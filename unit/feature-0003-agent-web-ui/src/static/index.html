@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MySQL AI Control Deck</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260321a" />
+</head>
+<body>
+  <div class="bg" aria-hidden="true"></div>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">◆</div>
+      <div>
+        <div class="title">MySQL AI Control Deck</div>
+        <div class="subtitle">자연어로 DB 작업을 제어하는 워크스페이스</div>
+      </div>
+    </div>
+    <div class="status">
+      <button class="icon-btn" id="sideToggle" type="button" aria-expanded="true">메뉴</button>
+      <button class="icon-btn" id="toolsToggle" type="button" aria-expanded="false">도구</button>
+      <button class="badge badge-toggle" id="domainBadge" type="button" title="현재 도메인 고정/해제">Domain: -</button>
+      <button class="badge badge-toggle" id="strategyBadge" type="button" title="현재 전략 고정/해제">Strategy: -</button>
+      <div class="badge meta-id" id="sessionId">SESSION: -</div>
+      <div class="badge meta-id" id="conversationId">CONV: -</div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="side">
+      <div class="card side-section side-section--primary">
+        <div class="card-title">Conversations <span class="count-badge" id="conversationCount">0</span></div>
+        <button class="btn tiny" id="btnNew">새 대화 시작</button>
+        <div class="conversation-list" id="conversationList"></div>
+      </div>
+    </aside>
+
+    <section class="chat">
+      <div class="chat-header">
+        <div class="chat-title">대화 로그</div>
+        <div class="chat-meta" id="lastDuration">최근 처리: -</div>
+        <div class="chat-meta" id="conversationStats">메시지 0</div>
+        <input type="hidden" id="jumpTime" />
+      </div>
+      <div class="run-hud hidden" id="runHud" aria-live="polite"></div>
+      <div class="domain-drift hidden" id="domainDriftPanel" aria-live="polite">
+        <div class="domain-drift-text" id="domainDriftText"></div>
+        <div class="domain-drift-actions">
+          <button type="button" class="mini" id="domainDriftRevert">고정 도메인 원복</button>
+          <button type="button" class="mini ghost" id="domainDriftClose">닫기</button>
+        </div>
+      </div>
+      <div class="restore-mode hidden" id="restoreModePanel" aria-live="polite">
+        <div class="restore-mode-main">
+          <span class="restore-mode-badge">복원 모드</span>
+          <span class="restore-mode-file" id="restoreModeFile">선택 파일 없음</span>
+        </div>
+        <div class="restore-mode-actions">
+          <button type="button" class="mini" id="restoreContinueBtn">복원 계속</button>
+          <button type="button" class="mini ghost" id="restoreModeClearBtn">모드 해제</button>
+        </div>
+      </div>
+      <div class="chat-log-wrap">
+        <div class="chat-log" id="chatLog">
+          <div class="msg assistant">
+            <div class="bubble">
+              <pre class="output">준비가 완료되었습니다.
+자연어로 요청을 입력해 시작하세요.</pre>
+            </div>
+          </div>
+        </div>
+        <div class="chat-timeline" id="chatTimeline"></div>
+        <button class="scroll-latest-btn hidden" id="scrollLatestBtn" title="최신 대화로 이동">&#x25BC;</button>
+        <div class="jump-cal-panel hidden" id="jumpCalPanel">
+          <div class="jump-cal-header">
+            <button class="jump-cal-nav" id="jumpCalPrev">&lsaquo;</button>
+            <span class="jump-cal-title" id="jumpCalTitle"></span>
+            <button class="jump-cal-nav" id="jumpCalNext">&rsaquo;</button>
+          </div>
+          <div class="jump-cal-weekdays">
+            <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
+          </div>
+          <div class="jump-cal-grid" id="jumpCalGrid"></div>
+          <div class="jump-cal-times hidden" id="jumpCalTimes">
+            <div class="jump-cal-times-title">대화 시각</div>
+            <div class="jump-cal-times-list" id="jumpCalTimesList"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="composer-input-row">
+          <textarea id="prompt" rows="3" placeholder="예) 최근 접속 유저 수와 평균 플레이타임을 계산해줘"></textarea>
+          <div class="composer-actions">
+            <button class="btn ghost hidden" id="btnCancel">요청 취소</button>
+            <button class="btn ghost" id="btnSend">요청 보내기</button>
+          </div>
+        </div>
+</div>
+    </section>
+  </main>
+
+  <div class="drawer hidden" id="toolsDrawer" aria-hidden="true">
+    <div class="drawer-card">
+      <div class="drawer-header">
+        <div class="drawer-title">Utilities</div>
+        <button class="icon-btn" id="toolsClose" type="button">닫기</button>
+      </div>
+      <div class="drawer-body">
+        <div class="drawer-section">
+          <div class="drawer-subtitle">Quick Controls</div>
+          <div class="control-row">
+            <button class="btn ghost" id="btnQuickDb">현재 DB 목록</button>
+            <button class="btn ghost" id="btnClear">모든 대화 삭제</button>
+          </div>
+          <div class="hint">
+            세션 기준은 접속한 머신(IP)입니다.
+            같은 IP의 다른 브라우저는 동일 세션을 공유합니다.
+          </div>
+        </div>
+        <div class="drawer-section" id="apiCard">
+          <div class="drawer-subtitle">API Vault</div>
+          <div class="api-summary">
+            <div class="api-status" id="apiStatus">미설정</div>
+            <button class="btn ghost tiny" id="apiToggle">설정 열기</button>
+          </div>
+          <div class="api-panel hidden" id="apiPanel">
+            <div class="api-form">
+              <label class="api-label" for="apiKeyEnc">암호화된 API 키</label>
+              <textarea id="apiKeyEnc" rows="3" placeholder="v1:..."></textarea>
+
+              <label class="api-label" for="apiKeyPass">암호화 키</label>
+              <input id="apiKeyPass" type="password" placeholder="암호화 키(패스프레이즈)" />
+
+              <label class="api-label" for="apiModel">모델</label>
+              <select id="apiModel"></select>
+              <div class="api-model-hint" id="apiModelHint"></div>
+
+              <div class="api-actions">
+                <button class="btn tiny" id="apiSave">저장</button>
+                <button class="btn ghost tiny" id="apiClear">삭제</button>
+              </div>
+              <div class="api-validation" id="apiValidation"></div>
+              <div class="api-security-hint hidden" id="apiSecureHint"></div>
+              <div class="hint">키/모델은 브라우저에만 캐싱되며 서버에는 저장되지 않습니다.</div>
+              <div class="api-history" id="apiHistory"></div>
+
+              <details class="api-tool">
+                <summary>암호화 도구</summary>
+                <div class="api-tool-body">
+                  <input id="apiKeyPlain" type="password" placeholder="평문 API 키" />
+                  <button class="btn tiny" id="apiEncrypt">암호화 후 채우기</button>
+                </div>
+                <div class="hint">암호화는 브라우저에서만 수행됩니다.</div>
+              </details>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="modal" aria-hidden="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title" id="modalTitle">상세 보기</div>
+        <button class="icon-btn" id="modalClose" type="button">닫기</button>
+      </div>
+      <div class="modal-body" id="modalBody" tabindex="0"></div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="modalCopy" type="button">복사</button>
+        <a class="btn" id="modalDownload" href="#" target="_blank" rel="noopener">다운로드</a>
+      </div>
+    </div>
+  </div>
+
+  <div
+    class="modal"
+    id="dangerModal"
+    aria-hidden="true"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="dangerModalTitle"
+    aria-describedby="dangerModalText"
+  >
+    <div class="modal-card danger-modal-card">
+      <div class="modal-header">
+        <div class="modal-title" id="dangerModalTitle">삭제 확인</div>
+        <button class="icon-btn" id="dangerModalClose" type="button">닫기</button>
+      </div>
+      <div class="modal-body danger-modal-body">
+        <div class="danger-modal-text" id="dangerModalText"></div>
+        <label class="danger-modal-label" id="dangerModalLabel" for="dangerModalInput">확인 입력</label>
+        <input class="danger-modal-input" id="dangerModalInput" type="text" autocomplete="off" />
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="dangerModalCancel" type="button">취소</button>
+        <button class="btn danger" id="dangerModalConfirm" type="button" disabled>삭제</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="csv-pager-dock hidden" id="csvPagerDock" aria-hidden="true">
+    <div class="csv-pager-shell">
+      <div class="csv-pager-panel" id="csvPagerPanel"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" aria-live="polite"></div>
+
+  <script src="/static/vendor/marked.umd.js"></script>
+  <script src="/static/vendor/purify.min.js"></script>
+  <script src="/static/app.js?v=20260321a"></script>
+</body>
+</html>

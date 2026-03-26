@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 작업 전 확인 문서
+    url: https://github.com/msmckimgpt-tech/ai_desk_mysql/blob/main/AGENTS.md
+    about: 작업 범위와 제약은 AGENTS.md 및 CONTRIBUTING.md를 먼저 확인하세요.

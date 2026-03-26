@@ -1,0 +1,142 @@
+x-agent-common: &agent-common
+  build:
+    context: .
+    dockerfile: unit/feature-0002-agent-core/src/Dockerfile
+  env_file:
+    - .env
+  environment:
+    TZ: ${TZ}
+    LANG: ${APP_LANG}
+    LANGUAGE: ${APP_LANGUAGE}
+    LC_ALL: ${APP_LC_ALL}
+    PYTHONIOENCODING: utf-8
+  volumes:
+    - ../artifacts/shared:/shared
+  depends_on:
+    mysql:
+      condition: service_healthy
+
+services:
+  mysql:
+    image: mysql:${MYSQL_IMAGE_TAG}
+    env_file:
+      - .env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      TZ: ${TZ}
+    ports:
+      - "${MYSQL_PORT}:3306"
+    volumes:
+      - ../artifacts/shared:/shared
+      - ../artifacts/mysql-data:/var/lib/mysql
+      - ../artifacts/mysql-backup:/shared/mysql-backup
+      - ./unit/feature-0001-platform-runtime/src/mysql/conf.d/99-mysql-ai-server.cnf:/etc/mysql/conf.d/99-mysql-ai-server.cnf:ro
+      - ./unit/feature-0001-platform-runtime/src/mysql/conf.d/99-mysql-ai-client.cnf:/etc/mysql/conf.d/99-mysql-ai-client.cnf:ro
+    networks: [dbnet]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  agent:
+    <<: *agent-common
+    networks: [dbnet, llm-shared]
+
+  memory-init:
+    <<: *agent-common
+    entrypoint: ["python", "/app/agent_core.py", "--init-memory"]
+    networks: [dbnet]
+    restart: "no"
+
+  insight-worker:
+    <<: *agent-common
+    environment:
+      TZ: ${TZ}
+      LANG: ${APP_LANG}
+      LANGUAGE: ${APP_LANGUAGE}
+      LC_ALL: ${APP_LC_ALL}
+      PYTHONIOENCODING: utf-8
+      AGENT_SESSION: insight_worker
+      AGENT_CONVERSATION_ID: __insight_worker__
+    entrypoint: ["python", "/app/agent_core.py", "--insight-worker"]
+    networks: [dbnet, llm-shared]
+    restart: unless-stopped
+
+  mcp:
+    image: bytebase/dbhub:${DBHUB_IMAGE_TAG}
+    profiles: ["mcp"]
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ}
+      LANG: ${APP_LANG}
+      LANGUAGE: ${APP_LANGUAGE}
+      LC_ALL: ${APP_LC_ALL}
+      DBHUB_LOG_LEVEL: ${DBHUB_LOG_LEVEL}
+    ports:
+      - "${MCP_HOST_PORT}:${MCP_PORT}"
+    command:
+      - --transport
+      - ${MCP_TRANSPORT}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "${MCP_PORT}"
+      - --dsn
+      - "${DBHUB_DSN}"
+    networks: [dbnet]
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  web:
+    <<: *agent-common
+    entrypoint: ["/bin/sh", "-c", "if [ -f \"$WEB_TLS_CERT_FILE\" ] && [ -f \"$WEB_TLS_KEY_FILE\" ] && [ \"$ENABLE_WEB_TLS\" = '1' ]; then exec uvicorn web.app:app --host 0.0.0.0 --port 8000 --ssl-keyfile \"$WEB_TLS_KEY_FILE\" --ssl-certfile \"$WEB_TLS_CERT_FILE\"; else exec uvicorn web.app:app --host 0.0.0.0 --port 8000; fi"]
+    volumes:
+      - ../artifacts/shared:/shared
+      - ../artifacts/certs:/certs:ro
+    ports:
+      - "${WEB_PORT}:8000"
+    networks: [dbnet, llm-shared]
+
+  caddy:
+    image: caddy:2
+    env_file:
+      - .env
+    environment:
+      WEB_PUBLIC_HOST: ${WEB_PUBLIC_HOST}
+      WEB_TLS_CERT_FILE: ${WEB_TLS_CERT_FILE}
+      WEB_TLS_KEY_FILE: ${WEB_TLS_KEY_FILE}
+    volumes:
+      - ./unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../artifacts/certs:/certs:ro
+      - ../artifacts/caddy-data:/data
+      - ../artifacts/caddy-config:/config
+    ports:
+      - "${WEB_HTTP_PORT}:80"
+      - "${WEB_HTTPS_PORT}:443"
+    networks: [dbnet]
+    depends_on:
+      - web
+
+  browser:
+    build:
+      context: .
+      dockerfile: unit/feature-0004-browser-automation/src/Dockerfile
+    env_file:
+      - .env
+    environment:
+      BROWSER_SCREENSHOT_DIR: /shared/out/browser
+    volumes:
+      - ../artifacts/shared:/shared
+    ports:
+      - "${BROWSER_PORT}:8001"
+    networks: [dbnet]
+
+networks:
+  dbnet:
+  llm-shared:
+    external: true
+    name: llm-shared
