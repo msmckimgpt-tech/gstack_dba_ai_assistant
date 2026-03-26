@@ -1,0 +1,369 @@
+SHELL := /bin/bash
+export PATH := /snap/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$(PATH)
+
+DC := COMPOSE_BAKE=false docker compose
+DC_QUIET := $(DC) --ansi=never
+RUNTIME_DIR := ../artifacts
+SHARED_DIR := $(RUNTIME_DIR)/shared
+MYSQL_DATA_DIR := $(RUNTIME_DIR)/mysql-data
+MYSQL_BACKUP_DIR := $(RUNTIME_DIR)/mysql-backup
+LOG_DIR := $(SHARED_DIR)/logs
+OUT_DIR := $(SHARED_DIR)/out
+CERT_ROOT := $(RUNTIME_DIR)/certs
+CADDY_DATA_DIR := $(RUNTIME_DIR)/caddy-data
+CADDY_CONFIG_DIR := $(RUNTIME_DIR)/caddy-config
+ENABLE_MCP ?= $(shell sed -n 's/^ENABLE_MCP=//p' .env | tail -n 1)
+ENABLE_INSIGHT_WORKER ?= $(shell sed -n 's/^AGENT_INSIGHT_WORKER_ENABLED=//p' .env | tail -n 1)
+ENABLE_WEB_TLS ?= $(shell sed -n 's/^ENABLE_WEB_TLS=//p' .env | tail -n 1)
+ENABLE_WEB_TLS_PROXY ?= $(shell sed -n 's/^ENABLE_WEB_TLS_PROXY=//p' .env | tail -n 1)
+MEMORY_DB ?= $(shell sed -n 's/^AGENT_MEMORY_DB=//p' .env | tail -n 1)
+WEB_PORT ?= $(shell sed -n 's/^WEB_PORT=//p' .env | tail -n 1)
+WEB_PUBLIC_HOST ?= $(shell sed -n 's/^WEB_PUBLIC_HOST=//p' .env | tail -n 1)
+WEB_LAN_IP ?= $(shell sed -n 's/^WEB_LAN_IP=//p' .env | tail -n 1)
+BROWSER_PORT ?= $(shell sed -n 's/^BROWSER_PORT=//p' .env | tail -n 1)
+BROWSER_URL ?= $(shell sed -n 's/^BROWSER_URL=//p' .env | tail -n 1)
+SESSION_TAG ?=
+SESSION_BASE := $(shell sh -lc 'u=$$(id -un); t=$$(tty 2>/dev/null || true); if [ -n "$$t" ] && [ "$$t" != "not a tty" ]; then t=$${t#/dev/}; echo "$$u_$$t"; else echo "$$u"; fi' | tr -c 'A-Za-z0-9_.-' '_')
+SESSION ?= $(SESSION_BASE)$(if $(SESSION_TAG),_$(SESSION_TAG),)
+CONV_FILE ?= /shared/conversation_id.$(SESSION)
+BROWSER_SESSION_FILE ?= /shared/browser_session_id.$(SESSION)
+BROWSER_CTL := $(DC_QUIET) run --rm --entrypoint python --env BROWSER_SESSION_FILE=$(BROWSER_SESSION_FILE) --env BROWSER_URL=$(BROWSER_URL) browser /app/ctl.py
+
+.PHONY: ensure-llm-network wait-mysql ensure-memory-db up down restart build ps logs sh repl ask out clean clear init mcp-up mcp-down mcp-test convo-list convo-new convo-use convo-delete convo-rename convo-clear start stop status dump web web-down web-tls-up web-tls-down web-tls-status web-tls-logs insight-up insight-down insight-logs insight-status browser-up browser-down browser-health browser-session browser-goto browser-click browser-type browser-set-value browser-eval browser-press browser-wait browser-text browser-html browser-shot browser-close browser-hover browser-mousedown browser-mouseup browser-scroll mysql session-info
+
+ensure-llm-network:
+	@docker network inspect llm-shared >/dev/null 2>&1 || docker network create llm-shared >/dev/null
+
+wait-mysql:
+	@container_id="$$( $(DC_QUIET) ps -q mysql )"; \
+	if [[ -z "$$container_id" ]]; then \
+		echo "mysql service container not found" >&2; \
+		exit 1; \
+	fi; \
+	for i in $$(seq 1 60); do \
+		status=$$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$$container_id" 2>/dev/null || true); \
+		if [[ "$$status" == "healthy" ]]; then \
+			exit 0; \
+		fi; \
+		sleep 2; \
+	done; \
+	echo "mysql service healthcheck timed out" >&2; \
+	exit 1
+
+ensure-memory-db:
+	@$(DC_QUIET) exec -T mysql sh -lc 'mysql -uroot -p"$$MYSQL_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \`$(MEMORY_DB)\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"'
+
+up:
+	@$(MAKE) ensure-llm-network
+	@mkdir -p $(SHARED_DIR) $(MYSQL_DATA_DIR) $(MYSQL_BACKUP_DIR) $(LOG_DIR) $(OUT_DIR) $(SHARED_DIR)/web_sessions $(SHARED_DIR)/out/browser $(CERT_ROOT)/$(WEB_PUBLIC_HOST) $(CADDY_DATA_DIR) $(CADDY_CONFIG_DIR)
+	@chown -R 999:999 $(MYSQL_DATA_DIR) || true
+	@chmod -R 770 $(MYSQL_DATA_DIR) $(MYSQL_BACKUP_DIR) $(LOG_DIR) $(OUT_DIR) || true
+	@$(DC_QUIET) build agent memory-init insight-worker web browser
+	@$(DC_QUIET) up -d --build mysql web browser
+	@$(MAKE) wait-mysql
+	@$(MAKE) ensure-memory-db
+	@if [[ "$(ENABLE_WEB_TLS_PROXY)" == "1" ]]; then \
+		$(DC_QUIET) up -d caddy; \
+	else \
+		$(DC_QUIET) stop caddy >/dev/null 2>&1 || true; \
+	fi
+	@$(DC_QUIET) run --rm memory-init
+	@if [[ "$(ENABLE_INSIGHT_WORKER)" != "0" ]]; then \
+		$(DC_QUIET) up -d --build insight-worker; \
+	else \
+		$(DC_QUIET) stop insight-worker >/dev/null 2>&1 || true; \
+	fi
+	@if [[ "$(ENABLE_MCP)" == "1" ]]; then \
+		$(DC_QUIET) --profile mcp up -d mcp; \
+	fi
+
+start:
+	@echo "Starting docker environment..."
+	@$(MAKE) up
+	@$(MAKE) ps
+
+stop: down
+
+status: ps
+
+down:
+	@$(DC_QUIET) down
+
+restart: down up
+
+build:
+	@$(DC_QUIET) build --no-cache
+
+ps:
+	@$(DC_QUIET) ps
+
+logs:
+	@$(DC_QUIET) logs -f --tail=200
+
+sh:
+	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --entrypoint bash agent
+
+repl:
+	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --repl
+
+ask: init
+	@if [[ -z "$(q)" ]]; then \
+		echo '사용법: make ask q="질문"'; \
+		exit 1; \
+	fi
+	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent "$(q)"
+
+mysql: init
+	@if [[ -z "$(sql)" ]]; then \
+		echo '사용법: make mysql sql="SELECT 1;"'; \
+		exit 1; \
+	fi
+	@$(DC_QUIET) run --rm --remove-orphans --entrypoint bash --env SQL="$(sql)" agent -lc 'mysql -h "$$DB_HOST" -P "$$DB_PORT" -u "$$DB_USER" -p"$$DB_PASSWORD" -e "$$SQL"'
+
+convo-list: init
+	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --list-conversations
+
+convo-new: init
+	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --new-conversation
+
+convo-use: init
+	@if [[ -z "$(index)" ]]; then \
+		echo '사용법: make convo-use index=1 q="질문"'; \
+		exit 1; \
+	fi
+	@if [[ -z "$(q)" ]]; then \
+		AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --use-conversation-index "$(index)"; \
+	else \
+		AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --use-conversation-index "$(index)" "$(q)"; \
+	fi
+
+convo-delete: init
+	@if [[ -z "$(index)" ]]; then \
+		echo '사용법: make convo-delete index=1'; \
+		exit 1; \
+	fi
+	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --delete-conversation-index "$(index)"
+
+convo-rename: init
+	@if [[ -z "$(index)" || -z "$(topic)" ]]; then \
+		echo '사용법: make convo-rename index=1 topic="새 주제"'; \
+		exit 1; \
+	fi
+	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --rename-conversation-index "$(index)" --rename-topic "$(topic)"
+
+convo-clear: init
+	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent "__CLEAR_MEMORY_TABLES__"
+
+init:
+	@if [ "$(SKIP_INIT)" = "1" ]; then \
+		exit 0; \
+	fi
+	@$(DC_QUIET) run --rm --remove-orphans memory-init
+
+mcp-up:
+	@$(DC_QUIET) --profile mcp up -d mcp
+
+mcp-down:
+	@$(DC_QUIET) stop mcp || true
+
+mcp-test:
+	@MCP_TEST_URL=http://localhost:$(shell sed -n 's/^MCP_HOST_PORT=//p' .env | tail -n 1)/mcp python3 unit/feature-0005-qa-mcp/src/mcp_tests.py
+
+web: init
+	@if [ "$(ENABLE_WEB_TLS)" = "1" ]; then $(MAKE) -s web-tls-cert; fi
+	@$(DC_QUIET) up -d --build web
+	@if [ "$(ENABLE_WEB_TLS)" = "1" ]; then \
+		echo "Web UI (HTTPS): https://localhost:$(WEB_PORT)"; \
+		if [ -n "$(WEB_LAN_IP)" ]; then echo "LAN 접속: https://$(WEB_LAN_IP):$(WEB_PORT)"; fi; \
+	else \
+		echo "Web UI: http://localhost:$(WEB_PORT)"; \
+	fi
+	@if [ "$(ENABLE_WEB_TLS_PROXY)" = "1" ]; then \
+		$(MAKE) -s web-tls-cert; \
+		mkdir -p $(CADDY_DATA_DIR) $(CADDY_CONFIG_DIR); \
+		$(DC_QUIET) up -d caddy; \
+		echo "TLS Proxy: https://$(WEB_PUBLIC_HOST)"; \
+	fi
+
+web-down:
+	@$(DC_QUIET) stop caddy 2>/dev/null || true
+	@$(DC_QUIET) stop web || true
+
+web-tls-cert:
+	@mkdir -p $(CERT_ROOT)/$(WEB_PUBLIC_HOST)
+	@if [ ! -f $(CERT_ROOT)/$(WEB_PUBLIC_HOST)/fullchain.pem ]; then \
+		echo "  자체 서명 인증서 생성 중..."; \
+		SAN="DNS:$(WEB_PUBLIC_HOST),DNS:localhost,IP:127.0.0.1"; \
+		if [ -n "$(WEB_LAN_IP)" ]; then SAN="$$SAN,IP:$(WEB_LAN_IP)"; fi; \
+		openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+			-keyout $(CERT_ROOT)/$(WEB_PUBLIC_HOST)/privkey.pem \
+			-out $(CERT_ROOT)/$(WEB_PUBLIC_HOST)/fullchain.pem \
+			-subj "/CN=$(WEB_PUBLIC_HOST)" \
+			-addext "subjectAltName=$$SAN" 2>/dev/null; \
+		echo "  인증서 생성 완료: $(CERT_ROOT)/$(WEB_PUBLIC_HOST)/"; \
+	else \
+		echo "  기존 인증서 사용: $(CERT_ROOT)/$(WEB_PUBLIC_HOST)/"; \
+	fi
+
+web-tls-up: init web-tls-cert
+	@mkdir -p $(CADDY_DATA_DIR) $(CADDY_CONFIG_DIR)
+	@$(DC_QUIET) up -d --build web
+	@$(DC_QUIET) up -d caddy
+	@echo "TLS Web UI: https://$(WEB_PUBLIC_HOST)"
+	@if [ -n "$(WEB_LAN_IP)" ]; then echo "LAN 접속: https://$(WEB_LAN_IP)"; fi
+
+web-tls-down:
+	@$(DC_QUIET) stop caddy || true
+
+web-tls-status:
+	@$(DC_QUIET) ps web caddy
+
+web-tls-logs:
+	@$(DC_QUIET) logs -f --tail=200 caddy
+
+insight-up:
+	@$(DC_QUIET) up -d --build insight-worker
+
+insight-down:
+	@$(DC_QUIET) stop insight-worker || true
+
+insight-logs:
+	@$(DC_QUIET) logs -f --tail=200 insight-worker
+
+insight-status:
+	@$(DC_QUIET) ps insight-worker
+
+browser-up:
+	@$(DC_QUIET) up -d --build browser
+	@echo "Browser service: http://localhost:$(BROWSER_PORT)"
+
+browser-down:
+	@$(DC_QUIET) stop browser || true
+
+browser-health:
+	@$(BROWSER_CTL) health
+
+browser-session:
+	@$(BROWSER_CTL) session $(if $(ip),--ip "$(ip)",)
+
+browser-goto:
+	@if [[ -z "$(url)" ]]; then \
+		echo '사용법: make browser-goto url="https://example.com"'; \
+		exit 1; \
+	fi
+	@$(BROWSER_CTL) goto --url "$(url)"
+
+browser-click:
+	@if [[ -z "$(selector)" ]]; then \
+		echo '사용법: make browser-click selector="css-selector"'; \
+		exit 1; \
+	fi
+	@$(BROWSER_CTL) click --selector "$(selector)"
+
+browser-type:
+	@if [[ -z "$(selector)" || -z "$(text)" ]]; then \
+		echo '사용법: make browser-type selector="css-selector" text="입력값"'; \
+		exit 1; \
+	fi
+	@$(BROWSER_CTL) type --selector "$(selector)" --text "$(text)"
+
+browser-set-value:
+	@if [[ -z "$(selector)" || -z "$(text)" ]]; then \
+		echo '사용법: make browser-set-value selector="css-selector" text="입력값"'; \
+		exit 1; \
+	fi
+	@$(BROWSER_CTL) set_value --selector "$(selector)" --text "$(text)"
+
+browser-eval:
+	@if [[ -z "$(script)" ]]; then \
+		echo '사용법: make browser-eval script="document.querySelector(...)"'; \
+		exit 1; \
+	fi
+	@$(BROWSER_CTL) eval --script "$(script)"
+
+browser-press:
+	@if [[ -z "$(selector)" || -z "$(key)" ]]; then \
+		echo '사용법: make browser-press selector="css-selector" key="Enter"'; \
+		exit 1; \
+	fi
+	@$(BROWSER_CTL) press --selector "$(selector)" --key "$(key)"
+
+browser-hover:
+	@if [[ -z "$(selector)" ]]; then \
+		echo '사용법: make browser-hover selector="css-selector"'; \
+		exit 1; \
+	fi
+	@$(BROWSER_CTL) hover --selector "$(selector)"
+
+browser-mousedown:
+	@$(BROWSER_CTL) mousedown $(if $(selector),--selector "$(selector)",) $(if $(button),--button "$(button)",)
+
+browser-mouseup:
+	@$(BROWSER_CTL) mouseup $(if $(selector),--selector "$(selector)",) $(if $(button),--button "$(button)",)
+
+browser-scroll:
+	@if [[ -z "$(dy)" && -z "$(dx)" ]]; then \
+		echo '사용법: make browser-scroll dy=-800 [dx=0]'; \
+		exit 1; \
+	fi
+	@$(BROWSER_CTL) scroll $(if $(dx),--delta-x "$(dx)",) $(if $(dy),--delta-y "$(dy)",)
+
+browser-wait:
+	@if [[ -z "$(selector)" ]]; then \
+		echo '사용법: make browser-wait selector="css-selector"'; \
+		exit 1; \
+	fi
+	@$(BROWSER_CTL) wait_for --selector "$(selector)"
+
+browser-text:
+	@if [[ -z "$(selector)" ]]; then \
+		echo '사용법: make browser-text selector="css-selector"'; \
+		exit 1; \
+	fi
+	@$(BROWSER_CTL) text --selector "$(selector)"
+
+browser-html:
+	@if [[ -z "$(selector)" ]]; then \
+		echo '사용법: make browser-html selector="css-selector"'; \
+		exit 1; \
+	fi
+	@$(BROWSER_CTL) html --selector "$(selector)"
+
+browser-shot:
+	@$(BROWSER_CTL) screenshot $(if $(path),--path "$(path)",) $(if $(full),--full-page,)
+
+browser-close:
+	@$(BROWSER_CTL) close
+
+session-info:
+	@echo "SESSION_BASE=$(SESSION_BASE)"
+	@echo "SESSION_TAG=$(SESSION_TAG)"
+	@echo "SESSION=$(SESSION)"
+	@echo "CONV_FILE=$(CONV_FILE)"
+	@echo "BROWSER_SESSION_FILE=$(BROWSER_SESSION_FILE)"
+
+dump:
+	@if [[ -z "$(db)" ]]; then \
+		echo '사용법: make dump db=데이터베이스명 [file=파일명.sql]'; \
+		exit 1; \
+	fi
+	@f="$${file:-$(db)_$$(date +%Y%m%d_%H%M%S).sql}"; \
+	$(DC_QUIET) exec -T mysql sh -lc 'mysqldump --defaults-extra-file=/etc/mysql/conf.d/99-mysql-ai-client.cnf --quote-names -uroot -p"$$MYSQL_ROOT_PASSWORD" --databases '"$(db)"' > /shared/mysql-backup/'"$$f"'' \
+	&& echo "덤프 저장: $(MYSQL_BACKUP_DIR)/$$f"
+
+out:
+	@echo "[host $(OUT_DIR)]"; \
+	ls -alh $(OUT_DIR) 2>/dev/null || true; \
+	echo ""; \
+	echo "[host $(LOG_DIR)]"; \
+	ls -alh $(LOG_DIR) 2>/dev/null || true
+
+clean:
+	@$(DC_QUIET) down -v
+
+clear:
+	@$(DC_QUIET) down
+	@rm -rf $(MYSQL_DATA_DIR)
+	@mkdir -p $(MYSQL_DATA_DIR)
+	@chown -R 999:999 $(MYSQL_DATA_DIR) || true
+	@chmod -R 770 $(MYSQL_DATA_DIR) || true
