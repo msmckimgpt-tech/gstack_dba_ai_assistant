@@ -1,0 +1,44 @@
+{
+  "$schema": "https://github.com/Azure/data-api-builder/releases/download/v1.7.83-rc/dab.draft.schema.json",
+  "data-source": {
+    "database-type": "mysql",
+    "connection-string": "Server=mysql;Port=3306;Database=agent_memory;Uid=root;Pwd=change_me;SslMode=None;"
+  },
+  "entities": {
+    "AgentMemoryMessages": {
+      "source": "AgentMemoryMessages",
+      "permissions": [
+        { "role": "Anonymous", "actions": [ "*" ] }
+      ]
+    },
+    "AgentMemorySummary": {
+      "source": "AgentMemorySummary",
+      "permissions": [
+        { "role": "Anonymous", "actions": [ "*" ] }
+      ]
+    },
+    "AgentMemoryKv": {
+      "source": "AgentMemoryKv",
+      "permissions": [
+        { "role": "Anonymous", "actions": [ "*" ] }
+      ]
+    }
+  },
+  "runtime": {
+    "rest": {
+      "enabled": true,
+      "path": "/api"
+    },
+    "graphql": {
+      "enabled": true,
+      "path": "/graphql"
+    },
+    "mcp": {
+      "enabled": true,
+      "path": "/mcp",
+      "dml-tools": {
+        "enabled": true
+      }
+    }
+  }
+}
