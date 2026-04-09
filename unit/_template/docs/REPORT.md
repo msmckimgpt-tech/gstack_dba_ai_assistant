@@ -35,3 +35,8 @@ source_of_truth: false
 
 ## 7. Human Attention Needed
 - 사람 판단 또는 승인이 필요한 항목
+
+## 8. Suggested Improvements
+<!-- AI가 작업 중 발견한 개선 기회를 기록한다 (§8.1 개선 제안 정책) -->
+<!-- 제안은 기록만 하며, 사용자 지시 없이 실행하지 않는다 -->
+- 없음
