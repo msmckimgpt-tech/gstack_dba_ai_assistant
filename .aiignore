@@ -1,0 +1,44 @@
+# =============================================================================
+# AI Context Exclusion (.aiignore)
+#
+# 이 파일에 나열된 패턴에 매칭되는 파일은 AI 읽기 대상에서 제외한다.
+# 문법은 .gitignore와 동일하다.
+# 단, AGENTS.md와 TASK.md는 이 파일에 포함해도 제외되지 않는다 (필수 읽기).
+# =============================================================================
+
+# Build outputs
+dist/
+build/
+coverage/
+*.min.js
+*.min.css
+
+# Dependencies
+node_modules/
+vendor/
+.venv/
+__pycache__/
+
+# Generated files
+*.generated.*
+*.pb.go
+*_gen.py
+
+# Large data files
+*.csv
+*.parquet
+*.sqlite
+*.sql.gz
+
+# Archives
+_archive/
+
+# AI runtime artifacts
+.ai-runtime/
+*:Zone.Identifier
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -57,8 +57,115 @@ source_of_truth: true
 - 이 저장소의 정본 정책 파일은 `../AGENTS.md`이다.
 - Claude Code: `../CLAUDE.md` → `../AGENTS.md` 참조
 - 다른 도구용 호환 파일이 필요하면 AGENTS.md 참조 파일로만 둔다.
+- AI 컨텍스트 제외: `../.aiignore` — AI가 읽지 않을 파일 패턴을 정의한다 (AGENTS.md §10.4 참조).
 
-## 8. 용어집
+## 8. 환경변수 및 설정 관리
+
+### 8.1 기본 원칙
+- 프로젝트 루트에 `.env.example`을 두고 모든 환경변수의 키와 설명을 유지한다.
+- 기능별 설정이 필요하면 `src/config/` 디렉토리에 계층 구조를 둔다:
+  - `config/default.env` — 공통 기본값 (커밋 대상)
+  - `config/profiles/<profile>.env` — 프로필별 오버라이드 (커밋 대상)
+  - `config/credentials/*.cnf` — 자격증명 (git-ignored, `*.example`만 커밋)
+- 환경변수 이름은 `SCREAMING_SNAKE_CASE`를 사용한다.
+- 카테고리가 있으면 접두사로 구분한다 (예: `MYSQL_*`, `AGENT_*`, `WEB_*`).
+- 환경변수 추가/변경 시 `.env.example`과 `MODIFY.md`를 동시에 갱신한다.
+- 환경변수의 의미 변경(이름 유지 + 동작 변경)은 `REVIEW.md`에 근거를 기록한다.
+
+### 8.2 설정 파일 주석 표준
+설정 파일(`.env`, `.cnf` 등)의 변수에는 다음 기준에 따라 주석을 작성한다.
+AI 작업자가 변수의 역할과 허용 범위를 즉시 파악할 수 있도록 하는 것이 목적이다.
+
+#### 파일 헤더
+파일 최상단에 아래 내용을 배너 주석으로 작성한다.
+- 파일의 목적 (무엇의 기본값인지)
+- 상속/오버라이드 관계 (어떤 파일이 이 값을 덮어쓰는지)
+- 민감정보 경고 (자격증명을 여기에 두지 말 것)
+
+```bash
+# -----------------------------------------------------------------------------
+# <component> shared defaults
+#
+# 이 파일은 모든 profile이 공통으로 상속하는 기본값입니다.
+# 인스턴스별 차이는 ./profiles/<name>.env 에서 override 하세요.
+# 비밀번호 같은 민감정보는 여기에 두지 말고 ./credentials/ 에만 두세요.
+# -----------------------------------------------------------------------------
+```
+
+#### 섹션 구분
+관련 변수를 의미 단위로 묶고, 배너 주석 안에 `[카테고리명]`을 표기한다.
+
+```bash
+# -----------------------------------------------------------------------------
+# [Storage roots]
+# ...변수 설명...
+# -----------------------------------------------------------------------------
+BACKUP_ROOT_DIR="/backup"
+STATE_ROOT_DIR=".state"
+```
+
+#### 변수별 주석 — 필수 항목
+모든 변수에 최소한 아래 항목을 포함한다.
+
+| 항목 | 설명 | 필수 |
+|------|------|------|
+| **변수명** | 주석 첫 줄에 변수명을 명시 | O |
+| **역할 설명** | 이 값이 무엇을 제어하는지 1~2줄로 기술 | O |
+| **허용값 (열거형)** | `허용값:` 키워드 뒤에 파이프(`\|`)로 구분하여 나열 | 열거형일 때 O |
+| **각 옵션 설명** | 열거형의 각 값이 어떤 동작을 하는지 기술 | 열거형일 때 O |
+| **단위** | 숫자값의 단위 명시 (초, 일, GB 등) | 숫자형일 때 O |
+| **경로 해석** | 상대경로 기준점, 절대경로 여부 | 경로형일 때 O |
+| **템플릿 토큰** | 지원되는 치환 토큰 목록 | 템플릿일 때 O |
+| **기본 동작** | 빈 값이나 생략 시 동작 | 선택 |
+
+#### 변수별 주석 — 유형별 예시
+
+**열거형 (enum)**
+```bash
+# LOW_SPACE_POLICY
+#   허용값: warn | block | auto_shrink
+#   warn       : 경고만 남기고 계속 진행
+#   block      : 임계치 미만이면 즉시 중단
+#   auto_shrink: temp → logs → archive 순으로 자동 정리 후 재시도
+LOW_SPACE_POLICY="auto_shrink"
+```
+
+**숫자형 (단위 필수)**
+```bash
+# RETENTION_DAYS
+#   archive/binlog 보관 기준 일수입니다.
+RETENTION_DAYS="35"
+```
+
+**경로형 (해석 기준 필수)**
+```bash
+# ARCHIVE_METADATA_DIR
+#   sidecar metadata 저장 경로입니다.
+#   상대경로면 BACKUP_ARCHIVE_DIR 기준으로 해석됩니다.
+ARCHIVE_METADATA_DIR=".metadata"
+```
+
+**템플릿형 (토큰 목록 필수)**
+```bash
+# BACKUP_FILENAME_TEMPLATE
+#   archive 파일명 base template입니다. 확장자 .tar.zst 는 자동으로 붙습니다.
+#   지원 토큰:
+#     {profile}   profile 이름
+#     {type}      full | incr | partial
+#     {date}      YYYYMMDD
+#     {timestamp} YYYYMMDDTHHMMSSZ
+BACKUP_FILENAME_TEMPLATE="{profile}_{type}_{date}_{time}"
+```
+
+**불리언형 (각 값의 동작 명시)**
+```bash
+# TEMP_CLEANUP_ON_SUCCESS
+#   1: 성공한 명령 이후 TTL 지난 temp를 자동 정리합니다.
+#   0: 성공 후에도 자동 temp cleanup을 하지 않습니다.
+TEMP_CLEANUP_ON_SUCCESS="1"
+```
+
+## 9. 용어집
 
 | 용어 | 정의 |
 |------|------|
@@ -69,3 +176,9 @@ source_of_truth: true
 | append-only | 기존 항목을 수정/삭제하지 않고 새 항목만 추가하는 수정 정책 |
 | runtime artifacts | 로그, 세션, MySQL 데이터, 인증서처럼 `../../artifacts`에 저장되는 파일 |
 | execution root | `docker-compose.yml`, `Makefile`, `.env`가 위치한 저장소 실행 루트 |
+| .aiignore | AI 컨텍스트 제외 패턴 파일. `.gitignore` 문법을 따르며, 매칭된 파일을 AI 읽기 대상에서 제외 |
+| playbook | 반복 작업 절차를 표준화한 문서. `playbooks/` 디렉토리에 `PB-NNNN` 형식으로 관리 |
+| plan-review | 비사소한 작업 전 AI가 구현 계획을 작성하고 위험도에 따라 사람 승인을 거치는 프로토콜 |
+| worktree | Git worktree를 활용한 물리적 작업 디렉토리 분리. 병렬 AI 작업 시 권장 |
+| LEARNINGS.md | AI 학습 기록 문서. 실수, 패턴, 특이사항, 선호를 append-only로 누적 |
+| CODEBASE_MAP.md | 저장소 파일 구조와 주요 진입점을 AI가 빠르게 참조할 수 있도록 요약한 문서 |
