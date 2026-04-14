@@ -24,13 +24,14 @@ repo/
 ├── docker-compose.yml      # 서비스 오케스트레이션
 ├── .env / .env.example     # 런타임 환경변수
 ├── .aiignore               # AI 컨텍스트 제외 패턴
+├── .github/automation-contract.json  # GitHub 자동화 계약 정본
 ├── docs/                   # 프로젝트 수준 문서
 │   ├── AGENTS.md(상위)·CONVENTIONS·DECISIONS·PROJECT·SECURITY·STATUS
 │   ├── ARCHITECTURE.md
 │   ├── GITHUB_AUTOMATION.md
 │   ├── LEARNINGS.md
 │   └── CODEBASE_MAP.md     # 이 문서
-├── playbooks/              # PB-0001 ~ PB-0004
+├── playbooks/              # PB-0001 ~ PB-0006
 ├── shared/                 # 공통 모듈 (현재 예약 영역)
 ├── tests/integration/      # 통합 테스트
 └── unit/                   # 기능 단위
@@ -54,6 +55,7 @@ repo/
 | `AGENTS.md` | AI 운영 정책 정본 | 섹션 §1~§17 + Part A~G 구조 |
 | `MCP_DESIGN.md` | MCP 서비스 설계 | `feature-0005-qa-mcp`와 연동되는 설계 참고 |
 | `README.md` | 사람용 개요 | 구조와 시작 절차 |
+| `.github/automation-contract.json` | 자동화 계약 정본 | 브랜치, 라벨, 커밋, required checks, 분류 규칙의 단일 기계 판독 기준 |
 
 ## 3. Shared Module Index
 
@@ -85,3 +87,11 @@ repo/
 | 브라우저 (로컬/헤드리스) | Automation | `feature-0004-browser-automation` |
 | GitHub (원격) | git/HTTPS | `docs/GITHUB_AUTOMATION.md`에 워크플로 정의 |
 | `../../artifacts/` | 런타임 산출물 | 모든 feature 실행 결과 — Git 외부 |
+
+## 6. Automation Assets
+
+| Asset | Purpose | Notes |
+|-------|---------|-------|
+| `.github/scripts/issue_gate.sh` | 이슈 실행 가능 여부 판정 | `status:ready` 비필수, 차단 상태만 gate |
+| `.github/scripts/format_issue_commit.sh` | 자동 커밋 제목 생성 | `type(scope): summary (#issue)` 형식 보장 |
+| `.github/scripts/validate_automation_contract.sh` | 문서-워크플로 정합성 검증 | `policy-contract` 체크에서 실행 |

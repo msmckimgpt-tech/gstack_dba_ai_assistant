@@ -31,6 +31,10 @@ jobs:
         shell: bash
         run: git fetch --no-tags origin "$BASE_REF"
 
+      - name: Validate automation contract
+        shell: bash
+        run: ./.github/scripts/validate_automation_contract.sh
+
       - name: Classify changed files
         id: classify
         shell: bash
@@ -41,12 +45,16 @@ jobs:
       - name: Validate branch, PR title, and linked issue
         shell: bash
         run: |
-          if [[ ! "$BRANCH_NAME" =~ ^issue/[0-9]+-[a-z0-9][a-z0-9-]*$ ]]; then
+          branch_regex="$(jq -r '.branches.public_pr_regex' .github/automation-contract.json)"
+          pr_title_regex="$(jq -r '.pull_requests.title_regex' .github/automation-contract.json)"
+          closing_regex="$(jq -r '.pull_requests.closing_reference_regex' .github/automation-contract.json)"
+
+          if [[ ! "$BRANCH_NAME" =~ $branch_regex ]]; then
             echo "Invalid branch name: $BRANCH_NAME" >&2
             exit 1
           fi
 
-          if [[ ! "$PR_TITLE" =~ ^#[0-9]+[[:space:]].+ ]]; then
+          if [[ ! "$PR_TITLE" =~ $pr_title_regex ]]; then
             echo "Invalid PR title: $PR_TITLE" >&2
             exit 1
           fi
@@ -60,8 +68,20 @@ jobs:
             exit 1
           fi
 
-          if ! grep -Eq "closes #[0-9]+" <<<"$PR_BODY"; then
+          if ! grep -Eq "$closing_regex" <<<"$PR_BODY"; then
             echo "PR body must include 'closes #<issue>'." >&2
+            exit 1
+          fi
+
+      - name: Validate commit subjects
+        shell: bash
+        run: |
+          subject_regex="$(jq -r '.commits.subject_regex' .github/automation-contract.json)"
+          invalid_subjects="$(git log --format='%s' "origin/$BASE_REF..HEAD" | grep -Ev '^(Merge |Revert )' | grep -Ev "$subject_regex" || true)"
+
+          if [[ -n "$invalid_subjects" ]]; then
+            echo "Commit subjects do not satisfy the automation contract." >&2
+            printf '%s\n' "$invalid_subjects" >&2
             exit 1
           fi
 

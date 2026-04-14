@@ -17,7 +17,7 @@ scope: project
 
 ## Steps
 
-1. `chore/dep-<package>-<version>` 브랜치를 main에서 생성한다.
+1. project-level task issue를 만들거나 확인한 뒤 공개 브랜치 `issue/<issue-number>-<short-slug>`를 main에서 생성한다.
 2. 현재 버전 → 목표 버전의 **changelog / release notes**를 읽고 breaking change 여부를 판단한다.
    - Major 버전 bump인 경우: ADR 필수. 사람 승인 대기.
    - Minor / Patch: 자율 진행 가능(단, 보안 등급 변경은 Critical로 취급).
@@ -39,12 +39,12 @@ scope: project
 7. `/repo/docs/CODEBASE_MAP.md` §5 External Interfaces에 버전 정보가 있으면 갱신한다.
 8. Git 커밋.
    ```
-   chore(deps): bump <package> a.b.c → x.y.z
+   chore(project): bump <package> a.b.c → x.y.z (#<issue-number>)
 
    - <파일>: 버전 지정 변경
    - <영향 받은 호출부>: 시그니처 대응
    ```
-9. AGENTS.md §16.3 Git 동기화 절차를 수행한다 (PB-0003과 동일).
+9. AGENTS.md §16.5 Git 동기화 절차를 수행한다 (PB-0003과 동일).
 
 ## Validation
 - [ ] 대상 패키지 버전이 실제로 바뀌었다 (lock 파일 포함)
@@ -53,7 +53,7 @@ scope: project
 - [ ] Breaking change가 있었다면 호출부 수정이 반영되었다
 - [ ] MODIFY.md / LEARNINGS.md / (Major의 경우) DECISIONS.md에 기록되었다
 - [ ] CODEBASE_MAP.md §5가 최신 버전을 반영한다 (해당되는 경우)
-- [ ] 커밋 메시지가 `chore(deps):` prefix를 사용한다
+- [ ] 커밋 메시지가 `type(scope): summary (#issue-number)` 규칙을 따른다
 
 ## 주의 사항
 - **보안 업데이트**: CVE 대응은 지연 없이 수행하되, 호환성 검증은 건너뛰지 않는다. 우회 수단이 있는 경우라도 **임시 mitigation은 LEARNINGS.md에 기록**하고 본 수정까지 추적한다.

@@ -102,10 +102,23 @@ make build
 ## 10. CI/CD 및 자동화
 
 ### 10.1 CI/CD 파이프라인
-- 현재 설정: 없음
+- GitHub Actions 기반 자동화가 구성되어 있다.
+- 주요 워크플로:
+  - `ai-triage.yml`: 저장소 신호 기반 autonomous issue 생성
+  - `ai-execute.yml`: 실행 가능 이슈를 공개 `issue/*` 브랜치/PR로 전개
+  - `ai-review.yml`: 활성 provider 기반 PR 리뷰
+  - `policy-contract.yml`: 브랜치/PR/커밋/문서-자동화 계약 검증
+  - `owner-agent-report.yml`: provider 및 위험 요약 게시
+  - `selfhosted-runtime-smoke.yml`: self-hosted 런타임 smoke 검증
 
 ### 10.2 AI 워크플로 프롬프트
-<!-- AI 에이전트가 GitHub Actions 등에서 자동 실행되는 경우 프롬프트 파일의 위치와 역할을 기입한다 -->
+- `.github/ai/prompts/triage.md`: triage 워크플로 공용 프롬프트
+- `.github/ai/prompts/implement.md`: 이슈 구현 워크플로 공용 프롬프트
+- `.github/ai/prompts/review.md`: PR 리뷰 워크플로 공용 프롬프트
 
 ### 10.3 자동화 규칙
-<!-- 라벨, PR 템플릿, 자동 할당 등 GitHub 자동화 규칙이 있으면 기입한다 -->
+- 자동화 계약 정본: `.github/automation-contract.json`
+- 공개 PR 브랜치: `issue/<번호>-<short-slug>`
+- 내부 병렬 브랜치: `ai/<agent-id>/<issue-number>/<slice>` (로컬/worktree 전용)
+- 커밋 형식: `type(scope): summary (#issue-number)`
+- 자세한 내용은 `../docs/GITHUB_AUTOMATION.md`와 `../CONTRIBUTING.md`를 따른다.

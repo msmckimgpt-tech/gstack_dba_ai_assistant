@@ -23,7 +23,7 @@ scope: project
 7. `/repo/docs/CODEBASE_MAP.md` §4에 기능 항목을 추가한다.
 8. Git 커밋한다.
    ```
-   feat(<feature-id>): 기능 유닛 초기화
+   feat(<feature-id>): 기능 유닛 초기화 (#<issue-number>)
 
    - unit/<feature-id>/: _template 기반 초기 구조 생성
    - docs/STATUS.md: 기능 등록

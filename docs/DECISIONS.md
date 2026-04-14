@@ -161,3 +161,15 @@ source_of_truth: true
   - 병렬 AI 작업 시 브랜치 분리/Worktree 격리/문서 잠금 3단계 격리 지침 명문화
   - 섹션 번호 이동: 구 §19 → 신 §15 (도메인 커스터마이징), 구 §20.3 → 신 §16.3 (Git 동기화)
   - template_version: v3.0.0으로 갱신
+
+## ADR-0017
+- Status: accepted
+- Date: 2026-04-14
+- Context: `AGENTS.md`, `CONTRIBUTING.md`, `docs/GITHUB_AUTOMATION.md`, GitHub Actions 구현 사이에 공개 브랜치 규칙, `status:ready` 의미, 커밋 형식, main 병합 절차가 서로 다르게 정의되어 있었다
+- Decision: GitHub 운영 흐름을 `Issue -> issue/<번호>-<slug> -> PR -> status checks -> auto-merge`로 일원화하고, 병렬 AI 작업은 로컬/worktree 전용 내부 `ai/<agent-id>/<issue-number>/<slice>` 브랜치 + 공개 `issue/*` 브랜치의 2계층 모델로 고정한다. 자동화 정본은 `.github/automation-contract.json`으로 관리하고 `policy-contract`에서 문서-자동화 정합성을 함께 검증한다
+- Consequences:
+  - `main` 직접 push 및 로컬 main 병합 절차를 정책에서 제거한다
+  - `status:ready`는 권장 라벨로 유지하되 `ai-execute`의 필수 gate에서는 제외한다
+  - 자동/수동 커밋 제목은 `type(scope): summary (#issue-number)` 형식으로 통일한다
+  - `policy-contract`는 브랜치/PR 규칙 외에 커밋 제목과 자동화 계약 정합성도 검사한다
+  - playbook, README, template 문서를 새 공개 브랜치 규칙과 동기화한다

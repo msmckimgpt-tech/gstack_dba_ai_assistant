@@ -25,10 +25,10 @@ scope: feature
    - Source: 커밋 해시 또는 TASK-ID 포함
    - Applies to: 영향 받는 경로/파일 명시
 8. BLOCKED 항목이 있으면 `REPORT.md`에 정리하여 사람에게 전달한다.
-9. AGENTS.md §16.3 Git 동기화 절차를 수행한다.
+9. AGENTS.md §16.5 Git 동기화 절차를 수행한다.
    - Step 1: 커밋 (항상)
    - Step 2: 원격 동기화 판정
-   - Step 3: 자동 동기화 (조건 충족 시)
+   - Step 3: 공개 브랜치 push + PR 생성/갱신 (조건 충족 시)
    - Step 4: 결과 기록
 
 ## Validation

@@ -1,9 +1,12 @@
 # GitHub Automation
 
 ## 개요
-- 이 저장소의 자동화는 "동시에 여러 AI를 병렬 투입"하지 않는다.
+- 이 저장소의 자동화는 공개 PR 기준으로 **이슈당 하나의 `issue/*` 브랜치**를 사용한다.
+- 여러 AI가 병렬 작업할 수 있지만, 내부 병렬 작업 브랜치는 로컬/worktree 전용이다.
 - 한 시점에는 하나의 provider만 활성화하며, provider는 `codex` 또는 `claude` 중 하나다.
 - 정본 흐름은 `Issue -> Branch -> PR -> Status Checks -> GitHub auto-merge` 이다.
+- 공개 PR 브랜치는 항상 `issue/<번호>-<short-slug>`를 사용한다.
+- 내부 병렬 작업 브랜치는 `ai/<agent-id>/<issue-number>/<slice>` 형식을 사용하며, PR head로 직접 사용하지 않는다.
 
 ## Provider 선택
 - 우선순위 1: Issue 또는 PR 라벨 `agent:codex`, `agent:claude`
@@ -13,9 +16,9 @@
 
 ## 워크플로
 - `ai-triage.yml`: 저장소 신호를 읽고 필요 시 autonomous issue 1건 생성
-- `ai-execute.yml`: ready 상태의 이슈를 브랜치/PR로 전개
+- `ai-execute.yml`: 실행 가능 이슈를 공개 `issue/*` 브랜치/PR로 전개
 - `ai-review.yml`: 활성 provider가 PR 검토 수행
-- `policy-contract.yml`: 브랜치/PR/자동병합 계약 검증
+- `policy-contract.yml`: 브랜치/PR/자동병합 계약과 문서-자동화 정합성 검증
 - `owner-agent-report.yml`: 현재 PR의 활성 provider와 위험 요약 게시
 - `selfhosted-runtime-smoke.yml`: self-hosted Linux runner에서 런타임 검증 수행
 
@@ -24,6 +27,11 @@
 - source: `source:human`, `source:autonomous`
 - status: `status:ready`, `status:in-progress`, `status:in-review`, `status:blocked`
 - merge: `automerge:candidate`, `risk:manual`, `needs-followup`
+
+`status:ready`는 권장 라벨이다.
+- Issue Template과 `ai-triage`는 기본값으로 이 라벨을 붙일 수 있다.
+- `ai-execute`의 필수 gate는 타입 라벨(`feature`, `bug`, `task`)과 차단 상태 부재다.
+- 실행이 시작되면 `status:ready`는 제거되고 `status:in-progress`로 전환된다.
 
 ## 필수 Secrets / Variables
 - Secrets
@@ -55,6 +63,13 @@
 - `selfhosted-runtime-smoke`
 - `ai-review`
 - `owner-agent-report`
+
+`policy-contract` 체크 안에는 다음 검증이 포함된다.
+- 공개 PR 브랜치 규칙 검증 (`issue/*`)
+- PR 제목 / `closes #<issue>` 규칙 검증
+- `.env` 제외 검증
+- 커밋 제목 형식 검증 (`type(scope): summary (#issue)`)
+- `.github/automation-contract.json`과 문서/스크립트 정합성 검증
 
 ## 자동 이슈 생성 기준
 - `ai-triage`는 한 번에 최대 1개 이슈만 생성한다.

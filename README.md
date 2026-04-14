@@ -33,8 +33,10 @@
 - 원격 저장소는 `git@github.com:msmckimgpt-tech/ai_desk_mysql.git`를 사용한다.
 - 기본 브랜치는 `main`이다.
 - 작업은 GitHub Issue를 기준으로 분기한다.
-- 브랜치 규칙은 `issue/<번호>-<short-slug>`이다.
+- 공개 PR 브랜치 규칙은 `issue/<번호>-<short-slug>`이다.
+- 내부 병렬 브랜치는 `ai/<agent-id>/<issue-number>/<slice>`를 사용하되, 로컬/worktree 전용으로만 운영한다.
 - PR 제목 규칙은 `#<번호> <summary>`이다.
+- 커밋 제목 규칙은 `type(scope): summary (#issue-number)`이다.
 - 단일 AI provider 운영 기준은 `docs/GITHUB_AUTOMATION.md`를 따른다.
 - Codex와 Claude는 둘 다 사용할 수 있지만, 한 이슈/한 PR/한 워크플로 런에서는 하나의 provider만 활성화한다.
 - provider 우선순위는 `agent:codex` / `agent:claude` 라벨 -> 저장소 변수 `AI_PROVIDER_DEFAULT` -> 기본값 `codex` 순서다.

@@ -17,7 +17,7 @@ scope: project
 
 ## Steps
 
-1. `chore/template-migration-v<X.Y.Z>` 브랜치를 main에서 생성한다.
+1. project-level task issue를 만들거나 확인한 뒤 공개 브랜치 `issue/<issue-number>-<short-slug>`를 main에서 생성한다.
 2. 신버전 TEMPLATE_CHANGELOG를 읽고 **수용/기각 매트릭스**를 작성한다.
    - 각 변경 항목에 대해: 본 프로젝트가 해당 기능을 필요로 하는가?
    - 기각하는 경우 이유를 `DECISIONS.md` ADR 초안에 기록.
@@ -54,9 +54,9 @@ scope: project
 9. **LEARNINGS.md append**: 이번 마이그레이션에서 발견한 프로젝트 고유 이슈(예: 특정 섹션이 기존 커스터마이징과 충돌)를 `pattern` 또는 `quirk`로 기록.
 10. Git 커밋.
     ```
-    feat(project): 템플릿 vX.Y.Z 마이그레이션 — <요약>
+    feat(project): 템플릿 vX.Y.Z 마이그레이션 — <요약> (#<issue-number>)
     ```
-11. AGENTS.md §16.3 Git 동기화 절차 수행 (PB-0003과 동일).
+11. AGENTS.md §16.5 Git 동기화 절차 수행 (PB-0003과 동일).
 
 ## Validation
 - [ ] 신규 파일이 프로젝트 도메인에 맞게 커스터마이징되어 복사되었다
@@ -67,7 +67,7 @@ scope: project
 - [ ] LEARNINGS.md에 마이그레이션 과정에서 얻은 교훈이 기록되었다 (없으면 "추가 없음" 명시)
 - [ ] 기각한 템플릿 변경 항목이 이유와 함께 ADR에 기록되었다
 - [ ] smoke 테스트(`make help` 등)가 통과한다
-- [ ] 커밋 메시지가 `feat(project): 템플릿 vX.Y.Z 마이그레이션` 형식이다
+- [ ] 커밋 메시지가 `type(scope): summary (#issue-number)` 규칙을 따른다
 
 ## 주의 사항
 - **프로젝트 고유 섹션 보존이 최우선**: 템플릿의 일반 조항을 기계적으로 복사해서 프로젝트 고유 조항을 덮어쓰면 안 된다. 충돌 시 **프로젝트 고유 조항 우선**.

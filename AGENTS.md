@@ -467,22 +467,27 @@ AI가 자유롭게 갱신 가능한 영역
 #### 단일 AI 작업 (기본)
 단일 AI가 순차적으로 작업하는 경우 별도 격리 없이 §13.1의 충돌 방지 규칙을 따른다.
 
-#### 병렬 AI 작업 (권장: Git Worktree)
+#### 병렬 AI 작업 (권장: Git Worktree + 2계층 브랜치)
 두 개 이상의 AI가 동시에 서로 다른 기능을 작업하는 경우:
 
-1. **브랜치 격리 (최소)**: 각 AI는 별도 브랜치에서 작업한다.
-   - 브랜치 명명: `ai/<agent-id>/<feature-id>`
+1. **내부 작업 브랜치 (로컬 전용)**: 각 AI는 별도 내부 브랜치에서 작업한다.
+   - 브랜치 명명: `ai/<agent-id>/<issue-number>/<slice>`
+   - 이 브랜치는 **로컬/worktree 전용**이며, GitHub PR head로 직접 사용하지 않는다.
 
-2. **Worktree 격리 (권장)**: Git worktree를 활용하여 물리적으로 작업 디렉토리를 분리한다.
+2. **공개 PR 브랜치 (이슈당 1개)**: 외부로 push하고 PR을 여는 브랜치는 항상 `issue/<issue-number>-<short-slug>` 하나만 사용한다.
+   - 내부 `ai/*` 브랜치에서 작업한 결과는 로컬에서 `issue/*` 브랜치로 통합한 뒤 push한다.
+   - 공개 PR 브랜치 외의 브랜치는 branch protection 및 `policy-contract`의 지원 대상이 아니다.
+
+3. **Worktree 격리 (권장)**: Git worktree를 활용하여 물리적으로 작업 디렉토리를 분리한다.
    ```bash
-   git worktree add ../worktrees/<feature-id> -b ai/<agent-id>/<feature-id>
+   git worktree add ../worktrees/issue-12 -b ai/codex/12/browser-cleanup
    ```
    - 각 AI는 자신의 worktree 내에서만 파일을 수정한다.
-   - 작업 완료 후 main에 병합하고 worktree를 제거한다.
+   - 내부 브랜치 작업 완료 후 공개 `issue/*` 브랜치에 통합하고 worktree를 제거한다.
 
-3. **공유 파일 수정 프로토콜**:
+4. **공유 파일 수정 프로토콜**:
    - 프로젝트 수준 문서(STATUS.md, ARCHITECTURE.md 등)는 병합 시에만 갱신한다.
-   - shared/ 코드 변경이 필요하면 REPORT.md에 기록하고 병합 단계에서 통합한다.
+   - shared/ 코드 변경이 필요하면 REPORT.md에 기록하고 공개 `issue/*` 브랜치 통합 단계에서 합친다.
    - 동일 shared 모듈을 두 AI가 동시 수정하는 것은 금지한다.
 
 #### 샌드박스 실행
@@ -785,27 +790,32 @@ AI가 작업 완료를 선언할 때는 `TASK.md`의 Completion Checklist를 명
 
 | 조건 | 동작 |
 |------|------|
-| BLOCKED 항목 없음 + Critical/Major 승인 대기 없음 | **자동 동기화** (Step 3 진행) |
-| BLOCKED 항목 있음 또는 Critical/Major 승인 대기 | **커밋만** 수행, `REPORT.md`에 동기화 보류 사유 기록 |
+| BLOCKED 항목 없음 + Critical/Major 승인 대기 없음 | **공개 브랜치 동기화** (Step 3 진행) |
+| BLOCKED 항목 있음 또는 Critical/Major 승인 대기 | **커밋만** 수행, push/PR 보류 사유를 `REPORT.md`에 기록 |
 | 원격 저장소 미설정 | **커밋만** 수행, 원격 설정은 사람에게 위임 |
 
-#### Step 3: 자동 동기화 (조건 충족 시)
+#### Step 3: 공개 브랜치 동기화 (조건 충족 시)
 
-Step 2에서 자동 동기화로 판정된 경우:
+Step 2에서 공개 브랜치 동기화로 판정된 경우:
 
-1. **Push**: 현재 브랜치를 원격에 push한다.
+1. **공개 브랜치 규칙 확인**:
+   - 외부로 push하는 브랜치는 반드시 `issue/<issue-number>-<short-slug>` 형식을 따라야 한다.
+   - 현재 브랜치가 내부 `ai/<agent-id>/<issue-number>/<slice>` 브랜치라면, 로컬에서 공개 `issue/*` 브랜치에 먼저 통합한다.
+
+2. **Push**: 현재 공개 브랜치를 원격에 push한다.
    ```bash
    git push origin <current-branch>
    ```
 
-2. **main 병합**: 현재 브랜치가 `main`이 아닌 경우, main으로 병합한다.
-   ```bash
-   git switch main
-   git merge <feature-branch> --no-edit
-   git push origin main
-   ```
+3. **PR 생성 또는 갱신**:
+   - 공개 브랜치에 대한 PR이 없으면 생성한다.
+   - 이미 있으면 동일 PR을 갱신한다.
+   - PR 제목은 `#<issue-number> <summary>` 형식을 사용하고, 본문에는 반드시 `closes #<issue-number>`를 포함한다.
 
-3. **병합 충돌 시**: §16.6 병합 충돌 해결 정책에 따라 처리한다.
+4. **병합**:
+   - 병합은 GitHub PR + status checks + auto-merge 흐름으로만 진행한다.
+   - `main` 직접 push 또는 로컬 `main` 병합은 금지한다.
+   - 브랜치 동기화 중 충돌이 발생하면 §16.6 정책에 따라 처리한다.
 
 #### Step 4: 결과 기록
 
@@ -815,13 +825,15 @@ Git 동기화 결과를 `REPORT.md`에 기록한다.
 ### Git 동기화 결과
 - 커밋: <commit-hash> (<branch>)
 - Push: 완료 / 보류 (사유: ...)
-- main 병합: 완료 / 해당없음 / 보류 (사유: ...)
+- PR: 생성 / 갱신 / 보류 (사유: ...)
+- 병합 상태: auto-merge 후보 / 수동 검토 / 보류
 - 충돌 해결: 없음 / AI 자율 해결 (건수, 요약) / 사람 위임 (사유)
 ```
 
 ### §16.6 병합 충돌 해결 정책
 
-병합 충돌 발생 시 AI는 아래 분류 기준에 따라 자율 해결 또는 사람 위임을 판정한다.
+공개 `issue/*` 브랜치를 `origin/main`에 맞춰 동기화하거나, 내부 `ai/*` 브랜치를 공개 `issue/*` 브랜치에 통합하는 과정에서 충돌이 발생할 수 있다.
+충돌 발생 시 AI는 아래 분류 기준에 따라 자율 해결 또는 사람 위임을 판정한다.
 **판정 원칙: 충돌의 양쪽 의도가 모두 명확하고 공존 가능하면 AI가 해결한다. 의도가 상충하거나 판단이 필요하면 사람에게 위임한다.**
 
 #### AI 자율 해결 가능 (명료한 충돌)
@@ -860,10 +872,10 @@ Git 동기화 결과를 `REPORT.md`에 기록한다.
   │    ├─ 충돌 마커를 제거하고 해결 방법에 따라 내용 병합
   │    ├─ git add → git commit (병합 커밋)
   │    ├─ REVIEW.md에 해결 내역 기록
-  │    └─ 동기화 계속 (push)
+  │    └─ 공개 issue/* 브랜치 동기화 계속 (push / PR 갱신)
   │
   ├─ 하나라도 모호 포함 → 부분 해결 + 사람 위임
-  │    ├─ git merge --abort (병합 중단)
+  │    ├─ git merge --abort 또는 rebase --abort (통합 중단)
   │    ├─ REPORT.md에 BLOCKED: merge-conflict-needs-review 기록
   │    │    ├─ AI 해결 가능 항목 목록
   │    │    ├─ 사람 판단 필요 항목 + 양쪽 내용 요약
@@ -871,14 +883,14 @@ Git 동기화 결과를 `REPORT.md`에 기록한다.
   │    └─ 사람 검토 후 재시도
   │
   └─ 판단 불가 → 전체 사람 위임
-       ├─ git merge --abort
+       ├─ git merge --abort 또는 rebase --abort
        └─ REPORT.md에 BLOCKED: merge-conflict 기록
 ```
 
 #### 자율 해결 시 커밋 메시지
 
 ```
-merge(<scope>): <feature-branch>를 main에 병합
+refactor(project): 공개 브랜치 동기화 충돌 해결 (#<issue-number>)
 
 - <파일1>: <충돌 유형> — <해결 방법>
 - <파일2>: <충돌 유형> — <해결 방법>

@@ -24,7 +24,7 @@ scope: project
 8. `/repo/docs/CODEBASE_MAP.md` §3에 모듈을 등록한다.
 9. Git 커밋한다.
    ```
-   refactor(shared): <module-name> 공통 모듈 추출
+   refactor(shared): <module-name> 공통 모듈 추출 (#<issue-number>)
 
    - shared/<module-name>/: 신규 공통 모듈
    - <feature-ids>: shared 참조로 전환

@@ -24,6 +24,11 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 
 ## Category: pattern
 
+### LRN-20260414-0001 — GitHub 자동화 계약은 기계 판독 파일로 먼저 고정
+- Source: ADR-0017
+- Pattern: 공개 브랜치 규칙, provider 라벨, 상태 라벨, 커밋 형식, required checks가 문서와 워크플로에 중복되면 쉽게 드리프트가 생긴다. `.github/automation-contract.json`을 정본으로 두고, 쉘 스크립트와 `policy-contract`가 이 파일을 읽게 하면 재발을 줄일 수 있다.
+- Applies to: `.github/workflows/*`, `.github/scripts/*`, `docs/GITHUB_AUTOMATION.md`, `CONTRIBUTING.md`, `AGENTS.md`
+
 ### LRN-20260409-0001 — 템플릿 v3.0.0 마이그레이션 시 프로젝트 고유 섹션 보존
 - Source: commit `d5ce1a2` (feat(project): 템플릿 v3.0.0 마이그레이션)
 - Pattern: AGENTS.md를 Part A~G 구조로 재정렬할 때, 본 프로젝트 고유 섹션(**프로젝트 목표**, **연구 기반 방향 전환**, **웹 기준 업계 표준 반영**, **절대 금지 목록**, **Docker Compose 운영 규칙**, **.env 정책**)은 템플릿의 일반 조항을 덮어쓰지 않고 해당 Part에 그대로 배치한다. 템플릿의 섹션 재편을 기계적으로 따르면 프로젝트 고유 지침이 누락된다.
