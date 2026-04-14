@@ -402,11 +402,70 @@ def _run_agent(args: list[str], session_id: str, env_overrides: dict[str, str] |
     }
 
 
+_WEB_TABLES_READY = False
+
+
+def _ensure_web_tables():
+    """Create WebUsers and WebKeywords tables if they do not exist."""
+    global _WEB_TABLES_READY
+    if _WEB_TABLES_READY:
+        return
+    conn = mysql.connector.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=MEMORY_DB,
+        autocommit=True,
+        connection_timeout=10,
+        charset="utf8mb4",
+        use_unicode=True,
+    )
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebUsers (
+                Id INT AUTO_INCREMENT PRIMARY KEY,
+                Username VARCHAR(64) NOT NULL UNIQUE,
+                DisplayName VARCHAR(128) NOT NULL DEFAULT '',
+                Role VARCHAR(32) NOT NULL DEFAULT '',
+                Purpose TEXT,
+                SessionId VARCHAR(64),
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                LastLoginAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                IsActive TINYINT(1) DEFAULT 1
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebKeywords (
+                Id INT AUTO_INCREMENT PRIMARY KEY,
+                Keyword VARCHAR(128) NOT NULL,
+                Category VARCHAR(64) NOT NULL DEFAULT 'general',
+                Definition TEXT NOT NULL,
+                Examples TEXT,
+                CreatedBy VARCHAR(64),
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                IsActive TINYINT(1) DEFAULT 1,
+                UNIQUE KEY uq_keyword_category (Keyword, Category)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+        cur.close()
+        _WEB_TABLES_READY = True
+    finally:
+        conn.close()
+
+
 def _connect_memory():
     global _MEMORY_SCHEMA_READY
     if not _MEMORY_SCHEMA_READY:
         ensure_memory_schema()
         _MEMORY_SCHEMA_READY = True
+        _ensure_web_tables()
     return mysql.connector.connect(
         host=DB_HOST,
         port=DB_PORT,
@@ -2130,3 +2189,331 @@ def get_file(path: str, max_bytes: int = 0):
             return JSONResponse({"error": "read failed"}, status_code=500)
         return PlainTextResponse(text)
     return FileResponse(safe)
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+
+def _sanitize_input(value: str, max_len: int = 128) -> str:
+    """Strip and truncate user-supplied text."""
+    return str(value or "").strip()[:max_len]
+
+
+@app.post("/api/auth/login")
+async def auth_login(request: Request) -> JSONResponse:
+    session_id, new_cookie, _client_ip = _get_session_id(request)
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
+
+    username = _sanitize_input(data.get("username", ""), 64)
+    display_name = _sanitize_input(data.get("display_name", ""), 128)
+    role = _sanitize_input(data.get("role", ""), 32)
+    purpose = _sanitize_input(data.get("purpose", ""), 1024)
+
+    if not username:
+        return JSONResponse({"ok": False, "error": "username is required"}, status_code=400)
+
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "db connection failed"}, status_code=500)
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO WebUsers (Username, DisplayName, Role, Purpose, SessionId)
+            VALUES (%s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                DisplayName = VALUES(DisplayName),
+                Role = VALUES(Role),
+                Purpose = VALUES(Purpose),
+                SessionId = VALUES(SessionId),
+                IsActive = 1
+            """,
+            (username, display_name, role, purpose, session_id),
+        )
+        cur.execute(
+            "SELECT Id, Username, DisplayName, Role, Purpose, SessionId, CreatedAt, LastLoginAt, IsActive "
+            "FROM WebUsers WHERE Username = %s",
+            (username,),
+        )
+        row = cur.fetchone()
+        cur.close()
+    except Exception as exc:
+        conn.close()
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+    conn.close()
+
+    if not row:
+        return JSONResponse({"ok": False, "error": "user not found after upsert"}, status_code=500)
+
+    user = {
+        "id": row[0],
+        "username": row[1],
+        "display_name": row[2],
+        "role": row[3],
+        "purpose": row[4],
+        "session_id": row[5],
+        "created_at": str(row[6]) if row[6] else None,
+        "last_login_at": str(row[7]) if row[7] else None,
+        "is_active": bool(row[8]),
+    }
+    resp = JSONResponse({"ok": True, "user": user})
+    if new_cookie:
+        _set_session_cookie(resp, request, session_id)
+    return resp
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request) -> JSONResponse:
+    session_id, new_cookie, _client_ip = _get_session_id(request)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return JSONResponse({"ok": False})
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT Id, Username, DisplayName, Role, Purpose, SessionId, CreatedAt, LastLoginAt, IsActive "
+            "FROM WebUsers WHERE SessionId = %s AND IsActive = 1 LIMIT 1",
+            (session_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+    except Exception:
+        conn.close()
+        return JSONResponse({"ok": False})
+    conn.close()
+
+    if not row:
+        resp = JSONResponse({"ok": False})
+    else:
+        user = {
+            "id": row[0],
+            "username": row[1],
+            "display_name": row[2],
+            "role": row[3],
+            "purpose": row[4],
+            "session_id": row[5],
+            "created_at": str(row[6]) if row[6] else None,
+            "last_login_at": str(row[7]) if row[7] else None,
+            "is_active": bool(row[8]),
+        }
+        resp = JSONResponse({"ok": True, "user": user})
+    if new_cookie:
+        _set_session_cookie(resp, request, session_id)
+    return resp
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request) -> JSONResponse:
+    session_id, new_cookie, _client_ip = _get_session_id(request)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return JSONResponse({"ok": True})
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE WebUsers SET SessionId = NULL WHERE SessionId = %s",
+            (session_id,),
+        )
+        cur.close()
+    except Exception:
+        pass
+    conn.close()
+
+    resp = JSONResponse({"ok": True})
+    if new_cookie:
+        _set_session_cookie(resp, request, session_id)
+    return resp
+
+
+# ---------------------------------------------------------------------------
+# Keyword learning endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/keywords")
+async def list_keywords(request: Request, category: str = "", q: str = "") -> JSONResponse:
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "db connection failed"}, status_code=500)
+
+    try:
+        cur = conn.cursor()
+        query = (
+            "SELECT Id, Keyword, Category, Definition, Examples, CreatedBy, CreatedAt, UpdatedAt "
+            "FROM WebKeywords WHERE IsActive = 1"
+        )
+        params: list[Any] = []
+
+        cat = _sanitize_input(category, 64)
+        search = _sanitize_input(q, 128)
+
+        if cat:
+            query += " AND Category = %s"
+            params.append(cat)
+        if search:
+            query += " AND (Keyword LIKE %s OR Definition LIKE %s)"
+            like = f"%{search}%"
+            params.extend([like, like])
+
+        query += " ORDER BY Keyword ASC LIMIT 500"
+        cur.execute(query, params)
+        rows = cur.fetchall() or []
+        cur.close()
+    except Exception as exc:
+        conn.close()
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+    conn.close()
+
+    items = []
+    for r in rows:
+        items.append({
+            "id": r[0],
+            "keyword": r[1],
+            "category": r[2],
+            "definition": r[3],
+            "examples": r[4],
+            "created_by": r[5],
+            "created_at": str(r[6]) if r[6] else None,
+            "updated_at": str(r[7]) if r[7] else None,
+        })
+    return JSONResponse({"ok": True, "keywords": items})
+
+
+@app.post("/api/keywords")
+async def upsert_keyword(request: Request) -> JSONResponse:
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
+
+    keyword = _sanitize_input(data.get("keyword", ""), 128)
+    category = _sanitize_input(data.get("category", "general"), 64) or "general"
+    definition = _sanitize_input(data.get("definition", ""), 4096)
+    examples = _sanitize_input(data.get("examples", ""), 4096)
+
+    if not keyword:
+        return JSONResponse({"ok": False, "error": "keyword is required"}, status_code=400)
+    if not definition:
+        return JSONResponse({"ok": False, "error": "definition is required"}, status_code=400)
+
+    # Resolve current user for CreatedBy
+    session_id, new_cookie, _client_ip = _get_session_id(request)
+    created_by = ""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "db connection failed"}, status_code=500)
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT Username FROM WebUsers WHERE SessionId = %s AND IsActive = 1 LIMIT 1",
+            (session_id,),
+        )
+        user_row = cur.fetchone()
+        if user_row:
+            created_by = user_row[0]
+
+        cur.execute(
+            """
+            INSERT INTO WebKeywords (Keyword, Category, Definition, Examples, CreatedBy)
+            VALUES (%s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                Definition = VALUES(Definition),
+                Examples = VALUES(Examples),
+                CreatedBy = VALUES(CreatedBy),
+                IsActive = 1
+            """,
+            (keyword, category, definition, examples, created_by),
+        )
+        cur.execute(
+            "SELECT Id, Keyword, Category, Definition, Examples, CreatedBy, CreatedAt, UpdatedAt "
+            "FROM WebKeywords WHERE Keyword = %s AND Category = %s",
+            (keyword, category),
+        )
+        row = cur.fetchone()
+        cur.close()
+    except Exception as exc:
+        conn.close()
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+    conn.close()
+
+    if not row:
+        return JSONResponse({"ok": False, "error": "keyword not found after upsert"}, status_code=500)
+
+    kw = {
+        "id": row[0],
+        "keyword": row[1],
+        "category": row[2],
+        "definition": row[3],
+        "examples": row[4],
+        "created_by": row[5],
+        "created_at": str(row[6]) if row[6] else None,
+        "updated_at": str(row[7]) if row[7] else None,
+    }
+    resp = JSONResponse({"ok": True, "keyword": kw})
+    if new_cookie:
+        _set_session_cookie(resp, request, session_id)
+    return resp
+
+
+@app.delete("/api/keywords/{keyword_id}")
+async def delete_keyword(keyword_id: int) -> JSONResponse:
+    if keyword_id <= 0:
+        return JSONResponse({"ok": False, "error": "invalid keyword_id"}, status_code=400)
+
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "db connection failed"}, status_code=500)
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE WebKeywords SET IsActive = 0 WHERE Id = %s",
+            (keyword_id,),
+        )
+        affected = cur.rowcount
+        cur.close()
+    except Exception as exc:
+        conn.close()
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+    conn.close()
+
+    if not affected:
+        return JSONResponse({"ok": False, "error": "keyword not found"}, status_code=404)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/keywords/categories")
+async def keyword_categories() -> JSONResponse:
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "db connection failed"}, status_code=500)
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT DISTINCT Category FROM WebKeywords WHERE IsActive = 1 ORDER BY Category ASC"
+        )
+        rows = cur.fetchall() or []
+        cur.close()
+    except Exception as exc:
+        conn.close()
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+    conn.close()
+
+    categories = [r[0] for r in rows]
+    return JSONResponse({"ok": True, "categories": categories})

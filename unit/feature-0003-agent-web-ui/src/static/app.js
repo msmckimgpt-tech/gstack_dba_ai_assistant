@@ -74,6 +74,29 @@ const domainDriftCloseBtnEl = document.getElementById("domainDriftClose");
 const timingPanelEl = null;
 const timingMetaEl = null;
 const timingListEl = null;
+
+/* ── 신규 UI: 로그인, 테마, 키워드 ── */
+const loginOverlayEl = document.getElementById("loginOverlay");
+const loginFormEl = document.getElementById("loginForm");
+const loginUsernameEl = document.getElementById("loginUsername");
+const loginDisplayNameEl = document.getElementById("loginDisplayName");
+const loginRoleEl = document.getElementById("loginRole");
+const loginPurposeEl = document.getElementById("loginPurpose");
+const loginErrorEl = document.getElementById("loginError");
+const userBadgeEl = document.getElementById("userBadge");
+const userBadgeNameEl = document.getElementById("userBadgeName");
+const userBadgeRoleEl = document.getElementById("userBadgeRole");
+const userLogoutBtn = document.getElementById("userLogout");
+const themeToggleEl = document.getElementById("themeToggle");
+const keywordPanelEl = document.getElementById("keywordPanel");
+const keywordListEl = document.getElementById("keywordList");
+const keywordFormEl = document.getElementById("keywordForm");
+const kwInputEl = document.getElementById("kwKeyword");
+const kwCategoryEl = document.getElementById("kwCategory");
+const kwDefinitionEl = document.getElementById("kwDefinition");
+const kwExamplesEl = document.getElementById("kwExamples");
+let currentUser = null;
+
 const HISTORY_PAGE_SIZE = 10;
 const STATUS_POLL_MS = 2000;
 const CHAT_POLL_MS = 3000;
@@ -5266,7 +5289,188 @@ function bindActions() {
   }
 }
 
+/* ══════════════════════════════════════════════════════
+   사용자 인증 / 로그인
+   ══════════════════════════════════════════════════════ */
+async function checkAuth() {
+  try {
+    const res = await fetch("/api/auth/me");
+    const data = await res.json();
+    if (data.ok && data.user) {
+      currentUser = data.user;
+      showApp();
+      renderUserBadge();
+      return true;
+    }
+  } catch (_) {}
+  showLogin();
+  return false;
+}
+
+function showLogin() {
+  if (loginOverlayEl) loginOverlayEl.classList.remove("hidden");
+  document.querySelector(".layout")?.classList.add("blur");
+}
+
+function hideLogin() {
+  if (loginOverlayEl) loginOverlayEl.classList.add("hidden");
+  document.querySelector(".layout")?.classList.remove("blur");
+}
+
+function showApp() {
+  hideLogin();
+}
+
+function renderUserBadge() {
+  if (!currentUser) return;
+  if (userBadgeNameEl) userBadgeNameEl.textContent = currentUser.display_name || currentUser.username || "";
+  if (userBadgeRoleEl) userBadgeRoleEl.textContent = currentUser.role || "";
+  if (userBadgeEl) userBadgeEl.classList.remove("hidden");
+}
+
+async function handleLogin(e) {
+  e.preventDefault();
+  if (loginErrorEl) loginErrorEl.textContent = "";
+  const username = (loginUsernameEl?.value || "").trim();
+  const display_name = (loginDisplayNameEl?.value || "").trim();
+  const role = (loginRoleEl?.value || "").trim();
+  const purpose = (loginPurposeEl?.value || "").trim();
+  if (!username) {
+    if (loginErrorEl) loginErrorEl.textContent = "사용자 ID를 입력해주세요.";
+    return;
+  }
+  if (!display_name) {
+    if (loginErrorEl) loginErrorEl.textContent = "이름을 입력해주세요.";
+    return;
+  }
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, display_name, role, purpose }),
+    });
+    const data = await res.json();
+    if (data.ok && data.user) {
+      currentUser = data.user;
+      showApp();
+      renderUserBadge();
+    } else {
+      if (loginErrorEl) loginErrorEl.textContent = data.error || "로그인에 실패했습니다.";
+    }
+  } catch (err) {
+    if (loginErrorEl) loginErrorEl.textContent = "서버 연결에 실패했습니다.";
+  }
+}
+
+async function handleLogout() {
+  try { await fetch("/api/auth/logout", { method: "POST" }); } catch (_) {}
+  currentUser = null;
+  if (userBadgeEl) userBadgeEl.classList.add("hidden");
+  showLogin();
+}
+
+/* ══════════════════════════════════════════════════════
+   테마 토글 (라이트/다크)
+   ══════════════════════════════════════════════════════ */
+const THEME_KEY = "mysql_ai_theme_v1";
+
+function loadTheme() {
+  const saved = localStorage.getItem(THEME_KEY) || "light";
+  document.documentElement.setAttribute("data-theme", saved);
+  updateThemeIcon(saved);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute("data-theme") || "light";
+  const next = current === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem(THEME_KEY, next);
+  updateThemeIcon(next);
+}
+
+function updateThemeIcon(theme) {
+  if (!themeToggleEl) return;
+  const sunIcon = themeToggleEl.querySelector(".icon-sun");
+  const moonIcon = themeToggleEl.querySelector(".icon-moon");
+  if (sunIcon) sunIcon.style.display = theme === "dark" ? "block" : "none";
+  if (moonIcon) moonIcon.style.display = theme === "dark" ? "none" : "block";
+}
+
+/* ══════════════════════════════════════════════════════
+   키워드 학습 관리
+   ══════════════════════════════════════════════════════ */
+async function loadKeywords() {
+  if (!keywordListEl) return;
+  try {
+    const res = await fetch("/api/keywords");
+    const data = await res.json();
+    if (!data.ok) return;
+    keywordListEl.innerHTML = "";
+    if (!data.keywords || data.keywords.length === 0) {
+      keywordListEl.innerHTML = '<div class="kw-empty">등록된 키워드가 없습니다.</div>';
+      return;
+    }
+    for (const kw of data.keywords) {
+      const item = document.createElement("div");
+      item.className = "kw-item";
+      item.innerHTML = `
+        <div class="kw-item-header">
+          <span class="kw-item-keyword">${_esc(kw.keyword)}</span>
+          <span class="kw-item-category">${_esc(kw.category)}</span>
+          <button class="kw-delete-btn" data-id="${kw.id}" title="삭제">&times;</button>
+        </div>
+        <div class="kw-item-definition">${_esc(kw.definition)}</div>
+        ${kw.examples ? `<div class="kw-item-examples">${_esc(kw.examples)}</div>` : ""}
+      `;
+      const delBtn = item.querySelector(".kw-delete-btn");
+      if (delBtn) {
+        delBtn.addEventListener("click", async () => {
+          await fetch(`/api/keywords/${kw.id}`, { method: "DELETE" });
+          await loadKeywords();
+        });
+      }
+      keywordListEl.appendChild(item);
+    }
+  } catch (_) {}
+}
+
+async function handleKeywordSubmit(e) {
+  e.preventDefault();
+  const keyword = (kwInputEl?.value || "").trim();
+  const category = (kwCategoryEl?.value || "").trim() || "general";
+  const definition = (kwDefinitionEl?.value || "").trim();
+  const examples = (kwExamplesEl?.value || "").trim();
+  if (!keyword || !definition) return;
+  try {
+    await fetch("/api/keywords", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keyword, category, definition, examples }),
+    });
+    if (kwInputEl) kwInputEl.value = "";
+    if (kwDefinitionEl) kwDefinitionEl.value = "";
+    if (kwExamplesEl) kwExamplesEl.value = "";
+    await loadKeywords();
+  } catch (_) {}
+}
+
+function _esc(str) {
+  const d = document.createElement("div");
+  d.textContent = str || "";
+  return d.innerHTML;
+}
+
+/* ══════════════════════════════════════════════════════
+   초기화
+   ══════════════════════════════════════════════════════ */
 async function init() {
+  loadTheme();
+  if (themeToggleEl) themeToggleEl.addEventListener("click", toggleTheme);
+  if (loginFormEl) loginFormEl.addEventListener("submit", handleLogin);
+  if (userLogoutBtn) userLogoutBtn.addEventListener("click", handleLogout);
+  if (keywordFormEl) keywordFormEl.addEventListener("submit", handleKeywordSubmit);
+
+  const authed = await checkAuth();
   loadPinnedContext();
   renderContextBadges();
   await loadApiVaultOptions();
@@ -5286,6 +5490,7 @@ async function init() {
   renderFollowupLiveStatus();
   renderContextBadges();
   renderSendPreview();
+  loadKeywords();
   window.addEventListener("resize", () => {
     updateTimelinePositions();
   });
