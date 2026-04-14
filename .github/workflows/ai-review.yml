@@ -1,0 +1,146 @@
+name: AI Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, ready_for_review]
+
+jobs:
+  ai-review:
+    name: ai-review
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      DEFAULT_PROVIDER: ${{ vars.AI_PROVIDER_DEFAULT }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+    steps:
+      - name: Checkout merge ref
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          fetch-depth: 0
+
+      - name: Fetch base and head refs
+        shell: bash
+        run: |
+          git fetch --no-tags origin \
+            "${{ github.event.pull_request.base.ref }}" \
+            "+refs/pull/${{ github.event.pull_request.number }}/head"
+
+      - name: Resolve provider
+        id: provider
+        shell: bash
+        env:
+          LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: ./.github/scripts/resolve_provider.sh
+
+      - name: Classify changed files
+        id: classify
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: ./.github/scripts/classify_changes.sh
+
+      - name: Skip AI review for docs-only PRs
+        if: steps.classify.outputs.docs_only == 'true'
+        shell: bash
+        run: |
+          echo "Docs-only PR: AI review is informational only and passes without provider execution." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build review prompt
+        if: steps.classify.outputs.docs_only != 'true'
+        shell: bash
+        env:
+          PROVIDER_NAME: ${{ steps.provider.outputs.provider }}
+        run: |
+          mkdir -p .ai-runtime
+          cp .github/ai/prompts/review.md .ai-runtime/review_prompt.md
+          cat <<EOF >> .ai-runtime/review_prompt.md
+
+          ## Runtime context
+          - Active provider: $PROVIDER_NAME
+          - Pull request: #$PR_NUMBER
+          - Pull request title: $PR_TITLE
+          - Base ref: $BASE_REF
+          - Output file: .ai-runtime/review_result.json
+          - Diff command: git diff --stat origin/$BASE_REF...HEAD && git diff --unified=3 origin/$BASE_REF...HEAD
+          EOF
+
+      - name: Load review prompt for Claude
+        if: steps.classify.outputs.docs_only != 'true'
+        id: review_prompt
+        shell: bash
+        run: |
+          {
+            echo "prompt<<'EOF'"
+            cat .ai-runtime/review_prompt.md
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run Codex review
+        if: steps.classify.outputs.docs_only != 'true' && steps.provider.outputs.provider == 'codex'
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .ai-runtime/review_prompt.md
+          output-file: .ai-runtime/codex-review-output.md
+          codex-args: --full-auto
+          sandbox: workspace-write
+          safety-strategy: drop-sudo
+
+      - name: Run Claude review
+        if: steps.classify.outputs.docs_only != 'true' && steps.provider.outputs.provider == 'claude'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: ${{ steps.review_prompt.outputs.prompt }}
+          claude_args: |
+            --max-turns 12
+
+      - name: Validate review artifacts
+        if: steps.classify.outputs.docs_only != 'true'
+        shell: bash
+        run: |
+          test -f .ai-runtime/review_result.json
+          if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+            echo "Review workflow must not modify tracked files." >&2
+            git status --short
+            exit 1
+          fi
+
+      - name: Post review summary
+        if: steps.classify.outputs.docs_only != 'true'
+        shell: bash
+        run: |
+          jq -r '.findings[]? | "- [" + (.severity // "info") + "] " + (.path // "unknown") + (if (.line // 0) > 0 then ":" + (.line | tostring) else "" end) + " | " + (.title // "Finding") + " | " + (.detail // "")' .ai-runtime/review_result.json > .ai-runtime/review-findings.txt
+          if [[ ! -s .ai-runtime/review-findings.txt ]]; then
+            echo "- blocking findings 없음" > .ai-runtime/review-findings.txt
+          fi
+
+          cat <<EOF > .ai-runtime/review_comment.md
+          ## AI Review (${{ steps.provider.outputs.provider }})
+          $(jq -r '.summary // "리뷰 요약이 제공되지 않았습니다."' .ai-runtime/review_result.json)
+
+          $(cat .ai-runtime/review-findings.txt)
+          EOF
+
+          gh pr comment "$PR_NUMBER" --body-file .ai-runtime/review_comment.md
+
+      - name: Apply review outcome
+        if: steps.classify.outputs.docs_only != 'true'
+        shell: bash
+        run: |
+          verdict="$(jq -r '.verdict // "pass"' .ai-runtime/review_result.json)"
+          if [[ "$verdict" == "manual" ]]; then
+            gh pr edit "$PR_NUMBER" --add-label "risk:manual"
+            exit 1
+          fi
+          if [[ "$verdict" == "fail" ]]; then
+            exit 1
+          fi

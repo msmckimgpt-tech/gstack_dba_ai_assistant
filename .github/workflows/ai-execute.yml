@@ -1,0 +1,218 @@
+name: AI Execute
+
+on:
+  issues:
+    types: [opened, reopened, labeled]
+
+jobs:
+  ai-execute:
+    name: ai-execute
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    concurrency:
+      group: ai-execute-issue-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      ISSUE_TITLE: ${{ github.event.issue.title }}
+      ISSUE_BODY: ${{ github.event.issue.body }}
+      DEFAULT_PROVIDER: ${{ vars.AI_PROVIDER_DEFAULT }}
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Gate issue execution
+        id: gate
+        shell: bash
+        env:
+          LABELS_JSON: ${{ toJson(github.event.issue.labels.*.name) }}
+        run: |
+          type_count="$(jq '[.[] | select(. == "feature" or . == "bug" or . == "task")] | length' <<<"$LABELS_JSON")"
+          blocked_count="$(jq '[.[] | select(. == "status:blocked" or . == "status:in-progress" or . == "status:in-review")] | length' <<<"$LABELS_JSON")"
+          if [[ "$type_count" == "0" || "$blocked_count" != "0" ]]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve provider
+        if: steps.gate.outputs.should_run == 'true'
+        id: provider
+        shell: bash
+        env:
+          LABELS_JSON: ${{ toJson(github.event.issue.labels.*.name) }}
+        run: ./.github/scripts/resolve_provider.sh
+
+      - name: Prepare branch metadata
+        if: steps.gate.outputs.should_run == 'true'
+        id: branch
+        shell: bash
+        run: |
+          slug="$(printf '%s' "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | sed -E 's/^\[[^]]+\][[:space:]]*//; s/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-+/-/g' | cut -c1-48)"
+          if [[ -z "$slug" ]]; then
+            slug="work-item"
+          fi
+          branch="issue/${ISSUE_NUMBER}-${slug}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Detect existing PR
+        if: steps.gate.outputs.should_run == 'true'
+        id: existing_pr
+        shell: bash
+        env:
+          BRANCH_NAME: ${{ steps.branch.outputs.branch }}
+        run: |
+          existing_pr="$(gh pr list --head "$BRANCH_NAME" --state open --json number --jq '.[0].number // empty')"
+          if [[ -n "$existing_pr" ]]; then
+            echo "should_continue=false" >> "$GITHUB_OUTPUT"
+            echo "Open PR already exists for $BRANCH_NAME (#$existing_pr)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "should_continue=true" >> "$GITHUB_OUTPUT"
+          git switch -c "$BRANCH_NAME"
+
+      - name: Mark issue in progress
+        if: steps.gate.outputs.should_run == 'true' && steps.existing_pr.outputs.should_continue == 'true'
+        shell: bash
+        env:
+          PROVIDER_LABEL: ${{ steps.provider.outputs.provider_label }}
+        run: |
+          gh issue edit "$ISSUE_NUMBER" --add-label "$PROVIDER_LABEL" --add-label "status:in-progress"
+          gh api "repos/$GH_REPO/issues/$ISSUE_NUMBER/labels/status:ready" -X DELETE >/dev/null 2>&1 || true
+
+      - name: Build implementation prompt
+        if: steps.gate.outputs.should_run == 'true' && steps.existing_pr.outputs.should_continue == 'true'
+        shell: bash
+        env:
+          PROVIDER_NAME: ${{ steps.provider.outputs.provider }}
+          BRANCH_NAME: ${{ steps.branch.outputs.branch }}
+        run: |
+          mkdir -p .ai-runtime
+          cp .github/ai/prompts/implement.md .ai-runtime/implement_prompt.md
+          cat <<EOF >> .ai-runtime/implement_prompt.md
+
+          ## Runtime context
+          - Active provider: $PROVIDER_NAME
+          - Branch: $BRANCH_NAME
+          - Write report file: .ai-runtime/owner_agent_report.json
+
+          ## Issue context
+          - Issue number: #$ISSUE_NUMBER
+          - Issue title: $ISSUE_TITLE
+          - Issue URL: https://github.com/$GH_REPO/issues/$ISSUE_NUMBER
+
+          ### Issue body
+          $ISSUE_BODY
+          EOF
+
+      - name: Load implementation prompt for Claude
+        if: steps.gate.outputs.should_run == 'true' && steps.existing_pr.outputs.should_continue == 'true'
+        id: implement_prompt
+        shell: bash
+        run: |
+          {
+            echo "prompt<<'EOF'"
+            cat .ai-runtime/implement_prompt.md
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run Codex implementation
+        if: steps.gate.outputs.should_run == 'true' && steps.existing_pr.outputs.should_continue == 'true' && steps.provider.outputs.provider == 'codex'
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .ai-runtime/implement_prompt.md
+          output-file: .ai-runtime/codex-execute-output.md
+          codex-args: --full-auto
+          sandbox: workspace-write
+          safety-strategy: drop-sudo
+
+      - name: Run Claude implementation
+        if: steps.gate.outputs.should_run == 'true' && steps.existing_pr.outputs.should_continue == 'true' && steps.provider.outputs.provider == 'claude'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: ${{ steps.implement_prompt.outputs.prompt }}
+          claude_args: |
+            --max-turns 30
+
+      - name: Create commit and pull request
+        if: steps.gate.outputs.should_run == 'true' && steps.existing_pr.outputs.should_continue == 'true'
+        shell: bash
+        env:
+          BRANCH_NAME: ${{ steps.branch.outputs.branch }}
+          PROVIDER_LABEL: ${{ steps.provider.outputs.provider_label }}
+        run: |
+          if [[ ! -f .ai-runtime/owner_agent_report.json ]]; then
+            echo '{"summary":"Implementation report missing.","target_scope":"Issue body 참조","tests_run":[],"risks":["No owner_agent_report.json was produced."],"docs_updated":["none"]}' > .ai-runtime/owner_agent_report.json
+          fi
+
+          if git diff --quiet; then
+            gh issue comment "$ISSUE_NUMBER" --body "자동 실행을 시도했지만 변경 사항이 생성되지 않았습니다. 이슈 계약 또는 접근 제약을 확인해 주세요."
+            gh issue edit "$ISSUE_NUMBER" --add-label "needs-followup"
+            gh api "repos/$GH_REPO/issues/$ISSUE_NUMBER/labels/status:in-progress" -X DELETE >/dev/null 2>&1 || true
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "#$ISSUE_NUMBER ${ISSUE_TITLE}"
+          git push --set-upstream origin "$BRANCH_NAME"
+
+          jq -r '.tests_run[]? | "- " + .' .ai-runtime/owner_agent_report.json > .ai-runtime/report-tests.txt
+          jq -r '.risks[]? | "- " + .' .ai-runtime/owner_agent_report.json > .ai-runtime/report-risks.txt
+          jq -r '.docs_updated[]? | "- " + .' .ai-runtime/owner_agent_report.json > .ai-runtime/report-docs.txt
+
+          cat <<EOF > .ai-runtime/pr_body.md
+          ## 관련 이슈
+          - closes #$ISSUE_NUMBER
+
+          ## 변경 요약
+          - $(jq -r '.summary // "자동 구현 결과를 확인해 주세요."' .ai-runtime/owner_agent_report.json)
+
+          ## 대상 범위
+          - feature 또는 경로: $(jq -r '.target_scope // "Issue body 참조"' .ai-runtime/owner_agent_report.json)
+
+          ## 검증 결과
+          - [x] 정적 검토
+          - [ ] 실행 검증
+          - [ ] 회귀 확인
+
+          실행한 명령 / 확인한 시나리오:
+          \`\`\`bash
+          $(sed 's/^- //' .ai-runtime/report-tests.txt)
+          \`\`\`
+
+          ## 리스크 / 미해결 사항
+          $(cat .ai-runtime/report-risks.txt)
+
+          ## 문서 갱신 여부
+          $(cat .ai-runtime/report-docs.txt)
+          EOF
+
+          pr_url="$(gh pr create \
+            --base "${{ github.event.repository.default_branch }}" \
+            --head "$BRANCH_NAME" \
+            --title "#$ISSUE_NUMBER ${ISSUE_TITLE}" \
+            --body-file .ai-runtime/pr_body.md)"
+
+          pr_number="$(basename "$pr_url")"
+          gh pr edit "$pr_number" --add-label "$PROVIDER_LABEL"
+          gh issue edit "$ISSUE_NUMBER" --add-label "status:in-review"
+          gh api "repos/$GH_REPO/issues/$ISSUE_NUMBER/labels/status:in-progress" -X DELETE >/dev/null 2>&1 || true
+
+          {
+            echo "Created PR:"
+            echo
+            echo "- $pr_url"
+          } >> "$GITHUB_STEP_SUMMARY"

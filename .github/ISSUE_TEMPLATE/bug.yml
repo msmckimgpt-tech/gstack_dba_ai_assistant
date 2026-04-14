@@ -1,8 +1,10 @@
 name: 버그 수정
-description: 재현 가능한 문제와 기대 동작을 기준으로 Codex 작업을 정의합니다.
+description: 재현 가능한 문제와 기대 동작을 기준으로 AI 작업을 정의합니다.
 title: "[Bug] "
 labels:
   - bug
+  - source:human
+  - status:ready
 body:
   - type: textarea
     id: goal_background
@@ -76,3 +78,8 @@ body:
         - #34
     validations:
       required: true
+  - type: markdown
+    attributes:
+      value: |
+        기본 provider는 저장소 변수 `AI_PROVIDER_DEFAULT`를 따릅니다.
+        특정 AI를 강제하려면 `agent:codex` 또는 `agent:claude` 라벨을 추가하세요.
