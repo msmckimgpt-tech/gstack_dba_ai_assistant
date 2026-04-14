@@ -332,10 +332,12 @@ AI는 작업 대상 파일의 패턴을 확인하고, 매칭되는 규칙을 추
 
 | 파일 패턴 | 추가 참조 문서 | 비고 |
 |-----------|--------------|------|
-<!-- 프로젝트별로 아래에 추가한다. 예시: -->
-<!-- | *.sql | docs/SECURITY.md §3 | SQL 인젝션 방지 규칙 확인 | -->
-<!-- | *.env*, *.cnf | docs/SECURITY.md §2 | 민감정보 처리 규칙 확인 | -->
-<!-- | Dockerfile* | docs/CONVENTIONS.md | 컨테이너 규칙 확인 | -->
+| `.env`, `.env.example` | `docs/SECURITY.md`, `docs/DECISIONS.md ADR-0014` | 원본 `mysql_ai/.env`의 운영 의미 보존. 비밀값 커밋 금지 |
+| `docker-compose.yml`, `Dockerfile*` | `docs/CONVENTIONS.md`, `docs/DECISIONS.md ADR-0012` | 서비스(`mysql`, `agent`, `memory-init`, `insight-worker`, `mcp`) 경계·포트 규칙 확인 |
+| `unit/**/src/**/*.py` | 해당 feature `docs/AGENTS.md` + `docs/FUNCTION.md` | 기능별 경계·외부 의존성 규칙 확인 |
+| `unit/**/tests/**/*.py` | 해당 feature `docs/TEST.md` | 테스트 케이스 정의는 rewrite, 결과는 append-only |
+| `Makefile` | `docs/ARCHITECTURE.md` | 실행 진입점 — 타깃 추가/제거는 ADR 경유 |
+| `../../artifacts/**` | `docs/DECISIONS.md ADR-0011`, `ADR-0013` | Git 외부 — 코드에서 경로만 참조하고 커밋하지 않는다 |
 
 ## §11. 컨텍스트 및 학습 관리
 

@@ -23,10 +23,28 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 <!-- AI가 실수한 패턴과 올바른 접근법 -->
 
 ## Category: pattern
-<!-- 효과적이었던 접근법, 재사용 가능한 패턴 -->
+
+### LRN-20260409-0001 — 템플릿 v3.0.0 마이그레이션 시 프로젝트 고유 섹션 보존
+- Source: commit `d5ce1a2` (feat(project): 템플릿 v3.0.0 마이그레이션)
+- Pattern: AGENTS.md를 Part A~G 구조로 재정렬할 때, 본 프로젝트 고유 섹션(**프로젝트 목표**, **연구 기반 방향 전환**, **웹 기준 업계 표준 반영**, **절대 금지 목록**, **Docker Compose 운영 규칙**, **.env 정책**)은 템플릿의 일반 조항을 덮어쓰지 않고 해당 Part에 그대로 배치한다. 템플릿의 섹션 재편을 기계적으로 따르면 프로젝트 고유 지침이 누락된다.
+- Applies to: 차후 템플릿 버전 업 시에도 동일 원칙 적용. 프로젝트 고유 조항의 위치는 CODEBASE_MAP.md 또는 TEMPLATE_CHANGELOG.md의 마이그레이션 체크리스트에 기록한다.
 
 ## Category: quirk
-<!-- 프로젝트 특이사항, 외부 시스템 제약 등 -->
+
+### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존
+- Source: ADR-0014
+- Quirk: 본 저장소는 `mysql_ai` 원본의 **템플릿 이관 사본**이다. `.env`의 포트·모델·DB 자격증명은 원본과 같아야 하며, 동시 기동은 하지 않는다.
+- Mitigation:
+  - `.env.example`는 대체 기본값이 아니라 민감값 제거된 샘플로 취급한다.
+  - 원본 의미와 다르게 수정할 필요가 생기면 ADR을 거쳐 승격한다.
+
+### LRN-20260326-0002 — 런타임 산출물은 `../../artifacts/`로만 쓴다
+- Source: ADR-0013
+- Quirk: `shared/`는 공용 **코드** 예약 영역이며 런타임 산출물(로그/세션/데이터 파일)을 여기에 쓰면 Git 추적 대상이 된다.
+- Mitigation: 모든 산출물은 `../../artifacts/` 하위로 쓰고, feature 코드는 그 경로만 참조하도록 helper를 경유한다.
 
 ## Category: preference
-<!-- 사용자가 선호하는 스타일, 관례 -->
+
+### LRN-20260326-0001 — `AGENTS.md`가 정책 정본, `CLAUDE.md`는 참조 shim
+- Source: ADR-0002
+- Preference: 저장소 수준 AI 정책은 `AGENTS.md` 하나로만 관리한다. `CLAUDE.md`는 호환성을 위해 유지하되 정책 내용을 중복 서술하지 않는다.
