@@ -79,3 +79,24 @@ source_of_truth: true
 ## 8. 확장 원칙
 - 기능 간 공통성이 반복되면 공통 모듈로 승격을 검토한다.
 - 구조 변경이 필요한 경우 프로젝트 수준 `DECISIONS.md`에 남긴다.
+
+## 9. artifacts 조직 규칙
+`/artifacts/`는 재생성 가능한 파생 결과물을 저장한다.
+
+### 9.1 디렉토리 구조
+```
+artifacts/
+├── build/              # 빌드 산출물
+├── reports/            # 생성된 보고서
+├── exports/            # 내보내기 파일
+├── tmp/                # 임시 파일
+└── <feature-id>/       # 기능별 산출물 (검증 결과, 로그 등)
+    └── <timestamp>/    # 실행 시점별 격리
+```
+
+### 9.2 규칙
+- artifacts는 git 추적 대상이 아니다 (repo 외부에 위치).
+- 기능별 산출물은 `<feature-id>/` 하위에 타임스탬프 디렉토리로 격리한다.
+- 빌드/테스트 산출물은 재생성 가능해야 하며, source of truth가 아니다.
+- 공유 런타임 데이터(로그, 세션 등)는 `artifacts/shared/`에 둔다.
+- `.gitkeep` 파일로 디렉토리 구조를 유지한다.

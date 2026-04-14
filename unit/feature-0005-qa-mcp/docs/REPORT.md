@@ -13,8 +13,8 @@ MCP 테스트 스크립트와 QA 보조 스크립트를 feature 구조로 이관
 
 ## 2. Progress
 - Planned: 0
-- In Progress: 엄격한 QA 검증 시나리오 정리
-- Done: 스크립트 이관, 루트 경로 반영
+- In Progress: MCP 기능 검증, 엄격한 QA 검증 시나리오 정리
+- Done: 스크립트 이관, 루트 경로 반영, MCP 서비스 기동 성공 (2026-04-06, 포트 28000)
 
 ## 3. Recent Changes
 - `mcp_tests.py`를 feature 경로로 이동
@@ -30,7 +30,7 @@ MCP 테스트 스크립트와 QA 보조 스크립트를 feature 구조로 이관
 - 미검증 항목: 엄격한 QA 시나리오
 
 ## 6. Blocked Items
-- 없음
+- 없음 (2026-04-06: 포트 28000 차단 해소 확인)
 
 ## 7. Human Attention Needed
 - 추후 QA 기준 문서화 방향 확정

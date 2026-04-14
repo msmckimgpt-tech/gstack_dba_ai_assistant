@@ -1,0 +1,35 @@
+# Source Code Layout
+
+## 개요
+이 디렉토리는 기능의 소스 코드를 포함한다.
+
+## 구조
+```
+src/
+├── README.md           # 이 문서 (소스 코드 레이아웃 설명)
+├── (메인 코드 파일)     # 기능의 핵심 구현
+├── config/             # 설정 파일 (선택)
+│   ├── default.env     # 공통 기본 설정
+│   ├── profiles/       # 프로필별 설정 오버라이드
+│   │   └── local.env   # 로컬 환경 프로필
+│   └── credentials/    # 자격증명 (git-ignored)
+│       └── *.example   # 자격증명 템플릿만 커밋
+└── (추가 모듈)
+```
+
+## 설정 계층
+설정 값은 아래 순서로 로드되며, 후순위가 전순위를 오버라이드한다:
+1. `config/default.env` — 공통 기본값
+2. `config/profiles/<profile>.env` — 프로필별 오버라이드
+3. 환경변수 (`.env` 또는 시스템) — 런타임 오버라이드
+4. CLI 인자 — 최종 오버라이드
+
+## 자격증명
+- `config/credentials/` 내 실제 자격증명 파일(`.cnf`, `.env`)은 `.gitignore`에 등록한다.
+- `*.example` 파일만 저장소에 커밋하여 필요한 키와 형식을 문서화한다.
+- 자격증명 파일 권한은 `0600`을 유지한다.
+
+## 참고
+- 기능 명세: `../docs/FUNCTION.md`
+- 테스트: `../tests/`
+- 변경 이력: `../docs/MODIFY.md`

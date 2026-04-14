@@ -86,3 +86,26 @@ make build
 ### 8.5 배포
 - AI 자율 배포: 불가 (사람 승인 필요)
 - 배포 절차: 별도 정의 필요
+
+## 9. 빌드 자동화
+
+### 9.1 자동화 도구
+- **Makefile**: 프로젝트 루트 `../Makefile`이 주요 빌드/실행 진입점이다.
+- 주요 명령: `make start`, `make stop`, `make status`, `make build`, `make web`, `make browser-up`
+- 상세 Make 타깃 목록은 `../AGENTS.md` §운영 명령 참조.
+
+### 9.2 서비스 정의
+- **Docker Compose**: `../docker-compose.yml`로 서비스 오케스트레이션
+- 서비스: `mysql`, `agent`, `memory-init`, `insight-worker`, `mcp`(선택)
+- 상세 볼륨/포트 설정은 `../AGENTS.md` §Docker Compose 기준 참조.
+
+## 10. CI/CD 및 자동화
+
+### 10.1 CI/CD 파이프라인
+- 현재 설정: 없음
+
+### 10.2 AI 워크플로 프롬프트
+<!-- AI 에이전트가 GitHub Actions 등에서 자동 실행되는 경우 프롬프트 파일의 위치와 역할을 기입한다 -->
+
+### 10.3 자동화 규칙
+<!-- 라벨, PR 템플릿, 자동 할당 등 GitHub 자동화 규칙이 있으면 기입한다 -->
