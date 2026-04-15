@@ -160,7 +160,7 @@ function renderAccounts(accounts) {
 
     const saveBtn = document.createElement("button");
     saveBtn.type = "submit";
-    saveBtn.className = "primary-button small";
+    saveBtn.className = "btn-primary";
     saveBtn.textContent = "저장";
     actionWrap.append(activeToggle, saveBtn);
 

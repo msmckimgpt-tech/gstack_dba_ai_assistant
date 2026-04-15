@@ -4,233 +4,205 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260415a" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260415b" />
 </head>
-<body class="page-shell">
-  <div class="auth-overlay" id="authOverlay">
-    <div class="auth-grid">
-      <section class="auth-brand">
-        <div class="eyebrow">Account-Based Workspace</div>
-        <h1>MySQL AI Assistant</h1>
-        <p>
-          세션/IP 기준 식별을 제거하고 계정, 권한, 승인 절차를 기준으로 재구성한
-          운영형 워크스페이스입니다.
-        </p>
-        <div class="auth-points">
-          <article>
-            <strong>계정 단위 대화 소유권</strong>
-            <span>대화는 계정에 귀속되며 승인 전 계정은 조회 전용으로 동작합니다.</span>
-          </article>
-          <article>
-            <strong>권한 기반 실행</strong>
-            <span>전송, 취소, 즉시 답변, 삭제 권한을 운영자가 개별적으로 제어합니다.</span>
-          </article>
-          <article>
-            <strong>정리된 화면</strong>
-            <span>업무와 직접 관련 없는 상태 정보와 유틸리티를 제거하고 작업 흐름만 남겼습니다.</span>
-          </article>
-        </div>
-      </section>
+<body>
 
-      <section class="auth-panel">
-        <div class="auth-tabs">
-          <button type="button" class="tab-button is-active" data-auth-tab="login">로그인</button>
-          <button type="button" class="tab-button" data-auth-tab="signup">회원가입</button>
-        </div>
+  <!-- ─── Auth Screen ─────────────────────────────────────────────── -->
+  <div class="auth-screen" id="authOverlay">
+    <div class="auth-card">
+      <div class="auth-logo">MA</div>
+      <h1 class="auth-title">MySQL AI Assistant</h1>
 
-        <form class="auth-form" id="loginForm" data-auth-pane="login" autocomplete="on">
-          <div class="panel-head">
-            <h2>작업 시작</h2>
-            <p>승인된 계정은 권한에 따라 요청 실행이 가능하고, 미승인 계정은 조회만 가능합니다.</p>
-          </div>
-          <label class="field">
-            <span>사용자 ID</span>
-            <input id="loginUsername" type="text" placeholder="예) dba_team01" required />
-          </label>
-          <label class="field">
-            <span>비밀번호</span>
-            <input id="loginPassword" type="password" placeholder="비밀번호" required />
-          </label>
-          <div class="auth-error" id="loginError"></div>
-          <button type="submit" class="primary-button">로그인</button>
-        </form>
+      <div class="auth-tabs">
+        <button type="button" class="auth-tab is-active" data-auth-tab="login">로그인</button>
+        <button type="button" class="auth-tab" data-auth-tab="signup">회원가입</button>
+      </div>
 
-        <form class="auth-form hidden" id="signupForm" data-auth-pane="signup" autocomplete="on">
-          <div class="panel-head">
-            <h2>계정 등록</h2>
-            <p>가입 직후에는 조회 전용 계정으로 생성되며, 관리자 승인 후 실행 권한이 부여됩니다.</p>
-          </div>
-          <label class="field">
-            <span>사용자 ID</span>
-            <input id="signupUsername" type="text" placeholder="영문/숫자/._- 3~64자" required />
-          </label>
-          <label class="field">
-            <span>비밀번호</span>
-            <input id="signupPassword" type="password" placeholder="10자 이상" required />
-          </label>
-          <label class="field">
-            <span>비밀번호 확인</span>
-            <input id="signupPasswordConfirm" type="password" placeholder="비밀번호 다시 입력" required />
-          </label>
-          <div class="auth-error" id="signupError"></div>
-          <button type="submit" class="primary-button">회원가입</button>
-        </form>
-      </section>
+      <form class="auth-form" id="loginForm" data-auth-pane="login" autocomplete="on">
+        <label class="field">
+          <span>사용자 ID</span>
+          <input id="loginUsername" type="text" placeholder="사용자 ID" required autocomplete="username" />
+        </label>
+        <label class="field">
+          <span>비밀번호</span>
+          <input id="loginPassword" type="password" placeholder="비밀번호" required autocomplete="current-password" />
+        </label>
+        <div class="form-error" id="loginError"></div>
+        <button type="submit" class="btn-primary btn-full">로그인</button>
+      </form>
+
+      <form class="auth-form hidden" id="signupForm" data-auth-pane="signup" autocomplete="on">
+        <label class="field">
+          <span>사용자 ID</span>
+          <input id="signupUsername" type="text" placeholder="영문/숫자/._- 3~64자" required autocomplete="username" />
+        </label>
+        <label class="field">
+          <span>비밀번호</span>
+          <input id="signupPassword" type="password" placeholder="10자 이상" required autocomplete="new-password" />
+        </label>
+        <label class="field">
+          <span>비밀번호 확인</span>
+          <input id="signupPasswordConfirm" type="password" placeholder="비밀번호 다시 입력" required autocomplete="new-password" />
+        </label>
+        <div class="form-error" id="signupError"></div>
+        <button type="submit" class="btn-primary btn-full">회원가입</button>
+        <p class="auth-note">가입 즉시 조회 전용 계정이 생성됩니다. 관리자 승인 후 실행 권한이 부여됩니다.</p>
+      </form>
     </div>
   </div>
 
-  <div class="app-frame" id="appFrame">
-    <header class="app-header">
-      <div class="brand-block">
-        <div class="brand-mark">MA</div>
-        <div>
-          <div class="eyebrow">Operational Console</div>
-          <div class="brand-title">MySQL AI Assistant</div>
-        </div>
-      </div>
+  <!-- ─── App Shell ──────────────────────────────────────────────── -->
+  <div class="app-shell" id="appFrame">
 
-      <div class="header-actions">
-        <div class="account-chip">
-          <span class="account-name" id="accountName">-</span>
-          <span class="account-role" id="accountRole">-</span>
+    <!-- Top Bar -->
+    <header class="topbar">
+      <div class="topbar-brand">
+        <div class="brand-icon">MA</div>
+        <span class="brand-name">MySQL AI</span>
+      </div>
+      <div class="topbar-end">
+        <div class="user-chip">
+          <span class="user-name" id="accountName">—</span>
+          <span class="role-badge" id="accountRole">—</span>
         </div>
-        <button type="button" class="secondary-button hidden" id="openAdminBtn">관리 콘솔</button>
-        <button type="button" class="secondary-button" id="openSettingsBtn">API Vault</button>
-        <button type="button" class="secondary-button" id="logoutBtn">로그아웃</button>
+        <button type="button" class="topbar-btn hidden" id="openAdminBtn">관리 콘솔</button>
+        <button type="button" class="topbar-btn" id="openSettingsBtn">API Vault</button>
+        <button type="button" class="topbar-btn" id="logoutBtn">로그아웃</button>
       </div>
     </header>
 
-    <main class="workspace-grid">
-      <aside class="sidebar-column">
-        <section class="surface-card account-card">
-          <div class="eyebrow">Access</div>
-          <h2>계정 상태</h2>
-          <p id="accountStateText">권한 정보를 불러오는 중입니다.</p>
-          <div class="permission-pills" id="permissionPills"></div>
-        </section>
+    <!-- Body: Sidebar + Chat -->
+    <div class="app-body">
 
-        <section class="surface-card conversation-card">
-          <div class="section-row">
-            <div>
-              <div class="eyebrow">Conversation</div>
-              <h2>내 대화</h2>
-            </div>
-            <button type="button" class="primary-button small" id="newConversationBtn">새 대화</button>
-          </div>
-          <div class="conversation-list" id="conversationList"></div>
-        </section>
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <button type="button" class="btn-new-conv" id="newConversationBtn">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
+              <path d="M6.5 1v11M1 6.5h11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            새 대화
+          </button>
+        </div>
+        <div class="conv-list" id="conversationList"></div>
+        <div class="sidebar-foot">
+          <p class="account-state" id="accountStateText"></p>
+          <div class="perm-pills" id="permissionPills"></div>
+        </div>
       </aside>
 
-      <section class="chat-column">
-        <section class="surface-card hero-card">
-          <div>
-            <div class="eyebrow">Current Workspace</div>
-            <h1 id="conversationTitle">대화를 선택하세요</h1>
-            <p id="conversationSubtitle">계정 기준으로 정리된 대화와 실행 결과를 확인할 수 있습니다.</p>
+      <!-- Chat Pane -->
+      <div class="chat-pane">
+
+        <!-- Chat Header -->
+        <div class="chat-header">
+          <div class="chat-header-info">
+            <h2 class="chat-title" id="conversationTitle">대화를 선택하세요</h2>
+            <span class="chat-subtitle" id="conversationSubtitle"></span>
           </div>
-
-          <div class="hero-actions">
-            <button type="button" class="secondary-button hidden" id="cancelBtn">요청 중단</button>
-            <button type="button" class="secondary-button hidden" id="finalizeBtn">즉시 답변</button>
-            <button type="button" class="secondary-button danger hidden" id="deleteConversationBtn">대화 삭제</button>
+          <div class="chat-header-tools">
+            <button type="button" class="tool-btn hidden" id="loadMoreBtn">이전 기록</button>
+            <button type="button" class="tool-btn danger hidden" id="deleteConversationBtn">삭제</button>
           </div>
-        </section>
+        </div>
 
-        <section class="notice-strip hidden" id="accessNotice"></section>
+        <!-- Access Notice -->
+        <div class="access-notice hidden" id="accessNotice"></div>
 
-        <section class="surface-card progress-card hidden" id="progressCard">
-          <div class="section-row compact">
-            <div>
-              <div class="eyebrow">Run Status</div>
-              <h2 id="progressTitle">처리 중</h2>
+        <!-- Progress Strip -->
+        <div class="progress-strip hidden" id="progressCard">
+          <div class="progress-row">
+            <span class="progress-label" id="progressTitle">처리 중</span>
+            <span class="progress-badge" id="progressStatus">processing</span>
+            <div class="progress-actions">
+              <button type="button" class="tool-btn hidden" id="cancelBtn">중단</button>
+              <button type="button" class="tool-btn hidden" id="finalizeBtn">즉시 답변</button>
             </div>
-            <span class="status-chip" id="progressStatus">processing</span>
           </div>
           <div class="progress-steps" id="progressSteps"></div>
-        </section>
+        </div>
 
-        <section class="surface-card message-card">
-          <div class="section-row compact">
-            <div>
-              <div class="eyebrow">Conversation Log</div>
-              <h2>대화 기록</h2>
-            </div>
-            <button type="button" class="secondary-button small hidden" id="loadMoreBtn">이전 기록</button>
+        <!-- Messages -->
+        <div class="messages" id="messageLog">
+          <div class="empty-state">
+            <strong>대화를 선택하거나 새 대화를 시작하세요</strong>
+            <span>좌측 목록에서 대화를 선택하거나 새 대화 버튼을 클릭하세요.</span>
           </div>
-          <div class="message-log" id="messageLog">
-            <div class="empty-state">
-              <strong>아직 표시할 대화가 없습니다.</strong>
-              <span>좌측 목록에서 대화를 선택하거나 새 대화를 생성하세요.</span>
-            </div>
-          </div>
-        </section>
+        </div>
 
-        <section class="surface-card composer-card">
-          <div class="section-row compact">
-            <div>
-              <div class="eyebrow">Prompt</div>
-              <h2 id="composerTitle">요청 작성</h2>
-            </div>
-            <span class="composer-hint" id="composerHint">실행 권한이 없는 경우 조회 전용 상태로 동작합니다.</span>
+        <!-- Composer -->
+        <div class="composer-wrap">
+          <div class="composer-box">
+            <textarea
+              id="promptInput"
+              rows="1"
+              placeholder="예) 최근 7일 신규 사용자 수와 평균 접속 시간을 보여줘"
+              autocomplete="off"
+            ></textarea>
+            <button type="button" class="send-btn" id="sendBtn" title="전송 (Ctrl+Enter)">
+              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+                <path d="M1.5 7.5L13.5 1.5L7.5 13.5L6.5 8.5L1.5 7.5Z" fill="currentColor"/>
+              </svg>
+            </button>
           </div>
-          <textarea id="promptInput" rows="5" placeholder="예) 최근 7일 기준 신규 사용자 수와 평균 접속 시간을 보여줘"></textarea>
-          <div class="composer-actions">
-            <button type="button" class="primary-button" id="sendBtn">요청 보내기</button>
+          <div class="composer-footer">
+            <span class="composer-status" id="composerTitle"></span>
+            <span class="composer-hint" id="composerHint"></span>
           </div>
-        </section>
-      </section>
-    </main>
-  </div>
+        </div>
 
-  <div class="drawer-backdrop hidden" id="drawerBackdrop"></div>
-  <aside class="settings-drawer hidden" id="settingsDrawer">
-    <div class="section-row">
+      </div><!-- /chat-pane -->
+    </div><!-- /app-body -->
+  </div><!-- /app-shell -->
+
+  <!-- ─── Settings Drawer ────────────────────────────────────────── -->
+  <div class="drawer-bg hidden" id="drawerBackdrop"></div>
+  <aside class="drawer hidden" id="settingsDrawer">
+    <div class="drawer-header">
       <div>
-        <div class="eyebrow">API Vault</div>
+        <div class="drawer-label">API Vault</div>
         <h2>실행 설정</h2>
       </div>
-      <button type="button" class="secondary-button small" id="closeSettingsBtn">닫기</button>
+      <button type="button" class="tool-btn" id="closeSettingsBtn">닫기</button>
     </div>
-
-    <p class="drawer-copy">
-      모델과 암호화된 API 키는 서버에 저장하지 않습니다. 로컬 LLM이 활성화된 환경에서는 API 키 없이도 요청할 수 있습니다.
+    <p class="drawer-desc">
+      모델과 API 키는 서버에 저장하지 않습니다. 로컬 LLM 환경에서는 API 키 없이도 요청할 수 있습니다.
     </p>
-
     <label class="field">
       <span>모델</span>
       <select id="vaultModel"></select>
     </label>
-
     <label class="field">
       <span>암호화된 API 키</span>
-      <textarea id="vaultCipher" rows="4" placeholder="v1:..."></textarea>
+      <textarea id="vaultCipher" rows="3" placeholder="v1:..."></textarea>
     </label>
-
     <label class="field">
       <span>암호화 키</span>
-      <input id="vaultPassphrase" type="password" placeholder="현재 브라우저 세션에만 유지" />
+      <input id="vaultPassphrase" type="password" placeholder="현재 세션에만 유지" />
     </label>
-
-    <details class="encrypt-tool">
+    <details class="encrypt-panel">
       <summary>브라우저에서 API 키 암호화</summary>
-      <label class="field">
-        <span>평문 API 키</span>
-        <input id="vaultPlainKey" type="password" placeholder="sk-..." />
-      </label>
-      <button type="button" class="secondary-button" id="vaultEncryptBtn">암호화 후 채우기</button>
+      <div class="encrypt-body">
+        <label class="field">
+          <span>평문 API 키</span>
+          <input id="vaultPlainKey" type="password" placeholder="sk-..." />
+        </label>
+        <button type="button" class="btn-secondary" id="vaultEncryptBtn">암호화 후 채우기</button>
+      </div>
     </details>
-
-    <div class="settings-actions">
-      <button type="button" class="primary-button" id="saveVaultBtn">저장</button>
-      <button type="button" class="secondary-button" id="clearVaultBtn">초기화</button>
+    <div class="drawer-actions">
+      <button type="button" class="btn-primary" id="saveVaultBtn">저장</button>
+      <button type="button" class="btn-secondary" id="clearVaultBtn">초기화</button>
     </div>
     <div class="helper-text" id="vaultStatus">아직 저장된 설정이 없습니다.</div>
   </aside>
 
+  <!-- Toast -->
   <div class="toast" id="toast"></div>
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260415a"></script>
+  <script src="/static/app.js?v=20260415b"></script>
 </body>
 </html>

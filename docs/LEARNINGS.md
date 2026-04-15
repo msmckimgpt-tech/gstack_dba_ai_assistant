@@ -20,9 +20,23 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 ---
 
 ## Category: mistake
-<!-- AI가 실수한 패턴과 올바른 접근법 -->
+
+### LRN-20260415-0001 — Web UI 카드 적층 구조는 항상 외부 스크롤을 유발한다
+- Source: feature-0003 UI 개편 작업 (2026-04-15)
+- Mistake: `surface-card` 요소를 세로로 쌓으면 콘텐츠 총 높이 > 100vh가 되어 페이지 전체 스크롤이 발생한다. 이는 AI 채팅 앱에서 치명적인 UX 결함이다.
+- Correct approach: `app-shell`을 `100vh grid`로 고정하고, 스크롤은 메시지 목록(`.messages { flex:1; overflow-y:auto }`) 영역에만 허용한다. 나머지 영역(topbar, sidebar, composer)은 고정 높이/flex-shrink:0으로 처리한다.
 
 ## Category: pattern
+
+### LRN-20260415-0002 — Web UI 설계는 검증된 상용 앱 패턴을 우선 따른다
+- Source: feature-0003 UI 개편 작업 (2026-04-15)
+- Pattern: 채팅형 AI 도구 UI는 ChatGPT/Claude 검증 패턴인 `[Topbar | Sidebar + Chat Pane]` 2단 고정 레이아웃을 기본으로 한다. 상태 설명, 마케팅 카피, eyebrow 레이블은 기능적으로 필요할 때만 노출한다. 성공 레퍼런스를 먼저 파악하고 따르는 것이 사용자 피드백 반복보다 효율적이다.
+- Applies to: feature-0003 이후 신규 Web UI feature 전체.
+
+### LRN-20260415-0003 — 브라우저 자동화 접근 시 web 컨테이너는 `ignore_https_errors: true` + HTTPS URL 사용
+- Source: feature-0003 브라우저 검증 작업 (2026-04-15)
+- Quirk: web 컨테이너는 `ENABLE_WEB_TLS=1` 설정으로 HTTPS로 기동된다. browser 컨테이너에서 `http://web:8000`은 빈 응답을 반환한다. `https://web:8000` + `ignore_https_errors: true` 파라미터를 goto에 전달해야 정상 접근된다.
+- Applies to: feature-0004-browser-automation을 이용한 모든 Web UI 검증 시나리오.
 
 ### LRN-20260414-0001 — GitHub 자동화 계약은 기계 판독 파일로 먼저 고정
 - Source: ADR-0017

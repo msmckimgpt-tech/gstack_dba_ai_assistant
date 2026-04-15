@@ -29,9 +29,11 @@ source_of_truth: true
 - [x] TASK-0012 대화 소유권을 계정 기준으로 전환
 - [x] TASK-0013 상단 상태/키워드 관리/시간 이동 등 불필요한 UI 제거
 - [x] TASK-0014 로컬 LLM false-ready 방지
+- [x] TASK-0015 성공 사례 기반 UI/UX 전면 개편 (App-Shell 레이아웃)
+- [x] TASK-0016 AI 작업자용 UI/UX 정책 지침 문서화
 
 ## 3. In Progress
-- operator 계정 기준 추가 회귀 검증
+- 없음
 
 ## 4. Blocked
 - 없음
@@ -43,6 +45,8 @@ source_of_truth: true
 - TASK-0013 (2026-04-15): 표시 이름/역할/사용 목적 입력 제거, Keyword Management 제거, Domain/Strategy/Session/Calendar 등 불필요한 UI 제거
 - TASK-0014 (2026-04-15): 세션 응답의 `local_llm_enabled`를 실제 연결 가능 여부 기준으로 보정
 - TASK-0015 (2026-04-15): `llm-shared` 외부 네트워크에 Ollama 기반 `local-llm-gateway`를 복구하고 `auto/edge/core/code` alias 모델 준비
+- TASK-0015 (2026-04-15): 외부 스크롤 제거 · 마케팅 패널 제거 · App-Shell 레이아웃 적용. 로그인: 단일 카드, 메인: Topbar+Sidebar+ChatPane 3단 고정 구조
+- TASK-0016 (2026-04-15): feature AGENTS.md §8에 UI/UX 설계 원칙, 버튼 클래스 규칙, 브라우저 검증 정책, 금지사항 문서화. LEARNINGS.md에 3개 항목 추가
 
 ## 6. Next Action
 - operator 계정 기준으로 장문/다단계 질의 회귀 테스트 수행
@@ -57,3 +61,5 @@ source_of_truth: true
 - [x] 대화 소유권이 계정 기준으로 분리되었다
 - [x] 불필요한 상단 상태 정보와 Keyword Management가 제거되었다
 - [x] 브라우저 기반 렌더링 증빙이 남아 있다
+- [x] 상용 AI 앱 수준의 App-Shell 레이아웃이 적용되었다 (외부 스크롤 없음)
+- [x] UI/UX 정책 지침이 feature AGENTS.md §8에 문서화되었다

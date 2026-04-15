@@ -281,7 +281,7 @@ function renderConversationList() {
   if (!state.conversations.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.innerHTML = "<strong>표시할 대화가 없습니다.</strong><span>권한이 부여되면 새 대화를 생성할 수 있습니다.</span>";
+    empty.innerHTML = "<strong>대화 없음</strong><span>새 대화를 만들어 시작하세요.</span>";
     conversationListEl.appendChild(empty);
     return;
   }
@@ -289,38 +289,27 @@ function renderConversationList() {
   state.conversations.forEach((item) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `conversation-item ${item.id === state.activeConversationId ? "is-active" : ""}`.trim();
+    button.className = `conv-item ${item.id === state.activeConversationId ? "is-active" : ""}`.trim();
     button.addEventListener("click", () => {
       selectConversation(item.id);
     });
 
-    const main = document.createElement("div");
-    main.className = "conversation-main";
+    const titleEl = document.createElement("div");
+    titleEl.className = "conv-item-title";
+    titleEl.textContent = item.topic || "새 대화";
 
-    const titleWrap = document.createElement("div");
-    const title = document.createElement("div");
-    title.className = "conversation-title";
-    title.textContent = item.topic || "새 대화";
-    const meta = document.createElement("div");
-    meta.className = "conversation-meta";
-    meta.textContent = formatDateTime(item.last_activity_at || item.created_at);
-    titleWrap.append(title, meta);
+    const metaEl = document.createElement("div");
+    metaEl.className = "conv-item-meta";
 
-    const status = document.createElement("span");
     const normalizedStatus = String(item.status || "").trim().toLowerCase();
-    status.className = `conversation-status ${normalizedStatus ? `is-${normalizedStatus}` : ""}`.trim();
-    status.textContent = normalizedStatus || "idle";
+    const dot = document.createElement("span");
+    dot.className = `conv-dot ${normalizedStatus ? `is-${normalizedStatus}` : ""}`.trim();
 
-    main.append(titleWrap, status);
+    const dateEl = document.createElement("span");
+    dateEl.textContent = formatDateTime(item.last_activity_at || item.created_at);
 
-    const footer = document.createElement("div");
-    footer.className = "conversation-meta";
-    footer.innerHTML = `
-      <span>메시지 ${Number(item.message_count || 0)}</span>
-      <span>질문 ${Number(item.user_message_count || 0)}</span>
-    `;
-
-    button.append(main, footer);
+    metaEl.append(dot, dateEl);
+    button.append(titleEl, metaEl);
     conversationListEl.appendChild(button);
   });
 }
@@ -702,6 +691,7 @@ async function sendPrompt() {
       }),
     });
     promptInputEl.value = "";
+    promptInputEl.style.height = "auto";
     showToast(payload.error ? payload.error : "응답을 갱신했습니다.");
     await refreshWorkspace(payload.conversation_id || state.activeConversationId);
   } finally {
@@ -908,6 +898,12 @@ async function initialize() {
     deleteConversation().catch((error) => {
       showToast(error.message || "대화 삭제에 실패했습니다.", true);
     });
+  });
+
+  // Textarea auto-grow
+  promptInputEl.addEventListener("input", function () {
+    this.style.height = "auto";
+    this.style.height = Math.min(this.scrollHeight, 180) + "px";
   });
 
   toggleAuthPane("login");

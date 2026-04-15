@@ -4,32 +4,28 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260415a" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260415b" />
 </head>
-<body class="page-shell admin-shell">
-  <header class="app-header admin-header">
-    <div class="brand-block">
-      <div class="brand-mark">AD</div>
-      <div>
-        <div class="eyebrow">Administration</div>
-        <div class="brand-title">계정/권한 관리</div>
-      </div>
+<body class="admin-shell">
+  <header class="topbar">
+    <div class="topbar-brand">
+      <div class="brand-icon">AD</div>
+      <span class="brand-name">계정/권한 관리</span>
     </div>
-
-    <div class="header-actions">
-      <button type="button" class="secondary-button" id="backToAppBtn">작업 화면</button>
-      <button type="button" class="secondary-button" id="adminLogoutBtn">로그아웃</button>
+    <div class="topbar-end">
+      <button type="button" class="topbar-btn" id="backToAppBtn">작업 화면</button>
+      <button type="button" class="topbar-btn" id="adminLogoutBtn">로그아웃</button>
+      <button type="button" class="btn-secondary" id="refreshAdminBtn">새로고침</button>
     </div>
   </header>
 
-  <main class="admin-grid">
-    <section class="surface-card admin-summary-card">
+  <main class="admin-grid admin-shell">
+    <section class="surface-card">
       <div class="section-row">
         <div>
-          <div class="eyebrow">Overview</div>
-          <h1>승인 대기와 권한 충돌을 한 화면에서 정리</h1>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--text-muted);margin-bottom:3px">Overview</div>
+          <h2>승인 대기와 권한 충돌을 한 화면에서 정리</h2>
         </div>
-        <button type="button" class="secondary-button" id="refreshAdminBtn">새로고침</button>
       </div>
       <div class="summary-metrics">
         <article class="metric-card">
@@ -51,10 +47,10 @@
       </div>
     </section>
 
-    <section class="surface-card account-admin-card">
+    <section class="surface-card">
       <div class="section-row">
         <div>
-          <div class="eyebrow">Accounts</div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--text-muted);margin-bottom:3px">Accounts</div>
           <h2>사용자 목록</h2>
         </div>
       </div>
@@ -64,6 +60,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260415a"></script>
+  <script src="/static/admin.js?v=20260415b"></script>
 </body>
 </html>
