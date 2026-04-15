@@ -14,9 +14,9 @@ source_of_truth: true
 
 | 기능 ID | 상태 | 담당 | 최종 갱신 | 비고 |
 |---------|------|------|----------|------|
-| feature-0001-platform-runtime | in-progress | AI | 2026-04-06 | 구조 이관 완료, 엄격 시나리오 미작성 |
-| feature-0002-agent-core | in-progress | AI | 2026-04-06 | 구조 이관 완료, LLM 게이트웨이 연결 해소 진행 중 |
-| feature-0003-agent-web-ui | in-progress | AI | 2026-04-06 | 구조 이관 완료, 엄격 시나리오 미작성 |
+| feature-0001-platform-runtime | in-progress | AI | 2026-04-15 | 로컬 LLM 게이트웨이/Ollama 기동 스크립트 추가 |
+| feature-0002-agent-core | in-progress | AI | 2026-04-15 | `make ask` 기준 local-llm-gateway 실동작 확인 |
+| feature-0003-agent-web-ui | in-progress | AI | 2026-04-15 | 계정/RBAC 개편 + local LLM 실응답 검증 완료 |
 | feature-0004-browser-automation | in-progress | AI | 2026-04-06 | 구조 이관 완료, smoke 검증 예정 |
 | feature-0005-qa-mcp | in-progress | AI | 2026-04-06 | 포트 28000 점유 해소 확인, MCP 기동 검증 예정 |
 | feature-0006-lan-proxy-access | in-progress | AI | 2026-04-06 | 운영 자산 이관 완료 |
@@ -37,16 +37,16 @@ ARCHITECTURE.md §6 참조. 현재 등록된 의존 관계:
 
 ## 3. 블로킹 항목
 현재 사람 승인 또는 확인이 필요한 항목:
-- ~~`llm-shared` 네트워크에 `local-llm-gateway` 컨테이너가 없어 `feature-0002-agent-core`의 `make ask` 검증이 LLM 연결 오류로 중단됨~~ → 2026-04-06 `local_llm` 기동으로 해소 진행 중
+- 없음
 - ~~호스트 포트 `28000`을 외부 컨테이너 `mysql-ai-mcp`가 사용 중이라 `feature-0005-qa-mcp`의 `make start`/`mcp` 단독 기동 검증이 차단됨~~ → 2026-04-06 포트 미사용 확인, 차단 해소
 
 ## 4. 통합 테스트 현황
 - 통합 테스트 대상 기능 쌍: 향후 엄격 시나리오 정의 후 확정
 - 최근 통합 테스트 실행: 2026-03-26 구조/기동 검증
 - 현재 기준: 구조/기동 검증만 적용
-- 확인 완료: `docker compose config`, `make status`, `make web`, `make browser-up`, `make browser-health`
-- 차단됨: `make ask`(LLM 게이트웨이 연결 확인 중), `make mcp-test`(MCP 기동 검증 예정)
-- 2026-04-06 갱신: 포트 28000 차단 해소, LLM 게이트웨이 기동 진행 중
+- 확인 완료: `docker compose config`, `make status`, `make web`, `make browser-up`, `make browser-health`, `make local-llm-up`, `GET /api/session`, `POST /api/ask`
+- 차단됨: `make mcp-test`(MCP 기동 검증 예정)
+- 2026-04-15 갱신: `local-llm-gateway`가 `llm-shared`에 연결되었고 Web UI/API에서 로컬 LLM 실응답을 확인
 
 ## 5. 전체 진행률
 - 총 기능 수: 6

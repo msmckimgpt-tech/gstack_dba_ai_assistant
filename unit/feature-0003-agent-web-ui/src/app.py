@@ -3,16 +3,20 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
+import socket
 import subprocess
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import mysql.connector
 from cryptography.hazmat.primitives import hashes
@@ -62,6 +66,7 @@ MEMORY_DB = os.getenv("AGENT_MEMORY_DB", "agent_memory")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 MODEL_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,64}$")
+USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,63}$")
 
 INTERNAL_MEMORY_PREFIXES = (
     "파일 탐색 완료",
@@ -70,6 +75,20 @@ INTERNAL_MEMORY_PREFIXES = (
     "자동 탐색 완료",
 )
 PLACEHOLDER_TOPICS = {"", "(미설정)", "새 대화"}
+ACCOUNT_ROLE_PENDING = "pending"
+ACCOUNT_ROLE_OPERATOR = "operator"
+ACCOUNT_ROLE_ADMIN = "admin"
+ACCOUNT_PERMISSION_FIELDS = (
+    "can_send_request",
+    "can_cancel_request",
+    "can_finalize_request",
+    "can_delete_conversation",
+    "can_clear_conversations",
+)
+PASSWORD_HASH_ITERATIONS = max(100_000, int(os.getenv("WEB_PASSWORD_HASH_ITERATIONS", "310000")))
+AUTH_SESSION_DAYS = max(1, int(os.getenv("WEB_AUTH_SESSION_DAYS", "14")))
+BOOTSTRAP_ADMIN_USERNAME = str(os.getenv("WEB_BOOTSTRAP_ADMIN_USERNAME", "") or "").strip()
+BOOTSTRAP_ADMIN_PASSWORD = str(os.getenv("WEB_BOOTSTRAP_ADMIN_PASSWORD", "") or "")
 
 app = FastAPI(title="mysql_ai web")
 
@@ -95,6 +114,7 @@ WEB_PARALLEL_LIMIT = max(1, int(os.getenv("WEB_PARALLEL_LIMIT", "6")))
 _ACTIVE_REQUESTS: dict[str, int] = {}
 _ACTIVE_REQUESTS_LOCK = threading.Lock()
 _MEMORY_SCHEMA_READY = False
+_LOCAL_LLM_STATUS = {"checked_at": 0.0, "value": False}
 
 # Allow local GUI access from Windows/WSL, including non-standard origins.
 allowed = os.getenv("WEB_ALLOWED_ORIGINS", "").strip()
@@ -204,22 +224,12 @@ def _get_client_ip(request: Request) -> str:
     return ""
 
 
-def _session_id_from_ip(ip: str) -> str:
-    if not ip:
-        return ""
-    digest = hashlib.sha256(ip.encode("utf-8")).hexdigest()
-    return digest[:32]
-
-
 def _get_session_id(request: Request) -> tuple[str, bool, str]:
     client_ip = _get_client_ip(request)
-    ip_session = _session_id_from_ip(client_ip)
-    if ip_session:
-        return ip_session, False, client_ip
     existing = _sanitize_session_id(request.cookies.get(SESSION_COOKIE, ""))
     if existing:
         return existing, False, client_ip
-    return uuid.uuid4().hex, True, client_ip
+    return secrets.token_hex(32), True, client_ip
 
 
 def _request_is_https(request: Request) -> bool:
@@ -237,6 +247,139 @@ def _set_session_cookie(response: Any, request: Request, session_id: str) -> Non
         samesite="lax",
         secure=_request_is_https(request),
     )
+
+
+def _clear_session_cookie(response: Any, request: Request) -> None:
+    response.delete_cookie(
+        SESSION_COOKIE,
+        httponly=True,
+        samesite="lax",
+        secure=_request_is_https(request),
+    )
+
+
+def _hash_session_token(token: str) -> str:
+    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+
+def _sanitize_username(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "", str(value or "").strip())[:64]
+
+
+def _is_valid_username(value: str) -> bool:
+    return bool(USERNAME_RE.match(str(value or "").strip()))
+
+
+def _is_valid_password(password: str) -> bool:
+    text = str(password or "")
+    if len(text) < 10 or len(text) > 128:
+        return False
+    if CONTROL_RE.search(text):
+        return False
+    return True
+
+
+def _hash_password(password: str, salt: bytes | None = None) -> str:
+    if not _is_valid_password(password):
+        raise ValueError("invalid password")
+    salt = salt or os.urandom(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        PASSWORD_HASH_ITERATIONS,
+    )
+    return (
+        f"pbkdf2_sha256${PASSWORD_HASH_ITERATIONS}$"
+        f"{base64.b64encode(salt).decode('ascii')}$"
+        f"{base64.b64encode(digest).decode('ascii')}"
+    )
+
+
+def _verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        algorithm, iterations_raw, salt_b64, digest_b64 = str(stored_hash or "").split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        iterations = max(1, int(iterations_raw))
+        salt = _b64decode(salt_b64)
+        expected = _b64decode(digest_b64)
+        if not salt or not expected:
+            return False
+    except Exception:
+        return False
+    actual = hashlib.pbkdf2_hmac(
+        "sha256",
+        str(password or "").encode("utf-8"),
+        salt,
+        iterations,
+    )
+    return hmac.compare_digest(actual, expected)
+
+
+def _normalize_role(value: str) -> str:
+    role = str(value or "").strip().lower()
+    if role in {ACCOUNT_ROLE_PENDING, ACCOUNT_ROLE_OPERATOR, ACCOUNT_ROLE_ADMIN}:
+        return role
+    return ACCOUNT_ROLE_PENDING
+
+
+def _default_permissions_for_role(role: str) -> dict[str, bool]:
+    normalized = _normalize_role(role)
+    if normalized == ACCOUNT_ROLE_ADMIN:
+        return {field: True for field in ACCOUNT_PERMISSION_FIELDS}
+    if normalized == ACCOUNT_ROLE_OPERATOR:
+        return {
+            "can_send_request": True,
+            "can_cancel_request": True,
+            "can_finalize_request": True,
+            "can_delete_conversation": True,
+            "can_clear_conversations": False,
+        }
+    return {field: False for field in ACCOUNT_PERMISSION_FIELDS}
+
+
+def _account_permissions(account: dict[str, Any] | None) -> dict[str, bool]:
+    if not account:
+        return {field: False for field in ACCOUNT_PERMISSION_FIELDS}
+    role = _normalize_role(account.get("role"))
+    if role == ACCOUNT_ROLE_ADMIN:
+        return {field: True for field in ACCOUNT_PERMISSION_FIELDS}
+    if role == ACCOUNT_ROLE_PENDING:
+        return {field: False for field in ACCOUNT_PERMISSION_FIELDS}
+    return {
+        field: bool(account.get(field))
+        for field in ACCOUNT_PERMISSION_FIELDS
+    }
+
+
+def _account_has_permission(account: dict[str, Any] | None, permission: str) -> bool:
+    permissions = _account_permissions(account)
+    return bool(permissions.get(permission))
+
+
+def _serialize_account(account: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not account:
+        return None
+    permissions = _account_permissions(account)
+    role = _normalize_role(account.get("role"))
+    return {
+        "id": int(account.get("id") or 0),
+        "username": str(account.get("username") or ""),
+        "role": role,
+        "is_active": bool(account.get("is_active")),
+        "created_at": str(account.get("created_at") or "") or None,
+        "approved_at": str(account.get("approved_at") or "") or None,
+        "last_login_at": str(account.get("last_login_at") or "") or None,
+        "last_conversation_id": str(account.get("last_conversation_id") or ""),
+        "permissions": permissions,
+        "is_pending": role == ACCOUNT_ROLE_PENDING,
+        "is_admin": role == ACCOUNT_ROLE_ADMIN,
+    }
+
+
+def _account_conv_file(account_id: int) -> str:
+    return str(SESSION_DIR / f"conversation_id.account-{int(account_id)}")
 
 
 def _conv_file(session_id: str) -> str:
@@ -257,28 +400,221 @@ def _write_conversation_id(path: str, conversation_id: str) -> None:
         pass
 
 
+def _load_account_by_id(conn, account_id: int) -> dict[str, Any] | None:
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+SELECT
+    Id AS id,
+    Username AS username,
+    Role AS role,
+    IsActive AS is_active,
+    CreatedAt AS created_at,
+    ApprovedAt AS approved_at,
+    LastLoginAt AS last_login_at,
+    LastConversationId AS last_conversation_id,
+    CanSendRequest AS can_send_request,
+    CanCancelRequest AS can_cancel_request,
+    CanFinalizeRequest AS can_finalize_request,
+    CanDeleteConversation AS can_delete_conversation,
+    CanClearConversations AS can_clear_conversations
+FROM WebAccounts
+WHERE Id = %s
+LIMIT 1
+        """,
+        (int(account_id),),
+    )
+    row = cur.fetchone()
+    cur.close()
+    return row
+
+
+def _load_account_by_username(conn, username: str) -> dict[str, Any] | None:
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+SELECT
+    Id AS id,
+    Username AS username,
+    Role AS role,
+    IsActive AS is_active,
+    CreatedAt AS created_at,
+    ApprovedAt AS approved_at,
+    LastLoginAt AS last_login_at,
+    LastConversationId AS last_conversation_id,
+    PasswordHash AS password_hash,
+    CanSendRequest AS can_send_request,
+    CanCancelRequest AS can_cancel_request,
+    CanFinalizeRequest AS can_finalize_request,
+    CanDeleteConversation AS can_delete_conversation,
+    CanClearConversations AS can_clear_conversations
+FROM WebAccounts
+WHERE Username = %s
+LIMIT 1
+        """,
+        (username,),
+    )
+    row = cur.fetchone()
+    cur.close()
+    return row
+
+
+def _issue_auth_session(conn, account_id: int, request: Request) -> str:
+    token = secrets.token_hex(32)
+    client_ip = _get_client_ip(request)
+    user_agent = str(request.headers.get("user-agent", "") or "")[:255]
+    expires_at = datetime.now(timezone.utc) + timedelta(days=AUTH_SESSION_DAYS)
+    cur = conn.cursor()
+    cur.execute(
+        """
+INSERT INTO WebAuthSessions (
+    AccountId,
+    SessionTokenHash,
+    RemoteAddr,
+    UserAgent,
+    ExpiresAt
+) VALUES (%s, %s, %s, %s, %s)
+        """,
+        (
+            int(account_id),
+            _hash_session_token(token),
+            client_ip,
+            user_agent,
+            expires_at.strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
+    cur.execute(
+        "UPDATE WebAccounts SET LastLoginAt = CURRENT_TIMESTAMP WHERE Id = %s",
+        (int(account_id),),
+    )
+    cur.close()
+    return token
+
+
+def _get_authenticated_account(conn, request: Request) -> dict[str, Any] | None:
+    token = _sanitize_session_id(request.cookies.get(SESSION_COOKIE, ""))
+    if not token:
+        return None
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+SELECT
+    a.Id AS id,
+    a.Username AS username,
+    a.Role AS role,
+    a.IsActive AS is_active,
+    a.CreatedAt AS created_at,
+    a.ApprovedAt AS approved_at,
+    a.LastLoginAt AS last_login_at,
+    a.LastConversationId AS last_conversation_id,
+    a.CanSendRequest AS can_send_request,
+    a.CanCancelRequest AS can_cancel_request,
+    a.CanFinalizeRequest AS can_finalize_request,
+    a.CanDeleteConversation AS can_delete_conversation,
+    a.CanClearConversations AS can_clear_conversations
+FROM WebAuthSessions s
+JOIN WebAccounts a
+  ON a.Id = s.AccountId
+WHERE s.SessionTokenHash = %s
+  AND s.IsRevoked = 0
+  AND s.ExpiresAt > CURRENT_TIMESTAMP
+  AND a.IsActive = 1
+LIMIT 1
+        """,
+        (_hash_session_token(token),),
+    )
+    row = cur.fetchone()
+    if row:
+        cur.execute(
+            """
+UPDATE WebAuthSessions
+SET LastSeenAt = CURRENT_TIMESTAMP,
+    RemoteAddr = %s,
+    UserAgent = %s
+WHERE SessionTokenHash = %s
+            """,
+            (
+                _get_client_ip(request),
+                str(request.headers.get("user-agent", "") or "")[:255],
+                _hash_session_token(token),
+            ),
+        )
+    cur.close()
+    return row
+
+
+def _set_account_current_conversation(conn, account_id: int, conversation_id: str) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE WebAccounts SET LastConversationId = %s WHERE Id = %s",
+        (str(conversation_id or "").strip() or None, int(account_id)),
+    )
+    cur.close()
+
+
+def _ensure_conversation_row(conn, conversation_id: str) -> None:
+    if not conversation_id:
+        return
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT IGNORE INTO AgentCoreConversations (conversation_id, topic) VALUES (%s, '')",
+        (conversation_id,),
+    )
+    cur.close()
+
+
+def _assign_conversation_owner(conn, conversation_id: str, account_id: int, *, force: bool = False) -> None:
+    if not conversation_id:
+        return
+    _ensure_conversation_row(conn, conversation_id)
+    cur = conn.cursor()
+    if force:
+        cur.execute(
+            """
+UPDATE AgentCoreConversations
+SET owner_account_id = %s,
+    owner_assigned_at = COALESCE(owner_assigned_at, CURRENT_TIMESTAMP)
+WHERE conversation_id = %s
+            """,
+            (int(account_id), conversation_id),
+        )
+    else:
+        cur.execute(
+            """
+UPDATE AgentCoreConversations
+SET owner_account_id = %s,
+    owner_assigned_at = COALESCE(owner_assigned_at, CURRENT_TIMESTAMP)
+WHERE conversation_id = %s
+  AND owner_account_id IS NULL
+            """,
+            (int(account_id), conversation_id),
+        )
+    cur.close()
+
+
 def _repair_current_conversation(
-    session_id: str,
+    conn,
+    account: dict[str, Any],
     items: list[dict[str, Any]] | None = None,
     *,
     create_if_missing: bool = True,
     force_new: bool = False,
 ) -> str:
-    current_path = _conv_file(session_id)
-    current_id = _read_conversation_id(current_path)
-    visible_items = items if items is not None else _list_conversations(limit=200)
+    current_id = str(account.get("last_conversation_id") or "").strip()
+    visible_items = items if items is not None else _list_conversations(limit=200, account=account, conn=conn)
     visible_ids = {str(item.get("id") or "") for item in visible_items if str(item.get("id") or "").strip()}
     if not force_new and current_id and current_id in visible_ids:
         return current_id
     next_id = ""
     if not force_new:
         next_id = next((str(item.get("id") or "").strip() for item in visible_items if str(item.get("id") or "").strip()), "")
-    if not next_id and create_if_missing:
+    if not next_id and create_if_missing and _account_has_permission(account, "can_send_request"):
         from agent_core import create_new_conversation as _create_conv
 
-        next_id = _create_conv(conv_file=current_path)
-    if next_id:
-        _write_conversation_id(current_path, next_id)
+        next_id = _create_conv(conv_file=_account_conv_file(int(account["id"])))
+        _assign_conversation_owner(conn, next_id, int(account["id"]), force=True)
+    _set_account_current_conversation(conn, int(account["id"]), next_id)
+    account["last_conversation_id"] = next_id
     return next_id
 
 
@@ -380,6 +716,28 @@ def _release_request_slot(session_id: str) -> None:
             _ACTIVE_REQUESTS[session_id] = current
 
 
+def _is_local_llm_available() -> bool:
+    base_url = str(os.getenv("LOCAL_LLM_API_BASE", "") or "").strip()
+    if not base_url:
+        return False
+    now = time.time()
+    if now - float(_LOCAL_LLM_STATUS.get("checked_at") or 0.0) < 30:
+        return bool(_LOCAL_LLM_STATUS.get("value"))
+    parsed = urlparse(base_url)
+    host = str(parsed.hostname or "").strip()
+    port = int(parsed.port or (443 if parsed.scheme == "https" else 80))
+    available = False
+    if host:
+        try:
+            with socket.create_connection((host, port), timeout=1.5):
+                available = True
+        except OSError:
+            available = False
+    _LOCAL_LLM_STATUS["checked_at"] = now
+    _LOCAL_LLM_STATUS["value"] = available
+    return available
+
+
 def _run_agent(args: list[str], session_id: str, env_overrides: dict[str, str] | None = None) -> dict[str, Any]:
     env = os.environ.copy()
     if env_overrides:
@@ -405,8 +763,138 @@ def _run_agent(args: list[str], session_id: str, env_overrides: dict[str, str] |
 _WEB_TABLES_READY = False
 
 
+def _ensure_bootstrap_admin(conn) -> int:
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT Id
+FROM WebAccounts
+WHERE Role = %s
+  AND IsActive = 1
+ORDER BY Id ASC
+LIMIT 1
+        """,
+        (ACCOUNT_ROLE_ADMIN,),
+    )
+    row = cur.fetchone()
+    if row:
+        admin_id = int(row[0])
+        cur.close()
+        return admin_id
+
+    username = _sanitize_username(BOOTSTRAP_ADMIN_USERNAME)
+    password = BOOTSTRAP_ADMIN_PASSWORD
+    if not _is_valid_username(username) or not _is_valid_password(password):
+        cur.close()
+        raise RuntimeError(
+            "활성 관리자 계정이 없습니다. WEB_BOOTSTRAP_ADMIN_USERNAME 및 "
+            "WEB_BOOTSTRAP_ADMIN_PASSWORD를 설정해야 합니다."
+        )
+
+    password_hash = _hash_password(password)
+    default_permissions = _default_permissions_for_role(ACCOUNT_ROLE_ADMIN)
+    cur.execute(
+        "SELECT Id FROM WebAccounts WHERE Username = %s LIMIT 1",
+        (username,),
+    )
+    existing = cur.fetchone()
+    if existing:
+        admin_id = int(existing[0])
+        cur.execute(
+            """
+UPDATE WebAccounts
+SET PasswordHash = %s,
+    Role = %s,
+    IsActive = 1,
+    ApprovedAt = COALESCE(ApprovedAt, CURRENT_TIMESTAMP),
+    CanSendRequest = %s,
+    CanCancelRequest = %s,
+    CanFinalizeRequest = %s,
+    CanDeleteConversation = %s,
+    CanClearConversations = %s
+WHERE Id = %s
+            """,
+            (
+                password_hash,
+                ACCOUNT_ROLE_ADMIN,
+                int(default_permissions["can_send_request"]),
+                int(default_permissions["can_cancel_request"]),
+                int(default_permissions["can_finalize_request"]),
+                int(default_permissions["can_delete_conversation"]),
+                int(default_permissions["can_clear_conversations"]),
+                admin_id,
+            ),
+        )
+        cur.close()
+        return admin_id
+
+    cur.execute(
+        """
+INSERT INTO WebAccounts (
+    Username,
+    PasswordHash,
+    Role,
+    CanSendRequest,
+    CanCancelRequest,
+    CanFinalizeRequest,
+    CanDeleteConversation,
+    CanClearConversations,
+    ApprovedAt,
+    IsActive
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, 1)
+        """,
+        (
+            username,
+            password_hash,
+            ACCOUNT_ROLE_ADMIN,
+            int(default_permissions["can_send_request"]),
+            int(default_permissions["can_cancel_request"]),
+            int(default_permissions["can_finalize_request"]),
+            int(default_permissions["can_delete_conversation"]),
+            int(default_permissions["can_clear_conversations"]),
+        ),
+    )
+    admin_id = int(cur.lastrowid or 0)
+    cur.close()
+    return admin_id
+
+
+def _seed_legacy_conversations(conn, bootstrap_admin_id: int) -> None:
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+SELECT ConversationId FROM AgentMemoryKv
+UNION
+SELECT ConversationId FROM AgentMemoryMessages
+UNION
+SELECT conversation_id FROM AgentCoreConversations
+            """
+        )
+        rows = cur.fetchall() or []
+        for (conversation_id_raw,) in rows:
+            conversation_id = str(conversation_id_raw or "").strip()
+            if not conversation_id:
+                continue
+            cur.execute(
+                "INSERT IGNORE INTO AgentCoreConversations (conversation_id, topic) VALUES (%s, '')",
+                (conversation_id,),
+            )
+        cur.execute(
+            """
+UPDATE AgentCoreConversations
+SET owner_account_id = %s,
+    owner_assigned_at = COALESCE(owner_assigned_at, CURRENT_TIMESTAMP)
+WHERE owner_account_id IS NULL
+            """,
+            (int(bootstrap_admin_id),),
+        )
+    finally:
+        cur.close()
+
+
 def _ensure_web_tables():
-    """Create WebUsers and WebKeywords tables if they do not exist."""
+    """Create auth/account tables and normalize conversation ownership."""
     global _WEB_TABLES_READY
     if _WEB_TABLES_READY:
         return
@@ -425,35 +913,72 @@ def _ensure_web_tables():
         cur = conn.cursor()
         cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS WebUsers (
-                Id INT AUTO_INCREMENT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS WebAccounts (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
                 Username VARCHAR(64) NOT NULL UNIQUE,
-                DisplayName VARCHAR(128) NOT NULL DEFAULT '',
                 Role VARCHAR(32) NOT NULL DEFAULT '',
-                Purpose TEXT,
-                SessionId VARCHAR(64),
+                PasswordHash VARCHAR(255) NOT NULL,
+                CanSendRequest TINYINT(1) NOT NULL DEFAULT 0,
+                CanCancelRequest TINYINT(1) NOT NULL DEFAULT 0,
+                CanFinalizeRequest TINYINT(1) NOT NULL DEFAULT 0,
+                CanDeleteConversation TINYINT(1) NOT NULL DEFAULT 0,
+                CanClearConversations TINYINT(1) NOT NULL DEFAULT 0,
+                LastConversationId VARCHAR(128) NULL,
+                ApprovedByAccountId BIGINT NULL,
+                ApprovedAt DATETIME NULL,
                 CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                LastLoginAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                LastLoginAt DATETIME NULL,
                 IsActive TINYINT(1) DEFAULT 1
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """
         )
         cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS WebKeywords (
-                Id INT AUTO_INCREMENT PRIMARY KEY,
-                Keyword VARCHAR(128) NOT NULL,
-                Category VARCHAR(64) NOT NULL DEFAULT 'general',
-                Definition TEXT NOT NULL,
-                Examples TEXT,
-                CreatedBy VARCHAR(64),
+            CREATE TABLE IF NOT EXISTS WebAuthSessions (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                AccountId BIGINT NOT NULL,
+                SessionTokenHash CHAR(64) NOT NULL UNIQUE,
+                RemoteAddr VARCHAR(64) NULL,
+                UserAgent VARCHAR(255) NULL,
                 CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                IsActive TINYINT(1) DEFAULT 1,
-                UNIQUE KEY uq_keyword_category (Keyword, Category)
+                LastSeenAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                ExpiresAt DATETIME NOT NULL,
+                IsRevoked TINYINT(1) NOT NULL DEFAULT 0,
+                INDEX IX_WebAuthSessions_Account (AccountId),
+                INDEX IX_WebAuthSessions_Expires (ExpiresAt)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS AgentCoreConversations (
+                conversation_id VARCHAR(128) PRIMARY KEY,
+                topic VARCHAR(256) DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+        try:
+            cur.execute(
+                "ALTER TABLE AgentCoreConversations ADD COLUMN owner_account_id BIGINT NULL"
+            )
+        except Exception:
+            pass
+        try:
+            cur.execute(
+                "ALTER TABLE AgentCoreConversations ADD COLUMN owner_assigned_at DATETIME NULL"
+            )
+        except Exception:
+            pass
+        try:
+            cur.execute(
+                "CREATE INDEX IX_AgentCoreConversations_Owner ON AgentCoreConversations (owner_account_id)"
+            )
+        except Exception:
+            pass
+        bootstrap_admin_id = _ensure_bootstrap_admin(conn)
+        _seed_legacy_conversations(conn, bootstrap_admin_id)
         cur.close()
         _WEB_TABLES_READY = True
     finally:
@@ -479,190 +1004,94 @@ def _connect_memory():
     )
 
 
-def _list_conversations(limit: int = 200) -> list[dict[str, Any]]:
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return []
+def _list_conversations(
+    limit: int = 200,
+    *,
+    account: dict[str, Any] | None = None,
+    conn=None,
+) -> list[dict[str, Any]]:
+    own_conn = conn is None
+    if own_conn:
+        try:
+            conn = _connect_memory()
+        except Exception:
+            return []
     try:
         cleanup_pending_delete_conversations(conn)
     except Exception:
         pass
-    cur = conn.cursor()
-    cur.execute(
-        """
-SELECT
-    c.ConversationId,
-    COALESCE(t.`Value`, '(미설정)') AS Topic,
-    c.`Value` AS CreatedAt
-FROM AgentMemoryKv c
-LEFT JOIN AgentMemoryKv t
-    ON c.ConversationId = t.ConversationId
-   AND t.`Key` = 'topic'
-WHERE c.`Key` = 'created_at'
-ORDER BY c.`Value` DESC
-LIMIT %s
-        """,
-        (limit,),
-    )
-    rows = cur.fetchall() or []
-    conv_map: dict[str, dict[str, Any]] = {}
-    for r in rows:
-        if not r:
-            continue
-        conv_id = str(r[0])
-        conv_map[conv_id] = {
-            "id": conv_id,
-            "topic": str(r[1]),
-            "created_at": str(r[2]),
-        }
-    cur.execute(
-        """
-SELECT
-    m.ConversationId,
-    COALESCE(t.`Value`, '(미설정)') AS Topic,
-    MAX(
-        CASE
-            WHEN NOT (
-                m.Role = 'assistant'
-                AND (
-                    COALESCE(m.Content, '') LIKE '파일 탐색 완료%%'
-                    OR COALESCE(m.Content, '') LIKE '대화 검색 완료%%'
-                    OR COALESCE(m.Content, '') LIKE '파일 읽기 완료%%'
-                    OR COALESCE(m.Content, '') LIKE '자동 탐색 완료%%'
-                    OR (
-                        JSON_VALID(m.MetaJson)
-                        AND LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(m.MetaJson, '$.internal')), '')) IN ('true', '1')
-                    )
-                )
-            )
-            THEN m.CreatedAt
-            ELSE NULL
-        END
-    ) AS LastAt
-FROM AgentMemoryMessages m
-LEFT JOIN AgentMemoryKv t
-    ON m.ConversationId = t.ConversationId
-   AND t.`Key` = 'topic'
-GROUP BY m.ConversationId
-ORDER BY LastAt DESC
-LIMIT %s
-        """,
-        (limit,),
-    )
-    msg_rows = cur.fetchall() or []
-    for r in msg_rows:
-        if not r:
-            continue
-        conv_id = str(r[0])
-        last_at = str(r[2]) if r[2] is not None else ""
-        topic = _normalize_topic(r[1], "(미설정)")
-        if conv_id not in conv_map:
-            conv_map[conv_id] = {
-                "id": conv_id,
-                "topic": topic,
-                "created_at": last_at,
-                "last_activity_at": last_at,
-            }
-        else:
-            existing = conv_map[conv_id]
-            if last_at and _sort_dt_key(last_at) > _sort_dt_key(existing.get("created_at")):
-                existing["created_at"] = last_at
-            existing["last_activity_at"] = last_at or existing.get("last_activity_at")
-            if str(existing.get("topic") or "").strip() in PLACEHOLDER_TOPICS and topic:
-                existing["topic"] = topic
     try:
-        cur.execute(
-            """
-SELECT conversation_id, topic, created_at, updated_at
-FROM AgentCoreConversations
-ORDER BY updated_at DESC
-LIMIT %s
-            """,
-            (limit,),
-        )
-        core_rows = cur.fetchall() or []
-    except Exception:
-        core_rows = []
-    cur.close()
-    for conv_id_raw, topic_raw, created_at_raw, updated_at_raw in core_rows:
-        conv_id = str(conv_id_raw or "")
-        if not conv_id:
-            continue
-        created_at = str(created_at_raw or "")
-        updated_at = str(updated_at_raw or created_at_raw or "")
-        topic = _normalize_topic(topic_raw, "새 대화")
-        if conv_id not in conv_map:
-            conv_map[conv_id] = {
-                "id": conv_id,
-                "topic": topic,
-                "created_at": created_at,
-                "last_activity_at": updated_at,
-            }
-            continue
-        existing = conv_map[conv_id]
-        if topic and str(existing.get("topic") or "").strip() in PLACEHOLDER_TOPICS:
-            existing["topic"] = topic
-        if created_at and not existing.get("created_at"):
-            existing["created_at"] = created_at
-        if _sort_dt_key(updated_at) > _sort_dt_key(existing.get("last_activity_at") or existing.get("created_at")):
-            existing["last_activity_at"] = updated_at
-    hidden_ids = set(list_delete_requested_conversation_ids(conn))
-    items = [item for item in conv_map.values() if str(item.get("id") or "") not in hidden_ids]
-    for item in items:
-        if not item.get("last_activity_at"):
-            item["last_activity_at"] = item.get("created_at", "")
-    items.sort(key=lambda x: _sort_dt_key(x.get("last_activity_at") or x.get("created_at")), reverse=True)
-    items = items[:limit]
+        cur = conn.cursor(dictionary=True)
+        query = """
+SELECT
+    c.conversation_id AS id,
+    COALESCE(NULLIF(TRIM(c.topic), ''), NULLIF(TRIM(topic_kv.`Value`), ''), '새 대화') AS topic,
+    c.created_at AS created_at,
+    c.updated_at AS last_activity_at,
+    c.owner_account_id AS owner_account_id
+FROM AgentCoreConversations c
+LEFT JOIN AgentMemoryKv topic_kv
+  ON topic_kv.ConversationId COLLATE utf8mb4_unicode_ci = c.conversation_id COLLATE utf8mb4_unicode_ci
+ AND topic_kv.`Key` = 'topic'
+        """
+        params: list[Any] = []
+        if account and _normalize_role(account.get("role")) != ACCOUNT_ROLE_ADMIN:
+            query += " WHERE c.owner_account_id = %s"
+            params.append(int(account["id"]))
+        query += " ORDER BY c.updated_at DESC LIMIT %s"
+        params.append(int(limit))
+        cur.execute(query, tuple(params))
+        items = cur.fetchall() or []
+        cur.close()
 
-    conv_ids = [item["id"] for item in items if item.get("id")]
-    status_map: dict[str, dict[str, str]] = {}
-    if conv_ids:
-        placeholders = ",".join(["%s"] * len(conv_ids))
-        cur = conn.cursor()
-        cur.execute(
-            f"""
+        hidden_ids = set(list_delete_requested_conversation_ids(conn))
+        items = [
+            {
+                "id": str(item.get("id") or ""),
+                "topic": _normalize_topic(item.get("topic"), "새 대화"),
+                "created_at": str(item.get("created_at") or ""),
+                "last_activity_at": str(item.get("last_activity_at") or item.get("created_at") or ""),
+                "owner_account_id": int(item.get("owner_account_id") or 0) or None,
+            }
+            for item in items
+            if str(item.get("id") or "") and str(item.get("id") or "") not in hidden_ids
+        ]
+        conv_ids = [item["id"] for item in items]
+        status_map: dict[str, dict[str, str]] = {}
+        count_map: dict[str, dict[str, int]] = {}
+        if conv_ids:
+            placeholders = ",".join(["%s"] * len(conv_ids))
+            cur = conn.cursor()
+            cur.execute(
+                f"""
 SELECT ConversationId, `Key`, `Value`
 FROM AgentMemoryKv
 WHERE ConversationId IN ({placeholders})
   AND `Key` IN ('last_status', 'last_status_at', 'last_duration_ms')
-            """,
-            tuple(conv_ids),
-        )
-        rows = cur.fetchall() or []
-        cur.close()
-        for conv_id, key, value in rows:
-            conv_id = str(conv_id)
-            status_map.setdefault(conv_id, {})[str(key)] = str(value)
-
-    count_map: dict[str, dict[str, int]] = {}
-    if conv_ids:
-        placeholders = ",".join(["%s"] * len(conv_ids))
-        cur = conn.cursor()
-        cur.execute(
-            f"""
+                """,
+                tuple(conv_ids),
+            )
+            for conv_id, key, value in cur.fetchall() or []:
+                status_map.setdefault(str(conv_id), {})[str(key)] = str(value)
+            cur.execute(
+                f"""
 SELECT ConversationId,
        COUNT(*) AS total_count,
        SUM(CASE WHEN Role = 'user' THEN 1 ELSE 0 END) AS user_count
 FROM AgentMemoryMessages
 WHERE ConversationId IN ({placeholders})
 GROUP BY ConversationId
-            """,
-            tuple(conv_ids),
-        )
-        rows = cur.fetchall() or []
-        cur.close()
-        for conv_id, total_count, user_count in rows:
-            count_map[str(conv_id)] = {
-                "total": int(total_count or 0),
-                "user": int(user_count or 0),
-            }
-    if conv_ids:
-        placeholders = ",".join(["%s"] * len(conv_ids))
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                f"""
+                """,
+                tuple(conv_ids),
+            )
+            for conv_id, total_count, user_count in cur.fetchall() or []:
+                count_map[str(conv_id)] = {
+                    "total": int(total_count or 0),
+                    "user": int(user_count or 0),
+                }
+            try:
+                cur.execute(
+                    f"""
 SELECT conversation_id,
        COUNT(*) AS total_count,
        SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) AS user_count
@@ -672,78 +1101,73 @@ WHERE conversation_id IN ({placeholders})
   AND tool_calls IS NULL
   AND COALESCE(content, '') <> ''
 GROUP BY conversation_id
-                """,
-                tuple(conv_ids),
-            )
-            rows = cur.fetchall() or []
-        except Exception:
-            rows = []
-        cur.close()
-        for conv_id, total_count, user_count in rows:
-            conv_key = str(conv_id)
-            total_value = int(total_count or 0)
-            user_value = int(user_count or 0)
-            existing = count_map.get(conv_key, {})
-            count_map[conv_key] = {
-                "total": max(int(existing.get("total", 0) or 0), total_value),
-                "user": max(int(existing.get("user", 0) or 0), user_value),
-            }
-
-    for item in items:
-        info = status_map.get(str(item.get("id", "")), {})
-        status = info.get("last_status") or ""
-        duration_raw = info.get("last_duration_ms") or ""
-        status_at = info.get("last_status_at") or ""
-        item["status"] = status
-        item["status_at"] = status_at
-        try:
-            item["duration_ms"] = float(duration_raw) if duration_raw else None
-        except Exception:
-            item["duration_ms"] = None
-        counts = count_map.get(str(item.get("id", "")), {})
-        item["message_count"] = counts.get("total", 0)
-        item["user_message_count"] = counts.get("user", 0)
-
-    conn.close()
-    return items
+                    """,
+                    tuple(conv_ids),
+                )
+                core_counts = cur.fetchall() or []
+            except Exception:
+                core_counts = []
+            cur.close()
+            for conv_id, total_count, user_count in core_counts:
+                existing = count_map.get(str(conv_id), {})
+                count_map[str(conv_id)] = {
+                    "total": max(int(existing.get("total", 0) or 0), int(total_count or 0)),
+                    "user": max(int(existing.get("user", 0) or 0), int(user_count or 0)),
+                }
+        for item in items:
+            info = status_map.get(item["id"], {})
+            counts = count_map.get(item["id"], {})
+            item["status"] = info.get("last_status") or ""
+            item["status_at"] = info.get("last_status_at") or ""
+            try:
+                item["duration_ms"] = float(info.get("last_duration_ms")) if info.get("last_duration_ms") else None
+            except Exception:
+                item["duration_ms"] = None
+            item["message_count"] = counts.get("total", 0)
+            item["user_message_count"] = counts.get("user", 0)
+        items.sort(
+            key=lambda x: _sort_dt_key(x.get("last_activity_at") or x.get("created_at")),
+            reverse=True,
+        )
+        return items[:limit]
+    finally:
+        if own_conn and conn is not None:
+            conn.close()
 
 
-def _conversation_exists(conversation_id: str) -> bool:
+def _conversation_exists(
+    conversation_id: str,
+    *,
+    account: dict[str, Any] | None = None,
+    conn=None,
+) -> bool:
     if not conversation_id:
         return False
+    own_conn = conn is None
+    if own_conn:
+        try:
+            conn = _connect_memory()
+        except Exception:
+            return False
     try:
-        conn = _connect_memory()
-    except Exception:
-        return False
-    if conversation_id in set(list_delete_requested_conversation_ids(conn)):
-        conn.close()
-        return False
-    cur = conn.cursor()
-    # 새 테이블 (AgentCoreConversations) 먼저 확인
-    try:
+        if conversation_id in set(list_delete_requested_conversation_ids(conn)):
+            return False
+        cur = conn.cursor()
         cur.execute(
-            "SELECT 1 FROM AgentCoreConversations WHERE conversation_id = %s LIMIT 1",
+            "SELECT owner_account_id FROM AgentCoreConversations WHERE conversation_id = %s LIMIT 1",
             (conversation_id,),
         )
         row = cur.fetchone()
-        if row:
-            cur.close()
+        cur.close()
+        if not row:
+            return False
+        if account and _normalize_role(account.get("role")) != ACCOUNT_ROLE_ADMIN:
+            owner_account_id = int(row[0] or 0)
+            return owner_account_id == int(account["id"])
+        return True
+    finally:
+        if own_conn and conn is not None:
             conn.close()
-            return True
-    except Exception:
-        pass
-    # 기존 테이블 폴백
-    try:
-        cur.execute(
-            "SELECT 1 FROM AgentMemoryKv WHERE ConversationId = %s AND `Key` = 'created_at' LIMIT 1",
-            (conversation_id,),
-        )
-        row = cur.fetchone()
-    except Exception:
-        row = None
-    cur.close()
-    conn.close()
-    return row is not None
 
 
 def _extract_intent_from_content(content: str) -> str:
@@ -1526,27 +1950,184 @@ def _is_question_text(text: str) -> bool:
     return any(cue in lowered for cue in cues)
 
 
+def _json_error(message: str, status_code: int = 400) -> JSONResponse:
+    return JSONResponse({"error": message}, status_code=status_code)
+
+
+def _require_account(request: Request, conn) -> tuple[dict[str, Any] | None, JSONResponse | None]:
+    account = _get_authenticated_account(conn, request)
+    if not account:
+        return None, _json_error("로그인이 필요합니다.", 401)
+    return account, None
+
+
+def _require_permission(
+    request: Request,
+    conn,
+    permission: str,
+) -> tuple[dict[str, Any] | None, JSONResponse | None]:
+    account, error = _require_account(request, conn)
+    if error:
+        return None, error
+    if not _account_has_permission(account, permission):
+        return None, _json_error("권한이 없습니다.", 403)
+    return account, None
+
+
+def _resolve_conversation_for_account(
+    conn,
+    account: dict[str, Any],
+    requested_id: str = "",
+    *,
+    create_if_missing: bool = False,
+) -> str:
+    conversation_id = str(requested_id or "").strip()
+    if conversation_id:
+        if _conversation_exists(conversation_id, account=account, conn=conn):
+            return conversation_id
+        return ""
+    return _repair_current_conversation(
+        conn,
+        account,
+        create_if_missing=create_if_missing,
+    )
+
+
+def _build_conversations_payload(conn, account: dict[str, Any]) -> dict[str, Any]:
+    can_create = _account_has_permission(account, "can_send_request")
+    items = _list_conversations(limit=200, account=account, conn=conn)
+    current_id = _repair_current_conversation(
+        conn,
+        account,
+        items=items,
+        create_if_missing=can_create,
+    )
+    if current_id and not any(str(item.get("id") or "") == current_id for item in items):
+        items = _list_conversations(limit=200, account=account, conn=conn)
+        current_id = _repair_current_conversation(
+            conn,
+            account,
+            items=items,
+            create_if_missing=False,
+        )
+    for item in items:
+        item["is_current"] = item.get("id") == current_id
+    return {"items": items, "current": current_id}
+
+
+def _clear_accounts_current_conversation(conn, conversation_id: str) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE WebAccounts SET LastConversationId = NULL WHERE LastConversationId = %s",
+        (conversation_id,),
+    )
+    cur.close()
+
+
+def _list_admin_accounts(conn) -> list[dict[str, Any]]:
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+SELECT
+    a.Id AS id,
+    a.Username AS username,
+    a.Role AS role,
+    a.IsActive AS is_active,
+    a.CreatedAt AS created_at,
+    a.ApprovedAt AS approved_at,
+    a.LastLoginAt AS last_login_at,
+    a.LastConversationId AS last_conversation_id,
+    a.CanSendRequest AS can_send_request,
+    a.CanCancelRequest AS can_cancel_request,
+    a.CanFinalizeRequest AS can_finalize_request,
+    a.CanDeleteConversation AS can_delete_conversation,
+    a.CanClearConversations AS can_clear_conversations,
+    COUNT(c.conversation_id) AS conversation_count
+FROM WebAccounts a
+LEFT JOIN AgentCoreConversations c
+  ON c.owner_account_id = a.Id
+GROUP BY
+    a.Id,
+    a.Username,
+    a.Role,
+    a.IsActive,
+    a.CreatedAt,
+    a.ApprovedAt,
+    a.LastLoginAt,
+    a.LastConversationId,
+    a.CanSendRequest,
+    a.CanCancelRequest,
+    a.CanFinalizeRequest,
+    a.CanDeleteConversation,
+    a.CanClearConversations
+ORDER BY
+    CASE a.Role
+        WHEN 'pending' THEN 0
+        WHEN 'operator' THEN 1
+        WHEN 'admin' THEN 2
+        ELSE 3
+    END,
+    a.CreatedAt DESC
+        """
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        payload = _serialize_account(row) or {}
+        payload["conversation_count"] = int(row.get("conversation_count") or 0)
+        items.append(payload)
+    return items
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/admin")
+def admin_index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "admin.html")
+
+
 @app.get("/api/session")
 def get_session(request: Request) -> JSONResponse:
-    session_id, new_cookie, client_ip = _get_session_id(request)
-    conversation_id = _repair_current_conversation(session_id, create_if_missing=True)
-    local_llm_enabled = bool(os.getenv("LOCAL_LLM_API_BASE", "").strip())
+    local_llm_enabled = _is_local_llm_available()
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return JSONResponse(
+            {
+                "authenticated": False,
+                "local_llm_enabled": local_llm_enabled,
+                "default_model": os.getenv("OPENAI_MODEL", "auto"),
+            }
+        )
+    account = _get_authenticated_account(conn, request)
+    if not account:
+        conn.close()
+        return JSONResponse(
+            {
+                "authenticated": False,
+                "local_llm_enabled": local_llm_enabled,
+                "default_model": os.getenv("OPENAI_MODEL", "auto"),
+            }
+        )
+    conversation_id = _repair_current_conversation(
+        conn,
+        account,
+        create_if_missing=_account_has_permission(account, "can_send_request"),
+    )
     payload = {
-        "session_id": session_id,
-        "client_ip": client_ip,
+        "authenticated": True,
+        "user": _serialize_account(account),
         "conversation_id": conversation_id,
         "local_llm_enabled": local_llm_enabled,
         "default_model": os.getenv("OPENAI_MODEL", "auto"),
+        "public_url": WEB_PUBLIC_URL,
     }
-    resp = JSONResponse(payload)
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
-    return resp
+    conn.close()
+    return JSONResponse(payload)
 
 
 @app.get("/api/api-vault/options")
@@ -1564,253 +2145,263 @@ def get_api_vault_options() -> JSONResponse:
 
 @app.post("/api/ask")
 async def ask(request: Request) -> JSONResponse:
-    session_id, new_cookie, _client_ip = _get_session_id(request)
     start_ts = time.time()
     try:
         data = await request.json()
     except Exception:
-        resp = JSONResponse({"error": "invalid json"}, status_code=400)
-        if new_cookie:
-            _set_session_cookie(resp, request, session_id)
-        return resp
+        return _json_error("invalid json", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_permission(request, conn, "can_send_request")
+    if error:
+        conn.close()
+        return error
     message = str(data.get("message", "")).strip()
     api_key_cipher = str(data.get("api_key_cipher", "")).strip()
     api_key_passphrase = str(data.get("api_key_passphrase", "")).strip()
-    model = str(data.get("model", "")).strip()
+    model = str(data.get("model", "") or API_DEFAULT_MODEL).strip()
     request_conversation_id = str(data.get("conversation_id", "")).strip()
-    local_llm_enabled = bool(os.getenv("LOCAL_LLM_API_BASE", "").strip())
+    local_llm_enabled = _is_local_llm_available()
     has_api_key_input = bool(api_key_cipher and api_key_passphrase)
     if not message:
-        resp = JSONResponse({"error": "empty message"}, status_code=400)
+        conn.close()
+        return _json_error("empty message", 400)
     elif not has_api_key_input and not local_llm_enabled:
-        resp = JSONResponse({"error": "API 키 설정이 필요합니다."}, status_code=400)
+        conn.close()
+        return _json_error("API 키 설정이 필요합니다.", 400)
     elif not model:
-        resp = JSONResponse({"error": "모델 설정이 필요합니다."}, status_code=400)
+        conn.close()
+        return _json_error("모델 설정이 필요합니다.", 400)
     elif has_api_key_input and not _is_safe_passphrase(api_key_passphrase):
-        resp = JSONResponse({"error": "암호화 키 형식이 올바르지 않습니다."}, status_code=400)
+        conn.close()
+        return _json_error("암호화 키 형식이 올바르지 않습니다.", 400)
     elif not _is_safe_model_name(model):
-        resp = JSONResponse({"error": "모델 이름 형식이 올바르지 않습니다."}, status_code=400)
+        conn.close()
+        return _json_error("모델 이름 형식이 올바르지 않습니다.", 400)
     elif not _is_allowed_api_model(model):
-        resp = JSONResponse({"error": "허용되지 않은 모델입니다."}, status_code=400)
+        conn.close()
+        return _json_error("허용되지 않은 모델입니다.", 400)
     elif has_api_key_input and (len(api_key_cipher) > 4096 or CONTROL_RE.search(api_key_cipher)):
-        resp = JSONResponse({"error": "API 키 형식이 올바르지 않습니다."}, status_code=400)
-    else:
-        if not _acquire_request_slot(session_id):
-            resp = JSONResponse({"error": "동시 요청 제한에 도달했습니다. 잠시 후 다시 시도해주세요."}, status_code=429)
-            if new_cookie:
-                _set_session_cookie(resp, request, session_id)
-            return resp
-        try:
-            api_key: str | None = None
-            if has_api_key_input:
-                try:
-                    api_key = _decrypt_api_key(api_key_cipher, api_key_passphrase)
-                except Exception:
-                    resp = JSONResponse({"error": "API 키 복호화에 실패했습니다."}, status_code=400)
-                    if new_cookie:
-                        _set_session_cookie(resp, request, session_id)
-                    return resp
-                if not _is_safe_api_key(api_key):
-                    resp = JSONResponse({"error": "API 키 형식이 올바르지 않습니다."}, status_code=400)
-                    if new_cookie:
-                        _set_session_cookie(resp, request, session_id)
-                    return resp
+        conn.close()
+        return _json_error("API 키 형식이 올바르지 않습니다.", 400)
+    if request_conversation_id and not _conversation_exists(request_conversation_id, account=account, conn=conn):
+        conn.close()
+        return _json_error("conversation not found", 404)
+    conv_id = _resolve_conversation_for_account(
+        conn,
+        account,
+        request_conversation_id,
+        create_if_missing=True,
+    )
+    slot_key = f"account:{int(account['id'])}"
+    if not _acquire_request_slot(slot_key):
+        conn.close()
+        return _json_error("동시 요청 제한에 도달했습니다. 잠시 후 다시 시도해주세요.", 429)
+    try:
+        api_key: str | None = None
+        if has_api_key_input:
+            try:
+                api_key = _decrypt_api_key(api_key_cipher, api_key_passphrase)
+            except Exception:
+                conn.close()
+                return _json_error("API 키 복호화에 실패했습니다.", 400)
+            if not _is_safe_api_key(api_key):
+                conn.close()
+                return _json_error("API 키 형식이 올바르지 않습니다.", 400)
 
-            # ── 새 Agent Core 직접 호출 ──
-            from agent_core import run_agent as _run_agent_core
+        from agent_core import run_agent as _run_agent_core
 
-            conv_id = request_conversation_id or _read_conversation_id(_conv_file(session_id))
-            temp_value = 0.0 if _model_supports_temperature(model) else None
+        temp_value = 0.0 if _model_supports_temperature(model) else None
+        agent_result = await asyncio.to_thread(
+            _run_agent_core,
+            user_message=message,
+            conversation_id=conv_id or None,
+            conv_file=_account_conv_file(int(account["id"])),
+            model=model,
+            api_key=api_key,
+            temperature=temp_value,
+            output_mode="json",
+        )
+        conversation_id = str(agent_result.get("conversation_id") or "").strip()
+        if conversation_id:
+            _assign_conversation_owner(conn, conversation_id, int(account["id"]))
+            _set_account_current_conversation(conn, int(account["id"]), conversation_id)
+            account["last_conversation_id"] = conversation_id
+            try:
+                Path(_account_conv_file(int(account["id"]))).write_text(conversation_id, encoding="utf-8")
+            except Exception:
+                pass
 
-            agent_result = await asyncio.to_thread(
-                _run_agent_core,
-                user_message=message,
-                conversation_id=conv_id or None,
-                conv_file=_conv_file(session_id),
-                model=model,
-                api_key=api_key,
-                temperature=temp_value,
-                output_mode="json",
-            )
-
-            conversation_id = agent_result.get("conversation_id", "")
-            # 대화 ID 파일 업데이트
-            if conversation_id:
-                try:
-                    Path(_conv_file(session_id)).write_text(conversation_id, encoding="utf-8")
-                except Exception:
-                    pass
-
-            render_output = agent_result.get("answer", "")
-            render_sql = agent_result.get("executed_sql", "")
-            render_steps = agent_result.get("steps", [])
-            render_csv_paths = agent_result.get("result_csv_paths", [])
-            render_rationale = agent_result.get("rationale", "")
-            if conversation_id:
-                latest_conn = None
-                try:
-                    latest_conn = _connect_memory()
-                    latest_message = _load_latest_assistant_message(latest_conn, conversation_id)
-                    latest_meta = latest_message.get("meta") if isinstance(latest_message, dict) else {}
-                    if latest_message.get("content"):
-                        render_output = latest_message.get("content", render_output)
-                    if isinstance(latest_meta, dict):
-                        if latest_meta.get("sql"):
-                            render_sql = latest_meta.get("sql", render_sql)
-                        latest_steps = latest_meta.get("steps")
-                        if isinstance(latest_steps, list) and latest_steps:
-                            render_steps = latest_steps
-                        latest_csv_paths = latest_meta.get("csv_paths")
-                        if isinstance(latest_csv_paths, list) and latest_csv_paths:
-                            render_csv_paths = latest_csv_paths
-                        if latest_meta.get("rationale"):
-                            render_rationale = latest_meta.get("rationale", render_rationale)
-                except Exception:
-                    pass
-                finally:
-                    if latest_conn is not None:
-                        try:
-                            latest_conn.close()
-                        except Exception:
-                            pass
-
-            result = {
-                "output": render_output,
-                "executed_sql": render_sql,
-                "conversation_id": conversation_id,
-                "steps": render_steps,
-                "result_csv_paths": render_csv_paths,
-                "rationale": render_rationale,
-                "error": agent_result.get("error", ""),
-                "duration_ms": round((time.time() - start_ts) * 1000, 2),
-            }
-            resp = JSONResponse(result)
-        finally:
-            _release_request_slot(session_id)
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
-    return resp
+        render_output = agent_result.get("answer", "")
+        render_sql = agent_result.get("executed_sql", "")
+        render_steps = agent_result.get("steps", [])
+        render_csv_paths = agent_result.get("result_csv_paths", [])
+        render_rationale = agent_result.get("rationale", "")
+        if conversation_id:
+            latest_message = _load_latest_assistant_message(conn, conversation_id)
+            latest_meta = latest_message.get("meta") if isinstance(latest_message, dict) else {}
+            if latest_message.get("content"):
+                render_output = latest_message.get("content", render_output)
+            if isinstance(latest_meta, dict):
+                if latest_meta.get("sql"):
+                    render_sql = latest_meta.get("sql", render_sql)
+                latest_steps = latest_meta.get("steps")
+                if isinstance(latest_steps, list) and latest_steps:
+                    render_steps = latest_steps
+                latest_csv_paths = latest_meta.get("csv_paths")
+                if isinstance(latest_csv_paths, list) and latest_csv_paths:
+                    render_csv_paths = latest_csv_paths
+                if latest_meta.get("rationale"):
+                    render_rationale = latest_meta.get("rationale", render_rationale)
+        result = {
+            "output": render_output,
+            "executed_sql": render_sql,
+            "conversation_id": conversation_id,
+            "steps": render_steps,
+            "result_csv_paths": render_csv_paths,
+            "rationale": render_rationale,
+            "error": agent_result.get("error", ""),
+            "duration_ms": round((time.time() - start_ts) * 1000, 2),
+        }
+        conn.close()
+        return JSONResponse(result)
+    finally:
+        _release_request_slot(slot_key)
 
 
 @app.post("/api/new_conversation")
 async def new_conversation(request: Request) -> JSONResponse:
-    session_id, new_cookie, _client_ip = _get_session_id(request)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_permission(request, conn, "can_send_request")
+    if error:
+        conn.close()
+        return error
     from agent_core import create_new_conversation as _create_conv
-    cid = _create_conv(conv_file=_conv_file(session_id))
-    resp = JSONResponse({"conversation_id": cid, "output": f"새 대화: {cid}"})
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
-    return resp
+    cid = _create_conv(conv_file=_account_conv_file(int(account["id"])))
+    _assign_conversation_owner(conn, cid, int(account["id"]), force=True)
+    _set_account_current_conversation(conn, int(account["id"]), cid)
+    conn.close()
+    return JSONResponse({"conversation_id": cid, "output": f"새 대화: {cid}"})
 
 
 @app.post("/api/list_conversations")
 async def list_conversations(request: Request) -> JSONResponse:
-    session_id, new_cookie, _client_ip = _get_session_id(request)
-    from agent_core import list_all_conversations as _list_convos
-    convos = _list_convos()
-    items = []
-    for c in convos:
-        items.append({
-            "id": c.get("conversation_id", ""),
-            "topic": c.get("topic", ""),
-            "created_at": str(c.get("created_at", "")),
-            "updated_at": str(c.get("updated_at", "")),
-        })
-    resp = JSONResponse({"items": items})
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
-    return resp
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    payload = _build_conversations_payload(conn, account)
+    conn.close()
+    return JSONResponse(payload)
 
 
 @app.post("/api/clear_memory")
 async def clear_memory(request: Request) -> JSONResponse:
-    session_id, new_cookie, _client_ip = _get_session_id(request)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_permission(request, conn, "can_clear_conversations")
+    if error:
+        conn.close()
+        return error
     try:
         data = await request.json()
     except Exception:
         data = {}
     confirm_text = str(data.get("confirm_text", "")).strip()
     if confirm_text != "YES":
-        resp = JSONResponse({"error": "확인 입력이 올바르지 않습니다. YES를 입력해주세요."}, status_code=400)
-        if new_cookie:
-            _set_session_cookie(resp, request, session_id)
-        return resp
-    current_before = _read_conversation_id(_conv_file(session_id))
-    try:
-        conn = _connect_memory()
-        cleanup_pending_delete_conversations(conn)
-        processing_ids = set(list_processing_conversation_ids(conn))
-        hidden_ids = set(list_delete_requested_conversation_ids(conn))
-        preserve_ids = set(AGENT_MEMORY_CLEAR_KEEP_IDS) | processing_ids
-        deleted_count = delete_all_conversations(conn, preserve_ids=preserve_ids)
         conn.close()
-    except Exception:
-        resp = JSONResponse({"error": "모든 대화 삭제에 실패했습니다."}, status_code=500)
-        if new_cookie:
-            _set_session_cookie(resp, request, session_id)
-        return resp
-    visible_processing_ids = {conv_id for conv_id in processing_ids if conv_id not in hidden_ids}
-    if current_before and current_before in visible_processing_ids:
-        current_id = current_before
-        _write_conversation_id(_conv_file(session_id), current_id)
-    else:
-        current_id = _repair_current_conversation(session_id, items=[], create_if_missing=True, force_new=True)
-    resp = JSONResponse(
+        return _json_error("확인 입력이 올바르지 않습니다. YES를 입력해주세요.", 400)
+    items = _list_conversations(limit=1000, account=account, conn=conn)
+    deleted_count = 0
+    pending_count = 0
+    for item in items:
+        conversation_id = str(item.get("id") or "").strip()
+        if not conversation_id or conversation_id in set(AGENT_MEMORY_CLEAR_KEEP_IDS):
+            continue
+        if is_processing_conversation(conn, conversation_id):
+            run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
+            mark_cancel_requested(conn, conversation_id, run_id=run_id)
+            mark_delete_requested(conn, conversation_id, run_id=run_id)
+            pending_count += 1
+            continue
+        delete_conversation_records(conn, conversation_id)
+        _clear_accounts_current_conversation(conn, conversation_id)
+        deleted_count += 1
+    current_id = _repair_current_conversation(
+        conn,
+        account,
+        items=[],
+        create_if_missing=_account_has_permission(account, "can_send_request"),
+        force_new=bool(deleted_count),
+    )
+    conn.close()
+    return JSONResponse(
         {
             "output": "모든 대화 삭제 완료",
             "deleted_count": int(deleted_count),
-            "preserved_processing_count": len(processing_ids),
+            "preserved_processing_count": int(pending_count),
             "current": current_id,
-            "scope": "all_conversations",
+            "scope": "visible_conversations",
         }
     )
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
-    return resp
 
 
 @app.get("/api/conversations")
 def conversations(request: Request) -> JSONResponse:
-    session_id, new_cookie, _client_ip = _get_session_id(request)
-    items = _list_conversations(limit=200)
-    current_id = _repair_current_conversation(session_id, items=items, create_if_missing=True)
-    if current_id and not any(str(item.get("id") or "") == current_id for item in items):
-        items = _list_conversations(limit=200)
-        current_id = _repair_current_conversation(session_id, items=items, create_if_missing=False)
-    for item in items:
-        item["is_current"] = item.get("id") == current_id
-    payload = {"items": items, "current": current_id}
-    resp = JSONResponse(payload)
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
-    return resp
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    payload = _build_conversations_payload(conn, account)
+    conn.close()
+    return JSONResponse(payload)
 
 
 @app.post("/api/use_conversation")
 async def use_conversation(request: Request) -> JSONResponse:
-    session_id, new_cookie, _client_ip = _get_session_id(request)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
     try:
         data = await request.json()
     except Exception:
-        resp = JSONResponse({"error": "invalid json"}, status_code=400)
-        if new_cookie:
-            _set_session_cookie(resp, request, session_id)
-        return resp
+        conn.close()
+        return _json_error("invalid json", 400)
     conversation_id = str(data.get("conversation_id", "")).strip()
     if not conversation_id:
-        resp = JSONResponse({"error": "empty conversation_id"}, status_code=400)
-    elif not _conversation_exists(conversation_id):
-        resp = JSONResponse({"error": "conversation not found"}, status_code=404)
-    else:
-        try:
-            Path(_conv_file(session_id)).write_text(conversation_id, encoding="utf-8")
-        except Exception:
-            resp = JSONResponse({"error": "failed to set conversation"}, status_code=500)
-        else:
-            resp = JSONResponse({"conversation_id": conversation_id})
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
-    return resp
+        conn.close()
+        return _json_error("empty conversation_id", 400)
+    if not _conversation_exists(conversation_id, account=account, conn=conn):
+        conn.close()
+        return _json_error("conversation not found", 404)
+    _set_account_current_conversation(conn, int(account["id"]), conversation_id)
+    try:
+        Path(_account_conv_file(int(account["id"]))).write_text(conversation_id, encoding="utf-8")
+    except Exception:
+        conn.close()
+        return _json_error("failed to set conversation", 500)
+    conn.close()
+    return JSONResponse({"conversation_id": conversation_id})
 
 
 @app.get("/api/history")
@@ -1820,12 +2411,23 @@ def history(
     before_id: int | None = None,
     limit: int = 10,
 ) -> JSONResponse:
-    session_id, new_cookie, _client_ip = _get_session_id(request)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
     requested_id = (conversation_id or "").strip()
     if requested_id:
-        conv_id = requested_id if _conversation_exists(requested_id) else ""
+        conv_id = requested_id if _conversation_exists(requested_id, account=account, conn=conn) else ""
     else:
-        conv_id = _repair_current_conversation(session_id, create_if_missing=True)
+        conv_id = _repair_current_conversation(
+            conn,
+            account,
+            create_if_missing=_account_has_permission(account, "can_send_request"),
+        )
     if conv_id:
         messages, has_more, oldest_id, total_count, user_count = _get_history(
             conv_id, limit=limit, before_id=before_id
@@ -1837,11 +2439,9 @@ def history(
     last_run_id = ""
     if conv_id:
         try:
-            _mc = _connect_memory()
-            last_status = str(load_memory_kv(_mc, conv_id, "last_status") or "").strip()
+            last_status = str(load_memory_kv(conn, conv_id, "last_status") or "").strip()
             if last_status == "processing":
-                last_run_id = str(load_memory_kv(_mc, conv_id, "last_status_run_id") or "").strip()
-            _mc.close()
+                last_run_id = str(load_memory_kv(conn, conv_id, "last_status_run_id") or "").strip()
         except Exception:
             pass
     payload = {
@@ -1854,10 +2454,8 @@ def history(
         "total_messages": total_count,
         "total_user_messages": user_count,
     }
-    resp = JSONResponse(payload)
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
-    return resp
+    conn.close()
+    return JSONResponse(payload)
 
 
 @app.get("/api/history_anchor")
@@ -1866,16 +2464,20 @@ def history_anchor(
     conversation_id: str | None = None,
     at: str | None = None,
 ) -> JSONResponse:
-    session_id, new_cookie, _client_ip = _get_session_id(request)
-    conv_id = (conversation_id or "").strip() or _read_conversation_id(_conv_file(session_id))
-    when = str(at or "").strip()
-    if not conv_id or not when:
-        resp = JSONResponse({"error": "missing conversation_id or at"}, status_code=400)
-        if new_cookie:
-            _set_session_cookie(resp, request, session_id)
-        return resp
     try:
         conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    conv_id = _resolve_conversation_for_account(conn, account, conversation_id or "")
+    when = str(at or "").strip()
+    if not conv_id or not when:
+        conn.close()
+        return _json_error("missing conversation_id or at", 400)
+    try:
         cur = conn.cursor()
         cur.execute(
             """
@@ -1901,19 +2503,14 @@ LIMIT 1
             )
             row = cur.fetchone()
         cur.close()
-        conn.close()
     except Exception:
-        resp = JSONResponse({"error": "failed to locate anchor"}, status_code=500)
-        if new_cookie:
-            _set_session_cookie(resp, request, session_id)
-        return resp
+        conn.close()
+        return _json_error("failed to locate anchor", 500)
     if not row:
-        resp = JSONResponse({"error": "no messages"}, status_code=404)
-    else:
-        resp = JSONResponse({"message_id": int(row[0]), "created_at": str(row[1])})
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
-    return resp
+        conn.close()
+        return _json_error("no messages", 404)
+    conn.close()
+    return JSONResponse({"message_id": int(row[0]), "created_at": str(row[1])})
 
 
 @app.get("/api/history_dates")
@@ -1922,17 +2519,19 @@ def history_dates(
     conversation_id: str | None = None,
 ) -> JSONResponse:
     """Return message timestamps grouped by date for calendar highlighting."""
-    session_id, new_cookie, _client_ip = _get_session_id(request)
-    conv_id = (conversation_id or "").strip() or _read_conversation_id(
-        _conv_file(session_id)
-    )
-    if not conv_id:
-        resp = JSONResponse({"dates": {}, "first": None, "last": None})
-        if new_cookie:
-            _set_session_cookie(resp, request, session_id)
-        return resp
     try:
         conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    conv_id = _resolve_conversation_for_account(conn, account, conversation_id or "")
+    if not conv_id:
+        conn.close()
+        return JSONResponse({"dates": {}, "first": None, "last": None})
+    try:
         cur = conn.cursor()
         cur.execute(
             "SELECT DATE(created_at) AS d,"
@@ -1945,12 +2544,9 @@ def history_dates(
         )
         rows = cur.fetchall() or []
         cur.close()
-        conn.close()
     except Exception:
-        resp = JSONResponse({"dates": {}, "first": None, "last": None})
-        if new_cookie:
-            _set_session_cookie(resp, request, session_id)
-        return resp
+        conn.close()
+        return JSONResponse({"dates": {}, "first": None, "last": None})
     dates: dict[str, list[str]] = {}
     for row in rows:
         day_str = str(row[0])
@@ -1958,160 +2554,153 @@ def history_dates(
         dates[day_str] = sorted(set(times))
     first = str(rows[0][0]) if rows else None
     last = str(rows[-1][0]) if rows else None
-    resp = JSONResponse({"dates": dates, "first": first, "last": last})
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
-    return resp
+    conn.close()
+    return JSONResponse({"dates": dates, "first": first, "last": last})
 
 
 @app.post("/api/delete_conversation")
 async def delete_conversation(request: Request) -> JSONResponse:
-    session_id, new_cookie, _client_ip = _get_session_id(request)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_permission(request, conn, "can_delete_conversation")
+    if error:
+        conn.close()
+        return error
     try:
         data = await request.json()
     except Exception:
-        resp = JSONResponse({"error": "invalid json"}, status_code=400)
-        if new_cookie:
-            _set_session_cookie(resp, request, session_id)
-        return resp
+        conn.close()
+        return _json_error("invalid json", 400)
     conversation_id = str(data.get("conversation_id", "")).strip()
     force = bool(data.get("force"))
     confirm_text = str(data.get("confirm_text", "")).strip()
     if not conversation_id:
-        resp = JSONResponse({"error": "empty conversation_id"}, status_code=400)
-    else:
-        try:
-            conn = _connect_memory()
-            cleanup_pending_delete_conversations(conn)
-            if not _conversation_exists(conversation_id):
+        conn.close()
+        return _json_error("empty conversation_id", 400)
+    if not _conversation_exists(conversation_id, account=account, conn=conn):
+        conn.close()
+        return _json_error("conversation not found", 404)
+    try:
+        cleanup_pending_delete_conversations(conn)
+        if is_processing_conversation(conn, conversation_id):
+            if not force:
                 conn.close()
-                resp = JSONResponse({"error": "conversation not found"}, status_code=404)
-            elif is_processing_conversation(conn, conversation_id):
-                if not force:
-                    conn.close()
-                    resp = JSONResponse({"error": "처리 중 대화입니다. 강제 삭제하려면 확인 입력이 필요합니다."}, status_code=409)
-                elif confirm_text != "삭제":
-                    conn.close()
-                    resp = JSONResponse({"error": "확인 입력이 올바르지 않습니다. 삭제를 입력해주세요."}, status_code=400)
-                else:
-                    run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
-                    mark_cancel_requested(conn, conversation_id, run_id=run_id)
-                    mark_delete_requested(conn, conversation_id, run_id=run_id)
-                    conn.close()
-                    items = _list_conversations(limit=200)
-                    current_after = _repair_current_conversation(session_id, items=items, create_if_missing=True)
-                    resp = JSONResponse({"deleted_pending": conversation_id, "current": current_after})
-            else:
-                delete_conversation_records(conn, conversation_id)
+                return _json_error("처리 중 대화입니다. 강제 삭제하려면 확인 입력이 필요합니다.", 409)
+            if confirm_text != "삭제":
                 conn.close()
-                items = _list_conversations(limit=200)
-                current_after = _repair_current_conversation(session_id, items=items, create_if_missing=True)
-                resp = JSONResponse({"deleted": conversation_id, "current": current_after})
-        except Exception:
-            resp = JSONResponse({"error": "failed to delete conversation"}, status_code=500)
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
-    return resp
+                return _json_error("확인 입력이 올바르지 않습니다. 삭제를 입력해주세요.", 400)
+            run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
+            mark_cancel_requested(conn, conversation_id, run_id=run_id)
+            mark_delete_requested(conn, conversation_id, run_id=run_id)
+            _clear_accounts_current_conversation(conn, conversation_id)
+            current_after = _repair_current_conversation(
+                conn,
+                account,
+                items=[],
+                create_if_missing=_account_has_permission(account, "can_send_request"),
+            )
+            conn.close()
+            return JSONResponse({"deleted_pending": conversation_id, "current": current_after})
+        delete_conversation_records(conn, conversation_id)
+        _clear_accounts_current_conversation(conn, conversation_id)
+        current_after = _repair_current_conversation(
+            conn,
+            account,
+            items=[],
+            create_if_missing=_account_has_permission(account, "can_send_request"),
+        )
+        conn.close()
+        return JSONResponse({"deleted": conversation_id, "current": current_after})
+    except Exception:
+        conn.close()
+        return _json_error("failed to delete conversation", 500)
 
 
 @app.post("/api/cancel")
 async def cancel_request(request: Request) -> JSONResponse:
-    session_id, new_cookie, _client_ip = _get_session_id(request)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_permission(request, conn, "can_cancel_request")
+    if error:
+        conn.close()
+        return error
     try:
         data = await request.json()
     except Exception:
-        resp = JSONResponse({"error": "invalid json"}, status_code=400)
-        if new_cookie:
-            _set_session_cookie(resp, request, session_id)
-        return resp
-    conversation_id = str(data.get("conversation_id", "")).strip() or _read_conversation_id(
-        _conv_file(session_id)
+        conn.close()
+        return _json_error("invalid json", 400)
+    conversation_id = _resolve_conversation_for_account(
+        conn,
+        account,
+        str(data.get("conversation_id", "")).strip(),
     )
     if not conversation_id:
-        resp = JSONResponse({"error": "empty conversation_id"}, status_code=400)
-        if new_cookie:
-            _set_session_cookie(resp, request, session_id)
-        return resp
+        conn.close()
+        return _json_error("empty conversation_id", 400)
     try:
-        conn = _connect_memory()
         run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
         mark_cancel_requested(conn, conversation_id, run_id=run_id)
-        conn.close()
     except Exception:
-        resp = JSONResponse({"error": "cancel failed"}, status_code=500)
-        if new_cookie:
-            _set_session_cookie(resp, request, session_id)
-        return resp
-    resp = JSONResponse({"conversation_id": conversation_id, "run_id": run_id, "output": "요청 취소를 진행합니다."})
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
-    return resp
+        conn.close()
+        return _json_error("cancel failed", 500)
+    conn.close()
+    return JSONResponse({"conversation_id": conversation_id, "run_id": run_id, "output": "요청 취소를 진행합니다."})
 
 
 @app.post("/api/finalize")
 async def finalize_request(request: Request) -> JSONResponse:
     """사용자가 '즉시 답변'을 요청 — 현재 루프를 마무리하고 텍스트 답변 생성."""
-    session_id, new_cookie, _client_ip = _get_session_id(request)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_permission(request, conn, "can_finalize_request")
+    if error:
+        conn.close()
+        return error
     try:
         data = await request.json()
     except Exception:
-        resp = JSONResponse({"error": "invalid json"}, status_code=400)
-        if new_cookie:
-            _set_session_cookie(resp, request, session_id)
-        return resp
-    conversation_id = str(data.get("conversation_id", "")).strip() or _read_conversation_id(
-        _conv_file(session_id)
+        conn.close()
+        return _json_error("invalid json", 400)
+    conversation_id = _resolve_conversation_for_account(
+        conn,
+        account,
+        str(data.get("conversation_id", "")).strip(),
     )
     if not conversation_id:
-        resp = JSONResponse({"error": "empty conversation_id"}, status_code=400)
-        if new_cookie:
-            _set_session_cookie(resp, request, session_id)
-        return resp
+        conn.close()
+        return _json_error("empty conversation_id", 400)
     try:
-        conn = _connect_memory()
         run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
         mark_finalize_requested(conn, conversation_id, run_id=run_id)
-        conn.close()
     except Exception:
-        resp = JSONResponse({"error": "finalize failed"}, status_code=500)
-        if new_cookie:
-            _set_session_cookie(resp, request, session_id)
-        return resp
-    resp = JSONResponse({"conversation_id": conversation_id, "run_id": run_id, "output": "즉시 답변을 요청합니다."})
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
-    return resp
+        conn.close()
+        return _json_error("finalize failed", 500)
+    conn.close()
+    return JSONResponse({"conversation_id": conversation_id, "run_id": run_id, "output": "즉시 답변을 요청합니다."})
 
 
 @app.get("/api/progress")
 async def progress(request: Request, conversation_id: str = "", after_step: int = 0) -> JSONResponse:
     """처리 중인 대화의 실시간 step 진행 상황을 반환."""
-    session_id, new_cookie, _client_ip = _get_session_id(request)
-    cid = conversation_id.strip() or _read_conversation_id(_conv_file(session_id))
     empty = JSONResponse({"steps": [], "status": "", "step_count": 0})
     try:
         conn = _connect_memory()
     except Exception:
-        if new_cookie:
-            _set_session_cookie(empty, request, session_id)
         return empty
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    cid = _resolve_conversation_for_account(conn, account, conversation_id.strip())
     try:
-        # cid가 없으면 현재 processing 상태인 대화를 자동 탐지
-        if not cid:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT ConversationId FROM AgentMemoryKv "
-                "WHERE `Key` = 'last_status' AND `Value` = 'processing' "
-                "ORDER BY UpdatedAt DESC LIMIT 1"
-            )
-            row = cur.fetchone()
-            cur.close()
-            if row:
-                cid = str(row[0] or "").strip()
         if not cid:
             conn.close()
-            if new_cookie:
-                _set_session_cookie(empty, request, session_id)
             return empty
         status = str(load_memory_kv(conn, cid, "last_status") or "").strip()
         status_at = str(load_memory_kv(conn, cid, "last_status_at") or "").strip()
@@ -2124,10 +2713,8 @@ async def progress(request: Request, conversation_id: str = "", after_step: int 
             conn.close()
         except Exception:
             pass
-        if new_cookie:
-            _set_session_cookie(empty, request, session_id)
         return empty
-    resp = JSONResponse({
+    return JSONResponse({
         "steps": new_steps,
         "status": status,
         "status_at": status_at,
@@ -2135,27 +2722,37 @@ async def progress(request: Request, conversation_id: str = "", after_step: int 
         "run_id": run_id,
         "conversation_id": cid,
     })
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
-    return resp
 
 
 @app.get("/api/suggestions")
-def suggestions(limit: int = 40) -> JSONResponse:
+def suggestions(request: Request, limit: int = 40) -> JSONResponse:
     try:
         conn = _connect_memory()
     except Exception:
         return JSONResponse({"items": []})
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return JSONResponse({"items": []})
+    if not _account_has_permission(account, "can_send_request"):
+        conn.close()
+        return JSONResponse({"items": []})
+    conv_ids = [item["id"] for item in _list_conversations(limit=200, account=account, conn=conn)]
+    if not conv_ids:
+        conn.close()
+        return JSONResponse({"items": []})
+    placeholders = ",".join(["%s"] * len(conv_ids))
     cur = conn.cursor()
     cur.execute(
-        """
+        f"""
 SELECT Content
 FROM AgentMemoryMessages
 WHERE Role = 'user'
+  AND ConversationId IN ({placeholders})
 ORDER BY CreatedAt DESC
 LIMIT %s
         """,
-        (int(limit) * 3,),
+        tuple(conv_ids) + (int(limit) * 3,),
     )
     rows = cur.fetchall() or []
     cur.close()
@@ -2176,7 +2773,16 @@ LIMIT %s
 
 
 @app.get("/api/file")
-def get_file(path: str, max_bytes: int = 0):
+def get_file(request: Request, path: str, max_bytes: int = 0):
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    conn.close()
     safe = _safe_shared_path(path)
     if not safe or not safe.exists():
         return JSONResponse({"error": "file not found"}, status_code=404)
@@ -2195,325 +2801,261 @@ def get_file(path: str, max_bytes: int = 0):
 # Auth endpoints
 # ---------------------------------------------------------------------------
 
-def _sanitize_input(value: str, max_len: int = 128) -> str:
-    """Strip and truncate user-supplied text."""
-    return str(value or "").strip()[:max_len]
-
-
-@app.post("/api/auth/login")
-async def auth_login(request: Request) -> JSONResponse:
-    session_id, new_cookie, _client_ip = _get_session_id(request)
+@app.post("/api/auth/signup")
+async def auth_signup(request: Request) -> JSONResponse:
     try:
         data = await request.json()
     except Exception:
         return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
-
-    username = _sanitize_input(data.get("username", ""), 64)
-    display_name = _sanitize_input(data.get("display_name", ""), 128)
-    role = _sanitize_input(data.get("role", ""), 32)
-    purpose = _sanitize_input(data.get("purpose", ""), 1024)
-
-    if not username:
-        return JSONResponse({"ok": False, "error": "username is required"}, status_code=400)
-
+    username = _sanitize_username(data.get("username", ""))
+    password = str(data.get("password", "") or "")
+    confirm_password = str(data.get("confirm_password", "") or "")
+    if not _is_valid_username(username):
+        return JSONResponse({"ok": False, "error": "사용자 ID는 3~64자 영문/숫자/._- 조합이어야 합니다."}, status_code=400)
+    if not _is_valid_password(password):
+        return JSONResponse({"ok": False, "error": "비밀번호는 10~128자여야 합니다."}, status_code=400)
+    if confirm_password and password != confirm_password:
+        return JSONResponse({"ok": False, "error": "비밀번호 확인이 일치하지 않습니다."}, status_code=400)
     try:
         conn = _connect_memory()
     except Exception:
         return JSONResponse({"ok": False, "error": "db connection failed"}, status_code=500)
-
     try:
         cur = conn.cursor()
+        cur.execute("SELECT 1 FROM WebAccounts WHERE Username = %s LIMIT 1", (username,))
+        if cur.fetchone():
+            cur.close()
+            conn.close()
+            return JSONResponse({"ok": False, "error": "이미 존재하는 사용자 ID입니다."}, status_code=409)
+        password_hash = _hash_password(password)
         cur.execute(
             """
-            INSERT INTO WebUsers (Username, DisplayName, Role, Purpose, SessionId)
-            VALUES (%s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                DisplayName = VALUES(DisplayName),
-                Role = VALUES(Role),
-                Purpose = VALUES(Purpose),
-                SessionId = VALUES(SessionId),
-                IsActive = 1
+INSERT INTO WebAccounts (
+    Username,
+    PasswordHash,
+    Role,
+    CanSendRequest,
+    CanCancelRequest,
+    CanFinalizeRequest,
+    CanDeleteConversation,
+    CanClearConversations,
+    IsActive
+) VALUES (%s, %s, %s, 0, 0, 0, 0, 0, 1)
             """,
-            (username, display_name, role, purpose, session_id),
+            (username, password_hash, ACCOUNT_ROLE_PENDING),
         )
-        cur.execute(
-            "SELECT Id, Username, DisplayName, Role, Purpose, SessionId, CreatedAt, LastLoginAt, IsActive "
-            "FROM WebUsers WHERE Username = %s",
-            (username,),
-        )
-        row = cur.fetchone()
+        account_id = int(cur.lastrowid or 0)
         cur.close()
+        session_token = _issue_auth_session(conn, account_id, request)
+        account = _load_account_by_id(conn, account_id)
     except Exception as exc:
         conn.close()
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
     conn.close()
+    resp = JSONResponse({"ok": True, "user": _serialize_account(account)})
+    _set_session_cookie(resp, request, session_token)
+    return resp
 
-    if not row:
-        return JSONResponse({"ok": False, "error": "user not found after upsert"}, status_code=500)
 
-    user = {
-        "id": row[0],
-        "username": row[1],
-        "display_name": row[2],
-        "role": row[3],
-        "purpose": row[4],
-        "session_id": row[5],
-        "created_at": str(row[6]) if row[6] else None,
-        "last_login_at": str(row[7]) if row[7] else None,
-        "is_active": bool(row[8]),
-    }
-    resp = JSONResponse({"ok": True, "user": user})
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
+@app.post("/api/auth/login")
+async def auth_login(request: Request) -> JSONResponse:
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
+    username = _sanitize_username(data.get("username", ""))
+    password = str(data.get("password", "") or "")
+    if not username or not password:
+        return JSONResponse({"ok": False, "error": "username and password are required"}, status_code=400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "db connection failed"}, status_code=500)
+    account = _load_account_by_username(conn, username)
+    if not account or not bool(account.get("is_active")):
+        conn.close()
+        return JSONResponse({"ok": False, "error": "로그인에 실패했습니다."}, status_code=401)
+    if not _verify_password(password, str(account.get("password_hash") or "")):
+        conn.close()
+        return JSONResponse({"ok": False, "error": "로그인에 실패했습니다."}, status_code=401)
+    session_token = _issue_auth_session(conn, int(account["id"]), request)
+    account = _load_account_by_id(conn, int(account["id"]))
+    conn.close()
+    resp = JSONResponse({"ok": True, "user": _serialize_account(account)})
+    _set_session_cookie(resp, request, session_token)
     return resp
 
 
 @app.get("/api/auth/me")
 async def auth_me(request: Request) -> JSONResponse:
-    session_id, new_cookie, _client_ip = _get_session_id(request)
     try:
         conn = _connect_memory()
     except Exception:
         return JSONResponse({"ok": False})
-
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT Id, Username, DisplayName, Role, Purpose, SessionId, CreatedAt, LastLoginAt, IsActive "
-            "FROM WebUsers WHERE SessionId = %s AND IsActive = 1 LIMIT 1",
-            (session_id,),
-        )
-        row = cur.fetchone()
-        cur.close()
-    except Exception:
-        conn.close()
-        return JSONResponse({"ok": False})
+    account = _get_authenticated_account(conn, request)
     conn.close()
-
-    if not row:
-        resp = JSONResponse({"ok": False})
-    else:
-        user = {
-            "id": row[0],
-            "username": row[1],
-            "display_name": row[2],
-            "role": row[3],
-            "purpose": row[4],
-            "session_id": row[5],
-            "created_at": str(row[6]) if row[6] else None,
-            "last_login_at": str(row[7]) if row[7] else None,
-            "is_active": bool(row[8]),
-        }
-        resp = JSONResponse({"ok": True, "user": user})
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
-    return resp
+    if not account:
+        return JSONResponse({"ok": False})
+    return JSONResponse({"ok": True, "user": _serialize_account(account)})
 
 
 @app.post("/api/auth/logout")
 async def auth_logout(request: Request) -> JSONResponse:
-    session_id, new_cookie, _client_ip = _get_session_id(request)
+    token = _sanitize_session_id(request.cookies.get(SESSION_COOKIE, ""))
     try:
         conn = _connect_memory()
-    except Exception:
-        return JSONResponse({"ok": True})
-
-    try:
         cur = conn.cursor()
-        cur.execute(
-            "UPDATE WebUsers SET SessionId = NULL WHERE SessionId = %s",
-            (session_id,),
-        )
+        if token:
+            cur.execute(
+                "UPDATE WebAuthSessions SET IsRevoked = 1 WHERE SessionTokenHash = %s",
+                (_hash_session_token(token),),
+            )
         cur.close()
+        conn.close()
     except Exception:
         pass
-    conn.close()
-
     resp = JSONResponse({"ok": True})
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
+    _clear_session_cookie(resp, request)
     return resp
 
 
-# ---------------------------------------------------------------------------
-# Keyword learning endpoints
-# ---------------------------------------------------------------------------
-
-
-@app.get("/api/keywords")
-async def list_keywords(request: Request, category: str = "", q: str = "") -> JSONResponse:
+@app.get("/api/admin/accounts")
+async def admin_accounts(request: Request) -> JSONResponse:
     try:
         conn = _connect_memory()
     except Exception:
-        return JSONResponse({"ok": False, "error": "db connection failed"}, status_code=500)
-
-    try:
-        cur = conn.cursor()
-        query = (
-            "SELECT Id, Keyword, Category, Definition, Examples, CreatedBy, CreatedAt, UpdatedAt "
-            "FROM WebKeywords WHERE IsActive = 1"
-        )
-        params: list[Any] = []
-
-        cat = _sanitize_input(category, 64)
-        search = _sanitize_input(q, 128)
-
-        if cat:
-            query += " AND Category = %s"
-            params.append(cat)
-        if search:
-            query += " AND (Keyword LIKE %s OR Definition LIKE %s)"
-            like = f"%{search}%"
-            params.extend([like, like])
-
-        query += " ORDER BY Keyword ASC LIMIT 500"
-        cur.execute(query, params)
-        rows = cur.fetchall() or []
-        cur.close()
-    except Exception as exc:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
         conn.close()
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+        return error
+    if _normalize_role(account.get("role")) != ACCOUNT_ROLE_ADMIN:
+        conn.close()
+        return _json_error("관리자 권한이 필요합니다.", 403)
+    accounts = _list_admin_accounts(conn)
+    summary = {
+        "pending": sum(1 for item in accounts if item.get("role") == ACCOUNT_ROLE_PENDING and item.get("is_active")),
+        "operator": sum(1 for item in accounts if item.get("role") == ACCOUNT_ROLE_OPERATOR and item.get("is_active")),
+        "admin": sum(1 for item in accounts if item.get("role") == ACCOUNT_ROLE_ADMIN and item.get("is_active")),
+        "disabled": sum(1 for item in accounts if not item.get("is_active")),
+    }
     conn.close()
-
-    items = []
-    for r in rows:
-        items.append({
-            "id": r[0],
-            "keyword": r[1],
-            "category": r[2],
-            "definition": r[3],
-            "examples": r[4],
-            "created_by": r[5],
-            "created_at": str(r[6]) if r[6] else None,
-            "updated_at": str(r[7]) if r[7] else None,
-        })
-    return JSONResponse({"ok": True, "keywords": items})
+    return JSONResponse({"accounts": accounts, "summary": summary})
 
 
-@app.post("/api/keywords")
-async def upsert_keyword(request: Request) -> JSONResponse:
+@app.post("/api/admin/accounts/{account_id}")
+async def admin_update_account(account_id: int, request: Request) -> JSONResponse:
+    if account_id <= 0:
+        return _json_error("invalid account_id", 400)
     try:
         data = await request.json()
     except Exception:
-        return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
-
-    keyword = _sanitize_input(data.get("keyword", ""), 128)
-    category = _sanitize_input(data.get("category", "general"), 64) or "general"
-    definition = _sanitize_input(data.get("definition", ""), 4096)
-    examples = _sanitize_input(data.get("examples", ""), 4096)
-
-    if not keyword:
-        return JSONResponse({"ok": False, "error": "keyword is required"}, status_code=400)
-    if not definition:
-        return JSONResponse({"ok": False, "error": "definition is required"}, status_code=400)
-
-    # Resolve current user for CreatedBy
-    session_id, new_cookie, _client_ip = _get_session_id(request)
-    created_by = ""
+        return _json_error("invalid json", 400)
     try:
         conn = _connect_memory()
     except Exception:
-        return JSONResponse({"ok": False, "error": "db connection failed"}, status_code=500)
-
-    try:
+        return _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if _normalize_role(actor.get("role")) != ACCOUNT_ROLE_ADMIN:
+        conn.close()
+        return _json_error("관리자 권한이 필요합니다.", 403)
+    target = _load_account_by_id(conn, account_id)
+    if not target:
+        conn.close()
+        return _json_error("account not found", 404)
+    next_role = _normalize_role(data.get("role", target.get("role")))
+    is_active = bool(data.get("is_active", target.get("is_active")))
+    if int(actor["id"]) == int(account_id) and not is_active:
+        conn.close()
+        return _json_error("현재 로그인한 관리자 계정은 비활성화할 수 없습니다.", 400)
+    if _normalize_role(target.get("role")) == ACCOUNT_ROLE_ADMIN and (next_role != ACCOUNT_ROLE_ADMIN or not is_active):
         cur = conn.cursor()
         cur.execute(
-            "SELECT Username FROM WebUsers WHERE SessionId = %s AND IsActive = 1 LIMIT 1",
-            (session_id,),
-        )
-        user_row = cur.fetchone()
-        if user_row:
-            created_by = user_row[0]
-
-        cur.execute(
             """
-            INSERT INTO WebKeywords (Keyword, Category, Definition, Examples, CreatedBy)
-            VALUES (%s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                Definition = VALUES(Definition),
-                Examples = VALUES(Examples),
-                CreatedBy = VALUES(CreatedBy),
-                IsActive = 1
+SELECT COUNT(*)
+FROM WebAccounts
+WHERE Role = %s
+  AND IsActive = 1
+  AND Id <> %s
             """,
-            (keyword, category, definition, examples, created_by),
+            (ACCOUNT_ROLE_ADMIN, int(account_id)),
         )
-        cur.execute(
-            "SELECT Id, Keyword, Category, Definition, Examples, CreatedBy, CreatedAt, UpdatedAt "
-            "FROM WebKeywords WHERE Keyword = %s AND Category = %s",
-            (keyword, category),
-        )
-        row = cur.fetchone()
+        remaining_admins = int((cur.fetchone() or (0,))[0] or 0)
         cur.close()
-    except Exception as exc:
-        conn.close()
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+        if remaining_admins == 0:
+            conn.close()
+            return _json_error("활성 관리자 계정은 최소 1개 이상 유지되어야 합니다.", 400)
+    if next_role == ACCOUNT_ROLE_ADMIN:
+        permissions = _default_permissions_for_role(next_role)
+    elif next_role == ACCOUNT_ROLE_OPERATOR:
+        provided = data.get("permissions") if isinstance(data.get("permissions"), dict) else {}
+        permissions = _default_permissions_for_role(next_role)
+        for field in ACCOUNT_PERMISSION_FIELDS:
+            if field in provided:
+                permissions[field] = bool(provided.get(field))
+    else:
+        permissions = _default_permissions_for_role(ACCOUNT_ROLE_PENDING)
+    cur = conn.cursor()
+    cur.execute(
+        """
+UPDATE WebAccounts
+SET Role = %s,
+    IsActive = %s,
+    CanSendRequest = %s,
+    CanCancelRequest = %s,
+    CanFinalizeRequest = %s,
+    CanDeleteConversation = %s,
+    CanClearConversations = %s,
+    ApprovedByAccountId = %s,
+    ApprovedAt = CASE
+        WHEN %s = 'pending' THEN NULL
+        ELSE COALESCE(ApprovedAt, CURRENT_TIMESTAMP)
+    END
+WHERE Id = %s
+        """,
+        (
+            next_role,
+            int(is_active),
+            int(permissions["can_send_request"]),
+            int(permissions["can_cancel_request"]),
+            int(permissions["can_finalize_request"]),
+            int(permissions["can_delete_conversation"]),
+            int(permissions["can_clear_conversations"]),
+            int(actor["id"]) if next_role != ACCOUNT_ROLE_PENDING else None,
+            next_role,
+            int(account_id),
+        ),
+    )
+    if not is_active:
+        cur.execute(
+            "UPDATE WebAuthSessions SET IsRevoked = 1 WHERE AccountId = %s",
+            (int(account_id),),
+        )
+    cur.close()
+    updated = _load_account_by_id(conn, account_id)
     conn.close()
+    return JSONResponse({"ok": True, "account": _serialize_account(updated)})
 
-    if not row:
-        return JSONResponse({"ok": False, "error": "keyword not found after upsert"}, status_code=500)
 
-    kw = {
-        "id": row[0],
-        "keyword": row[1],
-        "category": row[2],
-        "definition": row[3],
-        "examples": row[4],
-        "created_by": row[5],
-        "created_at": str(row[6]) if row[6] else None,
-        "updated_at": str(row[7]) if row[7] else None,
-    }
-    resp = JSONResponse({"ok": True, "keyword": kw})
-    if new_cookie:
-        _set_session_cookie(resp, request, session_id)
-    return resp
+@app.get("/api/keywords")
+async def list_keywords_removed(*_args, **_kwargs) -> JSONResponse:
+    return _json_error("Keyword Management는 제거되었습니다.", 410)
+
+
+@app.post("/api/keywords")
+async def upsert_keyword_removed(*_args, **_kwargs) -> JSONResponse:
+    return _json_error("Keyword Management는 제거되었습니다.", 410)
 
 
 @app.delete("/api/keywords/{keyword_id}")
-async def delete_keyword(keyword_id: int) -> JSONResponse:
-    if keyword_id <= 0:
-        return JSONResponse({"ok": False, "error": "invalid keyword_id"}, status_code=400)
-
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return JSONResponse({"ok": False, "error": "db connection failed"}, status_code=500)
-
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE WebKeywords SET IsActive = 0 WHERE Id = %s",
-            (keyword_id,),
-        )
-        affected = cur.rowcount
-        cur.close()
-    except Exception as exc:
-        conn.close()
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
-    conn.close()
-
-    if not affected:
-        return JSONResponse({"ok": False, "error": "keyword not found"}, status_code=404)
-    return JSONResponse({"ok": True})
+async def delete_keyword_removed(keyword_id: int) -> JSONResponse:
+    _ = keyword_id
+    return _json_error("Keyword Management는 제거되었습니다.", 410)
 
 
 @app.get("/api/keywords/categories")
-async def keyword_categories() -> JSONResponse:
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return JSONResponse({"ok": False, "error": "db connection failed"}, status_code=500)
-
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT DISTINCT Category FROM WebKeywords WHERE IsActive = 1 ORDER BY Category ASC"
-        )
-        rows = cur.fetchall() or []
-        cur.close()
-    except Exception as exc:
-        conn.close()
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
-    conn.close()
-
-    categories = [r[0] for r in rows]
-    return JSONResponse({"ok": True, "categories": categories})
+async def keyword_categories_removed() -> JSONResponse:
+    return _json_error("Keyword Management는 제거되었습니다.", 410)

@@ -23,7 +23,8 @@
 ## 실행
 1. 현재 디렉토리에서 작업한다.
 2. `.env`가 로컬 전용 파일이며 원본 운영 의미를 유지하는지 점검한다.
-3. `AGENT_DISABLE_REMOTE_FALLBACK=1` 상태라면 `llm-shared` 네트워크에 `local-llm-gateway`가 연결돼 있는지 확인한다.
+3. `ENABLE_LOCAL_LLM=1` 상태라면 `make start` 전에 `llm-shared` 외부 네트워크가 생성 가능한지 확인한다.
+4. `make start`는 `local-llm-gateway`를 함께 기동하고, `auto/edge/core/code` alias 모델을 Ollama에 준비한다.
 4. `ENABLE_MCP=1` 상태라면 호스트 포트 `28000`이 비어 있는지 확인한다.
 5. `make start`
 6. `make status`
@@ -53,5 +54,6 @@
 - 현재 단계 검증은 구조/경로/기동 확인까지만 반영했다.
 - 엄격한 도메인 검증 시나리오는 각 feature의 `docs/TEST.md`를 정본으로 후속 작성한다.
 - `.env.example`는 대체 기본값 파일이 아니라, 원본 `.env` 구조를 민감값 없이 보여주는 샘플이다.
-- 최근 검증 기준으로 `make ask`는 `local-llm-gateway` 부재 시 LLM 연결 오류로 실패할 수 있다.
+- 2026-04-15 검증 기준으로 `make start` 또는 `make local-llm-up`은 `local-llm-gateway`를 `llm-shared`에 연결하고 Ollama alias 모델(`auto`, `edge`, `core`, `code`)을 준비한다.
+- 2026-04-15 검증 기준으로 Web UI `GET /api/session`은 `local_llm_enabled=true`를 반환했고, `POST /api/ask`가 API 키 없이 `model=auto`로 성공했다.
 - 최근 검증 기준으로 `ENABLE_MCP=1`일 때 호스트 `28000` 포트가 이미 사용 중이면 `make start` 마지막 단계에서 `mcp` 기동이 차단될 수 있다.
