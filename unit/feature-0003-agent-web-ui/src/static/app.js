@@ -4,7 +4,6 @@ const signupFormEl = document.getElementById("signupForm");
 const loginErrorEl = document.getElementById("loginError");
 const signupErrorEl = document.getElementById("signupError");
 const openAdminBtn = document.getElementById("openAdminBtn");
-const openVaultBtn = document.getElementById("openVaultBtn");
 const vaultModelEl = document.getElementById("vaultModel");
 const vaultCipherEl = document.getElementById("vaultCipher");
 const vaultPassphraseEl = document.getElementById("vaultPassphrase");
@@ -931,9 +930,6 @@ async function initialize() {
   });
   loginFormEl.addEventListener("submit", handleLogin);
   signupFormEl.addEventListener("submit", handleSignup);
-  // 탑바 "API Vault" 버튼 → 프로필 드로어 vault 탭으로 단축
-  openVaultBtn.addEventListener("click", () => openProfile("vault"));
-
   // 프로필 드로어 open/close
   openProfileBtn.addEventListener("click", () => openProfile("account"));
   closeProfileBtn.addEventListener("click", closeProfile);
