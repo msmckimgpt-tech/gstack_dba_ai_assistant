@@ -813,9 +813,10 @@ def llm_plan(
         "schema_meta": compact_schema_meta,
     }
 
+    _plan_model = AGENT_PLAN_MODEL or OPENAI_MODEL
     resp = _openai_chat_completion_with_deadline(
         client,
-        OPENAI_MODEL,
+        _plan_model,
         [
             {"role": "system", "content": SYSTEM_PROMPT_MCP if AGENT_MODE == "mcp" else SYSTEM_PROMPT_SQL},
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
@@ -823,7 +824,7 @@ def llm_plan(
         timeout_sec=timeout_sec,
     )
     if resp is None:
-        _log_llm_warn("llm_plan", "no_response", f"model={OPENAI_MODEL}")
+        _log_llm_warn("llm_plan", "no_response", f"model={_plan_model}")
         return None
     try:
         text = (resp.choices[0].message.content or "").strip()
@@ -833,7 +834,7 @@ def llm_plan(
 
     result = _extract_json_object(text)
     if result is None and text:
-        _log_llm_warn("llm_plan", "json_extract_failed", f"model={OPENAI_MODEL} len={len(text)} head={text[:200]}")
+        _log_llm_warn("llm_plan", "json_extract_failed", f"model={_plan_model} len={len(text)} head={text[:200]}")
     return result
 
 
@@ -887,9 +888,10 @@ def llm_plan_rag_priority(
     }
     prompt = RAG_PRIORITY_PROMPT_MCP if AGENT_MODE == "mcp" else RAG_PRIORITY_PROMPT_SQL
 
+    _plan_model = AGENT_PLAN_MODEL or OPENAI_MODEL
     resp = _openai_chat_completion_with_deadline(
         client,
-        OPENAI_MODEL,
+        _plan_model,
         [
             {"role": "system", "content": prompt},
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
@@ -897,7 +899,7 @@ def llm_plan_rag_priority(
         timeout_sec=timeout_sec,
     )
     if resp is None:
-        _log_llm_warn("llm_plan_rag_priority", "no_response", f"model={OPENAI_MODEL}")
+        _log_llm_warn("llm_plan_rag_priority", "no_response", f"model={_plan_model}")
         return None
     try:
         text = (resp.choices[0].message.content or "").strip()
@@ -1326,15 +1328,16 @@ def llm_validate_step(payload: dict[str, Any]) -> dict[str, Any] | None:
     if client is None:
         return None
 
+    _validation_model = AGENT_STEP_GRADE_MODEL or AGENT_SUMMARY_MODEL or OPENAI_MODEL
     try:
         resp = client.chat.completions.create(
-            model=OPENAI_MODEL,
+            model=_validation_model,
             messages=[
                 {"role": "system", "content": VALIDATION_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ],
-            **_max_tokens_kwargs(OPENAI_MODEL, "validate"),
-            **_temperature_kwargs(OPENAI_MODEL),
+            **_max_tokens_kwargs(_validation_model, "validate"),
+            **_temperature_kwargs(_validation_model),
             timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
         )
         text = (resp.choices[0].message.content or "").strip()
@@ -1350,15 +1353,16 @@ def llm_update_summary(payload: dict[str, Any]) -> str | None:
     if client is None:
         return None
 
+    _summary_model = AGENT_SUMMARY_MODEL or OPENAI_MODEL
     try:
         resp = client.chat.completions.create(
-            model=OPENAI_MODEL,
+            model=_summary_model,
             messages=[
                 {"role": "system", "content": SUMMARY_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ],
-            **_max_tokens_kwargs(OPENAI_MODEL, "summary"),
-            **_temperature_kwargs(OPENAI_MODEL),
+            **_max_tokens_kwargs(_summary_model, "summary"),
+            **_temperature_kwargs(_summary_model),
             timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
         )
         text = (resp.choices[0].message.content or "").strip()
@@ -1425,16 +1429,17 @@ def llm_classify_origin_shift(origin: str, current: str) -> str:
     client = _get_openai_client(timeout_sec=_classify_timeout)
     if client is None:
         return "continue"
+    _classify_model = AGENT_TASK_CLASSIFY_MODEL or AGENT_PLAN_MODEL or OPENAI_MODEL
     payload = {"origin": origin[:500], "current": current[:500]}
     try:
         resp = client.chat.completions.create(
-            model=OPENAI_MODEL,
+            model=_classify_model,
             messages=[
                 {"role": "system", "content": ORIGIN_SHIFT_CLASSIFY_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ],
-            **_max_tokens_kwargs(OPENAI_MODEL, "summary"),
-            **_temperature_kwargs(OPENAI_MODEL),
+            **_max_tokens_kwargs(_classify_model, "summary"),
+            **_temperature_kwargs(_classify_model),
             timeout=_openai_request_timeout(_classify_timeout),
         )
         text = (resp.choices[0].message.content or "").strip()
@@ -1471,15 +1476,16 @@ def llm_generate_topic(payload: dict[str, Any]) -> str | None:
     if client is None:
         return None
 
+    _topic_model = AGENT_TOPIC_MODEL or AGENT_SUMMARY_MODEL or OPENAI_MODEL
     try:
         resp = client.chat.completions.create(
-            model=OPENAI_MODEL,
+            model=_topic_model,
             messages=[
                 {"role": "system", "content": TOPIC_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ],
-            **_max_tokens_kwargs(OPENAI_MODEL, "summary"),
-            **_temperature_kwargs(OPENAI_MODEL),
+            **_max_tokens_kwargs(_topic_model, "summary"),
+            **_temperature_kwargs(_topic_model),
             timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
         )
         text = (resp.choices[0].message.content or "").strip()
@@ -1500,15 +1506,16 @@ def llm_fix_sql(payload: dict[str, Any]) -> str | None:
     if client is None:
         return None
 
+    _fix_model = AGENT_SQL_FIX_MODEL or OPENAI_MODEL
     try:
         resp = client.chat.completions.create(
-            model=OPENAI_MODEL,
+            model=_fix_model,
             messages=[
                 {"role": "system", "content": SQL_FIX_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ],
-            **_max_tokens_kwargs(OPENAI_MODEL, "sql_fix"),
-            **_temperature_kwargs(OPENAI_MODEL),
+            **_max_tokens_kwargs(_fix_model, "sql_fix"),
+            **_temperature_kwargs(_fix_model),
             timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
         )
         text = (resp.choices[0].message.content or "").strip()
