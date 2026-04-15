@@ -32,6 +32,7 @@ source_of_truth: true
 - [x] TASK-0015 성공 사례 기반 UI/UX 전면 개편 (App-Shell 레이아웃)
 - [x] TASK-0016 AI 작업자용 UI/UX 정책 지침 문서화
 - [x] TASK-0017 프로필 드로어, 병렬 대화 지원, Admin 콘솔 개편
+- [x] TASK-0018 프로필 드로어 탭 구조화, API Vault 통합, 버그 수정, 탑바 정리
 
 ## 3. In Progress
 - 없음
@@ -49,6 +50,7 @@ source_of_truth: true
 - TASK-0015 (2026-04-15): 외부 스크롤 제거 · 마케팅 패널 제거 · App-Shell 레이아웃 적용. 로그인: 단일 카드, 메인: Topbar+Sidebar+ChatPane 3단 고정 구조
 - TASK-0016 (2026-04-15): feature AGENTS.md §8에 UI/UX 설계 원칙, 버튼 클래스 규칙, 브라우저 검증 정책, 금지사항 문서화. LEARNINGS.md에 3개 항목 추가
 - TASK-0017 (2026-04-15): 사이드바 하단 프로필 트리거(ChatGPT 패턴) + 프로필 드로어(권한/활동정보/비밀번호 변경/로그아웃). state.busyConversations Set으로 병렬 대화 지원. Admin 콘솔에 검색/필터/페이지네이션 추가
+- TASK-0018 (2026-04-15): 프로필 드로어를 계정/보안/API Vault 3탭으로 재구성. 기존 설정 드로어 제거 및 API Vault 흡수. 탑바 API Vault 버튼 제거. 로그아웃 시 드로어 미닫힘 버그·회원가입 폼 잔류 버그 수정.
 
 ## 6. Next Action
 - operator 계정 기준으로 장문/다단계 질의 회귀 테스트 수행
@@ -66,6 +68,8 @@ source_of_truth: true
 - [x] 상용 AI 앱 수준의 App-Shell 레이아웃이 적용되었다 (외부 스크롤 없음)
 - [x] UI/UX 정책 지침이 feature AGENTS.md §8에 문서화되었다
 - [x] 사이드바 하단 프로필 버튼이 ChatGPT/Claude 패턴으로 배치되었다
-- [x] 프로필 드로어에서 권한 현황·활동정보·비밀번호 변경·로그아웃을 지원한다
+- [x] 프로필 드로어가 계정/보안/API Vault 탭으로 구조화되어 있다
 - [x] 병렬 대화가 다른 대화의 요청 처리 중에도 차단되지 않는다
 - [x] Admin 콘솔에 검색·역할 필터·페이지네이션이 동작한다
+- [x] 계정별 설정(API Vault)이 탑바가 아닌 프로필 드로어 안에 배치되어 있다
+- [x] 로그아웃 시 열린 드로어가 닫히고 인증 폼이 초기화된다
