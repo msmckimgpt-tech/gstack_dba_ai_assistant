@@ -3,10 +3,7 @@ const loginFormEl = document.getElementById("loginForm");
 const signupFormEl = document.getElementById("signupForm");
 const loginErrorEl = document.getElementById("loginError");
 const signupErrorEl = document.getElementById("signupError");
-const accountNameEl = document.getElementById("accountName");
-const accountRoleEl = document.getElementById("accountRole");
 const openAdminBtn = document.getElementById("openAdminBtn");
-const logoutBtn = document.getElementById("logoutBtn");
 const openSettingsBtn = document.getElementById("openSettingsBtn");
 const closeSettingsBtn = document.getElementById("closeSettingsBtn");
 const drawerBackdropEl = document.getElementById("drawerBackdrop");
@@ -19,8 +16,29 @@ const saveVaultBtn = document.getElementById("saveVaultBtn");
 const clearVaultBtn = document.getElementById("clearVaultBtn");
 const vaultEncryptBtn = document.getElementById("vaultEncryptBtn");
 const vaultStatusEl = document.getElementById("vaultStatus");
-const accountStateTextEl = document.getElementById("accountStateText");
-const permissionPillsEl = document.getElementById("permissionPills");
+
+// Sidebar profile trigger
+const profileAvatarEl = document.getElementById("profileAvatar");
+const profileNameEl = document.getElementById("profileName");
+const profileRoleEl = document.getElementById("profileRole");
+const openProfileBtn = document.getElementById("openProfileBtn");
+
+// Profile drawer
+const profileBackdropEl = document.getElementById("profileBackdrop");
+const profileDrawerEl = document.getElementById("profileDrawer");
+const closeProfileBtn = document.getElementById("closeProfileBtn");
+const profileAvatarLgEl = document.getElementById("profileAvatarLg");
+const profileSummaryNameEl = document.getElementById("profileSummaryName");
+const profileSummaryMetaEl = document.getElementById("profileSummaryMeta");
+const profilePermPillsEl = document.getElementById("profilePermPills");
+const profileStateNoteEl = document.getElementById("profileStateNote");
+const profileCreatedAtEl = document.getElementById("profileCreatedAt");
+const profileLastLoginEl = document.getElementById("profileLastLogin");
+const profileApprovedAtEl = document.getElementById("profileApprovedAt");
+const passwordChangeFormEl = document.getElementById("passwordChangeForm");
+const passwordErrorEl = document.getElementById("passwordError");
+const logoutBtn = document.getElementById("logoutBtn");
+
 const conversationListEl = document.getElementById("conversationList");
 const newConversationBtn = document.getElementById("newConversationBtn");
 const conversationTitleEl = document.getElementById("conversationTitle");
@@ -55,13 +73,19 @@ const state = {
   messages: [],
   hasMoreHistory: false,
   nextBeforeId: null,
-  busy: false,
+  // 대화별 요청 진행 여부 — 전역 busy 대신 대화 ID Set으로 관리하여 병렬 대화 허용
+  busyConversations: new Set(),
   localLlmEnabled: false,
   apiVaultOptions: null,
   progressPoller: null,
   progressSteps: [],
   toastTimer: null,
 };
+
+/** 현재 활성 대화가 요청 중인지 여부 */
+function isCurrentConvBusy() {
+  return state.busyConversations.has(state.activeConversationId);
+}
 
 function escapeHtml(value = "") {
   return String(value || "")
@@ -231,8 +255,9 @@ function closeSettings() {
   drawerBackdropEl.classList.add("hidden");
 }
 
-function renderPermissionPills() {
-  permissionPillsEl.innerHTML = "";
+function buildPermissionPills(containerEl) {
+  if (!containerEl) return;
+  containerEl.innerHTML = "";
   const permissions = [
     ["can_send_request", "요청 실행"],
     ["can_cancel_request", "실행 중단"],
@@ -244,36 +269,100 @@ function renderPermissionPills() {
     const badge = document.createElement("span");
     badge.className = "permission-pill is-pending";
     badge.textContent = "승인 전 조회 전용";
-    permissionPillsEl.appendChild(badge);
+    containerEl.appendChild(badge);
   }
   permissions.forEach(([field, label]) => {
     const item = document.createElement("span");
     item.className = `permission-pill ${can(field) ? "is-enabled" : ""}`.trim();
     item.textContent = label;
-    permissionPillsEl.appendChild(item);
+    containerEl.appendChild(item);
   });
 }
 
 function renderAccountState() {
   if (!state.user) {
-    accountNameEl.textContent = "-";
-    accountRoleEl.textContent = "-";
-    accountStateTextEl.textContent = "로그인이 필요합니다.";
-    permissionPillsEl.innerHTML = "";
+    if (profileAvatarEl) profileAvatarEl.textContent = "—";
+    if (profileNameEl) profileNameEl.textContent = "—";
+    if (profileRoleEl) profileRoleEl.textContent = "—";
     openAdminBtn.classList.add("hidden");
     return;
   }
-  accountNameEl.textContent = state.user.username;
-  accountRoleEl.textContent = state.user.role;
+  const initials = state.user.username.slice(0, 2).toUpperCase();
+  if (profileAvatarEl) profileAvatarEl.textContent = initials;
+  if (profileNameEl) profileNameEl.textContent = state.user.username;
+  if (profileRoleEl) profileRoleEl.textContent = state.user.role || "member";
   openAdminBtn.classList.toggle("hidden", !isAdmin());
-  if (state.user.is_pending) {
-    accountStateTextEl.textContent = "현재 계정은 승인 전 상태입니다. 기존 대화 조회만 가능하며 새 요청 실행은 차단됩니다.";
-  } else if (can("can_send_request")) {
-    accountStateTextEl.textContent = "현재 계정은 실행 권한이 활성화되어 있습니다. 필요한 세부 권한만 별도로 조정할 수 있습니다.";
-  } else {
-    accountStateTextEl.textContent = "현재 계정은 로그인되어 있지만 실행 권한이 없습니다.";
+}
+
+function renderProfile() {
+  if (!state.user) return;
+  const initials = state.user.username.slice(0, 2).toUpperCase();
+
+  if (profileAvatarLgEl) profileAvatarLgEl.textContent = initials;
+  if (profileSummaryNameEl) profileSummaryNameEl.textContent = state.user.username;
+  if (profileSummaryMetaEl) {
+    profileSummaryMetaEl.textContent = state.user.is_admin
+      ? "관리자"
+      : state.user.is_pending
+        ? "승인 대기 중"
+        : (state.user.role || "member");
   }
-  renderPermissionPills();
+
+  buildPermissionPills(profilePermPillsEl);
+
+  if (profileStateNoteEl) {
+    if (state.user.is_pending) {
+      profileStateNoteEl.textContent = "승인 전 상태입니다. 관리자 승인 후 요청 실행 권한이 부여됩니다.";
+    } else if (can("can_send_request")) {
+      profileStateNoteEl.textContent = "실행 권한이 활성화된 계정입니다.";
+    } else {
+      profileStateNoteEl.textContent = "요청 실행 권한이 없습니다. 관리자에게 문의하세요.";
+    }
+  }
+
+  if (profileCreatedAtEl) profileCreatedAtEl.textContent = formatDateTime(state.user.created_at);
+  if (profileLastLoginEl) profileLastLoginEl.textContent = formatDateTime(state.user.last_login_at);
+  if (profileApprovedAtEl) profileApprovedAtEl.textContent = formatDateTime(state.user.approved_at) || "미승인";
+
+  if (passwordErrorEl) passwordErrorEl.textContent = "";
+  if (passwordChangeFormEl) passwordChangeFormEl.reset();
+}
+
+function openProfile() {
+  renderProfile();
+  profileDrawerEl.classList.remove("hidden");
+  profileBackdropEl.classList.remove("hidden");
+}
+
+function closeProfile() {
+  profileDrawerEl.classList.add("hidden");
+  profileBackdropEl.classList.add("hidden");
+}
+
+async function handlePasswordChange(event) {
+  event.preventDefault();
+  if (passwordErrorEl) passwordErrorEl.textContent = "";
+  const currentPassword = document.getElementById("currentPassword").value;
+  const newPassword = document.getElementById("newPassword").value;
+  const confirmPassword = document.getElementById("confirmPassword").value;
+  if (newPassword !== confirmPassword) {
+    if (passwordErrorEl) passwordErrorEl.textContent = "새 비밀번호가 일치하지 않습니다.";
+    return;
+  }
+  if (newPassword.length < 10) {
+    if (passwordErrorEl) passwordErrorEl.textContent = "새 비밀번호는 10자 이상이어야 합니다.";
+    return;
+  }
+  try {
+    await apiFetch("/api/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    });
+    showToast("비밀번호를 변경했습니다.");
+    if (passwordChangeFormEl) passwordChangeFormEl.reset();
+  } catch (error) {
+    if (passwordErrorEl) passwordErrorEl.textContent = error.message || "비밀번호 변경에 실패했습니다.";
+  }
 }
 
 function renderConversationList() {
@@ -460,10 +549,11 @@ function renderMessages() {
 }
 
 function renderComposer() {
-  const disabled = !can("can_send_request") || state.busy;
+  const busy = isCurrentConvBusy();
+  const disabled = !can("can_send_request") || busy;
   promptInputEl.disabled = disabled;
   sendBtn.disabled = disabled;
-  newConversationBtn.disabled = !can("can_send_request") || state.busy;
+  newConversationBtn.disabled = !can("can_send_request");
 
   if (state.user?.is_pending) {
     composerTitleEl.textContent = "조회 전용 상태";
@@ -471,9 +561,9 @@ function renderComposer() {
   } else if (!can("can_send_request")) {
     composerTitleEl.textContent = "실행 권한 없음";
     composerHintEl.textContent = "현재 계정에는 요청 실행 권한이 없습니다.";
-  } else if (state.busy) {
+  } else if (busy) {
     composerTitleEl.textContent = "요청 처리 중";
-    composerHintEl.textContent = "현재 작업이 끝날 때까지 추가 전송이 잠시 비활성화됩니다.";
+    composerHintEl.textContent = "이 대화의 요청이 처리 중입니다. 다른 대화에서 새 요청을 보낼 수 있습니다.";
   } else {
     composerTitleEl.textContent = "요청 작성";
     composerHintEl.textContent = "자연어 요청, 검증 요청, SQL 확인 요청을 그대로 입력할 수 있습니다.";
@@ -670,13 +760,15 @@ async function finalizeCurrentRun() {
 
 async function sendPrompt() {
   const message = promptInputEl.value.trim();
-  if (!message || !can("can_send_request") || state.busy) {
+  if (!message || !can("can_send_request") || isCurrentConvBusy()) {
     return;
   }
   const vault = readVaultState();
-  state.busy = true;
+  // 요청 시작 시점의 대화 ID를 고정 — 전송 중 대화 전환이 일어나도 올바른 대화에 귀속
+  const targetConvId = state.activeConversationId;
+  state.busyConversations.add(targetConvId);
   renderComposer();
-  if (state.activeConversationId) {
+  if (targetConvId) {
     startProgressPolling();
   }
   try {
@@ -684,7 +776,7 @@ async function sendPrompt() {
       method: "POST",
       body: JSON.stringify({
         message,
-        conversation_id: state.activeConversationId || "",
+        conversation_id: targetConvId || "",
         model: vaultModelEl.value.trim() || vault.model || state.apiVaultOptions?.default_model || "auto",
         api_key_cipher: vault.cipher,
         api_key_passphrase: vault.passphrase,
@@ -693,9 +785,9 @@ async function sendPrompt() {
     promptInputEl.value = "";
     promptInputEl.style.height = "auto";
     showToast(payload.error ? payload.error : "응답을 갱신했습니다.");
-    await refreshWorkspace(payload.conversation_id || state.activeConversationId);
+    await refreshWorkspace(payload.conversation_id || targetConvId);
   } finally {
-    state.busy = false;
+    state.busyConversations.delete(targetConvId);
     renderComposer();
   }
 }
@@ -837,6 +929,13 @@ async function initialize() {
   openSettingsBtn.addEventListener("click", openSettings);
   closeSettingsBtn.addEventListener("click", closeSettings);
   drawerBackdropEl.addEventListener("click", closeSettings);
+
+  openProfileBtn.addEventListener("click", openProfile);
+  closeProfileBtn.addEventListener("click", closeProfile);
+  profileBackdropEl.addEventListener("click", closeProfile);
+  if (passwordChangeFormEl) {
+    passwordChangeFormEl.addEventListener("submit", handlePasswordChange);
+  }
   saveVaultBtn.addEventListener("click", () => {
     writeVaultState();
     showToast("API Vault 설정을 저장했습니다.");

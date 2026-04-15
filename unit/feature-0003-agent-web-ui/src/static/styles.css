@@ -976,10 +976,120 @@ a { color: inherit; }
    ADMIN PAGE  (separate route /admin — same stylesheet)
    ===================================================================== */
 .admin-shell {
-  padding: 24px;
-  max-width: 1100px;
-  margin: 0 auto;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
+
+.admin-main {
+  flex: 1;
+  padding: 20px 24px 40px;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* 툴바: 검색 + 필터 */
+.admin-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.admin-search {
+  flex: 1;
+  min-width: 180px;
+  max-width: 280px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  transition: border-color .14s, box-shadow .14s;
+}
+.admin-search:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+}
+
+.admin-filter-group {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.admin-filter-btn {
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  transition: background .13s, color .13s, border-color .13s;
+}
+.admin-filter-btn:hover    { background: var(--bg); }
+.admin-filter-btn.is-active {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: rgba(37,99,235,.2);
+}
+
+/* 페이지네이션 */
+.admin-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding-top: 14px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+}
+.page-info {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* 계정 카드 헤더 영역 개편 */
+.admin-account-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+
+.admin-account-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* 역할 배지 색상 변형 */
+.status-chip.role-admin    { background: rgba(37,99,235,.1); color: var(--primary); }
+.status-chip.role-operator { background: rgba(22,163,74,.1); color: #15803d; }
+.status-chip.role-pending  { background: rgba(217,119,6,.12); color: #92400e; }
+.status-chip.is-disabled   { background: var(--danger-soft); color: var(--danger); }
 
 .admin-grid {
   display: flex;
@@ -1116,6 +1226,160 @@ a { color: inherit; }
   font-weight: 700;
   background: rgba(217,119,6,.12);
   color: #92400e;
+}
+
+/* =====================================================================
+   SIDEBAR PROFILE BUTTON  (ChatGPT / Claude 패턴 — 사이드바 하단)
+   ===================================================================== */
+.sidebar-profile {
+  flex-shrink: 0;
+  padding: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.profile-trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  text-align: left;
+  transition: background .13s;
+}
+.profile-trigger:hover { background: rgba(0,0,0,.05); }
+
+.profile-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+
+.profile-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.profile-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-role {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-arrow {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform .15s;
+}
+
+/* =====================================================================
+   PROFILE DRAWER
+   ===================================================================== */
+.profile-avatar-lg {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 18px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+
+.profile-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.profile-summary-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.profile-summary-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.profile-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.profile-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--text-muted);
+}
+
+.profile-section-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.profile-dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 20px;
+  font-size: 13px;
+  margin: 0;
+}
+
+.profile-dl dt {
+  color: var(--text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.profile-dl dd {
+  color: var(--text);
+}
+
+.profile-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.profile-danger-zone {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 16px;
+  margin-top: 4px;
 }
 
 /* =====================================================================

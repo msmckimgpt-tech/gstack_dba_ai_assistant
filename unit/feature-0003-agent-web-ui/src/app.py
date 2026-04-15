@@ -2909,6 +2909,82 @@ async def auth_me(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "user": _serialize_account(account)})
 
 
+@app.patch("/api/auth/me")
+async def auth_me_patch(request: Request) -> JSONResponse:
+    """자신의 계정 프로필을 수정한다. role/비밀번호 변경 지원."""
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account = _get_authenticated_account(conn, request)
+    if not account:
+        conn.close()
+        return _json_error("unauthorized", 401)
+
+    updates: list[str] = []
+    params: list[Any] = []
+
+    # 비밀번호 변경
+    current_password = str(data.get("current_password", "") or "").strip()
+    new_password = str(data.get("new_password", "") or "").strip()
+    if new_password:
+        if not current_password:
+            conn.close()
+            return _json_error("현재 비밀번호를 입력하세요.", 400)
+        if not _is_valid_password(new_password):
+            conn.close()
+            return _json_error("새 비밀번호는 10자 이상이어야 합니다.", 400)
+        # 현재 비밀번호 검증
+        cur = conn.cursor()
+        cur.execute("SELECT PasswordHash FROM WebAccounts WHERE Id = %s", (int(account["id"]),))
+        row = cur.fetchone()
+        cur.close()
+        if not row or not _verify_password(current_password, str(row[0])):
+            conn.close()
+            return _json_error("현재 비밀번호가 올바르지 않습니다.", 400)
+        updates.append("PasswordHash = %s")
+        params.append(_hash_password(new_password))
+
+    if not updates:
+        conn.close()
+        # 변경 내용 없음 — 현재 프로필 반환
+        return JSONResponse({"ok": True, "user": _serialize_account(account)})
+
+    params.append(int(account["id"]))
+    cur = conn.cursor()
+    cur.execute(
+        f"UPDATE WebAccounts SET {', '.join(updates)} WHERE Id = %s",
+        tuple(params),
+    )
+    conn.commit()
+    cur.close()
+
+    # 갱신된 계정 재조회
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT Id, Username, Role, IsActive, CreatedAt, ApprovedAt, LastLoginAt,
+       LastConversationId, ApprovedByAccountId,
+       CanSendRequest, CanCancelRequest, CanFinalizeRequest,
+       CanDeleteConversation, CanClearConversations
+  FROM WebAccounts WHERE Id = %s
+        """,
+        (int(account["id"]),),
+    )
+    cols = [c[0].lower() for c in cur.description]
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not row:
+        return _json_error("account not found", 404)
+    updated_account = dict(zip(cols, row))
+    return JSONResponse({"ok": True, "user": _serialize_account(updated_account)})
+
+
 @app.post("/api/auth/logout")
 async def auth_logout(request: Request) -> JSONResponse:
     token = _sanitize_session_id(request.cookies.get(SESSION_COOKIE, ""))

@@ -4,13 +4,13 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260415b" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260415c" />
 </head>
 <body class="admin-shell">
   <header class="topbar">
     <div class="topbar-brand">
-      <div class="brand-icon">AD</div>
-      <span class="brand-name">계정/권한 관리</span>
+      <div class="brand-icon">MA</div>
+      <span class="brand-name">관리 콘솔</span>
     </div>
     <div class="topbar-end">
       <button type="button" class="topbar-btn" id="backToAppBtn">작업 화면</button>
@@ -19,47 +19,72 @@
     </div>
   </header>
 
-  <main class="admin-grid admin-shell">
-    <section class="surface-card">
+  <main class="admin-main">
+    <!-- 요약 지표 -->
+    <section class="surface-card admin-overview">
       <div class="section-row">
         <div>
-          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--text-muted);margin-bottom:3px">Overview</div>
-          <h2>승인 대기와 권한 충돌을 한 화면에서 정리</h2>
+          <div class="drawer-label">Overview</div>
+          <h2>계정 현황</h2>
         </div>
       </div>
       <div class="summary-metrics">
         <article class="metric-card">
           <span>Pending</span>
-          <strong id="metricPending">0</strong>
+          <strong id="metricPending">—</strong>
         </article>
         <article class="metric-card">
           <span>Operator</span>
-          <strong id="metricOperator">0</strong>
+          <strong id="metricOperator">—</strong>
         </article>
         <article class="metric-card">
           <span>Admin</span>
-          <strong id="metricAdmin">0</strong>
+          <strong id="metricAdmin">—</strong>
         </article>
         <article class="metric-card">
           <span>Disabled</span>
-          <strong id="metricDisabled">0</strong>
+          <strong id="metricDisabled">—</strong>
         </article>
       </div>
     </section>
 
+    <!-- 계정 목록 -->
     <section class="surface-card">
       <div class="section-row">
         <div>
-          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--text-muted);margin-bottom:3px">Accounts</div>
+          <div class="drawer-label">Accounts</div>
           <h2>사용자 목록</h2>
         </div>
       </div>
+
+      <!-- 툴바: 검색 + 필터 -->
+      <div class="admin-toolbar">
+        <input
+          type="search"
+          id="adminSearch"
+          class="admin-search"
+          placeholder="사용자 ID 검색…"
+          autocomplete="off"
+        />
+        <div class="admin-filter-group">
+          <button type="button" class="admin-filter-btn is-active" data-filter="all">전체</button>
+          <button type="button" class="admin-filter-btn" data-filter="pending">Pending</button>
+          <button type="button" class="admin-filter-btn" data-filter="operator">Operator</button>
+          <button type="button" class="admin-filter-btn" data-filter="admin">Admin</button>
+          <button type="button" class="admin-filter-btn" data-filter="disabled">Disabled</button>
+        </div>
+      </div>
+
+      <!-- 계정 카드 목록 -->
       <div class="admin-accounts" id="adminAccounts"></div>
+
+      <!-- 페이지네이션 -->
+      <div class="admin-pagination" id="adminPagination"></div>
     </section>
   </main>
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260415b"></script>
+  <script src="/static/admin.js?v=20260415c"></script>
 </body>
 </html>
