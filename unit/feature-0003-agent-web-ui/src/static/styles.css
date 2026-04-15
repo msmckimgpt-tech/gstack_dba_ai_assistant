@@ -753,8 +753,14 @@ a { color: inherit; }
   user-select: none;
 }
 
+.message-details-body {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .message-detail-block {
-  margin-top: 8px;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -769,6 +775,83 @@ a { color: inherit; }
 }
 
 .message-detail-block li { margin-bottom: 3px; }
+
+/* SQL 쿼리 + 결과 테이블 그룹 */
+.sql-result-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sql-result-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-muted);
+}
+
+.sql-block {
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: #1a1b26;
+  color: #c0caf5;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0;
+}
+
+/* 인라인 쿼리 결과 테이블 */
+.result-table-wrap {
+  overflow-x: auto;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+}
+
+.result-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+  background: var(--surface);
+}
+
+.result-table th {
+  padding: 6px 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border-subtle);
+  font-weight: 600;
+  color: var(--text-2);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.result-table td {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+  color: var(--text);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-table tr:last-child td { border-bottom: none; }
+.result-table th:last-child,
+.result-table td:last-child { border-right: none; }
+.result-table tbody tr:hover td { background: var(--primary-soft); }
+
+.result-table-meta {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border-top: 1px solid var(--border-subtle);
+}
 
 .message-link-list {
   display: flex;

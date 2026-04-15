@@ -214,7 +214,7 @@ function updateVaultStatus() {
   if (cipher) {
     segments.push("암호화된 API 키 저장됨");
   } else if (state.localLlmEnabled) {
-    segments.push("로컬 LLM 사용 가능");
+    segments.push("외부 Local LLM 연결 가능");
   } else {
     segments.push("API 키 미설정");
   }
@@ -440,69 +440,170 @@ function renderMessageContent(target, content = "", role = "assistant") {
   target.innerHTML = markdownToHtml(content || "");
 }
 
-function buildStepsList(steps = []) {
-  const list = document.createElement("ul");
-  steps.forEach((step) => {
-    const item = document.createElement("li");
-    const work = String(step.work || step.intent || step.tool || "단계").trim();
-    const reason = String(step.reason || "").trim();
-    item.textContent = reason ? `${work} — ${reason}` : work;
-    list.appendChild(item);
-  });
-  return list;
-}
-
-function appendDetailBlock(detailsEl, title, contentNode) {
+function appendDetailBlock(parentEl, title, contentNode) {
   const block = document.createElement("div");
   block.className = "message-detail-block";
-  const strong = document.createElement("strong");
-  strong.textContent = title;
-  block.appendChild(strong);
+  if (title) {
+    const strong = document.createElement("strong");
+    strong.textContent = title;
+    block.appendChild(strong);
+  }
   block.appendChild(contentNode);
-  detailsEl.appendChild(block);
+  parentEl.appendChild(block);
+}
+
+function buildResultTable(previewTable) {
+  const { columns = [], rows = [], truncated = false } = previewTable;
+  if (!columns.length) return null;
+
+  const wrap = document.createElement("div");
+  wrap.className = "result-table-wrap";
+
+  const tableEl = document.createElement("table");
+  tableEl.className = "result-table";
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  columns.forEach((col) => {
+    const th = document.createElement("th");
+    th.textContent = String(col);
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  tableEl.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    columns.forEach((_, ci) => {
+      const td = document.createElement("td");
+      td.textContent = row[ci] != null ? String(row[ci]) : "";
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  tableEl.appendChild(tbody);
+  wrap.appendChild(tableEl);
+
+  const meta = document.createElement("div");
+  meta.className = "result-table-meta";
+  const shown = rows.length;
+  const colCount = columns.length;
+  meta.textContent = truncated
+    ? `${shown}행 표시 중 (더 있음) · ${colCount}열`
+    : `${shown}행 · ${colCount}열`;
+  wrap.appendChild(meta);
+
+  return wrap;
+}
+
+function buildStepBlocks(steps, containerEl) {
+  // execute_sql 단계는 SQL + 결과 테이블 + CSV 링크로 묶어 표시
+  // 나머지 단계는 요약 목록으로 표시
+  const nonSqlSteps = steps.filter((s) => String(s.tool || "") !== "execute_sql");
+  const sqlSteps = steps.filter((s) => String(s.tool || "") === "execute_sql");
+
+  if (nonSqlSteps.length) {
+    const list = document.createElement("ul");
+    nonSqlSteps.forEach((step) => {
+      const item = document.createElement("li");
+      const work = String(step.work || step.intent || step.tool || "단계").trim();
+      const reason = String(step.reason || "").trim();
+      item.textContent = reason ? `${work} — ${reason}` : work;
+      list.appendChild(item);
+    });
+    appendDetailBlock(containerEl, "단계", list);
+  }
+
+  sqlSteps.forEach((step, idx) => {
+    const group = document.createElement("div");
+    group.className = "sql-result-group";
+
+    const label = document.createElement("div");
+    label.className = "sql-result-label";
+    label.textContent = sqlSteps.length > 1 ? `SQL 쿼리 ${idx + 1}` : "SQL 쿼리";
+    group.appendChild(label);
+
+    if (step.sql) {
+      const pre = document.createElement("pre");
+      pre.className = "sql-block";
+      pre.textContent = String(step.sql);
+      group.appendChild(pre);
+    }
+
+    const rs = step.result_summary;
+    if (rs && typeof rs === "object") {
+      const pt = rs.preview_table;
+      if (pt && pt.columns?.length) {
+        const tableEl = buildResultTable(pt);
+        if (tableEl) {
+          group.appendChild(tableEl);
+        }
+      }
+
+      const csvPaths = Array.isArray(rs.csv_paths) ? rs.csv_paths : [];
+      if (csvPaths.length) {
+        const linkList = document.createElement("div");
+        linkList.className = "message-link-list";
+        csvPaths.forEach((path, i) => {
+          const link = document.createElement("a");
+          link.className = "message-link";
+          link.href = `/api/file?path=${encodeURIComponent(path)}`;
+          link.target = "_blank";
+          link.rel = "noopener";
+          link.textContent = `CSV 다운로드 ${csvPaths.length > 1 ? i + 1 : ""}`.trim();
+          linkList.appendChild(link);
+        });
+        group.appendChild(linkList);
+      }
+    }
+
+    containerEl.appendChild(group);
+  });
 }
 
 function renderMessageDetails(meta = {}) {
-  const hasDetails = meta?.sql || meta?.rationale || (Array.isArray(meta?.steps) && meta.steps.length) || (Array.isArray(meta?.csv_paths) && meta.csv_paths.length);
+  const steps = Array.isArray(meta?.steps) ? meta.steps : [];
+  const hasSql = steps.some((s) => String(s.tool || "") === "execute_sql" && s.sql);
+  const hasDetails = hasSql || meta?.rationale || steps.length || Array.isArray(meta?.csv_paths) && meta.csv_paths.length;
   if (!hasDetails) return null;
 
   const detailsEl = document.createElement("details");
   detailsEl.className = "message-details";
   const summary = document.createElement("summary");
-  summary.textContent = "실행 근거와 결과 보기";
+  summary.textContent = "실행 단계 및 쿼리 결과 보기";
   detailsEl.appendChild(summary);
 
-  if (Array.isArray(meta.steps) && meta.steps.length) {
-    appendDetailBlock(detailsEl, "단계", buildStepsList(meta.steps));
+  const body = document.createElement("div");
+  body.className = "message-details-body";
+
+  if (steps.length) {
+    buildStepBlocks(steps, body);
+  } else {
+    // steps가 없는 구형 메시지 — 기존 필드로 폴백
+    if (meta.sql) {
+      const pre = document.createElement("pre");
+      pre.className = "sql-block";
+      pre.textContent = String(meta.sql);
+      appendDetailBlock(body, "실행 SQL", pre);
+    }
+    if (Array.isArray(meta.csv_paths) && meta.csv_paths.length) {
+      const wrap = document.createElement("div");
+      wrap.className = "message-link-list";
+      meta.csv_paths.forEach((path, index) => {
+        const link = document.createElement("a");
+        link.className = "message-link";
+        link.href = `/api/file?path=${encodeURIComponent(path)}`;
+        link.target = "_blank";
+        link.rel = "noopener";
+        link.textContent = `CSV ${index + 1}`;
+        wrap.appendChild(link);
+      });
+      appendDetailBlock(body, "결과 파일", wrap);
+    }
   }
 
-  if (meta.rationale) {
-    const pre = document.createElement("pre");
-    pre.textContent = String(meta.rationale);
-    appendDetailBlock(detailsEl, "요약 근거", pre);
-  }
-
-  if (meta.sql) {
-    const pre = document.createElement("pre");
-    pre.textContent = String(meta.sql);
-    appendDetailBlock(detailsEl, "실행 SQL", pre);
-  }
-
-  if (Array.isArray(meta.csv_paths) && meta.csv_paths.length) {
-    const wrap = document.createElement("div");
-    wrap.className = "message-link-list";
-    meta.csv_paths.forEach((path, index) => {
-      const link = document.createElement("a");
-      link.className = "message-link";
-      link.href = `/api/file?path=${encodeURIComponent(path)}`;
-      link.target = "_blank";
-      link.rel = "noopener";
-      link.textContent = `CSV ${index + 1}`;
-      wrap.appendChild(link);
-    });
-    appendDetailBlock(detailsEl, "결과 파일", wrap);
-  }
-
+  detailsEl.appendChild(body);
   return detailsEl;
 }
 
