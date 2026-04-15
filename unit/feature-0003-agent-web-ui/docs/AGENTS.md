@@ -93,6 +93,7 @@ source_of_truth: false
 4. **컴포저** — 텍스트 입력 시 textarea 자동 높이 확인
 5. **프로필 드로어** — 탭 전환(계정/보안/API Vault)이 정상 동작하는지 확인
 6. **로그아웃** — 드로어가 닫히고 인증 화면으로 복귀, 폼이 초기화된 상태 확인
+7. **쿼리 결과** — execute_sql이 포함된 메시지에서 `<details>` 펼침 시 SQL 블록과 결과 테이블이 표시되는지 확인
 
 #### 브라우저 검증 절차
 ```
@@ -118,3 +119,5 @@ source_of_truth: false
 - 계정별 설정(API Vault 등)을 탑바에 배치 — 프로필 드로어 탭으로만 구성
 - 드로어/모달을 열어둔 채 인증 상태를 전환 — 전환 전 반드시 닫기
 - 탭 구조 없이 정보를 드로어 단일 스크롤에 누적 — 카테고리별 탭 분리 필수
+- `execute_sql` step의 `result_summary.preview_table`을 무시하고 CSV 링크만 제공 — 인라인 테이블 렌더링 필수
+- `renderMessageDetails`에서 `meta.steps`를 단순 텍스트 목록으로만 처리 — tool 유형별 분기 렌더링 유지
