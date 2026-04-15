@@ -63,7 +63,7 @@
       </div>
       <div class="topbar-end">
         <button type="button" class="topbar-btn hidden" id="openAdminBtn">관리 콘솔</button>
-        <button type="button" class="topbar-btn" id="openSettingsBtn">API Vault</button>
+        <button type="button" class="topbar-btn" id="openVaultBtn">API Vault</button>
       </div>
     </header>
 
@@ -162,48 +162,64 @@
     </div><!-- /app-body -->
   </div><!-- /app-shell -->
 
-  <!-- ─── Profile Drawer ────────────────────────────────────────── -->
+  <!-- ─── Profile Drawer (탭: 계정 / 보안 / API Vault) ────────────── -->
   <div class="drawer-bg hidden" id="profileBackdrop"></div>
   <aside class="drawer hidden" id="profileDrawer">
+
+    <!-- 헤더: 아바타 + 이름 + 닫기 -->
     <div class="drawer-header">
-      <div>
-        <div class="drawer-label">My Account</div>
-        <h2>프로필</h2>
+      <div class="profile-header-identity">
+        <div class="profile-avatar-lg" id="profileAvatarLg">—</div>
+        <div>
+          <div class="drawer-label">My Account</div>
+          <div class="profile-summary-name" id="profileSummaryName">—</div>
+          <div class="profile-summary-meta" id="profileSummaryMeta">—</div>
+        </div>
       </div>
       <button type="button" class="tool-btn" id="closeProfileBtn">닫기</button>
     </div>
 
-    <!-- 계정 요약 -->
-    <div class="profile-summary">
-      <div class="profile-avatar-lg" id="profileAvatarLg">—</div>
-      <div>
-        <div class="profile-summary-name" id="profileSummaryName">—</div>
-        <div class="profile-summary-meta" id="profileSummaryMeta">—</div>
+    <!-- 탭 네비게이션 -->
+    <div class="drawer-tabs">
+      <button type="button" class="drawer-tab is-active" data-profile-tab="account">계정</button>
+      <button type="button" class="drawer-tab" data-profile-tab="security">보안</button>
+      <button type="button" class="drawer-tab" data-profile-tab="vault">API Vault</button>
+    </div>
+
+    <!-- ── 탭 패널: 계정 ── -->
+    <div class="drawer-pane" data-profile-pane="account">
+
+      <!-- 권한 현황 -->
+      <div class="profile-section">
+        <div class="profile-section-title">권한 현황</div>
+        <div class="perm-pills" id="profilePermPills"></div>
+        <p class="profile-section-note" id="profileStateNote"></p>
       </div>
-    </div>
 
-    <!-- 권한 현황 -->
-    <div class="profile-section">
-      <div class="profile-section-title">권한 현황</div>
-      <div class="perm-pills" id="profilePermPills"></div>
-      <p class="profile-section-note" id="profileStateNote"></p>
-    </div>
+      <!-- 활동 정보 -->
+      <div class="profile-section">
+        <div class="profile-section-title">활동 정보</div>
+        <dl class="profile-dl">
+          <dt>계정 생성</dt><dd id="profileCreatedAt">—</dd>
+          <dt>마지막 로그인</dt><dd id="profileLastLogin">—</dd>
+          <dt>승인일</dt><dd id="profileApprovedAt">—</dd>
+        </dl>
+      </div>
 
-    <!-- 활동 정보 -->
-    <div class="profile-section">
-      <div class="profile-section-title">활동 정보</div>
-      <dl class="profile-dl">
-        <dt>계정 생성</dt><dd id="profileCreatedAt">—</dd>
-        <dt>마지막 로그인</dt><dd id="profileLastLogin">—</dd>
-        <dt>승인일</dt><dd id="profileApprovedAt">—</dd>
-      </dl>
-    </div>
+      <!-- 세션 / 로그아웃 -->
+      <div class="profile-section profile-danger-zone">
+        <div class="profile-section-title">세션</div>
+        <button type="button" class="btn-secondary" id="logoutBtn">로그아웃</button>
+      </div>
 
-    <!-- 비밀번호 변경 -->
-    <div class="profile-section">
-      <div class="profile-section-title">비밀번호 변경</div>
-      <form id="passwordChangeForm">
-        <div class="profile-form">
+    </div><!-- /account -->
+
+    <!-- ── 탭 패널: 보안 ── -->
+    <div class="drawer-pane hidden" data-profile-pane="security">
+
+      <div class="profile-section">
+        <div class="profile-section-title">비밀번호 변경</div>
+        <form id="passwordChangeForm" class="profile-form">
           <label class="field">
             <span>현재 비밀번호</span>
             <input id="currentPassword" type="password" autocomplete="current-password" />
@@ -218,57 +234,47 @@
           </label>
           <div class="form-error" id="passwordError"></div>
           <button type="submit" class="btn-primary">비밀번호 변경</button>
+        </form>
+      </div>
+
+    </div><!-- /security -->
+
+    <!-- ── 탭 패널: API Vault ── -->
+    <div class="drawer-pane hidden" data-profile-pane="vault">
+
+      <p class="drawer-desc">
+        모델과 API 키는 서버에 저장하지 않습니다. 로컬 LLM 환경에서는 API 키 없이도 요청할 수 있습니다.
+      </p>
+      <label class="field">
+        <span>모델</span>
+        <select id="vaultModel"></select>
+      </label>
+      <label class="field">
+        <span>암호화된 API 키</span>
+        <textarea id="vaultCipher" rows="3" placeholder="v1:..."></textarea>
+      </label>
+      <label class="field">
+        <span>암호화 키</span>
+        <input id="vaultPassphrase" type="password" placeholder="현재 세션에만 유지" />
+      </label>
+      <details class="encrypt-panel">
+        <summary>브라우저에서 API 키 암호화</summary>
+        <div class="encrypt-body">
+          <label class="field">
+            <span>평문 API 키</span>
+            <input id="vaultPlainKey" type="password" placeholder="sk-..." />
+          </label>
+          <button type="button" class="btn-secondary" id="vaultEncryptBtn">암호화 후 채우기</button>
         </div>
-      </form>
-    </div>
-
-    <!-- 로그아웃 -->
-    <div class="profile-section profile-danger-zone">
-      <div class="profile-section-title">세션</div>
-      <button type="button" class="btn-secondary" id="logoutBtn">로그아웃</button>
-    </div>
-  </aside>
-
-  <!-- ─── Settings Drawer ────────────────────────────────────────── -->
-  <div class="drawer-bg hidden" id="drawerBackdrop"></div>
-  <aside class="drawer hidden" id="settingsDrawer">
-    <div class="drawer-header">
-      <div>
-        <div class="drawer-label">API Vault</div>
-        <h2>실행 설정</h2>
+      </details>
+      <div class="drawer-actions">
+        <button type="button" class="btn-primary" id="saveVaultBtn">저장</button>
+        <button type="button" class="btn-secondary" id="clearVaultBtn">초기화</button>
       </div>
-      <button type="button" class="tool-btn" id="closeSettingsBtn">닫기</button>
-    </div>
-    <p class="drawer-desc">
-      모델과 API 키는 서버에 저장하지 않습니다. 로컬 LLM 환경에서는 API 키 없이도 요청할 수 있습니다.
-    </p>
-    <label class="field">
-      <span>모델</span>
-      <select id="vaultModel"></select>
-    </label>
-    <label class="field">
-      <span>암호화된 API 키</span>
-      <textarea id="vaultCipher" rows="3" placeholder="v1:..."></textarea>
-    </label>
-    <label class="field">
-      <span>암호화 키</span>
-      <input id="vaultPassphrase" type="password" placeholder="현재 세션에만 유지" />
-    </label>
-    <details class="encrypt-panel">
-      <summary>브라우저에서 API 키 암호화</summary>
-      <div class="encrypt-body">
-        <label class="field">
-          <span>평문 API 키</span>
-          <input id="vaultPlainKey" type="password" placeholder="sk-..." />
-        </label>
-        <button type="button" class="btn-secondary" id="vaultEncryptBtn">암호화 후 채우기</button>
-      </div>
-    </details>
-    <div class="drawer-actions">
-      <button type="button" class="btn-primary" id="saveVaultBtn">저장</button>
-      <button type="button" class="btn-secondary" id="clearVaultBtn">초기화</button>
-    </div>
-    <div class="helper-text" id="vaultStatus">아직 저장된 설정이 없습니다.</div>
+      <div class="helper-text" id="vaultStatus">아직 저장된 설정이 없습니다.</div>
+
+    </div><!-- /vault -->
+
   </aside>
 
   <!-- Toast -->

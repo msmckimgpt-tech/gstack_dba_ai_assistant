@@ -4,10 +4,7 @@ const signupFormEl = document.getElementById("signupForm");
 const loginErrorEl = document.getElementById("loginError");
 const signupErrorEl = document.getElementById("signupError");
 const openAdminBtn = document.getElementById("openAdminBtn");
-const openSettingsBtn = document.getElementById("openSettingsBtn");
-const closeSettingsBtn = document.getElementById("closeSettingsBtn");
-const drawerBackdropEl = document.getElementById("drawerBackdrop");
-const settingsDrawerEl = document.getElementById("settingsDrawer");
+const openVaultBtn = document.getElementById("openVaultBtn");
 const vaultModelEl = document.getElementById("vaultModel");
 const vaultCipherEl = document.getElementById("vaultCipher");
 const vaultPassphraseEl = document.getElementById("vaultPassphrase");
@@ -245,14 +242,13 @@ function hideAuthOverlay() {
   authOverlayEl.classList.add("hidden");
 }
 
-function openSettings() {
-  settingsDrawerEl.classList.remove("hidden");
-  drawerBackdropEl.classList.remove("hidden");
-}
-
-function closeSettings() {
-  settingsDrawerEl.classList.add("hidden");
-  drawerBackdropEl.classList.add("hidden");
+function switchProfileTab(tab) {
+  document.querySelectorAll("[data-profile-tab]").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.dataset.profileTab === tab);
+  });
+  document.querySelectorAll("[data-profile-pane]").forEach((pane) => {
+    pane.classList.toggle("hidden", pane.dataset.profilePane !== tab);
+  });
 }
 
 function buildPermissionPills(containerEl) {
@@ -328,8 +324,9 @@ function renderProfile() {
   if (passwordChangeFormEl) passwordChangeFormEl.reset();
 }
 
-function openProfile() {
+function openProfile(tab = "account") {
   renderProfile();
+  switchProfileTab(tab);
   profileDrawerEl.classList.remove("hidden");
   profileBackdropEl.classList.remove("hidden");
 }
@@ -896,6 +893,8 @@ async function handleSignup(event) {
 }
 
 async function handleLogout() {
+  // 열려있는 드로어를 먼저 닫아야 로그아웃 후 뒤에 드로어가 남지 않음
+  closeProfile();
   stopProgressPolling();
   await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
   state.user = null;
@@ -906,6 +905,12 @@ async function handleLogout() {
   renderConversationList();
   renderMessages();
   renderAccountState();
+  // 로그아웃 시 회원가입/로그인 폼 초기화 (이전 입력값 노출 방지)
+  loginFormEl.reset();
+  signupFormEl.reset();
+  loginErrorEl.textContent = "";
+  signupErrorEl.textContent = "";
+  toggleAuthPane("login");
   showAuthOverlay();
 }
 
@@ -926,13 +931,19 @@ async function initialize() {
   });
   loginFormEl.addEventListener("submit", handleLogin);
   signupFormEl.addEventListener("submit", handleSignup);
-  openSettingsBtn.addEventListener("click", openSettings);
-  closeSettingsBtn.addEventListener("click", closeSettings);
-  drawerBackdropEl.addEventListener("click", closeSettings);
+  // 탑바 "API Vault" 버튼 → 프로필 드로어 vault 탭으로 단축
+  openVaultBtn.addEventListener("click", () => openProfile("vault"));
 
-  openProfileBtn.addEventListener("click", openProfile);
+  // 프로필 드로어 open/close
+  openProfileBtn.addEventListener("click", () => openProfile("account"));
   closeProfileBtn.addEventListener("click", closeProfile);
   profileBackdropEl.addEventListener("click", closeProfile);
+
+  // 프로필 탭 전환
+  document.querySelectorAll("[data-profile-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => switchProfileTab(btn.dataset.profileTab));
+  });
+
   if (passwordChangeFormEl) {
     passwordChangeFormEl.addEventListener("submit", handlePasswordChange);
   }

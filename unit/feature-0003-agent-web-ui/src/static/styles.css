@@ -915,6 +915,48 @@ a { color: inherit; }
   line-height: 1.6;
 }
 
+/* 드로어 탭 네비게이션 */
+.drawer-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  margin: -4px -24px 4px;
+  padding: 0 24px;
+}
+
+.drawer-tab {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+  transition: color .14s, border-color .14s;
+}
+.drawer-tab:hover    { color: var(--text-2); }
+.drawer-tab.is-active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+/* 드로어 탭 패널 */
+.drawer-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+
+/* 프로필 드로어 헤더: 아바타 + 이름 인라인 */
+.profile-header-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
 .encrypt-panel {
   padding: 11px 13px;
   border-radius: var(--r-md);
@@ -1311,16 +1353,8 @@ a { color: inherit; }
   text-transform: uppercase;
 }
 
-.profile-summary {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
 .profile-summary-name {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--text);
 }
@@ -1328,7 +1362,7 @@ a { color: inherit; }
 .profile-summary-meta {
   font-size: 12px;
   color: var(--text-muted);
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 .profile-section {
