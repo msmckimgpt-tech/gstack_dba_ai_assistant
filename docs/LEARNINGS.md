@@ -70,6 +70,16 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Pattern: AGENTS.md를 Part A~G 구조로 재정렬할 때, 본 프로젝트 고유 섹션(**프로젝트 목표**, **연구 기반 방향 전환**, **웹 기준 업계 표준 반영**, **절대 금지 목록**, **Docker Compose 운영 규칙**, **.env 정책**)은 템플릿의 일반 조항을 덮어쓰지 않고 해당 Part에 그대로 배치한다. 템플릿의 섹션 재편을 기계적으로 따르면 프로젝트 고유 지침이 누락된다.
 - Applies to: 차후 템플릿 버전 업 시에도 동일 원칙 적용. 프로젝트 고유 조항의 위치는 CODEBASE_MAP.md 또는 TEMPLATE_CHANGELOG.md의 마이그레이션 체크리스트에 기록한다.
 
+### LRN-20260416-0001 — LLM 도구 호출 순서는 TOOL_DEFINITIONS 배열 순서에 영향받는다
+- Source: feature-0002 Planner 자율성 개선 작업 (2026-04-16)
+- Pattern: 로컬 LLM이 `search_tables` → `describe_table`을 반복하며 `execute_sql`을 늦게 호출하는 문제가 있었다. `TOOL_DEFINITIONS` 배열에서 `execute_sql`을 맨 앞으로 이동하고 각 도구 description에 사용 조건(예: "최후 수단", "오류 시에만")을 명시하자 탐색 단계가 줄어들었다. 휴리스틱(step count 기반 강제)이 아닌 도구 제시 순서와 자연어 지침만으로 LLM 행동을 교정할 수 있다.
+- Applies to: feature-0002 agent_core.py + tools.py의 TOOL_DEFINITIONS 및 SYSTEM_PROMPT 수정 시.
+
+### LRN-20260416-0002 — Progress Strip은 `<details>` 드롭다운으로 높이를 고정해야 한다
+- Source: feature-0003 Progress Strip 드롭다운 구조화 (2026-04-16)
+- Pattern: step이 누적되며 progress-strip 높이가 증가하면 채팅 영역이 점점 좁아진다. `<details>`/`<summary>` 네이티브 드롭다운으로 전환하고, summary에 `n단계 · 최근 작업` 요약을 표시하며, 펼침 영역은 `max-height: 40vh; overflow-y: auto`로 제한하면 채팅 영역을 보호하면서 전체 진행 상황 확인도 가능하다.
+- Applies to: feature-0003 progress strip 구조를 수정하는 모든 작업.
+
 ## Category: quirk
 
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존

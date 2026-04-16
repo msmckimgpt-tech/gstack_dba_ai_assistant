@@ -40,41 +40,6 @@ services:
       timeout: 5s
       retries: 20
 
-  local-llm-gateway:
-    image: ollama/ollama:latest
-    env_file:
-      - .env
-    environment:
-      OLLAMA_CONTEXT_LENGTH: ${LOCAL_LLM_CONTEXT_LENGTH:-16384}
-    volumes:
-      - ../artifacts/ollama:/root/.ollama
-    networks:
-      llm-shared:
-        aliases:
-          - local-llm-gateway
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 15s
-      timeout: 10s
-      retries: 20
-    restart: unless-stopped
-
-  local-llm-init:
-    image: ollama/ollama:latest
-    env_file:
-      - .env
-    environment:
-      OLLAMA_HOST: http://local-llm-gateway:11434
-    entrypoint: ["/bin/sh", "/init_ollama_models.sh"]
-    volumes:
-      - ../artifacts/ollama:/root/.ollama
-      - ./unit/feature-0001-platform-runtime/src/local-llm/init_ollama_models.sh:/init_ollama_models.sh:ro
-    networks: [llm-shared]
-    depends_on:
-      local-llm-gateway:
-        condition: service_healthy
-    restart: "no"
-
   agent:
     <<: *agent-common
     networks: [dbnet, llm-shared]

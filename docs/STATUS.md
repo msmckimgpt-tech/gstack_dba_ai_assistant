@@ -14,9 +14,9 @@ source_of_truth: true
 
 | 기능 ID | 상태 | 담당 | 최종 갱신 | 비고 |
 |---------|------|------|----------|------|
-| feature-0001-platform-runtime | in-progress | AI | 2026-04-15 | 로컬 LLM 게이트웨이/Ollama 기동 스크립트 추가 |
-| feature-0002-agent-core | in-progress | AI | 2026-04-15 | `make ask` 기준 local-llm-gateway 실동작 확인 |
-| feature-0003-agent-web-ui | in-progress | AI | 2026-04-15 | 계정/RBAC 개편 + local LLM 실응답 검증 완료 |
+| feature-0001-platform-runtime | in-progress | AI | 2026-04-15 | MySQL runtime 경계 유지, 내장 Local LLM bootstrap 제거 |
+| feature-0002-agent-core | in-progress | AI | 2026-04-15 | 외부 `local_llm` gateway 소비 계약 정리 |
+| feature-0003-agent-web-ui | in-progress | AI | 2026-04-15 | 계정/RBAC 개편 + 외부 Local LLM 상태 안내 정리 |
 | feature-0004-browser-automation | in-progress | AI | 2026-04-06 | 구조 이관 완료, smoke 검증 예정 |
 | feature-0005-qa-mcp | in-progress | AI | 2026-04-06 | 포트 28000 점유 해소 확인, MCP 기동 검증 예정 |
 | feature-0006-lan-proxy-access | in-progress | AI | 2026-04-06 | 운영 자산 이관 완료 |
@@ -44,9 +44,9 @@ ARCHITECTURE.md §6 참조. 현재 등록된 의존 관계:
 - 통합 테스트 대상 기능 쌍: 향후 엄격 시나리오 정의 후 확정
 - 최근 통합 테스트 실행: 2026-03-26 구조/기동 검증
 - 현재 기준: 구조/기동 검증만 적용
-- 확인 완료: `docker compose config`, `make status`, `make web`, `make browser-up`, `make browser-health`, `make local-llm-up`, `GET /api/session`, `POST /api/ask`
+- 확인 완료: `docker compose config`, `make status`, `make web`, `make browser-up`, `make browser-health`, `GET /api/session`
 - 차단됨: `make mcp-test`(MCP 기동 검증 예정)
-- 2026-04-15 갱신: `local-llm-gateway`가 `llm-shared`에 연결되었고 Web UI/API에서 로컬 LLM 실응답을 확인
+- 2026-04-15 갱신: 현재 repo 내부 Local LLM runtime 제거 작업을 반영했고, 외부 provider 계약 기준으로 문서와 실행 경로를 정리
 
 ## 5. 전체 진행률
 - 총 기능 수: 6

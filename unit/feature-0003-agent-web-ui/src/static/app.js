@@ -44,6 +44,7 @@ const progressCardEl = document.getElementById("progressCard");
 const progressTitleEl = document.getElementById("progressTitle");
 const progressStatusEl = document.getElementById("progressStatus");
 const progressStepsEl = document.getElementById("progressSteps");
+const progressSummaryEl = document.getElementById("progressSummary");
 const messageLogEl = document.getElementById("messageLog");
 const loadMoreBtn = document.getElementById("loadMoreBtn");
 const cancelBtn = document.getElementById("cancelBtn");
@@ -679,23 +680,39 @@ function renderProgress(statusPayload = null) {
   const status = String(payload.status || "").trim();
   if (!status && !steps.length) {
     progressCardEl.classList.add("hidden");
+    progressCardEl.removeAttribute("open");
     progressStepsEl.innerHTML = "";
     progressStatusEl.textContent = "idle";
+    if (progressSummaryEl) progressSummaryEl.textContent = "";
     return;
   }
 
   progressCardEl.classList.remove("hidden");
   progressTitleEl.textContent = status === "processing" ? "처리 중" : "최근 실행";
   progressStatusEl.textContent = status || "unknown";
+
+  if (progressSummaryEl) {
+    if (steps.length > 0) {
+      const latest = steps[steps.length - 1] || {};
+      const label = latest.work || latest.intent || latest.tool || "단계";
+      progressSummaryEl.textContent = `${steps.length}단계 · ${label}`;
+    } else {
+      progressSummaryEl.textContent = status === "processing" ? "시작 중..." : "";
+    }
+  }
+
   progressStepsEl.innerHTML = "";
-  steps.forEach((step) => {
+  steps.forEach((step, idx) => {
     const item = document.createElement("div");
     item.className = "progress-step";
+    const indexEl = document.createElement("span");
+    indexEl.className = "progress-step-index";
+    indexEl.textContent = `${idx + 1}.`;
     const title = document.createElement("strong");
     title.textContent = step.work || step.intent || step.tool || "단계";
     const desc = document.createElement("span");
     desc.textContent = step.reason || step.result_summary || step.tool || "";
-    item.append(title, desc);
+    item.append(indexEl, title, desc);
     progressStepsEl.appendChild(item);
   });
 }
@@ -1091,12 +1108,16 @@ async function initialize() {
       showToast(error.message || "이전 기록을 불러오지 못했습니다.", true);
     });
   });
-  cancelBtn.addEventListener("click", () => {
+  cancelBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
     cancelCurrentRun().catch((error) => {
       showToast(error.message || "취소 요청에 실패했습니다.", true);
     });
   });
-  finalizeBtn.addEventListener("click", () => {
+  finalizeBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
     finalizeCurrentRun().catch((error) => {
       showToast(error.message || "즉시 답변 요청에 실패했습니다.", true);
     });

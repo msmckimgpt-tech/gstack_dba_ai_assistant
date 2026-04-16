@@ -23,12 +23,14 @@
 ## 실행
 1. 현재 디렉토리에서 작업한다.
 2. `.env`가 로컬 전용 파일이며 원본 운영 의미를 유지하는지 점검한다.
-3. `ENABLE_LOCAL_LLM=1` 상태라면 `make start` 전에 `llm-shared` 외부 네트워크가 생성 가능한지 확인한다.
-4. `make start`는 `local-llm-gateway`를 함께 기동하고, `auto/edge/core/code` alias 모델을 Ollama에 준비한다.
-4. `ENABLE_MCP=1` 상태라면 호스트 포트 `28000`이 비어 있는지 확인한다.
-5. `make start`
-6. `make status`
-7. `make ask q="질문"`
+3. 외부 Local LLM provider가 필요하면 먼저 `/root/download/docker/local_llm` 에서 별도로 기동한다.
+4. 외부 provider가 `llm-shared` 네트워크와 `http://local-llm-gateway:8080/v1` 계약을 제공하는지 확인한다.
+5. `ENABLE_MCP=1` 상태라면 호스트 포트 `28000`이 비어 있는지 확인한다.
+6. `make start`
+7. `make status`
+8. `make ask q="질문"`
+
+현재 repo는 Local LLM을 직접 기동하지 않는다. `llm-shared` 외부 네트워크가 없으면 `make` 명령이 안내 메시지와 함께 중단된다.
 
 ## GitHub 협업
 - 원격 저장소는 `git@github.com:msmckimgpt-tech/ai_desk_mysql.git`를 사용한다.
@@ -54,6 +56,6 @@
 - 현재 단계 검증은 구조/경로/기동 확인까지만 반영했다.
 - 엄격한 도메인 검증 시나리오는 각 feature의 `docs/TEST.md`를 정본으로 후속 작성한다.
 - `.env.example`는 대체 기본값 파일이 아니라, 원본 `.env` 구조를 민감값 없이 보여주는 샘플이다.
-- 2026-04-15 검증 기준으로 `make start` 또는 `make local-llm-up`은 `local-llm-gateway`를 `llm-shared`에 연결하고 Ollama alias 모델(`auto`, `edge`, `core`, `code`)을 준비한다.
-- 2026-04-15 검증 기준으로 Web UI `GET /api/session`은 `local_llm_enabled=true`를 반환했고, `POST /api/ask`가 API 키 없이 `model=auto`로 성공했다.
+- 2026-04-15 기준으로 현재 repo는 외부 `/root/download/docker/local_llm` provider를 소비만 하며, 내부에서 Ollama/gateway를 생성하거나 관리하지 않는다.
+- 2026-04-15 기준으로 Web UI는 `LOCAL_LLM_API_BASE` 연결 가능 여부를 `local_llm_enabled`로 노출하고, 외부 provider 미기동 시 Local LLM 요청을 503으로 제한한다.
 - 최근 검증 기준으로 `ENABLE_MCP=1`일 때 호스트 `28000` 포트가 이미 사용 중이면 `make start` 마지막 단계에서 `mcp` 기동이 차단될 수 있다.

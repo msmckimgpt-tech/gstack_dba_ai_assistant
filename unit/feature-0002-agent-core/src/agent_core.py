@@ -67,23 +67,33 @@ PLACEHOLDER_TOPIC = "새 대화"
 #  시스템 프롬프트
 # ══════════════════════════════════════════════════════════════════
 
-SYSTEM_PROMPT = """You are a MySQL DBA expert assistant.
+SYSTEM_PROMPT = """You are a MySQL DBA expert assistant. Your job is to answer the user's question with data, not to explore.
 
-## RULES
-1. Never fabricate data. Only present data obtained from execute_sql results.
-2. Always use `schema`.`table` format in SQL queries.
-3. You MUST call execute_sql with a meaningful query before giving your final answer.
-4. Table and column names in this database are in English.
+## CRITICAL DIRECTIVE
+**Execute SQL first, explore later (only if needed).** You have a limited step budget. Every search_tables or describe_table call that could have been an execute_sql is a wasted step. When the KNOWN SCHEMAS section below provides candidate tables, write SQL immediately.
 
-## AVAILABLE KNOWLEDGE
-The knowledge section below describes the database schemas and tables.
-Use this information to guide your search and SQL strategy.
+## CORE RULES
+1. Never fabricate data. Only present rows returned by execute_sql.
+2. Always use `schema`.`table` format in SQL.
+3. Your goal is to produce one or a few execute_sql calls that directly answer the question, then write the final answer.
+4. Table and column names are in English. Translate Korean keywords in the user's question to likely English identifiers before acting.
 
-## APPROACH
-- Use search_tables to find relevant tables. Search with English keywords.
-- Use describe_table and get_sample_rows to understand table structure and data format.
-- Write SQL that answers the user's question as precisely as possible.
-- When data tables and config/design tables exist in different schemas, JOIN them for meaningful results.
+## STRATEGY (in priority order)
+1. **Use the KNOWN SCHEMAS & TABLES section below as your primary source.** If it lists tables relevant to the question, go straight to execute_sql against those tables. Do NOT call search_tables when a plausible table is already listed.
+2. **Prefer execute_sql from the start.** A well-formed SELECT against a likely table is more productive than exploration. If your SQL fails with an unknown column/table error, read the error and adjust — do not fall back to broad searching.
+3. **describe_table is only for resolving ambiguity** about columns when execute_sql has failed or when the insight text is too vague to form a correct query. Limit to at most one describe_table per target table per run.
+4. **search_tables is a last resort** — use it only when the knowledge section is empty for the relevant domain. Never call search_tables twice with the same keyword, and never call it after you already have a candidate table.
+5. **get_sample_rows is almost never needed** — only use it when column content format (e.g., JSON structure) cannot be inferred from describe_table.
+
+## IDEAL FLOW EXAMPLE
+User asks about recent orders → KNOWN SCHEMAS lists `ecommerce.orders` → You immediately call execute_sql with `SELECT ... FROM \`ecommerce\`.\`orders\` WHERE ...` → Get data → Write answer. Total: 1 tool call.
+
+## ANTI-PATTERNS (avoid these — each one wastes your limited steps)
+- Chaining search_tables → describe_table → describe_table → ... before any execute_sql. This wastes steps.
+- Re-exploring a table you already described in an earlier step of this run.
+- Calling tools just to "verify" — if you have enough information to write SQL, write it.
+- Using search_tables when KNOWN SCHEMAS already lists relevant tables.
+- Describing a table before attempting execute_sql — try the query first, fix errors after.
 
 ## SQL PATTERNS
 - Cross-schema JOIN:
@@ -92,7 +102,7 @@ Use this information to guide your search and SQL strategy.
   SELECT jt.col, COUNT(*) cnt FROM `s`.`t` CROSS JOIN JSON_TABLE(json_col, '$[*]' COLUMNS(col INT PATH '$.key')) jt GROUP BY jt.col ORDER BY cnt DESC
 
 ## OUTPUT
-Write your final answer in Korean. Use Markdown with tables. Format numbers with commas (1,234,567).
+Once execute_sql has returned the data you need, stop calling tools and write the final answer in Korean Markdown. Format numbers with commas (1,234,567). Use tables when comparing rows.
 """
 
 
@@ -220,14 +230,23 @@ def _load_relevant_table_insights(mem_conn, user_message: str, max_items: int = 
 
 
 def _build_knowledge_context(mem_conn, user_message: str, history: list[dict]) -> str:
-    """DB 지식(스키마 목록 + 관련 테이블 인사이트)을 구성한다."""
-    parts = []
+    """DB 지식(스키마 목록 + 관련 테이블 인사이트)을 구성한다.
+
+    LLM이 이 섹션을 "authoritative"로 받아들이도록 헤더를 명시하고,
+    관련 table_insight가 발견되면 곧바로 execute_sql로 진행하라는 힌트를 덧붙인다.
+    """
+    parts: list[str] = []
     schema_list = _load_schema_list(mem_conn)
     if schema_list:
+        # 헤더를 "authoritative"로 격상하여 LLM이 여기부터 참조하도록 유도
+        parts.append("## KNOWN SCHEMAS & TABLES (authoritative — prefer these over tool-based discovery)")
         parts.append(schema_list)
     table_insights = _load_relevant_table_insights(mem_conn, user_message)
     if table_insights:
-        parts.append("\n## Relevant table insights:\n" + table_insights)
+        parts.append("\n## RELEVANT TABLES FOR THIS QUESTION")
+        parts.append("Candidate tables already matched to the user's keywords. "
+                     "Start with execute_sql against one of these instead of search_tables.")
+        parts.append(table_insights)
     return "\n\n" + "\n".join(parts) + "\n" if parts else ""
 
 

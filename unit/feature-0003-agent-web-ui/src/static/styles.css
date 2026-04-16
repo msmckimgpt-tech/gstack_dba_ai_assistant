@@ -554,12 +554,23 @@ a { color: inherit; }
   font-weight: 500;
 }
 
-/* Progress strip */
+/* Progress strip (collapsible <details>) */
 .progress-strip {
   flex-shrink: 0;
-  padding: 9px 20px;
+  padding: 0;
   background: rgba(37,99,235,.04);
   border-bottom: 1px solid rgba(37,99,235,.1);
+}
+
+.progress-strip > summary.progress-row {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 20px;
+  user-select: none;
+}
+
+.progress-strip > summary.progress-row::-webkit-details-marker {
+  display: none;
 }
 
 .progress-row {
@@ -584,17 +595,39 @@ a { color: inherit; }
   font-weight: 700;
 }
 
+.progress-summary {
+  font-size: 12px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .progress-actions {
   display: flex;
   gap: 2px;
   margin-left: auto;
 }
 
+.progress-caret {
+  font-size: 11px;
+  color: var(--text-2);
+  transition: transform .15s ease;
+}
+
+.progress-strip[open] .progress-caret {
+  transform: rotate(180deg);
+}
+
 .progress-steps {
-  margin-top: 7px;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  padding: 4px 20px 10px;
+  max-height: 40vh;
+  overflow-y: auto;
 }
 
 .progress-step {
@@ -608,6 +641,15 @@ a { color: inherit; }
 
 .progress-step strong {
   margin-right: 4px;
+}
+
+.progress-step-index {
+  display: inline-block;
+  min-width: 18px;
+  margin-right: 6px;
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 11px;
 }
 
 /* ─── Messages ───────────────────────────────────────────────────── */

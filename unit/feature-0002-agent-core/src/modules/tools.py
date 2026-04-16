@@ -35,11 +35,57 @@ def _is_user_schema(name: str) -> bool:
 # ══════════════════════════════════════════════════════════════════
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
+    # execute_sql을 맨 앞에 배치 — LLM이 첫 번째 도구를 선호하는 경향을 활용.
+    # 질문에 바로 답할 수 있는 SQL을 먼저 시도하도록 유도한다.
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_sql",
+            "description": (
+                "SELECT SQL을 실행하여 데이터를 조회한다. "
+                "반드시 `schema`.`table` 형식을 사용한다. "
+                "이 도구를 가장 먼저 사용하라 — 시스템 프롬프트의 KNOWN SCHEMAS 정보로 SQL을 즉시 작성할 수 있다."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sql": {
+                        "type": "string",
+                        "description": "실행할 SELECT SQL",
+                    },
+                },
+                "required": ["sql"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "describe_table",
+            "description": (
+                "테이블의 컬럼명, 타입, 키, 인덱스를 반환한다. "
+                "execute_sql이 컬럼 오류로 실패했을 때만 사용한다. "
+                "동일 테이블에 대해 1회만 호출한다."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "schema_name": {"type": "string", "description": "스키마 이름"},
+                    "table_name": {"type": "string", "description": "테이블 이름"},
+                },
+                "required": ["schema_name", "table_name"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
             "name": "search_tables",
-            "description": "키워드로 테이블을 검색한다. 테이블명/컬럼명에서 키워드를 찾는다.",
+            "description": (
+                "키워드로 테이블을 검색한다 (최후 수단). "
+                "시스템 프롬프트의 KNOWN SCHEMAS에 관련 테이블이 이미 있으면 이 도구를 사용하지 않는다. "
+                "같은 키워드로 2회 이상 호출하지 않는다."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -59,23 +105,12 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "describe_table",
-            "description": "테이블의 컬럼명, 타입, 키, 인덱스를 반환한다.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "schema_name": {"type": "string", "description": "스키마 이름"},
-                    "table_name": {"type": "string", "description": "테이블 이름"},
-                },
-                "required": ["schema_name", "table_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "get_sample_rows",
-            "description": "테이블의 샘플 데이터를 조회한다.",
+            "description": (
+                "테이블의 샘플 데이터를 조회한다. "
+                "컬럼 내용 형식(예: JSON 구조)을 확인해야 할 때만 사용한다. "
+                "대부분의 경우 불필요하다."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -84,23 +119,6 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "limit": {"type": "integer", "description": "행 수 (기본 5)"},
                 },
                 "required": ["schema_name", "table_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "execute_sql",
-            "description": "SELECT SQL을 실행한다. 반드시 `schema`.`table` 형식을 사용한다.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "sql": {
-                        "type": "string",
-                        "description": "실행할 SELECT SQL",
-                    },
-                },
-                "required": ["sql"],
             },
         },
     },

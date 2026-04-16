@@ -115,18 +115,20 @@
         <!-- Access Notice -->
         <div class="access-notice hidden" id="accessNotice"></div>
 
-        <!-- Progress Strip -->
-        <div class="progress-strip hidden" id="progressCard">
-          <div class="progress-row">
+        <!-- Progress Strip (collapsible dropdown) -->
+        <details class="progress-strip hidden" id="progressCard">
+          <summary class="progress-row">
             <span class="progress-label" id="progressTitle">처리 중</span>
             <span class="progress-badge" id="progressStatus">processing</span>
+            <span class="progress-summary" id="progressSummary"></span>
             <div class="progress-actions">
               <button type="button" class="tool-btn hidden" id="cancelBtn">중단</button>
               <button type="button" class="tool-btn hidden" id="finalizeBtn">즉시 답변</button>
             </div>
-          </div>
+            <span class="progress-caret" aria-hidden="true">▾</span>
+          </summary>
           <div class="progress-steps" id="progressSteps"></div>
-        </div>
+        </details>
 
         <!-- Messages -->
         <div class="messages" id="messageLog">
@@ -238,11 +240,11 @@
 
     </div><!-- /security -->
 
-    <!-- ── 탭 패널: API Vault ── -->
-    <div class="drawer-pane hidden" data-profile-pane="vault">
+      <!-- ── 탭 패널: API Vault ── -->
+      <div class="drawer-pane hidden" data-profile-pane="vault">
 
       <p class="drawer-desc">
-        모델과 API 키는 서버에 저장하지 않습니다. 로컬 LLM 환경에서는 API 키 없이도 요청할 수 있습니다.
+        모델과 API 키는 서버에 저장하지 않습니다. 외부 Local LLM gateway가 연결되어 있으면 API 키 없이도 요청할 수 있습니다.
       </p>
       <label class="field">
         <span>모델</span>

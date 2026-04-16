@@ -12,9 +12,7 @@ OUT_DIR := $(SHARED_DIR)/out
 CERT_ROOT := $(RUNTIME_DIR)/certs
 CADDY_DATA_DIR := $(RUNTIME_DIR)/caddy-data
 CADDY_CONFIG_DIR := $(RUNTIME_DIR)/caddy-config
-OLLAMA_DIR := $(RUNTIME_DIR)/ollama
 ENABLE_MCP ?= $(shell sed -n 's/^ENABLE_MCP=//p' .env | tail -n 1)
-ENABLE_LOCAL_LLM ?= $(shell sed -n 's/^ENABLE_LOCAL_LLM=//p' .env | tail -n 1)
 ENABLE_INSIGHT_WORKER ?= $(shell sed -n 's/^AGENT_INSIGHT_WORKER_ENABLED=//p' .env | tail -n 1)
 ENABLE_WEB_TLS ?= $(shell sed -n 's/^ENABLE_WEB_TLS=//p' .env | tail -n 1)
 ENABLE_WEB_TLS_PROXY ?= $(shell sed -n 's/^ENABLE_WEB_TLS_PROXY=//p' .env | tail -n 1)
@@ -31,10 +29,14 @@ CONV_FILE ?= /shared/conversation_id.$(SESSION)
 BROWSER_SESSION_FILE ?= /shared/browser_session_id.$(SESSION)
 BROWSER_CTL := $(DC_QUIET) run --rm --entrypoint python --env BROWSER_SESSION_FILE=$(BROWSER_SESSION_FILE) --env BROWSER_URL=$(BROWSER_URL) browser /app/ctl.py
 
-.PHONY: ensure-llm-network wait-mysql ensure-memory-db local-llm-up local-llm-down local-llm-status local-llm-logs up down restart build ps logs sh repl ask out clean clear init mcp-up mcp-down mcp-test convo-list convo-new convo-use convo-delete convo-rename convo-clear start stop status dump web web-down web-tls-up web-tls-down web-tls-status web-tls-logs insight-up insight-down insight-logs insight-status browser-up browser-down browser-health browser-session browser-goto browser-click browser-type browser-set-value browser-eval browser-press browser-wait browser-text browser-html browser-shot browser-close browser-hover browser-mousedown browser-mouseup browser-scroll mysql session-info
+.PHONY: check-llm-network wait-mysql ensure-memory-db up down restart build ps logs sh repl ask out clean clear init mcp-up mcp-down mcp-test convo-list convo-new convo-use convo-delete convo-rename convo-clear start stop status dump web web-down web-tls-up web-tls-down web-tls-status web-tls-logs insight-up insight-down insight-logs insight-status browser-up browser-down browser-health browser-session browser-goto browser-click browser-type browser-set-value browser-eval browser-press browser-wait browser-text browser-html browser-shot browser-close browser-hover browser-mousedown browser-mouseup browser-scroll mysql session-info
 
-ensure-llm-network:
-	@docker network inspect llm-shared >/dev/null 2>&1 || docker network create llm-shared >/dev/null
+check-llm-network:
+	@docker network inspect llm-shared >/dev/null 2>&1 || { \
+		echo "llm-shared 외부 네트워크를 찾을 수 없습니다." >&2; \
+		echo "현재 repo는 Local LLM을 직접 기동하지 않습니다. 먼저 /root/download/docker/local_llm 에서 provider를 준비하세요." >&2; \
+		exit 1; \
+	}
 
 wait-mysql:
 	@container_id="$$( $(DC_QUIET) ps -q mysql )"; \
@@ -55,32 +57,12 @@ wait-mysql:
 ensure-memory-db:
 	@$(DC_QUIET) exec -T mysql sh -lc 'mysql -uroot -p"$$MYSQL_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \`$(MEMORY_DB)\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"'
 
-local-llm-up:
-	@$(MAKE) ensure-llm-network
-	@mkdir -p $(OLLAMA_DIR)
-	@$(DC_QUIET) up -d local-llm-gateway
-	@$(DC_QUIET) run --rm local-llm-init
-
-local-llm-down:
-	@$(DC_QUIET) stop local-llm-gateway || true
-
-local-llm-status:
-	@$(DC_QUIET) ps local-llm-gateway
-
-local-llm-logs:
-	@$(DC_QUIET) logs -f --tail=200 local-llm-gateway
-
 up:
-	@$(MAKE) ensure-llm-network
-	@mkdir -p $(SHARED_DIR) $(MYSQL_DATA_DIR) $(MYSQL_BACKUP_DIR) $(LOG_DIR) $(OUT_DIR) $(SHARED_DIR)/web_sessions $(SHARED_DIR)/out/browser $(CERT_ROOT)/$(WEB_PUBLIC_HOST) $(CADDY_DATA_DIR) $(CADDY_CONFIG_DIR) $(OLLAMA_DIR)
+	@$(MAKE) check-llm-network
+	@mkdir -p $(SHARED_DIR) $(MYSQL_DATA_DIR) $(MYSQL_BACKUP_DIR) $(LOG_DIR) $(OUT_DIR) $(SHARED_DIR)/web_sessions $(SHARED_DIR)/out/browser $(CERT_ROOT)/$(WEB_PUBLIC_HOST) $(CADDY_DATA_DIR) $(CADDY_CONFIG_DIR)
 	@chown -R 999:999 $(MYSQL_DATA_DIR) || true
 	@chmod -R 770 $(MYSQL_DATA_DIR) $(MYSQL_BACKUP_DIR) $(LOG_DIR) $(OUT_DIR) || true
 	@$(DC_QUIET) build agent memory-init insight-worker web browser
-	@if [[ "$(ENABLE_LOCAL_LLM)" != "0" ]]; then \
-		$(MAKE) local-llm-up; \
-	else \
-		$(DC_QUIET) stop local-llm-gateway >/dev/null 2>&1 || true; \
-	fi
 	@$(DC_QUIET) up -d --build mysql web browser
 	@$(MAKE) wait-mysql
 	@$(MAKE) ensure-memory-db
@@ -123,9 +105,11 @@ logs:
 	@$(DC_QUIET) logs -f --tail=200
 
 sh:
+	@$(MAKE) check-llm-network
 	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --entrypoint bash agent
 
 repl:
+	@$(MAKE) check-llm-network
 	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --repl
 
 ask: init
@@ -133,6 +117,7 @@ ask: init
 		echo '사용법: make ask q="질문"'; \
 		exit 1; \
 	fi
+	@$(MAKE) check-llm-network
 	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent "$(q)"
 
 mysql: init
@@ -140,12 +125,15 @@ mysql: init
 		echo '사용법: make mysql sql="SELECT 1;"'; \
 		exit 1; \
 	fi
+	@$(MAKE) check-llm-network
 	@$(DC_QUIET) run --rm --remove-orphans --entrypoint bash --env SQL="$(sql)" agent -lc 'mysql -h "$$DB_HOST" -P "$$DB_PORT" -u "$$DB_USER" -p"$$DB_PASSWORD" -e "$$SQL"'
 
 convo-list: init
+	@$(MAKE) check-llm-network
 	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --list-conversations
 
 convo-new: init
+	@$(MAKE) check-llm-network
 	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --new-conversation
 
 convo-use: init
@@ -153,6 +141,7 @@ convo-use: init
 		echo '사용법: make convo-use index=1 q="질문"'; \
 		exit 1; \
 	fi
+	@$(MAKE) check-llm-network
 	@if [[ -z "$(q)" ]]; then \
 		AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --use-conversation-index "$(index)"; \
 	else \
@@ -164,6 +153,7 @@ convo-delete: init
 		echo '사용법: make convo-delete index=1'; \
 		exit 1; \
 	fi
+	@$(MAKE) check-llm-network
 	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --delete-conversation-index "$(index)"
 
 convo-rename: init
@@ -171,9 +161,11 @@ convo-rename: init
 		echo '사용법: make convo-rename index=1 topic="새 주제"'; \
 		exit 1; \
 	fi
+	@$(MAKE) check-llm-network
 	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent --rename-conversation-index "$(index)" --rename-topic "$(topic)"
 
 convo-clear: init
+	@$(MAKE) check-llm-network
 	@AGENT_CONVERSATION_ID_FILE=$(CONV_FILE) $(DC_QUIET) run --rm --remove-orphans agent "__CLEAR_MEMORY_TABLES__"
 
 init:
@@ -193,6 +185,7 @@ mcp-test:
 
 web: init
 	@if [ "$(ENABLE_WEB_TLS)" = "1" ]; then $(MAKE) -s web-tls-cert; fi
+	@$(MAKE) check-llm-network
 	@$(DC_QUIET) up -d --build web
 	@if [ "$(ENABLE_WEB_TLS)" = "1" ]; then \
 		echo "Web UI (HTTPS): https://localhost:$(WEB_PORT)"; \
@@ -229,6 +222,7 @@ web-tls-cert:
 
 web-tls-up: init web-tls-cert
 	@mkdir -p $(CADDY_DATA_DIR) $(CADDY_CONFIG_DIR)
+	@$(MAKE) check-llm-network
 	@$(DC_QUIET) up -d --build web
 	@$(DC_QUIET) up -d caddy
 	@echo "TLS Web UI: https://$(WEB_PUBLIC_HOST)"
@@ -244,6 +238,7 @@ web-tls-logs:
 	@$(DC_QUIET) logs -f --tail=200 caddy
 
 insight-up:
+	@$(MAKE) check-llm-network
 	@$(DC_QUIET) up -d --build insight-worker
 
 insight-down:

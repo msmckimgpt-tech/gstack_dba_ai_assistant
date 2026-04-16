@@ -2180,13 +2180,13 @@ async def ask(request: Request) -> JSONResponse:
         conn.close()
         return _json_error("허용되지 않은 모델입니다.", 400)
     # ── 모델 종류별 자격증명 검증 ──
-    # 로컬 LLM 모델(auto/edge/core/code)은 로컬 게이트웨이만 확인한다.
+    # Local LLM 모델(auto/edge/core/code)은 외부 gateway 연결 가능 여부만 확인한다.
     # API 모델(gpt-* 등)은 사용자가 제공한 API 키가 반드시 있어야 한다.
     # 서버 환경변수 OPENAI_API_KEY를 대신 사용하는 것을 막기 위해 분리한다.
     elif is_local_llm_model(model):
         if not local_llm_enabled:
             conn.close()
-            return _json_error("로컬 LLM을 현재 사용할 수 없습니다. 게이트웨이 상태를 확인하세요.", 503)
+            return _json_error("외부 Local LLM provider가 준비되지 않았습니다. 게이트웨이 상태를 확인하세요.", 503)
     elif not has_api_key_input:
         conn.close()
         return _json_error("API 모델 사용 시 API 키 설정이 필요합니다.", 400)
