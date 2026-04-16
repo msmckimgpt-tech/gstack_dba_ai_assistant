@@ -916,6 +916,97 @@ a { color: inherit; }
 }
 .message-link:hover { background: var(--primary-soft); color: var(--primary); border-color: rgba(37,99,235,.2); }
 
+/* SQL 결과 액션 영역 (전체 데이터 보기 + CSV 링크) */
+.sql-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.result-table-wrap.is-full-data {
+  max-height: 360px;
+  overflow: auto;
+}
+
+/* SQL 쿼리 Navigator — 다수 execute_sql step을 한 화면에서 탐색 */
+.sql-navigator {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 8px;
+  background: var(--bg);
+  outline: none;
+}
+.sql-navigator:focus-visible {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(37,99,235,.15);
+}
+
+.sql-nav-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sql-nav-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .12s ease, border-color .12s ease;
+}
+.sql-nav-btn:hover:not(:disabled) {
+  background: var(--primary-soft);
+  border-color: rgba(37,99,235,.2);
+  color: var(--primary);
+}
+.sql-nav-btn:disabled {
+  opacity: .4;
+  cursor: default;
+}
+
+.sql-nav-indicator {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  min-width: 64px;
+  text-align: center;
+}
+
+.sql-nav-context {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: auto;
+  font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sql-nav-panels {
+  display: block;
+}
+
+.sql-nav-panel {
+  display: none;
+}
+.sql-nav-panel.is-active {
+  display: flex;
+}
+
 /* ─── Composer ───────────────────────────────────────────────────── */
 .composer-wrap {
   flex-shrink: 0;

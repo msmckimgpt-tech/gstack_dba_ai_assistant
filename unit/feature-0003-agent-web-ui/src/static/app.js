@@ -527,6 +527,61 @@ function appendDetailBlock(parentEl, title, contentNode) {
   parentEl.appendChild(block);
 }
 
+function extractFirstTableRef(sql = "") {
+  const match = String(sql || "").match(
+    /(?:FROM|JOIN|UPDATE|INTO)\s+`?([A-Za-z0-9_]+)`?\.`?([A-Za-z0-9_]+)`?/i,
+  );
+  return match ? `${match[1]}.${match[2]}` : "";
+}
+
+// 단순 CSV 파서 — 따옴표, 이스케이프된 따옴표(""), CR/LF 처리.
+function parseCsv(text = "") {
+  const rows = [];
+  let row = [];
+  let current = "";
+  let inQuotes = false;
+  const src = String(text || "");
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inQuotes) {
+      if (ch === '"' && src[i + 1] === '"') {
+        current += '"';
+        i++;
+        continue;
+      }
+      if (ch === '"') {
+        inQuotes = false;
+        continue;
+      }
+      current += ch;
+      continue;
+    }
+    if (ch === '"') {
+      inQuotes = true;
+      continue;
+    }
+    if (ch === ",") {
+      row.push(current);
+      current = "";
+      continue;
+    }
+    if (ch === "\r") continue;
+    if (ch === "\n") {
+      row.push(current);
+      rows.push(row);
+      row = [];
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  if (current.length || row.length) {
+    row.push(current);
+    rows.push(row);
+  }
+  return rows;
+}
+
 function buildResultTable(previewTable) {
   const { columns = [], rows = [], truncated = false } = previewTable;
   if (!columns.length) return null;
@@ -569,12 +624,234 @@ function buildResultTable(previewTable) {
     : `${shown}행 · ${colCount}열`;
   wrap.appendChild(meta);
 
+  // 테이블 래퍼에 참조용 핸들 노출 — 전체 데이터 로드 시 tbody 교체에 사용
+  wrap._tableEl = tableEl;
+  wrap._metaEl = meta;
+  wrap._colCount = colCount;
   return wrap;
+}
+
+async function loadFullCsvIntoTable(csvPath, tableWrap, buttonEl) {
+  if (!tableWrap || !tableWrap._tableEl) return;
+  const originalText = buttonEl.textContent;
+  buttonEl.disabled = true;
+  buttonEl.textContent = "불러오는 중...";
+  try {
+    const url = `/api/file?path=${encodeURIComponent(csvPath)}&conversation_id=${encodeURIComponent(state.activeConversationId || "")}`;
+    const response = await fetch(url, { credentials: "same-origin" });
+    if (!response.ok) {
+      throw new Error(`CSV 요청 실패 (${response.status})`);
+    }
+    const text = await response.text();
+    const rows = parseCsv(text).filter((r) => r.length && !(r.length === 1 && r[0] === ""));
+    if (!rows.length) {
+      throw new Error("CSV에 표시할 데이터가 없습니다.");
+    }
+    const header = rows[0];
+    const body = rows.slice(1);
+    const tableEl = tableWrap._tableEl;
+    // 헤더 재구성
+    const thead = tableEl.querySelector("thead");
+    thead.innerHTML = "";
+    const headRow = document.createElement("tr");
+    header.forEach((col) => {
+      const th = document.createElement("th");
+      th.textContent = col;
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    // 본문 재구성
+    const tbody = tableEl.querySelector("tbody");
+    tbody.innerHTML = "";
+    body.forEach((row) => {
+      const tr = document.createElement("tr");
+      header.forEach((_, ci) => {
+        const td = document.createElement("td");
+        td.textContent = row[ci] != null ? row[ci] : "";
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    tableWrap.classList.add("is-full-data");
+    tableWrap._metaEl.textContent = `${body.length}행 · ${header.length}열 (전체)`;
+    buttonEl.textContent = "전체 데이터 로드됨";
+    buttonEl.setAttribute("aria-disabled", "true");
+  } catch (error) {
+    buttonEl.disabled = false;
+    buttonEl.textContent = originalText;
+    showToast(error.message || "전체 데이터를 불러오지 못했습니다.", true);
+  }
+}
+
+function buildSqlStepPanel(step) {
+  const panel = document.createElement("div");
+  panel.className = "sql-result-group";
+
+  if (step.sql) {
+    const pre = document.createElement("pre");
+    pre.className = "sql-block";
+    pre.textContent = String(step.sql);
+    panel.appendChild(pre);
+  }
+
+  const rs = step.result_summary;
+  let tableWrap = null;
+  let firstCsvPath = "";
+  let truncated = false;
+  if (rs && typeof rs === "object") {
+    const pt = rs.preview_table;
+    if (pt && pt.columns?.length) {
+      tableWrap = buildResultTable(pt);
+      truncated = Boolean(pt.truncated);
+      if (tableWrap) panel.appendChild(tableWrap);
+    }
+    const csvPaths = Array.isArray(rs.csv_paths) ? rs.csv_paths : [];
+    if (csvPaths.length) firstCsvPath = csvPaths[0];
+
+    if (csvPaths.length || (tableWrap && truncated)) {
+      const actions = document.createElement("div");
+      actions.className = "sql-result-actions";
+
+      if (tableWrap && truncated && firstCsvPath) {
+        const loadBtn = document.createElement("button");
+        loadBtn.type = "button";
+        loadBtn.className = "tool-btn";
+        loadBtn.textContent = "전체 데이터 보기";
+        loadBtn.title = "CSV에서 전체 행을 이 화면 표에 불러옵니다";
+        loadBtn.addEventListener("click", (evt) => {
+          evt.preventDefault();
+          loadFullCsvIntoTable(firstCsvPath, tableWrap, loadBtn);
+        });
+        actions.appendChild(loadBtn);
+      }
+
+      csvPaths.forEach((path, i) => {
+        const link = document.createElement("a");
+        link.className = "message-link";
+        link.href = `/api/file?path=${encodeURIComponent(path)}&conversation_id=${encodeURIComponent(state.activeConversationId || "")}`;
+        link.target = "_blank";
+        link.rel = "noopener";
+        link.textContent = `CSV 다운로드${csvPaths.length > 1 ? ` ${i + 1}` : ""}`;
+        link.title = "새 탭에서 원본 CSV 파일을 연다";
+        actions.appendChild(link);
+      });
+
+      panel.appendChild(actions);
+    }
+  }
+  return panel;
+}
+
+function buildSqlNavigator(sqlSteps) {
+  const root = document.createElement("div");
+  root.className = "sql-navigator";
+  root.setAttribute("tabindex", "0");
+  root.setAttribute("role", "group");
+  root.setAttribute("aria-label", "SQL 쿼리 결과 탐색");
+
+  const header = document.createElement("div");
+  header.className = "sql-nav-header";
+
+  const prevBtn = document.createElement("button");
+  prevBtn.type = "button";
+  prevBtn.className = "sql-nav-btn";
+  prevBtn.innerHTML = "&#9664;";
+  prevBtn.setAttribute("aria-label", "이전 쿼리");
+  prevBtn.title = "이전 쿼리 (←)";
+
+  const nextBtn = document.createElement("button");
+  nextBtn.type = "button";
+  nextBtn.className = "sql-nav-btn";
+  nextBtn.innerHTML = "&#9654;";
+  nextBtn.setAttribute("aria-label", "다음 쿼리");
+  nextBtn.title = "다음 쿼리 (→)";
+
+  const indicator = document.createElement("span");
+  indicator.className = "sql-nav-indicator";
+  indicator.setAttribute("aria-live", "polite");
+
+  const context = document.createElement("span");
+  context.className = "sql-nav-context";
+
+  header.append(prevBtn, indicator, nextBtn, context);
+  root.appendChild(header);
+
+  const panels = document.createElement("div");
+  panels.className = "sql-nav-panels";
+  root.appendChild(panels);
+
+  const panelEls = sqlSteps.map((step) => {
+    const p = buildSqlStepPanel(step);
+    p.className += " sql-nav-panel";
+    panels.appendChild(p);
+    return p;
+  });
+
+  let activeIdx = 0;
+  function update() {
+    panelEls.forEach((el, i) => {
+      el.classList.toggle("is-active", i === activeIdx);
+    });
+    indicator.textContent = `쿼리 ${activeIdx + 1}/${sqlSteps.length}`;
+    const step = sqlSteps[activeIdx] || {};
+    const ref = extractFirstTableRef(step.sql);
+    context.textContent = ref ? `대상: ${ref}` : "";
+    prevBtn.disabled = activeIdx <= 0;
+    nextBtn.disabled = activeIdx >= sqlSteps.length - 1;
+  }
+  function go(delta) {
+    const next = Math.min(Math.max(activeIdx + delta, 0), sqlSteps.length - 1);
+    if (next !== activeIdx) {
+      activeIdx = next;
+      update();
+    }
+  }
+  function goTo(idx) {
+    const next = Math.min(Math.max(idx, 0), sqlSteps.length - 1);
+    if (next !== activeIdx) {
+      activeIdx = next;
+      update();
+    }
+  }
+
+  prevBtn.addEventListener("click", (evt) => {
+    evt.preventDefault();
+    go(-1);
+    root.focus();
+  });
+  nextBtn.addEventListener("click", (evt) => {
+    evt.preventDefault();
+    go(1);
+    root.focus();
+  });
+  root.addEventListener("keydown", (evt) => {
+    // 내부 input/textarea에 포커스가 있으면 무시
+    const target = evt.target;
+    if (target && target !== root && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+      return;
+    }
+    if (evt.key === "ArrowLeft") {
+      evt.preventDefault();
+      go(-1);
+    } else if (evt.key === "ArrowRight") {
+      evt.preventDefault();
+      go(1);
+    } else if (evt.key === "Home") {
+      evt.preventDefault();
+      goTo(0);
+    } else if (evt.key === "End") {
+      evt.preventDefault();
+      goTo(sqlSteps.length - 1);
+    }
+  });
+
+  update();
+  return root;
 }
 
 function buildStepBlocks(steps, containerEl) {
   // execute_sql 단계는 SQL + 결과 테이블 + CSV 링크로 묶어 표시
-  // 나머지 단계는 요약 목록으로 표시
+  // 나머지 단계는 요약 목록으로 표시. 2개 이상이면 Navigator로 압축.
   const nonSqlSteps = steps.filter((s) => String(s.tool || "") !== "execute_sql");
   const sqlSteps = steps.filter((s) => String(s.tool || "") === "execute_sql");
 
@@ -590,51 +867,16 @@ function buildStepBlocks(steps, containerEl) {
     appendDetailBlock(containerEl, "단계", list);
   }
 
-  sqlSteps.forEach((step, idx) => {
-    const group = document.createElement("div");
-    group.className = "sql-result-group";
-
+  if (!sqlSteps.length) return;
+  if (sqlSteps.length === 1) {
     const label = document.createElement("div");
     label.className = "sql-result-label";
-    label.textContent = sqlSteps.length > 1 ? `SQL 쿼리 ${idx + 1}` : "SQL 쿼리";
-    group.appendChild(label);
-
-    if (step.sql) {
-      const pre = document.createElement("pre");
-      pre.className = "sql-block";
-      pre.textContent = String(step.sql);
-      group.appendChild(pre);
-    }
-
-    const rs = step.result_summary;
-    if (rs && typeof rs === "object") {
-      const pt = rs.preview_table;
-      if (pt && pt.columns?.length) {
-        const tableEl = buildResultTable(pt);
-        if (tableEl) {
-          group.appendChild(tableEl);
-        }
-      }
-
-      const csvPaths = Array.isArray(rs.csv_paths) ? rs.csv_paths : [];
-      if (csvPaths.length) {
-        const linkList = document.createElement("div");
-        linkList.className = "message-link-list";
-        csvPaths.forEach((path, i) => {
-          const link = document.createElement("a");
-          link.className = "message-link";
-          link.href = `/api/file?path=${encodeURIComponent(path)}&conversation_id=${encodeURIComponent(state.activeConversationId || "")}`;
-          link.target = "_blank";
-          link.rel = "noopener";
-          link.textContent = `CSV 다운로드 ${csvPaths.length > 1 ? i + 1 : ""}`.trim();
-          linkList.appendChild(link);
-        });
-        group.appendChild(linkList);
-      }
-    }
-
-    containerEl.appendChild(group);
-  });
+    label.textContent = "SQL 쿼리";
+    containerEl.appendChild(label);
+    containerEl.appendChild(buildSqlStepPanel(sqlSteps[0]));
+    return;
+  }
+  containerEl.appendChild(buildSqlNavigator(sqlSteps));
 }
 
 function renderMessageDetails(meta = {}) {

@@ -39,9 +39,45 @@ source_of_truth: true
 - [x] TASK-0022 Progress Strip 드롭다운 구조화 (단계 누적에 따른 채팅 영역 축소 해소)
 - [x] TASK-0023 Planner 자율성 개선 (휴리스틱 없이 불필요 탐색 축소)
 - [x] TASK-0024 Role/권한 구조를 RBAC + account override 모델로 재설계
+- [x] TASK-0025 SQL 결과셋 Navigator(말풍선 내 스텝 탐색) 도입
 
 ## 3. In Progress
 - 없음
+
+### TASK-0025 상세 설계
+- 문제: assistant 말풍선 내 `<details>`(실행 단계 및 쿼리 결과 보기)를 펼치면, execute_sql step이 여러 개인 경우 각 SQL + 결과 테이블이 수직으로 누적되어 말풍선 길이가 과도하게 증가한다. UI 개편 이전에 있었던 별도 팝업(`CSV 미리보기`) 방식은 창 크기가 레코드 수에 따라 흔들리는 UX 이슈가 있었다.
+- 목표:
+  - 말풍선 내 `<details>` 안에서 다수 SQL step을 수직 누적 없이 탐색 가능한 Navigator로 압축한다.
+  - 각 말풍선의 탐색 범위는 해당 말풍선으로만 한정된다(격리된 스코프). 현재 선택된 결과셋이 어떤 SQL에 대응하는지 화면에서 상시 확인 가능해야 한다.
+  - preview 레코드 제한을 넘어 전체 데이터도 조회 가능해야 한다(CSV 기반).
+  - 키보드 조작 가능, 단 조작법은 화면에 상시 노출하지 않고 버튼의 `title` 툴팁(마우스 hover)으로만 힌트 제공.
+- 접근:
+  - `buildStepBlocks()`를 분해. execute_sql step이 2개 이상이면 Navigator 형태로 렌더링, 1개면 기존 단일 블록 유지.
+  - Navigator 구조:
+    - 헤더(1행): `◀` 이전 버튼 + `쿼리 n/N` 인디케이터 + `▶` 다음 버튼 + 현재 쿼리의 첫 테이블 참조(작업 대상) 라벨.
+    - 본문: 현재 인덱스의 SQL `<pre>` + 결과 테이블 + 액션 영역(전체 데이터 보기, CSV 다운로드).
+  - 키보드 조작:
+    - Navigator 컨테이너에 `tabindex="0"` 부여 → 포커스 시 `←`/`→`로 prev/next, `Home`/`End`로 처음/끝 이동.
+    - 각 버튼의 `title`에 단축키 힌트 포함(예: `이전 쿼리 (←)`).
+  - 전체 데이터 조회:
+    - preview_table이 truncated이고 csv_paths가 있을 때 "전체 N행 보기" 버튼 노출.
+    - 클릭 시 `/api/file?path=...` 로 CSV fetch → 클라이언트 측 CSV 파서로 파싱 → 기존 테이블의 tbody를 전체 행으로 교체.
+    - 대량 행(>500) 렌더 시 테이블 컨테이너 `max-height` + `overflow:auto`로 말풍선 영역 보호.
+  - 스코프 격리:
+    - Navigator 인스턴스마다 내부 상태(현재 인덱스)를 가지며, 말풍선 별로 완전 격리.
+    - 헤더 상단에 "쿼리 1/3 · `schema.table`" 형태로 현재 선택 컨텍스트 상시 노출.
+  - 접근성:
+    - 버튼에 `aria-label`, 인디케이터에 `aria-live="polite"` 부여.
+    - 키보드 포커스 시 outline 스타일 유지(제거하지 않음).
+- 범위 제한:
+  - 새로운 백엔드 API 추가 없음. 기존 `/api/file`만 재사용.
+  - 기존 `<details>` 드롭다운 구조는 유지(그 안의 렌더링만 교체).
+  - 단일 SQL step 케이스는 Navigator를 쓰지 않고 기존 블록 유지(불필요한 chrome 방지).
+- 검증 기준:
+  - operator 계정으로 2개 이상 execute_sql step을 발생시키는 질의 전송 후, Navigator로 단계 탐색이 정상 동작한다.
+  - 키보드 `←/→/Home/End`로 step 이동 가능.
+  - "전체 데이터 보기" 클릭 시 preview 이상의 행이 테이블에 렌더링된다.
+  - 말풍선 총 높이가 step 수와 무관하게 한 화면 내로 유지된다.
 
 ## 4. Blocked
 - 없음
@@ -62,6 +98,7 @@ source_of_truth: true
 - TASK-0022 (2026-04-16): Progress Strip을 `<details>`/`<summary>` 드롭다운으로 전환. step 수가 늘어도 기본 1행 고정, 펼침 시 `max-height:40vh` 내부 스크롤. summary에 `n단계 · 최근 작업` 표시.
 - TASK-0023 (2026-04-16): Planner 자율성 개선 — TOOL_DEFINITIONS 순서를 execute_sql 최우선으로 재배치, 각 도구 description에 사용 조건 명시, SYSTEM_PROMPT에 CRITICAL DIRECTIVE·IDEAL FLOW EXAMPLE·강화 ANTI-PATTERNS 추가. 휴리스틱 없이 프롬프트/도구 제시 순서만으로 불필요 탐색을 억제.
 - TASK-0024 (2026-04-16): `WebRoles`/`WebPermissions`/`WebRolePermissions`/`WebAccountPermissionOverrides` 기반 RBAC로 cutover. role명 특수 처리 없이 permission + ownership 로만 권한 판정. 계정 soft delete, role CRUD, tri-state override, own/any 대화 권한, 제목 변경 API, Accounts/Roles 2영역 관리자 콘솔, `/api/clear_memory` 제거 완료.
+- TASK-0025 (2026-04-16): assistant 말풍선 내 다중 execute_sql step을 수직 누적 없이 SQL Navigator(단일 패널 + `←/→/Home/End` 키보드 조작 + `쿼리 n/N · 대상 테이블` 상시 컨텍스트 + "전체 데이터 보기" CSV 로드)로 압축. 단일 step은 기존 블록 유지. 새 백엔드 API 없이 `/api/file`만 재사용. 브라우저 자동화로 탐색/키보드/단일 step 분기/CSV 파서 모두 검증 완료.
 
 ## 6. Next Action
 - 신규 권한/계정 정책 변경이 필요하면 별도 TASK로 분리한다
@@ -96,3 +133,7 @@ source_of_truth: true
 - [x] 계정 soft delete 후 로그인 차단과 세션 폐기가 동작한다
 - [x] 대화 조회/제목 변경/삭제/중단/즉시답변이 own/any 권한으로 분기된다
 - [x] `/api/clear_memory` 및 legacy `Can*` 계약이 런타임에서 제거되었다
+- [x] 다중 execute_sql step 말풍선이 Navigator로 압축되어 수직 누적되지 않는다
+- [x] Navigator에서 `←/→/Home/End` 키보드로 step 탐색이 가능하다
+- [x] 현재 선택된 쿼리의 인덱스와 대상 테이블이 Navigator 헤더에 상시 노출된다
+- [x] "전체 데이터 보기" 로 preview 이상의 행을 CSV 기반으로 로드할 수 있다

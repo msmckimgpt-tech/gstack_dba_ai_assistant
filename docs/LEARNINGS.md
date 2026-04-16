@@ -80,6 +80,16 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Pattern: step이 누적되며 progress-strip 높이가 증가하면 채팅 영역이 점점 좁아진다. `<details>`/`<summary>` 네이티브 드롭다운으로 전환하고, summary에 `n단계 · 최근 작업` 요약을 표시하며, 펼침 영역은 `max-height: 40vh; overflow-y: auto`로 제한하면 채팅 영역을 보호하면서 전체 진행 상황 확인도 가능하다.
 - Applies to: feature-0003 progress strip 구조를 수정하는 모든 작업.
 
+### LRN-20260416-0003 — 다중 결과셋은 팝업이 아닌 말풍선 내 Navigator로 격리 탐색한다
+- Source: feature-0003 SQL 결과 Navigator 도입 작업 (TASK-0025, 2026-04-16)
+- Pattern: execute_sql step이 여러 개일 때 SQL+결과 테이블을 수직 누적하면 말풍선이 과도하게 길어진다. 반대로 별도 팝업(modal)은 레코드 수에 따라 창 크기가 흔들리고 말풍선 컨텍스트에서 벗어난다. 해결책은 말풍선 내에서 단일 패널을 유지하는 Navigator 패턴이다:
+  - `◀` / `쿼리 n/N` 인디케이터 / `▶` + `대상: schema.table` 컨텍스트 헤더를 상시 노출
+  - 패널을 한번 생성하고 `.is-active` 클래스로 display 토글 (DOM 재생성 없음 → 상태 안정)
+  - 컨테이너에 `tabindex="0"` + `←/→/Home/End` 키보드 조작, 조작법은 버튼 `title` 툴팁으로만 노출(화면 내 상시 출력 금지)
+  - 말풍선마다 Navigator 인스턴스를 독립 생성(클로저 상태)해 탐색 범위를 격리
+  - 대용량 전체 데이터는 `/api/file`로 CSV fetch 후 클라이언트 파싱해 tbody 교체 + `max-height + overflow:auto`로 영역 보호
+- Applies to: feature-0003 에서 말풍선 내 여러 결과셋을 다뤄야 하는 모든 UI (SQL 결과 외에도 step 기반 반복 결과 일반에 확장 가능).
+
 ## Category: quirk
 
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존
