@@ -27,10 +27,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from modules.config import AGENT_MEMORY_CLEAR_KEEP_IDS
 from modules.memory import (
     cleanup_pending_delete_conversations,
-    delete_all_conversations,
     delete_conversation as delete_conversation_records,
     ensure_memory_schema,
     is_processing_conversation,
@@ -68,6 +66,7 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 MODEL_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,64}$")
 USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,63}$")
+ROLE_KEY_RE = re.compile(r"^[a-z][a-z0-9_.-]{2,63}$")
 
 INTERNAL_MEMORY_PREFIXES = (
     "파일 탐색 완료",
@@ -76,16 +75,237 @@ INTERNAL_MEMORY_PREFIXES = (
     "자동 탐색 완료",
 )
 PLACEHOLDER_TOPICS = {"", "(미설정)", "새 대화"}
-ACCOUNT_ROLE_PENDING = "pending"
-ACCOUNT_ROLE_OPERATOR = "operator"
-ACCOUNT_ROLE_ADMIN = "admin"
-ACCOUNT_PERMISSION_FIELDS = (
-    "can_send_request",
-    "can_cancel_request",
-    "can_finalize_request",
-    "can_delete_conversation",
-    "can_clear_conversations",
+PERMISSION_DEFINITIONS = (
+    {
+        "code": "console.access",
+        "label": "관리 콘솔 접근",
+        "description": "관리 콘솔 화면에 접근할 수 있다.",
+        "group": "console",
+    },
+    {
+        "code": "console.manage",
+        "label": "관리 콘솔 수정",
+        "description": "관리 콘솔에서 변경 작업을 수행할 수 있다.",
+        "group": "console",
+    },
+    {
+        "code": "account.read",
+        "label": "계정 조회",
+        "description": "계정 목록과 상세 정보를 조회할 수 있다.",
+        "group": "account",
+    },
+    {
+        "code": "account.update",
+        "label": "계정 수정",
+        "description": "계정 상태를 수정하는 요청을 보낼 수 있다.",
+        "group": "account",
+    },
+    {
+        "code": "account.delete",
+        "label": "계정 삭제",
+        "description": "계정을 소프트 삭제할 수 있다.",
+        "group": "account",
+    },
+    {
+        "code": "account.activate",
+        "label": "계정 활성화",
+        "description": "비활성 계정을 다시 활성화할 수 있다.",
+        "group": "account",
+    },
+    {
+        "code": "account.deactivate",
+        "label": "계정 비활성화",
+        "description": "계정 로그인을 차단할 수 있다.",
+        "group": "account",
+    },
+    {
+        "code": "account.role.assign",
+        "label": "역할 부여/변경",
+        "description": "계정의 primary role을 변경할 수 있다.",
+        "group": "account",
+    },
+    {
+        "code": "account.permission.override.manage",
+        "label": "권한 override 관리",
+        "description": "계정별 권한 override를 설정할 수 있다.",
+        "group": "account",
+    },
+    {
+        "code": "role.read",
+        "label": "역할 조회",
+        "description": "역할 목록과 권한 배치를 조회할 수 있다.",
+        "group": "role",
+    },
+    {
+        "code": "role.create",
+        "label": "역할 생성",
+        "description": "새 역할을 생성할 수 있다.",
+        "group": "role",
+    },
+    {
+        "code": "role.update",
+        "label": "역할 수정",
+        "description": "역할의 표시명, 설명, 상태를 수정할 수 있다.",
+        "group": "role",
+    },
+    {
+        "code": "role.delete",
+        "label": "역할 삭제",
+        "description": "미사용 역할을 삭제할 수 있다.",
+        "group": "role",
+    },
+    {
+        "code": "role.permission.manage",
+        "label": "역할 권한 배치",
+        "description": "역할에 부여할 권한을 수정할 수 있다.",
+        "group": "role",
+    },
+    {
+        "code": "conversation.create",
+        "label": "대화 생성",
+        "description": "새 대화를 생성할 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.ask",
+        "label": "대화 요청 실행",
+        "description": "자신의 대화에 새 요청을 보낼 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.suggestions.read",
+        "label": "질문 제안 조회",
+        "description": "대화 히스토리 기반 질문 제안을 볼 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.list.own",
+        "label": "내 대화 목록 조회",
+        "description": "자신의 대화 목록을 볼 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.list.any",
+        "label": "전체 대화 목록 조회",
+        "description": "모든 계정의 대화 목록을 볼 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.read.own",
+        "label": "내 대화 내용 조회",
+        "description": "자신의 대화 내용과 진행 상태를 볼 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.read.any",
+        "label": "전체 대화 내용 조회",
+        "description": "모든 계정의 대화 내용과 진행 상태를 볼 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.file.read.own",
+        "label": "내 대화 파일 조회",
+        "description": "자신의 대화 결과 파일을 내려받을 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.file.read.any",
+        "label": "전체 대화 파일 조회",
+        "description": "모든 계정의 대화 결과 파일을 내려받을 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.rename.own",
+        "label": "내 대화 제목 변경",
+        "description": "자신의 대화 제목을 변경할 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.rename.any",
+        "label": "전체 대화 제목 변경",
+        "description": "모든 계정의 대화 제목을 변경할 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.delete.own",
+        "label": "내 대화 삭제",
+        "description": "자신의 대화를 삭제할 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.delete.any",
+        "label": "전체 대화 삭제",
+        "description": "모든 계정의 대화를 삭제할 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.cancel.own",
+        "label": "내 대화 중단",
+        "description": "자신의 처리 중 대화를 중단할 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.cancel.any",
+        "label": "전체 대화 중단",
+        "description": "모든 계정의 처리 중 대화를 중단할 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.finalize.own",
+        "label": "내 대화 즉시답변",
+        "description": "자신의 처리 중 대화에 즉시답변을 요청할 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.finalize.any",
+        "label": "전체 대화 즉시답변",
+        "description": "모든 계정의 처리 중 대화에 즉시답변을 요청할 수 있다.",
+        "group": "conversation",
+    },
 )
+PERMISSION_CODES = tuple(item["code"] for item in PERMISSION_DEFINITIONS)
+PERMISSION_DEFINITION_MAP = {item["code"]: item for item in PERMISSION_DEFINITIONS}
+SEED_ROLE_DEFINITIONS = (
+    {
+        "key": "pending",
+        "name": "Pending",
+        "description": "승인 전 조회 전용 계정",
+        "is_default_signup": True,
+        "permissions": {
+            "conversation.list.own",
+            "conversation.read.own",
+            "conversation.file.read.own",
+        },
+    },
+    {
+        "key": "operator",
+        "name": "Operator",
+        "description": "일반 작업 계정",
+        "is_default_signup": False,
+        "permissions": {
+            "conversation.create",
+            "conversation.ask",
+            "conversation.suggestions.read",
+            "conversation.list.own",
+            "conversation.read.own",
+            "conversation.file.read.own",
+            "conversation.rename.own",
+            "conversation.delete.own",
+            "conversation.cancel.own",
+            "conversation.finalize.own",
+        },
+    },
+    {
+        "key": "admin",
+        "name": "Admin",
+        "description": "관리 콘솔과 전체 대화 관리 권한을 가진 계정",
+        "is_default_signup": False,
+        "permissions": set(PERMISSION_CODES),
+    },
+)
+OVERRIDE_ALLOW = "allow"
+OVERRIDE_DENY = "deny"
+OVERRIDE_INHERIT = "inherit"
 PASSWORD_HASH_ITERATIONS = max(100_000, int(os.getenv("WEB_PASSWORD_HASH_ITERATIONS", "310000")))
 AUTH_SESSION_DAYS = max(1, int(os.getenv("WEB_AUTH_SESSION_DAYS", "14")))
 BOOTSTRAP_ADMIN_USERNAME = str(os.getenv("WEB_BOOTSTRAP_ADMIN_USERNAME", "") or "").strip()
@@ -318,40 +538,82 @@ def _verify_password(password: str, stored_hash: str) -> bool:
     return hmac.compare_digest(actual, expected)
 
 
-def _normalize_role(value: str) -> str:
-    role = str(value or "").strip().lower()
-    if role in {ACCOUNT_ROLE_PENDING, ACCOUNT_ROLE_OPERATOR, ACCOUNT_ROLE_ADMIN}:
-        return role
-    return ACCOUNT_ROLE_PENDING
+def _empty_permission_map() -> dict[str, bool]:
+    return {code: False for code in PERMISSION_CODES}
 
 
-def _default_permissions_for_role(role: str) -> dict[str, bool]:
-    normalized = _normalize_role(role)
-    if normalized == ACCOUNT_ROLE_ADMIN:
-        return {field: True for field in ACCOUNT_PERMISSION_FIELDS}
-    if normalized == ACCOUNT_ROLE_OPERATOR:
-        return {
-            "can_send_request": True,
-            "can_cancel_request": True,
-            "can_finalize_request": True,
-            "can_delete_conversation": True,
-            "can_clear_conversations": False,
-        }
-    return {field: False for field in ACCOUNT_PERMISSION_FIELDS}
+def _seed_role_definition(role_key: str) -> dict[str, Any] | None:
+    for item in SEED_ROLE_DEFINITIONS:
+        if item["key"] == role_key:
+            return item
+    return None
+
+
+def _seed_role_codes(role_key: str) -> set[str]:
+    item = _seed_role_definition(role_key)
+    if not item:
+        return set()
+    return set(item["permissions"])
+
+
+def _normalize_override_value(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text == OVERRIDE_ALLOW:
+        return OVERRIDE_ALLOW
+    if text == OVERRIDE_DENY:
+        return OVERRIDE_DENY
+    return OVERRIDE_INHERIT
+
+
+def _apply_permission_overrides(
+    base_codes: set[str] | None,
+    overrides: dict[str, str] | None = None,
+) -> dict[str, bool]:
+    permissions = _empty_permission_map()
+    for code in base_codes or set():
+        if code in permissions:
+            permissions[code] = True
+    for code, value in (overrides or {}).items():
+        if code not in permissions:
+            continue
+        normalized = _normalize_override_value(value)
+        if normalized == OVERRIDE_ALLOW:
+            permissions[code] = True
+        elif normalized == OVERRIDE_DENY:
+            permissions[code] = False
+    return permissions
+
+
+def _legacy_permission_codes_from_row(row: dict[str, Any] | None) -> set[str]:
+    if not row:
+        return set()
+    role_key = str(row.get("legacy_role") or row.get("role") or "").strip().lower()
+    if role_key == "admin":
+        return set(PERMISSION_CODES)
+    codes = {
+        "conversation.list.own",
+        "conversation.read.own",
+        "conversation.file.read.own",
+    }
+    if role_key == "operator":
+        if bool(row.get("legacy_can_send_request")):
+            codes.update({"conversation.create", "conversation.ask", "conversation.suggestions.read"})
+        if bool(row.get("legacy_can_cancel_request")):
+            codes.add("conversation.cancel.own")
+        if bool(row.get("legacy_can_finalize_request")):
+            codes.add("conversation.finalize.own")
+        if bool(row.get("legacy_can_delete_conversation")):
+            codes.add("conversation.delete.own")
+    return codes
 
 
 def _account_permissions(account: dict[str, Any] | None) -> dict[str, bool]:
     if not account:
-        return {field: False for field in ACCOUNT_PERMISSION_FIELDS}
-    role = _normalize_role(account.get("role"))
-    if role == ACCOUNT_ROLE_ADMIN:
-        return {field: True for field in ACCOUNT_PERMISSION_FIELDS}
-    if role == ACCOUNT_ROLE_PENDING:
-        return {field: False for field in ACCOUNT_PERMISSION_FIELDS}
-    return {
-        field: bool(account.get(field))
-        for field in ACCOUNT_PERMISSION_FIELDS
-    }
+        return _empty_permission_map()
+    cached = account.get("permissions")
+    if isinstance(cached, dict):
+        return {code: bool(cached.get(code)) for code in PERMISSION_CODES}
+    return _empty_permission_map()
 
 
 def _account_has_permission(account: dict[str, Any] | None, permission: str) -> bool:
@@ -359,23 +621,36 @@ def _account_has_permission(account: dict[str, Any] | None, permission: str) -> 
     return bool(permissions.get(permission))
 
 
+def _role_payload(account: dict[str, Any] | None) -> dict[str, Any] | None:
+    role_id = int(account.get("role_id") or 0) if account else 0
+    if role_id <= 0:
+        return None
+    return {
+        "id": role_id,
+        "key": str(account.get("role_key") or ""),
+        "name": str(account.get("role_name") or ""),
+        "description": str(account.get("role_description") or ""),
+        "is_active": bool(account.get("role_is_active", True)),
+        "is_default_signup": bool(account.get("role_is_default_signup")),
+    }
+
+
 def _serialize_account(account: dict[str, Any] | None) -> dict[str, Any] | None:
     if not account:
         return None
     permissions = _account_permissions(account)
-    role = _normalize_role(account.get("role"))
     return {
         "id": int(account.get("id") or 0),
         "username": str(account.get("username") or ""),
-        "role": role,
+        "role": _role_payload(account),
         "is_active": bool(account.get("is_active")),
+        "deleted_at": str(account.get("deleted_at") or "") or None,
+        "deleted_by_account_id": int(account.get("deleted_by_account_id") or 0) or None,
         "created_at": str(account.get("created_at") or "") or None,
         "approved_at": str(account.get("approved_at") or "") or None,
         "last_login_at": str(account.get("last_login_at") or "") or None,
         "last_conversation_id": str(account.get("last_conversation_id") or ""),
         "permissions": permissions,
-        "is_pending": role == ACCOUNT_ROLE_PENDING,
-        "is_admin": role == ACCOUNT_ROLE_ADMIN,
     }
 
 
@@ -401,63 +676,167 @@ def _write_conversation_id(path: str, conversation_id: str) -> None:
         pass
 
 
-def _load_account_by_id(conn, account_id: int) -> dict[str, Any] | None:
+def _permission_id_map(conn) -> dict[str, int]:
+    cur = conn.cursor()
+    cur.execute("SELECT Id, Code FROM WebPermissions")
+    rows = cur.fetchall() or []
+    cur.close()
+    return {str(code): int(permission_id) for permission_id, code in rows}
+
+
+def _role_id_map(conn) -> dict[str, int]:
+    cur = conn.cursor()
+    cur.execute("SELECT Id, RoleKey FROM WebRoles")
+    rows = cur.fetchall() or []
+    cur.close()
+    return {str(role_key): int(role_id) for role_id, role_key in rows}
+
+
+def _fetch_account_rows(
+    conn,
+    where_sql: str,
+    params: tuple[Any, ...] = (),
+    *,
+    include_password: bool = False,
+    include_legacy: bool = False,
+    order_sql: str = "",
+    limit_sql: str = "",
+) -> list[dict[str, Any]]:
+    password_select = ", a.PasswordHash AS password_hash" if include_password else ""
+    legacy_select = (
+        """
+    ,
+    a.Role AS legacy_role,
+    a.CanSendRequest AS legacy_can_send_request,
+    a.CanCancelRequest AS legacy_can_cancel_request,
+    a.CanFinalizeRequest AS legacy_can_finalize_request,
+    a.CanDeleteConversation AS legacy_can_delete_conversation,
+    a.CanClearConversations AS legacy_can_clear_conversations
+        """
+        if include_legacy
+        else ""
+    )
     cur = conn.cursor(dictionary=True)
     cur.execute(
-        """
+        f"""
 SELECT
-    Id AS id,
-    Username AS username,
-    Role AS role,
-    IsActive AS is_active,
-    CreatedAt AS created_at,
-    ApprovedAt AS approved_at,
-    LastLoginAt AS last_login_at,
-    LastConversationId AS last_conversation_id,
-    CanSendRequest AS can_send_request,
-    CanCancelRequest AS can_cancel_request,
-    CanFinalizeRequest AS can_finalize_request,
-    CanDeleteConversation AS can_delete_conversation,
-    CanClearConversations AS can_clear_conversations
-FROM WebAccounts
-WHERE Id = %s
-LIMIT 1
+    a.Id AS id,
+    a.Username AS username,
+    a.IsActive AS is_active,
+    a.CreatedAt AS created_at,
+    a.ApprovedAt AS approved_at,
+    a.ApprovedByAccountId AS approved_by_account_id,
+    a.LastLoginAt AS last_login_at,
+    a.LastConversationId AS last_conversation_id,
+    a.RoleId AS role_id,
+    a.DeletedAt AS deleted_at,
+    a.DeletedByAccountId AS deleted_by_account_id,
+    r.RoleKey AS role_key,
+    r.Name AS role_name,
+    r.Description AS role_description,
+    r.IsActive AS role_is_active,
+    r.IsDefaultSignup AS role_is_default_signup
+    {legacy_select}
+    {password_select}
+FROM WebAccounts a
+LEFT JOIN WebRoles r
+  ON r.Id = a.RoleId
+WHERE {where_sql}
+{order_sql}
+{limit_sql}
         """,
-        (int(account_id),),
+        params,
     )
-    row = cur.fetchone()
+    rows = cur.fetchall() or []
     cur.close()
-    return row
+    return rows
+
+
+def _load_role_permission_codes(conn, role_ids: list[int]) -> dict[int, set[str]]:
+    if not role_ids:
+        return {}
+    placeholders = ",".join(["%s"] * len(role_ids))
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+SELECT rp.RoleId, p.Code
+FROM WebRolePermissions rp
+JOIN WebPermissions p
+  ON p.Id = rp.PermissionId
+WHERE rp.RoleId IN ({placeholders})
+        """,
+        tuple(role_ids),
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    mapping: dict[int, set[str]] = {}
+    for role_id, code in rows:
+        mapping.setdefault(int(role_id), set()).add(str(code))
+    return mapping
+
+
+def _load_account_override_values(conn, account_ids: list[int]) -> dict[int, dict[str, str]]:
+    if not account_ids:
+        return {}
+    placeholders = ",".join(["%s"] * len(account_ids))
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+SELECT ao.AccountId, p.Code, ao.OverrideValue
+FROM WebAccountPermissionOverrides ao
+JOIN WebPermissions p
+  ON p.Id = ao.PermissionId
+WHERE ao.AccountId IN ({placeholders})
+        """,
+        tuple(account_ids),
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    mapping: dict[int, dict[str, str]] = {}
+    for account_id, code, value in rows:
+        mapping.setdefault(int(account_id), {})[str(code)] = _normalize_override_value(value)
+    return mapping
+
+
+def _decorate_account_rows(conn, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not rows:
+        return rows
+    role_ids = sorted({int(row.get("role_id") or 0) for row in rows if int(row.get("role_id") or 0) > 0})
+    account_ids = [int(row.get("id") or 0) for row in rows if int(row.get("id") or 0) > 0]
+    role_permission_map = _load_role_permission_codes(conn, role_ids)
+    override_map = _load_account_override_values(conn, account_ids)
+    for row in rows:
+        account_id = int(row.get("id") or 0)
+        role_id = int(row.get("role_id") or 0)
+        overrides = override_map.get(account_id, {})
+        permissions = _apply_permission_overrides(role_permission_map.get(role_id, set()), overrides)
+        row["permission_overrides"] = overrides
+        row["permissions"] = permissions
+    return rows
+
+
+def _load_account_by_id(conn, account_id: int) -> dict[str, Any] | None:
+    rows = _fetch_account_rows(
+        conn,
+        "a.Id = %s",
+        (int(account_id),),
+        include_password=False,
+        limit_sql="LIMIT 1",
+    )
+    rows = _decorate_account_rows(conn, rows)
+    return rows[0] if rows else None
 
 
 def _load_account_by_username(conn, username: str) -> dict[str, Any] | None:
-    cur = conn.cursor(dictionary=True)
-    cur.execute(
-        """
-SELECT
-    Id AS id,
-    Username AS username,
-    Role AS role,
-    IsActive AS is_active,
-    CreatedAt AS created_at,
-    ApprovedAt AS approved_at,
-    LastLoginAt AS last_login_at,
-    LastConversationId AS last_conversation_id,
-    PasswordHash AS password_hash,
-    CanSendRequest AS can_send_request,
-    CanCancelRequest AS can_cancel_request,
-    CanFinalizeRequest AS can_finalize_request,
-    CanDeleteConversation AS can_delete_conversation,
-    CanClearConversations AS can_clear_conversations
-FROM WebAccounts
-WHERE Username = %s
-LIMIT 1
-        """,
+    rows = _fetch_account_rows(
+        conn,
+        "a.Username = %s",
         (username,),
+        include_password=True,
+        limit_sql="LIMIT 1",
     )
-    row = cur.fetchone()
-    cur.close()
-    return row
+    rows = _decorate_account_rows(conn, rows)
+    return rows[0] if rows else None
 
 
 def _issue_auth_session(conn, account_id: int, request: Request) -> str:
@@ -496,36 +875,28 @@ def _get_authenticated_account(conn, request: Request) -> dict[str, Any] | None:
     token = _sanitize_session_id(request.cookies.get(SESSION_COOKIE, ""))
     if not token:
         return None
-    cur = conn.cursor(dictionary=True)
-    cur.execute(
+    rows = _fetch_account_rows(
+        conn,
         """
-SELECT
-    a.Id AS id,
-    a.Username AS username,
-    a.Role AS role,
-    a.IsActive AS is_active,
-    a.CreatedAt AS created_at,
-    a.ApprovedAt AS approved_at,
-    a.LastLoginAt AS last_login_at,
-    a.LastConversationId AS last_conversation_id,
-    a.CanSendRequest AS can_send_request,
-    a.CanCancelRequest AS can_cancel_request,
-    a.CanFinalizeRequest AS can_finalize_request,
-    a.CanDeleteConversation AS can_delete_conversation,
-    a.CanClearConversations AS can_clear_conversations
-FROM WebAuthSessions s
-JOIN WebAccounts a
-  ON a.Id = s.AccountId
-WHERE s.SessionTokenHash = %s
-  AND s.IsRevoked = 0
-  AND s.ExpiresAt > CURRENT_TIMESTAMP
-  AND a.IsActive = 1
-LIMIT 1
+a.Id = (
+    SELECT s.AccountId
+    FROM WebAuthSessions s
+    WHERE s.SessionTokenHash = %s
+      AND s.IsRevoked = 0
+      AND s.ExpiresAt > CURRENT_TIMESTAMP
+    LIMIT 1
+)
+AND a.IsActive = 1
+AND a.DeletedAt IS NULL
         """,
         (_hash_session_token(token),),
+        include_password=False,
+        limit_sql="LIMIT 1",
     )
-    row = cur.fetchone()
+    rows = _decorate_account_rows(conn, rows)
+    row = rows[0] if rows else None
     if row:
+        cur = conn.cursor()
         cur.execute(
             """
 UPDATE WebAuthSessions
@@ -540,7 +911,7 @@ WHERE SessionTokenHash = %s
                 _hash_session_token(token),
             ),
         )
-    cur.close()
+        cur.close()
     return row
 
 
@@ -609,7 +980,7 @@ def _repair_current_conversation(
     next_id = ""
     if not force_new:
         next_id = next((str(item.get("id") or "").strip() for item in visible_items if str(item.get("id") or "").strip()), "")
-    if not next_id and create_if_missing and _account_has_permission(account, "can_send_request"):
+    if not next_id and create_if_missing and _account_has_permission(account, "conversation.create"):
         from agent_core import create_new_conversation as _create_conv
 
         next_id = _create_conv(conv_file=_account_conv_file(int(account["id"])))
@@ -764,68 +1135,255 @@ def _run_agent(args: list[str], session_id: str, env_overrides: dict[str, str] |
 _WEB_TABLES_READY = False
 
 
-def _ensure_bootstrap_admin(conn) -> int:
+def _create_role_with_permissions(
+    conn,
+    role_key: str,
+    *,
+    name: str,
+    description: str,
+    is_active: bool,
+    is_default_signup: bool,
+    permission_codes: set[str] | None = None,
+) -> int:
+    cur = conn.cursor()
+    cur.execute(
+        """
+INSERT INTO WebRoles (RoleKey, Name, Description, IsActive, IsDefaultSignup)
+VALUES (%s, %s, %s, %s, %s)
+        """,
+        (
+            role_key,
+            name,
+            description,
+            int(is_active),
+            int(is_default_signup),
+        ),
+    )
+    role_id = int(cur.lastrowid or 0)
+    permission_map = _permission_id_map(conn)
+    for code in sorted(permission_codes or set()):
+        permission_id = int(permission_map.get(code) or 0)
+        if permission_id <= 0:
+            continue
+        cur.execute(
+            """
+INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId)
+VALUES (%s, %s)
+            """,
+            (role_id, permission_id),
+        )
+    cur.close()
+    return role_id
+
+
+def _ensure_permission_catalog(conn) -> None:
+    cur = conn.cursor()
+    for item in PERMISSION_DEFINITIONS:
+        cur.execute(
+            """
+INSERT INTO WebPermissions (Code, Label, Description, GroupName)
+VALUES (%s, %s, %s, %s)
+ON DUPLICATE KEY UPDATE
+    Label = VALUES(Label),
+    Description = VALUES(Description),
+    GroupName = VALUES(GroupName)
+            """,
+            (
+                item["code"],
+                item["label"],
+                item["description"],
+                item["group"],
+            ),
+        )
+    cur.close()
+
+
+def _ensure_default_signup_role(conn) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT Id, RoleKey
+FROM WebRoles
+WHERE IsActive = 1
+ORDER BY IsDefaultSignup DESC, Id ASC
+        """
+    )
+    rows = cur.fetchall() or []
+    if not rows:
+        cur.close()
+        return
+    default_row = next((row for row in rows if int(row[0] or 0) > 0 and str(row[1] or "")), None)
+    chosen_id = int(default_row[0]) if default_row else int(rows[0][0] or 0)
+    pending_id = next((int(role_id) for role_id, role_key in rows if str(role_key) == "pending"), 0)
+    if pending_id > 0:
+        chosen_id = pending_id
+    cur.execute("UPDATE WebRoles SET IsDefaultSignup = 0 WHERE Id <> %s", (chosen_id,))
+    cur.execute("UPDATE WebRoles SET IsDefaultSignup = 1 WHERE Id = %s", (chosen_id,))
+    cur.close()
+
+
+def _ensure_seed_roles(conn) -> None:
+    role_map = _role_id_map(conn)
+    for seed in SEED_ROLE_DEFINITIONS:
+        if seed["key"] in role_map:
+            continue
+        _create_role_with_permissions(
+            conn,
+            seed["key"],
+            name=seed["name"],
+            description=seed["description"],
+            is_active=True,
+            is_default_signup=bool(seed["is_default_signup"]),
+            permission_codes=set(seed["permissions"]),
+        )
+    _ensure_default_signup_role(conn)
+
+
+def _default_signup_role_id(conn) -> int:
     cur = conn.cursor()
     cur.execute(
         """
 SELECT Id
-FROM WebAccounts
-WHERE Role = %s
+FROM WebRoles
+WHERE IsDefaultSignup = 1
   AND IsActive = 1
 ORDER BY Id ASC
 LIMIT 1
-        """,
-        (ACCOUNT_ROLE_ADMIN,),
+        """
     )
     row = cur.fetchone()
-    if row:
-        admin_id = int(row[0])
-        cur.close()
-        return admin_id
+    cur.close()
+    return int((row or (0,))[0] or 0)
+
+
+def _migrate_legacy_accounts_to_rbac(conn) -> None:
+    role_map = _role_id_map(conn)
+    rows = _fetch_account_rows(conn, "a.RoleId IS NULL", include_password=False, include_legacy=True)
+    if not rows:
+        return
+    permission_map = _permission_id_map(conn)
+    cur = conn.cursor()
+    for row in rows:
+        account_id = int(row.get("id") or 0)
+        if account_id <= 0:
+            continue
+        legacy_role = str(row.get("legacy_role") or "").strip().lower() or "pending"
+        if legacy_role not in role_map:
+            seed = _seed_role_definition(legacy_role)
+            role_map[legacy_role] = _create_role_with_permissions(
+                conn,
+                legacy_role,
+                name=str(seed["name"] if seed else legacy_role.title()),
+                description=str(seed["description"] if seed else ""),
+                is_active=True,
+                is_default_signup=bool(seed["is_default_signup"]) if seed else False,
+                permission_codes=_seed_role_codes(legacy_role),
+            )
+        role_id = int(role_map[legacy_role])
+        desired_codes = _legacy_permission_codes_from_row(row)
+        seed_codes = _seed_role_codes(legacy_role)
+        cur.execute(
+            """
+UPDATE WebAccounts
+SET RoleId = %s
+WHERE Id = %s
+            """,
+            (role_id, account_id),
+        )
+        cur.execute("DELETE FROM WebAccountPermissionOverrides WHERE AccountId = %s", (account_id,))
+        for code in PERMISSION_CODES:
+            if (code in desired_codes) == (code in seed_codes):
+                continue
+            permission_id = int(permission_map.get(code) or 0)
+            if permission_id <= 0:
+                continue
+            cur.execute(
+                """
+INSERT INTO WebAccountPermissionOverrides (AccountId, PermissionId, OverrideValue)
+VALUES (%s, %s, %s)
+                """,
+                (
+                    account_id,
+                    permission_id,
+                    OVERRIDE_ALLOW if code in desired_codes else OVERRIDE_DENY,
+                ),
+            )
+        if not row.get("approved_at") and (
+            "conversation.ask" in desired_codes or "console.access" in desired_codes
+        ):
+            cur.execute(
+                "UPDATE WebAccounts SET ApprovedAt = CURRENT_TIMESTAMP WHERE Id = %s AND ApprovedAt IS NULL",
+                (account_id,),
+            )
+    cur.close()
+    _ensure_default_signup_role(conn)
+
+
+def _list_active_accounts(conn) -> list[dict[str, Any]]:
+    rows = _fetch_account_rows(
+        conn,
+        "a.IsActive = 1 AND a.DeletedAt IS NULL",
+        include_password=False,
+    )
+    return _decorate_account_rows(conn, rows)
+
+
+def _management_accounts(conn) -> list[dict[str, Any]]:
+    rows = _list_active_accounts(conn)
+    return [
+        row
+        for row in rows
+        if _account_has_permission(row, "console.manage")
+        and _account_has_permission(row, "account.role.assign")
+        and _account_has_permission(row, "role.permission.manage")
+    ]
+
+
+def _ensure_bootstrap_admin(conn) -> int:
+    managers = _management_accounts(conn)
+    if managers:
+        return int(managers[0]["id"])
 
     username = _sanitize_username(BOOTSTRAP_ADMIN_USERNAME)
     password = BOOTSTRAP_ADMIN_PASSWORD
     if not _is_valid_username(username) or not _is_valid_password(password):
-        cur.close()
         raise RuntimeError(
-            "활성 관리자 계정이 없습니다. WEB_BOOTSTRAP_ADMIN_USERNAME 및 "
+            "관리 가능 계정이 없습니다. WEB_BOOTSTRAP_ADMIN_USERNAME 및 "
             "WEB_BOOTSTRAP_ADMIN_PASSWORD를 설정해야 합니다."
         )
 
+    role_map = _role_id_map(conn)
+    admin_role_id = int(role_map.get("admin") or 0)
+    if admin_role_id <= 0:
+        admin_role_id = _create_role_with_permissions(
+            conn,
+            "admin",
+            name="Admin",
+            description="관리 콘솔과 전체 대화 관리 권한을 가진 계정",
+            is_active=True,
+            is_default_signup=False,
+            permission_codes=set(PERMISSION_CODES),
+        )
     password_hash = _hash_password(password)
-    default_permissions = _default_permissions_for_role(ACCOUNT_ROLE_ADMIN)
-    cur.execute(
-        "SELECT Id FROM WebAccounts WHERE Username = %s LIMIT 1",
-        (username,),
-    )
+    cur = conn.cursor()
+    cur.execute("SELECT Id FROM WebAccounts WHERE Username = %s LIMIT 1", (username,))
     existing = cur.fetchone()
     if existing:
-        admin_id = int(existing[0])
+        admin_id = int(existing[0] or 0)
         cur.execute(
             """
 UPDATE WebAccounts
 SET PasswordHash = %s,
-    Role = %s,
+    RoleId = %s,
     IsActive = 1,
-    ApprovedAt = COALESCE(ApprovedAt, CURRENT_TIMESTAMP),
-    CanSendRequest = %s,
-    CanCancelRequest = %s,
-    CanFinalizeRequest = %s,
-    CanDeleteConversation = %s,
-    CanClearConversations = %s
+    DeletedAt = NULL,
+    DeletedByAccountId = NULL,
+    ApprovedAt = COALESCE(ApprovedAt, CURRENT_TIMESTAMP)
 WHERE Id = %s
             """,
-            (
-                password_hash,
-                ACCOUNT_ROLE_ADMIN,
-                int(default_permissions["can_send_request"]),
-                int(default_permissions["can_cancel_request"]),
-                int(default_permissions["can_finalize_request"]),
-                int(default_permissions["can_delete_conversation"]),
-                int(default_permissions["can_clear_conversations"]),
-                admin_id,
-            ),
+            (password_hash, admin_role_id, admin_id),
         )
+        cur.execute("DELETE FROM WebAccountPermissionOverrides WHERE AccountId = %s", (admin_id,))
         cur.close()
         return admin_id
 
@@ -834,26 +1392,12 @@ WHERE Id = %s
 INSERT INTO WebAccounts (
     Username,
     PasswordHash,
-    Role,
-    CanSendRequest,
-    CanCancelRequest,
-    CanFinalizeRequest,
-    CanDeleteConversation,
-    CanClearConversations,
+    RoleId,
     ApprovedAt,
     IsActive
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, 1)
+) VALUES (%s, %s, %s, CURRENT_TIMESTAMP, 1)
         """,
-        (
-            username,
-            password_hash,
-            ACCOUNT_ROLE_ADMIN,
-            int(default_permissions["can_send_request"]),
-            int(default_permissions["can_cancel_request"]),
-            int(default_permissions["can_finalize_request"]),
-            int(default_permissions["can_delete_conversation"]),
-            int(default_permissions["can_clear_conversations"]),
-        ),
+        (username, password_hash, admin_role_id),
     )
     admin_id = int(cur.lastrowid or 0)
     cur.close()
@@ -865,11 +1409,11 @@ def _seed_legacy_conversations(conn, bootstrap_admin_id: int) -> None:
     try:
         cur.execute(
             """
-SELECT ConversationId FROM AgentMemoryKv
+SELECT ConversationId COLLATE utf8mb4_unicode_ci AS conversation_id FROM AgentMemoryKv
 UNION
-SELECT ConversationId FROM AgentMemoryMessages
+SELECT ConversationId COLLATE utf8mb4_unicode_ci FROM AgentMemoryMessages
 UNION
-SELECT conversation_id FROM AgentCoreConversations
+SELECT conversation_id COLLATE utf8mb4_unicode_ci FROM AgentCoreConversations
             """
         )
         rows = cur.fetchall() or []
@@ -924,12 +1468,86 @@ def _ensure_web_tables():
                 CanFinalizeRequest TINYINT(1) NOT NULL DEFAULT 0,
                 CanDeleteConversation TINYINT(1) NOT NULL DEFAULT 0,
                 CanClearConversations TINYINT(1) NOT NULL DEFAULT 0,
+                RoleId BIGINT NULL,
                 LastConversationId VARCHAR(128) NULL,
                 ApprovedByAccountId BIGINT NULL,
                 ApprovedAt DATETIME NULL,
                 CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
                 LastLoginAt DATETIME NULL,
-                IsActive TINYINT(1) DEFAULT 1
+                IsActive TINYINT(1) DEFAULT 1,
+                DeletedAt DATETIME NULL,
+                DeletedByAccountId BIGINT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+        try:
+            cur.execute("ALTER TABLE WebAccounts ADD COLUMN RoleId BIGINT NULL")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE WebAccounts ADD COLUMN DeletedAt DATETIME NULL")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE WebAccounts ADD COLUMN DeletedByAccountId BIGINT NULL")
+        except Exception:
+            pass
+        try:
+            cur.execute("CREATE INDEX IX_WebAccounts_RoleId ON WebAccounts (RoleId)")
+        except Exception:
+            pass
+        try:
+            cur.execute("CREATE INDEX IX_WebAccounts_DeletedAt ON WebAccounts (DeletedAt)")
+        except Exception:
+            pass
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebPermissions (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                Code VARCHAR(128) NOT NULL UNIQUE,
+                Label VARCHAR(128) NOT NULL,
+                Description VARCHAR(255) NOT NULL DEFAULT '',
+                GroupName VARCHAR(32) NOT NULL,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebRoles (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                RoleKey VARCHAR(64) NOT NULL UNIQUE,
+                Name VARCHAR(128) NOT NULL,
+                Description VARCHAR(255) NOT NULL DEFAULT '',
+                IsActive TINYINT(1) NOT NULL DEFAULT 1,
+                IsDefaultSignup TINYINT(1) NOT NULL DEFAULT 0,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebRolePermissions (
+                RoleId BIGINT NOT NULL,
+                PermissionId BIGINT NOT NULL,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (RoleId, PermissionId),
+                INDEX IX_WebRolePermissions_Permission (PermissionId)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebAccountPermissionOverrides (
+                AccountId BIGINT NOT NULL,
+                PermissionId BIGINT NOT NULL,
+                OverrideValue VARCHAR(16) NOT NULL,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (AccountId, PermissionId),
+                INDEX IX_WebAccountPermissionOverrides_Permission (PermissionId)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """
         )
@@ -978,9 +1596,12 @@ def _ensure_web_tables():
             )
         except Exception:
             pass
+        cur.close()
+        _ensure_permission_catalog(conn)
+        _ensure_seed_roles(conn)
+        _migrate_legacy_accounts_to_rbac(conn)
         bootstrap_admin_id = _ensure_bootstrap_admin(conn)
         _seed_legacy_conversations(conn, bootstrap_admin_id)
-        cur.close()
         _WEB_TABLES_READY = True
     finally:
         conn.close()
@@ -1022,6 +1643,11 @@ def _list_conversations(
     except Exception:
         pass
     try:
+        if account and not (
+            _account_has_permission(account, "conversation.list.any")
+            or _account_has_permission(account, "conversation.list.own")
+        ):
+            return []
         cur = conn.cursor(dictionary=True)
         query = """
 SELECT
@@ -1029,14 +1655,17 @@ SELECT
     COALESCE(NULLIF(TRIM(c.topic), ''), NULLIF(TRIM(topic_kv.`Value`), ''), '새 대화') AS topic,
     c.created_at AS created_at,
     c.updated_at AS last_activity_at,
-    c.owner_account_id AS owner_account_id
+    c.owner_account_id AS owner_account_id,
+    owner.Username AS owner_username
 FROM AgentCoreConversations c
 LEFT JOIN AgentMemoryKv topic_kv
   ON topic_kv.ConversationId COLLATE utf8mb4_unicode_ci = c.conversation_id COLLATE utf8mb4_unicode_ci
  AND topic_kv.`Key` = 'topic'
+LEFT JOIN WebAccounts owner
+  ON owner.Id = c.owner_account_id
         """
         params: list[Any] = []
-        if account and _normalize_role(account.get("role")) != ACCOUNT_ROLE_ADMIN:
+        if account and not _account_has_permission(account, "conversation.list.any"):
             query += " WHERE c.owner_account_id = %s"
             params.append(int(account["id"]))
         query += " ORDER BY c.updated_at DESC LIMIT %s"
@@ -1053,6 +1682,7 @@ LEFT JOIN AgentMemoryKv topic_kv
                 "created_at": str(item.get("created_at") or ""),
                 "last_activity_at": str(item.get("last_activity_at") or item.get("created_at") or ""),
                 "owner_account_id": int(item.get("owner_account_id") or 0) or None,
+                "owner_username": str(item.get("owner_username") or ""),
             }
             for item in items
             if str(item.get("id") or "") and str(item.get("id") or "") not in hidden_ids
@@ -1154,21 +1784,49 @@ def _conversation_exists(
         if conversation_id in set(list_delete_requested_conversation_ids(conn)):
             return False
         cur = conn.cursor()
-        cur.execute(
-            "SELECT owner_account_id FROM AgentCoreConversations WHERE conversation_id = %s LIMIT 1",
-            (conversation_id,),
-        )
+        cur.execute("SELECT 1 FROM AgentCoreConversations WHERE conversation_id = %s LIMIT 1", (conversation_id,))
         row = cur.fetchone()
         cur.close()
-        if not row:
-            return False
-        if account and _normalize_role(account.get("role")) != ACCOUNT_ROLE_ADMIN:
-            owner_account_id = int(row[0] or 0)
-            return owner_account_id == int(account["id"])
-        return True
+        return bool(row)
     finally:
         if own_conn and conn is not None:
             conn.close()
+
+
+def _conversation_owner_account_id(conn, conversation_id: str) -> int | None:
+    if not conversation_id:
+        return None
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT owner_account_id FROM AgentCoreConversations WHERE conversation_id = %s LIMIT 1",
+        (conversation_id,),
+    )
+    row = cur.fetchone()
+    cur.close()
+    if not row:
+        return None
+    return int(row[0] or 0) or None
+
+
+def _conversation_owned_by_account(conn, conversation_id: str, account_id: int) -> bool:
+    owner_account_id = _conversation_owner_account_id(conn, conversation_id)
+    return owner_account_id is not None and owner_account_id == int(account_id)
+
+
+def _account_can_access_conversation(
+    conn,
+    account: dict[str, Any] | None,
+    conversation_id: str,
+    own_permission: str,
+    any_permission: str | None = None,
+) -> bool:
+    if not account or not _conversation_exists(conversation_id, conn=conn):
+        return False
+    if any_permission and _account_has_permission(account, any_permission):
+        return True
+    if not _account_has_permission(account, own_permission):
+        return False
+    return _conversation_owned_by_account(conn, conversation_id, int(account["id"]))
 
 
 def _extract_intent_from_content(content: str) -> str:
@@ -1984,7 +2642,13 @@ def _resolve_conversation_for_account(
 ) -> str:
     conversation_id = str(requested_id or "").strip()
     if conversation_id:
-        if _conversation_exists(conversation_id, account=account, conn=conn):
+        if _account_can_access_conversation(
+            conn,
+            account,
+            conversation_id,
+            "conversation.read.own",
+            "conversation.read.any",
+        ):
             return conversation_id
         return ""
     return _repair_current_conversation(
@@ -1995,7 +2659,7 @@ def _resolve_conversation_for_account(
 
 
 def _build_conversations_payload(conn, account: dict[str, Any]) -> dict[str, Any]:
-    can_create = _account_has_permission(account, "can_send_request")
+    can_create = _account_has_permission(account, "conversation.create")
     items = _list_conversations(limit=200, account=account, conn=conn)
     current_id = _repair_current_conversation(
         conn,
@@ -2026,59 +2690,267 @@ def _clear_accounts_current_conversation(conn, conversation_id: str) -> None:
 
 
 def _list_admin_accounts(conn) -> list[dict[str, Any]]:
+    rows = _fetch_account_rows(
+        conn,
+        "1=1",
+        include_password=False,
+        order_sql="ORDER BY (a.DeletedAt IS NULL) DESC, a.IsActive DESC, a.CreatedAt DESC",
+    )
+    rows = _decorate_account_rows(conn, rows)
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT owner_account_id, COUNT(*)
+FROM AgentCoreConversations
+WHERE owner_account_id IS NOT NULL
+GROUP BY owner_account_id
+        """
+    )
+    count_rows = cur.fetchall() or []
+    cur.close()
+    conversation_counts = {int(owner_id): int(count or 0) for owner_id, count in count_rows if int(owner_id or 0) > 0}
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        payload = _serialize_account(row) or {}
+        payload["conversation_count"] = conversation_counts.get(int(row.get("id") or 0), 0)
+        payload["permission_overrides"] = dict(row.get("permission_overrides") or {})
+        items.append(payload)
+    return items
+
+
+def _list_roles(conn) -> list[dict[str, Any]]:
     cur = conn.cursor(dictionary=True)
     cur.execute(
         """
 SELECT
-    a.Id AS id,
-    a.Username AS username,
-    a.Role AS role,
-    a.IsActive AS is_active,
-    a.CreatedAt AS created_at,
-    a.ApprovedAt AS approved_at,
-    a.LastLoginAt AS last_login_at,
-    a.LastConversationId AS last_conversation_id,
-    a.CanSendRequest AS can_send_request,
-    a.CanCancelRequest AS can_cancel_request,
-    a.CanFinalizeRequest AS can_finalize_request,
-    a.CanDeleteConversation AS can_delete_conversation,
-    a.CanClearConversations AS can_clear_conversations,
-    COUNT(c.conversation_id) AS conversation_count
-FROM WebAccounts a
-LEFT JOIN AgentCoreConversations c
-  ON c.owner_account_id = a.Id
+    r.Id AS id,
+    r.RoleKey AS role_key,
+    r.Name AS role_name,
+    r.Description AS role_description,
+    r.IsActive AS is_active,
+    r.IsDefaultSignup AS is_default_signup,
+    r.CreatedAt AS created_at,
+    r.UpdatedAt AS updated_at,
+    COUNT(CASE WHEN a.DeletedAt IS NULL THEN 1 END) AS member_count
+FROM WebRoles r
+LEFT JOIN WebAccounts a
+  ON a.RoleId = r.Id
 GROUP BY
-    a.Id,
-    a.Username,
-    a.Role,
-    a.IsActive,
-    a.CreatedAt,
-    a.ApprovedAt,
-    a.LastLoginAt,
-    a.LastConversationId,
-    a.CanSendRequest,
-    a.CanCancelRequest,
-    a.CanFinalizeRequest,
-    a.CanDeleteConversation,
-    a.CanClearConversations
+    r.Id,
+    r.RoleKey,
+    r.Name,
+    r.Description,
+    r.IsActive,
+    r.IsDefaultSignup,
+    r.CreatedAt,
+    r.UpdatedAt
 ORDER BY
-    CASE a.Role
-        WHEN 'pending' THEN 0
-        WHEN 'operator' THEN 1
-        WHEN 'admin' THEN 2
-        ELSE 3
-    END,
-    a.CreatedAt DESC
+    r.IsDefaultSignup DESC,
+    r.CreatedAt ASC
         """
     )
     rows = cur.fetchall() or []
     cur.close()
+    role_permission_map = _load_role_permission_codes(
+        conn,
+        [int(row.get("id") or 0) for row in rows if int(row.get("id") or 0) > 0],
+    )
     items: list[dict[str, Any]] = []
     for row in rows:
-        payload = _serialize_account(row) or {}
-        payload["conversation_count"] = int(row.get("conversation_count") or 0)
-        items.append(payload)
+        role_id = int(row.get("id") or 0)
+        granted_codes = role_permission_map.get(role_id, set())
+        items.append(
+            {
+                "id": role_id,
+                "key": str(row.get("role_key") or ""),
+                "name": str(row.get("role_name") or ""),
+                "description": str(row.get("role_description") or ""),
+                "is_active": bool(row.get("is_active")),
+                "is_default_signup": bool(row.get("is_default_signup")),
+                "created_at": str(row.get("created_at") or "") or None,
+                "updated_at": str(row.get("updated_at") or "") or None,
+                "member_count": int(row.get("member_count") or 0),
+                "permission_codes": sorted(granted_codes),
+                "permissions": {code: code in granted_codes for code in PERMISSION_CODES},
+            }
+        )
     return items
+
+
+def _permission_catalog_payload() -> list[dict[str, Any]]:
+    return [dict(item) for item in PERMISSION_DEFINITIONS]
+
+
+def _sanitize_role_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9_.-]", "", str(value or "").strip().lower())[:64]
+
+
+def _is_valid_role_key(value: str) -> bool:
+    return bool(ROLE_KEY_RE.match(str(value or "").strip().lower()))
+
+
+def _load_role_by_id(conn, role_id: int) -> dict[str, Any] | None:
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+SELECT
+    Id AS id,
+    RoleKey AS role_key,
+    Name AS role_name,
+    Description AS role_description,
+    IsActive AS is_active,
+    IsDefaultSignup AS is_default_signup,
+    CreatedAt AS created_at,
+    UpdatedAt AS updated_at
+FROM WebRoles
+WHERE Id = %s
+LIMIT 1
+        """,
+        (int(role_id),),
+    )
+    row = cur.fetchone()
+    cur.close()
+    if not row:
+        return None
+    granted_codes = _load_role_permission_codes(conn, [int(role_id)]).get(int(role_id), set())
+    return {
+        "id": int(row.get("id") or 0),
+        "key": str(row.get("role_key") or ""),
+        "name": str(row.get("role_name") or ""),
+        "description": str(row.get("role_description") or ""),
+        "is_active": bool(row.get("is_active")),
+        "is_default_signup": bool(row.get("is_default_signup")),
+        "created_at": str(row.get("created_at") or "") or None,
+        "updated_at": str(row.get("updated_at") or "") or None,
+        "permission_codes": sorted(granted_codes),
+        "permissions": {code: code in granted_codes for code in PERMISSION_CODES},
+    }
+
+
+def _validate_permission_codes(codes: list[str] | set[str] | tuple[str, ...]) -> set[str]:
+    allowed = set(PERMISSION_CODES)
+    normalized = {str(code or "").strip() for code in codes if str(code or "").strip()}
+    invalid = sorted(code for code in normalized if code not in allowed)
+    if invalid:
+        raise ValueError(f"unknown permissions: {', '.join(invalid)}")
+    return normalized
+
+
+def _normalize_override_payload(payload: dict[str, Any] | None) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for code in PERMISSION_CODES:
+        normalized = _normalize_override_value((payload or {}).get(code))
+        if normalized == OVERRIDE_INHERIT:
+            continue
+        result[code] = normalized
+    invalid_keys = sorted(
+        key for key in (payload or {}).keys() if str(key) not in PERMISSION_DEFINITION_MAP
+    )
+    if invalid_keys:
+        raise ValueError(f"unknown override permissions: {', '.join(map(str, invalid_keys))}")
+    return result
+
+
+def _set_role_permissions(conn, role_id: int, permission_codes: set[str]) -> None:
+    permission_ids = _permission_id_map(conn)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM WebRolePermissions WHERE RoleId = %s", (int(role_id),))
+    for code in sorted(permission_codes):
+        permission_id = int(permission_ids.get(code) or 0)
+        if permission_id <= 0:
+            continue
+        cur.execute(
+            """
+INSERT INTO WebRolePermissions (RoleId, PermissionId)
+VALUES (%s, %s)
+            """,
+            (int(role_id), permission_id),
+        )
+    cur.close()
+
+
+def _set_account_overrides(conn, account_id: int, override_values: dict[str, str]) -> None:
+    permission_ids = _permission_id_map(conn)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM WebAccountPermissionOverrides WHERE AccountId = %s", (int(account_id),))
+    for code, value in sorted(override_values.items()):
+        permission_id = int(permission_ids.get(code) or 0)
+        if permission_id <= 0:
+            continue
+        cur.execute(
+            """
+INSERT INTO WebAccountPermissionOverrides (AccountId, PermissionId, OverrideValue)
+VALUES (%s, %s, %s)
+            """,
+            (int(account_id), permission_id, value),
+        )
+    cur.close()
+
+
+def _is_management_permission_set(permissions: dict[str, bool] | None) -> bool:
+    payload = permissions or {}
+    return bool(
+        payload.get("console.manage")
+        and payload.get("account.role.assign")
+        and payload.get("role.permission.manage")
+    )
+
+
+def _ensure_management_survivor_for_account_change(
+    conn,
+    target_account_id: int,
+    *,
+    next_is_active: bool,
+    next_permissions: dict[str, bool],
+    deleting: bool = False,
+) -> None:
+    accounts = _list_active_accounts(conn)
+    survivors = 0
+    seen_target = False
+    for account in accounts:
+        account_id = int(account.get("id") or 0)
+        if account_id == int(target_account_id):
+            seen_target = True
+            if deleting or not next_is_active:
+                continue
+            permissions = next_permissions
+        else:
+            permissions = _account_permissions(account)
+        if _is_management_permission_set(permissions):
+            survivors += 1
+    if not seen_target and not deleting and next_is_active and _is_management_permission_set(next_permissions):
+        survivors += 1
+    if survivors <= 0:
+        raise ValueError("관리 가능한 활성 계정은 최소 1개 이상 유지되어야 합니다.")
+
+
+def _ensure_management_survivor_for_role_change(
+    conn,
+    role_id: int,
+    next_role_permission_codes: set[str],
+) -> None:
+    accounts = _list_active_accounts(conn)
+    survivors = 0
+    for account in accounts:
+        account_role_id = int(account.get("role_id") or 0)
+        if account_role_id == int(role_id):
+            permissions = _apply_permission_overrides(
+                next_role_permission_codes,
+                dict(account.get("permission_overrides") or {}),
+            )
+        else:
+            permissions = _account_permissions(account)
+        if _is_management_permission_set(permissions):
+            survivors += 1
+    if survivors <= 0:
+        raise ValueError("관리 가능한 활성 계정은 최소 1개 이상 유지되어야 합니다.")
+
+
+def _assign_default_signup_role(conn, role_id: int) -> None:
+    cur = conn.cursor()
+    cur.execute("UPDATE WebRoles SET IsDefaultSignup = 0 WHERE Id <> %s", (int(role_id),))
+    cur.execute("UPDATE WebRoles SET IsDefaultSignup = 1 WHERE Id = %s", (int(role_id),))
+    cur.close()
 
 
 @app.get("/")
@@ -2117,7 +2989,7 @@ def get_session(request: Request) -> JSONResponse:
     conversation_id = _repair_current_conversation(
         conn,
         account,
-        create_if_missing=_account_has_permission(account, "can_send_request"),
+        create_if_missing=_account_has_permission(account, "conversation.create"),
     )
     payload = {
         "authenticated": True,
@@ -2155,7 +3027,7 @@ async def ask(request: Request) -> JSONResponse:
         conn = _connect_memory()
     except Exception:
         return _json_error("db connection failed", 500)
-    account, error = _require_permission(request, conn, "can_send_request")
+    account, error = _require_account(request, conn)
     if error:
         conn.close()
         return error
@@ -2196,15 +3068,30 @@ async def ask(request: Request) -> JSONResponse:
     elif len(api_key_cipher) > 4096 or CONTROL_RE.search(api_key_cipher):
         conn.close()
         return _json_error("API 키 형식이 올바르지 않습니다.", 400)
-    if request_conversation_id and not _conversation_exists(request_conversation_id, account=account, conn=conn):
-        conn.close()
-        return _json_error("conversation not found", 404)
-    conv_id = _resolve_conversation_for_account(
-        conn,
-        account,
-        request_conversation_id,
-        create_if_missing=True,
-    )
+    if request_conversation_id:
+        if not _conversation_exists(request_conversation_id, conn=conn):
+            conn.close()
+            return _json_error("conversation not found", 404)
+        if not _account_has_permission(account, "conversation.ask"):
+            conn.close()
+            return _json_error("권한이 없습니다.", 403)
+        if not _conversation_owned_by_account(conn, request_conversation_id, int(account["id"])):
+            conn.close()
+            return _json_error("타 계정 대화에는 요청을 이어서 보낼 수 없습니다.", 403)
+        conv_id = request_conversation_id
+    else:
+        if not _account_has_permission(account, "conversation.create"):
+            conn.close()
+            return _json_error("새 대화를 생성할 권한이 없습니다.", 403)
+        if not _account_has_permission(account, "conversation.ask"):
+            conn.close()
+            return _json_error("권한이 없습니다.", 403)
+        conv_id = _resolve_conversation_for_account(
+            conn,
+            account,
+            request_conversation_id,
+            create_if_missing=True,
+        )
     slot_key = f"account:{int(account['id'])}"
     if not _acquire_request_slot(slot_key):
         conn.close()
@@ -2287,10 +3174,13 @@ async def new_conversation(request: Request) -> JSONResponse:
         conn = _connect_memory()
     except Exception:
         return _json_error("db connection failed", 500)
-    account, error = _require_permission(request, conn, "can_send_request")
+    account, error = _require_account(request, conn)
     if error:
         conn.close()
         return error
+    if not _account_has_permission(account, "conversation.create"):
+        conn.close()
+        return _json_error("권한이 없습니다.", 403)
     from agent_core import create_new_conversation as _create_conv
     cid = _create_conv(conv_file=_account_conv_file(int(account["id"])))
     _assign_conversation_owner(conn, cid, int(account["id"]), force=True)
@@ -2316,55 +3206,7 @@ async def list_conversations(request: Request) -> JSONResponse:
 
 @app.post("/api/clear_memory")
 async def clear_memory(request: Request) -> JSONResponse:
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_permission(request, conn, "can_clear_conversations")
-    if error:
-        conn.close()
-        return error
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    confirm_text = str(data.get("confirm_text", "")).strip()
-    if confirm_text != "YES":
-        conn.close()
-        return _json_error("확인 입력이 올바르지 않습니다. YES를 입력해주세요.", 400)
-    items = _list_conversations(limit=1000, account=account, conn=conn)
-    deleted_count = 0
-    pending_count = 0
-    for item in items:
-        conversation_id = str(item.get("id") or "").strip()
-        if not conversation_id or conversation_id in set(AGENT_MEMORY_CLEAR_KEEP_IDS):
-            continue
-        if is_processing_conversation(conn, conversation_id):
-            run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
-            mark_cancel_requested(conn, conversation_id, run_id=run_id)
-            mark_delete_requested(conn, conversation_id, run_id=run_id)
-            pending_count += 1
-            continue
-        delete_conversation_records(conn, conversation_id)
-        _clear_accounts_current_conversation(conn, conversation_id)
-        deleted_count += 1
-    current_id = _repair_current_conversation(
-        conn,
-        account,
-        items=[],
-        create_if_missing=_account_has_permission(account, "can_send_request"),
-        force_new=bool(deleted_count),
-    )
-    conn.close()
-    return JSONResponse(
-        {
-            "output": "모든 대화 삭제 완료",
-            "deleted_count": int(deleted_count),
-            "preserved_processing_count": int(pending_count),
-            "current": current_id,
-            "scope": "visible_conversations",
-        }
-    )
+    return _json_error("전체 정리 기능은 제거되었습니다.", 410)
 
 
 @app.get("/api/conversations")
@@ -2401,7 +3243,13 @@ async def use_conversation(request: Request) -> JSONResponse:
     if not conversation_id:
         conn.close()
         return _json_error("empty conversation_id", 400)
-    if not _conversation_exists(conversation_id, account=account, conn=conn):
+    if not _account_can_access_conversation(
+        conn,
+        account,
+        conversation_id,
+        "conversation.read.own",
+        "conversation.read.any",
+    ):
         conn.close()
         return _json_error("conversation not found", 404)
     _set_account_current_conversation(conn, int(account["id"]), conversation_id)
@@ -2431,12 +3279,22 @@ def history(
         return error
     requested_id = (conversation_id or "").strip()
     if requested_id:
-        conv_id = requested_id if _conversation_exists(requested_id, account=account, conn=conn) else ""
+        conv_id = (
+            requested_id
+            if _account_can_access_conversation(
+                conn,
+                account,
+                requested_id,
+                "conversation.read.own",
+                "conversation.read.any",
+            )
+            else ""
+        )
     else:
         conv_id = _repair_current_conversation(
             conn,
             account,
-            create_if_missing=_account_has_permission(account, "can_send_request"),
+            create_if_missing=_account_has_permission(account, "conversation.create"),
         )
     if conv_id:
         messages, has_more, oldest_id, total_count, user_count = _get_history(
@@ -2574,7 +3432,7 @@ async def delete_conversation(request: Request) -> JSONResponse:
         conn = _connect_memory()
     except Exception:
         return _json_error("db connection failed", 500)
-    account, error = _require_permission(request, conn, "can_delete_conversation")
+    account, error = _require_account(request, conn)
     if error:
         conn.close()
         return error
@@ -2589,9 +3447,15 @@ async def delete_conversation(request: Request) -> JSONResponse:
     if not conversation_id:
         conn.close()
         return _json_error("empty conversation_id", 400)
-    if not _conversation_exists(conversation_id, account=account, conn=conn):
+    if not _account_can_access_conversation(
+        conn,
+        account,
+        conversation_id,
+        "conversation.delete.own",
+        "conversation.delete.any",
+    ):
         conn.close()
-        return _json_error("conversation not found", 404)
+        return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
     try:
         cleanup_pending_delete_conversations(conn)
         if is_processing_conversation(conn, conversation_id):
@@ -2609,7 +3473,7 @@ async def delete_conversation(request: Request) -> JSONResponse:
                 conn,
                 account,
                 items=[],
-                create_if_missing=_account_has_permission(account, "can_send_request"),
+                create_if_missing=_account_has_permission(account, "conversation.create"),
             )
             conn.close()
             return JSONResponse({"deleted_pending": conversation_id, "current": current_after})
@@ -2619,7 +3483,7 @@ async def delete_conversation(request: Request) -> JSONResponse:
             conn,
             account,
             items=[],
-            create_if_missing=_account_has_permission(account, "can_send_request"),
+            create_if_missing=_account_has_permission(account, "conversation.create"),
         )
         conn.close()
         return JSONResponse({"deleted": conversation_id, "current": current_after})
@@ -2628,13 +3492,56 @@ async def delete_conversation(request: Request) -> JSONResponse:
         return _json_error("failed to delete conversation", 500)
 
 
+@app.patch("/api/conversations/{conversation_id}/title")
+async def rename_conversation_title(conversation_id: str, request: Request) -> JSONResponse:
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    title = _normalize_topic(data.get("title"), "").strip()
+    if not title:
+        return _json_error("empty title", 400)
+    if len(title) > 256:
+        return _json_error("title too long", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_can_access_conversation(
+        conn,
+        account,
+        conversation_id,
+        "conversation.rename.own",
+        "conversation.rename.any",
+    ):
+        conn.close()
+        return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
+    cur = conn.cursor()
+    cur.execute(
+        """
+UPDATE AgentCoreConversations
+SET topic = %s,
+    updated_at = CURRENT_TIMESTAMP
+WHERE conversation_id = %s
+        """,
+        (title, conversation_id),
+    )
+    cur.close()
+    conn.close()
+    return JSONResponse({"ok": True, "conversation_id": conversation_id, "title": title})
+
+
 @app.post("/api/cancel")
 async def cancel_request(request: Request) -> JSONResponse:
     try:
         conn = _connect_memory()
     except Exception:
         return _json_error("db connection failed", 500)
-    account, error = _require_permission(request, conn, "can_cancel_request")
+    account, error = _require_account(request, conn)
     if error:
         conn.close()
         return error
@@ -2651,6 +3558,15 @@ async def cancel_request(request: Request) -> JSONResponse:
     if not conversation_id:
         conn.close()
         return _json_error("empty conversation_id", 400)
+    if not _account_can_access_conversation(
+        conn,
+        account,
+        conversation_id,
+        "conversation.cancel.own",
+        "conversation.cancel.any",
+    ):
+        conn.close()
+        return _json_error("권한이 없습니다.", 403)
     try:
         run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
         mark_cancel_requested(conn, conversation_id, run_id=run_id)
@@ -2668,7 +3584,7 @@ async def finalize_request(request: Request) -> JSONResponse:
         conn = _connect_memory()
     except Exception:
         return _json_error("db connection failed", 500)
-    account, error = _require_permission(request, conn, "can_finalize_request")
+    account, error = _require_account(request, conn)
     if error:
         conn.close()
         return error
@@ -2685,6 +3601,15 @@ async def finalize_request(request: Request) -> JSONResponse:
     if not conversation_id:
         conn.close()
         return _json_error("empty conversation_id", 400)
+    if not _account_can_access_conversation(
+        conn,
+        account,
+        conversation_id,
+        "conversation.finalize.own",
+        "conversation.finalize.any",
+    ):
+        conn.close()
+        return _json_error("권한이 없습니다.", 403)
     try:
         run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
         mark_finalize_requested(conn, conversation_id, run_id=run_id)
@@ -2744,7 +3669,7 @@ def suggestions(request: Request, limit: int = 40) -> JSONResponse:
     if error:
         conn.close()
         return JSONResponse({"items": []})
-    if not _account_has_permission(account, "can_send_request"):
+    if not _account_has_permission(account, "conversation.suggestions.read"):
         conn.close()
         return JSONResponse({"items": []})
     conv_ids = [item["id"] for item in _list_conversations(limit=200, account=account, conn=conn)]
@@ -2783,7 +3708,7 @@ LIMIT %s
 
 
 @app.get("/api/file")
-def get_file(request: Request, path: str, max_bytes: int = 0):
+def get_file(request: Request, path: str, conversation_id: str, max_bytes: int = 0):
     try:
         conn = _connect_memory()
     except Exception:
@@ -2792,6 +3717,19 @@ def get_file(request: Request, path: str, max_bytes: int = 0):
     if error:
         conn.close()
         return error
+    conversation_id = str(conversation_id or "").strip()
+    if not conversation_id:
+        conn.close()
+        return _json_error("conversation_id is required", 400)
+    if not _account_can_access_conversation(
+        conn,
+        account,
+        conversation_id,
+        "conversation.file.read.own",
+        "conversation.file.read.any",
+    ):
+        conn.close()
+        return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
     conn.close()
     safe = _safe_shared_path(path)
     if not safe or not safe.exists():
@@ -2838,21 +3776,31 @@ async def auth_signup(request: Request) -> JSONResponse:
             conn.close()
             return JSONResponse({"ok": False, "error": "이미 존재하는 사용자 ID입니다."}, status_code=409)
         password_hash = _hash_password(password)
+        signup_role_id = _default_signup_role_id(conn)
+        if signup_role_id <= 0:
+            cur.close()
+            conn.close()
+            return JSONResponse({"ok": False, "error": "기본 가입 역할이 설정되지 않았습니다."}, status_code=500)
+        signup_role = _load_role_by_id(conn, signup_role_id)
+        signup_permissions = dict((signup_role or {}).get("permissions") or {})
         cur.execute(
             """
 INSERT INTO WebAccounts (
     Username,
     PasswordHash,
-    Role,
-    CanSendRequest,
-    CanCancelRequest,
-    CanFinalizeRequest,
-    CanDeleteConversation,
-    CanClearConversations,
+    RoleId,
+    ApprovedAt,
     IsActive
-) VALUES (%s, %s, %s, 0, 0, 0, 0, 0, 1)
+) VALUES (%s, %s, %s, %s, 1)
             """,
-            (username, password_hash, ACCOUNT_ROLE_PENDING),
+            (
+                username,
+                password_hash,
+                signup_role_id,
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                if signup_permissions.get("conversation.ask") or signup_permissions.get("console.access")
+                else None,
+            ),
         )
         account_id = int(cur.lastrowid or 0)
         cur.close()
@@ -2882,7 +3830,7 @@ async def auth_login(request: Request) -> JSONResponse:
     except Exception:
         return JSONResponse({"ok": False, "error": "db connection failed"}, status_code=500)
     account = _load_account_by_username(conn, username)
-    if not account or not bool(account.get("is_active")):
+    if not account or not bool(account.get("is_active")) or account.get("deleted_at"):
         conn.close()
         return JSONResponse({"ok": False, "error": "로그인에 실패했습니다."}, status_code=401)
     if not _verify_password(password, str(account.get("password_hash") or "")):
@@ -2963,25 +3911,10 @@ async def auth_me_patch(request: Request) -> JSONResponse:
     conn.commit()
     cur.close()
 
-    # 갱신된 계정 재조회
-    cur = conn.cursor()
-    cur.execute(
-        """
-SELECT Id, Username, Role, IsActive, CreatedAt, ApprovedAt, LastLoginAt,
-       LastConversationId, ApprovedByAccountId,
-       CanSendRequest, CanCancelRequest, CanFinalizeRequest,
-       CanDeleteConversation, CanClearConversations
-  FROM WebAccounts WHERE Id = %s
-        """,
-        (int(account["id"]),),
-    )
-    cols = [c[0].lower() for c in cur.description]
-    row = cur.fetchone()
-    cur.close()
+    updated_account = _load_account_by_id(conn, int(account["id"]))
     conn.close()
-    if not row:
+    if not updated_account:
         return _json_error("account not found", 404)
-    updated_account = dict(zip(cols, row))
     return JSONResponse({"ok": True, "user": _serialize_account(updated_account)})
 
 
@@ -3015,21 +3948,22 @@ async def admin_accounts(request: Request) -> JSONResponse:
     if error:
         conn.close()
         return error
-    if _normalize_role(account.get("role")) != ACCOUNT_ROLE_ADMIN:
+    if not _account_has_permission(account, "console.access") or not _account_has_permission(account, "account.read"):
         conn.close()
-        return _json_error("관리자 권한이 필요합니다.", 403)
+        return _json_error("관리 콘솔 조회 권한이 필요합니다.", 403)
     accounts = _list_admin_accounts(conn)
     summary = {
-        "pending": sum(1 for item in accounts if item.get("role") == ACCOUNT_ROLE_PENDING and item.get("is_active")),
-        "operator": sum(1 for item in accounts if item.get("role") == ACCOUNT_ROLE_OPERATOR and item.get("is_active")),
-        "admin": sum(1 for item in accounts if item.get("role") == ACCOUNT_ROLE_ADMIN and item.get("is_active")),
-        "disabled": sum(1 for item in accounts if not item.get("is_active")),
+        "total": len(accounts),
+        "active": sum(1 for item in accounts if item.get("is_active") and not item.get("deleted_at")),
+        "inactive": sum(1 for item in accounts if not item.get("is_active") and not item.get("deleted_at")),
+        "deleted": sum(1 for item in accounts if item.get("deleted_at")),
+        "management": sum(1 for item in accounts if _is_management_permission_set(item.get("permissions"))),
     }
     conn.close()
     return JSONResponse({"accounts": accounts, "summary": summary})
 
 
-@app.post("/api/admin/accounts/{account_id}")
+@app.patch("/api/admin/accounts/{account_id}")
 async def admin_update_account(account_id: int, request: Request) -> JSONResponse:
     if account_id <= 0:
         return _json_error("invalid account_id", 400)
@@ -3045,85 +3979,384 @@ async def admin_update_account(account_id: int, request: Request) -> JSONRespons
     if error:
         conn.close()
         return error
-    if _normalize_role(actor.get("role")) != ACCOUNT_ROLE_ADMIN:
+    if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
         conn.close()
-        return _json_error("관리자 권한이 필요합니다.", 403)
+        return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+    if not _account_has_permission(actor, "account.update"):
+        conn.close()
+        return _json_error("계정 수정 권한이 필요합니다.", 403)
     target = _load_account_by_id(conn, account_id)
     if not target:
         conn.close()
         return _json_error("account not found", 404)
-    next_role = _normalize_role(data.get("role", target.get("role")))
-    is_active = bool(data.get("is_active", target.get("is_active")))
-    if int(actor["id"]) == int(account_id) and not is_active:
+    if target.get("deleted_at"):
         conn.close()
-        return _json_error("현재 로그인한 관리자 계정은 비활성화할 수 없습니다.", 400)
-    if _normalize_role(target.get("role")) == ACCOUNT_ROLE_ADMIN and (next_role != ACCOUNT_ROLE_ADMIN or not is_active):
-        cur = conn.cursor()
-        cur.execute(
-            """
-SELECT COUNT(*)
-FROM WebAccounts
-WHERE Role = %s
-  AND IsActive = 1
-  AND Id <> %s
-            """,
-            (ACCOUNT_ROLE_ADMIN, int(account_id)),
-        )
-        remaining_admins = int((cur.fetchone() or (0,))[0] or 0)
-        cur.close()
-        if remaining_admins == 0:
+        return _json_error("삭제된 계정은 수정할 수 없습니다.", 400)
+
+    role_payload = target.get("role") or {}
+    next_role_id = int(data.get("role_id") or role_payload.get("id") or 0)
+    next_is_active = bool(data.get("is_active", target.get("is_active")))
+    override_values = dict(target.get("permission_overrides") or {})
+
+    if "role_id" in data:
+        if not _account_has_permission(actor, "account.role.assign"):
             conn.close()
-            return _json_error("활성 관리자 계정은 최소 1개 이상 유지되어야 합니다.", 400)
-    if next_role == ACCOUNT_ROLE_ADMIN:
-        permissions = _default_permissions_for_role(next_role)
-    elif next_role == ACCOUNT_ROLE_OPERATOR:
-        provided = data.get("permissions") if isinstance(data.get("permissions"), dict) else {}
-        permissions = _default_permissions_for_role(next_role)
-        for field in ACCOUNT_PERMISSION_FIELDS:
-            if field in provided:
-                permissions[field] = bool(provided.get(field))
+            return _json_error("역할 부여 권한이 필요합니다.", 403)
+        next_role = _load_role_by_id(conn, next_role_id)
+        if not next_role or not next_role.get("is_active"):
+            conn.close()
+            return _json_error("활성 역할만 부여할 수 있습니다.", 400)
     else:
-        permissions = _default_permissions_for_role(ACCOUNT_ROLE_PENDING)
+        next_role = _load_role_by_id(conn, next_role_id)
+
+    if "is_active" in data and next_is_active != bool(target.get("is_active")):
+        required = "account.activate" if next_is_active else "account.deactivate"
+        if not _account_has_permission(actor, required):
+            conn.close()
+            return _json_error("계정 상태 변경 권한이 필요합니다.", 403)
+
+    if "permission_overrides" in data:
+        if not _account_has_permission(actor, "account.permission.override.manage"):
+            conn.close()
+            return _json_error("권한 override 관리 권한이 필요합니다.", 403)
+        try:
+            override_values = _normalize_override_payload(
+                data.get("permission_overrides") if isinstance(data.get("permission_overrides"), dict) else {}
+            )
+        except ValueError as exc:
+            conn.close()
+            return _json_error(str(exc), 400)
+
+    role_permission_codes = _load_role_permission_codes(conn, [next_role_id]).get(next_role_id, set())
+    next_permissions = _apply_permission_overrides(role_permission_codes, override_values)
+    try:
+        _ensure_management_survivor_for_account_change(
+            conn,
+            int(account_id),
+            next_is_active=next_is_active,
+            next_permissions=next_permissions,
+        )
+    except ValueError as exc:
+        conn.close()
+        return _json_error(str(exc), 400)
+
     cur = conn.cursor()
     cur.execute(
         """
 UPDATE WebAccounts
-SET Role = %s,
+SET RoleId = %s,
     IsActive = %s,
-    CanSendRequest = %s,
-    CanCancelRequest = %s,
-    CanFinalizeRequest = %s,
-    CanDeleteConversation = %s,
-    CanClearConversations = %s,
     ApprovedByAccountId = %s,
     ApprovedAt = CASE
-        WHEN %s = 'pending' THEN NULL
-        ELSE COALESCE(ApprovedAt, CURRENT_TIMESTAMP)
+        WHEN ApprovedAt IS NULL AND %s = 1 THEN CURRENT_TIMESTAMP
+        ELSE ApprovedAt
     END
 WHERE Id = %s
         """,
         (
-            next_role,
-            int(is_active),
-            int(permissions["can_send_request"]),
-            int(permissions["can_cancel_request"]),
-            int(permissions["can_finalize_request"]),
-            int(permissions["can_delete_conversation"]),
-            int(permissions["can_clear_conversations"]),
-            int(actor["id"]) if next_role != ACCOUNT_ROLE_PENDING else None,
-            next_role,
+            next_role_id,
+            int(next_is_active),
+            int(actor["id"]),
+            int(next_permissions.get("conversation.ask") or next_permissions.get("console.access")),
             int(account_id),
         ),
     )
-    if not is_active:
-        cur.execute(
-            "UPDATE WebAuthSessions SET IsRevoked = 1 WHERE AccountId = %s",
-            (int(account_id),),
-        )
     cur.close()
+    _set_account_overrides(conn, int(account_id), override_values)
+    if not next_is_active:
+        cur = conn.cursor()
+        cur.execute("UPDATE WebAuthSessions SET IsRevoked = 1 WHERE AccountId = %s", (int(account_id),))
+        cur.close()
     updated = _load_account_by_id(conn, account_id)
     conn.close()
-    return JSONResponse({"ok": True, "account": _serialize_account(updated)})
+    payload = _serialize_account(updated) or {}
+    payload["permission_overrides"] = dict((updated or {}).get("permission_overrides") or {})
+    return JSONResponse({"ok": True, "account": payload})
+
+
+@app.delete("/api/admin/accounts/{account_id}")
+async def admin_delete_account(account_id: int, request: Request) -> JSONResponse:
+    if account_id <= 0:
+        return _json_error("invalid account_id", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+        conn.close()
+        return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+    if not _account_has_permission(actor, "account.delete"):
+        conn.close()
+        return _json_error("계정 삭제 권한이 필요합니다.", 403)
+    target = _load_account_by_id(conn, account_id)
+    if not target:
+        conn.close()
+        return _json_error("account not found", 404)
+    if target.get("deleted_at"):
+        conn.close()
+        return _json_error("이미 삭제된 계정입니다.", 400)
+    try:
+        _ensure_management_survivor_for_account_change(
+            conn,
+            int(account_id),
+            next_is_active=False,
+            next_permissions=_account_permissions(target),
+            deleting=True,
+        )
+    except ValueError as exc:
+        conn.close()
+        return _json_error(str(exc), 400)
+    cur = conn.cursor()
+    cur.execute(
+        """
+UPDATE WebAccounts
+SET IsActive = 0,
+    DeletedAt = CURRENT_TIMESTAMP,
+    DeletedByAccountId = %s
+WHERE Id = %s
+        """,
+        (int(actor["id"]), int(account_id)),
+    )
+    cur.execute("UPDATE WebAuthSessions SET IsRevoked = 1 WHERE AccountId = %s", (int(account_id),))
+    cur.close()
+    conn.close()
+    return JSONResponse({"ok": True, "account_id": int(account_id)})
+
+
+@app.get("/api/admin/roles")
+async def admin_roles(request: Request) -> JSONResponse:
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(account, "console.access") or not _account_has_permission(account, "role.read"):
+        conn.close()
+        return _json_error("역할 조회 권한이 필요합니다.", 403)
+    roles = _list_roles(conn)
+    conn.close()
+    return JSONResponse({"roles": roles})
+
+
+@app.post("/api/admin/roles")
+async def admin_create_role(request: Request) -> JSONResponse:
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+        conn.close()
+        return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+    if not _account_has_permission(actor, "role.create"):
+        conn.close()
+        return _json_error("역할 생성 권한이 필요합니다.", 403)
+    role_key = _sanitize_role_key(data.get("role_key", ""))
+    if not _is_valid_role_key(role_key):
+        conn.close()
+        return _json_error("role_key 형식이 올바르지 않습니다.", 400)
+    try:
+        permission_codes = _validate_permission_codes(data.get("permission_codes") or [])
+    except ValueError as exc:
+        conn.close()
+        return _json_error(str(exc), 400)
+    if permission_codes and not _account_has_permission(actor, "role.permission.manage"):
+        conn.close()
+        return _json_error("역할 권한 배치 권한이 필요합니다.", 403)
+    name = str(data.get("name", "") or "").strip()
+    if not name:
+        conn.close()
+        return _json_error("role name is required", 400)
+    description = str(data.get("description", "") or "").strip()
+    is_active = bool(data.get("is_active", True))
+    is_default_signup = bool(data.get("is_default_signup", False))
+    if is_default_signup and not is_active:
+        conn.close()
+        return _json_error("기본 가입 역할은 활성 상태여야 합니다.", 400)
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM WebRoles WHERE RoleKey = %s LIMIT 1", (role_key,))
+    if cur.fetchone():
+        cur.close()
+        conn.close()
+        return _json_error("이미 존재하는 role_key 입니다.", 409)
+    cur.close()
+    role_id = _create_role_with_permissions(
+        conn,
+        role_key,
+        name=name,
+        description=description,
+        is_active=is_active,
+        is_default_signup=is_default_signup,
+        permission_codes=permission_codes,
+    )
+    if is_default_signup:
+        _assign_default_signup_role(conn, role_id)
+    role = _load_role_by_id(conn, role_id)
+    conn.close()
+    return JSONResponse({"ok": True, "role": role})
+
+
+@app.patch("/api/admin/roles/{role_id}")
+async def admin_update_role(role_id: int, request: Request) -> JSONResponse:
+    if role_id <= 0:
+        return _json_error("invalid role_id", 400)
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+        conn.close()
+        return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+    if not _account_has_permission(actor, "role.update"):
+        conn.close()
+        return _json_error("역할 수정 권한이 필요합니다.", 403)
+    current_role = _load_role_by_id(conn, role_id)
+    if not current_role:
+        conn.close()
+        return _json_error("role not found", 404)
+    if "role_key" in data and _sanitize_role_key(data.get("role_key", "")) != current_role.get("key"):
+        conn.close()
+        return _json_error("role_key 는 수정할 수 없습니다.", 400)
+    next_name = str(data.get("name", current_role.get("name")) or "").strip()
+    next_description = str(data.get("description", current_role.get("description")) or "").strip()
+    next_is_active = bool(data.get("is_active", current_role.get("is_active")))
+    next_is_default_signup = bool(data.get("is_default_signup", current_role.get("is_default_signup")))
+    next_permission_codes = set(current_role.get("permission_codes") or [])
+    if "permission_codes" in data:
+        if not _account_has_permission(actor, "role.permission.manage"):
+            conn.close()
+            return _json_error("역할 권한 배치 권한이 필요합니다.", 403)
+        try:
+            next_permission_codes = _validate_permission_codes(data.get("permission_codes") or [])
+        except ValueError as exc:
+            conn.close()
+            return _json_error(str(exc), 400)
+        try:
+            _ensure_management_survivor_for_role_change(conn, int(role_id), next_permission_codes)
+        except ValueError as exc:
+            conn.close()
+            return _json_error(str(exc), 400)
+    if current_role.get("is_default_signup") and not next_is_default_signup:
+        conn.close()
+        return _json_error("기본 가입 역할은 다른 역할을 지정하기 전에는 해제할 수 없습니다.", 400)
+    if next_is_default_signup and not next_is_active:
+        conn.close()
+        return _json_error("기본 가입 역할은 활성 상태여야 합니다.", 400)
+    if current_role.get("is_default_signup") and not next_is_active:
+        conn.close()
+        return _json_error("기본 가입 역할은 비활성화할 수 없습니다.", 400)
+    cur = conn.cursor()
+    cur.execute(
+        """
+UPDATE WebRoles
+SET Name = %s,
+    Description = %s,
+    IsActive = %s,
+    IsDefaultSignup = %s
+WHERE Id = %s
+        """,
+        (
+            next_name,
+            next_description,
+            int(next_is_active),
+            int(next_is_default_signup),
+            int(role_id),
+        ),
+    )
+    cur.close()
+    if "permission_codes" in data:
+        _set_role_permissions(conn, int(role_id), next_permission_codes)
+    if next_is_default_signup:
+        _assign_default_signup_role(conn, int(role_id))
+    role = _load_role_by_id(conn, int(role_id))
+    conn.close()
+    return JSONResponse({"ok": True, "role": role})
+
+
+@app.delete("/api/admin/roles/{role_id}")
+async def admin_delete_role(role_id: int, request: Request) -> JSONResponse:
+    if role_id <= 0:
+        return _json_error("invalid role_id", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+        conn.close()
+        return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+    if not _account_has_permission(actor, "role.delete"):
+        conn.close()
+        return _json_error("역할 삭제 권한이 필요합니다.", 403)
+    role = _load_role_by_id(conn, int(role_id))
+    if not role:
+        conn.close()
+        return _json_error("role not found", 404)
+    if role.get("is_default_signup"):
+        conn.close()
+        return _json_error("기본 가입 역할은 삭제할 수 없습니다.", 400)
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT COUNT(*)
+FROM WebAccounts
+WHERE RoleId = %s
+  AND DeletedAt IS NULL
+        """,
+        (int(role_id),),
+    )
+    in_use = int((cur.fetchone() or (0,))[0] or 0)
+    if in_use > 0:
+        cur.close()
+        conn.close()
+        return _json_error("미삭제 계정이 참조 중인 역할은 삭제할 수 없습니다.", 400)
+    cur.execute("DELETE FROM WebRolePermissions WHERE RoleId = %s", (int(role_id),))
+    cur.execute("DELETE FROM WebRoles WHERE Id = %s", (int(role_id),))
+    cur.close()
+    conn.close()
+    return JSONResponse({"ok": True, "role_id": int(role_id)})
+
+
+@app.get("/api/admin/permissions")
+async def admin_permissions(request: Request) -> JSONResponse:
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(account, "console.access"):
+        conn.close()
+        return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    conn.close()
+    return JSONResponse({"permissions": _permission_catalog_payload()})
 
 
 @app.get("/api/keywords")

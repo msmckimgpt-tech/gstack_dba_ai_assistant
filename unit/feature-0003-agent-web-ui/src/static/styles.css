@@ -1541,6 +1541,116 @@ a { color: inherit; }
   margin-top: 4px;
 }
 
+.admin-section-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.admin-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.field-wide {
+  grid-column: 1 / -1;
+}
+
+.permission-grid,
+.override-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.permission-group {
+  border: 1px solid var(--border-subtle);
+  border-radius: 18px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.permission-group-title {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.permission-grid-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.permission-toggle-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: rgba(248, 250, 255, 0.95);
+}
+
+.permission-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.permission-text strong {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.permission-text small,
+.override-field small {
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.admin-role-create {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.admin-role-head {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.admin-role-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-role-card .admin-controls {
+  grid-template-columns: 1fr;
+}
+
+.override-field {
+  gap: 6px;
+}
+
+.override-field select {
+  min-height: 42px;
+}
+
 /* =====================================================================
    RESPONSIVE
    ===================================================================== */
@@ -1553,4 +1663,6 @@ a { color: inherit; }
   .sidebar { display: none; }
   .drawer { width: min(100vw, 380px); }
   .admin-controls { grid-template-columns: 1fr; }
+  .permission-grid-list,
+  .admin-role-head { grid-template-columns: 1fr; }
 }

@@ -16,7 +16,7 @@ source_of_truth: true
 |---------|------|------|----------|------|
 | feature-0001-platform-runtime | in-progress | AI | 2026-04-15 | MySQL runtime 경계 유지, 내장 Local LLM bootstrap 제거 |
 | feature-0002-agent-core | in-progress | AI | 2026-04-15 | 외부 `local_llm` gateway 소비 계약 정리 |
-| feature-0003-agent-web-ui | in-progress | AI | 2026-04-15 | 계정/RBAC 개편 + 외부 Local LLM 상태 안내 정리 |
+| feature-0003-agent-web-ui | in-progress | AI | 2026-04-16 | RBAC + account override cutover, 관리자 콘솔 Roles/Accounts 분리, own/any 권한 정리 |
 | feature-0004-browser-automation | in-progress | AI | 2026-04-06 | 구조 이관 완료, smoke 검증 예정 |
 | feature-0005-qa-mcp | in-progress | AI | 2026-04-06 | 포트 28000 점유 해소 확인, MCP 기동 검증 예정 |
 | feature-0006-lan-proxy-access | in-progress | AI | 2026-04-06 | 운영 자산 이관 완료 |

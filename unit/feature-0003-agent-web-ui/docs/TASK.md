@@ -9,10 +9,10 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: in-progress
+- State: completed
 - Owner: AI
 - Priority: high
-- Last Updated: 2026-04-15
+- Last Updated: 2026-04-16
 
 ## 2. Task Queue
 - [x] TASK-0001 Web UI 코드 이관
@@ -38,6 +38,7 @@ source_of_truth: true
 - [x] TASK-0021 쿼리 결과셋 인라인 표시 복원
 - [x] TASK-0022 Progress Strip 드롭다운 구조화 (단계 누적에 따른 채팅 영역 축소 해소)
 - [x] TASK-0023 Planner 자율성 개선 (휴리스틱 없이 불필요 탐색 축소)
+- [x] TASK-0024 Role/권한 구조를 RBAC + account override 모델로 재설계
 
 ## 3. In Progress
 - 없음
@@ -60,9 +61,10 @@ source_of_truth: true
 - TASK-0021 (2026-04-15): UI 개편 과정에서 누락된 `execute_sql` step 결과셋 인라인 표시 복원. `result_summary.preview_table`을 HTML 테이블로 렌더링, SQL 쿼리+결과+CSV를 step 단위로 묶어 표시. 구형 메시지는 `meta.sql`/`meta.csv_paths` 폴백.
 - TASK-0022 (2026-04-16): Progress Strip을 `<details>`/`<summary>` 드롭다운으로 전환. step 수가 늘어도 기본 1행 고정, 펼침 시 `max-height:40vh` 내부 스크롤. summary에 `n단계 · 최근 작업` 표시.
 - TASK-0023 (2026-04-16): Planner 자율성 개선 — TOOL_DEFINITIONS 순서를 execute_sql 최우선으로 재배치, 각 도구 description에 사용 조건 명시, SYSTEM_PROMPT에 CRITICAL DIRECTIVE·IDEAL FLOW EXAMPLE·강화 ANTI-PATTERNS 추가. 휴리스틱 없이 프롬프트/도구 제시 순서만으로 불필요 탐색을 억제.
+- TASK-0024 (2026-04-16): `WebRoles`/`WebPermissions`/`WebRolePermissions`/`WebAccountPermissionOverrides` 기반 RBAC로 cutover. role명 특수 처리 없이 permission + ownership 로만 권한 판정. 계정 soft delete, role CRUD, tri-state override, own/any 대화 권한, 제목 변경 API, Accounts/Roles 2영역 관리자 콘솔, `/api/clear_memory` 제거 완료.
 
 ## 6. Next Action
-- operator 계정 기준으로 장문/다단계 질의 회귀 테스트 수행
+- 신규 권한/계정 정책 변경이 필요하면 별도 TASK로 분리한다
 
 ## 7. Completion Checklist
 - [x] Web UI 코드 이관이 완료되었다
@@ -87,3 +89,10 @@ source_of_truth: true
 - [x] SQL 쿼리 블록과 결과 테이블, CSV 링크가 step 단위로 묶여 표시된다
 - [x] Progress Strip이 `<details>` 드롭다운으로 동작하며 step 증가 시 채팅 영역이 축소되지 않는다
 - [x] Planner가 execute_sql을 우선 시도하도록 도구 순서와 프롬프트가 구성되어 있다
+- [x] 계정이 `Role 기본 권한 + account override` 구조로 계산된다
+- [x] `pending/operator/admin` 문자열 비교 없이 permission + ownership 만으로 권한이 판정된다
+- [x] 관리 콘솔에서 role 생성/수정/삭제와 기본 가입 역할 변경이 가능하다
+- [x] 관리 콘솔에서 계정 role 부여와 tri-state override 편집이 가능하다
+- [x] 계정 soft delete 후 로그인 차단과 세션 폐기가 동작한다
+- [x] 대화 조회/제목 변경/삭제/중단/즉시답변이 own/any 권한으로 분기된다
+- [x] `/api/clear_memory` 및 legacy `Can*` 계약이 런타임에서 제거되었다

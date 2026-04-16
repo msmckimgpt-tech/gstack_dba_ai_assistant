@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260415c" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260416-rbac1" />
 </head>
 <body class="admin-shell">
   <header class="topbar">
@@ -19,45 +19,41 @@
     </div>
   </header>
 
-  <main class="admin-main">
-    <!-- 요약 지표 -->
+  <main class="admin-main admin-section-stack">
     <section class="surface-card admin-overview">
       <div class="section-row">
         <div>
           <div class="drawer-label">Overview</div>
-          <h2>계정 현황</h2>
+          <h2>운영 상태</h2>
         </div>
       </div>
       <div class="summary-metrics">
         <article class="metric-card">
-          <span>Pending</span>
-          <strong id="metricPending">—</strong>
+          <span>Active</span>
+          <strong id="metricActive">—</strong>
         </article>
         <article class="metric-card">
-          <span>Operator</span>
-          <strong id="metricOperator">—</strong>
+          <span>Inactive</span>
+          <strong id="metricInactive">—</strong>
         </article>
         <article class="metric-card">
-          <span>Admin</span>
-          <strong id="metricAdmin">—</strong>
+          <span>Deleted</span>
+          <strong id="metricDeleted">—</strong>
         </article>
         <article class="metric-card">
-          <span>Disabled</span>
-          <strong id="metricDisabled">—</strong>
+          <span>Roles</span>
+          <strong id="metricRoles">—</strong>
         </article>
       </div>
     </section>
 
-    <!-- 계정 목록 -->
     <section class="surface-card">
       <div class="section-row">
         <div>
           <div class="drawer-label">Accounts</div>
-          <h2>사용자 목록</h2>
+          <h2>계정 / Override</h2>
         </div>
       </div>
-
-      <!-- 툴바: 검색 + 필터 -->
       <div class="admin-toolbar">
         <input
           type="search"
@@ -68,23 +64,54 @@
         />
         <div class="admin-filter-group">
           <button type="button" class="admin-filter-btn is-active" data-filter="all">전체</button>
-          <button type="button" class="admin-filter-btn" data-filter="pending">Pending</button>
-          <button type="button" class="admin-filter-btn" data-filter="operator">Operator</button>
-          <button type="button" class="admin-filter-btn" data-filter="admin">Admin</button>
-          <button type="button" class="admin-filter-btn" data-filter="disabled">Disabled</button>
+          <button type="button" class="admin-filter-btn" data-filter="active">활성</button>
+          <button type="button" class="admin-filter-btn" data-filter="inactive">비활성</button>
+          <button type="button" class="admin-filter-btn" data-filter="deleted">삭제됨</button>
         </div>
       </div>
-
-      <!-- 계정 카드 목록 -->
       <div class="admin-accounts" id="adminAccounts"></div>
-
-      <!-- 페이지네이션 -->
       <div class="admin-pagination" id="adminPagination"></div>
+    </section>
+
+    <section class="surface-card">
+      <div class="section-row">
+        <div>
+          <div class="drawer-label">Roles</div>
+          <h2>역할 / 권한</h2>
+        </div>
+      </div>
+      <form class="admin-role-create" id="roleCreateForm">
+        <div class="admin-role-head">
+          <label class="field">
+            <span>role_key</span>
+            <input type="text" name="role_key" placeholder="예: analyst" />
+          </label>
+          <label class="field">
+            <span>표시 이름</span>
+            <input type="text" name="name" placeholder="예: Analyst" />
+          </label>
+          <label class="field field-wide">
+            <span>설명</span>
+            <input type="text" name="description" placeholder="역할 용도 설명" />
+          </label>
+          <label class="permission-toggle">
+            <input type="checkbox" name="is_active" checked />
+            <span>활성</span>
+          </label>
+          <label class="permission-toggle">
+            <input type="checkbox" name="is_default_signup" />
+            <span>기본 가입 역할</span>
+          </label>
+          <button type="submit" class="btn-primary" id="createRoleBtn">역할 생성</button>
+        </div>
+        <div class="permission-grid" id="roleCreatePermissions"></div>
+      </form>
+      <div class="admin-accounts" id="adminRoles"></div>
     </section>
   </main>
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260415c"></script>
+  <script src="/static/admin.js?v=20260416-rbac1"></script>
 </body>
 </html>

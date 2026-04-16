@@ -47,6 +47,7 @@ const progressStepsEl = document.getElementById("progressSteps");
 const progressSummaryEl = document.getElementById("progressSummary");
 const messageLogEl = document.getElementById("messageLog");
 const loadMoreBtn = document.getElementById("loadMoreBtn");
+const renameConversationBtn = document.getElementById("renameConversationBtn");
 const cancelBtn = document.getElementById("cancelBtn");
 const finalizeBtn = document.getElementById("finalizeBtn");
 const deleteConversationBtn = document.getElementById("deleteConversationBtn");
@@ -77,6 +78,40 @@ const state = {
   progressPoller: null,
   progressSteps: [],
   toastTimer: null,
+};
+
+const PERMISSION_LABELS = {
+  "console.access": "관리 콘솔 접근",
+  "console.manage": "관리 콘솔 수정",
+  "account.read": "계정 조회",
+  "account.update": "계정 수정",
+  "account.delete": "계정 삭제",
+  "account.activate": "계정 활성화",
+  "account.deactivate": "계정 비활성화",
+  "account.role.assign": "역할 부여",
+  "account.permission.override.manage": "권한 override 관리",
+  "role.read": "역할 조회",
+  "role.create": "역할 생성",
+  "role.update": "역할 수정",
+  "role.delete": "역할 삭제",
+  "role.permission.manage": "역할 권한 배치",
+  "conversation.create": "대화 생성",
+  "conversation.ask": "대화 요청 실행",
+  "conversation.suggestions.read": "질문 제안 조회",
+  "conversation.list.own": "내 대화 목록 조회",
+  "conversation.list.any": "전체 대화 목록 조회",
+  "conversation.read.own": "내 대화 내용 조회",
+  "conversation.read.any": "전체 대화 내용 조회",
+  "conversation.file.read.own": "내 대화 파일 조회",
+  "conversation.file.read.any": "전체 대화 파일 조회",
+  "conversation.rename.own": "내 대화 제목 변경",
+  "conversation.rename.any": "전체 대화 제목 변경",
+  "conversation.delete.own": "내 대화 삭제",
+  "conversation.delete.any": "전체 대화 삭제",
+  "conversation.cancel.own": "내 대화 중단",
+  "conversation.cancel.any": "전체 대화 중단",
+  "conversation.finalize.own": "내 대화 즉시답변",
+  "conversation.finalize.any": "전체 대화 즉시답변",
 };
 
 /** 현재 활성 대화가 요청 중인지 여부 */
@@ -164,8 +199,45 @@ function can(permission) {
   return Boolean(state.user?.permissions?.[permission]);
 }
 
-function isAdmin() {
-  return Boolean(state.user?.is_admin);
+function roleLabel() {
+  return state.user?.role?.name || state.user?.role?.key || "Unassigned";
+}
+
+function isOwnConversation(conversation = currentConversation()) {
+  if (!conversation || !state.user) return false;
+  return Number(conversation.owner_account_id || 0) === Number(state.user.id || 0);
+}
+
+function canOpenAdminConsole() {
+  return can("console.access");
+}
+
+function canAskInConversation(conversation = currentConversation()) {
+  if (!can("conversation.ask")) return false;
+  if (!conversation) {
+    return can("conversation.create");
+  }
+  return isOwnConversation(conversation);
+}
+
+function canRenameConversation(conversation = currentConversation()) {
+  if (!conversation) return false;
+  return can("conversation.rename.any") || (isOwnConversation(conversation) && can("conversation.rename.own"));
+}
+
+function canDeleteConversation(conversation = currentConversation()) {
+  if (!conversation) return false;
+  return can("conversation.delete.any") || (isOwnConversation(conversation) && can("conversation.delete.own"));
+}
+
+function canCancelConversation(conversation = currentConversation()) {
+  if (!conversation) return false;
+  return can("conversation.cancel.any") || (isOwnConversation(conversation) && can("conversation.cancel.own"));
+}
+
+function canFinalizeConversation(conversation = currentConversation()) {
+  if (!conversation) return false;
+  return can("conversation.finalize.any") || (isOwnConversation(conversation) && can("conversation.finalize.own"));
 }
 
 function currentConversation() {
@@ -254,23 +326,20 @@ function switchProfileTab(tab) {
 function buildPermissionPills(containerEl) {
   if (!containerEl) return;
   containerEl.innerHTML = "";
-  const permissions = [
-    ["can_send_request", "요청 실행"],
-    ["can_cancel_request", "실행 중단"],
-    ["can_finalize_request", "즉시 답변"],
-    ["can_delete_conversation", "대화 삭제"],
-    ["can_clear_conversations", "전체 정리"],
-  ];
-  if (state.user?.is_pending) {
+  const enabled = Object.entries(state.user?.permissions || {})
+    .filter(([, enabled]) => Boolean(enabled))
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  if (!enabled.length) {
     const badge = document.createElement("span");
-    badge.className = "permission-pill is-pending";
-    badge.textContent = "승인 전 조회 전용";
+    badge.className = "permission-pill";
+    badge.textContent = "활성 권한 없음";
     containerEl.appendChild(badge);
+    return;
   }
-  permissions.forEach(([field, label]) => {
+  enabled.forEach(([field]) => {
     const item = document.createElement("span");
-    item.className = `permission-pill ${can(field) ? "is-enabled" : ""}`.trim();
-    item.textContent = label;
+    item.className = "permission-pill is-enabled";
+    item.textContent = PERMISSION_LABELS[field] || field;
     containerEl.appendChild(item);
   });
 }
@@ -286,8 +355,8 @@ function renderAccountState() {
   const initials = state.user.username.slice(0, 2).toUpperCase();
   if (profileAvatarEl) profileAvatarEl.textContent = initials;
   if (profileNameEl) profileNameEl.textContent = state.user.username;
-  if (profileRoleEl) profileRoleEl.textContent = state.user.role || "member";
-  openAdminBtn.classList.toggle("hidden", !isAdmin());
+  if (profileRoleEl) profileRoleEl.textContent = roleLabel();
+  openAdminBtn.classList.toggle("hidden", !canOpenAdminConsole());
 }
 
 function renderProfile() {
@@ -297,28 +366,24 @@ function renderProfile() {
   if (profileAvatarLgEl) profileAvatarLgEl.textContent = initials;
   if (profileSummaryNameEl) profileSummaryNameEl.textContent = state.user.username;
   if (profileSummaryMetaEl) {
-    profileSummaryMetaEl.textContent = state.user.is_admin
-      ? "관리자"
-      : state.user.is_pending
-        ? "승인 대기 중"
-        : (state.user.role || "member");
+    profileSummaryMetaEl.textContent = roleLabel();
   }
 
   buildPermissionPills(profilePermPillsEl);
 
   if (profileStateNoteEl) {
-    if (state.user.is_pending) {
-      profileStateNoteEl.textContent = "승인 전 상태입니다. 관리자 승인 후 요청 실행 권한이 부여됩니다.";
-    } else if (can("can_send_request")) {
-      profileStateNoteEl.textContent = "실행 권한이 활성화된 계정입니다.";
+    if (can("conversation.ask")) {
+      profileStateNoteEl.textContent = "요청 실행 권한이 활성화된 계정입니다.";
+    } else if (can("conversation.read.own") || can("conversation.read.any")) {
+      profileStateNoteEl.textContent = "현재는 조회 중심 권한만 부여된 계정입니다.";
     } else {
-      profileStateNoteEl.textContent = "요청 실행 권한이 없습니다. 관리자에게 문의하세요.";
+      profileStateNoteEl.textContent = "사용 가능한 권한이 없습니다. 관리자에게 역할 또는 override를 요청하세요.";
     }
   }
 
   if (profileCreatedAtEl) profileCreatedAtEl.textContent = formatDateTime(state.user.created_at);
   if (profileLastLoginEl) profileLastLoginEl.textContent = formatDateTime(state.user.last_login_at);
-  if (profileApprovedAtEl) profileApprovedAtEl.textContent = formatDateTime(state.user.approved_at) || "미승인";
+  if (profileApprovedAtEl) profileApprovedAtEl.textContent = formatDateTime(state.user.approved_at) || "미기록";
 
   if (passwordErrorEl) passwordErrorEl.textContent = "";
   if (passwordChangeFormEl) passwordChangeFormEl.reset();
@@ -395,6 +460,11 @@ function renderConversationList() {
     dateEl.textContent = formatDateTime(item.last_activity_at || item.created_at);
 
     metaEl.append(dot, dateEl);
+    if (item.owner_username) {
+      const ownerEl = document.createElement("span");
+      ownerEl.textContent = item.owner_username;
+      metaEl.append(ownerEl);
+    }
     button.append(titleEl, metaEl);
     conversationListEl.appendChild(button);
   });
@@ -404,7 +474,7 @@ function renderConversationHeader() {
   const conversation = currentConversation();
   if (!conversation) {
     conversationTitleEl.textContent = "대화를 선택하세요";
-    conversationSubtitleEl.textContent = "계정 기준으로 정리된 대화와 실행 결과를 확인할 수 있습니다.";
+    conversationSubtitleEl.textContent = "권한이 허용한 범위의 대화와 실행 결과를 확인할 수 있습니다.";
     return;
   }
   conversationTitleEl.textContent = conversation.topic || "새 대화";
@@ -412,6 +482,9 @@ function renderConversationHeader() {
     `최근 갱신 ${formatDateTime(conversation.last_activity_at || conversation.created_at)}`,
     `메시지 ${Number(conversation.message_count || 0)}`,
   ];
+  if (conversation.owner_username) {
+    subtitleParts.push(`소유자 ${conversation.owner_username}`);
+  }
   if (conversation.status) {
     subtitleParts.push(`상태 ${conversation.status}`);
   }
@@ -421,13 +494,14 @@ function renderConversationHeader() {
 function renderAccessNotice() {
   accessNoticeEl.classList.add("hidden");
   if (!state.user) return;
-  if (state.user.is_pending) {
-    accessNoticeEl.textContent = "승인 전 계정입니다. 관리자 승인 전에는 기존 대화 조회만 가능합니다.";
+  const conversation = currentConversation();
+  if (!can("conversation.ask")) {
+    accessNoticeEl.textContent = "현재 계정에는 대화 요청 실행 권한이 없습니다.";
     accessNoticeEl.classList.remove("hidden");
     return;
   }
-  if (!can("can_send_request")) {
-    accessNoticeEl.textContent = "현재 계정에는 요청 실행 권한이 없습니다.";
+  if (conversation && !isOwnConversation(conversation)) {
+    accessNoticeEl.textContent = "다른 계정의 대화는 조회만 가능합니다. 새 대화를 만들거나 본인 대화로 전환하세요.";
     accessNoticeEl.classList.remove("hidden");
   }
 }
@@ -549,7 +623,7 @@ function buildStepBlocks(steps, containerEl) {
         csvPaths.forEach((path, i) => {
           const link = document.createElement("a");
           link.className = "message-link";
-          link.href = `/api/file?path=${encodeURIComponent(path)}`;
+          link.href = `/api/file?path=${encodeURIComponent(path)}&conversation_id=${encodeURIComponent(state.activeConversationId || "")}`;
           link.target = "_blank";
           link.rel = "noopener";
           link.textContent = `CSV 다운로드 ${csvPaths.length > 1 ? i + 1 : ""}`.trim();
@@ -594,7 +668,7 @@ function renderMessageDetails(meta = {}) {
       meta.csv_paths.forEach((path, index) => {
         const link = document.createElement("a");
         link.className = "message-link";
-        link.href = `/api/file?path=${encodeURIComponent(path)}`;
+        link.href = `/api/file?path=${encodeURIComponent(path)}&conversation_id=${encodeURIComponent(state.activeConversationId || "")}`;
         link.target = "_blank";
         link.rel = "noopener";
         link.textContent = `CSV ${index + 1}`;
@@ -648,17 +722,17 @@ function renderMessages() {
 
 function renderComposer() {
   const busy = isCurrentConvBusy();
-  const disabled = !can("can_send_request") || busy;
+  const disabled = !canAskInConversation() || busy;
   promptInputEl.disabled = disabled;
   sendBtn.disabled = disabled;
-  newConversationBtn.disabled = !can("can_send_request");
+  newConversationBtn.disabled = !can("conversation.create");
 
-  if (state.user?.is_pending) {
+  if (!can("conversation.ask")) {
     composerTitleEl.textContent = "조회 전용 상태";
-    composerHintEl.textContent = "관리자 승인 전에는 새 요청을 보낼 수 없습니다.";
-  } else if (!can("can_send_request")) {
-    composerTitleEl.textContent = "실행 권한 없음";
-    composerHintEl.textContent = "현재 계정에는 요청 실행 권한이 없습니다.";
+    composerHintEl.textContent = "현재 계정에는 대화 요청 실행 권한이 없습니다.";
+  } else if (currentConversation() && !isOwnConversation(currentConversation())) {
+    composerTitleEl.textContent = "읽기 전용 대화";
+    composerHintEl.textContent = "타 계정 대화에는 요청을 이어서 보낼 수 없습니다. 새 대화를 생성하세요.";
   } else if (busy) {
     composerTitleEl.textContent = "요청 처리 중";
     composerHintEl.textContent = "이 대화의 요청이 처리 중입니다. 다른 대화에서 새 요청을 보낼 수 있습니다.";
@@ -669,9 +743,10 @@ function renderComposer() {
 
   const active = currentConversation();
   const processing = active && String(active.status || "").toLowerCase() === "processing";
-  cancelBtn.classList.toggle("hidden", !(processing && can("can_cancel_request")));
-  finalizeBtn.classList.toggle("hidden", !(processing && can("can_finalize_request")));
-  deleteConversationBtn.classList.toggle("hidden", !(state.activeConversationId && can("can_delete_conversation")));
+  cancelBtn.classList.toggle("hidden", !(processing && canCancelConversation(active)));
+  finalizeBtn.classList.toggle("hidden", !(processing && canFinalizeConversation(active)));
+  renameConversationBtn.classList.toggle("hidden", !(state.activeConversationId && canRenameConversation(active)));
+  deleteConversationBtn.classList.toggle("hidden", !(state.activeConversationId && canDeleteConversation(active)));
 }
 
 function renderProgress(statusPayload = null) {
@@ -816,14 +891,29 @@ async function selectConversation(conversationId) {
 }
 
 async function createConversation() {
-  if (!can("can_send_request")) return;
+  if (!can("conversation.create")) return;
   const payload = await apiFetch("/api/new_conversation", { method: "POST" });
   showToast("새 대화를 만들었습니다.");
   await refreshWorkspace(payload.conversation_id || "");
 }
 
+async function renameCurrentConversation() {
+  const conversation = currentConversation();
+  if (!conversation || !canRenameConversation(conversation)) return;
+  const nextTitle = window.prompt("새 대화 제목을 입력하세요.", conversation.topic || "");
+  if (nextTitle == null) return;
+  const trimmed = nextTitle.trim();
+  if (!trimmed) return;
+  await apiFetch(`/api/conversations/${encodeURIComponent(conversation.id)}/title`, {
+    method: "PATCH",
+    body: JSON.stringify({ title: trimmed }),
+  });
+  showToast("대화 제목을 변경했습니다.");
+  await refreshWorkspace(conversation.id);
+}
+
 async function deleteConversation() {
-  if (!state.activeConversationId || !can("can_delete_conversation")) return;
+  if (!state.activeConversationId || !canDeleteConversation()) return;
   if (!window.confirm("현재 대화를 삭제하시겠습니까?")) {
     return;
   }
@@ -855,7 +945,7 @@ async function deleteConversation() {
 }
 
 async function cancelCurrentRun() {
-  if (!state.activeConversationId || !can("can_cancel_request")) return;
+  if (!state.activeConversationId || !canCancelConversation()) return;
   await apiFetch("/api/cancel", {
     method: "POST",
     body: JSON.stringify({ conversation_id: state.activeConversationId }),
@@ -864,7 +954,7 @@ async function cancelCurrentRun() {
 }
 
 async function finalizeCurrentRun() {
-  if (!state.activeConversationId || !can("can_finalize_request")) return;
+  if (!state.activeConversationId || !canFinalizeConversation()) return;
   await apiFetch("/api/finalize", {
     method: "POST",
     body: JSON.stringify({ conversation_id: state.activeConversationId }),
@@ -874,7 +964,7 @@ async function finalizeCurrentRun() {
 
 async function sendPrompt() {
   const message = promptInputEl.value.trim();
-  if (!message || !can("can_send_request") || isCurrentConvBusy()) {
+  if (!message || !canAskInConversation() || isCurrentConvBusy()) {
     return;
   }
   const vault = readVaultState();
@@ -1125,6 +1215,11 @@ async function initialize() {
   deleteConversationBtn.addEventListener("click", () => {
     deleteConversation().catch((error) => {
       showToast(error.message || "대화 삭제에 실패했습니다.", true);
+    });
+  });
+  renameConversationBtn.addEventListener("click", () => {
+    renameCurrentConversation().catch((error) => {
+      showToast(error.message || "대화 제목 변경에 실패했습니다.", true);
     });
   });
 

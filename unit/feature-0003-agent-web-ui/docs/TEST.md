@@ -16,13 +16,13 @@ source_of_truth: true
 
 ## 2. Test Scope
 - 계정 기반 로그인/회원가입이 실제로 동작하는지 확인
-- pending 계정이 조회 전용으로 제한되는지 확인
-- 관리자 화면에서 계정 승인과 세부 권한 조정이 가능한지 확인
-- 대화 목록/히스토리가 계정 소유권 기준으로 분리되는지 확인
+- 기본 signup role 전환과 role CRUD가 동작하는지 확인
+- 계정 role assignment, tri-state override, soft delete가 동작하는지 확인
+- 대화 목록/히스토리/제목 변경/삭제/중단/즉시답변이 own/any 권한 기준으로 분기되는지 확인
 - 메인 화면이 외부 스크롤 없는 App-Shell 레이아웃으로 렌더링되는지 확인
 - 프로필 드로어가 계정 / 보안 / API Vault 탭 구조로 동작하는지 확인
-- 로그아웃 시 열린 드로어와 인증 폼 상태가 초기화되는지 확인
-- Admin 콘솔의 검색 / 역할 필터 / 페이지네이션이 동작하는지 확인
+- Admin 콘솔의 검색 / 필터 / role/override 편집이 동작하는지 확인
+- role명 휴리스틱 없이 permission + ownership만으로 판정하는지 확인
 - 외부 Local LLM gateway 연결 시 API 키 없이 `model=auto` 요청이 가능한지 확인
 - 외부 Local LLM provider 미기동 시 `model=auto` 요청이 503으로 제한되는지 확인
 
@@ -35,25 +35,34 @@ source_of_truth: true
 
 ### 계정/RBAC API 검증
 - TEST-0004: `GET /api/session` 비인증 시 `authenticated=false`
-- TEST-0005: bootstrap admin 로그인 후 `GET /api/auth/me`, `GET /api/admin/accounts` 정상 응답
-- TEST-0006: 신규 회원가입 계정은 `role=pending`, 모든 실행 권한이 false
-- TEST-0007: pending 계정의 `POST /api/new_conversation`은 403으로 차단
-- TEST-0008: 관리자 승인 후 operator 계정의 `POST /api/new_conversation` 성공
-- TEST-0009: admin 계정은 전체 대화를, operator 계정은 자신의 대화만 `GET /api/conversations`에서 확인
-- TEST-0010: `AgentCoreConversations.owner_account_id`가 새 대화 생성 계정으로 기록
-- TEST-0011: `PATCH /api/auth/me`로 현재 비밀번호 검증 후 새 비밀번호 변경 가능
-- TEST-0012: 외부 Local LLM gateway 연결 시 `GET /api/session.local_llm_enabled=true`
-- TEST-0013: bootstrap admin 세션에서 외부 provider 연결 상태로 `POST /api/ask` + `model=auto`가 API 키 없이 성공
-- TEST-0020: 외부 Local LLM provider 미기동 시 `POST /api/ask` + `model=auto`가 503으로 제한
+- TEST-0005: bootstrap admin 로그인 후 `GET /api/auth/me`, `GET /api/admin/accounts`, `GET /api/admin/roles`, `GET /api/admin/permissions` 정상 응답
+- TEST-0006: 임시 기본 signup role 생성 후 신규 회원가입 계정에 해당 role이 자동 부여
+- TEST-0007: `console.access` 단독 계정은 `/api/admin/permissions`만 조회 가능하고 `/api/admin/accounts`, `/api/admin/roles`는 403
+- TEST-0008: 계정 role assignment + override allow/deny 후 최종 permission map이 기대값과 일치
+- TEST-0009: `conversation.list.any`, `conversation.read.any` 허용 계정이 타 계정 대화를 조회 가능
+- TEST-0010: 타 계정 대화에 대해 `conversation.ask`는 owner mismatch로 차단
+- TEST-0011: `conversation.rename.any` override 후 타 계정 대화 제목 변경 가능
+- TEST-0012: `/api/clear_memory`가 410을 반환
+- TEST-0013: 마지막 관리 가능 계정/role 보호 규칙이 빈 permission set 변경을 차단
+- TEST-0014: soft delete 후 로그인 차단 및 기존 세션 폐기
+- TEST-0015: `PATCH /api/auth/me`로 현재 비밀번호 검증 후 새 비밀번호 변경 가능
+- TEST-0016: 외부 Local LLM gateway 연결 시 `GET /api/session.local_llm_enabled=true`
+- TEST-0017: bootstrap admin 세션에서 외부 provider 연결 상태로 `POST /api/ask` + `model=auto`가 API 키 없이 성공
+- TEST-0018: 외부 Local LLM provider 미기동 시 `POST /api/ask` + `model=auto`가 503으로 제한
+- TEST-0019: 휴리스틱 금지 grep으로 `ACCOUNT_ROLE_*`, `is_admin`, `is_pending`, `_normalize_role(...)`, legacy `can_*` 권한 판정 경로 부재 확인
 
 ### 브라우저 기반 UI 검증
-- TEST-0014: 로그인 화면이 계정/권한 안내 중심 2패널 구조로 렌더링된다
-- TEST-0015: 로그인 후 메인 화면이 App-Shell 구조로 렌더링되고 외부 스크롤이 발생하지 않는다
-- TEST-0016: 프로필 버튼 클릭 시 드로어가 열리고 계정 / 보안 / API Vault 탭 전환이 동작한다
-- TEST-0017: 로그아웃 시 드로어가 닫히고 로그인 화면으로 복귀하며 로그인/회원가입 폼 값이 초기화된다
-- TEST-0018: 관리자 버튼 클릭 시 `/admin` 화면으로 이동하고 검색 / 필터 / 페이지네이션 UI가 렌더링된다
-- TEST-0019: 다른 대화 처리 중 활성 대화를 바꿔도 전송 중 대화의 busy 상태가 분리 유지된다
-- TEST-0021: bootstrap admin 브라우저 세션에서 `model=auto`, 질문 `현재 데이터베이스 목록을 보여줘` 가 실제 화면 기준 `60초 이내` 완료되고 완료 화면이 스크린샷으로 남는다
+- TEST-0020: 로그인 화면이 계정/권한 안내 중심 2패널 구조로 렌더링된다
+- TEST-0021: 로그인 후 메인 화면이 App-Shell 구조로 렌더링되고 외부 스크롤이 발생하지 않는다
+- TEST-0022: 관리자 버튼 클릭 시 `/admin` 화면으로 이동하고 Accounts / Roles 2영역이 렌더링된다
+- TEST-0023: 관리자 콘솔에서 role 생성/수정/기본 signup role 전환이 가능하다
+- TEST-0024: 브라우저 회원가입 후 기본 signup role이 프로필 role 라벨에 반영된다
+- TEST-0025: 관리자 콘솔에서 계정 role을 다른 role로 바꾼 뒤 다시 복원할 수 있다
+- TEST-0026: own conversation에서 제목 변경/삭제 버튼이 노출된다
+- TEST-0027: 타 계정 대화는 `read/list.any`만 있을 때 버튼이 숨겨지고, `rename/delete.any` 허용 후 버튼이 노출된다
+- TEST-0028: soft delete 후 `/admin` deleted 필터에 계정이 보이고, 삭제된 계정 로그인은 차단된다
+- TEST-0029: 삭제된 role이 관리자 역할 목록에서 제거된다
+- TEST-0030: bootstrap admin 브라우저 세션에서 `model=auto`, 질문 `현재 데이터베이스 목록을 보여줘` 가 실제 화면 기준 `60초 이내` 완료되고 완료 화면이 스크린샷으로 남는다
 
 ## 4. Test Run History
 - 2026-03-26: 구조 검증 기준만 정의
@@ -82,3 +91,14 @@ source_of_truth: true
     - `/shared/out/browser/perf_just_after_send.png`
     - `/shared/out/browser/perf_done.png`
   - 테스트 중 생성된 stuck conversation `20260415093013-f34140ec` 는 `POST /api/cancel` 후 `status=done` 으로 정리했고, 이후 `GET /api/conversations` 기준 `processing` 0건 확인
+- 2026-04-16:
+  - `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py`
+  - `node --check unit/feature-0003-agent-web-ui/src/static/app.js`
+  - `node --check unit/feature-0003-agent-web-ui/src/static/admin.js`
+  - API 회귀 스크립트로 기본 signup role 전환, role CRUD, account override, `console.access` 읽기 전용 셸, own/any 대화 권한, `clear_memory=410`, 마지막 관리 가능 계정 보호, soft delete/session revoke 검증
+  - 브라우저 자동화로 관리자/사용자 세션 검증:
+    - `/shared/out/browser/rbac_admin_home_76309029.png`
+    - `/shared/out/browser/rbac_admin_roles_76309029.png`
+    - `/shared/out/browser/rbac_user_own_76309029.png`
+    - `/shared/out/browser/rbac_user_other_76309029.png`
+  - 후속 브라우저 검증으로 deleted 필터의 soft-deleted 계정 표시, 삭제 role 미노출, 삭제 계정 로그인 차단을 재확인
