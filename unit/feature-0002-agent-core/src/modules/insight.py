@@ -344,6 +344,69 @@ def _insight_missing_parts(state: dict[str, Any] | None) -> list[str]:
     return missing
 
 
+def _detect_pending_insight_repairs(
+    db_conn,
+    mem_conn,
+    schemas: list[str],
+) -> dict[str, int]:
+    report = {
+        "pending_schema_repairs": 0,
+        "pending_table_repairs": 0,
+    }
+    schema_names = [str(s or "").strip() for s in (schemas or [])]
+    schema_names = [s for s in schema_names if s and not _is_system_schema(s)]
+    if not db_conn or not mem_conn or not schema_names:
+        return report
+
+    schema_keys = [f"schema_insight:{schema}" for schema in schema_names]
+    schema_states = _load_insight_artifact_states(mem_conn, schema_keys)
+    for schema in schema_names:
+        schema_key = f"schema_insight:{schema}"
+        if not _insight_artifact_complete(
+            schema_states.get(schema_key, _empty_insight_artifact_state(schema_key))
+        ):
+            report["pending_schema_repairs"] += 1
+
+    cur = db_conn.cursor()
+    try:
+        placeholders = ",".join(["%s"] * len(schema_names))
+        cur.execute(
+            f"""
+SELECT TABLE_SCHEMA, TABLE_NAME
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA IN ({placeholders})
+ORDER BY TABLE_SCHEMA, TABLE_NAME
+            """,
+            schema_names,
+        )
+        rows = cur.fetchall() or []
+    except Exception:
+        rows = []
+    finally:
+        cur.close()
+
+    table_keys: list[str] = []
+    for row in rows:
+        if not row:
+            continue
+        schema_name = str(row[0] or "").strip()
+        table_name = str(row[1] or "").strip()
+        if not schema_name or not table_name:
+            continue
+        table_keys.append(f"table_insight:{schema_name}.{table_name}")
+
+    if not table_keys:
+        return report
+
+    table_states = _load_insight_artifact_states(mem_conn, table_keys)
+    for table_key in table_keys:
+        if not _insight_artifact_complete(
+            table_states.get(table_key, _empty_insight_artifact_state(table_key))
+        ):
+            report["pending_table_repairs"] += 1
+    return report
+
+
 def _build_insight_references(
     schema: str,
     table: str | None = None,
@@ -569,6 +632,8 @@ def _scan_instance_schema_insights(
         "skipped_schemas": 0,
         "skipped_tables": 0,
         "deferred_tables": 0,
+        "pending_schema_repairs": 0,
+        "pending_table_repairs": 0,
     }
     if not db_conn or not mem_conn or not AGENT_SCHEMA_INSTANCE_SCAN or not AGENT_SCHEMA_INSIGHT:
         return report
@@ -614,6 +679,14 @@ def _scan_instance_schema_insights(
                 )
             except Exception:
                 pass
+    pending_repairs = _detect_pending_insight_repairs(db_conn, mem_conn, candidates)
+    report["pending_schema_repairs"] = int(pending_repairs.get("pending_schema_repairs", 0) or 0)
+    report["pending_table_repairs"] = int(pending_repairs.get("pending_table_repairs", 0) or 0)
+    force_scan = bool(
+        missing
+        or report["pending_schema_repairs"]
+        or report["pending_table_repairs"]
+    )
     if not force_scan:
         try:
             last_scan = load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, "schema_instance_scan_at")
@@ -773,6 +846,8 @@ ORDER BY TABLE_NAME
                         publish_attempted = True
                     elif schema_error:
                         publish_skip_reason = "llm_error"
+                    elif not isinstance(schema_insight, dict):
+                        publish_skip_reason = "invalid_response"
                     elif not schema_text:
                         publish_skip_reason = "empty_text"
                     else:
@@ -1063,6 +1138,8 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                         publish_attempted = True
                     elif table_error:
                         publish_skip_reason = "llm_error"
+                    elif not isinstance(table_insight, dict):
+                        publish_skip_reason = "invalid_response"
                     elif not table_text:
                         publish_skip_reason = "empty_text"
                     else:
@@ -1299,6 +1376,12 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             "tables_repaired": int(scan_report.get("tables_repaired", 0) or 0),
             "artifact_missing_selected": int(
                 scan_report.get("artifact_missing_selected", 0) or 0
+            ),
+            "pending_schema_repairs": int(
+                scan_report.get("pending_schema_repairs", 0) or 0
+            ),
+            "pending_table_repairs": int(
+                scan_report.get("pending_table_repairs", 0) or 0
             ),
             "deferred_tables": int(scan_report.get("deferred_tables", 0) or 0),
             "skipped_schemas": int(scan_report.get("skipped_schemas", 0) or 0),

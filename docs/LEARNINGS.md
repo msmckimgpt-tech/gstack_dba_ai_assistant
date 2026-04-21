@@ -99,6 +99,29 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
   - CSS에 `white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere` + 컨테이너 `min-width: 0`을 함께 적용해 포매터가 못 잡는 초장문 토큰도 wrap
 - Applies to: feature-0003 에서 `sql-block` 렌더링을 수정하거나 SQL 표시 로직을 변경하는 모든 작업.
 
+### LRN-20260421-0002 — 많은 권한 항목은 `<details>` collapsible + summary 카운트 배지로 접근성을 회복한다
+- Source: feature-0003 RBAC 33-permission UX 개편 (TASK-0027, 2026-04-21)
+- Pattern: 권한이 5그룹 33개로 세분화되자 관리 콘솔에서 "계정 1건당 33개 select × 페이지당 10계정 = 330개 select"가 한 화면에 쌓여 사실상 조작 불가능 상태가 됐다. 해결책은 네이티브 `<details>`/`<summary>` 접힘 + summary에 **실시간 카운트 배지** 노출 + 그룹별 **배치 액션 버튼**이다:
+  - summary 구조: `그룹명 + 카운트 배지(상속 N · 허용 M · 거부 K 또는 N/M 선택됨)`
+  - 기본 접힘, 선택/override가 있는 그룹만 자동 펼침으로 초기 렌더
+  - 배치 액션: "모두 허용/거부/상속" 또는 "모두 선택/해제"를 그룹 헤더에 배치해 클릭 1회로 그룹 전체 반영
+  - Profile 드로어처럼 "조회 전용" 맥락에서는 그룹별 `<section>` + pill chip 리스트로 충분 (접힘 불필요)
+  - `PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "misc"]` 배열을 프론트 상수로 두고, permission 코드의 앞쪽 토큰(`console.manage` → `console`)으로 폴백 분류하면 백엔드 스키마와 독립된다.
+- Applies to: feature-0003 이후 항목 수가 10개를 넘는 선택/편집 UI 전반 (권한 외에도 feature flag, 알림 설정, 역할 매핑 등).
+
+### LRN-20260421-0003 — 백그라운드 서비스/숨은 서브시스템은 전용 문서로 분리해 "서비스 오류"로 오해받지 않게 한다
+- Source: feature-0002 Insight 시스템 문서화 (TASK-0028, 2026-04-21)
+- Pattern: `insight.py` 1400 줄이 넘는 백그라운드 워커가 5 초마다 DB 에 접속하고 자체 로그(`insight_worker.log`)를 쌓았으나, 어느 문서에도 기능 설명이 없어 사용자가 "서비스가 오류를 반복하고 있다"고 오해했다. 이런 숨은 서브시스템은 `FUNCTION.md` 본문에 몇 줄 추가하는 것만으로는 부족하고, **전용 문서 1종**을 아래 구조로 만들어야 한다:
+  - 한 줄 요약 + "사용자 영향(왜 이 시스템이 존재하는가)"
+  - 아키텍처 ASCII 다이어그램 (컨테이너/루프/저장소 관계)
+  - 실행 경로 — 정상 루프 + fallback 경로(워커 부재 시 인라인 스캔처럼)
+  - 저장 형식 (테이블/KV 키 패턴 표)
+  - 환경변수 레퍼런스 표 (기본값 + 설명)
+  - **"오류 같아 보이지만 정상인 신호" 해석 가이드** — `skip_locked`, `fingerprint_skip` 등
+  - 헬스 체크 SQL snippet + **실제 런타임 출력을 문서 작성 시점에 캡처해 증빙**으로 삽입
+  - 코드 참조표 (파일:줄번호) — 줄번호는 다른 작업자의 리팩터링 후 쉽게 드리프트하므로 함수명을 함께 적고, 문서 갱신 시 `grep`으로 재검증한다.
+- Applies to: 향후 숨은 백그라운드 워커/큐/스케줄러/캐시 갱신 로직이 추가되면 동일 구조로 전용 문서를 작성한다. 기존 숨은 로직도 발견 즉시 동일 패턴으로 문서화한다.
+
 ## Category: quirk
 
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존

@@ -1551,8 +1551,18 @@ def llm_schema_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
     except Exception as exc:
         _log_llm_warn("llm_schema_insight", "exception", str(exc))
         return None
+    if not text:
+        _log_llm_warn("llm_schema_insight", "empty_response", f"model={_insight_model}")
+        return None
     obj = _extract_json_object(text)
-    return obj if isinstance(obj, dict) else None
+    if not isinstance(obj, dict):
+        _log_llm_warn(
+            "llm_schema_insight",
+            "json_extract_failed",
+            f"model={_insight_model} len={len(text)} head={text[:200]}",
+        )
+        return None
+    return obj
 
 
 def llm_table_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -1575,8 +1585,18 @@ def llm_table_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
     except Exception as exc:
         _log_llm_warn("llm_table_insight", "exception", str(exc))
         return None
+    if not text:
+        _log_llm_warn("llm_table_insight", "empty_response", f"model={_insight_model}")
+        return None
     obj = _extract_json_object(text)
-    return obj if isinstance(obj, dict) else None
+    if not isinstance(obj, dict):
+        _log_llm_warn(
+            "llm_table_insight",
+            "json_extract_failed",
+            f"model={_insight_model} len={len(text)} head={text[:200]}",
+        )
+        return None
+    return obj
 
 
 def _build_summary_payload(

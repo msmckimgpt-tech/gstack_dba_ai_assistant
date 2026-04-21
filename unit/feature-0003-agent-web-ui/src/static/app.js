@@ -80,6 +80,20 @@ const state = {
   toastTimer: null,
 };
 
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "misc"];
+const PERMISSION_GROUP_LABELS = {
+  console: "관리 콘솔",
+  account: "계정",
+  role: "역할",
+  conversation: "대화",
+  misc: "기타",
+};
+
+function permissionGroupOf(code = "") {
+  const head = String(code || "").split(".", 1)[0] || "misc";
+  return PERMISSION_GROUP_LABELS[head] ? head : "misc";
+}
+
 const PERMISSION_LABELS = {
   "console.access": "관리 콘솔 접근",
   "console.manage": "관리 콘솔 수정",
@@ -327,8 +341,9 @@ function buildPermissionPills(containerEl) {
   if (!containerEl) return;
   containerEl.innerHTML = "";
   const enabled = Object.entries(state.user?.permissions || {})
-    .filter(([, enabled]) => Boolean(enabled))
-    .sort((a, b) => a[0].localeCompare(b[0]));
+    .filter(([, value]) => Boolean(value))
+    .map(([code]) => code);
+
   if (!enabled.length) {
     const badge = document.createElement("span");
     badge.className = "permission-pill";
@@ -336,11 +351,45 @@ function buildPermissionPills(containerEl) {
     containerEl.appendChild(badge);
     return;
   }
-  enabled.forEach(([field]) => {
-    const item = document.createElement("span");
-    item.className = "permission-pill is-enabled";
-    item.textContent = PERMISSION_LABELS[field] || field;
-    containerEl.appendChild(item);
+
+  const byGroup = new Map();
+  enabled.forEach((code) => {
+    const group = permissionGroupOf(code);
+    if (!byGroup.has(group)) byGroup.set(group, []);
+    byGroup.get(group).push(code);
+  });
+
+  PERMISSION_GROUP_ORDER.forEach((group) => {
+    const codes = byGroup.get(group);
+    if (!codes || !codes.length) return;
+    codes.sort((a, b) => a.localeCompare(b));
+
+    const section = document.createElement("section");
+    section.className = "perm-section";
+    section.dataset.permGroup = group;
+
+    const head = document.createElement("div");
+    head.className = "perm-section-head";
+    const title = document.createElement("span");
+    title.className = "perm-section-title";
+    title.textContent = PERMISSION_GROUP_LABELS[group] || group;
+    const count = document.createElement("span");
+    count.className = "perm-section-count";
+    count.textContent = String(codes.length);
+    head.append(title, count);
+
+    const pillWrap = document.createElement("div");
+    pillWrap.className = "perm-pills";
+    codes.forEach((code) => {
+      const item = document.createElement("span");
+      item.className = "permission-pill is-enabled";
+      item.textContent = PERMISSION_LABELS[code] || code;
+      item.title = code;
+      pillWrap.appendChild(item);
+    });
+
+    section.append(head, pillWrap);
+    containerEl.appendChild(section);
   });
 }
 

@@ -476,6 +476,46 @@ a { color: inherit; }
   gap: 4px;
 }
 
+.perm-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.perm-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+
+.perm-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.perm-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-muted);
+}
+
+.perm-section-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--primary);
+  background: var(--primary-soft);
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+
 /* Permission pills (shared with admin) */
 .permission-pill {
   display: inline-flex;
@@ -1664,13 +1704,65 @@ a { color: inherit; }
 
 .permission-group {
   border: 1px solid var(--border-subtle);
-  border-radius: 18px;
-  padding: 14px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.74);
+  overflow: hidden;
+}
+
+.permission-group + .permission-group {
+  margin-top: 10px;
+}
+
+.permission-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  background: rgba(245, 247, 250, .6);
+}
+
+.permission-group-head::-webkit-details-marker { display: none; }
+
+.permission-group-head::before {
+  content: "▸";
+  display: inline-block;
+  width: 12px;
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform .15s ease;
+}
+
+.permission-group[open] > .permission-group-head::before {
+  transform: rotate(90deg);
+}
+
+.permission-group-counts {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
+  background: var(--primary-soft);
+  padding: 2px 10px;
+  border-radius: 999px;
+  margin-left: auto;
+}
+
+.permission-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 14px 0;
+}
+
+.permission-group .permission-grid-list {
+  padding: 10px 14px 14px;
 }
 
 .permission-group-title {
-  margin: 0 0 10px;
+  margin: 0;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: .08em;

@@ -71,6 +71,15 @@ function can(permission) {
   return Boolean(adminState.me?.permissions?.[permission]);
 }
 
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "misc"];
+const PERMISSION_GROUP_LABELS = {
+  console: "관리 콘솔",
+  account: "계정",
+  role: "역할",
+  conversation: "대화",
+  misc: "기타",
+};
+
 function groupedPermissions() {
   const groups = new Map();
   adminState.permissions.forEach((permission) => {
@@ -78,20 +87,103 @@ function groupedPermissions() {
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group).push(permission);
   });
-  return Array.from(groups.entries());
+  const order = new Map();
+  PERMISSION_GROUP_ORDER.forEach((key, idx) => order.set(key, idx));
+  return Array.from(groups.entries()).sort((a, b) => {
+    const ai = order.has(a[0]) ? order.get(a[0]) : 99;
+    const bi = order.has(b[0]) ? order.get(b[0]) : 99;
+    if (ai !== bi) return ai - bi;
+    return a[0].localeCompare(b[0]);
+  });
+}
+
+function _updateCheckboxGroupSummary(section) {
+  const total = section.querySelectorAll("input[type='checkbox']").length;
+  const checked = section.querySelectorAll("input[type='checkbox']:checked").length;
+  const badge = section.querySelector(".permission-group-counts");
+  if (badge) badge.textContent = `${checked}/${total} 선택`;
+}
+
+function _updateOverrideGroupSummary(section) {
+  const selects = section.querySelectorAll("select[data-override-code]");
+  let allow = 0, deny = 0, inherit = 0;
+  selects.forEach((s) => {
+    if (s.value === "allow") allow += 1;
+    else if (s.value === "deny") deny += 1;
+    else inherit += 1;
+  });
+  const badge = section.querySelector(".permission-group-counts");
+  if (!badge) return;
+  const parts = [];
+  if (allow) parts.push(`허용 ${allow}`);
+  if (deny) parts.push(`거부 ${deny}`);
+  parts.push(`상속 ${inherit}`);
+  badge.textContent = parts.join(" · ");
 }
 
 function renderPermissionGrid(containerEl, selectedCodes, disabled = false, mode = "checkbox", overrides = {}) {
   containerEl.innerHTML = "";
   const selected = new Set(selectedCodes || []);
   groupedPermissions().forEach(([group, items]) => {
-    const section = document.createElement("section");
+    const section = document.createElement("details");
     section.className = "permission-group";
+    section.dataset.permGroup = group;
 
-    const title = document.createElement("h3");
+    const summary = document.createElement("summary");
+    summary.className = "permission-group-head";
+    const title = document.createElement("span");
     title.className = "permission-group-title";
-    title.textContent = group;
-    section.appendChild(title);
+    title.textContent = PERMISSION_GROUP_LABELS[group] || group;
+    const counts = document.createElement("span");
+    counts.className = "permission-group-counts";
+    summary.append(title, counts);
+    section.appendChild(summary);
+
+    const bulk = document.createElement("div");
+    bulk.className = "permission-bulk-actions";
+    if (mode === "checkbox") {
+      const allBtn = document.createElement("button");
+      allBtn.type = "button";
+      allBtn.className = "tool-btn";
+      allBtn.textContent = "모두 선택";
+      allBtn.disabled = disabled;
+      allBtn.addEventListener("click", (evt) => {
+        evt.preventDefault();
+        section.querySelectorAll("input[type='checkbox']").forEach((cb) => { cb.checked = true; });
+        _updateCheckboxGroupSummary(section);
+      });
+      const noneBtn = document.createElement("button");
+      noneBtn.type = "button";
+      noneBtn.className = "tool-btn";
+      noneBtn.textContent = "모두 해제";
+      noneBtn.disabled = disabled;
+      noneBtn.addEventListener("click", (evt) => {
+        evt.preventDefault();
+        section.querySelectorAll("input[type='checkbox']").forEach((cb) => { cb.checked = false; });
+        _updateCheckboxGroupSummary(section);
+      });
+      bulk.append(allBtn, noneBtn);
+    } else {
+      const makeBulk = (val, label) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "tool-btn";
+        btn.textContent = label;
+        btn.disabled = disabled;
+        btn.addEventListener("click", (evt) => {
+          evt.preventDefault();
+          section.querySelectorAll("select[data-override-code]").forEach((s) => { s.value = val; });
+          _updateOverrideGroupSummary(section);
+        });
+        return btn;
+      };
+      bulk.append(
+        makeBulk("allow", "모두 허용"),
+        makeBulk("deny", "모두 거부"),
+        makeBulk("inherit", "모두 상속"),
+      );
+    }
+    section.appendChild(bulk);
 
     const list = document.createElement("div");
     list.className = "permission-grid-list";
@@ -105,6 +197,7 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled = false, mode
         input.value = permission.code;
         input.checked = selected.has(permission.code);
         input.disabled = disabled;
+        input.addEventListener("change", () => _updateCheckboxGroupSummary(section));
         const textWrap = document.createElement("span");
         textWrap.className = "permission-text";
         const strong = document.createElement("strong");
@@ -123,9 +216,9 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled = false, mode
         select.dataset.overrideCode = permission.code;
         select.disabled = disabled;
         [
-          ["inherit", "inherit"],
-          ["allow", "allow"],
-          ["deny", "deny"],
+          ["inherit", "상속"],
+          ["allow", "허용"],
+          ["deny", "거부"],
         ].forEach(([value, label]) => {
           const option = document.createElement("option");
           option.value = value;
@@ -133,6 +226,7 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled = false, mode
           option.selected = (overrides?.[permission.code] || "inherit") === value;
           select.appendChild(option);
         });
+        select.addEventListener("change", () => _updateOverrideGroupSummary(section));
         const hint = document.createElement("small");
         hint.textContent = permission.description;
         field.append(titleEl, select, hint);
@@ -142,6 +236,19 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled = false, mode
 
     section.appendChild(list);
     containerEl.appendChild(section);
+
+    if (mode === "checkbox") {
+      _updateCheckboxGroupSummary(section);
+      const hasSelected = items.some((p) => selected.has(p.code));
+      section.open = hasSelected;
+    } else {
+      _updateOverrideGroupSummary(section);
+      const hasNonInherit = items.some((p) => {
+        const v = overrides?.[p.code] || "inherit";
+        return v === "allow" || v === "deny";
+      });
+      section.open = hasNonInherit;
+    }
   });
 }
 
