@@ -64,6 +64,12 @@ const STORAGE_KEYS = {
   passphrase: "mysql_ai_vault_passphrase_v1",
 };
 
+const PROGRESS_FETCH_TIMEOUT_MS = 4000;
+const PROGRESS_POLL_ACTIVE_MS = 1200;
+const PROGRESS_POLL_IDLE_MS = 3000;
+const PROGRESS_POLL_HIDDEN_MS = 10000;
+const PROGRESS_POLL_ERROR_MS = 8000;
+
 const state = {
   user: null,
   session: null,
@@ -77,6 +83,12 @@ const state = {
   localLlmEnabled: false,
   apiVaultOptions: null,
   progressPoller: null,
+  progressPollInFlight: false,
+  progressPollSeq: 0,
+  progressAbortController: null,
+  progressRunId: "",
+  progressAfterStep: 0,
+  progressErrorCount: 0,
   progressSteps: [],
   toastTimer: null,
 };
@@ -435,6 +447,82 @@ function switchProfileTab(tab) {
   document.querySelectorAll("[data-profile-pane]").forEach((pane) => {
     pane.classList.toggle("hidden", pane.dataset.profilePane !== tab);
   });
+}
+
+async function fetchAccountPromptRow(productId) {
+  const params = new URLSearchParams();
+  if (productId) params.set("product_id", String(productId));
+  const query = params.toString();
+  const res = await fetch(`/api/auth/me/system-prompt${query ? `?${query}` : ""}`, {
+    credentials: "same-origin",
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+  return res.json();
+}
+
+async function initAccountPromptEditor() {
+  const selectEl = document.getElementById("promptProductSelect");
+  const contentEl = document.getElementById("promptContent");
+  const metaEl = document.getElementById("promptMeta");
+  if (!selectEl || !contentEl) return;
+  const products = Array.isArray(state.products) ? state.products : [];
+  if (!selectEl.dataset.populated) {
+    selectEl.innerHTML = "";
+    const optNone = document.createElement("option");
+    optNone.value = "";
+    optNone.textContent = "(Product 무관)";
+    selectEl.appendChild(optNone);
+    products.forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = String(p.id);
+      opt.textContent = `${p.name} (${p.product_key})`;
+      if (state.default_product_id && Number(state.default_product_id) === Number(p.id)) {
+        opt.selected = true;
+      }
+      selectEl.appendChild(opt);
+    });
+    selectEl.dataset.populated = "1";
+    selectEl.addEventListener("change", () => {
+      reloadAccountPrompt().catch(() => {});
+    });
+  }
+  await reloadAccountPrompt();
+
+  async function reloadAccountPrompt() {
+    const pid = selectEl.value ? Number(selectEl.value) : null;
+    try {
+      const payload = await fetchAccountPromptRow(pid);
+      const row = payload.prompt;
+      if (row) {
+        contentEl.value = row.content || "";
+        if (metaEl) metaEl.textContent = `마지막 수정: ${row.updated_at || "-"}`;
+      } else {
+        contentEl.value = "";
+        if (metaEl) metaEl.textContent = "(저장된 프롬프트 없음)";
+      }
+    } catch (error) {
+      if (metaEl) metaEl.textContent = `조회 실패: ${error.message || error}`;
+    }
+  }
+}
+
+async function saveAccountPrompt(forceDelete = false) {
+  const selectEl = document.getElementById("promptProductSelect");
+  const contentEl = document.getElementById("promptContent");
+  if (!selectEl || !contentEl) return;
+  const productId = selectEl.value ? Number(selectEl.value) : null;
+  const content = forceDelete ? "" : contentEl.value;
+  const res = await fetch(`/api/auth/me/system-prompt`, {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, product_id: productId }),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(payload.error || res.statusText);
+  if (forceDelete) contentEl.value = "";
+  showToast(forceDelete ? "프롬프트를 삭제했습니다." : "프롬프트를 저장했습니다.");
+  await initAccountPromptEditor();
 }
 
 function buildPermissionPills(containerEl) {
@@ -1379,40 +1467,150 @@ function renderProgress(statusPayload = null) {
   });
 }
 
-function stopProgressPolling() {
+function clearProgressPollTimer() {
   if (state.progressPoller) {
-    clearInterval(state.progressPoller);
+    clearTimeout(state.progressPoller);
     state.progressPoller = null;
   }
 }
 
-async function pollProgress() {
-  if (!state.activeConversationId) return;
-  try {
-    const payload = await apiFetch(
-      `/api/progress?conversation_id=${encodeURIComponent(state.activeConversationId)}`
-    );
-    renderProgress(payload);
-    if (payload.status && payload.status !== "processing") {
-      stopProgressPolling();
-      await refreshWorkspace(state.activeConversationId);
+function maxProgressStepIndex(steps = []) {
+  let maxStep = 0;
+  steps.forEach((step) => {
+    const stepIndex = Number(step?.step_index || 0);
+    if (Number.isFinite(stepIndex) && stepIndex > maxStep) {
+      maxStep = stepIndex;
     }
-  } catch (_error) {
-    stopProgressPolling();
+  });
+  return maxStep;
+}
+
+function resetProgressTracking(runId = "") {
+  state.progressRunId = String(runId || "").trim();
+  state.progressAfterStep = 0;
+  state.progressErrorCount = 0;
+  state.progressSteps = [];
+}
+
+function stopProgressPolling({ reset = false, abort = true } = {}) {
+  state.progressPollSeq += 1;
+  clearProgressPollTimer();
+  if (abort && state.progressAbortController) {
+    try {
+      state.progressAbortController.abort();
+    } catch (_error) {
+      // no-op
+    }
+  }
+  state.progressAbortController = null;
+  state.progressPollInFlight = false;
+  if (reset) {
+    resetProgressTracking();
   }
 }
 
-function startProgressPolling() {
-  stopProgressPolling();
+function scheduleProgressPolling(delayMs = PROGRESS_POLL_IDLE_MS, seq = state.progressPollSeq) {
+  clearProgressPollTimer();
   if (!state.activeConversationId) return;
-  pollProgress().catch(() => {});
-  state.progressPoller = window.setInterval(() => {
-    pollProgress();
-  }, 2000);
+  const nextDelay = document.hidden
+    ? Math.max(delayMs, PROGRESS_POLL_HIDDEN_MS)
+    : Math.max(delayMs, 0);
+  state.progressPoller = window.setTimeout(() => {
+    pollProgress(seq).catch(() => {});
+  }, nextDelay);
+}
+
+function applyProgressPayload(payload = {}) {
+  const runId = String(payload.run_id || "").trim();
+  const incomingSteps = Array.isArray(payload.steps) ? payload.steps : [];
+  const stepCount = Math.max(0, Number(payload.step_count || 0));
+
+  if (!runId || runId !== state.progressRunId) {
+    state.progressRunId = runId;
+    state.progressSteps = incomingSteps.slice();
+  } else if (incomingSteps.length) {
+    const seen = new Set(
+      state.progressSteps.map((step) => `${step.step_index || 0}:${step.created_at || ""}`)
+    );
+    incomingSteps.forEach((step) => {
+      const key = `${step.step_index || 0}:${step.created_at || ""}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        state.progressSteps.push(step);
+      }
+    });
+  }
+
+  state.progressAfterStep = Math.max(stepCount, maxProgressStepIndex(state.progressSteps));
+  renderProgress({ ...payload, steps: state.progressSteps.slice() });
+}
+
+async function pollProgress(seq = state.progressPollSeq) {
+  if (!state.activeConversationId || seq !== state.progressPollSeq || state.progressPollInFlight) return;
+  state.progressPollInFlight = true;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), PROGRESS_FETCH_TIMEOUT_MS);
+  state.progressAbortController = controller;
+  let shouldSchedule = false;
+  let nextDelay = PROGRESS_POLL_IDLE_MS;
+  try {
+    const params = new URLSearchParams({
+      conversation_id: state.activeConversationId,
+    });
+    if (state.progressRunId && state.progressAfterStep > 0) {
+      params.set("client_run_id", state.progressRunId);
+      params.set("after_step", String(state.progressAfterStep));
+    }
+    const payload = await apiFetch(`/api/progress?${params.toString()}`, {
+      signal: controller.signal,
+    });
+    state.progressErrorCount = 0;
+    applyProgressPayload(payload);
+    if (payload.status && payload.status !== "processing") {
+      stopProgressPolling({ abort: false });
+      await refreshWorkspace(state.activeConversationId);
+      return;
+    }
+    shouldSchedule = true;
+    nextDelay = Array.isArray(payload.steps) && payload.steps.length
+      ? PROGRESS_POLL_ACTIVE_MS
+      : PROGRESS_POLL_IDLE_MS;
+  } catch (_error) {
+    if (seq !== state.progressPollSeq) {
+      return;
+    }
+    state.progressErrorCount += 1;
+    shouldSchedule = Boolean(state.activeConversationId) && state.progressErrorCount < 3;
+    nextDelay = document.hidden ? PROGRESS_POLL_HIDDEN_MS : PROGRESS_POLL_ERROR_MS;
+  } finally {
+    window.clearTimeout(timeoutId);
+    if (state.progressAbortController === controller) {
+      state.progressAbortController = null;
+    }
+    state.progressPollInFlight = false;
+    if (shouldSchedule && seq === state.progressPollSeq) {
+      scheduleProgressPolling(nextDelay, seq);
+    }
+  }
+}
+
+function startProgressPolling({ reset = false, runId = "" } = {}) {
+  stopProgressPolling({ reset: false, abort: true });
+  state.progressPollSeq += 1;
+  if (reset) {
+    resetProgressTracking(runId);
+  } else if (runId && runId !== state.progressRunId) {
+    resetProgressTracking(runId);
+  } else {
+    state.progressErrorCount = 0;
+  }
+  if (!state.activeConversationId) return;
+  scheduleProgressPolling(0, state.progressPollSeq);
 }
 
 async function loadHistory({ append = false } = {}) {
   if (!state.activeConversationId) {
+    stopProgressPolling({ reset: true });
     state.messages = [];
     state.hasMoreHistory = false;
     state.nextBeforeId = null;
@@ -1437,10 +1635,13 @@ async function loadHistory({ append = false } = {}) {
   loadMoreBtn.classList.toggle("hidden", !state.hasMoreHistory);
   renderMessages();
   if (payload.last_status === "processing") {
-    startProgressPolling();
-    renderProgress({ status: payload.last_status, steps: [] });
+    startProgressPolling({
+      reset: payload.last_run_id !== state.progressRunId,
+      runId: payload.last_run_id || "",
+    });
+    renderProgress({ status: payload.last_status, steps: state.progressSteps.slice() });
   } else {
-    stopProgressPolling();
+    stopProgressPolling({ reset: true });
     renderProgress();
   }
   renderComposer();
@@ -1614,7 +1815,7 @@ async function sendPrompt() {
   state.busyConversations.add(targetConvId);
   renderComposer();
   if (targetConvId) {
-    startProgressPolling();
+    startProgressPolling({ reset: true });
   }
   try {
     const payload = await apiFetch("/api/ask", {
@@ -1743,7 +1944,7 @@ async function handleSignup(event) {
 async function handleLogout() {
   // 열려있는 드로어를 먼저 닫아야 로그아웃 후 뒤에 드로어가 남지 않음
   closeProfile();
-  stopProgressPolling();
+  stopProgressPolling({ reset: true });
   await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
   state.user = null;
   state.session = null;
@@ -1765,6 +1966,8 @@ async function handleLogout() {
 async function initializeWorkspace() {
   state.session = await apiFetch("/api/session");
   state.user = state.session.user;
+  state.products = Array.isArray(state.session.products) ? state.session.products : [];
+  state.default_product_id = state.session.default_product_id || null;
   renderAccountState();
   renderAccessNotice();
   await loadVaultOptions();
@@ -1786,8 +1989,31 @@ async function initialize() {
 
   // 프로필 탭 전환
   document.querySelectorAll("[data-profile-tab]").forEach((btn) => {
-    btn.addEventListener("click", () => switchProfileTab(btn.dataset.profileTab));
+    btn.addEventListener("click", () => {
+      switchProfileTab(btn.dataset.profileTab);
+      if (btn.dataset.profileTab === "prompt") {
+        initAccountPromptEditor().catch(() => {});
+      }
+    });
   });
+
+  const savePromptBtn = document.getElementById("savePromptBtn");
+  const clearPromptBtn = document.getElementById("clearPromptBtn");
+  if (savePromptBtn) {
+    savePromptBtn.addEventListener("click", () => {
+      saveAccountPrompt(false).catch((error) => {
+        showToast(error.message || "저장에 실패했습니다.", true);
+      });
+    });
+  }
+  if (clearPromptBtn) {
+    clearPromptBtn.addEventListener("click", () => {
+      if (!window.confirm("저장된 프롬프트를 삭제할까요?")) return;
+      saveAccountPrompt(true).catch((error) => {
+        showToast(error.message || "삭제에 실패했습니다.", true);
+      });
+    });
+  }
 
   if (passwordChangeFormEl) {
     passwordChangeFormEl.addEventListener("submit", handlePasswordChange);
@@ -1882,6 +2108,8 @@ async function initialize() {
   try {
     const session = await apiFetch("/api/session");
     state.session = session;
+    state.products = Array.isArray(session.products) ? session.products : [];
+    state.default_product_id = session.default_product_id || null;
     if (!session.authenticated) {
       showAuthOverlay();
       await loadVaultOptions().catch(() => {});
@@ -1901,6 +2129,18 @@ async function initialize() {
     showToast(error.message || "초기화에 실패했습니다.", true);
   }
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    stopProgressPolling({ reset: false, abort: true });
+    return;
+  }
+  const active = currentConversation();
+  const isProcessing = String(active?.status || "").toLowerCase() === "processing";
+  if (state.activeConversationId && (isProcessing || state.progressRunId || isCurrentConvBusy())) {
+    startProgressPolling({ reset: false, runId: state.progressRunId });
+  }
+});
 
 initialize().catch((error) => {
   showToast(error.message || "페이지 초기화에 실패했습니다.", true);

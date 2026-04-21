@@ -52,7 +52,12 @@ from modules.model_catalog import is_local_llm_model, max_tokens_for_model, mode
 from modules.llm import llm_classify_origin_shift, llm_generate_topic
 from modules.domain import _derive_topic, _should_refresh_origin_request
 from modules.render import normalize_step_result_summary
-from modules.tools import TOOL_DEFINITIONS, execute_tool
+from modules.tools import (
+    TOOL_DEFINITIONS,
+    execute_tool,
+    set_active_schema_allowlist,
+    clear_active_schema_allowlist,
+)
 
 try:
     from openai import OpenAI
@@ -104,6 +109,94 @@ User asks about recent orders → KNOWN SCHEMAS lists `ecommerce.orders` → You
 ## OUTPUT
 Once execute_sql has returned the data you need, stop calling tools and write the final answer in Korean Markdown. Format numbers with commas (1,234,567). Use tables when comparing rows.
 """
+
+
+def compose_system_prompt(
+    mem_conn,
+    *,
+    product_id: int | None = None,
+    role_id: int | None = None,
+    account_id: int | None = None,
+) -> str:
+    """Product → Role → Account 순으로 custom 시스템 프롬프트를 base 뒤에 append 한다.
+
+    각 scope 에서 `ProductId` 가 있는(현재 product 한정) prompt 를 우선 사용하고, 없으면
+    `ProductId IS NULL` 의 범용 prompt 를 fallback 으로 쓴다. mem_conn 이 None 이거나 테이블이
+    없으면 base SYSTEM_PROMPT 를 그대로 반환.
+    """
+    if mem_conn is None:
+        return SYSTEM_PROMPT
+    parts: list[str] = [SYSTEM_PROMPT]
+    try:
+        cur = mem_conn.cursor()
+    except Exception:
+        return SYSTEM_PROMPT
+
+    def _fetch(scope: str, scope_col: str, scope_val: int | None) -> tuple[str, str]:
+        """해당 scope 의 prompt 와 표시용 label 을 반환. 없으면 ('','')."""
+        if scope_val is None or scope_val <= 0:
+            return ("", "")
+        try:
+            if product_id and product_id > 0:
+                cur.execute(
+                    f"SELECT Content FROM WebSystemPrompts "
+                    f"WHERE Scope=%s AND {scope_col}=%s AND ProductId=%s LIMIT 1",
+                    (scope, int(scope_val), int(product_id)),
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    return (str(row[0]), f"ProductId={product_id}")
+            cur.execute(
+                f"SELECT Content FROM WebSystemPrompts "
+                f"WHERE Scope=%s AND {scope_col}=%s AND ProductId IS NULL LIMIT 1",
+                (scope, int(scope_val)),
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                return (str(row[0]), "all products")
+        except Exception:
+            return ("", "")
+        return ("", "")
+
+    # Product-scope prompt (1건만)
+    product_label = ""
+    if product_id and product_id > 0:
+        try:
+            cur.execute("SELECT ProductKey FROM WebProducts WHERE Id=%s LIMIT 1", (int(product_id),))
+            row = cur.fetchone()
+            product_label = str(row[0]) if row and row[0] else str(product_id)
+            cur.execute(
+                "SELECT Content FROM WebSystemPrompts WHERE Scope='product' AND ProductId=%s LIMIT 1",
+                (int(product_id),),
+            )
+            prow = cur.fetchone()
+            if prow and prow[0]:
+                parts.append(f"\n\n## PRODUCT CONTEXT ({product_label})\n{str(prow[0]).strip()}\n")
+        except Exception:
+            pass
+
+    # Role-scope prompt
+    role_content, _ = _fetch("role", "RoleId", role_id)
+    if role_content:
+        role_label = ""
+        try:
+            cur.execute("SELECT RoleKey FROM WebRoles WHERE Id=%s LIMIT 1", (int(role_id or 0),))
+            row = cur.fetchone()
+            role_label = str(row[0]) if row and row[0] else str(role_id)
+        except Exception:
+            pass
+        parts.append(f"\n\n## ROLE GUIDANCE ({role_label})\n{role_content.strip()}\n")
+
+    # Account-scope prompt
+    account_content, _ = _fetch("account", "AccountId", account_id)
+    if account_content:
+        parts.append(f"\n\n## ACCOUNT PREFERENCES\n{account_content.strip()}\n")
+
+    try:
+        cur.close()
+    except Exception:
+        pass
+    return "".join(parts)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -941,6 +1034,45 @@ def run_agent(
     api_key: str | None = None,
     temperature: float | None = None,
     output_mode: str = "console",  # "console" or "json"
+    *,
+    product_id: int | None = None,
+    role_id: int | None = None,
+    account_id: int | None = None,
+    allowed_schemas: list[str] | None = None,
+) -> dict[str, Any]:
+    """Product whitelist 를 설정한 뒤 실제 에이전트 루프를 호출하는 얇은 래퍼."""
+    set_active_schema_allowlist(allowed_schemas)
+    try:
+        return _run_agent_core(
+            user_message,
+            conversation_id=conversation_id,
+            conv_file=conv_file,
+            max_steps=max_steps,
+            model=model,
+            api_key=api_key,
+            temperature=temperature,
+            output_mode=output_mode,
+            product_id=product_id,
+            role_id=role_id,
+            account_id=account_id,
+        )
+    finally:
+        clear_active_schema_allowlist()
+
+
+def _run_agent_core(
+    user_message: str,
+    conversation_id: str | None = None,
+    conv_file: str | None = None,
+    max_steps: int | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
+    temperature: float | None = None,
+    output_mode: str = "console",
+    *,
+    product_id: int | None = None,
+    role_id: int | None = None,
+    account_id: int | None = None,
 ) -> dict[str, Any]:
     """에이전트 메인 루프.
 
@@ -953,6 +1085,8 @@ def run_agent(
         api_key: OpenAI API 키
         temperature: legacy 입력값. 현재는 내부 규칙으로만 처리
         output_mode: "console"이면 Rich 출력, "json"이면 결과 딕셔너리만 반환
+        product_id/role_id/account_id: 시스템 프롬프트 depth 조립에 사용되는 현재 컨텍스트 식별자
+        allowed_schemas: None 이면 whitelist 미적용, list 이면 해당 스키마만 도구가 접근 허용
 
     Returns:
         {"answer": str, "conversation_id": str, "steps": list, "sql": str, "error": str}
@@ -1087,7 +1221,15 @@ def run_agent(
         pass
 
     # ── LLM 메시지 구성 ──
-    system_content = SYSTEM_PROMPT
+    try:
+        system_content = compose_system_prompt(
+            mem_conn,
+            product_id=product_id,
+            role_id=role_id,
+            account_id=account_id,
+        )
+    except Exception:
+        system_content = SYSTEM_PROMPT
     # Inject conversation context (origin_request + thread_goal)
     if prev_origin or thread_goal:
         ctx_parts: list[str] = []

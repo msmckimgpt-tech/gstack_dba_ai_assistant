@@ -9,6 +9,7 @@ const adminState = {
   permissions: [],
   roles: [],
   accounts: [],
+  products: [],
   tab: "dashboard",
   accountFilter: "all",
   accountSearch: "",
@@ -18,6 +19,9 @@ const adminState = {
   roleSearch: "",
   roleSelected: new Set(),
   selectedRoleId: null,
+  productSearch: "",
+  selectedProductId: null,
+  productDbDraft: new Map(),
   pending: {
     accounts: new Map(),
     roles: new Map(),
@@ -1252,6 +1256,18 @@ function renderRoleDetail() {
   permSection.appendChild(permWrap);
   paneEl.appendChild(permSection);
 
+  // System prompt (Role scope) — per-Product 또는 product-agnostic
+  if (!merged._isNew && can("system_prompt.manage.role.any")) {
+    const promptSection = buildSystemPromptEditor({
+      scope: "role",
+      roleId: Number(merged.id),
+      accountId: null,
+      title: "역할 시스템 프롬프트 (Role Scope)",
+      hint: "이 역할 구성원 전부에게 누적 적용됩니다. Product 별로 다르게 설정하거나 'Product 무관' 을 선택하세요.",
+    });
+    paneEl.appendChild(promptSection);
+  }
+
   // Actions
   const actions = document.createElement("div");
   actions.className = "admin-detail-actions";
@@ -1308,6 +1324,8 @@ function refreshPendingUI() {
   $("commitBarCount").textContent = `변경사항 ${total}건`;
   $("tabCountAccounts").textContent = `${adminState.accounts.length}`;
   $("tabCountRoles").textContent = `${adminState.roles.length + adminState.pending.newRoles.size}`;
+  const tabCountProducts = $("tabCountProducts");
+  if (tabCountProducts) tabCountProducts.textContent = `${adminState.products.length}`;
   $("adminPendingSummary").textContent = total ? `pending 변경 ${total}건` : "pending 변경 0건";
   $("adminCommitBar").classList.toggle("has-pending", total > 0);
   $("commitApplyBtn").disabled = total === 0;
@@ -1443,7 +1461,7 @@ function cancelAllPending() {
 /* ── Load ────────────────────────────────────────────────────────────── */
 
 async function loadAdminData() {
-  const [permissionsPayload, rolesPayload, accountsPayload] = await Promise.all([
+  const [permissionsPayload, rolesPayload, accountsPayload, productsPayload] = await Promise.all([
     apiFetch("/api/admin/permissions").catch((error) => {
       if (error.status === 403) return { permissions: [] };
       throw error;
@@ -1456,11 +1474,23 @@ async function loadAdminData() {
       if (error.status === 403) return { accounts: [], summary: {} };
       throw error;
     }),
+    apiFetch("/api/admin/products").catch((error) => {
+      if (error.status === 403) return { products: [] };
+      throw error;
+    }),
   ]);
 
   adminState.permissions = Array.isArray(permissionsPayload.permissions) ? permissionsPayload.permissions : [];
   adminState.roles = Array.isArray(rolesPayload.roles) ? rolesPayload.roles : [];
   adminState.accounts = Array.isArray(accountsPayload.accounts) ? accountsPayload.accounts : [];
+  adminState.products = Array.isArray(productsPayload.products) ? productsPayload.products : [];
+  const productIds = new Set(adminState.products.map((p) => Number(p.id)));
+  if (adminState.selectedProductId && !productIds.has(Number(adminState.selectedProductId))) {
+    adminState.selectedProductId = null;
+  }
+  Array.from(adminState.productDbDraft.keys()).forEach((id) => {
+    if (!productIds.has(Number(id))) adminState.productDbDraft.delete(id);
+  });
 
   // Drop selections that no longer exist
   const accountIds = new Set(adminState.accounts.map((a) => Number(a.id)));
@@ -1492,6 +1522,501 @@ async function loadAdminData() {
   renderAccountBulkBar();
   renderRoleList();
   renderRoleDetail();
+  renderProductList();
+  renderProductDetail();
+}
+
+/* ── Products pane ───────────────────────────────────────────────────── */
+
+function filteredProducts() {
+  const q = (adminState.productSearch || "").toLowerCase().trim();
+  if (!q) return adminState.products.slice();
+  return adminState.products.filter((p) => {
+    return (
+      (p.product_key || "").toLowerCase().includes(q)
+      || (p.name || "").toLowerCase().includes(q)
+      || (p.description || "").toLowerCase().includes(q)
+    );
+  });
+}
+
+function renderProductList() {
+  const listEl = $("productList");
+  if (!listEl) return;
+  const countEl = $("productListCount");
+  listEl.innerHTML = "";
+  const items = filteredProducts();
+  if (countEl) countEl.textContent = `${items.length} / ${adminState.products.length}`;
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "admin-detail-empty";
+    empty.textContent = "상품이 없습니다.";
+    listEl.appendChild(empty);
+    return;
+  }
+  items.forEach((p) => {
+    const row = document.createElement("div");
+    row.className = "admin-list-row";
+    if (Number(adminState.selectedProductId) === Number(p.id)) row.classList.add("is-selected");
+    row.addEventListener("click", () => {
+      adminState.selectedProductId = Number(p.id);
+      renderProductList();
+      renderProductDetail();
+    });
+    const meta = document.createElement("div");
+    meta.className = "admin-list-main";
+    const name = document.createElement("div");
+    name.className = "admin-account-name";
+    name.textContent = `${p.name} (${p.product_key})`;
+    const sub = document.createElement("div");
+    sub.className = "admin-meta";
+    const badges = [];
+    if (p.is_default) badges.push("default");
+    if (!p.is_active) badges.push("inactive");
+    sub.textContent = [p.description || "—", ...badges].filter(Boolean).join(" · ");
+    meta.append(name, sub);
+    row.appendChild(meta);
+    listEl.appendChild(row);
+  });
+}
+
+function renderProductDetail() {
+  const paneEl = $("productDetail");
+  if (!paneEl) return;
+  paneEl.innerHTML = "";
+  if (!adminState.selectedProductId) {
+    const empty = document.createElement("div");
+    empty.className = "admin-detail-empty";
+    empty.textContent = "좌측에서 상품을 선택하거나 \"+ 새 상품\"을 누르세요.";
+    paneEl.appendChild(empty);
+    return;
+  }
+  const product = adminState.products.find((p) => Number(p.id) === Number(adminState.selectedProductId));
+  if (!product) {
+    paneEl.textContent = "상품 정보를 찾을 수 없습니다.";
+    return;
+  }
+  const canManage = can("product.manage");
+
+  // Header
+  const header = document.createElement("div");
+  header.className = "admin-detail-head";
+  const idBlock = document.createElement("div");
+  idBlock.className = "admin-detail-identity";
+  const avatar = document.createElement("div");
+  avatar.className = "admin-avatar";
+  avatar.textContent = (product.product_key || "P").slice(0, 2).toUpperCase();
+  const idText = document.createElement("div");
+  const nameEl = document.createElement("div");
+  nameEl.className = "admin-account-name";
+  nameEl.textContent = `${product.name} (${product.product_key})`;
+  const metaEl = document.createElement("div");
+  metaEl.className = "admin-meta";
+  metaEl.innerHTML = `
+    <span>${product.is_active ? "active" : "inactive"}</span>
+    <span>${product.is_default ? "default" : ""}</span>
+    <span>정렬 ${product.sort_order}</span>
+    <span>생성 ${formatDateTime(product.created_at)}</span>
+    <span>수정 ${formatDateTime(product.updated_at)}</span>
+  `;
+  idText.append(nameEl, metaEl);
+  idBlock.append(avatar, idText);
+  header.append(idBlock);
+  paneEl.appendChild(header);
+
+  // Name
+  const nameField = document.createElement("label");
+  nameField.className = "field admin-detail-field";
+  const nameLabel = document.createElement("span");
+  nameLabel.textContent = "표시 이름";
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.value = product.name || "";
+  nameInput.disabled = !canManage;
+  nameField.append(nameLabel, nameInput);
+  paneEl.appendChild(nameField);
+
+  // Description
+  const descField = document.createElement("label");
+  descField.className = "field admin-detail-field";
+  const descLabel = document.createElement("span");
+  descLabel.textContent = "설명";
+  const descInput = document.createElement("input");
+  descInput.type = "text";
+  descInput.value = product.description || "";
+  descInput.disabled = !canManage;
+  descField.append(descLabel, descInput);
+  paneEl.appendChild(descField);
+
+  // Toggles + sort
+  const toggles = document.createElement("div");
+  toggles.className = "admin-role-toggle-row";
+  const mkToggle = (label, checked, onChange) => {
+    const wrap = document.createElement("label");
+    wrap.className = "permission-toggle";
+    const inp = document.createElement("input");
+    inp.type = "checkbox";
+    inp.checked = checked;
+    inp.disabled = !canManage;
+    inp.addEventListener("change", () => onChange(inp.checked));
+    const span = document.createElement("span");
+    span.textContent = label;
+    wrap.append(inp, span);
+    return wrap;
+  };
+  let activeVal = !!product.is_active;
+  let defaultVal = !!product.is_default;
+  toggles.appendChild(mkToggle("활성", activeVal, (v) => { activeVal = v; }));
+  toggles.appendChild(mkToggle("기본 상품", defaultVal, (v) => { defaultVal = v; }));
+  const sortField = document.createElement("label");
+  sortField.className = "field admin-detail-field";
+  const sortLabel = document.createElement("span");
+  sortLabel.textContent = "정렬 순서";
+  const sortInput = document.createElement("input");
+  sortInput.type = "number";
+  sortInput.step = "1";
+  sortInput.value = String(product.sort_order || 100);
+  sortInput.disabled = !canManage;
+  sortField.append(sortLabel, sortInput);
+  toggles.appendChild(sortField);
+  paneEl.appendChild(toggles);
+
+  // Save product metadata
+  const saveMetaBtn = document.createElement("button");
+  saveMetaBtn.type = "button";
+  saveMetaBtn.className = "btn-primary";
+  saveMetaBtn.textContent = "상품 정보 저장";
+  saveMetaBtn.disabled = !canManage;
+  saveMetaBtn.addEventListener("click", async () => {
+    try {
+      await apiFetch(`/api/admin/products/${Number(product.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: nameInput.value.trim(),
+          description: descInput.value.trim(),
+          is_active: activeVal,
+          is_default: defaultVal,
+          sort_order: Number(sortInput.value) || 100,
+        }),
+      });
+      showToast("상품 정보를 저장했습니다.");
+      await loadAdminData();
+    } catch (error) {
+      showToast(error.message || "저장 실패", true);
+    }
+  });
+  paneEl.appendChild(saveMetaBtn);
+
+  // Database chip editor
+  const dbSection = document.createElement("div");
+  dbSection.className = "admin-detail-section";
+  const dbTitle = document.createElement("div");
+  dbTitle.className = "admin-detail-section-title";
+  dbTitle.textContent = "접근 가능 데이터베이스 (스키마 Whitelist)";
+  dbSection.appendChild(dbTitle);
+  const dbHint = document.createElement("div");
+  dbHint.className = "admin-detail-hint";
+  dbHint.textContent = "이 상품 대화에서 agent 가 조회/실행 가능한 스키마만 나열됩니다. 목록에 없는 스키마는 agent 가 접근할 수 없습니다.";
+  dbSection.appendChild(dbHint);
+
+  const draft = adminState.productDbDraft.get(Number(product.id)) || (product.databases || []).map((d) => ({ ...d }));
+  adminState.productDbDraft.set(Number(product.id), draft);
+
+  const chipWrap = document.createElement("div");
+  chipWrap.className = "admin-chip-wrap";
+  const redrawChips = () => {
+    chipWrap.innerHTML = "";
+    draft.forEach((entry, idx) => {
+      const chip = document.createElement("span");
+      chip.className = "admin-chip";
+      const txt = document.createElement("span");
+      txt.textContent = entry.schema_name;
+      chip.appendChild(txt);
+      if (canManage) {
+        const x = document.createElement("button");
+        x.type = "button";
+        x.className = "admin-chip-remove";
+        x.textContent = "×";
+        x.addEventListener("click", () => {
+          draft.splice(idx, 1);
+          redrawChips();
+        });
+        chip.appendChild(x);
+      }
+      chipWrap.appendChild(chip);
+    });
+    if (!draft.length) {
+      const empty = document.createElement("div");
+      empty.className = "admin-meta";
+      empty.textContent = "(접근 가능 스키마가 없습니다 — agent 는 사실상 사용 불가)";
+      chipWrap.appendChild(empty);
+    }
+  };
+  redrawChips();
+  dbSection.appendChild(chipWrap);
+
+  const chipInputRow = document.createElement("div");
+  chipInputRow.className = "admin-chip-input-row";
+  const chipInput = document.createElement("input");
+  chipInput.type = "text";
+  chipInput.placeholder = "스키마 이름 (예: dbgame)";
+  chipInput.disabled = !canManage;
+  const chipAddBtn = document.createElement("button");
+  chipAddBtn.type = "button";
+  chipAddBtn.className = "tool-btn";
+  chipAddBtn.textContent = "+ 추가";
+  chipAddBtn.disabled = !canManage;
+  chipAddBtn.addEventListener("click", () => {
+    const v = (chipInput.value || "").trim().toLowerCase();
+    if (!v) return;
+    if (!/^[a-z_][a-z0-9_]{0,63}$/.test(v)) {
+      showToast("스키마 이름 형식이 올바르지 않습니다.", true);
+      return;
+    }
+    if (draft.some((d) => d.schema_name === v)) {
+      showToast("이미 등록된 스키마입니다.", true);
+      return;
+    }
+    draft.push({ schema_name: v, description: "", sort_order: (draft.length + 1) * 10 });
+    chipInput.value = "";
+    redrawChips();
+  });
+  chipInput.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      chipAddBtn.click();
+    }
+  });
+  chipInputRow.append(chipInput, chipAddBtn);
+  dbSection.appendChild(chipInputRow);
+
+  const saveDbBtn = document.createElement("button");
+  saveDbBtn.type = "button";
+  saveDbBtn.className = "btn-primary";
+  saveDbBtn.textContent = "DB 목록 저장";
+  saveDbBtn.disabled = !canManage;
+  saveDbBtn.addEventListener("click", async () => {
+    try {
+      await apiFetch(`/api/admin/products/${Number(product.id)}/databases`, {
+        method: "PUT",
+        body: JSON.stringify({ databases: draft }),
+      });
+      adminState.productDbDraft.delete(Number(product.id));
+      showToast("접근 가능 데이터베이스를 저장했습니다.");
+      await loadAdminData();
+    } catch (error) {
+      showToast(error.message || "저장 실패", true);
+    }
+  });
+  dbSection.appendChild(saveDbBtn);
+  paneEl.appendChild(dbSection);
+
+  // Product-scope system prompt
+  if (canManage) {
+    const promptSection = buildSystemPromptEditor({
+      scope: "product",
+      productId: Number(product.id),
+      roleId: null,
+      accountId: null,
+      title: "상품 시스템 프롬프트 (Product Scope)",
+      hint: "이 상품의 모든 대화에 누적 적용됩니다.",
+      fixedProductId: Number(product.id),
+    });
+    paneEl.appendChild(promptSection);
+  }
+
+  // Delete
+  if (canManage) {
+    const actions = document.createElement("div");
+    actions.className = "admin-detail-actions";
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "btn-secondary danger";
+    deleteBtn.textContent = "이 상품 삭제";
+    deleteBtn.addEventListener("click", async () => {
+      if (!window.confirm(`${product.name} 상품을 삭제할까요? (참조 대화가 있으면 실패합니다)`)) return;
+      try {
+        await apiFetch(`/api/admin/products/${Number(product.id)}`, { method: "DELETE" });
+        adminState.selectedProductId = null;
+        showToast("상품을 삭제했습니다.");
+        await loadAdminData();
+      } catch (error) {
+        showToast(error.message || "삭제 실패", true);
+      }
+    });
+    actions.appendChild(deleteBtn);
+    paneEl.appendChild(actions);
+  }
+}
+
+function startNewProduct() {
+  const key = (window.prompt("product_key (A-Z/0-9/_, 영문대문자 시작, 1~32자)") || "").trim().toUpperCase();
+  if (!key) return;
+  if (!/^[A-Z][A-Z0-9_]{0,31}$/.test(key)) {
+    showToast("product_key 형식이 올바르지 않습니다.", true);
+    return;
+  }
+  const name = (window.prompt("표시 이름", key) || "").trim();
+  if (!name) return;
+  apiFetch("/api/admin/products", {
+    method: "POST",
+    body: JSON.stringify({ product_key: key, name, description: "" }),
+  })
+    .then(async (payload) => {
+      adminState.selectedProductId = Number(payload.product_id);
+      showToast("상품을 생성했습니다.");
+      await loadAdminData();
+    })
+    .catch((error) => {
+      showToast(error.message || "생성 실패", true);
+    });
+}
+
+/* ── System prompt editor (공용 — role / product / account scope) ────── */
+
+function buildSystemPromptEditor({ scope, productId = null, roleId = null, accountId = null, title, hint, fixedProductId = null }) {
+  const section = document.createElement("div");
+  section.className = "admin-detail-section";
+  const sectionTitle = document.createElement("div");
+  sectionTitle.className = "admin-detail-section-title";
+  sectionTitle.textContent = title || "시스템 프롬프트";
+  section.appendChild(sectionTitle);
+  if (hint) {
+    const hintEl = document.createElement("div");
+    hintEl.className = "admin-detail-hint";
+    hintEl.textContent = hint;
+    section.appendChild(hintEl);
+  }
+
+  const products = adminState.products || [];
+  let currentProductId = productId;
+  if (fixedProductId !== null && fixedProductId !== undefined) {
+    currentProductId = Number(fixedProductId);
+  } else if (!currentProductId && products.length) {
+    const def = products.find((p) => p.is_default) || products[0];
+    currentProductId = def ? Number(def.id) : null;
+  }
+
+  let productSelect = null;
+  if (scope !== "product" && !fixedProductId) {
+    const row = document.createElement("div");
+    row.className = "admin-inline-row";
+    const label = document.createElement("span");
+    label.className = "field-label";
+    label.textContent = "Product 범위";
+    productSelect = document.createElement("select");
+    const optNone = document.createElement("option");
+    optNone.value = "";
+    optNone.textContent = "(Product 무관)";
+    productSelect.appendChild(optNone);
+    products.forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = String(p.id);
+      opt.textContent = `${p.name} (${p.product_key})`;
+      if (Number(p.id) === Number(currentProductId)) opt.selected = true;
+      productSelect.appendChild(opt);
+    });
+    row.append(label, productSelect);
+    section.appendChild(row);
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.className = "admin-prompt-textarea";
+  textarea.placeholder = "이 스코프에서 누적 적용할 시스템 프롬프트. 비워두고 저장하면 기존 프롬프트가 삭제됩니다.";
+  textarea.rows = 6;
+  section.appendChild(textarea);
+
+  const metaEl = document.createElement("div");
+  metaEl.className = "admin-meta";
+  section.appendChild(metaEl);
+
+  const buttonRow = document.createElement("div");
+  buttonRow.className = "admin-detail-actions";
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "btn-primary";
+  saveBtn.textContent = "프롬프트 저장";
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "btn-secondary";
+  clearBtn.textContent = "비우기 (삭제)";
+  buttonRow.append(saveBtn, clearBtn);
+  section.appendChild(buttonRow);
+
+  const resolveProductId = () => {
+    if (productSelect) {
+      const v = productSelect.value;
+      return v ? Number(v) : null;
+    }
+    return currentProductId || null;
+  };
+
+  const refresh = async () => {
+    const pid = resolveProductId();
+    const params = new URLSearchParams({ scope });
+    if (pid) params.set("product_id", String(pid));
+    if (roleId) params.set("role_id", String(roleId));
+    if (accountId) params.set("account_id", String(accountId));
+    try {
+      const payload = await apiFetch(`/api/admin/system-prompts?${params.toString()}`);
+      const row = payload.prompt;
+      if (row) {
+        textarea.value = row.content || "";
+        metaEl.textContent = `마지막 수정: ${formatDateTime(row.updated_at)}`;
+      } else {
+        textarea.value = "";
+        metaEl.textContent = "(저장된 프롬프트 없음)";
+      }
+    } catch (error) {
+      metaEl.textContent = `조회 실패: ${error.message || error}`;
+    }
+  };
+
+  if (productSelect) productSelect.addEventListener("change", refresh);
+  refresh();
+
+  saveBtn.addEventListener("click", async () => {
+    const pid = resolveProductId();
+    try {
+      await apiFetch("/api/admin/system-prompts", {
+        method: "PUT",
+        body: JSON.stringify({
+          scope,
+          content: textarea.value,
+          product_id: pid,
+          role_id: roleId,
+          account_id: accountId,
+        }),
+      });
+      showToast("프롬프트를 저장했습니다.");
+      await refresh();
+    } catch (error) {
+      showToast(error.message || "저장 실패", true);
+    }
+  });
+
+  clearBtn.addEventListener("click", async () => {
+    if (!window.confirm("저장된 프롬프트를 삭제할까요?")) return;
+    const pid = resolveProductId();
+    try {
+      await apiFetch("/api/admin/system-prompts", {
+        method: "PUT",
+        body: JSON.stringify({
+          scope,
+          content: "",
+          product_id: pid,
+          role_id: roleId,
+          account_id: accountId,
+        }),
+      });
+      showToast("프롬프트를 삭제했습니다.");
+      await refresh();
+    } catch (error) {
+      showToast(error.message || "삭제 실패", true);
+    }
+  });
+
+  return section;
 }
 
 /* ── Initialize ──────────────────────────────────────────────────────── */
@@ -1572,6 +2097,29 @@ async function initialize() {
     }
     startNewRole();
   });
+
+  // Product search + new product
+  const productSearchEl = $("productSearch");
+  if (productSearchEl) {
+    let productSearchTimer = null;
+    productSearchEl.addEventListener("input", (ev) => {
+      clearTimeout(productSearchTimer);
+      productSearchTimer = window.setTimeout(() => {
+        adminState.productSearch = ev.target.value;
+        renderProductList();
+      }, 150);
+    });
+  }
+  const newProductBtn = $("newProductBtn");
+  if (newProductBtn) {
+    newProductBtn.addEventListener("click", () => {
+      if (!can("product.manage")) {
+        showToast("상품 관리 권한이 없습니다.", true);
+        return;
+      }
+      startNewProduct();
+    });
+  }
 
   // Commit bar
   $("commitApplyBtn").addEventListener("click", () => {

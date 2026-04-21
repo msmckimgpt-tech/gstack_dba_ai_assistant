@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260421-fork" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260421-sysprompt" />
 </head>
 <body>
 
@@ -187,6 +187,7 @@
       <button type="button" class="drawer-tab is-active" data-profile-tab="account">계정</button>
       <button type="button" class="drawer-tab" data-profile-tab="security">보안</button>
       <button type="button" class="drawer-tab" data-profile-tab="vault">API Vault</button>
+      <button type="button" class="drawer-tab" data-profile-tab="prompt">프롬프트</button>
     </div>
 
     <!-- ── 탭 패널: 계정 ── -->
@@ -278,6 +279,26 @@
 
     </div><!-- /vault -->
 
+    <!-- ── 탭 패널: 프롬프트 (계정 스코프 시스템 프롬프트) ── -->
+    <div class="drawer-pane hidden" data-profile-pane="prompt">
+      <p class="drawer-desc">
+        이 프롬프트는 내 계정이 참여하는 대화의 시스템 프롬프트에 추가됩니다. Product 범위를 선택하면 해당 Product 에서만 적용됩니다.
+      </p>
+      <label class="field">
+        <span>Product 범위</span>
+        <select id="promptProductSelect"></select>
+      </label>
+      <label class="field">
+        <span>내 프롬프트 (빈 값으로 저장하면 삭제)</span>
+        <textarea id="promptContent" rows="8" placeholder="예: 숫자는 천 단위 구분자, 금액은 KRW 기준으로 답변해 주세요."></textarea>
+      </label>
+      <div class="helper-text" id="promptMeta"></div>
+      <div class="drawer-actions">
+        <button type="button" class="btn-primary" id="savePromptBtn">저장</button>
+        <button type="button" class="btn-secondary" id="clearPromptBtn">비우기 (삭제)</button>
+      </div>
+    </div><!-- /prompt -->
+
   </aside>
 
   <!-- Toast -->
@@ -285,6 +306,6 @@
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260421-fork"></script>
+  <script src="/static/app.js?v=20260421-sysprompt"></script>
 </body>
 </html>

@@ -17,6 +17,8 @@ from .render import save_csv
 __all__ = [
     "TOOL_DEFINITIONS",
     "execute_tool",
+    "set_active_schema_allowlist",
+    "clear_active_schema_allowlist",
 ]
 
 # ── 시스템 스키마 (탐색 대상에서 제외) ──────────────────────────
@@ -25,9 +27,71 @@ _SYSTEM_SCHEMAS = frozenset({
     "agent_memory",
 })
 
+# ── Product 단위 스키마 whitelist (None 이면 기존 동작, set 이면 교집합 필터) ──
+_ACTIVE_SCHEMA_ALLOWLIST: set[str] | None = None
+
+
+def set_active_schema_allowlist(schemas: list[str] | set[str] | None) -> None:
+    """agent 실행 시작 시 Product 에 배정된 스키마 whitelist 를 설정.
+
+    None 을 넣으면 기존 동작(모든 user schema 접근 가능).
+    빈 list/set 을 넣으면 **접근 가능 스키마가 없는 상태** (모든 조회/실행이 거부).
+    """
+    global _ACTIVE_SCHEMA_ALLOWLIST
+    if schemas is None:
+        _ACTIVE_SCHEMA_ALLOWLIST = None
+    else:
+        _ACTIVE_SCHEMA_ALLOWLIST = {str(s).strip().lower() for s in schemas if str(s).strip()}
+
+
+def clear_active_schema_allowlist() -> None:
+    set_active_schema_allowlist(None)
+
 
 def _is_user_schema(name: str) -> bool:
-    return name.lower() not in _SYSTEM_SCHEMAS
+    lower = str(name or "").lower()
+    if lower in _SYSTEM_SCHEMAS:
+        return False
+    if _ACTIVE_SCHEMA_ALLOWLIST is not None and lower not in _ACTIVE_SCHEMA_ALLOWLIST:
+        return False
+    return True
+
+
+_SCHEMA_TABLE_REF_RE = None
+
+
+def _extract_sql_schema_refs(sql: str) -> set[str]:
+    """SQL 텍스트에서 `schema`.`table` 또는 schema.table 참조 schema 를 추출."""
+    import re as _re
+    global _SCHEMA_TABLE_REF_RE
+    if _SCHEMA_TABLE_REF_RE is None:
+        _SCHEMA_TABLE_REF_RE = _re.compile(
+            r"`?([A-Za-z_][A-Za-z0-9_]*)`?\s*\.\s*`?([A-Za-z_][A-Za-z0-9_]*)`?",
+        )
+    refs: set[str] = set()
+    for m in _SCHEMA_TABLE_REF_RE.finditer(sql or ""):
+        schema_token = m.group(1).lower()
+        refs.add(schema_token)
+    return refs
+
+
+def _whitelist_violation(refs: set[str]) -> str | None:
+    """참조된 스키마 중 접근이 허용되지 않은 것이 있으면 에러 메시지 반환."""
+    if _ACTIVE_SCHEMA_ALLOWLIST is None:
+        return None
+    allowed = set(_ACTIVE_SCHEMA_ALLOWLIST) | {"information_schema"}
+    # information_schema 는 스키마 카탈로그 자체 조회용으로 항상 허용하되, 그 결과는
+    # list_schemas/search_tables 가 _is_user_schema 로 다시 필터링한다. 다른 시스템
+    # 스키마(mysql/performance_schema/sys/agent_memory)는 whitelist 를 통해 명시적으로
+    # 차단된다 — `SELECT ... FROM mysql.user` 류의 직접 접근을 막기 위함.
+    blocked = [r for r in refs if r and r not in allowed]
+    if not blocked:
+        return None
+    allowed_str = ", ".join(sorted(_ACTIVE_SCHEMA_ALLOWLIST)) or "(none)"
+    return (
+        f"오류: 접근이 허용되지 않은 스키마 참조: {', '.join(sorted(blocked))}. "
+        f"현재 Product 에 허용된 스키마: {allowed_str}"
+    )
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -268,6 +332,9 @@ def _tool_describe_schema(conn, args: dict) -> str:
     schema = _safe_ident(args.get("schema_name", ""))
     if not schema:
         return "오류: schema_name은 필수입니다."
+    err = _whitelist_violation({schema.lower()})
+    if err:
+        return err
     sql = f"""
         SELECT
             TABLE_NAME,
@@ -299,6 +366,9 @@ def _tool_describe_table(conn, args: dict) -> str:
     table = _safe_ident(args.get("table_name", ""))
     if not schema or not table:
         return "오류: schema_name과 table_name은 필수입니다."
+    err = _whitelist_violation({schema.lower()})
+    if err:
+        return err
 
     # 컬럼 정보
     col_sql = f"""
@@ -371,6 +441,10 @@ def _tool_search_tables(conn, args: dict) -> str:
     schema_filter = _safe_ident(args.get("schema_name", ""))
     if not keyword:
         return "오류: keyword는 필수입니다."
+    if schema_filter:
+        err = _whitelist_violation({schema_filter.lower()})
+        if err:
+            return err
 
     where_schema = f"AND t.TABLE_SCHEMA = '{schema_filter}'" if schema_filter else ""
     # 시스템 스키마 제외 조건
@@ -436,6 +510,9 @@ def _tool_get_sample_rows(conn, args: dict) -> str:
     limit = min(max(1, int(args.get("limit", 5))), 20)
     if not schema or not table:
         return "오류: schema_name과 table_name은 필수입니다."
+    err = _whitelist_violation({schema.lower()})
+    if err:
+        return err
     sql = f"SELECT * FROM `{schema}`.`{table}` LIMIT {limit}"
     try:
         result_sets, elapsed = _raw_execute_sql(conn, sql)
@@ -465,6 +542,9 @@ def _tool_execute_sql(conn, args: dict) -> str:
     for prefix in blocked:
         if upper.startswith(prefix):
             return f"오류: {prefix.strip()} 구문은 보안상 차단됩니다."
+    err = _whitelist_violation(_extract_sql_schema_refs(sql))
+    if err:
+        return err
     try:
         result_sets, elapsed = _raw_execute_sql(conn, sql)
         csv_paths: list[str] = []
@@ -502,6 +582,9 @@ def _tool_explain_query(conn, args: dict) -> str:
     sql = str(args.get("sql", "")).strip()
     if not sql:
         return "오류: sql은 필수입니다."
+    err = _whitelist_violation(_extract_sql_schema_refs(sql))
+    if err:
+        return err
     explain_sql = f"EXPLAIN {sql}"
     try:
         result_sets, _ = _raw_execute_sql(conn, explain_sql)
@@ -515,6 +598,9 @@ def _tool_get_table_indexes(conn, args: dict) -> str:
     table = _safe_ident(args.get("table_name", ""))
     if not schema or not table:
         return "오류: schema_name과 table_name은 필수입니다."
+    err = _whitelist_violation({schema.lower()})
+    if err:
+        return err
     sql = f"""
         SELECT
             INDEX_NAME, NON_UNIQUE, COLUMN_NAME, SEQ_IN_INDEX,
@@ -535,6 +621,9 @@ def _tool_get_foreign_keys(conn, args: dict) -> str:
     table = _safe_ident(args.get("table_name", ""))
     if not schema or not table:
         return "오류: schema_name과 table_name은 필수입니다."
+    err = _whitelist_violation({schema.lower()})
+    if err:
+        return err
 
     # 이 테이블이 참조하는 외래키
     outgoing_sql = f"""

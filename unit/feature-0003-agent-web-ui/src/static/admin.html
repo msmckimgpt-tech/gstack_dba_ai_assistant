@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260421-scroll" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260421-sysprompt" />
 </head>
 <body class="admin-shell">
   <header class="topbar">
@@ -25,6 +25,8 @@
         <button type="button" class="admin-tab is-active" data-admin-tab="dashboard">
           <span class="admin-tab-label">대시보드</span>
         </button>
+
+        <div class="admin-tab-group-label">계정 카테고리</div>
         <button type="button" class="admin-tab" data-admin-tab="accounts">
           <span class="admin-tab-label">계정</span>
           <span class="admin-tab-count" id="tabCountAccounts">—</span>
@@ -32,6 +34,13 @@
         <button type="button" class="admin-tab" data-admin-tab="roles">
           <span class="admin-tab-label">역할</span>
           <span class="admin-tab-count" id="tabCountRoles">—</span>
+        </button>
+
+        <div class="admin-tab-group-divider"></div>
+        <div class="admin-tab-group-label">상품 카테고리</div>
+        <button type="button" class="admin-tab" data-admin-tab="products">
+          <span class="admin-tab-label">상품 (Products)</span>
+          <span class="admin-tab-count" id="tabCountProducts">—</span>
         </button>
       </nav>
       <div class="admin-sidebar-foot">
@@ -119,6 +128,39 @@
         </div>
       </section>
 
+      <!-- Products pane -->
+      <section class="admin-pane" data-admin-pane="products">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">Products</div>
+            <h2>상품 관리 — DB 접근 묶음</h2>
+          </div>
+          <div class="admin-pane-head-right">
+            <button type="button" class="btn-primary" id="newProductBtn">+ 새 상품</button>
+          </div>
+        </header>
+        <div class="admin-list-detail">
+          <div class="admin-list-col">
+            <div class="admin-list-toolbar">
+              <input
+                type="search"
+                id="productSearch"
+                class="admin-search"
+                placeholder="상품 이름/키 검색…"
+                autocomplete="off"
+              />
+            </div>
+            <div class="admin-list-head">
+              <span class="admin-list-count" id="productListCount"></span>
+            </div>
+            <div class="admin-list" id="productList"></div>
+          </div>
+          <div class="admin-detail-col" id="productDetail">
+            <div class="admin-detail-empty">좌측에서 상품을 선택하거나 "+ 새 상품"을 누르세요.</div>
+          </div>
+        </div>
+      </section>
+
       <!-- Roles pane -->
       <section class="admin-pane" data-admin-pane="roles">
         <header class="admin-pane-head">
@@ -172,6 +214,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260421-scroll"></script>
+  <script src="/static/admin.js?v=20260421-sysprompt"></script>
 </body>
 </html>

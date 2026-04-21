@@ -12,10 +12,11 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: medium
-- Last Updated: 2026-04-21 (TASK-0035 완료, TASK-0034 준비 상태)
+- Last Updated: 2026-04-21 (TASK-0036 완료, TASK-0034 준비 상태)
 
 ## 2. Task Queue
 - [ ] TASK-0034 복잡 QA 성능 테스트 (local LLM 5 직렬 + 상용 API gpt-5.4-mini 5 병렬, 최대 20턴, 실제 DB 결과 대조 검증)
+- [x] TASK-0036 시스템 프롬프트 Depth (Product/Role/Account) + Product 단위 DB 접근 관리
 - [x] TASK-0035 대화 탭 내 계정 구분 하이라이트/정렬 + 대화/말풍선 fork 기능
 - [x] TASK-0033 결과셋 말풍선 단일 스크롤 + RowCount + 첫 행/열 freeze
 - [x] TASK-0032 권한 안내 UX (툴팁 서술화 + 차단 시 필요 권한 안내)
@@ -55,6 +56,132 @@ source_of_truth: true
 - TASK-0034 복잡 QA 성능 테스트 — 현재 구성된 assistant(agent-core + web UI)의 복잡 질의 대응력을 측정해 이후 개선 포인트를 도출한다.
 
 ## 3.1 Recently Done
+- TASK-0036 (2026-04-21 마감): System Prompt Depth 가 Product → Role → Account 3 계층 체인으로 동작하고, Product 단위 접근 DB 화이트리스트가 agent tools 레벨에서 강제된다. `WebProducts` / `WebProductDatabases` / `WebSystemPrompts` 3 신규 테이블 + `AgentCoreConversations.product_id` 컬럼을 추가했고, `product.manage` / `system_prompt.manage.role.any` 2 개 permission 을 `admin` 역할에 기본 부여했다. seed 로 ProductKey=`KR` + DB(`dbgame`/`dblog`/`dbauth`) 가 자동 생성된다. `agent_core.compose_system_prompt(mem_conn, product_id, role_id, account_id)` 가 base prompt 뒤로 `## PRODUCT CONTEXT` / `## ROLE GUIDANCE` / `## ACCOUNT PREFERENCES` 블록을 순차 append 하고, `tools.set_active_schema_allowlist()` 가 execute_sql/describe_schema 등 모든 도구의 스키마 참조를 검사한다. 관리 콘솔은 `상품 카테고리` 구분 그룹 아래 `상품 (Products)` 탭이 추가되어 Product CRUD + 접근 DB chip 편집 + Product scope prompt 편집을, Roles detail 은 Role scope prompt 편집기(Product 드롭다운 포함) 를, 프로필 드로우의 새 `프롬프트` 탭은 Account scope prompt 편집기를 각각 제공한다. 검증: (1) `docker compose up -d --build web` → bootstrap_admin 로그인 → `/api/admin/products` → KR seed 확인, (2) `PUT /api/admin/products/1/databases` 로 dblog 제거/복원 왕복 OK, (3) `PUT /api/admin/system-prompts` (product scope) → `compose_system_prompt(conn, product_id=1, role_id=3, account_id=1)` 출력에 `## PRODUCT CONTEXT (KR)` 블록이 추가됨을 in-container 직접 확인, (4) whitelist=`{dbgame,dblog,dbauth}` 설정 후 `execute_sql("SELECT 1 FROM mysql.user")` 및 `describe_schema("mysql")` 이 `오류: 접근이 허용되지 않은 스키마 참조: mysql` 반환, `describe_schema("dbgame")` 은 정상 동작. 부수 수정: `_runtime_tables_available` 의 probe list 에 신규 3 테이블을 포함해 기존 배포에서 schema 마이그레이션이 자동 트리거되게 했고, `_whitelist_violation` 이 `_SYSTEM_SCHEMAS` 를 예외 처리하던 우회 경로를 제거해 `mysql`/`performance_schema`/`sys`/`agent_memory` 가 더 이상 whitelist 를 건너뛰지 않게 했다 (security hardening).
+
+### TASK-0036 상세 설계 (2026-04-21)
+- 문제/목적 (사용자 요청 2026-04-21):
+  1. 현재 `SYSTEM_PROMPT` 는 `agent_core.py:70` 에 하드코딩되어 있고, 조직/도메인/사용자별 맞춤 지침을 주입할 방법이 없다. 운영 중 "이 Role 은 이렇게 답하게 해달라", "특정 계정은 본인 전용 스타일 지침을 추가하고 싶다" 같은 요구가 반복된다.
+  2. 현재 agent 는 `DB_CONNECT_DB` 로 default schema 만 고정되어 있고 `_SYSTEM_SCHEMAS` 외의 모든 user schema 에 무차별로 접근한다. 실제로는 서비스 경계(국가/팀/도메인) 단위로 "이 Product 는 이 DB 세트만 본다" 로 묶어야 한다.
+  3. 현재는 Product 가 하나지만(초기 값으로 `KR` 부여, 접근 DB: `dbgame`/`dblog`/`dbauth`), 이후 다른 Product 가 추가될 것이므로 **Role/Account 와 대등한 위상의 정본 테이블** 로 관리해야 한다.
+- 현황/환경 분석 (출발점 근거):
+  1. `SYSTEM_PROMPT` ([agent_core.py:70](../../feature-0002-agent-core/src/agent_core.py#L70)) 는 `run_agent` ([agent_core.py:935](../../feature-0002-agent-core/src/agent_core.py#L935)) 안 `system_content = SYSTEM_PROMPT` ([L1090](../../feature-0002-agent-core/src/agent_core.py#L1090)) 에서 origin_request/thread_goal/knowledge_ctx 와 합쳐진다. `run_agent` 호출은 web 측 `app.py` 가 in-process 로 수행 ([app.py:3260](../src/app.py#L3260)) 하므로 kwarg 추가가 쉽다.
+  2. RBAC 정본은 `WebPermissions` / `WebRoles` / `WebRolePermissions` / `WebAccountPermissionOverrides` 이고 account ↔ role 은 `WebAccounts.RoleId` 이다 ([app.py:1477~1570](../src/app.py#L1477)). Product 는 이 구조와 대등하게 `WebProducts` / `WebProductDatabases` (+ 계정/대화별 Product 참조) 를 추가하면 자연스럽다.
+  3. 도구 구현 `tools.py` ([feature-0002-agent-core/src/modules/tools.py:23](../../feature-0002-agent-core/src/modules/tools.py#L23)) 의 `_SYSTEM_SCHEMAS` + `_is_user_schema` 만으로 스키마 필터가 결정된다. 여기에 **실행 시점 whitelist** 를 추가하고 execute_sql 에서 `schema`.`table` 참조를 검사하면 접근 제한이 가능하다.
+  4. admin console 은 "대시보드/계정/역할" 3 탭 ([admin.html:24~36](../src/static/admin.html#L24)) 이고, 4 번째 탭 "상품" 추가가 자연스럽다. 프로필 드로우는 "계정/보안/API Vault" 3 탭 ([index.html:187~189](../src/static/index.html#L187)) 이고 여기에 "프롬프트" 탭 추가.
+  5. 대화의 Product 결정: `AgentCoreConversations` 에 `product_id` 컬럼 추가. 새 대화는 계정의 default product (추후 account-level 선택 가능) 로 고정. fork 시 원본 product_id 를 그대로 상속.
+
+- 설계 (Plan-Review-Execute, 위험도: Moderate — 신규 테이블 3개 + permission 2개 + admin/prompt API + UI 2곳 + agent_core signature 확장):
+
+  A. DB 스키마 (`_ensure_web_tables` 확장)
+     ```
+     WebProducts (
+       Id BIGINT AUTO_INCREMENT PK,
+       ProductKey VARCHAR(32) UNIQUE NOT NULL,   -- 'KR', 'JP', ...
+       Name VARCHAR(128) NOT NULL,
+       Description VARCHAR(255) DEFAULT '',
+       IsActive TINYINT(1) DEFAULT 1,
+       IsDefault TINYINT(1) DEFAULT 0,           -- 대화 생성 시 기본 product
+       SortOrder INT DEFAULT 100,
+       CreatedAt/UpdatedAt
+     )
+     WebProductDatabases (
+       ProductId BIGINT NOT NULL,
+       SchemaName VARCHAR(64) NOT NULL,
+       Description VARCHAR(255) DEFAULT '',
+       SortOrder INT DEFAULT 100,
+       CreatedAt,
+       PRIMARY KEY (ProductId, SchemaName)
+     )
+     WebSystemPrompts (
+       Id BIGINT AUTO_INCREMENT PK,
+       Scope ENUM('product','role','account') NOT NULL,
+       ProductId BIGINT NULL,                    -- scope=product: 필수, role/account: nullable(=범용)
+       RoleId BIGINT NULL,                       -- scope=role 만 사용
+       AccountId BIGINT NULL,                    -- scope=account 만 사용
+       Content MEDIUMTEXT NOT NULL,
+       UpdatedAt, UpdatedByAccountId,
+       UNIQUE KEY UX_Scope (Scope, ProductId, RoleId, AccountId)
+     )
+     AgentCoreConversations.product_id BIGINT NULL   -- 대화가 속한 Product
+     ```
+     - seed (`_ensure_seed_products`): ProductKey=`KR`, Name=`Korea`, IsDefault=1, IsActive=1. 연결 DB: `dbgame`, `dblog`, `dbauth`.
+
+  B. Permission 추가 (PERMISSION_DEFINITIONS)
+     - `product.manage` (그룹: `관리`) — Product/ProductDatabases CRUD + Product scope prompt 쓰기. 기본으로 admin role 에 부여.
+     - `system_prompt.manage.role.any` (그룹: `관리`) — Role scope prompt 쓰기. admin role 에 부여.
+     - Account scope prompt 는 본인 자신은 언제나 읽기/쓰기 가능 (별도 permission 불요). 다른 계정의 account scope prompt 는 `system_prompt.manage.role.any` 가 있어야 관리 가능 (감사성 측면).
+     - Product 자체 조회(`products.read`)는 "로그인한 모든 계정"에 기본 허용 — 대화 생성 시 product 선택/표시를 위해 필요. 따라서 세션 payload 에 products 목록만 내려주고 별도 permission 체크는 생략한다. CUD 는 `product.manage` 로만 가드.
+
+  C. 시스템 프롬프트 조립 함수 (`agent_core.py`)
+     - 신규 함수 `compose_system_prompt(mem_conn, *, product_id, role_id, account_id) -> str`:
+       ```
+       [BASE SYSTEM_PROMPT]
+       (product prompt 있으면) "\n\n## PRODUCT CONTEXT ({product_key})\n{content}"
+       (role prompt 있으면)    "\n\n## ROLE GUIDANCE ({role_key})\n{content}"
+       (account prompt 있으면) "\n\n## ACCOUNT PREFERENCES\n{content}"
+       ```
+     - role/account scope prompt 는 `ProductId=NULL`(전 Product 공통) 과 `ProductId=X`(해당 product 전용) 둘 다 가능. product-specific 이 있으면 그걸 쓰고 없으면 generic fallback.
+     - Product 가 없거나 prompt 가 비어 있으면 기존 동작(base prompt 만) 과 동일.
+     - `run_agent` 는 신규 kwargs `product_id: int | None = None`, `role_id: int | None = None`, `account_id: int | None = None` 을 받아 `system_content = compose_system_prompt(...)` 을 사용. 이어서 기존 `CONVERSATION CONTEXT` + `knowledge_ctx` 를 현재 순서 그대로 뒤에 붙인다.
+
+  D. DB 접근 whitelist (tools.py)
+     - 모듈 전역 `_ACTIVE_SCHEMA_ALLOWLIST: set[str] | None = None` 추가. `None` 이면 기존 동작(모든 user schema), set 이면 whitelist 필터 적용.
+     - `_is_user_schema` 는 유지하고, whitelist 가 set 이면 그 추가 조건으로 AND 필터. `_tool_list_schemas` / `_tool_describe_schema` / `_tool_describe_table` / `_tool_search_tables` / `_tool_execute_sql` 모두 반영.
+     - execute_sql 은 SQL 에서 ``\`schema\`.\`table\``` 또는 `schema.table` 패턴을 정규식으로 추출해 whitelist 밖 스키마가 있으면 즉시 에러(`"접근이 허용되지 않은 스키마: X"`).
+     - `run_agent` 는 `allowed_schemas: list[str] | None` kwarg 를 추가로 받아, 실행 시작 시 `tools.set_active_schema_allowlist(...)` 로 세팅하고 종료 시 `None` 으로 복원(try/finally).
+
+  E. app.py 계약
+     - 신규 헬퍼: `_get_product_for_conversation(conn, conversation_id)` — `AgentCoreConversations.product_id` 를 읽어 없으면 default product 로 fallback.
+     - 새 대화 생성 (`/api/new_conversation`, `/api/fork_conversation`, 자동 생성): `product_id` = request body 의 `product_id` (optional) → fallback 으로 `account` 의 해당 Product (향후) → fallback 으로 default product.
+     - `/api/ask` 는 대화의 product_id 를 조회 → 해당 product 의 DB schema 리스트 조회 → `run_agent(..., product_id=pid, role_id=rid, account_id=aid, allowed_schemas=schemas)` 로 전달.
+     - 신규 admin API:
+       - `GET /api/admin/products` — 목록 (`product.manage` 없이도 읽기 허용 = 공용 카탈로그)
+       - `POST /api/admin/products` body: `{product_key, name, description?, is_active?, is_default?, sort_order?}` (`product.manage`)
+       - `PATCH /api/admin/products/{id}` — 같은 필드 (`product.manage`)
+       - `DELETE /api/admin/products/{id}` — 해당 product 를 쓰는 대화가 있으면 거부 (`product.manage`)
+       - `GET /api/admin/products/{id}/databases` — 스키마 목록
+       - `PUT /api/admin/products/{id}/databases` body: `{databases: [{schema_name, description?, sort_order?}, ...]}` — 전체 교체 (`product.manage`)
+       - `GET /api/admin/system-prompts?scope=product|role|account&product_id=&role_id=&account_id=` — 해당 스코프 리스트
+       - `PUT /api/admin/system-prompts` body: `{scope, product_id?, role_id?, account_id?, content}` — upsert. scope=role 은 `system_prompt.manage.role.any`, scope=account 는 본인이 아니면 `system_prompt.manage.role.any` 필요.
+       - `DELETE /api/admin/system-prompts/{id}` — 같은 권한 규칙.
+     - 신규 self API:
+       - `GET /api/auth/me/system-prompts` — 본인의 account scope prompt 목록 (product_id 별)
+       - `PUT /api/auth/me/system-prompt` body: `{product_id?, content}` — 본인 upsert (본인 계정 대상은 권한 불요).
+     - 세션 응답 (`/api/auth/me`) 에 `products: [{id, product_key, name, is_default}]` 를 추가해 프론트가 드롭다운/라벨에 사용.
+
+  F. UI — admin console
+     - 탭 추가 `상품` (admin.html): 대시보드/계정/역할 다음에 배치. 좌측 list + 우측 detail 패턴으로 구성 (기존 Role 관리와 같은 layout 재사용).
+     - Detail 구성:
+       1. 기본 정보 섹션 (ProductKey/Name/Description/IsActive/IsDefault/SortOrder)
+       2. **접근 DB** 섹션 — "계정 카테고리와 별개" 라는 사용자 요구에 따라 구분선 + 명시적 헤더 (`접근 가능 DB 스키마`) 로 그룹화. 해당 product 에 등록된 schema 를 chip 으로 보여주고, 텍스트 입력 + `추가` 버튼 + 각 chip 옆 `×` 삭제.
+       3. **시스템 프롬프트** 섹션 (Product scope) — textarea + 저장. scope=product, ProductId=현재 product 로 upsert.
+     - Role detail 에도 **시스템 프롬프트** 섹션 추가:
+       - Product 드롭다운 (첫 항목 `(전 Product 공통)`, 그 아래 구분선 후 Product 목록) + textarea + 저장. 저장 시 scope=role, RoleId=현재 role, ProductId=(선택값 or NULL).
+     - Products 탭은 `product.manage` 가 없으면 read-only 상태(수정/삭제 버튼 disable + 저장시 에러 토스트)로 보인다. 어떤 계정도 product 목록 자체는 볼 수 있어야 profile 화면에서 product 별 prompt 를 지정할 수 있다.
+
+  G. UI — 프로필 드로우
+     - 드로우 탭에 `프롬프트` 추가 (계정/보안/API Vault/프롬프트).
+     - 내부: Product 드롭다운 (`(전 Product 공통)` 기본값 + 각 Product) + textarea + 저장 + 초기화. 저장 시 `PUT /api/auth/me/system-prompt`.
+     - 프로필 탭에서 product 선택을 바꾸면 해당 product scope 의 현재 prompt 를 다시 불러온다.
+
+  H. 대화/Agent 연결
+     - `/api/new_conversation` 과 `/api/fork_conversation` 은 생성/복제 시 `AgentCoreConversations.product_id` 에 값을 기록. 기본값은 (body.product_id || account.default_product_id || global default product).
+     - `/api/ask` 는 conversation.product_id 를 조회해 `product_id` + `allowed_schemas` + `role_id` + `account_id` 를 `run_agent` 에 넘긴다.
+     - `run_agent` 는 `allowed_schemas` 를 tools 전역에 set/clear 하고, `compose_system_prompt` 결과로 system message 를 만든 뒤 기존 흐름대로 진행.
+
+- 검증 계획:
+  1. `python3 -m py_compile` 로 agent_core.py / app.py / tools.py 문법 확인.
+  2. 컨테이너 재빌드 (`make web`, `make agent`) 후 bootstrap_admin 로그인 → `/api/admin/products` GET → KR seed 확인 → `/api/admin/products/{kr_id}/databases` GET → `dbgame,dblog,dbauth` 3건 확인.
+  3. `PUT /api/admin/system-prompts` 로 Product scope prompt 생성 → Role scope prompt 생성 → 본인 account scope prompt 생성.
+  4. `/api/ask` 로 질의 → agent 가 받은 system message 에 `## PRODUCT CONTEXT (KR)` / `## ROLE GUIDANCE (admin)` / `## ACCOUNT PREFERENCES` 가 순서대로 주입되었는지 agent 응답의 steps 로그에서 확인.
+  5. whitelist 밖 schema (e.g. `mysql.user`) 를 execute_sql 로 호출했을 때 거부되는지 확인.
+  6. 브라우저 수동: admin 의 Products 탭 + Roles detail 의 prompt 영역 + 프로필의 프롬프트 탭이 모두 렌더되는지 확인.
+
+- 비-목적 (Out of Scope):
+  - Product 별 계정 멤버십 ACL (`WebAccountProducts`). 이번은 모든 계정이 모든 active product 접근 가능한 MVP.
+  - Product 별 RBAC override 매트릭스. 현재 permission 체계는 RBAC 만 쓰고, "이 Role 이 이 Product 에서만 유효" 같은 scoping 은 별 과제로 둠.
+  - `_tool_execute_sql` SQL parsing 정확도: quoted identifier 가 아닌 서브쿼리 내부 복잡 참조는 표면적 regex 로만 검사. full sqlparse 도입은 후속 과제.
+
 - TASK-0035 (2026-04-21 마감): 사이드바가 `내 대화` / `타 계정 대화 (N)` 섹션으로 분할 노출되고 내 대화는 좌측 primary 컬러 바 + 틴트, 타 계정 대화는 owner 뱃지 강조로 구분된다. 말풍선의 user 메시지도 `is-own-message` / `is-other-message` 로 톤이 분리되며, meta 라벨은 `나 (<username>)` 또는 `<owner_username>` 을 표시한다. `POST /api/fork_conversation` 이 `conversation.create` + `read.own/any` 권한에 맞춰 원본 topic 과 메시지(internal 제외)를 새 대화로 복제하며, 복제본 topic 에는 `[Fork]` 접두사를 붙인다. 헤더 `대화 복사` 버튼은 전체 복제, 말풍선 hover 액션 `여기서 분기` 는 부분 복제(`from_message_id` 지정) 를 수행한다. 검증: `docker compose run --rm -T web python -m py_compile src/app.py` OK, 브라우저 스크립트 `curl -sk ... /api/fork_conversation` 로 전체 복제 6건/부분 복제 3건(source 20260421075518-571abdb6) 모두 HTTP 200 반환, 새 conversation_id 20260421082459-c039abbd / 20260421082523-d9fbb21b 에 topic `[Fork] ...` 접두어와 MetaJson 내 `forked_from_message_id` 저장 확인.
 
 ### TASK-0035 상세 설계 (2026-04-21)

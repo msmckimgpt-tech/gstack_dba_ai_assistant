@@ -61,6 +61,8 @@ DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 MEMORY_DB = os.getenv("AGENT_MEMORY_DB", "agent_memory")
+WEB_DB_QUERY_TIMEOUT_SEC = max(3, int(os.getenv("WEB_DB_QUERY_TIMEOUT_SEC", "8")))
+WEB_DB_LOCK_WAIT_TIMEOUT_SEC = max(1, int(os.getenv("WEB_DB_LOCK_WAIT_TIMEOUT_SEC", "5")))
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
@@ -262,6 +264,18 @@ PERMISSION_DEFINITIONS = (
         "description": "모든 계정의 처리 중 대화에 즉시답변을 요청할 수 있다.",
         "group": "conversation",
     },
+    {
+        "code": "product.manage",
+        "label": "상품 관리",
+        "description": "상품(Product) 생성/수정/삭제 및 접근 DB 스키마, 상품 시스템 프롬프트를 관리할 수 있다.",
+        "group": "product",
+    },
+    {
+        "code": "system_prompt.manage.role.any",
+        "label": "역할/계정 시스템 프롬프트 관리",
+        "description": "모든 역할 또는 다른 계정의 시스템 프롬프트를 수정할 수 있다. 본인 계정의 프롬프트는 이 권한 없이도 수정 가능하다.",
+        "group": "product",
+    },
 )
 PERMISSION_CODES = tuple(item["code"] for item in PERMISSION_DEFINITIONS)
 PERMISSION_DEFINITION_MAP = {item["code"]: item for item in PERMISSION_DEFINITIONS}
@@ -331,10 +345,21 @@ if WEB_ALLOWED_HOSTS:
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+
+@app.on_event("startup")
+def _bootstrap_memory_runtime() -> None:
+    threading.Thread(
+        target=_schedule_memory_runtime_bootstrap,
+        name="web-memory-bootstrap",
+        daemon=True,
+    ).start()
+
 WEB_PARALLEL_LIMIT = max(1, int(os.getenv("WEB_PARALLEL_LIMIT", "6")))
 _ACTIVE_REQUESTS: dict[str, int] = {}
 _ACTIVE_REQUESTS_LOCK = threading.Lock()
 _MEMORY_SCHEMA_READY = False
+_MEMORY_SCHEMA_INIT_LOCK = threading.Lock()
+_MEMORY_BOOTSTRAP_RUNNING = False
 _LOCAL_LLM_STATUS = {"checked_at": 0.0, "value": False}
 
 # Allow local GUI access from Windows/WSL, including non-standard origins.
@@ -1237,6 +1262,264 @@ def _ensure_seed_roles(conn) -> None:
             permission_codes=set(seed["permissions"]),
         )
     _ensure_default_signup_role(conn)
+    # 기존 admin role 에 신규 권한(product.manage, system_prompt.manage.role.any) 보정
+    cur = conn.cursor()
+    cur.execute("SELECT Id FROM WebRoles WHERE RoleKey = %s LIMIT 1", ("admin",))
+    admin_row = cur.fetchone()
+    cur.close()
+    if admin_row:
+        admin_role_id = int(admin_row[0] or 0)
+        permission_map = _permission_id_map(conn)
+        cur = conn.cursor()
+        for code in ("product.manage", "system_prompt.manage.role.any"):
+            permission_id = int(permission_map.get(code) or 0)
+            if permission_id <= 0:
+                continue
+            cur.execute(
+                """
+INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId)
+VALUES (%s, %s)
+                """,
+                (admin_role_id, permission_id),
+            )
+        cur.close()
+
+
+SEED_PRODUCT_DEFINITIONS = (
+    {
+        "product_key": "KR",
+        "name": "Korea",
+        "description": "국내 서비스 DB 묶음 (dbgame, dblog, dbauth).",
+        "is_default": True,
+        "is_active": True,
+        "sort_order": 10,
+        "databases": [
+            {"schema_name": "dbgame", "description": "게임 메타 데이터", "sort_order": 10},
+            {"schema_name": "dblog", "description": "전투/이벤트 로그", "sort_order": 20},
+            {"schema_name": "dbauth", "description": "계정/인증", "sort_order": 30},
+        ],
+    },
+)
+
+
+def _ensure_seed_products(conn) -> None:
+    cur = conn.cursor()
+    cur.execute("SELECT ProductKey FROM WebProducts")
+    existing_keys = {str(row[0]) for row in cur.fetchall() or []}
+    cur.close()
+    if any(seed["product_key"] in existing_keys for seed in SEED_PRODUCT_DEFINITIONS):
+        return
+    for seed in SEED_PRODUCT_DEFINITIONS:
+        if seed["product_key"] in existing_keys:
+            continue
+        cur = conn.cursor()
+        cur.execute(
+            """
+INSERT INTO WebProducts (ProductKey, Name, Description, IsActive, IsDefault, SortOrder)
+VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                seed["product_key"],
+                seed["name"],
+                seed.get("description", ""),
+                1 if seed.get("is_active", True) else 0,
+                1 if seed.get("is_default", False) else 0,
+                int(seed.get("sort_order", 100)),
+            ),
+        )
+        product_id = int(cur.lastrowid or 0)
+        cur.close()
+        if product_id <= 0:
+            continue
+        cur = conn.cursor()
+        for db in seed.get("databases", []):
+            cur.execute(
+                """
+INSERT IGNORE INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder)
+VALUES (%s, %s, %s, %s)
+                """,
+                (
+                    product_id,
+                    str(db["schema_name"]),
+                    str(db.get("description", "")),
+                    int(db.get("sort_order", 100)),
+                ),
+            )
+        cur.close()
+
+
+def _get_default_product_id(conn) -> int:
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT Id FROM WebProducts
+WHERE IsActive = 1
+ORDER BY IsDefault DESC, SortOrder ASC, Id ASC
+LIMIT 1
+        """
+    )
+    row = cur.fetchone()
+    cur.close()
+    return int((row or (0,))[0] or 0)
+
+
+def _list_products(conn, *, include_inactive: bool = False) -> list[dict[str, Any]]:
+    cur = conn.cursor(dictionary=True)
+    where = "" if include_inactive else " WHERE IsActive = 1"
+    cur.execute(
+        f"""
+SELECT Id AS id, ProductKey AS product_key, Name AS name, Description AS description,
+       IsActive AS is_active, IsDefault AS is_default, SortOrder AS sort_order,
+       CreatedAt AS created_at, UpdatedAt AS updated_at
+FROM WebProducts
+{where}
+ORDER BY IsDefault DESC, SortOrder ASC, Id ASC
+        """
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        out.append({
+            "id": int(row.get("id") or 0),
+            "product_key": str(row.get("product_key") or ""),
+            "name": str(row.get("name") or ""),
+            "description": str(row.get("description") or ""),
+            "is_active": bool(row.get("is_active")),
+            "is_default": bool(row.get("is_default")),
+            "sort_order": int(row.get("sort_order") or 0),
+            "created_at": str(row.get("created_at") or ""),
+            "updated_at": str(row.get("updated_at") or ""),
+        })
+    return out
+
+
+def _list_product_databases(conn, product_id: int) -> list[dict[str, Any]]:
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+SELECT SchemaName AS schema_name, Description AS description, SortOrder AS sort_order
+FROM WebProductDatabases
+WHERE ProductId = %s
+ORDER BY SortOrder ASC, SchemaName ASC
+        """,
+        (int(product_id),),
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    return [
+        {
+            "schema_name": str(r.get("schema_name") or ""),
+            "description": str(r.get("description") or ""),
+            "sort_order": int(r.get("sort_order") or 0),
+        }
+        for r in rows
+    ]
+
+
+def _product_allowed_schemas(conn, product_id: int) -> list[str]:
+    if product_id <= 0:
+        return []
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT SchemaName FROM WebProductDatabases WHERE ProductId = %s ORDER BY SortOrder, SchemaName",
+        (int(product_id),),
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    return [str(r[0]) for r in rows if r and r[0]]
+
+
+def _load_system_prompt(
+    conn,
+    *,
+    scope: str,
+    product_id: int | None = None,
+    role_id: int | None = None,
+    account_id: int | None = None,
+) -> dict[str, Any] | None:
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+SELECT Id AS id, Scope AS scope, ProductId AS product_id, RoleId AS role_id, AccountId AS account_id,
+       Content AS content, UpdatedAt AS updated_at, UpdatedByAccountId AS updated_by_account_id
+FROM WebSystemPrompts
+WHERE Scope = %s
+  AND ((ProductId IS NULL AND %s IS NULL) OR ProductId = %s)
+  AND ((RoleId IS NULL AND %s IS NULL) OR RoleId = %s)
+  AND ((AccountId IS NULL AND %s IS NULL) OR AccountId = %s)
+LIMIT 1
+        """,
+        (
+            scope,
+            product_id, product_id,
+            role_id, role_id,
+            account_id, account_id,
+        ),
+    )
+    row = cur.fetchone()
+    cur.close()
+    if not row:
+        return None
+    return {
+        "id": int(row.get("id") or 0),
+        "scope": str(row.get("scope") or ""),
+        "product_id": int(row.get("product_id") or 0) or None,
+        "role_id": int(row.get("role_id") or 0) or None,
+        "account_id": int(row.get("account_id") or 0) or None,
+        "content": str(row.get("content") or ""),
+        "updated_at": str(row.get("updated_at") or ""),
+        "updated_by_account_id": int(row.get("updated_by_account_id") or 0) or None,
+    }
+
+
+def _upsert_system_prompt(
+    conn,
+    *,
+    scope: str,
+    content: str,
+    product_id: int | None = None,
+    role_id: int | None = None,
+    account_id: int | None = None,
+    updated_by_account_id: int | None = None,
+) -> int:
+    existing = _load_system_prompt(
+        conn,
+        scope=scope,
+        product_id=product_id,
+        role_id=role_id,
+        account_id=account_id,
+    )
+    cur = conn.cursor()
+    content = (content or "").strip()
+    if existing:
+        if not content:
+            cur.execute("DELETE FROM WebSystemPrompts WHERE Id = %s", (int(existing["id"]),))
+            cur.close()
+            return 0
+        cur.execute(
+            """
+UPDATE WebSystemPrompts
+SET Content = %s, UpdatedByAccountId = %s
+WHERE Id = %s
+            """,
+            (content, updated_by_account_id, int(existing["id"])),
+        )
+        cur.close()
+        return int(existing["id"])
+    if not content:
+        cur.close()
+        return 0
+    cur.execute(
+        """
+INSERT INTO WebSystemPrompts (Scope, ProductId, RoleId, AccountId, Content, UpdatedByAccountId)
+VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (scope, product_id, role_id, account_id, content, updated_by_account_id),
+    )
+    new_id = int(cur.lastrowid or 0)
+    cur.close()
+    return new_id
 
 
 def _default_signup_role_id(conn) -> int:
@@ -1438,22 +1721,111 @@ WHERE owner_account_id IS NULL
         cur.close()
 
 
+def _mark_memory_runtime_ready() -> None:
+    global _MEMORY_SCHEMA_READY, _WEB_TABLES_READY
+    _MEMORY_SCHEMA_READY = True
+    _WEB_TABLES_READY = True
+
+
+def _open_memory_connection(*, database: str | None = MEMORY_DB):
+    params: dict[str, Any] = {
+        "host": DB_HOST,
+        "port": DB_PORT,
+        "user": DB_USER,
+        "password": DB_PASSWORD,
+        "autocommit": True,
+        "connection_timeout": 10,
+        "read_timeout": WEB_DB_QUERY_TIMEOUT_SEC,
+        "write_timeout": WEB_DB_QUERY_TIMEOUT_SEC,
+        "charset": "utf8mb4",
+        "use_unicode": True,
+    }
+    if database:
+        params["database"] = database
+    conn = mysql.connector.connect(**params)
+    cur = conn.cursor()
+    try:
+        cur.execute(f"SET SESSION lock_wait_timeout = {int(WEB_DB_LOCK_WAIT_TIMEOUT_SEC)}")
+        cur.execute(f"SET SESSION innodb_lock_wait_timeout = {int(WEB_DB_LOCK_WAIT_TIMEOUT_SEC)}")
+    finally:
+        cur.close()
+    return conn
+
+
+def _runtime_tables_available() -> bool:
+    try:
+        conn = _open_memory_connection()
+    except mysql.connector.Error as exc:
+        if int(getattr(exc, "errno", 0) or 0) == 1049:
+            return False
+        raise
+    try:
+        cur = conn.cursor()
+        try:
+            for table_name in (
+                "AgentMemoryKv",
+                "AgentMemoryMessages",
+                "AgentMemorySteps",
+                "WebAccounts",
+                "WebRoles",
+                "WebAuthSessions",
+                "AgentCoreConversations",
+                "WebProducts",
+                "WebProductDatabases",
+                "WebSystemPrompts",
+            ):
+                cur.execute(f"SELECT 1 FROM `{table_name}` LIMIT 1")
+                cur.fetchall()
+        finally:
+            cur.close()
+    except mysql.connector.Error as exc:
+        if int(getattr(exc, "errno", 0) or 0) == 1146:
+            return False
+        raise
+    finally:
+        conn.close()
+    return True
+
+
+def _schedule_memory_runtime_bootstrap() -> None:
+    global _MEMORY_BOOTSTRAP_RUNNING
+    if _MEMORY_SCHEMA_READY:
+        return
+    try:
+        if _runtime_tables_available():
+            _mark_memory_runtime_ready()
+            return
+    except Exception as exc:
+        print(f"[web.startup] memory probe failed: {exc}")
+        return
+    with _MEMORY_SCHEMA_INIT_LOCK:
+        if _MEMORY_SCHEMA_READY or _MEMORY_BOOTSTRAP_RUNNING:
+            return
+        _MEMORY_BOOTSTRAP_RUNNING = True
+
+    def _run_bootstrap() -> None:
+        global _MEMORY_BOOTSTRAP_RUNNING
+        try:
+            _ensure_memory_runtime_ready()
+        except Exception as exc:
+            print(f"[web.startup] memory bootstrap failed: {exc}")
+        finally:
+            with _MEMORY_SCHEMA_INIT_LOCK:
+                _MEMORY_BOOTSTRAP_RUNNING = False
+
+    threading.Thread(
+        target=_run_bootstrap,
+        name="web-memory-bootstrap",
+        daemon=True,
+    ).start()
+
+
 def _ensure_web_tables():
     """Create auth/account tables and normalize conversation ownership."""
     global _WEB_TABLES_READY
     if _WEB_TABLES_READY:
         return
-    conn = mysql.connector.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        database=MEMORY_DB,
-        autocommit=True,
-        connection_timeout=10,
-        charset="utf8mb4",
-        use_unicode=True,
-    )
+    conn = _open_memory_connection()
     try:
         cur = conn.cursor()
         cur.execute(
@@ -1596,34 +1968,102 @@ def _ensure_web_tables():
             )
         except Exception:
             pass
+        try:
+            cur.execute(
+                "ALTER TABLE AgentCoreConversations ADD COLUMN product_id BIGINT NULL"
+            )
+        except Exception:
+            pass
+        try:
+            cur.execute(
+                "CREATE INDEX IX_AgentCoreConversations_Product ON AgentCoreConversations (product_id)"
+            )
+        except Exception:
+            pass
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebProducts (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ProductKey VARCHAR(32) NOT NULL UNIQUE,
+                Name VARCHAR(128) NOT NULL,
+                Description VARCHAR(255) NOT NULL DEFAULT '',
+                IsActive TINYINT(1) NOT NULL DEFAULT 1,
+                IsDefault TINYINT(1) NOT NULL DEFAULT 0,
+                SortOrder INT NOT NULL DEFAULT 100,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebProductDatabases (
+                ProductId BIGINT NOT NULL,
+                SchemaName VARCHAR(64) NOT NULL,
+                Description VARCHAR(255) NOT NULL DEFAULT '',
+                SortOrder INT NOT NULL DEFAULT 100,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (ProductId, SchemaName),
+                INDEX IX_WebProductDatabases_Schema (SchemaName)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebSystemPrompts (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                Scope VARCHAR(16) NOT NULL,
+                ProductId BIGINT NULL,
+                RoleId BIGINT NULL,
+                AccountId BIGINT NULL,
+                Content MEDIUMTEXT NOT NULL,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UpdatedByAccountId BIGINT NULL,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX IX_WebSystemPrompts_Product (ProductId),
+                INDEX IX_WebSystemPrompts_Role (RoleId),
+                INDEX IX_WebSystemPrompts_Account (AccountId)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+        # MySQL 의 unique index 로 NULL 구분 (복합키에 NULL 이 있으면 UNIQUE 에서 제외됨)
+        # → application-level 로 upsert 시 중복 방지 (별도 체크)
+        try:
+            cur.execute(
+                "CREATE UNIQUE INDEX UX_WebSystemPrompts_Scope ON WebSystemPrompts (Scope, ProductId, RoleId, AccountId)"
+            )
+        except Exception:
+            pass
         cur.close()
         _ensure_permission_catalog(conn)
         _ensure_seed_roles(conn)
+        _ensure_seed_products(conn)
         _migrate_legacy_accounts_to_rbac(conn)
         bootstrap_admin_id = _ensure_bootstrap_admin(conn)
         _seed_legacy_conversations(conn, bootstrap_admin_id)
-        _WEB_TABLES_READY = True
+        _mark_memory_runtime_ready()
     finally:
         conn.close()
 
 
 def _connect_memory():
-    global _MEMORY_SCHEMA_READY
-    if not _MEMORY_SCHEMA_READY:
+    try:
+        return _open_memory_connection()
+    except mysql.connector.Error as exc:
+        if int(getattr(exc, "errno", 0) or 0) == 1049:
+            _schedule_memory_runtime_bootstrap()
+        raise
+
+
+def _ensure_memory_runtime_ready() -> None:
+    if _MEMORY_SCHEMA_READY:
+        return
+    with _MEMORY_SCHEMA_INIT_LOCK:
+        if _MEMORY_SCHEMA_READY:
+            return
         ensure_memory_schema()
-        _MEMORY_SCHEMA_READY = True
         _ensure_web_tables()
-    return mysql.connector.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        database=MEMORY_DB,
-        autocommit=True,
-        connection_timeout=10,
-        charset="utf8mb4",
-        use_unicode=True,
-    )
+        _mark_memory_runtime_ready()
 
 
 def _list_conversations(
@@ -2054,12 +2494,64 @@ LIMIT 1
     return str(row[0]) if row else ""
 
 
-def _load_steps_for_run(conn, conversation_id: str, run_id: str) -> list[dict[str, Any]]:
-    if not conversation_id or not run_id:
-        return []
+def _load_progress_status(conn, conversation_id: str) -> tuple[str, str, str]:
     cur = conn.cursor()
     cur.execute(
         """
+SELECT `Key`, `Value`
+FROM AgentMemoryKv
+WHERE ConversationId = %s
+  AND `Key` IN ('last_status', 'last_status_at', 'last_status_run_id')
+        """,
+        (conversation_id,),
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    kv = {str(key or ""): str(value or "") for key, value in rows}
+    return (
+        str(kv.get("last_status") or "").strip(),
+        str(kv.get("last_status_at") or "").strip(),
+        str(kv.get("last_status_run_id") or "").strip(),
+    )
+
+
+def _load_step_count_for_run(conn, conversation_id: str, run_id: str) -> int:
+    if not conversation_id or not run_id:
+        return 0
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT COUNT(*)
+FROM AgentMemorySteps
+WHERE ConversationId = %s AND RunId = %s
+        """,
+        (conversation_id, run_id),
+    )
+    row = cur.fetchone()
+    cur.close()
+    try:
+        return int(row[0] or 0) if row else 0
+    except Exception:
+        return 0
+
+
+def _load_steps_for_run(
+    conn,
+    conversation_id: str,
+    run_id: str,
+    *,
+    after_step: int = 0,
+) -> list[dict[str, Any]]:
+    if not conversation_id or not run_id:
+        return []
+    cur = conn.cursor()
+    params: list[Any] = [conversation_id, run_id]
+    step_clause = ""
+    if int(after_step or 0) > 0:
+        step_clause = " AND StepIndex > %s"
+        params.append(int(after_step))
+    cur.execute(
+        f"""
 SELECT
     StepIndex,
     Action,
@@ -2076,9 +2568,10 @@ SELECT
     CreatedAt
 FROM AgentMemorySteps
 WHERE ConversationId = %s AND RunId = %s
+{step_clause}
 ORDER BY StepIndex ASC, CreatedAt ASC
         """,
-        (conversation_id, run_id),
+        tuple(params),
     )
     rows = cur.fetchall() or []
     cur.close()
@@ -2991,6 +3484,12 @@ def get_session(request: Request) -> JSONResponse:
         account,
         create_if_missing=_account_has_permission(account, "conversation.create"),
     )
+    try:
+        products = _list_products(conn, include_inactive=False)
+        default_pid = _get_default_product_id(conn) or 0
+    except Exception:
+        products = []
+        default_pid = 0
     payload = {
         "authenticated": True,
         "user": _serialize_account(account),
@@ -2998,6 +3497,8 @@ def get_session(request: Request) -> JSONResponse:
         "local_llm_enabled": local_llm_enabled,
         "default_model": os.getenv("OPENAI_MODEL", "auto"),
         "public_url": WEB_PUBLIC_URL,
+        "products": products,
+        "default_product_id": int(default_pid) if default_pid else None,
     }
     conn.close()
     return JSONResponse(payload)
@@ -3111,6 +3612,47 @@ async def ask(request: Request) -> JSONResponse:
         from agent_core import run_agent as _run_agent_core
 
         temp_value = 0.0 if _model_supports_temperature(model) else None
+
+        # ── Product / Role / Account 기반 system prompt depth 컨텍스트 해결 ──
+        try:
+            product_id_for_run: int | None = None
+            if conv_id:
+                cur_p = conn.cursor()
+                cur_p.execute(
+                    "SELECT product_id FROM AgentCoreConversations WHERE conversation_id = %s",
+                    (conv_id,),
+                )
+                row_p = cur_p.fetchone()
+                cur_p.close()
+                if row_p and row_p[0] is not None:
+                    product_id_for_run = int(row_p[0])
+            if not product_id_for_run:
+                product_id_for_run = _get_default_product_id(conn) or None
+            if product_id_for_run and conv_id:
+                try:
+                    cur_u = conn.cursor()
+                    cur_u.execute(
+                        "UPDATE AgentCoreConversations SET product_id = %s WHERE conversation_id = %s AND (product_id IS NULL OR product_id = 0)",
+                        (int(product_id_for_run), conv_id),
+                    )
+                    cur_u.close()
+                except Exception:
+                    pass
+            allowed_schemas_for_run = (
+                _product_allowed_schemas(conn, int(product_id_for_run)) if product_id_for_run else None
+            )
+            role_id_for_run: int | None = None
+            try:
+                role_payload = _role_payload(account) or {}
+                if role_payload.get("id"):
+                    role_id_for_run = int(role_payload["id"])
+            except Exception:
+                role_id_for_run = None
+        except Exception:
+            product_id_for_run = None
+            allowed_schemas_for_run = None
+            role_id_for_run = None
+
         agent_result = await asyncio.to_thread(
             _run_agent_core,
             user_message=message,
@@ -3120,6 +3662,10 @@ async def ask(request: Request) -> JSONResponse:
             api_key=api_key,
             temperature=temp_value,
             output_mode="json",
+            product_id=product_id_for_run,
+            role_id=role_id_for_run,
+            account_id=int(account["id"]),
+            allowed_schemas=allowed_schemas_for_run,
         )
         conversation_id = str(agent_result.get("conversation_id") or "").strip()
         if conversation_id:
@@ -3171,6 +3717,10 @@ async def ask(request: Request) -> JSONResponse:
 @app.post("/api/new_conversation")
 async def new_conversation(request: Request) -> JSONResponse:
     try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    try:
         conn = _connect_memory()
     except Exception:
         return _json_error("db connection failed", 500)
@@ -3181,12 +3731,31 @@ async def new_conversation(request: Request) -> JSONResponse:
     if not _account_has_permission(account, "conversation.create"):
         conn.close()
         return _json_error("권한이 없습니다.", 403)
+    req_product_id: int | None = None
+    raw_product = (data or {}).get("product_id")
+    if raw_product is not None and str(raw_product).strip() != "":
+        try:
+            req_product_id = int(raw_product)
+        except Exception:
+            req_product_id = None
+    if not req_product_id:
+        req_product_id = _get_default_product_id(conn) or None
     from agent_core import create_new_conversation as _create_conv
     cid = _create_conv(conv_file=_account_conv_file(int(account["id"])))
     _assign_conversation_owner(conn, cid, int(account["id"]), force=True)
     _set_account_current_conversation(conn, int(account["id"]), cid)
+    if req_product_id:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE AgentCoreConversations SET product_id = %s WHERE conversation_id = %s",
+                (int(req_product_id), cid),
+            )
+            cur.close()
+        except Exception:
+            pass
     conn.close()
-    return JSONResponse({"conversation_id": cid, "output": f"새 대화: {cid}"})
+    return JSONResponse({"conversation_id": cid, "output": f"새 대화: {cid}", "product_id": req_product_id})
 
 
 @app.post("/api/fork_conversation")
@@ -3284,6 +3853,21 @@ ORDER BY Id ASC
         conn.close()
         return _json_error("failed to load source messages", 500)
 
+    # 원본 대화의 product_id 를 조회 (없으면 기본 Product).
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT product_id FROM AgentCoreConversations WHERE conversation_id = %s",
+            (source_id,),
+        )
+        row_pid = cur.fetchone()
+        cur.close()
+        forked_product_id = int(row_pid[0]) if row_pid and row_pid[0] is not None else None
+    except Exception:
+        forked_product_id = None
+    if not forked_product_id:
+        forked_product_id = _get_default_product_id(conn) or None
+
     # 새 대화 생성 + 소유권 부여 + topic 세팅.
     from agent_core import create_new_conversation as _create_conv
     try:
@@ -3295,10 +3879,11 @@ ORDER BY Id ASC
             """
 UPDATE AgentCoreConversations
 SET topic = %s,
+    product_id = %s,
     updated_at = CURRENT_TIMESTAMP
 WHERE conversation_id = %s
             """,
-            (new_topic, new_cid),
+            (new_topic, int(forked_product_id) if forked_product_id else None, new_cid),
         )
         cur.close()
     except Exception:
@@ -3794,7 +4379,12 @@ async def finalize_request(request: Request) -> JSONResponse:
 
 
 @app.get("/api/progress")
-async def progress(request: Request, conversation_id: str = "", after_step: int = 0) -> JSONResponse:
+def progress(
+    request: Request,
+    conversation_id: str = "",
+    after_step: int = 0,
+    client_run_id: str = "",
+) -> JSONResponse:
     """처리 중인 대화의 실시간 step 진행 상황을 반환."""
     empty = JSONResponse({"steps": [], "status": "", "step_count": 0})
     try:
@@ -3810,11 +4400,15 @@ async def progress(request: Request, conversation_id: str = "", after_step: int 
         if not cid:
             conn.close()
             return empty
-        status = str(load_memory_kv(conn, cid, "last_status") or "").strip()
-        status_at = str(load_memory_kv(conn, cid, "last_status_at") or "").strip()
-        run_id = str(load_memory_kv(conn, cid, "last_status_run_id") or "").strip()
-        all_steps = _load_steps_for_run(conn, cid, run_id) if run_id else []
-        new_steps = [s for s in all_steps if s.get("step_index", 0) > after_step]
+        status, status_at, run_id = _load_progress_status(conn, cid)
+        next_after_step = max(0, int(after_step or 0))
+        if not run_id or str(client_run_id or "").strip() != run_id:
+            next_after_step = 0
+        step_count = _load_step_count_for_run(conn, cid, run_id) if run_id else 0
+        new_steps = (
+            _load_steps_for_run(conn, cid, run_id, after_step=next_after_step)
+            if run_id else []
+        )
         conn.close()
     except Exception:
         try:
@@ -3826,7 +4420,7 @@ async def progress(request: Request, conversation_id: str = "", after_step: int 
         "steps": new_steps,
         "status": status,
         "status_at": status_at,
-        "step_count": len(all_steps),
+        "step_count": step_count,
         "run_id": run_id,
         "conversation_id": cid,
     })
@@ -4024,10 +4618,22 @@ async def auth_me(request: Request) -> JSONResponse:
     except Exception:
         return JSONResponse({"ok": False})
     account = _get_authenticated_account(conn, request)
-    conn.close()
     if not account:
+        conn.close()
         return JSONResponse({"ok": False})
-    return JSONResponse({"ok": True, "user": _serialize_account(account)})
+    try:
+        products = _list_products(conn, include_inactive=False)
+        default_pid = _get_default_product_id(conn) or 0
+    except Exception:
+        products = []
+        default_pid = 0
+    conn.close()
+    return JSONResponse({
+        "ok": True,
+        "user": _serialize_account(account),
+        "products": products,
+        "default_product_id": int(default_pid) if default_pid else None,
+    })
 
 
 @app.patch("/api/auth/me")
@@ -4530,6 +5136,390 @@ async def admin_permissions(request: Request) -> JSONResponse:
         return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
     conn.close()
     return JSONResponse({"permissions": _permission_catalog_payload()})
+
+
+@app.get("/api/admin/products")
+async def admin_list_products(request: Request) -> JSONResponse:
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(account, "console.access"):
+        conn.close()
+        return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    products = _list_products(conn, include_inactive=True)
+    for p in products:
+        p["databases"] = _list_product_databases(conn, int(p["id"]))
+    conn.close()
+    return JSONResponse({"products": products})
+
+
+@app.post("/api/admin/products")
+async def admin_create_product(request: Request) -> JSONResponse:
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(account, "product.manage"):
+        conn.close()
+        return _json_error("상품 관리 권한이 필요합니다.", 403)
+    product_key = str(data.get("product_key") or "").strip().upper()
+    name = str(data.get("name") or "").strip()
+    description = str(data.get("description") or "").strip()
+    sort_order = int(data.get("sort_order") or 100)
+    is_active = bool(data.get("is_active", True))
+    is_default = bool(data.get("is_default", False))
+    if not product_key or not name:
+        conn.close()
+        return _json_error("product_key 와 name 은 필수입니다.", 400)
+    if not re.match(r"^[A-Z][A-Z0-9_]{0,31}$", product_key):
+        conn.close()
+        return _json_error("product_key 는 A-Z/0-9/_ 만, 1~32자 영문대문자로 시작.", 400)
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM WebProducts WHERE ProductKey = %s", (product_key,))
+    if int((cur.fetchone() or (0,))[0] or 0) > 0:
+        cur.close()
+        conn.close()
+        return _json_error("이미 존재하는 product_key 입니다.", 409)
+    cur.execute(
+        """
+INSERT INTO WebProducts (ProductKey, Name, Description, IsActive, IsDefault, SortOrder)
+VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (product_key, name, description, 1 if is_active else 0, 1 if is_default else 0, sort_order),
+    )
+    new_id = int(cur.lastrowid or 0)
+    if is_default:
+        cur.execute("UPDATE WebProducts SET IsDefault = 0 WHERE Id <> %s", (new_id,))
+    cur.close()
+    conn.close()
+    return JSONResponse({"ok": True, "product_id": new_id})
+
+
+@app.patch("/api/admin/products/{product_id}")
+async def admin_update_product(product_id: int, request: Request) -> JSONResponse:
+    if product_id <= 0:
+        return _json_error("invalid product_id", 400)
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(account, "product.manage"):
+        conn.close()
+        return _json_error("상품 관리 권한이 필요합니다.", 403)
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT Id, ProductKey FROM WebProducts WHERE Id = %s", (int(product_id),))
+    existing = cur.fetchone()
+    cur.close()
+    if not existing:
+        conn.close()
+        return _json_error("product not found", 404)
+    fields: list[str] = []
+    params: list[Any] = []
+    if "name" in data:
+        fields.append("Name = %s")
+        params.append(str(data.get("name") or "").strip())
+    if "description" in data:
+        fields.append("Description = %s")
+        params.append(str(data.get("description") or "").strip())
+    if "is_active" in data:
+        fields.append("IsActive = %s")
+        params.append(1 if bool(data.get("is_active")) else 0)
+    if "sort_order" in data:
+        fields.append("SortOrder = %s")
+        params.append(int(data.get("sort_order") or 100))
+    set_default = False
+    if "is_default" in data:
+        fields.append("IsDefault = %s")
+        params.append(1 if bool(data.get("is_default")) else 0)
+        set_default = bool(data.get("is_default"))
+    if fields:
+        params.append(int(product_id))
+        cur = conn.cursor()
+        cur.execute(f"UPDATE WebProducts SET {', '.join(fields)} WHERE Id = %s", tuple(params))
+        cur.close()
+        if set_default:
+            cur = conn.cursor()
+            cur.execute("UPDATE WebProducts SET IsDefault = 0 WHERE Id <> %s", (int(product_id),))
+            cur.close()
+    conn.close()
+    return JSONResponse({"ok": True, "product_id": int(product_id)})
+
+
+@app.delete("/api/admin/products/{product_id}")
+async def admin_delete_product(product_id: int, request: Request) -> JSONResponse:
+    if product_id <= 0:
+        return _json_error("invalid product_id", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(account, "product.manage"):
+        conn.close()
+        return _json_error("상품 관리 권한이 필요합니다.", 403)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT COUNT(*) FROM AgentCoreConversations WHERE product_id = %s",
+        (int(product_id),),
+    )
+    in_use = int((cur.fetchone() or (0,))[0] or 0)
+    if in_use > 0:
+        cur.close()
+        conn.close()
+        return _json_error("이 상품을 참조하는 대화가 있어 삭제할 수 없습니다. (대신 비활성화를 사용하세요)", 400)
+    cur.execute("DELETE FROM WebSystemPrompts WHERE ProductId = %s", (int(product_id),))
+    cur.execute("DELETE FROM WebProductDatabases WHERE ProductId = %s", (int(product_id),))
+    cur.execute("DELETE FROM WebProducts WHERE Id = %s", (int(product_id),))
+    cur.close()
+    conn.close()
+    return JSONResponse({"ok": True, "product_id": int(product_id)})
+
+
+@app.put("/api/admin/products/{product_id}/databases")
+async def admin_update_product_databases(product_id: int, request: Request) -> JSONResponse:
+    if product_id <= 0:
+        return _json_error("invalid product_id", 400)
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(account, "product.manage"):
+        conn.close()
+        return _json_error("상품 관리 권한이 필요합니다.", 403)
+    cur = conn.cursor()
+    cur.execute("SELECT Id FROM WebProducts WHERE Id = %s", (int(product_id),))
+    if not cur.fetchone():
+        cur.close()
+        conn.close()
+        return _json_error("product not found", 404)
+    cur.close()
+    raw_items = data.get("databases")
+    if not isinstance(raw_items, list):
+        return _json_error("databases must be a list", 400)
+    seen: set[str] = set()
+    cleaned: list[dict[str, Any]] = []
+    for i, item in enumerate(raw_items):
+        if not isinstance(item, dict):
+            continue
+        schema = str(item.get("schema_name") or "").strip().lower()
+        if not schema:
+            continue
+        if not re.match(r"^[a-z_][a-z0-9_]{0,63}$", schema):
+            return _json_error(f"invalid schema_name: {schema}", 400)
+        if schema in seen:
+            continue
+        seen.add(schema)
+        cleaned.append({
+            "schema_name": schema,
+            "description": str(item.get("description") or "").strip(),
+            "sort_order": int(item.get("sort_order") or (i + 1) * 10),
+        })
+    cur = conn.cursor()
+    cur.execute("DELETE FROM WebProductDatabases WHERE ProductId = %s", (int(product_id),))
+    for item in cleaned:
+        cur.execute(
+            """
+INSERT INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder)
+VALUES (%s, %s, %s, %s)
+            """,
+            (int(product_id), item["schema_name"], item["description"], int(item["sort_order"])),
+        )
+    cur.close()
+    conn.close()
+    return JSONResponse({"ok": True, "databases": cleaned})
+
+
+@app.get("/api/admin/system-prompts")
+async def admin_get_system_prompt(
+    request: Request,
+    scope: str,
+    product_id: int | None = None,
+    role_id: int | None = None,
+    account_id: int | None = None,
+) -> JSONResponse:
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if scope not in ("product", "role", "account"):
+        conn.close()
+        return _json_error("scope 은 product/role/account 중 하나여야 합니다.", 400)
+    # scope 별 권한 검사
+    if scope == "product":
+        if not _account_has_permission(actor, "product.manage"):
+            conn.close()
+            return _json_error("상품 시스템 프롬프트 조회 권한이 없습니다.", 403)
+    elif scope == "role":
+        if not _account_has_permission(actor, "system_prompt.manage.role.any"):
+            conn.close()
+            return _json_error("역할 시스템 프롬프트 조회 권한이 없습니다.", 403)
+    else:  # account
+        target_account = int(account_id or 0)
+        if target_account != int(actor["id"]) and not _account_has_permission(actor, "system_prompt.manage.role.any"):
+            conn.close()
+            return _json_error("타 계정 프롬프트 조회 권한이 없습니다.", 403)
+    row = _load_system_prompt(
+        conn,
+        scope=scope,
+        product_id=int(product_id) if product_id else None,
+        role_id=int(role_id) if role_id else None,
+        account_id=int(account_id) if account_id else None,
+    )
+    conn.close()
+    return JSONResponse({"prompt": row, "scope": scope})
+
+
+@app.put("/api/admin/system-prompts")
+async def admin_put_system_prompt(request: Request) -> JSONResponse:
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    scope = str(data.get("scope") or "").strip().lower()
+    if scope not in ("product", "role", "account"):
+        conn.close()
+        return _json_error("scope 은 product/role/account 중 하나여야 합니다.", 400)
+    content = str(data.get("content") or "")
+    product_id = int(data.get("product_id") or 0) or None
+    role_id = int(data.get("role_id") or 0) or None
+    account_id = int(data.get("account_id") or 0) or None
+    if scope == "product":
+        if not _account_has_permission(actor, "product.manage"):
+            conn.close()
+            return _json_error("상품 시스템 프롬프트 관리 권한이 없습니다.", 403)
+        if not product_id:
+            conn.close()
+            return _json_error("product_id 가 필요합니다.", 400)
+        role_id = None
+        account_id = None
+    elif scope == "role":
+        if not _account_has_permission(actor, "system_prompt.manage.role.any"):
+            conn.close()
+            return _json_error("역할 시스템 프롬프트 관리 권한이 없습니다.", 403)
+        if not role_id:
+            conn.close()
+            return _json_error("role_id 가 필요합니다.", 400)
+        account_id = None
+    else:  # account
+        target_account = account_id or int(actor["id"])
+        if target_account != int(actor["id"]) and not _account_has_permission(actor, "system_prompt.manage.role.any"):
+            conn.close()
+            return _json_error("타 계정 프롬프트 관리 권한이 없습니다.", 403)
+        account_id = target_account
+        role_id = None
+    new_id = _upsert_system_prompt(
+        conn,
+        scope=scope,
+        content=content,
+        product_id=product_id,
+        role_id=role_id,
+        account_id=account_id,
+        updated_by_account_id=int(actor["id"]),
+    )
+    conn.close()
+    return JSONResponse({"ok": True, "id": new_id, "scope": scope, "deleted": new_id == 0})
+
+
+@app.get("/api/auth/me/system-prompt")
+async def me_get_system_prompt(request: Request, product_id: int | None = None) -> JSONResponse:
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    # 계정 스코프: 개인 프롬프트는 product 별 혹은 product 무관 하나씩 보유 가능.
+    row = _load_system_prompt(
+        conn,
+        scope="account",
+        product_id=int(product_id) if product_id else None,
+        role_id=None,
+        account_id=int(account["id"]),
+    )
+    conn.close()
+    return JSONResponse({"prompt": row, "product_id": int(product_id) if product_id else None})
+
+
+@app.put("/api/auth/me/system-prompt")
+async def me_put_system_prompt(request: Request) -> JSONResponse:
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    content = str(data.get("content") or "")
+    product_id_raw = data.get("product_id")
+    product_id: int | None = None
+    if product_id_raw is not None and str(product_id_raw).strip() != "":
+        try:
+            product_id = int(product_id_raw)
+        except Exception:
+            conn.close()
+            return _json_error("invalid product_id", 400)
+    new_id = _upsert_system_prompt(
+        conn,
+        scope="account",
+        content=content,
+        product_id=product_id,
+        role_id=None,
+        account_id=int(account["id"]),
+        updated_by_account_id=int(account["id"]),
+    )
+    conn.close()
+    return JSONResponse({"ok": True, "id": new_id, "deleted": new_id == 0})
 
 
 @app.get("/api/keywords")
