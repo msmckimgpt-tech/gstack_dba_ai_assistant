@@ -178,6 +178,18 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Verification: 브라우저 자동화로 (a) bootstrap_admin(31 권한) 은 모든 버튼이 활성·토스트 미발생, (b) 신규 pending 계정(5 권한, `conversation.ask`/`.create`/`.delete.any` 없음) 으로 로그인 시 composer 의 "보내기" · "새 대화" 버튼이 `.is-access-blocked` + `aria-disabled` 로 보이고, 클릭 시 필요 권한 코드가 포함된 토스트가 뜨는 것을 확인. 스크린샷 `artifacts/shared/out/browser/task0032_{01,02,03}_*.png`.
 - Applies to: RBAC/기능 플래그/구독 제한 등 권한 게이트가 존재하는 모든 UI. "의미 있는 컨텍스트에서 권한만 부족한 버튼" 은 숨기지 말고 blocked 상태로 노출하고, 클릭 경로를 유지해 **필요 권한 코드 + 서술 + 요청 대상(관리자)** 3요소를 토스트/title 로 안내한다. 권한 코드는 사용자 메시지에 코드블록으로 포함해 복사·검색이 가능하게 한다.
 
+### LRN-20260421-0009 — 스크롤 컨테이너 중첩은 "턱턱" 끊김을 만들고, 결과 테이블에는 RowCount + sticky freeze 가 기본값이어야 한다
+- Source: feature-0003 결과셋 말풍선 UX 정리 (TASK-0033, 2026-04-21)
+- Mistake: TASK-0030 에서 말풍선 내부 스크롤 격리를 목적으로 `.message-details-body { max-height: min(60vh,520px); overflow: auto; overscroll-behavior: contain }` 를 도입했다. 하지만 내부의 `.sql-block`/`.result-table-wrap` 도 각자 `max-height` + `overscroll-behavior: contain` 을 가지고 있었다. 결과: 같은 말풍선 안에 세로 스크롤 컨테이너가 2-3개 겹치고, 마우스 휠이 "누가 휠을 소비할지" 매 프레임 바뀌면서 사용자 입장에서 **"턱턱" 걸리는** 느낌이 났다. 또 결과 테이블에 RowCount(행 번호) 컬럼이 없고 헤더/첫 열 freeze 도 없어 행/열이 많아지면 위치 파악이 불가능했다.
+- Correct approach: "말풍선 안의 확장 본문" 은 스크롤을 중첩하지 말고 **단일 바깥 스크롤 + 단일 내부 스크롤** 원칙을 지킨다. 그리고 결과 테이블은 RowCount + freeze 를 기본값으로 탑재한다 —
+  1. **말풍선 body cap 제거** — `.message-details-body` 의 `max-height`/`overflow`/`overscroll-behavior`/`padding-right` 를 모두 제거해 본문이 콘텐츠 높이만큼 자연스럽게 자라게 한다. 채팅 로그(`.messages`) 가 유일한 세로 스크롤 컨테이너가 되고, 같은 말풍선 안에 스크롤바 2개가 동시에 뜨는 상황을 **근본 제거**.
+  2. **내부 컨테이너의 `overscroll-behavior: contain` 제거** — `contain` 은 자식이 경계에 닿아도 휠을 부모로 전파하지 않는다. 결과 테이블/SQL 블록 내부에서 끝까지 스크롤하면 "막힌 벽" 느낌이 나며, 사용자는 마우스를 이동해 다시 바깥 스크롤을 잡아야 한다. `auto`(기본)로 되돌리면 경계에서 `.messages` 로 자연스럽게 휠이 넘어가 연속된 흐름이 된다. 단, 내부 `max-height` 는 유지 — 결과 테이블이 100행이면 말풍선이 화면을 완전히 차지해 다른 메시지를 못 보게 되기 때문.
+  3. **sticky freeze 는 CSS 만으로 완전 구현** — `.result-table { border-collapse: separate; border-spacing: 0 }` + `thead th { position: sticky; top: 0 }` + `th.col-rownum, td.col-rownum { position: sticky; left: 0 }` + 교차점(`thead th.col-rownum { z-index: 3 }`) 으로 Excel 의 "Freeze first row + first column" 을 정확히 재현. `border-collapse: collapse` 에서는 sticky 셀의 border 가 렌더 타이밍에 따라 사라지므로 **`separate` + `box-shadow: inset` 으로 border 대체** 해야 시각적 경계가 유지된다.
+  4. **RowCount 는 가상 컬럼으로 클라이언트에서 prepend** — 백엔드 응답(`preview_table.columns/rows`) 스키마는 건드리지 않고 `buildResultTable()` 에서 `<th class="col-rownum">#</th>` + 각 `<tr>` 앞 `<td class="col-rownum">{i+1}</td>` 를 추가. `loadFullCsvIntoTable()` 의 전체 데이터 교체 경로에도 같은 헬퍼(`appendRowNumCell`)를 재사용. meta 의 `"N열"` 카운트는 데이터 컬럼 수로 유지(사용자 기대와 일치).
+  5. Sticky 측정 시 **`<tr>` 이 아니라 개별 `<th>` 요소의 BoundingClientRect** 를 확인. 대부분의 브라우저는 `position: sticky` 를 `<tr>` 에서 무시하고 `<th>`/`<td>` 에서만 적용하므로, `thead tr` 의 rect 는 scroll 만큼 이동해 보여도 내부 `th` 들은 실제로는 고정되어 있다. 검증 자동화 작성 시 함정.
+- Verification: 기존 33행 × 3열 결과 테이블을 기준으로 (a) `.message-details-body` 의 `scrollHeight === clientHeight` (내부 스크롤 없음), `overflow = visible`, (b) `.result-table-wrap` `overscroll-behavior = auto`, (c) `thead th.position = sticky`, `td.col-rownum position = sticky, left = 0`, corner `z-index = 3`, (d) `wrap.scrollTop = 200` 시 각 `<th>` 개별 `top` 변동 0, (e) `wrap.scrollLeft = 100` (폭 강제 축소) 시 `td.col-rownum` 좌표 불변(`rnStayed: true`) + 데이터 컬럼은 이동(`dataMoved: true`). 스크린샷에서도 `# | hero_index | participation_count` 헤더가 상단에, `#` 열이 좌측에 고정된 채 행 6-19 가 보임.
+- Applies to: 채팅/로그/인사이트 패널 등 **확장 가능한 본문을 포함한 카드형 UI**. 본문 스크롤은 컨테이너 계층마다 함부로 중첩하지 말고, 외부 페이지 스크롤을 대체할 만큼 큰 내부 영역에만 제한적으로 둔다. 또 모든 데이터 테이블(쿼리 결과/로그/리스트 등) 은 **기본값으로 행 번호 컬럼 + 헤더/첫 열 freeze** 를 제공한다 — 사용자가 스크롤 중에도 위치를 잃지 않는 것은 옵션이 아니라 기본 요구사항.
+
 ## Category: quirk
 
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존

@@ -11,10 +11,11 @@ source_of_truth: true
 ## 1. Current Status
 - State: completed
 - Owner: AI
-- Priority: high
+- Priority: medium
 - Last Updated: 2026-04-21
 
 ## 2. Task Queue
+- [x] TASK-0033 결과셋 말풍선 단일 스크롤 + RowCount + 첫 행/열 freeze
 - [x] TASK-0032 권한 안내 UX (툴팁 서술화 + 차단 시 필요 권한 안내)
 - [x] TASK-0001 Web UI 코드 이관
 - [x] TASK-0002 정적 자산 이관
@@ -50,6 +51,64 @@ source_of_truth: true
 
 ## 3. In Progress
 - 없음
+
+### TASK-0033 상세 설계
+- 문제 (사용자 테스트 피드백 2026-04-21):
+  - 말풍선 안의 `실행 단계 및 쿼리 결과 보기` 를 펼치면 **바깥 채팅 로그(`.messages`) 스크롤 + 말풍선 상세 본문(`.message-details-body`) 스크롤** 두 개가 중첩되어, 사용자가 대화 전체를 마우스 휠로 훑을 때 경계에서 "턱턱" 끊기는 느낌이 난다.
+  - 사용자 요청: **바깥 스크롤(= 말풍선 body cap)은 최대한 나타나지 않도록** 본문을 확장해달라.
+  - 결과셋의 행/열이 많을 때 (특히 열이 10개 이상) 어느 행/열을 보고 있는지 **위치 파악이 어렵다**. 기본적으로 RowCount(행 번호) 컬럼이 있어야 하고, 1행(헤더)/1열(번호)은 스크롤해도 **틀 고정(freeze)** 되어야 한다.
+- 원인:
+  1. [styles.css:849-859](../src/static/styles.css#L849-L859) `.message-details-body { max-height: min(60vh, 520px); overflow: auto; overscroll-behavior: contain; padding-right: 4px; }` — TASK-0030 에서 말풍선 폭/스크롤 격리 목적으로 넣었지만, 내부의 `.sql-block`/`.result-table-wrap` 가 이미 각자 cap 을 가지므로 바깥 body cap 은 **중복 방어**. 중복된 cap 때문에 같은 콘텐츠에 대해 스크롤 컨테이너가 2개 생기고, 마우스 휠이 경계를 넘을 때마다 어느 컨테이너가 휠을 소비할지 바뀌어 "턱턱" 멈춤이 발생.
+  2. [styles.css:913-920](../src/static/styles.css#L913-L920) `.result-table-wrap { ...; overscroll-behavior: contain; max-height: 320px; }` + [styles.css:907-909](../src/static/styles.css#L907-L909) `.sql-block { ...; overscroll-behavior: contain; max-height: 240px; }` — `overscroll-behavior: contain` 은 자식이 경계에 도달해도 휠을 부모로 **전파하지 않는다**. 그래서 테이블/SQL 내부 스크롤이 바닥/천장에 닿으면 `.messages` 로 올라가지 못하고 그대로 멈춤 — 이것도 "턱턱" 느낌의 큰 원인.
+  3. [app.js:734-781](../src/static/app.js#L734-L781) `buildResultTable()` — 데이터 컬럼만 그대로 th/td 로 렌더. RowCount 컬럼 없음. thead th / 첫 컬럼 td 모두 `position: static` 이라 내부 스크롤 시 헤더/첫 열이 함께 밀려 보이지 않게 됨.
+  4. [app.js:801-825](../src/static/app.js#L801-L825) `loadFullCsvIntoTable()` — 전체 데이터 로드 시에도 `header.forEach` / `body.forEach` 만 사용, RowCount 를 따로 추가하지 않음.
+- 목표:
+  1. 말풍선 상세 본문(`.message-details-body`) 의 수직 스크롤 컨테이너를 **제거** — 본문이 콘텐츠 높이만큼 자연스럽게 자라고, 전역 세로 스크롤은 채팅 로그(`.messages`) 하나로 통일. 같은 말풍선 안에 스크롤바 2개가 동시에 뜨는 상황을 근본 제거.
+  2. 결과 테이블/SQL 블록은 여전히 **자체 내부 스크롤**을 가지지만, 내부가 경계에 닿으면 `.messages` 로 휠이 **전파**되어 끊김 없이 상하 흐름이 이어져야 한다.
+  3. 모든 결과 테이블에 **RowCount 컬럼**(첫 컬럼 `#`) 이 항상 포함되어, 스크롤 중에도 몇 번째 행인지 바로 알 수 있다.
+  4. 결과 테이블의 **첫 행(헤더) + 첫 열(#)** 은 내부 스크롤 동안 고정되어 보인다(Excel 의 `Freeze first row + first column` 과 동일한 개념).
+  5. "전체 데이터 보기" 로 CSV 전체를 로드해도 동일하게 RowCount + freeze 가 유지된다.
+- 접근:
+  1. **`.message-details-body` 단일화** — `max-height`, `overflow`, `overscroll-behavior`, `padding-right` 제거. 말풍선 본문은 자연스럽게 자라고, 채팅 로그(`.messages`) 가 유일한 세로 스크롤 컨테이너가 된다. TASK-0030 의 scroll anchor(summary 클릭 시 `messageLogEl.scrollTop` 보정) 은 그대로 동작 — 애초에 `messageLogEl` 기준으로 측정하므로 inner cap 유무와 무관.
+  2. **내부 컨테이너 휠 전파 허용** — `.result-table-wrap`, `.sql-block` 의 `overscroll-behavior: contain` 제거. 스크롤 자체는 남기되 경계에서 부모(.messages)로 휠이 넘어가게 한다. 내부 max-height 은 조금 넉넉히 — `.result-table-wrap { max-height: min(60vh, 460px) }`, `.sql-block { max-height: min(40vh, 320px) }` 로 상향(사용자의 "최대한 바깥 스크롤이 나타나지 않도록 확장" 요청 반영).
+  3. **`buildResultTable()` 에 RowCount 삽입** — thead 에 `<th class="col-rownum">#</th>` prepend, tbody 의 각 tr 에 `<td class="col-rownum">{i+1}</td>` prepend. 데이터 컬럼 카운트는 그대로 `columns.length` 로 유지(meta 의 `N열` 문구 영향 없음).
+  4. **sticky freeze CSS**:
+     ```css
+     .result-table { border-collapse: separate; border-spacing: 0; }
+     .result-table thead th {
+       position: sticky; top: 0; z-index: 2;
+       background: var(--bg);
+       box-shadow: inset 0 -1px 0 var(--border);
+     }
+     .result-table th.col-rownum,
+     .result-table td.col-rownum {
+       position: sticky; left: 0; z-index: 1;
+       background: var(--bg);
+       color: var(--text-muted);
+       font-variant-numeric: tabular-nums;
+       text-align: right;
+       min-width: 40px;
+       width: 40px;
+       box-shadow: inset -1px 0 0 var(--border);
+     }
+     .result-table thead th.col-rownum { z-index: 3; }  /* corner: 두 축 모두 최상위 */
+     ```
+     `border-collapse: separate` 는 sticky 셀에 border 가 제대로 그려지도록 필요 — box-shadow 로 border 대체.
+  5. **`loadFullCsvIntoTable()` 동일 패턴 적용** — thead 재구성 시 `#` 먼저, tbody 재구성 시 각 tr 에 `i+1` 먼저.
+  6. 기존 `result-table th:last-child, td:last-child { border-right: none }` 는 유지(마지막 데이터 컬럼의 우측 border 제거). sticky 코너가 배경색과 일치해 content 가 뒤쪽으로 비치지 않도록 `background: var(--bg)` 확인.
+- 범위 제한:
+  - backend API / `preview_table` 응답 스키마 변경 없음. RowCount 는 순수 클라이언트 가상 컬럼.
+  - Navigator(`sql-navigator`) 구조/키보드 로직 변경 없음.
+  - 말풍선 폭 정책(TASK-0030) 변경 없음.
+  - SQL 블록 구조(pre tag) 변경 없음 — 기존 `formatSqlForDisplay()` / pre-wrap 유지.
+- 검증 기준:
+  1. 쿼리 결과 ≥ 20행을 포함한 말풍선을 펼쳤을 때 `.message-details-body` 에 scrollbar 가 나타나지 않는다(`overflow` 제거 확인).
+  2. 결과 테이블 영역에서 세로 스크롤 시 헤더 row 가 상단에 고정되어 보인다 (`getComputedStyle(thead th).position === 'sticky'`).
+  3. 가로 스크롤 시 `#` 컬럼이 좌측에 고정되어 보인다 (`getComputedStyle(td.col-rownum).position === 'sticky'`).
+  4. 결과 테이블 내부에서 세로로 스크롤하다 바닥/천장에 닿으면 `.messages` 로 휠이 전파되어 채팅 전체 스크롤이 이어진다(overscroll-behavior 제거 효과).
+  5. "전체 데이터 보기" 클릭 후에도 #/sticky 동작 유지.
+  6. 단일 말풍선 내부에 세로 스크롤바는 최대 1개(= 결과 테이블)만 동시 존재. `.message-details-body` / `.sql-block` (SQL 이 짧을 때) 에는 스크롤바 없음.
+  7. 브라우저 자동화로 위 2/3/6 을 `eval` 로 확인 + 스크린샷 캡처.
 
 ### TASK-0032 상세 설계
 - 문제 (사용자 테스트 피드백 2026-04-21):
@@ -524,6 +583,7 @@ source_of_truth: true
 - TASK-0031 (2026-04-21): 관리 콘솔 내부 스크롤 정리. `.admin-workspace` 의 외부 스크롤(`overflow-y: auto`) 제거 → `overflow: hidden` + flex column 으로 전환하고, `.admin-pane.is-active` / `.admin-list-detail` 가 남은 공간을 `flex: 1 1 auto + min-height: 0` 으로 채우도록 변경. `.admin-list-col` / `.admin-detail-col` 각각 자체 내부 스크롤 소유 — list 컬럼은 toolbar/list-head(shrink 고정) + `.admin-list`(`flex: 1; overflow-y: auto`, 기존 `max-height: calc(100vh-320px)` 제거) + 페이지네이션/일괄 액션(`flex-shrink: 0; border-top`) 구조. detail 컬럼은 `overflow-y: auto` + `.admin-detail-actions { position: sticky; bottom: -18px; margin: 4px -22px -18px; padding: 12px 22px; background: var(--surface); border-top }` 로 저장/취소/삭제 버튼을 detail 높이와 무관하게 상시 하단 노출. 대시보드 pane 은 `overflow-y: auto` 단일 스크롤로 별도 처리. 검증: detailColScroll=1866, listScroll=807 각각 내부 스크롤 활성, docScrollDelta=0(외부 스크롤 0), paginationVisible/actionsVisible=true, 양 컬럼 끝까지 스크롤해도 두 하단 요소 모두 뷰포트 내 유지. JS/HTML 변경 없이 CSS 만으로 해결.
 - TASK-0030 (2026-04-21): assistant 말풍선 고정 폭 + `<details>` 펼침 시 내부 스크롤/스크롤 앵커. `.message`의 role별 max-width 분기(user 72% / assistant `max-width:none` + `margin-right:48px` + `align-self:stretch`)로 assistant 는 채팅 pane 전폭에 가깝게, user 는 좁은 우측 정렬로 분리. `.message-details-body`에 `max-height:min(60vh,520px); overflow:auto; overscroll-behavior:contain` 캡으로 펼친 본문을 말풍선 내부에서 수직 스크롤 처리. `.result-table-wrap` 기본 `max-height:320px`, `.sql-block` `max-height:240px` 로 결과 테이블/초장문 SQL 도 내부 스크롤로 격리. `app.js` `renderMessageDetails()`의 `<summary>` 클릭 핸들러에 `messageLogEl` 기준 `summary.getBoundingClientRect().top` 측정 → 2-frame `requestAnimationFrame` 후 delta 만큼 `messageLogEl.scrollTop` 보정하는 scroll anchor 추가. 브라우저 검증: summaryDelta=0/scrollDelta=0, Navigator 이동 시 bubble width 705→705 불변, bodyMaxH=432px(60vh), details body overflow-y=auto 확인.
 - TASK-0029 (2026-04-21): 관리 콘솔 재구조화. `admin.html` 을 `topbar + sidebar(tabs) + workspace + commit-bar` 4영역 grid 로 재작성(탭: 대시보드/계정/역할). `admin.js` 전면 재작성 — `adminState.pending = { accounts, roles, newRoles }` Map 기반 pending changes 모델 + 서버 값과 일치하면 auto-drop 로직(`setAccountPending`/`setRolePending`). 계정/역할 편집은 form submit 없이 input/select change 이벤트에서 pending 에 적재만 하고, 하단 commit bar 의 "모두 적용" 클릭 시 전체 pending entry 를 순차 PATCH/DELETE/POST 후 1회만 `loadAdminData()`. 리스트-디테일 레이아웃 + 탭별 scoped search + 리스트 row 체크박스 기반 일괄 작업(활성/비활성/삭제 pending 반영). 신규 역할은 tempId(`new:N`)로 pending.newRoles 에 넣고 POST 로 일괄 커밋. `styles.css` 에 `.admin-shell` grid/`.admin-sidebar`/`.admin-tab`/`.admin-list-detail`/`.admin-list-row`/`.admin-detail-*`/`.admin-commit-bar`(.has-pending 노란 강조) 스타일 추가. 사용자 테스트에서 확인된 "여러 계정 동시 수정 시 특정 계정 저장하면 타 계정 변경 소실" 버그는 pending 모델 + 단일 commit 경로로 근본 해소.
+- TASK-0033 (2026-04-21): 결과셋 말풍선의 이중 스크롤 제거 + RowCount + Excel-like freeze. `styles.css` 의 `.message-details-body` 에서 `max-height: min(60vh,520px); overflow: auto; overscroll-behavior: contain; padding-right: 4px` 일괄 제거 → 말풍선 body 는 자연스럽게 자라고 세로 스크롤은 `.messages` 하나로 통일. `.result-table-wrap` 은 `max-height: 320px → min(60vh, 460px)` + `overscroll-behavior: contain` 제거(= auto 로 복원 → 경계에서 `.messages` 로 휠 전파). `.sql-block` 도 `max-height: 240px → min(40vh, 320px)` + overscroll 제거. `.result-table` 을 `border-collapse: separate; border-spacing: 0` 으로 전환하고 border 는 `box-shadow: inset` 으로 대체(sticky 셀에서 border 누락 방지). `.result-table thead th { position: sticky; top: 0; z-index: 2 }` 로 헤더 freeze, `.result-table th.col-rownum, td.col-rownum { position: sticky; left: 0; z-index: 1 }` 로 첫 열(#) freeze, 코너 `thead th.col-rownum { z-index: 3 }` 로 교차점 최상위. `app.js` 에 `appendRowNumCell(tr, tag, value)` 헬퍼 추가, `buildResultTable()` thead/tbody 렌더 시 `<th class="col-rownum">#</th>` + `<td class="col-rownum">{i+1}</td>` 항상 prepend. `loadFullCsvIntoTable()` 도 동일 패턴으로 재구성 → "전체 데이터 보기" 이후에도 #/freeze 유지. 검증: 기존 대화의 33행 결과 테이블에서 `theadThPosition='sticky'`, `col-rownum td position='sticky'`, corner `zIndex=3`, wrap `max-height=432px`, `overscroll-behavior='auto'`, `.message-details-body { max-height: none; overflow: visible }`, `hasInnerDetailScroll=false`, 수직 스크롤 200px 시 각 th 개별 top 변동 없음(`firstTh_delta=0`), 가로 스크롤 60px 시 `col-rownum` 좌측 고정(`rnStayed=true`, `dataMoved=true`). 스크린샷 `artifacts/shared/out/browser/task0033_01_result_tables.png` · `task0033_02_sticky_header_mid_scroll.png`.
 - TASK-0032 (2026-04-21): 권한 안내 UX 개편. `app.js` 에 `PERMISSION_DESCRIPTIONS`(33개 권한 서술 문장 맵), `describePermission()`, `requiredPermissionsFor(action, conversation)`(any/own 이원화된 권한 자동 확장), `hasAnyPermission()`, `showPermissionDeniedToast()`(필요 권한 코드 + 서술 + 관리자 요청 문구), `markAccessBlocked(btn, action, conversation)`(aria-disabled + is-access-blocked + 서술 title) 추가. `buildPermissionPills()` 의 `item.title = code` 를 `서술 문장\n(code)` 로 교체. `renderComposer()` 에서 `cancel/finalize/rename/delete` 버튼을 context 신호(processing / activeConversationId) 로만 hidden 토글하고, 권한 부재는 `markAccessBlocked()` 로 별도 표현. `sendBtn`/`newConversationBtn` 도 native disabled 대신 aria-disabled 사용해 클릭이 통과하도록 전환. 각 action 함수 (`createConversation`, `renameCurrentConversation`, `deleteConversation`, `cancelCurrentRun`, `finalizeCurrentRun`, `sendPrompt`) 의 silent `return` 을 `showPermissionDeniedToast()` 호출로 교체. `renderAccessNotice()` / `renderComposer()` 안내 문구에 `conversation.ask` 코드 명시. `styles.css` 에 `.is-access-blocked { opacity: .42; cursor: help; color: var(--text-muted) }` 추가. 검증 (admin / pending 계정): pill tooltip=한국어 서술 문장+`(code)`, pending 계정 composerHint=`현재 계정에는 대화 요청 실행 권한(\`conversation.ask\`)이 없습니다...`, sendBtn/newConvBtn/renameBtn/deleteBtn 모두 `is-access-blocked` + aria-disabled + 서술 title, 클릭 시 `'대화 삭제' 권한이 필요합니다. 관리자에게 \`conversation.delete.any\` 권한 부여를 요청하세요. — 타 사용자가 소유한 대화까지 삭제할 수 있는 권한입니다.` 형식 토스트 노출. 스크린샷 `artifacts/shared/out/browser/task0032_{01,02,03}_*.png` 증빙.
 - TASK-0028 (2026-04-21): agent-core 문서 보강. `docs/INSIGHTS.md` 신규 작성(워커 루프/사이클/fingerprint/인라인 fallback/KV 스키마/환경변수 14종/해석 가이드/헬스 체크 SQL + 2026-04-21 실제 런타임 출력). `docs/AGENT_CORE_INTERNALS.md` 신규 작성(run_agent 흐름도, SYSTEM_PROMPT 7블록 구조, TOOL_DEFINITIONS 우선순위 근거, Knowledge Injection, Step 예산/타임아웃/cancel/finalize 신호, CSV 2단계(preview 50행 + 전체 파일), Planner insight fast path, 3-state 대화 맥락). `FUNCTION.md` Main Flow/Dependencies/Observability 확장(MEMORY_DB 스키마 표, insight_worker 로그 관측성). 코드 변경 없음.
 
@@ -584,3 +644,8 @@ source_of_truth: true
 - [x] Profile > 계정 탭 권한 pill 에 마우스를 올리면 한국어 서술 문장과 권한 코드가 툴팁으로 표시된다
 - [x] 권한이 부족한 계정에서 차단된 동작을 시도(클릭/단축키)하면 필요 권한 코드 + 서술 문장 + 관리자 요청 문구가 토스트로 노출된다
 - [x] cancel/finalize/rename/delete 버튼은 context 상 의미있을 때는 항상 보이고, 권한이 없을 때는 `is-access-blocked` 로 표시되며 클릭은 토스트로 안내된다
+- [x] assistant 말풍선의 `실행 단계 및 쿼리 결과 보기` 내부에 세로 스크롤바가 중첩되지 않는다 (본문은 콘텐츠 크기만큼 확장되고 세로 스크롤은 `.messages` 하나)
+- [x] 쿼리 결과 테이블에 첫 컬럼 `#` (RowCount) 이 자동 삽입되어 행 번호가 1부터 표시된다
+- [x] 결과 테이블 내부 세로 스크롤 시 헤더 행이 상단 고정, 가로 스크롤 시 `#` 컬럼이 좌측 고정된다
+- [x] 결과 테이블 내부 스크롤이 경계에 닿으면 채팅 로그(`.messages`) 로 휠이 전파된다 (`overscroll-behavior` 제거)
+- [x] "전체 데이터 보기" 로 CSV 로드 후에도 RowCount 와 sticky freeze 가 유지된다

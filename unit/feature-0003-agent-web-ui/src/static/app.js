@@ -731,6 +731,14 @@ function parseCsv(text = "") {
   return rows;
 }
 
+function appendRowNumCell(tr, tag, value) {
+  const cell = document.createElement(tag);
+  cell.className = "col-rownum";
+  cell.textContent = String(value);
+  tr.appendChild(cell);
+  return cell;
+}
+
 function buildResultTable(previewTable) {
   const { columns = [], rows = [], truncated = false } = previewTable;
   if (!columns.length) return null;
@@ -743,6 +751,7 @@ function buildResultTable(previewTable) {
 
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
+  appendRowNumCell(headRow, "th", "#");
   columns.forEach((col) => {
     const th = document.createElement("th");
     th.textContent = String(col);
@@ -752,8 +761,9 @@ function buildResultTable(previewTable) {
   tableEl.appendChild(thead);
 
   const tbody = document.createElement("tbody");
-  rows.forEach((row) => {
+  rows.forEach((row, ri) => {
     const tr = document.createElement("tr");
+    appendRowNumCell(tr, "td", ri + 1);
     columns.forEach((_, ci) => {
       const td = document.createElement("td");
       td.textContent = row[ci] != null ? String(row[ci]) : "";
@@ -799,21 +809,23 @@ async function loadFullCsvIntoTable(csvPath, tableWrap, buttonEl) {
     const header = rows[0];
     const body = rows.slice(1);
     const tableEl = tableWrap._tableEl;
-    // 헤더 재구성
+    // 헤더 재구성 (RowCount 가상 컬럼 유지)
     const thead = tableEl.querySelector("thead");
     thead.innerHTML = "";
     const headRow = document.createElement("tr");
+    appendRowNumCell(headRow, "th", "#");
     header.forEach((col) => {
       const th = document.createElement("th");
       th.textContent = col;
       headRow.appendChild(th);
     });
     thead.appendChild(headRow);
-    // 본문 재구성
+    // 본문 재구성 (각 tr 에 행 번호 prepend)
     const tbody = tableEl.querySelector("tbody");
     tbody.innerHTML = "";
-    body.forEach((row) => {
+    body.forEach((row, ri) => {
       const tr = document.createElement("tr");
+      appendRowNumCell(tr, "td", ri + 1);
       header.forEach((_, ci) => {
         const td = document.createElement("td");
         td.textContent = row[ci] != null ? row[ci] : "";
