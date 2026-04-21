@@ -9,16 +9,35 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
-Web UI의 계정/권한 구조를 하드코딩된 `pending/operator/admin` + 계정별 `Can*` 컬럼 모델에서 `Role 기본 권한 + account override(inherit/allow/deny)` 모델로 전환했다. 권한 판정은 role명 휴리스틱 없이 `permission code + conversation ownership`만 사용하며, 관리자 콘솔은 `Accounts` / `Roles` 2영역으로 재구성했다.
+Web UI 대화 탭에서 내 계정 / 타 계정 대화를 한눈에 구분할 수 있도록 사이드바를 2 그룹(`내 대화` / `타 계정 대화`) 으로 분할 렌더하고 하이라이트·뱃지를 적용했다. 말풍선의 user 메시지도 소유 계정에 따라 톤을 분리했다. 함께 신규 `POST /api/fork_conversation` 엔드포인트와 UI 진입점(헤더 `대화 복사`, 말풍선 `여기서 분기`) 을 도입해, 타 계정 대화 전체 또는 특정 메시지까지의 스냅샷을 내 계정의 새 대화로 복제할 수 있다. RBAC 모델(`conversation.create` + 원본 read 권한) 은 그대로 재사용한다.
 
 ## 2. Progress
 - Planned: 0
-- In Progress: 없음
-- Done: RBAC table cutover, role CRUD, account role assignment, tri-state override, account soft delete, own/any 대화 권한 분기, 제목 변경 API, `clear_memory` 제거, `console.access` 기반 읽기 전용 관리자 셸, 브라우저/API 검증
+- In Progress: TASK-0034 복잡 QA 성능 테스트 (테스트 하니스 미작성 상태)
+- Done: TASK-0035 대화 사이드바 구분/정렬 + 대화/말풍선 fork, (이전) RBAC table cutover, role CRUD, account role assignment, tri-state override, account soft delete, own/any 대화 권한 분기, 제목 변경 API, `clear_memory` 제거, `console.access` 기반 읽기 전용 관리자 셸, 브라우저/API 검증
 
 ## 3. Recent Changes
-- `src/app.py`
-  - `WebPermissions`, `WebRoles`, `WebRolePermissions`, `WebAccountPermissionOverrides`를 기준으로 최종 권한을 계산하도록 재구성
+- 2026-04-21 (TASK-0035)
+  - `src/app.py`
+    - `POST /api/fork_conversation` 추가 (new_conversation 바로 아래, L3192). body: `{source_conversation_id, from_message_id?}` → 응답 `{conversation_id, source, copied, from_message_id, topic}`
+    - 권한: `conversation.create` + `_account_can_access_conversation(..., read.own/read.any)`. 위반 시 403, 원본 미존재 404, 빈 body 400
+    - 원본 topic (`AgentCoreConversations.topic` 우선, fallback `AgentMemoryKv.topic`) 에 `[Fork] ` 접두사 추가. `AgentMemoryMessages` 는 `(ConversationId, Role, Content, CreatedAt, MetaJson)` 을 **원본 CreatedAt 그대로** 재삽입, `MetaJson.forked_from_conversation_id` / `forked_from_message_id` 추가. `_is_internal_message` 은 skip.
+    - 중간 실패 시 `delete_conversation_records(conn, new_cid)` 로 롤백
+    - 성공 시 `_set_account_current_conversation` 으로 새 대화를 활성화
+  - `src/static/index.html`
+    - `chat-header-tools` 에 `#forkConversationBtn` ("대화 복사") 추가
+    - `styles.css`, `app.js` 의 cache-bust 쿼리를 `v=20260421-fork` 로 갱신
+  - `src/static/app.js`
+    - `renderConversationList` 이 `state.conversations` 을 `own` / `others` 로 파티션 → `.conv-group-title` 헤더("내 대화" / "타 계정 대화 (N)") + `.conv-item.is-own` / `.is-other` / `.conv-owner-badge` 노출
+    - `renderMessages` 가 대화 소유 계정 기준으로 `is-own-message` / `is-other-message` 클래스 + `나 (<username>)` / `<owner_username>` meta 라벨 적용, 각 메시지에 호버 시 노출되는 `여기서 분기` 버튼 삽입
+    - 신규 `forkConversation({fromMessageId})` + `forkConversationBtn` wiring, `renderComposer` 에서 fork 버튼 가시성/disabled 제어
+  - `src/static/styles.css`
+    - `.conv-group-title`, `.conv-item.is-own` (primary 좌측 바 + 틴트), `.conv-item.is-other`, `.conv-owner-badge.is-own/.is-other` 추가
+    - `.message.is-user.is-own-message` / `.is-other-message` 톤 분기, `.message-actions` / `.message-action-btn` (호버 시 opacity 상승 pill 액션) 추가
+
+- (이전) RBAC cutover (CHG-20260416-0007)
+  - `src/app.py`
+    - `WebPermissions`, `WebRoles`, `WebRolePermissions`, `WebAccountPermissionOverrides`를 기준으로 최종 권한을 계산하도록 재구성
   - legacy `Role`/`Can*` 컬럼은 마이그레이션 원본으로만 사용하고, cutover 후 런타임 read/write 경로에서 분리
   - `GET/PATCH/DELETE /api/admin/accounts`, `GET/POST/PATCH/DELETE /api/admin/roles`, `GET /api/admin/permissions`를 새 RBAC 계약으로 재작성
   - `PATCH /api/conversations/{conversation_id}/title` 추가. 대화 조회/제목 변경/삭제/중단/즉시답변/파일 조회를 `own`/`any` 권한으로 재배선
@@ -47,6 +66,11 @@ Web UI의 계정/권한 구조를 하드코딩된 `pending/operator/admin` + 계
 - 코드 문법 검증: `python3 -m py_compile src/app.py`, `node --check src/static/app.js`, `node --check src/static/admin.js`
 - 정적/검색 검증:
   - 휴리스틱 금지 grep: `ACCOUNT_ROLE_*`, `is_admin`, `is_pending`, `_normalize_role(...)`, legacy `can_*` 권한 판정 경로가 런타임에 남지 않았는지 확인
+- TASK-0035 전용 HTTP 검증 (2026-04-21):
+  - bootstrap_admin 로그인 후 `POST /api/fork_conversation {source_conversation_id: "20260421075518-571abdb6"}` → HTTP 200, `copied=6`, 새 대화 `20260421082459-c039abbd`, topic `[Fork] dblog 에서 ... `
+  - 같은 계정에서 `{source_conversation_id, from_message_id: 153}` → HTTP 200, `copied=3`, 새 대화 `20260421082523-d9fbb21b`
+  - 새 대화의 `/api/history` 응답에서 3개 메시지가 `meta.forked_from_message_id = 146, 152, 153` 으로 추적되는지 확인
+  - 인증 없는 호출은 401, 빈 body 는 400, 존재하지 않는 source 는 404 반환 확인
 - HTTP 검증:
   - bootstrap admin 로그인 후 role 목록/permission catalog/account 목록 조회
   - 임시 기본 signup role 생성 후 회원가입 계정의 기본 role 자동 부여 확인

@@ -9,12 +9,14 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: completed
+- State: in_progress
 - Owner: AI
 - Priority: medium
-- Last Updated: 2026-04-21
+- Last Updated: 2026-04-21 (TASK-0035 완료, TASK-0034 준비 상태)
 
 ## 2. Task Queue
+- [ ] TASK-0034 복잡 QA 성능 테스트 (local LLM 5 직렬 + 상용 API gpt-5.4-mini 5 병렬, 최대 20턴, 실제 DB 결과 대조 검증)
+- [x] TASK-0035 대화 탭 내 계정 구분 하이라이트/정렬 + 대화/말풍선 fork 기능
 - [x] TASK-0033 결과셋 말풍선 단일 스크롤 + RowCount + 첫 행/열 freeze
 - [x] TASK-0032 권한 안내 UX (툴팁 서술화 + 차단 시 필요 권한 안내)
 - [x] TASK-0001 Web UI 코드 이관
@@ -50,7 +52,177 @@ source_of_truth: true
 - [x] TASK-0031 관리 콘솔 내부 스크롤 정리 (페이지네이션·액션 버튼 상시 노출)
 
 ## 3. In Progress
-- 없음
+- TASK-0034 복잡 QA 성능 테스트 — 현재 구성된 assistant(agent-core + web UI)의 복잡 질의 대응력을 측정해 이후 개선 포인트를 도출한다.
+
+## 3.1 Recently Done
+- TASK-0035 (2026-04-21 마감): 사이드바가 `내 대화` / `타 계정 대화 (N)` 섹션으로 분할 노출되고 내 대화는 좌측 primary 컬러 바 + 틴트, 타 계정 대화는 owner 뱃지 강조로 구분된다. 말풍선의 user 메시지도 `is-own-message` / `is-other-message` 로 톤이 분리되며, meta 라벨은 `나 (<username>)` 또는 `<owner_username>` 을 표시한다. `POST /api/fork_conversation` 이 `conversation.create` + `read.own/any` 권한에 맞춰 원본 topic 과 메시지(internal 제외)를 새 대화로 복제하며, 복제본 topic 에는 `[Fork]` 접두사를 붙인다. 헤더 `대화 복사` 버튼은 전체 복제, 말풍선 hover 액션 `여기서 분기` 는 부분 복제(`from_message_id` 지정) 를 수행한다. 검증: `docker compose run --rm -T web python -m py_compile src/app.py` OK, 브라우저 스크립트 `curl -sk ... /api/fork_conversation` 로 전체 복제 6건/부분 복제 3건(source 20260421075518-571abdb6) 모두 HTTP 200 반환, 새 conversation_id 20260421082459-c039abbd / 20260421082523-d9fbb21b 에 topic `[Fork] ...` 접두어와 MetaJson 내 `forked_from_message_id` 저장 확인.
+
+### TASK-0035 상세 설계 (2026-04-21)
+- 문제/목적 (사용자 요청 2026-04-21):
+  1. 사이드바 대화 목록에서 자신의 대화인지, 타 계정 대화인지 **한눈에 구분이 안 된다**. 현재는 `conv-item-meta` 마지막에 작은 회색 글자로 `owner_username` 만 표시되어, admin 으로 로그인해 전체 대화를 볼 때 본인 대화가 파묻힌다.
+  2. 타 계정 대화는 조회만 가능하고 composer 가 잠겨 있어(`renderComposer` 의 `!isOwnConversation(...)` 분기), **타 계정 대화를 그대로 이어서 질의할 수 없다**. 따라서 "이 대화의 지금까지 맥락을 가져와서 내 대화로 이어서 질문" 하는 경로가 필요하다.
+  3. 동일한 요구가 자기 대화 내에서도 발생 — 특정 중간 응답(가설/분기점)에서부터 다른 방향으로 실험해 보고 싶을 때 **현재 대화를 오염시키지 않고** 그 지점까지 복제한 새 대화가 있으면 안전하다.
+- 현황/환경 분석 (출발점 근거):
+  1. `_list_conversations` ([app.py:1629](../src/app.py#L1629)) 는 `owner_account_id`, `owner_username`, `last_activity_at` 을 모두 반환하지만, 프론트엔드 `renderConversationList` ([static/app.js:588](../src/static/app.js#L588)) 는 단일 리스트로 `owner_username` 만 소극적으로 덧붙인다.
+  2. `isOwnConversation` ([static/app.js:319](../src/static/app.js#L319)) 이 `Number(conversation.owner_account_id) === Number(state.user.id)` 기준으로 소유 판정 로직을 이미 갖고 있어, 하이라이트/정렬 로직에서 재사용 가능하다.
+  3. `renderMessages` ([static/app.js:1153](../src/static/app.js#L1153)) 는 role 만으로 "사용자 / Assistant" 를 표시한다. `user` 메시지는 현재 대화 소유자가 보낸 것이므로, 대화 소유자가 현재 계정이면 "나 (<username>)", 아니면 `owner_username` 으로 라벨링하면 정보량이 크게 올라간다.
+  4. `/api/new_conversation` ([app.py:3171](../src/app.py#L3171)) 는 빈 대화만 만든다. 메시지 복사는 별도 API 가 필요하다.
+  5. `AgentMemoryMessages` 는 `(ConversationId, Role, Content, CreatedAt, MetaJson)` 스키마이고, `memory.py` 의 insert 문 ([memory.py:867](../../feature-0002-agent-core/src/modules/memory.py#L867)) 은 CreatedAt 을 DEFAULT CURRENT_TIMESTAMP 에 의존한다. fork 시에는 **원본 CreatedAt 을 보존** 해야 원본과 동일한 시계열로 재생된다 → 별도 insert 쿼리(CreatedAt 포함) 를 API 레벨에서 직접 발행.
+  6. `_get_history` ([app.py:2343](../src/app.py#L2343)) 와 `_is_internal_message` 는 internal 플래그가 붙은 시스템 메시지를 표시에서 제거한다. fork 에서는 **표시되는 메시지만** 복사해 새 대화를 "깨끗하게" 시작할 수 있도록 한다.
+- 설계 (Plan-Review-Execute, 위험도: Minor — UI 레이어 추가 + 신규 API 1개, 기존 스키마/권한 체계 변경 없음):
+  A. 사이드바 구분/정렬 (프론트엔드)
+     - `renderConversationList` 를 **own-first 그룹핑** 으로 재구성: `state.conversations` 을 `isOwnConversation(item)` 으로 파티션 → `own` 블록 + `others` 블록. 각 블록은 기존 ORDER(`updated_at DESC`) 를 그대로 따른다.
+     - 각 블록 앞에 `.conv-group-title` (섹션 헤더) 을 삽입: "내 대화" / "타 계정 대화 (<count>)". 타 계정 블록은 item 이 1건 이상일 때만 노출.
+     - `conv-item` 에 `is-own` / `is-other` 클래스 추가. 활성 하이라이트(`is-active`) 와 독립적.
+     - CSS (`styles.css`):
+       * `.conv-item.is-own` → `border-left: 3px solid var(--primary)`(내 대화 좌측 컬러 바) + 약한 `background` 틴트.
+       * `.conv-item.is-other` → `border-left: 3px solid transparent` + `.conv-item-meta` 의 owner_username 을 bold/색 강조(`var(--text-2)`) 처리.
+       * `.conv-item.is-own .conv-owner` 는 "나" 로 라벨, `.conv-item.is-other .conv-owner` 는 `owner_username` 을 그대로 노출.
+       * `.conv-group-title` → 11px, uppercase, letter-spacing 0.06em, muted 톤.
+  B. 말풍선 소유자 라벨/하이라이트 (프론트엔드)
+     - `renderMessages` 에서 현재 대화를 `currentConversation()` 로 잡아 `isOwn = isOwnConversation(conversation)`, `ownerLabel = conversation.owner_username || "사용자"` 를 계산.
+     - user 메시지 meta 라인: `isOwn ? "나 (" + state.user.username + ")" : ownerLabel` → 기존 "사용자" 라벨 교체.
+     - user 메시지 row 에 `is-own-message` 또는 `is-other-message` 클래스 부여.
+     - CSS: `is-own-message .message-bubble` → 기존 primary 톤 유지(현 상태), `is-other-message .message-bubble` → 중성 grey 톤(`--bg`, border `var(--border)`) 으로 색상 분리해 "내가 보낸 글" 과 혼동 방지. assistant 말풍선은 계정과 무관하므로 변경 없음.
+  C. 대화 fork API (백엔드)
+     - 신규 엔드포인트 `POST /api/fork_conversation` ([app.py:3171](../src/app.py#L3171) 근처, `new_conversation` 바로 아래 배치):
+       ```
+       request body: {
+         source_conversation_id: str (required),
+         from_message_id: int | null   // 이 ID 까지(포함) 복사. null/누락 시 전체 복사.
+       }
+       response: { conversation_id: str, copied: int, source: str }
+       ```
+     - 권한:
+       * 현재 계정이 `conversation.create` 를 가져야 한다 (not owned).
+       * 원본 대화에 대해 `_account_can_access_conversation(conn, account, source, "conversation.read.own", "conversation.read.any")` 가 True 이어야 한다.
+     - 절차:
+       1. 원본 존재/권한 검증. 실패 시 404/403.
+       2. `agent_core.create_new_conversation(conv_file=_account_conv_file(id))` 로 새 cid 발급 + `_assign_conversation_owner(conn, cid, account_id, force=True)`.
+       3. topic 복사: 원본 topic 조회 후 `_set_conversation_topic(conn, cid, "[Fork] " + original_topic)`. (기존 `rename_conversation_title` 의 topic 쓰기 경로를 재사용한다.)
+       4. `AgentMemoryMessages` 에서 `ConversationId = source` AND (`from_message_id` 있으면 `Id <= from_message_id`) 조건으로 Role/Content/CreatedAt/MetaJson 을 ORDER BY Id ASC 로 가져와, 새 cid 로 **원본 CreatedAt 을 그대로 유지한 채** 재삽입. `_is_internal_message` 가 True 인 row 는 skip (internal=True 인 시스템 메모는 fork 대상 아님).
+       5. MetaJson 에 `forked_from_conversation_id`, `forked_from_message_id`(또는 null) 를 추가해 추적성 보존.
+       6. `_set_account_current_conversation(conn, account_id, cid)` 로 새 대화를 활성화 후 JSON 응답.
+     - 실패/롤백: 중간 예외 시 이미 생성된 새 대화는 `delete_conversation_records(conn, cid)` 로 정리 후 500.
+  D. 대화 fork UI (프론트엔드)
+     - 헤더 버튼: `index.html` `chat-header-tools` 에 `<button id="forkConversationBtn">대화 복사</button>` 추가. 활성 대화가 있고 `conversation.create` 권한이 있으면 visible, 없으면 `is-access-blocked`.
+     - 말풍선 단위 fork: `renderMessages` 에서 각 message row 에 `message-actions` 액션 바를 생성하고 `여기서 새 대화로 분기` 버튼을 둔다. 호버 시 opacity 가 올라오는 pattern (기존 hover 스타일 참고). click → `forkConversation(from_message_id=message.id)`.
+     - 공통 함수:
+       ```js
+       async function forkConversation({ fromMessageId = null } = {}) {
+         const src = state.activeConversationId;
+         if (!src) return;
+         if (!can("conversation.create")) { showPermissionDeniedToast("conversation.create"); return; }
+         const payload = await apiFetch("/api/fork_conversation", {
+           method: "POST",
+           body: JSON.stringify({ source_conversation_id: src, from_message_id: fromMessageId }),
+         });
+         showToast(fromMessageId ? "선택한 지점까지 새 대화로 복제했습니다." : "대화를 새 대화로 복제했습니다.");
+         await refreshWorkspace(payload.conversation_id || "");
+       }
+       ```
+     - 비-own 대화에서도 `conversation.create` 만 있으면 fork 가 허용되므로, 기존 "읽기 전용 대화" 문구 아래에 "대화 복사" 버튼을 강조 노출한다 (read-only UX 의 탈출구 제공).
+- 테스트/검증:
+  1. `python3 -m py_compile repo/unit/feature-0003-agent-web-ui/src/app.py` 로 문법/import 점검.
+  2. 브라우저 수동 검증: 로그인 → 내 대화/타 계정 대화가 섹션 분리 + 하이라이트로 구분되는지 확인. admin 계정에서 본인 대화가 상단으로 정렬되는지 확인.
+  3. fork 수동 검증:
+     - 자기 대화에서 "대화 복사" → 새 대화 cid 반환 + 사이드바 "내 대화" 블록에 추가됨.
+     - 타 계정 대화에서 특정 assistant 말풍선의 "여기서 분기" → 해당 말풍선 id 까지 복사된 새 대화가 나에게 생성됨.
+     - 새 대화의 topic 이 `[Fork] ...` 로 표시되는지 확인.
+     - 새 대화에서 composer 가 열려 추가 ask 가 가능한지 확인.
+  4. 권한 분기 검증: `conversation.create` 가 없는 viewer 계정에서 fork 버튼이 `is-access-blocked` 로 표시되고 클릭 시 토스트만 뜨는지.
+- 비-목적(Out of Scope):
+  - 메시지 meta 의 steps/csv/sql 아티팩트 복제. (MetaJson 은 그대로 복제되지만, `/shared/...` 에 있는 CSV 파일은 그대로 원본 경로를 참조한다. 파일 접근은 `conversation.file.read.*` 권한과 `_account_can_access_conversation` 으로 여전히 통제되므로 fork 소유자가 원본 파일에 대한 접근 권한을 갖고 있지 않으면 링크 클릭 시 403 을 받는다. 이 범위는 현 작업에서 변경하지 않는다.)
+  - 실시간 동기화(원본 대화가 뒤에 더 쌓여도 fork 된 대화에는 반영되지 않음 — snapshot 시맨틱 유지).
+  - agent-core 내부 `ConversationState` 마이그레이션(대화별 run state 는 새 대화에서 깨끗하게 시작).
+
+### TASK-0034 상세 설계
+- 문제/목적 (사용자 요청 2026-04-21):
+  - 현재 구성된 assistant (RBAC/SQL agent/Insight/Local+API LLM) 가 실제로 **복잡한 도메인 질의** 에서 얼마나 정확한 답을 내놓는지 체계적으로 확인하고, 이후 개선 이슈의 근거로 쓰고자 함.
+  - 정확한 답변을 위해 **한 대화 안에서 최대 20회 까지 질의를 이어간다** (= 사용자 역할을 하는 테스트 러너가 추가 질문/구체화 요청으로 agent 를 보조) 는 가정으로 진행.
+  - 구성: **local LLM 5 대화 (성능 한계 → 직렬)** + **상용 API 5 대화 (모델 = gpt-5 mini → 이 저장소의 `gpt-5.4-mini`, 병렬 가능)**.
+  - API 키는 `.env` 의 `OPENAI_API_KEY` 재사용 승인됨.
+  - **실제 DB 데이터와 정확히 일치하는지 별도 검증**: 같은 질문을 사람이 직접 MySQL 쿼리로 풀어서 그 결과를 assistant 의 최종 답변과 1:1 대조한다.
+  - 기본 예시 3 개는 주어졌고, 더 복잡한 변주도 가능하면 포함한다.
+- 기준 예시 질문 (사용자 제공):
+  1. dblog 에서 **영웅스킬 업그레이드의 가장 대중적인 테크트리** 를 영웅별 및 테크트리별로 집계.
+  2. dblog 에서 **전투시작 관련 테이블 통계** — 전투시작 구성 영웅 중 가장 많이 사용된 50종의 참여 횟수/채택률.
+  3. 한정가챠 — **유저가 특정 상품일 때만 시도하고 나머지는 만료** 시키는 패턴을 근거로, "가치가 높은 상품" 이 무엇인지 집계 (이진 플래그 기반).
+- 원인/환경 분석 (본 작업의 출발점):
+  1. `/api/ask` 가 commercial 모델 사용 시 클라이언트 측에서 **PBKDF2-HMAC-SHA256(100000 iter, 32byte) + AES-GCM, `v1:<salt_b64>:<iv_b64>:<ct_b64>`** 포맷으로 암호화된 API key 를 요구 ([app.py:1003](../src/app.py#L1003) `_decrypt_api_key`). 즉 브라우저 없이 curl 로만 commercial 테스트를 하려면 동일 포맷의 암호 헬퍼가 별도로 필요하다.
+  2. Local LLM 경로는 `model ∈ {"auto","edge","core","code"}` 이고 API key 를 요구하지 않는다 ([model_catalog.py](../../feature-0002-agent-core/src/modules/model_catalog.py)). Local LLM 은 `local-llm-gateway:8080/v1` 단일 프로세스라 병렬 대화가 큐 경합으로 느려지므로 **직렬** 지시가 적절하다.
+  3. 기본 인증은 HttpOnly 세션 쿠키이므로 `/api/auth/login` → 쿠키 jar 저장 → `/api/ask` 재사용 흐름을 그대로 쓸 수 있다. `bootstrap_admin` 은 RoleId=3 (admin) 으로 `conversation.ask`/`conversation.create`/`conversation.read.any`/`conversation.file.read.any` 등 필요한 권한을 모두 보유(확인됨 `SELECT ... webrolepermissions WHERE RoleId=3 AND Code LIKE 'conversation%'`).
+  4. DB 스키마 사전 조사:
+     - `dblog.battlebegin` (533k rows). `MyHeroInfo` 컬럼이 JSON 배열 `[{Index, Level, Star, Skill:[5 levels], Equip..., Transcend...}, ...]` — **질문 1 (영웅스킬 테크트리) + 질문 2 (영웅 사용 빈도) 의 공통 자원**.
+     - `dblog.battleend` (555k rows). `Win/Star/PlayTime` 포함 — BattleType 별 성과 지표 확장 가능.
+     - `dblog.equipoptionupgrade` (8.7k rows). `OptionIndex, OptionStep` — "장비 옵션 업그레이드 테크트리" 로 해석할 여지 있으나 질문 1 의 본질은 MyHeroInfo.Skill[] 분포.
+     - `dblog.equipgacharecord` (165 rows). `HighGachaCategory` 는 comma-separated 카테고리(`"25,71,13,2"`) 와 클래스명(`"NewHero"`, `"Wizard"` 등) 이 섞여 저장되어 있음. 행 수가 매우 적지만 질문 3 이 요구하는 "이진 플래그 기반 한정가챠 가치 판별" 의 뚜렷한 resource — assistant 의 희소 데이터 해석력 테스트에 오히려 적합.
+     - 추가 대형 테이블: `dblog.currency` (2.84M), `dblog.equipget` (1.8M), `dblog.equipremove` (1.6M), `dblog.gold` (899k), `dblog.battlebeginaffixv2` (562k), `dblog.battleendaffixv2` (511k), `dblog.gemv2` (308k). 이들은 추가 복잡 질의(재화 유출입/장비 수명주기/전투 affix 영향) 에 쓸 수 있음.
+- 5 개 복잡 질문 설계 (local LLM 5 대화 × 상용 API 5 대화 공통, 동일 질문 쌍으로 두 경로를 비교):
+  1. **Q1 영웅스킬 업그레이드 테크트리 랭킹** — dblog 기준, 영웅(Index)별로 [Skill1, Skill2, Skill3, Skill4, Skill5] 레벨 조합(= "테크트리") 의 등장 빈도를 집계해 영웅별 상위 5 테크트리(+테크트리별 전체 상위 20) 를 리스트업. 데이터 소스: `battlebegin.MyHeroInfo` 배열을 JSON 풀어서 집계. (battlebegin 한 row 당 여러 hero 가 들어 있음에 주의 — assistant 가 스스로 풀어내는지 관찰 포인트.)
+  2. **Q2 전투시작 영웅 사용 Top 50** — `battlebegin.MyHeroInfo` 를 펼쳐 hero Index 별 등장 수(= 참여 횟수) 와 채택률(= 등장 수 / 전체 battlebegin 행 수) 을 계산. 전체 영웅 종 수와 rank, 채택률 소수점 2자리 보고.
+  3. **Q3 한정가챠 가치 품목 판별** — `equipgacharecord` 에서 (a) 유저가 실제로 **가챠를 진행한 행위** 와 (b) 만료/미진행 으로 보이는 **카테고리 노출 기록** 을 구분하고, 진행 행위가 많았던 카테고리(또는 코드) ↔ 일반 노출뿐이었던 카테고리 간 차이를 도출. 카테고리가 comma-separated 이므로 "이진 플래그" 해석을 assistant 가 잡아내는지가 관건.
+  4. **Q4 BattleType 별 승률 × 평균 플레이타임** — `battlebegin` ↔ `battleend` 를 (AccountId, Time window) 로 매칭하여 BattleType 별 전투 수 / 승률 (`SUM(Win) / COUNT(*)`) / 평균 PlayTime / 평균 Star 를 도출, 상위 10 BattleType 랭킹. JOIN 정의가 애매하므로 assistant 의 스키마 탐색/LIMIT 프로빙 능력 관찰.
+  5. **Q5 영웅 레벨/스타 분포로 본 "육성 된 메타 영웅" Top 20** — 각 영웅 Index 에 대해, 전투에 투입된 **최고 Level**, **평균 Level**, **Star ≥ 2 비율**, **총 등장 수** 를 계산해 "많이 나오면서 평균 레벨/스타도 높은" 영웅 Top 20. rank 산식은 assistant 가 합리적으로 제시하게 두고 검증 시 동일 산식을 사람 쿼리로 재현해 비교.
+  - 모든 5 질문은 두 모델 경로에서 동일하게 사용 → 같은 질문에 대한 local vs API 응답 품질 비교 가능.
+- 대화 프로토콜 (1 질문 → 1 "대화" 단위, 최대 20 turn):
+  - **turn 1**: 주 질문을 그대로 던진다.
+  - **turn 2~N**: assistant 가 부분 답/진행 중/스키마 탐색 중이면 러너가 보조 프롬프트 ("스키마를 먼저 확인해주세요", "JSON 안의 Skill 배열을 풀어서 집계해주세요", "가능하면 영웅별 Top 5 로 잘라주세요", "각 수치에 대해 어떤 쿼리를 썼는지 같이 보여주세요") 를 순차 제공.
+  - 종료 조건 (다음 중 하나):
+    a. assistant 가 명확한 최종 답 (표/CSV + 요약) 을 내고 러너가 "이제 충분합니다" 판단.
+    b. 20 turn 도달.
+    c. `/api/ask` 가 인증 만료/서버 500 반환 → turn 간격 유지를 위해 재로그인 1 회 시도 후 실패하면 종료.
+  - 대화 1 건당 메타: `{model, conversation_id, turns: [{user, assistant_answer, sql_list, csv_preview, elapsed_s}], final_verdict}`.
+- 테스트 하니스 설계:
+  - 위치: `/root/download/docker/mysql_ai_delegated_dev/repo/unit/feature-0003-agent-web-ui/tests/task0034_runner.py` (신규, 테스트 전용). 실제 배포 코드가 아님.
+  - 의존: `httpx`, `cryptography` (PBKDF2 + AESGCM). 두 라이브러리는 repo web 이미지에 이미 포함됨 — host 의 `python3 -m pip` 대신 `docker compose run --rm -T web python` 으로 실행해도 되고, host 에 이미 설치되어 있으면 host 에서 바로 실행 가능 (둘 다 시도 가능하도록 설계).
+  - 주요 함수:
+    ```python
+    def encrypt_api_key(plain: str, passphrase: str) -> str:
+        # salt(16B rand) + iv(12B rand) + PBKDF2HMAC-SHA256(iter=100_000, len=32)
+        # → AESGCM encrypt → "v1:<b64 salt>:<b64 iv>:<b64 ct>"
+    def login(client, username, password) -> None                 # POST /api/auth/login
+    def new_conversation(client, model) -> dict                   # POST /api/new_conversation
+    def ask(client, message, model, conversation_id,
+            api_key_cipher=None, api_key_passphrase=None,
+            timeout=600) -> dict                                   # POST /api/ask
+    def run_conversation(question, model, api_key, max_turns=20) -> dict
+    ```
+  - 상용 API 경로: `ask()` 호출 시 매 턴마다 암호화된 cipher + 새 passphrase 같이 전송 (서버 측 복호화 → upstream OpenAI 호출).
+  - Local LLM 경로: `api_key_cipher=None`, `model ∈ {"core","edge","auto"}`. 본 테스트는 `core` 고정 (agent 기본 권장).
+  - 실행 전략:
+    - 상용 5 대화: `asyncio.gather` 5 병렬 (`gpt-5.4-mini`).
+    - Local 5 대화: `for` 루프 직렬 (`core`).
+  - 결과 저장: `/root/download/docker/mysql_ai_delegated_dev/repo/unit/feature-0003-agent-web-ui/tests/task0034_runs/{local|api}-{qid}.json` — 각 대화의 전체 turn 로그 + 최종 답변 + 모든 SQL + CSV preview path 포함.
+- DB 대조 검증 설계:
+  - 질문별 **사람 정답 쿼리** 를 별도 파일 `tests/task0034_truth.sql` 에 기록 (Q1~Q5). 예:
+    ```sql
+    -- Q2 (참고): hero 사용 Top 50
+    SELECT h.hero_index, COUNT(*) AS appearances,
+           ROUND(COUNT(*) / (SELECT COUNT(*) FROM dblog.battlebegin WHERE MyHeroInfo IS NOT NULL) * 100, 2) AS adoption_pct
+    FROM dblog.battlebegin b,
+         JSON_TABLE(b.MyHeroInfo, '$[*]' COLUMNS (hero_index INT PATH '$.Index')) h
+    WHERE b.MyHeroInfo IS NOT NULL AND b.MyHeroInfo <> ''
+    GROUP BY h.hero_index
+    ORDER BY appearances DESC
+    LIMIT 50;
+    ```
+  - 검증 스크립트 `tests/task0034_verify.py`: assistant 가 낸 최종 Top-N 리스트 vs truth 쿼리 결과를 **(key, count) tuple set 비교 + rank 순서 비교** 로 확인. 일치율 % 와 불일치 항목 diff 출력.
+  - 모호한 질문(Q3, Q5) 은 "논리적으로 맞는 범위" 를 기준으로 판정 기록 (완전 일치 가능 여부를 리포트에 명시).
+- 결과 리포트:
+  - `tests/TASK-0034-REPORT.md` — 질문별로 (a) assistant 최종 답변 요약, (b) 사람 truth 결과, (c) 일치/불일치, (d) 몇 턴 만에 수렴, (e) 관찰된 개선 포인트.
+  - LEARNINGS 는 (**LRN-20260421-0010**) "복잡 QA 에서 agent 가 어디에서 막히거나 무한 재시도하는지, 어떤 휴리스틱을 추가하면 턴 수를 줄일 수 있는지" 한 줄 패턴으로 정리.
+- 범위 제한:
+  - 프로덕션 UI/백엔드 코드 변경 **금지**. 오직 테스트 하니스 신규 파일 추가 + 결과 문서만.
+  - 결과 저장 CSV 원본 (agent 가 `/data/artifacts` 에 남기는 실제 파일) 은 repo 에 체크인하지 않음 — 로그 JSON 의 `preview` 10 행만 커밋.
+  - `.env` 의 실제 API key 는 **절대 로그에 남기지 않는다**. 러너가 키를 메모리에 로드해서 암호화·전송 후 즉시 해제.
+  - 본 테스트 실행 중 agent 가 만든 대화/메타데이터(webaccounts/conversations) 는 정리하지 않고 남겨 둠 — 사용자가 이후 UI 로 참고 가능.
+- 검증 기준 (본 TASK 자체의 완료 조건):
+  1. local 5 + API 5 총 10 대화가 실제로 실행되어 JSON 로그로 남았다.
+  2. 각 대화의 turn 수 / 최종 답변 / SQL 목록 / 경과 시간이 로그에서 읽힌다.
+  3. 5 질문 각각에 대해 DB truth 쿼리를 사람이 돌려본 결과와 assistant 답변을 비교한 diff 가 REPORT.md 에 기록되었다.
+  4. LEARNINGS.md 에 이번 실험에서 발견된 구조적 개선점(LRN 항목 신규) 이 추가되었다.
+  5. 커밋/푸시까지 완료.
 
 ### TASK-0033 상세 설계
 - 문제 (사용자 테스트 피드백 2026-04-21):
@@ -649,3 +821,6 @@ source_of_truth: true
 - [x] 결과 테이블 내부 세로 스크롤 시 헤더 행이 상단 고정, 가로 스크롤 시 `#` 컬럼이 좌측 고정된다
 - [x] 결과 테이블 내부 스크롤이 경계에 닿으면 채팅 로그(`.messages`) 로 휠이 전파된다 (`overscroll-behavior` 제거)
 - [x] "전체 데이터 보기" 로 CSV 로드 후에도 RowCount 와 sticky freeze 가 유지된다
+- [ ] TASK-0034: 복잡 QA 성능 테스트가 local LLM 5 (직렬) + 상용 API gpt-5.4-mini 5 (병렬) 총 10 대화로 실행되어 turn-by-turn 로그가 JSON 으로 저장된다
+- [ ] TASK-0034: 5 개 복잡 질문에 대해 사람 truth 쿼리와 assistant 최종 답변이 비교 가능한 diff 형태로 `TASK-0034-REPORT.md` 에 기록된다
+- [ ] TASK-0034: 관찰된 개선 포인트가 `docs/LEARNINGS.md` 에 신규 LRN 항목으로 추가된다

@@ -3189,6 +3189,179 @@ async def new_conversation(request: Request) -> JSONResponse:
     return JSONResponse({"conversation_id": cid, "output": f"새 대화: {cid}"})
 
 
+@app.post("/api/fork_conversation")
+async def fork_conversation(request: Request) -> JSONResponse:
+    """원본 대화의 메시지를 현재 계정 소유의 새 대화로 스냅샷 복제한다.
+
+    body: {source_conversation_id: str, from_message_id?: int}
+    - from_message_id 가 주어지면 해당 Id 까지(포함) 복사, 아니면 표시 가능한 전체 메시지 복사.
+    - 원본 CreatedAt/Role/Content/MetaJson 을 보존하고 MetaJson 에 forked_from_* 를 추가한다.
+    - 원본에 대한 read 권한 + 현재 계정의 conversation.create 권한이 모두 필요하다.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    source_id = str(data.get("source_conversation_id") or "").strip()
+    if not source_id:
+        return _json_error("empty source_conversation_id", 400)
+    raw_from = data.get("from_message_id")
+    from_id: int | None = None
+    if raw_from is not None and str(raw_from).strip() != "":
+        try:
+            from_id = int(raw_from)
+        except Exception:
+            return _json_error("invalid from_message_id", 400)
+
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(account, "conversation.create"):
+        conn.close()
+        return _json_error("'새 대화 생성' 권한이 없습니다.", 403)
+    if not _account_can_access_conversation(
+        conn,
+        account,
+        source_id,
+        "conversation.read.own",
+        "conversation.read.any",
+    ):
+        conn.close()
+        return _json_error("원본 대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+
+    # 원본 topic 조회 (AgentCoreConversations.topic 우선, 없으면 AgentMemoryKv 의 'topic').
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+SELECT COALESCE(NULLIF(TRIM(c.topic), ''), NULLIF(TRIM(kv.`Value`), ''), '새 대화') AS topic
+FROM AgentCoreConversations c
+LEFT JOIN AgentMemoryKv kv
+  ON kv.ConversationId COLLATE utf8mb4_unicode_ci = c.conversation_id COLLATE utf8mb4_unicode_ci
+ AND kv.`Key` = 'topic'
+WHERE c.conversation_id = %s
+LIMIT 1
+            """,
+            (source_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        source_topic = str(row[0]) if row and row[0] is not None else "새 대화"
+    except Exception:
+        source_topic = "새 대화"
+
+    # 복사 대상 메시지 조회 (내부/시스템 메시지는 제외, 표시되는 스트림만 보존).
+    try:
+        cur = conn.cursor()
+        if from_id is not None:
+            cur.execute(
+                """
+SELECT Id, Role, Content, CreatedAt, MetaJson
+FROM AgentMemoryMessages
+WHERE ConversationId = %s AND Id <= %s
+ORDER BY Id ASC
+                """,
+                (source_id, int(from_id)),
+            )
+        else:
+            cur.execute(
+                """
+SELECT Id, Role, Content, CreatedAt, MetaJson
+FROM AgentMemoryMessages
+WHERE ConversationId = %s
+ORDER BY Id ASC
+                """,
+                (source_id,),
+            )
+        src_rows = cur.fetchall() or []
+        cur.close()
+    except Exception:
+        conn.close()
+        return _json_error("failed to load source messages", 500)
+
+    # 새 대화 생성 + 소유권 부여 + topic 세팅.
+    from agent_core import create_new_conversation as _create_conv
+    try:
+        new_cid = _create_conv(conv_file=_account_conv_file(int(account["id"])))
+        _assign_conversation_owner(conn, new_cid, int(account["id"]), force=True)
+        new_topic = f"[Fork] {source_topic}"[:256]
+        cur = conn.cursor()
+        cur.execute(
+            """
+UPDATE AgentCoreConversations
+SET topic = %s,
+    updated_at = CURRENT_TIMESTAMP
+WHERE conversation_id = %s
+            """,
+            (new_topic, new_cid),
+        )
+        cur.close()
+    except Exception:
+        conn.close()
+        return _json_error("failed to create forked conversation", 500)
+
+    copied = 0
+    try:
+        cur = conn.cursor()
+        for row in src_rows:
+            msg_id, role, content, created_at, meta_json = row
+            if _is_internal_message(role, content, meta_json):
+                continue
+            meta: dict[str, Any] = {}
+            if meta_json:
+                try:
+                    parsed = json.loads(meta_json)
+                    if isinstance(parsed, dict):
+                        meta = parsed
+                except Exception:
+                    meta = {}
+            meta["forked_from_conversation_id"] = source_id
+            meta["forked_from_message_id"] = int(msg_id) if msg_id is not None else None
+            if from_id is not None:
+                meta["forked_cut_message_id"] = int(from_id)
+            try:
+                meta_out = json.dumps(meta, ensure_ascii=False, default=str)
+            except Exception:
+                meta_out = json.dumps({"forked_from_conversation_id": source_id})
+            cur.execute(
+                """
+INSERT INTO AgentMemoryMessages (ConversationId, Role, Content, CreatedAt, MetaJson)
+VALUES (%s, %s, %s, %s, %s)
+                """,
+                (new_cid, role, content, created_at, meta_out),
+            )
+            copied += 1
+        cur.close()
+    except Exception:
+        # 중간 실패 시 새 대화 기록을 정리하고 500 반환.
+        try:
+            delete_conversation_records(conn, new_cid)
+        except Exception:
+            pass
+        conn.close()
+        return _json_error("failed to copy messages", 500)
+
+    try:
+        _set_account_current_conversation(conn, int(account["id"]), new_cid)
+    except Exception:
+        pass
+    conn.close()
+    return JSONResponse(
+        {
+            "conversation_id": new_cid,
+            "source": source_id,
+            "copied": copied,
+            "from_message_id": int(from_id) if from_id is not None else None,
+            "topic": new_topic,
+        }
+    )
+
+
 @app.post("/api/list_conversations")
 async def list_conversations(request: Request) -> JSONResponse:
     try:

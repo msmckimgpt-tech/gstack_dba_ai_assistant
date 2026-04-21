@@ -51,6 +51,7 @@ const renameConversationBtn = document.getElementById("renameConversationBtn");
 const cancelBtn = document.getElementById("cancelBtn");
 const finalizeBtn = document.getElementById("finalizeBtn");
 const deleteConversationBtn = document.getElementById("deleteConversationBtn");
+const forkConversationBtn = document.getElementById("forkConversationBtn");
 const composerTitleEl = document.getElementById("composerTitle");
 const composerHintEl = document.getElementById("composerHint");
 const promptInputEl = document.getElementById("promptInput");
@@ -585,37 +586,71 @@ function renderConversationList() {
     return;
   }
 
+  const own = [];
+  const others = [];
   state.conversations.forEach((item) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `conv-item ${item.id === state.activeConversationId ? "is-active" : ""}`.trim();
-    button.addEventListener("click", () => {
-      selectConversation(item.id);
-    });
-
-    const titleEl = document.createElement("div");
-    titleEl.className = "conv-item-title";
-    titleEl.textContent = item.topic || "새 대화";
-
-    const metaEl = document.createElement("div");
-    metaEl.className = "conv-item-meta";
-
-    const normalizedStatus = String(item.status || "").trim().toLowerCase();
-    const dot = document.createElement("span");
-    dot.className = `conv-dot ${normalizedStatus ? `is-${normalizedStatus}` : ""}`.trim();
-
-    const dateEl = document.createElement("span");
-    dateEl.textContent = formatDateTime(item.last_activity_at || item.created_at);
-
-    metaEl.append(dot, dateEl);
-    if (item.owner_username) {
-      const ownerEl = document.createElement("span");
-      ownerEl.textContent = item.owner_username;
-      metaEl.append(ownerEl);
-    }
-    button.append(titleEl, metaEl);
-    conversationListEl.appendChild(button);
+    if (isOwnConversation(item)) own.push(item);
+    else others.push(item);
   });
+
+  const renderGroup = (label, items) => {
+    if (!items.length) return;
+    const header = document.createElement("div");
+    header.className = "conv-group-title";
+    header.textContent = label;
+    conversationListEl.appendChild(header);
+
+    items.forEach((item) => {
+      const mine = isOwnConversation(item);
+      const button = document.createElement("button");
+      button.type = "button";
+      const classes = ["conv-item", mine ? "is-own" : "is-other"];
+      if (item.id === state.activeConversationId) classes.push("is-active");
+      button.className = classes.join(" ");
+      button.addEventListener("click", () => {
+        selectConversation(item.id);
+      });
+
+      const titleRow = document.createElement("div");
+      titleRow.className = "conv-item-title-row";
+
+      const titleEl = document.createElement("div");
+      titleEl.className = "conv-item-title";
+      titleEl.textContent = item.topic || "새 대화";
+      titleRow.appendChild(titleEl);
+
+      const badge = document.createElement("span");
+      badge.className = `conv-owner-badge ${mine ? "is-own" : "is-other"}`;
+      badge.textContent = mine ? "내" : (item.owner_username || "타 계정");
+      if (!mine && item.owner_username) {
+        badge.title = `소유자: ${item.owner_username}`;
+      }
+      titleRow.appendChild(badge);
+
+      const metaEl = document.createElement("div");
+      metaEl.className = "conv-item-meta";
+
+      const normalizedStatus = String(item.status || "").trim().toLowerCase();
+      const dot = document.createElement("span");
+      dot.className = `conv-dot ${normalizedStatus ? `is-${normalizedStatus}` : ""}`.trim();
+
+      const dateEl = document.createElement("span");
+      dateEl.textContent = formatDateTime(item.last_activity_at || item.created_at);
+
+      metaEl.append(dot, dateEl);
+      if (!mine && item.owner_username) {
+        const ownerEl = document.createElement("span");
+        ownerEl.className = "conv-owner";
+        ownerEl.textContent = item.owner_username;
+        metaEl.append(ownerEl);
+      }
+      button.append(titleRow, metaEl);
+      conversationListEl.appendChild(button);
+    });
+  };
+
+  renderGroup("내 대화", own);
+  renderGroup(`타 계정 대화 (${others.length})`, others);
 }
 
 function renderConversationHeader() {
@@ -1160,14 +1195,28 @@ function renderMessages() {
     return;
   }
 
+  const conversation = currentConversation();
+  const isOwn = conversation ? isOwnConversation(conversation) : false;
+  const ownerLabel = conversation && conversation.owner_username ? conversation.owner_username : "사용자";
+  const selfLabel = state.user && state.user.username ? `나 (${state.user.username})` : "나";
+  const canFork = Boolean(state.activeConversationId) && can("conversation.create");
+
   state.messages.forEach((message) => {
     const row = document.createElement("article");
     const role = message.role === "user" ? "user" : "assistant";
-    row.className = `message is-${role}`;
+    const classes = [`message`, `is-${role}`];
+    if (role === "user") {
+      classes.push(isOwn ? "is-own-message" : "is-other-message");
+    }
+    row.className = classes.join(" ");
 
     const meta = document.createElement("div");
     meta.className = "message-meta";
-    meta.textContent = `${role === "user" ? "사용자" : "Assistant"} · ${formatDateTime(message.created_at)}`;
+    let speaker = "Assistant";
+    if (role === "user") {
+      speaker = isOwn ? selfLabel : ownerLabel;
+    }
+    meta.textContent = `${speaker} · ${formatDateTime(message.created_at)}`;
 
     const bubble = document.createElement("div");
     bubble.className = "message-bubble";
@@ -1180,6 +1229,26 @@ function renderMessages() {
       if (details) {
         bubble.appendChild(details);
       }
+    }
+
+    // 말풍선 단위 분기 버튼 — conversation.create 권한이 있을 때만 노출.
+    if (canFork && message.id != null) {
+      const actions = document.createElement("div");
+      actions.className = "message-actions";
+      const forkBtn = document.createElement("button");
+      forkBtn.type = "button";
+      forkBtn.className = "message-action-btn";
+      forkBtn.textContent = "여기서 분기";
+      forkBtn.title = "이 말풍선까지의 기록을 내 계정의 새 대화로 복제합니다.";
+      forkBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        forkConversation({ fromMessageId: message.id }).catch((error) => {
+          showToast(error.message || "대화 분기에 실패했습니다.", true);
+        });
+      });
+      actions.appendChild(forkBtn);
+      bubble.appendChild(actions);
     }
 
     row.append(meta, bubble);
@@ -1240,6 +1309,23 @@ function renderComposer() {
   finalizeBtn.classList.toggle("hidden", !processing);
   renameConversationBtn.classList.toggle("hidden", !state.activeConversationId);
   deleteConversationBtn.classList.toggle("hidden", !state.activeConversationId);
+  if (forkConversationBtn) {
+    forkConversationBtn.classList.toggle("hidden", !state.activeConversationId);
+    if (state.activeConversationId) {
+      if (can("conversation.create")) {
+        forkConversationBtn.removeAttribute("aria-disabled");
+        forkConversationBtn.classList.remove("is-access-blocked");
+        forkConversationBtn.title = active && !isOwnConversation(active)
+          ? "이 대화의 기록을 내 계정의 새 대화로 복제합니다."
+          : "이 대화의 기록을 내 계정의 새 대화로 복제합니다.";
+      } else {
+        forkConversationBtn.setAttribute("aria-disabled", "true");
+        forkConversationBtn.classList.add("is-access-blocked");
+        forkConversationBtn.title =
+          "'새 대화 생성' 권한이 없습니다. 필요 권한: `conversation.create`";
+      }
+    }
+  }
   if (processing) {
     markAccessBlocked(cancelBtn, "conversation.cancel", active);
     markAccessBlocked(finalizeBtn, "conversation.finalize", active);
@@ -1399,6 +1485,29 @@ async function createConversation() {
   const payload = await apiFetch("/api/new_conversation", { method: "POST" });
   showToast("새 대화를 만들었습니다.");
   await refreshWorkspace(payload.conversation_id || "");
+}
+
+async function forkConversation({ fromMessageId = null } = {}) {
+  const sourceId = state.activeConversationId;
+  if (!sourceId) return;
+  if (!can("conversation.create")) {
+    showPermissionDeniedToast("conversation.create");
+    return;
+  }
+  const body = { source_conversation_id: sourceId };
+  if (fromMessageId != null) body.from_message_id = Number(fromMessageId);
+  const payload = await apiFetch("/api/fork_conversation", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  const newId = payload && payload.conversation_id ? String(payload.conversation_id) : "";
+  const copied = Number(payload && payload.copied) || 0;
+  showToast(
+    fromMessageId != null
+      ? `선택한 지점까지 ${copied}개 메시지를 새 대화로 복제했습니다.`
+      : `대화를 복제했습니다 (${copied}개 메시지).`
+  );
+  await refreshWorkspace(newId);
 }
 
 async function renameCurrentConversation() {
@@ -1754,6 +1863,13 @@ async function initialize() {
       showToast(error.message || "대화 제목 변경에 실패했습니다.", true);
     });
   });
+  if (forkConversationBtn) {
+    forkConversationBtn.addEventListener("click", () => {
+      forkConversation().catch((error) => {
+        showToast(error.message || "대화 복사에 실패했습니다.", true);
+      });
+    });
+  }
 
   // Textarea auto-grow
   promptInputEl.addEventListener("input", function () {

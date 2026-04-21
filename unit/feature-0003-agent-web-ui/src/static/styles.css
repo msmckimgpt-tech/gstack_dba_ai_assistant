@@ -415,6 +415,18 @@ a { color: inherit; }
 }
 .conv-list .empty-state strong { font-size: 13px; color: var(--text-2); }
 
+/* Conversation group header */
+.conv-group-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--text-muted);
+  padding: 10px 10px 4px;
+  margin-top: 6px;
+}
+.conv-group-title:first-child { margin-top: 0; }
+
 /* Conversation item */
 .conv-item {
   display: flex;
@@ -423,14 +435,64 @@ a { color: inherit; }
   padding: 9px 10px;
   border-radius: var(--r-md);
   border: none;
+  border-left: 3px solid transparent;
   background: transparent;
   text-align: left;
   cursor: pointer;
   width: 100%;
-  transition: background .12s;
+  transition: background .12s, border-color .12s;
 }
 .conv-item:hover    { background: rgba(0,0,0,.04); }
 .conv-item.is-active { background: rgba(37,99,235,.09); }
+
+/* Own / other-account differentiation */
+.conv-item.is-own {
+  border-left-color: var(--primary);
+  background: rgba(37,99,235,.04);
+}
+.conv-item.is-own.is-active {
+  background: rgba(37,99,235,.12);
+}
+.conv-item.is-other {
+  background: transparent;
+  opacity: .92;
+}
+.conv-item.is-other .conv-item-title { color: var(--text-2); }
+.conv-item.is-other .conv-owner {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.conv-item-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.conv-item-title-row .conv-item-title { flex: 1; min-width: 0; }
+
+.conv-owner-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  line-height: 1.6;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conv-owner-badge.is-own {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border: 1px solid rgba(37,99,235,.22);
+}
+.conv-owner-badge.is-other {
+  background: var(--bg);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
 
 .conv-item-title {
   font-size: 13px;
@@ -756,6 +818,30 @@ a { color: inherit; }
   border-bottom-right-radius: var(--r-xs);
 }
 
+/* 타 계정 사용자 메시지: 파란색(내 메시지) 과 혼동하지 않도록 중성 grey 로 분리 */
+.message.is-user.is-other-message .message-bubble {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+.message.is-user.is-other-message .message-content pre {
+  background: #1a1b26;
+  color: #c0caf5;
+}
+.message.is-user.is-other-message .message-content code {
+  background: rgba(0,0,0,.06);
+  color: inherit;
+}
+.message.is-user.is-own-message .message-meta {
+  color: var(--primary);
+  font-weight: 600;
+}
+.message.is-user.is-other-message .message-meta {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
 .message.is-assistant .message-bubble {
   width: 100%;
   background: var(--bubble-ai);
@@ -763,6 +849,42 @@ a { color: inherit; }
   border: 1px solid var(--border);
   border-bottom-left-radius: var(--r-xs);
   box-shadow: var(--shadow-sm);
+}
+
+/* 말풍선 단위 분기(fork) 버튼 */
+.message-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+  opacity: 0;
+  transition: opacity .12s;
+}
+.message:hover .message-actions,
+.message-actions:focus-within {
+  opacity: 1;
+}
+.message-action-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.message-action-btn:hover {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: rgba(37,99,235,.25);
+}
+.message.is-user.is-own-message .message-action-btn {
+  background: rgba(255,255,255,.9);
+  color: var(--primary);
+}
+.message.is-user.is-own-message .message-action-btn:hover {
+  background: #fff;
 }
 
 /* Message content markdown */
