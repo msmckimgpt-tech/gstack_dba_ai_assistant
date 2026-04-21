@@ -823,6 +823,7 @@ a { color: inherit; }
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 }
 
 .sql-result-label {
@@ -841,9 +842,12 @@ a { color: inherit; }
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.55;
-  overflow-x: auto;
-  white-space: pre;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
   margin: 0;
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* 인라인 쿼리 결과 테이블 */
@@ -939,6 +943,7 @@ a { color: inherit; }
   padding: 8px;
   background: var(--bg);
   outline: none;
+  min-width: 0;
 }
 .sql-navigator:focus-visible {
   border-color: var(--primary);
@@ -1002,6 +1007,7 @@ a { color: inherit; }
 
 .sql-nav-panel {
   display: none;
+  min-width: 0;
 }
 .sql-nav-panel.is-active {
   display: flex;

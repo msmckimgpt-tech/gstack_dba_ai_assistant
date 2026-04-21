@@ -90,6 +90,15 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
   - 대용량 전체 데이터는 `/api/file`로 CSV fetch 후 클라이언트 파싱해 tbody 교체 + `max-height + overflow:auto`로 영역 보호
 - Applies to: feature-0003 에서 말풍선 내 여러 결과셋을 다뤄야 하는 모든 UI (SQL 결과 외에도 step 기반 반복 결과 일반에 확장 가능).
 
+### LRN-20260421-0001 — 한 줄 SQL은 표시 전용 포매터로 키워드 경계 줄바꿈을 적용한다
+- Source: feature-0003 SQL 수평 확장 방지 작업 (TASK-0026, 2026-04-21)
+- Pattern: LLM이 생성하는 SQL은 종종 한 줄로 길게 이어져 `<pre>` 블록이 말풍선을 수평으로 확장시킨다. `overflow-x: auto`를 쓰면 스크롤바가 생기지만 flex/grid `min-width` 계산으로 부모가 확장되는 경우는 방지하지 못한다. 해결책은 표시 전용 포매터 `formatSqlForDisplay()`를 `pre.textContent` 세팅 직전에 적용하는 것이다:
+  - 이미 `\n`이 있으면 원형 유지 (LLM이 이미 포맷한 경우)
+  - 문자열 리터럴(`'...'`, `"..."`, `` `...` ``)을 placeholder로 치환해 내부 키워드를 보호한 뒤, 주요 키워드(`SELECT`, `FROM`, `WHERE`, `GROUP BY`, `ORDER BY`, `INNER JOIN` 등) 앞 공백을 `\n`으로 교체
+  - 복합 키워드(`LEFT JOIN` 등)가 분리되지 않도록 bare `JOIN`은 키워드 목록에서 제외
+  - CSS에 `white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere` + 컨테이너 `min-width: 0`을 함께 적용해 포매터가 못 잡는 초장문 토큰도 wrap
+- Applies to: feature-0003 에서 `sql-block` 렌더링을 수정하거나 SQL 표시 로직을 변경하는 모든 작업.
+
 ## Category: quirk
 
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존

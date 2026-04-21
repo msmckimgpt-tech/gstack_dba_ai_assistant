@@ -683,6 +683,55 @@ async function loadFullCsvIntoTable(csvPath, tableWrap, buttonEl) {
   }
 }
 
+const SQL_FORMAT_KEYWORDS = [
+  "LEFT OUTER JOIN",
+  "RIGHT OUTER JOIN",
+  "FULL OUTER JOIN",
+  "LEFT JOIN",
+  "RIGHT JOIN",
+  "INNER JOIN",
+  "OUTER JOIN",
+  "FULL JOIN",
+  "CROSS JOIN",
+  "UNION ALL",
+  "GROUP BY",
+  "ORDER BY",
+  "INSERT INTO",
+  "DELETE FROM",
+  "SELECT",
+  "FROM",
+  "WHERE",
+  "HAVING",
+  "LIMIT",
+  "OFFSET",
+  "UNION",
+  "UPDATE",
+  "SET",
+  "VALUES",
+];
+
+function formatSqlForDisplay(raw = "") {
+  const src = String(raw || "").trim();
+  if (!src) return "";
+  if (/\n/.test(src)) return src;
+
+  const literals = [];
+  const literalRe = /('([^'\\]|\\.|'')*'|"([^"\\]|\\.|"")*"|`[^`]*`)/g;
+  const masked = src.replace(literalRe, (m) => {
+    literals.push(m);
+    return `\u0001${literals.length - 1}\u0001`;
+  });
+
+  const keywordAlt = SQL_FORMAT_KEYWORDS
+    .map((k) => k.replace(/ /g, "\\s+"))
+    .join("|");
+  const pattern = new RegExp(`\\s+(?=\\b(?:${keywordAlt})\\b)`, "gi");
+  let formatted = masked.replace(pattern, "\n");
+
+  formatted = formatted.replace(/\u0001(\d+)\u0001/g, (_, i) => literals[Number(i)]);
+  return formatted;
+}
+
 function buildSqlStepPanel(step) {
   const panel = document.createElement("div");
   panel.className = "sql-result-group";
@@ -690,7 +739,7 @@ function buildSqlStepPanel(step) {
   if (step.sql) {
     const pre = document.createElement("pre");
     pre.className = "sql-block";
-    pre.textContent = String(step.sql);
+    pre.textContent = formatSqlForDisplay(step.sql);
     panel.appendChild(pre);
   }
 
