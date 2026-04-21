@@ -44,9 +44,63 @@ source_of_truth: true
 - [x] TASK-0027 RBAC 세분화 반영 — Profile 권한 그룹화 + 관리 콘솔 UX 재설계
 - [x] TASK-0028 Insight 시스템 및 agent-core 내부 설계 문서화
 - [x] TASK-0029 관리 콘솔 재구조화 (탭 + 마스터-디테일 + 일괄 commit)
+- [x] TASK-0030 assistant 말풍선 고정 폭 + 결과셋 내부 스크롤 + 펼침 스크롤 앵커
 
 ## 3. In Progress
 - 없음
+
+### TASK-0030 상세 설계
+- 문제 (사용자 테스트 피드백 2026-04-21):
+  - assistant 답변의 "실행 단계 및 쿼리 결과 보기" `<details>` 블록을 펼칠 경우, 결과셋 구성(쿼리 수/행 수/컬럼 수/SQL 길이)에 따라 말풍선의 높이와 폭이 비결정적으로 커져 **채팅 스크롤 위치가 움직이고**, 사용자가 방금 보던 문장을 놓친다.
+  - 원인 1: [styles.css:721-725](../src/static/styles.css#L721-L725) `.message { max-width: 82% }`가 user/assistant 양쪽에 동일 적용되어, assistant 말풍선이 기본적으로 좁고, 내용이 커지면 높이로 비대해진다.
+  - 원인 2: [styles.css:838-843](../src/static/styles.css#L838-L843) `.message-details-body`에 max-height/overflow 제약이 없어서 내부 SQL · 테이블 · 긴 `<pre>` 가 수직으로 끝없이 누적된다.
+  - 원인 3: [styles.css:894-898](../src/static/styles.css#L894-L898) `.result-table-wrap` 기본형은 `overflow-x: auto`만 있고 수직 cap이 없다 ("is-full-data" 변형만 360px 로 제한). 결과 preview가 많이 잘리지 않은 상태면 높이가 무제한.
+  - 원인 4: [styles.css:877-891](../src/static/styles.css#L877-L891) `.sql-block`은 `pre-wrap`이지만 초장문 SQL 은 여전히 화면 높이를 밀어낸다.
+  - 원인 5: [app.js:980-1023](../src/static/app.js#L980-L1023) `renderMessageDetails()`는 `<details>` 펼침/접힘 시 스크롤 앵커 로직이 없어, `<summary>` 위치가 뷰포트 내에서 통째로 이동한다.
+- 목표:
+  1. assistant 말풍선은 기본적으로 **넓은 폭으로 고정**(우측 사용자 질문 영역과 구분할 수 있는 소량 여백만 유지). 펼친 내용의 크기에 따라 말풍선 폭이 흔들리지 않는다.
+  2. 말풍선 내부가 너무 길어지면 **말풍선 내부에서 수직/수평 스크롤**로 처리한다. 말풍선 바깥 레이아웃(채팅 스크롤, 사이드바, 메시지 간격)은 변형되지 않는다.
+  3. `<details>` 펼침/접힘 시 **`<summary>`가 뷰포트 내 동일 위치에 유지**되도록 스크롤을 보정한다(scroll anchor).
+  4. user 말풍선은 우측 정렬 좁은 형태를 유지해 assistant와 시각적으로 확실히 구분된다.
+- 검토한 대안:
+  - Option A (사용자 제안 원형): 말풍선 전폭 + 내부 수평 스크롤. 단순하고 직접적.
+  - Option B (Claude artifact 사이드 패널): 결과셋을 별도 right-panel에 띄워 채팅 흐름과 분리. 현재 이슈 해결에는 과설계이며 Navigator/CSV 링크/progress strip 과의 통합 비용이 큼.
+  - Option C (채택): **말풍선 고정 폭 + `<details>` 본문 max-height 캡 + 중첩 스크롤 + summary 클릭 스크롤 앵커**. Option A의 직접성에 scroll anchor를 더해 "펼칠 때 위치가 튀는" 부작용까지 해소. 기존 Navigator/CSV 흐름 그대로 재사용.
+- 접근:
+  1. **말풍선 폭 분기 (styles.css)**:
+     - 기존 `.message { max-width: 82% }` 를 제거하고 역할별로 분리:
+       ```css
+       .message.is-user      { max-width: 72%; }
+       .message.is-assistant { max-width: calc(100% - 48px); }
+       ```
+       (assistant 는 우측으로만 약 48px 여백, 나머지는 전부 사용 — 사용자 질문 영역과 구분은 이 여백으로 확보)
+     - `.message-bubble` 에 `width: 100%; min-width: 0;` 추가해 말풍선 자체가 자식 내용에 의해 팽창하지 않도록 고정한다.
+  2. **펼침 본문 내부 스크롤 (styles.css)**:
+     - `.message-details-body { max-height: min(60vh, 520px); overflow: auto; overscroll-behavior: contain; }` — 펼침 시 본문 전체가 내부 세로 스크롤. `overscroll-behavior: contain`으로 내부 끝에 도달해도 상위 채팅 스크롤이 이어서 움직이지 않게 격리.
+     - `.message-details[open] .message-details-body { padding-right: 4px; }` 로 스크롤바가 생길 때 콘텐츠가 숨지 않게 여유.
+  3. **결과 테이블 기본 스크롤 (styles.css)**:
+     - `.result-table-wrap { max-height: 320px; overflow: auto; }` 기본 캡 (기존에는 수평 스크롤만). "전체 데이터 보기"로 CSV 를 로드한 경우(`is-full-data`)는 기존 360px 를 유지.
+  4. **초장문 SQL 캡 (styles.css)**:
+     - `.sql-block { max-height: 240px; overflow: auto; }` — 수백 줄 SQL이 말풍선을 뚫고 들어오는 걸 방지. 기존 pre-wrap/word-break 은 유지.
+  5. **Navigator 패널 min-width (styles.css)**:
+     - `.sql-navigator`, `.sql-nav-panel`, `.sql-result-group` 에 `min-width: 0` 재확인(이미 있는 곳도 있으나 누락된 곳 보강)해 flex/grid shrink 허용.
+  6. **스크롤 앵커 (app.js)**:
+     - [app.js:980-1023](../src/static/app.js#L980-L1023) `renderMessageDetails()` 에서 `<summary>` 에 `click` 리스너를 추가:
+       - 클릭 직전에 `summary.getBoundingClientRect().top - messageLogEl.getBoundingClientRect().top` 을 기록(=`prevOffset`).
+       - `requestAnimationFrame` 2회 후(`<details>` open 상태 토글 + 레이아웃 반영 이후) 같은 값을 다시 계산해 `delta = newOffset - prevOffset` 만큼 `messageLogEl.scrollTop` 을 더한다.
+     - 결과: `<summary>` 라인은 사용자 뷰포트에서 동일한 y좌표에 고정되고, 펼침으로 생긴 공간은 `<summary>` 아래로만 밀려난다.
+     - 접힘 시에도 같은 로직이 대칭으로 작동 (summary 위치 유지).
+- 범위 제한:
+  - 백엔드/agent-core 변경 없음.
+  - 기존 SQL Navigator, CSV 다운로드, "전체 데이터 보기", Progress Strip `<details>` 는 그대로 유지. Progress Strip 은 이번 이슈의 범주가 아님 (이미 TASK-0022 에서 max-height 처리됨).
+  - admin 콘솔 쪽 CSS 변경 없음.
+- 검증 기준:
+  1. assistant 말풍선이 기본적으로 채팅 pane 의 오른쪽 약간(≈48px)만 남기고 좌측부터 넓게 차지한다. user 말풍선은 우측 정렬 좁은 형태로 구분된다.
+  2. `<details>` 접힌 상태의 말풍선 크기가, `<details>` 를 펼쳐도 **폭이 변하지 않는다**. 내부에 긴 SQL · 큰 결과 테이블 · 여러 쿼리 Navigator 가 있어도 말풍선의 폭/높이 outline 은 결과셋 구성에 무관하게 일정(max-height 내부 스크롤로 흡수).
+  3. `<summary>` 클릭으로 펼칠 때 해당 `<summary>` 라인이 뷰포트 내 동일 좌표에 유지된다. 접을 때도 동일. 채팅 로그 다른 메시지들의 뷰포트 위치가 튀지 않는다.
+  4. 결과 테이블 내부에서 세로/가로 스크롤이 작동하고, 채팅 로그 스크롤과 독립적(`overscroll-behavior: contain`)이다.
+  5. 단일 SQL step / 다중 SQL Navigator / CSV 전체 데이터 로드 / `meta.sql` 폴백 네 경로 모두에서 위 동작이 일관된다.
+  6. 브라우저 자동화(또는 수동) 스크린샷으로 "펼침 전/후 말풍선 bounding box 동일" 과 "summary 좌표 불변"을 확인.
 
 ### TASK-0029 상세 설계
 - 문제 (사용자 테스트 피드백 2026-04-21):
@@ -282,6 +336,7 @@ source_of_truth: true
 - TASK-0025 (2026-04-16): assistant 말풍선 내 다중 execute_sql step을 수직 누적 없이 SQL Navigator(단일 패널 + `←/→/Home/End` 키보드 조작 + `쿼리 n/N · 대상 테이블` 상시 컨텍스트 + "전체 데이터 보기" CSV 로드)로 압축. 단일 step은 기존 블록 유지. 새 백엔드 API 없이 `/api/file`만 재사용. 브라우저 자동화로 탐색/키보드/단일 step 분기/CSV 파서 모두 검증 완료.
 - TASK-0026 (2026-04-21): 한 줄 긴 SQL이 말풍선을 수평 확장하는 이슈 해소. 표시 전용 `formatSqlForDisplay()` 추가(주요 키워드 경계 줄바꿈, 복합 JOIN 보존, 문자열 리터럴 보호, 기존 여러 줄 쿼리 원형 유지). `.sql-block` CSS를 `pre-wrap` + `word-break` + `overflow-wrap`으로 변경, 컨테이너 `min-width:0` 안전망 추가.
 - TASK-0027 (2026-04-21): 33개 RBAC 권한의 UX 정리. Profile 드로어의 `buildPermissionPills()`를 그룹별 `<section class="perm-section">` + 카운트 배지 구조로 재작성. Admin 콘솔 권한 그리드 `renderPermissionGrid()`를 `<details>` 기반 collapsible + summary 카운트 배지(허용/거부/상속 또는 N/M 선택) + 그룹별 배치 액션 버튼(모두 허용/거부/상속 또는 모두 선택/해제)으로 개편. `PERMISSION_GROUP_ORDER/LABELS` 상수와 `permissionGroupOf()` 헬퍼 추가. CSS: `.perm-sections`, `.perm-section*`, `.permission-group-head`, `.permission-group-counts`, `.permission-bulk-actions` 스타일 추가.
+- TASK-0030 (2026-04-21): assistant 말풍선 고정 폭 + `<details>` 펼침 시 내부 스크롤/스크롤 앵커. `.message`의 role별 max-width 분기(user 72% / assistant `max-width:none` + `margin-right:48px` + `align-self:stretch`)로 assistant 는 채팅 pane 전폭에 가깝게, user 는 좁은 우측 정렬로 분리. `.message-details-body`에 `max-height:min(60vh,520px); overflow:auto; overscroll-behavior:contain` 캡으로 펼친 본문을 말풍선 내부에서 수직 스크롤 처리. `.result-table-wrap` 기본 `max-height:320px`, `.sql-block` `max-height:240px` 로 결과 테이블/초장문 SQL 도 내부 스크롤로 격리. `app.js` `renderMessageDetails()`의 `<summary>` 클릭 핸들러에 `messageLogEl` 기준 `summary.getBoundingClientRect().top` 측정 → 2-frame `requestAnimationFrame` 후 delta 만큼 `messageLogEl.scrollTop` 보정하는 scroll anchor 추가. 브라우저 검증: summaryDelta=0/scrollDelta=0, Navigator 이동 시 bubble width 705→705 불변, bodyMaxH=432px(60vh), details body overflow-y=auto 확인.
 - TASK-0029 (2026-04-21): 관리 콘솔 재구조화. `admin.html` 을 `topbar + sidebar(tabs) + workspace + commit-bar` 4영역 grid 로 재작성(탭: 대시보드/계정/역할). `admin.js` 전면 재작성 — `adminState.pending = { accounts, roles, newRoles }` Map 기반 pending changes 모델 + 서버 값과 일치하면 auto-drop 로직(`setAccountPending`/`setRolePending`). 계정/역할 편집은 form submit 없이 input/select change 이벤트에서 pending 에 적재만 하고, 하단 commit bar 의 "모두 적용" 클릭 시 전체 pending entry 를 순차 PATCH/DELETE/POST 후 1회만 `loadAdminData()`. 리스트-디테일 레이아웃 + 탭별 scoped search + 리스트 row 체크박스 기반 일괄 작업(활성/비활성/삭제 pending 반영). 신규 역할은 tempId(`new:N`)로 pending.newRoles 에 넣고 POST 로 일괄 커밋. `styles.css` 에 `.admin-shell` grid/`.admin-sidebar`/`.admin-tab`/`.admin-list-detail`/`.admin-list-row`/`.admin-detail-*`/`.admin-commit-bar`(.has-pending 노란 강조) 스타일 추가. 사용자 테스트에서 확인된 "여러 계정 동시 수정 시 특정 계정 저장하면 타 계정 변경 소실" 버그는 pending 모델 + 단일 commit 경로로 근본 해소.
 - TASK-0028 (2026-04-21): agent-core 문서 보강. `docs/INSIGHTS.md` 신규 작성(워커 루프/사이클/fingerprint/인라인 fallback/KV 스키마/환경변수 14종/해석 가이드/헬스 체크 SQL + 2026-04-21 실제 런타임 출력). `docs/AGENT_CORE_INTERNALS.md` 신규 작성(run_agent 흐름도, SYSTEM_PROMPT 7블록 구조, TOOL_DEFINITIONS 우선순위 근거, Knowledge Injection, Step 예산/타임아웃/cancel/finalize 신호, CSV 2단계(preview 50행 + 전체 파일), Planner insight fast path, 3-state 대화 맥락). `FUNCTION.md` Main Flow/Dependencies/Observability 확장(MEMORY_DB 스키마 표, insight_worker 로그 관측성). 코드 변경 없음.
 
@@ -332,5 +387,8 @@ source_of_truth: true
 - [x] 관리 콘솔이 대시보드/계정/역할 탭 기반 네비게이션으로 분리되어 있다
 - [x] 계정/역할 편집이 pending changes 모델로 관리되며, 하단 commit bar 의 "모두 적용" 시에만 서버에 반영된다
 - [x] 여러 계정을 동시에 편집해도 각 편집 내용이 유지되며 단일 계정 저장으로 소실되지 않는다
+- [x] assistant 말풍선이 기본적으로 채팅 pane 의 우측 약간(48px)만 남기고 넓게 고정되며, `<details>` 펼침/접힘이나 결과셋 구성 변화에 말풍선 폭이 흔들리지 않는다
+- [x] `<details>` 펼침 시 내부 SQL/테이블/Navigator 가 말풍선 내부 수직 스크롤로 격리되어 채팅 로그 스크롤 위치와 전체 레이아웃이 변형되지 않는다
+- [x] `<summary>` 클릭 시 해당 라인이 뷰포트 내 동일 y좌표를 유지(scroll anchor)
 - [x] 리스트 row 체크박스 + 일괄 작업(활성/비활성/삭제 pending)이 동작한다
 - [x] 계정 탭/역할 탭 각각이 독립된 scoped search 를 가진다

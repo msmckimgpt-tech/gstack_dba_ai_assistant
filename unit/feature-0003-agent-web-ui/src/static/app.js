@@ -989,6 +989,22 @@ function renderMessageDetails(meta = {}) {
   summary.textContent = "실행 단계 및 쿼리 결과 보기";
   detailsEl.appendChild(summary);
 
+  // 스크롤 앵커: 펼침/접힘 시 summary 라인이 뷰포트 내 동일 위치에 유지되도록 보정.
+  summary.addEventListener("click", () => {
+    if (!messageLogEl) return;
+    const logRect = messageLogEl.getBoundingClientRect();
+    const prevOffset = summary.getBoundingClientRect().top - logRect.top;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const newOffset = summary.getBoundingClientRect().top - messageLogEl.getBoundingClientRect().top;
+        const delta = newOffset - prevOffset;
+        if (delta !== 0) {
+          messageLogEl.scrollTop += delta;
+        }
+      });
+    });
+  });
+
   const body = document.createElement("div");
   body.className = "message-details-body";
 

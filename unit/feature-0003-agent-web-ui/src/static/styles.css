@@ -722,10 +722,10 @@ a { color: inherit; }
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-width: 82%;
+  min-width: 0;
 }
-.message.is-user      { align-self: flex-end;  align-items: flex-end; }
-.message.is-assistant { align-self: flex-start; align-items: flex-start; }
+.message.is-user      { align-self: flex-end;   align-items: flex-end;   max-width: 72%; }
+.message.is-assistant { align-self: stretch;    align-items: flex-start; max-width: none; margin-right: 48px; }
 
 .message-meta {
   font-size: 11px;
@@ -738,6 +738,8 @@ a { color: inherit; }
   border-radius: 14px;
   line-height: 1.68;
   font-size: 14px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .message.is-user .message-bubble {
@@ -747,6 +749,7 @@ a { color: inherit; }
 }
 
 .message.is-assistant .message-bubble {
+  width: 100%;
   background: var(--bubble-ai);
   color: var(--text);
   border: 1px solid var(--border);
@@ -840,6 +843,11 @@ a { color: inherit; }
   display: flex;
   flex-direction: column;
   gap: 12px;
+  max-height: min(60vh, 520px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  min-width: 0;
+  padding-right: 4px;
 }
 
 .message-detail-block {
@@ -888,13 +896,19 @@ a { color: inherit; }
   margin: 0;
   min-width: 0;
   max-width: 100%;
+  max-height: 240px;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 /* 인라인 쿼리 결과 테이블 */
 .result-table-wrap {
-  overflow-x: auto;
+  overflow: auto;
+  overscroll-behavior: contain;
   border-radius: var(--r-sm);
   border: 1px solid var(--border);
+  max-height: 320px;
+  min-width: 0;
 }
 
 .result-table {

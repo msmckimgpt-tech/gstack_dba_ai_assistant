@@ -141,6 +141,16 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Pattern: admin 페이지에 `max-width: 1100px; margin: 0 auto` 를 걸고 3개 surface-card 를 세로로 스택하면, 채팅 "작업 화면"(app-shell 전폭 grid + sidebar + chat pane) 과 톤이 크게 달라 사용자가 "위화감이 든다" 고 느낀다. 또한 좌우 여백이 정보 표현 공간을 낭비한다. 해결: admin 도 `body.admin-shell { display:grid; grid-template-rows: var(--topbar-h) 1fr auto; height:100vh }` + `.admin-body { grid-template-columns: 220px 1fr }` 구조로 전환해 topbar/sidebar/workspace/commit-bar 4 영역을 채팅 UI 와 동일한 축으로 배치한다. 탭 네비는 sidebar 에 둬 대시보드/계정/역할 영역을 독립 pane(`display:none` 토글)으로 분리하면 "한 화면에 세 섹션이 섞여 검색 범위가 모호해진다"는 피드백도 동시에 해소된다.
 - Applies to: feature-0003 이후 모든 internal 관리/설정 UI. 별도 서브 앱(/admin, /settings 등)이라도 동일한 app-shell 골격을 재사용해 시각적 일관성을 유지한다.
 
+### LRN-20260421-0006 — 확장 가능한 본문을 포함한 채팅 말풍선은 고정 폭 + 내부 max-height + scroll anchor 3 종 세트로 설계한다
+- Source: feature-0003 말풍선 스크롤 드리프트 이슈 (TASK-0030, 2026-04-21)
+- Mistake: assistant 말풍선 안에 `<details>` / SQL / 결과 테이블을 담으면서 `.message { max-width: 82% }` 와 `.message-details-body { /* no cap */ }` 만 적용했더니, 펼침/Navigator 이동/쿼리 결과셋 행 수에 따라 말풍선 크기와 채팅 로그 스크롤 위치가 비결정적으로 튀어 사용자가 방금 보던 문장을 놓치는 UX 버그가 발생했다.
+- Correct approach: "확장 가능한 본문을 가진 채팅 말풍선" 은 세 장치를 동시에 적용한다 —
+  1. **역할별 max-width 분기** — user 는 좁은 우측 정렬(`max-width: 72%`), assistant 는 `max-width: none` + `align-self: stretch` + `margin-right: 48px` 로 채팅 pane 전폭에 가깝게 고정. 우측 여백(≈48px) 만으로 시각 구분.
+  2. **내부 본문 cap** — `.message-details-body { max-height: min(60vh, 520px); overflow: auto; overscroll-behavior: contain; }` 로 펼친 콘텐츠를 말풍선 내부에서 소비. 내부 요소(SQL block, 결과 테이블)에도 2차 cap(`.sql-block { max-height: 240px; overflow: auto }`, `.result-table-wrap { max-height: 320px; overflow: auto }`) 을 걸어 이중 안전망.
+  3. **Scroll anchor** — `<summary>` 클릭 핸들러에서 스크롤 컨테이너 기준 `getBoundingClientRect().top` 을 측정 → `requestAnimationFrame` 2 프레임 후 delta 만큼 `scrollContainer.scrollTop` 을 보정. `<details>` 네이티브 동작만으로는 부족하고, 내부 cap + anchor 가 모두 있어야 "펼쳐도 위에 있는 메시지가 튀지 않는다".
+- Verification: 브라우저 자동화에서 펼침 전/후 `summary.getBoundingClientRect().top` 동일(delta=0), Navigator 이동 시 `bubble.getBoundingClientRect().width` 불변(705→705), `message-details-body` 의 실계산 max-height 가 432px(60vh @ 720px viewport) 로 확인됨.
+- Applies to: 챗봇/로그 뷰어/이벤트 피드 등 "고정 목록 내부에 확장 가능한 row" 가 있는 모든 UI. `<details>` 만으로 충분해 보여도 내부 콘텐츠가 동적이면 반드시 cap + anchor 를 동반한다.
+
 ## Category: quirk
 
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존
