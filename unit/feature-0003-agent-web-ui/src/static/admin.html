@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260416-rbac1" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260421-rbac2" />
 </head>
 <body class="admin-shell">
   <header class="topbar">
@@ -14,104 +14,164 @@
     </div>
     <div class="topbar-end">
       <button type="button" class="topbar-btn" id="backToAppBtn">작업 화면</button>
+      <button type="button" class="topbar-btn" id="refreshAdminBtn">새로고침</button>
       <button type="button" class="topbar-btn" id="adminLogoutBtn">로그아웃</button>
-      <button type="button" class="btn-secondary" id="refreshAdminBtn">새로고침</button>
     </div>
   </header>
 
-  <main class="admin-main admin-section-stack">
-    <section class="surface-card admin-overview">
-      <div class="section-row">
-        <div>
-          <div class="drawer-label">Overview</div>
-          <h2>운영 상태</h2>
-        </div>
+  <div class="admin-body">
+    <aside class="admin-sidebar">
+      <nav class="admin-tabs" id="adminTabs">
+        <button type="button" class="admin-tab is-active" data-admin-tab="dashboard">
+          <span class="admin-tab-label">대시보드</span>
+        </button>
+        <button type="button" class="admin-tab" data-admin-tab="accounts">
+          <span class="admin-tab-label">계정</span>
+          <span class="admin-tab-count" id="tabCountAccounts">—</span>
+        </button>
+        <button type="button" class="admin-tab" data-admin-tab="roles">
+          <span class="admin-tab-label">역할</span>
+          <span class="admin-tab-count" id="tabCountRoles">—</span>
+        </button>
+      </nav>
+      <div class="admin-sidebar-foot">
+        <div class="admin-pending-summary" id="adminPendingSummary">pending 변경 0건</div>
       </div>
-      <div class="summary-metrics">
-        <article class="metric-card">
-          <span>Active</span>
-          <strong id="metricActive">—</strong>
-        </article>
-        <article class="metric-card">
-          <span>Inactive</span>
-          <strong id="metricInactive">—</strong>
-        </article>
-        <article class="metric-card">
-          <span>Deleted</span>
-          <strong id="metricDeleted">—</strong>
-        </article>
-        <article class="metric-card">
-          <span>Roles</span>
-          <strong id="metricRoles">—</strong>
-        </article>
-      </div>
-    </section>
+    </aside>
 
-    <section class="surface-card">
-      <div class="section-row">
-        <div>
-          <div class="drawer-label">Accounts</div>
-          <h2>계정 / Override</h2>
+    <main class="admin-workspace">
+      <!-- Dashboard pane -->
+      <section class="admin-pane is-active" data-admin-pane="dashboard">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">Overview</div>
+            <h2>운영 현황</h2>
+          </div>
+        </header>
+        <div class="summary-metrics">
+          <article class="metric-card">
+            <span>Active</span>
+            <strong id="metricActive">—</strong>
+          </article>
+          <article class="metric-card">
+            <span>Inactive</span>
+            <strong id="metricInactive">—</strong>
+          </article>
+          <article class="metric-card">
+            <span>Deleted</span>
+            <strong id="metricDeleted">—</strong>
+          </article>
+          <article class="metric-card">
+            <span>Roles</span>
+            <strong id="metricRoles">—</strong>
+          </article>
+          <article class="metric-card">
+            <span>최근 7일 로그인</span>
+            <strong id="metricRecentLogins">—</strong>
+          </article>
+          <article class="metric-card">
+            <span>Pending 변경</span>
+            <strong id="metricPending">0</strong>
+          </article>
         </div>
-      </div>
-      <div class="admin-toolbar">
-        <input
-          type="search"
-          id="adminSearch"
-          class="admin-search"
-          placeholder="사용자 ID 검색…"
-          autocomplete="off"
-        />
-        <div class="admin-filter-group">
-          <button type="button" class="admin-filter-btn is-active" data-filter="all">전체</button>
-          <button type="button" class="admin-filter-btn" data-filter="active">활성</button>
-          <button type="button" class="admin-filter-btn" data-filter="inactive">비활성</button>
-          <button type="button" class="admin-filter-btn" data-filter="deleted">삭제됨</button>
-        </div>
-      </div>
-      <div class="admin-accounts" id="adminAccounts"></div>
-      <div class="admin-pagination" id="adminPagination"></div>
-    </section>
+        <div class="admin-dashboard-pending" id="dashboardPendingList"></div>
+      </section>
 
-    <section class="surface-card">
-      <div class="section-row">
-        <div>
-          <div class="drawer-label">Roles</div>
-          <h2>역할 / 권한</h2>
+      <!-- Accounts pane -->
+      <section class="admin-pane" data-admin-pane="accounts">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">Accounts</div>
+            <h2>계정 관리</h2>
+          </div>
+          <div class="admin-pane-head-right" id="accountsBulkBar"></div>
+        </header>
+        <div class="admin-list-detail">
+          <div class="admin-list-col">
+            <div class="admin-list-toolbar">
+              <input
+                type="search"
+                id="accountSearch"
+                class="admin-search"
+                placeholder="사용자 검색…"
+                autocomplete="off"
+              />
+              <div class="admin-filter-group">
+                <button type="button" class="admin-filter-btn is-active" data-account-filter="all">전체</button>
+                <button type="button" class="admin-filter-btn" data-account-filter="active">활성</button>
+                <button type="button" class="admin-filter-btn" data-account-filter="inactive">비활성</button>
+                <button type="button" class="admin-filter-btn" data-account-filter="deleted">삭제됨</button>
+              </div>
+            </div>
+            <div class="admin-list-head">
+              <label class="admin-list-select-all">
+                <input type="checkbox" id="accountSelectAll" />
+                <span>전체 선택</span>
+              </label>
+              <span class="admin-list-count" id="accountListCount"></span>
+            </div>
+            <div class="admin-list" id="accountList"></div>
+            <div class="admin-list-pagination" id="accountPagination"></div>
+          </div>
+          <div class="admin-detail-col" id="accountDetail">
+            <div class="admin-detail-empty">좌측에서 계정을 선택하세요.</div>
+          </div>
         </div>
-      </div>
-      <form class="admin-role-create" id="roleCreateForm">
-        <div class="admin-role-head">
-          <label class="field">
-            <span>role_key</span>
-            <input type="text" name="role_key" placeholder="예: analyst" />
-          </label>
-          <label class="field">
-            <span>표시 이름</span>
-            <input type="text" name="name" placeholder="예: Analyst" />
-          </label>
-          <label class="field field-wide">
-            <span>설명</span>
-            <input type="text" name="description" placeholder="역할 용도 설명" />
-          </label>
-          <label class="permission-toggle">
-            <input type="checkbox" name="is_active" checked />
-            <span>활성</span>
-          </label>
-          <label class="permission-toggle">
-            <input type="checkbox" name="is_default_signup" />
-            <span>기본 가입 역할</span>
-          </label>
-          <button type="submit" class="btn-primary" id="createRoleBtn">역할 생성</button>
+      </section>
+
+      <!-- Roles pane -->
+      <section class="admin-pane" data-admin-pane="roles">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">Roles</div>
+            <h2>역할 관리</h2>
+          </div>
+          <div class="admin-pane-head-right">
+            <button type="button" class="btn-primary" id="newRoleBtn">+ 새 역할</button>
+          </div>
+        </header>
+        <div class="admin-list-detail">
+          <div class="admin-list-col">
+            <div class="admin-list-toolbar">
+              <input
+                type="search"
+                id="roleSearch"
+                class="admin-search"
+                placeholder="역할 이름/키 검색…"
+                autocomplete="off"
+              />
+            </div>
+            <div class="admin-list-head">
+              <label class="admin-list-select-all">
+                <input type="checkbox" id="roleSelectAll" />
+                <span>전체 선택</span>
+              </label>
+              <span class="admin-list-count" id="roleListCount"></span>
+            </div>
+            <div class="admin-list" id="roleList"></div>
+            <div class="admin-bulk-actions" id="roleBulkBar"></div>
+          </div>
+          <div class="admin-detail-col" id="roleDetail">
+            <div class="admin-detail-empty">좌측에서 역할을 선택하거나 "+ 새 역할"을 누르세요.</div>
+          </div>
         </div>
-        <div class="permission-grid" id="roleCreatePermissions"></div>
-      </form>
-      <div class="admin-accounts" id="adminRoles"></div>
-    </section>
-  </main>
+      </section>
+    </main>
+  </div>
+
+  <footer class="admin-commit-bar" id="adminCommitBar">
+    <div class="admin-commit-info">
+      <span class="admin-commit-count" id="commitBarCount">변경사항 0건</span>
+      <span class="admin-commit-detail" id="commitBarDetail"></span>
+    </div>
+    <div class="admin-commit-actions">
+      <button type="button" class="btn-secondary" id="commitCancelBtn">취소</button>
+      <button type="button" class="btn-primary" id="commitApplyBtn">모두 적용</button>
+    </div>
+  </footer>
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260416-rbac1"></script>
+  <script src="/static/admin.js?v=20260421-rbac2"></script>
 </body>
 </html>

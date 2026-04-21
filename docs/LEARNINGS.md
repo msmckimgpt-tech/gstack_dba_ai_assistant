@@ -122,6 +122,25 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
   - 코드 참조표 (파일:줄번호) — 줄번호는 다른 작업자의 리팩터링 후 쉽게 드리프트하므로 함수명을 함께 적고, 문서 갱신 시 `grep`으로 재검증한다.
 - Applies to: 향후 숨은 백그라운드 워커/큐/스케줄러/캐시 갱신 로직이 추가되면 동일 구조로 전용 문서를 작성한다. 기존 숨은 로직도 발견 즉시 동일 패턴으로 문서화한다.
 
+### LRN-20260421-0004 — 관리 콘솔 다건 편집은 per-form save 대신 pending + bulk commit 모델이어야 한다
+- Source: feature-0003 관리 콘솔 재구조화 (TASK-0029, 2026-04-21)
+- Mistake: admin.js 가 각 계정/역할마다 독립된 `<form>` + 개별 "저장" 버튼을 두고, 저장 성공 후 `loadAdminData()` 로 전체 DOM 을 다시 렌더링했다. 결과: 사용자가 3개 계정을 순차 편집 중 한 계정에서 저장을 누르면 나머지 2개 계정의 pending DOM state 가 사라지는 크리티컬 버그. 사용자 테스트에서 "수정한 내용이 사라진다"는 피드백으로 확인됨.
+- Correct approach: AWS IAM 콘솔 패턴을 따른다 —
+  1. 편집 이벤트(input/change)는 **서버 호출 없이** JS 측 `pending = { accounts: Map<id, patch>, roles: Map<id, patch>, newRoles: Map<tempId, draft> }` 에만 반영.
+  2. patch 값이 서버 원본과 동일해지면 pending 에서 auto-drop (noise 방지).
+  3. 하단에 sticky commit bar 를 두고 "변경사항 N건 · 취소 / 모두 적용" 노출. `.has-pending` 클래스로 색상 강조(노란/주황).
+  4. "모두 적용" 클릭 시에만 전체 pending entry 를 loop 로 PATCH/DELETE/POST 후 1회만 `loadAdminData()`.
+  5. detail pane 은 `mergedAccount(id) = server + pending overlay` 로 렌더 — 리스트와 디테일 양쪽에서 pending 표시(`.has-pending` dot)가 일관되게 보이도록.
+  6. 리스트 row 체크박스 기반 bulk 작업도 **즉시 API 호출 금지**. 선택된 각 row 에 대해 `setAccountPending(id, patch)` 만 호출 → 사용자가 commit bar 로 확인 후 적용.
+  7. `beforeunload` 에서 pending 이 남아 있으면 이탈 경고.
+- Verification: admin.js 의 pending 로직을 단순 node 스크립트로 분리해 "3개 계정 각기 다른 필드 편집 → 전부 pending 유지, revert-to-server 시 auto-drop" 시나리오를 assert 로 재현했다(`/tmp/verify_pending_logic.js`). API 레벨에서 partial PATCH(`is_active` 만 / `role_id` 만 / `permission_overrides` 만) 가 모두 200 OK 를 반환하는 것도 확인해 pending 모델이 서버 계약과 일치함을 검증.
+- Applies to: 모든 관리/설정 콘솔 UI. "여러 행을 편집 가능한 테이블" UI 는 기본적으로 이 패턴을 적용한다. 단건 편집이거나 저장 후 즉시 새 화면으로 이동하는 경우는 예외.
+
+### LRN-20260421-0005 — 관리 콘솔은 채팅 app-shell 과 동일한 전폭 grid 레이아웃을 써서 일관성을 유지한다
+- Source: feature-0003 관리 콘솔 재구조화 (TASK-0029, 2026-04-21)
+- Pattern: admin 페이지에 `max-width: 1100px; margin: 0 auto` 를 걸고 3개 surface-card 를 세로로 스택하면, 채팅 "작업 화면"(app-shell 전폭 grid + sidebar + chat pane) 과 톤이 크게 달라 사용자가 "위화감이 든다" 고 느낀다. 또한 좌우 여백이 정보 표현 공간을 낭비한다. 해결: admin 도 `body.admin-shell { display:grid; grid-template-rows: var(--topbar-h) 1fr auto; height:100vh }` + `.admin-body { grid-template-columns: 220px 1fr }` 구조로 전환해 topbar/sidebar/workspace/commit-bar 4 영역을 채팅 UI 와 동일한 축으로 배치한다. 탭 네비는 sidebar 에 둬 대시보드/계정/역할 영역을 독립 pane(`display:none` 토글)으로 분리하면 "한 화면에 세 섹션이 섞여 검색 범위가 모호해진다"는 피드백도 동시에 해소된다.
+- Applies to: feature-0003 이후 모든 internal 관리/설정 UI. 별도 서브 앱(/admin, /settings 등)이라도 동일한 app-shell 골격을 재사용해 시각적 일관성을 유지한다.
+
 ## Category: quirk
 
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존
