@@ -12,6 +12,7 @@ import stat
 import statistics
 import subprocess
 import sys
+import tarfile
 import time
 __all__ = [
     "CONFIRMATION_FOLLOWUP_CUES",
@@ -101,7 +102,7 @@ from .config import *
 from . import config as cfg
 import concurrent.futures, csv, difflib, hashlib, io, json, os, random, re
 import shutil, stat, statistics, subprocess, time, urllib.error, urllib.request, uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 import mysql.connector
 from rich.panel import Panel
@@ -125,6 +126,90 @@ def _ensure_dir(path: str) -> None:
 
 _ensure_dir(AGENT_LOG_DIR)
 _ensure_dir(AGENT_OUT_DIR)
+_LOG_DAY_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_LOG_HOUSEKEEPING_LAST_TS = 0.0
+
+
+def _parse_log_day(name: str) -> datetime | None:
+    label = str(name or "").strip()
+    if not _LOG_DAY_DIR_RE.fullmatch(label):
+        return None
+    try:
+        return datetime.strptime(label, "%Y-%m-%d")
+    except Exception:
+        return None
+
+
+def _log_archive_root() -> str:
+    path = os.path.join(AGENT_LOG_DIR, "archive")
+    _ensure_dir(path)
+    return path
+
+
+def _archive_old_log_dirs(retention_days: int = 7) -> None:
+    root = str(AGENT_LOG_DIR or "").strip()
+    if not root or not os.path.isdir(root):
+        return
+    archive_root = _log_archive_root()
+    today = datetime.now().date()
+    keep_days = max(1, int(retention_days))
+    for entry in os.scandir(root):
+        if not entry.is_dir():
+            continue
+        if entry.name == "archive":
+            continue
+        parsed = _parse_log_day(entry.name)
+        if parsed is None:
+            continue
+        age_days = (today - parsed.date()).days
+        if age_days <= keep_days:
+            continue
+        archive_path = os.path.join(archive_root, f"{entry.name}.tar.gz")
+        if os.path.exists(archive_path):
+            shutil.rmtree(entry.path, ignore_errors=True)
+            continue
+        tmp_path = f"{archive_path}.tmp"
+        try:
+            with tarfile.open(tmp_path, "w:gz") as tar:
+                tar.add(entry.path, arcname=entry.name)
+            os.replace(tmp_path, archive_path)
+            shutil.rmtree(entry.path, ignore_errors=True)
+        except Exception:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+
+
+def _run_log_housekeeping() -> None:
+    global _LOG_HOUSEKEEPING_LAST_TS
+    now = time.time()
+    if now - _LOG_HOUSEKEEPING_LAST_TS < 60:
+        return
+    _LOG_HOUSEKEEPING_LAST_TS = now
+    try:
+        _ensure_dir(AGENT_LOG_DIR)
+        _archive_old_log_dirs(retention_days=7)
+    except Exception:
+        pass
+
+
+def _daily_log_dir() -> str:
+    _run_log_housekeeping()
+    path = os.path.join(AGENT_LOG_DIR, datetime.now().strftime("%Y-%m-%d"))
+    _ensure_dir(path)
+    return path
+
+
+def _log_file_path(name: str, suffix: str = "log", timestamped: bool = False) -> str:
+    safe_name = _sanitize_key_part(name or "log", max_len=80) or "log"
+    if timestamped:
+        prefix = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{prefix}_{safe_name}.{suffix}"
+    else:
+        filename = f"{safe_name}.{suffix}"
+    return os.path.join(_daily_log_dir(), filename)
 
 
 def print_internal(*args, **kwargs) -> None:
@@ -323,15 +408,14 @@ def connect_with_retry(
 
 
 def log_text(name: str, text: str) -> str:
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = os.path.join(AGENT_LOG_DIR, f"{ts}_{name}.log")
+    path = _log_file_path(name, suffix="log", timestamped=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
     return path
 
 
 def append_log_line(name: str, text: str) -> str:
-    path = os.path.join(AGENT_LOG_DIR, f"{name}.log")
+    path = _log_file_path(name, suffix="log", timestamped=False)
     with open(path, "a", encoding="utf-8") as f:
         f.write(text.rstrip() + "\n")
     return path
@@ -548,8 +632,7 @@ def _write_timing_breakdown(timing: dict[str, Any]) -> str:
     run_id = str(timing.get("run_id") or "").strip()
     if not run_id:
         return ""
-    _ensure_dir(AGENT_LOG_DIR)
-    path = os.path.join(AGENT_LOG_DIR, f"timing_breakdown_{run_id}.json")
+    path = _log_file_path(f"timing_breakdown_{run_id}", suffix="json", timestamped=False)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(timing, f, ensure_ascii=False, indent=2)
     return path
@@ -1360,4 +1443,3 @@ def _safe_int(value: Any, default: int = -1) -> int:
         return int(value)
     except Exception:
         return default
-

@@ -645,13 +645,17 @@ AI가 코드를 실행(테스트, 빌드 등)할 때는 다음을 준수한다:
 - `AgentMemoryFacts`, `AgentMemoryFactEntries`는 복수 근거를 보존한다.
 - Fact에는 최소 `SourceRunId`, `SourceType`, `Weight/Confidence`를 보존한다.
 - 지식 참조 경로 로그:
-- `/shared/logs/insight_route.log`
-- 필수 기록: 사용한 스키마/테이블, 근거 source, fallback 사유
+- `/shared/logs/YYYY-MM-DD/insight_route.log`
+- 필수 기록: 실제 참조한 스키마/테이블/컬럼, action, reason, result, error
+- `insight-worker` 는 `artifact_missing -> repair_from_fact/generate_insight -> verify_persist` 흐름을 그대로 남긴다.
+- `insight_worker.log` 는 cycle 시작/종료/오류 요약만 남기고, idle heartbeat 는 남기지 않는다.
 - 타이밍 로그:
-- `/shared/logs/timing.log`
-- `/shared/logs/timing_breakdown_<run_id>.json`
+- `/shared/logs/YYYY-MM-DD/timing.log`
+- `/shared/logs/YYYY-MM-DD/timing_breakdown_<run_id>.json`
 - 실행 SQL 로그:
-- `/shared/logs/*_executed_sql.log`
+- `/shared/logs/YYYY-MM-DD/*_executed_sql.log`
+- 오래된 로그 보관:
+- `7일` 초과 날짜 디렉토리는 `/shared/logs/archive/YYYY-MM-DD.tar.gz` 로 압축 보관한다.
 
 ### §15.6 지식 아키텍처 목표 (신규 기준)
 

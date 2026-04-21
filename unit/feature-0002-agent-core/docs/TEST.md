@@ -9,36 +9,54 @@ source_of_truth: true
 # Test
 
 ## 1. Test Scope
-- 코어 소스가 새 위치에서 빌드되는지 확인
-- `make ask`가 새 feature Dockerfile을 통해 실행되는지 확인
-- 역할별 내부 LLM 호출이 실제 env alias를 사용하는지 확인
-- 워크스테이션 기준 `model=auto` 지연이 브라우저에서 재현 가능한 수준인지 확인
-- GPU 우선 추론 조건과 provider 직접 벤치 수치를 확인
+- `insight-worker` 가 `fingerprint` 만이 아니라 `Fact/Text/RagDocument/RagObject` 완전성까지 보고 후보를 다시 선정하는지 확인
+- 기존 fact 가 남은 객체는 RAG/Text/Object 를 우선 복구하는지 확인
+- 복구 불가 객체는 LLM 재생성 후 검증을 거친 뒤에만 fingerprint/refresh 마커를 갱신하는지 확인
+- `insight_route.log` 에 실제 참조 schema/table/column 과 action/reason/result 가 남는지 확인
+- 로그가 `/shared/logs/YYYY-MM-DD/` 로 기록되고 `7일 초과` 날짜 디렉토리가 `tar.gz` 로 압축되는지 확인
+- no-op cycle 이 더 이상 요약/타이밍 로그를 누적하지 않는지 확인
 
 ## 2. Test Cases
-- TEST-0001: `docker-compose.yml`의 agent 계열 build가 `feature-0002-agent-core/src/Dockerfile`을 사용한다
-- TEST-0002: `Makefile`의 `make ask`가 동일 인터페이스를 유지한다
-- TEST-0003: `AGENT_PLAN_MODEL`, `AGENT_TASK_CLASSIFY_MODEL`, `AGENT_SUMMARY_MODEL`, `AGENT_TOPIC_MODEL`, `AGENT_SQL_FIX_MODEL`, `AGENT_STEP_GRADE_MODEL` 이 코드에서 실제 호출 모델로 사용된다
-- TEST-0004: `python3 -m py_compile unit/feature-0002-agent-core/src/modules/config.py unit/feature-0002-agent-core/src/modules/llm.py`
-- TEST-0005: `make -C /root/download/docker/local_llm health`
-- TEST-0006: `make -C /root/download/docker/local_llm bench-quick`
-- TEST-0007: bootstrap admin 브라우저 세션에서 `model=auto`, 질문 `현재 데이터베이스 목록을 보여줘` 가 `60초 이내` 완료
-- TEST-0008: 같은 브라우저 구간에서 `ollama ps` 가 `PROCESSOR 100% GPU` 를 유지하고 `nvidia-smi` 가 약 `5.9GiB / 6GiB` 사용을 보인다
-- TEST-0009: browser regression 이후 `llm_warn.log` 에 새 `Connection error` 누적이 없는지 확인
+- TEST-0001: `python3 -m py_compile unit/feature-0002-agent-core/src/modules/utils.py unit/feature-0002-agent-core/src/modules/insight.py`
+- TEST-0002: 기준선으로 `table_fp:*`, `table_insight` fact/doc/object 수, fact 자체가 없는 incomplete 수를 기록
+- TEST-0003: host override 환경에서 `run_insight_cycle('manual-insight-test')` 실행
+- TEST-0004: cycle 후 `table_insight` fact/object 수가 증가하고 incomplete 수가 감소하는지 확인
+- TEST-0005: `artifacts/shared/logs/YYYY-MM-DD/insight_route.log` 에 `artifact_missing`, `repair_from_fact`, `generate_insight`, `verify_persist`, `referenced_objects` 가 남는지 확인
+- TEST-0006: `artifacts/shared/logs/YYYY-MM-DD/insight_worker.log` 가 실제 스캔 요약만 남기고 idle heartbeat 를 남기지 않는지 확인
+- TEST-0007: `run_insight_cycle('manual-insight-noop')` 직후 같은 날짜 디렉토리에 no-op 전용 `timing_breakdown`/`insight_worker` 파일이 추가되지 않는지 확인
+- TEST-0008: 오래된 샘플 디렉토리 생성 후 `append_log_line('archive_probe', ...)` 호출 시 `archive/YYYY-MM-DD.tar.gz` 가 생성되는지 확인
 
 ## 3. Test Run History
-- 2026-03-26: 구조 검증 기준만 정의함. 엄격한 질의 시나리오는 후속 작성 예정
-- 2026-04-15:
-  - `python3 -m py_compile unit/feature-0002-agent-core/src/modules/config.py unit/feature-0002-agent-core/src/modules/llm.py`
-    - 결과: 통과. `llm.py` 기존 문자열에서 `SyntaxWarning: invalid escape sequence '\\`'` 경고 1건
-  - `make -C /root/download/docker/local_llm health bench-quick`
-    - 결과: Summary `3317ms`, SQL Review `6174ms`
-    - 비교 기준: Summary baseline `6664ms` 대비 개선, SQL Review baseline `5102ms` 대비 미달
-  - 브라우저 기준 `model=auto` 회귀 검증
-    - conversation `20260415091922-1a529620`: `duration_ms=33038.4`, status `done`
-    - conversation `20260415092741-f2384e59`: `duration_ms=35555.35`, status `done`
-    - 이전 비교치: conversation `20260415091121-57bc11e0`, `duration_ms=84335.19`
-  - GPU/메모리 관찰
-    - `docker exec local-llm-edge ollama ps` -> `qwen3.5:4b`, `PROCESSOR 100% GPU`
-    - `nvidia-smi` -> 약 `5898 MiB / 6144 MiB`
-    - `GET /api/conversations` 기준 `processing` conversation 0건으로 정리 완료
+- 2026-04-21:
+  - `python3 -m py_compile unit/feature-0002-agent-core/src/modules/utils.py unit/feature-0002-agent-core/src/modules/insight.py`
+    - 결과: 통과
+  - 기준선 집계
+    - `table_fp:*`: `154`
+    - `table_insight` fact: `28`
+    - `table_insight` rag document: `56`
+    - `table_insight` rag object: `28`
+    - fact 자체가 없는 incomplete table: `126`
+  - 실제 cycle 실행
+    - 명령: host override 환경에서 `run_insight_cycle('manual-insight-test')`
+    - 결과: `duration_ms=149886.45`, `scan_triggered=1`, `schemas_evaluated=2`, `tables_selected=10`, `tables_generated=2`, `artifact_missing_selected=5`
+    - cycle 후 집계:
+      - `table_insight` fact: `28 -> 30`
+      - `table_insight` rag object: `28 -> 30`
+      - fact 자체가 없는 incomplete table: `126 -> 124`
+  - 로그 구조 검증
+    - 생성 파일:
+      - `artifacts/shared/logs/2026-04-21/insight_route.log`
+      - `artifacts/shared/logs/2026-04-21/insight_worker.log`
+      - `artifacts/shared/logs/2026-04-21/timing_breakdown_manual-insight-test.json`
+    - route log 예시:
+      - `phase=publish`, `action=repair_from_fact`, `result=unavailable`
+      - `phase=publish`, `action=generate_insight`, `result=ok`
+      - `phase=verify`, `action=verify_persist`, `result=ok`
+      - `referenced_objects` 에 실제 schema/table/column 목록 포함
+  - no-op 억제 검증
+    - 명령: host override 환경에서 `run_insight_cycle('manual-insight-noop')`
+    - 결과: `duration_ms=139.64`, `scan_triggered=0`
+    - 확인: 날짜 디렉토리에는 `timing_breakdown_manual-insight-test.json` 만 남았고, no-op 전용 `timing_breakdown`/`insight_worker` 추가 생성 없음
+  - 보관 압축 검증
+    - 샘플 디렉토리 `artifacts/shared/logs/2026-04-01/` 생성 후 `append_log_line('archive_probe', ...)`
+    - 결과: `artifacts/shared/logs/archive/2026-04-01.tar.gz` 생성, 원본 `2026-04-01/` 디렉토리 제거

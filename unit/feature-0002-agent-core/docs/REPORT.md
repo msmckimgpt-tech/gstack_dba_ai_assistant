@@ -9,45 +9,56 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
-외부 Local LLM provider를 `GTX 1660 SUPER 6GiB` 워크스테이션 기준 프로필로 조정했고, 현재 repo는 역할별 내부 LLM 호출이 실제 env alias를 따르도록 수정했다. 휴리스틱 fast-path는 추가하지 않았고, 실제 개선은 provider 경량화, 내부 모델 바인딩 수정, 소비자 시간 예산 축소만으로 얻었다.
+`insight-worker` 가 `table_fp:*` 와 refresh KV 만 남기고 실제 `table_insight` fact/RAG/Text/Object 를 만들지 못한 객체를 영구 skip 하던 문제를 수정했다. worker 는 이제 `Fact/Text/RagDocument/RagObject` 4종 완전성을 먼저 확인하고, 기존 fact 기반 복구가 가능하면 즉시 복구하며, 복구 불가 시에만 LLM 재생성을 수행한다. 로그는 `/shared/logs/YYYY-MM-DD/` 구조로 재편했고, 오래된 날짜 디렉토리는 `/shared/logs/archive/YYYY-MM-DD.tar.gz` 로 압축 보관한다.
 
 ## 2. Progress
 - Planned: 0
-- In Progress: 저장소별 commit/push, provider direct SQL Review 경로 추가 원인 분석
-- Done: 외부 provider 6GB 프로필 정렬, 내부 역할별 모델 바인딩 수정, 브라우저 실측, stuck `processing` 대화 정리
+- In Progress: clean integration worktree 반영, runtime image 재기동, commit/push
+- Done: 누락 원인 재현, worker 완전성 검사 추가, 상세 route log 추가, 일자별 로그 디렉토리/보관 압축 구현, 실제 cycle/보관/no-op 억제 검증
 
 ## 3. Recent Changes
-- 코어 Python 소스를 `unit/feature-0002-agent-core/src`로 이동
-- agent 이미지 Dockerfile 추가
-- 2026-04-06: LLM 게이트웨이(local-llm-gateway) 연결 성공, `make ask` 동작 확인
-- 2026-04-15: 현재 repo 내부 provider 소유 경로를 제거하고 외부 `/root/download/docker/local_llm` gateway 소비 계약으로 복구
-- 2026-04-15: `AGENT_PLAN_MODEL`, `AGENT_TASK_CLASSIFY_MODEL`, `AGENT_SUMMARY_MODEL`, `AGENT_TOPIC_MODEL`, `AGENT_SQL_FIX_MODEL`, `AGENT_STEP_GRADE_MODEL` 을 실제 코드가 사용하도록 수정
-- 2026-04-15: 브라우저 기준 `ask(model=auto)` 가 `84.33초`에서 `33.04초`, `35.56초` 수준으로 재검증됨
-- 총 변경 횟수: 5
+- `insight.py` 에서 후보 선정 기준을 `fingerprint` 단독에서 `artifact completeness + fingerprint + refresh` 순서로 변경
+- 기존 fact가 남아 있으면 `_upsert_fact` 기반으로 RAG/Text/Object 를 우선 복구하고, 복구 후에도 구조 변경이 있으면 재생성까지 이어지도록 수정
+- 저장 직후 재조회로 4종 아티팩트 완전성을 검증하고, 완전성 검증이 통과할 때만 `table_fp:*`, `schema_fp:*`, `*_insight_refresh_at:*` 성공 마커를 갱신하도록 수정
+- `insight_route.log` 에 `phase/schema/object_type/object_name/reason/action/referenced_objects/result/error` 를 기록하도록 추가
+- 공통 로그 유틸을 `/shared/logs/YYYY-MM-DD/` 구조로 변경하고 `7일 초과` 날짜 디렉토리를 `archive/*.tar.gz` 로 압축하도록 추가
+- no-op cycle 은 더 이상 `insight_worker.log` 나 `timing_breakdown` 파일을 남기지 않도록 수정
 
 ## 4. Open Issues
-- 테스트 DB(gunzgame, account_db 등)가 아직 로드되지 않음 — TestDataDB.sql 복사 필요
-- provider direct `bench-quick` 결과는 Summary `3317ms`로 개선됐지만 SQL Review `6174ms`는 기존 기준선 `5102ms` 대비 목표를 아직 충족하지 못했다.
-- 일부 planner run은 여전히 데이터베이스 목록 요청을 `search_tables` 탐색으로 잘못 확장한다. 휴리스틱 우회 없이 prompt/plan 품질 개선이 추가로 필요하다.
+- 일부 `agent_memory` 내부 테이블은 현재 LLM 응답이 빈 텍스트로 정리되어 `publish_attempted=false` 로 남는다. 이 경우 fingerprint 는 갱신하지 않으므로 추후 cycle 에서 다시 `artifact_missing` 대상으로 남지만, 근본 원인은 모델 출력 품질 쪽이다.
+- 이번 검증은 점진 복구 정책 기준으로 1 cycle 만 수행했다. 누락된 나머지 테이블은 이후 cycle 에서 순차 복구된다.
 
 ## 5. Test Status
-- 정적 검증: `python3 -m py_compile unit/feature-0002-agent-core/src/modules/config.py unit/feature-0002-agent-core/src/modules/llm.py`
-  - 결과: 통과. 단, `llm.py` 기존 문자열에서 `SyntaxWarning: invalid escape sequence '\\`'` 1건이 출력됨
-- 외부 provider 수동 검증: `make -C /root/download/docker/local_llm health bench-quick`
-  - 결과: Summary `3317ms`, SQL Review `6174ms`
-- 브라우저 수동 검증: bootstrap admin 로그인 후 `model=auto`, 질문 `현재 데이터베이스 목록을 보여줘`
-  - 결과 1: conversation `20260415091922-1a529620`, `duration_ms=33038.4`, status `done`
-  - 결과 2: conversation `20260415092741-f2384e59`, `duration_ms=35555.35`, status `done`
-  - 증빙: `/shared/out/browser/perf_login.png`, `/shared/out/browser/perf_before_send.png`, `/shared/out/browser/perf_just_after_send.png`, `/shared/out/browser/perf_done.png`
-- GPU 우선 추론 검증:
-  - `docker exec local-llm-edge ollama ps` 에서 `qwen3.5:4b`, `PROCESSOR 100% GPU` 확인
-  - `nvidia-smi` 에서 추론 중 약 `5.9GiB / 6GiB` 사용 확인
-  - `free -h` 기준 swap 증가는 유의미하게 관찰되지 않음
-  - `llm_warn.log` 에서 최신 browser regression 구간 이후 새 `Connection error` 누적은 확인되지 않음
-- 미검증 항목: provider direct SQL Review 경로 추가 튜닝, 도메인별 장문 DBA 시나리오
+- 정적 검증:
+  - `python3 -m py_compile unit/feature-0002-agent-core/src/modules/utils.py unit/feature-0002-agent-core/src/modules/insight.py`
+  - 결과: 통과
+- 기준선 집계:
+  - `table_fp:*` `154`
+  - `table_insight` fact `28`
+  - `table_insight` rag document `56`
+  - `table_insight` rag object `28`
+  - fact 자체가 없는 incomplete table `126`
+- 실제 cycle 검증:
+  - host override 환경에서 `run_insight_cycle('manual-insight-test')` 실행
+  - 결과: `duration_ms=149886.45`, `scan_triggered=1`, `tables_selected=10`, `tables_generated=2`, `artifact_missing_selected=5`
+  - cycle 후 집계:
+    - `table_insight` fact `28 -> 30`
+    - `table_insight` rag object `28 -> 30`
+    - fact 자체가 없는 incomplete table `126 -> 124`
+- 로그 검증:
+  - 새 파일 위치: `artifacts/shared/logs/2026-04-21/insight_route.log`, `.../insight_worker.log`, `.../timing_breakdown_manual-insight-test.json`
+  - `insight_route.log` 에 실제 참조 schema/table/column 과 `repair_from_fact/generate_insight/verify_persist` 흐름이 남음
+  - `insight_worker.log` 는 실제 스캔 요약 1줄만 남고 idle heartbeat 는 남지 않음
+- no-op 억제 검증:
+  - 직후 `run_insight_cycle('manual-insight-noop')` 실행
+  - 결과: `scan_triggered=0`, `duration_ms=139.64`
+  - 같은 날짜 디렉토리에는 `timing_breakdown_manual-insight-test.json` 만 존재했고, no-op 전용 `timing_breakdown`/`insight_worker` 추가 생성 없음
+- 보관 압축 검증:
+  - 샘플 디렉토리 `artifacts/shared/logs/2026-04-01/` 생성 후 `append_log_line('archive_probe', ...)` 호출
+  - 결과: 원본 디렉토리 제거, `artifacts/shared/logs/archive/2026-04-01.tar.gz` 생성
 
 ## 6. Blocked Items
 - 없음
 
 ## 7. Human Attention Needed
-- `search_tables` 오탐 경로를 휴리스틱 없이 줄일 planner/prompt 개선 기준 확정
+- `agent_memory` 계열 일부 테이블에 대해 모델 출력이 빈 텍스트로 떨어지는 원인은 별도 프롬프트/모델 품질 과제로 분리 검토가 필요하다.
