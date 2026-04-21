@@ -12,10 +12,11 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: medium
-- Last Updated: 2026-04-21 (TASK-0036 완료, TASK-0034 준비 상태)
+- Last Updated: 2026-04-22 (TASK-0037 완료, TASK-0034 진행 중)
 
 ## 2. Task Queue
 - [ ] TASK-0034 복잡 QA 성능 테스트 (local LLM 5 직렬 + 상용 API gpt-5.4-mini 5 병렬, 최대 20턴, 실제 DB 결과 대조 검증)
+- [x] TASK-0037 진행 상황 폴링 루프 중복/축적 방지 리팩터 리뷰 및 문서화 (TASK-0036 부수 변경)
 - [x] TASK-0036 시스템 프롬프트 Depth (Product/Role/Account) + Product 단위 DB 접근 관리
 - [x] TASK-0035 대화 탭 내 계정 구분 하이라이트/정렬 + 대화/말풍선 fork 기능
 - [x] TASK-0033 결과셋 말풍선 단일 스크롤 + RowCount + 첫 행/열 freeze
@@ -56,7 +57,44 @@ source_of_truth: true
 - TASK-0034 복잡 QA 성능 테스트 — 현재 구성된 assistant(agent-core + web UI)의 복잡 질의 대응력을 측정해 이후 개선 포인트를 도출한다.
 
 ## 3.1 Recently Done
+- TASK-0037 (2026-04-22 마감): `/api/progress` 폴링 루프를 `setInterval` 고정 주기에서 **순번(progressPollSeq) 기반 `setTimeout` 체인 + AbortController + 적응형 주기** 로 전환한 TASK-0036 부수 변경을 사후 리뷰/검증/문서화한다. 문제: `/api/ask` 한 턴이 수분까지 걸리는 실사용 워크로드(TASK-0034 에서 평균 ~3분/턴 관측) 에서 1500ms 고정 `setInterval` 폴링은 (1) 이전 요청이 끝나기 전에 다음 요청이 발행돼 **in-flight 요청 쌓임**, (2) 탭 전환/대화 변경/로그아웃 시 발행된 요청을 취소할 경로가 없어 서버에 **스텁 요청이 계속 도착**, (3) 서버는 `_load_steps_for_run` 이 전체 step 을 파이썬으로 로드해 `after_step` 필터를 코드로 걸던 경로였고, (4) 탭이 배경화되어도 그대로 1500ms 주기로 폴링을 지속해 배터리/네트워크를 불필요하게 소모했다. 조치 (이미 27127b9 커밋에 반영됨): 서버는 `_load_progress_status(conn, cid)` 단일 커서로 `(status, status_at, run_id)` 를 반환하도록 분리하고, `_load_steps_for_run(after_step=0)` 으로 SQL 레이어 필터를 밀어넣었으며, `/api/progress` 에 `client_run_id` 쿼리 파라미터를 추가해 클라이언트가 들고 있는 run_id 가 서버 최신 run_id 와 불일치하면 `after_step` 을 0 으로 리셋해 새 run 전체를 다시 흘려보내도록 했다. 클라이언트는 상수 `PROGRESS_FETCH_TIMEOUT_MS=4000`, `PROGRESS_POLL_ACTIVE_MS=1200`, `PROGRESS_POLL_IDLE_MS=3000`, `PROGRESS_POLL_HIDDEN_MS=10000`, `PROGRESS_POLL_ERROR_MS=8000` 5개를 도입하고, state 에 `progressPollInFlight`/`progressPollSeq`/`progressAbortController`/`progressErrorCount` 을 추가했다. `setInterval` → `setTimeout` 단일 체인(`scheduleProgressPolling(delayMs, seq)`) 으로 전환해 각 poll 이 응답하고 나서 다음 poll 을 예약하는 구조가 되었고, `pollProgress(seq)` 은 `seq !== state.progressPollSeq || progressPollInFlight` 이면 즉시 return 해 중복 실행을 차단한다. 매 요청마다 `AbortController` 를 생성해 `state.progressAbortController` 에 보관하고 `stopProgressPolling({abort:true})` 이나 `controller.abort()` 타임아웃(4초) 에서 in-flight 요청을 즉시 취소한다. 적응형 주기: 응답에 step 이 있으면 1.2s(ACTIVE), 없으면 3s(IDLE), `document.hidden` 이면 최소 10s(HIDDEN), 연속 오류 3회 미만까지는 8s(ERROR) 간격으로 재시도하되 3회 이상은 아예 재스케줄링하지 않는다. 검증: (1) `grep -c "setInterval" src/static/app.js` = 0 으로 기존 폴링 루프가 모두 제거됨, (2) 적응형 상수 5개 모두 `scheduleProgressPolling`/`pollProgress` 에서 실제 참조됨, (3) 서버 `/api/progress` 는 `client_run_id` 가 없거나 불일치 시 `after_step` 을 0 으로 리셋하는 조건을 실제로 가진다(`app.py:4405`), (4) 브라우저에서 `/api/progress` 응답 status 가 `processing` 이외 값이 되면 `stopProgressPolling({abort:false})` + `refreshWorkspace(cid)` 호출로 폴링이 즉시 멈추고 최종 workspace 가 재로드된다. 영향: TASK-0034 복잡 QA 테스트 중 상용 API 응답이 5분 이상 걸리는 상황에서도 브라우저 열린 탭에서 요청이 쌓이지 않고, 탭 전환 시 자동으로 저속 모드로 내려간다.
 - TASK-0036 (2026-04-21 마감): System Prompt Depth 가 Product → Role → Account 3 계층 체인으로 동작하고, Product 단위 접근 DB 화이트리스트가 agent tools 레벨에서 강제된다. `WebProducts` / `WebProductDatabases` / `WebSystemPrompts` 3 신규 테이블 + `AgentCoreConversations.product_id` 컬럼을 추가했고, `product.manage` / `system_prompt.manage.role.any` 2 개 permission 을 `admin` 역할에 기본 부여했다. seed 로 ProductKey=`KR` + DB(`dbgame`/`dblog`/`dbauth`) 가 자동 생성된다. `agent_core.compose_system_prompt(mem_conn, product_id, role_id, account_id)` 가 base prompt 뒤로 `## PRODUCT CONTEXT` / `## ROLE GUIDANCE` / `## ACCOUNT PREFERENCES` 블록을 순차 append 하고, `tools.set_active_schema_allowlist()` 가 execute_sql/describe_schema 등 모든 도구의 스키마 참조를 검사한다. 관리 콘솔은 `상품 카테고리` 구분 그룹 아래 `상품 (Products)` 탭이 추가되어 Product CRUD + 접근 DB chip 편집 + Product scope prompt 편집을, Roles detail 은 Role scope prompt 편집기(Product 드롭다운 포함) 를, 프로필 드로우의 새 `프롬프트` 탭은 Account scope prompt 편집기를 각각 제공한다. 검증: (1) `docker compose up -d --build web` → bootstrap_admin 로그인 → `/api/admin/products` → KR seed 확인, (2) `PUT /api/admin/products/1/databases` 로 dblog 제거/복원 왕복 OK, (3) `PUT /api/admin/system-prompts` (product scope) → `compose_system_prompt(conn, product_id=1, role_id=3, account_id=1)` 출력에 `## PRODUCT CONTEXT (KR)` 블록이 추가됨을 in-container 직접 확인, (4) whitelist=`{dbgame,dblog,dbauth}` 설정 후 `execute_sql("SELECT 1 FROM mysql.user")` 및 `describe_schema("mysql")` 이 `오류: 접근이 허용되지 않은 스키마 참조: mysql` 반환, `describe_schema("dbgame")` 은 정상 동작. 부수 수정: `_runtime_tables_available` 의 probe list 에 신규 3 테이블을 포함해 기존 배포에서 schema 마이그레이션이 자동 트리거되게 했고, `_whitelist_violation` 이 `_SYSTEM_SCHEMAS` 를 예외 처리하던 우회 경로를 제거해 `mysql`/`performance_schema`/`sys`/`agent_memory` 가 더 이상 whitelist 를 건너뛰지 않게 했다 (security hardening).
+
+### TASK-0037 상세 설계 (2026-04-22)
+- 문제/목적 (사용자 보고 2026-04-22 01:07 KST): TASK-0034 복잡 QA 성능 테스트(상용 API gpt-5.4-mini, 대화당 ~3분/턴) 를 돌리면서 브라우저 탭을 열어두면 `/api/progress` 요청이 지속적으로 쌓이는 현상이 관찰됐다. 이 "폴링이 끝없이 요구되는" 증상은 다른 작업자 AI 가 TASK-0036 PR 에 같이 묶어 해결(27127b9)한 상태라, 본 세션에서는 **수정 내용을 리뷰하고 설계·학습 문서에 반영**하는 것이 목표다.
+- 현황/환경 분석 (수정 전 코드 기준):
+  1. `src/static/app.js` 의 폴링 루프는 `setInterval(pollProgress, 1500)` 단일 `state.progressPoller` 핸들로 동작했다. `pollProgress()` 는 fetch 후 await 하는데, `/api/progress` 응답이 느리면 다음 `setInterval` tick 이 먼저 발화해 **동시 in-flight 요청이 1 을 넘길 수 있는 구조**.
+  2. 대화 전환/로그아웃 시 `stopProgressPolling()` 이 `clearInterval` 만 호출하고 이미 발행된 fetch 를 취소하지 않아, 서버 측에는 **스텁 요청이 뒤늦게 계속 도착**.
+  3. `/api/progress` 핸들러는 `_load_steps_for_run(conn, cid, run_id)` 로 **해당 run 의 전체 step 을 매번 파이썬 메모리로 로드**하고 `[s for s in all_steps if step_index > after_step]` 로 필터링했다. 서버 `AgentMemorySteps` 가 쌓이는 장기 대화일수록 폴링 비용이 O(N) 으로 증가.
+  4. 서버는 `after_step` 만 받고 `client_run_id` 는 없어서, **클라이언트가 들고 있는 run_id 가 서버 최신 run_id 와 달라도** 서버가 그것을 감지할 수 없었다. 결과: 새 run 이 시작됐는데 클라이언트는 과거 run 의 `after_step` 을 계속 들고 와 **신규 step 0..K 를 놓침**.
+  5. `document.hidden` 상태(탭 전환) 에서도 1500ms 주기가 그대로 유지 — 탭이 백그라운드여도 매초 한 번 네트워크/CPU 를 쓴다.
+- 설계 (TASK-0036 시점에 실제 적용된 구조, 본 TASK-0037 은 이를 검토·문서화):
+  1. **클라이언트 상태 모델 확장** — `state` 에 `progressPollInFlight:boolean`, `progressPollSeq:number`, `progressAbortController:AbortController`, `progressErrorCount:number` 추가. 기존 `progressPoller`(timer handle), `progressSteps`(누적 step 캐시), `progressRunId`(현재 추적 중인 run), `progressAfterStep`(다음 폴링의 after_step 값) 와 결합해 **폴링 생명주기** 를 정확히 모델링.
+  2. **`setInterval` → 순번 기반 `setTimeout` 체인** — `scheduleProgressPolling(delayMs, seq)` 는 `clearProgressPollTimer()` 후 `setTimeout(() => pollProgress(seq).catch(()=>{}), nextDelay)` 단 하나만 예약. `pollProgress(seq)` 는 실행 시작 때 `seq !== state.progressPollSeq || progressPollInFlight` 이면 즉시 return, 끝날 때 다시 `scheduleProgressPolling(nextDelay, seq)` 로 다음 한 번을 예약한다. 즉 타임라인 상 항상 `[fetch] → [응답] → [다음 fetch 예약]` 순차 체인 구조가 보장되어 **in-flight 요청 수 ≤ 1** 가 코드로 강제됨.
+  3. **AbortController 기반 취소 경로** — 매 poll 마다 `new AbortController()` 를 `state.progressAbortController` 에 저장하고 fetch 에 signal 로 전달. `stopProgressPolling({abort:true})` 는 이를 `.abort()` 호출해 in-flight fetch 를 즉시 끊는다. 추가로 `setTimeout(() => controller.abort(), PROGRESS_FETCH_TIMEOUT_MS=4000)` 로 서버 응답 지연 상한도 보장.
+  4. **적응형 폴링 주기** — `PROGRESS_POLL_ACTIVE_MS=1200ms`(신규 step 스트리밍 중), `PROGRESS_POLL_IDLE_MS=3000ms`(기본), `PROGRESS_POLL_HIDDEN_MS=10000ms`(탭 배경화), `PROGRESS_POLL_ERROR_MS=8000ms`(에러 후). `scheduleProgressPolling(delayMs)` 진입부에서 `document.hidden` 이면 `Math.max(delayMs, PROGRESS_POLL_HIDDEN_MS)` 로 하한을 올려, 어떤 경로로 빠른 delay 가 들어와도 탭이 숨겨져 있으면 자동 감속.
+  5. **에러 백오프 + 포기 조건** — `progressErrorCount` 를 각 예외 경로(fetch 에러/timeout) 마다 증가시키고, 3회 미만이면 `PROGRESS_POLL_ERROR_MS=8000` 으로 재시도하되 3회 이상이면 아예 재스케줄링하지 않는다(`shouldSchedule = errorCount < 3`).
+  6. **서버 `/api/progress` 최적화** — `_load_progress_status(conn, cid)` 로 `(status, status_at, run_id)` 를 단일 커서에서 반환. `_load_steps_for_run(..., after_step=0)` 은 `after_step > 0` 이면 SQL `WHERE step_index > %s` 조건을 직접 걸어 **DB 에서 바로 필터링** (python 측 list comprehension 제거). 핸들러는 async → sync 로 바뀌고(블로킹 mysql 호출과 단순 수식 뿐이라 이벤트 루프 점유 이득 없음), `client_run_id` 가 없거나 서버 최신 run_id 와 다르면 `next_after_step = 0` 으로 리셋해 응답에 해당 run 의 모든 step 을 담아 되돌려준다 — 클라이언트가 `applyProgressPayload` 에서 `runId !== state.progressRunId` 를 감지해 캐시를 새 run 으로 교체.
+  7. **라이프사이클 API 일관화** — `startProgressPolling({reset=false, runId=""})` 은 이전 체인을 `stopProgressPolling({reset:false, abort:true})` 로 끊고 `progressPollSeq` 를 한 칸 올린 뒤 `scheduleProgressPolling(0, seq)` 로 즉시 첫 poll 을 예약한다. `stopProgressPolling({reset, abort})` 은 `reset=true` 일 때 `resetProgressTracking()` 을 호출해 캐시/run_id/after_step 을 0으로 복원 — 대화 전환/로그아웃/새 대화 생성 등 "새로 시작해야 하는" 경로에서 명시적으로 reset 을 지정.
+- 검증 (코드 리뷰 + 정적 확인 — 이미 커밋된 변경이므로 신규 runtime 배포 불필요):
+  1. `grep -c "setInterval" src/static/app.js` = 0. 기존 고정 주기 루프가 폴링 경로에 남아있지 않음.
+  2. `grep -nE "PROGRESS_POLL_(ACTIVE|IDLE|HIDDEN|ERROR)_MS|PROGRESS_FETCH_TIMEOUT_MS" src/static/app.js` 로 5 개 상수(lines 67-71) 모두 선언 확인, `scheduleProgressPolling`/`pollProgress` 본문에서 실제 참조.
+  3. `progressPollSeq` 증가 지점(3곳): `stopProgressPolling()`, `startProgressPolling()`, `applyProgressPayload()` 계열 콜러에서 새 run 감지 시. 각 poll 은 `seq !== state.progressPollSeq` 로 자신이 구버전인지 체크.
+  4. `AbortController` 배치: `pollProgress` 는 `controller = new AbortController()`, `timeoutId = setTimeout(controller.abort, 4000)`, `fetch(url, {signal: controller.signal})`, `finally` 에서 `clearTimeout(timeoutId)` + `state.progressAbortController = null if matches controller`.
+  5. 서버 측 `/api/progress` (app.py:4381~4426) 가 `client_run_id` 파라미터를 선언하고 `if not run_id or str(client_run_id or "").strip() != run_id: next_after_step = 0` 조건을 가진다 (line 4405-4406).
+  6. 사용자 수신 상태 플로우: `status != 'processing'` 이면 `stopProgressPolling({abort:false})` + `refreshWorkspace(cid)` 호출 — 즉 서버가 done/failed 를 돌려주는 순간 클라이언트 폴링이 종료되고 workspace 가 최종 상태로 refresh 된다.
+- 영향/후속:
+  1. TASK-0034 같이 턴당 수분 걸리는 워크로드에서도 브라우저에서 `/api/progress` 요청이 쌓이지 않는다. 서버 측 로그/DB/네트워크 부하가 선형에서 상수 시간대로 감소.
+  2. 현재는 LEARNINGS.md 에 폴링 패턴 학습 기록이 없다. 본 TASK 로 `LRN-20260422-0011 장시간 작업 폴링은 setInterval 이 아니라 순번 기반 setTimeout 체인 + AbortController + document.hidden 감지가 기본` 을 추가.
+  3. TASK-0036 MODIFY 항목(CHG-20260421-0009) 에는 폴링 리팩터가 언급되지 않았다. 본 TASK 에서 별도 CHG 로 분리하지 않고 CHG-20260421-0009 Notes 에 한 줄을 보강하는 대신, 문서화 목적이므로 `CHG-20260422-0010` 으로 따로 기록하는 것이 다른 feature/에이전트 가 "폴링 개선" 키워드로 검색할 때 발견 가능성이 높다 — 따라서 별도 CHG 로 분리.
+- 범위 제한:
+  - 신규 코드 변경 없음(이미 27127b9 에 반영됨).
+  - 문서 갱신만 수행: `docs/TASK.md`(본 항목 + 체크리스트), `docs/MODIFY.md`(CHG-20260422-0010), `docs/LEARNINGS.md`(LRN 추가), `docs/REPORT.md`(검증 결과 한 줄).
+- 완료 조건:
+  - TASK.md §2 Task Queue 에 TASK-0037 `[x]` 가 올라가고 §3.1 Recently Done 에 본 요약이 들어간다.
+  - LEARNINGS.md 에 폴링 패턴 LRN 항목이 추가된다.
+  - MODIFY.md 에 CHG-20260422-0010 문서화 전용 엔트리가 append 된다.
+  - git commit + push 가 완료된다.
 
 ### TASK-0036 상세 설계 (2026-04-21)
 - 문제/목적 (사용자 요청 2026-04-21):
@@ -951,3 +989,8 @@ source_of_truth: true
 - [ ] TASK-0034: 복잡 QA 성능 테스트가 local LLM 5 (직렬) + 상용 API gpt-5.4-mini 5 (병렬) 총 10 대화로 실행되어 turn-by-turn 로그가 JSON 으로 저장된다
 - [ ] TASK-0034: 5 개 복잡 질문에 대해 사람 truth 쿼리와 assistant 최종 답변이 비교 가능한 diff 형태로 `TASK-0034-REPORT.md` 에 기록된다
 - [ ] TASK-0034: 관찰된 개선 포인트가 `docs/LEARNINGS.md` 에 신규 LRN 항목으로 추가된다
+- [x] TASK-0037: `/api/progress` 폴링이 `setInterval` 고정 주기가 아니라 순번 기반 `setTimeout` 체인으로 동작하고 in-flight 요청이 1 을 넘지 않는다
+- [x] TASK-0037: 대화 전환/로그아웃/새 대화 생성 시 AbortController 로 진행 중인 `/api/progress` 요청이 즉시 취소된다
+- [x] TASK-0037: 탭 전환(`document.hidden`) 시 폴링 주기가 최소 10초로 감속되고, 연속 오류 3회 이상이면 재스케줄링되지 않는다
+- [x] TASK-0037: 서버 `/api/progress` 가 `client_run_id` 불일치 시 `after_step` 을 0 으로 리셋해 새 run 의 모든 step 을 되돌려준다
+- [x] TASK-0037: 폴링 패턴 학습 내용이 `docs/LEARNINGS.md` 의 LRN 항목(LRN-20260422-0011) 로 기록된다

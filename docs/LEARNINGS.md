@@ -190,6 +190,23 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Verification: 기존 33행 × 3열 결과 테이블을 기준으로 (a) `.message-details-body` 의 `scrollHeight === clientHeight` (내부 스크롤 없음), `overflow = visible`, (b) `.result-table-wrap` `overscroll-behavior = auto`, (c) `thead th.position = sticky`, `td.col-rownum position = sticky, left = 0`, corner `z-index = 3`, (d) `wrap.scrollTop = 200` 시 각 `<th>` 개별 `top` 변동 0, (e) `wrap.scrollLeft = 100` (폭 강제 축소) 시 `td.col-rownum` 좌표 불변(`rnStayed: true`) + 데이터 컬럼은 이동(`dataMoved: true`). 스크린샷에서도 `# | hero_index | participation_count` 헤더가 상단에, `#` 열이 좌측에 고정된 채 행 6-19 가 보임.
 - Applies to: 채팅/로그/인사이트 패널 등 **확장 가능한 본문을 포함한 카드형 UI**. 본문 스크롤은 컨테이너 계층마다 함부로 중첩하지 말고, 외부 페이지 스크롤을 대체할 만큼 큰 내부 영역에만 제한적으로 둔다. 또 모든 데이터 테이블(쿼리 결과/로그/리스트 등) 은 **기본값으로 행 번호 컬럼 + 헤더/첫 열 freeze** 를 제공한다 — 사용자가 스크롤 중에도 위치를 잃지 않는 것은 옵션이 아니라 기본 요구사항.
 
+### LRN-20260422-0011 — 장시간 작업 폴링은 `setInterval` 고정 주기가 아니라 순번 기반 `setTimeout` 체인 + AbortController + 적응형 주기로 설계한다
+- Source: feature-0003 `/api/progress` 폴링 리팩터 (TASK-0036 부수 변경, TASK-0037 사후 리뷰, 2026-04-22)
+- Mistake: 초기 구현은 `state.progressPoller = setInterval(pollProgress, 1500)` 고정 주기였다. `/api/ask` 한 턴이 수분까지 걸리는 실사용 (TASK-0034 복잡 QA 테스트에서 평균 ~3분/턴) 에서 다음 4가지 문제가 동시에 발생:
+  1. `setInterval` 은 이전 fetch 완료 여부와 무관하게 tick 을 발화 → `/api/progress` in-flight 요청이 누적되어 서버 커넥션/CPU 낭비
+  2. `stopProgressPolling()` 이 `clearInterval` 만 호출 → 이미 발행된 fetch 는 응답이 올 때까지 서버/네트워크 리소스를 계속 소비
+  3. `document.hidden` 감지 없음 → 탭을 배경화해도 1.5초마다 폴링이 계속되어 배터리/모바일 셀룰러 트래픽을 불필요하게 씀
+  4. 서버는 `after_step` 필터를 받지만 `client_run_id` 가 없어서, 새 run 이 시작된 상황을 감지 못해 클라이언트가 "낡은 run 의 after_step" 으로 계속 요청 → 새 run 의 step 0..K 를 놓침
+- Correct approach: 장시간 작업(분 단위) 을 백그라운드에서 추적하는 모든 폴링은 다음 5 원칙을 묶어서 적용한다 —
+  1. **순번 기반 `setTimeout` 체인** — `state.progressPollSeq: number` + `scheduleProgressPolling(delayMs, seq)` 로 "[fetch] → [응답] → [다음 fetch 1회 예약]" 단일 체인을 유지. `pollProgress(seq)` 진입부에서 `seq !== state.progressPollSeq || state.progressPollInFlight` 이면 즉시 return — in-flight 요청이 1 을 넘는 게 **코드로 불가능** 하게 강제.
+  2. **AbortController 로 취소 경로 완비** — 매 poll 마다 `new AbortController()` 를 `state.progressAbortController` 에 저장하고 fetch signal 로 전달. `stopProgressPolling({abort:true})` 이 `controller.abort()` 를 호출해 in-flight HTTP 를 즉시 끊는다. 대화 전환/로그아웃/상세 본문 닫기 등 "이 폴링이 더 이상 의미 없어진" 모든 경로에서 호출.
+  3. **요청당 timeout 상한** — `setTimeout(() => controller.abort(), PROGRESS_FETCH_TIMEOUT_MS=4000)` 으로 서버 응답 지연도 상한 설정. `finally` 에서 `clearTimeout(timeoutId)`. 서버가 죽었을 때도 클라이언트가 무한 대기하지 않음.
+  4. **적응형 주기 (상태 → 주기)** — `PROGRESS_POLL_ACTIVE_MS=1200`(새 step 스트리밍 중), `PROGRESS_POLL_IDLE_MS=3000`(기본), `PROGRESS_POLL_HIDDEN_MS=10000`(`document.hidden`), `PROGRESS_POLL_ERROR_MS=8000`(에러 후) 4단계. `scheduleProgressPolling(delayMs)` 진입 시 `document.hidden` 이면 `Math.max(delayMs, PROGRESS_POLL_HIDDEN_MS)` 로 하한을 끌어올려 어떤 경로로 짧은 delay 가 들어와도 탭 배경화 시 자동 감속.
+  5. **서버측 delta + run_id 검증** — `/api/progress(conversation_id, after_step, client_run_id)` 3 파라미터. 서버는 `client_run_id` 가 없거나 현재 run_id 와 다르면 `after_step=0` 으로 리셋해 **새 run 의 모든 step 을 한 번에 반환** — 클라이언트는 `runId !== state.progressRunId` 를 `applyProgressPayload` 에서 감지해 캐시를 통째로 교체. `_load_steps_for_run(after_step=N)` 은 `WHERE step_index > N` 을 SQL 레이어에서 걸어 DB 필터링 비용을 O(N) → O(returned) 로 축소.
+- 에러 백오프 + 포기: `progressErrorCount` 를 각 예외에서 증가시키고 `errorCount < 3` 이면 `PROGRESS_POLL_ERROR_MS=8000` 으로 재시도, 3회 이상은 `shouldSchedule = false` 로 아예 재스케줄링 중단. 네트워크가 완전히 끊긴 상황에서 지속적으로 실패 요청을 때리지 않는다.
+- Verification (정적 검증): (a) `grep -c "setInterval" src/static/app.js` = 0 (고정 주기 루프 제거 확인), (b) 5 개 상수 모두 `scheduleProgressPolling`/`pollProgress` 본문에서 실제 참조, (c) 서버 `/api/progress` (app.py:4381~4426) 가 `client_run_id` 를 선언하고 불일치 시 `next_after_step=0` 재설정 조건이 있음 (line 4405-4406), (d) `curl -sk https://127.0.0.1:18080/api/progress?conversation_id=X` HTTP 401 (인증), 로그인 후 HTTP 200 + JSON 스키마 `{steps, status, status_at, step_count, run_id, conversation_id}` 반환.
+- Applies to: 장시간(>수초) 비동기 작업을 클라이언트가 실시간 추적해야 하는 모든 웹 UI. `fetch` 폴링 루프를 새로 작성하거나 기존 `setInterval` 패턴을 발견했을 때 전면 적용. 짧은(<1초) 단일 요청에는 과설계이므로 제외.
+
 ## Category: quirk
 
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존
