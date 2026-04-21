@@ -165,6 +165,19 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Verification: 브라우저 자동화로 `document.documentElement.scrollHeight - clientHeight == 0`(외부 스크롤 없음), `detail-col.scrollHeight - clientHeight > 0`(내부 스크롤 활성), 양 컬럼 끝까지 scrollTop 을 밀어도 `.admin-detail-actions.getBoundingClientRect().bottom <= window.innerHeight` 가 유지되는 것을 확인.
 - Applies to: 마스터-디테일/리스트-폼/설정 패널 등 "좌측 리스트 + 우측 편집" 레이아웃 전반. Admin · 프로필 · API Vault · 알림 설정 등 향후 유사 화면에 동일 패턴을 재사용한다.
 
+### LRN-20260421-0008 — 권한으로 막힌 버튼은 숨기지 말고 "필요 권한 코드 + 서술"을 안내하는 blocked 상태로 노출한다
+- Source: feature-0003 권한 안내 UX (TASK-0032, 2026-04-21)
+- Mistake: RBAC 권한 확인이 실패하면 버튼을 `hidden` 토글로 DOM 에서 감추거나 핸들러 초입 `if (!can(X)) return;` 으로 **소리 없이 무시**했다. 동작이 안 보이거나 클릭해도 반응이 없어 사용자는 "왜 안 되는지" 를 알 수 없었고, 관리자에게 정확히 어떤 권한을 요청해야 하는지도 전달되지 않았다. 툴팁도 `title = code` 로 영문 id (`conversation.rename.own`) 만 노출해 비개발자가 해석하기 어려웠다.
+- Correct approach: 권한 게이트는 **노출 + 명시** 두 축으로 재설계한다 —
+  1. **`PERMISSION_DESCRIPTIONS` flat map** 을 단일 정본으로 둬서 모든 권한 코드를 "~할 수 있습니다" 형태의 완결된 한국어 문장으로 매핑한다. `PERMISSION_LABELS` 는 짧은 라벨(그룹 합계 등 좁은 공간용), `PERMISSION_DESCRIPTIONS` 는 서술 문장용으로 역할을 분리한다. 프로필 권한 pill 툴팁은 `` `${describePermission(code)}\n(${code})` `` 2줄 형식으로 노출해 사람이 읽는 문장과 개발자가 검색할 코드를 동시에 보여준다.
+  2. **숨김 vs blocked 상태 분리** — 버튼 hidden 토글은 **컨텍스트**(예: 대화가 없음 → 이름변경 의미 없음, run 실행 중 아님 → 취소 의미 없음) 에만 사용한다. 권한 부재는 `markAccessBlocked(btn, action, conv)` 헬퍼가 `aria-disabled="true"` + `.is-access-blocked` (opacity .42, cursor: help, 중립 색) 을 붙이고, 네이티브 `disabled` 는 쓰지 않는다. 네이티브 `disabled` 는 click 이벤트 자체를 차단해 토스트를 띄울 기회를 잃기 때문이다.
+  3. **클릭 경로를 유지한 채 토스트로 안내** — 각 액션 핸들러(`createConversation`, `renameCurrentConversation`, `deleteConversation`, `cancelCurrentRun`, `finalizeCurrentRun`, `sendPrompt`) 는 `if (!can(...)) { showPermissionDeniedToast(action); return; }` 로 교체. `showPermissionDeniedToast` 는 `requiredPermissionsFor(action, conversation)` 로 필요한 권한 코드 집합(any/own 양쪽 포함)을 계산해 `"'이름변경' 권한이 없습니다. 필요 권한: \`conversation.rename.own\` — 본인이 소유한 대화의 이름만 변경…"` 처럼 **동작명 + 코드 + 서술** 3종을 한 문장에 담는다.
+  4. `any` 권한이 있으면 own 요구 없이 통과하고, own 만 있으면 `isOwnConversation()` 로 소유 여부를 한 번 더 검증하는 **dual-permission 패턴** 을 `requiredPermissionsFor` 에 집중시켜 호출부는 `action` 문자열만 넘긴다.
+  5. 접근 차단 상태에서도 버튼 title 에 동일한 필요 권한 문구가 들어가도록 `markAccessBlocked` 에서 title 을 같이 갱신 — hover 와 click 양쪽에서 동일 정보가 나온다.
+  6. `renderAccessNotice()` 처럼 페이지 전체가 잠기는 경우에도 안내 메시지에 필요 권한 코드(예: `` `conversation.ask` ``) 와 "관리자에게 권한 부여를 요청하세요." 를 명시해 **어떤 권한을 누구에게 요청해야 하는지** 를 일관된 톤으로 전달한다.
+- Verification: 브라우저 자동화로 (a) bootstrap_admin(31 권한) 은 모든 버튼이 활성·토스트 미발생, (b) 신규 pending 계정(5 권한, `conversation.ask`/`.create`/`.delete.any` 없음) 으로 로그인 시 composer 의 "보내기" · "새 대화" 버튼이 `.is-access-blocked` + `aria-disabled` 로 보이고, 클릭 시 필요 권한 코드가 포함된 토스트가 뜨는 것을 확인. 스크린샷 `artifacts/shared/out/browser/task0032_{01,02,03}_*.png`.
+- Applies to: RBAC/기능 플래그/구독 제한 등 권한 게이트가 존재하는 모든 UI. "의미 있는 컨텍스트에서 권한만 부족한 버튼" 은 숨기지 말고 blocked 상태로 노출하고, 클릭 경로를 유지해 **필요 권한 코드 + 서술 + 요청 대상(관리자)** 3요소를 토스트/title 로 안내한다. 권한 코드는 사용자 메시지에 코드블록으로 포함해 복사·검색이 가능하게 한다.
+
 ## Category: quirk
 
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존

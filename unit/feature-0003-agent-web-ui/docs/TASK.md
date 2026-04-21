@@ -15,6 +15,7 @@ source_of_truth: true
 - Last Updated: 2026-04-21
 
 ## 2. Task Queue
+- [x] TASK-0032 권한 안내 UX (툴팁 서술화 + 차단 시 필요 권한 안내)
 - [x] TASK-0001 Web UI 코드 이관
 - [x] TASK-0002 정적 자산 이관
 - [x] TASK-0003 agent 이미지 복사 경로 반영
@@ -49,6 +50,118 @@ source_of_truth: true
 
 ## 3. In Progress
 - 없음
+
+### TASK-0032 상세 설계
+- 문제 (사용자 테스트 피드백 2026-04-21):
+  - 작업 화면에서 사용자가 특정 동작(대화 생성/제목 변경/삭제/중단/즉시답변/요청 전송)을 시도했을 때 권한이 없으면 버튼이 **아예 숨겨지거나 조용히 무시되어** 사용자는 "어떤 권한"이 필요한지 알 수 없다. 결과적으로 관리자에게 "그냥 권한 다 줘 주세요" 같은 불필요·과도한 요청이 반복된다.
+  - Profile > 계정 탭의 권한 pill 에 마우스를 올리면 툴팁에 **영문 권한 id 만 노출**([app.js:387](../src/static/app.js#L387) `item.title = code`)되어, `conversation.rename.own` 같은 코드를 일반 사용자가 해석할 수 없다.
+  - 원인:
+    1. [app.js:340-393](../src/static/app.js#L340-L393) `buildPermissionPills()` — `item.title = code` 한 줄. 서술 맵 부재.
+    2. [app.js:1102-1105](../src/static/app.js#L1102-L1105) `renderComposer()` 에서 cancel/finalize/rename/delete 버튼을 `classList.toggle("hidden", !canX)` 로 처리 — 권한이 없으면 버튼 자체가 사라져 "이 동작이 있다"는 정보조차 사라짐.
+    3. [app.js:1250](../src/static/app.js#L1250), [app.js:1258](../src/static/app.js#L1258), [app.js:1272](../src/static/app.js#L1272), [app.js:1304](../src/static/app.js#L1304), [app.js:1313](../src/static/app.js#L1313), [app.js:1323](../src/static/app.js#L1323) — 각 action 함수가 `if (!canX(...)) return;` 로 **조용히** 리턴. 사용자 피드백 없음.
+    4. [app.js:548](../src/static/app.js#L548), [app.js:1088](../src/static/app.js#L1088) `renderAccessNotice()` / `renderComposer()` 안내 문구가 "대화 요청 실행 권한이 없습니다" 까지만 말하고 **어떤 permission code 를 요청해야 하는지 명시하지 않는다**.
+- 목표:
+  1. Profile > 계정 권한 pill hover 툴팁이 "이 권한이 실제로 어떤 동작을 허용하는지" 한국어 서술 문장 + 권한 코드를 모두 보여준다.
+  2. 사용자가 차단된 동작을 시도했을 때(버튼 클릭 / 전송 / 단축키), **필요 권한 이름 + 관리자 요청 문구** 가 포함된 토스트가 즉시 노출된다.
+  3. 버튼 가림 정책 변경: context 상 의미있는 상태(대화 선택됨 / 처리 중)에서는 **권한이 없어도 버튼을 유지**하되 `aria-disabled="true"` + 희미한 스타일로 "존재는 하지만 현재 계정으로는 실행 불가"임을 암시. 툴팁에도 필요 권한을 명시.
+  4. 조회 전용 / 복구 가능 상태 안내 문구(`accessNoticeEl`, `composerHintEl`)에도 필요한 권한 코드를 명시.
+  5. 기존에 자연스레 숨겨야 할 경우(대화 미선택 상태의 제목 변경 버튼 등)는 그대로 숨김 유지 — context 상 의미가 없기 때문.
+- 접근:
+  1. **권한 서술 맵 추가 ([app.js:97](../src/static/app.js#L97) 부근)**:
+     ```js
+     const PERMISSION_DESCRIPTIONS = {
+       "console.access": "관리 콘솔에 접속할 수 있는 권한입니다.",
+       "console.manage": "관리 콘솔에서 계정/역할/권한을 저장 커밋할 수 있는 권한입니다.",
+       "account.read": "계정 목록과 상세 정보를 조회할 수 있는 권한입니다.",
+       // ... 33개 모두 서술 ...
+       "conversation.rename.own": "내가 소유한 대화의 제목을 변경할 수 있는 권한입니다.",
+       "conversation.rename.any": "모든 사용자의 대화 제목을 변경할 수 있는 권한입니다.",
+       // ...
+     };
+     function describePermission(code = "") {
+       return PERMISSION_DESCRIPTIONS[code] || "권한 설명이 등록되어 있지 않습니다.";
+     }
+     ```
+  2. **필요 권한 반환 헬퍼**:
+     ```js
+     // 현재 대화에서 action 을 실행하기 위해 필요한 "대안 권한 코드들"을 반환.
+     // 예: conversation.rename → ["conversation.rename.any"] 또는 own 대화면 ["conversation.rename.any", "conversation.rename.own"].
+     // 이 중 하나라도 granted 면 허용.
+     function requiredPermissionsFor(action, conversation = currentConversation()) {
+       const own = conversation ? isOwnConversation(conversation) : false;
+       switch (action) {
+         case "conversation.ask":     return { label: "대화 요청 실행", codes: ["conversation.ask"] };
+         case "conversation.create":  return { label: "새 대화 생성", codes: ["conversation.create"] };
+         case "conversation.rename":  return { label: "대화 제목 변경", codes: own ? ["conversation.rename.any", "conversation.rename.own"] : ["conversation.rename.any"] };
+         case "conversation.delete":  return { label: "대화 삭제",     codes: own ? ["conversation.delete.any", "conversation.delete.own"] : ["conversation.delete.any"] };
+         case "conversation.cancel":  return { label: "대화 중단",     codes: own ? ["conversation.cancel.any", "conversation.cancel.own"] : ["conversation.cancel.any"] };
+         case "conversation.finalize":return { label: "즉시 답변",     codes: own ? ["conversation.finalize.any","conversation.finalize.own"] : ["conversation.finalize.any"] };
+         default:                     return { label: action, codes: [] };
+       }
+     }
+     function hasAnyPermission(codes = []) { return codes.some((c) => can(c)); }
+     ```
+  3. **차단 토스트 헬퍼**:
+     ```js
+     function showPermissionDeniedToast(action, conversation = currentConversation()) {
+       const req = requiredPermissionsFor(action, conversation);
+       if (!req.codes.length) { showToast(`'${req.label}' 을(를) 실행할 수 없습니다.`, true); return; }
+       const missing = req.codes.filter((c) => !can(c));
+       const primary = missing[0] || req.codes[0];
+       const desc = describePermission(primary);
+       const alt = req.codes.length > 1 ? `(또는 ${req.codes.slice(1).join(", ")})` : "";
+       showToast(`'${req.label}' 권한이 필요합니다. 관리자에게 \`${primary}\`${alt ? " " + alt : ""} 권한 부여를 요청하세요.\n${desc}`, true);
+     }
+     ```
+  4. **buildPermissionPills 툴팁 서술화**:
+     ```js
+     item.title = `${describePermission(code)}\n(${code})`;
+     ```
+     (short label 은 pill 의 `textContent`로 유지, 서술 문장은 hover 툴팁에만 노출 — 레이아웃 변경 없음)
+  5. **버튼 visibility 정책 전환** ([app.js:1102-1105](../src/static/app.js#L1102-L1105)):
+     - `cancelBtn` / `finalizeBtn`: "처리 중" 컨텍스트에서만 의미가 있으므로 `hidden` 토글은 `processing` 여부에만 매핑. 권한 부재는 `aria-disabled + .is-access-blocked` 로 표현.
+     - `renameConversationBtn` / `deleteConversationBtn`: 대화가 선택되었을 때만 의미가 있으므로 `hidden` 토글은 `state.activeConversationId` 에만 매핑. 권한 부재는 `aria-disabled + .is-access-blocked`.
+     - 헬퍼:
+       ```js
+       function markAccessBlocked(btn, action, conversation) {
+         const req = requiredPermissionsFor(action, conversation);
+         const blocked = !hasAnyPermission(req.codes);
+         btn.classList.toggle("is-access-blocked", blocked);
+         if (blocked) {
+           btn.setAttribute("aria-disabled", "true");
+           btn.dataset.blockedAction = action;
+           const missing = req.codes.filter((c) => !can(c))[0] || req.codes[0];
+           btn.title = `'${req.label}' 권한이 없습니다. 필요 권한: \`${missing}\``;
+         } else {
+           btn.removeAttribute("aria-disabled");
+           delete btn.dataset.blockedAction;
+           btn.title = "";
+         }
+       }
+       ```
+  6. **클릭 핸들러 보강** ([app.js:1534-1580](../src/static/app.js#L1534-L1580)):
+     - 각 핸들러 본문 맨 앞에 `if (btn.getAttribute("aria-disabled") === "true") { showPermissionDeniedToast(action, currentConversation()); return; }` 추가.
+     - `createConversation()`, `renameCurrentConversation()`, `deleteConversation()`, `cancelCurrentRun()`, `finalizeCurrentRun()`, `sendPrompt()` 내부의 조용한 `if (!canX) return` 도 `if (!hasAnyPermission(req.codes)) { showPermissionDeniedToast(action); return; }` 패턴으로 교체 — 단축키(Ctrl+Enter) 경로에서도 토스트가 나오도록.
+  7. **안내 문구 보강** (`renderAccessNotice()`, `renderComposer()`):
+     - `accessNoticeEl.textContent = "현재 계정에는 대화 요청 실행 권한(\`conversation.ask\`)이 없습니다. 관리자에게 권한을 요청하세요.";`
+     - `composerHintEl.textContent = "현재 계정에는 대화 요청 실행 권한(\`conversation.ask\`)이 없습니다. 관리자에게 요청하세요.";`
+     - Profile 의 "사용 가능한 권한이 없습니다" 문구는 그대로 (별도 추가 작업 불필요).
+  8. **CSS** (`styles.css`):
+     - `.tool-btn.is-access-blocked` + `.tool-btn[aria-disabled="true"]` 에 `opacity: .38; cursor: help; color: var(--text-muted);` 지정 — 기존 `:disabled` 스타일 재사용하되 click 은 계속 통과.
+     - `button.is-access-blocked` hover 시 네이티브 `title` 툴팁이 뜨도록 `pointer-events: auto` 유지 (기본값이라 별도 선언 불필요).
+- 범위 제한:
+  - 백엔드 API 변경 없음. 권한 정의 테이블(WebPermissions) 그대로 사용.
+  - admin 콘솔 쪽 UX 는 TASK-0031 이 마무리되었으므로 이번 범위에서 제외.
+  - Profile 드로어의 "활성 권한" 섹션 외관은 유지 (그룹핑/카운트 배지 TASK-0027 그대로).
+  - "부족한 권한 전체 목록" 같은 별도 UI 섹션은 추가하지 않는다 — 동작 시도 시점에 안내되므로 과설계.
+- 검증 기준:
+  1. Profile > 계정 탭에서 임의의 권한 pill 에 hover → 툴팁에 한국어 서술 문장 + `(code)` 가 표시된다(단순 `code` 가 아님).
+  2. operator 계정(= `conversation.delete.own` 미보유) 로그인 → 본인 대화 선택 시 "삭제" 버튼이 보이고 `aria-disabled="true"` + 희미한 색. 클릭하면 토스트 `'대화 삭제' 권한이 필요합니다. 관리자에게 \`conversation.delete.any\` 권한 부여를 요청하세요.` 노출.
+  3. 동일 계정에서 대화 미선택 상태에서는 "삭제" 버튼이 (권한과 무관하게) 숨김 — context 상 의미 없음.
+  4. pending 계정(= `conversation.ask` 미보유) 로그인 → access notice / composer hint 에 `conversation.ask` 권한 코드 명시. 전송 시도 시 토스트 출현.
+  5. admin 계정(모든 권한) 로그인 → 버튼 모두 정상 클릭 가능. `aria-disabled` 없음. 툴팁에도 빈 문자열.
+  6. Ctrl+Enter 로 빈 권한 상태 전송 시도해도 동일 토스트 확인 (단축키 경로).
+  7. 브라우저 자동화로 위 2번/4번을 재현해 스크린샷 or DOM 상태 증빙.
 
 ### TASK-0031 상세 설계
 - 문제 (사용자 테스트 피드백 2026-04-21):
@@ -411,6 +524,7 @@ source_of_truth: true
 - TASK-0031 (2026-04-21): 관리 콘솔 내부 스크롤 정리. `.admin-workspace` 의 외부 스크롤(`overflow-y: auto`) 제거 → `overflow: hidden` + flex column 으로 전환하고, `.admin-pane.is-active` / `.admin-list-detail` 가 남은 공간을 `flex: 1 1 auto + min-height: 0` 으로 채우도록 변경. `.admin-list-col` / `.admin-detail-col` 각각 자체 내부 스크롤 소유 — list 컬럼은 toolbar/list-head(shrink 고정) + `.admin-list`(`flex: 1; overflow-y: auto`, 기존 `max-height: calc(100vh-320px)` 제거) + 페이지네이션/일괄 액션(`flex-shrink: 0; border-top`) 구조. detail 컬럼은 `overflow-y: auto` + `.admin-detail-actions { position: sticky; bottom: -18px; margin: 4px -22px -18px; padding: 12px 22px; background: var(--surface); border-top }` 로 저장/취소/삭제 버튼을 detail 높이와 무관하게 상시 하단 노출. 대시보드 pane 은 `overflow-y: auto` 단일 스크롤로 별도 처리. 검증: detailColScroll=1866, listScroll=807 각각 내부 스크롤 활성, docScrollDelta=0(외부 스크롤 0), paginationVisible/actionsVisible=true, 양 컬럼 끝까지 스크롤해도 두 하단 요소 모두 뷰포트 내 유지. JS/HTML 변경 없이 CSS 만으로 해결.
 - TASK-0030 (2026-04-21): assistant 말풍선 고정 폭 + `<details>` 펼침 시 내부 스크롤/스크롤 앵커. `.message`의 role별 max-width 분기(user 72% / assistant `max-width:none` + `margin-right:48px` + `align-self:stretch`)로 assistant 는 채팅 pane 전폭에 가깝게, user 는 좁은 우측 정렬로 분리. `.message-details-body`에 `max-height:min(60vh,520px); overflow:auto; overscroll-behavior:contain` 캡으로 펼친 본문을 말풍선 내부에서 수직 스크롤 처리. `.result-table-wrap` 기본 `max-height:320px`, `.sql-block` `max-height:240px` 로 결과 테이블/초장문 SQL 도 내부 스크롤로 격리. `app.js` `renderMessageDetails()`의 `<summary>` 클릭 핸들러에 `messageLogEl` 기준 `summary.getBoundingClientRect().top` 측정 → 2-frame `requestAnimationFrame` 후 delta 만큼 `messageLogEl.scrollTop` 보정하는 scroll anchor 추가. 브라우저 검증: summaryDelta=0/scrollDelta=0, Navigator 이동 시 bubble width 705→705 불변, bodyMaxH=432px(60vh), details body overflow-y=auto 확인.
 - TASK-0029 (2026-04-21): 관리 콘솔 재구조화. `admin.html` 을 `topbar + sidebar(tabs) + workspace + commit-bar` 4영역 grid 로 재작성(탭: 대시보드/계정/역할). `admin.js` 전면 재작성 — `adminState.pending = { accounts, roles, newRoles }` Map 기반 pending changes 모델 + 서버 값과 일치하면 auto-drop 로직(`setAccountPending`/`setRolePending`). 계정/역할 편집은 form submit 없이 input/select change 이벤트에서 pending 에 적재만 하고, 하단 commit bar 의 "모두 적용" 클릭 시 전체 pending entry 를 순차 PATCH/DELETE/POST 후 1회만 `loadAdminData()`. 리스트-디테일 레이아웃 + 탭별 scoped search + 리스트 row 체크박스 기반 일괄 작업(활성/비활성/삭제 pending 반영). 신규 역할은 tempId(`new:N`)로 pending.newRoles 에 넣고 POST 로 일괄 커밋. `styles.css` 에 `.admin-shell` grid/`.admin-sidebar`/`.admin-tab`/`.admin-list-detail`/`.admin-list-row`/`.admin-detail-*`/`.admin-commit-bar`(.has-pending 노란 강조) 스타일 추가. 사용자 테스트에서 확인된 "여러 계정 동시 수정 시 특정 계정 저장하면 타 계정 변경 소실" 버그는 pending 모델 + 단일 commit 경로로 근본 해소.
+- TASK-0032 (2026-04-21): 권한 안내 UX 개편. `app.js` 에 `PERMISSION_DESCRIPTIONS`(33개 권한 서술 문장 맵), `describePermission()`, `requiredPermissionsFor(action, conversation)`(any/own 이원화된 권한 자동 확장), `hasAnyPermission()`, `showPermissionDeniedToast()`(필요 권한 코드 + 서술 + 관리자 요청 문구), `markAccessBlocked(btn, action, conversation)`(aria-disabled + is-access-blocked + 서술 title) 추가. `buildPermissionPills()` 의 `item.title = code` 를 `서술 문장\n(code)` 로 교체. `renderComposer()` 에서 `cancel/finalize/rename/delete` 버튼을 context 신호(processing / activeConversationId) 로만 hidden 토글하고, 권한 부재는 `markAccessBlocked()` 로 별도 표현. `sendBtn`/`newConversationBtn` 도 native disabled 대신 aria-disabled 사용해 클릭이 통과하도록 전환. 각 action 함수 (`createConversation`, `renameCurrentConversation`, `deleteConversation`, `cancelCurrentRun`, `finalizeCurrentRun`, `sendPrompt`) 의 silent `return` 을 `showPermissionDeniedToast()` 호출로 교체. `renderAccessNotice()` / `renderComposer()` 안내 문구에 `conversation.ask` 코드 명시. `styles.css` 에 `.is-access-blocked { opacity: .42; cursor: help; color: var(--text-muted) }` 추가. 검증 (admin / pending 계정): pill tooltip=한국어 서술 문장+`(code)`, pending 계정 composerHint=`현재 계정에는 대화 요청 실행 권한(\`conversation.ask\`)이 없습니다...`, sendBtn/newConvBtn/renameBtn/deleteBtn 모두 `is-access-blocked` + aria-disabled + 서술 title, 클릭 시 `'대화 삭제' 권한이 필요합니다. 관리자에게 \`conversation.delete.any\` 권한 부여를 요청하세요. — 타 사용자가 소유한 대화까지 삭제할 수 있는 권한입니다.` 형식 토스트 노출. 스크린샷 `artifacts/shared/out/browser/task0032_{01,02,03}_*.png` 증빙.
 - TASK-0028 (2026-04-21): agent-core 문서 보강. `docs/INSIGHTS.md` 신규 작성(워커 루프/사이클/fingerprint/인라인 fallback/KV 스키마/환경변수 14종/해석 가이드/헬스 체크 SQL + 2026-04-21 실제 런타임 출력). `docs/AGENT_CORE_INTERNALS.md` 신규 작성(run_agent 흐름도, SYSTEM_PROMPT 7블록 구조, TOOL_DEFINITIONS 우선순위 근거, Knowledge Injection, Step 예산/타임아웃/cancel/finalize 신호, CSV 2단계(preview 50행 + 전체 파일), Planner insight fast path, 3-state 대화 맥락). `FUNCTION.md` Main Flow/Dependencies/Observability 확장(MEMORY_DB 스키마 표, insight_worker 로그 관측성). 코드 변경 없음.
 
 ## 6. Next Action
@@ -467,3 +581,6 @@ source_of_truth: true
 - [x] 리스트 하단 페이지네이션/일괄 액션 바와 디테일 하단 저장/삭제 액션 바가 컬럼 스크롤과 무관하게 항상 뷰포트 내에 노출된다
 - [x] 리스트 row 체크박스 + 일괄 작업(활성/비활성/삭제 pending)이 동작한다
 - [x] 계정 탭/역할 탭 각각이 독립된 scoped search 를 가진다
+- [x] Profile > 계정 탭 권한 pill 에 마우스를 올리면 한국어 서술 문장과 권한 코드가 툴팁으로 표시된다
+- [x] 권한이 부족한 계정에서 차단된 동작을 시도(클릭/단축키)하면 필요 권한 코드 + 서술 문장 + 관리자 요청 문구가 토스트로 노출된다
+- [x] cancel/finalize/rename/delete 버튼은 context 상 의미있을 때는 항상 보이고, 권한이 없을 때는 `is-access-blocked` 로 표시되며 클릭은 토스트로 안내된다

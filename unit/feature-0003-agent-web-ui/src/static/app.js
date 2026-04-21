@@ -128,6 +128,105 @@ const PERMISSION_LABELS = {
   "conversation.finalize.any": "전체 대화 즉시답변",
 };
 
+const PERMISSION_DESCRIPTIONS = {
+  "console.access": "좌측 상단의 관리 콘솔 링크로 진입할 수 있는 권한입니다. (조회 전용)",
+  "console.manage": "관리 콘솔에서 누적된 pending 변경 사항을 서버에 일괄 적용(커밋)할 수 있는 권한입니다.",
+  "account.read": "관리 콘솔에서 다른 사용자의 계정 목록과 상세 정보를 조회할 수 있는 권한입니다.",
+  "account.update": "다른 사용자의 활성 상태, 역할 등 기본 계정 속성을 수정할 수 있는 권한입니다.",
+  "account.delete": "계정을 비활성/삭제 처리할 수 있는 권한입니다. (soft delete)",
+  "account.activate": "비활성 상태인 계정을 다시 활성으로 전환할 수 있는 권한입니다.",
+  "account.deactivate": "활성 상태인 계정을 비활성으로 전환할 수 있는 권한입니다.",
+  "account.role.assign": "다른 사용자에게 역할(Role)을 부여하거나 변경할 수 있는 권한입니다.",
+  "account.permission.override.manage": "역할이 제공하는 기본 권한을 특정 계정 단위로 허용/거부 override 할 수 있는 권한입니다.",
+  "role.read": "역할(Role) 목록과 각 역할의 권한 구성을 조회할 수 있는 권한입니다.",
+  "role.create": "새로운 역할을 생성할 수 있는 권한입니다.",
+  "role.update": "기존 역할의 이름·설명·활성 여부·기본 가입 역할 여부를 수정할 수 있는 권한입니다.",
+  "role.delete": "역할을 삭제할 수 있는 권한입니다. (해당 역할을 쓰는 계정이 있으면 관리 콘솔에서 거부됩니다)",
+  "role.permission.manage": "역할에 묶인 권한 셋을 허용/해제할 수 있는 권한입니다.",
+  "conversation.create": "사이드바의 \"새 대화\" 버튼으로 새로운 대화 세션을 시작할 수 있는 권한입니다.",
+  "conversation.ask": "선택한 대화에 질문(요청) 메시지를 보내 에이전트 실행을 트리거할 수 있는 권한입니다.",
+  "conversation.suggestions.read": "대화 입력창에서 제안된 예시 질문을 조회할 수 있는 권한입니다.",
+  "conversation.list.own": "자신이 소유한 대화 목록을 사이드바에서 볼 수 있는 권한입니다.",
+  "conversation.list.any": "다른 사용자가 소유한 대화까지 포함해 전체 대화 목록을 볼 수 있는 권한입니다.",
+  "conversation.read.own": "자신이 소유한 대화의 메시지 이력과 실행 결과를 열람할 수 있는 권한입니다.",
+  "conversation.read.any": "타 사용자 소유 대화의 메시지 이력과 실행 결과까지 열람할 수 있는 권한입니다.",
+  "conversation.file.read.own": "자신이 소유한 대화에서 생성된 CSV 등 첨부 파일을 다운로드할 수 있는 권한입니다.",
+  "conversation.file.read.any": "타 사용자 소유 대화의 CSV 등 첨부 파일까지 다운로드할 수 있는 권한입니다.",
+  "conversation.rename.own": "자신이 소유한 대화의 제목을 변경할 수 있는 권한입니다.",
+  "conversation.rename.any": "타 사용자가 소유한 대화의 제목까지 변경할 수 있는 권한입니다.",
+  "conversation.delete.own": "자신이 소유한 대화를 삭제할 수 있는 권한입니다.",
+  "conversation.delete.any": "타 사용자가 소유한 대화까지 삭제할 수 있는 권한입니다.",
+  "conversation.cancel.own": "자신이 소유한 대화에서 진행 중인 요청을 중단시킬 수 있는 권한입니다.",
+  "conversation.cancel.any": "타 사용자 소유 대화의 진행 중 요청까지 중단시킬 수 있는 권한입니다.",
+  "conversation.finalize.own": "자신이 소유한 대화에서 추가 탐색을 멈추고 현재까지의 정보로 즉시 답변을 만들게 할 수 있는 권한입니다.",
+  "conversation.finalize.any": "타 사용자 소유 대화까지 포함해 즉시 답변을 강제할 수 있는 권한입니다.",
+};
+
+function describePermission(code = "") {
+  return PERMISSION_DESCRIPTIONS[code] || "권한 설명이 등록되어 있지 않습니다.";
+}
+
+// 동작(action)을 실행하기 위해 필요한 "대안 권한 코드" 집합을 반환한다.
+// any/own 이원화된 항목은 현재 대화가 본인 소유인지에 따라 own 까지 후보로 포함한다.
+function requiredPermissionsFor(action, conversation = currentConversation()) {
+  const own = conversation ? isOwnConversation(conversation) : false;
+  switch (action) {
+    case "conversation.ask":
+      return { label: "대화 요청 실행", codes: ["conversation.ask"] };
+    case "conversation.create":
+      return { label: "새 대화 생성", codes: ["conversation.create"] };
+    case "conversation.rename":
+      return { label: "대화 제목 변경", codes: own ? ["conversation.rename.any", "conversation.rename.own"] : ["conversation.rename.any"] };
+    case "conversation.delete":
+      return { label: "대화 삭제", codes: own ? ["conversation.delete.any", "conversation.delete.own"] : ["conversation.delete.any"] };
+    case "conversation.cancel":
+      return { label: "대화 중단", codes: own ? ["conversation.cancel.any", "conversation.cancel.own"] : ["conversation.cancel.any"] };
+    case "conversation.finalize":
+      return { label: "즉시 답변", codes: own ? ["conversation.finalize.any", "conversation.finalize.own"] : ["conversation.finalize.any"] };
+    default:
+      return { label: action, codes: [] };
+  }
+}
+
+function hasAnyPermission(codes = []) {
+  return codes.some((c) => can(c));
+}
+
+function showPermissionDeniedToast(action, conversation = currentConversation()) {
+  const req = requiredPermissionsFor(action, conversation);
+  if (!req.codes.length) {
+    showToast(`'${req.label}' 을(를) 실행할 수 없습니다.`, true);
+    return;
+  }
+  const missing = req.codes.filter((c) => !can(c));
+  const primary = missing[0] || req.codes[0];
+  const alt = req.codes.length > 1
+    ? ` (또는 ${req.codes.slice(1).join(", ")})`
+    : "";
+  showToast(
+    `'${req.label}' 권한이 필요합니다. 관리자에게 \`${primary}\`${alt} 권한 부여를 요청하세요. — ${describePermission(primary)}`,
+    true,
+  );
+}
+
+// 버튼에 "권한 부재로 차단됨" 상태를 표현하되, 클릭 자체는 허용해 토스트로 안내한다.
+function markAccessBlocked(btn, action, conversation = currentConversation()) {
+  if (!btn) return;
+  const req = requiredPermissionsFor(action, conversation);
+  const blocked = !hasAnyPermission(req.codes);
+  btn.classList.toggle("is-access-blocked", blocked);
+  if (blocked) {
+    btn.setAttribute("aria-disabled", "true");
+    btn.dataset.blockedAction = action;
+    const missing = req.codes.filter((c) => !can(c))[0] || req.codes[0];
+    btn.title = `'${req.label}' 권한이 없습니다. 필요 권한: \`${missing}\` — ${describePermission(missing)}`;
+  } else {
+    btn.removeAttribute("aria-disabled");
+    delete btn.dataset.blockedAction;
+    btn.title = "";
+  }
+}
+
 /** 현재 활성 대화가 요청 중인지 여부 */
 function isCurrentConvBusy() {
   return state.busyConversations.has(state.activeConversationId);
@@ -384,7 +483,7 @@ function buildPermissionPills(containerEl) {
       const item = document.createElement("span");
       item.className = "permission-pill is-enabled";
       item.textContent = PERMISSION_LABELS[code] || code;
-      item.title = code;
+      item.title = `${describePermission(code)}\n(${code})`;
       pillWrap.appendChild(item);
     });
 
@@ -545,7 +644,8 @@ function renderAccessNotice() {
   if (!state.user) return;
   const conversation = currentConversation();
   if (!can("conversation.ask")) {
-    accessNoticeEl.textContent = "현재 계정에는 대화 요청 실행 권한이 없습니다.";
+    accessNoticeEl.textContent =
+      "현재 계정에는 대화 요청 실행 권한(`conversation.ask`)이 없습니다. 관리자에게 권한 부여를 요청하세요.";
     accessNoticeEl.classList.remove("hidden");
     return;
   }
@@ -1078,14 +1178,37 @@ function renderMessages() {
 
 function renderComposer() {
   const busy = isCurrentConvBusy();
+  const hasAsk = can("conversation.ask");
   const disabled = !canAskInConversation() || busy;
-  promptInputEl.disabled = disabled;
-  sendBtn.disabled = disabled;
-  newConversationBtn.disabled = !can("conversation.create");
+  // 전송 버튼: 권한이 없어도 클릭이 통과하여 토스트로 안내되도록 native disabled 대신 aria-disabled 사용.
+  promptInputEl.disabled = busy;
+  sendBtn.disabled = busy;
+  if (hasAsk) {
+    sendBtn.removeAttribute("aria-disabled");
+    sendBtn.classList.remove("is-access-blocked");
+    sendBtn.title = "";
+  } else {
+    sendBtn.setAttribute("aria-disabled", "true");
+    sendBtn.classList.add("is-access-blocked");
+    sendBtn.title = "'대화 요청 실행' 권한이 없습니다. 필요 권한: `conversation.ask`";
+  }
+  // 새 대화 버튼: 동일 패턴 — 클릭 시 토스트를 노출하기 위해 aria-disabled 로 표시.
+  if (can("conversation.create")) {
+    newConversationBtn.disabled = false;
+    newConversationBtn.removeAttribute("aria-disabled");
+    newConversationBtn.classList.remove("is-access-blocked");
+    newConversationBtn.title = "";
+  } else {
+    newConversationBtn.disabled = false;
+    newConversationBtn.setAttribute("aria-disabled", "true");
+    newConversationBtn.classList.add("is-access-blocked");
+    newConversationBtn.title = "'새 대화 생성' 권한이 없습니다. 필요 권한: `conversation.create`";
+  }
 
-  if (!can("conversation.ask")) {
+  if (!hasAsk) {
     composerTitleEl.textContent = "조회 전용 상태";
-    composerHintEl.textContent = "현재 계정에는 대화 요청 실행 권한이 없습니다.";
+    composerHintEl.textContent =
+      "현재 계정에는 대화 요청 실행 권한(`conversation.ask`)이 없습니다. 관리자에게 권한 부여를 요청하세요.";
   } else if (currentConversation() && !isOwnConversation(currentConversation())) {
     composerTitleEl.textContent = "읽기 전용 대화";
     composerHintEl.textContent = "타 계정 대화에는 요청을 이어서 보낼 수 없습니다. 새 대화를 생성하세요.";
@@ -1099,10 +1222,20 @@ function renderComposer() {
 
   const active = currentConversation();
   const processing = active && String(active.status || "").toLowerCase() === "processing";
-  cancelBtn.classList.toggle("hidden", !(processing && canCancelConversation(active)));
-  finalizeBtn.classList.toggle("hidden", !(processing && canFinalizeConversation(active)));
-  renameConversationBtn.classList.toggle("hidden", !(state.activeConversationId && canRenameConversation(active)));
-  deleteConversationBtn.classList.toggle("hidden", !(state.activeConversationId && canDeleteConversation(active)));
+  // 가림 정책: context 상 의미있는 조건(처리 중 / 대화 선택됨) 은 그대로 가시성에 반영하되,
+  // "권한 없음" 은 hidden 이 아닌 is-access-blocked 로 표현해 버튼이 존재함을 알 수 있게 한다.
+  cancelBtn.classList.toggle("hidden", !processing);
+  finalizeBtn.classList.toggle("hidden", !processing);
+  renameConversationBtn.classList.toggle("hidden", !state.activeConversationId);
+  deleteConversationBtn.classList.toggle("hidden", !state.activeConversationId);
+  if (processing) {
+    markAccessBlocked(cancelBtn, "conversation.cancel", active);
+    markAccessBlocked(finalizeBtn, "conversation.finalize", active);
+  }
+  if (state.activeConversationId) {
+    markAccessBlocked(renameConversationBtn, "conversation.rename", active);
+    markAccessBlocked(deleteConversationBtn, "conversation.delete", active);
+  }
 }
 
 function renderProgress(statusPayload = null) {
@@ -1247,7 +1380,10 @@ async function selectConversation(conversationId) {
 }
 
 async function createConversation() {
-  if (!can("conversation.create")) return;
+  if (!can("conversation.create")) {
+    showPermissionDeniedToast("conversation.create");
+    return;
+  }
   const payload = await apiFetch("/api/new_conversation", { method: "POST" });
   showToast("새 대화를 만들었습니다.");
   await refreshWorkspace(payload.conversation_id || "");
@@ -1255,7 +1391,11 @@ async function createConversation() {
 
 async function renameCurrentConversation() {
   const conversation = currentConversation();
-  if (!conversation || !canRenameConversation(conversation)) return;
+  if (!conversation) return;
+  if (!canRenameConversation(conversation)) {
+    showPermissionDeniedToast("conversation.rename", conversation);
+    return;
+  }
   const nextTitle = window.prompt("새 대화 제목을 입력하세요.", conversation.topic || "");
   if (nextTitle == null) return;
   const trimmed = nextTitle.trim();
@@ -1269,7 +1409,11 @@ async function renameCurrentConversation() {
 }
 
 async function deleteConversation() {
-  if (!state.activeConversationId || !canDeleteConversation()) return;
+  if (!state.activeConversationId) return;
+  if (!canDeleteConversation()) {
+    showPermissionDeniedToast("conversation.delete");
+    return;
+  }
   if (!window.confirm("현재 대화를 삭제하시겠습니까?")) {
     return;
   }
@@ -1301,7 +1445,11 @@ async function deleteConversation() {
 }
 
 async function cancelCurrentRun() {
-  if (!state.activeConversationId || !canCancelConversation()) return;
+  if (!state.activeConversationId) return;
+  if (!canCancelConversation()) {
+    showPermissionDeniedToast("conversation.cancel");
+    return;
+  }
   await apiFetch("/api/cancel", {
     method: "POST",
     body: JSON.stringify({ conversation_id: state.activeConversationId }),
@@ -1310,7 +1458,11 @@ async function cancelCurrentRun() {
 }
 
 async function finalizeCurrentRun() {
-  if (!state.activeConversationId || !canFinalizeConversation()) return;
+  if (!state.activeConversationId) return;
+  if (!canFinalizeConversation()) {
+    showPermissionDeniedToast("conversation.finalize");
+    return;
+  }
   await apiFetch("/api/finalize", {
     method: "POST",
     body: JSON.stringify({ conversation_id: state.activeConversationId }),
@@ -1320,7 +1472,19 @@ async function finalizeCurrentRun() {
 
 async function sendPrompt() {
   const message = promptInputEl.value.trim();
-  if (!message || !canAskInConversation() || isCurrentConvBusy()) {
+  if (!message) return;
+  if (isCurrentConvBusy()) return;
+  if (!can("conversation.ask")) {
+    showPermissionDeniedToast("conversation.ask");
+    return;
+  }
+  const active = currentConversation();
+  if (active && !isOwnConversation(active)) {
+    showToast("타 계정 소유의 대화에는 요청을 보낼 수 없습니다. 새 대화를 생성하세요.", true);
+    return;
+  }
+  if (!active && !can("conversation.create")) {
+    showPermissionDeniedToast("conversation.create");
     return;
   }
   const vault = readVaultState();

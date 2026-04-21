@@ -253,6 +253,14 @@ a { color: inherit; }
 .tool-btn.danger:hover { background: var(--danger-soft); }
 .tool-btn:disabled { opacity: .38; cursor: not-allowed; }
 
+/* Access-blocked state: 권한이 없어 동작을 수행할 수 없지만, 클릭은 통과시켜 토스트로 안내한다. */
+.is-access-blocked {
+  opacity: .42;
+  cursor: help;
+  color: var(--text-muted);
+}
+.is-access-blocked:hover { background: transparent; color: var(--text-muted); }
+
 /* =====================================================================
    APP SHELL  (full-screen grid)
    ===================================================================== */
