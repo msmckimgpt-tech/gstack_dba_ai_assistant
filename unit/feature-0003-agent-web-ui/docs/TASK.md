@@ -45,9 +45,81 @@ source_of_truth: true
 - [x] TASK-0028 Insight 시스템 및 agent-core 내부 설계 문서화
 - [x] TASK-0029 관리 콘솔 재구조화 (탭 + 마스터-디테일 + 일괄 commit)
 - [x] TASK-0030 assistant 말풍선 고정 폭 + 결과셋 내부 스크롤 + 펼침 스크롤 앵커
+- [x] TASK-0031 관리 콘솔 내부 스크롤 정리 (페이지네이션·액션 버튼 상시 노출)
 
 ## 3. In Progress
 - 없음
+
+### TASK-0031 상세 설계
+- 문제 (사용자 테스트 피드백 2026-04-21):
+  - 관리 콘솔에서 계정/권한 목록이나 디테일 편집 항목이 많아지면 화면 아래 있어야 할 버튼(예: 페이지 버튼, 저장/취소/삭제 액션)이 외부 스크롤에 의해 뷰포트 밖으로 밀려 **이용자가 존재 자체를 인지하지 못한다**.
+  - 원인:
+    1. [styles.css:1378-1383](../src/static/styles.css#L1378-L1383) `.admin-workspace { overflow-y: auto }` — workspace 전체가 단일 스크롤 컨테이너. 디테일 pane 이 커지면 그 높이가 workspace 스크롤을 지배하여 리스트 하단 페이지네이션이 **외부 스크롤 아래로 숨음**.
+    2. [styles.css:1509-1516](../src/static/styles.css#L1509-L1516) `.admin-list { max-height: calc(100vh - 320px) }` 는 고정 pixel 계산인데다 외부 workspace 스크롤에 의해 의도치 않게 무력화됨.
+    3. [admin.html:113-114](../src/static/admin.html#L113-L114) 페이지네이션(`#accountPagination`)이 `.admin-list` 바깥(동일 `.admin-list-col` 자식)으로 위치해, 리스트 내부 스크롤이 아니라 바깥 workspace 스크롤에 종속됨.
+    4. [admin.js:854-855](../src/static/admin.js#L854-L855) `.admin-detail-actions`(저장/취소/삭제 버튼 영역)도 detail pane 내용 맨 아래에 append 될 뿐 위치 고정 처리가 없어 detail 이 길어지면 외부 스크롤로만 접근 가능.
+- 목표:
+  - 관리 콘솔 2열 레이아웃(리스트 / 디테일) 각 컬럼이 **자체 내부 스크롤**을 가지며, 컬럼 하단의 페이지네이션·일괄 액션·detail 저장 버튼은 **항상 뷰포트 내에 노출**된다.
+  - 외부(페이지 전체) 스크롤은 발생하지 않는다. 모든 스크롤은 각 pane / 컬럼 내부로 한정.
+  - 하단 commit bar, topbar, sidebar 는 기존대로 고정(이미 grid 로 고정되어 있음 — 그대로 유지).
+- 접근:
+  1. **`.admin-workspace` 를 스크롤 컨테이너에서 flex 컨테이너로 전환**:
+     ```css
+     .admin-workspace { overflow: hidden; display: flex; flex-direction: column; padding: 20px 24px 24px; min-height: 0; }
+     ```
+     (`min-height: 0` 은 부모 grid row 에서 flex children 이 overflow 하지 않게 하는 안전장치)
+  2. **`.admin-pane.is-active` 가 workspace 를 수직으로 채우도록**:
+     ```css
+     .admin-pane { display: none; flex-direction: column; gap: 16px; min-height: 0; flex: 1 1 auto; }
+     .admin-pane.is-active { display: flex; }
+     ```
+  3. **`.admin-pane-head` 는 고정**(shrink 없음):
+     ```css
+     .admin-pane-head { flex-shrink: 0; }
+     ```
+  4. **리스트-디테일 컨테이너가 남은 공간을 채우고, 자식 컬럼이 동일 높이를 가지도록**:
+     ```css
+     .admin-list-detail { flex: 1 1 auto; min-height: 0; align-items: stretch; }
+     ```
+     (기존 `align-items: start` 는 제거 — start 로는 두 컬럼이 콘텐츠 길이에 따라 다르게 자라므로)
+  5. **리스트 컬럼 = 고정 헤더(툴바/리스트-헤드) + 내부 스크롤 본문 + 고정 푸터(페이지네이션/일괄 액션)**:
+     ```css
+     .admin-list-col { min-height: 0; max-height: 100%; }
+     .admin-list-toolbar, .admin-list-head { flex-shrink: 0; }
+     .admin-list { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
+     .admin-list-pagination, .admin-bulk-actions { flex-shrink: 0; border-top: 1px solid var(--border-subtle); margin-top: 4px; padding-top: 8px; }
+     ```
+     기존 하드코딩 `max-height: calc(100vh - 320px)` 제거.
+  6. **디테일 컬럼 = 내부 스크롤 본문 + 하단 sticky 액션 바**:
+     - CSS 만으로 마지막 자식 `.admin-detail-actions` 를 sticky 하게 만들면, 내부 구조 변경 없이 저장/취소/삭제 버튼이 detail pane 하단에 항상 노출된다:
+     ```css
+     .admin-detail-col { min-height: 0; max-height: 100%; overflow-y: auto; padding-bottom: 0; }
+     .admin-detail-actions {
+       position: sticky;
+       bottom: 0;
+       background: var(--surface);
+       margin: 0 -22px -18px;   /* detail-col padding(18 22)을 상쇄해 전폭 바 */
+       padding: 10px 22px;
+       border-top: 1px solid var(--border);
+       z-index: 1;
+     }
+     ```
+  7. **대시보드 pane** 은 카드 + pending 미리보기만 있으므로 내부 스크롤이 필요한 경우에만 대비:
+     ```css
+     .admin-pane[data-admin-pane="dashboard"] { overflow-y: auto; }
+     ```
+  8. **뷰포트가 좁을 때 보호**: 기존 반응형 쿼리가 있다면 그대로 유지. 모바일(viewport < 960px) 대응은 이번 범위 아님(이용자는 데스크탑에서 사용).
+- 범위 제한:
+  - JS(admin.js) 변경 불필요. CSS 만으로 해결.
+  - admin.html DOM 구조 변경 불필요(페이지네이션·액션 바가 각각 올바른 컬럼의 마지막 자식에 이미 위치).
+  - 채팅 쪽, backend 변경 없음.
+- 검증 기준:
+  1. 브라우저로 `/admin` 열어 계정 탭 진입 → 페이지를 스크롤하지 않고도 페이지네이션 버튼이 리스트 하단에 보인다.
+  2. 계정을 선택해 디테일에 많은 권한 그룹을 펼친 상태에서도 리스트 컬럼의 페이지네이션은 그대로 보이며, 디테일 하단 저장/취소 버튼도 sticky 로 노출된다.
+  3. 리스트 컬럼에서 스크롤해도 페이지네이션은 리스트 아래에 고정 위치. 디테일 컬럼에서 스크롤해도 액션 바는 하단에 고정.
+  4. `document.documentElement.scrollHeight === document.documentElement.clientHeight` 인지 확인(외부 스크롤 없음).
+  5. 역할 탭에서도 동일 동작(역할 일괄 액션 바/detail 저장 버튼).
+  6. 브라우저 자동화로 위 동작을 재현·수치 검증.
 
 ### TASK-0030 상세 설계
 - 문제 (사용자 테스트 피드백 2026-04-21):
@@ -336,6 +408,7 @@ source_of_truth: true
 - TASK-0025 (2026-04-16): assistant 말풍선 내 다중 execute_sql step을 수직 누적 없이 SQL Navigator(단일 패널 + `←/→/Home/End` 키보드 조작 + `쿼리 n/N · 대상 테이블` 상시 컨텍스트 + "전체 데이터 보기" CSV 로드)로 압축. 단일 step은 기존 블록 유지. 새 백엔드 API 없이 `/api/file`만 재사용. 브라우저 자동화로 탐색/키보드/단일 step 분기/CSV 파서 모두 검증 완료.
 - TASK-0026 (2026-04-21): 한 줄 긴 SQL이 말풍선을 수평 확장하는 이슈 해소. 표시 전용 `formatSqlForDisplay()` 추가(주요 키워드 경계 줄바꿈, 복합 JOIN 보존, 문자열 리터럴 보호, 기존 여러 줄 쿼리 원형 유지). `.sql-block` CSS를 `pre-wrap` + `word-break` + `overflow-wrap`으로 변경, 컨테이너 `min-width:0` 안전망 추가.
 - TASK-0027 (2026-04-21): 33개 RBAC 권한의 UX 정리. Profile 드로어의 `buildPermissionPills()`를 그룹별 `<section class="perm-section">` + 카운트 배지 구조로 재작성. Admin 콘솔 권한 그리드 `renderPermissionGrid()`를 `<details>` 기반 collapsible + summary 카운트 배지(허용/거부/상속 또는 N/M 선택) + 그룹별 배치 액션 버튼(모두 허용/거부/상속 또는 모두 선택/해제)으로 개편. `PERMISSION_GROUP_ORDER/LABELS` 상수와 `permissionGroupOf()` 헬퍼 추가. CSS: `.perm-sections`, `.perm-section*`, `.permission-group-head`, `.permission-group-counts`, `.permission-bulk-actions` 스타일 추가.
+- TASK-0031 (2026-04-21): 관리 콘솔 내부 스크롤 정리. `.admin-workspace` 의 외부 스크롤(`overflow-y: auto`) 제거 → `overflow: hidden` + flex column 으로 전환하고, `.admin-pane.is-active` / `.admin-list-detail` 가 남은 공간을 `flex: 1 1 auto + min-height: 0` 으로 채우도록 변경. `.admin-list-col` / `.admin-detail-col` 각각 자체 내부 스크롤 소유 — list 컬럼은 toolbar/list-head(shrink 고정) + `.admin-list`(`flex: 1; overflow-y: auto`, 기존 `max-height: calc(100vh-320px)` 제거) + 페이지네이션/일괄 액션(`flex-shrink: 0; border-top`) 구조. detail 컬럼은 `overflow-y: auto` + `.admin-detail-actions { position: sticky; bottom: -18px; margin: 4px -22px -18px; padding: 12px 22px; background: var(--surface); border-top }` 로 저장/취소/삭제 버튼을 detail 높이와 무관하게 상시 하단 노출. 대시보드 pane 은 `overflow-y: auto` 단일 스크롤로 별도 처리. 검증: detailColScroll=1866, listScroll=807 각각 내부 스크롤 활성, docScrollDelta=0(외부 스크롤 0), paginationVisible/actionsVisible=true, 양 컬럼 끝까지 스크롤해도 두 하단 요소 모두 뷰포트 내 유지. JS/HTML 변경 없이 CSS 만으로 해결.
 - TASK-0030 (2026-04-21): assistant 말풍선 고정 폭 + `<details>` 펼침 시 내부 스크롤/스크롤 앵커. `.message`의 role별 max-width 분기(user 72% / assistant `max-width:none` + `margin-right:48px` + `align-self:stretch`)로 assistant 는 채팅 pane 전폭에 가깝게, user 는 좁은 우측 정렬로 분리. `.message-details-body`에 `max-height:min(60vh,520px); overflow:auto; overscroll-behavior:contain` 캡으로 펼친 본문을 말풍선 내부에서 수직 스크롤 처리. `.result-table-wrap` 기본 `max-height:320px`, `.sql-block` `max-height:240px` 로 결과 테이블/초장문 SQL 도 내부 스크롤로 격리. `app.js` `renderMessageDetails()`의 `<summary>` 클릭 핸들러에 `messageLogEl` 기준 `summary.getBoundingClientRect().top` 측정 → 2-frame `requestAnimationFrame` 후 delta 만큼 `messageLogEl.scrollTop` 보정하는 scroll anchor 추가. 브라우저 검증: summaryDelta=0/scrollDelta=0, Navigator 이동 시 bubble width 705→705 불변, bodyMaxH=432px(60vh), details body overflow-y=auto 확인.
 - TASK-0029 (2026-04-21): 관리 콘솔 재구조화. `admin.html` 을 `topbar + sidebar(tabs) + workspace + commit-bar` 4영역 grid 로 재작성(탭: 대시보드/계정/역할). `admin.js` 전면 재작성 — `adminState.pending = { accounts, roles, newRoles }` Map 기반 pending changes 모델 + 서버 값과 일치하면 auto-drop 로직(`setAccountPending`/`setRolePending`). 계정/역할 편집은 form submit 없이 input/select change 이벤트에서 pending 에 적재만 하고, 하단 commit bar 의 "모두 적용" 클릭 시 전체 pending entry 를 순차 PATCH/DELETE/POST 후 1회만 `loadAdminData()`. 리스트-디테일 레이아웃 + 탭별 scoped search + 리스트 row 체크박스 기반 일괄 작업(활성/비활성/삭제 pending 반영). 신규 역할은 tempId(`new:N`)로 pending.newRoles 에 넣고 POST 로 일괄 커밋. `styles.css` 에 `.admin-shell` grid/`.admin-sidebar`/`.admin-tab`/`.admin-list-detail`/`.admin-list-row`/`.admin-detail-*`/`.admin-commit-bar`(.has-pending 노란 강조) 스타일 추가. 사용자 테스트에서 확인된 "여러 계정 동시 수정 시 특정 계정 저장하면 타 계정 변경 소실" 버그는 pending 모델 + 단일 commit 경로로 근본 해소.
 - TASK-0028 (2026-04-21): agent-core 문서 보강. `docs/INSIGHTS.md` 신규 작성(워커 루프/사이클/fingerprint/인라인 fallback/KV 스키마/환경변수 14종/해석 가이드/헬스 체크 SQL + 2026-04-21 실제 런타임 출력). `docs/AGENT_CORE_INTERNALS.md` 신규 작성(run_agent 흐름도, SYSTEM_PROMPT 7블록 구조, TOOL_DEFINITIONS 우선순위 근거, Knowledge Injection, Step 예산/타임아웃/cancel/finalize 신호, CSV 2단계(preview 50행 + 전체 파일), Planner insight fast path, 3-state 대화 맥락). `FUNCTION.md` Main Flow/Dependencies/Observability 확장(MEMORY_DB 스키마 표, insight_worker 로그 관측성). 코드 변경 없음.
@@ -390,5 +463,7 @@ source_of_truth: true
 - [x] assistant 말풍선이 기본적으로 채팅 pane 의 우측 약간(48px)만 남기고 넓게 고정되며, `<details>` 펼침/접힘이나 결과셋 구성 변화에 말풍선 폭이 흔들리지 않는다
 - [x] `<details>` 펼침 시 내부 SQL/테이블/Navigator 가 말풍선 내부 수직 스크롤로 격리되어 채팅 로그 스크롤 위치와 전체 레이아웃이 변형되지 않는다
 - [x] `<summary>` 클릭 시 해당 라인이 뷰포트 내 동일 y좌표를 유지(scroll anchor)
+- [x] 관리 콘솔이 외부 페이지 스크롤 없이 viewport 에 고정되며, 리스트 컬럼과 디테일 컬럼이 각각 내부 스크롤을 가진다
+- [x] 리스트 하단 페이지네이션/일괄 액션 바와 디테일 하단 저장/삭제 액션 바가 컬럼 스크롤과 무관하게 항상 뷰포트 내에 노출된다
 - [x] 리스트 row 체크박스 + 일괄 작업(활성/비활성/삭제 pending)이 동작한다
 - [x] 계정 탭/역할 탭 각각이 독립된 scoped search 를 가진다

@@ -151,6 +151,20 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Verification: 브라우저 자동화에서 펼침 전/후 `summary.getBoundingClientRect().top` 동일(delta=0), Navigator 이동 시 `bubble.getBoundingClientRect().width` 불변(705→705), `message-details-body` 의 실계산 max-height 가 432px(60vh @ 720px viewport) 로 확인됨.
 - Applies to: 챗봇/로그 뷰어/이벤트 피드 등 "고정 목록 내부에 확장 가능한 row" 가 있는 모든 UI. `<details>` 만으로 충분해 보여도 내부 콘텐츠가 동적이면 반드시 cap + anchor 를 동반한다.
 
+### LRN-20260421-0007 — 마스터-디테일 관리 UI 는 "외부 스크롤 금지 + 컬럼별 내부 스크롤 + 하단 요소 sticky/flex-shrink:0" 로 구성한다
+- Source: feature-0003 관리 콘솔 스크롤 정리 (TASK-0031, 2026-04-21)
+- Mistake: admin 페이지에 `.admin-workspace { overflow-y: auto }` 를 걸고 양쪽 컬럼을 `align-items: start` 로 둔 채 `.admin-list { max-height: calc(100vh - 320px) }` 하드코딩 cap 만 넣었다. 디테일 pane 이 커지면 workspace 전체가 스크롤되면서 리스트 컬럼의 페이지네이션이 뷰포트 밖으로 밀려 "버튼이 없어진 것처럼" 보이는 UX 버그가 발생.
+- Correct approach: 마스터-디테일 관리 UI 는 **외부(페이지 전체) 스크롤을 발생시키지 않는다**. 대신 —
+  1. 최상위 shell 은 `height: 100vh; overflow: hidden` + `display: grid; grid-template-rows: topbar 1fr auto` (하단 commit bar 고정).
+  2. workspace 는 `overflow: hidden; display: flex; flex-direction: column; min-height: 0` — 자체 스크롤 금지, 자식이 남은 공간을 채우게 위임.
+  3. 활성 pane 은 `flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column`. head 영역은 `flex-shrink: 0`.
+  4. list-detail 컨테이너는 `flex: 1 1 auto; min-height: 0; align-items: stretch`. 두 컬럼은 각각 `min-height: 0` 을 받아 자체 내부 스크롤을 가진다.
+  5. **리스트 컬럼** 내부 수직 흐름: toolbar(shrink 0) + list-head(shrink 0) + `.admin-list`(`flex: 1; min-height: 0; overflow-y: auto`) + 페이지네이션/일괄 액션(`flex-shrink: 0`). 하드코딩 `max-height: calc(100vh - Xpx)` 는 제거 — 부모 flex 레이아웃이 자동 계산한다.
+  6. **디테일 컬럼** 은 `overflow-y: auto` 로 내부 스크롤. 저장/삭제 같은 마지막 액션 영역은 **`position: sticky; bottom: 0; background: surface; border-top`** 로 디테일 길이와 무관하게 상시 하단 노출.
+  7. 액션 영역의 sticky 가 detail-col padding 과 충돌하면 `margin: 0 -padX -padY` + `padding: padY padX` 로 padding 을 상쇄해 전폭 바로 만든다.
+- Verification: 브라우저 자동화로 `document.documentElement.scrollHeight - clientHeight == 0`(외부 스크롤 없음), `detail-col.scrollHeight - clientHeight > 0`(내부 스크롤 활성), 양 컬럼 끝까지 scrollTop 을 밀어도 `.admin-detail-actions.getBoundingClientRect().bottom <= window.innerHeight` 가 유지되는 것을 확인.
+- Applies to: 마스터-디테일/리스트-폼/설정 패널 등 "좌측 리스트 + 우측 편집" 레이아웃 전반. Admin · 프로필 · API Vault · 알림 설정 등 향후 유사 화면에 동일 패턴을 재사용한다.
+
 ## Category: quirk
 
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존
