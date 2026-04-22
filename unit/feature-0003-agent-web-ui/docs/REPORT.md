@@ -17,6 +17,14 @@ System Prompt 를 Product → Role → Account 3 계층으로 조립하도록 �
 - Done: TASK-0036 System Prompt Depth + Product DB whitelist, TASK-0035 대화 사이드바 구분/정렬 + 대화/말풍선 fork, (이전) RBAC table cutover, role CRUD, account role assignment, tri-state override, account soft delete, own/any 대화 권한 분기, 제목 변경 API, `clear_memory` 제거, `console.access` 기반 읽기 전용 관리자 셸, 브라우저/API 검증
 
 ## 3. Recent Changes
+- 2026-04-22 (TASK-0038)
+  - `../feature-0002-agent-core/src/agent_core.py`
+    - L26~32 `from modules.config import` 에 `AGENT_OPENAI_MAX_RETRIES` 추가
+    - L1134~1139 `client = OpenAI(**client_kwargs)` → `OpenAI(**client_kwargs, timeout=max(5,int(AGENT_TIMEOUT_SEC)), max_retries=max(0,int(AGENT_OPENAI_MAX_RETRIES)))` 로 확장. OpenAI SDK client-level timeout 이 내부 httpx 에 상속돼 `chat.completions.create` 모든 호출에 wall-clock 상한이 걸린다.
+  - `tests/task0034_runner.py`
+    - L52~56 `ASK_TIMEOUT_SEC=600.0` → `ASK_TIMEOUT_SEC=960.0` 및 산정 근거 주석(`max(AGENT_TIMEOUT_SEC*3, AGENT_EARLY_FINALIZE_MS/1000)=900s` + 60s buffer) 추가. 서버가 항상 클라이언트보다 먼저 자기-타임아웃을 친다.
+  - 검증: `docker compose up -d --force-recreate web` 후 bootstrap_admin 로그인 + `gpt-5.4-mini` 간단 질의 `/api/ask` HTTP 200, wall=5s, steps=1, list_schemas 정상.
+
 - 2026-04-22 (TASK-0037, 문서화 전용)
   - `/api/progress` 폴링 루프 리팩터(27127b9, TASK-0036 번들) 에 대한 사후 리뷰 및 학습 기록. 코드 변경 없음.
   - 검증: `grep -c "setInterval" src/static/app.js` = 0, 5개 적응형 상수(`PROGRESS_FETCH_TIMEOUT_MS=4000` / `PROGRESS_POLL_ACTIVE_MS=1200` / `PROGRESS_POLL_IDLE_MS=3000` / `PROGRESS_POLL_HIDDEN_MS=10000` / `PROGRESS_POLL_ERROR_MS=8000`) 모두 `scheduleProgressPolling`/`pollProgress` 에서 실제 참조, 서버 `/api/progress` (app.py:4381~4426) 가 `client_run_id` 파라미터를 수용하고 서버 최신 run_id 와 불일치 시 `next_after_step=0` 으로 리셋(app.py:4405-4406).

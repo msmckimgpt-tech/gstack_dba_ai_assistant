@@ -29,6 +29,7 @@ from modules.config import (
     DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_CONNECT_DB,
     MEMORY_DB, AGENT_TIMEOUT_SEC, AGENT_MAX_STEPS, AGENT_MAX_SHOW,
     AGENT_LOG_DIR, AGENT_MEMORY_CLEAR_KEEP_IDS,
+    AGENT_OPENAI_MAX_RETRIES,
 )
 from modules.db import connect_with_retry, execute_sql as raw_execute_sql
 from modules.memory import (
@@ -1131,7 +1132,11 @@ def _run_agent_core(
         # OPENAI_API_BASE가 별도로 설정된 경우(프록시 등)만 base_url 지정
         if OPENAI_API_BASE:
             client_kwargs["base_url"] = OPENAI_API_BASE
-    client = OpenAI(**client_kwargs)
+    client = OpenAI(
+        **client_kwargs,
+        timeout=max(5, int(AGENT_TIMEOUT_SEC)),
+        max_retries=max(0, int(AGENT_OPENAI_MAX_RETRIES)),
+    )
 
     # ── 대화 ID 관리 ──
     cid = conversation_id or _get_conversation_id(conv_file)

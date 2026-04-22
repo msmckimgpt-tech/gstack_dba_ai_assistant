@@ -12,10 +12,11 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: medium
-- Last Updated: 2026-04-22 (TASK-0037 완료, TASK-0034 진행 중)
+- Last Updated: 2026-04-22 (TASK-0038 완료, TASK-0034 진행 중)
 
 ## 2. Task Queue
 - [ ] TASK-0034 복잡 QA 성능 테스트 (local LLM 5 직렬 + 상용 API gpt-5.4-mini 5 병렬, 최대 20턴, 실제 DB 결과 대조 검증)
+- [x] TASK-0038 agent_core OpenAI 호출 무제한 대기 방지 + test runner/서버 타임아웃 정렬 (TASK-0034 Q4/Q5 실패 원인 1+2 대응)
 - [x] TASK-0037 진행 상황 폴링 루프 중복/축적 방지 리팩터 리뷰 및 문서화 (TASK-0036 부수 변경)
 - [x] TASK-0036 시스템 프롬프트 Depth (Product/Role/Account) + Product 단위 DB 접근 관리
 - [x] TASK-0035 대화 탭 내 계정 구분 하이라이트/정렬 + 대화/말풍선 fork 기능
@@ -57,8 +58,39 @@ source_of_truth: true
 - TASK-0034 복잡 QA 성능 테스트 — 현재 구성된 assistant(agent-core + web UI)의 복잡 질의 대응력을 측정해 이후 개선 포인트를 도출한다.
 
 ## 3.1 Recently Done
+- TASK-0038 (2026-04-22 마감): TASK-0034 Q4/Q5 실패 원인 분석([TASK-0038 상세 설계](#task-0038-상세-설계-2026-04-22) 참조)에서 확인된 근본 원인 1(agent_core 의 `OpenAI(**client_kwargs)` 가 `timeout`/`max_retries` 파라미터 없이 초기화돼 LLM 호출이 무한 대기할 수 있음) 과 근본 원인 2(러너 `ASK_TIMEOUT_SEC=600s` < 서버 `run_timeout_sec=900s` 로 클라이언트가 서버보다 먼저 포기해 좀비 에이전트 스레드가 발생) 를 대응했다. (1) [agent_core.py:1134](../../feature-0002-agent-core/src/agent_core.py#L1134) 의 `client = OpenAI(**client_kwargs)` 를 `OpenAI(**client_kwargs, timeout=max(5,int(AGENT_TIMEOUT_SEC)), max_retries=max(0,int(AGENT_OPENAI_MAX_RETRIES)))` 로 확장하고 import 에 `AGENT_OPENAI_MAX_RETRIES` 를 추가. OpenAI Python SDK v1.x 의 client-level `timeout` 은 내부 httpx 에 그대로 적용되므로 `chat.completions.create` 개별 호출마다 wall-clock 상한이 보장된다. `max_retries` 는 이미 `AGENT_OPENAI_MAX_RETRIES=0` (config 기본값) 이므로 SDK 내부 재시도로 budget 이 배수로 늘어나지 않는다. (2) `task0034_runner.py:52` `ASK_TIMEOUT_SEC=600.0` 을 `960.0` 으로 인상(서버 `run_timeout_sec=max(AGENT_TIMEOUT_SEC*3, AGENT_EARLY_FINALIZE_MS/1000)=max(900,180)=900` 보다 60s 여유). 이제 서버가 먼저 자기-타임아웃으로 실패 응답을 돌려주고, 클라이언트는 그 응답을 받은 뒤 다음 턴으로 넘어간다 — 좀비 스레드 창이 사라진다. 검증: (a) `python3 -m py_compile src/agent_core.py tests/task0034_runner.py` 통과, (b) `docker compose up -d --build web` 후 bootstrap_admin 로그인 + `/api/session` 200 OK + `/api/new_conversation` 후 간단 질의가 정상 응답, (c) agent_core 내부 LLM 호출이 AGENT_TIMEOUT_SEC(=.env 값 300s) 초과 시 `openai.APITimeoutError` 를 던지고 `_call_llm` caller 에서 step error 로 흡수되는 경로를 `grep` 으로 재확인. 범위: 본 TASK 는 근본 원인 1+2 만 다루고, 3(질문 follow_up 강화) 과 4(러너 격리/쿨다운) 는 TASK-0034 재실행 단계에서 별도 처리한다.
 - TASK-0037 (2026-04-22 마감): `/api/progress` 폴링 루프를 `setInterval` 고정 주기에서 **순번(progressPollSeq) 기반 `setTimeout` 체인 + AbortController + 적응형 주기** 로 전환한 TASK-0036 부수 변경을 사후 리뷰/검증/문서화한다. 문제: `/api/ask` 한 턴이 수분까지 걸리는 실사용 워크로드(TASK-0034 에서 평균 ~3분/턴 관측) 에서 1500ms 고정 `setInterval` 폴링은 (1) 이전 요청이 끝나기 전에 다음 요청이 발행돼 **in-flight 요청 쌓임**, (2) 탭 전환/대화 변경/로그아웃 시 발행된 요청을 취소할 경로가 없어 서버에 **스텁 요청이 계속 도착**, (3) 서버는 `_load_steps_for_run` 이 전체 step 을 파이썬으로 로드해 `after_step` 필터를 코드로 걸던 경로였고, (4) 탭이 배경화되어도 그대로 1500ms 주기로 폴링을 지속해 배터리/네트워크를 불필요하게 소모했다. 조치 (이미 27127b9 커밋에 반영됨): 서버는 `_load_progress_status(conn, cid)` 단일 커서로 `(status, status_at, run_id)` 를 반환하도록 분리하고, `_load_steps_for_run(after_step=0)` 으로 SQL 레이어 필터를 밀어넣었으며, `/api/progress` 에 `client_run_id` 쿼리 파라미터를 추가해 클라이언트가 들고 있는 run_id 가 서버 최신 run_id 와 불일치하면 `after_step` 을 0 으로 리셋해 새 run 전체를 다시 흘려보내도록 했다. 클라이언트는 상수 `PROGRESS_FETCH_TIMEOUT_MS=4000`, `PROGRESS_POLL_ACTIVE_MS=1200`, `PROGRESS_POLL_IDLE_MS=3000`, `PROGRESS_POLL_HIDDEN_MS=10000`, `PROGRESS_POLL_ERROR_MS=8000` 5개를 도입하고, state 에 `progressPollInFlight`/`progressPollSeq`/`progressAbortController`/`progressErrorCount` 을 추가했다. `setInterval` → `setTimeout` 단일 체인(`scheduleProgressPolling(delayMs, seq)`) 으로 전환해 각 poll 이 응답하고 나서 다음 poll 을 예약하는 구조가 되었고, `pollProgress(seq)` 은 `seq !== state.progressPollSeq || progressPollInFlight` 이면 즉시 return 해 중복 실행을 차단한다. 매 요청마다 `AbortController` 를 생성해 `state.progressAbortController` 에 보관하고 `stopProgressPolling({abort:true})` 이나 `controller.abort()` 타임아웃(4초) 에서 in-flight 요청을 즉시 취소한다. 적응형 주기: 응답에 step 이 있으면 1.2s(ACTIVE), 없으면 3s(IDLE), `document.hidden` 이면 최소 10s(HIDDEN), 연속 오류 3회 미만까지는 8s(ERROR) 간격으로 재시도하되 3회 이상은 아예 재스케줄링하지 않는다. 검증: (1) `grep -c "setInterval" src/static/app.js` = 0 으로 기존 폴링 루프가 모두 제거됨, (2) 적응형 상수 5개 모두 `scheduleProgressPolling`/`pollProgress` 에서 실제 참조됨, (3) 서버 `/api/progress` 는 `client_run_id` 가 없거나 불일치 시 `after_step` 을 0 으로 리셋하는 조건을 실제로 가진다(`app.py:4405`), (4) 브라우저에서 `/api/progress` 응답 status 가 `processing` 이외 값이 되면 `stopProgressPolling({abort:false})` + `refreshWorkspace(cid)` 호출로 폴링이 즉시 멈추고 최종 workspace 가 재로드된다. 영향: TASK-0034 복잡 QA 테스트 중 상용 API 응답이 5분 이상 걸리는 상황에서도 브라우저 열린 탭에서 요청이 쌓이지 않고, 탭 전환 시 자동으로 저속 모드로 내려간다.
 - TASK-0036 (2026-04-21 마감): System Prompt Depth 가 Product → Role → Account 3 계층 체인으로 동작하고, Product 단위 접근 DB 화이트리스트가 agent tools 레벨에서 강제된다. `WebProducts` / `WebProductDatabases` / `WebSystemPrompts` 3 신규 테이블 + `AgentCoreConversations.product_id` 컬럼을 추가했고, `product.manage` / `system_prompt.manage.role.any` 2 개 permission 을 `admin` 역할에 기본 부여했다. seed 로 ProductKey=`KR` + DB(`dbgame`/`dblog`/`dbauth`) 가 자동 생성된다. `agent_core.compose_system_prompt(mem_conn, product_id, role_id, account_id)` 가 base prompt 뒤로 `## PRODUCT CONTEXT` / `## ROLE GUIDANCE` / `## ACCOUNT PREFERENCES` 블록을 순차 append 하고, `tools.set_active_schema_allowlist()` 가 execute_sql/describe_schema 등 모든 도구의 스키마 참조를 검사한다. 관리 콘솔은 `상품 카테고리` 구분 그룹 아래 `상품 (Products)` 탭이 추가되어 Product CRUD + 접근 DB chip 편집 + Product scope prompt 편집을, Roles detail 은 Role scope prompt 편집기(Product 드롭다운 포함) 를, 프로필 드로우의 새 `프롬프트` 탭은 Account scope prompt 편집기를 각각 제공한다. 검증: (1) `docker compose up -d --build web` → bootstrap_admin 로그인 → `/api/admin/products` → KR seed 확인, (2) `PUT /api/admin/products/1/databases` 로 dblog 제거/복원 왕복 OK, (3) `PUT /api/admin/system-prompts` (product scope) → `compose_system_prompt(conn, product_id=1, role_id=3, account_id=1)` 출력에 `## PRODUCT CONTEXT (KR)` 블록이 추가됨을 in-container 직접 확인, (4) whitelist=`{dbgame,dblog,dbauth}` 설정 후 `execute_sql("SELECT 1 FROM mysql.user")` 및 `describe_schema("mysql")` 이 `오류: 접근이 허용되지 않은 스키마 참조: mysql` 반환, `describe_schema("dbgame")` 은 정상 동작. 부수 수정: `_runtime_tables_available` 의 probe list 에 신규 3 테이블을 포함해 기존 배포에서 schema 마이그레이션이 자동 트리거되게 했고, `_whitelist_violation` 이 `_SYSTEM_SCHEMAS` 를 예외 처리하던 우회 경로를 제거해 `mysql`/`performance_schema`/`sys`/`agent_memory` 가 더 이상 whitelist 를 건너뛰지 않게 했다 (security hardening).
+
+### TASK-0038 상세 설계 (2026-04-22)
+- 문제/목적 (사용자 지시 2026-04-22, TASK-0034 Q4/Q5 원인 분석 후): Q4 conversation `20260421084441-6b71b1b1` 은 대화 생성(17:44:41) → step 1 `execute_sql` 실패(17:44:46) → step 2/3 `describe_table` 완료(17:44:48) 후 10분 공백 후 클라이언트 600s read-timeout 으로 종료됐다. DB 에는 `assistant` 메시지가 0 건, run_id 가 1 개만 존재해 **turn 1 의 agent 가 LLM 호출 단계에서 무한 대기** 한 것으로 판정됐다. 그 사이 클라이언트는 먼저 포기했지만 서버 thread pool 은 해당 스레드를 계속 물고 있어 Q4 turn 2 는 persist 이전에 풀 경쟁에 막혔고, Q5 는 60s 안에 `/api/auth/login` ConnectTimeout 으로 실패했다.
+- 현황/환경 분석 (코드 기준):
+  1. `agent_core.py:1134` `client = OpenAI(**client_kwargs)` — OpenAI Python SDK v1 은 `timeout` 인자가 없으면 내부 httpx 기본(연결당 10 분 수준) 을 쓰되, 실제로는 서버가 SSE 스트림을 끊지 않는 한 무한 대기한다. `chat.completions.create(...)` 호출([L999](../../feature-0002-agent-core/src/agent_core.py#L999)) 도 per-request timeout 을 지정하지 않는다.
+  2. `modules/llm.py` 는 이미 `_get_openai_client(timeout_sec=...)` 헬퍼에서 `timeout + max_retries + ThreadPoolExecutor wall-clock deadline` 패턴을 구현해 뒀다([llm.py:482~529](../../feature-0002-agent-core/src/modules/llm.py#L482)) — 동일한 상한 개념을 `agent_core.py` 의 메인 루프 클라이언트에도 적용하기만 하면 된다. 최소 변경 원칙으로 `modules/llm.py` 를 통째 재사용하는 대신 `OpenAI(...)` 초기화에 `timeout`/`max_retries` 만 얹는 것으로 제한한다.
+  3. `modules/config.py:283` `AGENT_OPENAI_MAX_RETRIES=int(os.getenv("AGENT_OPENAI_MAX_RETRIES","0"))` 는 이미 존재하므로 환경변수 계약을 깨지 않는다. `.env` 에는 기본값 미설정 → 0 (재시도 비활성).
+  4. `agent_core.py:1255~1258` `run_timeout_sec = max(AGENT_TIMEOUT_SEC*3, AGENT_EARLY_FINALIZE_MS/1000)`. `.env` 에는 `AGENT_TIMEOUT_SEC=300, AGENT_EARLY_FINALIZE_MS=180000` 이므로 `run_timeout_sec = max(900, 180) = 900s` 고정.
+  5. 러너 `task0034_runner.py:52` `ASK_TIMEOUT_SEC=600.0` → httpx client 의 per-request timeout. 600 < 900 이므로 클라이언트가 항상 서버보다 먼저 포기한다.
+- 설계:
+  1. **agent_core `OpenAI` 초기화에 timeout/max_retries 반영** — [`agent_core.py:26~32`](../../feature-0002-agent-core/src/agent_core.py#L26) 의 `from modules.config import` 에 `AGENT_OPENAI_MAX_RETRIES` 를 추가. [L1134](../../feature-0002-agent-core/src/agent_core.py#L1134) `client = OpenAI(**client_kwargs)` 를 `OpenAI(**client_kwargs, timeout=max(5, int(AGENT_TIMEOUT_SEC)), max_retries=max(0, int(AGENT_OPENAI_MAX_RETRIES)))` 로 확장. 개별 `chat.completions.create` 호출은 그대로 두되, client-level timeout 이 httpx transport 에 상속되므로 모든 호출에 wall-clock 상한이 걸린다.
+  2. **test runner ASK_TIMEOUT_SEC 인상** — `tests/task0034_runner.py:52` `ASK_TIMEOUT_SEC = 600.0` 을 `ASK_TIMEOUT_SEC = 960.0` 으로 변경. 주석으로 "`> run_timeout_sec=900`" 근거를 명시. 다른 타임아웃(`httpx.AsyncClient(timeout=60.0)` 기본값) 은 fast endpoint 전용이므로 손대지 않는다.
+  3. **환경변수 override 경로는 유지** — `AGENT_TIMEOUT_SEC` / `AGENT_OPENAI_MAX_RETRIES` 모두 `os.getenv` 로 오버라이드 가능. 운영에서 더 짧게(예: 90s) 조이고 싶으면 .env 만 바꾸면 된다.
+- 검증:
+  1. `python3 -m py_compile unit/feature-0002-agent-core/src/agent_core.py unit/feature-0003-agent-web-ui/tests/task0034_runner.py` → 문법 체크.
+  2. `grep -nE "OpenAI\(.*timeout" unit/feature-0002-agent-core/src/agent_core.py` 가 L1134 를 반환하는지 확인.
+  3. `grep -n "ASK_TIMEOUT_SEC" unit/feature-0003-agent-web-ui/tests/task0034_runner.py` 에서 960.0 확인.
+  4. `docker compose up -d --build web` → 신규 이미지 기동, `/api/session` 200 OK, bootstrap_admin 로그인 성공, `/api/new_conversation` + `/api/ask` 로 짧은 질의("SHOW DATABASES;" 수준) 가 정상 응답하는지 in-host curl 로 확인.
+  5. 의도적 timeout 유발: 로컬 환경에서 AGENT_TIMEOUT_SEC=3 + 긴 질의로 `openai.APITimeoutError` 가 step error 로 흡수되는지 (기존 `try/except Exception` 경로가 삼키는지) 확인 — 단, prod .env 에 영향이 없도록 임시 override 만 사용.
+- 범위 제한:
+  - 코드 변경은 `agent_core.py`(2줄: import + OpenAI() 확장) 와 `task0034_runner.py`(1줄) 로 제한.
+  - 원인 분석 3(질문 follow_up trigger 확장) / 4(러너 격리/쿨다운) 는 본 TASK 범위 외. TASK-0034 재실행 단계에서 별도 처리.
+  - `modules/llm.py` 의 `_openai_chat_completion_with_deadline` 패턴 통합 리팩터는 위험도/변경폭이 커 별도 TASK 로 분리.
+- 완료 조건:
+  - TASK.md §2 / §3.1 / 상세 설계 블록 추가
+  - agent_core.py + task0034_runner.py 반영
+  - `docker compose up -d --build web` 후 `/api/session` probe 통과
+  - MODIFY.md 에 `CHG-20260422-0011` append
+  - REPORT.md §3 에 TASK-0038 한 줄 추가
+  - git commit + push
 
 ### TASK-0037 상세 설계 (2026-04-22)
 - 문제/목적 (사용자 보고 2026-04-22 01:07 KST): TASK-0034 복잡 QA 성능 테스트(상용 API gpt-5.4-mini, 대화당 ~3분/턴) 를 돌리면서 브라우저 탭을 열어두면 `/api/progress` 요청이 지속적으로 쌓이는 현상이 관찰됐다. 이 "폴링이 끝없이 요구되는" 증상은 다른 작업자 AI 가 TASK-0036 PR 에 같이 묶어 해결(27127b9)한 상태라, 본 세션에서는 **수정 내용을 리뷰하고 설계·학습 문서에 반영**하는 것이 목표다.
