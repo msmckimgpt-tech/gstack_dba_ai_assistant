@@ -62,21 +62,41 @@ def _is_user_schema(name: str) -> bool:
     return True
 
 
-_SCHEMA_TABLE_REF_RE = None
+_TABLE_LIST_RE = None
+_INNER_REF_RE = None
 
 
 def _extract_sql_schema_refs(sql: str) -> set[str]:
-    """SQL 텍스트에서 `schema`.`table` 또는 schema.table 참조 schema 를 추출."""
+    """SQL 텍스트에서 `schema`.`table` 참조의 schema 토큰만 추출.
+
+    TASK-0040: 두 단계로 동작한다.
+      1. `FROM` / `JOIN` 키워드 뒤의 **table list 구간** (다음 절 키워드
+         `ON` / `WHERE` / `GROUP BY` / `ORDER BY` / `HAVING` / `LIMIT` /
+         `UNION` / 다시 `JOIN` · `FROM` / `;` / `)` / 문장 끝 이전) 만 잘라낸다.
+      2. 그 구간 내부에서만 `schema.table` 패턴을 반복 추출한다.
+
+    이로써 `SELECT bb.BattleType, be.Star FROM dblog.t bb JOIN dblog.u be
+    ON be.AcntNo = bb.AcntNo WHERE bb.BattleType = ...` 같은 SQL 에서
+    SELECT / WHERE / ON 절의 `alias.column` 이 schema.table 로 오탐되지
+    않고, `FROM a.x, b.y` 형식의 comma join 은 그대로 수용된다.
+    """
     import re as _re
-    global _SCHEMA_TABLE_REF_RE
-    if _SCHEMA_TABLE_REF_RE is None:
-        _SCHEMA_TABLE_REF_RE = _re.compile(
+    global _TABLE_LIST_RE, _INNER_REF_RE
+    if _TABLE_LIST_RE is None:
+        _TABLE_LIST_RE = _re.compile(
+            r"\b(?:FROM|JOIN)\b(.*?)"
+            r"(?=\bON\b|\bWHERE\b|\bGROUP\s+BY\b|\bORDER\s+BY\b|\bHAVING\b"
+            r"|\bLIMIT\b|\bUNION\b|\bJOIN\b|\bFROM\b|;|\)|$)",
+            _re.IGNORECASE | _re.DOTALL,
+        )
+        _INNER_REF_RE = _re.compile(
             r"`?([A-Za-z_][A-Za-z0-9_]*)`?\s*\.\s*`?([A-Za-z_][A-Za-z0-9_]*)`?",
         )
     refs: set[str] = set()
-    for m in _SCHEMA_TABLE_REF_RE.finditer(sql or ""):
-        schema_token = m.group(1).lower()
-        refs.add(schema_token)
+    for m in _TABLE_LIST_RE.finditer(sql or ""):
+        chunk = m.group(1) or ""
+        for mm in _INNER_REF_RE.finditer(chunk):
+            refs.add(mm.group(1).lower())
     return refs
 
 

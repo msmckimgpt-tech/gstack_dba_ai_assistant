@@ -55,6 +55,11 @@ MAX_TURNS_DEFAULT = 20
 # 예산을 60s 여유를 두고 서버 self-timeout 이후까지 기다리도록 한다.
 ASK_TIMEOUT_SEC = 960.0
 PER_TURN_SLEEP = 0.5
+# TASK-0041: /api/ask 가 httpx.ReadTimeout 으로 끊긴 후에도 서버에서 agent 는 계속
+# 돌 수 있다. 이 경우 /api/ask_status + /api/ask_result long-poll 로 최종 응답을
+# 회수해 해당 턴에 병합한다. 서버 run_timeout_sec=900s 이므로 여유 60s.
+ATTACH_TIMEOUT_SEC = float(os.environ.get("TASK0034_ATTACH_TIMEOUT_SEC", "960.0"))
+ATTACH_POLL_WAIT_SEC = 45
 
 
 def load_env_file(path: Path) -> dict[str, str]:
@@ -160,6 +165,114 @@ async def new_conversation(client: httpx.AsyncClient) -> str:
     return str(resp.json().get("conversation_id", ""))
 
 
+def _steps_from_attach(meta: dict | None) -> list:
+    if not isinstance(meta, dict):
+        return []
+    steps = meta.get("steps")
+    return steps if isinstance(steps, list) else []
+
+
+async def _attach_run(
+    client: httpx.AsyncClient,
+    conversation_id: str,
+    message: str,
+    t0: float,
+) -> dict[str, Any]:
+    """client-read-timeout 이후 서버의 현재 run 결과를 long-poll 로 회수."""
+    run_id = ""
+    initial_status = ""
+    try:
+        r = await client.get(
+            f"{BASE_URL}/api/ask_status",
+            params={"conversation_id": conversation_id},
+            timeout=15.0,
+        )
+        if r.status_code == 200:
+            snap = r.json()
+            run_id = str(snap.get("run_id") or "")
+            initial_status = str(snap.get("status") or "")
+    except Exception:
+        pass
+    deadline = time.monotonic() + ATTACH_TIMEOUT_SEC
+    last_error = ""
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        wait_s = max(1, min(ATTACH_POLL_WAIT_SEC, int(remaining)))
+        try:
+            r = await client.get(
+                f"{BASE_URL}/api/ask_result",
+                params={
+                    "conversation_id": conversation_id,
+                    "run_id": run_id,
+                    "wait": wait_s,
+                },
+                timeout=wait_s + 10.0,
+            )
+        except Exception as exc:
+            last_error = f"attach-http-error: {exc!r}"
+            await asyncio.sleep(1.0)
+            continue
+        if r.status_code != 200:
+            last_error = f"attach-http-status-{r.status_code}"
+            await asyncio.sleep(1.0)
+            continue
+        try:
+            body = r.json()
+        except Exception:
+            last_error = "attach-non-json"
+            await asyncio.sleep(1.0)
+            continue
+        if body.get("timeout"):
+            # not yet terminal — loop again
+            if not run_id and body.get("run_id"):
+                run_id = str(body["run_id"])
+            continue
+        assistant = body.get("assistant") or {}
+        meta = assistant.get("meta") if isinstance(assistant, dict) else None
+        steps = _steps_from_attach(meta)
+        answer = str(assistant.get("content") or "") if isinstance(assistant, dict) else ""
+        sql_count = sum(
+            1 for s in steps if isinstance(s, dict) and s.get("tool") == "execute_sql"
+        )
+        status = str(body.get("status") or "")
+        error = str(body.get("error") or "")
+        verdict_tag = "succeeded-via-attach" if status == "done" else f"attach-status-{status}"
+        return {
+            "user": message,
+            "answer": answer,
+            "steps": steps,
+            "steps_count": len(steps),
+            "executed_sql": "",
+            "sql_count": sql_count,
+            "csv_paths": [],
+            "error": error or ("client-read-timeout" if not answer else ""),
+            "elapsed_s": round(time.time() - t0, 2),
+            "http_status": 200,
+            "attached_after_timeout": True,
+            "attach_verdict": verdict_tag,
+            "attach_run_id": str(body.get("run_id") or run_id),
+            "attach_initial_status": initial_status,
+        }
+    return {
+        "user": message,
+        "answer": "",
+        "steps": [],
+        "steps_count": 0,
+        "executed_sql": "",
+        "sql_count": 0,
+        "csv_paths": [],
+        "error": last_error or "attach-deadline-exceeded",
+        "elapsed_s": round(time.time() - t0, 2),
+        "http_status": None,
+        "attached_after_timeout": True,
+        "attach_verdict": "attach-timeout",
+        "attach_run_id": run_id,
+        "attach_initial_status": initial_status,
+    }
+
+
 async def ask_turn(
     client: httpx.AsyncClient,
     message: str,
@@ -190,18 +303,10 @@ async def ask_turn(
                 timeout=ASK_TIMEOUT_SEC,
             )
         except httpx.ReadTimeout:
-            return {
-                "user": message,
-                "answer": "",
-                "steps": [],
-                "steps_count": 0,
-                "executed_sql": "",
-                "sql_count": 0,
-                "csv_paths": [],
-                "error": "client-read-timeout",
-                "elapsed_s": round(time.time() - t0, 2),
-                "http_status": None,
-            }
+            # TASK-0041: client-read-timeout 상황에서도 서버의 agent 스레드는
+            # 계속 실행 중이므로, /api/ask_status + /api/ask_result long-poll 로
+            # 동일 run 의 최종 결과를 회수한다.
+            return await _attach_run(client, conversation_id, message, t0)
         status = resp.status_code
         if status != 429:
             break

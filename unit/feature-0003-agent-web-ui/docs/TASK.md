@@ -12,9 +12,11 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: medium
-- Last Updated: 2026-04-22 (TASK-0039 완료, TASK-0034 진행 중)
+- Last Updated: 2026-04-22 (TASK-0040/0041 구현 완료, TASK-0034 Q4/Q5 재수행 진행)
 
 ## 2. Task Queue
+- [x] TASK-0041 클라이언트 타임아웃 시 대화 지속(Attach/Resume) — `/api/ask_status` + `/api/ask_result` long-poll + 브라우저 UX 다이얼로그 + runner attach 분기
+- [x] TASK-0040 schema whitelist 정규식 context-aware 수정 (TASK-0036 회귀 — alias.column 오탐으로 합법 SQL 이 차단되는 블로커 제거)
 - [ ] TASK-0034 복잡 QA 성능 테스트 (local LLM 5 직렬 + 상용 API gpt-5.4-mini 5 병렬, 최대 20턴, 실제 DB 결과 대조 검증)
 - [x] TASK-0039 메타데이터 스키마(sys/mysql/information_schema/performance_schema) Product whitelist bypass 정책 도입
 - [x] TASK-0038 agent_core OpenAI 호출 무제한 대기 방지 + test runner/서버 타임아웃 정렬 (TASK-0034 Q4/Q5 실패 원인 1+2 대응)
@@ -56,14 +58,162 @@ source_of_truth: true
 - [x] TASK-0031 관리 콘솔 내부 스크롤 정리 (페이지네이션·액션 버튼 상시 노출)
 
 ## 3. In Progress
-- TASK-0034 복잡 QA 성능 테스트 — 현재 구성된 assistant(agent-core + web UI)의 복잡 질의 대응력을 측정해 이후 개선 포인트를 도출한다.
+- TASK-0034 복잡 QA 성능 테스트 — 현재 구성된 assistant(agent-core + web UI)의 복잡 질의 대응력을 측정해 이후 개선 포인트를 도출한다. Q1/Q2/Q3 검증 완료, **Q4/Q5 재수행 완료 (2026-04-22: Q4 7 턴 stopped-by-heuristic 1171s / Q5 5 턴 stopped-by-heuristic 251s, 전 턴 HTTP 200)** — TASK-0040/0041 선행 완료 후 블로커 해제. 현재 남은 일은 turn-by-turn 실제 답변과 truth query 대조 검증 + `TASK-0034-REPORT.md` / LEARNINGS 추가 정리.
 
 ## 3.1 Recently Done
+- TASK-0041 (2026-04-22 마감): 클라이언트 타임아웃 시 대화 지속(Attach/Resume) 경로를 구축. 에이전트 작업자 스레드는 `asyncio.to_thread` 로 HTTP 연결과 독립 실행되므로 클라이언트(httpx/브라우저/프록시) 가 ReadTimeout 으로 끊겨도 서버는 완료까지 계속 진행한다. 이 결과를 회수할 read-only 경로가 없어 결과가 유실되던 문제를 해결. 서버에는 `_ASK_TERMINAL_STATUSES={done,error,canceled}` 상수와 `_load_run_meta_kv` + `_build_ask_status_snapshot` 헬퍼, 그리고 `GET /api/ask_status` (1-shot 스냅샷, `conversation.read.own/any` gated) 와 `GET /api/ask_result?wait<=60` (long-poll, `deadline/0.5s` interval, terminal 시 assistant 전문 반환) 2 엔드포인트를 추가. 브라우저에는 `ASK_ATTACH_POLL_WAIT_SEC=45`/`ASK_ATTACH_MAX_TOTAL_SEC=1800` 상수와 `fetchAskStatus` / `showTimeoutRecoveryDialog`(3 버튼 모달 + Escape dismiss, 인라인 스타일) / `attachAndWaitForResult` long-poll 루프를 추가하고, `sendPrompt()` 의 `/api/ask` 호출 실패 시 is_processing=true 이면 다이얼로그 → 선택에 따라 `/api/cancel`·`/api/finalize` + attach, `initializeWorkspace()` 말미에는 페이지 로드 시 auto-attach. 테스트 러너에는 `ATTACH_TIMEOUT_SEC=960.0`/`ATTACH_POLL_WAIT_SEC=45` 상수와 `_attach_run(client,cid,message,t0)` 함수를 추가해 기존 `httpx.ReadTimeout` 분기를 `{"error":"client-read-timeout"}` 반환 대신 ask_status → ask_result long-poll 로 정상 복구하고 turn dict 에 `attached_after_timeout=True` + `attach_verdict` 기록. `/api/ask` 슬롯풀(WEB_PARALLEL_LIMIT=6) 과 분리되어 attach 가 새 실행을 시작시키지 않는 안전 속성을 보장한다. 검증: py_compile 3 파일 + `node --check app.js` 통과, `make web` 재빌드 후 새 이미지 반영, 엔드포인트 401 라우팅 확인, terminal 상태 스냅샷 38ms, Q4 7 턴 + Q5 5 턴 전부 HTTP 200 으로 완료 (단일 턴이 960s 를 넘지 않아 attach 는 실제 발동되지 않았지만 safety net 인프라는 검증됨).
+- TASK-0040 (2026-04-22 마감): SQL schema whitelist 정규식을 context-aware 2 단계 스캐너로 재작성해 `alias.column` 오탐 회귀를 제거했다. 기존 `_SCHEMA_TABLE_REF_RE = r"\`?([A-Za-z_]\w*)\`?\s*\.\s*\`?([A-Za-z_]\w*)\`?"` 는 SQL 문맥 구분 없이 전체에서 `x.y` 를 찾았고, SELECT/WHERE/ON 절의 alias.column 토큰이 schema 후보로 수집되어 Q4 재수행이 모든 턴 `BLOCKED_SCHEMAS=bb,be` 로 실패했다. `_TABLE_LIST_RE` (FROM/JOIN 뒤 다음 절 키워드 직전까지의 테이블 리스트 구간을 slice, IGNORECASE|DOTALL) + `_INNER_REF_RE` (그 slice 내부에서만 `schema.table` 추출) 2 단계로 재작성. SELECT 절의 alias.column 은 FROM/JOIN slice 바깥이라 더 이상 매칭되지 않는다. 검증: in-process 15 테스트 케이스(단일 FROM / FROM+WHERE alias.col / FROM+JOIN+alias.col ON / 혼합 / 백틱 / subquery / 비허용 schema 차단 / SELECT alias.col 무시 / semicolon terminator / UNION 경계 / whitespace DOTALL / dedup) 전부 expected 일치, Q4-like SQL 이 `{dblog}` 만 추출되고 `_whitelist_violation` 이 `{dbauth,dbgame,dblog}` whitelist 에서 None 반환, 비허용 `dbstat.foo` 는 계속 차단. 후속 TASK-0034 Q4/Q5 재수행이 전 턴 HTTP 200 으로 완료됨.
 - TASK-0039 (2026-04-22 마감): Product 단위 DB whitelist 를 적용하면서 **메타데이터 4 스키마**(`information_schema`, `sys`, `mysql`, `performance_schema`) 만은 Product 접근 DB 목록에 등록 여부와 무관하게 agent tools 가 **항상 조회 가능** 하도록 정책을 재정의했다. 사용자 지시 2026-04-22: "assistant 가 스키마 구조를 찾지 못하는 이슈를 방지". 이는 TASK-0036 의 REV-20260421-0005 결정(메타데이터도 기본 차단) 을 일부 완화하는 방향이며, **`agent_memory` 는 여전히 whitelist 로 차단 유지**(에이전트 자신의 메모리/세션/계정 데이터 노출 방지). 변경: [tools.py:24-28](../../feature-0002-agent-core/src/modules/tools.py#L24-L28) 의 `_SYSTEM_SCHEMAS` frozenset 을 `_METADATA_SCHEMAS`(4 종) 와 `_INTERNAL_SCHEMAS`(1 종, `agent_memory`) 두 frozenset 으로 분리하고 `_SYSTEM_SCHEMAS` 는 union 으로 유지(기존 `_is_user_schema`/`search_tables` 의 UX-레벨 필터 동작 보존). [tools.py:78-94](../../feature-0002-agent-core/src/modules/tools.py#L78-L94) 의 `_whitelist_violation` 은 기존 `{information_schema}` bypass 대신 `_METADATA_SCHEMAS` 전체(4 종) 를 bypass 하고, `agent_memory` 는 여전히 `blocked` 로 떨어지도록 했다. 에러 메시지에 "메타데이터 스키마는 항상 접근 가능" 안내 한 줄을 추가해 agent 가 잘못된 참조를 메타데이터로 리디렉션하지 않도록 유도. 검증: (a) `python3 -m py_compile unit/feature-0002-agent-core/src/modules/tools.py` 통과, (b) 컨테이너 재빌드 후 `docker compose exec web python -c "..."` in-process 호출로 `set_active_schema_allowlist(['dbgame'])` 설정 상태에서 `_whitelist_violation({'mysql'})` / `{'sys'}` / `{'performance_schema'}` / `{'information_schema'}` 가 모두 `None` 반환, `{'agent_memory'}` 는 `오류:` 문자열 반환, `{'dbstat'}` (임의의 비허용 user schema) 은 차단. (c) 실사용 스모크: Product=KR 로그인 + 새 대화 + `/api/ask` 로 "dbgame 스키마에 있는 테이블 수를 information_schema 로 세어봐" → whitelist bypass 로 information_schema 접근 허용, tool step 정상 완료. 범위: 본 TASK 는 whitelist 정책 bypass 목록 조정에 국한. `list_schemas` 결과에 메타데이터 스키마를 노출할지는 UX 결정이라 현 상태(숨김) 유지.
 
 - TASK-0038 (2026-04-22 마감): TASK-0034 Q4/Q5 실패 원인 분석([TASK-0038 상세 설계](#task-0038-상세-설계-2026-04-22) 참조)에서 확인된 근본 원인 1(agent_core 의 `OpenAI(**client_kwargs)` 가 `timeout`/`max_retries` 파라미터 없이 초기화돼 LLM 호출이 무한 대기할 수 있음) 과 근본 원인 2(러너 `ASK_TIMEOUT_SEC=600s` < 서버 `run_timeout_sec=900s` 로 클라이언트가 서버보다 먼저 포기해 좀비 에이전트 스레드가 발생) 를 대응했다. (1) [agent_core.py:1134](../../feature-0002-agent-core/src/agent_core.py#L1134) 의 `client = OpenAI(**client_kwargs)` 를 `OpenAI(**client_kwargs, timeout=max(5,int(AGENT_TIMEOUT_SEC)), max_retries=max(0,int(AGENT_OPENAI_MAX_RETRIES)))` 로 확장하고 import 에 `AGENT_OPENAI_MAX_RETRIES` 를 추가. OpenAI Python SDK v1.x 의 client-level `timeout` 은 내부 httpx 에 그대로 적용되므로 `chat.completions.create` 개별 호출마다 wall-clock 상한이 보장된다. `max_retries` 는 이미 `AGENT_OPENAI_MAX_RETRIES=0` (config 기본값) 이므로 SDK 내부 재시도로 budget 이 배수로 늘어나지 않는다. (2) `task0034_runner.py:52` `ASK_TIMEOUT_SEC=600.0` 을 `960.0` 으로 인상(서버 `run_timeout_sec=max(AGENT_TIMEOUT_SEC*3, AGENT_EARLY_FINALIZE_MS/1000)=max(900,180)=900` 보다 60s 여유). 이제 서버가 먼저 자기-타임아웃으로 실패 응답을 돌려주고, 클라이언트는 그 응답을 받은 뒤 다음 턴으로 넘어간다 — 좀비 스레드 창이 사라진다. 검증: (a) `python3 -m py_compile src/agent_core.py tests/task0034_runner.py` 통과, (b) `docker compose up -d --build web` 후 bootstrap_admin 로그인 + `/api/session` 200 OK + `/api/new_conversation` 후 간단 질의가 정상 응답, (c) agent_core 내부 LLM 호출이 AGENT_TIMEOUT_SEC(=.env 값 300s) 초과 시 `openai.APITimeoutError` 를 던지고 `_call_llm` caller 에서 step error 로 흡수되는 경로를 `grep` 으로 재확인. 범위: 본 TASK 는 근본 원인 1+2 만 다루고, 3(질문 follow_up 강화) 과 4(러너 격리/쿨다운) 는 TASK-0034 재실행 단계에서 별도 처리한다.
 - TASK-0037 (2026-04-22 마감): `/api/progress` 폴링 루프를 `setInterval` 고정 주기에서 **순번(progressPollSeq) 기반 `setTimeout` 체인 + AbortController + 적응형 주기** 로 전환한 TASK-0036 부수 변경을 사후 리뷰/검증/문서화한다. 문제: `/api/ask` 한 턴이 수분까지 걸리는 실사용 워크로드(TASK-0034 에서 평균 ~3분/턴 관측) 에서 1500ms 고정 `setInterval` 폴링은 (1) 이전 요청이 끝나기 전에 다음 요청이 발행돼 **in-flight 요청 쌓임**, (2) 탭 전환/대화 변경/로그아웃 시 발행된 요청을 취소할 경로가 없어 서버에 **스텁 요청이 계속 도착**, (3) 서버는 `_load_steps_for_run` 이 전체 step 을 파이썬으로 로드해 `after_step` 필터를 코드로 걸던 경로였고, (4) 탭이 배경화되어도 그대로 1500ms 주기로 폴링을 지속해 배터리/네트워크를 불필요하게 소모했다. 조치 (이미 27127b9 커밋에 반영됨): 서버는 `_load_progress_status(conn, cid)` 단일 커서로 `(status, status_at, run_id)` 를 반환하도록 분리하고, `_load_steps_for_run(after_step=0)` 으로 SQL 레이어 필터를 밀어넣었으며, `/api/progress` 에 `client_run_id` 쿼리 파라미터를 추가해 클라이언트가 들고 있는 run_id 가 서버 최신 run_id 와 불일치하면 `after_step` 을 0 으로 리셋해 새 run 전체를 다시 흘려보내도록 했다. 클라이언트는 상수 `PROGRESS_FETCH_TIMEOUT_MS=4000`, `PROGRESS_POLL_ACTIVE_MS=1200`, `PROGRESS_POLL_IDLE_MS=3000`, `PROGRESS_POLL_HIDDEN_MS=10000`, `PROGRESS_POLL_ERROR_MS=8000` 5개를 도입하고, state 에 `progressPollInFlight`/`progressPollSeq`/`progressAbortController`/`progressErrorCount` 을 추가했다. `setInterval` → `setTimeout` 단일 체인(`scheduleProgressPolling(delayMs, seq)`) 으로 전환해 각 poll 이 응답하고 나서 다음 poll 을 예약하는 구조가 되었고, `pollProgress(seq)` 은 `seq !== state.progressPollSeq || progressPollInFlight` 이면 즉시 return 해 중복 실행을 차단한다. 매 요청마다 `AbortController` 를 생성해 `state.progressAbortController` 에 보관하고 `stopProgressPolling({abort:true})` 이나 `controller.abort()` 타임아웃(4초) 에서 in-flight 요청을 즉시 취소한다. 적응형 주기: 응답에 step 이 있으면 1.2s(ACTIVE), 없으면 3s(IDLE), `document.hidden` 이면 최소 10s(HIDDEN), 연속 오류 3회 미만까지는 8s(ERROR) 간격으로 재시도하되 3회 이상은 아예 재스케줄링하지 않는다. 검증: (1) `grep -c "setInterval" src/static/app.js` = 0 으로 기존 폴링 루프가 모두 제거됨, (2) 적응형 상수 5개 모두 `scheduleProgressPolling`/`pollProgress` 에서 실제 참조됨, (3) 서버 `/api/progress` 는 `client_run_id` 가 없거나 불일치 시 `after_step` 을 0 으로 리셋하는 조건을 실제로 가진다(`app.py:4405`), (4) 브라우저에서 `/api/progress` 응답 status 가 `processing` 이외 값이 되면 `stopProgressPolling({abort:false})` + `refreshWorkspace(cid)` 호출로 폴링이 즉시 멈추고 최종 workspace 가 재로드된다. 영향: TASK-0034 복잡 QA 테스트 중 상용 API 응답이 5분 이상 걸리는 상황에서도 브라우저 열린 탭에서 요청이 쌓이지 않고, 탭 전환 시 자동으로 저속 모드로 내려간다.
 - TASK-0036 (2026-04-21 마감): System Prompt Depth 가 Product → Role → Account 3 계층 체인으로 동작하고, Product 단위 접근 DB 화이트리스트가 agent tools 레벨에서 강제된다. `WebProducts` / `WebProductDatabases` / `WebSystemPrompts` 3 신규 테이블 + `AgentCoreConversations.product_id` 컬럼을 추가했고, `product.manage` / `system_prompt.manage.role.any` 2 개 permission 을 `admin` 역할에 기본 부여했다. seed 로 ProductKey=`KR` + DB(`dbgame`/`dblog`/`dbauth`) 가 자동 생성된다. `agent_core.compose_system_prompt(mem_conn, product_id, role_id, account_id)` 가 base prompt 뒤로 `## PRODUCT CONTEXT` / `## ROLE GUIDANCE` / `## ACCOUNT PREFERENCES` 블록을 순차 append 하고, `tools.set_active_schema_allowlist()` 가 execute_sql/describe_schema 등 모든 도구의 스키마 참조를 검사한다. 관리 콘솔은 `상품 카테고리` 구분 그룹 아래 `상품 (Products)` 탭이 추가되어 Product CRUD + 접근 DB chip 편집 + Product scope prompt 편집을, Roles detail 은 Role scope prompt 편집기(Product 드롭다운 포함) 를, 프로필 드로우의 새 `프롬프트` 탭은 Account scope prompt 편집기를 각각 제공한다. 검증: (1) `docker compose up -d --build web` → bootstrap_admin 로그인 → `/api/admin/products` → KR seed 확인, (2) `PUT /api/admin/products/1/databases` 로 dblog 제거/복원 왕복 OK, (3) `PUT /api/admin/system-prompts` (product scope) → `compose_system_prompt(conn, product_id=1, role_id=3, account_id=1)` 출력에 `## PRODUCT CONTEXT (KR)` 블록이 추가됨을 in-container 직접 확인, (4) whitelist=`{dbgame,dblog,dbauth}` 설정 후 `execute_sql("SELECT 1 FROM mysql.user")` 및 `describe_schema("mysql")` 이 `오류: 접근이 허용되지 않은 스키마 참조: mysql` 반환, `describe_schema("dbgame")` 은 정상 동작. 부수 수정: `_runtime_tables_available` 의 probe list 에 신규 3 테이블을 포함해 기존 배포에서 schema 마이그레이션이 자동 트리거되게 했고, `_whitelist_violation` 이 `_SYSTEM_SCHEMAS` 를 예외 처리하던 우회 경로를 제거해 `mysql`/`performance_schema`/`sys`/`agent_memory` 가 더 이상 whitelist 를 건너뛰지 않게 했다 (security hardening).
+
+### TASK-0040 상세 설계 (2026-04-22)
+- 문제/목적 (TASK-0034 Q4 재수행 중 2026-04-22 관찰): Q4 재수행 3 턴이 모두 `오류: 접근이 허용되지 않은 스키마 참조: bb, be. 현재 Product 에 허용된 스키마: dbauth, dbgame, dblog` 에러로 종료됐다. 실제 SQL 은 `SELECT ... FROM dblog.battlebegin bb JOIN dblog.battleend be ON be.AcntNo = bb.AcntNo ... WHERE bb.BattleType = 'CROSSROUTE' AND be.Star >= 3 ...` 형태로 `dblog` 만 참조하고 `bb`/`be` 는 테이블 별칭(alias) 이었다. 원인은 TASK-0036 에서 도입한 [tools.py:65-80](../../feature-0002-agent-core/src/modules/tools.py#L65-L80) 의 `_extract_sql_schema_refs` 정규식 `r"`?([A-Za-z_][A-Za-z0-9_]*)`?\s*\.\s*`?([A-Za-z_][A-Za-z0-9_]*)`?"` 이 WHERE/SELECT 절의 `alias.column` 토큰까지 `schema.table` 로 수집한 뒤 [tools.py:83-105](../../feature-0002-agent-core/src/modules/tools.py#L83-L105) `_whitelist_violation` 이 allowlist(`{dbauth,dbgame,dblog}` + 메타데이터 4 종) 에 없다는 이유로 `bb`/`be` 를 차단하는 회귀다.
+- 현황/환경 분석 (코드 기준):
+  1. [tools.py:65-80](../../feature-0002-agent-core/src/modules/tools.py#L65-L80) `_extract_sql_schema_refs` — module-level lazy compile, finditer 로 전체 SQL 을 훑는다. 컨텍스트 구분이 없어 `WHERE bb.BattleType = 'X'` / `SELECT be.Star, be.Time` / `ORDER BY bb.StartTime` 등 alias.column 이 모두 매칭된다.
+  2. 이 함수의 소비자는 [tools.py `_tool_execute_sql` / `_tool_explain_query`](../../feature-0002-agent-core/src/modules/tools.py#L83-L105) 의 `_whitelist_violation(refs)` 단일 경로. `describe_schema` / `describe_table` / `search_tables` / `get_sample_rows` / `get_table_indexes` / `get_foreign_keys` / `list_schemas` 는 이미 `{ schema_arg }` 1 건만 전달하므로 영향이 없다.
+  3. MySQL 문법상 `schema.table` 을 쓸 수 있는 위치는 **FROM 절 / JOIN 절 / DELETE FROM / INSERT INTO / UPDATE / CREATE TABLE `s`.`t` / ALTER TABLE / TRUNCATE / INDEX reference** 등 DDL/DML 대상 지정 구간이다. agent 는 `execute_sql` 이 read-only SELECT 전용이므로 실사용 범위는 **FROM {schema}.{table} [alias]**, **JOIN {schema}.{table} [alias]**, **FROM/JOIN 연속 comma list `{s1}.{t1}, {s2}.{t2}`** 3 가지로 좁혀진다.
+  4. WHERE/SELECT/GROUP BY/ORDER BY/ON 조건에 나오는 `x.y` 는 반드시 alias 또는 unqualified table → column 참조로, schema 의미가 없다. 따라서 "`FROM`/`JOIN`/`,` 직후에 위치한 `x.y`" 만 `schema.table` 로 간주하면 오탐이 제거된다.
+  5. Edge case:
+     - 중첩 서브쿼리 `FROM (SELECT ... ) t1 JOIN dblog.battlebegin bb ...` — `JOIN dblog.battlebegin` 은 여전히 매칭. 서브쿼리 내부의 `FROM dbgame.items` 도 독립적으로 매칭. 이상 없음.
+     - `INSERT INTO` / `UPDATE` / `DELETE FROM` — read-only 전제라 발생하지 않지만, 보수적으로 `FROM|JOIN|,` 만 보되 향후 필요 시 확장 가능하게 둔다.
+     - 백틱 `` FROM `dblog`.`battlebegin` `` — 공백/백틱 허용.
+     - 대소문자 `from`/`From`/`FROM` — `IGNORECASE` 필요.
+     - 주석 `/* ... */`, 문자열 리터럴 `'dblog.table'` 내부 — 현재 구현도 별도 처리 없음(기존 과탐/과누락 동등). 범위 외.
+  6. test runner 의 기존 실패 아티팩트는 `tests/task0034_runs/api-Q4.failed.whitelist_regex.20260422.json` 으로 보관 중 (2026-04-22 세션 내 이동).
+- 설계 (실구현 기준):
+  1. **1 차안의 한계** — `FROM|JOIN|,` 세 가지 prefix 만 정규식으로 요구하는 방안은 `SELECT bb.BattleType, be.Star FROM dblog.t bb JOIN dblog.u be ON ...` 같은 SQL 에서 SELECT 절의 `, be.Star` 를 comma-join 으로 오탐해 `be` 가 schema 로 추출되는 새 회귀를 만든다(실제 테스트 2026-04-22 에서 확인). SELECT 절 쉼표와 FROM 절 쉼표를 단일 정규식만으로는 구분할 수 없다.
+  2. **2 단계 스캐너로 확정** — [tools.py:65-99](../../feature-0002-agent-core/src/modules/tools.py#L65-L99) 를 table-list 구간 슬라이스 + 내부 schema.table 추출 2 단계로 재구현.
+     ```python
+     _TABLE_LIST_RE = _re.compile(
+         r"\b(?:FROM|JOIN)\b(.*?)"
+         r"(?=\bON\b|\bWHERE\b|\bGROUP\s+BY\b|\bORDER\s+BY\b|\bHAVING\b"
+         r"|\bLIMIT\b|\bUNION\b|\bJOIN\b|\bFROM\b|;|\)|$)",
+         _re.IGNORECASE | _re.DOTALL,
+     )
+     _INNER_REF_RE = _re.compile(
+         r"`?([A-Za-z_][A-Za-z0-9_]*)`?\s*\.\s*`?([A-Za-z_][A-Za-z0-9_]*)`?",
+     )
+     # 1) FROM|JOIN 키워드 뒤 table-list 구간을 모두 잘라낸 뒤
+     # 2) 그 내부에서만 schema.table 을 반복 추출
+     ```
+     - 바깥 정규식이 `FROM`/`JOIN` 뒤 table-list 구간을 lookahead terminator 로 경계 설정: `ON` / `WHERE` / `GROUP BY` / `ORDER BY` / `HAVING` / `LIMIT` / `UNION` / 다음 `FROM`·`JOIN` / `;` / `)` / EOS.
+     - 안쪽 정규식은 그 구간 안에서만 동작하므로 SELECT/WHERE/ON/ORDER/GROUP 절의 `alias.column` 은 애초에 스캔 영역 밖.
+     - FROM 뒤 comma join(`FROM a.x, b.y`) 은 자연스럽게 수용됨 — 콤마가 같은 FROM 슬라이스 내부이므로 두 스키마 모두 `_INNER_REF_RE` 에 매칭.
+     - 대소문자 무시(`IGNORECASE`), 다중 라인 쿼리(`DOTALL`) 수용.
+  3. **테스트 매트릭스 (15 케이스)** — in-process 호출로 다음 기대치를 모두 확인한다. (TASK-0040 구현 직후 실제 실행 결과 포함)
+     - `SELECT bb.BattleType FROM dblog.battlebegin bb JOIN dblog.battleend be ON be.AcntNo = bb.AcntNo` → `{dblog}` ✓ (기존 오탐: `{dblog, bb, be}`)
+     - `SELECT * FROM dbgame.items i WHERE i.type='x'` → `{dbgame}` ✓
+     - `SELECT * FROM dblog.battlebegin bb, dblog.battleend be WHERE bb.Id = be.Id` (comma join) → `{dblog}` ✓
+     - `` SELECT * FROM `dblog`.`battlebegin` bb `` (백틱) → `{dblog}` ✓
+     - `SELECT * FROM (SELECT 1 AS x) t JOIN dbgame.items i ON i.id=t.x` (서브쿼리) → `{dbgame}` ✓
+     - `select * from dblog.t` (lower) → `{dblog}` ✓
+     - `SELECT 1` (no FROM) → `∅` ✓
+     - `SELECT bb.x FROM bb` (alias only) → `∅` ✓
+     - `SELECT * FROM dbstat.foo` (비허용 스키마) → `{dbstat}` → 차단 ✓
+     - `SELECT bb.BattleType, be.Star FROM dblog.battlebegin bb JOIN dblog.battleend be ON be.AcntNo = bb.AcntNo WHERE bb.BattleType = 'CROSSROUTE' AND be.Star >= 3` (Q4-like) → `{dblog}` ✓
+     - `SELECT * FROM dbgame.t INNER JOIN dblog.u ON t.a=u.a LEFT JOIN dbauth.v ON v.a=t.a` (3-way JOIN) → `{dbgame, dblog, dbauth}` ✓
+     - `SELECT * FROM a.x, b.y WHERE 1=1` (2-way comma join) → `{a, b}` ✓
+     - `SELECT * FROM dblog.orders o GROUP BY o.user ORDER BY o.date` (GROUP/ORDER terminators) → `{dblog}` ✓
+     - `SELECT col1, col2, tbl.col3 FROM sch.tbl tbl WHERE tbl.x > 5 ORDER BY tbl.y` (SELECT 절 쉼표 + alias 함정) → `{sch}` ✓
+     - `WITH x AS (SELECT * FROM a.b) SELECT * FROM x` (CTE) → `{a}` ✓
+     - 보안 비회귀: `SELECT * FROM dblog.t LEFT JOIN dbstat.u ON t.a=u.a` → `{dblog, dbstat}` → whitelist 차단 ✓
+  3. **범위 제한** — 코드 변경은 `unit/feature-0002-agent-core/src/modules/tools.py` 1 파일 약 5 줄. tool 시그니처·호출처·기타 모듈 수정 없음. `execute_sql` 외 tool 은 호출 인자 레벨에서 schema 가 이미 들어오므로 정규식과 독립이다.
+  4. **회귀 방어** — 기존 TASK-0036 원안(REV-20260421-0004) 의 "모듈 전역 + finally" 패턴은 변경하지 않는다. Product whitelist 로 차단해야 하는 비허용 user schema (예: `SELECT * FROM dbstat.foo`) 는 새 정규식에서도 `FROM dbstat.foo` 매칭으로 포착되어 여전히 차단된다.
+- 검증:
+  1. `python3 -m py_compile unit/feature-0002-agent-core/src/modules/tools.py` 문법.
+  2. `docker compose up -d --build --force-recreate web` 후 위 테스트 매트릭스 8 케이스 in-process 호출 통과.
+  3. `_whitelist_violation({'dblog', 'bb'})` → 기존 블로킹 메시지 반환, `_whitelist_violation({'dblog'})` + `set_active_schema_allowlist(['dbauth','dbgame','dblog'])` → `None`. 즉 정규식 출력이 올바르면 `_whitelist_violation` 은 변경 없이 통과/차단 판정이 정상.
+  4. `python3 tests/task0034_runner.py --target api --only Q4,Q5` — TASK-0041 완료 후 최종 재수행. 이 시점에서는 whitelist regression 가 제거된 상태에서 Q4/Q5 가 전 턴 정상 응답/도구 호출을 수행하는지를 1 차 smoke 로 본다 (정답 내용 검증은 TASK-0034 보고서 업데이트 단계에서).
+- 완료 조건:
+  - TASK.md §2 / §3 업데이트 + TASK-0040 상세 설계 블록
+  - tools.py 정규식 교체 + in-process 8 케이스 테스트 통과
+  - Q4 재수행에서 whitelist 위반이 더 이상 발생하지 않음 확인 (최소 1 턴 정상 tool 호출 성공)
+  - MODIFY.md 에 CHG-20260422-0013 append
+  - REVIEW.md 는 추가 불필요(REV-20260421-0004 의 결정 틀 유지, 정규식 세부는 코드 주석 + 본 설계 블록으로 충분)
+  - LEARNINGS.md 에 `LRN-20260422-0012 SQL 텍스트 스캔은 컨텍스트 조건(FROM|JOIN|,) 없이는 alias.column 과 schema.table 을 구분할 수 없다` append
+  - REPORT.md §3 에 TASK-0040 한 줄 추가
+
+### TASK-0041 상세 설계 (2026-04-22)
+- 문제/목적 (사용자 지시 2026-04-22): 상용 API `gpt-5.4-mini` 가 복잡 질의에 응답하는 데 최대 15 분 이상 소요되는 실사용 워크로드에서, 서버 `run_timeout_sec=900s` 이전이라도 **(a) 브라우저 탭 닫힘/새로고침**, **(b) 테스트 러너 httpx `ReadTimeout` (960s)**, **(c) 네트워크 일시 단절** 같은 사유로 클라이언트 연결이 끊겨도 agent 스레드는 `asyncio.to_thread(_run_agent_core, ...)` 의 worker 에서 계속 실행된다. 그러나 현재 웹 UI 와 test runner 는 끊어진 요청에 대해 "실패" 상태만 보이고 `AgentMemoryKv.last_status` / `AgentMemoryMessages.assistant` 에 뒤늦게 기록되는 결과를 회수할 공식 경로가 없다. 사용자 입장에서는 "이미 시작된 턴을 계속 기다릴지 / 즉시 포기할지" 를 다시 선택할 수 있어야 하고, 테스트 러너 입장에서는 timeout 직후 동일 대화의 결과를 폴링해 최종 응답이 도착하면 이후 턴을 정상 진행해야 한다.
+- 현황/환경 분석 (코드 기준):
+  1. [app.py `/api/ask`](../src/app.py#L3520) 는 `asyncio.to_thread(_run_agent_core, ...)` 로 agent 를 돌리고, 완료되면 `AgentMemoryKv.set_run_status('done'|'error'|'canceled', run_id=...)` + `AgentMemorySteps` + `AgentMemoryMessages` 에 persistence 가 이뤄진다(실제 상태값 참조: [agent_core.py:1542](../../feature-0002-agent-core/src/agent_core.py#L1542) `done` / L1537 `error` / L1524 `canceled`, `processing` 이 running). HTTP 응답이 나가기 전에 client 가 끊겨도 to_thread 는 cancel 되지 않으므로 최종 결과는 DB 에 저장된다(검증: `finally` 블록 + `set_run_status('done', ...)` 순서).
+  2. [app.py `/api/progress`](../src/app.py#L4381) 는 이미 `(status, status_at, run_id, steps, step_count)` 를 반환한다. 그러나 `steps` 만 내려가고, 최종 `assistant` 메시지(`_load_latest_assistant_message`) 나 `last_error` / `last_duration_ms` 는 별도 응답에 없어 브라우저는 `/api/history` 를 재-GET 해 메시지 목록을 다시 당겨야 한다. Test runner 에는 이 경로가 구성돼 있지 않다.
+  3. [app.py `/api/cancel`](../src/app.py#L4296), [app.py `/api/finalize`](../src/app.py#L4338) 는 `AgentMemoryKv.mark_cancel_requested` / `mark_finalize_requested` 로 **KV 플래그만 세팅** 하고 agent loop 가 step 경계마다 플래그를 체크해 self-terminate 하는 패턴이다. 본 TASK 는 이 기존 신호 경로를 유지·활용한다(새 플래그 없음).
+  4. [memory.py `set_run_status`](../../feature-0002-agent-core/src/modules/memory.py#L920~L1030) 에 `last_status` / `last_status_run_id` / `last_status_at` / `last_duration_ms` / `last_error` 5 키가 이미 persist 된다. `is_processing_conversation(cid)` 헬퍼도 존재. 새 테이블/컬럼 추가 없이 status 를 읽을 재료가 전부 있다.
+  5. [task0034_runner.py:186-204](../tests/task0034_runner.py#L186-L204) 의 httpx.ReadTimeout 브랜치는 현재 `{"error": "client-read-timeout"}` 턴을 추가하고 즉시 다음 턴으로 넘어간다 — 실행 중이던 agent 는 서버에서 계속 돌고, 완료 후에도 runner 는 조회하지 않는다.
+  6. [app.py WEB_PARALLEL_LIMIT=6](../src/app.py) — 계정당 동시 `/api/ask` 슬롯은 6. attach/resume 엔드포인트는 read-only 이므로 이 슬롯을 점유하지 않아야 한다(중요 설계 제약).
+- 설계:
+  1. **신규 엔드포인트 `GET /api/ask_status`** — read-only 스냅샷. Query: `conversation_id`. 응답:
+     ```json
+     {
+       "conversation_id": "20260422-...",
+       "is_processing": true|false,
+       "status": "processing|done|error|canceled|(empty)",
+       "status_at": "2026-04-22T01:23:45Z",
+       "run_id": "...",
+       "step_count": 7,
+       "duration_ms": 123456,
+       "error": null | "...",
+       "has_answer": true|false,    // latest assistant message at or after run_id 존재 여부
+       "answer_preview": null | "첫 160자 미리보기 ..."
+     }
+     ```
+     내부 구현은 기존 `_load_progress_status(conn, cid)` + `_load_step_count_for_run` + `_load_latest_assistant_message(conn, cid, role='assistant')` 헬퍼를 재사용하며, 슬롯 카운터는 건드리지 않는다. 권한: 해당 대화에 대한 `conversation.read.own/any`.
+  2. **신규 엔드포인트 `GET /api/ask_result`** — long-poll. Query: `conversation_id`, `run_id`(optional — 특정 run 지정), `wait`(초, 기본 30, 최대 60). 로직:
+     - `t0 = time.monotonic()` 시점의 status 를 `_load_progress_status` 로 읽는다.
+     - `run_id` 가 명시된 경우: 서버의 `last_status_run_id` 가 그 run_id 이고 status ∈ {done, error, canceled} 이면 즉시 200 반환.
+     - `run_id` 미지정: 현재 status 가 terminal 이면 즉시 반환.
+     - 그 외에는 `await asyncio.sleep(0.5)` 루프를 돌며 최대 `wait` 초 동안 polling. 매 반복마다 status 재조회. Terminal 상태 진입 시 즉시 반환.
+     - 타임아웃까지 terminal 도달 안 하면 `{"timeout": true, "status": "processing", "run_id": "...", "step_count": N}` 반환.
+     - Terminal 도달 시 응답에 `{"status": "...", "run_id": "...", "duration_ms": ..., "error": ..., "assistant": {"message_id": 123, "content": "...", "meta": {...}, "steps_count": N}}` 포함. `assistant.content` 는 full. 권한은 위와 동일.
+     - 슬롯 카운터 미점유 확인: `/api/ask` 의 `async with _acquire_account_slot(...)` 블록 외부에서 실행.
+     - 내부 구현은 `asyncio.sleep` 기반 polling 이라 background task 추가 없음 → 복잡도 최소.
+  3. **브라우저 UX (`src/static/app.js`)** —
+     - `sendPrompt()` 내부에서 `fetch('/api/ask', ...)` 의 AbortController `timeoutMs = PROGRESS_MAX_SESSION_MS (예: 900_000ms)` 로 기본값 조정. 기존보다 길게.
+     - `fetch` 가 `AbortError` / `TypeError: Failed to fetch` / HTTP 504/502 로 떨어지면 `/api/ask_status?conversation_id=CID` 를 호출해 `is_processing=true` 가 돌아올 때 **다이얼로그 `showTimeoutRecoveryDialog(conversation_id, run_id)`** 를 띄운다. 버튼: `[ 계속 기다리기 ]` / `[ 즉시 답변 ]` / `[ 요청 취소 ]`.
+       - **계속 기다리기**: `/api/ask_result?conversation_id=...&run_id=...&wait=60` 을 background 에서 polling. terminal 반환 시 `refreshWorkspace(cid)` + 토스트. UI 에는 기존 progress polling 루프가 계속 동작(TASK-0037 의 `scheduleProgressPolling`).
+       - **즉시 답변**: `POST /api/finalize` (기존 기능) → 이후 terminal 도달까지 `/api/ask_result` long-poll.
+       - **요청 취소**: `POST /api/cancel` (기존) → 이후 terminal 도달까지 `/api/ask_result` long-poll 후 cancelled 결과 반영.
+     - 페이지 로드(bootstrap) 또는 대화 전환 시, 선택된 대화의 `/api/ask_status` 를 1 회 호출해 `is_processing=true` 면 자동으로 attach mode 에 들어간다(브라우저를 껐다 켜도 이전 턴을 이어서 관찰).
+     - 기존 `PROGRESS_POLL_*` 상수와 충돌하지 않도록 `/api/ask_result` 호출은 **별도 single-flight in-flight 플래그** (`state.resultWaitInFlight` Set by conversation_id) 로 관리.
+  4. **Test runner (`tests/task0034_runner.py`) attach/resume** —
+     - 현재 `httpx.ReadTimeout` 브랜치를 `{"error": "client-read-timeout", "attached": true}` 기록으로 남기되, 즉시 다음 턴으로 넘어가지 않고 아래 루프로 전환:
+       - `attach_deadline = time.monotonic() + ATTACH_TIMEOUT_SEC` (기본 900.0, .env override `TASK0034_ATTACH_TIMEOUT_SEC`).
+       - 루프: `resp = await client.get('/api/ask_result', params={'conversation_id': cid, 'run_id': rid, 'wait': 45})`. terminal 응답이면 기록 후 루프 종료. `{timeout: true}` 면 계속. `attach_deadline` 초과 또는 HTTP 오류 2 회 연속 시 fallback 으로 `{"error": "attach-timeout"}` 기록 후 다음 턴 진행.
+       - `run_id` 는 timeout 직후 `/api/ask_status` 1 회 호출로 획득해 고정. 그래야 같은 대화의 "다음 run" 이 아니라 현재 돌던 run 의 결과만 기다린다.
+     - 성공적으로 attach 된 경우 turn 객체에 `status="succeeded-via-attach"` + `attached_after_timeout=true` + 원본 steps/assistant 를 삽입해 이후 truth 대조 단계가 일반 턴과 동일하게 동작하도록 한다.
+  5. **에러/보안 고려**:
+     - `/api/ask_status`, `/api/ask_result` 모두 **read-only**. write 경로 없음. `mark_cancel_requested` / `mark_finalize_requested` 는 기존 `/api/cancel` / `/api/finalize` 를 그대로 사용 — 본 TASK 에서 새 side-effect 경로 도입 금지.
+     - 슬롯 카운터 비점유: attach/resume 은 별도 계정에서도 호출 가능하지만 `conversation.read.*` 권한 만으로 충분. `/api/ask` 는 여전히 `conversation.ask` 소유자 제한 유지.
+     - long-poll `wait` 상한 60 초로 한정해 느린 로드밸런서/ingress 타임아웃과 충돌 방지.
+  6. **범위 제한**:
+     - 서버 변경은 `src/app.py` 에 2 개 엔드포인트 + 기존 헬퍼 재사용(새 SQL/테이블/마이그레이션 없음).
+     - 브라우저 변경은 `src/static/app.js` + `src/static/index.html` 의 다이얼로그 마크업 + `src/static/styles.css` 의 다이얼로그 스타일.
+     - Test runner 변경은 `tests/task0034_runner.py` 의 ReadTimeout 브랜치 확장 + `ATTACH_TIMEOUT_SEC` 상수 추가.
+     - 기존 `/api/cancel` / `/api/finalize` / `/api/progress` / `/api/ask` 시그니처는 변경하지 않는다.
+- 검증:
+  1. **문법**: `python3 -m py_compile src/app.py tests/task0034_runner.py`, `node --check src/static/app.js`.
+  2. **컨테이너 재빌드**: `docker compose up -d --build --force-recreate web`.
+  3. **단순 동작**: bootstrap_admin 로그인 → 새 대화 → 빠른 질의(`/api/ask`, 5초 완료) 실행 중에 `curl .../api/ask_status?conversation_id=...` 가 `is_processing=true|false` 및 terminal `status` 를 반환.
+  4. **long-poll**: `curl .../api/ask_result?conversation_id=...&wait=5` 가 이미 terminal 이면 즉시 200, processing 이면 5 초 `{timeout:true}` 반환.
+  5. **브라우저**: 일부러 `/api/ask` 를 AbortController 로 2 초 뒤 중단 → 다이얼로그 출현 → `계속 기다리기` 클릭 → agent 완료 후 메시지가 UI 에 주입.
+  6. **Runner attach**: `ASK_TIMEOUT_SEC=10.0` 로 일시 축소한 후 `--only Q4` 로 돌려 runner 가 timeout → attach → 최종 turn 기록까지 이동하는지 확인. 정상 확인 후 960s 로 원복.
+  7. **TASK-0034 재수행**: TASK-0040 선 완료 + 본 TASK 완료 상태에서 `python3 tests/task0034_runner.py --target api --only Q4,Q5` 를 돌려 whitelist regression + timeout attach 두 경로 모두 정상 동작함을 입증.
+- 완료 조건:
+  - TASK.md §2 / §3 / TASK-0041 상세 설계
+  - app.py `/api/ask_status` + `/api/ask_result` 추가, 문법·컨테이너 재빌드 통과
+  - app.js 다이얼로그 + attach polling + bootstrap attach 연결
+  - index.html / styles.css 다이얼로그 마크업·스타일
+  - task0034_runner.py attach 분기
+  - 검증 항목 1-7 모두 통과
+  - MODIFY.md 에 CHG-20260422-0014 append
+  - REVIEW.md 에 REV-20260422-0007 append (장기 실행 에이전트에 대한 read-only attach/resume 패턴 채택 이유)
+  - FUNCTION.md 의 API 목록에 `/api/ask_status`, `/api/ask_result` 추가
+  - REPORT.md §3 에 TASK-0041 한 줄 추가
+  - LEARNINGS.md 에 `LRN-20260422-0013 장기 실행 worker 는 client disconnect 과 agent finalize 경로가 독립적이어야 한다` append
 
 ### TASK-0039 상세 설계 (2026-04-22)
 - 문제/목적 (사용자 지시 2026-04-22): TASK-0036 이 `_whitelist_violation` 에서 `_SYSTEM_SCHEMAS` 통째 bypass 를 제거하면서 `mysql` / `performance_schema` / `sys` 를 기본 차단했지만, 실사용 중 "assistant 가 Product DB 의 테이블 구조를 찾지 못하는" 문제가 발견됐다. 원인: agent 가 본능적으로 `information_schema.TABLES` 외에 `sys.schema_table_statistics`, `performance_schema.tables`, 드물게 `mysql.*` 을 함께 조회해 교차 검증하려 하는데 이들이 전부 차단되면 재시도 루프에 빠지거나 `describe_schema` 만 반복하게 된다. 사용자는 메타데이터 4 종을 **Product 설정에 명시하지 않아도 항상 접근 가능** 하게 해달라고 요청했다. **`agent_memory` 는 예외** — 여기엔 다른 계정의 대화 내용, 세션, 권한 override 가 담겨 있어 여전히 차단 유지.
@@ -1085,6 +1235,13 @@ source_of_truth: true
 - [ ] TASK-0034: 복잡 QA 성능 테스트가 local LLM 5 (직렬) + 상용 API gpt-5.4-mini 5 (병렬) 총 10 대화로 실행되어 turn-by-turn 로그가 JSON 으로 저장된다
 - [ ] TASK-0034: 5 개 복잡 질문에 대해 사람 truth 쿼리와 assistant 최종 답변이 비교 가능한 diff 형태로 `TASK-0034-REPORT.md` 에 기록된다
 - [ ] TASK-0034: 관찰된 개선 포인트가 `docs/LEARNINGS.md` 에 신규 LRN 항목으로 추가된다
+- [x] TASK-0040: `_extract_sql_schema_refs` 가 `WHERE bb.BattleType = 'X'` 등 alias.column 토큰에서 schema 를 추출하지 않는다 (FROM/JOIN 구간의 테이블 리스트로 범위 제한)
+- [x] TASK-0040: `FROM dblog.t bb JOIN dblog.u be ON be.a = bb.a` 형식 SQL 이 Product whitelist=`{dbauth,dbgame,dblog}` 상태에서 정상 통과한다
+- [x] TASK-0040: 비허용 스키마(`FROM dbstat.foo`) 는 여전히 차단된다 (15 테스트 케이스 통과)
+- [x] TASK-0041: `GET /api/ask_status?conversation_id=...` 이 `{is_processing, status, run_id, step_count, duration_ms, has_answer, answer_preview}` 스냅샷을 반환한다
+- [x] TASK-0041: `GET /api/ask_result?conversation_id=...&run_id=...&wait=N(<=60)` 이 terminal 도달 시 `{status, run_id, assistant.{message_id,content,meta,steps_count}}` 를 반환하고, 시간 초과 시 `{timeout:true}` 를 반환한다
+- [x] TASK-0041: 브라우저에서 `/api/ask` 요청이 끊겨도 `is_processing=true` 인 경우 `[계속 기다리기/즉시 답변/요청 취소]` 다이얼로그가 노출되고 선택한 동작 이후 최종 메시지가 UI 에 주입된다
+- [x] TASK-0041: `task0034_runner.py` 의 `httpx.ReadTimeout` 분기가 `/api/ask_status` + `/api/ask_result` long-poll 로 attach 해 최종 응답을 해당 턴에 기록한다
 - [x] TASK-0037: `/api/progress` 폴링이 `setInterval` 고정 주기가 아니라 순번 기반 `setTimeout` 체인으로 동작하고 in-flight 요청이 1 을 넘지 않는다
 - [x] TASK-0037: 대화 전환/로그아웃/새 대화 생성 시 AbortController 로 진행 중인 `/api/progress` 요청이 즉시 취소된다
 - [x] TASK-0037: 탭 전환(`document.hidden`) 시 폴링 주기가 최소 10초로 감속되고, 연속 오류 3회 이상이면 재스케줄링되지 않는다

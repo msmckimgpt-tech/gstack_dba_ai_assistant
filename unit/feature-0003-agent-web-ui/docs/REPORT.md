@@ -13,10 +13,41 @@ System Prompt 를 Product → Role → Account 3 계층으로 조립하도록 �
 
 ## 2. Progress
 - Planned: 0
-- In Progress: TASK-0034 복잡 QA 성능 테스트 (테스트 하니스 미작성 상태)
-- Done: TASK-0039 메타데이터 스키마 whitelist bypass 정책, TASK-0036 System Prompt Depth + Product DB whitelist, TASK-0035 대화 사이드바 구분/정렬 + 대화/말풍선 fork, (이전) RBAC table cutover, role CRUD, account role assignment, tri-state override, account soft delete, own/any 대화 권한 분기, 제목 변경 API, `clear_memory` 제거, `console.access` 기반 읽기 전용 관리자 셸, 브라우저/API 검증
+- In Progress: TASK-0034 복잡 QA 성능 테스트 (Q4/Q5 재수행 — TASK-0040/0041 선행 완료 상태)
+- Done: TASK-0041 클라이언트 타임아웃 시 Attach/Resume, TASK-0040 schema whitelist 정규식 context-aware 수정, TASK-0039 메타데이터 스키마 whitelist bypass 정책, TASK-0036 System Prompt Depth + Product DB whitelist, TASK-0035 대화 사이드바 구분/정렬 + 대화/말풍선 fork, (이전) RBAC table cutover, role CRUD, account role assignment, tri-state override, account soft delete, own/any 대화 권한 분기, 제목 변경 API, `clear_memory` 제거, `console.access` 기반 읽기 전용 관리자 셸, 브라우저/API 검증
 
 ## 3. Recent Changes
+- 2026-04-22 (TASK-0041)
+  - `src/app.py`
+    - `_ASK_TERMINAL_STATUSES = frozenset({"done","error","canceled"})` / `_ASK_SUCCESS_STATUSES = frozenset({"done","canceled"})` 상수
+    - `_load_run_meta_kv(conn, cid)` — `AgentMemoryKv` 의 5 키(`last_status` · `last_status_at` · `last_status_run_id` · `last_duration_ms` · `last_error`) 를 단일 쿼리로 조회
+    - `_build_ask_status_snapshot(conn, cid)` — `{conversation_id, is_processing, status, status_at, run_id, step_count, duration_ms, error, has_answer, answer_preview, _latest_assistant}` 스냅샷 빌더
+    - `GET /api/ask_status` — 1-shot. 권한 `conversation.read.own/any`. 응답은 `_latest_assistant` 제외(long-poll 전용)
+    - `GET /api/ask_result?conversation_id=&run_id=&wait=<=60` — long-poll. `deadline=loop.time()+wait_s`, `poll_interval=0.5`. terminal 시 assistant dict 반환, 시간 초과 시 `{timeout:true, run_id?}`. `/api/ask` 슬롯풀(WEB_PARALLEL_LIMIT=6) 과 분리되어 attach 가 새 실행을 시작시키지 않는다.
+  - `src/static/app.js`
+    - 상수 `ASK_ATTACH_POLL_WAIT_SEC=45` / `ASK_ATTACH_MAX_TOTAL_SEC=1800`
+    - `fetchAskStatus(cid)` — 실패 시 null 반환하는 안전 래퍼
+    - `showTimeoutRecoveryDialog({statusText})` — 3 버튼 모달(`요청 취소`/`즉시 답변`/`계속 기다리기`) + Escape dismiss. 인라인 스타일로만 구성되어 HTML/CSS 변경 없이 동작
+    - `attachAndWaitForResult(cid, {runId})` — `/api/ask_result?wait=45` long-poll 루프, run_id 한 번 고정, terminal 시 `refreshWorkspace(cid)` + 토스트. 최대 1800s
+    - `sendPrompt()` — `apiFetch("/api/ask",...)` 를 try/catch 로 감싸 실패 시 `fetchAskStatus` → `is_processing=true` 이면 다이얼로그 → 사용자 선택에 따라 `/api/cancel`·`/api/finalize` 호출 후 `attachAndWaitForResult` 로 이어받음
+    - `initializeWorkspace()` 끝에 boot-time auto-attach — 페이지 로드 시 현재 대화가 `is_processing=true` 이면 자동으로 busy 상태 + progress polling + attach 재개, "이전에 남아있던 응답 요청을 이어받습니다." 토스트
+  - `tests/task0034_runner.py`
+    - 상수 `ATTACH_TIMEOUT_SEC=960.0` / `ATTACH_POLL_WAIT_SEC=45`
+    - `_steps_from_attach(meta)` 헬퍼
+    - `_attach_run(client, cid, message, t0)` — ask_status 로 run_id/initial_status 확보 → ask_result long-poll 반복 → turn dict 에 `attached_after_timeout=True` + `attach_verdict` + `attach_run_id`/`attach_initial_status` 메타 기록
+    - 기존 `httpx.ReadTimeout` 분기: `{"error":"client-read-timeout"}` 반환 대신 `_attach_run(...)` 로 정상 복구
+  - 검증: py_compile 3 파일 통과, `node --check app.js` JS OK, `make web` 재빌드 후 새 이미지(sha256:665515...) 반영, `/api/ask_status` / `/api/ask_result` 401 응답으로 라우팅 확인, terminal 상태 스냅샷 38ms, `python3 tests/task0034_runner.py --target api --only Q4,Q5` 재수행 실행
+  - 문서: `docs/TASK.md` §1/§2 + TASK-0041 상세 설계 블록(1236 라인대) + Completion Checklist 체크, `docs/MODIFY.md` CHG-20260422-0014, `docs/REVIEW.md` REV-20260422-0007, `docs/FUNCTION.md` 에 신규 2 엔드포인트, `../../docs/LEARNINGS.md` LRN-20260422-0013(작업자 스레드 lifecycle ≠ 클라이언트 연결)
+
+- 2026-04-22 (TASK-0040)
+  - `../feature-0002-agent-core/src/modules/tools.py`
+    - `_SCHEMA_TABLE_REF_RE` 단일 단계 regex 를 제거하고 `_TABLE_LIST_RE` + `_INNER_REF_RE` 2 단계 스캐너로 교체.
+      - 1 단계: `\b(?:FROM|JOIN)\b(.*?)(?=\bON\b|\bWHERE\b|\bGROUP\s+BY\b|\bORDER\s+BY\b|\bHAVING\b|\bLIMIT\b|\bUNION\b|\bJOIN\b|\bFROM\b|;|\)|$)` (IGNORECASE|DOTALL) — FROM/JOIN 키워드 다음 절 시작 직전까지의 테이블 리스트 구간만 slice
+      - 2 단계: slice 내부에서만 `\`?(schema)\`?\s*\.\s*\`?(table)\`?` 패턴으로 schema 토큰 추출
+    - SELECT/WHERE/ON 절의 alias.column 토큰은 FROM/JOIN slice 바깥이라 더 이상 매칭되지 않는다.
+  - 검증: in-process 15 테스트 케이스 (단일 FROM / FROM+WHERE alias.col / FROM+JOIN+alias.col ON / 혼합 schema / 백틱 / subquery / 비허용 schema 차단 / SELECT 절 alias.col 무시 / semicolon terminator / UNION 경계 / whitespace DOTALL / 중복 refs dedup) 전부 expected refs 일치. Q4-like SQL 은 `{dblog}` 만 검출, `_whitelist_violation` 이 `{dbauth,dbgame,dblog}` whitelist 에서 None 반환. 비허용 `dbstat.foo` 는 여전히 차단.
+  - 문서: `docs/TASK.md` §1/§2 + TASK-0040 상세 설계 블록 + Completion Checklist 체크, `docs/MODIFY.md` CHG-20260422-0013, `docs/REVIEW.md` REV-20260422-0007(TASK-0040/0041 통합), `../../docs/LEARNINGS.md` LRN-20260422-0012(SQL 정규식 문맥 의존성)
+
 - 2026-04-22 (TASK-0039)
   - `../feature-0002-agent-core/src/modules/tools.py`
     - L24~33 `_SYSTEM_SCHEMAS` 단일 frozenset 을 `_METADATA_SCHEMAS = {information_schema, sys, mysql, performance_schema}` (whitelist bypass) + `_INTERNAL_SCHEMAS = {agent_memory}` (whitelist 차단 유지) 두 frozenset 으로 분리. `_SYSTEM_SCHEMAS` 는 union 으로 유지해 `_is_user_schema`/`search_tables` UX 필터 동작 보존.

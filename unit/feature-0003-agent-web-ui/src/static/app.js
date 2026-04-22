@@ -70,6 +70,10 @@ const PROGRESS_POLL_IDLE_MS = 3000;
 const PROGRESS_POLL_HIDDEN_MS = 10000;
 const PROGRESS_POLL_ERROR_MS = 8000;
 
+// TASK-0041: 클라이언트 타임아웃 시 attach/resume 파라미터
+const ASK_ATTACH_POLL_WAIT_SEC = 45;
+const ASK_ATTACH_MAX_TOTAL_SEC = 1800;
+
 const state = {
   user: null,
   session: null,
@@ -1792,6 +1796,149 @@ async function finalizeCurrentRun() {
   showToast("즉시 답변 요청을 전달했습니다.");
 }
 
+// TASK-0041: 서버에 해당 대화의 현재 실행 상태(is_processing 등)를 질의한다.
+async function fetchAskStatus(conversationId) {
+  if (!conversationId) return null;
+  try {
+    const params = new URLSearchParams({ conversation_id: String(conversationId) });
+    return await apiFetch(`/api/ask_status?${params.toString()}`);
+  } catch (_error) {
+    return null;
+  }
+}
+
+// TASK-0041: 장시간 작업이 여전히 진행 중일 때 사용자에게 선택지를 제공하는 모달.
+// 반환값: "wait" | "finalize" | "cancel" | "dismiss"
+function showTimeoutRecoveryDialog({ statusText = "" } = {}) {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement("div");
+    backdrop.setAttribute("role", "dialog");
+    backdrop.setAttribute("aria-modal", "true");
+    backdrop.style.cssText = [
+      "position:fixed", "inset:0",
+      "background:rgba(4,10,20,0.62)",
+      "z-index:9999",
+      "display:flex", "align-items:center", "justify-content:center",
+      "padding:24px",
+    ].join(";");
+
+    const panel = document.createElement("div");
+    panel.style.cssText = [
+      "background:#0f1b2c", "color:#e5eef7",
+      "padding:24px 28px", "border-radius:14px",
+      "max-width:480px", "width:100%",
+      "box-shadow:0 24px 60px rgba(0,0,0,0.5)",
+      "font-family:inherit",
+      "border:1px solid rgba(255,255,255,0.08)",
+    ].join(";");
+
+    const title = document.createElement("h3");
+    title.textContent = "응답 대기 중입니다";
+    title.style.cssText = "margin:0 0 8px 0;font-size:1.05rem;";
+
+    const desc = document.createElement("p");
+    desc.style.cssText = "margin:0 0 18px 0;line-height:1.55;color:#9bb6d2;font-size:0.92rem;white-space:pre-line;";
+    desc.textContent = [
+      "서버는 여전히 이 대화를 처리 중입니다.",
+      "어떻게 진행할까요?",
+      statusText ? `\n현재 상태: ${statusText}` : "",
+    ].filter(Boolean).join("\n");
+
+    const btnRow = document.createElement("div");
+    btnRow.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;";
+
+    const makeBtn = (label, choice, variant) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = label;
+      const base = [
+        "padding:8px 14px",
+        "border-radius:8px",
+        "border:1px solid rgba(255,255,255,0.14)",
+        "background:#1a2740",
+        "color:#e5eef7",
+        "cursor:pointer",
+        "font-size:0.88rem",
+      ];
+      if (variant === "primary") {
+        base.push("background:#2457d9", "border-color:#2457d9");
+      } else if (variant === "danger") {
+        base.push("background:#7a2121", "border-color:#7a2121");
+      }
+      btn.style.cssText = base.join(";");
+      btn.addEventListener("click", () => {
+        document.body.removeChild(backdrop);
+        document.removeEventListener("keydown", onKey);
+        resolve(choice);
+      });
+      return btn;
+    };
+
+    btnRow.appendChild(makeBtn("요청 취소", "cancel", "danger"));
+    btnRow.appendChild(makeBtn("즉시 답변", "finalize"));
+    btnRow.appendChild(makeBtn("계속 기다리기", "wait", "primary"));
+
+    panel.appendChild(title);
+    panel.appendChild(desc);
+    panel.appendChild(btnRow);
+    backdrop.appendChild(panel);
+
+    const onKey = (event) => {
+      if (event.key === "Escape") {
+        document.body.removeChild(backdrop);
+        document.removeEventListener("keydown", onKey);
+        resolve("dismiss");
+      }
+    };
+    document.addEventListener("keydown", onKey);
+
+    document.body.appendChild(backdrop);
+  });
+}
+
+// TASK-0041: /api/ask_result 를 long-poll 방식으로 반복 호출해
+// 서버가 종료 상태가 될 때까지 대기한다. 종료되면 refreshWorkspace 를 호출한다.
+async function attachAndWaitForResult(conversationId, { runId = "" } = {}) {
+  if (!conversationId) return false;
+  const startedAt = Date.now();
+  let currentRunId = runId || "";
+  while (true) {
+    if ((Date.now() - startedAt) / 1000 > ASK_ATTACH_MAX_TOTAL_SEC) {
+      showToast("서버 응답이 너무 오래 걸립니다. 잠시 후 새로고침으로 다시 확인하세요.", true);
+      return false;
+    }
+    const params = new URLSearchParams({
+      conversation_id: String(conversationId),
+      wait: String(ASK_ATTACH_POLL_WAIT_SEC),
+    });
+    if (currentRunId) {
+      params.set("run_id", currentRunId);
+    }
+    let payload;
+    try {
+      payload = await apiFetch(`/api/ask_result?${params.toString()}`);
+    } catch (error) {
+      showToast(`응답 연결에 실패했습니다: ${error.message || error}`, true);
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      continue;
+    }
+    if (payload && payload.timeout) {
+      if (payload.run_id && !currentRunId) {
+        currentRunId = String(payload.run_id);
+      }
+      continue;
+    }
+    // terminal payload 수신 — refresh 후 종료
+    await refreshWorkspace(conversationId);
+    if (payload && payload.status === "error" && payload.error) {
+      showToast(`실행 오류: ${payload.error}`, true);
+    } else {
+      showToast("응답을 갱신했습니다.");
+    }
+    return true;
+  }
+}
+
 async function sendPrompt() {
   const message = promptInputEl.value.trim();
   if (!message) return;
@@ -1832,6 +1979,47 @@ async function sendPrompt() {
     promptInputEl.style.height = "auto";
     showToast(payload.error ? payload.error : "응답을 갱신했습니다.");
     await refreshWorkspace(payload.conversation_id || targetConvId);
+  } catch (error) {
+    // TASK-0041: /api/ask 가 타임아웃/네트워크 오류/게이트웨이 오류로 실패했을 때
+    // 서버가 여전히 처리 중이면 사용자에게 기다리기/즉시답변/취소 선택지를 제시.
+    const askCid = targetConvId;
+    const status = askCid ? await fetchAskStatus(askCid) : null;
+    if (status && status.is_processing) {
+      const statusText = status.status || "processing";
+      const choice = await showTimeoutRecoveryDialog({ statusText });
+      if (choice === "cancel") {
+        try {
+          await apiFetch("/api/cancel", {
+            method: "POST",
+            body: JSON.stringify({ conversation_id: askCid }),
+          });
+          showToast("취소 요청을 전달했습니다.");
+        } catch (cancelError) {
+          showToast(`취소 요청 실패: ${cancelError.message || cancelError}`, true);
+        }
+        await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
+      } else if (choice === "finalize") {
+        try {
+          await apiFetch("/api/finalize", {
+            method: "POST",
+            body: JSON.stringify({ conversation_id: askCid }),
+          });
+          showToast("즉시 답변 요청을 전달했습니다.");
+        } catch (finError) {
+          showToast(`즉시 답변 요청 실패: ${finError.message || finError}`, true);
+        }
+        await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
+      } else if (choice === "wait") {
+        await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
+      } else {
+        // dismiss — 진행 상태만 유지. progress polling 이 결과를 갱신할 것
+        showToast("계속 서버에서 처리 중입니다. 상태는 상단에 표시됩니다.");
+      }
+      promptInputEl.value = "";
+      promptInputEl.style.height = "auto";
+    } else {
+      showToast(`요청에 실패했습니다: ${error.message || error}`, true);
+    }
   } finally {
     state.busyConversations.delete(targetConvId);
     renderComposer();
@@ -1972,6 +2160,24 @@ async function initializeWorkspace() {
   renderAccessNotice();
   await loadVaultOptions();
   await refreshWorkspace(state.session.conversation_id || "");
+  // TASK-0041: 세션 복구 — 페이지 로드 시 현재 대화가 서버에서 진행 중이면
+  // 자동으로 결과 long-poll 에 attach 하여 사용자의 이전 요청을 이어받는다.
+  const resumeCid = state.activeConversationId;
+  if (resumeCid) {
+    const status = await fetchAskStatus(resumeCid);
+    if (status && status.is_processing) {
+      state.busyConversations.add(resumeCid);
+      renderComposer();
+      startProgressPolling({ reset: true, runId: status.run_id || "" });
+      showToast("이전에 남아있던 응답 요청을 이어받습니다.");
+      attachAndWaitForResult(resumeCid, { runId: status.run_id || "" })
+        .catch(() => {})
+        .finally(() => {
+          state.busyConversations.delete(resumeCid);
+          renderComposer();
+        });
+    }
+  }
 }
 
 async function initialize() {

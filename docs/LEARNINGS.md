@@ -207,6 +207,40 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Verification (정적 검증): (a) `grep -c "setInterval" src/static/app.js` = 0 (고정 주기 루프 제거 확인), (b) 5 개 상수 모두 `scheduleProgressPolling`/`pollProgress` 본문에서 실제 참조, (c) 서버 `/api/progress` (app.py:4381~4426) 가 `client_run_id` 를 선언하고 불일치 시 `next_after_step=0` 재설정 조건이 있음 (line 4405-4406), (d) `curl -sk https://127.0.0.1:18080/api/progress?conversation_id=X` HTTP 401 (인증), 로그인 후 HTTP 200 + JSON 스키마 `{steps, status, status_at, step_count, run_id, conversation_id}` 반환.
 - Applies to: 장시간(>수초) 비동기 작업을 클라이언트가 실시간 추적해야 하는 모든 웹 UI. `fetch` 폴링 루프를 새로 작성하거나 기존 `setInterval` 패턴을 발견했을 때 전면 적용. 짧은(<1초) 단일 요청에는 과설계이므로 제외.
 
+### LRN-20260422-0012 — SQL 텍스트에서 `schema.table` 을 추출할 때는 반드시 **FROM/JOIN 구간만 slice** 한 뒤 그 안에서만 찾는다
+- Source: feature-0003 `_extract_sql_schema_refs` context-aware 수정 (TASK-0040, 2026-04-22)
+- Mistake: 기존 구현은 `_SCHEMA_TABLE_REF_RE = r"\`?([A-Za-z_]\w*)\`?\s*\.\s*\`?([A-Za-z_]\w*)\`?"` 단일 regex 로 SQL 전체에서 `x.y` 토큰을 스캔했다. `SELECT bb.BattleType, be.Star FROM dblog.t bb JOIN dblog.u be ON be.a = bb.a WHERE bb.BattleType = 'X'` 같은 SQL 에서 SELECT 절 / WHERE 절 / ON 절의 **alias.column** 이 전부 `schema.table` 후보로 간주되어 schema refs = `{bb, be, dblog}` 가 되고, Product whitelist=`{dbauth,dbgame,dblog}` 에서 `{bb, be}` 가 허용 외로 판정 → 모든 턴이 `BLOCKED_SCHEMAS=bb,be` 로 거부. TASK-0034 Q4 재수행이 0 턴 성공 상태가 됐다.
+- Correct approach: SQL 구문상 `schema.table` 이 나올 수 있는 위치는 명확히 **FROM 절**과 **JOIN 절** 뿐이다. 이 두 키워드 뒤 테이블 리스트 구간만 slice 하고, 그 slice 안에서만 `schema.table` 패턴을 추출한다. Slice lookahead 는 다음 절 키워드 `ON`/`WHERE`/`GROUP BY`/`ORDER BY`/`HAVING`/`LIMIT`/`UNION`/또다른 `JOIN`/`FROM`/`;`/`)`/문장 끝 이전으로 끊는다. 2 단계 스캐너:
+  ```python
+  _TABLE_LIST_RE = re.compile(
+      r"\b(?:FROM|JOIN)\b(.*?)"
+      r"(?=\bON\b|\bWHERE\b|\bGROUP\s+BY\b|\bORDER\s+BY\b|\bHAVING\b"
+      r"|\bLIMIT\b|\bUNION\b|\bJOIN\b|\bFROM\b|;|\)|$)",
+      re.IGNORECASE | re.DOTALL,
+  )
+  _INNER_REF_RE = re.compile(
+      r"`?([A-Za-z_][A-Za-z0-9_]*)`?\s*\.\s*`?([A-Za-z_][A-Za-z0-9_]*)`?",
+  )
+  ```
+  1 단계 (`_TABLE_LIST_RE.finditer`) 로 FROM/JOIN 다음의 테이블 리스트 구간만 뽑고, 2 단계 (`_INNER_REF_RE.finditer`) 로 그 구간 안에서 `schema.table` 을 찾는다. SELECT/WHERE/ON 은 slice 바깥이라 alias.column 이 남더라도 매칭되지 않는다.
+- Verification: in-process 15 케이스 (단일 FROM / FROM+WHERE alias.col / FROM+JOIN+alias.col ON / 혼합 schema / 백틱 / subquery / 비허용 schema 차단 / SELECT 절 alias.col 무시 / semicolon terminator / UNION 경계 / whitespace DOTALL / 중복 refs dedup) 전부 expected refs 일치. TASK-0034 Q4(7 턴) + Q5(5 턴) 재수행이 모든 턴 HTTP 200 으로 완료.
+- Applies to: SQL 텍스트를 비파서 방식으로 스캔해서 security decision 을 내리는 모든 코드. "regex 는 context-free — 문법상 구분이 필요하면 **구간 slice 후 내부 검색**" 이 기본 설계. 단일 단계 regex 로 SQL 문맥을 흉내 내려 하면 alias/hint/CTE/subquery 중 하나에서 반드시 오탐이 난다. 규모가 더 커지면 `sqlparse` 같은 경량 파서 도입을 검토한다.
+
+### LRN-20260422-0013 — 에이전트 작업자 스레드 lifecycle 은 클라이언트 HTTP 연결과 독립이어야 하고, 별도 read-only 복구 경로를 제공해야 한다
+- Source: feature-0003 클라이언트 타임아웃 시 Attach/Resume 구현 (TASK-0041, 2026-04-22)
+- Pattern: 장시간 LLM agent 작업(우리 환경에서 `AGENT_TIMEOUT_SEC≈300s` × 여러 스텝, 실측 Q4 turn7=364s / 전체 1171s 등) 은 서버에서 `asyncio.to_thread(...)` 로 백그라운드 스레드에 분리되어 실행된다. 이 스레드는 FastAPI 의 `/api/ask` HTTP 요청 객체와 lifecycle 이 묶여있지 않다 — 클라이언트가 `httpx.ReadTimeout` 으로 끊어지거나 브라우저 탭을 닫거나 nginx/Cloudflare 가 504 를 던져도 **서버는 완료까지 계속 진행한다**. 결과도 `AgentMemoryMessages` + `AgentMemorySteps` + `AgentMemoryKv(last_status, last_status_run_id, last_duration_ms, last_error)` 에 정상 기록된다. 그러나 이 자원을 클라이언트가 회수할 read-only 경로가 없으면 "서버는 답했는데 유저는 못 본" 상태가 된다.
+- Design: `/api/ask` (쓰기, 슬롯풀) 와 분리된 2 개의 read-only 엔드포인트로 복구 경로를 완성한다.
+  1. **`GET /api/ask_status?conversation_id=CID`** — 1-shot 스냅샷. `AgentMemoryKv` 5 키를 단일 쿼리로 읽어 `{is_processing, status, status_at, run_id, step_count, duration_ms, has_answer, answer_preview}` 를 반환. 비용이 낮아 페이지 로드 시 auto-attach 여부 판단에 부담 없이 호출 가능.
+  2. **`GET /api/ask_result?conversation_id=CID&run_id=RID&wait=N`** (N ≤ 60, 내부 0.5s interval) — long-poll. `_ASK_TERMINAL_STATUSES={done, error, canceled}` 도달 시 assistant(content + meta + steps_count) 전문 반환, 시간 초과 시 `{timeout:true, run_id}` 만 반환하고 클라이언트가 바로 재호출해 체인할 수 있다.
+  - 두 엔드포인트는 기존 `conversation.read.own/any` 권한만 재사용하고, `/api/ask` 슬롯풀(WEB_PARALLEL_LIMIT=6) 과는 완전히 분리되어 **attach 가 새로운 실행을 시작시키지 않는다**. 이것이 "재진입으로 인한 중복 실행" 을 막는 핵심 속성이다.
+- Clients: 이 인프라를 활용하는 3 경로가 있다 —
+  1. **브라우저 `sendPrompt()` catch 분기**: `/api/ask` 가 실패(`TypeError: Failed to fetch`, `AbortError`, 504, 502, …) 하고 `is_processing=true` 이면 `[요청 취소 / 즉시 답변 / 계속 기다리기]` 3 버튼 다이얼로그를 노출. 선택에 따라 `/api/cancel`·`/api/finalize` 를 호출한 뒤 `/api/ask_result` long-poll 로 이어받는다.
+  2. **브라우저 boot-time auto-attach**: `initializeWorkspace()` 말미에 현재 대화의 `is_processing` 을 확인하고 true 면 다이얼로그 없이 자동 attach — 페이지 새로고침/탭 닫기 이후 재접속 시에도 이전 요청 결과를 자동 수신.
+  3. **테스트 러너 `_attach_run`**: `httpx.ReadTimeout` 분기에서 `{"error":"client-read-timeout"}` 실패로 끝내지 않고 `ask_status` → `ask_result` long-poll 로 해당 턴을 정상 기록. turn dict 에 `attached_after_timeout=True` + `attach_verdict` 를 남겨 사후 분석이 가능.
+- Anti-pattern (주의): Server-Sent Events / WebSocket 이 "더 현대적" 해 보이지만, 복구 경로의 목적은 "이미 있는 최종 상태를 꺼내오는 것" 이지 real-time stream 이 아니다. 기존 `AgentMemoryKv` + long-poll 2 엔드포인트만으로 완결되므로 프록시·TLS 종단·재접속 관리가 필요한 stream 인프라를 새로 세우지 않는다.
+- Verification: Q4 1171s + Q5 251s 모두 HTTP 200 으로 완료 (단일 턴이 960s 를 안 넘어 attach 가 실제 발동되지는 않았지만, 인프라는 in-container 에서 `ask_status`(38ms)/`ask_result` 동작 확인). `/api/ask_status`/`/api/ask_result` 401 응답으로 라우팅 정상, terminal 상태 대화에 대한 스냅샷 38ms, 브라우저 JS `node --check` OK.
+- Applies to: 장시간 LLM/batch 작업을 HTTP 로 시작시키는 모든 웹 UI. 작업자 lifecycle 을 HTTP 연결과 독립시키고, 완료된 작업 결과를 read-only 로 **재조회할 수 있는 별도 경로** 를 설계 초기부터 포함시킨다. 기존 진행 상태 저장소 (`AgentMemoryKv`/`Messages`/`Steps`) 가 있다면 그 위에 얇은 엔드포인트만 더 얹는다 — 새 상태 저장소를 만들지 않는 것이 핵심.
+
 ## Category: quirk
 
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존

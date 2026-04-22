@@ -2515,6 +2515,30 @@ WHERE ConversationId = %s
     )
 
 
+_ASK_TERMINAL_STATUSES = frozenset({"done", "error", "canceled"})
+_ASK_SUCCESS_STATUSES = frozenset({"done", "canceled"})
+
+
+def _load_run_meta_kv(conn, conversation_id: str) -> dict[str, str]:
+    """status/duration/error 관련 KV 키를 단일 쿼리로 조회."""
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT `Key`, `Value`
+FROM AgentMemoryKv
+WHERE ConversationId = %s
+  AND `Key` IN (
+    'last_status', 'last_status_at', 'last_status_run_id',
+    'last_duration_ms', 'last_error'
+  )
+        """,
+        (conversation_id,),
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    return {str(key or ""): str(value or "") for key, value in rows}
+
+
 def _load_step_count_for_run(conn, conversation_id: str, run_id: str) -> int:
     if not conversation_id or not run_id:
         return 0
@@ -4423,6 +4447,181 @@ def progress(
         "step_count": step_count,
         "run_id": run_id,
         "conversation_id": cid,
+    })
+
+
+def _build_ask_status_snapshot(conn, conversation_id: str) -> dict[str, Any]:
+    """대화의 현재 run 상태 snapshot 을 반환. `/api/ask_status` / `/api/ask_result` 공용."""
+    kv = _load_run_meta_kv(conn, conversation_id)
+    status = kv.get("last_status", "")
+    status_at = kv.get("last_status_at", "")
+    run_id = kv.get("last_status_run_id", "")
+    try:
+        duration_ms = int(kv.get("last_duration_ms", "0") or 0)
+    except Exception:
+        duration_ms = 0
+    error_text = kv.get("last_error", "") or ""
+    step_count = _load_step_count_for_run(conn, conversation_id, run_id) if run_id else 0
+    is_processing = (status == "processing")
+    latest_assistant = _load_latest_assistant_message(conn, conversation_id) or {}
+    latest_run_id = ""
+    if isinstance(latest_assistant, dict):
+        meta = latest_assistant.get("meta") or {}
+        if isinstance(meta, dict):
+            latest_run_id = str(meta.get("run_id") or "").strip()
+    has_answer = bool(
+        latest_assistant
+        and run_id
+        and latest_run_id == run_id
+        and status in _ASK_SUCCESS_STATUSES
+    )
+    answer_preview: str | None = None
+    if has_answer:
+        content = str(latest_assistant.get("content") or "")
+        answer_preview = content[:160] if content else None
+    return {
+        "conversation_id": conversation_id,
+        "is_processing": is_processing,
+        "status": status,
+        "status_at": status_at,
+        "run_id": run_id,
+        "step_count": step_count,
+        "duration_ms": duration_ms,
+        "error": error_text or None,
+        "has_answer": has_answer,
+        "answer_preview": answer_preview,
+        "_latest_assistant": latest_assistant,  # 내부용 (ask_result 가 소비)
+    }
+
+
+@app.get("/api/ask_status")
+def ask_status(request: Request, conversation_id: str = "") -> JSONResponse:
+    """현재 대화의 agent 실행 상태 snapshot.
+
+    client disconnect 이후에도 서버에서 돌고 있는 run 의 상태를 확인하는 read-only
+    엔드포인트. `/api/ask` 슬롯을 점유하지 않는다.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    cid = _resolve_conversation_for_account(conn, account, conversation_id.strip())
+    if not cid:
+        conn.close()
+        return _json_error("empty conversation_id", 400)
+    if not _account_can_access_conversation(
+        conn,
+        account,
+        cid,
+        "conversation.read.own",
+        "conversation.read.any",
+    ):
+        conn.close()
+        return _json_error("권한이 없습니다.", 403)
+    try:
+        snapshot = _build_ask_status_snapshot(conn, cid)
+    finally:
+        conn.close()
+    snapshot.pop("_latest_assistant", None)
+    return JSONResponse(snapshot)
+
+
+@app.get("/api/ask_result")
+async def ask_result(
+    request: Request,
+    conversation_id: str = "",
+    run_id: str = "",
+    wait: int = 30,
+) -> JSONResponse:
+    """대화의 terminal 상태를 long-poll 로 기다려 최종 assistant 응답을 반환.
+
+    - `run_id` 가 지정되면 그 run 이 terminal 에 도달할 때까지, 미지정이면 현재 run 이
+      terminal 에 도달할 때까지 대기.
+    - `wait` 은 초 단위, 기본 30s / 최대 60s. 초과 시 `{timeout: true}` 반환.
+    - read-only 경로. `/api/ask` 슬롯·cancel/finalize 플래그를 건드리지 않음.
+    """
+    wait_s = max(1, min(60, int(wait or 30)))
+    requested_run_id = str(run_id or "").strip()
+
+    # 권한 검사 (첫 커넥션 1 회만)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    cid = _resolve_conversation_for_account(conn, account, conversation_id.strip())
+    if not cid:
+        conn.close()
+        return _json_error("empty conversation_id", 400)
+    if not _account_can_access_conversation(
+        conn,
+        account,
+        cid,
+        "conversation.read.own",
+        "conversation.read.any",
+    ):
+        conn.close()
+        return _json_error("권한이 없습니다.", 403)
+    conn.close()
+
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + wait_s
+    poll_interval = 0.5
+    last_snapshot: dict[str, Any] = {}
+    while True:
+        try:
+            poll_conn = _connect_memory()
+        except Exception:
+            await asyncio.sleep(poll_interval)
+            if loop.time() >= deadline:
+                break
+            continue
+        try:
+            snapshot = _build_ask_status_snapshot(poll_conn, cid)
+        finally:
+            poll_conn.close()
+        last_snapshot = snapshot
+        server_status = str(snapshot.get("status") or "")
+        server_run_id = str(snapshot.get("run_id") or "")
+        run_ok = (not requested_run_id) or (requested_run_id == server_run_id)
+        if run_ok and server_status in _ASK_TERMINAL_STATUSES:
+            latest = snapshot.pop("_latest_assistant", {}) or {}
+            payload = {
+                "conversation_id": cid,
+                "status": server_status,
+                "status_at": snapshot.get("status_at", ""),
+                "run_id": server_run_id,
+                "step_count": snapshot.get("step_count", 0),
+                "duration_ms": snapshot.get("duration_ms", 0),
+                "error": snapshot.get("error"),
+                "has_answer": snapshot.get("has_answer", False),
+                "assistant": latest if snapshot.get("has_answer") else None,
+                "timeout": False,
+            }
+            return JSONResponse(payload)
+        if loop.time() >= deadline:
+            break
+        await asyncio.sleep(poll_interval)
+
+    last_snapshot.pop("_latest_assistant", None)
+    return JSONResponse({
+        "conversation_id": cid,
+        "status": last_snapshot.get("status", "") or "processing",
+        "status_at": last_snapshot.get("status_at", ""),
+        "run_id": last_snapshot.get("run_id", ""),
+        "step_count": last_snapshot.get("step_count", 0),
+        "duration_ms": last_snapshot.get("duration_ms", 0),
+        "error": last_snapshot.get("error"),
+        "has_answer": last_snapshot.get("has_answer", False),
+        "assistant": None,
+        "timeout": True,
     })
 
 
