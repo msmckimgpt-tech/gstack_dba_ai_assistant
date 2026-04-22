@@ -12,10 +12,11 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: medium
-- Last Updated: 2026-04-22 (TASK-0038 완료, TASK-0034 진행 중)
+- Last Updated: 2026-04-22 (TASK-0039 완료, TASK-0034 진행 중)
 
 ## 2. Task Queue
 - [ ] TASK-0034 복잡 QA 성능 테스트 (local LLM 5 직렬 + 상용 API gpt-5.4-mini 5 병렬, 최대 20턴, 실제 DB 결과 대조 검증)
+- [x] TASK-0039 메타데이터 스키마(sys/mysql/information_schema/performance_schema) Product whitelist bypass 정책 도입
 - [x] TASK-0038 agent_core OpenAI 호출 무제한 대기 방지 + test runner/서버 타임아웃 정렬 (TASK-0034 Q4/Q5 실패 원인 1+2 대응)
 - [x] TASK-0037 진행 상황 폴링 루프 중복/축적 방지 리팩터 리뷰 및 문서화 (TASK-0036 부수 변경)
 - [x] TASK-0036 시스템 프롬프트 Depth (Product/Role/Account) + Product 단위 DB 접근 관리
@@ -58,9 +59,72 @@ source_of_truth: true
 - TASK-0034 복잡 QA 성능 테스트 — 현재 구성된 assistant(agent-core + web UI)의 복잡 질의 대응력을 측정해 이후 개선 포인트를 도출한다.
 
 ## 3.1 Recently Done
+- TASK-0039 (2026-04-22 마감): Product 단위 DB whitelist 를 적용하면서 **메타데이터 4 스키마**(`information_schema`, `sys`, `mysql`, `performance_schema`) 만은 Product 접근 DB 목록에 등록 여부와 무관하게 agent tools 가 **항상 조회 가능** 하도록 정책을 재정의했다. 사용자 지시 2026-04-22: "assistant 가 스키마 구조를 찾지 못하는 이슈를 방지". 이는 TASK-0036 의 REV-20260421-0005 결정(메타데이터도 기본 차단) 을 일부 완화하는 방향이며, **`agent_memory` 는 여전히 whitelist 로 차단 유지**(에이전트 자신의 메모리/세션/계정 데이터 노출 방지). 변경: [tools.py:24-28](../../feature-0002-agent-core/src/modules/tools.py#L24-L28) 의 `_SYSTEM_SCHEMAS` frozenset 을 `_METADATA_SCHEMAS`(4 종) 와 `_INTERNAL_SCHEMAS`(1 종, `agent_memory`) 두 frozenset 으로 분리하고 `_SYSTEM_SCHEMAS` 는 union 으로 유지(기존 `_is_user_schema`/`search_tables` 의 UX-레벨 필터 동작 보존). [tools.py:78-94](../../feature-0002-agent-core/src/modules/tools.py#L78-L94) 의 `_whitelist_violation` 은 기존 `{information_schema}` bypass 대신 `_METADATA_SCHEMAS` 전체(4 종) 를 bypass 하고, `agent_memory` 는 여전히 `blocked` 로 떨어지도록 했다. 에러 메시지에 "메타데이터 스키마는 항상 접근 가능" 안내 한 줄을 추가해 agent 가 잘못된 참조를 메타데이터로 리디렉션하지 않도록 유도. 검증: (a) `python3 -m py_compile unit/feature-0002-agent-core/src/modules/tools.py` 통과, (b) 컨테이너 재빌드 후 `docker compose exec web python -c "..."` in-process 호출로 `set_active_schema_allowlist(['dbgame'])` 설정 상태에서 `_whitelist_violation({'mysql'})` / `{'sys'}` / `{'performance_schema'}` / `{'information_schema'}` 가 모두 `None` 반환, `{'agent_memory'}` 는 `오류:` 문자열 반환, `{'dbstat'}` (임의의 비허용 user schema) 은 차단. (c) 실사용 스모크: Product=KR 로그인 + 새 대화 + `/api/ask` 로 "dbgame 스키마에 있는 테이블 수를 information_schema 로 세어봐" → whitelist bypass 로 information_schema 접근 허용, tool step 정상 완료. 범위: 본 TASK 는 whitelist 정책 bypass 목록 조정에 국한. `list_schemas` 결과에 메타데이터 스키마를 노출할지는 UX 결정이라 현 상태(숨김) 유지.
+
 - TASK-0038 (2026-04-22 마감): TASK-0034 Q4/Q5 실패 원인 분석([TASK-0038 상세 설계](#task-0038-상세-설계-2026-04-22) 참조)에서 확인된 근본 원인 1(agent_core 의 `OpenAI(**client_kwargs)` 가 `timeout`/`max_retries` 파라미터 없이 초기화돼 LLM 호출이 무한 대기할 수 있음) 과 근본 원인 2(러너 `ASK_TIMEOUT_SEC=600s` < 서버 `run_timeout_sec=900s` 로 클라이언트가 서버보다 먼저 포기해 좀비 에이전트 스레드가 발생) 를 대응했다. (1) [agent_core.py:1134](../../feature-0002-agent-core/src/agent_core.py#L1134) 의 `client = OpenAI(**client_kwargs)` 를 `OpenAI(**client_kwargs, timeout=max(5,int(AGENT_TIMEOUT_SEC)), max_retries=max(0,int(AGENT_OPENAI_MAX_RETRIES)))` 로 확장하고 import 에 `AGENT_OPENAI_MAX_RETRIES` 를 추가. OpenAI Python SDK v1.x 의 client-level `timeout` 은 내부 httpx 에 그대로 적용되므로 `chat.completions.create` 개별 호출마다 wall-clock 상한이 보장된다. `max_retries` 는 이미 `AGENT_OPENAI_MAX_RETRIES=0` (config 기본값) 이므로 SDK 내부 재시도로 budget 이 배수로 늘어나지 않는다. (2) `task0034_runner.py:52` `ASK_TIMEOUT_SEC=600.0` 을 `960.0` 으로 인상(서버 `run_timeout_sec=max(AGENT_TIMEOUT_SEC*3, AGENT_EARLY_FINALIZE_MS/1000)=max(900,180)=900` 보다 60s 여유). 이제 서버가 먼저 자기-타임아웃으로 실패 응답을 돌려주고, 클라이언트는 그 응답을 받은 뒤 다음 턴으로 넘어간다 — 좀비 스레드 창이 사라진다. 검증: (a) `python3 -m py_compile src/agent_core.py tests/task0034_runner.py` 통과, (b) `docker compose up -d --build web` 후 bootstrap_admin 로그인 + `/api/session` 200 OK + `/api/new_conversation` 후 간단 질의가 정상 응답, (c) agent_core 내부 LLM 호출이 AGENT_TIMEOUT_SEC(=.env 값 300s) 초과 시 `openai.APITimeoutError` 를 던지고 `_call_llm` caller 에서 step error 로 흡수되는 경로를 `grep` 으로 재확인. 범위: 본 TASK 는 근본 원인 1+2 만 다루고, 3(질문 follow_up 강화) 과 4(러너 격리/쿨다운) 는 TASK-0034 재실행 단계에서 별도 처리한다.
 - TASK-0037 (2026-04-22 마감): `/api/progress` 폴링 루프를 `setInterval` 고정 주기에서 **순번(progressPollSeq) 기반 `setTimeout` 체인 + AbortController + 적응형 주기** 로 전환한 TASK-0036 부수 변경을 사후 리뷰/검증/문서화한다. 문제: `/api/ask` 한 턴이 수분까지 걸리는 실사용 워크로드(TASK-0034 에서 평균 ~3분/턴 관측) 에서 1500ms 고정 `setInterval` 폴링은 (1) 이전 요청이 끝나기 전에 다음 요청이 발행돼 **in-flight 요청 쌓임**, (2) 탭 전환/대화 변경/로그아웃 시 발행된 요청을 취소할 경로가 없어 서버에 **스텁 요청이 계속 도착**, (3) 서버는 `_load_steps_for_run` 이 전체 step 을 파이썬으로 로드해 `after_step` 필터를 코드로 걸던 경로였고, (4) 탭이 배경화되어도 그대로 1500ms 주기로 폴링을 지속해 배터리/네트워크를 불필요하게 소모했다. 조치 (이미 27127b9 커밋에 반영됨): 서버는 `_load_progress_status(conn, cid)` 단일 커서로 `(status, status_at, run_id)` 를 반환하도록 분리하고, `_load_steps_for_run(after_step=0)` 으로 SQL 레이어 필터를 밀어넣었으며, `/api/progress` 에 `client_run_id` 쿼리 파라미터를 추가해 클라이언트가 들고 있는 run_id 가 서버 최신 run_id 와 불일치하면 `after_step` 을 0 으로 리셋해 새 run 전체를 다시 흘려보내도록 했다. 클라이언트는 상수 `PROGRESS_FETCH_TIMEOUT_MS=4000`, `PROGRESS_POLL_ACTIVE_MS=1200`, `PROGRESS_POLL_IDLE_MS=3000`, `PROGRESS_POLL_HIDDEN_MS=10000`, `PROGRESS_POLL_ERROR_MS=8000` 5개를 도입하고, state 에 `progressPollInFlight`/`progressPollSeq`/`progressAbortController`/`progressErrorCount` 을 추가했다. `setInterval` → `setTimeout` 단일 체인(`scheduleProgressPolling(delayMs, seq)`) 으로 전환해 각 poll 이 응답하고 나서 다음 poll 을 예약하는 구조가 되었고, `pollProgress(seq)` 은 `seq !== state.progressPollSeq || progressPollInFlight` 이면 즉시 return 해 중복 실행을 차단한다. 매 요청마다 `AbortController` 를 생성해 `state.progressAbortController` 에 보관하고 `stopProgressPolling({abort:true})` 이나 `controller.abort()` 타임아웃(4초) 에서 in-flight 요청을 즉시 취소한다. 적응형 주기: 응답에 step 이 있으면 1.2s(ACTIVE), 없으면 3s(IDLE), `document.hidden` 이면 최소 10s(HIDDEN), 연속 오류 3회 미만까지는 8s(ERROR) 간격으로 재시도하되 3회 이상은 아예 재스케줄링하지 않는다. 검증: (1) `grep -c "setInterval" src/static/app.js` = 0 으로 기존 폴링 루프가 모두 제거됨, (2) 적응형 상수 5개 모두 `scheduleProgressPolling`/`pollProgress` 에서 실제 참조됨, (3) 서버 `/api/progress` 는 `client_run_id` 가 없거나 불일치 시 `after_step` 을 0 으로 리셋하는 조건을 실제로 가진다(`app.py:4405`), (4) 브라우저에서 `/api/progress` 응답 status 가 `processing` 이외 값이 되면 `stopProgressPolling({abort:false})` + `refreshWorkspace(cid)` 호출로 폴링이 즉시 멈추고 최종 workspace 가 재로드된다. 영향: TASK-0034 복잡 QA 테스트 중 상용 API 응답이 5분 이상 걸리는 상황에서도 브라우저 열린 탭에서 요청이 쌓이지 않고, 탭 전환 시 자동으로 저속 모드로 내려간다.
 - TASK-0036 (2026-04-21 마감): System Prompt Depth 가 Product → Role → Account 3 계층 체인으로 동작하고, Product 단위 접근 DB 화이트리스트가 agent tools 레벨에서 강제된다. `WebProducts` / `WebProductDatabases` / `WebSystemPrompts` 3 신규 테이블 + `AgentCoreConversations.product_id` 컬럼을 추가했고, `product.manage` / `system_prompt.manage.role.any` 2 개 permission 을 `admin` 역할에 기본 부여했다. seed 로 ProductKey=`KR` + DB(`dbgame`/`dblog`/`dbauth`) 가 자동 생성된다. `agent_core.compose_system_prompt(mem_conn, product_id, role_id, account_id)` 가 base prompt 뒤로 `## PRODUCT CONTEXT` / `## ROLE GUIDANCE` / `## ACCOUNT PREFERENCES` 블록을 순차 append 하고, `tools.set_active_schema_allowlist()` 가 execute_sql/describe_schema 등 모든 도구의 스키마 참조를 검사한다. 관리 콘솔은 `상품 카테고리` 구분 그룹 아래 `상품 (Products)` 탭이 추가되어 Product CRUD + 접근 DB chip 편집 + Product scope prompt 편집을, Roles detail 은 Role scope prompt 편집기(Product 드롭다운 포함) 를, 프로필 드로우의 새 `프롬프트` 탭은 Account scope prompt 편집기를 각각 제공한다. 검증: (1) `docker compose up -d --build web` → bootstrap_admin 로그인 → `/api/admin/products` → KR seed 확인, (2) `PUT /api/admin/products/1/databases` 로 dblog 제거/복원 왕복 OK, (3) `PUT /api/admin/system-prompts` (product scope) → `compose_system_prompt(conn, product_id=1, role_id=3, account_id=1)` 출력에 `## PRODUCT CONTEXT (KR)` 블록이 추가됨을 in-container 직접 확인, (4) whitelist=`{dbgame,dblog,dbauth}` 설정 후 `execute_sql("SELECT 1 FROM mysql.user")` 및 `describe_schema("mysql")` 이 `오류: 접근이 허용되지 않은 스키마 참조: mysql` 반환, `describe_schema("dbgame")` 은 정상 동작. 부수 수정: `_runtime_tables_available` 의 probe list 에 신규 3 테이블을 포함해 기존 배포에서 schema 마이그레이션이 자동 트리거되게 했고, `_whitelist_violation` 이 `_SYSTEM_SCHEMAS` 를 예외 처리하던 우회 경로를 제거해 `mysql`/`performance_schema`/`sys`/`agent_memory` 가 더 이상 whitelist 를 건너뛰지 않게 했다 (security hardening).
+
+### TASK-0039 상세 설계 (2026-04-22)
+- 문제/목적 (사용자 지시 2026-04-22): TASK-0036 이 `_whitelist_violation` 에서 `_SYSTEM_SCHEMAS` 통째 bypass 를 제거하면서 `mysql` / `performance_schema` / `sys` 를 기본 차단했지만, 실사용 중 "assistant 가 Product DB 의 테이블 구조를 찾지 못하는" 문제가 발견됐다. 원인: agent 가 본능적으로 `information_schema.TABLES` 외에 `sys.schema_table_statistics`, `performance_schema.tables`, 드물게 `mysql.*` 을 함께 조회해 교차 검증하려 하는데 이들이 전부 차단되면 재시도 루프에 빠지거나 `describe_schema` 만 반복하게 된다. 사용자는 메타데이터 4 종을 **Product 설정에 명시하지 않아도 항상 접근 가능** 하게 해달라고 요청했다. **`agent_memory` 는 예외** — 여기엔 다른 계정의 대화 내용, 세션, 권한 override 가 담겨 있어 여전히 차단 유지.
+- 현황/환경 분석 (코드 기준):
+  1. [tools.py:25-28](../../feature-0002-agent-core/src/modules/tools.py#L25-L28) `_SYSTEM_SCHEMAS` 는 `{information_schema, mysql, performance_schema, sys, agent_memory}` 5 종 frozenset. 이 집합은 두 용도로 쓰인다:
+     - [tools.py:51-57](../../feature-0002-agent-core/src/modules/tools.py#L51-L57) `_is_user_schema(name)` — `list_schemas` 결과 post-filter 와 `search_tables` 의 `sys_exclude` 조건에서 "사용자 스키마가 아님" 판정. UX 용도.
+     - [tools.py:78-94](../../feature-0002-agent-core/src/modules/tools.py#L78-L94) `_whitelist_violation(refs)` — agent tool 레벨 접근 차단 결정. Security 용도.
+  2. 현재 `_whitelist_violation` 은 `allowed = _ACTIVE_SCHEMA_ALLOWLIST | {information_schema}` 로 **information_schema 1 종만** bypass. 나머지 `sys`/`mysql`/`performance_schema`/`agent_memory` 는 whitelist 에 명시적으로 등록하지 않으면 차단.
+  3. `_is_user_schema` 는 `_SYSTEM_SCHEMAS` 에 포함된 스키마를 전부 "사용자 스키마 아님" 으로 판정해 `list_schemas` 결과에서 숨기는 UX 동작을 한다. 이건 사용자의 요청 의도("목록 내 유무와 관계없이 **접근** 가능") 와 무관하게 유지해도 된다 — agent 는 `describe_schema('information_schema')` / `execute_sql("SELECT ... FROM information_schema...")` 로 명시 호출이 가능하고, `list_schemas` 결과에 카탈로그 스키마를 섞어 보여주는 건 오히려 탐색 노이즈.
+  4. [tools.py:451](../../feature-0002-agent-core/src/modules/tools.py#L451) `search_tables` 의 `sys_exclude` 도 `_SYSTEM_SCHEMAS` 전체를 WHERE NOT IN 으로 제외 — 키워드 검색이 메타데이터 테이블을 섞어 반환하면 결과가 지저분해지므로 이 동작도 유지.
+- 설계:
+  1. **스키마 상수를 두 카테고리로 분리** — [tools.py:24-28](../../feature-0002-agent-core/src/modules/tools.py#L24-L28):
+     ```python
+     # 메타데이터 스키마 — Product whitelist 와 무관하게 agent tools 가 항상 접근 가능.
+     # DB 구조 탐색(정의·통계·런타임 메트릭) 에 필요해 기본 허용한다.
+     _METADATA_SCHEMAS = frozenset({"information_schema", "mysql", "performance_schema", "sys"})
+     # 에이전트 내부 스키마 — whitelist 로 차단 유지. 타 계정 대화/세션/권한 데이터 보호.
+     _INTERNAL_SCHEMAS = frozenset({"agent_memory"})
+     # 기존 호환: list_schemas/search_tables 의 "사용자 스키마 아님" 판정에 사용.
+     _SYSTEM_SCHEMAS = _METADATA_SCHEMAS | _INTERNAL_SCHEMAS
+     ```
+  2. **`_whitelist_violation` bypass 집합 교체** — [tools.py:78-94](../../feature-0002-agent-core/src/modules/tools.py#L78-L94):
+     - `allowed = set(_ACTIVE_SCHEMA_ALLOWLIST) | {"information_schema"}` → `allowed = set(_ACTIVE_SCHEMA_ALLOWLIST) | _METADATA_SCHEMAS`
+     - 결과: agent 가 `execute_sql("SELECT ... FROM mysql.user")`, `describe_schema("sys")`, `describe_table("performance_schema", "tables")` 류 호출을 시도하면 Product 설정과 무관하게 통과.
+     - `agent_memory` 는 `_METADATA_SCHEMAS` 에 없으므로 기존처럼 차단.
+     - 비허용 user schema (예: 임의의 `dbstat`) 도 기존처럼 차단.
+     - 에러 메시지에 "메타데이터 스키마(`information_schema`/`sys`/`mysql`/`performance_schema`) 는 항상 접근 가능" 한 줄을 덧붙여, LLM 이 차단된 user schema 를 메타데이터 쿼리로 리디렉션할 수 있는 힌트 제공.
+  3. **`_is_user_schema` / `search_tables` 는 그대로 유지** — `list_schemas` 결과에 메타데이터 4 종 노출 여부는 UX 결정 영역이고 현재는 숨김이 더 자연스럽다. agent 는 시스템 프롬프트의 KNOWN SCHEMAS 힌트 없이도 `execute_sql` 로 `information_schema.TABLES` 를 직접 조회할 수 있어 구조 탐색에 문제가 없다.
+- 보안 고려 (REV-20260422-0006 으로 문서화):
+  1. `mysql.user` 등이 bypass 경로를 타게 되지만, **DB 커넥터가 사용하는 MySQL 계정에 `mysql.*` SELECT 권한이 없으면 실행 단계에서 차단** 된다. whitelist 는 tool-레벨 1 차 방어이고 MySQL GRANT 가 2 차 방어로 남는다.
+  2. `performance_schema` / `sys` 는 민감도 낮음(런타임 stat + 뷰).
+  3. `information_schema` 는 원래부터 허용돼 있었다.
+  4. 이 완화는 **현 리포의 agent read-only SQL 특성** 을 전제로 한다. write 가능 계정을 agent 가 쓰게 된다면 이 결정을 재검토해야 한다.
+- 검증:
+  1. `python3 -m py_compile unit/feature-0002-agent-core/src/modules/tools.py` → 문법.
+  2. `docker compose up -d --build web` 후 컨테이너 내부에서 직접 호출:
+     ```python
+     from modules.tools import set_active_schema_allowlist, _whitelist_violation
+     set_active_schema_allowlist(["dbgame"])
+     assert _whitelist_violation({"mysql"}) is None
+     assert _whitelist_violation({"sys"}) is None
+     assert _whitelist_violation({"performance_schema"}) is None
+     assert _whitelist_violation({"information_schema"}) is None
+     assert _whitelist_violation({"dbgame"}) is None
+     assert "agent_memory" in (_whitelist_violation({"agent_memory"}) or "")
+     assert "dbstat" in (_whitelist_violation({"dbstat"}) or "")
+     ```
+  3. 실사용 스모크: bootstrap_admin 로그인 → 새 대화(Product=KR) → `/api/ask` 로 "information_schema 에서 dbgame 의 테이블 개수" → 성공 응답.
+  4. 회귀 방어: whitelist 미설정 상태(`_ACTIVE_SCHEMA_ALLOWLIST is None`) 에서는 `_whitelist_violation` 이 즉시 `None` 반환하는 경로가 유지됨(코드 L80-L81).
+- 범위 제한:
+  - 코드 변경은 `unit/feature-0002-agent-core/src/modules/tools.py` 한 파일(약 10 줄).
+  - `_is_user_schema` / `search_tables` / `list_schemas` UX 동작은 손대지 않는다.
+  - 시스템 프롬프트의 "KNOWN SCHEMAS" 블록 포맷도 손대지 않는다 — agent 가 이미 information_schema 경로를 잘 찾는다.
+- 완료 조건:
+  - TASK.md §2 / §3.1 / 상세 설계 블록 추가
+  - tools.py 반영 + in-process 테스트 통과
+  - MODIFY.md 에 `CHG-20260422-0012` append
+  - REVIEW.md 에 `REV-20260422-0006` append (REV-20260421-0005 supersede 관계 명시)
+  - FUNCTION.md AC-0010 보강
+  - REPORT.md §3 에 TASK-0039 한 줄 추가
+  - git commit + push
 
 ### TASK-0038 상세 설계 (2026-04-22)
 - 문제/목적 (사용자 지시 2026-04-22, TASK-0034 Q4/Q5 원인 분석 후): Q4 conversation `20260421084441-6b71b1b1` 은 대화 생성(17:44:41) → step 1 `execute_sql` 실패(17:44:46) → step 2/3 `describe_table` 완료(17:44:48) 후 10분 공백 후 클라이언트 600s read-timeout 으로 종료됐다. DB 에는 `assistant` 메시지가 0 건, run_id 가 1 개만 존재해 **turn 1 의 agent 가 LLM 호출 단계에서 무한 대기** 한 것으로 판정됐다. 그 사이 클라이언트는 먼저 포기했지만 서버 thread pool 은 해당 스레드를 계속 물고 있어 Q4 turn 2 는 persist 이전에 풀 경쟁에 막혔고, Q5 는 60s 안에 `/api/auth/login` ConnectTimeout 으로 실패했다.

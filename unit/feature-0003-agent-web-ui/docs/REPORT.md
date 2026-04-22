@@ -9,14 +9,21 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
-System Prompt 를 Product → Role → Account 3 계층으로 조립하도록 재설계하고, Product 단위의 DB 접근 whitelist 를 agent tools 레벨에서 강제하도록 도입했다. `WebProducts` / `WebProductDatabases` / `WebSystemPrompts` 신규 테이블과 `AgentCoreConversations.product_id` 컬럼을 추가해 모든 대화가 Product 컨텍스트에 귀속되고, `compose_system_prompt` 가 base SYSTEM_PROMPT 뒤로 `## PRODUCT CONTEXT` → `## ROLE GUIDANCE` → `## ACCOUNT PREFERENCES` 블록을 순차 append 한다. 관리 콘솔에는 `상품 카테고리` 그룹 구분선과 함께 `상품 (Products)` 탭(Product CRUD + 접근 DB chip + Product scope prompt 편집기) 이 추가되었고, Roles detail 에 Role scope prompt 편집기가, 프로필 드로우에 `프롬프트` 탭(Account scope) 이 각각 추가되었다. `_whitelist_violation` 의 `_SYSTEM_SCHEMAS` 우회 경로를 제거해 `mysql`/`performance_schema`/`sys`/`agent_memory` 직접 접근이 차단되도록 보안도 강화했다.
+System Prompt 를 Product → Role → Account 3 계층으로 조립하도록 재설계하고, Product 단위의 DB 접근 whitelist 를 agent tools 레벨에서 강제하도록 도입했다. `WebProducts` / `WebProductDatabases` / `WebSystemPrompts` 신규 테이블과 `AgentCoreConversations.product_id` 컬럼을 추가해 모든 대화가 Product 컨텍스트에 귀속되고, `compose_system_prompt` 가 base SYSTEM_PROMPT 뒤로 `## PRODUCT CONTEXT` → `## ROLE GUIDANCE` → `## ACCOUNT PREFERENCES` 블록을 순차 append 한다. 관리 콘솔에는 `상품 카테고리` 그룹 구분선과 함께 `상품 (Products)` 탭(Product CRUD + 접근 DB chip + Product scope prompt 편집기) 이 추가되었고, Roles detail 에 Role scope prompt 편집기가, 프로필 드로우에 `프롬프트` 탭(Account scope) 이 각각 추가되었다. whitelist 정책은 TASK-0039 에서 메타데이터 4 스키마(`information_schema`/`sys`/`mysql`/`performance_schema`) 를 Product 설정과 무관하게 항상 bypass 하도록 재조정했다 — agent 의 DB 구조 탐색을 보장하면서도 `agent_memory` 차단은 유지해 타 계정 데이터 노출을 막는다.
 
 ## 2. Progress
 - Planned: 0
 - In Progress: TASK-0034 복잡 QA 성능 테스트 (테스트 하니스 미작성 상태)
-- Done: TASK-0036 System Prompt Depth + Product DB whitelist, TASK-0035 대화 사이드바 구분/정렬 + 대화/말풍선 fork, (이전) RBAC table cutover, role CRUD, account role assignment, tri-state override, account soft delete, own/any 대화 권한 분기, 제목 변경 API, `clear_memory` 제거, `console.access` 기반 읽기 전용 관리자 셸, 브라우저/API 검증
+- Done: TASK-0039 메타데이터 스키마 whitelist bypass 정책, TASK-0036 System Prompt Depth + Product DB whitelist, TASK-0035 대화 사이드바 구분/정렬 + 대화/말풍선 fork, (이전) RBAC table cutover, role CRUD, account role assignment, tri-state override, account soft delete, own/any 대화 권한 분기, 제목 변경 API, `clear_memory` 제거, `console.access` 기반 읽기 전용 관리자 셸, 브라우저/API 검증
 
 ## 3. Recent Changes
+- 2026-04-22 (TASK-0039)
+  - `../feature-0002-agent-core/src/modules/tools.py`
+    - L24~33 `_SYSTEM_SCHEMAS` 단일 frozenset 을 `_METADATA_SCHEMAS = {information_schema, sys, mysql, performance_schema}` (whitelist bypass) + `_INTERNAL_SCHEMAS = {agent_memory}` (whitelist 차단 유지) 두 frozenset 으로 분리. `_SYSTEM_SCHEMAS` 는 union 으로 유지해 `_is_user_schema`/`search_tables` UX 필터 동작 보존.
+    - L81~103 `_whitelist_violation` 의 `allowed = set(_ACTIVE_SCHEMA_ALLOWLIST) | {"information_schema"}` 를 `_METADATA_SCHEMAS` 전체로 확장. 차단 에러 메시지에 "메타데이터 스키마(information_schema/sys/mysql/performance_schema) 는 항상 접근 가능" 안내를 추가.
+  - 검증: 컨테이너 in-process 8 케이스(whitelist=None / 메타데이터 4 종 bypass / 허용 user schema / 혼합 통과 / agent_memory 차단 / 비허용 user schema 차단 / `_is_user_schema` UX 필터 보존) + `execute_tool` 경로로 information_schema / performance_schema / sys / mysql / agent_memory / 비허용 user schema 각 케이스 기대 동작 확인. `mysql.user` tool-level bypass 후 실제 행 반환(MySQL GRANT 열림) → REV-20260422-0006 에 2 차 방어 필요성 기록.
+  - 문서: `docs/TASK.md` §1/§2/§3.1 + TASK-0039 상세 설계, `docs/MODIFY.md` CHG-20260422-0012, `docs/REVIEW.md` REV-20260422-0006 (REV-20260421-0005 일부 supersede), `docs/FUNCTION.md` AC-0010 보강.
+
 - 2026-04-22 (TASK-0038)
   - `../feature-0002-agent-core/src/agent_core.py`
     - L26~32 `from modules.config import` 에 `AGENT_OPENAI_MAX_RETRIES` 추가

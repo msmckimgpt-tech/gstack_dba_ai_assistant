@@ -21,11 +21,16 @@ __all__ = [
     "clear_active_schema_allowlist",
 ]
 
-# ── 시스템 스키마 (탐색 대상에서 제외) ──────────────────────────
-_SYSTEM_SCHEMAS = frozenset({
+# ── 시스템 스키마 ────────────────────────────────────────────────
+# 메타데이터 스키마 — Product whitelist 와 무관하게 agent tools 가 항상 접근 가능.
+# DB 구조 탐색(정의·통계·런타임 메트릭) 에 필요해 기본 허용한다. MySQL GRANT 가 2차 방어.
+_METADATA_SCHEMAS = frozenset({
     "information_schema", "mysql", "performance_schema", "sys",
-    "agent_memory",
 })
+# 에이전트 내부 스키마 — whitelist 로 차단 유지. 타 계정 대화/세션/권한 데이터 보호.
+_INTERNAL_SCHEMAS = frozenset({"agent_memory"})
+# `_is_user_schema` / `search_tables` 의 "사용자 스키마 아님" 판정에 쓰이는 union.
+_SYSTEM_SCHEMAS = _METADATA_SCHEMAS | _INTERNAL_SCHEMAS
 
 # ── Product 단위 스키마 whitelist (None 이면 기존 동작, set 이면 교집합 필터) ──
 _ACTIVE_SCHEMA_ALLOWLIST: set[str] | None = None
@@ -76,21 +81,27 @@ def _extract_sql_schema_refs(sql: str) -> set[str]:
 
 
 def _whitelist_violation(refs: set[str]) -> str | None:
-    """참조된 스키마 중 접근이 허용되지 않은 것이 있으면 에러 메시지 반환."""
+    """참조된 스키마 중 접근이 허용되지 않은 것이 있으면 에러 메시지 반환.
+
+    메타데이터 스키마(`information_schema`/`sys`/`mysql`/`performance_schema`) 는
+    Product whitelist 와 무관하게 항상 통과한다. 에이전트가 DB 구조를 탐색할 때
+    카탈로그·뷰·런타임 통계 조회가 필요하기 때문이다. `mysql` 의 민감 테이블은
+    DB 커넥터가 쓰는 MySQL 계정의 GRANT 로 2 차 방어된다.
+
+    `agent_memory` 는 whitelist 로 차단 유지 — 타 계정 대화/세션/권한 override 를
+    LLM 이 직접 조회하는 경로를 막는다.
+    """
     if _ACTIVE_SCHEMA_ALLOWLIST is None:
         return None
-    allowed = set(_ACTIVE_SCHEMA_ALLOWLIST) | {"information_schema"}
-    # information_schema 는 스키마 카탈로그 자체 조회용으로 항상 허용하되, 그 결과는
-    # list_schemas/search_tables 가 _is_user_schema 로 다시 필터링한다. 다른 시스템
-    # 스키마(mysql/performance_schema/sys/agent_memory)는 whitelist 를 통해 명시적으로
-    # 차단된다 — `SELECT ... FROM mysql.user` 류의 직접 접근을 막기 위함.
+    allowed = set(_ACTIVE_SCHEMA_ALLOWLIST) | _METADATA_SCHEMAS
     blocked = [r for r in refs if r and r not in allowed]
     if not blocked:
         return None
     allowed_str = ", ".join(sorted(_ACTIVE_SCHEMA_ALLOWLIST)) or "(none)"
     return (
         f"오류: 접근이 허용되지 않은 스키마 참조: {', '.join(sorted(blocked))}. "
-        f"현재 Product 에 허용된 스키마: {allowed_str}"
+        f"현재 Product 에 허용된 스키마: {allowed_str}. "
+        f"메타데이터 스키마(information_schema/sys/mysql/performance_schema) 는 항상 접근 가능."
     )
 
 
