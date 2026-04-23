@@ -310,6 +310,23 @@ SEED_ROLE_DEFINITIONS = (
         },
     },
     {
+        "key": "sales",
+        "name": "사업팀",
+        "description": "게임 사업팀 pilot 계정 — 단순 조회/집계 자가서비스. ad-hoc 심층 분석은 DBA 팀으로 이관",
+        "is_default_signup": False,
+        "permissions": {
+            "conversation.create",
+            "conversation.ask",
+            "conversation.suggestions.read",
+            "conversation.list.own",
+            "conversation.read.own",
+            "conversation.file.read.own",
+            "conversation.rename.own",
+            "conversation.cancel.own",
+            "conversation.finalize.own",
+        },
+    },
+    {
         "key": "admin",
         "name": "Admin",
         "description": "관리 콘솔과 전체 대화 관리 권한을 가진 계정",
@@ -1285,6 +1302,52 @@ VALUES (%s, %s)
         cur.close()
 
 
+SEED_ROLE_SYSTEM_PROMPTS = (
+    {
+        "role_key": "sales",
+        "product_id": None,
+        "content": (
+            "당신은 게임 사업팀을 지원하는 DBA 어시스턴트다.\n"
+            "- 질의가 단순 조회 (특정 아이템의 유무, NPC ID, 몬스터 스킬 모듈 등) 이면 문장으로 답하라.\n"
+            "- 질의가 집계/통계 요청이면 결과셋 표로 답하라.\n"
+            "- 심층 ad-hoc 분석, 데이터 의미 해석, 성능 튜닝 요청은 "
+            "\"DBA 팀으로 요청 이관이 필요합니다\" 안내 후 대화 종료.\n"
+            "- DB 쓰기 쿼리 (INSERT/UPDATE/DELETE/DDL) 는 항상 거부."
+        ),
+    },
+)
+
+
+def _ensure_seed_role_system_prompts(conn) -> None:
+    """사업팀 등 seed role 의 기본 role-scope system prompt 를 1회만 upsert 한다.
+
+    이미 같은 scope/role/product 조합으로 prompt 가 존재하면 덮어쓰지 않는다(관리 콘솔 수정 존중).
+    """
+    role_map = _role_id_map(conn)
+    for seed in SEED_ROLE_SYSTEM_PROMPTS:
+        role_id = int(role_map.get(str(seed.get("role_key") or "")) or 0)
+        if role_id <= 0:
+            continue
+        existing = _load_system_prompt(
+            conn,
+            scope="role",
+            product_id=seed.get("product_id"),
+            role_id=role_id,
+            account_id=None,
+        )
+        if existing:
+            continue
+        _upsert_system_prompt(
+            conn,
+            scope="role",
+            content=str(seed.get("content") or ""),
+            product_id=seed.get("product_id"),
+            role_id=role_id,
+            account_id=None,
+            updated_by_account_id=None,
+        )
+
+
 SEED_PRODUCT_DEFINITIONS = (
     {
         "product_key": "KR",
@@ -1787,12 +1850,33 @@ def _runtime_tables_available() -> bool:
     return True
 
 
+def _ensure_seed_catchup(conn) -> None:
+    """기존 배포에 신규 seed role/prompt 가 있으면 상태를 맞춘다.
+
+    `_schedule_memory_runtime_bootstrap` 의 fast path 에서 호출한다. 모든 seed
+    ensure 함수는 존재 여부를 먼저 확인해 건드리지 않으므로 매 재기동마다 호출
+    해도 안전하다. TASK-0044 에서 sales role + role-scope system prompt 를 기존
+    배포에 합류시키기 위해 도입.
+    """
+    _ensure_seed_roles(conn)
+    _ensure_seed_products(conn)
+    _ensure_seed_role_system_prompts(conn)
+
+
 def _schedule_memory_runtime_bootstrap() -> None:
     global _MEMORY_BOOTSTRAP_RUNNING
     if _MEMORY_SCHEMA_READY:
         return
     try:
         if _runtime_tables_available():
+            try:
+                catchup_conn = _open_memory_connection()
+                try:
+                    _ensure_seed_catchup(catchup_conn)
+                finally:
+                    catchup_conn.close()
+            except Exception as exc:
+                print(f"[web.startup] seed catchup skipped: {exc}")
             _mark_memory_runtime_ready()
             return
     except Exception as exc:
@@ -2038,6 +2122,7 @@ def _ensure_web_tables():
         _ensure_permission_catalog(conn)
         _ensure_seed_roles(conn)
         _ensure_seed_products(conn)
+        _ensure_seed_role_system_prompts(conn)
         _migrate_legacy_accounts_to_rbac(conn)
         bootstrap_admin_id = _ensure_bootstrap_admin(conn)
         _seed_legacy_conversations(conn, bootstrap_admin_id)

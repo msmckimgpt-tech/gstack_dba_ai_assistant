@@ -168,6 +168,11 @@ __all__ = [
     "DB_PORT",
     "DB_PROMPT_DEFAULT",
     "DB_USER",
+    "REPLICA_DB_ENABLED",
+    "REPLICA_DB_HOST",
+    "REPLICA_DB_PASSWORD",
+    "REPLICA_DB_PORT",
+    "REPLICA_DB_USER",
     "FACT_SCOPE_COMMON",
     "GLOBAL_CONVERSATION_ID",
     "GLOBAL_SESSION_CONVERSATION_ID",
@@ -216,6 +221,17 @@ DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "mysql").strip()
+
+# ── 복제(read-only) DB 인스턴스 (TASK-0044) ─────────────────────────
+# REPLICA_DB_HOST 가 설정되면 data-plane 쿼리(agent 도구의 execute_sql/describe_* 등) 는
+# 복제 인스턴스로 라우팅되고, memory DB(agent_memory) 연결은 기본 primary 로 유지된다.
+# 조직 정책상 사업팀 wedge 에서 agent 는 복제본에만 접근해야 하며, 접속 정보는 `.env`
+# 또는 docker-compose secret 으로만 주입하고 commit 에 포함하지 않는다.
+REPLICA_DB_HOST = os.getenv("REPLICA_DB_HOST", "").strip()
+REPLICA_DB_PORT = int(os.getenv("REPLICA_DB_PORT", str(DB_PORT)) or DB_PORT)
+REPLICA_DB_USER = os.getenv("REPLICA_DB_USER", "").strip() or DB_USER
+REPLICA_DB_PASSWORD = os.getenv("REPLICA_DB_PASSWORD", "") or DB_PASSWORD
+REPLICA_DB_ENABLED = bool(REPLICA_DB_HOST)
 BLOCKED_DEFAULT_SCHEMAS = {
     s.strip().lower()
     for s in os.getenv(

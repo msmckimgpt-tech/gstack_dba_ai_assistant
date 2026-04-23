@@ -18,7 +18,7 @@ source_of_truth: true
 |---------|------|------|----------|------|
 | feature-0001-platform-runtime | in-progress | AI | 2026-04-15 | MySQL runtime 경계 유지, 내장 Local LLM bootstrap 제거 |
 | feature-0002-agent-core | in-progress | AI | 2026-04-15 | 외부 `local_llm` gateway 소비 계약 정리 |
-| feature-0003-agent-web-ui | in-progress | AI | 2026-04-22 | TASK-0041 클라이언트 타임아웃 Attach/Resume(ask_status/ask_result 엔드포인트 + 브라우저 복구 다이얼로그 + runner attach), TASK-0040 SQL whitelist 정규식 context-aware 2-stage 재작성, TASK-0034 Q4/Q5 재수행 완료 |
+| feature-0003-agent-web-ui | in-progress | AI | 2026-04-23 | TASK-0044 Approach A wedge 사업팀(Sales) role + role-scope system prompt seed + REPLICA_DB_* envelope + pilot onboarding runbook, TASK-0041 클라이언트 타임아웃 Attach/Resume, TASK-0040 SQL whitelist 정규식 context-aware 2-stage 재작성, TASK-0034 Q4/Q5 재수행 완료 |
 | feature-0004-browser-automation | in-progress | AI | 2026-04-06 | 구조 이관 완료, smoke 검증 예정 |
 | feature-0005-qa-mcp | in-progress | AI | 2026-04-06 | 포트 28000 점유 해소 확인, MCP 기동 검증 예정 |
 | feature-0006-lan-proxy-access | in-progress | AI | 2026-04-06 | 운영 자산 이관 완료 |
