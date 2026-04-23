@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: "codex or claude"
+        description: "claude (only supported provider)"
         required: false
         type: string
       dry_run:
@@ -77,22 +77,11 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Run Codex triage
-        if: steps.provider.outputs.provider == 'codex'
-        uses: openai/codex-action@v1
-        with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: .ai-runtime/triage_prompt.md
-          output-file: .ai-runtime/codex-triage-output.md
-          codex-args: --full-auto
-          sandbox: workspace-write
-          safety-strategy: drop-sudo
-
       - name: Run Claude triage
         if: steps.provider.outputs.provider == 'claude'
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: ${{ steps.triage_prompt.outputs.prompt }}
           claude_args: |
             --max-turns 10

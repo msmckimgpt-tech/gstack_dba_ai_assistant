@@ -1,10 +1,9 @@
 {
   "version": 1,
   "providers": {
-    "default": "codex",
-    "allowed": ["codex", "claude"],
+    "default": "claude",
+    "allowed": ["claude"],
     "labels": {
-      "codex": "agent:codex",
       "claude": "agent:claude"
     }
   },
@@ -21,7 +20,7 @@
     "public_pr_example": "issue/12-fix-browser-session-cleanup",
     "internal_parallel_pattern": "ai/<agent-id>/<issue-number>/<slice>",
     "internal_parallel_regex": "^ai/[a-z0-9][a-z0-9._-]*/[0-9]+/[a-z0-9][a-z0-9-]*$",
-    "internal_parallel_example": "ai/codex/12/browser-cleanup"
+    "internal_parallel_example": "ai/claude/12/browser-cleanup"
   },
   "pull_requests": {
     "title_regex": "^#[0-9]+[[:space:]].+",

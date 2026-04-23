@@ -124,22 +124,11 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Run Codex implementation
-        if: steps.gate.outputs.should_run == 'true' && steps.existing_pr.outputs.should_continue == 'true' && steps.provider.outputs.provider == 'codex'
-        uses: openai/codex-action@v1
-        with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: .ai-runtime/implement_prompt.md
-          output-file: .ai-runtime/codex-execute-output.md
-          codex-args: --full-auto
-          sandbox: workspace-write
-          safety-strategy: drop-sudo
-
       - name: Run Claude implementation
         if: steps.gate.outputs.should_run == 'true' && steps.existing_pr.outputs.should_continue == 'true' && steps.provider.outputs.provider == 'claude'
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: ${{ steps.implement_prompt.outputs.prompt }}
           claude_args: |
             --max-turns 30

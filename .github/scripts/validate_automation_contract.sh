@@ -37,7 +37,8 @@ read_output() {
 }
 
 jq -e '
-  (.providers.allowed | length == 2) and
+  (.providers.allowed | length == 1) and
+  (.providers.allowed[0] == "claude") and
   (.issues.types | length == 3) and
   (.checks.required | length == 4) and
   (.commits.subject_regex | length > 0) and
@@ -68,10 +69,20 @@ for check_name in $(contract_get '.checks.required[]'); do
 done
 
 provider_output="$(mktemp)"
-if LABELS_JSON='["agent:codex","agent:claude"]' GITHUB_OUTPUT="$provider_output" "$script_dir/resolve_provider.sh" >/dev/null 2>&1; then
+if LABELS_JSON='["agent:codex"]' GITHUB_OUTPUT="$provider_output" "$script_dir/resolve_provider.sh" >/dev/null 2>&1; then
   rm -f "$provider_output"
-  fail "resolve_provider.sh must fail when both provider labels are present"
+  fail "resolve_provider.sh must fail when an unsupported agent:* label is present"
 fi
+rm -f "$provider_output"
+
+provider_output="$(mktemp)"
+LABELS_JSON='["agent:claude"]' GITHUB_OUTPUT="$provider_output" "$script_dir/resolve_provider.sh" >/dev/null
+[[ "$(read_output "$provider_output" provider)" == "claude" ]] || fail "resolve_provider.sh must resolve agent:claude label to claude"
+rm -f "$provider_output"
+
+provider_output="$(mktemp)"
+LABELS_JSON='[]' GITHUB_OUTPUT="$provider_output" "$script_dir/resolve_provider.sh" >/dev/null
+[[ "$(read_output "$provider_output" provider)" == "claude" ]] || fail "resolve_provider.sh must fall back to claude when no provider label is present"
 rm -f "$provider_output"
 
 gate_output="$(mktemp)"

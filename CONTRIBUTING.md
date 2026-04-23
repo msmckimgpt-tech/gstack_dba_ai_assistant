@@ -24,7 +24,7 @@ export GIT_SSH_COMMAND='ssh -i ~/.ssh/mckim_wsl -o IdentitiesOnly=yes'
 - **공개 PR 브랜치:** `issue/<issue-number>-<short-slug>`
 - **Worktree 격리 (권장):**
   ```bash
-  git worktree add ../worktrees/issue-12 -b ai/codex/12/browser-cleanup
+  git worktree add ../worktrees/issue-12 -b ai/claude/12/browser-cleanup
   ```
 - 내부 병렬 브랜치는 로컬/worktree 전용이며, PR head로 직접 사용하지 않는다.
 - 작업 완료 후 공개 `issue/*` 브랜치에 통합하고 PR을 갱신한 뒤 worktree를 제거한다.
@@ -34,7 +34,7 @@ export GIT_SSH_COMMAND='ssh -i ~/.ssh/mckim_wsl -o IdentitiesOnly=yes'
 
 ## 3. 작업 흐름
 1. GitHub Issue를 생성한다.
-2. 필요하면 `agent:codex` 또는 `agent:claude` 라벨로 provider를 override 한다.
+2. 필요하면 `agent:claude` 라벨로 provider를 명시한다 (현재 지원 provider 는 `claude` 하나).
 3. 이슈에 `feature`, `bug`, `task` 중 하나의 타입 라벨이 있고 차단 상태가 없으면 활성 provider가 브랜치와 PR을 생성한다.
 4. `status:ready`는 권장 라벨이며, Issue Template과 `ai-triage`가 기본값으로 붙일 수 있지만 실행의 필수 gate는 아니다.
 5. PR에서 `policy-contract`, `owner-agent-report`, `ai-review`, `selfhosted-runtime-smoke`를 통과한다.

@@ -3,16 +3,16 @@
 ## 개요
 - 이 저장소의 자동화는 공개 PR 기준으로 **이슈당 하나의 `issue/*` 브랜치**를 사용한다.
 - 여러 AI가 병렬 작업할 수 있지만, 내부 병렬 작업 브랜치는 로컬/worktree 전용이다.
-- 한 시점에는 하나의 provider만 활성화하며, provider는 `codex` 또는 `claude` 중 하나다.
+- 지원되는 provider 는 `claude` 하나이며, Claude Code GitHub Action (`anthropics/claude-code-action@v1`) 으로 실행된다.
 - 정본 흐름은 `Issue -> Branch -> PR -> Status Checks -> GitHub auto-merge` 이다.
 - 공개 PR 브랜치는 항상 `issue/<번호>-<short-slug>`를 사용한다.
 - 내부 병렬 작업 브랜치는 `ai/<agent-id>/<issue-number>/<slice>` 형식을 사용하며, PR head로 직접 사용하지 않는다.
 
 ## Provider 선택
-- 우선순위 1: Issue 또는 PR 라벨 `agent:codex`, `agent:claude`
+- 우선순위 1: Issue 또는 PR 라벨 `agent:claude`
 - 우선순위 2: 저장소 변수 `AI_PROVIDER_DEFAULT`
-- 우선순위 3: 기본값 `codex`
-- 한 Issue 또는 PR에 두 provider 라벨을 동시에 붙이면 정책 오류로 처리한다.
+- 우선순위 3: 기본값 `claude`
+- `agent:claude` 외의 `agent:*` 라벨(예: `agent:codex`)이 붙은 경우 정책 오류로 처리한다.
 
 ## 워크플로
 - `ai-triage.yml`: 저장소 신호를 읽고 필요 시 autonomous issue 1건 생성
@@ -23,7 +23,7 @@
 - `selfhosted-runtime-smoke.yml`: self-hosted Linux runner에서 런타임 검증 수행
 
 ## 라벨 계약
-- provider: `agent:codex`, `agent:claude`
+- provider: `agent:claude`
 - source: `source:human`, `source:autonomous`
 - status: `status:ready`, `status:in-progress`, `status:in-review`, `status:blocked`
 - merge: `automerge:candidate`, `risk:manual`, `needs-followup`
@@ -35,10 +35,9 @@
 
 ## 필수 Secrets / Variables
 - Secrets
-  - `OPENAI_API_KEY`
-  - `ANTHROPIC_API_KEY`
+  - `CLAUDE_CODE_OAUTH_TOKEN` — 로컬에서 `claude setup-token` 으로 발급한 Claude Pro/Max OAuth 토큰. 만료 시 주기적 갱신이 필요하다.
 - Variables
-  - `AI_PROVIDER_DEFAULT`
+  - `AI_PROVIDER_DEFAULT` — 선택. 설정하지 않으면 `.github/automation-contract.json` 의 기본값(`claude`)이 사용된다.
   - `AI_AUTONOMOUS_OPEN_ISSUE_LIMIT` 기본 권장값 `3`
 
 ## Self-hosted runner 기준

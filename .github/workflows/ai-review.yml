@@ -83,22 +83,11 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Run Codex review
-        if: steps.classify.outputs.docs_only != 'true' && steps.provider.outputs.provider == 'codex'
-        uses: openai/codex-action@v1
-        with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: .ai-runtime/review_prompt.md
-          output-file: .ai-runtime/codex-review-output.md
-          codex-args: --full-auto
-          sandbox: workspace-write
-          safety-strategy: drop-sudo
-
       - name: Run Claude review
         if: steps.classify.outputs.docs_only != 'true' && steps.provider.outputs.provider == 'claude'
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: ${{ steps.review_prompt.outputs.prompt }}
           claude_args: |
             --max-turns 12

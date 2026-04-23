@@ -480,7 +480,7 @@ AI가 자유롭게 갱신 가능한 영역
 
 3. **Worktree 격리 (권장)**: Git worktree를 활용하여 물리적으로 작업 디렉토리를 분리한다.
    ```bash
-   git worktree add ../worktrees/issue-12 -b ai/codex/12/browser-cleanup
+   git worktree add ../worktrees/issue-12 -b ai/claude/12/browser-cleanup
    ```
    - 각 AI는 자신의 worktree 내에서만 파일을 수정한다.
    - 내부 브랜치 작업 완료 후 공개 `issue/*` 브랜치에 통합하고 worktree를 제거한다.
