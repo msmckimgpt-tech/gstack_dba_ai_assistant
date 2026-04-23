@@ -72,7 +72,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo "prompt<<'EOF'"
+            echo "prompt<<EOF"
             cat .ai-runtime/triage_prompt.md
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
