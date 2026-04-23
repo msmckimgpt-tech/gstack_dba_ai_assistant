@@ -10,6 +10,8 @@ source_of_truth: true
 
 프로젝트 전체 현황을 한눈에 파악하기 위한 문서이다.
 
+> 2026-04-23: origin 을 `git@github.com:msmckimgpt-tech/gstack_dba_ai_assistant.git` 으로 전환하고 gstack 스킬 워크플로우와 공존하는 체계로 마이그레이션했다 (`CLAUDE.md §Skill routing`, 신설 `TODOS.md`). feature 단위 작업 기록은 기존 `unit/feature-NNNN/docs/*` 그대로 유지하며, gstack 스킬 호출 시에도 `AGENTS.md` / `CONTRIBUTING.md` 가 우선 적용된다.
+
 ## 1. 기능 현황
 
 | 기능 ID | 상태 | 담당 | 최종 갱신 | 비고 |
