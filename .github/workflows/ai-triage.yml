@@ -27,6 +27,7 @@ jobs:
       contents: read
       issues: write
       actions: read
+      id-token: write
     concurrency:
       group: ai-triage-${{ github.repository }}
       cancel-in-progress: false
