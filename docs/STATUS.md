@@ -16,7 +16,7 @@ source_of_truth: true
 
 | 기능 ID | 상태 | 담당 | 최종 갱신 | 비고 |
 |---------|------|------|----------|------|
-| feature-0001-platform-runtime | in-progress | AI | 2026-04-15 | MySQL runtime 경계 유지, 내장 Local LLM bootstrap 제거 |
+| feature-0001-platform-runtime | in-progress | AI | 2026-04-23 | MySQL runtime 경계 유지, 내장 Local LLM bootstrap 제거, TASK-0045 AI 전용 복제 MySQL 접속 레이어(compose replica-net + REPLICA_DB_* 자리 + `make replica-check`) 추가 |
 | feature-0002-agent-core | in-progress | AI | 2026-04-15 | 외부 `local_llm` gateway 소비 계약 정리 |
 | feature-0003-agent-web-ui | in-progress | AI | 2026-04-23 | TASK-0044 Approach A wedge 사업팀(Sales) role + role-scope system prompt seed + REPLICA_DB_* envelope + pilot onboarding runbook, TASK-0041 클라이언트 타임아웃 Attach/Resume, TASK-0040 SQL whitelist 정규식 context-aware 2-stage 재작성, TASK-0034 Q4/Q5 재수행 완료 |
 | feature-0004-browser-automation | in-progress | AI | 2026-04-06 | 구조 이관 완료, smoke 검증 예정 |

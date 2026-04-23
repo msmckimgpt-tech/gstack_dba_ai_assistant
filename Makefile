@@ -22,6 +22,7 @@ WEB_PUBLIC_HOST ?= $(shell sed -n 's/^WEB_PUBLIC_HOST=//p' .env | tail -n 1)
 WEB_LAN_IP ?= $(shell sed -n 's/^WEB_LAN_IP=//p' .env | tail -n 1)
 BROWSER_PORT ?= $(shell sed -n 's/^BROWSER_PORT=//p' .env | tail -n 1)
 BROWSER_URL ?= $(shell sed -n 's/^BROWSER_URL=//p' .env | tail -n 1)
+REPLICA_NETWORK_NAME ?= $(shell v=$$(sed -n 's/^REPLICA_NETWORK_NAME=//p' .env | tail -n 1); echo $${v:-replica-net})
 SESSION_TAG ?=
 SESSION_BASE := $(shell sh -lc 'u=$$(id -un); t=$$(tty 2>/dev/null || true); if [ -n "$$t" ] && [ "$$t" != "not a tty" ]; then t=$${t#/dev/}; echo "$$u_$$t"; else echo "$$u"; fi' | tr -c 'A-Za-z0-9_.-' '_')
 SESSION ?= $(SESSION_BASE)$(if $(SESSION_TAG),_$(SESSION_TAG),)
@@ -29,14 +30,21 @@ CONV_FILE ?= /shared/conversation_id.$(SESSION)
 BROWSER_SESSION_FILE ?= /shared/browser_session_id.$(SESSION)
 BROWSER_CTL := $(DC_QUIET) run --rm --entrypoint python --env BROWSER_SESSION_FILE=$(BROWSER_SESSION_FILE) --env BROWSER_URL=$(BROWSER_URL) browser /app/ctl.py
 
-.PHONY: check-llm-network wait-mysql ensure-memory-db up down restart build ps logs sh repl ask out clean clear init mcp-up mcp-down mcp-test convo-list convo-new convo-use convo-delete convo-rename convo-clear start stop status dump web web-down web-tls-up web-tls-down web-tls-status web-tls-logs insight-up insight-down insight-logs insight-status browser-up browser-down browser-health browser-session browser-goto browser-click browser-type browser-set-value browser-eval browser-press browser-wait browser-text browser-html browser-shot browser-close browser-hover browser-mousedown browser-mouseup browser-scroll mysql session-info
+.PHONY: check-llm-network ensure-replica-network replica-check wait-mysql ensure-memory-db up down restart build ps logs sh repl ask out clean clear init mcp-up mcp-down mcp-test convo-list convo-new convo-use convo-delete convo-rename convo-clear start stop status dump web web-down web-tls-up web-tls-down web-tls-status web-tls-logs insight-up insight-down insight-logs insight-status browser-up browser-down browser-health browser-session browser-goto browser-click browser-type browser-set-value browser-eval browser-press browser-wait browser-text browser-html browser-shot browser-close browser-hover browser-mousedown browser-mouseup browser-scroll mysql session-info
 
-check-llm-network:
+check-llm-network: ensure-replica-network
 	@docker network inspect llm-shared >/dev/null 2>&1 || { \
 		echo "llm-shared 외부 네트워크를 찾을 수 없습니다." >&2; \
 		echo "현재 repo는 Local LLM을 직접 기동하지 않습니다. 먼저 /root/download/docker/local_llm 에서 provider를 준비하세요." >&2; \
 		exit 1; \
 	}
+
+# replica-net 은 AI 전용 복제 MySQL 이 있는 docker network (기본 이름 replica-net).
+# REPLICA_DB_* 를 쓰지 않는 배포에서도 idempotent 하게 스텁 네트워크를 만들어
+# compose up 이 external network 미존재로 실패하지 않도록 한다.
+ensure-replica-network:
+	@docker network inspect $(REPLICA_NETWORK_NAME) >/dev/null 2>&1 \
+		|| docker network create $(REPLICA_NETWORK_NAME) >/dev/null
 
 wait-mysql:
 	@container_id="$$( $(DC_QUIET) ps -q mysql )"; \
@@ -182,6 +190,10 @@ mcp-down:
 
 mcp-test:
 	@MCP_TEST_URL=http://localhost:$(shell sed -n 's/^MCP_HOST_PORT=//p' .env | tail -n 1)/mcp python3 unit/feature-0005-qa-mcp/src/mcp_tests.py
+
+replica-check:
+	@$(MAKE) check-llm-network
+	@./scripts/check_replica.sh
 
 web: init
 	@if [ "$(ENABLE_WEB_TLS)" = "1" ]; then $(MAKE) -s web-tls-cert; fi
