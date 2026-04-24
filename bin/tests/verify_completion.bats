@@ -291,6 +291,14 @@ stage_code_change() {
   [[ "$output" =~ "META mode" ]]
 }
 
+@test "META mode: unit/_template/ edit skips verify" {
+  echo "# skeleton tweak" >> unit/_template/docs/ANCHOR.md
+  git add unit/_template/docs/ANCHOR.md
+  run bash bin/verify-completion.sh --pre-commit "feature-0001-demo"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "META mode" ]]
+}
+
 @test "META mode: mixed META+operational commit treated as operational (not META)" {
   make_feature_docs
   fill_anchor_1_3

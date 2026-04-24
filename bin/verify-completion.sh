@@ -118,10 +118,10 @@ is_meta_path() {
   local path="$1"
   case "$path" in
     AGENTS.md|CLAUDE.md) return 0 ;;
-    _template/*|bin/*|shared/docs/*) return 0 ;;
+    bin/*|shared/docs/*|docs/*) return 0 ;;
+    unit/_template/*) return 0 ;;
     unit/META-*) return 0 ;;
     TEMPLATE_CHANGELOG.md|CONTRIBUTING.md) return 0 ;;
-    docs/*) return 0 ;;
     *) return 1 ;;
   esac
 }
