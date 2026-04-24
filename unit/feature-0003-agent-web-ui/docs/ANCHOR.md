@@ -24,42 +24,33 @@ ANCHOR.md — External Anchor Document (9번째 1급 문서)
 # ANCHOR: feature-0003-agent-web-ui
 
 ## §1. 외부 관점 요약
-<!--
-이 기능을 모르는 사람이 처음 코드를 열어봤을 때
-"왜 이렇게 만들었지?" 또는 "이게 왜 필요하지?"라고 의문을 가질 법한 지점.
-3~5줄.
 
-예시:
-"왜 이 계산을 클라이언트에서 하지? 서버에서 하면 안 되나?"
-→ 이유: 실시간 UI 업데이트가 요구되고 서버 round-trip 레이턴시가 사용자 체감에
-부정적. 계산 결과는 짧은 생명주기라 일관성 위험도 낮다.
--->
-
-(작성 필요 — 3~5줄)
+- **"Web UI가 단순 프론트엔드인가?"**
+  → 아니다. `src/app.py`에 HTTP API + 세션 관리 + System Prompt 조립
+  (`compose_system_prompt`)까지 포함한다. "UI"라는 이름이 오해를 부르지만, 실제로는
+  **Web entry point의 서버 측 로직 전부**. 정적 자산은 일부일 뿐.
+- **"왜 System Prompt가 Web UI feature 안에 있는가? core에 있어야 하지 않나?"**
+  → System Prompt의 **Product → Role → Account 3계층 조립**이 Web 세션 맥락
+  (로그인한 account, 활성 product) 기반이다. core는 그 결과물을 주입받아 실행할 뿐.
+  core가 Web DB에 역의존하는 layering 위반을 피하기 위해 Web UI feature에 둔다.
 
 ## §2. 대안 분기
-<!--
-선택하지 않은 옵션 2개 이상 + 각 옵션을 선택할 법한 페르소나.
-"이 옵션 안 고른 이유"까지.
 
-형식:
-- **Alt-A: X 방식.** 페르소나: Y 성숙한 팀. 안 고른 이유: ...
-- **Alt-B: Z 방식.** 페르소나: W 빠른 iteration 팀. 안 고른 이유: ...
--->
-
-(작성 필요 — 최소 2개)
+- **Alt-A: System Prompt 조립을 agent-core로 이동.** 페르소나: "프롬프트는 agent의
+  책임" 관점 팀. 안 고른 이유: account/role/product 데이터가 Web 세션에 있어 core가
+  Web DB에 역의존하게 됨 → layering 위반.
+- **Alt-B: static 자산만 분리 + API는 core에.** 페르소나: JAMstack / 정적 사이트 +
+  CDN 팀. 안 고른 이유: `app.py`가 담당하는 HTTP routing + 세션 + 인증이 있어
+  API/static 분리가 artificial. 현 규모에선 단일 서버로 충분.
 
 ## §3. 가정된 사용 시나리오
-<!--
-실제 또는 상상된 end-user의 1개 구체 시나리오.
-1인 프로젝트라도 "다른 동료가 이 기능을 인수인계 받았을 때" 또는
-"6개월 후의 나 자신이 이 코드를 볼 때" 같은 가정 시나리오 허용.
 
-금지: 개발자/AI/템플릿 내부 관점.
-요구: 외부 또는 미래의 관점.
--->
-
-(작성 필요 — 1개)
+- **관리자가 특정 Role에게 새 Product 접근 권한을 부여하려 할 때:** 새 AI가
+  `WebRoles` / `WebProductDatabases` / `WebProducts` / `WebAccountPermissionOverrides`
+  테이블 관계를 모르면 whitelist가 엉뚱하게 풀린다. 이 ANCHOR §1의
+  "System Prompt 3계층 조립" 설명이 빠른 onboarding 진입점 역할. REPORT.md의
+  최신 변경 요약과 함께 읽으면 whitelist bypass 정책(metadata 4 스키마 항상 통과 +
+  agent_memory 차단)의 **의도**를 이해할 수 있다.
 
 ## §4. 외부 검증 로그 (append-only)
 <!--

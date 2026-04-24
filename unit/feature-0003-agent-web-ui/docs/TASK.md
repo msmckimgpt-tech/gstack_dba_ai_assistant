@@ -12,9 +12,10 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: medium
-- Last Updated: 2026-04-23 (TASK-0044 사업팀 role + 복제 DB 접속 + Product whitelist 사업팀 접근 조정 구현 완료)
+- Last Updated: 2026-04-24
 
 ## 2. Task Queue
+- [x] TASK-0045 ANCHOR.md §1-§3 작성 (template v3.2.0-rc.1 external anchor 도입)
 - [x] TASK-0044 사업팀(Sales) role + role-scope system prompt + 복제 DB 접속 envelope + Product whitelist 사업팀 접근 runbook — Approach A wedge pilot infrastructure
 - [x] TASK-0041 클라이언트 타임아웃 시 대화 지속(Attach/Resume) — `/api/ask_status` + `/api/ask_result` long-poll + 브라우저 UX 다이얼로그 + runner attach 분기
 - [x] TASK-0040 schema whitelist 정규식 context-aware 수정 (TASK-0036 회귀 — alias.column 오탐으로 합법 SQL 이 차단되는 블로커 제거)
