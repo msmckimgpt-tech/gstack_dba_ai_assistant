@@ -12,13 +12,14 @@ source_of_truth: true
 - State: in-progress
 - Owner: AI
 - Priority: medium
-- Last Updated: 2026-03-26
+- Last Updated: 2026-04-24
 
 ## 2. Task Queue
 - [x] TASK-0001 Caddy 설정 이관
 - [x] TASK-0002 Windows LAN 스크립트 이관
 - [x] TASK-0003 루트 TLS 경로를 `../../../../artifacts` 기준으로 수정
 - [ ] TASK-0004 엄격한 네트워크 운영 시나리오 정의
+- [x] TASK-0005 ANCHOR.md §1-§3 작성 (template v3.2.0-rc.1 external anchor 도입, dev → prod cherry-pick 궤적 명시)
 
 ## 3. In Progress
 - TASK-0004 엄격한 네트워크 시나리오 정의 대기
