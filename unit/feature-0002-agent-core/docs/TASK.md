@@ -12,7 +12,7 @@ source_of_truth: true
 - State: in-progress
 - Owner: AI
 - Priority: high
-- Last Updated: 2026-04-21
+- Last Updated: 2026-04-24
 
 ## 2. Implementation Plan
 
@@ -34,6 +34,7 @@ source_of_truth: true
 - [x] TASK-0009 REPORT/MODIFY/TEST/AGENTS 문서 갱신
 - [ ] TASK-0010 작업 브랜치 commit 후 clean integration worktree에서 cherry-pick/push
 - [ ] TASK-0011 원본 워크트리 더티 상태 동일성 재확인
+- [x] TASK-0012 ANCHOR.md §1-§3 작성 (template v3.2.0-rc.1 external anchor 도입)
 
 ## 4. In Progress
 - TASK-0010 작업 브랜치 commit 및 integration 반영 준비
