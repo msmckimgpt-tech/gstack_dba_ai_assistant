@@ -7,12 +7,11 @@ on:
 jobs:
   ai-review:
     name: ai-review
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     timeout-minutes: 30
     permissions:
       contents: read
       pull-requests: write
-      id-token: write
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -73,25 +72,18 @@ jobs:
           - Diff command: git diff --stat origin/$BASE_REF...HEAD && git diff --unified=3 origin/$BASE_REF...HEAD
           EOF
 
-      - name: Load review prompt for Claude
-        if: steps.classify.outputs.docs_only != 'true'
-        id: review_prompt
-        shell: bash
-        run: |
-          {
-            echo "prompt<<'EOF'"
-            cat .ai-runtime/review_prompt.md
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Run Claude review
         if: steps.classify.outputs.docs_only != 'true' && steps.provider.outputs.provider == 'claude'
-        uses: anthropics/claude-code-action@v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: ${{ steps.review_prompt.outputs.prompt }}
-          claude_args: |
-            --max-turns 12
+        shell: bash
+        run: |
+          claude -p \
+            --permission-mode bypassPermissions \
+            --max-turns 12 \
+            --output-format text \
+            --no-session-persistence \
+            --add-dir "$(pwd)" \
+            < .ai-runtime/review_prompt.md \
+            > .ai-runtime/claude-review-stdout.txt
 
       - name: Validate review artifacts
         if: steps.classify.outputs.docs_only != 'true'
