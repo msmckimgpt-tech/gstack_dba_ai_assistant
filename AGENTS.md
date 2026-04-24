@@ -741,6 +741,7 @@ AI가 코드를 실행(테스트, 빌드 등)할 때는 다음을 준수한다:
 - C/E/F/G 회귀 없음.
 - `FUNCTION.md`가 현재 동작과 일치한다.
 - `TASK.md`, `MODIFY.md`, `REVIEW.md`, `REPORT.md`, `TEST.md`가 필요한 수준으로 갱신되었다.
+- `ANCHOR.md` §1~§3이 작성되었고 (24h bootstrap grace 이후), 이번 TASK cycle 내 §4 human 엔트리 ≥ 1개 append되었다 (§18 참조).
 - 남은 리스크와 후속 작업이 `REPORT.md`에 정리되었다.
 - `/repo/docs/STATUS.md`에 기능 상태가 반영되었다.
 - `/repo/docs/CODEBASE_MAP.md`에 새 파일/모듈이 반영되었다 (해당 시).
@@ -770,37 +771,80 @@ AI가 작업 완료를 선언할 때는 `TASK.md`의 Completion Checklist를 명
 - [ ] BLOCKED 항목이 없거나 사람에게 전달되었다
 - [ ] STATUS.md에 기능 상태가 갱신되었다
 - [ ] LEARNINGS.md에 발견된 교훈이 기록되었다 (해당 시)
+- [ ] ANCHOR.md §1~§3이 채워져 있다 (또는 24h bootstrap grace 범위 내이다) (§18)
+- [ ] ANCHOR.md §4에 이번 TASK cycle 범위 내 human 검증 엔트리 ≥ 1개 존재한다 (§18)
+- [ ] `bin/verify-completion.sh --pre-commit <feature-id>`가 PASS한다 (§16.5)
 - [ ] Git 커밋이 완료되었다 (§16.5)
 - [ ] Git 원격 동기화가 완료되었다 또는 동기화 불가 사유가 기록되었다 (§16.5)
 ```
 
-### §16.5 Git 동기화 절차
+### §16.5 Git 동기화 절차 (verify-completion 기반)
 
-작업 완료 시 AI는 반드시 아래 절차에 따라 Git 동기화를 수행한다.
+작업 완료 선언 전에 AI는 반드시 `bin/verify-completion.sh`를 호출한다.
+이 스크립트가 완료 체크리스트 검증 + ANCHOR.md 게이트 + unstaged 잔여 검사를 흡수한다.
+AGENTS.md §1 AI 전권 위임 원칙에 부합한다 — 스크립트는 **AI가 호출하는 도구**이지
+인간 개입이 아니다.
+
 커밋 메시지 형식은 `CONTRIBUTING.md`의 커밋 규칙 섹션을 따른다.
 
-#### Step 1: 커밋 (항상 수행)
+#### Step 0: 완료 선언 정의
 
-작업 결과물을 반드시 커밋한다. 이 단계는 모든 작업 완료 시 예외 없이 수행한다.
+"완료 선언"이란 AI가 사용자에게 "작업 완료" 메시지를 전달하기 직전의 지점이다.
+이 시점 이전에 working tree는 정리된 상태여야 한다.
 
+#### Step 1: 사전 검증 (pre-commit)
+
+```
+1. 코드 + docs 변경 (working tree)
+2. ANCHOR.md §1~§3 (새 기능) 또는 §4 (cycle 마감 시) 확인 — §18 참조
+3. git add <변경된 모든 파일> (prefer named add, never -A)
+4. bash bin/verify-completion.sh --pre-commit <feature-id>
+   → FAIL: stderr의 누락 항목 해결 후 step 1로 복귀
+   → PASS: step 2로 진행
+```
+
+#### Step 2: 커밋
+
+필수 trailer:
+
+```
+<type>(<scope>): <summary>
+
+<body>
+
+Task-Cycle: <feature-id>
+```
+
+`Task-Cycle` trailer는 이 커밋이 어느 TASK cycle에 속하는지 명시한다
+(§18 Cycle Boundary). 이 trailer가 없는 commit은 post-commit hook의 verify 대상이 아니다.
+
+```bash
 1. `git status`로 변경 파일을 확인한다.
 2. `.gitignore` 대상(`.env`, 자격증명 등)이 포함되지 않았는지 검증한다.
 3. 코드와 문서를 같은 커밋에 포함한다.
-4. `CONTRIBUTING.md`의 커밋 메시지 규칙에 따라 커밋한다.
+4. 커밋 메시지 규칙에 따라 커밋한다 (Task-Cycle trailer 필수).
+```
 
-#### Step 2: 원격 동기화 판정
+#### Step 3: 사후 검증 (post-commit)
+
+`.git/hooks/post-commit`이 자동으로 `verify-completion.sh --post-commit <feature-id>`
+를 호출한다 (`bin/install-hooks.sh`가 설치). FAIL 시:
+- hook은 commit을 차단하지 않는다 (이미 발생). 경고만 출력.
+- AI는 출력을 읽고 **새 commit**으로 누락 항목을 수정한다. `git commit --amend` **금지**.
+
+#### Step 4: 원격 동기화 판정
 
 원격 저장소(`origin`)가 설정되어 있는 경우, 아래 조건표에 따라 동기화 범위를 판정한다.
 
 | 조건 | 동작 |
 |------|------|
-| BLOCKED 항목 없음 + Critical/Major 승인 대기 없음 | **공개 브랜치 동기화** (Step 3 진행) |
+| BLOCKED 항목 없음 + Critical/Major 승인 대기 없음 | **공개 브랜치 동기화** (Step 5 진행) |
 | BLOCKED 항목 있음 또는 Critical/Major 승인 대기 | **커밋만** 수행, push/PR 보류 사유를 `REPORT.md`에 기록 |
 | 원격 저장소 미설정 | **커밋만** 수행, 원격 설정은 사람에게 위임 |
 
-#### Step 3: 공개 브랜치 동기화 (조건 충족 시)
+#### Step 5: 공개 브랜치 동기화 (조건 충족 시)
 
-Step 2에서 공개 브랜치 동기화로 판정된 경우:
+Step 4에서 공개 브랜치 동기화로 판정된 경우:
 
 1. **공개 브랜치 규칙 확인**:
    - 외부로 push하는 브랜치는 반드시 `issue/<issue-number>-<short-slug>` 형식을 따라야 한다.
@@ -821,18 +865,24 @@ Step 2에서 공개 브랜치 동기화로 판정된 경우:
    - `main` 직접 push 또는 로컬 `main` 병합은 금지한다.
    - 브랜치 동기화 중 충돌이 발생하면 §16.6 정책에 따라 처리한다.
 
-#### Step 4: 결과 기록
+#### Step 6: 결과 기록
 
 Git 동기화 결과를 `REPORT.md`에 기록한다.
 
 ```md
 ### Git 동기화 결과
 - 커밋: <commit-hash> (<branch>)
+- verify-completion: PASS / FAIL (재시도 N회)
 - Push: 완료 / 보류 (사유: ...)
 - PR: 생성 / 갱신 / 보류 (사유: ...)
 - 병합 상태: auto-merge 후보 / 수동 검토 / 보류
 - 충돌 해결: 없음 / AI 자율 해결 (건수, 요약) / 사람 위임 (사유)
 ```
+
+#### SPOF 대응 (bypass 금지)
+
+`verify-completion.sh`는 모든 commit의 gate이며 bypass 경로를 제공하지 않는다
+(SPOF 복구는 §18.4 "운영 vs 메타 층위" 참조).
 
 ### §16.6 병합 충돌 해결 정책
 
@@ -902,7 +952,118 @@ refactor(project): 공개 브랜치 동기화 충돌 해결 (#<issue-number>)
 
 ## §17. shared/ 거버넌스
 
-- `/repo/shared/`에는 `README.md`(목적과 구조 설명)와 `MODIFY.md`(변경 이력)를 유지한다.
-- shared 코드를 변경하는 AI는 자신의 기능 `MODIFY.md`에 변경을 기록하고, `/repo/shared/MODIFY.md`에도 교차 참조를 남긴다.
+- `/repo/shared/`에는 `README.md`(목적과 구조 설명)을 루트에 유지한다.
+- `/repo/shared/docs/`에는 다음 두 문서를 유지한다:
+  - `MODIFY.md` (append-only) — 변경 이력
+  - `REPORT.md` (rewrite) — 현재 상태 스냅샷, 의존성 맵, cross-feature 참조
+- shared 코드를 변경하는 AI는 자신의 기능 `MODIFY.md`에 변경을 기록하고, `/repo/shared/docs/MODIFY.md`에도 교차 참조를 남긴다.
+- shared **단독** 변경 (feature 디렉토리 touch 없음)은 `bin/verify-completion.sh --shared` 모드로 검증한다.
+- shared + feature 혼합 commit은 양쪽 MODIFY.md 모두 갱신이 필요하며 `--pre-commit <feature-id>` 모드로 검증한다.
 - shared 변경이 다른 기능에 영향을 줄 수 있으면, 영향받는 기능의 `REPORT.md`에 알림을 기록한다.
 - 대규모 shared 변경은 별도의 unit(`shared-xxxx-module-name`)으로 관리하는 것을 권장한다.
+
+## §18. 외부 앵커 정책 (ANCHOR.md)
+
+이 섹션은 AI-delegated 개발의 **폐쇄 루프 문제** — 외부 관점 진입 지점의 부재 —
+를 해결하기 위한 구조적 정책이다. 각 기능의 `docs/ANCHOR.md`가 방향성 stable reference
+역할을 한다.
+
+### §18.1 ANCHOR.md 문서 구조
+
+각 feature (`unit/<feature-id>/docs/ANCHOR.md`)는 4개 섹션을 갖는다:
+
+| 섹션 | 역할 | edit 정책 |
+|------|------|----------|
+| §1. 외부 관점 요약 | 기능을 모르는 사람이 의문을 가질 지점 (3~5줄) | rewrite |
+| §2. 대안 분기 | 선택하지 않은 옵션 + 페르소나 (≥ 2개) | rewrite |
+| §3. 가정된 사용 시나리오 | 외부 또는 미래 관점의 구체 시나리오 1개 | rewrite |
+| §4. 외부 검증 로그 | human 검증 엔트리 (cycle당 ≥ 1) | append-only |
+
+§1~§3은 방향이 **명시적으로** 바뀌면 갱신한다 (자연 drift는 §18.3 Conflict Protocol이
+탐지한다).
+
+### §18.2 §4 author 제한 — human-only
+
+§4 엔트리는 `source: human:<name>` 만 허용한다. **AI는 §4 writer가 아니다.**
+
+이유: AI가 §4를 채우면 self-certification paradox가 발생한다 — "외부"라는 이름이지만
+실제로는 AI의 내부 산출물. §4의 externality는 인간이 직접 append하는 방식으로 보장된다.
+
+### §18.3 Conflict Protocol
+
+AI는 사용자 요청을 수신하면, 해당 feature의 `ANCHOR.md` §1~§3과 교차 검토한다.
+요청이 §1(외부 관점) 또는 §3(가정된 시나리오)와 **명백히 상충**할 경우, 작업을 시작하지 않고
+사용자에게 다음을 요청한다:
+
+1. `/office-hours` 또는 `/plan-ceo-review`로 방향 재정립, 또는
+2. 사용자 본인이 §4에 명시적 `direction-drift` 엔트리 추가
+
+충돌 감지 없으면 작업을 진행한다. 이 프로토콜이 §1~§3의 stale 문제를 active detection으로
+전환 — 별도의 staleness scanner가 불필요하다.
+
+### §18.4 운영(operational) vs 메타(meta) 층위 구분
+
+§1 AI 전권 위임 원칙은 **운영 층위**(기능 개발 실행)에 적용된다. **메타 층위**
+(템플릿 자체 설계, AGENTS.md 개정, ANCHOR 스켈레톤 재설계 등)에는 인간이 개입한다.
+
+#### 층위 판정 (path convention)
+
+`bin/verify-completion.sh`가 path convention으로 자동 판정한다. 아래 경로 편집은 META:
+
+- `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`
+- `TEMPLATE_CHANGELOG.md`
+- `_template/**` (기능 스켈레톤)
+- `bin/**` (검증 도구 자체)
+- `shared/docs/**` (shared 정책 문서)
+- `docs/**` (프로젝트 수준 정책 문서)
+- `unit/META-*/` (명시적 META feature)
+
+#### META 작업 워크플로
+
+META 작업도 일반 feature와 동일한 8-doc + ANCHOR.md 구조에 편입된다.
+형식: `unit/META-NNNN-<name>/`.
+**`[META]` commit prefix는 지원하지 않는다** — path convention만 유효 게이트.
+
+#### Pure-meta commit의 verify skip
+
+변경 파일이 **전부** META 경로면 `verify-completion.sh`가 "META mode" 진입하여
+모든 검사를 skip한다. 템플릿 자체 유지 작업에 필수 경로.
+
+**Mixed commit (META + operational)**은 operational로 취급되어 full gate를 거친다.
+이로써 AI가 operational 작업에 META 경로를 끼워 우회하는 패턴이 차단된다.
+
+#### SPOF 복구
+
+`verify-completion.sh` 자체에 버그가 발생해 모든 feature 작업이 차단되면,
+AI는 META mode로 자동 진입하여 스크립트를 수정한다. bypass env var는 존재하지 않는다.
+
+### §18.5 TASK Cycle 정의 (§4 엔트리 경계)
+
+"TASK cycle"은 하나의 TASK 수명 기간이다. cycle 시작은 아래 중 **나중의** commit:
+
+- `Task-Cycle: <feature-id>` trailer를 가진 가장 이른 commit (이 feature에 대해)
+- 해당 TASK의 첫 TASK.md 수정 commit
+- (migration day 이후라면) `anchor-migrate.sh`가 생성한 seed commit
+
+§4 엔트리가 이 범위 내에 ≥ 1개 있어야 `verify-completion.sh` check #7이 PASS한다.
+단, 24h bootstrap grace 적용 시 check #7은 skip된다.
+
+### §18.6 §4 엔트리 품질 gate
+
+각 엔트리 필수 필드:
+
+- `source: human:<name>` — 유일 허용 형식
+- `timestamp:` — ISO8601
+- `body:` — 실제 내용 ≥ 200자 (non-whitespace)
+- `challenge:` — 한 줄, 이 검증이 무엇을 반박하거나 확인했는지
+
+단순 confirmation(`"pass"`, `"looks good"` 등 단독)은 FAIL로 처리한다.
+
+### §18.7 Bootstrap grace (24h)
+
+새로 생성된 `ANCHOR.md`는 `created_at` 기준 24시간 이내면 §1~§3 빈칸 검사와
+§4 엔트리 수 검사가 skip된다. 이 유예 시간 안에 작성자가 §1~§3를 채우고
+최초 §4 엔트리를 추가한다.
+
+`created_at`은 frontmatter 값과 git log first-add timestamp 중 **더 이른 쪽**을
+canonical로 사용한다 (frontmatter 조작 방지).
