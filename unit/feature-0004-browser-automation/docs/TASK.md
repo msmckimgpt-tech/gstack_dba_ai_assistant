@@ -12,13 +12,14 @@ source_of_truth: true
 - State: in-progress
 - Owner: AI
 - Priority: medium
-- Last Updated: 2026-03-26
+- Last Updated: 2026-04-24
 
 ## 2. Task Queue
 - [x] TASK-0001 브라우저 서비스 이관
 - [x] TASK-0002 Dockerfile 경로 수정
 - [x] TASK-0003 루트 `browser-*` 명령 연동
 - [ ] TASK-0004 엄격한 브라우저 시나리오 정의
+- [x] TASK-0005 ANCHOR.md §1-§3 작성 (template v3.2.0-rc.1 external anchor 도입)
 
 ## 3. In Progress
 - TASK-0004 엄격한 브라우저 시나리오 정의 대기
