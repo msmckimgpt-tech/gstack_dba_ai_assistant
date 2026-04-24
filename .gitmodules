@@ -1,0 +1,3 @@
+[submodule ".claude/commands/_template"]
+	path = .claude/commands/_template
+	url = git@github.com:msmckimgpt-tech/ai-delegated-dev-template-personas.git
