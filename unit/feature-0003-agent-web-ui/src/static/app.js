@@ -10,8 +10,14 @@ const vaultPassphraseEl = document.getElementById("vaultPassphrase");
 const vaultPlainKeyEl = document.getElementById("vaultPlainKey");
 const saveVaultBtn = document.getElementById("saveVaultBtn");
 const clearVaultBtn = document.getElementById("clearVaultBtn");
-const vaultEncryptBtn = document.getElementById("vaultEncryptBtn");
 const vaultStatusEl = document.getElementById("vaultStatus");
+const vaultBannerEl = document.getElementById("vaultBanner");
+const vaultBannerTextEl = document.getElementById("vaultBannerText");
+const vaultSavedCardEl = document.getElementById("vaultSavedCard");
+const vaultSavedMetaEl = document.getElementById("vaultSavedMeta");
+const vaultDangerZoneEl = document.getElementById("vaultDangerZone");
+const vaultImportCipherBtn = document.getElementById("vaultImportCipherBtn");
+const vaultStepEls = Array.from(document.querySelectorAll("[data-step]"));
 
 // Sidebar profile trigger
 const profileAvatarEl = document.getElementById("profileAvatar");
@@ -390,7 +396,7 @@ function writeVaultState() {
   } else {
     sessionStorage.removeItem(STORAGE_KEYS.passphrase);
   }
-  updateVaultStatus();
+  refreshVaultUI();
 }
 
 function clearVaultState() {
@@ -403,28 +409,105 @@ function clearVaultState() {
   if (state.apiVaultOptions?.default_model) {
     vaultModelEl.value = state.apiVaultOptions.default_model;
   }
-  updateVaultStatus();
+  refreshVaultUI();
 }
 
-function updateVaultStatus() {
-  const cipher = vaultCipherEl.value.trim();
-  const passphrase = vaultPassphraseEl.value.trim();
+// Vault 의 현재 요청 가능 상태를 단일 tri-state 로 반환.
+// 진실의 출처는 storage(영속) — input value 는 일시적인 편집 buffer 이므로 신뢰하지 않는다.
+// passphrase 는 sessionStorage 우선, 사용자가 막 입력한 미저장 값(input)은 fallback 으로만 인정.
+function computeVaultReadiness() {
+  const cipher = (localStorage.getItem(STORAGE_KEYS.cipher) || "").trim();
+  const passphrase = (
+    sessionStorage.getItem(STORAGE_KEYS.passphrase)
+    || (vaultPassphraseEl ? vaultPassphraseEl.value : "")
+    || ""
+  ).trim();
+  if (cipher && passphrase) return "ready";
+  if (cipher && !passphrase) return "needs";
+  return "empty";
+}
+
+// readiness 배지·접근성 텍스트 동기화.
+function updateVaultReadiness() {
+  if (!vaultBannerEl || !vaultBannerTextEl) return;
+  const readiness = computeVaultReadiness();
   const model = vaultModelEl.value.trim();
-  const segments = [];
-  if (model) {
-    segments.push(`모델: ${model}`);
-  }
-  if (cipher) {
-    segments.push("암호화된 API 키 저장됨");
+  vaultBannerEl.setAttribute("data-state", readiness);
+  const dot = vaultBannerEl.querySelector(".vault-banner-dot");
+  if (dot) dot.setAttribute("data-state", readiness);
+  let label;
+  if (readiness === "ready") {
+    label = model ? `준비 완료 · 모델: ${model}` : "준비 완료";
+  } else if (readiness === "needs") {
+    label = "저장된 암호화 키가 있습니다. Step 2 에서 passphrase 를 입력하면 바로 사용 가능합니다.";
   } else if (state.localLlmEnabled) {
-    segments.push("외부 Local LLM 연결 가능");
+    label = "API 키 미설정 · 외부 Local LLM 게이트웨이로 동작 중입니다.";
   } else {
-    segments.push("API 키 미설정");
+    label = "API 키가 아직 설정되지 않았습니다. 아래 단계를 순서대로 진행하세요.";
   }
-  if (passphrase) {
-    segments.push("암호화 키 입력됨");
+  vaultBannerTextEl.textContent = label;
+  if (vaultStatusEl) vaultStatusEl.textContent = label;
+}
+
+// 각 step 의 data-state 와 primary 버튼 disabled 토글.
+//   - cipher 저장됨 → 모든 step done, save 버튼 disabled (saved-default)
+//   - cipher 미저장 → wizard 입력 모드 (Step 1 active 부터 시작)
+// 키를 갈아끼우려면 "저장된 키 삭제" 한 경로만 — 진입점 1개로 단순화.
+function syncVaultSteps() {
+  if (!vaultStepEls.length || !saveVaultBtn) return;
+  const cipherSaved = Boolean((localStorage.getItem(STORAGE_KEYS.cipher) || "").trim());
+  const plain = vaultPlainKeyEl.value.trim();
+  const passphrase = vaultPassphraseEl.value.trim();
+
+  const step1 = vaultStepEls.find((el) => el.dataset.step === "1");
+  const step2 = vaultStepEls.find((el) => el.dataset.step === "2");
+  const step3 = vaultStepEls.find((el) => el.dataset.step === "3");
+
+  if (cipherSaved) {
+    if (step1) step1.setAttribute("data-state", "done");
+    if (step2) step2.setAttribute("data-state", passphrase ? "done" : "active");
+    if (step3) step3.setAttribute("data-state", "done");
+    saveVaultBtn.disabled = true;
+    return;
   }
-  vaultStatusEl.textContent = segments.join(" · ");
+
+  if (step1) step1.setAttribute("data-state", plain ? "done" : "active");
+  if (step2) {
+    if (!plain) step2.setAttribute("data-state", "disabled");
+    else step2.setAttribute("data-state", passphrase ? "done" : "active");
+  }
+  if (step3) {
+    if (plain && passphrase) step3.setAttribute("data-state", "active");
+    else step3.setAttribute("data-state", "disabled");
+  }
+  saveVaultBtn.disabled = !(plain && passphrase);
+}
+
+// 저장된 cipher 카드(information only) 와 destructive zone(삭제) 렌더링.
+// cipher 가 저장돼 있을 때만 두 영역을 노출하고, 없으면 둘 다 숨긴다.
+// 키 갈아끼움은 "저장된 키 삭제" → confirm → 새로 입력 흐름이 유일.
+function renderVaultSavedCard() {
+  if (!vaultSavedCardEl || !vaultSavedMetaEl) return;
+  const savedCipher = (localStorage.getItem(STORAGE_KEYS.cipher) || "").trim();
+  const savedModel = (localStorage.getItem(STORAGE_KEYS.model) || "").trim();
+  if (!savedCipher) {
+    vaultSavedCardEl.hidden = true;
+    if (vaultDangerZoneEl) vaultDangerZoneEl.hidden = true;
+    return;
+  }
+  vaultSavedCardEl.hidden = false;
+  if (vaultDangerZoneEl) vaultDangerZoneEl.hidden = false;
+  const head = savedCipher.length > 10 ? `${savedCipher.slice(0, 10)}…` : savedCipher;
+  vaultSavedMetaEl.textContent = savedModel
+    ? `${head} · 모델: ${savedModel}`
+    : head;
+}
+
+// readiness / step / saved card 를 한 번에 갱신.
+function refreshVaultUI() {
+  updateVaultReadiness();
+  renderVaultSavedCard();
+  syncVaultSteps();
 }
 
 function toggleAuthPane(tab) {
@@ -2044,7 +2127,7 @@ async function loadVaultOptions() {
   vaultPassphraseEl.value = vaultState.passphrase;
   vaultModelEl.value = vaultState.model || payload.default_model || vaultModelEl.value;
   state.localLlmEnabled = Boolean(state.session?.local_llm_enabled);
-  updateVaultStatus();
+  refreshVaultUI();
 }
 
 async function encryptPlainApiKey() {
@@ -2086,7 +2169,7 @@ async function encryptPlainApiKey() {
   const toBase64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)));
   vaultCipherEl.value = `v1:${toBase64(salt)}:${toBase64(iv)}:${toBase64(cipherBuffer)}`;
   vaultPlainKeyEl.value = "";
-  updateVaultStatus();
+  refreshVaultUI();
 }
 
 async function handleLogin(event) {
@@ -2224,21 +2307,47 @@ async function initialize() {
   if (passwordChangeFormEl) {
     passwordChangeFormEl.addEventListener("submit", handlePasswordChange);
   }
-  saveVaultBtn.addEventListener("click", () => {
-    writeVaultState();
-    showToast("API Vault 설정을 저장했습니다.");
-  });
-  clearVaultBtn.addEventListener("click", () => {
-    clearVaultState();
-    showToast("API Vault 설정을 초기화했습니다.");
-  });
-  vaultEncryptBtn.addEventListener("click", async () => {
+  // Step 3: "암호화 후 저장" — encrypt → storage persist 를 한 번에 수행.
+  saveVaultBtn.addEventListener("click", async () => {
     try {
-      await encryptPlainApiKey();
-      showToast("브라우저에서 API 키를 암호화했습니다.");
+      await encryptPlainApiKey();   // → vaultCipherEl.value 에 v1:... 채움
+      writeVaultState();             // → localStorage/sessionStorage 영속화
+      showToast("API 키를 암호화해 저장했습니다.");
     } catch (error) {
-      showToast(error.message || "암호화에 실패했습니다.", true);
+      showToast(error.message || "암호화 후 저장에 실패했습니다.", true);
     }
+  });
+  // "저장된 키 삭제": destructive 액션. confirm() 게이트로 우발 클릭 방어.
+  clearVaultBtn.addEventListener("click", () => {
+    const ok = window.confirm(
+      "저장된 암호화 키를 삭제할까요?\n\n삭제 후에는 외부 Local LLM 게이트웨이로만 동작하게 됩니다."
+    );
+    if (!ok) return;
+    clearVaultState();
+    showToast("저장된 암호화 키를 삭제했습니다.");
+  });
+  // 키 갈아끼움 진입점은 destructive zone 의 "저장된 키 삭제" 1개만 — 별도 토글 없음.
+  // 고급: 이미 암호화된 v1:... 직접 붙여넣기 → 저장.
+  if (vaultImportCipherBtn) {
+    vaultImportCipherBtn.addEventListener("click", () => {
+      const raw = vaultCipherEl.value.trim();
+      if (!raw) {
+        showToast("붙여넣을 암호문(v1:...)이 비어 있습니다.", true);
+        return;
+      }
+      if (!raw.startsWith("v1:")) {
+        showToast("암호문 형식이 올바르지 않습니다. `v1:` 로 시작해야 합니다.", true);
+        return;
+      }
+      writeVaultState();
+      showToast("붙여넣은 암호문을 저장했습니다.");
+    });
+  }
+  // 입력이 바뀔 때마다 wizard step 상태 동기화.
+  [vaultPlainKeyEl, vaultPassphraseEl, vaultCipherEl, vaultModelEl].forEach((el) => {
+    if (!el) return;
+    el.addEventListener("input", refreshVaultUI);
+    el.addEventListener("change", refreshVaultUI);
   });
   logoutBtn.addEventListener("click", () => {
     handleLogout().catch((error) => {

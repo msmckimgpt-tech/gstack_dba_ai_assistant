@@ -12,9 +12,10 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: medium
-- Last Updated: 2026-04-24
+- Last Updated: 2026-04-25
 
 ## 2. Task Queue
+- [x] TASK-0046 API Vault 패널 Linear Wizard 재설계 + 단일 진입점 destructive (REQ-20260425-0001)
 - [x] TASK-0045 ANCHOR.md §1-§3 작성 (template v3.2.0-rc.1 external anchor 도입)
 - [x] TASK-0044 사업팀(Sales) role + role-scope system prompt + 복제 DB 접속 envelope + Product whitelist 사업팀 접근 runbook — Approach A wedge pilot infrastructure
 - [x] TASK-0041 클라이언트 타임아웃 시 대화 지속(Attach/Resume) — `/api/ask_status` + `/api/ask_result` long-poll + 브라우저 UX 다이얼로그 + runner attach 분기

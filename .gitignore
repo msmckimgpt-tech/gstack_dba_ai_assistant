@@ -20,3 +20,4 @@ _archive/
 **/config/credentials/*.cnf
 **/config/credentials/*.env
 !**/config/credentials/*.example
+.gstack/

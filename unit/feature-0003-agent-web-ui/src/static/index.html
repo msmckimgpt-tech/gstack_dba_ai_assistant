@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260421-sysprompt" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260425-vault-final" />
 </head>
 <body>
 
@@ -243,39 +243,95 @@
 
     </div><!-- /security -->
 
-      <!-- ── 탭 패널: API Vault ── -->
+      <!-- ── 탭 패널: API Vault (wizard) ── -->
       <div class="drawer-pane hidden" data-profile-pane="vault">
 
+      <!-- 1) readiness 배지 -->
+      <div class="vault-banner" id="vaultBanner" data-state="pending">
+        <span class="vault-banner-dot" data-state="pending"></span>
+        <span class="vault-banner-text" id="vaultBannerText">상태 확인 중...</span>
+      </div>
+
+      <!-- 2) 한 줄 안내 -->
       <p class="drawer-desc">
-        모델과 API 키는 서버에 저장하지 않습니다. 외부 Local LLM gateway가 연결되어 있으면 API 키 없이도 요청할 수 있습니다.
+        API 키는 브라우저에서 암호화돼 저장되고 서버로 전송되지 않습니다.
       </p>
-      <label class="field">
-        <span>모델</span>
-        <select id="vaultModel"></select>
-      </label>
-      <label class="field">
-        <span>암호화된 API 키</span>
-        <textarea id="vaultCipher" rows="3" placeholder="v1:..."></textarea>
-      </label>
-      <label class="field">
-        <span>암호화 키</span>
-        <input id="vaultPassphrase" type="password" placeholder="현재 세션에만 유지" />
-      </label>
-      <details class="encrypt-panel">
-        <summary>브라우저에서 API 키 암호화</summary>
-        <div class="encrypt-body">
+
+      <!-- 3) wizard stepper -->
+      <ol class="vault-stepper">
+        <!-- Step 1. 사용할 API 키 -->
+        <li class="vault-step" data-step="1" data-state="active">
+          <div class="vault-step-head">
+            <span class="vault-step-num">1</span>
+            <div class="vault-step-title">사용할 API 키</div>
+          </div>
+          <div class="vault-step-body">
+            <label class="field">
+              <span>API 키 (sk-... / anthropic-... 등)</span>
+              <input id="vaultPlainKey" type="password" placeholder="sk-..." autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>모델</span>
+              <select id="vaultModel"></select>
+            </label>
+          </div>
+        </li>
+
+        <!-- Step 2. passphrase -->
+        <li class="vault-step" data-step="2" data-state="disabled">
+          <div class="vault-step-head">
+            <span class="vault-step-num">2</span>
+            <div class="vault-step-title">이 브라우저 전용 비밀번호 (passphrase)</div>
+          </div>
+          <div class="vault-step-body">
+            <label class="field">
+              <span>Passphrase</span>
+              <input id="vaultPassphrase" type="password" placeholder="현재 세션에만 유지" autocomplete="new-password" />
+            </label>
+            <p class="vault-step-hint">브라우저 세션에만 보관되고 서버·영구 스토리지에는 남지 않습니다. 다시 로그인하면 한 번 더 입력합니다.</p>
+          </div>
+        </li>
+
+        <!-- Step 3. 암호화 후 저장 -->
+        <li class="vault-step" data-step="3" data-state="disabled">
+          <div class="vault-step-head">
+            <span class="vault-step-num">3</span>
+            <div class="vault-step-title">암호화 후 저장</div>
+          </div>
+          <div class="vault-step-body">
+            <button type="button" class="btn-primary vault-primary-btn" id="saveVaultBtn" disabled>암호화 후 저장</button>
+          </div>
+        </li>
+      </ol>
+
+      <!-- 4) 저장된 값 카드 (cipher 있을 때만 노출) — information only -->
+      <div class="vault-saved" id="vaultSavedCard" hidden>
+        <div class="vault-saved-head">
+          <div class="vault-saved-title">저장된 암호화 키</div>
+          <div class="vault-saved-meta" id="vaultSavedMeta">—</div>
+        </div>
+      </div>
+
+      <!-- 4-b) destructive zone — 키를 갈아끼우려면 여기로 (단일 진입점) -->
+      <div class="vault-danger-zone" id="vaultDangerZone" hidden>
+        <button type="button" class="btn-danger-link" id="clearVaultBtn">저장된 키 삭제</button>
+      </div>
+
+      <!-- 5) 고급: 이미 암호화된 값(v1:...) 직접 붙여넣기 -->
+      <details class="vault-advanced">
+        <summary>이미 암호화된 키(<code>v1:...</code>) 직접 붙여넣기</summary>
+        <div class="vault-advanced-body">
           <label class="field">
-            <span>평문 API 키</span>
-            <input id="vaultPlainKey" type="password" placeholder="sk-..." />
+            <span>암호문</span>
+            <textarea id="vaultCipher" rows="2" placeholder="v1:..." autocomplete="off"></textarea>
           </label>
-          <button type="button" class="btn-secondary" id="vaultEncryptBtn">암호화 후 채우기</button>
+          <button type="button" class="btn-secondary" id="vaultImportCipherBtn">이 값으로 저장</button>
+          <p class="helper-text">이전에 백업해 둔 ciphertext 가 있을 때만 사용합니다.</p>
         </div>
       </details>
-      <div class="drawer-actions">
-        <button type="button" class="btn-primary" id="saveVaultBtn">저장</button>
-        <button type="button" class="btn-secondary" id="clearVaultBtn">초기화</button>
-      </div>
-      <div class="helper-text" id="vaultStatus">아직 저장된 설정이 없습니다.</div>
+
+      <!-- 상태 문자열(디버그/접근성 보조; 화면 표시는 vaultBanner 가 담당) -->
+      <div class="helper-text" id="vaultStatus" hidden></div>
 
     </div><!-- /vault -->
 
@@ -306,6 +362,6 @@
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260421-sysprompt"></script>
+  <script src="/static/app.js?v=20260425-vault-final"></script>
 </body>
 </html>

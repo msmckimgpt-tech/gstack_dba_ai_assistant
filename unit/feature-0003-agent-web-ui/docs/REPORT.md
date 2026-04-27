@@ -9,14 +9,24 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
-System Prompt 를 Product → Role → Account 3 계층으로 조립하도록 재설계하고, Product 단위의 DB 접근 whitelist 를 agent tools 레벨에서 강제하도록 도입했다. `WebProducts` / `WebProductDatabases` / `WebSystemPrompts` 신규 테이블과 `AgentCoreConversations.product_id` 컬럼을 추가해 모든 대화가 Product 컨텍스트에 귀속되고, `compose_system_prompt` 가 base SYSTEM_PROMPT 뒤로 `## PRODUCT CONTEXT` → `## ROLE GUIDANCE` → `## ACCOUNT PREFERENCES` 블록을 순차 append 한다. 관리 콘솔에는 `상품 카테고리` 그룹 구분선과 함께 `상품 (Products)` 탭(Product CRUD + 접근 DB chip + Product scope prompt 편집기) 이 추가되었고, Roles detail 에 Role scope prompt 편집기가, 프로필 드로우에 `프롬프트` 탭(Account scope) 이 각각 추가되었다. whitelist 정책은 TASK-0039 에서 메타데이터 4 스키마(`information_schema`/`sys`/`mysql`/`performance_schema`) 를 Product 설정과 무관하게 항상 bypass 하도록 재조정했다 — agent 의 DB 구조 탐색을 보장하면서도 `agent_memory` 차단은 유지해 타 계정 데이터 노출을 막는다.
+System Prompt 를 Product → Role → Account 3 계층으로 조립하도록 재설계하고, Product 단위의 DB 접근 whitelist 를 agent tools 레벨에서 강제하도록 도입했다. `WebProducts` / `WebProductDatabases` / `WebSystemPrompts` 신규 테이블과 `AgentCoreConversations.product_id` 컬럼을 추가해 모든 대화가 Product 컨텍스트에 귀속되고, `compose_system_prompt` 가 base SYSTEM_PROMPT 뒤로 `## PRODUCT CONTEXT` → `## ROLE GUIDANCE` → `## ACCOUNT PREFERENCES` 블록을 순차 append 한다. 관리 콘솔에는 `상품 카테고리` 그룹 구분선과 함께 `상품 (Products)` 탭(Product CRUD + 접근 DB chip + Product scope prompt 편집기) 이 추가되었고, Roles detail 에 Role scope prompt 편집기가, 프로필 드로우에 `프롬프트` 탭(Account scope) 이 각각 추가되었다. whitelist 정책은 TASK-0039 에서 메타데이터 4 스키마(`information_schema`/`sys`/`mysql`/`performance_schema`) 를 Product 설정과 무관하게 항상 bypass 하도록 재조정했다 — agent 의 DB 구조 탐색을 보장하면서도 `agent_memory` 차단은 유지해 타 계정 데이터 노출을 막는다. TASK-0046 (REQ-20260425-0001) 에서 프로필 드로어의 API Vault 탭을 Linear Wizard 3-step 구조로 재설계하고 키 갈아끼움 진입점을 "저장된 키 삭제" → confirm → wizard 재진입 → 새 입력 → 저장 1 경로로 단일화했다.
 
 ## 2. Progress
 - Planned: 0
-- In Progress: TASK-0034 복잡 QA 성능 테스트 (Q4/Q5 재수행 — TASK-0040/0041 선행 완료 상태)
-- Done: TASK-0041 클라이언트 타임아웃 시 Attach/Resume, TASK-0040 schema whitelist 정규식 context-aware 수정, TASK-0039 메타데이터 스키마 whitelist bypass 정책, TASK-0036 System Prompt Depth + Product DB whitelist, TASK-0035 대화 사이드바 구분/정렬 + 대화/말풍선 fork, (이전) RBAC table cutover, role CRUD, account role assignment, tri-state override, account soft delete, own/any 대화 권한 분기, 제목 변경 API, `clear_memory` 제거, `console.access` 기반 읽기 전용 관리자 셸, 브라우저/API 검증
+- In Progress: TASK-0034 복잡 QA 성능 테스트 (Q4/Q5 재수행 — TASK-0040/0041/0046 선행 완료 상태)
+- Done: TASK-0046 API Vault 패널 Linear Wizard 재설계, TASK-0041 클라이언트 타임아웃 시 Attach/Resume, TASK-0040 schema whitelist 정규식 context-aware 수정, TASK-0039 메타데이터 스키마 whitelist bypass 정책, TASK-0036 System Prompt Depth + Product DB whitelist, TASK-0035 대화 사이드바 구분/정렬 + 대화/말풍선 fork, (이전) RBAC table cutover, role CRUD, account role assignment, tri-state override, account soft delete, own/any 대화 권한 분기, 제목 변경 API, `clear_memory` 제거, `console.access` 기반 읽기 전용 관리자 셸, 브라우저/API 검증
 
 ## 3. Recent Changes
+- 2026-04-25 (TASK-0046, REQ-20260425-0001)
+  - `src/static/index.html`
+    - L246-L334 vault 패널 markup 재구성: `vault-banner` (readiness tri-state) + `ol.vault-stepper > li.vault-step × 3` (Step 1 사용할 API 키 / Step 2 passphrase / Step 3 암호화 후 저장) + `vault-saved` (information only) + `vault-danger-zone` ("저장된 키 삭제" 1 개) + `details.vault-advanced` (cipher 직접 붙여넣기, 기본 접힘). cache-bust `v=20260425-vault-final`.
+  - `src/static/styles.css`
+    - L1420-L1582 신규 클래스: `.vault-banner` / `.vault-banner-dot[data-state]` / `.vault-stepper` / `.vault-step[data-state="active|done|disabled"]` / `.vault-step-num` / `.vault-step-head/title/body/hint` / `.vault-saved` / `.vault-danger-zone` / `.btn-danger-link` / `.vault-advanced[-body]` (약 170 줄).
+  - `src/static/app.js`
+    - vault state helper 군 재작성: `updateVaultStatus` → `updateVaultReadiness` rename + `computeVaultReadiness` 의 진실 출처를 input value 에서 storage 로 통일. `syncVaultSteps` 가 `cipherSaved` 만으로 saved-default ↔ wizard 입력 모드 전환. `renderVaultSavedCard` 가 saved card + danger zone 동시 hidden 토글. saveVault 흐름이 평문 → encrypt → cipher 채움 → localStorage 저장 한 줄로 통합. `clearVaultBtn` 핸들러에 `confirm("저장된 암호화 키를 삭제할까요? ...")` 가드 추가.  신규 `vaultImportCipherBtn` 핸들러로 `v1:` prefix 검증 후 ciphertext 직접 import. **단일 진입점 정책**: `vaultReplaceBtn` / `replacingVault` flag / `enterReplaceMode` / `cancelReplaceMode` 모두 제거 — 키 갈아끼움 경로 1 개만 유지.
+  - 검증: `repo/.gstack/qa-reports/qa-vault.cjs` (Playwright Node) 28/28 PASS, healthScore 100, console.error 0 건. 사용자 직접 브라우저 검증 4 시나리오(저장 완료 / 새로고침 / 삭제 후 새 키 입력 / confirm 취소) 모두 만족.
+  - 문서: `docs/TASK.md` §1/§2 갱신, `docs/MODIFY.md` CHG-20260425-0017, `docs/REPORT.md` (this), `docs/REQUEST.md` (REQ-20260425-0001 Outcome) → `docs/REQUEST_ARCHIVE.md` move.
+
 - 2026-04-22 (TASK-0041)
   - `src/app.py`
     - `_ASK_TERMINAL_STATUSES = frozenset({"done","error","canceled"})` / `_ASK_SUCCESS_STATUSES = frozenset({"done","canceled"})` 상수
