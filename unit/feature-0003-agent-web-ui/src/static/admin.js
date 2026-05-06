@@ -41,12 +41,16 @@ function systemPromptPendingKey({ scope, productId = null, roleId = null, accoun
   return `${scope}:${productId || 0}:${roleId || 0}:${accountId || 0}`;
 }
 
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "misc"];
+// TASK-0052 Phase 1D: 'product' 그룹 추가. backend `PERMISSION_GROUP_ORDER` (app.py) 와 순서 동기 필수.
+// product 그룹은 정적 `product.manage` / `system_prompt.manage.role.any` 외에 동적 `product.access.<key>`
+// 코드들 (Phase 1B 의 _ensure_product_access_permissions backfill) 도 자동으로 그룹에 합류된다.
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
   role: "역할",
   conversation: "대화",
+  product: "제품",
   misc: "기타",
 };
 

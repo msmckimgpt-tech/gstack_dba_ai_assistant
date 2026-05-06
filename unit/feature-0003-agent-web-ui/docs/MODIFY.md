@@ -8,6 +8,57 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260506-0026
+- Date: 2026-05-06
+- Summary: TASK-0052 Phase 1B/1C/1D + Phase 2 검증 — 계정·역할 → 제품 권한 상속/override 모델 본체 도입. Codex outside voice 의 9 개 finding 모두 통합 + admin_update_account RoleId 손실 pre-existing 버그 fix. AI 자율 commit/push 모드.
+- Files:
+  - [unit/feature-0003-agent-web-ui/src/app.py](../src/app.py)
+    - **Phase 1B (DB schema + catalog source 전환 + caller-update + 트랜잭션)**:
+      - `_resolve_permission_catalog(conn=None)` body 를 DB-driven 으로 교체 — conn 이 주어지면 정적 PERMISSION_DEFINITIONS + `WebPermissions WHERE IsDynamic=1` union 반환. graceful fallback (column missing / DB error → static).
+      - `_product_permission_code(product_key)` 헬퍼 신설 — `product.access.<key.lower()>` namespace 변환.
+      - `_ensure_dynamic_permissions_schema(conn)` 헬퍼 신설 — `WebPermissions ADD COLUMN IsDynamic / ProductId + INDEX` idempotent ALTER. slow path (`_ensure_web_tables`) + fast path (`_ensure_seed_catchup`) 양쪽에서 호출.
+      - `_ensure_product_access_permissions(conn)` 헬퍼 신설 — 모든 WebProducts 에 대해 `INSERT IGNORE INTO WebPermissions (Code, Label, ..., IsDynamic=1, ProductId)` + 모든 WebRoles 에 grant `INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId)`. D2-A 호환성 backfill, idempotent. backfill 결과를 stderr 에 1 회 기록 (운영 transparency, Codex Claim 5).
+      - bootstrap 흐름 (`_ensure_web_tables` + `_ensure_seed_catchup`) 에 `_ensure_dynamic_permissions_schema` + `_ensure_product_access_permissions` 호출 추가.
+      - `_decorate_account_rows` / `_ensure_management_survivor_for_role_change` / `admin_update_account` (override + permissions 빌드) / `_list_roles` / `_load_role_by_id` / `admin_create_role` / `admin_update_role` 의 7 callsite 가 `_resolve_permission_catalog(conn)` 결과 (`catalog_codes` / `catalog_map`) 를 명시적으로 전달하도록 caller-update.
+      - `_account_permissions(account)` 가 cached map 을 그대로 dict 변환해 dynamic codes (e.g. `product.access.kr`) 가 silently drop 되지 않도록 수정 (기존: `for code in PERMISSION_CODES` iteration → 정적 코드만).
+    - **Phase 1B (product CRUD 트랜잭션 — Codex Claim 2)**:
+      - `POST /api/admin/products` 가 `conn.autocommit=False` + 명시적 commit/rollback 안에서 product row + WebPermissions row + WebRolePermissions backfill (모든 role grant) 한 트랜잭션 처리.
+      - `DELETE /api/admin/products/{id}` 가 in_use guard 통과 후 명시적 트랜잭션 안에서 WebSystemPrompts → WebProductDatabases → WebRolePermissions(IsDynamic=1 ProductId 참조) → WebAccountPermissionOverrides(동일) → WebPermissions → WebProducts cascade 정리.
+    - **Phase 1B/1C (`_account_has_product_access` 헬퍼)**:
+      - 신설. int / ProductKey 문자열 / int-string 모두 수용. int 입력 시 conn 으로 ProductKey 조회 후 `product.access.<key.lower()>` permission lookup.
+    - **Phase 1C (G1-G8 8 endpoint guards — Codex Claim 3 + 4)**:
+      - G1 `PATCH /api/conversations/{cid}/product` pinned 모드 — 권한 없으면 403.
+      - G2 `POST /api/new_conversation` body `product_id` — 권한 없으면 403 (명시 입력) 또는 auto 강등 (default 채움 분기).
+      - G3 `POST /api/ask` body `product_id` hint — 동일 패턴.
+      - G4 `POST /api/ask` 기존 conversation 의 `product_id_for_run` 시점 — Codex Claim 3 의 직접 해소. 권한 회수 후 pinned 대화 재실행 시 403 + `이 대화의 제품 접근 권한이 회수되었습니다...` 안내.
+      - G5 `POST /api/fork_conversation` source product 상속 + `product_mode` 'auto' 보존 fix (Codex Claim 4 fork 버그). source 'auto' 가 fork 후 'pinned' 으로 변질되던 회귀 차단. fork 대상 계정이 source product 접근 권한 없으면 auto 강등.
+      - G6 `_save_account_product_pref` defense-in-depth (signature 에 `account` 추가) — caller-level 가드 누락 시 fallback 보호망.
+      - G7 `GET /api/auth/me/system-prompt?product_id=<X>` — 권한 없으면 403.
+      - G8 `PUT /api/auth/me/system-prompt` body `product_id` — 동일 패턴.
+    - **pre-existing 버그 fix (Phase 1C 작업 중 발견)**:
+      - `admin_update_account` (`PATCH /api/admin/accounts/{account_id}`) 가 body 에 `role_id` 미명시 시 `target.get("role")` (항상 None) 으로 fallback 해 next_role_id=0 으로 떨어져 PATCH 마다 RoleId 를 0 으로 덮어쓰던 회귀. `target.get("role_id")` 직접 조회로 fix. 본 fix 가 없으면 admin 의 permission_overrides 변경만으로도 admin role 손실 → 권한 lockout.
+  - [unit/feature-0003-agent-web-ui/src/static/admin.js](../src/static/admin.js)
+    - **Phase 1D**: `PERMISSION_GROUP_ORDER += "product"` (`["console","account","role","conversation","product","misc"]`), `PERMISSION_GROUP_LABELS["product"] = "제품"`. backend `app.py` 와 동기 필수. 기존 `renderPermissionGrid` 가 자동으로 product group 에 정적 + 동적 코드들 (`product.manage`, `system_prompt.manage.role.any`, `product.access.<key>`) 모두 노출.
+  - [unit/feature-0003-agent-web-ui/src/static/admin.html](../src/static/admin.html)
+    - cache-bust 갱신 (`v=20260506-c5-product-perms`).
+- Verification:
+  - (a) `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` 통과.
+  - (b) `node --check unit/feature-0003-agent-web-ui/src/static/admin.js` 통과.
+  - (c) `make web` 재배포 + `repo-web-1 Recreated/Started`.
+  - (d) bootstrap 후 stderr `[TASK-0052 Phase 1B catchup] product access backfill: 7 permission/role-permission rows added` 메시지 확인 (1 perm row + 6 role grants).
+  - (e) `/api/admin/permissions` count 33 → 34 (`product.access.kr` 추가) → POST FR 후 35 → DELETE FR 후 34 복귀. cascade 정합성 확인.
+  - (f) bootstrap_admin 의 effective permissions 에 `product.access.kr=true`, FR 생성 후 `product.access.fr=true`, FR 삭제 후 사라짐. D2-A 호환성 backfill 동작.
+  - (g) Phase 2 P0 negative HTTP smoke (deny override 적용 후): T01 PATCH conv→KR (G1) 403, T02 new_conversation KR (G2) 403, T07 GET sysprompt?product_id=1 (G7) 403, T08 PUT sysprompt body product_id=1 (G8) 403. cleanup 후 admin permissions 34/34 회복 확인.
+  - (h) admin_update_account RoleId 보존 fix 검증: PATCH `{"permission_overrides":{"product.access.kr":"deny"}}` → role 'admin' 보존, 33/34 true (KR 만 deny).
+  - (i) G3/G4 직접 HTTP smoke 는 model validation (`gpt-5-mini` not allowed) 단계에서 차단되어 정적 코드 검증으로 대체 — 코드 경로가 G1/G2 와 동일 패턴 (`_account_has_product_access` 직접 호출).
+- Risks:
+  - **D2-A 호환성 backfill 의 보안 의미**: pending/sales/operator 등 모든 role 이 KR 에 default grant. 운영자가 권한 회수가 필요한 (role × product) 조합에 admin 콘솔 deny override 를 추가해야 secure-by-default 효과 (Codex Claim 5 명시).
+  - **product_key immutability**: ProductKey 변경 시 권한 코드 namespace drift. ProductKey 는 사실상 immutable 로 정책 — 변경은 delete + recreate 경유. 같은 key 의 과거 override 는 cascade 로 사라짐 (briefing §F5).
+  - **Phase 2 P2 부분 (DOM/UX)**: `/api/sessions/me` filter (effective products 만 반환), 사이드바 chip option filter (FE permission map 기반) 는 본 turn 에 미포함 — frontend 렌더링은 이미 Phase 1B 의 effective permission map 으로 자동 갱신되므로 별 cycle 에서 보강. 보안 경계는 G1-G8 가드가 server-side 에서 보장.
+  - **`/api/sessions/me` 정보 노출 (Codex Claim 6 D4 변경)**: end-user `/api/session` 응답에서 effective products 만 반환하도록 split 은 본 turn 에 미적용 — 별도 작은 cycle 로 후속. 보안 임팩트는 mutation 가드가 이미 보장하므로 P0 아님 (briefing §6 NOT in scope 와 일치).
+- Range: app.py +~480 lines (helper 5 신설 + 7 caller-update + 8 가드 + 트랜잭션 wrapper + bug fix), admin.js +2 lines (group order + label), admin.html +0 (cache-bust 만), 신규 파일 0.
+- Notes: 본 turn 의 변경은 **Critical 등급 인증/인가 구조 변경** (AGENTS.md §12.3) 이지만 사용자가 AI 자율 commit/push 권한을 명시 부여 (2026-05-06) 함에 따라 진행. Phase 1A (commit 4dd1d0a) 와 본 cycle (Phase 1B/1C/1D + Phase 2) 가 함께 C5 본체를 완성. **Phase 2 의 P2 항목 (sessions/me filter, end-user FE chip filter) 은 정보 노출 강화 차원의 follow-up 으로 별 cycle**.
+
 ## CHG-20260506-0025
 - Date: 2026-05-06
 - Summary: TASK-0052 (REQ-20260506-0005, Critical §12.3 인증/인가 구조 변경) Phase 1A — RBAC engine catalog 인자화 refactor. Codex Claim 1 (정적 PERMISSION_CODES 가정에 5 hot path hardwired) 의 1 단계 해소. 동작 변경 0, plumbing 만 추가. Phase 1B (DB-driven catalog + product 권한 backfill) 진입을 위한 surface 준비.

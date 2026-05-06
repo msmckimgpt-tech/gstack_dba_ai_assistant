@@ -288,11 +288,53 @@ PERMISSION_DEFINITION_MAP = {item["code"]: item for item in PERMISSION_DEFINITIO
 def _resolve_permission_catalog(conn=None) -> tuple[list[dict[str, Any]], set[str], dict[str, dict[str, Any]]]:
     """현재 effective permission catalog 를 (definitions, codes_set, code_map) 형태로 반환.
 
-    Phase 1A: 정적 PERMISSION_DEFINITIONS 만 반환. conn 인자는 phase 1B 호환을 위한 placeholder.
-    Phase 1B (TASK-0052 의 후속 phase) 에서 conn 이 주어지면 WebPermissions 의 dynamic row 까지 union 한다.
+    Phase 1B 부터: conn 이 주어지면 정적 PERMISSION_DEFINITIONS + WebPermissions 의 IsDynamic=1 row 를
+    union 해서 반환한다. conn 이 None 이면 기존 정적 결과만 (테스트/bootstrap-time 안전망).
+
+    동적 row 는 product CRUD 가 관리하는 `product.access.<product_key>` 형태이며
+    GroupName='product', IsDynamic=1, ProductId=<WebProducts.Id>.
     """
-    _ = conn  # Phase 1A 시점에는 사용하지 않음
-    return list(PERMISSION_DEFINITIONS), set(PERMISSION_CODES), dict(PERMISSION_DEFINITION_MAP)
+    static_defs = list(PERMISSION_DEFINITIONS)
+    static_codes = set(PERMISSION_CODES)
+    static_map = dict(PERMISSION_DEFINITION_MAP)
+    if conn is None:
+        return static_defs, static_codes, static_map
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """
+SELECT Code, Label, Description, GroupName, ProductId
+FROM WebPermissions
+WHERE IsDynamic = 1
+ORDER BY GroupName, Code
+            """
+        )
+        dynamic_rows = cur.fetchall() or []
+        cur.close()
+    except Exception:
+        # WebPermissions IsDynamic 컬럼이 아직 없거나 (legacy) DB error 시 정적 결과로 graceful fallback.
+        return static_defs, static_codes, static_map
+    if not dynamic_rows:
+        return static_defs, static_codes, static_map
+    merged_defs = list(static_defs)
+    merged_codes = set(static_codes)
+    merged_map = dict(static_map)
+    for row in dynamic_rows:
+        code = str(row.get("Code") or "").strip()
+        if not code or code in merged_codes:
+            continue
+        item = {
+            "code": code,
+            "label": str(row.get("Label") or code),
+            "description": str(row.get("Description") or ""),
+            "group": str(row.get("GroupName") or "product"),
+            "is_dynamic": True,
+            "product_id": int(row.get("ProductId") or 0) or None,
+        }
+        merged_defs.append(item)
+        merged_codes.add(code)
+        merged_map[code] = item
+    return merged_defs, merged_codes, merged_map
 SEED_ROLE_DEFINITIONS = (
     {
         "key": "pending",
@@ -673,13 +715,85 @@ def _account_permissions(account: dict[str, Any] | None) -> dict[str, bool]:
         return _empty_permission_map()
     cached = account.get("permissions")
     if isinstance(cached, dict):
-        return {code: bool(cached.get(code)) for code in PERMISSION_CODES}
+        # TASK-0052 Phase 1B: cached map 은 _decorate_account_rows 에서 dynamic catalog 로 빌드됐으므로
+        # 그대로 dict() 복사해 dynamic codes (e.g. product.access.<key>) 도 보존한다.
+        # 기존엔 `for code in PERMISSION_CODES` 로 iterate 해 dynamic codes 가 silently drop 됐다.
+        return {str(code): bool(value) for code, value in cached.items()}
     return _empty_permission_map()
 
 
 def _account_has_permission(account: dict[str, Any] | None, permission: str) -> bool:
     permissions = _account_permissions(account)
     return bool(permissions.get(permission))
+
+
+def _account_has_product_access(
+    account: dict[str, Any] | None,
+    product_id_or_key,
+    *,
+    conn=None,
+) -> bool:
+    """TASK-0052 Phase 1B: 계정이 특정 제품에 접근 가능한지 검사.
+
+    `product_id_or_key`:
+        - int / int 문자열  → WebProducts.Id. conn 가 주어지면 WebProducts 에서 ProductKey 조회 후 판단.
+                              conn 가 None 인데 int 만 주어진 경우 False (안전한 fallback).
+        - str (대문자 ProductKey) → 그대로 lowercase 변환 후 권한 코드 lookup.
+    `account` 가 None 이거나 permissions cache 에 동적 코드가 없으면 False.
+
+    이 헬퍼는 G1-G8 가드 (briefing §3.4) 의 단일 진입점이며, 모든 mutation 경로에서 호출된다.
+    """
+    if not account:
+        return False
+    permissions = _account_permissions(account)
+    raw = product_id_or_key
+    product_key: str = ""
+    # int 입력 처리
+    try:
+        product_id_int = int(raw)  # type: ignore[arg-type]
+    except Exception:
+        product_id_int = 0
+    if product_id_int > 0 and not isinstance(raw, str):
+        # int 가 들어왔으면 conn 으로 ProductKey 조회.
+        if conn is None:
+            return False
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT ProductKey FROM WebProducts WHERE Id = %s LIMIT 1", (product_id_int,))
+            row = cur.fetchone()
+            cur.close()
+        except Exception:
+            return False
+        if not row or not row[0]:
+            return False
+        product_key = str(row[0])
+    else:
+        # 문자열 입력 (ProductKey 직접) 또는 str 형태의 숫자
+        if isinstance(raw, str) and raw.strip():
+            stripped = raw.strip()
+            if stripped.isdigit():
+                # str(숫자) 케이스 — int 로 처리
+                if conn is None:
+                    return False
+                try:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT ProductKey FROM WebProducts WHERE Id = %s LIMIT 1",
+                        (int(stripped),),
+                    )
+                    row = cur.fetchone()
+                    cur.close()
+                except Exception:
+                    return False
+                if not row or not row[0]:
+                    return False
+                product_key = str(row[0])
+            else:
+                product_key = stripped
+        else:
+            return False
+    code = _product_permission_code(product_key)
+    return bool(permissions.get(code))
 
 
 def _role_payload(account: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -866,11 +980,17 @@ def _decorate_account_rows(conn, rows: list[dict[str, Any]]) -> list[dict[str, A
     account_ids = [int(row.get("id") or 0) for row in rows if int(row.get("id") or 0) > 0]
     role_permission_map = _load_role_permission_codes(conn, role_ids)
     override_map = _load_account_override_values(conn, account_ids)
+    # TASK-0052 Phase 1B: catalog 를 conn 으로 한 번 조회 후 모든 row 에 재사용 (N+1 회피).
+    _catalog_defs, catalog_codes, _catalog_map = _resolve_permission_catalog(conn)
     for row in rows:
         account_id = int(row.get("id") or 0)
         role_id = int(row.get("role_id") or 0)
         overrides = override_map.get(account_id, {})
-        permissions = _apply_permission_overrides(role_permission_map.get(role_id, set()), overrides)
+        permissions = _apply_permission_overrides(
+            role_permission_map.get(role_id, set()),
+            overrides,
+            catalog_codes=catalog_codes,
+        )
         row["permission_overrides"] = overrides
         row["permissions"] = permissions
     return rows
@@ -1384,6 +1504,82 @@ SEED_PRODUCT_DEFINITIONS = (
 )
 
 
+def _product_permission_code(product_key: str) -> str:
+    """TASK-0052 Phase 1B: product_key 를 lowercase 권한 코드 namespace 로 변환.
+
+    `product_key` 는 `^[A-Z][A-Z0-9_]{0,31}$` 정규식. permission code 는 lowercase + dot.
+    e.g. "KR" → "product.access.kr" / "MY_NEW" → "product.access.my_new".
+    """
+    return f"product.access.{str(product_key or '').strip().lower()}"
+
+
+def _ensure_product_access_permissions(conn) -> int:
+    """TASK-0052 Phase 1B: 각 WebProducts 에 대응하는 동적 권한 row + role grant 를 idempotent backfill.
+
+    동작:
+    1. 모든 WebProducts row 에 대해 `product.access.<key>` 권한이 WebPermissions 에 없으면 INSERT.
+       IsDynamic=1, ProductId=<product_id>, GroupName='product'.
+    2. D2-A backfill: 신규 추가된 권한을 모든 WebRoles row 에 INSERT IGNORE WebRolePermissions.
+       기존 운영 호환성 유지 (briefing §4 Phase 1B 단계).
+    Returns: backfill 로 인해 추가된 (permission row + role-permission row) 합계 — 운영 transparency 용 카운트.
+    """
+    added_total = 0
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT Id, ProductKey, Name FROM WebProducts ORDER BY Id")
+    products = cur.fetchall() or []
+    cur.close()
+    if not products:
+        return 0
+    for product in products:
+        product_id = int(product.get("Id") or 0)
+        product_key = str(product.get("ProductKey") or "")
+        product_name = str(product.get("Name") or product_key)
+        if not product_id or not product_key:
+            continue
+        code = _product_permission_code(product_key)
+        # 1. 권한 row 보장
+        cur = conn.cursor()
+        cur.execute(
+            """
+INSERT IGNORE INTO WebPermissions (Code, Label, Description, GroupName, IsDynamic, ProductId)
+VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                code,
+                f"제품 접근 — {product_name}",
+                f"이 계정은 {product_key} 제품에 접근할 수 있습니다 (대화 생성·pin·system prompt 읽기).",
+                "product",
+                1,
+                product_id,
+            ),
+        )
+        if int(cur.rowcount or 0) > 0:
+            added_total += 1
+        cur.close()
+        # 2. 권한 id 조회 (INSERT IGNORE 했으니 fetch)
+        cur = conn.cursor()
+        cur.execute("SELECT Id FROM WebPermissions WHERE Code = %s LIMIT 1", (code,))
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            continue
+        permission_id = int(row[0] or 0)
+        if permission_id <= 0:
+            continue
+        # 3. 모든 role 에 grant backfill (D2-A: 호환성 우선)
+        cur = conn.cursor()
+        cur.execute(
+            """
+INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId)
+SELECT r.Id, %s FROM WebRoles r
+            """,
+            (permission_id,),
+        )
+        added_total += int(cur.rowcount or 0)
+        cur.close()
+    return added_total
+
+
 def _ensure_seed_products(conn) -> None:
     cur = conn.cursor()
     cur.execute("SELECT ProductKey FROM WebProducts")
@@ -1558,12 +1754,24 @@ def _load_account_product_pref(
 
 
 def _save_account_product_pref(
-    conn, account_id: int, *, mode: str, pinned_id: int | None
+    conn, account_id: int, *, mode: str, pinned_id: int | None,
+    account: dict[str, Any] | None = None,
 ) -> None:
+    """TASK-0052 Phase 1C G6: defense-in-depth 보호망.
+
+    `account` 가 전달되고 pinned_id 가 있으나 그 product 에 접근 권한이 없으면 auto 강등.
+    caller 에서 이미 G1/G2/G3 가드가 통과했다면 도달 시점에 이미 안전 — 본 helper 의 검사는
+    누락된 caller 가 있을 경우의 fallback 보안 layer.
+    """
     if account_id <= 0:
         return
     norm_mode = _normalize_product_mode(mode, default="auto")
     norm_pid = int(pinned_id) if pinned_id and norm_mode == "pinned" else None
+    # G6 strip 가드: 권한 없으면 auto 강등 (silent, defense-in-depth).
+    if account is not None and norm_mode == "pinned" and norm_pid:
+        if not _account_has_product_access(account, norm_pid, conn=conn):
+            norm_mode = "auto"
+            norm_pid = None
     try:
         cur = conn.cursor()
         cur.execute(
@@ -1999,6 +2207,31 @@ def _runtime_tables_available() -> bool:
     return True
 
 
+def _ensure_dynamic_permissions_schema(conn) -> None:
+    """TASK-0052 Phase 1B: WebPermissions 의 IsDynamic / ProductId 컬럼을 idempotent ALTER 로 보장.
+
+    _ensure_web_tables (slow path) 와 _ensure_seed_catchup (fast path) 양쪽에서 호출되어
+    기존 배포 (table 이미 존재) 에서도 신규 컬럼이 추가되도록 한다. 컬럼이 이미 있으면
+    `try/except pass` 로 graceful no-op.
+    """
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute("ALTER TABLE WebPermissions ADD COLUMN IsDynamic TINYINT(1) NOT NULL DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE WebPermissions ADD COLUMN ProductId BIGINT NULL")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE WebPermissions ADD INDEX IX_WebPermissions_ProductId (ProductId)")
+        except Exception:
+            pass
+    finally:
+        cur.close()
+
+
 def _ensure_seed_catchup(conn) -> None:
     """기존 배포에 신규 seed role/prompt 가 있으면 상태를 맞춘다.
 
@@ -2010,6 +2243,17 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_seed_roles(conn)
     _ensure_seed_products(conn)
     _ensure_seed_role_system_prompts(conn)
+    # TASK-0052 Phase 1B: fast-path 재기동에서도 신규 dynamic permission 컬럼 + product 권한 backfill 실행.
+    _ensure_dynamic_permissions_schema(conn)
+    _migration_added = _ensure_product_access_permissions(conn)
+    if _migration_added > 0:
+        try:
+            import sys as _sys
+            _sys.stderr.write(
+                f"[TASK-0052 Phase 1B catchup] product access backfill: {_migration_added} permission/role-permission rows added\n"
+            )
+        except Exception:
+            pass
 
 
 def _schedule_memory_runtime_bootstrap() -> None:
@@ -2129,6 +2373,9 @@ def _ensure_web_tables():
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """
         )
+        # TASK-0052 Phase 1B: WebPermissions 의 IsDynamic / ProductId 컬럼을 helper 로 보장 (slow path).
+        # 같은 helper 가 _ensure_seed_catchup (fast path) 에서도 호출되어 기존 배포에 ALTER 적용.
+        _ensure_dynamic_permissions_schema(conn)
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS WebRoles (
@@ -2291,6 +2538,20 @@ def _ensure_web_tables():
         _ensure_seed_roles(conn)
         _ensure_seed_products(conn)
         _ensure_seed_role_system_prompts(conn)
+        # TASK-0052 Phase 1B: WebProducts 와 1:1 동적 권한 row 보장 + D2-A 호환성 backfill (모든 role grant).
+        # 호출 순서 정합성: products 가 먼저 만들어진 후, 권한 row 가 보장되어야 admin/account 의 effective
+        # permission 계산이 일관됨. _migrate_legacy_accounts_to_rbac 보다 먼저 두는 이유는 RBAC 마이그레이션
+        # 시점에 effective permission 이 이미 정합 상태이도록 하기 위함.
+        _migration_added = _ensure_product_access_permissions(conn)
+        if _migration_added > 0:
+            try:
+                # 운영 transparency: backfill 결과를 stderr 에 1 회 기록 (Codex Claim 5 권고).
+                import sys as _sys
+                _sys.stderr.write(
+                    f"[TASK-0052 Phase 1B] product access backfill: {_migration_added} permission/role-permission rows added (compatibility-first, NOT secure-by-default — 권한 회수가 필요한 (role x product) 조합은 admin 콘솔 deny override 로 적용)\n"
+                )
+            except Exception:
+                pass
         _migrate_legacy_accounts_to_rbac(conn)
         bootstrap_admin_id = _ensure_bootstrap_admin(conn)
         _seed_legacy_conversations(conn, bootstrap_admin_id)
@@ -3518,6 +3779,8 @@ ORDER BY
         conn,
         [int(row.get("id") or 0) for row in rows if int(row.get("id") or 0) > 0],
     )
+    # TASK-0052 Phase 1B: catalog 1 회 조회 후 모든 role row 에 dynamic codes 까지 포함된 permissions 맵 build.
+    _catalog_defs, catalog_codes, _catalog_map = _resolve_permission_catalog(conn)
     items: list[dict[str, Any]] = []
     for row in rows:
         role_id = int(row.get("id") or 0)
@@ -3534,7 +3797,7 @@ ORDER BY
                 "updated_at": str(row.get("updated_at") or "") or None,
                 "member_count": int(row.get("member_count") or 0),
                 "permission_codes": sorted(granted_codes),
-                "permissions": {code: code in granted_codes for code in PERMISSION_CODES},
+                "permissions": {code: code in granted_codes for code in catalog_codes},
             }
         )
     return items
@@ -3584,6 +3847,8 @@ LIMIT 1
     if not row:
         return None
     granted_codes = _load_role_permission_codes(conn, [int(role_id)]).get(int(role_id), set())
+    # TASK-0052 Phase 1B: dynamic codes 포함된 catalog 로 permissions 맵 build.
+    _catalog_defs, catalog_codes, _catalog_map = _resolve_permission_catalog(conn)
     return {
         "id": int(row.get("id") or 0),
         "key": str(row.get("role_key") or ""),
@@ -3594,7 +3859,7 @@ LIMIT 1
         "created_at": str(row.get("created_at") or "") or None,
         "updated_at": str(row.get("updated_at") or "") or None,
         "permission_codes": sorted(granted_codes),
-        "permissions": {code: code in granted_codes for code in PERMISSION_CODES},
+        "permissions": {code: code in granted_codes for code in catalog_codes},
     }
 
 
@@ -3718,6 +3983,8 @@ def _ensure_management_survivor_for_role_change(
     next_role_permission_codes: set[str],
 ) -> None:
     accounts = _list_active_accounts(conn)
+    # TASK-0052 Phase 1B: catalog 1 회 조회 후 loop 에서 재사용.
+    _catalog_defs, catalog_codes, _catalog_map = _resolve_permission_catalog(conn)
     survivors = 0
     for account in accounts:
         account_role_id = int(account.get("role_id") or 0)
@@ -3725,6 +3992,7 @@ def _ensure_management_survivor_for_role_change(
             permissions = _apply_permission_overrides(
                 next_role_permission_codes,
                 dict(account.get("permission_overrides") or {}),
+                catalog_codes=catalog_codes,
             )
         else:
             permissions = _account_permissions(account)
@@ -3913,6 +4181,15 @@ async def ask(request: Request) -> JSONResponse:
                     hint_pid = None
                 elif not hint_pid:
                     hint_pid = _get_default_product_id(conn) or None
+                # TASK-0052 Phase 1C G3: hint product_id 의 접근 권한 검사.
+                # 권한 없으면 auto 로 강등 + 사용자 직접 명시 hint 였다면 403 으로 차단.
+                if hint_mode == "pinned" and hint_pid:
+                    if not _account_has_product_access(account, int(hint_pid), conn=conn):
+                        if hint_raw_pid not in (None, "", 0):
+                            conn.close()
+                            return _json_error("이 제품에 접근할 권한이 없습니다.", 403)
+                        hint_mode = "auto"
+                        hint_pid = None
                 if conv_id:
                     cur_h = conn.cursor()
                     cur_h.execute(
@@ -3973,6 +4250,17 @@ async def ask(request: Request) -> JSONResponse:
             else:
                 if not product_id_for_run:
                     product_id_for_run = _get_default_product_id(conn) or None
+                # TASK-0052 Phase 1C G4 (Codex Claim 3): 기존 대화의 product_id_for_run 시점에도 권한 검사.
+                # 권한 회수 후에도 pinned 대화가 그대로 실행되던 갭 차단. α 정책 (briefing §3.4):
+                # 권한 없으면 403 + "이 대화의 제품 접근 권한이 회수되었습니다" 안내. frontend 에서 사용자가
+                # auto 모드로 전환하거나 admin 에게 권한 요청 후 재시도하도록 가이드.
+                if product_id_for_run and not _account_has_product_access(account, int(product_id_for_run), conn=conn):
+                    _release_request_slot(slot_key)
+                    conn.close()
+                    return _json_error(
+                        "이 대화의 제품 접근 권한이 회수되었습니다. 사이드바에서 auto 모드로 전환하거나 관리자에게 권한 요청 후 다시 시도해 주세요.",
+                        403,
+                    )
                 if product_id_for_run and conv_id:
                     try:
                         cur_u = conn.cursor()
@@ -4096,6 +4384,18 @@ async def new_conversation(request: Request) -> JSONResponse:
     elif not req_product_id:
         # pinned 인데 명시 product_id 가 없으면 기존 default 채움 동작 유지.
         req_product_id = _get_default_product_id(conn) or None
+    # TASK-0052 Phase 1C G2: pinned 모드 + 명시적 product_id 의 경우 접근 권한 검사.
+    # default product 채움 분기 (req_product_id 가 default 로 채워졌을 때) 도 동일 적용 — 권한 없으면
+    # auto 강등 (사용자가 default 에도 접근 못하는 케이스 방어).
+    if req_mode == "pinned" and req_product_id:
+        if not _account_has_product_access(account, int(req_product_id), conn=conn):
+            # explicit body 에 명시했는데 권한 없으면 403 (보안 명확성). default 가 강등된 경우는 auto.
+            if (data or {}).get("product_id") not in (None, "", 0):
+                conn.close()
+                return _json_error("이 제품에 접근할 권한이 없습니다.", 403)
+            # default product 권한도 없는 케이스 → auto 강등 (운영 가능성 유지).
+            req_mode = "auto"
+            req_product_id = None
     from agent_core import create_new_conversation as _create_conv
     cid = _create_conv(conv_file=_account_conv_file(int(account["id"])))
     _assign_conversation_owner(conn, cid, int(account["id"]), force=True)
@@ -4191,6 +4491,11 @@ async def update_conversation_product(cid: str, request: Request) -> JSONRespons
         if not row_v or not int(row_v[0] or 0):
             conn.close()
             return _json_error("선택한 제품을 사용할 수 없습니다.", 400)
+        # TASK-0052 Phase 1C G1: product 접근 권한 검사 (briefing §3.4).
+        # 기존 코드는 IsActive 만 검사 → 모든 logged-in account 가 임의 product 에 pin 가능했음.
+        if not _account_has_product_access(account, pinned_id, conn=conn):
+            conn.close()
+            return _json_error("이 제품에 접근할 권한이 없습니다.", 403)
 
     try:
         cur_u = conn.cursor()
@@ -4312,19 +4617,35 @@ ORDER BY Id ASC
         return _json_error("failed to load source messages", 500)
 
     # 원본 대화의 product_id 를 조회 (없으면 기본 Product).
+    # TASK-0052 Phase 1C G5 (Codex Claim 4 fork product_mode 복사 fix): product_mode 도 함께 조회하여 'auto' 보존.
+    forked_product_mode = "pinned"
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT product_id FROM AgentCoreConversations WHERE conversation_id = %s",
+            "SELECT product_id, product_mode FROM AgentCoreConversations WHERE conversation_id = %s",
             (source_id,),
         )
         row_pid = cur.fetchone()
         cur.close()
         forked_product_id = int(row_pid[0]) if row_pid and row_pid[0] is not None else None
+        if row_pid and row_pid[1] is not None:
+            forked_product_mode = _normalize_product_mode(row_pid[1], default="pinned")
     except Exception:
         forked_product_id = None
-    if not forked_product_id:
+        forked_product_mode = "pinned"
+    # auto 모드는 product_id 가 의미 없으므로 명시적으로 NULL 유지. pinned 인데 product_id 없으면 default 채움.
+    if forked_product_mode == "auto":
+        forked_product_id = None
+    elif not forked_product_id:
         forked_product_id = _get_default_product_id(conn) or None
+
+    # TASK-0052 Phase 1C G5: fork 대상 계정이 source product 에 접근 권한이 없으면 auto 강등 (운영 가능성 유지).
+    # account 자체가 source 대화 read 권한이 있어 여기까지 도달했지만, fork 후 ask 단계에서 G4 로 차단되면
+    # 사용자가 의문을 가지므로 fork 시점에 의도 명확화. pinned + product_id 가 있는 경우만 검사.
+    if forked_product_mode == "pinned" and forked_product_id:
+        if not _account_has_product_access(account, int(forked_product_id), conn=conn):
+            forked_product_mode = "auto"
+            forked_product_id = None
 
     # 새 대화 생성 + 소유권 부여 + topic 세팅.
     from agent_core import create_new_conversation as _create_conv
@@ -4338,10 +4659,16 @@ ORDER BY Id ASC
 UPDATE AgentCoreConversations
 SET topic = %s,
     product_id = %s,
+    product_mode = %s,
     updated_at = CURRENT_TIMESTAMP
 WHERE conversation_id = %s
             """,
-            (new_topic, int(forked_product_id) if forked_product_id else None, new_cid),
+            (
+                new_topic,
+                int(forked_product_id) if forked_product_id else None,
+                forked_product_mode,
+                new_cid,
+            ),
         )
         cur.close()
     except Exception:
@@ -5409,8 +5736,11 @@ async def admin_update_account(account_id: int, request: Request) -> JSONRespons
         conn.close()
         return _json_error("삭제된 계정은 수정할 수 없습니다.", 400)
 
-    role_payload = target.get("role") or {}
-    next_role_id = int(data.get("role_id") or role_payload.get("id") or 0)
+    # TASK-0052 Phase 1C 작업 중 발견된 pre-existing 버그 fix:
+    # `target` 은 _fetch_account_rows 결과로 role_id / role_key 등이 flat key 로 들어 있다.
+    # `target.get("role")` 은 항상 None 이라 next_role_id 가 0 으로 떨어져 PATCH 마다 RoleId=0 으로
+    # 덮어써졌음 (admin role 손실 → 권한 lockout). 직접 role_id 키를 사용한다.
+    next_role_id = int(data.get("role_id") or target.get("role_id") or 0)
     next_is_active = bool(data.get("is_active", target.get("is_active")))
     override_values = dict(target.get("permission_overrides") or {})
 
@@ -5431,20 +5761,29 @@ async def admin_update_account(account_id: int, request: Request) -> JSONRespons
             conn.close()
             return _json_error("계정 상태 변경 권한이 필요합니다.", 403)
 
+    # TASK-0052 Phase 1B: catalog 를 conn 으로 1 회 조회 후 validation/normalization 모두에 전달.
+    _catalog_defs, catalog_codes, catalog_map = _resolve_permission_catalog(conn)
+
     if "permission_overrides" in data:
         if not _account_has_permission(actor, "account.permission.override.manage"):
             conn.close()
             return _json_error("권한 override 관리 권한이 필요합니다.", 403)
         try:
             override_values = _normalize_override_payload(
-                data.get("permission_overrides") if isinstance(data.get("permission_overrides"), dict) else {}
+                data.get("permission_overrides") if isinstance(data.get("permission_overrides"), dict) else {},
+                catalog_codes=catalog_codes,
+                catalog_map=catalog_map,
             )
         except ValueError as exc:
             conn.close()
             return _json_error(str(exc), 400)
 
     role_permission_codes = _load_role_permission_codes(conn, [next_role_id]).get(next_role_id, set())
-    next_permissions = _apply_permission_overrides(role_permission_codes, override_values)
+    next_permissions = _apply_permission_overrides(
+        role_permission_codes,
+        override_values,
+        catalog_codes=catalog_codes,
+    )
     try:
         _ensure_management_survivor_for_account_change(
             conn,
@@ -5585,8 +5924,13 @@ async def admin_create_role(request: Request) -> JSONResponse:
     if not _is_valid_role_key(role_key):
         conn.close()
         return _json_error("role_key 형식이 올바르지 않습니다.", 400)
+    # TASK-0052 Phase 1B: dynamic catalog 기반 검증.
+    _catalog_defs, catalog_codes_for_role, _catalog_map = _resolve_permission_catalog(conn)
     try:
-        permission_codes = _validate_permission_codes(data.get("permission_codes") or [])
+        permission_codes = _validate_permission_codes(
+            data.get("permission_codes") or [],
+            catalog_codes=catalog_codes_for_role,
+        )
     except ValueError as exc:
         conn.close()
         return _json_error(str(exc), 400)
@@ -5664,8 +6008,13 @@ async def admin_update_role(role_id: int, request: Request) -> JSONResponse:
         if not _account_has_permission(actor, "role.permission.manage"):
             conn.close()
             return _json_error("역할 권한 배치 권한이 필요합니다.", 403)
+        # TASK-0052 Phase 1B: dynamic catalog 기반 검증.
+        _catalog_defs_u, catalog_codes_for_role_u, _catalog_map_u = _resolve_permission_catalog(conn)
         try:
-            next_permission_codes = _validate_permission_codes(data.get("permission_codes") or [])
+            next_permission_codes = _validate_permission_codes(
+                data.get("permission_codes") or [],
+                catalog_codes=catalog_codes_for_role_u,
+            )
         except ValueError as exc:
             conn.close()
             return _json_error(str(exc), 400)
@@ -5834,17 +6183,67 @@ async def admin_create_product(request: Request) -> JSONResponse:
         cur.close()
         conn.close()
         return _json_error("이미 존재하는 product_key 입니다.", 409)
-    cur.execute(
-        """
+    cur.close()
+    # TASK-0052 Phase 1B (Codex Claim 2 — autocommit=True 기본 → 명시적 트랜잭션 wrapping):
+    # WebProducts INSERT + WebPermissions INSERT (`product.access.<key>`, IsDynamic=1, ProductId=<new_id>)
+    # + 모든 기존 role 에 grant backfill (D2-A 정책) 까지 한 commit/rollback. 부분 실패 시 product 자체를
+    # 롤백해 drift 차단.
+    new_id = 0
+    try:
+        conn.autocommit = False
+        cur = conn.cursor()
+        cur.execute(
+            """
 INSERT INTO WebProducts (ProductKey, Name, Description, IsActive, IsDefault, SortOrder)
 VALUES (%s, %s, %s, %s, %s, %s)
-        """,
-        (product_key, name, description, 1 if is_active else 0, 1 if is_default else 0, sort_order),
-    )
-    new_id = int(cur.lastrowid or 0)
-    if is_default:
-        cur.execute("UPDATE WebProducts SET IsDefault = 0 WHERE Id <> %s", (new_id,))
-    cur.close()
+            """,
+            (product_key, name, description, 1 if is_active else 0, 1 if is_default else 0, sort_order),
+        )
+        new_id = int(cur.lastrowid or 0)
+        if is_default:
+            cur.execute("UPDATE WebProducts SET IsDefault = 0 WHERE Id <> %s", (new_id,))
+        # 동적 권한 row 삽입 (Phase 1B 의 `_ensure_product_access_permissions` 와 동일 패턴, transaction 내 inline).
+        permission_code = _product_permission_code(product_key)
+        cur.execute(
+            """
+INSERT INTO WebPermissions (Code, Label, Description, GroupName, IsDynamic, ProductId)
+VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                permission_code,
+                f"제품 접근 — {name}",
+                f"이 계정은 {product_key} 제품에 접근할 수 있습니다 (대화 생성·pin·system prompt 읽기).",
+                "product",
+                1,
+                new_id,
+            ),
+        )
+        new_permission_id = int(cur.lastrowid or 0)
+        if new_permission_id <= 0:
+            raise RuntimeError("permission row insert lastrowid empty")
+        # 모든 기존 role 에 grant backfill (D2-A: 호환성 우선 — 운영자가 추후 deny override 로 회수 가능).
+        cur.execute(
+            """
+INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId)
+SELECT r.Id, %s FROM WebRoles r
+            """,
+            (new_permission_id,),
+        )
+        cur.close()
+        conn.commit()
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.autocommit = True
+        conn.close()
+        return _json_error(f"제품 생성 실패: {exc}", 500)
+    finally:
+        try:
+            conn.autocommit = True
+        except Exception:
+            pass
     conn.close()
     return JSONResponse({"ok": True, "product_id": new_id})
 
@@ -5932,10 +6331,51 @@ async def admin_delete_product(product_id: int, request: Request) -> JSONRespons
         cur.close()
         conn.close()
         return _json_error("이 제품을 참조하는 대화가 있어 삭제할 수 없습니다. (대신 비활성화를 사용하세요)", 400)
-    cur.execute("DELETE FROM WebSystemPrompts WHERE ProductId = %s", (int(product_id),))
-    cur.execute("DELETE FROM WebProductDatabases WHERE ProductId = %s", (int(product_id),))
-    cur.execute("DELETE FROM WebProducts WHERE Id = %s", (int(product_id),))
     cur.close()
+    # TASK-0052 Phase 1B (Codex Claim 2): 명시적 트랜잭션으로 cascade 정합성 보장.
+    # 신규: WebPermissions(IsDynamic=1, ProductId=<id>) + 그 권한을 참조하는 WebRolePermissions /
+    # WebAccountPermissionOverrides 도 함께 정리. 부분 실패 시 product 도 그대로 유지 (rollback).
+    try:
+        conn.autocommit = False
+        cur = conn.cursor()
+        cur.execute("DELETE FROM WebSystemPrompts WHERE ProductId = %s", (int(product_id),))
+        cur.execute("DELETE FROM WebProductDatabases WHERE ProductId = %s", (int(product_id),))
+        # 동적 권한 row 의 id 들을 먼저 조회해 두고, 참조 row 들을 cascade 정리.
+        cur.execute(
+            "SELECT Id FROM WebPermissions WHERE IsDynamic = 1 AND ProductId = %s",
+            (int(product_id),),
+        )
+        dyn_perm_ids = [int(r[0] or 0) for r in (cur.fetchall() or []) if r and r[0]]
+        if dyn_perm_ids:
+            placeholders = ",".join(["%s"] * len(dyn_perm_ids))
+            cur.execute(
+                f"DELETE FROM WebRolePermissions WHERE PermissionId IN ({placeholders})",
+                tuple(dyn_perm_ids),
+            )
+            cur.execute(
+                f"DELETE FROM WebAccountPermissionOverrides WHERE PermissionId IN ({placeholders})",
+                tuple(dyn_perm_ids),
+            )
+            cur.execute(
+                f"DELETE FROM WebPermissions WHERE Id IN ({placeholders})",
+                tuple(dyn_perm_ids),
+            )
+        cur.execute("DELETE FROM WebProducts WHERE Id = %s", (int(product_id),))
+        cur.close()
+        conn.commit()
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.autocommit = True
+        conn.close()
+        return _json_error(f"제품 삭제 실패: {exc}", 500)
+    finally:
+        try:
+            conn.autocommit = True
+        except Exception:
+            pass
     conn.close()
     return JSONResponse({"ok": True, "product_id": int(product_id)})
 
@@ -6172,6 +6612,11 @@ async def me_get_system_prompt(request: Request, product_id: int | None = None) 
     if error:
         conn.close()
         return error
+    # TASK-0052 Phase 1C G7: product_id query param 이 주어졌으면 그 product 의 접근 권한 검사.
+    if product_id is not None and int(product_id) > 0:
+        if not _account_has_product_access(account, int(product_id), conn=conn):
+            conn.close()
+            return _json_error("이 제품에 접근할 권한이 없습니다.", 403)
     # 계정 스코프: 개인 프롬프트는 product 별 혹은 product 무관 하나씩 보유 가능.
     row = _load_system_prompt(
         conn,
@@ -6207,6 +6652,11 @@ async def me_put_system_prompt(request: Request) -> JSONResponse:
         except Exception:
             conn.close()
             return _json_error("invalid product_id", 400)
+    # TASK-0052 Phase 1C G8: PUT body 의 product_id 가 주어졌으면 접근 권한 검사.
+    if product_id is not None and int(product_id) > 0:
+        if not _account_has_product_access(account, int(product_id), conn=conn):
+            conn.close()
+            return _json_error("이 제품에 접근할 권한이 없습니다.", 403)
     new_id = _upsert_system_prompt(
         conn,
         scope="account",

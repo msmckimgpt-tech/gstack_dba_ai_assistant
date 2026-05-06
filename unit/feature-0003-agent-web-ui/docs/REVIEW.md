@@ -8,6 +8,25 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260506-0013
+- Date: 2026-05-06
+- Decision: TASK-0052 의 Phase 1B/1C/1D + Phase 2 검증을 사용자 AI 자율 commit/push 모드에서 1 cycle 안에 완료한다. Codex outside voice 의 9 finding 모두 통합 (정적 catalog 가정 → DB-driven, autocommit → 명시적 트랜잭션, 가드 8 곳 도입, fork product_mode 복사 fix 등). 작업 중 발견된 pre-existing `admin_update_account` RoleId 손실 버그도 즉시 fix.
+- Method:
+  1. **Phase 1B (catalog DB-driven 전환)**: Phase 1A 가 깐 plumbing (`_resolve_permission_catalog(conn=None)`) 의 body 만 교체. conn 이 주어지면 정적 + WebPermissions IsDynamic=1 union 반환. graceful fallback (column missing / DB error) 으로 호환성 유지. caller 7 곳을 `_resolve_permission_catalog(conn)` 결과 (`catalog_codes` / `catalog_map`) 를 명시적으로 전달하도록 update.
+  2. **Phase 1B (schema migration)**: `_ensure_dynamic_permissions_schema(conn)` 헬퍼 + `_ensure_product_access_permissions(conn)` 헬퍼. slow path (`_ensure_web_tables`) + fast path (`_ensure_seed_catchup`) 양쪽에서 호출되어 기존 배포에서도 신규 컬럼/권한 row/role grant 가 자동 적용. backfill 결과를 stderr 에 1 회 기록 (운영 transparency, Codex Claim 5).
+  3. **Phase 1B (product CRUD 트랜잭션, Codex Claim 2)**: `conn.autocommit=False` + 명시적 commit/rollback. POST 는 product + permission row + role grant cascade 한 트랜잭션. DELETE 는 in_use guard 통과 후 SystemPrompts → ProductDatabases → RolePermissions → AccountPermissionOverrides → Permissions → Products cascade 한 트랜잭션. 부분 실패 시 product 자체 rollback.
+  4. **Phase 1C (G1-G8)**: `_account_has_product_access(account, product_id_or_key, *, conn=None)` 단일 진입점. 8 endpoint 가드 (briefing §3.4 매트릭스). G4 가 Codex Claim 3 의 직접 해소 — 권한 회수 후 pinned 대화 재실행 차단. G5 가 fork 의 product_mode 'auto' 보존 fix 도 함께 처리 (Codex Claim 4).
+  5. **Phase 1D (admin UI)**: PERMISSION_GROUP_ORDER 에 'product' 추가. admin.js + app.py 양쪽 동기. 기존 renderPermissionGrid 가 자동 노출.
+  6. **Phase 2 (HTTP smoke)**: bootstrap_admin 으로 deny override 적용 → G1/G2/G7/G8 직접 403 검증 + product CRUD lifecycle (T13/T14/T15/T16) + admin_update_account RoleId 보존 fix 검증. G3/G4 는 model validation 단계에서 차단되어 정적 코드 검증으로 대체 (코드 경로 동일 패턴).
+- Risks:
+  - **Critical 등급 변경 + AI 자율 commit**: AGENTS.md §12.3 (인증/인가 구조 변경) 으로 본래는 사람 승인 필요. 사용자가 명시적으로 AI 자율 권한 부여 (2026-05-06) — 정책 적용 우선순위 §3.1 1 위 (사용자 직접 지시) 에 따라 진행. 본 변경의 보안 의미: 8 endpoint mutation/read 가드가 추가되어 product 격리 강화, 단 D2-A 호환성 backfill 로 모든 role 이 default-grant 라 운영자 후속 deny override 필요.
+  - **pre-existing 버그의 발견 시점**: admin_update_account RoleId 손실은 이전 cycle 부터 존재했을 가능성이 높음 (코드상 `target.get("role")` 은 어느 시점부터 None 이었음). Phase 1C 의 negative smoke 에서만 트리거되어 catch — 일반 운영에서는 admin 이 본인 PATCH 를 거의 하지 않아 dormant 였던 회귀로 추정. 본 fix 가 cycle 안에 포함되어 안전.
+  - **D2-A 의 secure-by-default 갭**: 본 cycle 종료 후에도 pending/sales/operator 등 모든 role 이 KR (현재 1 product) 에 default-grant. 운영자가 deny override 로 회수해야 실효 격리. 운영 transparency 메시지로 안내.
+  - **Phase 2 negative smoke 의 G3/G4 미직접 검증**: model validation 단계 차단으로 HTTP smoke 가 가드 도달 불가. 정적 코드 검증으로 대체 — G1/G2 와 동일 패턴이라 회귀 위험 낮음. 후속 cycle 에서 valid model 로 재시도 가능.
+  - **admin lockout 보호 (briefing F8 — NOT in scope)**: admin 이 자기 자신의 마지막 product access 를 deny 로 잠가 lockout 가능성. survivor 보호 로직 (`_ensure_management_survivor_for_account_change`) 은 console.manage 류만 검사하고 product access 는 미포함. 별 cycle 검토.
+- Why this combines Phase 1B/1C/1D in one commit (분리 commit 옵션 선택 안 함): 본 cycle 진입 시 사용자가 "나머지 Phase 모두 진행" + "AI 자율 commit/push" 명시. Phase 1B/1C/1D 는 의존 순차라 각 phase 단독 deploy 의미가 적음 (1B 만 deploy 시 가드 없는 상태로 DB schema 변경, 1C 만 deploy 는 1B 없이 catalog 가 catch 못함). Phase 1A 는 deploy-safe 단일 변경이라 분리 commit 했지만 (4dd1d0a), 본 cycle 은 통합 deploy 가 일관성에 유리.
+- How this changes BRIEFING-c5: 본 cycle 로 briefing 의 Phase 1A/1B/1C/1D + Phase 2 P0 (T01-T08, T13-T16 직접 + T19/T20/T21-T23 정적) 모두 ✓. 미구현 항목: Phase 2 P2 (sessions/me filter, end-user FE chip filter) — 별 cycle. F8 (admin lockout 보호) — 별 cycle.
+
 ## REV-20260506-0012
 - Date: 2026-05-06
 - Decision: TASK-0052 Phase 1A 만 본 turn 에서 진행한다. RBAC engine 의 정적 PERMISSION_CODES 가정 (Codex Claim 1) 을 catalog 인자 받는 형태로 refactor 하되, **동작 변경은 0** — 모든 5 함수의 catalog 인자 default = None = 정적 사용. `/api/admin/permissions` 만 신규 plumbing 검증 경로로 전환해 Phase 1B 의 DB-driven 전환 surface 를 미리 검증한다. Phase 1B/1C/1D 는 별 cycle 분리.
