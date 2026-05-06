@@ -15,7 +15,8 @@ source_of_truth: true
 - Last Updated: 2026-05-06
 
 ## 2. Task Queue
-- [ ] TASK-0051 (REQ-20260506-0004) 관리 콘솔 일괄 저장 정책 회복 + 메타데이터 4 스키마 항상 노출 + DB 목록 라이브 enum — `프롬프트 저장` / `제품 정보 저장` / `DB 목록 저장` 3 버튼 제거 후 footer `모두 적용` 단일 commit 흐름으로 통합, 메타데이터 4 종(`information_schema`/`mysql`/`sys`/`performance_schema`) 을 회색 disabled chip 으로 강제 노출(REV-20260422-0006 정책 시각화), 자유 텍스트 chip 입력을 `GET /api/admin/databases/available` 라이브 enum 기반 picker 로 교체. C5 (제품 권한 상속/override) 는 다음 cycle 로 분리(plan-eng-review 후 진행).
+- [ ] TASK-0052 (REQ-20260506-0005, **Critical** 등급 §12.3 — 인증/인가 구조 변경) 계정·역할 → 제품 권한 상속/override 모델 도입 — TASK-0051 분리분 C5. `/plan-eng-review` + Codex outside voice 통합 plan 은 [BRIEFING-c5-permission-product-access.md](./BRIEFING-c5-permission-product-access.md). Phase 1A (RBAC engine DB-driven 마이그레이션, product 권한 도입 없음) → Phase 1B (product 권한 backfill) → Phase 1C (8 endpoint guard) → Phase 1D (admin UI group label) → Phase 2 (운영 검증). 본 turn 은 **Phase 1A 부터 단독 진행** (briefing §12 권고 — 회귀 표면 분리). 사용자 명시 진행 지시 (2026-05-06).
+- [x] TASK-0051 (REQ-20260506-0004) 관리 콘솔 일괄 저장 정책 회복 + 메타데이터 4 스키마 항상 노출 + DB 목록 라이브 enum — `프롬프트 저장` / `제품 정보 저장` / `DB 목록 저장` 3 버튼 제거 후 footer `모두 적용` 단일 commit 흐름으로 통합, 메타데이터 4 종(`information_schema`/`mysql`/`sys`/`performance_schema`) 을 회색 disabled chip 으로 강제 노출(REV-20260422-0006 정책 시각화), 자유 텍스트 chip 입력을 `GET /api/admin/databases/available` 라이브 enum 기반 picker 로 교체. C5 (제품 권한 상속/override) 는 다음 cycle 로 분리(plan-eng-review 후 진행).
 - [x] TASK-0050 (REQ-20260506-0003) `make web` 의 docker compose v5.1.1 + buildx v0.31.1 provenance metadata file race 우회 — Makefile 에 `dc-build SERVICE=...` reusable 가드 타깃 추가, `web` 타깃을 `dc-build SERVICE=web` + `up -d --no-build web` 로 분리. race 한정 무시 (image 빌드 OK + 로그에 `compose-build-metadataFile` 포함 시에만 EXIT=0 정규화).
 - [x] TASK-0049 (REQ-20260506-0002) 누적된 빈 대화 일괄 정리 — `bin/cleanup-empty-conversations.sh` (dry-run 기본 + `--execute`, processing 보호 + 최근 N분 보호 + owner-account 옵션) 추가, 운영 데이터에 1회 적용 (88 → 46 conversations, 42개 정리).
 - [x] TASK-0048 (REQ-20260506-0001) "새 대화" 생성 시점 lazy 화 — 버튼 클릭 시 client-side pending state 만 표시하고, 첫 메시지 전송 시 `/api/ask` 의 lazy creation path 가 실제 row 를 만들도록 전환. 신규 빈 대화 누적 방지. **CHG-20260506-0024 후속 fix**: backend `_repair_current_conversation` 의 `create_if_missing=_account_has_permission(...)` 자동 생성 분기 5 곳 (`_build_conversations_payload`, `/api/session`, `/api/history`, `/api/delete_conversation` 의 pending/일반 두 케이스) 을 모두 비활성화. 사용자 보고 회귀 "대화 삭제 시 새 대화가 그대로 남는 이슈" 의 근본 원인을 fix — delete 응답 `current` 가 backend 에서 자동 생성된 새 cid 였던 것을 빈 문자열로 정정.
@@ -65,7 +66,42 @@ source_of_truth: true
 - [x] TASK-0030 assistant 말풍선 고정 폭 + 결과셋 내부 스크롤 + 펼침 스크롤 앵커
 - [x] TASK-0031 관리 콘솔 내부 스크롤 정리 (페이지네이션·액션 버튼 상시 노출)
 
-## 2.1 Implementation Plan (TASK-0051)
+## 2.1 Implementation Plan (TASK-0052)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 Critical 등급 (인증/인가 구조 변경) 변경 계획이다. `/plan-eng-review` (Section 1~4) + Codex outside voice (gpt-5.5, reasoning=high) 통합 후 사용자 승인 (2026-05-06) 으로 진행. 4 phase 분할 → **본 turn 은 Phase 1A 만**.
+
+<!-- PLAN-APPROVED by user on 2026-05-06 -->
+
+전체 plan: [BRIEFING-c5-permission-product-access.md](./BRIEFING-c5-permission-product-access.md). 본 §2.1 은 그 briefing 의 Phase 1A 슬라이스만 record.
+
+### Phase 1A — RBAC engine catalog 인자화 (본 turn)
+
+**목표**: Codex Claim 1 이 지적한 정적 PERMISSION_CODES 가정 (5 hot path hardwired) 을 catalog 인자 받는 형태로 refactor. **동작 변경 0**, deploy 안전성 극대화.
+
+**영향 파일**:
+- [src/app.py](../src/app.py) — `Iterable` import 추가, `_resolve_permission_catalog(conn=None)` 헬퍼 신설, 5 함수 (`_empty_permission_map`, `_apply_permission_overrides`, `_validate_permission_codes`, `_normalize_override_payload`, `_permission_catalog_payload`) 시그니처 확장 (catalog_codes/catalog_map/catalog kwarg 추가, 기본값 None = 정적 PERMISSION_CODES 사용 → 기존 동작 유지). `/api/admin/permissions` 엔드포인트가 plumbing 검증 경로 (`_resolve_permission_catalog(conn) → _permission_catalog_payload(catalog=...)`) 를 거치도록 단일 위치 전환.
+
+**접근 방법**:
+1. `_resolve_permission_catalog(conn=None)` 추가 — Phase 1A 시점은 정적 `(PERMISSION_DEFINITIONS, PERMISSION_CODES, PERMISSION_DEFINITION_MAP)` 그대로 반환. Phase 1B 가 conn 으로 WebPermissions union 하도록 body 만 교체.
+2. 5 함수의 시그니처에 `*` 강제 keyword + catalog 인자 추가. `None` 이면 기존 정적 사용 (모든 기존 callsite 가 None 인자로 호출되어 회귀 0).
+3. `/api/admin/permissions` 1 곳만 새 plumbing 으로 전환 — 정적 결과와 동일함을 HTTP smoke 로 검증.
+4. 다른 callsite (account list, role detail 의 `_apply_permission_overrides` 등) 는 Phase 1B 에서 동적 catalog 도입 시 caller-update.
+
+**위험도**: Low — 모든 기본값이 backward-compat. 단일 deploy.
+
+**검증 (완료)**:
+- (a) `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` 통과
+- (b) `make web` 컨테이너 재배포 성공 (`repo-web-1 Recreated/Started`)
+- (c) 컨테이너 in-place 코드 검사: `_resolve_permission_catalog` / `catalog_codes` 키워드 17 hits — 신규 헬퍼 deploy 확인
+- (d) bootstrap_admin 로그인 + `/api/admin/permissions` HTTP 200 + 33 codes 정상 (이전 catalog 와 동일)
+
+**Phase 1A 종료 후 후속 phase (별 cycle)**:
+- Phase 1B: WebPermissions IsDynamic/ProductId 컬럼 추가 + product 권한 backfill SQL + `_resolve_permission_catalog(conn)` body 를 DB query 로 교체 + 다른 callsite caller-update
+- Phase 1C: 8 endpoint guard 도입 (G1-G8 — briefing §3.4)
+- Phase 1D: admin UI PERMISSION_GROUP_ORDER 'product' 추가
+- Phase 2: 운영 검증
+
+## 2.1.archived Implementation Plan (TASK-0051)
 
 본 plan 은 AGENTS.md §7.1 Plan-Review-Execute 프로토콜에 따른 **Major** 등급 변경 계획이다. 사용자가 2026-05-06 직접 진행 지시(§3.1 우선순위 1) + `[A → B → C → D]` 범위 한정으로 인계됐다. C5 (제품 권한 상속/override) 는 분리되어 다음 cycle 의 plan-eng-review 후 진행한다.
 

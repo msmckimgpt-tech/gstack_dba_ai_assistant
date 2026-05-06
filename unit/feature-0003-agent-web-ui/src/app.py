@@ -15,6 +15,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from collections.abc import Iterable
 from typing import Any
 from urllib.parse import urlparse
 
@@ -279,6 +280,19 @@ PERMISSION_DEFINITIONS = (
 )
 PERMISSION_CODES = tuple(item["code"] for item in PERMISSION_DEFINITIONS)
 PERMISSION_DEFINITION_MAP = {item["code"]: item for item in PERMISSION_DEFINITIONS}
+
+
+# TASK-0052 Phase 1A: RBAC catalog 를 인자로 받는 형태로 변경 (기본값은 정적 PERMISSION_DEFINITIONS).
+# Phase 1B 에서 _resolve_permission_catalog(conn) 가 WebPermissions 의 IsDynamic=1 row 까지 합쳐
+# 동적 catalog 를 반환하도록 확장 예정. 본 refactor 자체는 동작 변경 없음.
+def _resolve_permission_catalog(conn=None) -> tuple[list[dict[str, Any]], set[str], dict[str, dict[str, Any]]]:
+    """현재 effective permission catalog 를 (definitions, codes_set, code_map) 형태로 반환.
+
+    Phase 1A: 정적 PERMISSION_DEFINITIONS 만 반환. conn 인자는 phase 1B 호환을 위한 placeholder.
+    Phase 1B (TASK-0052 의 후속 phase) 에서 conn 이 주어지면 WebPermissions 의 dynamic row 까지 union 한다.
+    """
+    _ = conn  # Phase 1A 시점에는 사용하지 않음
+    return list(PERMISSION_DEFINITIONS), set(PERMISSION_CODES), dict(PERMISSION_DEFINITION_MAP)
 SEED_ROLE_DEFINITIONS = (
     {
         "key": "pending",
@@ -580,8 +594,10 @@ def _verify_password(password: str, stored_hash: str) -> bool:
     return hmac.compare_digest(actual, expected)
 
 
-def _empty_permission_map() -> dict[str, bool]:
-    return {code: False for code in PERMISSION_CODES}
+def _empty_permission_map(catalog_codes: Iterable[str] | None = None) -> dict[str, bool]:
+    """TASK-0052 Phase 1A: catalog_codes 인자가 None 이면 정적 PERMISSION_CODES 사용 (기존 동작)."""
+    codes = catalog_codes if catalog_codes is not None else PERMISSION_CODES
+    return {code: False for code in codes}
 
 
 def _seed_role_definition(role_key: str) -> dict[str, Any] | None:
@@ -610,8 +626,11 @@ def _normalize_override_value(value: Any) -> str:
 def _apply_permission_overrides(
     base_codes: set[str] | None,
     overrides: dict[str, str] | None = None,
+    *,
+    catalog_codes: Iterable[str] | None = None,
 ) -> dict[str, bool]:
-    permissions = _empty_permission_map()
+    """TASK-0052 Phase 1A: catalog_codes 가 주어지면 그 catalog 기반으로 map 을 build."""
+    permissions = _empty_permission_map(catalog_codes)
     for code in base_codes or set():
         if code in permissions:
             permissions[code] = True
@@ -3521,8 +3540,16 @@ ORDER BY
     return items
 
 
-def _permission_catalog_payload() -> list[dict[str, Any]]:
-    return [dict(item) for item in PERMISSION_DEFINITIONS]
+def _permission_catalog_payload(
+    *,
+    catalog: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """TASK-0052 Phase 1A: catalog 가 주어지면 그 list 를, None 이면 정적 PERMISSION_DEFINITIONS 를 반환.
+
+    Phase 1B 에서 `_resolve_permission_catalog(conn)` 결과를 caller 가 전달.
+    """
+    source = catalog if catalog is not None else PERMISSION_DEFINITIONS
+    return [dict(item) for item in source]
 
 
 def _sanitize_role_key(value: str) -> str:
@@ -3571,8 +3598,13 @@ LIMIT 1
     }
 
 
-def _validate_permission_codes(codes: list[str] | set[str] | tuple[str, ...]) -> set[str]:
-    allowed = set(PERMISSION_CODES)
+def _validate_permission_codes(
+    codes: list[str] | set[str] | tuple[str, ...],
+    *,
+    catalog_codes: Iterable[str] | None = None,
+) -> set[str]:
+    """TASK-0052 Phase 1A: catalog_codes 가 주어지면 그 catalog 에 포함된 code 만 허용."""
+    allowed = set(catalog_codes) if catalog_codes is not None else set(PERMISSION_CODES)
     normalized = {str(code or "").strip() for code in codes if str(code or "").strip()}
     invalid = sorted(code for code in normalized if code not in allowed)
     if invalid:
@@ -3580,15 +3612,27 @@ def _validate_permission_codes(codes: list[str] | set[str] | tuple[str, ...]) ->
     return normalized
 
 
-def _normalize_override_payload(payload: dict[str, Any] | None) -> dict[str, str]:
+def _normalize_override_payload(
+    payload: dict[str, Any] | None,
+    *,
+    catalog_codes: Iterable[str] | None = None,
+    catalog_map: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, str]:
+    """TASK-0052 Phase 1A: catalog_codes / catalog_map 을 명시적으로 받음.
+
+    Phase 1B 에서 product 권한 override 가 들어오면 caller 가 conn-resolved catalog 를 전달.
+    None 이면 정적 PERMISSION_CODES / PERMISSION_DEFINITION_MAP 사용 (기존 동작).
+    """
+    codes = list(catalog_codes) if catalog_codes is not None else list(PERMISSION_CODES)
+    cmap = catalog_map if catalog_map is not None else PERMISSION_DEFINITION_MAP
     result: dict[str, str] = {}
-    for code in PERMISSION_CODES:
+    for code in codes:
         normalized = _normalize_override_value((payload or {}).get(code))
         if normalized == OVERRIDE_INHERIT:
             continue
         result[code] = normalized
     invalid_keys = sorted(
-        key for key in (payload or {}).keys() if str(key) not in PERMISSION_DEFINITION_MAP
+        key for key in (payload or {}).keys() if str(key) not in cmap
     )
     if invalid_keys:
         raise ValueError(f"unknown override permissions: {', '.join(map(str, invalid_keys))}")
@@ -5727,8 +5771,12 @@ async def admin_permissions(request: Request) -> JSONResponse:
     if not _account_has_permission(account, "console.access"):
         conn.close()
         return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    # TASK-0052 Phase 1A: catalog 를 _resolve_permission_catalog 경로로 조회.
+    # Phase 1A 시점에는 정적 PERMISSION_DEFINITIONS 와 동일한 결과지만, plumbing 을 미리 검증.
+    # Phase 1B 에서 conn 이 동적 product 권한까지 union 한 catalog 를 반환하도록 확장 예정.
+    catalog_definitions, _catalog_codes, _catalog_map = _resolve_permission_catalog(conn)
     conn.close()
-    return JSONResponse({"permissions": _permission_catalog_payload()})
+    return JSONResponse({"permissions": _permission_catalog_payload(catalog=catalog_definitions)})
 
 
 @app.get("/api/admin/products")

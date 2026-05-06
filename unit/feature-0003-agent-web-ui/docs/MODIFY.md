@@ -8,6 +8,31 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260506-0025
+- Date: 2026-05-06
+- Summary: TASK-0052 (REQ-20260506-0005, Critical §12.3 인증/인가 구조 변경) Phase 1A — RBAC engine catalog 인자화 refactor. Codex Claim 1 (정적 PERMISSION_CODES 가정에 5 hot path hardwired) 의 1 단계 해소. 동작 변경 0, plumbing 만 추가. Phase 1B (DB-driven catalog + product 권한 backfill) 진입을 위한 surface 준비.
+- Files:
+  - [unit/feature-0003-agent-web-ui/src/app.py](../src/app.py)
+    - L18~19: `from collections.abc import Iterable` import 추가
+    - L290~ 신규 `_resolve_permission_catalog(conn=None) -> tuple[list, set, dict]` 헬퍼 — Phase 1A 시점은 정적 `(PERMISSION_DEFINITIONS, PERMISSION_CODES, PERMISSION_DEFINITION_MAP)` 그대로 반환. Phase 1B 에서 conn 인자 사용해 WebPermissions IsDynamic=1 row union 으로 교체 예정.
+    - `_empty_permission_map(catalog_codes=None)` 시그니처 확장 — None 이면 정적 PERMISSION_CODES 사용 (기존 동작).
+    - `_apply_permission_overrides(base_codes, overrides=None, *, catalog_codes=None)` 시그니처 확장 — catalog_codes 가 주어지면 그 catalog 기반으로 map build.
+    - `_validate_permission_codes(codes, *, catalog_codes=None)` 시그니처 확장.
+    - `_normalize_override_payload(payload, *, catalog_codes=None, catalog_map=None)` 시그니처 확장.
+    - `_permission_catalog_payload(*, catalog=None)` 시그니처 확장 — caller 가 명시적 catalog 전달 가능.
+    - `/api/admin/permissions` 엔드포인트 (L5761) — 단일 위치를 신규 plumbing 경로 (`_resolve_permission_catalog(conn) → _permission_catalog_payload(catalog=...)`) 로 전환. Phase 1A 검증용. 다른 callsite 는 Phase 1B 에서 caller-update.
+- Verification:
+  - (a) `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` 통과.
+  - (b) `make web` EXIT=0 (provenance metadata file race 우회 정상) + `repo-web-1 Recreated/Started`.
+  - (c) `docker exec repo-web-1 grep -c "_resolve_permission_catalog\|catalog_codes" /app/web/app.py` → 17 hits, 신규 코드 deploy 확인.
+  - (d) bootstrap_admin login → `/api/admin/permissions` HTTP 200, count=33 codes (이전과 동일). 첫 3: `console.access`/`console.manage`/`account.read`. 마지막 3: `conversation.finalize.any`/`product.manage`/`system_prompt.manage.role.any` — 정확히 이전 catalog 와 일치.
+- Risks:
+  - **Backward-compat default 검증된 callsite**: `_apply_permission_overrides` (3 callsites at L854/3681/5403), `_validate_permission_codes` (2 callsites at L5545/5624), `_normalize_override_payload` (1 callsite at L5395) 모두 catalog_codes/catalog_map kwarg 미전달 — 기본값 None → 정적 PERMISSION_CODES 사용 → 기존 동작 유지. 회귀 0.
+  - **L3518/3570 `for code in PERMISSION_CODES`** (role payload `permissions` map) 는 Phase 1A 에서 변경 없음. Phase 1B 에서 dynamic 코드 추가 시 caller 가 catalog 를 전달하도록 update.
+  - **Container deploy 검증**: `/api/admin/permissions` 만 신규 plumbing 사용. 정적 결과와 동일함 HTTP smoke 로 확인.
+- Range: app.py +~30 lines (helper + 5 시그니처 확장 + 1 callsite 전환). 신규 파일 0 개.
+- Notes: Phase 1A 는 briefing §12 권고 ("Phase 1A 단독 deploy 가능") 따라 분리 commit 권장. Phase 1B 가 conn-driven catalog 도입 + product 권한 backfill 을 담당. 본 turn 은 Phase 1B 진입을 위한 plumbing 만.
+
 ## CHG-20260506-0024
 - Date: 2026-05-06
 - Summary: TASK-0048 후속 fix — backend `_repair_current_conversation` 호출처 5 곳의 `create_if_missing=_account_has_permission(...)` 자동 생성 분기를 모두 비활성화. 사용자 보고 회귀 ("대화 삭제 시 새 대화가 그대로 남는 이슈") 의 근본 원인은 `/api/delete_conversation` 응답 `current` 필드가 backend 의 자동 생성 분기로 또 다른 빈 cid 를 발급해서 frontend 가 그것을 active 로 채택해 사이드바에 다시 등장하던 것. lazy 정책의 일관성을 backend 전 경로에 적용한다.

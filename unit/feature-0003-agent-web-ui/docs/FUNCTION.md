@@ -104,6 +104,8 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 - AC-0028: pending 상태에서 사이드바의 다른 실 대화를 선택하면 pending 모드가 자동 종료되고 placeholder 가 사라진다 (backend row 가 만들어지지 않았으므로 cleanup 불필요).
 - AC-0029: pending 단계의 `/api/ask` 실패는 attach/resume 다이얼로그(AC-0018) 를 활성화하지 않고 "다시 시도하거나 사이드바를 새로고침해 주세요" 안내 토스트만 노출한다 (cid 발급 여부가 client 에 불확실).
 - AC-0030: `request_conversation_id` 명시된 기존 대화 경로의 `/api/ask` 는 body 의 `product_mode`/`product_id` hint 를 무시한다 (대화 product 변경의 단독 진실은 `PATCH /api/conversations/{cid}/product` race 가드 — AC-0013 보존).
+- AC-0031: `_resolve_permission_catalog(conn=None)` 가 RBAC catalog 의 single point of customization 으로 존재한다. Phase 1A 시점은 정적 `(PERMISSION_DEFINITIONS, PERMISSION_CODES, PERMISSION_DEFINITION_MAP)` 그대로 반환하며, Phase 1B 가 conn 인자를 사용해 WebPermissions 의 IsDynamic=1 row 까지 union 한 catalog 를 반환하도록 body 만 교체된다. 5 hot path 함수 (`_empty_permission_map`/`_apply_permission_overrides`/`_validate_permission_codes`/`_normalize_override_payload`/`_permission_catalog_payload`) 는 keyword-only catalog 인자 (default=None → 정적 사용) 를 받아 dynamic catalog 와 호환된다.
+- AC-0032: `/api/admin/permissions` 응답은 `_resolve_permission_catalog(conn) → _permission_catalog_payload(catalog=...)` 경로를 거쳐 반환된다. Phase 1A 시점은 정적 catalog 와 동일한 33 codes, Phase 1B 가 동적 product 권한을 추가하면 그 codes 까지 자동 노출된다.
 
 ## 12. Observability
 - 웹 세션: `../../../../artifacts/shared/web_sessions`
