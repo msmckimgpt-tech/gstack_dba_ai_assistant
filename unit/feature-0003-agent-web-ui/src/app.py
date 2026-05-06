@@ -266,8 +266,8 @@ PERMISSION_DEFINITIONS = (
     },
     {
         "code": "product.manage",
-        "label": "상품 관리",
-        "description": "상품(Product) 생성/수정/삭제 및 접근 DB 스키마, 상품 시스템 프롬프트를 관리할 수 있다.",
+        "label": "제품 관리",
+        "description": "제품(Product) 생성/수정/삭제 및 접근 DB 스키마, 제품 시스템 프롬프트를 관리할 수 있다.",
         "group": "product",
     },
     {
@@ -1493,6 +1493,125 @@ def _product_allowed_schemas(conn, product_id: int) -> list[str]:
     return [str(r[0]) for r in rows if r and r[0]]
 
 
+# ──────────────────────────────────────────────────────────────────
+#  TASK-0047 — Product 선호 / 대화 모드 헬퍼
+# ──────────────────────────────────────────────────────────────────
+_VALID_PRODUCT_MODES: frozenset[str] = frozenset({"auto", "pinned"})
+
+
+def _normalize_product_mode(value: Any, default: str = "pinned") -> str:
+    text = str(value or "").strip().lower()
+    return text if text in _VALID_PRODUCT_MODES else default
+
+
+def _load_account_product_pref(
+    conn, account_id: int, products: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """WebAccounts 의 직전 ProductPref 를 읽어 클라이언트가 hydrate 가능한 형태로 반환.
+
+    pinned_id 가 (a) 비활성/삭제되었거나 (b) 현재 active products 에 없으면 자동으로 auto 로 강등한다.
+    이는 Codex 검토 의견(차후 리스크: pinned 가 inactive 가 된 경우 silent 잘못된 선택) 대응의 1차 가드.
+    """
+    if account_id <= 0:
+        return {"mode": "auto", "pinned_id": None, "fallback_reason": ""}
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            "SELECT ProductPrefMode AS mode, ProductPrefPinnedId AS pinned_id "
+            "FROM WebAccounts WHERE Id = %s LIMIT 1",
+            (int(account_id),),
+        )
+        row = cur.fetchone() or {}
+        cur.close()
+    except Exception:
+        return {"mode": "auto", "pinned_id": None, "fallback_reason": ""}
+    raw_mode = _normalize_product_mode(row.get("mode"), default="auto")
+    raw_pid = row.get("pinned_id")
+    pinned_id = int(raw_pid) if raw_pid not in (None, "") else None
+    fallback_reason = ""
+    if raw_mode == "pinned":
+        active_ids = {int(p.get("id") or 0) for p in (products or []) if p.get("is_active")}
+        if not pinned_id or pinned_id not in active_ids:
+            raw_mode = "auto"
+            pinned_id = None
+            fallback_reason = "pinned_inactive"
+    return {"mode": raw_mode, "pinned_id": pinned_id, "fallback_reason": fallback_reason}
+
+
+def _save_account_product_pref(
+    conn, account_id: int, *, mode: str, pinned_id: int | None
+) -> None:
+    if account_id <= 0:
+        return
+    norm_mode = _normalize_product_mode(mode, default="auto")
+    norm_pid = int(pinned_id) if pinned_id and norm_mode == "pinned" else None
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE WebAccounts SET ProductPrefMode = %s, ProductPrefPinnedId = %s WHERE Id = %s",
+            (norm_mode, norm_pid, int(account_id)),
+        )
+        cur.close()
+    except Exception:
+        pass
+
+
+def _load_conversation_product(conn, conversation_id: str) -> dict[str, Any] | None:
+    """대화의 현재 product_id / product_mode / product_key / name 을 통합 반환."""
+    if not conversation_id:
+        return None
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """
+SELECT c.product_id   AS product_id,
+       c.product_mode AS product_mode,
+       p.ProductKey   AS product_key,
+       p.Name         AS product_name,
+       p.IsActive     AS product_is_active
+FROM AgentCoreConversations c
+LEFT JOIN WebProducts p ON p.Id = c.product_id
+WHERE c.conversation_id = %s
+LIMIT 1
+            """,
+            (conversation_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+    except Exception:
+        return None
+    if not row:
+        return None
+    pid = int(row.get("product_id") or 0) or None
+    mode = _normalize_product_mode(row.get("product_mode"), default="pinned")
+    return {
+        "product_id": pid,
+        "product_mode": mode,
+        "product_key": str(row.get("product_key") or "") or None,
+        "product_name": str(row.get("product_name") or "") or None,
+        "product_is_active": bool(row.get("product_is_active")) if row.get("product_is_active") is not None else None,
+    }
+
+
+def _conversation_is_processing(conn, conversation_id: str) -> bool:
+    """진행 중 ask 가 있는지 (race 가드용). AgentMemoryKv.last_status 를 진실원으로 사용한다."""
+    if not conversation_id:
+        return False
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT `Value` FROM AgentMemoryKv "
+            "WHERE ConversationId = %s AND `Key` = 'last_status' LIMIT 1",
+            (conversation_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+    except Exception:
+        return False
+    status = str((row or [""])[0] or "").strip().lower()
+    return status == "processing"
+
+
 def _load_system_prompt(
     conn,
     *,
@@ -1839,10 +1958,21 @@ def _runtime_tables_available() -> bool:
             ):
                 cur.execute(f"SELECT 1 FROM `{table_name}` LIMIT 1")
                 cur.fetchall()
+            # TASK-0047: 신규 컬럼 존재까지 검증해 신규 배포가 fast-path 를 우회하고
+            # `_ensure_web_tables` 의 idempotent ALTER 들을 한 번 더 실행하도록 한다.
+            # 컬럼 누락 시 errno 1054(Unknown column)가 발생 → False 반환 → full 마이그레이션 트리거.
+            for column_check in (
+                "SELECT `product_mode` FROM `AgentCoreConversations` LIMIT 1",
+                "SELECT `ProductPrefMode` FROM `WebAccounts` LIMIT 1",
+                "SELECT `ProductPrefPinnedId` FROM `WebAccounts` LIMIT 1",
+            ):
+                cur.execute(column_check)
+                cur.fetchall()
         finally:
             cur.close()
     except mysql.connector.Error as exc:
-        if int(getattr(exc, "errno", 0) or 0) == 1146:
+        # 1146=Unknown table, 1054=Unknown column — 둘 다 신규 마이그레이션이 필요함을 의미.
+        if int(getattr(exc, "errno", 0) or 0) in (1146, 1054):
             return False
         raise
     finally:
@@ -1956,6 +2086,17 @@ def _ensure_web_tables():
             cur.execute("CREATE INDEX IX_WebAccounts_DeletedAt ON WebAccounts (DeletedAt)")
         except Exception:
             pass
+        # TASK-0047: 사용자별 직전 Product 선호 (재로그인 시 복원에 사용).
+        # ProductPrefMode: 'auto' | 'pinned' | NULL(미설정 — 서버 default 적용).
+        # ProductPrefPinnedId: pinned 일 때만 의미 있고, auto/NULL 일 때는 무시한다.
+        try:
+            cur.execute("ALTER TABLE WebAccounts ADD COLUMN ProductPrefMode VARCHAR(8) NULL")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE WebAccounts ADD COLUMN ProductPrefPinnedId BIGINT NULL")
+        except Exception:
+            pass
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS WebPermissions (
@@ -2061,6 +2202,14 @@ def _ensure_web_tables():
         try:
             cur.execute(
                 "CREATE INDEX IX_AgentCoreConversations_Product ON AgentCoreConversations (product_id)"
+            )
+        except Exception:
+            pass
+        # TASK-0047: 대화별 product_mode ('pinned'|'auto') — auto 는 일반 대화 모드.
+        try:
+            cur.execute(
+                "ALTER TABLE AgentCoreConversations "
+                "ADD COLUMN product_mode VARCHAR(8) NOT NULL DEFAULT 'pinned'"
             )
         except Exception:
             pass
@@ -3261,22 +3410,15 @@ def _resolve_conversation_for_account(
 
 
 def _build_conversations_payload(conn, account: dict[str, Any]) -> dict[str, Any]:
-    can_create = _account_has_permission(account, "conversation.create")
     items = _list_conversations(limit=200, account=account, conn=conn)
+    # TASK-0048 후속 fix: list 응답을 만들 때 자동으로 빈 대화를 생성하지 않는다 (lazy 정책).
+    # 사용자가 "새 대화" 버튼을 누르고 첫 메시지를 보낼 때만 backend row 가 만들어진다.
     current_id = _repair_current_conversation(
         conn,
         account,
         items=items,
-        create_if_missing=can_create,
+        create_if_missing=False,
     )
-    if current_id and not any(str(item.get("id") or "") == current_id for item in items):
-        items = _list_conversations(limit=200, account=account, conn=conn)
-        current_id = _repair_current_conversation(
-            conn,
-            account,
-            items=items,
-            create_if_missing=False,
-        )
     for item in items:
         item["is_current"] = item.get("id") == current_id
     return {"items": items, "current": current_id}
@@ -3588,10 +3730,11 @@ def get_session(request: Request) -> JSONResponse:
                 "default_model": os.getenv("OPENAI_MODEL", "auto"),
             }
         )
+    # TASK-0048 후속 fix: /api/session 응답 조립 시 자동으로 빈 대화를 만들지 않는다 (lazy 정책).
     conversation_id = _repair_current_conversation(
         conn,
         account,
-        create_if_missing=_account_has_permission(account, "conversation.create"),
+        create_if_missing=False,
     )
     try:
         products = _list_products(conn, include_inactive=False)
@@ -3599,6 +3742,9 @@ def get_session(request: Request) -> JSONResponse:
     except Exception:
         products = []
         default_pid = 0
+    # TASK-0047: 사용자 ProductPref 복원 + 현재 대화의 product_mode/product_id 동봉.
+    product_pref = _load_account_product_pref(conn, int(account.get("id") or 0), products)
+    conversation_product = _load_conversation_product(conn, conversation_id) if conversation_id else None
     payload = {
         "authenticated": True,
         "user": _serialize_account(account),
@@ -3608,6 +3754,8 @@ def get_session(request: Request) -> JSONResponse:
         "public_url": WEB_PUBLIC_URL,
         "products": products,
         "default_product_id": int(default_pid) if default_pid else None,
+        "product_pref": product_pref,
+        "conversation_product": conversation_product,
     }
     conn.close()
     return JSONResponse(payload)
@@ -3702,6 +3850,39 @@ async def ask(request: Request) -> JSONResponse:
             request_conversation_id,
             create_if_missing=True,
         )
+        # TASK-0048: client (특히 사이드바 "새 대화" 버튼이 lazy 화된 frontend) 가 첫 메시지에 함께 보낸
+        # product hint 를 이 시점에 적용한다. /api/new_conversation 의 동등한 분기를 ask body 안으로 이식.
+        # 기존 대화(`request_conversation_id` 명시) 경로에는 적용하지 않는다 — 대화 product 는 이미 결정된
+        # 상태이며, 변경 경로는 `PATCH /api/conversations/{cid}/product` 의 race 가드 단독 진실(TASK-0047).
+        try:
+            hint_raw_mode = data.get("product_mode") if isinstance(data, dict) else None
+            hint_raw_pid = data.get("product_id") if isinstance(data, dict) else None
+            if hint_raw_mode is not None or hint_raw_pid is not None:
+                hint_mode = _normalize_product_mode(hint_raw_mode, default="pinned")
+                hint_pid: int | None = None
+                if hint_raw_pid is not None and str(hint_raw_pid).strip() != "":
+                    try:
+                        hint_pid = int(hint_raw_pid)
+                    except Exception:
+                        hint_pid = None
+                if hint_mode == "auto":
+                    hint_pid = None
+                elif not hint_pid:
+                    hint_pid = _get_default_product_id(conn) or None
+                if conv_id:
+                    cur_h = conn.cursor()
+                    cur_h.execute(
+                        "UPDATE AgentCoreConversations SET product_id = %s, product_mode = %s "
+                        "WHERE conversation_id = %s",
+                        (int(hint_pid) if hint_pid else None, hint_mode, conv_id),
+                    )
+                    cur_h.close()
+                    _save_account_product_pref(
+                        conn, int(account["id"]), mode=hint_mode, pinned_id=hint_pid
+                    )
+        except Exception:
+            # hint 적용 실패는 ask 자체를 막지 않는다 — default('pinned' + default product) 로 fallback.
+            pass
     slot_key = f"account:{int(account['id'])}"
     if not _acquire_request_slot(slot_key):
         conn.close()
@@ -3723,33 +3904,46 @@ async def ask(request: Request) -> JSONResponse:
         temp_value = 0.0 if _model_supports_temperature(model) else None
 
         # ── Product / Role / Account 기반 system prompt depth 컨텍스트 해결 ──
+        # TASK-0047: 대화의 product_mode 까지 함께 조회. mode='auto' 면 product 한정 prompt/allowed schemas 를
+        # 주입하지 않고, 메타데이터 4 스키마만 허용한다(빈 리스트). 향후 LLM resolver 가 도입되면 그 시점에
+        # 한해 turn-local product 가 추론된다 (BRIEFING-product-selector-v1.md 참조).
+        product_mode_for_run: str = "pinned"
         try:
             product_id_for_run: int | None = None
             if conv_id:
                 cur_p = conn.cursor()
                 cur_p.execute(
-                    "SELECT product_id FROM AgentCoreConversations WHERE conversation_id = %s",
+                    "SELECT product_id, product_mode FROM AgentCoreConversations WHERE conversation_id = %s",
                     (conv_id,),
                 )
                 row_p = cur_p.fetchone()
                 cur_p.close()
-                if row_p and row_p[0] is not None:
-                    product_id_for_run = int(row_p[0])
-            if not product_id_for_run:
-                product_id_for_run = _get_default_product_id(conn) or None
-            if product_id_for_run and conv_id:
-                try:
-                    cur_u = conn.cursor()
-                    cur_u.execute(
-                        "UPDATE AgentCoreConversations SET product_id = %s WHERE conversation_id = %s AND (product_id IS NULL OR product_id = 0)",
-                        (int(product_id_for_run), conv_id),
-                    )
-                    cur_u.close()
-                except Exception:
-                    pass
-            allowed_schemas_for_run = (
-                _product_allowed_schemas(conn, int(product_id_for_run)) if product_id_for_run else None
-            )
+                if row_p:
+                    if row_p[0] is not None:
+                        product_id_for_run = int(row_p[0])
+                    product_mode_for_run = _normalize_product_mode(row_p[1], default="pinned")
+            if product_mode_for_run == "auto":
+                # auto 모드: 기존 default 자동 채움 경로를 우회한다 (의도 보존).
+                product_id_for_run = None
+                allowed_schemas_for_run = []  # 메타 4 스키마만 허용 (cross-product leak 차단)
+            else:
+                if not product_id_for_run:
+                    product_id_for_run = _get_default_product_id(conn) or None
+                if product_id_for_run and conv_id:
+                    try:
+                        cur_u = conn.cursor()
+                        cur_u.execute(
+                            "UPDATE AgentCoreConversations SET product_id = %s "
+                            "WHERE conversation_id = %s AND (product_id IS NULL OR product_id = 0)",
+                            (int(product_id_for_run), conv_id),
+                        )
+                        cur_u.close()
+                    except Exception:
+                        pass
+                allowed_schemas_for_run = (
+                    _product_allowed_schemas(conn, int(product_id_for_run))
+                    if product_id_for_run else None
+                )
             role_id_for_run: int | None = None
             try:
                 role_payload = _role_payload(account) or {}
@@ -3761,6 +3955,7 @@ async def ask(request: Request) -> JSONResponse:
             product_id_for_run = None
             allowed_schemas_for_run = None
             role_id_for_run = None
+            product_mode_for_run = "pinned"
 
         agent_result = await asyncio.to_thread(
             _run_agent_core,
@@ -3775,6 +3970,7 @@ async def ask(request: Request) -> JSONResponse:
             role_id=role_id_for_run,
             account_id=int(account["id"]),
             allowed_schemas=allowed_schemas_for_run,
+            product_mode=product_mode_for_run,
         )
         conversation_id = str(agent_result.get("conversation_id") or "").strip()
         if conversation_id:
@@ -3840,6 +4036,9 @@ async def new_conversation(request: Request) -> JSONResponse:
     if not _account_has_permission(account, "conversation.create"):
         conn.close()
         return _json_error("권한이 없습니다.", 403)
+    # TASK-0047: body 확장 — `mode='auto'|'pinned'`. 생략 시 기존 동작(pinned + default product) 보존.
+    raw_mode = (data or {}).get("mode") if isinstance(data, dict) else None
+    req_mode = _normalize_product_mode(raw_mode, default="pinned")
     req_product_id: int | None = None
     raw_product = (data or {}).get("product_id")
     if raw_product is not None and str(raw_product).strip() != "":
@@ -3847,24 +4046,130 @@ async def new_conversation(request: Request) -> JSONResponse:
             req_product_id = int(raw_product)
         except Exception:
             req_product_id = None
-    if not req_product_id:
+    if req_mode == "auto":
+        # auto 의도면 product_id 를 hint cache 로만 두고 명시 핀은 해제.
+        req_product_id = None
+    elif not req_product_id:
+        # pinned 인데 명시 product_id 가 없으면 기존 default 채움 동작 유지.
         req_product_id = _get_default_product_id(conn) or None
     from agent_core import create_new_conversation as _create_conv
     cid = _create_conv(conv_file=_account_conv_file(int(account["id"])))
     _assign_conversation_owner(conn, cid, int(account["id"]), force=True)
     _set_account_current_conversation(conn, int(account["id"]), cid)
-    if req_product_id:
-        try:
-            cur = conn.cursor()
-            cur.execute(
-                "UPDATE AgentCoreConversations SET product_id = %s WHERE conversation_id = %s",
-                (int(req_product_id), cid),
-            )
-            cur.close()
-        except Exception:
-            pass
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE AgentCoreConversations SET product_id = %s, product_mode = %s "
+            "WHERE conversation_id = %s",
+            (int(req_product_id) if req_product_id else None, req_mode, cid),
+        )
+        cur.close()
+    except Exception:
+        pass
+    # 사용자 직전 선택을 서버에 보존 (재로그인 시 hydrate 용).
+    _save_account_product_pref(
+        conn, int(account["id"]), mode=req_mode, pinned_id=req_product_id
+    )
     conn.close()
-    return JSONResponse({"conversation_id": cid, "output": f"새 대화: {cid}", "product_id": req_product_id})
+    return JSONResponse({
+        "conversation_id": cid,
+        "output": f"새 대화: {cid}",
+        "product_id": req_product_id,
+        "product_mode": req_mode,
+    })
+
+
+@app.patch("/api/conversations/{cid}/product")
+async def update_conversation_product(cid: str, request: Request) -> JSONResponse:
+    """대화의 product_id / product_mode 를 변경한다 (TASK-0047).
+
+    body: { product_id: int|null, mode: 'auto'|'pinned' }
+    - mode='auto' ⇒ product_id 는 무시되고 NULL 로 저장된다 (사용자 의도: 일반 대화).
+    - mode='pinned' ⇒ product_id 가 활성 product 여야 한다.
+    - 진행 중 ask(`AgentMemoryKv.last_status='processing'`) 가 있으면 409 로 거부.
+      이는 Codex 검토 의견의 PATCH race 가드(turn 단위 immutability) 1차 구현이다.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    if not cid or not isinstance(cid, str):
+        return _json_error("invalid conversation id", 400)
+    raw_mode = data.get("mode") if isinstance(data, dict) else None
+    raw_pid = data.get("product_id") if isinstance(data, dict) else None
+    mode = _normalize_product_mode(raw_mode, default="pinned")
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    # 권한: 자기 대화에 ask 가능한 사용자만 변경 허용.
+    if not _account_has_permission(account, "conversation.ask"):
+        conn.close()
+        return _json_error("권한이 없습니다.", 403)
+    if not _conversation_exists(cid, conn=conn):
+        conn.close()
+        return _json_error("conversation not found", 404)
+    if not _conversation_owned_by_account(conn, cid, int(account["id"])):
+        conn.close()
+        return _json_error("타 계정 대화는 변경할 수 없습니다.", 403)
+    # turn 단위 immutability 가드.
+    if _conversation_is_processing(conn, cid):
+        conn.close()
+        return _json_error(
+            "응답 처리 중에는 제품을 변경할 수 없습니다. 응답 완료 후 다시 시도해 주세요.", 409
+        )
+
+    pinned_id: int | None = None
+    if mode == "pinned":
+        if raw_pid in (None, "", 0):
+            conn.close()
+            return _json_error("pinned 모드에서는 product_id 가 필요합니다.", 400)
+        try:
+            pinned_id = int(raw_pid)
+        except Exception:
+            conn.close()
+            return _json_error("invalid product_id", 400)
+        # 활성 + 권한 가능성 검사.
+        try:
+            cur_v = conn.cursor()
+            cur_v.execute(
+                "SELECT IsActive FROM WebProducts WHERE Id = %s LIMIT 1",
+                (pinned_id,),
+            )
+            row_v = cur_v.fetchone()
+            cur_v.close()
+        except Exception:
+            row_v = None
+        if not row_v or not int(row_v[0] or 0):
+            conn.close()
+            return _json_error("선택한 제품을 사용할 수 없습니다.", 400)
+
+    try:
+        cur_u = conn.cursor()
+        cur_u.execute(
+            "UPDATE AgentCoreConversations SET product_id = %s, product_mode = %s "
+            "WHERE conversation_id = %s",
+            (pinned_id, mode, cid),
+        )
+        cur_u.close()
+    except Exception:
+        conn.close()
+        return _json_error("대화 제품 정보를 변경하지 못했습니다.", 500)
+    # 사용자 직전 선택 보존.
+    _save_account_product_pref(conn, int(account["id"]), mode=mode, pinned_id=pinned_id)
+    payload = _load_conversation_product(conn, cid) or {
+        "product_id": pinned_id,
+        "product_mode": mode,
+        "product_key": None,
+        "product_name": None,
+    }
+    payload["conversation_id"] = cid
+    conn.close()
+    return JSONResponse(payload)
 
 
 @app.post("/api/fork_conversation")
@@ -4158,10 +4463,11 @@ def history(
             else ""
         )
     else:
+        # TASK-0048 후속 fix: /api/history 응답 조립 시 자동으로 빈 대화를 만들지 않는다 (lazy 정책).
         conv_id = _repair_current_conversation(
             conn,
             account,
-            create_if_missing=_account_has_permission(account, "conversation.create"),
+            create_if_missing=False,
         )
     if conv_id:
         messages, has_more, oldest_id, total_count, user_count = _get_history(
@@ -4336,21 +4642,24 @@ async def delete_conversation(request: Request) -> JSONResponse:
             mark_cancel_requested(conn, conversation_id, run_id=run_id)
             mark_delete_requested(conn, conversation_id, run_id=run_id)
             _clear_accounts_current_conversation(conn, conversation_id)
+            # TASK-0048 후속 fix: 대화 삭제 후 자동으로 빈 새 대화를 만들지 않는다 (lazy 정책).
+            # 사용자가 "새 대화" 버튼을 다시 눌러야 한다 — 사용자 보고 회귀(2026-05-06): "대화 삭제 시 새 대화가 그대로 남는 이슈" 의 backend 측 원인.
             current_after = _repair_current_conversation(
                 conn,
                 account,
                 items=[],
-                create_if_missing=_account_has_permission(account, "conversation.create"),
+                create_if_missing=False,
             )
             conn.close()
             return JSONResponse({"deleted_pending": conversation_id, "current": current_after})
         delete_conversation_records(conn, conversation_id)
         _clear_accounts_current_conversation(conn, conversation_id)
+        # TASK-0048 후속 fix: 대화 삭제 후 자동으로 빈 새 대화를 만들지 않는다 (lazy 정책).
         current_after = _repair_current_conversation(
             conn,
             account,
             items=[],
-            create_if_missing=_account_has_permission(account, "conversation.create"),
+            create_if_missing=False,
         )
         conn.close()
         return JSONResponse({"deleted": conversation_id, "current": current_after})
@@ -5458,7 +5767,7 @@ async def admin_create_product(request: Request) -> JSONResponse:
         return error
     if not _account_has_permission(account, "product.manage"):
         conn.close()
-        return _json_error("상품 관리 권한이 필요합니다.", 403)
+        return _json_error("제품 관리 권한이 필요합니다.", 403)
     product_key = str(data.get("product_key") or "").strip().upper()
     name = str(data.get("name") or "").strip()
     description = str(data.get("description") or "").strip()
@@ -5510,7 +5819,7 @@ async def admin_update_product(product_id: int, request: Request) -> JSONRespons
         return error
     if not _account_has_permission(account, "product.manage"):
         conn.close()
-        return _json_error("상품 관리 권한이 필요합니다.", 403)
+        return _json_error("제품 관리 권한이 필요합니다.", 403)
     cur = conn.cursor(dictionary=True)
     cur.execute("SELECT Id, ProductKey FROM WebProducts WHERE Id = %s", (int(product_id),))
     existing = cur.fetchone()
@@ -5564,7 +5873,7 @@ async def admin_delete_product(product_id: int, request: Request) -> JSONRespons
         return error
     if not _account_has_permission(account, "product.manage"):
         conn.close()
-        return _json_error("상품 관리 권한이 필요합니다.", 403)
+        return _json_error("제품 관리 권한이 필요합니다.", 403)
     cur = conn.cursor()
     cur.execute(
         "SELECT COUNT(*) FROM AgentCoreConversations WHERE product_id = %s",
@@ -5574,13 +5883,70 @@ async def admin_delete_product(product_id: int, request: Request) -> JSONRespons
     if in_use > 0:
         cur.close()
         conn.close()
-        return _json_error("이 상품을 참조하는 대화가 있어 삭제할 수 없습니다. (대신 비활성화를 사용하세요)", 400)
+        return _json_error("이 제품을 참조하는 대화가 있어 삭제할 수 없습니다. (대신 비활성화를 사용하세요)", 400)
     cur.execute("DELETE FROM WebSystemPrompts WHERE ProductId = %s", (int(product_id),))
     cur.execute("DELETE FROM WebProductDatabases WHERE ProductId = %s", (int(product_id),))
     cur.execute("DELETE FROM WebProducts WHERE Id = %s", (int(product_id),))
     cur.close()
     conn.close()
     return JSONResponse({"ok": True, "product_id": int(product_id)})
+
+
+_DATABASES_AVAILABLE_METADATA = ("information_schema", "mysql", "sys", "performance_schema")
+_DATABASES_AVAILABLE_INTERNAL = ("agent_memory",)
+_DATABASES_AVAILABLE_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]{0,63}$")
+
+
+@app.get("/api/admin/databases/available")
+async def admin_list_available_databases(request: Request) -> JSONResponse:
+    """Live MySQL `SHOW DATABASES` enumeration for the product DB whitelist picker.
+
+    - 권한: `console.access` (등록은 별도로 `product.manage` 가 필요한 PUT /api/admin/products/{id}/databases 에서 검사).
+    - `metadata_schemas`: 정책상 항상 접근 가능한 4 종 (REV-20260422-0006). 실제 서버 존재 여부는 `present` 필드로 표기.
+    - `user_schemas`: 메타·내부(`agent_memory`, MEMORY_DB) 제외 + 정규식 통과 schema 만 정렬해 반환.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(account, "console.access"):
+        conn.close()
+        return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    conn.close()
+
+    try:
+        probe = _open_memory_connection(database=None)
+    except Exception:
+        return _json_error("DB 목록 조회 실패", 500)
+    try:
+        cur = probe.cursor()
+        try:
+            cur.execute("SHOW DATABASES")
+            rows = [str((r[0] if isinstance(r, tuple) else r) or "").lower() for r in cur.fetchall()]
+        finally:
+            cur.close()
+    finally:
+        probe.close()
+
+    present = {name for name in rows if name}
+    metadata_payload = [
+        {"schema_name": name, "present": name in present, "always_accessible": True}
+        for name in _DATABASES_AVAILABLE_METADATA
+    ]
+    excluded = set(_DATABASES_AVAILABLE_METADATA) | set(_DATABASES_AVAILABLE_INTERNAL)
+    excluded.add(MEMORY_DB.lower())
+    user_schemas = sorted(
+        name for name in present
+        if name not in excluded and _DATABASES_AVAILABLE_NAME_RE.match(name)
+    )
+    return JSONResponse({
+        "metadata_schemas": metadata_payload,
+        "user_schemas": user_schemas,
+    })
 
 
 @app.put("/api/admin/products/{product_id}/databases")
@@ -5601,7 +5967,7 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
         return error
     if not _account_has_permission(account, "product.manage"):
         conn.close()
-        return _json_error("상품 관리 권한이 필요합니다.", 403)
+        return _json_error("제품 관리 권한이 필요합니다.", 403)
     cur = conn.cursor()
     cur.execute("SELECT Id FROM WebProducts WHERE Id = %s", (int(product_id),))
     if not cur.fetchone():
@@ -5668,7 +6034,7 @@ async def admin_get_system_prompt(
     if scope == "product":
         if not _account_has_permission(actor, "product.manage"):
             conn.close()
-            return _json_error("상품 시스템 프롬프트 조회 권한이 없습니다.", 403)
+            return _json_error("제품 시스템 프롬프트 조회 권한이 없습니다.", 403)
     elif scope == "role":
         if not _account_has_permission(actor, "system_prompt.manage.role.any"):
             conn.close()
@@ -5714,7 +6080,7 @@ async def admin_put_system_prompt(request: Request) -> JSONResponse:
     if scope == "product":
         if not _account_has_permission(actor, "product.manage"):
             conn.close()
-            return _json_error("상품 시스템 프롬프트 관리 권한이 없습니다.", 403)
+            return _json_error("제품 시스템 프롬프트 관리 권한이 없습니다.", 403)
         if not product_id:
             conn.close()
             return _json_error("product_id 가 필요합니다.", 400)

@@ -118,16 +118,28 @@ def compose_system_prompt(
     product_id: int | None = None,
     role_id: int | None = None,
     account_id: int | None = None,
+    product_mode: str = "pinned",
 ) -> str:
     """Product → Role → Account 순으로 custom 시스템 프롬프트를 base 뒤에 append 한다.
 
     각 scope 에서 `ProductId` 가 있는(현재 product 한정) prompt 를 우선 사용하고, 없으면
     `ProductId IS NULL` 의 범용 prompt 를 fallback 으로 쓴다. mem_conn 이 None 이거나 테이블이
     없으면 base SYSTEM_PROMPT 를 그대로 반환.
+
+    product_mode='auto' 인 경우(사용자가 특정 제품을 고정하지 않은 일반 대화 모드):
+      - PRODUCT CONTEXT 블록은 주입하지 않는다 (제품 한정 가이드가 없으므로 일반 답변 유도).
+      - 대신 한 줄 AUTO MODE 안내를 base 직후에 append 해 LLM 이 "제품 미선택" 상태를 인지하게 한다.
+      - role/account scope prompt 는 ProductId IS NULL 의 범용 prompt 만 사용한다.
     """
     if mem_conn is None:
         return SYSTEM_PROMPT
+    is_auto = str(product_mode or "pinned").lower() == "auto"
     parts: list[str] = [SYSTEM_PROMPT]
+    if is_auto:
+        parts.append(
+            "\n\n[AUTO MODE] No product is pinned to this conversation. "
+            "Answer generally; if product-specific data is required, ask the user to pick a 제품 first.\n"
+        )
     try:
         cur = mem_conn.cursor()
     except Exception:
@@ -138,7 +150,8 @@ def compose_system_prompt(
         if scope_val is None or scope_val <= 0:
             return ("", "")
         try:
-            if product_id and product_id > 0:
+            # auto 모드는 product 한정 prompt 를 건너뛰고 곧장 ProductId IS NULL fallback 만 사용한다.
+            if (not is_auto) and product_id and product_id > 0:
                 cur.execute(
                     f"SELECT Content FROM WebSystemPrompts "
                     f"WHERE Scope=%s AND {scope_col}=%s AND ProductId=%s LIMIT 1",
@@ -159,9 +172,9 @@ def compose_system_prompt(
             return ("", "")
         return ("", "")
 
-    # Product-scope prompt (1건만)
+    # Product-scope prompt (1건만) — auto 모드에서는 건너뛴다 (사용자가 제품을 고정하지 않은 상태).
     product_label = ""
-    if product_id and product_id > 0:
+    if (not is_auto) and product_id and product_id > 0:
         try:
             cur.execute("SELECT ProductKey FROM WebProducts WHERE Id=%s LIMIT 1", (int(product_id),))
             row = cur.fetchone()
@@ -1040,6 +1053,7 @@ def run_agent(
     role_id: int | None = None,
     account_id: int | None = None,
     allowed_schemas: list[str] | None = None,
+    product_mode: str = "pinned",
 ) -> dict[str, Any]:
     """Product whitelist 를 설정한 뒤 실제 에이전트 루프를 호출하는 얇은 래퍼."""
     set_active_schema_allowlist(allowed_schemas)
@@ -1056,6 +1070,7 @@ def run_agent(
             product_id=product_id,
             role_id=role_id,
             account_id=account_id,
+            product_mode=product_mode,
         )
     finally:
         clear_active_schema_allowlist()
@@ -1074,6 +1089,7 @@ def _run_agent_core(
     product_id: int | None = None,
     role_id: int | None = None,
     account_id: int | None = None,
+    product_mode: str = "pinned",
 ) -> dict[str, Any]:
     """에이전트 메인 루프.
 
@@ -1232,6 +1248,7 @@ def _run_agent_core(
             product_id=product_id,
             role_id=role_id,
             account_id=account_id,
+            product_mode=product_mode,
         )
     except Exception:
         system_content = SYSTEM_PROMPT

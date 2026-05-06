@@ -73,4 +73,4 @@ AI는 §4 writer 아님. AI는 작업 시작 시 Conflict Protocol에 따라
 인간 리뷰어의 판단을 기록. 카고 컬트 방지를 위해 단순 "pass"/"looks good"은 FAIL.)
 -->
 
-(엔트리 없음 — TASK cycle 종료 전 최소 1개 필요)
+(엔트리 없음 — 일반 TASK cycle 완료 조건은 아님; release/milestone 검토 또는 방향 전환 검증 시 사용)

@@ -13,11 +13,13 @@ ANCHOR.md — External Anchor Document (9번째 1급 문서)
 이 문서는 기능의 "방향성 stable reference"다. AI-delegated 개발의 폐쇄 루프 문제를
 방지하기 위해 외부 관점과 가정된 사용 맥락을 명시적으로 기록한다.
 
-정책 요약 (AGENTS.md §17):
+정책 요약 (AGENTS.md §18):
 - §1~§3 (stable reference): rewrite 가능. 방향이 바뀌면 명시적으로 갱신한다.
 - §4 (외부 검증 로그): append-only. source는 `human:<name>` 만 허용. AI는 §4 writer가 아님.
+  일반 TASK cycle 완료 조건은 아니며, release/milestone 또는 방향 전환 검증 시 사용한다.
 - Conflict Protocol: AI는 사용자 요청이 §1~§3와 충돌 시 작업을 시작하지 않고
-  gstack skill(`/office-hours`, `/plan-ceo-review` 등) 재앵커를 유도한다.
+  gstack skill(`/office-hours`, `/plan-ceo-review` 등) 재앵커를 유도한다. 충돌이
+  명백하지 않고 검증 결과가 명료하면 §4 확인 요청 없이 진행한다.
 - 24h bootstrap grace: `created_at` 기준 24시간 이내면 §1~§3이 빈칸이어도 verify 통과.
 -->
 
@@ -63,9 +65,12 @@ ANCHOR.md — External Anchor Document (9번째 1급 문서)
 
 ## §4. 외부 검증 로그 (append-only)
 <!--
-완료 cycle마다 최소 1개 엔트리. source는 `human:<name>` 만 허용.
+release/milestone 검토 또는 방향 전환 검증이 필요할 때 엔트리를 남긴다.
+source는 `human:<name>` 만 허용.
 AI는 §4 writer 아님. AI는 작업 시작 시 Conflict Protocol에 따라
-사용자에게 gstack skill 재앵커를 유도할 뿐, §4는 인간이 직접 append한다.
+명백한 방향 충돌이 있을 때만 사용자에게 gstack skill 재앵커를 유도한다.
+§4는 인간이 직접 append한다. 일반 TASK cycle에서 요청 의도와 검증 결과가
+명료하면 §4 엔트리 없이 PASS다.
 
 각 엔트리 필수 필드:
 - source: human:<name>
@@ -82,4 +87,4 @@ AI는 §4 writer 아님. AI는 작업 시작 시 Conflict Protocol에 따라
 인간 리뷰어의 판단을 기록. 카고 컬트 방지를 위해 단순 "pass"/"looks good"은 FAIL.)
 -->
 
-(엔트리 없음 — TASK cycle 종료 전 최소 1개 필요)
+(엔트리 없음 — 일반 TASK cycle 완료 조건은 아님)

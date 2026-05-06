@@ -369,6 +369,80 @@ a { color: inherit; }
   padding: 10px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* TASK-0047: 제품 컨텍스트 칩. 사이드바 헤더 상단, "+ 새 대화" 위에 위치한다.
+   대화 단위 상태(전역 계정 설정이 아님)를 명시하기 위해 caption 으로 보강한다. */
+.product-chip-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.product-chip-caption {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: .02em;
+  padding-left: 2px;
+}
+.product-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 10px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--bg-elev, rgba(255,255,255,.03));
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background .13s, border-color .13s;
+  cursor: pointer;
+  max-width: 100%;
+}
+.product-chip:hover { border-color: var(--primary); }
+.product-chip[data-mode="auto"] .product-chip-dot {
+  background: var(--accent, #8ab4f8);
+  box-shadow: 0 0 0 2px rgba(138,180,248,.18);
+}
+.product-chip[data-mode="pinned"] .product-chip-dot {
+  background: var(--text-primary);
+  opacity: .55;
+}
+.product-chip[aria-disabled="true"],
+.product-chip.is-disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+.product-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.product-chip-select {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: inherit;
+  padding-right: 2px;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.product-chip-select:focus { outline: none; }
+.product-chip-select:disabled { cursor: not-allowed; }
+@media (max-width: 720px) {
+  .product-chip-caption { display: none; }
+  .product-chip-select { max-width: 16ch; }
 }
 
 .btn-new-conv {
@@ -462,6 +536,15 @@ a { color: inherit; }
   color: var(--text-2);
   font-weight: 600;
 }
+/* TASK-0048: pending 새 대화 placeholder — backend row 가 아직 없는 임시 항목 */
+.conv-item.is-pending {
+  cursor: default;
+  border: 1px dashed var(--border);
+  background: transparent;
+  opacity: .9;
+}
+.conv-item.is-pending .conv-item-title { color: var(--text-2); font-style: italic; }
+.conv-item.is-pending .conv-item-meta { color: var(--text-muted); }
 
 .conv-item-title-row {
   display: flex;
@@ -1757,6 +1840,24 @@ a { color: inherit; }
   padding: 0 2px;
 }
 
+.admin-chip.is-locked {
+  background: rgba(0, 0, 0, .04);
+  border-color: rgba(0, 0, 0, .12);
+  color: var(--text-muted, rgba(0, 0, 0, .55));
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+
+.admin-chip-locked-hint {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted, rgba(0, 0, 0, .55));
+  background: rgba(0, 0, 0, .06);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
 .admin-chip-input-row {
   display: flex;
   gap: 6px;
@@ -1766,6 +1867,28 @@ a { color: inherit; }
 .admin-chip-input-row input[type="text"] {
   flex: 1;
   min-width: 0;
+}
+
+.admin-db-picker-row {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0;
+  align-items: center;
+}
+
+.admin-db-picker {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle, rgba(0, 0, 0, .12));
+  border-radius: 6px;
+  background: #fff;
+}
+
+.admin-db-picker:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .admin-prompt-textarea {

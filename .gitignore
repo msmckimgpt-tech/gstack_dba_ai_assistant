@@ -21,3 +21,8 @@ _archive/
 **/config/credentials/*.env
 !**/config/credentials/*.example
 .gstack/
+
+# bin/template-upgrade.sh 산출물 — backup 트리와 실행 로그.
+# `.template-state` 는 declared/applied 마이그레이션 상태라 git 추적 대상.
+.template-backups/
+.template-upgrade-logs/

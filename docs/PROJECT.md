@@ -4,6 +4,9 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
+template_version: v3.6.0
+domain: [product, scope]
+ai_read_priority: 2
 ---
 
 # Project

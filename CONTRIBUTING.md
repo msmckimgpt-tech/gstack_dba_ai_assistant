@@ -5,6 +5,7 @@
 - 로컬 전용 파일인 `.env`는 Git에 올리지 않는다.
 - 작업은 GitHub Issue를 기준으로 나누고, 구현은 브랜치와 PR로 병합한다.
 - 구현 전에 `AGENTS.md`, `README.md`, 관련 feature 문서를 먼저 읽는다.
+- AI 작업자는 완료 가능한 cycle의 commit/push 결정을 사용자에게 위임하지 않고 `AGENTS.md §16.5`에 따라 수행한다.
 - GitHub 자동화 기준은 `docs/GITHUB_AUTOMATION.md`를 따른다.
 
 ## 2. 원격 연결

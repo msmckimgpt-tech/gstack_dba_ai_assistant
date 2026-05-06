@@ -241,6 +241,13 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Verification: Q4 1171s + Q5 251s 모두 HTTP 200 으로 완료 (단일 턴이 960s 를 안 넘어 attach 가 실제 발동되지는 않았지만, 인프라는 in-container 에서 `ask_status`(38ms)/`ask_result` 동작 확인). `/api/ask_status`/`/api/ask_result` 401 응답으로 라우팅 정상, terminal 상태 대화에 대한 스냅샷 38ms, 브라우저 JS `node --check` OK.
 - Applies to: 장시간 LLM/batch 작업을 HTTP 로 시작시키는 모든 웹 UI. 작업자 lifecycle 을 HTTP 연결과 독립시키고, 완료된 작업 결과를 read-only 로 **재조회할 수 있는 별도 경로** 를 설계 초기부터 포함시킨다. 기존 진행 상태 저장소 (`AgentMemoryKv`/`Messages`/`Steps`) 가 있다면 그 위에 얇은 엔드포인트만 더 얹는다 — 새 상태 저장소를 만들지 않는 것이 핵심.
 
+### LRN-20260506-0014 — "엔티티 생성 시점" 은 사용자 의도가 확정되는 시점에 lazy 로 — client-side pending state 패턴
+- Source: TASK-0048 (REQ-20260506-0001) "새 대화" lazy 화 (2026-05-06)
+- Pattern: UI 의 "신규 X 만들기" 버튼이 즉시 backend row 를 발급하면 사용자가 의도를 확정하지 않은 채로 빈 row 가 누적된다. 해법은 (1) 버튼 클릭 시 client-side pending state (`state.pendingNewConversation` + sentinel ID `__pending__`) 만 진입해 사이드바 placeholder 표시, (2) 첫 의미 있는 행위 (메시지 전송 / 폼 제출 / 저장) 시 backend 의 lazy creation path 를 호출, (3) 응답 ID 를 client 가 채택해 placeholder → 실 entity 로 전환. backend 는 기존 lazy creation path (e.g. `/api/ask` 의 `_resolve_conversation_for_account(create_if_missing=True)`) 가 이미 있는 경우가 많아 추가 endpoint 가 불필요하다. 사용자의 직전 의도 (TASK-0048 의 경우 product_mode/product_id) 는 첫 행위의 body 에 hint 로 첨부해 backend 가 cid 발급 직후 적용한다.
+- Anti-pattern (주의): "버튼 클릭 = 즉시 backend POST" 모델은 단순하지만 사용자가 실수로 누르거나 마음을 바꾸면 빈 entity 가 남는다. 또한 destructive cleanup (NOT EXISTS subquery 로 빈 row 삭제) 으로 보정하면 §12.1 사람 승인이 필요한 작업으로 격상된다 — 신규 누적 차단을 client-side lazy 로 해결하는 것이 비용/위험이 가장 낮다.
+- Trade-off: lazy create 단계 호출이 timeout/네트워크 오류로 실패하면 backend 가 cid 를 만들었는데 client 는 모르는 buried orphan 케이스가 1 발생 가능. 이는 사이드바 새로고침으로 visible 하게 되므로 데이터 유실은 아니지만 사용자 혼란 가능 — 실패 토스트가 "재시도/사이드바 새로고침" 을 명시해 회복 경로를 안내한다.
+- Applies to: 모든 "신규 entity 생성" UX. 특히 LLM 요청처럼 시간이 오래 걸리거나 사용자가 의도를 확정 전에 버튼만 눌러볼 가능성이 있는 흐름. PATCH race 가드 같은 mutation 보호 로직과는 자연스럽게 호환된다 (cid 가 발급되기 전엔 PATCH 가 불가하므로).
+
 ## Category: quirk
 
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존
@@ -254,6 +261,13 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Source: ADR-0013
 - Quirk: `shared/`는 공용 **코드** 예약 영역이며 런타임 산출물(로그/세션/데이터 파일)을 여기에 쓰면 Git 추적 대상이 된다.
 - Mitigation: 모든 산출물은 `../../artifacts/` 하위로 쓰고, feature 코드는 그 경로만 참조하도록 helper를 경유한다.
+
+### LRN-20260506-0001 — docker compose v5.1.1 + buildx v0.31.1 는 build 후 provenance metadata file 처리에서 EXIT=1 race 가 있다
+- Source: TASK-0048 운영 검증 (2026-05-06)
+- Quirk: `docker compose build <svc>` 또는 `compose up --build <svc>` 가 `#15 exporting to image` + `#15 naming to docker.io/library/...` 까지 정상 완료한 뒤 `#16 resolving provenance for metadata file` 단계에서 `open /tmp/.tmp-compose-build-metadataFile-<UUID>.json<NNNN>: no such file or directory` 메시지로 EXIT=1 종료한다. image 자체는 새 sha 로 정상 빌드되어 있다 — compose 측이 임시 파일 path 에 random suffix 를 잘못 붙여 stat/open 이 실패하는 회귀로 보인다 (정상이라면 `*.json` 으로 끝나야 하는데 `*.json<NNNN>` 형태). `--provenance=false`, `BUILDX_NO_DEFAULT_ATTESTATIONS=1`, `COMPOSE_BAKE=true/false` 모두 효과 없음 — compose 본체 경로의 race.
+- Mitigation: Makefile 에 `dc-build` reusable 타깃 (SERVICE 변수 인자) 을 추가하고, build 명령을 임시 로그에 캡처해서 EXIT≠0 + 로그에 `compose-build-metadataFile` 문자열 포함 시에만 EXIT=0 으로 정규화한다. 그 외 빌드 오류 (Dockerfile syntax, RUN 단계 실패 등) 는 그대로 전파된다. `web` 타깃은 `up -d --build web` 을 `dc-build SERVICE=web` + `up -d --no-build web` 로 분리해 image 를 미리 만들고 컨테이너 교체만 별도 단계로 수행한다.
+- Applies to: `make web` 류의 image 빌드 + 기동 명령. 향후 docker compose 또는 buildx 가 fix 되면 가드를 제거할 수 있다 — 가드는 `compose-build-metadataFile` 문자열 매칭으로만 race 를 흡수하므로 race 가 사라지면 자연스럽게 일반 build 경로로 흐른다.
+- Verification: `make web` EXIT=0, 로그에 "[make] note: ... provenance metadata file race 우회 ... compose EXIT=1 무시" 출력 후 `Container repo-web-1 Recreate/Recreated/Started` + `Web UI (HTTPS): https://localhost:18080`. `docker exec repo-web-1 grep -n PENDING_CONV_SENTINEL /app/web/static/app.js` 으로 새 코드 반영 확인.
 
 ## Category: preference
 

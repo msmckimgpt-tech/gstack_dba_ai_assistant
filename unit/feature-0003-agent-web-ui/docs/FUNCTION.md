@@ -14,6 +14,20 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 ## 2. Goal
 - REQ-0001: Web UI 코드를 별도 feature로 분리한다.
 - REQ-0002: agent 이미지가 새 Web UI 경로를 정상 포함하게 한다.
+- REQ-20260506-0001 (TASK-0048): "새 대화" 버튼은 backend row 를 즉시 만들지 않고, client-side pending state 를 표시한 뒤 사용자가 첫 메시지를 보낼 때 backend 가 lazy 로 row 를 생성한다. 빈 대화 누적을 방지한다.
+  - AC-0026: 사이드바 "새 대화" 버튼 클릭은 `POST /api/new_conversation` 을 호출하지 않는다 (network round trip 0회). 클릭 후 사이드바 "내 대화" 그룹 상단에 "새 대화 (작성 중)" placeholder (`.conv-item.is-pending`) 가 active 로 표시되고, 헤더는 "새 대화" + "첫 메시지를 입력하면 대화가 만들어집니다." 부제, composer 는 활성 상태가 된다.
+  - AC-0027: pending 상태에서 사용자가 첫 메시지를 보내면 `/api/ask` 가 호출되며 body 에 `conversation_id: ""` + `product_mode` + `product_id` (사용자의 직전 의도) 가 포함된다. 응답으로 받은 `conversation_id` 가 즉시 active 로 채택되고 pending placeholder 는 사라진다. backend 는 lazy 생성된 새 대화의 `AgentCoreConversations.product_id`/`product_mode` 를 hint 로 셋업하고 `WebAccounts.ProductPref*` 미러도 갱신한다.
+  - AC-0028: pending 상태에서 사용자가 사이드바의 다른 실 대화를 선택하면 pending 모드가 자동 종료되고 placeholder 가 사라진다 (cleanup 없음 — backend row 는 애초에 만들어지지 않았으므로).
+  - AC-0029: pending 단계에서 `/api/ask` 가 네트워크/타임아웃으로 실패하면 attach/resume 다이얼로그(TASK-0041 AC-0018) 는 활성화되지 않고 "다시 시도하거나 사이드바를 새로고침해 주세요" 안내 토스트만 노출된다 (cid 발급 여부가 client 에 불확실하기 때문).
+  - AC-0030: `request_conversation_id` 가 명시된 기존 대화 경로의 `/api/ask` 는 body 의 `product_mode`/`product_id` hint 를 무시한다 (대화 product 변경의 단독 진실은 `PATCH /api/conversations/{cid}/product` 의 race 가드 — TASK-0047 AC-0013 보존).
+
+- REQ-20260429-0001 (TASK-0047): 사용자가 진입 시 / 진행 중 대화에서 대상 **제품(Product)** 을 명시 선택할 수 있고, 일반 대화용 `auto` 모드를 제공한다.
+  - AC-0011: 로그인 직후 사이드바 헤더에 "이 대화의 제품" 칩이 표시되고 직전 선호(`WebAccounts.ProductPref*`)가 hydrate 된다.
+  - AC-0012: 칩에서 `auto` 또는 활성 제품 1개를 고르면 현재 대화의 `product_mode`/`product_id` 가 즉시 갱신되고 다음 ask 부터 적용된다.
+  - AC-0013: ask 진행 중(`AgentMemoryKv.last_status='processing'`) 에는 칩이 disabled 가 되고 PATCH 요청은 409 로 거부된다.
+  - AC-0014: `auto` 모드에서 `compose_system_prompt` 는 `[AUTO MODE]` 한 줄만 inject 하고 PRODUCT/role/account 의 product 한정 prompt 를 건너뛴다. allowed_schemas 는 빈 리스트(메타 4 스키마만 허용) 로 설정된다.
+  - AC-0015: pinned 제품이 비활성/제거된 경우 자동으로 `auto` 로 강등되고 사용자에게 토스트로 안내된다.
+  - AC-0016: 사용자 가시 한글 라벨 "상품" 은 모두 "제품" 으로 표기된다 (코드 식별자는 보존).
 
 ## 3. In Scope
 - `src/app.py`
@@ -85,6 +99,11 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 - AC-0023: 사업팀 pilot 계정(admin 이 콘솔에서 수동 발급)으로 로그인 후 `/api/ask` 에 단순 조회 질의(예: "특정 아이템 X 가 몬스터 Y 에 연결되어 있는지") 를 보내면 assistant 가 결과셋 표가 아닌 **문장형** 응답으로 답하고, 집계 질의(예: "최근 7 일 레벨별 유저 수") 에는 **결과셋 표(`<table class="result-table">`)** 로 답하며, ad-hoc 심층 분석 질의(예: "유저가 왜 이탈하는지 분석해줘") 에는 "DBA 팀으로 요청 이관이 필요합니다" 안내 + 같은 턴에서 대화 종료(추가 tool call 없음) 로 답한다.
 - AC-0024: `modules/config.py` 가 `REPLICA_DB_HOST` / `REPLICA_DB_PORT` / `REPLICA_DB_USER` / `REPLICA_DB_PASSWORD` env 4 개를 읽고 `REPLICA_DB_ENABLED = bool(REPLICA_DB_HOST)` 파생값을 `__all__` 로 export 한다. 접속 정보는 `.env` 또는 docker-compose secret 으로만 주입되고 `.env.example` 에는 placeholder (빈 값) 만 커밋된다.
 - AC-0025: `modules/db.py::connect(database=...)` 가 `REPLICA_DB_ENABLED` 가 True 이고 요청된 `database` 가 `MEMORY_DB` 가 아닐 때는 복제 인스턴스(REPLICA_DB_*) 로 접속하고, 그 외(REPLICA_DB_HOST 미설정 / `database=None` / `database=MEMORY_DB`) 는 기존 primary (DB_HOST/...) 로 접속한다. memory DB 연결은 항상 primary 로 유지되므로 대화·세션·권한 정본이 보존된다.
+- AC-0026: 사이드바 "새 대화" 버튼 클릭은 `POST /api/new_conversation` 을 호출하지 않는다. 클릭 후 사이드바 "내 대화" 그룹 상단에 "새 대화 (작성 중)" placeholder (`.conv-item.is-pending`) 가 active 로 표시되고, 헤더는 "새 대화" + "첫 메시지를 입력하면 대화가 만들어집니다." 부제, composer 는 활성 상태가 된다.
+- AC-0027: pending 상태에서 첫 메시지 전송 시 `/api/ask` body 에 `conversation_id: ""` + `product_mode` + `product_id` 가 포함된다. backend 는 lazy 생성된 새 대화의 `AgentCoreConversations.product_id`/`product_mode` 를 hint 로 셋업하고 `WebAccounts.ProductPref*` 미러도 갱신한다. 응답의 `conversation_id` 를 client 가 즉시 채택하고 placeholder 가 사라진다.
+- AC-0028: pending 상태에서 사이드바의 다른 실 대화를 선택하면 pending 모드가 자동 종료되고 placeholder 가 사라진다 (backend row 가 만들어지지 않았으므로 cleanup 불필요).
+- AC-0029: pending 단계의 `/api/ask` 실패는 attach/resume 다이얼로그(AC-0018) 를 활성화하지 않고 "다시 시도하거나 사이드바를 새로고침해 주세요" 안내 토스트만 노출한다 (cid 발급 여부가 client 에 불확실).
+- AC-0030: `request_conversation_id` 명시된 기존 대화 경로의 `/api/ask` 는 body 의 `product_mode`/`product_id` hint 를 무시한다 (대화 product 변경의 단독 진실은 `PATCH /api/conversations/{cid}/product` race 가드 — AC-0013 보존).
 
 ## 12. Observability
 - 웹 세션: `../../../../artifacts/shared/web_sessions`

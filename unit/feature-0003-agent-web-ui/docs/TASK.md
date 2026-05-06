@@ -12,9 +12,14 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: medium
-- Last Updated: 2026-04-25
+- Last Updated: 2026-05-06
 
 ## 2. Task Queue
+- [ ] TASK-0051 (REQ-20260506-0004) 관리 콘솔 일괄 저장 정책 회복 + 메타데이터 4 스키마 항상 노출 + DB 목록 라이브 enum — `프롬프트 저장` / `제품 정보 저장` / `DB 목록 저장` 3 버튼 제거 후 footer `모두 적용` 단일 commit 흐름으로 통합, 메타데이터 4 종(`information_schema`/`mysql`/`sys`/`performance_schema`) 을 회색 disabled chip 으로 강제 노출(REV-20260422-0006 정책 시각화), 자유 텍스트 chip 입력을 `GET /api/admin/databases/available` 라이브 enum 기반 picker 로 교체. C5 (제품 권한 상속/override) 는 다음 cycle 로 분리(plan-eng-review 후 진행).
+- [x] TASK-0050 (REQ-20260506-0003) `make web` 의 docker compose v5.1.1 + buildx v0.31.1 provenance metadata file race 우회 — Makefile 에 `dc-build SERVICE=...` reusable 가드 타깃 추가, `web` 타깃을 `dc-build SERVICE=web` + `up -d --no-build web` 로 분리. race 한정 무시 (image 빌드 OK + 로그에 `compose-build-metadataFile` 포함 시에만 EXIT=0 정규화).
+- [x] TASK-0049 (REQ-20260506-0002) 누적된 빈 대화 일괄 정리 — `bin/cleanup-empty-conversations.sh` (dry-run 기본 + `--execute`, processing 보호 + 최근 N분 보호 + owner-account 옵션) 추가, 운영 데이터에 1회 적용 (88 → 46 conversations, 42개 정리).
+- [x] TASK-0048 (REQ-20260506-0001) "새 대화" 생성 시점 lazy 화 — 버튼 클릭 시 client-side pending state 만 표시하고, 첫 메시지 전송 시 `/api/ask` 의 lazy creation path 가 실제 row 를 만들도록 전환. 신규 빈 대화 누적 방지. **CHG-20260506-0024 후속 fix**: backend `_repair_current_conversation` 의 `create_if_missing=_account_has_permission(...)` 자동 생성 분기 5 곳 (`_build_conversations_payload`, `/api/session`, `/api/history`, `/api/delete_conversation` 의 pending/일반 두 케이스) 을 모두 비활성화. 사용자 보고 회귀 "대화 삭제 시 새 대화가 그대로 남는 이슈" 의 근본 원인을 fix — delete 응답 `current` 가 backend 에서 자동 생성된 새 cid 였던 것을 빈 문자열로 정정.
+- [x] TASK-0047 Product Selector + Auto 모드 진입 UX (사이드바 chip, `product_mode` 컬럼, `PATCH /api/conversations/{cid}/product`, "상품"→"제품" 일괄 치환) — agent team 4 + Codex CLI 교차검증 합의안
 - [x] TASK-0046 API Vault 패널 Linear Wizard 재설계 + 단일 진입점 destructive (REQ-20260425-0001)
 - [x] TASK-0045 ANCHOR.md §1-§3 작성 (template v3.2.0-rc.1 external anchor 도입)
 - [x] TASK-0044 사업팀(Sales) role + role-scope system prompt + 복제 DB 접속 envelope + Product whitelist 사업팀 접근 runbook — Approach A wedge pilot infrastructure
@@ -60,10 +65,146 @@ source_of_truth: true
 - [x] TASK-0030 assistant 말풍선 고정 폭 + 결과셋 내부 스크롤 + 펼침 스크롤 앵커
 - [x] TASK-0031 관리 콘솔 내부 스크롤 정리 (페이지네이션·액션 버튼 상시 노출)
 
+## 2.1 Implementation Plan (TASK-0051)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute 프로토콜에 따른 **Major** 등급 변경 계획이다. 사용자가 2026-05-06 직접 진행 지시(§3.1 우선순위 1) + `[A → B → C → D]` 범위 한정으로 인계됐다. C5 (제품 권한 상속/override) 는 분리되어 다음 cycle 의 plan-eng-review 후 진행한다.
+
+<!-- PLAN-APPROVED by user on 2026-05-06 -->
+
+### 영향 파일
+- [src/static/admin.js](../src/static/admin.js) — 핵심. 3 개 인라인 save 버튼 제거 + pending 상태 4 종 추가(`productMeta`, `productDatabases`, `systemPrompts`) + `applyAllPending()` 6 단계로 확장 + `pendingChangeCount()` / `refreshPendingUI()` / dashboard pending 카드 갱신. `renderProductDetail()` 의 chip wrap 에 메타데이터 4 종 locked chip 강제 prepend(× 버튼 없음, `is-locked` 클래스). chip 자유 텍스트 입력을 `<select>` picker 로 교체 — `loadAdminData` 에서 `/api/admin/databases/available` 동시 호출, 메타데이터 4 종 / 이미 등록된 chip / 내부 차단 (`agent_memory`) 은 옵션에서 제외. `buildSystemPromptEditor` 의 saveBtn/clearBtn 제거 + textarea 변경 핸들러로 pending 등록 + 안내 메시지 ("변경사항은 하단 '모두 적용' 으로 저장됩니다").
+- [src/static/admin.html](../src/static/admin.html) — markup 변경 없음. cache-bust query string `v=20260506-batch-commit` 로 갱신 (admin.js / styles.css 양쪽).
+- [src/static/styles.css](../src/static/styles.css) — `.admin-chip.is-locked` (회색 + cursor:not-allowed + opacity 0.55), `.admin-chip-locked-hint` 토큰 사용, `.admin-db-picker-row` (select + 추가 버튼 정렬) 추가. 토큰만 사용하고 hardcoded 색상 금지.
+- [src/app.py](../src/app.py) — `GET /api/admin/databases/available` 신규 엔드포인트 추가. `_open_memory_connection(database=None)` 으로 `SHOW DATABASES` 실행, 결과를 `metadata_schemas`(고정 4 종 + 실제 존재 여부 marker) 와 `user_schemas`(메타 4 + `agent_memory` + `MEMORY_DB` 제외) 로 분리. 권한: `console.access`. 검증: schema name regex `^[a-z_][a-z0-9_]{0,63}$` 매칭 만 반환.
+
+### 접근 방법
+1. **Backend `/api/admin/databases/available`** 추가 — read-only enumeration. 권한이 약하면 (`console.access` 만) Product 관리자가 아니어도 목록 조회는 가능 (옵션 채우기 용도). 실제 등록은 `product.manage` 권한이 필요한 `PUT /api/admin/products/{id}/databases` 로만.
+2. **Frontend pending 흐름 통합**:
+   - `adminState.pending` 에 `productMeta: Map<productId, patch>`, `productDatabases: Map<productId, draft[]>`, `systemPrompts: Map<key, {scope, productId, roleId, accountId, content}>` (key = `${scope}:${productId||0}:${roleId||0}:${accountId||0}`) 추가.
+   - `setProductMetaPending(id, patch)`, `setProductDatabasesPending(id, draft)`, `setSystemPromptPending(args)` 헬퍼 추가. 모두 immediate API 호출 안 함.
+   - `pendingChangeCount()` 에 신규 3 buckets 합산.
+   - `applyAllPending()` 에 6 번째~8 번째 단계 추가: 제품 메타 PATCH → 제품 DB PUT → 시스템 프롬프트 PUT (productMeta → productDatabases 순서, 둘 다 같은 product 면 메타 먼저).
+   - `cancelAllPending()` 에 신규 buckets clear 추가. `loadAdminData()` 에 stale entry GC 추가 (제품 삭제 시 정리).
+   - `refreshPendingUI()` 의 `commitBarDetail` 에 신규 카테고리 항목 추가.
+   - Dashboard pending 카드(`renderDashboard` / `dashboardPendingList`) 에도 신규 카테고리 노출.
+3. **renderProductDetail (제품 정보 저장 버튼 제거)** — name/desc/active/default/sort 입력 변경 핸들러를 `setProductMetaPending(productId, {field: value})` 로 변경. `saveMetaBtn` 삭제. 입력 disabled 는 `!canManage` 그대로 유지.
+4. **renderProductDetail (DB 목록 저장 버튼 제거 + metadata locked chip + picker)**:
+   - `redrawChips()` 시작 부분에 메타데이터 4 종을 `<span class="admin-chip is-locked"><span>information_schema</span> <small>항상 접근</small></span>` 형태로 forEach 강제 prepend. × 버튼 없음. `draft` 배열에는 메타 4 종이 들어있더라도 화면 상 user chip 영역에서 제외하여 중복 노출 방지 (단, draft 정합성 유지를 위해 user chip 만 표시).
+   - 자유 텍스트 input + 추가 버튼을 `<select>` picker + `+ 추가` 버튼으로 교체. `<select>` 옵션은 `adminState.availableDatabases` (loadAdminData 에서 채움) 에서 메타 4 종 / 이미 draft 에 있는 schema / `agent_memory` / `MEMORY_DB` 제외. 옵션 0개면 "(추가 가능한 DB 없음)" 빈 옵션 표시.
+   - `+ 추가` 버튼 클릭 시 draft 에 push + `setProductDatabasesPending(productId, draft)` + `redrawChips()` + picker 옵션 갱신.
+   - chip × 버튼 클릭 시도 동일하게 `setProductDatabasesPending` 으로 pending 등록.
+   - `saveDbBtn` 삭제. 안내 텍스트(dbHint) 마지막에 "메타데이터 4 종은 정책상 항상 접근 가능하며 변경할 수 없습니다." 한 줄 추가.
+5. **buildSystemPromptEditor**:
+   - `saveBtn` / `clearBtn` 제거 후, textarea `input` 이벤트로 `setSystemPromptPending({scope, productId: resolveProductId(), roleId, accountId, content: textarea.value})` 호출.
+   - 빈 문자열 입력은 그대로 pending 으로 들어가고 apply 시 `PUT /api/admin/system-prompts` body content="" 가 삭제 경로로 처리됨 (기존 backend 동작 활용).
+   - textarea 위에 안내 한 줄 ("변경사항은 하단 '모두 적용' 버튼으로 일괄 저장됩니다") 추가.
+   - `productSelect` 변경 시 pending 의 key 가 바뀌므로, change 이벤트에서 `refresh()` 만 하고 textarea 값은 비우지 않는다 (사용자 의도 보존). Pending 에 같은 key 가 이미 있으면 textarea 에 그 content 를 채움.
+6. **app.py `GET /api/admin/databases/available`** — `_account_has_permission(account, "console.access")` 검사 후 `_open_memory_connection(database=None)` → `SHOW DATABASES` → 결과를 `_METADATA_SCHEMAS = {"information_schema","mysql","sys","performance_schema"}` 와 `_INTERNAL_SCHEMAS = {MEMORY_DB.lower(), "agent_memory"}` 로 분류. user_schemas 에는 메타·내부·정규식 위반 제외 후 정렬해 반환. metadata_schemas 는 항상 고정 4 종 (실제 존재 여부 `present: bool` 표기).
+7. **Cache-bust** — admin.html 의 `styles.css?v=…` 와 `admin.js?v=…` 두 줄을 `v=20260506-batch-commit` 으로 갱신.
+
+### 위험도
+- **Major** (§12.3) — 다파일 변경(FE 3 + BE 1), 권한 모델 변경 없음, 외부 계약·비용 영향 없음, 기존 정책(REV-20260422-0006 메타 bypass) 의 시각화일 뿐 동작 변경 아님. `agent_memory` 차단 정책 그대로 유지. 회귀 위험 영역: applyAllPending 6 → 8 단계 확장, dashboard pending 카드 새 카테고리.
+- **C5 (계정·역할 → 제품 권한 상속/override)** 는 본 cycle 에서 분리. 사유: 신규 테이블(`WebRoleProductAccess`, `WebAccountProductAccessOverrides`) 마이그레이션 + `compose_system_prompt` 의 product 조회 경로 영향 + RBAC override 모델 (TASK-0024) 과의 충돌 검토 필요. 다음 cycle 진입 전 `/plan-eng-review` 권고.
+
+### 검증 계획 (D 단계)
+- a) `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` — syntax
+- b) `make web` 재빌드 + `docker logs web` healthy 확인
+- c) UX 회귀: `/admin` 진입 → 제품 탭 → 메타 4 chip 회색 표시 / × 없음 확인 / picker 옵션에 메타 4 미포함 확인 / 사용자 schema 추가·제거 시 footer 카운트 증감 / `모두 적용` 클릭 시 PATCH + PUT 순차 호출. 역할 탭 → 권한 grid 변경 + 시스템 프롬프트 textarea 변경 → footer 일괄 적용 동작.
+- d) `GET /api/admin/databases/available` 직접 호출로 metadata 4 종 + user_schemas 정렬 + agent_memory 제외 확인.
+- e) `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS.
+
+### 후속
+- C5 분리 권고를 본 plan + `docs/REPORT.md §후속 작업` 에 기록.
+- ANCHOR.md §3 의 "Role/Product 권한 부여" 시나리오 묘사가 본 변경으로 시각화되어 강화됨 — §3 본문 보강 여부는 §4 (cycle 종료 시 human 검증) 에서 판단.
+
+## 2.1.archived Implementation Plan (TASK-0048)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute 프로토콜에 따른 Major 등급 변경 계획이다. 사용자가 2026-05-06 직접 진행 지시 (§3.1 우선순위 1) 를 한 상태에서 `<!-- PLAN-APPROVED by user on 2026-05-06 -->` 마커로 인계된다.
+
+### 영향 파일
+- [src/app.py](../src/app.py) — `/api/ask` body 에 optional `product_mode` / `product_id` hint 수용. 기존 `request_conversation_id` 이 비어 있어 `_resolve_conversation_for_account(create_if_missing=True)` 로 lazy 생성되는 분기에서, 새 cid 직후 `AgentCoreConversations.product_id/product_mode` 를 hint 값으로 셋업하고 `_save_account_product_pref` 도 호출. `request_conversation_id` 가 명시된 경로(기존 대화에 ask) 에서는 hint 를 무시한다 (대화의 product 변경은 `PATCH /api/conversations/{cid}/product` 가 단독 진실 — TASK-0047 의 race guard 와 충돌 방지).
+- [src/static/app.js](../src/static/app.js) — `state.pendingNewConversation: boolean` 도입. `createConversation()` 의 동작은 보존(다른 호출처에서 직접 호출 가능) 하되, `newConversationBtn` 핸들러는 새 함수 `beginPendingConversation()` 으로 교체. `sendPrompt()` 가 pending 상태일 때 `/api/ask` body 에 `product_mode` / `product_id` 를 첨부하고 응답의 `conversation_id` 를 채택. `renderConversationList()` 에 pending placeholder (`is-pending` 클래스, 클릭 비활성, "내 대화" 그룹 상단) 추가. `selectConversation()` 은 pending 모드를 자동 종료. `isCurrentConvBusy()` / progress polling 은 pending 동안 cid sentinel `__pending__` 를 사용해 빈 cid 와 충돌하지 않도록 한다.
+- [src/static/index.html](../src/static/index.html) — markup 변경 없음. cache-bust query string `v=20260506-pending-conv` 로 갱신.
+- [src/static/styles.css](../src/static/styles.css) — `.conv-item.is-pending` 1 selector 추가 (border-dashed + faded text + cursor:default). 토큰만 사용.
+
+### 접근 방법
+1. **Frontend pending state 도입** — `state.pendingNewConversation` 플래그와 sentinel cid `__pending__` 도입. 새 대화 버튼 클릭 시 `beginPendingConversation()` 호출:
+   - `state.activeConversationId = ""`, `state.pendingNewConversation = true`, `state.messages = []`
+   - `renderConversationList()` (placeholder 표시), `renderConversationHeader()` ("새 대화" 표기), `renderComposer()` (활성), `stopProgressPolling({reset:true})`
+   - product chip 은 `state.productMode/pinnedProductId` 를 그대로 유지 (cid 가 없어도 localStorage 미러로 의도 보존, `setActiveProduct` 의 cid-없음 분기 활용)
+2. **사이드바 placeholder** — `renderConversationList()` 의 "내 대화" 섹션 렌더 직전에 pending 모드면 가상 항목을 prepend. 클래스: `conv-item is-own is-active is-pending`. 텍스트: "새 대화 (작성 중)" + 부제 "첫 메시지를 입력하세요". 클릭 핸들러 없음.
+3. **sendPrompt() 변경** — pending 모드면:
+   - body 에 `conversation_id: ""` + `product_mode: state.productMode` + `product_id: state.pinnedProductId || null` 첨부
+   - `targetConvId` sentinel 로 `__pending__` 사용하여 `state.busyConversations.add("__pending__")` 처리
+   - `progress polling 시작 시 cid 가 비어있으므로 startProgressPolling 호출은 ask 응답으로 cid 를 받은 후로 미룸
+   - ask 응답에서 `payload.conversation_id` 받으면 `state.activeConversationId = payload.conversation_id`, `state.pendingNewConversation = false`, busy sentinel 해제, `refreshWorkspace(payload.conversation_id)`
+   - ask 가 timeout/네트워크 오류로 실패 — 이 경우 backend 가 이미 cid 를 만들었을 수 있으나 client 가 cid 를 모름 → 사용자에게 "다시 시도하거나 사이드바 새로고침으로 복구" 안내 토스트. attach/resume 다이얼로그는 cid 가 있을 때만 의미가 있어 pending 모드에서는 비활성. 복구 경로: 사용자가 사이드바 새로고침(또는 `loadConversations` 재호출) 으로 새 대화를 보고 그 cid 로 ask 를 다시 보낸다.
+4. **Backend `/api/ask` 보강** — `data.get("product_mode")` / `data.get("product_id")` 를 normalize. lazy 생성 분기에서 cid 만든 직후:
+   ```python
+   if hint_mode in ("auto", "pinned"):
+       cur = conn.cursor()
+       cur.execute(
+           "UPDATE AgentCoreConversations SET product_id = %s, product_mode = %s "
+           "WHERE conversation_id = %s",
+           (hint_pid, hint_mode, conv_id),
+       )
+       cur.close()
+       _save_account_product_pref(conn, int(account["id"]), mode=hint_mode, pinned_id=hint_pid)
+   ```
+   기존 대화 경로 (`request_conversation_id` 명시) 는 hint 무시. lazy 분기 이후 line 3886~ 의 `if conv_id:` block 이 새 row 의 `product_mode` 를 다시 읽어 정상 동작한다.
+
+### 위험도 평가 (§12.3)
+- **Major** — backend API contract 확장 + frontend state 흐름 변경. 단:
+  - Schema/auth/마이그레이션 변경 없음 → Critical 아님
+  - 외부 비용 영향 없음
+  - 기존 호출자(테스트 러너, 직접 `/api/new_conversation` 사용) 는 backward-compatible 동작 유지
+  - 회귀 surface: TASK-0041 attach/resume (cid 가 있을 때만 attach 가능), TASK-0047 product chip race guard (pending 동안 cid 없으니 PATCH 미동작 — `setActiveProduct` 의 cid-없음 분기 활용), 사이드바 그룹 렌더링.
+
+### 사람 승인
+<!-- PLAN-APPROVED by user on 2026-05-06 -->
+
 ## 3. In Progress
 - TASK-0034 복잡 QA 성능 테스트 — 현재 구성된 assistant(agent-core + web UI)의 복잡 질의 대응력을 측정해 이후 개선 포인트를 도출한다. Q1/Q2/Q3 검증 완료, **Q4/Q5 재수행 완료 (2026-04-22: Q4 7 턴 stopped-by-heuristic 1171s / Q5 5 턴 stopped-by-heuristic 251s, 전 턴 HTTP 200)** — TASK-0040/0041 선행 완료 후 블로커 해제. 현재 남은 일은 turn-by-turn 실제 답변과 truth query 대조 검증 + `TASK-0034-REPORT.md` / LEARNINGS 추가 정리.
 
 ## 3.1 Recently Done
+- TASK-0050 (2026-05-06 마감): `make web` 이 docker compose v5.1.1 + buildx v0.31.1 의 provenance metadata file race 로 EXIT=1 종료되던 문제 우회. 환경 진단으로 `#15 exporting to image` 까지 정상 빌드 후 `#16 resolving provenance for metadata file` 직후 `open /tmp/.tmp-compose-build-metadataFile-<UUID>.json<NNNN>: no such file or directory` 메시지로 종료되는 패턴을 확인 (random suffix mismatch — compose 본체 회귀). `--provenance=false`, `BUILDX_NO_DEFAULT_ATTESTATIONS=1`, `COMPOSE_BAKE=true/false` 모두 효과 없음. Makefile 에 `dc-build SERVICE=...` reusable 가드 타깃을 추가하고 `web` 타깃을 `dc-build SERVICE=web` + `up -d --no-build web` 로 분리. 가드는 build 명령 로그를 임시파일에 캡처해 EXIT≠0 + 로그에 `compose-build-metadataFile` 문자열 포함 시에만 EXIT=0 으로 정규화 (다른 빌드 오류는 그대로 전파). 향후 compose 또는 buildx 가 fix 되면 가드는 자연스럽게 일반 build 경로로 흐름. 검증: `make web` EXIT=0, `[make] note: ...provenance metadata file race 우회...` 로그, `Container repo-web-1 Recreate/Recreated/Started`, `docker exec repo-web-1 grep -n PENDING_CONV_SENTINEL /app/web/static/app.js` 으로 새 코드 반영 확인. 학습 기록: `docs/LEARNINGS.md` LRN-20260506-0001 quirk.
+
+- TASK-0049 (2026-05-06 마감, REQ-20260506-0002): TASK-0048 lazy 화 이전에 누적된 빈 대화 row 들을 일회성으로 정리. `bin/cleanup-empty-conversations.sh` 추가 — dry-run 기본 + `--execute` 명시 시에만 DELETE, `AgentMemoryKv.last_status='processing'` 인 대화 보호 (실행 중 ask race), `c.created_at < NOW() - INTERVAL <keep-recent-min> MINUTE` (default 5분) 으로 방금 만들어진 placeholder 폴백/in-flight 보호, `--owner-account-id <N>` 으로 계정 한정 가능. SQL 주입 방지를 위해 owner_id/keep_recent_min 모두 정수 정규식 검증 후 인터폴레이션, AgentCoreConversations 와 AgentMemoryMessages 의 collation 차이를 `COLLATE utf8mb4_unicode_ci` 명시 변환으로 해결. 운영 데이터에 적용: 88 conversations / 42 empty / 46 non-empty → 46 conversations / 0 empty / 46 non-empty (5분 보호로 방금 만든 backward-compat 검증 row 1개 포함 정리). 정리된 빈 대화 42개의 owner 분포는 admin (id=1) 다수, 그 외 일부 사용자. 본 TASK 는 destructive 변경(§12.1) 이지만 사용자 2026-05-06 명시 진행 지시에 따라 §3.1 우선순위 1 적용. 추후 정리는 동일 스크립트 재실행으로 idempotent 하게 가능.
+
+- TASK-0048 (2026-05-06 마감, REQ-20260506-0001): "새 대화" 버튼이 즉시 `POST /api/new_conversation` 을 호출하지 않도록 client-side pending state 로 전환했다. 사이드바 "내 대화" 그룹 상단에 `conv-item is-own is-active is-pending` placeholder ("새 대화 (작성 중)" / 부제 "첫 메시지를 입력하세요") 가 표시되고 헤더 + composer 가 활성화. 첫 메시지 전송 시 `sendPrompt()` 가 `/api/ask` body 에 `conversation_id: ""` + `product_mode` + `product_id` (사용자 직전 의도) 를 첨부해 호출하면 backend `/api/ask` 의 `_resolve_conversation_for_account(create_if_missing=True)` 직후 hint 를 `AgentCoreConversations.product_id/product_mode` 에 셋업 + `_save_account_product_pref` 호출로 `WebAccounts.ProductPref*` 미러까지 갱신한다. 응답의 `conversation_id` 를 client 가 채택하고 placeholder 가 사라진다. 빈 대화 누적이 신규 row 측에서 차단된다. PATCH race 가드(TASK-0047 AC-0013) 와 attach/resume(TASK-0041 AC-0018) 는 cid 가 있을 때만 의미가 있어 lazy 분기에서 의도적으로 비활성화 — pending 단계 ask 실패는 "다시 시도하거나 사이드바 새로고침" 안내 토스트로 fallback. 변경 파일: `src/app.py` (lazy 분기에 hint 적용 + `_save_account_product_pref`), `src/static/app.js` (`state.pendingNewConversation`, `PENDING_CONV_SENTINEL`, `beginPendingConversation`, `renderConversationList` placeholder + `prependFn`, `renderConversationHeader` pending 표시, `selectConversation` 자동 종료, `sendPrompt` lazy create 분기, `handleLogout` cleanup, 새 대화 버튼 핸들러 교체), `src/static/index.html` (cache-bust `v=20260506-pending-conv`), `src/static/styles.css` (`.conv-item.is-pending` 1 selector 그룹). 검증: `python3 -m py_compile`, `node --check` 모두 통과, `make web` 으로 컨테이너 재기동 후 새 코드 반영 확인 (`docker exec` grep), `/api/new_conversation` backward-compat 정상 (delta=1 정상 row), `/api/ask` invalid (no API key) 시 lazy create 발생 0건 (input validation 후 lazy create 가 일어나므로 안전). 학습 기록: `docs/LEARNINGS.md` LRN-20260506-0014 pattern.
+
+- TASK-0047 (2026-04-29 마감, agent team 4 합의 + Codex CLI 교차검증 — 사람 검토 없이 진행됨):
+  사용자가 진입(로그인 직후) 또는 진행 중 대화에서 대상 **제품(Product)** 을 명시 선택할 수 있도록
+  사이드바 헤더에 제품 칩(`#productChip` + `<select id="productSelect">`) 을 도입했다. 칩에는
+  caption "이 대화의 제품" 을 함께 두어 대화 단위 상태(전역 계정 설정이 아님) 임을 명시한다 (Codex
+  R-06 가드). `auto` 옵션은 일반 대화 모드로, 본 MVP 에서는 LLM resolver 가 들어가기 전이므로
+  `[AUTO MODE]` 한 줄을 시스템 프롬프트에 inject 하고 product 한정 PRODUCT/role/account prompt 와
+  `allowed_schemas` 를 모두 끈다(빈 리스트로 메타 4 스키마만 허용). 데이터 모델은 새 컬럼 2 개로
+  분리: `AgentCoreConversations.product_mode VARCHAR(8) NOT NULL DEFAULT 'pinned'` + `WebAccounts.ProductPrefMode`/`WebAccounts.ProductPrefPinnedId`. NULL=auto 의미 변경을
+  피하기 위해 명시 컬럼을 신설했다 (Backend Engineer 합의). 신규 API
+  `PATCH /api/conversations/{cid}/product { mode, product_id }` 는 (1) 권한
+  (`conversation.ask` + 소유자), (2) 진행 중 ask race 가드(`AgentMemoryKv.last_status='processing'`
+  이면 409), (3) pinned 모드는 활성 product 검증 후 `WebAccounts` 의 직전 선호도 동시 갱신.
+  `/api/session` 응답에 `product_pref` (mode, pinned_id, fallback_reason) +
+  `conversation_product` (product_id, product_mode, product_key, product_name) 추가. Frontend 는
+  `state.productMode` / `state.pinnedProductId` / `state.activeProductId` 3-필드 분리(의도/핀/서버 결과)
+  로 race 회피, optimistic update + PATCH + localStorage 미러 (`mad.productPref.v1`), 진행 중 ask
+  동안 `<select>` disabled + tooltip. 코드 중복 방지를 위해 `renderProductOptions(selectEl, {includeAuto, selected})`
+  factory 를 추출해 drawer 의 `promptProductSelect` 도 같은 옵션 모델을 공유하게 했다 (FE
+  Architect 합의). pinned product 가 비활성/제거된 경우 `_load_account_product_pref` 가 자동으로
+  auto 로 강등하고 `pref.fallback_reason='pinned_inactive'` 를 클라이언트에 알려 토스트로 안내한다
+  (Codex R-04 가드). 사용자 가시 한글 라벨 "상품" → "제품" 일괄 치환 (`app.py`, `index.html`, `app.js`,
+  `admin.html`, `admin.js`); 코드 식별자 `Product`/`product_id`/`WebProducts`/`ProductKey` 는 그대로.
+  검증: (1) `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` 통과,
+  (2) `python3 -m py_compile unit/feature-0002-agent-core/src/agent_core.py` 통과,
+  (3) `node --check src/static/app.js` 통과, (4) in-process `compose_system_prompt(None,...)` /
+  fake-conn `compose_system_prompt(...,product_mode='auto')` 검증 — auto 분기는 `[AUTO MODE]` 라인을
+  포함하고 pinned 분기는 포함하지 않음. 후속 검증 항목(LLM resolver, PATCH race 강화, Playwright 4 specs,
+  BroadcastChannel, mobile bottomsheet, 다국어, 운영 모니터링)은 별도 브리핑 [`docs/BRIEFING-product-selector-v1.md`](./BRIEFING-product-selector-v1.md)
+  에 16 개 위험 항목(R-01..R-16) + 5 개 사람 확인 결정 사항(D-01..D-05) 으로 정리. **본 turn 은
+  사용자 검토 없이 agent team(UX/FE Architect/BE Engineer/QA-Flow Validator) 4 인 합의 + Codex CLI
+  교차검증으로 진행됐다 — 운영 반영 전 D-01..D-05 사람 결정과 R-01..R-16 검증이 필요하다.**
+
 - TASK-0044 (2026-04-23 마감): Approach A wedge (office-hours 2026-04-23 세션에서 승인 — 사업팀 통계/단순 데이터 자가서비스) pilot 인프라 추가. (1) `SEED_ROLE_DEFINITIONS` 에 RoleKey=`sales` / Name=`사업팀` entry 를 추가해 부트스트랩 시 자동 생성되고, 권한은 대화 생성/질의/조회/파일조회/이름변경/취소/즉시답변(own 범위) 9 개로 operator 에서 `conversation.delete.own` 을 제거한 subset — 사업팀 pilot 은 자기 대화 흐름은 조작할 수 있지만 과거 요청 기록의 삭제는 불가. (2) 신규 `SEED_ROLE_SYSTEM_PROMPTS` + `_ensure_seed_role_system_prompts(conn)` 부트스트랩 단계를 추가해 sales role 에 역할 범위(`WebSystemPrompts.Scope='role', RoleKey=sales, ProductId=NULL`) system prompt 를 1 회 upsert 한다 — 관리 콘솔에서 덮어쓴 값은 존중(존재 시 skip). prompt 본문은 "단순 조회 → 문장 / 집계 → 결과셋 표 / ad-hoc 분석 → DBA 팀 이관 안내 후 대화 종료 / DB 쓰기 쿼리는 항상 거부" 4 지침. `compose_system_prompt` (agent_core) 가 기존 로직대로 `## ROLE GUIDANCE (sales)` 블록으로 주입한다. (3) `modules/config.py` 에 `REPLICA_DB_HOST` / `REPLICA_DB_PORT` / `REPLICA_DB_USER` / `REPLICA_DB_PASSWORD` / `REPLICA_DB_ENABLED` env 5 개 추가 + `modules/db.py::connect()` 에 라우팅 — `REPLICA_DB_HOST` 가 세팅되어 있고 요청된 `database` 가 `MEMORY_DB`(=agent_memory) 가 아니면 복제 인스턴스로 접속, 아니면 기존 primary. memory DB 연결은 항상 primary 로 남아 대화/세션/권한 정본이 보존된다. `.env.example` 에 4 개 placeholder 추가, 실제 값은 `.env` 또는 docker-compose secret 으로만 주입한다(commit 금지). (4) Product 단위 접근 DB 화이트리스트 조정은 **런타임 체크가 아닌 관리 콘솔 runbook** 으로 정리 — 사업팀 pilot 에게 서빙할 Product 는 KR 의 기본값(`dbgame`/`dblog`/`dbauth`) 을 admin 이 관리 콘솔 `상품 (Products)` 탭에서 `dbauth` 를 제거하거나, 별도 Product(예: `KR-Sales`={dbgame,dblog}) 를 신규 생성해 사업팀 대화를 routing 하는 방식 중 조직 정책에 맞게 선택한다. 현재 seed 는 호환성을 위해 변경하지 않음(기존 KR 을 그대로 쓰는 DBA 워크플로우 영향 없음). (5) 사업팀 pilot 계정 자체는 코드가 자동 생성하지 않고 admin 이 관리 콘솔에서 수동 발급 — `.env.example` 에 `WEB_PILOT_SALES_USERNAMES=` placeholder 주석으로 치환 예시(`sales_lee,sales_kim,sales_park`) 기록. 검증: (a) `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py unit/feature-0002-agent-core/src/modules/config.py unit/feature-0002-agent-core/src/modules/db.py` 통과, (b) `docker compose up -d --build web` 후 `/api/session` HTTP 200 OK, (c) `/api/admin/roles` 응답에 `{"role_key":"sales","name":"사업팀", permissions:[9 codes] }` 포함, (d) `WebSystemPrompts.Scope='role' AND RoleId=<sales_role_id> AND ProductId IS NULL` 1 row 존재하고 content 가 4 지침 문자열로 저장됨. 범위: 애플리케이션 코드 3 파일 약 70 줄, `.env.example` 6 줄, 문서 4 파일. `agent_core` 경로 재빌드(`depends_on` 체인) 는 모두 `modules/db.py` 변경 때문에 필요하다.
 - TASK-0041 (2026-04-22 마감): 클라이언트 타임아웃 시 대화 지속(Attach/Resume) 경로를 구축. 에이전트 작업자 스레드는 `asyncio.to_thread` 로 HTTP 연결과 독립 실행되므로 클라이언트(httpx/브라우저/프록시) 가 ReadTimeout 으로 끊겨도 서버는 완료까지 계속 진행한다. 이 결과를 회수할 read-only 경로가 없어 결과가 유실되던 문제를 해결. 서버에는 `_ASK_TERMINAL_STATUSES={done,error,canceled}` 상수와 `_load_run_meta_kv` + `_build_ask_status_snapshot` 헬퍼, 그리고 `GET /api/ask_status` (1-shot 스냅샷, `conversation.read.own/any` gated) 와 `GET /api/ask_result?wait<=60` (long-poll, `deadline/0.5s` interval, terminal 시 assistant 전문 반환) 2 엔드포인트를 추가. 브라우저에는 `ASK_ATTACH_POLL_WAIT_SEC=45`/`ASK_ATTACH_MAX_TOTAL_SEC=1800` 상수와 `fetchAskStatus` / `showTimeoutRecoveryDialog`(3 버튼 모달 + Escape dismiss, 인라인 스타일) / `attachAndWaitForResult` long-poll 루프를 추가하고, `sendPrompt()` 의 `/api/ask` 호출 실패 시 is_processing=true 이면 다이얼로그 → 선택에 따라 `/api/cancel`·`/api/finalize` + attach, `initializeWorkspace()` 말미에는 페이지 로드 시 auto-attach. 테스트 러너에는 `ATTACH_TIMEOUT_SEC=960.0`/`ATTACH_POLL_WAIT_SEC=45` 상수와 `_attach_run(client,cid,message,t0)` 함수를 추가해 기존 `httpx.ReadTimeout` 분기를 `{"error":"client-read-timeout"}` 반환 대신 ask_status → ask_result long-poll 로 정상 복구하고 turn dict 에 `attached_after_timeout=True` + `attach_verdict` 기록. `/api/ask` 슬롯풀(WEB_PARALLEL_LIMIT=6) 과 분리되어 attach 가 새 실행을 시작시키지 않는 안전 속성을 보장한다. 검증: py_compile 3 파일 + `node --check app.js` 통과, `make web` 재빌드 후 새 이미지 반영, 엔드포인트 401 라우팅 확인, terminal 상태 스냅샷 38ms, Q4 7 턴 + Q5 5 턴 전부 HTTP 200 으로 완료 (단일 턴이 960s 를 넘지 않아 attach 는 실제 발동되지 않았지만 safety net 인프라는 검증됨).
 - TASK-0040 (2026-04-22 마감): SQL schema whitelist 정규식을 context-aware 2 단계 스캐너로 재작성해 `alias.column` 오탐 회귀를 제거했다. 기존 `_SCHEMA_TABLE_REF_RE = r"\`?([A-Za-z_]\w*)\`?\s*\.\s*\`?([A-Za-z_]\w*)\`?"` 는 SQL 문맥 구분 없이 전체에서 `x.y` 를 찾았고, SELECT/WHERE/ON 절의 alias.column 토큰이 schema 후보로 수집되어 Q4 재수행이 모든 턴 `BLOCKED_SCHEMAS=bb,be` 로 실패했다. `_TABLE_LIST_RE` (FROM/JOIN 뒤 다음 절 키워드 직전까지의 테이블 리스트 구간을 slice, IGNORECASE|DOTALL) + `_INNER_REF_RE` (그 slice 내부에서만 `schema.table` 추출) 2 단계로 재작성. SELECT 절의 alias.column 은 FROM/JOIN slice 바깥이라 더 이상 매칭되지 않는다. 검증: in-process 15 테스트 케이스(단일 FROM / FROM+WHERE alias.col / FROM+JOIN+alias.col ON / 혼합 / 백틱 / subquery / 비허용 schema 차단 / SELECT alias.col 무시 / semicolon terminator / UNION 경계 / whitespace DOTALL / dedup) 전부 expected 일치, Q4-like SQL 이 `{dblog}` 만 추출되고 `_whitelist_violation` 이 `{dbauth,dbgame,dblog}` whitelist 에서 None 반환, 비허용 `dbstat.foo` 는 계속 차단. 후속 TASK-0034 Q4/Q5 재수행이 전 턴 HTTP 200 으로 완료됨.

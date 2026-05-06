@@ -26,10 +26,11 @@ scope: feature
    - Applies to: 영향 받는 경로/파일 명시
 8. BLOCKED 항목이 있으면 `REPORT.md`에 정리하여 사람에게 전달한다.
 9. AGENTS.md §16.5 Git 동기화 절차를 수행한다.
-   - Step 1: 커밋 (항상)
-   - Step 2: 원격 동기화 판정
-   - Step 3: 공개 브랜치 push + PR 생성/갱신 (조건 충족 시)
-   - Step 4: 결과 기록
+   - Step 1: `verify-completion` pre-commit 검증
+   - Step 2: AI가 커밋 수행 (완료 가능한 cycle에서 사용자 결정 대기 금지)
+   - Step 3: 원격 동기화 판정
+   - Step 4: AI가 공개 브랜치 push + PR 생성/갱신 (조건 충족 시)
+   - Step 5: 결과 기록
 
 ## Validation
 - [ ] Completion Checklist 전체 항목이 체크되었다
@@ -37,4 +38,5 @@ scope: feature
 - [ ] `LEARNINGS.md`에 재사용 가능한 교훈이 기록되었다 (또는 "추가 없음" 확인됨)
 - [ ] BLOCKED 항목이 없거나 사람에게 전달되었다
 - [ ] Git 커밋이 완료되었다
+- [ ] Git 원격 동기화가 완료되었다 또는 동기화 불가 사유가 기록되었다
 - [ ] REPORT.md에 Git 동기화 결과가 기록되었다

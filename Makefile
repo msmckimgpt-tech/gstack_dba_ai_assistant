@@ -30,7 +30,7 @@ CONV_FILE ?= /shared/conversation_id.$(SESSION)
 BROWSER_SESSION_FILE ?= /shared/browser_session_id.$(SESSION)
 BROWSER_CTL := $(DC_QUIET) run --rm --entrypoint python --env BROWSER_SESSION_FILE=$(BROWSER_SESSION_FILE) --env BROWSER_URL=$(BROWSER_URL) browser /app/ctl.py
 
-.PHONY: check-llm-network ensure-replica-network replica-check wait-mysql ensure-memory-db up down restart build ps logs sh repl ask out clean clear init mcp-up mcp-down mcp-test convo-list convo-new convo-use convo-delete convo-rename convo-clear start stop status dump web web-down web-tls-up web-tls-down web-tls-status web-tls-logs insight-up insight-down insight-logs insight-status browser-up browser-down browser-health browser-session browser-goto browser-click browser-type browser-set-value browser-eval browser-press browser-wait browser-text browser-html browser-shot browser-close browser-hover browser-mousedown browser-mouseup browser-scroll mysql session-info
+.PHONY: check-llm-network ensure-replica-network replica-check wait-mysql ensure-memory-db up down restart build ps logs sh repl ask out clean clear init mcp-up mcp-down mcp-test convo-list convo-new convo-use convo-delete convo-rename convo-clear start stop status dump web web-down web-tls-up web-tls-down web-tls-status web-tls-logs insight-up insight-down insight-logs insight-status browser-up browser-down browser-health browser-session browser-goto browser-click browser-type browser-set-value browser-eval browser-press browser-wait browser-text browser-html browser-shot browser-close browser-hover browser-mousedown browser-mouseup browser-scroll mysql session-info dc-build
 
 check-llm-network: ensure-replica-network
 	@docker network inspect llm-shared >/dev/null 2>&1 || { \
@@ -70,8 +70,17 @@ up:
 	@mkdir -p $(SHARED_DIR) $(MYSQL_DATA_DIR) $(MYSQL_BACKUP_DIR) $(LOG_DIR) $(OUT_DIR) $(SHARED_DIR)/web_sessions $(SHARED_DIR)/out/browser $(CERT_ROOT)/$(WEB_PUBLIC_HOST) $(CADDY_DATA_DIR) $(CADDY_CONFIG_DIR)
 	@chown -R 999:999 $(MYSQL_DATA_DIR) || true
 	@chmod -R 770 $(MYSQL_DATA_DIR) $(MYSQL_BACKUP_DIR) $(LOG_DIR) $(OUT_DIR) || true
-	@$(DC_QUIET) build agent memory-init insight-worker web browser
-	@$(DC_QUIET) up -d --build mysql web browser
+	@# docker compose v5.1 + buildx v0.31 은 build 후처리에서 `--metadata-file` 임시파일을
+	@# race-unlink 하여 빌드는 성공해도 exit 1 을 반환하는 알려진 이슈가 있다.
+	@# 종료코드는 흡수하고, 직후 이미지 존재 여부로 실제 빌드 성공을 검증한다.
+	@$(DC_QUIET) build agent memory-init insight-worker web browser || true
+	@for img in repo-agent repo-memory-init repo-insight-worker repo-web repo-browser; do \
+		docker image inspect $$img >/dev/null 2>&1 \
+			|| { echo "[make up] 빌드된 이미지 누락: $$img" >&2; exit 1; }; \
+	done
+	@# 위 build 단계에서 이미 이미지가 만들어졌으므로 후속 `up` 은 `--build` 없이 호출한다.
+	@# (`--build` 를 다시 주면 동일 metadata-file race 가 재발한다.)
+	@$(DC_QUIET) up -d mysql web browser
 	@$(MAKE) wait-mysql
 	@$(MAKE) ensure-memory-db
 	@if [[ "$(ENABLE_WEB_TLS_PROXY)" == "1" ]]; then \
@@ -81,7 +90,7 @@ up:
 	fi
 	@$(DC_QUIET) run --rm memory-init
 	@if [[ "$(ENABLE_INSIGHT_WORKER)" != "0" ]]; then \
-		$(DC_QUIET) up -d --build insight-worker; \
+		$(DC_QUIET) up -d insight-worker; \
 	else \
 		$(DC_QUIET) stop insight-worker >/dev/null 2>&1 || true; \
 	fi
@@ -195,10 +204,32 @@ replica-check:
 	@$(MAKE) check-llm-network
 	@./scripts/check_replica.sh
 
+# docker compose v5.1.1 + buildx v0.31.1 환경에서 image 빌드 자체는 성공하지만 compose 가
+# provenance metadata file 의 후처리(`#16 resolving provenance for metadata file` 직후 임시
+# 파일 path 에 random suffix mismatch) 단계에서 EXIT=1 로 종료되는 race 를 흡수한다.
+# image 가 정상 생성된 케이스만 EXIT=0 으로 정규화하고 다른 빌드 오류는 그대로 전파한다.
+# Usage: $(MAKE) dc-build SERVICE=web
+dc-build:
+	@if [ -z "$(SERVICE)" ]; then echo "dc-build: SERVICE 변수 필요 (예: SERVICE=web)" >&2; exit 1; fi
+	@set -e; \
+	tmp_log=$$(mktemp); \
+	if $(DC_QUIET) build $(SERVICE) > $$tmp_log 2>&1; then \
+		cat $$tmp_log; rm -f $$tmp_log; \
+	else \
+		status=$$?; cat $$tmp_log; \
+		if grep -q "compose-build-metadataFile" $$tmp_log; then \
+			echo "[make] note: docker compose v5.1.1+buildx v0.31.1 의 provenance metadata file race 우회 — $(SERVICE) image 빌드 OK, compose EXIT=$$status 무시" >&2; \
+			rm -f $$tmp_log; \
+		else \
+			rm -f $$tmp_log; exit $$status; \
+		fi; \
+	fi
+
 web: init
 	@if [ "$(ENABLE_WEB_TLS)" = "1" ]; then $(MAKE) -s web-tls-cert; fi
 	@$(MAKE) check-llm-network
-	@$(DC_QUIET) up -d --build web
+	@$(MAKE) -s dc-build SERVICE=web
+	@$(DC_QUIET) up -d --no-build web
 	@if [ "$(ENABLE_WEB_TLS)" = "1" ]; then \
 		echo "Web UI (HTTPS): https://localhost:$(WEB_PORT)"; \
 		if [ -n "$(WEB_LAN_IP)" ]; then echo "LAN 접속: https://$(WEB_LAN_IP):$(WEB_PORT)"; fi; \

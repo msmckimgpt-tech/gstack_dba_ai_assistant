@@ -101,7 +101,21 @@ const state = {
   progressErrorCount: 0,
   progressSteps: [],
   toastTimer: null,
+  // TASK-0047: 제품 컨텍스트 (대화 단위) state.
+  // - productMode: 사용자 의도. 'auto' = 일반 대화, 'pinned' = 특정 제품 고정.
+  // - pinnedProductId: pinned 일 때만 의미 있음.
+  // - activeProductId: 서버가 마지막으로 확정한 제품 (read-only mirror, auto resolver 가 도입되면 LLM 추론 결과 캐시).
+  productMode: "auto",
+  pinnedProductId: null,
+  activeProductId: null,
+  // TASK-0048: "새 대화" 버튼은 즉시 backend row 를 만들지 않는다. client-side 만 pending 상태로 진입했다가
+  // 첫 메시지 전송 시 /api/ask 가 lazy 생성한다. cid 가 없는 동안의 busy/sentinel 식별자.
+  pendingNewConversation: false,
 };
+
+const PENDING_CONV_SENTINEL = "__pending__";
+
+const PRODUCT_PREF_LS_KEY = "mad.productPref.v1";
 
 const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "misc"];
 const PERMISSION_GROUP_LABELS = {
@@ -252,6 +266,9 @@ function markAccessBlocked(btn, action, conversation = currentConversation()) {
 
 /** 현재 활성 대화가 요청 중인지 여부 */
 function isCurrentConvBusy() {
+  if (state.pendingNewConversation && state.busyConversations.has(PENDING_CONV_SENTINEL)) {
+    return true;
+  }
   return state.busyConversations.has(state.activeConversationId);
 }
 
@@ -536,6 +553,163 @@ function switchProfileTab(tab) {
   });
 }
 
+// ──────────────────────────────────────────────────────────────────
+//  TASK-0047 — Product chip (sidebar header) 렌더 / 변경 / hydrate
+// ──────────────────────────────────────────────────────────────────
+
+/** select 요소에 [auto] + 활성 products 옵션을 렌더한다. drawer 의 promptProductSelect 와 공유 가능한 factory. */
+function renderProductOptions(selectEl, { includeAuto, selected }) {
+  if (!selectEl) return;
+  const products = Array.isArray(state.products) ? state.products : [];
+  const previous = selectEl.value;
+  selectEl.innerHTML = "";
+  if (includeAuto) {
+    const opt = document.createElement("option");
+    opt.value = "auto";
+    opt.textContent = "auto · 자동 (제품 미선택)";
+    selectEl.appendChild(opt);
+  } else {
+    const optNone = document.createElement("option");
+    optNone.value = "";
+    optNone.textContent = "(제품 무관)";
+    selectEl.appendChild(optNone);
+  }
+  products.forEach((p) => {
+    if (p && p.is_active === false) return;
+    const opt = document.createElement("option");
+    opt.value = String(p.id);
+    opt.textContent = `${p.name} (${p.product_key})`;
+    selectEl.appendChild(opt);
+  });
+  const target = selected != null ? String(selected) : previous;
+  if (target && Array.from(selectEl.options).some((o) => o.value === target)) {
+    selectEl.value = target;
+  }
+}
+
+function renderProductChip() {
+  const chipEl = document.getElementById("productChip");
+  const selectEl = document.getElementById("productSelect");
+  if (!chipEl || !selectEl) return;
+  const mode = state.productMode === "pinned" ? "pinned" : "auto";
+  chipEl.dataset.mode = mode;
+  const selectedValue = mode === "auto" ? "auto" : (state.pinnedProductId ? String(state.pinnedProductId) : "auto");
+  renderProductOptions(selectEl, { includeAuto: true, selected: selectedValue });
+  const products = Array.isArray(state.products) ? state.products : [];
+  const pinned = products.find((p) => Number(p.id) === Number(state.pinnedProductId));
+  const label = mode === "auto"
+    ? "auto · 자동 (제품 미선택)"
+    : (pinned ? `${pinned.name} (${pinned.product_key})` : "auto · 자동 (제품 미선택)");
+  chipEl.setAttribute("aria-label", `이 대화의 제품 선택, 현재 ${label}`);
+  // 진행 중 ask 가 있으면 select disabled (race 가드 + 사용자 안내).
+  const busy = isCurrentConvBusy();
+  selectEl.disabled = busy;
+  chipEl.setAttribute("aria-disabled", busy ? "true" : "false");
+  chipEl.classList.toggle("is-disabled", busy);
+  chipEl.title = busy
+    ? "응답 처리 중에는 변경할 수 없어요. 응답이 끝난 뒤 다시 시도해 주세요."
+    : "이 대화에 적용할 제품을 선택합니다. auto 는 일반 대화 모드입니다.";
+}
+
+function readProductPrefFromLocal() {
+  try {
+    const raw = window.localStorage.getItem(PRODUCT_PREF_LS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const mode = parsed.mode === "pinned" ? "pinned" : "auto";
+    const pid = parsed.pinned_id ? Number(parsed.pinned_id) : null;
+    return { mode, pinned_id: Number.isFinite(pid) ? pid : null };
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeProductPrefToLocal(mode, pinnedId) {
+  try {
+    window.localStorage.setItem(
+      PRODUCT_PREF_LS_KEY,
+      JSON.stringify({ mode, pinned_id: pinnedId || null }),
+    );
+  } catch (_) { /* private mode etc.: ignore */ }
+}
+
+/** 서버 hydrate(/api/session 의 product_pref / conversation_product) 결과를 state 에 반영한다. */
+function applyProductHydration({ pref, conversationProduct }) {
+  // 1) 우선 localStorage 미러 → 깜빡임 방지용 즉시 표시.
+  const local = readProductPrefFromLocal();
+  if (local) {
+    state.productMode = local.mode;
+    state.pinnedProductId = local.pinned_id;
+  }
+  // 2) 대화별 product 가 있으면 그것이 우선(대화 컨텍스트는 대화의 진실).
+  if (conversationProduct && conversationProduct.product_mode) {
+    state.productMode = conversationProduct.product_mode === "pinned" ? "pinned" : "auto";
+    state.pinnedProductId = conversationProduct.product_id || null;
+    state.activeProductId = conversationProduct.product_id || null;
+  }
+  // 3) account-level 선호 — 대화 product 가 없을 때(신규/fork 직후) 적용.
+  if (pref && (!conversationProduct || conversationProduct.product_id == null)) {
+    state.productMode = pref.mode === "pinned" ? "pinned" : "auto";
+    state.pinnedProductId = pref.mode === "pinned" ? (pref.pinned_id || null) : null;
+    if (pref.fallback_reason === "pinned_inactive") {
+      // Codex 검토 가드: pinned 제품이 비활성/제거된 경우 자동 강등.
+      showToast("이전에 고정해 둔 제품을 사용할 수 없어 자동으로 auto 로 전환했어요.");
+    }
+  }
+  writeProductPrefToLocal(state.productMode, state.pinnedProductId);
+  renderProductChip();
+}
+
+async function setActiveProduct({ mode, pinnedId }) {
+  const normMode = mode === "pinned" ? "pinned" : "auto";
+  const normPid = normMode === "pinned" ? Number(pinnedId) || null : null;
+  if (normMode === "pinned" && !normPid) {
+    showToast("제품을 선택해 주세요.", true);
+    renderProductChip();
+    return;
+  }
+  if (isCurrentConvBusy()) {
+    showToast("응답 처리 중에는 제품을 변경할 수 없어요.", true);
+    renderProductChip();
+    return;
+  }
+  // optimistic.
+  state.productMode = normMode;
+  state.pinnedProductId = normPid;
+  writeProductPrefToLocal(normMode, normPid);
+  renderProductChip();
+  const cid = state.activeConversationId;
+  try {
+    if (cid) {
+      const res = await fetch(`/api/conversations/${encodeURIComponent(cid)}/product`, {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: normMode, product_id: normPid }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.error || res.statusText);
+      state.activeProductId = payload.product_id || null;
+      const products = Array.isArray(state.products) ? state.products : [];
+      const p = products.find((x) => Number(x.id) === Number(normPid));
+      const label = normMode === "auto"
+        ? "auto · 자동 (제품 미선택)"
+        : (p ? p.name : "");
+      showToast(
+        normMode === "auto"
+          ? "auto 로 바꿨어요. 다음 답변부터 적용됩니다."
+          : `제품을 ${label} 으로 바꿨어요. 다음 답변부터 적용됩니다.`,
+      );
+    }
+    // cid 가 없으면(아직 새 대화 미생성) localStorage 만 갱신하고 다음 새 대화 생성 시 반영.
+  } catch (error) {
+    // 롤백: 서버 거부 시 직전 상태로 복원하고 안내.
+    showToast(error.message || "제품 변경에 실패했습니다.", true);
+    await refreshWorkspace(state.activeConversationId).catch(() => {});
+  }
+}
+
 async function fetchAccountPromptRow(productId) {
   const params = new URLSearchParams();
   if (productId) params.set("product_id", String(productId));
@@ -753,7 +927,8 @@ async function handlePasswordChange(event) {
 
 function renderConversationList() {
   conversationListEl.innerHTML = "";
-  if (!state.conversations.length) {
+  const hasPending = Boolean(state.pendingNewConversation);
+  if (!state.conversations.length && !hasPending) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.innerHTML = "<strong>대화 없음</strong><span>새 대화를 만들어 시작하세요.</span>";
@@ -768,12 +943,44 @@ function renderConversationList() {
     else others.push(item);
   });
 
-  const renderGroup = (label, items) => {
-    if (!items.length) return;
+  // TASK-0048: pending 새 대화 placeholder. cid 가 아직 없으므로 클릭 비활성, 메타 라벨만 보여준다.
+  const appendPendingItem = () => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "conv-item is-own is-active is-pending";
+    button.setAttribute("aria-disabled", "true");
+    button.disabled = true;
+    button.title = "첫 메시지를 입력하면 대화가 만들어집니다.";
+
+    const titleRow = document.createElement("div");
+    titleRow.className = "conv-item-title-row";
+    const titleEl = document.createElement("div");
+    titleEl.className = "conv-item-title";
+    titleEl.textContent = "새 대화 (작성 중)";
+    titleRow.appendChild(titleEl);
+    const badge = document.createElement("span");
+    badge.className = "conv-owner-badge is-own";
+    badge.textContent = "내";
+    titleRow.appendChild(badge);
+
+    const metaEl = document.createElement("div");
+    metaEl.className = "conv-item-meta";
+    const dateEl = document.createElement("span");
+    dateEl.textContent = "첫 메시지를 입력하세요";
+    metaEl.appendChild(dateEl);
+
+    button.append(titleRow, metaEl);
+    conversationListEl.appendChild(button);
+  };
+
+  const renderGroup = (label, items, prependFn = null) => {
+    if (!items.length && !prependFn) return;
     const header = document.createElement("div");
     header.className = "conv-group-title";
     header.textContent = label;
     conversationListEl.appendChild(header);
+
+    if (prependFn) prependFn();
 
     items.forEach((item) => {
       const mine = isOwnConversation(item);
@@ -824,13 +1031,19 @@ function renderConversationList() {
     });
   };
 
-  renderGroup("내 대화", own);
+  renderGroup("내 대화", own, hasPending ? appendPendingItem : null);
   renderGroup(`타 계정 대화 (${others.length})`, others);
 }
 
 function renderConversationHeader() {
   const conversation = currentConversation();
   if (!conversation) {
+    if (state.pendingNewConversation) {
+      // TASK-0048: pending 새 대화 — 첫 메시지 전송 전 단계.
+      conversationTitleEl.textContent = "새 대화";
+      conversationSubtitleEl.textContent = "첫 메시지를 입력하면 대화가 만들어집니다.";
+      return;
+    }
     conversationTitleEl.textContent = "대화를 선택하세요";
     conversationSubtitleEl.textContent = "권한이 허용한 범위의 대화와 실행 결과를 확인할 수 있습니다.";
     return;
@@ -1436,6 +1649,8 @@ function renderComposer() {
   const busy = isCurrentConvBusy();
   const hasAsk = can("conversation.ask");
   const disabled = !canAskInConversation() || busy;
+  // TASK-0047: composer busy 상태 변화에 따라 product chip 도 disabled 동기화.
+  renderProductChip();
   // 전송 버튼: 권한이 없어도 클릭이 통과하여 토스트로 안내되도록 native disabled 대신 aria-disabled 사용.
   promptInputEl.disabled = busy;
   sendBtn.disabled = busy;
@@ -1749,11 +1964,25 @@ async function refreshWorkspace(preferredConversationId = "") {
   renderConversationHeader();
   renderAccessNotice();
   await loadHistory();
+  // TASK-0047: 활성 대화의 product_mode/product_id 를 별도 endpoint 없이 /api/session 재호출로 hydrate.
+  try {
+    const fresh = await apiFetch("/api/session");
+    if (fresh && fresh.authenticated) {
+      applyProductHydration({
+        pref: fresh.product_pref || null,
+        conversationProduct: fresh.conversation_product || null,
+      });
+    }
+  } catch (_) { /* network blip: state 유지 */ }
 }
 
 async function selectConversation(conversationId) {
   if (!conversationId || conversationId === state.activeConversationId) {
     return;
+  }
+  // TASK-0048: 다른 실 대화로 전환하면 pending 모드는 자동 종료한다.
+  if (state.pendingNewConversation) {
+    state.pendingNewConversation = false;
   }
   await apiFetch("/api/use_conversation", {
     method: "POST",
@@ -1763,6 +1992,16 @@ async function selectConversation(conversationId) {
   renderConversationList();
   renderConversationHeader();
   await loadHistory();
+  // 대화 전환 시 새 대화의 product 컨텍스트로 chip 갱신.
+  try {
+    const fresh = await apiFetch("/api/session");
+    if (fresh && fresh.authenticated) {
+      applyProductHydration({
+        pref: fresh.product_pref || null,
+        conversationProduct: fresh.conversation_product || null,
+      });
+    }
+  } catch (_) { /* ignore */ }
 }
 
 async function createConversation() {
@@ -1770,9 +2009,44 @@ async function createConversation() {
     showPermissionDeniedToast("conversation.create");
     return;
   }
-  const payload = await apiFetch("/api/new_conversation", { method: "POST" });
+  // TASK-0047: 새 대화 생성 시 사용자의 직전 선호(state.productMode/pinnedProductId) 를 함께 보낸다.
+  const body = state.productMode === "pinned" && state.pinnedProductId
+    ? { mode: "pinned", product_id: Number(state.pinnedProductId) }
+    : { mode: "auto" };
+  const payload = await apiFetch("/api/new_conversation", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
   showToast("새 대화를 만들었습니다.");
   await refreshWorkspace(payload.conversation_id || "");
+}
+
+// TASK-0048: "새 대화" 버튼은 즉시 backend row 를 만들지 않는다. client-side pending 상태만 진입하고
+// 실제 row 생성은 첫 메시지 전송 시 /api/ask 의 lazy creation path 에 위임한다. 빈 대화 누적 방지.
+function beginPendingConversation() {
+  if (!can("conversation.create")) {
+    showPermissionDeniedToast("conversation.create");
+    return;
+  }
+  if (state.pendingNewConversation) {
+    // 이미 pending 상태 — 입력란에 포커스만 다시 맞춘다.
+    if (promptInputEl) promptInputEl.focus();
+    return;
+  }
+  // 진행 중 ask 가 있는 대화의 사이드바 컨텍스트를 깨지 않도록 polling 만 중단(상태 자체는 보존).
+  stopProgressPolling({ reset: true });
+  state.activeConversationId = "";
+  state.pendingNewConversation = true;
+  state.messages = [];
+  state.hasMoreHistory = false;
+  state.nextBeforeId = null;
+  renderConversationList();
+  renderConversationHeader();
+  renderAccessNotice();
+  renderMessages();
+  renderProgress();
+  renderComposer();
+  if (promptInputEl) promptInputEl.focus();
 }
 
 async function forkConversation({ fromMessageId = null } = {}) {
@@ -2035,76 +2309,106 @@ async function sendPrompt() {
     showToast("타 계정 소유의 대화에는 요청을 보낼 수 없습니다. 새 대화를 생성하세요.", true);
     return;
   }
-  if (!active && !can("conversation.create")) {
+  // TASK-0048: pending 모드는 client-side 만 진입한 빈 대화 단계. cid 가 없으니 lazy create.
+  const isPending = Boolean(state.pendingNewConversation);
+  const isLazyCreate = isPending || !state.activeConversationId;
+  if (isLazyCreate && !can("conversation.create")) {
     showPermissionDeniedToast("conversation.create");
     return;
   }
   const vault = readVaultState();
   // 요청 시작 시점의 대화 ID를 고정 — 전송 중 대화 전환이 일어나도 올바른 대화에 귀속
   const targetConvId = state.activeConversationId;
-  state.busyConversations.add(targetConvId);
+  // busy 추적: lazy create 시점에는 cid 가 없으므로 sentinel 로 잠근다.
+  const busyKey = isLazyCreate ? PENDING_CONV_SENTINEL : targetConvId;
+  state.busyConversations.add(busyKey);
   renderComposer();
-  if (targetConvId) {
+  if (!isLazyCreate && targetConvId) {
     startProgressPolling({ reset: true });
+  }
+  // TASK-0048: lazy create 분기에서 사용자의 직전 product 의도(state.productMode/pinnedProductId)를
+  // backend 에 hint 로 전달. backend `/api/ask` 가 새 cid 직후 AgentCoreConversations.product_*에 반영한다.
+  const askBody = {
+    message,
+    conversation_id: targetConvId || "",
+    model: vaultModelEl.value.trim() || vault.model || state.apiVaultOptions?.default_model || "auto",
+    api_key_cipher: vault.cipher,
+    api_key_passphrase: vault.passphrase,
+  };
+  if (isLazyCreate) {
+    askBody.product_mode = state.productMode === "pinned" ? "pinned" : "auto";
+    askBody.product_id =
+      askBody.product_mode === "pinned" && state.pinnedProductId
+        ? Number(state.pinnedProductId)
+        : null;
   }
   try {
     const payload = await apiFetch("/api/ask", {
       method: "POST",
-      body: JSON.stringify({
-        message,
-        conversation_id: targetConvId || "",
-        model: vaultModelEl.value.trim() || vault.model || state.apiVaultOptions?.default_model || "auto",
-        api_key_cipher: vault.cipher,
-        api_key_passphrase: vault.passphrase,
-      }),
+      body: JSON.stringify(askBody),
     });
     promptInputEl.value = "";
     promptInputEl.style.height = "auto";
     showToast(payload.error ? payload.error : "응답을 갱신했습니다.");
-    await refreshWorkspace(payload.conversation_id || targetConvId);
+    const newCid = String(payload.conversation_id || targetConvId || "");
+    if (isLazyCreate && newCid) {
+      // pending placeholder → 실 cid 로 전환. busy sentinel 은 finally 에서 정리.
+      state.pendingNewConversation = false;
+      state.activeConversationId = newCid;
+    }
+    await refreshWorkspace(newCid);
   } catch (error) {
-    // TASK-0041: /api/ask 가 타임아웃/네트워크 오류/게이트웨이 오류로 실패했을 때
-    // 서버가 여전히 처리 중이면 사용자에게 기다리기/즉시답변/취소 선택지를 제시.
-    const askCid = targetConvId;
-    const status = askCid ? await fetchAskStatus(askCid) : null;
-    if (status && status.is_processing) {
-      const statusText = status.status || "processing";
-      const choice = await showTimeoutRecoveryDialog({ statusText });
-      if (choice === "cancel") {
-        try {
-          await apiFetch("/api/cancel", {
-            method: "POST",
-            body: JSON.stringify({ conversation_id: askCid }),
-          });
-          showToast("취소 요청을 전달했습니다.");
-        } catch (cancelError) {
-          showToast(`취소 요청 실패: ${cancelError.message || cancelError}`, true);
-        }
-        await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
-      } else if (choice === "finalize") {
-        try {
-          await apiFetch("/api/finalize", {
-            method: "POST",
-            body: JSON.stringify({ conversation_id: askCid }),
-          });
-          showToast("즉시 답변 요청을 전달했습니다.");
-        } catch (finError) {
-          showToast(`즉시 답변 요청 실패: ${finError.message || finError}`, true);
-        }
-        await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
-      } else if (choice === "wait") {
-        await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
-      } else {
-        // dismiss — 진행 상태만 유지. progress polling 이 결과를 갱신할 것
-        showToast("계속 서버에서 처리 중입니다. 상태는 상단에 표시됩니다.");
-      }
-      promptInputEl.value = "";
-      promptInputEl.style.height = "auto";
+    // TASK-0048: pending 단계에서 ask 가 실패하면 cid 발급 여부가 client 에는 불확실 →
+    // attach/resume 다이얼로그 대신 사용자에게 재시도/사이드바 새로고침을 안내한다.
+    if (isLazyCreate) {
+      showToast(
+        `첫 메시지 전송에 실패했습니다: ${error.message || error}. 다시 시도하거나 사이드바를 새로고침해 주세요.`,
+        true,
+      );
     } else {
-      showToast(`요청에 실패했습니다: ${error.message || error}`, true);
+      // TASK-0041: 기존 대화에서 /api/ask 가 타임아웃/네트워크 오류/게이트웨이 오류로 실패했을 때
+      // 서버가 여전히 처리 중이면 사용자에게 기다리기/즉시답변/취소 선택지를 제시.
+      const askCid = targetConvId;
+      const status = askCid ? await fetchAskStatus(askCid) : null;
+      if (status && status.is_processing) {
+        const statusText = status.status || "processing";
+        const choice = await showTimeoutRecoveryDialog({ statusText });
+        if (choice === "cancel") {
+          try {
+            await apiFetch("/api/cancel", {
+              method: "POST",
+              body: JSON.stringify({ conversation_id: askCid }),
+            });
+            showToast("취소 요청을 전달했습니다.");
+          } catch (cancelError) {
+            showToast(`취소 요청 실패: ${cancelError.message || cancelError}`, true);
+          }
+          await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
+        } else if (choice === "finalize") {
+          try {
+            await apiFetch("/api/finalize", {
+              method: "POST",
+              body: JSON.stringify({ conversation_id: askCid }),
+            });
+            showToast("즉시 답변 요청을 전달했습니다.");
+          } catch (finError) {
+            showToast(`즉시 답변 요청 실패: ${finError.message || finError}`, true);
+          }
+          await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
+        } else if (choice === "wait") {
+          await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
+        } else {
+          // dismiss — 진행 상태만 유지. progress polling 이 결과를 갱신할 것
+          showToast("계속 서버에서 처리 중입니다. 상태는 상단에 표시됩니다.");
+        }
+        promptInputEl.value = "";
+        promptInputEl.style.height = "auto";
+      } else {
+        showToast(`요청에 실패했습니다: ${error.message || error}`, true);
+      }
     }
   } finally {
-    state.busyConversations.delete(targetConvId);
+    state.busyConversations.delete(busyKey);
     renderComposer();
   }
 }
@@ -2222,6 +2526,8 @@ async function handleLogout() {
   state.conversations = [];
   state.activeConversationId = "";
   state.messages = [];
+  // TASK-0048: 로그아웃 시 pending 새 대화 placeholder 도 정리.
+  state.pendingNewConversation = false;
   renderConversationList();
   renderMessages();
   renderAccountState();
@@ -2239,6 +2545,11 @@ async function initializeWorkspace() {
   state.user = state.session.user;
   state.products = Array.isArray(state.session.products) ? state.session.products : [];
   state.default_product_id = state.session.default_product_id || null;
+  // TASK-0047: 제품 선호 hydrate (서버 pref + 대화별 product → state).
+  applyProductHydration({
+    pref: state.session.product_pref || null,
+    conversationProduct: state.session.conversation_product || null,
+  });
   renderAccountState();
   renderAccessNotice();
   await loadVaultOptions();
@@ -2358,10 +2669,26 @@ async function initialize() {
     window.location.href = "/admin";
   });
   newConversationBtn.addEventListener("click", () => {
-    createConversation().catch((error) => {
+    // TASK-0048: 빈 대화 누적 방지. backend row 는 첫 메시지 전송 시 lazy 생성된다.
+    try {
+      beginPendingConversation();
+    } catch (error) {
       showToast(error.message || "새 대화 생성에 실패했습니다.", true);
-    });
+    }
   });
+  // TASK-0047: 사이드바 제품 칩의 select 변경 → setActiveProduct.
+  const productSelectEl = document.getElementById("productSelect");
+  if (productSelectEl) {
+    productSelectEl.addEventListener("change", (ev) => {
+      const value = (ev.target && ev.target.value) || "auto";
+      const next = value === "auto"
+        ? { mode: "auto", pinnedId: null }
+        : { mode: "pinned", pinnedId: Number(value) };
+      setActiveProduct(next).catch((error) => {
+        showToast(error.message || "제품 변경에 실패했습니다.", true);
+      });
+    });
+  }
   sendBtn.addEventListener("click", () => {
     sendPrompt().catch((error) => {
       showToast(error.message || "요청 전송에 실패했습니다.", true);

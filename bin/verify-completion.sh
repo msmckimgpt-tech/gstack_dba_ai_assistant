@@ -303,7 +303,12 @@ check_section_4_quality() {
   local section
   section=$(extract_section_4 "$anchor_path")
 
-  if [ -z "$(printf '%s' "$section" | grep -v '^<!--' | grep -v '^-->' | grep -v '^\s*$' | grep -v '^(엔트리 없음')" ]; then
+  # 주석 블록 안의 텍스트는 entry 본문이 아니므로 strip 한 뒤에 빈지 판정한다.
+  local stripped_section
+  stripped_section=$(printf '%s' "$section" \
+    | awk 'BEGIN{c=0} /<!--/{c=1} { if(!c) print } /-->/{c=0}' \
+    | grep -v '^\s*$' | grep -v '^(엔트리 없음' || true)
+  if [ -z "$stripped_section" ]; then
     REJECT_REASONS+=("§4 has no entries at all")
     return 1
   fi
@@ -529,7 +534,9 @@ check_6_anchor_1_3() {
   return 1
 }
 
-# Check #7: ANCHOR.md §4 quality gate (≥1 well-formed entry).
+# Check #7: ANCHOR.md §4 optional quality gate.
+# Normal TASK cycles do not require human §4 entries. If a human entry exists,
+# it must be well-formed so the log does not drift into cargo-cult approval.
 check_7_anchor_4() {
   local fdir="$1"
   local anchor_md="${fdir}/docs/ANCHOR.md"
@@ -552,6 +559,11 @@ check_7_anchor_4() {
 
   if check_section_4_quality "$anchor_md"; then
     log_check 7 PASS "ANCHOR §4 quality (${GOOD_ENTRY_COUNT} well-formed entries)"
+    return 0
+  fi
+
+  if [ "${#REJECT_REASONS[@]}" -eq 1 ] && [ "${REJECT_REASONS[0]}" = "§4 has no entries at all" ]; then
+    log_check 7 PASS "ANCHOR §4 optional (no human entries)"
     return 0
   fi
 

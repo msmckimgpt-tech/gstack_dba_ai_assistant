@@ -1,5 +1,7 @@
 ---
-template_version: v3.0.0
+template_version: v3.6.0
+domain: [governance, workflow, context, safety]
+ai_read_priority: 1
 ---
 
 # mysql_ai 템플릿 작업 지침서
@@ -741,7 +743,8 @@ AI가 코드를 실행(테스트, 빌드 등)할 때는 다음을 준수한다:
 - C/E/F/G 회귀 없음.
 - `FUNCTION.md`가 현재 동작과 일치한다.
 - `TASK.md`, `MODIFY.md`, `REVIEW.md`, `REPORT.md`, `TEST.md`가 필요한 수준으로 갱신되었다.
-- `ANCHOR.md` §1~§3이 작성되었고 (24h bootstrap grace 이후), 이번 TASK cycle 내 §4 human 엔트리 ≥ 1개 append되었다 (§18 참조).
+- `ANCHOR.md` §1~§3이 작성되었다 (24h bootstrap grace 이후).
+- `ANCHOR.md` §4 human 검증 로그는 일반 TASK cycle 완료 조건이 아니며, release/milestone 검토 또는 방향 전환 검증이 필요할 때만 요구된다 (§18 참조).
 - 남은 리스크와 후속 작업이 `REPORT.md`에 정리되었다.
 - `/repo/docs/STATUS.md`에 기능 상태가 반영되었다.
 - `/repo/docs/CODEBASE_MAP.md`에 새 파일/모듈이 반영되었다 (해당 시).
@@ -772,7 +775,6 @@ AI가 작업 완료를 선언할 때는 `TASK.md`의 Completion Checklist를 명
 - [ ] STATUS.md에 기능 상태가 갱신되었다
 - [ ] LEARNINGS.md에 발견된 교훈이 기록되었다 (해당 시)
 - [ ] ANCHOR.md §1~§3이 채워져 있다 (또는 24h bootstrap grace 범위 내이다) (§18)
-- [ ] ANCHOR.md §4에 이번 TASK cycle 범위 내 human 검증 엔트리 ≥ 1개 존재한다 (§18)
 - [ ] `bin/verify-completion.sh --pre-commit <feature-id>`가 PASS한다 (§16.5)
 - [ ] Git 커밋이 완료되었다 (§16.5)
 - [ ] Git 원격 동기화가 완료되었다 또는 동기화 불가 사유가 기록되었다 (§16.5)
@@ -785,6 +787,12 @@ AI가 작업 완료를 선언할 때는 `TASK.md`의 Completion Checklist를 명
 AGENTS.md §1 AI 전권 위임 원칙에 부합한다 — 스크립트는 **AI가 호출하는 도구**이지
 인간 개입이 아니다.
 
+**기본 원칙: AI 작업자는 완료 가능한 cycle을 사용자 확인 대기로 멈추지 않는다.**
+pre-commit 검증이 PASS하고 BLOCKED/Critical/Major 승인 대기 항목이 없으면 AI가
+직접 commit한다. 원격 저장소가 설정되어 있고 공개 브랜치 push가 가능하면 AI가
+직접 push/PR 갱신까지 수행한다. `commit/push 결정은 사용자에게 위임` 같은 응답은
+정책 위반이다.
+
 커밋 메시지 형식은 `CONTRIBUTING.md`의 커밋 규칙 섹션을 따른다.
 
 #### Step 0: 완료 선언 정의
@@ -796,7 +804,7 @@ AGENTS.md §1 AI 전권 위임 원칙에 부합한다 — 스크립트는 **AI�
 
 ```
 1. 코드 + docs 변경 (working tree)
-2. ANCHOR.md §1~§3 (새 기능) 또는 §4 (cycle 마감 시) 확인 — §18 참조
+2. ANCHOR.md §1~§3 확인 — §4 human 검증 로그는 release/milestone 또는 방향 전환 검증 시에만 확인 (§18 참조)
 3. git add <변경된 모든 파일> (prefer named add, never -A)
 4. bash bin/verify-completion.sh --pre-commit <feature-id>
    → FAIL: stderr의 누락 항목 해결 후 step 1로 복귀
@@ -838,8 +846,8 @@ Task-Cycle: <feature-id>
 
 | 조건 | 동작 |
 |------|------|
-| BLOCKED 항목 없음 + Critical/Major 승인 대기 없음 | **공개 브랜치 동기화** (Step 5 진행) |
-| BLOCKED 항목 있음 또는 Critical/Major 승인 대기 | **커밋만** 수행, push/PR 보류 사유를 `REPORT.md`에 기록 |
+| BLOCKED 항목 없음 + Critical/Major 승인 대기 없음 | **AI가 commit 후 공개 브랜치 동기화** (Step 5 진행) |
+| BLOCKED 항목 있음 또는 Critical/Major 승인 대기 | **AI가 commit만** 수행, push/PR 보류 사유를 `REPORT.md`에 기록 |
 | 원격 저장소 미설정 | **커밋만** 수행, 원격 설정은 사람에게 위임 |
 
 #### Step 5: 공개 브랜치 동기화 (조건 충족 시)
@@ -884,11 +892,31 @@ Git 동기화 결과를 `REPORT.md`에 기록한다.
 `verify-completion.sh`는 모든 commit의 gate이며 bypass 경로를 제공하지 않는다
 (SPOF 복구는 §18.4 "운영 vs 메타 층위" 참조).
 
+#### 완료 응답 금지 패턴
+
+AI 작업자는 완료 가능한 cycle에서 아래 응답으로 작업을 멈추면 안 된다.
+
+- `자동 commit/push는 하지 않았습니다`
+- `commit 결정은 사용자에게 위임합니다`
+- `push 여부를 확인해 주세요`
+
+허용되는 예외는 다음뿐이다:
+
+- `verify-completion` FAIL 또는 테스트 FAIL이 남아 있고 AI가 같은 cycle 안에서 복구할 수 없음
+- `BLOCKED` 항목 또는 Critical/Major 승인 대기가 `REPORT.md`에 기록됨
+- 원격 저장소가 없거나 인증/권한 문제로 push가 기술적으로 불가능함
+- 사용자가 명시적으로 "commit/push 하지 말라"고 지시함
+
+예외가 아니면 AI는 §16.5에 따라 commit하고, 가능한 경우 push/PR 갱신까지 완료한 뒤
+결과를 `REPORT.md`와 최종 응답에 기록한다.
+
 ### §16.6 병합 충돌 해결 정책
 
 공개 `issue/*` 브랜치를 `origin/main`에 맞춰 동기화하거나, 내부 `ai/*` 브랜치를 공개 `issue/*` 브랜치에 통합하는 과정에서 충돌이 발생할 수 있다.
 충돌 발생 시 AI는 아래 분류 기준에 따라 자율 해결 또는 사람 위임을 판정한다.
 **판정 원칙: 충돌의 양쪽 의도가 모두 명확하고 공존 가능하면 AI가 해결한다. 의도가 상충하거나 판단이 필요하면 사람에게 위임한다.**
+단, "사람 판단 필요"는 작업 중단의 기본값이 아니다. 처음 요청 의도가 왜곡될 우려가
+없고 검증 결과가 명료하면 AI는 PASS로 판정하고 cycle을 계속 진행한다.
 
 #### AI 자율 해결 가능 (명료한 충돌)
 
@@ -902,6 +930,8 @@ Git 동기화 결과를 `REPORT.md`에 기록한다.
 | `STATUS.md` 상태 갱신 충돌 | 최신 상태 우선, 이전 상태는 이력에 보존 |
 | **설정 파일 주석** 추가/수정 충돌 | 더 상세한 쪽 채택 |
 | **독립적 파일 변경**이 동일 커밋에 묶인 경우 | 각 파일의 변경을 개별 반영 |
+| `ANCHOR.md` §4에 서로 다른 human 엔트리 append | 두 엔트리를 모두 보존하고 시간순 정렬 |
+| 일반 TASK cycle에서 `ANCHOR.md` §4 엔트리 부재 | 사용자 확인 요청 없이 PASS (§18.2, §18.5) |
 
 #### 사람 판단 필수 (모호한 충돌)
 
@@ -914,6 +944,8 @@ Git 동기화 결과를 `REPORT.md`에 기록한다.
 | `source_of_truth` 문서에서 **동일 사실에 다른 내용** | 정본 판단은 사람 권한 |
 | **삭제 vs 수정** 충돌 (한쪽 삭제, 다른 쪽 수정) | 삭제 의도 확인 필요 |
 | **외부 계약·비용·인증** 관련 변경 충돌 | Critical/Major 등급 (§12.3) |
+| `ANCHOR.md` §4 작성이 완료 조건으로 명시됨 | §4는 `human:<name>` only라 AI가 대체 작성 불가 (§18.2) |
+| 요청이 `ANCHOR.md` §1~§3과 명백히 충돌함 | 방향 전환 검증 또는 `direction-drift`가 필요 (§18.3) |
 
 #### 해결 절차
 
@@ -977,7 +1009,7 @@ refactor(project): 공개 브랜치 동기화 충돌 해결 (#<issue-number>)
 | §1. 외부 관점 요약 | 기능을 모르는 사람이 의문을 가질 지점 (3~5줄) | rewrite |
 | §2. 대안 분기 | 선택하지 않은 옵션 + 페르소나 (≥ 2개) | rewrite |
 | §3. 가정된 사용 시나리오 | 외부 또는 미래 관점의 구체 시나리오 1개 | rewrite |
-| §4. 외부 검증 로그 | human 검증 엔트리 (cycle당 ≥ 1) | append-only |
+| §4. 외부 검증 로그 | release/milestone 또는 방향 전환 검증 시 human 검증 엔트리 | append-only |
 
 §1~§3은 방향이 **명시적으로** 바뀌면 갱신한다 (자연 drift는 §18.3 Conflict Protocol이
 탐지한다).
@@ -988,6 +1020,10 @@ refactor(project): 공개 브랜치 동기화 충돌 해결 (#<issue-number>)
 
 이유: AI가 §4를 채우면 self-certification paradox가 발생한다 — "외부"라는 이름이지만
 실제로는 AI의 내부 산출물. §4의 externality는 인간이 직접 append하는 방식으로 보장된다.
+다만 일반 TASK cycle마다 §4를 요구하지 않는다. 반복적인 human 검증 강제는 형식적
+확인 로그를 만들 가능성이 높으므로, §4는 release/milestone 검토, 방향 전환, 사용자가
+명시한 외부 검증 시점에만 요구한다. 처음 요청했던 의도가 왜곡될 우려가 없고
+검증 결과가 명료하면 §4 확인 요청 없이 PASS로 판정한다.
 
 ### §18.3 Conflict Protocol
 
@@ -998,8 +1034,9 @@ AI는 사용자 요청을 수신하면, 해당 feature의 `ANCHOR.md` §1~§3과
 1. `/office-hours` 또는 `/plan-ceo-review`로 방향 재정립, 또는
 2. 사용자 본인이 §4에 명시적 `direction-drift` 엔트리 추가
 
-충돌 감지 없으면 작업을 진행한다. 이 프로토콜이 §1~§3의 stale 문제를 active detection으로
-전환 — 별도의 staleness scanner가 불필요하다.
+충돌 감지 없으면 작업을 진행한다. 판단이 "단순히 오래됨", "혹시 다를 수 있음",
+"더 확인하면 좋음" 수준이면 사용자 확인을 요구하지 않는다. 이 프로토콜이 §1~§3의
+stale 문제를 active detection으로 전환 — 별도의 staleness scanner가 불필요하다.
 
 ### §18.4 운영(operational) vs 메타(meta) 층위 구분
 
