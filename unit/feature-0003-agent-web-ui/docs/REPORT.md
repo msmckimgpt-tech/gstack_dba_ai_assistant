@@ -25,6 +25,14 @@ System Prompt 를 Product → Role → Account 3 계층으로 조립하도록 �
 - Done: TASK-0050 make web buildx race 회피, TASK-0049 누적 빈 대화 일괄 정리, TASK-0048 "새 대화" lazy 화, TASK-0047 Product Selector + Auto 모드, TASK-0046 API Vault 패널 Linear Wizard 재설계, TASK-0041 클라이언트 타임아웃 시 Attach/Resume, TASK-0040 schema whitelist 정규식 context-aware 수정, TASK-0039 메타데이터 스키마 whitelist bypass 정책, TASK-0036 System Prompt Depth + Product DB whitelist, TASK-0035 대화 사이드바 구분/정렬 + 대화/말풍선 fork, (이전) RBAC table cutover, role CRUD, account role assignment, tri-state override, account soft delete, own/any 대화 권한 분기, 제목 변경 API, `clear_memory` 제거, `console.access` 기반 읽기 전용 관리자 셸, 브라우저/API 검증
 
 ## 3. Recent Changes
+- 2026-05-06 Git 동기화 결과 (commit 85f674d)
+  - 커밋: `85f674d` (`feat/adopt-external-anchor-v3.2.0-rc`) — TASK-0048/0049/0050/0051 + 정책 변경 흡수 + verify-completion §4 strip fix 32 files / +2493 / -295.
+  - verify-completion: PASS (pre + post-commit 모두 6/6)
+  - Push: 완료 — `git push origin feat/adopt-external-anchor-v3.2.0-rc` 정상 (`a7122f8..85f674d`)
+  - PR: 보류 — 현재 브랜치 `feat/adopt-external-anchor-v3.2.0-rc` 는 internal feat/* 형식이라 `docs/GITHUB_AUTOMATION.md` 의 공개 PR 브랜치 규칙(`issue/<번호>-<short-slug>`) 에 부합하지 않고 GitHub issue 가 본 cycle 에 묶이지 않았다. 사용자가 이미 origin 에 같은 이름으로 작업 중인 internal develop 브랜치라 push 만 진행. PR 전환은 별도 issue 발급 + `issue/*` 통합 시 진행.
+  - 병합 상태: 수동 검토 — internal feat/* 브랜치이므로 자동 merge 후보 아님.
+  - 충돌 해결: 없음.
+
 - 2026-05-06 (TASK-0048 후속 fix, CHG-20260506-0024)
   - **버그 보고**: 사용자 보고 — "대화 삭제 시 새 대화가 그대로 남는 이슈". 사용자가 active 대화를 삭제했는데 사이드바에 또 빈 대화가 등장.
   - **근본 원인**: backend `_repair_current_conversation` 의 호출처 5 곳이 `create_if_missing=_account_has_permission(account, "conversation.create")` 로 자동 생성하던 분기. 특히 `/api/delete_conversation` 응답의 `current` 필드가 자동 생성된 새 cid 였고 frontend 가 그것을 active 로 채택해 사이드바에 다시 등장. 또 `_build_conversations_payload` (`/api/conversations`), `/api/session`, `/api/history` 의 conv resolver 도 동일하게 자동 생성 중이라 사용자가 어떤 경로로 list 를 fetch 해도 빈 대화가 자동으로 나타날 수 있었다 — TASK-0048 의 lazy 정책을 backend 가 우회하던 회귀.
