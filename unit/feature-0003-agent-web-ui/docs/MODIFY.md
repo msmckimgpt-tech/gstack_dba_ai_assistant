@@ -8,6 +8,42 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260506-0027
+- Date: 2026-05-06
+- Summary: TASK-0053 (REQ-20260506-0006, Major §12.3) 신규 제품 default 정책 토글 + 권한 grid 의 product sub-catalog + Role/Account detail 의 product-카드 통합. TASK-0052 완료 직후 사용자 follow-up. **사용자 in-cycle 설계 전환 (2026-05-06)**: 정책 주체를 Role 이 아닌 **Product** 로 변경 — 운영자가 product 생성 시점에 토글로 결정하는 것이 더 자연스럽다는 의도. AI 자율 commit/push.
+- Files:
+  - [unit/feature-0003-agent-web-ui/src/app.py](../src/app.py)
+    - **Phase A — `WebProducts.DefaultRoleAccess` 정책 토글 (product 주체)**:
+      - `_ensure_dynamic_permissions_schema(conn)` 에 `ALTER TABLE WebProducts ADD COLUMN DefaultRoleAccess TINYINT(1) NOT NULL DEFAULT 1` 추가 (idempotent ALTER, 기존 운영 데이터 호환).
+      - `_ensure_product_access_permissions(conn)` (catchup backfill) 의 role grant SQL 이 product 의 `DefaultRoleAccess` 값에 따라 분기 — true 면 모든 role grant, false 면 grant 안 함.
+      - `POST /api/admin/products` 의 body 에 `default_role_access` 수용, INSERT 시 컬럼 set + transaction 안 backfill 분기에 동일 적용.
+      - `PATCH /api/admin/products/{id}` 에 `default_role_access` 수용 (기존 product 정책 변경 가능).
+      - `_list_products` SELECT 와 응답 dict 에 `default_role_access` 필드 추가.
+      - `WebRoles.DefaultProductAccess` 관련 코드 모두 제거 — `_load_role_by_id` / `_list_roles` SELECT/GROUP BY/dict 에서 컬럼 삭제, `admin_update_role` 의 body 수용 + UPDATE 컬럼 제거. 컬럼 자체는 destructive DROP 회피 차원에서 잔존 (다음 cleanup cycle 에서 DROP COLUMN).
+  - [unit/feature-0003-agent-web-ui/src/static/admin.js](../src/static/admin.js)
+    - **Phase A frontend**: Product detail 에 토글 1 row 추가 ("신규 역할 자동 접근"). Product detail 의 `merged` 객체에 `default_role_access` 추가, `setProductMetaPending` 핸들러 + `applyAllPending` 의 productMeta PATCH body 에 포함, `describePatchKeys` 라벨 추가. **Role detail 의 토글은 제거** (이전 설계의 잔재 — Role-side 의 default_product_access 흐름 전부 삭제: mergedRole/setRolePending/applyAllPending/startNewRole/describePatchKeys 모두 정정).
+    - **Phase B — 권한 grid 의 dynamic 권한 분리**: `groupedPermissions(opts={excludeDynamic})` 옵션 추가, `dynamicProductPermissions()` 헬퍼 신설. `renderPermissionGrid(..., opts={excludeDynamic})` 옵션 전달. Role detail 과 Account detail 의 grid 호출이 `excludeDynamic: true` 로 dynamic `product.access.<key>` 권한들을 별도 product subcatalog 로 분리.
+    - **Phase B/C — product subcatalog cards**: `buildRoleProductCardList(role, disabled)` 신설 — product 별 collapsible card (헤더에 access 토글, 본문에 role-scope system prompt textarea fixedProductId=Number(product.id)). "전 Product 공통" generic card 도 마지막에 추가 (fixedProductId=0). `buildAccountProductOverrideList(account, disabled)` 신설 — product 별 flat card 에 override select (allow/deny/inherit) 만 표시 (account scope prompt 는 profile drawer 영역).
+    - **Role/Account detail 재구성**: `renderRoleDetail` 의 기존 단일 `buildSystemPromptEditor` (역할 시스템 프롬프트 Role Scope) 호출이 `buildRoleProductCardList` 로 교체. `renderAccountDetail` 에서 권한 override grid 다음에 `buildAccountProductOverrideList` 추가. permission 변경 onChange 핸들러는 dynamic 권한들의 기존 상태 (subcatalog 에서 변경된 값) 를 union 으로 보존하도록 수정.
+  - [unit/feature-0003-agent-web-ui/src/static/styles.css](../src/static/styles.css)
+    - `.admin-product-card-list` / `.admin-product-card[open]` / `.admin-product-card-head` / `.admin-product-card-toggle` / `.admin-product-card-info` / `.admin-product-card-body` / `.admin-product-card-flat` / `.admin-product-card-generic` 스타일 추가. 토큰 (`--border-subtle` / `--text-muted`) 사용.
+  - [unit/feature-0003-agent-web-ui/src/static/admin.html](../src/static/admin.html)
+    - cache-bust `v=20260506-c5-product-cards`.
+- Verification:
+  - (a) `python3 -m py_compile` PASS / `node --check admin.js` PASS / `make web` 재배포.
+  - (b) Schema: `DESC WebProducts` 에 `DefaultRoleAccess tinyint(1) NOT NULL DEFAULT 1` 컬럼 추가 확인. 기존 product (KR/TT) 모두 1 유지 (기존 운영 호환). `WebRoles.DefaultProductAccess` (이전 시도) 컬럼은 잔존하나 어떤 SQL 도 참조하지 않음 — 다음 cleanup cycle 에서 DROP COLUMN.
+  - (c) `/api/admin/roles` 응답에서 `default_product_access` 필드 제거 확인 (admin role keys 에서 미존재). `/api/admin/products` 응답에 `default_role_access` 필드 노출.
+  - (d) **Phase A E2E smoke (product-driven)**: 신규 product `DE` 를 `default_role_access=false` 로 생성 → DB 직접 확인: 6 role 모두 `has_de_grant=NO` ✓. admin effective `product.access.de=False` ✓. 비교 신규 product `JP` 를 `default_role_access=true` 로 생성 → 6 role 모두 `has_jp_grant=YES` ✓. **정책 주체가 product 라는 의도 정확히 반영**.
+  - (e) **Phase B/C DOM smoke** (browse): Role detail 진입 시 토글 2 개만 ("활성 / 기본 가입 역할") 노출 — 신규 제품 자동 접근 토글은 Role detail 에서 제거됨, 대신 Product detail 로 이동. 권한 grid `details[data-perm-group="product"]` 안에 `product.manage` / `system_prompt.manage.role.any` 만 (dynamic 코드 제외) ✓. `.admin-product-card-list` 1 개 + `.admin-product-card` 3 개 (KR + TT + 전 Product 공통) 정상.
+- Risks:
+  - **호환성 영향 0**: `DefaultRoleAccess DEFAULT 1` + 기존 product 들 모두 1 으로 backfill 되어 기존 운영 동작 유지. 운영자가 product 생성 시 토글을 명시적으로 끌 때만 신규 product 의 자동 grant 차단 발효.
+  - **이전 시도의 잔재**: `WebRoles.DefaultProductAccess` 컬럼이 DB 에 잔존 — destructive DROP COLUMN 회피. 어떤 SQL 도 참조하지 않으므로 동작 영향 0. 다음 cleanup cycle 에서 정리 (또는 운영자가 직접 `ALTER TABLE WebRoles DROP COLUMN DefaultProductAccess` 가능).
+  - **권한 grid 의 dynamic 분리로 인한 caller-update 의존성**: Role/Account detail 의 onChange 핸들러가 `existingDynamic` union 보존 안 하면 product subcatalog 의 토글 변경이 grid 의 onChange 호출 시점에 무효화됨. union 처리 코드 추가. 검증: subcatalog 토글 변경 후 grid 의 정적 권한 토글 변경 → footer 카운트 양쪽 다 반영.
+  - **buildRoleProductCardList 가 buildSystemPromptEditor 의 fixedProductId 인자에 의존**: 기존 함수 signature 보존 (TASK-0051 cycle 부터). `fixedProductId=0` 는 generic "Product 무관" 케이스 — backend `_load_system_prompt` 의 `ProductId IS NULL` 매칭과 일치.
+  - **계정 detail 의 product card 는 prompt textarea 미포함**: account scope prompt 는 profile drawer 영역 (AC-0014). admin 콘솔에서는 access override 만 product 별 카드로.
+- Range: app.py +~60 lines (WebProducts schema ALTER + product API/admin_update_product 의 default_role_access + 정책-driven backfill 분기 + role API 의 default_product_access 제거), admin.js +~250 lines (Phase B groupedPermissions/dynamicProductPermissions + Phase C buildRoleProductCard*/buildAccountProductOverride* + Role/Account detail 재구성 + Product detail 토글), styles.css +~70 lines, admin.html cache-bust.
+- Notes: 본 cycle 은 사용자 in-cycle 설계 전환의 결과 — 처음 작성한 Role-side 정책을 Product-side 로 정정. 운영 시나리오: 운영자가 product 를 만들 때 토글로 "이 제품은 모든 role 에 기본 grant" / "명시 grant 만" 결정. 한 번 결정되면 그 product 의 권한 분배 정책으로 고정 (PATCH 로 변경은 가능하나 신규 product 의 backfill 시점에만 적용). TASK-0052 의 8 endpoint guard 는 변경 없음 (보안 표면 동일).
+
 ## CHG-20260506-0026
 - Date: 2026-05-06
 - Summary: TASK-0052 Phase 1B/1C/1D + Phase 2 검증 — 계정·역할 → 제품 권한 상속/override 모델 본체 도입. Codex outside voice 의 9 개 finding 모두 통합 + admin_update_account RoleId 손실 pre-existing 버그 fix. AI 자율 commit/push 모드.

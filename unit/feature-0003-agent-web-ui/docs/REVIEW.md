@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260506-0014
+- Date: 2026-05-06
+- Decision: TASK-0053 의 3 phase (A/B/C) 를 1 cycle 안에 통합 진행. **사용자 in-cycle 설계 전환 (2026-05-06)** — 처음 작성한 Phase A 의 "Role 의 DefaultProductAccess 토글" 접근을 사용자 의도에 따라 "Product 의 DefaultRoleAccess 토글" 로 정정. 분리 commit 하지 않은 이유: 본 cycle 의 수정은 보안 표면 추가 0 + 기존 동작 호환 (DEFAULT 1 백필) + frontend 재구성이 핵심. 분리 commit 의 회귀 표면 제어 이득보다 통합 deploy 의 일관성 (정책 토글이 곧 product subcatalog 와 함께 보임) 이 더 큼.
+- Method:
+  1. **Phase A (정책 토글, product 주체)**: WebProducts 에 `DefaultRoleAccess TINYINT(1) NOT NULL DEFAULT 1` 컬럼. 기존 product 모두 1 으로 backfill 되어 D2-A 와 동일 동작 유지. POST `/api/admin/products` 의 transaction 안 backfill SQL + `_ensure_product_access_permissions(conn)` (catchup) 양쪽이 product 의 `DefaultRoleAccess` 값에 따라 분기. POST/PATCH `/api/admin/products` body 에 `default_role_access` 수용. Role-side 의 이전 시도 (`WebRoles.DefaultProductAccess`) 는 컬럼 잔존하나 어떤 SQL 도 참조하지 않음 — 다음 cleanup cycle 에서 DROP COLUMN.
+  2. **Phase B (권한 grid 의 dynamic 분리)**: `groupedPermissions(opts)` 에 excludeDynamic 옵션 추가. `dynamicProductPermissions()` 헬퍼로 product 별 정렬된 동적 권한 목록 반환. `renderPermissionGrid` 가 옵션 통과. Role detail 과 Account detail 의 onChange 핸들러는 dynamic 권한들의 기존 상태를 union 으로 보존해 subcatalog 와의 분리가 데이터 손실로 이어지지 않게 처리.
+  3. **Phase C (Role/Account detail 의 product subcatalog 카드)**: `buildRoleProductCardList(role, disabled)` — product 별 collapsible card 안에 access 토글 + role-scope system prompt textarea (fixedProductId=Number(id)) 묶음 + "전 Product 공통" generic card (fixedProductId=0). `buildAccountProductOverrideList(account, disabled)` — flat card 에 override select. Role detail 의 단일 buildSystemPromptEditor 호출은 product 카드의 textarea 로 흡수 (Product detail 의 product-scope prompt + profile drawer 의 account-scope prompt 는 그대로).
+  4. **검증 매트릭스**: py_compile + node check + make web + Phase A E2E (DE 생성 with `default_role_access=false` → 6 role 모두 grant 0, JP 생성 with true → 6 role 모두 grant) + Phase B/C DOM (admin-product-card-list/admin-product-card 카운트 + 권한 grid dynamic 코드 제외 확인 + 스크린샷).
+- Risks:
+  - **호환성 우선의 default 1**: 운영자가 product 생성 시 토글을 명시적으로 끄지 않으면 기존 동작 유지 (D2-A 호환).
+  - **이전 시도 잔재**: `WebRoles.DefaultProductAccess` 컬럼이 destructive DROP 회피로 잔존. 어떤 SQL 도 참조하지 않으므로 동작 영향 0. 본 cycle 자체가 commit 전 상태에서 in-place 정정이라 git log 에는 이 잔재가 노출되지 않음 (single commit). 다음 cleanup cycle 에서 명시적 DROP COLUMN.
+  - **Phase B 의 onChange union 처리**: dynamic 권한들이 grid 와 subcatalog 두 곳에서 source-of-truth 가 분리되어 보일 수 있으나 실제 storage 는 단일 (`role.permission_codes` / `account.permission_overrides`). onChange 가 정적/동적 양쪽 union 을 보장하므로 race-free.
+  - **Account detail 의 product card 에 prompt textarea 부재**: account scope prompt 는 profile drawer (AC-0014) 가 source-of-truth.
+  - **product 가 100 개 이상이 되면 cards 가 길어짐**: collapsible details 라 펼치지 않으면 헤더만 보여 스크롤 부담 적음. 추후 search 필터 추가 가능 (별 cycle).
+  - **"신규 역할 자동 접근" 토글의 의미 명시**: **신규** product 생성 시점에만 효력. 기존 product 의 grant 는 product PATCH 의 default_role_access 변경으로도 변하지 않음 (정책만 변경, 기존 grant 보존). admin UI 에 명시 hint 추가는 별 cycle.
+- Why this design switch (Role-driven → Product-driven): 사용자가 본 cycle 진행 중 명시적으로 의도 정정 — "신규 제품 자동 접근의 주체를 Role 이 아닌 Product 를 기준으로 적용". 직관적으로도 정책의 주체는 "이 product 가 어떻게 분배되는지" 이지 "이 role 이 무엇을 자동으로 받는지" 가 아님. Product-driven 이 product 운영자의 결정 권한을 명확히 함.
+- Why this combines Phase A/B/C in one commit: 사용자가 한 번에 3 항목 (토글 + sub catalog + role-prompt 묶기) 을 요청했고 AI 자율 commit/push 권한이 명시되어 있음. 분리 commit 은 회귀 표면 제어 이득 < 통합 deploy 의 일관성 (3 변경이 한 화면에서 함께 보여야 의도 전달) 이 더 큼.
+
 ## REV-20260506-0013
 - Date: 2026-05-06
 - Decision: TASK-0052 의 Phase 1B/1C/1D + Phase 2 검증을 사용자 AI 자율 commit/push 모드에서 1 cycle 안에 완료한다. Codex outside voice 의 9 finding 모두 통합 (정적 catalog 가정 → DB-driven, autocommit → 명시적 트랜잭션, 가드 8 곳 도입, fork product_mode 복사 fix 등). 작업 중 발견된 pre-existing `admin_update_account` RoleId 손실 버그도 즉시 fix.

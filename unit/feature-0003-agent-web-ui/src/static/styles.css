@@ -1891,6 +1891,83 @@ a { color: inherit; }
   cursor: not-allowed;
 }
 
+/* TASK-0053 Phase B/C — product subcatalog cards (Role/Account detail) */
+.admin-product-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.admin-product-card {
+  border: 1px solid var(--border-subtle, rgba(0, 0, 0, .12));
+  border-radius: 8px;
+  background: rgba(0, 0, 0, .02);
+}
+
+.admin-product-card[open] {
+  background: #fff;
+  border-color: rgba(37, 99, 235, .25);
+}
+
+.admin-product-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+}
+
+.admin-product-card-toggle {
+  flex: 0 0 auto;
+}
+
+.admin-product-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+}
+
+.admin-product-card-info strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.admin-product-card-info small {
+  font-size: 11px;
+  color: var(--text-muted, rgba(0, 0, 0, .55));
+}
+
+.admin-product-card-body {
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--border-subtle, rgba(0, 0, 0, .08));
+  background: rgba(0, 0, 0, .015);
+}
+
+.admin-product-card-flat {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+}
+
+.admin-product-card-flat select {
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle, rgba(0, 0, 0, .12));
+  border-radius: 6px;
+  background: #fff;
+}
+
+.admin-product-card-generic {
+  border-style: dashed;
+  background: rgba(0, 0, 0, .02);
+  margin-top: 4px;
+}
+
 .admin-prompt-textarea {
   width: 100%;
   min-height: 120px;

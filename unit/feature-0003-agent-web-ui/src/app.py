@@ -1525,7 +1525,8 @@ def _ensure_product_access_permissions(conn) -> int:
     """
     added_total = 0
     cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT Id, ProductKey, Name FROM WebProducts ORDER BY Id")
+    # TASK-0053: product 자체가 DefaultRoleAccess 정책의 주체. 1=모든 role 자동 grant, 0=명시 grant 만.
+    cur.execute("SELECT Id, ProductKey, Name, DefaultRoleAccess FROM WebProducts ORDER BY Id")
     products = cur.fetchall() or []
     cur.close()
     if not products:
@@ -1534,6 +1535,7 @@ def _ensure_product_access_permissions(conn) -> int:
         product_id = int(product.get("Id") or 0)
         product_key = str(product.get("ProductKey") or "")
         product_name = str(product.get("Name") or product_key)
+        default_role_access = bool(product.get("DefaultRoleAccess", True))
         if not product_id or not product_key:
             continue
         code = _product_permission_code(product_key)
@@ -1566,17 +1568,19 @@ VALUES (%s, %s, %s, %s, %s, %s)
         permission_id = int(row[0] or 0)
         if permission_id <= 0:
             continue
-        # 3. 모든 role 에 grant backfill (D2-A: 호환성 우선)
-        cur = conn.cursor()
-        cur.execute(
-            """
+        # 3. product.DefaultRoleAccess=1 일 때만 모든 role 에 grant backfill (TASK-0053 정책 — product 주체).
+        # DEFAULT 1 이라 기존 운영 데이터는 D2-A 와 동일 동작 유지.
+        if default_role_access:
+            cur = conn.cursor()
+            cur.execute(
+                """
 INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId)
 SELECT r.Id, %s FROM WebRoles r
-            """,
-            (permission_id,),
-        )
-        added_total += int(cur.rowcount or 0)
-        cur.close()
+                """,
+                (permission_id,),
+            )
+            added_total += int(cur.rowcount or 0)
+            cur.close()
     return added_total
 
 
@@ -1644,10 +1648,12 @@ LIMIT 1
 def _list_products(conn, *, include_inactive: bool = False) -> list[dict[str, Any]]:
     cur = conn.cursor(dictionary=True)
     where = "" if include_inactive else " WHERE IsActive = 1"
+    # TASK-0053: DefaultRoleAccess (product 가 자체 정책의 주체) 컬럼도 함께 SELECT.
     cur.execute(
         f"""
 SELECT Id AS id, ProductKey AS product_key, Name AS name, Description AS description,
        IsActive AS is_active, IsDefault AS is_default, SortOrder AS sort_order,
+       DefaultRoleAccess AS default_role_access,
        CreatedAt AS created_at, UpdatedAt AS updated_at
 FROM WebProducts
 {where}
@@ -1666,6 +1672,7 @@ ORDER BY IsDefault DESC, SortOrder ASC, Id ASC
             "is_active": bool(row.get("is_active")),
             "is_default": bool(row.get("is_default")),
             "sort_order": int(row.get("sort_order") or 0),
+            "default_role_access": bool(row.get("default_role_access", True)),
             "created_at": str(row.get("created_at") or ""),
             "updated_at": str(row.get("updated_at") or ""),
         })
@@ -2208,7 +2215,17 @@ def _runtime_tables_available() -> bool:
 
 
 def _ensure_dynamic_permissions_schema(conn) -> None:
-    """TASK-0052 Phase 1B: WebPermissions 의 IsDynamic / ProductId 컬럼을 idempotent ALTER 로 보장.
+    """TASK-0052 Phase 1B + TASK-0053: WebPermissions/WebProducts 의 동적 권한·정책 컬럼을 idempotent ALTER.
+
+    - WebPermissions.IsDynamic / ProductId : 동적 권한 row 식별 (TASK-0052).
+    - WebProducts.DefaultRoleAccess : product 생성 시 모든 role 자동 grant 여부 정책 (TASK-0053).
+      DEFAULT 1 = 기존 D2-A 호환 (모든 신규 product 가 모든 role 에 자동 grant). 운영자가 product
+      생성 시 0 으로 설정하면 그 product 는 명시적 grant 가 있어야만 role 이 접근 가능.
+      정책의 주체는 product 자체 — role 은 어떤 product 든 자기 grant 만으로 결정 (role-side default
+      toggle 은 별도로 두지 않음, 본 cycle 에서 사용자 의도 반영).
+
+    `WebRoles.DefaultProductAccess` (이전 설계) 는 **deprecated** — 컬럼 자체는 destructive DROP
+    회피 차원에서 남기되 어떤 SQL 도 참조하지 않음. 다음 cleanup cycle 에서 DROP COLUMN.
 
     _ensure_web_tables (slow path) 와 _ensure_seed_catchup (fast path) 양쪽에서 호출되어
     기존 배포 (table 이미 존재) 에서도 신규 컬럼이 추가되도록 한다. 컬럼이 이미 있으면
@@ -2228,6 +2245,13 @@ def _ensure_dynamic_permissions_schema(conn) -> None:
             cur.execute("ALTER TABLE WebPermissions ADD INDEX IX_WebPermissions_ProductId (ProductId)")
         except Exception:
             pass
+        # TASK-0053: WebProducts 에 DefaultRoleAccess 컬럼 — product 가 자체 정책의 주체.
+        try:
+            cur.execute("ALTER TABLE WebProducts ADD COLUMN DefaultRoleAccess TINYINT(1) NOT NULL DEFAULT 1")
+        except Exception:
+            pass
+        # WebRoles.DefaultProductAccess (deprecated, 이전 설계 잔재) 의 ALTER 는 더 이상 추가하지 않는다.
+        # 기존 deploy 에 컬럼이 이미 있다면 그대로 보존 (다음 cleanup cycle 의 DROP 대상).
     finally:
         cur.close()
 
@@ -6171,6 +6195,8 @@ async def admin_create_product(request: Request) -> JSONResponse:
     sort_order = int(data.get("sort_order") or 100)
     is_active = bool(data.get("is_active", True))
     is_default = bool(data.get("is_default", False))
+    # TASK-0053: product 의 default-role-access 정책 (D2-A 호환 default=True).
+    default_role_access = bool(data.get("default_role_access", True))
     if not product_key or not name:
         conn.close()
         return _json_error("product_key 와 name 은 필수입니다.", 400)
@@ -6194,10 +6220,18 @@ async def admin_create_product(request: Request) -> JSONResponse:
         cur = conn.cursor()
         cur.execute(
             """
-INSERT INTO WebProducts (ProductKey, Name, Description, IsActive, IsDefault, SortOrder)
-VALUES (%s, %s, %s, %s, %s, %s)
+INSERT INTO WebProducts (ProductKey, Name, Description, IsActive, IsDefault, SortOrder, DefaultRoleAccess)
+VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
-            (product_key, name, description, 1 if is_active else 0, 1 if is_default else 0, sort_order),
+            (
+                product_key,
+                name,
+                description,
+                1 if is_active else 0,
+                1 if is_default else 0,
+                sort_order,
+                1 if default_role_access else 0,
+            ),
         )
         new_id = int(cur.lastrowid or 0)
         if is_default:
@@ -6221,14 +6255,16 @@ VALUES (%s, %s, %s, %s, %s, %s)
         new_permission_id = int(cur.lastrowid or 0)
         if new_permission_id <= 0:
             raise RuntimeError("permission row insert lastrowid empty")
-        # 모든 기존 role 에 grant backfill (D2-A: 호환성 우선 — 운영자가 추후 deny override 로 회수 가능).
-        cur.execute(
-            """
+        # TASK-0053: product 의 DefaultRoleAccess 정책 — true 면 모든 role 에 자동 grant, false 면 grant 안 함.
+        # 정책의 주체는 product 자체 — 운영자가 product 생성 시 토글로 결정.
+        if default_role_access:
+            cur.execute(
+                """
 INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId)
 SELECT r.Id, %s FROM WebRoles r
-            """,
-            (new_permission_id,),
-        )
+                """,
+                (new_permission_id,),
+            )
         cur.close()
         conn.commit()
     except Exception as exc:
@@ -6293,6 +6329,10 @@ async def admin_update_product(product_id: int, request: Request) -> JSONRespons
         fields.append("IsDefault = %s")
         params.append(1 if bool(data.get("is_default")) else 0)
         set_default = bool(data.get("is_default"))
+    # TASK-0053: default_role_access 정책 토글도 admin update 에서 변경 가능 (기존 product 정책 변경).
+    if "default_role_access" in data:
+        fields.append("DefaultRoleAccess = %s")
+        params.append(1 if bool(data.get("default_role_access")) else 0)
     if fields:
         params.append(int(product_id))
         cur = conn.cursor()

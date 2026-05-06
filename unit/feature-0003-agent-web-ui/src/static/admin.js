@@ -104,9 +104,14 @@ function can(permission) {
   return Boolean(adminState.me?.permissions?.[permission]);
 }
 
-function groupedPermissions() {
+function groupedPermissions(opts = {}) {
+  // TASK-0053 Phase B: dynamic 권한 (`product.access.<key>`) 은 별도 product subcatalog UI 가
+  // 처리하므로 일반 권한 grid 에서는 excludeDynamic=true 로 필터링한다. 정적 권한
+  // (`product.manage`, `system_prompt.manage.role.any` 등) 은 그대로 product 그룹에 남는다.
+  const { excludeDynamic = false } = opts;
   const groups = new Map();
   adminState.permissions.forEach((permission) => {
+    if (excludeDynamic && permission.is_dynamic) return;
     const group = permission.group || "misc";
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group).push(permission);
@@ -119,6 +124,27 @@ function groupedPermissions() {
     if (ai !== bi) return ai - bi;
     return a[0].localeCompare(b[0]);
   });
+}
+
+function dynamicProductPermissions() {
+  // TASK-0053 Phase B: product 별 access 권한 row 를 product_id 기준으로 sort 후 반환.
+  // `_resolve_permission_catalog` 에서 GroupName='product' 로 묶이고 is_dynamic=true.
+  return (adminState.permissions || [])
+    .filter((p) => p && p.is_dynamic && (p.group === "product"))
+    .map((p) => ({
+      ...p,
+      product_id: Number(p.product_id || 0),
+    }))
+    .sort((a, b) => {
+      // product_id 순서가 아닌, products 목록의 sort_order 순서를 따른다.
+      const products = adminState.products || [];
+      const idxA = products.findIndex((pr) => Number(pr.id) === Number(a.product_id));
+      const idxB = products.findIndex((pr) => Number(pr.id) === Number(b.product_id));
+      if (idxA === -1 && idxB === -1) return String(a.code).localeCompare(String(b.code));
+      if (idxA === -1) return 1;
+      if (idxB === -1) return -1;
+      return idxA - idxB;
+    });
 }
 
 function statusBadge(text, className = "") {
@@ -154,10 +180,13 @@ function _updateOverrideGroupSummary(section) {
   badge.textContent = parts.join(" · ");
 }
 
-function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overrides, onChange) {
+function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overrides, onChange, opts = {}) {
+  // TASK-0053 Phase B: opts.excludeDynamic=true 면 dynamic product.access.<key> 권한들을 grid 에서 제외.
+  // 그 권한들은 호출처가 별도 buildProductSubcatalog... 함수로 product 카드 형식으로 렌더한다.
+  const { excludeDynamic = false } = opts;
   containerEl.innerHTML = "";
   const selected = new Set(selectedCodes || []);
-  groupedPermissions().forEach(([group, items]) => {
+  groupedPermissions({ excludeDynamic }).forEach(([group, items]) => {
     const section = document.createElement("details");
     section.className = "permission-group";
     section.dataset.permGroup = group;
@@ -578,8 +607,10 @@ function describePatchKeys(patch) {
     name: "이름",
     description: "설명",
     is_default_signup: "기본 가입",
+    default_role_access: "신규 역할 자동 접근",
     is_default: "기본 제품",
     sort_order: "정렬",
+    default_role_access: "신규 역할 자동 접근",
     permission_codes: "권한",
     _delete: "삭제",
   };
@@ -911,7 +942,7 @@ function renderAccountDetail() {
   topRow.append(roleField, activeToggle);
   paneEl.appendChild(topRow);
 
-  // Override grid
+  // Override grid (TASK-0053 Phase B: dynamic product.access.* override 는 product subcatalog 가 담당).
   const overrideSection = document.createElement("div");
   overrideSection.className = "admin-detail-section";
   const overrideTitle = document.createElement("div");
@@ -927,16 +958,31 @@ function renderAccountDetail() {
     "override",
     merged.permission_overrides || {},
     () => {
+      // TASK-0053 Phase B: grid 의 select[data-override-code] 는 정적 권한만이므로, dynamic
+      // product.access.* 의 기존 override (product subcatalog 에서 설정한 값) 는 보존해야 한다.
       const overrides = {};
+      const existingDynamic = Object.fromEntries(
+        Object.entries(merged.permission_overrides || {})
+          .filter(([code]) => String(code).startsWith("product.access."))
+      );
       overrideWrap.querySelectorAll("select[data-override-code]").forEach((select) => {
         overrides[select.dataset.overrideCode] = select.value;
       });
+      Object.assign(overrides, existingDynamic);
       setAccountPending(adminState.selectedAccountId, { permission_overrides: overrides });
       renderAccountList();
-    }
+    },
+    { excludeDynamic: true }
   );
   overrideSection.appendChild(overrideWrap);
   paneEl.appendChild(overrideSection);
+
+  // TASK-0053 Phase B: 제품별 접근 override card list.
+  const productOverrides = buildAccountProductOverrideList(
+    merged,
+    disabledBase || !can("account.permission.override.manage"),
+  );
+  paneEl.appendChild(productOverrides);
 
   // Per-account actions
   const actions = document.createElement("div");
@@ -1313,9 +1359,11 @@ function renderRoleDetail() {
     setRolePending(adminState.selectedRoleId, { is_default_signup: v });
     renderRoleList();
   }));
+  // 사용자 의도 (2026-05-06 follow-up): 신규 제품 자동 접근 정책의 주체는 Role 이 아닌 Product.
+  // 정책 토글은 Product detail 에 위치 — Role detail 에서는 더 이상 노출하지 않는다.
   paneEl.appendChild(toggles);
 
-  // Permission grid
+  // Permission grid (TASK-0053 Phase B: dynamic product.access.* 는 product subcatalog 가 처리하므로 제외).
   const permSection = document.createElement("div");
   permSection.className = "admin-detail-section";
   const permTitle = document.createElement("div");
@@ -1331,25 +1379,30 @@ function renderRoleDetail() {
     "checkbox",
     {},
     () => {
-      const codes = Array.from(permWrap.querySelectorAll("input[type='checkbox']:checked"))
+      // TASK-0053 Phase B: dynamic perms 는 grid 에 노출되지 않으므로 product subcatalog 의
+      // 상태 (= permission_codes 에 이미 포함된 product.access.*) 를 보존해야 한다. checked 만으로
+      // 새 codes 를 만들면 product 카드의 토글이 무효화됨. 기존 dynamic codes 를 union 으로 유지.
+      const checkedStatic = Array.from(permWrap.querySelectorAll("input[type='checkbox']:checked"))
         .map((input) => input.value);
+      const existingDynamic = (merged.permission_codes || []).filter((c) =>
+        String(c).startsWith("product.access.")
+      );
+      const codes = Array.from(new Set([...checkedStatic, ...existingDynamic]));
       setRolePending(adminState.selectedRoleId, { permission_codes: codes });
       renderRoleList();
-    }
+    },
+    { excludeDynamic: true }
   );
   permSection.appendChild(permWrap);
   paneEl.appendChild(permSection);
 
-  // System prompt (Role scope) — per-Product 또는 product-agnostic
-  if (!merged._isNew && can("system_prompt.manage.role.any")) {
-    const promptSection = buildSystemPromptEditor({
-      scope: "role",
-      roleId: Number(merged.id),
-      accountId: null,
-      title: "역할 시스템 프롬프트 (Role Scope)",
-      hint: "이 역할 구성원 전부에게 누적 적용됩니다. Product 별로 다르게 설정하거나 'Product 무관' 을 선택하세요.",
-    });
-    paneEl.appendChild(promptSection);
+  // TASK-0053 Phase B/C: 제품별 접근 + role-scope system prompt 카드 리스트.
+  if (!merged._isNew) {
+    const productCards = buildRoleProductCardList(
+      merged,
+      disabledBase || !can("role.permission.manage"),
+    );
+    paneEl.appendChild(productCards);
   }
 
   // Actions
@@ -1531,6 +1584,7 @@ async function applyAllPending() {
       if (patch.is_active !== undefined) body.is_active = Boolean(patch.is_active);
       if (patch.is_default !== undefined) body.is_default = Boolean(patch.is_default);
       if (patch.sort_order !== undefined) body.sort_order = Number(patch.sort_order) || 100;
+      if (patch.default_role_access !== undefined) body.default_role_access = Boolean(patch.default_role_access);
       if (Object.keys(body).length > 0) {
         await apiFetch(`/api/admin/products/${Number(productId)}`, {
           method: "PATCH",
@@ -1818,6 +1872,10 @@ function renderProductDetail() {
     is_active: productPending.is_active !== undefined ? productPending.is_active : !!product.is_active,
     is_default: productPending.is_default !== undefined ? productPending.is_default : !!product.is_default,
     sort_order: productPending.sort_order !== undefined ? productPending.sort_order : (product.sort_order || 100),
+    // TASK-0053 (사용자 follow-up 2026-05-06): default_role_access — product 생성 시 모든 role 자동 grant 여부.
+    default_role_access: productPending.default_role_access !== undefined
+      ? productPending.default_role_access
+      : (product.default_role_access !== undefined ? !!product.default_role_access : true),
   };
 
   // Name
@@ -1871,6 +1929,12 @@ function renderProductDetail() {
   }));
   toggles.appendChild(mkToggle("기본 제품", merged.is_default, (v) => {
     setProductMetaPending(product.id, { is_default: v });
+  }));
+  // TASK-0053 (사용자 follow-up 2026-05-06): 정책 주체를 Role → Product 로 전환.
+  // 켜져 있으면 (default) 이 product 가 추가될 때 모든 role 에 자동 grant. 끄면 명시 grant 만으로
+  // 접근 가능. **신규 product 생성 시 효력 발휘** — 기존 grant 는 보존.
+  toggles.appendChild(mkToggle("신규 역할 자동 접근", merged.default_role_access, (v) => {
+    setProductMetaPending(product.id, { default_role_access: v });
   }));
   const sortField = document.createElement("label");
   sortField.className = "field admin-detail-field";
@@ -2093,6 +2157,205 @@ function startNewProduct() {
       showToast(error.message || "생성 실패", true);
     });
 }
+
+/* ── Product subcatalog (TASK-0053 Phase B/C — Role / Account detail) ── */
+
+/**
+ * Role detail 의 product 카드 — product 별로 접근 토글 + role-scope system prompt 묶음.
+ * @param {{role: object, disabled: boolean, onPermissionChange: function}} args
+ * role.permission_codes 가 toggle 의 source-of-truth. onPermissionChange(nextCodesArray) 가 호출되어
+ * pending 에 반영되도록 caller 가 처리한다.
+ */
+function buildRoleProductCard({ role, product, perm, disabled, onToggle }) {
+  const card = document.createElement("details");
+  card.className = "admin-product-card";
+  card.dataset.productId = String(product.id);
+
+  const summary = document.createElement("summary");
+  summary.className = "admin-product-card-head";
+  // 접근 토글 (체크박스) — summary 안에 두어 펼치지 않고도 접근 가능.
+  const toggleLabel = document.createElement("label");
+  toggleLabel.className = "permission-toggle admin-product-card-toggle";
+  // 클릭 시 details 가 토글되지 않도록 stopPropagation
+  toggleLabel.addEventListener("click", (e) => e.stopPropagation());
+  const toggleInput = document.createElement("input");
+  toggleInput.type = "checkbox";
+  const granted = Array.isArray(role.permission_codes) && role.permission_codes.includes(perm.code);
+  toggleInput.checked = granted;
+  toggleInput.disabled = disabled;
+  toggleInput.addEventListener("change", () => {
+    onToggle(perm.code, toggleInput.checked);
+  });
+  toggleLabel.append(toggleInput);
+
+  const info = document.createElement("span");
+  info.className = "admin-product-card-info";
+  const name = document.createElement("strong");
+  name.textContent = product.name || product.product_key;
+  const meta = document.createElement("small");
+  meta.textContent = product.is_default ? "default · " + product.product_key : product.product_key;
+  info.append(name, meta);
+
+  summary.append(toggleLabel, info);
+  card.appendChild(summary);
+
+  // 본문: role-scope prompt textarea (펼쳤을 때 노출).
+  if (role && role.id && !String(role.id).startsWith("new:") && can("system_prompt.manage.role.any")) {
+    const promptBody = document.createElement("div");
+    promptBody.className = "admin-product-card-body";
+    const editor = buildSystemPromptEditor({
+      scope: "role",
+      roleId: Number(role.id),
+      title: `${product.name} 시스템 프롬프트 (Role × Product)`,
+      hint: `${product.name} 제품의 ${role.name || role.key} 역할에만 누적 적용됩니다.`,
+      fixedProductId: Number(product.id),
+    });
+    promptBody.appendChild(editor);
+    card.appendChild(promptBody);
+  }
+  return card;
+}
+
+function buildRoleProductCardList(role, disabled) {
+  const wrap = document.createElement("div");
+  wrap.className = "admin-product-card-list admin-detail-section";
+  const head = document.createElement("div");
+  head.className = "admin-detail-section-title";
+  head.textContent = "제품별 접근 + 시스템 프롬프트";
+  wrap.appendChild(head);
+  const hint = document.createElement("div");
+  hint.className = "admin-detail-hint";
+  hint.textContent = "각 제품의 접근 권한을 토글하고, 펼쳐서 그 제품×역할 한정 system prompt 를 편집할 수 있습니다. 변경은 footer '모두 적용' 으로 일괄 저장됩니다.";
+  wrap.appendChild(hint);
+
+  const dynamicPerms = dynamicProductPermissions();
+  const permByProductId = new Map(dynamicPerms.map((p) => [Number(p.product_id), p]));
+  const products = adminState.products || [];
+
+  const onToggle = (code, granted) => {
+    const current = new Set((role.permission_codes || []).map(String));
+    if (granted) current.add(code);
+    else current.delete(code);
+    setRolePending(role.id, { permission_codes: Array.from(current) });
+    renderRoleList();
+  };
+
+  if (!products.length) {
+    const empty = document.createElement("div");
+    empty.className = "admin-meta";
+    empty.textContent = "(등록된 제품이 없습니다)";
+    wrap.appendChild(empty);
+  } else {
+    products.forEach((product) => {
+      const perm = permByProductId.get(Number(product.id));
+      if (!perm) return;
+      const card = buildRoleProductCard({ role, product, perm, disabled, onToggle });
+      wrap.appendChild(card);
+    });
+  }
+
+  // "Product 무관" 카드 — role-scope prompt 의 product-agnostic generic.
+  if (role && role.id && !String(role.id).startsWith("new:") && can("system_prompt.manage.role.any")) {
+    const genericCard = document.createElement("details");
+    genericCard.className = "admin-product-card admin-product-card-generic";
+    const summary = document.createElement("summary");
+    summary.className = "admin-product-card-head";
+    const info = document.createElement("span");
+    info.className = "admin-product-card-info";
+    const name = document.createElement("strong");
+    name.textContent = "전 Product 공통";
+    const meta = document.createElement("small");
+    meta.textContent = "Product 와 무관하게 이 역할에 누적 적용";
+    info.append(name, meta);
+    summary.append(info);
+    genericCard.appendChild(summary);
+    const body = document.createElement("div");
+    body.className = "admin-product-card-body";
+    const editor = buildSystemPromptEditor({
+      scope: "role",
+      roleId: Number(role.id),
+      title: "전 Product 공통 — 시스템 프롬프트 (Role)",
+      hint: "Product 와 무관하게 이 역할 구성원 전부에게 누적 적용됩니다.",
+      fixedProductId: 0, // 0 = product 무관 (Phase 1B catalog 의 NULL 매칭)
+    });
+    body.appendChild(editor);
+    genericCard.appendChild(body);
+    wrap.appendChild(genericCard);
+  }
+  return wrap;
+}
+
+/**
+ * Account detail 의 product 카드 — product 별 access override (allow/deny/inherit).
+ */
+function buildAccountProductOverrideList(account, disabled) {
+  const wrap = document.createElement("div");
+  wrap.className = "admin-product-card-list admin-detail-section";
+  const head = document.createElement("div");
+  head.className = "admin-detail-section-title";
+  head.textContent = "제품별 접근 (Override)";
+  wrap.appendChild(head);
+  const hint = document.createElement("div");
+  hint.className = "admin-detail-hint";
+  hint.textContent = "역할의 기본 접근 권한을 계정 단위로 override 합니다. '상속' 은 역할의 grant 를 따릅니다.";
+  wrap.appendChild(hint);
+
+  const dynamicPerms = dynamicProductPermissions();
+  const permByProductId = new Map(dynamicPerms.map((p) => [Number(p.product_id), p]));
+  const products = adminState.products || [];
+  const overrides = account.permission_overrides || {};
+
+  const onChange = (code, value) => {
+    const next = { ...(account.permission_overrides || {}) };
+    if (value === "inherit") {
+      delete next[code];
+    } else {
+      next[code] = value;
+    }
+    setAccountPending(account.id, { permission_overrides: next });
+  };
+
+  if (!products.length) {
+    const empty = document.createElement("div");
+    empty.className = "admin-meta";
+    empty.textContent = "(등록된 제품이 없습니다)";
+    wrap.appendChild(empty);
+    return wrap;
+  }
+  products.forEach((product) => {
+    const perm = permByProductId.get(Number(product.id));
+    if (!perm) return;
+    const card = document.createElement("div");
+    card.className = "admin-product-card admin-product-card-flat";
+    const info = document.createElement("span");
+    info.className = "admin-product-card-info";
+    const name = document.createElement("strong");
+    name.textContent = product.name || product.product_key;
+    const meta = document.createElement("small");
+    meta.textContent = product.is_default ? "default · " + product.product_key : product.product_key;
+    info.append(name, meta);
+    card.appendChild(info);
+    const select = document.createElement("select");
+    select.dataset.overrideCode = perm.code;
+    select.disabled = disabled;
+    [
+      ["inherit", "상속"],
+      ["allow", "허용"],
+      ["deny", "거부"],
+    ].forEach(([value, label]) => {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      opt.selected = (overrides[perm.code] || "inherit") === value;
+      select.appendChild(opt);
+    });
+    select.addEventListener("change", () => onChange(perm.code, select.value));
+    card.appendChild(select);
+    wrap.appendChild(card);
+  });
+  return wrap;
+}
+
 
 /* ── System prompt editor (공용 — role / product / account scope) ────── */
 
