@@ -1968,6 +1968,13 @@ a { color: inherit; }
   margin-top: 4px;
 }
 
+/* embed=true: 권한 grid 의 'product' 그룹 details 안에 inline 배치될 때 */
+.admin-product-card-list-embedded {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-subtle, rgba(0, 0, 0, .12));
+}
+
 .admin-prompt-textarea {
   width: 100%;
   min-height: 120px;
@@ -2182,8 +2189,11 @@ a { color: inherit; }
   border-color: rgba(37,99,235,.2);
 }
 
-.admin-list-row.has-pending::before {
-  content: "";
+/* TASK-0053 bug fix: 이전 placeholder rule 인 `.has-pending::before { content: "" }` 가 CSS Grid
+ * 의 ::before 가 4번째 grid item 으로 참여해 cb/main/chips 의 레이아웃을 row 2 로 밀어내던 버그.
+ * pendingDot (`•`) 이 이미 title 안에서 시각적 표시 역할을 하므로 ::before 자체를 제거. */
+.admin-list-row.has-pending {
+  border-color: rgba(37, 99, 235, .35);
 }
 
 .admin-list-row.is-to-delete {

@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260507-0001
+- Date: 2026-05-07
+- Decision: TASK-0053 의 사용자 follow-up 2 항목 수정 — pending row UI 뒤틀림 + product 카드 위치 이동 — 을 1 commit 에 통합. AI 자율 commit/push.
+- Method:
+  1. **Issue 1 진단**: pending sales row 의 DOM 을 `getBoundingClientRect` 로 분석 → cb 가 column 2 (x=70), main 이 column 3 (x=175), chips 가 row 2 col 1 (x=11, y=73) 에 wrap 되어 있음. 수상한 4번째 grid item 추정. CSS 검토 결과 `.admin-list-row.has-pending::before { content: ""; }` placeholder rule 발견 — `::before` 가 grid container 의 pseudo-element 이지만 `content: ""` 가 있으면 generated DOM 에 참여해 grid 의 4번째 child 가 되어 column 1 row 1 을 차지. 다른 children 이 한 칸씩 밀리고 chips 는 wrap.
+  2. **Issue 1 수정**: pseudo-element 자체를 제거 (placeholder 의도가 사라졌음). 시각적 표시는 `border-color` 변경으로 유지 (`pendingDot` "•" 이 이미 title 안에서 indicator 역할 수행).
+  3. **Issue 2 구현**: `buildRoleProductCardList` / `buildAccountProductOverrideList` 에 `opts.embed` 옵션 추가. embed=true 면 별도 section title 생략 (부모 details summary 의 "제품" 라벨이 이미 표시), hint 단축. `renderRoleDetail` / `renderAccountDetail` 가 `permWrap.querySelector('details[data-perm-group="product"]')` 로 grid 의 product 그룹 details 를 찾아 그 안에 append. 없으면 fallback paneEl append.
+  4. **검증**: DOM 좌표 비교 (수정 전 cb x=70 → 수정 후 x=11), embedded 카드 카운트 3 (KR/TT/전 Product 공통), 시각 screenshot 비교.
+- Risks:
+  - **CSS Grid pseudo-element 함정 재발 위험**: 향후 `::before`/`::after` 에 content 추가 시 grid item 으로 참여. LEARNINGS.md 의 frontend pitfall 항목 등재 권고. 방어 패턴: grid container 의 pseudo 는 `position: absolute` 로 flow 에서 제외 또는 `display: none`.
+  - **embed 옵션의 hint 길이 차이**: standalone 모드 vs embed 모드의 hint 텍스트가 다름 (footer 안내 중복 회피). UX 일관성 손실은 미미 — 동일 의미를 압축 표현.
+  - **Issue 2 의 fallback 경로**: grid 에 product 그룹이 없으면 (정적 product.manage 권한 자체가 없는 환경) product 카드 list 가 별도 paneEl section 으로 표시. 운영 환경에서 product 그룹은 항상 존재하므로 발생 시나리오 거의 없음.
+- Why combine in one commit: 두 이슈가 독립적이지만 사용자가 동시에 보고 + 둘 다 동일 cycle (TASK-0053) 의 보완 + 둘 다 admin.js + styles.css 파일 영역. 분리 commit 의 이득 < 통합 deploy 의 일관성.
+
 ## REV-20260506-0014
 - Date: 2026-05-06
 - Decision: TASK-0053 의 3 phase (A/B/C) 를 1 cycle 안에 통합 진행. **사용자 in-cycle 설계 전환 (2026-05-06)** — 처음 작성한 Phase A 의 "Role 의 DefaultProductAccess 토글" 접근을 사용자 의도에 따라 "Product 의 DefaultRoleAccess 토글" 로 정정. 분리 commit 하지 않은 이유: 본 cycle 의 수정은 보안 표면 추가 0 + 기존 동작 호환 (DEFAULT 1 백필) + frontend 재구성이 핵심. 분리 commit 의 회귀 표면 제어 이득보다 통합 deploy 의 일관성 (정책 토글이 곧 product subcatalog 와 함께 보임) 이 더 큼.

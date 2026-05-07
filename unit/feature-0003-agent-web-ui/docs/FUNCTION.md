@@ -120,6 +120,8 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 - AC-0044: 관리 콘솔 권한 grid (`renderPermissionGrid`) 가 `groupedPermissions({excludeDynamic: true})` 를 사용해 동적 `product.access.<key>` 권한들을 grid 에서 분리한다. 정적 `product.manage` / `system_prompt.manage.role.any` 만 product 그룹에 남고 dynamic 코드들은 별도 product subcatalog 카드로 이전된다.
 - AC-0045: Role detail 에 product 별 collapsible card list 가 노출된다 — 각 카드의 헤더에 access 토글 (= role.permission_codes 의 `product.access.<key>` 토글), 본문에 role-scope system prompt textarea (`fixedProductId=Number(product.id)`). 마지막에 "전 Product 공통" generic card (fixedProductId=0) 가 추가된다. `account scope prompt` 는 profile drawer 에 위치하므로 Role detail 카드에는 prompt textarea 도 access 토글도 표시되지 않는다.
 - AC-0046: Account detail 에 product 별 flat card list 가 노출된다 — 각 카드에 product 이름 + override select (allow/deny/inherit) 만 표시. account scope prompt 는 profile drawer 가 source-of-truth 이므로 카드에는 포함되지 않는다.
+- AC-0047: Account/Role 의 list row (`.admin-list-row`) 가 `has-pending` 상태일 때도 grid layout (`auto 1fr auto`) 이 정상 유지된다. 이전 placeholder rule `.has-pending::before { content: ""; }` 가 CSS Grid 의 ::before pseudo-element 를 4번째 grid item 으로 참여시켜 cb/main/chips 위치를 row 2 까지 밀던 버그가 fix 됐다 (pseudo 자체 제거 + `border-color` 로 시각 표시). pendingDot ("•") 이 title 안에서 inline indicator 역할 수행.
+- AC-0048: Role detail / Account detail 의 product 별 카드 list 는 권한 grid 의 `details[data-perm-group="product"]` 안에 inline 배치된다. 사용자가 "제품" 그룹 collapse 시 정적 권한 (`product.manage` / `system_prompt.manage.role.any`) + product 별 카드 (KR / TT / 전 Product 공통 / ...) 모두 함께 접힘. embed=true 모드에서는 별도 section title 이 생략되고 hint 메시지가 단축된다 (부모 details summary "제품" 라벨과 중복 회피).
 
 ## 12. Observability
 - 웹 세션: `../../../../artifacts/shared/web_sessions`

@@ -8,6 +8,31 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260507-0001
+- Date: 2026-05-07
+- Summary: TASK-0053 사용자 follow-up 2 항목 수정 — (1) Account/Role 의 pending 상태 row UI 뒤틀림 버그 fix, (2) 제품별 접근 카드 list 를 권한 grid 의 'product' 그룹 details 안으로 이전. AI 자율 commit/push.
+- Files:
+  - [unit/feature-0003-agent-web-ui/src/static/styles.css](../src/static/styles.css)
+    - Issue 1 fix: `.admin-list-row.has-pending::before { content: ""; }` 의 placeholder rule 이 CSS Grid container 의 `::before` 가 4번째 grid item 으로 참여해 cb 를 column 2 로 밀고 chips 를 row 2 col 1 로 wrap 시키던 버그 fix. pseudo-element 자체를 제거하고, `.has-pending` 에 `border-color: rgba(37,99,235,.35)` 만 적용해 시각적 표시 유지 (`pendingDot` "•" 이 이미 title 안에서 indicator 역할).
+    - 신규 `.admin-product-card-list-embedded` 스타일 (margin-top + padding-top + dashed border-top) — 권한 grid 'product' 그룹 details 안에 inline 배치될 때 정적 권한과의 시각적 구분.
+  - [unit/feature-0003-agent-web-ui/src/static/admin.js](../src/static/admin.js)
+    - Issue 2: `buildRoleProductCardList(role, disabled, opts={})` / `buildAccountProductOverrideList(account, disabled, opts={})` 시그니처에 `opts.embed` 추가. embed=true 면 별도 section title 생략 (부모 details summary 의 "제품" 라벨과 중복 회피), hint 메시지 단축.
+    - `renderRoleDetail`: 기존 `paneEl.appendChild(productCards)` 를 `permWrap.querySelector('details[data-perm-group="product"]')` 가 있으면 그 안에 append, 없으면 fallback 으로 paneEl 에 append 하는 분기로 변경. embed 옵션 전달.
+    - `renderAccountDetail`: 동일 패턴으로 `overrideWrap` 안의 product 그룹 details 에 productOverrides append.
+  - [unit/feature-0003-agent-web-ui/src/static/admin.html](../src/static/admin.html)
+    - cache-bust `v=20260507-row-fix-embed`.
+- Verification:
+  - (a) `node --check admin.js` PASS / `make web` 재배포.
+  - (b) **Issue 1 DOM 분석 (수정 전 → 수정 후)**: sales role 에 pending 적용 후 `getBoundingClientRect`. 수정 전 — `cb x=70 y=30` (column 2 — 잘못), `main x=175 y=9` (column 3 — 잘못), `chips x=11 y=73` (row 2 col 1 — wrap). 수정 후 — `cb x=11 y=30` (column 1 ✓), `main x=34 y=9` (column 2 ✓), `chips x=270 y=26` (column 3 ✓), 모두 row 1 에 정상 배치. row height 102 → 72 (정상 높이).
+  - (c) **Issue 2 DOM 검증**: `details[data-perm-group="product"]` 안에 `.admin-product-card-list-embedded` 1 개 + `.admin-product-card` 3 개 (KR / TT / 전 Product 공통) 정상 배치 확인. 사용자가 "제품" 그룹 collapse 시 정적 권한과 product 카드가 함께 접힘.
+  - (d) **시각 확인** (스크린샷): pending 상태 sales row 가 다른 role row 와 동일한 패턴 (cb / 아바타 / name+meta / active 칩) 으로 표시. "제품" 그룹 펼치면 정적 권한 + 안내 hint + product 카드 (체크박스 + product key) inline 노출.
+- Risks:
+  - **CSS pseudo-element grid item 회귀 위험**: 향후 다른 `::before`/`::after` 에 `content: "..."` 가 추가될 때 같은 버그 재발 가능. 방어책: grid container 의 pseudo-element 는 `position: absolute` 로 grid flow 에서 제외하거나 `display: none`. 본 수정은 placeholder rule 자체를 제거.
+  - **embed=true 모드의 hint 텍스트 차이**: 부모 details 안에 들어가면 footer 정보가 중복되지 않도록 hint 를 단축. UX 일관성 손실 우려는 적음 — footer "모두 적용" 메시지가 이미 다른 곳에서 노출됨.
+  - **Account detail 의 product card 도 동일 처리**: override grid 의 product 그룹 details 안에 inline 배치. 사용자가 "제품" collapse 시 product 별 override select 도 함께 접힘.
+- Range: styles.css +6 lines (rule 제거 + 신규 embedded 변형 + has-pending border), admin.js +~25 lines (renderRoleDetail/renderAccountDetail 의 분기 + buildRoleProductCardList/buildAccountProductOverrideList 의 embed opts), admin.html cache-bust 2 lines. 신규 파일 0.
+- Notes: 본 fix 는 TASK-0053 의 후속 보완 — 사용자 직접 보고 + 시각 의도 ("제품 접기에 따라 출력") 반영. 정책 주체 (Product) 결정은 변경 없음. CSS Grid 의 ::before pseudo-element 가 grid item 으로 참여한다는 사실은 흔한 함정 — LEARNINGS.md 등재 권고.
+
 ## CHG-20260506-0027
 - Date: 2026-05-06
 - Summary: TASK-0053 (REQ-20260506-0006, Major §12.3) 신규 제품 default 정책 토글 + 권한 grid 의 product sub-catalog + Role/Account detail 의 product-카드 통합. TASK-0052 완료 직후 사용자 follow-up. **사용자 in-cycle 설계 전환 (2026-05-06)**: 정책 주체를 Role 이 아닌 **Product** 로 변경 — 운영자가 product 생성 시점에 토글로 결정하는 것이 더 자연스럽다는 의도. AI 자율 commit/push.

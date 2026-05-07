@@ -977,12 +977,20 @@ function renderAccountDetail() {
   overrideSection.appendChild(overrideWrap);
   paneEl.appendChild(overrideSection);
 
-  // TASK-0053 Phase B: 제품별 접근 override card list.
+  // TASK-0053 (사용자 follow-up 2026-05-07): 제품별 접근 카드 list 를 권한 grid 의 'product' 그룹 details
+  // 안으로 이전. 사용자가 제품 그룹을 collapse 하면 product 별 override 카드도 함께 접힌다.
+  const accountProductGroup = overrideWrap.querySelector('details[data-perm-group="product"]');
   const productOverrides = buildAccountProductOverrideList(
     merged,
     disabledBase || !can("account.permission.override.manage"),
+    { embed: Boolean(accountProductGroup) },
   );
-  paneEl.appendChild(productOverrides);
+  if (accountProductGroup) {
+    accountProductGroup.appendChild(productOverrides);
+  } else {
+    // Fallback: product 그룹이 grid 에 없으면 (정적 product.manage 등 권한 부재 시) 별도 section.
+    paneEl.appendChild(productOverrides);
+  }
 
   // Per-account actions
   const actions = document.createElement("div");
@@ -1396,13 +1404,21 @@ function renderRoleDetail() {
   permSection.appendChild(permWrap);
   paneEl.appendChild(permSection);
 
-  // TASK-0053 Phase B/C: 제품별 접근 + role-scope system prompt 카드 리스트.
+  // TASK-0053 Phase B/C + 사용자 follow-up (2026-05-07): 제품별 접근 + role-scope system prompt 카드를
+  // 권한 grid 의 'product' 그룹 details 안으로 이전. 사용자가 '제품' 그룹을 collapse 하면
+  // 제품별 카드도 함께 접혀 가시성 향상. fallback: product 그룹이 grid 에 없으면 별도 section.
   if (!merged._isNew) {
+    const roleProductGroup = permWrap.querySelector('details[data-perm-group="product"]');
     const productCards = buildRoleProductCardList(
       merged,
       disabledBase || !can("role.permission.manage"),
+      { embed: Boolean(roleProductGroup) },
     );
-    paneEl.appendChild(productCards);
+    if (roleProductGroup) {
+      roleProductGroup.appendChild(productCards);
+    } else {
+      paneEl.appendChild(productCards);
+    }
   }
 
   // Actions
@@ -2216,16 +2232,23 @@ function buildRoleProductCard({ role, product, perm, disabled, onToggle }) {
   return card;
 }
 
-function buildRoleProductCardList(role, disabled) {
+function buildRoleProductCardList(role, disabled, opts = {}) {
+  // 사용자 follow-up (2026-05-07): embed=true 면 권한 grid 의 'product' 그룹 details 안에 inline 배치 —
+  // 별도 section title/hint 는 부모 details summary 가 이미 "제품" 라벨을 보여주므로 중복 회피.
+  const { embed = false } = opts;
   const wrap = document.createElement("div");
-  wrap.className = "admin-product-card-list admin-detail-section";
-  const head = document.createElement("div");
-  head.className = "admin-detail-section-title";
-  head.textContent = "제품별 접근 + 시스템 프롬프트";
-  wrap.appendChild(head);
+  wrap.className = embed ? "admin-product-card-list admin-product-card-list-embedded" : "admin-product-card-list admin-detail-section";
+  if (!embed) {
+    const head = document.createElement("div");
+    head.className = "admin-detail-section-title";
+    head.textContent = "제품별 접근 + 시스템 프롬프트";
+    wrap.appendChild(head);
+  }
   const hint = document.createElement("div");
   hint.className = "admin-detail-hint";
-  hint.textContent = "각 제품의 접근 권한을 토글하고, 펼쳐서 그 제품×역할 한정 system prompt 를 편집할 수 있습니다. 변경은 footer '모두 적용' 으로 일괄 저장됩니다.";
+  hint.textContent = embed
+    ? "각 제품의 접근 권한을 토글하고, 펼쳐서 그 제품×역할 한정 system prompt 를 편집할 수 있습니다."
+    : "각 제품의 접근 권한을 토글하고, 펼쳐서 그 제품×역할 한정 system prompt 를 편집할 수 있습니다. 변경은 footer '모두 적용' 으로 일괄 저장됩니다.";
   wrap.appendChild(hint);
 
   const dynamicPerms = dynamicProductPermissions();
@@ -2288,13 +2311,17 @@ function buildRoleProductCardList(role, disabled) {
 /**
  * Account detail 의 product 카드 — product 별 access override (allow/deny/inherit).
  */
-function buildAccountProductOverrideList(account, disabled) {
+function buildAccountProductOverrideList(account, disabled, opts = {}) {
+  // 사용자 follow-up (2026-05-07): embed=true 면 권한 override grid 의 'product' 그룹 details 안에 inline.
+  const { embed = false } = opts;
   const wrap = document.createElement("div");
-  wrap.className = "admin-product-card-list admin-detail-section";
-  const head = document.createElement("div");
-  head.className = "admin-detail-section-title";
-  head.textContent = "제품별 접근 (Override)";
-  wrap.appendChild(head);
+  wrap.className = embed ? "admin-product-card-list admin-product-card-list-embedded" : "admin-product-card-list admin-detail-section";
+  if (!embed) {
+    const head = document.createElement("div");
+    head.className = "admin-detail-section-title";
+    head.textContent = "제품별 접근 (Override)";
+    wrap.appendChild(head);
+  }
   const hint = document.createElement("div");
   hint.className = "admin-detail-hint";
   hint.textContent = "역할의 기본 접근 권한을 계정 단위로 override 합니다. '상속' 은 역할의 grant 를 따릅니다.";
