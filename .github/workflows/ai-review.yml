@@ -80,8 +80,9 @@ jobs:
           which claude || { echo "ERROR: claude CLI not found on PATH for runner user $(whoami)"; exit 1; }
           claude --version || { echo "ERROR: claude --version failed"; exit 1; }
           echo "claude path: $(which claude)" >> "$GITHUB_STEP_SUMMARY"
+          echo "claude resolved: $(realpath "$(which claude)" 2>/dev/null || readlink -f "$(which claude)")" >> "$GITHUB_STEP_SUMMARY"
           echo "claude version: $(claude --version)" >> "$GITHUB_STEP_SUMMARY"
-          echo "runner uid: $(id -u) ($(whoami))" >> "$GITHUB_STEP_SUMMARY"
+          echo "runner uid: $(id -u) ($(whoami)) home=$HOME" >> "$GITHUB_STEP_SUMMARY"
           if [[ "$(id -u)" == "0" ]]; then
             echo "ERROR: self-hosted runner is running as root (uid 0)." >&2
             echo "       claude CLI rejects --permission-mode bypassPermissions under root" >&2
