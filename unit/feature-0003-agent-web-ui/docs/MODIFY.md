@@ -8,6 +8,27 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260508-0001
+- Date: 2026-05-08
+- Summary: TASK-0054 (REQ-20260508-0001) PR 흐름으로 main 동기화 — feat/adopt-external-anchor-v3.2.0-rc + issue/1-github-bootstrap 의 누적 작업을 두 개의 PR 로 main 에 머지. AI 자율 commit/push (§16.5).
+- Files:
+  - PR #2 (`feat/adopt-external-anchor-v3.2.0-rc` → `main`):
+    - merge commit `eafe4c2` (admin merge, 72 commits / 137 files / +28320 / -9018)
+    - 충돌 해결 commit `ae53965` — main 의 v3.0.0 마이그레이션과 본 브랜치의 v3.6.0 진화 conflict (10 files: AGENTS.md / CONTRIBUTING.md / unit/_template/docs/TASK.md / docs/{CODEBASE_MAP,LEARNINGS}.md / playbooks/{PB-0001~0004,README}.md) 을 §3.2 + §16.6 자율 해결 원칙에 따라 본 브랜치 본문 우선으로 통합.
+  - PR #3 (`issue/1-github-bootstrap` → `main`):
+    - merge commit `3fd4272` (admin merge, 단일 commit `38702cd`)
+    - 변경: `.github/workflows/{ai-execute,ai-review,ai-triage}.yml` 의 `runs-on` 을 `[self-hosted, linux]` 로 + `anthropics/claude-code-action@v1` 제거 + 로컬 `claude -p ...` CLI 직접 호출.
+  - 본 cycle 의 `unit/feature-0003-agent-web-ui/docs/REPORT.md` §3 에 Git 동기화 결과 양식 (§16.5 Step 6) 으로 PR #2 + PR #3 의 머지 commit hash, 충돌 해결 사유, CI fail 인프라 이슈 요약을 누적 기록.
+- Verification:
+  - `gh pr view 2 --json state,mergedAt,mergeCommit` → `MERGED`, mergeCommit `eafe4c25af3eda75e2f74cd9350dfc3c9531fad9`.
+  - `gh pr view 3 --json state,mergedAt,mergeCommit` → `MERGED`, mergeCommit `3fd4272fdc2aaa902df50c8cb03431a7a99c3855`.
+  - `git show origin/main:.github/workflows/ai-execute.yml | grep runs-on` → `runs-on: [self-hosted, linux]` (운영 정합성 회복).
+  - 직전 `bin/verify-completion.sh --post-commit feature-0003-agent-web-ui` PASS (6/6).
+- Risks:
+  - feat 브랜치는 PR #2/PR #3 의 merge commits + ae53965 만큼 main 보다 behind 3 — feat 에서 추가 작업 시 catch-up 필요 (사용자 결정).
+  - main 의 self-hosted runner 환경에서 `repo-agent` 이미지 누락 (selfhosted-runtime-smoke fail) 은 별도 인프라 후속 작업으로 분리. PR #2 / PR #3 자체의 정책 위반은 아님.
+  - CI 의 `policy-contract` (브랜치 이름 `feat/*` 가 `issue/<번호>-<short-slug>` 자동화 계약 외) + `ai-review` (heredoc EOF delimiter 워크플로 버그) 는 본 PR 본문과 무관한 인프라 이슈로 admin merge 정당화. 정책 자동화 자체는 향후 cycle 에서 보강 필요.
+
 ## CHG-20260507-0001
 - Date: 2026-05-07
 - Summary: TASK-0053 사용자 follow-up 2 항목 수정 — (1) Account/Role 의 pending 상태 row UI 뒤틀림 버그 fix, (2) 제품별 접근 카드 list 를 권한 grid 의 'product' 그룹 details 안으로 이전. AI 자율 commit/push.
