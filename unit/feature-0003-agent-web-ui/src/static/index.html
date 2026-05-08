@@ -3,213 +3,376 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MySQL AI Control Deck</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260321a" />
+  <title>MySQL AI Assistant</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260506-pending-conv" />
 </head>
 <body>
-  <div class="bg" aria-hidden="true"></div>
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo">◆</div>
-      <div>
-        <div class="title">MySQL AI Control Deck</div>
-        <div class="subtitle">자연어로 DB 작업을 제어하는 워크스페이스</div>
-      </div>
-    </div>
-    <div class="status">
-      <button class="icon-btn" id="sideToggle" type="button" aria-expanded="true">메뉴</button>
-      <button class="icon-btn" id="toolsToggle" type="button" aria-expanded="false">도구</button>
-      <button class="badge badge-toggle" id="domainBadge" type="button" title="현재 도메인 고정/해제">Domain: -</button>
-      <button class="badge badge-toggle" id="strategyBadge" type="button" title="현재 전략 고정/해제">Strategy: -</button>
-      <div class="badge meta-id" id="sessionId">SESSION: -</div>
-      <div class="badge meta-id" id="conversationId">CONV: -</div>
-    </div>
-  </header>
 
-  <main class="layout">
-    <aside class="side">
-      <div class="card side-section side-section--primary">
-        <div class="card-title">Conversations <span class="count-badge" id="conversationCount">0</span></div>
-        <button class="btn tiny" id="btnNew">새 대화 시작</button>
-        <div class="conversation-list" id="conversationList"></div>
-      </div>
-    </aside>
+  <!-- ─── Auth Screen ─────────────────────────────────────────────── -->
+  <div class="auth-screen" id="authOverlay">
+    <div class="auth-card">
+      <div class="auth-logo">MA</div>
+      <h1 class="auth-title">MySQL AI Assistant</h1>
 
-    <section class="chat">
-      <div class="chat-header">
-        <div class="chat-title">대화 로그</div>
-        <div class="chat-meta" id="lastDuration">최근 처리: -</div>
-        <div class="chat-meta" id="conversationStats">메시지 0</div>
-        <input type="hidden" id="jumpTime" />
+      <div class="auth-tabs">
+        <button type="button" class="auth-tab is-active" data-auth-tab="login">로그인</button>
+        <button type="button" class="auth-tab" data-auth-tab="signup">회원가입</button>
       </div>
-      <div class="run-hud hidden" id="runHud" aria-live="polite"></div>
-      <div class="domain-drift hidden" id="domainDriftPanel" aria-live="polite">
-        <div class="domain-drift-text" id="domainDriftText"></div>
-        <div class="domain-drift-actions">
-          <button type="button" class="mini" id="domainDriftRevert">고정 도메인 원복</button>
-          <button type="button" class="mini ghost" id="domainDriftClose">닫기</button>
-        </div>
+
+      <form class="auth-form" id="loginForm" data-auth-pane="login" autocomplete="on">
+        <label class="field">
+          <span>사용자 ID</span>
+          <input id="loginUsername" type="text" placeholder="사용자 ID" required autocomplete="username" />
+        </label>
+        <label class="field">
+          <span>비밀번호</span>
+          <input id="loginPassword" type="password" placeholder="비밀번호" required autocomplete="current-password" />
+        </label>
+        <div class="form-error" id="loginError"></div>
+        <button type="submit" class="btn-primary btn-full">로그인</button>
+      </form>
+
+      <form class="auth-form hidden" id="signupForm" data-auth-pane="signup" autocomplete="on">
+        <label class="field">
+          <span>사용자 ID</span>
+          <input id="signupUsername" type="text" placeholder="영문/숫자/._- 3~64자" required autocomplete="username" />
+        </label>
+        <label class="field">
+          <span>비밀번호</span>
+          <input id="signupPassword" type="password" placeholder="10자 이상" required autocomplete="new-password" />
+        </label>
+        <label class="field">
+          <span>비밀번호 확인</span>
+          <input id="signupPasswordConfirm" type="password" placeholder="비밀번호 다시 입력" required autocomplete="new-password" />
+        </label>
+        <div class="form-error" id="signupError"></div>
+        <button type="submit" class="btn-primary btn-full">회원가입</button>
+        <p class="auth-note">가입 즉시 기본 역할이 부여됩니다. 기본 가입 역할 설정에 따라 조회 전용 또는 작업 계정으로 시작할 수 있습니다.</p>
+      </form>
+    </div>
+  </div>
+
+  <!-- ─── App Shell ──────────────────────────────────────────────── -->
+  <div class="app-shell" id="appFrame">
+
+    <!-- Top Bar -->
+    <header class="topbar">
+      <div class="topbar-brand">
+        <div class="brand-icon">MA</div>
+        <span class="brand-name">MySQL AI</span>
       </div>
-      <div class="restore-mode hidden" id="restoreModePanel" aria-live="polite">
-        <div class="restore-mode-main">
-          <span class="restore-mode-badge">복원 모드</span>
-          <span class="restore-mode-file" id="restoreModeFile">선택 파일 없음</span>
-        </div>
-        <div class="restore-mode-actions">
-          <button type="button" class="mini" id="restoreContinueBtn">복원 계속</button>
-          <button type="button" class="mini ghost" id="restoreModeClearBtn">모드 해제</button>
-        </div>
+      <div class="topbar-end">
+        <button type="button" class="topbar-btn hidden" id="openAdminBtn">관리 콘솔</button>
       </div>
-      <div class="chat-log-wrap">
-        <div class="chat-log" id="chatLog">
-          <div class="msg assistant">
-            <div class="bubble">
-              <pre class="output">준비가 완료되었습니다.
-자연어로 요청을 입력해 시작하세요.</pre>
+    </header>
+
+    <!-- Body: Sidebar + Chat -->
+    <div class="app-body">
+
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <!-- TASK-0047: 제품 컨텍스트 칩 (auto / pinned). 대화 단위 상태이며 진행 중 ask 동안에는 disabled. -->
+          <div class="product-chip-wrap">
+            <span class="product-chip-caption">이 대화의 제품</span>
+            <label class="product-chip" id="productChip" title="이 대화에 적용할 제품을 선택합니다.">
+              <span class="product-chip-dot" id="productChipDot" aria-hidden="true"></span>
+              <select id="productSelect" class="product-chip-select" aria-label="이 대화의 제품 선택, 현재 auto"></select>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                <path d="M3 4.5l3 3 3-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </label>
+          </div>
+          <button type="button" class="btn-new-conv" id="newConversationBtn">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
+              <path d="M6.5 1v11M1 6.5h11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            새 대화
+          </button>
+        </div>
+
+        <div class="conv-list" id="conversationList"></div>
+
+        <!-- 사이드바 하단 프로필 버튼 (ChatGPT 스타일) -->
+        <div class="sidebar-profile">
+          <button type="button" class="profile-trigger" id="openProfileBtn">
+            <div class="profile-avatar" id="profileAvatar">—</div>
+            <div class="profile-info">
+              <span class="profile-name" id="profileName">—</span>
+              <span class="profile-role" id="profileRole">—</span>
             </div>
+            <svg class="profile-arrow" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M5 3l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
+      </aside>
+
+      <!-- Chat Pane -->
+      <div class="chat-pane">
+
+        <!-- Chat Header -->
+        <div class="chat-header">
+          <div class="chat-header-info">
+            <h2 class="chat-title" id="conversationTitle">대화를 선택하세요</h2>
+            <span class="chat-subtitle" id="conversationSubtitle"></span>
+          </div>
+          <div class="chat-header-tools">
+            <button type="button" class="tool-btn hidden" id="loadMoreBtn">이전 기록</button>
+            <button type="button" class="tool-btn hidden" id="forkConversationBtn" title="이 대화의 현재 기록을 내 계정의 새 대화로 복제합니다.">대화 복사</button>
+            <button type="button" class="tool-btn hidden" id="renameConversationBtn">제목 변경</button>
+            <button type="button" class="tool-btn danger hidden" id="deleteConversationBtn">삭제</button>
           </div>
         </div>
-        <div class="chat-timeline" id="chatTimeline"></div>
-        <button class="scroll-latest-btn hidden" id="scrollLatestBtn" title="최신 대화로 이동">&#x25BC;</button>
-        <div class="jump-cal-panel hidden" id="jumpCalPanel">
-          <div class="jump-cal-header">
-            <button class="jump-cal-nav" id="jumpCalPrev">&lsaquo;</button>
-            <span class="jump-cal-title" id="jumpCalTitle"></span>
-            <button class="jump-cal-nav" id="jumpCalNext">&rsaquo;</button>
-          </div>
-          <div class="jump-cal-weekdays">
-            <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
-          </div>
-          <div class="jump-cal-grid" id="jumpCalGrid"></div>
-          <div class="jump-cal-times hidden" id="jumpCalTimes">
-            <div class="jump-cal-times-title">대화 시각</div>
-            <div class="jump-cal-times-list" id="jumpCalTimesList"></div>
-          </div>
-        </div>
-      </div>
 
-      <div class="composer">
-        <div class="composer-input-row">
-          <textarea id="prompt" rows="3" placeholder="예) 최근 접속 유저 수와 평균 플레이타임을 계산해줘"></textarea>
-          <div class="composer-actions">
-            <button class="btn ghost hidden" id="btnCancel">요청 취소</button>
-            <button class="btn ghost" id="btnSend">요청 보내기</button>
-          </div>
-        </div>
-</div>
-    </section>
-  </main>
+        <!-- Access Notice -->
+        <div class="access-notice hidden" id="accessNotice"></div>
 
-  <div class="drawer hidden" id="toolsDrawer" aria-hidden="true">
-    <div class="drawer-card">
-      <div class="drawer-header">
-        <div class="drawer-title">Utilities</div>
-        <button class="icon-btn" id="toolsClose" type="button">닫기</button>
-      </div>
-      <div class="drawer-body">
-        <div class="drawer-section">
-          <div class="drawer-subtitle">Quick Controls</div>
-          <div class="control-row">
-            <button class="btn ghost" id="btnQuickDb">현재 DB 목록</button>
-            <button class="btn ghost" id="btnClear">모든 대화 삭제</button>
-          </div>
-          <div class="hint">
-            세션 기준은 접속한 머신(IP)입니다.
-            같은 IP의 다른 브라우저는 동일 세션을 공유합니다.
-          </div>
-        </div>
-        <div class="drawer-section" id="apiCard">
-          <div class="drawer-subtitle">API Vault</div>
-          <div class="api-summary">
-            <div class="api-status" id="apiStatus">미설정</div>
-            <button class="btn ghost tiny" id="apiToggle">설정 열기</button>
-          </div>
-          <div class="api-panel hidden" id="apiPanel">
-            <div class="api-form">
-              <label class="api-label" for="apiKeyEnc">암호화된 API 키</label>
-              <textarea id="apiKeyEnc" rows="3" placeholder="v1:..."></textarea>
-
-              <label class="api-label" for="apiKeyPass">암호화 키</label>
-              <input id="apiKeyPass" type="password" placeholder="암호화 키(패스프레이즈)" />
-
-              <label class="api-label" for="apiModel">모델</label>
-              <select id="apiModel"></select>
-              <div class="api-model-hint" id="apiModelHint"></div>
-
-              <div class="api-actions">
-                <button class="btn tiny" id="apiSave">저장</button>
-                <button class="btn ghost tiny" id="apiClear">삭제</button>
-              </div>
-              <div class="api-validation" id="apiValidation"></div>
-              <div class="api-security-hint hidden" id="apiSecureHint"></div>
-              <div class="hint">키/모델은 브라우저에만 캐싱되며 서버에는 저장되지 않습니다.</div>
-              <div class="api-history" id="apiHistory"></div>
-
-              <details class="api-tool">
-                <summary>암호화 도구</summary>
-                <div class="api-tool-body">
-                  <input id="apiKeyPlain" type="password" placeholder="평문 API 키" />
-                  <button class="btn tiny" id="apiEncrypt">암호화 후 채우기</button>
-                </div>
-                <div class="hint">암호화는 브라우저에서만 수행됩니다.</div>
-              </details>
+        <!-- Progress Strip (collapsible dropdown) -->
+        <details class="progress-strip hidden" id="progressCard">
+          <summary class="progress-row">
+            <span class="progress-label" id="progressTitle">처리 중</span>
+            <span class="progress-badge" id="progressStatus">processing</span>
+            <span class="progress-summary" id="progressSummary"></span>
+            <div class="progress-actions">
+              <button type="button" class="tool-btn hidden" id="cancelBtn">중단</button>
+              <button type="button" class="tool-btn hidden" id="finalizeBtn">즉시 답변</button>
             </div>
+            <span class="progress-caret" aria-hidden="true">▾</span>
+          </summary>
+          <div class="progress-steps" id="progressSteps"></div>
+        </details>
+
+        <!-- Messages -->
+        <div class="messages" id="messageLog">
+          <div class="empty-state">
+            <strong>대화를 선택하거나 새 대화를 시작하세요</strong>
+            <span>좌측 목록에서 대화를 선택하거나 새 대화 버튼을 클릭하세요.</span>
           </div>
         </div>
-      </div>
-    </div>
-  </div>
 
-  <div class="modal" id="modal" aria-hidden="true">
-    <div class="modal-card">
-      <div class="modal-header">
-        <div class="modal-title" id="modalTitle">상세 보기</div>
-        <button class="icon-btn" id="modalClose" type="button">닫기</button>
-      </div>
-      <div class="modal-body" id="modalBody" tabindex="0"></div>
-      <div class="modal-actions">
-        <button class="btn ghost" id="modalCopy" type="button">복사</button>
-        <a class="btn" id="modalDownload" href="#" target="_blank" rel="noopener">다운로드</a>
-      </div>
-    </div>
-  </div>
+        <!-- Composer -->
+        <div class="composer-wrap">
+          <div class="composer-box">
+            <textarea
+              id="promptInput"
+              rows="1"
+              placeholder="예) 최근 7일 신규 사용자 수와 평균 접속 시간을 보여줘"
+              autocomplete="off"
+            ></textarea>
+            <button type="button" class="send-btn" id="sendBtn" title="전송 (Ctrl+Enter)">
+              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+                <path d="M1.5 7.5L13.5 1.5L7.5 13.5L6.5 8.5L1.5 7.5Z" fill="currentColor"/>
+              </svg>
+            </button>
+          </div>
+          <div class="composer-footer">
+            <span class="composer-status" id="composerTitle"></span>
+            <span class="composer-hint" id="composerHint"></span>
+          </div>
+        </div>
 
-  <div
-    class="modal"
-    id="dangerModal"
-    aria-hidden="true"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="dangerModalTitle"
-    aria-describedby="dangerModalText"
-  >
-    <div class="modal-card danger-modal-card">
-      <div class="modal-header">
-        <div class="modal-title" id="dangerModalTitle">삭제 확인</div>
-        <button class="icon-btn" id="dangerModalClose" type="button">닫기</button>
-      </div>
-      <div class="modal-body danger-modal-body">
-        <div class="danger-modal-text" id="dangerModalText"></div>
-        <label class="danger-modal-label" id="dangerModalLabel" for="dangerModalInput">확인 입력</label>
-        <input class="danger-modal-input" id="dangerModalInput" type="text" autocomplete="off" />
-      </div>
-      <div class="modal-actions">
-        <button class="btn ghost" id="dangerModalCancel" type="button">취소</button>
-        <button class="btn danger" id="dangerModalConfirm" type="button" disabled>삭제</button>
-      </div>
-    </div>
-  </div>
+      </div><!-- /chat-pane -->
+    </div><!-- /app-body -->
+  </div><!-- /app-shell -->
 
-  <div class="csv-pager-dock hidden" id="csvPagerDock" aria-hidden="true">
-    <div class="csv-pager-shell">
-      <div class="csv-pager-panel" id="csvPagerPanel"></div>
-    </div>
-  </div>
+  <!-- ─── Profile Drawer (탭: 계정 / 보안 / API Vault) ────────────── -->
+  <div class="drawer-bg hidden" id="profileBackdrop"></div>
+  <aside class="drawer hidden" id="profileDrawer">
 
-  <div class="toast" id="toast" aria-live="polite"></div>
+    <!-- 헤더: 아바타 + 이름 + 닫기 -->
+    <div class="drawer-header">
+      <div class="profile-header-identity">
+        <div class="profile-avatar-lg" id="profileAvatarLg">—</div>
+        <div>
+          <div class="drawer-label">My Account</div>
+          <div class="profile-summary-name" id="profileSummaryName">—</div>
+          <div class="profile-summary-meta" id="profileSummaryMeta">—</div>
+        </div>
+      </div>
+      <button type="button" class="tool-btn" id="closeProfileBtn">닫기</button>
+    </div>
+
+    <!-- 탭 네비게이션 -->
+    <div class="drawer-tabs">
+      <button type="button" class="drawer-tab is-active" data-profile-tab="account">계정</button>
+      <button type="button" class="drawer-tab" data-profile-tab="security">보안</button>
+      <button type="button" class="drawer-tab" data-profile-tab="vault">API Vault</button>
+      <button type="button" class="drawer-tab" data-profile-tab="prompt">프롬프트</button>
+    </div>
+
+    <!-- ── 탭 패널: 계정 ── -->
+    <div class="drawer-pane" data-profile-pane="account">
+
+      <!-- 권한 현황 -->
+      <div class="profile-section">
+        <div class="profile-section-title">권한 현황</div>
+        <div class="perm-sections" id="profilePermPills"></div>
+        <p class="profile-section-note" id="profileStateNote"></p>
+      </div>
+
+      <!-- 활동 정보 -->
+      <div class="profile-section">
+        <div class="profile-section-title">활동 정보</div>
+        <dl class="profile-dl">
+          <dt>계정 생성</dt><dd id="profileCreatedAt">—</dd>
+          <dt>마지막 로그인</dt><dd id="profileLastLogin">—</dd>
+          <dt>권한 부여일</dt><dd id="profileApprovedAt">—</dd>
+        </dl>
+      </div>
+
+      <!-- 세션 / 로그아웃 -->
+      <div class="profile-section profile-danger-zone">
+        <div class="profile-section-title">세션</div>
+        <button type="button" class="btn-secondary" id="logoutBtn">로그아웃</button>
+      </div>
+
+    </div><!-- /account -->
+
+    <!-- ── 탭 패널: 보안 ── -->
+    <div class="drawer-pane hidden" data-profile-pane="security">
+
+      <div class="profile-section">
+        <div class="profile-section-title">비밀번호 변경</div>
+        <form id="passwordChangeForm" class="profile-form">
+          <label class="field">
+            <span>현재 비밀번호</span>
+            <input id="currentPassword" type="password" autocomplete="current-password" />
+          </label>
+          <label class="field">
+            <span>새 비밀번호 (10자 이상)</span>
+            <input id="newPassword" type="password" autocomplete="new-password" />
+          </label>
+          <label class="field">
+            <span>새 비밀번호 확인</span>
+            <input id="confirmPassword" type="password" autocomplete="new-password" />
+          </label>
+          <div class="form-error" id="passwordError"></div>
+          <button type="submit" class="btn-primary">비밀번호 변경</button>
+        </form>
+      </div>
+
+    </div><!-- /security -->
+
+      <!-- ── 탭 패널: API Vault (wizard) ── -->
+      <div class="drawer-pane hidden" data-profile-pane="vault">
+
+      <!-- 1) readiness 배지 -->
+      <div class="vault-banner" id="vaultBanner" data-state="pending">
+        <span class="vault-banner-dot" data-state="pending"></span>
+        <span class="vault-banner-text" id="vaultBannerText">상태 확인 중...</span>
+      </div>
+
+      <!-- 2) 한 줄 안내 -->
+      <p class="drawer-desc">
+        API 키는 브라우저에서 암호화돼 저장되고 서버로 전송되지 않습니다.
+      </p>
+
+      <!-- 3) wizard stepper -->
+      <ol class="vault-stepper">
+        <!-- Step 1. 사용할 API 키 -->
+        <li class="vault-step" data-step="1" data-state="active">
+          <div class="vault-step-head">
+            <span class="vault-step-num">1</span>
+            <div class="vault-step-title">사용할 API 키</div>
+          </div>
+          <div class="vault-step-body">
+            <label class="field">
+              <span>API 키 (sk-... / anthropic-... 등)</span>
+              <input id="vaultPlainKey" type="password" placeholder="sk-..." autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>모델</span>
+              <select id="vaultModel"></select>
+            </label>
+          </div>
+        </li>
+
+        <!-- Step 2. passphrase -->
+        <li class="vault-step" data-step="2" data-state="disabled">
+          <div class="vault-step-head">
+            <span class="vault-step-num">2</span>
+            <div class="vault-step-title">이 브라우저 전용 비밀번호 (passphrase)</div>
+          </div>
+          <div class="vault-step-body">
+            <label class="field">
+              <span>Passphrase</span>
+              <input id="vaultPassphrase" type="password" placeholder="현재 세션에만 유지" autocomplete="new-password" />
+            </label>
+            <p class="vault-step-hint">브라우저 세션에만 보관되고 서버·영구 스토리지에는 남지 않습니다. 다시 로그인하면 한 번 더 입력합니다.</p>
+          </div>
+        </li>
+
+        <!-- Step 3. 암호화 후 저장 -->
+        <li class="vault-step" data-step="3" data-state="disabled">
+          <div class="vault-step-head">
+            <span class="vault-step-num">3</span>
+            <div class="vault-step-title">암호화 후 저장</div>
+          </div>
+          <div class="vault-step-body">
+            <button type="button" class="btn-primary vault-primary-btn" id="saveVaultBtn" disabled>암호화 후 저장</button>
+          </div>
+        </li>
+      </ol>
+
+      <!-- 4) 저장된 값 카드 (cipher 있을 때만 노출) — information only -->
+      <div class="vault-saved" id="vaultSavedCard" hidden>
+        <div class="vault-saved-head">
+          <div class="vault-saved-title">저장된 암호화 키</div>
+          <div class="vault-saved-meta" id="vaultSavedMeta">—</div>
+        </div>
+      </div>
+
+      <!-- 4-b) destructive zone — 키를 갈아끼우려면 여기로 (단일 진입점) -->
+      <div class="vault-danger-zone" id="vaultDangerZone" hidden>
+        <button type="button" class="btn-danger-link" id="clearVaultBtn">저장된 키 삭제</button>
+      </div>
+
+      <!-- 5) 고급: 이미 암호화된 값(v1:...) 직접 붙여넣기 -->
+      <details class="vault-advanced">
+        <summary>이미 암호화된 키(<code>v1:...</code>) 직접 붙여넣기</summary>
+        <div class="vault-advanced-body">
+          <label class="field">
+            <span>암호문</span>
+            <textarea id="vaultCipher" rows="2" placeholder="v1:..." autocomplete="off"></textarea>
+          </label>
+          <button type="button" class="btn-secondary" id="vaultImportCipherBtn">이 값으로 저장</button>
+          <p class="helper-text">이전에 백업해 둔 ciphertext 가 있을 때만 사용합니다.</p>
+        </div>
+      </details>
+
+      <!-- 상태 문자열(디버그/접근성 보조; 화면 표시는 vaultBanner 가 담당) -->
+      <div class="helper-text" id="vaultStatus" hidden></div>
+
+    </div><!-- /vault -->
+
+    <!-- ── 탭 패널: 프롬프트 (계정 스코프 시스템 프롬프트) ── -->
+    <div class="drawer-pane hidden" data-profile-pane="prompt">
+      <p class="drawer-desc">
+        이 프롬프트는 내 계정이 참여하는 대화의 시스템 프롬프트에 추가됩니다. Product 범위를 선택하면 해당 Product 에서만 적용됩니다.
+      </p>
+      <label class="field">
+        <span>Product 범위</span>
+        <select id="promptProductSelect"></select>
+      </label>
+      <label class="field">
+        <span>내 프롬프트 (빈 값으로 저장하면 삭제)</span>
+        <textarea id="promptContent" rows="8" placeholder="예: 숫자는 천 단위 구분자, 금액은 KRW 기준으로 답변해 주세요."></textarea>
+      </label>
+      <div class="helper-text" id="promptMeta"></div>
+      <div class="drawer-actions">
+        <button type="button" class="btn-primary" id="savePromptBtn">저장</button>
+        <button type="button" class="btn-secondary" id="clearPromptBtn">비우기 (삭제)</button>
+      </div>
+    </div><!-- /prompt -->
+
+  </aside>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260321a"></script>
+  <script src="/static/app.js?v=20260506-pending-conv"></script>
 </body>
 </html>

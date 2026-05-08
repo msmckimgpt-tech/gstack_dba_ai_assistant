@@ -88,6 +88,7 @@ __all__ = [
     "AGENT_OBJECT_RESOLVE_TIMEOUT_SEC",
     "AGENT_OPENAI_MAX_RETRIES",
     "AGENT_OUT_DIR",
+    "AGENT_PLAN_MODEL",
     "AGENT_PLAN_TIMEOUT_MIN_SEC",
     "AGENT_PLAN_TIMEOUT_RECOVERY_SEC",
     "AGENT_PLAN_TIMEOUT_SEC",
@@ -137,19 +138,23 @@ __all__ = [
     "AGENT_SQL_REVIEW_MODEL",
     "AGENT_SQL_SIGNATURE_REPEAT_LIMIT",
     "AGENT_SQL_SIGNATURE_WINDOW",
+    "AGENT_STEP_GRADE_MODEL",
     "AGENT_STEP_TRACE_MAX",
     "AGENT_STEP_VALIDATION",
     "AGENT_STEP_VALIDATION_EVERY",
     "AGENT_STORE_INTERNAL_MESSAGES",
+    "AGENT_SUMMARY_MODEL",
     "AGENT_SUMMARY_MAX_RECENT",
     "AGENT_SUMMARY_REFRESH",
     "AGENT_SUMMARY_REFRESH_EVERY",
+    "AGENT_TASK_CLASSIFY_MODEL",
     "AGENT_TABLE_INSIGHT_MAX_COLS",
     "AGENT_TABLE_INSIGHT_RESCAN_SEC",
     "AGENT_TABLE_MAX_COLS",
     "AGENT_TABLE_MAX_COL_WIDTH",
     "AGENT_TIMEOUT_SEC",
     "AGENT_TIMING_LOG",
+    "AGENT_TOPIC_MODEL",
     "AGENT_TOP_N",
     "BLOCKED_DEFAULT_SCHEMAS",
     "CURRENT_FACT_SCOPE_KEY",
@@ -163,6 +168,11 @@ __all__ = [
     "DB_PORT",
     "DB_PROMPT_DEFAULT",
     "DB_USER",
+    "REPLICA_DB_ENABLED",
+    "REPLICA_DB_HOST",
+    "REPLICA_DB_PASSWORD",
+    "REPLICA_DB_PORT",
+    "REPLICA_DB_USER",
     "FACT_SCOPE_COMMON",
     "GLOBAL_CONVERSATION_ID",
     "GLOBAL_SESSION_CONVERSATION_ID",
@@ -211,6 +221,17 @@ DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "mysql").strip()
+
+# ── 복제(read-only) DB 인스턴스 (TASK-0044) ─────────────────────────
+# REPLICA_DB_HOST 가 설정되면 data-plane 쿼리(agent 도구의 execute_sql/describe_* 등) 는
+# 복제 인스턴스로 라우팅되고, memory DB(agent_memory) 연결은 기본 primary 로 유지된다.
+# 조직 정책상 사업팀 wedge 에서 agent 는 복제본에만 접근해야 하며, 접속 정보는 `.env`
+# 또는 docker-compose secret 으로만 주입하고 commit 에 포함하지 않는다.
+REPLICA_DB_HOST = os.getenv("REPLICA_DB_HOST", "").strip()
+REPLICA_DB_PORT = int(os.getenv("REPLICA_DB_PORT", str(DB_PORT)) or DB_PORT)
+REPLICA_DB_USER = os.getenv("REPLICA_DB_USER", "").strip() or DB_USER
+REPLICA_DB_PASSWORD = os.getenv("REPLICA_DB_PASSWORD", "") or DB_PASSWORD
+REPLICA_DB_ENABLED = bool(REPLICA_DB_HOST)
 BLOCKED_DEFAULT_SCHEMAS = {
     s.strip().lower()
     for s in os.getenv(
@@ -242,6 +263,27 @@ AGENT_SQL_COMPOSE_MODEL = (
 AGENT_SQL_REVIEW_MODEL = (
     os.getenv("AGENT_SQL_REVIEW_MODEL", AGENT_SQL_COMPOSE_MODEL).strip()
     or AGENT_SQL_COMPOSE_MODEL
+)
+AGENT_PLAN_MODEL = (
+    os.getenv("AGENT_PLAN_MODEL", OPENAI_MODEL).strip() or OPENAI_MODEL
+)
+AGENT_TASK_CLASSIFY_MODEL = (
+    os.getenv("AGENT_TASK_CLASSIFY_MODEL", AGENT_PLAN_MODEL).strip()
+    or AGENT_PLAN_MODEL
+)
+AGENT_SUMMARY_MODEL = (
+    os.getenv("AGENT_SUMMARY_MODEL", OPENAI_MODEL).strip() or OPENAI_MODEL
+)
+AGENT_TOPIC_MODEL = (
+    os.getenv("AGENT_TOPIC_MODEL", AGENT_SUMMARY_MODEL).strip()
+    or AGENT_SUMMARY_MODEL
+)
+AGENT_SQL_FIX_MODEL = (
+    os.getenv("AGENT_SQL_FIX_MODEL", OPENAI_MODEL).strip() or OPENAI_MODEL
+)
+AGENT_STEP_GRADE_MODEL = (
+    os.getenv("AGENT_STEP_GRADE_MODEL", AGENT_SUMMARY_MODEL).strip()
+    or AGENT_SUMMARY_MODEL
 )
 AGENT_INSIGHT_MODEL = (
     os.getenv("AGENT_INSIGHT_MODEL", "").strip() or OPENAI_MODEL

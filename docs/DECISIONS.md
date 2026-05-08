@@ -4,6 +4,9 @@ scope: project
 status: active
 edit_policy: append-only
 source_of_truth: true
+template_version: v3.6.0
+domain: [architecture, history]
+ai_read_priority: 9
 ---
 
 # Project Decisions
@@ -135,3 +138,41 @@ source_of_truth: true
   - 템플릿 사본은 구조만 분리되고 운영 의미는 원본과 일치한다
   - `repo/.env.example`는 대체 기본값이 아니라 민감값 제거 샘플로 취급한다
   - 템플릿 사본은 원본과 동시 기동하지 않는 단독 실행 전제를 문서로 고정한다
+
+## ADR-0015
+- Status: accepted
+- Date: 2026-03-30
+- Context: 기본 템플릿이 v2.0.0으로 개선되어 Git 루트 경계, 환경변수 관리, 자격증명 패턴, artifacts 규칙, 도메인 커스터마이징 가이드 등이 추가됨
+- Decision: 템플릿 v2.0.0 마이그레이션을 적용한다. 새 파일 복사, 기존 문서에 섹션 병합, .gitignore 보강을 포함한다
+- Consequences:
+  - 기능 템플릿에 src/README.md, tests/README.md 추가
+  - 프로젝트 문서에 환경변수, 자격증명, artifacts, CI/CD 섹션 추가
+  - AGENTS.md에 Git 루트 경계 규칙 추가
+  - template_version: v2.0.0으로 갱신
+
+## ADR-0016
+- Status: accepted
+- Date: 2026-04-13
+- Context: 기본 템플릿이 v3.0.0으로 개선되어 AGENTS.md Part A~G 재구성, Plan-Review-Execute 프로토콜, .aiignore, LEARNINGS.md, CODEBASE_MAP.md, playbooks/, 병렬 AI 브랜치 전략, Glob 기반 조건부 규칙 등이 추가됨
+- Decision: 템플릿 v3.0.0 마이그레이션을 적용한다. AGENTS.md 재구성, 8개 신규 파일(.aiignore, docs/LEARNINGS.md, docs/CODEBASE_MAP.md, playbooks/ 하위 5개) 추가, unit/_template 갱신(TASK.md §2 Implementation Plan, REPORT.md §8 Suggested Improvements, AGENTS.md §8.1 파일 패턴별 규칙)을 포함한다
+- Consequences:
+  - AI 위임 흐름이 Plan-Review-Execute 3단계로 구조화됨 (Minor=자율, Major=승인 대기, Critical=REPORT.md 기록)
+  - .aiignore로 AI 컨텍스트 윈도우 효율화
+  - LEARNINGS.md로 세션 간 교훈 전달 (mistake/pattern/quirk/preference)
+  - CODEBASE_MAP.md로 신규 AI 온보딩 시간 단축
+  - 반복 작업을 PB-0001~PB-0004 playbook으로 표준화
+  - 병렬 AI 작업 시 브랜치 분리/Worktree 격리/문서 잠금 3단계 격리 지침 명문화
+  - 섹션 번호 이동: 구 §19 → 신 §15 (도메인 커스터마이징), 구 §20.3 → 신 §16.3 (Git 동기화)
+  - template_version: v3.0.0으로 갱신
+
+## ADR-0017
+- Status: accepted
+- Date: 2026-04-14
+- Context: `AGENTS.md`, `CONTRIBUTING.md`, `docs/GITHUB_AUTOMATION.md`, GitHub Actions 구현 사이에 공개 브랜치 규칙, `status:ready` 의미, 커밋 형식, main 병합 절차가 서로 다르게 정의되어 있었다
+- Decision: GitHub 운영 흐름을 `Issue -> issue/<번호>-<slug> -> PR -> status checks -> auto-merge`로 일원화하고, 병렬 AI 작업은 로컬/worktree 전용 내부 `ai/<agent-id>/<issue-number>/<slice>` 브랜치 + 공개 `issue/*` 브랜치의 2계층 모델로 고정한다. 자동화 정본은 `.github/automation-contract.json`으로 관리하고 `policy-contract`에서 문서-자동화 정합성을 함께 검증한다
+- Consequences:
+  - `main` 직접 push 및 로컬 main 병합 절차를 정책에서 제거한다
+  - `status:ready`는 권장 라벨로 유지하되 `ai-execute`의 필수 gate에서는 제외한다
+  - 자동/수동 커밋 제목은 `type(scope): summary (#issue-number)` 형식으로 통일한다
+  - `policy-contract`는 브랜치/PR 규칙 외에 커밋 제목과 자동화 계약 정합성도 검사한다
+  - playbook, README, template 문서를 새 공개 브랜치 규칙과 동기화한다

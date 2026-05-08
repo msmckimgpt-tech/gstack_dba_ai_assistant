@@ -1,5 +1,7 @@
 ---
-template_version: v3.0.0
+template_version: v3.6.0
+domain: [governance, workflow, context, safety]
+ai_read_priority: 1
 ---
 
 # mysql_ai 템플릿 작업 지침서
@@ -332,10 +334,12 @@ AI는 작업 대상 파일의 패턴을 확인하고, 매칭되는 규칙을 추
 
 | 파일 패턴 | 추가 참조 문서 | 비고 |
 |-----------|--------------|------|
-<!-- 프로젝트별로 아래에 추가한다. 예시: -->
-<!-- | *.sql | docs/SECURITY.md §3 | SQL 인젝션 방지 규칙 확인 | -->
-<!-- | *.env*, *.cnf | docs/SECURITY.md §2 | 민감정보 처리 규칙 확인 | -->
-<!-- | Dockerfile* | docs/CONVENTIONS.md | 컨테이너 규칙 확인 | -->
+| `.env`, `.env.example` | `docs/SECURITY.md`, `docs/DECISIONS.md ADR-0014` | 원본 `mysql_ai/.env`의 운영 의미 보존. 비밀값 커밋 금지 |
+| `docker-compose.yml`, `Dockerfile*` | `docs/CONVENTIONS.md`, `docs/DECISIONS.md ADR-0012` | 서비스(`mysql`, `agent`, `memory-init`, `insight-worker`, `mcp`) 경계·포트 규칙 확인 |
+| `unit/**/src/**/*.py` | 해당 feature `docs/AGENTS.md` + `docs/FUNCTION.md` | 기능별 경계·외부 의존성 규칙 확인 |
+| `unit/**/tests/**/*.py` | 해당 feature `docs/TEST.md` | 테스트 케이스 정의는 rewrite, 결과는 append-only |
+| `Makefile` | `docs/ARCHITECTURE.md` | 실행 진입점 — 타깃 추가/제거는 ADR 경유 |
+| `../../artifacts/**` | `docs/DECISIONS.md ADR-0011`, `ADR-0013` | Git 외부 — 코드에서 경로만 참조하고 커밋하지 않는다 |
 
 ## §11. 컨텍스트 및 학습 관리
 
@@ -465,22 +469,27 @@ AI가 자유롭게 갱신 가능한 영역
 #### 단일 AI 작업 (기본)
 단일 AI가 순차적으로 작업하는 경우 별도 격리 없이 §13.1의 충돌 방지 규칙을 따른다.
 
-#### 병렬 AI 작업 (권장: Git Worktree)
+#### 병렬 AI 작업 (권장: Git Worktree + 2계층 브랜치)
 두 개 이상의 AI가 동시에 서로 다른 기능을 작업하는 경우:
 
-1. **브랜치 격리 (최소)**: 각 AI는 별도 브랜치에서 작업한다.
-   - 브랜치 명명: `ai/<agent-id>/<feature-id>`
+1. **내부 작업 브랜치 (로컬 전용)**: 각 AI는 별도 내부 브랜치에서 작업한다.
+   - 브랜치 명명: `ai/<agent-id>/<issue-number>/<slice>`
+   - 이 브랜치는 **로컬/worktree 전용**이며, GitHub PR head로 직접 사용하지 않는다.
 
-2. **Worktree 격리 (권장)**: Git worktree를 활용하여 물리적으로 작업 디렉토리를 분리한다.
+2. **공개 PR 브랜치 (이슈당 1개)**: 외부로 push하고 PR을 여는 브랜치는 항상 `issue/<issue-number>-<short-slug>` 하나만 사용한다.
+   - 내부 `ai/*` 브랜치에서 작업한 결과는 로컬에서 `issue/*` 브랜치로 통합한 뒤 push한다.
+   - 공개 PR 브랜치 외의 브랜치는 branch protection 및 `policy-contract`의 지원 대상이 아니다.
+
+3. **Worktree 격리 (권장)**: Git worktree를 활용하여 물리적으로 작업 디렉토리를 분리한다.
    ```bash
-   git worktree add ../worktrees/<feature-id> -b ai/<agent-id>/<feature-id>
+   git worktree add ../worktrees/issue-12 -b ai/claude/12/browser-cleanup
    ```
    - 각 AI는 자신의 worktree 내에서만 파일을 수정한다.
-   - 작업 완료 후 main에 병합하고 worktree를 제거한다.
+   - 내부 브랜치 작업 완료 후 공개 `issue/*` 브랜치에 통합하고 worktree를 제거한다.
 
-3. **공유 파일 수정 프로토콜**:
+4. **공유 파일 수정 프로토콜**:
    - 프로젝트 수준 문서(STATUS.md, ARCHITECTURE.md 등)는 병합 시에만 갱신한다.
-   - shared/ 코드 변경이 필요하면 REPORT.md에 기록하고 병합 단계에서 통합한다.
+   - shared/ 코드 변경이 필요하면 REPORT.md에 기록하고 공개 `issue/*` 브랜치 통합 단계에서 합친다.
    - 동일 shared 모듈을 두 AI가 동시 수정하는 것은 금지한다.
 
 #### 샌드박스 실행
@@ -638,13 +647,17 @@ AI가 코드를 실행(테스트, 빌드 등)할 때는 다음을 준수한다:
 - `AgentMemoryFacts`, `AgentMemoryFactEntries`는 복수 근거를 보존한다.
 - Fact에는 최소 `SourceRunId`, `SourceType`, `Weight/Confidence`를 보존한다.
 - 지식 참조 경로 로그:
-- `/shared/logs/insight_route.log`
-- 필수 기록: 사용한 스키마/테이블, 근거 source, fallback 사유
+- `/shared/logs/YYYY-MM-DD/insight_route.log`
+- 필수 기록: 실제 참조한 스키마/테이블/컬럼, action, reason, result, error
+- `insight-worker` 는 `artifact_missing -> repair_from_fact/generate_insight -> verify_persist` 흐름을 그대로 남긴다.
+- `insight_worker.log` 는 cycle 시작/종료/오류 요약만 남기고, idle heartbeat 는 남기지 않는다.
 - 타이밍 로그:
-- `/shared/logs/timing.log`
-- `/shared/logs/timing_breakdown_<run_id>.json`
+- `/shared/logs/YYYY-MM-DD/timing.log`
+- `/shared/logs/YYYY-MM-DD/timing_breakdown_<run_id>.json`
 - 실행 SQL 로그:
-- `/shared/logs/*_executed_sql.log`
+- `/shared/logs/YYYY-MM-DD/*_executed_sql.log`
+- 오래된 로그 보관:
+- `7일` 초과 날짜 디렉토리는 `/shared/logs/archive/YYYY-MM-DD.tar.gz` 로 압축 보관한다.
 
 ### §15.6 지식 아키텍처 목표 (신규 기준)
 
@@ -730,6 +743,8 @@ AI가 코드를 실행(테스트, 빌드 등)할 때는 다음을 준수한다:
 - C/E/F/G 회귀 없음.
 - `FUNCTION.md`가 현재 동작과 일치한다.
 - `TASK.md`, `MODIFY.md`, `REVIEW.md`, `REPORT.md`, `TEST.md`가 필요한 수준으로 갱신되었다.
+- `ANCHOR.md` §1~§3이 작성되었다 (24h bootstrap grace 이후).
+- `ANCHOR.md` §4 human 검증 로그는 일반 TASK cycle 완료 조건이 아니며, release/milestone 검토 또는 방향 전환 검증이 필요할 때만 요구된다 (§18 참조).
 - 남은 리스크와 후속 작업이 `REPORT.md`에 정리되었다.
 - `/repo/docs/STATUS.md`에 기능 상태가 반영되었다.
 - `/repo/docs/CODEBASE_MAP.md`에 새 파일/모듈이 반영되었다 (해당 시).
@@ -759,68 +774,149 @@ AI가 작업 완료를 선언할 때는 `TASK.md`의 Completion Checklist를 명
 - [ ] BLOCKED 항목이 없거나 사람에게 전달되었다
 - [ ] STATUS.md에 기능 상태가 갱신되었다
 - [ ] LEARNINGS.md에 발견된 교훈이 기록되었다 (해당 시)
+- [ ] ANCHOR.md §1~§3이 채워져 있다 (또는 24h bootstrap grace 범위 내이다) (§18)
+- [ ] `bin/verify-completion.sh --pre-commit <feature-id>`가 PASS한다 (§16.5)
 - [ ] Git 커밋이 완료되었다 (§16.5)
 - [ ] Git 원격 동기화가 완료되었다 또는 동기화 불가 사유가 기록되었다 (§16.5)
 ```
 
-### §16.5 Git 동기화 절차
+### §16.5 Git 동기화 절차 (verify-completion 기반)
 
-작업 완료 시 AI는 반드시 아래 절차에 따라 Git 동기화를 수행한다.
+작업 완료 선언 전에 AI는 반드시 `bin/verify-completion.sh`를 호출한다.
+이 스크립트가 완료 체크리스트 검증 + ANCHOR.md 게이트 + unstaged 잔여 검사를 흡수한다.
+AGENTS.md §1 AI 전권 위임 원칙에 부합한다 — 스크립트는 **AI가 호출하는 도구**이지
+인간 개입이 아니다.
+
+**기본 원칙: AI 작업자는 완료 가능한 cycle을 사용자 확인 대기로 멈추지 않는다.**
+pre-commit 검증이 PASS하고 BLOCKED/Critical/Major 승인 대기 항목이 없으면 AI가
+직접 commit한다. 원격 저장소가 설정되어 있고 공개 브랜치 push가 가능하면 AI가
+직접 push/PR 갱신까지 수행한다. `commit/push 결정은 사용자에게 위임` 같은 응답은
+정책 위반이다.
+
 커밋 메시지 형식은 `CONTRIBUTING.md`의 커밋 규칙 섹션을 따른다.
 
-#### Step 1: 커밋 (항상 수행)
+#### Step 0: 완료 선언 정의
 
-작업 결과물을 반드시 커밋한다. 이 단계는 모든 작업 완료 시 예외 없이 수행한다.
+"완료 선언"이란 AI가 사용자에게 "작업 완료" 메시지를 전달하기 직전의 지점이다.
+이 시점 이전에 working tree는 정리된 상태여야 한다.
 
+#### Step 1: 사전 검증 (pre-commit)
+
+```
+1. 코드 + docs 변경 (working tree)
+2. ANCHOR.md §1~§3 확인 — §4 human 검증 로그는 release/milestone 또는 방향 전환 검증 시에만 확인 (§18 참조)
+3. git add <변경된 모든 파일> (prefer named add, never -A)
+4. bash bin/verify-completion.sh --pre-commit <feature-id>
+   → FAIL: stderr의 누락 항목 해결 후 step 1로 복귀
+   → PASS: step 2로 진행
+```
+
+#### Step 2: 커밋
+
+필수 trailer:
+
+```
+<type>(<scope>): <summary>
+
+<body>
+
+Task-Cycle: <feature-id>
+```
+
+`Task-Cycle` trailer는 이 커밋이 어느 TASK cycle에 속하는지 명시한다
+(§18 Cycle Boundary). 이 trailer가 없는 commit은 post-commit hook의 verify 대상이 아니다.
+
+```bash
 1. `git status`로 변경 파일을 확인한다.
 2. `.gitignore` 대상(`.env`, 자격증명 등)이 포함되지 않았는지 검증한다.
 3. 코드와 문서를 같은 커밋에 포함한다.
-4. `CONTRIBUTING.md`의 커밋 메시지 규칙에 따라 커밋한다.
+4. 커밋 메시지 규칙에 따라 커밋한다 (Task-Cycle trailer 필수).
+```
 
-#### Step 2: 원격 동기화 판정
+#### Step 3: 사후 검증 (post-commit)
+
+`.git/hooks/post-commit`이 자동으로 `verify-completion.sh --post-commit <feature-id>`
+를 호출한다 (`bin/install-hooks.sh`가 설치). FAIL 시:
+- hook은 commit을 차단하지 않는다 (이미 발생). 경고만 출력.
+- AI는 출력을 읽고 **새 commit**으로 누락 항목을 수정한다. `git commit --amend` **금지**.
+
+#### Step 4: 원격 동기화 판정
 
 원격 저장소(`origin`)가 설정되어 있는 경우, 아래 조건표에 따라 동기화 범위를 판정한다.
 
 | 조건 | 동작 |
 |------|------|
-| BLOCKED 항목 없음 + Critical/Major 승인 대기 없음 | **자동 동기화** (Step 3 진행) |
-| BLOCKED 항목 있음 또는 Critical/Major 승인 대기 | **커밋만** 수행, `REPORT.md`에 동기화 보류 사유 기록 |
+| BLOCKED 항목 없음 + Critical/Major 승인 대기 없음 | **AI가 commit 후 공개 브랜치 동기화** (Step 5 진행) |
+| BLOCKED 항목 있음 또는 Critical/Major 승인 대기 | **AI가 commit만** 수행, push/PR 보류 사유를 `REPORT.md`에 기록 |
 | 원격 저장소 미설정 | **커밋만** 수행, 원격 설정은 사람에게 위임 |
 
-#### Step 3: 자동 동기화 (조건 충족 시)
+#### Step 5: 공개 브랜치 동기화 (조건 충족 시)
 
-Step 2에서 자동 동기화로 판정된 경우:
+Step 4에서 공개 브랜치 동기화로 판정된 경우:
 
-1. **Push**: 현재 브랜치를 원격에 push한다.
+1. **공개 브랜치 규칙 확인**:
+   - 외부로 push하는 브랜치는 반드시 `issue/<issue-number>-<short-slug>` 형식을 따라야 한다.
+   - 현재 브랜치가 내부 `ai/<agent-id>/<issue-number>/<slice>` 브랜치라면, 로컬에서 공개 `issue/*` 브랜치에 먼저 통합한다.
+
+2. **Push**: 현재 공개 브랜치를 원격에 push한다.
    ```bash
    git push origin <current-branch>
    ```
 
-2. **main 병합**: 현재 브랜치가 `main`이 아닌 경우, main으로 병합한다.
-   ```bash
-   git switch main
-   git merge <feature-branch> --no-edit
-   git push origin main
-   ```
+3. **PR 생성 또는 갱신**:
+   - 공개 브랜치에 대한 PR이 없으면 생성한다.
+   - 이미 있으면 동일 PR을 갱신한다.
+   - PR 제목은 `#<issue-number> <summary>` 형식을 사용하고, 본문에는 반드시 `closes #<issue-number>`를 포함한다.
 
-3. **병합 충돌 시**: §16.6 병합 충돌 해결 정책에 따라 처리한다.
+4. **병합**:
+   - 병합은 GitHub PR + status checks + auto-merge 흐름으로만 진행한다.
+   - `main` 직접 push 또는 로컬 `main` 병합은 금지한다.
+   - 브랜치 동기화 중 충돌이 발생하면 §16.6 정책에 따라 처리한다.
 
-#### Step 4: 결과 기록
+#### Step 6: 결과 기록
 
 Git 동기화 결과를 `REPORT.md`에 기록한다.
 
 ```md
 ### Git 동기화 결과
 - 커밋: <commit-hash> (<branch>)
+- verify-completion: PASS / FAIL (재시도 N회)
 - Push: 완료 / 보류 (사유: ...)
-- main 병합: 완료 / 해당없음 / 보류 (사유: ...)
+- PR: 생성 / 갱신 / 보류 (사유: ...)
+- 병합 상태: auto-merge 후보 / 수동 검토 / 보류
 - 충돌 해결: 없음 / AI 자율 해결 (건수, 요약) / 사람 위임 (사유)
 ```
 
+#### SPOF 대응 (bypass 금지)
+
+`verify-completion.sh`는 모든 commit의 gate이며 bypass 경로를 제공하지 않는다
+(SPOF 복구는 §18.4 "운영 vs 메타 층위" 참조).
+
+#### 완료 응답 금지 패턴
+
+AI 작업자는 완료 가능한 cycle에서 아래 응답으로 작업을 멈추면 안 된다.
+
+- `자동 commit/push는 하지 않았습니다`
+- `commit 결정은 사용자에게 위임합니다`
+- `push 여부를 확인해 주세요`
+
+허용되는 예외는 다음뿐이다:
+
+- `verify-completion` FAIL 또는 테스트 FAIL이 남아 있고 AI가 같은 cycle 안에서 복구할 수 없음
+- `BLOCKED` 항목 또는 Critical/Major 승인 대기가 `REPORT.md`에 기록됨
+- 원격 저장소가 없거나 인증/권한 문제로 push가 기술적으로 불가능함
+- 사용자가 명시적으로 "commit/push 하지 말라"고 지시함
+
+예외가 아니면 AI는 §16.5에 따라 commit하고, 가능한 경우 push/PR 갱신까지 완료한 뒤
+결과를 `REPORT.md`와 최종 응답에 기록한다.
+
 ### §16.6 병합 충돌 해결 정책
 
-병합 충돌 발생 시 AI는 아래 분류 기준에 따라 자율 해결 또는 사람 위임을 판정한다.
+공개 `issue/*` 브랜치를 `origin/main`에 맞춰 동기화하거나, 내부 `ai/*` 브랜치를 공개 `issue/*` 브랜치에 통합하는 과정에서 충돌이 발생할 수 있다.
+충돌 발생 시 AI는 아래 분류 기준에 따라 자율 해결 또는 사람 위임을 판정한다.
 **판정 원칙: 충돌의 양쪽 의도가 모두 명확하고 공존 가능하면 AI가 해결한다. 의도가 상충하거나 판단이 필요하면 사람에게 위임한다.**
+단, "사람 판단 필요"는 작업 중단의 기본값이 아니다. 처음 요청 의도가 왜곡될 우려가
+없고 검증 결과가 명료하면 AI는 PASS로 판정하고 cycle을 계속 진행한다.
 
 #### AI 자율 해결 가능 (명료한 충돌)
 
@@ -834,6 +930,8 @@ Git 동기화 결과를 `REPORT.md`에 기록한다.
 | `STATUS.md` 상태 갱신 충돌 | 최신 상태 우선, 이전 상태는 이력에 보존 |
 | **설정 파일 주석** 추가/수정 충돌 | 더 상세한 쪽 채택 |
 | **독립적 파일 변경**이 동일 커밋에 묶인 경우 | 각 파일의 변경을 개별 반영 |
+| `ANCHOR.md` §4에 서로 다른 human 엔트리 append | 두 엔트리를 모두 보존하고 시간순 정렬 |
+| 일반 TASK cycle에서 `ANCHOR.md` §4 엔트리 부재 | 사용자 확인 요청 없이 PASS (§18.2, §18.5) |
 
 #### 사람 판단 필수 (모호한 충돌)
 
@@ -846,6 +944,8 @@ Git 동기화 결과를 `REPORT.md`에 기록한다.
 | `source_of_truth` 문서에서 **동일 사실에 다른 내용** | 정본 판단은 사람 권한 |
 | **삭제 vs 수정** 충돌 (한쪽 삭제, 다른 쪽 수정) | 삭제 의도 확인 필요 |
 | **외부 계약·비용·인증** 관련 변경 충돌 | Critical/Major 등급 (§12.3) |
+| `ANCHOR.md` §4 작성이 완료 조건으로 명시됨 | §4는 `human:<name>` only라 AI가 대체 작성 불가 (§18.2) |
+| 요청이 `ANCHOR.md` §1~§3과 명백히 충돌함 | 방향 전환 검증 또는 `direction-drift`가 필요 (§18.3) |
 
 #### 해결 절차
 
@@ -858,10 +958,10 @@ Git 동기화 결과를 `REPORT.md`에 기록한다.
   │    ├─ 충돌 마커를 제거하고 해결 방법에 따라 내용 병합
   │    ├─ git add → git commit (병합 커밋)
   │    ├─ REVIEW.md에 해결 내역 기록
-  │    └─ 동기화 계속 (push)
+  │    └─ 공개 issue/* 브랜치 동기화 계속 (push / PR 갱신)
   │
   ├─ 하나라도 모호 포함 → 부분 해결 + 사람 위임
-  │    ├─ git merge --abort (병합 중단)
+  │    ├─ git merge --abort 또는 rebase --abort (통합 중단)
   │    ├─ REPORT.md에 BLOCKED: merge-conflict-needs-review 기록
   │    │    ├─ AI 해결 가능 항목 목록
   │    │    ├─ 사람 판단 필요 항목 + 양쪽 내용 요약
@@ -869,14 +969,14 @@ Git 동기화 결과를 `REPORT.md`에 기록한다.
   │    └─ 사람 검토 후 재시도
   │
   └─ 판단 불가 → 전체 사람 위임
-       ├─ git merge --abort
+       ├─ git merge --abort 또는 rebase --abort
        └─ REPORT.md에 BLOCKED: merge-conflict 기록
 ```
 
 #### 자율 해결 시 커밋 메시지
 
 ```
-merge(<scope>): <feature-branch>를 main에 병합
+refactor(project): 공개 브랜치 동기화 충돌 해결 (#<issue-number>)
 
 - <파일1>: <충돌 유형> — <해결 방법>
 - <파일2>: <충돌 유형> — <해결 방법>
@@ -884,7 +984,123 @@ merge(<scope>): <feature-branch>를 main에 병합
 
 ## §17. shared/ 거버넌스
 
-- `/repo/shared/`에는 `README.md`(목적과 구조 설명)와 `MODIFY.md`(변경 이력)를 유지한다.
-- shared 코드를 변경하는 AI는 자신의 기능 `MODIFY.md`에 변경을 기록하고, `/repo/shared/MODIFY.md`에도 교차 참조를 남긴다.
+- `/repo/shared/`에는 `README.md`(목적과 구조 설명)을 루트에 유지한다.
+- `/repo/shared/docs/`에는 다음 두 문서를 유지한다:
+  - `MODIFY.md` (append-only) — 변경 이력
+  - `REPORT.md` (rewrite) — 현재 상태 스냅샷, 의존성 맵, cross-feature 참조
+- shared 코드를 변경하는 AI는 자신의 기능 `MODIFY.md`에 변경을 기록하고, `/repo/shared/docs/MODIFY.md`에도 교차 참조를 남긴다.
+- shared **단독** 변경 (feature 디렉토리 touch 없음)은 `bin/verify-completion.sh --shared` 모드로 검증한다.
+- shared + feature 혼합 commit은 양쪽 MODIFY.md 모두 갱신이 필요하며 `--pre-commit <feature-id>` 모드로 검증한다.
 - shared 변경이 다른 기능에 영향을 줄 수 있으면, 영향받는 기능의 `REPORT.md`에 알림을 기록한다.
 - 대규모 shared 변경은 별도의 unit(`shared-xxxx-module-name`)으로 관리하는 것을 권장한다.
+
+## §18. 외부 앵커 정책 (ANCHOR.md)
+
+이 섹션은 AI-delegated 개발의 **폐쇄 루프 문제** — 외부 관점 진입 지점의 부재 —
+를 해결하기 위한 구조적 정책이다. 각 기능의 `docs/ANCHOR.md`가 방향성 stable reference
+역할을 한다.
+
+### §18.1 ANCHOR.md 문서 구조
+
+각 feature (`unit/<feature-id>/docs/ANCHOR.md`)는 4개 섹션을 갖는다:
+
+| 섹션 | 역할 | edit 정책 |
+|------|------|----------|
+| §1. 외부 관점 요약 | 기능을 모르는 사람이 의문을 가질 지점 (3~5줄) | rewrite |
+| §2. 대안 분기 | 선택하지 않은 옵션 + 페르소나 (≥ 2개) | rewrite |
+| §3. 가정된 사용 시나리오 | 외부 또는 미래 관점의 구체 시나리오 1개 | rewrite |
+| §4. 외부 검증 로그 | release/milestone 또는 방향 전환 검증 시 human 검증 엔트리 | append-only |
+
+§1~§3은 방향이 **명시적으로** 바뀌면 갱신한다 (자연 drift는 §18.3 Conflict Protocol이
+탐지한다).
+
+### §18.2 §4 author 제한 — human-only
+
+§4 엔트리는 `source: human:<name>` 만 허용한다. **AI는 §4 writer가 아니다.**
+
+이유: AI가 §4를 채우면 self-certification paradox가 발생한다 — "외부"라는 이름이지만
+실제로는 AI의 내부 산출물. §4의 externality는 인간이 직접 append하는 방식으로 보장된다.
+다만 일반 TASK cycle마다 §4를 요구하지 않는다. 반복적인 human 검증 강제는 형식적
+확인 로그를 만들 가능성이 높으므로, §4는 release/milestone 검토, 방향 전환, 사용자가
+명시한 외부 검증 시점에만 요구한다. 처음 요청했던 의도가 왜곡될 우려가 없고
+검증 결과가 명료하면 §4 확인 요청 없이 PASS로 판정한다.
+
+### §18.3 Conflict Protocol
+
+AI는 사용자 요청을 수신하면, 해당 feature의 `ANCHOR.md` §1~§3과 교차 검토한다.
+요청이 §1(외부 관점) 또는 §3(가정된 시나리오)와 **명백히 상충**할 경우, 작업을 시작하지 않고
+사용자에게 다음을 요청한다:
+
+1. `/office-hours` 또는 `/plan-ceo-review`로 방향 재정립, 또는
+2. 사용자 본인이 §4에 명시적 `direction-drift` 엔트리 추가
+
+충돌 감지 없으면 작업을 진행한다. 판단이 "단순히 오래됨", "혹시 다를 수 있음",
+"더 확인하면 좋음" 수준이면 사용자 확인을 요구하지 않는다. 이 프로토콜이 §1~§3의
+stale 문제를 active detection으로 전환 — 별도의 staleness scanner가 불필요하다.
+
+### §18.4 운영(operational) vs 메타(meta) 층위 구분
+
+§1 AI 전권 위임 원칙은 **운영 층위**(기능 개발 실행)에 적용된다. **메타 층위**
+(템플릿 자체 설계, AGENTS.md 개정, ANCHOR 스켈레톤 재설계 등)에는 인간이 개입한다.
+
+#### 층위 판정 (path convention)
+
+`bin/verify-completion.sh`가 path convention으로 자동 판정한다. 아래 경로 편집은 META:
+
+- `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`
+- `TEMPLATE_CHANGELOG.md`
+- `_template/**` (기능 스켈레톤)
+- `bin/**` (검증 도구 자체)
+- `shared/docs/**` (shared 정책 문서)
+- `docs/**` (프로젝트 수준 정책 문서)
+- `unit/META-*/` (명시적 META feature)
+
+#### META 작업 워크플로
+
+META 작업도 일반 feature와 동일한 8-doc + ANCHOR.md 구조에 편입된다.
+형식: `unit/META-NNNN-<name>/`.
+**`[META]` commit prefix는 지원하지 않는다** — path convention만 유효 게이트.
+
+#### Pure-meta commit의 verify skip
+
+변경 파일이 **전부** META 경로면 `verify-completion.sh`가 "META mode" 진입하여
+모든 검사를 skip한다. 템플릿 자체 유지 작업에 필수 경로.
+
+**Mixed commit (META + operational)**은 operational로 취급되어 full gate를 거친다.
+이로써 AI가 operational 작업에 META 경로를 끼워 우회하는 패턴이 차단된다.
+
+#### SPOF 복구
+
+`verify-completion.sh` 자체에 버그가 발생해 모든 feature 작업이 차단되면,
+AI는 META mode로 자동 진입하여 스크립트를 수정한다. bypass env var는 존재하지 않는다.
+
+### §18.5 TASK Cycle 정의 (§4 엔트리 경계)
+
+"TASK cycle"은 하나의 TASK 수명 기간이다. cycle 시작은 아래 중 **나중의** commit:
+
+- `Task-Cycle: <feature-id>` trailer를 가진 가장 이른 commit (이 feature에 대해)
+- 해당 TASK의 첫 TASK.md 수정 commit
+- (migration day 이후라면) `anchor-migrate.sh`가 생성한 seed commit
+
+§4 엔트리가 이 범위 내에 ≥ 1개 있어야 `verify-completion.sh` check #7이 PASS한다.
+단, 24h bootstrap grace 적용 시 check #7은 skip된다.
+
+### §18.6 §4 엔트리 품질 gate
+
+각 엔트리 필수 필드:
+
+- `source: human:<name>` — 유일 허용 형식
+- `timestamp:` — ISO8601
+- `body:` — 실제 내용 ≥ 200자 (non-whitespace)
+- `challenge:` — 한 줄, 이 검증이 무엇을 반박하거나 확인했는지
+
+단순 confirmation(`"pass"`, `"looks good"` 등 단독)은 FAIL로 처리한다.
+
+### §18.7 Bootstrap grace (24h)
+
+새로 생성된 `ANCHOR.md`는 `created_at` 기준 24시간 이내면 §1~§3 빈칸 검사와
+§4 엔트리 수 검사가 skip된다. 이 유예 시간 안에 작성자가 §1~§3를 채우고
+최초 §4 엔트리를 추가한다.
+
+`created_at`은 frontmatter 값과 git log first-add timestamp 중 **더 이른 쪽**을
+canonical로 사용한다 (frontmatter 조작 방지).

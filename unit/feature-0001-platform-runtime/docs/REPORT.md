@@ -14,12 +14,13 @@ source_of_truth: false
 ## 2. Progress
 - Planned: 0
 - In Progress: 엄격한 검증 시나리오 정의
-- Done: 설정 파일/SQL 유틸리티 이관, 루트 경로 반영
+- Done: 설정 파일/SQL 유틸리티 이관, 루트 경로 반영, 내장 Local LLM bootstrap 제거
 
 ## 3. Recent Changes
 - MySQL/DAB 설정을 feature 경로로 이동
 - SQL 유틸리티를 버전관리 대상 자산으로 정리
-- 총 변경 횟수: 1
+- 2026-04-15: 현재 repo가 소유하던 `src/local-llm/init_ollama_models.sh`를 제거해 MySQL runtime 경계를 복구
+- 총 변경 횟수: 2
 
 ## 4. Open Issues
 - 운영 검증 기준이 아직 구조/기동 수준에 머물러 있다.

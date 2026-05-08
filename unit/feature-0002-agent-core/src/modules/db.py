@@ -16,11 +16,19 @@ from typing import Any
 import mysql.connector
 
 def connect(database: str | None = None, autocommit: bool = True):
+    # 복제 DB (TASK-0044): REPLICA_DB_HOST 가 설정되어 있고 요청된 database 가
+    # memory DB(agent_memory) 가 아닌 경우(= data-plane 쿼리) 복제 인스턴스로 라우팅.
+    # memory DB 연결은 항상 primary 로 유지된다 (대화·세션·권한 정본은 primary).
+    use_replica = bool(REPLICA_DB_ENABLED) and (database is not None) and (str(database) != str(MEMORY_DB))
+    if use_replica:
+        host, port, user, password = REPLICA_DB_HOST, REPLICA_DB_PORT, REPLICA_DB_USER, REPLICA_DB_PASSWORD
+    else:
+        host, port, user, password = DB_HOST, DB_PORT, DB_USER, DB_PASSWORD
     params = {
-        "host": DB_HOST,
-        "port": DB_PORT,
-        "user": DB_USER,
-        "password": DB_PASSWORD,
+        "host": host,
+        "port": port,
+        "user": user,
+        "password": password,
         "autocommit": autocommit,
         "connection_timeout": AGENT_TIMEOUT_SEC,
         "charset": "utf8mb4",

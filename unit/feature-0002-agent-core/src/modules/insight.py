@@ -103,6 +103,456 @@ def _save_fingerprint(mem_conn, key: str, fingerprint: str) -> None:
     except Exception:
         pass
 
+
+def _insight_target_conversation_id() -> str:
+    return str(GLOBAL_SESSION_CONVERSATION_ID or GLOBAL_CONVERSATION_ID or "").strip()
+
+
+def _empty_insight_artifact_state(fact_key: str) -> dict[str, Any]:
+    return {
+        "fact_key": str(fact_key or "").strip(),
+        "has_fact": False,
+        "has_text": False,
+        "has_rag_document": False,
+        "has_rag_object": False,
+        "conversation_id": "",
+        "scope_key": FACT_SCOPE_COMMON,
+        "fact_text": "",
+        "repair_text": "",
+        "weight": 4,
+        "source_type": "schema_insight",
+        "source_run_id": "",
+        "source_sql": "",
+    }
+
+
+def _remember_repair_text(state: dict[str, Any], text: str) -> None:
+    candidate = str(text or "").strip()
+    if candidate and not str(state.get("repair_text") or "").strip():
+        state["repair_text"] = candidate
+
+
+def _load_insight_artifact_states(mem_conn, fact_keys: list[str]) -> dict[str, dict[str, Any]]:
+    keys = [str(key or "").strip() for key in (fact_keys or []) if str(key or "").strip()]
+    states = {key: _empty_insight_artifact_state(key) for key in keys}
+    if not mem_conn or not keys:
+        return states
+    conversation_ids = _global_fact_conversation_ids(include_shared=True)
+    if not conversation_ids:
+        return states
+    cid_placeholders = ",".join(["%s"] * len(conversation_ids))
+    key_placeholders = ",".join(["%s"] * len(keys))
+    scope_clause, scope_params = _scope_filter_sql(_scope_candidates(FACT_SCOPE_COMMON))
+
+    cur = mem_conn.cursor()
+    try:
+        cur.execute(
+            f"""
+SELECT
+    e.FactKey,
+    e.ConversationId,
+    e.ScopeKey,
+    COALESCE(t.TextContent, '') AS FactText,
+    e.Weight,
+    COALESCE(e.SourceType, '') AS SourceType,
+    COALESCE(e.SourceRunId, '') AS SourceRunId,
+    COALESCE(e.SourceSql, '') AS SourceSql
+FROM AgentMemoryFactEntries e
+LEFT JOIN AgentMemoryTexts t ON t.TextHash = e.TextHash
+WHERE e.ConversationId IN ({cid_placeholders})
+  AND e.FactKey IN ({key_placeholders}){scope_clause}
+ORDER BY e.FactKey, e.Weight DESC, e.UpdatedAt DESC, e.Id DESC
+            """,
+            [*conversation_ids, *keys, *scope_params],
+        )
+        rows = cur.fetchall() or []
+    except Exception:
+        rows = []
+    finally:
+        cur.close()
+    seen_fact_keys: set[str] = set()
+    for row in rows:
+        fact_key = str(row[0] or "").strip()
+        if not fact_key or fact_key in seen_fact_keys:
+            continue
+        seen_fact_keys.add(fact_key)
+        state = states.setdefault(fact_key, _empty_insight_artifact_state(fact_key))
+        fact_text = str(row[3] or "").strip()
+        state["has_fact"] = True
+        state["conversation_id"] = str(row[1] or "").strip()
+        state["scope_key"] = str(row[2] or "").strip() or FACT_SCOPE_COMMON
+        state["fact_text"] = fact_text
+        state["weight"] = int(row[4]) if row[4] is not None else 4
+        state["source_type"] = str(row[5] or "").strip() or "schema_insight"
+        state["source_run_id"] = str(row[6] or "").strip()
+        state["source_sql"] = str(row[7] or "").strip()
+        if fact_text:
+            state["has_text"] = True
+            _remember_repair_text(state, fact_text)
+
+    cur = mem_conn.cursor()
+    try:
+        cur.execute(
+            f"""
+SELECT
+    d.FactKey,
+    COALESCE(t.TextContent, '') AS DocText
+FROM AgentMemoryRagDocuments d
+LEFT JOIN AgentMemoryTexts t ON t.TextHash = d.TextHash
+WHERE d.ConversationId IN ({cid_placeholders})
+  AND d.FactKey IN ({key_placeholders}){scope_clause}
+ORDER BY d.FactKey, d.Weight DESC, d.UpdatedAt DESC, d.Id DESC
+            """,
+            [*conversation_ids, *keys, *scope_params],
+        )
+        rows = cur.fetchall() or []
+    except Exception:
+        rows = []
+    finally:
+        cur.close()
+    seen_doc_keys: set[str] = set()
+    for row in rows:
+        fact_key = str(row[0] or "").strip()
+        if not fact_key or fact_key in seen_doc_keys:
+            continue
+        seen_doc_keys.add(fact_key)
+        state = states.setdefault(fact_key, _empty_insight_artifact_state(fact_key))
+        doc_text = str(row[1] or "").strip()
+        state["has_rag_document"] = True
+        if doc_text:
+            state["has_text"] = True
+            _remember_repair_text(state, doc_text)
+
+    schema_object_map: dict[str, str] = {}
+    table_object_map: dict[tuple[str, str], str] = {}
+    for fact_key in keys:
+        object_type, _, schema_name, table_name, _ = _infer_rag_object_from_fact(fact_key, "")
+        if object_type == "schema" and schema_name:
+            schema_object_map[schema_name] = fact_key
+        elif object_type == "table" and schema_name and table_name:
+            table_object_map[(schema_name, table_name)] = fact_key
+
+    if schema_object_map:
+        cur = mem_conn.cursor()
+        try:
+            schema_placeholders = ",".join(["%s"] * len(schema_object_map))
+            cur.execute(
+                f"""
+SELECT
+    o.SchemaName,
+    COALESCE(t.TextContent, '') AS ObjectText
+FROM AgentMemoryRagObjects o
+LEFT JOIN AgentMemoryTexts t ON t.TextHash = o.TextHash
+WHERE o.ConversationId IN ({cid_placeholders})
+  AND o.ObjectType = 'schema'
+  AND o.SchemaName IN ({schema_placeholders}){scope_clause}
+ORDER BY o.SchemaName, o.Weight DESC, o.UpdatedAt DESC, o.Id DESC
+                """,
+                [*conversation_ids, *schema_object_map.keys(), *scope_params],
+            )
+            rows = cur.fetchall() or []
+        except Exception:
+            rows = []
+        finally:
+            cur.close()
+        seen_schema_objects: set[str] = set()
+        for row in rows:
+            schema_name = str(row[0] or "").strip()
+            if not schema_name or schema_name in seen_schema_objects:
+                continue
+            seen_schema_objects.add(schema_name)
+            fact_key = schema_object_map.get(schema_name)
+            if not fact_key:
+                continue
+            state = states.setdefault(fact_key, _empty_insight_artifact_state(fact_key))
+            object_text = str(row[1] or "").strip()
+            state["has_rag_object"] = True
+            if object_text:
+                state["has_text"] = True
+                _remember_repair_text(state, object_text)
+
+    if table_object_map:
+        cur = mem_conn.cursor()
+        table_filters = []
+        table_params: list[str] = []
+        for schema_name, table_name in table_object_map.keys():
+            table_filters.append("(o.SchemaName = %s AND o.TableName = %s)")
+            table_params.extend([schema_name, table_name])
+        try:
+            cur.execute(
+                f"""
+SELECT
+    o.SchemaName,
+    o.TableName,
+    COALESCE(t.TextContent, '') AS ObjectText
+FROM AgentMemoryRagObjects o
+LEFT JOIN AgentMemoryTexts t ON t.TextHash = o.TextHash
+WHERE o.ConversationId IN ({cid_placeholders})
+  AND o.ObjectType = 'table'
+  AND ({' OR '.join(table_filters)}){scope_clause}
+ORDER BY o.SchemaName, o.TableName, o.Weight DESC, o.UpdatedAt DESC, o.Id DESC
+                """,
+                [*conversation_ids, *table_params, *scope_params],
+            )
+            rows = cur.fetchall() or []
+        except Exception:
+            rows = []
+        finally:
+            cur.close()
+        seen_table_objects: set[tuple[str, str]] = set()
+        for row in rows:
+            schema_name = str(row[0] or "").strip()
+            table_name = str(row[1] or "").strip()
+            key_ref = (schema_name, table_name)
+            if not schema_name or not table_name or key_ref in seen_table_objects:
+                continue
+            seen_table_objects.add(key_ref)
+            fact_key = table_object_map.get(key_ref)
+            if not fact_key:
+                continue
+            state = states.setdefault(fact_key, _empty_insight_artifact_state(fact_key))
+            object_text = str(row[2] or "").strip()
+            state["has_rag_object"] = True
+            if object_text:
+                state["has_text"] = True
+                _remember_repair_text(state, object_text)
+
+    return states
+
+
+def _insight_artifact_complete(state: dict[str, Any] | None) -> bool:
+    info = state or {}
+    return bool(
+        info.get("has_fact")
+        and info.get("has_text")
+        and info.get("has_rag_document")
+        and info.get("has_rag_object")
+    )
+
+
+def _insight_missing_parts(state: dict[str, Any] | None) -> list[str]:
+    info = state or {}
+    missing: list[str] = []
+    if not info.get("has_fact"):
+        missing.append("fact")
+    if not info.get("has_text"):
+        missing.append("text")
+    if not info.get("has_rag_document"):
+        missing.append("rag_document")
+    if not info.get("has_rag_object"):
+        missing.append("rag_object")
+    return missing
+
+
+def _detect_pending_insight_repairs(
+    db_conn,
+    mem_conn,
+    schemas: list[str],
+) -> dict[str, int]:
+    report = {
+        "pending_schema_repairs": 0,
+        "pending_table_repairs": 0,
+    }
+    schema_names = [str(s or "").strip() for s in (schemas or [])]
+    schema_names = [s for s in schema_names if s and not _is_system_schema(s)]
+    if not db_conn or not mem_conn or not schema_names:
+        return report
+
+    schema_keys = [f"schema_insight:{schema}" for schema in schema_names]
+    schema_states = _load_insight_artifact_states(mem_conn, schema_keys)
+    for schema in schema_names:
+        schema_key = f"schema_insight:{schema}"
+        if not _insight_artifact_complete(
+            schema_states.get(schema_key, _empty_insight_artifact_state(schema_key))
+        ):
+            report["pending_schema_repairs"] += 1
+
+    cur = db_conn.cursor()
+    try:
+        placeholders = ",".join(["%s"] * len(schema_names))
+        cur.execute(
+            f"""
+SELECT TABLE_SCHEMA, TABLE_NAME
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA IN ({placeholders})
+ORDER BY TABLE_SCHEMA, TABLE_NAME
+            """,
+            schema_names,
+        )
+        rows = cur.fetchall() or []
+    except Exception:
+        rows = []
+    finally:
+        cur.close()
+
+    table_keys: list[str] = []
+    for row in rows:
+        if not row:
+            continue
+        schema_name = str(row[0] or "").strip()
+        table_name = str(row[1] or "").strip()
+        if not schema_name or not table_name:
+            continue
+        table_keys.append(f"table_insight:{schema_name}.{table_name}")
+
+    if not table_keys:
+        return report
+
+    table_states = _load_insight_artifact_states(mem_conn, table_keys)
+    for table_key in table_keys:
+        if not _insight_artifact_complete(
+            table_states.get(table_key, _empty_insight_artifact_state(table_key))
+        ):
+            report["pending_table_repairs"] += 1
+    return report
+
+
+def _build_insight_references(
+    schema: str,
+    table: str | None = None,
+    col_names: list[str] | None = None,
+    table_names: list[str] | None = None,
+) -> list[str]:
+    refs: list[str] = []
+    schema_name = str(schema or "").strip()
+    table_name = str(table or "").strip()
+    if schema_name:
+        refs.append(f"schema:{schema_name}")
+    if table_name:
+        refs.append(f"table:{schema_name}.{table_name}" if schema_name else f"table:{table_name}")
+    max_candidates = max(1, int(AGENT_INSIGHT_ROUTE_LOG_MAX_CANDIDATES))
+    if table_name:
+        for col_name in col_names or []:
+            name = str(col_name or "").strip()
+            if not name:
+                continue
+            refs.append(
+                f"column:{schema_name}.{table_name}.{name}"
+                if schema_name
+                else f"column:{table_name}.{name}"
+            )
+            if len(refs) >= 2 + max_candidates:
+                break
+    else:
+        for hint in table_names or []:
+            name = str(hint or "").strip()
+            if not name:
+                continue
+            refs.append(f"table:{schema_name}.{name}" if schema_name else f"table:{name}")
+            if len(refs) >= 1 + max_candidates:
+                break
+    return refs
+
+
+def _trace_insight_worker_event(
+    run_id: str | None,
+    phase: str,
+    schema: str,
+    object_type: str,
+    object_name: str,
+    reason: str,
+    action: str,
+    referenced_objects: list[str] | None = None,
+    result: str = "",
+    duration_ms: float | None = None,
+    error: str = "",
+    extra: dict[str, Any] | None = None,
+) -> None:
+    payload: dict[str, Any] = {
+        "timestamp": utc_now_iso(),
+        "run_id": str(run_id or "").strip(),
+        "phase": str(phase or "").strip(),
+        "schema": str(schema or "").strip(),
+        "object_type": str(object_type or "").strip(),
+        "object_name": str(object_name or "").strip(),
+        "reason": str(reason or "").strip(),
+        "action": str(action or "").strip(),
+        "referenced_objects": referenced_objects or [],
+        "result": str(result or "").strip(),
+        "duration_ms": round(float(duration_ms or 0.0), 2),
+        "error": str(error or "").strip()[:500],
+    }
+    if extra:
+        payload.update(extra)
+    log_insight_route("insight_worker", payload)
+
+
+def _repair_insight_artifacts_from_state(
+    mem_conn,
+    fact_key: str,
+    state: dict[str, Any],
+    run_id: str | None,
+    schema: str,
+    object_type: str,
+    object_name: str,
+    referenced_objects: list[str] | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    current = dict(state or {})
+    repair_text = str(current.get("repair_text") or current.get("fact_text") or "").strip()
+    missing_parts = _insight_missing_parts(current)
+    if not repair_text:
+        _trace_insight_worker_event(
+            run_id,
+            "publish",
+            schema,
+            object_type,
+            object_name,
+            "artifact_missing",
+            "repair_from_fact",
+            referenced_objects=referenced_objects,
+            result="unavailable",
+            extra={"missing_parts": missing_parts},
+        )
+        return False, current
+    started = time.perf_counter()
+    try:
+        _upsert_fact(
+            mem_conn,
+            str(current.get("conversation_id") or _insight_target_conversation_id()).strip()
+            or _insight_target_conversation_id(),
+            fact_key,
+            repair_text,
+            int(current.get("weight") or 4),
+            scope_key=str(current.get("scope_key") or FACT_SCOPE_COMMON),
+            source_type=str(current.get("source_type") or "schema_insight") or "schema_insight",
+            source_run_id=str(current.get("source_run_id") or run_id or "").strip() or None,
+            source_sql=str(current.get("source_sql") or "").strip() or None,
+        )
+        repaired = _load_insight_artifact_states(mem_conn, [fact_key]).get(
+            fact_key, _empty_insight_artifact_state(fact_key)
+        )
+        complete = _insight_artifact_complete(repaired)
+        _trace_insight_worker_event(
+            run_id,
+            "publish",
+            schema,
+            object_type,
+            object_name,
+            "artifact_missing",
+            "repair_from_fact",
+            referenced_objects=referenced_objects,
+            result="ok" if complete else "partial_persist",
+            duration_ms=(time.perf_counter() - started) * 1000.0,
+            extra={"missing_parts": _insight_missing_parts(repaired)},
+        )
+        return complete, repaired
+    except Exception as exc:
+        _trace_insight_worker_event(
+            run_id,
+            "publish",
+            schema,
+            object_type,
+            object_name,
+            "artifact_missing",
+            "repair_from_fact",
+            referenced_objects=referenced_objects,
+            result="publish_failed",
+            duration_ms=(time.perf_counter() - started) * 1000.0,
+            error=str(exc),
+            extra={"missing_parts": missing_parts},
+        )
+        return False, current
+
 def _bootstrap_schema_insights(
     db_conn,
     mem_conn,
@@ -169,15 +619,30 @@ def _scan_instance_schema_insights(
     mem_conn,
     schemas: list[str],
     run_id: str | None = None,
-) -> None:
+) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "scan_started": False,
+        "schemas_evaluated": 0,
+        "schemas_generated": 0,
+        "schemas_repaired": 0,
+        "tables_selected": 0,
+        "tables_generated": 0,
+        "tables_repaired": 0,
+        "artifact_missing_selected": 0,
+        "skipped_schemas": 0,
+        "skipped_tables": 0,
+        "deferred_tables": 0,
+        "pending_schema_repairs": 0,
+        "pending_table_repairs": 0,
+    }
     if not db_conn or not mem_conn or not AGENT_SCHEMA_INSTANCE_SCAN or not AGENT_SCHEMA_INSIGHT:
-        return
+        return report
     if not OPENAI_API_KEY or OpenAI is None:
-        return
+        return report
     candidates = [str(s or "").strip() for s in (schemas or [])]
     candidates = [s for s in candidates if s and not _is_system_schema(s)]
     if not candidates:
-        return
+        return report
     existing_schema_insights = _load_existing_schema_insights(mem_conn)
     missing = [schema for schema in candidates if schema not in existing_schema_insights]
     seen = [schema for schema in candidates if schema in existing_schema_insights]
@@ -214,6 +679,14 @@ def _scan_instance_schema_insights(
                 )
             except Exception:
                 pass
+    pending_repairs = _detect_pending_insight_repairs(db_conn, mem_conn, candidates)
+    report["pending_schema_repairs"] = int(pending_repairs.get("pending_schema_repairs", 0) or 0)
+    report["pending_table_repairs"] = int(pending_repairs.get("pending_table_repairs", 0) or 0)
+    force_scan = bool(
+        missing
+        or report["pending_schema_repairs"]
+        or report["pending_table_repairs"]
+    )
     if not force_scan:
         try:
             last_scan = load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, "schema_instance_scan_at")
@@ -221,16 +694,15 @@ def _scan_instance_schema_insights(
             if parsed:
                 elapsed = (datetime.now(timezone.utc) - parsed).total_seconds()
                 if elapsed < max(5, AGENT_SCHEMA_INSTANCE_SCAN_EVERY_SEC):
-                    return
+                    return report
         except Exception:
             pass
 
-    # ── 핑거프린트 기반 변경 감지 ──
+    report["scan_started"] = True
     stored_schema_fps = _load_stored_fingerprints(mem_conn, "schema_fp:")
     stored_table_fps = _load_stored_fingerprints(mem_conn, "table_fp:")
 
     cur = db_conn.cursor()
-    did_scan = False
     scan_start = time.perf_counter()
     budget_sec = max(5, int(AGENT_SCHEMA_INSTANCE_SCAN_BUDGET_SEC))
     table_seen_map = _load_existing_table_insight_map(mem_conn, candidates)
@@ -238,13 +710,12 @@ def _scan_instance_schema_insights(
     table_refresh_sec = int(AGENT_TABLE_INSIGHT_RESCAN_SEC or 0)
     schema_refresh_map = _load_kv_prefix_map(mem_conn, GLOBAL_CONVERSATION_ID, "schema_insight_refresh_at:")
     table_refresh_map = _load_kv_prefix_map(mem_conn, GLOBAL_CONVERSATION_ID, "table_insight_refresh_at:")
-    skipped_schemas = 0
-    skipped_tables = 0
     try:
         for schema in candidates:
             if time.perf_counter() - scan_start > budget_sec:
                 break
             try:
+                report["schemas_evaluated"] = int(report.get("schemas_evaluated", 0)) + 1
                 # 스키마 핑거프린트 계산 (테이블 목록 기반)
                 current_schema_fp = _compute_schema_fingerprint(db_conn, schema)
                 schema_fp_key = f"schema_fp:{schema}"
@@ -272,49 +743,6 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                     seen_cols.add(name)
                     col_names.append(name)
                 col_names = sorted(col_names)
-                schema_key = f"schema_insight:{schema}"
-                schema_refresh_key = f"schema_insight_refresh_at:{schema}"
-                schema_missing = schema not in existing_schema_insights
-                schema_refresh_due = _is_refresh_due(
-                    schema_refresh_map, schema_refresh_key, schema_refresh_sec
-                )
-                # 스키마 인사이트: 신규 or 구조 변경 시에만 LLM 호출
-                # fingerprint 존재하고 변경 없으면 타이머 만료여도 LLM 호출 생략 (비용 절감)
-                schema_has_stored_fp = bool(stored_schema_fp)
-                if schema_missing or schema_structure_changed or (schema_refresh_due and not schema_has_stored_fp):
-                    schema_payload = {
-                        "schema": schema,
-                        "columns": col_names[: max(1, AGENT_SCHEMA_INSIGHT_MAX_COLS)],
-                        "table_hints": [],
-                    }
-                    schema_insight = llm_schema_insight(schema_payload)
-                    schema_text = _format_schema_insight_text(schema, schema_insight, col_names=col_names)
-                    if schema_text and _should_publish_global_fact(schema_key, "schema_insight", 4, schema_text):
-                        _publish_fact(
-                            mem_conn,
-                            GLOBAL_SESSION_CONVERSATION_ID or GLOBAL_CONVERSATION_ID,
-                            schema_key,
-                            schema_text,
-                            4,
-                            scope_key=FACT_SCOPE_COMMON,
-                            source_type="schema_insight",
-                            source_run_id=run_id,
-                            source_sql="",
-                            source_meta=schema_insight if isinstance(schema_insight, dict) else None,
-                        )
-                        existing_schema_insights.add(schema)
-                        did_scan = True
-                    _mark_refresh_kv(mem_conn, schema_refresh_map, schema_refresh_key)
-                    # 핑거프린트 갱신
-                    _save_fingerprint(mem_conn, schema_fp_key, current_schema_fp)
-                    stored_schema_fps[schema_fp_key] = current_schema_fp
-                else:
-                    skipped_schemas += 1
-
-                offset_key = f"schema_instance_scan_offset:{schema}"
-                batch = max(1, int(AGENT_SCHEMA_INSTANCE_SCAN_TABLE_LIMIT))
-                if run_id == "init-memory":
-                    batch = min(batch, 2)
                 cur.execute(
                     """
 SELECT TABLE_NAME
@@ -327,6 +755,153 @@ ORDER BY TABLE_NAME
                 table_rows = cur.fetchall() or []
                 all_table_names = [str(r[0]).strip() for r in table_rows if r and r[0]]
                 all_table_names = [t for t in all_table_names if t]
+                schema_key = f"schema_insight:{schema}"
+                schema_refresh_key = f"schema_insight_refresh_at:{schema}"
+                schema_state = _load_insight_artifact_states(mem_conn, [schema_key]).get(
+                    schema_key, _empty_insight_artifact_state(schema_key)
+                )
+                schema_artifact_missing = not _insight_artifact_complete(schema_state)
+                schema_refresh_due = _is_refresh_due(
+                    schema_refresh_map, schema_refresh_key, schema_refresh_sec
+                )
+                schema_has_stored_fp = bool(stored_schema_fp)
+                schema_reason = ""
+                if schema_artifact_missing:
+                    schema_reason = "artifact_missing"
+                    report["artifact_missing_selected"] = int(
+                        report.get("artifact_missing_selected", 0)
+                    ) + 1
+                elif schema_structure_changed:
+                    schema_reason = "fingerprint_changed"
+                elif schema_refresh_due and not schema_has_stored_fp:
+                    schema_reason = "refresh_due"
+
+                schema_refs = _build_insight_references(
+                    schema, table_names=all_table_names[: max(1, int(AGENT_INSIGHT_ROUTE_LOG_MAX_CANDIDATES))]
+                )
+                if schema_reason == "artifact_missing":
+                    repaired, schema_state = _repair_insight_artifacts_from_state(
+                        mem_conn,
+                        schema_key,
+                        schema_state,
+                        run_id,
+                        schema,
+                        "schema",
+                        schema,
+                        referenced_objects=schema_refs,
+                    )
+                    if repaired:
+                        followup_reason = ""
+                        if schema_structure_changed:
+                            followup_reason = "fingerprint_changed"
+                        elif schema_refresh_due and not schema_has_stored_fp:
+                            followup_reason = "refresh_due"
+                        if followup_reason:
+                            schema_reason = followup_reason
+                        else:
+                            _mark_refresh_kv(mem_conn, schema_refresh_map, schema_refresh_key)
+                            _save_fingerprint(mem_conn, schema_fp_key, current_schema_fp)
+                            stored_schema_fps[schema_fp_key] = current_schema_fp
+                            existing_schema_insights.add(schema)
+                            report["schemas_repaired"] = int(report.get("schemas_repaired", 0)) + 1
+                            schema_reason = ""
+
+                if schema_reason:
+                    schema_started = time.perf_counter()
+                    schema_payload = {
+                        "schema": schema,
+                        "columns": col_names[: max(1, AGENT_SCHEMA_INSIGHT_MAX_COLS)],
+                        "table_hints": [],
+                    }
+                    schema_error = ""
+                    schema_insight = None
+                    try:
+                        schema_insight = llm_schema_insight(schema_payload)
+                    except Exception as exc:
+                        schema_error = str(exc)
+                    schema_text = _format_schema_insight_text(
+                        schema,
+                        schema_insight if isinstance(schema_insight, dict) else None,
+                        col_names=col_names,
+                    )
+                    publish_attempted = False
+                    publish_skip_reason = ""
+                    if (
+                        not schema_error
+                        and schema_text
+                        and _should_publish_global_fact(schema_key, "schema_insight", 4, schema_text)
+                    ):
+                        _publish_fact(
+                            mem_conn,
+                            _insight_target_conversation_id(),
+                            schema_key,
+                            schema_text,
+                            4,
+                            scope_key=FACT_SCOPE_COMMON,
+                            source_type="schema_insight",
+                            source_run_id=run_id,
+                            source_sql="",
+                            source_meta=schema_insight if isinstance(schema_insight, dict) else None,
+                        )
+                        publish_attempted = True
+                    elif schema_error:
+                        publish_skip_reason = "llm_error"
+                    elif not isinstance(schema_insight, dict):
+                        publish_skip_reason = "invalid_response"
+                    elif not schema_text:
+                        publish_skip_reason = "empty_text"
+                    else:
+                        publish_skip_reason = "publish_filtered"
+                    verified_schema_state = _load_insight_artifact_states(mem_conn, [schema_key]).get(
+                        schema_key, _empty_insight_artifact_state(schema_key)
+                    )
+                    schema_complete = _insight_artifact_complete(verified_schema_state)
+                    result = "ok" if schema_complete else "partial_persist"
+                    if schema_error:
+                        result = "publish_failed"
+                    _trace_insight_worker_event(
+                        run_id,
+                        "publish",
+                        schema,
+                        "schema",
+                        schema,
+                        schema_reason,
+                        "generate_insight",
+                        referenced_objects=schema_refs,
+                        result=result,
+                        duration_ms=(time.perf_counter() - schema_started) * 1000.0,
+                        error=schema_error,
+                        extra={
+                            "missing_parts": _insight_missing_parts(verified_schema_state),
+                            "publish_attempted": bool(publish_attempted),
+                            "publish_skip_reason": publish_skip_reason,
+                        },
+                    )
+                    _trace_insight_worker_event(
+                        run_id,
+                        "verify",
+                        schema,
+                        "schema",
+                        schema,
+                        schema_reason,
+                        "verify_persist",
+                        referenced_objects=schema_refs,
+                        result="ok" if schema_complete else "partial_persist",
+                        extra={"missing_parts": _insight_missing_parts(verified_schema_state)},
+                    )
+                    if schema_complete:
+                        _mark_refresh_kv(mem_conn, schema_refresh_map, schema_refresh_key)
+                        _save_fingerprint(mem_conn, schema_fp_key, current_schema_fp)
+                        stored_schema_fps[schema_fp_key] = current_schema_fp
+                        existing_schema_insights.add(schema)
+                        report["schemas_generated"] = int(report.get("schemas_generated", 0)) + 1
+                else:
+                    report["skipped_schemas"] = int(report.get("skipped_schemas", 0)) + 1
+
+                offset_key = f"schema_instance_scan_offset:{schema}"
+                batch = max(1, int(AGENT_SCHEMA_INSTANCE_SCAN_TABLE_LIMIT))
+                if run_id == "init-memory":
+                    batch = min(batch, 2)
                 if not all_table_names:
                     try:
                         save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, offset_key, "0")
@@ -337,37 +912,38 @@ ORDER BY TABLE_NAME
                 # 테이블 핑거프린트를 배치로 계산
                 current_table_fps = _compute_table_fingerprints_batch(db_conn, schema, all_table_names)
 
-                # 변경된 테이블 식별
-                changed_tables: set[str] = set()
+                table_keys = [f"table_insight:{schema}.{name}" for name in all_table_names]
+                artifact_states = _load_insight_artifact_states(mem_conn, table_keys)
+                artifact_missing_tables: list[str] = []
+                changed_tables: list[str] = []
+                refresh_due_tables: list[str] = []
+                reason_map: dict[str, str] = {}
                 for tname in all_table_names:
-                    tfp_key = f"table_fp:{schema}.{tname}"
-                    stored_tfp = stored_table_fps.get(tfp_key, "")
-                    current_tfp = current_table_fps.get(tname, "")
-                    if current_tfp != stored_tfp:
-                        changed_tables.add(tname)
-
-                seen_tables = table_seen_map.get(schema, set())
-                pending_tables = [t for t in all_table_names if t not in seen_tables]
-                known_tables = [t for t in all_table_names if t in seen_tables]
-
-                # 변경 감지 기반 필터링 (fingerprint 변경 시에만 LLM 호출)
-                # 타이머만 만료된 경우 fingerprint 존재하면 LLM 호출 생략 (비용 절감)
-                pending_ready = []
-                for t in pending_tables:
-                    tfp_key_chk = f"table_fp:{schema}.{t}"
+                    table_key = f"table_insight:{schema}.{tname}"
+                    state = artifact_states.get(table_key, _empty_insight_artifact_state(table_key))
+                    tfp_key_chk = f"table_fp:{schema}.{tname}"
                     has_stored_tfp = bool(stored_table_fps.get(tfp_key_chk, ""))
-                    if t in changed_tables or (not has_stored_tfp and _is_refresh_due(
+                    current_tfp = current_table_fps.get(tname, "")
+                    table_refresh_key = f"table_insight_refresh_at:{schema}.{tname}"
+                    table_refresh_due = _is_refresh_due(
                         table_refresh_map,
-                        f"table_insight_refresh_at:{schema}.{t}",
+                        table_refresh_key,
                         table_refresh_sec,
-                    )):
-                        pending_ready.append(t)
+                    )
+                    if not _insight_artifact_complete(state):
+                        artifact_missing_tables.append(tname)
+                        reason_map[tname] = "artifact_missing"
+                    elif current_tfp != stored_table_fps.get(tfp_key_chk, ""):
+                        changed_tables.append(tname)
+                        reason_map[tname] = "fingerprint_changed"
+                    elif (not has_stored_tfp) and table_refresh_due:
+                        refresh_due_tables.append(tname)
+                        reason_map[tname] = "refresh_due"
 
-                known_changed = [t for t in known_tables if t in changed_tables]
-                known_ready = known_changed
-
-                # 변경 없고 타이머도 안 된 테이블은 완전히 스킵
-                skipped_tables += len(all_table_names) - len(pending_ready) - len(known_ready)
+                ready_total = len(artifact_missing_tables) + len(changed_tables) + len(refresh_due_tables)
+                report["skipped_tables"] = int(report.get("skipped_tables", 0)) + max(
+                    0, len(all_table_names) - ready_total
+                )
 
                 try:
                     offset = int(load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, offset_key) or 0)
@@ -375,24 +951,61 @@ ORDER BY TABLE_NAME
                     offset = 0
                 if offset < 0:
                     offset = 0
-                if pending_ready:
-                    rotated_pending = _rotate_list(pending_ready, offset)
-                    table_names = rotated_pending[:batch]
-                    base_len = len(pending_ready)
-                elif known_ready:
-                    rotated_known = _rotate_list(known_ready, offset)
-                    table_names = rotated_known[:batch]
-                    base_len = len(known_ready)
+                selected_tables: list[str] = []
+                primary_len = 0
+                primary_selected = 0
+                if artifact_missing_tables:
+                    rotated_missing = _rotate_list(artifact_missing_tables, offset)
+                    selected_tables.extend(rotated_missing[:batch])
+                    primary_len = len(artifact_missing_tables)
+                    primary_selected = min(len(selected_tables), batch)
+                    if len(selected_tables) < batch and changed_tables:
+                        selected_tables.extend(changed_tables[: batch - len(selected_tables)])
+                    if len(selected_tables) < batch and refresh_due_tables:
+                        selected_tables.extend(refresh_due_tables[: batch - len(selected_tables)])
+                elif changed_tables:
+                    rotated_changed = _rotate_list(changed_tables, offset)
+                    selected_tables.extend(rotated_changed[:batch])
+                    primary_len = len(changed_tables)
+                    primary_selected = min(len(selected_tables), batch)
+                    if len(selected_tables) < batch and refresh_due_tables:
+                        selected_tables.extend(refresh_due_tables[: batch - len(selected_tables)])
+                elif refresh_due_tables:
+                    rotated_refresh = _rotate_list(refresh_due_tables, offset)
+                    selected_tables.extend(rotated_refresh[:batch])
+                    primary_len = len(refresh_due_tables)
+                    primary_selected = min(len(selected_tables), batch)
                 else:
-                    # 변경 없음 — 이 스키마의 모든 테이블 스킵
                     try:
                         save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, offset_key, "0")
                     except Exception:
                         pass
                     continue
+                report["tables_selected"] = int(report.get("tables_selected", 0)) + len(selected_tables)
+                selected_set = set(selected_tables)
+                deferred_tables = [
+                    table_name
+                    for table_name in (artifact_missing_tables + changed_tables + refresh_due_tables)
+                    if table_name not in selected_set
+                ]
+                if deferred_tables:
+                    report["deferred_tables"] = int(report.get("deferred_tables", 0)) + len(deferred_tables)
+                    _trace_insight_worker_event(
+                        run_id,
+                        "table_scan",
+                        schema,
+                        "schema",
+                        schema,
+                        "limit_exceeded",
+                        "defer",
+                        referenced_objects=_build_insight_references(
+                            schema, table_names=deferred_tables[: max(1, int(AGENT_INSIGHT_ROUTE_LOG_MAX_CANDIDATES))]
+                        ),
+                        result=f"deferred:{len(deferred_tables)}",
+                    )
                 table_cols: dict[str, list[tuple[str, str]]] = {}
-                if table_names:
-                    placeholders = ",".join(["%s"] * len(table_names))
+                if selected_tables:
+                    placeholders = ",".join(["%s"] * len(selected_tables))
                     cur.execute(
                         f"""
 SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE
@@ -400,7 +1013,7 @@ FROM information_schema.COLUMNS
 WHERE TABLE_SCHEMA = %s AND TABLE_NAME IN ({placeholders})
 ORDER BY TABLE_NAME, ORDINAL_POSITION
                         """,
-                        [schema] + table_names,
+                        [schema] + selected_tables,
                     )
                     col_rows = cur.fetchall() or []
                     for table_name, col_name, data_type in col_rows:
@@ -413,7 +1026,7 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                         table_cols.setdefault(tname, []).append(
                             (name, str(data_type or "").strip())
                         )
-                for table in table_names:
+                for table in selected_tables:
                     if time.perf_counter() - scan_start > budget_sec:
                         break
                     col_rows = table_cols.get(table) or []
@@ -435,21 +1048,84 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                         continue
                     col_name_list = sorted(col_name_list)
                     cols_payload = sorted(cols_payload, key=lambda x: str(x.get("name", "")))
+                    table_key = f"table_insight:{schema}.{table}"
+                    table_reason = reason_map.get(table, "artifact_missing")
+                    table_refs = _build_insight_references(
+                        schema,
+                        table=table,
+                        col_names=col_name_list,
+                    )
+                    table_state = artifact_states.get(
+                        table_key, _empty_insight_artifact_state(table_key)
+                    )
+                    if table_reason == "artifact_missing":
+                        report["artifact_missing_selected"] = int(
+                            report.get("artifact_missing_selected", 0)
+                        ) + 1
+                        repaired, repaired_state = _repair_insight_artifacts_from_state(
+                            mem_conn,
+                            table_key,
+                            table_state,
+                            run_id,
+                            schema,
+                            "table",
+                            table,
+                            referenced_objects=table_refs,
+                        )
+                        if repaired:
+                            artifact_states[table_key] = repaired_state
+                            current_tfp = current_table_fps.get(table, "")
+                            tfp_key = f"table_fp:{schema}.{table}"
+                            has_stored_tfp = bool(stored_table_fps.get(tfp_key, ""))
+                            followup_reason = ""
+                            if current_tfp != stored_table_fps.get(tfp_key, ""):
+                                followup_reason = "fingerprint_changed"
+                            elif (not has_stored_tfp) and _is_refresh_due(
+                                table_refresh_map,
+                                f"table_insight_refresh_at:{schema}.{table}",
+                                table_refresh_sec,
+                            ):
+                                followup_reason = "refresh_due"
+                            if followup_reason:
+                                table_reason = followup_reason
+                            else:
+                                table_refresh_key = f"table_insight_refresh_at:{schema}.{table}"
+                                _mark_refresh_kv(mem_conn, table_refresh_map, table_refresh_key)
+                                if current_tfp:
+                                    _save_fingerprint(mem_conn, tfp_key, current_tfp)
+                                    stored_table_fps[tfp_key] = current_tfp
+                                report["tables_repaired"] = int(report.get("tables_repaired", 0)) + 1
+                                table_seen_map.setdefault(schema, set()).add(table)
+                                continue
                     table_payload = {
                         "schema": schema,
                         "table": table,
                         "columns": cols_payload[: max(1, int(AGENT_TABLE_INSIGHT_MAX_COLS))],
                     }
-                    table_insight = llm_table_insight(table_payload)
+                    table_started = time.perf_counter()
                     table_refresh_key = f"table_insight_refresh_at:{schema}.{table}"
+                    table_error = ""
+                    table_insight = None
+                    try:
+                        table_insight = llm_table_insight(table_payload)
+                    except Exception as exc:
+                        table_error = str(exc)
                     table_text = _format_table_insight_text(
-                        schema, table, table_insight, col_names=col_name_list
+                        schema,
+                        table,
+                        table_insight if isinstance(table_insight, dict) else None,
+                        col_names=col_name_list,
                     )
-                    table_key = f"table_insight:{schema}.{table}"
-                    if table_text and _should_publish_global_fact(table_key, "schema_insight", 4, table_text):
+                    publish_attempted = False
+                    publish_skip_reason = ""
+                    if (
+                        not table_error
+                        and table_text
+                        and _should_publish_global_fact(table_key, "schema_insight", 4, table_text)
+                    ):
                         _publish_fact(
                             mem_conn,
-                            GLOBAL_SESSION_CONVERSATION_ID or GLOBAL_CONVERSATION_ID,
+                            _insight_target_conversation_id(),
                             table_key,
                             table_text,
                             4,
@@ -459,18 +1135,64 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                             source_sql="",
                             source_meta=table_insight if isinstance(table_insight, dict) else None,
                         )
-                        did_scan = True
+                        publish_attempted = True
+                    elif table_error:
+                        publish_skip_reason = "llm_error"
+                    elif not isinstance(table_insight, dict):
+                        publish_skip_reason = "invalid_response"
+                    elif not table_text:
+                        publish_skip_reason = "empty_text"
+                    else:
+                        publish_skip_reason = "publish_filtered"
+                    verified_table_state = _load_insight_artifact_states(mem_conn, [table_key]).get(
+                        table_key, _empty_insight_artifact_state(table_key)
+                    )
+                    table_complete = _insight_artifact_complete(verified_table_state)
+                    result = "ok" if table_complete else "partial_persist"
+                    if table_error:
+                        result = "publish_failed"
+                    _trace_insight_worker_event(
+                        run_id,
+                        "publish",
+                        schema,
+                        "table",
+                        table,
+                        table_reason,
+                        "generate_insight",
+                        referenced_objects=table_refs,
+                        result=result,
+                        duration_ms=(time.perf_counter() - table_started) * 1000.0,
+                        error=table_error,
+                        extra={
+                            "missing_parts": _insight_missing_parts(verified_table_state),
+                            "publish_attempted": bool(publish_attempted),
+                            "publish_skip_reason": publish_skip_reason,
+                        },
+                    )
+                    _trace_insight_worker_event(
+                        run_id,
+                        "verify",
+                        schema,
+                        "table",
+                        table,
+                        table_reason,
+                        "verify_persist",
+                        referenced_objects=table_refs,
+                        result="ok" if table_complete else "partial_persist",
+                        extra={"missing_parts": _insight_missing_parts(verified_table_state)},
+                    )
+                    if table_complete:
+                        _mark_refresh_kv(mem_conn, table_refresh_map, table_refresh_key)
+                        tfp_key = f"table_fp:{schema}.{table}"
+                        current_tfp = current_table_fps.get(table, "")
+                        if current_tfp:
+                            _save_fingerprint(mem_conn, tfp_key, current_tfp)
+                            stored_table_fps[tfp_key] = current_tfp
                         table_seen_map.setdefault(schema, set()).add(table)
-                    _mark_refresh_kv(mem_conn, table_refresh_map, table_refresh_key)
-                    # 테이블 핑거프린트 갱신
-                    tfp_key = f"table_fp:{schema}.{table}"
-                    current_tfp = current_table_fps.get(table, "")
-                    if current_tfp:
-                        _save_fingerprint(mem_conn, tfp_key, current_tfp)
-                        stored_table_fps[tfp_key] = current_tfp
-                if base_len > 0:
-                    step = batch if base_len > batch else 1
-                    new_offset = (offset + max(1, step)) % base_len
+                        report["tables_generated"] = int(report.get("tables_generated", 0)) + 1
+                if primary_len > 0:
+                    step = primary_selected if primary_selected > 0 else 1
+                    new_offset = (offset + max(1, step)) % primary_len
                 else:
                     new_offset = 0
                 try:
@@ -486,22 +1208,12 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                 continue
     finally:
         cur.close()
-    # 스킵 통계 로깅
-    if skipped_schemas > 0 or skipped_tables > 0:
-        append_log_line(
-            "insight_worker",
-            json.dumps({
-                "event": "fingerprint_skip",
-                "skipped_schemas": skipped_schemas,
-                "skipped_tables": skipped_tables,
-                "run_id": run_id or "",
-            }, ensure_ascii=False),
-        )
     try:
-        if did_scan:
+        if report.get("scan_started"):
             save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, "schema_instance_scan_at", utc_now_iso())
     except Exception:
         pass
+    return report
 
 
 def _is_insight_worker_heartbeat_fresh(mem_conn) -> bool:
@@ -554,6 +1266,19 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
     schema_count = 0
     scan_triggered = 0
     lock_acquired = False
+    scan_report: dict[str, Any] = {
+        "scan_started": False,
+        "schemas_evaluated": 0,
+        "schemas_generated": 0,
+        "schemas_repaired": 0,
+        "tables_selected": 0,
+        "tables_generated": 0,
+        "tables_repaired": 0,
+        "artifact_missing_selected": 0,
+        "skipped_schemas": 0,
+        "skipped_tables": 0,
+        "deferred_tables": 0,
+    }
     timing = _timing_breakdown_template(
         cycle_run_id, AGENT_INSIGHT_WORKER_CONVERSATION_ID, "__insight_worker__"
     )
@@ -584,13 +1309,16 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                 KNOWN_SCHEMAS.clear()
                 KNOWN_SCHEMAS.extend(known)
             schema_count = len([s for s in (KNOWN_SCHEMAS or []) if s and not _is_system_schema(s)])
-            scan_before = load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, "schema_instance_scan_at")
             plan_start = time.perf_counter()
             _bootstrap_schema_insights(db_conn, mem_conn, KNOWN_SCHEMAS, run_id=cycle_run_id)
-            _scan_instance_schema_insights(db_conn, mem_conn, KNOWN_SCHEMAS, run_id=cycle_run_id)
+            scan_report = _scan_instance_schema_insights(
+                db_conn,
+                mem_conn,
+                KNOWN_SCHEMAS,
+                run_id=cycle_run_id,
+            )
             _timing_breakdown_add(timing, "plan_ms", (time.perf_counter() - plan_start) * 1000.0)
-            scan_after = load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, "schema_instance_scan_at")
-            if str(scan_after or "").strip() and str(scan_after or "").strip() != str(scan_before or "").strip():
+            if scan_report.get("scan_started"):
                 scan_triggered = 1
     except Exception as exc:
         status = "error"
@@ -630,7 +1358,6 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
     timing["scan_triggered"] = int(scan_triggered)
     timing["schema_count"] = int(schema_count)
     timing["error"] = err_text
-    timing_path = _write_timing_breakdown(timing)
     payload = {
         "run_id": cycle_run_id,
         "status": status,
@@ -639,9 +1366,34 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
         "scan_triggered": int(scan_triggered),
         "error": err_text,
     }
-    if timing_path:
-        payload["timing_path"] = timing_path
-    append_log_line("insight_worker", json.dumps(payload, ensure_ascii=False))
+    payload.update(
+        {
+            "schemas_evaluated": int(scan_report.get("schemas_evaluated", 0) or 0),
+            "schemas_generated": int(scan_report.get("schemas_generated", 0) or 0),
+            "schemas_repaired": int(scan_report.get("schemas_repaired", 0) or 0),
+            "tables_selected": int(scan_report.get("tables_selected", 0) or 0),
+            "tables_generated": int(scan_report.get("tables_generated", 0) or 0),
+            "tables_repaired": int(scan_report.get("tables_repaired", 0) or 0),
+            "artifact_missing_selected": int(
+                scan_report.get("artifact_missing_selected", 0) or 0
+            ),
+            "pending_schema_repairs": int(
+                scan_report.get("pending_schema_repairs", 0) or 0
+            ),
+            "pending_table_repairs": int(
+                scan_report.get("pending_table_repairs", 0) or 0
+            ),
+            "deferred_tables": int(scan_report.get("deferred_tables", 0) or 0),
+            "skipped_schemas": int(scan_report.get("skipped_schemas", 0) or 0),
+            "skipped_tables": int(scan_report.get("skipped_tables", 0) or 0),
+        }
+    )
+    should_log = status != "ok" or bool(scan_report.get("scan_started"))
+    if should_log:
+        timing_path = _write_timing_breakdown(timing)
+        if timing_path:
+            payload["timing_path"] = timing_path
+        append_log_line("insight_worker", json.dumps(payload, ensure_ascii=False))
     return payload
 
 
@@ -656,5 +1408,3 @@ def run_insight_worker_loop() -> None:
     while True:
         run_insight_cycle()
         time.sleep(tick_sec)
-
-

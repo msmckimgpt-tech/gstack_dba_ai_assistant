@@ -4,6 +4,9 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
+template_version: v3.6.0
+domain: [security]
+ai_read_priority: 4
 ---
 
 # Security
@@ -36,3 +39,17 @@ source_of_truth: true
 - 런타임 로그와 출력: `../../artifacts/shared`
 - MySQL 데이터: `../../artifacts/mysql-data`
 - 인증서: `../../artifacts/certs`
+
+## 6. 자격증명 관리 패턴
+- 자격증명 파일(`.cnf`, `.env`, 인증서 등)은 저장소에 커밋하지 않는다.
+- 기능별 `src/config/credentials/` 디렉토리에 실제 자격증명을 두되, `.gitignore`로 제외한다.
+- `*.example` 파일만 커밋하여 필요한 키와 형식을 문서화한다.
+- 자격증명 파일 권한은 `0600` (소유자만 읽기/쓰기)을 유지한다.
+- `.gitignore` 패턴 예시:
+  ```
+  # 자격증명 제외
+  **/config/credentials/*.cnf
+  **/config/credentials/*.env
+  !**/config/credentials/*.example
+  ```
+- 자격증명 경로와 필요 권한은 해당 기능의 `FUNCTION.md` §10 Dependencies에 명시한다.

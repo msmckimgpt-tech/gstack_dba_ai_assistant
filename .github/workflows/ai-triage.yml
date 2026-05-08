@@ -1,0 +1,197 @@
+name: AI Triage
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "claude (only supported provider)"
+        required: false
+        type: string
+      dry_run:
+        description: "Skip issue creation and only write summaries"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+jobs:
+  ai-triage:
+    name: ai-triage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+      id-token: write
+    concurrency:
+      group: ai-triage-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      DEFAULT_PROVIDER: ${{ inputs.provider || vars.AI_PROVIDER_DEFAULT }}
+      AUTONOMOUS_ISSUE_LIMIT: ${{ vars.AI_AUTONOMOUS_OPEN_ISSUE_LIMIT || '3' }}
+      DRY_RUN: ${{ inputs.dry_run || 'false' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve provider
+        id: provider
+        shell: bash
+        env:
+          LABELS_JSON: "[]"
+        run: ./.github/scripts/resolve_provider.sh
+
+      - name: Collect repository signals
+        shell: bash
+        run: ./.github/scripts/collect_triage_signals.sh
+
+      - name: Build shared triage prompt
+        shell: bash
+        run: |
+          mkdir -p .ai-runtime
+          cp .github/ai/prompts/triage.md .ai-runtime/triage_prompt.md
+          cat <<EOF >> .ai-runtime/triage_prompt.md
+
+          ## Runtime context
+          - Active provider: ${{ steps.provider.outputs.provider }}
+          - Output file: .ai-runtime/triage_result.json
+          - Signals file: .ai-runtime/triage_signals.md
+          - Today (UTC): $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          EOF
+
+      - name: Load triage prompt for Claude
+        id: triage_prompt
+        shell: bash
+        run: |
+          {
+            echo "prompt<<EOF"
+            cat .ai-runtime/triage_prompt.md
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run Claude triage
+        if: steps.provider.outputs.provider == 'claude'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: ${{ steps.triage_prompt.outputs.prompt }}
+          claude_args: |
+            --max-turns 10
+
+      - name: Validate triage artifacts
+        shell: bash
+        run: |
+          test -f .ai-runtime/triage_result.json
+          if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+            echo "Triage workflow must not modify tracked files." >&2
+            git status --short
+            exit 1
+          fi
+          jq -e '.create_issue | type == "boolean"' .ai-runtime/triage_result.json >/dev/null
+
+      - name: Create autonomous issue
+        if: env.DRY_RUN != 'true'
+        shell: bash
+        env:
+          PROVIDER_LABEL: ${{ steps.provider.outputs.provider_label }}
+        run: |
+          file=".ai-runtime/triage_result.json"
+          create_issue="$(jq -r '.create_issue' "$file")"
+          reason="$(jq -r '.reason // ""' "$file")"
+          if [[ "$create_issue" != "true" ]]; then
+            {
+              echo "No issue created."
+              echo
+              echo "$reason"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          fingerprint="$(jq -r '.fingerprint // ""' "$file")"
+          if [[ -z "$fingerprint" ]]; then
+            echo "triage_result.json must include a fingerprint." >&2
+            exit 1
+          fi
+
+          existing_count="$(gh issue list --state open --search "$fingerprint in:body" --json number --jq 'length')"
+          if [[ "$existing_count" != "0" ]]; then
+            {
+              echo "Skipped duplicate issue."
+              echo
+              echo "- fingerprint: $fingerprint"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          open_auto_count="$(gh issue list --state open --label "source:autonomous" --limit 100 --json number --jq 'length')"
+          if (( open_auto_count >= AUTONOMOUS_ISSUE_LIMIT )); then
+            {
+              echo "Skipped issue creation because the autonomous issue cap is reached."
+              echo
+              echo "- current open autonomous issues: $open_auto_count"
+              echo "- configured cap: $AUTONOMOUS_ISSUE_LIMIT"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          issue_type="$(jq -r '.issue_type // "task"' "$file")"
+          case "$issue_type" in
+            feature|bug|task) ;;
+            *) issue_type="task" ;;
+          esac
+
+          title="$(jq -r '.title' "$file")"
+          target_scope="$(jq -r '.target_scope // "docs/GITHUB_AUTOMATION.md"' "$file")"
+          goal_background="$(jq -r '.goal_background // ""' "$file")"
+
+          jq -r '.success_criteria[]? | "- " + .' "$file" > .ai-runtime/triage-success.txt
+          jq -r '.validation_plan[]? | "- " + .' "$file" > .ai-runtime/triage-validation.txt
+          jq -r '.constraints[]? | "- " + .' "$file" > .ai-runtime/triage-constraints.txt
+          jq -r '.references[]? | "- " + .' "$file" > .ai-runtime/triage-references.txt
+
+          cat <<EOF > .ai-runtime/triage_issue_body.md
+          ## 목표 / 배경
+          $goal_background
+
+          ## 대상 feature 또는 경로
+          $target_scope
+
+          ## 성공 기준
+          $(cat .ai-runtime/triage-success.txt)
+
+          ## 검증 방법
+          $(cat .ai-runtime/triage-validation.txt)
+
+          ## 제약사항
+          $(cat .ai-runtime/triage-constraints.txt)
+
+          ## 참고 로그 / 문서 / 이슈
+          $(cat .ai-runtime/triage-references.txt)
+
+          <!-- ai-fingerprint:$fingerprint -->
+          EOF
+
+          issue_url="$(gh issue create \
+            --title "$title" \
+            --body-file .ai-runtime/triage_issue_body.md \
+            --label "$issue_type" \
+            --label "source:autonomous" \
+            --label "status:ready" \
+            --label "$PROVIDER_LABEL")"
+
+          {
+            echo "Created issue:"
+            echo
+            echo "- $issue_url"
+            echo "- provider: ${{ steps.provider.outputs.provider }}"
+            echo "- fingerprint: $fingerprint"
+          } >> "$GITHUB_STEP_SUMMARY"

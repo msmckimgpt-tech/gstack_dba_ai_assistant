@@ -42,7 +42,7 @@ services:
 
   agent:
     <<: *agent-common
-    networks: [dbnet, llm-shared]
+    networks: [dbnet, llm-shared, replica-net]
 
   memory-init:
     <<: *agent-common
@@ -61,7 +61,7 @@ services:
       AGENT_SESSION: insight_worker
       AGENT_CONVERSATION_ID: __insight_worker__
     entrypoint: ["python", "/app/agent_core.py", "--insight-worker"]
-    networks: [dbnet, llm-shared]
+    networks: [dbnet, llm-shared, replica-net]
     restart: unless-stopped
 
   mcp:
@@ -99,7 +99,7 @@ services:
       - ../artifacts/certs:/certs:ro
     ports:
       - "${WEB_PORT}:8000"
-    networks: [dbnet, llm-shared]
+    networks: [dbnet, llm-shared, replica-net]
 
   caddy:
     image: caddy:2
@@ -140,3 +140,6 @@ networks:
   llm-shared:
     external: true
     name: llm-shared
+  replica-net:
+    external: true
+    name: ${REPLICA_NETWORK_NAME:-replica-net}

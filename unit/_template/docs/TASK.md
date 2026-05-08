@@ -61,3 +61,4 @@ source_of_truth: true
 - [ ] STATUS.md에 기능 상태가 갱신되었다
 - [ ] LEARNINGS.md에 발견된 교훈이 기록되었다 (해당 시)
 - [ ] Git 커밋이 완료되었다
+- [ ] Git 원격 동기화가 완료되었거나 보류 사유가 기록되었다

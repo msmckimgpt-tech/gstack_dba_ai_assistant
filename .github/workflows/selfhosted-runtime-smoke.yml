@@ -1,0 +1,63 @@
+name: Self-hosted Runtime Smoke
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, ready_for_review]
+
+jobs:
+  selfhosted-runtime-smoke:
+    name: selfhosted-runtime-smoke
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 90
+    concurrency:
+      group: selfhosted-runtime-smoke-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+      SESSION_TAG: ghpr_${{ github.event.pull_request.number }}
+    steps:
+      - name: Checkout merge ref
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          fetch-depth: 0
+
+      - name: Fetch base ref
+        shell: bash
+        run: git fetch --no-tags origin "$BASE_REF"
+
+      - name: Classify changed files
+        id: classify
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: ./.github/scripts/classify_changes.sh
+
+      - name: Skip runtime smoke for docs-only PRs
+        if: steps.classify.outputs.docs_only == 'true'
+        shell: bash
+        run: |
+          echo "Docs-only PR: runtime smoke skipped by policy." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Runtime smoke test
+        if: steps.classify.outputs.docs_only != 'true'
+        shell: bash
+        run: |
+          make start
+          make status
+          make ask q="현재 DB 목록 보여줘"
+          make web
+          make browser-up
+          make browser-health
+          if [[ "${ENABLE_MCP:-0}" == "1" ]]; then
+            make mcp-test
+          fi
+
+      - name: Stop stack
+        if: always() && steps.classify.outputs.docs_only != 'true'
+        shell: bash
+        run: |
+          make browser-down >/dev/null 2>&1 || true
+          make stop >/dev/null 2>&1 || true

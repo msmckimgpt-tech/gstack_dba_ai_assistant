@@ -30,6 +30,7 @@ source_of_truth: true
 - `../../../.env`
 - `docker-compose.yml`
 - `Makefile`
+- `../../../scripts/check_replica.sh`
 
 ## 6. Outputs
 - MySQL 컨테이너에 마운트되는 설정 파일
@@ -71,3 +72,9 @@ source_of_truth: true
 
 ## 13. Pre-approved Changes
 - 비파괴적 경로 재배치와 설정 파일 이관
+- AI 전용 복제 MySQL 인스턴스 접속용 env/compose/check 스크립트 추가
+
+## 14. 복제 MySQL 연결 정책 (TASK-0045)
+AI DBA 는 라이브 게임 DB 가 아닌 **AI 전용 복제 인스턴스** 에만 접근한다 (design doc Premise 3). 본 기능은 복제본 자체의 생성·replication 동기화 (binlog/GTID/덤프 주기 등) 는 다루지 않으며, agent 컨테이너가 이미 존재하는 복제본에 도달할 수 있도록 repo 쪽 **런타임 접속 레이어** (compose 네트워크 + env 자리 + smoke check) 만 담당한다. 네이밍은 기존 agent-core 가 `modules/config.py` / `modules/db.py` 에서 사용 중인 `REPLICA_DB_*` 컨벤션 (primary 의 `DB_*` 와 parallel) 을 유지한다.
+
+연결은 두 레이어로 구성된다. (a) **네트워크 레이어**: `docker-compose.yml` 에 external network `replica-net` (기본 이름 `replica-net`, `REPLICA_NETWORK_NAME` env 로 override 가능) 를 선언하고 `agent` / `insight-worker` / `web` 서비스에 연결한다. `Makefile::ensure-replica-network` 가 idempotent 로 네트워크를 보장하므로 복제본을 아직 붙이지 않은 배포에서도 `make up` 이 깨지지 않는다. (b) **자격증명 레이어**: `.env` 의 `REPLICA_DB_HOST` / `REPLICA_DB_PORT` / `REPLICA_DB_USER` / `REPLICA_DB_PASSWORD` / `REPLICA_DB_NAME` 을 통해 agent-core 가 `modules/db.py::connect()` 에서 data-plane 쿼리(`database != MEMORY_DB`) 를 복제 인스턴스로 라우팅한다. 실제 값은 `.env` 또는 docker-compose secret 으로만 주입하고 commit 에 포함하지 않는다. smoke check 는 `make replica-check` (내부적으로 `scripts/check_replica.sh`) 로 agent 컨테이너 안에서 `SELECT 1` 을 수행한다.

@@ -4,6 +4,9 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
+template_version: v3.6.0
+domain: [product, scope]
+ai_read_priority: 2
 ---
 
 # Project
@@ -86,3 +89,39 @@ make build
 ### 8.5 배포
 - AI 자율 배포: 불가 (사람 승인 필요)
 - 배포 절차: 별도 정의 필요
+
+## 9. 빌드 자동화
+
+### 9.1 자동화 도구
+- **Makefile**: 프로젝트 루트 `../Makefile`이 주요 빌드/실행 진입점이다.
+- 주요 명령: `make start`, `make stop`, `make status`, `make build`, `make web`, `make browser-up`
+- 상세 Make 타깃 목록은 `../AGENTS.md` §운영 명령 참조.
+
+### 9.2 서비스 정의
+- **Docker Compose**: `../docker-compose.yml`로 서비스 오케스트레이션
+- 서비스: `mysql`, `agent`, `memory-init`, `insight-worker`, `mcp`(선택)
+- 상세 볼륨/포트 설정은 `../AGENTS.md` §Docker Compose 기준 참조.
+
+## 10. CI/CD 및 자동화
+
+### 10.1 CI/CD 파이프라인
+- GitHub Actions 기반 자동화가 구성되어 있다.
+- 주요 워크플로:
+  - `ai-triage.yml`: 저장소 신호 기반 autonomous issue 생성
+  - `ai-execute.yml`: 실행 가능 이슈를 공개 `issue/*` 브랜치/PR로 전개
+  - `ai-review.yml`: 활성 provider 기반 PR 리뷰
+  - `policy-contract.yml`: 브랜치/PR/커밋/문서-자동화 계약 검증
+  - `owner-agent-report.yml`: provider 및 위험 요약 게시
+  - `selfhosted-runtime-smoke.yml`: self-hosted 런타임 smoke 검증
+
+### 10.2 AI 워크플로 프롬프트
+- `.github/ai/prompts/triage.md`: triage 워크플로 공용 프롬프트
+- `.github/ai/prompts/implement.md`: 이슈 구현 워크플로 공용 프롬프트
+- `.github/ai/prompts/review.md`: PR 리뷰 워크플로 공용 프롬프트
+
+### 10.3 자동화 규칙
+- 자동화 계약 정본: `.github/automation-contract.json`
+- 공개 PR 브랜치: `issue/<번호>-<short-slug>`
+- 내부 병렬 브랜치: `ai/<agent-id>/<issue-number>/<slice>` (로컬/worktree 전용)
+- 커밋 형식: `type(scope): summary (#issue-number)`
+- 자세한 내용은 `../docs/GITHUB_AUTOMATION.md`와 `../CONTRIBUTING.md`를 따른다.

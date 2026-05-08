@@ -29,6 +29,7 @@ from modules.config import (
     DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_CONNECT_DB,
     MEMORY_DB, AGENT_TIMEOUT_SEC, AGENT_MAX_STEPS, AGENT_MAX_SHOW,
     AGENT_LOG_DIR, AGENT_MEMORY_CLEAR_KEEP_IDS,
+    AGENT_OPENAI_MAX_RETRIES,
 )
 from modules.db import connect_with_retry, execute_sql as raw_execute_sql
 from modules.memory import (
@@ -52,7 +53,12 @@ from modules.model_catalog import is_local_llm_model, max_tokens_for_model, mode
 from modules.llm import llm_classify_origin_shift, llm_generate_topic
 from modules.domain import _derive_topic, _should_refresh_origin_request
 from modules.render import normalize_step_result_summary
-from modules.tools import TOOL_DEFINITIONS, execute_tool
+from modules.tools import (
+    TOOL_DEFINITIONS,
+    execute_tool,
+    set_active_schema_allowlist,
+    clear_active_schema_allowlist,
+)
 
 try:
     from openai import OpenAI
@@ -67,23 +73,33 @@ PLACEHOLDER_TOPIC = "새 대화"
 #  시스템 프롬프트
 # ══════════════════════════════════════════════════════════════════
 
-SYSTEM_PROMPT = """You are a MySQL DBA expert assistant.
+SYSTEM_PROMPT = """You are a MySQL DBA expert assistant. Your job is to answer the user's question with data, not to explore.
 
-## RULES
-1. Never fabricate data. Only present data obtained from execute_sql results.
-2. Always use `schema`.`table` format in SQL queries.
-3. You MUST call execute_sql with a meaningful query before giving your final answer.
-4. Table and column names in this database are in English.
+## CRITICAL DIRECTIVE
+**Execute SQL first, explore later (only if needed).** You have a limited step budget. Every search_tables or describe_table call that could have been an execute_sql is a wasted step. When the KNOWN SCHEMAS section below provides candidate tables, write SQL immediately.
 
-## AVAILABLE KNOWLEDGE
-The knowledge section below describes the database schemas and tables.
-Use this information to guide your search and SQL strategy.
+## CORE RULES
+1. Never fabricate data. Only present rows returned by execute_sql.
+2. Always use `schema`.`table` format in SQL.
+3. Your goal is to produce one or a few execute_sql calls that directly answer the question, then write the final answer.
+4. Table and column names are in English. Translate Korean keywords in the user's question to likely English identifiers before acting.
 
-## APPROACH
-- Use search_tables to find relevant tables. Search with English keywords.
-- Use describe_table and get_sample_rows to understand table structure and data format.
-- Write SQL that answers the user's question as precisely as possible.
-- When data tables and config/design tables exist in different schemas, JOIN them for meaningful results.
+## STRATEGY (in priority order)
+1. **Use the KNOWN SCHEMAS & TABLES section below as your primary source.** If it lists tables relevant to the question, go straight to execute_sql against those tables. Do NOT call search_tables when a plausible table is already listed.
+2. **Prefer execute_sql from the start.** A well-formed SELECT against a likely table is more productive than exploration. If your SQL fails with an unknown column/table error, read the error and adjust — do not fall back to broad searching.
+3. **describe_table is only for resolving ambiguity** about columns when execute_sql has failed or when the insight text is too vague to form a correct query. Limit to at most one describe_table per target table per run.
+4. **search_tables is a last resort** — use it only when the knowledge section is empty for the relevant domain. Never call search_tables twice with the same keyword, and never call it after you already have a candidate table.
+5. **get_sample_rows is almost never needed** — only use it when column content format (e.g., JSON structure) cannot be inferred from describe_table.
+
+## IDEAL FLOW EXAMPLE
+User asks about recent orders → KNOWN SCHEMAS lists `ecommerce.orders` → You immediately call execute_sql with `SELECT ... FROM \`ecommerce\`.\`orders\` WHERE ...` → Get data → Write answer. Total: 1 tool call.
+
+## ANTI-PATTERNS (avoid these — each one wastes your limited steps)
+- Chaining search_tables → describe_table → describe_table → ... before any execute_sql. This wastes steps.
+- Re-exploring a table you already described in an earlier step of this run.
+- Calling tools just to "verify" — if you have enough information to write SQL, write it.
+- Using search_tables when KNOWN SCHEMAS already lists relevant tables.
+- Describing a table before attempting execute_sql — try the query first, fix errors after.
 
 ## SQL PATTERNS
 - Cross-schema JOIN:
@@ -92,8 +108,109 @@ Use this information to guide your search and SQL strategy.
   SELECT jt.col, COUNT(*) cnt FROM `s`.`t` CROSS JOIN JSON_TABLE(json_col, '$[*]' COLUMNS(col INT PATH '$.key')) jt GROUP BY jt.col ORDER BY cnt DESC
 
 ## OUTPUT
-Write your final answer in Korean. Use Markdown with tables. Format numbers with commas (1,234,567).
+Once execute_sql has returned the data you need, stop calling tools and write the final answer in Korean Markdown. Format numbers with commas (1,234,567). Use tables when comparing rows.
 """
+
+
+def compose_system_prompt(
+    mem_conn,
+    *,
+    product_id: int | None = None,
+    role_id: int | None = None,
+    account_id: int | None = None,
+    product_mode: str = "pinned",
+) -> str:
+    """Product → Role → Account 순으로 custom 시스템 프롬프트를 base 뒤에 append 한다.
+
+    각 scope 에서 `ProductId` 가 있는(현재 product 한정) prompt 를 우선 사용하고, 없으면
+    `ProductId IS NULL` 의 범용 prompt 를 fallback 으로 쓴다. mem_conn 이 None 이거나 테이블이
+    없으면 base SYSTEM_PROMPT 를 그대로 반환.
+
+    product_mode='auto' 인 경우(사용자가 특정 제품을 고정하지 않은 일반 대화 모드):
+      - PRODUCT CONTEXT 블록은 주입하지 않는다 (제품 한정 가이드가 없으므로 일반 답변 유도).
+      - 대신 한 줄 AUTO MODE 안내를 base 직후에 append 해 LLM 이 "제품 미선택" 상태를 인지하게 한다.
+      - role/account scope prompt 는 ProductId IS NULL 의 범용 prompt 만 사용한다.
+    """
+    if mem_conn is None:
+        return SYSTEM_PROMPT
+    is_auto = str(product_mode or "pinned").lower() == "auto"
+    parts: list[str] = [SYSTEM_PROMPT]
+    if is_auto:
+        parts.append(
+            "\n\n[AUTO MODE] No product is pinned to this conversation. "
+            "Answer generally; if product-specific data is required, ask the user to pick a 제품 first.\n"
+        )
+    try:
+        cur = mem_conn.cursor()
+    except Exception:
+        return SYSTEM_PROMPT
+
+    def _fetch(scope: str, scope_col: str, scope_val: int | None) -> tuple[str, str]:
+        """해당 scope 의 prompt 와 표시용 label 을 반환. 없으면 ('','')."""
+        if scope_val is None or scope_val <= 0:
+            return ("", "")
+        try:
+            # auto 모드는 product 한정 prompt 를 건너뛰고 곧장 ProductId IS NULL fallback 만 사용한다.
+            if (not is_auto) and product_id and product_id > 0:
+                cur.execute(
+                    f"SELECT Content FROM WebSystemPrompts "
+                    f"WHERE Scope=%s AND {scope_col}=%s AND ProductId=%s LIMIT 1",
+                    (scope, int(scope_val), int(product_id)),
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    return (str(row[0]), f"ProductId={product_id}")
+            cur.execute(
+                f"SELECT Content FROM WebSystemPrompts "
+                f"WHERE Scope=%s AND {scope_col}=%s AND ProductId IS NULL LIMIT 1",
+                (scope, int(scope_val)),
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                return (str(row[0]), "all products")
+        except Exception:
+            return ("", "")
+        return ("", "")
+
+    # Product-scope prompt (1건만) — auto 모드에서는 건너뛴다 (사용자가 제품을 고정하지 않은 상태).
+    product_label = ""
+    if (not is_auto) and product_id and product_id > 0:
+        try:
+            cur.execute("SELECT ProductKey FROM WebProducts WHERE Id=%s LIMIT 1", (int(product_id),))
+            row = cur.fetchone()
+            product_label = str(row[0]) if row and row[0] else str(product_id)
+            cur.execute(
+                "SELECT Content FROM WebSystemPrompts WHERE Scope='product' AND ProductId=%s LIMIT 1",
+                (int(product_id),),
+            )
+            prow = cur.fetchone()
+            if prow and prow[0]:
+                parts.append(f"\n\n## PRODUCT CONTEXT ({product_label})\n{str(prow[0]).strip()}\n")
+        except Exception:
+            pass
+
+    # Role-scope prompt
+    role_content, _ = _fetch("role", "RoleId", role_id)
+    if role_content:
+        role_label = ""
+        try:
+            cur.execute("SELECT RoleKey FROM WebRoles WHERE Id=%s LIMIT 1", (int(role_id or 0),))
+            row = cur.fetchone()
+            role_label = str(row[0]) if row and row[0] else str(role_id)
+        except Exception:
+            pass
+        parts.append(f"\n\n## ROLE GUIDANCE ({role_label})\n{role_content.strip()}\n")
+
+    # Account-scope prompt
+    account_content, _ = _fetch("account", "AccountId", account_id)
+    if account_content:
+        parts.append(f"\n\n## ACCOUNT PREFERENCES\n{account_content.strip()}\n")
+
+    try:
+        cur.close()
+    except Exception:
+        pass
+    return "".join(parts)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -220,14 +337,23 @@ def _load_relevant_table_insights(mem_conn, user_message: str, max_items: int = 
 
 
 def _build_knowledge_context(mem_conn, user_message: str, history: list[dict]) -> str:
-    """DB 지식(스키마 목록 + 관련 테이블 인사이트)을 구성한다."""
-    parts = []
+    """DB 지식(스키마 목록 + 관련 테이블 인사이트)을 구성한다.
+
+    LLM이 이 섹션을 "authoritative"로 받아들이도록 헤더를 명시하고,
+    관련 table_insight가 발견되면 곧바로 execute_sql로 진행하라는 힌트를 덧붙인다.
+    """
+    parts: list[str] = []
     schema_list = _load_schema_list(mem_conn)
     if schema_list:
+        # 헤더를 "authoritative"로 격상하여 LLM이 여기부터 참조하도록 유도
+        parts.append("## KNOWN SCHEMAS & TABLES (authoritative — prefer these over tool-based discovery)")
         parts.append(schema_list)
     table_insights = _load_relevant_table_insights(mem_conn, user_message)
     if table_insights:
-        parts.append("\n## Relevant table insights:\n" + table_insights)
+        parts.append("\n## RELEVANT TABLES FOR THIS QUESTION")
+        parts.append("Candidate tables already matched to the user's keywords. "
+                     "Start with execute_sql against one of these instead of search_tables.")
+        parts.append(table_insights)
     return "\n\n" + "\n".join(parts) + "\n" if parts else ""
 
 
@@ -922,6 +1048,48 @@ def run_agent(
     api_key: str | None = None,
     temperature: float | None = None,
     output_mode: str = "console",  # "console" or "json"
+    *,
+    product_id: int | None = None,
+    role_id: int | None = None,
+    account_id: int | None = None,
+    allowed_schemas: list[str] | None = None,
+    product_mode: str = "pinned",
+) -> dict[str, Any]:
+    """Product whitelist 를 설정한 뒤 실제 에이전트 루프를 호출하는 얇은 래퍼."""
+    set_active_schema_allowlist(allowed_schemas)
+    try:
+        return _run_agent_core(
+            user_message,
+            conversation_id=conversation_id,
+            conv_file=conv_file,
+            max_steps=max_steps,
+            model=model,
+            api_key=api_key,
+            temperature=temperature,
+            output_mode=output_mode,
+            product_id=product_id,
+            role_id=role_id,
+            account_id=account_id,
+            product_mode=product_mode,
+        )
+    finally:
+        clear_active_schema_allowlist()
+
+
+def _run_agent_core(
+    user_message: str,
+    conversation_id: str | None = None,
+    conv_file: str | None = None,
+    max_steps: int | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
+    temperature: float | None = None,
+    output_mode: str = "console",
+    *,
+    product_id: int | None = None,
+    role_id: int | None = None,
+    account_id: int | None = None,
+    product_mode: str = "pinned",
 ) -> dict[str, Any]:
     """에이전트 메인 루프.
 
@@ -934,6 +1102,8 @@ def run_agent(
         api_key: OpenAI API 키
         temperature: legacy 입력값. 현재는 내부 규칙으로만 처리
         output_mode: "console"이면 Rich 출력, "json"이면 결과 딕셔너리만 반환
+        product_id/role_id/account_id: 시스템 프롬프트 depth 조립에 사용되는 현재 컨텍스트 식별자
+        allowed_schemas: None 이면 whitelist 미적용, list 이면 해당 스키마만 도구가 접근 허용
 
     Returns:
         {"answer": str, "conversation_id": str, "steps": list, "sql": str, "error": str}
@@ -978,7 +1148,11 @@ def run_agent(
         # OPENAI_API_BASE가 별도로 설정된 경우(프록시 등)만 base_url 지정
         if OPENAI_API_BASE:
             client_kwargs["base_url"] = OPENAI_API_BASE
-    client = OpenAI(**client_kwargs)
+    client = OpenAI(
+        **client_kwargs,
+        timeout=max(5, int(AGENT_TIMEOUT_SEC)),
+        max_retries=max(0, int(AGENT_OPENAI_MAX_RETRIES)),
+    )
 
     # ── 대화 ID 관리 ──
     cid = conversation_id or _get_conversation_id(conv_file)
@@ -1068,7 +1242,16 @@ def run_agent(
         pass
 
     # ── LLM 메시지 구성 ──
-    system_content = SYSTEM_PROMPT
+    try:
+        system_content = compose_system_prompt(
+            mem_conn,
+            product_id=product_id,
+            role_id=role_id,
+            account_id=account_id,
+            product_mode=product_mode,
+        )
+    except Exception:
+        system_content = SYSTEM_PROMPT
     # Inject conversation context (origin_request + thread_goal)
     if prev_origin or thread_goal:
         ctx_parts: list[str] = []

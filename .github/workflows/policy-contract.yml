@@ -1,0 +1,109 @@
+name: Policy Contract
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled, ready_for_review]
+
+jobs:
+  policy-contract:
+    name: policy-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      PR_BODY: ${{ github.event.pull_request.body }}
+      BRANCH_NAME: ${{ github.head_ref }}
+    steps:
+      - name: Checkout merge ref
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          fetch-depth: 0
+
+      - name: Fetch base ref
+        shell: bash
+        run: git fetch --no-tags origin "$BASE_REF"
+
+      - name: Validate automation contract
+        shell: bash
+        run: ./.github/scripts/validate_automation_contract.sh
+
+      - name: Classify changed files
+        id: classify
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: ./.github/scripts/classify_changes.sh
+
+      - name: Validate branch, PR title, and linked issue
+        shell: bash
+        run: |
+          branch_regex="$(jq -r '.branches.public_pr_regex' .github/automation-contract.json)"
+          pr_title_regex="$(jq -r '.pull_requests.title_regex' .github/automation-contract.json)"
+          closing_regex="$(jq -r '.pull_requests.closing_reference_regex' .github/automation-contract.json)"
+
+          if [[ ! "$BRANCH_NAME" =~ $branch_regex ]]; then
+            echo "Invalid branch name: $BRANCH_NAME" >&2
+            exit 1
+          fi
+
+          if [[ ! "$PR_TITLE" =~ $pr_title_regex ]]; then
+            echo "Invalid PR title: $PR_TITLE" >&2
+            exit 1
+          fi
+
+          branch_issue="${BRANCH_NAME#issue/}"
+          branch_issue="${branch_issue%%-*}"
+          title_issue="$(sed -E 's/^#([0-9]+).*/\1/' <<<"$PR_TITLE")"
+
+          if [[ "$branch_issue" != "$title_issue" ]]; then
+            echo "Branch issue number and PR title issue number must match." >&2
+            exit 1
+          fi
+
+          if ! grep -Eq "$closing_regex" <<<"$PR_BODY"; then
+            echo "PR body must include 'closes #<issue>'." >&2
+            exit 1
+          fi
+
+      - name: Validate commit subjects
+        shell: bash
+        run: |
+          subject_regex="$(jq -r '.commits.subject_regex' .github/automation-contract.json)"
+          invalid_subjects="$(git log --format='%s' "origin/$BASE_REF..HEAD" | grep -Ev '^(Merge |Revert )' | grep -Ev "$subject_regex" || true)"
+
+          if [[ -n "$invalid_subjects" ]]; then
+            echo "Commit subjects do not satisfy the automation contract." >&2
+            printf '%s\n' "$invalid_subjects" >&2
+            exit 1
+          fi
+
+      - name: Validate tracked local-only files are excluded
+        shell: bash
+        run: |
+          changed_files="$(git diff --name-only "origin/$BASE_REF...HEAD")"
+          if grep -Eq '^\.env$' <<<"$changed_files"; then
+            echo ".env must not be committed." >&2
+            exit 1
+          fi
+
+      - name: Apply risk and auto-merge labels
+        shell: bash
+        run: |
+          if [[ "${{ steps.classify.outputs.risk_manual }}" == "true" ]]; then
+            gh pr edit "$PR_NUMBER" --add-label "risk:manual"
+            gh pr edit "$PR_NUMBER" --remove-label "automerge:candidate" >/dev/null 2>&1 || true
+            echo "Sensitive paths changed. Auto-merge disabled." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          gh pr edit "$PR_NUMBER" --add-label "automerge:candidate"
+          gh pr merge "$PR_NUMBER" --auto --squash >/dev/null 2>&1 || true
+          echo "Auto-merge candidate confirmed." >> "$GITHUB_STEP_SUMMARY"

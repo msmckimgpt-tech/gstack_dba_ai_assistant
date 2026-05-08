@@ -1,8 +1,10 @@
 name: 기능 요청
-description: 새 기능이나 구조 개선 작업을 Codex 작업 단위로 정의합니다.
+description: 새 기능이나 구조 개선 작업을 AI 작업 단위로 정의합니다.
 title: "[Feature] "
 labels:
   - feature
+  - source:human
+  - status:ready
 body:
   - type: textarea
     id: goal_background
@@ -37,7 +39,7 @@ body:
     id: validation_plan
     attributes:
       label: 검증 방법
-      description: `make` 명령, 수동 시나리오, 로그 확인 기준을 적어주세요.
+      description: "`make` 명령, 수동 시나리오, 로그 확인 기준을 적어주세요."
       placeholder: |
         - make status
         - make ask q="..."
@@ -69,4 +71,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Codex 작업 시 브랜치 이름은 `issue/<번호>-<short-slug>` 규칙을 사용합니다.
+        기본 provider는 저장소 변수 `AI_PROVIDER_DEFAULT`를 따릅니다.
+        현재 지원 provider 는 `claude` 하나이며, 명시하려면 `agent:claude` 라벨을 추가하세요.
+        이 템플릿은 `status:ready`를 기본값으로 붙이지만, 자동화의 필수 gate는 아닙니다.
+        브랜치 이름은 `issue/<번호>-<short-slug>` 규칙을 사용합니다.

@@ -1,523 +1,2459 @@
-const promptBox = document.getElementById("prompt");
-const sessionIdEl = document.getElementById("sessionId");
-const convIdEl = document.getElementById("conversationId");
-const lastDurationEl = document.getElementById("lastDuration");
-const conversationCountEl = document.getElementById("conversationCount");
-const conversationStatsEl = document.getElementById("conversationStats");
-const jumpTimeEl = document.getElementById("jumpTime");
-const jumpBtn = document.getElementById("jumpBtn");
-const jumpLatestBtn = document.getElementById("jumpLatest");
-const scrollLatestBtn = document.getElementById("scrollLatestBtn");
-const jumpCalBtn = document.getElementById("jumpCalBtn");
-const jumpCalPanel = document.getElementById("jumpCalPanel");
-const jumpCalGrid = document.getElementById("jumpCalGrid");
-const jumpCalTitle = document.getElementById("jumpCalTitle");
-const jumpCalPrev = document.getElementById("jumpCalPrev");
-const jumpCalNext = document.getElementById("jumpCalNext");
-const jumpCalTimes = document.getElementById("jumpCalTimes");
-const jumpCalTimesList = document.getElementById("jumpCalTimesList");
+const authOverlayEl = document.getElementById("authOverlay");
+const loginFormEl = document.getElementById("loginForm");
+const signupFormEl = document.getElementById("signupForm");
+const loginErrorEl = document.getElementById("loginError");
+const signupErrorEl = document.getElementById("signupError");
+const openAdminBtn = document.getElementById("openAdminBtn");
+const vaultModelEl = document.getElementById("vaultModel");
+const vaultCipherEl = document.getElementById("vaultCipher");
+const vaultPassphraseEl = document.getElementById("vaultPassphrase");
+const vaultPlainKeyEl = document.getElementById("vaultPlainKey");
+const saveVaultBtn = document.getElementById("saveVaultBtn");
+const clearVaultBtn = document.getElementById("clearVaultBtn");
+const vaultStatusEl = document.getElementById("vaultStatus");
+const vaultBannerEl = document.getElementById("vaultBanner");
+const vaultBannerTextEl = document.getElementById("vaultBannerText");
+const vaultSavedCardEl = document.getElementById("vaultSavedCard");
+const vaultSavedMetaEl = document.getElementById("vaultSavedMeta");
+const vaultDangerZoneEl = document.getElementById("vaultDangerZone");
+const vaultImportCipherBtn = document.getElementById("vaultImportCipherBtn");
+const vaultStepEls = Array.from(document.querySelectorAll("[data-step]"));
+
+// Sidebar profile trigger
+const profileAvatarEl = document.getElementById("profileAvatar");
+const profileNameEl = document.getElementById("profileName");
+const profileRoleEl = document.getElementById("profileRole");
+const openProfileBtn = document.getElementById("openProfileBtn");
+
+// Profile drawer
+const profileBackdropEl = document.getElementById("profileBackdrop");
+const profileDrawerEl = document.getElementById("profileDrawer");
+const closeProfileBtn = document.getElementById("closeProfileBtn");
+const profileAvatarLgEl = document.getElementById("profileAvatarLg");
+const profileSummaryNameEl = document.getElementById("profileSummaryName");
+const profileSummaryMetaEl = document.getElementById("profileSummaryMeta");
+const profilePermPillsEl = document.getElementById("profilePermPills");
+const profileStateNoteEl = document.getElementById("profileStateNote");
+const profileCreatedAtEl = document.getElementById("profileCreatedAt");
+const profileLastLoginEl = document.getElementById("profileLastLogin");
+const profileApprovedAtEl = document.getElementById("profileApprovedAt");
+const passwordChangeFormEl = document.getElementById("passwordChangeForm");
+const passwordErrorEl = document.getElementById("passwordError");
+const logoutBtn = document.getElementById("logoutBtn");
+
 const conversationListEl = document.getElementById("conversationList");
-const chatLogEl = document.getElementById("chatLog");
-const timelineEl = document.getElementById("chatTimeline");
-const runHudEl = document.getElementById("runHud");
-const layoutEl = document.querySelector(".layout");
-const sideEl = document.querySelector(".side");
-const sideToggleEl = document.getElementById("sideToggle");
-const toolsToggleEl = document.getElementById("toolsToggle");
-const domainBadgeEl = document.getElementById("domainBadge");
-const strategyBadgeEl = document.getElementById("strategyBadge");
-const toolsDrawerEl = document.getElementById("toolsDrawer");
-const toolsCloseEl = document.getElementById("toolsClose");
-const apiPanelEl = document.getElementById("apiPanel");
-const apiToggleEl = document.getElementById("apiToggle");
-const csvPagerDockEl = document.getElementById("csvPagerDock");
-const csvPagerPanelEl = document.getElementById("csvPagerPanel");
-const apiKeyEncEl = document.getElementById("apiKeyEnc");
-const apiKeyPassEl = document.getElementById("apiKeyPass");
-const apiModelEl = document.getElementById("apiModel");
-const apiModelHintEl = document.getElementById("apiModelHint");
-const apiStatusEl = document.getElementById("apiStatus");
-const apiKeyPlainEl = document.getElementById("apiKeyPlain");
-const apiValidationEl = document.getElementById("apiValidation");
-const apiHistoryEl = document.getElementById("apiHistory");
-const apiSaveBtn = document.getElementById("apiSave");
-const apiClearBtn = document.getElementById("apiClear");
-const apiEncryptBtn = document.getElementById("apiEncrypt");
-const apiSecureHintEl = document.getElementById("apiSecureHint");
-/* 제거된 UI: followup 의도/제약, 전송문 미리보기 — null로 유지하여 기존 가드 호환 */
-const followupIntentEl = null;
-const followupConstraintsEl = null;
-const followupClearEl = null;
-const followupApplyOnceEl = null;
-const followupLiveEl = null;
-const followupAutoInjectEl = null;
-const sendPreviewBoxEl = null;
-const sendPreviewMetaEl = null;
-const sendPreviewTextEl = null;
-const dangerModalEl = document.getElementById("dangerModal");
-const dangerModalTitleEl = document.getElementById("dangerModalTitle");
-const dangerModalTextEl = document.getElementById("dangerModalText");
-const dangerModalLabelEl = document.getElementById("dangerModalLabel");
-const dangerModalInputEl = document.getElementById("dangerModalInput");
-const dangerModalConfirmEl = document.getElementById("dangerModalConfirm");
-const dangerModalCancelEl = document.getElementById("dangerModalCancel");
-const dangerModalCloseEl = document.getElementById("dangerModalClose");
-const restoreModePanelEl = document.getElementById("restoreModePanel");
-const restoreModeFileEl = document.getElementById("restoreModeFile");
-const restoreContinueBtnEl = document.getElementById("restoreContinueBtn");
-const restoreModeClearBtnEl = document.getElementById("restoreModeClearBtn");
-const domainDriftPanelEl = document.getElementById("domainDriftPanel");
-const domainDriftTextEl = document.getElementById("domainDriftText");
-const domainDriftRevertBtnEl = document.getElementById("domainDriftRevert");
-const domainDriftCloseBtnEl = document.getElementById("domainDriftClose");
-/* 제거된 UI: 지연 Top3 단계 패널 */
-const timingPanelEl = null;
-const timingMetaEl = null;
-const timingListEl = null;
-const HISTORY_PAGE_SIZE = 10;
-const STATUS_POLL_MS = 2000;
-const CHAT_POLL_MS = 3000;
-const CONV_POLL_MS = 5000;
-const HUD_TICK_MS = 1000;
-const TOAST_DURATION_MS = 1800;
-let historyLoading = false;
-let historyExhausted = false;
-let historyOldestId = null;
-let historyMoreAvailable = false;
-let activeConversationId = "";
-let lastRenderedMessageId = null;
-let lastRenderedSignature = null;
-let activeChatPoller = null;
-let activeHudTicker = null;
-let currentHistoryMessages = [];
-let conversationTotalCount = 0;
-const conversationState = new Map();
-const conversationPollers = new Map();
-const conversationPollCounts = new Map();
-const cancelOverrideUntil = new Map();
-let modalCopyText = "";
-let toastTimer = null;
-let dangerModalResolver = null;
-let dangerModalReturnFocusEl = null;
-let followupManualEdit = false;
-let followupApplyArmed = false;
-let followupContextConversationId = "";
-let currentDomainHint = "";
-let currentStrategyHint = "";
-let pinnedDomainHint = "";
-let pinnedStrategyHint = "";
-let localLlmEnabled = false;
-let localLlmDefaultModel = "auto";
-const recentDurationsMs = [];
-const SUGGESTION_CACHE_KEY = "mysql_ai_suggestions_v1";
-const SUGGESTION_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
-const API_KEY_CACHE_KEY = "mysql_ai_api_key_v3";
-const API_KEY_CACHE_LEGACY_KEYS = ["mysql_ai_api_key_v2", "mysql_ai_api_key_v1"];
-const API_KEY_HISTORY_KEY = "mysql_ai_api_key_history_v1";
-const API_KEY_HISTORY_MAX = 5;
-const PINNED_CONTEXT_KEY = "mysql_ai_pinned_context_v1";
-const CANCEL_OVERRIDE_MS = 12000;
-const TIMING_LOG_PATH = "/shared/logs/timing.log";
-const TIMING_LOG_MAX_BYTES = 262144;
-const TIMING_PANEL_REFRESH_MS = 7000;
-const RECOVERY_FLOW_STEPS = ["오류 감지", "후보 탐색", "검증", "재실행", "결론"];
-const FALLBACK_API_VAULT_OPTIONS = {
-  default_model: "gpt-5.4-nano",
-  public_host: "localhost",
-  public_url: "https://localhost",
-  requires_secure_context: true,
-  models: [
-    {
-      value: "gpt-5.4",
-      label: "gpt-5.4",
-      group: "GPT-5",
-      description: "최신 GPT-5 base 모델",
-    },
-    {
-      value: "gpt-5-mini",
-      label: "gpt-5-mini",
-      group: "GPT-5",
-      description: "최신 가용 mini alias",
-    },
-    {
-      value: "gpt-5-nano",
-      label: "gpt-5-nano",
-      group: "GPT-5",
-      description: "최신 가용 nano alias",
-    },
-    {
-      value: "gpt-5.3-codex",
-      label: "gpt-5.3-codex",
-      group: "GPT-5",
-      description: "최신 numbered codex 모델",
-    },
-    {
-      value: "gpt-5.3-chat-latest",
-      label: "gpt-5.3-chat-latest",
-      group: "GPT-5",
-      description: "최신 numbered chat-latest 모델",
-    },
-  ],
+const newConversationBtn = document.getElementById("newConversationBtn");
+const conversationTitleEl = document.getElementById("conversationTitle");
+const conversationSubtitleEl = document.getElementById("conversationSubtitle");
+const accessNoticeEl = document.getElementById("accessNotice");
+const progressCardEl = document.getElementById("progressCard");
+const progressTitleEl = document.getElementById("progressTitle");
+const progressStatusEl = document.getElementById("progressStatus");
+const progressStepsEl = document.getElementById("progressSteps");
+const progressSummaryEl = document.getElementById("progressSummary");
+const messageLogEl = document.getElementById("messageLog");
+const loadMoreBtn = document.getElementById("loadMoreBtn");
+const renameConversationBtn = document.getElementById("renameConversationBtn");
+const cancelBtn = document.getElementById("cancelBtn");
+const finalizeBtn = document.getElementById("finalizeBtn");
+const deleteConversationBtn = document.getElementById("deleteConversationBtn");
+const forkConversationBtn = document.getElementById("forkConversationBtn");
+const composerTitleEl = document.getElementById("composerTitle");
+const composerHintEl = document.getElementById("composerHint");
+const promptInputEl = document.getElementById("promptInput");
+const sendBtn = document.getElementById("sendBtn");
+const toastEl = document.getElementById("toast");
+
+const STORAGE_KEYS = {
+  cipher: "mysql_ai_vault_cipher_v1",
+  model: "mysql_ai_vault_model_v1",
+  passphrase: "mysql_ai_vault_passphrase_v1",
 };
-let apiVaultOptions = FALLBACK_API_VAULT_OPTIONS;
-const csvPreviewState = {
-  paths: [],
-  index: 0,
-  loading: false,
-  steps: [],
-  scrollTop: 0,
-  rowLimit: 50,
-  sortIndex: null,
-  sortDir: 1,
-  rawRows: null,
+
+const PROGRESS_FETCH_TIMEOUT_MS = 4000;
+const PROGRESS_POLL_ACTIVE_MS = 1200;
+const PROGRESS_POLL_IDLE_MS = 3000;
+const PROGRESS_POLL_HIDDEN_MS = 10000;
+const PROGRESS_POLL_ERROR_MS = 8000;
+
+// TASK-0041: 클라이언트 타임아웃 시 attach/resume 파라미터
+const ASK_ATTACH_POLL_WAIT_SEC = 45;
+const ASK_ATTACH_MAX_TOTAL_SEC = 1800;
+
+const state = {
+  user: null,
+  session: null,
+  conversations: [],
+  activeConversationId: "",
+  messages: [],
+  hasMoreHistory: false,
+  nextBeforeId: null,
+  // 대화별 요청 진행 여부 — 전역 busy 대신 대화 ID Set으로 관리하여 병렬 대화 허용
+  busyConversations: new Set(),
+  localLlmEnabled: false,
+  apiVaultOptions: null,
+  progressPoller: null,
+  progressPollInFlight: false,
+  progressPollSeq: 0,
+  progressAbortController: null,
+  progressRunId: "",
+  progressAfterStep: 0,
+  progressErrorCount: 0,
+  progressSteps: [],
+  toastTimer: null,
+  // TASK-0047: 제품 컨텍스트 (대화 단위) state.
+  // - productMode: 사용자 의도. 'auto' = 일반 대화, 'pinned' = 특정 제품 고정.
+  // - pinnedProductId: pinned 일 때만 의미 있음.
+  // - activeProductId: 서버가 마지막으로 확정한 제품 (read-only mirror, auto resolver 가 도입되면 LLM 추론 결과 캐시).
+  productMode: "auto",
+  pinnedProductId: null,
+  activeProductId: null,
+  // TASK-0048: "새 대화" 버튼은 즉시 backend row 를 만들지 않는다. client-side 만 pending 상태로 진입했다가
+  // 첫 메시지 전송 시 /api/ask 가 lazy 생성한다. cid 가 없는 동안의 busy/sentinel 식별자.
+  pendingNewConversation: false,
 };
-const sqlResultModalState = {
-  open: false,
-  sql: "",
-  returnTarget: null,
+
+const PENDING_CONV_SENTINEL = "__pending__";
+
+const PRODUCT_PREF_LS_KEY = "mad.productPref.v1";
+
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "misc"];
+const PERMISSION_GROUP_LABELS = {
+  console: "관리 콘솔",
+  account: "계정",
+  role: "역할",
+  conversation: "대화",
+  misc: "기타",
 };
-const MISSING_CSV_TOAST = "저장된 CSV 파일이 없습니다.";
-const ASSISTANT_PLAIN_TEXT_HINT_RE = /(오류|error|실패|not\s+found|unknown|mcp|syntax|중단|자동\s*복구|취소)/i;
-let markdownRenderer = null;
-const restoreModeState = {
-  active: false,
-  file_path: "",
-  conversation_id: "",
+
+function permissionGroupOf(code = "") {
+  const head = String(code || "").split(".", 1)[0] || "misc";
+  return PERMISSION_GROUP_LABELS[head] ? head : "misc";
+}
+
+const PERMISSION_LABELS = {
+  "console.access": "관리 콘솔 접근",
+  "console.manage": "관리 콘솔 수정",
+  "account.read": "계정 조회",
+  "account.update": "계정 수정",
+  "account.delete": "계정 삭제",
+  "account.activate": "계정 활성화",
+  "account.deactivate": "계정 비활성화",
+  "account.role.assign": "역할 부여",
+  "account.permission.override.manage": "권한 override 관리",
+  "role.read": "역할 조회",
+  "role.create": "역할 생성",
+  "role.update": "역할 수정",
+  "role.delete": "역할 삭제",
+  "role.permission.manage": "역할 권한 배치",
+  "conversation.create": "대화 생성",
+  "conversation.ask": "대화 요청 실행",
+  "conversation.suggestions.read": "질문 제안 조회",
+  "conversation.list.own": "내 대화 목록 조회",
+  "conversation.list.any": "전체 대화 목록 조회",
+  "conversation.read.own": "내 대화 내용 조회",
+  "conversation.read.any": "전체 대화 내용 조회",
+  "conversation.file.read.own": "내 대화 파일 조회",
+  "conversation.file.read.any": "전체 대화 파일 조회",
+  "conversation.rename.own": "내 대화 제목 변경",
+  "conversation.rename.any": "전체 대화 제목 변경",
+  "conversation.delete.own": "내 대화 삭제",
+  "conversation.delete.any": "전체 대화 삭제",
+  "conversation.cancel.own": "내 대화 중단",
+  "conversation.cancel.any": "전체 대화 중단",
+  "conversation.finalize.own": "내 대화 즉시답변",
+  "conversation.finalize.any": "전체 대화 즉시답변",
 };
-let domainDriftDismissedKey = "";
-let timingPanelLastFetchAt = 0;
-let timingPanelLastKey = "";
 
-function hasMarkdownRuntime() {
-  return Boolean(window.marked && window.DOMPurify);
+const PERMISSION_DESCRIPTIONS = {
+  "console.access": "좌측 상단의 관리 콘솔 링크로 진입할 수 있는 권한입니다. (조회 전용)",
+  "console.manage": "관리 콘솔에서 누적된 pending 변경 사항을 서버에 일괄 적용(커밋)할 수 있는 권한입니다.",
+  "account.read": "관리 콘솔에서 다른 사용자의 계정 목록과 상세 정보를 조회할 수 있는 권한입니다.",
+  "account.update": "다른 사용자의 활성 상태, 역할 등 기본 계정 속성을 수정할 수 있는 권한입니다.",
+  "account.delete": "계정을 비활성/삭제 처리할 수 있는 권한입니다. (soft delete)",
+  "account.activate": "비활성 상태인 계정을 다시 활성으로 전환할 수 있는 권한입니다.",
+  "account.deactivate": "활성 상태인 계정을 비활성으로 전환할 수 있는 권한입니다.",
+  "account.role.assign": "다른 사용자에게 역할(Role)을 부여하거나 변경할 수 있는 권한입니다.",
+  "account.permission.override.manage": "역할이 제공하는 기본 권한을 특정 계정 단위로 허용/거부 override 할 수 있는 권한입니다.",
+  "role.read": "역할(Role) 목록과 각 역할의 권한 구성을 조회할 수 있는 권한입니다.",
+  "role.create": "새로운 역할을 생성할 수 있는 권한입니다.",
+  "role.update": "기존 역할의 이름·설명·활성 여부·기본 가입 역할 여부를 수정할 수 있는 권한입니다.",
+  "role.delete": "역할을 삭제할 수 있는 권한입니다. (해당 역할을 쓰는 계정이 있으면 관리 콘솔에서 거부됩니다)",
+  "role.permission.manage": "역할에 묶인 권한 셋을 허용/해제할 수 있는 권한입니다.",
+  "conversation.create": "사이드바의 \"새 대화\" 버튼으로 새로운 대화 세션을 시작할 수 있는 권한입니다.",
+  "conversation.ask": "선택한 대화에 질문(요청) 메시지를 보내 에이전트 실행을 트리거할 수 있는 권한입니다.",
+  "conversation.suggestions.read": "대화 입력창에서 제안된 예시 질문을 조회할 수 있는 권한입니다.",
+  "conversation.list.own": "자신이 소유한 대화 목록을 사이드바에서 볼 수 있는 권한입니다.",
+  "conversation.list.any": "다른 사용자가 소유한 대화까지 포함해 전체 대화 목록을 볼 수 있는 권한입니다.",
+  "conversation.read.own": "자신이 소유한 대화의 메시지 이력과 실행 결과를 열람할 수 있는 권한입니다.",
+  "conversation.read.any": "타 사용자 소유 대화의 메시지 이력과 실행 결과까지 열람할 수 있는 권한입니다.",
+  "conversation.file.read.own": "자신이 소유한 대화에서 생성된 CSV 등 첨부 파일을 다운로드할 수 있는 권한입니다.",
+  "conversation.file.read.any": "타 사용자 소유 대화의 CSV 등 첨부 파일까지 다운로드할 수 있는 권한입니다.",
+  "conversation.rename.own": "자신이 소유한 대화의 제목을 변경할 수 있는 권한입니다.",
+  "conversation.rename.any": "타 사용자가 소유한 대화의 제목까지 변경할 수 있는 권한입니다.",
+  "conversation.delete.own": "자신이 소유한 대화를 삭제할 수 있는 권한입니다.",
+  "conversation.delete.any": "타 사용자가 소유한 대화까지 삭제할 수 있는 권한입니다.",
+  "conversation.cancel.own": "자신이 소유한 대화에서 진행 중인 요청을 중단시킬 수 있는 권한입니다.",
+  "conversation.cancel.any": "타 사용자 소유 대화의 진행 중 요청까지 중단시킬 수 있는 권한입니다.",
+  "conversation.finalize.own": "자신이 소유한 대화에서 추가 탐색을 멈추고 현재까지의 정보로 즉시 답변을 만들게 할 수 있는 권한입니다.",
+  "conversation.finalize.any": "타 사용자 소유 대화까지 포함해 즉시 답변을 강제할 수 있는 권한입니다.",
+};
+
+function describePermission(code = "") {
+  return PERMISSION_DESCRIPTIONS[code] || "권한 설명이 등록되어 있지 않습니다.";
 }
 
-function getMarkdownRenderer() {
-  if (markdownRenderer || !window.marked || !window.marked.Renderer) {
-    return markdownRenderer;
+// 동작(action)을 실행하기 위해 필요한 "대안 권한 코드" 집합을 반환한다.
+// any/own 이원화된 항목은 현재 대화가 본인 소유인지에 따라 own 까지 후보로 포함한다.
+function requiredPermissionsFor(action, conversation = currentConversation()) {
+  const own = conversation ? isOwnConversation(conversation) : false;
+  switch (action) {
+    case "conversation.ask":
+      return { label: "대화 요청 실행", codes: ["conversation.ask"] };
+    case "conversation.create":
+      return { label: "새 대화 생성", codes: ["conversation.create"] };
+    case "conversation.rename":
+      return { label: "대화 제목 변경", codes: own ? ["conversation.rename.any", "conversation.rename.own"] : ["conversation.rename.any"] };
+    case "conversation.delete":
+      return { label: "대화 삭제", codes: own ? ["conversation.delete.any", "conversation.delete.own"] : ["conversation.delete.any"] };
+    case "conversation.cancel":
+      return { label: "대화 중단", codes: own ? ["conversation.cancel.any", "conversation.cancel.own"] : ["conversation.cancel.any"] };
+    case "conversation.finalize":
+      return { label: "즉시 답변", codes: own ? ["conversation.finalize.any", "conversation.finalize.own"] : ["conversation.finalize.any"] };
+    default:
+      return { label: action, codes: [] };
   }
-  markdownRenderer = new window.marked.Renderer();
-  markdownRenderer.html = () => "";
-  return markdownRenderer;
 }
 
-function extractPlainTextFromHtml(html = "") {
-  const wrap = document.createElement("div");
-  wrap.innerHTML = String(html || "");
-  return String(wrap.innerText || wrap.textContent || "")
-    .replace(/\u00a0/g, " ")
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+function hasAnyPermission(codes = []) {
+  return codes.some((c) => can(c));
 }
 
-function sanitizeRawMarkdownSource(source = "") {
-  const raw = String(source || "").replace(/\\n/g, "\n").replace(/\\t/g, "\t");
-  if (!raw) return "";
-  return raw
-    .split(/(```[\s\S]*?```)/g)
-    .map((part) => {
-      if (part.startsWith("```")) return part;
-      return part
-        .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
-        .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
-        .replace(/<\/?[A-Za-z][^>]*>/g, (match) =>
-          match.replace(/</g, "&lt;").replace(/>/g, "&gt;")
-        );
-    })
-    .join("");
-}
-
-function renderMarkdownSource(source = "") {
-  const raw = String(source || "").trim();
-  if (!raw || !hasMarkdownRuntime()) {
-    return { html: "", text: raw };
-  }
-  const normalized = sanitizeRawMarkdownSource(raw);
-  let html = "";
-  try {
-    html = window.marked.parse(normalized, {
-      gfm: true,
-      breaks: true,
-      renderer: getMarkdownRenderer(),
-      headerIds: false,
-      mangle: false,
-    });
-  } catch (err) {
-    return { html: "", text: raw };
-  }
-  const sanitized = window.DOMPurify.sanitize(html, {
-    USE_PROFILES: { html: true },
-    ADD_ATTR: ["data-csv-path", "data-csv-label"],
-  });
-  const wrap = document.createElement("div");
-  wrap.innerHTML = sanitized;
-  wrap.querySelectorAll("a").forEach((anchor) => {
-    const href = String(anchor.getAttribute("href") || "").trim();
-    if (!href || /^javascript:/i.test(href)) {
-      anchor.removeAttribute("href");
-      return;
-    }
-    // CSV 파일 링크에 data 속성 마킹 (DOM 삽입 후 이벤트 바인딩)
-    const csvMatch = href.match(/\/api\/file\?path=(.+\.csv)/i);
-    if (csvMatch) {
-      anchor.setAttribute("data-csv-path", decodeURIComponent(csvMatch[1]));
-      anchor.setAttribute("data-csv-label", anchor.textContent || "CSV 미리보기");
-      anchor.removeAttribute("target");
-      anchor.removeAttribute("rel");
-      return;
-    }
-    anchor.setAttribute("target", "_blank");
-    anchor.setAttribute("rel", "noopener noreferrer");
-  });
-  const safeHtml = wrap.innerHTML;
-  return {
-    html: safeHtml,
-    text: extractPlainTextFromHtml(safeHtml) || raw,
-  };
-}
-
-function shouldRenderAssistantMarkdown(role, text = "") {
-  if (role !== "assistant") return false;
-  const raw = String(text || "").trim();
-  if (!raw) return false;
-  if (isInternalAssistantContent(raw)) return false;
-  if (ASSISTANT_PLAIN_TEXT_HINT_RE.test(raw.slice(0, 120))) return false;
-  if (raw.length <= 180 && isQuestionContent(raw)) return false;
-  return hasMarkdownRuntime();
-}
-
-function hasStructuredMarkdownSource(text = "") {
-  const raw = String(text || "");
-  if (!raw) return false;
-  return /(^|\n)(#{1,6}\s|[-*+]\s|\d+\.\s|\|.+\||```|> )/.test(raw);
-}
-
-function createPlainOutputNode(text = "") {
-  const content = document.createElement("pre");
-  content.className = "output";
-  const cleaned = String(text || "").replace(/\\n/g, "\n").replace(/\\t/g, "\t");
-  content.textContent = cleaned;
-  if (!/[\u2500-\u257f\u2580-\u259f]/.test(text || "")) {
-    content.classList.add("wrap");
-  }
-  return content;
-}
-
-function createMarkdownOutputNode(html = "", steps = []) {
-  const content = document.createElement("div");
-  content.className = "answer-markdown";
-  content.innerHTML = String(html || "");
-  // CSV 링크(data-csv-path)를 미리보기 모달 버튼으로 변환
-  // fallback: data 속성이 없는 경우 href 패턴으로 직접 탐색
-  if (!content.querySelectorAll("a[data-csv-path]").length) {
-    content.querySelectorAll("a").forEach((anchor) => {
-      const href = String(anchor.getAttribute("href") || "");
-      const m = href.match(/\/api\/file\?path=(.+\.csv)/i);
-      if (m) {
-        anchor.setAttribute("data-csv-path", decodeURIComponent(m[1]));
-        anchor.setAttribute("data-csv-label", anchor.textContent || "CSV 미리보기");
-      }
-    });
-  }
-  const safeSteps = Array.isArray(steps) ? steps : [];
-  content.querySelectorAll("a[data-csv-path]").forEach((anchor) => {
-    const csvPath = anchor.getAttribute("data-csv-path");
-    const labelText = anchor.getAttribute("data-csv-label") || "CSV 미리보기";
-    const btnWrap = document.createElement("div");
-    btnWrap.className = "csv-inline-link";
-    const previewBtn = document.createElement("button");
-    previewBtn.type = "button";
-    previewBtn.className = "mini csv-preview-inline-btn";
-    previewBtn.textContent = labelText;
-    previewBtn.addEventListener("click", () => {
-      openCsvPreviewModal([csvPath], 0, safeSteps);
-    });
-    btnWrap.appendChild(previewBtn);
-    anchor.replaceWith(btnWrap);
-  });
-  return content;
-}
-
-function syncAnswerExpandedState(messageEl, detailEl) {
-  if (!messageEl || !detailEl) return;
-  if (!detailEl.open) {
-    messageEl.classList.remove("msg--answer-expanded");
+function showPermissionDeniedToast(action, conversation = currentConversation()) {
+  const req = requiredPermissionsFor(action, conversation);
+  if (!req.codes.length) {
+    showToast(`'${req.label}' 을(를) 실행할 수 없습니다.`, true);
     return;
   }
-  const bubble = messageEl.querySelector(".bubble");
-  const messageRect = messageEl.getBoundingClientRect();
-  const bubbleRect = bubble ? bubble.getBoundingClientRect() : null;
-  const widthRatio =
-    bubbleRect && messageRect
-      ? Math.max(0, bubbleRect.width / Math.max(messageRect.width, 1))
-      : 1;
-  messageEl.classList.toggle("msg--answer-expanded", widthRatio <= 0.82);
+  const missing = req.codes.filter((c) => !can(c));
+  const primary = missing[0] || req.codes[0];
+  const alt = req.codes.length > 1
+    ? ` (또는 ${req.codes.slice(1).join(", ")})`
+    : "";
+  showToast(
+    `'${req.label}' 권한이 필요합니다. 관리자에게 \`${primary}\`${alt} 권한 부여를 요청하세요. — ${describePermission(primary)}`,
+    true,
+  );
 }
 
-function formatSql(sql) {
-  const raw = String(sql || "").trim();
-  if (!raw) return "";
-  if (raw.includes("\n")) return raw;
-  const segments = [];
-  let buf = "";
-  let quote = "";
-  for (let i = 0; i < raw.length; i += 1) {
-    const ch = raw[i];
-    if (quote) {
-      buf += ch;
-      if (ch === quote) {
-        if (quote === "'" && raw[i + 1] === "'") {
-          buf += raw[i + 1];
-          i += 1;
-          continue;
+// 버튼에 "권한 부재로 차단됨" 상태를 표현하되, 클릭 자체는 허용해 토스트로 안내한다.
+function markAccessBlocked(btn, action, conversation = currentConversation()) {
+  if (!btn) return;
+  const req = requiredPermissionsFor(action, conversation);
+  const blocked = !hasAnyPermission(req.codes);
+  btn.classList.toggle("is-access-blocked", blocked);
+  if (blocked) {
+    btn.setAttribute("aria-disabled", "true");
+    btn.dataset.blockedAction = action;
+    const missing = req.codes.filter((c) => !can(c))[0] || req.codes[0];
+    btn.title = `'${req.label}' 권한이 없습니다. 필요 권한: \`${missing}\` — ${describePermission(missing)}`;
+  } else {
+    btn.removeAttribute("aria-disabled");
+    delete btn.dataset.blockedAction;
+    btn.title = "";
+  }
+}
+
+/** 현재 활성 대화가 요청 중인지 여부 */
+function isCurrentConvBusy() {
+  if (state.pendingNewConversation && state.busyConversations.has(PENDING_CONV_SENTINEL)) {
+    return true;
+  }
+  return state.busyConversations.has(state.activeConversationId);
+}
+
+function escapeHtml(value = "") {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function showToast(message, isError = false) {
+  if (!toastEl) return;
+  toastEl.textContent = message;
+  toastEl.style.background = isError
+    ? "rgba(124, 24, 24, 0.94)"
+    : "rgba(10, 22, 44, 0.92)";
+  toastEl.classList.add("is-visible");
+  if (state.toastTimer) {
+    clearTimeout(state.toastTimer);
+  }
+  state.toastTimer = window.setTimeout(() => {
+    toastEl.classList.remove("is-visible");
+  }, 2200);
+}
+
+async function apiFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (!headers.has("Content-Type") && options.body && !(options.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
+  const response = await fetch(url, {
+    ...options,
+    headers,
+    credentials: "same-origin",
+  });
+  const contentType = response.headers.get("content-type") || "";
+  const isJson = contentType.includes("application/json");
+  const payload = isJson ? await response.json() : await response.text();
+  if (!response.ok) {
+    const message = typeof payload === "object" && payload
+      ? payload.error || payload.detail || response.statusText
+      : String(payload || response.statusText);
+    const error = new Error(message);
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
+  return payload;
+}
+
+function formatDateTime(value = "") {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  return date.toLocaleString("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function markdownToHtml(text = "") {
+  const source = String(text || "").trim();
+  if (!source) {
+    return "";
+  }
+  if (window.marked && window.DOMPurify) {
+    const rendered = window.marked.parse(source);
+    return window.DOMPurify.sanitize(rendered);
+  }
+  return `<pre>${escapeHtml(source)}</pre>`;
+}
+
+function can(permission) {
+  return Boolean(state.user?.permissions?.[permission]);
+}
+
+function roleLabel() {
+  return state.user?.role?.name || state.user?.role?.key || "Unassigned";
+}
+
+function isOwnConversation(conversation = currentConversation()) {
+  if (!conversation || !state.user) return false;
+  return Number(conversation.owner_account_id || 0) === Number(state.user.id || 0);
+}
+
+function canOpenAdminConsole() {
+  return can("console.access");
+}
+
+function canAskInConversation(conversation = currentConversation()) {
+  if (!can("conversation.ask")) return false;
+  if (!conversation) {
+    return can("conversation.create");
+  }
+  return isOwnConversation(conversation);
+}
+
+function canRenameConversation(conversation = currentConversation()) {
+  if (!conversation) return false;
+  return can("conversation.rename.any") || (isOwnConversation(conversation) && can("conversation.rename.own"));
+}
+
+function canDeleteConversation(conversation = currentConversation()) {
+  if (!conversation) return false;
+  return can("conversation.delete.any") || (isOwnConversation(conversation) && can("conversation.delete.own"));
+}
+
+function canCancelConversation(conversation = currentConversation()) {
+  if (!conversation) return false;
+  return can("conversation.cancel.any") || (isOwnConversation(conversation) && can("conversation.cancel.own"));
+}
+
+function canFinalizeConversation(conversation = currentConversation()) {
+  if (!conversation) return false;
+  return can("conversation.finalize.any") || (isOwnConversation(conversation) && can("conversation.finalize.own"));
+}
+
+function currentConversation() {
+  return state.conversations.find((item) => item.id === state.activeConversationId) || null;
+}
+
+function readVaultState() {
+  return {
+    cipher: localStorage.getItem(STORAGE_KEYS.cipher) || "",
+    model: localStorage.getItem(STORAGE_KEYS.model) || "",
+    passphrase: sessionStorage.getItem(STORAGE_KEYS.passphrase) || "",
+  };
+}
+
+function writeVaultState() {
+  localStorage.setItem(STORAGE_KEYS.cipher, vaultCipherEl.value.trim());
+  localStorage.setItem(STORAGE_KEYS.model, vaultModelEl.value.trim());
+  if (vaultPassphraseEl.value.trim()) {
+    sessionStorage.setItem(STORAGE_KEYS.passphrase, vaultPassphraseEl.value.trim());
+  } else {
+    sessionStorage.removeItem(STORAGE_KEYS.passphrase);
+  }
+  refreshVaultUI();
+}
+
+function clearVaultState() {
+  localStorage.removeItem(STORAGE_KEYS.cipher);
+  localStorage.removeItem(STORAGE_KEYS.model);
+  sessionStorage.removeItem(STORAGE_KEYS.passphrase);
+  vaultCipherEl.value = "";
+  vaultPassphraseEl.value = "";
+  vaultPlainKeyEl.value = "";
+  if (state.apiVaultOptions?.default_model) {
+    vaultModelEl.value = state.apiVaultOptions.default_model;
+  }
+  refreshVaultUI();
+}
+
+// Vault 의 현재 요청 가능 상태를 단일 tri-state 로 반환.
+// 진실의 출처는 storage(영속) — input value 는 일시적인 편집 buffer 이므로 신뢰하지 않는다.
+// passphrase 는 sessionStorage 우선, 사용자가 막 입력한 미저장 값(input)은 fallback 으로만 인정.
+function computeVaultReadiness() {
+  const cipher = (localStorage.getItem(STORAGE_KEYS.cipher) || "").trim();
+  const passphrase = (
+    sessionStorage.getItem(STORAGE_KEYS.passphrase)
+    || (vaultPassphraseEl ? vaultPassphraseEl.value : "")
+    || ""
+  ).trim();
+  if (cipher && passphrase) return "ready";
+  if (cipher && !passphrase) return "needs";
+  return "empty";
+}
+
+// readiness 배지·접근성 텍스트 동기화.
+function updateVaultReadiness() {
+  if (!vaultBannerEl || !vaultBannerTextEl) return;
+  const readiness = computeVaultReadiness();
+  const model = vaultModelEl.value.trim();
+  vaultBannerEl.setAttribute("data-state", readiness);
+  const dot = vaultBannerEl.querySelector(".vault-banner-dot");
+  if (dot) dot.setAttribute("data-state", readiness);
+  let label;
+  if (readiness === "ready") {
+    label = model ? `준비 완료 · 모델: ${model}` : "준비 완료";
+  } else if (readiness === "needs") {
+    label = "저장된 암호화 키가 있습니다. Step 2 에서 passphrase 를 입력하면 바로 사용 가능합니다.";
+  } else if (state.localLlmEnabled) {
+    label = "API 키 미설정 · 외부 Local LLM 게이트웨이로 동작 중입니다.";
+  } else {
+    label = "API 키가 아직 설정되지 않았습니다. 아래 단계를 순서대로 진행하세요.";
+  }
+  vaultBannerTextEl.textContent = label;
+  if (vaultStatusEl) vaultStatusEl.textContent = label;
+}
+
+// 각 step 의 data-state 와 primary 버튼 disabled 토글.
+//   - cipher 저장됨 → 모든 step done, save 버튼 disabled (saved-default)
+//   - cipher 미저장 → wizard 입력 모드 (Step 1 active 부터 시작)
+// 키를 갈아끼우려면 "저장된 키 삭제" 한 경로만 — 진입점 1개로 단순화.
+function syncVaultSteps() {
+  if (!vaultStepEls.length || !saveVaultBtn) return;
+  const cipherSaved = Boolean((localStorage.getItem(STORAGE_KEYS.cipher) || "").trim());
+  const plain = vaultPlainKeyEl.value.trim();
+  const passphrase = vaultPassphraseEl.value.trim();
+
+  const step1 = vaultStepEls.find((el) => el.dataset.step === "1");
+  const step2 = vaultStepEls.find((el) => el.dataset.step === "2");
+  const step3 = vaultStepEls.find((el) => el.dataset.step === "3");
+
+  if (cipherSaved) {
+    if (step1) step1.setAttribute("data-state", "done");
+    if (step2) step2.setAttribute("data-state", passphrase ? "done" : "active");
+    if (step3) step3.setAttribute("data-state", "done");
+    saveVaultBtn.disabled = true;
+    return;
+  }
+
+  if (step1) step1.setAttribute("data-state", plain ? "done" : "active");
+  if (step2) {
+    if (!plain) step2.setAttribute("data-state", "disabled");
+    else step2.setAttribute("data-state", passphrase ? "done" : "active");
+  }
+  if (step3) {
+    if (plain && passphrase) step3.setAttribute("data-state", "active");
+    else step3.setAttribute("data-state", "disabled");
+  }
+  saveVaultBtn.disabled = !(plain && passphrase);
+}
+
+// 저장된 cipher 카드(information only) 와 destructive zone(삭제) 렌더링.
+// cipher 가 저장돼 있을 때만 두 영역을 노출하고, 없으면 둘 다 숨긴다.
+// 키 갈아끼움은 "저장된 키 삭제" → confirm → 새로 입력 흐름이 유일.
+function renderVaultSavedCard() {
+  if (!vaultSavedCardEl || !vaultSavedMetaEl) return;
+  const savedCipher = (localStorage.getItem(STORAGE_KEYS.cipher) || "").trim();
+  const savedModel = (localStorage.getItem(STORAGE_KEYS.model) || "").trim();
+  if (!savedCipher) {
+    vaultSavedCardEl.hidden = true;
+    if (vaultDangerZoneEl) vaultDangerZoneEl.hidden = true;
+    return;
+  }
+  vaultSavedCardEl.hidden = false;
+  if (vaultDangerZoneEl) vaultDangerZoneEl.hidden = false;
+  const head = savedCipher.length > 10 ? `${savedCipher.slice(0, 10)}…` : savedCipher;
+  vaultSavedMetaEl.textContent = savedModel
+    ? `${head} · 모델: ${savedModel}`
+    : head;
+}
+
+// readiness / step / saved card 를 한 번에 갱신.
+function refreshVaultUI() {
+  updateVaultReadiness();
+  renderVaultSavedCard();
+  syncVaultSteps();
+}
+
+function toggleAuthPane(tab) {
+  document.querySelectorAll("[data-auth-tab]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.authTab === tab);
+  });
+  document.querySelectorAll("[data-auth-pane]").forEach((pane) => {
+    pane.classList.toggle("hidden", pane.dataset.authPane !== tab);
+  });
+}
+
+function showAuthOverlay() {
+  authOverlayEl.classList.remove("hidden");
+}
+
+function hideAuthOverlay() {
+  authOverlayEl.classList.add("hidden");
+}
+
+function switchProfileTab(tab) {
+  document.querySelectorAll("[data-profile-tab]").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.dataset.profileTab === tab);
+  });
+  document.querySelectorAll("[data-profile-pane]").forEach((pane) => {
+    pane.classList.toggle("hidden", pane.dataset.profilePane !== tab);
+  });
+}
+
+// ──────────────────────────────────────────────────────────────────
+//  TASK-0047 — Product chip (sidebar header) 렌더 / 변경 / hydrate
+// ──────────────────────────────────────────────────────────────────
+
+/** select 요소에 [auto] + 활성 products 옵션을 렌더한다. drawer 의 promptProductSelect 와 공유 가능한 factory. */
+function renderProductOptions(selectEl, { includeAuto, selected }) {
+  if (!selectEl) return;
+  const products = Array.isArray(state.products) ? state.products : [];
+  const previous = selectEl.value;
+  selectEl.innerHTML = "";
+  if (includeAuto) {
+    const opt = document.createElement("option");
+    opt.value = "auto";
+    opt.textContent = "auto · 자동 (제품 미선택)";
+    selectEl.appendChild(opt);
+  } else {
+    const optNone = document.createElement("option");
+    optNone.value = "";
+    optNone.textContent = "(제품 무관)";
+    selectEl.appendChild(optNone);
+  }
+  products.forEach((p) => {
+    if (p && p.is_active === false) return;
+    const opt = document.createElement("option");
+    opt.value = String(p.id);
+    opt.textContent = `${p.name} (${p.product_key})`;
+    selectEl.appendChild(opt);
+  });
+  const target = selected != null ? String(selected) : previous;
+  if (target && Array.from(selectEl.options).some((o) => o.value === target)) {
+    selectEl.value = target;
+  }
+}
+
+function renderProductChip() {
+  const chipEl = document.getElementById("productChip");
+  const selectEl = document.getElementById("productSelect");
+  if (!chipEl || !selectEl) return;
+  const mode = state.productMode === "pinned" ? "pinned" : "auto";
+  chipEl.dataset.mode = mode;
+  const selectedValue = mode === "auto" ? "auto" : (state.pinnedProductId ? String(state.pinnedProductId) : "auto");
+  renderProductOptions(selectEl, { includeAuto: true, selected: selectedValue });
+  const products = Array.isArray(state.products) ? state.products : [];
+  const pinned = products.find((p) => Number(p.id) === Number(state.pinnedProductId));
+  const label = mode === "auto"
+    ? "auto · 자동 (제품 미선택)"
+    : (pinned ? `${pinned.name} (${pinned.product_key})` : "auto · 자동 (제품 미선택)");
+  chipEl.setAttribute("aria-label", `이 대화의 제품 선택, 현재 ${label}`);
+  // 진행 중 ask 가 있으면 select disabled (race 가드 + 사용자 안내).
+  const busy = isCurrentConvBusy();
+  selectEl.disabled = busy;
+  chipEl.setAttribute("aria-disabled", busy ? "true" : "false");
+  chipEl.classList.toggle("is-disabled", busy);
+  chipEl.title = busy
+    ? "응답 처리 중에는 변경할 수 없어요. 응답이 끝난 뒤 다시 시도해 주세요."
+    : "이 대화에 적용할 제품을 선택합니다. auto 는 일반 대화 모드입니다.";
+}
+
+function readProductPrefFromLocal() {
+  try {
+    const raw = window.localStorage.getItem(PRODUCT_PREF_LS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const mode = parsed.mode === "pinned" ? "pinned" : "auto";
+    const pid = parsed.pinned_id ? Number(parsed.pinned_id) : null;
+    return { mode, pinned_id: Number.isFinite(pid) ? pid : null };
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeProductPrefToLocal(mode, pinnedId) {
+  try {
+    window.localStorage.setItem(
+      PRODUCT_PREF_LS_KEY,
+      JSON.stringify({ mode, pinned_id: pinnedId || null }),
+    );
+  } catch (_) { /* private mode etc.: ignore */ }
+}
+
+/** 서버 hydrate(/api/session 의 product_pref / conversation_product) 결과를 state 에 반영한다. */
+function applyProductHydration({ pref, conversationProduct }) {
+  // 1) 우선 localStorage 미러 → 깜빡임 방지용 즉시 표시.
+  const local = readProductPrefFromLocal();
+  if (local) {
+    state.productMode = local.mode;
+    state.pinnedProductId = local.pinned_id;
+  }
+  // 2) 대화별 product 가 있으면 그것이 우선(대화 컨텍스트는 대화의 진실).
+  if (conversationProduct && conversationProduct.product_mode) {
+    state.productMode = conversationProduct.product_mode === "pinned" ? "pinned" : "auto";
+    state.pinnedProductId = conversationProduct.product_id || null;
+    state.activeProductId = conversationProduct.product_id || null;
+  }
+  // 3) account-level 선호 — 대화 product 가 없을 때(신규/fork 직후) 적용.
+  if (pref && (!conversationProduct || conversationProduct.product_id == null)) {
+    state.productMode = pref.mode === "pinned" ? "pinned" : "auto";
+    state.pinnedProductId = pref.mode === "pinned" ? (pref.pinned_id || null) : null;
+    if (pref.fallback_reason === "pinned_inactive") {
+      // Codex 검토 가드: pinned 제품이 비활성/제거된 경우 자동 강등.
+      showToast("이전에 고정해 둔 제품을 사용할 수 없어 자동으로 auto 로 전환했어요.");
+    }
+  }
+  writeProductPrefToLocal(state.productMode, state.pinnedProductId);
+  renderProductChip();
+}
+
+async function setActiveProduct({ mode, pinnedId }) {
+  const normMode = mode === "pinned" ? "pinned" : "auto";
+  const normPid = normMode === "pinned" ? Number(pinnedId) || null : null;
+  if (normMode === "pinned" && !normPid) {
+    showToast("제품을 선택해 주세요.", true);
+    renderProductChip();
+    return;
+  }
+  if (isCurrentConvBusy()) {
+    showToast("응답 처리 중에는 제품을 변경할 수 없어요.", true);
+    renderProductChip();
+    return;
+  }
+  // optimistic.
+  state.productMode = normMode;
+  state.pinnedProductId = normPid;
+  writeProductPrefToLocal(normMode, normPid);
+  renderProductChip();
+  const cid = state.activeConversationId;
+  try {
+    if (cid) {
+      const res = await fetch(`/api/conversations/${encodeURIComponent(cid)}/product`, {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: normMode, product_id: normPid }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.error || res.statusText);
+      state.activeProductId = payload.product_id || null;
+      const products = Array.isArray(state.products) ? state.products : [];
+      const p = products.find((x) => Number(x.id) === Number(normPid));
+      const label = normMode === "auto"
+        ? "auto · 자동 (제품 미선택)"
+        : (p ? p.name : "");
+      showToast(
+        normMode === "auto"
+          ? "auto 로 바꿨어요. 다음 답변부터 적용됩니다."
+          : `제품을 ${label} 으로 바꿨어요. 다음 답변부터 적용됩니다.`,
+      );
+    }
+    // cid 가 없으면(아직 새 대화 미생성) localStorage 만 갱신하고 다음 새 대화 생성 시 반영.
+  } catch (error) {
+    // 롤백: 서버 거부 시 직전 상태로 복원하고 안내.
+    showToast(error.message || "제품 변경에 실패했습니다.", true);
+    await refreshWorkspace(state.activeConversationId).catch(() => {});
+  }
+}
+
+async function fetchAccountPromptRow(productId) {
+  const params = new URLSearchParams();
+  if (productId) params.set("product_id", String(productId));
+  const query = params.toString();
+  const res = await fetch(`/api/auth/me/system-prompt${query ? `?${query}` : ""}`, {
+    credentials: "same-origin",
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+  return res.json();
+}
+
+async function initAccountPromptEditor() {
+  const selectEl = document.getElementById("promptProductSelect");
+  const contentEl = document.getElementById("promptContent");
+  const metaEl = document.getElementById("promptMeta");
+  if (!selectEl || !contentEl) return;
+  const products = Array.isArray(state.products) ? state.products : [];
+  if (!selectEl.dataset.populated) {
+    selectEl.innerHTML = "";
+    const optNone = document.createElement("option");
+    optNone.value = "";
+    optNone.textContent = "(Product 무관)";
+    selectEl.appendChild(optNone);
+    products.forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = String(p.id);
+      opt.textContent = `${p.name} (${p.product_key})`;
+      if (state.default_product_id && Number(state.default_product_id) === Number(p.id)) {
+        opt.selected = true;
+      }
+      selectEl.appendChild(opt);
+    });
+    selectEl.dataset.populated = "1";
+    selectEl.addEventListener("change", () => {
+      reloadAccountPrompt().catch(() => {});
+    });
+  }
+  await reloadAccountPrompt();
+
+  async function reloadAccountPrompt() {
+    const pid = selectEl.value ? Number(selectEl.value) : null;
+    try {
+      const payload = await fetchAccountPromptRow(pid);
+      const row = payload.prompt;
+      if (row) {
+        contentEl.value = row.content || "";
+        if (metaEl) metaEl.textContent = `마지막 수정: ${row.updated_at || "-"}`;
+      } else {
+        contentEl.value = "";
+        if (metaEl) metaEl.textContent = "(저장된 프롬프트 없음)";
+      }
+    } catch (error) {
+      if (metaEl) metaEl.textContent = `조회 실패: ${error.message || error}`;
+    }
+  }
+}
+
+async function saveAccountPrompt(forceDelete = false) {
+  const selectEl = document.getElementById("promptProductSelect");
+  const contentEl = document.getElementById("promptContent");
+  if (!selectEl || !contentEl) return;
+  const productId = selectEl.value ? Number(selectEl.value) : null;
+  const content = forceDelete ? "" : contentEl.value;
+  const res = await fetch(`/api/auth/me/system-prompt`, {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, product_id: productId }),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(payload.error || res.statusText);
+  if (forceDelete) contentEl.value = "";
+  showToast(forceDelete ? "프롬프트를 삭제했습니다." : "프롬프트를 저장했습니다.");
+  await initAccountPromptEditor();
+}
+
+function buildPermissionPills(containerEl) {
+  if (!containerEl) return;
+  containerEl.innerHTML = "";
+  const enabled = Object.entries(state.user?.permissions || {})
+    .filter(([, value]) => Boolean(value))
+    .map(([code]) => code);
+
+  if (!enabled.length) {
+    const badge = document.createElement("span");
+    badge.className = "permission-pill";
+    badge.textContent = "활성 권한 없음";
+    containerEl.appendChild(badge);
+    return;
+  }
+
+  const byGroup = new Map();
+  enabled.forEach((code) => {
+    const group = permissionGroupOf(code);
+    if (!byGroup.has(group)) byGroup.set(group, []);
+    byGroup.get(group).push(code);
+  });
+
+  PERMISSION_GROUP_ORDER.forEach((group) => {
+    const codes = byGroup.get(group);
+    if (!codes || !codes.length) return;
+    codes.sort((a, b) => a.localeCompare(b));
+
+    const section = document.createElement("section");
+    section.className = "perm-section";
+    section.dataset.permGroup = group;
+
+    const head = document.createElement("div");
+    head.className = "perm-section-head";
+    const title = document.createElement("span");
+    title.className = "perm-section-title";
+    title.textContent = PERMISSION_GROUP_LABELS[group] || group;
+    const count = document.createElement("span");
+    count.className = "perm-section-count";
+    count.textContent = String(codes.length);
+    head.append(title, count);
+
+    const pillWrap = document.createElement("div");
+    pillWrap.className = "perm-pills";
+    codes.forEach((code) => {
+      const item = document.createElement("span");
+      item.className = "permission-pill is-enabled";
+      item.textContent = PERMISSION_LABELS[code] || code;
+      item.title = `${describePermission(code)}\n(${code})`;
+      pillWrap.appendChild(item);
+    });
+
+    section.append(head, pillWrap);
+    containerEl.appendChild(section);
+  });
+}
+
+function renderAccountState() {
+  if (!state.user) {
+    if (profileAvatarEl) profileAvatarEl.textContent = "—";
+    if (profileNameEl) profileNameEl.textContent = "—";
+    if (profileRoleEl) profileRoleEl.textContent = "—";
+    openAdminBtn.classList.add("hidden");
+    return;
+  }
+  const initials = state.user.username.slice(0, 2).toUpperCase();
+  if (profileAvatarEl) profileAvatarEl.textContent = initials;
+  if (profileNameEl) profileNameEl.textContent = state.user.username;
+  if (profileRoleEl) profileRoleEl.textContent = roleLabel();
+  openAdminBtn.classList.toggle("hidden", !canOpenAdminConsole());
+}
+
+function renderProfile() {
+  if (!state.user) return;
+  const initials = state.user.username.slice(0, 2).toUpperCase();
+
+  if (profileAvatarLgEl) profileAvatarLgEl.textContent = initials;
+  if (profileSummaryNameEl) profileSummaryNameEl.textContent = state.user.username;
+  if (profileSummaryMetaEl) {
+    profileSummaryMetaEl.textContent = roleLabel();
+  }
+
+  buildPermissionPills(profilePermPillsEl);
+
+  if (profileStateNoteEl) {
+    if (can("conversation.ask")) {
+      profileStateNoteEl.textContent = "요청 실행 권한이 활성화된 계정입니다.";
+    } else if (can("conversation.read.own") || can("conversation.read.any")) {
+      profileStateNoteEl.textContent = "현재는 조회 중심 권한만 부여된 계정입니다.";
+    } else {
+      profileStateNoteEl.textContent = "사용 가능한 권한이 없습니다. 관리자에게 역할 또는 override를 요청하세요.";
+    }
+  }
+
+  if (profileCreatedAtEl) profileCreatedAtEl.textContent = formatDateTime(state.user.created_at);
+  if (profileLastLoginEl) profileLastLoginEl.textContent = formatDateTime(state.user.last_login_at);
+  if (profileApprovedAtEl) profileApprovedAtEl.textContent = formatDateTime(state.user.approved_at) || "미기록";
+
+  if (passwordErrorEl) passwordErrorEl.textContent = "";
+  if (passwordChangeFormEl) passwordChangeFormEl.reset();
+}
+
+function openProfile(tab = "account") {
+  renderProfile();
+  switchProfileTab(tab);
+  profileDrawerEl.classList.remove("hidden");
+  profileBackdropEl.classList.remove("hidden");
+}
+
+function closeProfile() {
+  profileDrawerEl.classList.add("hidden");
+  profileBackdropEl.classList.add("hidden");
+}
+
+async function handlePasswordChange(event) {
+  event.preventDefault();
+  if (passwordErrorEl) passwordErrorEl.textContent = "";
+  const currentPassword = document.getElementById("currentPassword").value;
+  const newPassword = document.getElementById("newPassword").value;
+  const confirmPassword = document.getElementById("confirmPassword").value;
+  if (newPassword !== confirmPassword) {
+    if (passwordErrorEl) passwordErrorEl.textContent = "새 비밀번호가 일치하지 않습니다.";
+    return;
+  }
+  if (newPassword.length < 10) {
+    if (passwordErrorEl) passwordErrorEl.textContent = "새 비밀번호는 10자 이상이어야 합니다.";
+    return;
+  }
+  try {
+    await apiFetch("/api/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    });
+    showToast("비밀번호를 변경했습니다.");
+    if (passwordChangeFormEl) passwordChangeFormEl.reset();
+  } catch (error) {
+    if (passwordErrorEl) passwordErrorEl.textContent = error.message || "비밀번호 변경에 실패했습니다.";
+  }
+}
+
+function renderConversationList() {
+  conversationListEl.innerHTML = "";
+  const hasPending = Boolean(state.pendingNewConversation);
+  if (!state.conversations.length && !hasPending) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.innerHTML = "<strong>대화 없음</strong><span>새 대화를 만들어 시작하세요.</span>";
+    conversationListEl.appendChild(empty);
+    return;
+  }
+
+  const own = [];
+  const others = [];
+  state.conversations.forEach((item) => {
+    if (isOwnConversation(item)) own.push(item);
+    else others.push(item);
+  });
+
+  // TASK-0048: pending 새 대화 placeholder. cid 가 아직 없으므로 클릭 비활성, 메타 라벨만 보여준다.
+  const appendPendingItem = () => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "conv-item is-own is-active is-pending";
+    button.setAttribute("aria-disabled", "true");
+    button.disabled = true;
+    button.title = "첫 메시지를 입력하면 대화가 만들어집니다.";
+
+    const titleRow = document.createElement("div");
+    titleRow.className = "conv-item-title-row";
+    const titleEl = document.createElement("div");
+    titleEl.className = "conv-item-title";
+    titleEl.textContent = "새 대화 (작성 중)";
+    titleRow.appendChild(titleEl);
+    const badge = document.createElement("span");
+    badge.className = "conv-owner-badge is-own";
+    badge.textContent = "내";
+    titleRow.appendChild(badge);
+
+    const metaEl = document.createElement("div");
+    metaEl.className = "conv-item-meta";
+    const dateEl = document.createElement("span");
+    dateEl.textContent = "첫 메시지를 입력하세요";
+    metaEl.appendChild(dateEl);
+
+    button.append(titleRow, metaEl);
+    conversationListEl.appendChild(button);
+  };
+
+  const renderGroup = (label, items, prependFn = null) => {
+    if (!items.length && !prependFn) return;
+    const header = document.createElement("div");
+    header.className = "conv-group-title";
+    header.textContent = label;
+    conversationListEl.appendChild(header);
+
+    if (prependFn) prependFn();
+
+    items.forEach((item) => {
+      const mine = isOwnConversation(item);
+      const button = document.createElement("button");
+      button.type = "button";
+      const classes = ["conv-item", mine ? "is-own" : "is-other"];
+      if (item.id === state.activeConversationId) classes.push("is-active");
+      button.className = classes.join(" ");
+      button.addEventListener("click", () => {
+        selectConversation(item.id);
+      });
+
+      const titleRow = document.createElement("div");
+      titleRow.className = "conv-item-title-row";
+
+      const titleEl = document.createElement("div");
+      titleEl.className = "conv-item-title";
+      titleEl.textContent = item.topic || "새 대화";
+      titleRow.appendChild(titleEl);
+
+      const badge = document.createElement("span");
+      badge.className = `conv-owner-badge ${mine ? "is-own" : "is-other"}`;
+      badge.textContent = mine ? "내" : (item.owner_username || "타 계정");
+      if (!mine && item.owner_username) {
+        badge.title = `소유자: ${item.owner_username}`;
+      }
+      titleRow.appendChild(badge);
+
+      const metaEl = document.createElement("div");
+      metaEl.className = "conv-item-meta";
+
+      const normalizedStatus = String(item.status || "").trim().toLowerCase();
+      const dot = document.createElement("span");
+      dot.className = `conv-dot ${normalizedStatus ? `is-${normalizedStatus}` : ""}`.trim();
+
+      const dateEl = document.createElement("span");
+      dateEl.textContent = formatDateTime(item.last_activity_at || item.created_at);
+
+      metaEl.append(dot, dateEl);
+      if (!mine && item.owner_username) {
+        const ownerEl = document.createElement("span");
+        ownerEl.className = "conv-owner";
+        ownerEl.textContent = item.owner_username;
+        metaEl.append(ownerEl);
+      }
+      button.append(titleRow, metaEl);
+      conversationListEl.appendChild(button);
+    });
+  };
+
+  renderGroup("내 대화", own, hasPending ? appendPendingItem : null);
+  renderGroup(`타 계정 대화 (${others.length})`, others);
+}
+
+function renderConversationHeader() {
+  const conversation = currentConversation();
+  if (!conversation) {
+    if (state.pendingNewConversation) {
+      // TASK-0048: pending 새 대화 — 첫 메시지 전송 전 단계.
+      conversationTitleEl.textContent = "새 대화";
+      conversationSubtitleEl.textContent = "첫 메시지를 입력하면 대화가 만들어집니다.";
+      return;
+    }
+    conversationTitleEl.textContent = "대화를 선택하세요";
+    conversationSubtitleEl.textContent = "권한이 허용한 범위의 대화와 실행 결과를 확인할 수 있습니다.";
+    return;
+  }
+  conversationTitleEl.textContent = conversation.topic || "새 대화";
+  const subtitleParts = [
+    `최근 갱신 ${formatDateTime(conversation.last_activity_at || conversation.created_at)}`,
+    `메시지 ${Number(conversation.message_count || 0)}`,
+  ];
+  if (conversation.owner_username) {
+    subtitleParts.push(`소유자 ${conversation.owner_username}`);
+  }
+  if (conversation.status) {
+    subtitleParts.push(`상태 ${conversation.status}`);
+  }
+  conversationSubtitleEl.textContent = subtitleParts.join(" · ");
+}
+
+function renderAccessNotice() {
+  accessNoticeEl.classList.add("hidden");
+  if (!state.user) return;
+  const conversation = currentConversation();
+  if (!can("conversation.ask")) {
+    accessNoticeEl.textContent =
+      "현재 계정에는 대화 요청 실행 권한(`conversation.ask`)이 없습니다. 관리자에게 권한 부여를 요청하세요.";
+    accessNoticeEl.classList.remove("hidden");
+    return;
+  }
+  if (conversation && !isOwnConversation(conversation)) {
+    accessNoticeEl.textContent = "다른 계정의 대화는 조회만 가능합니다. 새 대화를 만들거나 본인 대화로 전환하세요.";
+    accessNoticeEl.classList.remove("hidden");
+  }
+}
+
+function renderMessageContent(target, content = "", role = "assistant") {
+  target.className = "message-content";
+  if (role === "assistant") {
+    target.innerHTML = markdownToHtml(content);
+    return;
+  }
+  target.innerHTML = markdownToHtml(content || "");
+}
+
+function appendDetailBlock(parentEl, title, contentNode) {
+  const block = document.createElement("div");
+  block.className = "message-detail-block";
+  if (title) {
+    const strong = document.createElement("strong");
+    strong.textContent = title;
+    block.appendChild(strong);
+  }
+  block.appendChild(contentNode);
+  parentEl.appendChild(block);
+}
+
+function extractFirstTableRef(sql = "") {
+  const match = String(sql || "").match(
+    /(?:FROM|JOIN|UPDATE|INTO)\s+`?([A-Za-z0-9_]+)`?\.`?([A-Za-z0-9_]+)`?/i,
+  );
+  return match ? `${match[1]}.${match[2]}` : "";
+}
+
+// 단순 CSV 파서 — 따옴표, 이스케이프된 따옴표(""), CR/LF 처리.
+function parseCsv(text = "") {
+  const rows = [];
+  let row = [];
+  let current = "";
+  let inQuotes = false;
+  const src = String(text || "");
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inQuotes) {
+      if (ch === '"' && src[i + 1] === '"') {
+        current += '"';
+        i++;
+        continue;
+      }
+      if (ch === '"') {
+        inQuotes = false;
+        continue;
+      }
+      current += ch;
+      continue;
+    }
+    if (ch === '"') {
+      inQuotes = true;
+      continue;
+    }
+    if (ch === ",") {
+      row.push(current);
+      current = "";
+      continue;
+    }
+    if (ch === "\r") continue;
+    if (ch === "\n") {
+      row.push(current);
+      rows.push(row);
+      row = [];
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  if (current.length || row.length) {
+    row.push(current);
+    rows.push(row);
+  }
+  return rows;
+}
+
+function appendRowNumCell(tr, tag, value) {
+  const cell = document.createElement(tag);
+  cell.className = "col-rownum";
+  cell.textContent = String(value);
+  tr.appendChild(cell);
+  return cell;
+}
+
+function buildResultTable(previewTable) {
+  const { columns = [], rows = [], truncated = false } = previewTable;
+  if (!columns.length) return null;
+
+  const wrap = document.createElement("div");
+  wrap.className = "result-table-wrap";
+
+  const tableEl = document.createElement("table");
+  tableEl.className = "result-table";
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  appendRowNumCell(headRow, "th", "#");
+  columns.forEach((col) => {
+    const th = document.createElement("th");
+    th.textContent = String(col);
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  tableEl.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  rows.forEach((row, ri) => {
+    const tr = document.createElement("tr");
+    appendRowNumCell(tr, "td", ri + 1);
+    columns.forEach((_, ci) => {
+      const td = document.createElement("td");
+      td.textContent = row[ci] != null ? String(row[ci]) : "";
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  tableEl.appendChild(tbody);
+  wrap.appendChild(tableEl);
+
+  const meta = document.createElement("div");
+  meta.className = "result-table-meta";
+  const shown = rows.length;
+  const colCount = columns.length;
+  meta.textContent = truncated
+    ? `${shown}행 표시 중 (더 있음) · ${colCount}열`
+    : `${shown}행 · ${colCount}열`;
+  wrap.appendChild(meta);
+
+  // 테이블 래퍼에 참조용 핸들 노출 — 전체 데이터 로드 시 tbody 교체에 사용
+  wrap._tableEl = tableEl;
+  wrap._metaEl = meta;
+  wrap._colCount = colCount;
+  return wrap;
+}
+
+async function loadFullCsvIntoTable(csvPath, tableWrap, buttonEl) {
+  if (!tableWrap || !tableWrap._tableEl) return;
+  const originalText = buttonEl.textContent;
+  buttonEl.disabled = true;
+  buttonEl.textContent = "불러오는 중...";
+  try {
+    const url = `/api/file?path=${encodeURIComponent(csvPath)}&conversation_id=${encodeURIComponent(state.activeConversationId || "")}`;
+    const response = await fetch(url, { credentials: "same-origin" });
+    if (!response.ok) {
+      throw new Error(`CSV 요청 실패 (${response.status})`);
+    }
+    const text = await response.text();
+    const rows = parseCsv(text).filter((r) => r.length && !(r.length === 1 && r[0] === ""));
+    if (!rows.length) {
+      throw new Error("CSV에 표시할 데이터가 없습니다.");
+    }
+    const header = rows[0];
+    const body = rows.slice(1);
+    const tableEl = tableWrap._tableEl;
+    // 헤더 재구성 (RowCount 가상 컬럼 유지)
+    const thead = tableEl.querySelector("thead");
+    thead.innerHTML = "";
+    const headRow = document.createElement("tr");
+    appendRowNumCell(headRow, "th", "#");
+    header.forEach((col) => {
+      const th = document.createElement("th");
+      th.textContent = col;
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    // 본문 재구성 (각 tr 에 행 번호 prepend)
+    const tbody = tableEl.querySelector("tbody");
+    tbody.innerHTML = "";
+    body.forEach((row, ri) => {
+      const tr = document.createElement("tr");
+      appendRowNumCell(tr, "td", ri + 1);
+      header.forEach((_, ci) => {
+        const td = document.createElement("td");
+        td.textContent = row[ci] != null ? row[ci] : "";
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    tableWrap.classList.add("is-full-data");
+    tableWrap._metaEl.textContent = `${body.length}행 · ${header.length}열 (전체)`;
+    buttonEl.textContent = "전체 데이터 로드됨";
+    buttonEl.setAttribute("aria-disabled", "true");
+  } catch (error) {
+    buttonEl.disabled = false;
+    buttonEl.textContent = originalText;
+    showToast(error.message || "전체 데이터를 불러오지 못했습니다.", true);
+  }
+}
+
+const SQL_FORMAT_KEYWORDS = [
+  "LEFT OUTER JOIN",
+  "RIGHT OUTER JOIN",
+  "FULL OUTER JOIN",
+  "LEFT JOIN",
+  "RIGHT JOIN",
+  "INNER JOIN",
+  "OUTER JOIN",
+  "FULL JOIN",
+  "CROSS JOIN",
+  "UNION ALL",
+  "GROUP BY",
+  "ORDER BY",
+  "INSERT INTO",
+  "DELETE FROM",
+  "SELECT",
+  "FROM",
+  "WHERE",
+  "HAVING",
+  "LIMIT",
+  "OFFSET",
+  "UNION",
+  "UPDATE",
+  "SET",
+  "VALUES",
+];
+
+function formatSqlForDisplay(raw = "") {
+  const src = String(raw || "").trim();
+  if (!src) return "";
+  if (/\n/.test(src)) return src;
+
+  const literals = [];
+  const literalRe = /('([^'\\]|\\.|'')*'|"([^"\\]|\\.|"")*"|`[^`]*`)/g;
+  const masked = src.replace(literalRe, (m) => {
+    literals.push(m);
+    return `\u0001${literals.length - 1}\u0001`;
+  });
+
+  const keywordAlt = SQL_FORMAT_KEYWORDS
+    .map((k) => k.replace(/ /g, "\\s+"))
+    .join("|");
+  const pattern = new RegExp(`\\s+(?=\\b(?:${keywordAlt})\\b)`, "gi");
+  let formatted = masked.replace(pattern, "\n");
+
+  formatted = formatted.replace(/\u0001(\d+)\u0001/g, (_, i) => literals[Number(i)]);
+  return formatted;
+}
+
+function buildSqlStepPanel(step) {
+  const panel = document.createElement("div");
+  panel.className = "sql-result-group";
+
+  if (step.sql) {
+    const pre = document.createElement("pre");
+    pre.className = "sql-block";
+    pre.textContent = formatSqlForDisplay(step.sql);
+    panel.appendChild(pre);
+  }
+
+  const rs = step.result_summary;
+  let tableWrap = null;
+  let firstCsvPath = "";
+  let truncated = false;
+  if (rs && typeof rs === "object") {
+    const pt = rs.preview_table;
+    if (pt && pt.columns?.length) {
+      tableWrap = buildResultTable(pt);
+      truncated = Boolean(pt.truncated);
+      if (tableWrap) panel.appendChild(tableWrap);
+    }
+    const csvPaths = Array.isArray(rs.csv_paths) ? rs.csv_paths : [];
+    if (csvPaths.length) firstCsvPath = csvPaths[0];
+
+    if (csvPaths.length || (tableWrap && truncated)) {
+      const actions = document.createElement("div");
+      actions.className = "sql-result-actions";
+
+      if (tableWrap && truncated && firstCsvPath) {
+        const loadBtn = document.createElement("button");
+        loadBtn.type = "button";
+        loadBtn.className = "tool-btn";
+        loadBtn.textContent = "전체 데이터 보기";
+        loadBtn.title = "CSV에서 전체 행을 이 화면 표에 불러옵니다";
+        loadBtn.addEventListener("click", (evt) => {
+          evt.preventDefault();
+          loadFullCsvIntoTable(firstCsvPath, tableWrap, loadBtn);
+        });
+        actions.appendChild(loadBtn);
+      }
+
+      csvPaths.forEach((path, i) => {
+        const link = document.createElement("a");
+        link.className = "message-link";
+        link.href = `/api/file?path=${encodeURIComponent(path)}&conversation_id=${encodeURIComponent(state.activeConversationId || "")}`;
+        link.target = "_blank";
+        link.rel = "noopener";
+        link.textContent = `CSV 다운로드${csvPaths.length > 1 ? ` ${i + 1}` : ""}`;
+        link.title = "새 탭에서 원본 CSV 파일을 연다";
+        actions.appendChild(link);
+      });
+
+      panel.appendChild(actions);
+    }
+  }
+  return panel;
+}
+
+function buildSqlNavigator(sqlSteps) {
+  const root = document.createElement("div");
+  root.className = "sql-navigator";
+  root.setAttribute("tabindex", "0");
+  root.setAttribute("role", "group");
+  root.setAttribute("aria-label", "SQL 쿼리 결과 탐색");
+
+  const header = document.createElement("div");
+  header.className = "sql-nav-header";
+
+  const prevBtn = document.createElement("button");
+  prevBtn.type = "button";
+  prevBtn.className = "sql-nav-btn";
+  prevBtn.innerHTML = "&#9664;";
+  prevBtn.setAttribute("aria-label", "이전 쿼리");
+  prevBtn.title = "이전 쿼리 (←)";
+
+  const nextBtn = document.createElement("button");
+  nextBtn.type = "button";
+  nextBtn.className = "sql-nav-btn";
+  nextBtn.innerHTML = "&#9654;";
+  nextBtn.setAttribute("aria-label", "다음 쿼리");
+  nextBtn.title = "다음 쿼리 (→)";
+
+  const indicator = document.createElement("span");
+  indicator.className = "sql-nav-indicator";
+  indicator.setAttribute("aria-live", "polite");
+
+  const context = document.createElement("span");
+  context.className = "sql-nav-context";
+
+  header.append(prevBtn, indicator, nextBtn, context);
+  root.appendChild(header);
+
+  const panels = document.createElement("div");
+  panels.className = "sql-nav-panels";
+  root.appendChild(panels);
+
+  const panelEls = sqlSteps.map((step) => {
+    const p = buildSqlStepPanel(step);
+    p.className += " sql-nav-panel";
+    panels.appendChild(p);
+    return p;
+  });
+
+  let activeIdx = 0;
+  function update() {
+    panelEls.forEach((el, i) => {
+      el.classList.toggle("is-active", i === activeIdx);
+    });
+    indicator.textContent = `쿼리 ${activeIdx + 1}/${sqlSteps.length}`;
+    const step = sqlSteps[activeIdx] || {};
+    const ref = extractFirstTableRef(step.sql);
+    context.textContent = ref ? `대상: ${ref}` : "";
+    prevBtn.disabled = activeIdx <= 0;
+    nextBtn.disabled = activeIdx >= sqlSteps.length - 1;
+  }
+  function go(delta) {
+    const next = Math.min(Math.max(activeIdx + delta, 0), sqlSteps.length - 1);
+    if (next !== activeIdx) {
+      activeIdx = next;
+      update();
+    }
+  }
+  function goTo(idx) {
+    const next = Math.min(Math.max(idx, 0), sqlSteps.length - 1);
+    if (next !== activeIdx) {
+      activeIdx = next;
+      update();
+    }
+  }
+
+  prevBtn.addEventListener("click", (evt) => {
+    evt.preventDefault();
+    go(-1);
+    root.focus();
+  });
+  nextBtn.addEventListener("click", (evt) => {
+    evt.preventDefault();
+    go(1);
+    root.focus();
+  });
+  root.addEventListener("keydown", (evt) => {
+    // 내부 input/textarea에 포커스가 있으면 무시
+    const target = evt.target;
+    if (target && target !== root && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+      return;
+    }
+    if (evt.key === "ArrowLeft") {
+      evt.preventDefault();
+      go(-1);
+    } else if (evt.key === "ArrowRight") {
+      evt.preventDefault();
+      go(1);
+    } else if (evt.key === "Home") {
+      evt.preventDefault();
+      goTo(0);
+    } else if (evt.key === "End") {
+      evt.preventDefault();
+      goTo(sqlSteps.length - 1);
+    }
+  });
+
+  update();
+  return root;
+}
+
+function buildStepBlocks(steps, containerEl) {
+  // execute_sql 단계는 SQL + 결과 테이블 + CSV 링크로 묶어 표시
+  // 나머지 단계는 요약 목록으로 표시. 2개 이상이면 Navigator로 압축.
+  const nonSqlSteps = steps.filter((s) => String(s.tool || "") !== "execute_sql");
+  const sqlSteps = steps.filter((s) => String(s.tool || "") === "execute_sql");
+
+  if (nonSqlSteps.length) {
+    const list = document.createElement("ul");
+    nonSqlSteps.forEach((step) => {
+      const item = document.createElement("li");
+      const work = String(step.work || step.intent || step.tool || "단계").trim();
+      const reason = String(step.reason || "").trim();
+      item.textContent = reason ? `${work} — ${reason}` : work;
+      list.appendChild(item);
+    });
+    appendDetailBlock(containerEl, "단계", list);
+  }
+
+  if (!sqlSteps.length) return;
+  if (sqlSteps.length === 1) {
+    const label = document.createElement("div");
+    label.className = "sql-result-label";
+    label.textContent = "SQL 쿼리";
+    containerEl.appendChild(label);
+    containerEl.appendChild(buildSqlStepPanel(sqlSteps[0]));
+    return;
+  }
+  containerEl.appendChild(buildSqlNavigator(sqlSteps));
+}
+
+function renderMessageDetails(meta = {}) {
+  const steps = Array.isArray(meta?.steps) ? meta.steps : [];
+  const hasSql = steps.some((s) => String(s.tool || "") === "execute_sql" && s.sql);
+  const hasDetails = hasSql || meta?.rationale || steps.length || Array.isArray(meta?.csv_paths) && meta.csv_paths.length;
+  if (!hasDetails) return null;
+
+  const detailsEl = document.createElement("details");
+  detailsEl.className = "message-details";
+  const summary = document.createElement("summary");
+  summary.textContent = "실행 단계 및 쿼리 결과 보기";
+  detailsEl.appendChild(summary);
+
+  // 스크롤 앵커: 펼침/접힘 시 summary 라인이 뷰포트 내 동일 위치에 유지되도록 보정.
+  summary.addEventListener("click", () => {
+    if (!messageLogEl) return;
+    const logRect = messageLogEl.getBoundingClientRect();
+    const prevOffset = summary.getBoundingClientRect().top - logRect.top;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const newOffset = summary.getBoundingClientRect().top - messageLogEl.getBoundingClientRect().top;
+        const delta = newOffset - prevOffset;
+        if (delta !== 0) {
+          messageLogEl.scrollTop += delta;
         }
-        if (raw[i - 1] !== "\\") {
-          segments.push({ text: buf, quoted: true });
-          buf = "";
-          quote = "";
-        }
+      });
+    });
+  });
+
+  const body = document.createElement("div");
+  body.className = "message-details-body";
+
+  if (steps.length) {
+    buildStepBlocks(steps, body);
+  } else {
+    // steps가 없는 구형 메시지 — 기존 필드로 폴백
+    if (meta.sql) {
+      const pre = document.createElement("pre");
+      pre.className = "sql-block";
+      pre.textContent = String(meta.sql);
+      appendDetailBlock(body, "실행 SQL", pre);
+    }
+    if (Array.isArray(meta.csv_paths) && meta.csv_paths.length) {
+      const wrap = document.createElement("div");
+      wrap.className = "message-link-list";
+      meta.csv_paths.forEach((path, index) => {
+        const link = document.createElement("a");
+        link.className = "message-link";
+        link.href = `/api/file?path=${encodeURIComponent(path)}&conversation_id=${encodeURIComponent(state.activeConversationId || "")}`;
+        link.target = "_blank";
+        link.rel = "noopener";
+        link.textContent = `CSV ${index + 1}`;
+        wrap.appendChild(link);
+      });
+      appendDetailBlock(body, "결과 파일", wrap);
+    }
+  }
+
+  detailsEl.appendChild(body);
+  return detailsEl;
+}
+
+function renderMessages() {
+  messageLogEl.innerHTML = "";
+  if (!state.messages.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.innerHTML = "<strong>아직 표시할 대화가 없습니다.</strong><span>좌측 목록에서 대화를 선택하거나 새 대화를 생성하세요.</span>";
+    messageLogEl.appendChild(empty);
+    return;
+  }
+
+  const conversation = currentConversation();
+  const isOwn = conversation ? isOwnConversation(conversation) : false;
+  const ownerLabel = conversation && conversation.owner_username ? conversation.owner_username : "사용자";
+  const selfLabel = state.user && state.user.username ? `나 (${state.user.username})` : "나";
+  const canFork = Boolean(state.activeConversationId) && can("conversation.create");
+
+  state.messages.forEach((message) => {
+    const row = document.createElement("article");
+    const role = message.role === "user" ? "user" : "assistant";
+    const classes = [`message`, `is-${role}`];
+    if (role === "user") {
+      classes.push(isOwn ? "is-own-message" : "is-other-message");
+    }
+    row.className = classes.join(" ");
+
+    const meta = document.createElement("div");
+    meta.className = "message-meta";
+    let speaker = "Assistant";
+    if (role === "user") {
+      speaker = isOwn ? selfLabel : ownerLabel;
+    }
+    meta.textContent = `${speaker} · ${formatDateTime(message.created_at)}`;
+
+    const bubble = document.createElement("div");
+    bubble.className = "message-bubble";
+    const content = document.createElement("div");
+    renderMessageContent(content, message.content || "", role);
+    bubble.appendChild(content);
+
+    if (role === "assistant") {
+      const details = renderMessageDetails(message.meta || {});
+      if (details) {
+        bubble.appendChild(details);
+      }
+    }
+
+    // 말풍선 단위 분기 버튼 — conversation.create 권한이 있을 때만 노출.
+    if (canFork && message.id != null) {
+      const actions = document.createElement("div");
+      actions.className = "message-actions";
+      const forkBtn = document.createElement("button");
+      forkBtn.type = "button";
+      forkBtn.className = "message-action-btn";
+      forkBtn.textContent = "여기서 분기";
+      forkBtn.title = "이 말풍선까지의 기록을 내 계정의 새 대화로 복제합니다.";
+      forkBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        forkConversation({ fromMessageId: message.id }).catch((error) => {
+          showToast(error.message || "대화 분기에 실패했습니다.", true);
+        });
+      });
+      actions.appendChild(forkBtn);
+      bubble.appendChild(actions);
+    }
+
+    row.append(meta, bubble);
+    messageLogEl.appendChild(row);
+  });
+  messageLogEl.scrollTop = messageLogEl.scrollHeight;
+}
+
+function renderComposer() {
+  const busy = isCurrentConvBusy();
+  const hasAsk = can("conversation.ask");
+  const disabled = !canAskInConversation() || busy;
+  // TASK-0047: composer busy 상태 변화에 따라 product chip 도 disabled 동기화.
+  renderProductChip();
+  // 전송 버튼: 권한이 없어도 클릭이 통과하여 토스트로 안내되도록 native disabled 대신 aria-disabled 사용.
+  promptInputEl.disabled = busy;
+  sendBtn.disabled = busy;
+  if (hasAsk) {
+    sendBtn.removeAttribute("aria-disabled");
+    sendBtn.classList.remove("is-access-blocked");
+    sendBtn.title = "";
+  } else {
+    sendBtn.setAttribute("aria-disabled", "true");
+    sendBtn.classList.add("is-access-blocked");
+    sendBtn.title = "'대화 요청 실행' 권한이 없습니다. 필요 권한: `conversation.ask`";
+  }
+  // 새 대화 버튼: 동일 패턴 — 클릭 시 토스트를 노출하기 위해 aria-disabled 로 표시.
+  if (can("conversation.create")) {
+    newConversationBtn.disabled = false;
+    newConversationBtn.removeAttribute("aria-disabled");
+    newConversationBtn.classList.remove("is-access-blocked");
+    newConversationBtn.title = "";
+  } else {
+    newConversationBtn.disabled = false;
+    newConversationBtn.setAttribute("aria-disabled", "true");
+    newConversationBtn.classList.add("is-access-blocked");
+    newConversationBtn.title = "'새 대화 생성' 권한이 없습니다. 필요 권한: `conversation.create`";
+  }
+
+  if (!hasAsk) {
+    composerTitleEl.textContent = "조회 전용 상태";
+    composerHintEl.textContent =
+      "현재 계정에는 대화 요청 실행 권한(`conversation.ask`)이 없습니다. 관리자에게 권한 부여를 요청하세요.";
+  } else if (currentConversation() && !isOwnConversation(currentConversation())) {
+    composerTitleEl.textContent = "읽기 전용 대화";
+    composerHintEl.textContent = "타 계정 대화에는 요청을 이어서 보낼 수 없습니다. 새 대화를 생성하세요.";
+  } else if (busy) {
+    composerTitleEl.textContent = "요청 처리 중";
+    composerHintEl.textContent = "이 대화의 요청이 처리 중입니다. 다른 대화에서 새 요청을 보낼 수 있습니다.";
+  } else {
+    composerTitleEl.textContent = "요청 작성";
+    composerHintEl.textContent = "자연어 요청, 검증 요청, SQL 확인 요청을 그대로 입력할 수 있습니다.";
+  }
+
+  const active = currentConversation();
+  const processing = active && String(active.status || "").toLowerCase() === "processing";
+  // 가림 정책: context 상 의미있는 조건(처리 중 / 대화 선택됨) 은 그대로 가시성에 반영하되,
+  // "권한 없음" 은 hidden 이 아닌 is-access-blocked 로 표현해 버튼이 존재함을 알 수 있게 한다.
+  cancelBtn.classList.toggle("hidden", !processing);
+  finalizeBtn.classList.toggle("hidden", !processing);
+  renameConversationBtn.classList.toggle("hidden", !state.activeConversationId);
+  deleteConversationBtn.classList.toggle("hidden", !state.activeConversationId);
+  if (forkConversationBtn) {
+    forkConversationBtn.classList.toggle("hidden", !state.activeConversationId);
+    if (state.activeConversationId) {
+      if (can("conversation.create")) {
+        forkConversationBtn.removeAttribute("aria-disabled");
+        forkConversationBtn.classList.remove("is-access-blocked");
+        forkConversationBtn.title = active && !isOwnConversation(active)
+          ? "이 대화의 기록을 내 계정의 새 대화로 복제합니다."
+          : "이 대화의 기록을 내 계정의 새 대화로 복제합니다.";
+      } else {
+        forkConversationBtn.setAttribute("aria-disabled", "true");
+        forkConversationBtn.classList.add("is-access-blocked");
+        forkConversationBtn.title =
+          "'새 대화 생성' 권한이 없습니다. 필요 권한: `conversation.create`";
+      }
+    }
+  }
+  if (processing) {
+    markAccessBlocked(cancelBtn, "conversation.cancel", active);
+    markAccessBlocked(finalizeBtn, "conversation.finalize", active);
+  }
+  if (state.activeConversationId) {
+    markAccessBlocked(renameConversationBtn, "conversation.rename", active);
+    markAccessBlocked(deleteConversationBtn, "conversation.delete", active);
+  }
+}
+
+function renderProgress(statusPayload = null) {
+  const payload = statusPayload || { status: "", steps: [] };
+  const steps = Array.isArray(payload.steps) ? payload.steps : [];
+  const status = String(payload.status || "").trim();
+  if (!status && !steps.length) {
+    progressCardEl.classList.add("hidden");
+    progressCardEl.removeAttribute("open");
+    progressStepsEl.innerHTML = "";
+    progressStatusEl.textContent = "idle";
+    if (progressSummaryEl) progressSummaryEl.textContent = "";
+    return;
+  }
+
+  progressCardEl.classList.remove("hidden");
+  progressTitleEl.textContent = status === "processing" ? "처리 중" : "최근 실행";
+  progressStatusEl.textContent = status || "unknown";
+
+  if (progressSummaryEl) {
+    if (steps.length > 0) {
+      const latest = steps[steps.length - 1] || {};
+      const label = latest.work || latest.intent || latest.tool || "단계";
+      progressSummaryEl.textContent = `${steps.length}단계 · ${label}`;
+    } else {
+      progressSummaryEl.textContent = status === "processing" ? "시작 중..." : "";
+    }
+  }
+
+  progressStepsEl.innerHTML = "";
+  steps.forEach((step, idx) => {
+    const item = document.createElement("div");
+    item.className = "progress-step";
+    const indexEl = document.createElement("span");
+    indexEl.className = "progress-step-index";
+    indexEl.textContent = `${idx + 1}.`;
+    const title = document.createElement("strong");
+    title.textContent = step.work || step.intent || step.tool || "단계";
+    const desc = document.createElement("span");
+    desc.textContent = step.reason || step.result_summary || step.tool || "";
+    item.append(indexEl, title, desc);
+    progressStepsEl.appendChild(item);
+  });
+}
+
+function clearProgressPollTimer() {
+  if (state.progressPoller) {
+    clearTimeout(state.progressPoller);
+    state.progressPoller = null;
+  }
+}
+
+function maxProgressStepIndex(steps = []) {
+  let maxStep = 0;
+  steps.forEach((step) => {
+    const stepIndex = Number(step?.step_index || 0);
+    if (Number.isFinite(stepIndex) && stepIndex > maxStep) {
+      maxStep = stepIndex;
+    }
+  });
+  return maxStep;
+}
+
+function resetProgressTracking(runId = "") {
+  state.progressRunId = String(runId || "").trim();
+  state.progressAfterStep = 0;
+  state.progressErrorCount = 0;
+  state.progressSteps = [];
+}
+
+function stopProgressPolling({ reset = false, abort = true } = {}) {
+  state.progressPollSeq += 1;
+  clearProgressPollTimer();
+  if (abort && state.progressAbortController) {
+    try {
+      state.progressAbortController.abort();
+    } catch (_error) {
+      // no-op
+    }
+  }
+  state.progressAbortController = null;
+  state.progressPollInFlight = false;
+  if (reset) {
+    resetProgressTracking();
+  }
+}
+
+function scheduleProgressPolling(delayMs = PROGRESS_POLL_IDLE_MS, seq = state.progressPollSeq) {
+  clearProgressPollTimer();
+  if (!state.activeConversationId) return;
+  const nextDelay = document.hidden
+    ? Math.max(delayMs, PROGRESS_POLL_HIDDEN_MS)
+    : Math.max(delayMs, 0);
+  state.progressPoller = window.setTimeout(() => {
+    pollProgress(seq).catch(() => {});
+  }, nextDelay);
+}
+
+function applyProgressPayload(payload = {}) {
+  const runId = String(payload.run_id || "").trim();
+  const incomingSteps = Array.isArray(payload.steps) ? payload.steps : [];
+  const stepCount = Math.max(0, Number(payload.step_count || 0));
+
+  if (!runId || runId !== state.progressRunId) {
+    state.progressRunId = runId;
+    state.progressSteps = incomingSteps.slice();
+  } else if (incomingSteps.length) {
+    const seen = new Set(
+      state.progressSteps.map((step) => `${step.step_index || 0}:${step.created_at || ""}`)
+    );
+    incomingSteps.forEach((step) => {
+      const key = `${step.step_index || 0}:${step.created_at || ""}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        state.progressSteps.push(step);
+      }
+    });
+  }
+
+  state.progressAfterStep = Math.max(stepCount, maxProgressStepIndex(state.progressSteps));
+  renderProgress({ ...payload, steps: state.progressSteps.slice() });
+}
+
+async function pollProgress(seq = state.progressPollSeq) {
+  if (!state.activeConversationId || seq !== state.progressPollSeq || state.progressPollInFlight) return;
+  state.progressPollInFlight = true;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), PROGRESS_FETCH_TIMEOUT_MS);
+  state.progressAbortController = controller;
+  let shouldSchedule = false;
+  let nextDelay = PROGRESS_POLL_IDLE_MS;
+  try {
+    const params = new URLSearchParams({
+      conversation_id: state.activeConversationId,
+    });
+    if (state.progressRunId && state.progressAfterStep > 0) {
+      params.set("client_run_id", state.progressRunId);
+      params.set("after_step", String(state.progressAfterStep));
+    }
+    const payload = await apiFetch(`/api/progress?${params.toString()}`, {
+      signal: controller.signal,
+    });
+    state.progressErrorCount = 0;
+    applyProgressPayload(payload);
+    if (payload.status && payload.status !== "processing") {
+      stopProgressPolling({ abort: false });
+      await refreshWorkspace(state.activeConversationId);
+      return;
+    }
+    shouldSchedule = true;
+    nextDelay = Array.isArray(payload.steps) && payload.steps.length
+      ? PROGRESS_POLL_ACTIVE_MS
+      : PROGRESS_POLL_IDLE_MS;
+  } catch (_error) {
+    if (seq !== state.progressPollSeq) {
+      return;
+    }
+    state.progressErrorCount += 1;
+    shouldSchedule = Boolean(state.activeConversationId) && state.progressErrorCount < 3;
+    nextDelay = document.hidden ? PROGRESS_POLL_HIDDEN_MS : PROGRESS_POLL_ERROR_MS;
+  } finally {
+    window.clearTimeout(timeoutId);
+    if (state.progressAbortController === controller) {
+      state.progressAbortController = null;
+    }
+    state.progressPollInFlight = false;
+    if (shouldSchedule && seq === state.progressPollSeq) {
+      scheduleProgressPolling(nextDelay, seq);
+    }
+  }
+}
+
+function startProgressPolling({ reset = false, runId = "" } = {}) {
+  stopProgressPolling({ reset: false, abort: true });
+  state.progressPollSeq += 1;
+  if (reset) {
+    resetProgressTracking(runId);
+  } else if (runId && runId !== state.progressRunId) {
+    resetProgressTracking(runId);
+  } else {
+    state.progressErrorCount = 0;
+  }
+  if (!state.activeConversationId) return;
+  scheduleProgressPolling(0, state.progressPollSeq);
+}
+
+async function loadHistory({ append = false } = {}) {
+  if (!state.activeConversationId) {
+    stopProgressPolling({ reset: true });
+    state.messages = [];
+    state.hasMoreHistory = false;
+    state.nextBeforeId = null;
+    renderMessages();
+    renderProgress();
+    renderComposer();
+    return;
+  }
+  const params = new URLSearchParams({
+    conversation_id: state.activeConversationId,
+    limit: "20",
+  });
+  if (append && state.nextBeforeId) {
+    params.set("before_id", String(state.nextBeforeId));
+  }
+  const payload = await apiFetch(`/api/history?${params.toString()}`);
+  state.messages = append
+    ? [...payload.messages, ...state.messages]
+    : payload.messages;
+  state.hasMoreHistory = Boolean(payload.has_more);
+  state.nextBeforeId = payload.next_before_id || null;
+  loadMoreBtn.classList.toggle("hidden", !state.hasMoreHistory);
+  renderMessages();
+  if (payload.last_status === "processing") {
+    startProgressPolling({
+      reset: payload.last_run_id !== state.progressRunId,
+      runId: payload.last_run_id || "",
+    });
+    renderProgress({ status: payload.last_status, steps: state.progressSteps.slice() });
+  } else {
+    stopProgressPolling({ reset: true });
+    renderProgress();
+  }
+  renderComposer();
+}
+
+async function loadConversations(preferredConversationId = "") {
+  const payload = await apiFetch("/api/conversations");
+  state.conversations = Array.isArray(payload.items) ? payload.items : [];
+  const preferredExists = state.conversations.some((item) => item.id === preferredConversationId);
+  state.activeConversationId = preferredExists ? preferredConversationId : (payload.current || "");
+  renderConversationList();
+  renderConversationHeader();
+  renderComposer();
+}
+
+async function refreshWorkspace(preferredConversationId = "") {
+  await loadConversations(preferredConversationId);
+  renderConversationHeader();
+  renderAccessNotice();
+  await loadHistory();
+  // TASK-0047: 활성 대화의 product_mode/product_id 를 별도 endpoint 없이 /api/session 재호출로 hydrate.
+  try {
+    const fresh = await apiFetch("/api/session");
+    if (fresh && fresh.authenticated) {
+      applyProductHydration({
+        pref: fresh.product_pref || null,
+        conversationProduct: fresh.conversation_product || null,
+      });
+    }
+  } catch (_) { /* network blip: state 유지 */ }
+}
+
+async function selectConversation(conversationId) {
+  if (!conversationId || conversationId === state.activeConversationId) {
+    return;
+  }
+  // TASK-0048: 다른 실 대화로 전환하면 pending 모드는 자동 종료한다.
+  if (state.pendingNewConversation) {
+    state.pendingNewConversation = false;
+  }
+  await apiFetch("/api/use_conversation", {
+    method: "POST",
+    body: JSON.stringify({ conversation_id: conversationId }),
+  });
+  state.activeConversationId = conversationId;
+  renderConversationList();
+  renderConversationHeader();
+  await loadHistory();
+  // 대화 전환 시 새 대화의 product 컨텍스트로 chip 갱신.
+  try {
+    const fresh = await apiFetch("/api/session");
+    if (fresh && fresh.authenticated) {
+      applyProductHydration({
+        pref: fresh.product_pref || null,
+        conversationProduct: fresh.conversation_product || null,
+      });
+    }
+  } catch (_) { /* ignore */ }
+}
+
+async function createConversation() {
+  if (!can("conversation.create")) {
+    showPermissionDeniedToast("conversation.create");
+    return;
+  }
+  // TASK-0047: 새 대화 생성 시 사용자의 직전 선호(state.productMode/pinnedProductId) 를 함께 보낸다.
+  const body = state.productMode === "pinned" && state.pinnedProductId
+    ? { mode: "pinned", product_id: Number(state.pinnedProductId) }
+    : { mode: "auto" };
+  const payload = await apiFetch("/api/new_conversation", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  showToast("새 대화를 만들었습니다.");
+  await refreshWorkspace(payload.conversation_id || "");
+}
+
+// TASK-0048: "새 대화" 버튼은 즉시 backend row 를 만들지 않는다. client-side pending 상태만 진입하고
+// 실제 row 생성은 첫 메시지 전송 시 /api/ask 의 lazy creation path 에 위임한다. 빈 대화 누적 방지.
+function beginPendingConversation() {
+  if (!can("conversation.create")) {
+    showPermissionDeniedToast("conversation.create");
+    return;
+  }
+  if (state.pendingNewConversation) {
+    // 이미 pending 상태 — 입력란에 포커스만 다시 맞춘다.
+    if (promptInputEl) promptInputEl.focus();
+    return;
+  }
+  // 진행 중 ask 가 있는 대화의 사이드바 컨텍스트를 깨지 않도록 polling 만 중단(상태 자체는 보존).
+  stopProgressPolling({ reset: true });
+  state.activeConversationId = "";
+  state.pendingNewConversation = true;
+  state.messages = [];
+  state.hasMoreHistory = false;
+  state.nextBeforeId = null;
+  renderConversationList();
+  renderConversationHeader();
+  renderAccessNotice();
+  renderMessages();
+  renderProgress();
+  renderComposer();
+  if (promptInputEl) promptInputEl.focus();
+}
+
+async function forkConversation({ fromMessageId = null } = {}) {
+  const sourceId = state.activeConversationId;
+  if (!sourceId) return;
+  if (!can("conversation.create")) {
+    showPermissionDeniedToast("conversation.create");
+    return;
+  }
+  const body = { source_conversation_id: sourceId };
+  if (fromMessageId != null) body.from_message_id = Number(fromMessageId);
+  const payload = await apiFetch("/api/fork_conversation", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  const newId = payload && payload.conversation_id ? String(payload.conversation_id) : "";
+  const copied = Number(payload && payload.copied) || 0;
+  showToast(
+    fromMessageId != null
+      ? `선택한 지점까지 ${copied}개 메시지를 새 대화로 복제했습니다.`
+      : `대화를 복제했습니다 (${copied}개 메시지).`
+  );
+  await refreshWorkspace(newId);
+}
+
+async function renameCurrentConversation() {
+  const conversation = currentConversation();
+  if (!conversation) return;
+  if (!canRenameConversation(conversation)) {
+    showPermissionDeniedToast("conversation.rename", conversation);
+    return;
+  }
+  const nextTitle = window.prompt("새 대화 제목을 입력하세요.", conversation.topic || "");
+  if (nextTitle == null) return;
+  const trimmed = nextTitle.trim();
+  if (!trimmed) return;
+  await apiFetch(`/api/conversations/${encodeURIComponent(conversation.id)}/title`, {
+    method: "PATCH",
+    body: JSON.stringify({ title: trimmed }),
+  });
+  showToast("대화 제목을 변경했습니다.");
+  await refreshWorkspace(conversation.id);
+}
+
+async function deleteConversation() {
+  if (!state.activeConversationId) return;
+  if (!canDeleteConversation()) {
+    showPermissionDeniedToast("conversation.delete");
+    return;
+  }
+  if (!window.confirm("현재 대화를 삭제하시겠습니까?")) {
+    return;
+  }
+  try {
+    const payload = await apiFetch("/api/delete_conversation", {
+      method: "POST",
+      body: JSON.stringify({ conversation_id: state.activeConversationId }),
+    });
+    showToast("대화를 삭제했습니다.");
+    await refreshWorkspace(payload.current || "");
+  } catch (error) {
+    if (error.status === 409) {
+      const text = window.prompt("처리 중 대화입니다. 강제 삭제하려면 '삭제'를 입력하세요.", "");
+      if (text !== "삭제") return;
+      const payload = await apiFetch("/api/delete_conversation", {
+        method: "POST",
+        body: JSON.stringify({
+          conversation_id: state.activeConversationId,
+          force: true,
+          confirm_text: "삭제",
+        }),
+      });
+      showToast("처리 중 대화를 삭제 대기 상태로 전환했습니다.");
+      await refreshWorkspace(payload.current || "");
+      return;
+    }
+    throw error;
+  }
+}
+
+async function cancelCurrentRun() {
+  if (!state.activeConversationId) return;
+  if (!canCancelConversation()) {
+    showPermissionDeniedToast("conversation.cancel");
+    return;
+  }
+  await apiFetch("/api/cancel", {
+    method: "POST",
+    body: JSON.stringify({ conversation_id: state.activeConversationId }),
+  });
+  showToast("취소 요청을 전달했습니다.");
+}
+
+async function finalizeCurrentRun() {
+  if (!state.activeConversationId) return;
+  if (!canFinalizeConversation()) {
+    showPermissionDeniedToast("conversation.finalize");
+    return;
+  }
+  await apiFetch("/api/finalize", {
+    method: "POST",
+    body: JSON.stringify({ conversation_id: state.activeConversationId }),
+  });
+  showToast("즉시 답변 요청을 전달했습니다.");
+}
+
+// TASK-0041: 서버에 해당 대화의 현재 실행 상태(is_processing 등)를 질의한다.
+async function fetchAskStatus(conversationId) {
+  if (!conversationId) return null;
+  try {
+    const params = new URLSearchParams({ conversation_id: String(conversationId) });
+    return await apiFetch(`/api/ask_status?${params.toString()}`);
+  } catch (_error) {
+    return null;
+  }
+}
+
+// TASK-0041: 장시간 작업이 여전히 진행 중일 때 사용자에게 선택지를 제공하는 모달.
+// 반환값: "wait" | "finalize" | "cancel" | "dismiss"
+function showTimeoutRecoveryDialog({ statusText = "" } = {}) {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement("div");
+    backdrop.setAttribute("role", "dialog");
+    backdrop.setAttribute("aria-modal", "true");
+    backdrop.style.cssText = [
+      "position:fixed", "inset:0",
+      "background:rgba(4,10,20,0.62)",
+      "z-index:9999",
+      "display:flex", "align-items:center", "justify-content:center",
+      "padding:24px",
+    ].join(";");
+
+    const panel = document.createElement("div");
+    panel.style.cssText = [
+      "background:#0f1b2c", "color:#e5eef7",
+      "padding:24px 28px", "border-radius:14px",
+      "max-width:480px", "width:100%",
+      "box-shadow:0 24px 60px rgba(0,0,0,0.5)",
+      "font-family:inherit",
+      "border:1px solid rgba(255,255,255,0.08)",
+    ].join(";");
+
+    const title = document.createElement("h3");
+    title.textContent = "응답 대기 중입니다";
+    title.style.cssText = "margin:0 0 8px 0;font-size:1.05rem;";
+
+    const desc = document.createElement("p");
+    desc.style.cssText = "margin:0 0 18px 0;line-height:1.55;color:#9bb6d2;font-size:0.92rem;white-space:pre-line;";
+    desc.textContent = [
+      "서버는 여전히 이 대화를 처리 중입니다.",
+      "어떻게 진행할까요?",
+      statusText ? `\n현재 상태: ${statusText}` : "",
+    ].filter(Boolean).join("\n");
+
+    const btnRow = document.createElement("div");
+    btnRow.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;";
+
+    const makeBtn = (label, choice, variant) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = label;
+      const base = [
+        "padding:8px 14px",
+        "border-radius:8px",
+        "border:1px solid rgba(255,255,255,0.14)",
+        "background:#1a2740",
+        "color:#e5eef7",
+        "cursor:pointer",
+        "font-size:0.88rem",
+      ];
+      if (variant === "primary") {
+        base.push("background:#2457d9", "border-color:#2457d9");
+      } else if (variant === "danger") {
+        base.push("background:#7a2121", "border-color:#7a2121");
+      }
+      btn.style.cssText = base.join(";");
+      btn.addEventListener("click", () => {
+        document.body.removeChild(backdrop);
+        document.removeEventListener("keydown", onKey);
+        resolve(choice);
+      });
+      return btn;
+    };
+
+    btnRow.appendChild(makeBtn("요청 취소", "cancel", "danger"));
+    btnRow.appendChild(makeBtn("즉시 답변", "finalize"));
+    btnRow.appendChild(makeBtn("계속 기다리기", "wait", "primary"));
+
+    panel.appendChild(title);
+    panel.appendChild(desc);
+    panel.appendChild(btnRow);
+    backdrop.appendChild(panel);
+
+    const onKey = (event) => {
+      if (event.key === "Escape") {
+        document.body.removeChild(backdrop);
+        document.removeEventListener("keydown", onKey);
+        resolve("dismiss");
+      }
+    };
+    document.addEventListener("keydown", onKey);
+
+    document.body.appendChild(backdrop);
+  });
+}
+
+// TASK-0041: /api/ask_result 를 long-poll 방식으로 반복 호출해
+// 서버가 종료 상태가 될 때까지 대기한다. 종료되면 refreshWorkspace 를 호출한다.
+async function attachAndWaitForResult(conversationId, { runId = "" } = {}) {
+  if (!conversationId) return false;
+  const startedAt = Date.now();
+  let currentRunId = runId || "";
+  while (true) {
+    if ((Date.now() - startedAt) / 1000 > ASK_ATTACH_MAX_TOTAL_SEC) {
+      showToast("서버 응답이 너무 오래 걸립니다. 잠시 후 새로고침으로 다시 확인하세요.", true);
+      return false;
+    }
+    const params = new URLSearchParams({
+      conversation_id: String(conversationId),
+      wait: String(ASK_ATTACH_POLL_WAIT_SEC),
+    });
+    if (currentRunId) {
+      params.set("run_id", currentRunId);
+    }
+    let payload;
+    try {
+      payload = await apiFetch(`/api/ask_result?${params.toString()}`);
+    } catch (error) {
+      showToast(`응답 연결에 실패했습니다: ${error.message || error}`, true);
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      continue;
+    }
+    if (payload && payload.timeout) {
+      if (payload.run_id && !currentRunId) {
+        currentRunId = String(payload.run_id);
       }
       continue;
     }
-    if (ch === "'" || ch === "\"" || ch === "`") {
-      if (buf) segments.push({ text: buf, quoted: false });
-      buf = ch;
-      quote = ch;
-      continue;
+    // terminal payload 수신 — refresh 후 종료
+    await refreshWorkspace(conversationId);
+    if (payload && payload.status === "error" && payload.error) {
+      showToast(`실행 오류: ${payload.error}`, true);
+    } else {
+      showToast("응답을 갱신했습니다.");
     }
-    buf += ch;
+    return true;
   }
-  if (buf) {
-    segments.push({ text: buf, quoted: Boolean(quote) });
+}
+
+async function sendPrompt() {
+  const message = promptInputEl.value.trim();
+  if (!message) return;
+  if (isCurrentConvBusy()) return;
+  if (!can("conversation.ask")) {
+    showPermissionDeniedToast("conversation.ask");
+    return;
   }
-
-  const formatSegment = (text) => {
-    let s = text.replace(/\s+/g, " ");
-    s = s.replace(/\bUNION\s+ALL\b/gi, "__UNION_ALL__");
-    s = s.replace(/\bLEFT\s+JOIN\b/gi, "__LEFT_JOIN__");
-    s = s.replace(/\bRIGHT\s+JOIN\b/gi, "__RIGHT_JOIN__");
-    s = s.replace(/\bINNER\s+JOIN\b/gi, "__INNER_JOIN__");
-    s = s.replace(/\bOUTER\s+JOIN\b/gi, "__OUTER_JOIN__");
-    s = s.replace(/\bCROSS\s+JOIN\b/gi, "__CROSS_JOIN__");
-    s = s.replace(/\bGROUP\s+BY\b/gi, "__GROUP_BY__");
-    s = s.replace(/\bORDER\s+BY\b/gi, "__ORDER_BY__");
-    s = s.replace(/\bDELETE\s+FROM\b/gi, "__DELETE_FROM__");
-    s = s.replace(/\bINSERT\s+INTO\b/gi, "__INSERT_INTO__");
-
-    const rules = [
-      [/\bSELECT\b/gi, "\nSELECT"],
-      [/\bFROM\b/gi, "\nFROM"],
-      [/\bWHERE\b/gi, "\nWHERE"],
-      [/\bHAVING\b/gi, "\nHAVING"],
-      [/\bLIMIT\b/gi, "\nLIMIT"],
-      [/\bOFFSET\b/gi, "\nOFFSET"],
-      [/\bUNION\b/gi, "\nUNION"],
-      [/\bJOIN\b/gi, "\nJOIN"],
-      [/\bON\b/gi, "\n  ON"],
-      [/\bAND\b/gi, "\n  AND"],
-      [/\bOR\b/gi, "\n  OR"],
-      [/\bVALUES\b/gi, "\nVALUES"],
-      [/\bSET\b/gi, "\nSET"],
-      [/\bUPDATE\b/gi, "\nUPDATE"],
-    ];
-    rules.forEach(([re, rep]) => {
-      s = s.replace(re, rep);
-    });
-
-    s = s.replace(/__UNION_ALL__/g, "\nUNION ALL");
-    s = s.replace(/__LEFT_JOIN__/g, "\nLEFT JOIN");
-    s = s.replace(/__RIGHT_JOIN__/g, "\nRIGHT JOIN");
-    s = s.replace(/__INNER_JOIN__/g, "\nINNER JOIN");
-    s = s.replace(/__OUTER_JOIN__/g, "\nOUTER JOIN");
-    s = s.replace(/__CROSS_JOIN__/g, "\nCROSS JOIN");
-    s = s.replace(/__GROUP_BY__/g, "\nGROUP BY");
-    s = s.replace(/__ORDER_BY__/g, "\nORDER BY");
-    s = s.replace(/__DELETE_FROM__/g, "\nDELETE FROM");
-    s = s.replace(/__INSERT_INTO__/g, "\nINSERT INTO");
-    s = s.replace(/\n\s*\n+/g, "\n");
-    return s;
+  const active = currentConversation();
+  if (active && !isOwnConversation(active)) {
+    showToast("타 계정 소유의 대화에는 요청을 보낼 수 없습니다. 새 대화를 생성하세요.", true);
+    return;
+  }
+  // TASK-0048: pending 모드는 client-side 만 진입한 빈 대화 단계. cid 가 없으니 lazy create.
+  const isPending = Boolean(state.pendingNewConversation);
+  const isLazyCreate = isPending || !state.activeConversationId;
+  if (isLazyCreate && !can("conversation.create")) {
+    showPermissionDeniedToast("conversation.create");
+    return;
+  }
+  const vault = readVaultState();
+  // 요청 시작 시점의 대화 ID를 고정 — 전송 중 대화 전환이 일어나도 올바른 대화에 귀속
+  const targetConvId = state.activeConversationId;
+  // busy 추적: lazy create 시점에는 cid 가 없으므로 sentinel 로 잠근다.
+  const busyKey = isLazyCreate ? PENDING_CONV_SENTINEL : targetConvId;
+  state.busyConversations.add(busyKey);
+  renderComposer();
+  if (!isLazyCreate && targetConvId) {
+    startProgressPolling({ reset: true });
+  }
+  // TASK-0048: lazy create 분기에서 사용자의 직전 product 의도(state.productMode/pinnedProductId)를
+  // backend 에 hint 로 전달. backend `/api/ask` 가 새 cid 직후 AgentCoreConversations.product_*에 반영한다.
+  const askBody = {
+    message,
+    conversation_id: targetConvId || "",
+    model: vaultModelEl.value.trim() || vault.model || state.apiVaultOptions?.default_model || "auto",
+    api_key_cipher: vault.cipher,
+    api_key_passphrase: vault.passphrase,
   };
-
-  let output = "";
-  segments.forEach((seg) => {
-    output += seg.quoted ? seg.text : formatSegment(seg.text);
-  });
-  output = output.replace(/^\s*\n/, "");
-  return output.trim();
-}
-
-function buildSqlLinesHtml(sql) {
-  const raw = String(sql || "");
-  const lines = raw.split(/\r?\n/);
-  const items = lines
-    .map((line) => `<li><span class="sql-line-code">${highlightSqlLine(line)}</span></li>`)
-    .join("");
-  return `<ol class="sql-lines">${items}</ol>`;
-}
-
-function highlightSqlLine(line) {
-  const source = String(line || "");
-  if (!source) return "";
-  const stashed = [];
-  const makeToken = () => `__SQLTOKEN_${"x".repeat(stashed.length + 1)}__`;
-  const stash = (text, kind) => {
-    const key = makeToken();
-    stashed.push({ key, text, kind });
-    return key;
-  };
-
-  let work = source;
-  work = work.replace(/(--.*$|#.*$)/g, (m) => stash(m, "comment"));
-  work = work.replace(/'([^'\\]|\\.|'')*'|\"([^\"\\]|\\.)*\"|`[^`]*`/g, (m) => stash(m, "str"));
-
-  let html = escapeHtml(work);
-  html = html.replace(
-    /\b(COUNT|SUM|AVG|MIN|MAX|DATE_FORMAT|COALESCE|IFNULL|ROUND|CAST|CONCAT|SUBSTRING|NOW|DATEDIFF|TIMESTAMPDIFF)\b(?=\s*\()/gi,
-    (m) => `<span class="sql-token sql-fn">${m.toUpperCase()}</span>`
-  );
-  html = html.replace(
-    /\b(LEFT\s+JOIN|RIGHT\s+JOIN|INNER\s+JOIN|OUTER\s+JOIN|CROSS\s+JOIN|GROUP\s+BY|ORDER\s+BY|UNION\s+ALL|INSERT\s+INTO|DELETE\s+FROM|SELECT|FROM|WHERE|HAVING|LIMIT|OFFSET|UNION|JOIN|ON|AND|OR|AS|IN|EXISTS|NOT|NULL|IS|LIKE|DISTINCT|CASE|WHEN|THEN|ELSE|END|UPDATE|SET|DELETE|INSERT|INTO|VALUES|CREATE|ALTER|DROP|TABLE|DATABASE|SHOW|DESCRIBE|EXPLAIN|WITH|BY|ASC|DESC)\b/gi,
-    (m) => `<span class="sql-token sql-kw">${m.toUpperCase()}</span>`
-  );
-  html = html.replace(/\b\d+(?:\.\d+)?\b/g, (m) => `<span class="sql-token sql-num">${m}</span>`);
-
-  for (let i = stashed.length - 1; i >= 0; i -= 1) {
-    const item = stashed[i];
-    const cls = item.kind === "comment" ? "sql-comment" : "sql-str";
-    const tokenHtml = `<span class="sql-token ${cls}">${escapeHtml(item.text)}</span>`;
-    html = html.replace(item.key, tokenHtml);
+  if (isLazyCreate) {
+    askBody.product_mode = state.productMode === "pinned" ? "pinned" : "auto";
+    askBody.product_id =
+      askBody.product_mode === "pinned" && state.pinnedProductId
+        ? Number(state.pinnedProductId)
+        : null;
   }
-  return html;
-}
-
-function bufferToBase64(buffer) {
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  let binary = "";
-  bytes.forEach((b) => {
-    binary += String.fromCharCode(b);
-  });
-  return btoa(binary);
-}
-
-function base64ToBuffer(base64) {
   try {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) {
-      bytes[i] = binary.charCodeAt(i);
+    const payload = await apiFetch("/api/ask", {
+      method: "POST",
+      body: JSON.stringify(askBody),
+    });
+    promptInputEl.value = "";
+    promptInputEl.style.height = "auto";
+    showToast(payload.error ? payload.error : "응답을 갱신했습니다.");
+    const newCid = String(payload.conversation_id || targetConvId || "");
+    if (isLazyCreate && newCid) {
+      // pending placeholder → 실 cid 로 전환. busy sentinel 은 finally 에서 정리.
+      state.pendingNewConversation = false;
+      state.activeConversationId = newCid;
     }
-    return bytes;
-  } catch (err) {
-    return new Uint8Array();
+    await refreshWorkspace(newCid);
+  } catch (error) {
+    // TASK-0048: pending 단계에서 ask 가 실패하면 cid 발급 여부가 client 에는 불확실 →
+    // attach/resume 다이얼로그 대신 사용자에게 재시도/사이드바 새로고침을 안내한다.
+    if (isLazyCreate) {
+      showToast(
+        `첫 메시지 전송에 실패했습니다: ${error.message || error}. 다시 시도하거나 사이드바를 새로고침해 주세요.`,
+        true,
+      );
+    } else {
+      // TASK-0041: 기존 대화에서 /api/ask 가 타임아웃/네트워크 오류/게이트웨이 오류로 실패했을 때
+      // 서버가 여전히 처리 중이면 사용자에게 기다리기/즉시답변/취소 선택지를 제시.
+      const askCid = targetConvId;
+      const status = askCid ? await fetchAskStatus(askCid) : null;
+      if (status && status.is_processing) {
+        const statusText = status.status || "processing";
+        const choice = await showTimeoutRecoveryDialog({ statusText });
+        if (choice === "cancel") {
+          try {
+            await apiFetch("/api/cancel", {
+              method: "POST",
+              body: JSON.stringify({ conversation_id: askCid }),
+            });
+            showToast("취소 요청을 전달했습니다.");
+          } catch (cancelError) {
+            showToast(`취소 요청 실패: ${cancelError.message || cancelError}`, true);
+          }
+          await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
+        } else if (choice === "finalize") {
+          try {
+            await apiFetch("/api/finalize", {
+              method: "POST",
+              body: JSON.stringify({ conversation_id: askCid }),
+            });
+            showToast("즉시 답변 요청을 전달했습니다.");
+          } catch (finError) {
+            showToast(`즉시 답변 요청 실패: ${finError.message || finError}`, true);
+          }
+          await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
+        } else if (choice === "wait") {
+          await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
+        } else {
+          // dismiss — 진행 상태만 유지. progress polling 이 결과를 갱신할 것
+          showToast("계속 서버에서 처리 중입니다. 상태는 상단에 표시됩니다.");
+        }
+        promptInputEl.value = "";
+        promptInputEl.style.height = "auto";
+      } else {
+        showToast(`요청에 실패했습니다: ${error.message || error}`, true);
+      }
+    }
+  } finally {
+    state.busyConversations.delete(busyKey);
+    renderComposer();
   }
 }
 
-async function deriveAesKey(passphrase, salt) {
-  const enc = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(passphrase), "PBKDF2", false, ["deriveKey"]);
-  return await crypto.subtle.deriveKey(
+async function loadVaultOptions() {
+  const payload = await apiFetch("/api/api-vault/options");
+  state.apiVaultOptions = payload;
+  vaultModelEl.innerHTML = "";
+  const models = Array.isArray(payload.models) ? payload.models : [];
+  models.forEach((item) => {
+    const option = document.createElement("option");
+    const value = typeof item === "string" ? item : item.value;
+    const label = typeof item === "string" ? item : item.label || item.value;
+    option.value = value;
+    option.textContent = label;
+    vaultModelEl.appendChild(option);
+  });
+  const vaultState = readVaultState();
+  vaultCipherEl.value = vaultState.cipher;
+  vaultPassphraseEl.value = vaultState.passphrase;
+  vaultModelEl.value = vaultState.model || payload.default_model || vaultModelEl.value;
+  state.localLlmEnabled = Boolean(state.session?.local_llm_enabled);
+  refreshVaultUI();
+}
+
+async function encryptPlainApiKey() {
+  const plain = vaultPlainKeyEl.value.trim();
+  const passphrase = vaultPassphraseEl.value.trim();
+  if (!plain) {
+    throw new Error("평문 API 키를 입력하세요.");
+  }
+  if (!passphrase) {
+    throw new Error("암호화 키를 입력하세요.");
+  }
+  const encoder = new TextEncoder();
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(passphrase),
+    { name: "PBKDF2" },
+    false,
+    ["deriveKey"]
+  );
+  const aesKey = await crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
       salt,
@@ -526,4784 +2462,328 @@ async function deriveAesKey(passphrase, salt) {
     },
     keyMaterial,
     { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"]
+    true,
+    ["encrypt"]
   );
+  const cipherBuffer = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    aesKey,
+    encoder.encode(plain)
+  );
+  const toBase64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)));
+  vaultCipherEl.value = `v1:${toBase64(salt)}:${toBase64(iv)}:${toBase64(cipherBuffer)}`;
+  vaultPlainKeyEl.value = "";
+  refreshVaultUI();
 }
 
-async function encryptApiKey(plain, passphrase) {
-  const enc = new TextEncoder();
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveAesKey(passphrase, salt);
-  const cipherBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(plain));
-  return `v1:${bufferToBase64(salt)}:${bufferToBase64(iv)}:${bufferToBase64(cipherBuf)}`;
-}
-
-async function decryptApiKey(cipher, passphrase) {
-  if (!cipher || !cipher.startsWith("v1:")) {
-    throw new Error("invalid cipher");
-  }
-  const parts = cipher.split(":");
-  if (parts.length !== 4) {
-    throw new Error("invalid cipher");
-  }
-  const salt = base64ToBuffer(parts[1]);
-  const iv = base64ToBuffer(parts[2]);
-  const data = base64ToBuffer(parts[3]);
-  if (!salt.length || !iv.length || !data.length) {
-    throw new Error("invalid cipher");
-  }
-  const key = await deriveAesKey(passphrase, salt);
-  const plainBuf = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
-  const dec = new TextDecoder();
-  return dec.decode(plainBuf);
-}
-
-function maskApiKey(value) {
-  const text = String(value || "").trim();
-  if (!text) return "";
-  if (text.length <= 8) return `${text[0]}***${text[text.length - 1]}`;
-  return `${text.slice(0, 4)}****${text.slice(-4)}`;
-}
-
-const CONTROL_RE = /[\x00-\x08\x0b-\x1f\x7f]/;
-
-function isSafePassphrase(value) {
-  const text = String(value || "").trim();
-  if (!text) return false;
-  if (text.length < 8 || text.length > 128) return false;
-  if (CONTROL_RE.test(text)) return false;
-  return true;
-}
-
-function isCipherFormat(value) {
-  const text = String(value || "").trim();
-  if (!text || !text.startsWith("v1:")) return false;
-  const parts = text.split(":");
-  if (parts.length !== 4) return false;
-  return parts.slice(1).every((p) => p && !CONTROL_RE.test(p));
-}
-
-function shortPath(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  const parts = raw.split("/");
-  return parts[parts.length - 1] || raw;
-}
-
-function normalizeApiVaultOptions(payload) {
-  const fallback = FALLBACK_API_VAULT_OPTIONS;
-  const models = Array.isArray(payload && payload.models)
-    ? payload.models.filter((item) => item && typeof item.value === "string" && typeof item.label === "string")
-    : fallback.models;
-  const safeModels = models.length ? models : fallback.models;
-  const defaultModel =
-    typeof payload?.default_model === "string" && safeModels.some((item) => item.value === payload.default_model)
-      ? payload.default_model
-      : fallback.default_model;
-  const publicHost = typeof payload?.public_host === "string" && payload.public_host.trim()
-    ? payload.public_host.trim()
-    : fallback.public_host;
-  let publicUrl = typeof payload?.public_url === "string" && payload.public_url.trim()
-    ? payload.public_url.trim()
-    : fallback.public_url;
+async function handleLogin(event) {
+  event.preventDefault();
+  loginErrorEl.textContent = "";
   try {
-    const parsedUrl = new URL(publicUrl);
-    if (parsedUrl.protocol !== "https:") {
-      publicUrl = fallback.public_url;
-    } else {
-      publicUrl = parsedUrl.toString().replace(/\/$/, "");
-    }
-  } catch (err) {
-    publicUrl = fallback.public_url;
+    const payload = await apiFetch("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({
+        username: document.getElementById("loginUsername").value.trim(),
+        password: document.getElementById("loginPassword").value,
+      }),
+    });
+    state.user = payload.user;
+    hideAuthOverlay();
+    await initializeWorkspace();
+  } catch (error) {
+    loginErrorEl.textContent = error.message || "로그인에 실패했습니다.";
   }
-  return {
-    default_model: defaultModel,
-    models: safeModels,
-    public_host: publicHost,
-    public_url: publicUrl,
-    requires_secure_context: payload?.requires_secure_context !== false,
-  };
 }
 
-async function loadApiVaultOptions() {
+async function handleSignup(event) {
+  event.preventDefault();
+  signupErrorEl.textContent = "";
   try {
-    const data = await apiFetch("/api/api-vault/options");
-    apiVaultOptions = normalizeApiVaultOptions(data);
-  } catch (err) {
-    apiVaultOptions = FALLBACK_API_VAULT_OPTIONS;
-  }
-  renderApiModelOptions();
-  renderApiSecureContextState();
-}
-
-function getApiVaultModels() {
-  return Array.isArray(apiVaultOptions.models) ? apiVaultOptions.models : [];
-}
-
-function getApiVaultDefaultModel() {
-  const fallback = FALLBACK_API_VAULT_OPTIONS.default_model;
-  const candidate = String(apiVaultOptions.default_model || fallback).trim();
-  return getApiVaultModels().some((item) => item.value === candidate) ? candidate : fallback;
-}
-
-function getApiVaultPublicUrl() {
-  const fallback = FALLBACK_API_VAULT_OPTIONS.public_url;
-  const candidate = String(apiVaultOptions.public_url || fallback).trim();
-  if (!candidate) return fallback;
-  try {
-    const parsedUrl = new URL(candidate);
-    if (parsedUrl.protocol !== "https:") return fallback;
-    return parsedUrl.toString().replace(/\/$/, "");
-  } catch (err) {
-    return fallback;
+    const payload = await apiFetch("/api/auth/signup", {
+      method: "POST",
+      body: JSON.stringify({
+        username: document.getElementById("signupUsername").value.trim(),
+        password: document.getElementById("signupPassword").value,
+        confirm_password: document.getElementById("signupPasswordConfirm").value,
+      }),
+    });
+    state.user = payload.user;
+    hideAuthOverlay();
+    showToast("계정이 등록되었습니다. 관리자 승인 전까지는 조회 전용으로 동작합니다.");
+    await initializeWorkspace();
+  } catch (error) {
+    signupErrorEl.textContent = error.message || "회원가입에 실패했습니다.";
   }
 }
 
-function isApiVaultSecureRuntime() {
-  return Boolean(window.isSecureContext && window.crypto && window.crypto.subtle);
+async function handleLogout() {
+  // 열려있는 드로어를 먼저 닫아야 로그아웃 후 뒤에 드로어가 남지 않음
+  closeProfile();
+  stopProgressPolling({ reset: true });
+  await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+  state.user = null;
+  state.session = null;
+  state.conversations = [];
+  state.activeConversationId = "";
+  state.messages = [];
+  // TASK-0048: 로그아웃 시 pending 새 대화 placeholder 도 정리.
+  state.pendingNewConversation = false;
+  renderConversationList();
+  renderMessages();
+  renderAccountState();
+  // 로그아웃 시 회원가입/로그인 폼 초기화 (이전 입력값 노출 방지)
+  loginFormEl.reset();
+  signupFormEl.reset();
+  loginErrorEl.textContent = "";
+  signupErrorEl.textContent = "";
+  toggleAuthPane("login");
+  showAuthOverlay();
 }
 
-function getApiVaultDisableReason() {
-  // HTTPS 또는 localhost(secure context)이면 crypto.subtle 사용 가능 → vault 허용
-  if (isApiVaultSecureRuntime()) {
-    return "";
-  }
-  // crypto.subtle 없지만 localhost 계열이면 허용 (개발 환경)
-  const host = window.location.hostname;
-  if (host === "localhost" || host === "127.0.0.1" || host.endsWith(".localhost")) {
-    return "";
-  }
-  const publicUrl = getApiVaultPublicUrl();
-  return `API 키 입력은 HTTPS(${publicUrl}) 또는 localhost 에서만 지원됩니다. 현재 접속은 secure context가 아닙니다.`;
-}
-
-function renderApiSecureContextState() {
-  const disableReason = getApiVaultDisableReason();
-  const shouldDisable = Boolean(disableReason);
-  [apiKeyEncEl, apiKeyPassEl, apiModelEl, apiKeyPlainEl, apiSaveBtn, apiEncryptBtn].forEach((el) => {
-    if (!el) return;
-    el.disabled = shouldDisable;
+async function initializeWorkspace() {
+  state.session = await apiFetch("/api/session");
+  state.user = state.session.user;
+  state.products = Array.isArray(state.session.products) ? state.session.products : [];
+  state.default_product_id = state.session.default_product_id || null;
+  // TASK-0047: 제품 선호 hydrate (서버 pref + 대화별 product → state).
+  applyProductHydration({
+    pref: state.session.product_pref || null,
+    conversationProduct: state.session.conversation_product || null,
   });
-  if (!apiSecureHintEl) return;
-  if (!shouldDisable) {
-    apiSecureHintEl.classList.add("hidden");
-    apiSecureHintEl.innerHTML = "";
-    return;
-  }
-  const publicUrl = getApiVaultPublicUrl();
-  const showLink = publicUrl && window.location.origin !== publicUrl;
-  const linkHtml = showLink
-    ? `<a class="btn ghost tiny api-secure-link" href="${escapeHtml(publicUrl)}">HTTPS 도메인으로 이동</a>`
-    : "";
-  apiSecureHintEl.innerHTML = `<span>${escapeHtml(disableReason)}</span>${linkHtml}`;
-  apiSecureHintEl.classList.remove("hidden");
-}
-
-function getApiModelMeta(model) {
-  const target = String(model || "").trim();
-  return getApiVaultModels().find((item) => item.value === target) || null;
-}
-
-function isAllowedApiModel(model) {
-  return Boolean(getApiModelMeta(model));
-}
-
-function normalizeApiCache(cache) {
-  if (!cache || !cache.cipher) return null;
-  const model = isAllowedApiModel(cache.model) ? cache.model : getApiVaultDefaultModel();
-  return {
-    cipher: String(cache.cipher || "").trim(),
-    passphrase: String(cache.passphrase || ""),
-    model,
-    mask: String(cache.mask || ""),
-    updated_at: Number.isFinite(Number(cache.updated_at)) ? Number(cache.updated_at) : Date.now(),
-  };
-}
-
-function renderApiModelOptions(selectedModel) {
-  if (!apiModelEl) return;
-  const models = getApiVaultModels();
-  if (!models.length) return;
-  const groups = new Map();
-  models.forEach((item) => {
-    const group = item.group || "기타";
-    if (!groups.has(group)) groups.set(group, []);
-    groups.get(group).push(item);
-  });
-  const currentModel = isAllowedApiModel(selectedModel) ? selectedModel : apiModelEl.value || getApiVaultDefaultModel();
-  const fragments = [];
-  groups.forEach((items, group) => {
-    const options = items
-      .map((item) => '<option value="' + escapeHtml(item.value) + '">' + escapeHtml(item.label) + '</option>')
-      .join("");
-    fragments.push('<optgroup label="' + escapeHtml(group) + '">' + options + '</optgroup>');
-  });
-  apiModelEl.innerHTML = fragments.join("");
-  apiModelEl.value = isAllowedApiModel(currentModel) ? currentModel : getApiVaultDefaultModel();
-}
-
-function renderApiModelHint() {
-  const model = apiModelEl ? apiModelEl.value : getApiVaultDefaultModel();
-  const meta = getApiModelMeta(model);
-  if (apiModelHintEl) {
-    apiModelHintEl.textContent = meta ? meta.description : "";
-  }
-}
-
-function loadApiKeyCache() {
-  try {
-    const keys = [API_KEY_CACHE_KEY, ...API_KEY_CACHE_LEGACY_KEYS];
-    for (const key of keys) {
-      const raw = localStorage.getItem(key);
-      if (!raw) continue;
-      const parsed = JSON.parse(raw);
-      const normalized = normalizeApiCache(parsed);
-      if (normalized) {
-        saveApiKeyCache(normalized);
-        return normalized;
-      }
-    }
-    return null;
-  } catch (err) {
-    return null;
-  }
-}
-
-function saveApiKeyCache(cache) {
-  try {
-    const normalized = normalizeApiCache(cache);
-    if (!normalized) return;
-    localStorage.setItem(API_KEY_CACHE_KEY, JSON.stringify(normalized));
-  } catch (err) {
-    // ignore
-  }
-}
-
-function clearApiKeyCache() {
-  try {
-    localStorage.removeItem(API_KEY_CACHE_KEY);
-    API_KEY_CACHE_LEGACY_KEYS.forEach((key) => localStorage.removeItem(key));
-  } catch (err) {
-    // ignore
-  }
-}
-
-function loadApiKeyHistory() {
-  try {
-    const raw = localStorage.getItem(API_KEY_HISTORY_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (err) {
-    return [];
-  }
-}
-
-function saveApiKeyHistory(items) {
-  try {
-    localStorage.setItem(API_KEY_HISTORY_KEY, JSON.stringify(items));
-  } catch (err) {
-    // ignore
-  }
-}
-
-function renderApiHistory() {
-  if (!apiHistoryEl) return;
-  const items = loadApiKeyHistory();
-  if (!items.length) {
-    apiHistoryEl.innerHTML = "<div class=\"api-history-empty\">최근 변경 이력이 없습니다.</div>";
-    return;
-  }
-  apiHistoryEl.innerHTML = items
-    .map((entry) => {
-      const mask = escapeHtml(entry.mask || "-");
-      const model = escapeHtml(entry.model || "-");
-      const ts = new Date(entry.updated_at || 0).toLocaleString();
-      return `<div class="api-history-item"><span>${mask}</span><span>${model}</span><span class="api-history-time">${ts}</span></div>`;
-    })
-    .join("");
-}
-
-function recordApiKeyHistory(entry) {
-  if (!entry) return;
-  const normalized = {
-    mask: entry.mask || "",
-    model: entry.model || "",
-    updated_at: entry.updated_at || Date.now(),
-  };
-  const items = loadApiKeyHistory();
-  if (items.length && items[0].mask === normalized.mask && items[0].model === normalized.model) {
-    items[0] = normalized;
-  } else {
-    items.unshift(normalized);
-  }
-  saveApiKeyHistory(items.slice(0, API_KEY_HISTORY_MAX));
-  renderApiHistory();
-}
-
-async function updateApiStatusDisplay() {
-  if (!apiStatusEl) return;
-  const disableReason = getApiVaultDisableReason();
-  const cached = loadApiKeyCache();
-  if (!cached || !cached.cipher) {
-    if (localLlmEnabled) {
-      apiStatusEl.textContent = `로컬 LLM / ${localLlmDefaultModel}`;
-      apiStatusEl.title = "서버 로컬 LLM 게이트웨이 사용 중 — API 키 불필요";
-      renderApiHistory();
-      return;
-    }
-    apiStatusEl.textContent = disableReason ? "보안 연결 필요" : "미설정";
-    apiStatusEl.title = disableReason || "";
-    renderApiHistory();
-    return;
-  }
-  const model = cached.model || "-";
-  const mask = cached.mask ? ` / ${cached.mask}` : "";
-  apiStatusEl.textContent = `설정됨 / ${model}${mask}`;
-  apiStatusEl.title = disableReason
-    ? `키는 브라우저에만 저장됩니다. ${disableReason}`
-    : "키는 브라우저에만 저장됩니다.";
-  renderApiHistory();
-}
-
-function getApiKeyConfig() {
-  const cached = loadApiKeyCache();
-  if (cached && cached.cipher && cached.passphrase && cached.model) return cached;
-  if (localLlmEnabled) {
-    return { cipher: "", passphrase: "", model: localLlmDefaultModel };
-  }
-  return null;
-}
-
-function escapeHtml(value) {
-  const text = String(value ?? "");
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function parseCsv(text) {
-  const rows = [];
-  const raw = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  let field = "";
-  let row = [];
-  let inQuotes = false;
-  for (let i = 0; i < raw.length; i += 1) {
-    const ch = raw[i];
-    if (inQuotes) {
-      if (ch === "\"") {
-        const next = raw[i + 1];
-        if (next === "\"") {
-          field += "\"";
-          i += 1;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        field += ch;
-      }
-      continue;
-    }
-    if (ch === "\"") {
-      inQuotes = true;
-      continue;
-    }
-    if (ch === ",") {
-      row.push(field);
-      field = "";
-      continue;
-    }
-    if (ch === "\n") {
-      row.push(field);
-      field = "";
-      rows.push(row);
-      row = [];
-      continue;
-    }
-    field += ch;
-  }
-  row.push(field);
-  if (row.length > 1 || row[0] !== "") {
-    rows.push(row);
-  }
-  return rows;
-}
-
-function stringifyValue(value) {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch (err) {
-    return String(value);
-  }
-}
-
-function formatResultSummary(summary) {
-  if (!summary) return "";
-  if (typeof summary !== "object") return String(summary);
-  const parts = [];
-  if (summary.rows !== undefined && summary.rows !== null) {
-    parts.push(`rows=${summary.rows}`);
-  }
-  if (summary.cols !== undefined && summary.cols !== null) {
-    parts.push(`cols=${summary.cols}`);
-  }
-  if (Array.isArray(summary.col_names) && summary.col_names.length) {
-    const head = summary.col_names.slice(0, 6).join(", ");
-    const tail = summary.col_names.length > 6 ? ` 외 ${summary.col_names.length - 6}` : "";
-    parts.push(`col=${head}${tail}`);
-  }
-  if (Array.isArray(summary.samples) && summary.samples.length) {
-    const sample = summary.samples[0];
-    if (Array.isArray(sample) && sample.length) {
-      parts.push(`sample=${sample.slice(0, 4).join(", ")}${sample.length > 4 ? "..." : ""}`);
+  renderAccountState();
+  renderAccessNotice();
+  await loadVaultOptions();
+  await refreshWorkspace(state.session.conversation_id || "");
+  // TASK-0041: 세션 복구 — 페이지 로드 시 현재 대화가 서버에서 진행 중이면
+  // 자동으로 결과 long-poll 에 attach 하여 사용자의 이전 요청을 이어받는다.
+  const resumeCid = state.activeConversationId;
+  if (resumeCid) {
+    const status = await fetchAskStatus(resumeCid);
+    if (status && status.is_processing) {
+      state.busyConversations.add(resumeCid);
+      renderComposer();
+      startProgressPolling({ reset: true, runId: status.run_id || "" });
+      showToast("이전에 남아있던 응답 요청을 이어받습니다.");
+      attachAndWaitForResult(resumeCid, { runId: status.run_id || "" })
+        .catch(() => {})
+        .finally(() => {
+          state.busyConversations.delete(resumeCid);
+          renderComposer();
+        });
     }
   }
-  if (!parts.length && summary.preview_table && typeof summary.preview_table === "object") {
-    const columns = Array.isArray(summary.preview_table.columns) ? summary.preview_table.columns : [];
-    const rows = Array.isArray(summary.preview_table.rows) ? summary.preview_table.rows : [];
-    if (columns.length) {
-      parts.push(`preview=${rows.length}행, ${columns.length}열`);
-    }
-  }
-  if (!parts.length && summary.preview) {
-    parts.push("저장된 결과 미리보기");
-  }
-  return parts.join(" · ");
 }
 
-function buildCsvTable(rows, rowLimit = 50) {
-  if (!rows.length) return "";
-  const header = rows[0];
-  const bodyRows = rows.slice(1, rowLimit > 0 ? rowLimit + 1 : undefined);
-  const headHtml = header.map((cell) => `<th>${escapeHtml(cell)}</th>`).join("");
-  const bodyHtml = bodyRows
-    .map(
-      (r) =>
-        `<tr>${r.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`
-    )
-    .join("");
-  return `<table><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>`;
-}
-
-function getStepCsvPaths(step = {}) {
-  const summary = step && typeof step.result_summary === "object" ? step.result_summary : null;
-  const csvPaths = summary && Array.isArray(summary.csv_paths) ? summary.csv_paths : [];
-  return csvPaths.filter(Boolean);
-}
-
-function createCsvPreviewButton(paths = [], steps = []) {
-  const csvPaths = [...new Set((Array.isArray(paths) ? paths : []).filter(Boolean))];
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "mini";
-  button.textContent = csvPaths.length > 1 ? `CSV 미리보기 (${csvPaths.length})` : "CSV 미리보기";
-  if (csvPaths.length) {
+async function initialize() {
+  document.querySelectorAll("[data-auth-tab]").forEach((button) => {
     button.addEventListener("click", () => {
-      openCsvPreviewModal(csvPaths, csvPaths.length - 1, steps).catch(() => showToast("CSV 미리보기 실패"));
+      toggleAuthPane(button.dataset.authTab);
     });
-    return button;
+  });
+  loginFormEl.addEventListener("submit", handleLogin);
+  signupFormEl.addEventListener("submit", handleSignup);
+  // 프로필 드로어 open/close
+  openProfileBtn.addEventListener("click", () => openProfile("account"));
+  closeProfileBtn.addEventListener("click", closeProfile);
+  profileBackdropEl.addEventListener("click", closeProfile);
+
+  // 프로필 탭 전환
+  document.querySelectorAll("[data-profile-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      switchProfileTab(btn.dataset.profileTab);
+      if (btn.dataset.profileTab === "prompt") {
+        initAccountPromptEditor().catch(() => {});
+      }
+    });
+  });
+
+  const savePromptBtn = document.getElementById("savePromptBtn");
+  const clearPromptBtn = document.getElementById("clearPromptBtn");
+  if (savePromptBtn) {
+    savePromptBtn.addEventListener("click", () => {
+      saveAccountPrompt(false).catch((error) => {
+        showToast(error.message || "저장에 실패했습니다.", true);
+      });
+    });
   }
-  button.classList.add("is-disabled");
-  button.setAttribute("aria-disabled", "true");
-  button.title = MISSING_CSV_TOAST;
-  button.addEventListener("click", (event) => {
+  if (clearPromptBtn) {
+    clearPromptBtn.addEventListener("click", () => {
+      if (!window.confirm("저장된 프롬프트를 삭제할까요?")) return;
+      saveAccountPrompt(true).catch((error) => {
+        showToast(error.message || "삭제에 실패했습니다.", true);
+      });
+    });
+  }
+
+  if (passwordChangeFormEl) {
+    passwordChangeFormEl.addEventListener("submit", handlePasswordChange);
+  }
+  // Step 3: "암호화 후 저장" — encrypt → storage persist 를 한 번에 수행.
+  saveVaultBtn.addEventListener("click", async () => {
+    try {
+      await encryptPlainApiKey();   // → vaultCipherEl.value 에 v1:... 채움
+      writeVaultState();             // → localStorage/sessionStorage 영속화
+      showToast("API 키를 암호화해 저장했습니다.");
+    } catch (error) {
+      showToast(error.message || "암호화 후 저장에 실패했습니다.", true);
+    }
+  });
+  // "저장된 키 삭제": destructive 액션. confirm() 게이트로 우발 클릭 방어.
+  clearVaultBtn.addEventListener("click", () => {
+    const ok = window.confirm(
+      "저장된 암호화 키를 삭제할까요?\n\n삭제 후에는 외부 Local LLM 게이트웨이로만 동작하게 됩니다."
+    );
+    if (!ok) return;
+    clearVaultState();
+    showToast("저장된 암호화 키를 삭제했습니다.");
+  });
+  // 키 갈아끼움 진입점은 destructive zone 의 "저장된 키 삭제" 1개만 — 별도 토글 없음.
+  // 고급: 이미 암호화된 v1:... 직접 붙여넣기 → 저장.
+  if (vaultImportCipherBtn) {
+    vaultImportCipherBtn.addEventListener("click", () => {
+      const raw = vaultCipherEl.value.trim();
+      if (!raw) {
+        showToast("붙여넣을 암호문(v1:...)이 비어 있습니다.", true);
+        return;
+      }
+      if (!raw.startsWith("v1:")) {
+        showToast("암호문 형식이 올바르지 않습니다. `v1:` 로 시작해야 합니다.", true);
+        return;
+      }
+      writeVaultState();
+      showToast("붙여넣은 암호문을 저장했습니다.");
+    });
+  }
+  // 입력이 바뀔 때마다 wizard step 상태 동기화.
+  [vaultPlainKeyEl, vaultPassphraseEl, vaultCipherEl, vaultModelEl].forEach((el) => {
+    if (!el) return;
+    el.addEventListener("input", refreshVaultUI);
+    el.addEventListener("change", refreshVaultUI);
+  });
+  logoutBtn.addEventListener("click", () => {
+    handleLogout().catch((error) => {
+      showToast(error.message || "로그아웃에 실패했습니다.", true);
+    });
+  });
+  openAdminBtn.addEventListener("click", () => {
+    window.location.href = "/admin";
+  });
+  newConversationBtn.addEventListener("click", () => {
+    // TASK-0048: 빈 대화 누적 방지. backend row 는 첫 메시지 전송 시 lazy 생성된다.
+    try {
+      beginPendingConversation();
+    } catch (error) {
+      showToast(error.message || "새 대화 생성에 실패했습니다.", true);
+    }
+  });
+  // TASK-0047: 사이드바 제품 칩의 select 변경 → setActiveProduct.
+  const productSelectEl = document.getElementById("productSelect");
+  if (productSelectEl) {
+    productSelectEl.addEventListener("change", (ev) => {
+      const value = (ev.target && ev.target.value) || "auto";
+      const next = value === "auto"
+        ? { mode: "auto", pinnedId: null }
+        : { mode: "pinned", pinnedId: Number(value) };
+      setActiveProduct(next).catch((error) => {
+        showToast(error.message || "제품 변경에 실패했습니다.", true);
+      });
+    });
+  }
+  sendBtn.addEventListener("click", () => {
+    sendPrompt().catch((error) => {
+      showToast(error.message || "요청 전송에 실패했습니다.", true);
+    });
+  });
+  promptInputEl.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      sendPrompt().catch((error) => {
+        showToast(error.message || "요청 전송에 실패했습니다.", true);
+      });
+    }
+  });
+  loadMoreBtn.addEventListener("click", () => {
+    loadHistory({ append: true }).catch((error) => {
+      showToast(error.message || "이전 기록을 불러오지 못했습니다.", true);
+    });
+  });
+  cancelBtn.addEventListener("click", (event) => {
     event.preventDefault();
-    showToast(MISSING_CSV_TOAST);
-  });
-  return button;
-}
-
-function normalizeSqlForCompare(sql) {
-  return String(sql || "")
-    .replace(/\s+/g, " ")
-    .replace(/;+\s*$/, "")
-    .trim()
-    .toLowerCase();
-}
-
-function findCsvPathsForSql(sql, paths = [], steps = []) {
-  const target = normalizeSqlForCompare(sql);
-  if (!target || !Array.isArray(paths) || !paths.length) return [];
-  return paths.filter((path) => normalizeSqlForCompare(findSqlForCsvPath(path, steps)) === target);
-}
-
-function resetSqlResultModalState() {
-  sqlResultModalState.open = false;
-  sqlResultModalState.sql = "";
-  sqlResultModalState.returnTarget = null;
-}
-
-function getStepWorkText(step = {}) {
-  return String((step && (step.work || step.intent || step.action)) || "").trim();
-}
-
-function getStepReasonText(step = {}) {
-  return String((step && step.reason) || "").trim();
-}
-
-function buildStepsDropdown(steps = [], label = "") {
-  if (!Array.isArray(steps) || !steps.length) return null;
-  const details = document.createElement("details");
-  details.className = "msg-steps";
-  const summary = document.createElement("summary");
-  summary.textContent = label || `작업 상세 (${steps.length})`;
-  details.appendChild(summary);
-  const list = document.createElement("div");
-  list.className = "steps-list";
-
-  steps.forEach((step, idx) => {
-    const item = document.createElement("div");
-    item.className = "step-item";
-    const head = document.createElement("div");
-    head.className = "step-head";
-    const title = getStepWorkText(step) || "단계";
-    const stepIndex = step.step_index || idx + 1;
-    head.textContent = `#${stepIndex} · ${title}`;
-    item.appendChild(head);
-
-    const meta = document.createElement("div");
-    meta.className = "step-meta";
-    meta.textContent = `도구: ${step.tool || "-"}`;
-    item.appendChild(meta);
-
-    const reasonText = getStepReasonText(step);
-    if (reasonText) {
-      const reasonEl = document.createElement("div");
-      reasonEl.className = "step-reason";
-      reasonEl.textContent = `이유: ${reasonText}`;
-      item.appendChild(reasonEl);
-    }
-
-    const summaryText = formatResultSummary(step.result_summary || "");
-    if (summaryText) {
-      const summaryEl = document.createElement("div");
-      summaryEl.className = "step-summary";
-      summaryEl.textContent = summaryText;
-      item.appendChild(summaryEl);
-    }
-
-    if (step.error) {
-      const errorEl = document.createElement("div");
-      errorEl.className = "step-error";
-      errorEl.textContent = step.error;
-      item.appendChild(errorEl);
-    }
-
-    if (step.sql) {
-      const actions = document.createElement("div");
-      actions.className = "step-actions";
-      const stepCsvPaths = getStepCsvPaths(step);
-      const sqlBtn = document.createElement("button");
-      sqlBtn.className = "mini ghost";
-      sqlBtn.textContent = "SQL 보기";
-      sqlBtn.addEventListener("click", () =>
-        openSqlResultModal({
-          sql: step.sql,
-        }).catch(() => showToast("SQL 보기 실패"))
-      );
-      actions.appendChild(sqlBtn);
-      actions.appendChild(createCsvPreviewButton(stepCsvPaths, [step]));
-      item.appendChild(actions);
-    }
-
-    list.appendChild(item);
-  });
-
-  details.appendChild(list);
-  return details;
-}
-
-function findSqlForCsvPath(path, steps = []) {
-  if (!path || !Array.isArray(steps)) return "";
-  for (const step of steps) {
-    if (!step || !step.result_summary) continue;
-    const summary = step.result_summary || {};
-    const csvPaths = Array.isArray(summary.csv_paths) ? summary.csv_paths : [];
-    if (csvPaths.includes(path) && step.sql) {
-      return step.sql;
-    }
-  }
-  return "";
-}
-
-function isInternalAssistantContent(text) {
-  const value = String(text || "").trim();
-  if (!value) return true;
-  if (
-    value.startsWith("실행 완료:") ||
-    value.startsWith("자동 탐색 완료:") ||
-    value.startsWith("파일 탐색 완료:") ||
-    value.startsWith("대화 검색 완료:") ||
-    value.startsWith("파일 읽기 완료:")
-  ) return true;
-  // tool_notes JSON (LLM 도구 호출 시 생성) 필터링
-  if (value.startsWith("{") && value.endsWith("}")) {
-    try {
-      const parsed = JSON.parse(value);
-      if (parsed && typeof parsed === "object" && "tool_notes" in parsed) return true;
-    } catch (_) { /* not JSON */ }
-  }
-  return false;
-}
-
-function isQuestionContent(text) {
-  const value = String(text || "").trim();
-  if (!value) return false;
-  if (value.includes("?")) return true;
-  return /알려주세요|하시겠습니까|될까요|가능할까요|확인해|선택/.test(value);
-}
-
-function dedupeSteps(steps = []) {
-  const map = new Map();
-  steps.forEach((step) => {
-    if (!step) return;
-    const key = `${step.run_id || ""}#${step.step_index || ""}#${step.tool || ""}#${getStepWorkText(step)}`;
-    if (!map.has(key)) map.set(key, step);
-  });
-  return Array.from(map.values()).sort((a, b) => (a.step_index || 0) - (b.step_index || 0));
-}
-
-function mergeMeta(base = {}, next = {}) {
-  const merged = { ...base };
-  if (next.sql && !merged.sql) merged.sql = next.sql;
-  if (next.run_id && !merged.run_id) merged.run_id = next.run_id;
-  if (next.rationale) merged.rationale = next.rationale;
-  const baseCsv = Array.isArray(merged.csv_paths) ? merged.csv_paths : [];
-  const nextCsv = Array.isArray(next.csv_paths)
-    ? next.csv_paths
-    : Array.isArray(next.csvPaths)
-      ? next.csvPaths
-      : next.csvPath
-        ? [next.csvPath]
-        : [];
-  const csvSet = new Set([...baseCsv, ...nextCsv].filter(Boolean));
-  if (csvSet.size) merged.csv_paths = Array.from(csvSet);
-  const baseSteps = Array.isArray(merged.steps) ? merged.steps : [];
-  const nextSteps = Array.isArray(next.steps) ? next.steps : [];
-  merged.steps = dedupeSteps([...baseSteps, ...nextSteps]);
-  return merged;
-}
-
-function buildSummaryFromMeta(meta = {}) {
-  const steps = Array.isArray(meta.steps) ? meta.steps : [];
-  const lastStep = steps.length ? steps[steps.length - 1] : null;
-  const work = lastStep ? getStepWorkText(lastStep) : "";
-  const summary = lastStep && lastStep.result_summary ? lastStep.result_summary : null;
-  const rows = summary && typeof summary === "object" ? summary.rows : null;
-  const cols = summary && typeof summary === "object" ? summary.cols : null;
-  const csvCount = Array.isArray(meta.csv_paths) ? meta.csv_paths.length : 0;
-  const lines = [];
-  if (work) lines.push(`실행 완료: ${work}`);
-  if (rows !== null && rows !== undefined) {
-    lines.push(cols !== null && cols !== undefined ? `결과: ${rows}행, ${cols}열` : `결과: ${rows}행`);
-  }
-  if (csvCount) lines.push(`결과셋: ${csvCount}개 (CSV 미리보기에서 확인)`);
-  return lines.join("\n") || "요청 처리 완료";
-}
-
-function groupConversationMessages(messages = []) {
-  const grouped = [];
-  let pendingAssistant = null;
-  let pendingRunId = "";
-
-  const flushAssistant = () => {
-    if (pendingAssistant) {
-      if (isInternalAssistantContent(pendingAssistant.content) || !pendingAssistant.content) {
-        pendingAssistant.content = buildSummaryFromMeta(pendingAssistant.meta || {});
-      }
-      grouped.push(pendingAssistant);
-      pendingAssistant = null;
-      pendingRunId = "";
-    }
-  };
-
-  messages.forEach((msg) => {
-    if (!msg) return;
-    if (msg.role === "user") {
-      flushAssistant();
-      grouped.push(msg);
-      return;
-    }
-    if (msg.role === "assistant") {
-      const content = String(msg.content || "");
-      const runId = msg.meta && msg.meta.run_id ? String(msg.meta.run_id) : "";
-      if (pendingAssistant && runId && pendingRunId && runId !== pendingRunId) {
-        flushAssistant();
-      }
-      if (!pendingAssistant) {
-        pendingAssistant = { ...msg };
-        pendingAssistant.meta = mergeMeta({}, msg.meta || {});
-        pendingRunId = runId;
-        return;
-      }
-      pendingAssistant.meta = mergeMeta(pendingAssistant.meta || {}, msg.meta || {});
-      if (isQuestionContent(content)) {
-        pendingAssistant.content = content;
-        pendingAssistant.created_at = msg.created_at;
-      } else if (!isInternalAssistantContent(content)) {
-        pendingAssistant.content = content;
-        pendingAssistant.created_at = msg.created_at;
-      }
-      return;
-    }
-    grouped.push(msg);
-  });
-
-  flushAssistant();
-  return grouped;
-}
-
-function renderCsvPager(paths, index) {
-  if (!csvPagerDockEl || !csvPagerPanelEl) return;
-  csvPagerPanelEl.innerHTML = "";
-  const rerender = async () => renderCsvPreviewPage();
-  const pager = document.createElement("div");
-  pager.className = "csv-pager";
-  const left = document.createElement("div");
-  left.className = "csv-pager-left";
-  const prevBtn = document.createElement("button");
-  prevBtn.className = "mini ghost";
-  prevBtn.textContent = "이전";
-  prevBtn.disabled = index <= 0;
-  prevBtn.addEventListener("click", async () => {
-    if (csvPreviewState.loading) return;
-    csvPreviewState.index = Math.max(0, csvPreviewState.index - 1);
-    await rerender();
-  });
-  const label = document.createElement("div");
-  label.className = "csv-pager-label";
-  label.textContent = `결과셋 ${index + 1} / ${paths.length}`;
-  const nextBtn = document.createElement("button");
-  nextBtn.className = "mini ghost";
-  nextBtn.textContent = "다음";
-  nextBtn.disabled = index >= paths.length - 1;
-  nextBtn.addEventListener("click", async () => {
-    if (csvPreviewState.loading) return;
-    csvPreviewState.index = Math.min(paths.length - 1, csvPreviewState.index + 1);
-    await rerender();
-  });
-  left.appendChild(prevBtn);
-  left.appendChild(label);
-  left.appendChild(nextBtn);
-  pager.appendChild(left);
-  csvPagerPanelEl.appendChild(pager);
-  csvPagerDockEl.classList.remove("hidden");
-  csvPagerDockEl.setAttribute("aria-hidden", "false");
-}
-
-function hideCsvPagerDock() {
-  if (!csvPagerDockEl || !csvPagerPanelEl) return;
-  csvPagerPanelEl.innerHTML = "";
-  csvPagerDockEl.classList.add("hidden");
-  csvPagerDockEl.setAttribute("aria-hidden", "true");
-}
-
-function prepareModalShell(title, bodyClasses = []) {
-  const modal = document.getElementById("modal");
-  const modalTitle = document.getElementById("modalTitle");
-  const modalBody = document.getElementById("modalBody");
-  const modalDownload = document.getElementById("modalDownload");
-  const modalCopy = document.getElementById("modalCopy");
-  hideCsvPagerDock();
-  modalTitle.textContent = title;
-  modalBody.textContent = "";
-  modalBody.classList.remove("modal-sql");
-  modalBody.classList.remove("modal-csv");
-  modalBody.classList.remove("modal-sql-result");
-  modalBody.innerHTML = "";
-  bodyClasses.forEach((className) => {
-    if (className) modalBody.classList.add(className);
-  });
-  return { modal, modalTitle, modalBody, modalDownload, modalCopy };
-}
-
-function syncCsvPreviewState(paths, startIndex = 0, steps = [], resetView = false) {
-  const nextPaths = Array.isArray(paths) ? paths.filter(Boolean) : [];
-  const nextIndex =
-    Number.isFinite(Number(startIndex)) && Number(startIndex) >= 0
-      ? Math.min(nextPaths.length - 1, Math.max(0, Number(startIndex)))
-      : Math.max(0, nextPaths.length - 1);
-  const prevPath = Array.isArray(csvPreviewState.paths) ? csvPreviewState.paths[csvPreviewState.index] || "" : "";
-  const nextPath = nextPaths[nextIndex] || "";
-  csvPreviewState.paths = [...nextPaths];
-  csvPreviewState.index = nextIndex;
-  csvPreviewState.steps = Array.isArray(steps) ? steps : [];
-  if (resetView || prevPath !== nextPath) {
-    csvPreviewState.scrollTop = 0;
-    csvPreviewState.sortIndex = null;
-    csvPreviewState.sortDir = 1;
-    csvPreviewState.rawRows = null;
-  }
-}
-
-async function buildCsvPreviewContent({
-  path,
-  titleText,
-  sqlText = "",
-  sqlButtonLabel = "SQL 보기",
-  onSqlButtonClick = null,
-} = {}) {
-  const currentPath = String(path || "").trim();
-  if (!currentPath) {
-    return {
-      bodyEl: document.createElement("div"),
-      copyText: "",
-      copyLabel: "복사",
-      downloadUrl: "",
-    };
-  }
-
-  const scrollWrap = document.createElement("div");
-  scrollWrap.className = "csv-preview-scroll";
-  scrollWrap.addEventListener("scroll", () => {
-    csvPreviewState.scrollTop = scrollWrap.scrollTop;
-  });
-
-  const toolbar = document.createElement("div");
-  toolbar.className = "csv-preview-toolbar";
-  const toolbarTitle = document.createElement("div");
-  toolbarTitle.className = "csv-preview-title";
-  toolbarTitle.textContent = titleText || shortPath(currentPath) || "CSV 결과";
-  toolbar.appendChild(toolbarTitle);
-
-  const limitWrap = document.createElement("div");
-  limitWrap.className = "csv-preview-limit";
-  const limitLabel = document.createElement("span");
-  limitLabel.className = "csv-preview-limit-label";
-  limitLabel.textContent = `행: ${csvPreviewState.rowLimit}`;
-  const limitInput = document.createElement("input");
-  limitInput.type = "range";
-  limitInput.min = "5";
-  limitInput.max = "200";
-  limitInput.step = "5";
-  limitInput.value = String(csvPreviewState.rowLimit);
-  limitInput.addEventListener("input", () => {
-    csvPreviewState.rowLimit = parseInt(limitInput.value, 10) || 50;
-    limitLabel.textContent = `행: ${csvPreviewState.rowLimit}`;
-    if (csvPreviewState.rawRows && csvPreviewState.rawRows.length) {
-      const sorted = applyCsvSort(csvPreviewState.rawRows);
-      tableWrap.innerHTML = buildCsvTable(sorted, csvPreviewState.rowLimit);
-      if (note) {
-        note.textContent = `미리보기는 상위 ${csvPreviewState.rowLimit}행까지 표시됩니다. 복사는 TSV로 제공됩니다.`;
-      }
-      attachCsvSortHandlers(tableWrap);
-    }
-  });
-  limitWrap.appendChild(limitLabel);
-  limitWrap.appendChild(limitInput);
-  toolbar.appendChild(limitWrap);
-
-  if (sqlText && typeof onSqlButtonClick === "function") {
-    const sqlToggleBtn = document.createElement("button");
-    sqlToggleBtn.className = "mini ghost";
-    sqlToggleBtn.textContent = sqlButtonLabel;
-    sqlToggleBtn.addEventListener("click", onSqlButtonClick);
-    toolbar.appendChild(sqlToggleBtn);
-  }
-  scrollWrap.appendChild(toolbar);
-
-  const tableWrap = document.createElement("div");
-  tableWrap.className = "csv-preview-table";
-  csvPreviewState.loading = true;
-  const preview = await fetchCsvPreview(currentPath);
-  csvPreviewState.loading = false;
-  let note = null;
-  let rows = [];
-  if (!preview || preview.includes("CSV 미리보기 실패")) {
-    tableWrap.textContent = preview || "CSV 미리보기 실패";
-    modalCopyText = preview || "";
-    scrollWrap.appendChild(tableWrap);
-  } else {
-    rows = parseCsv(preview);
-    if (!rows.length) {
-      tableWrap.textContent = preview;
-      modalCopyText = preview;
-      scrollWrap.appendChild(tableWrap);
-    } else {
-      csvPreviewState.rawRows = rows;
-      const sortedRows = applyCsvSort(rows);
-      tableWrap.innerHTML = buildCsvTable(sortedRows, csvPreviewState.rowLimit);
-      attachCsvSortHandlers(tableWrap);
-      modalCopyText = buildTsv(rows);
-      scrollWrap.appendChild(tableWrap);
-      note = document.createElement("div");
-      note.className = "csv-preview-note";
-      note.textContent = `미리보기는 상위 ${csvPreviewState.rowLimit}행까지 표시됩니다. 복사는 TSV로 제공됩니다.`;
-    }
-  }
-  if (note) scrollWrap.appendChild(note);
-
-  return {
-    bodyEl: scrollWrap,
-    copyText: modalCopyText,
-    copyLabel: Array.isArray(rows) && rows.length ? "복사(TSV)" : "복사",
-    downloadUrl: `/api/file?path=${encodeURIComponent(currentPath)}`,
-  };
-}
-
-async function renderCsvPreviewPage() {
-  const paths = csvPreviewState.paths || [];
-  const steps = Array.isArray(csvPreviewState.steps) ? csvPreviewState.steps : [];
-  if (!paths.length) return;
-  const index = Math.min(Math.max(csvPreviewState.index, 0), paths.length - 1);
-  const currentPath = paths[index];
-  const sqlForPath = findSqlForCsvPath(currentPath, steps);
-  const { modal, modalBody, modalDownload, modalCopy } = prepareModalShell("CSV 미리보기", ["modal-csv"]);
-  const fileLabel = shortPath(currentPath);
-  const titleText = fileLabel ? `${index + 1}/${paths.length} · ${fileLabel}` : `${index + 1}/${paths.length}`;
-  const content = await buildCsvPreviewContent({
-    path: currentPath,
-    titleText,
-    sqlText: sqlForPath,
-    sqlButtonLabel: "SQL 보기",
-    onSqlButtonClick:
-      sqlForPath
-        ? () =>
-            openSqlResultModal({
-              sql: sqlForPath,
-              returnTarget: {
-                type: "csv",
-                paths: [...paths],
-                index,
-                steps: [...steps],
-              },
-            })
-        : null,
-  });
-  modalBody.appendChild(content.bodyEl);
-  if (csvPreviewState.scrollTop) {
-    content.bodyEl.scrollTop = csvPreviewState.scrollTop;
-  }
-  modalCopyText = content.copyText || "";
-  if (modalCopy) modalCopy.textContent = content.copyLabel || "복사";
-  if (modalDownload) {
-    modalDownload.href = content.downloadUrl || "#";
-    modalDownload.classList.toggle("hidden", !content.downloadUrl);
-  }
-  renderCsvPager(paths, index);
-  modal.classList.add("show");
-}
-
-async function renderSqlResultModal() {
-  if (!sqlResultModalState.open) return;
-  const sqlText = formatSql(sqlResultModalState.sql);
-  const { modal, modalBody, modalDownload, modalCopy } = prepareModalShell("실행 SQL", ["modal-sql", "modal-sql-result"]);
-  const scrollWrap = document.createElement("div");
-  scrollWrap.className = "sql-result-scroll";
-  const toolbar = document.createElement("div");
-  toolbar.className = "sql-result-toolbar";
-  const toolbarTitle = document.createElement("div");
-  toolbarTitle.className = "sql-result-title";
-  toolbarTitle.textContent = "실행 SQL";
-  toolbar.appendChild(toolbarTitle);
-  scrollWrap.appendChild(toolbar);
-  const sqlPanel = document.createElement("div");
-  sqlPanel.className = "sql-result-panel";
-  sqlPanel.innerHTML = buildSqlLinesHtml(sqlText);
-  scrollWrap.appendChild(sqlPanel);
-  modalBody.appendChild(scrollWrap);
-  modalCopyText = sqlText;
-  if (modalCopy) modalCopy.textContent = "복사";
-  if (modalDownload) modalDownload.classList.add("hidden");
-  hideCsvPagerDock();
-  modal.classList.add("show");
-}
-
-async function openSqlResultModal({
-  sql,
-  returnTarget = null,
-} = {}) {
-  const formattedSql = formatSql(sql);
-  if (!formattedSql) return;
-  sqlResultModalState.open = true;
-  sqlResultModalState.sql = formattedSql;
-  sqlResultModalState.returnTarget = returnTarget;
-  await renderSqlResultModal();
-}
-
-async function openCsvPreviewModal(paths, startIndex = 0, steps = []) {
-  if (!Array.isArray(paths) || !paths.length) return;
-  resetSqlResultModalState();
-  syncCsvPreviewState(paths, startIndex, steps, true);
-  await renderCsvPreviewPage();
-}
-
-function buildTsv(rows) {
-  return rows
-    .map((row) =>
-      row.map((cell) => String(cell ?? "").replace(/\r?\n/g, " ")).join("\t")
-    )
-    .join("\n");
-}
-
-function compareCsvValues(a, b) {
-  const ax = String(a ?? "").trim();
-  const bx = String(b ?? "").trim();
-  const na = Number(ax.replace(/,/g, ""));
-  const nb = Number(bx.replace(/,/g, ""));
-  const isNum = !Number.isNaN(na) && !Number.isNaN(nb) && ax !== "" && bx !== "";
-  if (isNum) return na - nb;
-  return ax.localeCompare(bx, "ko");
-}
-
-function applyCsvSort(rows) {
-  if (!rows || rows.length < 2) return rows;
-  if (csvPreviewState.sortIndex === null || csvPreviewState.sortIndex === undefined) {
-    return rows;
-  }
-  const header = rows[0];
-  const body = rows.slice(1);
-  const idx = csvPreviewState.sortIndex;
-  const dir = csvPreviewState.sortDir || 1;
-  const sorted = [...body].sort((a, b) => compareCsvValues(a[idx], b[idx]) * dir);
-  return [header, ...sorted];
-}
-
-function attachCsvSortHandlers(tableWrap) {
-  if (!tableWrap) return;
-  const headers = tableWrap.querySelectorAll("th");
-  if (!headers.length) return;
-  headers.forEach((th, idx) => {
-    th.classList.toggle("sorted", csvPreviewState.sortIndex === idx);
-    th.classList.toggle("asc", csvPreviewState.sortIndex === idx && csvPreviewState.sortDir === 1);
-    th.classList.toggle("desc", csvPreviewState.sortIndex === idx && csvPreviewState.sortDir === -1);
-    th.addEventListener("click", () => {
-      if (csvPreviewState.sortIndex === idx) {
-        csvPreviewState.sortDir = csvPreviewState.sortDir === 1 ? -1 : 1;
-      } else {
-        csvPreviewState.sortIndex = idx;
-        csvPreviewState.sortDir = 1;
-      }
-      if (csvPreviewState.rawRows && csvPreviewState.rawRows.length) {
-        const sorted = applyCsvSort(csvPreviewState.rawRows);
-        tableWrap.innerHTML = buildCsvTable(sorted, csvPreviewState.rowLimit);
-        attachCsvSortHandlers(tableWrap);
-      }
+    event.stopPropagation();
+    cancelCurrentRun().catch((error) => {
+      showToast(error.message || "취소 요청에 실패했습니다.", true);
     });
   });
-}
-
-function extractDateKey(createdAt) {
-  if (createdAt) {
-    const match = String(createdAt).match(/\d{4}-\d{2}-\d{2}/);
-    if (match) return match[0];
-  }
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
-function sanitizeTopic(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return "(미설정)";
-  const convIdPattern = /\b\d{14}-[0-9a-f]{8}\b/i;
-  if (convIdPattern.test(raw)) {
-    const cleaned = raw.replace(convIdPattern, "").replace(/\s+/g, " ").trim();
-    if (cleaned && cleaned !== "대화") {
-      return cleaned;
-    }
-    return "대화";
-  }
-  return raw;
-}
-
-function formatAbsoluteTime(value) {
-  if (!value) return "";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  const y = parsed.getFullYear();
-  const m = String(parsed.getMonth() + 1).padStart(2, "0");
-  const d = String(parsed.getDate()).padStart(2, "0");
-  const hh = String(parsed.getHours()).padStart(2, "0");
-  const mm = String(parsed.getMinutes()).padStart(2, "0");
-  const ss = String(parsed.getSeconds()).padStart(2, "0");
-  return `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
-}
-
-function formatDateLabel(dateKey) {
-  return dateKey;
-}
-
-function formatRelativeTime(value) {
-  if (!value) return "";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  const diffMs = Date.now() - parsed.getTime();
-  const diffSec = Math.max(0, Math.floor(diffMs / 1000));
-  if (diffSec < 60) return `${diffSec}초 전`;
-  const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}분 전`;
-  const diffHour = Math.floor(diffMin / 60);
-  if (diffHour < 24) return `${diffHour}시간 전`;
-  const y = parsed.getFullYear();
-  const m = String(parsed.getMonth() + 1).padStart(2, "0");
-  const d = String(parsed.getDate()).padStart(2, "0");
-  const hh = String(parsed.getHours()).padStart(2, "0");
-  const mm = String(parsed.getMinutes()).padStart(2, "0");
-  return `${y}-${m}-${d} ${hh}:${mm}`;
-}
-
-function normalizeSingleLine(value, maxLen = 140) {
-  const raw = String(value || "").replace(/\s+/g, " ").trim();
-  if (!raw) return "";
-  if (raw.length <= maxLen) return raw;
-  return `${raw.slice(0, maxLen - 1)}…`;
-}
-
-function normalizeForCompare(value) {
-  return String(value || "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-function sanitizeContextTag(value, maxLen = 48) {
-  const cleaned = sanitizeFollowupText(value, maxLen)
-    .replace(/[`"'()[\]{}]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!cleaned || cleaned === "-" || cleaned === "none") return "";
-  return normalizeSingleLine(cleaned, maxLen);
-}
-
-function loadPinnedContext() {
-  try {
-    const raw = localStorage.getItem(PINNED_CONTEXT_KEY);
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return;
-    pinnedDomainHint = sanitizeContextTag(parsed.domain || "", 56);
-    pinnedStrategyHint = sanitizeContextTag(parsed.strategy || "", 72);
-  } catch (err) {
-    pinnedDomainHint = "";
-    pinnedStrategyHint = "";
-  }
-}
-
-function savePinnedContext() {
-  try {
-    localStorage.setItem(
-      PINNED_CONTEXT_KEY,
-      JSON.stringify({
-        domain: pinnedDomainHint || "",
-        strategy: pinnedStrategyHint || "",
-        updated_at: Date.now(),
-      })
-    );
-  } catch (err) {
-    // ignore
-  }
-}
-
-function renderContextBadges() {
-  const domainValue = pinnedDomainHint || currentDomainHint || "-";
-  const strategyValue = pinnedStrategyHint || currentStrategyHint || "-";
-  if (domainBadgeEl) {
-    domainBadgeEl.textContent = `Domain: ${domainValue}`;
-    domainBadgeEl.classList.toggle("is-empty", domainValue === "-");
-    domainBadgeEl.classList.toggle("is-pinned", Boolean(pinnedDomainHint));
-    domainBadgeEl.title = pinnedDomainHint
-      ? "고정 해제: 현재 도메인 고정 상태"
-      : "고정: 현재 도메인을 다음 요청에도 유지";
-  }
-  if (strategyBadgeEl) {
-    strategyBadgeEl.textContent = `Strategy: ${strategyValue}`;
-    strategyBadgeEl.classList.toggle("is-empty", strategyValue === "-");
-    strategyBadgeEl.classList.toggle("is-pinned", Boolean(pinnedStrategyHint));
-    strategyBadgeEl.title = pinnedStrategyHint
-      ? "고정 해제: 현재 전략 고정 상태"
-      : "고정: 현재 전략을 다음 요청에도 유지";
-  }
-}
-
-function renderFollowupLiveStatus() {
-  if (!followupLiveEl) return;
-  updateFollowupApplyButton();
-  renderFollowupAutoInject();
-  const intent = followupIntentEl ? sanitizeFollowupText(followupIntentEl.value || "", 64) : "";
-  const constraints = followupConstraintsEl ? sanitizeFollowupText(followupConstraintsEl.value || "", 84) : "";
-  const parts = [];
-  if (intent) parts.push(`의도 ${intent}`);
-  if (constraints) parts.push(`제약 ${constraints}`);
-  if (pinnedDomainHint) parts.push(`Domain ${pinnedDomainHint} 고정`);
-  if (pinnedStrategyHint) parts.push(`Strategy ${pinnedStrategyHint} 고정`);
-  if (isRestoreModeActive()) parts.push("복원 모드 고정");
-  const hasContext = parts.length > 0;
-  if (!hasContext) {
-    followupLiveEl.textContent = followupApplyArmed ? "현재 이어받기 없음 (전송 반영만 켜짐)" : "현재 이어받기 없음";
-    followupLiveEl.classList.add("empty");
-    return;
-  }
-  parts.push(followupApplyArmed || isRestoreModeActive() ? "전송 반영 켜짐" : "전송 반영 꺼짐");
-  followupLiveEl.textContent = `현재 이어받기: ${parts.join(" · ")}`;
-  followupLiveEl.classList.remove("empty");
-}
-
-function updateFollowupApplyButton() {
-  if (!followupApplyOnceEl) return;
-  const active = followupApplyArmed || isRestoreModeActive();
-  followupApplyOnceEl.classList.toggle("is-active", active);
-  followupApplyOnceEl.textContent = active ? "다음 요청 반영: 켜짐" : "다음 요청 반영: 꺼짐";
-  if (isRestoreModeActive()) {
-    followupApplyOnceEl.title = "복원 모드에서는 항상 반영됩니다.";
-  } else {
-    followupApplyOnceEl.title = "필요할 때만 켜고, 전송 후 자동으로 꺼집니다.";
-  }
-}
-
-function getPendingInjectParts() {
-  const parts = [];
-  const useDraft = Boolean(followupManualEdit && followupContextConversationId === activeConversationId);
-  const draftIntent = useDraft && followupIntentEl ? sanitizeFollowupText(followupIntentEl.value || "", 56) : "";
-  const draftConstraints = useDraft && followupConstraintsEl ? sanitizeFollowupText(followupConstraintsEl.value || "", 72) : "";
-  if (draftIntent) parts.push(`의도 ${draftIntent}`);
-  if (draftConstraints) parts.push(`제약 ${draftConstraints}`);
-  const pin = getPinnedContextPayload();
-  if (pin.domain) parts.push(`고정 도메인 ${pin.domain}`);
-  if (pin.strategy) parts.push(`고정 전략 ${pin.strategy}`);
-  if (isRestoreModeActive()) {
-    parts.push(`복원 모드 ${shortPath(restoreModeState.file_path)}`);
-  }
-  return parts;
-}
-
-function getActiveInjectParts() {
-  if (!followupApplyArmed && !isRestoreModeActive()) return [];
-  return getPendingInjectParts();
-}
-
-function mergeConstraintLine(base, line, maxLen = 220) {
-  const target = sanitizeFollowupText(line || "", 120);
-  if (!target) return sanitizeFollowupText(base || "", maxLen);
-  const parts = String(base || "")
-    .split(/\s*[;·]\s*/g)
-    .map((item) => sanitizeFollowupText(item || "", 120))
-    .filter(Boolean);
-  const exists = parts.some((item) => normalizeForCompare(item) === normalizeForCompare(target));
-  if (!exists) parts.push(target);
-  return sanitizeFollowupText(parts.join("; "), maxLen);
-}
-
-function getPinnedContextPayload() {
-  return {
-    domain: sanitizeContextTag(pinnedDomainHint || "", 56),
-    strategy: sanitizeContextTag(pinnedStrategyHint || "", 72),
-  };
-}
-
-function renderFollowupAutoInject() {
-  if (!followupAutoInjectEl) return;
-  const pending = getPendingInjectParts();
-  const parts = getActiveInjectParts();
-  if (!pending.length) {
-    followupAutoInjectEl.textContent = "자동 추가 제약 없음";
-    followupAutoInjectEl.classList.add("empty");
-    return;
-  }
-  if (!parts.length) {
-    followupAutoInjectEl.textContent = `자동 추가 대기: ${pending.join(" · ")} (반영 버튼 필요)`;
-    followupAutoInjectEl.classList.remove("empty");
-    return;
-  }
-  followupAutoInjectEl.textContent = `다음 요청에 자동 추가: ${parts.join(" · ")}`;
-  followupAutoInjectEl.classList.remove("empty");
-}
-
-function buildSendPreviewPayload(rawInput = "") {
-  const raw = String(rawInput || "").trim();
-  if (!raw) {
-    return { original: "", outbound: "", changed: false };
-  }
-  const parsed = parseFollowupEnvelope(raw);
-  const original = parsed.userRequest || raw;
-  const outbound = composeMessageWithFollowup(original);
-  const changed = normalizeForCompare(outbound) !== normalizeForCompare(original);
-  return { original, outbound, changed };
-}
-
-function renderSendPreview() {
-  if (!sendPreviewBoxEl || !sendPreviewMetaEl || !sendPreviewTextEl || !promptBox) return;
-  let rawInput = String(promptBox.value || "");
-  const draftParsed = parseFollowupEnvelope(rawInput);
-  // Keep the prompt box clean: when follow-up auto-apply is off, unwrap stale context text.
-  if (draftParsed.wrapped && !followupApplyArmed && !isRestoreModeActive()) {
-    const cleanedRequest = String(draftParsed.userRequest || "").trim();
-    if (cleanedRequest && cleanedRequest !== String(promptBox.value || "").trim()) {
-      promptBox.value = cleanedRequest;
-      rawInput = cleanedRequest;
-    }
-  }
-  const raw = String(rawInput || "").trim();
-  const autoParts = getActiveInjectParts();
-  const pendingParts = getPendingInjectParts();
-  if (!raw) {
-    sendPreviewMetaEl.textContent = autoParts.length
-      ? `입력 전입니다. 자동 추가 예정: ${autoParts.join(" · ")}`
-      : pendingParts.length
-        ? `입력 전입니다. 자동 추가 대기: ${pendingParts.join(" · ")}`
-      : "입력 전입니다. 원문 그대로 전송됩니다.";
-    sendPreviewTextEl.textContent = "(요청을 입력하면 실제 전송문이 표시됩니다.)";
-    sendPreviewBoxEl.classList.remove("changed");
-    return;
-  }
-  const payload = buildSendPreviewPayload(raw);
-  const originalLabel = normalizeSingleLine(payload.original, 92);
-  sendPreviewTextEl.textContent = payload.outbound || payload.original;
-  if (payload.changed) {
-    sendPreviewMetaEl.textContent = autoParts.length
-      ? `원문: ${originalLabel} / 전송문은 아래 내용 + 자동 추가(${autoParts.join(" · ")})`
-      : `원문: ${originalLabel} / 전송문은 아래 내용(이어받기 컨텍스트 포함)`;
-    sendPreviewBoxEl.classList.add("changed");
-  } else {
-    sendPreviewMetaEl.textContent = autoParts.length
-      ? `원문 그대로 전송 + 자동 추가: ${autoParts.join(" · ")}`
-      : pendingParts.length
-        ? `원문 그대로 전송됩니다. (자동 추가 대기: ${pendingParts.join(" · ")})`
-      : "원문 그대로 전송됩니다.";
-    sendPreviewBoxEl.classList.remove("changed");
-  }
-}
-
-function isLikelySqlText(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return false;
-  const head = /^(select|with|insert|update|delete|create|alter|drop|show|describe|explain)\b/i.test(raw);
-  const body = /\b(from|where|group\s+by|order\s+by|limit|join|having|count\(|sum\(|avg\(|min\(|max\(|left\(|right\(|inner\s+join)\b/i.test(raw);
-  return head && body;
-}
-
-function stripFollowupTokens(value) {
-  let text = String(value || "");
-  if (!text) return "";
-  text = text
-    .replace(/\[이어받기 컨텍스트\]/gi, " ")
-    .replace(/\[사용자 요청\]/gi, " ")
-    .replace(/\b의도\s*:/gi, " ")
-    .replace(/\b제약\s*:/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return text;
-}
-
-function sanitizeFollowupText(value, maxLen = 140) {
-  const cleaned = stripFollowupTokens(value);
-  if (!cleaned) return "";
-  return normalizeSingleLine(cleaned, maxLen);
-}
-
-function parseFollowupEnvelope(value) {
-  const maxUnwrap = 4;
-  let current = String(value || "").trim();
-  if (!current) {
-    return { wrapped: false, intent: "", constraints: "", userRequest: "" };
-  }
-  let wrapped = false;
-  let intent = "";
-  let constraints = "";
-  for (let i = 0; i < maxUnwrap; i += 1) {
-    if (!current.includes("[이어받기 컨텍스트]")) break;
-    if (!current.startsWith("[이어받기 컨텍스트]")) {
-      const markerPos = current.indexOf("[이어받기 컨텍스트]");
-      current = current.slice(markerPos).trim();
-    }
-    wrapped = true;
-    const normalizedCurrent = current
-      .replace(/^\[이어받기 컨텍스트\]\s*/i, "[이어받기 컨텍스트]\n")
-      .replace(/\s+(의도\s*:)/gi, "\n$1")
-      .replace(/\s+(제약\s*:)/gi, "\n$1")
-      .replace(/\s+(\[사용자 요청\])/gi, "\n$1");
-    const lines = normalizedCurrent
-      .split(/\r?\n/)
-      .map((line) => String(line || "").trim())
-      .filter(Boolean);
-    let nextRequest = "";
-    lines.forEach((line) => {
-      if (/^의도\s*:/i.test(line)) {
-        intent = sanitizeFollowupText(line.replace(/^의도\s*:/i, "").trim(), 180);
-        return;
-      }
-      if (/^제약\s*:/i.test(line)) {
-        constraints = sanitizeFollowupText(line.replace(/^제약\s*:/i, "").trim(), 220);
-        return;
-      }
-      if (line.startsWith("[사용자 요청]")) {
-        nextRequest = line.replace("[사용자 요청]", "").trim();
-      }
+  finalizeBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    finalizeCurrentRun().catch((error) => {
+      showToast(error.message || "즉시 답변 요청에 실패했습니다.", true);
     });
-    if (!nextRequest) {
-      const fallback = lines
-        .filter(
-          (line) =>
-            line &&
-            line !== "[이어받기 컨텍스트]" &&
-            !/^의도\s*:/i.test(line) &&
-            !/^제약\s*:/i.test(line) &&
-            !line.startsWith("[사용자 요청]")
-        )
-        .pop();
-      nextRequest = String(fallback || "").trim();
-    }
-    if (!nextRequest) break;
-    current = nextRequest;
-  }
-  return {
-    wrapped,
-    intent: sanitizeFollowupText(intent, 180),
-    constraints: sanitizeFollowupText(constraints, 220),
-    userRequest: String(current || "").trim(),
-  };
-}
-
-function extractConclusionLines(text, maxLines = 3) {
-  const raw = String(text || "").trim();
-  if (!raw) return [];
-  const lines = raw
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const sentenceLines = lines.length > 1
-    ? lines
-    : raw
-      .split(/(?<=[.!?])\s+|(?<=다\.)\s+/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-  const picked = sentenceLines
-    .filter((line) => !/^실행 완료[:：]?$/i.test(line))
-    .slice(0, maxLines)
-    .map((line) => normalizeSingleLine(line, 180));
-  return picked;
-}
-
-function buildConclusionText(text, maxLines = 3) {
-  const lines = extractConclusionLines(text, maxLines);
-  return lines.join("\n").trim();
-}
-
-function isRedundantAssistantBody(text, conclusionText) {
-  const raw = String(text || "").trim();
-  const conclusion = String(conclusionText || "").trim();
-  if (!raw || !conclusion) return false;
-  const normRaw = normalizeForCompare(raw);
-  const normConclusion = normalizeForCompare(conclusion);
-  if (normRaw === normConclusion) return true;
-  if (raw.length <= 260 && normConclusion && normRaw.includes(normConclusion)) return true;
-  const rawLines = raw
-    .split(/\r?\n/)
-    .map((line) => normalizeForCompare(line))
-    .filter(Boolean);
-  const conclusionLines = conclusion
-    .split(/\r?\n/)
-    .map((line) => normalizeForCompare(line))
-    .filter(Boolean);
-  if (rawLines.length <= 4 && conclusionLines.length >= 2) {
-    const matched = conclusionLines.filter((line) => rawLines.some((rawLine) => rawLine.includes(line) || line.includes(rawLine)));
-    if (matched.length / conclusionLines.length >= 0.75) return true;
-  }
-  return false;
-}
-
-function shouldCollapseAssistantOutput(text, meta = {}) {
-  const raw = String(text || "");
-  if (!raw) return false;
-  const lineCount = raw.split(/\r?\n/).filter(Boolean).length;
-  const csvCount = Array.isArray(meta.csv_paths) ? meta.csv_paths.length : 0;
-  const stepCount = Array.isArray(meta.steps) ? meta.steps.length : 0;
-  return raw.length >= 320 || lineCount >= 8 || stepCount >= 6 || csvCount >= 2;
-}
-
-function isMaxStepReachedText(text) {
-  const raw = String(text || "").trim();
-  return raw.includes("최대 단계 수에 도달");
-}
-
-function formatElapsedShort(seconds) {
-  const sec = Math.max(0, Math.floor(Number(seconds) || 0));
-  if (sec < 60) return `${sec}s`;
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  if (m < 60) return `${m}m ${s}s`;
-  const h = Math.floor(m / 60);
-  return `${h}h ${m % 60}m`;
-}
-
-function formatDurationMsLabel(ms) {
-  const value = Number(ms);
-  if (!Number.isFinite(value) || value <= 0) return "-";
-  if (value < 1000) return `${Math.round(value)}ms`;
-  return `${(value / 1000).toFixed(1)}s`;
-}
-
-function estimateDurationMs() {
-  if (!recentDurationsMs.length) return null;
-  const sorted = [...recentDurationsMs].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)] || null;
-}
-
-function getLatestStepInfoFromGrouped(grouped = []) {
-  if (!Array.isArray(grouped) || !grouped.length) return { stepCount: 0, intent: "" };
-  for (let i = grouped.length - 1; i >= 0; i -= 1) {
-    const item = grouped[i];
-    if (!item || item.role !== "assistant") continue;
-    const meta = item.meta || {};
-    const steps = Array.isArray(meta.steps) ? meta.steps : [];
-    if (!steps.length) continue;
-    let stepCount = 0;
-    let intent = "";
-    steps.forEach((step) => {
-      const idx = Number(step && step.step_index);
-      if (Number.isFinite(idx) && idx > stepCount) stepCount = idx;
-      const work = getStepWorkText(step);
-      if (work) intent = work;
+  });
+  deleteConversationBtn.addEventListener("click", () => {
+    deleteConversation().catch((error) => {
+      showToast(error.message || "대화 삭제에 실패했습니다.", true);
     });
-    return { stepCount, intent: normalizeSingleLine(intent, 96) };
-  }
-  return { stepCount: 0, intent: "" };
-}
-
-function collectAssistantSteps(grouped = []) {
-  const items = Array.isArray(grouped) ? grouped : [];
-  for (let i = items.length - 1; i >= 0; i -= 1) {
-    const item = items[i];
-    if (!item || item.role !== "assistant") continue;
-    const meta = item.meta || {};
-    if (Array.isArray(meta.steps) && meta.steps.length) {
-      return dedupeSteps(meta.steps);
-    }
-  }
-  return [];
-}
-
-function extractSchemaFromSql(sqlText = "") {
-  const sql = String(sqlText || "");
-  const schemaCounts = new Map();
-  const patterns = [
-    /(?:from|join|update|into)\s+`?([a-zA-Z_][a-zA-Z0-9_]*)`?\s*\.\s*`?([a-zA-Z_][a-zA-Z0-9_]*)`?/gi,
-    /`([a-zA-Z_][a-zA-Z0-9_]*)`\.`([a-zA-Z_][a-zA-Z0-9_]*)`/g,
-  ];
-  patterns.forEach((re) => {
-    let match;
-    while ((match = re.exec(sql))) {
-      const schema = String(match[1] || "").toLowerCase();
-      if (!schema) continue;
-      if (["information_schema", "performance_schema", "mysql", "sys"].includes(schema)) continue;
-      schemaCounts.set(schema, (schemaCounts.get(schema) || 0) + 1);
-    }
   });
-  let best = "";
-  let bestCount = 0;
-  schemaCounts.forEach((count, schema) => {
-    if (count > bestCount) {
-      bestCount = count;
-      best = schema;
-    }
-  });
-  return best;
-}
-
-function inferDomainFromGrouped(grouped = []) {
-  const steps = collectAssistantSteps(grouped);
-  for (let i = steps.length - 1; i >= 0; i -= 1) {
-    const schema = extractSchemaFromSql(steps[i] && steps[i].sql ? steps[i].sql : "");
-    if (schema) return sanitizeContextTag(schema, 42);
-  }
-  const items = Array.isArray(grouped) ? grouped : [];
-  const schemaRef = /\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\.\s*[a-zA-Z_][a-zA-Z0-9_]*\b/g;
-  for (let i = items.length - 1; i >= 0; i -= 1) {
-    const item = items[i];
-    if (!item || !item.content) continue;
-    let match;
-    while ((match = schemaRef.exec(String(item.content || "")))) {
-      const schema = String(match[1] || "").toLowerCase();
-      if (!schema || ["information_schema", "performance_schema", "mysql", "sys"].includes(schema)) continue;
-      return sanitizeContextTag(schema, 42);
-    }
-  }
-  return "";
-}
-
-function inferStrategyFromGrouped(grouped = []) {
-  const items = Array.isArray(grouped) ? grouped : [];
-  for (let i = items.length - 1; i >= 0; i -= 1) {
-    const item = items[i];
-    if (!item || item.role !== "assistant") continue;
-    const meta = item.meta || {};
-    const steps = Array.isArray(meta.steps) ? meta.steps : [];
-    if (!steps.length) continue;
-    const toolSet = new Set(
-      steps
-        .map((step) => String((step && step.tool) || "").toLowerCase())
-        .filter(Boolean)
-    );
-    const hasSearch = toolSet.has("search_objects");
-    const hasSql = toolSet.has("execute_sql");
-    const hasCsv = Array.isArray(meta.csv_paths) && meta.csv_paths.length > 0;
-    if (hasSearch && hasSql) return hasCsv ? "탐색 + SQL 집계 + CSV" : "탐색 + SQL 집계";
-    if (hasSql) return hasCsv ? "SQL 집계 + CSV" : "SQL 집계";
-    if (hasSearch) return "메타 탐색";
-    if (hasCsv) return "CSV 분석";
-    return "단계 실행";
-  }
-  return "";
-}
-
-function detectRepeatExploration(grouped = []) {
-  const steps = collectAssistantSteps(grouped);
-  if (steps.length < 4) return false;
-  const counts = new Map();
-  steps.forEach((step) => {
-    const intent = normalizeForCompare(getStepWorkText(step));
-    if (!intent) return;
-    const key = intent
-      .replace(/[0-9]+/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!key) return;
-    counts.set(key, (counts.get(key) || 0) + 1);
-  });
-  let maxCount = 0;
-  counts.forEach((count) => {
-    if (count > maxCount) maxCount = count;
-  });
-  if (maxCount >= 3) return true;
-  const loopHints = steps.filter((step) =>
-    /(메타\s*탐색|후보|스키마\s*검색|재검색|탐색\s*축소)/i.test(getStepWorkText(step))
-  );
-  return loopHints.length >= 3;
-}
-
-function inferRecoveryProgressFromGrouped(grouped = []) {
-  const items = (Array.isArray(grouped) ? grouped : []).filter((item) => item && item.role === "assistant");
-  if (!items.length) {
-    return { active: false, stage: 0 };
-  }
-  const recent = items.slice(-6);
-  const corpus = recent.map((item) => String(item.content || "")).join("\n");
-  const hasErrorHint = /(오류|error|실패|not\s+found|unknown\s+(table|column|database)|syntax|권한|접근\s+거부|mcp)/i.test(corpus);
-  if (!hasErrorHint) {
-    return { active: false, stage: 0 };
-  }
-  let stage = 1;
-  if (/(후보|탐색|search|schema|대체\s*경로|fallback)/i.test(corpus)) stage = Math.max(stage, 2);
-  if (/(검증|validate|검토|확인)/i.test(corpus)) stage = Math.max(stage, 3);
-  if (/(재실행|재시도|retry|다시\s*실행|재요청)/i.test(corpus)) stage = Math.max(stage, 4);
-  if (/(결론|요약|핵심\s*결론|최종)/i.test(corpus)) stage = Math.max(stage, 5);
-  return { active: true, stage };
-}
-
-function normalizeDomainKey(value = "") {
-  return sanitizeContextTag(value || "", 42).toLowerCase();
-}
-
-function findLatestRestoreFileFromGrouped(grouped = []) {
-  const items = Array.isArray(grouped) ? grouped : [];
-  for (let i = items.length - 1; i >= 0; i -= 1) {
-    const item = items[i];
-    if (!item) continue;
-    const paths = extractSharedFilePaths(item.content || "");
-    const restorable = paths.filter((path) => isSqlRestoreFile(path));
-    if (restorable.length) {
-      return restorable[0];
-    }
-  }
-  return "";
-}
-
-function isRestoreModeActive(conversationId = activeConversationId) {
-  return Boolean(
-    restoreModeState.active &&
-      restoreModeState.file_path &&
-      restoreModeState.conversation_id &&
-      conversationId &&
-      restoreModeState.conversation_id === conversationId
-  );
-}
-
-function setRestoreModeState(active, filePath = "", conversationId = activeConversationId) {
-  const normalizedPath = String(filePath || "").trim();
-  const nextActive = Boolean(active && normalizedPath && conversationId);
-  restoreModeState.active = nextActive;
-  restoreModeState.file_path = nextActive ? normalizedPath : "";
-  restoreModeState.conversation_id = nextActive ? String(conversationId || "") : "";
-  renderRestoreModePanel();
-  updatePromptPlaceholder();
-  renderFollowupLiveStatus();
-  renderSendPreview();
-}
-
-function clearRestoreModeState(conversationId = activeConversationId, force = false) {
-  if (!force && restoreModeState.conversation_id && conversationId && restoreModeState.conversation_id !== conversationId) {
-    return;
-  }
-  restoreModeState.active = false;
-  restoreModeState.file_path = "";
-  restoreModeState.conversation_id = "";
-  renderRestoreModePanel();
-  updatePromptPlaceholder();
-  renderFollowupLiveStatus();
-  renderSendPreview();
-}
-
-function buildRestoreContinuePrompt() {
-  if (!restoreModeState.file_path) return "";
-  return `복원 모드 계속 진행: ${restoreModeState.file_path} 파일을 우선 실행하고, 실패 시 이유와 다음 대안 1개만 제시해줘.`;
-}
-
-function syncRestoreModeFromGrouped(grouped = []) {
-  const latestRestoreFile = findLatestRestoreFileFromGrouped(grouped);
-  if (latestRestoreFile && activeConversationId) {
-    setRestoreModeState(true, latestRestoreFile, activeConversationId);
-    return;
-  }
-  if (restoreModeState.active && restoreModeState.conversation_id && restoreModeState.conversation_id !== activeConversationId) {
-    clearRestoreModeState(activeConversationId, true);
-  } else {
-    renderRestoreModePanel();
-  }
-}
-
-function renderRestoreModePanel() {
-  if (!restoreModePanelEl) return;
-  const active = isRestoreModeActive();
-  restoreModePanelEl.classList.toggle("hidden", !active);
-  document.body.classList.toggle("restore-mode-active", active);
-  if (!active) {
-    if (restoreModeFileEl) restoreModeFileEl.textContent = "선택 파일 없음";
-    return;
-  }
-  if (restoreModeFileEl) {
-    restoreModeFileEl.textContent = restoreModeState.file_path;
-    restoreModeFileEl.title = restoreModeState.file_path;
-  }
-}
-
-function buildRecoveryFlowHtml(stage = 1) {
-  const current = Math.max(1, Math.min(RECOVERY_FLOW_STEPS.length, Number(stage) || 1));
-  const chunks = [];
-  RECOVERY_FLOW_STEPS.forEach((label, idx) => {
-    const n = idx + 1;
-    const cls = n < current ? "done" : n === current ? "current" : "pending";
-    chunks.push(`<span class="recovery-step ${cls}">${escapeHtml(label)}</span>`);
-    if (idx < RECOVERY_FLOW_STEPS.length - 1) {
-      chunks.push('<span class="recovery-sep">›</span>');
-    }
-  });
-  return `<div class="recovery-flow">${chunks.join("")}</div>`;
-}
-
-function renderDomainDriftPanel() {
-  if (!domainDriftPanelEl || !domainDriftTextEl) return;
-  const expected = normalizeDomainKey(pinnedDomainHint || "");
-  const state = getConversationState(activeConversationId);
-  const actual = normalizeDomainKey(currentDomainHint || state.current_domain || "");
-  if (!expected || !actual || expected === actual) {
-    domainDriftPanelEl.classList.add("hidden");
-    if (domainDriftPanelEl.dataset) {
-      delete domainDriftPanelEl.dataset.driftKey;
-    }
-    domainDriftDismissedKey = "";
-    return;
-  }
-  const driftKey = `${activeConversationId}:${expected}:${actual}`;
-  if (domainDriftDismissedKey === driftKey) {
-    domainDriftPanelEl.classList.add("hidden");
-    return;
-  }
-  domainDriftPanelEl.dataset.driftKey = driftKey;
-  domainDriftTextEl.textContent = `도메인 드리프트 감지: 고정 ${expected} 대비 최근 실행 ${actual}.`;
-  domainDriftPanelEl.classList.remove("hidden");
-}
-
-function toUserFriendlyAssistantText(text = "") {
-  const raw = String(text || "");
-  if (!raw) return "";
-  if (!/(오류|error|실패|not\s+found|unknown|mcp|syntax|중단)/i.test(raw)) {
-    return raw;
-  }
-  let next = raw;
-  next = next.replace(/요청\s*처리를?\s*중단(?:했습니다)?\./gi, "자동 복구 시도 중입니다.");
-  next = next.replace(/실행을\s*중단(?:했습니다)?\./gi, "자동 복구 시도 중입니다.");
-  next = next.replace(/중단(?:했습니다)?\./g, "자동 복구 시도 중입니다.");
-  return next;
-}
-
-function formatTimingEntryLabel(entry) {
-  const event = String(entry.event || "");
-  const tool = String(entry.tool || "");
-  const action = String(entry.action || "");
-  const step = Number(entry.step_index || 0);
-  if (event === "mcp_tool" && tool) return `도구:${tool} (step ${step || "-"})`;
-  if (event === "plan") return `플랜:${action || "step"} (step ${step || "-"})`;
-  if (event === "step_validation") return `검증 (step ${step || "-"})`;
-  if (event === "summary_refresh") return `요약 갱신 (step ${step || "-"})`;
-  if (event === "schema_meta") return `스키마 메타 (step ${step || "-"})`;
-  return `${event || "unknown"} (step ${step || "-"})`;
-}
-
-async function refreshTimingPanel(force = false) {
-  if (!timingPanelEl || !timingMetaEl || !timingListEl) return;
-  const state = getConversationState(activeConversationId);
-  if (!activeConversationId || state.status === "processing" || state.status === "idle") {
-    timingPanelEl.classList.add("hidden");
-    timingListEl.innerHTML = "";
-    return;
-  }
-  timingPanelEl.classList.remove("hidden");
-  const key = `${activeConversationId}:${state.status}:${state.duration_ms || ""}`;
-  const now = Date.now();
-  if (!force && key === timingPanelLastKey && now - timingPanelLastFetchAt < TIMING_PANEL_REFRESH_MS) {
-    return;
-  }
-  timingPanelLastKey = key;
-  timingPanelLastFetchAt = now;
-  try {
-    const res = await fetch(`/api/file?path=${encodeURIComponent(TIMING_LOG_PATH)}&max_bytes=${TIMING_LOG_MAX_BYTES}`);
-    if (!res.ok) {
-      timingMetaEl.textContent = "타이밍 로그를 읽지 못했습니다.";
-      timingListEl.innerHTML = "";
-      return;
-    }
-    const text = await res.text();
-    const lines = String(text || "")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .slice(-1200);
-    const entries = [];
-    lines.forEach((line) => {
-      try {
-        const parsed = JSON.parse(line);
-        const ms = Number(parsed && parsed.ms);
-        if (!parsed || parsed.conversation_id !== activeConversationId || !Number.isFinite(ms) || ms <= 0) return;
-        entries.push({ ...parsed, ms });
-      } catch (err) {
-        // ignore non-json lines
-      }
+  renameConversationBtn.addEventListener("click", () => {
+    renameCurrentConversation().catch((error) => {
+      showToast(error.message || "대화 제목 변경에 실패했습니다.", true);
     });
-    if (!entries.length) {
-      timingMetaEl.textContent = "현재 대화의 지연 데이터가 아직 없습니다.";
-      timingListEl.innerHTML = "";
-      return;
-    }
-    const agg = new Map();
-    entries.forEach((entry) => {
-      const label = formatTimingEntryLabel(entry);
-      const current = agg.get(label) || { label, total: 0, count: 0 };
-      current.total += Number(entry.ms || 0);
-      current.count += 1;
-      agg.set(label, current);
-    });
-    const top = [...agg.values()]
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 3);
-    timingMetaEl.textContent = `최근 실행 기준 상위 ${top.length}개 단계`;
-    timingListEl.innerHTML = top
-      .map((item) => `<li><strong>${escapeHtml(item.label)}</strong> · ${formatDurationMsLabel(item.total)} · ${item.count}회</li>`)
-      .join("");
-  } catch (err) {
-    timingMetaEl.textContent = "타이밍 패널 갱신 실패";
-    timingListEl.innerHTML = "";
-  }
-}
-
-function deriveFollowupContextFromGrouped(grouped = []) {
-  const items = Array.isArray(grouped) ? grouped : [];
-  let latestUserRaw = "";
-  let latestAssistantQuestion = "";
-  for (let i = items.length - 1; i >= 0; i -= 1) {
-    const item = items[i];
-    if (!item) continue;
-    if (!latestUserRaw && item.role === "user") {
-      latestUserRaw = String(item.content || "").trim();
-    }
-    if (!latestAssistantQuestion && item.role === "assistant" && isQuestionContent(item.content || "")) {
-      latestAssistantQuestion = String(item.content || "").trim();
-    }
-    if (latestUserRaw && latestAssistantQuestion) break;
-  }
-  const parsedUser = parseFollowupEnvelope(latestUserRaw);
-  const latestUser = parsedUser.userRequest || latestUserRaw;
-  const latestParsedIntent = parsedUser.intent || "";
-  const latestParsedConstraints = parsedUser.constraints || "";
-  const intentBase = sanitizeFollowupText(latestUser, 120) || sanitizeFollowupText(latestParsedIntent, 120);
-  const intent = !isLikelySqlText(intentBase) ? normalizeSingleLine(intentBase || "", 120) : "";
-  let constraints = "";
-  if (latestParsedConstraints && !isLikelySqlText(latestParsedConstraints)) {
-    constraints = sanitizeFollowupText(latestParsedConstraints, 140);
-  } else if (
-    latestUser &&
-    !isLikelySqlText(latestUser) &&
-    /(제외|포함|이상|이하|상위|하위|최근|limit|only|조건|필터)/i.test(latestUser)
-  ) {
-    constraints = sanitizeFollowupText(latestUser, 140);
-  } else if (latestAssistantQuestion && !isLikelySqlText(latestAssistantQuestion)) {
-    constraints = sanitizeFollowupText(latestAssistantQuestion, 140);
-  }
-  return { intent, constraints };
-}
-
-function setFollowupContextFields(intent = "", constraints = "", force = false) {
-  if (!followupIntentEl || !followupConstraintsEl) return;
-  if (!force && followupManualEdit && followupContextConversationId === activeConversationId) return;
-  followupIntentEl.value = String(intent || "");
-  followupConstraintsEl.value = String(constraints || "");
-  renderFollowupLiveStatus();
-  renderSendPreview();
-}
-
-function getFollowupContextPayload() {
-  const intent = followupIntentEl ? String(followupIntentEl.value || "").trim() : "";
-  const constraints = followupConstraintsEl ? String(followupConstraintsEl.value || "").trim() : "";
-  return { intent, constraints };
-}
-
-function composeMessageWithFollowup(message) {
-  const raw = String(message || "").trim();
-  if (!raw) return "";
-  const parsed = parseFollowupEnvelope(raw);
-  const userRequest = parsed.userRequest || raw;
-  const applyContext = followupApplyArmed || isRestoreModeActive();
-  if (!applyContext) {
-    return userRequest;
-  }
-  const ctx = getFollowupContextPayload();
-  const pin = getPinnedContextPayload();
-  const useDraft = Boolean(followupManualEdit && followupContextConversationId === activeConversationId);
-  const intent = sanitizeFollowupText(useDraft ? (ctx.intent || parsed.intent) : parsed.intent, 180);
-  let constraints = sanitizeFollowupText(useDraft ? (ctx.constraints || parsed.constraints) : parsed.constraints, 220);
-  if (pin.domain) {
-    constraints = mergeConstraintLine(constraints, `고정 도메인 ${pin.domain}`, 220);
-  }
-  if (pin.strategy) {
-    constraints = mergeConstraintLine(constraints, `고정 전략 ${pin.strategy}`, 220);
-  }
-  if (isRestoreModeActive() && restoreModeState.file_path) {
-    constraints = mergeConstraintLine(constraints, `복원 모드 ${restoreModeState.file_path} 우선 실행`, 220);
-  }
-  if (!intent && !constraints) return userRequest;
-  const lines = ["[이어받기 컨텍스트]"];
-  if (intent) lines.push(`의도: ${intent}`);
-  if (constraints) lines.push(`제약: ${constraints}`);
-  lines.push(`[사용자 요청] ${userRequest}`);
-  return lines.join("\n");
-}
-
-function normalizePromptDraftFromFollowup() {
-  if (!promptBox) return;
-  const raw = String(promptBox.value || "").trim();
-  if (!raw) return;
-  const parsed = parseFollowupEnvelope(raw);
-  if (!parsed.wrapped) return;
-  const userRequest = parsed.userRequest || "";
-  if (!followupManualEdit) {
-    if (parsed.intent && !isLikelySqlText(parsed.intent) && followupIntentEl && !followupIntentEl.value.trim()) {
-      followupIntentEl.value = sanitizeFollowupText(parsed.intent, 120);
-    }
-    if (
-      parsed.constraints &&
-      !isLikelySqlText(parsed.constraints) &&
-      followupConstraintsEl &&
-      !followupConstraintsEl.value.trim()
-    ) {
-      followupConstraintsEl.value = sanitizeFollowupText(parsed.constraints, 140);
-    }
-  }
-  promptBox.value = userRequest;
-  renderFollowupLiveStatus();
-  renderSendPreview();
-}
-
-function renderRunHud() {
-  // 상단 HUD 비활성화 — 모든 진행 상황은 대화 로그 내 progress 버블에 표시
-  if (!runHudEl) return;
-  runHudEl.classList.add("hidden");
-  runHudEl.innerHTML = "";
-}
-
-function createDateSeparator(dateKey) {
-  const sep = document.createElement("div");
-  sep.className = "date-separator";
-  sep.dataset.dateKey = dateKey;
-  const label = document.createElement("span");
-  label.className = "date-sep-label";
-  label.textContent = formatDateLabel(dateKey);
-  label.title = "\uD074\uB9AD\uD558\uC5EC \uD574\uB2F9 \uB0A0\uC9DC \uCE98\uB9B0\uB354 \uC5F4\uAE30";
-  label.addEventListener("click", () => {
-    document.dispatchEvent(new CustomEvent("openCalDate", { detail: dateKey }));
   });
-  sep.appendChild(label);
-  return sep;
-}
-
-function ensureHistoryIndicator() {
-  let el = document.getElementById("historyLoading");
-  if (el) return el;
-  el = document.createElement("div");
-  el.id = "historyLoading";
-  el.className = "history-loading";
-  el.textContent = "이전 대화 로딩 중...";
-  return el;
-}
-
-function ensureHistoryMoreButton() {
-  let el = document.getElementById("historyMore");
-  if (el) return el;
-  el = document.createElement("button");
-  el.id = "historyMore";
-  el.type = "button";
-  el.className = "history-more";
-  el.textContent = "이전 대화 더보기";
-  el.addEventListener("click", () => loadOlderHistory());
-  return el;
-}
-
-function ensureHistoryTopElements() {
-  const indicator = ensureHistoryIndicator();
-  const moreBtn = ensureHistoryMoreButton();
-  if (!indicator.parentElement || !moreBtn.parentElement) {
-    chatLogEl.replaceChildren(indicator, moreBtn);
-    return;
-  }
-  if (chatLogEl.firstChild !== indicator) {
-    chatLogEl.insertBefore(indicator, chatLogEl.firstChild);
-  }
-  if (indicator.nextSibling !== moreBtn) {
-    chatLogEl.insertBefore(moreBtn, indicator.nextSibling);
-  }
-}
-
-function setHistoryLoading(show) {
-  const indicator = ensureHistoryIndicator();
-  if (show) {
-    indicator.classList.add("show");
-  } else {
-    indicator.classList.remove("show");
-  }
-}
-
-function setHistoryMoreVisible(show) {
-  historyMoreAvailable = Boolean(show);
-  updateHistoryMoreButtonVisibility();
-}
-
-function updateHistoryMoreButtonVisibility() {
-  const moreBtn = ensureHistoryMoreButton();
-  const nearTop = chatLogEl ? chatLogEl.scrollTop <= 100 : false;
-  if (historyMoreAvailable && nearTop) {
-    moreBtn.classList.add("show");
-  } else {
-    moreBtn.classList.remove("show");
-  }
-}
-
-function extractSharedFilePaths(text = "") {
-  const raw = String(text || "");
-  const matches = raw.match(/(?:\/shared\/[^\s"'`)\]}]+|shared\/[^\s"'`)\]}]+)/g) || [];
-  const unique = [];
-  const seen = new Set();
-  matches.forEach((item) => {
-    const normalized = String(item || "").replace(/^[.\/]*/, "/").replace(/\/+/g, "/").trim();
-    if (!normalized) return;
-    if (!normalized.startsWith("/shared/")) return;
-    if (seen.has(normalized)) return;
-    seen.add(normalized);
-    unique.push(normalized);
-  });
-  return unique;
-}
-
-function isSqlRestoreFile(path = "") {
-  const lower = String(path || "").toLowerCase();
-  return [".sql", ".dump"].some((ext) => lower.endsWith(ext));
-}
-
-function createMessageElement(role, text, meta = {}, createdAt = "") {
-  const msg = document.createElement("div");
-  msg.className = `msg ${role}`;
-  msg.dataset.dateKey = extractDateKey(createdAt);
-  if (createdAt) msg.dataset.createdAt = String(createdAt);
-  const bubble = document.createElement("div");
-  bubble.className = "bubble";
-
-  const rawText = String(text || "");
-  const mergedMeta = mergeMeta({}, meta || {});
-  const steps = Array.isArray(mergedMeta.steps) ? mergedMeta.steps : [];
-  const fallbackSqlText = (() => {
-    const sqlSteps = steps.filter((step) => step && step.sql);
-    return sqlSteps.length ? sqlSteps[sqlSteps.length - 1].sql : "";
-  })();
-  const fallbackCsvPaths = (() => {
-    const values = [];
-    steps.forEach((step) => {
-      getStepCsvPaths(step).forEach((path) => values.push(path));
-    });
-    return [...new Set(values.filter(Boolean))];
-  })();
-  const sqlText =
-    mergedMeta.sql ||
-    (Array.isArray(mergedMeta.sqls) && mergedMeta.sqls.length ? mergedMeta.sqls[mergedMeta.sqls.length - 1] : "") ||
-    fallbackSqlText;
-  const csvPaths = Array.isArray(mergedMeta.csv_paths) && mergedMeta.csv_paths.length
-    ? mergedMeta.csv_paths
-    : Array.isArray(mergedMeta.csvPaths) && mergedMeta.csvPaths.length
-      ? mergedMeta.csvPaths
-      : mergedMeta.csvPath
-        ? [mergedMeta.csvPath]
-        : fallbackCsvPaths;
-  const stepsLabel = steps.length ? `작업 상세 (${steps.length})` : "";
-  const rationale = mergedMeta.rationale || mergedMeta.reason || "";
-  const isAssistant = role === "assistant";
-  const displayText = isAssistant ? toUserFriendlyAssistantText(rawText) : rawText;
-  const markdownPayload =
-    isAssistant && shouldRenderAssistantMarkdown(role, displayText)
-      ? renderMarkdownSource(displayText)
-      : { html: "", text: displayText };
-  const renderedDisplayText = markdownPayload.text || displayText;
-  const keepsMarkdownBody =
-    isAssistant && markdownPayload.html && hasStructuredMarkdownSource(displayText);
-  const sharedFiles = isAssistant ? extractSharedFilePaths(rawText) : [];
-  const sqlRestoreFiles = sharedFiles.filter((path) => isSqlRestoreFile(path));
-  const conclusionText = isAssistant ? buildConclusionText(renderedDisplayText, 3) : "";
-  const isBodyRedundant =
-    isAssistant && conclusionText && !keepsMarkdownBody
-      ? isRedundantAssistantBody(renderedDisplayText, conclusionText)
-      : false;
-  if (isAssistant && conclusionText) {
-    const conclusionCard = document.createElement("div");
-    conclusionCard.className = "answer-conclusion";
-    const title = document.createElement("div");
-    title.className = "answer-conclusion-title";
-    title.textContent = "핵심 결론";
-    const body = document.createElement("pre");
-    body.className = "answer-conclusion-text";
-    body.textContent = conclusionText;
-    conclusionCard.appendChild(title);
-    conclusionCard.appendChild(body);
-    bubble.appendChild(conclusionCard);
-  }
-
-  if (!isBodyRedundant) {
-    const content =
-      isAssistant && markdownPayload.html
-        ? createMarkdownOutputNode(markdownPayload.html, steps)
-        : createPlainOutputNode(displayText);
-    if (isAssistant && shouldCollapseAssistantOutput(renderedDisplayText, mergedMeta)) {
-      const detail = document.createElement("details");
-      detail.className = "answer-detail";
-      const summary = document.createElement("summary");
-      summary.textContent = "상세 답변 보기";
-      detail.appendChild(summary);
-      detail.appendChild(content);
-      detail.addEventListener("toggle", () => {
-        if (detail.open) {
-          requestAnimationFrame(() => syncAnswerExpandedState(msg, detail));
-          return;
-        }
-        syncAnswerExpandedState(msg, detail);
+  if (forkConversationBtn) {
+    forkConversationBtn.addEventListener("click", () => {
+      forkConversation().catch((error) => {
+        showToast(error.message || "대화 복사에 실패했습니다.", true);
       });
-      syncAnswerExpandedState(msg, detail);
-      bubble.appendChild(detail);
-    } else {
-      bubble.appendChild(content);
-    }
-  }
-
-  if (isAssistant && isMaxStepReachedText(displayText) && !isRestoreModeActive()) {
-    const actionWrap = document.createElement("div");
-    actionWrap.className = "maxstep-actions";
-    const ctaList = [
-      { label: "결론만 보기", prompt: "방금 작업의 결론만 핵심 3줄로 요약해줘." },
-      { label: "다른 경로 재시도", prompt: "같은 목표를 다른 경로로 재시도해줘. 탐색 범위를 더 좁혀줘." },
-      { label: "질문 최소화 모드", prompt: "질문을 최소화하고 바로 실행 가능한 가정으로 진행해줘." },
-    ];
-    ctaList.forEach((item) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "mini ghost";
-      btn.textContent = item.label;
-      btn.addEventListener("click", () => sendMessage(item.prompt));
-      actionWrap.appendChild(btn);
-    });
-    bubble.appendChild(actionWrap);
-  }
-
-  const sqlResultPaths = sqlText ? findCsvPathsForSql(sqlText, csvPaths, steps) : [];
-  if (role === "assistant" || sqlText || csvPaths.length) {
-    const footer = document.createElement("div");
-    footer.className = "msg-footer";
-    let extraTools = null;
-    let extraToolsBody = null;
-    const ensureExtraTools = () => {
-      if (extraTools) return;
-      extraTools = document.createElement("details");
-      extraTools.className = "msg-tools";
-      const summary = document.createElement("summary");
-      summary.textContent = "추가 도구";
-      extraToolsBody = document.createElement("div");
-      extraToolsBody.className = "msg-tools-body";
-      extraTools.appendChild(summary);
-      extraTools.appendChild(extraToolsBody);
-    };
-    const addExtraTool = (label, onClick) => {
-      ensureExtraTools();
-      const btn = document.createElement("button");
-      btn.className = "mini ghost";
-      btn.textContent = label;
-      btn.addEventListener("click", onClick);
-      extraToolsBody.appendChild(btn);
-    };
-
-    if (sqlText) {
-      const sqlBtn = document.createElement("button");
-      sqlBtn.className = "mini ghost";
-      sqlBtn.textContent = "SQL 보기";
-      sqlBtn.addEventListener("click", () =>
-        openSqlResultModal({
-          sql: sqlText,
-        }).catch(() => showToast("SQL 보기 실패"))
-      );
-      footer.appendChild(sqlBtn);
-      footer.appendChild(createCsvPreviewButton(sqlResultPaths, steps));
-    }
-    if (!sqlText && csvPaths.length) {
-      footer.appendChild(createCsvPreviewButton(csvPaths, steps));
-    }
-    if (isAssistant && sharedFiles.length) {
-      const restoreBtn = document.createElement("button");
-      restoreBtn.className = "mini ghost restore-cta-btn";
-      if (sqlRestoreFiles.length) {
-        restoreBtn.textContent =
-          sqlRestoreFiles.length > 1 ? `복원 실행 (${sqlRestoreFiles.length})` : "복원 실행";
-        const targetPath = sqlRestoreFiles[0];
-        restoreBtn.title = `SQL 파일 실행: ${targetPath}`;
-        restoreBtn.addEventListener("click", () => {
-          if (activeConversationId) {
-            setRestoreModeState(true, targetPath, activeConversationId);
-          }
-          sendMessage(`다음 SQL 복원 파일을 실행해줘: ${targetPath}`);
-        });
-      } else {
-        restoreBtn.textContent = "복원 실행 불가";
-        restoreBtn.disabled = true;
-        restoreBtn.title = "복원 실행은 .sql 또는 .dump 파일에서만 가능합니다.";
-      }
-      footer.appendChild(restoreBtn);
-    }
-    if (role === "assistant") {
-      addExtraTool("원문 보기", () => {
-        showModal("응답 원문", rawText || "");
-      });
-
-      if (rationale) {
-        addExtraTool("근거 보기", () => {
-          showModal("실행 근거", stringifyValue(rationale));
-        });
-      }
-      addExtraTool("출력 복사", () => {
-        navigator.clipboard
-          .writeText(rawText || displayText || "")
-          .then(() => showToast("복사 완료"))
-          .catch(() => showToast("복사 실패"));
-      });
-      if (isAssistant && conclusionText) {
-        addExtraTool("결론 보기", () => {
-          showModal("핵심 결론", conclusionText);
-        });
-      }
-    }
-    // duration_ms 뱃지 (답변 소요 시간)
-    if (isAssistant && mergedMeta.duration_ms != null) {
-      const durBadge = document.createElement("span");
-      durBadge.className = "msg-duration-badge";
-      durBadge.textContent = formatDurationMsLabel(mergedMeta.duration_ms);
-      durBadge.title = `소요 시간: ${Number(mergedMeta.duration_ms).toLocaleString()}ms`;
-      footer.appendChild(durBadge);
-    }
-    if (extraTools) {
-      footer.appendChild(extraTools);
-    }
-    bubble.appendChild(footer);
-  }
-
-  if (role === "assistant" && steps.length) {
-    const dropdown = buildStepsDropdown(steps, stepsLabel);
-    if (dropdown) bubble.appendChild(dropdown);
-  }
-
-  msg.appendChild(bubble);
-  return msg;
-}
-
-function getConversationState(conversationId) {
-  if (!conversationId) {
-    return {
-      status: "idle",
-      duration_ms: null,
-      updated_at: null,
-      step_count: 0,
-      current_intent: "",
-      current_domain: "",
-      current_strategy: "",
-      repeat_explore: false,
-      recovery_active: false,
-      recovery_stage: 0,
-    };
-  }
-  if (!conversationState.has(conversationId)) {
-    conversationState.set(conversationId, {
-      status: "idle",
-      duration_ms: null,
-      updated_at: null,
-      step_count: 0,
-      current_intent: "",
-      current_domain: "",
-      current_strategy: "",
-      repeat_explore: false,
-      recovery_active: false,
-      recovery_stage: 0,
     });
   }
-  return conversationState.get(conversationId);
-}
 
-function markCancelOverride(conversationId, ttlMs = CANCEL_OVERRIDE_MS) {
-  if (!conversationId) return;
-  cancelOverrideUntil.set(conversationId, Date.now() + Math.max(0, Number(ttlMs) || 0));
-}
-
-function clearCancelOverride(conversationId) {
-  if (!conversationId) return;
-  cancelOverrideUntil.delete(conversationId);
-}
-
-function isCancelOverrideActive(conversationId) {
-  if (!conversationId) return false;
-  const expireAt = Number(cancelOverrideUntil.get(conversationId) || 0);
-  if (!Number.isFinite(expireAt) || expireAt <= 0) return false;
-  if (Date.now() >= expireAt) {
-    cancelOverrideUntil.delete(conversationId);
-    return false;
-  }
-  return true;
-}
-
-function setConversationState(conversationId, patch) {
-  if (!conversationId) return;
-  const current = getConversationState(conversationId);
-  const next = {
-    ...current,
-    ...patch,
-    updated_at: new Date().toISOString(),
-  };
-  const hasStatusPatch = Boolean(patch && Object.prototype.hasOwnProperty.call(patch, "status"));
-  if (hasStatusPatch) {
-    const incomingStatus = String(patch.status || "").toLowerCase();
-    if (incomingStatus === "processing" && isCancelOverrideActive(conversationId)) {
-      next.status = "canceled";
-      if (current.started_at) {
-        next.started_at = current.started_at;
-      }
-    } else if (incomingStatus === "done" || incomingStatus === "error" || incomingStatus === "idle") {
-      clearCancelOverride(conversationId);
-    }
-  }
-  if (next.status === "done") {
-    const ms = Number(next.duration_ms);
-    if (Number.isFinite(ms) && ms > 0) {
-      recentDurationsMs.push(ms);
-      if (recentDurationsMs.length > 20) {
-        recentDurationsMs.splice(0, recentDurationsMs.length - 20);
-      }
-    }
-  }
-  if (patch && Object.prototype.hasOwnProperty.call(patch, "current_domain")) {
-    next.current_domain = sanitizeContextTag(patch.current_domain || "", 42);
-  }
-  if (patch && Object.prototype.hasOwnProperty.call(patch, "current_strategy")) {
-    next.current_strategy = sanitizeContextTag(patch.current_strategy || "", 72);
-  }
-  if (patch && Object.prototype.hasOwnProperty.call(patch, "repeat_explore")) {
-    next.repeat_explore = Boolean(patch.repeat_explore);
-  }
-  if (patch && Object.prototype.hasOwnProperty.call(patch, "recovery_active")) {
-    next.recovery_active = Boolean(patch.recovery_active);
-  }
-  if (patch && Object.prototype.hasOwnProperty.call(patch, "recovery_stage")) {
-    const stage = Number(patch.recovery_stage);
-    next.recovery_stage = Number.isFinite(stage) ? Math.max(0, Math.min(RECOVERY_FLOW_STEPS.length, Math.floor(stage))) : 0;
-  }
-  conversationState.set(conversationId, next);
-}
-
-function startConversationPoll(conversationId) {
-  if (!conversationId) return;
-  const nextCount = (conversationPollCounts.get(conversationId) || 0) + 1;
-  conversationPollCounts.set(conversationId, nextCount);
-  if (conversationPollers.has(conversationId)) {
-    return;
-  }
-  const handle = setInterval(() => {
-    refreshConversations().catch(() => {});
-    if (conversationId === activeConversationId) {
-      refreshActiveConversation(false);
-    }
-  }, STATUS_POLL_MS);
-  conversationPollers.set(conversationId, handle);
-}
-
-function stopConversationPoll(conversationId) {
-  const current = conversationPollCounts.get(conversationId) || 0;
-  const next = current - 1;
-  if (next > 0) {
-    conversationPollCounts.set(conversationId, next);
-    return;
-  }
-  conversationPollCounts.delete(conversationId);
-  const handle = conversationPollers.get(conversationId);
-  if (handle) {
-    clearInterval(handle);
-    conversationPollers.delete(conversationId);
-  }
-}
-
-function renderHeaderStatus() {
-  if (!lastDurationEl) return;
-  const state = getConversationState(activeConversationId);
-  if (!activeConversationId) {
-    lastDurationEl.textContent = "대기 중";
-    currentDomainHint = "";
-    currentStrategyHint = "";
-    renderContextBadges();
-    renderFollowupLiveStatus();
-    renderSendPreview();
-    renderDomainDriftPanel();
-    renderRestoreModePanel();
-    updateComposerActions();
-    renderRunHud();
-    refreshTimingPanel().catch(() => {});
-    return;
-  }
-  if (!currentDomainHint || !currentStrategyHint) {
-    currentDomainHint = sanitizeContextTag(state.current_domain || "", 42) || currentDomainHint;
-    currentStrategyHint = sanitizeContextTag(state.current_strategy || "", 72) || currentStrategyHint;
-  }
-  renderContextBadges();
-  renderFollowupLiveStatus();
-  renderSendPreview();
-  renderDomainDriftPanel();
-  renderRestoreModePanel();
-  if (state.status === "processing") {
-    lastDurationEl.textContent = "처리 중";
-    updateComposerActions();
-    renderRunHud();
-    refreshTimingPanel().catch(() => {});
-    return;
-  }
-  if (state.status === "error") {
-    lastDurationEl.textContent = state.recovery_active ? "자동 복구 시도 중" : "오류 발생";
-    updateComposerActions();
-    renderRunHud();
-    refreshTimingPanel().catch(() => {});
-    return;
-  }
-  if (state.status === "canceled") {
-    lastDurationEl.textContent = "요청 취소됨";
-    updateComposerActions();
-    renderRunHud();
-    refreshTimingPanel().catch(() => {});
-    return;
-  }
-  if (state.status === "done" && state.duration_ms !== null && state.duration_ms !== undefined) {
-    lastDurationEl.textContent = `최근 처리: ${state.duration_ms} ms`;
-    updateComposerActions();
-    renderRunHud();
-    refreshTimingPanel().catch(() => {});
-    return;
-  }
-  lastDurationEl.textContent = "대기 중";
-  updateComposerActions();
-  renderRunHud();
-  refreshTimingPanel().catch(() => {});
-}
-
-function updateComposerActions() {
-  const sendBtn = document.getElementById("btnSend");
-  const cancelBtn = document.getElementById("btnCancel");
-  if (!sendBtn || !cancelBtn) return;
-  const state = getConversationState(activeConversationId);
-  const processing = state.status === "processing";
-  sendBtn.classList.toggle("hidden", processing);
-  cancelBtn.classList.toggle("hidden", !processing);
-  promptBox.disabled = processing;
-}
-
-function isNearBottom() {
-  const threshold = 80;
-  return chatLogEl.scrollHeight - chatLogEl.scrollTop - chatLogEl.clientHeight < threshold;
-}
-
-function ensureDateSeparatorForAppend(dateKey) {
-  const nodes = Array.from(chatLogEl.children).filter((node) => node.id !== "historyLoading");
-  let lastDateKey = null;
-  for (let i = nodes.length - 1; i >= 0; i -= 1) {
-    const node = nodes[i];
-    if (node.classList.contains("date-separator")) {
-      lastDateKey = node.dataset.dateKey || null;
-      break;
-    }
-    if (node.classList.contains("msg")) {
-      lastDateKey = node.dataset.dateKey || null;
-      break;
-    }
-  }
-  if (!lastDateKey || lastDateKey !== dateKey) {
-    chatLogEl.appendChild(createDateSeparator(dateKey));
-  }
-}
-
-function appendMessage(role, text, meta = {}, options = {}) {
-  const dateKey = extractDateKey();
-  const shouldStickBottom = isNearBottom();
-  ensureDateSeparatorForAppend(dateKey);
-  const msg = createMessageElement(role, text, meta, dateKey);
-  chatLogEl.appendChild(msg);
-  if (options.forceScroll || role === "user" || shouldStickBottom) {
-    scrollToBottom();
-  }
-}
-
-function prependMessages(items) {
-  if (!items.length) return;
-  ensureHistoryTopElements();
-  const existingNodes = Array.from(chatLogEl.children).filter(
-    (node) => node.id !== "historyLoading" && node.id !== "historyMore"
-  );
-  const firstNode = existingNodes[0] || null;
-  let firstDateKey = null;
-  if (firstNode) {
-    if (firstNode.classList.contains("date-separator")) {
-      firstDateKey = firstNode.dataset.dateKey || null;
-    } else if (firstNode.classList.contains("msg")) {
-      firstDateKey = firstNode.dataset.dateKey || null;
-    }
-  }
-  const anchor = (() => {
-    const containerTop = chatLogEl.scrollTop;
-    for (const node of existingNodes) {
-      const nodeTop = node.offsetTop;
-      const nodeBottom = nodeTop + node.offsetHeight;
-      if (nodeBottom >= containerTop) {
-        return { node, offset: nodeTop - containerTop };
-      }
-    }
-    return null;
-  })();
-  const prevHeight = chatLogEl.scrollHeight;
-  const nodes = [];
-  let lastDate = null;
-  const groupedItems = groupConversationMessages(items);
-  groupedItems.forEach((item) => {
-    const dateKey = extractDateKey(item.created_at);
-    if (dateKey !== lastDate) {
-      nodes.push(createDateSeparator(dateKey));
-      lastDate = dateKey;
-    }
-    const msg = createMessageElement(item.role, item.content, item.meta || {}, item.created_at);
-    if (item.id) {
-      msg.id = `msg-${item.id}`;
-      msg.dataset.msgId = String(item.id);
-    }
-    nodes.push(msg);
+  // Textarea auto-grow
+  promptInputEl.addEventListener("input", function () {
+    this.style.height = "auto";
+    this.style.height = Math.min(this.scrollHeight, 180) + "px";
   });
-  if (nodes.length) {
-    const lastNode = nodes[nodes.length - 1];
-    if (lastNode.classList.contains("date-separator") && lastNode.dataset.dateKey === firstDateKey) {
-      nodes.pop();
-    }
-  }
-  let insertBefore = null;
-  for (const child of chatLogEl.children) {
-    if (child.id === "historyLoading" || child.id === "historyMore") continue;
-    insertBefore = child;
-    break;
-  }
-  nodes.forEach((node) => {
-    if (insertBefore) {
-      chatLogEl.insertBefore(node, insertBefore);
-    } else {
-      chatLogEl.appendChild(node);
-    }
-  });
-  const newHeight = chatLogEl.scrollHeight;
-  if (anchor && anchor.node && anchor.node.isConnected) {
-    const newTop = anchor.node.offsetTop;
-    chatLogEl.scrollTop = newTop - anchor.offset;
-  } else {
-    chatLogEl.scrollTop += newHeight - prevHeight;
-  }
-}
 
-function buildRenderSignature(groupedItems = []) {
-  if (!Array.isArray(groupedItems) || !groupedItems.length) return "";
-  const last = groupedItems[groupedItems.length - 1];
-  const meta = last && last.meta ? last.meta : {};
-  const steps = Array.isArray(meta.steps) ? meta.steps.length : 0;
-  const csvCount = Array.isArray(meta.csv_paths) ? meta.csv_paths.length : 0;
-  const contentLen = (last && last.content ? String(last.content).length : 0) || 0;
-  return `${last && last.id ? last.id : ""}:${steps}:${csvCount}:${contentLen}`;
-}
+  toggleAuthPane("login");
 
-function updateConversationStats(payload = {}) {
-  if (!conversationStatsEl) return;
-  const total = payload.total_messages ?? payload.total ?? null;
-  const userTotal = payload.total_user_messages ?? payload.user_total ?? null;
-  if (total === null || total === undefined) {
-    conversationStatsEl.textContent = conversationTotalCount
-      ? `대화 ${conversationTotalCount} · 메시지 0`
-      : "메시지 0";
-    return;
-  }
-  if (userTotal !== null && userTotal !== undefined) {
-    conversationStatsEl.textContent = conversationTotalCount
-      ? `대화 ${conversationTotalCount} · 메시지 ${total} · 사용자 ${userTotal}`
-      : `메시지 ${total} · 사용자 ${userTotal}`;
-  } else {
-    conversationStatsEl.textContent = conversationTotalCount
-      ? `대화 ${conversationTotalCount} · 메시지 ${total}`
-      : `메시지 ${total}`;
-  }
-}
-
-function formatTooltipText(message) {
-  const text = String(message || "").trim().replace(/\s+/g, " ");
-  if (!text) return "내용 없음";
-  return text.length > 60 ? `${text.slice(0, 60)}...` : text;
-}
-
-function renderTimelineMarkers(groupedItems = []) {
-  if (!timelineEl) return;
-  timelineEl.innerHTML = "";
-  if (!Array.isArray(groupedItems) || !groupedItems.length) {
-    return;
-  }
-  const userItems = groupedItems.filter((item) => item && item.role === "user" && item.id);
-  if (!userItems.length) return;
-  userItems.forEach((item) => {
-    const marker = document.createElement("div");
-    marker.className = "timeline-marker";
-    marker.dataset.targetId = `msg-${item.id}`;
-    const tooltip = document.createElement("div");
-    tooltip.className = "timeline-tooltip";
-    const timeLabel = item.created_at ? String(item.created_at).replace("T", " ") : "";
-    tooltip.textContent = `${timeLabel}\n${formatTooltipText(item.content)}`;
-    marker.appendChild(tooltip);
-    marker.addEventListener("click", () => {
-      const target = document.getElementById(`msg-${item.id}`);
-      if (target) {
-        target.scrollIntoView({ block: "center", behavior: "smooth" });
-      }
-    });
-    timelineEl.appendChild(marker);
-  });
-  updateTimelinePositions();
-}
-
-function updateTimelinePositions() {
-  if (!timelineEl || !chatLogEl) return;
-  const height = chatLogEl.scrollHeight || 1;
-  const timelineHeight = timelineEl.clientHeight || 1;
-  const markers = Array.from(timelineEl.querySelectorAll(".timeline-marker"));
-  markers.forEach((marker) => {
-    const targetId = marker.dataset.targetId;
-    if (!targetId) return;
-    const target = document.getElementById(targetId);
-    if (!target) return;
-    const ratio = Math.min(Math.max(target.offsetTop / height, 0), 1);
-    const markerHalf = (marker.offsetHeight || 10) / 2;
-    const topPx = Math.min(
-      Math.max(ratio * timelineHeight, markerHalf),
-      Math.max(timelineHeight - markerHalf, markerHalf)
-    );
-    marker.style.top = `${topPx}px`;
-  });
-}
-
-function replaceMessages(items, groupedItems = null) {
-  ensureHistoryTopElements();
-  // progress 버블 보존: replaceChildren 전에 떼어두고 마지막에 다시 붙임
-  const progressBubble = chatLogEl.querySelector(".msg-progress-live");
-  if (progressBubble) progressBubble.remove();
-  chatLogEl.replaceChildren(ensureHistoryIndicator(), ensureHistoryMoreButton());
-  const grouped = groupedItems || groupConversationMessages(items);
-  if (!grouped.length) {
-    const msg = createMessageElement("assistant", "대화 기록이 없습니다.");
-    chatLogEl.appendChild(msg);
-    lastRenderedSignature = "";
-    renderTimelineMarkers([]);
-    return;
-  }
-  let lastDate = null;
-  grouped.forEach((item) => {
-    const dateKey = extractDateKey(item.created_at);
-    if (dateKey !== lastDate) {
-      chatLogEl.appendChild(createDateSeparator(dateKey));
-      lastDate = dateKey;
-    }
-    const msg = createMessageElement(item.role, item.content, item.meta || {}, item.created_at);
-    if (item.id) {
-      msg.id = `msg-${item.id}`;
-      msg.dataset.msgId = String(item.id);
-    }
-    chatLogEl.appendChild(msg);
-  });
-  const last = grouped[grouped.length - 1];
-  lastRenderedMessageId = last && last.id ? last.id : lastRenderedMessageId;
-  lastRenderedSignature = buildRenderSignature(grouped);
-  renderTimelineMarkers(grouped);
-  // progress 버블 복원
-  if (progressBubble) chatLogEl.appendChild(progressBubble);
-}
-
-function syncActiveConversationMetaFromGrouped(grouped = []) {
-  if (!activeConversationId) return;
-  const stepInfo = getLatestStepInfoFromGrouped(grouped);
-  const domain = inferDomainFromGrouped(grouped);
-  const strategy = inferStrategyFromGrouped(grouped);
-  const repeatExplore = detectRepeatExploration(grouped);
-  const recovery = inferRecoveryProgressFromGrouped(grouped);
-  if (stepInfo.stepCount || stepInfo.intent) {
-    setConversationState(activeConversationId, {
-      step_count: stepInfo.stepCount || 0,
-      current_intent: stepInfo.intent || "",
-      current_domain: domain || "",
-      current_strategy: strategy || "",
-      repeat_explore: repeatExplore,
-      recovery_active: recovery.active,
-      recovery_stage: recovery.stage,
-    });
-  } else {
-    setConversationState(activeConversationId, {
-      current_domain: domain || "",
-      current_strategy: strategy || "",
-      repeat_explore: repeatExplore,
-      recovery_active: recovery.active,
-      recovery_stage: recovery.stage,
-    });
-  }
-  currentDomainHint = domain || "";
-  currentStrategyHint = strategy || "";
-  renderContextBadges();
-  if (followupContextConversationId !== activeConversationId) {
-    followupManualEdit = false;
-  }
-  const ctx = deriveFollowupContextFromGrouped(grouped);
-  setFollowupContextFields(ctx.intent, ctx.constraints, followupContextConversationId !== activeConversationId);
-  followupContextConversationId = activeConversationId;
-  renderFollowupLiveStatus();
-  syncRestoreModeFromGrouped(grouped);
-  renderDomainDriftPanel();
-}
-
-function scrollToBottom() {
-  chatLogEl.scrollTop = chatLogEl.scrollHeight;
-}
-
-function showModal(title, content, downloadUrl = "") {
-  resetSqlResultModalState();
-  const bodyClasses = String(title || "").includes("SQL") ? ["modal-sql"] : [];
-  const { modal, modalBody, modalDownload, modalCopy } = prepareModalShell(title, bodyClasses);
-  if (content && content.html) {
-    modalBody.innerHTML = content.html;
-    modalCopyText = content.copyText || modalBody.innerText || "";
-    if (modalCopy) modalCopy.textContent = content.isSql ? "복사" : "복사(TSV)";
-  } else {
-    const text = String(content || "(내용 없음)");
-    const pre = document.createElement("pre");
-    pre.textContent = text;
-    modalBody.appendChild(pre);
-    modalCopyText = text;
-    if (modalCopy) modalCopy.textContent = "복사";
-  }
-  if (downloadUrl) {
-    modalDownload.href = downloadUrl;
-    modalDownload.classList.remove("hidden");
-  } else {
-    modalDownload.classList.add("hidden");
-  }
-  modal.classList.add("show");
-}
-
-function hideModal() {
-  const modal = document.getElementById("modal");
-  const returnTarget = sqlResultModalState.open ? sqlResultModalState.returnTarget : null;
-  resetSqlResultModalState();
-  if (returnTarget && returnTarget.type === "csv" && Array.isArray(returnTarget.paths) && returnTarget.paths.length) {
-    openCsvPreviewModal(returnTarget.paths, returnTarget.index || 0, returnTarget.steps || []).catch(() => {
-      modal.classList.remove("show");
-      hideCsvPagerDock();
-    });
-    return;
-  }
-  modal.classList.remove("show");
-  hideCsvPagerDock();
-  const modalBody = document.getElementById("modalBody");
-  if (modalBody) {
-    modalBody.classList.remove("modal-csv");
-    modalBody.classList.remove("modal-sql-result");
-  }
-}
-
-async function fetchCsvPreview(path) {
-  const res = await fetch(`/api/file?path=${encodeURIComponent(path)}&max_bytes=65536`);
-  if (!res.ok) {
-    return "CSV 미리보기 실패";
-  }
-  return await res.text();
-}
-
-async function apiFetch(path, body = null) {
-  const options = body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {};
-  const res = await fetch(path, options);
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || "요청 실패");
-  }
-  return data;
-}
-
-function loadSuggestionCache() {
   try {
-    const raw = localStorage.getItem(SUGGESTION_CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || !Array.isArray(parsed.items)) return null;
-    return parsed;
-  } catch (err) {
-    return null;
-  }
-}
-
-function saveSuggestionCache(items) {
-  try {
-    localStorage.setItem(
-      SUGGESTION_CACHE_KEY,
-      JSON.stringify({ items, updated_at: Date.now() })
-    );
-  } catch (err) {
-    // ignore
-  }
-}
-
-function pickRandomSuggestion(items = []) {
-  if (!items.length) return "";
-  const idx = Math.floor(Math.random() * items.length);
-  return items[idx];
-}
-
-function normalizeSuggestionText(value) {
-  const parsed = parseFollowupEnvelope(value);
-  const base = parsed.userRequest || String(value || "");
-  return sanitizeFollowupText(base, 180);
-}
-
-async function refreshSuggestionCache() {
-  try {
-    const data = await apiFetch("/api/suggestions");
-    const items = Array.isArray(data.items) ? data.items : [];
-    if (items.length) {
-      saveSuggestionCache(items);
-      return items;
-    }
-  } catch (err) {
-    // ignore
-  }
-  return [];
-}
-
-async function updatePromptPlaceholder() {
-  if (!promptBox) return;
-  if (isRestoreModeActive() && restoreModeState.file_path) {
-    promptBox.placeholder = `복원 모드: ${shortPath(restoreModeState.file_path)} 계속 진행`;
-    return;
-  }
-  let cached = loadSuggestionCache();
-  const now = Date.now();
-  let items = cached && Array.isArray(cached.items) ? cached.items : [];
-  if (!items.length || !cached || now - (cached.updated_at || 0) > SUGGESTION_CACHE_TTL_MS) {
-    items = await refreshSuggestionCache();
-  }
-  const suggestion = normalizeSuggestionText(pickRandomSuggestion(items));
-  if (suggestion) {
-    promptBox.placeholder = suggestion;
-  }
-}
-
-function loadApiKeyIntoInputs() {
-  const cached = loadApiKeyCache();
-  const model = cached && isAllowedApiModel(cached.model) ? cached.model : getApiVaultDefaultModel();
-  renderApiModelOptions(model);
-  if (apiKeyEncEl) apiKeyEncEl.value = cached ? cached.cipher || "" : "";
-  if (apiKeyPassEl) apiKeyPassEl.value = cached ? cached.passphrase || "" : "";
-  if (apiModelEl) apiModelEl.value = model;
-  renderApiModelHint();
-  renderApiSecureContextState();
-}
-
-function setInputValidity(el, ok) {
-  if (!el) return;
-  el.classList.toggle("invalid", !ok);
-}
-
-function validateApiInputs() {
-  const disableReason = getApiVaultDisableReason();
-  const cipherRaw = apiKeyEncEl ? apiKeyEncEl.value : "";
-  const cipher = cipherRaw.trim().replace(/\s+/g, "");
-  const passphrase = apiKeyPassEl ? apiKeyPassEl.value.trim() : "";
-  const model = apiModelEl ? apiModelEl.value.trim() : "";
-  const cipherOk = !cipher || isCipherFormat(cipher);
-  const passOk = !passphrase || isSafePassphrase(passphrase);
-  const modelOk = !model || isAllowedApiModel(model);
-  setInputValidity(apiKeyEncEl, cipherOk);
-  setInputValidity(apiKeyPassEl, passOk);
-  setInputValidity(apiModelEl, modelOk);
-  const errors = [];
-  if (cipher && !cipherOk) errors.push("암호화된 키 형식이 올바르지 않습니다.");
-  if (passphrase && !passOk) errors.push("암호화 키 형식이 올바르지 않습니다.");
-  if (model && !modelOk) errors.push("허용된 모델만 선택할 수 있습니다.");
-  const ready = Boolean(cipher && passphrase && model && cipherOk && passOk && modelOk);
-  renderApiSecureContextState();
-  if (apiSaveBtn) apiSaveBtn.disabled = Boolean(disableReason) || !ready;
-  if (apiValidationEl) {
-    if (disableReason) {
-      apiValidationEl.textContent = disableReason;
-    } else if (!cipher && !passphrase && localLlmEnabled) {
-      apiValidationEl.textContent = "로컬 LLM 사용 중 — API 키 없이 전송 가능";
-    } else if (!cipher && !passphrase) {
-      apiValidationEl.textContent = "";
-    } else if (errors.length) {
-      apiValidationEl.textContent = errors[0];
-    } else if (!ready) {
-      apiValidationEl.textContent = "암호화된 키, 암호화 키, 모델을 입력해주세요.";
-    } else {
-      apiValidationEl.textContent = "입력값이 유효합니다.";
-    }
-  }
-}
-
-async function saveApiKeyFromInputs() {
-  const disableReason = getApiVaultDisableReason();
-  if (disableReason) {
-    throw new Error(disableReason);
-  }
-  const cipherRaw = apiKeyEncEl ? apiKeyEncEl.value : "";
-  const cipher = cipherRaw.trim().replace(/\s+/g, "");
-  const passphrase = apiKeyPassEl ? apiKeyPassEl.value.trim() : "";
-  const model = apiModelEl ? apiModelEl.value.trim() : "";
-  if (!cipher || !passphrase || !model) {
-    throw new Error("암호화된 키, 암호화 키, 모델을 모두 입력해주세요.");
-  }
-  if (apiKeyEncEl) apiKeyEncEl.value = cipher;
-  if (!isCipherFormat(cipher)) {
-    throw new Error("암호화된 키 형식이 올바르지 않습니다.");
-  }
-  if (!isSafePassphrase(passphrase)) {
-    throw new Error("암호화 키 형식이 올바르지 않습니다.");
-  }
-  if (!isAllowedApiModel(model)) {
-    throw new Error("허용된 모델만 선택할 수 있습니다.");
-  }
-  let mask = "";
-  try {
-    const plain = await decryptApiKey(cipher, passphrase);
-    mask = maskApiKey(plain);
-  } catch (err) {
-    throw new Error("암호화 키 검증에 실패했습니다.");
-  }
-  saveApiKeyCache({
-    cipher,
-    passphrase,
-    model,
-    mask,
-    updated_at: Date.now(),
-  });
-  recordApiKeyHistory({
-    mask,
-    model,
-    updated_at: Date.now(),
-  });
-  await updateApiStatusDisplay();
-}
-
-function clearApiKeyInputs() {
-  if (apiKeyEncEl) apiKeyEncEl.value = "";
-  if (apiKeyPassEl) apiKeyPassEl.value = "";
-  if (apiKeyPlainEl) apiKeyPlainEl.value = "";
-  renderApiModelOptions(getApiVaultDefaultModel());
-  if (apiModelEl) apiModelEl.value = getApiVaultDefaultModel();
-  renderApiModelHint();
-}
-
-function showToast(message) {
-  const toast = document.getElementById("toast");
-  if (!toast) return;
-  toast.textContent = message;
-  toast.classList.add("show");
-  if (toastTimer) {
-    clearTimeout(toastTimer);
-  }
-  toastTimer = setTimeout(() => {
-    toast.classList.remove("show");
-    toastTimer = null;
-  }, TOAST_DURATION_MS);
-}
-
-function resetConversationRenderState() {
-  currentHistoryMessages = [];
-  lastRenderedMessageId = null;
-  lastRenderedSignature = null;
-  resetHistoryState();
-  setHistoryLoading(false);
-  setHistoryMoreVisible(false);
-  replaceMessages([], []);
-  updateConversationStats({ total_messages: 0, total_user_messages: 0 });
-}
-
-function setActiveConversation(conversationId, options = {}) {
-  const nextId = String(conversationId || "").trim();
-  // 대화 전환 시 기존 progress 버블/polling 정리
-  if (nextId !== _progressActiveConvId && _progressActiveConvId) {
-    _stopProgressPoll();
-    _progressActiveConvId = "";
-    const oldBubble = chatLogEl.querySelector(".msg-progress-live");
-    if (oldBubble) oldBubble.remove();
-  }
-  activeConversationId = nextId;
-  if (convIdEl) {
-    convIdEl.textContent = `CONV: ${nextId || "-"}`;
-  }
-  if (options.resetView) {
-    resetConversationRenderState();
-  }
-  if (nextId) {
-    getConversationState(nextId);
-  }
-  renderHeaderStatus();
-}
-
-function pruneConversationClientState(items = []) {
-  const visibleIds = new Set(
-    (Array.isArray(items) ? items : [])
-      .map((item) => String(item && item.id ? item.id : "").trim())
-      .filter(Boolean)
-  );
-  Array.from(conversationPollers.keys()).forEach((conversationId) => {
-    if (!visibleIds.has(conversationId)) {
-      stopConversationPoll(conversationId);
-    }
-  });
-  Array.from(conversationState.keys()).forEach((conversationId) => {
-    if (!visibleIds.has(conversationId)) {
-      conversationState.delete(conversationId);
-    }
-  });
-  Array.from(cancelOverrideUntil.keys()).forEach((conversationId) => {
-    if (!visibleIds.has(conversationId)) {
-      cancelOverrideUntil.delete(conversationId);
-    }
-  });
-}
-
-function resolveDangerModal(result) {
-  const resolver = dangerModalResolver;
-  dangerModalResolver = null;
-  if (resolver) {
-    resolver(result);
-  }
-}
-
-function getFocusableElement(candidate) {
-  if (!(candidate instanceof HTMLElement)) return null;
-  if (!document.body.contains(candidate)) return null;
-  if (candidate.hasAttribute("disabled")) return null;
-  if (candidate.closest(".hidden")) return null;
-  return candidate;
-}
-
-function setAppModalState(open) {
-  document.body.classList.toggle("modal-open", Boolean(open));
-  if (!toolsDrawerEl) return;
-  if (open) {
-    toolsDrawerEl.setAttribute("inert", "");
-    return;
-  }
-  if (toolsDrawerEl.classList.contains("show")) {
-    toolsDrawerEl.removeAttribute("inert");
-  } else {
-    toolsDrawerEl.setAttribute("inert", "");
-  }
-}
-
-function setToolsDrawerOpen(open, options = {}) {
-  if (!toolsDrawerEl) return;
-  const nextOpen = Boolean(open);
-  toolsDrawerEl.classList.toggle("show", nextOpen);
-  toolsDrawerEl.classList.toggle("hidden", !nextOpen);
-  toolsDrawerEl.setAttribute("aria-hidden", nextOpen ? "false" : "true");
-  if (toolsToggleEl) {
-    toolsToggleEl.setAttribute("aria-expanded", nextOpen ? "true" : "false");
-  }
-  if (nextOpen) {
-    if (!document.body.classList.contains("modal-open")) {
-      toolsDrawerEl.removeAttribute("inert");
-    }
-    return;
-  }
-  toolsDrawerEl.setAttribute("inert", "");
-  if (options.restoreFocus === false) return;
-  const activeEl = document.activeElement;
-  if (activeEl instanceof HTMLElement && toolsDrawerEl.contains(activeEl)) {
-    const focusTarget = getFocusableElement(toolsToggleEl) || getFocusableElement(promptBox);
-    if (focusTarget) {
-      requestAnimationFrame(() => focusTarget.focus());
-    }
-  }
-}
-
-function waitForNextPaint() {
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(resolve);
-    });
-  });
-}
-
-function hideDangerConfirmModal(result = { confirmed: false, value: "" }, options = {}) {
-  if (!dangerModalEl) return;
-  dangerModalEl.classList.remove("show");
-  dangerModalEl.setAttribute("aria-hidden", "true");
-  if (dangerModalInputEl) {
-    dangerModalInputEl.value = "";
-    dangerModalInputEl.placeholder = "";
-  }
-  if (dangerModalConfirmEl) {
-    dangerModalConfirmEl.disabled = true;
-  }
-  if (dangerModalEl.dataset) {
-    dangerModalEl.dataset.expectedText = "";
-  }
-  setAppModalState(false);
-  const focusTarget =
-    options.restoreFocus === false
-      ? null
-      : getFocusableElement(dangerModalReturnFocusEl) ||
-        getFocusableElement(toolsToggleEl) ||
-        getFocusableElement(promptBox);
-  dangerModalReturnFocusEl = null;
-  if (focusTarget) {
-    requestAnimationFrame(() => {
-      focusTarget.focus();
-    });
-  }
-  resolveDangerModal(result);
-}
-
-function syncDangerConfirmButton() {
-  if (!dangerModalEl || !dangerModalConfirmEl || !dangerModalInputEl) return;
-  const expectedText = String(dangerModalEl.dataset.expectedText || "");
-  dangerModalConfirmEl.disabled = dangerModalInputEl.value.trim() !== expectedText;
-}
-
-async function requestDangerConfirmation(options = {}) {
-  const title = String(options.title || "삭제 확인");
-  const message = String(options.message || "");
-  const label = String(options.label || "확인 입력");
-  const expectedText = String(options.expectedText || "").trim();
-  const confirmLabel = String(options.confirmLabel || "삭제");
-  const closeToolsDrawerBeforeOpen = Boolean(options.closeToolsDrawerBeforeOpen);
-  const explicitReturnFocusEl = getFocusableElement(options.returnFocusEl);
-  if (!dangerModalEl || !dangerModalInputEl || !dangerModalConfirmEl) {
-    return Promise.resolve({ confirmed: false, value: "" });
-  }
-  if (dangerModalResolver) {
-    hideDangerConfirmModal({ confirmed: false, value: "" }, { restoreFocus: false });
-  }
-  dangerModalReturnFocusEl =
-    explicitReturnFocusEl ||
-    getFocusableElement(document.activeElement) ||
-    getFocusableElement(toolsToggleEl) ||
-    getFocusableElement(promptBox);
-  if (closeToolsDrawerBeforeOpen && toolsDrawerEl && toolsDrawerEl.classList.contains("show")) {
-    setToolsDrawerOpen(false, { restoreFocus: false });
-    await waitForNextPaint();
-  }
-  if (dangerModalTitleEl) dangerModalTitleEl.textContent = title;
-  if (dangerModalTextEl) dangerModalTextEl.textContent = message;
-  if (dangerModalLabelEl) dangerModalLabelEl.textContent = label;
-  dangerModalInputEl.value = "";
-  dangerModalInputEl.placeholder = expectedText;
-  dangerModalEl.dataset.expectedText = expectedText;
-  dangerModalConfirmEl.textContent = confirmLabel;
-  dangerModalConfirmEl.disabled = true;
-  setAppModalState(true);
-  dangerModalEl.classList.add("show");
-  dangerModalEl.setAttribute("aria-hidden", "false");
-  return new Promise((resolve) => {
-    dangerModalResolver = resolve;
-    requestAnimationFrame(() => {
-      dangerModalInputEl.focus();
-      dangerModalInputEl.select();
-    });
-  });
-}
-
-async function syncConversationAfterMutation(currentConversationId) {
-  const nextCurrentId = String(currentConversationId || "").trim();
-  if (nextCurrentId !== activeConversationId) {
-    setActiveConversation(nextCurrentId, { resetView: true });
-  }
-  const data = await refreshConversations({ syncHistoryOnCurrentChange: false });
-  const resolvedCurrentId = String((data && data.current) || nextCurrentId || "").trim();
-  if (!resolvedCurrentId) {
-    setActiveConversation("", { resetView: true });
-    return;
-  }
-  if (resolvedCurrentId !== activeConversationId) {
-    setActiveConversation(resolvedCurrentId, { resetView: true });
-  }
-  await loadRecentHistory(resolvedCurrentId);
-}
-
-async function deleteConversationWithConfirmation(item) {
-  if (!item || !item.id) return;
-  const conversationId = String(item.id).trim();
-  if (!conversationId) return;
-  const state = getConversationState(conversationId);
-  const processing = state.status === "processing";
-  if (!processing) {
-    if (!confirm("이 대화를 삭제할까요?")) return;
-  } else {
-    const decision = await requestDangerConfirmation({
-      title: "처리 중 대화 강제 삭제",
-      message:
-        "이 대화는 현재 처리 중입니다.\n`삭제`를 입력하면 실행을 중단시키고 이 대화를 강제로 삭제합니다.",
-      label: "정말 삭제하려면 아래에 `삭제`를 입력하세요.",
-      expectedText: "삭제",
-      confirmLabel: "강제 삭제",
-    });
-    if (!decision.confirmed) return;
-  }
-  try {
-    const payload = processing
-      ? { conversation_id: conversationId, force: true, confirm_text: "삭제" }
-      : { conversation_id: conversationId };
-    const data = await apiFetch("/api/delete_conversation", payload);
-    await syncConversationAfterMutation(data.current || "");
-    showToast(data.deleted_pending ? "처리 중 대화 삭제를 요청했습니다." : "대화를 삭제했습니다.");
-  } catch (err) {
-    showToast(`대화 삭제 실패: ${err.message}`);
-  }
-}
-
-async function clearAllConversationsWithConfirmation() {
-  const decision = await requestDangerConfirmation({
-    title: "모든 대화 삭제",
-    message:
-      "비처리중 대화가 모두 삭제됩니다.\n처리 중 대화는 보호되어 유지됩니다.\n계속하려면 `YES`를 입력하세요.",
-    label: "전체 삭제를 진행하려면 아래에 `YES`를 입력하세요.",
-    expectedText: "YES",
-    confirmLabel: "모든 대화 삭제",
-    closeToolsDrawerBeforeOpen: true,
-    returnFocusEl: toolsToggleEl,
-  });
-  if (!decision.confirmed) return;
-  try {
-    const data = await apiFetch("/api/clear_memory", { confirm_text: "YES" });
-    conversationState.clear();
-    Array.from(conversationPollers.keys()).forEach((conversationId) => stopConversationPoll(conversationId));
-    cancelOverrideUntil.clear();
-    await syncConversationAfterMutation(data.current || "");
-    const preserved = Number(data.preserved_processing_count || 0);
-    showToast(
-      preserved > 0
-        ? `모든 대화 삭제 완료 · 처리 중 대화 ${preserved}건 유지`
-        : "모든 대화 삭제 완료"
-    );
-  } catch (err) {
-    showToast(`모든 대화 삭제 실패: ${err.message}`);
-  }
-}
-
-async function refreshSession() {
-  try {
-    const data = await apiFetch("/api/session");
-    const sessionLabel = data.client_ip ? `SESSION: ${data.client_ip}` : `SESSION: ${data.session_id || "-"}`;
-    sessionIdEl.textContent = sessionLabel;
-    convIdEl.textContent = `CONV: ${data.conversation_id || "-"}`;
-    if (data.conversation_id) {
-      activeConversationId = data.conversation_id;
-      getConversationState(activeConversationId);
-    }
-    localLlmEnabled = Boolean(data.local_llm_enabled);
-    if (data.default_model) localLlmDefaultModel = data.default_model;
-    renderHeaderStatus();
-    return data;
-  } catch (err) {
-    sessionIdEl.textContent = "SESSION: -";
-    convIdEl.textContent = "CONV: -";
-    renderHeaderStatus();
-    return null;
-  }
-}
-
-function resetHistoryState() {
-  historyLoading = false;
-  historyExhausted = false;
-  historyOldestId = null;
-}
-
-async function loadRecentHistory(conversationId) {
-  if (!conversationId) return;
-  if (followupContextConversationId && followupContextConversationId !== conversationId) {
-    followupApplyArmed = false;
-  }
-  resetHistoryState();
-  historyLoading = true;
-  setHistoryLoading(true);
-  try {
-    const data = await apiFetch(`/api/history?conversation_id=${encodeURIComponent(conversationId)}&limit=${HISTORY_PAGE_SIZE}`);
-    const messages = data.messages || [];
-    currentHistoryMessages = messages;
-    const grouped = groupConversationMessages(messages);
-    replaceMessages(messages, grouped);
-    syncActiveConversationMetaFromGrouped(grouped);
-    updateConversationStats(data);
-    historyOldestId = data.next_before_id || null;
-    historyExhausted = !data.has_more;
-    setHistoryMoreVisible(!historyExhausted);
-    scrollToBottom();
-    updateHistoryMoreButtonVisibility();
-    await ensureHistoryFilled();
-    normalizePromptDraftFromFollowup();
-    requestAnimationFrame(_syncJumpTimeFromScroll);
-    // 서버에서 processing 상태이면 클라이언트 상태를 갱신하여 progress bubble 복원
-    if (data.last_status === "processing") {
-      setConversationState(conversationId, {
-        status: "processing",
-        run_id: data.last_run_id || "",
-      });
-      _restoreProgressBubbleIfNeeded();
-    }
-  } catch (err) {
-    appendMessage("assistant", `대화 기록 로드 실패: ${err.message}`);
-  } finally {
-    historyLoading = false;
-    setHistoryLoading(false);
-  }
-}
-
-async function refreshActiveConversation(force = false) {
-  if (!activeConversationId || historyLoading) return;
-  try {
-    const data = await apiFetch(
-      `/api/history?conversation_id=${encodeURIComponent(activeConversationId)}&limit=${HISTORY_PAGE_SIZE}`
-    );
-    const messages = data.messages || [];
-    currentHistoryMessages = messages;
-    const grouped = groupConversationMessages(messages);
-    const signature = buildRenderSignature(grouped);
-    // 서버에서 processing 상태이면 클라이언트 상태 갱신
-    if (data.last_status === "processing") {
-      setConversationState(activeConversationId, {
-        status: "processing",
-        run_id: data.last_run_id || "",
-      });
-    }
-    if (!force && signature && signature === lastRenderedSignature) {
-      // signature가 같아도 processing 상태 복원은 항상 시도
-      _restoreProgressBubbleIfNeeded();
+    const session = await apiFetch("/api/session");
+    state.session = session;
+    state.products = Array.isArray(session.products) ? session.products : [];
+    state.default_product_id = session.default_product_id || null;
+    if (!session.authenticated) {
+      showAuthOverlay();
+      await loadVaultOptions().catch(() => {});
+      renderAccountState();
+      renderAccessNotice();
+      renderComposer();
       return;
     }
-    const stayBottom = force || isNearBottom();
-    const prevHeight = chatLogEl.scrollHeight;
-    const prevTop = chatLogEl.scrollTop;
-    replaceMessages(messages, grouped);
-    syncActiveConversationMetaFromGrouped(grouped);
-    updateConversationStats(data);
-    if (stayBottom) {
-      scrollToBottom();
-    } else {
-      const newHeight = chatLogEl.scrollHeight;
-      chatLogEl.scrollTop = prevTop + (newHeight - prevHeight);
-    }
-    updateHistoryMoreButtonVisibility();
-    normalizePromptDraftFromFollowup();
-    lastRenderedSignature = signature || lastRenderedSignature;
-    // processing 중인 대화라면 progress 버블 복원
-    _restoreProgressBubbleIfNeeded();
-  } catch (err) {
-    // ignore polling errors
+    hideAuthOverlay();
+    state.user = session.user;
+    await initializeWorkspace();
+  } catch (error) {
+    showAuthOverlay();
+    renderAccountState();
+    renderAccessNotice();
+    renderComposer();
+    showToast(error.message || "초기화에 실패했습니다.", true);
   }
 }
 
-async function loadOlderHistory() {
-  if (historyLoading || historyExhausted || !activeConversationId || !historyOldestId) return;
-  historyLoading = true;
-  setHistoryLoading(true);
-  try {
-    const data = await apiFetch(
-      `/api/history?conversation_id=${encodeURIComponent(activeConversationId)}&before_id=${historyOldestId}&limit=${HISTORY_PAGE_SIZE}`
-    );
-    const messages = data.messages || [];
-    if (!messages.length) {
-      historyExhausted = true;
-      setHistoryMoreVisible(false);
-      return;
-    }
-    currentHistoryMessages = [...messages, ...currentHistoryMessages];
-    historyOldestId = data.next_before_id || historyOldestId;
-    historyExhausted = !data.has_more;
-    setHistoryMoreVisible(!historyExhausted);
-    prependMessages(messages);
-    updateHistoryMoreButtonVisibility();
-    updateConversationStats(data);
-    const grouped = groupConversationMessages(currentHistoryMessages);
-    renderTimelineMarkers(grouped);
-    syncActiveConversationMetaFromGrouped(grouped);
-  } catch (err) {
-    historyLoading = false;
-  } finally {
-    historyLoading = false;
-    setHistoryLoading(false);
-  }
-}
-
-async function ensureHistoryFilled() {
-  if (historyExhausted) return;
-  let attempts = 0;
-  while (!historyExhausted && chatLogEl.scrollHeight <= chatLogEl.clientHeight && attempts < 5) {
-    await loadOlderHistory();
-    attempts += 1;
-  }
-}
-
-async function jumpToTime() {
-  if (!activeConversationId) {
-    showToast("대화를 선택해주세요.");
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    stopProgressPolling({ reset: false, abort: true });
     return;
   }
-  const raw = jumpTimeEl ? jumpTimeEl.value.trim() : "";
-  if (!raw) {
-    showToast("이동할 시각을 선택해주세요.");
-    return;
+  const active = currentConversation();
+  const isProcessing = String(active?.status || "").toLowerCase() === "processing";
+  if (state.activeConversationId && (isProcessing || state.progressRunId || isCurrentConvBusy())) {
+    startProgressPolling({ reset: false, runId: state.progressRunId });
   }
-  const normalized = raw.replace("T", " ");
-  const at = normalized.length === 16 ? `${normalized}:00` : normalized;
-  try {
-    const data = await apiFetch(
-      `/api/history_anchor?conversation_id=${encodeURIComponent(activeConversationId)}&at=${encodeURIComponent(at)}`
-    );
-    const targetId = data.message_id;
-    if (!targetId) {
-      showToast("해당 시각의 대화가 없습니다.");
-      return;
-    }
-    /* 이미 DOM에 있으면 스크롤만 */
-    const existing = document.getElementById(`msg-${targetId}`);
-    if (existing) {
-      existing.scrollIntoView({ block: "center" });
-      _highlightJumpTarget(existing);
-      return;
-    }
-    /* DOM에 없으면 전체 메시지 로드 후 스크롤 */
-    resetHistoryState();
-    historyLoading = true;
-    setHistoryLoading(true);
-    const history = await apiFetch(
-      `/api/history?conversation_id=${encodeURIComponent(activeConversationId)}&limit=9999`
-    );
-    const messages = history.messages || [];
-    currentHistoryMessages = messages;
-    const grouped = groupConversationMessages(messages);
-    replaceMessages(messages, grouped);
-    syncActiveConversationMetaFromGrouped(grouped);
-    updateConversationStats(history);
-    historyOldestId = history.next_before_id || null;
-    historyExhausted = !history.has_more;
-    setHistoryMoreVisible(!historyExhausted);
-    updateHistoryMoreButtonVisibility();
-    requestAnimationFrame(() => {
-      const target = document.getElementById(`msg-${targetId}`);
-      if (target) {
-        target.scrollIntoView({ block: "center" });
-        _highlightJumpTarget(target);
-      }
-    });
-  } catch (err) {
-    showToast("시각 이동 실패");
-  } finally {
-    historyLoading = false;
-    setHistoryLoading(false);
-  }
-}
-
-/** 시각 이동 대상 메시지를 잠깐 강조 */
-function _highlightJumpTarget(el) {
-  el.classList.add("jump-highlight");
-  setTimeout(() => el.classList.remove("jump-highlight"), 1800);
-}
-
-async function jumpToLatest() {
-  if (!activeConversationId) return;
-  await loadRecentHistory(activeConversationId);
-}
-
-/** 스크롤 위치에 따라 jumpTimeEl을 현재 보이는 메시지 시각으로 갱신 */
-function _syncJumpTimeFromScroll() {
-  if (!jumpTimeEl || !chatLogEl) return;
-  const rect = chatLogEl.getBoundingClientRect();
-  const midY = rect.top + rect.height * 0.3;
-  const msgs = chatLogEl.querySelectorAll(".msg[data-created-at]");
-  let closest = null;
-  let closestDist = Infinity;
-  for (const m of msgs) {
-    const r = m.getBoundingClientRect();
-    const dist = Math.abs(r.top - midY);
-    if (dist < closestDist) { closestDist = dist; closest = m; }
-  }
-  if (closest && closest.dataset.createdAt) {
-    const dt = closest.dataset.createdAt.replace(" ", "T").substring(0, 16);
-    jumpTimeEl.value = dt;
-  }
-}
-
-let _jumpTimeSyncTimer = 0;
-function _updateScrollLatestVisibility() {
-  if (!scrollLatestBtn || !chatLogEl) return;
-  const gap = chatLogEl.scrollHeight - chatLogEl.scrollTop - chatLogEl.clientHeight;
-  scrollLatestBtn.classList.toggle("hidden", gap < 200);
-}
-if (chatLogEl) {
-  chatLogEl.addEventListener("scroll", () => {
-    clearTimeout(_jumpTimeSyncTimer);
-    _jumpTimeSyncTimer = setTimeout(() => {
-      _syncJumpTimeFromScroll();
-      _updateScrollLatestVisibility();
-    }, 300);
-  }, { passive: true });
-}
-if (scrollLatestBtn) {
-  scrollLatestBtn.addEventListener("click", () => {
-    if (chatLogEl) chatLogEl.scrollTo({ top: chatLogEl.scrollHeight, behavior: "smooth" });
-  });
-}
-
-function renderConversations(items = [], currentId = "") {
-  if (!conversationListEl) return;
-  conversationTotalCount = Array.isArray(items) ? items.length : 0;
-  let activeTopic = "";
-  if (conversationCountEl) {
-    conversationCountEl.textContent = String(conversationTotalCount || 0);
-  }
-  updateConversationStats({ total_messages: currentHistoryMessages.length, total_user_messages: null });
-  items.forEach((item) => {
-    if (item && item.id && item.status) {
-      const duration = item.duration_ms !== undefined && item.duration_ms !== null
-        ? Number(item.duration_ms)
-        : null;
-      const patch = { status: item.status, duration_ms: duration };
-      if (item.status_at) {
-        patch.status_at = item.status_at;
-        if (item.status === "processing") {
-          patch.started_at = item.status_at;
-        }
-      }
-      setConversationState(item.id, patch);
-    }
-  });
-  conversationListEl.innerHTML = "";
-  if (!items.length) {
-    const empty = document.createElement("div");
-    empty.className = "hint";
-    empty.textContent = "대화가 없습니다.";
-    conversationListEl.appendChild(empty);
-    const loadBtn = document.createElement("button");
-    loadBtn.type = "button";
-    loadBtn.className = "btn ghost tiny";
-    loadBtn.textContent = "이전 대화 불러오기";
-    loadBtn.addEventListener("click", refreshConversations);
-    conversationListEl.appendChild(loadBtn);
-    return;
-  }
-  items.forEach((item) => {
-    const state = getConversationState(item.id);
-    const isActive = item.id === currentId || item.is_current;
-    if (isActive) {
-      activeTopic = sanitizeTopic(item.topic);
-    }
-    const card = document.createElement("div");
-    card.className = `conv-item ${isActive ? "active" : ""}`;
-    card.setAttribute("role", "button");
-    card.tabIndex = 0;
-    card.dataset.conversationId = item.id || "";
-    const topic = document.createElement("div");
-    topic.className = "conv-topic";
-    topic.textContent = sanitizeTopic(item.topic);
-    const meta = document.createElement("div");
-    meta.className = "conv-meta";
-    meta.textContent = formatRelativeTime(item.last_activity_at || item.created_at || "");
-    meta.title = formatAbsoluteTime(item.last_activity_at || item.created_at || "");
-    const countEl = document.createElement("div");
-    countEl.className = "conv-count";
-    if (item.message_count !== undefined && item.message_count !== null) {
-      countEl.textContent = `메시지 ${item.message_count}`;
-      countEl.title = `전체 메시지: ${item.message_count}\n사용자 메시지: ${item.user_message_count ?? 0}`;
-    } else {
-      countEl.textContent = "";
-    }
-    const liveEl = document.createElement("div");
-    liveEl.className = "conv-live";
-    if (state.status === "processing") {
-      const startTs = state.started_at ? new Date(state.started_at).getTime() : Date.now();
-      const elapsed = Math.max(0, Math.floor((Date.now() - startTs) / 1000));
-      const stepText = Number(state.step_count || 0) > 0 ? ` · 단계 ${state.step_count}` : "";
-      liveEl.textContent = `진행 ${formatElapsedShort(elapsed)}${stepText}`;
-    } else if (state.status === "error" && state.recovery_active) {
-      liveEl.textContent = "자동 복구 시도 중";
-    } else if (state.status === "done" && state.duration_ms) {
-      liveEl.textContent = `최근 ${formatDurationMsLabel(state.duration_ms)}`;
-    } else {
-      liveEl.textContent = "";
-    }
-    const statusLabel = document.createElement("span");
-    const statusVisual = state.status === "error" && state.recovery_active ? "recovery" : (state.status || "idle");
-    statusLabel.className = `conv-status conv-status--${statusVisual}`;
-    statusLabel.textContent =
-      state.status === "processing"
-        ? "처리중"
-        : state.status === "error" && state.recovery_active
-          ? "복구중"
-        : state.status === "canceled"
-          ? "취소됨"
-          : state.status === "error"
-            ? "오류"
-          : state.status === "done"
-            ? "완료"
-            : "대기";
-    const foot = document.createElement("div");
-    foot.className = "conv-foot";
-    const deleteBtn = document.createElement("button");
-    deleteBtn.type = "button";
-    deleteBtn.className = "conv-delete";
-    deleteBtn.textContent = "삭제";
-    deleteBtn.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      await deleteConversationWithConfirmation(item);
-    });
-    foot.appendChild(statusLabel);
-    foot.appendChild(deleteBtn);
-    card.appendChild(topic);
-    card.appendChild(meta);
-    card.appendChild(countEl);
-    if (liveEl.textContent) {
-      card.appendChild(liveEl);
-    }
-    card.appendChild(foot);
-
-    const activateConversation = async () => {
-      try {
-        await apiFetch("/api/use_conversation", { conversation_id: item.id });
-        setActiveConversation(item.id);
-        lastRenderedMessageId = null;
-        await loadRecentHistory(item.id);
-        await refreshConversations();
-        _restoreProgressBubbleIfNeeded();
-      } catch (err) {
-        appendMessage("assistant", `대화 전환 실패: ${err.message}`);
-      }
-    };
-    card.addEventListener("click", (event) => {
-      const target = event.target;
-      if (target && typeof target.closest === "function" && target.closest(".conv-delete")) {
-        return;
-      }
-      activateConversation();
-    });
-    card.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        activateConversation();
-      }
-    });
-    conversationListEl.appendChild(card);
-  });
-  if (activeTopic && !currentHistoryMessages.length) {
-    setFollowupContextFields(normalizeSingleLine(activeTopic, 120), "", followupContextConversationId !== activeConversationId);
-    followupContextConversationId = activeConversationId || followupContextConversationId;
-  }
-}
-
-async function refreshConversations(options = {}) {
-  const syncHistoryOnCurrentChange = options.syncHistoryOnCurrentChange !== false;
-  try {
-    const data = await apiFetch("/api/conversations");
-    const items = Array.isArray(data.items) ? data.items : [];
-    const currentId = String(data.current || "").trim();
-    const currentChanged = currentId !== activeConversationId;
-    pruneConversationClientState(items);
-    if (currentChanged) {
-      setActiveConversation(currentId, { resetView: true });
-    }
-    renderConversations(items, currentId);
-    renderHeaderStatus();
-    if (currentChanged && syncHistoryOnCurrentChange) {
-      if (currentId) {
-        await loadRecentHistory(currentId);
-        _restoreProgressBubbleIfNeeded();
-      } else {
-        resetConversationRenderState();
-      }
-    }
-    return data;
-  } catch (err) {
-    pruneConversationClientState([]);
-    renderConversations([], "");
-    renderHeaderStatus();
-    return { items: [], current: "" };
-  }
-}
-
-// ── 실시간 progress polling ──
-let _progressPoller = null;
-let _progressTimerHandle = null;
-let _progressLastStep = 0;
-let _progressStartTime = 0;
-let _progressActiveConvId = "";  // 현재 progress 버블이 연결된 대화 ID
-
-/**
- * processing 중인 대화의 progress 버블을 복원한다.
- * 대화 전환, 페이지 새로고침 시 호출.
- */
-function _restoreProgressBubbleIfNeeded() {
-  const cid = activeConversationId;
-  if (!cid) return;
-  const state = getConversationState(cid);
-  const isProcessing = state.status === "processing" || (state.status === "error" && state.recovery_active);
-  // 이미 progress 버블이 있으면 무시
-  if (chatLogEl.querySelector(".msg-progress-live")) {
-    if (!isProcessing) {
-      // 더 이상 processing이 아니면 버블 제거
-      _stopProgressPoll();
-      const old = chatLogEl.querySelector(".msg-progress-live");
-      if (old) old.remove();
-    }
-    return;
-  }
-  if (!isProcessing) return;
-  // processing 중인데 버블이 없으면 복원
-  const progressUI = _createProgressBubble();
-  // 기존 시작 시간 복원
-  if (state.started_at) {
-    _progressStartTime = new Date(state.started_at).getTime();
-    if (progressUI.timerEl) {
-      const sec = Math.floor((Date.now() - _progressStartTime) / 1000);
-      progressUI.timerEl.textContent = `${sec}s`;
-    }
-  }
-  _progressActiveConvId = cid;
-  _startProgressPoll(cid, progressUI.stepsContainer, progressUI.spinner, progressUI.timerEl, progressUI.intentEl, _progressStartTime || undefined);
-  scrollToBottom();
-}
-
-function _createProgressBubble() {
-  const dateKey = extractDateKey();
-  const shouldStick = isNearBottom();
-  ensureDateSeparatorForAppend(dateKey);
-  const wrapper = document.createElement("div");
-  wrapper.className = "msg assistant msg-progress-live";
-  wrapper.dataset.dateKey = dateKey;
-  const bubble = document.createElement("div");
-  bubble.className = "bubble";
-
-  // 상단 상태바: 스피너 + 의도 + 경과 시간 + 취소 버튼
-  const statusBar = document.createElement("div");
-  statusBar.className = "progress-status-bar";
-  const spinner = document.createElement("div");
-  spinner.className = "progress-spinner";
-  spinner.textContent = "처리 중...";
-  statusBar.appendChild(spinner);
-  const intentEl = document.createElement("span");
-  intentEl.className = "progress-intent";
-  intentEl.textContent = "";
-  statusBar.appendChild(intentEl);
-  const timerEl = document.createElement("span");
-  timerEl.className = "progress-timer";
-  timerEl.textContent = "0s";
-  statusBar.appendChild(timerEl);
-  const finalizeBtn = document.createElement("button");
-  finalizeBtn.className = "progress-finalize-btn";
-  finalizeBtn.textContent = "즉시 답변";
-  finalizeBtn.title = "지금까지 수집한 정보로 즉시 답변 생성";
-  finalizeBtn.addEventListener("click", () => { finalizeRequest(); });
-  statusBar.appendChild(finalizeBtn);
-  const cancelBtn = document.createElement("button");
-  cancelBtn.className = "progress-cancel-btn";
-  cancelBtn.textContent = "취소";
-  cancelBtn.title = "현재 요청 취소";
-  cancelBtn.addEventListener("click", () => { cancelRequest(); });
-  statusBar.appendChild(cancelBtn);
-  bubble.appendChild(statusBar);
-
-  // step 리스트 영역
-  const stepsContainer = document.createElement("div");
-  stepsContainer.className = "progress-steps-live";
-  bubble.appendChild(stepsContainer);
-  wrapper.appendChild(bubble);
-  chatLogEl.appendChild(wrapper);
-  if (shouldStick) scrollToBottom();
-  return { wrapper, stepsContainer, spinner, timerEl, intentEl };
-}
-
-function _renderProgressStep(container, step) {
-  const item = document.createElement("div");
-  item.className = "step-item step-item--live";
-
-  // 헤더: step 번호 + 작업 설명
-  const head = document.createElement("div");
-  head.className = "step-head";
-  const title = getStepWorkText(step) || "단계";
-  const stepIndex = step.step_index || 0;
-  head.textContent = `#${stepIndex} · ${title}`;
-  item.appendChild(head);
-
-  // 메타: 도구명
-  const meta = document.createElement("div");
-  meta.className = "step-meta";
-  meta.textContent = `도구: ${step.tool || "-"}`;
-  item.appendChild(meta);
-
-  // 근거/이유
-  const reasonText = getStepReasonText(step);
-  if (reasonText) {
-    const reasonEl = document.createElement("div");
-    reasonEl.className = "step-reason";
-    reasonEl.textContent = `근거: ${reasonText}`;
-    item.appendChild(reasonEl);
-  }
-
-  // 결과 요약
-  const summaryText = formatResultSummary(step.result_summary || "");
-  if (summaryText) {
-    const summaryEl = document.createElement("div");
-    summaryEl.className = "step-summary";
-    summaryEl.textContent = summaryText;
-    item.appendChild(summaryEl);
-  }
-
-  // SQL 전문 (접이식)
-  if (step.sql) {
-    const sqlText = String(step.sql || "");
-    const sqlDetails = document.createElement("details");
-    sqlDetails.className = "step-sql-details";
-    const sqlSummary = document.createElement("summary");
-    sqlSummary.className = "step-sql-summary";
-    sqlSummary.textContent = sqlText.length > 60 ? `SQL: ${sqlText.slice(0, 60)}…` : `SQL: ${sqlText}`;
-    sqlDetails.appendChild(sqlSummary);
-
-    const sqlBody = document.createElement("div");
-    sqlBody.className = "step-sql-body";
-    const sqlPre = document.createElement("pre");
-    sqlPre.className = "step-sql-full";
-    sqlPre.textContent = sqlText;
-    sqlBody.appendChild(sqlPre);
-
-    // 액션 버튼: 복사 + SQL 보기
-    const sqlActions = document.createElement("div");
-    sqlActions.className = "step-sql-actions";
-    const copyBtn = document.createElement("button");
-    copyBtn.className = "mini ghost";
-    copyBtn.textContent = "SQL 복사";
-    copyBtn.addEventListener("click", () => {
-      navigator.clipboard.writeText(sqlText)
-        .then(() => { copyBtn.textContent = "복사 완료"; setTimeout(() => { copyBtn.textContent = "SQL 복사"; }, 1200); })
-        .catch(() => showToast("복사 실패"));
-    });
-    sqlActions.appendChild(copyBtn);
-    if (typeof openSqlResultModal === "function") {
-      const viewBtn = document.createElement("button");
-      viewBtn.className = "mini ghost";
-      viewBtn.textContent = "SQL 보기";
-      viewBtn.addEventListener("click", () =>
-        openSqlResultModal({ sql: step.sql }).catch(() => showToast("SQL 보기 실패"))
-      );
-      sqlActions.appendChild(viewBtn);
-    }
-    sqlBody.appendChild(sqlActions);
-    sqlDetails.appendChild(sqlBody);
-    item.appendChild(sqlDetails);
-  }
-
-  // 오류
-  if (step.error) {
-    const errorEl = document.createElement("div");
-    errorEl.className = "step-error";
-    errorEl.textContent = step.error;
-    item.appendChild(errorEl);
-  }
-
-  container.appendChild(item);
-}
-
-function _startProgressPoll(conversationId, stepsContainer, spinner, timerEl, intentEl, restoreStartTime) {
-  _progressLastStep = 0;
-  // restoreStartTime이 주어지면 서버측 시작 시각을 사용 (타이머 복원)
-  _progressStartTime = restoreStartTime || Date.now();
-  if (_progressPoller) clearInterval(_progressPoller);
-  if (_progressTimerHandle) clearInterval(_progressTimerHandle);
-
-  // 경과 시간 타이머 (1초마다)
-  _progressTimerHandle = setInterval(() => {
-    if (timerEl) {
-      const sec = Math.floor((Date.now() - _progressStartTime) / 1000);
-      timerEl.textContent = `${sec}s`;
-    }
-  }, 1000);
-
-  // step polling (1.5초마다)
-  let _pollConvId = conversationId;
-  _progressPoller = setInterval(async () => {
-    try {
-      // 첫 대화에서 conversation_id가 아직 없으면 activeConversationId 사용
-      const effectiveId = _pollConvId || activeConversationId || "";
-      const url = `/api/progress?conversation_id=${encodeURIComponent(effectiveId)}&after_step=${_progressLastStep}`;
-      const res = await fetch(url);
-      if (!res.ok) return;
-      const data = await res.json();
-      // 서버에서 run_id를 받으면 정상 연결된 것
-      if (!_pollConvId && effectiveId) _pollConvId = effectiveId;
-      // 서버측 시작 시각으로 타이머 보정 (최초 1회)
-      if (data.status_at && _progressStartTime && data.status === "processing") {
-        const serverStart = new Date(data.status_at).getTime();
-        if (serverStart > 0 && Math.abs(_progressStartTime - serverStart) > 3000) {
-          _progressStartTime = serverStart;
-          // conversationState에도 반영
-          const cState = getConversationState(effectiveId);
-          if (cState) cState.started_at = data.status_at;
-        }
-      }
-      const newSteps = Array.isArray(data.steps) ? data.steps : [];
-      if (newSteps.length > 0) {
-        const wasNearBottom = isNearBottom();
-        newSteps.forEach((step) => {
-          _renderProgressStep(stepsContainer, step);
-          const idx = step.step_index || 0;
-          if (idx > _progressLastStep) _progressLastStep = idx;
-        });
-        if (spinner) {
-          spinner.textContent = `처리 중... (${data.step_count || _progressLastStep}단계)`;
-        }
-        if (wasNearBottom) scrollToBottom();
-      }
-      // 완료 감지: processing이 아니면 progress 버블 제거 + 대화 새로고침
-      if (data.status && data.status !== "processing") {
-        _stopProgressPoll();
-        _progressActiveConvId = "";
-        const liveBubble = document.querySelector(".msg-progress-live");
-        if (liveBubble) liveBubble.remove();
-        if (effectiveId) {
-          setConversationState(effectiveId, { status: data.status });
-        }
-        refreshActiveConversation(true);
-        refreshConversations();
-        renderHeaderStatus();
-        return;
-      }
-      // 의도 정보 업데이트 (상태 또는 step 기반)
-      if (intentEl) {
-        const cState = getConversationState(effectiveId);
-        const intentText = normalizeSingleLine(cState.current_intent || "", 88) || "";
-        if (intentText) {
-          intentEl.textContent = intentText;
-        } else if (newSteps.length > 0) {
-          // step에서 직접 의도 추출
-          const lastStep = newSteps[newSteps.length - 1];
-          const stepDesc = lastStep.work || lastStep.tool || "";
-          if (stepDesc) intentEl.textContent = stepDesc;
-        }
-      }
-    } catch (_e) {
-      // polling 실패는 무시
-    }
-  }, 1500);
-}
-
-function _stopProgressPoll() {
-  if (_progressPoller) {
-    clearInterval(_progressPoller);
-    _progressPoller = null;
-  }
-  if (_progressTimerHandle) {
-    clearInterval(_progressTimerHandle);
-    _progressTimerHandle = null;
-  }
-  _progressLastStep = 0;
-  _progressStartTime = 0;
-}
-
-async function sendMessage(message) {
-  if (!message) return;
-  const previewPayload = buildSendPreviewPayload(message);
-  const cleanMessage = previewPayload.original || String(message || "").trim();
-  const outboundMessage = previewPayload.outbound || cleanMessage;
-  const keyConfig = getApiKeyConfig();
-  if (!keyConfig) {
-    showToast("API 설정이 필요합니다.");
-    appendMessage("assistant", "API 설정이 필요합니다. 좌측의 API 설정에서 키와 모델을 등록해주세요.");
-    return;
-  }
-  const consumeFollowupApply = followupApplyArmed && !isRestoreModeActive();
-  if (consumeFollowupApply) {
-    followupApplyArmed = false;
-    renderFollowupLiveStatus();
-    renderSendPreview();
-  }
-  const requestConversationId = activeConversationId;
-  appendMessage("user", cleanMessage);
-  promptBox.value = "";
-  renderSendPreview();
-  if (requestConversationId) {
-    clearCancelOverride(requestConversationId);
-    setConversationState(requestConversationId, {
-      status: "processing",
-      started_at: new Date().toISOString(),
-      step_count: 0,
-      recovery_active: false,
-      recovery_stage: 0,
-    });
-    startConversationPoll(requestConversationId);
-  }
-  renderHeaderStatus();
-  refreshConversations();
-  refreshActiveConversation(true);
-
-  // ── 실시간 progress 버블 생성 ──
-  const progressUI = _createProgressBubble();
-  _progressActiveConvId = requestConversationId || "";
-  // conversation_id가 없어도(첫 대화) polling 시작 — 서버가 세션 기반으로 자동 탐지
-  _startProgressPoll(requestConversationId || "", progressUI.stepsContainer, progressUI.spinner, progressUI.timerEl, progressUI.intentEl);
-
-  try {
-    const data = await apiFetch("/api/ask", {
-      message: outboundMessage,
-      api_key_cipher: keyConfig.cipher,
-      api_key_passphrase: keyConfig.passphrase,
-      model: keyConfig.model,
-      conversation_id: requestConversationId || "",
-    });
-
-    // ── progress 버블 제거 ──
-    _stopProgressPoll();
-    _progressActiveConvId = "";
-    if (progressUI.wrapper && progressUI.wrapper.parentNode) {
-      progressUI.wrapper.parentNode.removeChild(progressUI.wrapper);
-    }
-
-    const responseConversationId = data.conversation_id || requestConversationId;
-    const responseError = String(data.error || "").trim();
-    const canceledResponse =
-      Boolean(responseConversationId) &&
-      isCancelOverrideActive(responseConversationId) &&
-      /취소/.test(responseError);
-    if (!activeConversationId && responseConversationId) {
-      setActiveConversation(responseConversationId);
-    }
-    if (responseConversationId) {
-      setConversationState(responseConversationId, {
-        status: canceledResponse ? "canceled" : responseError ? "error" : "done",
-        duration_ms: data.duration_ms,
-      });
-      if (canceledResponse) {
-        clearCancelOverride(responseConversationId);
-      }
-    }
-    if (responseConversationId === activeConversationId) {
-      if (canceledResponse) {
-        showToast("요청이 취소되었습니다.");
-      } else if (responseError) {
-        appendMessage("assistant", `오류: ${responseError}`);
-      } else {
-        appendMessage("assistant", data.output || "(출력 없음)", {
-          sql: data.executed_sql,
-          csvPaths: data.result_csv_paths || (data.result_csv_path ? [data.result_csv_path] : []),
-          steps: data.steps || [],
-          rationale: data.rationale || "",
-        });
-      }
-      if (data.conversation_id) {
-        convIdEl.textContent = `CONV: ${data.conversation_id}`;
-        activeConversationId = data.conversation_id;
-      }
-      renderHeaderStatus();
-    } else {
-      renderHeaderStatus();
-    }
-    refreshConversations();
-    refreshActiveConversation(true);
-  } catch (err) {
-    _stopProgressPoll();
-    _progressActiveConvId = "";
-    if (progressUI.wrapper && progressUI.wrapper.parentNode) {
-      progressUI.wrapper.parentNode.removeChild(progressUI.wrapper);
-    }
-    if (requestConversationId) {
-      setConversationState(requestConversationId, { status: "error" });
-    }
-    if (!requestConversationId || requestConversationId === activeConversationId) {
-      appendMessage("assistant", `오류: ${err.message}`);
-    }
-    renderHeaderStatus();
-    refreshConversations();
-  } finally {
-    if (requestConversationId) {
-      stopConversationPoll(requestConversationId);
-    }
-  }
-}
-
-async function cancelRequest() {
-  if (!activeConversationId) {
-    showToast("취소할 대화가 없습니다.");
-    return;
-  }
-  const targetConversationId = activeConversationId;
-  markCancelOverride(targetConversationId);
-  setConversationState(targetConversationId, { status: "canceled" });
-  renderHeaderStatus();
-  renderRunHud();
-  refreshConversations();
-  if (targetConversationId === activeConversationId) {
-    refreshActiveConversation(false);
-  }
-  showToast("요청 취소 요청 중...");
-  try {
-    const data = await apiFetch("/api/cancel", { conversation_id: targetConversationId });
-    setConversationState(targetConversationId, { status: "canceled" });
-    renderHeaderStatus();
-    renderRunHud();
-    showToast("요청 취소 요청 완료");
-    if (data && data.output) {
-      appendMessage("assistant", data.output);
-    }
-  } catch (err) {
-    clearCancelOverride(targetConversationId);
-    setConversationState(targetConversationId, { status: "processing" });
-    renderHeaderStatus();
-    renderRunHud();
-    showToast("요청 취소 실패");
-  }
-}
-
-async function finalizeRequest() {
-  if (!activeConversationId) {
-    showToast("즉시 답변할 대화가 없습니다.");
-    return;
-  }
-  const state = getConversationState(activeConversationId);
-  if (state.status !== "processing") {
-    showToast("처리 중인 대화만 즉시 답변을 요청할 수 있습니다.");
-    return;
-  }
-  showToast("즉시 답변 요청 중...");
-  try {
-    await apiFetch("/api/finalize", { conversation_id: activeConversationId });
-    showToast("즉시 답변을 요청했습니다. 잠시 후 답변이 생성됩니다.");
-  } catch (err) {
-    showToast("즉시 답변 요청 실패");
-  }
-}
-
-function bindActions() {
-  if (domainBadgeEl) {
-    domainBadgeEl.addEventListener("click", () => {
-      if (pinnedDomainHint) {
-        pinnedDomainHint = "";
-        savePinnedContext();
-        renderContextBadges();
-        renderFollowupLiveStatus();
-        renderSendPreview();
-        showToast("도메인 고정을 해제했습니다.");
-        return;
-      }
-      const candidate = sanitizeContextTag(currentDomainHint || "", 56);
-      if (!candidate) {
-        showToast("고정할 도메인 정보가 아직 없습니다.");
-        return;
-      }
-      pinnedDomainHint = candidate;
-      savePinnedContext();
-      renderContextBadges();
-      renderFollowupLiveStatus();
-      renderSendPreview();
-      showToast(`도메인 고정: ${candidate}`);
-    });
-  }
-
-  if (strategyBadgeEl) {
-    strategyBadgeEl.addEventListener("click", () => {
-      if (pinnedStrategyHint) {
-        pinnedStrategyHint = "";
-        savePinnedContext();
-        renderContextBadges();
-        renderFollowupLiveStatus();
-        renderSendPreview();
-        showToast("전략 고정을 해제했습니다.");
-        return;
-      }
-      const candidate = sanitizeContextTag(currentStrategyHint || "", 72);
-      if (!candidate) {
-        showToast("고정할 전략 정보가 아직 없습니다.");
-        return;
-      }
-      pinnedStrategyHint = candidate;
-      savePinnedContext();
-      renderContextBadges();
-      renderFollowupLiveStatus();
-      renderSendPreview();
-      showToast(`전략 고정: ${candidate}`);
-    });
-  }
-
-  if (restoreContinueBtnEl) {
-    restoreContinueBtnEl.addEventListener("click", () => {
-      if (!isRestoreModeActive()) {
-        showToast("복원 모드가 아닙니다.");
-        return;
-      }
-      const prompt = buildRestoreContinuePrompt();
-      if (!prompt) {
-        showToast("복원 파일이 선택되지 않았습니다.");
-        return;
-      }
-      sendMessage(prompt);
-    });
-  }
-
-  if (restoreModeClearBtnEl) {
-    restoreModeClearBtnEl.addEventListener("click", () => {
-      clearRestoreModeState(activeConversationId, true);
-      renderFollowupLiveStatus();
-      renderSendPreview();
-      showToast("복원 모드를 해제했습니다.");
-    });
-  }
-
-  if (domainDriftRevertBtnEl) {
-    domainDriftRevertBtnEl.addEventListener("click", () => {
-      const targetDomain = sanitizeContextTag(pinnedDomainHint || "", 42);
-      if (!targetDomain || !activeConversationId) {
-        showToast("원복할 고정 도메인이 없습니다.");
-        return;
-      }
-      currentDomainHint = targetDomain;
-      setConversationState(activeConversationId, { current_domain: targetDomain });
-      domainDriftDismissedKey = "";
-      renderContextBadges();
-      renderDomainDriftPanel();
-      renderFollowupLiveStatus();
-      renderSendPreview();
-      showToast(`고정 도메인으로 원복: ${targetDomain}`);
-    });
-  }
-
-  if (domainDriftCloseBtnEl) {
-    domainDriftCloseBtnEl.addEventListener("click", () => {
-      const key = domainDriftPanelEl && domainDriftPanelEl.dataset ? domainDriftPanelEl.dataset.driftKey : "";
-      domainDriftDismissedKey = key || domainDriftDismissedKey;
-      if (domainDriftPanelEl) domainDriftPanelEl.classList.add("hidden");
-    });
-  }
-
-  if (sideToggleEl && sideEl) {
-    sideToggleEl.addEventListener("click", () => {
-      if (layoutEl) {
-        layoutEl.classList.toggle("side-collapsed");
-      } else {
-        sideEl.classList.toggle("collapsed");
-      }
-      const collapsed = layoutEl ? layoutEl.classList.contains("side-collapsed") : sideEl.classList.contains("collapsed");
-      const expanded = !collapsed;
-      sideToggleEl.setAttribute("aria-expanded", expanded ? "true" : "false");
-      if (expanded) {
-        showToast("사이드 메뉴 확장");
-      } else {
-        showToast("사이드 메뉴 축소");
-      }
-    });
-  }
-
-  if (toolsToggleEl && toolsDrawerEl) {
-    toolsToggleEl.addEventListener("click", () => {
-      if (document.body.classList.contains("modal-open")) return;
-      const open = !toolsDrawerEl.classList.contains("show");
-      setToolsDrawerOpen(open);
-    });
-  }
-
-  if (toolsCloseEl && toolsDrawerEl) {
-    toolsCloseEl.addEventListener("click", () => {
-      setToolsDrawerOpen(false);
-    });
-  }
-
-  if (toolsDrawerEl) {
-    toolsDrawerEl.addEventListener("click", (event) => {
-      if (event.target === toolsDrawerEl) {
-        setToolsDrawerOpen(false);
-      }
-    });
-  }
-
-  if (apiToggleEl && apiPanelEl) {
-    apiToggleEl.textContent = apiPanelEl.classList.contains("hidden") ? "설정 열기" : "설정 닫기";
-    apiToggleEl.addEventListener("click", () => {
-      apiPanelEl.classList.toggle("hidden");
-      apiToggleEl.textContent = apiPanelEl.classList.contains("hidden") ? "설정 열기" : "설정 닫기";
-    });
-  }
-
-  document.getElementById("btnSend").addEventListener("click", () => {
-    sendMessage(promptBox.value.trim());
-  });
-
-  promptBox.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage(promptBox.value.trim());
-    }
-  });
-  promptBox.addEventListener("input", () => {
-    renderSendPreview();
-  });
-
-  [followupIntentEl, followupConstraintsEl].forEach((el) => {
-    if (!el) return;
-    el.addEventListener("input", () => {
-      followupManualEdit = true;
-      followupContextConversationId = activeConversationId || followupContextConversationId;
-      renderFollowupLiveStatus();
-      renderSendPreview();
-    });
-  });
-  if (followupApplyOnceEl) {
-    followupApplyOnceEl.addEventListener("click", () => {
-      if (isRestoreModeActive()) {
-        showToast("복원 모드에서는 반영이 항상 켜져 있습니다.");
-        renderFollowupLiveStatus();
-        renderSendPreview();
-        return;
-      }
-      const pending = getPendingInjectParts();
-      if (!pending.length && !followupApplyArmed) {
-        showToast("반영할 의도/제약 또는 고정값이 없습니다.");
-        return;
-      }
-      followupApplyArmed = !followupApplyArmed;
-      renderFollowupLiveStatus();
-      renderSendPreview();
-      showToast(followupApplyArmed ? "다음 요청 반영을 켰습니다." : "다음 요청 반영을 껐습니다.");
-    });
-  }
-  if (followupClearEl) {
-    followupClearEl.addEventListener("click", () => {
-      if (followupIntentEl) followupIntentEl.value = "";
-      if (followupConstraintsEl) followupConstraintsEl.value = "";
-      followupManualEdit = false;
-      followupApplyArmed = false;
-      followupContextConversationId = activeConversationId || "";
-      renderFollowupLiveStatus();
-      renderSendPreview();
-      showToast("이어받기 컨텍스트를 초기화했습니다.");
-    });
-  }
-
-  document.getElementById("btnNew").addEventListener("click", async () => {
-    appendMessage("assistant", "새 대화를 생성합니다...");
-    try {
-      const data = await apiFetch("/api/new_conversation", {});
-      appendMessage("assistant", data.output || "(출력 없음)");
-      if (data.conversation_id) {
-        setActiveConversation(data.conversation_id);
-        followupApplyArmed = false;
-        await loadRecentHistory(data.conversation_id);
-        await refreshConversations();
-        refreshActiveConversation(true);
-      }
-      refreshConversations();
-    } catch (err) {
-      appendMessage("assistant", `오류: ${err.message}`);
-    }
-  });
-
-  document.getElementById("btnClear").addEventListener("click", async () => {
-    await clearAllConversationsWithConfirmation();
-  });
-  const cancelBtn = document.getElementById("btnCancel");
-  if (cancelBtn) {
-    cancelBtn.addEventListener("click", () => {
-      cancelRequest();
-    });
-  }
-  const quickDbBtn = document.getElementById("btnQuickDb");
-  if (quickDbBtn) {
-    quickDbBtn.addEventListener("click", () => {
-      sendMessage("현재 DB 목록 보여줘");
-    });
-  }
-  if (jumpBtn) {
-    jumpBtn.addEventListener("click", () => {
-      jumpToTime();
-    });
-  }
-  if (jumpLatestBtn) {
-    jumpLatestBtn.addEventListener("click", () => {
-      jumpToLatest();
-    });
-  }
-  if (jumpTimeEl) {
-    jumpTimeEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        jumpToTime();
-      }
-    });
-  }
-
-  /* ── 캘린더 시각 이동 ── */
-  let _calDatesCache = {};
-  let _calMonth = new Date();
-  let _calSelectedDate = "";
-
-  function _toggleCalPanel() {
-    if (!jumpCalPanel) return;
-    const show = jumpCalPanel.classList.contains("hidden");
-    jumpCalPanel.classList.toggle("hidden", !show);
-    if (show && activeConversationId) _loadCalDates();
-  }
-
-  async function _loadCalDates() {
-    try {
-      const data = await apiFetch(`/api/history_dates?conversation_id=${encodeURIComponent(activeConversationId)}`);
-      _calDatesCache = data.dates || {};
-      if (data.last) {
-        const parts = data.last.split("-");
-        _calMonth = new Date(Number(parts[0]), Number(parts[1]) - 1, 1);
-      }
-      _renderCalendar();
-    } catch (e) { /* ignore */ }
-  }
-
-  function _renderCalendar() {
-    if (!jumpCalGrid || !jumpCalTitle) return;
-    const year = _calMonth.getFullYear();
-    const month = _calMonth.getMonth();
-    jumpCalTitle.textContent = `${year}년 ${month + 1}월`;
-
-    const firstDay = new Date(year, month, 1).getDay();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const prevDays = new Date(year, month, 0).getDate();
-    const today = new Date();
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
-
-    jumpCalGrid.innerHTML = "";
-    // prev month fill
-    for (let i = firstDay - 1; i >= 0; i--) {
-      const d = document.createElement("div");
-      d.className = "jump-cal-day other-month";
-      d.textContent = prevDays - i;
-      jumpCalGrid.appendChild(d);
-    }
-    // current month
-    for (let day = 1; day <= daysInMonth; day++) {
-      const dateStr = `${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
-      const d = document.createElement("div");
-      d.className = "jump-cal-day";
-      d.textContent = day;
-      if (dateStr === todayStr) d.classList.add("today");
-      if (_calDatesCache[dateStr]) {
-        d.classList.add("has-messages");
-        d.addEventListener("click", () => _selectCalDate(dateStr, d));
-      }
-      if (dateStr === _calSelectedDate) d.classList.add("selected");
-      jumpCalGrid.appendChild(d);
-    }
-    // next month fill
-    const totalCells = jumpCalGrid.children.length;
-    const remaining = (7 - (totalCells % 7)) % 7;
-    for (let i = 1; i <= remaining; i++) {
-      const d = document.createElement("div");
-      d.className = "jump-cal-day other-month";
-      d.textContent = i;
-      jumpCalGrid.appendChild(d);
-    }
-  }
-
-  function _selectCalDate(dateStr, el) {
-    _calSelectedDate = dateStr;
-    jumpCalGrid.querySelectorAll(".selected").forEach(s => s.classList.remove("selected"));
-    if (el) el.classList.add("selected");
-    const times = _calDatesCache[dateStr] || [];
-    if (jumpCalTimes) jumpCalTimes.classList.toggle("hidden", !times.length);
-    if (jumpCalTimesList) {
-      jumpCalTimesList.innerHTML = "";
-      const unique = [...new Set(times)].sort();
-      unique.forEach(t => {
-        const btn = document.createElement("button");
-        btn.className = "jump-cal-time";
-        btn.textContent = t;
-        btn.addEventListener("click", () => {
-          if (jumpTimeEl) jumpTimeEl.value = `${dateStr}T${t}`;
-          jumpToTime();
-          jumpCalPanel.classList.add("hidden");
-        });
-        jumpCalTimesList.appendChild(btn);
-      });
-    }
-  }
-
-  if (jumpCalBtn) jumpCalBtn.addEventListener("click", _toggleCalPanel);
-  if (jumpCalPrev) jumpCalPrev.addEventListener("click", () => {
-    _calMonth.setMonth(_calMonth.getMonth() - 1);
-    _renderCalendar();
-  });
-  if (jumpCalNext) jumpCalNext.addEventListener("click", () => {
-    _calMonth.setMonth(_calMonth.getMonth() + 1);
-    _renderCalendar();
-  });
-
-  // 패널 외부 클릭 시 닫기
-  document.addEventListener("click", (e) => {
-    if (jumpCalPanel && !jumpCalPanel.classList.contains("hidden")) {
-      if (!jumpCalPanel.contains(e.target) && !e.target.classList.contains("date-sep-label")) {
-        jumpCalPanel.classList.add("hidden");
-      }
-    }
-  });
-
-  // 날짜 경계선 라벨 클릭 → 캘린더 열기
-  document.addEventListener("openCalDate", (e) => {
-    const dateKey = e.detail;
-    if (!jumpCalPanel) return;
-    const parts = dateKey.split("-");
-    if (parts.length === 3) {
-      _calMonth = new Date(Number(parts[0]), Number(parts[1]) - 1, 1);
-    }
-    jumpCalPanel.classList.remove("hidden");
-    if (activeConversationId) {
-      _loadCalDates().then(() => {
-        _selectCalDate(dateKey, jumpCalGrid && jumpCalGrid.querySelector(".jump-cal-day.selected"));
-      });
-    } else {
-      _renderCalendar();
-    }
-  });
-
-  if (apiSaveBtn) {
-    apiSaveBtn.addEventListener("click", async () => {
-      try {
-        await saveApiKeyFromInputs();
-        showToast("API 설정 저장 완료");
-        validateApiInputs();
-      } catch (err) {
-        showToast(err.message || "API 설정 저장 실패");
-      }
-    });
-  }
-
-  if (apiClearBtn) {
-    apiClearBtn.addEventListener("click", async () => {
-      clearApiKeyCache();
-      clearApiKeyInputs();
-      await updateApiStatusDisplay();
-      validateApiInputs();
-      showToast("API 설정 삭제 완료");
-    });
-  }
-
-  if (apiEncryptBtn) {
-    apiEncryptBtn.addEventListener("click", async () => {
-      const disableReason = getApiVaultDisableReason();
-      if (disableReason) {
-        showToast(disableReason);
-        return;
-      }
-      const plain = apiKeyPlainEl ? apiKeyPlainEl.value.trim() : "";
-      const passphrase = apiKeyPassEl ? apiKeyPassEl.value.trim() : "";
-      if (!plain || !passphrase) {
-        showToast("평문 키와 암호화 키를 입력해주세요.");
-        return;
-      }
-      try {
-        const cipher = await encryptApiKey(plain, passphrase);
-        if (apiKeyEncEl) apiKeyEncEl.value = cipher;
-        const mask = maskApiKey(plain);
-        const model = apiModelEl ? apiModelEl.value.trim() || getApiVaultDefaultModel() : getApiVaultDefaultModel();
-        if (!isAllowedApiModel(model)) {
-          showToast("허용된 모델만 선택할 수 있습니다.");
-          return;
-        }
-        saveApiKeyCache({
-          cipher,
-          passphrase,
-          model,
-          mask,
-          updated_at: Date.now(),
-        });
-        recordApiKeyHistory({
-          mask,
-          model,
-          updated_at: Date.now(),
-        });
-        await updateApiStatusDisplay();
-        validateApiInputs();
-        showToast("암호화 완료");
-      } catch (err) {
-        showToast(err.message || "암호화 실패");
-      }
-    });
-  }
-  [apiKeyEncEl, apiKeyPassEl, apiModelEl].forEach((el) => {
-    if (!el) return;
-    el.addEventListener("input", () => {
-      if (el === apiModelEl) {
-        renderApiModelHint();
-      }
-      validateApiInputs();
-    });
-  });
-  if (apiModelEl) {
-    apiModelEl.addEventListener("change", () => {
-      renderApiModelHint();
-      validateApiInputs();
-    });
-  }
-  document.getElementById("modalClose").addEventListener("click", hideModal);
-  document.getElementById("modalCopy").addEventListener("click", () => {
-    const modalBody = document.getElementById("modalBody");
-    const text = modalCopyText || modalBody.innerText || "";
-    navigator.clipboard
-      .writeText(text)
-      .then(() => showToast("복사 완료"))
-      .catch(() => showToast("복사 실패"));
-  });
-  document.getElementById("modal").addEventListener("click", (e) => {
-    if (e.target.id === "modal") hideModal();
-  });
-  if (dangerModalInputEl) {
-    dangerModalInputEl.addEventListener("input", () => {
-      syncDangerConfirmButton();
-    });
-    dangerModalInputEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && dangerModalConfirmEl && !dangerModalConfirmEl.disabled) {
-        e.preventDefault();
-        hideDangerConfirmModal({ confirmed: true, value: dangerModalInputEl.value.trim() });
-      }
-    });
-  }
-  if (dangerModalCancelEl) {
-    dangerModalCancelEl.addEventListener("click", () => {
-      hideDangerConfirmModal({ confirmed: false, value: "" });
-    });
-  }
-  if (dangerModalCloseEl) {
-    dangerModalCloseEl.addEventListener("click", () => {
-      hideDangerConfirmModal({ confirmed: false, value: "" });
-    });
-  }
-  if (dangerModalConfirmEl) {
-    dangerModalConfirmEl.addEventListener("click", () => {
-      if (dangerModalConfirmEl.disabled) return;
-      hideDangerConfirmModal({ confirmed: true, value: dangerModalInputEl ? dangerModalInputEl.value.trim() : "" });
-    });
-  }
-  if (dangerModalEl) {
-    dangerModalEl.addEventListener("click", (e) => {
-      if (e.target === dangerModalEl) {
-        hideDangerConfirmModal({ confirmed: false, value: "" });
-      }
-    });
-  }
-  document.addEventListener("keydown", (e) => {
-    if (dangerModalEl && dangerModalEl.classList.contains("show")) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        hideDangerConfirmModal({ confirmed: false, value: "" });
-      }
-      return;
-    }
-    const modal = document.getElementById("modal");
-    if (!modal || !modal.classList.contains("show")) return;
-    if (e.key === "Escape") {
-      e.preventDefault();
-      hideModal();
-    }
-  });
-  if (toolsDrawerEl && !toolsDrawerEl.classList.contains("show")) {
-    toolsDrawerEl.setAttribute("inert", "");
-  }
-
-  if (chatLogEl) {
-    chatLogEl.addEventListener("scroll", () => {
-      updateHistoryMoreButtonVisibility();
-      updateTimelinePositions();
-    });
-  }
-}
-
-async function init() {
-  loadPinnedContext();
-  renderContextBadges();
-  await loadApiVaultOptions();
-  await refreshSession();
-  await refreshConversations();
-  if (activeConversationId) {
-    await loadRecentHistory(activeConversationId);
-    _restoreProgressBubbleIfNeeded();
-  }
-  bindActions();
-  renderHeaderStatus();
-  loadApiKeyIntoInputs();
-  updateApiStatusDisplay();
-  validateApiInputs();
-  updatePromptPlaceholder();
-  normalizePromptDraftFromFollowup();
-  renderFollowupLiveStatus();
-  renderContextBadges();
-  renderSendPreview();
-  window.addEventListener("resize", () => {
-    updateTimelinePositions();
-  });
-  if (activeChatPoller) {
-    clearInterval(activeChatPoller);
-  }
-  activeChatPoller = setInterval(() => {
-    refreshConversations();
-    refreshActiveConversation(false);
-    updatePromptPlaceholder();
-  }, CONV_POLL_MS);
-  if (activeHudTicker) {
-    clearInterval(activeHudTicker);
-  }
-  activeHudTicker = setInterval(() => {
-    renderHeaderStatus();
-    renderRunHud();
-  }, HUD_TICK_MS);
-}
-
-init();
+});
+
+initialize().catch((error) => {
+  showToast(error.message || "페이지 초기화에 실패했습니다.", true);
+});
