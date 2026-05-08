@@ -70,6 +70,8 @@ jobs:
       - name: Run Claude triage
         if: steps.provider.outputs.provider == 'claude'
         shell: bash
+        env:
+          IS_SANDBOX: "1"
         run: |
           claude -p \
             --permission-mode bypassPermissions \
