@@ -97,12 +97,21 @@ jobs:
         run: |
           claude -p \
             --permission-mode bypassPermissions \
-            --max-turns 12 \
+            --max-turns 30 \
             --output-format text \
             --no-session-persistence \
             --add-dir "$(pwd)" \
             < .ai-runtime/review_prompt.md \
-            > .ai-runtime/claude-review-stdout.txt
+            > .ai-runtime/claude-review-stdout.txt \
+            2> .ai-runtime/claude-review-stderr.txt
+          rc=$?
+          if [[ $rc -ne 0 ]]; then
+            echo "=== claude stdout (tail) ===" >&2
+            tail -40 .ai-runtime/claude-review-stdout.txt >&2 || true
+            echo "=== claude stderr (tail) ===" >&2
+            tail -40 .ai-runtime/claude-review-stderr.txt >&2 || true
+            exit $rc
+          fi
 
       - name: Validate review artifacts
         if: steps.classify.outputs.docs_only != 'true'
