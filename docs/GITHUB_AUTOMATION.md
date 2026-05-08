@@ -44,16 +44,43 @@
 - Docker와 `make` 사용 가능
 - `make start`, `make ask`, `make web`, `make browser-up`, `make browser-health` 실행 가능
 - 런타임 충돌 방지를 위해 self-hosted smoke는 저장소 단위 concurrency 로 직렬화한다.
-- **Claude CLI 요구사항**: `claude --version` 이 동작해야 하며, runner user 계정으로 `claude /status` 가 "Login method: Claude Pro/Max account" 를 반환하는 상태여야 한다. AI Triage/Execute/Review 워크플로는 runner 의 `~/.claude/` 자격 증명을 그대로 사용한다.
+- **Runner user 는 반드시 non-root** — claude CLI 의 `--permission-mode bypassPermissions` 는 내부적으로 `--dangerously-skip-permissions` 로 매핑되며, uid 0 (root/sudo) 에서 실행하면 보안상 거부되어 `ai-review.yml` 의 `Run Claude review` step 이 즉시 exit 1 한다 (관측 사례: PR #6 / run 25545926914). systemd 서비스로 등록할 때 `./svc.sh install <runner-user>` 의 `<runner-user>` 를 root 가 아닌 별도 user 로 지정해야 한다.
+- **Claude CLI 요구사항**: `claude --version` 이 동작해야 하며, **runner user 계정** (위의 non-root user) 으로 `claude /status` 가 "Login method: Claude Pro/Max account" 를 반환하는 상태여야 한다. AI Triage/Execute/Review 워크플로는 runner user 의 `~/.claude/` 자격 증명을 그대로 사용한다 — runner user 를 변경하면 새 home 에서 `claude login` 을 다시 수행해야 한다.
 - **러너 온라인 유지**: `ai-triage.yml` 은 스케줄 실행 (`cron: "17 */6 * * *"`) 이므로 해당 시간대에 runner 가 오프라인이면 실행이 지연되거나 timeout 된다. systemd 서비스 또는 WSL 자동 시작 스크립트 등으로 runner 프로세스를 상시 유지하는 것을 권장한다.
 
 ### 러너 셋업 (요약)
-1. `https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/settings/actions/runners/new` 에서 Linux x64 runner 등록 스크립트 확인
-2. 적절한 경로에 설치 (예: `~/actions-runner/`)
-3. `./config.sh --url https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant --token <register-token> --labels self-hosted,linux --unattended`
-4. 서비스로 설치: `sudo ./svc.sh install <runner-user> && sudo ./svc.sh start`
-5. runner user 계정에서 `claude login` (또는 이미 로그인되어 있으면 확인만)
-6. `gh api /repos/msmckimgpt-tech/gstack_dba_ai_assistant/actions/runners` 로 등록 여부 확인
+1. **non-root user 준비** — root 가 아닌 dedicated user (예: `runner`, `gh-runner`) 를 미리 만들어 두고 docker / make 가 해당 user 로 실행 가능하도록 docker 그룹에 추가한다 (`usermod -aG docker <runner-user>`).
+2. `https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/settings/actions/runners/new` 에서 Linux x64 runner 등록 스크립트 확인.
+3. 해당 user 의 home (예: `/home/<runner-user>/actions-runner/`) 에 설치.
+4. `./config.sh --url https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant --token <register-token> --labels self-hosted,linux --unattended` (해당 user 로 실행).
+5. 서비스로 설치: `sudo ./svc.sh install <runner-user> && sudo ./svc.sh start` — `<runner-user>` 인자에 **반드시 non-root user 이름** 을 명시. 빠뜨리면 systemd 가 root 로 기동한다.
+6. **runner user 계정에서 `claude login`** 수행 — `claude --version` 동작 확인 + `~/.claude/.credentials.json` 생성 확인.
+7. `gh api /repos/msmckimgpt-tech/gstack_dba_ai_assistant/actions/runners` 로 등록 여부 확인.
+8. 첫 PR 또는 `gh workflow run ai-review.yml` 로 Diagnose Claude CLI environment step 이 PASS 하는지 확인 (`runner uid: <0 이외의 숫자>` 가 `$GITHUB_STEP_SUMMARY` 에 노출되어야 한다).
+
+### 기존 root runner 마이그레이션 절차
+이미 root 로 systemd service 를 등록한 환경에서는 아래 순서로 전환한다.
+
+```bash
+# 1. 기존 root service 정지/제거
+cd /root/actions-runner
+sudo ./svc.sh stop
+sudo ./svc.sh uninstall
+./config.sh remove --token <removal-token>   # GitHub UI 의 runner 페이지에서 발급
+
+# 2. non-root user 로 재설치
+sudo useradd -m -s /bin/bash gh-runner   # 이미 있다면 skip
+sudo usermod -aG docker gh-runner
+sudo -iu gh-runner
+mkdir -p ~/actions-runner && cd ~/actions-runner
+# (위 §러너 셋업 4 ~ 8 반복)
+
+# 3. claude login 재수행 (gh-runner 계정 home 에서)
+claude login
+claude /status   # "Login method: Claude Pro/Max account" 확인
+```
+
+마이그레이션 직후 PR 한 건을 reopen 또는 trivial commit push 로 ai-review 를 1회 강제 실행해 Diagnose step 에서 `runner uid` 가 0 이 아닌지 확인한다. 0 이면 systemd unit 의 `User=` 가 여전히 root 임 — `systemctl cat actions.runner.*.service` 로 검증.
 
 ## Branch protection 권장값
 - Require pull request before merging

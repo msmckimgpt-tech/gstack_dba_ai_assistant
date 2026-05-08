@@ -72,6 +72,24 @@ jobs:
           - Diff command: git diff --stat origin/$BASE_REF...HEAD && git diff --unified=3 origin/$BASE_REF...HEAD
           EOF
 
+      - name: Diagnose Claude CLI environment
+        if: steps.classify.outputs.docs_only != 'true' && steps.provider.outputs.provider == 'claude'
+        shell: bash
+        run: |
+          echo "## Claude CLI diagnostics" >> "$GITHUB_STEP_SUMMARY"
+          which claude || { echo "ERROR: claude CLI not found on PATH for runner user $(whoami)"; exit 1; }
+          claude --version || { echo "ERROR: claude --version failed"; exit 1; }
+          echo "claude path: $(which claude)" >> "$GITHUB_STEP_SUMMARY"
+          echo "claude version: $(claude --version)" >> "$GITHUB_STEP_SUMMARY"
+          echo "runner uid: $(id -u) ($(whoami))" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$(id -u)" == "0" ]]; then
+            echo "ERROR: self-hosted runner is running as root (uid 0)." >&2
+            echo "       claude CLI rejects --permission-mode bypassPermissions under root" >&2
+            echo "       (\"--dangerously-skip-permissions cannot be used with root/sudo privileges\")." >&2
+            echo "       Re-register the runner under a non-root user. See docs/GITHUB_AUTOMATION.md." >&2
+            exit 1
+          fi
+
       - name: Run Claude review
         if: steps.classify.outputs.docs_only != 'true' && steps.provider.outputs.provider == 'claude'
         shell: bash
