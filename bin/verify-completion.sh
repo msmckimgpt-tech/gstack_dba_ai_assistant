@@ -122,6 +122,7 @@ is_meta_path() {
     unit/_template/*) return 0 ;;
     unit/META-*) return 0 ;;
     TEMPLATE_CHANGELOG.md|CONTRIBUTING.md) return 0 ;;
+    .github/*) return 0 ;;
     *) return 1 ;;
   esac
 }

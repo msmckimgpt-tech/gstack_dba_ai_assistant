@@ -1054,6 +1054,7 @@ stale 문제를 active detection으로 전환 — 별도의 staleness scanner가
 - `shared/docs/**` (shared 정책 문서)
 - `docs/**` (프로젝트 수준 정책 문서)
 - `unit/META-*/` (명시적 META feature)
+- `.github/**` (CI/CD 워크플로 + 자동화 스크립트 + 정책 contract — 운영 코드와 분리된 인프라)
 
 #### META 작업 워크플로
 
