@@ -41,7 +41,7 @@
 - PR 제목 규칙은 `#<번호> <summary>`이다.
 - 커밋 제목 규칙은 `type(scope): summary (#issue-number)`이다.
 - 단일 AI provider 운영 기준은 `docs/GITHUB_AUTOMATION.md`를 따른다.
-- 지원되는 provider 는 `claude` 하나이며, `anthropics/claude-code-action@v1` 을 `CLAUDE_CODE_OAUTH_TOKEN` 으로 호출한다.
+- 지원되는 provider 는 `claude` 하나이며, **self-hosted runner 의 로컬 `claude` CLI 를 직접 호출**한다 (API key / OAuth 토큰 시크릿 불필요).
 - provider 우선순위는 `agent:claude` 라벨 -> 저장소 변수 `AI_PROVIDER_DEFAULT` -> 기본값 `claude` 순서다.
 - 자세한 절차는 `CONTRIBUTING.md`와 `docs/GITHUB_AUTOMATION.md`를 따른다.
 

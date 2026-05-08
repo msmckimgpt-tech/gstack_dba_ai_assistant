@@ -3,7 +3,7 @@
 ## 개요
 - 이 저장소의 자동화는 공개 PR 기준으로 **이슈당 하나의 `issue/*` 브랜치**를 사용한다.
 - 여러 AI가 병렬 작업할 수 있지만, 내부 병렬 작업 브랜치는 로컬/worktree 전용이다.
-- 지원되는 provider 는 `claude` 하나이며, Claude Code GitHub Action (`anthropics/claude-code-action@v1`) 으로 실행된다.
+- 지원되는 provider 는 `claude` 하나이며, **self-hosted runner 에 설치된 공식 `claude` CLI 를 직접 호출**한다. `anthropics/claude-code-action@v1` 은 사용하지 않는다 (Anthropic 이 2026-02 이후 Pro/Max OAuth 토큰을 서버 측에서 거부하기 때문).
 - 정본 흐름은 `Issue -> Branch -> PR -> Status Checks -> GitHub auto-merge` 이다.
 - 공개 PR 브랜치는 항상 `issue/<번호>-<short-slug>`를 사용한다.
 - 내부 병렬 작업 브랜치는 `ai/<agent-id>/<issue-number>/<slice>` 형식을 사용하며, PR head로 직접 사용하지 않는다.
@@ -34,8 +34,7 @@
 - 실행이 시작되면 `status:ready`는 제거되고 `status:in-progress`로 전환된다.
 
 ## 필수 Secrets / Variables
-- Secrets
-  - `CLAUDE_CODE_OAUTH_TOKEN` — 로컬에서 `claude setup-token` 으로 발급한 Claude Pro/Max OAuth 토큰. 만료 시 주기적 갱신이 필요하다.
+- Secrets — 현재 Claude 경로는 self-hosted runner 의 로컬 `~/.claude/` 자격 증명을 사용하므로 **API key / OAuth 토큰 시크릿이 필요 없다.**
 - Variables
   - `AI_PROVIDER_DEFAULT` — 선택. 설정하지 않으면 `.github/automation-contract.json` 의 기본값(`claude`)이 사용된다.
   - `AI_AUTONOMOUS_OPEN_ISSUE_LIMIT` 기본 권장값 `3`
@@ -45,6 +44,16 @@
 - Docker와 `make` 사용 가능
 - `make start`, `make ask`, `make web`, `make browser-up`, `make browser-health` 실행 가능
 - 런타임 충돌 방지를 위해 self-hosted smoke는 저장소 단위 concurrency 로 직렬화한다.
+- **Claude CLI 요구사항**: `claude --version` 이 동작해야 하며, runner user 계정으로 `claude /status` 가 "Login method: Claude Pro/Max account" 를 반환하는 상태여야 한다. AI Triage/Execute/Review 워크플로는 runner 의 `~/.claude/` 자격 증명을 그대로 사용한다.
+- **러너 온라인 유지**: `ai-triage.yml` 은 스케줄 실행 (`cron: "17 */6 * * *"`) 이므로 해당 시간대에 runner 가 오프라인이면 실행이 지연되거나 timeout 된다. systemd 서비스 또는 WSL 자동 시작 스크립트 등으로 runner 프로세스를 상시 유지하는 것을 권장한다.
+
+### 러너 셋업 (요약)
+1. `https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/settings/actions/runners/new` 에서 Linux x64 runner 등록 스크립트 확인
+2. 적절한 경로에 설치 (예: `~/actions-runner/`)
+3. `./config.sh --url https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant --token <register-token> --labels self-hosted,linux --unattended`
+4. 서비스로 설치: `sudo ./svc.sh install <runner-user> && sudo ./svc.sh start`
+5. runner user 계정에서 `claude login` (또는 이미 로그인되어 있으면 확인만)
+6. `gh api /repos/msmckimgpt-tech/gstack_dba_ai_assistant/actions/runners` 로 등록 여부 확인
 
 ## Branch protection 권장값
 - Require pull request before merging

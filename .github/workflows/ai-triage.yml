@@ -21,13 +21,12 @@ on:
 jobs:
   ai-triage:
     name: ai-triage
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     timeout-minutes: 20
     permissions:
       contents: read
       issues: write
       actions: read
-      id-token: write
     concurrency:
       group: ai-triage-${{ github.repository }}
       cancel-in-progress: false
@@ -68,24 +67,18 @@ jobs:
           - Today (UTC): $(date -u +"%Y-%m-%dT%H:%M:%SZ")
           EOF
 
-      - name: Load triage prompt for Claude
-        id: triage_prompt
-        shell: bash
-        run: |
-          {
-            echo "prompt<<EOF"
-            cat .ai-runtime/triage_prompt.md
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Run Claude triage
         if: steps.provider.outputs.provider == 'claude'
-        uses: anthropics/claude-code-action@v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: ${{ steps.triage_prompt.outputs.prompt }}
-          claude_args: |
-            --max-turns 10
+        shell: bash
+        run: |
+          claude -p \
+            --permission-mode bypassPermissions \
+            --max-turns 10 \
+            --output-format text \
+            --no-session-persistence \
+            --add-dir "$(pwd)" \
+            < .ai-runtime/triage_prompt.md \
+            > .ai-runtime/claude-triage-stdout.txt
 
       - name: Validate triage artifacts
         shell: bash
