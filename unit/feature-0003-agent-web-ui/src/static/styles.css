@@ -49,6 +49,12 @@
   /* Layout */
   --topbar-h:  52px;
   --sidebar-w: 252px;
+
+  /* Admin bulk toolbar — DESIGN.md §3 */
+  --z-bulk-bar:        12;
+  --z-bulk-banner:     11;
+  --bulk-bar-bottom:   0;
+  --bulk-bar-elev:     0 -2px 8px rgba(0, 0, 0, .06);
 }
 
 /* ─── Reset ─────────────────────────────────────────────────────── */
@@ -2271,11 +2277,81 @@ a { color: inherit; }
   display: none;
 }
 
+/* CONVENTIONS.md §10.2 + DESIGN.md §2/§3 — bulk toolbar 표준 위치 (list 직하단 sticky) */
+.admin-bulk-actions:not(:empty) {
+  position: sticky;
+  bottom: var(--bulk-bar-bottom);
+  z-index: var(--z-bulk-bar);
+  background: var(--surface);
+  box-shadow: var(--bulk-bar-elev);
+  padding: 8px 10px;
+  border-radius: 0 0 var(--r-md) var(--r-md);
+}
+
 .admin-bulk-label {
   font-size: 12px;
   font-weight: 700;
   color: var(--primary);
   margin-right: 4px;
+}
+
+/* DESIGN.md §5 — Linear-style inline keyboard hint */
+.kbd-hint {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  vertical-align: 1px;
+}
+
+/* DESIGN.md §6 — cross-page selection banner (Stripe pattern) */
+.admin-bulk-cross-page {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  margin: 4px 0;
+  border: 1px solid var(--primary-soft);
+  background: var(--primary-soft);
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  color: var(--text-2);
+  z-index: var(--z-bulk-banner);
+}
+
+.admin-bulk-cross-page:empty {
+  display: none;
+}
+
+.admin-bulk-cross-page-msg {
+  flex: 1 1 auto;
+}
+
+.admin-bulk-cross-page-msg strong {
+  color: var(--primary);
+}
+
+.admin-bulk-cross-page .tool-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+/* DESIGN.md §8 — RBAC partial-failure toast (skipped count chip) */
+.toast .toast-skipped {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 11px;
+  color: var(--warning);
+  background: rgba(217, 119, 6, .12);
+  border-radius: 3px;
 }
 
 /* ── Detail pane layout ──────────────────────────────────────── */

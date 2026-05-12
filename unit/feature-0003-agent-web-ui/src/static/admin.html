@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260507-row-fix-embed" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260512-bulk-contract-v02" />
 </head>
 <body class="admin-shell">
   <header class="topbar">
@@ -87,13 +87,15 @@
       </section>
 
       <!-- Accounts pane -->
+      <!-- CONVENTIONS.md §10.2 + DESIGN.md §2 표준 5단 구조 적용 -->
       <section class="admin-pane" data-admin-pane="accounts">
         <header class="admin-pane-head">
           <div>
             <div class="drawer-label">Accounts</div>
             <h2>계정 관리</h2>
           </div>
-          <div class="admin-pane-head-right" id="accountsBulkBar"></div>
+          <!-- primary action ONLY (현재 계정 신규 생성 flow 별도 — 슬롯 비움) -->
+          <div class="admin-pane-head-right"></div>
         </header>
         <div class="admin-list-detail">
           <div class="admin-list-col">
@@ -114,12 +116,20 @@
             </div>
             <div class="admin-list-head">
               <label class="admin-list-select-all">
-                <input type="checkbox" id="accountSelectAll" />
+                <input type="checkbox" id="accountSelectAll" aria-label="현재 페이지 계정 전체 선택" />
                 <span>전체 선택</span>
               </label>
-              <span class="admin-list-count" id="accountListCount"></span>
+              <span class="admin-list-count" id="accountListCount" aria-live="polite"></span>
             </div>
-            <div class="admin-list" id="accountList"></div>
+            <div class="admin-bulk-cross-page" id="accountsCrossPageBanner" role="status" aria-live="polite"></div>
+            <div class="admin-list" id="accountList" role="grid" aria-multiselectable="true" aria-label="계정 목록"></div>
+            <div
+              class="admin-bulk-actions"
+              id="accountsBulkBar"
+              role="toolbar"
+              aria-label="계정 일괄 작업"
+              aria-live="polite"
+            ></div>
             <div class="admin-list-pagination" id="accountPagination"></div>
           </div>
           <div class="admin-detail-col" id="accountDetail">
@@ -129,6 +139,7 @@
       </section>
 
       <!-- Products pane -->
+      <!-- CONVENTIONS.md §10.2 + DESIGN.md §2/§12 표준 5단 구조 + multi-select 신설 -->
       <section class="admin-pane" data-admin-pane="products">
         <header class="admin-pane-head">
           <div>
@@ -151,9 +162,21 @@
               />
             </div>
             <div class="admin-list-head">
-              <span class="admin-list-count" id="productListCount"></span>
+              <label class="admin-list-select-all">
+                <input type="checkbox" id="productSelectAll" aria-label="현재 페이지 제품 전체 선택" />
+                <span>전체 선택</span>
+              </label>
+              <span class="admin-list-count" id="productListCount" aria-live="polite"></span>
             </div>
-            <div class="admin-list" id="productList"></div>
+            <div class="admin-bulk-cross-page" id="productsCrossPageBanner" role="status" aria-live="polite"></div>
+            <div class="admin-list" id="productList" role="grid" aria-multiselectable="true" aria-label="제품 목록"></div>
+            <div
+              class="admin-bulk-actions"
+              id="productsBulkBar"
+              role="toolbar"
+              aria-label="제품 일괄 작업"
+              aria-live="polite"
+            ></div>
           </div>
           <div class="admin-detail-col" id="productDetail">
             <div class="admin-detail-empty">좌측에서 제품을 선택하거나 "+ 새 제품"을 누르세요.</div>
@@ -162,6 +185,7 @@
       </section>
 
       <!-- Roles pane -->
+      <!-- CONVENTIONS.md §10.2 + DESIGN.md §2 표준 5단 구조 (기준 패턴) -->
       <section class="admin-pane" data-admin-pane="roles">
         <header class="admin-pane-head">
           <div>
@@ -185,13 +209,20 @@
             </div>
             <div class="admin-list-head">
               <label class="admin-list-select-all">
-                <input type="checkbox" id="roleSelectAll" />
+                <input type="checkbox" id="roleSelectAll" aria-label="현재 페이지 역할 전체 선택" />
                 <span>전체 선택</span>
               </label>
-              <span class="admin-list-count" id="roleListCount"></span>
+              <span class="admin-list-count" id="roleListCount" aria-live="polite"></span>
             </div>
-            <div class="admin-list" id="roleList"></div>
-            <div class="admin-bulk-actions" id="roleBulkBar"></div>
+            <div class="admin-bulk-cross-page" id="rolesCrossPageBanner" role="status" aria-live="polite"></div>
+            <div class="admin-list" id="roleList" role="grid" aria-multiselectable="true" aria-label="역할 목록"></div>
+            <div
+              class="admin-bulk-actions"
+              id="roleBulkBar"
+              role="toolbar"
+              aria-label="역할 일괄 작업"
+              aria-live="polite"
+            ></div>
           </div>
           <div class="admin-detail-col" id="roleDetail">
             <div class="admin-detail-empty">좌측에서 역할을 선택하거나 "+ 새 역할"을 누르세요.</div>
@@ -214,6 +245,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260507-row-fix-embed"></script>
+  <script src="/static/admin.js?v=20260512-bulk-contract-v02"></script>
 </body>
 </html>

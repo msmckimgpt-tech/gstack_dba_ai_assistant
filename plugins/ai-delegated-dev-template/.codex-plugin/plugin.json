@@ -1,0 +1,43 @@
+{
+  "name": "ai-delegated-dev-template",
+  "version": "0.1.0",
+  "description": "Repo-local Codex commands and skills for ai_delegated_dev_template workflows.",
+  "author": {
+    "name": "ai_delegated_dev_template maintainers",
+    "email": "support@example.invalid",
+    "url": "https://github.com/msmckimgpt-tech"
+  },
+  "homepage": "https://github.com/msmckimgpt-tech/ai_delegated_dev_template",
+  "repository": "https://github.com/msmckimgpt-tech/ai_delegated_dev_template",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "template",
+    "commands",
+    "workflow",
+    "delegated-development"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "AI Delegated Dev Template",
+    "shortDescription": "Template-owned Codex commands for delegated development workflows",
+    "longDescription": "Repo-local Codex commands and skills that mirror the template-owned Claude /_template workflows while preserving AGENTS.md as the policy source of truth.",
+    "developerName": "ai_delegated_dev_template maintainers",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/msmckimgpt-tech/ai_delegated_dev_template",
+    "privacyPolicyURL": "https://openai.com/policies/privacy-policy/",
+    "termsOfServiceURL": "https://openai.com/policies/terms-of-use/",
+    "defaultPrompt": [
+      "/_template:entry 신규 작업 요청을 정리하고 진행",
+      "/_template:test-strategy 현재 변경의 테스트 전략 수립",
+      "/_template:version-upgrade --check"
+    ],
+    "brandColor": "#2563EB",
+    "screenshots": []
+  }
+}

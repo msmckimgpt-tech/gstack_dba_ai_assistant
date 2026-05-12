@@ -42,3 +42,6 @@ gstack 스킬이 본 저장소 맥락과 충돌하지 않는 경우에 한해, �
 - gstack 버전 업그레이드 → `/gstack-upgrade`
 
 본 저장소는 feature 중심 구조이므로, 스킬이 `/ship` 이나 `/review` 로 PR 을 다룰 때는 `CONTRIBUTING.md` 의 브랜치/커밋 규칙(`<type>(<scope>): 요약 (#<issue>)` + `TASK-NNNN` 접미)을 우선 적용한다.
+
+Codex 사용자는 `.codex/commands/` 및 `AGENTS.md` 의 Codex command compatibility
+정책을 따른다. `.claude/commands/` 는 Claude 전용 entrypoint 로 유지한다.
