@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
-template_version: v3.6.0
+template_version: v3.6.1
 domain: [workflow, context]
 ai_read_priority: 3
 ---
@@ -185,3 +185,76 @@ TEMP_CLEANUP_ON_SUCCESS="1"
 | worktree | Git worktree를 활용한 물리적 작업 디렉토리 분리. 병렬 AI 작업 시 권장 |
 | LEARNINGS.md | AI 학습 기록 문서. 실수, 패턴, 특이사항, 선호를 append-only로 누적 |
 | CODEBASE_MAP.md | 저장소 파일 구조와 주요 진입점을 AI가 빠르게 참조할 수 있도록 요약한 문서 |
+
+## 10. Admin Console UI 일관성
+
+관리 콘솔 (`feature-0003-agent-web-ui` 의 `admin.html` / `admin.js` / `styles.css`) 의 카테고리별 UI (Accounts, Roles, Products, 이후 추가될 모든 카테고리) 는 본 섹션의 정책을 따른다.
+
+상세 컴포넌트 명세 · HTML · CSS · JS contract · keyboard map · a11y · cross-page selection · optimistic rollback · confirm · RBAC partial-failure UI · runtime assertion 은 `../unit/feature-0003-agent-web-ui/docs/DESIGN.md` 정본을 따른다. 본 섹션은 project-level 강제 정책만 명시한다.
+
+### 10.1 다중선택 (multi-select) 적용 룰
+
+카테고리가 다음 조건을 모두 만족하면 다중선택을 **의무 지원** 한다:
+1. 동질 row entity 리스트 (한 row = 한 entity 인스턴스).
+2. 일괄 적용 가치가 있는 작업 (활성/비활성, 삭제, 내보내기 등) 이 ≥ 1 개 존재.
+3. row 당 별도 detail panel 또는 inline form 이 있다.
+
+위 조건을 만족하지 않는 카테고리 (단순 viewer, dashboard, 비교 view 등) 는 다중선택 면제. 면제 카테고리는 row-hover inline action 패턴을 사용한다 (Vercel deployments 패턴).
+
+### 10.2 DOM anchor 표준
+
+모든 다중선택 카테고리는 동일한 5단 구조를 따른다:
+
+```
+<section class="admin-pane">
+  <header class="admin-pane-head">
+    <div>... drawer-label + h2 ...</div>
+    <div class="admin-pane-head-right"><!-- primary action ONLY --></div>
+  </header>
+  <div class="admin-list-detail">
+    <div class="admin-list-col">
+      <div class="admin-list-toolbar">      <!-- 검색 + 필터 -->
+      <div class="admin-list-head">         <!-- select-all + count -->
+      <div class="admin-list">              <!-- row list -->
+      <div class="admin-bulk-actions">      <!-- ★ bulk toolbar 표준 위치 (list 직하단) -->
+      <div class="admin-list-pagination">   <!-- 페이지네이션 -->
+    </div>
+    <div class="admin-detail-col"></div>
+  </div>
+</section>
+```
+
+**불변 규칙:**
+- `.admin-pane-head-right` 는 **카테고리 primary action 전용** (`+ 새 X` / 카테고리-scope navigation). bulk toolbar 또는 동적 action 슬롯으로 사용 금지.
+- Bulk toolbar 는 **항상 `.admin-bulk-actions` 컨테이너** 에 위치하며, list 직하단 sticky 로 배치한다. 다른 위치 (floating, header, footer fixed 등) 채택은 본 컨벤션의 명시적 개정을 통해서만 가능.
+- 거부 근거: Notion 식 "헤더 morph" 패턴 (헤더 자체가 bulk toolbar 로 변형) 은 본 컨벤션이 명시 거부. 이유는 `.admin-pane-head-right` 슬롯의 semantic 단일성 (primary action 전용) 을 깨뜨리기 때문.
+
+### 10.3 표준 자료구조
+
+- 다중선택 상태: `adminState.<entity>Selected: Set<KEY>` 형태.
+  - KEY 타입은 entity 의 wire-format 기본형 (정수 ID → `Number`, key string → `String`). 한 entity 내에서 통일.
+- 신규 미저장 row 는 multi-select checkbox `disabled` + Set 에서 자동 제외.
+- 데이터 reload 후 invariant: `<entity>Selected = <entity>Selected ∩ visibleIds` (stale entry 자동 제거).
+- 페이지 이동 시 Set **보존** (cross-page selection). 페이지 1·2 합산 count 가 ≥ 2 페이지에 걸치면 banner 노출 (상세는 DESIGN.md §6).
+
+### 10.4 단위 어휘 표준
+
+| Entity 종류 | 단위 |
+|---|---|
+| 사람 (Accounts, Members 등) | 명 |
+| 시스템 entity (Roles, Products, Conversations 등) | 개 |
+
+선택 count label 형식: `{N}{단위} 선택됨`.
+
+### 10.5 신규 카테고리 추가 체크리스트
+
+새 admin 카테고리 (예: future `Settings`, `Audit Log`, `Integrations`) 를 추가할 때 다음을 차례로 평가한다:
+
+- [ ] §10.1 적용 룰 — 다중선택 의무 카테고리인지 판정
+- [ ] §10.2 DOM anchor 표준 구조 사용
+- [ ] §10.3 자료구조 (Set, invariant, cross-page) 적용
+- [ ] §10.4 단위 어휘 따름
+- [ ] feature-0003 `DESIGN.md` 의 컴포넌트 / a11y / keyboard / confirm / RBAC partial-fail / runtime assertion 적용
+- [ ] 적용 후 `assertBulkBarContract(<entity>)` 가 통과하는지 brower devtools 또는 e2e 에서 확인
+
+위 체크리스트가 PASS 되지 않은 카테고리 추가는 PR 단계에서 `policy-contract` 또는 `ai-review` 가 반려한다 (자동 contract 정의는 후속 cycle 작업으로 등록).

@@ -14,6 +14,18 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 ## 2. Goal
 - REQ-0001: Web UI 코드를 별도 feature로 분리한다.
 - REQ-0002: agent 이미지가 새 Web UI 경로를 정상 포함하게 한다.
+- REQ-20260512-0001 (TASK-0055): 관리 콘솔의 모든 카테고리 (Accounts / Roles / Products / 이후 추가) 의 다중선택 (multi-select) UX 는 단일 정합 컨벤션 (`docs/CONVENTIONS.md §10` + `feature-0003 docs/DESIGN.md`) 을 따른다. drift 재발은 runtime contract assertion 이 차단한다.
+  - AC-0031: Accounts / Roles / Products 의 bulk toolbar 가 모두 `.admin-list-col` 의 `.admin-bulk-actions` (list 직하단) 에 위치한다. `.admin-pane-head-right` 는 primary action (`+ 새 X`) 전용이며 동적 bulk action 슬롯 사용 금지 — `assertBulkBarContract(<entity>)` 가 초기화 시 검증.
+  - AC-0032: Products 에 multi-select 가 신설된다 (`productSelected: Set<number>` + row checkbox + `#productSelectAll` + `#productsBulkBar`). 기존 단일 `selectedProductId` 흐름은 detail panel 용으로 유지된다 (DESIGN.md §12 Phase A).
+  - AC-0033: 모든 다중선택 카테고리의 bulk bar 는 표준 컴포넌트 set (label `{N}{단위} 선택됨` + 활성화 / 비활성화 / 삭제(danger) / 선택 해제[Esc kbd-hint]) 순서로 표시된다. 단위 어휘는 사람 entity → "명", 시스템 entity → "개".
+  - AC-0034: 위험 액션 (`delete`) 의 count 가 ≥ `CONFIRM_TYPED_THRESHOLD` (=10) 일 때 typed-confirmation prompt 가 노출된다. 사용자가 정확한 count 를 입력해야 적용된다.
+  - AC-0035: RBAC partial-failure 시 toast 는 `{applied}{단위} {액션} pending 반영 ({skipped}{단위} 권한 부족·보호 row 제외)` 형식으로 분할 표시한다. self-deactivate / self-delete / 기본 제품(`is_default`) 삭제 / 미저장 신규 role(`new:` prefix) 은 자동 보호된다.
+  - AC-0036: keyboard 단축키 — shift-click 으로 직전 click 부터 현재 row 까지 visible 범위 range 선택. 현재 active pane (`adminState.tab`) 에서 `Esc` 키는 해당 카테고리의 선택을 모두 해제한다 (input/textarea/contenteditable 내부에서는 무시).
+  - AC-0037: cross-page selection — Accounts 의 페이징을 넘나들며 선택 시 Set 이 보존되고, 다른 페이지 선택이 존재할 때 `.admin-bulk-cross-page` banner (Stripe pattern) 가 자동 노출된다. banner 의 "전체 페이지 선택 해제" 또는 "현재 페이지만 보기" 버튼으로 정리 가능.
+  - AC-0038: 데이터 reload 후 (`loadAdminData`) 모든 `<entity>Selected` 가 visible id set 으로 교차 정리되어 stale entry 가 제거된다 (DESIGN.md §4 invariant I-2).
+  - AC-0039: a11y — bulk bar 는 `role="toolbar"` + `aria-live="polite"`, cross-page banner 는 `role="status"` + `aria-live="polite"`, list 는 `role="grid"` + `aria-multiselectable="true"`, row 는 `role="row"`, row checkbox 는 entity 이름이 포함된 `aria-label`, select-all 은 "현재 페이지 X 전체 선택" 라벨 + `indeterminate` 정확 반영.
+  - AC-0040: visual hierarchy 토큰 — `:root` 의 `--z-bulk-bar`, `--z-bulk-banner`, `--bulk-bar-bottom`, `--bulk-bar-elev` 가 sticky offset / z-index / shadow 를 표준화. `.admin-bulk-actions:not(:empty)` 일 때만 sticky/shadow 적용 (빈 상태는 `:empty {display:none}`).
+
 - REQ-20260506-0001 (TASK-0048): "새 대화" 버튼은 backend row 를 즉시 만들지 않고, client-side pending state 를 표시한 뒤 사용자가 첫 메시지를 보낼 때 backend 가 lazy 로 row 를 생성한다. 빈 대화 누적을 방지한다.
   - AC-0026: 사이드바 "새 대화" 버튼 클릭은 `POST /api/new_conversation` 을 호출하지 않는다 (network round trip 0회). 클릭 후 사이드바 "내 대화" 그룹 상단에 "새 대화 (작성 중)" placeholder (`.conv-item.is-pending`) 가 active 로 표시되고, 헤더는 "새 대화" + "첫 메시지를 입력하면 대화가 만들어집니다." 부제, composer 는 활성 상태가 된다.
   - AC-0027: pending 상태에서 사용자가 첫 메시지를 보내면 `/api/ask` 가 호출되며 body 에 `conversation_id: ""` + `product_mode` + `product_id` (사용자의 직전 의도) 가 포함된다. 응답으로 받은 `conversation_id` 가 즉시 active 로 채택되고 pending placeholder 는 사라진다. backend 는 lazy 생성된 새 대화의 `AgentCoreConversations.product_id`/`product_mode` 를 hint 로 셋업하고 `WebAccounts.ProductPref*` 미러도 갱신한다.

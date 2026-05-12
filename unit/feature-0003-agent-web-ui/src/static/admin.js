@@ -21,6 +21,12 @@ const adminState = {
   selectedRoleId: null,
   productSearch: "",
   selectedProductId: null,
+  // DESIGN.md §4 / §12 Phase A — Products multi-select (단일 selectedProductId 와 동거)
+  productSelected: new Set(),
+  // DESIGN.md §9 — shift-click range 의 anchor index (visible 범위 내)
+  accountLastClickIdx: -1,
+  roleLastClickIdx: -1,
+  productLastClickIdx: -1,
   productDbDraft: new Map(),
   availableDatabases: { metadata_schemas: [], user_schemas: [] },
   pending: {
@@ -53,6 +59,119 @@ const PERMISSION_GROUP_LABELS = {
   product: "제품",
   misc: "기타",
 };
+
+/* ── Bulk action contract — CONVENTIONS.md §10 + DESIGN.md §4~§9 ───── */
+
+// DESIGN.md §5 / §10.4 — 카테고리별 단위 어휘
+const BULK_ENTITY_UNIT = { accounts: "명", roles: "개", products: "개" };
+const BULK_ACTION_LABEL = { activate: "활성화", deactivate: "비활성화", delete: "삭제" };
+// DESIGN.md §7 — 위험 액션 typed-confirm 임계치
+const CONFIRM_TYPED_THRESHOLD = 10;
+
+function entityUnit(entity) { return BULK_ENTITY_UNIT[entity] || "개"; }
+function actionLabel(action) { return BULK_ACTION_LABEL[action] || action; }
+
+// DESIGN.md §7 — bulk action confirm 표준
+function confirmBulkAction({ entity, action, count, danger = false }) {
+  const unit = entityUnit(entity);
+  const verb = actionLabel(action);
+  const summary = `${count}${unit} ${verb}`;
+  if (!danger || count < CONFIRM_TYPED_THRESHOLD) {
+    return window.confirm(`${summary} pending 반영. 적용 전에는 되돌릴 수 있습니다. 계속할까요?`);
+  }
+  const expected = String(count);
+  const typed = window.prompt(
+    `${summary} pending 반영 — 위험 작업입니다.\n확인을 위해 ${expected} 를 정확히 입력하세요:`
+  );
+  return typed === expected;
+}
+
+// DESIGN.md §8 — RBAC partial-failure 처리. ids 를 [applied, skipped] 로 분할.
+function runBulkActionWithPartialFail({ entity, ids, action, applyFn, canTargetRow }) {
+  const applied = [];
+  const skipped = [];
+  Array.from(ids).forEach((id) => {
+    if (canTargetRow && !canTargetRow(id)) { skipped.push(id); return; }
+    try { applyFn(id); applied.push(id); }
+    catch (_err) { skipped.push(id); }
+  });
+  const unit = entityUnit(entity);
+  const verb = actionLabel(action);
+  const baseMsg = `${applied.length}${unit} ${verb} pending 반영`;
+  if (skipped.length === 0) {
+    showToast(baseMsg);
+  } else {
+    // skipped chip 은 styles.css .toast-skipped 와 짝
+    const skipChip = ` (${skipped.length}${unit} 권한 부족·보호 row 제외)`;
+    showToast(baseMsg + skipChip, false);
+  }
+  return { applied, skipped };
+}
+
+// DESIGN.md §4 — runtime contract assertion (drift 재발 차단)
+function assertBulkBarContract(entity) {
+  const barId = entity === "roles" ? "roleBulkBar" : `${entity}BulkBar`;
+  const bar = document.getElementById(barId);
+  if (!bar) { console.warn(`[contract] #${barId} missing`); return false; }
+  if (bar.getAttribute("role") !== "toolbar") {
+    console.warn(`[contract] #${barId} role!=toolbar (DESIGN.md §10)`); return false;
+  }
+  if (!bar.hasAttribute("aria-live")) {
+    console.warn(`[contract] #${barId} aria-live missing`); return false;
+  }
+  const parent = bar.parentElement;
+  if (!parent || !parent.classList.contains("admin-list-col")) {
+    console.warn(`[contract] #${barId} must be child of .admin-list-col (CONVENTIONS §10.2)`);
+    return false;
+  }
+  const paneSel = `[data-admin-pane="${entity}"]`;
+  const headRight = document.querySelector(`${paneSel} .admin-pane-head-right`);
+  if (headRight && headRight.querySelector(".admin-bulk-label")) {
+    console.warn(`[contract] bulk label leaked into .admin-pane-head-right (CONVENTIONS §10.2)`);
+    return false;
+  }
+  return true;
+}
+
+// DESIGN.md §6 — generic cross-page banner renderer
+function renderCrossPageBanner({ entity, selected, visibleIds, totalCount, onClearAll, onShowCurrentOnly }) {
+  const banner = document.getElementById(`${entity}CrossPageBanner`);
+  if (!banner) return;
+  banner.innerHTML = "";
+  const unit = entityUnit(entity);
+  const visibleSet = new Set(visibleIds.map((v) => String(v)));
+  const currentPageCount = Array.from(selected).filter((id) => visibleSet.has(String(id))).length;
+  const totalSelected = selected.size;
+  const offPageCount = totalSelected - currentPageCount;
+  if (offPageCount <= 0) return;  // 다른 페이지 선택 없으면 banner skip
+  const msg = document.createElement("div");
+  msg.className = "admin-bulk-cross-page-msg";
+  msg.innerHTML = `현재 페이지 <strong>${currentPageCount}${unit}</strong> · 전체 <strong>${totalSelected}${unit}</strong> 선택 (다른 페이지 ${offPageCount}${unit} 포함)`;
+  banner.appendChild(msg);
+  const clearAllBtn = document.createElement("button");
+  clearAllBtn.type = "button";
+  clearAllBtn.className = "tool-btn";
+  clearAllBtn.textContent = "전체 페이지 선택 해제";
+  clearAllBtn.addEventListener("click", onClearAll);
+  banner.appendChild(clearAllBtn);
+  const showCurOnlyBtn = document.createElement("button");
+  showCurOnlyBtn.type = "button";
+  showCurOnlyBtn.className = "tool-btn";
+  showCurOnlyBtn.textContent = "현재 페이지만 보기";
+  showCurOnlyBtn.addEventListener("click", onShowCurrentOnly);
+  banner.appendChild(showCurOnlyBtn);
+}
+
+// DESIGN.md §9 — shift-click range 적용
+function applyShiftRangeSelect({ selected, visibleIds, fromIdx, toIdx, addMode = true }) {
+  if (fromIdx < 0 || toIdx < 0) return;
+  const [lo, hi] = fromIdx <= toIdx ? [fromIdx, toIdx] : [toIdx, fromIdx];
+  for (let i = lo; i <= hi; i++) {
+    const id = visibleIds[i];
+    if (id === undefined || id === null) continue;
+    if (addMode) selected.add(id); else selected.delete(id);
+  }
+}
 
 /* ── Utility & DOM helpers ───────────────────────────────────────────── */
 
@@ -662,11 +781,15 @@ function renderAccountList() {
   const start = adminState.accountPage * ACCOUNT_PAGE_SIZE;
   const visible = all.slice(start, start + ACCOUNT_PAGE_SIZE);
 
-  visible.forEach((account) => {
+  // DESIGN.md §9 — shift-click range 를 위한 visible id 시퀀스 (현재 페이지)
+  const visibleIds = visible.map((a) => Number(a.id));
+  visible.forEach((account, visibleIdx) => {
     const merged = mergedAccount(account.id);
     const row = document.createElement("div");
     row.className = "admin-list-row";
     row.dataset.accountId = String(account.id);
+    row.dataset.idx = String(visibleIdx);
+    row.setAttribute("role", "row");
     if (Number(adminState.selectedAccountId) === Number(account.id)) row.classList.add("is-active");
     if (merged._pending) row.classList.add("has-pending");
     if (merged._delete) row.classList.add("is-to-delete");
@@ -675,12 +798,28 @@ function renderAccountList() {
     cb.type = "checkbox";
     cb.className = "admin-list-row-cb";
     cb.checked = adminState.accountSelected.has(Number(account.id));
-    cb.addEventListener("click", (ev) => ev.stopPropagation());
+    cb.setAttribute("aria-label", `계정 ${account.username} 선택`);
+    cb.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      // DESIGN.md §9 — shift-click range 처리는 click phase 에서 (change 이전)
+      if (ev.shiftKey && adminState.accountLastClickIdx >= 0) {
+        const addMode = !cb.checked;  // 곧 toggle 될 새 상태와 같은 방향으로 range 적용
+        applyShiftRangeSelect({
+          selected: adminState.accountSelected,
+          visibleIds,
+          fromIdx: adminState.accountLastClickIdx,
+          toIdx: visibleIdx,
+          addMode,
+        });
+        // 이번 click 의 default toggle 도 처리하도록 그대로 진행 (browser native)
+      }
+    });
     cb.addEventListener("change", () => {
       if (cb.checked) adminState.accountSelected.add(Number(account.id));
       else adminState.accountSelected.delete(Number(account.id));
-      renderAccountBulkBar();
-      updateAccountSelectAllCheckbox();
+      adminState.accountLastClickIdx = visibleIdx;
+      // shift-click range 가 다수 변경했을 수 있으므로 list 재렌더
+      renderAccountList();
     });
 
     const main = document.createElement("div");
@@ -744,6 +883,37 @@ function renderAccountList() {
   }
 
   updateAccountSelectAllCheckbox();
+  renderAccountBulkBar();
+  renderAccountCrossPageBanner();
+}
+
+// DESIGN.md §6 — Accounts cross-page banner (페이징 있음)
+function renderAccountCrossPageBanner() {
+  const totalPages = Math.max(1, Math.ceil(filteredAccounts().length / ACCOUNT_PAGE_SIZE));
+  if (totalPages <= 1) {
+    const banner = $("accountsCrossPageBanner");
+    if (banner) banner.innerHTML = "";
+    return;
+  }
+  const start = adminState.accountPage * ACCOUNT_PAGE_SIZE;
+  const visible = filteredAccounts().slice(start, start + ACCOUNT_PAGE_SIZE);
+  renderCrossPageBanner({
+    entity: "accounts",
+    selected: adminState.accountSelected,
+    visibleIds: visible.map((a) => Number(a.id)),
+    totalCount: adminState.accounts.length,
+    onClearAll: () => {
+      adminState.accountSelected.clear();
+      renderAccountList();
+    },
+    onShowCurrentOnly: () => {
+      const visibleSet = new Set(visible.map((a) => Number(a.id)));
+      adminState.accountSelected = new Set(
+        Array.from(adminState.accountSelected).filter((id) => visibleSet.has(Number(id)))
+      );
+      renderAccountList();
+    },
+  });
 }
 
 function updateAccountSelectAllCheckbox() {
@@ -773,16 +943,23 @@ function renderAccountBulkBar() {
   const count = adminState.accountSelected.size;
   if (!count) return;
 
+  // DESIGN.md §5 — 표준 컴포넌트 set (label → 액션들 → 선택 해제 + Esc kbd-hint)
   const label = document.createElement("span");
   label.className = "admin-bulk-label";
-  label.textContent = `${count}명 선택됨`;
+  label.textContent = `${count}${entityUnit("accounts")} 선택됨`;
   bar.appendChild(label);
 
-  const makeBtn = (text, handler, danger = false) => {
+  const makeBtn = (text, handler, danger = false, kbdHint = null) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = danger ? "tool-btn danger" : "tool-btn";
     btn.textContent = text;
+    if (kbdHint) {
+      const hint = document.createElement("span");
+      hint.className = "kbd-hint";
+      hint.textContent = kbdHint;
+      btn.appendChild(hint);
+    }
     btn.addEventListener("click", handler);
     return btn;
   };
@@ -798,28 +975,47 @@ function renderAccountBulkBar() {
   }
   bar.appendChild(makeBtn("선택 해제", () => {
     adminState.accountSelected.clear();
+    adminState.accountLastClickIdx = -1;
     renderAccountList();
-    renderAccountBulkBar();
-  }));
+  }, false, "Esc"));
 }
 
+// DESIGN.md §7 + §8 — confirm 표준 + partial-fail (deleted/self 보호)
 function bulkAccountSetActive(active) {
-  adminState.accountSelected.forEach((id) => {
-    const base = adminState.accounts.find((a) => Number(a.id) === Number(id));
-    if (!base || base.deleted_at) return;
-    setAccountPending(id, { is_active: active });
+  const action = active ? "activate" : "deactivate";
+  const count = adminState.accountSelected.size;
+  if (!confirmBulkAction({ entity: "accounts", action, count, danger: false })) return;
+  const meId = adminState.me ? Number(adminState.me.id) : null;
+  runBulkActionWithPartialFail({
+    entity: "accounts",
+    ids: adminState.accountSelected,
+    action,
+    applyFn: (id) => setAccountPending(Number(id), { is_active: active }),
+    canTargetRow: (id) => {
+      const base = adminState.accounts.find((a) => Number(a.id) === Number(id));
+      if (!base || base.deleted_at) return false;
+      if (!active && meId !== null && Number(id) === meId) return false;  // self-deactivate 보호
+      return true;
+    },
   });
-  showToast(`${adminState.accountSelected.size}명 ${active ? "활성" : "비활성"} pending 반영`);
 }
 
 function bulkAccountDelete() {
-  if (!window.confirm(`${adminState.accountSelected.size}명 계정을 삭제 대기열에 넣을까요? (적용 전에는 반영되지 않음)`)) return;
-  adminState.accountSelected.forEach((id) => {
-    const base = adminState.accounts.find((a) => Number(a.id) === Number(id));
-    if (!base || base.deleted_at) return;
-    setAccountPending(id, { _delete: true });
+  const count = adminState.accountSelected.size;
+  if (!confirmBulkAction({ entity: "accounts", action: "delete", count, danger: true })) return;
+  const meId = adminState.me ? Number(adminState.me.id) : null;
+  runBulkActionWithPartialFail({
+    entity: "accounts",
+    ids: adminState.accountSelected,
+    action: "delete",
+    applyFn: (id) => setAccountPending(Number(id), { _delete: true }),
+    canTargetRow: (id) => {
+      const base = adminState.accounts.find((a) => Number(a.id) === Number(id));
+      if (!base || base.deleted_at) return false;
+      if (meId !== null && Number(id) === meId) return false;  // self-delete 보호
+      return true;
+    },
   });
-  showToast(`${adminState.accountSelected.size}명 삭제 pending 반영`);
 }
 
 function selectAccount(accountId) {
@@ -1065,22 +1261,35 @@ function renderRoleList() {
     return;
   }
 
+  // DESIGN.md §9 — shift-click range 를 위한 visible id 시퀀스 (newEntries 는 disabled 라 제외)
+  const visibleRoleIds = serverRoles.map((r) => String(r.id));
   newEntries.forEach(([tempId, _draft]) => {
-    listEl.appendChild(buildRoleRow(tempId));
+    listEl.appendChild(buildRoleRow(tempId, /*visibleIdx=*/-1, visibleRoleIds));
   });
-  serverRoles.forEach((role) => {
-    listEl.appendChild(buildRoleRow(role.id));
+  serverRoles.forEach((role, idx) => {
+    listEl.appendChild(buildRoleRow(role.id, idx, visibleRoleIds));
   });
 
   updateRoleSelectAllCheckbox();
   renderRoleBulkBar();
+  // Roles 는 페이징이 없으므로 cross-page banner 는 항상 empty (renderCrossPageBanner 가 off-page 0 으로 skip)
+  renderCrossPageBanner({
+    entity: "roles",
+    selected: adminState.roleSelected,
+    visibleIds: visibleRoleIds,
+    totalCount: serverRoles.length,
+    onClearAll: () => { adminState.roleSelected.clear(); renderRoleList(); },
+    onShowCurrentOnly: () => { /* no-op — 페이징 없음 */ },
+  });
 }
 
-function buildRoleRow(roleKey) {
+function buildRoleRow(roleKey, visibleIdx = -1, visibleRoleIds = []) {
   const merged = mergedRole(roleKey);
   const row = document.createElement("div");
   row.className = "admin-list-row";
   row.dataset.roleKey = String(roleKey);
+  if (visibleIdx >= 0) row.dataset.idx = String(visibleIdx);
+  row.setAttribute("role", "row");
   if (String(adminState.selectedRoleId) === String(roleKey)) row.classList.add("is-active");
   if (merged._pending) row.classList.add("has-pending");
   if (merged._delete) row.classList.add("is-to-delete");
@@ -1089,13 +1298,27 @@ function buildRoleRow(roleKey) {
   cb.type = "checkbox";
   cb.className = "admin-list-row-cb";
   cb.checked = adminState.roleSelected.has(String(roleKey));
+  cb.setAttribute("aria-label", `역할 ${merged.name || merged.key || roleKey} 선택`);
   if (merged._isNew) cb.disabled = true;
-  cb.addEventListener("click", (ev) => ev.stopPropagation());
+  cb.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    // DESIGN.md §9 — shift-click range
+    if (ev.shiftKey && adminState.roleLastClickIdx >= 0 && visibleIdx >= 0 && !cb.disabled) {
+      const addMode = !cb.checked;
+      applyShiftRangeSelect({
+        selected: adminState.roleSelected,
+        visibleIds: visibleRoleIds,
+        fromIdx: adminState.roleLastClickIdx,
+        toIdx: visibleIdx,
+        addMode,
+      });
+    }
+  });
   cb.addEventListener("change", () => {
     if (cb.checked) adminState.roleSelected.add(String(roleKey));
     else adminState.roleSelected.delete(String(roleKey));
-    renderRoleBulkBar();
-    updateRoleSelectAllCheckbox();
+    if (visibleIdx >= 0) adminState.roleLastClickIdx = visibleIdx;
+    renderRoleList();
   });
 
   const main = document.createElement("div");
@@ -1153,16 +1376,23 @@ function renderRoleBulkBar() {
   const count = adminState.roleSelected.size;
   if (!count) return;
 
+  // DESIGN.md §5 — 표준 컴포넌트 set
   const label = document.createElement("span");
   label.className = "admin-bulk-label";
-  label.textContent = `${count}개 선택됨`;
+  label.textContent = `${count}${entityUnit("roles")} 선택됨`;
   bar.appendChild(label);
 
-  const makeBtn = (text, handler, danger = false) => {
+  const makeBtn = (text, handler, danger = false, kbdHint = null) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = danger ? "tool-btn danger" : "tool-btn";
     btn.textContent = text;
+    if (kbdHint) {
+      const hint = document.createElement("span");
+      hint.className = "kbd-hint";
+      hint.textContent = kbdHint;
+      btn.appendChild(hint);
+    }
     btn.addEventListener("click", handler);
     return btn;
   };
@@ -1176,25 +1406,35 @@ function renderRoleBulkBar() {
   }
   bar.appendChild(makeBtn("선택 해제", () => {
     adminState.roleSelected.clear();
+    adminState.roleLastClickIdx = -1;
     renderRoleList();
-  }));
+  }, false, "Esc"));
 }
 
+// DESIGN.md §7 + §8 — confirm + partial-fail (new: 미저장 row 제외)
 function bulkRoleSetActive(active) {
-  adminState.roleSelected.forEach((roleKey) => {
-    if (String(roleKey).startsWith("new:")) return;
-    setRolePending(Number(roleKey), { is_active: active });
+  const action = active ? "activate" : "deactivate";
+  const count = adminState.roleSelected.size;
+  if (!confirmBulkAction({ entity: "roles", action, count, danger: false })) return;
+  runBulkActionWithPartialFail({
+    entity: "roles",
+    ids: adminState.roleSelected,
+    action,
+    applyFn: (key) => setRolePending(Number(key), { is_active: active }),
+    canTargetRow: (key) => !String(key).startsWith("new:"),
   });
-  showToast(`${adminState.roleSelected.size}개 ${active ? "활성" : "비활성"} pending 반영`);
 }
 
 function bulkRoleDelete() {
-  if (!window.confirm(`${adminState.roleSelected.size}개 역할을 삭제 대기열에 넣을까요? (적용 전 취소 가능)`)) return;
-  adminState.roleSelected.forEach((roleKey) => {
-    if (String(roleKey).startsWith("new:")) return;
-    setRolePending(Number(roleKey), { _delete: true });
+  const count = adminState.roleSelected.size;
+  if (!confirmBulkAction({ entity: "roles", action: "delete", count, danger: true })) return;
+  runBulkActionWithPartialFail({
+    entity: "roles",
+    ids: adminState.roleSelected,
+    action: "delete",
+    applyFn: (key) => setRolePending(Number(key), { _delete: true }),
+    canTargetRow: (key) => !String(key).startsWith("new:"),
   });
-  showToast(`${adminState.roleSelected.size}개 삭제 pending 반영`);
 }
 
 function selectRole(roleKey) {
@@ -1727,6 +1967,10 @@ async function loadAdminData() {
   if (adminState.selectedProductId && !productIds.has(Number(adminState.selectedProductId))) {
     adminState.selectedProductId = null;
   }
+  // DESIGN.md §4 I-2 — productSelected stale entry 제거 (reload 후 invariant)
+  adminState.productSelected = new Set(
+    Array.from(adminState.productSelected).filter((id) => productIds.has(Number(id)))
+  );
   Array.from(adminState.productDbDraft.keys()).forEach((id) => {
     if (!productIds.has(Number(id))) adminState.productDbDraft.delete(id);
   });
@@ -1808,12 +2052,48 @@ function renderProductList() {
     empty.className = "admin-detail-empty";
     empty.textContent = "제품이 없습니다.";
     listEl.appendChild(empty);
+    updateProductSelectAllCheckbox();
+    renderProductBulkBar();
+    renderProductCrossPageBanner();
     return;
   }
-  items.forEach((p) => {
+  // DESIGN.md §9 — shift-click range 를 위한 visible id 시퀀스
+  const visibleProductIds = items.map((p) => Number(p.id));
+  items.forEach((p, visibleIdx) => {
     const row = document.createElement("div");
     row.className = "admin-list-row";
-    if (Number(adminState.selectedProductId) === Number(p.id)) row.classList.add("is-selected");
+    row.dataset.productId = String(p.id);
+    row.dataset.idx = String(visibleIdx);
+    row.setAttribute("role", "row");
+    if (Number(adminState.selectedProductId) === Number(p.id)) row.classList.add("is-active");
+    if (!p.is_active) row.classList.add("is-disabled");
+
+    // DESIGN.md §12 Phase A — row checkbox (multi-select 신설), detail panel 은 단일 selectedProductId 유지
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "admin-list-row-cb";
+    cb.checked = adminState.productSelected.has(Number(p.id));
+    cb.setAttribute("aria-label", `제품 ${p.name} 선택`);
+    cb.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (ev.shiftKey && adminState.productLastClickIdx >= 0) {
+        const addMode = !cb.checked;
+        applyShiftRangeSelect({
+          selected: adminState.productSelected,
+          visibleIds: visibleProductIds,
+          fromIdx: adminState.productLastClickIdx,
+          toIdx: visibleIdx,
+          addMode,
+        });
+      }
+    });
+    cb.addEventListener("change", () => {
+      if (cb.checked) adminState.productSelected.add(Number(p.id));
+      else adminState.productSelected.delete(Number(p.id));
+      adminState.productLastClickIdx = visibleIdx;
+      renderProductList();
+    });
+
     row.addEventListener("click", () => {
       adminState.selectedProductId = Number(p.id);
       renderProductList();
@@ -1831,9 +2111,118 @@ function renderProductList() {
     if (!p.is_active) badges.push("inactive");
     sub.textContent = [p.description || "—", ...badges].filter(Boolean).join(" · ");
     meta.append(name, sub);
-    row.appendChild(meta);
+    row.append(cb, meta);
     listEl.appendChild(row);
   });
+  updateProductSelectAllCheckbox();
+  renderProductBulkBar();
+  renderProductCrossPageBanner();
+}
+
+// DESIGN.md §11 — Products select-all (indeterminate 반영)
+function updateProductSelectAllCheckbox() {
+  const all = filteredProducts();
+  const selAll = $("productSelectAll");
+  if (!selAll) return;
+  if (!all.length) { selAll.checked = false; selAll.indeterminate = false; return; }
+  const selected = all.filter((p) => adminState.productSelected.has(Number(p.id))).length;
+  if (selected === 0) { selAll.checked = false; selAll.indeterminate = false; }
+  else if (selected === all.length) { selAll.checked = true; selAll.indeterminate = false; }
+  else { selAll.checked = false; selAll.indeterminate = true; }
+}
+
+// DESIGN.md §5 — Products bulk toolbar
+function renderProductBulkBar() {
+  const bar = $("productsBulkBar");
+  if (!bar) return;
+  bar.innerHTML = "";
+  const count = adminState.productSelected.size;
+  if (!count) return;
+
+  const label = document.createElement("span");
+  label.className = "admin-bulk-label";
+  label.textContent = `${count}${entityUnit("products")} 선택됨`;
+  bar.appendChild(label);
+
+  const makeBtn = (text, handler, danger = false, kbdHint = null) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = danger ? "tool-btn danger" : "tool-btn";
+    btn.textContent = text;
+    if (kbdHint) {
+      const hint = document.createElement("span");
+      hint.className = "kbd-hint";
+      hint.textContent = kbdHint;
+      btn.appendChild(hint);
+    }
+    btn.addEventListener("click", handler);
+    return btn;
+  };
+
+  // product.manage 권한 1 개로 모든 product mutation 을 통제 (현재 RBAC catalog 기준)
+  if (can("product.manage")) {
+    bar.appendChild(makeBtn("활성화 pending", () => bulkProductSetActive(true)));
+    bar.appendChild(makeBtn("비활성화 pending", () => bulkProductSetActive(false)));
+    bar.appendChild(makeBtn("삭제 pending", () => bulkProductDelete(), true));
+  }
+  bar.appendChild(makeBtn("선택 해제", () => {
+    adminState.productSelected.clear();
+    adminState.productLastClickIdx = -1;
+    renderProductList();
+  }, false, "Esc"));
+}
+
+// DESIGN.md §6 — Products cross-page banner (현재 페이징 없음, 향후 도입 대비 placeholder)
+function renderProductCrossPageBanner() {
+  const items = filteredProducts();
+  renderCrossPageBanner({
+    entity: "products",
+    selected: adminState.productSelected,
+    visibleIds: items.map((p) => Number(p.id)),
+    totalCount: adminState.products.length,
+    onClearAll: () => { adminState.productSelected.clear(); renderProductList(); },
+    onShowCurrentOnly: () => { /* no-op — 페이징 없음 */ },
+  });
+}
+
+// DESIGN.md §7 + §8 — confirm + partial-fail
+// product.manage 권한이 있어도 다음 row 는 보호: (1) detail panel 에서 미저장 새 product 의 placeholder
+function bulkProductSetActive(active) {
+  const action = active ? "activate" : "deactivate";
+  const count = adminState.productSelected.size;
+  if (!confirmBulkAction({ entity: "products", action, count, danger: false })) return;
+  runBulkActionWithPartialFail({
+    entity: "products",
+    ids: adminState.productSelected,
+    action,
+    applyFn: (id) => setProductMetaPending(Number(id), { is_active: active }),
+    canTargetRow: (id) => {
+      const base = adminState.products.find((p) => Number(p.id) === Number(id));
+      return !!base;
+    },
+  });
+  // pending 반영 후 detail 새로고침 (선택된 product 의 active 상태가 바뀐 경우 UI 일관성)
+  if (adminState.selectedProductId) renderProductDetail();
+}
+
+function bulkProductDelete() {
+  const count = adminState.productSelected.size;
+  if (!confirmBulkAction({ entity: "products", action: "delete", count, danger: true })) return;
+  // product 삭제는 catalog 영향이 큼 (Role/Account 권한 grid 도 의존). 본 cycle 은 deletion API 가 마련된 경우만 적용.
+  // 현재 product.manage 권한 + setProductMetaPending 에 _delete 키 plumbing 이 backend 에 없을 수 있으므로 safety check.
+  runBulkActionWithPartialFail({
+    entity: "products",
+    ids: adminState.productSelected,
+    action: "delete",
+    applyFn: (id) => setProductMetaPending(Number(id), { _delete: true }),
+    canTargetRow: (id) => {
+      const base = adminState.products.find((p) => Number(p.id) === Number(id));
+      if (!base) return false;
+      if (base.is_default) return false;  // default product 삭제 보호
+      return true;
+    },
+  });
+  if (adminState.selectedProductId) renderProductDetail();
 }
 
 function renderProductDetail() {
@@ -2603,6 +2992,46 @@ async function initialize() {
     });
   }
 
+  // DESIGN.md §12 Phase A — Products select-all
+  const productSelectAllEl = $("productSelectAll");
+  if (productSelectAllEl) {
+    productSelectAllEl.addEventListener("change", (ev) => {
+      const visible = filteredProducts();
+      if (ev.target.checked) {
+        visible.forEach((p) => adminState.productSelected.add(Number(p.id)));
+      } else {
+        visible.forEach((p) => adminState.productSelected.delete(Number(p.id)));
+      }
+      renderProductList();
+    });
+  }
+
+  // DESIGN.md §9 — Esc 글로벌 핸들러: 현재 active pane 의 선택 해제
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Escape") return;
+    // input/textarea/contenteditable 안에서는 무시 (form 입력 보호)
+    const t = ev.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    let cleared = false;
+    if (adminState.tab === "accounts" && adminState.accountSelected.size > 0) {
+      adminState.accountSelected.clear();
+      adminState.accountLastClickIdx = -1;
+      renderAccountList();
+      cleared = true;
+    } else if (adminState.tab === "roles" && adminState.roleSelected.size > 0) {
+      adminState.roleSelected.clear();
+      adminState.roleLastClickIdx = -1;
+      renderRoleList();
+      cleared = true;
+    } else if (adminState.tab === "products" && adminState.productSelected.size > 0) {
+      adminState.productSelected.clear();
+      adminState.productLastClickIdx = -1;
+      renderProductList();
+      cleared = true;
+    }
+    if (cleared) ev.preventDefault();
+  });
+
   // Commit bar
   $("commitApplyBtn").addEventListener("click", () => {
     applyAllPending().catch((error) => {
@@ -2638,6 +3067,12 @@ async function initialize() {
   });
 
   await loadAdminData();
+
+  // DESIGN.md §4 — runtime contract assertion (drift 재발 차단, best-effort)
+  ["accounts", "roles", "products"].forEach((entity) => {
+    try { assertBulkBarContract(entity); }
+    catch (err) { console.error(err); }
+  });
 }
 
 initialize().catch((error) => {
