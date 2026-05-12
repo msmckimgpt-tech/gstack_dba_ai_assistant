@@ -47,7 +47,7 @@ function systemPromptPendingKey({ scope, productId = null, roleId = null, accoun
   return `${scope}:${productId || 0}:${roleId || 0}:${accountId || 0}`;
 }
 
-// TASK-0052 Phase 1D: 'product' 그룹 추가. backend `PERMISSION_GROUP_ORDER` (app.py) 와 순서 동기 필수.
+// TASK-0052 Phase 1D: 'product' 그룹 추가. backend `PERMISSION_DEFINITIONS[*].group` (app.py) 와 키 정합 필수.
 // product 그룹은 정적 `product.manage` / `system_prompt.manage.role.any` 외에 동적 `product.access.<key>`
 // 코드들 (Phase 1B 의 _ensure_product_access_permissions backfill) 도 자동으로 그룹에 합류된다.
 const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "misc"];
@@ -59,6 +59,15 @@ const PERMISSION_GROUP_LABELS = {
   product: "제품",
   misc: "기타",
 };
+
+// CONVENTIONS.md §10.6 — 관리 콘솔 권한 grid 는 "관리 권한 → 운영 권한 → 기타" 2단 section 으로 묶는다.
+// 화면 맥락이 "타인의 권한을 배치하는 관리자 시점" 이므로 console·account·role 메타권한이 위로 오고,
+// conversation·product 운영 권한은 그 아래로 분리한다. (작업 화면측 정렬은 app.js WORK_SCREEN_PERMISSION_SECTIONS)
+const ADMIN_PERMISSION_SECTIONS = [
+  { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 메타권한", groups: ["console", "account", "role"] },
+  { id: "operate", title: "운영 권한", description: "대화 · 제품 접근", groups: ["conversation", "product"] },
+  { id: "misc", title: "기타", description: null, groups: ["misc"] },
+];
 
 /* ── Bulk action contract — CONVENTIONS.md §10 + DESIGN.md §4~§9 ───── */
 
@@ -245,6 +254,29 @@ function groupedPermissions(opts = {}) {
   });
 }
 
+// CONVENTIONS.md §10.6 — groupedPermissions() 결과를 ADMIN_PERMISSION_SECTIONS 기준으로
+// 2단 section (관리/운영/기타) 으로 묶어 반환한다. 빈 group / 빈 section 은 자동 제외.
+// 반환 형식: [{ section: {id, title, description}, groups: [[groupKey, items], ...] }, ...]
+function sectionedGroupedPermissions(opts = {}) {
+  const groupsByKey = new Map(groupedPermissions(opts));
+  const used = new Set();
+  const out = [];
+  ADMIN_PERMISSION_SECTIONS.forEach((sec) => {
+    const groups = sec.groups
+      .filter((g) => groupsByKey.has(g))
+      .map((g) => { used.add(g); return [g, groupsByKey.get(g)]; });
+    if (groups.length) out.push({ section: sec, groups });
+  });
+  // ADMIN_PERMISSION_SECTIONS 에 정의되지 않은 group key 가 새로 들어오면 "기타" section 으로 fallback.
+  const orphans = Array.from(groupsByKey.entries()).filter(([k]) => !used.has(k));
+  if (orphans.length) {
+    const miscSec = out.find((e) => e.section.id === "misc");
+    if (miscSec) miscSec.groups.push(...orphans);
+    else out.push({ section: { id: "misc", title: "기타", description: null }, groups: orphans });
+  }
+  return out;
+}
+
 function dynamicProductPermissions() {
   // TASK-0053 Phase B: product 별 access 권한 row 를 product_id 기준으로 sort 후 반환.
   // `_resolve_permission_catalog` 에서 GroupName='product' 로 묶이고 is_dynamic=true.
@@ -302,10 +334,33 @@ function _updateOverrideGroupSummary(section) {
 function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overrides, onChange, opts = {}) {
   // TASK-0053 Phase B: opts.excludeDynamic=true 면 dynamic product.access.<key> 권한들을 grid 에서 제외.
   // 그 권한들은 호출처가 별도 buildProductSubcatalog... 함수로 product 카드 형식으로 렌더한다.
+  // CONVENTIONS.md §10.6 — group <details> 들은 ADMIN_PERMISSION_SECTIONS 의 2단 section (관리/운영/기타) 으로 묶어 렌더.
   const { excludeDynamic = false } = opts;
   containerEl.innerHTML = "";
   const selected = new Set(selectedCodes || []);
-  groupedPermissions({ excludeDynamic }).forEach(([group, items]) => {
+  sectionedGroupedPermissions({ excludeDynamic }).forEach(({ section: sec, groups }) => {
+    const sectionEl = document.createElement("section");
+    sectionEl.className = "permission-section";
+    sectionEl.dataset.permSection = sec.id;
+    const sectionHead = document.createElement("header");
+    sectionHead.className = "permission-section-head";
+    const sectionTitle = document.createElement("h4");
+    sectionTitle.className = "permission-section-title";
+    sectionTitle.textContent = sec.title;
+    sectionHead.appendChild(sectionTitle);
+    if (sec.description) {
+      const sectionDesc = document.createElement("span");
+      sectionDesc.className = "permission-section-description";
+      sectionDesc.textContent = sec.description;
+      sectionHead.appendChild(sectionDesc);
+    }
+    sectionEl.appendChild(sectionHead);
+    const sectionGroupsEl = document.createElement("div");
+    sectionGroupsEl.className = "permission-section-groups";
+    sectionEl.appendChild(sectionGroupsEl);
+    containerEl.appendChild(sectionEl);
+
+  groups.forEach(([group, items]) => {
     const section = document.createElement("details");
     section.className = "permission-group";
     section.dataset.permGroup = group;
@@ -425,7 +480,7 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
     });
 
     section.appendChild(list);
-    containerEl.appendChild(section);
+    sectionGroupsEl.appendChild(section);
 
     if (mode === "checkbox") {
       _updateCheckboxGroupSummary(section);
@@ -439,6 +494,7 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
       });
       section.open = hasNonInherit;
     }
+  });
   });
 }
 

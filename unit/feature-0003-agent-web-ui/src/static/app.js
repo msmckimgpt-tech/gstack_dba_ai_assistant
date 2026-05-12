@@ -117,16 +117,27 @@ const PENDING_CONV_SENTINEL = "__pending__";
 
 const PRODUCT_PREF_LS_KEY = "mad.productPref.v1";
 
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "misc"];
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
   role: "역할",
   conversation: "대화",
+  product: "제품",
   misc: "기타",
 };
 
+// CONVENTIONS.md §10.6 — 작업 화면은 "운영 권한 → 관리 권한 → 기타" 순. 본인의 일상 작업 권한이 위로 오고,
+// 관리 메타권한은 사용자가 실제로 보유한 경우에만 묶음 형태로 뒤쪽에 표시된다. (관리자측 정렬은 admin.js ADMIN_PERMISSION_SECTIONS)
+const WORK_SCREEN_PERMISSION_SECTIONS = [
+  { id: "operate", title: "운영 권한", description: "대화 · 제품 접근", groups: ["conversation", "product"] },
+  { id: "manage", title: "관리 권한", description: "관리 콘솔 / 계정 / 역할", groups: ["console", "account", "role"] },
+  { id: "misc", title: "기타", description: null, groups: ["misc"] },
+];
+
 function permissionGroupOf(code = "") {
+  // app.py PERMISSION_DEFINITIONS 와 정합: system_prompt.* 코드는 product 그룹으로 매핑.
+  if (String(code || "").startsWith("system_prompt.")) return "product";
   const head = String(code || "").split(".", 1)[0] || "misc";
   return PERMISSION_GROUP_LABELS[head] ? head : "misc";
 }
@@ -163,6 +174,8 @@ const PERMISSION_LABELS = {
   "conversation.cancel.any": "전체 대화 중단",
   "conversation.finalize.own": "내 대화 즉시답변",
   "conversation.finalize.any": "전체 대화 즉시답변",
+  "product.manage": "제품 관리",
+  "system_prompt.manage.role.any": "역할/계정 시스템 프롬프트 관리",
 };
 
 const PERMISSION_DESCRIPTIONS = {
@@ -197,6 +210,8 @@ const PERMISSION_DESCRIPTIONS = {
   "conversation.cancel.any": "타 사용자 소유 대화의 진행 중 요청까지 중단시킬 수 있는 권한입니다.",
   "conversation.finalize.own": "자신이 소유한 대화에서 추가 탐색을 멈추고 현재까지의 정보로 즉시 답변을 만들게 할 수 있는 권한입니다.",
   "conversation.finalize.any": "타 사용자 소유 대화까지 포함해 즉시 답변을 강제할 수 있는 권한입니다.",
+  "product.manage": "제품(Product) 생성/수정/삭제 및 접근 DB 스키마와 제품 시스템 프롬프트를 관리할 수 있는 권한입니다.",
+  "system_prompt.manage.role.any": "다른 역할 또는 다른 계정의 시스템 프롬프트를 수정할 수 있는 권한입니다. 본인 계정 프롬프트는 이 권한 없이도 수정할 수 있습니다.",
 };
 
 function describePermission(code = "") {
@@ -808,38 +823,114 @@ function buildPermissionPills(containerEl) {
     byGroup.get(group).push(code);
   });
 
-  PERMISSION_GROUP_ORDER.forEach((group) => {
-    const codes = byGroup.get(group);
-    if (!codes || !codes.length) return;
-    codes.sort((a, b) => a.localeCompare(b));
+  // CONVENTIONS.md §10.6 — WORK_SCREEN_PERMISSION_SECTIONS 2단 묶음으로 렌더.
+  // 사용자가 그 section 의 어떤 group 권한도 보유하지 않으면 section 자체 미렌더 (자동 hide).
+  const usedGroups = new Set();
+  WORK_SCREEN_PERMISSION_SECTIONS.forEach((sec) => {
+    const sectionGroups = sec.groups
+      .filter((g) => (byGroup.get(g) || []).length > 0);
+    sectionGroups.forEach((g) => usedGroups.add(g));
+    if (!sectionGroups.length) return;
 
-    const section = document.createElement("section");
-    section.className = "perm-section";
-    section.dataset.permGroup = group;
+    const metaSection = document.createElement("section");
+    metaSection.className = "perm-section-meta";
+    metaSection.dataset.permSection = sec.id;
 
-    const head = document.createElement("div");
-    head.className = "perm-section-head";
-    const title = document.createElement("span");
-    title.className = "perm-section-title";
-    title.textContent = PERMISSION_GROUP_LABELS[group] || group;
-    const count = document.createElement("span");
-    count.className = "perm-section-count";
-    count.textContent = String(codes.length);
-    head.append(title, count);
+    const metaHead = document.createElement("div");
+    metaHead.className = "perm-section-meta-head";
+    const metaTitle = document.createElement("span");
+    metaTitle.className = "perm-section-meta-title";
+    metaTitle.textContent = sec.title;
+    metaHead.appendChild(metaTitle);
+    if (sec.description) {
+      const metaDesc = document.createElement("span");
+      metaDesc.className = "perm-section-meta-description";
+      metaDesc.textContent = sec.description;
+      metaHead.appendChild(metaDesc);
+    }
+    metaSection.appendChild(metaHead);
 
-    const pillWrap = document.createElement("div");
-    pillWrap.className = "perm-pills";
-    codes.forEach((code) => {
-      const item = document.createElement("span");
-      item.className = "permission-pill is-enabled";
-      item.textContent = PERMISSION_LABELS[code] || code;
-      item.title = `${describePermission(code)}\n(${code})`;
-      pillWrap.appendChild(item);
+    const groupsWrap = document.createElement("div");
+    groupsWrap.className = "perm-section-meta-groups";
+    metaSection.appendChild(groupsWrap);
+
+    sectionGroups.forEach((group) => {
+      const codes = (byGroup.get(group) || []).slice().sort((a, b) => a.localeCompare(b));
+      const section = document.createElement("section");
+      section.className = "perm-section";
+      section.dataset.permGroup = group;
+
+      const head = document.createElement("div");
+      head.className = "perm-section-head";
+      const title = document.createElement("span");
+      title.className = "perm-section-title";
+      title.textContent = PERMISSION_GROUP_LABELS[group] || group;
+      const count = document.createElement("span");
+      count.className = "perm-section-count";
+      count.textContent = String(codes.length);
+      head.append(title, count);
+
+      const pillWrap = document.createElement("div");
+      pillWrap.className = "perm-pills";
+      codes.forEach((code) => {
+        const item = document.createElement("span");
+        item.className = "permission-pill is-enabled";
+        item.textContent = PERMISSION_LABELS[code] || code;
+        item.title = `${describePermission(code)}\n(${code})`;
+        pillWrap.appendChild(item);
+      });
+
+      section.append(head, pillWrap);
+      groupsWrap.appendChild(section);
     });
 
-    section.append(head, pillWrap);
-    containerEl.appendChild(section);
+    containerEl.appendChild(metaSection);
   });
+
+  // WORK_SCREEN_PERMISSION_SECTIONS 에 정의되지 않은 group 이 새로 들어오면 "기타" section 으로 fallback.
+  const orphans = Array.from(byGroup.entries()).filter(([g, codes]) => !usedGroups.has(g) && codes.length);
+  if (orphans.length) {
+    const metaSection = document.createElement("section");
+    metaSection.className = "perm-section-meta";
+    metaSection.dataset.permSection = "misc-fallback";
+    const metaHead = document.createElement("div");
+    metaHead.className = "perm-section-meta-head";
+    const metaTitle = document.createElement("span");
+    metaTitle.className = "perm-section-meta-title";
+    metaTitle.textContent = "기타";
+    metaHead.appendChild(metaTitle);
+    metaSection.appendChild(metaHead);
+    const groupsWrap = document.createElement("div");
+    groupsWrap.className = "perm-section-meta-groups";
+    metaSection.appendChild(groupsWrap);
+    orphans.forEach(([group, codes]) => {
+      codes.sort((a, b) => a.localeCompare(b));
+      const section = document.createElement("section");
+      section.className = "perm-section";
+      section.dataset.permGroup = group;
+      const head = document.createElement("div");
+      head.className = "perm-section-head";
+      const title = document.createElement("span");
+      title.className = "perm-section-title";
+      title.textContent = PERMISSION_GROUP_LABELS[group] || group;
+      const count = document.createElement("span");
+      count.className = "perm-section-count";
+      count.textContent = String(codes.length);
+      head.append(title, count);
+      const pillWrap = document.createElement("div");
+      pillWrap.className = "perm-pills";
+      codes.forEach((code) => {
+        const item = document.createElement("span");
+        item.className = "permission-pill is-enabled";
+        item.textContent = PERMISSION_LABELS[code] || code;
+        item.title = `${describePermission(code)}\n(${code})`;
+        pillWrap.appendChild(item);
+      });
+      section.append(head, pillWrap);
+      groupsWrap.appendChild(section);
+    });
+    containerEl.appendChild(metaSection);
+  }
 }
 
 function renderAccountState() {

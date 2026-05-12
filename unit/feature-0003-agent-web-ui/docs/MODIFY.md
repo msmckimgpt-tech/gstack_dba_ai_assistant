@@ -8,6 +8,38 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260512-0002
+- Date: 2026-05-12
+- Summary: TASK-0056 (REQ-20260512-0002, **Major** §12.3 — 작업 화면·관리 콘솔 권한 정렬 분리, AI 자율 commit/push 대상은 사용자 결정) 작업 화면 (`index.html` 권한 현황) 과 관리 콘솔 (`admin.html` 권한 grid) 의 권한 group 순서가 동일 `console→account→role→conversation→[product]→misc` 으로 묶여 있어, 화면 맥락(자기시점 / 관리자시점) 이 정반대인데도 두 곳 모두 admin 메타권한이 위로 노출되던 문제 fix. 화면별 2단 section (관리/운영/기타) 으로 분리, 작업 화면은 운영 권한이 위로 + 관리 권한은 보유 시만 묶음 형태로 뒤로. CONVENTIONS.md §10.6 정책 신설.
+- Files:
+  - `repo/docs/CONVENTIONS.md` §10.6 (화면별 권한 섹션·정렬 정책) 신설 — 화면별 section 순서 표, 정합 규칙 6 줄, 동적 권한 (`product.access.<key>`, `system_prompt.*`) 처리, 검증 한 줄.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/admin.js`:
+    - 새 상수 `ADMIN_PERMISSION_SECTIONS` (관리/운영/기타 3 section 정의) 추가.
+    - 새 함수 `sectionedGroupedPermissions(opts)` — `groupedPermissions()` 결과를 section 으로 묶고 빈 group/section 제외 + 미매핑 group 은 "기타" fallback.
+    - `renderPermissionGrid` 가 outer section header (`.permission-section` + `.permission-section-head` + `.permission-section-title` + `.permission-section-description` + `.permission-section-groups`) 로 감싸고 inner `<details data-perm-group>` 들을 `sectionGroupsEl` 에 append 하도록 수정.
+    - 기존 line 50 의 "backend `PERMISSION_GROUP_ORDER` (app.py) 와 순서 동기 필수" 주석은 실제로는 backend `PERMISSION_DEFINITIONS[*].group` 키 정합에 가까워 표현 정정.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/app.js`:
+    - `PERMISSION_GROUP_ORDER` 에 `product` 그룹 추가 + `PERMISSION_GROUP_LABELS.product = "제품"` 추가 (작업 화면 측 누락 fix).
+    - 새 상수 `WORK_SCREEN_PERMISSION_SECTIONS` (운영/관리/기타 3 section) 추가 — 관리자측과 정반대 순서.
+    - `permissionGroupOf()` 가 `system_prompt.` 접두사를 `product` 그룹으로 명시 매핑 (app.py `system_prompt.manage.role.any` 의 `group: "product"` 와 정합).
+    - `PERMISSION_LABELS` / `PERMISSION_DESCRIPTIONS` 에 `product.manage` / `system_prompt.manage.role.any` 항목 추가.
+    - `buildPermissionPills(containerEl)` 가 WORK_SCREEN_PERMISSION_SECTIONS 의 2단 묶음 (`.perm-section-meta` + `.perm-section-meta-head` + `.perm-section-meta-title` + `.perm-section-meta-description` + `.perm-section-meta-groups`) 으로 렌더. section 안의 어느 group 권한도 보유하지 않으면 section 자체 미렌더 (관리 권한 묶음 자동 hide). 미매핑 group orphan 처리도 추가.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css`:
+    - 작업 화면측: `.perm-section-meta`, `.perm-section-meta-head`, `.perm-section-meta-title`, `.perm-section-meta-description`, `.perm-section-meta-groups`. 관리 권한 묶음만 살짝 opacity/muted 처리.
+    - 관리 콘솔측: `.permission-section`, `.permission-section-head`, `.permission-section-title`, `.permission-section-description`, `.permission-section-groups`. `data-perm-section="manage"` 는 살짝 파란 background, `"operate"` 는 살짝 녹색 background.
+    - `.permission-grid/.override-grid { gap: 18px }` 로 increase (외부 section 들 간격), `.permission-section-groups > .permission-group + .permission-group { margin-top: 0 }` 로 gap 중첩 제거.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/admin.html`: styles.css / admin.js cache-bust slug `v=20260512-perm-sections`.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html`: styles.css / app.js cache-bust slug `v=20260512-perm-sections`.
+- Verification:
+  - `node --check admin.js` 통과.
+  - `node --check app.js` 통과.
+  - DB schema / backend RBAC catalog / endpoint guard / system prompt assembly 변경 **0**. 본 cycle 은 frontend 렌더링과 project-level 컨벤션 문서만 수정 — 인가 모델 무영향.
+  - 두 화면 모두 정렬은 frontend 상수 (`WORK_SCREEN_PERMISSION_SECTIONS` / `ADMIN_PERMISSION_SECTIONS`) 가 단일 정의처. 미매핑 group 은 "기타" section 으로 자동 fallback.
+- Risks:
+  - 백엔드에 새 group key 가 추가되는 경우 (예: 향후 `audit`, `integration` 등) 두 상수에 명시 매핑하지 않으면 "기타" 로 떨어진다. CONVENTIONS.md §10.6 의 정합 규칙으로 명시.
+  - 작업 화면의 "관리 권한" section 자동 hide 는 사용자가 실제로 admin perm 을 한 개도 보유하지 않을 때만 적용 — admin 계정은 항상 표시됨. 일반 사용자는 관리 권한 section 자체가 없어지므로 시각적 단순화.
+  - 시각 검증 (`make web` 기동 후 두 화면 비교 + 일반 사용자 / admin 계정 양 시점) 은 사용자 환경에서 진행 권고.
+
 ## CHG-20260508-0001
 - Date: 2026-05-08
 - Summary: TASK-0054 (REQ-20260508-0001) PR 흐름으로 main 동기화 — feat/adopt-external-anchor-v3.2.0-rc + issue/1-github-bootstrap 의 누적 작업을 두 개의 PR 로 main 에 머지. AI 자율 commit/push (§16.5).
