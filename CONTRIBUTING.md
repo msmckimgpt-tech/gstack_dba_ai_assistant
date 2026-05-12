@@ -127,3 +127,36 @@ feat(feature-0002): agent-core 세션 관리 개선 (#12)
   - required status checks: `policy-contract`, `owner-agent-report`, `ai-review`, `selfhosted-runtime-smoke`
   - auto-merge 활성화
   - stale branch 자동 정리는 선택
+
+## 10. Dev 환경 가동 — single TLS termination 원칙
+
+운영 구조:
+- **Production / staging** (외부 LAN): Caddy (`80/443`) 가 TLS 종단 담당 → 내부 web 컨테이너는 plaintext `8000` 으로 동작.
+- **Local dev** (개발자 머신): 호스트 `localhost:18080` → web 컨테이너 직접 (Caddy 우회). 이 경로에 self-signed cert 로 자체 HTTPS 가동하면 *이중 TLS* (Caddy + web) 가 되어 browser 자동화 (gstack `/qa`, playwright e2e 등) 가 TLS 검증으로 차단된다.
+
+### 10.1 권장 — compose override 로 plain HTTP
+
+```bash
+# 1회 설정 (개발자 머신마다)
+cp docker-compose.override.yml.example docker-compose.override.yml
+make web   # 또는: docker compose up -d --no-build --force-recreate web
+```
+
+`docker-compose.override.yml` 은 `.gitignore` 대상 (환경별 file). `docker-compose.override.yml.example` 는 template 으로 commit. docker compose 가 base + override 를 자동 merge 한다.
+
+### 10.2 효과
+- 호스트 `http://localhost:18080/admin` 으로 plain HTTP 접근. self-signed cert TLS handshake 차단 사라짐.
+- gstack `/qa`, `/browse`, `curl`, `playwright e2e` 모두 env 변수·옵션 추가 없이 자연 동작.
+- production 영향 0 — production compose 파일에 override 를 두지 않으면 무시. Caddy 의 외부 LAN TLS 종단은 그대로 유지.
+
+### 10.3 production-like local 검증이 필요한 경우
+override 를 제거 (또는 rename) 후 가동:
+```bash
+mv docker-compose.override.yml docker-compose.override.yml.disabled
+make web
+```
+이 경우 `ENABLE_WEB_TLS=1` (`.env` 기본값) 으로 self-signed HTTPS 가동. browser 자동화는 cert 신뢰 처리 필요 (mkcert local CA 추가 또는 도구별 ignore-https-errors 옵션).
+
+### 10.4 정합 원칙
+- "single TLS termination" — 한 경로 (Caddy) 가 TLS 종단을 담당하고, 내부 service 는 plaintext 로 다닌다. 이중 TLS 는 운영·디버그·자동화 모두에서 마찰을 만든다.
+- web 컨테이너의 self-HTTPS 모드는 *Caddy 우회 외부 노출* (예: 18080 을 LAN 으로 expose) 시나리오에서만 의미. 본 repo 의 dev 가동은 그 시나리오가 아니다.
