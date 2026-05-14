@@ -266,6 +266,12 @@ PERMISSION_DEFINITIONS = (
         "group": "conversation",
     },
     {
+        "code": "conversation.share.create",
+        "label": "대화 공유 링크 생성",
+        "description": "자신의 대화를 anonymous 접근 가능한 공유 링크로 발급하거나 취소할 수 있다.",
+        "group": "conversation",
+    },
+    {
         "code": "product.manage",
         "label": "제품 관리",
         "description": "제품(Product) 생성/수정/삭제 및 접근 DB 스키마, 제품 시스템 프롬프트를 관리할 수 있다.",
@@ -363,6 +369,7 @@ SEED_ROLE_DEFINITIONS = (
             "conversation.delete.own",
             "conversation.cancel.own",
             "conversation.finalize.own",
+            "conversation.share.create",
         },
     },
     {
@@ -380,6 +387,7 @@ SEED_ROLE_DEFINITIONS = (
             "conversation.rename.own",
             "conversation.cancel.own",
             "conversation.finalize.own",
+            "conversation.share.create",
         },
     },
     {
@@ -1427,7 +1435,7 @@ def _ensure_seed_roles(conn) -> None:
         admin_role_id = int(admin_row[0] or 0)
         permission_map = _permission_id_map(conn)
         cur = conn.cursor()
-        for code in ("product.manage", "system_prompt.manage.role.any"):
+        for code in ("product.manage", "system_prompt.manage.role.any", "conversation.share.create"):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
                 continue
@@ -1439,6 +1447,25 @@ VALUES (%s, %s)
                 (admin_role_id, permission_id),
             )
         cur.close()
+    # REQ-20260514-0001: 기존 operator/sales role 에도 conversation.share.create catchup 보정.
+    cur = conn.cursor()
+    cur.execute("SELECT Id FROM WebRoles WHERE RoleKey IN ('operator', 'sales')")
+    role_rows = cur.fetchall() or []
+    cur.close()
+    if role_rows:
+        permission_map = _permission_id_map(conn)
+        share_pid = int(permission_map.get("conversation.share.create") or 0)
+        if share_pid > 0:
+            cur = conn.cursor()
+            for row in role_rows:
+                role_id = int((row[0] if isinstance(row, (list, tuple)) else row.get("Id")) or 0)
+                if role_id <= 0:
+                    continue
+                cur.execute(
+                    "INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId) VALUES (%s, %s)",
+                    (role_id, share_pid),
+                )
+            cur.close()
 
 
 SEED_ROLE_SYSTEM_PROMPTS = (
@@ -2256,6 +2283,49 @@ def _ensure_dynamic_permissions_schema(conn) -> None:
         cur.close()
 
 
+def _ensure_web_conversation_shares_schema(conn) -> None:
+    """REQ-20260514-0001: WebConversationShares 테이블을 idempotent CREATE.
+
+    대화 공유 링크 (anonymous 접근 가능) 저장소. 한 ConversationId 에 여러 share 발급 가능
+    (ScopeMode='full' 또는 'anchored' + AnchorMessageId 조합으로 구분).
+
+    AnchorMessageId 는 `AgentMemoryMessages.Id` 와 동일 식별자를 사용한다
+    (`fork_conversation` 의 `from_message_id` 와 정합). 의미: inclusive — 해당 메시지
+    까지 (`Id <= AnchorMessageId`) 공유 view 에 노출.
+
+    Token 은 `secrets.token_urlsafe(32)` (256-bit entropy) 가 생성하며 UNIQUE.
+    RevokedAt NULL = 활성, NOT NULL = revoked → public GET 은 410 Gone 반환.
+
+    `_ensure_web_tables` (slow path) 와 `_ensure_seed_catchup` (fast path) 양쪽에서
+    호출되어 기존 배포에도 자동 적용된다.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebConversationShares (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ConversationId VARCHAR(128) NOT NULL,
+                Token VARCHAR(64) NOT NULL UNIQUE,
+                ScopeMode VARCHAR(16) NOT NULL DEFAULT 'full',
+                AnchorMessageId BIGINT NULL,
+                CreatedBy BIGINT NOT NULL,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                RevokedAt DATETIME NULL,
+                RevokedBy BIGINT NULL,
+                ViewCount BIGINT NOT NULL DEFAULT 0,
+                LastViewedAt DATETIME NULL,
+                INDEX IX_WCS_Conversation (ConversationId),
+                INDEX IX_WCS_Token (Token),
+                INDEX IX_WCS_CreatedBy (CreatedBy),
+                INDEX IX_WCS_RevokedAt (RevokedAt)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+    finally:
+        cur.close()
+
+
 def _ensure_seed_catchup(conn) -> None:
     """기존 배포에 신규 seed role/prompt 가 있으면 상태를 맞춘다.
 
@@ -2269,6 +2339,10 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_seed_role_system_prompts(conn)
     # TASK-0052 Phase 1B: fast-path 재기동에서도 신규 dynamic permission 컬럼 + product 권한 backfill 실행.
     _ensure_dynamic_permissions_schema(conn)
+    # REQ-20260514-0001: 공유 링크 테이블 fast-path 보정.
+    _ensure_web_conversation_shares_schema(conn)
+    # REQ-20260514-0001: catchup 시 catalog hydrate (신규 conversation.share.create 권한이 WebPermissions 에 INSERT 되도록).
+    _ensure_permission_catalog(conn)
     _migration_added = _ensure_product_access_permissions(conn)
     if _migration_added > 0:
         try:
@@ -2400,6 +2474,8 @@ def _ensure_web_tables():
         # TASK-0052 Phase 1B: WebPermissions 의 IsDynamic / ProductId 컬럼을 helper 로 보장 (slow path).
         # 같은 helper 가 _ensure_seed_catchup (fast path) 에서도 호출되어 기존 배포에 ALTER 적용.
         _ensure_dynamic_permissions_schema(conn)
+        # REQ-20260514-0001: 공유 링크 테이블 보장 (slow path).
+        _ensure_web_conversation_shares_schema(conn)
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS WebRoles (
@@ -3675,6 +3751,18 @@ def _require_account(request: Request, conn) -> tuple[dict[str, Any] | None, JSO
     return account, None
 
 
+def _optional_account(request: Request, conn) -> dict[str, Any] | None:
+    """REQ-20260514-0001: anonymous endpoint 용 — 쿠키 부재/오류 시 None 반환 (401 raise 없음).
+
+    `/api/public/share/{token}` 처럼 미로그인 접근이 허용되지만 로그인 상태라면 fork 같은
+    추가 액션을 안내해야 하는 경로에서 사용한다.
+    """
+    try:
+        return _get_authenticated_account(conn, request)
+    except Exception:
+        return None
+
+
 def _require_permission(
     request: Request,
     conn,
@@ -4041,6 +4129,15 @@ def index() -> FileResponse:
 @app.get("/admin")
 def admin_index() -> FileResponse:
     return FileResponse(STATIC_DIR / "admin.html")
+
+
+# REQ-20260514-0001: 공유 링크 페이지 (anonymous accessible). 실제 token 검증은
+# 클라이언트 JS 가 `/api/public/share/{token}` 호출로 수행한다. 본 route 는
+# 정적 share.html serve 만 담당. AGENTS.md / SECURITY.md 에 명시된 유이한
+# anonymous-allowed 페이지 경로.
+@app.get("/share/{token}")
+def share_page(token: str) -> FileResponse:
+    return FileResponse(STATIC_DIR / "share.html")
 
 
 @app.get("/api/session")
@@ -4545,51 +4642,16 @@ async def update_conversation_product(cid: str, request: Request) -> JSONRespons
     return JSONResponse(payload)
 
 
-@app.post("/api/fork_conversation")
-async def fork_conversation(request: Request) -> JSONResponse:
-    """원본 대화의 메시지를 현재 계정 소유의 새 대화로 스냅샷 복제한다.
+def _fork_conversation_impl(
+    conn,
+    account: dict[str, Any],
+    source_id: str,
+    from_id: int | None,
+) -> tuple[dict[str, Any] | None, JSONResponse | None]:
+    """REQ-20260514-0001: fork 본체 로직. 호출자가 source 접근 권한 + create 권한을 사전 검증한다.
 
-    body: {source_conversation_id: str, from_message_id?: int}
-    - from_message_id 가 주어지면 해당 Id 까지(포함) 복사, 아니면 표시 가능한 전체 메시지 복사.
-    - 원본 CreatedAt/Role/Content/MetaJson 을 보존하고 MetaJson 에 forked_from_* 를 추가한다.
-    - 원본에 대한 read 권한 + 현재 계정의 conversation.create 권한이 모두 필요하다.
+    Returns: (success_dict, None) on success, (None, JSONResponse) on error.
     """
-    try:
-        data = await request.json()
-    except Exception:
-        return _json_error("invalid json", 400)
-    source_id = str(data.get("source_conversation_id") or "").strip()
-    if not source_id:
-        return _json_error("empty source_conversation_id", 400)
-    raw_from = data.get("from_message_id")
-    from_id: int | None = None
-    if raw_from is not None and str(raw_from).strip() != "":
-        try:
-            from_id = int(raw_from)
-        except Exception:
-            return _json_error("invalid from_message_id", 400)
-
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
-    if not _account_has_permission(account, "conversation.create"):
-        conn.close()
-        return _json_error("'새 대화 생성' 권한이 없습니다.", 403)
-    if not _account_can_access_conversation(
-        conn,
-        account,
-        source_id,
-        "conversation.read.own",
-        "conversation.read.any",
-    ):
-        conn.close()
-        return _json_error("원본 대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
-
     # 원본 topic 조회 (AgentCoreConversations.topic 우선, 없으면 AgentMemoryKv 의 'topic').
     try:
         cur = conn.cursor()
@@ -4637,8 +4699,7 @@ ORDER BY Id ASC
         src_rows = cur.fetchall() or []
         cur.close()
     except Exception:
-        conn.close()
-        return _json_error("failed to load source messages", 500)
+        return None, _json_error("failed to load source messages", 500)
 
     # 원본 대화의 product_id 를 조회 (없으면 기본 Product).
     # TASK-0052 Phase 1C G5 (Codex Claim 4 fork product_mode 복사 fix): product_mode 도 함께 조회하여 'auto' 보존.
@@ -4696,8 +4757,7 @@ WHERE conversation_id = %s
         )
         cur.close()
     except Exception:
-        conn.close()
-        return _json_error("failed to create forked conversation", 500)
+        return None, _json_error("failed to create forked conversation", 500)
 
     copied = 0
     try:
@@ -4732,28 +4792,491 @@ VALUES (%s, %s, %s, %s, %s)
             copied += 1
         cur.close()
     except Exception:
-        # 중간 실패 시 새 대화 기록을 정리하고 500 반환.
+        # 중간 실패 시 새 대화 기록을 정리하고 error 반환.
         try:
             delete_conversation_records(conn, new_cid)
         except Exception:
             pass
-        conn.close()
-        return _json_error("failed to copy messages", 500)
+        return None, _json_error("failed to copy messages", 500)
 
     try:
         _set_account_current_conversation(conn, int(account["id"]), new_cid)
     except Exception:
         pass
-    conn.close()
-    return JSONResponse(
+    return (
         {
             "conversation_id": new_cid,
             "source": source_id,
             "copied": copied,
             "from_message_id": int(from_id) if from_id is not None else None,
             "topic": new_topic,
-        }
+        },
+        None,
     )
+
+
+@app.post("/api/fork_conversation")
+async def fork_conversation(request: Request) -> JSONResponse:
+    """원본 대화를 현재 계정 소유의 새 대화로 스냅샷 복제한다.
+
+    body: {source_conversation_id: str, from_message_id?: int}
+    - 원본에 대한 read 권한 + 현재 계정의 conversation.create 권한이 모두 필요하다.
+    - 실제 복제 로직은 `_fork_conversation_impl` 헬퍼가 수행한다 (share-token fork 와 공유).
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    source_id = str(data.get("source_conversation_id") or "").strip()
+    if not source_id:
+        return _json_error("empty source_conversation_id", 400)
+    raw_from = data.get("from_message_id")
+    from_id: int | None = None
+    if raw_from is not None and str(raw_from).strip() != "":
+        try:
+            from_id = int(raw_from)
+        except Exception:
+            return _json_error("invalid from_message_id", 400)
+
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(account, "conversation.create"):
+            return _json_error("'새 대화 생성' 권한이 없습니다.", 403)
+        if not _account_can_access_conversation(
+            conn,
+            account,
+            source_id,
+            "conversation.read.own",
+            "conversation.read.any",
+        ):
+            return _json_error("원본 대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        payload, err = _fork_conversation_impl(conn, account, source_id, from_id)
+        if err:
+            return err
+        return JSONResponse(payload)
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# REQ-20260514-0001: 대화 공유 링크 (Conversation Share) endpoints
+# ---------------------------------------------------------------------------
+import secrets as _share_secrets  # noqa: E402  (REQ-20260514-0001 한정 import)
+
+
+def _share_generate_token() -> str:
+    """256-bit URL-safe token. UNIQUE 충돌 시 호출자가 retry."""
+    return _share_secrets.token_urlsafe(32)
+
+
+def _share_load_active(conn, token: str) -> dict[str, Any] | None:
+    """Token 으로 활성 (RevokedAt IS NULL) share row 조회. 없거나 revoked 면 None."""
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+SELECT Id, ConversationId, Token, ScopeMode, AnchorMessageId,
+       CreatedBy, CreatedAt, RevokedAt, ViewCount, LastViewedAt
+FROM WebConversationShares
+WHERE Token = %s
+LIMIT 1
+            """,
+            (token,),
+        )
+        row = cur.fetchone()
+        return row
+    finally:
+        cur.close()
+
+
+def _share_anchor_belongs_to_conversation(conn, conversation_id: str, anchor_message_id: int) -> bool:
+    """AnchorMessageId 가 해당 ConversationId 의 메시지인지 검증."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT 1 FROM AgentMemoryMessages WHERE ConversationId = %s AND Id = %s LIMIT 1",
+            (conversation_id, int(anchor_message_id)),
+        )
+        return cur.fetchone() is not None
+    finally:
+        cur.close()
+
+
+def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | None) -> list[dict[str, Any]]:
+    """공유 view 용 메시지 목록. anchor 가 주어지면 `Id <= anchor` (inclusive).
+
+    fork 의 `_is_internal_message` 와 동일 필터를 적용해 내부/시스템 메시지를 숨긴다.
+    """
+    cur = conn.cursor(dictionary=True)
+    try:
+        if anchor_message_id is not None:
+            cur.execute(
+                """
+SELECT Id, Role, Content, CreatedAt, MetaJson
+FROM AgentMemoryMessages
+WHERE ConversationId = %s AND Id <= %s
+ORDER BY Id ASC
+                """,
+                (conversation_id, int(anchor_message_id)),
+            )
+        else:
+            cur.execute(
+                """
+SELECT Id, Role, Content, CreatedAt, MetaJson
+FROM AgentMemoryMessages
+WHERE ConversationId = %s
+ORDER BY Id ASC
+                """,
+                (conversation_id,),
+            )
+        rows = cur.fetchall() or []
+    finally:
+        cur.close()
+    visible: list[dict[str, Any]] = []
+    for row in rows:
+        role = str(row.get("Role") or "")
+        content = str(row.get("Content") or "")
+        meta_json = row.get("MetaJson")
+        if _is_internal_message(role, content, meta_json if isinstance(meta_json, str) else None):
+            continue
+        meta_obj: Any = None
+        if meta_json:
+            try:
+                meta_obj = json.loads(meta_json) if isinstance(meta_json, str) else meta_json
+            except Exception:
+                meta_obj = None
+        created_at = row.get("CreatedAt")
+        visible.append(
+            {
+                "id": int(row.get("Id") or 0),
+                "role": role,
+                "content": content,
+                "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else (str(created_at) if created_at else None),
+                "meta": meta_obj,
+            }
+        )
+    return visible
+
+
+@app.post("/api/conversations/{cid}/share")
+async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
+    """공유 링크 생성. body: {scope_mode: 'full'|'anchored', anchor_message_id?: int}.
+
+    권한: `conversation.share.create` + (`conversation.read.own` 또는 `conversation.read.any`).
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    scope_mode = str(data.get("scope_mode") or "full").strip().lower()
+    if scope_mode not in ("full", "anchored"):
+        return _json_error("invalid scope_mode", 400)
+    raw_anchor = data.get("anchor_message_id")
+    anchor_id: int | None = None
+    if scope_mode == "anchored":
+        if raw_anchor is None or str(raw_anchor).strip() == "":
+            return _json_error("anchor_message_id required for scope_mode=anchored", 400)
+        try:
+            anchor_id = int(raw_anchor)
+        except Exception:
+            return _json_error("invalid anchor_message_id", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(account, "conversation.share.create"):
+            return _json_error("대화 공유 권한이 없습니다.", 403)
+        if not _account_can_access_conversation(
+            conn,
+            account,
+            cid,
+            "conversation.read.own",
+            "conversation.read.any",
+        ):
+            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        if anchor_id is not None and not _share_anchor_belongs_to_conversation(conn, cid, anchor_id):
+            return _json_error("anchor_message_id 가 대화에 속하지 않습니다.", 400)
+        # Token UNIQUE 충돌 retry loop (확률은 극히 낮지만 cheap).
+        share_id: int | None = None
+        token: str = ""
+        for _attempt in range(5):
+            token = _share_generate_token()
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    """
+INSERT INTO WebConversationShares
+    (ConversationId, Token, ScopeMode, AnchorMessageId, CreatedBy)
+VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        cid,
+                        token,
+                        scope_mode,
+                        int(anchor_id) if anchor_id is not None else None,
+                        int(account["id"]),
+                    ),
+                )
+                share_id = int(cur.lastrowid or 0)
+                cur.close()
+                break
+            except Exception:
+                cur.close()
+                continue
+        if not share_id:
+            return _json_error("공유 링크 생성 실패", 500)
+        return JSONResponse(
+            {
+                "id": share_id,
+                "token": token,
+                "conversation_id": cid,
+                "scope_mode": scope_mode,
+                "anchor_message_id": int(anchor_id) if anchor_id is not None else None,
+                "url": f"/share/{token}",
+            }
+        )
+    finally:
+        conn.close()
+
+
+@app.get("/api/conversations/{cid}/shares")
+def list_conversation_shares(cid: str, request: Request) -> JSONResponse:
+    """해당 대화의 share 목록 (활성 + revoked 모두). 조회 권한: read.own/any."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_can_access_conversation(
+            conn,
+            account,
+            cid,
+            "conversation.read.own",
+            "conversation.read.any",
+        ):
+            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+SELECT Id, Token, ScopeMode, AnchorMessageId, CreatedBy, CreatedAt,
+       RevokedAt, RevokedBy, ViewCount, LastViewedAt
+FROM WebConversationShares
+WHERE ConversationId = %s
+ORDER BY CreatedAt DESC, Id DESC
+                """,
+                (cid,),
+            )
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+        items = []
+        for row in rows:
+            created_at = row.get("CreatedAt")
+            revoked_at = row.get("RevokedAt")
+            last_viewed_at = row.get("LastViewedAt")
+            items.append(
+                {
+                    "id": int(row.get("Id") or 0),
+                    "token": str(row.get("Token") or ""),
+                    "scope_mode": str(row.get("ScopeMode") or "full"),
+                    "anchor_message_id": int(row["AnchorMessageId"]) if row.get("AnchorMessageId") is not None else None,
+                    "created_by": int(row.get("CreatedBy") or 0),
+                    "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else (str(created_at) if created_at else None),
+                    "revoked_at": revoked_at.isoformat() if hasattr(revoked_at, "isoformat") else (str(revoked_at) if revoked_at else None),
+                    "revoked_by": int(row["RevokedBy"]) if row.get("RevokedBy") is not None else None,
+                    "view_count": int(row.get("ViewCount") or 0),
+                    "last_viewed_at": last_viewed_at.isoformat() if hasattr(last_viewed_at, "isoformat") else (str(last_viewed_at) if last_viewed_at else None),
+                    "url": f"/share/{row.get('Token')}",
+                    "is_active": row.get("RevokedAt") is None,
+                }
+            )
+        return JSONResponse({"items": items})
+    finally:
+        conn.close()
+
+
+@app.delete("/api/share/{share_id}")
+def revoke_share(share_id: int, request: Request) -> JSONResponse:
+    """공유 링크 revoke. CreatedBy 본인 또는 admin (`conversation.read.any` 가진 자) 만 가능."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                "SELECT Id, ConversationId, CreatedBy, RevokedAt FROM WebConversationShares WHERE Id = %s LIMIT 1",
+                (int(share_id),),
+            )
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        if not row:
+            return _json_error("공유 링크를 찾을 수 없습니다.", 404)
+        if row.get("RevokedAt") is not None:
+            return JSONResponse({"id": int(row.get("Id")), "already_revoked": True})
+        is_creator = int(row.get("CreatedBy") or 0) == int(account["id"])
+        is_admin = _account_has_permission(account, "conversation.read.any")
+        if not (is_creator or is_admin):
+            return _json_error("이 공유 링크를 취소할 권한이 없습니다.", 403)
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+UPDATE WebConversationShares
+SET RevokedAt = CURRENT_TIMESTAMP, RevokedBy = %s
+WHERE Id = %s AND RevokedAt IS NULL
+                """,
+                (int(account["id"]), int(share_id)),
+            )
+            updated = int(cur.rowcount or 0)
+        finally:
+            cur.close()
+        return JSONResponse({"id": int(share_id), "revoked": updated > 0})
+    finally:
+        conn.close()
+
+
+@app.get("/api/public/share/{token}")
+def public_share_view(token: str, request: Request) -> JSONResponse:
+    """anonymous accessible share view. revoked 면 410 Gone, 미존재 면 404.
+
+    View 카운터 증가는 revoke 체크와 동일 UPDATE 로 race-free 처리.
+    노출 범위: messages (text + SQL + result 포함), owner display name, conversation topic,
+    product context. file attachments 는 `conversation.file.read.*` gated 이므로 공유 view 에서 hide.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        # race-free: 활성 share 일 때만 ViewCount++ + LastViewedAt 갱신.
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+UPDATE WebConversationShares
+SET ViewCount = ViewCount + 1, LastViewedAt = CURRENT_TIMESTAMP
+WHERE Token = %s AND RevokedAt IS NULL
+                """,
+                (token,),
+            )
+            bumped = int(cur.rowcount or 0)
+        finally:
+            cur.close()
+        share = _share_load_active(conn, token)
+        if not share:
+            return _json_error("공유 링크를 찾을 수 없습니다.", 404)
+        if share.get("RevokedAt") is not None:
+            return _json_error("이 공유 링크는 취소되었습니다.", 410)
+        if bumped == 0:
+            # race 가드: revoke 가 사이에 끼어든 경우.
+            return _json_error("이 공유 링크는 취소되었습니다.", 410)
+        conversation_id = str(share.get("ConversationId") or "")
+        anchor_id = share.get("AnchorMessageId")
+        anchor_id_int = int(anchor_id) if anchor_id is not None else None
+        # 대화 topic + product context 조회.
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+SELECT c.topic AS topic, c.product_id AS product_id, c.product_mode AS product_mode,
+       p.ProductKey AS product_key, p.Name AS product_name,
+       owner.Username AS owner_username
+FROM AgentCoreConversations c
+LEFT JOIN WebProducts p ON p.Id = c.product_id
+LEFT JOIN WebAccounts owner ON owner.Id = c.owner_account_id
+WHERE c.conversation_id = %s
+LIMIT 1
+                """,
+                (conversation_id,),
+            )
+            conv_meta = cur.fetchone() or {}
+        finally:
+            cur.close()
+        messages = _share_load_messages(conn, conversation_id, anchor_id_int)
+        # 로그인 상태 + conversation.create 보유 시 fork 가능 flag.
+        viewer = _optional_account(request, conn)
+        can_fork = bool(viewer and _account_has_permission(viewer, "conversation.create"))
+        created_at = share.get("CreatedAt")
+        last_viewed = share.get("LastViewedAt")
+        return JSONResponse(
+            {
+                "share": {
+                    "token": token,
+                    "scope_mode": str(share.get("ScopeMode") or "full"),
+                    "anchor_message_id": anchor_id_int,
+                    "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else (str(created_at) if created_at else None),
+                    "view_count": int(share.get("ViewCount") or 0) + 1,
+                    "last_viewed_at": last_viewed.isoformat() if hasattr(last_viewed, "isoformat") else (str(last_viewed) if last_viewed else None),
+                },
+                "conversation": {
+                    "topic": str(conv_meta.get("topic") or "대화"),
+                    "owner_username": str(conv_meta.get("owner_username") or ""),
+                    "product_key": str(conv_meta.get("product_key") or ""),
+                    "product_name": str(conv_meta.get("product_name") or ""),
+                    "product_mode": str(conv_meta.get("product_mode") or "pinned"),
+                },
+                "messages": messages,
+                "viewer": {
+                    "is_authenticated": bool(viewer),
+                    "can_fork": can_fork,
+                },
+            }
+        )
+    finally:
+        conn.close()
+
+
+@app.post("/api/public/share/{token}/fork")
+async def public_share_fork(token: str, request: Request) -> JSONResponse:
+    """공유 링크 viewer 가 로그인 상태일 때 본인 계정으로 대화 fork.
+
+    권한: `conversation.create`. share-token 자체가 source 접근의 grant 역할이므로
+    `_account_can_access_conversation` 우회 (helper 직접 호출).
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(account, "conversation.create"):
+            return _json_error("'새 대화 생성' 권한이 없습니다.", 403)
+        share = _share_load_active(conn, token)
+        if not share:
+            return _json_error("공유 링크를 찾을 수 없습니다.", 404)
+        if share.get("RevokedAt") is not None:
+            return _json_error("이 공유 링크는 취소되었습니다.", 410)
+        conversation_id = str(share.get("ConversationId") or "")
+        anchor_id = share.get("AnchorMessageId")
+        anchor_id_int = int(anchor_id) if anchor_id is not None else None
+        payload, err = _fork_conversation_impl(conn, account, conversation_id, anchor_id_int)
+        if err:
+            return err
+        return JSONResponse(payload)
+    finally:
+        conn.close()
 
 
 @app.post("/api/list_conversations")

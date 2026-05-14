@@ -58,6 +58,7 @@ const cancelBtn = document.getElementById("cancelBtn");
 const finalizeBtn = document.getElementById("finalizeBtn");
 const deleteConversationBtn = document.getElementById("deleteConversationBtn");
 const forkConversationBtn = document.getElementById("forkConversationBtn");
+const shareConversationBtn = document.getElementById("shareConversationBtn");
 const composerTitleEl = document.getElementById("composerTitle");
 const composerHintEl = document.getElementById("composerHint");
 const promptInputEl = document.getElementById("promptInput");
@@ -174,6 +175,7 @@ const PERMISSION_LABELS = {
   "conversation.cancel.any": "전체 대화 중단",
   "conversation.finalize.own": "내 대화 즉시답변",
   "conversation.finalize.any": "전체 대화 즉시답변",
+  "conversation.share.create": "대화 공유 링크 생성",
   "product.manage": "제품 관리",
   "system_prompt.manage.role.any": "역할/계정 시스템 프롬프트 관리",
 };
@@ -210,6 +212,7 @@ const PERMISSION_DESCRIPTIONS = {
   "conversation.cancel.any": "타 사용자 소유 대화의 진행 중 요청까지 중단시킬 수 있는 권한입니다.",
   "conversation.finalize.own": "자신이 소유한 대화에서 추가 탐색을 멈추고 현재까지의 정보로 즉시 답변을 만들게 할 수 있는 권한입니다.",
   "conversation.finalize.any": "타 사용자 소유 대화까지 포함해 즉시 답변을 강제할 수 있는 권한입니다.",
+  "conversation.share.create": "자신의 대화를 anonymous 접근 가능한 공유 링크로 발급하거나 취소할 수 있는 권한입니다. 사내 협업용이며 외부 IP 노출 시 보안 영향이 있을 수 있습니다.",
   "product.manage": "제품(Product) 생성/수정/삭제 및 접근 DB 스키마와 제품 시스템 프롬프트를 관리할 수 있는 권한입니다.",
   "system_prompt.manage.role.any": "다른 역할 또는 다른 계정의 시스템 프롬프트를 수정할 수 있는 권한입니다. 본인 계정 프롬프트는 이 권한 없이도 수정할 수 있습니다.",
 };
@@ -1710,23 +1713,41 @@ function renderMessages() {
       }
     }
 
-    // 말풍선 단위 분기 버튼 — conversation.create 권한이 있을 때만 노출.
-    if (canFork && message.id != null) {
+    // 말풍선 단위 분기 / 공유 버튼.
+    const canShareHere = can("conversation.share.create") && message.id != null;
+    if ((canFork && message.id != null) || canShareHere) {
       const actions = document.createElement("div");
       actions.className = "message-actions";
-      const forkBtn = document.createElement("button");
-      forkBtn.type = "button";
-      forkBtn.className = "message-action-btn";
-      forkBtn.textContent = "여기서 분기";
-      forkBtn.title = "이 말풍선까지의 기록을 내 계정의 새 대화로 복제합니다.";
-      forkBtn.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        forkConversation({ fromMessageId: message.id }).catch((error) => {
-          showToast(error.message || "대화 분기에 실패했습니다.", true);
+      if (canFork && message.id != null) {
+        const forkBtn = document.createElement("button");
+        forkBtn.type = "button";
+        forkBtn.className = "message-action-btn";
+        forkBtn.textContent = "여기서 분기";
+        forkBtn.title = "이 말풍선까지의 기록을 내 계정의 새 대화로 복제합니다.";
+        forkBtn.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          forkConversation({ fromMessageId: message.id }).catch((error) => {
+            showToast(error.message || "대화 분기에 실패했습니다.", true);
+          });
         });
-      });
-      actions.appendChild(forkBtn);
+        actions.appendChild(forkBtn);
+      }
+      if (canShareHere) {
+        const shareHereBtn = document.createElement("button");
+        shareHereBtn.type = "button";
+        shareHereBtn.className = "message-action-btn";
+        shareHereBtn.textContent = "여기까지 공유";
+        shareHereBtn.title = "이 말풍선까지의 기록을 anonymous 공유 링크로 발급합니다.";
+        shareHereBtn.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          createConversationShare({ anchorMessageId: message.id }).catch((error) => {
+            showToast(error.message || "공유 링크 생성에 실패했습니다.", true);
+          });
+        });
+        actions.appendChild(shareHereBtn);
+      }
       bubble.appendChild(actions);
     }
 
@@ -1805,6 +1826,16 @@ function renderComposer() {
         forkConversationBtn.title =
           "'새 대화 생성' 권한이 없습니다. 필요 권한: `conversation.create`";
       }
+    }
+  }
+  // REQ-20260514-0001: 공유 버튼 — conversation.share.create 권한이 있고 대화가 선택돼야 노출.
+  if (shareConversationBtn) {
+    const hasShare = can("conversation.share.create");
+    shareConversationBtn.classList.toggle("hidden", !state.activeConversationId || !hasShare);
+    if (state.activeConversationId && hasShare) {
+      shareConversationBtn.removeAttribute("aria-disabled");
+      shareConversationBtn.classList.remove("is-access-blocked");
+      shareConversationBtn.title = "이 대화 전체를 anonymous 접근 가능한 링크로 공유합니다.";
     }
   }
   if (processing) {
@@ -2138,6 +2169,39 @@ function beginPendingConversation() {
   renderProgress();
   renderComposer();
   if (promptInputEl) promptInputEl.focus();
+}
+
+// REQ-20260514-0001: 대화 공유 링크 생성. anchorMessageId 가 주어지면 'anchored', 아니면 'full'.
+// 성공 시 절대 URL 을 clipboard 에 복사하고 toast 로 노출. 실패 시 throw.
+async function createConversationShare({ anchorMessageId = null } = {}) {
+  const cid = state.activeConversationId;
+  if (!cid) return null;
+  if (!can("conversation.share.create")) {
+    showPermissionDeniedToast("conversation.share.create");
+    return null;
+  }
+  const body = anchorMessageId != null
+    ? { scope_mode: "anchored", anchor_message_id: Number(anchorMessageId) }
+    : { scope_mode: "full" };
+  const payload = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/share`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  if (!payload || !payload.url) {
+    throw new Error("공유 링크 응답이 비어 있습니다.");
+  }
+  const absoluteUrl = `${window.location.origin}${payload.url}`;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(absoluteUrl);
+      showToast(`공유 링크가 복사되었습니다: ${absoluteUrl}`);
+    } else {
+      window.prompt("공유 링크를 복사하세요:", absoluteUrl);
+    }
+  } catch (e) {
+    window.prompt("공유 링크를 복사하세요:", absoluteUrl);
+  }
+  return payload;
 }
 
 async function forkConversation({ fromMessageId = null } = {}) {
@@ -2826,6 +2890,13 @@ async function initialize() {
     forkConversationBtn.addEventListener("click", () => {
       forkConversation().catch((error) => {
         showToast(error.message || "대화 복사에 실패했습니다.", true);
+      });
+    });
+  }
+  if (shareConversationBtn) {
+    shareConversationBtn.addEventListener("click", () => {
+      createConversationShare().catch((error) => {
+        showToast(error.message || "공유 링크 생성에 실패했습니다.", true);
       });
     });
   }
