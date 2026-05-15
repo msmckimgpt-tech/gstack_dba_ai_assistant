@@ -9,6 +9,8 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-05-15 TASK-0061 round 2 — /qa 심층 검증 완료, 추가 fix 0건** (browser session `483add52718b4a93`). Phase 4 (Point rail) 의 dot click → smooth scroll + active dot id 갱신 (`291`) 정상. Phase 5 (캘린더) 의 월 prev/next 이동 + has-messages day "15" 선택 → 시각 list 1 개 표시 + screenshot `/shared/out/browser/shot_20260515_091222.png` 정상. Phase 3 stale / Phase 6 비번 reset / Phase 8 bulk delete 는 destructive endpoint 라 운영 환경 사용자 명시 시점에 실 호출 검증 권고 (1차 cycle 의 응답 형식 / 권한 / DOM 요소 검증으로 contract 확정 완료). 본 cycle PR (#27) 은 추가 fix 없이 ship 가능.
+
 **2026-05-15 TASK-0061 완료 — GOAL.md 8 항목 Web UI 합본 cycle (실시간 step / lazy polling / stale 감지 / point rail / 캘린더 / 비밀번호 초기화 / select-all fix / bulk delete)** (CHG-20260515-0003, REV-20260515-0003, REQ-20260515-0003~0010, **Major** §12.3 — Phase 6 Critical 분면 포함, 사용자 일괄 승인 + 보안 권장안 채택). 
 
 **Phase 1+2 (답변 버블 실시간 + 신규 대화 첫 polling)**: `state.pendingBubble` + `renderPendingAssistantBubble()` + 1초 elapsed timer + `applyProgressPayload` 동기화. lazy-create 분기에서 cid 발급 즉시 `startProgressPolling({reset:true})` 호출.
