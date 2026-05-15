@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260515-0004
+- Date: 2026-05-15
+- Summary: TASK-0061 round 2 — /qa 심층 검증 결과 docs 보강. Phase 4/5 의 사용자 상호작용 흐름 (dot click smooth scroll, 캘린더 월 이동 + day click) 을 browser 자동화 (`make browser-*`, session `483add52718b4a93`) 로 실측 확인. Phase 3/6/8 의 destructive endpoint 는 1차 cycle 의 contract 확정 (응답 형식 / 권한 / DOM 노출) 으로 충분, 운영 환경 실 호출은 사용자 명시 시점에 별도 진행 권고. round 2 신규 발견 이슈 0 건.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/docs/REPORT.md` — round 2 검증 결과 summary 라인 prepend.
+  - `repo/unit/feature-0003-agent-web-ui/docs/TEST.md` — round 2 test run history entry prepend (Phase 4/5 deep + Phase 3/6/8 contract 정합 메모).
+- Verification:
+  - browser session `483add52718b4a93`, screenshot `/shared/out/browser/shot_20260515_091222.png`.
+  - 대화 `20260515080029-a5353434` (2 메시지), Point rail dot click → `messageLog.scrollTop=245 → smooth scroll`, active dot id `291` 갱신.
+  - 캘린더 popover title 2026년 5월 ↔ 4월 prev/next 이동, day "15" click → 시각 list 1개 표시.
+- Trace: TASK-0061 → CHG-20260515-0003 → CHG-20260515-0004 (post-ship QA round 2).
+
 ## CHG-20260515-0003
 - Date: 2026-05-15
 - Summary: TASK-0061 (REQ-20260515-0003 ~ REQ-20260515-0010, **Major** §12.3 — UI 상태 / 인증(비밀번호 초기화) / 파괴적 데이터(bulk delete) 일괄 변경) GOAL.md 8 항목 합본 cycle.
