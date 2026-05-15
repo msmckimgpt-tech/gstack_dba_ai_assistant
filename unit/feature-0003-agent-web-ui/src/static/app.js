@@ -1100,7 +1100,7 @@ function renderConversationList() {
       if (mine) button.dataset.idx = String(visibleIdx);
       button.addEventListener("click", (ev) => {
         if (mine && can("conversation.delete.own") && (ev.ctrlKey || ev.metaKey || ev.shiftKey)) {
-          // TASK-0061 Phase 8 (AC-0101): Ctrl/Meta = 토글, Shift = range (own 그룹 내 visible 기준).
+          // TASK-0062 (REQ-20260515-0011): Ctrl/Meta = 토글, Shift = range. 일반 click 은 선택 해제.
           ev.preventDefault();
           ev.stopPropagation();
           if (ev.shiftKey && state.conversationLastClickIdx >= 0 && ownVisibleIds.length) {
@@ -1121,25 +1121,11 @@ function renderConversationList() {
           renderConversationBulkBar();
           return;
         }
+        // TASK-0062: 일반 click — 단일 선택 + 다중 선택 set 비우기.
+        state.conversationSelected.clear();
+        state.conversationLastClickIdx = -1;
         selectConversation(item.id);
       });
-      // TASK-0061 Phase 8 (AC-0101): own 항목에만 checkbox 노출. delete.own 보유 시만.
-      if (mine && can("conversation.delete.own")) {
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.className = "conv-item-checkbox";
-        cb.checked = state.conversationSelected.has(String(item.id));
-        cb.setAttribute("aria-label", `대화 ${item.topic || item.id} 선택`);
-        cb.addEventListener("click", (ev) => ev.stopPropagation());
-        cb.addEventListener("change", () => {
-          if (cb.checked) state.conversationSelected.add(String(item.id));
-          else state.conversationSelected.delete(String(item.id));
-          state.conversationLastClickIdx = visibleIdx;
-          renderConversationList();
-          renderConversationBulkBar();
-        });
-        button.appendChild(cb);
-      }
 
       const titleRow = document.createElement("div");
       titleRow.className = "conv-item-title-row";
@@ -2007,7 +1993,33 @@ function renderMessagePointRail() {
     });
     rail.appendChild(dot);
   });
+  // TASK-0062: dot 위치를 messageLog 의 scrollHeight 기준 비례로 재배치.
+  layoutMessagePointRail();
   highlightActivePoint();
+}
+
+// TASK-0062 (REQ-20260515-0012): 각 dot 의 top 을 messageLog 의 scrollHeight 비례로 배치.
+// 메시지 1 개가 매우 길어도 dot 가 실 message 의 중심점 비례 위치로 표시된다.
+function layoutMessagePointRail() {
+  const rail = document.getElementById("messagePointRail");
+  if (!rail || !messageLogEl) return;
+  const dots = rail.querySelectorAll(".message-point-dot");
+  if (!dots.length) return;
+  const totalHeight = Math.max(1, messageLogEl.scrollHeight);
+  dots.forEach((dot) => {
+    const messageId = dot.dataset.messageId;
+    if (!messageId) return;
+    const el = document.getElementById(`message-${messageId}`);
+    if (!el) return;
+    // offsetTop 은 가장 가까운 positioned ancestor 기준. messageLog 가 그 ancestor 여야 정확.
+    // messageLog 가 position: static 이면 offsetTop 이 더 위 ancestor 기준 — getBoundingClientRect 보정 사용.
+    const messageRect = el.getBoundingClientRect();
+    const logRect = messageLogEl.getBoundingClientRect();
+    const offsetTopInLog = messageRect.top - logRect.top + messageLogEl.scrollTop;
+    const center = offsetTopInLog + messageRect.height / 2;
+    const pct = Math.max(0, Math.min(100, (center / totalHeight) * 100));
+    dot.style.top = `${pct}%`;
+  });
 }
 
 function highlightActivePoint() {
@@ -2181,13 +2193,13 @@ async function jumpToHistoryAnchor(atString) {
   }
 }
 
-// TASK-0061 Phase 8 (REQ-20260515-0010): 내 대화 다중 선택 + bulk delete.
+// TASK-0061 Phase 8 (REQ-20260515-0010) + TASK-0062 (REQ-20260515-0011): 2 개 이상 선택 시 노출.
 function renderConversationBulkBar() {
   const bar = document.getElementById("conversationBulkBar");
   if (!bar) return;
   bar.innerHTML = "";
   const count = state.conversationSelected.size;
-  if (count <= 0 || !can("conversation.delete.own")) {
+  if (count < 2 || !can("conversation.delete.own")) {
     bar.classList.add("hidden");
     return;
   }
@@ -3642,10 +3654,14 @@ async function initialize() {
   });
 
   // TASK-0061 Phase 4 (REQ-20260515-0006): point rail 의 active dot 갱신 — scroll + resize.
+  // TASK-0062 (REQ-20260515-0012): scrollHeight 변화 시 dot 위치도 재배치.
   if (messageLogEl) {
     messageLogEl.addEventListener("scroll", () => highlightActivePoint(), { passive: true });
   }
-  window.addEventListener("resize", () => highlightActivePoint());
+  window.addEventListener("resize", () => {
+    layoutMessagePointRail();
+    highlightActivePoint();
+  });
 
   // Textarea auto-grow
   promptInputEl.addEventListener("input", function () {

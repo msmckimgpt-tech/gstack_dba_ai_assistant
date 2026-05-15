@@ -78,6 +78,16 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   - AC-0105: bulk delete 가 ≥ `CONFIRM_TYPED_THRESHOLD` (=10) 개를 대상으로 할 때 typed-confirm prompt 가 노출된다 (AC-0034 와 동일 컨벤션). 처리 중 대화가 포함되면 추가 confirm 으로 강제 삭제 의사를 확인한다.
   - AC-0106: 삭제 성공 후 `state.conversationSelected` 가 clear 되고 `loadConversations()` 로 list 가 재로드된다. 삭제된 대화 중 active conversation 이 포함되었으면 `state.activeConversationId=""` 로 reset + `renderMessages()` 빈 상태.
   - AC-0107: 권한 `conversation.delete.own` 보유한 계정만 bulk delete 버튼이 노출된다. 권한 없으면 checkbox 자체가 hidden. 타 계정 대화는 selection 대상이 아니다.
+
+- REQ-20260515-0011 (TASK-0062, Minor §12.3): 내 대화 다중 선택 UX 를 더 minimal 하게 — 별도 checkbox 없이 Ctrl/Shift modifier 만으로 다중 선택, 2 개 이상 선택 시에만 bulk bar 표시, 일반 click 은 단일 선택 + 다중 선택 해제.
+  - AC-0108: `.conv-item-checkbox` 가 DOM 에서 제거된다. 다중 선택은 Ctrl/Meta + click (토글) / Shift + click (range) 만 허용. 일반 click 은 `selectConversation()` 호출 + `state.conversationSelected.clear()` + `state.conversationLastClickIdx = -1`.
+  - AC-0109: `renderConversationBulkBar()` 의 노출 조건이 `count < 2` 면 hidden — 즉 2 개 이상 선택 시에만 bar 표시. 1 개만 선택 / 0 개 선택 시 bar 자동 숨김.
+  - AC-0110: 다른 대화 일반 click 시 `state.conversationSelected.clear()` 가 호출되어 기존 다중 선택이 즉시 해제된다. 사용자가 의도하지 않은 stale 다중 선택 잔존을 방지.
+
+- REQ-20260515-0012 (TASK-0062, Minor §12.3): chat pane 우측 Point rail 의 dot 위치를 메시지 영역의 scrollHeight 기준 비례 분포로 배치한다 (이전: rail 안에서 단순 누적 — 메시지 길이 차이를 반영하지 않음).
+  - AC-0111: `.message-point-rail` 이 `position: relative` 로 변경되고 각 `.message-point-dot` 가 `position: absolute; top: <pct>%`. `pct = (message.offsetTop + height/2) / messageLog.scrollHeight * 100`. 매우 긴 메시지 1 개가 있어도 dot 가 해당 메시지의 실 중심 비례 위치에 표시된다.
+  - AC-0112: `layoutMessagePointRail()` 헬퍼가 `renderMessages()` 끝 + resize 시 호출되어 dot 의 top% 를 재계산한다. message scrollHeight 변경 (메시지 추가 / 펼침 / 접힘) 시 다음 render cycle 에 자동 반영.
+  - AC-0113: dot 의 transform 은 `translate(-50%, -50%)` 로 horizontal 중앙 정렬 + vertical 중심점 정렬. `.is-active` 일 때 `translate(-50%, -50%) scale(1.8)` 로 translate 와 scale 함께 적용해 dot 가 좌측으로 튀지 않는다.
 - REQ-20260514-0001 (TASK-0058, **Critical** §12.3): 사용자가 자기 대화를 anonymous 접근 가능한 공유 링크로 발급해 다른 사람과 공유할 수 있다. 공유 받은 사람은 로그인 없이 read 가능하고, 로그인 + `conversation.create` 보유 시 본인 계정의 새 대화로 fork 가능하다. 공유 범위는 대화 전체 (`full`) 또는 특정 메시지까지 (`anchored`) 의 두 모드. 만료는 무기한 + 명시 revoke. 생성/취소 권한은 신규 `conversation.share.create` 로 gated 된다 (operator/sales/admin 자동 grant). 외부 anonymous 허용은 사내 IP 가정이며 외부 배포 시 IP 제한 또는 비밀번호 보호가 후속 cycle 권장사항이다.
 - REQ-20260512-0001 (TASK-0055): 관리 콘솔의 모든 카테고리 (Accounts / Roles / Products / 이후 추가) 의 다중선택 (multi-select) UX 는 단일 정합 컨벤션 (`docs/CONVENTIONS.md §10` + `feature-0003 docs/DESIGN.md`) 을 따른다. drift 재발은 runtime contract assertion 이 차단한다.
   - AC-0031: Accounts / Roles / Products 의 bulk toolbar 가 모두 `.admin-list-col` 의 `.admin-bulk-actions` (list 직하단) 에 위치한다. `.admin-pane-head-right` 는 primary action (`+ 새 X`) 전용이며 동적 bulk action 슬롯 사용 금지 — `assertBulkBarContract(<entity>)` 가 초기화 시 검증.

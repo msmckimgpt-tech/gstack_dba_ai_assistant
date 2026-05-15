@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260515-0005
+- Date: 2026-05-15
+- Summary: TASK-0062 (REQ-20260515-0011 / REQ-20260515-0012, Minor §12.3) — 사용자 GOAL 2026-05-15 후속 2 항목.
+  - **다중선택 UX 개선**: `.conv-item-checkbox` 제거 → Ctrl/Meta toggle + Shift range 만으로 다중 선택. 일반 click 은 단일 선택 + `state.conversationSelected.clear()` + `state.conversationLastClickIdx = -1`. `renderConversationBulkBar()` 의 노출 임계값 `count >= 1` → `count >= 2`. 즉 2 개 이상 선택 시에만 bar 가시.
+  - **Point rail 위치 비례 분포**: `.message-point-rail` 을 `flex column` → `position: relative` 로 변경. 각 `.message-point-dot` 가 `position: absolute; left: 50%; top: <pct>%; transform: translate(-50%, -50%)`. `pct = (msg.offsetTopInLog + msg.height/2) / messageLog.scrollHeight * 100`. 신규 helper `layoutMessagePointRail()` 가 `renderMessagePointRail` 끝 + resize listener 에서 재계산. `.is-active` 의 transform 도 `translate(-50%, -50%) scale(1.8)` 로 보정 (좌측 튐 방지).
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/app.js` — `renderConversationList` 의 checkbox block 제거 + 일반 click 의 `conversationSelected.clear()` 추가 + `renderConversationBulkBar` 임계값. `renderMessagePointRail` 끝에 `layoutMessagePointRail()` 호출 + helper 신설 + resize handler 가 layout + highlight 둘 다 호출.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css` — `.message-point-rail` (flex/gap/padding/overflow 제거 + relative 추가), `.message-point-dot` (position absolute + transform translate), `.message-point-dot.is-active` (translate + scale 합성), `.conv-item-checkbox` rule 제거, `.conv-item.is-multi-selected` outline-offset -1px 보강.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html` + `admin.html` — cache-bust `v=20260515-task-0062`.
+  - `repo/unit/feature-0003-agent-web-ui/docs/FUNCTION.md` — REQ-20260515-0011 / REQ-20260515-0012 + AC-0108 ~ AC-0113 추가.
+  - `repo/unit/feature-0003-agent-web-ui/docs/TASK.md` — Task Queue entry 추가.
+- Verification:
+  - `node --check unit/feature-0003-agent-web-ui/src/static/app.js` PASS
+  - `node --check unit/feature-0003-agent-web-ui/src/static/admin.js` PASS
+  - (browser smoke 는 후속 단계에서 make web 재배포 후 진행)
+- Trace: REQ-20260515-0011 / REQ-20260515-0012 → TASK-0062 → CHG-20260515-0005
+
 ## CHG-20260515-0004
 - Date: 2026-05-15
 - Summary: TASK-0061 round 2 — /qa 심층 검증 결과 docs 보강. Phase 4/5 의 사용자 상호작용 흐름 (dot click smooth scroll, 캘린더 월 이동 + day click) 을 browser 자동화 (`make browser-*`, session `483add52718b4a93`) 로 실측 확인. Phase 3/6/8 의 destructive endpoint 는 1차 cycle 의 contract 확정 (응답 형식 / 권한 / DOM 노출) 으로 충분, 운영 환경 실 호출은 사용자 명시 시점에 별도 진행 권고. round 2 신규 발견 이슈 0 건.
