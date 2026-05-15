@@ -2074,8 +2074,13 @@ async function loadHistory({ append = false } = {}) {
 async function loadConversations(preferredConversationId = "") {
   const payload = await apiFetch("/api/conversations");
   state.conversations = Array.isArray(payload.items) ? payload.items : [];
-  const preferredExists = state.conversations.some((item) => item.id === preferredConversationId);
-  state.activeConversationId = preferredExists ? preferredConversationId : (payload.current || "");
+  // TASK-0059: pending 모드 race 가드. "새 대화" 버튼을 누른 직후 (state.activeConversationId="")
+  // 다른 비동기 path 가 refreshWorkspace 를 호출하면 payload.current (직전 대화 id) 로 active 가
+  // 복귀해 신규 의도가 깨지던 회귀를 차단. pending 모드일 때는 사이드바 리스트만 갱신하고 active 는 보존.
+  if (!state.pendingNewConversation) {
+    const preferredExists = state.conversations.some((item) => item.id === preferredConversationId);
+    state.activeConversationId = preferredExists ? preferredConversationId : (payload.current || "");
+  }
   renderConversationList();
   renderConversationHeader();
   renderComposer();
@@ -2491,6 +2496,10 @@ async function sendPrompt() {
     api_key_passphrase: vault.passphrase,
   };
   if (isLazyCreate) {
+    // TASK-0059: backend `/api/ask` 가 빈 conversation_id 를 "session 초기화 후 직전 대화 이어받기"
+    // 로 폴백하지 않고 신규 cid 를 강제 생성하도록 명시적 hint. hint 없는 legacy client 흐름은
+    // 기존 fallback 유지 (backward-compat).
+    askBody.lazy_create = true;
     askBody.product_mode = state.productMode === "pinned" ? "pinned" : "auto";
     askBody.product_id =
       askBody.product_mode === "pinned" && state.pinnedProductId

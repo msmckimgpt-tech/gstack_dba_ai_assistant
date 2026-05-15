@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260515-0001
+- Date: 2026-05-15
+- Decision: TASK-0059 (REQ-20260515-0001, **Major** §12.3 — 사용자 대화 routing 데이터 영역). "새 대화" 의 lazy-create 의도가 backend 로 전달되지 않아 빈 `conversation_id` 가 `_repair_current_conversation` 폴백 경로에서 `account.last_conversation_id` 로 귀결되던 결함을, 명시적 `lazy_create` body hint + `_resolve_conversation_for_account(force_new=...)` plumbing 으로 닫음. 인증/인가 catalog·endpoint guard·owner check 무변경.
+- Method:
+  1. **버그 재현 분석**: 사용자 보고 "새 대화 만든 후 그 대화에서 요청을 보냈는데 기존 대화에서 처리됨". 코드 trace 로 핵심 경로 파악 — frontend `beginPendingConversation()` [app.js:2148-2172] 이 `state.activeConversationId=""` + `pendingNewConversation=true` 로 두고 backend row 를 lazy 생성 위임 (TASK-0048 빈 대화 누적 방지 정책). `sendPrompt()` [app.js:2454] 는 `askBody.conversation_id=""` 로 `/api/ask` 호출. backend [app.py:4273-4285] 가 빈 cid 경로에서 `_resolve_conversation_for_account(..., create_if_missing=True)` 호출 → `_repair_current_conversation` [app.py:1156-1179] 으로 폴백 → `current_id = account.last_conversation_id` (= 직전 대화) 가 visible 안에 있으면 line 1167-1168 의 early return 으로 **기존 대화 ID 반환**. 신규 의도가 backend 로 전달되지 않음.
+  2. **부가 race 발견**: `loadConversations` [app.js:2074] 이 pending 모드 진행 중에 호출되면 `payload.current` (= backend `_repair_current_conversation(create_if_missing=False)` 결과 = 직전 대화 id) 로 `state.activeConversationId` 를 덮어써 pending 의도를 깨뜨릴 수 있음. progress polling 정리에서 폴백된 갱신이나 다른 비동기 path 가 호출하는 경로에서 발생 가능.
+  3. **대안 비교**:
+     - **Alt A (선택)**: 명시적 `lazy_create` hint — frontend 가 pending 의도를 backend 에 신호. 단일 변경점 + 기존 fallback 보존 + legacy client 호환.
+     - **Alt B**: backend 가 빈 conversation_id 를 항상 신규 생성. 단순하지만 첫 로그인 후 자동 이어받기 / `/api/use_conversation` 미호출 client 흐름이 깨짐. backward-compat 위배.
+     - **Alt C**: frontend 가 pending 모드일 때 명시적 `/api/new_conversation` 먼저 호출. TASK-0048 의 빈 대화 누적 방지 정책이 부활하므로 거부.
+  4. **race 가드 분리**: backend 의 routing fix 만으로는 pending 의도가 frontend 자체에서 깨질 가능성 잔존 → `loadConversations` 의 active id 덮어쓰기에 `!state.pendingNewConversation` 가드 추가. 두 변경은 독립적 — 하나만 적용해도 일부 시나리오 보호되나, 함께 적용해야 모든 reproduction 경로 차단.
+- Risks:
+  - **legacy client (구버전 frontend)**: hint 미포함 ask 요청은 force_new=False 로 기존 동작 유지. 그래서 backend 단독 deploy 후 frontend 가 캐시된 구버전이면 버그는 그대로 재현 가능. cache-bust 필요 시 `static/app.js` 의 query string 갱신 (e.g. `v=20260515-lazy`). 본 cycle 은 변경 자체에 cache-bust 미포함 — 사용자가 hard reload 또는 browser cache clear 로 확인.
+  - **신규 cid 의 owner assign 경로**: `_repair_current_conversation` 의 force_new=True 분기는 `_create_conv(conv_file=_account_conv_file(...))` 호출 후 즉시 `_assign_conversation_owner(conn, next_id, account_id, force=True)` 와 `_set_account_current_conversation` 을 호출 (line 1175-1177). 즉 새 cid 는 본 계정 소유로 즉시 assign 되며 cross-account leak 가능성 없음.
+  - **pending 가드의 부작용**: `loadConversations` 가 pending 중에 호출되어도 active id 가 보존되므로 backend `payload.current` 와 frontend `state.activeConversationId` 가 일시적으로 분기. 사용자가 사이드바에서 다른 대화를 직접 선택하면 `selectConversation` [app.js:2101] 이 pending 모드를 종료시키므로 (line 2106-2108) 정합 회복. 첫 메시지 전송 시에는 `sendPrompt` 의 lazy create 분기 (line 2509-2513) 가 새 cid 로 정리.
+  - **owner check 우회 가능성**: 변경 후에도 명시 cid 가 들어오는 경로 (`request_conversation_id` truthy) 는 기존 `_conversation_owned_by_account` 검사 [app.py:4269-4271] 를 그대로 거친다. force_new 경로는 새 cid 를 즉시 생성하므로 owner check 가 무의미 (본 계정 소유). 인가 모델 무변경 확인.
+  - **TASK-0048 정책과의 충돌 여부**: TASK-0048 은 "빈 대화 row 누적 방지" 가 목적. 본 fix 의 force_new 분기는 **메시지 전송 시점에만** 발동하므로 row 가 만들어지는 즉시 메시지가 attach 됨 → 빈 대화 아님. 정책 위배 0.
+- Follow-ups:
+  - 운영 검증: web 컨테이너 재배포 후 (a) 직전 대화 X 가 있는 상태에서 "새 대화" 클릭 → 빈 입력창 → 메시지 전송 → 새 cid Y 발급 + 메시지가 Y 에 attach (X 에는 추가 없음) 확인. (b) 직전 대화 X 가 있는 상태에서 "새 대화" 클릭 → 사이드바 새로고침 트리거 → active 가 X 로 복귀 안 되는지 확인 (pending 가드).
+  - cache-bust: 다음 cycle 에서 frontend 변경 함께 deploy 할 때 `static/app.js?v=` 갱신.
+  - 회귀 테스트: feature-0003 unit tests 에 "lazy create 의도 시 신규 cid 발급" + "pending 모드 race 시 active 보존" 케이스 추가 가능 (현 cycle defer — TASK-0034 성능 테스트와 함께 다룰지 사용자 결정).
+
 ## REV-20260514-0001
 - Date: 2026-05-14
 - Decision: TASK-0058 (REQ-20260514-0001, **Critical** §12.3) 대화 공유 링크 기능 도입. anonymous 접근 허용은 사내 IP 가정 + 외부 배포 시 IP 제한/비밀번호 보호 후속 cycle. PLAN-APPROVED + 사용자 결정 6 항목 + outside voice review 완료 후 진행.

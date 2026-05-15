@@ -12,10 +12,33 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: medium
-- Last Updated: 2026-05-14
+- Last Updated: 2026-05-15
 
 ## 2. Task Queue
-<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-14 -->
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-15 -->
+- [ ] TASK-0059 (REQ-20260515-0001, **Major** §12.3 — 사용자 대화 routing 데이터 영역, 인증/인가 모델 무변경) "새 대화" 버튼 누른 후 첫 메시지를 보내도 backend 가 직전 active 대화에 메시지를 추가하는 lazy-create routing 결함 수정. 사용자가 신규 대화 의도로 보낸 첫 메시지가 잘못된 대화 컨텍스트로 귀속되어 발견. **근본 원인**: frontend `beginPendingConversation()` 이 `state.activeConversationId=""` 로 두고 backend row 를 lazy 생성 위임하나 (TASK-0048 정책), `/api/ask` 의 빈 `conversation_id` 경로가 `_resolve_conversation_for_account` → `_repair_current_conversation` 으로 폴백해 `account.last_conversation_id` (직전 대화) 를 반환. frontend 의 "pending = 신규 의도" 가 backend 로 전달되지 않아 "session 초기화 후 직전 대화 이어받기" 와 구분 불가. **Fix Phase A**: frontend `sendPrompt()` 가 `isLazyCreate=true` 일 때 `askBody.lazy_create = true` 를 추가. **Phase B**: backend `_resolve_conversation_for_account(..., force_new=False)` kwarg 추가, `_repair_current_conversation` 의 기존 `force_new` 파라미터로 위임. `/api/ask` 의 빈 `request_conversation_id` 경로에서 `data.get("lazy_create")` 가 truthy 이면 `force_new=True` 호출. **Phase C**: frontend `loadConversations()` 의 `state.activeConversationId` 덮어쓰기에 `!state.pendingNewConversation` 가드 추가 — pending 모드 race 시 직전 대화로 복귀 차단. **Phase D**: MODIFY.md CHG-20260515-0001 + REVIEW.md REV-20260515-0001 기록.
+
+### 2.1 Implementation Plan (TASK-0059)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 Major 등급 변경 계획이다. 사용자 승인 (2026-05-15) 으로 진행.
+
+**영향 파일**:
+- [src/static/app.js](../src/static/app.js) — `sendPrompt()` askBody 에 `lazy_create` hint (lazy 경로 한정), `loadConversations()` 의 active id 덮어쓰기에 pending 가드
+- [src/app.py](../src/app.py) — `_resolve_conversation_for_account` 시그니처에 `force_new=False` kwarg 추가, `/api/ask` 의 빈 `request_conversation_id` 경로가 `lazy_create` body hint 를 `force_new=True` 로 위임
+
+**접근 방법**:
+1. Frontend `sendPrompt()` 의 askBody 구성 시 `isLazyCreate` 일 때만 `lazy_create: true` 를 추가 (기존 대화 ask 에는 추가 안 함 — 의미 변경 0).
+2. Frontend `loadConversations()` 가 `state.pendingNewConversation` true 일 때는 `state.activeConversationId` 를 덮어쓰지 않음 — 사이드바 리스트와 backend `current` 는 갱신하되 active id 보존.
+3. Backend `_resolve_conversation_for_account` 에 `force_new=False` kwarg 추가. requested_id 가 truthy 이면 기존 동작 (force_new 무시), 빈 문자열이면 `_repair_current_conversation(..., force_new=force_new)` 로 위임. `_repair_current_conversation` 은 기존에 `force_new=True` 시 visible fallback 차단 + 새 cid 생성 로직을 이미 가짐 — body 변경 없음.
+4. `/api/ask` 의 빈 `request_conversation_id` 경로에서 `lazy_create_requested = bool(data.get("lazy_create"))` 추출 후 `_resolve_conversation_for_account(..., create_if_missing=True, force_new=lazy_create_requested)` 호출. hint 없는 legacy client (예: 첫 로그인 후 직전 대화 자동 이어받기 흐름) 는 force_new=False → 기존 동작 유지.
+
+**위험도**: **Major** §12.3 — 사용자 대화 routing 데이터 영역. 인증/인가 catalog·endpoint guard·owner check 무변경. `_account_can_access_conversation` / `_conversation_owned_by_account` 검사는 기존 그대로 유지되며 force_new 경로는 새 cid 를 생성하므로 owner 가 즉시 본 계정으로 assign 됨 (`_assign_conversation_owner(force=True)`). cross-account leak 가능성 없음.
+
+**검증**:
+- (a) `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py`
+- (b) `node --check unit/feature-0003-agent-web-ui/src/static/app.js`
+- (c) `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui`
+
 - [x] TASK-0058 (REQ-20260514-0001, **Critical** §12.3 — 인증/인가·개인정보·외부 공개 범위 변경) 대화 공유 링크 기능 도입. anonymous 접근 가능한 read-only view + 로그인 viewer 의 fork. 사용자 결정 6 항목 (외부 anonymous 허용 / 무기한 + revoke / read+fork / full+anchored / `conversation.share.create` 신설 / 메시지+SQL+결과셋 노출) 와 codex outside voice review 의 blindspot 보강 (B1 메시지 테이블 이중성 — AnchorMessageId 는 `AgentMemoryMessages.Id` 기준 inclusive `Id <= anchor`, B2 `_optional_account` 헬퍼 신설, R4 `_fork_conversation_impl` 추출로 share-grant 가 read-gate 우회, R6 revoke+view race-free 단일 UPDATE, R7 file attachment 자동 hide, R8 token 충돌 retry, R10 share.html FileResponse mount) 반영. **Phase A**: `PERMISSION_DEFINITIONS` 에 `conversation.share.create` 추가 (catalog 33→34, group=conversation), `SEED_ROLE_DEFINITIONS` operator/sales 에 grant + admin 보정 list 에 추가, `WebConversationShares` 테이블 신설, `_ensure_web_conversation_shares_schema(conn)` helper 가 slow path + fast path 양쪽 idempotent 호출, fast path catchup 에 `_ensure_permission_catalog(conn)` 추가로 신규 권한 hydrate. **Phase B**: `_optional_account` + `_fork_conversation_impl` 헬퍼 + 5 endpoint (POST/GET share[s], DELETE share, GET/POST public/share/{token}[/fork]). Token = `secrets.token_urlsafe(32)`. `/share/{token}` FileResponse route. **Phase C**: 헤더 `shareConversationBtn` (gated by `conversation.share.create`) + 메시지 hover "여기까지 공유" + `createConversationShare` 함수 (clipboard copy + toast). 권한 label/description 매핑 추가 → CONVENTIONS.md §10.6 conversation section 에 자동 합류. **Phase D**: `share.html` / `share.css` / `share.js` 신규 정적 파일 — anonymous accessible read-only view (메시지 + SQL `<pre>` + 결과셋 `<table>`), 로그인 + can_fork 시 "내 계정에서 fork" 버튼. **Phase E**: 본 entry + FUNCTION.md REQ-20260514-0001 (AC-0053~AC-0060), MODIFY.md / REVIEW.md, project-level [`docs/SECURITY.md`](../../../docs/SECURITY.md) 에 anonymous endpoint 2 곳 명시 + 외부 배포 시 IP 제한/비밀번호 보호 후속 cycle 권장, STATUS.md feature-0003 row 갱신.
 
 ### 2.1 Implementation Plan (TASK-0058)

@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260515-0001
+- Date: 2026-05-15
+- Summary: TASK-0059 (REQ-20260515-0001, **Major** §12.3 — 사용자 대화 routing 데이터 영역). "새 대화" 버튼 누른 후 첫 메시지가 신규 대화가 아닌 직전 active 대화로 routing 되던 lazy-create 결함 수정. frontend 의 신규 의도가 backend 로 전달되지 않아 빈 `conversation_id` 가 "session 초기화 후 직전 대화 이어받기" 와 구분 불가했던 갭을 명시적 `lazy_create` hint + `force_new` 분기로 닫는다. 인증/인가 모델 무변경.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/app.js`:
+    - `sendPrompt()` 의 askBody 에 `isLazyCreate=true` 일 때만 `lazy_create: true` hint 를 추가. 기존 대화 ask 경로는 hint 미포함 (의미 변경 0).
+    - `loadConversations()` 의 `state.activeConversationId` 덮어쓰기를 `!state.pendingNewConversation` 가드 안으로 이동. pending 모드 race 시 사이드바 리스트만 갱신하고 active 보존 → 직전 대화로 복귀하던 회귀 차단.
+  - `repo/unit/feature-0003-agent-web-ui/src/app.py`:
+    - `_resolve_conversation_for_account` 시그니처에 `force_new: bool = False` kwarg 추가. requested_id 가 truthy 이면 force_new 무시 (의도 상호배타), 빈 문자열이면 `_repair_current_conversation(..., force_new=force_new)` 로 위임. 기존 `_repair_current_conversation` 의 force_new 동작 (line 1167 의 visible fallback 차단 + line 1172 의 신규 cid 생성 + `_assign_conversation_owner(force=True)`) 그대로 활용 — body 변경 없음.
+    - `/api/ask` 의 빈 `request_conversation_id` 경로에서 `lazy_create_requested = bool(data.get("lazy_create"))` 추출 후 `_resolve_conversation_for_account(..., create_if_missing=True, force_new=lazy_create_requested)` 호출. hint 없는 legacy client (예: 첫 로그인 후 직전 대화 자동 이어받기 흐름) 는 force_new=False 로 기존 동작 유지.
+- Trace: REQ-20260515-0001 → TASK-0059 → CHG-20260515-0001
+- Verify: `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` / `node --check unit/feature-0003-agent-web-ui/src/static/app.js` / `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui`
+
 ## CHG-20260514-0001
 - Date: 2026-05-14
 - Summary: TASK-0058 (REQ-20260514-0001, **Critical** §12.3) 대화 공유 링크 기능 도입. anonymous accessible read-only view + 로그인 viewer 의 fork. 사용자 결정 6 항목 + codex outside voice review 의 blindspot 10 개 (B1-B2 blocking + R1-R10 recommended) 모두 plan 에 반영.

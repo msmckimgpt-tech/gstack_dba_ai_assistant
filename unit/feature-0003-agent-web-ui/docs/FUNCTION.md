@@ -14,6 +14,11 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 ## 2. Goal
 - REQ-0001: Web UI 코드를 별도 feature로 분리한다.
 - REQ-0002: agent 이미지가 새 Web UI 경로를 정상 포함하게 한다.
+- REQ-20260515-0001 (TASK-0059, **Major** §12.3): "새 대화" 버튼 lazy-create 흐름의 신규 의도가 backend 로 정확히 전달되어, 사용자가 직전 대화 X 에 있는 상태에서 "새 대화" 클릭 후 첫 메시지를 보내면 항상 신규 cid Y 가 발급되고 메시지가 Y 에 attach 된다 (X 에는 추가되지 않는다). 인증/인가 모델 무변경.
+  - AC-0061: frontend `sendPrompt()` 가 lazy-create 분기 (`isPending || !state.activeConversationId`) 일 때만 askBody 에 `lazy_create: true` hint 를 포함한다. 기존 대화 ask 경로는 hint 미포함.
+  - AC-0062: backend `/api/ask` 가 빈 `request_conversation_id` 경로에서 `data.get("lazy_create")` truthy 이면 `_resolve_conversation_for_account(..., force_new=True)` 로 호출해 직전 대화(`account.last_conversation_id`) 폴백 대신 신규 cid 를 강제 생성한다. hint 없는 legacy client (세션 부트스트랩 후 직전 대화 자동 이어받기 흐름) 는 force_new=False 로 기존 동작 유지.
+  - AC-0063: frontend `loadConversations()` 가 `state.pendingNewConversation === true` 일 때 `state.activeConversationId` 를 덮어쓰지 않는다 — 사이드바 리스트와 `payload.current` 는 갱신하되 pending 의도가 race 로 깨지지 않도록 active 보존. 사용자가 사이드바에서 다른 실 대화를 직접 선택하면 `selectConversation` 이 pending 모드를 종료시키는 기존 동작은 유지.
+  - AC-0064: force_new 분기로 생성된 신규 cid 는 `_assign_conversation_owner(force=True)` 와 `_set_account_current_conversation` 으로 즉시 본 계정에 assign 된다 — cross-account leak 가능성 없음.
 - REQ-20260514-0001 (TASK-0058, **Critical** §12.3): 사용자가 자기 대화를 anonymous 접근 가능한 공유 링크로 발급해 다른 사람과 공유할 수 있다. 공유 받은 사람은 로그인 없이 read 가능하고, 로그인 + `conversation.create` 보유 시 본인 계정의 새 대화로 fork 가능하다. 공유 범위는 대화 전체 (`full`) 또는 특정 메시지까지 (`anchored`) 의 두 모드. 만료는 무기한 + 명시 revoke. 생성/취소 권한은 신규 `conversation.share.create` 로 gated 된다 (operator/sales/admin 자동 grant). 외부 anonymous 허용은 사내 IP 가정이며 외부 배포 시 IP 제한 또는 비밀번호 보호가 후속 cycle 권장사항이다.
 - REQ-20260512-0001 (TASK-0055): 관리 콘솔의 모든 카테고리 (Accounts / Roles / Products / 이후 추가) 의 다중선택 (multi-select) UX 는 단일 정합 컨벤션 (`docs/CONVENTIONS.md §10` + `feature-0003 docs/DESIGN.md`) 을 따른다. drift 재발은 runtime contract assertion 이 차단한다.
   - AC-0031: Accounts / Roles / Products 의 bulk toolbar 가 모두 `.admin-list-col` 의 `.admin-bulk-actions` (list 직하단) 에 위치한다. `.admin-pane-head-right` 는 primary action (`+ 새 X`) 전용이며 동적 bulk action 슬롯 사용 금지 — `assertBulkBarContract(<entity>)` 가 초기화 시 검증.

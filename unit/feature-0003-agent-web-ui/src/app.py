@@ -3782,7 +3782,10 @@ def _resolve_conversation_for_account(
     requested_id: str = "",
     *,
     create_if_missing: bool = False,
+    force_new: bool = False,
 ) -> str:
+    # TASK-0059: `force_new=True` 는 빈 `requested_id` 경로에서만 의미를 가진다. 명시된 cid 가 들어오면
+    # 그 cid 의 접근 권한만 검사하고 그대로 반환 (frontend 의 신규 의도와 명시 cid 의도는 상호 배타).
     conversation_id = str(requested_id or "").strip()
     if conversation_id:
         if _account_can_access_conversation(
@@ -3798,6 +3801,7 @@ def _resolve_conversation_for_account(
         conn,
         account,
         create_if_missing=create_if_missing,
+        force_new=force_new,
     )
 
 
@@ -4277,11 +4281,17 @@ async def ask(request: Request) -> JSONResponse:
         if not _account_has_permission(account, "conversation.ask"):
             conn.close()
             return _json_error("권한이 없습니다.", 403)
+        # TASK-0059: frontend "새 대화" 버튼 lazy 경로의 명시적 신규 의도. hint 가 있으면 직전
+        # 대화 (account.last_conversation_id) 로 폴백하지 않고 신규 cid 를 강제 생성한다.
+        # hint 없는 legacy client (세션 부트스트랩 후 직전 대화 자동 이어받기) 는 force_new=False
+        # 로 기존 동작 유지.
+        lazy_create_requested = bool(data.get("lazy_create"))
         conv_id = _resolve_conversation_for_account(
             conn,
             account,
             request_conversation_id,
             create_if_missing=True,
+            force_new=lazy_create_requested,
         )
         # TASK-0048: client (특히 사이드바 "새 대화" 버튼이 lazy 화된 frontend) 가 첫 메시지에 함께 보낸
         # product hint 를 이 시점에 적용한다. /api/new_conversation 의 동등한 분기를 ask body 안으로 이식.
