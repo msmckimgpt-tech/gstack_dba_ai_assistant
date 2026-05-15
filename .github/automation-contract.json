@@ -44,7 +44,6 @@
     "required": [
       "policy-contract",
       "selfhosted-runtime-smoke",
-      "ai-review",
       "owner-agent-report"
     ]
   },

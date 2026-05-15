@@ -40,7 +40,7 @@ jq -e '
   (.providers.allowed | length == 1) and
   (.providers.allowed[0] == "claude") and
   (.issues.types | length == 3) and
-  (.checks.required | length == 4) and
+  (.checks.required | length == 3) and
   (.commits.subject_regex | length > 0) and
   (.branches.public_pr_regex | length > 0)
 ' "$contract_file" >/dev/null || fail "automation contract schema validation failed"
@@ -102,7 +102,7 @@ CHANGED_FILES=$'README.md\ndocs/GITHUB_AUTOMATION.md' GITHUB_OUTPUT="$classify_o
 rm -f "$classify_output"
 
 classify_output="$(mktemp)"
-CHANGED_FILES=$'AGENTS.md\n.github/workflows/ai-review.yml' GITHUB_OUTPUT="$classify_output" "$script_dir/classify_changes.sh" >/dev/null
+CHANGED_FILES=$'AGENTS.md\n.github/workflows/policy-contract.yml' GITHUB_OUTPUT="$classify_output" "$script_dir/classify_changes.sh" >/dev/null
 [[ "$(read_output "$classify_output" docs_only)" == "false" ]] || fail "policy file changes must not be docs-only"
 [[ "$(read_output "$classify_output" risk_manual)" == "true" ]] || fail "sensitive changes must be risk manual"
 rm -f "$classify_output"

@@ -38,7 +38,7 @@ export GIT_SSH_COMMAND='ssh -i ~/.ssh/mckim_wsl -o IdentitiesOnly=yes'
 2. 필요하면 `agent:claude` 라벨로 provider를 명시한다 (현재 지원 provider 는 `claude` 하나).
 3. 이슈에 `feature`, `bug`, `task` 중 하나의 타입 라벨이 있고 차단 상태가 없으면 활성 provider가 브랜치와 PR을 생성한다.
 4. `status:ready`는 권장 라벨이며, Issue Template과 `ai-triage`가 기본값으로 붙일 수 있지만 실행의 필수 gate는 아니다.
-5. PR에서 `policy-contract`, `owner-agent-report`, `ai-review`, `selfhosted-runtime-smoke`를 통과한다.
+5. PR에서 `policy-contract`, `owner-agent-report`, `selfhosted-runtime-smoke`를 통과한다 (ai-review 는 self-hosted runner OAuth 만료로 비활성화됨, 자세한 사유는 issue #24).
 6. `risk:manual`이 없으면 GitHub auto-merge 후보가 된다.
 7. 병합 후 Issue를 종료한다.
 
@@ -128,7 +128,7 @@ feat(feature-0002): agent-core 세션 관리 개선 (#12)
 - 최소 권장값:
   - direct push 제한
   - PR merge 기준 사용
-  - required status checks: `policy-contract`, `owner-agent-report`, `ai-review`, `selfhosted-runtime-smoke`
+  - required status checks: `policy-contract`, `owner-agent-report`, `selfhosted-runtime-smoke`
   - auto-merge 활성화
   - stale branch 자동 정리는 선택
 
