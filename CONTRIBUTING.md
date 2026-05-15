@@ -45,7 +45,11 @@ export GIT_SSH_COMMAND='ssh -i ~/.ssh/mckim_wsl -o IdentitiesOnly=yes'
 ## 4. 브랜치 / PR 규칙
 - 공개 PR 브랜치: `issue/<issue-number>-<short-slug>`
 - 내부 병렬 브랜치: `ai/<agent-id>/<issue-number>/<slice>` (로컬/worktree 전용, PR 금지)
-- PR 제목: `#<issue-number> <summary>`
+- 내부 작업 브랜치 (`feat/*`, `chore/*`, `ai/*`) 는 공개 `issue/*` 브랜치로 통합한 뒤 PR 을 연다.
+- PR 제목은 다음 두 형식 중 하나를 사용한다 (`automation-contract.json#pull_requests.title_regex`):
+  - `#<issue-number> <summary>` — 사람이 GitHub UI 에서 짧게 작성할 때.
+  - `<type>(<scope>): <summary> (#<issue-number>)` — `gh pr create` 가 first commit subject 를 그대로 PR 제목으로 채울 때 (§5.2 commit 형식과 동일).
+  - 두 형식 모두에서 `closes #<issue-number>` 는 PR 본문에 반드시 포함한다.
 - `main`에는 직접 push 하지 않는다.
 
 예시:

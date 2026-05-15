@@ -100,11 +100,30 @@ claude /status   # "Login method: Claude Pro/Max account" 확인
 - `owner-agent-report`
 
 `policy-contract` 체크 안에는 다음 검증이 포함된다.
-- 공개 PR 브랜치 규칙 검증 (`issue/*`)
-- PR 제목 / `closes #<issue>` 규칙 검증
+- 공개 PR 브랜치 규칙 검증 (`issue/*`) — 내부 `feat/*`, `chore/*`, `ai/*` 브랜치는 공개 `issue/*` 브랜치로 통합 후에만 PR head 가 될 수 있다 (`AGENTS.md §13.2`, §16.5 Step 5.1).
+- PR 제목 / `closes #<issue>` 규칙 검증 — 제목은 `#<issue> <summary>` 또는 `<type>(<scope>): <summary> (#<issue>)` 두 형식 모두 허용 (`automation-contract.json#pull_requests.title_regex_forms`). 두 형식 모두에서 branch 의 issue 번호와 title 의 issue 번호가 일치해야 한다.
 - `.env` 제외 검증
 - 커밋 제목 형식 검증 (`type(scope): summary (#issue)`)
 - `.github/automation-contract.json`과 문서/스크립트 정합성 검증
+
+### 내부 브랜치 통합 절차
+
+`gh pr create` 를 내부 `feat/*` / `chore/*` / `ai/*` 브랜치에서 직접 실행하면 `policy-contract` 의 branch 규칙 단계에서 fail 한다. 통합 절차는 다음과 같다.
+
+```bash
+# 1. 내부 브랜치에서 작업 완료 (예: feat/add-foo)
+git switch feat/add-foo
+
+# 2. 공개 issue/* 브랜치 생성 (이슈 번호에 맞춰)
+git switch -c issue/<n>-<short-slug>
+
+# 3. 필요 시 origin/main 에 rebase
+git fetch origin && git rebase origin/main
+
+# 4. push 및 PR 생성
+git push -u origin issue/<n>-<short-slug>
+gh pr create --title "<type>(<scope>): <summary> (#<n>)" --body "... closes #<n> ..."
+```
 
 ## 자동 이슈 생성 기준
 - `ai-triage`는 한 번에 최대 1개 이슈만 생성한다.
