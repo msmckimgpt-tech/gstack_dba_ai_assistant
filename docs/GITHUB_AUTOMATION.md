@@ -44,6 +44,8 @@
 - Docker와 `make` 사용 가능
 - `make start`, `make ask`, `make web`, `make browser-up`, `make browser-health` 실행 가능
 - 런타임 충돌 방지를 위해 self-hosted smoke는 저장소 단위 concurrency 로 직렬화한다.
+- **Image 빌드 책임**: `selfhosted-runtime-smoke.yml` 은 `make start` 가 내부적으로 `docker compose build` 를 수행하므로 image 사전 빌드를 운영자에게 요구하지 않는다. PR 의 Dockerfile / build context 변경이 매번 검증된다. 워크플로 env 블록의 `COMPOSE_PROJECT_NAME=repo` 가 image 이름을 workspace 디렉토리와 분리해 `Makefile:77-80` 의 `repo-*` 검증과 일치시킨다 — workspace 가 `_work/<repo>/<repo>` 형태여도 image 는 `repo-agent` 등으로 안정 생성된다.
+- **`.env` provisioning**: 워크플로는 runner-local `.env` 파일을 PR 워크스페이스로 복사한 뒤 smoke 를 실행한다. 기본 경로는 `~/.mysql_ai_smoke.env` 이며 저장소 var `SMOKE_ENV_PATH` 로 override 가능하다. 운영자가 이 파일에 실제 LLM / DB 자격 증명을 provision 한다 (저장소에 commit 하지 않는다). 파일이 없으면 워크플로는 `.env.example` 로 fallback 하지만 `make ask` 등 LLM 의존 step 은 실패할 수 있다.
 - **Runner user 는 반드시 non-root** — claude CLI 의 `--permission-mode bypassPermissions` 는 내부적으로 `--dangerously-skip-permissions` 로 매핑되며, uid 0 (root/sudo) 에서 실행하면 보안상 거부되어 `ai-review.yml` 의 `Run Claude review` step 이 즉시 exit 1 한다 (관측 사례: PR #6 / run 25545926914). systemd 서비스로 등록할 때 `./svc.sh install <runner-user>` 의 `<runner-user>` 를 root 가 아닌 별도 user 로 지정해야 한다.
 - **Claude CLI 요구사항**: `claude --version` 이 동작해야 하며, **runner user 계정** (위의 non-root user) 으로 `claude /status` 가 "Login method: Claude Pro/Max account" 를 반환하는 상태여야 한다. AI Triage/Execute/Review 워크플로는 runner user 의 `~/.claude/` 자격 증명을 그대로 사용한다 — runner user 를 변경하면 새 home 에서 `claude login` 을 다시 수행해야 한다.
 - **러너 온라인 유지**: `ai-triage.yml` 은 스케줄 실행 (`cron: "17 */6 * * *"`) 이므로 해당 시간대에 runner 가 오프라인이면 실행이 지연되거나 timeout 된다. systemd 서비스 또는 WSL 자동 시작 스크립트 등으로 runner 프로세스를 상시 유지하는 것을 권장한다.
@@ -57,6 +59,8 @@
 6. **runner user 계정에서 `claude login`** 수행 — `claude --version` 동작 확인 + `~/.claude/.credentials.json` 생성 확인.
 7. `gh api /repos/msmckimgpt-tech/gstack_dba_ai_assistant/actions/runners` 로 등록 여부 확인.
 8. 첫 PR 또는 `gh workflow run ai-review.yml` 로 Diagnose Claude CLI environment step 이 PASS 하는지 확인 (`runner uid: <0 이외의 숫자>` 가 `$GITHUB_STEP_SUMMARY` 에 노출되어야 한다).
+9. **Smoke `.env` provision**: runner user 계정에 `~/.mysql_ai_smoke.env` 를 작성한다 (모드 600 권장). repo 의 `.env.example` 을 base 로 OPENAI_API_KEY / DB 비밀번호 등 실제 자격 증명을 채운다. 다른 경로를 쓰려면 GitHub repo settings 의 Variables 에 `SMOKE_ENV_PATH` 를 절대 경로로 등록한다.
+10. `llm-shared` docker network 가 runner 에 존재해야 한다 (`docker network ls | grep llm-shared`). 없으면 `/root/download/docker/local_llm` 의 provider 부터 기동한다 — `Makefile:36-40` 의 `check-llm-network` 가 fail-loud 로 차단한다.
 
 ### 기존 root runner 마이그레이션 절차
 이미 root 로 systemd service 를 등록한 환경에서는 아래 순서로 전환한다.
