@@ -20,6 +20,7 @@ source_of_truth: true
 - TEST-0009: `python3 -m py_compile unit/feature-0002-agent-core/src/agent_core.py unit/feature-0003-agent-web-ui/src/app.py`
 - TEST-0010: `python3 -m unittest unit/feature-0002-agent-core/tests/test_compose_system_prompt.py`
 - TEST-0011: web 컨테이너 내부에서 `compose_system_prompt(product_id=1, role_id=16, product_mode="pinned")`를 호출해 Role 공통 지침이 누적되는지 확인
+- TEST-0012: `tests/test_compose_system_prompt.py`에서 Product → Role → Account 순서와 최종 user request 메시지 보존을 확인
 - TEST-0001: `python3 -m py_compile unit/feature-0002-agent-core/src/modules/utils.py unit/feature-0002-agent-core/src/modules/insight.py`
 - TEST-0002: 기준선으로 `table_fp:*`, `table_insight` fact/doc/object 수, fact 자체가 없는 incomplete 수를 기록
 - TEST-0003: host override 환경에서 `run_insight_cycle('manual-insight-test')` 실행
@@ -31,6 +32,12 @@ source_of_truth: true
 
 ## 3. Test Run History
 - 2026-05-15:
+  - 추가 검증:
+    - `python3 -m py_compile unit/feature-0002-agent-core/src/agent_core.py`
+      - 결과: 통과
+    - `python3 -m unittest unit/feature-0002-agent-core/tests/test_compose_system_prompt.py`
+      - 결과: 3건 통과
+    - 확인: Product → Role → Account 순서, Account common+specific 누적, 최종 user request 메시지 보존
   - `python3 -m py_compile unit/feature-0002-agent-core/src/agent_core.py unit/feature-0003-agent-web-ui/src/app.py`
     - 결과: 통과
   - `python3 -m unittest unit/feature-0002-agent-core/tests/test_compose_system_prompt.py`

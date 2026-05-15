@@ -15,9 +15,25 @@ source_of_truth: true
 - Last Updated: 2026-05-15
 
 ## 1.1 Current Cycle
+- [x] TASK-0014 (REQ-20260515-0003, Minor §12.3) 시스템 프롬프트가 `Product → Role → Account → 현재 사용자 요청` 순서로 누적 적용되는지 검토하고 Account scope 누적을 정정. 기존 구조는 Product context → Role guidance → Account preferences → user message 순서는 맞았지만, Account prompt 는 Product 전용이 있으면 `ProductId IS NULL` 공통 prompt 를 fallback 으로만 사용했다. 수정 후 Account 공통 prompt 를 먼저 넣고, pinned Product 전용 Account prompt 가 있으면 뒤에 추가한다. 테스트는 Product/Role/Account 순서와 최종 user request 보존까지 검증한다.
 - [x] TASK-0013 (REQ-20260515-0002, Minor §12.3) Role scope 시스템 프롬프트의 "전 Product 공통" 지침을 fallback 이 아니라 누적 적용으로 전환. `compose_system_prompt()`는 pinned Product 대화에서 Role 공통 지침을 먼저 넣고, Role×Product 지침이 있으면 뒤에 추가한다. auto 모드는 Product 전용 지침을 건너뛰고 공통 지침만 사용한다. 회귀 테스트 `tests/test_compose_system_prompt.py` 추가.
 
-### 1.2 Implementation Plan (TASK-0013)
+### 1.2 Implementation Plan (TASK-0014)
+
+영향 파일:
+- `src/agent_core.py` — Account prompt 조회를 공통 + Product 전용 누적 방식으로 변경
+- `tests/test_compose_system_prompt.py` — Product → Role → Account 순서와 최종 user request 보존 테스트 추가
+- `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md` — 요구사항, 변경 이력, 검증 기록
+
+접근 방법:
+1. 현재 조립 흐름을 확인한다. Product context, Role guidance, Account preferences 는 system message 안에 순서대로 append 되고, 현재 사용자 요청은 `messages.append({"role":"user","content": user_message})` 로 마지막에 추가된다.
+2. Account scope 의 기존 `_fetch(..., prompt_product_id=product_id)` 호출은 Product 전용이 있으면 공통 prompt 를 누락시키므로 Role scope 와 같은 block 누적 구조로 바꾼다.
+3. `_fetch()`는 특정 `prompt_product_id` 조회 시 match 가 없으면 공통 fallback 을 반환하지 않도록 정정해 Role/Account 공통 중복 가능성도 제거한다.
+4. 단위 테스트로 pinned 누적, auto 공통-only, Product → Role → Account → user request 순서를 고정한다.
+
+위험도: Minor — LLM 입력 패키징 수정이며 인증/인가, DB 스키마, 파괴적 데이터 변경 없음.
+
+### 1.3 Implementation Plan (TASK-0013)
 
 영향 파일:
 - `src/agent_core.py` — Role prompt 조회를 공통 + Product 전용 누적 방식으로 변경

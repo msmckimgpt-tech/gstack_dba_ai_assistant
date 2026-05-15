@@ -15,6 +15,7 @@ source_of_truth: true
 - REQ-0001: agent 코어 코드를 feature 구조로 이관한다.
 - REQ-0002: 새 Dockerfile과 루트 실행 파일이 코어를 정상 참조하게 한다.
 - REQ-20260515-0002: Role scope 시스템 프롬프트에서 `ProductId IS NULL`로 저장된 "전 Product 공통" 지침은 특정 Product를 선택한 대화에서도 항상 누적 적용된다. Product 전용 Role 지침이 있으면 공통 지침 뒤에 추가된다.
+- REQ-20260515-0003: 시스템 프롬프트는 `Product → Role → Account → 현재 사용자 요청` 순서로 누적 적용된다. Account scope 도 Role scope 와 동일하게 `전 Product 공통` 지침을 먼저 적용하고, Product 전용 개인 지침이 있으면 뒤에 추가한다.
 
 ## 3. In Scope
 - `agent_cli.py`, `agent_core.py`
@@ -87,6 +88,8 @@ source_of_truth: true
 - AC-0003: 루트 `make ask` 경로가 새 feature 구조를 사용한다.
 - AC-0004: `compose_system_prompt(..., product_mode="pinned")`는 Role의 전 Product 공통 프롬프트와 Role×Product 프롬프트를 함께 주입하며, 공통 지침이 먼저 온다.
 - AC-0005: `compose_system_prompt(..., product_mode="auto")`는 Role×Product 프롬프트를 건너뛰고 Role의 전 Product 공통 프롬프트만 주입한다.
+- AC-0006: `compose_system_prompt(..., product_mode="pinned")`는 Account의 전 Product 공통 프롬프트와 Account×Product 프롬프트를 함께 주입하며, 공통 지침이 먼저 온다.
+- AC-0007: 최종 사용자 요청은 system message 뒤의 `{"role":"user"}` 메시지로 추가되어 Product/Role/Account 지침 뒤에 적용된다.
 
 ## 12. Observability
 - 로그: `../../../../artifacts/shared/logs`

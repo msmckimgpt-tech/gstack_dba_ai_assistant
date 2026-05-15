@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260515-0003
+- Date: 2026-05-15
+- Summary: TASK-0014 (REQ-20260515-0003) Account scope 시스템 프롬프트도 `전 Product 공통 + Product 전용` 누적 방식으로 정정하고, 최종 user request 가 Product/Role/Account 지침 뒤에 보존되는 것을 테스트로 고정.
+- Files:
+  - `src/agent_core.py`: Account prompt 조립을 `ProductId IS NULL` 공통 지침 먼저, Account×Product 전용 지침 뒤 순서로 변경. `_fetch()`는 특정 Product 조회에서 miss 가 나면 공통 fallback 을 반환하지 않도록 정정해 중복 누적을 방지.
+  - `tests/test_compose_system_prompt.py`: Product → Role → Account 순서, Account common+specific 누적, 최종 user request 메시지 보존 테스트 추가.
+  - `docs/FUNCTION.md`, `docs/TASK.md`, `docs/REVIEW.md`, `docs/REPORT.md`, `docs/TEST.md`: 요구사항, 계획, 판단, 검증 기록 갱신.
+- Verification:
+  - `python3 -m py_compile unit/feature-0002-agent-core/src/agent_core.py`
+  - `python3 -m unittest unit/feature-0002-agent-core/tests/test_compose_system_prompt.py`
+
 ## CHG-20260515-0002
 - Date: 2026-05-15
 - Summary: TASK-0013 (REQ-20260515-0002) Role scope 시스템 프롬프트의 "전 Product 공통" 지침을 fallback 이 아니라 누적 적용으로 전환.

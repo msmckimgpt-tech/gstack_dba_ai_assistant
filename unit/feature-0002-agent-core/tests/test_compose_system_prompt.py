@@ -22,7 +22,7 @@ class FakeCursor:
             self._row = ("sales",)
             return
         if "Scope='product'" in sql:
-            self._row = None
+            self._row = ("product guidance",)
             return
         if "FROM WebSystemPrompts" in sql and "RoleId=%s" in sql:
             product_param = params[-1] if params else None
@@ -33,6 +33,13 @@ class FakeCursor:
                 self._row = ("common role guidance",)
                 return
         if "FROM WebSystemPrompts" in sql and "AccountId=%s" in sql:
+            product_param = params[-1] if params else None
+            if "ProductId=%s" in sql and product_param == 1:
+                self._row = ("product-specific account preference",)
+                return
+            if "ProductId IS NULL" in sql:
+                self._row = ("common account preference",)
+                return
             self._row = None
             return
         self._row = None
@@ -63,17 +70,38 @@ class ComposeSystemPromptTest(unittest.TestCase):
         self.assertIn("### ProductId=1\nproduct-specific role guidance", prompt)
         self.assertLess(prompt.index("common role guidance"), prompt.index("product-specific role guidance"))
 
+    def test_product_role_account_order_accumulates_before_user_request(self):
+        system_prompt = agent_core.compose_system_prompt(
+            FakeConnection(),
+            product_id=1,
+            role_id=16,
+            account_id=7,
+            product_mode="pinned",
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": "current user request"},
+        ]
+
+        self.assertLess(system_prompt.index("## PRODUCT CONTEXT"), system_prompt.index("## ROLE GUIDANCE"))
+        self.assertLess(system_prompt.index("## ROLE GUIDANCE"), system_prompt.index("## ACCOUNT PREFERENCES"))
+        self.assertIn("### 전 Product 공통\ncommon account preference", system_prompt)
+        self.assertIn("### ProductId=1\nproduct-specific account preference", system_prompt)
+        self.assertEqual(messages[-1], {"role": "user", "content": "current user request"})
+
     def test_auto_mode_uses_only_role_common_prompt(self):
         prompt = agent_core.compose_system_prompt(
             FakeConnection(),
             product_id=1,
             role_id=16,
-            account_id=None,
+            account_id=7,
             product_mode="auto",
         )
 
         self.assertIn("### 전 Product 공통\ncommon role guidance", prompt)
         self.assertNotIn("product-specific role guidance", prompt)
+        self.assertIn("### 전 Product 공통\ncommon account preference", prompt)
+        self.assertNotIn("product-specific account preference", prompt)
 
 
 if __name__ == "__main__":
