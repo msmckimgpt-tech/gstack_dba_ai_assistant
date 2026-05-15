@@ -257,7 +257,7 @@ TEMP_CLEANUP_ON_SUCCESS="1"
 - [ ] feature-0003 `DESIGN.md` 의 컴포넌트 / a11y / keyboard / confirm / RBAC partial-fail / runtime assertion 적용
 - [ ] 적용 후 `assertBulkBarContract(<entity>)` 가 통과하는지 brower devtools 또는 e2e 에서 확인
 
-위 체크리스트가 PASS 되지 않은 카테고리 추가는 PR 단계에서 `policy-contract` 또는 `ai-review` 가 반려한다 (자동 contract 정의는 후속 cycle 작업으로 등록).
+위 체크리스트가 PASS 되지 않은 카테고리 추가는 PR 단계에서 `policy-contract` 가 반려하거나 사람 리뷰가 반려한다 (자동 contract 정의는 후속 cycle 작업으로 등록).
 
 ### 10.6 화면별 권한 섹션·정렬 정책 (REQ-20260512-0002)
 
@@ -286,4 +286,4 @@ TEMP_CLEANUP_ON_SUCCESS="1"
 
 #### 검증
 
-화면 정렬이 본 §10.6 와 어긋나면 그 PR 은 `policy-contract` 또는 `ai-review` 가 반려한다. 자동 contract 정의는 후속 cycle 에 등록한다.
+화면 정렬이 본 §10.6 와 어긋나면 그 PR 은 `policy-contract` 또는 사람 리뷰가 반려한다. 자동 contract 정의는 후속 cycle 에 등록한다.

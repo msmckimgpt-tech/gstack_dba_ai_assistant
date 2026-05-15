@@ -17,7 +17,7 @@
 ## 워크플로
 - `ai-triage.yml`: 저장소 신호를 읽고 필요 시 autonomous issue 1건 생성
 - `ai-execute.yml`: 실행 가능 이슈를 공개 `issue/*` 브랜치/PR로 전개
-- `ai-review.yml`: 활성 provider가 PR 검토 수행
+- ~~`ai-review.yml`: 활성 provider가 PR 검토 수행~~ — 비활성화됨 (issue #24, self-hosted runner OAuth 만료로 모든 PR 차단). PR 코드 리뷰는 사람 또는 외부 도구로 수행한다.
 - `policy-contract.yml`: 브랜치/PR/자동병합 계약과 문서-자동화 정합성 검증
 - `owner-agent-report.yml`: 현재 PR의 활성 provider와 위험 요약 게시
 - `selfhosted-runtime-smoke.yml`: self-hosted Linux runner에서 런타임 검증 수행
@@ -34,7 +34,7 @@
 - 실행이 시작되면 `status:ready`는 제거되고 `status:in-progress`로 전환된다.
 
 ## 필수 Secrets / Variables
-- Secrets — 현재 Claude 경로는 self-hosted runner 의 로컬 `~/.claude/` 자격 증명을 사용하므로 **API key / OAuth 토큰 시크릿이 필요 없다.**
+- Secrets — `ai-review` 비활성화 후 (issue #24) GitHub Actions secret 은 필요 없다. 다른 ai-* workflow (ai-triage, ai-execute) 는 여전히 self-hosted runner 의 로컬 `~/.claude/` 자격 증명을 사용한다.
 - Variables
   - `AI_PROVIDER_DEFAULT` — 선택. 설정하지 않으면 `.github/automation-contract.json` 의 기본값(`claude`)이 사용된다.
   - `AI_AUTONOMOUS_OPEN_ISSUE_LIMIT` 기본 권장값 `3`
@@ -46,7 +46,7 @@
 - 런타임 충돌 방지를 위해 self-hosted smoke는 저장소 단위 concurrency 로 직렬화한다.
 - **Image 빌드 책임**: `selfhosted-runtime-smoke.yml` 은 `make start` 가 내부적으로 `docker compose build` 를 수행하므로 image 사전 빌드를 운영자에게 요구하지 않는다. PR 의 Dockerfile / build context 변경이 매번 검증된다. 워크플로 env 블록의 `COMPOSE_PROJECT_NAME=repo` 가 image 이름을 workspace 디렉토리와 분리해 `Makefile:77-80` 의 `repo-*` 검증과 일치시킨다 — workspace 가 `_work/<repo>/<repo>` 형태여도 image 는 `repo-agent` 등으로 안정 생성된다.
 - **`.env` provisioning**: 워크플로는 runner-local `.env` 파일을 PR 워크스페이스로 복사한 뒤 smoke 를 실행한다. 기본 경로는 `~/.mysql_ai_smoke.env` 이며 저장소 var `SMOKE_ENV_PATH` 로 override 가능하다. 운영자가 이 파일에 실제 LLM / DB 자격 증명을 provision 한다 (저장소에 commit 하지 않는다). 파일이 없으면 워크플로는 `.env.example` 로 fallback 하지만 `make ask` 등 LLM 의존 step 은 실패할 수 있다.
-- **Runner user 는 반드시 non-root** — claude CLI 의 `--permission-mode bypassPermissions` 는 내부적으로 `--dangerously-skip-permissions` 로 매핑되며, uid 0 (root/sudo) 에서 실행하면 보안상 거부되어 `ai-review.yml` 의 `Run Claude review` step 이 즉시 exit 1 한다 (관측 사례: PR #6 / run 25545926914). systemd 서비스로 등록할 때 `./svc.sh install <runner-user>` 의 `<runner-user>` 를 root 가 아닌 별도 user 로 지정해야 한다.
+- **Runner user 는 반드시 non-root** — claude CLI 의 `--permission-mode bypassPermissions` 는 내부적으로 `--dangerously-skip-permissions` 로 매핑되며, uid 0 (root/sudo) 에서 실행하면 보안상 거부되어 ai-* workflow 의 claude 호출 step 이 즉시 exit 1 한다 (관측 사례: PR #6 / run 25545926914). systemd 서비스로 등록할 때 `./svc.sh install <runner-user>` 의 `<runner-user>` 를 root 가 아닌 별도 user 로 지정해야 한다.
 - **Claude CLI 요구사항**: `claude --version` 이 동작해야 하며, **runner user 계정** (위의 non-root user) 으로 `claude /status` 가 "Login method: Claude Pro/Max account" 를 반환하는 상태여야 한다. AI Triage/Execute/Review 워크플로는 runner user 의 `~/.claude/` 자격 증명을 그대로 사용한다 — runner user 를 변경하면 새 home 에서 `claude login` 을 다시 수행해야 한다.
 - **러너 온라인 유지**: `ai-triage.yml` 은 스케줄 실행 (`cron: "17 */6 * * *"`) 이므로 해당 시간대에 runner 가 오프라인이면 실행이 지연되거나 timeout 된다. systemd 서비스 또는 WSL 자동 시작 스크립트 등으로 runner 프로세스를 상시 유지하는 것을 권장한다.
 
@@ -58,7 +58,7 @@
 5. 서비스로 설치: `sudo ./svc.sh install <runner-user> && sudo ./svc.sh start` — `<runner-user>` 인자에 **반드시 non-root user 이름** 을 명시. 빠뜨리면 systemd 가 root 로 기동한다.
 6. **runner user 계정에서 `claude login`** 수행 — `claude --version` 동작 확인 + `~/.claude/.credentials.json` 생성 확인.
 7. `gh api /repos/msmckimgpt-tech/gstack_dba_ai_assistant/actions/runners` 로 등록 여부 확인.
-8. 첫 PR 또는 `gh workflow run ai-review.yml` 로 Diagnose Claude CLI environment step 이 PASS 하는지 확인 (`runner uid: <0 이외의 숫자>` 가 `$GITHUB_STEP_SUMMARY` 에 노출되어야 한다).
+8. ai-triage / ai-execute workflow 의 Diagnose Claude CLI environment step 이 PASS 하는지 확인 (`runner uid: <0 이외의 숫자>` 가 `$GITHUB_STEP_SUMMARY` 에 노출되어야 한다).
 9. **Smoke `.env` provision**: runner user 계정에 `~/.mysql_ai_smoke.env` 를 작성한다 (모드 600 권장). repo 의 `.env.example` 을 base 로 OPENAI_API_KEY / DB 비밀번호 등 실제 자격 증명을 채운다. 다른 경로를 쓰려면 GitHub repo settings 의 Variables 에 `SMOKE_ENV_PATH` 를 절대 경로로 등록한다.
 10. `llm-shared` docker network 가 runner 에 존재해야 한다 (`docker network ls | grep llm-shared`). 없으면 `/root/download/docker/local_llm` 의 provider 부터 기동한다 — `Makefile:36-40` 의 `check-llm-network` 가 fail-loud 로 차단한다.
 
@@ -84,7 +84,7 @@ claude login
 claude /status   # "Login method: Claude Pro/Max account" 확인
 ```
 
-마이그레이션 직후 PR 한 건을 reopen 또는 trivial commit push 로 ai-review 를 1회 강제 실행해 Diagnose step 에서 `runner uid` 가 0 이 아닌지 확인한다. 0 이면 systemd unit 의 `User=` 가 여전히 root 임 — `systemctl cat actions.runner.*.service` 로 검증.
+마이그레이션 직후 ai-triage / ai-execute workflow 를 1회 강제 실행해 Diagnose step 에서 `runner uid` 가 0 이 아닌지 확인한다. 0 이면 systemd unit 의 `User=` 가 여전히 root 임 — `systemctl cat actions.runner.*.service` 로 검증.
 
 ## Branch protection 권장값
 - Require pull request before merging
@@ -100,8 +100,9 @@ claude /status   # "Login method: Claude Pro/Max account" 확인
 ## Required status checks
 - `policy-contract`
 - `selfhosted-runtime-smoke`
-- `ai-review`
 - `owner-agent-report`
+
+`ai-review` 는 issue #24 에서 비활성화 (self-hosted runner 의 claude OAuth 만료로 모든 PR 차단). 향후 재활성화는 (a) runner credentials 재발급 + (b) workflow 복원 + (c) automation-contract `required[]` 재추가 + (d) 본 문서 갱신을 동시에 수반한다.
 
 `policy-contract` 체크 안에는 다음 검증이 포함된다.
 - 공개 PR 브랜치 규칙 검증 (`issue/*`) — 내부 `feat/*`, `chore/*`, `ai/*` 브랜치는 공개 `issue/*` 브랜치로 통합 후에만 PR head 가 될 수 있다 (`AGENTS.md §13.2`, §16.5 Step 5.1).

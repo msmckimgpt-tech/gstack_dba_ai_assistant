@@ -109,7 +109,7 @@ make build
 - 주요 워크플로:
   - `ai-triage.yml`: 저장소 신호 기반 autonomous issue 생성
   - `ai-execute.yml`: 실행 가능 이슈를 공개 `issue/*` 브랜치/PR로 전개
-  - `ai-review.yml`: 활성 provider 기반 PR 리뷰
+  - ~~`ai-review.yml`: 활성 provider 기반 PR 리뷰~~ — 비활성화 (issue #24, self-hosted runner OAuth 만료)
   - `policy-contract.yml`: 브랜치/PR/커밋/문서-자동화 계약 검증
   - `owner-agent-report.yml`: provider 및 위험 요약 게시
   - `selfhosted-runtime-smoke.yml`: self-hosted 런타임 smoke 검증
