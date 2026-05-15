@@ -80,8 +80,9 @@ jobs:
           which claude || { echo "ERROR: claude CLI not found on PATH for runner user $(whoami)"; exit 1; }
           claude --version || { echo "ERROR: claude --version failed"; exit 1; }
           echo "claude path: $(which claude)" >> "$GITHUB_STEP_SUMMARY"
+          echo "claude resolved: $(realpath "$(which claude)" 2>/dev/null || readlink -f "$(which claude)")" >> "$GITHUB_STEP_SUMMARY"
           echo "claude version: $(claude --version)" >> "$GITHUB_STEP_SUMMARY"
-          echo "runner uid: $(id -u) ($(whoami))" >> "$GITHUB_STEP_SUMMARY"
+          echo "runner uid: $(id -u) ($(whoami)) home=$HOME" >> "$GITHUB_STEP_SUMMARY"
           if [[ "$(id -u)" == "0" ]]; then
             echo "ERROR: self-hosted runner is running as root (uid 0)." >&2
             echo "       claude CLI rejects --permission-mode bypassPermissions under root" >&2
@@ -94,14 +95,43 @@ jobs:
         if: steps.classify.outputs.docs_only != 'true' && steps.provider.outputs.provider == 'claude'
         shell: bash
         run: |
+          rc=0
           claude -p \
             --permission-mode bypassPermissions \
-            --max-turns 12 \
+            --max-turns 30 \
             --output-format text \
             --no-session-persistence \
             --add-dir "$(pwd)" \
             < .ai-runtime/review_prompt.md \
-            > .ai-runtime/claude-review-stdout.txt
+            > .ai-runtime/claude-review-stdout.txt \
+            2> .ai-runtime/claude-review-stderr.txt || rc=$?
+          if [[ $rc -ne 0 ]]; then
+            {
+              echo "## Run Claude review failed (exit $rc)"
+              echo ""
+              echo "### claude stdout (tail)"
+              echo '```'
+              tail -40 .ai-runtime/claude-review-stdout.txt 2>/dev/null || echo "(no stdout)"
+              echo '```'
+              echo "### claude stderr (tail)"
+              echo '```'
+              tail -40 .ai-runtime/claude-review-stderr.txt 2>/dev/null || echo "(no stderr)"
+              echo '```'
+            } | tee -a "$GITHUB_STEP_SUMMARY" >&2
+            exit $rc
+          fi
+
+      - name: Upload claude review artifacts
+        if: always() && steps.classify.outputs.docs_only != 'true' && steps.provider.outputs.provider == 'claude'
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-review-runtime
+          path: |
+            .ai-runtime/claude-review-stdout.txt
+            .ai-runtime/claude-review-stderr.txt
+            .ai-runtime/review_result.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Validate review artifacts
         if: steps.classify.outputs.docs_only != 'true'
