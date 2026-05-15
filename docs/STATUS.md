@@ -10,6 +10,8 @@ source_of_truth: true
 
 프로젝트 전체 현황을 한눈에 파악하기 위한 문서이다.
 
+> 2026-05-15: TASK-0060 (확장) — `GZ_KR(GZ_국내)` Product 시스템 프롬프트를 KR/MV 와 같은 포맷으로 추가했다. 접근 가능 DB 는 `gunzgame`(원장, 약 1340만/1230만/110만 행 대용량 테이블 포함, 2016-01 ~ 2026-05) / `gunzlog`(로그 스키마지만 현재 0건) / `gunzlogin`(세션 키 2 테이블 모두 0건) 이며, `account` 의 `Email/RegNum/Name/Age/Sex/ZipCode/Address/PublisherUserID` 와 `gunzlogin` 의 `SessionKey/ClientIP/BirthDay` 는 민감정보로 표기했다. `WebSystemPrompts.Id=14`, `ProductId=8` 으로 등록 (feature-0002 / feature-0003 공통 자산, 코드 변경 없음).
+
 > 2026-05-15: TASK-0060 — `KR(킹스레이드)` / `MV(마이크로볼츠)` Product 시스템 프롬프트와 `pending/operator/admin/sales/dba` Role `전 Product 공통` 프롬프트를 실제 접근 DB 분석 결과 기반으로 정비했다. `compose_system_prompt()`는 이제 Role 공통 지침을 Product 선택 시에도 누적 적용한다 (feature-0002 + feature-0003 혼합 변경).
 
 > 2026-05-15: TASK-0059 — `make up` 으로 활성화한 장기 실행 컨테이너의 restart policy 를 정렬했다. `mysql`, `web`, `browser`, `caddy`, `mcp` 는 `restart: unless-stopped` 를 사용하고, 일회성 `agent` / `memory-init` 은 제외한다 (feature-0001).
