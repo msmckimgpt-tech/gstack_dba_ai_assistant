@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>공유된 대화</title>
+  <link rel="stylesheet" href="/static/share.css" />
+</head>
+<body class="share-body">
+  <div class="share-container">
+    <header class="share-header">
+      <div class="share-header-inner">
+        <h1 id="shareTopic" class="share-topic">대화 로딩 중...</h1>
+        <div class="share-meta">
+          <span id="shareOwner" class="share-meta-item"></span>
+          <span id="shareScope" class="share-meta-item"></span>
+          <span id="shareProduct" class="share-meta-item"></span>
+        </div>
+      </div>
+      <div class="share-actions">
+        <button type="button" id="shareForkBtn" class="share-fork-btn hidden">내 계정에서 fork</button>
+        <a href="/" class="share-login-link hidden" id="shareLoginLink">로그인하고 fork</a>
+      </div>
+    </header>
+    <main id="shareMessages" class="share-messages">
+      <div class="share-loading">로딩 중...</div>
+    </main>
+    <footer class="share-footer">
+      <span class="share-footer-note">사내 공유용 — 외부 IP 로 전달 시 데이터 노출 위험이 있습니다.</span>
+      <span id="shareViewCount" class="share-footer-stats"></span>
+    </footer>
+  </div>
+  <script src="/static/share.js"></script>
+</body>
+</html>

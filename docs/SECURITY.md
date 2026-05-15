@@ -53,3 +53,29 @@ ai_read_priority: 4
   !**/config/credentials/*.example
   ```
 - 자격증명 경로와 필요 권한은 해당 기능의 `FUNCTION.md` §10 Dependencies에 명시한다.
+
+## 7. Anonymous 접근 허용 경로 (allowlist)
+
+본 저장소의 모든 HTTP endpoint 는 기본적으로 로그인 쿠키 검증을 요구한다 (`_require_account` → 401). 다음 경로는 **명시적 예외** 로 anonymous 접근이 허용된다. RBAC refactor 시 실수로 `_require_account` 를 일괄 부착하지 않도록 주의한다.
+
+| 경로 | 메서드 | 인증 | 용도 | 도입 |
+|---|---|---|---|---|
+| `/share/{token}` | GET | anonymous | 대화 공유 페이지 (`share.html` FileResponse) | TASK-0058 (REQ-20260514-0001) |
+| `/api/public/share/{token}` | GET | anonymous | 공유된 대화 read-only 조회 (메시지 + SQL + 결과셋) | TASK-0058 |
+| `/api/public/share/{token}/fork` | POST | **로그인 필요** + `conversation.create` | 공유받은 viewer 가 본인 계정으로 fork (`_optional_account` 가 아닌 `_require_account` 사용) | TASK-0058 |
+
+### 7.1 운영 정책
+
+- `/api/public/...` 네임스페이스는 **공유 view 외 다른 anonymous endpoint 추가 금지**. 신규 anonymous endpoint 가 필요하면 본 표를 갱신 + REVIEW.md 등재.
+- 공유 페이지는 사내 IP 가정 (운영 LAN 또는 VPN 경유) 으로 활성화돼 있다. 외부 LAN 노출이 발생하면 SQL 원문 + 결과셋이 외부로 그대로 전달된다.
+- 공유 페이지의 `share.html` 은 `meta robots noindex,nofollow` 와 fixed footer "사내 공유용 — 외부 IP 로 전달 시 데이터 노출 위험" 안내를 포함한다.
+
+### 7.2 외부 배포 전 보완 (TODO)
+
+외부 LAN / 공개 인터넷 배포가 가시화되면 다음 중 하나 이상의 보완을 본 cycle 전에 추가한다:
+
+1. **IP allowlist**: Caddy / reverse proxy 레벨에서 `/api/public/share/...` 와 `/share/...` 에 대한 사내 CIDR 화이트리스트.
+2. **Token 별 비밀번호**: `WebConversationShares` 에 `PasswordHash VARCHAR(255) NULL` 컬럼 + 생성 시 옵션. GET 응답 401 시 password prompt 노출.
+3. **시간 기반 만료**: `ExpiresAt DATETIME NULL` 컬럼 + GET 시 `NOW() > ExpiresAt` → 410. 기본은 무기한 + 명시 revoke 그대로 유지.
+
+후속 cycle 결정은 운영 환경 변경 시점에 진행한다 (사용자 직접 결정 필요).

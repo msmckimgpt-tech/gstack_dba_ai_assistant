@@ -8,6 +8,37 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260514-0001
+- Date: 2026-05-14
+- Summary: TASK-0058 (REQ-20260514-0001, **Critical** §12.3) 대화 공유 링크 기능 도입. anonymous accessible read-only view + 로그인 viewer 의 fork. 사용자 결정 6 항목 + codex outside voice review 의 blindspot 10 개 (B1-B2 blocking + R1-R10 recommended) 모두 plan 에 반영.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/app.py`:
+    - `PERMISSION_DEFINITIONS` 에 `conversation.share.create` (group="conversation") 추가 → catalog 33 → 34.
+    - `SEED_ROLE_DEFINITIONS` 의 operator/sales permissions set 에 `conversation.share.create` 추가. admin 은 `set(PERMISSION_CODES)` 자동 포함.
+    - `_ensure_seed_roles` admin 보정 list 에 `conversation.share.create` 추가 + operator/sales catchup INSERT IGNORE.
+    - `_ensure_web_conversation_shares_schema(conn)` helper 신설 → `_ensure_web_tables` (slow path) + `_ensure_seed_catchup` (fast path) 양쪽에서 호출. fast path 에 `_ensure_permission_catalog(conn)` 추가로 신규 권한 hydrate.
+    - `_optional_account(request, conn)` 헬퍼 신설 — anonymous endpoint 용 (쿠키 없으면 None).
+    - `_fork_conversation_impl(conn, account, source_id, from_id)` 로 fork 본체 추출. 기존 `/api/fork_conversation` 은 helper 호출. share-token 경로는 read-gate 우회.
+    - `/share/{token}` FileResponse route (admin 옆).
+    - 신규 5 endpoint: POST `/api/conversations/{cid}/share`, GET `/api/conversations/{cid}/shares`, DELETE `/api/share/{share_id}`, GET `/api/public/share/{token}`, POST `/api/public/share/{token}/fork`. Token `secrets.token_urlsafe(32)` + UNIQUE 충돌 5 회 retry. revoke + view counter = 단일 race-free UPDATE.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html`: chat 헤더 fork 버튼 옆에 `shareConversationBtn` 추가.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/app.js`:
+    - `shareConversationBtn` DOM reference + `PERMISSION_LABELS` / `PERMISSION_DESCRIPTIONS` 매핑 추가.
+    - 메시지 hover "여기까지 공유" 액션 + 헤더 share 버튼 visibility toggle + click handler.
+    - `createConversationShare({anchorMessageId})` async — `/api/conversations/{cid}/share` 호출 + clipboard.writeText + toast.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/share.html` (신규): anonymous read-only view, `meta robots noindex,nofollow`, `share.css` 만 import (메인 styles.css 격리).
+  - `repo/unit/feature-0003-agent-web-ui/src/static/share.css` (신규): minimal styling. `.share-sql` (dark `<pre>`), `.share-result-table`, fixed footer 사내 협업 고지.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/share.js` (신규): vanilla JS — token 추출 → fetch → 메시지 + meta.final_sql + meta.result_rows 렌더 → can_fork 시 fork 버튼.
+  - `repo/unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: §2 Goal REQ-20260514-0001 + §11 AC-0053~AC-0060.
+  - `repo/unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0058 + §2.1 Implementation Plan + PLAN-APPROVED 마커.
+  - `repo/docs/SECURITY.md`: anonymous endpoint 2 곳 명시 + 외부 배포 시 IP 제한/비밀번호 보호 후속 cycle 권장.
+  - `repo/docs/STATUS.md`: feature-0003 row 갱신.
+- Verification:
+  - `python3 -c "import ast; ast.parse(...)"` app.py OK.
+  - `node --check` app.js / share.js OK.
+  - 부트스트랩 idempotency 는 helper 패턴 (try/except pass + INSERT IGNORE + ON DUPLICATE KEY UPDATE).
+  - Runtime 검증 (sales/admin 로그인 → 헤더 "공유" 버튼 → dialog 발급 → anonymous URL 접근 → revoke → 410) 은 후속 단계.
+
 ## CHG-20260512-0002
 - Date: 2026-05-12
 - Summary: TASK-0056 (REQ-20260512-0002, **Major** §12.3 — 작업 화면·관리 콘솔 권한 정렬 분리, AI 자율 commit/push 대상은 사용자 결정) 작업 화면 (`index.html` 권한 현황) 과 관리 콘솔 (`admin.html` 권한 grid) 의 권한 group 순서가 동일 `console→account→role→conversation→[product]→misc` 으로 묶여 있어, 화면 맥락(자기시점 / 관리자시점) 이 정반대인데도 두 곳 모두 admin 메타권한이 위로 노출되던 문제 fix. 화면별 2단 section (관리/운영/기타) 으로 분리, 작업 화면은 운영 권한이 위로 + 관리 권한은 보유 시만 묶음 형태로 뒤로. CONVENTIONS.md §10.6 정책 신설.

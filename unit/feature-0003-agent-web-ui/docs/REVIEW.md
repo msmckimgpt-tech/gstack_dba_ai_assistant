@@ -8,6 +8,26 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260514-0001
+- Date: 2026-05-14
+- Decision: TASK-0058 (REQ-20260514-0001, **Critical** §12.3) 대화 공유 링크 기능 도입. anonymous 접근 허용은 사내 IP 가정 + 외부 배포 시 IP 제한/비밀번호 보호 후속 cycle. PLAN-APPROVED + 사용자 결정 6 항목 + outside voice review 완료 후 진행.
+- Method:
+  1. **요구사항 정제**: 사용자 요청 "특정 대화를 링크로 공유" 가 매우 광범위. 6 가지 결정사항을 AskUserQuestion 2 라운드로 확정 — 외부 anonymous 허용, 무기한 + revoke, read+fork, full+anchored 둘 다 생성 시 선택, `conversation.share.create` 권한 신설, 메시지 + SQL + 결과셋 모두 노출 (사내 협업 우선).
+  2. **Outside voice review** (메모리 정책 `feedback_outside_voice_for_rbac`): RBAC catalog 변경이므로 general-purpose subagent 로 plan blindspot 10 건 수집. B1 (메시지 테이블 이중성 — `AgentMemoryMessages` vs `AgentCoreMessages` Id 공간 분리 — fork 의 `from_message_id` 와 정합 위해 `AgentMemoryMessages.Id` 채택), B2 (`_require_account` 가 401 raise → `_optional_account` 신설), R4 (`_fork_conversation_impl` 추출로 share-grant 가 read-gate 우회), R5 (AnchorMessageId inclusive `Id <= anchor`), R6 (revoke + view race-free 단일 UPDATE), R7 (file attachment 자동 hide), R8 (token UNIQUE 충돌 retry 5 회), R10 (share.html FileResponse) 모두 plan 에 흡수.
+  3. **위험 분리**: Critical 등급 (SECURITY.md §3 의 인증/인가 + 개인정보 + 외부 공개 범위 3 항목 동시) 이지만 5 phase 가 모두 비파괴 추가 + idempotent. Phase 별 syntax check 통과 후 다음 phase 진행.
+  4. **검증**: app.py Python AST parse OK, app.js / share.js node --check OK. 부트스트랩 idempotency 는 helper 패턴 (try/except pass + INSERT IGNORE + ON DUPLICATE KEY UPDATE). 실런타임 검증 (sales/admin 로그인 → 헤더 공유 → URL 발급 → anonymous 접근 → revoke → 410) 은 후속 단계.
+- Risks:
+  - **외부 IP 노출**: 사내 IP 가정이 깨지는 순간 (예: 실수로 외부 LAN 으로 expose, VPN 미접속) 대화의 SQL 원문 + 결과셋이 외부에 그대로 노출. 사용자도 이 위험을 인지하고 "추후 사내 배포 시 보완" 결정. 후속 cycle 의 보완 옵션: (a) Caddy / reverse proxy IP allowlist (사내 CIDR), (b) share token 별 비밀번호 옵션 (`WebConversationShares.PasswordHash` 컬럼 추가), (c) 시간 기반 만료 (현재 무기한). 본 cycle 은 minimum viable.
+  - **anonymous endpoint 보안 표면**: `/api/public/share/{token}` 과 `/api/public/share/{token}/fork` 가 시스템의 유이한 anonymous-allowed 경로. 향후 RBAC refactor 가 실수로 `_require_account` 를 모든 endpoint 에 일괄 부착하면 share view 가 깨질 수 있음. 두 endpoint 모두 inline 주석으로 anonymous 의도 명시. SECURITY.md 에 정책 등재.
+  - **token enumeration**: `secrets.token_urlsafe(32)` = 256-bit entropy → brute force 비현실적. UNIQUE 충돌 retry loop 는 보안 위협 없음 (5 회 재시도 후 500 반환).
+  - **revoke + view race**: 단일 `UPDATE ... WHERE Token=? AND RevokedAt IS NULL` rowcount 가 0 일 때 410 Gone 반환. rowcount > 0 + 그 후 revoke 사이 라스트 mile 은 stale-by-one 수용.
+  - **anchor 의미 혼란**: inclusive (`Id <= anchor`) — fork 의 `from_message_id` 와 정확히 동일. UI label "여기까지 공유" 가 그 의미 표현.
+- Follow-ups:
+  - 외부 배포 전: IP allowlist 또는 token 별 비밀번호 옵션 cycle.
+  - `/api/public/share/{token}` 의 rate limit (DDoS 완화) — 본 cycle defer.
+  - 운영 검증: sales/admin 계정 양쪽으로 헤더 공유 / 메시지 hover 공유 / anonymous URL 접근 / revoke / 410 회귀 / fork 흐름 실제 동작 확인.
+  - 프로필 drawer 의 "내 공유 링크" 관리 탭 — `GET /api/conversations/{cid}/shares` 와 `DELETE /api/share/{id}` 가 이미 backend 에 있으니 frontend UI 만 후속 추가 가능.
+
 ## REV-20260507-0001
 - Date: 2026-05-07
 - Decision: TASK-0053 의 사용자 follow-up 2 항목 수정 — pending row UI 뒤틀림 + product 카드 위치 이동 — 을 1 commit 에 통합. AI 자율 commit/push.
