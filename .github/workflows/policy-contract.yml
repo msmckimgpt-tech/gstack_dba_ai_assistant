@@ -61,7 +61,17 @@ jobs:
 
           branch_issue="${BRANCH_NAME#issue/}"
           branch_issue="${branch_issue%%-*}"
-          title_issue="$(sed -E 's/^#([0-9]+).*/\1/' <<<"$PR_TITLE")"
+
+          # PR title accepts two forms (see automation-contract.json title_regex_forms):
+          #   1) "#<issue> <summary>"            → issue number at start
+          #   2) "<type>(<scope>): <summary> (#<issue>)" → issue number in trailing (#N)
+          if [[ "$PR_TITLE" =~ ^#([0-9]+)[[:space:]] ]]; then
+            title_issue="${BASH_REMATCH[1]}"
+          elif [[ "$PR_TITLE" =~ \(#([0-9]+)\)$ ]]; then
+            title_issue="${BASH_REMATCH[1]}"
+          else
+            title_issue=""
+          fi
 
           if [[ "$branch_issue" != "$title_issue" ]]; then
             echo "Branch issue number and PR title issue number must match." >&2

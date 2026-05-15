@@ -73,14 +73,45 @@ jobs:
         env:
           IS_SANDBOX: "1"
         run: |
+          rc=0
           claude -p \
             --permission-mode bypassPermissions \
-            --max-turns 10 \
+            --max-turns 30 \
             --output-format text \
             --no-session-persistence \
             --add-dir "$(pwd)" \
             < .ai-runtime/triage_prompt.md \
-            > .ai-runtime/claude-triage-stdout.txt
+            > .ai-runtime/claude-triage-stdout.txt \
+            2> .ai-runtime/claude-triage-stderr.txt || rc=$?
+          if [[ $rc -ne 0 ]]; then
+            {
+              echo "## Run Claude triage failed (exit $rc)"
+              echo ""
+              echo "### claude stdout (tail)"
+              echo '```'
+              tail -40 .ai-runtime/claude-triage-stdout.txt 2>/dev/null || echo "(no stdout)"
+              echo '```'
+              echo "### claude stderr (tail)"
+              echo '```'
+              tail -40 .ai-runtime/claude-triage-stderr.txt 2>/dev/null || echo "(no stderr)"
+              echo '```'
+            } | tee -a "$GITHUB_STEP_SUMMARY" >&2
+            exit $rc
+          fi
+
+      - name: Upload claude triage artifacts
+        if: always() && steps.provider.outputs.provider == 'claude'
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-triage-runtime
+          path: |
+            .ai-runtime/claude-triage-stdout.txt
+            .ai-runtime/claude-triage-stderr.txt
+            .ai-runtime/triage_result.json
+            .ai-runtime/triage_signals.md
+            .ai-runtime/triage_prompt.md
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Validate triage artifacts
         shell: bash
