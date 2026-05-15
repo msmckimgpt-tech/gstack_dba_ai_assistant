@@ -638,7 +638,41 @@ a { color: inherit; }
 .perm-sections {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
+}
+
+/* CONVENTIONS.md §10.6 — 작업 화면 2단 묶음 wrapper (운영/관리/기타) */
+.perm-section-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.perm-section-meta-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 2px;
+}
+.perm-section-meta-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: var(--text);
+}
+.perm-section-meta-description {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.perm-section-meta-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.perm-section-meta[data-perm-section="manage"] .perm-section-meta-title {
+  color: var(--text-muted);
+}
+.perm-section-meta[data-perm-section="manage"] {
+  opacity: .92;
 }
 
 .perm-section {
@@ -2887,7 +2921,51 @@ a { color: inherit; }
 .override-grid {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 18px;
+}
+
+/* CONVENTIONS.md §10.6 — 관리 콘솔 권한 grid 2단 묶음 (관리/운영/기타) */
+.permission-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: rgba(252, 253, 255, 0.9);
+}
+.permission-section + .permission-section {
+  margin-top: 0;
+}
+.permission-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px dashed var(--border-subtle);
+}
+.permission-section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.permission-section-description {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.permission-section-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.permission-section[data-perm-section="manage"] {
+  background: rgba(245, 248, 255, 0.92);
+  border-color: rgba(37, 99, 235, .14);
+}
+.permission-section[data-perm-section="operate"] {
+  background: rgba(248, 252, 248, 0.92);
+  border-color: rgba(22, 163, 74, .14);
 }
 
 .permission-group {
@@ -2899,6 +2977,10 @@ a { color: inherit; }
 
 .permission-group + .permission-group {
   margin-top: 10px;
+}
+/* section 안에서는 gap 로 간격을 처리하므로 margin-top 중첩 제거. */
+.permission-section-groups > .permission-group + .permission-group {
+  margin-top: 0;
 }
 
 .permission-group-head {

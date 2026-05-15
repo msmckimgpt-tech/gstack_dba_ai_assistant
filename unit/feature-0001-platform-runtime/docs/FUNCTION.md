@@ -14,6 +14,12 @@ source_of_truth: true
 ## 2. Goal
 - REQ-0001: 루트 중심 운영 자산을 기능 단위 구조로 이관한다.
 - REQ-0002: 런타임 산출물과 버전관리 자산의 경계를 분리한다.
+- REQ-20260512-0003 (TASK-0057): dev 환경 가동 시 single TLS termination 원칙 회복 — host `localhost:18080` 직접 접근 시 web 컨테이너가 plain HTTP 로 가동되어 browser 자동화 도구 (gstack `/qa`, `/browse`, playwright e2e) 가 추가 옵션 없이 자연 동작한다. production / staging 환경 (Caddy frontline TLS 종단) 영향 0.
+  - AC-0011: `docker-compose.override.yml.example` template 이 repo root 에 존재하며, web 서비스의 entrypoint 를 `["/bin/sh", "-c", "exec uvicorn web.app:app --host 0.0.0.0 --port 8000"]` 으로 override 한다.
+  - AC-0012: `.gitignore` 에 `docker-compose.override.yml` 가 포함되어 실 사용 파일은 환경별 (gitignore) 로 관리된다.
+  - AC-0013: `CONTRIBUTING.md §10` "Dev 환경 가동 — single TLS termination 원칙" 섹션이 개발자 onboarding 가이드 (1회 setup + 정합 원칙 + production-like 검증 방법) 를 제공한다.
+  - AC-0014: override 적용 후 `curl http://localhost:18080/admin` HTTP 200 응답 + uvicorn 로그 `Uvicorn running on http://0.0.0.0:8000` 출력 + admin 정적 자산 cache-bust 정상 반영.
+  - AC-0015: override 미적용 환경 (production / staging compose 파일에 override 미포함) 에서는 base compose 의 entrypoint 분기로 복귀해 self-HTTPS 가동 가능 — production 정합 영향 0.
 
 ## 3. In Scope
 - MySQL `conf.d` 설정 파일

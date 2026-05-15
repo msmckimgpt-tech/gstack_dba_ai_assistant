@@ -1,0 +1,26 @@
+# docker-compose.override.yml — DEV ONLY 가동 옵션 template
+#
+# 사용:
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#   docker compose up -d web
+#
+# docker compose 가 자동으로 docker-compose.yml + docker-compose.override.yml 을
+# merge 한다. 따라서 추가 옵션 없이 `make web` 또는 `docker compose up -d web` 으로
+# override 가 적용된다. production / staging 배포 시 이 파일을 두지 않거나
+# `-f docker-compose.yml` 만 명시하면 override 무시.
+#
+# 본 template 의 목적: dev 환경에서 single TLS termination 원칙 회복.
+# - production: Caddy (`80/443`) 가 TLS 종단 → web (내부 HTTP `8000`).
+# - dev (override 적용 시): web 컨테이너 자체도 plain HTTP `8000`. 호스트
+#   `localhost:18080` 직접 접근이 plaintext → self-signed cert 부재로 인한
+#   gstack browse / curl / playwright 등의 TLS 차단 해소.
+#
+# 운영 영향: 0 — production compose 파일은 변경 없음. local dev 만 적용.
+
+services:
+  web:
+    # docker-compose.yml 의 entrypoint 는 `if [ "$ENABLE_WEB_TLS" = '1' ]; ...` 분기를
+    # 가지지만, `$ENABLE_WEB_TLS` 는 compose 변수 보간 단계에서 `.env` 값으로 이미
+    # 치환되므로, 단순 `environment.ENABLE_WEB_TLS: "0"` 으로는 분기를 못 끈다.
+    # 따라서 entrypoint 자체를 plain HTTP uvicorn 으로 override 한다.
+    entrypoint: ["/bin/sh", "-c", "exec uvicorn web.app:app --host 0.0.0.0 --port 8000"]

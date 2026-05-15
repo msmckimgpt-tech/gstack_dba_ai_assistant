@@ -26,3 +26,7 @@ _archive/
 # `.template-state` 는 declared/applied 마이그레이션 상태라 git 추적 대상.
 .template-backups/
 .template-upgrade-logs/
+
+# docker-compose dev override — 환경별 (developer machine 의 dev 가동 옵션).
+# template 은 `docker-compose.override.yml.example` 로 추적. 실제 사용 파일은 gitignore.
+docker-compose.override.yml
