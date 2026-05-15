@@ -16,6 +16,7 @@ source_of_truth: true
 
 ## 2. Task Queue
 - [x] TASK-0059 (REQ-20260515-0004, Minor §12.3) `make up` 으로 활성화한 장기 실행 컨테이너가 Docker daemon/WSL 재시작 또는 일시적 프로세스 종료 후 자동 복구되지 않는 문제 수정. `mysql`, `web`, `browser`, `caddy`, `mcp` 에 `restart: unless-stopped` 를 적용하고, 기존 `insight-worker` 정책과 정렬한다.
+- [x] TASK-0060 (REQ-20260515-0004, Minor §12.3) TASK-0059 Git 동기화 결과를 `REPORT.md` 에 기록하고, 현재 공개 브랜치 scope 불일치로 원격 push/PR 갱신을 보류한다.
 - [x] TASK-0058 (REQ-20260515-0003, Minor §12.3) docker compose v5.1.1 + buildx v0.31.1 provenance metadata file race 가 `browser-up` / `insight-up` 에서도 재발하던 문제 수정. 기존 `web` 타깃이 쓰는 `dc-build SERVICE=...` 가드를 재사용해 build metadata race 는 흡수하고, 실제 기동은 `up -d --no-build` 로 수행한다.
 - [x] TASK-0057 (REQ-20260512-0003, Minor §12.3) dev 환경 가동 시 single TLS termination 원칙 회복 — `docker-compose.override.yml.example` template 신설 (web entrypoint 를 plain HTTP 로 override) + `.gitignore` 에 실 사용 파일 (`docker-compose.override.yml`) 추가 + `CONTRIBUTING.md §10` "Dev 환경 가동 — single TLS termination 원칙" 섹션 신설. 부작용 해소: 본 cycle 직전까지 web 컨테이너가 `ENABLE_WEB_TLS=1` (`.env` 기본) 로 self-signed cert HTTPS 가동 → Caddy 의 frontline TLS 와 이중 TLS → host `localhost:18080` 직접 접근 시 gstack `/qa` / `/browse` / playwright e2e 가 `net::ERR_CERT_AUTHORITY_INVALID` 로 차단되던 issue. override 적용 후 web 컨테이너가 plaintext HTTP `:8000` 으로 가동, browser 자동화 도구 자연 동작 (env var · opt-in 불필요). production 영향 0 — override 는 dev 환경 한정 (production compose 파일에 두지 않으면 무시).
 - [x] TASK-0001 운영 자산 위치 재정의
@@ -42,6 +43,7 @@ source_of_truth: true
 - TASK-0003
 - TASK-0045
 - TASK-0059
+- TASK-0060
 
 ## 6. Next Action
 - `TEST.md`에 후속 엄격 검증 시나리오를 구체화한다.
