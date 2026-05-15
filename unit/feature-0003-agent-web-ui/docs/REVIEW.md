@@ -221,3 +221,26 @@ source_of_truth: true
   - `information_schema` + `sys` 2 종만 bypass: 사용자가 `mysql`/`performance_schema` 를 포함해 4 종을 명시했고, 둘 다 DBA 작업에서 교차 검증이 빈번해 2 종으로는 충분하지 않아 기각.
   - `agent_memory` 까지 포함한 전체 `_SYSTEM_SCHEMAS` bypass: agent 가 자신의 메모리 DB 를 읽을 이유가 없고, 타 계정 대화 유출 경로가 생기므로 기각.
 - How this changes REV-20260421-0005: REV-20260421-0005 의 "`information_schema` 만 bypass" 결정을 "메타데이터 4 종 bypass, 에이전트 내부 스키마는 계속 차단" 으로 교체. `agent_memory`/임의 user schema 를 차단한다는 핵심 보안 의도는 유지된다.
+
+## REV-20260512-0001
+- Date: 2026-05-12
+- Decision: 관리 콘솔의 모든 카테고리 다중선택 UX 를 단일 정합 컨벤션 (CONVENTIONS.md §10 + DESIGN.md v0.2) 으로 통일하고, drift 재발 차단을 위해 admin.js 의 `assertBulkBarContract(entity)` runtime check 를 initialize 끝에서 호출한다. Bulk toolbar 위치 표준은 **list 직하단 sticky** (`.admin-bulk-actions`), `.admin-pane-head-right` 는 primary action (`+ 새 X`) 전용으로 단일 semantic 유지.
+- Reason: 사용자 raw feedback (2026-05-12) "관리 콘솔에 구성된 항목 별 다중선택 UI/UX 가 카테고리 별로 일관성없이 차이가 나타나는것을 확인했습니다 — 계정: 우측 상단 / 역할: 좌측 하단 / 제품: 다중 선택 기능 없음. 차후 작업에서도 이러한 경향이 나타나지 않도록 방향을 정합적으로 명시해주세요." Root cause 두 가지: (1) DOM anchor 위치 표준 부재 → Accounts (header slot) vs Roles (list 하단) 갈라짐. (2) `.admin-pane-head-right` 슬롯의 semantic 충돌 — 어떤 카테고리에서는 "+ 새 X" primary action, 다른 카테고리에서는 동적 bulk action 슬롯으로 점유 → 컴포넌트 표준화 실패의 본질. Products 의 multi-select 부재는 의도적 결정이 아니라 drift 로 판정 (활성·비활성·삭제 의미가 있는 동질 entity 리스트 = §10.1 적용 룰 충족).
+- Risk:
+  1. **Accounts bulk anchor 이전** (헤더 우상단 → list 직하단): 기존 e2e/screenshot test 가 `#accountsBulkBar` 의 위치 selector 에 의존했다면 깨질 수 있다. 본 cycle 에서는 e2e selector 변경 영향 검증을 못 했음 (실제 e2e suite 위치 후속 확인). 사용자 화면 시각 차이는 의도적.
+  2. **Products multi-select 신설 + selectedProductId 단수 동거**: detail panel 은 단일 selectedProductId 만 신뢰 (DESIGN.md §12 Phase A). row click 은 단일 detail 선택, checkbox click 은 multi-select Set — 두 흐름이 별 path 라 race 없음. 다만 사용자가 checkbox 만 다수 체크 후 detail 을 expect 하는 mental model 가능 — 후속 모니터링 필요.
+  3. **bulkProductDelete 의 _delete 키 plumbing**: backend `setProductMetaPending(_delete: true)` 가 apply 단계에서 실제 DELETE API 를 호출하는지 backend (`app.py applyAllPending` flow) 확인 필요. 본 cycle 은 pending 마킹만 추가했고, 실제 backend 가 product `_delete` 키를 수용하지 않으면 NO-OP 또는 에러. 후속 검증 항목으로 REPORT.md 에 명시.
+  4. **assertBulkBarContract 가 console.warn only**: 운영 코드 차단 안 함 (best-effort). 정말 강제하려면 CI snapshot/jsdom test 가 필요 (별 cycle).
+  5. **typed-confirmation prompt UX**: `window.prompt()` 기반이라 모던 UX 와 어긋날 수 있음. 후속에서 custom modal 로 업그레이드 가능 (v0.3 후보).
+- Alternatives considered:
+  - **DOM anchor 표준을 헤더 우상단 (Accounts 패턴)** 으로 통일: 후보였으나 (a) "+ 새 X" 와 동적 bulk action 이 같은 슬롯을 두고 경쟁, (b) row 선택 인터랙션의 시선·손 위치 근접성 부족 — 기각.
+  - **Notion morph 패턴** (헤더 자체가 bulk toolbar 로 변형): 모던 레퍼런스로 존재하지만 본 컨벤션의 "헤더 = primary 전용" 단일 semantic 원칙 위반 → 명시 거부 (DESIGN.md §14 참조).
+  - **Linear floating pill** (viewport footer fixed): 강한 visibility 장점이나 list-scope 의미 약화 + drawer/modal 과 z-index 전쟁 → v0.2 에서는 list 직하단 sticky 채택, floating pill 은 v0.3 옵션으로 기록.
+  - **Vercel 패턴** (multi-select 없이 row-hover inline action): admin entity 가 일괄 적용 가치를 갖는 (활성·비활성·삭제) 카테고리에는 부적합 → 면제 카테고리의 reference 로만 인용 (CONVENTIONS §10.1).
+  - **RBAC 새 권한 추가** (예: `account.bulk_delete`): catalog 변경 = RBAC plan 영역 (사용자 메모리 정책 "RBAC plan 은 outside voice 필수") → 본 cycle scope 에서 분리. 기존 권한 (`account.delete` 등) 의 row-level check 만 활용.
+- How this relates to prior reviews: 본 REV 는 관리 콘솔의 UI 표준화 첫 정본. 기존 REPORT.md 의 TASK-0053 (제품 권한 grid + product 카드 통합) / TASK-0051 (일괄 저장 정책 회복) 등은 개별 UI 변경이었으나 표준 컨벤션 없이 진행됨 → 본 cycle 이 그 누적 inconsistency 의 가드레일을 사후 도입. 외부 design 시각 결과 (worker-design framework 차용 + general-purpose subagent) 는 v0.1 의 IA 6 / Visual 5 / Interaction 6 / Consistency 7 / A11y 4 dimension rating 과 5 gap (cross-page selection / empty·loading·error / optimistic rollback / confirm 컨벤션 / RBAC gating) 을 강하게 지적 → v0.2 에 모두 흡수.
+- Open questions (DESIGN.md §13 참조):
+  - Q-13.1: cross-page banner 의 "전체 페이지 선택" 버튼 (보이지 않는 페이지까지 모두 선택) — 본 cycle 미포함, v0.3 후보.
+  - Q-13.2: bulk action apply 후 undo (toast 내부 "되돌리기") — 후속 평가.
+  - Q-13.3: shift+click range 의 cross-page 동작 (현재는 visible 만) — 본 cycle 의 결정과 모순 없음.
+  - Q-13.4: `assertBulkBarContract` 의 CI 화 (jsdom unit 또는 e2e snapshot) — 별 cycle.

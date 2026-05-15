@@ -59,3 +59,25 @@
 - 2026-04-15 기준으로 현재 repo는 외부 `/root/download/docker/local_llm` provider를 소비만 하며, 내부에서 Ollama/gateway를 생성하거나 관리하지 않는다.
 - 2026-04-15 기준으로 Web UI는 `LOCAL_LLM_API_BASE` 연결 가능 여부를 `local_llm_enabled`로 노출하고, 외부 provider 미기동 시 Local LLM 요청을 503으로 제한한다.
 - 최근 검증 기준으로 `ENABLE_MCP=1`일 때 호스트 `28000` 포트가 이미 사용 중이면 `make start` 마지막 단계에서 `mcp` 기동이 차단될 수 있다.
+
+## Codex Commands
+
+Codex 호환 command 원본은 repo-local `.codex/` 아래에 둔다. `~/.codex` 와
+plugin cache 는 설치 대상일 뿐 source of truth 가 아니다.
+
+```bash
+bash repo/bin/codex-template-install.sh --check
+bash repo/bin/codex-template-install.sh --link
+bash repo/bin/codex-template-install.sh --check
+```
+
+copy-base 전달 과정에서 symlink 가 빠지면 Codex 의 `$<skill>` 자동완성이
+`_template-*` skill 을 찾지 못한다. 첫 AI 작업자는 skill 이 없다고 판단하기 전에
+wrapper 위치에서 위 명령으로 `<wrapper>/.codex -> repo/.codex` 링크를 복구한다.
+
+필요 시 local marketplace 또는 prompt 호환 링크를 설치한다:
+
+```bash
+bash repo/bin/codex-template-install.sh --install-marketplace
+bash repo/bin/codex-template-install.sh --install-prompts
+```

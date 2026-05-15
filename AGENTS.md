@@ -1,5 +1,5 @@
 ---
-template_version: v3.6.0
+template_version: v3.6.1
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -1105,3 +1105,31 @@ AI는 META mode로 자동 진입하여 스크립트를 수정한다. bypass env 
 
 `created_at`은 frontmatter 값과 git log first-add timestamp 중 **더 이른 쪽**을
 canonical로 사용한다 (frontmatter 조작 방지).
+
+### Codex command compatibility
+
+- Codex command 원본은 repo-local `.codex/commands/_template/*.md` 이다.
+- Codex skill wrapper 는 `.codex/skills/_template-*/SKILL.md` 에 둔다.
+- Repo-local marketplace/plugin 원본은 `.agents/plugins/marketplace.json` 과
+  `plugins/ai-delegated-dev-template/` 이다.
+- `~/.codex` 와 Codex plugin cache 는 설치/링크 대상일 뿐 source of truth 가 아니다.
+- Exact intent 는 계속 `/_template:<skill>` 로 기록하고, Codex surface 가 이를 거부하면
+  `_template-<skill>` fallback prompt alias 를 사용한다.
+
+### Codex copy-base skill discovery
+
+- 현재 확인된 Codex skill 호출 표면은 `$<skill-name>` 이다.
+- `_template` skill 자동완성은 Codex 가 시작된 workspace 에서 `.codex/skills` 를
+  발견할 수 있어야 동작한다.
+- copy-base 를 파일 복사로 전달하면 symlink 가 누락될 수 있다. 첫 AI 작업자는
+  skill 이 없다고 판단하기 전에 wrapper 위치에서 다음을 먼저 실행한다:
+
+  ```bash
+  bash repo/bin/codex-template-install.sh --check
+  bash repo/bin/codex-template-install.sh --link
+  bash repo/bin/codex-template-install.sh --check
+  ```
+
+- 이미 `/repo` 안에서 작업 중이면 `bash bin/codex-template-install.sh --check` 를
+  사용한다. `--link` 가 플랫폼 정책상 실패하면 Codex 를 `/repo` 에서 시작하고,
+  wrapper-level 자동완성 제한을 작업 로그에 명시한다.
