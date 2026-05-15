@@ -12,9 +12,10 @@ source_of_truth: true
 - State: in-progress
 - Owner: AI
 - Priority: high
-- Last Updated: 2026-05-12
+- Last Updated: 2026-05-15
 
 ## 2. Task Queue
+- [x] TASK-0058 (REQ-20260515-0003, Minor §12.3) docker compose v5.1.1 + buildx v0.31.1 provenance metadata file race 가 `browser-up` / `insight-up` 에서도 재발하던 문제 수정. 기존 `web` 타깃이 쓰는 `dc-build SERVICE=...` 가드를 재사용해 build metadata race 는 흡수하고, 실제 기동은 `up -d --no-build` 로 수행한다.
 - [x] TASK-0057 (REQ-20260512-0003, Minor §12.3) dev 환경 가동 시 single TLS termination 원칙 회복 — `docker-compose.override.yml.example` template 신설 (web entrypoint 를 plain HTTP 로 override) + `.gitignore` 에 실 사용 파일 (`docker-compose.override.yml`) 추가 + `CONTRIBUTING.md §10` "Dev 환경 가동 — single TLS termination 원칙" 섹션 신설. 부작용 해소: 본 cycle 직전까지 web 컨테이너가 `ENABLE_WEB_TLS=1` (`.env` 기본) 로 self-signed cert HTTPS 가동 → Caddy 의 frontline TLS 와 이중 TLS → host `localhost:18080` 직접 접근 시 gstack `/qa` / `/browse` / playwright e2e 가 `net::ERR_CERT_AUTHORITY_INVALID` 로 차단되던 issue. override 적용 후 web 컨테이너가 plaintext HTTP `:8000` 으로 가동, browser 자동화 도구 자연 동작 (env var · opt-in 불필요). production 영향 0 — override 는 dev 환경 한정 (production compose 파일에 두지 않으면 무시).
 - [x] TASK-0001 운영 자산 위치 재정의
 - [x] TASK-0002 MySQL/DAB/SQL 유틸리티 이관

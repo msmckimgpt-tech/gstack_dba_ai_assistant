@@ -20,6 +20,9 @@ source_of_truth: true
   - AC-0013: `CONTRIBUTING.md §10` "Dev 환경 가동 — single TLS termination 원칙" 섹션이 개발자 onboarding 가이드 (1회 setup + 정합 원칙 + production-like 검증 방법) 를 제공한다.
   - AC-0014: override 적용 후 `curl http://localhost:18080/admin` HTTP 200 응답 + uvicorn 로그 `Uvicorn running on http://0.0.0.0:8000` 출력 + admin 정적 자산 cache-bust 정상 반영.
   - AC-0015: override 미적용 환경 (production / staging compose 파일에 override 미포함) 에서는 base compose 의 entrypoint 분기로 복귀해 self-HTTPS 가동 가능 — production 정합 영향 0.
+- REQ-20260515-0003 (TASK-0058): docker compose v5.1.1 + buildx v0.31.1 provenance metadata file race 가 `browser-up` / `insight-up` 에서도 재발하지 않도록 기존 `dc-build` 가드 패턴을 적용한다.
+  - AC-0016: `make browser-up` 은 `dc-build SERVICE=browser` 후 `up -d --no-build browser` 로 기동한다.
+  - AC-0017: `make insight-up` 은 `dc-build SERVICE=insight-worker` 후 `up -d --no-build insight-worker` 로 기동한다.
 
 ## 3. In Scope
 - MySQL `conf.d` 설정 파일

@@ -10,6 +10,10 @@ source_of_truth: true
 
 프로젝트 전체 현황을 한눈에 파악하기 위한 문서이다.
 
+> 2026-05-15: TASK-0060 — `KR(킹스레이드)` / `MV(마이크로볼츠)` Product 시스템 프롬프트와 `pending/operator/admin/sales/dba` Role `전 Product 공통` 프롬프트를 실제 접근 DB 분석 결과 기반으로 정비했다. `compose_system_prompt()`는 이제 Role 공통 지침을 Product 선택 시에도 누적 적용한다 (feature-0002 + feature-0003 혼합 변경).
+
+> 2026-05-15: TASK-0058 — `make browser-up` / `make insight-up` 도 `make web` 과 같은 compose/buildx provenance metadata file race 가드(`dc-build` + `up --no-build`)를 사용하도록 정렬했다 (feature-0001).
+
 > 2026-04-23: origin 을 `git@github.com:msmckimgpt-tech/gstack_dba_ai_assistant.git` 으로 전환하고 gstack 스킬 워크플로우와 공존하는 체계로 마이그레이션했다 (`CLAUDE.md §Skill routing`, 신설 `TODOS.md`). feature 단위 작업 기록은 기존 `unit/feature-NNNN/docs/*` 그대로 유지하며, gstack 스킬 호출 시에도 `AGENTS.md` / `CONTRIBUTING.md` 가 우선 적용된다.
 
 ## 1. 기능 현황

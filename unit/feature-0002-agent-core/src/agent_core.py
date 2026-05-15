@@ -145,21 +145,26 @@ def compose_system_prompt(
     except Exception:
         return SYSTEM_PROMPT
 
-    def _fetch(scope: str, scope_col: str, scope_val: int | None) -> tuple[str, str]:
-        """해당 scope 의 prompt 와 표시용 label 을 반환. 없으면 ('','')."""
+    def _fetch(
+        scope: str,
+        scope_col: str,
+        scope_val: int | None,
+        *,
+        prompt_product_id: int | None,
+    ) -> tuple[str, str]:
+        """해당 scope/product 조합의 prompt 와 표시용 label 을 반환. 없으면 ('','')."""
         if scope_val is None or scope_val <= 0:
             return ("", "")
         try:
-            # auto 모드는 product 한정 prompt 를 건너뛰고 곧장 ProductId IS NULL fallback 만 사용한다.
-            if (not is_auto) and product_id and product_id > 0:
+            if prompt_product_id and prompt_product_id > 0:
                 cur.execute(
                     f"SELECT Content FROM WebSystemPrompts "
                     f"WHERE Scope=%s AND {scope_col}=%s AND ProductId=%s LIMIT 1",
-                    (scope, int(scope_val), int(product_id)),
+                    (scope, int(scope_val), int(prompt_product_id)),
                 )
                 row = cur.fetchone()
                 if row and row[0]:
-                    return (str(row[0]), f"ProductId={product_id}")
+                    return (str(row[0]), f"ProductId={prompt_product_id}")
             cur.execute(
                 f"SELECT Content FROM WebSystemPrompts "
                 f"WHERE Scope=%s AND {scope_col}=%s AND ProductId IS NULL LIMIT 1",
@@ -190,8 +195,22 @@ def compose_system_prompt(
             pass
 
     # Role-scope prompt
-    role_content, _ = _fetch("role", "RoleId", role_id)
-    if role_content:
+    # Role 의 "전 Product 공통" prompt 는 fallback 이 아니라 항상 먼저 누적한다.
+    # 특정 Product 를 선택했고 해당 Role×Product prompt 가 있으면 공통 지침 뒤에 추가한다.
+    role_blocks: list[tuple[str, str]] = []
+    role_common, _ = _fetch("role", "RoleId", role_id, prompt_product_id=None)
+    if role_common:
+        role_blocks.append(("전 Product 공통", role_common))
+    if (not is_auto) and product_id and product_id > 0:
+        role_specific, role_specific_label = _fetch(
+            "role",
+            "RoleId",
+            role_id,
+            prompt_product_id=int(product_id),
+        )
+        if role_specific:
+            role_blocks.append((role_specific_label or f"ProductId={product_id}", role_specific))
+    if role_blocks:
         role_label = ""
         try:
             cur.execute("SELECT RoleKey FROM WebRoles WHERE Id=%s LIMIT 1", (int(role_id or 0),))
@@ -199,10 +218,13 @@ def compose_system_prompt(
             role_label = str(row[0]) if row and row[0] else str(role_id)
         except Exception:
             pass
-        parts.append(f"\n\n## ROLE GUIDANCE ({role_label})\n{role_content.strip()}\n")
+        role_text = "\n\n".join(
+            f"### {block_label}\n{block_content.strip()}" for block_label, block_content in role_blocks
+        )
+        parts.append(f"\n\n## ROLE GUIDANCE ({role_label})\n{role_text}\n")
 
     # Account-scope prompt
-    account_content, _ = _fetch("account", "AccountId", account_id)
+    account_content, _ = _fetch("account", "AccountId", account_id, prompt_product_id=None if is_auto else product_id)
     if account_content:
         parts.append(f"\n\n## ACCOUNT PREFERENCES\n{account_content.strip()}\n")
 

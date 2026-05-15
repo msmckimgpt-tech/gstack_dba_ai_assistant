@@ -9,6 +9,8 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+2026-05-15: Role scope 시스템 프롬프트 조립 의미를 정정했다. `ProductId IS NULL`로 저장된 "전 Product 공통" Role 지침은 특정 Product를 선택한 대화에서도 항상 `## ROLE GUIDANCE` 안에 먼저 누적되고, Role×Product 전용 지침이 있으면 뒤에 추가된다. auto 모드는 Product 전용 지침을 건너뛰고 공통 지침만 사용한다. 단위 테스트 2건과 web 컨테이너 내부 직접 조회로 확인했다.
+
 `insight-worker` 가 `table_fp:*` 와 refresh KV 만 남기고 실제 `table_insight` fact/RAG/Text/Object 를 만들지 못한 객체를 영구 skip 하던 문제를 수정했다. worker 는 이제 `Fact/Text/RagDocument/RagObject` 4종 완전성을 먼저 확인하고, 기존 fact 기반 복구가 가능하면 즉시 복구하며, 복구 불가 시에만 LLM 재생성을 수행한다. 로그는 `/shared/logs/YYYY-MM-DD/` 구조로 재편했고, 오래된 날짜 디렉토리는 `/shared/logs/archive/YYYY-MM-DD.tar.gz` 로 압축 보관한다.
 
 ## 2. Progress
@@ -17,6 +19,7 @@ source_of_truth: false
 - Done: 누락 원인 재현, worker 완전성 검사 추가, 상세 route log 추가, 일자별 로그 디렉토리/보관 압축 구현, 실제 cycle/보관/no-op 억제 검증
 
 ## 3. Recent Changes
+- 2026-05-15: `agent_core.compose_system_prompt()` Role prompt 조립 변경. `전 Product 공통` Role prompt는 fallback 이 아니라 공통 누적 지침이며, Product 전용 Role prompt가 있으면 같은 Role guidance 블록 아래에 추가된다. `tests/test_compose_system_prompt.py` 신규 추가.
 - `insight.py` 에서 후보 선정 기준을 `fingerprint` 단독에서 `artifact completeness + fingerprint + refresh` 순서로 변경
 - 기존 fact가 남아 있으면 `_upsert_fact` 기반으로 RAG/Text/Object 를 우선 복구하고, 복구 후에도 구조 변경이 있으면 재생성까지 이어지도록 수정
 - 저장 직후 재조회로 4종 아티팩트 완전성을 검증하고, 완전성 검증이 통과할 때만 `table_fp:*`, `schema_fp:*`, `*_insight_refresh_at:*` 성공 마커를 갱신하도록 수정
@@ -29,6 +32,10 @@ source_of_truth: false
 - 이번 검증은 점진 복구 정책 기준으로 1 cycle 만 수행했다. 누락된 나머지 테이블은 이후 cycle 에서 순차 복구된다.
 
 ## 5. Test Status
+- 2026-05-15:
+  - `python3 -m py_compile unit/feature-0002-agent-core/src/agent_core.py unit/feature-0003-agent-web-ui/src/app.py`: 통과
+  - `python3 -m unittest unit/feature-0002-agent-core/tests/test_compose_system_prompt.py`: 2건 통과
+  - web 컨테이너 내부 직접 조회: `compose_system_prompt(product_id=1, role_id=16, product_mode="pinned")` 결과에 `## PRODUCT CONTEXT (KR)`와 `## ROLE GUIDANCE (sales)` 및 `### 전 Product 공통` 포함 확인
 - 정적 검증:
   - `python3 -m py_compile unit/feature-0002-agent-core/src/modules/utils.py unit/feature-0002-agent-core/src/modules/insight.py`
   - 결과: 통과

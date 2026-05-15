@@ -8,6 +8,25 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260515-0002
+- Date: 2026-05-15
+- Summary: TASK-0060 (REQ-20260515-0002) 실제 접근 가능 DB 분석 기반 Product 시스템 프롬프트 작성 + Role `전 Product 공통` 프롬프트 작성 + runtime 누적 적용 fix.
+- Files / Data:
+  - `agent_memory.WebSystemPrompts`:
+    - Product prompt upsert: `KR / 킹스레이드` (`dbgame,dblog,dbauth`), `MV / 마이크로볼츠` (`account_db,dev_1_1_1_20,have_00,log_v2,global_db`).
+    - Role common prompt upsert: `pending`, `operator`, `admin`, `sales`, `dba` 각각 `Scope='role' AND ProductId IS NULL`.
+  - `repo/unit/feature-0002-agent-core/src/agent_core.py`: Role `ProductId IS NULL` prompt 를 fallback 이 아니라 공통 누적 지침으로 조립하도록 변경.
+  - `repo/unit/feature-0002-agent-core/tests/test_compose_system_prompt.py`: pinned/auto 모드 누적 적용 테스트 추가.
+  - `repo/unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,REVIEW,REPORT,TEST}.md` 및 feature-0002 문서 갱신.
+- DB Analysis:
+  - `KR`: `dbgame` 98 tables / 약 147만 rows, `dblog` 279 tables / 약 3929만 rows, `dbauth` 9 tables / 약 7977 rows. 주요 확인 범위: `dbgame.player` 2187 rows (`CreatedTime` 2026-04-07~2026-04-23), `dblog.battleend` 813,280 rows, `dblog.item` 12,656,848 rows, `dbauth.accountbasicinfo` 2187 rows.
+  - `MV`: `account_db` 6 tables / 약 21.8만 rows, `dev_1_1_1_20` 62 tables / 약 12.6만 rows, `have_00` 50 tables / 약 2520만 rows, `global_db` 28 tables / 약 599 rows, `log_v2` DB 존재 + tables 0. 주요 확인 범위: `account_db.account` 242,973 rows, `have_00.player` 232,922 rows, `have_00.matchhistory` 8,006,486 rows (`rv_created_at` 2023-09-09~2026-05-11).
+- Verification:
+  - `python3 -m py_compile unit/feature-0002-agent-core/src/agent_core.py unit/feature-0003-agent-web-ui/src/app.py`
+  - `python3 -m unittest unit/feature-0002-agent-core/tests/test_compose_system_prompt.py`
+  - SQL readback: Product prompt 2건, Role common prompt 5건 content length 확인.
+  - web 컨테이너 내부 `compose_system_prompt(product_id=1, role_id=16, product_mode="pinned")` 직접 조회로 Product context + Role common guidance 포함 확인.
+
 ## CHG-20260515-0001
 - Date: 2026-05-15
 - Summary: TASK-0059 (REQ-20260515-0001, **Major** §12.3 — 사용자 대화 routing 데이터 영역). "새 대화" 버튼 누른 후 첫 메시지가 신규 대화가 아닌 직전 active 대화로 routing 되던 lazy-create 결함 수정. frontend 의 신규 의도가 backend 로 전달되지 않아 빈 `conversation_id` 가 "session 초기화 후 직전 대화 이어받기" 와 구분 불가했던 갭을 명시적 `lazy_create` hint + `force_new` 분기로 닫는다. 인증/인가 모델 무변경.

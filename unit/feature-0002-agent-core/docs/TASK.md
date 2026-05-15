@@ -12,7 +12,25 @@ source_of_truth: true
 - State: in-progress
 - Owner: AI
 - Priority: high
-- Last Updated: 2026-04-24
+- Last Updated: 2026-05-15
+
+## 1.1 Current Cycle
+- [x] TASK-0013 (REQ-20260515-0002, Minor §12.3) Role scope 시스템 프롬프트의 "전 Product 공통" 지침을 fallback 이 아니라 누적 적용으로 전환. `compose_system_prompt()`는 pinned Product 대화에서 Role 공통 지침을 먼저 넣고, Role×Product 지침이 있으면 뒤에 추가한다. auto 모드는 Product 전용 지침을 건너뛰고 공통 지침만 사용한다. 회귀 테스트 `tests/test_compose_system_prompt.py` 추가.
+
+### 1.2 Implementation Plan (TASK-0013)
+
+영향 파일:
+- `src/agent_core.py` — Role prompt 조회를 공통 + Product 전용 누적 방식으로 변경
+- `tests/test_compose_system_prompt.py` — pinned/auto 모드의 Role prompt 누적 동작 검증
+- `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md` — 요구사항, 변경 이력, 검증 기록
+
+접근 방법:
+1. 기존 `_fetch()`를 특정 product id 또는 `ProductId IS NULL` 조회를 명시적으로 수행하는 helper로 정리한다.
+2. Role scope에서는 `ProductId IS NULL` 공통 prompt를 먼저 조회해 항상 주입하고, pinned Product의 전용 prompt가 있으면 같은 `## ROLE GUIDANCE` 블록 아래에 추가한다.
+3. account scope의 기존 "Product 전용 우선, 없으면 공통 fallback" 동작은 유지한다.
+4. fake connection 기반 단위 테스트로 pinned 누적 / auto 공통-only 동작을 고정한다.
+
+위험도: Minor — 인증/인가, DB 스키마, 파괴적 데이터 변경 없음. LLM 입력 패키징만 조정한다.
 
 ## 2. Implementation Plan
 

@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260515-0002
+- Date: 2026-05-15
+- Summary: TASK-0013 (REQ-20260515-0002) Role scope 시스템 프롬프트의 "전 Product 공통" 지침을 fallback 이 아니라 누적 적용으로 전환.
+- Files:
+  - `src/agent_core.py`: Role prompt 조립을 `ProductId IS NULL` 공통 지침 먼저, Role×Product 전용 지침 뒤 순서로 변경. auto 모드는 Product 전용 지침을 건너뛰고 공통 지침만 사용.
+  - `tests/test_compose_system_prompt.py`: fake connection 기반으로 pinned 누적 / auto 공통-only 동작 검증.
+  - `docs/FUNCTION.md`, `docs/TASK.md`, `docs/REVIEW.md`, `docs/REPORT.md`, `docs/TEST.md`: 요구사항, 계획, 판단, 검증 기록 갱신.
+- Verification:
+  - `python3 -m py_compile unit/feature-0002-agent-core/src/agent_core.py unit/feature-0003-agent-web-ui/src/app.py`
+  - `python3 -m unittest unit/feature-0002-agent-core/tests/test_compose_system_prompt.py`
+  - web 컨테이너 내부 `compose_system_prompt(product_id=1, role_id=16, product_mode="pinned")` 직접 조회로 `PRODUCT CONTEXT` 뒤 `ROLE GUIDANCE` 안에 `### 전 Product 공통`이 포함됨을 확인.
+
 ## CHG-20260326-0001
 - Date: 2026-03-26
 - Summary: agent 코어 소스와 Dockerfile을 기능 단위 구조로 이관

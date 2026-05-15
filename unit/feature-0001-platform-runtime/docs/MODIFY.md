@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260515-0003
+- Date: 2026-05-15
+- Related Requirement: TASK-0058, REQ-20260515-0003
+- Summary: `browser-up` / `insight-up` 에서도 docker compose v5.1.1 + buildx v0.31.1 provenance metadata file race 를 흡수하도록 기존 `dc-build` 가드 패턴 적용.
+- Files: `Makefile`, `unit/feature-0001-platform-runtime/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md`
+- Impact: `make browser-up` 과 `make insight-up` 이 `dc-build SERVICE=...` 로 이미지를 먼저 만들고 `up -d --no-build` 로 기동한다. web 타깃과 같은 root-cause 대응이라 metadata file 후처리 race 때문에 서비스 복구가 실패하지 않는다.
+- Verification: `make browser-up`, `make insight-up`, `make status`
+
 ## CHG-20260326-0001
 - Date: 2026-03-26
 - Summary: MySQL/DAB/SQL 유틸리티를 템플릿 feature 구조로 이관

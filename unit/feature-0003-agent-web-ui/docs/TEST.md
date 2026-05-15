@@ -79,6 +79,18 @@ source_of_truth: true
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-05-15 (TASK-0060 Product / Role 시스템 프롬프트 정비):
+  - `python3 -m py_compile unit/feature-0002-agent-core/src/agent_core.py unit/feature-0003-agent-web-ui/src/app.py`
+    - 결과: 통과
+  - `python3 -m unittest unit/feature-0002-agent-core/tests/test_compose_system_prompt.py`
+    - 결과: 2건 통과
+  - DB 분석 / readback:
+    - `KR`: `dbgame` 98 tables, `dblog` 279 tables, `dbauth` 9 tables 확인
+    - `MV`: `account_db` 6 tables, `dev_1_1_1_20` 62 tables, `have_00` 50 tables, `global_db` 28 tables, `log_v2` 0 tables 확인
+    - `WebSystemPrompts`: Product prompt 2건 + Role common prompt 5건 content length 확인
+  - runtime 직접 확인:
+    - web 컨테이너 내부 `compose_system_prompt(product_id=1, role_id=16, product_mode="pinned")`
+    - 결과: `HAS_PRODUCT_CONTEXT=True`, `HAS_ROLE_COMMON=True`, `HAS_SALES=True`
 - 2026-03-26: 구조 검증 기준만 정의
 - 2026-04-06: 이전 로그인 버그 수정 기준의 브라우저 검증 수행
 - 2026-04-14: 이전 콘솔형 UI 렌더링 검증 수행
