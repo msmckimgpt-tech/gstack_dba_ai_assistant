@@ -3132,3 +3132,352 @@ a { color: inherit; }
   .admin-body { grid-template-columns: 1fr; }
   .admin-sidebar { display: none; }
 }
+
+/* ─── TASK-0061 (GOAL.md 2026-05-15 8개 항목) ─────────────────────── */
+
+/* Phase 1+2 (REQ-20260515-0003 / -0004): pending assistant bubble */
+.message.is-pending .message-bubble {
+  border: 1px solid var(--border-soft, rgba(0, 0, 0, 0.1));
+  background: var(--surface-2, rgba(0, 0, 0, 0.03));
+}
+.message.is-pending.is-error .message-bubble {
+  border-color: var(--color-danger, #dc2626);
+  background: rgba(220, 38, 38, 0.06);
+}
+.message.is-pending.is-stale-error .message-bubble {
+  border-color: var(--color-danger, #dc2626);
+  background: rgba(220, 38, 38, 0.08);
+}
+.pending-bubble-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.pending-bubble-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--color-primary, #2563eb);
+  border-top-color: transparent;
+  animation: pending-bubble-spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
+.message.is-pending.is-error .pending-bubble-spinner,
+.message.is-pending.is-stale-error .pending-bubble-spinner {
+  border-color: var(--color-danger, #dc2626);
+  border-top-color: transparent;
+  animation: none;
+}
+@keyframes pending-bubble-spin {
+  to { transform: rotate(360deg); }
+}
+.pending-bubble-status {
+  font-weight: 600;
+  color: var(--color-primary, #2563eb);
+}
+.message.is-pending.is-error .pending-bubble-status,
+.message.is-pending.is-stale-error .pending-bubble-status {
+  color: var(--color-danger, #dc2626);
+}
+.pending-bubble-elapsed {
+  color: var(--text-muted, #6b7280);
+  font-size: 12px;
+  margin-left: auto;
+}
+.pending-bubble-latest {
+  border-left: 2px solid var(--color-primary, #2563eb);
+  padding-left: 8px;
+  margin: 6px 0;
+}
+.pending-bubble-latest strong {
+  display: block;
+  font-size: 13px;
+}
+.pending-bubble-reason {
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+.pending-bubble-error {
+  color: var(--color-danger, #dc2626);
+  font-size: 13px;
+  padding: 6px 8px;
+  background: rgba(220, 38, 38, 0.04);
+  border-radius: 4px;
+}
+.pending-bubble-steps {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.pending-bubble-steps summary {
+  cursor: pointer;
+  color: var(--text-muted, #6b7280);
+}
+.pending-bubble-step-list {
+  margin: 6px 0 0 16px;
+  padding: 0;
+}
+.pending-bubble-step-item {
+  margin: 4px 0;
+}
+.pending-bubble-step-item strong {
+  font-size: 12px;
+}
+.pending-bubble-step-reason {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+  margin-top: 1px;
+}
+
+/* Phase 3 (REQ-20260515-0005): stale_error dot */
+.conv-dot.is-stale-error {
+  background: var(--color-danger, #dc2626);
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.18);
+}
+
+/* Phase 4 (REQ-20260515-0006): Point rail */
+.messages-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+.messages-wrap > .messages {
+  flex: 1;
+  min-width: 0;
+}
+.message-point-rail {
+  width: 16px;
+  padding: 8px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  overflow-y: auto;
+  border-left: 1px solid var(--border-soft, rgba(0, 0, 0, 0.06));
+  background: transparent;
+  flex-shrink: 0;
+}
+.message-point-rail.hidden { display: none; }
+.message-point-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  background: var(--border-soft, rgba(0, 0, 0, 0.2));
+  transition: transform 0.15s, background 0.15s;
+}
+.message-point-dot.is-user {
+  background: var(--color-primary, #2563eb);
+  opacity: 0.6;
+}
+.message-point-dot.is-assistant {
+  background: var(--text-muted, #6b7280);
+  opacity: 0.6;
+}
+.message-point-dot.is-active {
+  transform: scale(1.8);
+  opacity: 1;
+}
+.message-point-dot:hover {
+  opacity: 1;
+}
+.is-anchor-highlight {
+  outline: 2px solid var(--color-primary, #2563eb);
+  outline-offset: 4px;
+  border-radius: 6px;
+  transition: outline 0.3s;
+}
+@media (max-width: 720px) {
+  .message-point-rail { display: none !important; }
+}
+
+/* Phase 5 (REQ-20260515-0007): 캘린더 popover */
+.history-calendar-popover {
+  position: absolute;
+  top: 8px;
+  right: 32px;
+  z-index: 30;
+  background: var(--surface-1, #ffffff);
+  border: 1px solid var(--border-strong, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 12px;
+  min-width: 260px;
+  max-width: 320px;
+}
+.history-calendar-popover.hidden { display: none; }
+.history-calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  gap: 6px;
+}
+.history-calendar-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.history-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.history-calendar-day-head {
+  font-size: 10px;
+  color: var(--text-muted, #6b7280);
+  text-align: center;
+  padding: 4px 0;
+}
+.history-calendar-day {
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 4px 2px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  color: var(--text, #1f2937);
+}
+.history-calendar-day:disabled,
+.history-calendar-day.is-blank {
+  background: transparent;
+  cursor: default;
+  color: var(--text-muted, #9ca3af);
+  opacity: 0.4;
+}
+.history-calendar-day.has-messages {
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--color-primary, #2563eb);
+  font-weight: 600;
+}
+.history-calendar-day.is-selected {
+  border-color: var(--color-primary, #2563eb);
+}
+.history-calendar-times {
+  margin-top: 12px;
+  border-top: 1px solid var(--border-soft, rgba(0, 0, 0, 0.06));
+  padding-top: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.history-calendar-times-heading {
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+  margin-bottom: 4px;
+}
+.history-calendar-times-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.history-calendar-time {
+  background: var(--surface-2, rgba(0, 0, 0, 0.04));
+  border: 1px solid transparent;
+  padding: 3px 6px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text, #1f2937);
+}
+.history-calendar-time:hover {
+  border-color: var(--color-primary, #2563eb);
+}
+.history-calendar-empty {
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+  text-align: center;
+  padding: 8px 0;
+}
+
+/* Phase 8 (REQ-20260515-0010): 내 대화 다중 선택 + bulk bar */
+.conv-item-checkbox {
+  margin-right: 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.conv-item.is-multi-selected {
+  background: rgba(37, 99, 235, 0.08);
+  outline: 1px solid var(--color-primary, #2563eb);
+}
+.conv-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--surface-2, rgba(0, 0, 0, 0.04));
+  border-bottom: 1px solid var(--border-soft, rgba(0, 0, 0, 0.06));
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.conv-bulk-bar.hidden { display: none; }
+.conv-bulk-label {
+  font-weight: 600;
+  margin-right: auto;
+}
+
+/* Phase 6 (REQ-20260515-0008): admin password reset + force change modal */
+.admin-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.admin-modal {
+  background: var(--surface-1, #ffffff);
+  border-radius: 8px;
+  padding: 20px;
+  max-width: 440px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+}
+.admin-modal h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.admin-modal-note {
+  font-size: 13px;
+  color: var(--text-muted, #6b7280);
+  line-height: 1.5;
+  margin: 0;
+}
+.admin-modal-error {
+  color: var(--color-danger, #dc2626);
+  font-size: 12px;
+  min-height: 16px;
+}
+.temp-password-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2, rgba(0, 0, 0, 0.04));
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-family: monospace;
+}
+.temp-password-display code {
+  font-size: 14px;
+  flex: 1;
+  word-break: break-all;
+}
+.admin-modal .field-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong, rgba(0, 0, 0, 0.12));
+  border-radius: 4px;
+  font-size: 14px;
+  box-sizing: border-box;
+}

@@ -8,6 +8,34 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260515-0003
+- Date: 2026-05-15
+- Summary: TASK-0061 (REQ-20260515-0003 ~ REQ-20260515-0010, **Major** §12.3 — UI 상태 / 인증(비밀번호 초기화) / 파괴적 데이터(bulk delete) 일괄 변경) GOAL.md 8 항목 합본 cycle.
+- Phases:
+  - Phase 1+2: 답변 버블 내부 실시간 step 진행상황 + 신규 대화 첫 요청 즉시 polling 연결 (state.pendingBubble + renderPendingAssistantBubble + 1초 elapsed timer + applyProgressPayload 동기화 + sendPrompt lazy-create 분기에서 cid 발급 즉시 polling start).
+  - Phase 3: 끊긴 processing 대화 만료 감지 + 붉은 badge — backend `_compute_display_status(conn, conversation_id, last_status, last_status_at, last_status_run_id)` + `_last_step_at_for_run` + `_parse_kv_timestamp` helper. env `WEB_PROGRESS_STALE_TIMEOUT_SECONDS=1200` (20분). `_list_conversations` payload 에 `display_status` / `raw_status` / `is_stale` 추가. `/api/progress` / `_build_ask_status_snapshot` / `/api/ask_status` / `/api/ask_result` long-poll 일관 stale 처리. frontend `.conv-dot.is-stale-error` + tooltip + bubble error 영역 + 1회 toast 안내.
+  - Phase 4: 우측 Point rail (`#messagePointRail` + `renderMessagePointRail()` + scroll observer → `highlightActivePoint()` + click → `scrollIntoView smooth`). 좁은 화면(`max-width:720px`) hidden.
+  - Phase 5: 캘린더/시각 이동 — backend `/api/history_dates` 가 `AgentMemoryMessages` 정본 기준 (이전 `AgentCoreMessages` 에서 변경). frontend `historyCalendarBtn` + `#historyCalendarPopover` (월간 grid + 시각 목록) + `/api/history_anchor?at=...` jump + `.is-anchor-highlight` 1.5s 강조.
+  - Phase 6 (Critical 분면): 관리자 주관 비밀번호 초기화. `WebAccounts.MustChangePassword TINYINT(1) NOT NULL DEFAULT 0` 컬럼 idempotent ALTER (`_ensure_web_tables` slow path + `_ensure_must_change_password_schema` + `_ensure_seed_catchup` fast path). 신규 endpoint `POST /api/admin/accounts/{id}/password-reset` — `secrets.token_urlsafe(12)` 임시비번 + `_hash_password` 저장 + `MustChangePassword=1` + 대상 계정 `WebAuthSessions IsRevoked=1`. self-reset 거부. `_serialize_account` 에 `must_change_password` 필드 + `_fetch_account_rows` 가 `COALESCE(a.MustChangePassword, 0)` SELECT. `/api/auth/me` PATCH 가 비밀번호 변경 성공 시 `MustChangePassword = 0`. frontend `adminPasswordResetBtn` (Account detail) + 1회 표시 modal + 강제 변경 modal (login + initializeWorkspace 직후 must_change_password=true 시 노출).
+  - Phase 7: 관리자 select-all 현재 페이지 fix — `currentPageAccounts()` helper 신설. `accountSelectAll` change handler 와 `updateAccountSelectAllCheckbox()` 가 동일 helper 사용해 현재 페이지 row 만 토글. 다른 페이지 선택은 보존.
+  - Phase 8: 내 대화 Ctrl/Shift 다중 선택 + bulk delete — `state.conversationSelected: Set<string>` + `state.conversationLastClickIdx`. `renderConversationList()` 의 own 그룹에만 `.conv-item-checkbox` 추가 + Ctrl/Meta toggle + Shift range. `.conv-bulk-bar` (label / 삭제 / 선택 해제). backend `_delete_conversation_impl(conn, account, conversation_id, force, confirm_text)` helper 추출 (단건/일괄 공용) + 신규 `POST /api/delete_conversations` partial success endpoint (`{deleted, deleted_pending, failed:[{conversation_id, reason}], current}`). ≥10 typed-confirm + processing 대화 강제 삭제 confirm.
+- Files:
+  - backend: `repo/unit/feature-0003-agent-web-ui/src/app.py` — env + helper 추가, `_list_conversations` / `/api/progress` / `_build_ask_status_snapshot` / `/api/ask_result` / `/api/history_dates` / `_delete_conversation_impl` / `/api/delete_conversations` / `/api/admin/accounts/{id}/password-reset` / `_serialize_account` / `_fetch_account_rows` 수정.
+  - frontend: `repo/unit/feature-0003-agent-web-ui/src/static/app.js` — state 확장 + renderMessages + renderPendingAssistantBubble + elapsed timer + applyProgressPayload 동기화 + renderConversationList Ctrl/Shift + renderConversationBulkBar + bulkDeleteConversations + renderMessagePointRail + highlightActivePoint + calendarState + openHistoryCalendar / renderHistoryCalendar / jumpToHistoryAnchor + showForceChangePasswordModal + must_change_password hook in handleLogin/initializeWorkspace + listener wiring.
+  - frontend: `repo/unit/feature-0003-agent-web-ui/src/static/admin.js` — currentPageAccounts + select-all change handler + updateAccountSelectAllCheckbox + renderAccountDetail 의 adminPasswordResetBtn + triggerPasswordResetFlow + showTemporaryPasswordModal.
+  - frontend: `repo/unit/feature-0003-agent-web-ui/src/static/index.html` — `.messages-wrap` / `#messagePointRail` / `#historyCalendarBtn` / `#historyCalendarPopover` / `#conversationBulkBar` 추가 + cache-bust `v=20260515-task-0061`.
+  - frontend: `repo/unit/feature-0003-agent-web-ui/src/static/admin.html` — cache-bust 만 갱신 (button 은 renderAccountDetail 에서 동적 mount).
+  - frontend: `repo/unit/feature-0003-agent-web-ui/src/static/styles.css` — Phase 1~8 신규 클래스 토큰 (pending bubble + stale dot + point rail + history calendar + conv-item-checkbox + conv-bulk-bar + admin-modal + temp-password-display + field-input).
+  - env: `repo/.env.example` — `WEB_PROGRESS_STALE_TIMEOUT_SECONDS=` placeholder + 설명.
+  - docs: `repo/unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md`.
+- Verification:
+  - `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS
+  - `node --check unit/feature-0003-agent-web-ui/src/static/app.js` PASS
+  - `node --check unit/feature-0003-agent-web-ui/src/static/admin.js` PASS
+  - `make web` 재배포 PASS — `repo-web-1 Recreated/Started`
+  - browser 검증 (http://web:8000): cache-bust `v=20260515-task-0061` 적용 확인 / `.messages-wrap` / `#messagePointRail` / `#historyCalendarBtn` / `#historyCalendarPopover` / `#conversationBulkBar` 모두 존재 / login 후 conv list 45개 + own checkbox 34개 / bulk bar 1개 선택 시 "1개 선택됨" 라벨 / 캘린더 popover 2026년 4월 + has-messages 1일 (4/22) / `/api/progress` 응답에 display_status·raw_status·is_stale 포함 / `/api/history_dates` 응답 first/last 2026-04-22 / `/api/delete_conversations` 빈 body → 400 validation / pending bubble 강제 렌더 시 spinner + elapsed + bubble DOM 정상 / admin page accountList 15 + currentPageAccounts() 15 + filteredAccounts() 26 (다른 페이지 보존 가능) / 비-bootstrap_admin 계정 detail panel 에 `adminPasswordResetBtn` "비밀번호 초기화" 노출.
+- Trace: REQ-20260515-0003 ~ REQ-20260515-0010 → TASK-0061 → CHG-20260515-0003
+
 ## CHG-20260515-0002
 - Date: 2026-05-15
 - Summary: TASK-0060 (REQ-20260515-0002) 실제 접근 가능 DB 분석 기반 Product 시스템 프롬프트 작성 + Role `전 Product 공통` 프롬프트 작성 + runtime 누적 적용 fix.

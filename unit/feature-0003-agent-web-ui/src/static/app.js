@@ -112,6 +112,16 @@ const state = {
   // TASK-0048: "새 대화" 버튼은 즉시 backend row 를 만들지 않는다. client-side 만 pending 상태로 진입했다가
   // 첫 메시지 전송 시 /api/ask 가 lazy 생성한다. cid 가 없는 동안의 busy/sentinel 식별자.
   pendingNewConversation: false,
+  // TASK-0061 Phase 1+2 (REQ-20260515-0003 / REQ-20260515-0003): pending assistant bubble.
+  // sendPrompt() 시작 시 user message + pending bubble 즉시 prepend, polling step 으로 갱신,
+  // /api/ask 응답 또는 attach 완료 시 실 assistant message 로 replace.
+  pendingBubble: null,  // null | { startedAt, runId, steps, status, displayStatus, isStale, error, userMessage }
+  elapsedTimer: null,
+  // TASK-0061 Phase 3 (REQ-20260515-0005): stale 감지 toast 가 같은 대화에서 반복 노출되지 않도록 1 회 가드.
+  staleToastShownFor: new Set(),
+  // TASK-0061 Phase 8 (REQ-20260515-0010): 내 대화 다중 선택 set (Ctrl/Shift)
+  conversationSelected: new Set(),
+  conversationLastClickIdx: -1,
 };
 
 const PENDING_CONV_SENTINEL = "__pending__";
@@ -1076,16 +1086,60 @@ function renderConversationList() {
 
     if (prependFn) prependFn();
 
-    items.forEach((item) => {
+    // TASK-0061 Phase 8 (REQ-20260515-0010 / AC-0101): own 그룹 안의 visible 순서 = Shift range 의 기준.
+    const ownVisibleIds = label === "내 대화" ? items.map((it) => String(it.id)) : [];
+    items.forEach((item, visibleIdx) => {
       const mine = isOwnConversation(item);
       const button = document.createElement("button");
       button.type = "button";
       const classes = ["conv-item", mine ? "is-own" : "is-other"];
       if (item.id === state.activeConversationId) classes.push("is-active");
+      if (mine && state.conversationSelected.has(String(item.id))) classes.push("is-multi-selected");
       button.className = classes.join(" ");
-      button.addEventListener("click", () => {
+      button.dataset.conversationId = String(item.id);
+      if (mine) button.dataset.idx = String(visibleIdx);
+      button.addEventListener("click", (ev) => {
+        if (mine && can("conversation.delete.own") && (ev.ctrlKey || ev.metaKey || ev.shiftKey)) {
+          // TASK-0061 Phase 8 (AC-0101): Ctrl/Meta = 토글, Shift = range (own 그룹 내 visible 기준).
+          ev.preventDefault();
+          ev.stopPropagation();
+          if (ev.shiftKey && state.conversationLastClickIdx >= 0 && ownVisibleIds.length) {
+            const from = Math.min(state.conversationLastClickIdx, visibleIdx);
+            const to = Math.max(state.conversationLastClickIdx, visibleIdx);
+            for (let i = from; i <= to; i += 1) {
+              state.conversationSelected.add(String(ownVisibleIds[i]));
+            }
+          } else {
+            if (state.conversationSelected.has(String(item.id))) {
+              state.conversationSelected.delete(String(item.id));
+            } else {
+              state.conversationSelected.add(String(item.id));
+            }
+            state.conversationLastClickIdx = visibleIdx;
+          }
+          renderConversationList();
+          renderConversationBulkBar();
+          return;
+        }
         selectConversation(item.id);
       });
+      // TASK-0061 Phase 8 (AC-0101): own 항목에만 checkbox 노출. delete.own 보유 시만.
+      if (mine && can("conversation.delete.own")) {
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.className = "conv-item-checkbox";
+        cb.checked = state.conversationSelected.has(String(item.id));
+        cb.setAttribute("aria-label", `대화 ${item.topic || item.id} 선택`);
+        cb.addEventListener("click", (ev) => ev.stopPropagation());
+        cb.addEventListener("change", () => {
+          if (cb.checked) state.conversationSelected.add(String(item.id));
+          else state.conversationSelected.delete(String(item.id));
+          state.conversationLastClickIdx = visibleIdx;
+          renderConversationList();
+          renderConversationBulkBar();
+        });
+        button.appendChild(cb);
+      }
 
       const titleRow = document.createElement("div");
       titleRow.className = "conv-item-title-row";
@@ -1106,9 +1160,16 @@ function renderConversationList() {
       const metaEl = document.createElement("div");
       metaEl.className = "conv-item-meta";
 
-      const normalizedStatus = String(item.status || "").trim().toLowerCase();
+      // TASK-0061 Phase 3 (REQ-20260515-0005 / AC-0082): stale_error 가 들어오면 붉은 dot + tooltip.
+      const normalizedStatus = String(item.display_status || item.status || "").trim().toLowerCase();
       const dot = document.createElement("span");
       dot.className = `conv-dot ${normalizedStatus ? `is-${normalizedStatus}` : ""}`.trim();
+      if (normalizedStatus === "stale_error") {
+        const lastActivity = item.last_activity_at || item.created_at || "";
+        dot.title = lastActivity
+          ? `작업이 중단된 것으로 보입니다 — 마지막 활동: ${formatDateTime(lastActivity)}`
+          : "작업이 중단된 것으로 보입니다";
+      }
 
       const dateEl = document.createElement("span");
       dateEl.textContent = formatDateTime(item.last_activity_at || item.created_at);
@@ -1127,6 +1188,12 @@ function renderConversationList() {
 
   renderGroup("내 대화", own, hasPending ? appendPendingItem : null);
   renderGroup(`타 계정 대화 (${others.length})`, others);
+  // TASK-0061 Phase 8: list 갱신 시 bulk bar 도 같이 동기화 + 사라진 대화 제거.
+  const visibleOwnIds = new Set(own.map((it) => String(it.id)));
+  state.conversationSelected = new Set(
+    Array.from(state.conversationSelected).filter((id) => visibleOwnIds.has(String(id)))
+  );
+  renderConversationBulkBar();
 }
 
 function renderConversationHeader() {
@@ -1669,7 +1736,8 @@ function renderMessageDetails(meta = {}) {
 
 function renderMessages() {
   messageLogEl.innerHTML = "";
-  if (!state.messages.length) {
+  const hasPendingBubble = Boolean(state.pendingBubble);
+  if (!state.messages.length && !hasPendingBubble) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.innerHTML = "<strong>아직 표시할 대화가 없습니다.</strong><span>좌측 목록에서 대화를 선택하거나 새 대화를 생성하세요.</span>";
@@ -1751,10 +1819,463 @@ function renderMessages() {
       bubble.appendChild(actions);
     }
 
+    // TASK-0061 Phase 4 (REQ-20260515-0006 / AC-0084): stable anchor id 부여 (rail / calendar 점프용).
+    if (message.id != null) {
+      row.id = `message-${message.id}`;
+      row.dataset.messageId = String(message.id);
+      row.dataset.messageRole = role;
+    }
+
     row.append(meta, bubble);
     messageLogEl.appendChild(row);
   });
+
+  // TASK-0061 Phase 1 (REQ-20260515-0003): pending assistant bubble 은 메시지 흐름 가장 아래 위치.
+  if (state.pendingBubble) {
+    const pendingRow = renderPendingAssistantBubble(state.pendingBubble);
+    if (pendingRow) messageLogEl.appendChild(pendingRow);
+  }
+
   messageLogEl.scrollTop = messageLogEl.scrollHeight;
+  // TASK-0061 Phase 4 (REQ-20260515-0006): point rail 동기화.
+  renderMessagePointRail();
+}
+
+// TASK-0061 Phase 1 (REQ-20260515-0003): pending assistant bubble — spinner + elapsed timer +
+// status badge + 최신 step + 누적 step 목록. element 자체는 매 render 시 새로 만들지만
+// timer 는 state.elapsedTimer 가 1 초 간격 tick 으로 갱신 (`#pendingBubbleElapsed` text 만 교체).
+function renderPendingAssistantBubble(pending) {
+  if (!pending) return null;
+  const row = document.createElement("article");
+  row.className = "message is-assistant is-pending";
+  if (pending.isStale) row.classList.add("is-stale-error");
+  if (pending.error) row.classList.add("is-error");
+  row.id = "pendingAssistantBubble";
+
+  const meta = document.createElement("div");
+  meta.className = "message-meta";
+  meta.textContent = `Assistant · 처리 중`;
+
+  const bubble = document.createElement("div");
+  bubble.className = "message-bubble";
+
+  // Header: spinner + 상태 라벨 + elapsed
+  const header = document.createElement("div");
+  header.className = "pending-bubble-header";
+  const spinner = document.createElement("span");
+  spinner.className = "pending-bubble-spinner";
+  spinner.setAttribute("aria-hidden", "true");
+  const statusLabel = document.createElement("span");
+  statusLabel.className = "pending-bubble-status";
+  if (pending.isStale) {
+    statusLabel.textContent = "작업 중단 감지";
+  } else if (pending.error) {
+    statusLabel.textContent = "오류";
+  } else {
+    statusLabel.textContent = pendingStatusLabel(pending.displayStatus || pending.status || "starting");
+  }
+  const elapsedEl = document.createElement("span");
+  elapsedEl.className = "pending-bubble-elapsed";
+  elapsedEl.id = "pendingBubbleElapsed";
+  elapsedEl.textContent = formatElapsed(Date.now() - (pending.startedAt || Date.now()));
+  header.append(spinner, statusLabel, elapsedEl);
+  bubble.appendChild(header);
+
+  // 최신 step 의 work + reason
+  const steps = Array.isArray(pending.steps) ? pending.steps : [];
+  if (steps.length) {
+    const latest = steps[steps.length - 1] || {};
+    const latestEl = document.createElement("div");
+    latestEl.className = "pending-bubble-latest";
+    const title = document.createElement("strong");
+    title.textContent = latest.work || latest.intent || latest.tool || "단계";
+    const reason = document.createElement("div");
+    reason.className = "pending-bubble-reason";
+    reason.textContent = latest.reason || latest.result_summary || latest.tool || "";
+    latestEl.append(title, reason);
+    bubble.appendChild(latestEl);
+  } else if (pending.error) {
+    const errorEl = document.createElement("div");
+    errorEl.className = "pending-bubble-error";
+    errorEl.textContent = String(pending.error);
+    bubble.appendChild(errorEl);
+  } else if (pending.isStale) {
+    const errorEl = document.createElement("div");
+    errorEl.className = "pending-bubble-error";
+    errorEl.textContent = "작업이 중단된 것으로 보입니다. 사이드바에서 취소 또는 삭제 액션을 사용해 주세요.";
+    bubble.appendChild(errorEl);
+  }
+
+  // 누적 step 목록 (접을 수 있음)
+  if (steps.length) {
+    const detailsEl = document.createElement("details");
+    detailsEl.className = "pending-bubble-steps";
+    const summary = document.createElement("summary");
+    summary.textContent = `누적 ${steps.length}단계`;
+    detailsEl.appendChild(summary);
+    const list = document.createElement("ol");
+    list.className = "pending-bubble-step-list";
+    steps.forEach((step, idx) => {
+      const li = document.createElement("li");
+      li.className = "pending-bubble-step-item";
+      const title = document.createElement("strong");
+      title.textContent = step.work || step.intent || step.tool || `단계 ${idx + 1}`;
+      const reason = document.createElement("span");
+      reason.className = "pending-bubble-step-reason";
+      reason.textContent = step.reason || step.result_summary || "";
+      li.append(title, reason);
+      list.appendChild(li);
+    });
+    detailsEl.appendChild(list);
+    bubble.appendChild(detailsEl);
+  }
+
+  row.append(meta, bubble);
+  return row;
+}
+
+function pendingStatusLabel(status) {
+  const s = String(status || "").toLowerCase();
+  if (s === "processing") return "처리 중";
+  if (s === "stale_error") return "작업 중단 감지";
+  if (s === "starting") return "시작 중";
+  if (s === "done") return "완료";
+  if (s === "error") return "오류";
+  if (s === "canceled") return "취소";
+  return s || "처리 중";
+}
+
+function formatElapsed(ms) {
+  const total = Math.max(0, Math.floor((ms || 0) / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return m > 0 ? `${m}분 ${s}초` : `${s}초`;
+}
+
+function startElapsedTimer() {
+  stopElapsedTimer();
+  state.elapsedTimer = window.setInterval(() => {
+    if (!state.pendingBubble) {
+      stopElapsedTimer();
+      return;
+    }
+    const el = document.getElementById("pendingBubbleElapsed");
+    if (el) {
+      el.textContent = formatElapsed(Date.now() - state.pendingBubble.startedAt);
+    }
+  }, 1000);
+}
+
+function stopElapsedTimer() {
+  if (state.elapsedTimer) {
+    window.clearInterval(state.elapsedTimer);
+    state.elapsedTimer = null;
+  }
+}
+
+function clearPendingBubble() {
+  state.pendingBubble = null;
+  stopElapsedTimer();
+}
+
+// TASK-0061 Phase 4 (REQ-20260515-0006 / AC-0084~AC-0087): 우측 Point rail.
+function renderMessagePointRail() {
+  const rail = document.getElementById("messagePointRail");
+  if (!rail) return;
+  rail.innerHTML = "";
+  const messages = Array.isArray(state.messages) ? state.messages : [];
+  // 1 개 이하면 rail 숨김.
+  if (messages.length <= 1) {
+    rail.classList.add("hidden");
+    return;
+  }
+  rail.classList.remove("hidden");
+  messages.forEach((message, idx) => {
+    if (message.id == null) return;
+    const dot = document.createElement("button");
+    dot.type = "button";
+    dot.className = `message-point-dot is-${message.role === "user" ? "user" : "assistant"}`;
+    dot.dataset.messageId = String(message.id);
+    dot.dataset.idx = String(idx);
+    const topic = String(message.content || "").trim().slice(0, 60).replace(/\s+/g, " ");
+    dot.title = `${formatDateTime(message.created_at)} · ${message.role === "user" ? "내 질문" : "Assistant"}${topic ? ` · ${topic}` : ""}`;
+    dot.setAttribute("aria-label", dot.title);
+    dot.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      const target = document.getElementById(`message-${message.id}`);
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    rail.appendChild(dot);
+  });
+  highlightActivePoint();
+}
+
+function highlightActivePoint() {
+  const rail = document.getElementById("messagePointRail");
+  if (!rail || !messageLogEl) return;
+  const logRect = messageLogEl.getBoundingClientRect();
+  const midpoint = logRect.top + logRect.height / 2;
+  let closestId = null;
+  let closestDist = Infinity;
+  (state.messages || []).forEach((message) => {
+    if (message.id == null) return;
+    const el = document.getElementById(`message-${message.id}`);
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const center = r.top + r.height / 2;
+    const dist = Math.abs(center - midpoint);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closestId = message.id;
+    }
+  });
+  rail.querySelectorAll(".message-point-dot").forEach((dot) => {
+    dot.classList.toggle("is-active", String(dot.dataset.messageId) === String(closestId));
+  });
+}
+
+// TASK-0061 Phase 5 (REQ-20260515-0007): 캘린더 popover state + 렌더.
+const calendarState = {
+  open: false,
+  // 현재 popover 가 보여주는 월 (1 일 기준)
+  cursorYear: null,
+  cursorMonth: null,  // 0-11
+  // 서버에서 받은 {dates: {"YYYY-MM-DD": ["HH:MM", ...]}, first, last}
+  payload: null,
+  selectedDate: null,  // "YYYY-MM-DD" 또는 null
+};
+
+async function openHistoryCalendar() {
+  const cid = state.activeConversationId;
+  if (!cid) return;
+  let payload;
+  try {
+    payload = await apiFetch(`/api/history_dates?conversation_id=${encodeURIComponent(cid)}`);
+  } catch (error) {
+    showToast(`캘린더 데이터를 불러오지 못했습니다: ${error.message || error}`, true);
+    return;
+  }
+  calendarState.payload = payload;
+  // 가장 최근 날짜를 기본 cursor 로
+  const last = String(payload.last || "");
+  if (last && /^\d{4}-\d{2}-\d{2}/.test(last)) {
+    const [y, m] = last.split("-");
+    calendarState.cursorYear = Number(y);
+    calendarState.cursorMonth = Number(m) - 1;
+    calendarState.selectedDate = last;
+  } else {
+    const now = new Date();
+    calendarState.cursorYear = now.getFullYear();
+    calendarState.cursorMonth = now.getMonth();
+    calendarState.selectedDate = null;
+  }
+  calendarState.open = true;
+  const pop = document.getElementById("historyCalendarPopover");
+  if (pop) pop.classList.remove("hidden");
+  const btn = document.getElementById("historyCalendarBtn");
+  if (btn) btn.setAttribute("aria-expanded", "true");
+  renderHistoryCalendar();
+}
+
+function closeHistoryCalendar() {
+  calendarState.open = false;
+  const pop = document.getElementById("historyCalendarPopover");
+  if (pop) pop.classList.add("hidden");
+  const btn = document.getElementById("historyCalendarBtn");
+  if (btn) btn.setAttribute("aria-expanded", "false");
+}
+
+function renderHistoryCalendar() {
+  const grid = document.getElementById("calendarGrid");
+  const title = document.getElementById("calendarTitle");
+  const times = document.getElementById("calendarTimes");
+  if (!grid || !title || !times) return;
+  const y = calendarState.cursorYear;
+  const m = calendarState.cursorMonth;
+  title.textContent = `${y}년 ${m + 1}월`;
+  grid.innerHTML = "";
+  ["일", "월", "화", "수", "목", "금", "토"].forEach((label) => {
+    const head = document.createElement("div");
+    head.className = "history-calendar-day-head";
+    head.textContent = label;
+    grid.appendChild(head);
+  });
+  const firstDow = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  for (let i = 0; i < firstDow; i += 1) {
+    const blank = document.createElement("div");
+    blank.className = "history-calendar-day is-blank";
+    grid.appendChild(blank);
+  }
+  const dates = (calendarState.payload && calendarState.payload.dates) || {};
+  for (let d = 1; d <= daysInMonth; d += 1) {
+    const key = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const hasMessages = Array.isArray(dates[key]) && dates[key].length > 0;
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "history-calendar-day";
+    cell.textContent = String(d);
+    if (hasMessages) {
+      cell.classList.add("has-messages");
+    } else {
+      cell.disabled = true;
+    }
+    if (key === calendarState.selectedDate) cell.classList.add("is-selected");
+    cell.addEventListener("click", () => {
+      if (!hasMessages) return;
+      calendarState.selectedDate = key;
+      renderHistoryCalendar();
+      // 자동으로 그 날의 첫 시각으로 점프.
+      const firstTime = dates[key][0];
+      if (firstTime) jumpToHistoryAnchor(`${key} ${firstTime}:00`);
+    });
+    grid.appendChild(cell);
+  }
+  // times list
+  times.innerHTML = "";
+  if (calendarState.selectedDate && Array.isArray(dates[calendarState.selectedDate])) {
+    const heading = document.createElement("div");
+    heading.className = "history-calendar-times-heading";
+    heading.textContent = `${calendarState.selectedDate} 메시지 시각`;
+    times.appendChild(heading);
+    const list = document.createElement("div");
+    list.className = "history-calendar-times-list";
+    dates[calendarState.selectedDate].forEach((t) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "history-calendar-time";
+      btn.textContent = t;
+      btn.addEventListener("click", () => jumpToHistoryAnchor(`${calendarState.selectedDate} ${t}:00`));
+      list.appendChild(btn);
+    });
+    times.appendChild(list);
+  } else {
+    const empty = document.createElement("div");
+    empty.className = "history-calendar-empty";
+    empty.textContent = "메시지가 있는 날짜를 선택하세요.";
+    times.appendChild(empty);
+  }
+}
+
+async function jumpToHistoryAnchor(atString) {
+  const cid = state.activeConversationId;
+  if (!cid) return;
+  try {
+    const params = new URLSearchParams({ conversation_id: cid, at: atString });
+    const payload = await apiFetch(`/api/history_anchor?${params.toString()}`);
+    const mid = payload && payload.message_id;
+    if (mid == null) {
+      showToast("해당 시각의 메시지를 찾을 수 없습니다.", true);
+      return;
+    }
+    const target = document.getElementById(`message-${mid}`);
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.classList.add("is-anchor-highlight");
+      window.setTimeout(() => target.classList.remove("is-anchor-highlight"), 1500);
+    } else {
+      showToast("메시지 element 를 찾을 수 없습니다 — 이전 기록 로드가 필요할 수 있습니다.", true);
+    }
+  } catch (error) {
+    showToast(`이동 실패: ${error.message || error}`, true);
+  }
+}
+
+// TASK-0061 Phase 8 (REQ-20260515-0010): 내 대화 다중 선택 + bulk delete.
+function renderConversationBulkBar() {
+  const bar = document.getElementById("conversationBulkBar");
+  if (!bar) return;
+  bar.innerHTML = "";
+  const count = state.conversationSelected.size;
+  if (count <= 0 || !can("conversation.delete.own")) {
+    bar.classList.add("hidden");
+    return;
+  }
+  bar.classList.remove("hidden");
+  const label = document.createElement("span");
+  label.className = "conv-bulk-label";
+  label.textContent = `${count}개 선택됨`;
+  bar.appendChild(label);
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "tool-btn danger";
+  deleteBtn.textContent = "삭제";
+  deleteBtn.addEventListener("click", () => bulkDeleteConversations().catch((err) => showToast(err.message || "삭제 실패", true)));
+  bar.appendChild(deleteBtn);
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "tool-btn";
+  clearBtn.textContent = "선택 해제";
+  clearBtn.addEventListener("click", () => {
+    state.conversationSelected.clear();
+    state.conversationLastClickIdx = -1;
+    renderConversationList();
+    renderConversationBulkBar();
+  });
+  bar.appendChild(clearBtn);
+}
+
+async function bulkDeleteConversations() {
+  const ids = Array.from(state.conversationSelected);
+  if (!ids.length) return;
+  const CONFIRM_TYPED_THRESHOLD = 10;
+  if (ids.length >= CONFIRM_TYPED_THRESHOLD) {
+    const typed = window.prompt(`${ids.length}개 대화를 삭제하려면 정확한 숫자 ${ids.length}을(를) 입력하세요.`, "");
+    if (String(typed || "").trim() !== String(ids.length)) {
+      showToast("입력값이 일치하지 않아 삭제를 취소했습니다.", true);
+      return;
+    }
+  } else if (!window.confirm(`${ids.length}개 대화를 삭제할까요?`)) {
+    return;
+  }
+  let force = false;
+  let confirmText = "";
+  // 처리 중 대화가 포함되었는지 client 측에서 빠른 추정 — 정확한 결과는 backend partial fail 응답으로 확인.
+  const hasProcessing = state.conversations.some((c) =>
+    state.conversationSelected.has(String(c.id)) && String(c.status || "").toLowerCase() === "processing"
+  );
+  if (hasProcessing) {
+    if (!window.confirm("처리 중 대화가 포함되어 있습니다. 강제 삭제할까요?")) {
+      return;
+    }
+    const text = window.prompt("강제 삭제 확인 — '삭제' 를 입력해 주세요.", "");
+    if (text !== "삭제") return;
+    force = true;
+    confirmText = "삭제";
+  }
+  let payload;
+  try {
+    payload = await apiFetch("/api/delete_conversations", {
+      method: "POST",
+      body: JSON.stringify({ conversation_ids: ids, force, confirm_text: confirmText }),
+    });
+  } catch (error) {
+    showToast(`일괄 삭제 실패: ${error.message || error}`, true);
+    return;
+  }
+  const deleted = Array.isArray(payload.deleted) ? payload.deleted : [];
+  const deletedPending = Array.isArray(payload.deleted_pending) ? payload.deleted_pending : [];
+  const failed = Array.isArray(payload.failed) ? payload.failed : [];
+  state.conversationSelected.clear();
+  state.conversationLastClickIdx = -1;
+  // active 대화가 삭제된 경우 reset.
+  const removedAll = new Set([...deleted, ...deletedPending]);
+  if (removedAll.has(state.activeConversationId)) {
+    state.activeConversationId = "";
+    state.messages = [];
+  }
+  const msgParts = [];
+  if (deleted.length || deletedPending.length) {
+    msgParts.push(`${deleted.length + deletedPending.length}개 삭제`);
+  }
+  if (failed.length) {
+    msgParts.push(`${failed.length}개 실패`);
+  }
+  showToast(msgParts.join(" / ") || "처리 완료", Boolean(failed.length));
+  if (failed.length) {
+    console.warn("[bulk delete] failed:", failed);
+  }
+  await refreshWorkspace(state.activeConversationId);
 }
 
 function renderComposer() {
@@ -1811,6 +2332,12 @@ function renderComposer() {
   finalizeBtn.classList.toggle("hidden", !processing);
   renameConversationBtn.classList.toggle("hidden", !state.activeConversationId);
   deleteConversationBtn.classList.toggle("hidden", !state.activeConversationId);
+  // TASK-0061 Phase 5 (REQ-20260515-0007 / AC-0089): 캘린더 버튼 — 활성 대화 + 메시지가 있을 때만 노출.
+  const calBtn = document.getElementById("historyCalendarBtn");
+  if (calBtn) {
+    const hasMessages = Array.isArray(state.messages) && state.messages.some((m) => m.id != null);
+    calBtn.classList.toggle("hidden", !state.activeConversationId || !hasMessages);
+  }
   if (forkConversationBtn) {
     forkConversationBtn.classList.toggle("hidden", !state.activeConversationId);
     if (state.activeConversationId) {
@@ -1930,6 +2457,9 @@ function stopProgressPolling({ reset = false, abort = true } = {}) {
   state.progressPollInFlight = false;
   if (reset) {
     resetProgressTracking();
+    // TASK-0061 Phase 1: 대화 전환 / 로그아웃 등 reset 경로에서 pending bubble 도 정리.
+    clearPendingBubble();
+    state.staleToastShownFor.clear();
   }
 }
 
@@ -1967,6 +2497,31 @@ function applyProgressPayload(payload = {}) {
 
   state.progressAfterStep = Math.max(stepCount, maxProgressStepIndex(state.progressSteps));
   renderProgress({ ...payload, steps: state.progressSteps.slice() });
+
+  // TASK-0061 Phase 1+3 (REQ-20260515-0003 / REQ-20260515-0005): pending bubble 동기화 +
+  // stale 감지 toast 1 회 노출.
+  const displayStatus = String(payload.display_status || payload.status || "").trim();
+  const rawStatus = String(payload.raw_status || payload.status || "").trim();
+  const isStale = Boolean(payload.is_stale) || displayStatus === "stale_error";
+  if (state.pendingBubble) {
+    state.pendingBubble.runId = runId;
+    state.pendingBubble.steps = state.progressSteps.slice();
+    state.pendingBubble.status = rawStatus;
+    state.pendingBubble.displayStatus = displayStatus || rawStatus;
+    state.pendingBubble.isStale = isStale;
+    // pending bubble 만 재렌더 (실 messages 는 변함 없으므로 efficient).
+    const existing = document.getElementById("pendingAssistantBubble");
+    const newBubble = renderPendingAssistantBubble(state.pendingBubble);
+    if (existing && existing.parentNode && newBubble) {
+      existing.parentNode.replaceChild(newBubble, existing);
+    } else {
+      renderMessages();
+    }
+  }
+  if (isStale && state.activeConversationId && !state.staleToastShownFor.has(state.activeConversationId)) {
+    state.staleToastShownFor.add(state.activeConversationId);
+    showToast("작업이 중단된 것으로 보입니다. 사이드바에서 취소 또는 삭제 액션을 사용해 주세요.", true);
+  }
 }
 
 async function pollProgress(seq = state.progressPollSeq) {
@@ -2446,8 +3001,12 @@ async function attachAndWaitForResult(conversationId, { runId = "" } = {}) {
       continue;
     }
     // terminal payload 수신 — refresh 후 종료
+    // TASK-0061 Phase 1 (AC-0072) + Phase 3: pending bubble cleanup. stale 이면 별도 toast.
+    clearPendingBubble();
     await refreshWorkspace(conversationId);
-    if (payload && payload.status === "error" && payload.error) {
+    if (payload && payload.is_stale) {
+      showToast("작업이 중단된 것으로 보입니다. 사이드바에서 취소 또는 삭제 액션을 사용해 주세요.", true);
+    } else if (payload && payload.status === "error" && payload.error) {
       showToast(`실행 오류: ${payload.error}`, true);
     } else {
       showToast("응답을 갱신했습니다.");
@@ -2482,6 +3041,35 @@ async function sendPrompt() {
   // busy 추적: lazy create 시점에는 cid 가 없으므로 sentinel 로 잠근다.
   const busyKey = isLazyCreate ? PENDING_CONV_SENTINEL : targetConvId;
   state.busyConversations.add(busyKey);
+
+  // TASK-0061 Phase 1+2 (REQ-20260515-0003 / REQ-20260515-0004 / AC-0070 / AC-0075):
+  // user message 와 pending assistant bubble 을 즉시 messageLogEl 에 표시.
+  // - 기존 대화: optimistic user message 추가 (실제 backend 메시지는 refreshWorkspace 가 덮어씀).
+  // - lazy-create: pending bubble 만 표시 (user message 는 backend 가 cid 와 함께 기록 후 refreshWorkspace 가 hydrate).
+  const optimisticUserMessage = {
+    id: null,
+    role: "user",
+    content: message,
+    created_at: new Date().toISOString(),
+    meta: {},
+    _optimistic: true,
+  };
+  if (!isLazyCreate) {
+    state.messages = [...state.messages, optimisticUserMessage];
+  }
+  state.pendingBubble = {
+    startedAt: Date.now(),
+    runId: "",
+    steps: [],
+    status: "starting",
+    displayStatus: "starting",
+    isStale: false,
+    error: null,
+    userMessage: message,
+  };
+  renderMessages();
+  startElapsedTimer();
+
   renderComposer();
   if (!isLazyCreate && targetConvId) {
     startProgressPolling({ reset: true });
@@ -2519,12 +3107,28 @@ async function sendPrompt() {
       // pending placeholder → 실 cid 로 전환. busy sentinel 은 finally 에서 정리.
       state.pendingNewConversation = false;
       state.activeConversationId = newCid;
+      // TASK-0061 Phase 2 (AC-0076): lazy-create 응답으로 cid 가 발급된 즉시 polling 시작.
+      // ask 가 동기 완료된 경우라도 첫 polling 으로 step snapshot 을 받아 pending bubble 에 반영한다.
+      startProgressPolling({ reset: true });
     }
+    // TASK-0061 Phase 1 (AC-0072): 정상 응답 후 pending bubble 제거 → refreshWorkspace 가 실 assistant message 로 교체.
+    clearPendingBubble();
     await refreshWorkspace(newCid);
   } catch (error) {
     // TASK-0048: pending 단계에서 ask 가 실패하면 cid 발급 여부가 client 에는 불확실 →
     // attach/resume 다이얼로그 대신 사용자에게 재시도/사이드바 새로고침을 안내한다.
     if (isLazyCreate) {
+      // TASK-0061 Phase 2 (AC-0077): pending bubble 을 오류 영역으로 전환.
+      if (state.pendingBubble) {
+        state.pendingBubble.error = `첫 메시지 전송에 실패했습니다: ${error.message || error}`;
+        const existing = document.getElementById("pendingAssistantBubble");
+        const next = renderPendingAssistantBubble(state.pendingBubble);
+        if (existing && existing.parentNode && next) {
+          existing.parentNode.replaceChild(next, existing);
+        } else {
+          renderMessages();
+        }
+      }
       showToast(
         `첫 메시지 전송에 실패했습니다: ${error.message || error}. 다시 시도하거나 사이드바를 새로고침해 주세요.`,
         true,
@@ -2654,9 +3258,90 @@ async function handleLogin(event) {
     state.user = payload.user;
     hideAuthOverlay();
     await initializeWorkspace();
+    // TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0095): 관리자가 비밀번호 초기화한 계정이면
+    // 다음 로그인 직후 강제 변경 modal 노출 (다른 모든 액션 차단).
+    if (state.user && state.user.must_change_password) {
+      showForceChangePasswordModal();
+    }
   } catch (error) {
     loginErrorEl.textContent = error.message || "로그인에 실패했습니다.";
   }
+}
+
+// TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0095): 강제 비밀번호 변경 modal.
+// 사용자가 새 비밀번호 입력 + 확인 일치 + /api/auth/me PATCH 성공 전까지는 닫을 수 없다.
+function showForceChangePasswordModal() {
+  if (document.getElementById("forceChangePasswordModal")) return;
+  const overlay = document.createElement("div");
+  overlay.id = "forceChangePasswordModal";
+  overlay.className = "admin-modal-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+
+  const modal = document.createElement("div");
+  modal.className = "admin-modal";
+  const title = document.createElement("h3");
+  title.textContent = "비밀번호 변경 필요";
+  modal.appendChild(title);
+
+  const note = document.createElement("p");
+  note.className = "admin-modal-note";
+  note.textContent = "관리자가 임시 비밀번호로 초기화한 상태입니다. 새 비밀번호를 설정해야 다른 작업을 진행할 수 있습니다.";
+  modal.appendChild(note);
+
+  const tempField = document.createElement("input");
+  tempField.type = "password";
+  tempField.placeholder = "현재(임시) 비밀번호";
+  tempField.className = "field-input";
+  const newField = document.createElement("input");
+  newField.type = "password";
+  newField.placeholder = "새 비밀번호 (10자 이상)";
+  newField.className = "field-input";
+  const confirmField = document.createElement("input");
+  confirmField.type = "password";
+  confirmField.placeholder = "새 비밀번호 확인";
+  confirmField.className = "field-input";
+  const errorEl = document.createElement("div");
+  errorEl.className = "admin-modal-error";
+  modal.append(tempField, newField, confirmField, errorEl);
+
+  const submit = document.createElement("button");
+  submit.type = "button";
+  submit.className = "btn-primary";
+  submit.textContent = "변경";
+  submit.addEventListener("click", async () => {
+    errorEl.textContent = "";
+    const current = tempField.value;
+    const next = newField.value;
+    const confirm = confirmField.value;
+    if (!current || !next) {
+      errorEl.textContent = "현재 비밀번호와 새 비밀번호를 입력하세요.";
+      return;
+    }
+    if (next !== confirm) {
+      errorEl.textContent = "새 비밀번호 확인이 일치하지 않습니다.";
+      return;
+    }
+    if (next.length < 10) {
+      errorEl.textContent = "새 비밀번호는 10자 이상이어야 합니다.";
+      return;
+    }
+    try {
+      const payload = await apiFetch("/api/auth/me", {
+        method: "PATCH",
+        body: JSON.stringify({ current_password: current, new_password: next }),
+      });
+      state.user = payload.user || state.user;
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      showToast("비밀번호를 변경했습니다.");
+    } catch (error) {
+      errorEl.textContent = error.message || "비밀번호 변경에 실패했습니다.";
+    }
+  });
+  modal.appendChild(submit);
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
 }
 
 async function handleSignup(event) {
@@ -2707,6 +3392,10 @@ async function handleLogout() {
 async function initializeWorkspace() {
   state.session = await apiFetch("/api/session");
   state.user = state.session.user;
+  // TASK-0061 Phase 6 (AC-0095): 새로고침 후에도 must_change_password 가 true 면 강제 modal.
+  if (state.user && state.user.must_change_password) {
+    showForceChangePasswordModal();
+  }
   state.products = Array.isArray(state.session.products) ? state.session.products : [];
   state.default_product_id = state.session.default_product_id || null;
   // TASK-0047: 제품 선호 hydrate (서버 pref + 대화별 product → state).
@@ -2909,6 +3598,54 @@ async function initialize() {
       });
     });
   }
+
+  // TASK-0061 Phase 5 (REQ-20260515-0007): 캘린더 popover toggle + 월 이동.
+  const calBtn = document.getElementById("historyCalendarBtn");
+  if (calBtn) {
+    calBtn.addEventListener("click", () => {
+      if (calendarState.open) closeHistoryCalendar();
+      else openHistoryCalendar().catch((error) => showToast(error.message || "캘린더 열기 실패", true));
+    });
+  }
+  const calPrev = document.getElementById("calendarPrevMonth");
+  const calNext = document.getElementById("calendarNextMonth");
+  if (calPrev) {
+    calPrev.addEventListener("click", () => {
+      if (calendarState.cursorMonth === null) return;
+      let m = calendarState.cursorMonth - 1;
+      let y = calendarState.cursorYear;
+      if (m < 0) { m = 11; y -= 1; }
+      calendarState.cursorMonth = m;
+      calendarState.cursorYear = y;
+      renderHistoryCalendar();
+    });
+  }
+  if (calNext) {
+    calNext.addEventListener("click", () => {
+      if (calendarState.cursorMonth === null) return;
+      let m = calendarState.cursorMonth + 1;
+      let y = calendarState.cursorYear;
+      if (m > 11) { m = 0; y += 1; }
+      calendarState.cursorMonth = m;
+      calendarState.cursorYear = y;
+      renderHistoryCalendar();
+    });
+  }
+  // 캘린더 외부 click 으로 닫기.
+  document.addEventListener("click", (ev) => {
+    if (!calendarState.open) return;
+    const pop = document.getElementById("historyCalendarPopover");
+    const btn = document.getElementById("historyCalendarBtn");
+    if (!pop || !btn) return;
+    if (pop.contains(ev.target) || btn.contains(ev.target)) return;
+    closeHistoryCalendar();
+  });
+
+  // TASK-0061 Phase 4 (REQ-20260515-0006): point rail 의 active dot 갱신 — scroll + resize.
+  if (messageLogEl) {
+    messageLogEl.addEventListener("scroll", () => highlightActivePoint(), { passive: true });
+  }
+  window.addEventListener("resize", () => highlightActivePoint());
 
   // Textarea auto-grow
   promptInputEl.addEventListener("input", function () {

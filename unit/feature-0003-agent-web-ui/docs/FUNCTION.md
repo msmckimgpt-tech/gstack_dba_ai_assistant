@@ -24,6 +24,60 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   - AC-0066: `MV / 마이크로볼츠` Product prompt 는 접근 DB `account_db,dev_1_1_1_20,have_00,log_v2,global_db`의 실제 테이블 성격을 반영하고, `log_v2`는 현재 테이블 0개임을 명시한다.
   - AC-0067: Role `pending/operator/admin/sales/dba`의 `ProductId IS NULL` Role prompt 가 각각 역할명에 맞게 저장된다.
   - AC-0068: runtime 시스템 프롬프트 조립 결과에서 Product prompt 뒤 Role 공통 prompt 가 포함된다.
+
+- REQ-20260515-0003 (TASK-0061 Phase 1, **Major** §12.3): 답변 버블 내부에 실시간 step 진행상황(스피너 / elapsed timer / 최신 작업명 / `reason` / 누적 step 목록)이 표시된다. 기존 상단 `#progressCard` 는 보조 상태로 유지(호환성)하고, pending assistant bubble 이 메시지 흐름에 즉시 등장해 polling step 을 그대로 반영한다.
+  - AC-0070: `sendPrompt()` 시작 시 사용자 message 와 pending assistant bubble 이 즉시 `messageLogEl` 에 append 된다. pending bubble 은 `.message.is-assistant.is-pending` 클래스를 가지며 spinner + elapsed timer + status badge + 최신 step title + 최신 step reason/result_summary 요약 + `<details>` 누적 step 목록 5 영역으로 구성된다.
+  - AC-0071: `applyProgressPayload()` 는 기존 `renderProgress()` 호출 외에 pending bubble 의 step 영역을 동일 step snapshot 으로 갱신한다 (`renderBubbleProgress(pendingBubbleEl, steps, status)`). step 추가 시 누적 목록의 행 수와 최신 step 의 reason 이 갱신된다. polling 이 step 을 새로 받지 않은 경우에도 elapsed timer 는 client startedAt 기준으로 1 초 간격 tick 한다.
+  - AC-0072: 최종 응답 수신 시 (`/api/ask` 정상 응답 또는 `/api/ask_result` long-poll attach 완료) pending bubble 은 `renderMessages()` 의 실 assistant message 로 교체되고 `renderMessageDetails()` 의 `실행 단계 및 쿼리 결과 보기` `<details>` 가 보존된다. 오류 / 취소 / 즉시 답변 상태는 pending bubble 상단에 색상으로 명시되고 사용자가 dismiss 할 수 있다.
+  - AC-0073: 기존 `#progressCard` 는 그대로 유지되며 status === `processing` 일 때 보조 표시 (제거 시 회귀 위험이 있으므로 호환성 차원에서 1 차 구현은 유지). 사용자가 명시적으로 collapsed 한 상태는 localStorage `web.progressCard.collapsed` 로 보존된다.
+  - AC-0074: elapsed timer 는 client 기준 `Date.now() - state.pendingBubble.startedAt` (ms) 을 `M분 S초` 형식으로 표기한다. 서버 `status_at` 은 fallback 으로만 사용한다.
+
+- REQ-20260515-0004 (TASK-0061 Phase 2, **Major** §12.3): 신규 대화의 첫 메시지 전송 직후에도 pending assistant bubble + `/api/progress` polling 이 즉시 시작된다 — lazy-create 가 backend cid 를 발급하기 전까지의 race window 에서도 client-side progress 표시가 끊기지 않는다.
+  - AC-0075: `sendPrompt()` 의 lazy-create 분기에서 `askBody.lazy_create = true` 직후 client 가 `state.pendingBubble = { startedAt: Date.now(), steps: [], status: "starting" }` 을 set 하고 pending bubble 을 렌더한다. cid 가 아직 없으므로 polling 은 일시 보류 (cid sentinel 모드).
+  - AC-0076: `/api/ask` 응답에서 `conversation_id` 를 받는 즉시 `state.activeConversationId` 갱신 + `startProgressPolling({ reset: true })` 을 호출한다 — 응답 도착 시점에 진행 중 step 이 이미 누적되어 있을 수 있으므로 첫 polling 은 `after_step=0` 으로 전체 snapshot 을 받는다. 응답 직후 polling 첫 결과로 pending bubble 의 step 영역이 일관되게 채워진다.
+  - AC-0077: lazy-create 가 네트워크/타임아웃으로 실패한 경우 pending bubble 은 빨간 오류 영역으로 전환되고 (`is-error`) "다시 시도하거나 사이드바를 새로고침해 주세요" 메시지를 노출한다 (AC-0029 와 정합). attach/resume 다이얼로그(AC-0018) 는 활성화하지 않는다.
+
+- REQ-20260515-0005 (TASK-0061 Phase 3, **Major** §12.3): 실제 진행이 끊긴 `processing` 대화의 만료를 backend 에서 판정해 stale_error 상태로 표시한다. conversation list / `/api/progress` / `/api/ask_status` / `/api/ask_result` 가 일관되게 stale 을 반환한다.
+  - AC-0078: backend helper `_compute_display_status(conn, conversation_id, last_status, last_status_at, last_status_run_id)` 가 `last_status='processing'` 이고 `now() - max(last_status_at, last step CreatedAt) > WEB_PROGRESS_STALE_TIMEOUT_SECONDS` 이면 `stale_error` 를 반환한다. 그 외에는 원본 `last_status` 그대로.
+  - AC-0079: 환경변수 `WEB_PROGRESS_STALE_TIMEOUT_SECONDS` (기본값 `1200` = 20 분) 로 만료 기준을 설정한다. `.env.example` 의 Web 섹션에 키와 설명이 추가된다.
+  - AC-0080: `_list_conversations()` 가 채우는 conversation list payload 의 `status` (또는 신규 `display_status`) 필드는 `_compute_display_status()` 결과를 우선 사용한다. 원본 `last_status` 는 `raw_status` 로 보존되어 디버깅 가능하다.
+  - AC-0081: `/api/progress` / `/api/ask_status` / `/api/ask_result` 는 stale 판정 시 `status="stale_error"`, `is_processing=false`, `is_stale=true` 를 일관되게 반환한다. attach/resume long-poll 이 stale 대화에 대해 무한 대기하지 않고 즉시 terminal 처리한다.
+  - AC-0082: frontend `renderConversationList()` 의 dot 은 `display_status="stale_error"` 일 때 `.conv-dot.is-stale-error` (붉은색 토큰 `--color-danger`) 로 표시되고, hover tooltip 은 "작업이 중단된 것으로 보입니다 — 마지막 활동: {timestamp}" 형식이다. status === `processing` 이면 기존 주황색 `.is-processing` 유지.
+  - AC-0083: stale 대화를 사용자가 열면 답변 bubble 영역 / `#progressCard` 상단에 "작업 중단 감지" 안내 + `[취소 / 삭제]` 액션 제안 toast 가 1 회 노출된다. stale 판정은 실제 run 을 자동 취소·삭제하지 않는다 — UI 표시 + 사용자 안내가 1 차 목적.
+
+- REQ-20260515-0006 (TASK-0061 Phase 4, Minor §12.3): chat pane 우측에 메시지별 Point rail 이 표시되어 scroll 위치를 시각화하고 빠른 이동을 제공한다.
+  - AC-0084: `renderMessages()` 가 각 메시지 element 에 `data-message-id` + `data-message-role` + stable `id="message-${message.id}"` 를 부여한다 (이미 있는 경우 보존). rail 컨테이너 `#messagePointRail` (`.message-point-rail`) 가 chat pane 우측에 sticky 로 배치된다.
+  - AC-0085: rail point 는 메시지 1 개당 1 개 `.message-point-dot` 가 시간 순으로 세로 정렬되고, role 별 색상 토큰을 사용 (user → primary, assistant → neutral). tooltip 으로 `formatDateTime` + role + topic 첫 N 글자 노출.
+  - AC-0086: chat pane scroll 이벤트에서 viewport 중앙에 가장 가까운 메시지의 dot 가 `.is-active` 로 highlight 된다. point dot 클릭 시 해당 메시지 element 로 smooth scroll. 메시지 없음 / 1 개 only 시 rail 자체 미렌더.
+  - AC-0087: 모바일/좁은 화면 (`max-width: 720px`) 에서는 rail 이 hidden 으로 처리된다 (단순 hide — compact control 대체는 향후 cycle 분리).
+
+- REQ-20260515-0007 (TASK-0061 Phase 5, Minor §12.3): 대화의 날짜/시각으로 직접 점프할 수 있는 캘린더 UI 가 chat pane 헤더에 추가되며, `history_dates` backend 가 실제 메시지 저장 테이블 기준으로 동작한다.
+  - AC-0088: backend `/api/history_dates` 가 `AgentMemoryMessages` 테이블 (실제 메시지 정본) 기준으로 `DATE(CreatedAt)` GROUP 결과를 반환한다 — 기존 `AgentCoreMessages` 조회는 deprecated 경로로 제거된다. account 의 read 권한 가드 (`conversation.read.own` / `conversation.read.any`) 통과 시에만 응답.
+  - AC-0089: chat pane 헤더에 `historyCalendarBtn` (날짜 아이콘) 이 추가되며 클릭 시 `<details>` / popover 가 토글된다. 활성 대화 없음 또는 메시지 0 개일 때는 button 자체가 hidden.
+  - AC-0090: popover 안에 월간 grid 캘린더와 선택된 날짜의 시각 목록 (HH:MM, 그 날 메시지가 있는 시각들) 이 표시된다. 메시지가 있는 날짜만 active class. 날짜 선택 시 해당 날짜의 첫 시각으로 자동 jump, 시각 선택 시 `/api/history_anchor?conversation_id=...&at=...` 호출 후 반환된 `message_id` 의 element 로 smooth scroll.
+  - AC-0091: 메시지가 없는 대화 또는 날짜 선택이 empty 인 상태에서는 popover 가 "선택할 메시지가 없습니다" empty state 를 표시. 캘린더는 timezone 변환 없이 server 의 `DATE()` 결과 (UTC) 를 그대로 사용한다.
+
+- REQ-20260515-0008 (TASK-0061 Phase 6, **Critical** §12.3 — 인증/인가 변경): 관리자가 타 계정의 비밀번호를 1 회용 임시 비밀번호로 초기화할 수 있다. 임시 비밀번호는 modal 에서 1 회만 표시되고 평문 저장하지 않는다. 대상 계정의 기존 세션은 revoke 되고 `MustChangePassword` 플래그가 활성화되어 다음 로그인 시 강제로 비밀번호 변경한다.
+  - AC-0092: `WebAccounts.MustChangePassword TINYINT(1) NOT NULL DEFAULT 0` 컬럼이 idempotent ALTER 로 추가된다 (`_ensure_web_tables` slow path + `_ensure_seed_catchup` fast path 양쪽). 기존 계정은 default 0 으로 backfill.
+  - AC-0093: backend `POST /api/admin/accounts/{account_id}/password-reset` endpoint 가 신규로 존재한다. 권한 `console.manage` AND `account.update` 보유 + 자기 자신 reset 은 거부 (별도 `/api/auth/me` 흐름 사용). 16 자 임시 비밀번호를 `secrets.token_urlsafe(12)` 로 생성 후 `_hash_password` 로 hash 저장, `MustChangePassword=1` 셋, `WebAccountSessions` 의 해당 account_id 모든 row 를 revoke (또는 삭제) 한다.
+  - AC-0094: 응답은 `{ ok: true, account_id, username, temporary_password, expires_hint: "다음 로그인 시 즉시 변경됩니다." }` — `temporary_password` 는 응답 본문에만 1 회 포함되고 server 로그/DB 에는 평문 저장하지 않는다 (hash 만 저장).
+  - AC-0095: `/api/auth/login` 응답에 `must_change_password: true` 가 포함되면 frontend 가 즉시 "비밀번호 변경" modal 을 강제 노출하고 변경 완료 전까지 모든 작업 차단. 변경 성공 시 `MustChangePassword=0` 로 reset.
+  - AC-0096: 관리 콘솔 Account detail panel 에 "비밀번호 초기화" 버튼이 추가된다 (`adminPasswordResetBtn`). 권한 부족 / 자기 자신 / 삭제된 계정 / pending new account 에는 hidden. 클릭 시 confirmation modal 노출 → 진행 시 backend 호출 → modal 에 임시 비밀번호 1 회 표시 + "복사 후 닫기" 액션.
+  - AC-0097: REVIEW.md 에 보안 결정 사유 (1 회 표시 / 평문 저장 금지 / `MustChangePassword` 강제 / 세션 revoke / self-reset 금지) 가 기록된다.
+
+- REQ-20260515-0009 (TASK-0061 Phase 7, Minor §12.3): 관리자 계정 일괄 적용의 select-all 체크박스가 현재 페이지 row 만 선택한다 (현재는 전체 filtered 결과를 대상으로 선택하는 버그).
+  - AC-0098: `accountSelectAll` change handler 가 `filteredAccounts()` 의 전체가 아닌, `accountPage` slice 만 선택/해제 대상으로 사용한다. 동일 helper 를 `updateAccountSelectAllCheckbox()` 가 재사용해 select-all checked / indeterminate 상태가 현재 페이지 row 와 일치한다.
+  - AC-0099: 다른 페이지의 선택 상태는 보존된다 — `accountSelected` Set 에서 현재 페이지 visible 외의 entry 는 변하지 않는다. cross-page banner (AC-0037) 는 변경 후에도 정확한 카운트를 반영한다.
+  - AC-0100: 검색/필터/페이지 이동 후 select-all 의 checked / indeterminate 가 현재 페이지의 선택 비율을 정확히 반영한다 (0 → false, all visible → true, partial → indeterminate). Roles / Products select-all 도 동일 정책으로 정합화한다.
+
+- REQ-20260515-0010 (TASK-0061 Phase 8, **Major** §12.3 — 파괴적 데이터 일괄 삭제): `내 대화` 영역에서 Ctrl/Meta 토글 선택 + Shift range 선택으로 여러 대화를 선택하고 단일 액션으로 일괄 삭제할 수 있다. backend 는 partial success 를 지원한다.
+  - AC-0101: `renderConversationList()` 의 own group 항목에 `.conv-item-checkbox` 가 추가된다 (타 계정 대화는 적용 안 함). 클릭 시 토글 선택. `Ctrl/Meta + click` 은 토글, `Shift + click` 은 현재 표시 순서 기준 마지막 클릭 ~ 현재 row range 선택. 일반 click 은 기존 selectConversation 동작 유지.
+  - AC-0102: `state.conversationSelected: Set<string>` + `state.conversationLastClickIdx: number` 가 추가된다. selection 비어있지 않을 때 sidebar 상단 또는 chat pane 위에 `.conv-bulk-bar` (`{N}개 선택됨` + `삭제` (danger) + `선택 해제`) 가 노출된다.
+  - AC-0103: backend `POST /api/delete_conversations` endpoint 가 신규로 존재한다 — body `{ conversation_ids: string[], force?: boolean, confirm_text?: string }`. 단건 `/api/delete_conversation` 의 owner 권한 + processing 가드 + cleanup 로직을 내부 helper `_delete_conversation_impl(conn, account, conversation_id, force, confirm_text)` 로 추출해 두 endpoint 가 공유한다.
+  - AC-0104: 응답은 `{ deleted: string[], deleted_pending: string[], failed: [{ conversation_id, reason }] }` partial success 구조. processing 대화가 포함되고 `force=false` 면 해당 항목만 fail 로 분리, 나머지는 정상 삭제. 권한 부족 항목도 fail 로 분리. 빈 입력은 400 error.
+  - AC-0105: bulk delete 가 ≥ `CONFIRM_TYPED_THRESHOLD` (=10) 개를 대상으로 할 때 typed-confirm prompt 가 노출된다 (AC-0034 와 동일 컨벤션). 처리 중 대화가 포함되면 추가 confirm 으로 강제 삭제 의사를 확인한다.
+  - AC-0106: 삭제 성공 후 `state.conversationSelected` 가 clear 되고 `loadConversations()` 로 list 가 재로드된다. 삭제된 대화 중 active conversation 이 포함되었으면 `state.activeConversationId=""` 로 reset + `renderMessages()` 빈 상태.
+  - AC-0107: 권한 `conversation.delete.own` 보유한 계정만 bulk delete 버튼이 노출된다. 권한 없으면 checkbox 자체가 hidden. 타 계정 대화는 selection 대상이 아니다.
 - REQ-20260514-0001 (TASK-0058, **Critical** §12.3): 사용자가 자기 대화를 anonymous 접근 가능한 공유 링크로 발급해 다른 사람과 공유할 수 있다. 공유 받은 사람은 로그인 없이 read 가능하고, 로그인 + `conversation.create` 보유 시 본인 계정의 새 대화로 fork 가능하다. 공유 범위는 대화 전체 (`full`) 또는 특정 메시지까지 (`anchored`) 의 두 모드. 만료는 무기한 + 명시 revoke. 생성/취소 권한은 신규 `conversation.share.create` 로 gated 된다 (operator/sales/admin 자동 grant). 외부 anonymous 허용은 사내 IP 가정이며 외부 배포 시 IP 제한 또는 비밀번호 보호가 후속 cycle 권장사항이다.
 - REQ-20260512-0001 (TASK-0055): 관리 콘솔의 모든 카테고리 (Accounts / Roles / Products / 이후 추가) 의 다중선택 (multi-select) UX 는 단일 정합 컨벤션 (`docs/CONVENTIONS.md §10` + `feature-0003 docs/DESIGN.md`) 을 따른다. drift 재발은 runtime contract assertion 이 차단한다.
   - AC-0031: Accounts / Roles / Products 의 bulk toolbar 가 모두 `.admin-list-col` 의 `.admin-bulk-actions` (list 직하단) 에 위치한다. `.admin-pane-head-right` 는 primary action (`+ 새 X`) 전용이며 동적 bulk action 슬롯 사용 금지 — `assertBulkBarContract(<entity>)` 가 초기화 시 검증.
