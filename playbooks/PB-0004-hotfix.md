@@ -30,8 +30,7 @@ scope: feature
    - docs/MODIFY.md: 이력 기록
    ```
 10. 공개 `issue/*` 브랜치를 push하고 PR을 생성 또는 갱신한다.
-11. `policy-contract`, `owner-agent-report`, `ai-review`, `selfhosted-runtime-smoke` 결과를 확인한다.
-12. auto-merge 또는 사람 병합 후 내부 브랜치/worktree를 정리한다.
+11. 사람 리뷰 후 `gh pr merge` 등으로 병합하고 내부 브랜치/worktree를 정리한다.
 
 ## Validation
 - [ ] 결함이 해결되었다

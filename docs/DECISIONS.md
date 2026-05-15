@@ -166,7 +166,7 @@ ai_read_priority: 9
   - template_version: v3.0.0으로 갱신
 
 ## ADR-0017
-- Status: accepted
+- Status: superseded by ADR-0018 (2026-05-15)
 - Date: 2026-04-14
 - Context: `AGENTS.md`, `CONTRIBUTING.md`, `docs/GITHUB_AUTOMATION.md`, GitHub Actions 구현 사이에 공개 브랜치 규칙, `status:ready` 의미, 커밋 형식, main 병합 절차가 서로 다르게 정의되어 있었다
 - Decision: GitHub 운영 흐름을 `Issue -> issue/<번호>-<slug> -> PR -> status checks -> auto-merge`로 일원화하고, 병렬 AI 작업은 로컬/worktree 전용 내부 `ai/<agent-id>/<issue-number>/<slice>` 브랜치 + 공개 `issue/*` 브랜치의 2계층 모델로 고정한다. 자동화 정본은 `.github/automation-contract.json`으로 관리하고 `policy-contract`에서 문서-자동화 정합성을 함께 검증한다
@@ -176,3 +176,14 @@ ai_read_priority: 9
   - 자동/수동 커밋 제목은 `type(scope): summary (#issue-number)` 형식으로 통일한다
   - `policy-contract`는 브랜치/PR 규칙 외에 커밋 제목과 자동화 계약 정합성도 검사한다
   - playbook, README, template 문서를 새 공개 브랜치 규칙과 동기화한다
+
+## ADR-0018
+- Status: accepted
+- Date: 2026-05-15
+- Context: ADR-0017 이 정의한 자동화 스택 (`ai-*` 워크플로, `policy-contract`, `selfhosted-runtime-smoke`, `owner-agent-report`, `automation-contract.json`) 이 self-hosted runner OAuth 만료·인프라 port 충돌·deprecated provider 라벨 등으로 더 이상 신뢰 가능한 머지 게이트로 동작하지 않게 됐다. stale required check 가 정상 PR 병합을 일관되게 차단해 운영 마찰만 키웠다
+- Decision: 자동화 워크플로 전체 + `automation-contract.json` + `.github/scripts/*` + `docs/GITHUB_AUTOMATION.md` + AI 프롬프트 자산을 폐기한다. GitHub 운영은 `Issue -> issue/<번호>-<slug> -> PR -> 사람 리뷰 -> 일반 머지` 흐름으로 단순화한다
+- Consequences:
+  - `agent:claude` / `AI_PROVIDER_DEFAULT` 등 provider 라벨/변수는 더 이상 정책 의미를 가지지 않는다
+  - PR 머지에 필요한 status check 는 사람 리뷰 + 로컬 `bin/verify-completion.sh` 결과로 대체한다
+  - branch protection 의 required check 는 비워두거나 사용자가 새로 정의한다
+  - 후속 작업으로 `playbooks/PB-0004-hotfix.md` 등 `policy-contract` / `ai-review` 를 참조하던 playbook 을 정리한다

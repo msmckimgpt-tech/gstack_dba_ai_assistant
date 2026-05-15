@@ -478,7 +478,6 @@ AI가 자유롭게 갱신 가능한 영역
 
 2. **공개 PR 브랜치 (이슈당 1개)**: 외부로 push하고 PR을 여는 브랜치는 항상 `issue/<issue-number>-<short-slug>` 하나만 사용한다.
    - 내부 `ai/*` 브랜치에서 작업한 결과는 로컬에서 `issue/*` 브랜치로 통합한 뒤 push한다.
-   - 공개 PR 브랜치 외의 브랜치는 branch protection 및 `policy-contract`의 지원 대상이 아니다.
 
 3. **Worktree 격리 (권장)**: Git worktree를 활용하여 물리적으로 작업 디렉토리를 분리한다.
    ```bash
@@ -869,7 +868,7 @@ Step 4에서 공개 브랜치 동기화로 판정된 경우:
    - PR 제목은 `#<issue-number> <summary>` 형식을 사용하고, 본문에는 반드시 `closes #<issue-number>`를 포함한다.
 
 4. **병합**:
-   - 병합은 GitHub PR + status checks + auto-merge 흐름으로만 진행한다.
+   - 병합은 GitHub PR 흐름으로 진행한다 (사람 검토 + `gh pr merge`).
    - `main` 직접 push 또는 로컬 `main` 병합은 금지한다.
    - 브랜치 동기화 중 충돌이 발생하면 §16.6 정책에 따라 처리한다.
 
@@ -883,7 +882,7 @@ Git 동기화 결과를 `REPORT.md`에 기록한다.
 - verify-completion: PASS / FAIL (재시도 N회)
 - Push: 완료 / 보류 (사유: ...)
 - PR: 생성 / 갱신 / 보류 (사유: ...)
-- 병합 상태: auto-merge 후보 / 수동 검토 / 보류
+- 병합 상태: 머지 완료 / 수동 검토 / 보류
 - 충돌 해결: 없음 / AI 자율 해결 (건수, 요약) / 사람 위임 (사유)
 ```
 
