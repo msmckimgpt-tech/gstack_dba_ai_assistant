@@ -16,6 +16,23 @@ source_of_truth: true
 - TEST-0001: `docker-compose.yml`이 `src/mysql/conf.d`를 참조한다
 - TEST-0002: `Makefile`이 `../../../../artifacts/mysql-data`와 `../../../../artifacts/mysql-backup`를 사용한다
 - TEST-0003: 엄격한 운영 시나리오 정의 필요
+- TEST-0004: `make browser-up` 이 compose/buildx metadata file race 환경에서도 browser 서비스를 기동한다
+- TEST-0005: `make insight-up` 이 compose/buildx metadata file race 환경에서도 insight-worker 서비스를 기동한다
+- TEST-0006: `make up` 후 장기 실행 서비스가 restart policy 를 가진 상태로 기동한다
 
 ## 3. Test Run History
+- 2026-05-15:
+  - `make up`
+    - 결과: 통과. `mysql`, `web`, `browser`, `insight-worker`, `mcp` 기동 확인.
+  - `make status`
+    - 결과: 통과. `mysql` healthy, `web`, `browser`, `insight-worker`, `mcp` 실행 상태.
+  - `make browser-health`
+    - 결과: 통과. `{"ok": true}` 반환.
+- 2026-05-15:
+  - `make browser-up`
+    - 결과: 통과
+  - `make insight-up`
+    - 결과: 통과
+  - `make status`
+    - 결과: mysql/web/browser/insight-worker/mcp 실행 확인
 - 2026-03-26: 구조 검증 기준만 정의함. 엄격한 운영 시나리오는 후속 작성 예정

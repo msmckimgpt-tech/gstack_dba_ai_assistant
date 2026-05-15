@@ -1,9 +1,6 @@
 ## 관련 이슈
 - closes #
 
-## 활성 Provider
-- `agent:claude` 라벨 기준 (현재 지원 provider 는 `claude` 하나)
-
 ## 변경 요약
 - 이번 PR에서 바뀐 핵심 사항을 적어주세요.
 

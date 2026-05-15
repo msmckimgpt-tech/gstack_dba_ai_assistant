@@ -972,19 +972,29 @@ function renderAccountCrossPageBanner() {
   });
 }
 
-function updateAccountSelectAllCheckbox() {
+// TASK-0061 Phase 7 (REQ-20260515-0009 / AC-0098): select-all 의 visible 정의를
+// 전체 filteredAccounts 가 아닌 현재 페이지 slice 만 대상으로 한다 (사용자 보고 버그 fix).
+function currentPageAccounts() {
   const all = filteredAccounts();
+  const totalPages = Math.max(1, Math.ceil(all.length / ACCOUNT_PAGE_SIZE));
+  const page = Math.min(Math.max(0, adminState.accountPage), totalPages - 1);
+  const start = page * ACCOUNT_PAGE_SIZE;
+  return all.slice(start, start + ACCOUNT_PAGE_SIZE);
+}
+
+function updateAccountSelectAllCheckbox() {
+  const visible = currentPageAccounts();
   const selAll = $("accountSelectAll");
-  if (!all.length) {
+  if (!visible.length) {
     selAll.checked = false;
     selAll.indeterminate = false;
     return;
   }
-  const selected = all.filter((a) => adminState.accountSelected.has(Number(a.id))).length;
+  const selected = visible.filter((a) => adminState.accountSelected.has(Number(a.id))).length;
   if (selected === 0) {
     selAll.checked = false;
     selAll.indeterminate = false;
-  } else if (selected === all.length) {
+  } else if (selected === visible.length) {
     selAll.checked = true;
     selAll.indeterminate = false;
   } else {
@@ -1276,7 +1286,105 @@ function renderAccountDetail() {
     actions.appendChild(deleteBtn);
   }
 
+  // TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0096): 비밀번호 초기화 버튼.
+  // 권한 부족 / 자기 자신 / 삭제된 계정 / pending new account 에서는 hidden.
+  const meId = adminState.me ? Number(adminState.me.id) : null;
+  if (
+    !base.deleted_at &&
+    !merged._isNew &&
+    can("console.manage") &&
+    can("account.update") &&
+    meId !== null &&
+    meId !== Number(base.id)
+  ) {
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.id = "adminPasswordResetBtn";
+    resetBtn.className = "btn-secondary";
+    resetBtn.textContent = "비밀번호 초기화";
+    resetBtn.title = "임시 비밀번호를 생성하고 대상 계정의 기존 세션을 모두 종료합니다. 임시 비밀번호는 1회만 표시됩니다.";
+    resetBtn.addEventListener("click", () => triggerPasswordResetFlow(base));
+    actions.appendChild(resetBtn);
+  }
+
   if (actions.children.length) paneEl.appendChild(actions);
+}
+
+// TASK-0061 Phase 6 (REQ-20260515-0008): 임시 비밀번호 생성 + 1 회 표시 modal.
+async function triggerPasswordResetFlow(account) {
+  if (!account || !account.id) return;
+  if (!window.confirm(
+    `${account.username} 계정의 비밀번호를 초기화하시겠습니까?\n\n` +
+    "임시 비밀번호가 생성되며 대상 계정의 기존 세션이 모두 종료됩니다. " +
+    "임시 비밀번호는 modal 에서 1 회만 표시되므로 즉시 복사해 안전하게 전달해야 합니다."
+  )) {
+    return;
+  }
+  let payload;
+  try {
+    payload = await apiFetch(`/api/admin/accounts/${Number(account.id)}/password-reset`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  } catch (error) {
+    showToast(`비밀번호 초기화 실패: ${error.message || error}`, true);
+    return;
+  }
+  showTemporaryPasswordModal(payload);
+}
+
+function showTemporaryPasswordModal(payload) {
+  // 기존 modal 제거.
+  const prev = document.getElementById("adminPasswordResetModal");
+  if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
+
+  const overlay = document.createElement("div");
+  overlay.id = "adminPasswordResetModal";
+  overlay.className = "admin-modal-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+
+  const modal = document.createElement("div");
+  modal.className = "admin-modal";
+  const title = document.createElement("h3");
+  title.textContent = `임시 비밀번호 — ${payload.username || ""}`;
+  modal.appendChild(title);
+
+  const note = document.createElement("p");
+  note.className = "admin-modal-note";
+  note.textContent = "이 비밀번호는 1 회만 표시됩니다. 이 창을 닫으면 다시 확인할 수 없으므로 즉시 복사해 안전한 채널로 대상자에게 전달해 주세요. 대상 계정은 다음 로그인 시 즉시 비밀번호를 변경해야 합니다.";
+  modal.appendChild(note);
+
+  const passwordRow = document.createElement("div");
+  passwordRow.className = "temp-password-display";
+  const code = document.createElement("code");
+  code.textContent = String(payload.temporary_password || "");
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "btn-secondary";
+  copyBtn.textContent = "복사";
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(String(payload.temporary_password || ""));
+      showToast("임시 비밀번호를 클립보드에 복사했습니다.");
+    } catch (_err) {
+      showToast("자동 복사에 실패했습니다. 직접 선택해 복사해 주세요.", true);
+    }
+  });
+  passwordRow.append(code, copyBtn);
+  modal.appendChild(passwordRow);
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "btn-primary";
+  closeBtn.textContent = "복사 후 닫기";
+  closeBtn.addEventListener("click", () => {
+    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+  });
+  modal.appendChild(closeBtn);
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
 }
 
 /* ── Roles pane ──────────────────────────────────────────────────────── */
@@ -2983,9 +3091,9 @@ async function initialize() {
     }, 150);
   });
 
-  // Account select-all
+  // Account select-all — TASK-0061 Phase 7 (AC-0098): 현재 페이지 row 만 대상.
   $("accountSelectAll").addEventListener("change", (ev) => {
-    const visible = filteredAccounts();
+    const visible = currentPageAccounts();
     if (ev.target.checked) {
       visible.forEach((a) => adminState.accountSelected.add(Number(a.id)));
     } else {

@@ -122,14 +122,14 @@ def compose_system_prompt(
 ) -> str:
     """Product → Role → Account 순으로 custom 시스템 프롬프트를 base 뒤에 append 한다.
 
-    각 scope 에서 `ProductId` 가 있는(현재 product 한정) prompt 를 우선 사용하고, 없으면
-    `ProductId IS NULL` 의 범용 prompt 를 fallback 으로 쓴다. mem_conn 이 None 이거나 테이블이
-    없으면 base SYSTEM_PROMPT 를 그대로 반환.
+    Role/Account scope 에서 `ProductId IS NULL` 공통 prompt 는 fallback 이 아니라 먼저 누적한다.
+    현재 product 한정 prompt 가 있으면 공통 prompt 뒤에 추가한다. mem_conn 이 None 이거나
+    테이블이 없으면 base SYSTEM_PROMPT 를 그대로 반환.
 
     product_mode='auto' 인 경우(사용자가 특정 제품을 고정하지 않은 일반 대화 모드):
       - PRODUCT CONTEXT 블록은 주입하지 않는다 (제품 한정 가이드가 없으므로 일반 답변 유도).
       - 대신 한 줄 AUTO MODE 안내를 base 직후에 append 해 LLM 이 "제품 미선택" 상태를 인지하게 한다.
-      - role/account scope prompt 는 ProductId IS NULL 의 범용 prompt 만 사용한다.
+      - role/account scope prompt 는 ProductId IS NULL 의 공통 prompt 만 사용한다.
     """
     if mem_conn is None:
         return SYSTEM_PROMPT
@@ -145,21 +145,27 @@ def compose_system_prompt(
     except Exception:
         return SYSTEM_PROMPT
 
-    def _fetch(scope: str, scope_col: str, scope_val: int | None) -> tuple[str, str]:
-        """해당 scope 의 prompt 와 표시용 label 을 반환. 없으면 ('','')."""
+    def _fetch(
+        scope: str,
+        scope_col: str,
+        scope_val: int | None,
+        *,
+        prompt_product_id: int | None,
+    ) -> tuple[str, str]:
+        """해당 scope/product 조합의 prompt 와 표시용 label 을 반환. 없으면 ('','')."""
         if scope_val is None or scope_val <= 0:
             return ("", "")
         try:
-            # auto 모드는 product 한정 prompt 를 건너뛰고 곧장 ProductId IS NULL fallback 만 사용한다.
-            if (not is_auto) and product_id and product_id > 0:
+            if prompt_product_id and prompt_product_id > 0:
                 cur.execute(
                     f"SELECT Content FROM WebSystemPrompts "
                     f"WHERE Scope=%s AND {scope_col}=%s AND ProductId=%s LIMIT 1",
-                    (scope, int(scope_val), int(product_id)),
+                    (scope, int(scope_val), int(prompt_product_id)),
                 )
                 row = cur.fetchone()
                 if row and row[0]:
-                    return (str(row[0]), f"ProductId={product_id}")
+                    return (str(row[0]), f"ProductId={prompt_product_id}")
+                return ("", "")
             cur.execute(
                 f"SELECT Content FROM WebSystemPrompts "
                 f"WHERE Scope=%s AND {scope_col}=%s AND ProductId IS NULL LIMIT 1",
@@ -190,8 +196,22 @@ def compose_system_prompt(
             pass
 
     # Role-scope prompt
-    role_content, _ = _fetch("role", "RoleId", role_id)
-    if role_content:
+    # Role 의 "전 Product 공통" prompt 는 fallback 이 아니라 항상 먼저 누적한다.
+    # 특정 Product 를 선택했고 해당 Role×Product prompt 가 있으면 공통 지침 뒤에 추가한다.
+    role_blocks: list[tuple[str, str]] = []
+    role_common, _ = _fetch("role", "RoleId", role_id, prompt_product_id=None)
+    if role_common:
+        role_blocks.append(("전 Product 공통", role_common))
+    if (not is_auto) and product_id and product_id > 0:
+        role_specific, role_specific_label = _fetch(
+            "role",
+            "RoleId",
+            role_id,
+            prompt_product_id=int(product_id),
+        )
+        if role_specific:
+            role_blocks.append((role_specific_label or f"ProductId={product_id}", role_specific))
+    if role_blocks:
         role_label = ""
         try:
             cur.execute("SELECT RoleKey FROM WebRoles WHERE Id=%s LIMIT 1", (int(role_id or 0),))
@@ -199,12 +219,32 @@ def compose_system_prompt(
             role_label = str(row[0]) if row and row[0] else str(role_id)
         except Exception:
             pass
-        parts.append(f"\n\n## ROLE GUIDANCE ({role_label})\n{role_content.strip()}\n")
+        role_text = "\n\n".join(
+            f"### {block_label}\n{block_content.strip()}" for block_label, block_content in role_blocks
+        )
+        parts.append(f"\n\n## ROLE GUIDANCE ({role_label})\n{role_text}\n")
 
     # Account-scope prompt
-    account_content, _ = _fetch("account", "AccountId", account_id)
-    if account_content:
-        parts.append(f"\n\n## ACCOUNT PREFERENCES\n{account_content.strip()}\n")
+    # Account 의 "전 Product 공통" prompt 도 항상 먼저 누적한다. pinned Product 전용 개인 지침이
+    # 있으면 그 뒤에 추가한다. 최종 사용자 요청은 이 system message 뒤의 user message 로 보존된다.
+    account_blocks: list[tuple[str, str]] = []
+    account_common, _ = _fetch("account", "AccountId", account_id, prompt_product_id=None)
+    if account_common:
+        account_blocks.append(("전 Product 공통", account_common))
+    if (not is_auto) and product_id and product_id > 0:
+        account_specific, account_specific_label = _fetch(
+            "account",
+            "AccountId",
+            account_id,
+            prompt_product_id=int(product_id),
+        )
+        if account_specific:
+            account_blocks.append((account_specific_label or f"ProductId={product_id}", account_specific))
+    if account_blocks:
+        account_text = "\n\n".join(
+            f"### {block_label}\n{block_content.strip()}" for block_label, block_content in account_blocks
+        )
+        parts.append(f"\n\n## ACCOUNT PREFERENCES\n{account_text}\n")
 
     try:
         cur.close()

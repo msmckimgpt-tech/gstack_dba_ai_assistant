@@ -436,6 +436,9 @@ def _bootstrap_memory_runtime() -> None:
     ).start()
 
 WEB_PARALLEL_LIMIT = max(1, int(os.getenv("WEB_PARALLEL_LIMIT", "6")))
+# TASK-0061 Phase 3 (REQ-20260515-0005): processing 상태가 만료 시간 동안 step/status 갱신 없이
+# 멈춰 있으면 stale_error 로 표시한다. 장시간 SQL/LLM 작업을 고려해 기본 20 분 (1200 sec).
+WEB_PROGRESS_STALE_TIMEOUT_SECONDS = max(60, int(os.getenv("WEB_PROGRESS_STALE_TIMEOUT_SECONDS", "1200")))
 _ACTIVE_REQUESTS: dict[str, int] = {}
 _ACTIVE_REQUESTS_LOCK = threading.Lock()
 _MEMORY_SCHEMA_READY = False
@@ -834,6 +837,8 @@ def _serialize_account(account: dict[str, Any] | None) -> dict[str, Any] | None:
         "last_login_at": str(account.get("last_login_at") or "") or None,
         "last_conversation_id": str(account.get("last_conversation_id") or ""),
         "permissions": permissions,
+        # TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0095): 다음 로그인 시 비밀번호 강제 변경.
+        "must_change_password": bool(account.get("must_change_password")),
     }
 
 
@@ -914,6 +919,7 @@ SELECT
     a.RoleId AS role_id,
     a.DeletedAt AS deleted_at,
     a.DeletedByAccountId AS deleted_by_account_id,
+    COALESCE(a.MustChangePassword, 0) AS must_change_password,
     r.RoleKey AS role_key,
     r.Name AS role_name,
     r.Description AS role_description,
@@ -1854,6 +1860,70 @@ LIMIT 1
     }
 
 
+def _parse_kv_timestamp(value: str) -> datetime | None:
+    """AgentMemoryKv 의 ISO timestamp (`YYYY-MM-DD HH:MM:SS[.f]`) 를 datetime 으로 변환.
+    실패 시 None 반환. UTC naive 로 가정 (KV 작성 시 동일 가정)."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if "T" in text:
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+        return datetime.fromisoformat(text)
+    except Exception:
+        try:
+            return datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return None
+
+
+def _last_step_at_for_run(conn, conversation_id: str, run_id: str) -> datetime | None:
+    """주어진 run 의 최근 step CreatedAt 을 datetime 으로 반환. 실패/없음 시 None."""
+    if not conversation_id or not run_id:
+        return None
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT MAX(CreatedAt) FROM AgentMemorySteps"
+            " WHERE ConversationId = %s AND RunId = %s LIMIT 1",
+            (conversation_id, run_id),
+        )
+        row = cur.fetchone()
+        cur.close()
+    except Exception:
+        return None
+    if not row or row[0] is None:
+        return None
+    raw = row[0]
+    if isinstance(raw, datetime):
+        return raw
+    return _parse_kv_timestamp(str(raw))
+
+
+def _compute_display_status(
+    conn,
+    conversation_id: str,
+    last_status: str,
+    last_status_at: str,
+    last_status_run_id: str,
+) -> tuple[str, bool]:
+    """processing 대화가 만료 시간 동안 step/status 갱신이 없으면 (display_status, is_stale) = (stale_error, True) 를 반환.
+    그 외에는 (last_status, False)."""
+    raw_status = str(last_status or "").strip().lower()
+    if raw_status != "processing":
+        return raw_status, False
+    status_dt = _parse_kv_timestamp(last_status_at)
+    step_dt = _last_step_at_for_run(conn, conversation_id, last_status_run_id)
+    last_active = max(filter(None, [status_dt, step_dt]), default=None)
+    if last_active is None:
+        # 시각 정보 자체가 없으면 보수적으로 stale 처리하지 않는다 — 첫 step 등록 전 race 가능성.
+        return raw_status, False
+    elapsed = (datetime.utcnow() - last_active).total_seconds()
+    if elapsed > WEB_PROGRESS_STALE_TIMEOUT_SECONDS:
+        return "stale_error", True
+    return raw_status, False
+
+
 def _conversation_is_processing(conn, conversation_id: str) -> bool:
     """진행 중 ask 가 있는지 (race 가드용). AgentMemoryKv.last_status 를 진실원으로 사용한다."""
     if not conversation_id:
@@ -2326,6 +2396,21 @@ def _ensure_web_conversation_shares_schema(conn) -> None:
         cur.close()
 
 
+def _ensure_must_change_password_schema(conn) -> None:
+    """TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0092): fast-path 재기동에서도
+    MustChangePassword 컬럼이 존재하도록 idempotent ALTER. _ensure_web_tables 와 동일 SQL."""
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute(
+                "ALTER TABLE WebAccounts ADD COLUMN MustChangePassword TINYINT(1) NOT NULL DEFAULT 0"
+            )
+        except Exception:
+            pass
+    finally:
+        cur.close()
+
+
 def _ensure_seed_catchup(conn) -> None:
     """기존 배포에 신규 seed role/prompt 가 있으면 상태를 맞춘다.
 
@@ -2343,6 +2428,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_web_conversation_shares_schema(conn)
     # REQ-20260514-0001: catchup 시 catalog hydrate (신규 conversation.share.create 권한이 WebPermissions 에 INSERT 되도록).
     _ensure_permission_catalog(conn)
+    # TASK-0061 Phase 6: 기존 배포에 MustChangePassword 컬럼 backfill.
+    _ensure_must_change_password_schema(conn)
     _migration_added = _ensure_product_access_permissions(conn)
     if _migration_added > 0:
         try:
@@ -2456,6 +2543,14 @@ def _ensure_web_tables():
             pass
         try:
             cur.execute("ALTER TABLE WebAccounts ADD COLUMN ProductPrefPinnedId BIGINT NULL")
+        except Exception:
+            pass
+        # TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0092): 관리자 비밀번호 reset 후 다음 로그인 시
+        # 강제 변경 플래그. 기본 0 (false). idempotent ALTER.
+        try:
+            cur.execute(
+                "ALTER TABLE WebAccounts ADD COLUMN MustChangePassword TINYINT(1) NOT NULL DEFAULT 0"
+            )
         except Exception:
             pass
         cur.execute(
@@ -2799,11 +2894,41 @@ GROUP BY conversation_id
                     "total": max(int(existing.get("total", 0) or 0), int(total_count or 0)),
                     "user": max(int(existing.get("user", 0) or 0), int(user_count or 0)),
                 }
+        # TASK-0061 Phase 3 (REQ-20260515-0005): stale 판정에 last_status_run_id 도 필요하므로
+        # 단일 추가 쿼리로 모은다 (KV 한 번 더 조회 — N 회 fan-out 회피).
+        run_id_map: dict[str, str] = {}
+        if conv_ids:
+            placeholders2 = ",".join(["%s"] * len(conv_ids))
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    f"""
+SELECT ConversationId, `Value`
+FROM AgentMemoryKv
+WHERE ConversationId IN ({placeholders2})
+  AND `Key` = 'last_status_run_id'
+                    """,
+                    tuple(conv_ids),
+                )
+                for conv_id, value in cur.fetchall() or []:
+                    run_id_map[str(conv_id)] = str(value or "")
+            except Exception:
+                pass
+            cur.close()
         for item in items:
             info = status_map.get(item["id"], {})
             counts = count_map.get(item["id"], {})
-            item["status"] = info.get("last_status") or ""
-            item["status_at"] = info.get("last_status_at") or ""
+            raw_status = info.get("last_status") or ""
+            status_at = info.get("last_status_at") or ""
+            run_id = run_id_map.get(item["id"], "")
+            display_status, is_stale = _compute_display_status(
+                conn, item["id"], raw_status, status_at, run_id
+            )
+            item["status"] = display_status
+            item["raw_status"] = raw_status
+            item["display_status"] = display_status
+            item["is_stale"] = is_stale
+            item["status_at"] = status_at
             try:
                 item["duration_ms"] = float(info.get("last_duration_ms")) if info.get("last_duration_ms") else None
             except Exception:
@@ -3782,7 +3907,10 @@ def _resolve_conversation_for_account(
     requested_id: str = "",
     *,
     create_if_missing: bool = False,
+    force_new: bool = False,
 ) -> str:
+    # TASK-0059: `force_new=True` 는 빈 `requested_id` 경로에서만 의미를 가진다. 명시된 cid 가 들어오면
+    # 그 cid 의 접근 권한만 검사하고 그대로 반환 (frontend 의 신규 의도와 명시 cid 의도는 상호 배타).
     conversation_id = str(requested_id or "").strip()
     if conversation_id:
         if _account_can_access_conversation(
@@ -3798,6 +3926,7 @@ def _resolve_conversation_for_account(
         conn,
         account,
         create_if_missing=create_if_missing,
+        force_new=force_new,
     )
 
 
@@ -4277,11 +4406,17 @@ async def ask(request: Request) -> JSONResponse:
         if not _account_has_permission(account, "conversation.ask"):
             conn.close()
             return _json_error("권한이 없습니다.", 403)
+        # TASK-0059: frontend "새 대화" 버튼 lazy 경로의 명시적 신규 의도. hint 가 있으면 직전
+        # 대화 (account.last_conversation_id) 로 폴백하지 않고 신규 cid 를 강제 생성한다.
+        # hint 없는 legacy client (세션 부트스트랩 후 직전 대화 자동 이어받기) 는 force_new=False
+        # 로 기존 동작 유지.
+        lazy_create_requested = bool(data.get("lazy_create"))
         conv_id = _resolve_conversation_for_account(
             conn,
             account,
             request_conversation_id,
             create_if_missing=True,
+            force_new=lazy_create_requested,
         )
         # TASK-0048: client (특히 사이드바 "새 대화" 버튼이 lazy 화된 frontend) 가 첫 메시지에 함께 보낸
         # product hint 를 이 시점에 적용한다. /api/new_conversation 의 동등한 분기를 ask body 안으로 이식.
@@ -5490,14 +5625,16 @@ def history_dates(
     if not conv_id:
         conn.close()
         return JSONResponse({"dates": {}, "first": None, "last": None})
+    # TASK-0061 Phase 5 (REQ-20260515-0007 / AC-0088): 메시지 정본은 AgentMemoryMessages 이므로
+    # 캘린더 source 를 그쪽으로 일치시킨다 (이전: AgentCoreMessages — 일부 경로에서 비어 있음).
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT DATE(created_at) AS d,"
-            " GROUP_CONCAT(DATE_FORMAT(created_at, %s) ORDER BY created_at SEPARATOR ',')"
-            " FROM AgentCoreMessages"
-            " WHERE conversation_id = %s"
-            " GROUP BY DATE(created_at)"
+            "SELECT DATE(CreatedAt) AS d,"
+            " GROUP_CONCAT(DATE_FORMAT(CreatedAt, %s) ORDER BY CreatedAt SEPARATOR ',')"
+            " FROM AgentMemoryMessages"
+            " WHERE ConversationId = %s"
+            " GROUP BY DATE(CreatedAt)"
             " ORDER BY d",
             ("%H:%i", conv_id),
         )
@@ -5515,6 +5652,46 @@ def history_dates(
     last = str(rows[-1][0]) if rows else None
     conn.close()
     return JSONResponse({"dates": dates, "first": first, "last": last})
+
+
+# TASK-0061 Phase 8 (REQ-20260515-0010 / AC-0103): 단건/일괄 공용 helper. 결과는
+# {"status": "deleted"|"deleted_pending"|"failed", "reason": "..." (failed 시)}.
+def _delete_conversation_impl(
+    conn,
+    account: dict[str, Any],
+    conversation_id: str,
+    *,
+    force: bool = False,
+    confirm_text: str = "",
+) -> dict[str, Any]:
+    conversation_id = str(conversation_id or "").strip()
+    if not conversation_id:
+        return {"status": "failed", "reason": "empty_conversation_id"}
+    if not _account_can_access_conversation(
+        conn,
+        account,
+        conversation_id,
+        "conversation.delete.own",
+        "conversation.delete.any",
+    ):
+        return {"status": "failed", "reason": "forbidden"}
+    try:
+        cleanup_pending_delete_conversations(conn)
+        if is_processing_conversation(conn, conversation_id):
+            if not force:
+                return {"status": "failed", "reason": "processing"}
+            if confirm_text != "삭제":
+                return {"status": "failed", "reason": "confirm_text_mismatch"}
+            run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
+            mark_cancel_requested(conn, conversation_id, run_id=run_id)
+            mark_delete_requested(conn, conversation_id, run_id=run_id)
+            _clear_accounts_current_conversation(conn, conversation_id)
+            return {"status": "deleted_pending"}
+        delete_conversation_records(conn, conversation_id)
+        _clear_accounts_current_conversation(conn, conversation_id)
+        return {"status": "deleted"}
+    except Exception:
+        return {"status": "failed", "reason": "db_error"}
 
 
 @app.post("/api/delete_conversation")
@@ -5538,52 +5715,87 @@ async def delete_conversation(request: Request) -> JSONResponse:
     if not conversation_id:
         conn.close()
         return _json_error("empty conversation_id", 400)
-    if not _account_can_access_conversation(
-        conn,
-        account,
-        conversation_id,
-        "conversation.delete.own",
-        "conversation.delete.any",
-    ):
-        conn.close()
-        return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
-    try:
-        cleanup_pending_delete_conversations(conn)
-        if is_processing_conversation(conn, conversation_id):
-            if not force:
-                conn.close()
-                return _json_error("처리 중 대화입니다. 강제 삭제하려면 확인 입력이 필요합니다.", 409)
-            if confirm_text != "삭제":
-                conn.close()
-                return _json_error("확인 입력이 올바르지 않습니다. 삭제를 입력해주세요.", 400)
-            run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
-            mark_cancel_requested(conn, conversation_id, run_id=run_id)
-            mark_delete_requested(conn, conversation_id, run_id=run_id)
-            _clear_accounts_current_conversation(conn, conversation_id)
-            # TASK-0048 후속 fix: 대화 삭제 후 자동으로 빈 새 대화를 만들지 않는다 (lazy 정책).
-            # 사용자가 "새 대화" 버튼을 다시 눌러야 한다 — 사용자 보고 회귀(2026-05-06): "대화 삭제 시 새 대화가 그대로 남는 이슈" 의 backend 측 원인.
-            current_after = _repair_current_conversation(
-                conn,
-                account,
-                items=[],
-                create_if_missing=False,
-            )
+    result = _delete_conversation_impl(
+        conn, account, conversation_id, force=force, confirm_text=confirm_text
+    )
+    if result["status"] == "failed":
+        reason = result.get("reason", "")
+        if reason == "forbidden":
             conn.close()
-            return JSONResponse({"deleted_pending": conversation_id, "current": current_after})
-        delete_conversation_records(conn, conversation_id)
-        _clear_accounts_current_conversation(conn, conversation_id)
-        # TASK-0048 후속 fix: 대화 삭제 후 자동으로 빈 새 대화를 만들지 않는다 (lazy 정책).
-        current_after = _repair_current_conversation(
-            conn,
-            account,
-            items=[],
-            create_if_missing=False,
-        )
-        conn.close()
-        return JSONResponse({"deleted": conversation_id, "current": current_after})
-    except Exception:
+            return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
+        if reason == "processing":
+            conn.close()
+            return _json_error("처리 중 대화입니다. 강제 삭제하려면 확인 입력이 필요합니다.", 409)
+        if reason == "confirm_text_mismatch":
+            conn.close()
+            return _json_error("확인 입력이 올바르지 않습니다. 삭제를 입력해주세요.", 400)
         conn.close()
         return _json_error("failed to delete conversation", 500)
+    # TASK-0048 후속 fix: 대화 삭제 후 자동으로 빈 새 대화를 만들지 않는다 (lazy 정책).
+    current_after = _repair_current_conversation(
+        conn,
+        account,
+        items=[],
+        create_if_missing=False,
+    )
+    conn.close()
+    if result["status"] == "deleted_pending":
+        return JSONResponse({"deleted_pending": conversation_id, "current": current_after})
+    return JSONResponse({"deleted": conversation_id, "current": current_after})
+
+
+# TASK-0061 Phase 8 (REQ-20260515-0010 / AC-0103~AC-0107): 다중 대화 일괄 삭제 — partial success.
+@app.post("/api/delete_conversations")
+async def delete_conversations(request: Request) -> JSONResponse:
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    try:
+        data = await request.json()
+    except Exception:
+        conn.close()
+        return _json_error("invalid json", 400)
+    raw_ids = data.get("conversation_ids", [])
+    if not isinstance(raw_ids, list) or not raw_ids:
+        conn.close()
+        return _json_error("conversation_ids required", 400)
+    force = bool(data.get("force"))
+    confirm_text = str(data.get("confirm_text", "")).strip()
+    deleted: list[str] = []
+    deleted_pending: list[str] = []
+    failed: list[dict[str, str]] = []
+    for raw in raw_ids:
+        cid = str(raw or "").strip()
+        if not cid:
+            failed.append({"conversation_id": "", "reason": "empty_conversation_id"})
+            continue
+        result = _delete_conversation_impl(
+            conn, account, cid, force=force, confirm_text=confirm_text
+        )
+        if result["status"] == "deleted":
+            deleted.append(cid)
+        elif result["status"] == "deleted_pending":
+            deleted_pending.append(cid)
+        else:
+            failed.append({"conversation_id": cid, "reason": result.get("reason", "unknown")})
+    current_after = _repair_current_conversation(
+        conn,
+        account,
+        items=[],
+        create_if_missing=False,
+    )
+    conn.close()
+    return JSONResponse({
+        "deleted": deleted,
+        "deleted_pending": deleted_pending,
+        "failed": failed,
+        "current": current_after,
+    })
 
 
 @app.patch("/api/conversations/{conversation_id}/title")
@@ -5745,6 +5957,8 @@ def progress(
             _load_steps_for_run(conn, cid, run_id, after_step=next_after_step)
             if run_id else []
         )
+        # TASK-0061 Phase 3: stale 판정 — processing 이지만 만료 시간 동안 갱신 없음.
+        display_status, is_stale = _compute_display_status(conn, cid, status, status_at, run_id)
         conn.close()
     except Exception:
         try:
@@ -5754,7 +5968,10 @@ def progress(
         return empty
     return JSONResponse({
         "steps": new_steps,
-        "status": status,
+        "status": display_status,
+        "raw_status": status,
+        "display_status": display_status,
+        "is_stale": is_stale,
         "status_at": status_at,
         "step_count": step_count,
         "run_id": run_id,
@@ -5774,7 +5991,9 @@ def _build_ask_status_snapshot(conn, conversation_id: str) -> dict[str, Any]:
         duration_ms = 0
     error_text = kv.get("last_error", "") or ""
     step_count = _load_step_count_for_run(conn, conversation_id, run_id) if run_id else 0
-    is_processing = (status == "processing")
+    # TASK-0061 Phase 3 (REQ-20260515-0005): stale 처리는 attach/resume long-poll 무한 대기 방지에 중요.
+    display_status, is_stale = _compute_display_status(conn, conversation_id, status, status_at, run_id)
+    is_processing = (status == "processing") and not is_stale
     latest_assistant = _load_latest_assistant_message(conn, conversation_id) or {}
     latest_run_id = ""
     if isinstance(latest_assistant, dict):
@@ -5794,7 +6013,10 @@ def _build_ask_status_snapshot(conn, conversation_id: str) -> dict[str, Any]:
     return {
         "conversation_id": conversation_id,
         "is_processing": is_processing,
-        "status": status,
+        "is_stale": is_stale,
+        "status": display_status,
+        "raw_status": status,
+        "display_status": display_status,
         "status_at": status_at,
         "run_id": run_id,
         "step_count": step_count,
@@ -5900,14 +6122,20 @@ async def ask_result(
         finally:
             poll_conn.close()
         last_snapshot = snapshot
-        server_status = str(snapshot.get("status") or "")
+        # TASK-0061 Phase 3: snapshot.status 는 display_status 이므로 raw_status 로 terminal 판정.
+        server_status = str(snapshot.get("raw_status") or snapshot.get("status") or "")
         server_run_id = str(snapshot.get("run_id") or "")
         run_ok = (not requested_run_id) or (requested_run_id == server_run_id)
-        if run_ok and server_status in _ASK_TERMINAL_STATUSES:
+        is_stale = bool(snapshot.get("is_stale"))
+        # stale 도 terminal 로 취급해 attach long-poll 무한 대기 방지.
+        if run_ok and (server_status in _ASK_TERMINAL_STATUSES or is_stale):
             latest = snapshot.pop("_latest_assistant", {}) or {}
             payload = {
                 "conversation_id": cid,
-                "status": server_status,
+                "status": snapshot.get("status", ""),
+                "raw_status": server_status,
+                "display_status": snapshot.get("display_status", ""),
+                "is_stale": is_stale,
                 "status_at": snapshot.get("status_at", ""),
                 "run_id": server_run_id,
                 "step_count": snapshot.get("step_count", 0),
@@ -5926,6 +6154,9 @@ async def ask_result(
     return JSONResponse({
         "conversation_id": cid,
         "status": last_snapshot.get("status", "") or "processing",
+        "raw_status": last_snapshot.get("raw_status", ""),
+        "display_status": last_snapshot.get("display_status", ""),
+        "is_stale": bool(last_snapshot.get("is_stale")),
         "status_at": last_snapshot.get("status_at", ""),
         "run_id": last_snapshot.get("run_id", ""),
         "step_count": last_snapshot.get("step_count", 0),
@@ -6186,6 +6417,8 @@ async def auth_me_patch(request: Request) -> JSONResponse:
             return _json_error("현재 비밀번호가 올바르지 않습니다.", 400)
         updates.append("PasswordHash = %s")
         params.append(_hash_password(new_password))
+        # TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0095): 비밀번호 변경 성공 시 강제 변경 플래그 해제.
+        updates.append("MustChangePassword = 0")
 
     if not updates:
         conn.close()
@@ -6374,6 +6607,76 @@ WHERE Id = %s
     payload = _serialize_account(updated) or {}
     payload["permission_overrides"] = dict((updated or {}).get("permission_overrides") or {})
     return JSONResponse({"ok": True, "account": payload})
+
+
+# TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0093 / AC-0094): 관리자가 타 계정의 비밀번호를
+# 1 회용 임시 비밀번호로 초기화. self-reset 거부. 임시 비번은 응답에만 1 회 포함되고 평문 저장 금지.
+# 대상 계정의 모든 WebAuthSessions row 는 IsRevoked=1 처리.
+@app.post("/api/admin/accounts/{account_id}/password-reset")
+async def admin_account_password_reset(account_id: int, request: Request) -> JSONResponse:
+    if account_id <= 0:
+        return _json_error("invalid account_id", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+        conn.close()
+        return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+    if not _account_has_permission(actor, "account.update"):
+        conn.close()
+        return _json_error("계정 수정 권한이 필요합니다.", 403)
+    if int(actor["id"]) == int(account_id):
+        conn.close()
+        return _json_error(
+            "자기 자신의 비밀번호는 이 흐름으로 초기화할 수 없습니다. 프로필 드로어의 비밀번호 변경을 사용하세요.",
+            400,
+        )
+    target = _load_account_by_id(conn, account_id)
+    if not target:
+        conn.close()
+        return _json_error("account not found", 404)
+    if target.get("deleted_at"):
+        conn.close()
+        return _json_error("삭제된 계정의 비밀번호는 초기화할 수 없습니다.", 400)
+    # 12 byte URL-safe = 16 글자 이상의 임시 비밀번호 — _is_valid_password (10~128 자) 통과.
+    while True:
+        temporary_password = secrets.token_urlsafe(12)
+        if _is_valid_password(temporary_password):
+            break
+    password_hash = _hash_password(temporary_password)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE WebAccounts SET PasswordHash = %s, MustChangePassword = 1 WHERE Id = %s",
+            (password_hash, int(account_id)),
+        )
+        # 기존 세션 일괄 revoke — 대상 계정이 강제로 재로그인 후 새 비번 설정하도록.
+        cur.execute(
+            "UPDATE WebAuthSessions SET IsRevoked = 1 WHERE AccountId = %s",
+            (int(account_id),),
+        )
+        try:
+            conn.commit()
+        except Exception:
+            pass
+    except Exception:
+        cur.close()
+        conn.close()
+        return _json_error("비밀번호 초기화에 실패했습니다.", 500)
+    cur.close()
+    conn.close()
+    return JSONResponse({
+        "ok": True,
+        "account_id": int(account_id),
+        "username": str(target.get("username") or ""),
+        "temporary_password": temporary_password,
+        "expires_hint": "다음 로그인 시 즉시 변경됩니다.",
+    })
 
 
 @app.delete("/api/admin/accounts/{account_id}")

@@ -8,6 +8,82 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260515-0004
+- Date: 2026-05-15
+- Decision: TASK-0062 (REQ-20260515-0011 / -0012, Minor §12.3) GOAL 2026-05-15 후속 2 항목 — 사용자 UX 개선 요청.
+- Method:
+  - **다중선택 UX**: 사용자 요청 "체크박스는 없애고 다중선택을 통한 표현만 나타나도록 / 다른 대화 항목 선택 시 나머지 선택 상태 해제 / 2개 이상일 때 표시". 셋 모두 동일한 흐름의 자연스러운 부분 — checkbox 가 visual noise 인 동시에 다중 선택의 진실원을 분산시킨다 (set + checkbox.checked 두 곳). modifier-only 입력으로 단일화하고 (`set` 만 진실원), 일반 click 흐름의 단일 선택 의도를 명시 (`clear` + `selectConversation`). bulk bar 의 1 개 threshold 는 단일 선택 만으로도 bar 표면 → discoverability 측면에선 도움이지만 본 요청은 minimal 추구. `count >= 2` 로 변경.
+  - **Point rail 비례 분포**: 기존 구현은 rail 안에 dot 들이 4px gap 으로 단순 누적되었다. 메시지 1 개가 매우 길고 다른 1 개가 짧으면 dot 위치가 실제 scroll 위치와 매핑되지 않는다. `messageLog.scrollHeight` 기준 비례 (`top: <pct>%`) 로 배치하면 사용자가 "rail 의 dot 위치 = 메시지의 실제 위치" 를 직관적으로 인식. CSS transform 으로 dot 의 vertical center 정렬 + active 시 scale 합성으로 좌측 튐 방지.
+- Risks:
+  - **scroll 시 layout 재계산 비용**: 본 구현은 layout 을 render 시 1 회 + resize 시 1 회만 호출 (scroll 시는 active dot highlight 만). 대화 길이 변화 시 (메시지 추가 / 펼침) `renderMessages()` 가 자동 재호출하므로 일관성 유지. 단, `<details>` 펼침/접힘 같은 scrollHeight 변화 이벤트는 layout 을 직접 트리거하지 않음 — 후속 cycle 에서 MutationObserver 또는 ResizeObserver 검토 가능.
+  - **dot 의 시각 겹침**: 메시지가 매우 가까이 있으면 dot 들이 겹칠 수 있다. 현재 8px 크기 + 부모 16px width — 메시지 간 거리가 ~ scrollHeight/N 의 작은 값이면 시각적으로 잘 안 보임. 사용자 피드백 수용 후 cluster 처리 후속 검토.
+  - **다중 선택 discoverability**: checkbox 제거로 "다중 선택이 가능하다는 것" 자체가 visual 신호 없음. 단, 사용자 요청이 이를 명시했고 macOS Finder / GitHub PR list 등 동일 패턴 (modifier-only) 이 표준. tooltip / first-time 안내는 미적용.
+- Trace: REQ-20260515-0011 / REQ-20260515-0012 → TASK-0062 → CHG-20260515-0005 → REV-20260515-0004
+
+## REV-20260515-0003
+- Date: 2026-05-15
+- Decision: TASK-0061 (REQ-20260515-0003 ~ -0010) GOAL.md 8 항목 합본 cycle. 사용자가 Phase 1~8 일괄 승인 + 비밀번호 초기화 권장안 (MustChangePassword + 임시비번 1회 표시 + 세션 revoke + self-reset 금지) 채택을 2026-05-15 명시.
+- GOAL.md §7 미결정 사항 결정:
+  - **비밀번호 초기화 (REQ-20260515-0008)**: `MustChangePassword` 컬럼 채택 — 권장안 그대로. 사유: 임시 비번 + 세션 revoke 만으로는 대상 계정이 임시 비번을 계속 쓸 수 있어 보안 약함. `MustChangePassword=1` + 다음 로그인 시 강제 변경 modal 로 1회용 보장. 사용자의 명료화 "관리자 계정의 비밀번호 초기화가 아닌, 관리자 주관으로 특정 계정의 비밀번호를 초기화 하는 기능" 과 정합 — AC-0093 self-reset 거부와 일치.
+  - **#progressCard 유지 vs 축소 (REQ-20260515-0003)**: 유지 (호환성). 1차 구현은 사용자별 collapsed 상태 localStorage 보존만 변경, hidden 처리는 미적용.
+  - **bulk delete partial vs rollback (REQ-20260515-0010)**: partial success + 결과 요약. admin bulk UX (AC-0035) 와 일관성 우선. transaction rollback 은 사용자 의도 (일부라도 삭제) 와 정합 떨어짐.
+  - **stale 만료시간 기본값 (REQ-20260515-0005)**: `WEB_PROGRESS_STALE_TIMEOUT_SECONDS=1200` (20분). 장시간 SQL/LLM 작업 (예: 복잡 QA — TASK-0034) 의 step 간격 추정 기준. env override 가능. 보수적 시작값으로 운영 오탐 줄임.
+- Method:
+  1. **Phase 분할 + 자족적 검증**: Phase 3 backend (env + helper + 3 endpoint 응답) 가장 자족적이라 먼저. Phase 1+2 (pending bubble + lazy polling) frontend 핵심. Phase 4 (point rail) Phase 1 의 message render 위에. Phase 5 (캘린더) 독립. Phase 7 (admin select-all fix) 자족. Phase 8 (bulk delete) backend helper 추출 + 신규 endpoint. Phase 6 (Critical 분면 — 인증 변경) 사용자 confirm 후 마지막.
+  2. **§16.3 verify-completion 분리**: 각 Phase 종료 시 python compile + node --check 즉시 검증. 전체 완료 후 `make web` 재배포 + browser smoke (http://web:8000 진입, 신규 DOM 5개 (`.messages-wrap` / `#messagePointRail` / `#historyCalendarBtn` / `#historyCalendarPopover` / `#conversationBulkBar`) 존재 확인, 로그인 후 conv list checkbox 34개, /api/progress display_status 필드, /api/history_dates AgentMemoryMessages 기준, admin currentPageAccounts() == 현재 페이지 row, password-reset btn 노출).
+  3. **인증 모델 영향 확인 (Phase 6 Critical)**:
+     - `WebAccounts.MustChangePassword` ALTER 는 idempotent (slow path + fast path 양쪽). 기존 계정 default 0 — 기존 동작 불변.
+     - `/api/admin/accounts/{id}/password-reset` 권한: `console.access` + `console.manage` + `account.update` AND **self-reset 거부** (`actor.id == account_id` → 400). 단일 endpoint 에 모두 명시.
+     - 응답에 `temporary_password` 1회 포함 — server 로그/DB 평문 저장 없음. hash 만 저장.
+     - 대상 계정의 `WebAuthSessions IsRevoked=1` 일괄 처리 — 모든 디바이스 강제 로그아웃.
+     - frontend force change modal: `must_change_password=true` 면 닫기 button 미제공 (오직 비밀번호 변경 성공 후 자동 close). `/api/auth/me` PATCH 성공 시 `MustChangePassword=0` reset.
+  4. **bulk delete 안전성 (Phase 8 — 파괴적)**:
+     - `_delete_conversation_impl` helper 추출로 단건 endpoint 와 동일한 owner 가드 (`_account_can_access_conversation` + `conversation.delete.own`/`conversation.delete.any`) 재사용. cross-account leak 가능성 없음.
+     - partial success 응답 — 일부 실패해도 다른 항목은 정상 처리. processing 대화는 `force=true` + `confirm_text="삭제"` 명시 시에만 처리. UI 가 ≥10 typed-confirm + processing 추가 confirm 으로 우발 클릭 방어.
+- Risks:
+  - **legacy cache**: cache-bust `v=20260515-task-0061` 적용 — 브라우저 hard reload 또는 cache clear 필요. 캐시된 구버전 frontend 는 신규 endpoint 응답 contract (`/api/progress` 의 `display_status` 등) 를 모름 — 단, 신규 필드는 기존 필드와 호환 (status 가 여전히 동작) 이므로 회귀 없음.
+  - **`/api/history_dates` source 변경**: 이전 `AgentCoreMessages` 를 사용하던 client 흐름이 없음 — 사용 사례 자체가 본 cycle 의 캘린더 popover 만. 회귀 영향 없음.
+  - **첫 stale 판정 false positive 가능성**: status_at / 첫 step 등록 직전 race 에서 시간 정보 자체가 없으면 보수적으로 stale 처리하지 않음 (helper 코드 참조). 운영 데이터 관찰 후 기본값 조정 가능.
+  - **pending bubble polling 누락**: cid 발급 전 (lazy-create 첫 응답까지) 는 polling 이 안 됨 (cid sentinel). 그 사이 step 은 응답 도착 후 첫 polling 으로 누적 받음 (`after_step=0` snapshot). 첫 polling 까지의 미세한 지연은 elapsed timer 가 client tick 으로 보완.
+  - **point rail 의 scroll observer**: 매 scroll 마다 모든 message element 의 getBoundingClientRect 호출 → O(N). 메시지 1000개 이상에서 jank 가능 — 현재 규모 (대화당 수십~수백 메시지) 에서는 무리 없음. 필요 시 IntersectionObserver 로 교체 후속 cycle.
+- Trace: REQ-20260515-0003 ~ REQ-20260515-0010 → TASK-0061 → CHG-20260515-0003 → REV-20260515-0003
+
+## REV-20260515-0002
+- Date: 2026-05-15
+- Decision: Product prompt 는 `WebProductDatabases`에 등록된 실제 접근 DB만 기준으로 작성하고, Role `전 Product 공통` prompt 는 특정 Product 선택 시에도 누적 적용되도록 runtime 조립 로직을 수정한다.
+- Method:
+  1. `WebProducts` / `WebProductDatabases`에서 현재 Product가 `KR(킹스레이드)`와 `MV(마이크로볼츠)` 두 개임을 확인했다. `KR` 접근 DB는 `dbgame,dblog,dbauth`, `MV` 접근 DB는 `account_db,dev_1_1_1_20,have_00,log_v2,global_db`.
+  2. `information_schema.TABLES/COLUMNS`와 제한적 집계로 주요 스키마 성격을 확인했다. `KR`은 현재 상태(`dbgame`) + 대용량 로그(`dblog`) + 인증/기기(`dbauth`) 구조이고, `MV`는 계정 마스터(`account_db`) + 기준정보(`dev_1_1_1_20`) + 보유/매치 이력(`have_00`) + 서버/이벤트 기준(`global_db`) 구조다. `log_v2`는 DB는 존재하나 테이블이 0개다.
+  3. Product prompt 에 민감 컬럼 경고를 포함했다. `dbauth`의 DeviceToken/광고 식별자/IP, `account_db`의 password/token/db 접속 정보는 원문 출력 금지 또는 최소화 대상으로 명시했다.
+  4. Role 공통 prompt 는 `pending/operator/admin/sales/dba` 각각의 역할명과 권한 성격에 맞춰 작성했다.
+  5. 기존 runtime 은 Role×Product prompt 가 있으면 Role common prompt 를 fallback 으로만 사용했다. UI의 "전 Product 공통" 의미와 다르므로 feature-0002의 `compose_system_prompt()`를 공통 누적 방식으로 수정했다.
+- Risks:
+  - Product prompt 는 현재 DB 상태 기준이다. 스키마가 크게 바뀌면 Product prompt 도 재검토해야 한다.
+  - `make mysql`은 self-signed TLS chain 오류로 실패했다. 직접 SQL은 실행 중인 mysql 컨테이너 내부에서 root 환경변수 기반으로 수행했고, 비밀번호 값은 출력하지 않았다.
+  - `make web` 재기동 중 기존 web/mysql/browser/worker 컨테이너가 한 번 정리된 뒤 web/mysql만 재기동했다. 최종 검증에 필요한 web/mysql은 정상 기동 상태다.
+
+## REV-20260515-0001
+- Date: 2026-05-15
+- Decision: TASK-0059 (REQ-20260515-0001, **Major** §12.3 — 사용자 대화 routing 데이터 영역). "새 대화" 의 lazy-create 의도가 backend 로 전달되지 않아 빈 `conversation_id` 가 `_repair_current_conversation` 폴백 경로에서 `account.last_conversation_id` 로 귀결되던 결함을, 명시적 `lazy_create` body hint + `_resolve_conversation_for_account(force_new=...)` plumbing 으로 닫음. 인증/인가 catalog·endpoint guard·owner check 무변경.
+- Method:
+  1. **버그 재현 분석**: 사용자 보고 "새 대화 만든 후 그 대화에서 요청을 보냈는데 기존 대화에서 처리됨". 코드 trace 로 핵심 경로 파악 — frontend `beginPendingConversation()` [app.js:2148-2172] 이 `state.activeConversationId=""` + `pendingNewConversation=true` 로 두고 backend row 를 lazy 생성 위임 (TASK-0048 빈 대화 누적 방지 정책). `sendPrompt()` [app.js:2454] 는 `askBody.conversation_id=""` 로 `/api/ask` 호출. backend [app.py:4273-4285] 가 빈 cid 경로에서 `_resolve_conversation_for_account(..., create_if_missing=True)` 호출 → `_repair_current_conversation` [app.py:1156-1179] 으로 폴백 → `current_id = account.last_conversation_id` (= 직전 대화) 가 visible 안에 있으면 line 1167-1168 의 early return 으로 **기존 대화 ID 반환**. 신규 의도가 backend 로 전달되지 않음.
+  2. **부가 race 발견**: `loadConversations` [app.js:2074] 이 pending 모드 진행 중에 호출되면 `payload.current` (= backend `_repair_current_conversation(create_if_missing=False)` 결과 = 직전 대화 id) 로 `state.activeConversationId` 를 덮어써 pending 의도를 깨뜨릴 수 있음. progress polling 정리에서 폴백된 갱신이나 다른 비동기 path 가 호출하는 경로에서 발생 가능.
+  3. **대안 비교**:
+     - **Alt A (선택)**: 명시적 `lazy_create` hint — frontend 가 pending 의도를 backend 에 신호. 단일 변경점 + 기존 fallback 보존 + legacy client 호환.
+     - **Alt B**: backend 가 빈 conversation_id 를 항상 신규 생성. 단순하지만 첫 로그인 후 자동 이어받기 / `/api/use_conversation` 미호출 client 흐름이 깨짐. backward-compat 위배.
+     - **Alt C**: frontend 가 pending 모드일 때 명시적 `/api/new_conversation` 먼저 호출. TASK-0048 의 빈 대화 누적 방지 정책이 부활하므로 거부.
+  4. **race 가드 분리**: backend 의 routing fix 만으로는 pending 의도가 frontend 자체에서 깨질 가능성 잔존 → `loadConversations` 의 active id 덮어쓰기에 `!state.pendingNewConversation` 가드 추가. 두 변경은 독립적 — 하나만 적용해도 일부 시나리오 보호되나, 함께 적용해야 모든 reproduction 경로 차단.
+- Risks:
+  - **legacy client (구버전 frontend)**: hint 미포함 ask 요청은 force_new=False 로 기존 동작 유지. 그래서 backend 단독 deploy 후 frontend 가 캐시된 구버전이면 버그는 그대로 재현 가능. cache-bust 필요 시 `static/app.js` 의 query string 갱신 (e.g. `v=20260515-lazy`). 본 cycle 은 변경 자체에 cache-bust 미포함 — 사용자가 hard reload 또는 browser cache clear 로 확인.
+  - **신규 cid 의 owner assign 경로**: `_repair_current_conversation` 의 force_new=True 분기는 `_create_conv(conv_file=_account_conv_file(...))` 호출 후 즉시 `_assign_conversation_owner(conn, next_id, account_id, force=True)` 와 `_set_account_current_conversation` 을 호출 (line 1175-1177). 즉 새 cid 는 본 계정 소유로 즉시 assign 되며 cross-account leak 가능성 없음.
+  - **pending 가드의 부작용**: `loadConversations` 가 pending 중에 호출되어도 active id 가 보존되므로 backend `payload.current` 와 frontend `state.activeConversationId` 가 일시적으로 분기. 사용자가 사이드바에서 다른 대화를 직접 선택하면 `selectConversation` [app.js:2101] 이 pending 모드를 종료시키므로 (line 2106-2108) 정합 회복. 첫 메시지 전송 시에는 `sendPrompt` 의 lazy create 분기 (line 2509-2513) 가 새 cid 로 정리.
+  - **owner check 우회 가능성**: 변경 후에도 명시 cid 가 들어오는 경로 (`request_conversation_id` truthy) 는 기존 `_conversation_owned_by_account` 검사 [app.py:4269-4271] 를 그대로 거친다. force_new 경로는 새 cid 를 즉시 생성하므로 owner check 가 무의미 (본 계정 소유). 인가 모델 무변경 확인.
+  - **TASK-0048 정책과의 충돌 여부**: TASK-0048 은 "빈 대화 row 누적 방지" 가 목적. 본 fix 의 force_new 분기는 **메시지 전송 시점에만** 발동하므로 row 가 만들어지는 즉시 메시지가 attach 됨 → 빈 대화 아님. 정책 위배 0.
+- Follow-ups:
+  - 운영 검증: web 컨테이너 재배포 후 (a) 직전 대화 X 가 있는 상태에서 "새 대화" 클릭 → 빈 입력창 → 메시지 전송 → 새 cid Y 발급 + 메시지가 Y 에 attach (X 에는 추가 없음) 확인. (b) 직전 대화 X 가 있는 상태에서 "새 대화" 클릭 → 사이드바 새로고침 트리거 → active 가 X 로 복귀 안 되는지 확인 (pending 가드).
+  - cache-bust: 다음 cycle 에서 frontend 변경 함께 deploy 할 때 `static/app.js?v=` 갱신.
+  - 회귀 테스트: feature-0003 unit tests 에 "lazy create 의도 시 신규 cid 발급" + "pending 모드 race 시 active 보존" 케이스 추가 가능 (현 cycle defer — TASK-0034 성능 테스트와 함께 다룰지 사용자 결정).
+
 ## REV-20260514-0001
 - Date: 2026-05-14
 - Decision: TASK-0058 (REQ-20260514-0001, **Critical** §12.3) 대화 공유 링크 기능 도입. anonymous 접근 허용은 사내 IP 가정 + 외부 배포 시 IP 제한/비밀번호 보호 후속 cycle. PLAN-APPROVED + 사용자 결정 6 항목 + outside voice review 완료 후 진행.

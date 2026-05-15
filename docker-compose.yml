@@ -19,6 +19,7 @@ x-agent-common: &agent-common
 services:
   mysql:
     image: mysql:${MYSQL_IMAGE_TAG}
+    restart: unless-stopped
     env_file:
       - .env
     environment:
@@ -66,6 +67,7 @@ services:
 
   mcp:
     image: bytebase/dbhub:${DBHUB_IMAGE_TAG}
+    restart: unless-stopped
     profiles: ["mcp"]
     env_file:
       - .env
@@ -93,6 +95,7 @@ services:
 
   web:
     <<: *agent-common
+    restart: unless-stopped
     entrypoint: ["/bin/sh", "-c", "if [ -f \"$WEB_TLS_CERT_FILE\" ] && [ -f \"$WEB_TLS_KEY_FILE\" ] && [ \"$ENABLE_WEB_TLS\" = '1' ]; then exec uvicorn web.app:app --host 0.0.0.0 --port 8000 --ssl-keyfile \"$WEB_TLS_KEY_FILE\" --ssl-certfile \"$WEB_TLS_CERT_FILE\"; else exec uvicorn web.app:app --host 0.0.0.0 --port 8000; fi"]
     volumes:
       - ../artifacts/shared:/shared
@@ -103,6 +106,7 @@ services:
 
   caddy:
     image: caddy:2
+    restart: unless-stopped
     env_file:
       - .env
     environment:
@@ -125,6 +129,7 @@ services:
     build:
       context: .
       dockerfile: unit/feature-0004-browser-automation/src/Dockerfile
+    restart: unless-stopped
     env_file:
       - .env
     environment:

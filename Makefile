@@ -366,7 +366,8 @@ web-tls-logs:  ## web: caddy 로그 follow
 
 insight-up:  ## insight: insight-worker 기동
 	@$(MAKE) check-llm-network
-	@$(DC_QUIET) up -d --build insight-worker
+	@$(MAKE) -s dc-build SERVICE=insight-worker
+	@$(DC_QUIET) up -d --no-build insight-worker
 
 insight-down:  ## insight: insight-worker 정지
 	@$(DC_QUIET) stop insight-worker || true
@@ -395,7 +396,8 @@ mcp-test:  ## mcp: MCP 엔드포인트 테스트 (unit/feature-0005-qa-mcp)
 # =============================================================================
 
 browser-up:  ## browser: browser 서비스 기동
-	@$(DC_QUIET) up -d --build browser
+	@$(MAKE) -s dc-build SERVICE=browser
+	@$(DC_QUIET) up -d --no-build browser
 	@echo "Browser service: http://localhost:$(BROWSER_PORT)"
 
 browser-down:  ## browser: browser 서비스 정지

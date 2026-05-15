@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260512-perm-sections" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260515-task-0062" />
 </head>
 <body>
 
@@ -121,6 +121,8 @@
             <button type="button" class="tool-btn hidden" id="loadMoreBtn">이전 기록</button>
             <button type="button" class="tool-btn hidden" id="forkConversationBtn" title="이 대화의 현재 기록을 내 계정의 새 대화로 복제합니다.">대화 복사</button>
             <button type="button" class="tool-btn hidden" id="shareConversationBtn" title="이 대화를 anonymous 접근 가능한 링크로 공유합니다.">공유</button>
+            <!-- TASK-0061 Phase 5 (REQ-20260515-0007): 캘린더/시각 기반 이동 -->
+            <button type="button" class="tool-btn hidden" id="historyCalendarBtn" title="대화 기록의 특정 날짜/시각으로 이동합니다." aria-haspopup="dialog" aria-expanded="false">📅 시간 이동</button>
             <button type="button" class="tool-btn hidden" id="renameConversationBtn">제목 변경</button>
             <button type="button" class="tool-btn danger hidden" id="deleteConversationBtn">삭제</button>
           </div>
@@ -144,13 +146,29 @@
           <div class="progress-steps" id="progressSteps"></div>
         </details>
 
-        <!-- Messages -->
-        <div class="messages" id="messageLog">
-          <div class="empty-state">
-            <strong>대화를 선택하거나 새 대화를 시작하세요</strong>
-            <span>좌측 목록에서 대화를 선택하거나 새 대화 버튼을 클릭하세요.</span>
+        <!-- Messages + Point Rail (TASK-0061 Phase 4 REQ-20260515-0006) -->
+        <div class="messages-wrap">
+          <div class="messages" id="messageLog">
+            <div class="empty-state">
+              <strong>대화를 선택하거나 새 대화를 시작하세요</strong>
+              <span>좌측 목록에서 대화를 선택하거나 새 대화 버튼을 클릭하세요.</span>
+            </div>
+          </div>
+          <nav class="message-point-rail hidden" id="messagePointRail" aria-label="대화 메시지 빠른 이동"></nav>
+          <!-- TASK-0061 Phase 5 (REQ-20260515-0007): 캘린더 popover -->
+          <div class="history-calendar-popover hidden" id="historyCalendarPopover" role="dialog" aria-modal="false" aria-label="대화 시간 이동">
+            <div class="history-calendar-header">
+              <button type="button" class="tool-btn" id="calendarPrevMonth" aria-label="이전 달">◀</button>
+              <span class="history-calendar-title" id="calendarTitle"></span>
+              <button type="button" class="tool-btn" id="calendarNextMonth" aria-label="다음 달">▶</button>
+            </div>
+            <div class="history-calendar-grid" id="calendarGrid"></div>
+            <div class="history-calendar-times" id="calendarTimes"></div>
           </div>
         </div>
+
+        <!-- TASK-0061 Phase 8 (REQ-20260515-0010): 내 대화 다중선택 bulk bar (chat pane 위) -->
+        <div class="conv-bulk-bar hidden" id="conversationBulkBar" role="toolbar" aria-live="polite"></div>
 
         <!-- Composer -->
         <div class="composer-wrap">
@@ -374,6 +392,6 @@
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260512-perm-sections"></script>
+  <script src="/static/app.js?v=20260515-task-0062"></script>
 </body>
 </html>

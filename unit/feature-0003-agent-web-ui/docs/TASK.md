@@ -12,10 +12,136 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: medium
-- Last Updated: 2026-05-14
+- Last Updated: 2026-05-15
 
 ## 2. Task Queue
-<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-14 -->
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-15 -->
+- [x] TASK-0062 (REQ-20260515-0011 / REQ-20260515-0012, Minor §12.3) GOAL 2026-05-15 후속: (1) 내 대화 다중선택 UX 개선 — `.conv-item-checkbox` DOM 제거, Ctrl/Shift modifier 만 다중 선택 허용, 2 개 이상 선택 시에만 bulk bar 표시, 일반 click 은 단일 선택 + `state.conversationSelected.clear()`. (2) Point rail dot 위치를 `messageLog.scrollHeight` 기준 비례 분포로 재배치 — `.message-point-rail` 이 `position: relative`, dot 이 `position: absolute; top: <pct>%; transform: translate(-50%, -50%)`. `layoutMessagePointRail()` 헬퍼가 `renderMessagePointRail` + resize 에서 재계산. 검증: node --check 통과, make web 재배포, browser smoke (single click → 다중 선택 해제 / Ctrl click 2개 → bulk bar 표시 / point rail dot 의 top% 가 message scrollHeight 비례). cache-bust `v=20260515-task-0062`.
+- [x] TASK-0061 (REQ-20260515-0003 ~ REQ-20260515-0010, **Major** §12.3 — UI 상태 / auth(비밀번호 초기화) / 파괴적 데이터(bulk delete) 일괄 변경) GOAL.md 8 항목 합본 cycle. **/qa round 2 심층 검증 완료 (2026-05-15, CHG-20260515-0004)** — Phase 4 Point rail dot click smooth scroll + active dot id 갱신, Phase 5 캘린더 월 이동 + day click → 시각 list 모두 정상. Phase 3/6/8 destructive endpoints 는 운영 환경 사용자 명시 시점에 실 호출 검증 권고. round 2 신규 이슈 0 건. 답변 버블 내부 실시간 step 진행 (Phase 1) + 신규 대화 첫 요청 polling 즉시 연결 (Phase 2) + processing 만료 감지 + 붉은 badge (Phase 3) + 우측 Point rail (Phase 4) + 캘린더/시각 이동 (Phase 5) + 관리자 비밀번호 초기화 (Phase 6) + admin select-all 현재 페이지 fix (Phase 7) + 내 대화 Ctrl/Shift bulk delete (Phase 8). 상세 plan-review 는 §2.1 Implementation Plan (TASK-0061). **사용자 승인 요청 시점**: §2.1 Plan 확정 후 Phase 6 (Critical 분면 — 비밀번호 초기화, 인증 모델 영향) 진입 전. Phase 1~5, 7, 8 (Major) 는 plan-review 통과 후 Execute.
+- [x] TASK-0060 (REQ-20260515-0002, Minor §12.3) Product별 접근 가능 DB의 실제 스키마/데이터를 분석해 Product scope 시스템 프롬프트를 작성하고, Role detail 의 `전 Product 공통` 프롬프트를 역할명에 맞게 채움. 분석 대상: `KR(킹스레이드)` 접근 DB `dbgame,dblog,dbauth`, `MV(마이크로볼츠)` 접근 DB `account_db,dev_1_1_1_20,have_00,log_v2,global_db`. `log_v2`는 DB는 존재하지만 테이블 0개로 확인. 실제 DB에는 product prompt 2건 + role 공통 prompt 5건(`pending/operator/admin/sales/dba`) upsert 완료. runtime 의 누적 적용은 feature-0002 `compose_system_prompt()` 수정으로 보장.
+- [x] TASK-0059 (REQ-20260515-0001, **Major** §12.3 — 사용자 대화 routing 데이터 영역, 인증/인가 모델 무변경) "새 대화" 버튼 누른 후 첫 메시지를 보내도 backend 가 직전 active 대화에 메시지를 추가하는 lazy-create routing 결함 수정. 사용자가 신규 대화 의도로 보낸 첫 메시지가 잘못된 대화 컨텍스트로 귀속되어 발견. **근본 원인**: frontend `beginPendingConversation()` 이 `state.activeConversationId=""` 로 두고 backend row 를 lazy 생성 위임하나 (TASK-0048 정책), `/api/ask` 의 빈 `conversation_id` 경로가 `_resolve_conversation_for_account` → `_repair_current_conversation` 으로 폴백해 `account.last_conversation_id` (직전 대화) 를 반환. frontend 의 "pending = 신규 의도" 가 backend 로 전달되지 않아 "session 초기화 후 직전 대화 이어받기" 와 구분 불가. **Fix Phase A**: frontend `sendPrompt()` 가 `isLazyCreate=true` 일 때 `askBody.lazy_create = true` 를 추가. **Phase B**: backend `_resolve_conversation_for_account(..., force_new=False)` kwarg 추가, `_repair_current_conversation` 의 기존 `force_new` 파라미터로 위임. `/api/ask` 의 빈 `request_conversation_id` 경로에서 `data.get("lazy_create")` 가 truthy 이면 `force_new=True` 호출. **Phase C**: frontend `loadConversations()` 의 `state.activeConversationId` 덮어쓰기에 `!state.pendingNewConversation` 가드 추가 — pending 모드 race 시 직전 대화로 복귀 차단. **Phase D**: MODIFY.md CHG-20260515-0001 + REVIEW.md REV-20260515-0001 기록.
+
+### 2.1 Implementation Plan (TASK-0061)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 Major 등급 변경 계획이다. **상태**: `approved`. 사용자가 2026-05-15 에 Phase 1~8 일괄 승인 + 비밀번호 초기화 권장안 (MustChangePassword + 임시비번 1회 표시 + 세션 revoke + self-reset 금지) 채택을 명시했다. 사용자의 명료화: "관리자 계정의 비밀번호 초기화가 아닌, 관리자 주관으로 특정 계정의 비밀번호를 초기화 하는 기능" — AC-0093 (self-reset 거부) 의도와 정합.
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-15 (TASK-0061 Phase 1~8 일괄, Phase 6 Critical 분면 포함) -->
+
+#### 영향 파일 요약
+
+Backend:
+- [src/app.py](../src/app.py) — Phase 3 (`_compute_display_status` + WEB_PROGRESS_STALE_TIMEOUT_SECONDS env + `/api/progress` / `/api/ask_status` / `/api/ask_result` / `_list_conversations` 일관 반영), Phase 5 (`/api/history_dates` 가 `AgentMemoryMessages` 기준으로 SELECT 변경), Phase 6 (`WebAccounts.MustChangePassword` ALTER + `_ensure_web_tables` / `_ensure_seed_catchup` idempotent helper + `POST /api/admin/accounts/{account_id}/password-reset` endpoint + `/api/auth/login` 응답에 `must_change_password` 추가 + `/api/auth/me` PATCH 가 비밀번호 변경 성공 시 `MustChangePassword=0`), Phase 8 (`_delete_conversation_impl` helper 추출 + `POST /api/delete_conversations` endpoint).
+
+Frontend:
+- [src/static/app.js](../src/static/app.js) — Phase 1 (`state.pendingBubble` + `renderPendingAssistantBubble()` + `applyProgressPayload()` 가 pending bubble 동시 갱신 + elapsed timer interval + `renderMessages()` 가 pending state 가 있으면 사용자 message + pending bubble 즉시 prepend), Phase 2 (`sendPrompt()` lazy-create 분기에서 pending bubble 진입 + `/api/ask` 응답 직후 polling start), Phase 3 (`renderConversationList()` 가 `display_status === "stale_error"` 시 `.is-stale-error` dot 사용 + tooltip), Phase 4 (`#messagePointRail` 컨테이너 + `renderMessagePointRail()` + scroll/click handler), Phase 5 (`historyCalendarBtn` + popover + `/api/history_dates` 호출 + `/api/history_anchor` jump), Phase 6 (`/api/auth/login` 응답에서 `must_change_password` 처리 — 강제 modal), Phase 8 (`state.conversationSelected: Set<string>` + `state.conversationLastClickIdx` + `conv-item-checkbox` 추가 + Ctrl/Shift click handler + `.conv-bulk-bar`).
+- [src/static/admin.js](../src/static/admin.js) — Phase 6 (Account detail 에 `adminPasswordResetBtn` + modal 표시 + 임시 비밀번호 복사 액션), Phase 7 (accountSelectAll change handler 가 `filteredAccounts()` 의 `accountPage` slice 만 대상으로 변경 + `updateAccountSelectAllCheckbox()` 도 동일 helper 사용 + Roles/Products select-all 도 동일 정책 정합화).
+- [src/static/index.html](../src/static/index.html) — Phase 4 (`#messagePointRail` 컨테이너), Phase 5 (`historyCalendarBtn` + popover container), 그 외 ID 추가.
+- [src/static/admin.html](../src/static/admin.html) — Phase 6 (Account detail 의 `adminPasswordResetBtn` slot — `renderAccountDetail()` 에서 동적 mount 도 가능하지만 cache-bust 위치 정의).
+- [src/static/styles.css](../src/static/styles.css) — Phase 1 (`.message.is-pending` + spinner + elapsed + step list 토큰), Phase 3 (`.conv-dot.is-stale-error` red 토큰), Phase 4 (`.message-point-rail` + `.message-point-dot`), Phase 5 (`.history-calendar-popover` + grid), Phase 6 (`.admin-password-reset-modal` + `.temp-password-display`), Phase 8 (`.conv-item-checkbox` + `.conv-bulk-bar`).
+
+문서:
+- `docs/FUNCTION.md` — 본 commit 에 REQ-20260515-0003 ~ 0010 + AC-0070 ~ AC-0107 이미 추가됨.
+- `docs/TASK.md` — 본 §2.1 + Task Queue entry + Completion Checklist.
+- `docs/MODIFY.md` — Phase 별 CHG entry (8 phase).
+- `docs/REVIEW.md` — Phase 1 (호환 차원에서 `#progressCard` 유지 결정), Phase 3 (env 기본값 20 분 결정 근거 — 장시간 SQL/LLM 작업 고려), Phase 6 (1 회 표시 / 평문 저장 금지 / MustChangePassword 강제 / 세션 revoke / self-reset 금지 보안 정책 결정), Phase 7 (bulk delete partial success + ≥10 typed-confirm 결정), Phase 8 (bulk delete partial success 채택, rollback 미선택 사유).
+- `docs/REPORT.md` — Phase 별 변경 요약 + git 동기화 결과 (§16.5 Step 6).
+- `docs/TEST.md` — TEST 케이스 정의 (§2) rewrite + 실행 결과 (§3) append.
+- 프로젝트 수준: `repo/.env.example` — `WEB_PROGRESS_STALE_TIMEOUT_SECONDS=1200` 추가, `repo/docs/STATUS.md` feature-0003 row 갱신, `repo/docs/SECURITY.md` 비밀번호 초기화 정책 1 줄 추가.
+
+#### 접근 방법 (Phase 순서)
+
+순서는 의존성 최소화 + 빠른 검증 가능성 기준으로 정렬했다. 각 Phase 끝마다 python compile + node --check 가능하도록 분할.
+
+1. **Phase 3 (backend stale 감지) 먼저** — 가장 자족적인 backend 변경. helper + env 추가 + 3 endpoint 응답 + conversation list status. 검증: `/api/progress` HTTP 응답에 stale 가 정확히 들어가는지.
+2. **Phase 1 (답변 버블 live progress)** — frontend 핵심. `state.pendingBubble` 자료구조 + render + applyProgressPayload 갱신 + elapsed timer + `renderMessages()` 분기. Phase 3 의 status 가 stale 일 때 pending bubble 에서도 오류 영역 노출.
+3. **Phase 2 (신규 대화 첫 polling)** — Phase 1 의존. lazy-create 분기에서 pending bubble 진입 + `/api/ask` 응답 직후 polling start. 회귀: 기존 대화 ask 흐름은 변경 없음.
+4. **Phase 4 (Point rail)** — Phase 1 의 message rendering 위에 build. scroll observer + click handler.
+5. **Phase 5 (캘린더)** — Phase 4 와 무관. backend `/api/history_dates` 의 source table 변경 + frontend popover. timezone 은 server 의 DATE() 그대로 (UTC).
+6. **Phase 7 (admin select-all fix)** — 자족적인 frontend bug fix. 그 다음 Phase 6 (Critical) 직전에 끊어서 사용자 confirm 요청.
+7. **Phase 8 (bulk delete)** — backend helper + endpoint + frontend selection state + UI. 단건 endpoint 와 동일 가드 재사용.
+8. **🛑 Phase 6 (비밀번호 초기화 — Critical confirm) 직전 STOP** — DB schema 변경 (`MustChangePassword`) + 인증 응답 contract 변경 + 임시 비밀번호 노출. 사용자 명시 confirm 받은 후 Execute.
+
+#### 위험도 평가 (§12.3)
+
+| Phase | 변경 영역 | 위험도 | 사전 승인 |
+|------|-----------|--------|----------|
+| Phase 1 | frontend UI 상태 추가 | Minor | plan-review 만 |
+| Phase 2 | frontend lazy-create UX | Minor | plan-review 만 |
+| Phase 3 | backend status helper + env | Major (운영 환경변수 + 표시 정책) | plan-review |
+| Phase 4 | frontend UI 추가 | Minor | plan-review 만 |
+| Phase 5 | backend SELECT source 변경 | Minor | plan-review (회귀 가능성) |
+| Phase 6 | **인증 모델 + 비밀번호 + 세션 revoke** | **Critical** | **사용자 명시 confirm** |
+| Phase 7 | frontend bug fix | Minor | plan-review 만 |
+| Phase 8 | **파괴적 데이터 일괄 삭제 + 신규 endpoint** | **Major** | plan-review (cross-account leak 위험 없음 — owner 가드 보존) |
+
+**전체 등급**: Major (Phase 1~5, 7, 8 은 plan-review 마커 부여로 Execute. Phase 6 는 별도 Critical confirm).
+
+#### 검증 계획
+
+각 Phase 종료 후:
+- (a) `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py`
+- (b) `node --check unit/feature-0003-agent-web-ui/src/static/app.js`
+- (c) `node --check unit/feature-0003-agent-web-ui/src/static/admin.js`
+
+전체 완료 후:
+- (d) `make web` — 컨테이너 재배포
+- (e) browser 검증 (gstack `/browse` 또는 make browser-*) — 8 시나리오 (GOAL.md §5 필수 브라우저 확인 8 항목) 실측 + screenshot 첨부.
+- (f) `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui`
+
+#### 미결정 사항의 결정 (GOAL.md §7)
+
+| 항목 | 결정 | 사유 |
+|------|------|------|
+| 비밀번호 초기화: MustChangePassword vs 임시비번+revoke only | **MustChangePassword 채택** | GOAL.md 권장 + 보안 우위. 1 회 임시 비밀번호 + 세션 revoke + 다음 로그인 시 강제 변경 |
+| `#progressCard` 유지 vs 축소 | **유지** | 호환성. 사용자별 collapsed 상태는 localStorage 보존 |
+| bulk delete partial vs rollback | **partial success + 결과 요약** | admin bulk UX 일관성 (AC-0035 와 정합) |
+| stale 만료시간 기본값 | **1200 sec (20 분)** | 장시간 SQL/LLM 작업 고려한 보수적 기본값. env 로 override 가능 |
+
+#### 사용자 승인 마커
+
+Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 §2 Task Queue 의 기존 마커를 재사용한다 (사용자가 이미 GOAL.md 의 진행 의도를 명시함). Phase 6 (Critical) 진입 직전 별도 마커:
+```md
+<!-- PLAN-APPROVED-PHASE-6 by <user> on YYYY-MM-DD -->
+```
+
+### 2.1 Implementation Plan (TASK-0060)
+
+영향 파일 / 데이터:
+- `agent_memory.WebSystemPrompts` — Product prompt 2건, Role 공통 prompt 5건 upsert
+- `../feature-0002-agent-core/src/agent_core.py` — Role 공통 prompt 누적 적용
+- `../feature-0002-agent-core/tests/test_compose_system_prompt.py` — 누적 적용 회귀 테스트
+- `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md` 및 feature-0002 문서
+
+접근 방법:
+1. `WebProducts`와 `WebProductDatabases`에서 Product별 접근 DB 목록을 확인한다.
+2. 각 접근 DB에 대해 `information_schema.TABLES/COLUMNS`와 제한적 집계 쿼리로 테이블 수, 주요 테이블, 시간 범위, 민감 컬럼 성격을 확인한다.
+3. 확인한 사실만 Product scope 시스템 프롬프트에 반영한다. 비밀번호/토큰/기기 식별자 등 민감 컬럼은 원문 노출 금지 지침으로 명시한다.
+4. Role `pending/operator/admin/sales/dba`의 `ProductId IS NULL` prompt 를 역할명에 맞게 작성한다.
+5. runtime 조립은 feature-0002에서 `전 Product 공통` Role prompt 누적 방식으로 수정하고 테스트한다.
+
+위험도: Minor — 비파괴 데이터 upsert + LLM 입력 패키징 수정. 인증/인가 catalog, DB schema, 삭제/파괴 작업 없음.
+
+### 2.1 Implementation Plan (TASK-0059)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 Major 등급 변경 계획이다. 사용자 승인 (2026-05-15) 으로 진행.
+
+**영향 파일**:
+- [src/static/app.js](../src/static/app.js) — `sendPrompt()` askBody 에 `lazy_create` hint (lazy 경로 한정), `loadConversations()` 의 active id 덮어쓰기에 pending 가드
+- [src/app.py](../src/app.py) — `_resolve_conversation_for_account` 시그니처에 `force_new=False` kwarg 추가, `/api/ask` 의 빈 `request_conversation_id` 경로가 `lazy_create` body hint 를 `force_new=True` 로 위임
+
+**접근 방법**:
+1. Frontend `sendPrompt()` 의 askBody 구성 시 `isLazyCreate` 일 때만 `lazy_create: true` 를 추가 (기존 대화 ask 에는 추가 안 함 — 의미 변경 0).
+2. Frontend `loadConversations()` 가 `state.pendingNewConversation` true 일 때는 `state.activeConversationId` 를 덮어쓰지 않음 — 사이드바 리스트와 backend `current` 는 갱신하되 active id 보존.
+3. Backend `_resolve_conversation_for_account` 에 `force_new=False` kwarg 추가. requested_id 가 truthy 이면 기존 동작 (force_new 무시), 빈 문자열이면 `_repair_current_conversation(..., force_new=force_new)` 로 위임. `_repair_current_conversation` 은 기존에 `force_new=True` 시 visible fallback 차단 + 새 cid 생성 로직을 이미 가짐 — body 변경 없음.
+4. `/api/ask` 의 빈 `request_conversation_id` 경로에서 `lazy_create_requested = bool(data.get("lazy_create"))` 추출 후 `_resolve_conversation_for_account(..., create_if_missing=True, force_new=lazy_create_requested)` 호출. hint 없는 legacy client (예: 첫 로그인 후 직전 대화 자동 이어받기 흐름) 는 force_new=False → 기존 동작 유지.
+
+**위험도**: **Major** §12.3 — 사용자 대화 routing 데이터 영역. 인증/인가 catalog·endpoint guard·owner check 무변경. `_account_can_access_conversation` / `_conversation_owned_by_account` 검사는 기존 그대로 유지되며 force_new 경로는 새 cid 를 생성하므로 owner 가 즉시 본 계정으로 assign 됨 (`_assign_conversation_owner(force=True)`). cross-account leak 가능성 없음.
+
+**검증**:
+- (a) `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py`
+- (b) `node --check unit/feature-0003-agent-web-ui/src/static/app.js`
+- (c) `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui`
+
 - [x] TASK-0058 (REQ-20260514-0001, **Critical** §12.3 — 인증/인가·개인정보·외부 공개 범위 변경) 대화 공유 링크 기능 도입. anonymous 접근 가능한 read-only view + 로그인 viewer 의 fork. 사용자 결정 6 항목 (외부 anonymous 허용 / 무기한 + revoke / read+fork / full+anchored / `conversation.share.create` 신설 / 메시지+SQL+결과셋 노출) 와 codex outside voice review 의 blindspot 보강 (B1 메시지 테이블 이중성 — AnchorMessageId 는 `AgentMemoryMessages.Id` 기준 inclusive `Id <= anchor`, B2 `_optional_account` 헬퍼 신설, R4 `_fork_conversation_impl` 추출로 share-grant 가 read-gate 우회, R6 revoke+view race-free 단일 UPDATE, R7 file attachment 자동 hide, R8 token 충돌 retry, R10 share.html FileResponse mount) 반영. **Phase A**: `PERMISSION_DEFINITIONS` 에 `conversation.share.create` 추가 (catalog 33→34, group=conversation), `SEED_ROLE_DEFINITIONS` operator/sales 에 grant + admin 보정 list 에 추가, `WebConversationShares` 테이블 신설, `_ensure_web_conversation_shares_schema(conn)` helper 가 slow path + fast path 양쪽 idempotent 호출, fast path catchup 에 `_ensure_permission_catalog(conn)` 추가로 신규 권한 hydrate. **Phase B**: `_optional_account` + `_fork_conversation_impl` 헬퍼 + 5 endpoint (POST/GET share[s], DELETE share, GET/POST public/share/{token}[/fork]). Token = `secrets.token_urlsafe(32)`. `/share/{token}` FileResponse route. **Phase C**: 헤더 `shareConversationBtn` (gated by `conversation.share.create`) + 메시지 hover "여기까지 공유" + `createConversationShare` 함수 (clipboard copy + toast). 권한 label/description 매핑 추가 → CONVENTIONS.md §10.6 conversation section 에 자동 합류. **Phase D**: `share.html` / `share.css` / `share.js` 신규 정적 파일 — anonymous accessible read-only view (메시지 + SQL `<pre>` + 결과셋 `<table>`), 로그인 + can_fork 시 "내 계정에서 fork" 버튼. **Phase E**: 본 entry + FUNCTION.md REQ-20260514-0001 (AC-0053~AC-0060), MODIFY.md / REVIEW.md, project-level [`docs/SECURITY.md`](../../../docs/SECURITY.md) 에 anonymous endpoint 2 곳 명시 + 외부 배포 시 IP 제한/비밀번호 보호 후속 cycle 권장, STATUS.md feature-0003 row 갱신.
 
 ### 2.1 Implementation Plan (TASK-0058)
@@ -223,6 +349,8 @@ source_of_truth: true
 - TASK-0034 복잡 QA 성능 테스트 — 현재 구성된 assistant(agent-core + web UI)의 복잡 질의 대응력을 측정해 이후 개선 포인트를 도출한다. Q1/Q2/Q3 검증 완료, **Q4/Q5 재수행 완료 (2026-04-22: Q4 7 턴 stopped-by-heuristic 1171s / Q5 5 턴 stopped-by-heuristic 251s, 전 턴 HTTP 200)** — TASK-0040/0041 선행 완료 후 블로커 해제. 현재 남은 일은 turn-by-turn 실제 답변과 truth query 대조 검증 + `TASK-0034-REPORT.md` / LEARNINGS 추가 정리.
 
 ## 3.1 Recently Done
+- TASK-0061 (2026-05-15 마감, REQ-20260515-0003~0010, **Major** §12.3 — Phase 6 Critical 분면 포함, 사용자 일괄 승인): GOAL.md 8 항목 합본 cycle. (Phase 1+2) 답변 버블 내부 실시간 step 진행 + 신규 대화 첫 요청 즉시 polling 연결 — `state.pendingBubble` + `renderPendingAssistantBubble` + elapsed timer + `applyProgressPayload` 동기화 + `sendPrompt` lazy-create 분기에서 cid 발급 즉시 `startProgressPolling`. (Phase 3) `_compute_display_status` + `WEB_PROGRESS_STALE_TIMEOUT_SECONDS=1200` + 일관 stale 반영 (/api/progress, ask_status, ask_result, list_conversations) + frontend `.conv-dot.is-stale-error` + toast. (Phase 4) `#messagePointRail` + scroll observer + click jump. (Phase 5) `/api/history_dates` AgentMemoryMessages 정본 + 캘린더 popover. (Phase 6 Critical) `WebAccounts.MustChangePassword` ALTER + `POST /api/admin/accounts/{id}/password-reset` (self-reset 거부) + 임시 비번 1회 표시 + 세션 revoke + 강제 변경 modal. (Phase 7) `currentPageAccounts()` helper 로 select-all 현재 페이지만 토글. (Phase 8) Ctrl/Shift 다중 선택 + `_delete_conversation_impl` helper 추출 + `POST /api/delete_conversations` partial success + ≥10 typed-confirm. 변경 파일: `app.py`, `app.js`, `admin.js`, `index.html`, `admin.html`, `styles.css`, `.env.example`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md`. cache-bust `v=20260515-task-0061`. 검증: python compile / node --check / make web / browser smoke (DOM 5 신규 element + login + bulk bar + 캘린더 popover + display_status + history_dates + delete_conversations + pending bubble + admin currentPageAccounts/select-all + reset btn) 모두 통과.
+
 - TASK-0050 (2026-05-06 마감): `make web` 이 docker compose v5.1.1 + buildx v0.31.1 의 provenance metadata file race 로 EXIT=1 종료되던 문제 우회. 환경 진단으로 `#15 exporting to image` 까지 정상 빌드 후 `#16 resolving provenance for metadata file` 직후 `open /tmp/.tmp-compose-build-metadataFile-<UUID>.json<NNNN>: no such file or directory` 메시지로 종료되는 패턴을 확인 (random suffix mismatch — compose 본체 회귀). `--provenance=false`, `BUILDX_NO_DEFAULT_ATTESTATIONS=1`, `COMPOSE_BAKE=true/false` 모두 효과 없음. Makefile 에 `dc-build SERVICE=...` reusable 가드 타깃을 추가하고 `web` 타깃을 `dc-build SERVICE=web` + `up -d --no-build web` 로 분리. 가드는 build 명령 로그를 임시파일에 캡처해 EXIT≠0 + 로그에 `compose-build-metadataFile` 문자열 포함 시에만 EXIT=0 으로 정규화 (다른 빌드 오류는 그대로 전파). 향후 compose 또는 buildx 가 fix 되면 가드는 자연스럽게 일반 build 경로로 흐름. 검증: `make web` EXIT=0, `[make] note: ...provenance metadata file race 우회...` 로그, `Container repo-web-1 Recreate/Recreated/Started`, `docker exec repo-web-1 grep -n PENDING_CONV_SENTINEL /app/web/static/app.js` 으로 새 코드 반영 확인. 학습 기록: `docs/LEARNINGS.md` LRN-20260506-0001 quirk.
 
 - TASK-0049 (2026-05-06 마감, REQ-20260506-0002): TASK-0048 lazy 화 이전에 누적된 빈 대화 row 들을 일회성으로 정리. `bin/cleanup-empty-conversations.sh` 추가 — dry-run 기본 + `--execute` 명시 시에만 DELETE, `AgentMemoryKv.last_status='processing'` 인 대화 보호 (실행 중 ask race), `c.created_at < NOW() - INTERVAL <keep-recent-min> MINUTE` (default 5분) 으로 방금 만들어진 placeholder 폴백/in-flight 보호, `--owner-account-id <N>` 으로 계정 한정 가능. SQL 주입 방지를 위해 owner_id/keep_recent_min 모두 정수 정규식 검증 후 인터폴레이션, AgentCoreConversations 와 AgentMemoryMessages 의 collation 차이를 `COLLATE utf8mb4_unicode_ci` 명시 변환으로 해결. 운영 데이터에 적용: 88 conversations / 42 empty / 46 non-empty → 46 conversations / 0 empty / 46 non-empty (5분 보호로 방금 만든 backward-compat 검증 row 1개 포함 정리). 정리된 빈 대화 42개의 owner 분포는 admin (id=1) 다수, 그 외 일부 사용자. 본 TASK 는 destructive 변경(§12.1) 이지만 사용자 2026-05-06 명시 진행 지시에 따라 §3.1 우선순위 1 적용. 추후 정리는 동일 스크립트 재실행으로 idempotent 하게 가능.
