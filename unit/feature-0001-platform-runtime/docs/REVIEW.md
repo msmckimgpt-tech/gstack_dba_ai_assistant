@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260515-0004
+- Date: 2026-05-15
+- Decision: `mysql`, `web`, `browser`, `caddy`, `mcp` 에 `restart: unless-stopped` 를 적용하고, `agent` / `memory-init` 은 restart 대상에서 제외한다.
+- Reason: 현재 `make status` 에서 `mcp` 만 실행 중이고 `mysql/web/browser/insight-worker` 가 모두 내려간 상태가 확인됐다. 또한 `insight_worker.log` 에 `2005 (HY000): Unknown MySQL server host 'mysql' (-2)` 오류가 반복되어, 워커 내부 예외가 아니라 compose 네트워크에서 `mysql` 서비스가 사라진 시간이 있었다. 기존 Compose 에서는 장기 실행 서비스 중 `insight-worker` 만 restart policy 를 가지고 있어 Docker daemon/WSL 재시작이나 일시적 프로세스 종료 뒤 나머지 서비스가 자동 복구되지 않는다. `unless-stopped` 는 사람이 명시적으로 멈춘 상태는 존중하면서 비의도 종료와 daemon 재시작 복구를 제공하므로 `make up` 의 기대 동작에 맞다.
+- Risk: 명시적 장애 상황에서도 컨테이너가 재시작을 반복할 수 있다. 그러나 MySQL healthcheck 와 서비스 로그로 원인 확인이 가능하고, `make down` / `make stop` 은 명시 중지 의도를 유지한다. `memory-init` 에 restart 를 적용하면 초기화 작업이 반복될 수 있어 제외했다.
+
 ## REV-20260515-0003
 - Date: 2026-05-15
 - Decision: `browser-up` / `insight-up` 도 `web` 타깃과 동일하게 `dc-build` 가드 + `up --no-build` 패턴으로 전환한다.

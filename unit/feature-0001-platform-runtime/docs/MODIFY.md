@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260515-0004
+- Date: 2026-05-15
+- Related Requirement: TASK-0059, REQ-20260515-0004
+- Summary: `make up` 으로 활성화한 장기 실행 컨테이너가 내려간 뒤 자동 복구되지 않는 문제를 막기 위해 Compose restart policy 를 정렬.
+- Files: `docker-compose.yml`, `unit/feature-0001-platform-runtime/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md`
+- Impact: `mysql`, `web`, `browser`, `caddy`, `mcp` 에 `restart: unless-stopped` 를 적용했다. 기존 `insight-worker` 정책과 일치하며, Docker daemon/WSL 재시작 또는 일시적 프로세스 종료 후 장기 실행 서비스가 내려간 상태로 방치될 가능성을 줄인다. `agent` 와 `memory-init` 은 일회성/수동 실행 컨테이너라 restart 대상에서 제외했다.
+- Verification: `make up`, `make status`, `make browser-health`
+
 ## CHG-20260515-0003
 - Date: 2026-05-15
 - Related Requirement: TASK-0058, REQ-20260515-0003

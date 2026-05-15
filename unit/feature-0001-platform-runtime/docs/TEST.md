@@ -18,8 +18,16 @@ source_of_truth: true
 - TEST-0003: 엄격한 운영 시나리오 정의 필요
 - TEST-0004: `make browser-up` 이 compose/buildx metadata file race 환경에서도 browser 서비스를 기동한다
 - TEST-0005: `make insight-up` 이 compose/buildx metadata file race 환경에서도 insight-worker 서비스를 기동한다
+- TEST-0006: `make up` 후 장기 실행 서비스가 restart policy 를 가진 상태로 기동한다
 
 ## 3. Test Run History
+- 2026-05-15:
+  - `make up`
+    - 결과: 통과. `mysql`, `web`, `browser`, `insight-worker`, `mcp` 기동 확인.
+  - `make status`
+    - 결과: 통과. `mysql` healthy, `web`, `browser`, `insight-worker`, `mcp` 실행 상태.
+  - `make browser-health`
+    - 결과: 통과. `{"ok": true}` 반환.
 - 2026-05-15:
   - `make browser-up`
     - 결과: 통과

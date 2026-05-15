@@ -23,6 +23,11 @@ source_of_truth: true
 - REQ-20260515-0003 (TASK-0058): docker compose v5.1.1 + buildx v0.31.1 provenance metadata file race 가 `browser-up` / `insight-up` 에서도 재발하지 않도록 기존 `dc-build` 가드 패턴을 적용한다.
   - AC-0016: `make browser-up` 은 `dc-build SERVICE=browser` 후 `up -d --no-build browser` 로 기동한다.
   - AC-0017: `make insight-up` 은 `dc-build SERVICE=insight-worker` 후 `up -d --no-build insight-worker` 로 기동한다.
+- REQ-20260515-0004 (TASK-0059): `make up` 으로 활성화한 장기 실행 컨테이너가 Docker daemon/WSL 재시작 또는 일시적 프로세스 종료 후 내려간 상태로 남지 않도록 Compose restart policy 를 정렬한다.
+  - AC-0018: `mysql`, `web`, `browser`, `caddy`, `mcp` 는 `restart: unless-stopped` 를 가진다.
+  - AC-0019: `insight-worker` 의 기존 `restart: unless-stopped` 정책은 유지한다.
+  - AC-0020: `agent` 와 `memory-init` 은 일회성/수동 실행 컨테이너이므로 restart 대상에서 제외한다.
+  - AC-0021: `make up` 후 `make status` 에서 `mysql`, `web`, `browser`, `insight-worker`, `mcp` 가 실행 상태로 표시된다.
 
 ## 3. In Scope
 - MySQL `conf.d` 설정 파일
