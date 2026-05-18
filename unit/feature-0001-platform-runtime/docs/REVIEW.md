@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260518-0001
+- Date: 2026-05-18
+- Decision: `mysql` 컨테이너의 `innodb_redo_log_capacity` 를 1 GiB (1073741824 bytes) 로 명시 설정. 99-mysql-ai-server.cnf 의 `[mysqld]` 섹션에 한 줄 추가 + trade-off 주석.
+- Reason: MySQL 8.0 의 dynamic redo log 기본값 100 MiB 가 본 프로젝트의 write 패턴 (insight-worker 의 KB 집계, agent_memory 의 conversation/message append, share/duplicate 등 transactional 작업 빈도) 에서 장시간 가동 시 saturation 도달. `log_checkpointer` 가 LSN 따라잡지 못해 InnoDB 가 redo log 공간 확보 대기 → write 지연 → mysqladmin ping healthcheck timeout → unhealthy 분류 → `dependency failed to start: container repo-mysql-1 is unhealthy` 로 `make up` / `make web` init 차단. 1 GiB 는 MySQL 8.0+ 의 `innodb_redo_log_capacity` 권장 범위 (100 M ~ 128 G) 내 보수적 상향이며 약 10 배 — 본 프로젝트의 운영 가동 시간 (수 일 ~ 수 주) 동안 saturation 없이 동작.
+- 대안 검토:
+  - **Alt-A: docker restart 로 매번 reset**: 응급 처치는 가능하나 사용자 가시적 장애 (web init 차단) + 재발 시점이 예측 불가 → 거부.
+  - **Alt-B: healthcheck threshold 완화 (interval/timeout/retries 늘림)**: unhealthy 분류 시점만 미루는 미봉책. 실제 write 지연은 그대로 → 거부.
+  - **Alt-C: 4 GiB / 8 GiB 등 더 큰 값**: disk 사용량 비례 증가. 본 프로젝트의 write 패턴에는 1 GiB 가 충분하며, 후속 saturation 발생 시점에 정밀 측정 후 추가 상향 가능 → 1 GiB 채택.
+- Risk:
+  - **디스크 사용량 +900 MiB** (`artifacts/mysql-data/#innodb_redo/` 의 `*.log` 파일들이 최대 1 GiB 까지 동적 할당). artifacts 디스크 여유가 GB 단위로 있다는 전제 — 본 운영 환경에서는 무시 가능.
+  - **재기동 시 redo log file resize 시간**: 100 MiB → 1 GiB 동적 resize 는 MySQL 8.0+ 가 background 로 수행. 본 cycle 검증에서 healthcheck 9 초만에 healthy 진입 — 운영 영향 무시 가능.
+  - **rollback 시 disk 회수 지연**: `innodb_redo_log_capacity` 를 다시 줄이면 MySQL 이 다음 checkpoint 이후 자동 회수하나 즉시 회수 안 됨. 운영상 문제 없음 (디스크 여유 충분 가정).
+  - **본 cycle 이 데이터 영역 무변경 보장**: redo log 는 commit flush buffer 일 뿐 데이터 정본은 `ibdata1` / `*.ibd` (별도 파일). 본 변경으로 데이터 손실 위험 0.
+- Trace: REQ-20260518-0002 → TASK-0064 → CHG-20260518-0001 → REV-20260518-0001
+
 ## REV-20260515-0004
 - Date: 2026-05-15
 - Decision: `mysql`, `web`, `browser`, `caddy`, `mcp` 에 `restart: unless-stopped` 를 적용하고, `agent` / `memory-init` 은 restart 대상에서 제외한다.

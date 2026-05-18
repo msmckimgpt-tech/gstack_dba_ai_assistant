@@ -9,6 +9,16 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-05-18 TASK-0064 완료 — mysql 컨테이너 `innodb_redo_log_capacity` 100 MiB → 1 GiB 상향** (CHG-20260518-0001, REV-20260518-0001, REQ-20260518-0002, Major §12.3 — mysql server 설정 변경, 데이터 영역 무변경). 발견 경위: TASK-0063 (feature-0003 conv-item menu) commit 직후 `make web` 표준 호출 시 init step 이 `dependency failed to start: container repo-mysql-1 is unhealthy` 로 차단. `docker logs repo-mysql-1` 에 `MY-014084 Threads are unable to reserve space in redo log ... log_checkpointer ... lagging` + `MY-014089 Redo log writer is waiting for a new redo log file. The current log capacity is 104857600 bytes` 가 수 초 간격으로 지속 출력 — 기본 100 MiB redo log saturation 으로 `log_checkpointer` 가 LSN 따라잡지 못하는 상태. 응급으로 `docker restart` 시 healthy 회복 가능하나 장시간 가동 시 재발 — 본 cycle 에서 근본 fix.
+
+수정: `repo/unit/feature-0001-platform-runtime/src/mysql/conf.d/99-mysql-ai-server.cnf` 의 `[mysqld]` 섹션에 `innodb_redo_log_capacity = 1073741824` (1 GiB) 추가. 회귀 사유 + trade-off (디스크 +900 MiB, 메모리 변화 0, 데이터 정본 무변경) 주석 동봉.
+
+검증: `docker compose restart mysql` → healthcheck 9 초만에 healthy 진입. `SELECT @@innodb_redo_log_capacity = 1073741824` 확인. `make up` 완주 — memory-init "메모리 테이블 초기화 완료", 5 컨테이너 (mysql healthy / web / browser / insight-worker / mcp) 모두 Up. Endpoint smoke: Web UI HTTP 200 (18.8 KB), MCP HTTP 200.
+
+후속 cycle 권장 (REV-20260518-0001 Risks): 1 GiB 가 본 프로젝트 write 패턴에 충분한지 장시간 가동 후 재측정 권장. 후속 saturation 발생 시 4 GiB / 8 GiB 등 추가 상향 가능 (디스크 여유 검토 필요).
+
+---
+
 **2026-05-15 TASK-0059 완료 — `make up` 장기 실행 컨테이너 restart policy 정렬** (CHG-20260515-0004, REQ-20260515-0004, Minor §12.3). 현상 확인 시점에 `make status` 는 `mcp` 만 실행 중이고 `mysql/web/browser/insight-worker` 는 내려간 상태였다. `insight_worker.log` 에는 `2005 (HY000): Unknown MySQL server host 'mysql' (-2)` 가 반복되어, 워커 자체 예외가 아니라 compose 네트워크에서 `mysql` 서비스가 사라진 시간이 있었음이 확인됐다. 원인: 장기 실행 서비스 중 `insight-worker` 만 `restart: unless-stopped` 를 가지고 있고 `mysql`, `web`, `browser`, `caddy`, `mcp` 는 restart policy 가 없어 Docker daemon/WSL 재시작 또는 일시적 프로세스 종료 뒤 자동 복구되지 않았다. 수정: `mysql`, `web`, `browser`, `caddy`, `mcp` 에 `restart: unless-stopped` 적용. `agent` / `memory-init` 은 일회성/수동 실행 컨테이너라 제외. 검증: `make up` 이 변경된 compose 설정으로 컨테이너를 재생성했고, `make status` 에서 `mysql` healthy + `web/browser/insight-worker/mcp` 실행 확인, `make browser-health` 는 `{"ok": true}` 를 반환했다.
 
 **2026-05-15 TASK-0058 완료 — browser-up / insight-up buildx metadata race 대응** (CHG-20260515-0003, REQ-20260515-0003, Minor §12.3). `make browser-up` 실행 중 `make web`에서 이미 확인했던 docker compose v5.1.1 + buildx v0.31.1 provenance metadata file race 가 재현됐다. 이미지 빌드는 성공했지만 `open /tmp/.tmp-compose-build-metadataFile-... no such file or directory` 후처리 오류로 target 이 실패했다. 기존 `dc-build SERVICE=...` 가드 패턴을 `browser-up` / `insight-up` 에도 적용해 빌드는 가드에서 수행하고 서비스 기동은 `up -d --no-build` 로 분리했다.

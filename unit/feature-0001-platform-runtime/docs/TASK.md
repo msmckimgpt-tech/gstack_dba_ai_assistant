@@ -15,6 +15,8 @@ source_of_truth: true
 - Last Updated: 2026-05-15
 
 ## 2. Task Queue
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0064, Major §12.3 — 운영 인프라 / 데이터 영역 무변경) -->
+- [x] TASK-0064 (REQ-20260518-0002, **Major** §12.3 — mysql 컨테이너 server 설정 변경) `mysql` 컨테이너의 `innodb_redo_log_capacity` 를 기본 100 MiB → 1 GiB 로 상향. 장시간 가동 중 redo log saturation (`MY-014084` / `MY-014089`) 으로 healthcheck 가 unhealthy 분류되어 `dependency failed to start: container repo-mysql-1 is unhealthy` 로 `make up` / `make web` 의 init step 이 차단되던 운영 회귀 차단. `repo/unit/feature-0001-platform-runtime/src/mysql/conf.d/99-mysql-ai-server.cnf` 의 `[mysqld]` 섹션에 `innodb_redo_log_capacity = 1073741824` 추가. trade-off: 디스크 `artifacts/mysql-data/#innodb_redo/` +900 MiB, 메모리 변화 0, 데이터 정본 (`ibdata1`, `*.ibd`) 무변경. 검증: `docker compose restart mysql` 후 healthcheck 9 초만에 healthy, `SELECT @@innodb_redo_log_capacity = 1073741824` 확인, `make up` 완주 (5 컨테이너 모두 Up).
 - [x] TASK-0059 (REQ-20260515-0004, Minor §12.3) `make up` 으로 활성화한 장기 실행 컨테이너가 Docker daemon/WSL 재시작 또는 일시적 프로세스 종료 후 자동 복구되지 않는 문제 수정. `mysql`, `web`, `browser`, `caddy`, `mcp` 에 `restart: unless-stopped` 를 적용하고, 기존 `insight-worker` 정책과 정렬한다.
 - [x] TASK-0060 (REQ-20260515-0004, Minor §12.3) TASK-0059 Git 동기화 결과를 `REPORT.md` 에 기록하고, 현재 공개 브랜치 scope 불일치로 원격 push/PR 갱신을 보류한다.
 - [x] TASK-0058 (REQ-20260515-0003, Minor §12.3) docker compose v5.1.1 + buildx v0.31.1 provenance metadata file race 가 `browser-up` / `insight-up` 에서도 재발하던 문제 수정. 기존 `web` 타깃이 쓰는 `dc-build SERVICE=...` 가드를 재사용해 build metadata race 는 흡수하고, 실제 기동은 `up -d --no-build` 로 수행한다.

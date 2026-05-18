@@ -28,6 +28,11 @@ source_of_truth: true
   - AC-0019: `insight-worker` 의 기존 `restart: unless-stopped` 정책은 유지한다.
   - AC-0020: `agent` 와 `memory-init` 은 일회성/수동 실행 컨테이너이므로 restart 대상에서 제외한다.
   - AC-0021: `make up` 후 `make status` 에서 `mysql`, `web`, `browser`, `insight-worker`, `mcp` 가 실행 상태로 표시된다.
+- REQ-20260518-0002 (TASK-0064, Major §12.3 — 운영 인프라 / 데이터 영역 무변경): `mysql` 컨테이너의 `innodb_redo_log_capacity` 를 기본 100M (MySQL 8.0+ default) 에서 1 GiB 로 상향해, 장시간 가동 중 redo log saturation (`[InnoDB] Threads are unable to reserve space in redo log ... log_checkpointer ... lagging`, `[InnoDB] Redo log writer is waiting for a new redo log file`) 으로 healthcheck 가 unhealthy 로 분류되는 회귀를 차단한다.
+  - AC-0022: `repo/unit/feature-0001-platform-runtime/src/mysql/conf.d/99-mysql-ai-server.cnf` 의 `[mysqld]` 섹션에 `innodb_redo_log_capacity = 1073741824` (= 1 GiB, 1024×1024×1024) 가 명시된다. 주석은 회귀 사유 (MY-014084 / MY-014089) 와 trade-off (디스크 +900 MiB, 메모리 변화 0) 를 한 단락으로 남긴다.
+  - AC-0023: `docker compose restart mysql` 또는 `make restart` 후 컨테이너 healthcheck 가 30 초 이내에 `(healthy)` 로 전환되며, `SELECT @@innodb_redo_log_capacity;` 결과가 `1073741824` 을 반환한다.
+  - AC-0024: 적용 후 `make up` 흐름이 `init` (memory-init) → `web` → `browser` → `insight-worker` → `mcp` 의존성 그래프를 통과해 5 개 컨테이너가 모두 Up 상태가 된다. healthcheck unhealthy 로 인한 `dependency failed to start: container repo-mysql-1 is unhealthy` 차단이 발생하지 않는다.
+  - AC-0025: 데이터 보존성 — `innodb_redo_log_capacity` 변경은 `ib_logfile*` 파일을 동적 resize 하며 `ibdata1` / `*.ibd` 데이터 정본은 무변경이다. 본 변경으로 발생할 수 있는 데이터 손실은 없다.
 
 ## 3. In Scope
 - MySQL `conf.d` 설정 파일

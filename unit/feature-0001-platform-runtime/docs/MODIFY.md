@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260518-0001
+- Date: 2026-05-18
+- Related Requirement: TASK-0064, REQ-20260518-0002
+- Summary: TASK-0064 (Major §12.3 — mysql 컨테이너 server 설정 변경) `mysql` 의 `innodb_redo_log_capacity` 를 기본 100 MiB → 1 GiB 로 상향. MySQL 8.0+ 의 dynamic redo log 가 기본 100 MiB 한계에서 장시간 가동 시 saturation (`MY-014084 Threads are unable to reserve space in redo log`, `MY-014089 Redo log writer is waiting for a new redo log file`) 으로 healthcheck 가 unhealthy 분류되어, `make up` / `make web` 의 `init` step 이 `dependency failed to start: container repo-mysql-1 is unhealthy` 로 차단되던 운영 회귀를 차단.
+- 발견 경위: TASK-0063 (feature-0003 conv-item menu) commit 직후 사용자 요청으로 `make web` 표준 호출 시 init step fail 재현 → `docker logs repo-mysql-1` 에 redo log saturation 경고가 수 초 간격으로 지속 출력, `Up 2 days (unhealthy)` 상태 확인. `docker restart repo-mysql-1` 으로 saturation reset 후 healthy 회복 가능하나, 장시간 가동 시 재발 — 본 cycle 에서 근본 fix 진행 (사용자 결정).
+- Files:
+  - `repo/unit/feature-0001-platform-runtime/src/mysql/conf.d/99-mysql-ai-server.cnf` — `[mysqld]` 섹션에 `innodb_redo_log_capacity = 1073741824` 추가. 회귀 사유 (MY-014084 / MY-014089) + trade-off (디스크 +900 MiB, 메모리 변화 0, 데이터 정본 무변경) 주석 한 단락 동봉.
+  - `repo/unit/feature-0001-platform-runtime/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md` — REQ-20260518-0002 / AC-0022~AC-0025 / TASK-0064 / CHG-20260518-0001 / REV-20260518-0001 entries.
+  - `repo/docs/STATUS.md` — feature-0001 row 갱신 + 상단 prose entry.
+- Verification:
+  - `docker compose restart mysql` 후 healthcheck 9 초만에 `Up (healthy)` 진입.
+  - `SELECT @@innodb_redo_log_capacity;` → `1073741824` (= 1.00 GiB) 확인.
+  - `make up` 완주 — memory-init "메모리 테이블 초기화 완료" 출력, 5 컨테이너 (mysql healthy / web / browser / insight-worker / mcp) 모두 Up.
+  - Endpoint smoke: Web UI `http://localhost:18080` HTTP 200 (18.8 KB), MCP `http://localhost:28000` HTTP 200.
+- Impact: mysql 컨테이너 server 설정 변경. 데이터 정본 (`ibdata1`, `*.ibd`) 무변경 — `ib_logfile*` 만 1 GiB 까지 동적 resize. 운영 환경 적용 시 `docker compose restart mysql` 또는 `make restart` 만 필요. rollback 안전 (`innodb_redo_log_capacity` 줄이는 것도 동적 — 단 안 줄어든 상태에선 disk 회수까지 시간 필요).
+- Trace: REQ-20260518-0002 → TASK-0064 → CHG-20260518-0001 → REV-20260518-0001
+
 ## CHG-20260515-0005
 - Date: 2026-05-15
 - Related Requirement: TASK-0060, REQ-20260515-0004
