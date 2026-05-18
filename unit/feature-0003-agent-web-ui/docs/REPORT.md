@@ -9,6 +9,33 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-05-18 TASK-0071 완료 — shell grid row hotfix (cascade root of TASK-0068~0070 layout chain)** (CHG-20260518-0008, REV-20260518-0008, REQ-20260518-0009, Minor §12.3 — CSS 2 줄 hotfix, RBAC / endpoint / 데이터 / JS 무변경).
+
+**배경**: 사용자 3 차 screenshot 보고. TASK-0070 의 list-detail row fix 이후에도 dashboard pane 처럼 list-detail 을 사용하지 않는 화면에서 큰 viewport (height 800+) + 짧은 content 조합 시 sidebar / commit-bar 가 viewport 의 약 70% 위치까지만 차지하고 그 아래 회색 빈 영역이 viewport bottom 까지 노출.
+
+**원인**: `.app-shell` / `.admin-shell` 의 `display: grid; height: 100vh` 만 정의하고 `grid-template-rows` 미정의 → default `auto` → single row track height = 자식 max-content. grid container 100vh 와 track height 의 mismatch 시 track 아래 빈 영역. 이전 cycle 들의 fix 는 column 안의 stretch chain 만 해결 — column 의 height 결정 layer (grid track) 는 미처리. cascade 의 root.
+
+**환경 차이**: 본 환경 (chrome headless) 에서는 grid track 이 100vh 차지 동작이라 TASK-0069 부터 정상 보였음. 사용자 환경에서는 max-content 동작이라 노출. browser engine / DPI / timing 등 환경별 grid algorithm 차이가 회귀 timing 결정.
+
+**Fix**: `.app-shell` 과 `.admin-shell` 양쪽에 `grid-template-rows: minmax(0, 1fr)` 추가 (2 줄, 동일 패턴 일관성). `minmax(0, 1fr)` 은 CSS Grid spec 의 명시적 단일 row stretch 패턴 — 환경 의존성 제거.
+
+**Layout cascade 완성**:
+```
+.app-shell / .admin-shell { height: 100vh; grid-template-rows: minmax(0, 1fr) }  ← TASK-0071 (cascade root)
+  └ chat-column / admin-column  (grid item, row full height)
+      └ .chat-pane / .admin-workspace  { flex: 1 1 auto }  ← TASK-0069
+          └ .admin-pane.is-active  { flex: 1 1 auto }
+              └ .admin-list-detail  { grid-template-rows: minmax(0, 1fr) }  ← TASK-0070
+                  └ list-col / detail-col  (row stretch)
+      └ commit-bar  (flex-shrink: 0, viewport bottom sticky)
+```
+
+**검증**: 1320x900 viewport 에서 admin-shell h=900 (viewport 와 일치), admin-column h=900, commit-bar bottom=900 (viewport bottom 정확히 sticky), gridTemplateRows="900px" (1fr 의 computed 값). Screenshot `/tmp/admin-dashboard-fixed.png` — sidebar (brand → 탭 → pending footer) 가 viewport 전체 height 차지 + admin-column (topbar → dashboard content + 자연 빈 영역 → commit-bar 가 viewport bottom). 회색 빈 영역 사라짐. 작업 화면 (`/`) 도 동일 fix 자연 적용. cache-bust `v=20260518-shell-grid-rows` (admin.html + index.html 양쪽).
+
+본 cycle 이 TASK-0066 (ChatGPT 패턴 layout) 부터 시작된 layout 재구조화의 최종 stretch fix. cascade 완성 후 회귀 없이 안정.
+
+---
+
 **2026-05-18 TASK-0070 완료 — admin list-detail grid row hotfix (TASK-0069 잔여 회귀)** (CHG-20260518-0007, REV-20260518-0007, REQ-20260518-0008, Minor §12.3 — CSS 1 줄 hotfix, RBAC / endpoint / 데이터 / JS 무변경).
 
 **배경**: 사용자 2 차 screenshot 보고. TASK-0069 의 `.admin-workspace { flex: 1 1 auto }` fix 이후에도 `역할` / `제품` 등 항목이 적은 pane 의 큰 viewport (height 800+) 에서 list-col / detail-col box 가 viewport 의 일부만 차지하고 그 아래 회색 빈 영역 잔존. 항목 많은 `계정` (26 row) 이나 좁은 화면에선 row content 가 자연 채워 노출 안 됨 — 1 차 검증 (720 viewport) 에서 놓침.

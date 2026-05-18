@@ -8,6 +8,30 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260518-0008
+- Date: 2026-05-18
+- Decision: TASK-0071 (REQ-20260518-0009, Minor §12.3) — `.app-shell` / `.admin-shell` 양쪽에 `grid-template-rows: minmax(0, 1fr)` 추가. cascade root fix.
+- Reason: 본 cycle 은 TASK-0068 → 0069 → 0070 의 layout hotfix chain 의 마지막 root. 이전 fix 들이 column 안의 stretch chain (workspace → pane → list-detail → list-col) 을 차례로 해결했으나 column 자체의 height 결정 layer (.app-shell / .admin-shell 의 grid track) 는 미처리. grid 의 single row 가 default `auto` 면 row track height = 자식 max-content — grid container 가 `height: 100vh` 여도 track 이 100vh 보다 작아질 수 있음. 본 환경 (chrome headless) 은 grid track 이 100vh 차지하는 동작이라 stretch 정상 보였지만, 사용자 환경에서는 max-content 차지 동작이라 노출. browser engine / 동일 brower 의 timing / DPI 등 환경별 grid algorithm 차이가 회귀 timing 결정. `minmax(0, 1fr)` 으로 row 가 container 의 전체 height 차지하도록 명시 — 환경 의존성 제거.
+- Cascade 정리 (요약):
+  ```
+  .app-shell / .admin-shell { height: 100vh; display: grid; grid-template-rows: minmax(0, 1fr) }  ← TASK-0071 fix
+    └ .sidebar / .admin-sidebar  (grid item, row 의 full height stretch)
+    └ .chat-column / .admin-column  (grid item, row 의 full height stretch)
+        └ .topbar (flex-shrink: 0)
+        └ .chat-pane / .admin-workspace  { flex: 1 1 auto }  ← TASK-0069 fix
+            └ .chat 영역 / .admin-pane.is-active  { flex: 1 1 auto }
+                └ .admin-list-detail  { flex: 1 1 auto; grid-template-rows: minmax(0, 1fr) }  ← TASK-0070 fix
+                    └ .admin-list-col / .admin-detail-col  (grid item, row stretch)
+        └ .composer / .admin-commit-bar  (flex-shrink: 0)
+  ```
+- Alt 거부: `grid-template-rows: 100vh`. minmax(0, 1fr) 보다 명시적이지만 container 의 height: 100vh 와 row 의 100vh 중복 — DRY 위반. 1fr 이 container size 의 100% 를 의미 (single row 일 때).
+- Risks:
+  - **다른 brower / DPI 회귀 검증 불가**: 본 환경 chrome headless 에서는 1 차 (TASK-0069) 부터 정상 보였음. 사용자 환경 (실제 browser) 에서만 노출 — 본 환경에서 추가 회귀 검증 가능성 제한. 그러나 `minmax(0, 1fr)` 은 CSS Grid spec 의 명시적 단일 row stretch 패턴이라 환경 의존성 없는 fix.
+  - **반응형 mobile**: `.app-shell { grid-template-columns: 1fr }` / `.admin-shell { grid-template-columns: 1fr }` 으로 단일 column 인데 row 도 1fr 이라 정상 동작. mobile 환경 별 cycle 검증 권장.
+  - **viewport height 0 edge case**: `minmax(0, 1fr)` 의 min 이 0 이라 viewport 가 매우 짧을 때 (height 0) row 도 0 — `overflow: hidden` 의 shell 안에서 자식이 grow 동작 멈춤. 비현실 case 라 무시.
+  - **scrollbar 영향**: 부모에 scrollbar 가 있는 경우 100vh ≠ 실 가용 height. shell 자체에 `overflow: hidden` 있어 scrollbar 발생 안 함. 자식의 overflow-y: auto 만 동작.
+- Trace: REQ-20260518-0009 → TASK-0071 → CHG-20260518-0008 → REV-20260518-0008 (hotfix chain root of TASK-0068 / 0069 / 0070)
+
 ## REV-20260518-0007
 - Date: 2026-05-18
 - Decision: TASK-0070 (REQ-20260518-0008, Minor §12.3) — `.admin-list-detail` 에 `grid-template-rows: minmax(0, 1fr)` 추가. CSS 1 줄 root-cause fix.

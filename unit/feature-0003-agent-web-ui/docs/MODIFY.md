@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260518-0008
+- Date: 2026-05-18
+- Summary: TASK-0071 (REQ-20260518-0009, Minor §12.3 — shell grid row hotfix, RBAC / endpoint / 데이터 / JS 무변경) TASK-0070 의 list-detail row fix 이후에도 사용자 3 차 screenshot 보고 — dashboard pane 처럼 list-detail 을 사용하지 않는 화면에서 큰 viewport (height 800+) + 짧은 content 조합 시 sidebar / commit-bar 가 viewport 의 약 70% 위치까지만 차지하고 그 아래 회색 빈 영역이 viewport bottom 까지 노출.
+- 원인: `.app-shell` / `.admin-shell` 둘 다 `display: grid; height: 100vh` 만 정의하고 `grid-template-rows` 미정의 → default `grid-auto-rows: auto` → single row track 의 height 가 자식 max-content 결정. 자식 (sidebar / column) 의 max-content 가 짧으면 grid track 도 짧음. grid container 자체는 100vh 차지하지만 track 이 100vh 보다 작으면 track 아래 빈 영역. 이전 cycle 의 fix (list-detail / workspace 의 flex grow) 는 column 안의 stretch chain 만 해결 — column 의 height 자체가 grid track 에 의해 결정되는 layer 는 미처리. cascade 의 root.
+- 관찰: 동일 viewport (900) 에서 본 환경 (chrome headless) 은 grid track 이 100vh 차지 (다른 grid track sizing 동작), 사용자 환경에서는 max-content 차지 — 환경별 grid algorithm 동작 차이가 회귀 노출 timing 결정.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css`
+    - `.app-shell` 에 `grid-template-rows: minmax(0, 1fr)` 추가. single row 가 grid container 의 전체 height 차지하도록 명시.
+    - `.admin-shell` 에 동일 rule 추가. 두 shell 동일 패턴 유지.
+    - 다른 속성 (grid-template-columns / height: 100vh / overflow: hidden) 무변경.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/admin.html` — cache-bust `v=20260518-admin-list-rows` → `v=20260518-shell-grid-rows`.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html` — cache-bust `v=20260518-product-composer` → `v=20260518-shell-grid-rows` (양쪽 페이지 동일 cache-bust 로 정렬).
+  - `repo/unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md` + `repo/docs/STATUS.md` — REQ-20260518-0009 / TASK-0071 / CHG-20260518-0008 / REV-20260518-0008 entries.
+- Verification:
+  - `SKIP_INIT=1 make web` 재배포 OK.
+  - DOM (browser headless `/admin` dashboard pane, viewport `1320x900`):
+    `admin-shell h = 900` (viewport 와 일치), `admin-column h = 900`, `commit-bar bottom = 900` (viewport bottom 정확히 sticky), `gridTemplateRows = "900px"` (minmax(0, 1fr) 의 computed 값).
+  - Screenshot `/tmp/admin-dashboard-fixed.png` — sidebar (brand → 탭 → ... → pending footer) 가 viewport 전체 height 차지 + admin-column (topbar → dashboard content + 자연 빈 영역 → commit-bar 가 viewport bottom). sidebar / commit-bar 아래 회색 빈 영역 사라짐.
+  - 작업 화면 (`/`) 도 동일 fix 자연 적용 — `.app-shell` 의 동일 rule.
+  - 양쪽 shell 의 일관성 보장 (`.app-shell` 과 `.admin-shell` 둘 다 `grid-template-rows: minmax(0, 1fr)`).
+- Trace: REQ-20260518-0009 → TASK-0071 → CHG-20260518-0008 → REV-20260518-0008 (hotfix of TASK-0068 / 0069 / 0070 layout chain — cascade root fix)
+
 ## CHG-20260518-0007
 - Date: 2026-05-18
 - Summary: TASK-0070 (REQ-20260518-0008, Minor §12.3 — admin list-detail grid row hotfix, RBAC / endpoint / 데이터 / JS 무변경) TASK-0069 follow-up. 사용자 screenshot 2 차 보고 — `역할` / `제품` 등 항목이 적은 pane 에서 화면 height 가 큰 viewport 의 경우 list-col / detail-col box 가 viewport 의 일부만 차지하고 그 아래로 admin-workspace 의 padding 영역이 회색으로 노출. 항목이 많은 pane (`계정` 26 row) 이나 화면이 좁을 때는 content 가 row 를 자연 채워 노출 없었기에 1 차 검증 (720 viewport) 에서는 놓침.

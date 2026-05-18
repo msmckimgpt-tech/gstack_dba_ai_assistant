@@ -273,6 +273,10 @@ a { color: inherit; }
 .app-shell {
   display: grid;
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  /* REQ-20260518-0009: single row track 도 명시. height: 100vh 만으로는 일부 환경에서
+     grid track 이 자식 max-content 까지만 차지 → grid container 100vh 와 track height 가
+     mismatch 되어 아래 빈 영역 노출. minmax(0, 1fr) 으로 row 가 container 의 전체 height 차지. */
+  grid-template-rows: minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
 }
@@ -1902,6 +1906,10 @@ a { color: inherit; }
 .admin-shell {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
+  /* REQ-20260518-0009: single row track 도 명시 — .app-shell 와 동일 패턴.
+     dashboard pane 처럼 content 가 짧을 때 grid track 이 자식 max-content 만큼만 차지해
+     viewport 의 약 30% 가 회색 빈 영역으로 노출되던 회귀 차단. */
+  grid-template-rows: minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
   background: var(--bg);
