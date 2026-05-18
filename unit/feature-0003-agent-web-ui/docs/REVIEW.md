@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260518-0003
+- Date: 2026-05-18
+- Decision: TASK-0066 (REQ-20260518-0004, Minor §12.3) — ChatGPT 패턴 layout 재구조화. 사용자 결정: topbar 에 대화 제목 통합 + 좌측 정렬 + brand 를 sidebar 영역으로 이전. `.app-shell` grid 2-row → 2-column. `.app-body` wrapper / `.chat-header` 폐기.
+- Method:
+  - **선택지 비교**: AskUserQuestion 으로 두 옵션 제시 — (A) chat-pane 안에 관리 콘솔 편입 (topbar 는 brand 전용, sidebar 와 같은 너비), (B) topbar 중앙에 대화 제목 통합 (단일 전체 너비 헤더). 사용자가 (B) 변형 채택 — topbar 에 대화 제목 통합하되 **중앙 정렬 X, 좌측 정렬** + brand 를 sidebar 영역 안으로 (ChatGPT UI 명시). chat-header 폐기로 채팅 영역 확장 효과.
+  - **layout 변환**: 기존 `.app-shell` 이 row 2개 (topbar | app-body) + `.app-body` 가 column 2개 (sidebar | chat-pane) 의 nested grid. 변환 후 `.app-shell` 이 직접 column 2개 (sidebar | chat-column). `.app-body` wrapper 폐기로 DOM depth 감소. chat-column 안에서 flex column 으로 topbar + chat-pane 쌓음.
+  - **baseline 정렬**: `.sidebar-brand` 의 height = `var(--topbar-h)` = 52px 로 topbar 와 baseline 일치. `.sidebar-brand` 의 border-bottom (border-subtle) 이 `.topbar` 의 border-bottom (border) 와 시각적으로 연결되어 sidebar / chat-column 의 첫 row 가 단일 헤더 row 로 보임 — 시각 통합 효과.
+  - **chat-title typography 보존**: `.chat-header` rule 은 폐기했지만 `.chat-title` / `.chat-subtitle` 의 font-size / weight / color rule 은 그대로 유지 — topbar-info 안에서 동일 스타일로 렌더.
+  - **JS 무변경**: 모든 element ID (`conversationTitle`, `conversationSubtitle`, `loadMoreBtn`, `openAdminBtn`) 가 보존되어 getElementById 호출이 그대로 동작. `setupChatHeader` 같은 별도 mount 로직 불필요.
+- Risks:
+  - **반응형 mobile (max-width: 680px)**: 기존 `.app-body { grid-template-columns: 1fr }` + `.sidebar { display: none }` 패턴을 `.app-shell { grid-template-columns: 1fr }` + `.sidebar { display: none }` 으로 변환. 동일 효과 — sidebar 숨김 + chat-column 만 표시. mobile 환경 실측 검증은 별 cycle 권장.
+  - **brand 가 sidebar 안으로 이전 후 sidebar 의 vertical scroll 영향**: `.sidebar { display: flex; flex-direction: column; overflow: hidden }` 인데 `.sidebar-brand` (flex-shrink: 0) + 기존 `.sidebar-head` + `.conv-list` (overflow-y: auto) + `.sidebar-profile` 의 구조에서 brand 가 첫 child 라 conv-list 의 scroll 영역이 brand height 만큼 줄어듦. 252px sidebar 에서 brand 52px 추가는 시각적으로 자연스러움.
+  - **`.chat-pane` 의 background**: 기존엔 chat-pane 의 첫 child 가 chat-header (surface 배경) 라 시각적 구분이 있었으나 이제 chat-pane 의 첫 child 가 access-notice 또는 progress-strip 또는 messages-wrap. chat-pane background (var(--bg)) 가 그대로 노출되어 topbar 와 시각 구분 명확 (topbar 는 surface, chat-pane 은 bg).
+  - **JS 사이드 effect 미검증**: setupChatHeader / 진행 상황 표시 / point rail 등 directing 코드가 chat-header rect 또는 chat-pane 첫 child rect 를 참조할 가능성. grep 으로 확인 — `.chat-header` selector 참조 없음. `.chat-title` / `.chat-subtitle` 은 textContent 만 갱신하며 layout 의존성 없음.
+  - **dead code 잔존**: `.topbar-brand` CSS rule 이 더 이상 사용되지 않으나 stylesheet 에 남음. 무해이지만 별 cycle 에서 제거 권장.
+- Trace: REQ-20260518-0004 → TASK-0066 → CHG-20260518-0003 → REV-20260518-0003 (follow-up of TASK-0065)
+
 ## REV-20260518-0002
 - Date: 2026-05-18
 - Decision: TASK-0065 (REQ-20260518-0003, Minor §12.3) — TASK-0063 직접 테스트 follow-up 3 항목. 헤더 4 버튼 제거 + "···" trigger 위치 우측 하단 + 분기선 `position: sticky`.

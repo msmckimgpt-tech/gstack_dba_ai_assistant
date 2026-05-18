@@ -268,31 +268,49 @@ a { color: inherit; }
 .is-access-blocked:hover { background: transparent; color: var(--text-muted); }
 
 /* =====================================================================
-   APP SHELL  (full-screen grid)
+   APP SHELL  (REQ-20260518-0004: ChatGPT 패턴 — sidebar 전체 height + chat-column)
    ===================================================================== */
 .app-shell {
   display: grid;
-  grid-template-rows: var(--topbar-h) minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
 }
 
-/* ─── Top Bar ───────────────────────────────────────────────────── */
+/* ─── Chat Column (topbar + chat-pane) ──────────────────────────── */
+.chat-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* ─── Top Bar (REQ-20260518-0004: chat-column 안의 헤더, sidebar 옆 영역) ─── */
 .topbar {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 16px;
+  padding: 0 20px;
+  height: var(--topbar-h);
+  flex-shrink: 0;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   z-index: 10;
 }
 
-.topbar-brand {
+.topbar-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+  /* 좌측 정렬 (사용자 명시) — 중앙 정렬 금지 */
+}
+
+.topbar-tools {
   display: flex;
   align-items: center;
-  gap: 9px;
-  min-width: calc(var(--sidebar-w) - 16px);
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .brand-icon {
@@ -353,15 +371,10 @@ a { color: inherit; }
 }
 .topbar-btn:hover { background: var(--bg); color: var(--text-2); }
 
-/* ─── App Body (sidebar + chat) ─────────────────────────────────── */
-.app-body {
-  display: grid;
-  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
-  overflow: hidden;
-}
+/* REQ-20260518-0004: .app-body 폐기 — .app-shell grid 가 sidebar / chat-column 을 직접 배치. */
 
 /* =====================================================================
-   SIDEBAR
+   SIDEBAR (REQ-20260518-0004: 전체 height. brand 포함)
    ===================================================================== */
 .sidebar {
   display: flex;
@@ -369,6 +382,17 @@ a { color: inherit; }
   background: var(--sidebar-bg);
   border-right: 1px solid var(--border);
   overflow: hidden;
+}
+
+/* REQ-20260518-0004: brand 가 sidebar 의 첫 영역. topbar-h 와 같은 height 로 chat-column 의 topbar 와 baseline 정렬. */
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 14px;
+  height: var(--topbar-h);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .sidebar-head {
@@ -742,19 +766,8 @@ a { color: inherit; }
   background: var(--bg);
 }
 
-/* Chat header */
-.chat-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 20px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-  min-height: 50px;
-}
-
+/* REQ-20260518-0004: .chat-header 폐기 — 대화 제목/부제는 chat-column 의 .topbar 안 .topbar-info 로 이전.
+   .chat-title / .chat-subtitle 의 typography 는 그대로 유지 (topbar-info 안에서 사용). */
 .chat-title {
   font-size: 14px;
   font-weight: 700;
@@ -767,13 +780,6 @@ a { color: inherit; }
   color: var(--text-muted);
   display: block;
   margin-top: 1px;
-}
-
-.chat-header-tools {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
 }
 
 /* Access notice */
@@ -3123,7 +3129,8 @@ a { color: inherit; }
 }
 
 @media (max-width: 680px) {
-  .app-body { grid-template-columns: 1fr; }
+  /* REQ-20260518-0004: .app-body 폐기 후 .app-shell 이 직접 grid. mobile 에선 sidebar 숨김 + chat-column 만. */
+  .app-shell { grid-template-columns: 1fr; }
   .sidebar { display: none; }
   .drawer { width: min(100vw, 380px); }
   .admin-controls { grid-template-columns: 1fr; }

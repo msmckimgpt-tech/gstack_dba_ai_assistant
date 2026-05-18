@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260518-header-cleanup" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260518-topbar-merge" />
 </head>
 <body>
 
@@ -53,24 +53,17 @@
   </div>
 
   <!-- ─── App Shell ──────────────────────────────────────────────── -->
+  <!-- REQ-20260518-0004: ChatGPT 패턴 layout — sidebar 가 전체 height, topbar 가 chat-pane width 만.
+       brand 는 sidebar 의 첫 child, 대화 제목 + 관리 콘솔은 chat-column 의 topbar. chat-header 폐기. -->
   <div class="app-shell" id="appFrame">
 
-    <!-- Top Bar -->
-    <header class="topbar">
-      <div class="topbar-brand">
-        <div class="brand-icon">MA</div>
-        <span class="brand-name">MySQL AI</span>
-      </div>
-      <div class="topbar-end">
-        <button type="button" class="topbar-btn hidden" id="openAdminBtn">관리 콘솔</button>
-      </div>
-    </header>
-
-    <!-- Body: Sidebar + Chat -->
-    <div class="app-body">
-
-      <!-- Sidebar -->
+      <!-- Sidebar (full height — brand 포함) -->
       <aside class="sidebar">
+        <!-- REQ-20260518-0004: brand 이전 — sidebar 의 첫 영역. -->
+        <div class="sidebar-brand">
+          <div class="brand-icon">MA</div>
+          <span class="brand-name">MySQL AI</span>
+        </div>
         <div class="sidebar-head">
           <!-- TASK-0047: 제품 컨텍스트 칩 (auto / pinned). 대화 단위 상태이며 진행 중 ask 동안에는 disabled. -->
           <div class="product-chip-wrap">
@@ -108,20 +101,26 @@
         </div>
       </aside>
 
-      <!-- Chat Pane -->
-      <div class="chat-pane">
+      <!-- Chat Column (topbar + chat-pane) -->
+      <div class="chat-column">
 
-        <!-- Chat Header -->
-        <div class="chat-header">
-          <div class="chat-header-info">
+        <!-- Top Bar (대화 제목 + 관리 콘솔). REQ-20260518-0004 로 sidebar 옆 chat-column 의 첫 영역으로 이전 -->
+        <header class="topbar">
+          <div class="topbar-info">
             <h2 class="chat-title" id="conversationTitle">대화를 선택하세요</h2>
             <span class="chat-subtitle" id="conversationSubtitle"></span>
           </div>
-          <div class="chat-header-tools">
+          <div class="topbar-tools">
             <button type="button" class="tool-btn hidden" id="loadMoreBtn">이전 기록</button>
-            <!-- REQ-20260518-0003: 헤더의 대화 복사 / 공유 / 제목 변경 / 삭제 4 버튼 제거 — 동일 액션은 좌측 conv-item 의 "···" menu 단일 진입점으로 통일. 캘린더 시간 이동은 메시지 날짜 분기선 (sticky) 클릭. -->
+            <!-- REQ-20260518-0003: 대화 복사 / 공유 / 제목 변경 / 삭제 4 버튼은 좌측 conv-item "···" menu 로 일원화 -->
           </div>
-        </div>
+          <div class="topbar-end">
+            <button type="button" class="topbar-btn hidden" id="openAdminBtn">관리 콘솔</button>
+          </div>
+        </header>
+
+      <!-- Chat Pane -->
+      <div class="chat-pane">
 
         <!-- Access Notice -->
         <div class="access-notice hidden" id="accessNotice"></div>
@@ -186,7 +185,7 @@
         </div>
 
       </div><!-- /chat-pane -->
-    </div><!-- /app-body -->
+      </div><!-- /chat-column -->
   </div><!-- /app-shell -->
 
   <!-- ─── Profile Drawer (탭: 계정 / 보안 / API Vault) ────────────── -->
@@ -386,6 +385,6 @@
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260518-header-cleanup"></script>
+  <script src="/static/app.js?v=20260518-topbar-merge"></script>
 </body>
 </html>

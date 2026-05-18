@@ -8,6 +8,36 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260518-0003
+- Date: 2026-05-18
+- Summary: TASK-0066 (REQ-20260518-0004, Minor §12.3 — UI layout 재구조화, RBAC / endpoint / 데이터 영역 무변경) TASK-0065 follow-up. 사용자 직접 테스트 피드백: 헤더 4 버튼 제거 후 `.chat-header` 가 거의 비어 있어 `.topbar` (관리 콘솔) 와 영역 통합 필요. ChatGPT 패턴으로 layout 재구조화 — sidebar 가 전체 height, brand (`[MA] MySQL AI`) 를 sidebar 의 첫 영역으로 이전, topbar (대화 제목 + 관리 콘솔) 을 chat-column 의 첫 영역으로 이전, chat-header 폐기로 채팅 영역 확장. 대화 제목은 좌측 정렬 (사용자 명시 — 중앙 정렬 금지).
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html`
+    - `.app-shell` 내 grid 구조 재정의:
+      - 기존: `.topbar` (전체 너비) + `.app-body` (sidebar + chat-pane)
+      - 신규: `.sidebar` (column 1, 전체 height) + `.chat-column` (column 2, 전체 height) — `.app-body` wrapper 폐기.
+    - `.topbar-brand` 를 `.sidebar` 의 첫 child `.sidebar-brand` 로 이전 (brand icon + name).
+    - 신규 `.chat-column` 안에 `.topbar` (대화 제목 + tools + 관리 콘솔) → `.chat-pane` 순서.
+    - `.chat-pane > .chat-header` 폐기 — `.chat-title` / `.chat-subtitle` / `#loadMoreBtn` 은 `.topbar > .topbar-info` / `.topbar-tools` 로 이전. `#openAdminBtn` 은 `.topbar-end` 위치 유지.
+    - cache-bust `v=20260518-header-cleanup` → `v=20260518-topbar-merge`.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css`
+    - `.app-shell` 의 `grid-template-rows: var(--topbar-h) minmax(0, 1fr)` → `grid-template-columns: var(--sidebar-w) minmax(0, 1fr)` (단일 row, 2 column).
+    - `.app-body` rule 폐기 (HTML 에서 wrapper 제거됨).
+    - `.chat-column` 신설 — `display: flex; flex-direction: column; min-width: 0; overflow: hidden`.
+    - `.sidebar-brand` 신설 — `padding: 0 14px; height: var(--topbar-h); border-bottom: 1px solid var(--border-subtle)`. topbar 와 baseline (y=52px) 정렬.
+    - `.topbar` rule 갱신 — `padding: 0 20px; height: var(--topbar-h); flex-shrink: 0`. 기존 topbar-brand min-width 제거 (brand 가 sidebar 로 이전됨).
+    - `.topbar-info` 신설 — `display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto` (좌측 정렬, justify-content 미설정).
+    - `.topbar-tools` 신설 — `display: flex; align-items: center; gap: 6px; flex-shrink: 0` (loadMoreBtn 등).
+    - `.topbar-end` 기존 유지 (관리 콘솔, `margin-left: auto`).
+    - `.chat-header` / `.chat-header-info` / `.chat-header-tools` rule 폐기. `.chat-title` / `.chat-subtitle` typography rule 만 유지 (topbar-info 안에서 사용).
+    - 반응형 `@media (max-width: 680px) { .app-body { ... } }` → `.app-shell { grid-template-columns: 1fr }` 로 변경.
+  - `repo/unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md` + `repo/docs/STATUS.md` — REQ-20260518-0004 / TASK-0066 / CHG-20260518-0003 / REV-20260518-0003 entries.
+- Verification:
+  - DOM 검증: `.app-shell` gridTemplateColumns = `"252px 1028px"` (sidebar-w + 나머지), `.sidebar-brand` 정상 mount + 텍스트 "MA MySQL AI", `.topbar` mount + height 52px, `.topbar-info` mount, 기존 `.chat-header` DOM 부재.
+  - Browser smoke (`gstack /browse` headless + screenshot `/tmp/layout-merged.png`): sidebar 좌측 (brand + 제품 칩 + 새 대화 + conv list + 프로필) / chat-column 우측 (topbar 제목 좌측 정렬 + `최근 갱신 ... 메시지 22 · 소유자 admin` 부제 + 우측 끝 `관리 콘솔` 버튼) — ChatGPT 패턴 정확 구현. brand 와 topbar 의 baseline (y=52px) 정렬. sticky 날짜 분기선 ("2026년 4월 16일") + per-conversation "···" trigger 등 직전 cycle 변경사항 무회귀.
+  - JS 변경 없음 — 모든 element ID 보존 (conversationTitle / conversationSubtitle / loadMoreBtn / openAdminBtn 모두 getElementById 동작).
+- Trace: REQ-20260518-0004 → TASK-0066 → CHG-20260518-0003 → REV-20260518-0003 (follow-up of TASK-0065)
+
 ## CHG-20260518-0002
 - Date: 2026-05-18
 - Summary: TASK-0065 (REQ-20260518-0003, Minor §12.3 — UI 정리 + sticky 분기선) TASK-0063 직접 테스트 follow-up. (1) 헤더의 대화 복사 / 공유 / 제목 변경 / 삭제 4 버튼 제거 (per-item "···" menu 로 일원화). (2) menu trigger 우측 상단 → 우측 하단 이동 (badge "내/sales" 우측 상단 영역과 시각 충돌 해결). (3) 채팅 로그 날짜 분기선에 `position: sticky; top: 0` 적용 — Slack 패턴. 사용자가 분기선까지 scroll 할 필요 없이 현재 시야의 날짜 그룹 헤더가 messageLog 상단에 stick 되고 click 시 캘린더 popover anchored 진입.

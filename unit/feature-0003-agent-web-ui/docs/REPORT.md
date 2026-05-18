@@ -9,6 +9,18 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-05-18 TASK-0066 완료 — ChatGPT 패턴 layout 재구조화 (헤더 영역 통합)** (CHG-20260518-0003, REV-20260518-0003, REQ-20260518-0004, Minor §12.3 — UI layout, RBAC / endpoint / 데이터 / JS 시그니처 무변경).
+
+**배경**: TASK-0065 follow-up. 헤더 4 버튼 제거로 `.chat-header` 가 거의 비어 있어 `.topbar` (관리 콘솔) 과 영역 통합이 자연스러움.
+
+**사용자 결정** (in-cycle): topbar 에 대화 제목 통합 + 좌측 정렬 (중앙 정렬 금지) + brand `[MA] MySQL AI` 를 sidebar 영역으로 이전 (ChatGPT UI 명시). chat-pane 상단 chat-header 제거로 채팅 영역 확장.
+
+**변경**: `.app-shell` grid 가 2-row (topbar | app-body) → 2-column (sidebar | chat-column) 로 단순화. `.app-body` wrapper 폐기. `.sidebar-brand` (height = topbar-h = 52px, border-bottom) 신설 — sidebar 의 첫 영역, topbar 와 baseline 정렬. `.chat-column` (flex column) 신설 — sidebar 옆 영역. topbar 가 chat-column 의 첫 child 로 이전 (대화 제목 좌측 정렬 + loadMoreBtn + 관리 콘솔 우측). `.chat-header` 폐기 — `.chat-title` / `.chat-subtitle` typography 만 보존. 반응형 mobile (max-width: 680px) 도 `.app-shell { grid-template-columns: 1fr }` 으로 변환.
+
+**검증**: DOM `.app-shell.gridTemplateColumns = "252px 1028px"` / `.sidebar-brand` 정상 mount + "MA MySQL AI" / `.topbar.height = 52px` / 기존 `.chat-header` DOM 부재 — 모두 확인. browser screenshot (`/tmp/layout-merged.png`): 좌측 sidebar (brand + 제품 칩 + 새 대화 + conv list + 프로필) / 우측 chat-column (topbar 좌측 정렬 제목 "SQL 쿼리 계속 완성 요청" + `최근 갱신 ... 메시지 22 · 소유자 admin` 부제 + 우측 끝 `관리 콘솔` + sticky 분기선 "2026년 4월 16일" + 메시지 영역 확장) — ChatGPT 패턴 정확 구현 + 직전 cycle 변경 (sticky / "···" menu) 무회귀. cache-bust `v=20260518-topbar-merge`. JS 변경 0.
+
+---
+
 **2026-05-18 TASK-0065 완료 — TASK-0063 직접 테스트 follow-up 3 항목 (헤더 4 버튼 제거 + trigger 우측 하단 + 분기선 sticky)** (CHG-20260518-0002, REV-20260518-0002, REQ-20260518-0003, Minor §12.3 — UI 정리, RBAC / endpoint / 데이터 영역 무변경).
 
 **변경**: (1) `chat-header-tools` 의 `forkConversationBtn` / `shareConversationBtn` / `renameConversationBtn` / `deleteConversationBtn` 4 element 제거. conv-item "···" menu 가 단일 진입점. backend helper 는 menu makeItem + message-bubble actions 에서 여전히 호출 — 무변경. (2) `.conv-item-menu-trigger` 위치 `top: 6px` → `bottom: 6px` (owner badge 와 시각 충돌 해결). `.conv-item` 에 `padding-right: 32px` 보정. (3) `.message-date-divider` 에 `position: sticky; top: 0; z-index: 5` + `padding: 4px 0`. label 배경 `var(--surface-2)` (반투명) → `var(--surface-1, #ffffff)` (불투명) + `box-shadow: 0 1px 2px rgba(0,0,0,.04)` elevation. hover 시 `box-shadow: 0 2px 6px rgba(37,99,235,.18)` 강화.
