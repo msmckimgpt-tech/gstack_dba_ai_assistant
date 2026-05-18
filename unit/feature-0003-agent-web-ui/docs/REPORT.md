@@ -9,6 +9,20 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-05-18 TASK-0067 완료 — 제품 칩 composer 이전 + custom drop-up dropdown (ChatGPT 모델 선택 패턴)** (CHG-20260518-0004, REV-20260518-0004, REQ-20260518-0005, Minor §12.3 — UI 위치 이전 + native select → custom dropdown, backend / endpoint / RBAC / 데이터 영역 무변경).
+
+**배경**: TASK-0066 의 layout 통합 후 사이드바 영역도 확장하기 위한 사용자 follow-up. ChatGPT 의 모델 선택 UI 패턴 — chip 을 composer 영역 우측 (textarea / sendBtn 사이) 에 두고 click 시 drop-up dropdown 으로 옵션 표시.
+
+**변경**: (1) `.sidebar-head` 의 `.product-chip-wrap` 제거 → sidebar-head 에는 `#newConversationBtn` 만 (sidebar vertical 공간 확장). (2) `.composer-box` 안에 `.composer-product-chip-wrap` 신설 — `button#productChip` (dot + compact label + arrow) + `div#productDropupMenu`. (3) 기존 native `<select id="productSelect">` 폐기 → custom button + custom menu (drop-up 보장). (4) JS: `renderProductChip` 재작성, 신규 `renderProductDropupMenu` / `buildProductDropupItem` / `openProductDropup` / `closeProductDropup`. chip click handler 가 dropdown toggle. `setActiveProduct` 본체 무변경 (backend `PATCH /api/conversations/{cid}/product` 호출 그대로).
+
+**디자인 정책**: chip label = compact (`product_key` 만, chip width 보존) + aria-label = full (`{name} ({product_key})`). menu z=50, drop-up (`bottom: calc(100% + 6px)`), max-height 320px. busy 시 chip.disabled + aria-disabled (race 가드 보존).
+
+**검증**: `node --check` PASS, `SKIP_INIT=1 make web` 재배포 OK. Browser headless: `chipInComposer=true` (chip 이 composer-box 안), 기존 native select 부재, sidebar-head 가 "새 대화" 만, chip click → menu 4 items (auto + KR + MV + GZ_KR) 정상 + `dropUp=true` (menuY=459 < chipY=644), KR item click → chip label "KR" + chip mode=pinned + toast "제품을 킹스레이드로 바꿨어요. 다음 답변부터 적용됩니다." 정상. backend endpoint 호출 정상. cache-bust `v=20260518-product-composer`.
+
+후속 cycle 권장: dead CSS rule (`.product-chip-wrap` / `.product-chip*` / `.topbar-brand`) 정리. arrow key keyboard navigation (REQ-20260518-0005 의 후속 가능).
+
+---
+
 **2026-05-18 TASK-0066 완료 — ChatGPT 패턴 layout 재구조화 (헤더 영역 통합)** (CHG-20260518-0003, REV-20260518-0003, REQ-20260518-0004, Minor §12.3 — UI layout, RBAC / endpoint / 데이터 / JS 시그니처 무변경).
 
 **배경**: TASK-0065 follow-up. 헤더 4 버튼 제거로 `.chat-header` 가 거의 비어 있어 `.topbar` (관리 콘솔) 과 영역 통합이 자연스러움.

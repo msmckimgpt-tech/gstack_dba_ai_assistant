@@ -624,28 +624,154 @@ function renderProductOptions(selectEl, { includeAuto, selected }) {
   }
 }
 
+// REQ-20260518-0005: 신규 composer chip + drop-up dropdown (ChatGPT 모델 선택 패턴).
+// 기존 native <select id="productSelect"> 는 HTML 에서 제거됨. chip 은 button + custom menu.
 function renderProductChip() {
   const chipEl = document.getElementById("productChip");
-  const selectEl = document.getElementById("productSelect");
-  if (!chipEl || !selectEl) return;
+  if (!chipEl) return;
   const mode = state.productMode === "pinned" ? "pinned" : "auto";
   chipEl.dataset.mode = mode;
-  const selectedValue = mode === "auto" ? "auto" : (state.pinnedProductId ? String(state.pinnedProductId) : "auto");
-  renderProductOptions(selectEl, { includeAuto: true, selected: selectedValue });
   const products = Array.isArray(state.products) ? state.products : [];
   const pinned = products.find((p) => Number(p.id) === Number(state.pinnedProductId));
-  const label = mode === "auto"
+  const fullLabel = mode === "auto"
     ? "auto · 자동 (제품 미선택)"
     : (pinned ? `${pinned.name} (${pinned.product_key})` : "auto · 자동 (제품 미선택)");
-  chipEl.setAttribute("aria-label", `이 대화의 제품 선택, 현재 ${label}`);
-  // 진행 중 ask 가 있으면 select disabled (race 가드 + 사용자 안내).
+  // chip 본체 label 은 compact (chip width 보존)
+  const compactLabel = mode === "auto"
+    ? "auto"
+    : (pinned ? pinned.product_key : "auto");
+  const labelEl = document.getElementById("productChipLabel");
+  if (labelEl) labelEl.textContent = compactLabel;
+  chipEl.setAttribute("aria-label", `이 대화의 제품 선택, 현재 ${fullLabel}`);
+  // 진행 중 ask 가 있으면 chip disabled (race 가드 + 사용자 안내).
   const busy = isCurrentConvBusy();
-  selectEl.disabled = busy;
+  chipEl.disabled = busy;
   chipEl.setAttribute("aria-disabled", busy ? "true" : "false");
   chipEl.classList.toggle("is-disabled", busy);
   chipEl.title = busy
     ? "응답 처리 중에는 변경할 수 없어요. 응답이 끝난 뒤 다시 시도해 주세요."
     : "이 대화에 적용할 제품을 선택합니다. auto 는 일반 대화 모드입니다.";
+  // 메뉴가 열려 있으면 옵션 리스트도 즉시 갱신.
+  if (chipEl.getAttribute("aria-expanded") === "true") {
+    renderProductDropupMenu();
+  }
+}
+
+function renderProductDropupMenu() {
+  const menu = document.getElementById("productDropupMenu");
+  if (!menu) return;
+  menu.innerHTML = "";
+  const mode = state.productMode === "pinned" ? "pinned" : "auto";
+  const currentPid = mode === "pinned" ? Number(state.pinnedProductId) : null;
+  const products = Array.isArray(state.products) ? state.products : [];
+
+  // section head
+  const head = document.createElement("div");
+  head.className = "product-dropup-section-head";
+  head.textContent = "이 대화의 제품";
+  menu.appendChild(head);
+
+  // auto item
+  menu.appendChild(buildProductDropupItem({
+    mode: "auto",
+    pid: null,
+    label: "auto · 자동 (제품 미선택)",
+    selected: mode === "auto",
+  }));
+
+  // pinned items
+  products.forEach((p) => {
+    const pid = Number(p.id);
+    if (!pid) return;
+    menu.appendChild(buildProductDropupItem({
+      mode: "pinned",
+      pid,
+      label: `${p.name} (${p.product_key})`,
+      selected: mode === "pinned" && pid === currentPid,
+    }));
+  });
+}
+
+function buildProductDropupItem({ mode, pid, label, selected }) {
+  const item = document.createElement("button");
+  item.type = "button";
+  item.className = "product-dropup-item";
+  item.setAttribute("role", "menuitem");
+  item.dataset.mode = mode;
+  if (pid != null) item.dataset.pid = String(pid);
+  if (selected) item.classList.add("is-selected");
+
+  const dot = document.createElement("span");
+  dot.className = "product-dropup-item-dot";
+  item.appendChild(dot);
+
+  const labelEl = document.createElement("span");
+  labelEl.className = "product-dropup-item-label";
+  labelEl.textContent = label;
+  item.appendChild(labelEl);
+
+  const check = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  check.setAttribute("class", "product-dropup-item-check");
+  check.setAttribute("viewBox", "0 0 14 14");
+  check.setAttribute("fill", "none");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M2.5 7.5l3 3 6-7");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "1.8");
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
+  check.appendChild(path);
+  item.appendChild(check);
+
+  item.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeProductDropup();
+    setActiveProduct({
+      mode,
+      pinnedId: pid,
+    }).catch((error) => showToast(error.message || "제품 변경 실패", true));
+  });
+  return item;
+}
+
+function openProductDropup() {
+  const chip = document.getElementById("productChip");
+  const menu = document.getElementById("productDropupMenu");
+  if (!chip || !menu) return;
+  if (chip.disabled) return;
+  renderProductDropupMenu();
+  menu.classList.remove("hidden");
+  chip.setAttribute("aria-expanded", "true");
+  const detach = () => {
+    document.removeEventListener("mousedown", onDocClick, true);
+    document.removeEventListener("keydown", onKey, true);
+  };
+  const onDocClick = (ev) => {
+    if (menu.contains(ev.target)) return;
+    if (chip.contains(ev.target)) return;
+    closeProductDropup();
+    detach();
+  };
+  const onKey = (ev) => {
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      closeProductDropup();
+      detach();
+      try { chip.focus(); } catch (e) {}
+    }
+  };
+  window.setTimeout(() => {
+    document.addEventListener("mousedown", onDocClick, true);
+    document.addEventListener("keydown", onKey, true);
+  }, 0);
+}
+
+function closeProductDropup() {
+  const chip = document.getElementById("productChip");
+  const menu = document.getElementById("productDropupMenu");
+  if (menu) menu.classList.add("hidden");
+  if (chip) chip.setAttribute("aria-expanded", "false");
 }
 
 function readProductPrefFromLocal() {
@@ -3789,17 +3915,17 @@ async function initialize() {
       showToast(error.message || "새 대화 생성에 실패했습니다.", true);
     }
   });
-  // TASK-0047: 사이드바 제품 칩의 select 변경 → setActiveProduct.
-  const productSelectEl = document.getElementById("productSelect");
-  if (productSelectEl) {
-    productSelectEl.addEventListener("change", (ev) => {
-      const value = (ev.target && ev.target.value) || "auto";
-      const next = value === "auto"
-        ? { mode: "auto", pinnedId: null }
-        : { mode: "pinned", pinnedId: Number(value) };
-      setActiveProduct(next).catch((error) => {
-        showToast(error.message || "제품 변경에 실패했습니다.", true);
-      });
+  // REQ-20260518-0005: composer product chip — click 시 drop-up dropdown 토글.
+  const productChipEl = document.getElementById("productChip");
+  if (productChipEl) {
+    productChipEl.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (productChipEl.getAttribute("aria-expanded") === "true") {
+        closeProductDropup();
+      } else {
+        openProductDropup();
+      }
     });
   }
   sendBtn.addEventListener("click", () => {

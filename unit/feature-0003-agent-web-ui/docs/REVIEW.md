@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260518-0004
+- Date: 2026-05-18
+- Decision: TASK-0067 (REQ-20260518-0005, Minor §12.3) — 제품 칩을 사이드바 → composer 우측 (textarea/sendBtn 사이) 으로 이전. ChatGPT 모델 선택 UI 패턴. 기존 native `<select>` 를 custom button + drop-up dropdown 으로 대체.
+- Method:
+  - **위치 결정 — composer 우측**: 사용자 명시 "요청사항을 입력하는 우측". textarea 와 send-btn 사이가 의미상 정합 (입력 → 모드 선택 → 전송). ChatGPT 의 모델 selector 가 composer 영역 안에 있는 패턴과 일치.
+  - **drop-up 필요성**: chip 이 composer (페이지 하단 근처) 에 위치하므로 menu 가 chip 아래로 펼치면 viewport 밖. CSS `position: absolute; bottom: calc(100% + 6px)` 로 chip 위로 펼침 — drop-up 보장. 사용자 명시한 "상대적인 위치로 drop-up" 정합.
+  - **native `<select>` 폐기 사유**: native dropdown 위치는 브라우저가 결정 (보통 below). drop-up 효과를 보장할 수 없음. custom button + custom menu 로 전환.
+  - **chip label 정책 — compact vs full**: chip 폭이 좁아 pinned 일 때 전체 이름 + product_key 를 보여주면 ellipsis 발생. `compactLabel = product_key` (KR / MV / GZ_KR — 짧고 식별 가능) 채택. 단 a11y 는 보존 — `aria-label` 에 `"이 대화의 제품 선택, 현재 {name} ({product_key})"` 전체 형식 유지.
+  - **menu 옵션 list 갱신**: `state.products` 가 비동기 hydrate 되므로 menu 가 열려 있는 동안에도 product list 가 갱신될 수 있음. `renderProductChip()` 끝에서 `chip.aria-expanded === "true"` 면 `renderProductDropupMenu()` 도 즉시 호출해 동기화.
+  - **busy 상태 정책**: 기존 `isCurrentConvBusy()` race 가드 유지 — busy 시 chip.disabled + aria-disabled + cursor not-allowed. menu open 도 `chip.disabled` 체크로 차단. 사용자가 응답 처리 중에 product 를 바꾸려 하면 chip 자체가 비활성.
+- Risks:
+  - **dead CSS 잔존**: 기존 `.product-chip-wrap` / `.product-chip` / `.product-chip-caption` / `.product-chip-select` rule 이 stylesheet 에 남아 있음 (사용처 없음). 무해이지만 별 cycle 에서 제거 권장 (TASK-0066 의 `.topbar-brand` dead rule 과 함께).
+  - **a11y — native select 의 keyboard 동작 대체**: native `<select>` 는 keyboard 화살표 / Enter / Esc / 빠른 search 자동 지원. custom dropdown 은 본 cycle 에선 click + outside-click + ESC close 만 구현. arrow key 탐색은 후속 cycle 검토 (TASK-0063 conv-item menu 와 동일 정책 — Esc 만 적용).
+  - **drop-up 의 viewport 경계 처리**: chip 이 viewport 하단 근처라 drop-up 이 자연스럽지만, chip 이 viewport 상단 근처 (mobile keyboard 등 viewport 축소 시) 면 menu 가 위로 튀어나갈 수 있음. CSS `max-height: 320px; overflow-y: auto` 로 안전망. fully responsive 동작은 후속 cycle 검토 가능.
+  - **menu z-index 50 vs sticky 분기선 z-index 5 vs conv-item dropdown z-index 200**: 분기선 (5) 위, conv-item menu (200) 아래. composer 영역에서 menu 가 펼쳐지면 sticky 분기선 위에 표시되므로 정합. conv-item menu 와 동시 노출은 일반적이지 않으므로 200 충돌은 무시 가능.
+  - **JS — element ID 보존**: chip 의 ID (`productChip`, `productChipDot`) 보존으로 기존 외부 reference 무영향. 신규 ID (`productChipLabel`, `productDropupMenu`) 는 본 cycle 신설.
+- Trace: REQ-20260518-0005 → TASK-0067 → CHG-20260518-0004 → REV-20260518-0004 (follow-up of TASK-0066)
+
 ## REV-20260518-0003
 - Date: 2026-05-18
 - Decision: TASK-0066 (REQ-20260518-0004, Minor §12.3) — ChatGPT 패턴 layout 재구조화. 사용자 결정: topbar 에 대화 제목 통합 + 좌측 정렬 + brand 를 sidebar 영역으로 이전. `.app-shell` grid 2-row → 2-column. `.app-body` wrapper / `.chat-header` 폐기.

@@ -1364,12 +1364,143 @@ a { color: inherit; }
 .composer-box {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 6px;
   padding: 9px 12px;
   border-radius: var(--r-lg);
   border: 1px solid var(--border);
   background: var(--bg);
   transition: border-color .14s, box-shadow .14s;
+}
+
+/* REQ-20260518-0005: composer 우측 product chip (ChatGPT 모델 선택 패턴) + drop-up dropdown */
+.composer-product-chip-wrap {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-end;
+}
+.composer-product-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease, color .12s ease;
+  user-select: none;
+  max-width: 180px;
+}
+.composer-product-chip:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.composer-product-chip[aria-expanded="true"] {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.composer-product-chip[aria-disabled="true"],
+.composer-product-chip.is-disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+.composer-product-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+.composer-product-chip[data-mode="auto"] .composer-product-chip-dot {
+  background: var(--text-muted);
+}
+.composer-product-chip[data-mode="pinned"] .composer-product-chip-dot {
+  background: var(--primary);
+}
+.composer-product-chip-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 130px;
+}
+
+/* drop-up menu — chip 위로 펼침 (composer 위쪽) */
+.product-dropup-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 50;
+  min-width: 220px;
+  max-width: 280px;
+  background: var(--surface-1, #ffffff);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.product-dropup-menu.hidden { display: none; }
+.product-dropup-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.product-dropup-item:hover { background: rgba(37,99,235,.08); }
+.product-dropup-item.is-selected {
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
+.product-dropup-item-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+.product-dropup-item[data-mode="auto"] .product-dropup-item-dot { background: var(--text-muted); }
+.product-dropup-item[data-mode="pinned"] .product-dropup-item-dot { background: var(--primary); }
+.product-dropup-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.product-dropup-item-check {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--primary);
+  opacity: 0;
+}
+.product-dropup-item.is-selected .product-dropup-item-check { opacity: 1; }
+.product-dropup-section-head {
+  padding: 6px 10px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
 }
 
 .composer-box:focus-within {

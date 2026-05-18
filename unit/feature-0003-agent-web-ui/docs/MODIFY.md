@@ -8,6 +8,37 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260518-0004
+- Date: 2026-05-18
+- Summary: TASK-0067 (REQ-20260518-0005, Minor §12.3 — UI 위치 이전 + native select → custom dropdown 전환. backend / endpoint / RBAC / 데이터 영역 무변경.) 사용자 직접 테스트 follow-up — TASK-0066 의 layout 통합 후 사이드바도 채팅 영역처럼 확장하기 위해 `제품 칩` 을 사이드바에서 composer 의 우측 (textarea 와 send 버튼 사이) 으로 이전. ChatGPT 의 모델 선택 UI 패턴 — chip 클릭 시 drop-up dropdown 으로 옵션 표시 + 선택 시 즉시 적용 + chip label/dot 갱신.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html`
+    - `.sidebar-head` 의 `.product-chip-wrap` (caption + label.product-chip + select 형태) 제거. `.sidebar-head` 에는 `#newConversationBtn` 만 남음 → 사이드바 vertical 공간 확장.
+    - `.composer-box` 안 textarea 와 `#sendBtn` 사이에 `.composer-product-chip-wrap` 신설 — `button#productChip` (dot + label + arrow) + `div#productDropupMenu.product-dropup-menu`.
+    - chip 의 기존 ID 보존 (`productChip`, `productChipDot`) + 신규 ID (`productChipLabel`, `productDropupMenu`).
+    - cache-bust `v=20260518-topbar-merge` → `v=20260518-product-composer`.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/app.js`
+    - `renderProductChip()` 재작성 — 기존 native `<select id="productSelect">` 의존 (renderProductOptions 호출) 제거. 새 chip 의 dataset.mode / label / aria-label / busy 시 disabled 갱신. menu 가 열려 있으면 `renderProductDropupMenu()` 도 즉시 갱신해 옵션 list 동기화.
+    - chip label 정책: pinned 시 `compactLabel = product_key` (chip width 보존), aria-label 은 `fullLabel = "{name} ({key})"` (a11y 보존).
+    - 신규 `renderProductDropupMenu()` — section head ("이 대화의 제품") + auto item + products 의 pinned items 렌더. `state.products` 변경 시 menu open 중에도 즉시 반영.
+    - 신규 `buildProductDropupItem({mode, pid, label, selected})` — `role="menuitem"`, dot + label + check svg, click handler 가 closeProductDropup + setActiveProduct 호출.
+    - 신규 `openProductDropup()` / `closeProductDropup()` — menu visibility + chip `aria-expanded` 동기화 + outside-click (mousedown capture, setTimeout 0 으로 trigger click 충돌 방지) + ESC 닫기.
+    - DOM ready 의 기존 `productSelect` change handler 제거. 신규 `#productChip` click handler 가 dropdown toggle.
+    - `setActiveProduct` 본체 무변경 — backend `PATCH /api/conversations/{cid}/product` 호출, optimistic state 갱신, toast 메시지 모두 그대로.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css`
+    - 신규 `.composer-product-chip-wrap` (relative + flex 끝 정렬), `.composer-product-chip` (pill: 30px height, padding 0 9px, border 1px, hover/expanded 시 primary 색 강조, busy 시 opacity .5), `.composer-product-chip-dot` (7px 원, mode=auto 회색 / mode=pinned 파랑), `.composer-product-chip-label` (max-width 130px ellipsis).
+    - 신규 `.product-dropup-menu` (`position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 50; min-width: 220px; max-width: 280px; max-height: 320px; overflow-y: auto`) — chip 위로 펼침 (drop-up).
+    - 신규 `.product-dropup-item` + `.is-selected` + `.product-dropup-item-dot` + `.product-dropup-item-label` + `.product-dropup-item-check` (svg checkmark, selected 시만 opacity 1) + `.product-dropup-section-head` (소형 caps).
+    - `.composer-box` 의 `gap: 8px` → `gap: 6px` 로 조정 (chip + send 간 간격 자연스럽게).
+    - 기존 `.product-chip-wrap` / `.product-chip` / `.product-chip-caption` / `.product-chip-select` rule 은 stylesheet 에 남아 있으나 사용처가 사라져 dead code (제거는 별 cycle).
+  - `repo/unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md` + `repo/docs/STATUS.md` — REQ-20260518-0005 / TASK-0067 / CHG-20260518-0004 / REV-20260518-0004 entries.
+- Verification:
+  - `node --check unit/feature-0003-agent-web-ui/src/static/app.js` PASS
+  - `SKIP_INIT=1 make web` 재배포 OK
+  - DOM 검증 (browser console): `chipInComposer = true` (chip 이 composer-box 안), `oldSelectPresent = false` (기존 native select 부재), `oldWrapPresent = false` (sidebar product-chip-wrap 부재), `sidebarHeadChildren = ["BUTTON.btn-new-conv"]` (sidebar-head 가 새 대화 버튼만), `chipLabel = "auto"`, `chipMode = "auto"` (hydrate 정상).
+  - 동작 검증: chip click → menu 표시 (4 items: auto + KR + MV + GZ_KR, auto selected), `dropUp = true` (menuY=459 < chipY=644 — drop-up 보장), KR item click → menu close + chip 갱신 (`chipMode=pinned, chipLabel="KR", chipAriaLabel="이 대화의 제품 선택, 현재 킹스레이드 (KR)"`) + toast "제품을 킹스레이드로 바꿨어요. 다음 답변부터 적용됩니다.". backend endpoint `PATCH /api/conversations/{cid}/product` 정상 호출.
+- Trace: REQ-20260518-0005 → TASK-0067 → CHG-20260518-0004 → REV-20260518-0004 (follow-up of TASK-0066)
+
 ## CHG-20260518-0003
 - Date: 2026-05-18
 - Summary: TASK-0066 (REQ-20260518-0004, Minor §12.3 — UI layout 재구조화, RBAC / endpoint / 데이터 영역 무변경) TASK-0065 follow-up. 사용자 직접 테스트 피드백: 헤더 4 버튼 제거 후 `.chat-header` 가 거의 비어 있어 `.topbar` (관리 콘솔) 와 영역 통합 필요. ChatGPT 패턴으로 layout 재구조화 — sidebar 가 전체 height, brand (`[MA] MySQL AI`) 를 sidebar 의 첫 영역으로 이전, topbar (대화 제목 + 관리 콘솔) 을 chat-column 의 첫 영역으로 이전, chat-header 폐기로 채팅 영역 확장. 대화 제목은 좌측 정렬 (사용자 명시 — 중앙 정렬 금지).
