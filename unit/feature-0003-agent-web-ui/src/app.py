@@ -272,6 +272,18 @@ PERMISSION_DEFINITIONS = (
         "group": "conversation",
     },
     {
+        "code": "conversation.duplicate.own",
+        "label": "내 대화 복사",
+        "description": "자신이 소유한 대화의 메시지/첨부/SQL 결과 전체를 본 계정 소유의 새 대화로 복제할 수 있다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.duplicate.any",
+        "label": "전체 대화 복사",
+        "description": "타 사용자가 소유한 대화까지 본 계정 소유의 새 대화로 복제할 수 있다.",
+        "group": "conversation",
+    },
+    {
         "code": "product.manage",
         "label": "제품 관리",
         "description": "제품(Product) 생성/수정/삭제 및 접근 DB 스키마, 제품 시스템 프롬프트를 관리할 수 있다.",
@@ -370,6 +382,7 @@ SEED_ROLE_DEFINITIONS = (
             "conversation.cancel.own",
             "conversation.finalize.own",
             "conversation.share.create",
+            "conversation.duplicate.own",
         },
     },
     {
@@ -388,6 +401,7 @@ SEED_ROLE_DEFINITIONS = (
             "conversation.cancel.own",
             "conversation.finalize.own",
             "conversation.share.create",
+            "conversation.duplicate.own",
         },
     },
     {
@@ -1441,7 +1455,13 @@ def _ensure_seed_roles(conn) -> None:
         admin_role_id = int(admin_row[0] or 0)
         permission_map = _permission_id_map(conn)
         cur = conn.cursor()
-        for code in ("product.manage", "system_prompt.manage.role.any", "conversation.share.create"):
+        for code in (
+            "product.manage",
+            "system_prompt.manage.role.any",
+            "conversation.share.create",
+            "conversation.duplicate.own",
+            "conversation.duplicate.any",
+        ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
                 continue
@@ -1453,25 +1473,31 @@ VALUES (%s, %s)
                 (admin_role_id, permission_id),
             )
         cur.close()
-    # REQ-20260514-0001: 기존 operator/sales role 에도 conversation.share.create catchup 보정.
+    # REQ-20260514-0001 / REQ-20260518-0001: 기존 operator/sales role 에 신규 conversation.* 권한 catchup.
     cur = conn.cursor()
     cur.execute("SELECT Id FROM WebRoles WHERE RoleKey IN ('operator', 'sales')")
     role_rows = cur.fetchall() or []
     cur.close()
     if role_rows:
         permission_map = _permission_id_map(conn)
-        share_pid = int(permission_map.get("conversation.share.create") or 0)
-        if share_pid > 0:
-            cur = conn.cursor()
-            for row in role_rows:
-                role_id = int((row[0] if isinstance(row, (list, tuple)) else row.get("Id")) or 0)
-                if role_id <= 0:
+        catchup_codes = ("conversation.share.create", "conversation.duplicate.own")
+        catchup_pids = [
+            int(permission_map.get(code) or 0)
+            for code in catchup_codes
+        ]
+        cur = conn.cursor()
+        for row in role_rows:
+            role_id = int((row[0] if isinstance(row, (list, tuple)) else row.get("Id")) or 0)
+            if role_id <= 0:
+                continue
+            for pid in catchup_pids:
+                if pid <= 0:
                     continue
                 cur.execute(
                     "INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId) VALUES (%s, %s)",
-                    (role_id, share_pid),
+                    (role_id, pid),
                 )
-            cur.close()
+        cur.close()
 
 
 SEED_ROLE_SYSTEM_PROMPTS = (
@@ -2419,6 +2445,11 @@ def _ensure_seed_catchup(conn) -> None:
     해도 안전하다. TASK-0044 에서 sales role + role-scope system prompt 를 기존
     배포에 합류시키기 위해 도입.
     """
+    # REQ-20260518-0001: catalog hydrate 를 seed_roles 앞으로 옮긴다.
+    # _ensure_seed_roles 의 admin/operator/sales catchup 이 _permission_id_map(conn) 으로
+    # PermissionId 를 lookup 하므로, 신규 권한이 catalog 에 먼저 INSERT 되어 있어야
+    # 기존 배포에 grant 가 보정된다 (Codex review risk 3 변형).
+    _ensure_permission_catalog(conn)
     _ensure_seed_roles(conn)
     _ensure_seed_products(conn)
     _ensure_seed_role_system_prompts(conn)
@@ -2426,8 +2457,6 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_dynamic_permissions_schema(conn)
     # REQ-20260514-0001: 공유 링크 테이블 fast-path 보정.
     _ensure_web_conversation_shares_schema(conn)
-    # REQ-20260514-0001: catchup 시 catalog hydrate (신규 conversation.share.create 권한이 WebPermissions 에 INSERT 되도록).
-    _ensure_permission_catalog(conn)
     # TASK-0061 Phase 6: 기존 배포에 MustChangePassword 컬럼 backfill.
     _ensure_must_change_password_schema(conn)
     _migration_added = _ensure_product_access_permissions(conn)
@@ -4994,6 +5023,72 @@ async def fork_conversation(request: Request) -> JSONResponse:
         payload, err = _fork_conversation_impl(conn, account, source_id, from_id)
         if err:
             return err
+        return JSONResponse(payload)
+    finally:
+        conn.close()
+
+
+@app.post("/api/conversations/{cid}/duplicate")
+async def duplicate_conversation(cid: str, request: Request) -> JSONResponse:
+    """REQ-20260518-0001: 본인 대화 또는 (.any) 타 사용자 대화를 본 계정 소유의 새 대화로 복제.
+
+    fork (`/api/fork_conversation`) 와의 차이:
+    - cid 가 path parameter (per-conversation "···" menu UX 정합).
+    - 메시지 전체 복제 (from_message_id 없음).
+    - 신규 권한 `conversation.duplicate.own` / `.any` 별도 gate. `.any` 가 superset.
+    - topic prefix = `사본:` (fork 의 `[Fork]` 와 구분되어 추적성 보존).
+    - 본체 복제는 `_fork_conversation_impl` 재활용 (share-token fork 와 helper 공유).
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        # Codex risk 5/6: read-gate 를 먼저 수행. 404 단일 메시지로 metadata leak 차단.
+        # (rename/delete 와 동일 wording — `_account_can_access_conversation` 이 존재성 + own/any 권한을 한 번에 검사)
+        if not _account_can_access_conversation(
+            conn,
+            account,
+            cid,
+            "conversation.read.own",
+            "conversation.read.any",
+        ):
+            return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
+        # Codex risk 7: .any superset semantics. mirror `_account_can_access_conversation` (app.py §3004-3008).
+        is_own = _conversation_owned_by_account(conn, cid, int(account["id"]))
+        if not (
+            _account_has_permission(account, "conversation.duplicate.any")
+            or (is_own and _account_has_permission(account, "conversation.duplicate.own"))
+        ):
+            return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
+        if not _account_has_permission(account, "conversation.create"):
+            return _json_error("'새 대화 생성' 권한이 없습니다.", 403)
+        payload, err = _fork_conversation_impl(conn, account, cid, None)
+        if err:
+            return err
+        # Codex risk 10: 그래프임 단위 안전 truncation. helper 가 만든 "[Fork] " 를 "사본: " 로 교체.
+        source_topic = str(payload.get("topic") or "")
+        base = source_topic[len("[Fork] "):] if source_topic.startswith("[Fork] ") else source_topic
+        max_base = max(0, 256 - len("사본: "))
+        new_topic = f"사본: {base[:max_base]}"
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+UPDATE AgentCoreConversations
+SET topic = %s,
+    updated_at = CURRENT_TIMESTAMP
+WHERE conversation_id = %s
+                """,
+                (new_topic, payload["conversation_id"]),
+            )
+            cur.close()
+        except Exception:
+            pass
+        payload["topic"] = new_topic
         return JSONResponse(payload)
     finally:
         conn.close()

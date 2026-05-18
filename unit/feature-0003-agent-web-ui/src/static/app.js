@@ -186,6 +186,8 @@ const PERMISSION_LABELS = {
   "conversation.finalize.own": "내 대화 즉시답변",
   "conversation.finalize.any": "전체 대화 즉시답변",
   "conversation.share.create": "대화 공유 링크 생성",
+  "conversation.duplicate.own": "내 대화 복사",
+  "conversation.duplicate.any": "전체 대화 복사",
   "product.manage": "제품 관리",
   "system_prompt.manage.role.any": "역할/계정 시스템 프롬프트 관리",
 };
@@ -223,6 +225,8 @@ const PERMISSION_DESCRIPTIONS = {
   "conversation.finalize.own": "자신이 소유한 대화에서 추가 탐색을 멈추고 현재까지의 정보로 즉시 답변을 만들게 할 수 있는 권한입니다.",
   "conversation.finalize.any": "타 사용자 소유 대화까지 포함해 즉시 답변을 강제할 수 있는 권한입니다.",
   "conversation.share.create": "자신의 대화를 anonymous 접근 가능한 공유 링크로 발급하거나 취소할 수 있는 권한입니다. 사내 협업용이며 외부 IP 노출 시 보안 영향이 있을 수 있습니다.",
+  "conversation.duplicate.own": "자신이 소유한 대화의 메시지/첨부/SQL 결과 전체를 본 계정 소유의 새 대화로 복제할 수 있는 권한입니다. 원본은 유지됩니다.",
+  "conversation.duplicate.any": "타 사용자가 소유한 대화까지 본 계정 소유의 새 대화로 복제할 수 있는 권한입니다. 원본은 유지됩니다.",
   "product.manage": "제품(Product) 생성/수정/삭제 및 접근 DB 스키마와 제품 시스템 프롬프트를 관리할 수 있는 권한입니다.",
   "system_prompt.manage.role.any": "다른 역할 또는 다른 계정의 시스템 프롬프트를 수정할 수 있는 권한입니다. 본인 계정 프롬프트는 이 권한 없이도 수정할 수 있습니다.",
 };
@@ -248,6 +252,10 @@ function requiredPermissionsFor(action, conversation = currentConversation()) {
       return { label: "대화 중단", codes: own ? ["conversation.cancel.any", "conversation.cancel.own"] : ["conversation.cancel.any"] };
     case "conversation.finalize":
       return { label: "즉시 답변", codes: own ? ["conversation.finalize.any", "conversation.finalize.own"] : ["conversation.finalize.any"] };
+    case "conversation.duplicate":
+      return { label: "대화 복사", codes: own ? ["conversation.duplicate.any", "conversation.duplicate.own"] : ["conversation.duplicate.any"] };
+    case "conversation.share":
+      return { label: "대화 공유", codes: ["conversation.share.create"] };
     default:
       return { label: action, codes: [] };
   }
@@ -1168,6 +1176,33 @@ function renderConversationList() {
         metaEl.append(ownerEl);
       }
       button.append(titleRow, metaEl);
+
+      // REQ-20260518-0001: per-conversation "···" menu trigger.
+      // hover 시 fade-in, active 시 상시 표시 (CSS 처리). click 은 conv-item click 과 분리되어 menu 만 토글.
+      const menuTrigger = document.createElement("span");
+      menuTrigger.className = "conv-item-menu-trigger";
+      menuTrigger.setAttribute("role", "button");
+      menuTrigger.setAttribute("tabindex", "0");
+      menuTrigger.setAttribute("aria-haspopup", "menu");
+      menuTrigger.setAttribute("aria-expanded", "false");
+      menuTrigger.setAttribute("aria-label", "대화 메뉴 열기");
+      menuTrigger.textContent = "···";
+      const toggleMenu = (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const existing = document.getElementById("convItemMenu");
+        if (existing && existing.dataset.conversationId === String(item.id)) {
+          closeConversationItemMenu();
+        } else {
+          openConversationItemMenu(String(item.id), menuTrigger);
+        }
+      };
+      menuTrigger.addEventListener("click", toggleMenu);
+      menuTrigger.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") toggleMenu(ev);
+      });
+      button.appendChild(menuTrigger);
+
       conversationListEl.appendChild(button);
     });
   };
@@ -1737,7 +1772,33 @@ function renderMessages() {
   const selfLabel = state.user && state.user.username ? `나 (${state.user.username})` : "나";
   const canFork = Boolean(state.activeConversationId) && can("conversation.create");
 
+  // REQ-20260518-0001: Slack 패턴 — 날짜 분기선 click 으로 캘린더 popover anchored 오픈.
+  let lastDateKey = "";
   state.messages.forEach((message) => {
+    const createdAt = message.created_at ? new Date(message.created_at) : null;
+    if (createdAt && !isNaN(createdAt.getTime())) {
+      const key = `${createdAt.getFullYear()}-${String(createdAt.getMonth() + 1).padStart(2, "0")}-${String(createdAt.getDate()).padStart(2, "0")}`;
+      if (key !== lastDateKey) {
+        lastDateKey = key;
+        const divider = document.createElement("button");
+        divider.type = "button";
+        divider.className = "message-date-divider";
+        divider.dataset.dateKey = key;
+        divider.setAttribute("aria-label", `${key} 의 다른 시각으로 이동 — 캘린더 열기`);
+        divider.title = "클릭하면 이 날짜의 다른 시각 또는 다른 날짜로 이동할 수 있는 캘린더가 열립니다.";
+        const label = document.createElement("span");
+        label.className = "message-date-divider-label";
+        label.textContent = `${createdAt.getFullYear()}년 ${createdAt.getMonth() + 1}월 ${createdAt.getDate()}일`;
+        divider.appendChild(label);
+        divider.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          openHistoryCalendarAt(key, divider);
+        });
+        messageLogEl.appendChild(divider);
+      }
+    }
+
     const row = document.createElement("article");
     const role = message.role === "user" ? "user" : "assistant";
     const classes = [`message`, `is-${role}`];
@@ -2058,6 +2119,12 @@ const calendarState = {
 };
 
 async function openHistoryCalendar() {
+  return openHistoryCalendarAt(null, null);
+}
+
+// REQ-20260518-0001: dateKey ("YYYY-MM-DD") 가 주어지면 해당 월에 cursor 를 두고 그 날짜를 selected 로 시작한다.
+// anchorEl 이 주어지면 popover 를 anchorEl 좌측 하단 근처에 띄운다 (분기선 click 진입점).
+async function openHistoryCalendarAt(dateKey = null, anchorEl = null) {
   const cid = state.activeConversationId;
   if (!cid) return;
   let payload;
@@ -2068,13 +2135,13 @@ async function openHistoryCalendar() {
     return;
   }
   calendarState.payload = payload;
-  // 가장 최근 날짜를 기본 cursor 로
-  const last = String(payload.last || "");
-  if (last && /^\d{4}-\d{2}-\d{2}/.test(last)) {
-    const [y, m] = last.split("-");
+  const norm = (s) => (typeof s === "string" && /^\d{4}-\d{2}-\d{2}/.test(s)) ? s : "";
+  const preferred = norm(dateKey) || norm(payload.last);
+  if (preferred) {
+    const [y, m] = preferred.split("-");
     calendarState.cursorYear = Number(y);
     calendarState.cursorMonth = Number(m) - 1;
-    calendarState.selectedDate = last;
+    calendarState.selectedDate = preferred;
   } else {
     const now = new Date();
     calendarState.cursorYear = now.getFullYear();
@@ -2083,18 +2150,49 @@ async function openHistoryCalendar() {
   }
   calendarState.open = true;
   const pop = document.getElementById("historyCalendarPopover");
-  if (pop) pop.classList.remove("hidden");
-  const btn = document.getElementById("historyCalendarBtn");
-  if (btn) btn.setAttribute("aria-expanded", "true");
+  if (pop) {
+    pop.classList.remove("hidden");
+    pop.style.position = "";
+    pop.style.top = "";
+    pop.style.left = "";
+    if (anchorEl) {
+      // popover 를 분기선 하단 근처로 옮긴다. viewport 안에 머무르도록 보정.
+      const rect = anchorEl.getBoundingClientRect();
+      const popRect = pop.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      let top = rect.bottom + 6;
+      let left = rect.left + rect.width / 2 - popRect.width / 2;
+      if (left < 8) left = 8;
+      if (left + popRect.width > vw - 8) left = vw - popRect.width - 8;
+      if (top + popRect.height > vh - 8) top = Math.max(8, rect.top - popRect.height - 6);
+      pop.style.position = "fixed";
+      pop.style.top = `${top}px`;
+      pop.style.left = `${left}px`;
+    }
+  }
   renderHistoryCalendar();
 }
 
 function closeHistoryCalendar() {
   calendarState.open = false;
   const pop = document.getElementById("historyCalendarPopover");
-  if (pop) pop.classList.add("hidden");
-  const btn = document.getElementById("historyCalendarBtn");
-  if (btn) btn.setAttribute("aria-expanded", "false");
+  if (pop) {
+    pop.classList.add("hidden");
+    // 분기선 anchor 진입으로 fixed 가 적용되었을 수 있어 원복.
+    pop.style.position = "";
+    pop.style.top = "";
+    pop.style.left = "";
+  }
+}
+
+// REQ-20260518-0001: 메시지가 있는 모든 날짜 중 oldest / newest 를 추출 — 년 jump 버튼 조건부 노출에 사용.
+function calendarDateBounds() {
+  const dates = (calendarState.payload && calendarState.payload.dates) || {};
+  const keys = Object.keys(dates).filter((k) => /^\d{4}-\d{2}-\d{2}$/.test(k) && Array.isArray(dates[k]) && dates[k].length > 0);
+  if (!keys.length) return { oldest: null, newest: null };
+  keys.sort();
+  return { oldest: keys[0], newest: keys[keys.length - 1] };
 }
 
 function renderHistoryCalendar() {
@@ -2105,6 +2203,55 @@ function renderHistoryCalendar() {
   const y = calendarState.cursorYear;
   const m = calendarState.cursorMonth;
   title.textContent = `${y}년 ${m + 1}월`;
+  // REQ-20260518-0001: 월/년 nav 버튼. 년 jump 는 oldest~newest 이 1년 이상 떨어진 경우에만 노출.
+  const nav = document.getElementById("calendarNav");
+  if (nav) {
+    nav.innerHTML = "";
+    const { oldest, newest } = calendarDateBounds();
+    const oldestYear = oldest ? Number(oldest.slice(0, 4)) : y;
+    const newestYear = newest ? Number(newest.slice(0, 4)) : y;
+    const showYearJump = (newestYear - oldestYear) >= 1;
+    const mkBtn = (label, title, fn, disabled = false) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "calendar-nav-btn";
+      b.textContent = label;
+      b.title = title;
+      b.setAttribute("aria-label", title);
+      if (disabled) { b.disabled = true; b.classList.add("is-disabled"); }
+      else b.addEventListener("click", fn);
+      return b;
+    };
+    const goMonth = (delta) => {
+      let ny = calendarState.cursorYear;
+      let nm = calendarState.cursorMonth + delta;
+      while (nm < 0) { nm += 12; ny -= 1; }
+      while (nm > 11) { nm -= 12; ny += 1; }
+      calendarState.cursorYear = ny;
+      calendarState.cursorMonth = nm;
+      renderHistoryCalendar();
+    };
+    const goYear = (delta) => {
+      calendarState.cursorYear = calendarState.cursorYear + delta;
+      renderHistoryCalendar();
+    };
+    // 좌측 cursor 상한 도달 시 disable. oldest 보다 이전이 없으면 prev 비활성.
+    const cursorYM = y * 12 + m;
+    const oldestYM = oldest ? (Number(oldest.slice(0, 4)) * 12 + (Number(oldest.slice(5, 7)) - 1)) : cursorYM;
+    const newestYM = newest ? (Number(newest.slice(0, 4)) * 12 + (Number(newest.slice(5, 7)) - 1)) : cursorYM;
+    if (showYearJump) {
+      nav.appendChild(mkBtn("«", "1년 전으로 이동", () => goYear(-1), cursorYM - 12 < oldestYM));
+    }
+    nav.appendChild(mkBtn("‹", "이전 월", () => goMonth(-1), cursorYM - 1 < oldestYM));
+    const titleSlot = document.createElement("span");
+    titleSlot.className = "calendar-nav-title";
+    titleSlot.textContent = `${y}년 ${m + 1}월`;
+    nav.appendChild(titleSlot);
+    nav.appendChild(mkBtn("›", "다음 월", () => goMonth(1), cursorYM + 1 > newestYM));
+    if (showYearJump) {
+      nav.appendChild(mkBtn("»", "1년 후로 이동", () => goYear(1), cursorYM + 12 > newestYM));
+    }
+  }
   grid.innerHTML = "";
   ["일", "월", "화", "수", "목", "금", "토"].forEach((label) => {
     const head = document.createElement("div");
@@ -2344,12 +2491,7 @@ function renderComposer() {
   finalizeBtn.classList.toggle("hidden", !processing);
   renameConversationBtn.classList.toggle("hidden", !state.activeConversationId);
   deleteConversationBtn.classList.toggle("hidden", !state.activeConversationId);
-  // TASK-0061 Phase 5 (REQ-20260515-0007 / AC-0089): 캘린더 버튼 — 활성 대화 + 메시지가 있을 때만 노출.
-  const calBtn = document.getElementById("historyCalendarBtn");
-  if (calBtn) {
-    const hasMessages = Array.isArray(state.messages) && state.messages.some((m) => m.id != null);
-    calBtn.classList.toggle("hidden", !state.activeConversationId || !hasMessages);
-  }
+  // REQ-20260518-0001: 헤더 historyCalendarBtn 제거 — 캘린더 trigger 는 채팅 로그의 날짜 분기선이 단일 진입점.
   if (forkConversationBtn) {
     forkConversationBtn.classList.toggle("hidden", !state.activeConversationId);
     if (state.activeConversationId) {
@@ -2745,8 +2887,8 @@ function beginPendingConversation() {
 
 // REQ-20260514-0001: 대화 공유 링크 생성. anchorMessageId 가 주어지면 'anchored', 아니면 'full'.
 // 성공 시 절대 URL 을 clipboard 에 복사하고 toast 로 노출. 실패 시 throw.
-async function createConversationShare({ anchorMessageId = null } = {}) {
-  const cid = state.activeConversationId;
+async function createConversationShare({ anchorMessageId = null, conversationId = null } = {}) {
+  const cid = conversationId || state.activeConversationId;
   if (!cid) return null;
   if (!can("conversation.share.create")) {
     showPermissionDeniedToast("conversation.share.create");
@@ -2799,8 +2941,10 @@ async function forkConversation({ fromMessageId = null } = {}) {
   await refreshWorkspace(newId);
 }
 
-async function renameCurrentConversation() {
-  const conversation = currentConversation();
+async function renameCurrentConversation(targetCid = "") {
+  const conversation = targetCid
+    ? state.conversations.find((c) => String(c.id) === String(targetCid)) || null
+    : currentConversation();
   if (!conversation) return;
   if (!canRenameConversation(conversation)) {
     showPermissionDeniedToast("conversation.rename", conversation);
@@ -2818,19 +2962,21 @@ async function renameCurrentConversation() {
   await refreshWorkspace(conversation.id);
 }
 
-async function deleteConversation() {
-  if (!state.activeConversationId) return;
-  if (!canDeleteConversation()) {
-    showPermissionDeniedToast("conversation.delete");
+async function deleteConversation(targetCid = "") {
+  const cid = targetCid || state.activeConversationId;
+  if (!cid) return;
+  const conversation = state.conversations.find((c) => String(c.id) === String(cid)) || null;
+  if (!canDeleteConversation(conversation)) {
+    showPermissionDeniedToast("conversation.delete", conversation);
     return;
   }
-  if (!window.confirm("현재 대화를 삭제하시겠습니까?")) {
+  if (!window.confirm("선택한 대화를 삭제하시겠습니까?")) {
     return;
   }
   try {
     const payload = await apiFetch("/api/delete_conversation", {
       method: "POST",
-      body: JSON.stringify({ conversation_id: state.activeConversationId }),
+      body: JSON.stringify({ conversation_id: cid }),
     });
     showToast("대화를 삭제했습니다.");
     await refreshWorkspace(payload.current || "");
@@ -2841,7 +2987,7 @@ async function deleteConversation() {
       const payload = await apiFetch("/api/delete_conversation", {
         method: "POST",
         body: JSON.stringify({
-          conversation_id: state.activeConversationId,
+          conversation_id: cid,
           force: true,
           confirm_text: "삭제",
         }),
@@ -2852,6 +2998,138 @@ async function deleteConversation() {
     }
     throw error;
   }
+}
+
+// REQ-20260518-0001: per-conversation "···" menu 의 "복사" action.
+// `_fork_conversation_impl` 기반이므로 active 대화 자동 전환은 backend 가 처리 (Codex risk 4 — 사용자 의도와 정합).
+async function duplicateConversationFromMenu(targetCid) {
+  const cid = String(targetCid || "").trim();
+  if (!cid) return;
+  const conversation = state.conversations.find((c) => String(c.id) === cid) || null;
+  if (!hasAnyPermission(requiredPermissionsFor("conversation.duplicate", conversation).codes)) {
+    showPermissionDeniedToast("conversation.duplicate", conversation);
+    return;
+  }
+  if (!can("conversation.create")) {
+    showPermissionDeniedToast("conversation.create");
+    return;
+  }
+  try {
+    const payload = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/duplicate`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    const newId = payload && payload.conversation_id ? String(payload.conversation_id) : "";
+    const copied = Number(payload && payload.copied) || 0;
+    showToast(`대화를 복사했습니다 (${copied}개 메시지).`);
+    await refreshWorkspace(newId);
+  } catch (error) {
+    showToast(`복사 실패: ${error.message || error}`, true);
+  }
+}
+
+// REQ-20260518-0001: per-conversation "···" menu 의 lifecycle 관리.
+// menu 는 body 에 mount 하여 conv-item overflow 에 묶이지 않게 한다. ESC / outside click / scroll / resize 닫기.
+function closeConversationItemMenu() {
+  const existing = document.getElementById("convItemMenu");
+  if (existing) existing.remove();
+  // trigger aria-expanded 갱신
+  document.querySelectorAll(".conv-item-menu-trigger.is-open").forEach((t) => {
+    t.classList.remove("is-open");
+    t.setAttribute("aria-expanded", "false");
+  });
+}
+
+function openConversationItemMenu(cid, triggerEl) {
+  closeConversationItemMenu();
+  const conversation = state.conversations.find((c) => String(c.id) === String(cid)) || null;
+  if (!conversation) return;
+  const menu = document.createElement("div");
+  menu.id = "convItemMenu";
+  menu.className = "conv-item-menu";
+  menu.setAttribute("role", "menu");
+  menu.dataset.conversationId = String(cid);
+
+  const makeItem = (label, action, handler, opts = {}) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "conv-menu-item";
+    if (opts.danger) item.classList.add("is-danger");
+    item.setAttribute("role", "menuitem");
+    item.textContent = label;
+    markAccessBlocked(item, action, conversation);
+    item.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      // 권한 부재 시 markAccessBlocked 가 aria-disabled=true 로 표시 — handler 가 한 번 더 게이트.
+      if (item.classList.contains("is-access-blocked")) {
+        showPermissionDeniedToast(action, conversation);
+        return;
+      }
+      closeConversationItemMenu();
+      Promise.resolve()
+        .then(() => handler())
+        .catch((err) => showToast(err.message || "작업 실패", true));
+    });
+    return item;
+  };
+
+  menu.appendChild(makeItem("복사", "conversation.duplicate", () => duplicateConversationFromMenu(cid)));
+  menu.appendChild(makeItem("공유", "conversation.share", async () => {
+    await createConversationShare({ conversationId: cid });
+  }));
+  menu.appendChild(makeItem("제목 변경", "conversation.rename", () => renameCurrentConversation(cid)));
+  menu.appendChild(makeItem("삭제", "conversation.delete", () => deleteConversation(cid), { danger: true }));
+
+  document.body.appendChild(menu);
+
+  // 위치 계산 — trigger 의 오른쪽 아래로 띄우되 viewport 안에 머무르도록.
+  const rect = triggerEl.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  let top = rect.bottom + 4;
+  let left = rect.right - menuRect.width;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  if (left < 8) left = 8;
+  if (left + menuRect.width > vw - 8) left = vw - menuRect.width - 8;
+  if (top + menuRect.height > vh - 8) top = rect.top - menuRect.height - 4;
+  menu.style.top = `${Math.max(8, top)}px`;
+  menu.style.left = `${left}px`;
+
+  triggerEl.classList.add("is-open");
+  triggerEl.setAttribute("aria-expanded", "true");
+
+  const detach = () => {
+    document.removeEventListener("mousedown", onDocClick, true);
+    document.removeEventListener("keydown", onKey, true);
+    window.removeEventListener("scroll", onScroll, true);
+    window.removeEventListener("resize", onScroll, true);
+  };
+  const onDocClick = (ev) => {
+    if (menu.contains(ev.target)) return;
+    if (triggerEl.contains(ev.target)) return;
+    closeConversationItemMenu();
+    detach();
+  };
+  const onKey = (ev) => {
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      closeConversationItemMenu();
+      detach();
+      try { triggerEl.focus(); } catch (e) {}
+    }
+  };
+  const onScroll = () => {
+    closeConversationItemMenu();
+    detach();
+  };
+  // outside-click listener 를 다음 tick 으로 늦춰 trigger 의 click 자체가 close 로 잡히지 않게 한다.
+  window.setTimeout(() => {
+    document.addEventListener("mousedown", onDocClick, true);
+    document.addEventListener("keydown", onKey, true);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onScroll, true);
+  }, 0);
 }
 
 async function cancelCurrentRun() {
@@ -3611,45 +3889,14 @@ async function initialize() {
     });
   }
 
-  // TASK-0061 Phase 5 (REQ-20260515-0007): 캘린더 popover toggle + 월 이동.
-  const calBtn = document.getElementById("historyCalendarBtn");
-  if (calBtn) {
-    calBtn.addEventListener("click", () => {
-      if (calendarState.open) closeHistoryCalendar();
-      else openHistoryCalendar().catch((error) => showToast(error.message || "캘린더 열기 실패", true));
-    });
-  }
-  const calPrev = document.getElementById("calendarPrevMonth");
-  const calNext = document.getElementById("calendarNextMonth");
-  if (calPrev) {
-    calPrev.addEventListener("click", () => {
-      if (calendarState.cursorMonth === null) return;
-      let m = calendarState.cursorMonth - 1;
-      let y = calendarState.cursorYear;
-      if (m < 0) { m = 11; y -= 1; }
-      calendarState.cursorMonth = m;
-      calendarState.cursorYear = y;
-      renderHistoryCalendar();
-    });
-  }
-  if (calNext) {
-    calNext.addEventListener("click", () => {
-      if (calendarState.cursorMonth === null) return;
-      let m = calendarState.cursorMonth + 1;
-      let y = calendarState.cursorYear;
-      if (m > 11) { m = 0; y += 1; }
-      calendarState.cursorMonth = m;
-      calendarState.cursorYear = y;
-      renderHistoryCalendar();
-    });
-  }
-  // 캘린더 외부 click 으로 닫기.
+  // REQ-20260518-0001: 캘린더는 메시지 날짜 분기선 click 으로 진입. prev/next 는 popover header 의 calendarNav 가 동적 렌더.
+  // 외부 click 으로 닫기 — anchor 가 분기선이 될 수도 있으므로 messageLog 내 분기선 click 은 그 자체로 toggle 처리.
   document.addEventListener("click", (ev) => {
     if (!calendarState.open) return;
     const pop = document.getElementById("historyCalendarPopover");
-    const btn = document.getElementById("historyCalendarBtn");
-    if (!pop || !btn) return;
-    if (pop.contains(ev.target) || btn.contains(ev.target)) return;
+    if (!pop) return;
+    if (pop.contains(ev.target)) return;
+    if (ev.target.closest && ev.target.closest(".message-date-divider")) return;
     closeHistoryCalendar();
   });
 

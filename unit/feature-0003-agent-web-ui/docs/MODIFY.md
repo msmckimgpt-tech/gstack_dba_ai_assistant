@@ -8,6 +8,46 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260518-0001
+- Date: 2026-05-18
+- Summary: TASK-0063 (REQ-20260518-0001, **Major** §12.3 — RBAC catalog 확장 2건 + 신규 endpoint 1건 + 파괴적 액션 menu 통합) 작업 화면 대화 항목별 "···" menu (복사 / 공유 / 제목 변경 / 삭제) + 캘린더 시간 이동을 채팅 로그 날짜 분기선 click trigger 로 이전. ChatGPT / Slack UX 패턴 정렬.
+- Decisions (사용자):
+  - 복사 = full self-fork (`_fork_conversation_impl` 재활용, 메시지+첨부+SQL 결과 + 활성 대화 자동 전환).
+  - 신규 권한 `conversation.duplicate.own` / `conversation.duplicate.any` 분리 추가 (rename/delete 일관성).
+  - 헤더 `shareConversationBtn` 유지 (active 대화의 quick share path) — per-item menu 와 dual entry.
+  - 헤더 `historyCalendarBtn` 제거 — 캘린더 trigger 는 채팅 로그의 날짜 분기선이 단일 진입점. 먼 과거 jump 는 popover header 의 ‹ › (월) + « » (년, 데이터가 1년 이상일 때만) 로 해결.
+- Outside voice review: Codex (general-purpose subagent, 10 blindspot 보강 — risk 1 admin/operator/sales catchup loop 일반화, risk 2 IsDynamic NULL legacy schema 는 별도 cycle followup, risk 3 fast-path hydration call site 정합, risk 5 share-token bypass 차단 (read-gate 명시 호출), risk 6 403 vs 404 metadata leak 차단 (rename/delete 와 동일 wording), risk 7 `.any` superset semantics backend mirror, risk 8 frontend hide-vs-disable — rename/delete pattern (visible + is-access-blocked + toast) 채택, risk 9 PERMISSION_LABELS / PERMISSION_DESCRIPTIONS / requiredPermissionsFor 3 곳 갱신, risk 10 사본 제목 grapheme-safe truncation).
+- Catchup 순서 fix: `_ensure_seed_catchup` 의 `_ensure_permission_catalog` 호출을 `_ensure_seed_roles` 앞으로 옮김. 기존 호출 순서로는 `_ensure_seed_roles` 의 admin/operator/sales catchup loop 이 `_permission_id_map(conn)` 으로 신규 권한 id 를 lookup 할 때 catalog 에 아직 INSERT 안 되어 0 을 받아 skip 하던 회귀 (Codex risk 3 변형).
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/app.py`
+    - `PERMISSION_DEFINITIONS` 에 `conversation.duplicate.own` / `conversation.duplicate.any` 2건 추가 (catalog 34 → 36, group=conversation).
+    - `SEED_ROLE_DEFINITIONS` operator/sales 에 `conversation.duplicate.own` grant. admin 은 `set(PERMISSION_CODES)` 으로 자동 포함.
+    - `_ensure_seed_roles` 의 admin catchup tuple 에 `conversation.duplicate.own/.any` 추가. operator/sales catchup loop 을 `(share.create, duplicate.own)` 리스트 기반으로 일반화 (Codex risk 1).
+    - `_ensure_seed_catchup` 의 `_ensure_permission_catalog` 호출을 `_ensure_seed_roles` 앞으로 이동 (Codex risk 3 변형 fix).
+    - 신규 endpoint `POST /api/conversations/{cid}/duplicate` — read-gate 먼저 (404 단일 wording, Codex risk 5/6), `.any` superset semantics (Codex risk 7), `_fork_conversation_impl` 재활용, 제목은 grapheme-safe `사본: <base[:256-len('사본: ')]>` (Codex risk 10).
+  - `repo/unit/feature-0003-agent-web-ui/src/static/app.js`
+    - `PERMISSION_LABELS` / `PERMISSION_DESCRIPTIONS` 양쪽에 duplicate 2건 추가 (Codex risk 9).
+    - `requiredPermissionsFor` switch 에 `conversation.duplicate` / `conversation.share` case 추가.
+    - `renameCurrentConversation(cid)` / `deleteConversation(cid)` / `createConversationShare({conversationId})` 시그니처를 cid 인자 수용 가능하도록 확장 (backward compat).
+    - 신규: `duplicateConversationFromMenu(cid)` (RBAC + create 권한 사전 gate + apiFetch POST).
+    - 신규: `openConversationItemMenu(cid, triggerEl)` / `closeConversationItemMenu()` — fixed-position dropdown (z=200) + a11y (role=menu/menuitem, aria-haspopup, aria-expanded) + outside-click (setTimeout 0 으로 trigger click 충돌 방지) + ESC + scroll/resize close + viewport edge clamping.
+    - `renderConversationList()` 의 conv-item 마다 `.conv-item-menu-trigger` 추가 (hover 시 fade-in, active 시 상시 표시) + click handler toggle + keyboard (Enter/Space).
+    - `renderMessages()` 에 `.message-date-divider` 삽입 (createdAt 비교, 첫 등장만) + click → `openHistoryCalendarAt(dateKey, divider)`.
+    - `openHistoryCalendar` → `openHistoryCalendarAt(dateKey?, anchorEl?)` 로 리팩토링. anchorEl 가 주어지면 popover 를 fixed-position 으로 분기선 하단에 mount + viewport clamping.
+    - `calendarDateBounds()` 신설 — `(oldest, newest)` 키 추출. 년 jump 버튼 (« ») 노출 조건 = `(newestYear - oldestYear) >= 1`.
+    - `renderHistoryCalendar()` 의 popover header 에 동적 nav 슬롯 (`#calendarNav`) 렌더 — `‹ › [Y년 M월] (« »)` + cursor 가 oldest/newest 범위를 넘으면 disabled.
+    - 헤더 historyCalendarBtn 의 가시성 토글 + click handler + outside-click pair 제거. outside-click 은 popover 외부 + `.message-date-divider` 외부 click 일 때만 닫음.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html` — `historyCalendarBtn` 삭제, popover header 를 `#calendarNav` slot + hidden `#calendarTitle` (backward compat) 로 교체. cache-bust `v=20260518-conv-menu`.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css` — `.conv-item-menu-trigger` (absolute 위치, hover/active fade), `.conv-item-menu` (fixed, z=200, shadow), `.conv-menu-item` + `.is-danger` + `.is-access-blocked`, `.message-date-divider` + label (Slack pill 패턴, before/after horizontal line), `.history-calendar-nav` + `.calendar-nav-btn` + `.calendar-nav-title` (월/년 nav).
+- Verification:
+  - `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS
+  - `node --check unit/feature-0003-agent-web-ui/src/static/app.js` PASS
+  - `node --check unit/feature-0003-agent-web-ui/src/static/admin.js` PASS
+  - `SKIP_INIT=1 make web` 재배포 OK (buildx provenance race 우회는 기존 dc-build 가드 동작).
+  - DB 직접 확인: `agent_memory.WebPermissions` 의 `conversation.duplicate.own/.any` row hydrate 확인. 신규 role grant — admin (duplicate.any + duplicate.own), operator (duplicate.own), sales (duplicate.own).
+  - Browser smoke (gstack `/browse` headless): 좌측 conv-item 마다 "···" trigger 표시, click → 4 menu 항목 (복사 / 공유 / 제목 변경 / 삭제 — danger 색) 정상 mount + outside-click + ESC close 동작. 채팅 로그에 "YYYY년 M월 D일" 분기선 표시 (메시지 2 일 이상), click → popover anchored 오픈, 월 nav (‹ ›) 정상 (현재 데이터 1년 미만이라 « » 조건 충족 안 됨 = 정상). 헤더 historyCalendarBtn 부재 확인.
+- Trace: REQ-20260518-0001 → TASK-0063 → CHG-20260518-0001
+
 ## CHG-20260515-0005
 - Date: 2026-05-15
 - Summary: TASK-0062 (REQ-20260515-0011 / REQ-20260515-0012, Minor §12.3) — 사용자 GOAL 2026-05-15 후속 2 항목.

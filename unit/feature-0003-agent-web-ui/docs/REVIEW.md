@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260518-0001
+- Date: 2026-05-18
+- Decision: TASK-0063 (REQ-20260518-0001, Major §12.3) — 작업 화면 대화 항목별 "···" menu + 캘린더 시간 이동 분기선 trigger 화. Codex outside voice review 10 risk 모두 반영 + 사용자 4 결정 채택.
+- Method:
+  - **복사 = full self-fork (사용자 결정 1)**: 메시지/첨부/SQL 결과까지 전부 보존. `_fork_conversation_impl` 은 share-fork 와 self-duplicate 양쪽이 공유 (helper 추출의 본 의도와 정합 — TASK-0058 R4). helper 가 `_set_account_current_conversation` 으로 active 자동 전환하는 side-effect 는 Codex risk 4 가 지적했지만, 본 cycle 에서는 ChatGPT 동등 UX (복사 후 새 대화 활성) 가 사용자 의도와 정합 — 의도적 유지.
+  - **신규 권한 분리 (사용자 결정 2)**: `conversation.duplicate.own/.any` 추가는 rename/delete/cancel/finalize 와 동일 own/any 이원화 패턴 일관성. operator/sales 는 `.own` 만, admin 은 set(PERMISSION_CODES) 로 둘 다 자동 grant. `.any` 는 사용자 요청 없으면 grant 0 — 보수적.
+  - **헤더 share 유지 (사용자 결정 3)**: active 대화의 quick share path 보존. per-item menu 의 "공유" 와 동일 endpoint (`POST /api/conversations/{cid}/share`) 호출 + 동일 helper (`createConversationShare`). dual entry 의 redundancy 는 discoverability 와 muscle memory 양쪽을 보존. 단 Codex risk 8 가 지적한 hide-vs-disable 불일치 — 헤더 share 는 여전히 hidden 패턴, menu items 는 visible + is-access-blocked 패턴. menu 안 일관성은 보장되나 share 만 헤더에서 hidden — 후속 cycle 에서 share 헤더도 visible 패턴으로 통일 가능 (별 cycle).
+  - **분기선 단일 trigger + popover nav (사용자 결정 4)**: 헤더 historyCalendarBtn 제거 → 채팅 로그의 날짜 분기선이 캘린더 단일 진입점. 사용자 명시 — 먼 과거 jump 는 popover header 의 `‹` / `›` (월) + `«` / `»` (년) 로 해결. 년 jump 버튼은 `(newestYear - oldestYear) >= 1` 일 때만 조건부 노출 (사용자 명시). cursor 가 oldest/newest 범위를 넘는 방향은 disabled.
+- Risks:
+  - **Backend `_account_can_access_conversation` 의 호출 순서 (Codex risk 5/6)**: read-gate 먼저 호출 → 404 단일 wording ("권한이 없거나 대화를 찾을 수 없습니다.") → metadata leak 차단. `.any` 가 superset semantics 인 점은 backend 도 mirror (`is_own AND .own OR .any`).
+  - **`_ensure_seed_catchup` 호출 순서 (Codex risk 3 변형)**: 기존 catalog hydrate 가 seed_roles 보다 뒤에 있어 신규 권한 grant 가 skip 되었음. 본 cycle 에서 fix — catalog 가 항상 먼저. 동일 패턴 회귀가 발생할 수 있는 future 권한 추가 시 본 review entry 가 참조 자료.
+  - **Frontend hide-vs-disable inconsistency (Codex risk 8 잔여)**: menu 안은 rename/delete pattern 통일됨. 헤더 share 만 여전히 hidden — share 헤더도 visible 로 통일하는 별 cycle 권장.
+  - **Backend IsDynamic NULL legacy schema (Codex risk 2)**: `_ensure_permission_catalog` 가 4 컬럼만 INSERT — IsDynamic DEFAULT 0 가 schema 에 보장된다고 가정. 현 운영 환경은 TASK-0052 Phase 1B 의 schema ALTER 가 DEFAULT 0 보장. 별 배포 환경에서 column 부재 시 _resolve_permission_catalog 의 graceful fallback (line 320) 으로 안전망 동작. 후속 cycle 에서 IsDynamic 명시 INSERT 강화 가능.
+  - **년 jump 버튼 조건의 edge case**: oldest 와 newest 가 같은 해 (예: 2026-01 / 2026-12) 면 `newestYear - oldestYear = 0` → 년 jump 버튼 숨김. 1 년 폭 데이터인데 년 jump 가 없어 보이지만 월 jump 11 회로 같은 효과 달성 가능. 후속 cycle 에서 `>= 365 일` 또는 `>= 12 months` 조건으로 정밀화 가능.
+- Trace: REQ-20260518-0001 → TASK-0063 → CHG-20260518-0001 → REV-20260518-0001
+
 ## REV-20260515-0004
 - Date: 2026-05-15
 - Decision: TASK-0062 (REQ-20260515-0011 / -0012, Minor §12.3) GOAL 2026-05-15 후속 2 항목 — 사용자 UX 개선 요청.

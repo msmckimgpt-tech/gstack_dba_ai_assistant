@@ -3420,6 +3420,167 @@ a { color: inherit; }
   margin-right: auto;
 }
 
+/* REQ-20260518-0001: per-conversation "···" menu trigger + dropdown */
+.conv-item {
+  position: relative;
+}
+.conv-item-menu-trigger {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s ease, background .12s ease, border-color .12s ease;
+  user-select: none;
+}
+.conv-item:hover .conv-item-menu-trigger,
+.conv-item.is-active .conv-item-menu-trigger,
+.conv-item-menu-trigger.is-open,
+.conv-item-menu-trigger:focus-visible {
+  opacity: 1;
+}
+.conv-item-menu-trigger:hover,
+.conv-item-menu-trigger.is-open {
+  background: rgba(0,0,0,.08);
+  border-color: var(--border, rgba(0,0,0,.08));
+  color: var(--text);
+}
+.conv-item-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 168px;
+  background: var(--surface-1, #ffffff);
+  border: 1px solid var(--border, rgba(0,0,0,.10));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.conv-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-size: 13px;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text);
+}
+.conv-menu-item:hover {
+  background: rgba(37,99,235,.08);
+}
+.conv-menu-item.is-danger {
+  color: var(--color-danger, #c0392b);
+}
+.conv-menu-item.is-danger:hover {
+  background: rgba(192,57,43,.08);
+}
+.conv-menu-item.is-access-blocked {
+  color: var(--text-muted);
+  opacity: .65;
+  cursor: not-allowed;
+}
+.conv-menu-item.is-access-blocked:hover {
+  background: rgba(0,0,0,.04);
+}
+
+/* REQ-20260518-0001: 채팅 로그 날짜 분기선 — Slack 패턴. clickable button. */
+.message-date-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin: 14px 0 6px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  position: relative;
+}
+.message-date-divider::before,
+.message-date-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border, rgba(0,0,0,.10));
+}
+.message-date-divider-label {
+  display: inline-block;
+  padding: 3px 12px;
+  margin: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface-2, rgba(0,0,0,.03));
+  border: 1px solid var(--border, rgba(0,0,0,.10));
+  border-radius: 999px;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.message-date-divider:hover .message-date-divider-label,
+.message-date-divider:focus-visible .message-date-divider-label {
+  background: var(--primary-soft, rgba(37,99,235,.10));
+  color: var(--primary, #2563eb);
+  border-color: rgba(37,99,235,.30);
+}
+
+/* REQ-20260518-0001: history-calendar 의 popover header 에 동적 nav 슬롯 */
+.history-calendar-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  justify-content: center;
+}
+.calendar-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  font-size: 13px;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid var(--border, rgba(0,0,0,.10));
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+}
+.calendar-nav-btn:hover:not(.is-disabled) {
+  background: rgba(37,99,235,.08);
+  border-color: rgba(37,99,235,.30);
+  color: var(--primary, #2563eb);
+}
+.calendar-nav-btn.is-disabled,
+.calendar-nav-btn[disabled] {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: .55;
+}
+.calendar-nav-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  padding: 0 6px;
+  min-width: 84px;
+  text-align: center;
+}
+
 /* Phase 6 (REQ-20260515-0008): admin password reset + force change modal */
 .admin-modal-overlay {
   position: fixed;

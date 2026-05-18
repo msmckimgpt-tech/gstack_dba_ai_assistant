@@ -9,6 +9,21 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-05-18 TASK-0063 완료 — 작업 화면 conv-item "···" menu (복사 / 공유 / 제목 변경 / 삭제) + 캘린더 시간 이동 분기선 trigger** (CHG-20260518-0001, REV-20260518-0001, REQ-20260518-0001, **Major** §12.3 — RBAC catalog 확장 2 + 신규 endpoint 1 + 파괴적 액션 menu 통합). Codex outside voice review 의 10 risk 모두 반영 + 사용자 4 결정 채택 (full self-fork / 신규 권한 분리 / 헤더 share 유지 / 헤더 calendar 제거 + 년 jump 조건부).
+
+**Backend**: `PERMISSION_DEFINITIONS` 에 `conversation.duplicate.own/.any` 2 건 추가 (catalog 34→36). SEED_ROLE_DEFINITIONS operator/sales 에 `.own` grant, admin 은 set(PERMISSION_CODES) 로 둘 다 자동 포함. `_ensure_seed_roles` 의 admin catchup tuple 에 duplicate.own/.any 추가, operator/sales catchup loop 을 (share.create, duplicate.own) 리스트 기반으로 일반화. 신규 endpoint `POST /api/conversations/{cid}/duplicate` — read-gate 먼저 (404 단일 wording → metadata leak 차단), `.any` superset semantics, `_fork_conversation_impl` 재활용, grapheme-safe `사본:` prefix. `_ensure_seed_catchup` 의 catalog hydrate 호출을 seed_roles 앞으로 이동 (회귀 fix — 이전 순서로는 admin/operator/sales catchup 의 _permission_id_map lookup 이 신규 권한 id=0 받아 skip).
+
+**Frontend**: `renderConversationList()` 의 conv-item 마다 `.conv-item-menu-trigger` 추가 (hover/active fade). click → `openConversationItemMenu(cid, triggerEl)` 가 fixed-position dropdown mount (a11y role=menu/menuitem, ESC + outside-click + scroll/resize close, viewport clamping). menu items 는 rename/delete pattern (visible + is-access-blocked + toast). `duplicateConversationFromMenu(cid)` 신설. `createConversationShare({conversationId})` / `renameCurrentConversation(cid)` / `deleteConversation(cid)` 가 cid 인자 수용. `renderMessages()` 에 `.message-date-divider` (Slack pill) 삽입 + click → `openHistoryCalendarAt(dateKey, divider)`. `openHistoryCalendar` 를 `openHistoryCalendarAt(dateKey?, anchorEl?)` 로 리팩토링 — anchorEl 가 주어지면 popover 가 fixed-position 으로 분기선 하단 mount. popover header 의 `#calendarNav` 슬롯에 `‹ › [Y년 M월] (« »)` 동적 nav — 년 jump 는 `(newestYear - oldestYear) >= 1` 일 때만 노출. 헤더 `historyCalendarBtn` 제거. outside-click 으로 popover close 시 `.message-date-divider` 도 trigger pair 로 인정.
+
+**검증**: python compile / node --check 통과. `SKIP_INIT=1 make web` 재배포 PASS. DB 직접 확인 — `WebPermissions` 의 `conversation.duplicate.own/.any` row hydrate 정상, role grant — admin (.any + .own) / operator (.own) / sales (.own). browser headless smoke (`gstack /browse`): 좌측 conv-item "···" trigger 정상 표시, dropdown 4 항목 (복사 / 공유 / 제목 변경 / 삭제 — danger 색) mount, 채팅 로그 "YYYY년 M월 D일" 분기선 표시 + click → popover anchored 오픈, 월 nav (‹ ›) 정상 (테스트 환경 데이터 1년 미만이라 « » 미노출 = 조건 충족 안됨 = 정상). 헤더 historyCalendarBtn 부재 확인. cache-bust `v=20260518-conv-menu`.
+
+후속 cycle 권장 (REV-20260518-0001 Risks):
+- 헤더 share 의 hide-vs-disable 패턴을 menu 와 일치 (visible + is-access-blocked) 시키는 정합화 (Codex risk 8 잔여).
+- `_ensure_permission_catalog` 가 IsDynamic 컬럼을 명시 INSERT 하도록 강화 (Codex risk 2 — 별 배포 환경 대비).
+- 년 jump 버튼의 노출 조건을 `>= 12 months` 또는 `>= 365 days` 로 정밀화 (현재 `>= 1 year diff` 는 같은 해 1월/12월 데이터에서는 숨김).
+
+---
+
 **2026-05-15 TASK-0061 round 2 — /qa 심층 검증 완료, 추가 fix 0건** (browser session `483add52718b4a93`). Phase 4 (Point rail) 의 dot click → smooth scroll + active dot id 갱신 (`291`) 정상. Phase 5 (캘린더) 의 월 prev/next 이동 + has-messages day "15" 선택 → 시각 list 1 개 표시 + screenshot `/shared/out/browser/shot_20260515_091222.png` 정상. Phase 3 stale / Phase 6 비번 reset / Phase 8 bulk delete 는 destructive endpoint 라 운영 환경 사용자 명시 시점에 실 호출 검증 권고 (1차 cycle 의 응답 형식 / 권한 / DOM 요소 검증으로 contract 확정 완료). 본 cycle PR (#27) 은 추가 fix 없이 ship 가능.
 
 **2026-05-15 TASK-0061 완료 — GOAL.md 8 항목 Web UI 합본 cycle (실시간 step / lazy polling / stale 감지 / point rail / 캘린더 / 비밀번호 초기화 / select-all fix / bulk delete)** (CHG-20260515-0003, REV-20260515-0003, REQ-20260515-0003~0010, **Major** §12.3 — Phase 6 Critical 분면 포함, 사용자 일괄 승인 + 보안 권장안 채택). 
