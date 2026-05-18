@@ -88,6 +88,8 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   - AC-0111: `.message-point-rail` 이 `position: relative` 로 변경되고 각 `.message-point-dot` 가 `position: absolute; top: <pct>%`. `pct = (message.offsetTop + height/2) / messageLog.scrollHeight * 100`. 매우 긴 메시지 1 개가 있어도 dot 가 해당 메시지의 실 중심 비례 위치에 표시된다.
   - AC-0112: `layoutMessagePointRail()` 헬퍼가 `renderMessages()` 끝 + resize 시 호출되어 dot 의 top% 를 재계산한다. message scrollHeight 변경 (메시지 추가 / 펼침 / 접힘) 시 다음 render cycle 에 자동 반영.
   - AC-0113: dot 의 transform 은 `translate(-50%, -50%)` 로 horizontal 중앙 정렬 + vertical 중심점 정렬. `.is-active` 일 때 `translate(-50%, -50%) scale(1.8)` 로 translate 와 scale 함께 적용해 dot 가 좌측으로 튀지 않는다.
+- REQ-20260518-0007 (TASK-0069, Minor §12.3 — admin workspace flex hotfix, hotfix of REQ-20260518-0006): TASK-0068 의 admin-column flex column 안에서 `.admin-workspace` 의 flex grow 명시 누락으로 발생한 layout 회귀 (commit-bar 가 viewport bottom 이 아닌 workspace content 끝 바로 아래에 위치 + 그 아래로 회색 빈 영역) 차단.
+  - AC-0148: `.admin-workspace { flex: 1 1 auto }` 가 추가되어 admin-column flex column 안에서 workspace 가 남은 공간 전부 차지한다. 결과: list-detail / dashboard / 다른 admin-pane 이 workspace 안에서 정상 stretch + commit-bar 가 viewport bottom 에 sticky.
 - REQ-20260518-0006 (TASK-0068, Minor §12.3 — 관리 콘솔 layout 정합 + 미사용 버튼 정리, follow-up of REQ-20260518-0004): 관리 콘솔의 사이드바 구성을 작업 화면과 동일한 ChatGPT 패턴 (sidebar 전체 height + brand 통합 + topbar 가 column 영역 너비) 으로 정렬. 사용자 직접 테스트에서 거의 사용 안 되는 `새로고침` / `로그아웃` 버튼 제거.
   - AC-0142: `.admin-shell` 의 grid 가 `grid-template-columns: 220px minmax(0, 1fr)` 단일 row 로 단순화된다. `.admin-body` wrapper 폐기.
   - AC-0143: `.admin-sidebar` 의 첫 child 가 `.sidebar-brand` (brand-icon + "MySQL AI" — 작업 화면과 동일 brand). admin 의 기존 "관리 콘솔" brand 는 페이지 컨텍스트라 topbar 로 이전.

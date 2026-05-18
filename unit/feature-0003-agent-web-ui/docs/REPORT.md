@@ -9,6 +9,18 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-05-18 TASK-0069 완료 — admin workspace flex hotfix (TASK-0068 회귀 차단)** (CHG-20260518-0006, REV-20260518-0006, REQ-20260518-0007, Minor §12.3 — CSS 1 줄 hotfix, RBAC / endpoint / 데이터 / JS 무변경).
+
+**배경**: 사용자 screenshot 보고. admin `역할 관리` (및 다른 list-detail pane) 에서 commit-bar 가 workspace content 바로 아래에 좁게 위치하고 그 아래로 큰 회색 빈 영역이 admin-column 의 bottom 까지 노출. 원인: TASK-0068 에서 commit-bar 를 admin-shell grid (3rd row) → admin-column flex column item 으로 이전한 후 `.admin-workspace` 의 `flex: 1` 명시 누락. flex column 안에서 workspace 가 자기 content 만큼만 차지 → 남은 공간 노출 + commit-bar 가 sticky bottom 효과 상실.
+
+**Fix**: `.admin-workspace` 에 `flex: 1 1 auto` 1 줄 추가. 다른 속성 (overflow / padding / min-* 0 / display flex column) 무변경. `.admin-pane.is-active { flex: 1 1 auto }` 가 의미를 가지려면 부모 workspace 가 stretch 되어야 함 — cascade 출발점에 flex grow.
+
+**검증**: `SKIP_INIT=1 make web` 재배포 OK. DOM (browser headless `/admin` → 역할 tab): `wsHeight=607, wsBottom=659, cbarTop=659, cbarBottom=720, colHeight=720` → `workspaceTouchesCommitBar=true` (둘 사이 빈 공간 없음) + `commitBarAtBottom=true` (commit-bar 가 column bottom 에 정확히 위치). screenshot `/tmp/admin-roles-fixed.png` — list-detail 이 workspace 의 남은 height 전부 차지 + commit-bar viewport bottom sticky + 회색 빈 영역 사라짐. cache-bust `v=20260518-admin-workspace-flex`.
+
+후속 검토 (REV-20260518-0006 Risks): dashboard pane 의 scroll 동작 (overflow-y: auto) 정상 여부는 사용자 직접 확인 권장 — 단일 rule 변경이라 자연 적용되지만 dashboard 전용 시각 검증 별도.
+
+---
+
 **2026-05-18 TASK-0068 완료 — 관리 콘솔 layout 정합 (ChatGPT 패턴 통일) + 새로고침/로그아웃 버튼 제거** (CHG-20260518-0005, REV-20260518-0005, REQ-20260518-0006, Minor §12.3 — admin layout 정합 + 미사용 UI 정리. backend / endpoint / RBAC / 데이터 영역 무변경).
 
 **배경**: TASK-0066 / 0067 follow-up — 사용자 명시. 작업 화면을 ChatGPT 패턴으로 재구조화한 후 관리 콘솔도 같은 layout 으로 통일. 사용자 직접 테스트에서 `새로고침` / `로그아웃` 버튼이 거의 사용 안 되는 것으로 확인 → 제거.

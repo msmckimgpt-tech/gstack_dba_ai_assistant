@@ -2203,6 +2203,11 @@ a { color: inherit; }
 }
 
 .admin-workspace {
+  /* REQ-20260518-0007: admin-column flex column 안에서 남은 공간 전부 차지하도록 flex grow 명시.
+     이전 TASK-0068 에서 commit-bar 가 admin-column 안으로 이전된 후 workspace 가 자기 content
+     만큼만 차지해 commit-bar 위로 빈 회색 영역이 노출되던 회귀 차단. 각 admin-pane 의 flex: 1
+     이 의미를 가지려면 workspace 자체가 stretch 되어야 함. */
+  flex: 1 1 auto;
   overflow: hidden;
   padding: 20px 24px 24px;
   min-width: 0;

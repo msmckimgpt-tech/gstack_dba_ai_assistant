@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260518-0006
+- Date: 2026-05-18
+- Decision: TASK-0069 (REQ-20260518-0007, Minor §12.3) — `.admin-workspace` 에 `flex: 1 1 auto` 추가. 다른 fix path 미선택 — 1 줄로 root cause 해결되므로 우회 패치 불필요.
+- Reason: TASK-0068 에서 admin layout 을 작업 화면과 동일한 ChatGPT 패턴으로 재구조화하면서 commit-bar 의 위치가 `.admin-shell` grid 의 3rd row → `.admin-column` flex column 의 3rd flex item 으로 이전. 그러나 `.admin-workspace` 의 flex 명시 누락으로 flex column 안에서 workspace 가 자기 content 만큼만 차지하고 column 의 남은 공간이 빈 채로 노출 + commit-bar 가 viewport bottom 이 아닌 workspace 끝 바로 아래에 위치하는 시각 회귀. `.admin-pane.is-active { flex: 1 1 auto }` 가 의미를 가지려면 부모 `.admin-workspace` 자체가 stretch 되어야 함. cascade 의 출발점인 workspace 에 flex grow 명시.
+- Alt-A 거부: admin-column 의 grid (rows: topbar-h / 1fr / auto) 로 변경. flex 보다 명시적이지만 commit-bar 의 가시성/숨김 토글이 grid template-rows 도 함께 갱신해야 하므로 fragility 증가. flex column + flex grow 가 더 단순.
+- Alt-B 거부: commit-bar 의 position: sticky bottom: 0. workspace 의 flex 미해결 시 workspace 가 자기 content 만큼만 차지하는 본질 문제는 그대로. sticky 는 sticky overflow 부모를 필요로 하는데 그 정의가 workspace 와 conflict 가능.
+- Risks:
+  - **다른 admin pane (대시보드 / 계정 / 제품) 회귀 검증**: `.admin-workspace` 단일 rule 변경이므로 모든 pane 에 일관 적용. 대시보드는 `.admin-pane[data-admin-pane="dashboard"].is-active { overflow-y: auto }` 보유 — workspace 가 stretch 되면 dashboard content scroll 동작이 dashboard 내부에서 정상 동작 (이전엔 admin-shell grid 의 1fr 이 같은 효과 제공). 본 cycle browser smoke 는 역할 pane 한정 — 다른 pane 도 동일 fix 자연 적용되지만 dashboard scroll 검증은 사용자 직접 확인 권장.
+  - **min-height 0**: `.admin-workspace { min-height: 0 }` 가 이미 있어 flex 자식 (`.admin-pane`) 의 overflow / scroll 동작 정합. flex grow 추가가 이 동작과 충돌 없음.
+  - **mobile 반응형**: `.admin-shell { grid-template-columns: 1fr }` (mobile) 일 때 admin-sidebar 가 숨겨지고 admin-column 만 표시. flex grow 가 mobile 에서도 동일 동작.
+- Trace: REQ-20260518-0007 → TASK-0069 → CHG-20260518-0006 → REV-20260518-0006 (hotfix of TASK-0068)
+
 ## REV-20260518-0005
 - Date: 2026-05-18
 - Decision: TASK-0068 (REQ-20260518-0006, Minor §12.3) — 관리 콘솔의 sidebar 영역 구성을 작업 화면 (TASK-0066) 과 동일한 ChatGPT 패턴으로 정렬 + 헤더의 `새로고침` / `로그아웃` 제거.

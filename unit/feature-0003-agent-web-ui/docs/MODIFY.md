@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260518-0006
+- Date: 2026-05-18
+- Summary: TASK-0069 (REQ-20260518-0007, Minor §12.3 — admin layout hotfix, RBAC / endpoint / 데이터 / JS 무변경) TASK-0068 follow-up. 사용자 screenshot 으로 보고된 layout 회귀 — admin `역할 관리` (및 다른 list-detail pane) 에서 commit-bar 가 workspace content 바로 아래에 좁게 위치하고 그 아래로 큰 회색 빈 영역이 admin-column 의 bottom 까지 노출. 원인: TASK-0068 에서 commit-bar 를 admin-shell grid (3rd row) → admin-column 의 flex column item 으로 이전한 후 `.admin-workspace` 에 `flex: 1` 명시 누락. flex column 안에서 workspace 가 자기 content 만큼만 차지 → flex column 의 남은 공간이 빈 채로 보이고 commit-bar 가 workspace 끝 바로 아래에 위치 (sticky bottom 효과 상실). 각 `.admin-pane.is-active` 의 `flex: 1 1 auto` 가 의미를 가지려면 부모 `.admin-workspace` 자체가 stretch 되어야 함.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css`
+    - `.admin-workspace` 에 `flex: 1 1 auto` 추가. 다른 속성 (overflow / padding / display flex column / min-* 0) 무변경.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/admin.html`
+    - cache-bust `v=20260518-admin-layout` → `v=20260518-admin-workspace-flex` (admin.html / admin.js 양쪽 stylesheet ref).
+  - `repo/unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md` + `repo/docs/STATUS.md` — REQ-20260518-0007 / TASK-0069 / CHG-20260518-0006 / REV-20260518-0006 entries.
+- Verification:
+  - `SKIP_INIT=1 make web` 재배포 OK.
+  - DOM (browser headless `/admin` → 역할 tab):
+    `wsHeight = 607, wsBottom = 659, cbarTop = 659, cbarBottom = 720, colHeight = 720, colBottom = 720`
+    → `workspaceTouchesCommitBar = true` (둘 사이 빈 공간 없음), `commitBarAtBottom = true` (commit-bar 가 column 의 bottom 에 정확히 위치).
+  - Screenshot `/tmp/admin-roles-fixed.png` — 역할 list-detail 이 admin-workspace 의 남은 height 전부 차지 + commit-bar 가 viewport bottom 에 sticky. 회색 빈 영역 사라짐. screenshot 으로 보고된 회귀 fix 확인.
+  - 다른 pane (계정 / 제품 / 대시보드) 도 동일 fix 자연 적용 — `.admin-workspace` 의 단일 rule 변경이 전체 admin pane 에 일관 적용.
+- Trace: REQ-20260518-0007 → TASK-0069 → CHG-20260518-0006 → REV-20260518-0006 (hotfix of TASK-0068)
+
 ## CHG-20260518-0005
 - Date: 2026-05-18
 - Summary: TASK-0068 (REQ-20260518-0006, Minor §12.3 — admin layout 정합 + 미사용 버튼 정리. backend / endpoint / RBAC / 데이터 영역 무변경.) 사용자 follow-up — 관리 콘솔의 사이드바 구성을 작업 화면 (TASK-0066 의 ChatGPT 패턴) 과 동일하게 정렬 + 헤더의 `새로고침` / `로그아웃` 버튼 제거 (사용자 직접 테스트에서 거의 사용 안 되는 것 확인).
