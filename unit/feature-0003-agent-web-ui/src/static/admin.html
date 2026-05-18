@@ -4,23 +4,18 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260515-task-0062" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260518-admin-layout" />
 </head>
+<!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
+     topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
 <body class="admin-shell">
-  <header class="topbar">
-    <div class="topbar-brand">
-      <div class="brand-icon">MA</div>
-      <span class="brand-name">관리 콘솔</span>
-    </div>
-    <div class="topbar-end">
-      <button type="button" class="topbar-btn" id="backToAppBtn">작업 화면</button>
-      <button type="button" class="topbar-btn" id="refreshAdminBtn">새로고침</button>
-      <button type="button" class="topbar-btn" id="adminLogoutBtn">로그아웃</button>
-    </div>
-  </header>
 
-  <div class="admin-body">
     <aside class="admin-sidebar">
+      <!-- REQ-20260518-0006: brand 가 sidebar 의 첫 영역 — index.html 의 .sidebar-brand 와 동일 패턴 -->
+      <div class="sidebar-brand">
+        <div class="brand-icon">MA</div>
+        <span class="brand-name">MySQL AI</span>
+      </div>
       <nav class="admin-tabs" id="adminTabs">
         <button type="button" class="admin-tab is-active" data-admin-tab="dashboard">
           <span class="admin-tab-label">대시보드</span>
@@ -48,6 +43,18 @@
       </div>
     </aside>
 
+    <!-- REQ-20260518-0006: admin-column wrapper — topbar + workspace -->
+    <div class="admin-column">
+      <header class="topbar">
+        <div class="topbar-info">
+          <h2 class="chat-title">관리 콘솔</h2>
+          <span class="chat-subtitle">계정 · 역할 · 제품 · 시스템 프롬프트 운영</span>
+        </div>
+        <div class="topbar-tools"></div>
+        <div class="topbar-end">
+          <button type="button" class="topbar-btn" id="backToAppBtn">작업 화면</button>
+        </div>
+      </header>
     <main class="admin-workspace">
       <!-- Dashboard pane -->
       <section class="admin-pane is-active" data-admin-pane="dashboard">
@@ -230,21 +237,22 @@
         </div>
       </section>
     </main>
-  </div>
 
-  <footer class="admin-commit-bar" id="adminCommitBar">
-    <div class="admin-commit-info">
-      <span class="admin-commit-count" id="commitBarCount">변경사항 0건</span>
-      <span class="admin-commit-detail" id="commitBarDetail"></span>
-    </div>
-    <div class="admin-commit-actions">
-      <button type="button" class="btn-secondary" id="commitCancelBtn">취소</button>
-      <button type="button" class="btn-primary" id="commitApplyBtn">모두 적용</button>
-    </div>
-  </footer>
+    <!-- REQ-20260518-0006: commit bar 가 admin-column 의 하단 — sidebar 와 분리되어 workspace 하단에만 표시 -->
+    <footer class="admin-commit-bar" id="adminCommitBar">
+      <div class="admin-commit-info">
+        <span class="admin-commit-count" id="commitBarCount">변경사항 0건</span>
+        <span class="admin-commit-detail" id="commitBarDetail"></span>
+      </div>
+      <div class="admin-commit-actions">
+        <button type="button" class="btn-secondary" id="commitCancelBtn">취소</button>
+        <button type="button" class="btn-primary" id="commitApplyBtn">모두 적용</button>
+      </div>
+    </footer>
+    </div><!-- /admin-column -->
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260515-task-0062"></script>
+  <script src="/static/admin.js?v=20260518-admin-layout"></script>
 </body>
 </html>

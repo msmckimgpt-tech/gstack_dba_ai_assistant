@@ -3204,22 +3204,10 @@ async function initialize() {
   });
   $("commitCancelBtn").addEventListener("click", cancelAllPending);
 
-  // Top bar
-  $("refreshAdminBtn").addEventListener("click", () => {
-    if (pendingChangeCount() > 0 && !window.confirm("pending 변경사항이 있습니다. 새로고침하면 모두 사라집니다. 진행할까요?")) return;
-    adminState.pending.accounts.clear();
-    adminState.pending.roles.clear();
-    adminState.pending.newRoles.clear();
-    loadAdminData().catch((error) => {
-      showToast(error.message || "관리 콘솔을 새로고침하지 못했습니다.", true);
-    });
-  });
+  // REQ-20260518-0006: refreshAdminBtn / adminLogoutBtn 제거 — 사용자 직접 테스트에서 거의 사용 안 되는 것으로 확인.
+  // backToAppBtn 만 유지 (작업 화면 ↔ 관리 콘솔 빠른 전환). 로그아웃은 작업 화면의 프로필 drawer 에서 가능.
   $("backToAppBtn").addEventListener("click", () => {
     if (pendingChangeCount() > 0 && !window.confirm("pending 변경사항이 있습니다. 이동하면 모두 사라집니다. 진행할까요?")) return;
-    window.location.href = "/";
-  });
-  $("adminLogoutBtn").addEventListener("click", async () => {
-    await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
     window.location.href = "/";
   });
 

@@ -9,6 +9,18 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-05-18 TASK-0068 완료 — 관리 콘솔 layout 정합 (ChatGPT 패턴 통일) + 새로고침/로그아웃 버튼 제거** (CHG-20260518-0005, REV-20260518-0005, REQ-20260518-0006, Minor §12.3 — admin layout 정합 + 미사용 UI 정리. backend / endpoint / RBAC / 데이터 영역 무변경).
+
+**배경**: TASK-0066 / 0067 follow-up — 사용자 명시. 작업 화면을 ChatGPT 패턴으로 재구조화한 후 관리 콘솔도 같은 layout 으로 통일. 사용자 직접 테스트에서 `새로고침` / `로그아웃` 버튼이 거의 사용 안 되는 것으로 확인 → 제거.
+
+**변경**: (1) `.admin-shell` grid 가 `grid-template-rows: topbar-h | 1fr | auto` → `grid-template-columns: 220px minmax(0, 1fr)` 으로 단순화 (작업 화면 `.app-shell` 과 동일 패턴). `.admin-body` wrapper 폐기. (2) `.admin-sidebar` 의 첫 영역에 `.sidebar-brand` (작업 화면과 동일 brand "MA MySQL AI") 추가. 기존 admin brand "관리 콘솔" 은 페이지 컨텍스트라 topbar 의 `.chat-title` 로 이전 + subtitle "계정 · 역할 · 제품 · 시스템 프롬프트 운영" 동봉. (3) 신규 `.admin-column` (flex column) — sidebar 옆 영역. 안에 topbar (좌측 정렬 제목 + `#backToAppBtn` 우측) → workspace → commit-bar 순서로 flex 배치. (4) `#refreshAdminBtn` / `#adminLogoutBtn` element 제거 + admin.js click handler 제거. `#backToAppBtn` 만 유지. (5) `.admin-sidebar` padding 을 child 들 (sidebar-brand / admin-tabs / sidebar-foot) 로 분배. (6) 반응형 mobile `.admin-shell { grid-template-columns: 1fr }` 정렬.
+
+**검증**: `node --check admin.js` PASS, `SKIP_INIT=1 make web` 재배포 OK. Browser headless `/admin`: `refreshBtnPresent=false`, `logoutBtnPresent=false`, `backBtnPresent=true`, `brandInSidebar=true`, `adminColumnPresent=true`, `oldAdminBodyPresent=false`, `topbarHeight=52`, `topbarInfoText="관리 콘솔 ... 시스템 프롬프트 운영"`, `gridCols="220px 1060px"`. Screenshot `/tmp/admin-merged.png` — 좌측 admin-sidebar (brand + 대시보드 (active) + 계정 카테고리 + 제품 카테고리 + pending 변경 footer) + 우측 admin-column (topbar 좌측 정렬 "관리 콘솔" + 부제 + 우측 끝 "작업 화면" 버튼 / Overview metric cards / commit bar) — 작업 화면과 100% 일관된 ChatGPT 패턴. cache-bust `v=20260518-admin-layout` (admin.html / admin.js).
+
+후속 cycle 권장: 작업 화면 프로필 drawer 의 "로그아웃" 이 admin 페이지에서도 접근 가능한지 확인 (현재 admin 에는 drawer 없음 — 로그아웃 path 가 작업 화면 경유). dead CSS (`.topbar-brand`, `.product-chip-*`, `.admin-body`) 일괄 정리 별 cycle.
+
+---
+
 **2026-05-18 TASK-0067 완료 — 제품 칩 composer 이전 + custom drop-up dropdown (ChatGPT 모델 선택 패턴)** (CHG-20260518-0004, REV-20260518-0004, REQ-20260518-0005, Minor §12.3 — UI 위치 이전 + native select → custom dropdown, backend / endpoint / RBAC / 데이터 영역 무변경).
 
 **배경**: TASK-0066 의 layout 통합 후 사이드바 영역도 확장하기 위한 사용자 follow-up. ChatGPT 의 모델 선택 UI 패턴 — chip 을 composer 영역 우측 (textarea / sendBtn 사이) 에 두고 click 시 drop-up dropdown 으로 옵션 표시.

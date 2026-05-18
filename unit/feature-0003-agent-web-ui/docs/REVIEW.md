@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260518-0005
+- Date: 2026-05-18
+- Decision: TASK-0068 (REQ-20260518-0006, Minor §12.3) — 관리 콘솔의 sidebar 영역 구성을 작업 화면 (TASK-0066) 과 동일한 ChatGPT 패턴으로 정렬 + 헤더의 `새로고침` / `로그아웃` 제거.
+- Method:
+  - **layout 통일성**: 사용자는 작업 화면 / 관리 콘솔을 빈번히 전환한다 (`backToAppBtn`). 두 화면의 layout 이 일관되면 인지 비용 (eye tracking, mental model) 감소. TASK-0066 에서 작업 화면의 `.app-shell` 을 2-column grid 로 단순화한 패턴을 admin 에 그대로 적용. brand "MySQL AI" 도 통일 (admin 의 기존 "관리 콘솔" brand 는 페이지 컨텍스트라 topbar 안에 표시하는 것이 정합 — product 정체성 vs 페이지 컨텍스트 분리).
+  - **새로고침 버튼 제거의 의미**: pending 변경 보호 confirm + state clear + `loadAdminData()` 호출이었음. 사용자가 거의 사용 안 한다는 피드백 — 보통 `모두 적용` 또는 `취소` (commit-bar) 로 pending 정리하거나 페이지 reload (브라우저 F5) 로 충분. dead UI 제거가 SCREEN clutter 감소에 기여. element 제거 시 admin.js 의 click handler 도 함께 제거 (null reference 안전성).
+  - **로그아웃 버튼 제거의 의미**: admin 의 topbar 에서 직접 로그아웃은 빠른 path 였으나 사용자 통상 흐름이 작업 화면으로 돌아가 (`backToAppBtn`) → 프로필 drawer → 로그아웃 이라 중복. 로그아웃 endpoint (`POST /api/auth/logout`) 는 작업 화면 프로필 drawer 에서 그대로 호출 가능 — 기능 손실 없음.
+  - **`backToAppBtn` 유지**: admin → 작업 화면 전환은 사용자가 자주 사용 (pending 보호 confirm 도 의미 있음). 단일 quick path 로 유지.
+  - **commit-bar 위치**: 기존 `.admin-shell` 의 grid-template-rows 3rd row (`auto`) 였던 footer 를 `.admin-column` 안의 마지막 flex item 으로 이전. sidebar 영역에는 commit-bar 가 표시되지 않고 workspace 의 하단에만 표시 — 시각 정합 (commit-bar 가 workspace 와 묶임).
+  - **`.admin-sidebar` padding 정책**: brand 가 sidebar 의 첫 영역으로 들어가면서 sidebar 자체의 `padding: 10px 8px` 를 제거하고 각 child (`.sidebar-brand` = `padding: 0 14px`, `.admin-tabs` = `padding: 10px 8px 0`, `.admin-sidebar-foot` = `padding-left/right: 8px`) 가 자기 padding 갖도록 — brand 가 sidebar 전체 너비를 차지하고 padding 안쪽 정렬은 brand-icon/name 의 자체 padding 으로 자연스럽게.
+- Risks:
+  - **로그아웃 접근성 감소**: admin 페이지에서 직접 로그아웃 path 가 사라짐 → 작업 화면으로 이동 (1 click) → 프로필 drawer 열기 (1 click) → 로그아웃 (1 click). 3 click. 보안 의도의 빠른 강제 로그아웃 (예: 공용 머신에서 자리 비울 때) 시 불편할 수 있음. 후속 cycle 에서 작업 화면 프로필 drawer 의 "로그아웃" 버튼이 admin 페이지에서도 동일 접근 가능한지 확인 권장 (drawer 자체가 admin 페이지엔 없으므로 새로운 path 필요할 수도).
+  - **새로고침 버튼 제거 후 pending stale 회복**: 사용자가 의도치 않게 pending 을 쌓은 상태에서 `취소` (commit-bar) 도 못 누르거나 잘못 누른 경우 의도된 적용을 되돌리는 path 가 줄어듦. 그러나 commit-bar 의 `취소` 가 동일 역할 수행 — 실질 영향 없음.
+  - **brand 통일 후 페이지 식별성**: admin 페이지의 brand 가 "관리 콘솔" → "MySQL AI" 로 바뀌어 사용자가 어느 페이지인지 혼동할 가능성. 그러나 topbar 의 `<h2 class="chat-title">관리 콘솔</h2>` + subtitle 이 페이지 컨텍스트를 명확히 표시 + browser tab 의 `<title>MySQL AI Assistant Admin</title>` 도 식별 유지. 시각적으로 admin sidebar 의 `대시보드` / `계정 카테고리` / `제품 카테고리` 탭 구성이 관리 콘솔 인지 즉시 알림.
+  - **반응형 admin mobile**: `.admin-shell { grid-template-columns: 1fr }` + `.admin-sidebar { display: none }` 으로 sidebar 숨김 + workspace 만 표시. mobile 에서 admin tab 전환 path 부재 — 별 cycle 검토. (관리 콘솔은 desktop-first 가정이 일반적)
+  - **dead CSS 잔존 확대**: TASK-0066 의 `.topbar-brand`, TASK-0067 의 `.product-chip-*` 에 이어 `.admin-body` rule 도 dead code. 본 cycle 에서 `.admin-body` rule 도 제거 — `.topbar-brand` / `.product-chip-*` 잔존 (별 cycle 정리 권장).
+- Trace: REQ-20260518-0006 → TASK-0068 → CHG-20260518-0005 → REV-20260518-0005 (follow-up of TASK-0066 / 0067)
+
 ## REV-20260518-0004
 - Date: 2026-05-18
 - Decision: TASK-0067 (REQ-20260518-0005, Minor §12.3) — 제품 칩을 사이드바 → composer 우측 (textarea/sendBtn 사이) 으로 이전. ChatGPT 모델 선택 UI 패턴. 기존 native `<select>` 를 custom button + drop-up dropdown 으로 대체.

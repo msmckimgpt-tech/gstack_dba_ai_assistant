@@ -8,6 +8,35 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260518-0005
+- Date: 2026-05-18
+- Summary: TASK-0068 (REQ-20260518-0006, Minor §12.3 — admin layout 정합 + 미사용 버튼 정리. backend / endpoint / RBAC / 데이터 영역 무변경.) 사용자 follow-up — 관리 콘솔의 사이드바 구성을 작업 화면 (TASK-0066 의 ChatGPT 패턴) 과 동일하게 정렬 + 헤더의 `새로고침` / `로그아웃` 버튼 제거 (사용자 직접 테스트에서 거의 사용 안 되는 것 확인).
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/admin.html`
+    - `<header class="topbar">` 의 `.topbar-brand` 를 `.admin-sidebar` 의 첫 child `.sidebar-brand` (brand-icon + "MySQL AI" — 작업 화면과 동일 brand) 로 이전. 기존 admin brand 가 "관리 콘솔" 이었지만 ChatGPT 패턴은 brand 가 product 정체성 (MySQL AI), 페이지 컨텍스트 (관리 콘솔) 는 topbar 안에 표시.
+    - 기존 topbar 의 `#refreshAdminBtn` (새로고침) 과 `#adminLogoutBtn` (로그아웃) 2 element 제거. `#backToAppBtn` (작업 화면 전환) 만 `.topbar-end` 에 유지.
+    - `.admin-body` wrapper 제거.
+    - 신규 `.admin-column` (sidebar 옆 영역 wrapper, flex column) 안에 `<header class="topbar">` (`.topbar-info` 안에 `<h2 class="chat-title">관리 콘솔</h2>` + `<span class="chat-subtitle">계정 · 역할 · 제품 · 시스템 프롬프트 운영</span>`) → `<main class="admin-workspace">` → `<footer class="admin-commit-bar">` 순서로 배치. commit bar 가 sidebar 와 분리되어 admin-column 의 하단에만 표시.
+    - cache-bust `v=20260515-task-0062` → `v=20260518-admin-layout` (admin.html 은 이전 cycle 들의 cache-bust 흐름에서 누락되어 별 cycle 마다 갱신 안 됐던 점도 정렬).
+  - `repo/unit/feature-0003-agent-web-ui/src/static/admin.js`
+    - `#refreshAdminBtn` click handler 제거 (적용된 pending clear + loadAdminData 호출 로직 제거 — element 부재로 dead reference).
+    - `#adminLogoutBtn` click handler 제거 — `POST /api/auth/logout` 호출 흐름 제거. 로그아웃은 작업 화면 (`/`) 의 프로필 drawer 에서 가능하므로 기능 손실 없음.
+    - `#backToAppBtn` click handler 유지 (pending change 보호 confirm + `window.location.href = "/"`).
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css`
+    - `.admin-shell` 의 `grid-template-rows: var(--topbar-h) minmax(0, 1fr) auto` → `grid-template-columns: 220px minmax(0, 1fr)` (작업 화면의 `.app-shell` 과 동일 패턴 — 단일 row 2-column).
+    - `.admin-body` rule 폐기 (HTML wrapper 도 제거됨).
+    - 신규 `.admin-column` — `display: flex; flex-direction: column; min-width: 0; overflow: hidden`.
+    - `.admin-sidebar` 의 `padding: 10px 8px` 제거 — brand 가 sidebar 의 첫 영역으로 들어가면서 padding 을 각 child (`.sidebar-brand`, `.admin-tabs`, `.admin-sidebar-foot`) 가 갖도록 함. 신규 `.admin-sidebar .admin-tabs { padding: 10px 8px 0 }` + `.admin-sidebar .admin-sidebar-foot { padding-left: 8px; padding-right: 8px }`.
+    - 반응형 `@media (max-width: 680px)` 에서 `.admin-body { grid-template-columns: 1fr }` → `.admin-shell { grid-template-columns: 1fr }` 로 정렬.
+    - `.sidebar-brand` rule (TASK-0066 신설, index.html 의 `.sidebar` 에서만 사용) 은 그대로 재사용 — admin.html 의 sidebar 안에서도 동일 스타일 (52px height, border-bottom).
+  - `repo/unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md` + `repo/docs/STATUS.md` — REQ-20260518-0006 / TASK-0068 / CHG-20260518-0005 / REV-20260518-0005 entries.
+- Verification:
+  - `node --check unit/feature-0003-agent-web-ui/src/static/admin.js` PASS
+  - `SKIP_INIT=1 make web` 재배포 OK
+  - DOM 검증 (browser headless `/admin`): `refreshBtnPresent = false`, `logoutBtnPresent = false`, `backBtnPresent = true`, `brandInSidebar = true` (sidebar-brand 가 admin-sidebar 안에 mount), `adminColumnPresent = true`, `oldAdminBodyPresent = false`, `topbarHeight = 52` (var(--topbar-h)), `topbarInfoText = "관리 콘솔 ... 시스템 프롬프트 운영"`, `gridCols = "220px 1060px"` (sidebar 220 + 나머지).
+  - Screenshot `/tmp/admin-merged.png`: 좌측 admin-sidebar (brand "MA MySQL AI" + 대시보드 (active) + 계정 카테고리 (계정 26 / 역할 5) + 제품 카테고리 (제품 3) + pending 변경 0건 footer) / 우측 admin-column (topbar "관리 콘솔" 좌측 정렬 제목 + 부제 + 우측 끝 "작업 화면" 버튼만 / Overview 운영 현황 metric cards / 변경사항 0건 commit bar) — 작업 화면과 100% 일관된 ChatGPT 패턴.
+- Trace: REQ-20260518-0006 → TASK-0068 → CHG-20260518-0005 → REV-20260518-0005 (follow-up of TASK-0066 / 0067)
+
 ## CHG-20260518-0004
 - Date: 2026-05-18
 - Summary: TASK-0067 (REQ-20260518-0005, Minor §12.3 — UI 위치 이전 + native select → custom dropdown 전환. backend / endpoint / RBAC / 데이터 영역 무변경.) 사용자 직접 테스트 follow-up — TASK-0066 의 layout 통합 후 사이드바도 채팅 영역처럼 확장하기 위해 `제품 칩` 을 사이드바에서 composer 의 우측 (textarea 와 send 버튼 사이) 으로 이전. ChatGPT 의 모델 선택 UI 패턴 — chip 클릭 시 drop-up dropdown 으로 옵션 표시 + 선택 시 즉시 적용 + chip label/dot 갱신.

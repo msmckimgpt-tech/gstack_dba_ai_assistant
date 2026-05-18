@@ -88,6 +88,13 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   - AC-0111: `.message-point-rail` 이 `position: relative` 로 변경되고 각 `.message-point-dot` 가 `position: absolute; top: <pct>%`. `pct = (message.offsetTop + height/2) / messageLog.scrollHeight * 100`. 매우 긴 메시지 1 개가 있어도 dot 가 해당 메시지의 실 중심 비례 위치에 표시된다.
   - AC-0112: `layoutMessagePointRail()` 헬퍼가 `renderMessages()` 끝 + resize 시 호출되어 dot 의 top% 를 재계산한다. message scrollHeight 변경 (메시지 추가 / 펼침 / 접힘) 시 다음 render cycle 에 자동 반영.
   - AC-0113: dot 의 transform 은 `translate(-50%, -50%)` 로 horizontal 중앙 정렬 + vertical 중심점 정렬. `.is-active` 일 때 `translate(-50%, -50%) scale(1.8)` 로 translate 와 scale 함께 적용해 dot 가 좌측으로 튀지 않는다.
+- REQ-20260518-0006 (TASK-0068, Minor §12.3 — 관리 콘솔 layout 정합 + 미사용 버튼 정리, follow-up of REQ-20260518-0004): 관리 콘솔의 사이드바 구성을 작업 화면과 동일한 ChatGPT 패턴 (sidebar 전체 height + brand 통합 + topbar 가 column 영역 너비) 으로 정렬. 사용자 직접 테스트에서 거의 사용 안 되는 `새로고침` / `로그아웃` 버튼 제거.
+  - AC-0142: `.admin-shell` 의 grid 가 `grid-template-columns: 220px minmax(0, 1fr)` 단일 row 로 단순화된다. `.admin-body` wrapper 폐기.
+  - AC-0143: `.admin-sidebar` 의 첫 child 가 `.sidebar-brand` (brand-icon + "MySQL AI" — 작업 화면과 동일 brand). admin 의 기존 "관리 콘솔" brand 는 페이지 컨텍스트라 topbar 로 이전.
+  - AC-0144: 신규 `.admin-column` (`display: flex; flex-direction: column`) 안에 `<header class="topbar">` (`.topbar-info` 안에 `<h2 class="chat-title">관리 콘솔</h2>` + `<span class="chat-subtitle">계정 · 역할 · 제품 · 시스템 프롬프트 운영</span>`, `.topbar-end` 안에 `#backToAppBtn` 만) → `<main class="admin-workspace">` → `<footer class="admin-commit-bar">` 순서로 배치.
+  - AC-0145: `#refreshAdminBtn` (새로고침) / `#adminLogoutBtn` (로그아웃) 2 element 가 DOM 에서 제거되며 admin.js 의 click handler 도 함께 제거된다. `#backToAppBtn` (작업 화면 전환, pending 보호 confirm 포함) 만 유지.
+  - AC-0146: 로그아웃은 작업 화면 (`/`) 의 프로필 drawer 에서 `POST /api/auth/logout` 호출로 가능 — backend endpoint / 권한 / 흐름 무변경 (UI path 만 축소).
+  - AC-0147: 반응형 — `@media (max-width: 680px)` 에서 `.admin-shell { grid-template-columns: 1fr }` + `.admin-sidebar { display: none }` (작업 화면 `.app-shell` 과 동일 패턴).
 - REQ-20260518-0005 (TASK-0067, Minor §12.3 — 제품 칩 composer 이전 + custom drop-up dropdown, follow-up of REQ-20260518-0004): 사용자 명시 — ChatGPT 의 모델 선택 UI 패턴으로 제품 칩을 사이드바에서 composer 의 우측 (textarea/sendBtn 사이) 으로 이전. 클릭 시 drop-up dropdown 으로 옵션 표시. 사이드바도 채팅 영역처럼 확장.
   - AC-0136: `.sidebar-head` 의 `.product-chip-wrap` (caption + label.product-chip + native select) 가 DOM 에서 제거된다. `.sidebar-head` 에는 `#newConversationBtn` 만 남는다 (sidebar vertical 공간 확장).
   - AC-0137: `.composer-box` 안 textarea 와 `#sendBtn` 사이에 `.composer-product-chip-wrap` 가 신설되며 `button#productChip` (dot + label + arrow) + `div#productDropupMenu` 를 포함한다. 기존 native `<select id="productSelect">` 는 폐기되고 custom button + custom menu 로 대체.
