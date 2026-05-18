@@ -2284,6 +2284,12 @@ a { color: inherit; }
 .admin-list-detail {
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  /* REQ-20260518-0008: 단일 row 의 height 를 명시해 list-col / detail-col 이
+     list-detail 의 전체 height 만큼 stretch. 이전엔 grid-auto-rows: auto (default)
+     라 content 가 row 를 채우지 않는 큰 viewport (높이 800+) + 적은 항목 (역할/제품)
+     조합에서 box 가 짧게 표시되고 아래로 회색 빈 영역이 노출. align-items: stretch 는
+     row 안에서의 분배만 담당 — row 자체의 height 는 grid-template-rows 가 결정. */
+  grid-template-rows: minmax(0, 1fr);
   gap: 16px;
   align-items: stretch;
   min-width: 0;

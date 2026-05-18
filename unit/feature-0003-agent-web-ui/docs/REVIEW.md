@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260518-0007
+- Date: 2026-05-18
+- Decision: TASK-0070 (REQ-20260518-0008, Minor §12.3) — `.admin-list-detail` 에 `grid-template-rows: minmax(0, 1fr)` 추가. CSS 1 줄 root-cause fix.
+- Reason: TASK-0068/0069 layout chain 의 마지막 stretch gap. `.admin-list-detail` 가 grid (column 2 정의) 이지만 row 가 default `auto` → row height = content. `.admin-pane` / `.admin-workspace` / `.admin-column` 의 flex grow chain 이 list-detail 까지는 정상 도달했으나 list-detail 의 grid row 가 그 height 를 column 들에 분배 안 함. `minmax(0, 1fr)` 으로 row 가 list-detail 의 flex grow 받은 height 전부 차지 + min-content 무시 (자식 column 의 min-height 0 와 정합).
+- 1 차 검증 (TASK-0069) 에서 놓친 이유: 본 환경의 viewport (720) 에서는 list-col content (search input + select-all + 3+ items + bulk-bar + pagination) 의 총 height 가 우연히 list-detail 의 stretch 된 height 와 비슷 (~500) → 시각적으로 stretch 된 것처럼 보임. 사용자의 큰 viewport (900+) 에서는 list-col content 가 짧아 row 가 짧음 → 그 차이가 시각화됨. 검증 viewport 다양성 부족이 회귀 1 cycle 연장 원인.
+- Alt 거부: `min-height: 100%` (list-col / detail-col 에 추가). flex grow 와 결합 시 fragility (parent height 100% 의존). grid-template-rows 가 root cause 에 가깝고 simpler.
+- Risks:
+  - **다른 viewport 비율 검증**: 큰 viewport (1320x900) 에서 fix 검증 완료. 매우 짧은 viewport (height 500-) 의 경우 list-col content (toolbar + items) 가 row 보다 클 수도 — overflow-y: auto 의 `.admin-list` 가 scroll 동작으로 흡수. 또한 list-col / detail-col 자체에 `min-height: 0` 명시되어 있어 grid row stretch 와 정합.
+  - **dashboard pane**: dashboard 는 list-detail 사용 안 함 (`.admin-pane[data-admin-pane="dashboard"].is-active { overflow-y: auto }` 직접 scroll). 본 변경 무영향.
+  - **mobile 반응형** (`@media (max-width: 680px)`): `.admin-list-detail { grid-template-columns: 1fr }` 으로 단일 column. row 1 fr 도 그대로 동작 — column 1 (list-col) 이 1fr row 의 전체 height.
+- Trace: REQ-20260518-0008 → TASK-0070 → CHG-20260518-0007 → REV-20260518-0007 (hotfix of TASK-0068 / 0069 layout chain)
+
 ## REV-20260518-0006
 - Date: 2026-05-18
 - Decision: TASK-0069 (REQ-20260518-0007, Minor §12.3) — `.admin-workspace` 에 `flex: 1 1 auto` 추가. 다른 fix path 미선택 — 1 줄로 root cause 해결되므로 우회 패치 불필요.

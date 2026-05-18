@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260518-0007
+- Date: 2026-05-18
+- Summary: TASK-0070 (REQ-20260518-0008, Minor §12.3 — admin list-detail grid row hotfix, RBAC / endpoint / 데이터 / JS 무변경) TASK-0069 follow-up. 사용자 screenshot 2 차 보고 — `역할` / `제품` 등 항목이 적은 pane 에서 화면 height 가 큰 viewport 의 경우 list-col / detail-col box 가 viewport 의 일부만 차지하고 그 아래로 admin-workspace 의 padding 영역이 회색으로 노출. 항목이 많은 pane (`계정` 26 row) 이나 화면이 좁을 때는 content 가 row 를 자연 채워 노출 없었기에 1 차 검증 (720 viewport) 에서는 놓침.
+- 원인: `.admin-list-detail { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr) }` 의 `grid-template-rows` 미정의 → default `grid-auto-rows: auto` → row 의 height 가 content 결정. `align-items: stretch` 는 row 안에서 column 분배만 담당 (row 자체의 height 결정 X). 결과: list-col / detail-col content 가 짧으면 row 도 짧고 list-detail 의 flex grow 가 의미를 잃음.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css`
+    - `.admin-list-detail` 에 `grid-template-rows: minmax(0, 1fr)` 추가. 단일 row 의 height 를 명시. minmax(0, ...) 으로 자식의 min-content 무시 — 큰 viewport 에서도 row 가 list-detail 의 flex grow 받은 height 전부 차지.
+    - 다른 속성 (grid-template-columns / gap / align-items / min-* 0 / flex 1 1 auto) 무변경.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/admin.html` — cache-bust `v=20260518-admin-workspace-flex` → `v=20260518-admin-list-rows`.
+  - `repo/unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md` + `repo/docs/STATUS.md` — REQ-20260518-0008 / TASK-0070 / CHG-20260518-0007 / REV-20260518-0007 entries.
+- Verification:
+  - `SKIP_INIT=1 make web` 재배포 OK.
+  - DOM (browser headless `/admin` → 제품 tab, viewport `1320x900`):
+    `viewport = 900`, `listDetail h = 682` (이전엔 자기 content 약 200 만큼만), `listCol h = 682`, `detailCol h = 682`, `cbar y = 839 / bottom = 900` (viewport bottom 에 정확히 sticky).
+  - Screenshot `/tmp/admin-products-fixed.png` — list-col / detail-col box 가 viewport 의 거의 전체 height 까지 stretch + 3 items 만 있어도 box 자체는 commit-bar 까지 stretch + 회색 빈 영역 사라짐. 사용자 screenshot 회귀 완전 해결.
+  - 다른 pane (계정 / 역할) 도 동일 fix 자연 적용 — `.admin-list-detail` 단일 rule 변경.
+- Trace: REQ-20260518-0008 → TASK-0070 → CHG-20260518-0007 → REV-20260518-0007 (hotfix of TASK-0068 / 0069 layout chain)
+
 ## CHG-20260518-0006
 - Date: 2026-05-18
 - Summary: TASK-0069 (REQ-20260518-0007, Minor §12.3 — admin layout hotfix, RBAC / endpoint / 데이터 / JS 무변경) TASK-0068 follow-up. 사용자 screenshot 으로 보고된 layout 회귀 — admin `역할 관리` (및 다른 list-detail pane) 에서 commit-bar 가 workspace content 바로 아래에 좁게 위치하고 그 아래로 큰 회색 빈 영역이 admin-column 의 bottom 까지 노출. 원인: TASK-0068 에서 commit-bar 를 admin-shell grid (3rd row) → admin-column 의 flex column item 으로 이전한 후 `.admin-workspace` 에 `flex: 1` 명시 누락. flex column 안에서 workspace 가 자기 content 만큼만 차지 → flex column 의 남은 공간이 빈 채로 보이고 commit-bar 가 workspace 끝 바로 아래에 위치 (sticky bottom 효과 상실). 각 `.admin-pane.is-active` 의 `flex: 1 1 auto` 가 의미를 가지려면 부모 `.admin-workspace` 자체가 stretch 되어야 함.

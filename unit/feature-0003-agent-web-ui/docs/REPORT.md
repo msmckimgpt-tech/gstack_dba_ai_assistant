@@ -9,6 +9,20 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-05-18 TASK-0070 완료 — admin list-detail grid row hotfix (TASK-0069 잔여 회귀)** (CHG-20260518-0007, REV-20260518-0007, REQ-20260518-0008, Minor §12.3 — CSS 1 줄 hotfix, RBAC / endpoint / 데이터 / JS 무변경).
+
+**배경**: 사용자 2 차 screenshot 보고. TASK-0069 의 `.admin-workspace { flex: 1 1 auto }` fix 이후에도 `역할` / `제품` 등 항목이 적은 pane 의 큰 viewport (height 800+) 에서 list-col / detail-col box 가 viewport 의 일부만 차지하고 그 아래 회색 빈 영역 잔존. 항목 많은 `계정` (26 row) 이나 좁은 화면에선 row content 가 자연 채워 노출 안 됨 — 1 차 검증 (720 viewport) 에서 놓침.
+
+**원인**: `.admin-list-detail { display: grid; grid-template-columns: ...; align-items: stretch }` 의 `grid-template-rows` 미정의 → default `auto` → row height = content. `align-items: stretch` 는 row 내부 column 분배만 — row 자체 height 결정 X. flex grow chain (admin-column → workspace → pane → list-detail) 의 끝지점이라 fix 가 cascade 의 마지막 단계.
+
+**Fix**: `.admin-list-detail` 에 `grid-template-rows: minmax(0, 1fr)` 1 줄 추가. `minmax(0, ...)` 으로 자식 min-content 무시 — 자식의 `min-height: 0` 와 정합. 다른 속성 무변경.
+
+**검증**: 큰 viewport (1320x900) 에서 `제품` pane (3 items) — `listDetail h=682`, `listCol h=682`, `detailCol h=682` (이전엔 약 200 정도만), `cbar y=839 / bottom=900` (viewport bottom sticky). screenshot `/tmp/admin-products-fixed.png` — box 가 commit-bar 까지 stretch + 회색 빈 영역 사라짐. 다른 pane 도 동일 fix 자연 적용 (`.admin-list-detail` 공통 rule). cache-bust `v=20260518-admin-list-rows`.
+
+검증 viewport 다양성 부족이 회귀 1 cycle 연장한 점 기록 (REV-20260518-0007). 후속 cycle 검증 시 720 / 900 / 1080 / mobile (480) 등 multiple viewport snapshot 으로 stretch chain 종단 확인 권장.
+
+---
+
 **2026-05-18 TASK-0069 완료 — admin workspace flex hotfix (TASK-0068 회귀 차단)** (CHG-20260518-0006, REV-20260518-0006, REQ-20260518-0007, Minor §12.3 — CSS 1 줄 hotfix, RBAC / endpoint / 데이터 / JS 무변경).
 
 **배경**: 사용자 screenshot 보고. admin `역할 관리` (및 다른 list-detail pane) 에서 commit-bar 가 workspace content 바로 아래에 좁게 위치하고 그 아래로 큰 회색 빈 영역이 admin-column 의 bottom 까지 노출. 원인: TASK-0068 에서 commit-bar 를 admin-shell grid (3rd row) → admin-column flex column item 으로 이전한 후 `.admin-workspace` 의 `flex: 1` 명시 누락. flex column 안에서 workspace 가 자기 content 만큼만 차지 → 남은 공간 노출 + commit-bar 가 sticky bottom 효과 상실.
