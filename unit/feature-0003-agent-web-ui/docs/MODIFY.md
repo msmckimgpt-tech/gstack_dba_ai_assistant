@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260518-0002
+- Date: 2026-05-18
+- Summary: TASK-0065 (REQ-20260518-0003, Minor §12.3 — UI 정리 + sticky 분기선) TASK-0063 직접 테스트 follow-up. (1) 헤더의 대화 복사 / 공유 / 제목 변경 / 삭제 4 버튼 제거 (per-item "···" menu 로 일원화). (2) menu trigger 우측 상단 → 우측 하단 이동 (badge "내/sales" 우측 상단 영역과 시각 충돌 해결). (3) 채팅 로그 날짜 분기선에 `position: sticky; top: 0` 적용 — Slack 패턴. 사용자가 분기선까지 scroll 할 필요 없이 현재 시야의 날짜 그룹 헤더가 messageLog 상단에 stick 되고 click 시 캘린더 popover anchored 진입.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html`
+    - `chat-header-tools` 의 `forkConversationBtn` / `shareConversationBtn` / `renameConversationBtn` / `deleteConversationBtn` 4 element 제거. `loadMoreBtn` 만 유지 (이전 기록 — 별 기능).
+    - cache-bust `v=20260518-conv-menu` → `v=20260518-header-cleanup`.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/app.js`
+    - 4 element 의 `getElementById` 변수 선언 (line 56/59/60/61) 제거.
+    - `toggleConversationActionButtons` 류 가시성 로직 (line 2492 ~ 2530) 의 4 element 관련 분기 (35 lines) 삭제. cancel/finalize 만 남음.
+    - DOM ready 의 4 element click handler (line 3837 ~ 3860) 삭제. backend helper (`deleteConversation` / `renameCurrentConversation` / `forkConversation` / `createConversationShare`) 는 conv-item "···" menu 의 makeItem handler 가 cid 인자로 직접 호출하므로 유지.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css`
+    - `.conv-item` 에 `padding-right: 32px` 추가 (trigger 22px + margin 10px 확보).
+    - `.conv-item-menu-trigger` 의 `top: 6px` → `bottom: 6px` (위치 우측 하단으로 이동).
+    - `.message-date-divider` 에 `position: sticky; top: 0; z-index: 5` + `padding: 4px 0` (sticky 안정성). label 의 배경 `var(--surface-2)` → `var(--surface-1, #ffffff)` 로 조정 (sticky 시 message bubble 위에 자연스럽게 떠 보이도록 불투명도 강화) + `box-shadow: 0 1px 2px rgba(0,0,0,.04)` 추가. hover 시 `box-shadow: 0 2px 6px rgba(37,99,235,.18)` 로 elevation 강화.
+  - `repo/unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md` + `repo/docs/STATUS.md` — REQ-20260518-0003 / TASK-0065 / CHG-20260518-0002 / REV-20260518-0002 entries.
+- Verification:
+  - `node --check unit/feature-0003-agent-web-ui/src/static/app.js` PASS
+  - `SKIP_INIT=1 make web` 재배포 OK
+  - Browser smoke (`gstack /browse` headless): (1) 헤더 4 버튼 부재 확인 (snapshot 의 `chat-header-tools` 영역에 `loadMoreBtn` + product selector 외 추가 버튼 없음), (2) active conv-item 의 "···" trigger 가 bottom=6px / right=6px / opacity=1 로 우측 하단 정상 위치 (DOM `getComputedStyle` 확인), (3) 2 분기선 conversation 에서 `messageLog.scrollTop = 600` 깊이 스크롤 시 첫 분기선 "2026년 4월 15일" 이 messageLog 상단에 stick (screenshot `/tmp/sticky-scrolled.png` 첨부) — Slack 패턴 정확 구현.
+- Trace: REQ-20260518-0003 → TASK-0065 → CHG-20260518-0002 (follow-up of TASK-0063 / CHG-20260518-0001)
+
 ## CHG-20260518-0001
 - Date: 2026-05-18
 - Summary: TASK-0063 (REQ-20260518-0001, **Major** §12.3 — RBAC catalog 확장 2건 + 신규 endpoint 1건 + 파괴적 액션 menu 통합) 작업 화면 대화 항목별 "···" menu (복사 / 공유 / 제목 변경 / 삭제) + 캘린더 시간 이동을 채팅 로그 날짜 분기선 click trigger 로 이전. ChatGPT / Slack UX 패턴 정렬.

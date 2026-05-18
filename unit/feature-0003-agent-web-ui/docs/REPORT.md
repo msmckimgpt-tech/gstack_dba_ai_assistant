@@ -9,6 +9,14 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-05-18 TASK-0065 완료 — TASK-0063 직접 테스트 follow-up 3 항목 (헤더 4 버튼 제거 + trigger 우측 하단 + 분기선 sticky)** (CHG-20260518-0002, REV-20260518-0002, REQ-20260518-0003, Minor §12.3 — UI 정리, RBAC / endpoint / 데이터 영역 무변경).
+
+**변경**: (1) `chat-header-tools` 의 `forkConversationBtn` / `shareConversationBtn` / `renameConversationBtn` / `deleteConversationBtn` 4 element 제거. conv-item "···" menu 가 단일 진입점. backend helper 는 menu makeItem + message-bubble actions 에서 여전히 호출 — 무변경. (2) `.conv-item-menu-trigger` 위치 `top: 6px` → `bottom: 6px` (owner badge 와 시각 충돌 해결). `.conv-item` 에 `padding-right: 32px` 보정. (3) `.message-date-divider` 에 `position: sticky; top: 0; z-index: 5` + `padding: 4px 0`. label 배경 `var(--surface-2)` (반투명) → `var(--surface-1, #ffffff)` (불투명) + `box-shadow: 0 1px 2px rgba(0,0,0,.04)` elevation. hover 시 `box-shadow: 0 2px 6px rgba(37,99,235,.18)` 강화.
+
+**검증**: `node --check` PASS, `SKIP_INIT=1 make web` 재배포 OK. Browser smoke (`gstack /browse` headless): 헤더 4 버튼 부재 확인 (snapshot 의 `chat-header-tools` 영역에 `loadMoreBtn` 만), active conv-item trigger DOM `getComputedStyle` 가 `bottom: 6px / right: 6px / opacity: 1` (우측 하단 정상), 2 분기선 conversation 에서 `messageLog.scrollTop = 600` 깊이 스크롤 시 첫 분기선 "2026년 4월 15일" 이 messageLog 상단에 sticky stick 됨 (screenshot 첨부) — Slack 패턴 정확 구현. cache-bust `v=20260518-header-cleanup`.
+
+---
+
 **2026-05-18 TASK-0063 완료 — 작업 화면 conv-item "···" menu (복사 / 공유 / 제목 변경 / 삭제) + 캘린더 시간 이동 분기선 trigger** (CHG-20260518-0001, REV-20260518-0001, REQ-20260518-0001, **Major** §12.3 — RBAC catalog 확장 2 + 신규 endpoint 1 + 파괴적 액션 menu 통합). Codex outside voice review 의 10 risk 모두 반영 + 사용자 4 결정 채택 (full self-fork / 신규 권한 분리 / 헤더 share 유지 / 헤더 calendar 제거 + 년 jump 조건부).
 
 **Backend**: `PERMISSION_DEFINITIONS` 에 `conversation.duplicate.own/.any` 2 건 추가 (catalog 34→36). SEED_ROLE_DEFINITIONS operator/sales 에 `.own` grant, admin 은 set(PERMISSION_CODES) 로 둘 다 자동 포함. `_ensure_seed_roles` 의 admin catchup tuple 에 duplicate.own/.any 추가, operator/sales catchup loop 을 (share.create, duplicate.own) 리스트 기반으로 일반화. 신규 endpoint `POST /api/conversations/{cid}/duplicate` — read-gate 먼저 (404 단일 wording → metadata leak 차단), `.any` superset semantics, `_fork_conversation_impl` 재활용, grapheme-safe `사본:` prefix. `_ensure_seed_catchup` 의 catalog hydrate 호출을 seed_roles 앞으로 이동 (회귀 fix — 이전 순서로는 admin/operator/sales catchup 의 _permission_id_map lookup 이 신규 권한 id=0 받아 skip).

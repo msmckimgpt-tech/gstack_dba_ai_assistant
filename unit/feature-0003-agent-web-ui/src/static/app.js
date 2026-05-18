@@ -53,12 +53,13 @@ const progressStepsEl = document.getElementById("progressSteps");
 const progressSummaryEl = document.getElementById("progressSummary");
 const messageLogEl = document.getElementById("messageLog");
 const loadMoreBtn = document.getElementById("loadMoreBtn");
-const renameConversationBtn = document.getElementById("renameConversationBtn");
 const cancelBtn = document.getElementById("cancelBtn");
 const finalizeBtn = document.getElementById("finalizeBtn");
-const deleteConversationBtn = document.getElementById("deleteConversationBtn");
-const forkConversationBtn = document.getElementById("forkConversationBtn");
-const shareConversationBtn = document.getElementById("shareConversationBtn");
+// REQ-20260518-0003: 헤더의 대화 복사 / 공유 / 제목 변경 / 삭제 4 버튼은
+// 좌측 conv-item "···" menu 로 일원화되어 제거됨. 동일 action 의 backend
+// helper (createConversationShare / renameCurrentConversation /
+// deleteConversation / duplicateConversationFromMenu) 는 menu 가 cid 인자로
+// 직접 호출하므로 유지된다.
 const composerTitleEl = document.getElementById("composerTitle");
 const composerHintEl = document.getElementById("composerHint");
 const promptInputEl = document.getElementById("promptInput");
@@ -2489,43 +2490,12 @@ function renderComposer() {
   // "권한 없음" 은 hidden 이 아닌 is-access-blocked 로 표현해 버튼이 존재함을 알 수 있게 한다.
   cancelBtn.classList.toggle("hidden", !processing);
   finalizeBtn.classList.toggle("hidden", !processing);
-  renameConversationBtn.classList.toggle("hidden", !state.activeConversationId);
-  deleteConversationBtn.classList.toggle("hidden", !state.activeConversationId);
-  // REQ-20260518-0001: 헤더 historyCalendarBtn 제거 — 캘린더 trigger 는 채팅 로그의 날짜 분기선이 단일 진입점.
-  if (forkConversationBtn) {
-    forkConversationBtn.classList.toggle("hidden", !state.activeConversationId);
-    if (state.activeConversationId) {
-      if (can("conversation.create")) {
-        forkConversationBtn.removeAttribute("aria-disabled");
-        forkConversationBtn.classList.remove("is-access-blocked");
-        forkConversationBtn.title = active && !isOwnConversation(active)
-          ? "이 대화의 기록을 내 계정의 새 대화로 복제합니다."
-          : "이 대화의 기록을 내 계정의 새 대화로 복제합니다.";
-      } else {
-        forkConversationBtn.setAttribute("aria-disabled", "true");
-        forkConversationBtn.classList.add("is-access-blocked");
-        forkConversationBtn.title =
-          "'새 대화 생성' 권한이 없습니다. 필요 권한: `conversation.create`";
-      }
-    }
-  }
-  // REQ-20260514-0001: 공유 버튼 — conversation.share.create 권한이 있고 대화가 선택돼야 노출.
-  if (shareConversationBtn) {
-    const hasShare = can("conversation.share.create");
-    shareConversationBtn.classList.toggle("hidden", !state.activeConversationId || !hasShare);
-    if (state.activeConversationId && hasShare) {
-      shareConversationBtn.removeAttribute("aria-disabled");
-      shareConversationBtn.classList.remove("is-access-blocked");
-      shareConversationBtn.title = "이 대화 전체를 anonymous 접근 가능한 링크로 공유합니다.";
-    }
-  }
+  // REQ-20260518-0003: 헤더의 대화 복사 / 공유 / 제목 변경 / 삭제 4 버튼 가시성/blocked 로직 제거.
+  // 동일 action 은 좌측 conv-item "···" menu 가 단일 진입점이며 (REQ-20260518-0001),
+  // 각 menu item 이 markAccessBlocked + 권한 게이트를 따로 적용한다.
   if (processing) {
     markAccessBlocked(cancelBtn, "conversation.cancel", active);
     markAccessBlocked(finalizeBtn, "conversation.finalize", active);
-  }
-  if (state.activeConversationId) {
-    markAccessBlocked(renameConversationBtn, "conversation.rename", active);
-    markAccessBlocked(deleteConversationBtn, "conversation.delete", active);
   }
 }
 
@@ -3864,30 +3834,10 @@ async function initialize() {
       showToast(error.message || "즉시 답변 요청에 실패했습니다.", true);
     });
   });
-  deleteConversationBtn.addEventListener("click", () => {
-    deleteConversation().catch((error) => {
-      showToast(error.message || "대화 삭제에 실패했습니다.", true);
-    });
-  });
-  renameConversationBtn.addEventListener("click", () => {
-    renameCurrentConversation().catch((error) => {
-      showToast(error.message || "대화 제목 변경에 실패했습니다.", true);
-    });
-  });
-  if (forkConversationBtn) {
-    forkConversationBtn.addEventListener("click", () => {
-      forkConversation().catch((error) => {
-        showToast(error.message || "대화 복사에 실패했습니다.", true);
-      });
-    });
-  }
-  if (shareConversationBtn) {
-    shareConversationBtn.addEventListener("click", () => {
-      createConversationShare().catch((error) => {
-        showToast(error.message || "공유 링크 생성에 실패했습니다.", true);
-      });
-    });
-  }
+  // REQ-20260518-0003: 헤더 4 버튼 (대화 복사 / 공유 / 제목 변경 / 삭제) 의 click handler 도 정리.
+  // 동일 backend helper (deleteConversation / renameCurrentConversation / forkConversation /
+  // createConversationShare / duplicateConversationFromMenu) 는 좌측 conv-item "···" menu 에서
+  // cid 인자로 직접 호출된다 (openConversationItemMenu 의 makeItem handler).
 
   // REQ-20260518-0001: 캘린더는 메시지 날짜 분기선 click 으로 진입. prev/next 는 popover header 의 calendarNav 가 동적 렌더.
   // 외부 click 으로 닫기 — anchor 가 분기선이 될 수도 있으므로 messageLog 내 분기선 click 은 그 자체로 toggle 처리.

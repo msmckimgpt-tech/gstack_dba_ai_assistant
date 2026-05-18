@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260518-conv-menu" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260518-header-cleanup" />
 </head>
 <body>
 
@@ -119,11 +119,7 @@
           </div>
           <div class="chat-header-tools">
             <button type="button" class="tool-btn hidden" id="loadMoreBtn">이전 기록</button>
-            <button type="button" class="tool-btn hidden" id="forkConversationBtn" title="이 대화의 현재 기록을 내 계정의 새 대화로 복제합니다.">대화 복사</button>
-            <button type="button" class="tool-btn hidden" id="shareConversationBtn" title="이 대화를 anonymous 접근 가능한 링크로 공유합니다.">공유</button>
-            <!-- REQ-20260518-0001: 헤더 historyCalendarBtn 제거 — 캘린더는 채팅 로그의 날짜 분기선 클릭으로 진입한다 -->
-            <button type="button" class="tool-btn hidden" id="renameConversationBtn">제목 변경</button>
-            <button type="button" class="tool-btn danger hidden" id="deleteConversationBtn">삭제</button>
+            <!-- REQ-20260518-0003: 헤더의 대화 복사 / 공유 / 제목 변경 / 삭제 4 버튼 제거 — 동일 액션은 좌측 conv-item 의 "···" menu 단일 진입점으로 통일. 캘린더 시간 이동은 메시지 날짜 분기선 (sticky) 클릭. -->
           </div>
         </div>
 
@@ -390,6 +386,6 @@
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260518-conv-menu"></script>
+  <script src="/static/app.js?v=20260518-header-cleanup"></script>
 </body>
 </html>

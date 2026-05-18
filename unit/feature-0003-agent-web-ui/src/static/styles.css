@@ -3420,13 +3420,15 @@ a { color: inherit; }
   margin-right: auto;
 }
 
-/* REQ-20260518-0001: per-conversation "···" menu trigger + dropdown */
+/* REQ-20260518-0001 / REQ-20260518-0003: per-conversation "···" menu trigger + dropdown.
+   trigger 는 우측 하단 위치 (이전 상단은 conv-owner-badge "내"/"sales" 등 우측 상단 badge 와 시각 충돌). */
 .conv-item {
   position: relative;
+  padding-right: 32px; /* trigger (22px) + margin (10px) 확보 — title/meta 가 trigger 와 겹치지 않도록 */
 }
 .conv-item-menu-trigger {
   position: absolute;
-  top: 6px;
+  bottom: 6px;
   right: 6px;
   width: 22px;
   height: 22px;
@@ -3499,18 +3501,25 @@ a { color: inherit; }
   background: rgba(0,0,0,.04);
 }
 
-/* REQ-20260518-0001: 채팅 로그 날짜 분기선 — Slack 패턴. clickable button. */
+/* REQ-20260518-0001 / REQ-20260518-0003: 채팅 로그 날짜 분기선 — Slack 패턴.
+   position: sticky + top: 0 으로 부모(`.messages`) overflow-y 스크롤 안에서
+   해당 날짜 그룹이 viewport 를 지나는 동안 분기선이 상단에 stick 된다.
+   사용자가 분기선까지 스크롤할 필요 없이 현재 보이는 영역의 날짜가 항상 시야에 있고,
+   click → openHistoryCalendarAt() 으로 캘린더 popover 가 해당 날짜 anchored 로 열림. */
 .message-date-divider {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 100%;
   margin: 14px 0 6px;
-  padding: 0;
+  padding: 4px 0;
   background: transparent;
   border: none;
   cursor: pointer;
-  position: relative;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  pointer-events: auto;
 }
 .message-date-divider::before,
 .message-date-divider::after {
@@ -3526,16 +3535,18 @@ a { color: inherit; }
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
-  background: var(--surface-2, rgba(0,0,0,.03));
+  background: var(--surface-1, #ffffff);
   border: 1px solid var(--border, rgba(0,0,0,.10));
   border-radius: 999px;
-  transition: background .12s ease, color .12s ease, border-color .12s ease;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  transition: background .12s ease, color .12s ease, border-color .12s ease, box-shadow .12s ease;
 }
 .message-date-divider:hover .message-date-divider-label,
 .message-date-divider:focus-visible .message-date-divider-label {
   background: var(--primary-soft, rgba(37,99,235,.10));
   color: var(--primary, #2563eb);
   border-color: rgba(37,99,235,.30);
+  box-shadow: 0 2px 6px rgba(37,99,235,.18);
 }
 
 /* REQ-20260518-0001: history-calendar 의 popover header 에 동적 nav 슬롯 */

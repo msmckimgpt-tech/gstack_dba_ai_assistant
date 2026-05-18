@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260518-0002
+- Date: 2026-05-18
+- Decision: TASK-0065 (REQ-20260518-0003, Minor §12.3) — TASK-0063 직접 테스트 follow-up 3 항목. 헤더 4 버튼 제거 + "···" trigger 위치 우측 하단 + 분기선 `position: sticky`.
+- Method:
+  - **헤더 4 버튼 제거**: TASK-0063 의 dual entry 정책 (헤더 share 유지 / per-item menu) 은 일관성 측면에서 의도적이었으나 사용자 직접 테스트로 cancel/finalize 만 남기는 단일 진입점이 더 명료하다는 피드백 확인. share 가 hidden 패턴인 점은 REV-20260518-0001 Risks 의 잔여 trade-off 였는데, 본 cycle 에서 헤더 4 element 전체 제거로 자연 해소. duplicate/rename/delete/share/fork 의 backend helper 시그니처와 conv-item menu makeItem handler 는 무변경 — UI 진입점만 정리.
+  - **trigger 우측 하단 이동**: TASK-0063 의 우측 상단 위치는 `.conv-owner-badge` ("내/sales/admin" pill) 의 우측 상단 위치와 시각 영역 겹침. 직접 테스트에서 hover 시 trigger 가 badge 일부를 가리거나 trigger 의 click target 이 badge 와 인접해 misclick 가능성 확인. 우측 하단 (`bottom: 6px; right: 6px`) 으로 이동하면 `.conv-item-meta` (dot + 시간 + owner) 영역과 만나는데 `.conv-item` 에 `padding-right: 32px` 보정으로 meta 가 trigger 만큼 좌측으로 압축. 사용자 시야 동선상 우측 하단은 "더보기" 의 자연스러운 위치 (Slack/Discord/Notion 의 menu trigger 위치 patterns).
+  - **분기선 sticky**: TASK-0063 의 분기선 click trigger 가 동작은 정확하나 사용자가 캘린더 진입 의도일 때 분기선까지 scroll → click 의 2 단계가 부담. Slack 패턴 (date pill 이 message group 상단에 sticky) 으로 `position: sticky; top: 0; z-index: 5` 적용. CSS 만으로 동작 — JS scroll observer 불필요. label 배경을 `surface-2` (반투명) → `surface-1` (불투명 흰색) 으로 조정해 sticky 시 message bubble 위에 떠 있어도 가독성 보장. box-shadow elevation 으로 시각 분리. hover 시 box-shadow 강화로 clickable affordance 명확화.
+- Risks:
+  - **sticky 가 flex column + overflow:auto 부모에서 정상 동작하는가**: `.messages { display: flex; flex-direction: column; overflow-y: auto; gap: 14px }` — sticky 는 flex item 에서도 정상 동작. 본 cycle browser smoke 에서 `scrollTop = 600` 시 첫 분기선이 messageLog top + padding 영역에 정확히 stick 됨 확인 (`topInLog = 20`, padding-top 20px 와 일치).
+  - **gap: 14px 의 시각 부작용**: sticky element 가 다음 element 위에 stick 될 때 그 위로는 gap 만큼 빈 공간이 보일 수 있음. 현재 디자인에서 분기선 위에 message bubble 이 들어가는 구조 (분기선이 message group 헤더) 라 부작용 없음.
+  - **z-index 충돌**: pending bubble, message-actions ("여기서 분기" / "여기까지 공유" 버튼), message-point-rail dot 등의 z-index 와 비교 — 본 cycle 변경 element 는 z-index 5. menu dropdown (z=200), 캘린더 popover (default z=10 이하) 보다 낮아 dropdown / popover 가 sticky 위에 덮이는 정상 동작.
+  - **active conv-item 의 trigger 상시 표시 정책 유지**: trigger 위치 이동만 변경, opacity 정책 (hover/active 시 1) 은 무변경. discoverability 보존.
+  - **헤더 4 element 제거 후 backend helper 미사용 회귀 가능성**: `deleteConversation` / `renameCurrentConversation` / `forkConversation` / `createConversationShare` 는 conv-item menu 의 makeItem handler 와 message-bubble actions ("여기서 분기", "여기까지 공유") 양쪽에서 여전히 호출됨 — dead code 아님. grep 검증.
+- Trace: REQ-20260518-0003 → TASK-0065 → CHG-20260518-0002 → REV-20260518-0002 (follow-up of TASK-0063)
+
 ## REV-20260518-0001
 - Date: 2026-05-18
 - Decision: TASK-0063 (REQ-20260518-0001, Major §12.3) — 작업 화면 대화 항목별 "···" menu + 캘린더 시간 이동 분기선 trigger 화. Codex outside voice review 10 risk 모두 반영 + 사용자 4 결정 채택.
