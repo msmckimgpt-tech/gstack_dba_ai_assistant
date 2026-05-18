@@ -15,6 +15,7 @@ source_of_truth: true
 - Last Updated: 2026-05-15
 
 ## 2. Task Queue
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0072, Critical §12.3 — 타 계정 대화 검색·필터 + outside voice 보강) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0071, Minor §12.3 — shell grid row hotfix) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0070, Minor §12.3 — admin list-detail grid row hotfix) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0069, Minor §12.3 — admin workspace flex hotfix) -->
@@ -24,6 +25,7 @@ source_of_truth: true
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0065, Minor §12.3 — UI 정리 follow-up) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0063, Major §12.3) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-15 -->
+- [ ] TASK-0072 (REQ-20260518-0010, **Critical** §12.3 — 타 계정 대화 검색·필터) 사용자 in-cycle 결정 3 항목: (1) 권한 = 기존 `conversation.list.any` 재활용, (2) 검색 범위 = 제목 + 계정명 + 메시지 본문 (SQL/결과셋 제외), (3) UI = 사이드바 위 검색바 + chip. 상세 plan-review 는 §2.1 Implementation Plan (TASK-0072). **상태**: `outside-voice-review` — Codex / security / ux 3 개 외부 시각 dispatch 후 D1~D3 합의 → Phase A backend 진입. **사용자 메모리**: `feedback_outside_voice_for_rbac` 정책 강제 적용.
 - [x] TASK-0071 (REQ-20260518-0009, Minor §12.3 — shell grid row hotfix, cascade root of TASK-0068~0070) 사용자 3 차 screenshot 보고: dashboard pane 처럼 list-detail 사용 안 하는 화면에서 큰 viewport + 짧은 content 조합 시 sidebar / commit-bar 가 viewport 의 약 70% 위치까지만 차지 + 그 아래 회색 빈 영역. 원인: `.app-shell` / `.admin-shell` 의 `display: grid; height: 100vh` 만 정의 + `grid-template-rows` 미정의 → default `auto` → row track height = 자식 max-content. grid container 100vh 와 track height 의 mismatch 시 track 아래 빈 영역. 이전 cycle 의 fix 들은 column 안의 stretch chain 만 해결, column 의 height 결정 layer (grid track) 미처리 = cascade 의 root. Fix: `.app-shell` 과 `.admin-shell` 양쪽에 `grid-template-rows: minmax(0, 1fr)` 추가 (2 줄, 동일 패턴 일관성). 검증: 1320x900 viewport 에서 admin-shell h=900, column h=900, commit-bar bottom=900 (viewport bottom 정확히 sticky). screenshot 첨부. cache-bust `v=20260518-shell-grid-rows` (admin.html / index.html 양쪽 동일).
 - [x] TASK-0070 (REQ-20260518-0008, Minor §12.3 — admin list-detail grid row hotfix of TASK-0069) 사용자 2 차 screenshot 보고: `역할` / `제품` 등 항목이 적은 pane 에서 큰 viewport (height 800+) 의 경우 list-col / detail-col box 가 viewport 의 일부만 차지하고 그 아래 회색 빈 영역. 항목이 많은 `계정` (26 row) 또는 좁은 화면에서는 content 가 row 채워 정상. 원인: `.admin-list-detail` 의 grid-template-rows 미정의 → default auto → row height = content. align-items: stretch 는 row 내부 column 분배만 담당 — row 자체 height 결정 X. Fix: `grid-template-rows: minmax(0, 1fr)` 추가 (1 줄). 검증: 큰 viewport (1320x900) 에서 listDetail h=682, listCol/detailCol h=682 (이전 ~200), cbar viewport bottom sticky. screenshot 첨부. cache-bust `v=20260518-admin-list-rows`.
 - [x] TASK-0069 (REQ-20260518-0007, Minor §12.3 — admin workspace flex hotfix of TASK-0068) 사용자 screenshot 보고: admin `역할 관리` (및 다른 list-detail pane) 에서 commit-bar 가 workspace content 바로 아래에 좁게 위치하고 그 아래로 큰 회색 빈 영역. 원인: TASK-0068 에서 commit-bar 를 admin-shell grid → admin-column flex column item 으로 이전한 후 `.admin-workspace` 의 `flex: 1` 명시 누락 → flex column 안에서 workspace 가 자기 content 만큼만 차지. Fix: `.admin-workspace` 에 `flex: 1 1 auto` 추가 (1 줄). 다른 속성 무변경. 검증: DOM `wsBottom=659 / cbarTop=659 / commitBarAtBottom=true / workspaceTouchesCommitBar=true` → list-detail 이 column 의 남은 height 전부 차지 + commit-bar viewport bottom sticky. screenshot 첨부. cache-bust `v=20260518-admin-workspace-flex`.
@@ -36,6 +38,118 @@ source_of_truth: true
 - [x] TASK-0061 (REQ-20260515-0003 ~ REQ-20260515-0010, **Major** §12.3 — UI 상태 / auth(비밀번호 초기화) / 파괴적 데이터(bulk delete) 일괄 변경) GOAL.md 8 항목 합본 cycle. **/qa round 2 심층 검증 완료 (2026-05-15, CHG-20260515-0004)** — Phase 4 Point rail dot click smooth scroll + active dot id 갱신, Phase 5 캘린더 월 이동 + day click → 시각 list 모두 정상. Phase 3/6/8 destructive endpoints 는 운영 환경 사용자 명시 시점에 실 호출 검증 권고. round 2 신규 이슈 0 건. 답변 버블 내부 실시간 step 진행 (Phase 1) + 신규 대화 첫 요청 polling 즉시 연결 (Phase 2) + processing 만료 감지 + 붉은 badge (Phase 3) + 우측 Point rail (Phase 4) + 캘린더/시각 이동 (Phase 5) + 관리자 비밀번호 초기화 (Phase 6) + admin select-all 현재 페이지 fix (Phase 7) + 내 대화 Ctrl/Shift bulk delete (Phase 8). 상세 plan-review 는 §2.1 Implementation Plan (TASK-0061). **사용자 승인 요청 시점**: §2.1 Plan 확정 후 Phase 6 (Critical 분면 — 비밀번호 초기화, 인증 모델 영향) 진입 전. Phase 1~5, 7, 8 (Major) 는 plan-review 통과 후 Execute.
 - [x] TASK-0060 (REQ-20260515-0002, Minor §12.3) Product별 접근 가능 DB의 실제 스키마/데이터를 분석해 Product scope 시스템 프롬프트를 작성하고, Role detail 의 `전 Product 공통` 프롬프트를 역할명에 맞게 채움. 분석 대상: `KR(킹스레이드)` 접근 DB `dbgame,dblog,dbauth`, `MV(마이크로볼츠)` 접근 DB `account_db,dev_1_1_1_20,have_00,log_v2,global_db`. `log_v2`는 DB는 존재하지만 테이블 0개로 확인. 실제 DB에는 product prompt 2건 + role 공통 prompt 5건(`pending/operator/admin/sales/dba`) upsert 완료. runtime 의 누적 적용은 feature-0002 `compose_system_prompt()` 수정으로 보장.
 - [x] TASK-0059 (REQ-20260515-0001, **Major** §12.3 — 사용자 대화 routing 데이터 영역, 인증/인가 모델 무변경) "새 대화" 버튼 누른 후 첫 메시지를 보내도 backend 가 직전 active 대화에 메시지를 추가하는 lazy-create routing 결함 수정. 사용자가 신규 대화 의도로 보낸 첫 메시지가 잘못된 대화 컨텍스트로 귀속되어 발견. **근본 원인**: frontend `beginPendingConversation()` 이 `state.activeConversationId=""` 로 두고 backend row 를 lazy 생성 위임하나 (TASK-0048 정책), `/api/ask` 의 빈 `conversation_id` 경로가 `_resolve_conversation_for_account` → `_repair_current_conversation` 으로 폴백해 `account.last_conversation_id` (직전 대화) 를 반환. frontend 의 "pending = 신규 의도" 가 backend 로 전달되지 않아 "session 초기화 후 직전 대화 이어받기" 와 구분 불가. **Fix Phase A**: frontend `sendPrompt()` 가 `isLazyCreate=true` 일 때 `askBody.lazy_create = true` 를 추가. **Phase B**: backend `_resolve_conversation_for_account(..., force_new=False)` kwarg 추가, `_repair_current_conversation` 의 기존 `force_new` 파라미터로 위임. `/api/ask` 의 빈 `request_conversation_id` 경로에서 `data.get("lazy_create")` 가 truthy 이면 `force_new=True` 호출. **Phase C**: frontend `loadConversations()` 의 `state.activeConversationId` 덮어쓰기에 `!state.pendingNewConversation` 가드 추가 — pending 모드 race 시 직전 대화로 복귀 차단. **Phase D**: MODIFY.md CHG-20260515-0001 + REVIEW.md REV-20260515-0001 기록.
+
+### 2.1 Implementation Plan (TASK-0072)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 Critical 등급 변경 계획이다. **상태**: `approved-after-outside-voice`. 사용자가 2026-05-18 에 Plan 구조 + 권장안 3 항목 (권한·검색 범위·UI 위치) 일괄 승인 → outside voice 3 개 (adversarial / security / ux) dispatch → 종합 후 사용자 추가 결정 3 항목 (UI 위치 재결정·D1·본문 열람 정책) 반영. D1/D2/D3 + 4 must-fix + 3 sub-spec + 6 risk 모두 plan 에 흡수.
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0072 Phase A0~E 일괄, Critical 등급 PII 표면 신설 + WebAccountActivity DDL 포함) -->
+
+#### 사용자 in-cycle 결정 (5 항목)
+
+| 결정 | 채택안 | 근거 |
+|---|---|---|
+| 권한 모델 | 기존 `conversation.list.any` 재활용 | 신규 catalog 없이 빠르게 진입. `.own` only 는 본인 대화 내 검색만 |
+| 검색 범위 | 제목 + 계정명 + 메시지 본문 | SQL/결과셋은 list 단계 제외 — PII 노출 면적 최소 |
+| UI 위치 (재결정) | **Spotlight modal pattern (Cmd/Ctrl+K)** | UX BLOCKER — 252px 사이드바에 chip 4개 fit 불가. 사용자 명시 변형: brand 가 아니라 "+ 새 대화" 영역 우측 같은 높이에 돋보기 icon. modal overlay 로 full search UI |
+| D1 본문 search index | **A: LIKE + 강한 안전망** | 한국어 FULLTEXT 는 `ngram` parser + `innodb_ft_min_token_size` 튜닝 필수 → Critical migration. 신규 PII 표면과 interleave 회피. FULLTEXT 는 별 cycle 분리. min 3 char + LIMIT 50 + per-account rate 10/min + max_execution_time 3s |
+| 본문 열람 정책 | **`.any` 보유자 = 검색 매칭 + snippet 모두 허용, audit log 수반** | admin/operator 의 감사 needs 우선. `WebAccountActivity` 신설로 PIPA §29 준거 (접근기록 보관) |
+
+#### outside voice 종합 결정 (D2 / D3 — 의견 일치)
+
+| # | 결정 | 근거 |
+|---|---|---|
+| D2 | **A: snippet 항상 OFF + chip opt-in** | security + adversarial 일치 — `.any` 보유자 기본 ON 시 user interaction 전에 snippet leak. opt-in chip 클릭 자체도 audit log 대상 (의도 추적 가능) |
+| D3 | **B: cursor `(updated_at DESC, conversation_id DESC)`** | offset 은 기존 `app.py:2849` LIMIT 200 + `2967-2971` Python re-sort 와 incoherent — page 2 가 stale subset 반환. cursor 가 안전 |
+
+#### adversarial 3 sub-spec (Phase A 진입 차단 → 반영 후 진입)
+
+기존 `_list_conversations` 의 코드 패턴이 search 와 호환되지 않으므로 다음 3 sub-spec 을 Phase A 에서 반드시 동시 적용:
+
+1. **SQL composition order** — `owner_id = self` 가 q / owner_id / product_id 보다 **항상 먼저** AND. `.any` 미보유자 코드패스 에서도 owner_id WHERE 가 q 매칭보다 우선 (q 의 결과가 owner_id 매칭 *교집합* 으로 strict 적용). 응답 byte-equal (404 vs 403 metadata leak 차단).
+2. **`hidden_ids` SQL push** — Python post-filter (`app.py:2855-2866`) 폐기, `c.conversation_id NOT IN (…)` 으로 SQL 내 이전. LIMIT 50 과 호환.
+3. **Python re-sort 삭제** (`app.py:2967-2971`) — SQL `ORDER BY c.updated_at DESC, c.conversation_id DESC` 단일화. cursor pagination 정합.
+
+#### Must-fix 4 (security + adversarial)
+
+1. **Audit log 신설** — `WebAccountActivity` 테이블 (`id, account_id, action, target_owner_id, query_hash, matched_count, ts`). `.any` 보유자가 본문 search 실행 / snippet chip 활성화 시 INSERT. query 평문 X — SHA-256 hash 만.
+2. **SQL escape 명시** — `LIKE %s ESCAPE '!'` 형식. `%`, `_`, `!` 3 문자 escape (default `\\` ESCAPE 의 NO_BACKSLASH_ESCAPES sql_mode 회귀 차단).
+3. **Per-account rate limit** — in-process token bucket 10 req/min for body-search requests. `max_execution_time=3000ms` 동시 적용.
+4. **본문 검색 min 3 char + length cap 200** — escape 후 의미 literal char ≥ 2 추가 gate (`q="%%"` post-escape 0 char 차단). 한글 grapheme 기준 `len(q.strip())`.
+
+#### Additional risk 6 (adversarial)
+
+1. **`WebAccounts.DeletedAt` 필터 누락** — 현재 `app.py:2842` LEFT JOIN 이 DeletedAt 미체크. 삭제 user 본문 search 시 username verbatim leak. `AND owner.DeletedAt IS NULL` 추가 (또는 `(deleted user)` 명시 렌더).
+2. **Collation 일치 audit** — `AgentMemoryMessages.Content` + `AgentCoreMessages.content` 가 `utf8mb4_unicode_ci` 인지 Phase A 시작 시 확인. mismatch 시 풀스캔.
+3. **Account-name search `.any` 한정** — `.own` 사용자 q="kim" 의 경우 owner.Username 매칭은 본인 conv 만 (owner_id WHERE 이미 강제). 정상.
+4. **`q="%%"` post-escape 0 char 차단** — must-fix #4 와 통합.
+5. **404 vs 403 byte-equal response** — must-fix #1 의 SQL composition order + 동일 empty result shape 보장.
+6. **`share.js` 회귀 가드** — `share.html` / `share.js` (TASK-0058 Phase D) 가 신규 searchbar/modal 코드 import 안 함. modal element 는 `index.html` 에만 mount.
+
+#### 영향 파일 (최종)
+
+Backend:
+- [src/app.py](../src/app.py) — Phase A0 (`WebAccountActivity` 테이블 신설 + `_ensure_web_tables` 추가), Phase A1 (`_list_conversations()` 확장 + 3 sub-spec 적용 + cursor pagination + ESCAPE 절 + min 3 char gate + rate limit + audit insert), Phase A2 (`/api/conversations` query param 수신 + `_log_search_activity` helper + `max_execution_time` SET SESSION).
+
+Frontend:
+- [src/static/app.js](../src/static/app.js) — Phase C1 (`state.searchModal: {open, q, owner_id, product_id, date_from, date_to, snippet_opt_in, cursor}` + `openSearchModal()` / `closeSearchModal()` + Cmd/Ctrl+K 단축키 + Esc handler + 300ms 디바운스 + cursor pagination), Phase C2 (`loadConversations()` 가 `search` mode 시 modal 결과 영역에 렌더, sidebar conv-list 는 unchanged).
+- [src/static/index.html](../src/static/index.html) — `.sidebar-head` 의 "+ 새 대화" button 우측에 같은 높이 `#openSearchBtn` (돋보기 icon, aria-label="대화 검색 (Ctrl+K)"). `#searchModalOverlay` modal element (input + 4 facet + result list).
+- [src/static/styles.css](../src/static/styles.css) — `.sidebar-head` flex 조정 (new + search 2 button row, gap), `.search-modal-overlay` / `.search-modal` / `.search-modal-input` / `.search-modal-facets` / `.search-modal-result-list` / `.search-snippet` / `.search-snippet-hl` / `--search-highlight-bg` 토큰 ~12 개. cache-bust `v=20260518-conv-search`.
+
+문서:
+- `docs/FUNCTION.md` — REQ-20260518-0010 + AC 8~10 개 (audit log + RBAC gate + cursor + Cmd/Ctrl+K + Esc 정책 포함).
+- `docs/TASK.md` — 본 §2.1 + Task Queue entry + Completion Checklist.
+- `docs/MODIFY.md` — Phase 별 CHG entry (6 phase).
+- `docs/REVIEW.md` — outside voice 3 개 verdict 요약 + D1~D3 결정 근거 + 사용자 in-cycle 결정 5 항목 + Adversarial 3 sub-spec 흡수 이력 + Must-fix 4 + Additional risk 6 + 본 plan 의 변경 이력.
+- `docs/REPORT.md` — Phase 별 변경 요약 + git 동기화 결과.
+- `docs/TEST.md` — TEST 케이스 정의 (§2 rewrite) — Phase B 의 4 토큰 cross-account smoke + audit log assert + ESCAPE 절 SQL injection probe + cursor pagination 정합 + min 3 char gate + rate limit 11번째 요청 429.
+- 프로젝트 수준: `repo/docs/SECURITY.md` §7 (anonymous endpoint allowlist) 아래 §8 cross-account search policy 신설 + `WebAccountActivity` audit 정책, `repo/docs/STATUS.md` feature-0003 row 갱신.
+
+#### Phase 순서 (최종)
+
+1. **Phase A0 — WebAccountActivity DDL** — `_ensure_web_tables` 에 `CREATE TABLE IF NOT EXISTS WebAccountActivity` 추가 + `_log_search_activity(conn, account_id, action, target_owner_id, query, matched_count)` helper. py_compile + 컨테이너 재시작으로 DDL 적용 확인.
+2. **Phase A1 — `_list_conversations` 확장** — 3 sub-spec 적용 (SQL composition order / hidden_ids SQL push / Python re-sort 삭제) + 새 파라미터 `q, owner_id, product_id, date_from, date_to, cursor` + ESCAPE 절 + min 3 char gate + DeletedAt 필터 + collation audit. py_compile.
+3. **Phase A2 — `/api/conversations` query param + rate limit** — endpoint 가 query param 수신, body search 시 rate limit 확인 후 `_log_search_activity` 호출. `max_execution_time` SET SESSION. py_compile + HTTP curl smoke.
+4. **Phase B — HTTP smoke 6 시나리오** — `tests/test_search_rbac.py` 신설: (1) `.own` only + q=상대 키워드 → 본인 매칭만, (2) `.any` + 동일 q → 전체 매칭, (3) `.own` + owner_id=상대 → response byte-equal with owner_id=999999, (4) cursor 페이지 2 가 페이지 1 과 disjoint, (5) `q="%%"` → 400 reject, (6) rate limit 11번째 → 429.
+5. **Phase C — Frontend** — Spotlight modal + 돋보기 icon + Cmd/Ctrl+K + Esc + 300ms 디바운스 + cursor pagination + snippet opt-in chip + a11y (aria-live, focus trap, Tab order). node --check.
+6. **Phase D — 문서 + SECURITY policy + STATUS** — FUNCTION / MODIFY / REVIEW / REPORT / TEST 일괄.
+7. **Phase E — verify-completion + commit** — `make web` 재배포 + browser smoke (Cmd+K open / q="test" 입력 / Esc close / snippet chip toggle) + `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` + 사용자 명시 commit confirm 후 진행.
+
+#### 위험도 평가 (재평가)
+
+| 영역 | 위험도 | 보강 |
+|---|---|---|
+| RBAC bypass | Critical | 3 sub-spec 강제 (SQL composition order / hidden_ids SQL push / re-sort 삭제) + Phase B 6 시나리오 smoke + 404/403 byte-equal |
+| PII leak (snippet + cross-account body) | Critical | snippet opt-in 기본 OFF + WebAccountActivity audit + SHA-256 hash + `.any` 한정 |
+| SQL injection | Major | bound param + `ESCAPE '!'` 명시 + escape 후 의미 char ≥ 2 추가 gate |
+| 성능 회귀 (LIKE full scan) | Major | LIMIT 50 + min 3 char + per-account rate 10/min + max_execution_time 3s + collation audit + FULLTEXT 별 cycle |
+| 회귀 (기존 `.own` 사용자) | Minor | 빈 query 일 때 기존 동작 100% 유지 (early return) |
+| WebAccountActivity DDL | Major | `_ensure_web_tables` idempotent + `CREATE TABLE IF NOT EXISTS` + index `(account_id, ts)` 만 |
+| share-link 회귀 | Minor | `share.js` 신규 import 없음 (Phase C 가드) |
+
+**전체 등급**: Critical (PII 표면 신설 + DDL 1 + RBAC scope 확장 효과).
+
+#### 검증 계획
+
+각 Phase 종료 후:
+- (a) `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py`
+- (b) `node --check unit/feature-0003-agent-web-ui/src/static/app.js`
+
+전체 완료 후:
+- (c) Phase B 의 HTTP smoke 6 시나리오 (`tests/test_search_rbac.py`)
+- (d) `make web` — 컨테이너 재배포 + browser smoke (Cmd+K / Esc / snippet toggle / cursor 페이지 / 0 match empty state)
+- (e) `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui`
+
+#### outside voice 결과 요약 (REVIEW.md 정본)
+
+3 review verdict:
+- **Security**: FIX-FIRST → 4 must-fix (audit log / ESCAPE / FULLTEXT or LIKE 안전망 / rate limit) 흡수
+- **Adversarial**: Blocker (3 sub-spec) + D1 A + D2 A + D3 B + 6 risk → 모두 흡수
+- **UX**: NEEDS-TWEAK (사이드바 fit 불가) → Spotlight modal 패턴으로 UI 위치 재결정 → 사용자 변형 채택 ("+ 새 대화" 우측 돋보기 icon)
+
+REVIEW.md REV-20260518-0010 에 각 review 의 전체 verdict + plan 흡수 이력 + 결정 근거 기록.
+
+---
 
 ### 2.1 Implementation Plan (TASK-0061)
 

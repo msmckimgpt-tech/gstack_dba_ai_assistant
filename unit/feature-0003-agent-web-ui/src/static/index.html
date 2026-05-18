@@ -66,11 +66,18 @@
         </div>
         <div class="sidebar-head">
           <!-- REQ-20260518-0005: product chip 은 composer 우측 (ChatGPT 모델 선택 패턴) 으로 이전. sidebar 는 "새 대화" 만. -->
+          <!-- REQ-20260518-0010 (TASK-0072): "+ 새 대화" 약간 줄이고 우측 같은 높이에 돋보기 icon (대화 검색). Cmd/Ctrl+K 단축키. -->
           <button type="button" class="btn-new-conv" id="newConversationBtn">
             <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
               <path d="M6.5 1v11M1 6.5h11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
             </svg>
             새 대화
+          </button>
+          <button type="button" class="btn-search-conv" id="openSearchBtn" aria-label="대화 검색 (Ctrl+K)" title="대화 검색 (Ctrl+K)">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <circle cx="6" cy="6" r="4" stroke="currentColor" stroke-width="1.6"/>
+              <path d="M9.5 9.5L12.5 12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
           </button>
         </div>
 
@@ -390,8 +397,40 @@
   <!-- Toast -->
   <div class="toast" id="toast"></div>
 
+  <!-- REQ-20260518-0010 (TASK-0072): Spotlight modal for cross-account conversation search. -->
+  <div class="search-modal-overlay" id="searchModalOverlay" hidden role="dialog" aria-modal="true" aria-labelledby="searchModalTitle">
+    <div class="search-modal" id="searchModal">
+      <div class="search-modal-header">
+        <h2 id="searchModalTitle" class="search-modal-title">대화 검색</h2>
+        <button type="button" class="search-modal-close" id="searchModalCloseBtn" aria-label="닫기 (Esc)" title="닫기 (Esc)">×</button>
+      </div>
+      <div class="search-modal-input-row">
+        <svg class="search-modal-input-icon" width="16" height="16" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <circle cx="6" cy="6" r="4" stroke="currentColor" stroke-width="1.6"/>
+          <path d="M9.5 9.5L12.5 12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <input type="text" id="searchModalInput" class="search-modal-input"
+               placeholder="제목 · 계정명 · 본문 (3자 이상)"
+               autocomplete="off" spellcheck="false" maxlength="200" aria-label="검색어"/>
+        <span class="search-modal-status" id="searchModalStatus" role="status" aria-live="polite"></span>
+      </div>
+      <div class="search-modal-facets" id="searchModalFacets">
+        <button type="button" class="search-modal-chip" id="searchFacetOwner" aria-pressed="false" hidden>소유자: 전체</button>
+        <button type="button" class="search-modal-chip" id="searchFacetProduct" aria-pressed="false">제품: 전체</button>
+        <button type="button" class="search-modal-chip" id="searchFacetDate" aria-pressed="false">기간: 전체</button>
+        <button type="button" class="search-modal-chip" id="searchFacetSnippet" aria-pressed="false" hidden>본문 미리보기</button>
+        <button type="button" class="search-modal-chip is-clear" id="searchFacetClear">초기화</button>
+      </div>
+      <div class="search-modal-result-list" id="searchModalResultList" role="listbox" aria-label="검색 결과"></div>
+      <div class="search-modal-footer">
+        <button type="button" class="search-modal-load-more" id="searchModalLoadMoreBtn" hidden>더 보기</button>
+        <span class="search-modal-hint">Esc: 닫기 · ↑↓: 이동 · Enter: 열기</span>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260518-shell-grid-rows"></script>
+  <script src="/static/app.js?v=20260518-conv-search"></script>
 </body>
 </html>

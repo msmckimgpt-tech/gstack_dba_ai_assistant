@@ -8,6 +8,43 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260518-0010
+- Date: 2026-05-18
+- Summary: TASK-0072 (REQ-20260518-0010, **Critical** §12.3) — 타 계정 대화 검색·필터 + WebAccountActivity audit log 신설. Phase A0~E. outside voice 3 review (security FIX-FIRST, adversarial Blocker + 3 sub-spec, ux NEEDS-TWEAK) 의 4 must-fix + 3 sub-spec + 6 risk 모두 흡수. UI 위치 = Spotlight modal (Cmd/Ctrl+K) + 사용자 변형 ("+ 새 대화" 우측 같은 높이 돋보기 icon). 사용자 in-cycle 결정 5 항목 채택.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/app.py`
+    - Phase A0: `_ensure_web_account_activity_schema(conn)` + `_log_search_activity(conn, account_id, action, target_owner_id, query, matched_count)` 신설. `WebAccountActivity` 테이블 (`Id, AccountId, Action, TargetOwnerId, QueryHash CHAR(64), MatchedCount, CreatedAt`, 2 index). slow path (`_ensure_web_tables`) + fast path (`_ensure_seed_catchup`) 양쪽에서 idempotent 보장.
+    - Phase A1 helpers: `_RATE_LIMIT_BUCKETS` / `_RATE_LIMIT_LOCK` / `_COLLATION_AUDIT_DONE` module global + `_escape_like_for_search(s)` (`!`/`%`/`_` 3 char escape) + `_normalize_search_query(q)` (strip + len 3-200 gate, post-escape 0 literal char 차단) + `_search_rate_limit_check(account_id, max_per_min=10)` (in-process token bucket, 60 s window) + `_audit_message_table_collations(conn)` (process 당 1 회 information_schema 점검) + `_parse_search_cursor(cursor)` (`updated_at|conversation_id` 파싱).
+    - Phase A1: `_list_conversations()` 시그니처 확장 (`q`, `owner_id`, `product_id`, `date_from`, `date_to`, `cursor`). 3 sub-spec 적용 — (a) SQL composition order: owner_id WHERE 가 q/owner_id/product_id 보다 항상 먼저 AND, `.own` 사용자 owner_id 는 self 로 SQL 단계에서 강제 overwrite; (b) `hidden_ids` SQL push: Python post-filter 폐기 후 `c.conversation_id NOT IN (...)` 로 이전; (c) Python re-sort 삭제: SQL `ORDER BY c.updated_at DESC, c.conversation_id DESC LIMIT N` 단일화. 본문 search 는 `c.topic` / `topic_kv.Value` / `owner.Username` (.any 한정) / `AgentMemoryMessages.Content` EXISTS subquery / `AgentCoreMessages.content` EXISTS subquery + `LIKE %s ESCAPE '!'`. `WebAccounts.DeletedAt IS NULL` 필터 추가 (cross-account leak 추가 차단 layer). cursor pagination keyset on `(updated_at, conversation_id)` DESC.
+    - Phase A2: `/api/conversations` 가 `q`/`owner_id`/`product_id`/`date_from`/`date_to`/`cursor`/`limit` query param 수신. search mode 분기 (search params 가 하나라도 있을 때 활성). body-search 시 `_search_rate_limit_check` 10 req/min 진입 (429), `SET SESSION max_execution_time = 3000` 적용, `_log_search_activity` audit INSERT. 응답: `{items, current=null, next_cursor, matched_count, search_mode=true, has_any}`. q < 3 char 또는 escape-0 → 400. `.own` 사용자 owner_id 는 endpoint 에서도 effective overwrite 로 byte-equal response 보장.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html`
+    - `.sidebar-head` 의 "+ 새 대화" 버튼 우측에 같은 높이 `#openSearchBtn` (돋보기 SVG icon + aria-label="대화 검색 (Ctrl+K)") 추가. `+ 새 대화` 는 `flex: 1`, 검색 버튼은 `flex: 0 0 auto` (30×30).
+    - body 끝 직전에 `#searchModalOverlay` (role="dialog" aria-modal="true") + `#searchModal` (header + input row + facets row + result list + footer). facets: `#searchFacetOwner` (.any 한정 hidden 토글) / `#searchFacetProduct` / `#searchFacetDate` / `#searchFacetSnippet` (.any 한정 hidden, aria-pressed) / `#searchFacetClear`.
+    - cache-bust `v=20260518-shell-grid-rows` → `v=20260518-conv-search`.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css`
+    - `.sidebar-head` flex-direction column → row (gap 6 px, align-items: center). `.btn-new-conv { flex: 1 1 auto }` + `.btn-search-conv { flex: 0 0 auto; width/height: 30px }` + hover/focus-visible 상태.
+    - 신규 search modal 토큰 ~200 줄: `--search-highlight-bg` / `--search-modal-bg` / `--search-modal-border` root var, `.search-modal-overlay` (fixed, backdrop blur, z-index 1200), `.search-modal` (max-width 640px, max-height 72vh), header / input row / facets / result list / footer / snippet (`-webkit-line-clamp: 2`) / `.search-snippet-hl` (highlight bg). a11y: `focus-visible` outline ring, mobile (`max-width: 600px`) 분기.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/app.js`
+    - `state.searchModal: { open, q, owner_id, product_id, date_from, date_to, snippet_opt_in, cursor, results, has_any, debounceTimer, activeResultIdx, lastFocusedBeforeOpen }` 신설.
+    - `openSearchModal()` / `closeSearchModal()` / `runSearchQuery({append})` / `renderSearchModalResults()` / `_searchHighlight(text, q)` (case-insensitive 매칭 highlight) / `_bindSearchModalListeners()` 추가.
+    - Cmd/Ctrl+K (toggle) + Esc (close 시 only) 글로벌 keydown. ArrowDown/ArrowUp 으로 결과 이동, Enter 로 선택. backdrop click 도 close. 300 ms 디바운스. snippet opt-in chip 토글. cursor pagination 더 보기 버튼.
+    - file 끝의 `initialize()` 호출 직전에 `_bindSearchModalListeners()` 호출.
+  - `repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py` 신설 — 6 시나리오 standalone Python smoke (urllib).
+  - `repo/unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md` + `repo/docs/SECURITY.md §8` + `repo/docs/STATUS.md` — REQ-20260518-0010 / TASK-0072 / CHG-20260518-0010 / REV-20260518-0010 entries.
+- Verification:
+  - `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS (Phase A0/A1/A2 + helper 5 + endpoint 모두).
+  - `python3 -m py_compile unit/feature-0003-agent-web-ui/tests/test_search_rbac.py` PASS.
+  - `node --check unit/feature-0003-agent-web-ui/src/static/app.js` PASS (Phase C 의 modal handler 포함).
+  - HTTP smoke 6 시나리오 (`tests/test_search_rbac.py`) 는 Phase E 에서 컨테이너 가동 후 실행 (admin/operator 비밀번호 필요).
+  - `make web` 재배포 + browser smoke (Cmd+K open / q="test" 입력 / Esc close / snippet chip toggle / cursor 더 보기) 도 Phase E 에서.
+- Risks:
+  - **WebAccountActivity DDL idempotent**: `CREATE TABLE IF NOT EXISTS`. slow + fast path 양쪽 보장.
+  - **3 sub-spec 회귀**: `.own` 사용자 owner_id 가 endpoint 와 _list_conversations 양쪽에서 self 로 강제. byte-equal response 보장. Phase B 6 시나리오 smoke 에서 검증.
+  - **PII leak**: snippet opt-in 기본 OFF + `.any` 한정 + audit log + SHA-256 hash. cross-account body 검색 전 사용자가 명시적으로 chip 켜야 본문 미리보기 노출.
+  - **성능 회귀**: min 3 char + LIMIT 50 + per-account rate 10/min + `max_execution_time=3000ms` + collation audit. 한계 도달 시 후속 cycle 에서 ngram FULLTEXT 도입 (REVIEW.md REV-20260518-0010 의 미해결 followup).
+  - **share-link 회귀**: `share.js` 신규 import 없음. modal element 는 `index.html` 에만 mount.
+- Trace: REQ-20260518-0010 → TASK-0072 → §2.1 Implementation Plan (TASK-0072) + outside voice 3 verdict → CHG-20260518-0010 → REV-20260518-0010
+
 ## CHG-20260518-0008
 - Date: 2026-05-18
 - Summary: TASK-0071 (REQ-20260518-0009, Minor §12.3 — shell grid row hotfix, RBAC / endpoint / 데이터 / JS 무변경) TASK-0070 의 list-detail row fix 이후에도 사용자 3 차 screenshot 보고 — dashboard pane 처럼 list-detail 을 사용하지 않는 화면에서 큰 viewport (height 800+) + 짧은 content 조합 시 sidebar / commit-bar 가 viewport 의 약 70% 위치까지만 차지하고 그 아래 회색 빈 영역이 viewport bottom 까지 노출.

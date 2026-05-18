@@ -79,3 +79,56 @@ ai_read_priority: 4
 3. **시간 기반 만료**: `ExpiresAt DATETIME NULL` 컬럼 + GET 시 `NOW() > ExpiresAt` → 410. 기본은 무기한 + 명시 revoke 그대로 유지.
 
 후속 cycle 결정은 운영 환경 변경 시점에 진행한다 (사용자 직접 결정 필요).
+
+## 8. Cross-account 대화 검색·필터 정책 (TASK-0072)
+
+`/api/conversations` 의 search mode (`q` / `owner_id` / `product_id` / `date_from` / `date_to` / `cursor` 중 하나 이상) 는 admin/operator 의 cross-account 감사 needs 와 PII 보호의 균형을 위해 다음 정책을 강제한다.
+
+### 8.1 권한 모델
+
+- 신규 catalog 없음. 기존 `conversation.list.any` (admin/operator 자동 grant) / `conversation.list.own` (모든 사용자) 재활용.
+- `.any` 보유자: cross-account 매칭 + owner facet + snippet opt-in chip 노출.
+- `.own` only: 본인 대화 안에서만 매칭. `owner_id` 입력은 SQL 단계에서 self 로 강제 overwrite (sub-spec 1). 응답은 byte-equal regardless of input owner_id (404/403 metadata leak 차단).
+
+### 8.2 검색 표면 한정
+
+- 검색 대상 필드 = `c.topic` + `topic_kv.Value` (제목) + `owner.Username` (계정명, `.any` 한정) + `AgentMemoryMessages.Content` + `AgentCoreMessages.content` (메시지 본문).
+- 검색 대상 *비포함* = SQL 텍스트 / 실행 결과셋 / 디버그 로그 — list 단계 표면 최소화.
+
+### 8.3 SQL safety
+
+- 모든 LIKE 는 `LIKE %s ESCAPE '!'` + `!`, `%`, `_` 3 char escape. NO_BACKSLASH_ESCAPES sql_mode 회귀 차단.
+- `q` raw input min 3 char + max 200 char + post-escape 0 literal char (`q="%%"`) 거부 (400).
+- `WHERE` composition order strict — owner_id 가 q/owner_id/product_id 보다 항상 먼저 AND (`.own` 사용자는 self 강제, `.any` 사용자는 옵션 filter).
+- `c.conversation_id NOT IN (hidden_ids)` SQL push (Python post-filter 폐기).
+- `WebAccounts.DeletedAt IS NULL` filter 추가 (cross-account leak 추가 layer).
+
+### 8.4 성능 안전망
+
+- `LIMIT 50` 강제 (endpoint clamp 1~100).
+- per-account `_search_rate_limit_check` 10 req/min (in-process token bucket, 60 s sliding window). 11 번째 → 429.
+- body-search 진입 시 `SET SESSION max_execution_time = 3000` (3 s runaway 차단).
+- collation audit process 당 1 회 — `AgentMemoryMessages.Content` / `AgentCoreMessages.content` 가 `utf8mb4_unicode_ci` 아니면 stderr warning.
+- cursor pagination keyset on `(c.updated_at DESC, c.conversation_id DESC)`. offset pagination 금지.
+
+### 8.5 PII audit (PIPA §29 준거)
+
+- `WebAccountActivity` 테이블에 모든 body-search + snippet opt-in 활성화 INSERT.
+- 컬럼: `Id, AccountId, Action ('conversation.search.body'), TargetOwnerId, QueryHash CHAR(64), MatchedCount, CreatedAt`.
+- **`QueryHash` 는 SHA-256 hex 만 저장. 평문 query 저장 금지.** 재현 가능 + 평문 회피.
+- 보관 기간: PIPA §29 의 접근기록 1 년 보관 권장. 운영 환경에서 보관 정책 (cron purge / archive) 은 후속 cycle.
+- snippet opt-in chip 자체도 audit 대상 (의도 추적).
+
+### 8.6 UI 표면
+
+- Spotlight modal pattern (Cmd/Ctrl+K). 사이드바 conv-list 잠식 0.
+- snippet opt-in chip 기본 OFF + `.any` 한정 노출. opt-in 토글 자체가 명시적 user action.
+- owner facet chip 도 `.any` 한정. `.own` 사용자는 chip 보지 않음.
+
+### 8.7 외부 배포 전 보완 (TODO)
+
+외부 LAN / 공개 인터넷 배포가 가시화되면 §7.2 의 보완 조치 (IP allowlist / token 비밀번호 / 시간 만료) 가 `/api/conversations` search mode 에도 동일하게 적용된다. 추가로:
+
+1. **FULLTEXT migration** — `ngram` parser + `innodb_ft_min_token_size` 튜닝 후 `AgentMemoryMessages.Content` 에 FULLTEXT index. 본 cycle 의 LIKE 안전망이 rate limit 빈번 진입 또는 `max_execution_time` 빈번 hit 시 trigger.
+2. **WebAccountActivity 보관 정책** — cron / archive 자동화.
+3. **운영자 사전 고지** — 관리 콘솔 첫 진입 시 "타 계정 대화 본문 검색은 모두 기록됩니다" 1 회 dismiss 안내 (PIPA "처리 사실 인지" 요건 보강).

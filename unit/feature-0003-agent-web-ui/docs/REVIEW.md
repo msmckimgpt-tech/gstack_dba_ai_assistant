@@ -8,6 +8,60 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260518-0010
+- Date: 2026-05-18
+- Decision: TASK-0072 (REQ-20260518-0010, **Critical** §12.3) — 타 계정 대화 검색·필터 plan 의 D1/D2/D3 결정 + outside voice 3 개 verdict 흡수 + 사용자 in-cycle 결정 5 항목 확정. UI 위치 재결정 (사이드바 검색바 → Spotlight modal pattern), index 정책 (LIKE + 강한 안전망, FULLTEXT 별 cycle), 본문 열람 정책 (`.any` 보유자 검색·snippet 허용 + audit log 수반).
+
+### Outside voice 3 verdict 요약
+
+- **Security review** (FIX-FIRST) → 4 must-fix 모두 흡수:
+  1. `WebAccountActivity` audit log 신설 (PIPA §29 / 접근기록 보관)
+  2. `LIKE %s ESCAPE '!'` 명시 + `%`/`_`/`!` 3 char escape (NO_BACKSLASH_ESCAPES sql_mode 회귀 차단)
+  3. D1 → B (FULLTEXT) 권고 — 그러나 adversarial 의 분리 권고 더 설득력 (아래 D1 참조)
+  4. Per-account rate limit 10 req/min + `max_execution_time=3000ms`
+- **Adversarial review** (Blocker → 3 sub-spec 흡수 후 진입) → 3 sub-spec + 6 risk 모두 흡수:
+  - 3 sub-spec: (a) SQL composition order — `owner_id = self` 가 q 보다 항상 먼저 AND, (b) `hidden_ids` SQL push (`NOT IN`), (c) Python re-sort 삭제 (`app.py:2967-2971`)
+  - 6 risk: `WebAccounts.DeletedAt` 필터 / collation audit / account name search `.any` 한정 / `q="%%"` post-escape 0 char 차단 / 404 vs 403 byte-equal / `share.js` 회귀 가드
+- **UX review** (NEEDS-TWEAK) → 사이드바 252px 에 chip 4개 fit 불가. Spotlight modal pattern (Cmd/Ctrl+K) 권고 → 사용자 변형 채택 ("+ 새 대화" 버튼 우측 같은 높이 돋보기 icon + modal overlay).
+
+### D1 / D2 / D3 결정 + 근거
+
+- **D1 → A (LIKE only + 강한 안전망)** — security 와 상충 (B FULLTEXT 권고). adversarial 의 근거 채택: 한국어 FULLTEXT 는 `ngram` parser + `innodb_ft_min_token_size` 튜닝 필수 → `ALTER TABLE ADD FULLTEXT` 자체가 Critical migration. 신규 PII 표면 도입과 interleave 회피 위해 FULLTEXT 는 별 cycle 분리. 본 cycle 의 LIKE 안전망: min 3 char + length cap 200 + LIMIT 50 + per-account rate 10/min + `max_execution_time=3000ms` + collation audit.
+- **D2 → A (snippet 항상 OFF + chip opt-in)** — security + adversarial 일치. B (`.any` 기본 ON) 는 user interaction 전에 PII snippet 노출되는 worst-of-both. opt-in chip 클릭 자체가 audit log 대상 (의도 추적).
+- **D3 → B (cursor `updated_at DESC, conversation_id DESC`)** — offset 은 기존 `app.py:2849` LIMIT 200 + `2967-2971` Python re-sort 와 incoherent (page 2 가 stale subset 반환). cursor 가 안전 + Python re-sort 삭제와 정합.
+
+### 사용자 in-cycle 결정 5 항목
+
+1. 권한 모델: 기존 `conversation.list.any` 재활용 (신규 catalog 없음)
+2. 검색 범위: 제목 + 계정명 + 메시지 본문 (SQL/결과셋 제외)
+3. UI 위치 (재결정): Spotlight modal pattern + 사용자 변형 ("+ 새 대화" 버튼 우측 같은 높이 돋보기 icon + Cmd/Ctrl+K)
+4. D1 index: A (LIKE + 강한 안전망)
+5. 본문 열람: `.any` 보유자 = 검색 매칭 + snippet 모두 허용 + audit log 수반
+
+### Alt 거부 정리
+
+- **D1 B (FULLTEXT) 거부**: 한국어 ngram + innodb_ft_min_token_size 튜닝 + 대용량 `ALTER TABLE ADD FULLTEXT` 의 lock 시간 = 본 cycle 외 Critical migration. 분리.
+- **UI 사이드바 위 검색바 + chip 거부**: 252px 사이드바 fit 불가 (chip 4개 1줄 ~296px 필요). 2줄 wrap 시 toolbar 120px → conv-list 15-20% 잠식. Spotlight modal 이 conv-list 잠식 0 + Cmd/Ctrl+K 단축키로 power-user friction 낮음.
+- **신규 catalog `conversation.search.any` 거부**: 사용자 초기 결정 (권한 모델 = list.any 재활용). admin/operator 의 list 권한 = search 권한 묶음. 단 audit log 로 search 활동 추적해 권한 misuse 가시화.
+- **본문 검색 .own 한정 거부**: 사용자 결정 (본문 열람 = `.any` 허용 + audit). 감사 needs 우선. audit log 가 misuse 보호 layer.
+
+### Risks (재평가)
+
+- **RBAC bypass** (Critical) → 3 sub-spec + Phase B 6 시나리오 smoke + 404/403 byte-equal 로 차단
+- **PII leak (snippet + cross-account body)** (Critical) → snippet opt-in 기본 OFF + `WebAccountActivity` audit + SHA-256 hash + `.any` 한정
+- **SQL injection** (Major) → bound param + `ESCAPE '!'` + escape 후 의미 char ≥ 2
+- **성능 회귀 (LIKE full scan)** (Major) → LIMIT 50 + min 3 char + rate 10/min + `max_execution_time=3000ms` + collation audit
+- **WebAccountActivity DDL** (Major) → `_ensure_web_tables` idempotent + `CREATE TABLE IF NOT EXISTS` + `(account_id, ts)` index
+- **share-link 회귀** (Minor) → `share.js` 신규 import 없음 (Phase C 가드)
+
+### 미해결 followup
+
+- **FULLTEXT migration cycle** — 본 cycle 의 LIKE 안전망이 성능 한계 (≥ 5만 conv + 빈번한 body search) 도달 시 후속 cycle 로 ngram FULLTEXT 도입. trigger: rate limit 빈번 진입 또는 `max_execution_time` 빈번 hit.
+- **DESIGN.md §15 filter chip 패턴 v0.1** — UX review 권고. 본 cycle 은 modal 안 facet 만 사용. 사이드바 filter chip 이 필요해지면 별도 정합화 cycle.
+- **외부 LAN 배포 시 추가 게이트** — `repo/docs/SECURITY.md` §7 (TASK-0058 share-link) 의 IP allowlist / token 비밀번호 / 시간 만료 권장사항이 본 검색 endpoint 에도 동일 적용. 후속 SECURITY §8 에 명시.
+
+- Trace: REQ-20260518-0010 → TASK-0072 → §2.1 Implementation Plan (TASK-0072) + outside voice 3 verdict (security FIX-FIRST + adversarial Blocker + UX NEEDS-TWEAK) → CHG-20260518-0010 (Phase A0~E 진행 시 commit 별로 append) → REV-20260518-0010
+
 ## REV-20260518-0008
 - Date: 2026-05-18
 - Decision: TASK-0071 (REQ-20260518-0009, Minor §12.3) — `.app-shell` / `.admin-shell` 양쪽에 `grid-template-rows: minmax(0, 1fr)` 추가. cascade root fix.

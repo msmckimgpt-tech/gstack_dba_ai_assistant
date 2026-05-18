@@ -2422,6 +2422,82 @@ def _ensure_web_conversation_shares_schema(conn) -> None:
         cur.close()
 
 
+def _ensure_web_account_activity_schema(conn) -> None:
+    """REQ-20260518-0010 (TASK-0072, Critical §12.3): cross-account body search audit log.
+
+    PIPA §29 (안전성 확보 조치) + 표준 개인정보처리방침의 "접근기록 1년 보관" 요건.
+    `.any` 보유자가 다른 계정의 대화 본문을 검색하거나 snippet 을 opt-in 할 때 INSERT.
+    query 평문 저장 금지 — SHA-256 hex 만 (재현 가능 + 평문 회피).
+    `_ensure_web_tables` (slow path) 와 `_ensure_seed_catchup` (fast path) 양쪽에서 호출.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebAccountActivity (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                AccountId BIGINT NOT NULL,
+                Action VARCHAR(64) NOT NULL,
+                TargetOwnerId BIGINT NULL,
+                QueryHash CHAR(64) NULL,
+                MatchedCount INT NOT NULL DEFAULT 0,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX IX_WAA_Account (AccountId, CreatedAt),
+                INDEX IX_WAA_Action (Action, CreatedAt)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+    finally:
+        cur.close()
+
+
+def _log_search_activity(
+    conn,
+    account_id: int,
+    action: str,
+    target_owner_id: int | None,
+    query: str | None,
+    matched_count: int,
+) -> None:
+    """REQ-20260518-0010 (TASK-0072): cross-account body search audit. PIPA §29.
+
+    query 평문 저장 금지 — SHA-256 hex 만 저장. 실패는 silent (audit log 가
+    main flow 를 차단하지 않도록). INSERT 실패 시 stderr 로 추적 가능하게.
+    """
+    import hashlib
+    query_hash: str | None = None
+    if query:
+        normalized = query.strip()
+        if normalized:
+            query_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO WebAccountActivity (AccountId, Action, TargetOwnerId, QueryHash, MatchedCount) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (
+                int(account_id),
+                str(action)[:64],
+                int(target_owner_id) if target_owner_id is not None else None,
+                query_hash,
+                int(matched_count),
+            ),
+        )
+        conn.commit()
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        try:
+            import sys as _sys
+            _sys.stderr.write(f"[TASK-0072 audit] _log_search_activity failed: {exc}\n")
+        except Exception:
+            pass
+    finally:
+        cur.close()
+
+
 def _ensure_must_change_password_schema(conn) -> None:
     """TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0092): fast-path 재기동에서도
     MustChangePassword 컬럼이 존재하도록 idempotent ALTER. _ensure_web_tables 와 동일 SQL."""
@@ -2459,6 +2535,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_web_conversation_shares_schema(conn)
     # TASK-0061 Phase 6: 기존 배포에 MustChangePassword 컬럼 backfill.
     _ensure_must_change_password_schema(conn)
+    # REQ-20260518-0010 (TASK-0072): cross-account body search audit log 테이블 fast-path 보정.
+    _ensure_web_account_activity_schema(conn)
     _migration_added = _ensure_product_access_permissions(conn)
     if _migration_added > 0:
         try:
@@ -2600,6 +2678,8 @@ def _ensure_web_tables():
         _ensure_dynamic_permissions_schema(conn)
         # REQ-20260514-0001: 공유 링크 테이블 보장 (slow path).
         _ensure_web_conversation_shares_schema(conn)
+        # REQ-20260518-0010 (TASK-0072): cross-account body search audit log 테이블 보장 (slow path).
+        _ensure_web_account_activity_schema(conn)
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS WebRoles (
@@ -2804,12 +2884,124 @@ def _ensure_memory_runtime_ready() -> None:
         _mark_memory_runtime_ready()
 
 
+# REQ-20260518-0010 (TASK-0072) — body search safety net helpers.
+# adversarial review: ESCAPE '!' clause + min 3 char + length cap 200 + per-account
+# rate limit + collation audit + cursor parsing. SQL composition order strict.
+
+_RATE_LIMIT_BUCKETS: dict[int, list[float]] = {}
+_RATE_LIMIT_LOCK = threading.Lock()
+_COLLATION_AUDIT_DONE = False
+
+
+def _escape_like_for_search(s: str) -> str:
+    """REQ-20260518-0010 (TASK-0072): LIKE escape paired with `ESCAPE '!'`.
+    Order matters: ! must be escaped first (otherwise % / _ replacements would
+    inject unescaped !). Escapes !, %, _."""
+    return s.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+
+
+def _normalize_search_query(q: str | None) -> str | None:
+    """Returns sanitized q (strip + length 3-200) or None if it fails the gate.
+    None signals 'no body search'. adversarial risk 4: gate is applied to the
+    *raw* user input before escape so `q="%%"` (post-escape len 4 but 0 literal
+    chars) is rejected for falling under the raw-len-3 minimum."""
+    if not q:
+        return None
+    s = str(q).strip()
+    if len(s) < 3:
+        return None
+    if len(s) > 200:
+        s = s[:200]
+    return s
+
+
+def _search_rate_limit_check(account_id: int, max_per_min: int = 10) -> bool:
+    """REQ-20260518-0010 (TASK-0072): in-process token bucket per account.
+    True if allowed, False if quota exhausted (60s window). Single-process
+    only; multi-worker deployment will allow `max_per_min` per worker."""
+    import time as _time
+    now = _time.time()
+    window_start = now - 60.0
+    with _RATE_LIMIT_LOCK:
+        bucket = _RATE_LIMIT_BUCKETS.setdefault(int(account_id), [])
+        while bucket and bucket[0] < window_start:
+            bucket.pop(0)
+        if len(bucket) >= max_per_min:
+            return False
+        bucket.append(now)
+        return True
+
+
+def _audit_message_table_collations(conn) -> None:
+    """REQ-20260518-0010 (TASK-0072) adversarial risk 2: warn on stderr if
+    message body columns are not utf8mb4_unicode_ci. Runs once per process."""
+    global _COLLATION_AUDIT_DONE
+    if _COLLATION_AUDIT_DONE:
+        return
+    _COLLATION_AUDIT_DONE = True
+    cur = conn.cursor()
+    rows: list[Any] = []
+    try:
+        cur.execute(
+            "SELECT TABLE_NAME, COLUMN_NAME, COLLATION_NAME "
+            "FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() "
+            "AND TABLE_NAME IN ('AgentMemoryMessages', 'AgentCoreMessages') "
+            "AND COLUMN_NAME IN ('Content', 'content')"
+        )
+        rows = cur.fetchall() or []
+    except Exception:
+        return
+    finally:
+        cur.close()
+    expected = "utf8mb4_unicode_ci"
+    for row in rows:
+        tbl, col, coll = row[0], row[1], row[2]
+        if coll and coll != expected:
+            try:
+                import sys as _sys
+                _sys.stderr.write(
+                    f"[TASK-0072 audit] collation mismatch: {tbl}.{col} = {coll} "
+                    f"(expected {expected}). Body search LIKE may trigger conversion scan.\n"
+                )
+            except Exception:
+                pass
+
+
+def _parse_search_cursor(cursor: str | None) -> tuple[str, str] | None:
+    """Parse 'updated_at|conversation_id' cursor; return (updated_at, conv_id) or None."""
+    if not cursor:
+        return None
+    s = str(cursor).strip()
+    if not s or "|" not in s:
+        return None
+    parts = s.split("|", 1)
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    return parts[0], parts[1]
+
+
 def _list_conversations(
     limit: int = 200,
     *,
     account: dict[str, Any] | None = None,
     conn=None,
+    q: str | None = None,
+    owner_id: int | None = None,
+    product_id: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    cursor: str | None = None,
 ) -> list[dict[str, Any]]:
+    """REQ-20260518-0010 (TASK-0072): extended with search/filter params for
+    cross-account search modal. When q/owner_id/product_id/date_from/date_to/cursor
+    are all None, behaviour is backward-compatible with pre-TASK-0072 callers.
+
+    3 sub-spec enforced (adversarial review):
+    1. SQL composition order — owner_id WHERE always AND'd BEFORE q clauses.
+    2. hidden_ids SQL push — `c.conversation_id NOT IN (...)` not Python post-filter.
+    3. Python re-sort deleted — SQL `ORDER BY updated_at DESC, conversation_id DESC` authoritative.
+    """
     own_conn = conn is None
     if own_conn:
         try:
@@ -2821,11 +3013,23 @@ def _list_conversations(
     except Exception:
         pass
     try:
+        # Permission gate.
         if account and not (
             _account_has_permission(account, "conversation.list.any")
             or _account_has_permission(account, "conversation.list.own")
         ):
             return []
+        has_any = bool(account and _account_has_permission(account, "conversation.list.any"))
+        self_id = int(account["id"]) if account and account.get("id") else None
+
+        # REQ-20260518-0010 sub-spec 2: hidden_ids SQL push.
+        hidden_ids = list(list_delete_requested_conversation_ids(conn) or [])
+
+        # REQ-20260518-0010: body-search activation gate + collation audit (once per process).
+        normalized_q = _normalize_search_query(q)
+        if normalized_q:
+            _audit_message_table_collations(conn)
+
         cur = conn.cursor(dictionary=True)
         query = """
 SELECT
@@ -2842,17 +3046,92 @@ LEFT JOIN AgentMemoryKv topic_kv
 LEFT JOIN WebAccounts owner
   ON owner.Id = c.owner_account_id
         """
+        where_clauses: list[str] = []
         params: list[Any] = []
-        if account and not _account_has_permission(account, "conversation.list.any"):
-            query += " WHERE c.owner_account_id = %s"
-            params.append(int(account["id"]))
-        query += " ORDER BY c.updated_at DESC LIMIT %s"
+
+        # REQ-20260518-0010 sub-spec 1 (SQL composition order):
+        # Owner filter ALWAYS first. For .own-only callers, ALWAYS overwrite
+        # owner_id to self (explicit overwrite, not 'ignore'). For .any callers,
+        # owner_id (if provided) is a strict filter.
+        if has_any:
+            if owner_id is not None:
+                where_clauses.append("c.owner_account_id = %s")
+                params.append(int(owner_id))
+        else:
+            if self_id is not None:
+                where_clauses.append("c.owner_account_id = %s")
+                params.append(int(self_id))
+            # else: account-less internal call — no owner filter (admin tooling).
+
+        # REQ-20260518-0010 risk 1: WebAccounts.DeletedAt filter — hide deleted owners.
+        where_clauses.append("(owner.DeletedAt IS NULL OR c.owner_account_id IS NULL)")
+
+        # REQ-20260518-0010 sub-spec 2 (hidden_ids SQL push):
+        if hidden_ids:
+            placeholders_hidden = ",".join(["%s"] * len(hidden_ids))
+            where_clauses.append(f"c.conversation_id NOT IN ({placeholders_hidden})")
+            params.extend(str(h) for h in hidden_ids)
+
+        # Body / title / owner-username search.
+        if normalized_q:
+            escaped = _escape_like_for_search(normalized_q)
+            pattern = f"%{escaped}%"
+            search_subclauses = [
+                "c.topic LIKE %s ESCAPE '!'",
+                "topic_kv.`Value` LIKE %s ESCAPE '!'",
+            ]
+            sp_params: list[Any] = [pattern, pattern]
+            # owner.Username search — .any only (risk 3: prevent .own user from
+            # probing account existence cross-account via row presence).
+            if has_any:
+                search_subclauses.append("owner.Username LIKE %s ESCAPE '!'")
+                sp_params.append(pattern)
+            # Body EXISTS subqueries (AgentMemoryMessages + AgentCoreMessages).
+            search_subclauses.append(
+                "EXISTS (SELECT 1 FROM AgentMemoryMessages m "
+                "WHERE m.ConversationId COLLATE utf8mb4_unicode_ci = c.conversation_id COLLATE utf8mb4_unicode_ci "
+                "AND m.Content LIKE %s ESCAPE '!')"
+            )
+            sp_params.append(pattern)
+            search_subclauses.append(
+                "EXISTS (SELECT 1 FROM AgentCoreMessages cm "
+                "WHERE cm.conversation_id = c.conversation_id "
+                "AND cm.content LIKE %s ESCAPE '!')"
+            )
+            sp_params.append(pattern)
+            where_clauses.append("(" + " OR ".join(search_subclauses) + ")")
+            params.extend(sp_params)
+
+        # Date range on c.updated_at.
+        if date_from:
+            where_clauses.append("c.updated_at >= %s")
+            params.append(str(date_from))
+        if date_to:
+            where_clauses.append("c.updated_at <= %s")
+            params.append(str(date_to))
+
+        # Cursor pagination — keyset on (updated_at, conversation_id) DESC.
+        parsed_cursor = _parse_search_cursor(cursor)
+        if parsed_cursor:
+            cur_at, cur_id = parsed_cursor
+            where_clauses.append(
+                "(c.updated_at < %s OR (c.updated_at = %s AND c.conversation_id < %s))"
+            )
+            params.extend([cur_at, cur_at, cur_id])
+
+        # product_id filter — schema not yet linking conversations to products.
+        # Reserved param for future cycle; ignored silently to keep API stable.
+        _ = product_id
+
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
+        # REQ-20260518-0010 sub-spec 3: SQL ORDER BY is authoritative; no Python re-sort.
+        query += " ORDER BY c.updated_at DESC, c.conversation_id DESC LIMIT %s"
         params.append(int(limit))
         cur.execute(query, tuple(params))
         items = cur.fetchall() or []
         cur.close()
 
-        hidden_ids = set(list_delete_requested_conversation_ids(conn))
         items = [
             {
                 "id": str(item.get("id") or ""),
@@ -2863,7 +3142,7 @@ LEFT JOIN WebAccounts owner
                 "owner_username": str(item.get("owner_username") or ""),
             }
             for item in items
-            if str(item.get("id") or "") and str(item.get("id") or "") not in hidden_ids
+            if str(item.get("id") or "")
         ]
         conv_ids = [item["id"] for item in items]
         status_map: dict[str, dict[str, str]] = {}
@@ -2964,11 +3243,11 @@ WHERE ConversationId IN ({placeholders2})
                 item["duration_ms"] = None
             item["message_count"] = counts.get("total", 0)
             item["user_message_count"] = counts.get("user", 0)
-        items.sort(
-            key=lambda x: _sort_dt_key(x.get("last_activity_at") or x.get("created_at")),
-            reverse=True,
-        )
-        return items[:limit]
+        # REQ-20260518-0010 sub-spec 3: Python re-sort deleted. SQL ORDER BY
+        # `c.updated_at DESC, c.conversation_id DESC LIMIT N` is authoritative.
+        # The prior `_sort_dt_key` re-sort produced incoherent pages when combined
+        # with cursor pagination (page 2 would be a stale subset of page 1).
+        return items
     finally:
         if own_conn and conn is not None:
             conn.close()
@@ -5530,7 +5809,19 @@ async def clear_memory(request: Request) -> JSONResponse:
 
 
 @app.get("/api/conversations")
-def conversations(request: Request) -> JSONResponse:
+def conversations(
+    request: Request,
+    q: str | None = None,
+    owner_id: int | None = None,
+    product_id: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    cursor: str | None = None,
+    limit: int = 50,
+) -> JSONResponse:
+    """REQ-20260518-0010 (TASK-0072): list mode (no params) is backward-compatible.
+    Search mode triggered when any of {q, owner_id, product_id, date_from, date_to,
+    cursor} is provided. Body-search (q) requires rate limit + audit log."""
     try:
         conn = _connect_memory()
     except Exception:
@@ -5539,7 +5830,93 @@ def conversations(request: Request) -> JSONResponse:
     if error:
         conn.close()
         return error
-    payload = _build_conversations_payload(conn, account)
+
+    search_mode = any(
+        [q, owner_id is not None, product_id is not None, date_from, date_to, cursor]
+    )
+    if not search_mode:
+        payload = _build_conversations_payload(conn, account)
+        conn.close()
+        return JSONResponse(payload)
+
+    # REQ-20260518-0010 risk 4: reject q that fails the normalize gate (covers
+    # q="%%"" post-escape 0 char, q="ab" < 3 char, etc.). 400 response body is
+    # generic to avoid distinguishing failure modes.
+    if q is not None and _normalize_search_query(q) is None:
+        conn.close()
+        return _json_error("invalid search query", 400)
+
+    has_any = _account_has_permission(account, "conversation.list.any")
+    # adversarial risk 5: 404/403 metadata leak. For non-.any caller, owner_id
+    # is silently coerced to self (no error) so response shape is byte-equal
+    # regardless of input owner_id. _list_conversations sub-spec 1 enforces the
+    # same overwrite at SQL composition time; this layer makes the intent explicit
+    # for audit.
+    effective_owner_id: int | None
+    if has_any:
+        effective_owner_id = owner_id
+    else:
+        effective_owner_id = int(account["id"]) if account.get("id") else None
+
+    # Body-search rate limit (per-account, 10 req/min in-process token bucket).
+    body_search_active = bool(q and _normalize_search_query(q))
+    if body_search_active:
+        if not _search_rate_limit_check(int(account["id"]), max_per_min=10):
+            conn.close()
+            return _json_error("rate limit exceeded — try again in a minute", 429)
+        # SET SESSION max_execution_time=3s for runaway query protection.
+        try:
+            cur_set = conn.cursor()
+            cur_set.execute("SET SESSION max_execution_time = 3000")
+            cur_set.close()
+        except Exception:
+            pass
+
+    try:
+        clamped_limit = max(1, min(int(limit or 50), 100))
+    except Exception:
+        clamped_limit = 50
+
+    items = _list_conversations(
+        limit=clamped_limit,
+        account=account,
+        conn=conn,
+        q=q,
+        owner_id=effective_owner_id,
+        product_id=product_id,
+        date_from=date_from,
+        date_to=date_to,
+        cursor=cursor,
+    )
+
+    next_cursor: str | None = None
+    if len(items) >= clamped_limit and items:
+        last = items[-1]
+        last_at = last.get("last_activity_at") or last.get("created_at") or ""
+        if last_at and last.get("id"):
+            next_cursor = f"{last_at}|{last['id']}"
+
+    if body_search_active:
+        try:
+            _log_search_activity(
+                conn,
+                account_id=int(account["id"]),
+                action="conversation.search.body",
+                target_owner_id=effective_owner_id,
+                query=q,
+                matched_count=len(items),
+            )
+        except Exception:
+            pass
+
+    payload = {
+        "items": items,
+        "current": None,
+        "next_cursor": next_cursor,
+        "matched_count": len(items),
+        "search_mode": True,
+        "has_any": bool(has_any),
+    }
     conn.close()
     return JSONResponse(payload)
 

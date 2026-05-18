@@ -123,6 +123,26 @@ const state = {
   // TASK-0061 Phase 8 (REQ-20260515-0010): 내 대화 다중 선택 set (Ctrl/Shift)
   conversationSelected: new Set(),
   conversationLastClickIdx: -1,
+  // REQ-20260518-0010 (TASK-0072): cross-account search modal (Spotlight pattern, Cmd/Ctrl+K).
+  // open: 모달 노출 여부. q/owner_id/product_id/date_from/date_to: 검색 facet.
+  // snippet_opt_in: 본문 미리보기 chip 활성화 여부 (기본 OFF, .any 보유자만 노출).
+  // cursor: 다음 페이지 cursor (updated_at|conversation_id). results/has_any: 응답 캐시.
+  // debounceTimer: 300ms 타이핑 디바운스 핸들. activeResultIdx: 키보드 이동 위치.
+  searchModal: {
+    open: false,
+    q: "",
+    owner_id: null,
+    product_id: null,
+    date_from: null,
+    date_to: null,
+    snippet_opt_in: false,
+    cursor: null,
+    results: [],
+    has_any: false,
+    debounceTimer: null,
+    activeResultIdx: -1,
+    lastFocusedBeforeOpen: null,
+  },
 };
 
 const PENDING_CONV_SENTINEL = "__pending__";
@@ -4030,6 +4050,305 @@ document.addEventListener("visibilitychange", () => {
     startProgressPolling({ reset: false, runId: state.progressRunId });
   }
 });
+
+// ====================================================================
+// REQ-20260518-0010 (TASK-0072) — Cross-account search Spotlight modal
+// ====================================================================
+
+function _searchModalEl(id) {
+  return document.getElementById(id);
+}
+
+function _searchEscapeRegex(s) {
+  return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function _searchHighlight(text, q) {
+  // Highlight all case-insensitive matches of q in text. Escapes HTML first
+  // (escapeHtml) and wraps matches with <mark class="search-snippet-hl">.
+  const safeText = escapeHtml(String(text || ""));
+  const trimmed = String(q || "").trim();
+  if (!trimmed || trimmed.length < 3) return safeText;
+  try {
+    const re = new RegExp(_searchEscapeRegex(trimmed), "gi");
+    return safeText.replace(re, (m) => `<mark class="search-snippet-hl">${m}</mark>`);
+  } catch (_) {
+    return safeText;
+  }
+}
+
+function openSearchModal() {
+  const overlay = _searchModalEl("searchModalOverlay");
+  const input = _searchModalEl("searchModalInput");
+  if (!overlay || !input) return;
+  state.searchModal.open = true;
+  state.searchModal.lastFocusedBeforeOpen = document.activeElement;
+  overlay.hidden = false;
+  // Show snippet/owner chips only when the user has cross-account permission.
+  const hasAny = can("conversation.list.any");
+  const ownerChip = _searchModalEl("searchFacetOwner");
+  const snippetChip = _searchModalEl("searchFacetSnippet");
+  if (ownerChip) ownerChip.hidden = !hasAny;
+  if (snippetChip) snippetChip.hidden = !hasAny;
+  state.searchModal.has_any = hasAny;
+  // Reset state for each open — fresh search.
+  state.searchModal.q = "";
+  state.searchModal.cursor = null;
+  state.searchModal.results = [];
+  state.searchModal.activeResultIdx = -1;
+  state.searchModal.snippet_opt_in = false;
+  if (snippetChip) snippetChip.setAttribute("aria-pressed", "false");
+  input.value = "";
+  renderSearchModalResults();
+  const statusEl = _searchModalEl("searchModalStatus");
+  if (statusEl) statusEl.textContent = "";
+  setTimeout(() => input.focus(), 0);
+}
+
+function closeSearchModal() {
+  const overlay = _searchModalEl("searchModalOverlay");
+  if (!overlay) return;
+  state.searchModal.open = false;
+  overlay.hidden = true;
+  if (state.searchModal.debounceTimer) {
+    clearTimeout(state.searchModal.debounceTimer);
+    state.searchModal.debounceTimer = null;
+  }
+  const prev = state.searchModal.lastFocusedBeforeOpen;
+  if (prev && typeof prev.focus === "function") {
+    try { prev.focus(); } catch (_) {}
+  }
+}
+
+async function runSearchQuery({ append = false } = {}) {
+  const input = _searchModalEl("searchModalInput");
+  const statusEl = _searchModalEl("searchModalStatus");
+  const sm = state.searchModal;
+  const rawQ = input ? input.value : "";
+  sm.q = rawQ;
+  // Min 3 char gate — match backend _normalize_search_query.
+  const trimmed = String(rawQ || "").trim();
+  const hasQ = trimmed.length >= 3;
+  const hasFilter = sm.owner_id != null || sm.product_id != null || sm.date_from || sm.date_to;
+  if (!hasQ && !hasFilter && !append) {
+    sm.results = [];
+    sm.cursor = null;
+    sm.activeResultIdx = -1;
+    renderSearchModalResults();
+    if (statusEl) statusEl.textContent = "";
+    return;
+  }
+  const params = new URLSearchParams();
+  if (hasQ) params.set("q", trimmed);
+  if (sm.owner_id != null) params.set("owner_id", String(sm.owner_id));
+  if (sm.product_id != null) params.set("product_id", String(sm.product_id));
+  if (sm.date_from) params.set("date_from", sm.date_from);
+  if (sm.date_to) params.set("date_to", sm.date_to);
+  params.set("limit", "20");
+  if (append && sm.cursor) params.set("cursor", sm.cursor);
+
+  if (statusEl) statusEl.textContent = "검색 중…";
+  try {
+    const resp = await apiFetch(`/api/conversations?${params.toString()}`);
+    const items = Array.isArray(resp.items) ? resp.items : [];
+    sm.has_any = Boolean(resp.has_any);
+    sm.cursor = resp.next_cursor || null;
+    sm.results = append ? [...sm.results, ...items] : items;
+    sm.activeResultIdx = sm.results.length ? 0 : -1;
+    if (statusEl) {
+      statusEl.textContent = `${sm.results.length}건${sm.cursor ? " (더 있음)" : ""}`;
+    }
+  } catch (error) {
+    if (statusEl) statusEl.textContent = String(error.message || "검색 실패");
+    if (!append) {
+      sm.results = [];
+      sm.cursor = null;
+      sm.activeResultIdx = -1;
+    }
+  }
+  renderSearchModalResults();
+}
+
+function renderSearchModalResults() {
+  const listEl = _searchModalEl("searchModalResultList");
+  const loadMoreBtn = _searchModalEl("searchModalLoadMoreBtn");
+  if (!listEl) return;
+  const sm = state.searchModal;
+  listEl.innerHTML = "";
+  if (!sm.results.length) {
+    const trimmed = String(sm.q || "").trim();
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    if (trimmed && trimmed.length < 3) {
+      empty.innerHTML = "<strong>3자 이상 입력</strong><span>제목 · 계정명 · 본문 검색</span>";
+    } else if (trimmed) {
+      empty.innerHTML = `<strong>결과 없음</strong><span>"${escapeHtml(trimmed)}" 와 일치하는 대화가 없습니다.</span>`;
+    } else {
+      empty.innerHTML = "<strong>대화 검색</strong><span>3자 이상 입력하거나 필터를 선택하세요.</span>";
+    }
+    listEl.appendChild(empty);
+    if (loadMoreBtn) loadMoreBtn.hidden = true;
+    return;
+  }
+  sm.results.forEach((item, idx) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "search-modal-result-item";
+    row.setAttribute("role", "option");
+    if (idx === sm.activeResultIdx) row.classList.add("is-active");
+    row.dataset.conversationId = String(item.id);
+
+    const titleRow = document.createElement("div");
+    titleRow.className = "search-modal-result-item-title-row";
+    const titleEl = document.createElement("div");
+    titleEl.className = "search-modal-result-item-title";
+    // Highlight q in title.
+    titleEl.innerHTML = _searchHighlight(item.topic || "새 대화", sm.q);
+    titleRow.appendChild(titleEl);
+    const mine = isOwnConversation(item);
+    const badge = document.createElement("span");
+    badge.className = `search-modal-result-item-owner-badge ${mine ? "is-own" : ""}`;
+    badge.textContent = mine ? "내" : (item.owner_username || "타 계정");
+    titleRow.appendChild(badge);
+    row.appendChild(titleRow);
+
+    const meta = document.createElement("div");
+    meta.className = "search-modal-result-item-meta";
+    const dt = document.createElement("span");
+    dt.textContent = formatDateTime(item.last_activity_at || item.created_at);
+    meta.appendChild(dt);
+    if (!mine && item.owner_username) {
+      const own = document.createElement("span");
+      own.textContent = `소유자: ${item.owner_username}`;
+      meta.appendChild(own);
+    }
+    row.appendChild(meta);
+
+    // Snippet (opt-in chip). Backend does not yet return snippet text; we
+    // render highlighted topic preview only. Body-content snippet is future.
+    if (sm.snippet_opt_in && sm.q && String(sm.q).trim().length >= 3) {
+      const snip = document.createElement("div");
+      snip.className = "search-snippet";
+      // Best-effort placeholder — the topic itself is the snippet target until
+      // backend returns content excerpts. Highlight matches.
+      snip.innerHTML = _searchHighlight(item.topic || "", sm.q);
+      row.appendChild(snip);
+    }
+
+    row.addEventListener("click", () => {
+      closeSearchModal();
+      try {
+        selectConversation(String(item.id));
+      } catch (_) {}
+    });
+    listEl.appendChild(row);
+  });
+  if (loadMoreBtn) loadMoreBtn.hidden = !sm.cursor;
+}
+
+function _bindSearchModalListeners() {
+  const openBtn = _searchModalEl("openSearchBtn");
+  const closeBtn = _searchModalEl("searchModalCloseBtn");
+  const overlay = _searchModalEl("searchModalOverlay");
+  const input = _searchModalEl("searchModalInput");
+  const facetClear = _searchModalEl("searchFacetClear");
+  const facetSnippet = _searchModalEl("searchFacetSnippet");
+  const loadMoreBtn = _searchModalEl("searchModalLoadMoreBtn");
+
+  if (openBtn) openBtn.addEventListener("click", openSearchModal);
+  if (closeBtn) closeBtn.addEventListener("click", closeSearchModal);
+  if (overlay) {
+    overlay.addEventListener("click", (ev) => {
+      // Click on the backdrop (overlay itself) closes; clicks inside .search-modal don't bubble here.
+      if (ev.target === overlay) closeSearchModal();
+    });
+  }
+  if (input) {
+    input.addEventListener("input", () => {
+      if (state.searchModal.debounceTimer) clearTimeout(state.searchModal.debounceTimer);
+      state.searchModal.debounceTimer = setTimeout(() => {
+        state.searchModal.cursor = null;
+        runSearchQuery({ append: false }).catch(() => {});
+      }, 300);
+    });
+    input.addEventListener("keydown", (ev) => {
+      const sm = state.searchModal;
+      if (ev.key === "ArrowDown") {
+        ev.preventDefault();
+        if (sm.results.length) {
+          sm.activeResultIdx = Math.min(sm.results.length - 1, sm.activeResultIdx + 1);
+          renderSearchModalResults();
+        }
+      } else if (ev.key === "ArrowUp") {
+        ev.preventDefault();
+        if (sm.results.length) {
+          sm.activeResultIdx = Math.max(0, sm.activeResultIdx - 1);
+          renderSearchModalResults();
+        }
+      } else if (ev.key === "Enter") {
+        ev.preventDefault();
+        const item = sm.results[sm.activeResultIdx];
+        if (item) {
+          closeSearchModal();
+          try { selectConversation(String(item.id)); } catch (_) {}
+        }
+      }
+    });
+  }
+  if (facetClear) {
+    facetClear.addEventListener("click", () => {
+      const sm = state.searchModal;
+      sm.owner_id = null;
+      sm.product_id = null;
+      sm.date_from = null;
+      sm.date_to = null;
+      sm.snippet_opt_in = false;
+      if (facetSnippet) facetSnippet.setAttribute("aria-pressed", "false");
+      if (input) input.value = "";
+      sm.q = "";
+      sm.cursor = null;
+      sm.results = [];
+      sm.activeResultIdx = -1;
+      renderSearchModalResults();
+      const statusEl = _searchModalEl("searchModalStatus");
+      if (statusEl) statusEl.textContent = "";
+      if (input) input.focus();
+    });
+  }
+  if (facetSnippet) {
+    facetSnippet.addEventListener("click", () => {
+      const sm = state.searchModal;
+      sm.snippet_opt_in = !sm.snippet_opt_in;
+      facetSnippet.setAttribute("aria-pressed", sm.snippet_opt_in ? "true" : "false");
+      renderSearchModalResults();
+    });
+  }
+  if (loadMoreBtn) {
+    loadMoreBtn.addEventListener("click", () => {
+      runSearchQuery({ append: true }).catch(() => {});
+    });
+  }
+
+  // Global keyboard — Cmd/Ctrl+K = open, Esc = close (only while open).
+  document.addEventListener("keydown", (ev) => {
+    if ((ev.ctrlKey || ev.metaKey) && (ev.key === "k" || ev.key === "K")) {
+      ev.preventDefault();
+      // Toggle: if already open, close; otherwise open.
+      if (state.searchModal.open) {
+        closeSearchModal();
+      } else {
+        openSearchModal();
+      }
+      return;
+    }
+    if (ev.key === "Escape" && state.searchModal.open) {
+      ev.preventDefault();
+      closeSearchModal();
+    }
+  });
+}
+
+_bindSearchModalListeners();
 
 initialize().catch((error) => {
   showToast(error.message || "페이지 초기화에 실패했습니다.", true);
