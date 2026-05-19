@@ -191,6 +191,121 @@ Codex outside voice (read-only sandbox, model_reasoning_effort=high, 5분 timeou
 
 REVIEW.md REV-20260519-0001 에 각 finding + minimum-fix + redesign 흡수 이력 + 결정 근거 기록 예정 (Phase D).
 
+#### Eng review lock-in (E1-E9, 2026-05-19)
+
+본 plan 의 Additional risk 9 (Codex C7-C14) + 5 deadlock scenarios + 추가 eng items 를 architecture-level 로 lock-in. `/plan-eng-review` 호출 결과. 사용자 결정 2 항목 (E1, E4) + 나머지 7 항목 prose lock-in.
+
+**E1 — `audit.read.own` self 정의 (사용자 결정: B — Actor OR Target)**
+- `WebAuditEvents` 에 `TargetAccountId BIGINT NULL` indexed column 추가. SQL filter: `WHERE ActorAccountId = :self OR TargetAccountId = :self`.
+- self-audit valid use case 충족: "내 비밀번호 누가 reset / 내 권한 누가 grant / 내 대화 누가 공유" 등 admin actor + user target 이벤트가 user 본인 audit 에 노출. 보안 가시성 정합.
+
+**E2 — ChangeJson schema hybrid 확정**
+- Schema: `Id BIGINT PK AUTO_INCREMENT, ActorAccountId BIGINT NULL, ActorRoleId BIGINT NULL, ActorType VARCHAR(16) NOT NULL DEFAULT 'account', TargetAccountId BIGINT NULL, SessionId VARCHAR(64) NULL, ActionCode VARCHAR(64) NOT NULL, ResourceType VARCHAR(32) NOT NULL, ResourceId VARCHAR(64) NULL, ChangeJson JSON NULL, MaskedFields JSON NULL, RemoteAddr VARCHAR(64) NULL, UserAgent VARCHAR(255) NULL, RequestId VARCHAR(64) NULL, OccurredAt TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3)`.
+- 5 secondary indexes: `(ActorAccountId, OccurredAt)`, `(TargetAccountId, OccurredAt)`, `(ActionCode, OccurredAt)`, `(ResourceType, ResourceId)`, `(ActorType, OccurredAt)`.
+- MySQL 8.0 generated column 본 case 불필요 (위 indexed columns 으로 모든 filter 충분).
+
+**E3 — RemoteAddr spoof risk (`_get_client_ip` app.py:560)**
+- 본 cycle 변경 없음. 기존 `_get_client_ip` reuse (사내 LAN + Caddy reverse proxy 전제).
+- `docs/SECURITY.md §8` 에 명시: "외부 LAN 노출 시 Caddy `trust_forwarded_for` 또는 별 trusted_proxies 설정 후속 cycle 필요. feature-0006-lan-proxy-access 위임".
+- TASK-0058 share 의 사내 IP 가정과 동일 trade-off.
+
+**E4 — Anonymous share path audit (사용자 결정: B — 포함 + `ActorType` column)**
+- `ActorType VARCHAR(16) NOT NULL DEFAULT 'account'` 컬럼 enum: `"account"` / `"anonymous"` / `"system"`.
+- anonymous view (`GET /api/public/share/{token}`): ActorType="anonymous", ActorAccountId NULL, ResourceType="share", ResourceId=share_id, ChangeJson `{"share_token_prefix": "abc...8자", "view_count_after": N, "remote_addr": "x.x.x.x"}` (token 전체 X — fragment 만, PII 차단).
+- anonymous fork (`POST /api/public/share/{token}/fork`): TASK-0058 의 fork 가 이미 `_require_account` 필수이므로 ActorType="account" + ChangeJson 에 fork source share_token_prefix 명시.
+- `(ActorType, OccurredAt)` index 로 외부 access 만 filter 가능.
+
+**E5 — Same tx admin endpoint deadlock 시나리오 (Codex 5 lock 순서)**
+- 본 mutation row lock 먼저 → audit INSERT (PK auto-increment + secondary index update, contention 작음).
+- product delete cascade: WebSystemPrompts → WebProductDatabases → WebRolePermissions → WebAccountPermissionOverrides → WebPermissions → WebProducts 순서. audit builder 도 같은 순서로 조회 (역순 X). cascade 끝 → audit INSERT.
+- role/account permission 변경: `_ensure_permission_catalog` snapshot 읽기 + audit INSERT 같은 tx (READ COMMITTED isolation, snapshot drift 허용).
+- share revoke: TASK-0058 의 race-free UPDATE 패턴 + audit INSERT 같은 tx.
+- bulk delete: 입력 PK 정렬 후 처리 → 두 동시 요청이 같은 PK 순서로 lock → deadlock 회피.
+
+**E6 — Decorator vs explicit dispatcher call: explicit 확정**
+- decorator 는 magic hiding (actor capture / ChangeJson builder / masked_fields 가 endpoint 마다 다름).
+- 17 endpoint (admin 13 + user 4) 마다 explicit `record_audit_event(conn, actor, action, ...)` 호출 + builder.
+- ChangeJson builders 는 `src/audit_builders.py` (별 module) 또는 `app.py` 내 helper 섹션. 각 builder 가 `docs/SECURITY.md §8` sensitive field catalog 참조.
+
+**E7 — Dispatcher SPOF 차단**
+- `bin/verify-completion.sh` 의 check 에 `from app import record_audit_event` import 가능성 + ENV `AGENT_AUDIT_ENABLED` validation 추가 (Phase A1 의 verify-completion 보강).
+- 100% test coverage on dispatcher (Phase B 의 `tests/test_audit_dispatcher.py`).
+- startup gate: `AGENT_AUDIT_ENABLED=1` + `AGENT_MODE` check.
+
+**E8 — Purge atomicity + chunked PK loop**
+
+```python
+def purge_audit_events(conn, cutoff_dt, actor, chunk_size=1000):
+    total_deleted = 0
+    first_iter = True
+    started_at = now()
+    idempotency_key = hash((cutoff_dt, started_at.replace(second=0, microsecond=0)))
+    while True:
+        with conn.begin_transaction():  # each chunk = separate tx
+            rows = SELECT Id FROM WebAuditEvents WHERE OccurredAt < cutoff ORDER BY Id LIMIT chunk_size
+            if not rows: break
+            DELETE FROM WebAuditEvents WHERE Id IN rows
+            if first_iter:
+                record_audit_event(conn, actor=actor, action="audit.purge.start",
+                                   resource_type="audit_range", resource_id=None,
+                                   change_json={"cutoff": cutoff_dt, "chunk_size": chunk_size,
+                                                "started_at": started_at,
+                                                "idempotency_key": idempotency_key})
+                first_iter = False
+            total_deleted += len(rows)
+    record_audit_event(conn, actor=actor, action="audit.purge.complete",
+                       resource_type="audit_range", resource_id=None,
+                       change_json={"cutoff": cutoff_dt, "total_deleted": total_deleted,
+                                    "idempotency_key": idempotency_key})
+```
+
+- 각 chunk = 별 tx (Long Running Transaction 회피). `audit.purge.start` + `audit.purge.complete` 두 self-audit event. `idempotency_key = hash(cutoff, started_at_minute)` (1 분 내 중복 purge 차단).
+
+**E9 — dba role seed/catchup 보강**
+- `SEED_ROLE_DEFINITIONS` (app.py:356) 의 모든 role (pending/operator/sales/admin/dba) 의 `permissions` set 에 `audit.read.own` 추가.
+- `_ensure_seed_catchup` (app.py:2516) 의 backfill loop 가 dba 도 포함. 현재 admin/operator/sales catchup 만 한다면 dba 추가 (Phase A3 실행 시 `_ensure_seed_roles` 본문 확인 + 보강).
+
+#### Phase B 시나리오 확장 8 → 10 (E1 B + E4 B 결정 반영)
+
+추가 시나리오:
+- **(3a)** admin 의 password-reset 후 user 가 `/api/admin/audits` 본인 audit 조회 → admin event (actor=admin, target=user) 가 본인 audit 에 보임 (E1 B 의 핵심 검증).
+- **(9)** anonymous share view → audit row 생성 (ActorType="anonymous", ActorAccountId NULL, share_token_prefix 만 — token 전체 X).
+- **(10)** `/api/admin/audits?actor_type=anonymous` filter → anonymous 만 조회 가능 (audit.read.any 필요).
+
+#### Test infra 보강
+
+- `unit/feature-0003-agent-web-ui/tests/test_audit_dispatcher.py` — `record_audit_event` + `AGENT_AUDIT_ENABLED` gate + ChangeJson builders unit tests (TASK-0072 `test_search_rbac.py` 패턴 답습).
+- `unit/feature-0003-agent-web-ui/tests/test_audit_rbac.py` — 10 HTTP smoke 시나리오 (urllib + 직접 DB seed).
+- `unit/feature-0003-agent-web-ui/tests/test_audit_migration.py` — `WebAccountActivity` → `WebAuditEvents` migration smoke.
+
+#### Acceptance criteria (Phase A0 ready to start)
+
+Phase A0 실행 직전 다음이 모두 명확:
+- [x] `WebAuditEvents` DDL 완전 명세 (14 columns + 5 indexes, ActorType + TargetAccountId 포함)
+- [x] Dispatcher signature 확정 (`record_audit_event(conn, actor, action, resource_type, resource_id, change_json, masked_fields)`)
+- [x] ChangeJson builder 명세 위치 (`audit_builders.py` 또는 app.py 내 섹션, sensitive field catalog 참조)
+- [x] `AGENT_AUDIT_ENABLED` gate logic (prod startup fail-closed + dev/test toggle)
+- [x] Action-specific allowlist masking 정책 (raw 검증 X, builder 화이트리스트)
+- [x] Same tx (admin) / fail-open (user) 분기 + Same tx lock 순서 (E5)
+- [x] Purge chunked PK loop logic (E8 의 Python 의사코드)
+- [x] RBAC catalog 4건 + dba 포함 모든 role auto-grant + permission group `audit`
+- [x] `WebAccountActivity` → `WebAuditEvents` migration logic
+- [x] Test scenarios 13+ (Phase B 10 HTTP + dispatcher unit + migration + builders)
+- [x] CONVENTIONS.md §10.6 audit group 추가 정책
+- [x] SECURITY.md §8 sensitive field catalog 구조 + RemoteAddr spoof note
+
+**0 모호성**. Phase A0 (DDL) → A6 (user endpoint hook) → B (tests) → C (frontend) → D (project docs) → E (verify + commit) 순서대로 구현 가능.
+
+#### Eng review 결과 요약 (REVIEW.md REV-20260519-0002 정본)
+
+`/plan-eng-review` cycle:
+- 9 architectural findings (E1-E9) lock-in: E1, E4 사용자 결정 / E2, E3, E5-E9 prose lock-in
+- 30 test paths coverage diagram (Phase B 10 + dispatcher unit + migration + builders)
+- 5 deadlock scenarios (Codex) lock 순서 명세
+- 0 critical 미해결 — Phase A0 진입 가능
+
+REVIEW.md REV-20260519-0002 에 각 finding + decision + 근거 기록 예정 (Phase D).
+
 ---
 
 ### 2.1 Implementation Plan (TASK-0072)

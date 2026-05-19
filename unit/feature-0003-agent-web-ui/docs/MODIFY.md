@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0002
+- Date: 2026-05-19
+- Summary: TASK-0073 (REQ-20260519-0001, **Critical** §12.3) — `/plan-eng-review` Eng review lock-in (E1-E9 + 30 test paths + 5 deadlock scenarios). Codex outside voice 의 Additional risk 9 (C7-C14) + 5 deadlock scenarios + 추가 eng items 를 architecture-level 로 lock-in. 사용자 결정 2 항목 (E1 self 정의 = Actor OR Target / E4 anonymous share audit 포함 + ActorType column) + 나머지 7 항목 prose lock-in. 본 CHG 는 plan 본문 update 만, 코드 변경 0. Phase A0 진입 ready 상태.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/docs/TASK.md`
+    - §2.1 (TASK-0073) 의 마지막 subsection 으로 "Eng review lock-in (E1-E9)" 추가 — 9 finding 의 architecture-level decision + Phase B 시나리오 확장 8 → 10 + Test infra 보강 + Acceptance criteria + Eng review 결과 요약 명시.
+    - 본 추가로 `WebAuditEvents` DDL 14 columns (ActorType + TargetAccountId 추가) + 5 secondary indexes 확정. E8 chunked PK purge Python 의사코드 정착. E1 self filter SQL (`WHERE ActorAccountId = :self OR TargetAccountId = :self`) 확정.
+- Verification:
+  - 본 CHG 는 plan 본문 update 만이라 py_compile / node --check 적용 대상 없음.
+  - `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` (Phase A0 진입 전 lock-in commit).
+- Risks:
+  - **E1 B 결정의 부수효과**: admin actor 의 mutation 이 target user audit 에 보임 → admin "감시당함" 인지 가능. 단 정당한 보안 추적, SECURITY.md §8 에 명시.
+  - **E4 B 결정의 부수효과**: anonymous share view 도 audit row → write 부하 추가 (대화 share 빈도에 비례). 단 ActorType="anonymous" filter 로 분리 조회 가능.
+  - **E8 chunked purge idempotency**: 1 분 내 중복 purge 차단 (`idempotency_key = hash(cutoff, started_at_minute)`). 단 1 분 이후 동일 cutoff 재호출은 허용 — 이미 deleted 된 데이터라 noop 이지만 audit.purge.start row 만 추가 생성. 운영 정책상 acceptable.
+  - **E2 Schema 변경 가능성**: ActorType column 추가는 본 CHG 가 plan 본문만 update — 실제 DDL 은 Phase A0. DDL 변경 시 본 lock-in 의 schema 명세 update 필요.
+  - **테스트 부하**: 30 test paths 중 Phase B 10 HTTP smoke 가 가장 무거움 (admin/operator/sales/dba 다중 role + cross-account). 실행 시간 ~3분 추정.
+- Trace: REQ-20260519-0001 → TASK-0073 → §2.1 Implementation Plan (TASK-0073) + Codex outside voice 14 findings + Eng review 9 lock-in → CHG-20260519-0001 (CEO) → CHG-20260519-0002 (Eng) → REV-20260519-0001 (CEO + Eng 통합, Phase D)
+
 ## CHG-20260519-0001
 - Date: 2026-05-19
 - Summary: TASK-0073 (REQ-20260519-0001, **Critical** §12.3) — 모든 계정 행위 audit 기능 + 관리 콘솔 조회 plan 본문 작성 (plan-approved 단계, 코드 변경 0). CEO review 9 decision (Mode=HOLD SCOPE, Scope=Approach B Balanced, Storage=DB-only, Hook=Web-ui 단일, MySQL log=통합, RBAC=4건 .self/.any, Tx=Same tx, Masking=Hybrid, Flag=AGENT_AUDIT_ENABLED=1) → Codex outside voice 14 findings + 6 minimum-fix dispatch (read-only sandbox, model_reasoning_effort=high) → 9 decision 중 5 reset (Storage·MySQL log·Hook·Tx·Masking 의 5 domain) → Major redesign 사용자 확정. WebAccountActivity (TASK-0072) 흡수 결정 (직전 검토 보고가 놓친 결손, codex finding C2). 본 CHG 는 plan 본문 작성만, Phase A0 부터 별 cycle 시작.
