@@ -3853,18 +3853,24 @@ a { color: inherit; }
 
 /* ====================================================================
    REQ-20260518-0010 (TASK-0072) — Spotlight search modal
+   REQ-20260519-0001 (TASK-0073, Minor §12.3) — light theme 색상 hotfix
+   site theme 가 light (--bg #f4f4f5 / --surface #ffffff / --text #18181b)
+   인데 직전 cycle 의 modal 토큰은 미정의 var (--text-primary, --bg-elev)
+   fallback 이 dark hardcode (#1f2429) 라 어두운 배경 + 검은 텍스트 = 가독 0.
+   site 의 기존 토큰 (--surface, --text, --border, --text-muted, --primary)
+   으로 일관 적용.
    ==================================================================== */
 
 :root {
-  --search-highlight-bg: rgba(255, 213, 79, 0.32);
-  --search-modal-bg: var(--bg-elev, #1f2429);
-  --search-modal-border: var(--border-subtle, rgba(255,255,255,.08));
+  --search-highlight-bg: #fde68a;
+  --search-modal-bg: var(--surface);
+  --search-modal-border: var(--border);
 }
 
 .search-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.48);
+  background: rgba(15, 23, 42, 0.48);
   backdrop-filter: blur(2px);
   z-index: 1200;
   display: flex;
@@ -3886,10 +3892,11 @@ a { color: inherit; }
   background: var(--search-modal-bg);
   border: 1px solid var(--search-modal-border);
   border-radius: var(--r-lg, 10px);
-  box-shadow: 0 12px 48px rgba(0,0,0,.5);
+  box-shadow: 0 12px 48px rgba(15, 23, 42, .22);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  color: var(--text);
 }
 .search-modal-header {
   display: flex;
@@ -3902,7 +3909,7 @@ a { color: inherit; }
   margin: 0;
   font-size: 14px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text);
 }
 .search-modal-close {
   background: transparent;
@@ -3917,7 +3924,7 @@ a { color: inherit; }
   justify-content: center;
   border-radius: var(--r-sm, 4px);
 }
-.search-modal-close:hover { background: var(--surface, rgba(255,255,255,.05)); color: var(--text-primary); }
+.search-modal-close:hover { background: var(--bg); color: var(--text); }
 
 .search-modal-input-row {
   display: flex;
@@ -3933,7 +3940,7 @@ a { color: inherit; }
   border: 0;
   outline: 0;
   font-size: 14px;
-  color: var(--text-primary);
+  color: var(--text);
   padding: 4px 0;
 }
 .search-modal-input::placeholder { color: var(--text-muted); }
@@ -3953,23 +3960,23 @@ a { color: inherit; }
   border-bottom: 1px solid var(--search-modal-border);
 }
 .search-modal-chip {
-  background: transparent;
-  border: 1px solid var(--border, rgba(255,255,255,.12));
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 999px;
   padding: 4px 10px;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-2, var(--text));
   cursor: pointer;
   transition: background .12s, color .12s, border-color .12s;
 }
-.search-modal-chip:hover { border-color: var(--primary, #8ab4f8); color: var(--text-primary); }
+.search-modal-chip:hover { border-color: var(--primary); color: var(--text); }
 .search-modal-chip[aria-pressed="true"] {
-  background: rgba(138,180,248,.16);
-  border-color: var(--primary, #8ab4f8);
-  color: var(--text-primary);
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary-dark, var(--primary));
 }
 .search-modal-chip:focus-visible {
-  outline: 2px solid var(--primary, #8ab4f8);
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 .search-modal-chip.is-clear {
@@ -3983,6 +3990,7 @@ a { color: inherit; }
   min-height: 0;
   overflow-y: auto;
   padding: 6px;
+  background: var(--surface);
 }
 .search-modal-result-list .empty-state {
   padding: 28px 16px;
@@ -3993,6 +4001,7 @@ a { color: inherit; }
   flex-direction: column;
   gap: 4px;
 }
+.search-modal-result-list .empty-state strong { color: var(--text); }
 .search-modal-result-item {
   display: flex;
   flex-direction: column;
@@ -4001,10 +4010,16 @@ a { color: inherit; }
   border-radius: var(--r-md, 6px);
   cursor: pointer;
   transition: background .1s;
+  /* button reset — host element is <button> */
+  background: transparent;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
 }
 .search-modal-result-item:hover,
 .search-modal-result-item.is-active {
-  background: rgba(255,255,255,.04);
+  background: var(--primary-soft);
 }
 .search-modal-result-item-title-row {
   display: flex;
@@ -4014,7 +4029,7 @@ a { color: inherit; }
 .search-modal-result-item-title {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-primary);
+  color: var(--text);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -4026,10 +4041,15 @@ a { color: inherit; }
   padding: 2px 6px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  color: var(--text-muted);
+  color: var(--text-2, var(--text));
+  background: var(--bg);
   flex-shrink: 0;
 }
-.search-modal-result-item-owner-badge.is-own { color: var(--primary, #8ab4f8); border-color: var(--primary, #8ab4f8); }
+.search-modal-result-item-owner-badge.is-own {
+  color: var(--primary-dark, var(--primary));
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
 .search-modal-result-item-meta {
   display: flex;
   gap: 8px;
@@ -4037,9 +4057,9 @@ a { color: inherit; }
   color: var(--text-muted);
 }
 .search-snippet {
-  font-size: 11px;
-  color: var(--text-muted);
-  background: rgba(255,255,255,.03);
+  font-size: 12px;
+  color: var(--text-2, var(--text));
+  background: var(--bg);
   padding: 4px 6px;
   border-radius: var(--r-sm, 4px);
   margin-top: 2px;
@@ -4052,9 +4072,10 @@ a { color: inherit; }
 }
 .search-snippet-hl {
   background: var(--search-highlight-bg);
-  color: var(--text-primary);
+  color: var(--text);
   padding: 0 1px;
   border-radius: 2px;
+  font-weight: 600;
 }
 
 .search-modal-footer {
@@ -4063,11 +4084,12 @@ a { color: inherit; }
   justify-content: space-between;
   padding: 8px 14px;
   border-top: 1px solid var(--search-modal-border);
+  background: var(--surface);
 }
 .search-modal-load-more {
   background: transparent;
   border: 1px solid var(--border);
-  color: var(--text-muted);
+  color: var(--text-2, var(--text));
   padding: 4px 12px;
   border-radius: var(--r-sm, 4px);
   font-size: 12px;

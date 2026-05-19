@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0004
+- Date: 2026-05-19
+- Summary: TASK-0074 (REQ-20260519-0002, Minor §12.3) — search modal 색상 가독성 hotfix of TASK-0072. site theme = light (`--bg #f4f4f5` / `--surface #ffffff` / `--text #18181b`) 환경에서 modal 의 미정의 var fallback (dark hardcode `#1f2429`) + site 의 text inherit 검은색 = 어두운 배경 위 검은 텍스트 = 가독성 0 (사용자 screenshot 보고). modal CSS 전체를 site 의 기존 토큰으로 일관 적용.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css` — `--search-modal-bg: var(--surface)`, `--search-modal-border: var(--border)`, `--search-highlight-bg: #fde68a`. modal block 의 모든 `var(--text-primary)` → `var(--text)`, `rgba(255,255,255,.04|.03|.05)` → `var(--primary-soft)` / `var(--bg)`, chip aria-pressed bg → `--primary-soft`, owner badge "내" = triple (bg + border + color), snippet bg = `--bg`, snippet-hl color = `--text` + `font-weight: 600`, result-item button reset (background transparent + border 0 + width 100% + text-align left + font-family inherit), backdrop `rgba(15,23,42,0.48)` (modal pop 강조 유지).
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html` — cache-bust styles.css + app.js `v=20260518-conv-search` → `v=20260519-modal-contrast`.
+  - `repo/unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md` + `repo/docs/STATUS.md` — REQ-20260519-0002 / TASK-0074 / CHG-20260519-0004 / REV-20260519-0001 entries.
+- Verification:
+  - `make web` 재배포 OK — repo-web-1 recreated 12 초만에 healthy.
+  - backend / RBAC / endpoint / audit / TASK-0073 의 WebAuditEvents 영역 무변경.
+  - python3 / node --check 대상 변경 없음 (CSS + cache-bust only).
+- Risks: 매우 낮음 — CSS 토큰 변경만. modal 외 영역 영향 0. TASK-0073 Phase A0 (WebAuditEvents) 와 file overlap 없음 (styles.css + index.html cache-bust vs app.py DDL + docs).
+- Trace: REQ-20260519-0002 → TASK-0074 → CHG-20260519-0004 → REV-20260519-0001 (hotfix of TASK-0072)
+
 ## CHG-20260519-0003
 - Date: 2026-05-19
 - Summary: TASK-0073 (REQ-20260519-0001, **Critical** §12.3) — Phase A0: WebAuditEvents DDL + bootstrap helper. plan §2.1 (TASK-0073) 의 Eng review lock-in (E2 schema hybrid + E4 ActorType + E1 TargetAccountId) 의 schema 정의를 코드로 정착. 본 CHG 는 schema 만 — dispatcher (Phase A1), migration (A2), RBAC (A3), endpoints (A4), admin hook (A5), user hook (A6), tests (B), frontend (C), project docs (D) 는 별 phase.

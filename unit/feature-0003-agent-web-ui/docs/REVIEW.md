@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0001
+- Date: 2026-05-19
+- Decision: TASK-0074 (REQ-20260519-0002, Minor §12.3) — search modal CSS 의 색상 토큰을 site theme 의 기존 var (`--surface`, `--text`, `--border`, `--text-muted`, `--primary`, `--primary-soft`, `--bg`) 으로 일관 적용. 미정의 var fallback (`--text-primary` → `--bg-elev` dark hardcode `#1f2429`) 폐기. backdrop 의 dark overlay 는 modal pop 강조 위해 유지.
+- Reason: TASK-0072 modal CSS 가 dark theme 가정 var (`--text-primary`, `--bg-elev`) 사용 — site 가 정의 안 한 var 라 fallback 인 hardcode dark color 가 발동. 그러나 site 자체는 light theme (`--bg #f4f4f5` / `--surface #ffffff` / `--text #18181b`) 라 modal 의 검은 배경 위 text inherit 가 검은색 → contrast 0. UX review (TASK-0072 outside voice) 가 site theme 가정 명시 안 한 결과 — light theme 위 dark modal 의 가독성을 사용자가 직접 발견. 사용자 screenshot ("사용자가 이용할 수 없을 정도의 색상 구성") 으로 hotfix 진입.
+- Alt 거부:
+  - `@media (prefers-color-scheme: dark)` 분기: site 자체가 단일 theme (`:root` 에 light 만 정의, `prefers-color-scheme` 분기 없음) — modal 만 dark 분기 추가는 site 정합 깨짐.
+  - 미정의 var 의 fallback 값을 light 로 단순 swap (`var(--bg-elev, #ffffff)`): 다른 site 컴포넌트도 `var(--text-primary)` / `var(--bg-elev)` 가정으로 만들면 동일 회귀 재발 가능. 본 fix 는 site 의 *기존 토큰* (`--surface` / `--text` 등 site 가 명시 정의한 것) 으로 통일해 fallback 의존 차단.
+  - dark theme 강제 (site root 에 `--text-primary: #fff` 추가): 다른 모든 site CSS 영향 — scope 폭발.
+- Risks:
+  - **backdrop dark overlay 유지**: modal pop 강조 위해 `rgba(15,23,42,0.48)` 유지. light theme 위 어두운 overlay 가 modal 의 white background 와 contrast 잘 보이는 효과. light dimming 으로 갔다가 modal boundary 흐려지면 UX 회귀.
+  - **highlight bg `#fde68a` (yellow 300)** light theme 위 dark text 와 contrast WCAG AA 충분 (검산: contrast ratio ~10:1). dark theme 도입 시 highlight bg 재검토 필요 (별 cycle).
+  - **`--primary-soft` (#eff6ff) result row hover/active bg** light theme 위 visible 가능 (parent surface = #ffffff, hover = #eff6ff 의 contrast). visible 영역 충분.
+  - **다른 modal 영향 0**: 본 cycle 의 변경은 `.search-modal*` selector 한정. admin modal / profile drawer / 비밀번호 reset modal 등 무관.
+- 미해결 followup:
+  - **site 의 dark theme 도입 시 modal 재검토** — `prefers-color-scheme: dark` 분기 또는 사용자 toggle 시 search modal 색상도 함께 swap. 본 cycle 의 fix 가 site theme inherit 패턴이라 자동 swap 가능하나 highlight bg (`#fde68a`) 와 backdrop (`rgba(15,23,42,0.48)`) 은 dark theme 위 재검산 필요.
+  - **CSS 토큰 contract 명료화** — site root 의 모든 토큰 (`--bg-elev`, `--text-primary`, `--border-strong`) 이 정의 안 됨에도 다른 컴포넌트들이 fallback 으로 사용 중. site 의 root 토큰 정의 audit + 미정의 var 의 fallback 강제 정책은 별 cycle (DESIGN.md §15 확장 권고).
+- Trace: REQ-20260519-0002 → TASK-0074 → CHG-20260519-0004 → REV-20260519-0001 (hotfix of TASK-0072)
+
 ## REV-20260518-0010
 - Date: 2026-05-18
 - Decision: TASK-0072 (REQ-20260518-0010, **Critical** §12.3) — 타 계정 대화 검색·필터 plan 의 D1/D2/D3 결정 + outside voice 3 개 verdict 흡수 + 사용자 in-cycle 결정 5 항목 확정. UI 위치 재결정 (사이드바 검색바 → Spotlight modal pattern), index 정책 (LIKE + 강한 안전망, FULLTEXT 별 cycle), 본문 열람 정책 (`.any` 보유자 검색·snippet 허용 + audit log 수반).

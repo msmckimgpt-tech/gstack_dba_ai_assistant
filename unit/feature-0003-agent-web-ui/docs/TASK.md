@@ -15,6 +15,7 @@ source_of_truth: true
 - Last Updated: 2026-05-15
 
 ## 2. Task Queue
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-19 (TASK-0074, Minor §12.3 — search modal 색상 가독성 hotfix of TASK-0072, light theme 토큰 정합) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-19 (TASK-0073, Critical §12.3 — 모든 계정 행위 audit 기능 + 관리 콘솔 조회, CEO review 9 + Codex outside voice 14 findings + redesign 흡수) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0072, Critical §12.3 — 타 계정 대화 검색·필터 + outside voice 보강) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0071, Minor §12.3 — shell grid row hotfix) -->
@@ -26,6 +27,7 @@ source_of_truth: true
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0065, Minor §12.3 — UI 정리 follow-up) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0063, Major §12.3) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-15 -->
+- [x] TASK-0074 (REQ-20260519-0002, Minor §12.3 — search modal 색상 가독성 hotfix of TASK-0072) 사용자 screenshot 보고: TASK-0072 의 Spotlight modal 이 light theme (`--bg #f4f4f5` / `--surface #ffffff` / `--text #18181b`) 환경에서 어두운 배경 + 검은 텍스트로 노출 — "사용자가 이용할 수 없을 정도의 색상 구성". 원인: modal CSS 가 미정의 var (`--text-primary`, `--bg-elev`) 의 hardcode dark fallback (`#1f2429`) 으로 배경을 잡았고, 텍스트는 site 의 `--text` (zinc-900) inherit → 어두운 배경 위 검은 텍스트 = 가독성 0. Fix: modal block ~100 줄을 site 의 기존 토큰 (`--surface`, `--text`, `--text-2`, `--text-muted`, `--border`, `--primary`, `--primary-soft`, `--bg`) 으로 일관 적용. backdrop 의 dark overlay (`rgba(15, 23, 42, 0.48)`) 는 modal pop 강조 유지. snippet 배경 = `--bg`, result row hover/active = `--primary-soft`, owner badge = bg + border + color triple, highlight bg `#fde68a` + bold (light theme contrast). RBAC / endpoint / audit / backend 무변경. cache-bust `v=20260518-conv-search` → `v=20260519-modal-contrast` (styles.css + app.js 양쪽). 검증: make web 재배포 + 컨테이너 12 초 후 healthy. node --check / py_compile 대상 변경 없음.
 - [~] TASK-0073 (REQ-20260519-0001, **Critical** §12.3 — 모든 계정 행위 audit + 관리 콘솔 조회) 진행 중 sub-progress:
   - [x] Phase A0 — DDL + bootstrap (`_ensure_web_audit_events_schema` + WebAuditEvents 14 columns + 5 indexes + fast/slow path hook). CHG-20260519-0003. 2026-05-19. py_compile PASS.
   - [ ] Phase A1 — dispatcher + `AGENT_AUDIT_ENABLED` gate
