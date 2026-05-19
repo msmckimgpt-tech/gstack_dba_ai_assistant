@@ -8,6 +8,50 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0013
+- Date: 2026-05-19
+- Summary: TASK-0083 (REQ-20260519-0011, Minor §12.3) — web UI 전역 폰트를 monospace 로 통일. `:root` 의 `--font` 토큰을 `--mono` 와 같은 stack 으로 묶어 작업 화면 / 관리 화면의 모든 text 를 등폭 글꼴로 렌더. 영문은 Cascadia Code / SFMono-Regular / Consolas, 한글은 D2Coding / Noto Sans Mono CJK KR fallback. 사용자 요청 — "문자열 길이와 실제 표현되는 위치가 정합" 을 위한 등폭 정렬 보장.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css`
+    - line 33~36 (`:root` Typography 토큰 정의) — `--font: "Segoe UI", "Noto Sans KR", -apple-system, BlinkMacSystemFont, sans-serif` 제거 → `--mono` stack 을 한글 monospace fallback 포함으로 확장 (`"Cascadia Code", "SFMono-Regular", Consolas, "D2Coding", "Noto Sans Mono CJK KR", ui-monospace, Menlo, monospace`) + `--font: var(--mono)` 로 참조 통합. 기존 `body { font-family: var(--font); }` (line 65) + `button/input/textarea/select { font: inherit; }` (line 72~73) cascade 가 그대로 작동해 전역 적용.
+    - 다른 `font-family` 출현 위치 (line 1069 `var(--mono)`, line 1082 `var(--mono)`, line 1186 `var(--mono)`, line 1379 `var(--mono)`, line 1904 `var(--font-mono, ui-monospace, monospace)` 별도 변수, line 2216 hardcoded `ui-monospace, SFMono-Regular, Menlo, monospace`, line 2542 `var(--mono)`, line 3846 `monospace`, line 4026/4170/4190/4217/4233 `inherit`) 무변경 — 기존이 이미 monospace 또는 inherit 이라 영향 없음.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html` — line 7 `styles.css?v=20260519-chat-pane-flex` → `styles.css?v=20260519-mono-font-stack` cache-bust 토큰 갱신.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/admin.html` — line 7 `styles.css?v=20260518-shell-grid-rows` → `styles.css?v=20260519-mono-font-stack` cache-bust 토큰 갱신.
+- Verification:
+  - CSS syntax 단순 토큰 교체. JS / Python AST 변경 없음.
+  - `var(--font)` / `var(--mono)` 참조 자리 의미 무손상 — 두 토큰이 동일한 값으로 통합되어 cascade 결과 동일 (등폭) 보장.
+  - smoke (사용자 직접 확인 권장): ①작업 화면 (`/`) 진입 → sidebar / topbar / composer / message bubble / popover 의 모든 텍스트가 monospace 로 표시. ②관리 화면 (`/admin`) 진입 → list / detail / bulk toolbar / form 의 모든 텍스트가 monospace 로 표시. ③한글 메시지·이름·테이블명에서 글자 폭 정합 (system 에 D2Coding / Noto Sans Mono CJK KR 가 깔려 있을 때). ④`share.html` (별도 `share.css`) 은 본 변경 영향 없음 — 의도.
+- Risks:
+  - **한글 monospace 시스템 의존**: 시스템에 D2Coding / Noto Sans Mono CJK KR 가 설치되지 않은 환경 (예: 기본 Windows / macOS 사용자) 은 fallback chain 의 `ui-monospace` 또는 `monospace` 가 system default monospace 를 사용하는데, 일반적으로 한글은 system default proportional font (예: 맑은 고딕 / Apple SD Gothic Neo) 로 표시되어 한글만 등폭이 깨질 수 있음. CSS 단독으로 강제 불가 — system 폰트 설치 안내 또는 WebFont 도입은 별 cycle.
+  - **읽기 가독성 trade-off**: monospace 는 한글·영문 혼합 본문에서 가독성이 일반 sans-serif 보다 낮을 수 있음. 사용자가 명시 요청한 "문자열 길이 / 위치 정합" 우선이라 trade-off 수용. 사용자가 추후 일부 영역 (예: navigation, button label) 만 sans-serif 로 환원 요청 시 별 cycle.
+  - **`--font` 토큰의 의미 분리 소실**: 기존에 proportional / monospace 두 토큰이 분리되어 있던 design intent 가 사라짐. `var(--font)` 참조 자리에서 향후 다시 proportional 로 돌리려면 단일 line 변경 (line 35 `--font: var(--mono)` → 별도 stack) 으로 회복 가능 — 미래 cycle 옵션 보존.
+  - **share.css (share.html 전용) 미변경**: 공유 페이지의 폰트는 본 cycle 범위 외. 사용자가 명시한 "프로젝트로 실행되는 웹브라우저" 가 작업·관리 화면을 가리킨다고 해석. share.html 도 monospace 통일 요청 시 별 cycle 1 line 추가.
+- Trace: REQ-20260519-0011 → TASK-0083 → CHG-20260519-0013 → REV-20260519-0009. AC-0184 (전역 monospace 통일) 신규 등록. 기존 AC 회귀 없음 (cascade 동일).
+
+## CHG-20260519-0012
+- Date: 2026-05-19
+- Summary: TASK-0082 (REQ-20260519-0010, Minor §12.3) — lazy-create unique sentinel design 도입. TASK-0081 followup. 글로벌 단일 sentinel 의 컨텍스트 충돌로 첫 in-flight 중 + 새 대화 클릭 시 input 활성화 안 되던 회귀 근본 fix.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/app.js`
+    - state 정의 (line 115 부근) — `pendingSentinel: null` field 추가. 각 lazy-create 진입의 unique sentinel 보관.
+    - 상수 정의 (line 156 부근) — `PENDING_CONV_SENTINEL` 글로벌 별칭 유지 (legacy 호환) + `PENDING_CONV_SENTINEL_PREFIX` 신설 + `_newPendingSentinel()` helper 추가. helper 는 `${prefix}_${Date.now()}_${random 6 char}` 패턴으로 unique id 발급.
+    - `isCurrentConvBusy()` (line 333~339) — sentinel 점유 검사를 글로벌 단일 토큰 → `state.pendingSentinel` 점유 여부로 변경. `state.pendingNewConversation && state.pendingSentinel && busyConversations.has(state.pendingSentinel)` AND 조건.
+    - `beginPendingConversation()` (line 2993~3015) — TASK-0081 의 stale guard 분기 제거 + 항상 reset 흐름 진입 + `state.pendingSentinel = _newPendingSentinel()` 명시 부여. 첫 in-flight 여부와 무관하게 새 컨텍스트는 별개 sentinel 으로 분리. 기존 stopProgressPolling / activeConversationId reset / renderComposer 호출 chain 무변경.
+    - `sendPrompt()` busyKey 결정 (line 3458~3475) — lazy-create 시 `state.pendingSentinel` 을 busyKey 로 capture. pendingSentinel 미할당 (직접 send 진입) fallback 으로 새 sentinel 생성 후 state 에 기록. 직접 send 는 `busyKey = targetConvId` 그대로.
+    - `sendPrompt()` success path (line 3522~3539) — `if (state.pendingSentinel === busyKey)` closure check 후에만 `pendingNewConversation = false; activeConversationId = newCid; pendingSentinel = null` cleanup + polling 시작. closure mismatch (사용자가 send 도중 + 새 대화 이동) 시 두 번째 컨텍스트 state 보존 + refreshWorkspace 만 호출 (사이드바 list refresh).
+    - `sendPrompt()` catch path (line 3537~3551) — TASK-0081 의 cleanup 도 closure check 추가. `if (state.pendingSentinel === busyKey)` 일 때만 cleanup. pending bubble error 표시 / toast 안내는 closure 무관하게 본 send 발생 사실을 알림.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html` — `app.js?v=20260519-pending-recovery` → `app.js?v=20260519-unique-sentinel` cache-bust 토큰 갱신.
+- Verification:
+  - `node --check repo/unit/feature-0003-agent-web-ui/src/static/app.js` PASS.
+  - backend / RBAC / endpoint / audit / DB 무변경 (Python AST 검증 대상 없음).
+  - smoke (사용자 직접 확인 권장): 회귀 시나리오 4 종 — ①첫 송신 in-flight 중 "+ 새 대화" 클릭 → 입력칸 활성화 + 두 번째 prompt 작성 + send → 두 응답 모두 정상 (각자 sentinel 분리, sidebar 양 conv 표시). ②catch 분기 종료 후 "+ 새 대화" → 정상 진입 (closure check 로 cleanup OK). ③응답 후 "+ 새 대화" → 정상. ④pending bubble error 표시 → closure check 와 무관하게 표시 (cleanup 은 closure 일치 시에만, bubble UI 는 별도).
+- Risks:
+  - **closure mismatch 시 첫 대화의 activeConversationId 갱신 skip**: 첫 send 의 success path 가 newCid 를 받아도 closure mismatch (두 번째 컨텍스트 이동) 면 `state.activeConversationId` 를 newCid 로 set 하지 않음. 사용자가 사이드바 conversation list 에서 첫 대화 (이미 발급된 newCid) 를 직접 클릭해서 진입해야 함. `refreshWorkspace(newCid)` 가 list 를 refresh 하므로 첫 대화는 list 에 표시. 의도된 동작이지만 사용자 인지 필요.
+  - **closure mismatch 시 polling 시작 skip**: 첫 send 의 응답 도착 시 closure mismatch 면 `startProgressPolling` 호출 안 함. 첫 대화의 backend status="processing" 인 비동기 흐름은 사용자가 첫 대화로 진입 후 `loadHistory` → `startProgressPolling` (line 2895~2899 의 last_status=processing 경로) 가 다시 시작. 일관성 OK.
+  - **pendingSentinel race**: 동일 ms 안에 두 진입 시 random suffix (`Math.random().toString(36).slice(2, 8)`) 로 16^6 = ~16M 가지 분리. 실용적 충돌 위험 0.
+  - **legacy PENDING_CONV_SENTINEL reference**: 본 fix 후 글로벌 단일 토큰 검사는 모두 `state.pendingSentinel` 검사로 변경됨. `PENDING_CONV_SENTINEL` 상수는 외부 reference 없으나 호환 차원에서 유지 (별 cycle 에서 cleanup 가능).
+- Trace: REQ-20260519-0010 → TASK-0082 → CHG-20260519-0012 → REV-20260519-0008. TASK-0081 의 stale 가드 + catch cleanup 정책 본 design 으로 자연 흡수. AC-0072 / AC-0075~0077 / AC-0176~0178 (TASK-0081) 회귀 보호.
+
 ## CHG-20260519-0011
 - Date: 2026-05-19
 - Summary: TASK-0081 (REQ-20260519-0009, Minor §12.3) — `beginPendingConversation()` stale flag 회복 가드 + `sendPrompt()` catch 분기 `pendingNewConversation` cleanup. 두 번째 새 대화 send (요청 버튼 / Ctrl+Enter) 가 무동작이던 회귀 fix.

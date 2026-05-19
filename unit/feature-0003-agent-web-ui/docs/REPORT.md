@@ -9,6 +9,36 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-05-19 TASK-0082 완료 — lazy-create unique sentinel design (첫 in-flight 중 + 새 대화 클릭 시 input 비활성 회귀 근본 fix, TASK-0081 followup)** (CHG-20260519-0012, REV-20260519-0008, REQ-20260519-0010, Minor §12.3 — frontend state machine refactor 5 군데, backend / RBAC / endpoint / audit / DB 무변경).
+
+**배경**: TASK-0081 fix 후 사용자 추가 보고 — "대화 요청을 보낸 후, + 새 대화 버튼을 클릭한 후에도 요청 텍스트 입력칸이 활성화되지 않는 이슈". TASK-0081 의 stale guard + catch cleanup 만으로는 첫 lazy-create in-flight 중 + 새 대화 클릭 시나리오를 cover 못 함.
+
+**원인 (TASK-0081 보다 근본)**: `app.js` 의 글로벌 단일 sentinel (`PENDING_CONV_SENTINEL = "__pending__"`) 가 lazy-create busy tracking 의 토큰. 첫 send 가 in-flight 일 때 busyConversations 에 sentinel 점유 → 사용자가 + 새 대화 클릭해도 두 번째 컨텍스트의 `isCurrentConvBusy()` 가 same sentinel 검사로 true 반환 → `renderComposer()` 가 `promptInputEl.disabled = true` 유지 → input 활성화 안 됨. 추가로 TASK-0081 의 guard 분기는 in-flight 시 early return 으로 renderComposer 호출조차 skip — input.disabled state update 자체 안 됨. 두 결함 합쳐서 사용자 증상.
+
+**Fix**: 각 lazy-create 진입마다 unique sentinel 부여하는 design.
+
+- `state.pendingSentinel` field 추가 — 활성 lazy-create 의 unique sentinel 보관.
+- `_newPendingSentinel()` helper — `${prefix}_${Date.now()}_${random 6 char}` 패턴, 16M 분리.
+- `isCurrentConvBusy()` 의 sentinel 검사를 글로벌 단일 → `state.pendingSentinel` 점유 여부로 변경.
+- `beginPendingConversation()` 의 TASK-0081 guard 제거 + `state.pendingSentinel = _newPendingSentinel()` 명시 부여. 항상 reset 흐름 진입.
+- `sendPrompt()` 의 busyKey 를 `state.pendingSentinel` 으로 closure capture. success / catch path 의 cleanup 은 `if (state.pendingSentinel === busyKey)` 일치 검사 후에만 실행.
+
+이 design 의 핵심: 첫 sendPrompt 의 closure 에 capture 된 옛 sentinel ("A") 은 본 함수의 finally 가 책임지고 cleanup. 사용자가 그 사이 + 새 대화 클릭으로 두 번째 컨텍스트 진입하면 `state.pendingSentinel` 은 새 sentinel ("B") 으로 갱신. 첫 send 의 success/catch path 는 closure key ("A") 와 `state.pendingSentinel` ("B") 의 불일치를 보고 두 번째 컨텍스트 state 보존. 두 번째 send 의 busyKey 는 "B" — 본 send 의 finally 가 "B" 만 cleanup.
+
+**회귀 시나리오 4 종 검증** (코드 trace 기반):
+- ①첫 송신 in-flight 중 + 새 대화 클릭 → state.pendingSentinel 이 "A" → "B" 로 swap. renderComposer 의 isCurrentConvBusy 가 busyConversations.has("B") = false → busy=false → **input 활성화** ✓. 사용자 두 번째 prompt 작성 + send → busyKey="B" → in-flight. 첫 응답 도착 시 closure mismatch 로 두 번째 컨텍스트 보존. 두 번째 응답 도착 시 closure 일치로 normal cleanup. 사이드바에 양쪽 conv 표시.
+- ②catch 분기 종료 후 + 새 대화 → catch 에서 closure 일치 cleanup (state.pendingSentinel = null). 이후 + 새 대화 클릭 시 새 sentinel 부여. 정상 진행.
+- ③응답 후 + 새 대화 (정상 흐름) → success path 의 closure 일치 cleanup. 이후 + 새 대화 시 새 sentinel.
+- ④pending bubble error 표시 → closure mismatch 시 cleanup skip 하지만 bubble UI 는 별도 (state.pendingBubble). AC-0077 유지.
+
+**TASK-0081 와의 관계**: TASK-0081 의 stale guard (`pendingNewConversation && busyConversations.has(sentinel)`) 와 catch cleanup 정책은 본 design 으로 자연 흡수. 각 진입이 새 sentinel 으로 reset 하므로 stale state 자체가 컨텍스트 분리로 해소. catch cleanup 도 closure-aware 로 유지하되 closure mismatch 시 skip 으로 두 번째 컨텍스트 보호.
+
+**검증**: `node --check app.js` PASS. backend / RBAC / endpoint / audit / DB 무변경 (py_compile 대상 없음). cache-bust `v=20260519-pending-recovery` → `v=20260519-unique-sentinel` (index.html). smoke 시나리오 4 종은 사용자 환경 직접 확인 권장.
+
+**Trace**: REQ-20260519-0010 → TASK-0082 → CHG-20260519-0012 → REV-20260519-0008.
+
+---
+
 **2026-05-19 TASK-0081 완료 — beginPendingConversation stale flag 회복 가드 + sendPrompt catch 분기 pendingNewConversation cleanup (두 번째 새 대화 send 차단 회귀 fix)** (CHG-20260519-0011, REV-20260519-0007, REQ-20260519-0009, Minor §12.3 — frontend state machine 2 군데 변경, backend / RBAC / endpoint / audit / DB 무변경).
 
 **배경**: 사용자 직접 보고 — "새 대화에서 요청을 보낸 후, 다시 새 대화로 별개의 요청을 보내려고 했을 때 진행되지 않는 이슈". 증상 추가 확인: "두 번째 send 를 진행하는 상호작용 (요청 UI 버튼, Ctrl+Enter) 가 막혀있다".

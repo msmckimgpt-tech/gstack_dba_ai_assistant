@@ -8,6 +8,48 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0009
+- Date: 2026-05-19
+- Decision: TASK-0083 (REQ-20260519-0011, Minor §12.3) — `:root` 의 `--font` / `--mono` 두 토큰을 단일 monospace stack 으로 통합. `--mono` 에 한글 monospace fallback (`D2Coding`, `Noto Sans Mono CJK KR`) 추가 + `--font: var(--mono)` 참조. body / button / input / textarea / select 의 기존 cascade (`var(--font)` / `font: inherit`) 가 그대로 작동해 작업·관리 화면 전역에 등폭 글꼴 적용. cache-bust 토큰 동시 갱신 (index.html + admin.html).
+- Reason: 사용자 직접 요청 — "프로젝트로 실행되는 웹브라우저 내에서 출력되는 폰트를 monospace로 변경하여 문자열 길이와 실제 표현되는 위치가 정합하도록 구성". 의도는 "한 글자 한 글자가 같은 너비를 차지해서 ASCII 표 / 로그 / 결과 출력의 컬럼 정렬이 깨지지 않게" 로 해석. 현재 `--font` 가 Segoe UI / Noto Sans KR (proportional) 라 한글 / 영문 모두 가변 폭 → 사용자 의도와 불일치. 가장 단순한 변경 (`--font` 를 monospace stack 으로 치환) 으로 전역 일관 적용 가능. body 단위 `font-family: var(--font)` 가 cascade 의 출발점이라 단일 토큰 변경으로 전체 효과.
+- Alt 거부:
+  - **`* { font-family: monospace !important; }` 같은 universal selector 강제**: 모든 element 강제 적용. 단점 — `var(--mono)` 를 명시 적용한 코드 영역 (line 1069 등) 이 사실상 의미 잃음 + `!important` 가 향후 part-only 회복을 어렵게 함. 기존 token 시스템 활용이 design intent 보존 측면 우월.
+  - **body 의 `font-family` 만 변경 (`var(--font)` → `var(--mono)`)**: 단일 line 변경으로도 효과 동일. 단점 — `--font` 토큰이 정의는 있으나 실제 사용처 없음 → 의도 불명. `--font: var(--mono)` 통합이 향후 reader 에게 "두 토큰이 의도적으로 같다" 를 명시.
+  - **WebFont (D2Coding / JetBrains Mono) CDN 로딩**: 시스템에 monospace 한글 폰트 미설치 환경에서도 한글 등폭 보장. 단점 — 외부 의존 + 로딩 latency + offline 환경 제약 + CSP 검토. 본 cycle 의 1-line CSS 변경 범위 초과 → 별 cycle.
+  - **share.html 까지 동시 변경**: 공유 페이지도 monospace 통일. 단점 — share.css 의 typography 가 별도 design intent (공유 뷰는 일반 사용자 대상이라 가독성 우선) 일 수 있음. 사용자가 "프로젝트로 실행되는 웹브라우저" 라고 표현 — 작업·관리 화면을 가리킨다고 해석. share.html 도 통일 요청 시 별 cycle.
+  - **monospace 영역만 명시 변경 (예: result table, log view 만)**: 더 보수적인 접근. 단점 — 사용자 요청 "출력되는 폰트" 는 전역 의도 표현. 부분 변경은 사용자 의도 축소 해석.
+- Risks:
+  - **한글 monospace 시스템 의존**: D2Coding / Noto Sans Mono CJK KR 미설치 환경에서 한글이 fallback `ui-monospace` / `monospace` 로 해석되어 system default 한글 (proportional) 로 렌더 가능. CSS 단독으로 강제 불가. 사용자가 정합 깨짐을 보고 시 (a) 시스템 폰트 설치 안내 또는 (b) WebFont 도입 (별 cycle).
+  - **가독성 trade-off**: monospace 가 일반 본문 가독성 (특히 긴 한글 문장) 보다 ASCII 정렬에 최적화. 사용자가 일부 영역 (network / button label / popover) 만 sans-serif 로 복원 요청 시 그 영역의 `font-family` 를 `var(--font)` 가 아닌 별도 stack 으로 명시.
+  - **font 토큰 의미 분리 소실**: `--font` (proportional 의도) 와 `--mono` (등폭 의도) 의 분리가 사라짐. 향후 design intent 회복 시 line 35 `--font: var(--mono)` 를 명시 stack 으로 되돌리면 됨 — 1-line 회복 가능.
+  - **cache-bust 토큰 동기화**: index.html + admin.html 두 곳 모두 갱신. share.html 은 share.css 사용 (별 stylesheet) — cache-bust 동기화 불필요.
+  - **AC-0184 신규 등록 + 회귀 검증**: 기존 AC (chat pane / lazy-create / unique sentinel / search / excerpt) 모두 typography 와 무관 → cascade 동일성으로 회귀 0. smoke 시나리오는 MODIFY.md 의 Verification 항목 참조.
+- 미해결 followup:
+  - **한글 monospace WebFont 도입**: 사용자 환경 무관 등폭 보장. CDN (예: jsDelivr 의 D2Coding) 또는 self-host. CSP / 로딩 latency / offline 영향 검토. 별 cycle.
+  - **share.html monospace 통일 여부**: 사용자 의도 확인 후 결정.
+  - **specific 영역의 sans-serif 복원 요청**: 사용자가 가독성 보고 시 부분 복원.
+- Trace: REQ-20260519-0011 → TASK-0083 → CHG-20260519-0013 → REV-20260519-0009. AC-0184 (전역 monospace 통일) 등록.
+
+## REV-20260519-0008
+- Date: 2026-05-19
+- Decision: TASK-0082 (REQ-20260519-0010, Minor §12.3) — lazy-create unique sentinel design 도입. 글로벌 단일 `PENDING_CONV_SENTINEL` 토큰을 각 lazy-create 진입마다 `state.pendingSentinel = _newPendingSentinel()` 으로 분리 + closure-aware cleanup. TASK-0081 의 stale guard 자연 흡수.
+- Reason: 사용자 직접 보고 followup of TASK-0081 — "+ 새 대화 클릭 후 입력칸 활성화 안 됨". 직접 코드 검토로 root cause 재구명: (1) `isCurrentConvBusy()` 가 글로벌 단일 sentinel (`PENDING_CONV_SENTINEL`) 점유 여부 검사. (2) 첫 send 의 in-flight 시 busyConversations 에 sentinel 점유 → 사용자가 + 새 대화 클릭해도 두 번째 컨텍스트에서 isCurrentConvBusy() 가 same sentinel 검사로 true 반환 → renderComposer 가 input.disabled = true 그대로 → 활성화 안 됨. (3) TASK-0081 의 guard 분기는 in-flight 시 early return + renderComposer 미호출 — input 상태 update 안 됨. 두 결함이 합쳐져 사용자 증상 발생. 근본 해결은 unique sentinel design — 컨텍스트별 별개 토큰으로 isCurrentConvBusy 가 두 번째 컨텍스트에서 false 반환.
+- Alt 거부:
+  - **TASK-0081 의 guard 분기에서 input.disabled = false 강제 + toast 안내**: minimal hotfix (1~2 줄). 단점 — input 활성화는 됐지만 send 시점에 isCurrentConvBusy=true 라 또 차단 → 무한 루프 UX. 사용자가 prompt 작성해도 보낼 수 없음.
+  - **isCurrentConvBusy 의 sentinel 검사를 시간 기반 비교**: pendingNewConversation 진입 시간 기록 후 비교. 너무 fragile + race window 다양.
+  - **글로벌 sentinel 제거 + busyConversations 에 lazy 진입 자체를 add 안 함**: backend 와의 race window 보호 상실 — backend 의 lazy-create 가 종료되기 전 사용자가 다시 send 시 동일 cid 충돌 위험. sentinel design 의 목적 (race window 보호) 상실.
+  - **각 컨텍스트마다 별도 state slice (multi-pending state machine)**: 가장 robust 하지만 frontend state 모델의 대규모 refactor — overkill. 본 fix 의 unique sentinel + closure cleanup 으로 충분.
+- Risks:
+  - **closure mismatch 시 첫 대화의 activeConversationId 갱신 skip + polling skip**: 사용자가 첫 응답 도착 전 + 새 대화 클릭으로 두 번째 컨텍스트 이동한 경우, 첫 대화의 newCid 가 발급돼도 본 컨텍스트에서 자동 binding 안 함. 사용자가 사이드바 conversation list 에서 첫 대화 클릭으로 진입해야 함. `refreshWorkspace(newCid)` 가 사이드바 list 를 refresh 하므로 첫 대화는 표시. 의도된 동작 (사용자 의지 = 두 번째 대화 진입) 이지만 사용자 인지 위해 별 cycle 에서 toast 안내 추가 검토 가능.
+  - **pendingSentinel race**: `Math.random().toString(36).slice(2, 8)` 6 char 16M 분리. 동일 ms 안 다중 진입 시 충돌 위험 무시 가능.
+  - **legacy PENDING_CONV_SENTINEL reference**: 본 fix 후 글로벌 단일 토큰 검사 경로 모두 `state.pendingSentinel` 로 변경. 상수 자체는 호환 별칭으로 유지 — 별 cycle 정리 가능.
+  - **TASK-0081 의 catch cleanup 정책 보존**: 본 design 의 catch path 도 closure-aware cleanup 으로 TASK-0081 의 의도 유지. 다만 closure mismatch 시 (드물 것이나) cleanup skip — 두 번째 컨텍스트의 state 보호.
+- 미해결 followup:
+  - **사용자 환경 직접 검증**: 4 종 회귀 시나리오 (in-flight 중 새 대화 / catch 후 새 대화 / 응답 후 새 대화 / pending bubble error 표시 보존) 는 코드 trace + node --check 로 검증. 사용자 환경의 정확한 reproduce 시 추가 cycle 가능.
+  - **legacy 상수 cleanup**: `PENDING_CONV_SENTINEL` 의 외부 reference 없음 확인됨 — 별 cycle 에서 정리 가능.
+  - **첫 대화 closure mismatch 안내 toast**: 사용자가 첫 응답 도착 시점에 두 번째 컨텍스트라면 toast "이전 요청 응답이 도착했습니다 — 사이드바에서 첫 대화를 확인하세요" 추가. UX 가치 별 cycle 판단.
+- Trace: REQ-20260519-0010 → TASK-0082 → CHG-20260519-0012 → REV-20260519-0008. TASK-0081 의 stale guard / catch cleanup 정책 본 design 으로 자연 흡수. AC-0072 / AC-0075~0077 / AC-0176~0178 회귀 보호.
+
 ## REV-20260519-0007
 - Date: 2026-05-19
 - Decision: TASK-0081 (REQ-20260519-0009, Minor §12.3) — `app.js` 의 `beginPendingConversation()` early-return guard 조건을 `state.pendingNewConversation` 단독 → `state.pendingNewConversation && state.busyConversations.has(PENDING_CONV_SENTINEL)` 로 좁힘. 추가로 `sendPrompt()` 의 lazy-create catch 분기 진입 시점에 `state.pendingNewConversation = false` cleanup 1 줄 명시.
