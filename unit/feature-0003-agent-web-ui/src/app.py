@@ -2498,6 +2498,68 @@ def _log_search_activity(
         cur.close()
 
 
+def _ensure_web_audit_events_schema(conn) -> None:
+    """REQ-20260519-0001 (TASK-0073, Critical §12.3): 전체 계정 행위 audit log.
+
+    Approach B (admin 13 endpoint + user 4 endpoint = `/api/ask` / share create
+    / share revoke / public share view) 의 모든 mutation 을 기록한다. CEO review
+    9 decision + Codex outside voice 14 findings + Eng review 9 lock-in (E1-E9)
+    의 최종 schema 다.
+
+    핵심 column:
+    - ActorAccountId (NULL = anonymous), ActorRoleId (snapshot),
+      ActorType (`account` / `anonymous` / `system`)  -- E4 결정
+    - TargetAccountId (NULL = no target) -- E1 self filter 의 OR 분기
+    - ActionCode (`admin.account.update` / `conversation.ask` / `share.public.view` 등)
+    - ChangeJson (allowlist builder 산출), MaskedFields (sensitive field 목록)
+    - RemoteAddr, UserAgent, RequestId, SessionId
+
+    Hook 정책 (Eng review E5):
+    - admin endpoint 13 = direct dispatcher Same tx (fail-safe, audit 실패 = rollback)
+    - user endpoint 4 = best-effort delegate (fail-open, TASK-0072 `_log_search_activity` 패턴)
+
+    Index 정책 (E2 hybrid schema):
+    - (ActorAccountId, OccurredAt) — admin `.any` filter + actor 검색
+    - (TargetAccountId, OccurredAt) — E1 self OR branch
+    - (ActionCode, OccurredAt) — action 별 filter
+    - (ResourceType, ResourceId) — resource 별 추적
+    - (ActorType, OccurredAt) — anonymous / system 분리 조회 (E4)
+
+    `_ensure_web_tables` (slow path) 와 `_ensure_seed_catchup` (fast path) 양쪽에서
+    호출되어 idempotent 보장. TASK-0072 `_ensure_web_account_activity_schema` 패턴 답습.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebAuditEvents (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ActorAccountId BIGINT NULL,
+                ActorRoleId BIGINT NULL,
+                ActorType VARCHAR(16) NOT NULL DEFAULT 'account',
+                TargetAccountId BIGINT NULL,
+                SessionId VARCHAR(64) NULL,
+                ActionCode VARCHAR(64) NOT NULL,
+                ResourceType VARCHAR(32) NOT NULL,
+                ResourceId VARCHAR(64) NULL,
+                ChangeJson JSON NULL,
+                MaskedFields JSON NULL,
+                RemoteAddr VARCHAR(64) NULL,
+                UserAgent VARCHAR(255) NULL,
+                RequestId VARCHAR(64) NULL,
+                OccurredAt TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                INDEX IX_WAE_Actor (ActorAccountId, OccurredAt),
+                INDEX IX_WAE_Target (TargetAccountId, OccurredAt),
+                INDEX IX_WAE_Action (ActionCode, OccurredAt),
+                INDEX IX_WAE_Resource (ResourceType, ResourceId),
+                INDEX IX_WAE_ActorType (ActorType, OccurredAt)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+    finally:
+        cur.close()
+
+
 def _ensure_must_change_password_schema(conn) -> None:
     """TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0092): fast-path 재기동에서도
     MustChangePassword 컬럼이 존재하도록 idempotent ALTER. _ensure_web_tables 와 동일 SQL."""
@@ -2537,6 +2599,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_must_change_password_schema(conn)
     # REQ-20260518-0010 (TASK-0072): cross-account body search audit log 테이블 fast-path 보정.
     _ensure_web_account_activity_schema(conn)
+    # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 fast-path 보정.
+    _ensure_web_audit_events_schema(conn)
     _migration_added = _ensure_product_access_permissions(conn)
     if _migration_added > 0:
         try:
@@ -2680,6 +2744,8 @@ def _ensure_web_tables():
         _ensure_web_conversation_shares_schema(conn)
         # REQ-20260518-0010 (TASK-0072): cross-account body search audit log 테이블 보장 (slow path).
         _ensure_web_account_activity_schema(conn)
+        # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 보장 (slow path).
+        _ensure_web_audit_events_schema(conn)
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS WebRoles (

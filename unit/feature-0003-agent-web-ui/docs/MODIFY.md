@@ -8,6 +8,26 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0003
+- Date: 2026-05-19
+- Summary: TASK-0073 (REQ-20260519-0001, **Critical** §12.3) — Phase A0: WebAuditEvents DDL + bootstrap helper. plan §2.1 (TASK-0073) 의 Eng review lock-in (E2 schema hybrid + E4 ActorType + E1 TargetAccountId) 의 schema 정의를 코드로 정착. 본 CHG 는 schema 만 — dispatcher (Phase A1), migration (A2), RBAC (A3), endpoints (A4), admin hook (A5), user hook (A6), tests (B), frontend (C), project docs (D) 는 별 phase.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/app.py`
+    - **신설** `_ensure_web_audit_events_schema(conn)` (line ~2501 직전, `_log_search_activity` 직후, `_ensure_must_change_password_schema` 직전). DDL: `WebAuditEvents` 14 columns (Id BIGINT PK, ActorAccountId/ActorRoleId/TargetAccountId BIGINT NULL, ActorType VARCHAR(16) DEFAULT 'account', SessionId VARCHAR(64), ActionCode VARCHAR(64), ResourceType VARCHAR(32), ResourceId VARCHAR(64), ChangeJson/MaskedFields JSON, RemoteAddr VARCHAR(64), UserAgent VARCHAR(255), RequestId VARCHAR(64), OccurredAt TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3)) + 5 secondary indexes (IX_WAE_Actor / Target / Action / Resource / ActorType). Docstring 에 Eng review E1-E5 결정 근거 명시 (Approach B + Same tx admin / fail-open user + ActorType enum + TargetAccountId self filter).
+    - **fast-path hydrate** (`_ensure_seed_catchup` line ~2541): `_ensure_web_audit_events_schema(conn)` 호출 추가 (`_ensure_web_account_activity_schema` 직후). 기존 배포 재기동 시 audit table backfill.
+    - **slow-path bootstrap** (`_ensure_web_tables` line ~2748): 동일 helper 호출 추가 (`_ensure_web_account_activity_schema` 직후, `WebRoles` CREATE 직전). 신규 배포 첫 기동 시 audit table 생성.
+    - 3 위치 모두 TASK-0072 의 `_ensure_web_account_activity_schema` 패턴 답습.
+- Verification:
+  - `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` → **PASS** (helper 신설 + 2 hook 추가 syntax 검증).
+  - `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` (commit 직전 gate).
+  - 컨테이너 재기동 시 fast-path / slow-path 모두 `WebAuditEvents` DDL 적용 확인은 Phase E (make web 재배포) 에서.
+- Risks:
+  - **DDL idempotent**: `CREATE TABLE IF NOT EXISTS` — 기존 배포 재기동 시 noop. TASK-0072 패턴 검증됨.
+  - **Schema migration 정합**: ActorType `DEFAULT 'account'` 기본값으로 기존 row 가 있어도 NOT NULL 충족 (단 본 phase 는 신규 table, 기존 row 0). Phase A2 의 WebAccountActivity migration 시 ActorType="account" 명시 INSERT.
+  - **Index cardinality**: 5 secondary indexes — write 부하 5x. 단 admin 빈도 낮음 + user (대화·SQL·share·anonymous) 도 본질 write 빈도. 365일 retention 후 partitioning 검토 (Phase 2).
+  - **schema drift**: 본 cycle 의 다른 Phase 가 schema 변경 시 본 helper 의 DDL 도 update 필요. 단 schema 는 Eng review 에서 fix 됨 — drift 없음.
+- Trace: REQ-20260519-0001 → TASK-0073 → §2.1 (TASK-0073) 의 Eng review lock-in E2 + E1 + E4 → Phase A0 → CHG-20260519-0003 → REV-20260519-0001 (CEO + Eng + Phase A0 통합, Phase D)
+
 ## CHG-20260519-0002
 - Date: 2026-05-19
 - Summary: TASK-0073 (REQ-20260519-0001, **Critical** §12.3) — `/plan-eng-review` Eng review lock-in (E1-E9 + 30 test paths + 5 deadlock scenarios). Codex outside voice 의 Additional risk 9 (C7-C14) + 5 deadlock scenarios + 추가 eng items 를 architecture-level 로 lock-in. 사용자 결정 2 항목 (E1 self 정의 = Actor OR Target / E4 anonymous share audit 포함 + ActorType column) + 나머지 7 항목 prose lock-in. 본 CHG 는 plan 본문 update 만, 코드 변경 0. Phase A0 진입 ready 상태.
