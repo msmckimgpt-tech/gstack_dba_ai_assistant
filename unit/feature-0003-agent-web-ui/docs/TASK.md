@@ -15,6 +15,7 @@ source_of_truth: true
 - Last Updated: 2026-05-15
 
 ## 2. Task Queue
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-19 (TASK-0073, Critical §12.3 — 모든 계정 행위 audit 기능 + 관리 콘솔 조회, CEO review 9 + Codex outside voice 14 findings + redesign 흡수) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0072, Critical §12.3 — 타 계정 대화 검색·필터 + outside voice 보강) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0071, Minor §12.3 — shell grid row hotfix) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0070, Minor §12.3 — admin list-detail grid row hotfix) -->
@@ -25,6 +26,7 @@ source_of_truth: true
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0065, Minor §12.3 — UI 정리 follow-up) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0063, Major §12.3) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-15 -->
+- [ ] TASK-0073 (REQ-20260519-0001, **Critical** §12.3 — 모든 계정 행위 audit + 관리 콘솔 조회) 사용자 in-cycle 결정 (CEO review 9 항목 + Codex outside voice 14 findings 흡수 후 Major redesign): Mode=HOLD SCOPE, Scope=Approach B (admin + 대화·SQL·share·search), Storage=DB-only (`WebAuditEvents` 365일 retention + chunked PK purge), Hook=Web-ui split (admin 13 endpoint = direct dispatcher + Same tx / user 4 endpoint = best-effort delegate + fail-open, TASK-0072 패턴 답습), MySQL log=별 cycle 분리 (slow_query_log 본 cycle 제외), RBAC=`audit.read.own` + `audit.read.any` + `audit.export` + `audit.purge` 4건 (.own 은 dba 포함 모든 role 자동 grant, .any 는 admin/dba) + permission group `audit` 신규 + CONVENTIONS.md §10.6 동시 갱신, Tx=split (admin Same tx fail-safe / user fail-open), Masking=Action-specific allowlist builder (raw request 검증 X, ActionCode 별 명시 화이트리스트, free-text PII explicit redact/hash), Flag=`AGENT_AUDIT_ENABLED` prod (`AGENT_MODE!=dev/test`) startup fail-closed + dev/test toggle, WebAccountActivity 흡수 (TASK-0072 PIPA §29 1년 retention inherit, ActionCode `conversation.search.any` / `conversation.snippet.any` mapping, `_log_search_activity` 는 새 dispatcher 의 user best-effort path 로 wrap). 상세 plan 은 §2.1 Implementation Plan (TASK-0073). **상태**: `approved-after-outside-voice` — CEO review 9 decision 확정 → Codex outside voice 14 findings + 6 minimum-fix dispatch → 9 decision 중 5 reset (Storage·MySQL log·Hook·Tx·Masking) → redesign 사용자 확정 (2026-05-19). **사용자 메모리**: `feedback_outside_voice_for_rbac` 정책 강제 적용 (Critical RBAC + audit 표면 신설).
 - [ ] TASK-0072 (REQ-20260518-0010, **Critical** §12.3 — 타 계정 대화 검색·필터) 사용자 in-cycle 결정 3 항목: (1) 권한 = 기존 `conversation.list.any` 재활용, (2) 검색 범위 = 제목 + 계정명 + 메시지 본문 (SQL/결과셋 제외), (3) UI = 사이드바 위 검색바 + chip. 상세 plan-review 는 §2.1 Implementation Plan (TASK-0072). **상태**: `outside-voice-review` — Codex / security / ux 3 개 외부 시각 dispatch 후 D1~D3 합의 → Phase A backend 진입. **사용자 메모리**: `feedback_outside_voice_for_rbac` 정책 강제 적용.
 - [x] TASK-0071 (REQ-20260518-0009, Minor §12.3 — shell grid row hotfix, cascade root of TASK-0068~0070) 사용자 3 차 screenshot 보고: dashboard pane 처럼 list-detail 사용 안 하는 화면에서 큰 viewport + 짧은 content 조합 시 sidebar / commit-bar 가 viewport 의 약 70% 위치까지만 차지 + 그 아래 회색 빈 영역. 원인: `.app-shell` / `.admin-shell` 의 `display: grid; height: 100vh` 만 정의 + `grid-template-rows` 미정의 → default `auto` → row track height = 자식 max-content. grid container 100vh 와 track height 의 mismatch 시 track 아래 빈 영역. 이전 cycle 의 fix 들은 column 안의 stretch chain 만 해결, column 의 height 결정 layer (grid track) 미처리 = cascade 의 root. Fix: `.app-shell` 과 `.admin-shell` 양쪽에 `grid-template-rows: minmax(0, 1fr)` 추가 (2 줄, 동일 패턴 일관성). 검증: 1320x900 viewport 에서 admin-shell h=900, column h=900, commit-bar bottom=900 (viewport bottom 정확히 sticky). screenshot 첨부. cache-bust `v=20260518-shell-grid-rows` (admin.html / index.html 양쪽 동일).
 - [x] TASK-0070 (REQ-20260518-0008, Minor §12.3 — admin list-detail grid row hotfix of TASK-0069) 사용자 2 차 screenshot 보고: `역할` / `제품` 등 항목이 적은 pane 에서 큰 viewport (height 800+) 의 경우 list-col / detail-col box 가 viewport 의 일부만 차지하고 그 아래 회색 빈 영역. 항목이 많은 `계정` (26 row) 또는 좁은 화면에서는 content 가 row 채워 정상. 원인: `.admin-list-detail` 의 grid-template-rows 미정의 → default auto → row height = content. align-items: stretch 는 row 내부 column 분배만 담당 — row 자체 height 결정 X. Fix: `grid-template-rows: minmax(0, 1fr)` 추가 (1 줄). 검증: 큰 viewport (1320x900) 에서 listDetail h=682, listCol/detailCol h=682 (이전 ~200), cbar viewport bottom sticky. screenshot 첨부. cache-bust `v=20260518-admin-list-rows`.
@@ -38,6 +40,158 @@ source_of_truth: true
 - [x] TASK-0061 (REQ-20260515-0003 ~ REQ-20260515-0010, **Major** §12.3 — UI 상태 / auth(비밀번호 초기화) / 파괴적 데이터(bulk delete) 일괄 변경) GOAL.md 8 항목 합본 cycle. **/qa round 2 심층 검증 완료 (2026-05-15, CHG-20260515-0004)** — Phase 4 Point rail dot click smooth scroll + active dot id 갱신, Phase 5 캘린더 월 이동 + day click → 시각 list 모두 정상. Phase 3/6/8 destructive endpoints 는 운영 환경 사용자 명시 시점에 실 호출 검증 권고. round 2 신규 이슈 0 건. 답변 버블 내부 실시간 step 진행 (Phase 1) + 신규 대화 첫 요청 polling 즉시 연결 (Phase 2) + processing 만료 감지 + 붉은 badge (Phase 3) + 우측 Point rail (Phase 4) + 캘린더/시각 이동 (Phase 5) + 관리자 비밀번호 초기화 (Phase 6) + admin select-all 현재 페이지 fix (Phase 7) + 내 대화 Ctrl/Shift bulk delete (Phase 8). 상세 plan-review 는 §2.1 Implementation Plan (TASK-0061). **사용자 승인 요청 시점**: §2.1 Plan 확정 후 Phase 6 (Critical 분면 — 비밀번호 초기화, 인증 모델 영향) 진입 전. Phase 1~5, 7, 8 (Major) 는 plan-review 통과 후 Execute.
 - [x] TASK-0060 (REQ-20260515-0002, Minor §12.3) Product별 접근 가능 DB의 실제 스키마/데이터를 분석해 Product scope 시스템 프롬프트를 작성하고, Role detail 의 `전 Product 공통` 프롬프트를 역할명에 맞게 채움. 분석 대상: `KR(킹스레이드)` 접근 DB `dbgame,dblog,dbauth`, `MV(마이크로볼츠)` 접근 DB `account_db,dev_1_1_1_20,have_00,log_v2,global_db`. `log_v2`는 DB는 존재하지만 테이블 0개로 확인. 실제 DB에는 product prompt 2건 + role 공통 prompt 5건(`pending/operator/admin/sales/dba`) upsert 완료. runtime 의 누적 적용은 feature-0002 `compose_system_prompt()` 수정으로 보장.
 - [x] TASK-0059 (REQ-20260515-0001, **Major** §12.3 — 사용자 대화 routing 데이터 영역, 인증/인가 모델 무변경) "새 대화" 버튼 누른 후 첫 메시지를 보내도 backend 가 직전 active 대화에 메시지를 추가하는 lazy-create routing 결함 수정. 사용자가 신규 대화 의도로 보낸 첫 메시지가 잘못된 대화 컨텍스트로 귀속되어 발견. **근본 원인**: frontend `beginPendingConversation()` 이 `state.activeConversationId=""` 로 두고 backend row 를 lazy 생성 위임하나 (TASK-0048 정책), `/api/ask` 의 빈 `conversation_id` 경로가 `_resolve_conversation_for_account` → `_repair_current_conversation` 으로 폴백해 `account.last_conversation_id` (직전 대화) 를 반환. frontend 의 "pending = 신규 의도" 가 backend 로 전달되지 않아 "session 초기화 후 직전 대화 이어받기" 와 구분 불가. **Fix Phase A**: frontend `sendPrompt()` 가 `isLazyCreate=true` 일 때 `askBody.lazy_create = true` 를 추가. **Phase B**: backend `_resolve_conversation_for_account(..., force_new=False)` kwarg 추가, `_repair_current_conversation` 의 기존 `force_new` 파라미터로 위임. `/api/ask` 의 빈 `request_conversation_id` 경로에서 `data.get("lazy_create")` 가 truthy 이면 `force_new=True` 호출. **Phase C**: frontend `loadConversations()` 의 `state.activeConversationId` 덮어쓰기에 `!state.pendingNewConversation` 가드 추가 — pending 모드 race 시 직전 대화로 복귀 차단. **Phase D**: MODIFY.md CHG-20260515-0001 + REVIEW.md REV-20260515-0001 기록.
+
+### 2.1 Implementation Plan (TASK-0073)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 Critical 등급 변경 계획이다. **상태**: `approved-after-outside-voice`. 사용자가 2026-05-19 에 CEO review 9 trade-off 결정 → Codex outside voice 14 findings + 6 minimum-fix → 9 decision 중 5 reset (Major redesign) → redesign 최종 확정. CEO review · outside voice · redesign 의 결정을 모두 plan 에 흡수.
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-19 (TASK-0073 Phase A0~F 일괄, Critical 등급 audit 표면 신설 + WebAccountActivity 흡수 + RBAC 4건 .own/.any + Tx split + Allowlist builder + AGENT_AUDIT_ENABLED prod fail-closed) -->
+
+#### 사용자 in-cycle 결정 (CEO review 9 항목, redesign 후)
+
+| 결정 | 채택안 | 근거 |
+|---|---|---|
+| Mode | HOLD SCOPE | 단일 cycle bulletproof. 추가 expansion 다음 cycle |
+| Scope (Approach) | B (Balanced) + WebAccountActivity 흡수 | admin + 대화·SQL·share·search 행위 추적. PIPA §29 1년 retention inherit |
+| Storage | DB-only — `WebAuditEvents` (365일 retention + chunked PK purge) | mysql 단일 layer · 트랜잭션 정합 · admin UI filter 즉시 활용 |
+| Hook 위치 | Web-ui split — admin endpoint = direct dispatcher (Same tx), user endpoint = best-effort delegate (fail-open) | TASK-0072 fail-open 패턴 답습 + `/api/ask` long-running deadlock 회피 |
+| MySQL log | 별 cycle 분리 (slow_query_log 본 cycle 제외) | `slow_query_log` = mysql server log (file) — DB-only 와 모순 / retention·RBAC 미적용 (Codex C1) |
+| RBAC | `audit.read.own` (모든 role dba 포함 auto-grant) + `audit.read.any` (admin/dba .any superset) + `audit.export` + `audit.purge` 4건 + permission group `audit` 신규 + CONVENTIONS.md §10.6 동시 갱신 | 기존 `.own/.any` 패턴 정합 (Codex C8) · dba seed 누락 차단 (Codex C9) · misc fallback 차단 (Codex C10) |
+| Tx 정책 | Tx split — admin Same tx (정합성 우선 fail-safe) / user fail-open best-effort | `/api/ask` 별 thread/connection + LLM long-running lock contention 회피 (Codex C3, C4) |
+| Masking | Action-specific allowlist builder | dispatcher 가 raw request 검증 X. ActionCode 별 명시 `build_change_json(action, actor_ctx, request_ctx, response_ctx)` 화이트리스트 only insert. free-text PII (sql/description/system_prompt/message/result) explicit redact/hash. DoS 차단 (Codex C6) |
+| Feature flag | `AGENT_AUDIT_ENABLED` prod (`AGENT_MODE!=dev/test`) startup fail-closed + dev/test toggle | flag bypass surface 차단 (Codex C5) · prod 에서 audit off = 시작 차단 |
+
+#### outside voice 종합 결정 (Codex)
+
+Codex outside voice (read-only sandbox, model_reasoning_effort=high, 5분 timeout) 가 14 findings + 6 minimum-fix requirements + 5 deadlock scenarios 도출. 본 plan 의 9 CEO decision 중 5 개 (Storage·MySQL log·Hook·Tx·Masking 의 5 domain) 가 직접 reset 됨.
+
+| # | finding | 처리 |
+|---|---|---|
+| C1 | DB-only + slow_query_log 통합 모순 | slow_query_log 별 cycle 분리 |
+| C2 | `WebAccountActivity` (TASK-0072) 이미 존재 | 흡수: ActionCode mapping + 기존 row migration + `_log_search_activity` wrap |
+| C3 | Same tx + autocommit=True + agent_core 별 connection | Tx split — admin = Same tx / user = fail-open |
+| C4 | `/api/ask` Same tx deadlock (LLM 실행 동안 lock hold) | user endpoint Same tx 제외 |
+| C5 | `AGENT_AUDIT_ENABLED=0` bypass surface | prod startup fail-closed + dev/test only toggle |
+| C6 | Hybrid masking unknown raise = DoS + free-text PII 미차단 | Action-specific allowlist builder (raw 검증 X) |
+| C7 | `.self` 정의 미결 (Actor vs Target vs Resource owner) | eng review lock-in (SECURITY.md §8) |
+| C8 | RBAC `.self/.read` vs 기존 `.own/.any` 불일치 | `.own/.any` 로 재정렬 |
+| C9 | dba role seed/catchup 누락 | dba 명시 auto-grant + `_ensure_seed_catchup` hydrate 보강 |
+| C10 | permission group `audit` 추가 시 misc fallback | CONVENTIONS.md §10.6 동시 갱신 |
+| C11 | TASK-0058 share anonymous path 누락 가능 | eng review lock-in (`/api/public/share/{token}` view + fork audit) |
+| C12 | `_get_client_ip` (app.py:560) X-Forwarded-For trust 약함 | eng review lock-in (Caddy XFF strip/set 검증) |
+| C13 | purge self-audit idempotency / rollback / 재시도 | eng review lock-in |
+| C14 | 365일 retention + Phase 2 partitioning deferrable + range delete 충돌 | chunked PK purge 본 cycle 필수 |
+
+#### Must-fix 5 (Codex minimum-fix, 본 cycle 강제)
+
+1. **WebAccountActivity 흡수** — Phase A2 migration. 기존 row → `WebAuditEvents` 의 ActionCode `conversation.search.any` / `conversation.snippet.any` 변환 + RemoteAddr/UserAgent NULL (TASK-0072 schema 에는 부재). `_log_search_activity` 는 새 dispatcher 의 user best-effort path 로 wrap (signature transparent 보존). 기존 `WebAccountActivity` DROP 은 별 cycle (data 보존 backup 후).
+2. **`.own/.any` RBAC + .own SQL filter** — `audit.read.own` (dba 포함 모든 role auto-grant), `audit.read.any` (admin/dba .any superset), `audit.export` (admin/dba), `audit.purge` (admin only). `.own` SQL filter: `WHERE ActorAccountId = :session_account_id` 강제. TASK-0058 share read-gate 패턴 답습 (read-gate 먼저 = 404 metadata leak 차단 + `.any` superset semantics).
+3. **Action-specific allowlist builder** — dispatcher 는 raw request 검증 X. 각 ActionCode 별 `build_change_json(action: str, actor: dict, request_ctx: dict, response_ctx: dict) -> dict` 명시 화이트리스트. unknown action / field 는 builder 단계에서 raise (dispatcher 단계 X). free-text PII (sql/description/system_prompt/message/result/temporary_password/Token/SessionTokenHash/PasswordHash/API key cipher) explicit redact/hash. SECURITY.md §8 의 sensitive field catalog 가 builder source-of-truth.
+4. **`AGENT_AUDIT_ENABLED` prod fail-closed** — startup 시 `AGENT_MODE` 와 `AGENT_AUDIT_ENABLED` 동시 check. prod (`AGENT_MODE` 가 `dev` / `test` 가 아닐 때) 에서 `AGENT_AUDIT_ENABLED!=1` 이면 시스템 시작 차단 + stderr `[FATAL] AUDIT REQUIRED IN PROD — set AGENT_AUDIT_ENABLED=1`. dev/test 만 toggle 허용. flag state changes 는 audit row 불가 (env 변경은 DB mutation 아님) → startup stderr log 만.
+5. **Tx split — admin Same tx + user fail-open** — admin 13 endpoint (account update / role create-update-delete / permission grant / product CRUD / password-reset / account delete) = dispatcher direct call, business tx 에 audit INSERT 포함 (audit fail = rollback). user 4 endpoint (`/api/ask`, `/api/conversations/{cid}/share` POST·DELETE, `/api/public/share/{token}/fork` POST, `/api/conversations` search snippet) = best-effort delegate (TASK-0072 `_log_search_activity` 패턴), audit fail = stderr only, main flow 진행. dispatcher SPOF mitigation: verify-completion.sh check + 100% test coverage on dispatcher.
+
+#### Additional risk 9 (Codex C7-C14, eng review lock-in)
+
+1. `audit.read.own` 의 self 정의 (ActorAccountId vs TargetAccountId) — SECURITY.md §8 명시 (admin 의 password-reset target=user 이벤트가 user 자기 audit 에 보이는지)
+2. ChangeJson HTML escape on admin UI detail pane (TASK-0058 share.html `<pre>` 패턴 답습)
+3. `_get_client_ip` (app.py:560) trust 패턴 검토 + Caddy XFF strip/set 설정 확인 (feature-0006-lan-proxy-access)
+4. purge self-audit + idempotency key + chunked PK cursor 재시작 가능
+5. chunked purge `ORDER BY Id LIMIT N` 본 cycle 필수 (Phase 2 deferrable 아님)
+6. ChangeJson schema hybrid (indexed columns `ActionCode`/`ResourceType`/`ResourceId`/`OccurredAt` + JSON column `ChangeJson`/`MaskedFields`)
+7. dispatcher SPOF — verify-completion.sh check + 100% test coverage
+8. decorator pattern `@audit_action("admin.account.update")` for hook site DRY (선택)
+9. test infra (`feature-0003-agent-web-ui/tests/`) 보강 — masking builder + RBAC .own enforcement + WebAccountActivity migration smoke
+
+#### 영향 파일 (최종, slow_query_log 제외 + WebAccountActivity migration 추가 = 13 파일)
+
+Backend:
+- [src/app.py](../src/app.py) —
+  - Phase A0: `_ensure_web_audit_events_schema(conn)` 신설 (DDL: `Id BIGINT PK, ActorAccountId, ActorRoleId, SessionId, ActionCode VARCHAR(64), ResourceType VARCHAR(32), ResourceId VARCHAR(64), ChangeJson JSON, MaskedFields JSON, RemoteAddr VARCHAR(64), UserAgent VARCHAR(255), RequestId VARCHAR(64), OccurredAt TIMESTAMP(3); INDEX (ActorAccountId, OccurredAt) / (ActionCode, OccurredAt) / (ResourceType, ResourceId)`). `_ensure_seed_catchup` hydrate.
+  - Phase A1: `record_audit_event(conn, actor, action, resource_type, resource_id, change_json, masked_fields)` dispatcher + `AGENT_AUDIT_ENABLED` startup fail-closed gate (`AGENT_MODE` check) + `_get_client_ip` 재사용.
+  - Phase A2: WebAccountActivity migration helper — 기존 row → WebAuditEvents transform (ActionCode `conversation.search.any` / `conversation.snippet.any`, ActorAccountId=AccountId, ResourceType=`conversation`, ResourceId=TargetOwnerId, ChangeJson=`{query_hash, matched_count}`, OccurredAt=CreatedAt, RemoteAddr/UserAgent NULL). `_log_search_activity` 는 새 dispatcher 의 user best-effort path 로 wrap (transparent signature 보존, 호출처 변경 X).
+  - Phase A3: `PERMISSION_DEFINITIONS` +4 (`audit.read.own` / `audit.read.any` / `audit.export` / `audit.purge`) + dba role 자동 grant + `_ensure_seed_catchup` 의 `_ensure_permission_catalog` 호출 순서 강제 (TASK-0063 회귀 fix 패턴 답습).
+  - Phase A4: 5 endpoint 신설 (`GET /api/admin/audits` filter/cursor, `GET /api/admin/audits/{id}`, `GET /api/admin/audits/export.csv`, `GET /api/admin/audits/actors`, `GET /api/admin/audits/resources`) + `_require_permission` + `.own` SQL filter (`WHERE ActorAccountId=session_account_id`) 강제 + chunked purge `POST /api/admin/audits/purge` (`audit.purge` gate, `ORDER BY Id LIMIT N` cursor, idempotency key, self-audit row).
+  - Phase A5: admin 13 mutation endpoint hook (direct dispatcher call, Same tx). ActionCode 별 `build_change_json` allowlist (`admin.account.update`, `admin.account.delete`, `admin.account.password-reset`, `admin.role.create/update/delete`, `admin.role.permission.grant/revoke`, `admin.account.permission.override`, `admin.product.create/update/delete` 등 13).
+  - Phase A6: user 4 endpoint hook (best-effort delegate, fail-open). `/api/ask` (ActionCode `conversation.ask`), `/api/conversations/{cid}/share` POST/DELETE (`conversation.share.create` / `conversation.share.revoke`), `/api/public/share/{token}/fork` (`share.fork`), `/api/conversations` search snippet (TASK-0072 `_log_search_activity` wrap 통한 통합).
+
+Frontend:
+- [src/static/admin.html](../src/static/admin.html) — 신규 탭 "감사 로그" (Roles 다음 / Products 사이) + filter row (기간 datepicker / 액션 dropdown / actor search / resource search / action group chip) + list-detail pane + ChangeJson diff viewer (`<pre>` HTML escape). `.admin-shell` grid TASK-0071 패턴 (`grid-template-rows: minmax(0, 1fr)`) 답습.
+- [src/static/admin.js](../src/static/admin.js) — `ADMIN_AUDIT_*` state + `renderAuditList()` + `renderAuditDetail()` (ChangeJson HTML escape via `<pre>`) + filter handlers + CSV export button (`audit.export` gate, hide-vs-disable=hide TASK-0052 패턴) + Section permission `audit` group rendering (CONVENTIONS.md §10.6 신규 group 의 admin section "관리" 우선 노출).
+- [src/static/styles.css](../src/static/styles.css) — `.admin-audit-*` ~10 클래스 + `.admin-audit-diff` token + `.admin-audit-masked` placeholder style + cache-bust `v=20260519-audit-tab`. `.admin-list-detail` 의 grid row contract 답습.
+- [src/static/app.js](../src/static/app.js) — `PERMISSION_GROUP_ORDER` 에 `audit` 추가 + `WORK_SCREEN_PERMISSION_SECTIONS` 의 management section 에 `audit.read.own` 만 placeholder 노출 (작업 화면에 self-audit 진입점 본 cycle scope 외, placeholder only).
+
+문서:
+- `docs/FUNCTION.md` — REQ-20260519-0001 + AC 12~15개 (audit dispatcher / RBAC 4 / .own filter / masking allowlist / `AGENT_AUDIT_ENABLED` prod gate / WebAccountActivity migration / chunked purge / slow_query_log Phase 2 분리).
+- `docs/TASK.md` — 본 §2.1 + Task Queue entry + Completion Checklist.
+- `docs/MODIFY.md` — Phase A0~F 별 CHG-20260519-0001 entry.
+- `docs/REVIEW.md` — CEO review 9 decision 결정 근거 + Codex 14 findings 흡수 이력 + Must-fix 5 + Additional risk 9 + redesign trace.
+- `docs/REPORT.md` — Phase 별 변경 요약 + git 동기화 결과 (§16.5 Step 6).
+- `docs/TEST.md` — TEST 케이스 정의 (§2 rewrite): dispatcher unit + masking allowlist + RBAC `.own` enforcement + WebAccountActivity migration smoke + `AGENT_AUDIT_ENABLED` prod fail-closed + chunked purge + admin UI smoke.
+
+프로젝트 수준:
+- `repo/docs/SECURITY.md` §8 신설 — Audit subsystem 정책: Sensitive field catalog (source-of-truth) + Action-specific allowlist policy + `.own/.any` self 정의 + `audit.purge` self-audit + chunked PK 정책 + `AGENT_AUDIT_ENABLED` prod fail-closed gate. TASK-0072 PIPA §29 1년 retention inherit 명시.
+- `repo/docs/DECISIONS.md` ADR-0019 신설 — Audit subsystem 도입 결정 근거: Approach B 선택 / WebAccountActivity 흡수 / Tx split / Allowlist builder / CEO review + Codex outside voice 흡수.
+- `repo/docs/ARCHITECTURE.md` §4 (기능 맵 — 책임 영역) + §6 (의존성 맵) — dispatcher cross-feature dependency 표시.
+- `repo/docs/CONVENTIONS.md` §10.6 — permission group `audit` 신규 + 작업 화면 / admin 콘솔 section 배치 갱신 (admin 콘솔 management section 의 audit.read.any/.export/.purge 우선 / 작업 화면 management section 의 audit.read.own placeholder).
+- `repo/docs/STATUS.md` — feature-0003-agent-web-ui row 갱신 (TASK-0073 entry).
+
+#### Phase 순서 (최종)
+
+1. **Phase A0 — WebAuditEvents DDL** — `_ensure_web_audit_events_schema` + `_ensure_seed_catchup` hydrate. py_compile + 컨테이너 재시작으로 DDL 적용 확인.
+2. **Phase A1 — dispatcher + `AGENT_AUDIT_ENABLED` gate** — `record_audit_event(...)` + startup fail-closed gate. py_compile.
+3. **Phase A2 — WebAccountActivity 흡수 + migration helper** — 기존 row transform + `_log_search_activity` wrap. data 보존 (기존 table drop 은 별 cycle).
+4. **Phase A3 — RBAC catalog +4 + permission group `audit` + CONVENTIONS.md §10.6** — `PERMISSION_DEFINITIONS` +4 + dba 명시 auto-grant + hydrate 순서 강제 + admin.js + app.js section rendering. py_compile + node --check.
+5. **Phase A4 — 5 audit endpoint + chunked purge** — `_require_permission` + `.own` SQL filter + chunked PK cursor + self-audit row. py_compile.
+6. **Phase A5 — admin 13 endpoint hook (Same tx)** — direct dispatcher + ActionCode 별 `build_change_json` allowlist. py_compile + HTTP smoke.
+7. **Phase A6 — user 4 endpoint hook (fail-open)** — `/api/ask` + share + search 의 4 hook. py_compile.
+8. **Phase B — HTTP smoke 8 시나리오** — `tests/test_audit_dispatcher.py` + `tests/test_audit_rbac.py`: (1) admin update → audit row + Same tx rollback, (2) `/api/ask` → user fail-open silent, (3) `.own` actor=self → 본인 row 만, (4) `.own` actor=other → 403 byte-equal, (5) `.any` actor=any → 전체, (6) `.export` CSV + masked, (7) `.purge` chunked + self-audit row, (8) `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` → startup fail.
+9. **Phase C — Frontend** — admin.html 탭 + admin.js 렌더 + styles.css + cache-bust. node --check.
+10. **Phase D — 프로젝트 수준 docs** — SECURITY §8 + DECISIONS ADR-0019 + ARCHITECTURE §4 + CONVENTIONS §10.6 + STATUS 일괄.
+11. **Phase E — verify-completion + commit** — `make web` 재배포 + browser smoke (admin 탭 진입 / filter / detail pane / CSV export gated / 새 admin action audit 검증) + `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` + 사용자 명시 commit confirm.
+12. **Phase F — /plan-eng-review 후속 lock-in** — Additional risk 9 (Codex C7-C14) lock-in. Phase F 결과 적용은 별 commit (필요 시 follow-up TASK).
+
+#### 위험도 평가 (최종)
+
+| 영역 | 위험도 | 보강 |
+|---|---|---|
+| RBAC bypass (.own ↔ .any) | Critical | TASK-0058 share read-gate 패턴 + Phase B smoke 8 시나리오 + 404/403 byte-equal |
+| PII leak (ChangeJson masking) | Critical | Action-specific allowlist builder (raw 검증 X) + SECURITY.md §8 sensitive field catalog + admin UI HTML escape |
+| Tx atomicity (admin Same tx) | Major | dispatcher SPOF = verify-completion.sh check + 100% test coverage + builder explicit raise on unknown action |
+| `/api/ask` deadlock | Critical | user endpoint fail-open + TASK-0072 `_log_search_activity` 패턴 답습 + Same tx 제외 |
+| Feature flag bypass | Major | `AGENT_AUDIT_ENABLED` prod startup fail-closed + dev/test only toggle |
+| WebAccountActivity 흡수 | Major | migration data 보존 (기존 table drop 별 cycle backup 후) + dual source 일시 공존 → 단일 source 전환 |
+| RBAC hydrate 순서 | Major | TASK-0063 회귀 fix 패턴 답습 (`_ensure_permission_catalog` 가 `_ensure_seed_roles` 앞) |
+| 365일 chunked purge | Major | `ORDER BY Id LIMIT N` cursor 재시작 가능 + idempotency key + `audit.purge` self-audit |
+| 회귀 (TASK-0072 search) | Minor | `_log_search_activity` wrap 시 호출처 signature 보존 (transparent wrap) |
+| 회귀 (admin layout) | Minor | `.admin-shell` / `.admin-list-detail` grid row contract TASK-0071 패턴 답습 |
+
+**전체 등급**: Critical (audit 표면 신설 + RBAC 4 catalog 확장 + Tx split + PII masking allowlist + dispatcher SPOF + WebAccountActivity 흡수).
+
+#### 검증 계획
+
+각 Phase 종료 후:
+- (a) `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py`
+- (b) `node --check unit/feature-0003-agent-web-ui/src/static/{admin,app}.js`
+
+전체 완료 후:
+- (c) Phase B 의 HTTP smoke 8 시나리오 (`tests/test_audit_*.py`)
+- (d) `make web` 재배포 + browser smoke (admin 탭 / filter / detail pane / CSV export gated / 새 admin action 발생 시 audit row 검증)
+- (e) `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui`
+- (f) `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` 시작 시 fail-closed 검증
+- (g) WebAccountActivity 기존 row 가 WebAuditEvents 에 migration 됐는지 SQL count 확인
+
+#### outside voice 결과 요약 (REVIEW.md 정본)
+
+Codex outside voice (read-only sandbox, model_reasoning_effort=high, 5분 timeout):
+- 14 findings + 6 minimum-fix requirements + 5 deadlock scenarios 도출
+- 본 plan 의 9 CEO decision 중 5 reset (Storage·MySQL log·Hook·Tx·Masking 의 5 domain)
+- TASK-0072 `WebAccountActivity` 발견 — 직전 검토 보고가 놓친 결손, 본 plan 의 WebAuditEvents 가 superset 으로 흡수
+- 5 minimum-fix 모두 redesign 에 흡수
+- 9 additional risk 는 eng review lock-in (Phase F)
+
+REVIEW.md REV-20260519-0001 에 각 finding + minimum-fix + redesign 흡수 이력 + 결정 근거 기록 예정 (Phase D).
+
+---
 
 ### 2.1 Implementation Plan (TASK-0072)
 

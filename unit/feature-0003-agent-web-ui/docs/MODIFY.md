@@ -8,6 +8,29 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0001
+- Date: 2026-05-19
+- Summary: TASK-0073 (REQ-20260519-0001, **Critical** §12.3) — 모든 계정 행위 audit 기능 + 관리 콘솔 조회 plan 본문 작성 (plan-approved 단계, 코드 변경 0). CEO review 9 decision (Mode=HOLD SCOPE, Scope=Approach B Balanced, Storage=DB-only, Hook=Web-ui 단일, MySQL log=통합, RBAC=4건 .self/.any, Tx=Same tx, Masking=Hybrid, Flag=AGENT_AUDIT_ENABLED=1) → Codex outside voice 14 findings + 6 minimum-fix dispatch (read-only sandbox, model_reasoning_effort=high) → 9 decision 중 5 reset (Storage·MySQL log·Hook·Tx·Masking 의 5 domain) → Major redesign 사용자 확정. WebAccountActivity (TASK-0072) 흡수 결정 (직전 검토 보고가 놓친 결손, codex finding C2). 본 CHG 는 plan 본문 작성만, Phase A0 부터 별 cycle 시작.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/docs/TASK.md`
+    - Task Queue 에 TASK-0073 entry 추가 (in-cycle 결정 9 항목 + 상태 `approved-after-outside-voice` + 사용자 메모리 `feedback_outside_voice_for_rbac` 적용).
+    - `<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-19 (TASK-0073 Phase A0~F 일괄, Critical 등급 audit 표면 신설 + WebAccountActivity 흡수 + RBAC 4건 .own/.any + Tx split + Allowlist builder + AGENT_AUDIT_ENABLED prod fail-closed) -->` marker.
+    - §2.1 Implementation Plan (TASK-0073) section 신설 (§2.1 (TASK-0072) 위에 시간 역순 배치). 본 plan 의 구성: CEO 9 decision 표 + outside voice 종합 결정 표 (Codex 14 findings) + Must-fix 5 + Additional risk 9 (eng review lock-in) + 영향 파일 13 + Phase A0~F 순서 + 위험도 평가 표 10 + 검증 계획 + outside voice 결과 요약.
+- Verification:
+  - `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` (Phase A0 진입 전, plan-approved commit).
+  - 본 CHG 는 plan 본문 작성만이라 py_compile / node --check / HTTP smoke 적용 대상 없음.
+  - 외부 검증: Codex outside voice (`codex exec -s read-only -c 'model_reasoning_effort="high"'`) 14 findings + 6 minimum-fix 도출 → 본 plan 의 redesign 에 모두 흡수.
+- Risks:
+  - **PII leak (ChangeJson masking)**: Action-specific allowlist builder + SECURITY.md §8 sensitive field catalog (Phase D 작성) + admin UI HTML escape.
+  - **RBAC bypass (.own ↔ .any)**: TASK-0058 share read-gate 패턴 + Phase B smoke 8 시나리오 + 404/403 byte-equal.
+  - **Tx atomicity (admin Same tx)**: dispatcher SPOF = verify-completion.sh check + 100% test coverage + builder explicit raise on unknown action.
+  - **`/api/ask` deadlock**: user endpoint fail-open + TASK-0072 `_log_search_activity` 패턴 답습 + Same tx 제외.
+  - **Feature flag bypass**: `AGENT_AUDIT_ENABLED` prod (`AGENT_MODE!=dev/test`) startup fail-closed + dev/test only toggle.
+  - **WebAccountActivity 흡수**: migration data 보존 (기존 table drop 별 cycle backup 후) + dual source 일시 공존 → 단일 source 전환.
+  - **RBAC hydrate 순서**: TASK-0063 회귀 fix 패턴 답습 (`_ensure_permission_catalog` 가 `_ensure_seed_roles` 앞).
+  - **365일 chunked purge**: `ORDER BY Id LIMIT N` cursor 재시작 가능 + idempotency key + `audit.purge` self-audit row.
+- Trace: REQ-20260519-0001 → TASK-0073 → §2.1 Implementation Plan (TASK-0073) + Codex outside voice 14 findings + 6 minimum-fix → CHG-20260519-0001 → REV-20260519-0001 (Phase D)
+
 ## CHG-20260518-0010
 - Date: 2026-05-18
 - Summary: TASK-0072 (REQ-20260518-0010, **Critical** §12.3) — 타 계정 대화 검색·필터 + WebAccountActivity audit log 신설. Phase A0~E. outside voice 3 review (security FIX-FIRST, adversarial Blocker + 3 sub-spec, ux NEEDS-TWEAK) 의 4 must-fix + 3 sub-spec + 6 risk 모두 흡수. UI 위치 = Spotlight modal (Cmd/Ctrl+K) + 사용자 변형 ("+ 새 대화" 우측 같은 높이 돋보기 icon). 사용자 in-cycle 결정 5 항목 채택.
