@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0007
+- Date: 2026-05-19
+- Decision: TASK-0081 (REQ-20260519-0009, Minor §12.3) — `app.js` 의 `beginPendingConversation()` early-return guard 조건을 `state.pendingNewConversation` 단독 → `state.pendingNewConversation && state.busyConversations.has(PENDING_CONV_SENTINEL)` 로 좁힘. 추가로 `sendPrompt()` 의 lazy-create catch 분기 진입 시점에 `state.pendingNewConversation = false` cleanup 1 줄 명시.
+- Reason: 사용자 직접 보고 — "새 대화에서 요청을 보낸 후, 다시 새 대화로 별개의 요청을 보내려고 했을 때 진행되지 않는 이슈" + 증상 추가 확인 ("두 번째 send 를 진행하는 상호작용 (요청 UI 버튼, Ctrl+Enter) 가 막혀있다"). Explore subagent 의 코드 trace 와 직접 코드 검토 (line 333~337 `isCurrentConvBusy()` + line 2993 `beginPendingConversation` early-return + line 3437 `sendPrompt` busy guard + line 3533~3551 catch 분기) 로 root cause 2 군데 확정. (1) `beginPendingConversation` early-return 가 stale `pendingNewConversation` flag 만으로 진입 차단 — catch 분기가 flag cleanup 누락이라 한 번 실패한 lazy-create 가 두 번째 "+ 새 대화" 진입 자체를 막음. (2) catch 분기 cleanup 부재. fix 는 두 layer 모두 가드.
+- Alt 거부:
+  - **`beginPendingConversation()` 의 가드를 완전히 제거**: 사용자 클릭 의도를 100% 신뢰하고 항상 reset 후 진입. 단점 — 첫 lazy-create 가 실제 in-flight (sentinel 점유) 인 race window 에서 사용자가 클릭 시 두 번째 sentinel add 가 동일 KEY 충돌 + busyConversations Set 의 멱등성으로 보이지만 finally 의 delete 가 두 번 일어나 race. 안전 마진을 위해 sentinel 점유 시에만 보류 유지.
+  - **`sendPrompt()` 의 line 3437 `isCurrentConvBusy()` 자체 우회**: 사용자가 두 번째 새 대화에서 send 를 시도할 때 busy 검사 skip. 단점 — backend 의 동일 계정 동시 lazy-create 가 의도 외 conv 생성 가능. busy guard 자체는 보존 + state cleanup 으로 해결.
+  - **backend 의 동일 계정 dual-pending 제약 추가**: `/api/ask` 의 lazy-create 진입 시 같은 account 의 직전 unset conversation 존재 여부 검증. 단점 — backend 정책 변경 + 사용자 의도와 무관한 차단 가능 (정상 use case 인 빠른 multi-conv 도 차단). frontend state 단순 정리가 정합.
+- Risks:
+  - **lazy-create in-flight 중 "+ 새 대화" 진입 보류 유지**: 사용자가 첫 송신 응답을 기다리는 중 두 번째 대화로 전환 시도 시 입력란 포커스만 잡고 return. 의도된 동작 (sentinel 중복 race 방지) 이나 사용자가 "왜 안 됨" 으로 인지할 수 있음. UX 측면 toast 안내 추가는 별 cycle.
+  - **catch 분기 cleanup 시 pending bubble error 표시와 상태 분리**: `state.pendingNewConversation = false` 직후 사용자가 "+ 새 대화" 클릭 시 `state.pendingBubble` 의 error 영역도 함께 정리될 수 있음. AC-0077 의 빨간 오류 영역 노출 의도와 약한 trade-off — 사용자가 새 대화로 즉시 이동하면 오류 영역 확인 못 할 수 있음. toast 의 "다시 시도하거나 사이드바를 새로고침해 주세요" 안내가 1차 채널.
+  - **다른 entry point 검증**: `state.pendingNewConversation` 을 set 하는 위치 = `beginPendingConversation()` line 3001 (본 함수 내부), reset 위치 = (a) `sendPrompt()` success line 3524 (`isLazyCreate && newCid` 조건부) + (b) catch 신규 line 3537 cleanup. 그 외 3rd-party 진입 없음 (grep 검증 — `pendingNewConversation` 출현 위치 5 곳 모두 동일 흐름 안).
+- 미해결 followup:
+  - **사용자 환경 직접 검증**: 본 fix 의 회귀 시나리오 5 종은 코드 trace + node --check 로 검증. 사용자 환경의 정확한 catch 트리거 조건 (network 종류 / timeout / 서버 응답 형식) 은 미확정 — 사용자가 본 fix 후 동일 reproduce 시 추가 cycle 가능.
+  - **UX toast 안내**: in-flight 보류 + catch cleanup 두 분기 모두 사용자 행동에 미세한 비대칭 (전자는 click 무동작, 후자는 새 대화 정상 진입) — toast 로 명시 가능. 별 cycle.
+- Trace: REQ-20260519-0009 → TASK-0081 → CHG-20260519-0011 → REV-20260519-0007. AC-0072 (pending bubble) / AC-0075~0077 (lazy-create UX) 회귀 차단.
+
 ## REV-20260519-0006
 - Date: 2026-05-19
 - Decision: TASK-0080 (REQ-20260519-0008, Minor §12.3) — `_collect_matched_excerpts` 의 SELECT 를 `AgentMemoryMessages` + `AgentCoreMessages` UNION ALL + `ROW_NUMBER OVER (PARTITION BY cid ORDER BY msg_id DESC)` 으로 conv 별 더 최근 매칭 1건 선택. collation 통일 `COLLATE utf8mb4_unicode_ci`.

@@ -9,6 +9,29 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-05-19 TASK-0081 완료 — beginPendingConversation stale flag 회복 가드 + sendPrompt catch 분기 pendingNewConversation cleanup (두 번째 새 대화 send 차단 회귀 fix)** (CHG-20260519-0011, REV-20260519-0007, REQ-20260519-0009, Minor §12.3 — frontend state machine 2 군데 변경, backend / RBAC / endpoint / audit / DB 무변경).
+
+**배경**: 사용자 직접 보고 — "새 대화에서 요청을 보낸 후, 다시 새 대화로 별개의 요청을 보내려고 했을 때 진행되지 않는 이슈". 증상 추가 확인: "두 번째 send 를 진행하는 상호작용 (요청 UI 버튼, Ctrl+Enter) 가 막혀있다".
+
+**원인**: `app.js` 의 lazy-create state machine 2 군데 결함. (1) `beginPendingConversation()` (line 2988~3012) 의 early-return guard 가 `state.pendingNewConversation === true` 단독 검사로 stale state 와 정당한 in-flight 점유를 구분 못 함. 첫 lazy-create 가 network/timeout 으로 catch 분기에 진입한 경우 `state.pendingNewConversation` flag 가 cleanup 되지 않은 채 남음 → 사용자가 "+ 새 대화" 다시 클릭 → 가드가 stale flag 만 보고 입력란 포커스만 잡고 return → `state.activeConversationId = ""` reset 도 실행 안 됨. (2) `sendPrompt()` 의 lazy-create catch 분기 (line 3533~3551) 가 `state.pendingBubble` 의 error 영역만 처리하고 `state.pendingNewConversation` 자체는 cleanup 안 함. 결과: 두 번째 새 대화로 send 시도 시 (a) 진입조차 차단되거나 (b) 진입했어도 `sendPrompt()` 의 line 3437 `isCurrentConvBusy()` 가 `pendingNewConversation=true && busyConversations.has(sentinel)` 검사에서 막힘.
+
+**Fix**:
+- (a) `beginPendingConversation()` early-return 조건을 `state.pendingNewConversation && state.busyConversations.has(PENDING_CONV_SENTINEL)` 로 좁힘 — 첫 lazy-create 가 실제 in-flight (sentinel 점유) 일 때만 진입 보류. stale state 면 통과해 정상 reset 흐름 진입.
+- (b) `sendPrompt()` lazy-create catch 분기 진입 시점에 `state.pendingNewConversation = false` 1 줄 명시 cleanup. pending bubble error 표시 / toast 안내 로직은 무변경. busyConversations sentinel cleanup 은 finally 의 기존 `state.busyConversations.delete(busyKey)` 가 담당.
+
+**회귀 시나리오 5 종 검증** (코드 trace 기반):
+- ①정상 첫 송신 후 두 번째 새 대화 진입 + send → 통과. (success path 의 line 3524 `pendingNewConversation = false` + finally sentinel delete 후 sentinel 부재 → guard 가 false → 정상 reset 진입).
+- ②첫 송신 timeout 에러 후 두 번째 새 대화 → catch 의 신규 `pendingNewConversation = false` cleanup + sentinel delete (finally) → 두 번째 클릭 시 guard 통과 → 정상 진입.
+- ③첫 송신 in-flight 중 사용자가 "+ 새 대화" 클릭 → guard 가 sentinel 점유 검사로 진입 보류 (의도된 동작 — sentinel 중복 race 방지).
+- ④AC-0077 pending bubble error 표시: `state.pendingBubble` 별도 state 라 cleanup 과 무관 — 빨간 오류 영역 + toast 안내 그대로 노출.
+- ⑤AC-0072~0077 lazy-create 정상 success 흐름 무영향: line 3522~3528 의 success path 변경 없음, polling 시작도 그대로.
+
+**검증**: `node --check app.js` PASS. backend / RBAC / endpoint / audit / DB 무변경 (py_compile 대상 변경 없음). cache-bust `v=20260519-chat-pane-flex` → `v=20260519-pending-recovery` (index.html). smoke 시나리오 5 종은 사용자 환경 직접 확인 권장.
+
+**Trace**: REQ-20260519-0009 → TASK-0081 → CHG-20260519-0011 → REV-20260519-0007.
+
+---
+
 **2026-05-18 TASK-0071 완료 — shell grid row hotfix (cascade root of TASK-0068~0070 layout chain)** (CHG-20260518-0008, REV-20260518-0008, REQ-20260518-0009, Minor §12.3 — CSS 2 줄 hotfix, RBAC / endpoint / 데이터 / JS 무변경).
 
 **배경**: 사용자 3 차 screenshot 보고. TASK-0070 의 list-detail row fix 이후에도 dashboard pane 처럼 list-detail 을 사용하지 않는 화면에서 큰 viewport (height 800+) + 짧은 content 조합 시 sidebar / commit-bar 가 viewport 의 약 70% 위치까지만 차지하고 그 아래 회색 빈 영역이 viewport bottom 까지 노출.

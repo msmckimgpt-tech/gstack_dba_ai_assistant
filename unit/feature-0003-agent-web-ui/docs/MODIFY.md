@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0011
+- Date: 2026-05-19
+- Summary: TASK-0081 (REQ-20260519-0009, Minor §12.3) — `beginPendingConversation()` stale flag 회복 가드 + `sendPrompt()` catch 분기 `pendingNewConversation` cleanup. 두 번째 새 대화 send (요청 버튼 / Ctrl+Enter) 가 무동작이던 회귀 fix.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/app.js`
+    - line 2993~2997 (`beginPendingConversation()` 의 early-return guard) — `state.pendingNewConversation` 단독 검사 → `state.pendingNewConversation && state.busyConversations.has(PENDING_CONV_SENTINEL)` 로 좁힘. 첫 lazy-create send 가 실제 in-flight (sentinel 점유) 일 때만 진입 보류. stale state (catch 분기 후 cleanup 누락 등) 는 통과해 정상 reset 흐름으로 진입.
+    - line 3536~3537 (`sendPrompt()` 의 lazy-create catch 분기 진입 직후) — `state.pendingNewConversation = false` 명시 cleanup 1 줄 추가. pending bubble 의 error 표시 / toast 안내 로직은 무변경. busyConversations sentinel cleanup 은 기존 finally 블록의 `state.busyConversations.delete(busyKey)` 가 담당 (변경 없음).
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html` — `app.js?v=20260519-chat-pane-flex` → `app.js?v=20260519-pending-recovery` cache-bust 토큰 갱신.
+- Verification:
+  - `node --check repo/unit/feature-0003-agent-web-ui/src/static/app.js` PASS.
+  - backend / RBAC / endpoint / audit / DB 무변경 (Python AST 검증 대상 변경 없음).
+  - smoke (사용자 직접 확인 권장): ①새 대화 만들기 + 메시지 송신 + 정상 응답 후 다시 "+ 새 대화" 클릭 + 두 번째 메시지 send → 정상 진행. ②새 대화 만들기 + 메시지 송신 + (네트워크 차단 시뮬레이션 또는 backend timeout) catch 진입 후 "+ 새 대화" 클릭 + 두 번째 메시지 send → 정상 진행. ③첫 송신 in-flight 상태 (응답 도착 전) 에서 "+ 새 대화" 클릭 → 입력란 포커스만 유지 (의도적 — sentinel race 방지).
+- Risks:
+  - **lazy-create in-flight 중 "+ 새 대화" 클릭 보류 유지**: 사용자가 첫 송신 응답을 기다리는 중에 두 번째 대화로 전환을 시도하면 여전히 포커스만 잡고 진입 보류. 이는 sentinel 중복 race 방지를 위한 의도된 동작. UX 측면에서 사용자 안내 toast 추가 여부는 별 cycle 검토 가능.
+  - **catch 분기 cleanup 이 pending bubble error 표시와 독립**: `state.pendingNewConversation = false` 직후에도 `state.pendingBubble` 의 error 영역은 그대로 표시되어 사용자가 직전 실패 컨텍스트를 확인 가능. 다만 사용자가 즉시 "+ 새 대화" 로 이동하면 pending bubble 도 새 흐름에 의해 정리될 수 있음 — AC-0077 의 빨간 오류 표시 안내 의도와 약간 trade-off.
+  - **다른 entry point**: `beginPendingConversation()` 외에 `state.pendingNewConversation` 을 set 하는 코드 경로 미발견. line 3001 (본 함수 내부) + line 3524 의 success cleanup + line 3537 신규 catch cleanup 3 군데로 명확.
+- Trace: REQ-20260519-0009 → TASK-0081 → CHG-20260519-0011 → REV-20260519-0007 (lazy-create state machine, AC-0072/0075/0076/0077 의 회귀 차단)
+
 ## CHG-20260519-0010
 - Date: 2026-05-19
 - Summary: TASK-0080 (REQ-20260519-0008, Minor §12.3) — `_collect_matched_excerpts` 의 SELECT 를 `AgentMemoryMessages` + `AgentCoreMessages` UNION ALL 로 확장. TASK-0077 followup. core-only conv 의 snippet 부재 회귀 차단.

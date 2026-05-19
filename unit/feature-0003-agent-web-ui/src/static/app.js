@@ -2990,8 +2990,11 @@ function beginPendingConversation() {
     showPermissionDeniedToast("conversation.create");
     return;
   }
-  if (state.pendingNewConversation) {
-    // 이미 pending 상태 — 입력란에 포커스만 다시 맞춘다.
+  // TASK-0081: 첫 lazy-create send 가 in-flight (sentinel 점유) 일 때만 진입 보류.
+  // pendingNewConversation 만 true 이고 sentinel 부재면 stale state (catch 분기 후 cleanup
+  // 누락 등) — 두 번째 "+ 새 대화" 시도에서 reset 후 정상 진입한다. 회귀 차단: 새 대화 진입 + send 가
+  // 잔존 flag 로 막혀 사용자 별개 요청이 진행되지 않는 이슈.
+  if (state.pendingNewConversation && state.busyConversations.has(PENDING_CONV_SENTINEL)) {
     if (promptInputEl) promptInputEl.focus();
     return;
   }
@@ -3534,6 +3537,10 @@ async function sendPrompt() {
     // TASK-0048: pending 단계에서 ask 가 실패하면 cid 발급 여부가 client 에는 불확실 →
     // attach/resume 다이얼로그 대신 사용자에게 재시도/사이드바 새로고침을 안내한다.
     if (isLazyCreate) {
+      // TASK-0081: lazy-create catch 분기에서 pendingNewConversation flag 명시 cleanup.
+      // 미정리 시 사용자가 "+ 새 대화" 로 재진입할 때 beginPendingConversation 의 sentinel guard 가
+      // stale 상태로 가드를 통과하더라도 busyConversations 와의 race 가 안전하도록 보조한다.
+      state.pendingNewConversation = false;
       // TASK-0061 Phase 2 (AC-0077): pending bubble 을 오류 영역으로 전환.
       if (state.pendingBubble) {
         state.pendingBubble.error = `첫 메시지 전송에 실패했습니다: ${error.message || error}`;
