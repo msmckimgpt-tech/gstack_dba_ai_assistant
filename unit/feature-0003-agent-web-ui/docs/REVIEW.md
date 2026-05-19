@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0010
+- Date: 2026-05-19
+- Decision: TASK-0083 followup (REQ-20260519-0012, Minor §12.3) — REV-0009 의 monospace 통합 design 폐기 + 한글 가독성 우선 system-ui sans-serif stack 으로 재설정. `:root` 의 `--font` 를 `system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "맑은 고딕", "Helvetica Neue", Arial, sans-serif` 로 갱신. `--mono` 는 REV-0009 이전 stack (`"Cascadia Code", "SFMono-Regular", Consolas, monospace`) 복원. `--font: var(--mono)` 참조 제거 → 두 토큰 의미 분리 회복. admin.html cache-bust 토큰을 `?v=20260519-cjk-readable` 로 갱신, index.html cache-bust 는 사용자 직접 revert 흔적 (system reminder) 존중하여 본 cycle 에서 skip.
+- Reason: 사용자 직접 보고 — "중간에 확인해보니, 한글 기준으로 눈이 아픕니다… 한글 기준으로 가장 범용성있는 폰트로 다시 설정해주세요". REV-0009 의 monospace 통합은 영문·ASCII 정렬에는 정합하지만 한글에는 (a) 모노스페이스 한글 폰트 (D2Coding, Noto Sans Mono CJK KR) 가 시스템에 없는 경우 fallback 결과로 폭 정합 깨짐 + (b) 한글 모노스페이스가 시스템에 깔려 있어도 일반 본문 가독성이 낮음. 사용자의 가독성 우선 결정. 가장 범용성 있는 한글 폰트 stack 은 OS native (Windows = 맑은 고딕, macOS = Apple SD Gothic Neo, Linux = Noto Sans CJK 자동 fallback) 를 우선하는 system-ui 기반. 별도 WebFont 설치 없이 모든 환경에서 자연 한글 렌더링.
+- Alt 거부:
+  - **Pretendard 우선 stack**: 한글 디자인 표준이며 가독성 우수. 단점 — 시스템에 미설치 시 WebFont 로딩 필요 (별도 CDN/self-host). 본 cycle 의 "범용성" 우선이라 system-native 가 정합. 사용자가 Pretendard 도입 요청 시 별 cycle 에서 WebFont + stack 첫 자리 추가.
+  - **`--font` 만 변경하고 `--mono` 의 한글 monospace fallback (D2Coding, Noto Sans Mono CJK KR) 은 유지**: 코드/로그 영역의 한글이 등폭 유지. 단점 — `var(--mono)` 사용처가 실제 한글을 자주 표시하는 곳인지 검토 결과 SQL/code snippet 중심이라 한글 비중 낮음 + 시스템 의존성 유지 부담. REV-0009 이전 원본 stack 복원이 가장 단순 + 회귀 0.
+  - **CHG-0013 entry 를 git revert 또는 amend**: append-only 정책 (§5.2) + CHG-0013 가 다른 AI 작업자의 a7b7ded commit 에 흡수된 상태 → revert 시 다른 작업자의 다른 변경도 영향. CHG-0014 로 forward-only 정정.
+  - **index.html cache-bust 도 갱신**: admin.html 과 동일 갱신으로 일관성. 단점 — 사용자 system reminder 의 "intentional, don't revert" 신호 위반 가능 + 사용자가 main wt 에서 직접 revert 한 의도 (이전 작업자 영역과의 분리) 와 충돌. 안전 마진을 위해 index.html 은 skip + 사용자에게 hard refresh 안내.
+  - **WebFont 도입 (Noto Sans KR variable / Pretendard)**: 모든 환경에서 동일 한글 렌더링 보장. 단점 — 외부 의존 + 첫 로딩 latency + CSP 검토 + offline 환경 제약. 본 cycle 범위 초과 — 별 cycle.
+- Risks:
+  - **index.html cache-bust 미갱신**: 사용자가 작업 화면 첫 진입 시 styles.css 가 브라우저 캐시 hit → 새 sans-serif stack 즉시 안 보일 수 있음. Ctrl+Shift+R (hard refresh) 또는 DevTools "Disable cache" 모드 필요. UX 영향 단기 (캐시 만료 후 자연 해소).
+  - **system-ui 구형 브라우저 미지원**: iOS Safari 12 이하 / Android Browser 일부가 `system-ui` 키워드를 인식 못 함 — fallback `-apple-system` / `BlinkMacSystemFont` 가 그 자리를 채움. 실용적 risk 0.
+  - **CHG-0013 design intent 의 부분 해제**: AC-0184 "전역 monospace 통일" 의 의도가 CHG-0014 로 사실상 폐기. AC-0185 (var(--font) 영역은 sans-serif, var(--mono) 영역은 monospace 유지) 로 재정의. 추후 read 시 CHG-0013 + CHG-0014 의 trace 가 명확.
+  - **한글 폰트 스타일 차이 (OS 별)**: 맑은 고딕 / Apple SD Gothic Neo / Noto Sans CJK 가 weight·shape 미세하게 다름 — 사용자 환경별 시각 차. 의도된 trade-off (범용성 우선).
+  - **share.css 무변경**: 공유 페이지는 별도 stylesheet — 본 cycle 영향 없음. 사용자가 share.html 도 갱신 요청 시 별 cycle.
+- 미해결 followup:
+  - **사용자 환경 검증**: 본 stack 의 한글 가독성을 사용자 환경 (Windows 맑은 고딕 / macOS Apple SD Gothic Neo / Linux Noto Sans CJK) 에서 직접 확인.
+  - **Pretendard WebFont 도입 검토**: 모든 환경에서 동일 한글 렌더링 필요 시.
+  - **`var(--mono)` 영역의 한글 가독성 별도 검토**: 코드/로그 영역에서 한글이 등장하는 경우 monospace 가독성 issue 있는지 사용자 확인.
+- Trace: REQ-20260519-0012 → TASK-0083 followup → CHG-0014 (sans-serif 환원) → REV-0010. REV-0009 의 design intent 는 본 entry 로 정정됨 — append-only 유지하되 후속 의사결정이 우선.
+
 ## REV-20260519-0009
 - Date: 2026-05-19
 - Decision: TASK-0083 (REQ-20260519-0011, Minor §12.3) — `:root` 의 `--font` / `--mono` 두 토큰을 단일 monospace stack 으로 통합. `--mono` 에 한글 monospace fallback (`D2Coding`, `Noto Sans Mono CJK KR`) 추가 + `--font: var(--mono)` 참조. body / button / input / textarea / select 의 기존 cascade (`var(--font)` / `font: inherit`) 가 그대로 작동해 작업·관리 화면 전역에 등폭 글꼴 적용. cache-bust 토큰 동시 갱신 (index.html + admin.html).

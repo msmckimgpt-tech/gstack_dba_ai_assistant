@@ -8,6 +8,27 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0014
+- Date: 2026-05-19
+- Summary: TASK-0083 followup (REQ-20260519-0012, Minor §12.3) — CHG-0013 의 monospace 통합 방향 폐기 + 한글 가독성 우선 system-ui sans-serif stack 으로 재설정. 사용자 추가 보고: "한글 기준으로 눈이 아픕니다… 한글 기준으로 가장 범용성있는 폰트로 다시 설정해주세요". CHG-0013 의 `--font: var(--mono)` 통합을 해제하고 `--font` 를 OS native 한글 폰트 자동 fallback stack 으로 갱신. `--mono` 는 원래 stack 복원 (코드/로그 영역만 적용). worktree `ai/claude/task-0083` 에서 진행 — 다른 AI 작업자의 a7b7ded commit 의 docs 변경 (CHG-0013/REV-0009 흡수) 과 격리된 src commit.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css`
+    - line 33~35 (`:root` Typography 토큰) — CHG-0013 의 `--mono` stack (한글 monospace fallback 포함) + `--font: var(--mono)` 통합 해제. 새 stack: `--font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "맑은 고딕", "Helvetica Neue", Arial, sans-serif`. macOS 는 `-apple-system → Apple SD Gothic Neo`, Windows 는 `Segoe UI → 맑은 고딕`, Linux/ChromeOS 는 `system-ui` 또는 Noto Sans CJK 자동 fallback. `--mono` 는 CHG-0013 이전 stack 복원: `"Cascadia Code", "SFMono-Regular", Consolas, monospace`.
+    - 다른 `font-family` 출현 위치 무변경 — `var(--mono)` 명시 사용처 (line 1069, 1082, 1186, 1379, 2542) 는 monospace 유지, hardcoded `ui-monospace, ...` (line 2216) 와 `monospace` (line 3846) 도 그대로. `var(--font)` 사용처 (body line 65 등) 만 sans-serif 로 환원.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/admin.html` — line 7 `styles.css?v=20260518-shell-grid-rows` → `styles.css?v=20260519-cjk-readable` cache-bust 토큰 갱신.
+- Verification:
+  - CSS syntax 단순 토큰 교체. JS / Python 변경 없음.
+  - cascade 검증: `body { font-family: var(--font); }` (line 65) + `button/input/textarea/select { font: inherit; }` (line 72~73) 가 sans-serif 적용. `var(--mono)` 사용처 (코드/로그 영역) 는 monospace 유지.
+  - smoke (사용자 직접 확인 권장): ①작업 화면 (`/`) 메시지 본문 / sidebar / topbar / composer / popover 텍스트가 sans-serif 로 자연스러운 한글 표시. ②관리 화면 (`/admin`) list / detail / form 텍스트가 sans-serif. ③`var(--mono)` 명시 영역 (예: result table, log view, code snippet) 은 여전히 monospace.
+  - index.html cache-bust 미갱신 (사용자가 main wt 에서 직접 revert 한 의도 존중) — 사용자가 작업 화면 진입 시 styles.css 가 캐시되어 새 stack 이 즉시 안 보일 수 있음. Ctrl+Shift+R (hard refresh) 권장.
+- Risks:
+  - **index.html cache-bust 미갱신**: 사용자의 main wt revert 흔적 (system reminder 명시) 을 존중하기 위해 본 cycle 에서 skip. 사용자가 hard refresh 또는 캐시 무시 모드로 접근해야 새 stack 적용 인지. 사용자가 index.html cache-bust 도 갱신 요청 시 별 cycle 1 line.
+  - **system-ui 의미 ambiguity**: 일부 구형 브라우저 (특히 모바일 Safari 12 이하) 가 `system-ui` 를 인식 못 함. fallback `-apple-system` / `BlinkMacSystemFont` 로 안전. 본 stack 의 광범위 fallback 으로 실용적 risk 0.
+  - **Pretendard 등 별도 한글 모던 폰트 미포함**: 시스템 native 폰트 우선 — Pretendard 같은 비표준 폰트는 stack 에 포함 안 함. 사용자가 Pretendard 우선 요청 시 첫 위치에 추가 또는 WebFont 도입 (별 cycle).
+  - **CHG-0013 design intent 회수**: CHG-0013 의 "전역 등폭" intent 가 본 cycle 로 사실상 폐기 — 사용자 feedback 의 가독성 우선. CHG-0013 entry 는 append-only 이므로 그대로 유지하되, 본 entry 가 후속 정정임을 명시.
+  - **share.css 무변경**: share.html (공유 페이지) 은 별도 stylesheet 사용 — typography 변경 영향 없음. 별도 cycle 필요 시 추가 작업.
+- Trace: REQ-20260519-0012 → TASK-0083 followup → CHG-0013 (monospace, a7b7ded 의 docs / 본 cycle 의 worktree src) → CHG-0014 (sans-serif 환원). AC-0184 (전역 monospace 통일) 의 design intent 는 CHG-0014 로 부분 해제 — "var(--font) 영역은 sans-serif, var(--mono) 영역은 monospace 유지" 로 재정의. 새 AC-0185 등록.
+
 ## CHG-20260519-0013
 - Date: 2026-05-19
 - Summary: TASK-0083 (REQ-20260519-0011, Minor §12.3) — web UI 전역 폰트를 monospace 로 통일. `:root` 의 `--font` 토큰을 `--mono` 와 같은 stack 으로 묶어 작업 화면 / 관리 화면의 모든 text 를 등폭 글꼴로 렌더. 영문은 Cascadia Code / SFMono-Regular / Consolas, 한글은 D2Coding / Noto Sans Mono CJK KR fallback. 사용자 요청 — "문자열 길이와 실제 표현되는 위치가 정합" 을 위한 등폭 정렬 보장.
