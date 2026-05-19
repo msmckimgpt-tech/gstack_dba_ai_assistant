@@ -8,6 +8,38 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0010
+- Date: 2026-05-19
+- Summary: TASK-0080 (REQ-20260519-0008, Minor §12.3) — `_collect_matched_excerpts` 의 SELECT 를 `AgentMemoryMessages` + `AgentCoreMessages` UNION ALL 로 확장. TASK-0077 followup. core-only conv 의 snippet 부재 회귀 차단.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/app.py` — `_collect_matched_excerpts` 의 inner SELECT 가 두 table UNION ALL. 두 sub-SELECT 모두 동일 `conv_ids` IN + LIKE pattern + `COLLATE utf8mb4_unicode_ci` 통일. outer `ROW_NUMBER OVER (PARTITION BY cid ORDER BY msg_id DESC)` 으로 conv 별 더 최근 매칭 1건 선택. 파라미터 binding 은 `(conv_ids, pattern, conv_ids, pattern)` 4 그룹. line-based clip 로직 (LINE_MAX 220 + HALF_WINDOW 60) 무변경.
+- Verification:
+  - `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS.
+  - make web 재배포 OK — repo-web-1 29 초 후 healthy.
+  - smoke (사용자 브라우저 직접 확인 권장): core-only conv 에 매칭되는 검색어로 검색 → snippet 영역에 본문 excerpt 노출 확인.
+- Risks:
+  - **msg_id 의 두 table namespace 차이**: AgentMemoryMessages.Id 와 AgentCoreMessages.id 가 다른 schema. 본 fix 는 더 큰 id = 더 최근 가정 (monotonic 시간 증가) — 본 프로젝트 schema 정합. 동일 시점에 양 table 모두 INSERT 가 일어나는 race 에서는 어느 row 가 "더 최근" 인지 모호하나 sub-second race 라 사용자 시각 영향 0.
+  - **collation 통일 cost**: `COLLATE utf8mb4_unicode_ci` 명시로 index 우회 가능 — query 비용 ↑ 가능. 단 본 query 는 `WHERE conv_ids IN (...)` 으로 row scope 가 conv 단위 (검색 결과 LIMIT 50) 라 cost overhead 미미.
+  - **AgentCoreMessages content 컬럼이 NULL 인 row**: LIKE 의 NULL 매칭은 false 라 자동 제외 — 안전. 단 NULL content 의 conv 가 list 에 포함되면 excerpt 부재 (frontend snippet skip) — 그대로.
+  - **search EXISTS 와 excerpt 의 동기화**: TASK-0072 의 `_list_conversations` search EXISTS subquery 가 두 table 모두 검사하므로 본 fix 와 일치. 향후 EXISTS / excerpt 중 하나만 변경 시 동기화 깨질 위험.
+- Trace: REQ-20260519-0008 → TASK-0080 → CHG-20260519-0010 → REV-20260519-0006 (followup of TASK-0077)
+
+## CHG-20260519-0009
+- Date: 2026-05-19
+- Summary: TASK-0079 (REQ-20260519-0007, Minor §12.3) — `.chat-pane` 의 flex 누락으로 짧은 대화 + 큰 viewport 조합 시 composer 아래 회색 빈 영역 노출되던 layout 결함 차단. TASK-0066 ChatGPT 패턴 layout 재구조화 시점 cascade 잔여 결함 — TASK-0068~0071 chain 이 admin 영역만 다뤘고 작업 화면 chat-pane 은 미적용.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css` — `.chat-pane` 에 `flex: 1 1 auto` + `min-height: 0` 추가 (2 line). 다른 속성 (display: flex, flex-direction: column, overflow: hidden, background: var(--bg)) 무변경.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html` — cache-bust styles.css + app.js `v=20260519-snippet-line` → `v=20260519-chat-pane-flex` (양쪽 동일).
+- Verification:
+  - browser smoke 는 사용자 hard refresh 후 직접 확인 권장 (cache-bust `v=20260519-chat-pane-flex`).
+  - make web 재배포 OK — repo-web-1 29 초 후 healthy.
+  - DOM cascade 정합: `.app-shell { grid-template-rows: minmax(0, 1fr) }` (TASK-0071) → `.chat-column { flex column }` → `.chat-pane { flex: 1 1 auto; min-height: 0 }` (본 cycle) → `.messages-wrap { flex: 1; min-height: 0 }` → `.messages { flex: 1; min-height: 0 }`.
+- Risks:
+  - **다른 viewport 조합 검증**: 본 환경 (사용자 브라우저) 에서 정상 확인 필요. 작은 viewport (height < 600) 에서는 `.messages` 의 `overflow-y: auto` 가 scroll 흡수.
+  - **mobile 반응형**: `.app-shell` 의 mobile 분기 (`max-width: 680px`) 는 grid → single column. `.chat-pane` 의 flex chain 은 mobile 에서도 정상 (single column 안에서 grow).
+  - **TASK-0073 (다른 session) 과 file overlap 없음**: 본 cycle 의 styles.css `.chat-pane` 변경은 TASK-0073 의 admin / audit / endpoint 영역과 영역 분리.
+- Trace: REQ-20260519-0007 → TASK-0079 → CHG-20260519-0009 → REV-20260519-0005 (TASK-0066 cascade 잔여 결함 hotfix)
+
 ## CHG-20260519-0008
 - Date: 2026-05-19
 - Summary: TASK-0078 (REQ-20260519-0006, Minor §12.3) — search modal 3 항목 추가 hotfix of TASK-0077. (1) mouseup race 보강 (mouseup target 추적 추가), (2) preset 텍스트 "부터" 제거, (3) snippet 본문 발췌 line-based clip.

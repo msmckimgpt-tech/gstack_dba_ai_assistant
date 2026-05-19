@@ -793,6 +793,14 @@ a { color: inherit; }
    CHAT PANE
    ===================================================================== */
 .chat-pane {
+  /* REQ-20260519-0007 (TASK-0079, Minor §12.3): .chat-column flex container 안에서
+     .chat-pane 의 flex 미정의로 자식 max-content 만 차지하던 결함 (짧은 대화 + 큰
+     viewport 조합 시 composer 아래 회색 빈 영역 노출). TASK-0066 의 ChatGPT 패턴
+     layout 재구조화 시점 누락. .messages-wrap (flex: 1) 가 chat-pane 안에서 grow 하려면
+     chat-pane 자체가 column 의 남은 영역을 차지해야 함. min-height: 0 은 overflow 자식이
+     flex 자라기를 허용. */
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;

@@ -3037,15 +3037,20 @@ def _audit_message_table_collations(conn) -> None:
 
 
 def _collect_matched_excerpts(conn, conv_ids: list[str], q: str) -> dict[str, str]:
-    """REQ-20260519-0005 (TASK-0077): for each matched conversation, return the
-    most-recent matching message body excerpt (±40 char window around the first
-    match). Empty dict if no body-search active or no rows. Skips on error
-    (snippet is best-effort UX, not a security boundary).
+    """REQ-20260519-0005 (TASK-0077) + REQ-20260519-0008 (TASK-0080):
+    for each matched conversation, return the most-recent matching message body
+    excerpt as a line-based clip. Empty dict if no body-search active or no rows.
+    Skips on error (snippet is best-effort UX, not a security boundary).
 
-    Limits scope to AgentMemoryMessages — AgentCoreMessages has overlapping
-    storage but body search of TASK-0072 covers both via EXISTS; excerpts are
-    rendered from the primary memory table for simplicity. Frontend falls
-    back to title-only highlight when excerpt absent.
+    REQ-20260519-0008 (TASK-0080): scope expanded from AgentMemoryMessages-only
+    to UNION (AgentMemoryMessages + AgentCoreMessages). TASK-0072 의
+    `_list_conversations` search EXISTS subquery 는 두 table 모두 검사하나,
+    TASK-0077 의 excerpt 는 AgentMemoryMessages 한정이라 core-only conv 의
+    snippet 이 비어 있던 회귀 차단. UNION 내 ROW_NUMBER OVER (PARTITION BY cid
+    ORDER BY msg_id DESC) 로 conv 별 더 최근 매칭 1건 선택. msg_id 의 두 table
+    namespace 차이 — 더 큰 id 가 더 최근이라는 가정 (시간 monotonic 증가 — 본
+    프로젝트 schema 정합). ConversationId 의 collation mismatch 회피 위해
+    `COLLATE utf8mb4_unicode_ci` 통일.
     """
     if not conv_ids or not q:
         return {}
@@ -3057,17 +3062,34 @@ def _collect_matched_excerpts(conn, conv_ids: list[str], q: str) -> dict[str, st
     try:
         cur.execute(
             f"""
-SELECT t.ConversationId, t.Content
+SELECT t.cid, t.content
 FROM (
-  SELECT m.ConversationId AS ConversationId, m.Content AS Content,
-         ROW_NUMBER() OVER (PARTITION BY m.ConversationId ORDER BY m.Id DESC) AS rn
-  FROM AgentMemoryMessages m
-  WHERE m.ConversationId IN ({placeholders})
-    AND m.Content LIKE %s ESCAPE '!'
+  SELECT cid, content,
+         ROW_NUMBER() OVER (PARTITION BY cid ORDER BY msg_id DESC) AS rn
+  FROM (
+    SELECT m.ConversationId COLLATE utf8mb4_unicode_ci AS cid,
+           m.Content AS content,
+           m.Id AS msg_id
+    FROM AgentMemoryMessages m
+    WHERE m.ConversationId IN ({placeholders})
+      AND m.Content LIKE %s ESCAPE '!'
+    UNION ALL
+    SELECT cm.conversation_id COLLATE utf8mb4_unicode_ci AS cid,
+           cm.content AS content,
+           cm.id AS msg_id
+    FROM AgentCoreMessages cm
+    WHERE cm.conversation_id IN ({placeholders})
+      AND cm.content LIKE %s ESCAPE '!'
+  ) AS u
 ) AS t
 WHERE t.rn = 1
             """,
-            (*[str(c) for c in conv_ids], pattern),
+            (
+                *[str(c) for c in conv_ids],
+                pattern,
+                *[str(c) for c in conv_ids],
+                pattern,
+            ),
         )
         rows = cur.fetchall() or []
     except Exception:

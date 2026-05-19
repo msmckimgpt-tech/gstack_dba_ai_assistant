@@ -88,6 +88,12 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   - AC-0111: `.message-point-rail` 이 `position: relative` 로 변경되고 각 `.message-point-dot` 가 `position: absolute; top: <pct>%`. `pct = (message.offsetTop + height/2) / messageLog.scrollHeight * 100`. 매우 긴 메시지 1 개가 있어도 dot 가 해당 메시지의 실 중심 비례 위치에 표시된다.
   - AC-0112: `layoutMessagePointRail()` 헬퍼가 `renderMessages()` 끝 + resize 시 호출되어 dot 의 top% 를 재계산한다. message scrollHeight 변경 (메시지 추가 / 펼침 / 접힘) 시 다음 render cycle 에 자동 반영.
   - AC-0113: dot 의 transform 은 `translate(-50%, -50%)` 로 horizontal 중앙 정렬 + vertical 중심점 정렬. `.is-active` 일 때 `translate(-50%, -50%) scale(1.8)` 로 translate 와 scale 함께 적용해 dot 가 좌측으로 튀지 않는다.
+- REQ-20260519-0008 (TASK-0080, Minor §12.3 — `_collect_matched_excerpts` 의 AgentMemoryMessages + AgentCoreMessages UNION, snippet 부재 회귀 차단): TASK-0077 의 followup. backend `_collect_matched_excerpts` 의 SELECT 를 두 table UNION ALL + `ROW_NUMBER OVER (PARTITION BY cid ORDER BY msg_id DESC)` 으로 conv 별 더 최근 매칭 1건 선택. msg_id 의 두 table namespace 차이는 더 큰 id = 더 최근 가정 (시간 monotonic). collation mismatch 회피 위해 `COLLATE utf8mb4_unicode_ci` 통일.
+  - AC-0173: `_list_conversations` search 가 conv 를 결과 list 에 포함시킨 모든 경우 (AgentMemoryMessages EXISTS OR AgentCoreMessages EXISTS) 에서 `_collect_matched_excerpts` 가 동일 매칭을 찾아 excerpt 반환. core-only conv 의 snippet 부재 회귀 해소.
+  - AC-0174: 한 conv 가 두 table 모두에 매칭 message 보유 시 `ROW_NUMBER PARTITION BY cid ORDER BY msg_id DESC` 으로 더 큰 msg_id 쪽 (더 최근 가정) 만 반환. 두 table 의 id namespace 차이는 monotonic 시간 증가 가정 — 본 프로젝트 schema 정합.
+
+- REQ-20260519-0007 (TASK-0079, Minor §12.3 — `.chat-pane` flex layout hotfix, TASK-0066 cascade 잔여 결함): 짧은 대화 + 큰 viewport 조합에서 composer 아래로 viewport bottom 까지 회색 빈 영역 노출 결함 차단. backend / RBAC / endpoint / JS 무변경.
+  - AC-0175: `.chat-pane` 에 `flex: 1 1 auto` + `min-height: 0` 추가 — `.chat-column` 안에서 chat-pane 이 남은 영역 차지. `.messages-wrap (flex: 1)` 의 grow chain 정상 동작. 결과: 어떤 대화 길이 / viewport 조합에서도 composer 가 viewport bottom 에 stick + 그 아래 회색 빈 영역 0.
 - REQ-20260519-0006 (TASK-0078, Minor §12.3 — search modal 3 항목 추가 hotfix of TASK-0077, RBAC/backend contract 무변경): 사용자 직접 테스트 보고 3 항목 — mouseup race 보강 (modal 바깥 mousedown → modal 안 mouseup edge case 도 close 안 됨), preset 텍스트 "부터" 제거 (버튼 크기 간소화), snippet 발췌 line 출력 (line-based clip).
   - AC-0170: backdrop close 가 **mousedown / mouseup / click target 3 개 모두 overlay 일 때만** 발동. 양 끝점 중 하나라도 modal 안이면 close 안 됨 (text 선택 / drag 흐름 안전).
   - AC-0171: 기간 popover 의 preset 5 버튼 텍스트가 "1시간 전" / "1일 전" / "1주 전" / "1개월 전" / "1년 전" (이전 "...부터" 제거). data-preset-hours 동작 무변경.

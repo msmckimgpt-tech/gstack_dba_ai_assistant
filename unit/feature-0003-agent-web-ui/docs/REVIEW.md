@@ -8,6 +8,41 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0006
+- Date: 2026-05-19
+- Decision: TASK-0080 (REQ-20260519-0008, Minor §12.3) — `_collect_matched_excerpts` 의 SELECT 를 `AgentMemoryMessages` + `AgentCoreMessages` UNION ALL + `ROW_NUMBER OVER (PARTITION BY cid ORDER BY msg_id DESC)` 으로 conv 별 더 최근 매칭 1건 선택. collation 통일 `COLLATE utf8mb4_unicode_ci`.
+- Reason: 사용자 직접 확인 — "`excerpt 의 AgentCoreMessages 포함 (UNION)` 자세하게 다시 설명해주세요". TASK-0077 / TASK-0078 의 REVIEW followup 으로 명시만 했고 실제 코드 변경 없었음. 정직 설명 후 사용자 결정 — 본 cycle 진행. TASK-0072 의 `_list_conversations` search EXISTS subquery 는 두 table 모두 검사하므로 excerpt 도 두 table 모두 검사해야 정합. core-only conv 의 snippet 부재 회귀 차단.
+- Alt 거부:
+  - **두 table 별 query 2회**: AgentMemoryMessages 먼저 → AgentCoreMessages fallback. Python 측에서 conv 마다 둘 중 더 최근 결정. UNION 보다 query 2 회 + Python 후처리. 본 fix 의 단일 UNION query 가 더 효율 + DB 단일 transaction.
+  - **AgentMemoryMessages 우선 + fallback**: Python merge. memory 우선이 일반적이나 conv 가 core 우선인 케이스 있음 — priority 가정 위험. msg_id 단순 비교가 schema agnostic.
+  - **timestamp 컬럼 기반 정렬**: 두 table 의 timestamp 컬럼 존재 여부 + 통일 schema 검증 필요. msg_id (auto-increment) 는 schema 보장. 우회.
+- Risks:
+  - **msg_id namespace 차이**: AgentMemoryMessages.Id (BIGINT) 와 AgentCoreMessages.id (BIGINT 추정) 가 다른 schema. 더 큰 id = 더 최근 가정 (monotonic 시간 증가). 동시 INSERT race 의 모호함 sub-second — 사용자 시각 영향 0. 검증: 두 table 의 schema 확인 필요 (별 cycle).
+  - **collation 통일 cost**: index 우회 가능 — query 비용 ↑. WHERE conv_ids IN (...) 으로 row scope LIMIT 50 conv 단위라 cost overhead 미미.
+  - **AgentCoreMessages content NULL**: LIKE NULL 매칭 = false 라 자동 제외. NULL content conv 는 excerpt 부재 (frontend snippet skip).
+  - **search EXISTS / excerpt 의 동기화**: TASK-0072 의 EXISTS 가 두 table — 본 fix 와 일치. 향후 EXISTS 만 변경 시 동기화 깨짐 — search test (TASK-0072 의 Phase B 시나리오) 에 두 table coverage 추가 권고 (별 cycle).
+- 미해결 followup:
+  - **excerpt 의 neighboring line 추가** (TASK-0078 followup) — 매칭 line 이 매우 짧은 경우.
+  - **backend matched_message_id 응답** (TASK-0077 followup) — jump 정확도 100%.
+  - **popover bottom-edge clamp** (TASK-0076 followup) — viewport 하단 chip drop-up.
+- Trace: REQ-20260519-0008 → TASK-0080 → CHG-20260519-0010 → REV-20260519-0006 (followup of TASK-0077)
+
+## REV-20260519-0005
+- Date: 2026-05-19
+- Decision: TASK-0079 (REQ-20260519-0007, Minor §12.3) — `.chat-pane` 에 `flex: 1 1 auto; min-height: 0` 추가 (CSS 2 line). TASK-0066 의 ChatGPT 패턴 layout 재구조화 시점에 누락된 cascade 잔여 결함.
+- Reason: 사용자 screenshot 보고 — 짧은 대화 + 큰 viewport 조합에서 composer 아래 viewport bottom 까지 회색 빈 영역. 원인: `.chat-column` flex container 안에서 `.chat-pane` 의 flex 미정의 (default `flex: 0 1 auto`) → 자식 max-content 만 차지. `.messages-wrap (flex: 1)` 이 chat-pane 안에서 grow 하려면 chat-pane 자체가 column 의 남은 영역 차지 필요. `min-height: 0` 은 overflow 자식 (messages-wrap 안 messages) 의 flex 자라기를 허용. TASK-0068~0071 의 cascade hotfix chain 이 admin 영역만 다뤘고 (`.admin-shell` / `.admin-list-detail` / `.admin-workspace`) 작업 화면 `.chat-pane` 은 미적용 — 본 cycle 이 cascade 마무리.
+- Alt 거부:
+  - `.chat-pane { height: 100% }` — flex container 안 자식의 height: 100% 는 grow 보장 안 됨 (parent height 가 100% 이어야). flex: 1 이 더 명시적.
+  - `.chat-column` 의 grid-template-rows 명시 (TASK-0071 패턴) — chat-column 은 flex 가 더 자연 (가변 자식). grid 로 가면 chat-pane row 가 1fr 명시 필요 + topbar + chat-pane 두 row 분배. flex 가 더 단순.
+  - composer 를 chat-column 직접 자식으로 이전 (`.chat-pane` 분리) — TASK-0066 의 의도 (chat-pane 가 composer 포함 단위) 깨짐. layout DOM 변경은 회귀 위험 ↑.
+- Risks:
+  - **다른 viewport 조합**: 본 환경 chrome headless 가 default flex 동작 일관성 ↑. 사용자 환경에서 추가 회귀 검증 가능성 제한 — 다른 brower / DPI 조합 사용자 확인 권장.
+  - **mobile 반응형**: `.app-shell` 의 max-width 680px 분기에서 grid → single column. `.chat-pane` 의 flex chain 은 mobile 에서도 정상 (single column 안 grow).
+  - **TASK-0068~0071 cascade chain 의 missing 마지막 piece**: admin 영역 fix 만 cascade hotfix 로 진행되고 작업 화면은 동일 결함 노출까지 누적 — 본 fix 가 chain 마무리. 향후 layout 재구조화 시 chain 전체 (.app-shell, .admin-shell, .chat-pane, .admin-workspace, .admin-list-detail) 일관 적용 권고.
+- 미해결 followup:
+  - **layout 회귀 검증 자동화** — Phase 시각 검증 (gstack `/qa` 또는 screenshot diff) 도입 권고. 별 cycle.
+- Trace: REQ-20260519-0007 → TASK-0079 → CHG-20260519-0009 → REV-20260519-0005 (TASK-0066 cascade 잔여 결함 hotfix)
+
 ## REV-20260519-0004
 - Date: 2026-05-19
 - Decision: TASK-0078 (REQ-20260519-0006, Minor §12.3) — search modal 3 항목 추가 hotfix. mouseup race 보강 (mouseup target 도 추적), preset 텍스트 "부터" 제거, snippet 본문 발췌 line-based clip.
