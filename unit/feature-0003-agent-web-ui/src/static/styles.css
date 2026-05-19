@@ -4065,10 +4065,15 @@ a { color: inherit; }
   margin-top: 2px;
   white-space: pre-wrap;
   word-break: break-word;
+  /* REQ-20260519-0006 (TASK-0078): line-based excerpt 가 보통 1~2 visible line 이라
+     line-clamp 3 (이전 2) + line-height 1.45 + max-height 4.6em 로 '일정 line 아래로
+     잘림' 회귀 차단. backend 가 매칭 line 전체 (≤ 220 char) 반환. */
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  line-height: 1.45;
+  max-height: 4.6em;
 }
 .search-snippet-hl {
   background: var(--search-highlight-bg);

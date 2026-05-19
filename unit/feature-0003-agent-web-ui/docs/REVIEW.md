@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0004
+- Date: 2026-05-19
+- Decision: TASK-0078 (REQ-20260519-0006, Minor §12.3) — search modal 3 항목 추가 hotfix. mouseup race 보강 (mouseup target 도 추적), preset 텍스트 "부터" 제거, snippet 본문 발췌 line-based clip.
+- Reason: TASK-0077 의 5 항목 fix 적용 후 사용자 직접 테스트 보고 — (1) modal 바깥 mousedown 후 modal 안 mouseup 일 때도 close 됨 (TASK-0077 의 mousedownOnOverlay-only flag 가 click target = overlay 일 때만 검사하므로 mouseup 위치 무관). DOM 표준상 click event 의 target 은 mousedown + mouseup 양 끝점의 공통 ancestor — backdrop 에서 mousedown → modal 안 mouseup 시 click target 이 overlay 가 될 수 있어 close 트리거. (2) preset 버튼 "1시간 전부터" 가 너무 길어 popover 안 5 버튼 1 row 에 안 들어가는 wrapping 발생 — "부터" 제거로 간결화. (3) snippet ±40 char clip 이 multi-line content 의 일부 line 만 cut 해 의미 파악 어려움 — 사용자 사례 "일정 line 아래에 있는 경우 가끔 확인". 매칭 line 전체 반환으로 의미 보존.
+- Alt 거부:
+  - **mouseup race fix 의 다른 패턴**: (a) `pointerup` event 사용 — 동작 비슷하나 일관성 차이. (b) `mousedown` 시 `ev.preventDefault()` 로 click 자체 차단 — selection 등 다른 mouse 동작도 차단됨. 본 fix 의 mousedown + mouseup + click 3 단 검사가 가장 단순 + 표준 정합 (click 의 정의 자체와 일치).
+  - **snippet line 단위 vs 문장 단위**: 문장 단위 (period/comma split) 도 옵션. 그러나 본 프로젝트 본문은 SQL / 자연어 혼합 — 문장 분할 규칙이 복잡 + 한국어 종결 어미 추적 필요. line (`\n`) 단위가 markdown / 코드 / 자연어 모두 robust.
+  - **excerpt 의 neighboring line 추가**: 매칭 line + 이전/다음 line 한 줄씩 (총 3 line) 노출. context 확장에 좋으나 시각 영역 ↑, line-clamp 3 만으로 단일 매칭 line 도 가독 충분. 본 cycle 은 단일 매칭 line 만 — 후속 cycle 권고.
+  - **preset 5 버튼 수 축소**: "1시간 전" 만 두고 나머지 3 개 (1주 / 1개월 / 1년) 으로 단순화 옵션. 사용자 결정은 "부터" 텍스트만 제거 — 5 버튼 유지. 사용자 결정 그대로 채택.
+- Risks:
+  - **mouseup race 보강 의 side effect**: 정상 backdrop click (양 끝점 모두 overlay) 만 close. 사용자가 backdrop 위 mousedown → 곧바로 backdrop 위 mouseup 도 close — 이건 의도적 backdrop click 으로 인식 정합. drag 가 modal 안으로 들어왔다 다시 backdrop 으로 가서 mouseup 도 close (양 끝점 모두 overlay) — drag 중간 modal 통과는 추적 못 함. edge case 이고 의도적 close 일 가능성 높음 — 그대로 둠.
+  - **snippet line-based excerpt 의 short line**: 매칭 line 이 1~2 char 일 수 있음. snippet 영역에 매우 짧은 텍스트만 노출 가능 — 사용자 가독 영향 small. 후속 cycle 에서 min excerpt length 또는 neighboring line 추가 권고.
+  - **preset 텍스트 단순화**: 한국어 사용자에 "1시간 전" 만 보이면 의미 모호 가능 — "지금부터 1시간 이전" 또는 "지금부터 1시간 이전까지". 그러나 popover 의 header "기간 선택" 과 from/to input 옆 노출이라 컨텍스트로 의미 명확. 사용자 결정 정합.
+  - **CSS line-clamp 3 의 row height 증가**: result row 높이가 1 line (~21 px) 정도 증가. modal max-height 72vh 안에서 viewport 노출 row 수가 ~1 개 감소 가능. 보통 결과 list 가 짧아 영향 미미.
+  - **TASK-0073 (다른 session) 과 file overlap**: 본 cycle = `src/app.py` 의 `_collect_matched_excerpts` (TASK-0072 helper 영역) + frontend. TASK-0073 = `src/app.py` 의 audit/dispatcher 영역. 충돌 없음.
+- 미해결 followup:
+  - **excerpt 의 neighboring line 추가** (1 cycle 이상 후) — 매칭 line 의 이전/다음 line 1 개씩 추가 옵션.
+  - **excerpt 의 AgentCoreMessages 포함** (TASK-0077 followup) — 현재 AgentMemoryMessages 한정.
+  - **backend matched_message_id 응답** (TASK-0077 followup) — jump 정확도 100%.
+  - **popover bottom-edge clamp** (TASK-0076 followup) — viewport 하단 chip 의 popover 가 drop-up.
+- Trace: REQ-20260519-0006 → TASK-0078 → CHG-20260519-0008 → REV-20260519-0004 (hotfix of TASK-0077)
+
 ## REV-20260519-0003
 - Date: 2026-05-19
 - Decision: TASK-0077 (REQ-20260519-0005, Minor §12.3) — search modal 5 항목 hotfix bundle. min char 3→2, 소유자 facet 제거 (효용성 낮음 — 사용자 결정), 기간 preset 5종 (1시간/1일/1주/1개월/1년 전), mouseup race fix, snippet 본문 excerpt (backend `_collect_matched_excerpts` 신설).

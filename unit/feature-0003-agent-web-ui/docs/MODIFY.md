@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0008
+- Date: 2026-05-19
+- Summary: TASK-0078 (REQ-20260519-0006, Minor §12.3) — search modal 3 항목 추가 hotfix of TASK-0077. (1) mouseup race 보강 (mouseup target 추적 추가), (2) preset 텍스트 "부터" 제거, (3) snippet 본문 발췌 line-based clip.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/app.py` — `_collect_matched_excerpts` 의 excerpt 추출 로직을 line-based 로 재작성. 매칭 위치의 line 경계 (`text.rfind("\n", 0, idx)` + `text.find("\n", idx)`) 를 찾아 line 전체를 반환. line 이 LINE_MAX (220 char) 초과 시 매칭 위치 ±HALF_WINDOW (60 char) clip + "…" prefix/suffix. 매칭 위치 검색 실패 (escape edge) 시 first line 사용.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html` — `#searchDatePresets` 의 5 preset button 텍스트 "...부터" → "..." (5 개 모두). data-preset-hours 데이터 속성 무변경 (1/24/168/720/8760). cache-bust `v=20260519-search-presets` → `v=20260519-snippet-line` (styles.css + app.js 양쪽).
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css` — `.search-snippet` 의 `-webkit-line-clamp: 2` → `3` + `line-height: 1.45` + `max-height: 4.6em` 추가. line-based excerpt 의 시각 잘림 완화.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/app.js`
+    - `state.searchModal` 에 `mouseupOnOverlay: false` 추가.
+    - `openSearchModal` reset 에 `mouseupOnOverlay = false` 추가.
+    - `_bindSearchModalListeners` 의 overlay handler 패턴 갱신 — `overlay.mousedown` (mousedownOnOverlay 기록) + `overlay.mouseup` (mouseupOnOverlay 기록, **신규**) + `overlay.click` 시 둘 다 true + target === overlay 일 때만 close.
+- Verification:
+  - `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS.
+  - `node --check unit/feature-0003-agent-web-ui/src/static/app.js` PASS.
+  - `make web` 재배포 OK — `repo-web-1` 24 초 후 healthy.
+- Risks:
+  - **line-based excerpt 가 가독 line 보다 짧을 가능성**: 매칭 line 이 1 char 일 수도 있음 (예: 빈 line 직후 매칭 char 만 있는 line). 본 cycle 은 그대로 노출 — 사용자가 더 긴 context 가 필요하면 별 cycle 에서 neighboring line 추가 옵션 도입 권고.
+  - **mouseup race 보강**: 양 끝점 모두 overlay 인 의도적 backdrop click 만 close. 사용자 의도 모호 케이스 (예: backdrop 위 mousedown → 곧바로 backdrop 위 mouseup) 는 정상 close — 의도적 backdrop click 으로 인식.
+  - **preset 텍스트 변경**: 단순 텍스트 변경. 다른 영향 0.
+  - **line-clamp 3 의 시각 영역 ↑**: 결과 row 의 height 가 1 줄 분량 (~21 px) 증가 가능. result list 의 max-height (TASK-0072 의 modal 본체 max-height 72vh) 내에서 노출 — viewport 안 result row 수가 ~1 개 감소할 수 있음. 보통 결과 list 가 길지 않아 영향 미미.
+- Trace: REQ-20260519-0006 → TASK-0078 → CHG-20260519-0008 → REV-20260519-0004 (hotfix of TASK-0077)
+
 ## CHG-20260519-0007
 - Date: 2026-05-19
 - Summary: TASK-0077 (REQ-20260519-0005, Minor §12.3) — search modal 5 항목 hotfix bundle of TASK-0072/0076. 사용자 직접 테스트 보고 5 항목 모두 반영 — min char 3→2, 소유자 facet 제거, 기간 preset 5종, mouseup race fix, snippet 본문 excerpt.

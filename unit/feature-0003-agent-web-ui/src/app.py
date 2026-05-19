@@ -3074,23 +3074,40 @@ WHERE t.rn = 1
         return {}
     finally:
         cur.close()
+    # REQ-20260519-0006 (TASK-0078): excerpt 를 line-based 로 변환. 매칭 위치가 속한
+    # line 전체 (이전 \n 직후 ~ 다음 \n 직전) 를 반환해 사용자가 의미 있는 문장 단위로
+    # 발췌를 보게 한다. 그 line 이 매우 길 경우 매칭 위치 ±60 char clip + "…".
     result: dict[str, str] = {}
     q_lower = q.lower()
+    LINE_MAX = 220  # 한 line 의 최대 길이 — 초과 시 매칭 위치 기준 ±60 char clip
+    HALF_WINDOW = 60
     for cid, content in rows:
         text = str(content or "")
         if not text:
             continue
         idx = text.lower().find(q_lower)
         if idx < 0:
-            excerpt = text[:120]
+            # LIKE 매칭이나 case-insensitive find 실패 (escape edge) — 첫 line 사용.
+            first_line = text.split("\n", 1)[0]
+            excerpt = first_line if len(first_line) <= LINE_MAX else (first_line[:LINE_MAX] + "…")
         else:
-            start = max(0, idx - 40)
-            end = min(len(text), idx + len(q) + 40)
-            excerpt = text[start:end]
-            if start > 0:
-                excerpt = "…" + excerpt
-            if end < len(text):
-                excerpt = excerpt + "…"
+            # 매칭 위치가 속한 line 의 경계 찾기.
+            line_start = text.rfind("\n", 0, idx)
+            line_start = 0 if line_start == -1 else line_start + 1
+            line_end = text.find("\n", idx)
+            line_end = len(text) if line_end == -1 else line_end
+            line = text[line_start:line_end]
+            if len(line) <= LINE_MAX:
+                excerpt = line
+            else:
+                rel = idx - line_start
+                start = max(0, rel - HALF_WINDOW)
+                end = min(len(line), rel + len(q) + HALF_WINDOW)
+                excerpt = line[start:end]
+                if start > 0:
+                    excerpt = "…" + excerpt
+                if end < len(line):
+                    excerpt = excerpt + "…"
         result[str(cid)] = excerpt
     return result
 

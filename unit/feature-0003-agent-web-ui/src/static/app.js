@@ -146,8 +146,10 @@ const state = {
     pendingJumpConvId: "",
     // REQ-20260519-0005 (TASK-0077): backend `/api/conversations` 응답의 matched_excerpts (conv_id → 본문 excerpt) 캐시.
     matched_excerpts: {},
-    // REQ-20260519-0005 (TASK-0077): mouseup race fix — backdrop close 는 mousedown 도 overlay 에서 시작됐을 때만.
+    // REQ-20260519-0005 (TASK-0077) + REQ-20260519-0006 (TASK-0078): mouseup race fix.
+    // mousedown / mouseup / click target 3 개 모두 overlay 일 때만 close.
     mousedownOnOverlay: false,
+    mouseupOnOverlay: false,
   },
 };
 
@@ -4108,6 +4110,7 @@ function openSearchModal() {
   state.searchModal.date_to = null;
   state.searchModal.matched_excerpts = {};
   state.searchModal.mousedownOnOverlay = false;
+  state.searchModal.mouseupOnOverlay = false;
   if (snippetChip) snippetChip.setAttribute("aria-pressed", "false");
   _updateSearchFacetChipLabels();
   _closeSearchPopovers();
@@ -4363,15 +4366,22 @@ function _bindSearchModalListeners() {
   if (openBtn) openBtn.addEventListener("click", openSearchModal);
   if (closeBtn) closeBtn.addEventListener("click", closeSearchModal);
   if (overlay) {
-    // REQ-20260519-0005 (TASK-0077): mouseup race fix — backdrop close 는
-    // mousedown + mouseup 둘 다 overlay 에서 일어났을 때만. 사용자가 modal 안
-    // text 를 drag 선택하다 마우스를 backdrop 까지 끌고 가서 떼는 경우 close 방지.
+    // REQ-20260519-0005 (TASK-0077) + REQ-20260519-0006 (TASK-0078): mouseup race fix —
+    // backdrop close 는 mousedown / mouseup / click target 3 개 모두 overlay 일 때만 발동.
+    // 이렇게 해야 (a) modal 안 text drag → backdrop 위 mouseup 도 close 안 됨,
+    // (b) backdrop 위 mousedown → modal 안 drag → modal 안 mouseup 도 close 안 됨.
+    // 즉 의도적인 backdrop click (mousedown + mouseup 모두 backdrop) 만 close 트리거.
     overlay.addEventListener("mousedown", (ev) => {
       state.searchModal.mousedownOnOverlay = (ev.target === overlay);
     });
+    overlay.addEventListener("mouseup", (ev) => {
+      state.searchModal.mouseupOnOverlay = (ev.target === overlay);
+    });
     overlay.addEventListener("click", (ev) => {
-      const shouldClose = (ev.target === overlay) && state.searchModal.mousedownOnOverlay;
-      state.searchModal.mousedownOnOverlay = false;
+      const sm = state.searchModal;
+      const shouldClose = sm.mousedownOnOverlay && sm.mouseupOnOverlay && (ev.target === overlay);
+      sm.mousedownOnOverlay = false;
+      sm.mouseupOnOverlay = false;
       if (shouldClose) closeSearchModal();
     });
   }
