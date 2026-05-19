@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
-template_version: v3.6.1
+template_version: v3.8.0-rc.1
 domain: [workflow, context]
 ai_read_priority: 3
 ---
@@ -287,3 +287,21 @@ TEMP_CLEANUP_ON_SUCCESS="1"
 #### 검증
 
 화면 정렬이 본 §10.6 와 어긋나면 그 PR 은 사람 리뷰가 반려한다.
+
+## 10. 자동화 / 실행 진입점 (Makefile 채택 시)
+
+`repo/Makefile` 을 도입한 경우 (AGENTS.md §20) 다음 target 네이밍을 권장:
+
+- `up` / `down` — 서비스 시작/중지
+- `build` / `test` / `clean` — 표준 빌드 사이클
+- `<feature>-<verb>` — feature 별 entry (예: `mysql-restore`, `xtrabackup-up`). `<feature>` 부분은 `unit/feature-NNNN-<name>` 의 `<name>` 과 일치시켜 추적성 확보.
+- `help` — target 목록 자동 출력. 권장 구현:
+
+  ```makefile
+  help:
+  	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | \
+  		awk 'BEGIN {FS=":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+  ```
+
+- 새 target 추가/제거 시 `docs/DECISIONS.md` 의 ADR 작성 (Makefile = "실행 진입점" anchor, §18).
+- 본 § 은 PROJECT.md §9.1 (자동화 도구) 의 categorization 과 일관 — Makefile 은 테스트 프레임워크가 아닌 자동화 영역. CI/CD 도구는 PROJECT.md §10 참조.
