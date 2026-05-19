@@ -1,5 +1,5 @@
 ---
-template_version: v3.6.1
+template_version: v3.8.0-rc.1
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -464,38 +464,142 @@ AI가 자유롭게 갱신 가능한 영역
 - lane 간 동일 태그 재사용 금지
 - `WEB_PARALLEL_LIMIT` 초과 금지
 
-### §13.2 작업 격리 정책
+### §13.2 작업 격리 정책 (Manual Parallel AI Worktree Isolation, v0.1)
 
-#### 단일 AI 작업 (기본)
-단일 AI가 순차적으로 작업하는 경우 별도 격리 없이 §13.1의 충돌 방지 규칙을 따른다.
+단일 AI 가 순차적으로 작업하는 경우는 별도 격리 없이 §13.1 의 충돌 방지 규칙을
+따른다. 이하 §13.2.1 ~ §13.2.5 는 **manual parallel AI** (사용자가 명시적으로 여러
+Claude Code 세션을 띄워 각자 별 worktree 에서 독립 기능을 병렬 작업하는 시나리오)
+전용 정책이다.
 
-#### 병렬 AI 작업 (권장: Git Worktree + 2계층 브랜치)
-두 개 이상의 AI가 동시에 서로 다른 기능을 작업하는 경우:
+```
+Lifecycle (state machine, manual parallel AI):
 
-1. **내부 작업 브랜치 (로컬 전용)**: 각 AI는 별도 내부 브랜치에서 작업한다.
-   - 브랜치 명명: `ai/<agent-id>/<issue-number>/<slice>`
-   - 이 브랜치는 **로컬/worktree 전용**이며, GitHub PR head로 직접 사용하지 않는다.
+  [main worktree]                                          [linked ai/* worktree]
+      │  trigger (user 명시 / entry arg dispatch)               │
+      ├── git worktree add ../worktrees/<feat>                  │
+      │   -b ai/<agent>/<feat>           ─────────────────►     │  Work (mutate
+      │                                                         │   in this path
+      │                                                         │   only; F1 binding)
+      │     ◄────── PR / 자동 merge (§16.3 + §13.2.5) ──────────┤
+      │                                                         │
+      ├── self-merge ⇒ AI 자동 cleanup                          ├── other-merge
+      │   (git worktree remove + git branch -d)                 │   ⇒ orphan
+      │                                                         │   ⇒ user manual
+      ▼                                                         ▼   sweep
+   continue work                                            cleanup pending
+```
 
-2. **공개 PR 브랜치 (이슈당 1개)**: 외부로 push하고 PR을 여는 브랜치는 항상 `issue/<issue-number>-<short-slug>` 하나만 사용한다.
-   - 내부 `ai/*` 브랜치에서 작업한 결과는 로컬에서 `issue/*` 브랜치로 통합한 뒤 push한다.
+#### §13.2.1 적용범위 및 Trigger
 
-3. **Worktree 격리 (권장)**: Git worktree를 활용하여 물리적으로 작업 디렉토리를 분리한다.
-   ```bash
-   git worktree add ../worktrees/issue-12 -b ai/claude/12/browser-cleanup
-   ```
-   - 각 AI는 자신의 worktree 내에서만 파일을 수정한다.
-   - 내부 브랜치 작업 완료 후 공개 `issue/*` 브랜치에 통합하고 worktree를 제거한다.
+본 §13.2 는 **manual parallel AI feature 작업** 에 한정 적용한다. 단일 AI 순차
+작업 / variant exploration / 장기 risky refactor / QA worktree 시나리오는 본
+사이클 범위 외 — 별도 ADR 에서 다룬다 (`docs/DECISIONS.md` ADR-0005).
 
-4. **공유 파일 수정 프로토콜**:
-   - 프로젝트 수준 문서(STATUS.md, ARCHITECTURE.md 등)는 병합 시에만 갱신한다.
-   - shared/ 코드 변경이 필요하면 REPORT.md에 기록하고 공개 `issue/*` 브랜치 통합 단계에서 합친다.
-   - 동일 shared 모듈을 두 AI가 동시 수정하는 것은 금지한다.
+`git worktree add` 호출 가능한 trigger 는 다음 두 가지로 제한한다:
+1. **사용자 명시 지시** — 세션 안에서 "worktree 만들어서 X 작업해라" 류 직접 지시.
+2. **`/_template:entry` arg-given dispatch** — entry persona 의 Phase 3.6 worktree
+   decision tree (`_template/commands/entry.md`) 가 task envelope 의
+   `worktree.feature_id` hint 를 보고 worktree create 권유 결정.
 
-#### 샌드박스 실행
-AI가 코드를 실행(테스트, 빌드 등)할 때는 다음을 준수한다:
+그 외 AI 의 자율 `git worktree add` / cwd 변경 / 다른 worktree 진입은 금지.
+
+**Precedence (carve-out 우선)**: `/_template:entry` dispatch 대상이 `/_local:*` 류
+명령이면 §13.2.4 carve-out 이 trigger 보다 우선한다 — 즉, entry 가 자동으로
+worktree 진입을 결정하지 않고 main worktree 컨텍스트를 강제 유지한다.
+
+#### §13.2.2 Forbidden Actions
+
+세 등급 (강→약). 각 forbidden 위반은 detection gate 가 별도 존재한다.
+
+- **F1 (강)**: 단일 worktree 안에서 `git checkout <other-branch>` / `git switch
+  <other-branch>` **금지**. 한 worktree = 한 branch 영구 binding (binding 유효 기간:
+  해당 worktree 존재 동안). 다른 branch 작업은 새 worktree add 로 분리한다.
+  **Detached HEAD 상태 mutation 도 동일하게 금지** (F1 회피 경로 차단).
+  Detection: `bin/verify-completion.sh` check #10 (worktree binding) — 본 §13.2.2
+  F1 enforcement gate. detached HEAD / binding mismatch 시 FAIL, escape hatch 는
+  `GSTACK_SKIP_WORKTREE_CHECK=1` 또는 `--skip-worktree-check`.
+
+- **F2**: 두 worktree 가 다음 path 들을 동시 수정 금지. 단일 worktree mutator
+  지정, 나머지는 read-only (`git log`, `git diff`, `git show` 포함). path 목록은
+  **동적 enumeration** — `bin/list-shared-paths.sh` 출력을 single source of truth
+  로 사용한다. 정적 release artifact (`VERSION`, `CHANGELOG.md`,
+  `TEMPLATE_CHANGELOG.md`, `package.json`) 도 해당 출력에 포함된다 (스크립트
+  내부에서 정적 추가). hardcoded list 는 폐기 — `edit_policy: human-guided`
+  frontmatter 또는 `<!-- HUMAN-LOCKED:START -->` 마커 + `repo/shared/**` 재귀 +
+  release artifact 정적 추가의 합집합이 F2 path set.
+  **Release/ship 행위 자체가 main worktree 전용** (§13.2.4 carve-out 보강).
+
+- **F3**: append-only 문서 (`docs/LEARNINGS.md`, `docs/DECISIONS.md` 본문 history,
+  `docs/STATUS.md` history) 에 **timestamp + session-ID 누락 추가 금지**.
+  §13.1.a 참조. Detection: §18 cycle entry + reviewer manual scan.
+
+#### §13.2.3 Lifecycle
+
+- **Create (actor: trigger 받은 AI)** — §13.2.1 trigger 충족 시 AI 가 직접 실행:
+  ```bash
+  git worktree add ../worktrees/<feature-id> -b ai/<agent-id>/<feature-id>
+  ```
+  branch naming 은 `ai/<agent>/<feature>` 권장 (prescriptive, 강제 enforce 아님 —
+  check #10 의 binding 검증과 분리). 사용자 명시 실행도 허용.
+
+- **Work** — 한 worktree 안에서만 file write/delete (mutation 정의: write 또는
+  delete). 다른 worktree path 의 **read 는 허용** (read = file system read + git
+  read-only command). branch checkout / worktree-level mutation 은 read 아님 — F1
+  적용. `shared/` 변경 의도 시 단일 mutator 지정 + REPORT.md 기록 + 머지 단계
+  통합.
+
+- **Merge** — ai/* → main. PR 또는 자동 머지 (§16.3 + §13.2.5).
+
+- **Cleanup ownership** (P1 trigger 의 자연 예외 — 머지 시점 자동 허용):
+  - **자기 머지**: trigger 받은 AI 가 자기 PR 머지 직후 동일 세션에서
+    `git worktree remove <path>` + `git branch -d ai/<agent>/<feature>` 실행.
+    P1 의 "생성 금지" 와 별개로 cleanup 은 자동 허용.
+  - **타 worktree 머지 / orphan**: 다른 worktree AI 가 PR 머지를 트리거한 경우,
+    원 worktree AI 는 머지 사실을 모름 → orphan worktree 누적. 본 사이클은
+    **사용자 manual sweep**:
+    ```bash
+    git worktree prune
+    git branch --merged main | grep '^  ai/' | xargs -r git branch -d
+    ```
+    자동 orphan sweep 은 본 사이클 외 (Reviewer Concerns 참조, ADR-0005).
+  - `/_local:*` cron 은 worktree carve-out 이므로 자동 sweep 책임 없음.
+
+#### §13.2.4 Carve-outs
+
+- **`/_local:*` 명령과 scheduled-inspection cron 은 main checkout 전용**. 임의
+  worktree 에서 호출 금지. 3-layer sentinel (cwd + hostname + 인프라) 깨짐 방지.
+- **Release/ship 행위** (VERSION bump, CHANGELOG 정리, tag, npm publish 등) 도
+  main checkout 전용. ai/* worktree 에서 release artifact 직접 수정 금지 (§13.2.2
+  F2 와 결합).
+- **Carve-out 의 의미**: "정책 외" = 본 §13.2 의 forbidden actions / lifecycle /
+  trigger 룰이 적용되지 않음. 단 §13.1 일반 충돌방지 룰은 계속 적용. Conductor
+  / IDE multi-tab 자동 worktree 및 Codex `-C` 옵션 worktree 활용도 본 사이클
+  §13.2 정책 외 — 향후 별도 ADR.
+
+#### §13.2.5 §16.3 worktree-aware Addendum (Normative)
+
+**Normative source for §16.3 worktree-aware behavior.** §16.3 본문은 단일 checkout
+가정으로 유지되고, 본 §13.2.5 가 worktree 환경에서의 보충 룰을 정한다. 두 곳에
+같은 룰을 중복하지 않는다 (§16.3 에는 본 §13.2.5 로 cross-ref pointer 만).
+
+- §16.3 조건표는 **per-worktree per-branch** 적용. 각 ai/* worktree 가 자기 PR /
+  자동 push / main merge 결정을 독립으로 수행.
+- **ai/\* 머지 후 main worktree pull** (actor: main worktree 의 다음 turn 진입자):
+  ai/* PR 머지 후 main worktree 의 사용자/AI 가 다음 turn 의 first action 으로
+  `git fetch && git pull --ff-only` 실행. Trigger 메커니즘: main worktree entry
+  preamble (entry.md Phase 3.6 Step 1) 의 `git fetch origin` + `git rev-list
+  --count HEAD..origin/main` 검사. behind > 0 일 때만 사용자 화면에 1줄 표면화.
+  fetch 실패 = WARN ("remote unavailable") + 계속 진행 (D11A — 네트워크 가용성
+  ≠ correctness). TTL cache 없음.
+- 동시 push race 는 wedge B (manual parallel) 하 이론적 가능성. 발생 시 **사용자
+  수동 직렬화** 가 권장 해결. 자동 재시도 알고리즘은 본 사이클 외.
+
+#### §13.2.6 샌드박스 실행
+
+AI 가 코드를 실행 (테스트, 빌드 등) 할 때:
 - 프로덕션 데이터에 접근하지 않는다.
 - 네트워크 호출은 테스트 대상 또는 명시적으로 허용된 엔드포인트에만 수행한다.
-- 파일 시스템 변경은 작업 디렉토리 내로 제한한다.
+- 파일 시스템 변경은 작업 디렉토리 내로 제한한다 (§13.2.2 F1/F2 와 결합).
 - 구체적 범위는 §15.2 도메인 절대 금지사항에서 프로젝트별로 정의한다.
 
 ### §13.3 계획-실행 분리 에이전트 (선택적 고급 패턴)
@@ -909,6 +1013,14 @@ AI 작업자는 완료 가능한 cycle에서 아래 응답으로 작업을 멈�
 예외가 아니면 AI는 §16.5에 따라 commit하고, 가능한 경우 push/PR 갱신까지 완료한 뒤
 결과를 `REPORT.md`와 최종 응답에 기록한다.
 
+#### Worktree 환경에서의 적용
+
+본 §16.5 sync 결정 로직은 단일 checkout 가정으로 유지된다. manual parallel AI
+worktree 환경에서는 main worktree stale 위험이 추가되며, 이에 대한 보충 룰은
+**Normative source: §13.2.5 (Manual Parallel AI Worktree Isolation Addendum)** 에
+정의된다. ai/* PR 머지 후 main worktree 에서의 일회성 `git fetch && git pull
+--ff-only` 권유 및 fetch 실패 처리 (WARN + 계속) 룰은 그곳을 참조한다.
+
 ### §16.6 병합 충돌 해결 정책
 
 공개 `issue/*` 브랜치를 `origin/main`에 맞춰 동기화하거나, 내부 `ai/*` 브랜치를 공개 `issue/*` 브랜치에 통합하는 과정에서 충돌이 발생할 수 있다.
@@ -1132,3 +1244,81 @@ canonical로 사용한다 (frontmatter 조작 방지).
 - 이미 `/repo` 안에서 작업 중이면 `bash bin/codex-template-install.sh --check` 를
   사용한다. `--link` 가 플랫폼 정책상 실패하면 Codex 를 `/repo` 에서 시작하고,
   wrapper-level 자동완성 제한을 작업 로그에 명시한다.
+
+---
+
+## §20. Makefile 권유 정책
+
+소비자 프로젝트가 진입점 다수 / feature 디렉토리별 스크립트 실행 패턴을 가질 때 `repo/Makefile` 작성을 권유한다. 본 § 은 권유 메커니즘 (when / where / how) 의 single source of truth.
+
+### §20.1 적용 시점 (when)
+
+다음 신호 중 하나 이상이 감지되면 권유 대상:
+
+- **진입점 ≥ 2** — 서로 다른 디렉토리에 위치한 실행 스크립트, 또는 README / `docs/PROJECT.md` / `FIRST_REQUEST.md` 에 산재한 build/test/run 명령 ≥ 2.
+- **Feature 디렉토리별 스크립트 실행** — `unit/feature-*/` 안에 자체 실행 entry (예: `unit/feature-NNNN-name/scripts/*.sh`) 가 존재하고, 호출 명령이 README / docs 에 명시되어 있음.
+- **명령 산재** — README / `FIRST_REQUEST.md` / docs 에 명시된 실행 명령 (`bash …`, `npm …`, `python …`, `docker …` 등) 이 **3 개 이상** + `repo/Makefile` 부재.
+
+신호가 모호하면 권유하지 않는다 (false positive 회피 — 1 회 명령만 있는 단순 프로젝트는 Makefile 불요).
+
+### §20.2 권유 책임 분담 (where)
+
+- **`/_template:init`** (Phase 6 보고에서 Q3/Q4 답변 평가 시) — 신호 감지 시 보고 형식의 `### Makefile 권유` § 출력.
+- **`/_template:entry`** (Phase 3.5 pre-load 단계) — `repo/Makefile` 부재 + §20.1 신호 silent detection 시 Phase 5 의 후속 안내에서 hint 출력.
+- **일반 작업 중 (모든 AI 행동)** — 작업 진행 중 §20.1 신호를 새로 감지하면 1 회 hint. **자동 chain 금지** (§19.6 권유-only 원칙 — AI 가 Makefile 을 자동 생성하지 않는다).
+
+#### §20.2.1 Cross-source dedup marker (필수)
+
+권유 emission 은 **소비자 repo 전체에 대해 1 회만**. emission point 가 분산되어 있으므로 공유 dedup marker 사용:
+
+- **Marker path**: `repo/.template/makefile-hint-shown` (zero-byte sentinel)
+- **Touched on**: 첫 emission 시 자동 `touch`
+- **Checked on**: 모든 emission point 가 §20.1 신호 평가 *직전* `[ -f repo/.template/makefile-hint-shown ]` 확인. 존재 시 emission skip.
+- **자동 cleanup 안 함**: 사용자가 `/_template:makefile` 완료 후에도 marker 유지 → 재권유 차단.
+
+사용자의 **명시적 거절** 경로:
+
+- `repo/.template/MAKEFILE_DECLINED` (zero-byte sentinel) — Makefile 영구 불요 표명. 모든 emission point 가 marker 검사 후 영구 skip.
+- `docs/DECISIONS.md` 의 ADR — 정식 결정 (선호). ADR 본문에 "Makefile 불채택" 명시 시 영구 skip (AI 가 ADR grep 책임).
+
+`MAKEFILE_DECLINED` 또는 ADR-기반 거절이 발견되면 `/_template:makefile` SKILL 호출 시 SKILL 이 사전 차단 + 재확인.
+
+### §20.3 권유 형식 (how)
+
+권유 hint 는 **schema 강제** 로 emit (자유형식 placeholder 금지):
+
+```
+[Makefile 권유] §20.1 신호 감지
+- signal_kind: <multi-entry-readme | feature-scripts | docs-commands>
+- evidence: <≤80 char concrete reference>
+`repo/Makefile` 작성을 권유합니다. 호출: `/_template:makefile`
+(영구 skip 원하면 `repo/.template/MAKEFILE_DECLINED` 파일 생성 또는 `/_template:makefile` 호출 후 "영구 skip" 분기 선택)
+```
+
+#### 예시 (worked examples)
+
+```
+[Makefile 권유] §20.1 신호 감지
+- signal_kind: multi-entry-readme
+- evidence: README.md L12,L18,L24 의 bash/npm 명령 3개 + repo/Makefile 부재
+`repo/Makefile` 작성을 권유합니다. 호출: `/_template:makefile`
+(영구 skip 원하면 `repo/.template/MAKEFILE_DECLINED` 파일 생성 또는 `/_template:makefile` 호출 후 "영구 skip" 분기 선택)
+```
+
+```
+[Makefile 권유] §20.1 신호 감지
+- signal_kind: feature-scripts
+- evidence: unit/feature-0001-mysql-restore/scripts/restore.sh + unit/feature-0002-xtrabackup/scripts/run.sh
+`repo/Makefile` 작성을 권유합니다. 호출: `/_template:makefile`
+(영구 skip 원하면 `repo/.template/MAKEFILE_DECLINED` 파일 생성 또는 `/_template:makefile` 호출 후 "영구 skip" 분기 선택)
+```
+
+권유 출력 후 사용자 명시 호출이 있어야만 `/_template:makefile` SKILL 진입. AI 가 자동 생성하지 않는다.
+
+### §20.4 Makefile 위치 및 anchor 정합
+
+- **위치**: `repo/Makefile` (consumer-side path)
+- **Anchor 정합**: AGENTS.md anchor table (주석 예시) 의 `Makefile | docs/ARCHITECTURE.md | 실행 진입점` 행과 일치. target 추가/제거는 §18 (ADR 경유) 정책 준수.
+- **Customization 보호**: consumer 가 작성한 Makefile 은 template upgrade 시 보존 — 마이그레이션 hop 이 덮어쓰지 않는다 (`bin/migrations/lib/customization-detect.sh` 의 `is_marker_protected` 패턴 따름).
+- **`/_template:makefile` SKILL 의 scope**: project-agnostic (§19.7) — 특정 feature 이름·도메인을 가정하지 않는다. 사용자가 입력한 entry 명령을 Q&A 로 수집한 후 Makefile 본문을 조립.
+- **Shell-injection 경고 (필수)**: SKILL 의 Q1 (entry-point inventory) 으로 수집한 명령은 Makefile recipe 본문에 그대로 들어가며 `make <target>` 실행 시 `/bin/sh -c` 로 evaluate 된다. metachar (`;`, `&&`, `|`, backticks, `$()`, `>`, `&`) 가 active 이므로 SKILL 이 Q1.5 단계에서 수집 명령 echo + 1줄 경고 + 사용자 confirm 을 강제한다.

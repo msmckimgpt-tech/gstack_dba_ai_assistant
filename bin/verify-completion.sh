@@ -3,7 +3,7 @@
 # verify-completion.sh — AI가 작업 완료를 선언하기 전에 의무적으로 호출하는 검증 도구.
 #
 # 설계 근거: AGENTS.md §16.3 (Git 동기화 절차 — 이 스크립트가 흡수)
-#           AGENTS.md §17 (외부 앵커 정책)
+#           AGENTS.md §18 (외부 앵커 정책)
 #           ~/.gstack/projects/ai_delegated_dev_template/root-main-design-20260423-235935.md
 #
 # Requires: bash >= 4, git >= 2.20, awk (POSIX), grep (POSIX), date (POSIX)
@@ -117,18 +117,28 @@ feature_dir() {
 is_meta_path() {
   local path="$1"
   case "$path" in
-    AGENTS.md|CLAUDE.md|README.md) return 0 ;;
-    bin/*|shared/docs/*|docs/*|playbooks/*) return 0 ;;
+    AGENTS.md|CLAUDE.md) return 0 ;;
+    bin/*|shared/docs/*|docs/*) return 0 ;;
     unit/_template/*) return 0 ;;
     unit/META-*) return 0 ;;
-    TEMPLATE_CHANGELOG.md|CONTRIBUTING.md) return 0 ;;
-    .github/*) return 0 ;;
+    # v3.6.0 — template maintainer archive (NOT distributed to consumers,
+    # but classified as META for verify-completion check #9 attribution).
+    _template_maintainer/*) return 0 ;;
+    TEMPLATE_CHANGELOG.md|CONTRIBUTING.md|README.md|FIRST_REQUEST.md|TODOS.md|VERSION) return 0 ;;
+    # AGENTS.md §18.10 — meta/** and unit/<feature>/meta/** are META paths.
+    meta/*) return 0 ;;
+    unit/*/meta/*) return 0 ;;
+    # .claude/ holds project-scope agents, commands, settings — meta-class.
+    .claude/*) return 0 ;;
+    # .codex, .agents/plugins, and the template-owned local Codex plugin hold
+    # project-scope Codex commands, skills, and marketplace metadata — meta-class.
+    .codex/*|.agents/plugins/*|plugins/ai-delegated-dev-template/*) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 # Return 0 if ALL files in the provided list are META paths (pure-meta commit).
-# The AGENTS.md §17 rule: pure-meta commits skip verify-completion entirely.
+# The AGENTS.md §18.4 rule: pure-meta commits skip checks #1-#8 (check #9 still runs).
 # Mixed commits (meta + operational) are treated as operational (strict gate).
 is_pure_meta_changeset() {
   local any=0
@@ -304,12 +314,7 @@ check_section_4_quality() {
   local section
   section=$(extract_section_4 "$anchor_path")
 
-  # 주석 블록 안의 텍스트는 entry 본문이 아니므로 strip 한 뒤에 빈지 판정한다.
-  local stripped_section
-  stripped_section=$(printf '%s' "$section" \
-    | awk 'BEGIN{c=0} /<!--/{c=1} { if(!c) print } /-->/{c=0}' \
-    | grep -v '^\s*$' | grep -v '^(엔트리 없음' || true)
-  if [ -z "$stripped_section" ]; then
+  if [ -z "$(printf '%s' "$section" | grep -v '^<!--' | grep -v '^-->' | grep -v '^\s*$' | grep -v '^(엔트리 없음')" ]; then
     REJECT_REASONS+=("§4 has no entries at all")
     return 1
   fi
@@ -424,7 +429,11 @@ check_2_task_md() {
   fi
 
   # A checkbox delta means adding/removing `[x]` or `[ ]` transitions.
-  if printf '%s' "$diff_output" | grep -qE '^\+.*\[[ x]\]'; then
+  # NOTE: `printf | grep -q` triggers SIGPIPE+pipefail false-negative on >64KB
+  # diff. Use grep -c with count comparison to avoid early-exit SIGPIPE.
+  local checkbox_count
+  checkbox_count=$(printf '%s' "$diff_output" | grep -cE '^\+.*\[[ x]\]' || true)
+  if [ "${checkbox_count:-0}" -gt 0 ]; then
     log_check 2 PASS "TASK.md checkbox"
     return 0
   fi
@@ -450,7 +459,10 @@ check_3_modify_md() {
   esac
 
   # New append should introduce a CHG- header line
-  if printf '%s' "$diff_output" | grep -qE '^\+## CHG-'; then
+  # NOTE: SIGPIPE+pipefail fix — grep -c with count comparison.
+  local chg_count
+  chg_count=$(printf '%s' "$diff_output" | grep -cE '^\+## CHG-' || true)
+  if [ "${chg_count:-0}" -gt 0 ]; then
     log_check 3 PASS "MODIFY.md entry"
     return 0
   fi
@@ -574,6 +586,103 @@ check_7_anchor_4() {
   return 1
 }
 
+# Check #9: REVIEW.md cycle entry — at least one accepted [SUBAGENT|AGENT-TEAM]
+# entry, or an explicit [SKIPPED] entry for non-policy doc-only cycles, must
+# have been added to the relevant REVIEW.md in the current cycle. [REJECTED:*]
+# entries are diagnostic traces only; they do not prove review completion.
+# AGENTS.md §18.4 + §18.10.1: META mode skips checks #1-#8 but check #9 still runs.
+# v0.1 cycle scope approximation: staged/unstaged diff (pre-commit) or HEAD diff
+# (post-commit) of the candidate REVIEW.md must contain at least one added entry
+# matching the 4 entry types. Precise cycle-window scope is a v0.2 candidate.
+check_9_review_entry() {
+  local mode="$1"
+  local fid="${2:-}"
+  local changed=""
+  case "$mode" in
+    pre-commit|shared-pre-commit) changed=$(all_changed_files) ;;
+    post-commit) changed=$(head_commit_files) ;;
+  esac
+
+  local review_paths=()
+  if [ -n "$fid" ] && [ -d "unit/${fid}" ]; then
+    review_paths+=("unit/${fid}/docs/REVIEW.md")
+    if printf '%s\n' "$changed" | grep -Eq "^unit/${fid}/meta/"; then
+      review_paths+=("unit/${fid}/meta/REVIEW.md")
+    fi
+  fi
+
+  if printf '%s\n' "$changed" | grep -Eq '^meta/'; then
+    review_paths+=("meta/REVIEW.md")
+  fi
+
+  # v3.6.0 — Template maintainer cycle: changes touching _template_maintainer/**
+  # are accepted via _template_maintainer/REVIEW_INDEX.md as the cycle entry source.
+  # This keeps template-self review evidence out of the consumer-area meta/REVIEW.md.
+  if printf '%s\n' "$changed" | grep -Eq '^_template_maintainer/'; then
+    review_paths+=("_template_maintainer/REVIEW_INDEX.md")
+  fi
+
+  # feature-bound META paths from any feature in the changeset
+  local feature_metas
+  feature_metas=$(printf '%s\n' "$changed" \
+    | grep -Eo '^unit/[^/]+/meta/' \
+    | sed -E 's|^unit/([^/]+)/meta/$|\1|' \
+    | sort -u || true)
+  if [ -n "$feature_metas" ]; then
+    local fm
+    while IFS= read -r fm; do
+      [ -n "$fm" ] && review_paths+=("unit/${fm}/meta/REVIEW.md")
+    done <<<"$feature_metas"
+  fi
+
+  # Fallback: any META-class change at repo root (AGENTS.md, _template/, bin/, etc.)
+  # → both meta/REVIEW.md (consumer area) and _template_maintainer/REVIEW_INDEX.md
+  # (template-self area) are accepted. Either-or satisfies check #9 — author chooses
+  # the right area based on whether the change is template-self or consumer-area.
+  if [ "${#review_paths[@]}" -eq 0 ]; then
+    review_paths+=("meta/REVIEW.md")
+    review_paths+=("_template_maintainer/REVIEW_INDEX.md")
+  fi
+
+  # dedupe
+  local unique_paths
+  unique_paths=$(printf '%s\n' "${review_paths[@]}" | sort -u)
+
+  local entry_pattern='^\+## REV-[0-9]{8}-[0-9]{4} \[(SUBAGENT|AGENT-TEAM|SKIPPED):'
+  local found=0
+  local rmd
+  while IFS= read -r rmd; do
+    [ -n "$rmd" ] || continue
+    [ -f "$rmd" ] || continue
+    local diff_output=""
+    case "$mode" in
+      pre-commit|shared-pre-commit)
+        diff_output=$( { git diff --cached -- "$rmd" 2>/dev/null; git diff -- "$rmd" 2>/dev/null; } || true )
+        ;;
+      post-commit)
+        diff_output=$(git log -1 -p -- "$rmd" 2>/dev/null || true)
+        ;;
+    esac
+    # NOTE: SIGPIPE+pipefail fix — grep -c with count comparison.
+    local entry_count
+    entry_count=$(printf '%s' "$diff_output" | grep -cE "$entry_pattern" || true)
+    if [ "${entry_count:-0}" -gt 0 ]; then
+      found=1
+      break
+    fi
+  done <<<"$unique_paths"
+
+  if [ "$found" = "1" ]; then
+    log_check 9 PASS "REVIEW.md cycle entry"
+    return 0
+  fi
+
+  local hint="no accepted [SUBAGENT|AGENT-TEAM|SKIPPED]:* entry added to REVIEW.md in this cycle"
+  hint="${hint}. Run the verification panel protocol (/review-panel entrypoint or AGENTS.md §18.8 flow) and stage the resulting REVIEW.md change"
+  log_check 9 FAIL "REVIEW.md cycle entry" "$hint"
+  return 1
+}
+
 # Check #8: unstaged residual — everything intended must be staged (pre-commit).
 # Post-commit mode: check that working tree is clean after HEAD commit.
 check_8_unstaged_residual() {
@@ -607,12 +716,134 @@ check_shared_modify() {
     pre-commit) diff_output=$(git diff --cached -- "$modify_md" 2>/dev/null || true) ;;
     post-commit) diff_output=$(git log -1 -p -- "$modify_md" 2>/dev/null || true) ;;
   esac
-  if printf '%s' "$diff_output" | grep -qE '^\+## CHG-'; then
+  # NOTE: SIGPIPE+pipefail fix — grep -c with count comparison.
+  local shared_chg_count
+  shared_chg_count=$(printf '%s' "$diff_output" | grep -cE '^\+## CHG-' || true)
+  if [ "${shared_chg_count:-0}" -gt 0 ]; then
     log_check S1 PASS "shared/docs/MODIFY.md entry"
     return 0
   fi
   log_check S1 FAIL "shared/docs/MODIFY.md entry" "shared/ changes require a new CHG- entry in shared/docs/MODIFY.md"
   return 1
+}
+
+# -----------------------------------------------------------------------------
+# Check #10: worktree binding (AGENTS.md §13.2.2 F1)
+# -----------------------------------------------------------------------------
+#
+# 단일 worktree = 단일 branch 영구 binding 을 강제한다.
+# FAIL 분기:
+#   - detached HEAD 상태에서 mutation 시도 (F1 회피 경로 차단)
+#   - HEAD branch != worktree binding branch (branch-switch silent 오염)
+#
+# SKIP+WARN 분기 (정책 외 환경 / 일시적 git 상태):
+#   - env GSTACK_SKIP_WORKTREE_CHECK=1 또는 cli flag --skip-worktree-check
+#   - git work tree 가 아닌 디렉토리
+#   - rebase / cherry-pick / merge in progress (mid-state)
+#   - 현재 cwd 가 worktree entry path 와 매칭되지 않음 (bare/linked edge — TODO T1)
+#
+# 호출 위치: main() 의 require_git_repo 직후, case "$mode" (META detection) 앞.
+# META 모드 우회 필수 — branch-binding 은 changeset 종류와 무관한 git 상태 fact.
+check_10_worktree_binding() {
+  local args_str=" $* "
+
+  if [ "${GSTACK_SKIP_WORKTREE_CHECK:-0}" = "1" ] || \
+     [[ "$args_str" == *" --skip-worktree-check "* ]]; then
+    log_check 10 WARN "worktree binding" "SKIP (escape hatch)"
+    return 0
+  fi
+
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    log_check 10 WARN "worktree binding" "SKIP (not a git work tree)"
+    return 0
+  fi
+
+  local git_dir
+  git_dir=$(git rev-parse --git-dir 2>/dev/null || true)
+  if [ -n "$git_dir" ]; then
+    if [ -e "$git_dir/REBASE_HEAD" ] || \
+       [ -d "$git_dir/rebase-merge" ] || \
+       [ -d "$git_dir/rebase-apply" ] || \
+       [ -e "$git_dir/CHERRY_PICK_HEAD" ] || \
+       [ -e "$git_dir/MERGE_HEAD" ]; then
+      log_check 10 WARN "worktree binding" "SKIP (mid-state: rebase/cherry-pick/merge in progress)"
+      return 0
+    fi
+  fi
+
+  local current_branch
+  if ! current_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null); then
+    log_check 10 FAIL "worktree binding" \
+      "detached HEAD 에서 mutation 금지 (§13.2.2 F1). branch 로 복귀하거나 새 worktree add."
+    return 1
+  fi
+
+  local repo_root pwd_real
+  repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  if [ -z "$repo_root" ]; then
+    log_check 10 WARN "worktree binding" "SKIP (could not resolve repo root)"
+    return 0
+  fi
+  pwd_real=$(cd "$repo_root" && pwd -P 2>/dev/null || printf '%s' "$repo_root")
+
+  local wt_branch="" wt_path="" wt_detached=0 found=0
+  local porcelain
+  porcelain=$(git worktree list --porcelain 2>/dev/null || true)
+  if [ -z "$porcelain" ]; then
+    log_check 10 WARN "worktree binding" "SKIP (git worktree list returned empty)"
+    return 0
+  fi
+
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        wt_path="${line#worktree }"
+        if [ -d "$wt_path" ]; then
+          wt_path=$(cd "$wt_path" && pwd -P 2>/dev/null || printf '%s' "$wt_path")
+        fi
+        wt_branch=""
+        wt_detached=0
+        ;;
+      "branch "*)
+        wt_branch="${line#branch }"
+        wt_branch="${wt_branch#refs/heads/}"
+        ;;
+      "detached")
+        wt_detached=1
+        ;;
+      "")
+        if [ "$wt_path" = "$pwd_real" ]; then
+          found=1
+          break
+        fi
+        wt_path=""
+        ;;
+    esac
+  done <<< "$porcelain"
+
+  if [ "$found" = "0" ] && [ "$wt_path" = "$pwd_real" ]; then
+    found=1
+  fi
+
+  if [ "$found" = "0" ]; then
+    log_check 10 WARN "worktree binding" "SKIP (cwd '$pwd_real' not in any worktree entry — bare/linked edge, TODO T1)"
+    return 0
+  fi
+
+  if [ "$wt_detached" = "1" ]; then
+    log_check 10 FAIL "worktree binding" \
+      "worktree entry binding = detached, HEAD = $current_branch — F1 위반 (§13.2.2). 한 worktree = 한 branch."
+    return 1
+  fi
+
+  if [ "$current_branch" != "$wt_branch" ]; then
+    log_check 10 FAIL "worktree binding" \
+      "HEAD = $current_branch != worktree binding = $wt_branch (§13.2.2 F1). 한 worktree = 한 branch. 다른 branch 작업은 새 worktree add."
+    return 1
+  fi
+
+  log_check 10 PASS "worktree binding"
+  return 0
 }
 
 # -----------------------------------------------------------------------------
@@ -646,6 +877,13 @@ main() {
 
   require_git_repo
 
+  # Check #10 (§13.2.2 F1) — unconditional, META/shared 모드보다 먼저 실행.
+  # branch-binding 은 changeset 종류와 무관한 git 상태 fact 이므로 META 우회.
+  local check10_status=0
+  if ! check_10_worktree_binding "$@"; then
+    check10_status=1
+  fi
+
   # META short-circuit: pure-meta changesets skip verify entirely.
   # (Mixed commits — meta + operational — still get full operational gate.)
   local changed_files
@@ -654,19 +892,41 @@ main() {
     post-commit) changed_files=$(head_commit_files) ;;
   esac
 
+  # META mode (pure-meta changeset): per AGENTS.md §18.4, checks #1-#8 are
+  # skipped but check #9 (REVIEW.md cycle entry) still runs as the single
+  # exception. SPOF recovery still works because [SKIPPED:non-policy-doc]
+  # entries can explicitly mark non-policy doc-only cycles, while rejected
+  # panel attempts remain diagnostic-only and must be repaired/rerun.
+  local meta_mode=0
   if [ -n "$changed_files" ]; then
     # shellcheck disable=SC2086
     if is_pure_meta_changeset $changed_files; then
-      printf 'META mode: pure-meta changeset detected. verify-completion skipped.\n' >&2
-      exit 0
+      meta_mode=1
     fi
   fi
 
-  # Shared mode uses its own minimal check set.
+  if [ "$meta_mode" = "1" ]; then
+    printf 'META mode: pure-meta changeset detected. checks #1-#8 skipped (§18.4). check #10 always runs.\n' >&2
+    local failed=$check10_status
+    case "$mode" in
+      post-commit) check_9_review_entry post-commit "" || failed=$((failed + 1)) ;;
+      *) check_9_review_entry pre-commit "" || failed=$((failed + 1)) ;;
+    esac
+    if [ "$failed" -eq 0 ]; then
+      printf '\nverify-completion: PASS (META mode: checks #9, #10 ran)\n' >&2
+      exit 0
+    else
+      printf '\nverify-completion: FAIL (META mode: %d of #9, #10 failed)\n' "$failed" >&2
+      exit 1
+    fi
+  fi
+
+  # Shared mode uses its own minimal check set + check #9 + check #10.
   if [ "$mode" = "shared-pre-commit" ]; then
-    local failed=0
+    local failed=$check10_status
     check_shared_modify pre-commit || failed=$((failed + 1))
     check_8_unstaged_residual pre-commit || failed=$((failed + 1))
+    check_9_review_entry shared-pre-commit "" || failed=$((failed + 1))
     exit "$([ "$failed" -eq 0 ] && echo 0 || echo 1)"
   fi
 
@@ -674,7 +934,7 @@ main() {
   local fdir
   fdir=$(feature_dir "$feature_id")
 
-  local failed=0
+  local failed=$check10_status
   local effective_mode
   effective_mode="${mode}"
 
@@ -684,12 +944,13 @@ main() {
   check_6_anchor_1_3 "$fdir" || failed=$((failed + 1))
   check_7_anchor_4 "$fdir" || failed=$((failed + 1))
   check_8_unstaged_residual "$effective_mode" || failed=$((failed + 1))
+  check_9_review_entry "$effective_mode" "$feature_id" || failed=$((failed + 1))
 
   if [ "$failed" -eq 0 ]; then
-    printf '\nverify-completion: PASS (all 6 pilot checks)\n' >&2
+    printf '\nverify-completion: PASS (all 8 checks: 7 pilot + worktree binding)\n' >&2
     exit 0
   else
-    printf '\nverify-completion: FAIL (%d of 6 pilot checks failed)\n' "$failed" >&2
+    printf '\nverify-completion: FAIL (%d of 8 checks failed)\n' "$failed" >&2
     exit 1
   fi
 }
