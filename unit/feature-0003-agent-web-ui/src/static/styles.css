@@ -4105,3 +4105,114 @@ a { color: inherit; }
   .search-modal { max-height: 92vh; }
   .search-modal-hint { display: none; }
 }
+
+/* REQ-20260519-0004 (TASK-0076): facet popovers (소유자 / 기간) + matched-message highlight */
+.search-modal-popover {
+  position: absolute;
+  z-index: 1300;
+  min-width: 240px;
+  max-width: 320px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 6px);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, .18);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--text);
+}
+.search-modal-popover[hidden] { display: none; }
+.search-modal-popover-header {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2, var(--text));
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg);
+}
+.search-modal-popover-body {
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+.search-modal-popover-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm, 4px);
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+.search-modal-popover-item:hover,
+.search-modal-popover-item.is-selected {
+  background: var(--primary-soft);
+}
+.search-modal-popover-item-role {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.search-modal-popover-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+.search-modal-popover-field input[type="date"] {
+  flex: 0 0 auto;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm, 4px);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  font-family: inherit;
+}
+.search-modal-popover-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg);
+}
+.search-modal-popover-clear,
+.search-modal-popover-apply {
+  padding: 4px 12px;
+  border-radius: var(--r-sm, 4px);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.search-modal-popover-clear {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.search-modal-popover-apply {
+  background: var(--primary);
+  border: 1px solid var(--primary);
+  color: #ffffff;
+}
+.search-modal-popover-apply:hover { background: var(--primary-dark); }
+
+/* REQ-20260519-0004: matched message bubble jump highlight */
+.message.is-search-matched {
+  animation: search-matched-pulse 1.6s ease-out;
+}
+@keyframes search-matched-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(37, 99, 235, .42); }
+  50%  { box-shadow: 0 0 0 6px rgba(37, 99, 235, .14); }
+  100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+}

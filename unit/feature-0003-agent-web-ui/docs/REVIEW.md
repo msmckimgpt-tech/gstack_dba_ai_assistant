@@ -8,6 +8,26 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0002
+- Date: 2026-05-19
+- Decision: TASK-0076 (REQ-20260519-0004, Minor §12.3) — search modal UX 3 결함 hotfix bundle. 제품 facet 은 사용자 결정 ("대화 중 product 변경 가능") 으로 DOM 제거. 소유자 / 기간 facet 은 popover UI 신설. ArrowUp/Down 시 active row scrollIntoView. 매칭 message bubble jump 는 frontend textContent compare (backend matched_message_id 응답 없이 client-side).
+- Reason: 사용자 직접 테스트 보고 3 결함이 TASK-0072 의 명세 안에 포함됐어야 할 functionality 누락이었음. backend 의 `_list_conversations` 가 `owner_id` / `date_from` / `date_to` 파라미터를 이미 받지만 frontend popover UI 가 placeholder 만 있었음 — 사용자가 chip 클릭해도 동작 없음. 본 cycle 은 frontend 의 missing UI 만 채움. backend / RBAC / audit 영역 무변경.
+- Alt 거부:
+  - **제품 facet 구현 (3 option)**: 사용자 결정으로 DOM 제거 선택 — 대화 중 product 가 변경될 수 있어 *시점* 별 product filter 는 사용자 의도 왜곡 가능. cycle scope 축소.
+  - **Backend matched_message_id 응답**: 검색 결과의 정확한 매칭 message id 를 backend 가 함께 반환하면 frontend jump 정확도 ↑. 그러나 `_list_conversations` 의 EXISTS subquery 가 어느 row 매칭인지 알지 못함 — 별 query (window function `ROW_NUMBER() OVER (PARTITION BY conv_id ORDER BY ts DESC)` 또는 GROUP BY MIN(Id)) 필요. 2 message table (AgentMemoryMessages + AgentCoreMessages) 의 id namespace 가 다르고, frontend 의 message.id 와 mapping 명확화 필요 — Minor cycle scope 초과. 본 cycle 은 client-side textContent compare 채택 (q 와 messages 둘 다 client 측 보유라 round-trip 불필요). 정확도 낮음 (예: q="대화" 가 안내문 등 광범위 매칭) — 후속 cycle 권고.
+  - **owner facet 의 SSE / invalidate hook**: admin accounts cache 가 modal close 후 유지 → admin/operator 의 계정 추가/삭제 가 같은 session 안 발생 시 stale. SSE 또는 WebSocket invalidate 도입 vs cache TTL (예: 60 s) vs modal open 마다 refresh. 본 cycle 은 1 회 캐시 + 별 session 마다 refresh — 가장 단순. follow-up cycle 권고.
+- Risks:
+  - **facet popover positioning**: `position: fixed` + getBoundingClientRect. modal scroll / viewport resize 시 popover anchor drift. popover 자체가 단발 click 후 즉시 적용이라 drift window 좁아 보통 무문제. viewport right-edge clamp 만 적용, bottom clamp 미적용 — chip 이 viewport 하단에 있을 때 popover 가 viewport 밖 나갈 수도 있음 (follow-up).
+  - **matched message jump 정확도**: client-side `textContent.toLowerCase().includes(needle)` — q 가 짧거나 흔한 단어일 때 첫 매칭 row 가 사용자 의도와 다를 수 있음 (특히 user prompt 안 매칭이 assistant 본문 매칭보다 먼저). 본 cycle 의 trade-off — backend 의 정확한 매칭 message id 응답이 정확도 ↑ 이지만 schema/query 복잡도 ↑ 별 cycle.
+  - **owner facet `.any` 한정**: `.own` 사용자에게는 owner chip 자체가 `hidden`. 정합 (`.own` user 가 owner_id 입력해도 backend sub-spec 1 이 self 로 강제 overwrite). cross-account leak 0.
+  - **TASK-0073 (다른 session) 과 file overlap 없음**: 본 cycle = `src/static/{index.html, styles.css, app.js}` + docs. TASK-0073 = `src/app.py` (WebAuditEvents DDL) + docs. concurrent commit OK.
+- 미해결 followup:
+  - **Backend matched_message_id 응답** — `_list_conversations` 의 search mode 시 각 conv 의 첫 매칭 message id 함께 반환. frontend jump 정확도 100%. window function 또는 GROUP BY MIN(Id) per conv 추가 query.
+  - **owner accounts cache invalidate** — 60 s TTL 또는 SSE.
+  - **popover bottom-edge clamp** — viewport 하단 chip 의 popover 가 위로 펼침 (`drop-up`) 분기.
+  - **snippet 본문 미리보기 정확도** — 현재 snippet 은 topic 만 미리보기. backend 가 매칭 message excerpt (matched_message_id 채택 시 함께) 반환 시 snippet 본문 정확.
+- Trace: REQ-20260519-0004 → TASK-0076 → CHG-20260519-0006 → REV-20260519-0002 (hotfix bundle of TASK-0072)
+
 ## REV-20260519-0001
 - Date: 2026-05-19
 - Decision: TASK-0074 (REQ-20260519-0002, Minor §12.3) — search modal CSS 의 색상 토큰을 site theme 의 기존 var (`--surface`, `--text`, `--border`, `--text-muted`, `--primary`, `--primary-soft`, `--bg`) 으로 일관 적용. 미정의 var fallback (`--text-primary` → `--bg-elev` dark hardcode `#1f2429`) 폐기. backdrop 의 dark overlay 는 modal pop 강조 위해 유지.

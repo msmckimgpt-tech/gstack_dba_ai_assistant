@@ -8,6 +8,30 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0006
+- Date: 2026-05-19
+- Summary: TASK-0076 (REQ-20260519-0004, Minor §12.3) — search modal UX 3 결함 hotfix bundle of TASK-0072. 사용자 직접 테스트 보고: (1) facet click 무동작, (2) 키보드 ↑↓ scroll 미동작, (3) 매칭 message bubble jump 미동작. frontend only — backend / RBAC / audit / endpoint 무변경.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html` — 제품 facet button DOM 제거 (사용자 결정: 대화 중 product 변경 가능 → 필터 부적합). `#searchOwnerPopover` + `#searchDatePopover` 2 popover element 신설 (overlay 안 fixed 위치). cache-bust styles.css + app.js `v=20260519-modal-contrast` → `v=20260519-search-facets`.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css` — `.search-modal-popover*` 토큰 ~110 줄 신설 (popover 자체 + header + body + popover-item + popover-field date input + footer + apply/clear buttons). `.message.is-search-matched` + `@keyframes search-matched-pulse` (1.6 s box-shadow pulse for matched message bubble jump highlight).
+  - `repo/unit/feature-0003-agent-web-ui/src/static/app.js`
+    - `state.searchModal` 에 `owner_username`, `ownerAccountsCache`, `pendingJumpQuery`, `pendingJumpConvId` 4 필드 추가.
+    - `openSearchModal` 의 reset 보강 (owner_id / date_from / date_to / chip label / popover close).
+    - 신규 helpers: `_positionPopoverBelow` / `_closeSearchPopovers` / `_updateSearchFacetChipLabels` / `_loadOwnerAccountsForSearch` (1 회 캐시) / `_openOwnerPopover` (admin accounts list + "전체" + role label) / `_openDatePopover` (`<input type="date">` from/to 동기화) / `_jumpToSearchMatchedMessage` (messageLogEl `.message` textContent lowercase compare → 첫 매칭 row scrollIntoView + `is-search-matched` class 1.8 s).
+    - input keydown handler 갱신: ArrowDown / ArrowUp 시 active row 의 `scrollIntoView({block:'nearest'})` 추가. Enter 도 click 과 동일 pending jump 저장.
+    - result item click 시 `state.searchModal.pendingJumpQuery = q` + `pendingJumpConvId` 저장 → closeSearchModal → selectConversation.
+    - `_bindSearchModalListeners` 끝부분에 owner / date facet click handler + date apply / clear button handler 추가. overlay mousedown 시 popover 외 click 이면 popover 자동 close.
+    - `selectConversation` 끝 (loadHistory + renderMessages + product hydration 직후) 에 `_jumpToSearchMatchedMessage()` 호출 추가.
+- Verification:
+  - `node --check unit/feature-0003-agent-web-ui/src/static/app.js` PASS.
+  - `make web` 재배포 OK — `repo-web-1` recreated 26 초 후 healthy.
+  - browser smoke 는 사용자 hard refresh 후 직접 확인 권장 (cache-bust `v=20260519-search-facets`).
+- Risks:
+  - facet popover positioning 은 `position: fixed` + chip getBoundingClientRect 기반 — modal scroll / viewport resize 시 popover anchor drift 가능 (단발 click 후 즉시 적용이므로 보통 무문제. 단 popover 가 viewport 밖이면 right-edge clamp 만 적용 — bottom clamp 추가는 follow-up).
+  - matched message jump 의 client-side textContent compare 는 user / assistant 메시지 모두 검사 — content snippet 매칭이 너무 광범위 (예: q="대화" 가 "대화 시작" 안내문에도 매칭) 시 정확도 낮음. backend matched_message_id 응답 도입은 별 cycle 권고.
+  - owner_id facet 의 admin accounts cache 가 modal close 후 유지 — admin/operator 의 계정 추가/삭제 가 한 session 안에서 발생하면 stale 가능. 후속 cycle 에서 SSE / invalidate hook 권고.
+- Trace: REQ-20260519-0004 → TASK-0076 → CHG-20260519-0006 → REV-20260519-0002 (hotfix bundle of TASK-0072)
+
 ## CHG-20260519-0005
 - Date: 2026-05-19
 - Summary: TASK-0072 + TASK-0074 HTTP smoke test 실행 결과를 `unit/feature-0003-agent-web-ui/docs/TEST.md §4 Test Run History` 에 append. bootstrap_admin 1 토큰만 ad-hoc curl (operator pw 미보유). 6/8 PASS — S2 (any cross-account), S4 (cursor disjoint), S5 (q invalid 400), S6 (rate limit 429), S7 (DDL idempotent), S8 (audit SHA-256). S1/S3 (operator 의존) skip — `_list_conversations` 의 has_any 분기 + endpoint 의 effective_owner_id 강제 overwrite 코드 review 로 검증.

@@ -132,6 +132,7 @@ const state = {
     open: false,
     q: "",
     owner_id: null,
+    owner_username: "",
     product_id: null,
     date_from: null,
     date_to: null,
@@ -142,6 +143,11 @@ const state = {
     debounceTimer: null,
     activeResultIdx: -1,
     lastFocusedBeforeOpen: null,
+    // REQ-20260519-0004 (TASK-0076): owner facet popover 의 accounts list 캐시 (admin/operator 호출 1회).
+    ownerAccountsCache: null,
+    // REQ-20260519-0004 (TASK-0076): result click 시 q 를 저장해 selectConversation 후 매칭된 첫 message bubble 로 scrollIntoView.
+    pendingJumpQuery: "",
+    pendingJumpConvId: "",
   },
 };
 
@@ -2954,6 +2960,8 @@ async function selectConversation(conversationId) {
       });
     }
   } catch (_) { /* ignore */ }
+  // REQ-20260519-0004 (TASK-0076): search modal 에서 진입한 경우 매칭된 첫 message bubble 로 jump.
+  try { _jumpToSearchMatchedMessage(); } catch (_) {}
 }
 
 async function createConversation() {
@@ -4097,7 +4105,13 @@ function openSearchModal() {
   state.searchModal.results = [];
   state.searchModal.activeResultIdx = -1;
   state.searchModal.snippet_opt_in = false;
+  state.searchModal.owner_id = null;
+  state.searchModal.owner_username = "";
+  state.searchModal.date_from = null;
+  state.searchModal.date_to = null;
   if (snippetChip) snippetChip.setAttribute("aria-pressed", "false");
+  _updateSearchFacetChipLabels();
+  _closeSearchPopovers();
   input.value = "";
   renderSearchModalResults();
   const statusEl = _searchModalEl("searchModalStatus");
@@ -4110,6 +4124,7 @@ function closeSearchModal() {
   if (!overlay) return;
   state.searchModal.open = false;
   overlay.hidden = true;
+  _closeSearchPopovers();
   if (state.searchModal.debounceTimer) {
     clearTimeout(state.searchModal.debounceTimer);
     state.searchModal.debounceTimer = null;
@@ -4118,6 +4133,162 @@ function closeSearchModal() {
   if (prev && typeof prev.focus === "function") {
     try { prev.focus(); } catch (_) {}
   }
+}
+
+// REQ-20260519-0004 (TASK-0076) — facet popover positioning + open/close helpers.
+function _positionPopoverBelow(popover, anchorBtn) {
+  // Use absolute positioning within the modal's containing block.
+  // Compute anchor button's offset relative to the modal overlay.
+  const overlay = _searchModalEl("searchModalOverlay");
+  if (!overlay || !anchorBtn) return;
+  const aRect = anchorBtn.getBoundingClientRect();
+  const oRect = overlay.getBoundingClientRect();
+  popover.style.position = "fixed";
+  popover.style.top = `${aRect.bottom + 4}px`;
+  popover.style.left = `${Math.max(8, Math.min(aRect.left, window.innerWidth - 340))}px`;
+}
+
+function _closeSearchPopovers() {
+  const ownerPop = _searchModalEl("searchOwnerPopover");
+  const datePop = _searchModalEl("searchDatePopover");
+  if (ownerPop) ownerPop.hidden = true;
+  if (datePop) datePop.hidden = true;
+}
+
+function _updateSearchFacetChipLabels() {
+  const sm = state.searchModal;
+  const ownerChip = _searchModalEl("searchFacetOwner");
+  const dateChip = _searchModalEl("searchFacetDate");
+  if (ownerChip) {
+    if (sm.owner_id) {
+      ownerChip.textContent = `소유자: ${sm.owner_username || sm.owner_id}`;
+      ownerChip.setAttribute("aria-pressed", "true");
+    } else {
+      ownerChip.textContent = "소유자: 전체";
+      ownerChip.setAttribute("aria-pressed", "false");
+    }
+  }
+  if (dateChip) {
+    if (sm.date_from || sm.date_to) {
+      const f = sm.date_from || "처음";
+      const t = sm.date_to || "지금";
+      dateChip.textContent = `기간: ${f} ~ ${t}`;
+      dateChip.setAttribute("aria-pressed", "true");
+    } else {
+      dateChip.textContent = "기간: 전체";
+      dateChip.setAttribute("aria-pressed", "false");
+    }
+  }
+}
+
+async function _loadOwnerAccountsForSearch() {
+  // Fetched once per session. Requires admin/operator (account.read or console.access).
+  if (Array.isArray(state.searchModal.ownerAccountsCache)) return state.searchModal.ownerAccountsCache;
+  try {
+    const data = await apiFetch("/api/admin/accounts");
+    const items = (data && Array.isArray(data.items)) ? data.items : [];
+    // Only active + not soft-deleted accounts. Show admin-known accounts only.
+    const filtered = items.filter((a) => a && a.is_active && !a.deleted_at);
+    state.searchModal.ownerAccountsCache = filtered;
+    return filtered;
+  } catch (_) {
+    state.searchModal.ownerAccountsCache = [];
+    return [];
+  }
+}
+
+async function _openOwnerPopover() {
+  const popover = _searchModalEl("searchOwnerPopover");
+  const anchor = _searchModalEl("searchFacetOwner");
+  const list = _searchModalEl("searchOwnerList");
+  if (!popover || !anchor || !list) return;
+  _closeSearchPopovers();
+  list.innerHTML = "<div class=\"search-modal-popover-item\" aria-disabled=\"true\">로딩 중…</div>";
+  popover.hidden = false;
+  _positionPopoverBelow(popover, anchor);
+  const accounts = await _loadOwnerAccountsForSearch();
+  list.innerHTML = "";
+  const makeItem = (label, account_id, username, role_label, isSelected) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "search-modal-popover-item" + (isSelected ? " is-selected" : "");
+    const span = document.createElement("span");
+    span.textContent = label;
+    btn.appendChild(span);
+    if (role_label) {
+      const r = document.createElement("span");
+      r.className = "search-modal-popover-item-role";
+      r.textContent = role_label;
+      btn.appendChild(r);
+    }
+    btn.addEventListener("click", () => {
+      state.searchModal.owner_id = account_id;
+      state.searchModal.owner_username = username || "";
+      state.searchModal.cursor = null;
+      _updateSearchFacetChipLabels();
+      _closeSearchPopovers();
+      runSearchQuery({ append: false }).catch(() => {});
+    });
+    return btn;
+  };
+  list.appendChild(makeItem("전체", null, "", "", !state.searchModal.owner_id));
+  accounts.forEach((a) => {
+    const role_label = a.role && a.role.key ? a.role.key : "";
+    list.appendChild(makeItem(
+      a.username || `#${a.id}`,
+      Number(a.id),
+      a.username || "",
+      role_label,
+      Number(state.searchModal.owner_id) === Number(a.id),
+    ));
+  });
+}
+
+function _openDatePopover() {
+  const popover = _searchModalEl("searchDatePopover");
+  const anchor = _searchModalEl("searchFacetDate");
+  const fromInput = _searchModalEl("searchDateFromInput");
+  const toInput = _searchModalEl("searchDateToInput");
+  if (!popover || !anchor || !fromInput || !toInput) return;
+  _closeSearchPopovers();
+  fromInput.value = state.searchModal.date_from || "";
+  toInput.value = state.searchModal.date_to || "";
+  popover.hidden = false;
+  _positionPopoverBelow(popover, anchor);
+  setTimeout(() => fromInput.focus(), 0);
+}
+
+// REQ-20260519-0004 (TASK-0076) — after selectConversation + loadHistory, scroll to first message
+// whose textContent contains the pending search query.
+function _jumpToSearchMatchedMessage() {
+  const sm = state.searchModal;
+  if (!sm.pendingJumpConvId || !sm.pendingJumpQuery) return;
+  if (sm.pendingJumpConvId !== state.activeConversationId) return;
+  if (!messageLogEl) return;
+  const q = String(sm.pendingJumpQuery || "").trim();
+  if (q.length < 2) {
+    sm.pendingJumpQuery = "";
+    sm.pendingJumpConvId = "";
+    return;
+  }
+  const needle = q.toLowerCase();
+  const rows = messageLogEl.querySelectorAll(".message");
+  let matched = null;
+  for (const row of rows) {
+    const text = (row.textContent || "").toLowerCase();
+    if (text.indexOf(needle) !== -1) {
+      matched = row;
+      break;
+    }
+  }
+  sm.pendingJumpQuery = "";
+  sm.pendingJumpConvId = "";
+  if (!matched) return;
+  try {
+    matched.scrollIntoView({ behavior: "smooth", block: "center" });
+    matched.classList.add("is-search-matched");
+    setTimeout(() => matched.classList.remove("is-search-matched"), 1800);
+  } catch (_) {}
 }
 
 async function runSearchQuery({ append = false } = {}) {
@@ -4236,6 +4407,12 @@ function renderSearchModalResults() {
     }
 
     row.addEventListener("click", () => {
+      // REQ-20260519-0004 (TASK-0076): result click 시 q 를 저장해 conv 로드 후 매칭된 첫 message bubble 로 jump.
+      const q = String(sm.q || "").trim();
+      if (q.length >= 2) {
+        state.searchModal.pendingJumpQuery = q;
+        state.searchModal.pendingJumpConvId = String(item.id);
+      }
       closeSearchModal();
       try {
         selectConversation(String(item.id));
@@ -4278,17 +4455,32 @@ function _bindSearchModalListeners() {
         if (sm.results.length) {
           sm.activeResultIdx = Math.min(sm.results.length - 1, sm.activeResultIdx + 1);
           renderSearchModalResults();
+          // REQ-20260519-0004 (TASK-0076): active row 가 result list viewport 밖이면 scroll 따라옴.
+          const activeRow = document.querySelector(".search-modal-result-item.is-active");
+          if (activeRow && typeof activeRow.scrollIntoView === "function") {
+            activeRow.scrollIntoView({ block: "nearest" });
+          }
         }
       } else if (ev.key === "ArrowUp") {
         ev.preventDefault();
         if (sm.results.length) {
           sm.activeResultIdx = Math.max(0, sm.activeResultIdx - 1);
           renderSearchModalResults();
+          const activeRow = document.querySelector(".search-modal-result-item.is-active");
+          if (activeRow && typeof activeRow.scrollIntoView === "function") {
+            activeRow.scrollIntoView({ block: "nearest" });
+          }
         }
       } else if (ev.key === "Enter") {
         ev.preventDefault();
         const item = sm.results[sm.activeResultIdx];
         if (item) {
+          // REQ-20260519-0004 (TASK-0076): Enter 도 click 과 동일하게 매칭 message jump.
+          const q = String(sm.q || "").trim();
+          if (q.length >= 2) {
+            state.searchModal.pendingJumpQuery = q;
+            state.searchModal.pendingJumpConvId = String(item.id);
+          }
           closeSearchModal();
           try { selectConversation(String(item.id)); } catch (_) {}
         }
@@ -4299,11 +4491,14 @@ function _bindSearchModalListeners() {
     facetClear.addEventListener("click", () => {
       const sm = state.searchModal;
       sm.owner_id = null;
+      sm.owner_username = "";
       sm.product_id = null;
       sm.date_from = null;
       sm.date_to = null;
       sm.snippet_opt_in = false;
       if (facetSnippet) facetSnippet.setAttribute("aria-pressed", "false");
+      _updateSearchFacetChipLabels();
+      _closeSearchPopovers();
       if (input) input.value = "";
       sm.q = "";
       sm.cursor = null;
@@ -4313,6 +4508,63 @@ function _bindSearchModalListeners() {
       const statusEl = _searchModalEl("searchModalStatus");
       if (statusEl) statusEl.textContent = "";
       if (input) input.focus();
+    });
+  }
+  // REQ-20260519-0004 (TASK-0076): facet 버튼 click handlers.
+  const ownerChip = _searchModalEl("searchFacetOwner");
+  if (ownerChip) {
+    ownerChip.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const pop = _searchModalEl("searchOwnerPopover");
+      if (pop && !pop.hidden) { _closeSearchPopovers(); return; }
+      _openOwnerPopover().catch(() => {});
+    });
+  }
+  const dateChip = _searchModalEl("searchFacetDate");
+  if (dateChip) {
+    dateChip.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const pop = _searchModalEl("searchDatePopover");
+      if (pop && !pop.hidden) { _closeSearchPopovers(); return; }
+      _openDatePopover();
+    });
+  }
+  const dateApplyBtn = _searchModalEl("searchDateApplyBtn");
+  const dateClearBtn = _searchModalEl("searchDateClearBtn");
+  if (dateApplyBtn) {
+    dateApplyBtn.addEventListener("click", () => {
+      const fromInput = _searchModalEl("searchDateFromInput");
+      const toInput = _searchModalEl("searchDateToInput");
+      const sm = state.searchModal;
+      sm.date_from = fromInput && fromInput.value ? fromInput.value : null;
+      sm.date_to = toInput && toInput.value ? toInput.value : null;
+      sm.cursor = null;
+      _updateSearchFacetChipLabels();
+      _closeSearchPopovers();
+      runSearchQuery({ append: false }).catch(() => {});
+    });
+  }
+  if (dateClearBtn) {
+    dateClearBtn.addEventListener("click", () => {
+      const sm = state.searchModal;
+      sm.date_from = null;
+      sm.date_to = null;
+      sm.cursor = null;
+      _updateSearchFacetChipLabels();
+      _closeSearchPopovers();
+      runSearchQuery({ append: false }).catch(() => {});
+    });
+  }
+  // Close popovers on overlay click outside chip area.
+  if (overlay) {
+    overlay.addEventListener("mousedown", (ev) => {
+      const inOwnerPop = ev.target.closest && ev.target.closest("#searchOwnerPopover");
+      const inDatePop = ev.target.closest && ev.target.closest("#searchDatePopover");
+      const inOwnerChip = ev.target === ownerChip;
+      const inDateChip = ev.target === dateChip;
+      if (!inOwnerPop && !inDatePop && !inOwnerChip && !inDateChip) {
+        _closeSearchPopovers();
+      }
     });
   }
   if (facetSnippet) {
