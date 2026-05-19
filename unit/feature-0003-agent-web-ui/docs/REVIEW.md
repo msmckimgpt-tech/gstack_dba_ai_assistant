@@ -8,6 +8,27 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0011 [SKIPPED:design-panel]
+- Date: 2026-05-19
+- Decision: TASK-0084 (REQ-20260519-0013, Minor §12.3) — D2Coding 우선 monospace stack 으로 전역 통일 재시도. `:root` 의 `--font` / `--mono` 두 토큰을 다시 단일 D2Coding 우선 monospace stack 으로 통합 (`"D2Coding", "D2Coding ligature", "Cascadia Code", "SFMono-Regular", Consolas, "Noto Sans Mono CJK KR", ui-monospace, Menlo, monospace`) + `--font: var(--mono)` 참조. admin.html cache-bust `?v=20260519-d2coding-mono`. index.html cache-bust 는 사용자 main wt revert 의도 존중 skip.
+- Reason: 사용자 직접 요청 "D2Coding 폰트를 우선해줄 수 있을까요?" + AskUserQuestion (D2Coding 적용 범위) 응답 "본문 + 코드 모두 (전역 monospace 통일 부활)". 흐름: (1) CHG-0013 — 첫 요청 monospace 통일 시도 → (2) CHG-0014 — 한글 가독성 호소로 sans-serif 환원 → (3) CHG-0015 — D2Coding (NAVER 한글 monospace 가독성 검증된 폰트) 우선으로 monospace 통일 부활. 사용자는 monospace 의 정렬 효과를 원하지만 한글 가독성도 보장되어야 함을 D2Coding 으로 양립. D2Coding 은 한글·영문 모두 등폭이며 한글 가독성이 system monospace 보다 우월하므로 사용자 가독성 호소 (CHG-0014 reason) 완화 가능.
+- Alt 거부:
+  - **본문은 sans-serif 유지 + var(--mono) 만 D2Coding 우선**: 사용자가 본문 가독성 + 코드 영역 한글 등폭 둘 다 보장. 단점 — 사용자가 AskUserQuestion 응답에서 명시적으로 "본문 + 코드 모두 (전역 monospace 통일 부활)" 선택. 본 cycle 의 명시 결정과 충돌. 향후 사용자가 가독성 호소 시 본 옵션으로 별 cycle.
+  - **D2Coding WebFont 도입 (CDN 또는 self-host)**: D2Coding 미설치 환경에서도 보장. 단점 — 외부 의존 (CDN) 또는 self-host 인프라 + 첫 로딩 latency + CSP 검토 + offline 환경 제약. 본 cycle 범위 초과 — 별 cycle 에서 결정. 현재는 사용자가 D2Coding 을 직접 설치한 환경 가정.
+  - **D2Coding ligature 만 우선**: ligature 변형 한정. 단점 — ligature 미사용 사용자 환경 분기. 일반 D2Coding 우선 + ligature 도 fallback chain 에 포함이 안전.
+  - **CHG-0013 진동 차단 위해 강제 sans-serif**: 사용자 요청 무시. 정책 위반.
+- Risks:
+  - **D2Coding 미설치 환경**: fallback chain 으로 자동 대체되지만 한글이 system monospace 또는 default 폰트로 fallback → 사용자 의도 (D2Coding 한글 가독성 + 등폭) 미달. 사용자 환경에 D2Coding 설치 안내 필요 (https://github.com/naver/d2codingfont).
+  - **monospace 한글 가독성 trade-off**: D2Coding 이 한글 monospace 중 가독성 좋지만 sans-serif 본문 (system-ui 등) 보다는 가독성 낮음. 사용자가 CHG-0014 에서 "눈 아픔" 호소했었음 — D2Coding 으로도 같은 호소 가능. 사용자 검증 후 추가 조정 (예: 본문 sans-serif + 코드 D2Coding) 가능.
+  - **stack 첫 entry 인용**: `D2Coding` 과 `D2Coding ligature` 두 변형 모두 첫 줄 우선 — 시스템에 설치된 변형 자동 적용. 일부 시스템이 두 변형을 다른 폰트로 인식 가능 — 영향 최소 (둘 다 D2Coding 계열).
+  - **CHG-0013/0014/0015 진동 trace**: 본 cycle 이 세 번째 진동 — 사용자 의도가 명확히 결정된 상태이긴 하나, 미래 cycle 에 readability vs alignment 의 trade-off 가 재발할 가능성. WebFont 도입이 영구 해결책 — 별 cycle.
+  - **share.css 무변경**: 공유 페이지 별도 stylesheet. 본 cycle 영향 없음.
+- 미해결 followup:
+  - **D2Coding WebFont 도입**: 환경 무관 보장. CSP / CDN / self-host 검토 + 첫 로딩 FOUC 처리.
+  - **사용자 가독성 검증**: 본 stack 적용 후 사용자가 한글 본문 가독성에 만족하는지 확인. 호소 시 본문 sans-serif + 코드 D2Coding 분리 또는 다른 한글 monospace (예: Sarasa Gothic K Mono) 시도.
+- Trace: REQ-20260519-0013 → TASK-0084 → CHG-0015 → REV-0011. AC-0184 / AC-0185 의 design intent 가 CHG-0015 로 단일 D2Coding 우선 monospace 통합으로 합쳐짐. AC-0186 cache-bust 갱신. AC-0187 (D2Coding 우선) 등록.
+- [SKIPPED:design-panel] cosmetic-only typography stack 갱신 (`:root` 의 `--font` / `--mono` 두 토큰 + admin.html cache-bust). 사용자가 직접 D2Coding 우선 monospace 통일 의사결정 (AskUserQuestion 응답 명시). UI 도메인 변경이나 security / data / API contract / RBAC / audit 영향 없음 — 단순 CSS 토큰 + cache-bust 1 line. design panel 호출 가치 vs 실행 비용 trade-off 에서 skip 정합 (§18.8 cosmetic-only exception). 사용자가 추가 가독성 호소 시 별 cycle 에서 design panel 호출 가능.
+
 ## REV-20260519-0010
 - Date: 2026-05-19
 - Decision: TASK-0083 followup (REQ-20260519-0012, Minor §12.3) — REV-0009 의 monospace 통합 design 폐기 + 한글 가독성 우선 system-ui sans-serif stack 으로 재설정. `:root` 의 `--font` 를 `system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "맑은 고딕", "Helvetica Neue", Arial, sans-serif` 로 갱신. `--mono` 는 REV-0009 이전 stack (`"Cascadia Code", "SFMono-Regular", Consolas, monospace`) 복원. `--font: var(--mono)` 참조 제거 → 두 토큰 의미 분리 회복. admin.html cache-bust 토큰을 `?v=20260519-cjk-readable` 로 갱신, index.html cache-bust 는 사용자 직접 revert 흔적 (system reminder) 존중하여 본 cycle 에서 skip.

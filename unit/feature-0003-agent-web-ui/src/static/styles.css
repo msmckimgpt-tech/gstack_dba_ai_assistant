@@ -30,9 +30,9 @@
   --bubble-user:   #2563eb;
   --bubble-ai:     #ffffff;
 
-  /* Typography — 한글 가독성 우선 system-ui sans-serif stack. monospace 는 코드/로그 영역에만 (var(--mono) 명시 사용처). */
-  --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "맑은 고딕", "Helvetica Neue", Arial, sans-serif;
-  --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  /* Typography — D2Coding 우선 monospace 통일: 한글·영문 등폭 정렬 + D2Coding 가독성. var(--mono) 명시 사용처도 동일. */
+  --mono: "D2Coding", "D2Coding ligature", "Cascadia Code", "SFMono-Regular", Consolas, "Noto Sans Mono CJK KR", ui-monospace, Menlo, monospace;
+  --font: var(--mono);
 
   /* Radii */
   --r-xs: 4px;

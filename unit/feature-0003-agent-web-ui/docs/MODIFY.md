@@ -8,6 +8,26 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0015
+- Date: 2026-05-19
+- Summary: TASK-0084 (REQ-20260519-0013, Minor §12.3) — D2Coding 우선 monospace stack 으로 전역 통일 재시도. 사용자 후속 요청 "D2Coding 폰트를 우선해줄 수 있을까요?" + AskUserQuestion 으로 적용 범위 확인 (본문 + 코드 모두). CHG-0014 의 한글 친화 sans-serif stack 을 폐기하고, CHG-0013 의 monospace 통일 의도를 D2Coding (한글 monospace 가독성 검증된 NAVER 폰트) 우선으로 부활. `--font` 와 `--mono` 두 토큰을 다시 동일 D2Coding 우선 monospace stack 으로 통합. 사용자가 D2Coding 미설치 환경에서 fallback chain 의 Cascadia Code / SFMono-Regular / Consolas / Noto Sans Mono CJK KR / system monospace 로 자동 fallback.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css`
+    - line 33~35 (`:root` Typography 토큰) — CHG-0014 의 sans-serif stack 폐기. 새 stack: `--mono: "D2Coding", "D2Coding ligature", "Cascadia Code", "SFMono-Regular", Consolas, "Noto Sans Mono CJK KR", ui-monospace, Menlo, monospace` + `--font: var(--mono)` 로 통합. body cascade (`font-family: var(--font)` line 65 + `font: inherit` line 72~73) 가 그대로 작동해 작업·관리 화면 전역에 D2Coding 우선 monospace 적용. var(--mono) 명시 사용처 (코드/로그 영역) 도 동일하므로 영향 없음.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/admin.html` — line 7 `styles.css?v=20260519-cjk-readable` → `styles.css?v=20260519-d2coding-mono` cache-bust 토큰 갱신.
+- Verification:
+  - CSS syntax 단순 토큰 교체. JS / Python 변경 없음.
+  - cascade 검증: body / button / input / textarea / select 의 기존 font cascade 그대로 작동.
+  - smoke (사용자 직접 확인 권장): ①작업 화면 (`/`) 진입 → D2Coding 설치 시 한글·영문 모두 D2Coding 등폭으로 렌더, 미설치 시 Cascadia Code (영문 등폭) + system monospace (한글 fallback). ②관리 화면 (`/admin`) 동일. ③한글 메시지·이름·테이블명에서 글자 폭 정합. ④`var(--mono)` 명시 영역도 동일 stack — 변경 영향 없음.
+  - index.html cache-bust 미갱신 (CHG-0014 와 동일 — 사용자 main wt revert 의도 존중). 사용자가 작업 화면 진입 시 Ctrl+Shift+R 권장.
+- Risks:
+  - **D2Coding 미설치 환경**: 사용자가 D2Coding 폰트를 시스템에 설치하지 않은 경우 첫 fallback `Cascadia Code` (영문) + system monospace (한글) 로 렌더. 영문은 등폭 OK 이나 한글은 system monospace 가 깔려 있어야 등폭. 사용자가 D2Coding 설치 (NAVER 공식 https://github.com/naver/d2codingfont) 후 재확인 권장.
+  - **D2Coding 가독성 보고 가능성**: CHG-0014 에서 사용자가 monospace 가독성 호소했었음. D2Coding 은 한글 monospace 중 가독성 가장 좋은 평가지만 일반 본문 sans-serif 보다는 가독성 trade-off 있음. 사용자가 본 stack 검증 후 추가 조정 요청 시 별 cycle (예: 본문은 sans-serif + var(--mono) 사용처만 D2Coding 으로 분리).
+  - **D2Coding ligature 변형**: stack 두 번째 entry `D2Coding ligature` 는 D2Coding 의 ligature 지원 변형 — `==`, `=>`, `->` 같은 합자 표시. 시스템에 설치 시 자동 적용. 미설치 시 무영향.
+  - **CHG-0013 + CHG-0014 + CHG-0015 trace**: append-only 정책 (§5.2). 3 차례의 monospace ↔ sans-serif ↔ monospace 진동이 정직하게 기록. CHG-0013 (monospace 시도) → CHG-0014 (sans-serif 환원, 가독성) → CHG-0015 (D2Coding 우선 monospace 부활, 가독성 + 정렬 양립).
+  - **share.css 무변경**: 공유 페이지 별도 stylesheet — 영향 없음.
+- Trace: REQ-20260519-0013 → TASK-0084 → CHG-0015 → REV-0011. AC-0184 (전역 monospace) + AC-0185 (--mono 사용처 monospace) 모두 본 cycle 에서 단일 stack 통합으로 의미 합쳐짐. AC-0186 (admin.html cache-bust) 갱신. 새 AC-0187 등록 (D2Coding 우선).
+
 ## CHG-20260519-0014
 - Date: 2026-05-19
 - Summary: TASK-0083 followup (REQ-20260519-0012, Minor §12.3) — CHG-0013 의 monospace 통합 방향 폐기 + 한글 가독성 우선 system-ui sans-serif stack 으로 재설정. 사용자 추가 보고: "한글 기준으로 눈이 아픕니다… 한글 기준으로 가장 범용성있는 폰트로 다시 설정해주세요". CHG-0013 의 `--font: var(--mono)` 통합을 해제하고 `--font` 를 OS native 한글 폰트 자동 fallback stack 으로 갱신. `--mono` 는 원래 stack 복원 (코드/로그 영역만 적용). worktree `ai/claude/task-0083` 에서 진행 — 다른 AI 작업자의 a7b7ded commit 의 docs 변경 (CHG-0013/REV-0009 흡수) 과 격리된 src commit.

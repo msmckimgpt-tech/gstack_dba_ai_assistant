@@ -216,6 +216,9 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   - AC-0185: `:root` 의 `--mono` 토큰이 `"Cascadia Code", "SFMono-Regular", Consolas, monospace` 로 정의되어 `var(--mono)` 명시 사용처 (코드 snippet, log view, result table 등 styles.css 의 line 1069, 1082, 1186, 1379, 2542) 는 monospace 유지. `var(--font)` 사용처 (body line 65, button/input/textarea/select font:inherit) 는 sans-serif 적용.
   - AC-0186: admin.html 의 cache-bust 토큰이 `?v=20260519-cjk-readable` 로 갱신되어 사용자가 관리 콘솔 진입 시 새 stack 즉시 적용. index.html cache-bust 는 사용자 main wt 의 직접 revert 의도를 존중하여 본 cycle 에서 갱신하지 않음 — 사용자가 hard refresh (Ctrl+Shift+R) 시 새 stack 적용.
 
+- REQ-20260519-0013 (TASK-0084, Minor §12.3 — D2Coding 우선 monospace 통일): web UI 의 전역 폰트 (`var(--font)` + `var(--mono)`) 가 D2Coding 우선 monospace stack 으로 통일되어 한글·영문 등폭 정렬 + D2Coding 한글 가독성 양립한다. AC-0184~0186 의 design intent 가 본 cycle 의 단일 D2Coding 우선 stack 으로 합쳐진다 (sans-serif 환원 후 D2Coding 부활).
+  - AC-0187: `:root` 의 `--mono` 토큰이 `"D2Coding", "D2Coding ligature", "Cascadia Code", "SFMono-Regular", Consolas, "Noto Sans Mono CJK KR", ui-monospace, Menlo, monospace` 로 정의되고 `--font: var(--mono)` 로 참조 통합. 시스템에 D2Coding 설치 시 한글·영문 모두 D2Coding 등폭, 미설치 시 fallback chain (Cascadia Code 영문 + Noto Sans Mono CJK KR 또는 system monospace 한글). admin.html cache-bust 토큰은 `?v=20260519-d2coding-mono` 로 갱신. index.html cache-bust 는 본 cycle 에서도 갱신하지 않음 (TASK-0083 과 동일).
+
 ## 3. In Scope
 - `src/app.py`
 - `src/static/*`
