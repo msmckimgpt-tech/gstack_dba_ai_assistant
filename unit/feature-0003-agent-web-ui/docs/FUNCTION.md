@@ -211,6 +211,11 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   - AC-0015: pinned 제품이 비활성/제거된 경우 자동으로 `auto` 로 강등되고 사용자에게 토스트로 안내된다.
   - AC-0016: 사용자 가시 한글 라벨 "상품" 은 모두 "제품" 으로 표기된다 (코드 식별자는 보존).
 
+- REQ-20260519-0011 + REQ-20260519-0012 (TASK-0083, Minor §12.3 — web UI typography stack): web UI 의 본문 폰트 (`var(--font)`) 가 한글 가독성 우선 system-ui sans-serif stack 으로 적용되고, 코드/로그 영역 (`var(--mono)` 명시 사용처) 만 monospace 로 유지된다.
+  - AC-0184: `:root` 의 `--font` 토큰이 `system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "맑은 고딕", "Helvetica Neue", Arial, sans-serif` 로 정의되어 macOS / Windows / Linux 에서 OS native 한글 폰트 자동 fallback. 별도 WebFont 설치 없이 모든 환경에서 자연 한글 렌더링.
+  - AC-0185: `:root` 의 `--mono` 토큰이 `"Cascadia Code", "SFMono-Regular", Consolas, monospace` 로 정의되어 `var(--mono)` 명시 사용처 (코드 snippet, log view, result table 등 styles.css 의 line 1069, 1082, 1186, 1379, 2542) 는 monospace 유지. `var(--font)` 사용처 (body line 65, button/input/textarea/select font:inherit) 는 sans-serif 적용.
+  - AC-0186: admin.html 의 cache-bust 토큰이 `?v=20260519-cjk-readable` 로 갱신되어 사용자가 관리 콘솔 진입 시 새 stack 즉시 적용. index.html cache-bust 는 사용자 main wt 의 직접 revert 의도를 존중하여 본 cycle 에서 갱신하지 않음 — 사용자가 hard refresh (Ctrl+Shift+R) 시 새 stack 적용.
+
 ## 3. In Scope
 - `src/app.py`
 - `src/static/*`
