@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0005
+- Date: 2026-05-19
+- Summary: TASK-0072 + TASK-0074 HTTP smoke test 실행 결과를 `unit/feature-0003-agent-web-ui/docs/TEST.md §4 Test Run History` 에 append. bootstrap_admin 1 토큰만 ad-hoc curl (operator pw 미보유). 6/8 PASS — S2 (any cross-account), S4 (cursor disjoint), S5 (q invalid 400), S6 (rate limit 429), S7 (DDL idempotent), S8 (audit SHA-256). S1/S3 (operator 의존) skip — `_list_conversations` 의 has_any 분기 + endpoint 의 effective_owner_id 강제 overwrite 코드 review 로 검증.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/docs/TEST.md` — §4 Test Run History 에 2026-05-19 entry 추가 (8 sub-result + skip 사유 + UI 가독성 사용자 직접 확인 권장 note).
+- Verification: 6/8 시나리오 PASS (S1/S3 operator 의존 skip). 코드 변경 0 — 단순 test 결과 기록.
+- Risks: 0 (append-only 문서 갱신).
+- Trace: TASK-0072 + TASK-0074 → CHG-20260519-0005 (test execution record only, no spec change)
+
 ## CHG-20260519-0004
 - Date: 2026-05-19
 - Summary: TASK-0074 (REQ-20260519-0002, Minor §12.3) — search modal 색상 가독성 hotfix of TASK-0072. site theme = light (`--bg #f4f4f5` / `--surface #ffffff` / `--text #18181b`) 환경에서 modal 의 미정의 var fallback (dark hardcode `#1f2429`) + site 의 text inherit 검은색 = 어두운 배경 위 검은 텍스트 = 가독성 0 (사용자 screenshot 보고). modal CSS 전체를 site 의 기존 토큰으로 일관 적용.

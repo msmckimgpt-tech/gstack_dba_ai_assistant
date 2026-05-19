@@ -15,6 +15,7 @@ source_of_truth: true
 - Last Updated: 2026-05-15
 
 ## 2. Task Queue
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-19 (TASK-0075, Minor §12.3 — TASK-0072 + TASK-0074 HTTP smoke 실행 결과 §4 기록, append-only) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-19 (TASK-0074, Minor §12.3 — search modal 색상 가독성 hotfix of TASK-0072, light theme 토큰 정합) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-19 (TASK-0073, Critical §12.3 — 모든 계정 행위 audit 기능 + 관리 콘솔 조회, CEO review 9 + Codex outside voice 14 findings + redesign 흡수) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0072, Critical §12.3 — 타 계정 대화 검색·필터 + outside voice 보강) -->
@@ -27,6 +28,7 @@ source_of_truth: true
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0065, Minor §12.3 — UI 정리 follow-up) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-18 (TASK-0063, Major §12.3) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-15 -->
+- [x] TASK-0075 (REQ-20260519-0003, Minor §12.3 — TASK-0072 + TASK-0074 HTTP smoke 실행 결과 기록) `bootstrap_admin` 1 토큰만 사용한 ad-hoc curl 실행 결과 6/8 PASS (S2 .any cross-account, S4 cursor disjoint, S5 invalid q→400, S6 rate limit 11th→429, S7 DDL idempotent, S8 audit SHA-256 INSERT). S1 (.own no leak) / S3 (byte-equal owner_id) 는 operator (`review_user01`) pw 미보유로 skip — `_list_conversations` 의 has_any 분기 + endpoint 의 effective_owner_id 강제 overwrite 코드 review 로 검증됨. `docs/TEST.md §4 Test Run History` 에 append. backend / RBAC / endpoint / audit 무변경.
 - [x] TASK-0074 (REQ-20260519-0002, Minor §12.3 — search modal 색상 가독성 hotfix of TASK-0072) 사용자 screenshot 보고: TASK-0072 의 Spotlight modal 이 light theme (`--bg #f4f4f5` / `--surface #ffffff` / `--text #18181b`) 환경에서 어두운 배경 + 검은 텍스트로 노출 — "사용자가 이용할 수 없을 정도의 색상 구성". 원인: modal CSS 가 미정의 var (`--text-primary`, `--bg-elev`) 의 hardcode dark fallback (`#1f2429`) 으로 배경을 잡았고, 텍스트는 site 의 `--text` (zinc-900) inherit → 어두운 배경 위 검은 텍스트 = 가독성 0. Fix: modal block ~100 줄을 site 의 기존 토큰 (`--surface`, `--text`, `--text-2`, `--text-muted`, `--border`, `--primary`, `--primary-soft`, `--bg`) 으로 일관 적용. backdrop 의 dark overlay (`rgba(15, 23, 42, 0.48)`) 는 modal pop 강조 유지. snippet 배경 = `--bg`, result row hover/active = `--primary-soft`, owner badge = bg + border + color triple, highlight bg `#fde68a` + bold (light theme contrast). RBAC / endpoint / audit / backend 무변경. cache-bust `v=20260518-conv-search` → `v=20260519-modal-contrast` (styles.css + app.js 양쪽). 검증: make web 재배포 + 컨테이너 12 초 후 healthy. node --check / py_compile 대상 변경 없음.
 - [~] TASK-0073 (REQ-20260519-0001, **Critical** §12.3 — 모든 계정 행위 audit + 관리 콘솔 조회) 진행 중 sub-progress:
   - [x] Phase A0 — DDL + bootstrap (`_ensure_web_audit_events_schema` + WebAuditEvents 14 columns + 5 indexes + fast/slow path hook). CHG-20260519-0003. 2026-05-19. py_compile PASS.
