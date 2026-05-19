@@ -8,6 +8,39 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0007
+- Date: 2026-05-19
+- Summary: TASK-0077 (REQ-20260519-0005, Minor §12.3) — search modal 5 항목 hotfix bundle of TASK-0072/0076. 사용자 직접 테스트 보고 5 항목 모두 반영 — min char 3→2, 소유자 facet 제거, 기간 preset 5종, mouseup race fix, snippet 본문 excerpt.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/app.py` — `_normalize_search_query` raw-len gate 3→2. `_collect_matched_excerpts(conn, conv_ids, q)` helper 신설 (MySQL 8.0 `ROW_NUMBER() OVER (PARTITION BY ConversationId ORDER BY Id DESC)` window function, content 매칭 위치 ±40 char clip + "…" prefix/suffix, AgentMemoryMessages 한정). `/api/conversations` endpoint 응답에 `matched_excerpts: {conv_id: "..."}` 첨부 (body-search 활성 시만, 실패 안전 — snippet 은 best-effort UX).
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html` — 소유자 facet button + `#searchOwnerPopover` + `#searchOwnerList` DOM 제거. 기간 popover 에 `#searchDatePresets` row 신설 (5 preset button). input placeholder "제목 · 계정명 · 본문 (3자 이상)" → "제목 · 본문 (2자 이상)". cache-bust `v=20260519-search-facets` → `v=20260519-search-presets`.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css` — `.search-modal-popover-presets` + `.search-modal-popover-preset` 토큰 신설 (flex-wrap row, chip 모양).
+  - `repo/unit/feature-0003-agent-web-ui/src/static/app.js`
+    - `state.searchModal`: `owner_id` / `owner_username` / `product_id` / `ownerAccountsCache` 제거, `matched_excerpts: {}` + `mousedownOnOverlay: false` 추가.
+    - 제거: `_loadOwnerAccountsForSearch`, `_openOwnerPopover`. `_closeSearchPopovers` / `_updateSearchFacetChipLabels` 의 owner 분기 제거.
+    - `openSearchModal` reset 갱신 (owner 흔적 제거, matched_excerpts + mousedownOnOverlay 초기화).
+    - `runSearchQuery`: min 2 char gate, owner_id 쿼리 파라미터 보내지 않음, matched_excerpts state 캐시 (append 모드 merge), 실패 시 reset.
+    - `renderSearchModalResults`: empty state 문구 2자 기준, snippet 영역이 topic 대신 `sm.matched_excerpts[item.id]` excerpt + highlight. excerpt 부재 시 snippet skip (제목 매칭만).
+    - `_searchHighlight`: min length 3 → 2.
+    - `_bindSearchModalListeners`:
+      - overlay click + mousedown race fix — `mousedownOnOverlay` flag 추적, click 시 둘 다 overlay 일 때만 close.
+      - owner chip handler 제거.
+      - facetClear: owner 흔적 reset 제거 + matched_excerpts reset 추가.
+      - 기간 preset row click handler 신설 (5 preset 공통 — `data-preset-hours` 읽어 now - hours ~ now 자동 채움 + popover input sync + 적용 + runSearchQuery).
+      - popover close mousedown 의 owner 분기 제거 (date 만 검사).
+- Verification:
+  - `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS.
+  - `node --check unit/feature-0003-agent-web-ui/src/static/app.js` PASS.
+  - `make web` 재배포 OK — `repo-web-1` 8 초 후 healthy.
+  - browser smoke 는 사용자 hard refresh 후 직접 확인 권장 (cache-bust `v=20260519-search-presets`).
+- Risks:
+  - **min 2 char gate 약화**: 검색 결과 수 증가 가능 + rate limit 빈번 진입 가능 — per-account 10 req/min 정책은 그대로라 DoS 표면 추가 0. raw 2 char 가 한글 grapheme 1 자도 통과 (예: "데") 는 일반적 검색어 패턴.
+  - **`_collect_matched_excerpts` MySQL 8.0 dependency**: window function 의존. MySQL 5.7 환경에서는 query 실패 — try/except 로 silent skip + snippet 부재 fallback. STATUS.md 의 MySQL 8.0 명시와 정합.
+  - **snippet excerpt PII 표면**: TASK-0072 의 audit/RBAC 정책 그대로. `.any` 한정 + opt-in chip + `WebAccountActivity` audit (현재 `conversation.search.body` action 만 기록 — excerpt 자체는 별 audit action 안 만듦, snippet chip 활성 시점에 이미 query 단위 audit 기록). 새 PII 표면 아님.
+  - **소유자 facet 폐기 회귀**: backend `owner_id` 파라미터 호환 유지 — 향후 frontend 재도입 또는 다른 caller 영향 0.
+  - **mouseup race fix**: mouseup 이 overlay 안에서 일어나지 않는 경우 click 이벤트도 발생 안 함 (브라우저 표준). 본 fix 는 click 발생 시 mousedown 도 overlay 였는지 검사 — drag-out 후 다시 modal 안으로 돌아와 mouseup 발생하는 edge case 도 안전 (target 이 modal element 라 close 안 됨).
+- Trace: REQ-20260519-0005 → TASK-0077 → CHG-20260519-0007 → REV-20260519-0003 (hotfix bundle of TASK-0072/0076)
+
 ## CHG-20260519-0006
 - Date: 2026-05-19
 - Summary: TASK-0076 (REQ-20260519-0004, Minor §12.3) — search modal UX 3 결함 hotfix bundle of TASK-0072. 사용자 직접 테스트 보고: (1) facet click 무동작, (2) 키보드 ↑↓ scroll 미동작, (3) 매칭 message bubble jump 미동작. frontend only — backend / RBAC / audit / endpoint 무변경.

@@ -2967,14 +2967,16 @@ def _escape_like_for_search(s: str) -> str:
 
 
 def _normalize_search_query(q: str | None) -> str | None:
-    """Returns sanitized q (strip + length 3-200) or None if it fails the gate.
-    None signals 'no body search'. adversarial risk 4: gate is applied to the
-    *raw* user input before escape so `q="%%"` (post-escape len 4 but 0 literal
-    chars) is rejected for falling under the raw-len-3 minimum."""
+    """Returns sanitized q (strip + length 2-200) or None if it fails the gate.
+    None signals 'no body search'. REQ-20260519-0005 (TASK-0077): min char gate
+    3 → 2 (사용자 결정 — 한국어 grapheme 2 char 도 의미 있는 검색어). adversarial
+    risk 4: gate is applied to the *raw* user input before escape so `q="%%"`
+    (post-escape len 4 but 0 literal chars) is rejected for falling under the
+    raw-len-2 minimum."""
     if not q:
         return None
     s = str(q).strip()
-    if len(s) < 3:
+    if len(s) < 2:
         return None
     if len(s) > 200:
         s = s[:200]
@@ -3032,6 +3034,65 @@ def _audit_message_table_collations(conn) -> None:
                 )
             except Exception:
                 pass
+
+
+def _collect_matched_excerpts(conn, conv_ids: list[str], q: str) -> dict[str, str]:
+    """REQ-20260519-0005 (TASK-0077): for each matched conversation, return the
+    most-recent matching message body excerpt (±40 char window around the first
+    match). Empty dict if no body-search active or no rows. Skips on error
+    (snippet is best-effort UX, not a security boundary).
+
+    Limits scope to AgentMemoryMessages — AgentCoreMessages has overlapping
+    storage but body search of TASK-0072 covers both via EXISTS; excerpts are
+    rendered from the primary memory table for simplicity. Frontend falls
+    back to title-only highlight when excerpt absent.
+    """
+    if not conv_ids or not q:
+        return {}
+    escaped = _escape_like_for_search(q)
+    pattern = f"%{escaped}%"
+    placeholders = ",".join(["%s"] * len(conv_ids))
+    cur = conn.cursor()
+    rows: list[Any] = []
+    try:
+        cur.execute(
+            f"""
+SELECT t.ConversationId, t.Content
+FROM (
+  SELECT m.ConversationId AS ConversationId, m.Content AS Content,
+         ROW_NUMBER() OVER (PARTITION BY m.ConversationId ORDER BY m.Id DESC) AS rn
+  FROM AgentMemoryMessages m
+  WHERE m.ConversationId IN ({placeholders})
+    AND m.Content LIKE %s ESCAPE '!'
+) AS t
+WHERE t.rn = 1
+            """,
+            (*[str(c) for c in conv_ids], pattern),
+        )
+        rows = cur.fetchall() or []
+    except Exception:
+        return {}
+    finally:
+        cur.close()
+    result: dict[str, str] = {}
+    q_lower = q.lower()
+    for cid, content in rows:
+        text = str(content or "")
+        if not text:
+            continue
+        idx = text.lower().find(q_lower)
+        if idx < 0:
+            excerpt = text[:120]
+        else:
+            start = max(0, idx - 40)
+            end = min(len(text), idx + len(q) + 40)
+            excerpt = text[start:end]
+            if start > 0:
+                excerpt = "…" + excerpt
+            if end < len(text):
+                excerpt = excerpt + "…"
+        result[str(cid)] = excerpt
+    return result
 
 
 def _parse_search_cursor(cursor: str | None) -> tuple[str, str] | None:
@@ -5975,6 +6036,17 @@ def conversations(
         except Exception:
             pass
 
+    # REQ-20260519-0005 (TASK-0077): body-search 시 각 conv 의 매칭 message excerpt 첨부.
+    matched_excerpts: dict[str, str] = {}
+    if body_search_active and items:
+        normalized_q = _normalize_search_query(q)
+        if normalized_q:
+            conv_ids = [str(it.get("id") or "") for it in items if it.get("id")]
+            try:
+                matched_excerpts = _collect_matched_excerpts(conn, conv_ids, normalized_q)
+            except Exception:
+                matched_excerpts = {}
+
     payload = {
         "items": items,
         "current": None,
@@ -5982,6 +6054,7 @@ def conversations(
         "matched_count": len(items),
         "search_mode": True,
         "has_any": bool(has_any),
+        "matched_excerpts": matched_excerpts,
     }
     conn.close()
     return JSONResponse(payload)

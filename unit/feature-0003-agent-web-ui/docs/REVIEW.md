@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0003
+- Date: 2026-05-19
+- Decision: TASK-0077 (REQ-20260519-0005, Minor §12.3) — search modal 5 항목 hotfix bundle. min char 3→2, 소유자 facet 제거 (효용성 낮음 — 사용자 결정), 기간 preset 5종 (1시간/1일/1주/1개월/1년 전), mouseup race fix, snippet 본문 excerpt (backend `_collect_matched_excerpts` 신설).
+- Reason: 사용자 직접 테스트 보고 5 항목이 TASK-0072 / 0076 의 명세 누락 또는 사용성 부족. min 2 char 는 한국어 grapheme 검색 정합. 소유자 facet 은 admin/operator 의 실제 needs 가 낮음 (대부분 q 입력으로 충분). 기간 preset 은 매번 date input 채우는 마찰 해소. mouseup race 는 modal 안 text drag 가 backdrop 위에서 떼지면 close 되던 자연스럽지 못한 UX. snippet 본문 excerpt 는 TASK-0072 의 REV-20260519-0002 followup ("backend matched_message_id 응답") 의 다음 step — 본 cycle 은 매칭 *message id* 가 아닌 매칭 *content excerpt* 만 첨부 (frontend jump 의 정확도는 TASK-0076 의 textContent compare 그대로 유지 — message id 응답은 별 cycle).
+- Alt 거부:
+  - **owner facet 유지 + role label refine**: 소유자 facet 의 사용자 가치를 늘리려 role group / role chip 추가 옵션. 사용자 결정 ("효용성 낮음") 이 분명하므로 단순 제거가 더 가치. backend `owner_id` 파라미터는 호환 위해 유지.
+  - **mouseup race 의 다른 fix 패턴**: (a) `pointerup` event 사용 — 동작 비슷하나 browser 지원 차이. (b) modal close 자체를 click 이 아닌 별도 "X" 버튼 / Esc 만으로 — 사용자 backdrop click close 의도 손실. (c) modal 안 selection 가능 영역 추적 + 그 영역 내 mousedown 시 close 비활성. 본 fix 의 mousedownOnOverlay flag 가 가장 단순 + browser 표준 정합 (click = mousedown + mouseup 같은 element). 채택.
+  - **snippet excerpt backend matched_message_id 채택**: 매칭 message *id* 를 함께 응답하면 frontend jump 가 100% 정확. 단 2 message table (AgentMemoryMessages + AgentCoreMessages) namespace + frontend 의 message.id mapping 명시화 필요 — scope 초과. 본 cycle 은 excerpt 만 (snippet 본문 표시 결함 fix) + jump 는 client-side textContent compare 유지 (TASK-0076 그대로). matched_message_id 는 미해결 followup.
+  - **excerpt clip range 다른 값**: ±40 char (총 ~80-83 + q length). 더 좁으면 (±20) context 부족, 더 넓으면 (±80) snippet 영역 시각 overflow. 40 은 한국어 평균 1 줄 (40-60 byte = 20-30 char) 정합.
+- Risks:
+  - **min 2 char 검색 빈도 ↑**: 사용자 입력 시 더 자주 trigger 가능 (1 char 추가 시점부터 검색). per-account rate 10/min 정책 그대로라 DoS 표면 변화 0. UX trade-off — 더 빨리 결과 보이나 사소한 typo 도 검색 trigger.
+  - **MySQL 8.0 window function 의존**: `_collect_matched_excerpts` 의 `ROW_NUMBER() OVER (PARTITION BY ...)` 는 MySQL 8.0+ 필수. 5.7 환경에서 fail. 본 프로젝트 MySQL 8.0 명시 (STATUS.md / TASK-0064) 라 호환. fallback: try/except 로 silent skip — snippet 없으면 frontend 가 표시 안 함 (제목 매칭만).
+  - **excerpt PII**: TASK-0072 의 audit/RBAC 정책 (snippet chip opt-in + `.any` 한정 + `WebAccountActivity` audit) 그대로. 새 PII 표면 아님 — TASK-0072 의 snippet 영역이 *정확화* 됐을 뿐. opt-in chip 클릭 시 이미 audit log 기록되어 있음.
+  - **소유자 facet 제거 회귀**: backend `owner_id` 파라미터 호환 유지로 향후 facet 재도입 0 cost. `.own` 사용자의 SQL composition order sub-spec 1 (TASK-0072 의 self-overwrite) 도 그대로 동작.
+  - **TASK-0073 (다른 session) 과 file overlap**: TASK-0073 은 `src/app.py` 의 audit/dispatcher 영역. 본 cycle 도 `src/app.py` 변경 — 영역 분리 (TASK-0073 = WebAuditEvents + dispatcher Phase A0+, 본 cycle = `_normalize_search_query` line edit + `_collect_matched_excerpts` 신설 + endpoint payload 1 줄 추가). 충돌 가능성 점검 — `_normalize_search_query` 와 `_collect_matched_excerpts` 는 TASK-0072 helper 영역 (line 2887-3000 부근) 으로 TASK-0073 의 audit 영역 (`_audit_*`) 과 다른 위치. 안전.
+- 미해결 followup:
+  - **backend matched_message_id 응답** — 매칭 message id 까지 반환해 frontend jump 정확도 100%. 2 message table 의 namespace + frontend message.id mapping 명시 필요.
+  - **excerpt 의 AgentCoreMessages 포함** — 현재 AgentMemoryMessages 한정. 일부 conv 의 본문이 core 에 있으면 excerpt 부재. UNION + per-conv ROW_NUMBER 으로 확장 가능 (별 cycle).
+  - **popover bottom-edge clamp** (TASK-0076 의 followup) 미적용.
+  - **owner accounts cache invalidate** (TASK-0076 의 followup) — 소유자 facet 제거로 자동 해소 (cache 미사용).
+- Trace: REQ-20260519-0005 → TASK-0077 → CHG-20260519-0007 → REV-20260519-0003 (hotfix bundle of TASK-0072/0076)
+
 ## REV-20260519-0002
 - Date: 2026-05-19
 - Decision: TASK-0076 (REQ-20260519-0004, Minor §12.3) — search modal UX 3 결함 hotfix bundle. 제품 facet 은 사용자 결정 ("대화 중 product 변경 가능") 으로 DOM 제거. 소유자 / 기간 facet 은 popover UI 신설. ArrowUp/Down 시 active row scrollIntoView. 매칭 message bubble jump 는 frontend textContent compare (backend matched_message_id 응답 없이 client-side).

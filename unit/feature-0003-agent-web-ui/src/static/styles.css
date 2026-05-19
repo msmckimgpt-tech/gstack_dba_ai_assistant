@@ -4138,6 +4138,30 @@ a { color: inherit; }
   gap: 6px;
   padding: 8px;
 }
+/* REQ-20260519-0005 (TASK-0077): 기간 popover 의 preset 버튼 row */
+.search-modal-popover-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px dashed var(--border-subtle);
+}
+.search-modal-popover-preset {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--text-2, var(--text));
+  cursor: pointer;
+  font-family: inherit;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.search-modal-popover-preset:hover {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary-dark, var(--primary));
+}
 .search-modal-popover-item {
   display: flex;
   align-items: center;

@@ -131,9 +131,7 @@ const state = {
   searchModal: {
     open: false,
     q: "",
-    owner_id: null,
-    owner_username: "",
-    product_id: null,
+    // REQ-20260519-0005 (TASK-0077): 소유자 facet 제거 — owner_id 필드도 폐기. backend 호환 위해 endpoint 는 owner_id 파라미터 유지하나 frontend 는 보내지 않음.
     date_from: null,
     date_to: null,
     snippet_opt_in: false,
@@ -143,11 +141,13 @@ const state = {
     debounceTimer: null,
     activeResultIdx: -1,
     lastFocusedBeforeOpen: null,
-    // REQ-20260519-0004 (TASK-0076): owner facet popover 의 accounts list 캐시 (admin/operator 호출 1회).
-    ownerAccountsCache: null,
     // REQ-20260519-0004 (TASK-0076): result click 시 q 를 저장해 selectConversation 후 매칭된 첫 message bubble 로 scrollIntoView.
     pendingJumpQuery: "",
     pendingJumpConvId: "",
+    // REQ-20260519-0005 (TASK-0077): backend `/api/conversations` 응답의 matched_excerpts (conv_id → 본문 excerpt) 캐시.
+    matched_excerpts: {},
+    // REQ-20260519-0005 (TASK-0077): mouseup race fix — backdrop close 는 mousedown 도 overlay 에서 시작됐을 때만.
+    mousedownOnOverlay: false,
   },
 };
 
@@ -4074,9 +4074,10 @@ function _searchEscapeRegex(s) {
 function _searchHighlight(text, q) {
   // Highlight all case-insensitive matches of q in text. Escapes HTML first
   // (escapeHtml) and wraps matches with <mark class="search-snippet-hl">.
+  // REQ-20260519-0005 (TASK-0077): min 2 char (이전 3) — backend gate 와 정합.
   const safeText = escapeHtml(String(text || ""));
   const trimmed = String(q || "").trim();
-  if (!trimmed || trimmed.length < 3) return safeText;
+  if (!trimmed || trimmed.length < 2) return safeText;
   try {
     const re = new RegExp(_searchEscapeRegex(trimmed), "gi");
     return safeText.replace(re, (m) => `<mark class="search-snippet-hl">${m}</mark>`);
@@ -4092,11 +4093,9 @@ function openSearchModal() {
   state.searchModal.open = true;
   state.searchModal.lastFocusedBeforeOpen = document.activeElement;
   overlay.hidden = false;
-  // Show snippet/owner chips only when the user has cross-account permission.
+  // Show snippet chip only when the user has cross-account permission.
   const hasAny = can("conversation.list.any");
-  const ownerChip = _searchModalEl("searchFacetOwner");
   const snippetChip = _searchModalEl("searchFacetSnippet");
-  if (ownerChip) ownerChip.hidden = !hasAny;
   if (snippetChip) snippetChip.hidden = !hasAny;
   state.searchModal.has_any = hasAny;
   // Reset state for each open — fresh search.
@@ -4105,10 +4104,10 @@ function openSearchModal() {
   state.searchModal.results = [];
   state.searchModal.activeResultIdx = -1;
   state.searchModal.snippet_opt_in = false;
-  state.searchModal.owner_id = null;
-  state.searchModal.owner_username = "";
   state.searchModal.date_from = null;
   state.searchModal.date_to = null;
+  state.searchModal.matched_excerpts = {};
+  state.searchModal.mousedownOnOverlay = false;
   if (snippetChip) snippetChip.setAttribute("aria-pressed", "false");
   _updateSearchFacetChipLabels();
   _closeSearchPopovers();
@@ -4149,25 +4148,13 @@ function _positionPopoverBelow(popover, anchorBtn) {
 }
 
 function _closeSearchPopovers() {
-  const ownerPop = _searchModalEl("searchOwnerPopover");
   const datePop = _searchModalEl("searchDatePopover");
-  if (ownerPop) ownerPop.hidden = true;
   if (datePop) datePop.hidden = true;
 }
 
 function _updateSearchFacetChipLabels() {
   const sm = state.searchModal;
-  const ownerChip = _searchModalEl("searchFacetOwner");
   const dateChip = _searchModalEl("searchFacetDate");
-  if (ownerChip) {
-    if (sm.owner_id) {
-      ownerChip.textContent = `소유자: ${sm.owner_username || sm.owner_id}`;
-      ownerChip.setAttribute("aria-pressed", "true");
-    } else {
-      ownerChip.textContent = "소유자: 전체";
-      ownerChip.setAttribute("aria-pressed", "false");
-    }
-  }
   if (dateChip) {
     if (sm.date_from || sm.date_to) {
       const f = sm.date_from || "처음";
@@ -4179,69 +4166,6 @@ function _updateSearchFacetChipLabels() {
       dateChip.setAttribute("aria-pressed", "false");
     }
   }
-}
-
-async function _loadOwnerAccountsForSearch() {
-  // Fetched once per session. Requires admin/operator (account.read or console.access).
-  if (Array.isArray(state.searchModal.ownerAccountsCache)) return state.searchModal.ownerAccountsCache;
-  try {
-    const data = await apiFetch("/api/admin/accounts");
-    const items = (data && Array.isArray(data.items)) ? data.items : [];
-    // Only active + not soft-deleted accounts. Show admin-known accounts only.
-    const filtered = items.filter((a) => a && a.is_active && !a.deleted_at);
-    state.searchModal.ownerAccountsCache = filtered;
-    return filtered;
-  } catch (_) {
-    state.searchModal.ownerAccountsCache = [];
-    return [];
-  }
-}
-
-async function _openOwnerPopover() {
-  const popover = _searchModalEl("searchOwnerPopover");
-  const anchor = _searchModalEl("searchFacetOwner");
-  const list = _searchModalEl("searchOwnerList");
-  if (!popover || !anchor || !list) return;
-  _closeSearchPopovers();
-  list.innerHTML = "<div class=\"search-modal-popover-item\" aria-disabled=\"true\">로딩 중…</div>";
-  popover.hidden = false;
-  _positionPopoverBelow(popover, anchor);
-  const accounts = await _loadOwnerAccountsForSearch();
-  list.innerHTML = "";
-  const makeItem = (label, account_id, username, role_label, isSelected) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "search-modal-popover-item" + (isSelected ? " is-selected" : "");
-    const span = document.createElement("span");
-    span.textContent = label;
-    btn.appendChild(span);
-    if (role_label) {
-      const r = document.createElement("span");
-      r.className = "search-modal-popover-item-role";
-      r.textContent = role_label;
-      btn.appendChild(r);
-    }
-    btn.addEventListener("click", () => {
-      state.searchModal.owner_id = account_id;
-      state.searchModal.owner_username = username || "";
-      state.searchModal.cursor = null;
-      _updateSearchFacetChipLabels();
-      _closeSearchPopovers();
-      runSearchQuery({ append: false }).catch(() => {});
-    });
-    return btn;
-  };
-  list.appendChild(makeItem("전체", null, "", "", !state.searchModal.owner_id));
-  accounts.forEach((a) => {
-    const role_label = a.role && a.role.key ? a.role.key : "";
-    list.appendChild(makeItem(
-      a.username || `#${a.id}`,
-      Number(a.id),
-      a.username || "",
-      role_label,
-      Number(state.searchModal.owner_id) === Number(a.id),
-    ));
-  });
 }
 
 function _openDatePopover() {
@@ -4297,22 +4221,21 @@ async function runSearchQuery({ append = false } = {}) {
   const sm = state.searchModal;
   const rawQ = input ? input.value : "";
   sm.q = rawQ;
-  // Min 3 char gate — match backend _normalize_search_query.
+  // REQ-20260519-0005 (TASK-0077): min 2 char gate (이전 3) — backend _normalize_search_query 와 정합.
   const trimmed = String(rawQ || "").trim();
-  const hasQ = trimmed.length >= 3;
-  const hasFilter = sm.owner_id != null || sm.product_id != null || sm.date_from || sm.date_to;
+  const hasQ = trimmed.length >= 2;
+  const hasFilter = Boolean(sm.date_from || sm.date_to);
   if (!hasQ && !hasFilter && !append) {
     sm.results = [];
     sm.cursor = null;
     sm.activeResultIdx = -1;
+    sm.matched_excerpts = {};
     renderSearchModalResults();
     if (statusEl) statusEl.textContent = "";
     return;
   }
   const params = new URLSearchParams();
   if (hasQ) params.set("q", trimmed);
-  if (sm.owner_id != null) params.set("owner_id", String(sm.owner_id));
-  if (sm.product_id != null) params.set("product_id", String(sm.product_id));
   if (sm.date_from) params.set("date_from", sm.date_from);
   if (sm.date_to) params.set("date_to", sm.date_to);
   params.set("limit", "20");
@@ -4326,6 +4249,9 @@ async function runSearchQuery({ append = false } = {}) {
     sm.cursor = resp.next_cursor || null;
     sm.results = append ? [...sm.results, ...items] : items;
     sm.activeResultIdx = sm.results.length ? 0 : -1;
+    // REQ-20260519-0005 (TASK-0077): backend matched_excerpts 응답 캐시 (append 모드는 merge).
+    const newExcerpts = (resp && typeof resp.matched_excerpts === "object" && resp.matched_excerpts) || {};
+    sm.matched_excerpts = append ? { ...sm.matched_excerpts, ...newExcerpts } : newExcerpts;
     if (statusEl) {
       statusEl.textContent = `${sm.results.length}건${sm.cursor ? " (더 있음)" : ""}`;
     }
@@ -4335,6 +4261,7 @@ async function runSearchQuery({ append = false } = {}) {
       sm.results = [];
       sm.cursor = null;
       sm.activeResultIdx = -1;
+      sm.matched_excerpts = {};
     }
   }
   renderSearchModalResults();
@@ -4350,12 +4277,12 @@ function renderSearchModalResults() {
     const trimmed = String(sm.q || "").trim();
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    if (trimmed && trimmed.length < 3) {
-      empty.innerHTML = "<strong>3자 이상 입력</strong><span>제목 · 계정명 · 본문 검색</span>";
+    if (trimmed && trimmed.length < 2) {
+      empty.innerHTML = "<strong>2자 이상 입력</strong><span>제목 · 본문 검색</span>";
     } else if (trimmed) {
       empty.innerHTML = `<strong>결과 없음</strong><span>"${escapeHtml(trimmed)}" 와 일치하는 대화가 없습니다.</span>`;
     } else {
-      empty.innerHTML = "<strong>대화 검색</strong><span>3자 이상 입력하거나 필터를 선택하세요.</span>";
+      empty.innerHTML = "<strong>대화 검색</strong><span>2자 이상 입력하거나 기간을 선택하세요.</span>";
     }
     listEl.appendChild(empty);
     if (loadMoreBtn) loadMoreBtn.hidden = true;
@@ -4395,15 +4322,16 @@ function renderSearchModalResults() {
     }
     row.appendChild(meta);
 
-    // Snippet (opt-in chip). Backend does not yet return snippet text; we
-    // render highlighted topic preview only. Body-content snippet is future.
-    if (sm.snippet_opt_in && sm.q && String(sm.q).trim().length >= 3) {
-      const snip = document.createElement("div");
-      snip.className = "search-snippet";
-      // Best-effort placeholder — the topic itself is the snippet target until
-      // backend returns content excerpts. Highlight matches.
-      snip.innerHTML = _searchHighlight(item.topic || "", sm.q);
-      row.appendChild(snip);
+    // REQ-20260519-0005 (TASK-0077): snippet 본문 excerpt — backend matched_excerpts 응답 사용.
+    // chip opt-in 활성 + q 가 min 2 char + 해당 conv 의 excerpt 가 있을 때만 표시. excerpt 부재면 (제목 매칭만) skip.
+    if (sm.snippet_opt_in && sm.q && String(sm.q).trim().length >= 2) {
+      const excerpt = (sm.matched_excerpts && sm.matched_excerpts[String(item.id)]) || "";
+      if (excerpt) {
+        const snip = document.createElement("div");
+        snip.className = "search-snippet";
+        snip.innerHTML = _searchHighlight(excerpt, sm.q);
+        row.appendChild(snip);
+      }
     }
 
     row.addEventListener("click", () => {
@@ -4435,9 +4363,16 @@ function _bindSearchModalListeners() {
   if (openBtn) openBtn.addEventListener("click", openSearchModal);
   if (closeBtn) closeBtn.addEventListener("click", closeSearchModal);
   if (overlay) {
+    // REQ-20260519-0005 (TASK-0077): mouseup race fix — backdrop close 는
+    // mousedown + mouseup 둘 다 overlay 에서 일어났을 때만. 사용자가 modal 안
+    // text 를 drag 선택하다 마우스를 backdrop 까지 끌고 가서 떼는 경우 close 방지.
+    overlay.addEventListener("mousedown", (ev) => {
+      state.searchModal.mousedownOnOverlay = (ev.target === overlay);
+    });
     overlay.addEventListener("click", (ev) => {
-      // Click on the backdrop (overlay itself) closes; clicks inside .search-modal don't bubble here.
-      if (ev.target === overlay) closeSearchModal();
+      const shouldClose = (ev.target === overlay) && state.searchModal.mousedownOnOverlay;
+      state.searchModal.mousedownOnOverlay = false;
+      if (shouldClose) closeSearchModal();
     });
   }
   if (input) {
@@ -4490,9 +4425,7 @@ function _bindSearchModalListeners() {
   if (facetClear) {
     facetClear.addEventListener("click", () => {
       const sm = state.searchModal;
-      sm.owner_id = null;
-      sm.owner_username = "";
-      sm.product_id = null;
+      // REQ-20260519-0005 (TASK-0077): 소유자 facet 폐기 후 기간 + snippet 만 reset.
       sm.date_from = null;
       sm.date_to = null;
       sm.snippet_opt_in = false;
@@ -4504,22 +4437,14 @@ function _bindSearchModalListeners() {
       sm.cursor = null;
       sm.results = [];
       sm.activeResultIdx = -1;
+      sm.matched_excerpts = {};
       renderSearchModalResults();
       const statusEl = _searchModalEl("searchModalStatus");
       if (statusEl) statusEl.textContent = "";
       if (input) input.focus();
     });
   }
-  // REQ-20260519-0004 (TASK-0076): facet 버튼 click handlers.
-  const ownerChip = _searchModalEl("searchFacetOwner");
-  if (ownerChip) {
-    ownerChip.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      const pop = _searchModalEl("searchOwnerPopover");
-      if (pop && !pop.hidden) { _closeSearchPopovers(); return; }
-      _openOwnerPopover().catch(() => {});
-    });
-  }
+  // REQ-20260519-0004 (TASK-0076) + REQ-20260519-0005 (TASK-0077): 기간 facet handler.
   const dateChip = _searchModalEl("searchFacetDate");
   if (dateChip) {
     dateChip.addEventListener("click", (ev) => {
@@ -4555,14 +4480,38 @@ function _bindSearchModalListeners() {
       runSearchQuery({ append: false }).catch(() => {});
     });
   }
-  // Close popovers on overlay click outside chip area.
+  // REQ-20260519-0005 (TASK-0077): 기간 preset 5 종 (1시간/1일/1주/1개월/1년 전부터 지금까지).
+  const datePresets = _searchModalEl("searchDatePresets");
+  if (datePresets) {
+    datePresets.addEventListener("click", (ev) => {
+      const btn = ev.target && ev.target.closest && ev.target.closest(".search-modal-popover-preset");
+      if (!btn) return;
+      const hours = parseInt(btn.dataset.presetHours || "0", 10);
+      if (!hours || hours < 1) return;
+      const now = new Date();
+      const from = new Date(now.getTime() - hours * 60 * 60 * 1000);
+      const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const sm = state.searchModal;
+      sm.date_from = ymd(from);
+      sm.date_to = ymd(now);
+      sm.cursor = null;
+      // sync popover inputs so user can fine-tune before close.
+      const fromInput = _searchModalEl("searchDateFromInput");
+      const toInput = _searchModalEl("searchDateToInput");
+      if (fromInput) fromInput.value = sm.date_from;
+      if (toInput) toInput.value = sm.date_to;
+      _updateSearchFacetChipLabels();
+      _closeSearchPopovers();
+      runSearchQuery({ append: false }).catch(() => {});
+    });
+  }
+  // REQ-20260519-0005 (TASK-0077): 외부 click 시 popover close — overlay mousedown 의 mouseup race fix
+  // 와 함께 동작. ev.target 이 date chip / date popover 외부면 popover close (modal 자체 close 는 별 로직).
   if (overlay) {
     overlay.addEventListener("mousedown", (ev) => {
-      const inOwnerPop = ev.target.closest && ev.target.closest("#searchOwnerPopover");
       const inDatePop = ev.target.closest && ev.target.closest("#searchDatePopover");
-      const inOwnerChip = ev.target === ownerChip;
       const inDateChip = ev.target === dateChip;
-      if (!inOwnerPop && !inDatePop && !inOwnerChip && !inDateChip) {
+      if (!inDatePop && !inDateChip) {
         _closeSearchPopovers();
       }
     });
