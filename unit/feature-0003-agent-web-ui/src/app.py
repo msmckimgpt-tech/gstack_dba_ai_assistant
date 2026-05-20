@@ -8575,6 +8575,576 @@ async def me_put_system_prompt(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "id": new_id, "deleted": new_id == 0})
 
 
+# =============================================================================
+# REQ-20260519-0001 (TASK-0073 Phase A4, Critical §12.3): Audit log endpoints.
+# =============================================================================
+# 5 read endpoint + 1 chunked purge endpoint.
+# Eng review E1: `.own` SQL filter = `WHERE ActorAccountId=:self OR TargetAccountId=:self`
+# (Actor OR Target — admin password-reset 등 admin→user 이벤트가 user 본인 audit 에 보임).
+# Eng review E8: chunked PK purge — `ORDER BY Id LIMIT N` cursor, 각 chunk = 별 tx,
+# idempotency_key = hash(cutoff, started_at_minute), start + complete self-audit row.
+
+_AUDIT_LIST_DEFAULT_LIMIT = 100
+_AUDIT_LIST_MAX_LIMIT = 500
+_AUDIT_PURGE_CHUNK_SIZE = 1000
+_AUDIT_PURGE_MAX_RUNTIME_SEC = 30
+
+
+def _audit_row_to_dict(row: dict) -> dict[str, Any]:
+    """WebAuditEvents row dict 를 JSON 응답 shape 로 변환."""
+    occurred_at = row.get("OccurredAt")
+    try:
+        change_json_raw = row.get("ChangeJson")
+        if isinstance(change_json_raw, (bytes, bytearray)):
+            change_json_raw = change_json_raw.decode("utf-8", errors="replace")
+        change_obj = json.loads(change_json_raw) if change_json_raw else None
+    except Exception:
+        change_obj = None
+    try:
+        masked_raw = row.get("MaskedFields")
+        if isinstance(masked_raw, (bytes, bytearray)):
+            masked_raw = masked_raw.decode("utf-8", errors="replace")
+        masked_obj = json.loads(masked_raw) if masked_raw else None
+    except Exception:
+        masked_obj = None
+    return {
+        "id": int(row.get("Id") or 0),
+        "actor_account_id": int(row["ActorAccountId"]) if row.get("ActorAccountId") is not None else None,
+        "actor_role_id": int(row["ActorRoleId"]) if row.get("ActorRoleId") is not None else None,
+        "actor_type": str(row.get("ActorType") or "account"),
+        "target_account_id": int(row["TargetAccountId"]) if row.get("TargetAccountId") is not None else None,
+        "session_id": str(row.get("SessionId") or "") or None,
+        "action_code": str(row.get("ActionCode") or ""),
+        "resource_type": str(row.get("ResourceType") or ""),
+        "resource_id": str(row.get("ResourceId") or "") or None,
+        "change_json": change_obj,
+        "masked_fields": masked_obj,
+        "remote_addr": str(row.get("RemoteAddr") or "") or None,
+        "user_agent": str(row.get("UserAgent") or "") or None,
+        "request_id": str(row.get("RequestId") or "") or None,
+        "occurred_at": occurred_at.isoformat() if hasattr(occurred_at, "isoformat") else (str(occurred_at) if occurred_at else None),
+    }
+
+
+def _audit_build_self_filter_sql(account_id: int) -> tuple[str, tuple[Any, ...]]:
+    """E1 self filter: `ActorAccountId = :self OR TargetAccountId = :self`."""
+    return ("(ActorAccountId = %s OR TargetAccountId = %s)", (int(account_id), int(account_id)))
+
+
+def _audit_resolve_read_scope(actor: dict[str, Any]) -> str:
+    """`audit.read.any` 보유 시 'any', `audit.read.own` 보유 시 'own', 둘 다 없으면 ''."""
+    if _account_has_permission(actor, "audit.read.any"):
+        return "any"
+    if _account_has_permission(actor, "audit.read.own"):
+        return "own"
+    return ""
+
+
+def _audit_parse_filter_params(request: Request) -> dict[str, Any]:
+    """공통 filter 파라미터 파싱 — action_code, resource_type, actor_account_id, actor_type, from_at, to_at, q, cursor, limit."""
+    qp = request.query_params
+    def _trim(v: str | None) -> str:
+        return str(v or "").strip()
+    return {
+        "action_code": _trim(qp.get("action_code"))[:64],
+        "resource_type": _trim(qp.get("resource_type"))[:32],
+        "actor_account_id": _trim(qp.get("actor_account_id"))[:32],
+        "actor_type": _trim(qp.get("actor_type")).lower()[:16],
+        "from_at": _trim(qp.get("from_at"))[:64],
+        "to_at": _trim(qp.get("to_at"))[:64],
+        "q": _trim(qp.get("q"))[:128],
+        "cursor": _trim(qp.get("cursor"))[:64],
+        "limit": _trim(qp.get("limit"))[:8],
+    }
+
+
+def _audit_compose_where(
+    *,
+    scope: str,
+    account_id: int,
+    params: dict[str, Any],
+    cursor_id: int | None = None,
+) -> tuple[str, list[Any]]:
+    """WHERE clause + parameter list. scope='any' 면 self filter 미적용."""
+    conds: list[str] = []
+    args: list[Any] = []
+    # 1. Scope gate (E1).
+    if scope == "own":
+        cond, scope_args = _audit_build_self_filter_sql(account_id)
+        conds.append(cond)
+        args.extend(scope_args)
+    # 2. Filters.
+    if params.get("action_code"):
+        conds.append("ActionCode = %s")
+        args.append(params["action_code"])
+    if params.get("resource_type"):
+        conds.append("ResourceType = %s")
+        args.append(params["resource_type"])
+    if params.get("actor_account_id"):
+        try:
+            args.append(int(params["actor_account_id"]))
+            conds.append("ActorAccountId = %s")
+        except (ValueError, TypeError):
+            pass
+    if params.get("actor_type"):
+        conds.append("ActorType = %s")
+        args.append(params["actor_type"])
+    if params.get("from_at"):
+        conds.append("OccurredAt >= %s")
+        args.append(params["from_at"])
+    if params.get("to_at"):
+        conds.append("OccurredAt <= %s")
+        args.append(params["to_at"])
+    if params.get("q"):
+        # ActionCode + ResourceId substring (PII 노출 면적 최소화 — ChangeJson body 미검색).
+        conds.append("(ActionCode LIKE %s OR ResourceId LIKE %s)")
+        like_pat = f"%{params['q']}%"
+        args.append(like_pat)
+        args.append(like_pat)
+    # 3. Cursor (Id DESC pagination).
+    if cursor_id is not None and cursor_id > 0:
+        conds.append("Id < %s")
+        args.append(int(cursor_id))
+    where_clause = " WHERE " + " AND ".join(conds) if conds else ""
+    return where_clause, args
+
+
+def _audit_parse_cursor(cursor: str) -> int | None:
+    if not cursor:
+        return None
+    try:
+        return int(cursor)
+    except (ValueError, TypeError):
+        return None
+
+
+def _audit_clamped_limit(raw: str) -> int:
+    try:
+        n = int(raw)
+    except (ValueError, TypeError):
+        return _AUDIT_LIST_DEFAULT_LIMIT
+    if n <= 0:
+        return _AUDIT_LIST_DEFAULT_LIMIT
+    return min(n, _AUDIT_LIST_MAX_LIMIT)
+
+
+@app.get("/api/admin/audits")
+async def list_audit_events(request: Request) -> JSONResponse:
+    """REQ-20260519-0001 (TASK-0073 Phase A4): audit event 조회 (filter + cursor).
+
+    권한: `audit.read.own` 또는 `audit.read.any`. `.own` 은 `WHERE ActorAccountId=:self
+    OR TargetAccountId=:self` 강제 (E1). `.any` 는 전체 row 조회.
+
+    Query params: action_code / resource_type / actor_account_id / actor_type / from_at /
+    to_at / q (ActionCode + ResourceId substring) / cursor (Id) / limit (≤500).
+
+    Response: `{items: [...], next_cursor: <id>|None, scope: 'own'|'any'}`.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        scope = _audit_resolve_read_scope(account)
+        if not scope:
+            return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
+        params = _audit_parse_filter_params(request)
+        cursor_id = _audit_parse_cursor(params["cursor"])
+        limit = _audit_clamped_limit(params["limit"])
+        where_clause, args = _audit_compose_where(
+            scope=scope,
+            account_id=int(account["id"]),
+            params=params,
+            cursor_id=cursor_id,
+        )
+        sql = (
+            "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
+            "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
+            "RemoteAddr, UserAgent, RequestId, OccurredAt "
+            f"FROM WebAuditEvents{where_clause} "
+            "ORDER BY Id DESC LIMIT %s"
+        )
+        args.append(int(limit) + 1)
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(sql, tuple(args))
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+        has_more = len(rows) > limit
+        items = [_audit_row_to_dict(r) for r in rows[:limit]]
+        next_cursor = str(items[-1]["id"]) if has_more and items else None
+        return JSONResponse({"items": items, "next_cursor": next_cursor, "scope": scope})
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/audits/{event_id}")
+async def get_audit_event(event_id: int, request: Request) -> JSONResponse:
+    """REQ-20260519-0001 (TASK-0073 Phase A4): audit event 단건 detail.
+
+    `.own` 보유자는 ActorAccountId/TargetAccountId 가 본인일 때만 조회 가능 (404
+    metadata leak 차단 — 권한 부족 시 무조건 404, byte-equal 응답).
+    """
+    if event_id <= 0:
+        return _json_error("invalid event_id", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        scope = _audit_resolve_read_scope(account)
+        if not scope:
+            return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
+        where_clause = " WHERE Id = %s"
+        args: list[Any] = [int(event_id)]
+        if scope == "own":
+            cond, scope_args = _audit_build_self_filter_sql(int(account["id"]))
+            where_clause = f" WHERE Id = %s AND {cond}"
+            args.extend(scope_args)
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
+                "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
+                "RemoteAddr, UserAgent, RequestId, OccurredAt "
+                f"FROM WebAuditEvents{where_clause} LIMIT 1",
+                tuple(args),
+            )
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        if not row:
+            return _json_error("audit event not found", 404)
+        return JSONResponse({"item": _audit_row_to_dict(row), "scope": scope})
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/audits/export.csv")
+async def export_audit_events_csv(request: Request) -> Any:
+    """REQ-20260519-0001 (TASK-0073 Phase A4): audit event CSV export.
+
+    권한: `audit.export` (admin/dba). `.any` 와 동일 SQL — 전체 row 조회. masked field
+    는 ChangeJson 안의 redact policy 그대로 (`MaskedFields` column 에 redact 대상 명시).
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(account, "audit.export"):
+            return _json_error("감사 로그 export 권한이 필요합니다.", 403)
+        params = _audit_parse_filter_params(request)
+        # CSV export 는 .any superset 으로 — 본인 row 만 export 는 use case 없음.
+        scope = "any"
+        where_clause, args = _audit_compose_where(
+            scope=scope,
+            account_id=int(account["id"]),
+            params=params,
+            cursor_id=None,
+        )
+        # Hard cap 50k row — DoS 회피.
+        export_limit = 50000
+        sql = (
+            "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
+            "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
+            "RemoteAddr, UserAgent, RequestId, OccurredAt "
+            f"FROM WebAuditEvents{where_clause} "
+            "ORDER BY Id DESC LIMIT %s"
+        )
+        args.append(export_limit)
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(sql, tuple(args))
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+        # CSV stream.
+        import csv as _csv
+        import io as _io
+        sio = _io.StringIO()
+        writer = _csv.writer(sio)
+        writer.writerow([
+            "Id", "ActorAccountId", "ActorRoleId", "ActorType", "TargetAccountId",
+            "SessionId", "ActionCode", "ResourceType", "ResourceId", "ChangeJson",
+            "MaskedFields", "RemoteAddr", "UserAgent", "RequestId", "OccurredAt",
+        ])
+        for r in rows:
+            d = _audit_row_to_dict(r)
+            writer.writerow([
+                d["id"], d["actor_account_id"], d["actor_role_id"], d["actor_type"],
+                d["target_account_id"], d["session_id"], d["action_code"], d["resource_type"],
+                d["resource_id"],
+                json.dumps(d["change_json"], ensure_ascii=False, sort_keys=True) if d["change_json"] is not None else "",
+                json.dumps(d["masked_fields"], ensure_ascii=False, sort_keys=True) if d["masked_fields"] is not None else "",
+                d["remote_addr"], d["user_agent"], d["request_id"], d["occurred_at"],
+            ])
+        csv_text = sio.getvalue()
+        return PlainTextResponse(
+            csv_text,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="audit_events.csv"'},
+        )
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/audits/actors")
+async def list_audit_actors(request: Request) -> JSONResponse:
+    """REQ-20260519-0001 (TASK-0073 Phase A4): facet — distinct actor 목록."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        scope = _audit_resolve_read_scope(account)
+        if not scope:
+            return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
+        # `.own` 사용자는 본인 actor 만 (계정 enumeration 차단).
+        if scope == "own":
+            return JSONResponse({"items": [{"actor_account_id": int(account["id"])}]})
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                "SELECT wae.ActorAccountId, wa.Username "
+                "FROM (SELECT DISTINCT ActorAccountId FROM WebAuditEvents WHERE ActorAccountId IS NOT NULL) wae "
+                "LEFT JOIN WebAccounts wa ON wa.Id = wae.ActorAccountId "
+                "ORDER BY wa.Username ASC LIMIT 500"
+            )
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+        items = [
+            {
+                "actor_account_id": int(r.get("ActorAccountId")) if r.get("ActorAccountId") is not None else None,
+                "username": str(r.get("Username") or ""),
+            }
+            for r in rows
+        ]
+        return JSONResponse({"items": items})
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/audits/resources")
+async def list_audit_resources(request: Request) -> JSONResponse:
+    """REQ-20260519-0001 (TASK-0073 Phase A4): facet — distinct resource_type 목록."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        scope = _audit_resolve_read_scope(account)
+        if not scope:
+            return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
+        cur = conn.cursor(dictionary=True)
+        try:
+            # `.own` 사용자도 본인 row 의 resource_type 만 — extra SQL 분기.
+            if scope == "own":
+                cur.execute(
+                    "SELECT DISTINCT ResourceType FROM WebAuditEvents "
+                    "WHERE ActorAccountId = %s OR TargetAccountId = %s "
+                    "ORDER BY ResourceType ASC LIMIT 100",
+                    (int(account["id"]), int(account["id"])),
+                )
+            else:
+                cur.execute(
+                    "SELECT DISTINCT ResourceType FROM WebAuditEvents "
+                    "ORDER BY ResourceType ASC LIMIT 100"
+                )
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+        items = [{"resource_type": str(r.get("ResourceType") or "")} for r in rows if r.get("ResourceType")]
+        return JSONResponse({"items": items})
+    finally:
+        conn.close()
+
+
+@app.post("/api/admin/audits/purge")
+async def purge_audit_events(request: Request) -> JSONResponse:
+    """REQ-20260519-0001 (TASK-0073 Phase A4, Eng review E8): chunked PK purge.
+
+    권한: `audit.purge` (admin only). retention 초과 audit row 삭제.
+
+    Body: `{cutoff: ISO8601, chunk_size?: int, dry_run?: bool}`.
+    - cutoff: `OccurredAt < cutoff` 인 row 삭제.
+    - chunk_size: 기본 1000 (clamp [100, 5000]).
+    - dry_run: true 시 count 만 반환 + 실 삭제 X.
+
+    각 chunk = 별 tx (Long Running Transaction 회피). start + complete self-audit
+    event 2건 기록 (idempotency_key = hash(cutoff, started_at_minute) — 1 분 내
+    중복 purge 차단).
+
+    Response: `{purged: int, idempotency_key: str, dry_run: bool, started_at: ISO,
+    completed_at: ISO|None}`.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    cutoff = str(data.get("cutoff") or "").strip()
+    if not cutoff:
+        return _json_error("cutoff required (ISO8601)", 400)
+    try:
+        chunk_size = int(data.get("chunk_size") or _AUDIT_PURGE_CHUNK_SIZE)
+    except (ValueError, TypeError):
+        chunk_size = _AUDIT_PURGE_CHUNK_SIZE
+    chunk_size = max(100, min(chunk_size, 5000))
+    dry_run = bool(data.get("dry_run"))
+
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(account, "audit.purge"):
+            return _json_error("감사 로그 purge 권한이 필요합니다.", 403)
+
+        # dry_run: count only.
+        if dry_run:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "SELECT COUNT(*) FROM WebAuditEvents WHERE OccurredAt < %s",
+                    (cutoff,),
+                )
+                row = cur.fetchone()
+                count = int(row[0] if row else 0)
+            finally:
+                cur.close()
+            return JSONResponse({
+                "purged": 0,
+                "to_purge": count,
+                "dry_run": True,
+                "cutoff": cutoff,
+                "chunk_size": chunk_size,
+            })
+
+        started_at = datetime.now(timezone.utc)
+        idempotency_seed = f"{cutoff}|{started_at.strftime('%Y-%m-%dT%H:%M')}"
+        idempotency_key = hashlib.sha256(idempotency_seed.encode("utf-8")).hexdigest()[:32]
+        actor = _build_actor_from_request(request, account, actor_type="account")
+        actor["session_id"] = actor.get("session_id") or None
+        # start self-audit (별 tx).
+        try:
+            record_audit_event(
+                conn,
+                actor=actor,
+                action="audit.purge.start",
+                resource_type="audit_range",
+                resource_id=None,
+                change_json={
+                    "cutoff": cutoff,
+                    "chunk_size": chunk_size,
+                    "idempotency_key": idempotency_key,
+                    "started_at": started_at.isoformat(),
+                },
+            )
+            conn.commit()
+        except Exception as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return _json_error(f"purge start audit failed: {exc}", 500)
+
+        # Chunked DELETE loop.
+        total_deleted = 0
+        deadline_ts = time.time() + _AUDIT_PURGE_MAX_RUNTIME_SEC
+        while True:
+            if time.time() > deadline_ts:
+                break
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "SELECT Id FROM WebAuditEvents "
+                    "WHERE OccurredAt < %s ORDER BY Id LIMIT %s",
+                    (cutoff, int(chunk_size)),
+                )
+                rows = cur.fetchall() or []
+            finally:
+                cur.close()
+            if not rows:
+                break
+            ids = [int((r[0] if isinstance(r, (list, tuple)) else r.get("Id")) or 0) for r in rows]
+            ids = [i for i in ids if i > 0]
+            if not ids:
+                break
+            placeholders = ",".join(["%s"] * len(ids))
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    f"DELETE FROM WebAuditEvents WHERE Id IN ({placeholders})",
+                    tuple(ids),
+                )
+                conn.commit()
+                total_deleted += len(ids)
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                break
+            finally:
+                cur.close()
+
+        completed_at = datetime.now(timezone.utc)
+        # complete self-audit (별 tx).
+        try:
+            record_audit_event(
+                conn,
+                actor=actor,
+                action="audit.purge.complete",
+                resource_type="audit_range",
+                resource_id=None,
+                change_json={
+                    "cutoff": cutoff,
+                    "total_deleted": total_deleted,
+                    "idempotency_key": idempotency_key,
+                    "started_at": started_at.isoformat(),
+                    "completed_at": completed_at.isoformat(),
+                },
+            )
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+        return JSONResponse({
+            "purged": total_deleted,
+            "idempotency_key": idempotency_key,
+            "dry_run": False,
+            "cutoff": cutoff,
+            "chunk_size": chunk_size,
+            "started_at": started_at.isoformat(),
+            "completed_at": completed_at.isoformat(),
+        })
+    finally:
+        conn.close()
+
+
 @app.get("/api/keywords")
 async def list_keywords_removed(*_args, **_kwargs) -> JSONResponse:
     return _json_error("Keyword Management는 제거되었습니다.", 410)

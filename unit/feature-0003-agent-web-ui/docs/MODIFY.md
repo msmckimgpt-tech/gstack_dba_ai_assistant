@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0020
+- Date: 2026-05-19
+- Summary: TASK-0073 Phase A4 (REQ-20260519-0001, **Critical** §12.3) — 5 audit read endpoint + 1 chunked PK purge endpoint. `.own` SQL filter = `ActorAccountId OR TargetAccountId` (Eng review E1) + 404 byte-equal metadata leak 차단 + CSV 50k hard cap + chunked purge w/ idempotency_key + start/complete self-audit + 30s deadline.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/app.py`
+    - helper functions 신설 — `_audit_row_to_dict(row)`, `_audit_build_self_filter_sql(account_id)`, `_audit_resolve_read_scope(actor)`, `_audit_parse_filter_params(request)`, `_audit_compose_where(*, scope, account_id, params, cursor_id)`, `_audit_parse_cursor(cursor)`, `_audit_clamped_limit(raw)`. defaults: `_AUDIT_LIST_DEFAULT_LIMIT=100`, `_AUDIT_LIST_MAX_LIMIT=500`, `_AUDIT_PURGE_CHUNK_SIZE=1000`, `_AUDIT_PURGE_MAX_RUNTIME_SEC=30`.
+    - `GET /api/admin/audits` — list w/ filter (action_code / resource_type / actor_account_id / actor_type / from_at / to_at / q / cursor / limit). `.own` filter E1 (Actor OR Target). LIMIT N+1 → next_cursor 판정. Response `{items, next_cursor, scope}`.
+    - `GET /api/admin/audits/{event_id}` — detail. `.own` 보유자는 본인 actor/target 일 때만, 권한 부족 무조건 404 (byte-equal).
+    - `GET /api/admin/audits/export.csv` — `audit.export` gate. hard cap 50k row. `csv` 모듈 + `io.StringIO` + `PlainTextResponse` w/ Content-Disposition.
+    - `GET /api/admin/audits/actors` — distinct actor facet. `.own` = 본인 1건만 (enumeration 차단). `.any` = WebAccounts JOIN.
+    - `GET /api/admin/audits/resources` — distinct resource_type facet. `.own` 분기 SQL.
+    - `POST /api/admin/audits/purge` — chunked PK purge. `audit.purge` gate. dry_run=true → COUNT(*) 만 반환. 실 삭제 — chunk 1000 row 별 tx (LRT 회피). start/complete self-audit 2건. idempotency_key = sha256(cutoff + started_at_minute)[:32]. max runtime 30s (deadline 초과 시 partial — 다음 호출 cursor 재시작).
+- Verification: `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS. endpoint 6개 신설 (5 GET + 1 POST). 사용한 helper 모두 file 내 정의. `_build_actor_from_request` (Phase A1) 재사용. `record_audit_event` (Phase A1) purge start/complete 호출.
+- Risks: `.own` SQL filter 가 `ActorAccountId IS NULL` row 도 OR 분기로 `TargetAccountId=:self` 매칭 가능 — anonymous share view 시 본인 share 의 viewer 가 본인 audit 에 보이는 경우 (E4 정합, 의도). CSV 50k cap 가 large fleet 에서 모자랄 수 있음 — 본 cycle 의 hard cap, 별 cycle 에서 streaming export 검토. purge max runtime 30s 가 LLM 으로 인한 connection stall 회피 — partial purge 시 다음 호출 cursor 자연 재시작 (cutoff 이전 row 가 남아 있음).
+- Trace: REQ-20260519-0001 → TASK-0073 Phase A4 → CHG-20260519-0020 → REV-20260519-0016. Eng review E1 (Actor OR Target self filter) + E8 (chunked purge Python 의사코드).
+
 ## CHG-20260519-0019
 - Date: 2026-05-19
 - Summary: TASK-0073 Phase A3 (REQ-20260519-0001, **Critical** §12.3) — RBAC catalog audit 4건 + permission group `audit` 신규 + admin/operator/sales/dba/pending 5 role 자동 grant catchup. Codex outside voice C8/C9/C10 lock-in (`.own/.any` 정합 + dba seed/catchup 보강 + permission group misc fallback 차단). Eng review E9 — dba 누락 보강.

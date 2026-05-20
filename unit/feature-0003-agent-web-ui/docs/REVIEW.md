@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0016 [SKIPPED:multi-phase-plan-approved]
+- Date: 2026-05-19
+- Decision: TASK-0073 Phase A4 (REQ-20260519-0001, **Critical** §12.3) — 5 audit read endpoint (`GET /api/admin/audits` + detail + export.csv + actors facet + resources facet) + 1 chunked purge endpoint (`POST /api/admin/audits/purge`). E1 self filter (Actor OR Target) + 404 byte-equal + E8 chunked PK 의사코드 그대로 구현.
+- Reason: PLAN-APPROVED 2026-05-19. Eng review E1 = "B (Actor OR Target)" 사용자 결정 — admin actor + user target 이벤트가 user 본인 audit 에 노출 (admin 의 password-reset / 권한 grant / share revoke 이벤트의 user side 가시성). E8 chunked purge 의 Python 의사코드를 그대로 SQL 로 구현 — chunk 별 tx + 30s deadline + idempotency_key (1 분 내 중복 차단) + start/complete self-audit 2건.
+- Alt 거부:
+  - **`.own` = ActorAccountId 만**: E1 결정 A 라면 본인 actor 만. admin 의 user-target 이벤트가 user 본인 audit 에서 invisible — 보안 가시성 손실. 사용자 결정 B 정합.
+  - **detail 404 vs 403 분리**: Codex C-style metadata leak — `.own` 사용자가 다른 사용자 audit id 를 시도하면 403 응답이 row 존재 신호. 모두 404 = byte-equal.
+  - **CSV streaming (chunked)**: 본 cycle scope 외. hard cap 50k 로 DoS 방지. 별 cycle 검토.
+  - **purge 전체 1-tx**: LRT 회피 위반. chunk = 별 tx + 30s deadline 으로 partial purge 자연 재시작.
+- Risks: `.own` Actor OR Target 분기로 anonymous share view 의 viewer 가 본인 audit 에 보이는 경우 — E4 정합 (anonymous actor + share resource 가 share owner 의 audit 에 노출은 의도된 가시성). CSV 50k 가 large fleet 에서 모자랄 수 있음 — 본 cycle scope, follow-up. purge deadline 30s 가 짧을 수 있음 — partial purge 시 다음 호출 cursor 자연 재시작 보장.
+- 미해결 followup: Phase A5 의 admin 13 mutation endpoint hook (Same tx) + ActionCode 별 builder. Phase B 의 10 RBAC smoke (특히 (3a) admin password-reset → user 본인 audit 노출, (9)(10) anonymous share view audit_type filter).
+- panel: SKIPPED:multi-phase-plan-approved — Eng review E1 / E8 / E5 가 plan 단계에서 SQL filter + 의사코드 lock-in. Critical 등급이나 plan PLAN-APPROVED 후 Phase 단위 panel 재호출은 cargo-cult (REV-20260519-0013/0014/0015 정합).
+- Trace: REQ-20260519-0001 → TASK-0073 Phase A4 → CHG-20260519-0020 → REV-20260519-0016. Eng review E1 (Actor OR Target) + E8 (chunked PK purge Python 의사코드) lock-in.
+
 ## REV-20260519-0015 [SKIPPED:multi-phase-plan-approved]
 - Date: 2026-05-19
 - Decision: TASK-0073 Phase A3 (REQ-20260519-0001, **Critical** §12.3) — RBAC catalog +4 (`audit.read.own/.any/.export/.purge`) + permission group `audit` 신규 + admin/operator/sales/dba/pending 5 role 자동 catchup. Codex outside voice C8/C9/C10 + Eng review E9 lock-in.
