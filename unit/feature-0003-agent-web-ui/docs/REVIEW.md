@@ -8,6 +8,29 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260520-0004 [AGENT-TEAM:codex-outside-voice]
+- Date: 2026-05-20
+- Decision: TASK-0092 (REQ-20260520-0007, **Minor** §12.3 — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 7 vector matrix 검증) plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, ~5분, 490,891 tokens) → 5 findings + 2 minimum-fix → v2 redesign 흡수 → 사용자 confirm. Phase A0~E 본 cycle 진행 완료, **7 vector PASS (7/7)**.
+- Reason: TASK-0073 Phase E 의 사용자 위임 항목 1 건 (audit prod gate fail-closed live 검증) 해소. sandbox SSH 인증 차단 (TASK-0073 시점) → docker/compose 가용 환경 (Docker 29.3.1 + Compose v5.1.1) 으로 변경 → live container spawn 가능. 사용자 정책 (`feedback_outside_voice_for_rbac` user memory) 적용 — RBAC catalog 변경 없음에도 audit subsystem 보안 표면 자체 검증 가치 인정.
+- Codex outside voice 5 findings 흡수 결정:
+  - **C1 — 테스트 명령 오류**: Dockerfile 이 web UI 를 `/app/web/` 에 복사 (line 23). `python -c "import app"` 는 `ModuleNotFoundError`. uvicorn entrypoint 우회도 불명확. **ACCEPT** → `--entrypoint python` + `import web.app` 으로 정정.
+  - **C2 — compose 오염**: `depends_on: mysql` + `.env` + shared volume + 다른 worktree compose project 와 엮일 위험. **ACCEPT** → `docker run` 직접 호출 (compose 우회). `--no-deps` 동등 효과.
+  - **C3 — flag parsing 계약 공백**: `os.getenv(...).strip() == "1"` 은 `"true"`/`"yes"`/`"01"`/`""` 모두 disabled. 운영자 trap 가능. **ACCEPT** → V6 추가 (`AGENT_AUDIT_ENABLED=true` + prod → exit 1 negative 검증). SECURITY.md §8 strict-string-equality 계약 명시 별 cycle 후속.
+  - **C4 — stderr 검증**: prefix-only 약함, full byte-equal 너무 strict. **ACCEPT** → 3 substring (`[FATAL] AUDIT REQUIRED IN PROD` + `set AGENT_AUDIT_ENABLED=1` + `TASK-0073 Phase A1`) 모두 포함 + `Traceback`/`ModuleNotFoundError` 부재 검증.
+  - **C5 — docs append 위치**: TEST.md §3 = Test Cases 정의, §4 = Test Run History. **ACCEPT** → §4 에 append.
+- Alt 거부:
+  - **v1 단독 진행 (outside voice 흡수 X)**: 5 findings 모두 정합 — 특히 C1 (`import app` 오류) 가 검증 자체 실패시킴. v2 redesign 필수.
+  - **V6 제거 (7→6 vector)**: C3 의 strict-string-equality 계약 검증 가치 → 운영자 trap 노출 + SECURITY.md §8 후속 cycle 근거. 사용자 v2 단독 진행 confirm.
+  - **V7 제거 (7→6 vector)**: default `1` + default prod 정상 검증 가치 → V5 와 별 의미 (V5 는 명시 set, V7 은 default fallback). 사용자 v2 단독 진행 confirm.
+- Risks: V6 가 운영자 trap 노출 — `AGENT_AUDIT_ENABLED="true"` 가 fail-closed. 운영자가 truthy 표현 명시 시 prod 시작 차단. **SECURITY.md §8 strict-string-equality 계약 명시 별 cycle 후속 권고**. 본 cycle scope 외.
+- 미해결 followup: 본 cycle 결과의 후속 작업 — 별 cycle.
+  - **SECURITY.md §8 strict-string-equality 계약 명시** — V6 결과 기반 (Minor §12.3). 운영자 가이드.
+  - TASK-0086 (Major, WebAccountActivity DROP) — 별 cycle.
+  - TASK-0087 (Major, 외부 LAN trust) — feature-0006 위임 별 cycle.
+  - TASK-0088~0091 (Minor 4) — 각 별 cycle.
+- panel: AGENT-TEAM:codex-outside-voice — Codex consult mode 외부 voice review 실 수행. 본 cycle 의 verification panel.
+- Trace: REQ-20260520-0007 → TASK-0092 → CHG-20260520-0004 → REV-20260520-0004. **TASK-0092 cycle 종료, TASK-0073 Phase E 위임 1 건 해소.**
+
 ## REV-20260520-0003 [AGENT-TEAM:codex-outside-voice]
 - Date: 2026-05-20
 - Decision: TASK-0093 (REQ-20260520-0008, **Minor** §12.3 — verify-completion check_12 audit endpoint routing 정적 검사) plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, ~5분, 132,668 tokens) → 5 findings + 2 minimum-fix → v2 redesign 흡수 → 사용자 confirm. Phase A~F 본 cycle 진행 완료.

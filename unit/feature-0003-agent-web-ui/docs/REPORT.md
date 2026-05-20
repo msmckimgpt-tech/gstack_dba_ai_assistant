@@ -10,6 +10,46 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-05-20 TASK-0092 완료 (Phase A0~E 일괄) — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 7 vector matrix 검증 (TASK-0073 Phase E 위임 1 건 해소)** (CHG-20260520-0004, REV-20260520-0004, REQ-20260520-0007, **Minor** §12.3 — live container spawn + Codex outside voice 5 findings 흡수 v2 redesign).
+
+**본 cycle Phase 별 변경 요약**:
+- **Phase A0** (`.env` + image 가용성 확인): `repo-web:latest` image 가용 (435MB, 이미 build). `.env` 부재 — inline `-e` 만 사용 (compose 우회).
+- **Phase A** (7 vector live spawn): `docker run --rm --entrypoint python repo-web:latest -c "import web.app"` 형태 단발 spawn. 7 vector 명세된 환경변수 조합으로 호출.
+- **Phase B** (검증, **7 vector PASS (7/7)**):
+  - V1 (`AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod`) → rc=1 + 3 substring + Traceback 부재 ✓
+  - V2 (audit=0 + mode=unset) → rc=1 + `AGENT_MODE=(unset → prod)` 정합 ✓
+  - V3 (audit=0 + mode=staging) → rc=1 + `AGENT_MODE=staging` 정합 ✓
+  - V4 (audit=0 + mode=dev) → rc=0 + `IMPORTED OK` ✓ dev/test bypass
+  - V5 (audit=1 + mode=prod) → rc=0 + `IMPORTED OK` ✓ positive control
+  - V6 (audit=true + mode=prod) → rc=1 + `[FATAL]` ✓ Codex C3 strict-string-equality 계약
+  - V7 (모두 unset) → rc=0 + `IMPORTED OK` ✓ default `1` + default prod
+- **Phase C** (docs 5 갱신): 본 REPORT.md + TASK.md §2.3 + MODIFY.md CHG-20260520-0004 + REVIEW.md REV-20260520-0004 + TEST.md **§4** append.
+- **Phase D** (verify-completion + commit): `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS 후 사용자 명시 confirm 후 commit.
+- **Phase E** (cycle-finalize 패턴): issue + push + PR + merge + main worktree pull + 본 worktree cleanup.
+
+**Outside voice 흡수 5 findings 결정**:
+- C1 테스트 명령 오류 → `--entrypoint python` + `import web.app` 정정
+- C2 compose 오염 → `docker run` 직접 호출 (compose 우회)
+- C3 flag parsing 계약 → V6 추가 (`"true"` fail-closed 검증)
+- C4 stderr 검증 → 3 substring + Traceback 부재
+- C5 docs §3 → §4 정정 (Test Run History)
+
+**핵심 발견 (V6)**: `AGENT_AUDIT_ENABLED="true"` 는 fail-closed 됨 — strict string equality (`os.getenv(...).strip() == "1"`). 운영자가 truthy 표현 (`"true"`/`"yes"`/`"01"`) 명시 시 prod 시작 차단. SECURITY.md §8 의 strict-string-equality 계약 명시 별 cycle 후속 권고.
+
+### Git 동기화 결과 (§16.3 Step 6)
+
+PR description body 에 명시 — REPORT.md 갱신 별 commit 회피 (§16.3 Step 7 권장 패턴, TASK-0093 cycle 답습).
+
+### 후속 단계
+
+- **SECURITY.md §8 strict-string-equality 계약 명시** 별 cycle (Minor §12.3) — V6 결과 기반.
+- TASK-0073 backlog 6 entries 남음 (TASK-0086, 0087, 0088, 0089, 0090, 0091) — 각 별 cycle.
+- 본 cycle 종료 후 worktree archive — 다음 task 진입 시 별 worktree (`ai/claude/00XX/<slice>`) 권장.
+
+---
+
+## 1.archived TASK-0093 Summary (2026-05-20)
+
 **2026-05-20 TASK-0093 완료 (Phase A~F 일괄) — verify-completion check_12 audit endpoint routing 정적 검사 신설** (CHG-20260520-0003, REV-20260520-0003, REQ-20260520-0008, **Minor** §12.3 — TASK-0073 Phase E hotfix CHG-20260520-0001 의 routing 회귀 fragility 보강. Codex outside voice 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용).
 
 **본 cycle Phase 별 변경 요약**:
