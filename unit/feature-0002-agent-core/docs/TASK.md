@@ -9,63 +9,55 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: plan-approved (cycle: TASK-0015, ready for Execute via M-1 cycle)
-- Owner: AI (별 cycle 에서 M-1 baseline → M0 → M1 → M2 → M3 → M4 → M5 순차 Execute)
+- State: M-1 baseline measurement (cycle: TASK-0016)
+- Owner: AI (본 cycle: M-1 baseline 측정) → AI (별 cycle: M0 → M1 → M2 → M3 → M4 → M5 순차 Execute)
 - Priority: high
-- Last Updated: 2026-05-20 (PLAN-APPROVED 마커: ms.mckim.gpt@gmail.com on 2026-05-20)
+- Last Updated: 2026-05-20 (TASK-0015 PLAN-APPROVED 마커: ms.mckim.gpt@gmail.com on 2026-05-20)
 
 ## 1.1 Current Cycle
-- [ ] TASK-0015 (REQ-20260520-0001, Critical §12.3) `AgentMemoryFacts` / `AgentMemoryFactEntries` / `AgentMemoryTexts` / `AgentMemoryRagDocuments` / `AgentMemoryRagObjects` 5종 정본을 현재 MySQL (`agent_memory` DB) → 별도 Postgres pgvector 인스턴스로 이전하는 multi-cycle plan 정본 작성. AGENTS.md §11.3·§14.1·§15.6·§15.7 의 coverage 기반 검색·D0~D3 라우팅 효율 개선이 1차 목표. ANCHOR §3 의 fact-우선 복구 invariant 보존 필수. 직전 세션의 multi-cycle plan 의 Sprint 4 (D RAG, PGVector 도입) 와 인프라 공유 가능성으로 sequencing (선행/병행/후행) 결정 + 단일 cluster vs 별 DB 분리 결정 동반. RBAC catalog 신설 가능성 (`kb.read.any` / `kb.write.any` 의 storage 이전 후 재정의) + 정책 §11.3 변경 동반으로 Codex 또는 Plan subagent outside-voice review 필수. 본 cycle 은 plan 정본 작성 + outside-voice review + 사용자 PLAN-APPROVED 마커까지. 실제 코드·정책·schema·데이터 변경은 §2.1 의 phase M0~M5 가 각각 별 cycle 로 진행된다.
+- [ ] TASK-0016 (REQ-20260520-0002, Minor §12.3 — read-only 측정) §2.1 PLAN-APPROVED 의 **M-1 phase 사전 baseline 측정** 실행. M0 인프라 도입 전 정량 baseline 확보가 1차 목표 — 후속 phase 의 회귀 판정 기반 (Blocker B-2 / B-6 / B-10 / B-12 / B-13). 산출: `bin/kb-measure-baseline.sh` 신규 + `artifacts/shared/kb-baseline-2026-05-20.json` 정본. 본 cycle 은 read-only 측정만 + 코드 mutation 0건 (스크립트 신규 작성 외) + 외부 영향 0건 (LLM API 호출 없음 — latency 측정 part (e) 는 docker compose project name 충돌 회피 위해 M0 cycle 로 defer).
 
-## 1.2 Implementation Plan (TASK-0015 — plan-작성 cycle 자체)
+## 1.2 Implementation Plan (TASK-0016 — M-1 baseline 측정 cycle)
 
 영향 파일 (본 cycle):
-- `unit/feature-0002-agent-core/docs/TASK.md` — §1.1 cycle 등록, §1.2 본 plan-작성 plan, §2.1 신규 마이그레이션 plan, §2.2 기존 plan archive, §3 Task Queue·§4 In Progress·§7 Next Action·§8 Completion Checklist 갱신
-- `unit/feature-0002-agent-core/docs/REVIEW.md` — 본 plan 의 trade-off / 대안 / 외부 검증 호출 사유 기록 (append)
-- `unit/feature-0002-agent-core/docs/MODIFY.md` — plan 작성 사실 + worktree 경로 기록 (append)
-- `unit/feature-0002-agent-core/docs/REPORT.md` — Open Issues / plan-review 상태 표면화 + Human Attention Needed 갱신
+- `unit/feature-0002-agent-core/docs/TASK.md` — §1.1 cycle 등록, §1.2 본 plan, §3 Task Queue, §4 In Progress, §6 Done, §7 Next Action, §8 Completion Checklist 갱신.
+- `unit/feature-0002-agent-core/docs/REVIEW.md` — M-1 측정 결과 sanity check + Blocker B-2 / B-4 (embedding 저장 위치 결정) 영향 분석 (append).
+- `unit/feature-0002-agent-core/docs/MODIFY.md` — M-1 측정 사실 + JSON 산출물 경로 + script 추가 기록 (append).
+- `unit/feature-0002-agent-core/docs/REPORT.md` — §1 Summary 의 baseline 측정 결과 요약 + §4·§7 의 후속 항목 갱신.
+- `bin/kb-measure-baseline.sh` (신규) — read-only 측정 스크립트. mode: `--rows` / `--explain` / `--joins` / `--rbac` / `--all`. docker compose project name 충돌 회피 위해 직접 `docker exec repo-mysql-1 mysql` 호출 + grep 정적 분석 + jq 출력.
+- `artifacts/shared/kb-baseline-2026-05-20.json` (신규) — 측정 결과 정본. M4 cutover gate 의 비교 대상.
 
-본 cycle 의 영향 파일은 doc 4종만이며 코드·schema·데이터 변경은 없다. 본 cycle 자체의 doc edit 위험도는 Minor 이나, 본 cycle 이 작성하는 §2.1 plan 의 Execute 단계 위험도는 Critical 이라 §7.1 Plan-Review-Execute 의 Critical 분기 (plan-review 상태 + 사람 승인 + REPORT.md 교차 기록) 를 따른다.
+접근 방법 (4/5 측정 + 1 deferral):
+1. (a) **Row count** — `docker exec repo-mysql-1 mysql -uroot -p<pwd> -e "SELECT COUNT(*) ..."` 으로 `AgentMemoryFactEntries`, `AgentMemoryTexts`, `AgentMemoryRagDocuments`, `AgentMemoryRagObjects`, `AgentMemoryFacts` (VIEW 가 view 인지 확인 + count) 5종 측정.
+2. (b) **EXPLAIN baseline** — 주요 KB query 5건의 `EXPLAIN FORMAT=JSON` 결과 보관. query 예시:
+   - Q1 `_load_kb_entries`: `SELECT ... FROM AgentMemoryFactEntries e LEFT JOIN AgentMemoryTexts t ON t.TextHash = e.TextHash WHERE ConversationId IN (?, '__global__') AND FactKey LIKE ?` (knowledge.py:761)
+   - Q2 `_load_rag_documents_for_request`: `SELECT ... FROM AgentMemoryRagDocuments d LEFT JOIN AgentMemoryTexts t ON ...` (insight.py:200)
+   - Q3 `_load_rag_objects_for_request`: `SELECT ... FROM AgentMemoryRagObjects o LEFT JOIN AgentMemoryTexts t ON ...` (insight.py:244)
+   - Q4 `_load_existing_table_insight_map`: `SELECT FactKey, TextHash FROM AgentMemoryFactEntries WHERE FactKey LIKE 'table_insight:%'`
+   - Q5 `_filter_rag_objects_for_depth`: D0~D3 의 category 기반 filter — utils.py 의 helper.
+3. (c) **비-KB JOIN audit** — `grep -rn -E '(AgentMemoryConversations|AgentMemoryMessages|AgentMemorySteps).*JOIN.*(AgentMemoryFactEntries|AgentMemoryRagDocuments|AgentMemoryRagObjects|AgentMemoryTexts|AgentMemoryFacts)' unit/feature-0002-agent-core/src/` 양방향. 결과 0건이 예상.
+4. (d) **RBAC catalog audit** — `grep -nE '"kb\.|"memory\.|"agent_kb\.' unit/feature-0003-agent-web-ui/src/app.py` 카운트. 현재 0건이 예상 (Section D outside-voice 식별).
+5. (e) **`make ask` latency baseline** — **defer to M0 cycle**: docker compose project name (현재 main worktree 가 NAME=repo 로 활성, 본 ai/* worktree path 에서 `make ask` 호출 시 새 프로젝트 시도 → port 충돌 가능). M0 cycle (인프라 도입 cycle) 에서 main worktree 의 compose 와 동일 PROJECT_NAME 강제 (`COMPOSE_PROJECT_NAME=repo`) 또는 `docker exec repo-web-1` 직접 호출 패턴 결정 후 진행. **본 cycle 의 4/5 산출은 baseline JSON 의 latency 필드를 `"deferred_to": "M0"` 로 표기**.
 
-접근 방법:
-1. ai/claude/0002/pgvector-migration-plan worktree 격리 (§13.2.7 F0 통과) 후 본 doc 4종 갱신.
-2. §2.1 에 결정 매트릭스 (sequencing × topology × module rewrite) + phase M0~M5 + 영향 파일 + 위험도 + 검증 체크리스트 + Open Questions 작성.
-3. REVIEW.md 에 trade-off 기록 후 Codex `/codex` consult 또는 Plan subagent 호출 — RBAC catalog blindspot (static enum vs 동적 grant) + sequencing trade-off (선행 vs 병행 vs 후행) + topology trade-off (단일 cluster vs 별 인스턴스) 3개 결정 항목 검증.
-4. outside-voice review 결과를 §2.1.7 Open Questions 안에 인용 + REVIEW.md 에 cross-ref.
-5. 사용자에게 plan 검토 요청 + `<!-- PLAN-APPROVED by <user> on YYYY-MM-DD -->` 마커 부여 안내.
-6. PLAN-APPROVED 후 별 cycle 에서 M0 부터 진행.
+검증: 위 (a)~(d) 4종 모두 실행 + JSON 저장 + REPORT.md §1 에 핵심 수치 요약 추가. (e) latency 는 M0 cycle 산출에서 보완.
 
-위험도: Critical — plan 자체는 doc edit (Minor) 이나 §7.1 Critical 등급은 plan 의 Execute 위험도를 기준으로 판정한다. 따라서 본 cycle 은 plan-review 상태 + 사람 승인 필요 + REPORT.md 교차 기록 + outside-voice review 필수.
+위험도: Minor (read-only 측정 + 스크립트 신규 추가). PLAN-APPROVED 범위.
 
-## 1.3 Implementation Plan (TASK-0014, done — 보존)
+## 1.3 Implementation Plan (TASK-0015, done — 보존)
 
-영향 파일:
-- `src/agent_core.py` — Account prompt 조회를 공통 + Product 전용 누적 방식으로 변경
-- `tests/test_compose_system_prompt.py` — Product → Role → Account 순서와 최종 user request 보존 테스트 추가
-- `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md` — 요구사항, 변경 이력, 검증 기록
+본 §1.3 의 정본 plan 은 §2.1 (PLAN-APPROVED) 로 승격됨. TASK-0015 cycle 의 deliverable 요약:
+- §2.1 multi-cycle plan 정본 작성 ✓
+- outside-voice review (Plan subagent NEEDS-TWEAK + 11 Blocker) ✓
+- §2.1.11 추적 표 ✓
+- PLAN-APPROVED 마커 (2026-05-20 by ms.mckim.gpt@gmail.com) ✓
+- commit `6ac2288` + push + main ff-merge ✓
 
-접근 방법:
-1. 현재 조립 흐름을 확인한다. Product context, Role guidance, Account preferences 는 system message 안에 순서대로 append 되고, 현재 사용자 요청은 `messages.append({"role":"user","content": user_message})` 로 마지막에 추가된다.
-2. Account scope 의 기존 `_fetch(..., prompt_product_id=product_id)` 호출은 Product 전용이 있으면 공통 prompt 를 누락시키므로 Role scope 와 같은 block 누적 구조로 바꾼다.
-3. `_fetch()`는 특정 `prompt_product_id` 조회 시 match 가 없으면 공통 fallback 을 반환하지 않도록 정정해 Role/Account 공통 중복 가능성도 제거한다.
-4. 단위 테스트로 pinned 누적, auto 공통-only, Product → Role → Account → user request 순서를 고정한다.
+## 1.4 Implementation Plan (TASK-0014 / TASK-0013, done — 보존, summary)
 
-위험도: Minor — LLM 입력 패키징 수정이며 인증/인가, DB 스키마, 파괴적 데이터 변경 없음.
+본 §1.4 는 historical TASK plan summary. 상세 본문은 git history (commit `6ac2288` 이전의 TASK.md) 참조.
 
-## 1.4 Implementation Plan (TASK-0013, done — 보존)
-
-영향 파일:
-- `src/agent_core.py` — Role prompt 조회를 공통 + Product 전용 누적 방식으로 변경
-- `tests/test_compose_system_prompt.py` — pinned/auto 모드의 Role prompt 누적 동작 검증
-- `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md` — 요구사항, 변경 이력, 검증 기록
-
-접근 방법:
-1. 기존 `_fetch()`를 특정 product id 또는 `ProductId IS NULL` 조회를 명시적으로 수행하는 helper로 정리한다.
-2. Role scope에서는 `ProductId IS NULL` 공통 prompt를 먼저 조회해 항상 주입하고, pinned Product의 전용 prompt가 있으면 같은 `## ROLE GUIDANCE` 블록 아래에 추가한다.
-3. account scope의 기존 "Product 전용 우선, 없으면 공통 fallback" 동작은 유지한다.
-4. fake connection 기반 단위 테스트로 pinned 누적 / auto 공통-only 동작을 고정한다.
-
-위험도: Minor — 인증/인가, DB 스키마, 파괴적 데이터 변경 없음. LLM 입력 패키징만 조정한다.
+- **TASK-0014** (REQ-20260515-0003, Minor §12.3): `compose_system_prompt()` 의 Account scope 가 공통 + Product 전용 누적 (Role scope 와 동일 패턴) 으로 정정. `src/agent_core.py` + `tests/test_compose_system_prompt.py` 3건 통과.
+- **TASK-0013** (REQ-20260515-0002, Minor §12.3): `compose_system_prompt()` 의 Role scope 의 `ProductId IS NULL` 공통 prompt 를 fallback 이 아니라 누적 적용으로 전환. `src/agent_core.py` + `tests/test_compose_system_prompt.py` 2건 통과.
 
 ## 2. Implementation Plan
 
@@ -421,35 +413,47 @@ Nice-to-have (PLAN-APPROVED 후 별 cycle / 별 ADR — 본 §2.1 의 게이트 
 - [x] TASK-0012 ANCHOR.md §1-§3 작성 (template v3.2.0-rc.1 external anchor 도입)
 - [x] TASK-0013 Role scope 시스템 프롬프트 공통 누적 적용
 - [x] TASK-0014 Account scope 누적 + Product → Role → Account 순서 정정
-- [ ] TASK-0015 (Critical §12.3, **본 cycle**) KB 정본 MySQL → Postgres pgvector 마이그레이션 plan 정본 작성 + outside-voice review + 사용자 PLAN-APPROVED 마커
+- [x] TASK-0015 (Critical §12.3) KB 정본 MySQL → Postgres pgvector 마이그레이션 plan 정본 작성 + outside-voice review + PLAN-APPROVED 마커 (commit `6ac2288`)
+- [ ] TASK-0016 (Minor §12.3, **본 cycle**) M-1 사전 baseline 측정 — row count + EXPLAIN + 비-KB JOIN audit + RBAC catalog audit + (latency defer to M0). `bin/kb-measure-baseline.sh` 신규 + `artifacts/shared/kb-baseline-2026-05-20.json` 정본
 
 ## 4. In Progress
-- TASK-0015 plan 정본 작성 (본 §2.1) — outside-voice review 호출 + 사용자 PLAN-APPROVED 마커 대기
-- TASK-0010 작업 브랜치 commit 및 integration 반영 준비 (historical, TASK-0015 와 별개)
+- TASK-0016 M-1 사전 baseline 측정 — 4/5 측정 + JSON artifact + 정책 doc 갱신 + commit/push/ff-merge.
+- TASK-0010 작업 브랜치 commit 및 integration 반영 준비 (historical, TASK-0016 과 별개)
 
 ## 5. Blocked
-- TASK-0015 §2.1 Execute 진입 = 사용자 PLAN-APPROVED 마커 부여 대기 (plan-review 상태)
+- 없음 (TASK-0015 PLAN-APPROVED 마커 부여 완료).
 
 ## 6. Done
 - TASK-0001 ~ TASK-0009
 - TASK-0012, TASK-0013, TASK-0014
+- TASK-0015 (commit `6ac2288` + main ff-merge 2026-05-20)
 
 ## 7. Next Action
-1. (본 cycle) REVIEW.md 에 §2.1 의 trade-off + 대안 분기 + 외부 검증 호출 사유 기록.
-2. (본 cycle) MODIFY.md 에 plan 작성 사실 + worktree 경로 + Last Updated 기록.
-3. (본 cycle) REPORT.md §4 Open Issues + §7 Human Attention Needed 에 plan-review 상태 표면화.
-4. (본 cycle) outside-voice review 호출 — Codex `/codex` consult (RBAC catalog blindspot + sequencing + topology + module rewrite).
-5. (본 cycle) outside-voice 결과를 §2.1.7 Open Questions 안에 인용 + REVIEW.md cross-ref.
-6. (본 cycle) 사용자에게 plan 검토 요청 + `<!-- PLAN-APPROVED by <user> on YYYY-MM-DD -->` 마커 부여 요청.
-7. (별 cycle) M0 cycle 시작 — 별 worktree (예: `ai/claude/0002/kb-pg-m0`) + 별 PR + verify-completion.
+1. (본 cycle) `bin/kb-measure-baseline.sh` 작성 + 4/5 측정 실행 + JSON artifact 저장.
+2. (본 cycle) REPORT.md §1 Summary 에 baseline 핵심 수치 반영, MODIFY.md / REVIEW.md append.
+3. (본 cycle) verify-completion PASS + commit + push + ff-merge + worktree cleanup.
+4. (별 cycle) M0 cycle 시작 — 별 worktree `ai/claude/0002/kb-pg-m0` + 인프라 도입 (`postgres` 서비스 추가 + `_pg_connect()` helper). M0 cycle 의 산출에 latency baseline 5/5 측정 보완 (TASK-0016 deferral 항목).
+5. (별 cycle) M1 cycle — Postgres DDL + role 신설. **Sprint 4 D RAG schema 확인 (Blocker B-1) M1 진입 전 사용자 직접 확인 필수**.
 
-## 8. Completion Checklist (TASK-0015 — 본 plan-작성 cycle)
-- [x] §2.1 plan 정본 작성 완료 (본 cycle 의 1차 산출)
-- [x] REVIEW.md 에 §2.1 의 trade-off + outside-voice 호출 사유 기록 (`REV-20260520-0001`)
-- [x] MODIFY.md 에 plan 작성 사실 + worktree 경로 기록 (`CHG-20260520-0001`)
-- [x] REPORT.md §1·§4·§7 에 plan-review 상태 표면화 + PLAN-APPROVED 후 갱신
-- [x] outside-voice review (Plan subagent) 호출 + 결과 §2.1.11 / REVIEW.md `REV-20260520-0002` 기록 (Verdict NEEDS-TWEAK, 11 Blocker 반영)
-- [x] 사용자에게 plan 검토 + PLAN-APPROVED 마커 요청 → ✓ 마커 부여 완료 (ms.mckim.gpt@gmail.com on 2026-05-20)
+## 8. Completion Checklist (TASK-0016 — M-1 baseline 측정 cycle)
+- [ ] `bin/kb-measure-baseline.sh` 신규 작성 (4 mode: `--rows` / `--explain` / `--joins` / `--rbac`; `--all` 합본)
+- [ ] (a) Row count 측정 5종 (`FactEntries` / `Texts` / `RagDocuments` / `RagObjects` / `Facts` VIEW)
+- [ ] (b) EXPLAIN baseline 5건 query 보관
+- [ ] (c) 비-KB JOIN audit (KB 5종 ↔ Conversations/Messages/Steps 양방향 grep)
+- [ ] (d) RBAC catalog audit (PERMISSION_DEFINITIONS 의 `kb.*` / `memory.*` / `agent_kb.*` 카운트)
+- [ ] (e) Latency baseline — defer to M0 (docker compose project name 충돌 회피 — JSON 의 `latency.deferred_to=M0` 명시)
+- [ ] `artifacts/shared/kb-baseline-2026-05-20.json` 정본 저장
+- [ ] REPORT.md §1 Summary 에 baseline 핵심 수치 반영
+- [ ] MODIFY.md `CHG-20260520-0002` + REVIEW.md `REV-20260520-0003 [SUBAGENT:*|SKIPPED:*]` append
 - [ ] `bin/verify-completion.sh --pre-commit feature-0002-agent-core` PASS
-- [ ] Git 커밋 완료 (`Task-Cycle: feature-0002-agent-core` trailer)
-- [ ] ai/claude/0002/pgvector-migration-plan branch push + main ff-merge (사용자 결정 — 즉시 자동 동기화)
+- [ ] Git 커밋 (`Task-Cycle: feature-0002-agent-core` trailer) + push + main ff-merge + worktree cleanup
+
+## 9. Completion Checklist (TASK-0015 — done, 보존)
+- [x] §2.1 plan 정본 작성 완료
+- [x] REVIEW.md `REV-20260520-0001` + `REV-20260520-0002 [SUBAGENT:Plan-subagent]`
+- [x] MODIFY.md `CHG-20260520-0001`
+- [x] REPORT.md §1·§4·§7 plan-review 상태 표면화 + PLAN-APPROVED 후 갱신
+- [x] outside-voice review (Plan subagent, NEEDS-TWEAK + 11 Blocker 반영)
+- [x] PLAN-APPROVED 마커 부여 (ms.mckim.gpt@gmail.com on 2026-05-20)
+- [x] verify-completion PASS (10/10 checks)
+- [x] commit `6ac2288` + push + main ff-merge + worktree cleanup

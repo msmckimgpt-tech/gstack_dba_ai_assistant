@@ -8,6 +8,31 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260520-0002
+- Date: 2026-05-20
+- TASK-Cycle: TASK-0016 (M-1 baseline 측정, Minor §12.3 — read-only)
+- Summary: §2.1 PLAN-APPROVED 의 **M-1 phase** 사전 baseline 측정 실행. `bin/kb-measure-baseline.sh` (read-only 측정 스크립트) 신규 + 4/5 측정 (rows / EXPLAIN / JOIN audit / RBAC audit) + JSON artifact (`artifacts/shared/kb-baseline-2026-05-20.json`) 저장. Latency baseline (5/5) 는 docker compose project name 충돌 회피 위해 M0 cycle 로 defer.
+- Worktree: `ai/claude/0002/kb-pg-m-1` 격리 (§13.2.7 F0 통과). path: `<wrapper>/.worktrees/0002-kb-pg-m-1/`. 사용자 결정 (2026-05-20): "다음 cycle 또한 신규 worktree에서 진행해주세요".
+- Files:
+  - `bin/kb-measure-baseline.sh` (신규) — 5 mode: `--rows` / `--explain` / `--joins` / `--rbac` / `--all`. main worktree 의 `.env` fallback + `repo-mysql-1` 직접 `docker exec` (docker compose project name 충돌 회피). 미설치 환경에서 wrapper path 자동 detect.
+  - `unit/feature-0002-agent-core/docs/TASK.md` — §1.1 cycle 등록 (TASK-0016) + §1.2 cycle-specific plan + §1.3 TASK-0015 summary + §1.4 historical summary + §3 Task Queue + §4 In Progress + §5 Blocked (clear) + §6 Done + §7 Next Action + §8/§9 Completion Checklist.
+  - `unit/feature-0002-agent-core/docs/REVIEW.md` — `REV-20260520-0003 [SKIPPED:outside-voice-not-required]` append (측정 cycle 의 의사결정 0건 + JSON artifact 의 sanity check).
+  - `unit/feature-0002-agent-core/docs/MODIFY.md` — 본 entry.
+  - `unit/feature-0002-agent-core/docs/REPORT.md` — §1 Summary 의 M-1 measurement 결과 + §4 Open Issues / §7 Human Attention Needed 갱신 (M0 cycle 진입 안내 + Blocker B-1 Sprint 4 schema 확인 reminder).
+- Generated artifacts (git 추적 외):
+  - `artifacts/shared/kb-baseline-2026-05-20.json` — measurement 정본. M4 cutover gate (`bin/kb-cutover-readiness.sh`) 의 비교 대상.
+- Measurement summary (artifact 의 핵심 필드):
+  - rows: FactEntries 774 / Texts 798 / RagDocuments 831 / RagObjects 774 / Facts VIEW 774
+  - joins: non_kb_to_kb 0 / kb_to_non_kb 0 (expected 0 ✓ — Open Q #9 충족)
+  - rbac: kb_permissions 0 / memory_permissions 0 / agent_kb_permissions 0 / permission_definitions_total_approx 40 (outside-voice Section D 정합 — Postgres 분리 후 role 신설 필수)
+  - explain: Q1 range, Q2 ref, Q3/Q4/Q5 ALL (full scan — pgvector ANN selectivity 이득 영역)
+  - latency: `deferred_to=M0` (docker compose project name 충돌 회피)
+- Verification (본 cycle):
+  - 본 cycle 의 코드 mutation 0건 (스크립트 신규 추가만). 외부 영향 0건 (LLM 호출 없음, DB read-only).
+  - `bin/kb-measure-baseline.sh` 자체 실행 검증 — `--all` 모드 → JSON 정상 parse + 5 mode 개별 실행 PASS.
+  - `bin/verify-completion.sh --pre-commit feature-0002-agent-core` — commit 직전 호출.
+- 사용자 결정 (2026-05-20): 즉시 자동 commit + push + main ff-merge — 전역 사용자 정책 + AGENTS.md §16.5 의 BLOCKED 없음 + Critical/Major 승인 대기 없음 조건 충족 (M-1 은 Minor).
+
 ## CHG-20260520-0001
 - Date: 2026-05-20
 - TASK-Cycle: TASK-0015 (plan-review, Critical §12.3)

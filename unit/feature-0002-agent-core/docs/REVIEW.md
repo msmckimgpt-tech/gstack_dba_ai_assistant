@@ -8,6 +8,25 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260520-0003 [SKIPPED:outside-voice-not-required — M-1 baseline 측정 cycle]
+- Date: 2026-05-20
+- TASK-Cycle: TASK-0016 (M-1 baseline 측정, Minor §12.3 — read-only)
+- Decision: §2.1 PLAN-APPROVED 의 M-1 phase 실행 — `bin/kb-measure-baseline.sh` 신규 + 4/5 측정 + JSON artifact 저장. Latency (5/5) 는 docker compose project name 충돌 회피 위해 M0 cycle 로 defer.
+- Outside-voice rationale: 본 cycle 의 deliverable 은 측정 + 데이터 수집만이며 의사결정 항목 없음 (TASK-0015 의 plan 결정은 이미 PLAN-APPROVED 마커 부여). RBAC 변경 / schema 변경 / 코드 변경 / 정책 변경 0건. §18.4 운영 (operational) 층위 + 사용자 메모리 `feedback_outside_voice_for_rbac.md` 의 "권한 모델 변경" 조건 비해당 (RBAC catalog audit 은 측정만, 변경 없음). 외부 시각 호출 불요로 판정 — verify-completion check #9 의 `[SKIPPED:*]` entry 로 명시.
+- 측정 결과 sanity check (`artifacts/shared/kb-baseline-2026-05-20.json` 정본):
+  - **Row count (a)**: FactEntries 774, Texts 798, RagDocuments 831, RagObjects 774, AgentMemoryFacts VIEW 774. 총 정본 ~3,177 row + VIEW 별도. 본 plan §2.1.0 의 "수천~수만" 가정 lower bound 확인. M3 backfill 의 embedding cost 추정 정합 — `texts.embedding` 798 row × `text-embedding-3-small` USD 0.02/1M tokens × 평균 500 tokens ≈ **USD 0.008** (예측 over-budget 의 1/12500). PLAN-APPROVED 의 "USD 100 시 별도 confirm" 임계는 안전 margin.
+  - **EXPLAIN (b)**: Q1 (FactEntries `schema_insight:%`) range access via `IX_FactEntries_Conv_Key`. Q2 (RagDocuments) ref access via `UX_RagDocs_Conv_Scope_Key_Hash`. **Q3 / Q4 / Q5 (RagObjects + table_insight + category-filtered) ALL access** — full scan. KB row 수가 ~800 으로 작아 현재 latency 작으나 scale-up 시 pgvector ANN index (ivfflat / hnsw) 의 selectivity 이득 영역. M4 cutover gate 의 latency p99 +50% 임계 (Blocker B-6) 의 baseline 으로 활용.
+  - **JOIN audit (c)**: 비-KB (Conversations / Messages / Steps) ↔ KB (FactEntries / Texts / RagDocuments / RagObjects / Facts) cross-table JOIN candidate 양방향 0건. **Open Question #9 ✓ 충족** — Postgres 분리 시 cross-DB JOIN 우려 없음. M0 의 docker-compose `postgres` 서비스 추가 + agent 컨테이너에서 dual connection (mysql + pgsql) 패턴이 자연 가능.
+  - **RBAC catalog audit (d)**: `PERMISSION_DEFINITIONS` 총 40건 中 `kb.*` / `memory.*` / `agent_kb.*` = **0건**. outside-voice review Section D 정합 — KB 접근이 현재 RBAC catalog 외부 (connection-level: agent 컨테이너의 mysql_connector 가 root 권한으로 직접 접근). Postgres 분리 후 `agent_kb_rw` / `agent_kb_ro` role 신설 + ADR-0023 작성이 M1 cycle 의 명시 게이트 (Blocker B-8 / B-9).
+  - **Latency (e)**: deferral. `latency.deferred_to = "M0"` JSON 필드 명시. M0 cycle 의 docker-compose 수정 시점에 `COMPOSE_PROJECT_NAME=repo` 강제 또는 `docker exec repo-web-1` 직접 호출 패턴 결정 + N=10 회 S1~S5 시나리오 측정.
+- Blocker B-2 (M-1 baseline 측정 phase 추가) 의 부분 충족: 4/5 산출. 잔여 1/5 (latency) 는 M0 의 산출에 통합 — TASK.md §1.2 의 본 cycle plan 에 명시.
+- 결정 영향: 본 측정 결과는 §2.1 의 phase M0~M5 모두에 영향. 특히:
+  - **M3 embedding cost** 가 USD <0.01 추정 → §12.1 외부 비용 confirm trigger 안전 (USD 100 미만).
+  - **M4 cutover latency 임계** baseline 확보 — `EXPLAIN_Q1~Q5` 의 query_cost 와 비교.
+  - **M1 RBAC role 신설** 필수 확인 — kb.* = 0건 이라 catalog 추가 + connection-level enforcement 양쪽 필요.
+- 결과 정본: `artifacts/shared/kb-baseline-2026-05-20.json` (git 추적 외 — `.gitignore` 적용). M4 cutover gate (`bin/kb-cutover-readiness.sh`) 가 본 JSON 의 EXPLAIN_Q1~Q5 cost + row count 와 cutover 후 측정값 비교.
+- Next: M0 cycle (`ai/claude/0002/kb-pg-m0` 신규 worktree) — docker-compose `postgres` 서비스 추가 + `modules/db.py` 의 `_pg_connect()` helper + latency baseline 5/5 보완.
+
 ## REV-20260520-0002 [SUBAGENT:Plan-subagent — pgvector-migration-plan-review]
 - Date: 2026-05-20
 - TASK-Cycle: TASK-0015 (plan-review, Critical §12.3) — outside-voice review 결과 정본
