@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260520-0001
+- Date: 2026-05-20
+- Summary: TASK-0073 Phase E hotfix (REQ-20260519-0001, **Critical** §12.3) — `/api/admin/audits/{event_id}` routing 순서 회귀 fix + browser smoke 검증 PASS. main worktree 의 `make web` 재배포 후 audit subsystem 8 endpoint 실 검증 중 발견.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/app.py` — `get_audit_event(event_id: int, ...)` endpoint 의 정의 위치를 `export_audit_events_csv` / `list_audit_actors` / `list_audit_resources` / `purge_audit_events` 4 정적 sibling endpoint 뒤로 이동. NOTE comment 추가 — FastAPI/starlette 의 linear match order 가 `/{event_id}` path parameter 로 `export.csv` / `actors` / `resources` 를 잡아 422 int_parsing error. 본 fix 로 detail endpoint 가 정적 path 다음에 매칭.
+- Verification: `python3 -m py_compile` PASS. `make web` 재배포 후 browser smoke 검증 PASS:
+  - GET /api/admin/audits/{int} → 200 + detail (item.id=128, action=admin.role.create)
+  - GET /api/admin/audits/export.csv → 200 + Content-Type=text/csv + Content-Disposition=attachment
+  - GET /api/admin/audits/actors → items=[{actor_account_id: 1, username: 'bootstrap_admin'}]
+  - GET /api/admin/audits/resources → items=[{resource_type: 'conversation'}, {resource_type: 'role'}]
+  - POST /api/admin/audits/purge dry_run → {purged: 0, to_purge: 0, cutoff: '2026-05-01T...', chunk_size: 1000}
+  - admin.role.create 호출 → audit row 68→69 (delta=1) + ChangeJson 화이트리스트 정합
+  - anonymous share view (cookie 없음) → ActorType='anonymous' + ActorAccountId NULL + token_prefix 8 char (`Wp45TbFK`) + view_count_after=2 + masked_fields=['share.token_full']
+  - WebAccountActivity → WebAuditEvents migration 68 row 모두 RequestId=`account-activity:%` marker 정합
+- Risks: routing 순서 정합성은 endpoint 추가/삭제 시 fragile — 향후 audit endpoint 확장 시 정적 path 가 `/{event_id}` 보다 위에 위치 보장 필요. NOTE comment 가 가이드.
+- Trace: REQ-20260519-0001 → TASK-0073 Phase E hotfix → CHG-20260520-0001 → REV-20260520-0001.
+
 ## CHG-20260519-0026
 - Date: 2026-05-19
 - Summary: TASK-0073 Phase E (REQ-20260519-0001, **Critical** §12.3) — Completion Checklist 마킹 + TASK-0073 [~] → [x] + Phase E checkbox [x] + 외부 영향 (make web + browser smoke + AGENT_AUDIT_ENABLED prod fail-closed manual + WebAccountActivity migration SQL count) 사용자 위임 명시. sandbox SSH 인증 차단으로 본 session 내 컨테이너 재배포 불가.

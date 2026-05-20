@@ -9407,51 +9407,6 @@ async def list_audit_events(request: Request) -> JSONResponse:
         conn.close()
 
 
-@app.get("/api/admin/audits/{event_id}")
-async def get_audit_event(event_id: int, request: Request) -> JSONResponse:
-    """REQ-20260519-0001 (TASK-0073 Phase A4): audit event 단건 detail.
-
-    `.own` 보유자는 ActorAccountId/TargetAccountId 가 본인일 때만 조회 가능 (404
-    metadata leak 차단 — 권한 부족 시 무조건 404, byte-equal 응답).
-    """
-    if event_id <= 0:
-        return _json_error("invalid event_id", 400)
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        scope = _audit_resolve_read_scope(account)
-        if not scope:
-            return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
-        where_clause = " WHERE Id = %s"
-        args: list[Any] = [int(event_id)]
-        if scope == "own":
-            cond, scope_args = _audit_build_self_filter_sql(int(account["id"]))
-            where_clause = f" WHERE Id = %s AND {cond}"
-            args.extend(scope_args)
-        cur = conn.cursor(dictionary=True)
-        try:
-            cur.execute(
-                "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
-                "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
-                "RemoteAddr, UserAgent, RequestId, OccurredAt "
-                f"FROM WebAuditEvents{where_clause} LIMIT 1",
-                tuple(args),
-            )
-            row = cur.fetchone()
-        finally:
-            cur.close()
-        if not row:
-            return _json_error("audit event not found", 404)
-        return JSONResponse({"item": _audit_row_to_dict(row), "scope": scope})
-    finally:
-        conn.close()
-
-
 @app.get("/api/admin/audits/export.csv")
 async def export_audit_events_csv(request: Request) -> Any:
     """REQ-20260519-0001 (TASK-0073 Phase A4): audit event CSV export.
@@ -9766,6 +9721,55 @@ async def purge_audit_events(request: Request) -> JSONResponse:
             "started_at": started_at.isoformat(),
             "completed_at": completed_at.isoformat(),
         })
+    finally:
+        conn.close()
+
+
+# NOTE: detail endpoint MUST be defined AFTER all static-path sibling endpoints
+# (export.csv / actors / resources / purge) — FastAPI/starlette uses linear
+# match order, and `/{event_id}` would otherwise swallow `/export.csv` /
+# `/actors` / `/resources` with int_parsing 422 (TASK-0073 Phase E hotfix).
+@app.get("/api/admin/audits/{event_id}")
+async def get_audit_event(event_id: int, request: Request) -> JSONResponse:
+    """REQ-20260519-0001 (TASK-0073 Phase A4): audit event 단건 detail.
+
+    `.own` 보유자는 ActorAccountId/TargetAccountId 가 본인일 때만 조회 가능 (404
+    metadata leak 차단 — 권한 부족 시 무조건 404, byte-equal 응답).
+    """
+    if event_id <= 0:
+        return _json_error("invalid event_id", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        scope = _audit_resolve_read_scope(account)
+        if not scope:
+            return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
+        where_clause = " WHERE Id = %s"
+        args: list[Any] = [int(event_id)]
+        if scope == "own":
+            cond, scope_args = _audit_build_self_filter_sql(int(account["id"]))
+            where_clause = f" WHERE Id = %s AND {cond}"
+            args.extend(scope_args)
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
+                "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
+                "RemoteAddr, UserAgent, RequestId, OccurredAt "
+                f"FROM WebAuditEvents{where_clause} LIMIT 1",
+                tuple(args),
+            )
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        if not row:
+            return _json_error("audit event not found", 404)
+        return JSONResponse({"item": _audit_row_to_dict(row), "scope": scope})
     finally:
         conn.close()
 

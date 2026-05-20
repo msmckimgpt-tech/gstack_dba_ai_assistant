@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260520-0001 [SKIPPED:hotfix-after-smoke]
+- Date: 2026-05-20
+- Decision: TASK-0073 Phase E hotfix — `/api/admin/audits/{event_id}` routing 회귀 fix. 정적 sibling endpoint (export.csv / actors / resources) 가 `event_id` parameter 로 잡혀 422. detail endpoint 를 정적 path 뒤로 이동.
+- Reason: 사용자 후속 결정 ("make web 재배포 + 일반 테스트") 진행 중 main worktree 의 browser smoke 검증에서 발견. FastAPI/starlette 의 linear match order 회귀. NOTE comment 로 향후 endpoint 확장 시 가이드.
+- Alt 거부:
+  - **`{event_id:int}` path converter**: FastAPI / starlette 미지원.
+  - **별 path prefix (`/api/admin/audit-events/{id}`)**: API contract 변경 — frontend admin.js 의 detail click handler 도 수정 필요. routing 순서 변경이 minimal viable.
+  - **endpoint 합치기 (`/api/admin/audits/lookup?id=X`)**: REST 패턴 위반. routing 순서가 자연.
+- Risks: routing 순서 정합성이 endpoint 추가/삭제 시 fragile. 향후 audit endpoint 확장 시 NOTE comment 가 가이드.
+- 미해결 followup: 별 cycle 의 verify-completion check_12 — `/api/admin/audits/{event_id}` 가 정적 sibling endpoint 보다 *뒤* 정의됐는지 정적 grep (선택). 신규 worktree 의 audit-followup backlog 에 등재.
+- panel: SKIPPED:hotfix-after-smoke — make web 재배포 후 직접 smoke 검증으로 발견된 회귀, 단일 endpoint 정의 위치 변경 (logic 변경 0). minimal viable hotfix.
+- Trace: REQ-20260519-0001 → TASK-0073 Phase E hotfix → CHG-20260520-0001 → REV-20260520-0001.
+
 ## REV-20260519-0022 [SKIPPED:multi-phase-plan-approved]
 - Date: 2026-05-19
 - Decision: TASK-0073 Phase E (REQ-20260519-0001, **Critical** §12.3) — Completion Checklist 마킹 + TASK-0073 [x] + 외부 영향 검증 (make web 재배포 + browser headless smoke + AGENT_AUDIT_ENABLED=0/prod startup fail + WebAccountActivity migration SQL count) 사용자 위임. 본 cycle 의 모든 in-process 산출물 lock-in.

@@ -2036,9 +2036,9 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] TASK-0073: Frontend admin "감사 로그" 탭 + filter row 7 항목 + list-detail + CSV export gated + admin.js renderAuditList/Detail + HTML escape + cache-bust `v=20260519-audit-tab` (Phase C)
 - [x] TASK-0073: app.js + admin.js `PERMISSION_GROUP_ORDER` 에 'audit' 그룹 추가 + ADMIN/WORK_SCREEN_PERMISSION_SECTIONS manage section 합류 (Phase C)
 - [x] TASK-0073: `docs/SECURITY.md §9` (Audit subsystem 정책 + Sensitive field catalog source-of-truth) + `docs/DECISIONS.md ADR-0019` + `docs/ARCHITECTURE.md §4·§6` + `docs/CONVENTIONS.md §10.6` audit group + `docs/STATUS.md` feature-0003 row + REPORT.md §1 + TEST.md §2.1 (Phase D)
-- [ ] TASK-0073: `make web` 재배포 후 컨테이너 가동 + browser headless smoke (admin → 감사 로그 탭 / filter / detail / CSV gated / 새 admin action audit row 1:1 검증) — sandbox SSH 인증 차단으로 사용자 위임 (Phase E 외부 영향)
-- [ ] TASK-0073: `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` 환경에서 컨테이너 시작 시 process 종료 + stderr `[FATAL]` 검증 — 사용자 위임 (Phase E 외부 영향)
-- [ ] TASK-0073: `WebAccountActivity` 기존 row 가 `WebAuditEvents` 에 migration 됐는지 SQL `COUNT(*) FROM WebAuditEvents WHERE RequestId LIKE 'account-activity:%'` 확인 — 사용자 위임 (Phase E 외부 영향)
+- [x] TASK-0073: `make web` 재배포 후 audit endpoint 8 시나리오 smoke 검증 PASS (Phase E 본 cycle 2026-05-20). admin.role.create → audit row delta=1 / ChangeJson allowlist 정합 / detail / export.csv (Content-Type text/csv + Content-Disposition) / actors facet (bootstrap_admin) / resources facet (conversation + role) / purge dry_run / anonymous share view ActorType='anonymous' (token_prefix `Wp45TbFK`, view_count_after=2, masked share.token_full) 모두 PASS. routing 회귀 1 건 (`/{event_id}` 가 정적 sibling 가로채기) 발견 + 동일 cycle hotfix (CHG-20260520-0001).
+- [x] TASK-0073: WebAccountActivity → WebAuditEvents migration 검증 PASS — `SELECT COUNT(*) FROM WebAuditEvents WHERE RequestId LIKE 'account-activity:%'` = 68 row (legacy 전부 transform, idempotent marker).
+- [ ] TASK-0073: `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` 환경에서 컨테이너 시작 시 process 종료 + stderr `[FATAL]` 검증 — 후속 cycle 위임 (env override + 별 docker compose restart 필요, 본 cycle 의 audit subsystem 정상 가동 검증 우선)
 - [ ] TASK-0044: 사업팀 pilot 계정(placeholder `<< pilot_username_1..N >>`) 이 admin 콘솔에서 발급된다 — 코드 auto-create 없음, 발급 절차는 본 TASK 기술부 마지막 runbook 문단 참조
 - [ ] TASK-0044: 사업팀 pilot 계정으로 로그인해 단순 조회 prompt(예: "대표 아이템 X 가 몬스터 Y 에 연결돼 있나요?") 에 문장형 응답을 받는다
 - [ ] TASK-0044: 사업팀 pilot 계정으로 집계 prompt(예: "최근 7 일 레벨별 유저 수") 에 결과셋 표 응답을 받는다
