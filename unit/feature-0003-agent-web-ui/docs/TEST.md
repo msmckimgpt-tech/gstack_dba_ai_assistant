@@ -194,6 +194,19 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-05-20 (TASK-0086 Phase A~G — `WebAccountActivity` legacy table DROP + dual write 종료):
+  - **baseline**: legacy=74 row, mirror=74 row (1:1 정합). 초기 흡수 68 + dual write 추가 6.
+  - **backup (Codex C4)**: `mysqldump --single-transaction --quick --set-charset --create-options --add-drop-table --triggers --hex-blob --no-tablespaces agent_memory WebAccountActivity > artifacts/mysql-backup/WebAccountActivity-20260520T074927Z.sql` (11,950 bytes). Row digest `a09e7898d1ce88711f7a850ab5fbcc91`. File md5 `f4163df9dc1b7ac81ae4c463a0f35e98`.
+  - **scratch restore rehearsal**: 별 schema `task0086_restore_test` import → row count 74 + digest match ✓ → scratch DB DROP.
+  - **사용자 명시 ack** 받음.
+  - **code 변경 (Phase C)**: `_log_search_activity()` legacy INSERT 제거 + `_ensure_web_account_activity_schema()` 정의+호출×2 제거 + `_migrate_web_account_activity_to_audit()` rollback window 보존. py_compile PASS.
+  - **lightweight smoke (Phase D+E)**: `docker run --rm --entrypoint python -v <wt>/.../src:/app/web repo-web:latest -c "import web.app"` → `IMPORTED OK` + `_ensure_web_account_activity_schema present: False` ✓ + `_migrate_web_account_activity_to_audit present: True` ✓.
+  - **DROP (Phase F)**: `DROP TABLE IF EXISTS WebAccountActivity` → `DROP completed`.
+  - **verify (Phase G)**: `tables_remaining=0` ✓ + WebAuditEvents `conversation.search.body` 74 row 변동 없음 ✓.
+  - **tests**: test_audit_migration.py M3 (`m3_log_search_activity_dual_write`) 제거 + main() 호출 제거 + 모듈 docstring 3→2 시나리오 (Codex C2). M1/M2 보존 (table-absent silent skip).
+  - **Codex outside voice 5 findings 흡수**: C1 (Option A 불가능→helper Option B) / C2 (mirror risk→smoke + M3 제거) / C3 ("single tx"→"single statement") / C4 (backup 검증 강화) / C5 (rollback 2 시나리오).
+  - **Rollback runbook**: (1) DB restore only / (2) code revert + DB restore (완전).
+  - TASK-0073 Phase A2 dual write 종료. dispatcher → WebAuditEvents 단일 source.
 - 2026-05-20 (TASK-0092 Phase A~B — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed **7 vector matrix** 검증):
   - 환경: `docker run --rm --entrypoint python repo-web:latest -c "import web.app"`. module load 시점 `_enforce_audit_prod_gate()` (app.py:76-94) trigger. compose `--no-deps` 우회 (Codex C2 — mysql 기동 회피, 다른 worktree compose project 오염 차단). `.env` 부재로 inline `-e` 만 사용.
   - **7 vector PASS (7/7)**:
