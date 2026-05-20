@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0019
+- Date: 2026-05-19
+- Summary: TASK-0073 Phase A3 (REQ-20260519-0001, **Critical** §12.3) — RBAC catalog audit 4건 + permission group `audit` 신규 + admin/operator/sales/dba/pending 5 role 자동 grant catchup. Codex outside voice C8/C9/C10 lock-in (`.own/.any` 정합 + dba seed/catchup 보강 + permission group misc fallback 차단). Eng review E9 — dba 누락 보강.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/app.py`
+    - `PERMISSION_DEFINITIONS` 끝부분 (system_prompt.manage.role.any 다음) 에 4 entry 추가 — `audit.read.own` (모든 role), `audit.read.any` (admin/dba), `audit.export` (admin/dba), `audit.purge` (admin only). 모두 `group="audit"` (신규 permission group). 기존 ~40 → 44 codes.
+    - `SEED_ROLE_DEFINITIONS` pending/operator/sales role `permissions` set 에 `audit.read.own` 명시 추가. admin 은 `set(PERMISSION_CODES)` 라 자동 모두 포함.
+    - `_ensure_seed_roles` admin catchup (line ~1486) 의 명시 code list 에 `audit.read.own/.any/.export/.purge` 4 code 추가.
+    - operator/sales catchup (line ~1511) 의 `catchup_codes` tuple 에 `audit.read.own` 추가.
+    - 신규 dba role catchup loop — `SELECT Id FROM WebRoles WHERE RoleKey='dba' LIMIT 1` 검색 + 존재 시 `audit.read.own/.any/.export` 3 code INSERT IGNORE (.purge 는 admin only). Eng review E9 lock-in.
+    - 신규 pending role catchup loop — `audit.read.own` INSERT IGNORE (SEED_ROLE_DEFINITIONS 와 dual safety).
+- Verification: `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS. `_ensure_permission_catalog` 가 `_ensure_seed_roles` 앞에서 hydrate 되므로 (TASK-0063 회귀 fix 답습) 신규 4 permission id 가 catchup INSERT 시 valid 보장. frontend admin.js / app.js 의 `PERMISSION_GROUP_ORDER` 갱신은 Phase C scope (본 commit 의 backend 만 RBAC enforce 가능).
+- Risks: dba role 이 DB 에 없는 환경은 catchup loop graceful skip. 이미 audit 권한 보유한 admin (e.g. 수동 grant) 은 INSERT IGNORE 라 duplicate 회피. `set(PERMISSION_CODES)` 가 SEED admin 권한을 매 catchup 마다 재계산 → 정적 (module load 시 fixed) 이라 안전.
+- Trace: REQ-20260519-0001 → TASK-0073 Phase A3 → CHG-20260519-0019 → REV-20260519-0015. Codex C8/C9/C10 + Eng review E9 lock-in.
+
 ## CHG-20260519-0018
 - Date: 2026-05-19
 - Summary: TASK-0073 Phase A2 (REQ-20260519-0001, **Critical** §12.3) — `WebAccountActivity` (TASK-0072) 기존 row 흡수 + migration helper + `_log_search_activity` dual write wrap. Codex outside voice C2 minimum-fix (legacy table 발견 + transparent wrap). 기존 table 자체는 본 cycle DROP 안 함 (별 cycle backup 후 DROP).

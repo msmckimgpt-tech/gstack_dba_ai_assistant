@@ -54,7 +54,7 @@ source_of_truth: true
   - [x] Phase A0 — DDL + bootstrap (`_ensure_web_audit_events_schema` + WebAuditEvents 14 columns + 5 indexes + fast/slow path hook). CHG-20260519-0003. 2026-05-19. py_compile PASS.
   - [x] Phase A1 — dispatcher + `AGENT_AUDIT_ENABLED` gate (CHG-20260519-0017, 2026-05-19, py_compile + bash -n PASS; verify-completion check_11_audit_dispatcher 신설)
   - [x] Phase A2 — WebAccountActivity 흡수 + migration helper (CHG-20260519-0018, 2026-05-19, py_compile PASS; idempotent SQL marker `RequestId='account-activity:<id>'` + dual write `_log_search_activity`)
-  - [ ] Phase A3 — RBAC catalog +4 + dba seed + permission group `audit`
+  - [x] Phase A3 — RBAC catalog +4 + dba seed + permission group `audit` (CHG-20260519-0019, 2026-05-19, py_compile PASS; SEED + 4 catchup loop admin/operator/sales/dba/pending 자동 backfill)
   - [ ] Phase A4 — 5 audit endpoint + chunked purge
   - [ ] Phase A5 — admin 13 endpoint hook (Same tx)
   - [ ] Phase A6 — user 4 endpoint hook (fail-open)

@@ -323,6 +323,35 @@ PERMISSION_DEFINITIONS = (
         "description": "모든 역할 또는 다른 계정의 시스템 프롬프트를 수정할 수 있다. 본인 계정의 프롬프트는 이 권한 없이도 수정 가능하다.",
         "group": "product",
     },
+    # TASK-0073 Phase A3 (REQ-20260519-0001, Critical §12.3): audit 권한 4건.
+    # `.own` 은 모든 role (dba 포함) auto-grant — 본인 actor/target audit row 조회.
+    # `.any` 는 admin/dba — 전체 계정 audit row 조회 (`.any` superset semantics 정합).
+    # `.export` 는 admin/dba — CSV / JSON dump 가능 (PII bulk export).
+    # `.purge` 는 admin only — retention 초과 chunked PK 삭제 (자가 audit 동반).
+    {
+        "code": "audit.read.own",
+        "label": "내 감사 로그 조회",
+        "description": "자신이 actor 인 audit 이벤트 또는 자신을 target 으로 한 admin 이벤트를 조회할 수 있다.",
+        "group": "audit",
+    },
+    {
+        "code": "audit.read.any",
+        "label": "전체 감사 로그 조회",
+        "description": "모든 계정의 audit 이벤트를 조회할 수 있다 (PII 노출 — 관리 정책 기반).",
+        "group": "audit",
+    },
+    {
+        "code": "audit.export",
+        "label": "감사 로그 CSV/JSON 내보내기",
+        "description": "audit 이벤트를 CSV / JSON 으로 dump 할 수 있다. 감사 외부 검토용. masked field 정책은 변경되지 않음.",
+        "group": "audit",
+    },
+    {
+        "code": "audit.purge",
+        "label": "감사 로그 retention 삭제",
+        "description": "retention 초과 audit 이벤트를 chunked PK 삭제할 수 있다. 시작/완료 이벤트는 self-audit 으로 기록된다.",
+        "group": "audit",
+    },
 )
 PERMISSION_CODES = tuple(item["code"] for item in PERMISSION_DEFINITIONS)
 PERMISSION_DEFINITION_MAP = {item["code"]: item for item in PERMISSION_DEFINITIONS}
@@ -391,6 +420,9 @@ SEED_ROLE_DEFINITIONS = (
             "conversation.list.own",
             "conversation.read.own",
             "conversation.file.read.own",
+            # TASK-0073 Phase A3: 모든 role 에 audit.read.own auto-grant
+            # (E1 self filter — 본인 actor/target 이벤트 조회).
+            "audit.read.own",
         },
     },
     {
@@ -411,6 +443,8 @@ SEED_ROLE_DEFINITIONS = (
             "conversation.finalize.own",
             "conversation.share.create",
             "conversation.duplicate.own",
+            # TASK-0073 Phase A3: 모든 role audit.read.own auto-grant.
+            "audit.read.own",
         },
     },
     {
@@ -430,6 +464,8 @@ SEED_ROLE_DEFINITIONS = (
             "conversation.finalize.own",
             "conversation.share.create",
             "conversation.duplicate.own",
+            # TASK-0073 Phase A3: 모든 role audit.read.own auto-grant.
+            "audit.read.own",
         },
     },
     {
@@ -1489,6 +1525,11 @@ def _ensure_seed_roles(conn) -> None:
             "conversation.share.create",
             "conversation.duplicate.own",
             "conversation.duplicate.any",
+            # TASK-0073 Phase A3: admin 의 audit 권한 4건 catchup (모든 audit 권한 grant).
+            "audit.read.own",
+            "audit.read.any",
+            "audit.export",
+            "audit.purge",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -1501,14 +1542,19 @@ VALUES (%s, %s)
                 (admin_role_id, permission_id),
             )
         cur.close()
-    # REQ-20260514-0001 / REQ-20260518-0001: 기존 operator/sales role 에 신규 conversation.* 권한 catchup.
+    # REQ-20260514-0001 / REQ-20260518-0001 / TASK-0073 Phase A3: operator/sales role 에 신규 권한 catchup.
     cur = conn.cursor()
     cur.execute("SELECT Id FROM WebRoles WHERE RoleKey IN ('operator', 'sales')")
     role_rows = cur.fetchall() or []
     cur.close()
     if role_rows:
         permission_map = _permission_id_map(conn)
-        catchup_codes = ("conversation.share.create", "conversation.duplicate.own")
+        catchup_codes = (
+            "conversation.share.create",
+            "conversation.duplicate.own",
+            # TASK-0073 Phase A3: 모든 role 에 audit.read.own auto-grant.
+            "audit.read.own",
+        )
         catchup_pids = [
             int(permission_map.get(code) or 0)
             for code in catchup_codes
@@ -1526,6 +1572,44 @@ VALUES (%s, %s)
                     (role_id, pid),
                 )
         cur.close()
+    # TASK-0073 Phase A3 (Eng review E9): dba role catchup. SEED_ROLE_DEFINITIONS 에는
+    # 부재하나 DB 에 수동 INSERT 된 경우가 존재 (TASK-0060 5 role list 참조). dba 가
+    # 있으면 audit.read.own + .any + .export 3 code grant (.purge 는 admin only).
+    cur = conn.cursor()
+    cur.execute("SELECT Id FROM WebRoles WHERE RoleKey = 'dba' LIMIT 1")
+    dba_row = cur.fetchone()
+    cur.close()
+    if dba_row:
+        dba_role_id = int(dba_row[0] or 0)
+        if dba_role_id > 0:
+            permission_map = _permission_id_map(conn)
+            cur = conn.cursor()
+            for code in ("audit.read.own", "audit.read.any", "audit.export"):
+                pid = int(permission_map.get(code) or 0)
+                if pid <= 0:
+                    continue
+                cur.execute(
+                    "INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId) VALUES (%s, %s)",
+                    (dba_role_id, pid),
+                )
+            cur.close()
+    # TASK-0073 Phase A3: pending role 에도 audit.read.own catchup.
+    cur = conn.cursor()
+    cur.execute("SELECT Id FROM WebRoles WHERE RoleKey = 'pending' LIMIT 1")
+    pending_row = cur.fetchone()
+    cur.close()
+    if pending_row:
+        pending_role_id = int(pending_row[0] or 0)
+        if pending_role_id > 0:
+            permission_map = _permission_id_map(conn)
+            pid = int(permission_map.get("audit.read.own") or 0)
+            if pid > 0:
+                cur = conn.cursor()
+                cur.execute(
+                    "INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId) VALUES (%s, %s)",
+                    (pending_role_id, pid),
+                )
+                cur.close()
 
 
 SEED_ROLE_SYSTEM_PROMPTS = (

@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0015 [SKIPPED:multi-phase-plan-approved]
+- Date: 2026-05-19
+- Decision: TASK-0073 Phase A3 (REQ-20260519-0001, **Critical** §12.3) — RBAC catalog +4 (`audit.read.own/.any/.export/.purge`) + permission group `audit` 신규 + admin/operator/sales/dba/pending 5 role 자동 catchup. Codex outside voice C8/C9/C10 + Eng review E9 lock-in.
+- Reason: PLAN-APPROVED 2026-05-19. `.own/.any` 패턴 (TASK-0058 share + TASK-0063 RBAC catchup) 답습 — 본인 actor/target 만 조회 (.own) + 전체 audit row 조회 (.any superset). admin/dba 가 `.any` + `.export`, admin 만 `.purge` 의 분리는 권한 책임 최소화 (compliance 외부 검토 vs retention 관리 분리). `feedback_outside_voice_for_rbac` 정책 강제 — RBAC 변경은 outside voice 필수, Codex 가 plan 단계에서 14 finding lock-in.
+- Alt 거부:
+  - **`audit.*` 단일 권한 (group="audit")**: Codex C8 — `.own/.any` 분리 정합성 깨짐. admin 의 `.any` 가 sales 의 `.own` 을 superset 으로 포함하는 의미 명확.
+  - **`.purge` 는 dba 도 grant**: dba 가 retention 정책 직접 결정하면 책임 분산. admin 만 grant — Compliance 책임 명확.
+  - **dba role 을 SEED_ROLE_DEFINITIONS 에 추가**: TASK-0060 의 dba 가 manual 생성 case 라 SEED 추가는 scope creep. catchup loop 만 보강 (E9 의 가벼운 해석).
+  - **permission_group_of fallback="misc"**: Codex C10 — group="audit" 명시 + frontend `PERMISSION_GROUP_ORDER` 갱신 (Phase C scope) 으로 misc fallback 차단.
+- Risks: dba role 이 DB 에 부재한 환경은 catchup graceful skip — 향후 dba 생성 시 다음 catchup 에서 backfill. INSERT IGNORE 라 duplicate 안전. `_ensure_permission_catalog` 가 `_ensure_seed_roles` 앞 호출 보장 (TASK-0063 회귀 fix 패턴) — 신규 permission id 가 valid 시점에 catchup 진행.
+- 미해결 followup: Phase C frontend `PERMISSION_GROUP_ORDER` 갱신 (admin.js + app.js). Phase D `docs/CONVENTIONS.md §10.6` 갱신 (audit group 의 admin section "관리" 우선 노출). Phase B `tests/test_audit_rbac.py` 의 10 시나리오 검증.
+- panel: SKIPPED:multi-phase-plan-approved — RBAC catalog 4 추가는 Codex outside voice + Eng review E9 가 plan 단계 lock-in. 본 phase 단위 commit 마다 panel 재호출은 cargo-cult.
+- Trace: REQ-20260519-0001 → TASK-0073 Phase A3 → CHG-20260519-0019 → REV-20260519-0015. Codex outside voice C8/C9/C10 + Eng review E9 lock-in.
+
 ## REV-20260519-0014 [SKIPPED:multi-phase-plan-approved]
 - Date: 2026-05-19
 - Decision: TASK-0073 Phase A2 (REQ-20260519-0001, **Critical** §12.3) — `WebAccountActivity` (TASK-0072) 기존 row 흡수 migration helper + `_log_search_activity` dual write wrap. legacy table 본 cycle DROP 안 함 (별 cycle backup 후).
