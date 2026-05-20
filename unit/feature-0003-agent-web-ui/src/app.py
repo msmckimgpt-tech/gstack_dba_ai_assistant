@@ -65,6 +65,34 @@ MEMORY_DB = os.getenv("AGENT_MEMORY_DB", "agent_memory")
 WEB_DB_QUERY_TIMEOUT_SEC = max(3, int(os.getenv("WEB_DB_QUERY_TIMEOUT_SEC", "8")))
 WEB_DB_LOCK_WAIT_TIMEOUT_SEC = max(1, int(os.getenv("WEB_DB_LOCK_WAIT_TIMEOUT_SEC", "5")))
 
+# REQ-20260519-0001 (TASK-0073 Phase A1, Critical §12.3, Codex C5 minimum-fix):
+# AUDIT subsystem gate. prod (AGENT_MODE != dev/test) 에서 AGENT_AUDIT_ENABLED=1 이
+# 아니면 module load 시점에 process 종료. dev/test 에서만 toggle 허용.
+AGENT_AUDIT_ENABLED = os.getenv("AGENT_AUDIT_ENABLED", "1").strip() == "1"
+AGENT_MODE = os.getenv("AGENT_MODE", "").strip().lower()
+_AUDIT_IS_PROD_MODE = AGENT_MODE not in ("dev", "test")
+
+
+def _enforce_audit_prod_gate() -> None:
+    """REQ-20260519-0001 (TASK-0073 Phase A1): prod startup fail-closed gate.
+
+    Codex outside voice C5 — flag bypass surface 차단. AGENT_MODE 가 dev/test 가
+    아닐 때 AGENT_AUDIT_ENABLED=1 이 아니면 process 즉시 종료. env state changes 는
+    audit row 불가 (env 변경은 DB mutation 아님) → startup stderr log 만
+    (SECURITY.md §8 정책).
+    """
+    if _AUDIT_IS_PROD_MODE and not AGENT_AUDIT_ENABLED:
+        import sys as _sys
+        _sys.stderr.write(
+            "[FATAL] AUDIT REQUIRED IN PROD — set AGENT_AUDIT_ENABLED=1 "
+            f"(AGENT_MODE={AGENT_MODE or '(unset → prod)'}; TASK-0073 Phase A1)\n"
+        )
+        _sys.stderr.flush()
+        _sys.exit(1)
+
+
+_enforce_audit_prod_gate()
+
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 MODEL_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,64}$")
@@ -2558,6 +2586,140 @@ def _ensure_web_audit_events_schema(conn) -> None:
         )
     finally:
         cur.close()
+
+
+def record_audit_event(
+    conn,
+    *,
+    actor: dict | None,
+    action: str,
+    resource_type: str,
+    resource_id: str | None,
+    change_json: dict | None,
+    masked_fields: list[str] | None = None,
+    target_account_id: int | None = None,
+) -> None:
+    """REQ-20260519-0001 (TASK-0073 Phase A1, Critical §12.3): audit event dispatcher.
+
+    Approach B + Tx split. caller policy 별 분기 (E5):
+    - admin 13 endpoint: caller 가 같은 conn / transaction 으로 호출 → 실패 = bubble up
+      (caller rollback). 정합성 fail-safe.
+    - user 4 endpoint: caller 가 best-effort try/except wrapper 로 호출 → 실패 = stderr only,
+      main flow 유지. TASK-0072 `_log_search_activity` 패턴 답습.
+
+    dispatcher 자체는 commit/rollback 안 함 (E6 explicit dispatcher pattern).
+    AGENT_AUDIT_ENABLED=0 (dev/test only) 일 때 silent no-op.
+
+    Args:
+        conn: MySQL connection (caller-owned).
+        actor: dict | None — {account_id, role_id, username, session_id, actor_type,
+            remote_addr, user_agent, request_id}. None 또는 actor_type='system' 시
+            ActorAccountId/ActorRoleId NULL.
+        action: ActionCode (e.g., "admin.account.update", "conversation.ask").
+        resource_type: e.g., "account", "conversation", "role", "permission", "product",
+            "share", "audit_range".
+        resource_id: resource 식별자 (PK / token prefix / NULL).
+        change_json: allowlist builder 산출 (raw request 검증 X — E6).
+        masked_fields: redacted field 목록 (e.g., ["password_hash", "session_token"]).
+        target_account_id: E1 self filter 의 OR 분기 (admin password-reset 시 target user id).
+    """
+    if not AGENT_AUDIT_ENABLED:
+        return
+
+    actor = actor or {}
+    actor_type_raw = str(actor.get("actor_type") or "account").strip().lower() or "account"
+    if actor_type_raw not in ("account", "anonymous", "system"):
+        actor_type_raw = "account"
+    actor_type = actor_type_raw[:16]
+    actor_account_id = actor.get("account_id")
+    actor_role_id = actor.get("role_id")
+    session_id_value = actor.get("session_id")
+    remote_addr = actor.get("remote_addr") or actor.get("ip")
+    user_agent = actor.get("user_agent")
+    request_id = actor.get("request_id")
+
+    # actor_type=system / anonymous 시 account_id NULL 보정 (Eng review E4).
+    if actor_type in ("system", "anonymous"):
+        actor_account_id = None
+        actor_role_id = None
+
+    try:
+        change_json_text = (
+            json.dumps(change_json, ensure_ascii=False, sort_keys=True, default=str)
+            if change_json is not None
+            else None
+        )
+    except (TypeError, ValueError):
+        change_json_text = json.dumps({"_serialize_error": True}, ensure_ascii=False)
+    try:
+        masked_fields_text = (
+            json.dumps(list(masked_fields), ensure_ascii=False, sort_keys=True)
+            if masked_fields
+            else None
+        )
+    except (TypeError, ValueError):
+        masked_fields_text = None
+
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO WebAuditEvents "
+            "(ActorAccountId, ActorRoleId, ActorType, TargetAccountId, SessionId, "
+            "ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
+            "RemoteAddr, UserAgent, RequestId) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                int(actor_account_id) if actor_account_id is not None else None,
+                int(actor_role_id) if actor_role_id is not None else None,
+                actor_type,
+                int(target_account_id) if target_account_id is not None else None,
+                str(session_id_value)[:64] if session_id_value else None,
+                str(action)[:64],
+                str(resource_type)[:32],
+                str(resource_id)[:64] if resource_id is not None else None,
+                change_json_text,
+                masked_fields_text,
+                str(remote_addr)[:64] if remote_addr else None,
+                str(user_agent)[:255] if user_agent else None,
+                str(request_id)[:64] if request_id else None,
+            ),
+        )
+    finally:
+        cur.close()
+
+
+def _build_actor_from_request(
+    request: Request | None,
+    account: dict | None,
+    *,
+    actor_type: str = "account",
+) -> dict:
+    """Phase A1 helper: actor dict 조립 (caller 가 record_audit_event 에 전달).
+
+    actor_type='anonymous' 시 account NULL 허용. request None 시 remote_addr/user_agent NULL.
+    TASK-0072 `_log_search_activity` 의 호출 패턴 답습 — caller 가 직접 조립.
+    """
+    actor: dict[str, Any] = {"actor_type": actor_type}
+    if account:
+        actor["account_id"] = account.get("Id") or account.get("id")
+        actor["role_id"] = account.get("RoleId") or account.get("role_id")
+        actor["username"] = account.get("Username") or account.get("username")
+    if request is not None:
+        try:
+            actor["remote_addr"] = _get_client_ip(request)
+        except Exception:
+            actor["remote_addr"] = None
+        try:
+            actor["user_agent"] = request.headers.get("user-agent", "")
+        except Exception:
+            actor["user_agent"] = None
+        try:
+            actor["session_id"] = _sanitize_session_id(
+                request.cookies.get(SESSION_COOKIE, "")
+            )
+        except Exception:
+            actor["session_id"] = None
+    return actor
 
 
 def _ensure_must_change_password_schema(conn) -> None:

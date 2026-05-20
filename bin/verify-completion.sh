@@ -847,6 +847,51 @@ check_10_worktree_binding() {
 }
 
 # -----------------------------------------------------------------------------
+# Check #11: audit dispatcher symbol presence (TASK-0073 Phase A1)
+# -----------------------------------------------------------------------------
+#
+# REQ-20260519-0001 (TASK-0073, Critical §12.3, Eng review E7 SPOF mitigation):
+# audit subsystem 의 SPOF (dispatcher 단일 함수) 가 silently 사라지지 않도록
+# pre-commit 단계에서 record_audit_event() / AGENT_AUDIT_ENABLED gate /
+# _enforce_audit_prod_gate startup hook 의 symbol 존재를 강제 확인.
+#
+# scope: feature-0003-agent-web-ui (audit dispatcher 정본 위치) 만 검사.
+# 다른 feature 작업은 audit 정본 touch 안 함이 정상 → no-op PASS.
+check_11_audit_dispatcher() {
+  local fdir="$1"
+
+  case "$fdir" in
+    *feature-0003-agent-web-ui*) ;;
+    *)
+      log_check 11 PASS "audit dispatcher" "scope: not feature-0003"
+      return 0
+      ;;
+  esac
+
+  local app_py="$fdir/src/app.py"
+  if [ ! -f "$app_py" ]; then
+    log_check 11 FAIL "audit dispatcher" "src/app.py 부재 ($app_py) — feature-0003 정본 missing"
+    return 1
+  fi
+
+  if ! grep -q '^def record_audit_event(' "$app_py"; then
+    log_check 11 FAIL "audit dispatcher" "record_audit_event() 정의 부재 (TASK-0073 Phase A1)"
+    return 1
+  fi
+  if ! grep -q 'AGENT_AUDIT_ENABLED' "$app_py"; then
+    log_check 11 FAIL "audit dispatcher" "AGENT_AUDIT_ENABLED gate 부재 (TASK-0073 Phase A1)"
+    return 1
+  fi
+  if ! grep -q '_enforce_audit_prod_gate' "$app_py"; then
+    log_check 11 FAIL "audit dispatcher" "_enforce_audit_prod_gate startup hook 부재 (TASK-0073 Phase A1)"
+    return 1
+  fi
+
+  log_check 11 PASS "audit dispatcher"
+  return 0
+}
+
+# -----------------------------------------------------------------------------
 # Main dispatch
 # -----------------------------------------------------------------------------
 
@@ -945,12 +990,13 @@ main() {
   check_7_anchor_4 "$fdir" || failed=$((failed + 1))
   check_8_unstaged_residual "$effective_mode" || failed=$((failed + 1))
   check_9_review_entry "$effective_mode" "$feature_id" || failed=$((failed + 1))
+  check_11_audit_dispatcher "$fdir" || failed=$((failed + 1))
 
   if [ "$failed" -eq 0 ]; then
-    printf '\nverify-completion: PASS (all 8 checks: 7 pilot + worktree binding)\n' >&2
+    printf '\nverify-completion: PASS (all 9 checks: 7 pilot + worktree binding + audit dispatcher)\n' >&2
     exit 0
   else
-    printf '\nverify-completion: FAIL (%d of 8 checks failed)\n' "$failed" >&2
+    printf '\nverify-completion: FAIL (%d of 9 checks failed)\n' "$failed" >&2
     exit 1
   fi
 }

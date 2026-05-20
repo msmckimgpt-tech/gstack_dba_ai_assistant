@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0017
+- Date: 2026-05-19
+- Summary: TASK-0073 Phase A1 (REQ-20260519-0001, **Critical** §12.3) — audit dispatcher `record_audit_event()` + `AGENT_AUDIT_ENABLED` prod startup fail-closed gate + verify-completion check_11_audit_dispatcher SPOF guard. CEO review · Codex outside voice C5 minimum-fix · Eng review E6 (explicit dispatcher) / E7 (SPOF mitigation) 흡수.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/app.py`
+    - 신규 env constants (line 67 직후) — `AGENT_AUDIT_ENABLED` (bool, default 1), `AGENT_MODE` (str, lower-cased), `_AUDIT_IS_PROD_MODE` (bool — AGENT_MODE not in dev/test).
+    - 신규 `_enforce_audit_prod_gate()` 함수 + module-load 시점 즉시 호출 — prod (AGENT_MODE != dev/test) 에서 AGENT_AUDIT_ENABLED=1 가 아니면 `sys.exit(1)` + stderr `[FATAL] AUDIT REQUIRED IN PROD — set AGENT_AUDIT_ENABLED=1 (AGENT_MODE=...; TASK-0073 Phase A1)`. Codex C5 — flag bypass surface 차단.
+    - 신규 `record_audit_event(conn, *, actor, action, resource_type, resource_id, change_json, masked_fields=None, target_account_id=None)` dispatcher (Phase A0 `_ensure_web_audit_events_schema` 뒤). AGENT_AUDIT_ENABLED=0 (dev/test only) 일 때 silent no-op. actor=None / actor_type='system' 시 ActorAccountId/ActorRoleId NULL 보정 (E4). admin caller = same conn / tx 호출 → 실패 bubble up (caller rollback). user caller = best-effort try/except wrapper → 실패 stderr only. dispatcher 자체는 commit/rollback 안 함 (E6 explicit).
+    - 신규 helper `_build_actor_from_request(request, account, *, actor_type='account')` — caller 가 actor dict 조립 시 사용 (remote_addr / user_agent / session_id 자동 캡처).
+  - `repo/bin/verify-completion.sh`
+    - 신규 `check_11_audit_dispatcher(fdir)` 함수 — feature-0003-agent-web-ui scope 일 때 src/app.py 안 `record_audit_event(`, `AGENT_AUDIT_ENABLED`, `_enforce_audit_prod_gate` 3 symbol 존재 강제. 다른 feature scope 는 silent PASS. Eng review E7 SPOF mitigation.
+    - main() 호출 추가 — check_2~9 다음 line 에 `check_11_audit_dispatcher "$fdir"` 호출 + failed counter 반영. PASS / FAIL 메시지 "8 checks" → "9 checks (7 pilot + worktree binding + audit dispatcher)" 로 갱신.
+- Verification: `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS. `bash -n bin/verify-completion.sh` PASS. Phase A0 schema 변경 0 — dispatcher 가 기존 `WebAuditEvents` INSERT 패턴 사용. RBAC / endpoint / 데이터 변경 0 (dispatcher 는 caller wire-up 전이라 INSERT row 실측 0). 본 commit 은 인프라 layer 만.
+- Risks: module-load time `sys.exit` 가 tests 의 import 차단 가능 → Phase B tests 에서 `AGENT_MODE=test` 환경변수 강제 (test runner 가 환경 set). dispatcher 가 commit/rollback 안 한다는 caller contract 가 강함 — admin endpoint 의 same-tx fail-safe 정합성에 의존, 추후 Phase A5 wire-up 시 transaction boundary 명확 표기.
+- Trace: REQ-20260519-0001 → TASK-0073 Phase A1 → CHG-20260519-0017 → REV-20260519-0013. CEO review 9 decision + Codex 14 findings + Eng review E6/E7 lock-in.
+
 ## CHG-20260519-0016
 - Date: 2026-05-19
 - Summary: TASK-0085 (REQ-20260519-0014, Minor §12.3) — lazy-create 사이드바 optimistic pending entry 도입. "+ 새 대화 송신 직후 다른 대화 전환 시 새 대화 entry 가 사이드바에서 잠시 사라지는" UX 회귀 fix + 사용자 의도 "작업 step 현황의 출력 위해" pending entry 클릭으로 컨텍스트 swap 지원.

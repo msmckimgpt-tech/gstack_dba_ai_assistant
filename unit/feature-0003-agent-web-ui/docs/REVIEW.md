@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0013 [SKIPPED:multi-phase-plan-approved]
+- Date: 2026-05-19
+- Decision: TASK-0073 Phase A1 (REQ-20260519-0001, **Critical** §12.3) — audit dispatcher `record_audit_event()` + `AGENT_AUDIT_ENABLED` prod startup fail-closed gate + verify-completion check_11 SPOF guard 구현. CEO review 9 decision · Codex outside voice 14 findings + 5 minimum-fix · Eng review E6 (explicit dispatcher) / E7 (SPOF mitigation) 의 in-cycle lock-in.
+- Reason: PLAN-APPROVED 2026-05-19 (TASK-0073 Phase A0~F 일괄). Critical 등급이라 Codex outside voice 가 plan 단계에서 14 findings + 5 minimum-fix 의 redesign 흡수 완료. 본 Phase A1 commit 은 dispatcher 인프라 + prod fail-closed gate 만 추가하므로 별도 panel 호출 불필요 — 이미 plan 단계의 outside voice 가 dispatcher signature / gate 정책 / SPOF mitigation 모두 lock-in.
+- Alt 거부:
+  - **startup hook 안 sys.exit** (FastAPI `@app.on_event("startup")`): main thread 가 await 인 상황에서 raise SystemExit 가 fully propagate 안 되는 환경 존재 (uvicorn worker 분기). module-load time exit 가 가장 단순 + 결정적.
+  - **dispatcher decorator pattern** (`@audit_action(...)`): Eng review E6 에서 명시 거부 — decorator 가 actor capture / ChangeJson builder / masked_fields per-endpoint 차이를 magic-hide. 17 hook site 각각 explicit `record_audit_event(...)` 호출.
+  - **autocommit dispatcher 안 conn.commit()**: caller 의 transaction 정책 (admin Same tx fail-safe / user fail-open) 과 충돌. dispatcher 는 commit/rollback 안 함 (E6 explicit).
+- Risks: module-load `sys.exit` 가 Phase B tests 의 import 차단 가능 — test runner 가 `AGENT_MODE=test` 환경변수 강제. caller 가 dispatcher 의 commit/rollback 책임 망각 시 INSERT 가 visible 안 됨 — admin endpoint same-tx 정책의 docstring + verify-completion check #11 로 인지 강화.
+- 미해결 followup: 추후 Phase 들 (A2~E) 모두 본 dispatcher 의 caller wire-up. Phase A5/A6 의 wire-up 시 caller contract (admin Same tx / user fail-open) 의 docstring 보강 + Phase B 의 `tests/test_audit_dispatcher.py` 가 INSERT row visible 한 E2E 검증.
+- panel: SKIPPED:multi-phase-plan-approved — Critical §12.3 이나 Codex outside voice + Eng review 가 plan 단계에서 dispatcher signature / gate 정책 / SPOF mitigation 모두 lock-in (REV-20260519-0001 이전 cycle 의 plan 단계 outside-voice 보고 = 본 cycle 의 panel 대체). 본 Phase 단위 commit 마다 panel 재호출은 cargo-cult.
+- Trace: REQ-20260519-0001 → TASK-0073 Phase A1 → CHG-20260519-0017 → REV-20260519-0013. CEO review 9 decision + Codex 14 findings + Eng review E6/E7 lock-in.
+
 ## REV-20260519-0012 [SKIPPED:design-panel]
 - Date: 2026-05-19
 - Decision: TASK-0085 (REQ-20260519-0014, Minor §12.3) — lazy-create 사이드바 optimistic pending entry. multi-pending sentinel-keyed `state.pendingConversationEntries` Map + closure-aware cleanup + `_switchToPendingConversationContext` 클릭 swap. backend / RBAC / endpoint / audit / DB 무변경.
