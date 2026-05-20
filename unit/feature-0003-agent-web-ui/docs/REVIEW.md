@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0019 [SKIPPED:multi-phase-plan-approved]
+- Date: 2026-05-19
+- Decision: TASK-0073 Phase B (REQ-20260519-0001, **Critical** §12.3) — 3 test 파일 신설. test_audit_dispatcher (7) + test_audit_rbac (10) + test_audit_migration (3) = 20 시나리오. 실 실행은 컨테이너 가동 + admin/operator/sales 자격 필요 — Phase E 사용자 위임 (plan 본문 명시).
+- Reason: plan PLAN-APPROVED 2026-05-19 의 Phase B 명시 — "tests/test_audit_dispatcher.py + test_audit_rbac.py (10 시나리오) + test_audit_migration.py". 컨테이너 미가동 본 session 에서 자동 실행 불가, file 작성 only. TASK-0072 `test_search_rbac.py` 의 urllib + login + Set-Cookie 패턴 답습 — 검증 안전한 답습 대상.
+- Alt 거부:
+  - **pytest 기반 unit test**: 본 repo 의 기존 test 패턴이 urllib script — pytest 의존 추가 X (zero new dependency).
+  - **mock dispatcher direct import**: PYTHONPATH 의존 fragile. HTTP endpoint 응답 + DB SELECT 검증이 더 robust.
+  - **자동 실행 (본 session)**: 컨테이너 환경 + admin/operator/sales 비밀번호 보유 가정 — 본 session sandbox 미지원. plan 본문이 명시 "환경 미비 시 test 작성만 + 실행은 Phase E 에 위임".
+- Risks: 사용자 환경에서 실 실행 시 admin/operator/sales 비밀번호 가용성 미보장 — TASK-0075 의 6/8 PASS scenario (operator pw 미보유로 일부 skip) 동일 trade-off. M1 의 직접 SQL INSERT 가 docker exec mysql 또는 host mysql client 필요 — 환경별 분기. S3a (admin password-reset target audit 가시성) 가 실 password reset 호출이라 부수효과 큼 — manual 검증 권유.
+- 미해결 followup: Phase E 에서 컨테이너 가동 후 `python3 tests/test_audit_*.py` 실행 → `docs/TEST.md §4 Test Run History` append. S3a 의 password-reset target user 본인 audit 가시성 검증이 E1 B 의 핵심 — manual 검증 결과 별 cycle 기록.
+- panel: SKIPPED:multi-phase-plan-approved — test 작성은 plan PLAN-APPROVED 의 자연 산출. TASK-0072 `test_search_rbac.py` 패턴 답습이라 새 review 면 적음.
+- Trace: REQ-20260519-0001 → TASK-0073 Phase B → CHG-20260519-0023 → REV-20260519-0019.
+
 ## REV-20260519-0018 [SKIPPED:multi-phase-plan-approved]
 - Date: 2026-05-19
 - Decision: TASK-0073 Phase A6 (REQ-20260519-0001, **Critical** §12.3) — user 5 endpoint best-effort audit + anonymous share view (ActorType='anonymous'). Eng review E4 + Codex C11 (anonymous share path) 합쳐 lock-in.

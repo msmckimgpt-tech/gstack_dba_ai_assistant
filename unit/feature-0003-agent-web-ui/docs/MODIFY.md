@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0023
+- Date: 2026-05-19
+- Summary: TASK-0073 Phase B (REQ-20260519-0001, **Critical** §12.3) — 3 test 파일 신설. dispatcher / RBAC / migration 의 핵심 행위 HTTP smoke 검증. 실 실행은 컨테이너 가동 + admin/operator/sales 자격 필요 — Phase E 사용자 위임 (본 cycle 의 plan 본문 명시: "환경 미비 시 test 작성만 + 실행은 Phase E 에 위임").
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/tests/test_audit_dispatcher.py` — 신설. 7 시나리오 (D1~D7). HTTP smoke 4 (D1~D4) + static / code review 3 (D5~D7). D7 은 `bin/verify-completion.sh check_11` 의 정적 symbol check 와 동일 grep — 컨테이너 무관 실행 가능.
+  - `repo/unit/feature-0003-agent-web-ui/tests/test_audit_rbac.py` — 신설. 10 시나리오 (S1~S10). E1 B 의 핵심 (S3a admin password-reset target user 본인 audit 가시성) + E4 (S9 anonymous share view + S10 actor_type=anonymous filter) + 404 byte-equal metadata leak 차단 (S4) + CSV export (S6) + purge dry_run (S7) + prod fail-closed (S8, manual).
+  - `repo/unit/feature-0003-agent-web-ui/tests/test_audit_migration.py` — 신설. 3 시나리오 (M1 legacy → new migration visible / M2 idempotent / M3 dual write coverage). mysql client 직접 사용 — DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / MEMORY_DB env 필수.
+- Verification: 3 file 모두 `python3 -m py_compile` PASS. test_search_rbac.py (TASK-0072 Phase B) 와 동일 urllib + login + Set-Cookie 패턴 답습. 컨테이너 가동 후 사용자가 `python3 tests/test_audit_*.py --base-url http://localhost:18080 --admin-user admin --admin-pass <pw>` 로 실행 가능.
+- Risks: HTTP smoke 가 컨테이너 환경 의존 — admin/operator/sales 비밀번호 미보유 시 partial PASS. dispatcher 단위 검증이 실제 dispatcher import 직접 호출 X (PYTHONPATH 의존 회피) — `record_audit_event` symbol 부재 시 D7 static check 가 cover. M1 의 legacy INSERT 가 직접 SQL — `make ask` 우회 시 docker exec mysql 또는 host mysql client 필요.
+- Trace: REQ-20260519-0001 → TASK-0073 Phase B → CHG-20260519-0023 → REV-20260519-0019.
+
 ## CHG-20260519-0022
 - Date: 2026-05-19
 - Summary: TASK-0073 Phase A6 (REQ-20260519-0001, **Critical** §12.3) — user 5 endpoint fail-open best-effort audit hook + anonymous share view (ActorType='anonymous'). `_audit_user_action` helper 신설 (TASK-0072 `_log_search_activity` 패턴 답습). Eng review E4 — ActorType column 활용 anonymous filter.
