@@ -50,24 +50,6 @@ ANCHOR.md — External Anchor Document (9번째 1급 문서)
   폭발한다. 새 AI가 **이 순서의 이유**를 이해한 뒤 손대야 한다.
 
 ## §4. 외부 검증 로그 (append-only)
-<!--
-완료 cycle마다 최소 1개 엔트리. source는 `human:<name>` 만 허용.
-AI는 §4 writer 아님. AI는 작업 시작 시 Conflict Protocol에 따라
-사용자에게 gstack skill 재앵커를 유도할 뿐, §4는 인간이 직접 append한다.
+<!-- 완료 cycle마다 최소 1개 엔트리 (release/milestone 또는 방향 전환 검증 시). source: human:<name>, timestamp: ISO8601, challenge: 한 줄, body: ≥ 200자. AI는 §4 writer 아님 — 인간이 직접 append (gstack skill 결과 paste 또는 리뷰어 판단 기록, 카고 컬트 방지). -->
 
-각 엔트리 필수 필드:
-- source: human:<name>
-- timestamp: ISO8601
-- body: ≥ 200자 non-whitespace, 실제 내용
-- challenge: 한 줄 — 이 검증이 무엇을 반박하거나 확인했는지
-
-형식 예시:
-
-### 2026-04-24T10:30:00Z — source: human:alice
-**challenge:** 이 기능이 실제로 사용자 pain을 해결하는지 /office-hours로 재검증
-**body:**
-(여기에 200자 이상의 실제 검증 내용. gstack skill 실행 결과를 paste하거나
-인간 리뷰어의 판단을 기록. 카고 컬트 방지를 위해 단순 "pass"/"looks good"은 FAIL.)
--->
-
-(엔트리 없음 — TASK cycle 종료 전 최소 1개 필요)
+(엔트리 없음 — 일반 TASK cycle 완료 조건은 아님; release/milestone 검토 또는 방향 전환 검증 시 사용)

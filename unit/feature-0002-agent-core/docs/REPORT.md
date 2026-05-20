@@ -9,6 +9,8 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+2026-05-20 추가 (TASK-0015, plan-review, Critical §12.3): KB 정본 5종 (`AgentMemoryFacts` view + `FactEntries` + `Texts` + `RagDocuments` + `RagObjects`) 의 정본 위치를 현재 MySQL (`agent_memory` DB) 에서 별도 Postgres pgvector 인스턴스 (`agent_kb` DB) 로 이전하는 multi-cycle plan 정본을 `TASK.md §2.1` 에 작성. 본 cycle 은 plan-작성 cycle 이며 코드·schema·데이터 변경 없음. plan 의 Execute 단계는 phase M0 (인프라 도입) → M1 (DDL) → M2 (dual-write) → M3 (backfill + embedding) → M4 (cutover, Critical 사람 승인) → M5 (cleanup, Critical 사람 승인) 의 6 phase 별 cycle 로 진행한다. outside-voice review (Codex consult) + 사용자 PLAN-APPROVED 마커 후 M0 cycle 진입. ANCHOR §3 의 fact-우선 복구 invariant (insight.py 의 `_check_artifact_completeness` + `_repair_from_fact`) 는 새 storage 에서도 `KbBackend` 추상화 뒤에 보존되며 M2 / M4 검증 게이트에 명시 항목.
+
 2026-05-15 추가: `Product → Role → Account → 요청` 누적 구조를 재검토했다. 큰 순서는 이미 system message 안에서 Product context → Role guidance → Account preferences 로 조립되고, 현재 사용자 요청은 마지막 `user` 메시지로 추가되어 보존되고 있었다. 다만 Account scope 가 Role scope 와 달리 Product 전용 prompt 우선/fallback 구조라 Account 공통 prompt 가 누락될 수 있었다. 이를 `전 Product 공통` Account prompt 먼저, Account×Product 전용 prompt 뒤 순서로 정정했고, `_fetch()`의 product-specific miss 시 common fallback 동작도 제거해 중복 누적 위험을 없앴다. 단위 테스트는 3건으로 확장했다.
 
 2026-05-15: Role scope 시스템 프롬프트 조립 의미를 정정했다. `ProductId IS NULL`로 저장된 "전 Product 공통" Role 지침은 특정 Product를 선택한 대화에서도 항상 `## ROLE GUIDANCE` 안에 먼저 누적되고, Role×Product 전용 지침이 있으면 뒤에 추가된다. auto 모드는 Product 전용 지침을 건너뛰고 공통 지침만 사용한다. 단위 테스트 2건과 web 컨테이너 내부 직접 조회로 확인했다.
@@ -31,6 +33,8 @@ source_of_truth: false
 - no-op cycle 은 더 이상 `insight_worker.log` 나 `timing_breakdown` 파일을 남기지 않도록 수정
 
 ## 4. Open Issues
+- **plan-approved (TASK-0015, Critical §12.3) — ✓ 본 cycle 마감**: KB Postgres pgvector 마이그레이션 multi-cycle plan 이 `TASK.md §2.1` 에 작성 + outside-voice review (Plan subagent) NEEDS-TWEAK 결과 11 Blocker §2.1 본문/§2.1.11 추적 표 반영 + 사용자 PLAN-APPROVED 마커 (2026-05-20) 부여 완료. Execute 는 M-1 cycle (사전 baseline 측정) 부터 별 worktree 로 진입.
+- 직전 세션의 multi-cycle plan 의 Sprint 4 (D RAG, PGVector 도입) 정본 위치를 본 cycle 에서 확인 불가 (Repo 내 grep 결과 0건). Blocker B-1 — M1 cycle 진입 전 Sprint 4 D RAG schema 가 `rag_documents` / `rag_objects` 와 공유 가능한지 사용자 직접 확인 필수. 공유 가능 → D-1 default A 확정 / 별 namespace → C (후행) 전환 검토.
 - 일부 `agent_memory` 내부 테이블은 현재 LLM 응답이 빈 텍스트로 정리되어 `publish_attempted=false` 로 남는다. 이 경우 fingerprint 는 갱신하지 않으므로 추후 cycle 에서 다시 `artifact_missing` 대상으로 남지만, 근본 원인은 모델 출력 품질 쪽이다.
 - 이번 검증은 점진 복구 정책 기준으로 1 cycle 만 수행했다. 누락된 나머지 테이블은 이후 cycle 에서 순차 복구된다.
 
@@ -75,4 +79,8 @@ source_of_truth: false
 - 없음
 
 ## 7. Human Attention Needed
+- **TASK-0015 PLAN-APPROVED 마커 ✓ 부여 (2026-05-20 by ms.mckim.gpt@gmail.com)** — `TASK.md §2.1` 직후 마커 추가 완료. Execute 진입 가능. M-1 cycle (사전 baseline 측정) 부터 별 worktree 로 순차 진행.
+- **Outside-voice review (Plan subagent) 완료** — `REVIEW.md REV-20260520-0002`. Verdict **NEEDS-TWEAK** → 11 Blocker §2.1 본문 + §2.1.11 추적 표에 반영 완료.
+- **잔여 사람 confirm 시점**: M1 (RBAC role 신설), M4 (cutover + ADR-0023 작성 완료 게이트), M5 (DROP TABLE + mysqldump 사전 보관) 의 각 phase 진입 시점.
+- **Sprint 4 (D RAG, PGVector 도입) plan 의 schema 상세 확인** (Blocker B-1): 직전 세션의 multi-cycle plan 정본을 본 cycle 에서 확인할 수 없으므로, 본 plan 의 D-1 sequencing 최종 결정을 위해 사용자가 Sprint 4 의 D RAG schema 가 본 plan 의 `rag_documents` / `rag_objects` 와 공유 가능한지 직접 확인 필요. 공유 가능 → A (선행 + M3~M5 와 Sprint 4 병행) 확정. 별 namespace → C (Sprint 4 후행) 검토.
 - `agent_memory` 계열 일부 테이블에 대해 모델 출력이 빈 텍스트로 떨어지는 원인은 별도 프롬프트/모델 품질 과제로 분리 검토가 필요하다.

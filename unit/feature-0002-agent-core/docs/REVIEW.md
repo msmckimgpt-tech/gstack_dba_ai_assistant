@@ -8,6 +8,90 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260520-0002 [SUBAGENT:Plan-subagent — pgvector-migration-plan-review]
+- Date: 2026-05-20
+- TASK-Cycle: TASK-0015 (plan-review, Critical §12.3) — outside-voice review 결과 정본
+- Outside-voice channel: Plan subagent (Software architect agent) — `feedback_outside_voice_for_rbac.md` 정책의 "Codex/subagent 외부 시각 항상 호출" 충족.
+- Verdict: **NEEDS-TWEAK** — plan 골격 (6 phase 분해 + 3-D 결정 매트릭스 + ANCHOR §3 invariant 보존 의도 + RBAC 별 ADR 위임) 은 합리적이나 다수의 무검증 가정 + 검증 항목 누락 + 정량 baseline 부재로 PLAN-APPROVED 전 해소 필요.
+- Section A (3-D 결정) — 보강 필요:
+  - D-1 Sequencing 의 권장 default A 가 Sprint 4 schema unknown 위에 서 있음 (self-certification paradox) → 조건부 분기로 reclassify ("Sprint 4 schema 가 KB rag_objects 와 공유 → A 확정 / 별 namespace → C 검토").
+  - D-2 Topology 의 메모리 footprint estimate 누락 (WSL2 + MySQL 8.0 공존 시 shared_buffers / ivfflat index 메모리 계산).
+  - D-3 Module rewrite 의 dialect 변환 카탈로그 누락 (`ON DUPLICATE KEY UPDATE` / `INSERT IGNORE` / `TIMESTAMP(3) ON UPDATE` / `cursor.execute(multi=True)` 의 비대칭).
+- Section B (Phase 분해) — 보강 필요:
+  - M2 dual-write 의 fail rate 분모 정의 누락 (새 row 만 비교? ContentHash 일치 부분집합만?).
+  - M2 1주일 wait 가 calendar comfort — synthetic load (강제 insight 3회 + ask 5회) 게이트 필요.
+  - M3 backfill 의 idempotency 가 자연키 (Conv × Scope × FactKey × Fingerprint) 기반인지 SERIAL id 기반인지 미정의 + embedding API 부분 실패 시 resume 전략 미명시.
+  - M3 의 embedding 저장 위치 schema 결정 부재 — `texts.embedding` (TextHash 별, 비용 최소) vs `fact_entries.embedding` (row 별, 비용 폭증) 결정 누락.
+  - M4 cutover rollback window 3단계 (직후 / M5 진입 전 / M5 cleanup 후) 명시 누락.
+  - M5 wait 2주일 동안의 active probe (`bin/kb-cutover-canary.sh`) 부재.
+- Section C (ANCHOR §3 invariant) — 보강 필요:
+  - `KbBackend` 추상화의 method signature catalog 미명시 — 단일 추상화가 아니라 4종 (`FactEntriesBackend` + `RagDocumentsBackend` + `RagObjectsBackend` + `TextsBackend`) 분할 가능성.
+  - "fact 기반 복구 시나리오 1건" → 6종 카탈로그 (RagDocs 누락 / RagObjs 누락 / Texts 누락 / ScopeKey common 외 / RagObjs category stale / fact_entries 다중 row 우선순위).
+  - transactional 약화 (cross-DB tx 불가) 명시 누락 — fact_entries 만 작성하고 rag_documents 가 빠지는 partial failure 의 정합 검증 미정의.
+  - "repair_from_fact path 진입 시 LLM 호출 0건" negative assertion 누락.
+- Section D (RBAC catalog) — Critical 보강 필요:
+  - 현재 RBAC catalog (`unit/feature-0003-agent-web-ui/src/app.py:325~412` 의 `PERMISSION_DEFINITIONS`) 가 정적 tuple + 동적 row union 의 hybrid 패턴. 정적 catalog 의 blindspot 은 **정의 자체가 안 바뀌어도 enforcement path 가 바뀌는 것** — 본 plan 의 정확한 사례.
+  - 현재 catalog 에 `kb.*` / `memory.*` 항목 0건 (grep 결과 확인) — KB 권한이 catalog 외부에 있음. Postgres 분리 후 connection pool 분리 → connection-level 권한이 새 enforcement layer.
+  - `agent_kb_rw` / `agent_kb_ro` Postgres role 신설 = 인증/인가 변경 → M1 위험도 Minor → Major 격상 + 사람 승인 필수.
+  - ADR-0023 (RBAC catalog 재정의) 작성 의무를 M4 cutover 전 게이트 항목에 명시 필요.
+  - audit log 의 cross-DB tx 약화 명시 필요 (`WebAuditEvents` 는 MySQL 유지).
+- Section E (Open Questions) — 보강 필요:
+  - #4 embedding cost 추정: outside-voice 자체 추정 USD 0.01~0.5 (현재 row 수 추정 시). plan 의 "USD <100" estimate 는 over-budgeted, 그러나 **row 수 측정 자체를 plan 이 하지 않음**.
+  - #6 ivfflat vs hnsw: KB row 수 ~수만 이하 → `ivfflat (lists=100, probes=10)` 충분. row 수 100K+ → `hnsw` 고려. 환경변수 toggle.
+  - 신규 #9 (비-KB JOIN audit), #10 (VIEW 정의), #11 (embedding 모델 vendor lock-in), #12 (latency baseline 측정), #13 (EXPLAIN ANALYZE 검증) 추가 필요.
+- Section F (잘못된 가정 / 누락) — Critical 보강 필요:
+  - 5종 KB row count 정확 측정 (M0 이전 또는 M0 산출에 포함).
+  - `make ask` 5종 시나리오의 latency p50/p99 baseline + EXPLAIN baseline.
+  - M4 cutover gate 에 latency 정량 회귀 임계 (예: "p99 latency 증가 50% 이내").
+  - `make ask` 5종 시나리오 구체 catalog (어떤 질문, 어떤 expected 답변) 명시.
+  - 정책 doc 갱신 목록 보강: `docs/ARCHITECTURE.md`, `docs/LEARNINGS.md`, `unit/feature-0002-agent-core/docs/FUNCTION.md §10` (외부 의존성에 "Postgres 16 + pgvector extension" 추가).
+  - dialect-specific 테스트 (`ON CONFLICT` 동작, `vector` 컬럼 INSERT, cosine similarity 결과) catalog.
+- PLAN-APPROVED 전 해소 필수 (11 Blocker — 본 entry §2.1.11 에서 반영 추적):
+  1. D-1 Sequencing 조건부 default (Sprint 4 schema 확인 분기).
+  2. M0 이전 baseline 측정 phase 추가 (row count + latency + EXPLAIN + 비-KB JOIN audit).
+  3. M2 검증 정합 정의 (fail rate 분모 + synthetic load).
+  4. M3 embedding 저장 schema 결정 (`texts.embedding` 권장).
+  5. M4 rollback window 3단계 명시.
+  6. M4 latency 정량 임계.
+  7. ANCHOR §3 invariant 시나리오 카탈로그 6종.
+  8. RBAC role 신설 위험도 격상 (M1: Minor → Major + 사람 승인).
+  9. ADR-0023 작성을 M4 cutover 전 게이트 명시.
+  10. `make ask` 5종 시나리오 구체 catalog 명시.
+  11. 정책 doc 갱신 목록 보강 (ARCHITECTURE / LEARNINGS / FUNCTION §10).
+- Nice-to-have (별 ADR / 별 cycle):
+  - D-3 dialect 변환 카탈로그
+  - M5.5 post-cleanup canary 1주일
+  - EXPLAIN ANALYZE 비교 자동화
+  - embedding 모델 vendor lock-in fallback
+  - transactional partial failure 정책
+- 위 11 Blocker 가 `TASK.md §2.1` 본문 + `§2.1.11` 반영 표에 갱신되면 PLAN-APPROVED 진행 권장. 그 전에는 plan 의 "Execute 진입 조건" 이 self-certified 위에 서 있어 마커 부여 보류 권장.
+
+## REV-20260520-0001
+- Date: 2026-05-20
+- TASK-Cycle: TASK-0015 (plan-review, Critical §12.3)
+- Decision: KB 정본 5종 (`AgentMemoryFacts` view + `AgentMemoryFactEntries` + `AgentMemoryTexts` + `AgentMemoryRagDocuments` + `AgentMemoryRagObjects`) 의 정본 위치를 현재 MySQL (`agent_memory` DB) 에서 별도 Postgres pgvector 인스턴스 (`agent_kb` DB) 로 이전하는 multi-cycle plan 정본을 `TASK.md §2.1` 에 작성한다. 본 cycle 의 deliverable 은 plan 정본 + outside-voice review + 사용자 PLAN-APPROVED 마커까지이며, 실제 코드·schema·데이터 변경은 phase M0~M5 가 각각 별 cycle 로 진행한다.
+- Trade-offs (3-D 결정 매트릭스 — `TASK.md §2.1.1` 참조):
+  - **D-1 Sequencing**: 권장 default 는 A (선행 M0~M2 + M3~M5 와 Sprint 4 병행). Sprint 4 (D RAG, PGVector 도입) 와 pgvector 인프라 공유로 도입 비용 1회. Alternative B (병행 시작) 는 schema 충돌 + rollback 매트릭스 폭발로 비권장. Alternative C (후행 — Sprint 4 우선) 는 outside-voice review 가 Sprint 4 의 D RAG schema 가 KB 5종보다 단순하다고 판정 시 전환 가능.
+  - **D-2 Topology**: 권장 default 는 A (단일 Postgres cluster + 별 database `agent_kb`). Sprint 4 의 D RAG 와 동일 인스턴스 공유. Alternative B (별 인스턴스) 는 운영 부담 2배로 본 plan 규모 대비 과대.
+  - **D-3 Module rewrite**: 권장 default 는 A (raw psycopg3 + pgvector extension). 7,500+ LOC 의 raw SQL 패턴 보존 + dialect 변환만 수행. Alternative B (SQLAlchemy ORM 전환) 는 별 ADR + 별 cycle 로 분리 (마이그레이션 + ORM 도입 동시 진행은 risk 폭발).
+- Risk:
+  - **Critical (§12.3)** — 본 plan 의 Execute 단계 (M4 cutover, M5 cleanup) 는 롤백 어려운 마이그레이션 + DROP TABLE (파괴적 데이터 변경) 포함. 사람 승인 필수.
+  - **외부 비용** — M3 backfill 의 embedding 호출 비용 (OpenAI `text-embedding-3-small`) 추정 USD <100. 초과 시 §12.1 별도 confirm.
+  - **ANCHOR §3 invariant** — fact-우선 복구 흐름 (insight.py 의 `_check_artifact_completeness` + `_repair_from_fact`) 이 새 storage 에서도 보존되어야 한다. `KbBackend` 추상화 인터페이스 (M2 도입) 뒤에서 동일 동작 검증 필수. M2 / M4 의 검증 게이트에 명시 항목 포함.
+  - **정책 doc 변경** — AGENTS.md §11.3·§14.1·§15.6·§15.7 갱신 동반. META path (§18.4) 이므로 phase 별 META mode commit 으로 분리.
+  - **RBAC catalog blindspot** — 사용자 메모리 `feedback_outside_voice_for_rbac.md` 정책에 따라 정적 catalog 의 dynamic grant blindspot 외부 검증 필수. `kb.read.any` / `kb.write.any` 의 storage 이전 후 재정의는 별 ADR (`ADR-0023` 후보) 로 분리.
+- Alternatives 검토 후 폐기:
+  - **MySQL FULLTEXT + LIKE 만으로 §15.6 §4) D0~D3 라우팅 구현 강화** — coverage 기반 검색은 LIKE 패턴 매칭으로는 의미 거리 표현 불가. embedding similarity 가 자연 대응. 폐기 사유: 검색 정확도 천장이 낮음.
+  - **MySQL 8.0 의 `JSON_VALUE` + 자체 cosine similarity 함수 구현** — pure-MySQL 으로 vector similarity 시뮬레이션 가능하나 index 가 없어 full scan. 대규모 데이터에서 latency 폭발. 폐기.
+  - **모든 KB 정본을 즉시 cutover (dual-write phase 생략)** — rollback path 없음. 폐기 (Critical risk 무대응).
+- Outside-voice review 호출 사유 (사용자 명시 + 메모리 정책):
+  - 사용자 메시지: "RBAC catalog 신설 가능성 (예: `kb.read.any`·`kb.write.any` 의 storage 이전 후 재정의) 과 정책 §11.3 변경 동반으로 Codex 또는 subagent outside-voice review 가 필수입니다."
+  - 메모리 `feedback_outside_voice_for_rbac.md`: "권한 모델 변경 plan 은 Codex/subagent 외부 시각 항상 호출 (정적 catalog blindspot 대응)"
+  - 호출 방식: 1차 Codex `/codex` consult — D-1/D-2/D-3 결정 + §2.1.5 RBAC 3개 항목 + §2.1.7 Open Questions 8개 검증.
+  - 2차 (Codex 가 RBAC blindspot 발견 시): Plan subagent 호출 — dynamic grant 흐름 + RBAC catalog 재정의 검토.
+- Decision authority: 본 plan 의 PLAN-APPROVED 마커는 **사용자** 가 부여한다 (§7.1 Critical 분기). AI 는 plan 작성 + outside-voice review 호출 + 사용자에게 plan 제시까지만 수행.
+- Next-cycle plan: PLAN-APPROVED 후 M0 cycle (별 worktree `ai/claude/0002/kb-pg-m0`) → M1 → M2 → M3 → M4 (사람 confirm) → M5 (사람 confirm) 순서. 각 cycle 의 plan 은 `TASK.md §1.2` (cycle-specific) 에 별도 작성.
+
 ## REV-20260515-0003
 - Date: 2026-05-15
 - Decision: Account scope의 `ProductId IS NULL` 프롬프트도 Role scope 와 동일하게 fallback 이 아니라 항상 누적되는 공통 지침으로 해석한다. 전체 적용 순서는 `Product context → Role guidance → Account preferences → 현재 user message` 로 유지한다.

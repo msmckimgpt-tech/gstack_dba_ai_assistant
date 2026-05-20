@@ -8,6 +8,29 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260520-0001
+- Date: 2026-05-20
+- TASK-Cycle: TASK-0015 (plan-review, Critical §12.3)
+- Summary: KB 정본 5종 (`AgentMemoryFacts` view + `FactEntries` + `Texts` + `RagDocuments` + `RagObjects`) MySQL → Postgres pgvector 마이그레이션 multi-cycle plan 정본을 `TASK.md §2.1` 에 작성. 본 cycle 자체는 plan-작성 cycle 이며 코드·schema·데이터 변경 없음. doc 4종 (TASK, REVIEW, MODIFY, REPORT) 만 갱신.
+- Worktree: `ai/claude/0002/pgvector-migration-plan` 격리 (§13.2.7 F0 통과). path: `<wrapper>/.worktrees/0002-pgvector-migration-plan/`. 사용자 결정: "현재 세션에서 신규 Worktree를 생성 및 진입하되, 해당 worktree에서 plan 작성 또한 진행합니다."
+- Files:
+  - `unit/feature-0002-agent-core/docs/TASK.md`: §1.1 cycle 등록, §1.2 본 plan-작성 plan, §2.1 신규 마이그레이션 plan (M0~M5 phase + 결정 매트릭스 + 영향 파일 + 검증 체크리스트 + Open Questions), §2.2 기존 plan archive, §3 Task Queue TASK-0015 추가, §4 In Progress, §5 Blocked, §6 Done, §7 Next Action, §8 Completion Checklist.
+  - `unit/feature-0002-agent-core/docs/REVIEW.md`: `REV-20260520-0001` append (3-D 결정 + trade-off + alternatives + outside-voice 호출 사유).
+  - `unit/feature-0002-agent-core/docs/MODIFY.md`: 본 entry.
+  - `unit/feature-0002-agent-core/docs/REPORT.md`: §4 Open Issues + §7 Human Attention Needed 에 plan-review 상태 표면화 + cutover 시 사람 confirm 필요 항목 명시.
+- Plan 의 Execute 영향 (참고 — 본 cycle 에서는 변경 없음, 별 cycle 진행):
+  - Source: `modules/{memory,knowledge,insight,schema,planner,utils}.py`, `modules/db.py`, `agent_core.py` (7,500+ LOC raw SQL dialect 변환)
+  - Infra: `docker-compose.yml` (postgres 서비스 추가), `.env.example` (신규 `AGENT_KB_PG_*` / `AGENT_KB_READ_BACKEND` / `AGENT_KB_DUAL_WRITE` / `AGENT_KB_EMBEDDING_*` / `AGENT_KB_ANN_*`)
+  - Policy (META path): `AGENTS.md §11.3·§14.1·§15.6·§15.7`, `FUNCTION.md §10`, `INSIGHTS.md §4`, `ANCHOR.md §1·§3`, `docs/{DECISIONS,CONVENTIONS,SECURITY,STATUS,CODEBASE_MAP}.md`
+  - Tests: `tests/test_pgvector_migration.py` (신규), `tests/test_compose_system_prompt.py` (회귀)
+  - Tooling: `bin/{kb-backfill,kb-dual-write-verify,kb-cutover-readiness,kb-schema-compare,kb-pg-healthcheck}.sh` (신규), `unit/feature-0002-agent-core/src/scripts/agent_kb_schema.sql` (신규)
+- Verification (본 cycle):
+  - 본 cycle 의 deliverable 은 doc 변경만. 코드 검증 불요.
+  - outside-voice review (Plan subagent, Software architect agent) ✓ 완료 — `REV-20260520-0002`. Verdict **NEEDS-TWEAK** + 11 Blocker + 5 Nice-to-have. §2.1 본문 + §2.1.11 추적 표에 반영 완료.
+  - 사용자 PLAN-APPROVED 마커 ✓ 부여 (2026-05-20 by ms.mckim.gpt@gmail.com) — TASK.md §2.1 직후의 `<!-- PLAN-APPROVED -->` 마커 + §1.2 status `plan-approved` + §8 Completion Checklist 갱신.
+  - `bin/verify-completion.sh --pre-commit feature-0002-agent-core` — commit 직전 호출 (PLAN-APPROVED 직후 자동 진행).
+  - 사용자 결정 (2026-05-20): "즉시 자동 마커 추가 + commit/push" — verify-completion PASS 시 본 cycle commit + branch push + main ff-merge 자동 진행 (전역 사용자 정책 + AGENTS.md §16.5 의 BLOCKED 없음 + Critical/Major 승인 대기 없음 조건 충족).
+
 ## CHG-20260515-0003
 - Date: 2026-05-15
 - Summary: TASK-0014 (REQ-20260515-0003) Account scope 시스템 프롬프트도 `전 Product 공통 + Product 전용` 누적 방식으로 정정하고, 최종 user request 가 Product/Role/Account 지침 뒤에 보존되는 것을 테스트로 고정.
