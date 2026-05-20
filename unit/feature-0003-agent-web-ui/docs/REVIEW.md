@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0014 [SKIPPED:multi-phase-plan-approved]
+- Date: 2026-05-19
+- Decision: TASK-0073 Phase A2 (REQ-20260519-0001, **Critical** §12.3) — `WebAccountActivity` (TASK-0072) 기존 row 흡수 migration helper + `_log_search_activity` dual write wrap. legacy table 본 cycle DROP 안 함 (별 cycle backup 후).
+- Reason: Codex outside voice C2 minimum-fix (TASK-0072 schema 발견 — 직전 검토 보고가 놓친 결손). plan 본문 명시 — "기존 row → WebAuditEvents transform + `_log_search_activity` transparent wrap (signature 보존, caller 변경 0)". dual source 일시 공존이 data 보존 우선 + 별 cycle backup 검증 후 DROP 안전.
+- Alt 거부:
+  - **legacy table 즉시 DROP**: backup 검증 전 DROP 시 audit trail 손실 risk. plan 명시 "data 보존" 위배.
+  - **single write (legacy INSERT 제거, dispatcher only)**: legacy table 이 정합 상태 검증 전이라 dual source 비교 검증 불가. 별 cycle 까지 dual 유지가 안전.
+  - **migration on demand (별 manual script)**: catchup 패턴 (TASK-0063) 답습 못 함. fast/slow path 양쪽 hydrate 가 zero-touch 정합.
+- Risks: dual write 시 동일 audit event 가 두 row — search 통계 double count. 본 cycle frontend (Phase C) 가 WebAuditEvents 만 조회라 UX 영향 0. JSON_OBJECT 가 MySQL 8.0+ 한정 — `docker-compose.yml` MySQL 8.0 가정 (§15.4) 정합. migration RequestId marker 가 64 char limit 안 (`account-activity:` 17 + bigint ≤ 20 = ≤ 37 char) 안전.
+- 미해결 followup: 별 cycle TASK 등재 — `WebAccountActivity` data backup → DROP table → `_log_search_activity` mirror 본문에서 legacy INSERT 제거 → search 통계 single source 정합화. Phase B test (`tests/test_audit_migration.py`) 가 idempotency 검증 (두 번 호출 시 두 번째 INSERT 0 row).
+- panel: SKIPPED:multi-phase-plan-approved — Codex outside voice C2 가 plan 단계의 minimum-fix 로 이미 lock-in. plan 본문이 transform SQL signature 명시 + idempotency 요구. 본 phase 단위 commit 마다 panel 재호출은 cargo-cult (REV-20260519-0013 의 reasoning 답습).
+- Trace: REQ-20260519-0001 → TASK-0073 Phase A2 → CHG-20260519-0018 → REV-20260519-0014. Codex outside voice C2 minimum-fix lock-in.
+
 ## REV-20260519-0013 [SKIPPED:multi-phase-plan-approved]
 - Date: 2026-05-19
 - Decision: TASK-0073 Phase A1 (REQ-20260519-0001, **Critical** §12.3) — audit dispatcher `record_audit_event()` + `AGENT_AUDIT_ENABLED` prod startup fail-closed gate + verify-completion check_11 SPOF guard 구현. CEO review 9 decision · Codex outside voice 14 findings + 5 minimum-fix · Eng review E6 (explicit dispatcher) / E7 (SPOF mitigation) 의 in-cycle lock-in.

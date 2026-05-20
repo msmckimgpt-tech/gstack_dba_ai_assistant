@@ -2489,8 +2489,12 @@ def _log_search_activity(
 ) -> None:
     """REQ-20260518-0010 (TASK-0072): cross-account body search audit. PIPA §29.
 
-    query 평문 저장 금지 — SHA-256 hex 만 저장. 실패는 silent (audit log 가
-    main flow 를 차단하지 않도록). INSERT 실패 시 stderr 로 추적 가능하게.
+    TASK-0073 Phase A2 흡수: signature transparent 보존, 본문은 dual write —
+    (1) 기존 `WebAccountActivity` INSERT 유지 (data 보존, 별 cycle 에서 DROP),
+    (2) 새 `record_audit_event` dispatcher 호출 추가 (WebAuditEvents 통합).
+    두 source 모두 실패해도 main flow 진행 (user endpoint fail-open 패턴).
+
+    query 평문 저장 금지 — SHA-256 hex 만 저장. INSERT 실패 시 stderr 로 추적.
     """
     import hashlib
     query_hash: str | None = None
@@ -2498,6 +2502,7 @@ def _log_search_activity(
         normalized = query.strip()
         if normalized:
             query_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    # (1) legacy WebAccountActivity INSERT (dual write, 별 cycle 에서 DROP table 후 제거).
     cur = conn.cursor()
     try:
         cur.execute(
@@ -2524,6 +2529,36 @@ def _log_search_activity(
             pass
     finally:
         cur.close()
+    # (2) TASK-0073 Phase A2: new dispatcher mirror — best-effort, signature 무영향.
+    try:
+        record_audit_event(
+            conn,
+            actor={
+                "account_id": int(account_id),
+                "actor_type": "account",
+            },
+            action=str(action)[:64],
+            resource_type="conversation",
+            resource_id=str(target_owner_id) if target_owner_id is not None else None,
+            change_json={
+                "query_hash": query_hash,
+                "matched_count": int(matched_count),
+                "_legacy_source": "WebAccountActivity",
+            },
+            target_account_id=int(target_owner_id) if target_owner_id is not None else None,
+        )
+        try:
+            conn.commit()
+        except Exception:
+            pass
+    except Exception as exc:
+        try:
+            import sys as _sys
+            _sys.stderr.write(
+                f"[TASK-0073 Phase A2] dispatcher mirror failed (legacy WebAccountActivity OK): {exc}\n"
+            )
+        except Exception:
+            pass
 
 
 def _ensure_web_audit_events_schema(conn) -> None:
@@ -2722,6 +2757,103 @@ def _build_actor_from_request(
     return actor
 
 
+def _migrate_web_account_activity_to_audit(conn) -> int:
+    """REQ-20260519-0001 (TASK-0073 Phase A2): WebAccountActivity 기존 row 흡수.
+
+    TASK-0072 의 cross-account body search audit row 를 신규 `WebAuditEvents` 로
+    transform 한다. idempotent — `RequestId = CONCAT('account-activity:', waa.Id)`
+    marker 로 두 번째 호출 시 NOT EXISTS subquery 가 skip.
+
+    ChangeJson 에 `_migrated_from='WebAccountActivity'` + `_original_id=<id>` +
+    `query_hash` + `matched_count` 보존. RemoteAddr / UserAgent NULL (TASK-0072
+    schema 에는 부재). OccurredAt = waa.CreatedAt (시간 정합).
+
+    기존 `WebAccountActivity` 테이블 자체는 본 cycle 에서 DROP 안 함 — 별 cycle
+    backup 후 DROP. dual source 일시 공존.
+
+    `_ensure_seed_catchup` (fast path) 와 `_ensure_web_tables` (slow path) 양쪽
+    호출 → 신규 / 기존 배포 모두 자동 흡수. 실패는 stderr only (main flow 차단 X).
+
+    Returns: 새로 INSERT 된 row 수 (기존 marker 있는 row 는 skip).
+    """
+    cur = conn.cursor()
+    try:
+        # Pre-check: legacy table 존재 여부 (신규 배포에 부재해도 graceful skip).
+        cur.execute("SHOW TABLES LIKE 'WebAccountActivity'")
+        if not cur.fetchone():
+            return 0
+    except Exception:
+        return 0
+    finally:
+        cur.close()
+
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO WebAuditEvents
+              (ActorAccountId, ActorRoleId, ActorType, TargetAccountId, SessionId,
+               ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields,
+               RemoteAddr, UserAgent, RequestId, OccurredAt)
+            SELECT
+              waa.AccountId,
+              NULL,
+              'account',
+              waa.TargetOwnerId,
+              NULL,
+              waa.Action,
+              'conversation',
+              CASE WHEN waa.TargetOwnerId IS NULL THEN NULL
+                   ELSE CAST(waa.TargetOwnerId AS CHAR) END,
+              JSON_OBJECT(
+                'query_hash', waa.QueryHash,
+                'matched_count', waa.MatchedCount,
+                '_migrated_from', 'WebAccountActivity',
+                '_original_id', waa.Id
+              ),
+              NULL,
+              NULL,
+              NULL,
+              CONCAT('account-activity:', waa.Id),
+              waa.CreatedAt
+            FROM WebAccountActivity waa
+            WHERE NOT EXISTS (
+              SELECT 1 FROM WebAuditEvents wae
+              WHERE wae.RequestId = CONCAT('account-activity:', waa.Id)
+            )
+            """
+        )
+        inserted = cur.rowcount or 0
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        if inserted > 0:
+            try:
+                import sys as _sys
+                _sys.stderr.write(
+                    f"[TASK-0073 Phase A2] migrated {inserted} WebAccountActivity row(s) → WebAuditEvents\n"
+                )
+            except Exception:
+                pass
+        return int(inserted)
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        try:
+            import sys as _sys
+            _sys.stderr.write(
+                f"[TASK-0073 Phase A2] migration failed (legacy table preserved): {exc}\n"
+            )
+        except Exception:
+            pass
+        return 0
+    finally:
+        cur.close()
+
+
 def _ensure_must_change_password_schema(conn) -> None:
     """TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0092): fast-path 재기동에서도
     MustChangePassword 컬럼이 존재하도록 idempotent ALTER. _ensure_web_tables 와 동일 SQL."""
@@ -2763,6 +2895,12 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_web_account_activity_schema(conn)
     # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 fast-path 보정.
     _ensure_web_audit_events_schema(conn)
+    # REQ-20260519-0001 (TASK-0073, Phase A2): WebAccountActivity 기존 row → WebAuditEvents 흡수
+    # (idempotent — RequestId='account-activity:<id>' marker). 기존 table 자체는 별 cycle 까지 보존.
+    try:
+        _migrate_web_account_activity_to_audit(conn)
+    except Exception:
+        pass
     _migration_added = _ensure_product_access_permissions(conn)
     if _migration_added > 0:
         try:
@@ -2908,6 +3046,11 @@ def _ensure_web_tables():
         _ensure_web_account_activity_schema(conn)
         # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 보장 (slow path).
         _ensure_web_audit_events_schema(conn)
+        # REQ-20260519-0001 (TASK-0073, Phase A2): WebAccountActivity 기존 row 흡수 (slow path).
+        try:
+            _migrate_web_account_activity_to_audit(conn)
+        except Exception:
+            pass
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS WebRoles (

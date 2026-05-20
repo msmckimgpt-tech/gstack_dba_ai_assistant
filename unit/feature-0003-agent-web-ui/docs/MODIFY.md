@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0018
+- Date: 2026-05-19
+- Summary: TASK-0073 Phase A2 (REQ-20260519-0001, **Critical** §12.3) — `WebAccountActivity` (TASK-0072) 기존 row 흡수 + migration helper + `_log_search_activity` dual write wrap. Codex outside voice C2 minimum-fix (legacy table 발견 + transparent wrap). 기존 table 자체는 본 cycle DROP 안 함 (별 cycle backup 후 DROP).
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/app.py`
+    - `_log_search_activity()` 본문 변경 — signature 무변경 (6 keyword args 보존, caller 변경 0). 본문은 dual write: (1) 기존 `WebAccountActivity` INSERT + commit, (2) 새 `record_audit_event(conn, actor={account_id, actor_type:'account'}, action, resource_type='conversation', resource_id=target_owner_id, change_json={query_hash, matched_count, _legacy_source:'WebAccountActivity'}, target_account_id=target_owner_id)` mirror best-effort. 두 source 모두 실패해도 main flow 차단 X.
+    - 신규 `_migrate_web_account_activity_to_audit(conn)` helper — 기존 row → WebAuditEvents transform. SQL: `INSERT INTO WebAuditEvents (...) SELECT waa.AccountId, NULL, 'account', waa.TargetOwnerId, NULL, waa.Action, 'conversation', CAST(waa.TargetOwnerId AS CHAR), JSON_OBJECT(...), NULL, NULL, NULL, CONCAT('account-activity:', waa.Id), waa.CreatedAt FROM WebAccountActivity waa WHERE NOT EXISTS (SELECT 1 FROM WebAuditEvents wae WHERE wae.RequestId = CONCAT('account-activity:', waa.Id))`. RequestId marker 로 idempotent. legacy table 부재 시 SHOW TABLES check 후 graceful skip. 성공 시 stderr `migrated N WebAccountActivity row(s) → WebAuditEvents` log.
+    - `_ensure_seed_catchup()` 에 `_migrate_web_account_activity_to_audit(conn)` 호출 추가 (Phase A0 `_ensure_web_audit_events_schema` 직후). fast path.
+    - `_ensure_web_tables()` slow path 에도 동일 migration 호출 추가 — `WebRoles CREATE TABLE` 직전.
+- Verification: `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS. dispatcher (Phase A1) 의 `record_audit_event` 호출이 `_log_search_activity` mirror 에서 첫 실 사용 — INSERT path 의 정상 동작 확인 본 cycle 의 `make web` 재배포 + browser smoke (Phase E) 에서 검증.
+- Risks: dual write 시 동일 audit event 가 두 row (legacy + new) — search 통계 / billing 의 double count 위험. 본 cycle 에서 admin UI 는 WebAuditEvents 만 조회 (Phase C) 라 frontend 영향 0. 별 cycle DROP table 시 분리. migration helper 의 `JSON_OBJECT` 가 MySQL 8.0 한정 — repo 의 docker-compose.yml MySQL 8.0 가정 (§15.4) 정합.
+- Trace: REQ-20260519-0001 → TASK-0073 Phase A2 → CHG-20260519-0018 → REV-20260519-0014. Codex C2 (WebAccountActivity 발견) 최소 fix.
+
 ## CHG-20260519-0017
 - Date: 2026-05-19
 - Summary: TASK-0073 Phase A1 (REQ-20260519-0001, **Critical** §12.3) — audit dispatcher `record_audit_event()` + `AGENT_AUDIT_ENABLED` prod startup fail-closed gate + verify-completion check_11_audit_dispatcher SPOF guard. CEO review · Codex outside voice C5 minimum-fix · Eng review E6 (explicit dispatcher) / E7 (SPOF mitigation) 흡수.
