@@ -9,6 +9,37 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+
+**2026-05-20 TASK-0093 완료 (Phase A~F 일괄) — verify-completion check_12 audit endpoint routing 정적 검사 신설** (CHG-20260520-0003, REV-20260520-0003, REQ-20260520-0008, **Minor** §12.3 — TASK-0073 Phase E hotfix CHG-20260520-0001 의 routing 회귀 fragility 보강. Codex outside voice 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용).
+
+**본 cycle Phase 별 변경 요약**:
+- **Phase A** (`bin/verify-completion.sh` 갱신): `check_12_audit_endpoint_routing()` + `_check_audit_routing_order()` pure helper split (line ~936-1010). `main()` 의 line 1123 에 호출 추가. footer 의 "9 checks" → "10 checks: 7 pilot + worktree binding + repo immutability + audit endpoint routing" (line 1126·1129). META mode footer 는 그대로 (check_12 는 feature-specific). `bash -n` syntax PASS.
+- **Phase B** (production positive): production app.py 호출 → `CHECK#12 PASS audit endpoint routing order`. line 9522 max-static < line 9732 detail.
+- **Phase C** (5 fixture negative test, production app.py 미수정):
+  - `valid.py` (정합 ordering) → PASS
+  - `wrong_order.py` (event_id BEFORE static siblings) → FAIL "ordering" + line number hint
+  - `no_detail.py` (detail 부재) → FAIL "detail endpoint missing — possible route removal or refactor"
+  - `no_siblings.py` (정적 GET sibling 부재) → FAIL "no static GET siblings — audit route layout changed"
+  - `refactored.py` (APIRouter prefix) → FAIL "routes not found in expected form — manual review required"
+- **Phase D** (5 other-feature SKIP + 1 missing-app structural FAIL): feature-0001/0002/0004/0005/0006 호출 → rc=0, no output. target feature + app.py 부재 → FAIL "expected app.py at <path> but file is missing".
+- **Phase E** (docs 5 갱신): 본 REPORT.md + TASK.md §2.2 + MODIFY.md CHG-20260520-0003 + REVIEW.md REV-20260520-0003 + TEST.md.
+- **Phase F** (최종 verify-completion + commit): `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` META mode PASS (check_12 자동 skip 정합) + 사용자 명시 commit confirm.
+
+**Outside voice 흡수 5 findings 결정**:
+- C1 SKIP→FAIL structural (회귀 방지 게이트 의도 정합)
+- C2 grep 패턴 fragility (C1 통합, AST 파서 미도입 — Minor scope)
+- C3 `/purge` method-aware mismatch → sibling list 자동 제외
+- C4 Inline 4-path → auto-discovery (`@app.get("/api/admin/audits/<non-{>")` 패턴)
+- C5 Production app.py 임시 이동 risk → temp fixture + helper split
+
+**in-cycle fix (Phase C debug)**: `set -euo pipefail` + grep no-match (exit 1) 시 `|| true` fallback 처리. log_check 호출 보장.
+
+**Git 동기화 결과** (§16.5 Step 6): `ai/claude/0086/audit-followup` worktree 의 단일 commit. 본 cycle 의 base 는 f41e4f8 (CHG-20260520-0002 backlog staging). 사용자 명시 confirm 후 commit + push 진행. 후속 cycle (TASK-0086~0092 7 entries) 은 별 cycle 별 별 PLAN-APPROVED.
+
+---
+
+## 1.archived TASK-0073 Summary (2026-05-19~20)
+
 **2026-05-19 TASK-0073 진행 중 (Phase A1~D 완료, Phase E 컨테이너 검증 + 최종 commit) — 모든 계정 행위 audit subsystem 도입** (CHG-20260519-0017~0024, REV-20260519-0013~0020, REQ-20260519-0001, **Critical** §12.3 — 인증·인가 + PII 수집 + RBAC 4 신규 + Tx split + dispatcher SPOF + Codex outside voice 14 findings + Eng review E1-E9 lock-in).
 
 **Phase 별 변경 요약**:

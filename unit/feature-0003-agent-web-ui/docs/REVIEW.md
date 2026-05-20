@@ -8,6 +8,33 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260520-0003 [AGENT-TEAM:codex-outside-voice]
+- Date: 2026-05-20
+- Decision: TASK-0093 (REQ-20260520-0008, **Minor** §12.3 — verify-completion check_12 audit endpoint routing 정적 검사) plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, ~5분, 132,668 tokens) → 5 findings + 2 minimum-fix → v2 redesign 흡수 → 사용자 confirm. Phase A~F 본 cycle 진행 완료.
+- Reason: TASK-0073 Phase E hotfix (CHG-20260520-0001) 의 routing 회귀 fragility — `/{event_id}` 가 정적 sibling 위에 정의되면 FastAPI/starlette linear match 가 422 int_parsing 발생. 본 cycle 은 그 회귀를 정적 grep 으로 영구 차단. 사용자 정책 (`feedback_outside_voice_for_rbac` user memory) 적용 — RBAC catalog 변경 없음에도 audit 표면 회귀 방어 정책으로 outside voice 호출. Minor 등급이지만 보안 표면 자체 점검 가치 인정.
+- Codex outside voice 5 findings 흡수 결정:
+  - **C1 — SKIP 정책 오류**: event_id 또는 sibling 부재 시 silent PASS 는 "구조 변화 시 manual review 강제" 의도 모순. APIRouter 분리·prefix 변경·route 삭제가 silent pass. **ACCEPT** → SKIP 정책 변경 (feature_id != feature-0003 만 SKIP. 그 외 분기 모두 FAIL "manual review required").
+  - **C2 — grep 패턴 fragility**: multi-line decorator / single quote / @router.get / prefix router / trailing slash false-negative 가능. **ACCEPT (C1 과 통합)** → structural change 미검출 시 FAIL 처리로 보강. AST 파서까지는 안 감 (Minor scope).
+  - **C3 — `/purge` method-aware mismatch**: POST 라 GET `/{event_id}` 와 collision 0. FAIL hint 의 "purge would route" 표현 부정확. **ACCEPT** → `/purge` 는 sibling list 에서 자동 제외 (auto-discovery 패턴이 `@app.get(...)` 만 매치).
+  - **C4 — Inline 4 hardcoded sibling list**: new static GET (e.g., `/stats`) 추가 시 stale. **ACCEPT** → auto-discovery 패턴 (`@app.get("/api/admin/audits/<non-{>")` 자동 grep 수집).
+  - **C5 — Negative test 의 production app.py 임시 이동 위험**: dirty worktree / hook / 중간 실패. **ACCEPT** → temp fixture 5 scenario + helper split (`_check_audit_routing_order(app_path)` pure helper).
+- 추가 흡수:
+  - footer line "9 checks" → "10 checks: 7 pilot + worktree binding + repo immutability + audit endpoint routing" 명시화 (Codex 직접 권장).
+  - in-cycle fix (Phase C debug): `set -euo pipefail` + grep no-match (exit 1) 시 `|| true` fallback 처리. log_check 호출 보장.
+- Alt 거부:
+  - **v1 단독 진행 (outside voice 흡수 X)**: 5 findings 모두 정합 — SKIP 정책 오류는 회귀 방지 게이트 의미 손상. v2 redesign 필수.
+  - **C1 완화 (구조 변화 시 WARN exit 0 + stderr 경고)**: 일반 audit refactor 마다 manual review 강제 부담 완화 가능하나, "회귀 방지 게이트" 의도 약화. 사용자 v2 단독 진행 confirm 시 거부.
+  - **C4 완화 (inline 3 GET sibling + NOTE comment)**: 단순성 vs new sibling 추가 시 수동 갱신 신뢰. 사용자 v2 단독 진행 confirm 시 auto-discovery 채택.
+  - **별 worktree 분기 (ai/claude/0093/check-12)**: branch 이름 task-id 1:1 정합 vs Minor 작업의 worktree spawn overhead. 사용자 본 worktree 유지 confirm.
+- Risks: feature-0003 hardcode 는 의도적 — 일반화는 별 cycle. structural change LOUD FAIL 정책은 audit feature refactor 마다 check_12 update 동반 필요 (의도된 강제 행위). multi-line decorator / @router.get 같은 FastAPI 변형은 structural FAIL 로 잡힘 (false-positive 아님 — LOUD fail 의도). AST 파서 도입은 별 cycle (다른 feature 에 동일 패턴 발견 시).
+- 미해결 followup: 본 cycle 결과의 후속 작업 — 별 task 별 별 cycle.
+  - TASK-0086 (Major, WebAccountActivity DROP) — 별 cycle.
+  - TASK-0087 (Major, 외부 LAN trust) — feature-0006 위임 별 cycle.
+  - TASK-0088~0091 (Minor 4) — 별 cycle.
+  - TASK-0092 (Minor, AGENT_AUDIT_ENABLED=0+prod fail-closed 검증) — Phase E 위임 항목 별 cycle.
+- panel: AGENT-TEAM:codex-outside-voice — Codex consult mode 외부 voice review 실 수행. 본 cycle 의 verification panel.
+- Trace: REQ-20260520-0008 → TASK-0093 → CHG-20260520-0003 → REV-20260520-0003. **TASK-0093 cycle 종료.**
+
 ## REV-20260520-0002 [SKIPPED:backlog-staging]
 - Date: 2026-05-20
 - Decision: TASK-0073 후속 cycle backlog 8 entries (TASK-0086 ~ TASK-0093) 를 `ai/claude/0086/audit-followup` worktree 의 단일 commit 으로 lock-in. 본 worktree 는 다음 세션의 진입점.

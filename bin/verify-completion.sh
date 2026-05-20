@@ -933,6 +933,97 @@ check_11_repo_immutability() {
   return 1
 }
 
+# Check #12 — feature-0003-agent-web-ui audit endpoint routing order.
+# TASK-0073 Phase E hotfix (CHG-20260520-0001) 의 routing 회귀 fragility 보강:
+# `/api/admin/audits/{event_id}` 가 정적 GET sibling (export.csv / actors /
+# resources) 보다 먼저 정의되면 FastAPI/starlette linear match 가 sibling 을
+# `event_id` int path param 으로 capture → 422 int_parsing. POST sibling
+# (`/purge`) 은 method-aware 라 collision 없음.
+#
+# SKIP: feature_id != feature-0003-agent-web-ui (다른 feature 무관).
+# FAIL: target feature 인데 audit route layout 변화 (app.py 부재, detail
+#       endpoint 부재, 정적 GET sibling 부재). silent pass 차단 = manual
+#       review 강제.
+# FAIL: detail endpoint line < 정적 GET sibling max line (실제 ordering 위반).
+# PASS: detail line > 정적 GET sibling max line.
+#
+# 정적 GET sibling list 는 inline hardcoded 가 아니라 자동 검출
+# (`@app.get("/api/admin/audits/<non-{>")` 패턴). 새 GET sibling 추가 시
+# 자동 catch.
+check_12_audit_endpoint_routing() {
+  local fdir="$1"
+  local feature_id="$2"
+  local app_path="${fdir}/src/app.py"
+
+  [ "$feature_id" = "feature-0003-agent-web-ui" ] || return 0
+
+  if [ ! -f "$app_path" ]; then
+    log_check 12 FAIL "audit endpoint routing order" \
+      "expected app.py at ${app_path} but file is missing — audit feature removed or restructured"
+    return 1
+  fi
+
+  _check_audit_routing_order "$app_path"
+}
+
+# Pure helper — file path 받아 routing order 검사. Phase C fixture 테스트
+# 진입점. production app.py 외에도 임의 fixture 파일로 호출 가능.
+#
+# `set -euo pipefail` 환경이라 grep no-match (exit 1) 시 `|| true` 로 fallback.
+_check_audit_routing_order() {
+  local app_path="$1"
+
+  local event_id_raw
+  event_id_raw=$(grep -nE '^@app\.get\("/api/admin/audits/\{event_id\}"' "$app_path" || true)
+  local event_id_line=""
+  if [ -n "$event_id_raw" ]; then
+    event_id_line=$(printf '%s\n' "$event_id_raw" | head -1 | cut -d: -f1)
+  fi
+
+  local sibling_raw
+  sibling_raw=$(grep -nE '^@app\.get\("/api/admin/audits/[^"{]+"' "$app_path" || true)
+
+  local max_static_line=0 worst_sibling=""
+  local entry line path
+  if [ -n "$sibling_raw" ]; then
+    while IFS= read -r entry; do
+      [ -n "$entry" ] || continue
+      line="${entry%%:*}"
+      path=$(printf '%s' "$entry" \
+        | sed -nE 's|^[0-9]+:@app\.get\("(/api/admin/audits/[^"{]+)".*|\1|p')
+      [ -n "$path" ] || continue
+      if [ "$line" -gt "$max_static_line" ]; then
+        max_static_line="$line"
+        worst_sibling="$path"
+      fi
+    done <<<"$sibling_raw"
+  fi
+
+  if [ -z "$event_id_line" ] && [ "$max_static_line" -eq 0 ]; then
+    log_check 12 FAIL "audit endpoint routing order" \
+      "audit routes not found in expected '@app.get(\"/api/admin/audits/...\")' form. APIRouter split, prefix change, or route removal detected — manual review of routing order required"
+    return 1
+  fi
+  if [ -z "$event_id_line" ]; then
+    log_check 12 FAIL "audit endpoint routing order" \
+      "static audit GET sibling(s) detected but '/{event_id}' detail endpoint missing — possible route removal or refactor"
+    return 1
+  fi
+  if [ "$max_static_line" -eq 0 ]; then
+    log_check 12 FAIL "audit endpoint routing order" \
+      "'/{event_id}' detail endpoint detected but no static GET siblings — audit route layout changed"
+    return 1
+  fi
+
+  if [ "$event_id_line" -gt "$max_static_line" ]; then
+    log_check 12 PASS "audit endpoint routing order"
+    return 0
+  fi
+  log_check 12 FAIL "audit endpoint routing order" \
+    "'/api/admin/audits/{event_id}' (line ${event_id_line}) precedes static GET sibling '${worst_sibling}' (line ${max_static_line}). FastAPI/starlette linear match would route '${worst_sibling}' to '{event_id}' (422 int_parsing). Move '{event_id}' definition after all static GET siblings"
+  return 1
+}
+
 # -----------------------------------------------------------------------------
 # Main dispatch
 # -----------------------------------------------------------------------------
@@ -1039,12 +1130,13 @@ main() {
   check_7_anchor_4 "$fdir" || failed=$((failed + 1))
   check_8_unstaged_residual "$effective_mode" || failed=$((failed + 1))
   check_9_review_entry "$effective_mode" "$feature_id" || failed=$((failed + 1))
+  check_12_audit_endpoint_routing "$fdir" "$feature_id" || failed=$((failed + 1))
 
   if [ "$failed" -eq 0 ]; then
-    printf '\nverify-completion: PASS (all 9 checks: 7 pilot + worktree binding + repo immutability)\n' >&2
+    printf '\nverify-completion: PASS (all 10 checks: 7 pilot + worktree binding + repo immutability + audit endpoint routing)\n' >&2
     exit 0
   else
-    printf '\nverify-completion: FAIL (%d of 9 checks failed)\n' "$failed" >&2
+    printf '\nverify-completion: FAIL (%d of 10 checks failed)\n' "$failed" >&2
     exit 1
   fi
 }

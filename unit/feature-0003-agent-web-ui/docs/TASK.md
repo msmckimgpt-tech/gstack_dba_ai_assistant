@@ -27,7 +27,7 @@ source_of_truth: true
 - [ ] TASK-0090 (REQ-20260520-0005, Minor §12.3 — CSV streaming export). TASK-0073 Phase A4 의 `/api/admin/audits/export.csv` 의 hard cap 50k row → `StreamingResponse` 로 대체 + cursor 기반 page-by-page generator. large fleet (100k+ row) 에서 audit export 가능. memory footprint 안전. 본 cycle: backend FastAPI `StreamingResponse` + `csv.writer` iterator wrapper + Content-Type / Content-Disposition 정합.
 - [ ] TASK-0091 (REQ-20260520-0006, Minor §12.3 — PATCH admin/products audit before-state full snapshot). TASK-0073 Phase A5 의 `admin.product.update` audit 의 before-state 가 `{id, product_key}` 만 — UPDATE 전 full WebProducts row + WebProductDatabases schemas + system_prompt 까지 캡처가 정합. 본 cycle: PATCH 진입 시 `_list_products(conn, ...)` 또는 SELECT 로 full snapshot → `build_audit_change_json("admin.product.update", before=full_row, after=updated_row, ...)`. `_AUDIT_BUILDER_PRODUCT_FIELDS` 확장 검토.
 - [ ] TASK-0092 (REQ-20260520-0007, Minor §12.3 — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 검증). TASK-0073 Phase E 의 사용자 위임 항목 1 건. 본 cycle: (1) `.env.override` 또는 docker compose `-e AGENT_AUDIT_ENABLED=0 -e AGENT_MODE=prod` 로 별 컨테이너 spawn, (2) stderr `[FATAL] AUDIT REQUIRED IN PROD` log 확인, (3) process exit code 1 확인, (4) `docs/TEST.md §3 Test Run History` append.
-- [ ] TASK-0093 (REQ-20260520-0008, Minor §12.3 — `bin/verify-completion.sh check_12` audit endpoint routing 정적 검사). TASK-0073 Phase E hotfix (CHG-20260520-0001) 의 routing 회귀 fragility 보강. `/api/admin/audits/{event_id}` 가 정적 sibling endpoint (`/export.csv`, `/actors`, `/resources`, `/purge`) 보다 *뒤* 정의됐는지 grep -n 으로 line number 비교. FAIL 시 "audit endpoint routing order" hint.
+- [x] TASK-0093 (REQ-20260520-0008, Minor §12.3 — `bin/verify-completion.sh check_12` audit endpoint routing 정적 검사). TASK-0073 Phase E hotfix (CHG-20260520-0001) 의 routing 회귀 fragility 보강. Codex outside voice review 5 findings 흡수 후 plan v2 redesign (SKIP→FAIL structural / inline 4-path→auto-discovery static GET / `/purge` method-aware 제외 / helper split + fixture test / `9 checks`→`10 checks` footer). Phase A~D 모두 검증 PASS (production positive + 5 fixture negative + 5 other-feature SKIP). 본 cycle CHG-20260520-0003, REV-20260520-0003 on `ai/claude/0086/audit-followup` worktree.
 
 본 backlog 는 본 worktree 의 commit 으로 lock-in. 신규 세션이 본 worktree 에서 진입 (`/_template:entry`) 후 task 선택 + `/plan-eng-review` / `/autoplan` 등 호출.
 
@@ -358,6 +358,120 @@ Phase A0 실행 직전 다음이 모두 명확:
 - 0 critical 미해결 — Phase A0 진입 가능
 
 REVIEW.md REV-20260519-0002 에 각 finding + decision + 근거 기록 예정 (Phase D).
+
+---
+
+### 2.2 Implementation Plan (TASK-0093)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 Minor 등급 변경 계획이다. **상태**: `approved-after-outside-voice`. 사용자가 2026-05-20 에 plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high) → 5 findings + 2 minimum-fix → v2 redesign → 사용자 confirm 진행. TASK-0073 Phase E hotfix (CHG-20260520-0001) 의 routing 회귀 fragility 를 정적 검사로 영구 차단.
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-20 (TASK-0093 Phase A~F 일괄, Minor 등급 verify-completion check_12 신설 + outside voice 5 findings 흡수 + helper split + fixture-based negative test) -->
+
+#### 요지
+
+`bin/verify-completion.sh` 에 `check_12_audit_endpoint_routing()` 신설 + helper `_check_audit_routing_order()` 분리. feature-0003-agent-web-ui 의 `src/app.py` 내 `@app.get("/api/admin/audits/{event_id}")` line number 가 정적 GET sibling endpoint (auto-discovery 패턴 — `@app.get("/api/admin/audits/<non-{>")`) 의 max line number 보다 **뒤** 인지 정적 grep 검증. FAIL 시 actionable hint 출력. `/purge` 는 method-aware POST 라 GET path collision 위험 0 — sibling list 자동 제외.
+
+#### 현 상태 (검증)
+
+production app.py line 9356 list / 9410 export.csv / 9482 actors / 9522 resources / 9560 purge (POST) / **9732 `/{event_id}`** — hotfix 적용 완료, 정적 GET sibling max=9522 < 9732. positive PASS 조건 충족.
+
+#### Codex outside voice review 흡수 (5 findings + 2 minimum-fix)
+
+| # | finding | 흡수 결정 |
+|---|---|---|
+| C1 | SKIP 정책 오류 — event_id 또는 sibling 부재 시 silent PASS 는 회귀 방지 게이트 의도 모순. APIRouter 분리·prefix 변경·route 삭제가 silent pass | ACCEPT → SKIP 정책 변경 (feature_id != feature-0003 만 SKIP, 나머지 분기 FAIL "manual review required") |
+| C2 | grep 패턴 fragility (multi-line decorator / single quote / @router.get / prefix router / trailing slash) | ACCEPT (C1 과 통합) — structural change 미검출 시 FAIL 처리로 보강. AST 파서까지는 안 감 (Minor scope) |
+| C3 | `/purge` 의 method-aware mismatch — POST 라 GET `/{event_id}` 와 collision 0. FAIL hint 의 "purge would route" 표현 부정확 | ACCEPT → `/purge` 는 sibling list 에서 자동 제외 (auto-discovery 패턴이 `@app.get(...)` 만 매치) |
+| C4 | Inline 4 hardcoded sibling list 는 new static GET (e.g., `/stats`) 추가 시 stale | ACCEPT → auto-discovery (`@app.get("/api/admin/audits/<non-{>")` 패턴 자동 수집) |
+| C5 | Negative test 의 production app.py 임시 이동 위험 — dirty worktree / hook / 중간 실패 | ACCEPT → temp fixture 5 scenario + helper split (`_check_audit_routing_order(app_path)` pure helper). production app.py 절대 미수정 |
+
+추가:
+- footer line "9 checks" → "10 checks: 7 pilot + worktree binding + repo immutability + audit endpoint routing" 명시화 (Codex 직접 권장).
+- META mode footer ("checks #10, #11 always run") 갱신 불필요 — check_12 는 feature-specific 라 META mode 에서 의도적으로 skip.
+
+#### 영향 파일 (1 code + 5 docs)
+
+Backend (정책 인프라):
+- `bin/verify-completion.sh` — `check_12_audit_endpoint_routing()` 함수 신설 + `_check_audit_routing_order()` pure helper split + main() 호출 추가 + footer 2 라인 갱신 (line 1126·1129). META mode footer (line 1084·1091·1094) 는 그대로.
+
+문서:
+- `unit/feature-0003-agent-web-ui/docs/TASK.md` — 본 §2.2 + TASK-0093 [ ]→[x]
+- `unit/feature-0003-agent-web-ui/docs/MODIFY.md` — CHG-20260520-0003 entry (head prepend)
+- `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260520-0003 entry (head prepend, outside voice 흡수 이력)
+- `unit/feature-0003-agent-web-ui/docs/REPORT.md` — Phase 별 변경 요약 + git 동기화 결과
+- `unit/feature-0003-agent-web-ui/docs/TEST.md` — TEST 케이스 정의 (positive / 5 negative fixture / SKIP other-feature)
+
+#### check_12 spec (v2, 본 cycle 채택)
+
+```bash
+check_12_audit_endpoint_routing() {
+  local fdir="$1"
+  local feature_id="$2"
+  local app_path="${fdir}/src/app.py"
+
+  [ "$feature_id" = "feature-0003-agent-web-ui" ] || return 0  # SKIP — non-target
+
+  if [ ! -f "$app_path" ]; then
+    log_check 12 FAIL "audit endpoint routing order" \
+      "expected app.py at ${app_path} but file is missing — audit feature removed or restructured"
+    return 1
+  fi
+
+  _check_audit_routing_order "$app_path"
+}
+```
+
+`_check_audit_routing_order()` pure helper 가 file path 받아 routing order 검사. Phase C fixture 테스트 진입점. production app.py 외에도 임의 fixture 파일로 호출 가능. `set -euo pipefail` 환경이라 grep no-match (exit 1) 시 `|| true` fallback 처리.
+
+#### Phase 순서
+
+1. **Phase A** — check_12 + helper split + main() 호출 + footer 2 라인 갱신. `bash -n` syntax check PASS.
+2. **Phase B** — production positive: helper wrapper 로 production app.py 호출 → `CHECK#12 PASS audit endpoint routing order` PASS. (verify-completion.sh main mode 는 META mode 분기에서 check_12 skip — 정합).
+3. **Phase C** — 5 fixture negative test:
+   - `valid.py` (정합 ordering) → **PASS**
+   - `wrong_order.py` (event_id BEFORE static siblings) → FAIL ordering + line-number hint
+   - `no_detail.py` (detail endpoint 부재) → FAIL "detail endpoint missing — possible route removal or refactor"
+   - `no_siblings.py` (정적 GET sibling 부재) → FAIL "no static GET siblings — audit route layout changed"
+   - `refactored.py` (APIRouter prefix) → FAIL "routes not found in expected form — manual review required"
+4. **Phase D** — 5 other-feature SKIP: feature-0001 / 0002 / 0004 / 0005 / 0006 호출 → silent return 0 (rc=0, no output). 회귀 없음.
+5. **Phase E** — docs 5 갱신 (본 §2.2 + MODIFY + REVIEW + REPORT + TEST).
+6. **Phase F** — 최종 verify-completion 호출 (META mode 가정 PASS) + git status + 권장 commit 메시지 + 사용자 명시 commit confirm.
+
+#### 위험도 평가 (§12.3) — Minor
+
+| 영역 | 위험도 | 보강 |
+|---|---|---|
+| verify-completion.sh 정책 인프라 변경 | Minor | `bash -n` syntax + production positive + 5 fixture negative + 5 other-feature SKIP 양방향 검증 |
+| feature-0003 hardcode | Minor | `feature_id` 검사 SKIP 분기. 일반화는 별 cycle (다른 feature 에 동일 패턴 발견 시) |
+| structural change false-pass | **차단 (v1→v2)** | C1 흡수: SKIP→FAIL "manual review required" 로 강제. APIRouter 분리·prefix 변경·route 삭제 모두 LOUD FAIL |
+| sibling list staleness | **차단 (v1→v2)** | C4 흡수: auto-discovery 패턴 (`@app.get("/api/admin/audits/<non-{>")` 자동 수집). new static GET 자동 catch |
+| method-aware accuracy | **정확 (v1→v2)** | C3 흡수: GET-only sibling 자동 검출. POST (`/purge`) 자연 제외, hint 정확 |
+| negative test 안전성 | **안전 (v1→v2)** | C5 흡수: temp fixture + helper split. production app.py 절대 미수정 |
+| set -euo pipefail + grep no-match | **차단 (in-cycle fix)** | helper 내 `grep ... || true` fallback. log_check 호출 보장 |
+
+**전체 등급**: Minor — verify-completion.sh 의 read-only 정적 grep 검사 신설. 영향 범위: 정책 인프라 단일 파일 + 정책 인프라가 잡는 회귀 1건. runtime side-effect 0.
+
+#### 검증 계획
+
+각 Phase 종료 후:
+- (a) `bash -n bin/verify-completion.sh` syntax check
+- (b) helper wrapper 호출 (production positive)
+- (c) 5 fixture (negative)
+- (d) 5 other-feature (SKIP)
+
+전체 완료 후:
+- (e) META mode `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS (META mode 라 check_12 자동 skip, 다른 check 정합 검증)
+- (f) git status 정합 + 권장 commit 메시지 표시 + 사용자 명시 commit confirm
+
+#### outside voice 결과 요약 (REVIEW.md REV-20260520-0003 정본)
+
+Codex outside voice (consult mode, model_reasoning_effort=high, ~5분 실행, 132,668 tokens):
+- 5 findings + 2 minimum-fix recommendations 도출
+- 본 plan 의 5 finding 모두 ACCEPT → v2 redesign 흡수
+- footer line 표현 수정 권장 흡수 (`9 checks` → `10 checks`)
+- 본 사용자 정책 (`feedback_outside_voice_for_rbac`) 적용 — RBAC catalog 변경 없음에도 audit 표면 회귀 방어 정책으로 outside voice 호출. Minor 등급이지만 보안 표면 자체 점검 가치 인정.
+
+REVIEW.md REV-20260520-0003 에 각 finding + 흡수 결정 + 근거 기록.
 
 ---
 
