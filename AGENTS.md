@@ -1,10 +1,15 @@
 ---
-template_version: v3.8.0
+doc_type: REPOSITORY_AGENT_POLICY
+scope: repository
+status: active
+edit_policy: human-guided
+source_of_truth: true
+template_version: v3.9.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
 
-# mysql_ai 템플릿 작업 지침서
+# Repository AI Operating Policy
 
 > **주의:** 이 문서가 포함된 폴더 구조가 템플릿에서 복사된 직후라면,
 > `FIRST_REQUEST.md`의 **시나리오 0 (템플릿 초기화)**를 먼저 수행해야 한다.
@@ -17,50 +22,8 @@ ai_read_priority: 1
 
 ## §1. 목적
 
-현재 디렉토리(`.`)에 템플릿 실행 루트로 재구성된 MySQL 기반 `agent_cli` 환경을 운영한다.
-최우선 목적은 **요청 의도에 맞는 실제 데이터 결과를 빠르게 반환**하는 것이다.
-- 이 문서는 원본 루트 `AGENTS.md`의 의미를 유지한 채 템플릿 구조에 맞게 옮긴 정본이다.
-- 템플릿 사본은 **단독 실행**을 전제로 하며, 원본 프로젝트와의 동시 기동은 지원하지 않는다.
-
 이 저장소에서 AI는 사용자의 요구를 바탕으로 기능을 설계, 구현, 테스트, 문서화한다.
 모든 작업은 코드와 문서가 함께 갱신되어야 하며, 여러 AI와 사람이 함께 접근해도 충돌과 모호성을 최소화해야 한다.
-
-### §1.1 연구 기반 방향 전환 (강제)
-- 목표 상태는 "LLM 파라미터에 DB를 암기"가 아니라, **외부 지식베이스를 완전 구축**하고 LLM이 매 요청 시 해당 지식을 참조해 SQL을 작성하는 구조다.
-- 따라서 지식 품질의 1순위는 `DB -> Memory KB` 동기화 완전성이고, 2순위는 LLM 입력 패키징 정확도다.
-- 요청 텍스트를 코드가 임의 가공/축약/휴리스틱 분기하는 방식은 금지한다.
-- LLM에는 가능한 한 **요청 원문 + 근거 지식 + 실행 결과 피드백**을 전달한다.
-- 사용자 질의 경로에서 SQL은 **오직 LLM이 작성**한다. 코드 템플릿 SQL(`COUNT(*)`, 메타 점검 SQL, fast-aggregate SQL) 생성/주입은 금지한다.
-
-### §1.2 웹 기준 업계 표준 반영 (강제)
-- 대화 상태는 단순 문자열 누적이 아니라 **안정적인 상태 관리**로 유지한다.
-  - 메타 점검 발화(예: "문맥 이해하니?")는 `origin_request`를 덮어쓰지 않는다.
-  - 주제 전환은 명시 전환 신호(새 도메인/새 객체/명시 SQL)일 때만 반영한다.
-- 메모리는 `short-term(thread)` + `long-term(global)`를 분리해 사용하고, 실행마다 근거 패키지를 재구성한다.
-- RAG 라우팅은 `retrieve -> rerank -> grounded plan` 순서를 지키고, 근거 부족일 때만 메타탐색으로 폴백한다.
-- 근거가 없는 객체 강제 집계(`random table count`)를 금지한다.
-- 참고 표준:
-  - OpenAI Conversation State: https://platform.openai.com/docs/guides/conversation-state
-  - LangGraph Memory: https://docs.langchain.com/oss/python/langgraph/add-memory
-  - Anthropic Tool Use: https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview
-  - Azure RAG Architecture: https://learn.microsoft.com/en-us/azure/architecture/ai-ml/guide/rag/rag-architecture
-
-### §1.3 최우선 과제 (우선순위 고정)
-- `1)` 정확도: 메타데이터 나열이 아닌 실제 결과/결론 반환
-- `2)` 맥락: follow-up(`다시/이어서/아까 그거`)에서도 의도 유지
-- `3)` 지식 재사용: 기존 검증 근거 재활용으로 재탐색 최소화
-- `4)` 성능: 90초 초과 비율 감소, 루프/중복 탐색 제거
-
-### §1.4 비전문가 사용자 가정
-- 사용자는 모호한 요청을 한다.
-- 객체명/컬럼명을 틀릴 수 있다.
-- "다시/이어서/알아서" 같은 follow-up이 많다.
-- 오류 원인 분석을 agent에 위임한다.
-
-#### 대응 원칙
-- 최소 검증 후 실행 가능한 결과를 우선 반환.
-- 불확실성은 1회만 질문하고, 가능하면 실행 우선.
-- 오류 시 동일 쿼리 반복 금지, 오류 유형별 복구 경로 전환.
 
 ## §2. 작업 범위
 
@@ -77,28 +40,45 @@ ai_read_priority: 1
 - `FIRST_REQUEST.md`, 최상위 `README.md`, `/artifacts`는 git 추적 대상이 아니다.
 - 이 규칙을 위반하면 artifacts, FIRST_REQUEST.md 등 비추적 대상 파일이 git에 포함되어 저장소 오염이 발생한다.
 
-### §2.2 핵심 제약
-- `_ai_delegated_dev_template` 외부 디렉토리 수정 금지.
-- 런타임 산출물은 `../artifacts/`에만 저장한다.
-- `.env.example` 기본값에는 실제 키를 넣지 않는다.
-- 단, 기존 `OPENAI_API_KEY` 값이 이미 있으면 `.env`에서 삭제/덮어쓰기 금지.
-- 컨테이너 내부 경로는 Linux 경로만 사용한다.
-- 호스트 파일시스템 경로는 상대경로만 사용한다.
-- 도커 제어는 반드시 `make` 타깃 사용(직접 docker/compose 명령 금지).
-- DB 테스트/제어는 기본적으로 `make ask` 사용.
-- 예외: 메모리 DB(`AGENT_MEMORY_DB`, `AgentMemory*`) 점검은 mysql client 직접 사용 허용.
-- 메모리 DB 점검 시 `make ask`, `make mysql` 사용 금지.
+### §2.2 Template base vs 소비자 프로젝트 (필수 자가 검증)
 
-### §2.3 절대 금지 (충돌 항목 제거)
-- 문자열 패턴 기반 의도 분기/강제 SQL 경로 금지 (`_is_aggregate_like_request` 류 금지).
-- 요청 토큰 매칭 기반 객체 점수화/선택 금지(테이블 선택은 LLM resolver + 근거 패키지 기준).
-- 요청 토큰 매칭 기반 KB 검색 필터링 금지(근거 로딩은 전체/스키마/객체 exact 기준으로 수행).
-- `planner_constraints.*` 같은 임의 제약 변수로 LLM 행동을 강제하는 방식 금지.
-- `AGENT_KB_FACT_LIMIT`, `AGENT_GLOBAL_KB_FACT_LIMIT`, `AGENT_INSIGHT_OBJECT_MAX_CANDIDATES` 등 **고정 상한 기반 샘플링 설계 금지**.
-- "요약만 주입하고 원문 근거는 버리는 구조" 금지.
-- 사용자의 요청과 무관한 스키마/테이블 탐색을 먼저 수행하는 행동 금지.
-- 명시 근거 없이 객체를 임의 선택해 `COUNT(*)`로 즉시 응답하는 동작 금지.
-- 객체 선택 실패 시 `schema_top`/`fallback_top_candidate`/가중치 상위 1개 같은 임의 폴백 금지.
+본 repo 가 **template base** 인지 **소비자 프로젝트** 인지 판정해야 하는 작업
+— 특히 `FIRST_REQUEST.md` 시나리오 0 의 cleanup checklist 적용, `_template_maintainer/`
+영역 수정, `.claude/commands/_maintainer/` 영역 수정 — 은 작업 시작 전에
+`bin/template-base-check.sh` 를 호출해 기계 검증을 거친다.
+
+#### 판정 기준
+
+| Verdict | 신호 (모두 만족) |
+|---|---|
+| `template-base` | `_template_maintainer/HISTORY.md` 의 `## META-CYCLE-` heading ≥ 1 occurrence AND `bin/migrations/registry.sh` 존재 |
+| `consumer` | 위 신호 1개 이상 부재 |
+
+#### 호출 패턴
+
+```bash
+# 자가 진단 (exit code: 0=template-base, 1=consumer, 2=usage)
+bash repo/bin/template-base-check.sh
+
+# 소비자 cleanup 직전 — template base 에서는 STOP
+if bash repo/bin/template-base-check.sh --quiet 2>/dev/null; then
+  echo "STOP: template base 에서는 소비자 cleanup checklist 를 실행하지 않는다." >&2
+  exit 1
+fi
+```
+
+#### 사고 배경 (2026-05-19)
+
+PR #12 가 본 repo (template base) 에 소비자 cleanup checklist 를 잘못 적용하여
+`_template_maintainer/` (24 파일), `.claude/commands/_maintainer/improve.md`,
+`unit/feature-0001-example-*` 등을 삭제. PR #13 에서 revert 복구 후, 본 §2.2 와
+`bin/template-base-check.sh` 가 재발 방지 가드로 도입됨.
+
+#### Bypass 정책
+
+- `bin/template-base-check.sh` 의 verdict 를 무시하는 옵션은 제공하지 않는다.
+- verdict 가 모호하거나 잘못되었다고 판단되면, 본 정책의 신호 정의 자체를 갱신
+  (별도 cycle) 한 후 진행한다 — 명시적 정책 수정 없이 우회 금지.
 
 ## §3. 문서 체계
 
@@ -113,12 +93,13 @@ ai_read_priority: 1
 5. `/repo/docs/CONVENTIONS.md`
 6. `/repo/docs/SECURITY.md`
 7. `/repo/docs/DECISIONS.md`
-8. `/repo/playbooks/*.md`
-9. 기능 폴더의 `/docs/AGENTS.md`
-10. 기능 폴더의 `/docs/FUNCTION.md`
-11. 기능 폴더의 `/docs/TASK.md`
-12. 기능 폴더의 `/docs/REPORT.md`
-13. 기능 폴더의 `/docs/MODIFY.md`, `/docs/REVIEW.md`, `/docs/TEST.md`, `/docs/DECISIONS.md`
+8. `/repo/docs/REQUEST.md`
+9. `/repo/playbooks/*.md`
+10. 기능 폴더의 `/docs/AGENTS.md`
+11. 기능 폴더의 `/docs/FUNCTION.md`
+12. 기능 폴더의 `/docs/TASK.md`
+13. 기능 폴더의 `/docs/REPORT.md`
+14. 기능 폴더의 `/docs/MODIFY.md`, `/docs/REVIEW.md`, `/docs/TEST.md`, `/docs/DECISIONS.md`
 
 ### §3.2 충돌 해석 원칙
 
@@ -146,22 +127,6 @@ ai_read_priority: 1
 - AI가 Playbook에 해당하는 작업을 수행할 때는 해당 Playbook의 Steps를 순서대로 따른다.
 - Playbook 목록은 `/repo/playbooks/README.md`에서 확인한다.
 - 새 Playbook 추가는 프로젝트 수준 `DECISIONS.md`에 ADR로 기록한다.
-
-### §4.2 기본 구조
-
-- `./unit/feature-0001-platform-runtime/src`
-- `./unit/feature-0002-agent-core/src`
-- `./unit/feature-0003-agent-web-ui/src`
-- `./unit/feature-0004-browser-automation/src`
-- `./unit/feature-0005-qa-mcp/src`
-- `./unit/feature-0006-lan-proxy-access/src`
-- `./unit/<feature-id>/docs`
-- `./shared`
-- `./docs`
-- `./.env`
-- `./docker-compose.yml`
-- `./Makefile`
-- `./MCP_DESIGN.md`
 
 ## §5. 문서 역할 및 수정 정책
 
@@ -334,12 +299,14 @@ AI는 작업 대상 파일의 패턴을 확인하고, 매칭되는 규칙을 추
 
 | 파일 패턴 | 추가 참조 문서 | 비고 |
 |-----------|--------------|------|
-| `.env`, `.env.example` | `docs/SECURITY.md`, `docs/DECISIONS.md ADR-0014` | 원본 `mysql_ai/.env`의 운영 의미 보존. 비밀값 커밋 금지 |
-| `docker-compose.yml`, `Dockerfile*` | `docs/CONVENTIONS.md`, `docs/DECISIONS.md ADR-0012` | 서비스(`mysql`, `agent`, `memory-init`, `insight-worker`, `mcp`) 경계·포트 규칙 확인 |
-| `unit/**/src/**/*.py` | 해당 feature `docs/AGENTS.md` + `docs/FUNCTION.md` | 기능별 경계·외부 의존성 규칙 확인 |
-| `unit/**/tests/**/*.py` | 해당 feature `docs/TEST.md` | 테스트 케이스 정의는 rewrite, 결과는 append-only |
-| `Makefile` | `docs/ARCHITECTURE.md` | 실행 진입점 — 타깃 추가/제거는 ADR 경유 |
-| `../../artifacts/**` | `docs/DECISIONS.md ADR-0011`, `ADR-0013` | Git 외부 — 코드에서 경로만 참조하고 커밋하지 않는다 |
+<!-- 프로젝트 초기화 시 도메인에 맞게 최소 3~5개 이상을 채운다. 예시는 아래 주석 참조. -->
+<!-- | *.sql | docs/SECURITY.md §3 | SQL 인젝션 방지 규칙 확인 | -->
+<!-- | *.env*, *.cnf | docs/SECURITY.md §2 | 민감정보 처리 규칙 확인 | -->
+<!-- | Dockerfile*, docker-compose.yml | docs/CONVENTIONS.md | 컨테이너 규칙 확인 | -->
+<!-- | **/*.sh | docs/CONVENTIONS.md | ShellCheck 통과, set -euo pipefail 포함 | -->
+<!-- | shared/** | docs/DECISIONS.md | 공유 경계 — 변경 시 ADR 경유 | -->
+<!-- | Makefile | docs/ARCHITECTURE.md | 실행 진입점 — 타깃 추가/제거는 ADR 경유 | -->
+<!-- | artifacts/** | docs/DECISIONS.md | Git 외부 — 커밋 금지, 경로만 참조 | -->
 
 ## §11. 컨텍스트 및 학습 관리
 
@@ -364,33 +331,6 @@ AI는 작업 대상 파일의 패턴을 확인하고, 매칭되는 규칙을 추
 
 - 새 AI 세션 시작 시 최근 10건을 참조하는 것을 권장한다.
 - 사용자 피드백으로 확인된 학습은 `verified: true`를 추가한다.
-
-### §11.3 인사이트/근거 참조 운영 규정
-- 관련 질문에서 먼저 `AgentMemoryFactEntries` 근거를 조회한다.
-- 근거 충족 시 `search_objects` 같은 메타탐색을 건너뛴다.
-- 근거 부족일 때만 메타탐색을 수행하고, 부족 이유를 로그에 남긴다.
-- 동일 요청 도메인에서 이미 검증된 객체가 있으면 해당 객체를 우선 사용한다.
-- `AGENT_LLM_REQUEST_PASSTHROUGH=1`일 때는 모호 요청의 객체 short-circuit를 기본 비활성으로 둔다.
-- 선택 객체 SQL은 실행 전 grounding review를 통과해야 하며, 실패 시 재작성 또는 차단한다.
-
-### §11.4 맥락 품질 재발 방지 (P0/P1/P2)
-
-#### P0 (즉시 적용/회귀 불가)
-- `origin_request`는 주제 전환 시 갱신한다.
-- 요청/의도 판단에 문자열 휴리스틱을 사용하지 않는다.
-- 코드에서 LLM 행동을 제약하는 강제 분기 변수 주입을 금지한다.
-- 요청 원문을 임의 가공하지 않는다.
-- 이미 답한 질문 반복 금지.
-- 사용자 교정사항은 최우선 제약으로 즉시 반영.
-
-#### P1 (우선 적용)
-- 연속 `ask` 구간에서도 요약/맥락 갱신.
-- 검증된 결과를 전역 지식에 반영.
-- 지식 충돌 시 최신/고신뢰 근거 우선.
-
-#### P2 (차후 적용)
-- 스키마 메타는 요청 관련 객체 중심으로 전달.
-- Fact 모델은 다중 근거/출처/신뢰도 보존을 확장.
 
 ---
 
@@ -456,14 +396,6 @@ AI가 자유롭게 갱신 가능한 영역
 <!-- AI-EDITABLE:END -->
 ```
 
-#### §13.1.1 다중 AI 작업 충돌 방지 (프로젝트 특화)
-- `SESSION_TAG` 또는 `SESSION`을 고유값으로 분리한다.
-- 확인: `make session-info`
-- 단일 테스터 병렬 lane 규칙:
-- `SESSION_TAG=<ai>_<lane>`
-- lane 간 동일 태그 재사용 금지
-- `WEB_PARALLEL_LIMIT` 초과 금지
-
 ### §13.2 작업 격리 정책 (Manual Parallel AI Worktree Isolation, v0.1)
 
 단일 AI 가 순차적으로 작업하는 경우는 별도 격리 없이 §13.1 의 충돌 방지 규칙을
@@ -497,17 +429,24 @@ Lifecycle (state machine, manual parallel AI):
 Variant exploration / 장기 risky refactor / QA worktree 시나리오는 별도 ADR
 범위 (`docs/DECISIONS.md` ADR-0020 / ADR-0021).
 
-`git worktree add` 호출 가능한 trigger 는 다음 두 가지로 제한한다:
+`git worktree add` 호출 가능한 trigger 는 다음으로 제한한다:
 1. **사용자 명시 지시** — 세션 안에서 "worktree 만들어서 X 작업해라" 류 직접 지시.
 2. **`/_template:entry` arg-given dispatch** — entry persona 의 Phase 3.6 worktree
-   decision tree (`_template/commands/entry.md`) 가 task envelope 의
-   `worktree.feature_id` hint 를 보고 worktree create 권유 결정.
+   decision tree (`_template/commands/entry.md`) 가:
+   - task envelope 의 `worktree.feature_id` hint 를 보거나
+   - **main checkout + `repo/` mutation 신호** 를 감지하면 (§13.2.7 F0)
+   worktree create 권유 결정.
+3. **§13.2.7 F0 gate 자체** — `bin/verify-completion.sh` check #11 이 main
+   checkout 의 `repo/` mutation 을 detect 한 후 사용자에게 "worktree 로 전환"
+   권유.
 
 그 외 AI 의 자율 `git worktree add` / cwd 변경 / 다른 worktree 진입은 금지.
 
 **Precedence (carve-out 우선)**: `/_template:entry` dispatch 대상이 `/_local:*` 류
 명령이면 §13.2.4 carve-out 이 trigger 보다 우선한다 — 즉, entry 가 자동으로
-worktree 진입을 결정하지 않고 main worktree 컨텍스트를 강제 유지한다.
+worktree 진입을 결정하지 않고 main worktree 컨텍스트를 강제 유지한다. 마찬가지로
+§13.2.4 의 다른 carve-out (template base, git pull, `/_template:init`) 도
+§13.2.7 F0 보다 우선한다.
 
 #### §13.2.2 Forbidden Actions
 
@@ -563,7 +502,7 @@ worktree 진입을 결정하지 않고 main worktree 컨텍스트를 강제 유�
     git worktree prune
     git branch --merged main | grep '^  ai/' | xargs -r git branch -d
     ```
-    자동 orphan sweep 은 본 사이클 외 (Reviewer Concerns 참조, ADR-0005).
+    자동 orphan sweep 은 본 사이클 외 (Reviewer Concerns 참조, ADR-0020).
   - `/_local:*` cron 은 worktree carve-out 이므로 자동 sweep 책임 없음.
 
 #### §13.2.4 Carve-outs
@@ -618,7 +557,6 @@ AI 가 코드를 실행 (테스트, 빌드 등) 할 때:
 - 네트워크 호출은 테스트 대상 또는 명시적으로 허용된 엔드포인트에만 수행한다.
 - 파일 시스템 변경은 작업 디렉토리 내로 제한한다 (§13.2.2 F1/F2 와 결합).
 - 구체적 범위는 §15.2 도메인 절대 금지사항에서 프로젝트별로 정의한다.
-
 
 #### §13.2.7 Consumer repo Immutability (F0, Hard Gate, v3.8.0+)
 
@@ -706,214 +644,42 @@ META mode 우회 정책은 check #10 와 동일 (META mode 에서도 호출 — 
 
 ## §14. 환경변수 및 설정 관리
 
-- 프로젝트 루트에 `.env.example`을 두고, 모든 환경변수의 키와 설명을 유지한다.
-- `.env`(실제 값)는 `.gitignore`에 포함하고 저장소에 커밋하지 않는다.
-- 설정은 아래 계층 구조를 따른다 (후순위가 전순위를 오버라이드):
-  1. 코드 내 기본값
-  2. 공통 설정 파일 (예: `config/default.env`)
-  3. 프로필별 설정 (예: `config/profiles/<profile>.env`)
-  4. 환경변수 (`.env` 또는 시스템 환경)
-  5. CLI 인자 / 사용자 직접 지시
-- AI가 새 환경변수를 추가하면 `.env.example`에 키와 설명을 동시에 갱신한다.
-- 환경변수 변경은 `MODIFY.md`에 기록하고, 의미 변경(이름 유지 + 동작 변경)은 `REVIEW.md`에 근거를 남긴다.
-
-### §14.1 .env 정책 (프로젝트 특화)
-
-#### 유지/필수
-- `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
-- `AGENT_MEMORY_DB`
-- `AGENT_MODE`
-- `AGENT_INSIGHT_WORKER_ENABLED`
-- `AGENT_INSIGHT_WORKER_TICK_SEC`
-- `AGENT_SCHEMA_INSTANCE_SCAN`
-- `AGENT_SCHEMA_INSTANCE_SCAN_EVERY_SEC`
-- `AGENT_LLM_REQUEST_PASSTHROUGH=1`
-- `AGENT_INSIGHT_ROUTE_LOG=1`
-
-#### 제거/비권장 (충돌 항목)
-- 고정 개수 기반 지식 주입/후보 제한 변수는 제거 또는 사용 중단한다.
-- 예: `AGENT_KB_FACT_LIMIT`, `AGENT_GLOBAL_KB_FACT_LIMIT`, `AGENT_INSIGHT_OBJECT_MAX_CANDIDATES`
-- `planner_constraints` 계열 제약 주입 플래그는 제거한다.
-
-#### 신규 권장 (향후 구현용)
-- `AGENT_KB_COVERAGE_MODE=complete`
-- `AGENT_KB_PREFETCH_ON_ASK=1`
-- `AGENT_KB_PREFETCH_ON_START=1`
-- `AGENT_KB_INCREMENTAL_SYNC_SEC=5`
-- `AGENT_KB_REQUIRE_EVIDENCE=1`
-- `AGENT_METADATA_FALLBACK_ONLY_WHEN_MISSING=1`
-- `AGENT_INSIGHT_OBJECT_FASTPATH=1` (인사이트 객체 즉시 참조 활성)
-- `AGENT_INSIGHT_FASTPATH_ALLOW_WITH_PASSTHROUGH=1` (`AGENT_LLM_REQUEST_PASSTHROUGH=1`이어도 근거 기반 fast-path 허용)
-- `AGENT_INSIGHT_OBJECT_MAX_CANDIDATES=0` (고정 샘플링 제한 비활성, coverage 기반)
-- `AGENT_INSIGHT_OBJECT_DB_FETCH_LIMIT=120` (한 턴에서 과도한 후보 확장 방지용 기본 상한)
-- `AGENT_OBJECT_PICK_MIN_CONFIDENCE=0.55` (근거 기반 객체 선택 최소 신뢰도)
-- `AGENT_OBJECT_RESOLVE_BATCH_SIZE=40` (대규모 후보군 LLM 선택 배치 크기)
-- `AGENT_OBJECT_RESOLVE_MAX_BATCHES=6` (배치 선택 최대 반복 수)
-- `AGENT_GENERIC_ASK_GUARD=1` (generic ask 반복 시 자동 재계획)
-- `AGENT_INSIGHT_SQL_COMPOSE_TIMEOUT_SEC=20` (선택 객체 기반 SQL 작성 LLM 타임아웃, timeout 완화)
-- `AGENT_OBJECT_RESOLVE_MODEL=gpt-5-mini` (객체 선택 전용 모델 분리)
-- `AGENT_SQL_COMPOSE_MODEL=gpt-5-mini` (SQL 작성 전용 모델 분리)
-- `AGENT_SQL_REVIEW_MODEL=gpt-5-mini` (SQL grounding review 전용 모델 분리)
-- `AGENT_SQL_GROUNDED_REVIEW=1` (선택 객체 SQL 실행 전 grounding reviewer 수행)
-- `AGENT_SQL_GROUNDED_REWRITE_ON_FAIL=1` (review 실패 시 LLM 재작성 허용)
-- `AGENT_SQL_GROUNDED_BLOCK_ON_FAIL=1` (review 실패 SQL 실행 차단)
-- `AGENT_KNOWLEDGE_SQL_FALLBACK=1` (plan이 `ask`/메타로 수렴할 때 knowledge 근거 기반 SQL 1회 강제 생성)
-- `AGENT_KNOWLEDGE_SQL_FALLBACK_TIMEOUT_SEC=20` (fallback LLM SQL compose 타임아웃)
-- `AGENT_KNOWLEDGE_SQL_FALLBACK_MAX_OBJECT_TRIES=2` (fallback에서 객체 후보 재시도 최대 횟수)
-- `AGENT_AUTO_FIX_SQL=1` (syntax/not-found 오류에 대한 LLM 기반 SQL 보정 활성)
-- `AGENT_DISABLE_AUTO_RETRY=0` (오류 후 자동 재시도 비활성화 금지)
-- `AGENT_ERROR_AUTO_RECOVERY=1` (SCHEMA/TABLE/COLUMN not-found 자동 복구 활성)
-- `AGENT_AUTO_CONTINUE_AFTER_STEP=0` (정상 결과 1회 반환 후 불필요한 자동 `continue` 루프 방지)
-- `AGENT_RAG_DOC_OBJECT_SCORE_BOOST=24` (RAG 문서 FT 점수를 객체 랭킹에 반영하는 가중치)
-- `AGENT_SCHEMA_USAGE_RECORD_STRICT=1` (모호 요청 결과의 `table_pref` 오염 방지)
-- `AGENT_PLAN_TIMEOUT_SEC=35` (기본 플래너 타임아웃)
-- `AGENT_PLAN_TIMEOUT_RECOVERY_SEC=20` (복구/재시도 단계 플래너 타임아웃)
-- `AGENT_PLAN_TIMEOUT_MIN_SEC=8` (플래너 최소 타임아웃)
-- `AGENT_RAG_PRIORITY_TIMEOUT_SEC=12` (RAG 우선 재플랜 타임아웃)
-- `AGENT_RAG_PRIORITY_FIRST=1` (지식 근거가 있으면 기본 플래너 전에 RAG 우선 플랜 단축 경로 시도)
-- `AGENT_RAG_PRIORITY_SHORT_CIRCUIT=0` (모호 follow-up에서 임의 객체 short-circuit 비활성)
-- `AGENT_AUX_SKIP_NEAR_DEADLINE_MS=15000` (마감 임계치에서 summary/validation 생략)
-- `AGENT_OPENAI_MAX_RETRIES=0` (플래너/요약 호출의 SDK 재시도 비활성화로 상한 시간 준수)
+- **`.env` 실제 값은 저장소에 커밋하지 않는다** (반드시 `.gitignore` 포함, 자세한 자격증명 패턴은 `docs/SECURITY.md §4` 참조).
+- 환경변수 및 설정 파일의 표준 작성 규칙·계층 구조·주석 표준은 `docs/CONVENTIONS.md §8` 을 참조한다.
+- AI 가 새 환경변수를 추가하면 `.env.example` 과 `MODIFY.md` 를 동시에 갱신한다.
+- 의미 변경(이름 유지 + 동작 변경)은 `REVIEW.md` 에 근거를 남긴다.
 
 ## §15. 도메인 커스터마이징 가이드
 
 이 섹션은 프로젝트가 실제 도메인에 적용될 때 커스터마이징해야 할 영역을 안내한다.
 
-### §15.1 실행 환경 고정 (WSL 강제)
-- 모든 실행은 WSL(Ubuntu)에서만 수행.
-- 작업 경로: 현재 디렉토리(`.`) 또는 저장소 상대경로 `./_ai_delegated_dev_template/repo`
-- 시작 체크:
-- `pwd`가 템플릿 실행 루트(또는 하위)
-- `uname -s`가 `Linux`
-- 불만족 시 즉시 WSL 전환 후 재시작.
+### §15.1 도메인 우선순위 및 로드맵
+프로젝트의 도메인별 구현 우선순위를 정의한다. 예시:
 
-#### WSL 전환 표준 명령
-- WSL 진입 후 저장소 루트에서 `cd ./_ai_delegated_dev_template/repo && make session-info`
+```md
+### P0 (즉시)
+- 핵심 기능 A가 실제 데이터 결과를 반환해야 한다
 
-#### 금지 규칙
-- `C:\...` 기준 실행 금지.
-- Windows 인터프리터(`py.exe`, `python.exe`, `node.exe`) 실행 금지.
+### P1 (단기)
+- 기능 B의 품질 시나리오 검증
+
+### P2 (중기)
+- 기능 C 확장 및 최적화
+```
 
 ### §15.2 도메인 절대 금지사항
+프로젝트 도메인에서 AI가 절대 해서는 안 되는 행동을 나열한다. 예시:
 
-§2.3의 절대 금지 항목 참조.
+```md
+- 하드코딩된 매직넘버로 비즈니스 로직을 분기하지 않는다
+- 외부 API 응답을 검증 없이 신뢰하지 않는다
+- 사용자 데이터를 로그에 평문으로 기록하지 않는다
+```
 
-### §15.3 운영 명령 (Make)
-- `make start`
-- `make stop`
-- `make status`
-- `make convo-clear`
-- `make web`
-- `make web-down`
-- `make insight-up`
-- `make insight-down`
-- `make insight-status`
-- `make insight-logs`
-- `make mysql sql="SELECT 1;"` (사용자 명시 요청 시만)
-- `make browser-up`
-- `make browser-down`
-- `make browser-session`
-- `make browser-goto url="https://example.com"`
-- `make browser-click selector="..."`
-- `make browser-type selector="..." text="..."`
-- `make browser-press selector="..." key="Enter"`
-- `make browser-wait selector="..."`
-- `make browser-text selector="..."`
-- `make browser-html selector="..."`
-- `make browser-shot`
-- `make browser-close`
+### §15.3 도메인별 환경변수 정책
+`.env.example`에서 관리하는 변수의 카테고리와 변경 규칙을 정의한다.
 
-### §15.4 Docker Compose 기준
-- 서비스: `mysql`, `agent`, `memory-init`, `insight-worker`, `mcp`(선택)
-- MySQL: `mysql:8.0`
-- 볼륨:
-- `../artifacts/shared:/shared`
-- `../artifacts/mysql-data:/var/lib/mysql`
-- `../artifacts/mysql-backup:/shared/mysql-backup`
-- `../artifacts/certs:/certs`
-
-### §15.5 메모리/로그 운영
-- `AgentMemoryFacts`, `AgentMemoryFactEntries`는 복수 근거를 보존한다.
-- Fact에는 최소 `SourceRunId`, `SourceType`, `Weight/Confidence`를 보존한다.
-- 지식 참조 경로 로그:
-- `/shared/logs/YYYY-MM-DD/insight_route.log`
-- 필수 기록: 실제 참조한 스키마/테이블/컬럼, action, reason, result, error
-- `insight-worker` 는 `artifact_missing -> repair_from_fact/generate_insight -> verify_persist` 흐름을 그대로 남긴다.
-- `insight_worker.log` 는 cycle 시작/종료/오류 요약만 남기고, idle heartbeat 는 남기지 않는다.
-- 타이밍 로그:
-- `/shared/logs/YYYY-MM-DD/timing.log`
-- `/shared/logs/YYYY-MM-DD/timing_breakdown_<run_id>.json`
-- 실행 SQL 로그:
-- `/shared/logs/YYYY-MM-DD/*_executed_sql.log`
-- 오래된 로그 보관:
-- `7일` 초과 날짜 디렉토리는 `/shared/logs/archive/YYYY-MM-DD.tar.gz` 로 압축 보관한다.
-
-### §15.6 지식 아키텍처 목표 (신규 기준)
-
-#### 1) 완전 구축 레이어
-- `AgentMemoryFactEntries`는 DB 전역 구조 지식을 누락 없이 누적한다.
-- 최소 저장 단위:
-- 스키마
-- 테이블
-- 컬럼/타입
-- PK/FK/인덱스
-- 대표 조인 경로
-- 검증된 지표 정의(메트릭 정의)
-
-#### 2) 요청별 근거 패키지 레이어
-- `make ask` 실행마다 LLM 호출 전에 근거 패키지를 재구성한다.
-- 패키지는 고정 top-k가 아니라 **coverage 기반**으로 생성한다.
-- 기준:
-- 요청에서 언급된 객체/동의어 포함
-- 최근 성공 실행에서 사용된 객체 포함
-- 도메인 앵커와 충돌하는 후보 배제 근거 포함
-
-#### 3) 실행 피드백 레이어
-- 성공 SQL/실패 SQL/복구 경로를 지식에 반영한다.
-- 같은 실패 시그니처는 즉시 우회 경로를 제시한다.
-
-#### 4) 카테고리 + Depth 라우팅 레이어 (신규)
-- 인사이트 객체(`table_insight/schema_insight`)는 아래 카테고리를 구조화해 저장한다.
-- `domain`, `entity_type`, `metric_family`, `event_type`, `time_grain`, `join_hints`, `confidence`
-- 요청 실행 시 근거 선택은 고정 top-k가 아니라 `D0 -> D1 -> D2 -> D3` 단계로 확장한다.
-- `D0`: 명시 객체/직전 확정 객체 우선
-- `D1`: 스키마 앵커 범위
-- `D2`: 스키마 + 도메인 카테고리 확장
-- `D3`: 전체 근거 풀(최종 폴백)
-- 단계 승급 사유(`ask_loop`, 재시도, 오류)는 로그에 남기고, 무관 스키마 점프를 금지한다.
-
-### §15.7 구현 로드맵 (이후 작업계획 명시)
-
-#### P0 (즉시)
-- `agent_cli` 플래닝 경로에서 강제 분기용 `planner_constraints` 주입 제거.
-- LLM 입력 `knowledge`를 요약 중심에서 근거 중심으로 전환.
-- 요청 원문 보존: follow-up 재작성/임의 문자열 덧붙이기 제거.
-- 메타탐색은 "근거 부족"일 때만 허용하고 사유를 로그에 강제 기록.
-- `origin_request`/`domain_anchor` 보호: 메타 점검 발화는 상태를 오염시키지 않도록 차단.
-- RAG fallback 게이트: 명시 객체/앵커가 없는 경우 강제 객체 집계로 점프하지 않는다.
-
-#### P1 (우선)
-- `AgentMemoryFactEntries`를 중심으로 전수 인덱싱 워커 구현.
-- 인덱싱은 배치/페이지 방식으로 수행하되 최종 coverage는 100%를 목표로 한다.
-- 고정 상한 대신 `incomplete_queue` 기반으로 미완료 객체 우선 처리.
-- 질문 실행 전 preflight로 "요청 관련 근거 존재 여부"를 검사하고 부족 시 선동기화.
-
-#### P2 (구조 개선)
-- `reg_*` FactKey는 행수/컬럼명 나열형 텍스트 저장을 중단하고, 아래 구조화 정보로 대체:
-- metric 정의(분자/분모/기간/필터)
-- 조인 경로(테이블/키)
-- 검증 상태(confirmed/estimated)
-- 근거 SQL 시그니처
-- ScopeKey는 요청 문장 기반이 아니라 `domain/schema/object/metric` 구조화 키를 우선 사용.
-
-#### P3 (운영 안정화)
-- 지식 참조 경로 추적 로그를 요청 단위로 필수화한다.
-- "왜 그 객체를 선택했는지"를 점수 대신 근거 목록으로 남긴다.
-
-### §15.8 도메인별 환경변수 정책
-`.env.example`에서 관리하는 변수의 카테고리와 변경 규칙은 §14.1을 참조한다.
-
-### §15.9 도메인별 품질 게이트
+### §15.4 도메인별 품질 게이트
 기능 완료 시 도메인 특화 검증 항목이 있으면 여기에 추가한다.
 
 ---
@@ -925,11 +691,7 @@ META mode 우회 정책은 check #10 와 동일 (META mode 에서도 호출 — 
 ### §16.1 완료 기준
 
 작업은 아래를 만족해야 완료로 본다.
-- `make start`로 MySQL + 웹 + 브라우저 + 인사이트 워커 정상 기동.
-- `make ask` 정상 동작.
-- 브라우저 제어 기능 정상.
-- MCP 사용 시 `make mcp-test` 통과.
-- C/E/F/G 회귀 없음.
+- 기능 동작이 구현되었다.
 - `FUNCTION.md`가 현재 동작과 일치한다.
 - `TASK.md`, `MODIFY.md`, `REVIEW.md`, `REPORT.md`, `TEST.md`가 필요한 수준으로 갱신되었다.
 - `ANCHOR.md` §1~§3이 작성되었다 (24h bootstrap grace 이후).
@@ -938,16 +700,7 @@ META mode 우회 정책은 check #10 와 동일 (META mode 에서도 호출 — 
 - `/repo/docs/STATUS.md`에 기능 상태가 반영되었다.
 - `/repo/docs/CODEBASE_MAP.md`에 새 파일/모듈이 반영되었다 (해당 시).
 
-### §16.2 작업자 준수 체크 (시작 전/종료 전)
-- 시작 전: "이번 변경이 정확도/맥락/지식 중 무엇을 개선하는지" 1줄로 남긴다.
-- 종료 전: "실제 데이터 결과가 출력되는지" 확인한다.
-- 종료 전: "동일 도메인 재요청에서 불필요한 메타탐색이 줄었는지" 확인한다.
-
-### §16.3 테스트 조건
-- 기존 테스트와 약간 다른 노이즈를 포함한다.
-- 단순/일반/복잡 조건을 모두 포함한다.
-
-### §16.4 완료 선언 (Completion Checklist)
+### §16.2 완료 선언 (Completion Checklist)
 
 AI가 작업 완료를 선언할 때는 `TASK.md`의 Completion Checklist를 명시적으로 체크한다:
 
@@ -964,25 +717,22 @@ AI가 작업 완료를 선언할 때는 `TASK.md`의 Completion Checklist를 명
 - [ ] STATUS.md에 기능 상태가 갱신되었다
 - [ ] LEARNINGS.md에 발견된 교훈이 기록되었다 (해당 시)
 - [ ] ANCHOR.md §1~§3이 채워져 있다 (또는 24h bootstrap grace 범위 내이다) (§18)
-- [ ] `bin/verify-completion.sh --pre-commit <feature-id>`가 PASS한다 (§16.5)
-- [ ] Git 커밋이 완료되었다 (§16.5)
-- [ ] Git 원격 동기화가 완료되었다 또는 동기화 불가 사유가 기록되었다 (§16.5)
+- [ ] `bin/verify-completion.sh --pre-commit <feature-id>`가 PASS한다 (§16.3)
+- [ ] Git 커밋이 완료되었다 (§16.3)
+- [ ] Git 원격 동기화가 완료되었다 또는 동기화 불가 사유가 기록되었다 (§16.3)
 ```
 
-### §16.5 Git 동기화 절차 (verify-completion 기반)
+### §16.3 Git 동기화 절차 (verify-completion 기반)
 
 작업 완료 선언 전에 AI는 반드시 `bin/verify-completion.sh`를 호출한다.
-이 스크립트가 완료 체크리스트 검증 + ANCHOR.md 게이트 + unstaged 잔여 검사를 흡수한다.
-AGENTS.md §1 AI 전권 위임 원칙에 부합한다 — 스크립트는 **AI가 호출하는 도구**이지
+이 스크립트가 기존 완료 체크리스트 검증과 Git 동기화 절차를 흡수한다.
+AGENTS.md §1 AI 전권위임 원칙에 부합한다 — 스크립트는 **AI가 호출하는 도구**이지
 인간 개입이 아니다.
 
 **기본 원칙: AI 작업자는 완료 가능한 cycle을 사용자 확인 대기로 멈추지 않는다.**
 pre-commit 검증이 PASS하고 BLOCKED/Critical/Major 승인 대기 항목이 없으면 AI가
-직접 commit한다. 원격 저장소가 설정되어 있고 공개 브랜치 push가 가능하면 AI가
-직접 push/PR 갱신까지 수행한다. `commit/push 결정은 사용자에게 위임` 같은 응답은
-정책 위반이다.
-
-커밋 메시지 형식은 `CONTRIBUTING.md`의 커밋 규칙 섹션을 따른다.
+직접 commit한다. 원격 저장소가 설정되어 있고 push 가능하면 AI가 직접 push한다.
+`commit/push 결정은 사용자에게 위임` 같은 응답은 정책 위반이다.
 
 #### Step 0: 완료 선언 정의
 
@@ -992,7 +742,7 @@ pre-commit 검증이 PASS하고 BLOCKED/Critical/Major 승인 대기 항목이 �
 #### Step 1: 사전 검증 (pre-commit)
 
 ```
-1. 코드 + docs 변경 (working tree)
+1. 코드 + docs 변경 (working tree에서)
 2. ANCHOR.md §1~§3 확인 — §4 human 검증 로그는 release/milestone 또는 방향 전환 검증 시에만 확인 (§18 참조)
 3. git add <변경된 모든 파일> (prefer named add, never -A)
 4. bash bin/verify-completion.sh --pre-commit <feature-id>
@@ -1002,7 +752,7 @@ pre-commit 검증이 PASS하고 BLOCKED/Critical/Major 승인 대기 항목이 �
 
 #### Step 2: 커밋
 
-필수 trailer:
+커밋 메시지 형식은 `CONTRIBUTING.md`의 커밋 규칙을 따른다. **필수 trailer**:
 
 ```
 <type>(<scope>): <summary>
@@ -1013,14 +763,8 @@ Task-Cycle: <feature-id>
 ```
 
 `Task-Cycle` trailer는 이 커밋이 어느 TASK cycle에 속하는지 명시한다
-(§18 Cycle Boundary). 이 trailer가 없는 commit은 post-commit hook의 verify 대상이 아니다.
-
-```bash
-1. `git status`로 변경 파일을 확인한다.
-2. `.gitignore` 대상(`.env`, 자격증명 등)이 포함되지 않았는지 검증한다.
-3. 코드와 문서를 같은 커밋에 포함한다.
-4. 커밋 메시지 규칙에 따라 커밋한다 (Task-Cycle trailer 필수).
-```
+(§18의 Cycle Boundary 정의 참조). 이 trailer가 없는 commit은 post-commit hook의
+verify 대상이 되지 않는다.
 
 #### Step 3: 사후 검증 (post-commit)
 
@@ -1035,34 +779,11 @@ Task-Cycle: <feature-id>
 
 | 조건 | 동작 |
 |------|------|
-| BLOCKED 항목 없음 + Critical/Major 승인 대기 없음 | **AI가 commit 후 공개 브랜치 동기화** (Step 5 진행) |
-| BLOCKED 항목 있음 또는 Critical/Major 승인 대기 | **AI가 commit만** 수행, push/PR 보류 사유를 `REPORT.md`에 기록 |
+| BLOCKED 항목 없음 + Critical/Major 승인 대기 없음 | **AI가 commit 후 자동 동기화** (push) |
+| BLOCKED 항목 있음 또는 Critical/Major 승인 대기 | **AI가 commit만** 수행, `REPORT.md`에 동기화 보류 사유 기록 |
 | 원격 저장소 미설정 | **커밋만** 수행, 원격 설정은 사람에게 위임 |
 
-#### Step 5: 공개 브랜치 동기화 (조건 충족 시)
-
-Step 4에서 공개 브랜치 동기화로 판정된 경우:
-
-1. **공개 브랜치 규칙 확인**:
-   - 외부로 push하는 브랜치는 반드시 `issue/<issue-number>-<short-slug>` 형식을 따라야 한다.
-   - 현재 브랜치가 내부 `ai/<agent-id>/<issue-number>/<slice>` 브랜치라면, 로컬에서 공개 `issue/*` 브랜치에 먼저 통합한다.
-
-2. **Push**: 현재 공개 브랜치를 원격에 push한다.
-   ```bash
-   git push origin <current-branch>
-   ```
-
-3. **PR 생성 또는 갱신**:
-   - 공개 브랜치에 대한 PR이 없으면 생성한다.
-   - 이미 있으면 동일 PR을 갱신한다.
-   - PR 제목은 `#<issue-number> <summary>` 형식을 사용하고, 본문에는 반드시 `closes #<issue-number>`를 포함한다.
-
-4. **병합**:
-   - 병합은 GitHub PR 흐름으로 진행한다 (사람 검토 + `gh pr merge`).
-   - `main` 직접 push 또는 로컬 `main` 병합은 금지한다.
-   - 브랜치 동기화 중 충돌이 발생하면 §16.6 정책에 따라 처리한다.
-
-#### Step 6: 결과 기록
+#### Step 5: 결과 기록
 
 Git 동기화 결과를 `REPORT.md`에 기록한다.
 
@@ -1071,46 +792,121 @@ Git 동기화 결과를 `REPORT.md`에 기록한다.
 - 커밋: <commit-hash> (<branch>)
 - verify-completion: PASS / FAIL (재시도 N회)
 - Push: 완료 / 보류 (사유: ...)
-- PR: 생성 / 갱신 / 보류 (사유: ...)
-- 병합 상태: 머지 완료 / 수동 검토 / 보류
+- main 병합: 완료 / 해당없음 / 보류 (사유: ...)
 - 충돌 해결: 없음 / AI 자율 해결 (건수, 요약) / 사람 위임 (사유)
 ```
+
+> **REPORT.md "Git 동기화 결과" 정합 명세 (v3.9.0+)**: 본 section 은 PR push *전*
+> (cycle commit 안) 또는 PR description body 에 명시한다. 머지 후 별 commit 으로
+> 추가 시 `verify-completion` 새 cycle gate 가 트리거되어 overhead 가 크다 —
+> 권장하지 않는다. PR 머지 결과 (target HEAD, 머지 commit hash) 는 Step 6 의
+> cleanup 종료 보고와 GitHub PR UI 로 충분.
+
+#### Step 6: Cycle Cleanup (PR 머지 후, v3.9.0+)
+
+PR 머지 + cleanup 은 본 Step 의 자동화 대상이다 — cycle 종료 시점에서 BLOCKED
+신호가 없으면 사람 명시 요청 없이 자동 진행한다. Step 4 (원격 동기화 판정)
+조건표가 commit/push/병합 자동화를 정의한 것과 동일한 정책으로 cleanup 까지
+확장한다.
+
+> **자동 진행 정책 (v3.9.0+)**: cycle 종료 시점 (verify-completion PASS + PR
+> 생성 완료) 에서 다음 normal 경로는 사람 명시 요청 없이 진행한다:
+> - PR 상태가 MERGEABLE + mergeStateStatus CLEAN → `gh pr merge --<strategy> --delete-branch`
+> - 머지 직후 main worktree `git fetch + pull --ff-only origin main`
+> - 자기 worktree clean + worktree remove + local branch -d
+>
+> 다음 abnormal 경로는 자동 중단 + 사용자 결정 (AGENTS.md §16.3 Step 4 의
+> 충돌/blocked 처리 동일):
+> - PR mergeable != MERGEABLE / state == CLOSED — 즉시 중단
+> - 자기 worktree dirty — 중단 + stash/discard/commit 안내
+> - `pull --ff-only` non-fast-forward — 중단 + manual resolve 안내 (silent
+>   merge/rebase 금지)
+> - `branch -d` unmerged (squash/rebase merge 의 경우 정상) — WARN + force-delete
+>   안내 (silent `-D` 차단, 사용자 명시 confirm 후 진행)
+>
+> AI 작업자가 본 Step 진입을 결정하는 trigger 는 사용자 명시 요청이 아니라
+> "cycle 종료 + verify-completion PASS + BLOCKED 신호 없음". `bin/cycle-finalize.sh`
+> 는 위 정책을 codify 한 reference 구현이며, dry-run 으로 사전 검증 후 자동 실행
+> 또는 직접 실행 모두 가능하다.
+
+##### Step 6.1: main 최신화
+
+main worktree (또는 main checkout) 에서:
+
+```bash
+git fetch origin
+git pull --ff-only origin main
+```
+
+- `fetch` 실패 (네트워크/인증): WARN + 사용자 결정 (계속 / 중단). §13.2.5 의
+  fail-loud 회피 패턴 동참.
+- `pull --ff-only` 가 non-fast-forward 로 실패: 본 cleanup 중단 + 사용자 manual
+  resolve. 자동 `merge` / `rebase` 금지 (silent history rewriting 차단).
+
+##### Step 6.2: 자기 worktree working tree clean 검증
+
+`git status --porcelain` 가 비어 있어야 함. dirty 시 사용자 결정:
+- `stash` (later restore)
+- `discard` (사용자 명시 + 데이터 손실 경고)
+- `commit + 머지 재진행` (cleanup 중단)
+
+##### Step 6.3: cwd 이동 (자기 worktree 내부일 때만)
+
+자기 working dir 안에서 worktree 를 remove 할 수 없다. cwd 가 자기 worktree
+내부면 main worktree 로 `cd` 후 진행.
+
+##### Step 6.4: worktree remove
+
+```bash
+git -C <main-worktree> worktree remove <self-worktree-path>
+```
+
+##### Step 6.5: local branch delete
+
+```bash
+git -C <main-worktree> branch -d <self-branch>
+```
+
+`-d` 가 unmerged 로 실패하면 사용자 confirm 받은 후 `-D` (force). PR 이 squash /
+rebase 머지된 경우 local branch 의 commit hash 가 main 에 없을 수 있다 (squash
+merge 패턴) — 이 때 `-D` 가 정상 경로. **squash/rebase 머지 시 -D 사용은
+강제 자율 결정이 아니라 사용자 confirm 후 진행** (silent force-delete 차단).
+
+##### Step 6.6: §13.2.4 채택 consumer REGISTRY entry 이동
+
+`<project_root>/worktrees/REGISTRY.md` 존재 시 (consumer 가 §13.2.4 채택) 자기
+session entry 를 `## 활성 세션` → `## 종료 세션` 으로 이동 + `meta/SESSIONS_LOG.md`
+한 줄 append. 부재 시 silent skip.
+
+##### 자동화 (cycle-finalize.sh, v3.9.0+)
+
+위 6 sub-step 의 reference 구현은 `bin/cycle-finalize.sh` 다 — 호출 패턴:
+
+```bash
+bash bin/cycle-finalize.sh --pr <PR-NUMBER> \
+  [--merge-strategy merge|squash|rebase] \
+  [--keep-worktree] [--keep-branch] [--dry-run]
+```
+
+`--dry-run` 으로 사전 검증 후 실제 호출. idempotent (이미 머지된 PR / 이미
+삭제된 worktree 호출 시 step 별 skip).
 
 #### SPOF 대응 (bypass 금지)
 
 `verify-completion.sh`는 모든 commit의 gate이며 bypass 경로를 제공하지 않는다
-(SPOF 복구는 §18.4 "운영 vs 메타 층위" 참조).
-
-#### 완료 응답 금지 패턴
-
-AI 작업자는 완료 가능한 cycle에서 아래 응답으로 작업을 멈추면 안 된다.
-
-- `자동 commit/push는 하지 않았습니다`
-- `commit 결정은 사용자에게 위임합니다`
-- `push 여부를 확인해 주세요`
-
-허용되는 예외는 다음뿐이다:
-
-- `verify-completion` FAIL 또는 테스트 FAIL이 남아 있고 AI가 같은 cycle 안에서 복구할 수 없음
-- `BLOCKED` 항목 또는 Critical/Major 승인 대기가 `REPORT.md`에 기록됨
-- 원격 저장소가 없거나 인증/권한 문제로 push가 기술적으로 불가능함
-- 사용자가 명시적으로 "commit/push 하지 말라"고 지시함
-
-예외가 아니면 AI는 §16.5에 따라 commit하고, 가능한 경우 push/PR 갱신까지 완료한 뒤
-결과를 `REPORT.md`와 최종 응답에 기록한다.
+(SPOF 복구 방법은 §18.4 "운영 vs 메타 층위" 참조).
 
 #### Worktree 환경에서의 적용
 
-본 §16.5 sync 결정 로직은 단일 checkout 가정으로 유지된다. manual parallel AI
+본 §16.3 sync 결정 로직은 단일 checkout 가정으로 유지된다. manual parallel AI
 worktree 환경에서는 main worktree stale 위험이 추가되며, 이에 대한 보충 룰은
 **Normative source: §13.2.5 (Manual Parallel AI Worktree Isolation Addendum)** 에
 정의된다. ai/* PR 머지 후 main worktree 에서의 일회성 `git fetch && git pull
 --ff-only` 권유 및 fetch 실패 처리 (WARN + 계속) 룰은 그곳을 참조한다.
 
-### §16.6 병합 충돌 해결 정책
+### §16.4 병합 충돌 해결 정책
 
-공개 `issue/*` 브랜치를 `origin/main`에 맞춰 동기화하거나, 내부 `ai/*` 브랜치를 공개 `issue/*` 브랜치에 통합하는 과정에서 충돌이 발생할 수 있다.
-충돌 발생 시 AI는 아래 분류 기준에 따라 자율 해결 또는 사람 위임을 판정한다.
+병합 충돌 발생 시 AI는 아래 분류 기준에 따라 자율 해결 또는 사람 위임을 판정한다.
 **판정 원칙: 충돌의 양쪽 의도가 모두 명확하고 공존 가능하면 AI가 해결한다. 의도가 상충하거나 판단이 필요하면 사람에게 위임한다.**
 단, "사람 판단 필요"는 작업 중단의 기본값이 아니다. 처음 요청 의도가 왜곡될 우려가
 없고 검증 결과가 명료하면 AI는 PASS로 판정하고 cycle을 계속 진행한다.
@@ -1155,10 +951,10 @@ worktree 환경에서는 main worktree stale 위험이 추가되며, 이에 대�
   │    ├─ 충돌 마커를 제거하고 해결 방법에 따라 내용 병합
   │    ├─ git add → git commit (병합 커밋)
   │    ├─ REVIEW.md에 해결 내역 기록
-  │    └─ 공개 issue/* 브랜치 동기화 계속 (push / PR 갱신)
+  │    └─ 동기화 계속 (push)
   │
   ├─ 하나라도 모호 포함 → 부분 해결 + 사람 위임
-  │    ├─ git merge --abort 또는 rebase --abort (통합 중단)
+  │    ├─ git merge --abort (병합 중단)
   │    ├─ REPORT.md에 BLOCKED: merge-conflict-needs-review 기록
   │    │    ├─ AI 해결 가능 항목 목록
   │    │    ├─ 사람 판단 필요 항목 + 양쪽 내용 요약
@@ -1166,18 +962,36 @@ worktree 환경에서는 main worktree stale 위험이 추가되며, 이에 대�
   │    └─ 사람 검토 후 재시도
   │
   └─ 판단 불가 → 전체 사람 위임
-       ├─ git merge --abort 또는 rebase --abort
+       ├─ git merge --abort
        └─ REPORT.md에 BLOCKED: merge-conflict 기록
 ```
 
 #### 자율 해결 시 커밋 메시지
 
 ```
-refactor(project): 공개 브랜치 동기화 충돌 해결 (#<issue-number>)
+merge(<scope>): <feature-branch>를 main에 병합
 
 - <파일1>: <충돌 유형> — <해결 방법>
 - <파일2>: <충돌 유형> — <해결 방법>
 ```
+
+### §16.5 완료 응답 금지 패턴
+
+AI 작업자는 완료 가능한 cycle에서 아래 응답으로 작업을 멈추면 안 된다.
+
+- `자동 commit/push는 하지 않았습니다`
+- `commit 결정은 사용자에게 위임합니다`
+- `push 여부를 확인해 주세요`
+
+허용되는 예외는 다음뿐이다:
+
+- `verify-completion` FAIL 또는 테스트 FAIL이 남아 있고 AI가 같은 cycle 안에서 복구할 수 없음
+- `BLOCKED` 항목 또는 Critical/Major 승인 대기가 `REPORT.md`에 기록됨
+- 원격 저장소가 없거나 인증/권한 문제로 push가 기술적으로 불가능함
+- 사용자가 명시적으로 "commit/push 하지 말라"고 지시함
+
+예외가 아니면 AI는 §16.3에 따라 commit하고, 가능한 경우 push까지 완료한 뒤 결과를
+`REPORT.md`와 최종 응답에 기록한다.
 
 ## §17. shared/ 거버넌스
 
@@ -1251,18 +1065,25 @@ stale 문제를 active detection으로 전환 — 별도의 staleness scanner가
 - `shared/docs/**` (shared 정책 문서)
 - `docs/**` (프로젝트 수준 정책 문서)
 - `unit/META-*/` (명시적 META feature)
-- `.github/**` (CI/CD 워크플로 + 자동화 스크립트 + 정책 contract — 운영 코드와 분리된 인프라)
 
 #### META 작업 워크플로
 
 META 작업도 일반 feature와 동일한 8-doc + ANCHOR.md 구조에 편입된다.
-형식: `unit/META-NNNN-<name>/`.
+형식: `unit/META-NNNN-<name>/` (예: `unit/META-0001-external-anchor/`).
 **`[META]` commit prefix는 지원하지 않는다** — path convention만 유효 게이트.
 
-#### Pure-meta commit의 verify skip
+#### Pure-meta commit의 verify mode (check #9 단일 예외)
 
 변경 파일이 **전부** META 경로면 `verify-completion.sh`가 "META mode" 진입하여
-모든 검사를 skip한다. 템플릿 자체 유지 작업에 필수 경로.
+**check #1~#8을 skip한다.** 단 **check #9** (cycle 내 accepted REVIEW.md index entry ≥ 1 —
+§18.10.1 META REVIEW location 참조)는 **META mode에서도 적용된다.** META 작업도
+verification panel(§18.8) 호출 또는 명시 [SKIPPED:*] 트레이스를 남겨야 cycle을
+통과한다 — META skip 정책의 **단일 예외**. `[REJECTED:*]`는 diagnostic trace이며
+그 자체로는 check #9를 만족하지 않는다.
+
+이는 템플릿 자체 유지 작업을 가능하게 하면서도 (스크립트 버그 복구 시,
+AGENTS.md 개정 시 등) verification panel 호출이 manual habit이 아니라 enforced
+protocol로 격상됨을 보장한다.
 
 **Mixed commit (META + operational)**은 operational로 취급되어 full gate를 거친다.
 이로써 AI가 operational 작업에 META 경로를 끼워 우회하는 패턴이 차단된다.
@@ -1272,7 +1093,7 @@ META 작업도 일반 feature와 동일한 8-doc + ANCHOR.md 구조에 편입된
 `verify-completion.sh` 자체에 버그가 발생해 모든 feature 작업이 차단되면,
 AI는 META mode로 자동 진입하여 스크립트를 수정한다. bypass env var는 존재하지 않는다.
 
-### §18.5 TASK Cycle 정의 (§4 엔트리 경계)
+### §18.5 TASK Cycle 정의 (META cycle 경계 포함)
 
 "TASK cycle"은 하나의 TASK 수명 기간이다. cycle 시작은 아래 중 **나중의** commit:
 
@@ -1280,10 +1101,34 @@ AI는 META mode로 자동 진입하여 스크립트를 수정한다. bypass env 
 - 해당 TASK의 첫 TASK.md 수정 commit
 - (migration day 이후라면) `anchor-migrate.sh`가 생성한 seed commit
 
-§4 엔트리가 이 범위 내에 ≥ 1개 있어야 `verify-completion.sh` check #7이 PASS한다.
-단, 24h bootstrap grace 적용 시 check #7은 skip된다.
+일반 TASK cycle 완료에는 §4 엔트리가 필요하지 않다. `verify-completion.sh` check #7은
+§4 엔트리가 존재할 때 형식과 최소 품질만 검증하며, 엔트리 부재 자체는 실패로 보지 않는다.
+release/milestone 또는 방향 전환 검증에서 §4가 필요하면 해당 작업의 `TASK.md` 또는
+`REPORT.md`에 별도 완료 조건으로 명시한다.
 
-### §18.6 §4 엔트리 품질 gate
+#### META cycle 경계
+
+META 작업은 별도의 cycle scope를 가진다. META cycle 시작은 아래 중 **나중의**
+commit:
+
+- `Meta-Cycle: <meta-cycle-id>` trailer를 가진 가장 이른 commit
+- project-wide META의 경우 `meta/TASK.md` 첫 수정 commit
+- feature-bound META의 경우 `unit/<feature-id>/meta/TASK.md` 첫 수정 commit
+
+`<meta-cycle-id>`는 자유 형식 슬러그(예: `verification-panel-v0.1.5`,
+`agents-md-evolution-2026-04`). trailer가 없으면 path-based scope로 fallback —
+`meta/**` (project-wide) 또는 `unit/<id>/meta/**` (feature-bound) 첫 수정
+commit이 cycle 시작이 된다.
+
+META cycle 내 REVIEW.md(§18.10.1) index entry가 `[SUBAGENT:*]` /
+`[AGENT-TEAM:*]` / `[SKIPPED:*]` 중 ≥ 1개 존재해야 check #9가 PASS한다.
+`[REJECTED:*]`는 실패 진단용 trace이며 accepted review로 계산하지 않는다. META
+cycle은 §18.4의 "check #1~#8 skip + check #9 적용" 정책 하에서 운영된다.
+
+### §18.6 §4 엔트리 품질 기준
+
+§4 엔트리를 작성하는 경우에만 아래 기준을 적용한다. 일반 TASK cycle에서 §4 엔트리
+부재는 완료 실패 사유가 아니다.
 
 각 엔트리 필수 필드:
 
@@ -1293,31 +1138,287 @@ AI는 META mode로 자동 진입하여 스크립트를 수정한다. bypass env 
 - `challenge:` — 한 줄, 이 검증이 무엇을 반박하거나 확인했는지
 
 단순 confirmation(`"pass"`, `"looks good"` 등 단독)은 FAIL로 처리한다.
+이는 cargo cult 검증을 방지하기 위한 최소 장벽이다 — 완전 방어는 아니며,
+설계상 한계로 명시되어 있다 (§4 내용의 semantic 품질은 script가 보장하지 못한다).
 
 ### §18.7 Bootstrap grace (24h)
 
 새로 생성된 `ANCHOR.md`는 `created_at` 기준 24시간 이내면 §1~§3 빈칸 검사와
-§4 엔트리 수 검사가 skip된다. 이 유예 시간 안에 작성자가 §1~§3를 채우고
-최초 §4 엔트리를 추가한다.
+§4 품질 검사가 skip된다. 이 유예 시간 안에 작성자가 §1~§3를 채운다.
+§4 엔트리는 일반 TASK cycle 완료 조건이 아니므로 최초 엔트리 추가를 강제하지 않는다.
 
 `created_at`은 frontmatter 값과 git log first-add timestamp 중 **더 이른 쪽**을
 canonical로 사용한다 (frontmatter 조작 방지).
 
-### Codex command compatibility
+### §18.8 Verification Panel Dispatch Policy
 
-- Codex command 원본은 repo-local `.codex/commands/_template/*.md` 이다.
-- Codex skill wrapper 는 `.codex/skills/_template-*/SKILL.md` 에 둔다.
-- Repo-local marketplace/plugin 원본은 `.agents/plugins/marketplace.json` 과
-  `plugins/ai-delegated-dev-template/` 이다.
-- `~/.codex` 와 Codex plugin cache 는 설치/링크 대상일 뿐 source of truth 가 아니다.
-- Exact intent 는 계속 `/_template:<skill>` 로 기록하고, Codex surface 가 이를 거부하면
-  `_template-<skill>` fallback prompt alias 를 사용한다.
+main session은 새 TASK 또는 변경 요청을 처리한 뒤 완료 선언 전에 verification
+panel protocol을 실행한다. `/review-panel` slash command는 같은 protocol을 실행하기
+위한 Claude Code entrypoint일 뿐이며, 사용자 실행을 전제로 하지 않는다. AI 작업자는
+check #9 evidence가 없으면 스스로 이 protocol을 수행해야 한다.
 
-### Codex copy-base skill discovery
+다음 dispatch 표에 따라 관련 도메인 subagent subset을 결정한다.
+**no separate planner LLM** — main session prompt context에 이 표가 포함되어 main이
+직접 라우팅한다 (0 추가 LLM call).
 
-- 현재 확인된 Codex skill 호출 표면은 `$<skill-name>` 이다.
-- `_template` skill 자동완성은 Codex 가 시작된 workspace 에서 `.codex/skills` 를
-  발견할 수 있어야 동작한다.
+| Task signal (current TASK.md 내용 기준) | Required subagents |
+|---|---|
+| auth, password, key, token, session, credential / 인증, 비밀번호, 세션, 자격증명 | security |
+| schema, migration, foreign key, query, index, ORM / 스키마, 마이그레이션, 외래키, 쿼리, 인덱스 | backend, qa |
+| UI, button, page, form, dialog, modal, screen, layout / 버튼, 페이지, 폼, 모달, 화면, 레이아웃 | ux, design |
+| API, endpoint, contract, response shape, REST, GraphQL / API, 엔드포인트, 응답 스키마 | backend, security, qa |
+| performance, memory, latency, N+1, caching, throttle / 성능, 메모리, 지연, 캐싱 | backend, qa |
+| 비정책 doc-only OR comment-only | (panel SKIP) |
+| 정책 doc (`AGENTS.md`, `CLAUDE.md`, `_template/`, `docs/CONVENTIONS.md`, `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/PROJECT.md`, ANCHOR.md skeleton) doc-only | full panel (META mode) |
+| Code change (line-count 무관) | dispatch 키워드 매칭 → subset, 매칭 0건이면 full panel |
+| 키워드 0개 + cross-domain 키워드 ≥ 2개 | full panel (5명) |
+
+규칙:
+
+- 중복 도메인은 dedupe.
+- main session은 dispatch 결정의 근거(매칭된 키워드)를 REVIEW.md entry의
+  `Trigger` 필드에 기록한다 — 어느 신호로 어느 subagent가 호출됐는지 추적 가능.
+- 사용자가 명시적으로 "전체 panel"을 요청하면 full panel.
+- 매칭 0건 + code change 또는 정책 doc → full panel default. **fallback 빈도
+  자체가 측정 신호** — 자주 발화 시 "병렬 처리 불필요 영역"이라는 evidence.
+- 사용자 노출 surface (REVIEW.md verdict 라벨, `/review-panel` summary stderr)는
+  영어 keyword + 한국어 명사 병기 (예: `Trigger: schema/스키마 keyword matched`).
+  internal dispatch 매칭 자체는 영어 그대로.
+- skip 결정 시에도 REVIEW.md에 `[SKIPPED:non-policy-doc]` index entry 1줄을
+  남겨야 한다 — check #9가 인식하여 SKIP cycle도 통과시킨다 (§18.10.1).
+
+#### Agent Team escalation
+
+AI 작업자는 일반 subagent panel만으로 판단이 닫히지 않으면 agent team을 스스로
+구성할 수 있다. 사용자 명시 호출이 없어도 다음 경우에는 `[AGENT-TEAM:<topic>]`
+entry를 남긴다:
+
+- subagent verdict가 서로 충돌하고 main session이 단독으로 결론을 낼 근거가 부족함
+- security/data-loss/destructive operation처럼 단일 관점 누락 비용이 큰 결정
+- all-subagents rejected가 반복되어 prompt/context 설계 자체를 재검토해야 함
+- 요구사항/acceptance criteria가 서로 충돌해 구현 방향을 다시 선택해야 함
+
+### §18.9 REVIEW.md Subagent Index + Artifact Schema
+
+§18.2는 ANCHOR.md §4가 `human:<name>` only임을 규정한다. AI subagent 출력은
+§4가 아니라 **2-tier 분리 구조**로 저장된다:
+
+1. **Full artifact:** `unit/<feature-id>/docs/reviews/<ISO-timestamp>-<agent>.md`
+   (또는 META의 경우 §18.10.1 path) — 4-section + 4 required fields 출력 전문.
+2. **Index entry:** per-feature `docs/REVIEW.md` (또는 META의 경우 §18.10.1 path) —
+   1줄 verdict + artifact 링크.
+
+이로써 §4의 externality(인간 검증)와 REVIEW.md의 navigability(timeline 인덱스)가
+의미적으로 분리된다.
+
+#### 신규 REV entry — Subagent index (1-line index format)
+
+```
+## REV-YYYYMMDD-NNN [SUBAGENT:<agent-name>] — <verdict>
+- Related TASK: <feature-id | _meta_>
+- Trigger: <matched keyword/한국어 명사>
+- Timestamp: <ISO8601>
+- Verdict: PASS | CONCERN | BLOCK
+- Artifact: <feature: unit/<feature-id>/docs/reviews/<ISO-timestamp>-<agent>.md
+            META project-wide: meta/reviews/<ISO-timestamp>-<agent>.md
+            META feature-bound: unit/<feature-id>/meta/reviews/<ISO-timestamp>-<agent>.md>
+- Critical issue (if BLOCK/CONCERN): <1-line excerpt from artifact>
+- Human Approval Needed: yes/no
+```
+
+#### 신규 REV entry — Agent Team escalation
+
+```
+## REV-YYYYMMDD-NNN [AGENT-TEAM:<topic>]
+- Related TASK: <feature-id>
+- Source: agent-team:<topic>:<n-teammates>
+- Trigger: <AI escalation reason | manual escalation by user>
+- Timestamp: <ISO8601>
+
+### 1. Initial positions (per teammate)
+### 2. Discussion / contradictions
+### 3. Consensus
+### 4. Dissent / residual risks
+
+- Human Approval Needed: yes/no
+```
+
+#### 신규 REV entry — SKIPPED (non-policy doc trace)
+
+```
+## REV-YYYYMMDD-NNN [SKIPPED:non-policy-doc]
+- Related TASK: <feature-id | _meta_>
+- Reason: changed paths are docs/comments only outside policy-doc list
+- Timestamp: <ISO8601>
+```
+
+#### 신규 REV entry — REJECTED (diagnostic trace)
+
+wrapper post 단계에서 일부 또는 모든 subagent가 validator에 reject되거나
+wrapper-level fail-loud로 차단되면 다음 entry 1줄을 append한 뒤 stderr 보고하고
+exit 0:
+
+```
+## REV-YYYYMMDD-NNN [REJECTED:partial-subagents | REJECTED:all-subagents]
+- Related TASK: <feature-id | _meta_>
+- Reason: <reject reason 요약, ≥ 30 char>
+- Rejected agents: <list>
+- Timestamp: <ISO8601>
+```
+
+`[REJECTED:partial-subagents]`는 accepted artifact가 1개 이상 있고 일부만
+reject된 경우다. 이때 check #9는 REJECTED entry가 아니라 이미 append된
+`[SUBAGENT:*]` entry 때문에 PASS한다.
+
+`[REJECTED:all-subagents]`는 accepted artifact가 0개인 경우다. 이 entry는 시도
+흔적을 남기지만 check #9를 만족하지 않는다. 즉 모든 reviewer 출력이 schema/quality
+gate를 통과하지 못했다면 AI는 prompt/context/artifact를 고쳐 panel을 다시 실행해야
+하며, trace만으로 완료 선언할 수 없다.
+
+#### Artifact 파일 (full output)
+
+각 subagent의 4-section + 4 required fields 출력 전문 + frontmatter:
+
+```yaml
+---
+doc_type: REVIEW_ARTIFACT
+feature_id: <feature-id | "_meta_">
+agent: <agent-name>
+timestamp: <ISO8601>
+trigger: <matched keyword/한국어 명사>
+verdict: PASS|CONCERN|BLOCK
+---
+
+### 1. Blocking issues
+### 2. Cross-domain concerns
+### 3. Challenge to current spec
+### 4. Verdict
+```
+
+#### 품질 gate (validator enforced)
+
+`bin/review-md-append-from-subagent-output.sh`가 다음 규칙을 enforce한다:
+
+- **Schema는 exact match만 허용**: header `### 1. Blocking issues`,
+  `### 2. Cross-domain concerns`, `### 3. Challenge to current spec`,
+  `### 4. Verdict` 정확 토큰. bold/code-fence 변형, trailing whitespace 외 변형은
+  모두 reject. 각 header가 정확히 1회만 발견되어야 함 — duplicate (예: code-fence
+  안 가짜 + 진짜 둘 다) → reject.
+- 4 section header 모두 present.
+- Section 1·2의 각 finding은 **`Evidence`**, **`Location`**, **`Reason`**,
+  **`Action`** 4 required fields 모두 present.
+- `Evidence`, `Reason`, `Action`: markdown markup strip 후 ≥ 30 char.
+- `Location`: non-empty + 패턴 매칭 — `<path>:<line>`(예: `src/auth.ts:42`)
+  또는 UI selector(`#submit-btn`) 또는 URL path(`/api/v1/users`) 또는
+  Field path(`form.email`). char minimum 없음.
+- Section 1 `(no findings)` 단독이면 section 1 필드 검사 skip하지만 section
+  3·4는 substantive 강제.
+- **Section 4 verdict tightened**: 정확히 PASS | CONCERN | BLOCK 토큰 매칭 +
+  일관성 검사:
+  - §1 critical/high blocker ≥ 1 → BLOCK 강제 (다른 verdict 시 reject).
+  - §1 medium blocker 또는 §2 cross-domain concern ≥ 1 → CONCERN 또는 BLOCK
+    허용 (PASS 시 reject).
+  - §1 (no findings) AND §2 (no findings) → PASS만 허용.
+- Forbidden minimal patterns: 각 required field가 단독으로
+  `^\s*(pass|ok|fine|n/a|none|—)\s*$` 이면 reject.
+- Lock scope: `flock` 획득 → 마지막 NNNN 읽기 → NNNN+1 포맷팅 → REVIEW.md index
+  entry 작성 → temp file → `mv` → release. 모두 lock 안에서.
+
+**v0.1 SKIP 의도**: code-fence 가짜 헤더 무시·bold header 허용·복잡 markdown
+변형 허용은 v0.2. v0.1은 **strict exact-schema validator** — bash로 Day-0 안정
+구현 가능한 최소 수준.
+
+### §18.10 Meta TASK Convention
+
+Project-wide cross-cutting meta 작업과 feature-bound meta 작업의 저장 경로 분리:
+
+| 작업 종류 | 위치 | 사용 사례 |
+|---|---|---|
+| Project-wide cross-cutting meta | `meta/TASK.md` (append-only 권장, doc_type: `META_TASK_PROJECT`) | verification protocol v0.X backlog, render-agents 도구, AGENTS.md 진화, cross-project 정책 변경 등 |
+| Feature-bound meta | `unit/<feature-id>/meta/TASK.md` | 특정 feature와 결합된 meta 작업 (예: feature 자체 설계 디시전 변경) |
+| Operational TASK | `unit/<feature-id>/docs/TASK.md` (기존) | 변경 없음 — 운영 층위 |
+
+`verify-completion.sh`의 META mode (§18.4)는 `meta/**` 와
+`unit/<feature>/meta/**` 둘 다 META 경로로 자동 인식한다. mixed commit (META +
+operational)은 operational로 취급된다.
+
+### §18.10.1 META mode REVIEW location
+
+Day-0 자체 작업이 META 경로에서 발생할 때, panel 출력의 저장 위치를 path
+convention으로 자동 분기한다:
+
+| 변경 범위 | REVIEW 저장 위치 (index + artifact) | check #9 cycle scope |
+|---|---|---|
+| Operational (단일 feature 코드/문서) | `unit/<feature-id>/docs/REVIEW.md` (index) + `unit/<feature-id>/docs/reviews/<ts>-<agent>.md` (artifact) | per-feature cycle |
+| **Project-wide META** (AGENTS.md, CLAUDE.md, `_template/`, `bin/`, `settings.json`, `docs/CONVENTIONS.md` 등) | **`meta/REVIEW.md`** (index) + `meta/reviews/<ts>-<agent>.md` (artifact) | meta cycle (§18.5 META cycle) |
+| **Feature-bound META** (`unit/<feature-id>/meta/TASK.md`-driven) | `unit/<feature-id>/meta/REVIEW.md` (index) + `unit/<feature-id>/meta/reviews/<ts>-<agent>.md` (artifact) | feature cycle |
+| Mixed commit (META + operational) | operational 우선 — `unit/<feature-id>/docs/REVIEW.md` | per-feature cycle |
+
+### §18.11 Subagent invocation contract
+
+Subagent는 frontmatter `tools:` 필드 부재 — 어떤 도구도 호출하지 못한다 (git,
+Read, Grep 모두 불가). main session이 다음 4개 정보를 **각 subagent invocation
+prompt에 명시 inject**해야 subagent가 변경 범위를 알 수 있다:
+
+```
+[Context bundle injected by main session per subagent invocation]
+- changed_files: <git diff --name-only output, 1줄당 1 path>
+- diff_excerpt: <git diff output — 큰 경우 단일 hunk별 잘라서 첫 N hunks 또는 핵심 hunks>
+- task_md_content: <verbatim contents of unit/<feature-id>/docs/TASK.md
+                   또는 META의 경우 meta/TASK.md / unit/<id>/meta/TASK.md>
+- acceptance_criteria: <if TASK.md frontmatter has it, otherwise "(none specified)">
+```
+
+이게 contract — main session이 이 4개를 inject하지 않으면 subagent는 변경 범위를
+알 수 없다. `/review-panel` entrypoint와 AGENTS.md §18.8 protocol은 같은 contract를
+따른다. Subagent prompt 첫 줄에는 다음이 추가된다:
+
+```
+You will be given a context bundle below containing changed_files, diff_excerpt,
+task_md_content, acceptance_criteria. Your audit MUST cite specific files/lines
+from this bundle. Do not search the repo independently — the bundle is your only input.
+```
+
+---
+
+## §19. Request-Form Protocol
+
+### §19.1 목적
+
+사용자 요청이 AI 작업에 투입되기 전, **구조화된 form 으로 조립** 되도록 한다.
+§18 (ANCHOR 외부 앵커) 과 구분된다:
+- §18: 프로젝트 **방향성** 재앵커 (외부 관점 / 대안 분기 / 가정 / 외부 검증)
+- §19: 기능 단위 **요청** 조립·실행 (요청의 section 조립 + 필요 시 실제 적용)
+
+§18 은 *무엇을 왜 만드는가* 의 외부 증거. §19 는 *지금 이 요청을 어떻게 다룰 것인가* 의 구조.
+
+### §19.2 Persona 호출
+
+`/_template:<persona>` (template-owned, project-agnostic) 또는 `/_persona:<name>` (project-owned) 로 **명시 호출** 한다. 자동 호출하지 않는다.
+
+Persona 는 두 모드 중 하나로 작동한다:
+
+1. **조립 (assembly-only)**: `repo/docs/REQUEST.md` 의 특정 section 을 append 한다. 실제 코드·문서 변경 권한 없음.
+2. **조립 + 실행 (worker)**: section 조립 + 변경안 초안 작성 + **사용자 명시 승인 게이트** 를 통과한 후 AI 가 직접 Edit/Write 로 실제 적용. 이 모드의 persona 는 **`worker-*` prefix** 를 관례적으로 따른다 (강제 아님, 식별용).
+
+### §19.2.1 Codex command compatibility
+
+Codex 에서는 Claude Code 의 `.claude/commands/_template` 를 직접 source of truth 로
+사용하지 않는다. Codex 전용 원본은 다음 repo-local 구조다:
+
+- `.codex/commands/_template/*.md` — `/_template:<persona>` 의 Codex canonical prompt.
+- `.codex/skills/_template-*/SKILL.md` — Codex skill discovery 를 위한 최소 wrapper.
+- `.agents/plugins/marketplace.json` + `plugins/ai-delegated-dev-template/` — local marketplace/plugin 노출 표면.
+
+규칙:
+
+- `~/.codex`, Codex marketplace cache, installed plugin cache 는 **설치 대상**일 뿐
+  source of truth 가 아니다. 마켓플레이스 업데이트로 repo-local command 를 덮어쓰지 않는다.
+- `bin/codex-template-install.sh --check` 로 구조를 검증하고,
+  wrapper cwd 지원이 필요하면 `--link` 로 `<wrapper>/.codex -> repo/.codex` 를 만든다.
+- 현재 확인된 Codex skill 호출 표면은 `$<skill-name>` 이다. 따라서
+  `_template` skill 자동완성은 Codex 가 시작된 workspace 에서 `.codex/skills` 를
+  발견할 수 있어야 한다.
 - copy-base 를 파일 복사로 전달하면 symlink 가 누락될 수 있다. 첫 AI 작업자는
   skill 이 없다고 판단하기 전에 wrapper 위치에서 다음을 먼저 실행한다:
 
@@ -1327,9 +1428,96 @@ canonical로 사용한다 (frontmatter 조작 방지).
   bash repo/bin/codex-template-install.sh --check
   ```
 
-- 이미 `/repo` 안에서 작업 중이면 `bash bin/codex-template-install.sh --check` 를
+  이미 `/repo` 안에서 작업 중이면 `bash bin/codex-template-install.sh --check` 를
   사용한다. `--link` 가 플랫폼 정책상 실패하면 Codex 를 `/repo` 에서 시작하고,
   wrapper-level 자동완성 제한을 작업 로그에 명시한다.
+- Codex 가 exact `/_template:<persona>` namespace 를 거부하는 버전에서는
+  `--install-prompts` 가 `$CODEX_HOME/prompts/_template:<persona>.md` 와
+  `$CODEX_HOME/prompts/_template-<persona>.md` 호환 링크를 생성한다.
+- `.codex/**`, `.agents/plugins/**`, `plugins/ai-delegated-dev-template/**` 변경은
+  META-class 변경이며 §18.8 verification panel 정책 대상이다.
+
+### §19.3 REQUEST 문서 거버넌스
+
+Request 로그는 2 파일 구조로 운영한다:
+
+- `repo/docs/REQUEST.md` — **Active 요청 로그** (status: in-progress). append-only.
+- `repo/docs/REQUEST_ARCHIVE.md` — **완료·폐기 요청 로그** (status: completed | abandoned). append-only.
+
+양쪽 모두 §3.1 우선순위 8번 (project-level) 에 위치한다.
+각 entry 는 `REQ-YYYYMMDD-NNNN <request-slug>` 식별자로 구분된다.
+
+Persona 실행 시 기본적으로 **active 만 Read** 한다. 사례 참조가 필요한 경우에 한해 ARCHIVE 도 Read (명시적 판단, 무조건 Read 금지).
+
+### §19.4 Entry 구조
+
+각 entry 는 아래 최소 구조를 따른다:
+
+```markdown
+## REQ-YYYYMMDD-NNNN <request-slug>
+- submitted_at: <ISO8601>
+- target: project | feature-<id> | shared | multi
+- personas_invoked: [<name>, ...]
+- source_log: ~/.gstack/projects/<slug>/template-personas/<branch>-<request-slug>-*.md
+
+### <Section Name>
+(persona 가 조립한 section 내용)
+
+### Outcome
+- status: in-progress | completed | abandoned
+- completed_at: <ISO8601>  (status: completed 일 때만)
+- consumed_by: <feature-id | commit-hash | file-path list>
+- notes: <요약 1~2 줄>
+```
+
+신규 entry 생성 시 `target` 은 사용자에게 묻는다. `personas_invoked` 는 참여 persona 가 추가될 때마다 append.
+
+### §19.5 Archive move protocol
+
+전체 REQUEST 가 완료되면 (Outcome.status = completed) 다음 절차를 수행한다:
+
+1. `REQUEST.md` 에서 해당 entry 전체를 잘라냄.
+2. `REQUEST_ARCHIVE.md` 말미에 append. 파일 부재 시 frontmatter 포함 생성:
+   ```yaml
+   doc_type: REQUEST_ARCHIVE
+   scope: project
+   status: active
+   edit_policy: append-only
+   source_of_truth: true
+   ```
+3. 두 파일 변경을 **한 commit 에 atomic 으로** 포함 권장 (move 가 중간 상태로 git 에 노출되지 않도록).
+
+**책임 주체**:
+- **Worker-class persona** (§19.2 모드 2): 자기 실행 직후 해당 entry 에 대해 수행.
+- **조립-only persona** (§19.2 모드 1): Archive move 를 수행하지 않는다. Outcome.status 를 `in-progress` 로 설정하고 active 에 남긴다.
+- **사용자**: 여러 section 이 누적된 entry 의 전체 완료 판단 시 수동 move.
+
+### §19.6 Persona 분업 원칙
+
+- 각 persona 는 자기 section 을 **주로** 책임진다. 다른 section 을 덮어쓰지 않는다.
+- 실행 중 다른 persona 의 로직이 필요하면 해당 `persona.md` 를 **Read 로 in-context 합성** 한다 (Agent tool 으로 subagent spawn 하지 않음). gstack `/autoplan` 패턴 준용.
+- 실행 완료 후 다음 persona 호출은 **권유만** 한다 — 자동 chain 없음. 사용자가 명시적으로 호출해야 한다.
+
+### §19.7 Scope 원칙
+
+- `_template/` 의 persona 는 **project-agnostic** 이어야 한다. 특정 feature 이름·도메인을 가정하지 않는다. Template 은 자신을 적용할 project 의 feature 가짓수·구조를 예측하지 못한다.
+- Project-specific persona (예: 프로젝트 고유 scope 정의, 도메인 특화 체크리스트, 팀 고유 review 기준) 는 **`_persona/` 에 project 가 직접 생성** 한다 (via `/_template:persona-new` factory).
+- `_persona/` 는 project git 이 직접 버전관리. `_template/` 은 submodule 로 외부 source 를 참조 (배포 시 일괄 update 가능).
+- Codex project-specific persona 는 `.codex/commands/_persona/<name>.md` 와
+  `.codex/skills/_persona-<name>/SKILL.md` 를 함께 둔다. Claude 호환이 필요한
+  경우에만 `.claude/commands/_persona/` 를 추가한다.
+
+### §19.8 Pain-response 책임 구분
+
+사용자가 pain (문제·불만·혼란) 을 호소할 때 처리 책임은 다음 순서로 배분된다:
+
+1. **`verify-completion.sh`** gate (§16.3) — 기계적 완료 조건 검증.
+2. **ANCHOR Conflict Protocol** (§18) — 방향성·가정 충돌 재앵커.
+3. **gstack skill** (`/office-hours`, `/plan-ceo-review` 등) — 프로젝트 수준 재앵커.
+
+Request-Form persona 는 **요청 조립·실행 도구** 이며 pain 해소 자체가 목적이 아니다.
+Persona 가 pain 을 "감지해서 처리" 하는 구조는 수단과 목적의 역전 (도구가 목적을 품음) 을 유발한다.
+pain 호소는 위 1~3 에서 먼저 처리된 후, 필요 시 persona 호출로 이어진다.
 
 ---
 
