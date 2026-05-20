@@ -187,3 +187,21 @@ ai_read_priority: 9
   - PR 머지에 필요한 status check 는 사람 리뷰 + 로컬 `bin/verify-completion.sh` 결과로 대체한다
   - branch protection 의 required check 는 비워두거나 사용자가 새로 정의한다
   - 후속 작업으로 `playbooks/PB-0004-hotfix.md` 등 `policy-contract` / `ai-review` 를 참조하던 playbook 을 정리한다
+
+## ADR-0019
+- Status: accepted
+- Date: 2026-05-19
+- Context: TASK-0073 (REQ-20260519-0001, Critical §12.3) — 모든 계정의 mutation 행위 (admin 11 endpoint + user 5 endpoint) 와 anonymous share view 가 일관된 audit log 에 등재되어야 한다. 직전 TASK-0072 의 `WebAccountActivity` 는 cross-account body search 한정이라 admin actions (account update / role create / product CRUD / password-reset / system_prompt update) 와 user actions (`/api/ask`, share lifecycle, anonymous public view, share fork) 가 미감사 상태. CEO review 9 trade-off + Codex outside voice 14 findings (5 deadlock scenarios 포함) + Eng review 9 lock-in (E1~E9) 의 합의 진행
+- Decision: `WebAuditEvents` 단일 테이블 + `record_audit_event(conn, ...)` dispatcher + ActionCode-specific `build_audit_change_json` builder allowlist + 두 helper (`_audit_admin_mutation` Same tx fail-safe / `_audit_user_action` fail-open best-effort) + `audit.read.own` / `audit.read.any` / `audit.export` / `audit.purge` 4 신규 권한 + permission group `audit` + `AGENT_AUDIT_ENABLED` prod startup fail-closed gate + chunked PK purge with idempotency_key + WebAccountActivity 흡수 migration (dual write 일시 공존)
+- Consequences:
+  - `_log_search_activity` 의 signature 는 transparent 보존, 본문은 dual write — 기존 `WebAccountActivity` 별 cycle DROP 까지 양쪽 INSERT
+  - admin 11 mutation endpoint 의 Same tx 정합 — audit INSERT 실패 = caller `conn.rollback()` + 500 응답 → mutation 전체 atomic
+  - user 5 endpoint (`/api/ask` 포함) 는 fail-open — long-running LLM 실행과 audit 실패 격리, stderr log 만
+  - `.own` SQL filter `WHERE ActorAccountId = :self OR TargetAccountId = :self` (Eng review E1 B) — admin password-reset / role grant / share revoke 등 admin→user 이벤트가 user 본인 audit 에 보임
+  - anonymous share view = ActorType="anonymous" + ActorAccountId NULL + share_token_prefix 8 char (full token 차단)
+  - prod 에서 `AGENT_AUDIT_ENABLED=1` 강제 — flag bypass surface 차단 (dev/test 만 toggle)
+  - `slow_query_log` 통합은 별 cycle 분리 (Codex C1 — DB-only retention/RBAC 정합 안 됨)
+  - `WebAccountActivity` 테이블 DROP 은 별 cycle (data backup + dual write 검증 후)
+  - `docs/SECURITY.md §9` (Audit subsystem 정책) 가 sensitive field catalog source-of-truth 가 된다
+  - `docs/CONVENTIONS.md §10.6` audit permission group 추가 — admin section 의 관리 권한 묶음에 합류
+  - `bin/verify-completion.sh check_11_audit_dispatcher` 가 dispatcher SPOF guard (Eng review E7)

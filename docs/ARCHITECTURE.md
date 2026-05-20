@@ -44,10 +44,10 @@ ai_read_priority: 4
 |---------|------|
 | feature-0001-platform-runtime | MySQL 설정, DAB 설정, SQL 유틸리티 |
 | feature-0002-agent-core | agent CLI 및 코어 모듈 |
-| feature-0003-agent-web-ui | FastAPI Web UI 및 정적 자산 |
+| feature-0003-agent-web-ui | FastAPI Web UI 및 정적 자산 + **audit subsystem (TASK-0073)** — `WebAuditEvents` + `record_audit_event` dispatcher + admin 11 / user 5 endpoint hook + `audit.*` 4 RBAC + chunked PK purge. SECURITY.md §9 정합. |
 | feature-0004-browser-automation | Playwright 브라우저 제어 |
 | feature-0005-qa-mcp | MCP 테스트와 QA 스크립트 |
-| feature-0006-lan-proxy-access | Caddy 및 Windows LAN 프록시 자산 |
+| feature-0006-lan-proxy-access | Caddy 및 Windows LAN 프록시 자산 + `_get_client_ip` X-Forwarded-For trust 정책 (SECURITY.md §9.7) |
 
 ## 5. source of truth 원칙
 동일한 사실을 여러 문서에 중복 확정하지 않는다.
@@ -63,6 +63,7 @@ ai_read_priority: 4
 | 기능 ID | 의존 대상 | 의존 유형 | 비고 |
 |---------|----------|----------|------|
 | feature-0003-agent-web-ui | feature-0002-agent-core | uses | Web UI가 코어 모듈을 import |
+| feature-0003-agent-web-ui | feature-0006-lan-proxy-access | uses | TASK-0073: `_get_client_ip` X-Forwarded-For trust 가 Caddy `trust_forwarded_for` / `trusted_proxies` 설정에 의존 (SECURITY.md §9.7) |
 | feature-0004-browser-automation | feature-0001-platform-runtime | uses | 운영 런타임과 함께 구동 |
 | feature-0005-qa-mcp | feature-0001-platform-runtime | uses | Compose와 환경값 공유 |
 | feature-0005-qa-mcp | feature-0002-agent-core | uses | 에이전트/MCP 모드 검증 |

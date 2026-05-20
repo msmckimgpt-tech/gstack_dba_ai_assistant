@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0021 [SKIPPED:multi-phase-plan-approved]
+- Date: 2026-05-19
+- Decision: TASK-0073 Phase D (REQ-20260519-0001, **Critical** §12.3) — 프로젝트 수준 docs 일괄 갱신. SECURITY §9 (audit subsystem) + DECISIONS ADR-0019 + ARCHITECTURE §4·§6 + CONVENTIONS §10.6 audit group + STATUS feature-0003 row + REPORT §1 phase 요약 + TEST §2.1 audit scope.
+- Reason: PLAN-APPROVED 2026-05-19 의 Phase D 명시 — sensitive field catalog source-of-truth (SECURITY §8) + ADR-0019 + ARCHITECTURE §4·§6 + CONVENTIONS §10.6 + STATUS row + feature 의 REVIEW/REPORT/TEST. SECURITY §8 가 TASK-0072 점유라 §9 로 재배치 — plan 본문 의도 보존 (Audit subsystem 정책 신설), numbering 충돌 회피.
+- Alt 거부:
+  - **SECURITY §8 안 subsection (8.8~8.9) 추가**: TASK-0072 의 cross-account search 정책 안에 audit subsystem 섞이면 의미 분리 안 됨. §9 신설이 정합.
+  - **별 file `docs/AUDIT.md` 신설**: project-level docs 의 single source 패턴 위반. 본 cycle 의 정책 정본이 SECURITY.md.
+  - **ADR-0019 를 feature-local DECISIONS.md 에**: AGENTS.md §16.4 — project-level 의사결정은 `docs/DECISIONS.md` (정합). RBAC 4 catalog 신설 + Tx split + masking 정책 = project-scope 결정.
+  - **ARCHITECTURE §6 의 의존성 line 미추가**: TASK-0073 의 `_get_client_ip` 가 feature-0006-lan-proxy-access 의 Caddy XFF 정책 의존 — 명시 표기가 보안 가시성.
+- Risks: SECURITY §8 (TASK-0072 1 년 retention) 와 §9 (TASK-0073 365 일 retention 권장) 의 정책 정합성 — 일치하나 별 cycle 통합 정리 필요. CONVENTIONS §10.6 갱신 후 작업 화면 audit placeholder 가 실 entry 부재 → UX 보강 별 cycle.
+- 미해결 followup: Phase E browser headless smoke + verify-completion 최종 + Completion Checklist 모두 [x] + TASK-0073 [x] 완료 마킹. 사용자 push origin main (sandbox SSH 인증 차단으로 본 session 위임).
+- panel: SKIPPED:multi-phase-plan-approved — docs 변경은 plan PLAN-APPROVED 의 자연 산출. SECURITY §8 → §9 재배치는 plan 본문 의도 보존 (numbering 충돌 해소).
+- Trace: REQ-20260519-0001 → TASK-0073 Phase D → CHG-20260519-0025 → REV-20260519-0021.
+
 ## REV-20260519-0020 [SKIPPED:multi-phase-plan-approved]
 - Date: 2026-05-19
 - Decision: TASK-0073 Phase C (REQ-20260519-0001, **Critical** §12.3) — Frontend admin 콘솔 "감사 로그" tab 신설 + 7 항목 filter row + list-detail pane + CSV export (gated) + 작업 화면 / 관리 콘솔 양쪽 PERMISSION_GROUP_ORDER 'audit' 그룹 추가.

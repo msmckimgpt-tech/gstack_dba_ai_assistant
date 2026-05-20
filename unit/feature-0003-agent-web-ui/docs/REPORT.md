@@ -9,6 +9,39 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-05-19 TASK-0073 진행 중 (Phase A1~D 완료, Phase E 컨테이너 검증 + 최종 commit) — 모든 계정 행위 audit subsystem 도입** (CHG-20260519-0017~0024, REV-20260519-0013~0020, REQ-20260519-0001, **Critical** §12.3 — 인증·인가 + PII 수집 + RBAC 4 신규 + Tx split + dispatcher SPOF + Codex outside voice 14 findings + Eng review E1-E9 lock-in).
+
+**Phase 별 변경 요약**:
+- **Phase A1** (CHG-0017): `record_audit_event()` dispatcher + `AGENT_AUDIT_ENABLED` prod startup fail-closed gate (Codex C5) + `bin/verify-completion.sh check_11_audit_dispatcher` SPOF guard (Eng E7).
+- **Phase A2** (CHG-0018): WebAccountActivity 흡수 + `_migrate_web_account_activity_to_audit(conn)` helper (idempotent SQL marker `RequestId='account-activity:<id>'`) + `_log_search_activity` signature transparent dual write wrap (Codex C2).
+- **Phase A3** (CHG-0019): `PERMISSION_DEFINITIONS` +4 (`audit.read.own/.any/.export/.purge`) + permission group `audit` + admin/operator/sales/dba/pending 5 role catchup loop (Eng E9, Codex C8/C9/C10).
+- **Phase A4** (CHG-0020): 5 audit read endpoint (`/api/admin/audits` + detail + export.csv + actors facet + resources facet) + chunked PK purge `POST /api/admin/audits/purge` (Eng E1 Actor OR Target self filter + E8 의사코드 + 30s deadline + idempotency_key).
+- **Phase A5** (CHG-0021): admin 11 mutation endpoint Same tx audit hook + 16 ActionCode `build_audit_change_json` builder (Codex C6 allowlist) + `_audit_admin_mutation` helper.
+- **Phase A6** (CHG-0022): user 5 endpoint fail-open audit + `_audit_user_action` helper. `/api/ask`, share create / revoke / public view (ActorType='anonymous', Eng E4) / fork.
+- **Phase B** (CHG-0023): 3 test 파일. 실 실행은 Phase E 컨테이너 가동 후 사용자 위임.
+- **Phase C** (CHG-0024): Frontend admin "감사 로그" 탭 + filter + list-detail + CSV export gated + PERMISSION_GROUP_ORDER 'audit'.
+- **Phase D** (이번 commit): `docs/SECURITY.md §9` + `docs/DECISIONS.md ADR-0019` + `docs/ARCHITECTURE.md §4·§6` + `docs/CONVENTIONS.md §10.6` + `docs/STATUS.md` + 본 REPORT.md / TEST.md.
+
+**Git 동기화 결과** (§16.5 Step 6):
+- 커밋: 8 phase commits (`bf21886` A1 / `88d6fa4` A2 / `2e45cb4` A3 / `e21ab15` A4 / `4ed5f0d` A5 / `5f42ba6` A6 / `c801104` B / `2ddf9b5` C / Phase D 진행 중).
+- worktree: `ai/claude/0073/agent-audit` (`.worktrees/0073-agent-audit/`, §13.2 manual parallel AI worktree).
+- verify-completion: 모든 phase PASS (9 checks: 7 pilot + worktree binding + audit dispatcher).
+- Push: 보류 (sandbox SSH 인증 차단 — 본 session 종료 후 사용자가 직접 push).
+- PR: 미생성 (사용자 결정).
+- 충돌 해결: 없음.
+
+**남은 위험 / 후속**:
+- Phase E HTTP smoke 실 실행 (admin/operator 자격 + 컨테이너 가동 후 사용자 검증).
+- WebAccountActivity 별 cycle DROP (data backup + dual write 검증 후).
+- `_get_client_ip` 외부 LAN trust 강화 (feature-0006-lan-proxy-access 후속).
+- 작업 화면 audit 자기 view drawer (별 cycle UX).
+
+상세 진행: `docs/MODIFY.md` CHG-20260519-0017~0024 + `docs/REVIEW.md` REV-20260519-0013~0020.
+
+---
+
+(이전 cycle Summary — TASK-0085 lazy-create 사이드바 optimistic pending entry, CHG-0016 / REV-0012)
+
 **2026-05-19 TASK-0085 완료 — lazy-create 사이드바 optimistic pending entry (송신 직후 다른 대화 전환 시 새 대화 entry 잠시 소실 UX 회귀 fix + 클릭 swap 으로 작업 step 현황 출력 지원)** (CHG-20260519-0016, REV-20260519-0012, REQ-20260519-0014, Minor §12.3 — frontend state machine + rendering refactor 5 영역, backend / RBAC / endpoint / audit / DB 무변경).
 
 **배경**: 사용자 직접 요청 — "+ 새 대화 에서 요청을 보내면, 해당 대화가 사용자 입장에서(웹브라우저에서) 즉시 활성화된 대화 객체로 받아들이도록 구성" + "현재는 + 새 대화 에서 요청 후 다른 대화로 전환할 때, 이전에 요청한 신규 대화가 잠시동안 목록에서 사라지는 이슈" + click UX 결정 "대화 내부 진입도 가능하도록 구성해주세요. 작업 step 현황의 출력을 위해서입니다".

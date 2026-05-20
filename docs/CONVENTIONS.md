@@ -261,23 +261,25 @@ TEMP_CLEANUP_ON_SUCCESS="1"
 
 ### 10.6 화면별 권한 섹션·정렬 정책 (REQ-20260512-0002)
 
-권한 (Permission) 리스트는 백엔드 단일 `PERMISSION_DEFINITIONS[*].group` (`console` / `account` / `role` / `conversation` / `product` / `misc`) 으로 분류되지만, **사용자가 보는 정렬·섹션 구조는 화면 맥락에 따라 다르게 적용한다.** 같은 정렬을 두 화면에 공유하면 한쪽은 항상 핵심 권한이 묻힌다.
+권한 (Permission) 리스트는 백엔드 단일 `PERMISSION_DEFINITIONS[*].group` (`console` / `account` / `role` / `conversation` / `product` / `audit` / `misc`) 으로 분류되지만, **사용자가 보는 정렬·섹션 구조는 화면 맥락에 따라 다르게 적용한다.** 같은 정렬을 두 화면에 공유하면 한쪽은 항상 핵심 권한이 묻힌다.
 
 #### 화면별 2단 section
 
 | 화면 | 시각 | 섹션 순서 (상→하) |
 |---|---|---|
-| 작업 화면 (`index.html` + `app.js`) | 본인이 보유한 권한을 보여주는 자기 자신 시점 | **운영 권한** (`conversation`, `product`) → **관리 권한** (`console`, `account`, `role`) → **기타** (`misc`) |
-| 관리 콘솔 (`admin.html` + `admin.js`) | 타인의 권한을 배치하는 관리자 시점 | **관리 권한** (`console`, `account`, `role`) → **운영 권한** (`conversation`, `product`) → **기타** (`misc`) |
+| 작업 화면 (`index.html` + `app.js`) | 본인이 보유한 권한을 보여주는 자기 자신 시점 | **운영 권한** (`conversation`, `product`) → **관리 권한** (`console`, `account`, `role`, `audit`) → **기타** (`misc`) |
+| 관리 콘솔 (`admin.html` + `admin.js`) | 타인의 권한을 배치하는 관리자 시점 | **관리 권한** (`console`, `account`, `role`, `audit`) → **운영 권한** (`conversation`, `product`) → **기타** (`misc`) |
+
+> TASK-0073: `audit` group 은 두 화면 모두 "관리 권한" 묶음에 합류한다. 작업 화면은 본인 `audit.read.own` 보유 여부에 따라 placeholder 만 (실 entry point 는 admin 콘솔). 관리 콘솔은 audit.read.own / .any / .export / .purge 4 권한이 모두 grid 에 노출된다.
 
 #### 정합 규칙
 
-- 백엔드 group 키 (`console` / `account` / `role` / `conversation` / `product` / `misc`) 가 진실의 근원. FE 의 section 정의는 group 키를 묶기만 한다.
+- 백엔드 group 키 (`console` / `account` / `role` / `conversation` / `product` / `audit` / `misc`) 가 진실의 근원. FE 의 section 정의는 group 키를 묶기만 한다.
 - 작업 화면은 사용자가 그 section 안의 어느 group 권한도 보유하지 않으면 **section 자체를 미렌더**한다. 특히 일반 사용자의 "관리 권한" section 은 자동 hide.
 - 관리 콘솔은 사용자(관리자) 가 보유한 권한과 무관하게 **모든 section 을 항상 표시**한다. 관리자가 배치 가능한 권한 전체를 보여주는 grid 이기 때문이다.
 - 두 화면의 section 정의는 코드 상수 1 곳에서 한다: 작업 화면 = `app.js` 의 `WORK_SCREEN_PERMISSION_SECTIONS`, 관리 콘솔 = `admin.js` 의 `ADMIN_PERMISSION_SECTIONS`.
 - 새 group 키가 백엔드에 추가되면 위 두 상수에 명시적으로 매핑한다. 매핑이 빠지면 "기타" section 으로 fallback 한다 (자동, but 권장 아님).
-- group 키별 한글 label (`console`="관리 콘솔", `account`="계정", `role`="역할", `conversation`="대화", `product`="제품", `misc`="기타") 은 두 화면에서 동일하게 유지한다.
+- group 키별 한글 label (`console`="관리 콘솔", `account`="계정", `role`="역할", `conversation`="대화", `product`="제품", `audit`="감사", `misc`="기타") 은 두 화면에서 동일하게 유지한다.
 
 #### 동적 권한 (`product.access.<key>`, `system_prompt.*`)
 

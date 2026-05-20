@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0025
+- Date: 2026-05-19
+- Summary: TASK-0073 Phase D (REQ-20260519-0001, **Critical** §12.3) — 프로젝트 수준 docs 일괄 갱신. SECURITY §9 (Audit subsystem 정책 + Sensitive field catalog source-of-truth) + DECISIONS.md ADR-0019 + ARCHITECTURE.md §4·§6 + CONVENTIONS.md §10.6 audit group + STATUS.md feature-0003 row + feature 의 REPORT.md §1 (Phase 별 변경 요약 + git 동기화 결과) + TEST.md §2.1 audit subsystem scope.
+- Files:
+  - `repo/docs/SECURITY.md` — §9 (Audit subsystem 정책) 신설. §8 가 TASK-0072 cross-account search 점유라 §9 로 분리. 정합성 보존. 하위 §9.1~9.9: 권한 모델 (`audit.*` 4건 + group=audit), Sensitive field catalog (`_AUDIT_BUILDER_*_FIELDS` + `_AUDIT_MASKED_FIELDS_*` source-of-truth), Tx 정책 split (admin Same tx fail-safe / user fail-open), Anonymous ActorType (E4), purge self-audit + idempotency (E8), `AGENT_AUDIT_ENABLED` prod fail-closed (Codex C5), RemoteAddr spoof risk (E3), WebAccountActivity 흡수 (Codex C2), 보관 정책 + 외부 배포 TODO.
+  - `repo/docs/DECISIONS.md` — ADR-0019 신설. Context (TASK-0072 의 WebAccountActivity 한정 + CEO review 9 + Codex 14 + Eng review 9 합의) + Decision (Approach B + WebAuditEvents 단일 + dispatcher + builder allowlist + 2 helper + RBAC 4 + AGENT_AUDIT_ENABLED prod gate + chunked purge + 흡수 migration) + Consequences 11 항목.
+  - `repo/docs/ARCHITECTURE.md` — §4 (현재 기능 맵) 의 feature-0003 row 에 audit subsystem 명시 + feature-0006 의 `_get_client_ip` X-Forwarded-For trust 정책 참조. §6 (의존성 맵) 에 feature-0003 → feature-0006 의존 (TASK-0073) 추가.
+  - `repo/docs/CONVENTIONS.md` — §10.6 화면별 권한 섹션 정렬 정책에 audit group 추가. group 키 list 갱신 (console/account/role/conversation/product/`audit`/misc). 화면별 2단 section 표의 manage 묶음에 audit 합류. label map 의 `audit`="감사" 추가. 두 화면 모두 "관리 권한" 묶음에 audit 등재.
+  - `repo/docs/STATUS.md` — feature-0003-agent-web-ui row 갱신 (TASK-0073 신규 entry prepend). 2026-05-19 audit subsystem 도입 일지 entry prepend.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md` — §1 Summary rewrite. Phase 별 변경 요약 + git 동기화 결과 (§16.5 Step 6) + 남은 위험 / 후속.
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md` — §2.1 신설 (Audit subsystem 검증 case 5 분야 — dispatcher unit / RBAC enforcement / migration smoke / AGENT_AUDIT_ENABLED prod fail-closed / admin UI smoke).
+- Verification: 본 phase 는 docs only — py_compile / node --check 대상 변경 없음. `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS. SECURITY.md / DECISIONS.md / CONVENTIONS.md / ARCHITECTURE.md 의 정합성 확인.
+- Risks: SECURITY.md §8 (TASK-0072) 와 §9 (TASK-0073) 의 1년/365일 retention 정책이 유사 — 별 cycle 통합 검토. CONVENTIONS.md §10.6 갱신 후 작업 화면의 audit placeholder UX 가 실제 entry point 부재 (admin 콘솔 redirect) — UX 보강 별 cycle.
+- Trace: REQ-20260519-0001 → TASK-0073 Phase D → CHG-20260519-0025 → REV-20260519-0021.
+
 ## CHG-20260519-0024
 - Date: 2026-05-19
 - Summary: TASK-0073 Phase C (REQ-20260519-0001, **Critical** §12.3) — Frontend admin 콘솔 "감사 로그" tab 신설 + filter / list / detail / CSV export gated + `PERMISSION_GROUP_ORDER` 'audit' group 추가. CONVENTIONS.md §10.6 정합 — admin section 의 관리 권한 묶음에 audit 그룹 합류. 작업 화면 placeholder.

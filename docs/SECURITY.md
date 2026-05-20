@@ -132,3 +132,77 @@ ai_read_priority: 4
 1. **FULLTEXT migration** — `ngram` parser + `innodb_ft_min_token_size` 튜닝 후 `AgentMemoryMessages.Content` 에 FULLTEXT index. 본 cycle 의 LIKE 안전망이 rate limit 빈번 진입 또는 `max_execution_time` 빈번 hit 시 trigger.
 2. **WebAccountActivity 보관 정책** — cron / archive 자동화.
 3. **운영자 사전 고지** — 관리 콘솔 첫 진입 시 "타 계정 대화 본문 검색은 모두 기록됩니다" 1 회 dismiss 안내 (PIPA "처리 사실 인지" 요건 보강).
+
+## 9. Audit subsystem 정책 (TASK-0073)
+
+REQ-20260519-0001 — 모든 admin mutation + user 4 high-signal action (`/api/ask` / share create / share revoke / share public view / share fork) 의 행위가 `WebAuditEvents` 테이블에 통합 기록된다. CEO review · Codex outside voice · Eng review 9 lock-in 의 합의된 정책 정본.
+
+### 9.1 권한 모델 (`audit.*`)
+
+- `audit.read.own` — 모든 role (pending / operator / sales / dba 포함) 자동 grant. `.own` SQL filter = `WHERE ActorAccountId = :self OR TargetAccountId = :self` (Eng review E1, 사용자 결정 B). admin password-reset / role permission grant / share revoke 등 admin→user 이벤트가 user 본인 audit 에 노출 → 보안 가시성 정합.
+- `audit.read.any` — admin / dba auto-grant. 전체 row 조회. `.own` superset semantics (TASK-0058 share read-gate 패턴 답습).
+- `audit.export` — admin / dba auto-grant. CSV / JSON dump (hard cap 50k row). masked field 정책 유지.
+- `audit.purge` — admin only auto-grant. retention 초과 row chunked PK 삭제. start/complete self-audit row 동반.
+- permission group `audit` 신규 — `docs/CONVENTIONS.md §10.6` admin section "관리 권한" 묶음 합류 + 작업 화면 placeholder (manage section).
+- `_ensure_seed_catchup` 의 `_ensure_permission_catalog` 호출이 `_ensure_seed_roles` 앞 (TASK-0063 회귀 fix 패턴 답습) — 기존 배포의 신규 4 권한 backfill 보장.
+
+### 9.2 Sensitive field catalog (source-of-truth)
+
+`record_audit_event` dispatcher 는 raw request 검증 X. ActionCode 별 `build_audit_change_json(action, before, after, request_ctx)` builder 가 명시 화이트리스트 (Codex C6 minimum-fix). builder source-of-truth = `src/app.py` 의 `_AUDIT_BUILDER_*_FIELDS` 정적 tuple + `_AUDIT_MASKED_FIELDS_*`.
+
+- **`_AUDIT_BUILDER_ACCOUNT_FIELDS`** = (role_id, is_active, username, permission_overrides) — PasswordHash / MustChangePassword / DeletedByAccountId 제외.
+- **`_AUDIT_BUILDER_ROLE_FIELDS`** = (name, description, is_active, permission_codes).
+- **`_AUDIT_BUILDER_PRODUCT_FIELDS`** = (product_key, name, description, is_active, default_role_access, databases, system_prompt).
+- **`_AUDIT_MASKED_FIELDS_PASSWORD`** = (password_hash, temporary_password, raw_password) — `_audit_redact_sensitive` 가 `<redacted>` 로 shallow 치환 + MaskedFields list 명시.
+- **`_AUDIT_MASKED_FIELDS_TOKEN`** = (session_token_hash, session_token, token).
+- **`_AUDIT_MASKED_FIELDS_API_KEY`** = (openai_api_key, api_key, secret).
+- **share token** = `token_prefix[:8]` 만 ChangeJson 에 저장. full token 64 char X (PII 차단).
+- **system_prompt 본문** = `content_len_before / content_len_after` + `content_preview_after[:120]` 만. full content 는 audit 에 미보존 (size cap).
+- **unknown action** = `build_audit_change_json` 가 `ValueError` raise → admin endpoint try/except 가 `conn.rollback()` + 500 응답 (Same tx fail-safe). user endpoint 는 stderr only.
+
+### 9.3 Tx 정책 split (Eng review E5)
+
+- **admin 11 mutation endpoint** = `_audit_admin_mutation()` helper 호출. caller 가 commit 직전 1 line hook. audit 실패 = caller `conn.rollback()` + 500 응답 (Same tx fail-safe). E5 cascade lock 순서 — product delete: WebSystemPrompts → WebProductDatabases → WebRolePermissions → WebAccountPermissionOverrides → WebPermissions → WebProducts → audit INSERT.
+- **user 5 endpoint** = `_audit_user_action()` helper (`/api/ask`, share create / revoke / public view (anonymous) / fork). try/except → 실패 시 `conn.rollback()` + stderr log + main flow 진행 (TASK-0072 `_log_search_activity` 패턴). `/api/ask` long-running LLM lock contention 회피 (Codex C3/C4).
+
+### 9.4 Anonymous ActorType (Eng review E4)
+
+- `WebAuditEvents.ActorType VARCHAR(16) NOT NULL DEFAULT 'account'` enum: `"account"` / `"anonymous"` / `"system"`.
+- `GET /api/public/share/{token}` (cookie 없음) → ActorType="anonymous" + ActorAccountId NULL + ChangeJson `{share_token_prefix, view_count_after, remote_addr}`.
+- `POST /api/public/share/{token}/fork` 는 TASK-0058 의 fork 가 이미 `_require_account` 필수 → ActorType="account".
+- `(ActorType, OccurredAt)` index 로 anonymous filter 가능 (`audit.read.any` + `?actor_type=anonymous`).
+
+### 9.5 `audit.purge` self-audit + idempotency (Eng review E8)
+
+- chunked PK loop — 각 chunk 1000 row (clamp [100, 5000]) = 별 tx (Long Running Transaction 회피).
+- `audit.purge.start` self-audit row INSERT (시작 시 1 회) + `audit.purge.complete` (끝 시 1 회).
+- `idempotency_key = sha256(cutoff + started_at_minute)[:32]` — 1 분 내 동일 cutoff 재호출 시 두 번째 purge 의 idempotency_key 동일 (admin 이 audit log 로 중복 검출).
+- `max_runtime_seconds = 30` — deadline 초과 시 partial purge, 다음 호출이 cursor 재시작 (남은 row 존재 시 자연 continue).
+- `dry_run=true` 시 COUNT(*) 만 반환 + 실 삭제 X.
+
+### 9.6 `AGENT_AUDIT_ENABLED` prod fail-closed (Codex C5)
+
+- `AGENT_MODE != dev/test` (prod 가정) 에서 `AGENT_AUDIT_ENABLED=1` 가 아니면 `app.py` module load 시점에 `sys.exit(1)` + stderr `[FATAL] AUDIT REQUIRED IN PROD — set AGENT_AUDIT_ENABLED=1 (AGENT_MODE=...; TASK-0073 Phase A1)`.
+- dev / test 만 toggle 허용 — flag bypass surface 차단.
+- env state changes 는 audit row 불가 (env 변경 = DB mutation 아님). startup stderr log 로 대체.
+
+### 9.7 RemoteAddr spoof risk (Eng review E3)
+
+- `_get_client_ip(request)` (app.py:560) 가 `X-Forwarded-For` 첫 IP 사용 — 사내 LAN + Caddy reverse proxy 전제.
+- 외부 LAN 노출 시 Caddy `trust_forwarded_for` 또는 별 `trusted_proxies` 설정 후속 cycle 필요. `feature-0006-lan-proxy-access` 위임.
+- TASK-0058 share 의 사내 IP 가정과 동일 trade-off.
+
+### 9.8 WebAccountActivity 흡수 (Codex C2)
+
+- TASK-0072 의 cross-account body search audit (`WebAccountActivity`) 가 본 cycle 의 superset 으로 흡수.
+- `_migrate_web_account_activity_to_audit(conn)` migration helper — 기존 row → `WebAuditEvents` 변환 (ActionCode `conversation.search.any` / `conversation.snippet.any`, ChangeJson `{query_hash, matched_count, _migrated_from, _original_id}`, OccurredAt = waa.CreatedAt). `RequestId='account-activity:<id>'` marker → idempotent.
+- `_log_search_activity()` dual write — (1) 기존 `WebAccountActivity` INSERT + (2) `record_audit_event` mirror. signature transparent (caller 변경 0).
+- `WebAccountActivity` 테이블 자체 DROP 은 별 cycle (data 보존 backup 후).
+
+### 9.9 보관 정책 + 외부 배포 보완 (TODO)
+
+- 365 일 retention 권장. 운영자가 별 cycle 에서 cron purge 정책 결정 (PIPA §29 1 년 inherit, TASK-0072 정합).
+- chunked PK 정책 + Phase 2 partitioning 은 row 수 100M+ 시 검토.
+- `slow_query_log` (별 cycle 분리, Codex C1 lock-in) — DB-only retention / RBAC 정합 안 됨 → 본 cycle 제외, 별 cycle ADR 결정.
+
+본 정책 정본은 본 §9. dispatcher / builder / endpoint 정합은 [`unit/feature-0003-agent-web-ui/docs/FUNCTION.md`](../unit/feature-0003-agent-web-ui/docs/FUNCTION.md) AC-0159~AC-0189.
