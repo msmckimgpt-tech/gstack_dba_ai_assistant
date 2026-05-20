@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0018 [SKIPPED:multi-phase-plan-approved]
+- Date: 2026-05-19
+- Decision: TASK-0073 Phase A6 (REQ-20260519-0001, **Critical** §12.3) — user 5 endpoint best-effort audit + anonymous share view (ActorType='anonymous'). Eng review E4 + Codex C11 (anonymous share path) 합쳐 lock-in.
+- Reason: PLAN-APPROVED 2026-05-19. user endpoint (`/api/ask` + share CRUD + anonymous view) 는 fail-open 필수 — long-running LLM 또는 anonymous flow 에서 audit 실패가 user 응답 차단하면 main 기능 손실. TASK-0072 `_log_search_activity` 의 fail-open 패턴이 검증된 답습 대상.
+- Alt 거부:
+  - **user endpoint Same tx**: Codex C3/C4 — `/api/ask` 의 long-running LLM (분 단위 lock hold) + agent_core 별 connection 정합성 깨짐. Same tx 가 deadlock 위험.
+  - **anonymous share view 미감사**: Eng review E4 + Codex C11 — admin/operator 가 누가 share token 으로 access 했는지 가시성 손실. ActorType='anonymous' + ActorAccountId NULL 로 row 등록 (audit completeness 유지).
+  - **token full 저장**: PII 위협. token_prefix 8 char 만 (full token = 64 char 의 1/8 노출). share token 의 entropy 충분.
+  - **`/api/conversations` search snippet 별 hook**: TASK-0072 `_log_search_activity` 가 이미 Phase A2 에서 dual write — 별 hook 불필요 (자연 통합).
+- Risks: dispatcher 실패 시 stderr log 만 — audit completeness 가 silent loss 가능. verify-completion check_11 + Phase B `tests/test_audit_dispatcher.py` 가 silent loss 검출. anonymous view 의 `viewer = _optional_account` 가 cookie 오류 시 None 반환 → False positive 'anonymous' label 가능 (실제로는 logged-in viewer 의 cookie 오류). 본 cycle scope, 별 cycle 검증 필요.
+- 미해결 followup: Phase B 의 `tests/test_audit_dispatcher.py` 가 fail-open silent loss path 검증. `tests/test_audit_rbac.py` 의 시나리오 (9) anonymous share view → audit row 생성 검증 + (10) `?actor_type=anonymous` filter 검증. silent loss 의 metric 수집 (`stderr [TASK-0073 Phase A6] failed` 카운터) 별 cycle.
+- panel: SKIPPED:multi-phase-plan-approved — Codex C11 + Eng review E4 가 plan 단계 lock-in. TASK-0072 `_log_search_activity` 패턴 검증 답습이라 본 phase 의 추가 review 면 적음.
+- Trace: REQ-20260519-0001 → TASK-0073 Phase A6 → CHG-20260519-0022 → REV-20260519-0018. Eng review E4 (anonymous ActorType) + Codex C11 (TASK-0058 share anonymous path) lock-in.
+
 ## REV-20260519-0017 [SKIPPED:multi-phase-plan-approved]
 - Date: 2026-05-19
 - Decision: TASK-0073 Phase A5 (REQ-20260519-0001, **Critical** §12.3) — admin 11 mutation endpoint Same tx audit hook + 16 ActionCode build_audit_change_json builder + _audit_admin_mutation helper. plan 의 "13" 은 elastic 표현, 11 endpoint 가 admin mutation 전부.

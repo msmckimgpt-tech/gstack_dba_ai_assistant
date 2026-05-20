@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0022
+- Date: 2026-05-19
+- Summary: TASK-0073 Phase A6 (REQ-20260519-0001, **Critical** §12.3) — user 5 endpoint fail-open best-effort audit hook + anonymous share view (ActorType='anonymous'). `_audit_user_action` helper 신설 (TASK-0072 `_log_search_activity` 패턴 답습). Eng review E4 — ActorType column 활용 anonymous filter.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/app.py`
+    - 신규 helper `_audit_user_action(conn, request, account, *, action, resource_type, resource_id, request_ctx, target_account_id, actor_type='account')` — user endpoint fail-open audit. try/except wrap → 실패 시 conn.rollback() + stderr log + main flow 계속. `/api/ask` long-running LLM + share view anonymous flow 전용.
+    - POST /api/ask — `conversation.ask` hook (conv_id 결정 직후, LLM 호출 전, ChangeJson `{conversation_id, model, lazy_create, prompt_length}`).
+    - POST /api/conversations/{cid}/share — `conversation.share.create` hook (token 발급 직후, token full X — `token_prefix[:8]` 만, scope_mode + anchor_message_id + share_id).
+    - DELETE /api/share/{share_id} — `conversation.share.revoke` hook (UPDATE rowcount 직후, already_revoked flag + conversation_id + share_id).
+    - GET /api/public/share/{token} — `share.public.view` hook (anonymous! viewer None 이면 ActorType='anonymous' + ActorAccountId NULL, viewer 있으면 'account'). ChangeJson `{share_id, token_prefix[:8], view_count_after, remote_addr}`. Eng review E4 정합.
+    - POST /api/public/share/{token}/fork — `share.fork` hook (fork 결과 직후, source_share_id + source_token_prefix + new_conversation_id).
+- Verification: `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS. _audit_user_action helper 가 5 endpoint 모두에서 호출. _log_search_activity (Phase A2 mirror) 까지 합쳐 user audit path 전부 wire-up 완료. dispatcher 의 best-effort 실패 시 stderr `[TASK-0073 Phase A6] <action> audit failed: <exc>` log. plan 의 "user 4 endpoint" 는 실제로는 5 endpoint — `/api/conversations` search snippet 가 TASK-0072 `_log_search_activity` 의 자연 wrap (Phase A2 dual write), 본 phase 의 명시 5 endpoint = ask + share create + share revoke + share view (anonymous) + share fork.
+- Risks: `share.public.view` 의 `viewer = _optional_account(request, conn)` 는 cookie 없으면 None 반환. ActorType='anonymous' 분기 정합. dispatcher 의 actor_type 화이트리스트 (`account` / `anonymous` / `system`) 검증 — 잘못된 값 → `account` 로 normalize. token_prefix 가 8 char 만 — full token 64 char 의 1/8 노출, PII 침해 면적 최소.
+- Trace: REQ-20260519-0001 → TASK-0073 Phase A6 → CHG-20260519-0022 → REV-20260519-0018. Eng review E4 (anonymous ActorType) lock-in + Codex C11 (TASK-0058 share anonymous path 누락) lock-in.
+
 ## CHG-20260519-0021
 - Date: 2026-05-19
 - Summary: TASK-0073 Phase A5 (REQ-20260519-0001, **Critical** §12.3) — admin 11 mutation endpoint Same tx audit hook + ActionCode-specific `build_audit_change_json()` builder dispatch + `_audit_admin_mutation()` helper. Codex outside voice C6 minimum-fix (raw 검증 X, builder allowlist). Eng review E5 (product delete cascade lock 순서) + E6 (explicit dispatcher, decorator 거부).

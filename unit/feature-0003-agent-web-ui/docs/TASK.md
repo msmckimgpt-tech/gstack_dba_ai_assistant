@@ -57,7 +57,7 @@ source_of_truth: true
   - [x] Phase A3 — RBAC catalog +4 + dba seed + permission group `audit` (CHG-20260519-0019, 2026-05-19, py_compile PASS; SEED + 4 catchup loop admin/operator/sales/dba/pending 자동 backfill)
   - [x] Phase A4 — 5 audit endpoint + chunked purge (CHG-20260519-0020, 2026-05-19, py_compile PASS; .own SQL filter Actor OR Target + 50k CSV hard cap + 1000-row chunked purge w/ idempotency_key 30s deadline)
   - [x] Phase A5 — admin 11 endpoint hook (Same tx) + ActionCode 별 build_audit_change_json builder (CHG-20260519-0021, 2026-05-19, py_compile PASS; 11 endpoint = update/delete/password-reset/role CRUD/product CRUD/databases.update/system_prompt.update — plan 의 "13" elastic 표현, 11 이 admin mutation 전부; E5 product delete cascade lock 순서 정합)
-  - [ ] Phase A6 — user 4 endpoint hook (fail-open)
+  - [x] Phase A6 — user 5 endpoint hook (fail-open) + anonymous share view (CHG-20260519-0022, 2026-05-19, py_compile PASS; _audit_user_action helper + ActorType='anonymous' for public share view + token_prefix 8 char redact)
   - [ ] Phase B — HTTP smoke 10 시나리오
   - [ ] Phase C — Frontend (admin 탭 + filter + detail pane + CSV)
   - [ ] Phase D — 프로젝트 수준 docs (SECURITY §8 + DECISIONS ADR-0019 + ARCHITECTURE + CONVENTIONS + STATUS)

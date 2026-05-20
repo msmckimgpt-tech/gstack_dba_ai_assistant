@@ -5323,6 +5323,22 @@ async def ask(request: Request) -> JSONResponse:
         except Exception:
             # hint 적용 실패는 ask 자체를 막지 않는다 — default('pinned' + default product) 로 fallback.
             pass
+    # TASK-0073 Phase A6: user endpoint best-effort audit hook (fail-open).
+    # conv_id 결정 직후, LLM 호출 전 시점에 audit row INSERT. 실패 = stderr only.
+    _audit_user_action(
+        conn,
+        request,
+        account,
+        action="conversation.ask",
+        resource_type="conversation",
+        resource_id=str(conv_id) if conv_id else None,
+        request_ctx={
+            "conversation_id": str(conv_id) if conv_id else None,
+            "model": model,
+            "lazy_create": bool(data.get("lazy_create")) if not request_conversation_id else False,
+            "prompt_length": len(message or ""),
+        },
+    )
     slot_key = f"account:{int(account['id'])}"
     if not _acquire_request_slot(slot_key):
         conn.close()
@@ -6099,6 +6115,22 @@ VALUES (%s, %s, %s, %s, %s)
                 continue
         if not share_id:
             return _json_error("공유 링크 생성 실패", 500)
+        # TASK-0073 Phase A6: user endpoint best-effort audit (token full X — prefix 8 char 만).
+        _audit_user_action(
+            conn,
+            request,
+            account,
+            action="conversation.share.create",
+            resource_type="share",
+            resource_id=str(share_id),
+            request_ctx={
+                "conversation_id": cid,
+                "scope_mode": scope_mode,
+                "anchor_message_id": int(anchor_id) if anchor_id is not None else None,
+                "share_id": int(share_id),
+                "token_prefix": token[:8],
+            },
+        )
         return JSONResponse(
             {
                 "id": share_id,
@@ -6214,6 +6246,20 @@ WHERE Id = %s AND RevokedAt IS NULL
             updated = int(cur.rowcount or 0)
         finally:
             cur.close()
+        # TASK-0073 Phase A6: user endpoint best-effort audit.
+        _audit_user_action(
+            conn,
+            request,
+            account,
+            action="conversation.share.revoke",
+            resource_type="share",
+            resource_id=str(share_id),
+            request_ctx={
+                "conversation_id": str(row.get("ConversationId") or ""),
+                "share_id": int(share_id),
+                "already_revoked": updated == 0,
+            },
+        )
         return JSONResponse({"id": int(share_id), "revoked": updated > 0})
     finally:
         conn.close()
@@ -6282,6 +6328,25 @@ LIMIT 1
         can_fork = bool(viewer and _account_has_permission(viewer, "conversation.create"))
         created_at = share.get("CreatedAt")
         last_viewed = share.get("LastViewedAt")
+        # TASK-0073 Phase A6 (Eng review E4): anonymous share view audit.
+        # ActorType='anonymous' (viewer is None) 또는 'account' (logged in viewer).
+        # ChangeJson 에 share_token_prefix 8 char 만 — full token X (PII 차단).
+        actor_type = "anonymous" if not viewer else "account"
+        _audit_user_action(
+            conn,
+            request,
+            viewer,
+            action="share.public.view",
+            resource_type="share",
+            resource_id=str(int(share.get("Id") or 0)) if share.get("Id") is not None else None,
+            request_ctx={
+                "share_id": int(share.get("Id") or 0) if share.get("Id") is not None else None,
+                "token_prefix": str(token)[:8],
+                "view_count_after": int(share.get("ViewCount") or 0) + 1,
+                "remote_addr": _get_client_ip(request),
+            },
+            actor_type=actor_type,
+        )
         return JSONResponse(
             {
                 "share": {
@@ -6338,6 +6403,21 @@ async def public_share_fork(token: str, request: Request) -> JSONResponse:
         payload, err = _fork_conversation_impl(conn, account, conversation_id, anchor_id_int)
         if err:
             return err
+        # TASK-0073 Phase A6: share fork audit (TASK-0058 fork 는 이미 logged-in 필수).
+        new_cid = payload.get("conversation_id") if isinstance(payload, dict) else None
+        _audit_user_action(
+            conn,
+            request,
+            account,
+            action="share.fork",
+            resource_type="conversation",
+            resource_id=str(new_cid) if new_cid else None,
+            request_ctx={
+                "source_share_id": int(share.get("Id") or 0) if share.get("Id") is not None else None,
+                "source_token_prefix": str(token)[:8],
+                "new_conversation_id": str(new_cid) if new_cid else None,
+            },
+        )
         return JSONResponse(payload)
     finally:
         conn.close()
@@ -9066,6 +9146,58 @@ def _audit_admin_mutation(
         masked_fields=masked_fields or None,
         target_account_id=target_account_id,
     )
+
+
+def _audit_user_action(
+    conn,
+    request: Request,
+    account: dict | None,
+    *,
+    action: str,
+    resource_type: str,
+    resource_id: str | None,
+    request_ctx: dict | None = None,
+    target_account_id: int | None = None,
+    actor_type: str = "account",
+) -> None:
+    """Phase A6 helper: user endpoint best-effort audit (fail-open).
+
+    TASK-0072 `_log_search_activity` 패턴 답습 — 실패 시 stderr log + main flow 진행.
+    `/api/ask` 의 long-running LLM 실행 / share view 의 anonymous flow 등 audit 실패가
+    user 응답을 차단하면 안 되는 경로 전용.
+    """
+    try:
+        change_json, masked_fields = build_audit_change_json(
+            action=action,
+            before=None,
+            after=None,
+            request_ctx=request_ctx,
+        )
+        actor = _build_actor_from_request(request, account, actor_type=actor_type)
+        record_audit_event(
+            conn,
+            actor=actor,
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            change_json=change_json,
+            masked_fields=masked_fields or None,
+            target_account_id=target_account_id,
+        )
+        try:
+            conn.commit()
+        except Exception:
+            pass
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        try:
+            import sys as _sys
+            _sys.stderr.write(f"[TASK-0073 Phase A6] {action} audit failed: {exc}\n")
+        except Exception:
+            pass
 
 
 # =============================================================================
