@@ -69,18 +69,29 @@ source_of_truth: true
 ### 외부 의존성
 - OpenAI 또는 로컬 LLM API (`LLM_BASE_URL` 설정 시 로컬 게이트웨이 경유)
 - MySQL 8.0 (본 DB + `agent_memory` 메모리 DB)
+- **Postgres 16 + pgvector extension (TASK-0015 §2.1.3 M0+)** — `pgvector/pgvector:pg16` image. M0 cycle 부터 standalone (agent boot 의존 아님). M2 dual-write phase 부터 KB write path 가 `_pg_connect()` 호출, M4 cutover 시점에 read path 도 전환. `agent_kb` database 가 정본. 미가동 환경에서는 `modules/db.py:_pg_available()` 가 False 반환 + KB 흐름이 MySQL 측만 사용 (fail-soft).
 
 ### shared 모듈 의존성
 - 없음
 
-### Memory DB 스키마 (agent_memory)
+### Memory DB 스키마 (agent_memory, MySQL — M5 cleanup 까지)
 | 테이블 | 용도 |
 |---|---|
 | `AgentMemoryConversations` | 대화 엔터티 (id, topic, created_at, …) |
 | `AgentMemoryMessages` | user/assistant/tool 메시지 기록 |
 | `AgentMemorySteps` | 도구 실행 단계별 입출력 요약 |
-| `AgentMemoryFactEntries` + `AgentMemoryTexts` | 지식/인사이트 저장 (`schema_insight:*`, `table_insight:*`, 대화별 facts) |
-| `agentmemorykv` | Key-Value 메타 (`origin_request`, `thread_goal`, `insight_worker_last_*`, `schema_fp:*`, `table_fp:*`, cancel/finalize 플래그 등) |
+| `AgentMemoryFactEntries` + `AgentMemoryTexts` | 지식/인사이트 저장 (`schema_insight:*`, `table_insight:*`, 대화별 facts). **TASK-0015 §2.1 multi-cycle plan — M4 cutover 시점에 정본이 Postgres `agent_kb.fact_entries` + `agent_kb.texts` 로 이전. M5 cleanup 후 본 MySQL 테이블 drop.** |
+| `AgentMemoryRagDocuments` + `AgentMemoryRagObjects` | FactEntries 기반 backfill RAG. **TASK-0015 §2.1 — M4 cutover 시점에 정본이 Postgres `agent_kb.rag_documents` + `agent_kb.rag_objects` 로 이전. M5 cleanup 후 drop.** RagObjects 의 CategoryDomain/EventType/MetricFamily 카테고리 컬럼은 §15.6 §4) D0~D3 라우팅의 기초. |
+| `agentmemorykv` | Key-Value 메타 (`origin_request`, `thread_goal`, `insight_worker_last_*`, `schema_fp:*`, `table_fp:*`, cancel/finalize 플래그 등). **본 plan 의 마이그레이션 범위 외 — MySQL 유지.** |
+
+### KB DB 스키마 (agent_kb, Postgres pgvector — M0+ standalone, M4 cutover 시 read 전환)
+| 테이블 | 용도 | 활성 phase |
+|---|---|---|
+| `fact_entries` | `AgentMemoryFactEntries` 의 Postgres 정본 (M2 dual-write 부터 양쪽 작성, M4 read 전환) | M1 DDL + M2~ |
+| `texts` | `AgentMemoryTexts` 의 Postgres 정본. **`embedding vector(N)` 컬럼이 본 테이블에만 존재** (Blocker B-4 결정 — TextHash 별 단일 embedding) | M1 DDL + M3 backfill + M4~ |
+| `rag_documents` | `AgentMemoryRagDocuments` 의 Postgres 정본 | M1 DDL + M2~ |
+| `rag_objects` | `AgentMemoryRagObjects` 의 Postgres 정본. `category_*` 컬럼 + `ivfflat` / `hnsw` ANN index 가 D0~D3 라우팅 enable | M1 DDL + M2~ |
+| `agent_memory_facts` (VIEW) | MySQL `AgentMemoryFacts` (VIEW) 의 Postgres 등가 — `fact_entries` 기반 view | M1 DDL |
 
 ## 11. Acceptance Criteria
 - AC-0001: 코어 코드가 `src/` 아래로 이동되어 있다.

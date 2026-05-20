@@ -8,6 +8,32 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260520-0004 [SKIPPED:outside-voice-not-required — M0 인프라 도입 cycle]
+- Date: 2026-05-20
+- TASK-Cycle: TASK-0017 (M0 인프라 도입, Minor §12.3 — 비파괴 추가)
+- Decision: §2.1 PLAN-APPROVED 의 M0 phase 실행 — `docker-compose.yml` 의 `postgres` 서비스 (standalone, pgvector/pgvector:pg16), `.env.example` 의 AGENT_KB_PG_* 17 변수, `requirements.txt` 의 psycopg+pgvector, `modules/{config,db}.py` 의 `_pg_connect()` helper + fail-soft import, `bin/kb-pg-healthcheck.sh` 신규, `bin/kb-measure-baseline.sh` 의 `--latency` mode 추가 (M-1 deferral 보완). 본 cycle 의 runtime 검증 (make start regression + postgres healthcheck + latency 5/5 측정) 은 별 turn 위임.
+- Outside-voice rationale: 본 cycle 의 deliverable 은 비파괴 인프라 추가만이며 의사결정 항목 없음 (D-1/D-2/D-3 결정은 §2.1 PLAN-APPROVED 마커 부여 시점에 확정). RBAC catalog 변경 0건 (`agent_kb_rw`/`agent_kb_ro` role 신설은 M1 cycle 책임 — outside-voice Section D 권고대로 M1 에서 호출). 외부 시각 호출 불요로 판정 — `[SKIPPED:*]` entry 로 명시.
+- 본 cycle 의 변경 영향 분석:
+  - **docker-compose 의 startup ordering 영향 0** — postgres 서비스가 agent.depends_on 에 추가되지 않아 기존 agent boot 무영향 (outside-voice Section F-4 권고 정합). M2 dual-write 단계에서 agent.depends_on 에 추가될 때 healthcheck 가 healthy 까지 wait — 그 시점은 별 cycle 의 review.
+  - **psycopg fail-soft import** — postgres 컨테이너 미가동 환경 (예: 사용자 .env 미설정) 에서도 agent 가 정상 boot. `_pg_available()` 가 graceful False 반환. M2 dual-write 진입 시 fail-loud 로 전환 — 그 시점에 별 cycle review.
+  - **`.env.example` 17 변수** — §2.1.4 전체 (connection 6 + read backend + dual-write + embedding 5 + ANN 4). 값은 빈 string default — 사용자가 `.env` 에서 phase 별 점진 채움. M0 단계에서는 connection 6 만 필요, 나머지 11 변수는 M2~M4 에서 사용.
+  - **`pgvector>=0.2.4`** — Python adapter (psycopg `register_vector()` 호출 시 사용). M1 schema 의 `vector(N)` 컬럼 INSERT 시점에 활용. M0 단계에서는 import 만, 사용 없음.
+  - **kb-pg-healthcheck.sh 4 stage** — `--container` (docker ps + State.Health.Status) → `--connect` (docker exec psql SELECT 1) → `--extension` (pg_available_extensions → vector 존재 확인) → `--pg-connect` (agent 컨테이너에서 `_pg_connect()` smoke). 4 stage 가 M0 runtime 검증의 명시 게이트 (outside-voice Section F-4 권고 정합).
+  - **kb-measure-baseline.sh --latency** — Blocker B-2 잔여 1/5 보완. 5 시나리오 × N 회 wall-clock 측정. `docker compose -f <main compose> -p repo run --rm agent "<question>"` 호출 패턴. default N=3 (`--latency-n 10` 권장 — M4 cutover gate baseline). 본 cycle 은 implementation 까지, 실 측정은 사용자 별 turn.
+- Runtime 검증 deferral 사유:
+  - main worktree 의 `chore/template-v3.9.0-upgrade` 작업이 in-progress (commit `f6836b4`) — docker compose state 가 본 ai/* worktree 의 변경 적용 안 됨. `make start` 재기동 시 main worktree 의 새 compose.yml 기반으로 진행 필요.
+  - `.env` 의 AGENT_KB_PG_* 값을 사용자가 채워야 함 (특히 PASSWORD — 본 cycle 의 doc 에는 placeholder 만).
+  - postgres `agent_kb` database 생성 + pgvector extension 활성화는 사용자 명시 동작 (예: `docker exec repo-postgres-1 psql -U postgres -c "CREATE EXTENSION IF NOT EXISTS vector"`). M0 cycle 의 산출에는 이 명령 자동화 안 함 — M1 cycle 의 `_ensure_pg_schema()` 가 책임.
+- 결정 영향 (후속 cycle):
+  - **M1 cycle** — Postgres DDL + `agent_kb_rw`/`agent_kb_ro` role 신설 + `_ensure_pg_schema()` + ADR-0023 작성. Blocker B-1 (Sprint 4 schema 확인) M1 진입 전 사용자 직접 확인.
+  - **M2 cycle** — `KbBackend` 추상화 + dual-write phase. `_dual_write_kb()` 래퍼 추가. agent.depends_on 에 postgres 추가 (그 시점에 startup ordering 변경).
+  - **M3 cycle** — backfill ETL + embedding 일괄 생성 (Blocker B-4 의 `texts.embedding` schema 결정 적용). M-1 baseline 의 row count (FactEntries 774, Texts 798) 기준 embedding cost 추정 USD <0.01 — §12.1 confirm trigger 안전.
+- 본 cycle 의 코드 mutation: db.py +60 LOC (`_pg_available` + `_pg_connect` + psycopg import), config.py +20 LOC (9 export + 9 변수 정의), docker-compose.yml +29 LOC (postgres 서비스 block), .env.example +28 LOC (17 변수 + 주석), requirements.txt +4 LOC (psycopg + pgvector + 주석), bin/kb-pg-healthcheck.sh 177 LOC 신규, bin/kb-measure-baseline.sh +75 LOC (--latency mode). Total: 신규 script 1 + 6 file modify, ~390 line 변경.
+- Outside-voice 호출 시점 (앞으로):
+  - **M1 cycle 진입 직전**: RBAC role 신설 + ADR-0023 작성 — Critical RBAC 변경이라 outside-voice 필수 (사용자 메모리 정책).
+  - **M2 → M3 진입 직전**: dual-write 정합성 시나리오 + `KbBackend` 추상화 catalog — Major 변경.
+  - **M3 → M4 진입 직전**: cutover readiness 게이트 — Critical.
+
 ## REV-20260520-0003 [SKIPPED:outside-voice-not-required — M-1 baseline 측정 cycle]
 - Date: 2026-05-20
 - TASK-Cycle: TASK-0016 (M-1 baseline 측정, Minor §12.3 — read-only)

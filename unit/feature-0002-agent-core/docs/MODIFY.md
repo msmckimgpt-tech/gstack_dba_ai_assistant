@@ -8,6 +8,35 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260520-0003
+- Date: 2026-05-20
+- TASK-Cycle: TASK-0017 (M0 인프라 도입, Minor §12.3 — 비파괴 추가)
+- Summary: §2.1 PLAN-APPROVED 의 **M0 phase 인프라 도입** — docker-compose 의 `postgres` 서비스 (pgvector/pgvector:pg16, standalone), `.env.example` 의 AGENT_KB_PG_* 17 변수, `requirements.txt` 의 psycopg+pgvector, `modules/config.py` + `modules/db.py` 의 `_pg_connect()` helper (fail-soft import), `bin/kb-pg-healthcheck.sh` 신규 (4 stage), `bin/kb-measure-baseline.sh` 의 `--latency` mode 추가 (M-1 deferral 보완).
+- Worktree: `ai/claude/0002/kb-pg-m0` 격리. path: `<wrapper>/.worktrees/0002-kb-pg-m0/`. 사용자 결정 (2026-05-20): "다음 단계를 진행해주세요" (이전 turn 의 "다음 cycle 또한 신규 worktree에서 진행해주세요" 정책 지속 적용).
+- Files (코드/설정 변경, 비파괴 추가):
+  - `docker-compose.yml`: `postgres` 서비스 추가 (services 안 mysql 다음 위치). pgvector/pgvector:pg16 image, dbnet only, port `${AGENT_KB_PG_PORT:-5432}:5432`, volumes `../artifacts/postgres-data:/var/lib/postgresql/data` + `../artifacts/shared:/shared`, healthcheck `pg_isready`. **agent.depends_on 비추가** (M0 standalone, outside-voice Section F-4 권고).
+  - `.env.example`: `AGENT_KB_PG_*` 17 변수 추가 (§2.1.4 전체) — connection 6 (HOST/PORT/DB/USER/PASSWORD/SSLMODE) + read backend + dual-write + embedding 5 + ANN 4. 값은 빈 string default — phase 별 점진 채움.
+  - `unit/feature-0002-agent-core/src/requirements.txt`: `psycopg[binary]>=3.1` + `pgvector>=0.2.4` 추가 (4 LOC + 주석 2 LOC).
+  - `unit/feature-0002-agent-core/src/modules/config.py`: 9 export (`AGENT_KB_PG_HOST` / `PORT` / `DB` / `USER` / `PASSWORD` / `SSLMODE` / `_ENABLED` + `AGENT_KB_READ_BACKEND` + `AGENT_KB_DUAL_WRITE`) + 9 변수 정의 (`AGENT_KB_PG_*` 의 derivation, default 값 + 주석).
+  - `unit/feature-0002-agent-core/src/modules/db.py`: `_pg_available()` + `_pg_connect()` 함수 추가 (~60 LOC). psycopg optional import (fail-soft — postgres 컨테이너 미가동 환경에서도 agent 정상 boot). `_pg_connect()` 가 RuntimeError 로 fail-loud — caller fallback 신호.
+  - `bin/kb-pg-healthcheck.sh` (신규, 177 LOC): 4 stage check — `--container` (docker ps + healthcheck status) → `--connect` (docker exec psql SELECT 1) → `--extension` (pgvector available) → `--pg-connect` (agent 컨테이너에서 `_pg_connect()` smoke). `--all` 합본. `COMPOSE_PROJECT_NAME=repo` 강제 + main worktree `.env` fallback.
+  - `bin/kb-measure-baseline.sh`: `--latency` mode 추가 (~75 LOC). 5 시나리오 (S1 단순 / S2 follow-up / S3 모호 / S4 메타탐색 / S5 복구) × LATENCY_N 회 (default 3, `--latency-n` 으로 조정). `docker compose -f <main compose> -p repo run --rm agent "<question>"` 호출 + wall-clock 측정. JSON `latency` 필드의 `deferred_to=M0` 가 `samples` 배열로 전환. emit_json 의 cycle_id 가 `TASK-0016` → `TASK-0017` 갱신.
+  - `unit/feature-0002-agent-core/docs/{TASK,REVIEW,MODIFY,REPORT}.md`: cycle 등록 + 결과 기록 + Completion Checklist 갱신.
+- 검증 (본 cycle, 코드/설정 변경만):
+  - `python3 -m py_compile unit/feature-0002-agent-core/src/modules/config.py` — PASS
+  - `python3 -m py_compile unit/feature-0002-agent-core/src/modules/db.py` — PASS
+  - `bash -n bin/kb-pg-healthcheck.sh` — PASS
+  - `bash -n bin/kb-measure-baseline.sh` — PASS
+  - `docker compose -f docker-compose.yml config --quiet` — syntax OK (warning 은 본 worktree 의 .env 미설정 — main worktree 의 실 .env 에서는 무관)
+- Runtime 검증 deferral (사용자 별 turn 진행):
+  - main worktree 의 `chore/template-v3.9.0-upgrade` 작업 마무리 + `git pull --ff-only` + `.env` 의 AGENT_KB_PG_* 채움
+  - `make start` 재기동 (postgres 컨테이너 가동)
+  - `bin/kb-pg-healthcheck.sh --all` PASS 확인
+  - postgres 안에서 `CREATE EXTENSION IF NOT EXISTS vector;` (M1 cycle 의 `_ensure_pg_schema()` 가 책임 — 본 cycle 안 자동화 안 함)
+  - `bin/kb-measure-baseline.sh --latency --latency-n 10` 실행 + JSON artifact 갱신 (B-2 5/5 완성)
+- 사용자 결정 (2026-05-20): 이전 cycle 들과 동일 패턴 — 즉시 자동 commit + push + main 동기화 (전역 정책 + AGENTS.md §16.5 의 BLOCKED 없음 + Critical/Major 승인 대기 없음 조건 충족 — M0 는 Minor).
+- Outside-voice rationale: skipped — REVIEW.md `REV-20260520-0004 [SKIPPED:outside-voice-not-required]` 참조. 본 cycle 은 비파괴 인프라 추가만, 의사결정 항목 0건. RBAC 변경은 M1 cycle 책임 (그 시점에 outside-voice 필수).
+
 ## CHG-20260520-0002
 - Date: 2026-05-20
 - TASK-Cycle: TASK-0016 (M-1 baseline 측정, Minor §12.3 — read-only)

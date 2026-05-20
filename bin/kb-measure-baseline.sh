@@ -5,23 +5,26 @@
 # multi-cycle plan (TASK.md §2.1) 의 M-1 phase 산출물이다. 후속 M0~M5 phase 의
 # 회귀 판정 baseline 을 정량 측정으로 확보한다.
 #
-# 측정 항목 (5종 중 4종 본 cycle 진행, latency 는 M0 cycle 로 defer):
+# 측정 항목 (M-1 cycle 에서 4/5 + M0 cycle 부터 5/5 — latency mode 추가):
 #   --rows    5종 KB 테이블 row count (FactEntries / Texts / RagDocuments / RagObjects / Facts VIEW)
 #   --explain 주요 KB query 5건의 EXPLAIN FORMAT=JSON 결과
 #   --joins   비-KB ↔ KB cross-table JOIN audit (정적 grep)
 #   --rbac    PERMISSION_DEFINITIONS 의 kb.* / memory.* / agent_kb.* 항목 카운트
-#   --all     위 4종 모두 실행 후 단일 JSON artifact 로 저장
+#   --latency `make ask` 5종 시나리오 latency p50/p99 측정 — N 회 (default 3)
+#             COMPOSE_PROJECT_NAME=repo 강제 + docker compose run --rm agent 직접 호출
+#             (또는 docker exec ${PROJ}-web-1 의 web-only 경로) — M-1 cycle 의 deferral 보완
+#   --all     위 5종 모두 실행 후 단일 JSON artifact 로 저장
 #
-# Latency baseline (5/5) 는 docker compose project name 충돌 회피 위해 M0 cycle
-# 에서 measurement 보완 (`AGENT_KB_READ_BACKEND=mysql` 환경 + COMPOSE_PROJECT_NAME=repo
-# 강제). 본 스크립트의 JSON 출력에는 latency.deferred_to=M0 필드 명시.
+# --latency runtime cost: ~30s/ask × 5 시나리오 × N 회. default N=3 → 약 7~8 분.
+# 외부 LLM API 호출 비용 (text-embedding 아닌 chat completion) 발생 — N=3 시 USD <0.05 추정.
 #
 # Usage:
-#   bin/kb-measure-baseline.sh --all [--out <path>] [--container <name>] [--db <name>] [--password <env-var>]
+#   bin/kb-measure-baseline.sh --all [--out <path>] [--container <name>] [--db <name>] [--password <env-var>] [--latency-n N]
 #   bin/kb-measure-baseline.sh --rows
 #   bin/kb-measure-baseline.sh --explain
 #   bin/kb-measure-baseline.sh --joins
 #   bin/kb-measure-baseline.sh --rbac
+#   bin/kb-measure-baseline.sh --latency [--latency-n 10]
 #
 # Defaults:
 #   --container repo-mysql-1
@@ -58,27 +61,33 @@ DB="agent_memory"
 PASSWORD_VAR="MYSQL_ROOT_PASSWORD"
 OUT_PATH="${ARTIFACTS_ROOT}/shared/kb-baseline-$(date -I).json"
 MODE=""
+LATENCY_N=3  # M0 cycle 의 default — N=10 권장이지만 본 turn 에서는 sample 3 회
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --rows|--explain|--joins|--rbac|--all)
+    --rows|--explain|--joins|--rbac|--latency|--all)
       MODE="${1#--}"; shift ;;
-    --container) CONTAINER="$2"; shift 2 ;;
-    --db)        DB="$2"; shift 2 ;;
-    --password)  PASSWORD_VAR="$2"; shift 2 ;;
-    --out)       OUT_PATH="$2"; shift 2 ;;
+    --container)  CONTAINER="$2"; shift 2 ;;
+    --db)         DB="$2"; shift 2 ;;
+    --password)   PASSWORD_VAR="$2"; shift 2 ;;
+    --out)        OUT_PATH="$2"; shift 2 ;;
+    --latency-n)  LATENCY_N="$2"; shift 2 ;;
     -h|--help)
-      sed -n '2,30p' "$0"; exit 0 ;;
+      sed -n '2,35p' "$0"; exit 0 ;;
     *)
       echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
 
-[ -n "$MODE" ] || { echo "specify one of --rows / --explain / --joins / --rbac / --all" >&2; exit 2; }
+[ -n "$MODE" ] || { echo "specify one of --rows / --explain / --joins / --rbac / --latency / --all" >&2; exit 2; }
 [ -f "$ENV_FILE" ] || { echo "missing .env at $ENV_FILE" >&2; exit 1; }
 
 PWD_VALUE="$(grep -E "^${PASSWORD_VAR}=" "$ENV_FILE" | cut -d= -f2-)"
 [ -n "$PWD_VALUE" ] || { echo "missing ${PASSWORD_VAR} in $ENV_FILE" >&2; exit 1; }
+
+# M0 cycle: COMPOSE_PROJECT_NAME 강제 — main worktree 의 repo 프로젝트와 동일
+# 컨테이너 세트를 참조하여 본 ai/* worktree 안에서 호출되어도 port 충돌 없음.
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-repo}"
 
 docker_exec_mysql() {
   local sql="$1"
@@ -208,10 +217,64 @@ measure_rbac() {
   printf '}'
 }
 
+measure_latency() {
+  # M0 cycle 의 `make ask` latency baseline 측정. M-1 deferral 보완 (Blocker B-2 잔여 1/5).
+  #
+  # 구조: 5종 시나리오 × LATENCY_N 회 반복. 각 run 마다 docker compose -p repo run --rm
+  # agent "<question>" 시간 측정 (bash time builtin). 결과를 JSON 배열로 출력.
+  #
+  # M0 cycle 의 산출은 measurement_ready 상태 — 본 함수의 implementation 자체. 실 측정
+  # 실행은 사용자가 별 turn 에서 docker 환경 (postgres 컨테이너 가동 + agent_kb DB
+  # 존재 + LLM API key 유효) 확보 후 `bin/kb-measure-baseline.sh --latency --latency-n 10`
+  # 호출. 본 함수가 호출되면 실 측정 진행.
+
+  local s1='최근 7일간 가입한 사용자 수를 알려줘'
+  local s2='그 중 PaymentMethod 가 카드인 비율은?'
+  local s3='최근에 trend 가 어떻게 되고 있어?'
+  local s4='users 관련 테이블이 뭐가 있어?'
+  local s5='관리자 권한이 있는 사용자 중 마지막 로그인이 7일 이상 지난 사용자는 누구야?'
+
+  local scenarios=("S1:$s1" "S2:$s2" "S3:$s3" "S4:$s4" "S5:$s5")
+  local samples_json=""
+  local sid label question idx start_ts end_ts dur_ms rc
+  local n
+  n="$LATENCY_N"
+
+  # docker compose run 사용 — main repo path 의 compose.yml 사용 위해 -f 명시.
+  # COMPOSE_PROJECT_NAME=repo 는 이미 export 됨.
+  local compose_file="${MAIN_REPO_ROOT}/docker-compose.yml"
+  [ -f "$compose_file" ] || compose_file="${REPO_ROOT}/docker-compose.yml"
+
+  for sid in "${scenarios[@]}"; do
+    label="${sid%%:*}"
+    question="${sid#*:}"
+    for idx in $(seq 1 "$n"); do
+      start_ts=$(date +%s%3N)
+      rc=0
+      docker compose -f "$compose_file" -p "$COMPOSE_PROJECT_NAME" \
+        run --rm --remove-orphans agent "$question" >/dev/null 2>&1 || rc=$?
+      end_ts=$(date +%s%3N)
+      dur_ms=$((end_ts - start_ts))
+      if [ -n "$samples_json" ]; then samples_json+=", "; fi
+      samples_json+=$(printf '{"scenario": "%s", "iter": %d, "duration_ms": %d, "exit_code": %d}' \
+        "$label" "$idx" "$dur_ms" "$rc")
+    done
+  done
+
+  printf '"latency": {\n'
+  printf '  "iterations_per_scenario": %d,\n' "$n"
+  printf '  "scenarios_catalog": {"S1": "단순", "S2": "follow-up", "S3": "모호", "S4": "메타탐색", "S5": "복구"},\n'
+  printf '  "compose_file": "%s",\n' "$compose_file"
+  printf '  "compose_project_name": "%s",\n' "$COMPOSE_PROJECT_NAME"
+  printf '  "samples": [%s],\n' "$samples_json"
+  printf '  "note": "각 sample 의 duration_ms 는 docker compose run --rm agent 의 wall-clock. p50/p99 집계는 후처리 (python -c). M4 cutover gate 의 latency p99 +50%% 임계 baseline."\n'
+  printf '}'
+}
+
 # ----- Top-level orchestrator ---------------------------------------------
 
 emit_json() {
-  local cycle_id="TASK-0016"
+  local cycle_id="TASK-0017"
   local feature_id="feature-0002-agent-core"
   local now_iso
   now_iso="$(date -Iseconds)"
@@ -232,7 +295,8 @@ emit_json() {
     printf '  "mysql_container": "%s",\n' "$CONTAINER"
     printf '  "mysql_version": "%s",\n' "$mysql_version"
     printf '  "agent_memory_db": "%s",\n' "$DB"
-    printf '  "plan_reference": "unit/feature-0002-agent-core/docs/TASK.md §2.1.3 M-1"\n'
+    printf '  "compose_project_name": "%s",\n' "$COMPOSE_PROJECT_NAME"
+    printf '  "plan_reference": "unit/feature-0002-agent-core/docs/TASK.md §2.1.3 M0 (TASK-0017) + M-1 (TASK-0016)"\n'
     printf '},\n'
 
     if [ "$MODE" = "all" ] || [ "$MODE" = "rows" ]; then
@@ -247,12 +311,16 @@ emit_json() {
     if [ "$MODE" = "all" ] || [ "$MODE" = "rbac" ]; then
       measure_rbac; printf ',\n'
     fi
-
-    printf '"latency": {\n'
-    printf '  "deferred_to": "M0",\n'
-    printf '  "reason": "docker compose project name 충돌 회피 — main worktree 가 NAME=repo 활성. ai/* worktree path 에서 make ask 호출 시 새 프로젝트 시도 → port 충돌. M0 cycle 에서 COMPOSE_PROJECT_NAME=repo 강제 또는 docker exec repo-web-1 직접 호출 패턴 결정 후 보완.",\n'
-    printf '  "scenarios_catalog_ref": "TASK.md §2.1.3 M-1 의 S1~S5 (단순 / follow-up / 모호 / 메타탐색 / 복구)"\n'
-    printf '}\n'
+    if [ "$MODE" = "all" ] || [ "$MODE" = "latency" ]; then
+      measure_latency; printf '\n'
+    else
+      # latency 측정 안 함 — placeholder 로 deferred 표기.
+      printf '"latency": {\n'
+      printf '  "status": "not_measured_this_run",\n'
+      printf '  "reason": "MODE=%s — 본 호출은 latency mode 미포함. bin/kb-measure-baseline.sh --latency [--latency-n N] 으로 별도 호출.",\n' "$MODE"
+      printf '  "scenarios_catalog_ref": "TASK.md §2.1.3 M-1 의 S1~S5 (단순 / follow-up / 모호 / 메타탐색 / 복구)"\n'
+      printf '}\n'
+    fi
 
     printf '}\n'
   } > "$OUT_PATH"

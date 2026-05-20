@@ -9,6 +9,8 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+2026-05-20 추가 (TASK-0017, M0 인프라 도입, Minor §12.3 — 비파괴 추가): §2.1 PLAN-APPROVED 의 **M0 phase 인프라 도입** — `docker-compose.yml` 의 `postgres` 서비스 (pgvector/pgvector:pg16, standalone — agent.depends_on 비추가, outside-voice F-4 권고 정합), `.env.example` 의 AGENT_KB_PG_* 17 변수 (§2.1.4 전체), `requirements.txt` 의 psycopg+pgvector, `modules/config.py` 의 9 export + `modules/db.py` 의 `_pg_connect()` + `_pg_available()` helper (fail-soft import — postgres 미가동 환경에서도 agent boot 무영향), `bin/kb-pg-healthcheck.sh` 신규 (4 stage: container / connect / extension / pg-connect), `bin/kb-measure-baseline.sh` 의 `--latency` mode 추가 (M-1 deferral 보완, Blocker B-2 잔여 1/5). **본 turn 은 코드·설정 변경 + script 작성까지** + 검증 (py_compile / bash -n / docker compose config) PASS. Runtime 검증 (make start regression + postgres healthcheck + latency 5/5 측정) 은 별 turn 위임 — main worktree 의 chore branch 작업 마무리 + `.env` AGENT_KB_PG_* 채움 후 사용자 진행.
+
 2026-05-20 추가 (TASK-0016, M-1 baseline 측정, Minor §12.3 — read-only): §2.1 PLAN-APPROVED 의 **M-1 phase 사전 baseline 측정** 4/5 완료. `bin/kb-measure-baseline.sh` (read-only 측정 스크립트, 5 mode) 신규 + `artifacts/shared/kb-baseline-2026-05-20.json` 정본 저장. 핵심 수치: **rows** FactEntries 774 / Texts 798 / RagDocuments 831 / RagObjects 774 / Facts VIEW 774 (총 ~3,177 row + VIEW), **joins** 비-KB↔KB cross-table 0/0 (Open Q #9 ✓), **rbac** PERMISSION_DEFINITIONS 40건 中 kb.*/memory.*/agent_kb.* = 0건 (Section D 정합 — M1 의 ADR-0023 + Postgres role 신설 trigger 확인), **explain** Q1 range / Q2 ref / Q3-Q5 ALL access (pgvector ANN 도입 시 selectivity 이득 영역). **Latency (5/5)** 는 docker compose project name 충돌 회피 위해 M0 cycle 로 defer (JSON 의 `latency.deferred_to=M0` 명시). M3 embedding cost 정량 추정 USD <0.01 (PLAN-APPROVED 의 USD 100 confirm trigger 안전 margin). 본 cycle 은 코드 mutation 0건 + 외부 영향 0건 (LLM 호출 없음 + DB read-only).
 
 2026-05-20 추가 (TASK-0015, plan-review, Critical §12.3): KB 정본 5종 (`AgentMemoryFacts` view + `FactEntries` + `Texts` + `RagDocuments` + `RagObjects`) 의 정본 위치를 현재 MySQL (`agent_memory` DB) 에서 별도 Postgres pgvector 인스턴스 (`agent_kb` DB) 로 이전하는 multi-cycle plan 정본을 `TASK.md §2.1` 에 작성. 본 cycle 은 plan-작성 cycle 이며 코드·schema·데이터 변경 없음. plan 의 Execute 단계는 phase M0 (인프라 도입) → M1 (DDL) → M2 (dual-write) → M3 (backfill + embedding) → M4 (cutover, Critical 사람 승인) → M5 (cleanup, Critical 사람 승인) 의 6 phase 별 cycle 로 진행한다. outside-voice review (Plan subagent NEEDS-TWEAK + 11 Blocker 반영) + 사용자 PLAN-APPROVED 마커 후 M0 cycle 진입. ANCHOR §3 의 fact-우선 복구 invariant (insight.py 의 `_check_artifact_completeness` + `_repair_from_fact`) 는 새 storage 에서도 `KbBackend` 추상화 뒤에 보존되며 M2 / M4 검증 게이트에 명시 항목.
@@ -35,7 +37,8 @@ source_of_truth: false
 - no-op cycle 은 더 이상 `insight_worker.log` 나 `timing_breakdown` 파일을 남기지 않도록 수정
 
 ## 4. Open Issues
-- **M-1 baseline 측정 (TASK-0016) ✓ 본 cycle 마감**: 4/5 측정 + JSON artifact 저장 완료. Latency (5/5) deferral 의 보완은 M0 cycle 산출. Blocker B-2 (PLAN-APPROVED 의 정량 baseline 요구) 80% 충족 — 잔여 latency 는 M0 통합.
+- **M0 인프라 도입 (TASK-0017) ✓ 본 cycle 코드 변경 마감**: docker-compose + .env + db.py + healthcheck script + baseline latency mode 추가 완료. Runtime 검증 deferral — 사용자 별 turn 에서 `make start` 재기동 + healthcheck + latency 측정 5/5 진행. 본 cycle 완료 후 Blocker B-2 의 잔여 1/5 가 측정 가능 상태.
+- **M-1 baseline 측정 (TASK-0016) ✓ 마감**: 4/5 측정 + JSON artifact 저장 완료. Latency (5/5) script 의 `--latency` mode 가 TASK-0017 에서 추가됨 — 실 측정은 runtime 검증 deferral 의 일부.
 - **plan-approved (TASK-0015) ✓ 마감**: multi-cycle plan + NEEDS-TWEAK 11 Blocker 반영 + PLAN-APPROVED 마커 부여 완료.
 - 직전 세션의 multi-cycle plan 의 Sprint 4 (D RAG, PGVector 도입) 정본 위치 unknown — Blocker B-1. **M1 cycle 진입 전** Sprint 4 D RAG schema 가 `rag_documents` / `rag_objects` 와 공유 가능한지 사용자 직접 확인 필수.
 - 일부 `agent_memory` 내부 테이블은 현재 LLM 응답이 빈 텍스트로 정리되어 `publish_attempted=false` 로 남는다. 이 경우 fingerprint 는 갱신하지 않으므로 추후 cycle 에서 다시 `artifact_missing` 대상으로 남지만, 근본 원인은 모델 출력 품질 쪽이다.
@@ -82,6 +85,12 @@ source_of_truth: false
 - 없음
 
 ## 7. Human Attention Needed
+- **M0 인프라 도입 (TASK-0017) ✓ 코드/설정 변경 마감 (2026-05-20)** — docker-compose `postgres` + `.env.example` + db.py `_pg_connect()` + healthcheck + baseline latency mode 추가. 사용자가 별 turn 에서 runtime 검증 4 단계 진행:
+  1. main worktree 의 `chore/template-v3.9.0-upgrade` 작업 마무리 후 `git pull --ff-only` (origin/main 의 본 cycle commit 흡수)
+  2. `.env` 의 `AGENT_KB_PG_*` 6 변수 값 채움 (예: HOST=postgres / PORT=5432 / DB=agent_kb / USER=postgres / PASSWORD=<choose> / SSLMODE=prefer)
+  3. `make start` 재기동 — postgres 서비스 healthy 확인
+  4. `bin/kb-pg-healthcheck.sh --all` PASS — container running / SELECT 1 / pgvector extension available / agent `_pg_connect()` smoke
+  5. (optional, M-1 deferral 보완) `bin/kb-measure-baseline.sh --latency --latency-n 10` 실행 — JSON artifact 의 latency 5/5 완성
 - **M-1 baseline 측정 ✓ 마감 (2026-05-20)** — `artifacts/shared/kb-baseline-2026-05-20.json` 정본. 사용자가 측정 결과 검토 권장. 핵심 결정 영향: (a) M3 embedding cost USD <0.01 확인 → §12.1 confirm trigger 미발동. (b) M1 RBAC role 신설 필수 확인 (kb.* 0건). (c) M4 cutover latency baseline 확보.
 - **TASK-0015 PLAN-APPROVED 마커 ✓ 부여 (2026-05-20 by ms.mckim.gpt@gmail.com)** — Execute 진입 가능. M0 cycle 부터 별 worktree 로 순차 진행.
 - **Outside-voice review (Plan subagent) 완료** — `REVIEW.md REV-20260520-0002`. Verdict **NEEDS-TWEAK** → 11 Blocker §2.1 본문 + §2.1.11 추적 표에 반영 완료.

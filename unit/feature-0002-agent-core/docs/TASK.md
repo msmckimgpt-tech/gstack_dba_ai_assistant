@@ -9,50 +9,58 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: M-1 baseline measurement (cycle: TASK-0016)
-- Owner: AI (본 cycle: M-1 baseline 측정) → AI (별 cycle: M0 → M1 → M2 → M3 → M4 → M5 순차 Execute)
+- State: M0 infrastructure introduction (cycle: TASK-0017)
+- Owner: AI (본 cycle: M0 인프라 도입) → AI (별 cycle: M1 → M2 → M3 → M4 → M5 순차 Execute)
 - Priority: high
 - Last Updated: 2026-05-20 (TASK-0015 PLAN-APPROVED 마커: ms.mckim.gpt@gmail.com on 2026-05-20)
 
 ## 1.1 Current Cycle
-- [ ] TASK-0016 (REQ-20260520-0002, Minor §12.3 — read-only 측정) §2.1 PLAN-APPROVED 의 **M-1 phase 사전 baseline 측정** 실행. M0 인프라 도입 전 정량 baseline 확보가 1차 목표 — 후속 phase 의 회귀 판정 기반 (Blocker B-2 / B-6 / B-10 / B-12 / B-13). 산출: `bin/kb-measure-baseline.sh` 신규 + `artifacts/shared/kb-baseline-2026-05-20.json` 정본. 본 cycle 은 read-only 측정만 + 코드 mutation 0건 (스크립트 신규 작성 외) + 외부 영향 0건 (LLM API 호출 없음 — latency 측정 part (e) 는 docker compose project name 충돌 회피 위해 M0 cycle 로 defer).
+- [ ] TASK-0017 (REQ-20260520-0003, Minor §12.3 — 비파괴 추가 + outside-voice F-4 / B-2 잔여) §2.1 PLAN-APPROVED 의 **M0 phase 인프라 도입** 실행. `pgvector/pgvector:pg16` docker-compose 서비스 추가 (standalone — agent depends_on 에 추가 안 함), `.env.example` 의 `AGENT_KB_PG_*` 17 변수, `requirements.txt` 의 psycopg+pgvector, `modules/db.py` 의 `_pg_connect()` helper, `bin/kb-pg-healthcheck.sh` 신규, `bin/kb-measure-baseline.sh` 에 `--latency` mode 추가 (M-1 deferral 보완). **본 turn 의 deliverable 은 코드·설정 변경 + script 작성까지**. `make start` regression 실행 + postgres healthcheck + latency 5/5 측정의 실 runtime 검증은 별 turn 위임 (main worktree 의 `chore/template-v3.9.0-upgrade` 작업 마무리 + `.env` 의 `AGENT_KB_PG_*` 변수 채움 + `make start` 재기동 후).
 
-## 1.2 Implementation Plan (TASK-0016 — M-1 baseline 측정 cycle)
+## 1.2 Implementation Plan (TASK-0017 — M0 인프라 도입 cycle)
 
-영향 파일 (본 cycle):
-- `unit/feature-0002-agent-core/docs/TASK.md` — §1.1 cycle 등록, §1.2 본 plan, §3 Task Queue, §4 In Progress, §6 Done, §7 Next Action, §8 Completion Checklist 갱신.
-- `unit/feature-0002-agent-core/docs/REVIEW.md` — M-1 측정 결과 sanity check + Blocker B-2 / B-4 (embedding 저장 위치 결정) 영향 분석 (append).
-- `unit/feature-0002-agent-core/docs/MODIFY.md` — M-1 측정 사실 + JSON 산출물 경로 + script 추가 기록 (append).
-- `unit/feature-0002-agent-core/docs/REPORT.md` — §1 Summary 의 baseline 측정 결과 요약 + §4·§7 의 후속 항목 갱신.
-- `bin/kb-measure-baseline.sh` (신규) — read-only 측정 스크립트. mode: `--rows` / `--explain` / `--joins` / `--rbac` / `--all`. docker compose project name 충돌 회피 위해 직접 `docker exec repo-mysql-1 mysql` 호출 + grep 정적 분석 + jq 출력.
-- `artifacts/shared/kb-baseline-2026-05-20.json` (신규) — 측정 결과 정본. M4 cutover gate 의 비교 대상.
+영향 파일 (본 cycle, 비파괴 추가만):
+- `docker-compose.yml` — `postgres` 서비스 신규 (pgvector/pgvector:pg16, dbnet, healthcheck `pg_isready`, `../artifacts/postgres-data` 볼륨, port `${AGENT_KB_PG_PORT:-5432}`). **agent depends_on 에는 추가 안 함** — M0 는 standalone (Section F-4 권고).
+- `.env.example` — `AGENT_KB_PG_*` 17 변수 신설 (§2.1.4 전체). connection 6 + read backend + dual-write + embedding 5 + ANN 4.
+- `unit/feature-0002-agent-core/src/requirements.txt` — `psycopg[binary]>=3.1` + `pgvector>=0.2.4` 추가.
+- `unit/feature-0002-agent-core/src/modules/config.py` — `AGENT_KB_PG_HOST` / `PORT` / `DB` / `USER` / `PASSWORD` / `SSLMODE` / `_ENABLED` + `AGENT_KB_READ_BACKEND` / `AGENT_KB_DUAL_WRITE` 9 export.
+- `unit/feature-0002-agent-core/src/modules/db.py` — psycopg optional import (fail-soft) + `_pg_available()` + `_pg_connect(database=None, autocommit=True)` 추가. 기존 mysql.connector 경로 무영향.
+- `bin/kb-pg-healthcheck.sh` (신규, 177 LOC) — 4 mode: `--container` / `--connect` / `--pg-connect` / `--extension`. `--all` 합본. `COMPOSE_PROJECT_NAME=repo` 강제 + main worktree `.env` fallback.
+- `bin/kb-measure-baseline.sh` — `--latency` mode 추가 (5/5 보완). 5 시나리오 × N 회 (default 3, `--latency-n 10` 권장) wall-clock 측정. `docker compose -f <main compose> -p repo run --rm agent "<question>"` 호출.
+- `unit/feature-0002-agent-core/docs/{TASK,REVIEW,MODIFY,REPORT}.md` — cycle 등록 + 결과 기록.
 
-접근 방법 (4/5 측정 + 1 deferral):
-1. (a) **Row count** — `docker exec repo-mysql-1 mysql -uroot -p<pwd> -e "SELECT COUNT(*) ..."` 으로 `AgentMemoryFactEntries`, `AgentMemoryTexts`, `AgentMemoryRagDocuments`, `AgentMemoryRagObjects`, `AgentMemoryFacts` (VIEW 가 view 인지 확인 + count) 5종 측정.
-2. (b) **EXPLAIN baseline** — 주요 KB query 5건의 `EXPLAIN FORMAT=JSON` 결과 보관. query 예시:
-   - Q1 `_load_kb_entries`: `SELECT ... FROM AgentMemoryFactEntries e LEFT JOIN AgentMemoryTexts t ON t.TextHash = e.TextHash WHERE ConversationId IN (?, '__global__') AND FactKey LIKE ?` (knowledge.py:761)
-   - Q2 `_load_rag_documents_for_request`: `SELECT ... FROM AgentMemoryRagDocuments d LEFT JOIN AgentMemoryTexts t ON ...` (insight.py:200)
-   - Q3 `_load_rag_objects_for_request`: `SELECT ... FROM AgentMemoryRagObjects o LEFT JOIN AgentMemoryTexts t ON ...` (insight.py:244)
-   - Q4 `_load_existing_table_insight_map`: `SELECT FactKey, TextHash FROM AgentMemoryFactEntries WHERE FactKey LIKE 'table_insight:%'`
-   - Q5 `_filter_rag_objects_for_depth`: D0~D3 의 category 기반 filter — utils.py 의 helper.
-3. (c) **비-KB JOIN audit** — `grep -rn -E '(AgentMemoryConversations|AgentMemoryMessages|AgentMemorySteps).*JOIN.*(AgentMemoryFactEntries|AgentMemoryRagDocuments|AgentMemoryRagObjects|AgentMemoryTexts|AgentMemoryFacts)' unit/feature-0002-agent-core/src/` 양방향. 결과 0건이 예상.
-4. (d) **RBAC catalog audit** — `grep -nE '"kb\.|"memory\.|"agent_kb\.' unit/feature-0003-agent-web-ui/src/app.py` 카운트. 현재 0건이 예상 (Section D outside-voice 식별).
-5. (e) **`make ask` latency baseline** — **defer to M0 cycle**: docker compose project name (현재 main worktree 가 NAME=repo 로 활성, 본 ai/* worktree path 에서 `make ask` 호출 시 새 프로젝트 시도 → port 충돌 가능). M0 cycle (인프라 도입 cycle) 에서 main worktree 의 compose 와 동일 PROJECT_NAME 강제 (`COMPOSE_PROJECT_NAME=repo`) 또는 `docker exec repo-web-1` 직접 호출 패턴 결정 후 진행. **본 cycle 의 4/5 산출은 baseline JSON 의 latency 필드를 `"deferred_to": "M0"` 로 표기**.
+접근 방법:
+1. **docker-compose `postgres` 서비스 추가** — standalone (agent depends_on 비추가). volume `postgres-data`, port `${AGENT_KB_PG_PORT}:5432`, healthcheck `pg_isready`. dbnet 만 (llm-shared / replica-net 비포함).
+2. **`.env.example` AGENT_KB_PG_* 17 변수 추가** — §2.1.4 전체. 값은 빈 string (사용자가 `.env` 에서 채움).
+3. **requirements.txt** — psycopg[binary]>=3.1 + pgvector>=0.2.4. Docker image 재빌드 시 자동 설치.
+4. **config.py + db.py** — psycopg fail-soft import (M0~M1 환경에서 컨테이너 미가동 시 graceful). `_pg_available()` 가 None 체크 + env 변수 검사. `_pg_connect()` 는 RuntimeError 로 fail-loud (caller fallback 신호).
+5. **bin/kb-pg-healthcheck.sh** — 4 stage: container running → psql SELECT 1 → pgvector extension available → agent `_pg_connect()` smoke. M0 runtime 검증 게이트.
+6. **bin/kb-measure-baseline.sh --latency** — M-1 cycle 의 deferral (Blocker B-2 1/5) 보완. 측정 가능 상태 (script implementation) 까지 본 cycle. 실 측정은 사용자가 별 turn 에서 `bin/kb-measure-baseline.sh --latency --latency-n 10` 호출.
 
-검증: 위 (a)~(d) 4종 모두 실행 + JSON 저장 + REPORT.md §1 에 핵심 수치 요약 추가. (e) latency 는 M0 cycle 산출에서 보완.
+**Runtime 검증 deferral (사용자 별 turn)**: 본 cycle 의 코드·설정 변경 commit 후, 사용자가 main worktree 의 `chore/template-v3.9.0-upgrade` 작업 마무리 + `git pull --ff-only` + `.env` 의 `AGENT_KB_PG_*` 변수 값 채움 (host=postgres, port=5432, db=agent_kb, user=postgres, password=change_me_pg, sslmode=prefer) + `make start` 재기동 → `bin/kb-pg-healthcheck.sh --all` PASS 확인 → `bin/kb-measure-baseline.sh --latency --latency-n 10` 실행 → JSON artifact 갱신 (TASK-0017 measurement_ready 마감). 본 검증 단계는 외부 LLM API 호출 + docker 환경 의존성 큰 작업으로 자동 진행이 어려움.
 
-위험도: Minor (read-only 측정 + 스크립트 신규 추가). PLAN-APPROVED 범위.
+검증 (본 turn): `python3 -m py_compile config.py db.py` PASS + `bash -n` syntax check PASS + `docker compose config` syntax OK (warning 만 .env 부재 — 본 worktree 의 .env 가 git 추적 외라 정상).
 
-## 1.3 Implementation Plan (TASK-0015, done — 보존)
+위험도: Minor (비파괴 추가). PLAN-APPROVED 범위 + outside-voice F-4 권고 정합 ("agent depends_on 비추가" 로 startup ordering 영향 0).
 
-본 §1.3 의 정본 plan 은 §2.1 (PLAN-APPROVED) 로 승격됨. TASK-0015 cycle 의 deliverable 요약:
+## 1.3 Implementation Plan (TASK-0016 — M-1 baseline 측정, done — 보존, summary)
+
+본 §1.3 의 deliverable 요약:
+- `bin/kb-measure-baseline.sh` 4 mode 작성 + 4/5 측정 실행 ✓
+- `artifacts/shared/kb-baseline-2026-05-20.json` 정본 저장 ✓ (rows / EXPLAIN / joins / RBAC)
+- Latency (5/5) 는 본 M0 cycle 에서 보완 — script 의 `--latency` mode 추가 완료.
+- commit `8db796c` + push + origin/main fast-forward ff-merge ✓
+
+## 1.4 Implementation Plan (TASK-0015, done — 보존, summary)
+
+본 §1.4 의 정본 plan 은 §2.1 (PLAN-APPROVED) 로 승격됨. TASK-0015 cycle 의 deliverable 요약:
 - §2.1 multi-cycle plan 정본 작성 ✓
 - outside-voice review (Plan subagent NEEDS-TWEAK + 11 Blocker) ✓
 - §2.1.11 추적 표 ✓
 - PLAN-APPROVED 마커 (2026-05-20 by ms.mckim.gpt@gmail.com) ✓
 - commit `6ac2288` + push + main ff-merge ✓
 
-## 1.4 Implementation Plan (TASK-0014 / TASK-0013, done — 보존, summary)
+## 1.5 Implementation Plan (TASK-0014 / TASK-0013, done — 보존, summary)
 
 본 §1.4 는 historical TASK plan summary. 상세 본문은 git history (commit `6ac2288` 이전의 TASK.md) 참조.
 
@@ -414,11 +422,12 @@ Nice-to-have (PLAN-APPROVED 후 별 cycle / 별 ADR — 본 §2.1 의 게이트 
 - [x] TASK-0013 Role scope 시스템 프롬프트 공통 누적 적용
 - [x] TASK-0014 Account scope 누적 + Product → Role → Account 순서 정정
 - [x] TASK-0015 (Critical §12.3) KB 정본 MySQL → Postgres pgvector 마이그레이션 plan 정본 작성 + outside-voice review + PLAN-APPROVED 마커 (commit `6ac2288`)
-- [ ] TASK-0016 (Minor §12.3, **본 cycle**) M-1 사전 baseline 측정 — row count + EXPLAIN + 비-KB JOIN audit + RBAC catalog audit + (latency defer to M0). `bin/kb-measure-baseline.sh` 신규 + `artifacts/shared/kb-baseline-2026-05-20.json` 정본
+- [x] TASK-0016 (Minor §12.3) M-1 사전 baseline 측정 4/5 + `bin/kb-measure-baseline.sh` 신규 + `artifacts/shared/kb-baseline-2026-05-20.json` 정본 (commit `8db796c`)
+- [ ] TASK-0017 (Minor §12.3, **본 cycle**) M0 인프라 도입 — docker-compose `postgres` 서비스 + `.env.example` AGENT_KB_PG_* + requirements.txt psycopg + db.py `_pg_connect()` + `bin/kb-pg-healthcheck.sh` + `bin/kb-measure-baseline.sh --latency` mode. Runtime 검증 (make start regression + postgres healthcheck + latency 5/5 측정) 은 별 turn 위임.
 
 ## 4. In Progress
-- TASK-0016 M-1 사전 baseline 측정 — 4/5 측정 + JSON artifact + 정책 doc 갱신 + commit/push/ff-merge.
-- TASK-0010 작업 브랜치 commit 및 integration 반영 준비 (historical, TASK-0016 과 별개)
+- TASK-0017 M0 인프라 도입 — 코드/설정 변경 완료, runtime 검증 (사용자 별 turn) 대기.
+- TASK-0010 작업 브랜치 commit 및 integration 반영 준비 (historical, TASK-0017 과 별개)
 
 ## 5. Blocked
 - 없음 (TASK-0015 PLAN-APPROVED 마커 부여 완료).
@@ -427,28 +436,34 @@ Nice-to-have (PLAN-APPROVED 후 별 cycle / 별 ADR — 본 §2.1 의 게이트 
 - TASK-0001 ~ TASK-0009
 - TASK-0012, TASK-0013, TASK-0014
 - TASK-0015 (commit `6ac2288` + main ff-merge 2026-05-20)
+- TASK-0016 (commit `8db796c` + main ff-merge 2026-05-20)
 
 ## 7. Next Action
-1. (본 cycle) `bin/kb-measure-baseline.sh` 작성 + 4/5 측정 실행 + JSON artifact 저장.
-2. (본 cycle) REPORT.md §1 Summary 에 baseline 핵심 수치 반영, MODIFY.md / REVIEW.md append.
-3. (본 cycle) verify-completion PASS + commit + push + ff-merge + worktree cleanup.
-4. (별 cycle) M0 cycle 시작 — 별 worktree `ai/claude/0002/kb-pg-m0` + 인프라 도입 (`postgres` 서비스 추가 + `_pg_connect()` helper). M0 cycle 의 산출에 latency baseline 5/5 측정 보완 (TASK-0016 deferral 항목).
-5. (별 cycle) M1 cycle — Postgres DDL + role 신설. **Sprint 4 D RAG schema 확인 (Blocker B-1) M1 진입 전 사용자 직접 확인 필수**.
+1. (본 cycle) verify-completion PASS + commit + push + main ff-merge + worktree cleanup.
+2. (사용자 별 turn) main worktree 의 `chore/template-v3.9.0-upgrade` 작업 마무리 + `git pull --ff-only` + `.env` 의 `AGENT_KB_PG_*` 변수 값 채움 (host=postgres, port=5432, db=agent_kb, user=postgres, password=<choose>, sslmode=prefer) + `make start` 재기동.
+3. (사용자 별 turn) `bin/kb-pg-healthcheck.sh --all` PASS 확인 — container running / psql SELECT 1 / pgvector extension available / `_pg_connect()` smoke.
+4. (사용자 별 turn) `bin/kb-measure-baseline.sh --latency --latency-n 10` 실행 — JSON artifact 의 latency 필드 갱신 (B-2 5/5 완성).
+5. (별 cycle) M1 cycle — Postgres DDL + `agent_kb_rw`/`agent_kb_ro` role 신설 + ADR-0023 작성. **Sprint 4 D RAG schema 확인 (Blocker B-1) M1 진입 전 사용자 직접 확인 필수**.
 
-## 8. Completion Checklist (TASK-0016 — M-1 baseline 측정 cycle)
-- [ ] `bin/kb-measure-baseline.sh` 신규 작성 (4 mode: `--rows` / `--explain` / `--joins` / `--rbac`; `--all` 합본)
-- [ ] (a) Row count 측정 5종 (`FactEntries` / `Texts` / `RagDocuments` / `RagObjects` / `Facts` VIEW)
-- [ ] (b) EXPLAIN baseline 5건 query 보관
-- [ ] (c) 비-KB JOIN audit (KB 5종 ↔ Conversations/Messages/Steps 양방향 grep)
-- [ ] (d) RBAC catalog audit (PERMISSION_DEFINITIONS 의 `kb.*` / `memory.*` / `agent_kb.*` 카운트)
-- [ ] (e) Latency baseline — defer to M0 (docker compose project name 충돌 회피 — JSON 의 `latency.deferred_to=M0` 명시)
-- [ ] `artifacts/shared/kb-baseline-2026-05-20.json` 정본 저장
-- [ ] REPORT.md §1 Summary 에 baseline 핵심 수치 반영
-- [ ] MODIFY.md `CHG-20260520-0002` + REVIEW.md `REV-20260520-0003 [SUBAGENT:*|SKIPPED:*]` append
+## 8. Completion Checklist (TASK-0017 — M0 인프라 도입 cycle)
+- [ ] `docker-compose.yml` 에 `postgres` 서비스 신규 (pgvector/pgvector:pg16, standalone, pg_isready healthcheck)
+- [ ] `.env.example` 에 `AGENT_KB_PG_*` 17 변수 추가 (§2.1.4 전체)
+- [ ] `unit/feature-0002-agent-core/src/requirements.txt` 에 `psycopg[binary]>=3.1` + `pgvector>=0.2.4` 추가
+- [ ] `unit/feature-0002-agent-core/src/modules/config.py` 에 AGENT_KB_PG_* / AGENT_KB_READ_BACKEND / AGENT_KB_DUAL_WRITE 9 export
+- [ ] `unit/feature-0002-agent-core/src/modules/db.py` 에 `_pg_available()` + `_pg_connect()` (mysql.connector 와 공존, fail-soft import)
+- [ ] `bin/kb-pg-healthcheck.sh` 신규 (4 mode: `--container` / `--connect` / `--pg-connect` / `--extension`; `--all` 합본)
+- [ ] `bin/kb-measure-baseline.sh` 에 `--latency` mode 추가 (M-1 deferral 보완)
+- [ ] `python3 -m py_compile config.py db.py` PASS + `bash -n` syntax PASS + `docker compose config` syntax OK
+- [ ] Runtime 검증 deferral 명시 (REPORT.md §7 + 본 §7 Next Action)
 - [ ] `bin/verify-completion.sh --pre-commit feature-0002-agent-core` PASS
 - [ ] Git 커밋 (`Task-Cycle: feature-0002-agent-core` trailer) + push + main ff-merge + worktree cleanup
 
-## 9. Completion Checklist (TASK-0015 — done, 보존)
+## 9. Completion Checklist (TASK-0016, TASK-0015 — done, 보존)
+TASK-0016 (M-1 baseline 측정):
+- [x] `bin/kb-measure-baseline.sh` 신규 + 4/5 측정 + JSON artifact + REPORT/MODIFY/REVIEW 갱신
+- [x] verify-completion PASS (10/10) + commit `8db796c` + push + ff-merge
+
+TASK-0015 (plan-review):
 - [x] §2.1 plan 정본 작성 완료
 - [x] REVIEW.md `REV-20260520-0001` + `REV-20260520-0002 [SUBAGENT:Plan-subagent]`
 - [x] MODIFY.md `CHG-20260520-0001`
