@@ -1,5 +1,5 @@
 ---
-template_version: v3.8.0-rc.1
+template_version: v3.8.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -491,9 +491,11 @@ Lifecycle (state machine, manual parallel AI):
 
 #### §13.2.1 적용범위 및 Trigger
 
-본 §13.2 는 **manual parallel AI feature 작업** 에 한정 적용한다. 단일 AI 순차
-작업 / variant exploration / 장기 risky refactor / QA worktree 시나리오는 본
-사이클 범위 외 — 별도 ADR 에서 다룬다 (`docs/DECISIONS.md` ADR-0005).
+본 §13.2 는 **소비자 프로젝트의 모든 `repo/` mutation** 에 적용한다 (단일 AI
+순차 작업 포함). v3.8.0 이전 (v3.8.0-rc.1) 의 "manual parallel AI feature 작업
+한정" 범위는 §13.2.7 의 Consumer repo Immutability 정책 도입으로 확장되었다.
+Variant exploration / 장기 risky refactor / QA worktree 시나리오는 별도 ADR
+범위 (`docs/DECISIONS.md` ADR-0020 / ADR-0021).
 
 `git worktree add` 호출 가능한 trigger 는 다음 두 가지로 제한한다:
 1. **사용자 명시 지시** — 세션 안에서 "worktree 만들어서 X 작업해라" 류 직접 지시.
@@ -571,6 +573,21 @@ worktree 진입을 결정하지 않고 main worktree 컨텍스트를 강제 유�
 - **Release/ship 행위** (VERSION bump, CHANGELOG 정리, tag, npm publish 등) 도
   main checkout 전용. ai/* worktree 에서 release artifact 직접 수정 금지 (§13.2.2
   F2 와 결합).
+- **Template base maintainer**: `repo/_template_maintainer/HISTORY.md` 가 존재하는
+  영역 = template base 자체 (ai_delegated_dev_template 의 source-of-truth). 본
+  §13.2 정책 비적용 — maintainer 가 main checkout 에서 직접 정책 doc / hop /
+  gate 를 수정하는 것이 정상 워크플로우. 소비자 프로젝트에는 본 sentinel 부재
+  → §13.2.7 F0 적용.
+- **`git pull` / `git fetch` / `git submodule update --remote`**: read-only 또는
+  fast-forward update 는 mutation 아님 — §13.2.7 F0 외. 단 conflict resolution
+  merge commit 이 발생할 경우는 worktree 에서 수행 (이는 customization 영역).
+- **`/_template:init` 부트스트랩**: `<wrapper>/repo/.template/init-completed`
+  마커 부재 시 1회 carve-out — 신규 consumer 의 첫 setup 시점은 worktree 없는
+  main checkout 에서 진행. init 종료 시 마커 생성으로 carve-out 자동 만료.
+- **Escape hatch (긴급 회피)**: `GSTACK_SKIP_REPO_IMMUTABILITY=1` env 또는
+  `--skip-repo-immutability` cli flag — check #11 SKIP+WARN. 사용 의도는 hop
+  emergency fix, CI 환경 차이 등 일시적 우회. 상시 사용 금지 (REPORT.md 에
+  명시).
 - **Carve-out 의 의미**: "정책 외" = 본 §13.2 의 forbidden actions / lifecycle /
   trigger 룰이 적용되지 않음. 단 §13.1 일반 충돌방지 룰은 계속 적용. Conductor
   / IDE multi-tab 자동 worktree 및 Codex `-C` 옵션 worktree 활용도 본 사이클
@@ -601,6 +618,75 @@ AI 가 코드를 실행 (테스트, 빌드 등) 할 때:
 - 네트워크 호출은 테스트 대상 또는 명시적으로 허용된 엔드포인트에만 수행한다.
 - 파일 시스템 변경은 작업 디렉토리 내로 제한한다 (§13.2.2 F1/F2 와 결합).
 - 구체적 범위는 §15.2 도메인 절대 금지사항에서 프로젝트별로 정의한다.
+
+
+#### §13.2.7 Consumer repo Immutability (F0, Hard Gate, v3.8.0+)
+
+소비자 프로젝트에서 `repo/` directory 의 직접 mutation 을 차단한다. v3.8.0-rc.1
+의 §13.2 v0.1 정책이 "manual parallel AI feature 작업" 에 한정되어, 단일 AI 가
+main checkout 에서 `repo/` 를 그냥 수정하는 시나리오를 막지 못한 결함을 보강
+한다 (ADR-0021).
+
+**적용 대상**: `_template_maintainer/HISTORY.md` 가 부재한 모든 git working tree
+(= 소비자 프로젝트). 즉 `<wrapper>/repo/` 안에서 호출되는 verify-completion 이
+sentinel 검사 후 본 정책을 발동.
+
+**F0 (강) — Forbidden action**: 소비자의 **main worktree** 에서 `repo/` 안 path
+mutation 금지. 단 §13.2.4 carve-out 외.
+
+**Update path (유일한 수단)**:
+```bash
+cd <wrapper>/repo
+git fetch origin
+git pull --ff-only origin main
+```
+non-fast-forward 발생 시 (consumer 가 customize 했거나 main 이 history rewrite
+된 경우) → `git pull` 거부 + 사용자 manual resolve. customization conflict 는
+**ai/<agent>/<feat> worktree 에서 resolve 후 PR**.
+
+**Customization path (작업 수단)**:
+```bash
+cd <wrapper>
+git -C repo worktree add ../.worktrees/<feat> -b ai/<agent>/<feat>
+cd .worktrees/<feat>
+# ... 작업 ...
+git push -u origin ai/<agent>/<feat>
+# GitHub PR 또는 자동 머지 (§16.3 + §13.2.5)
+```
+머지 후 main worktree 의 다음 turn first action 으로 `git pull --ff-only` (§13.2.5
+addendum 동일).
+
+**Detection**: `bin/verify-completion.sh` check #11 (`check_11_repo_immutability`)
+— `--pre-commit` 시점에 main checkout 의 `repo/` mutation 을 감지하여 FAIL.
+META mode 우회 정책은 check #10 와 동일 (META mode 에서도 호출 — 정책 doc
+변경 자체가 worktree 에서 일어나야 함).
+
+**Sentinel 우선순위** (위에서 아래로, 매칭 시 즉시 PASS):
+1. Escape hatch (`GSTACK_SKIP_REPO_IMMUTABILITY=1` / `--skip-repo-immutability`)
+2. Non-git working tree (gate 비적용)
+3. Template base (`_template_maintainer/HISTORY.md` 존재)
+4. ai/* worktree (main worktree 아닌 linked worktree)
+5. `/_template:init` 부트스트랩 (`.template/init-completed` 마커 부재)
+6. Clean working tree (mutation 없음)
+
+위 6 조건 모두 부정 → FAIL with actionable guidance.
+
+**Rationale** (왜 hard gate 인가):
+- 소비자가 `repo/` 직접 수정 → template policy doc / hop / gate 망가짐 →
+  upstream `git pull` 시 conflict 누적 → customization drift detection 불가
+- customization 자체는 환영 — 단 worktree + branch + PR review 경로로
+- main checkout 은 **template 의 read-only mirror** (upstream main 의 상태)
+  로 유지
+
+**Edge cases**:
+- 신규 consumer 첫 commit (`/_template:init` 직후): `.template/init-completed`
+  마커가 init 종료 시 생성됨. init 자체는 carve-out 으로 통과, init 종료 후
+  첫 commit 시점부터 F0 발동.
+- consumer 가 `_template_maintainer/HISTORY.md` 를 잘못 복제: template base
+  sentinel 오인. consumer 의 `bin/template-bake-check.sh` 가 본 파일을
+  부수적으로 검출 (§19.2). 발견 시 manual cleanup 권유.
+- WSL / Mac 경로 normalization 차이: `realpath` 로 main worktree path 정규화
+  후 비교.
 
 ### §13.3 계획-실행 분리 에이전트 (선택적 고급 패턴)
 

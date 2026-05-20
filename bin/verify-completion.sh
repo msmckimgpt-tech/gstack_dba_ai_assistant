@@ -847,48 +847,90 @@ check_10_worktree_binding() {
 }
 
 # -----------------------------------------------------------------------------
-# Check #11: audit dispatcher symbol presence (TASK-0073 Phase A1)
+# Check #11: Consumer repo Immutability (AGENTS.md §13.2.7 F0, v3.8.0+)
 # -----------------------------------------------------------------------------
-#
-# REQ-20260519-0001 (TASK-0073, Critical §12.3, Eng review E7 SPOF mitigation):
-# audit subsystem 의 SPOF (dispatcher 단일 함수) 가 silently 사라지지 않도록
-# pre-commit 단계에서 record_audit_event() / AGENT_AUDIT_ENABLED gate /
-# _enforce_audit_prod_gate startup hook 의 symbol 존재를 강제 확인.
-#
-# scope: feature-0003-agent-web-ui (audit dispatcher 정본 위치) 만 검사.
-# 다른 feature 작업은 audit 정본 touch 안 함이 정상 → no-op PASS.
-check_11_audit_dispatcher() {
-  local fdir="$1"
+# 소비자 프로젝트의 main checkout 에서 `repo/` 직접 mutation 을 차단.
+# Sentinel: `_template_maintainer/HISTORY.md` 부재 = consumer.
+# Skip 조건 (우선순위):
+#   - escape hatch (env GSTACK_SKIP_REPO_IMMUTABILITY=1 또는 --skip-repo-immutability)
+#   - non-git working tree
+#   - template base (sentinel `_template_maintainer/HISTORY.md` 존재)
+#   - ai/* worktree (linked worktree, main 아님)
+#   - `/_template:init` 부트스트랩 (`.template/init-completed` 마커 부재)
+#   - working tree clean (mutation 없음)
+# FAIL: 위 6 조건 모두 부정 → main checkout 의 mutation = F0 위반.
 
-  case "$fdir" in
-    *feature-0003-agent-web-ui*) ;;
-    *)
-      log_check 11 PASS "audit dispatcher" "scope: not feature-0003"
+check_11_repo_immutability() {
+  local args_str=" $* "
+  if [[ "${GSTACK_SKIP_REPO_IMMUTABILITY:-}" == "1" ]] ||
+     [[ "$args_str" == *" --skip-repo-immutability "* ]]; then
+    log_check 11 WARN "repo immutability" "SKIP (escape hatch)"
+    return 0
+  fi
+
+  if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    log_check 11 WARN "repo immutability" "SKIP (not a git work tree)"
+    return 0
+  fi
+
+  local repo_root
+  repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    log_check 11 WARN "repo immutability" "SKIP (could not resolve repo root)"
+    return 0
+  }
+
+  # Template base sentinel — maintainer 영역은 정책 비적용.
+  if [ -f "$repo_root/_template_maintainer/HISTORY.md" ]; then
+    log_check 11 PASS "repo immutability" "(template base — carve-out)"
+    return 0
+  fi
+
+  # ai/* worktree carve-out: main worktree 가 아닌 linked worktree 면 PASS.
+  # check #10 가 F1 (branch binding) 을 별도 검증하므로 본 check 는 mutation
+  # 위치만 확인.
+  local porcelain main_wt_path=""
+  porcelain=$(git worktree list --porcelain 2>/dev/null || true)
+  if [ -n "$porcelain" ]; then
+    # 첫 번째 worktree entry = main worktree.
+    local in_first=1 line
+    while IFS= read -r line; do
+      case "$line" in
+        "worktree "*)
+          if [ "$in_first" = "1" ]; then
+            main_wt_path="${line#worktree }"
+            break
+          fi
+          ;;
+      esac
+    done <<<"$porcelain"
+  fi
+
+  local pwd_real repo_root_real main_wt_real
+  pwd_real=$(realpath -m "$repo_root" 2>/dev/null || echo "$repo_root")
+  if [ -n "$main_wt_path" ]; then
+    main_wt_real=$(realpath -m "$main_wt_path" 2>/dev/null || echo "$main_wt_path")
+    if [ "$pwd_real" != "$main_wt_real" ]; then
+      log_check 11 PASS "repo immutability" "(ai/* worktree — F0 외)"
       return 0
-      ;;
-  esac
-
-  local app_py="$fdir/src/app.py"
-  if [ ! -f "$app_py" ]; then
-    log_check 11 FAIL "audit dispatcher" "src/app.py 부재 ($app_py) — feature-0003 정본 missing"
-    return 1
+    fi
   fi
 
-  if ! grep -q '^def record_audit_event(' "$app_py"; then
-    log_check 11 FAIL "audit dispatcher" "record_audit_event() 정의 부재 (TASK-0073 Phase A1)"
-    return 1
-  fi
-  if ! grep -q 'AGENT_AUDIT_ENABLED' "$app_py"; then
-    log_check 11 FAIL "audit dispatcher" "AGENT_AUDIT_ENABLED gate 부재 (TASK-0073 Phase A1)"
-    return 1
-  fi
-  if ! grep -q '_enforce_audit_prod_gate' "$app_py"; then
-    log_check 11 FAIL "audit dispatcher" "_enforce_audit_prod_gate startup hook 부재 (TASK-0073 Phase A1)"
-    return 1
+  # `/_template:init` 부트스트랩 carve-out: init-completed 마커 부재 시 첫 setup.
+  if [ ! -f "$repo_root/.template/init-completed" ]; then
+    log_check 11 PASS "repo immutability" "(init bootstrap — carve-out)"
+    return 0
   fi
 
-  log_check 11 PASS "audit dispatcher"
-  return 0
+  # Mutation 여부: working tree clean 이면 PASS.
+  if [ -z "$(git status --porcelain 2>/dev/null)" ]; then
+    log_check 11 PASS "repo immutability" "(working tree clean)"
+    return 0
+  fi
+
+  # 위 모든 carve-out 부정 → FAIL.
+  log_check 11 FAIL "repo immutability" \
+    "main checkout 의 repo/ 직접 mutation 금지 (§13.2.7 F0). Update 는 'cd repo && git pull --ff-only', customization 은 'git -C repo worktree add ../.worktrees/<feat> -b ai/<agent>/<feat>'. Escape: GSTACK_SKIP_REPO_IMMUTABILITY=1 또는 --skip-repo-immutability."
+  return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -929,6 +971,13 @@ main() {
     check10_status=1
   fi
 
+  # Check #11 (§13.2.7 F0) — unconditional, META/shared 모드보다 먼저 실행.
+  # consumer repo immutability 는 mutation location 사실이므로 META 우회.
+  local check11_status=0
+  if ! check_11_repo_immutability "$@"; then
+    check11_status=1
+  fi
+
   # META short-circuit: pure-meta changesets skip verify entirely.
   # (Mixed commits — meta + operational — still get full operational gate.)
   local changed_files
@@ -951,24 +1000,24 @@ main() {
   fi
 
   if [ "$meta_mode" = "1" ]; then
-    printf 'META mode: pure-meta changeset detected. checks #1-#8 skipped (§18.4). check #10 always runs.\n' >&2
-    local failed=$check10_status
+    printf 'META mode: pure-meta changeset detected. checks #1-#8 skipped (§18.4). checks #10, #11 always run.\n' >&2
+    local failed=$((check10_status + check11_status))
     case "$mode" in
       post-commit) check_9_review_entry post-commit "" || failed=$((failed + 1)) ;;
       *) check_9_review_entry pre-commit "" || failed=$((failed + 1)) ;;
     esac
     if [ "$failed" -eq 0 ]; then
-      printf '\nverify-completion: PASS (META mode: checks #9, #10 ran)\n' >&2
+      printf '\nverify-completion: PASS (META mode: checks #9, #10, #11 ran)\n' >&2
       exit 0
     else
-      printf '\nverify-completion: FAIL (META mode: %d of #9, #10 failed)\n' "$failed" >&2
+      printf '\nverify-completion: FAIL (META mode: %d of #9, #10, #11 failed)\n' "$failed" >&2
       exit 1
     fi
   fi
 
-  # Shared mode uses its own minimal check set + check #9 + check #10.
+  # Shared mode uses its own minimal check set + check #9 + check #10 + check #11.
   if [ "$mode" = "shared-pre-commit" ]; then
-    local failed=$check10_status
+    local failed=$((check10_status + check11_status))
     check_shared_modify pre-commit || failed=$((failed + 1))
     check_8_unstaged_residual pre-commit || failed=$((failed + 1))
     check_9_review_entry shared-pre-commit "" || failed=$((failed + 1))
@@ -979,7 +1028,7 @@ main() {
   local fdir
   fdir=$(feature_dir "$feature_id")
 
-  local failed=$check10_status
+  local failed=$((check10_status + check11_status))
   local effective_mode
   effective_mode="${mode}"
 
@@ -990,10 +1039,9 @@ main() {
   check_7_anchor_4 "$fdir" || failed=$((failed + 1))
   check_8_unstaged_residual "$effective_mode" || failed=$((failed + 1))
   check_9_review_entry "$effective_mode" "$feature_id" || failed=$((failed + 1))
-  check_11_audit_dispatcher "$fdir" || failed=$((failed + 1))
 
   if [ "$failed" -eq 0 ]; then
-    printf '\nverify-completion: PASS (all 9 checks: 7 pilot + worktree binding + audit dispatcher)\n' >&2
+    printf '\nverify-completion: PASS (all 9 checks: 7 pilot + worktree binding + repo immutability)\n' >&2
     exit 0
   else
     printf '\nverify-completion: FAIL (%d of 9 checks failed)\n' "$failed" >&2

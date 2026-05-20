@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.8.0-rc.1
+template_version: v3.8.0
 domain: [workflow, tooling]
 ai_read_priority: 5
 ---
@@ -17,6 +17,82 @@ ai_read_priority: 5
 `/_template:version-upgrade` is the Claude Code SKILL wrapper that runs the
 same logic conversationally — it is optional convenience, not the canonical
 path. Either flow produces the same result.
+
+## §0. Consumer repo Immutability (v3.8.0+, §13.2.7 F0)
+
+**Direct edits to `<wrapper>/repo/` are forbidden in consumer projects.**
+
+소비자 프로젝트에서 `repo/` directory 의 직접 mutation 은 `bin/verify-completion.sh`
+check #11 (`check_11_repo_immutability`) 에 의해 차단됩니다. main checkout 의
+working tree 가 dirty 인 채 `--pre-commit` 호출 시 FAIL.
+
+### Update path (유일한 수단)
+
+template 의 변경을 흡수하는 정상 경로는 다음 두 가지:
+
+**(a) `bin/template-upgrade.sh --apply`** (권장 — customization preservation 자동)
+
+```bash
+cd /path/to/your/consumer/wrapper
+bash repo/bin/template-upgrade.sh --apply
+```
+
+본 명령은 hop chain 을 적용하여 `repo/` 안의 managed 파일을 갱신합니다.
+`bin/template-upgrade.sh` 자체는 §13.2.7 F0 의 carve-out 으로 처리됨 (script
+가 mutation 하는 path 는 hop 의 의도된 영역이며, verify-completion 의 `--pre-commit`
+호출 시점은 hop 완료 후 사용자가 commit 직전 — 그 시점은 customization 의
+working tree 상태가 아닌 hop output 으로 정의됨).
+
+**(b) `cd repo && git pull --ff-only origin main`** (raw — submodule / direct git 경로)
+
+```bash
+cd /path/to/your/consumer/wrapper/repo
+git fetch origin
+git pull --ff-only origin main
+```
+
+non-fast-forward 발생 시 (consumer 가 `repo/` 안을 customize 했거나 main 이
+history rewrite 된 경우) → `git pull` 거부. customization conflict 는 worktree
+에서 resolve 후 PR (Customization path 참조).
+
+### Customization path (작업 수단)
+
+`repo/` 안 정책 doc 또는 hop 또는 gate 를 자체 customize 하려면 **worktree 강제**:
+
+```bash
+cd /path/to/your/consumer/wrapper
+git -C repo worktree add ../.worktrees/<feat> -b ai/<agent>/<feat>
+cd .worktrees/<feat>
+# ... 작업, commit, push ...
+git push -u origin ai/<agent>/<feat>
+```
+
+이후 GitHub PR 또는 자동 머지 (§16.3 + §13.2.5). 머지 후 main worktree 의
+다음 turn first action 으로 `cd repo && git pull --ff-only`.
+
+### Escape hatch (긴급 회피)
+
+```bash
+GSTACK_SKIP_REPO_IMMUTABILITY=1 git commit ...
+# or
+bash repo/bin/verify-completion.sh --pre-commit feature-XXXX-x --skip-repo-immutability
+```
+
+emergency hotfix / CI 환경 차이 등 일시 우회용. 상시 사용 금지 — 사용 시
+`REPORT.md` 에 사유 기록 권유.
+
+### Carve-outs (자동 통과)
+
+- **Template base maintainer** (`<repo>/_template_maintainer/HISTORY.md` 존재):
+  ai_delegated_dev_template 의 source-of-truth 영역은 정책 비적용.
+- **ai/* worktree** (`<wrapper>/.worktrees/<feat>/`): F0 외 (F1 은 check #10 에서
+  별도 검증).
+- **`/_template:init` 부트스트랩**: `.template/init-completed` 마커 부재 시 1회
+  carve-out (신규 consumer 첫 setup).
+- **git pull / fetch / submodule update**: read-only 또는 fast-forward 만 — mutation
+  아님.
+
+상세: `repo/AGENTS.md` §13.2.7 + `repo/docs/DECISIONS.md` ADR-0021.
 
 ## Quickstart (3 commands)
 
