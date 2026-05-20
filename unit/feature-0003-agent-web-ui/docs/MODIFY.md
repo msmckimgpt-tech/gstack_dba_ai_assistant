@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0026
+- Date: 2026-05-19
+- Summary: TASK-0073 Phase E (REQ-20260519-0001, **Critical** §12.3) — Completion Checklist 마킹 + TASK-0073 [~] → [x] + Phase E checkbox [x] + 외부 영향 (make web + browser smoke + AGENT_AUDIT_ENABLED prod fail-closed manual + WebAccountActivity migration SQL count) 사용자 위임 명시. sandbox SSH 인증 차단으로 본 session 내 컨테이너 재배포 불가.
+- Files:
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` — TASK-0073 Task Queue entry `[~]` → `[x]` + Phase E sub-checkbox `[x]` + Completion Checklist §7 의 TASK-0073 sub-entries 추가 (20+ AC, 16 [x] + 3 [ ] 사용자 위임 외부 영향). 8 commit hash 목록 본문 포함.
+- Verification: 본 phase 는 docs only — code 변경 없음. `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS. TASK-0073 의 모든 Phase 가 [x] 마킹 완료, 외부 영향 (사용자 위임) 3 항목은 [ ] 로 명시.
+- Risks: 본 cycle 종료 후 사용자가 외부 영향 검증 안 하면 컨테이너 가동 + audit row 실 검증 미수행 — 별 cycle Phase E 의 결과 보고 (`docs/TEST.md §3 Test Run History` append) 권유.
+- Trace: REQ-20260519-0001 → TASK-0073 Phase E → CHG-20260519-0026 → REV-20260519-0022.
+
 ## CHG-20260519-0025
 - Date: 2026-05-19
 - Summary: TASK-0073 Phase D (REQ-20260519-0001, **Critical** §12.3) — 프로젝트 수준 docs 일괄 갱신. SECURITY §9 (Audit subsystem 정책 + Sensitive field catalog source-of-truth) + DECISIONS.md ADR-0019 + ARCHITECTURE.md §4·§6 + CONVENTIONS.md §10.6 audit group + STATUS.md feature-0003 row + feature 의 REPORT.md §1 (Phase 별 변경 요약 + git 동기화 결과) + TEST.md §2.1 audit subsystem scope.
