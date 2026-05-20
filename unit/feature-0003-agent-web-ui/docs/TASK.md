@@ -56,7 +56,7 @@ source_of_truth: true
   - [x] Phase A2 — WebAccountActivity 흡수 + migration helper (CHG-20260519-0018, 2026-05-19, py_compile PASS; idempotent SQL marker `RequestId='account-activity:<id>'` + dual write `_log_search_activity`)
   - [x] Phase A3 — RBAC catalog +4 + dba seed + permission group `audit` (CHG-20260519-0019, 2026-05-19, py_compile PASS; SEED + 4 catchup loop admin/operator/sales/dba/pending 자동 backfill)
   - [x] Phase A4 — 5 audit endpoint + chunked purge (CHG-20260519-0020, 2026-05-19, py_compile PASS; .own SQL filter Actor OR Target + 50k CSV hard cap + 1000-row chunked purge w/ idempotency_key 30s deadline)
-  - [ ] Phase A5 — admin 13 endpoint hook (Same tx)
+  - [x] Phase A5 — admin 11 endpoint hook (Same tx) + ActionCode 별 build_audit_change_json builder (CHG-20260519-0021, 2026-05-19, py_compile PASS; 11 endpoint = update/delete/password-reset/role CRUD/product CRUD/databases.update/system_prompt.update — plan 의 "13" elastic 표현, 11 이 admin mutation 전부; E5 product delete cascade lock 순서 정합)
   - [ ] Phase A6 — user 4 endpoint hook (fail-open)
   - [ ] Phase B — HTTP smoke 10 시나리오
   - [ ] Phase C — Frontend (admin 탭 + filter + detail pane + CSV)

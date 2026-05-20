@@ -8,6 +8,31 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0021
+- Date: 2026-05-19
+- Summary: TASK-0073 Phase A5 (REQ-20260519-0001, **Critical** §12.3) — admin 11 mutation endpoint Same tx audit hook + ActionCode-specific `build_audit_change_json()` builder dispatch + `_audit_admin_mutation()` helper. Codex outside voice C6 minimum-fix (raw 검증 X, builder allowlist). Eng review E5 (product delete cascade lock 순서) + E6 (explicit dispatcher, decorator 거부).
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/app.py`
+    - 신규 helper `_audit_pick_fields(source, fields)` — 화이트리스트 field 만 extract.
+    - 신규 helper `_audit_redact_sensitive(d)` — password_hash / token / api_key 등 sensitive field 값을 `<redacted>` 로 shallow 치환.
+    - 신규 `build_audit_change_json(*, action, before, after, request_ctx)` dispatcher — 16 ActionCode (admin 11 + user 5) 의 ChangeJson 화이트리스트 빌더. unknown action 은 ValueError raise (Codex C6 explicit allowlist).
+    - 신규 `_audit_admin_mutation(conn, request, actor, *, action, resource_type, resource_id, before, after, request_ctx, target_account_id)` helper — builder dispatch + record_audit_event 호출. caller 가 commit 직전 1 line 으로 호출.
+    - 11 admin mutation endpoint 의 Same tx audit hook 적용:
+      1. PATCH /api/admin/accounts/{id} — admin.account.update (before=target, after=updated, target_account_id=account_id)
+      2. POST /api/admin/accounts/{id}/password-reset — admin.account.password-reset (PasswordHash 명시 redact)
+      3. DELETE /api/admin/accounts/{id} — admin.account.delete
+      4. POST /api/admin/roles — admin.role.create
+      5. PATCH /api/admin/roles/{id} — admin.role.update
+      6. DELETE /api/admin/roles/{id} — admin.role.delete
+      7. POST /api/admin/products — admin.product.create (autocommit tx 뒤에 별 tx hook)
+      8. PATCH /api/admin/products/{id} — admin.product.update
+      9. DELETE /api/admin/products/{id} — admin.product.delete (E5 cascade lock 순서 — system_prompts → product_databases → role_permissions → account_permission_overrides → permissions → products → audit)
+      10. PUT /api/admin/products/{id}/databases — admin.product.databases.update (before-state schemas 캡처 후 hook)
+      11. PUT /api/admin/system-prompts — admin.system_prompt.update (before/after content_len + content_preview_after 120 char, full content 미포함)
+- Verification: `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS. record_audit_event 호출 19 회 (= 11 admin endpoint hook + 2 purge self-audit + 1 _log_search_activity mirror + helper 정의 5 etc.). 각 hook 의 try/except 가 audit 실패 시 conn.rollback() 후 500 응답 (Same tx fail-safe). plan 의 "13" 은 elastic 표현 — 11 endpoint 가 admin mutation 전부 (TASK-0073 plan E5 의 cascade lock 순서가 admin.product.delete 1 개 endpoint).
+- Risks: PATCH /api/admin/accounts/{id} 의 conn close() 위치가 audit hook 뒤로 이동 — 기존 flow 가 _set_account_overrides + revoke 세션 후 close. audit hook 도 같은 conn 사용. POST /api/admin/products 의 autocommit=False/True toggle 가 audit hook 안 영향 — finally 의 `conn.autocommit = True` 다음에 audit hook 이 추가 INSERT (auto-commit 모드 안전). PUT /api/admin/products/{id}/databases 의 before-state 캡처가 DELETE 직전에 — 추가 SELECT row.
+- Trace: REQ-20260519-0001 → TASK-0073 Phase A5 → CHG-20260519-0021 → REV-20260519-0017. Codex C6 (builder allowlist) + Eng review E5 (cascade lock 순서) + E6 (explicit dispatcher) lock-in.
+
 ## CHG-20260519-0020
 - Date: 2026-05-19
 - Summary: TASK-0073 Phase A4 (REQ-20260519-0001, **Critical** §12.3) — 5 audit read endpoint + 1 chunked PK purge endpoint. `.own` SQL filter = `ActorAccountId OR TargetAccountId` (Eng review E1) + 404 byte-equal metadata leak 차단 + CSV 50k hard cap + chunked purge w/ idempotency_key + start/complete self-audit + 30s deadline.

@@ -7642,6 +7642,27 @@ WHERE Id = %s
         cur.execute("UPDATE WebAuthSessions SET IsRevoked = 1 WHERE AccountId = %s", (int(account_id),))
         cur.close()
     updated = _load_account_by_id(conn, account_id)
+    # TASK-0073 Phase A5: same-tx audit hook. 실패 = caller tx rollback (fail-safe).
+    try:
+        _audit_admin_mutation(
+            conn,
+            request,
+            actor,
+            action="admin.account.update",
+            resource_type="account",
+            resource_id=str(account_id),
+            before=target,
+            after=updated,
+            target_account_id=int(account_id),
+        )
+        conn.commit()
+    except Exception as audit_exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.close()
+        return _json_error(f"audit write failed: {audit_exc}", 500)
     conn.close()
     payload = _serialize_account(updated) or {}
     payload["permission_overrides"] = dict((updated or {}).get("permission_overrides") or {})
@@ -7699,15 +7720,33 @@ async def admin_account_password_reset(account_id: int, request: Request) -> JSO
             "UPDATE WebAuthSessions SET IsRevoked = 1 WHERE AccountId = %s",
             (int(account_id),),
         )
-        try:
-            conn.commit()
-        except Exception:
-            pass
     except Exception:
         cur.close()
         conn.close()
         return _json_error("비밀번호 초기화에 실패했습니다.", 500)
     cur.close()
+    # TASK-0073 Phase A5: same-tx audit hook (PasswordHash / temporary_password 명시 redact).
+    try:
+        _audit_admin_mutation(
+            conn,
+            request,
+            actor,
+            action="admin.account.password-reset",
+            resource_type="account",
+            resource_id=str(account_id),
+            before=target,
+            after=None,
+            request_ctx={"sessions_revoked": True},
+            target_account_id=int(account_id),
+        )
+        conn.commit()
+    except Exception as audit_exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.close()
+        return _json_error(f"audit write failed: {audit_exc}", 500)
     conn.close()
     return JSONResponse({
         "ok": True,
@@ -7767,6 +7806,27 @@ WHERE Id = %s
     )
     cur.execute("UPDATE WebAuthSessions SET IsRevoked = 1 WHERE AccountId = %s", (int(account_id),))
     cur.close()
+    # TASK-0073 Phase A5: same-tx audit hook.
+    try:
+        _audit_admin_mutation(
+            conn,
+            request,
+            actor,
+            action="admin.account.delete",
+            resource_type="account",
+            resource_id=str(account_id),
+            before=target,
+            after=None,
+            target_account_id=int(account_id),
+        )
+        conn.commit()
+    except Exception as audit_exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.close()
+        return _json_error(f"audit write failed: {audit_exc}", 500)
     conn.close()
     return JSONResponse({"ok": True, "account_id": int(account_id)})
 
@@ -7855,6 +7915,26 @@ async def admin_create_role(request: Request) -> JSONResponse:
     if is_default_signup:
         _assign_default_signup_role(conn, role_id)
     role = _load_role_by_id(conn, role_id)
+    # TASK-0073 Phase A5: same-tx audit hook.
+    try:
+        _audit_admin_mutation(
+            conn,
+            request,
+            actor,
+            action="admin.role.create",
+            resource_type="role",
+            resource_id=str(role_id),
+            before=None,
+            after=role,
+        )
+        conn.commit()
+    except Exception as audit_exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.close()
+        return _json_error(f"audit write failed: {audit_exc}", 500)
     conn.close()
     return JSONResponse({"ok": True, "role": role})
 
@@ -7945,6 +8025,26 @@ WHERE Id = %s
     if next_is_default_signup:
         _assign_default_signup_role(conn, int(role_id))
     role = _load_role_by_id(conn, int(role_id))
+    # TASK-0073 Phase A5: same-tx audit hook.
+    try:
+        _audit_admin_mutation(
+            conn,
+            request,
+            actor,
+            action="admin.role.update",
+            resource_type="role",
+            resource_id=str(role_id),
+            before=current_role,
+            after=role,
+        )
+        conn.commit()
+    except Exception as audit_exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.close()
+        return _json_error(f"audit write failed: {audit_exc}", 500)
     conn.close()
     return JSONResponse({"ok": True, "role": role})
 
@@ -7992,6 +8092,26 @@ WHERE RoleId = %s
     cur.execute("DELETE FROM WebRolePermissions WHERE RoleId = %s", (int(role_id),))
     cur.execute("DELETE FROM WebRoles WHERE Id = %s", (int(role_id),))
     cur.close()
+    # TASK-0073 Phase A5: same-tx audit hook.
+    try:
+        _audit_admin_mutation(
+            conn,
+            request,
+            actor,
+            action="admin.role.delete",
+            resource_type="role",
+            resource_id=str(role_id),
+            before=role,
+            after=None,
+        )
+        conn.commit()
+    except Exception as audit_exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.close()
+        return _json_error(f"audit write failed: {audit_exc}", 500)
     conn.close()
     return JSONResponse({"ok": True, "role_id": int(role_id)})
 
@@ -8145,6 +8265,33 @@ SELECT r.Id, %s FROM WebRoles r
             conn.autocommit = True
         except Exception:
             pass
+    # TASK-0073 Phase A5: same-tx audit hook (product create — after-state 만, before=None).
+    try:
+        _audit_admin_mutation(
+            conn,
+            request,
+            account,
+            action="admin.product.create",
+            resource_type="product",
+            resource_id=str(new_id),
+            before=None,
+            after={
+                "id": new_id,
+                "product_key": product_key,
+                "name": name,
+                "description": description,
+                "is_active": is_active,
+                "default_role_access": default_role_access,
+            },
+        )
+        conn.commit()
+    except Exception as audit_exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.close()
+        return _json_error(f"audit write failed: {audit_exc}", 500)
     conn.close()
     return JSONResponse({"ok": True, "product_id": new_id})
 
@@ -8207,6 +8354,26 @@ async def admin_update_product(product_id: int, request: Request) -> JSONRespons
             cur = conn.cursor()
             cur.execute("UPDATE WebProducts SET IsDefault = 0 WHERE Id <> %s", (int(product_id),))
             cur.close()
+    # TASK-0073 Phase A5: same-tx audit hook (product update).
+    try:
+        _audit_admin_mutation(
+            conn,
+            request,
+            account,
+            action="admin.product.update",
+            resource_type="product",
+            resource_id=str(product_id),
+            before={"id": int(product_id), "product_key": existing.get("ProductKey")},
+            after={"id": int(product_id), **{k: data.get(k) for k in ("name", "description", "is_active", "sort_order", "is_default", "default_role_access") if k in data}},
+        )
+        conn.commit()
+    except Exception as audit_exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.close()
+        return _json_error(f"audit write failed: {audit_exc}", 500)
     conn.close()
     return JSONResponse({"ok": True, "product_id": int(product_id)})
 
@@ -8267,6 +8434,19 @@ async def admin_delete_product(product_id: int, request: Request) -> JSONRespons
             )
         cur.execute("DELETE FROM WebProducts WHERE Id = %s", (int(product_id),))
         cur.close()
+        # TASK-0073 Phase A5 (Eng review E5 cascade lock 순서): audit INSERT 가 같은 tx 안.
+        # cascade 순서 (WebSystemPrompts → WebProductDatabases → WebRolePermissions →
+        # WebAccountPermissionOverrides → WebPermissions → WebProducts) 끝 → audit INSERT.
+        # builder 가 before-state (product_id) 만 사용 — cascade 결과는 conn 상태로 가시.
+        record_audit_event(
+            conn,
+            actor=_build_actor_from_request(request, account, actor_type="account"),
+            action="admin.product.delete",
+            resource_type="product",
+            resource_id=str(product_id),
+            change_json={"target_product_id": int(product_id), "cascade_dyn_permissions": len(dyn_perm_ids)},
+            target_account_id=None,
+        )
         conn.commit()
     except Exception as exc:
         try:
@@ -8389,6 +8569,14 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
             "description": str(item.get("description") or "").strip(),
             "sort_order": int(item.get("sort_order") or (i + 1) * 10),
         })
+    # before-state 캡처 — 현재 schemas list.
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT SchemaName FROM WebProductDatabases WHERE ProductId = %s ORDER BY SortOrder ASC",
+        (int(product_id),),
+    )
+    before_schemas = [str(r[0]) for r in (cur.fetchall() or [])]
+    cur.close()
     cur = conn.cursor()
     cur.execute("DELETE FROM WebProductDatabases WHERE ProductId = %s", (int(product_id),))
     for item in cleaned:
@@ -8400,6 +8588,27 @@ VALUES (%s, %s, %s, %s)
             (int(product_id), item["schema_name"], item["description"], int(item["sort_order"])),
         )
     cur.close()
+    # TASK-0073 Phase A5: same-tx audit hook (product databases update).
+    try:
+        _audit_admin_mutation(
+            conn,
+            request,
+            account,
+            action="admin.product.databases.update",
+            resource_type="product",
+            resource_id=str(product_id),
+            before={"id": int(product_id), "schemas": before_schemas},
+            after={"id": int(product_id), "schemas": [c["schema_name"] for c in cleaned]},
+            request_ctx={"product_id": int(product_id)},
+        )
+        conn.commit()
+    except Exception as audit_exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.close()
+        return _json_error(f"audit write failed: {audit_exc}", 500)
     conn.close()
     return JSONResponse({"ok": True, "databases": cleaned})
 
@@ -8494,6 +8703,10 @@ async def admin_put_system_prompt(request: Request) -> JSONResponse:
             return _json_error("타 계정 프롬프트 관리 권한이 없습니다.", 403)
         account_id = target_account
         role_id = None
+    # before-state 캡처 (audit) — 기존 prompt 본문 length 비교를 위해.
+    before_prompt = _load_system_prompt(
+        conn, scope=scope, product_id=product_id, role_id=role_id, account_id=account_id,
+    ) or {}
     new_id = _upsert_system_prompt(
         conn,
         scope=scope,
@@ -8503,6 +8716,33 @@ async def admin_put_system_prompt(request: Request) -> JSONResponse:
         account_id=account_id,
         updated_by_account_id=int(actor["id"]),
     )
+    # TASK-0073 Phase A5: same-tx audit hook (system_prompt update).
+    try:
+        _audit_admin_mutation(
+            conn,
+            request,
+            actor,
+            action="admin.system_prompt.update",
+            resource_type="system_prompt",
+            resource_id=f"{scope}:{product_id or 0}:{role_id or 0}:{account_id or 0}",
+            before={"content": str(before_prompt.get("content") or "")},
+            after={"content": content},
+            request_ctx={
+                "scope": scope,
+                "product_id": product_id,
+                "role_id": role_id,
+                "account_id": account_id,
+            },
+            target_account_id=int(account_id) if (scope == "account" and account_id) else None,
+        )
+        conn.commit()
+    except Exception as audit_exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.close()
+        return _json_error(f"audit write failed: {audit_exc}", 500)
     conn.close()
     return JSONResponse({"ok": True, "id": new_id, "scope": scope, "deleted": new_id == 0})
 
@@ -8573,6 +8813,259 @@ async def me_put_system_prompt(request: Request) -> JSONResponse:
     )
     conn.close()
     return JSONResponse({"ok": True, "id": new_id, "deleted": new_id == 0})
+
+
+# =============================================================================
+# REQ-20260519-0001 (TASK-0073 Phase A5, Critical §12.3): ActionCode-specific
+# ChangeJson builders + admin mutation hook helper.
+# =============================================================================
+# Codex outside voice C6 minimum-fix — raw request 검증 없이 builder 단계에서 명시
+# 화이트리스트로 PII/secret 차단. unknown action / unknown field 는 builder 에 없어서
+# 자동 차단 (dispatcher 는 raw 검증 X). Eng review E6 — decorator pattern 거부, explicit
+# dispatcher per endpoint.
+#
+# 각 builder 는 (before, after, request_ctx) → dict 변환. SECURITY.md §8 sensitive
+# field catalog 는 builder 가 reference. PasswordHash / SessionTokenHash / API key
+# cipher / temporary_password 등은 builder 단계에서 제외.
+
+_AUDIT_BUILDER_ACCOUNT_FIELDS = ("role_id", "is_active", "username", "permission_overrides")
+_AUDIT_BUILDER_ROLE_FIELDS = ("name", "description", "is_active", "permission_codes")
+_AUDIT_BUILDER_PRODUCT_FIELDS = ("product_key", "name", "description", "is_active", "default_role_access", "databases", "system_prompt")
+_AUDIT_MASKED_FIELDS_PASSWORD = ("password_hash", "temporary_password", "raw_password")
+_AUDIT_MASKED_FIELDS_TOKEN = ("session_token_hash", "session_token", "token")
+_AUDIT_MASKED_FIELDS_API_KEY = ("openai_api_key", "api_key", "secret")
+_AUDIT_MASKED_FIELDS_ALL = (
+    _AUDIT_MASKED_FIELDS_PASSWORD
+    + _AUDIT_MASKED_FIELDS_TOKEN
+    + _AUDIT_MASKED_FIELDS_API_KEY
+)
+
+
+def _audit_pick_fields(source: dict | None, fields: tuple[str, ...]) -> dict:
+    """Builder helper — 명시 화이트리스트 field 만 추출. None 입력 시 empty dict."""
+    if not source:
+        return {}
+    return {k: source.get(k) for k in fields if k in source}
+
+
+def _audit_redact_sensitive(d: dict | None) -> dict:
+    """Builder helper — sensitive field 값을 '<redacted>' 로 치환. shallow 만 처리."""
+    if not d:
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in d.items():
+        if str(k).lower() in _AUDIT_MASKED_FIELDS_ALL:
+            out[k] = "<redacted>"
+        else:
+            out[k] = v
+    return out
+
+
+def build_audit_change_json(
+    *,
+    action: str,
+    before: dict | None = None,
+    after: dict | None = None,
+    request_ctx: dict | None = None,
+) -> tuple[dict, list[str]]:
+    """ActionCode-specific ChangeJson builder dispatch.
+
+    raw request 검증 X — 각 ActionCode 별 화이트리스트만 select. unknown action 은
+    raise ValueError (caller 가 catch 해 fail-safe — admin tx rollback / user fail-open).
+
+    Returns: (change_json, masked_fields).
+    """
+    action = str(action or "").strip()
+    request_ctx = request_ctx or {}
+    if action == "admin.account.update":
+        return (
+            {
+                "target_account_id": (before or {}).get("id") or (after or {}).get("id"),
+                "before": _audit_redact_sensitive(_audit_pick_fields(before, _AUDIT_BUILDER_ACCOUNT_FIELDS)),
+                "after": _audit_redact_sensitive(_audit_pick_fields(after, _AUDIT_BUILDER_ACCOUNT_FIELDS)),
+            },
+            [],
+        )
+    if action == "admin.account.delete":
+        return (
+            {
+                "target_account_id": (before or {}).get("id"),
+                "deleted": _audit_redact_sensitive(_audit_pick_fields(before, _AUDIT_BUILDER_ACCOUNT_FIELDS)),
+            },
+            [],
+        )
+    if action == "admin.account.password-reset":
+        # PasswordHash / temporary_password 명시 redact — builder 단계에서 제외.
+        return (
+            {
+                "target_account_id": (before or {}).get("id"),
+                "target_username": (before or {}).get("username"),
+                "must_change_password": True,
+                "sessions_revoked": bool(request_ctx.get("sessions_revoked")),
+            },
+            list(_AUDIT_MASKED_FIELDS_PASSWORD) + list(_AUDIT_MASKED_FIELDS_TOKEN),
+        )
+    if action == "admin.role.create":
+        return (
+            {
+                "created_role": _audit_pick_fields(after, _AUDIT_BUILDER_ROLE_FIELDS),
+            },
+            [],
+        )
+    if action == "admin.role.update":
+        return (
+            {
+                "target_role_id": (before or {}).get("id") or (after or {}).get("id"),
+                "before": _audit_pick_fields(before, _AUDIT_BUILDER_ROLE_FIELDS),
+                "after": _audit_pick_fields(after, _AUDIT_BUILDER_ROLE_FIELDS),
+            },
+            [],
+        )
+    if action == "admin.role.delete":
+        return (
+            {
+                "target_role_id": (before or {}).get("id"),
+                "deleted": _audit_pick_fields(before, _AUDIT_BUILDER_ROLE_FIELDS),
+            },
+            [],
+        )
+    if action == "admin.product.create":
+        return (
+            {"created_product": _audit_pick_fields(after, _AUDIT_BUILDER_PRODUCT_FIELDS)},
+            [],
+        )
+    if action == "admin.product.update":
+        return (
+            {
+                "target_product_id": (before or {}).get("id") or (after or {}).get("id"),
+                "before": _audit_pick_fields(before, _AUDIT_BUILDER_PRODUCT_FIELDS),
+                "after": _audit_pick_fields(after, _AUDIT_BUILDER_PRODUCT_FIELDS),
+            },
+            [],
+        )
+    if action == "admin.product.delete":
+        return (
+            {
+                "target_product_id": (before or {}).get("id"),
+                "deleted": _audit_pick_fields(before, _AUDIT_BUILDER_PRODUCT_FIELDS),
+            },
+            [],
+        )
+    if action == "admin.product.databases.update":
+        return (
+            {
+                "target_product_id": (before or {}).get("id") or request_ctx.get("product_id"),
+                "before_schemas": list((before or {}).get("schemas") or []),
+                "after_schemas": list((after or {}).get("schemas") or []),
+            },
+            [],
+        )
+    if action == "admin.system_prompt.update":
+        # system_prompt 본문 자체는 length 만 — full content 는 redact 가 아닌 size cap.
+        body_before = str((before or {}).get("content") or "")
+        body_after = str((after or {}).get("content") or "")
+        return (
+            {
+                "scope": request_ctx.get("scope"),
+                "target_role_id": request_ctx.get("role_id"),
+                "target_account_id": request_ctx.get("account_id"),
+                "target_product_id": request_ctx.get("product_id"),
+                "content_len_before": len(body_before),
+                "content_len_after": len(body_after),
+                "content_preview_after": body_after[:120],
+            },
+            ["system_prompt.content_full"],
+        )
+    # user endpoint actions (Phase A6) — builder 도 같은 catalog 에서 정의.
+    if action == "conversation.ask":
+        return (
+            {
+                "conversation_id": request_ctx.get("conversation_id"),
+                "model": request_ctx.get("model"),
+                "product_mode": request_ctx.get("product_mode"),
+                "product_key": request_ctx.get("product_key"),
+                "lazy_create": bool(request_ctx.get("lazy_create")),
+                "prompt_length": int(request_ctx.get("prompt_length") or 0),
+            },
+            ["conversation.ask.prompt_full", "conversation.ask.final_sql_full"],
+        )
+    if action == "conversation.share.create":
+        return (
+            {
+                "conversation_id": request_ctx.get("conversation_id"),
+                "scope_mode": request_ctx.get("scope_mode"),
+                "anchor_message_id": request_ctx.get("anchor_message_id"),
+                "share_id": request_ctx.get("share_id"),
+                "token_prefix": str(request_ctx.get("token_prefix") or "")[:8],
+            },
+            ["share.token_full"],
+        )
+    if action == "conversation.share.revoke":
+        return (
+            {
+                "conversation_id": request_ctx.get("conversation_id"),
+                "share_id": request_ctx.get("share_id"),
+                "already_revoked": bool(request_ctx.get("already_revoked")),
+            },
+            [],
+        )
+    if action == "share.public.view":
+        return (
+            {
+                "share_id": request_ctx.get("share_id"),
+                "token_prefix": str(request_ctx.get("token_prefix") or "")[:8],
+                "view_count_after": int(request_ctx.get("view_count_after") or 0),
+                "remote_addr_present": bool(request_ctx.get("remote_addr")),
+            },
+            ["share.token_full"],
+        )
+    if action == "share.fork":
+        return (
+            {
+                "source_share_id": request_ctx.get("source_share_id"),
+                "source_token_prefix": str(request_ctx.get("source_token_prefix") or "")[:8],
+                "new_conversation_id": request_ctx.get("new_conversation_id"),
+            },
+            ["share.token_full"],
+        )
+    # Unknown ActionCode — explicit raise (Codex C6 builder allowlist policy).
+    raise ValueError(f"unknown audit action: {action}")
+
+
+def _audit_admin_mutation(
+    conn,
+    request: Request,
+    actor_account: dict,
+    *,
+    action: str,
+    resource_type: str,
+    resource_id: str | None,
+    before: dict | None = None,
+    after: dict | None = None,
+    request_ctx: dict | None = None,
+    target_account_id: int | None = None,
+) -> None:
+    """Phase A5 helper: admin endpoint same-tx audit hook. builder dispatch + dispatcher 호출.
+
+    caller 가 commit 직전에 1 line 으로 호출. 실패 = caller tx rollback (Same tx fail-safe).
+    """
+    change_json, masked_fields = build_audit_change_json(
+        action=action,
+        before=before,
+        after=after,
+        request_ctx=request_ctx,
+    )
+    actor = _build_actor_from_request(request, actor_account, actor_type="account")
+    record_audit_event(
+        conn,
+        actor=actor,
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        change_json=change_json,
+        masked_fields=masked_fields or None,
+        target_account_id=target_account_id,
+    )
 
 
 # =============================================================================

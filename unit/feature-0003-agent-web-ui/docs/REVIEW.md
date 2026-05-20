@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0017 [SKIPPED:multi-phase-plan-approved]
+- Date: 2026-05-19
+- Decision: TASK-0073 Phase A5 (REQ-20260519-0001, **Critical** §12.3) — admin 11 mutation endpoint Same tx audit hook + 16 ActionCode build_audit_change_json builder + _audit_admin_mutation helper. plan 의 "13" 은 elastic 표현, 11 endpoint 가 admin mutation 전부.
+- Reason: PLAN-APPROVED 2026-05-19. Codex outside voice C6 — raw request 검증 X, builder allowlist 만. PasswordHash / token / api_key 명시 redact. Eng review E5 product delete cascade lock 순서 (system_prompts → product_databases → role_permissions → account_permission_overrides → permissions → products → audit INSERT). Eng review E6 — decorator 거부, 각 endpoint 의 explicit `_audit_admin_mutation()` 호출.
+- Alt 거부:
+  - **decorator @audit_action**: Eng review E6 거부 — actor capture / ChangeJson builder / masked_fields 가 endpoint 마다 다르므로 magic hide. 11 endpoint 각각 explicit.
+  - **src/audit_builders.py 별 module**: PYTHONPATH dependency. app.py 안 helper 섹션이 더 robust + import 부담 0.
+  - **POST /admin/products 의 audit 를 inner tx 안**: autocommit=False/True toggle 의 finally 안에 audit hook 두면 rollback 정합성 모호. finally 의 autocommit=True 복원 다음에 hook — autocommit 모드 안전.
+  - **DELETE /admin/products 의 audit 를 _audit_admin_mutation helper 로**: E5 cascade lock 순서가 product 의 dependent row 정리 후 audit row INSERT 가 정합 — helper 호출 대신 inline record_audit_event + conn.commit() 한 tx 안 정리.
+- Risks: PATCH/POST/DELETE 의 conn.close() 위치가 audit hook 뒤로 이동 — 기존 flow 의 close() 가 implicit commit 이었을 가능성 → audit hook 의 conn.commit() 가 명시 commit 보장. PUT /databases 의 before-state 캡처 SELECT 추가 — 성능 영향 negligible (단 product 의 schemas 수가 작음, ≤ ~10). PATCH /products 의 audit before 가 ProductKey 만 — full snapshot 필요하면 별 SELECT 필요, 본 cycle 의 cost-benefit 으로 후속 정확화.
+- 미해결 followup: PATCH /admin/products 의 before-state 가 ProductKey 만 — full WebProducts row 캡처는 별 cycle. Phase B 의 test 가 11 endpoint 각각의 audit row visible 검증. Phase E 의 browser smoke 가 admin 11 action 실 발생 시 audit row 1:1 정합 확인.
+- panel: SKIPPED:multi-phase-plan-approved — Eng review E5 (cascade lock 순서) + E6 (explicit dispatcher) + Codex C6 (builder allowlist) 가 plan 단계 lock-in. Critical 등급이나 plan PLAN-APPROVED 후 phase 단위 panel 재호출은 cargo-cult.
+- Trace: REQ-20260519-0001 → TASK-0073 Phase A5 → CHG-20260519-0021 → REV-20260519-0017. Codex C6 + Eng review E5/E6 lock-in.
+
 ## REV-20260519-0016 [SKIPPED:multi-phase-plan-approved]
 - Date: 2026-05-19
 - Decision: TASK-0073 Phase A4 (REQ-20260519-0001, **Critical** §12.3) — 5 audit read endpoint (`GET /api/admin/audits` + detail + export.csv + actors facet + resources facet) + 1 chunked purge endpoint (`POST /api/admin/audits/purge`). E1 self filter (Actor OR Target) + 404 byte-equal + E8 chunked PK 의사코드 그대로 구현.
