@@ -8,6 +8,35 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260520-0006 [AGENT-TEAM:codex-outside-voice]
+- Date: 2026-05-20
+- Decision: TASK-0091 (REQ-20260520-0006, ~~Minor~~→**Major** §12.3 — PATCH admin/products audit before-state full snapshot + audit integrity fix) plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, ~5분, 687,409 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign (scope 확장) → 사용자 confirm → Phase A~F 진행. **audit integrity 결함 fix 포함** (Codex C2).
+- Reason: TASK-0073 Phase A5 의 admin.product.update audit 정합성 강화 + Codex 가 발견한 audit integrity 결함 (autocommit=True default) 일괄 fix. 사용자 정책 (`feedback_outside_voice_for_rbac`) 적용 — audit 표면 직접 변경 의무 outside voice.
+- Codex outside voice 5 findings 흡수 결정:
+  - **C1 — `system_prompt.content` full = SECURITY.md §9.2 위반**: full content 금지, `content_len_*` + preview 만 허용. **ACCEPT** → snapshot 에 `system_prompt_summary = {present, content_len, updated_at}` 만, content 본문 제외.
+  - **C2 — `admin_update_product()` 가 same tx audit 아님 (audit integrity 결함)**: autocommit=True default + UPDATE 즉시 commit + audit fail 시 rollback 가능 0. **ACCEPT (scope 확장 Minor→Major)** → `conn.autocommit=False` + `SELECT FOR UPDATE` + commit + finally autocommit=True.
+  - **C3 — `_list_products()` 기반 snapshot 과잉 + FOR UPDATE 불가**: 전체 list scan. databases / system_prompt 별 endpoint. **ACCEPT** → single-row `SELECT FOR UPDATE` helper. `databases` 제외.
+  - **C4 — `sort_order` / `is_default` 누락은 현재 결함**: endpoint 가 갱신하는데 allowlist 빠짐. `is_default=true` side effect 도 기록 권장. **ACCEPT** → allowlist 확장 + `default_cleared_product_ids` extra ChangeJson.
+  - **C5 — Rollback 설명 낙관적**: full prompt ChangeJson 들어가면 code revert 만으로 복구 안 됨 → 별 redact/purge SQL 필요. **자동 해소** (C1 ACCEPT 로 content 가 애초에 안 들어감).
+- Alt 거부:
+  - **v1 단독 진행 (outside voice 흡수 X)**: C1 (PII 노출) + C2 (audit integrity 결함) 모두 fatal. v2 redesign 필수.
+  - **C2 제외 (scope 유지)**: audit integrity 결함이 cycle 안에 노출됐는데 별 cycle 위임은 부정합. 사용자 v2 단독 진행 confirm 시 거부.
+  - **C4 제외 (allowlist 확장 별 cycle)**: sort_order/is_default 가 현재 audit 에 안 잡힘 — 본 cycle 의 audit 정합성 강화 의도와 모순. 사용자 v2 단독 진행 confirm 시 거부.
+- Verification (Phase C sentinel smoke, host-mounted code + docker run):
+  - `'TASK-0091-SENTINEL' in body: False` ✓ — system_prompt full content drop (Codex C1)
+  - `'should_not_leak' in body: False` ✓ — databases drop (Codex C3)
+  - sort_order 100→50 / is_default False→True / `default_cleared_product_ids: [5,9]` ✓ (Codex C4)
+  - `system_prompt_summary` 정확 ({present, content_len, updated_at}) (Codex C1+SECURITY §9.2)
+- Risks: scope 확장 (Minor→Major) — audit integrity fix 포함. 사용자 영향 0 (audit row 정확성만), DB schema 변경 0, endpoint external contract 변경 0. transaction semantics 만 internal 변경 — concurrent PATCH race 가 `SELECT FOR UPDATE` 로 차단됨 (이전 race window 회귀 fix). live runtime smoke (실 PATCH 호출 + audit row 확인) 는 PR merge 후 next deploy 사용자 검증.
+- 미해결 followup:
+  - admin.product.create 의 audit 도 allowlist 확장 결과 자동 정합 — 별 sentinel test 권유 (Minor)
+  - admin.product.databases.update audit 의 system_prompt summary 패턴 도입 검토 (별 cycle)
+  - SECURITY.md §8 strict-string-equality 계약 (TASK-0092 V6 followup)
+  - rollback window (1~2 cycle) 후 `_migrate_web_account_activity_to_audit()` 제거 (TASK-0086 followup)
+  - TASK-0073 backlog 4 entries 남음 (TASK-0087, 0088, 0089, 0090) — 각 별 cycle
+- panel: AGENT-TEAM:codex-outside-voice — Codex consult mode (687,409 tokens). 본 cycle 의 verification panel.
+- Trace: REQ-20260520-0006 → TASK-0091 → CHG-20260520-0006 → REV-20260520-0006. **TASK-0091 cycle 종료, TASK-0073 Phase A5 audit 정합성 강화 + audit integrity 결함 fix.**
+
 ## REV-20260520-0005 [AGENT-TEAM:codex-outside-voice]
 - Date: 2026-05-20
 - Decision: TASK-0086 (REQ-20260520-0001, **Major** §12.3 — `WebAccountActivity` legacy table DROP + dual write 종료) plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, ~5분, 398,567 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign 흡수 → 사용자 confirm → Phase A backup + scratch restore + 1:1 정합 (74=74) → 사용자 명시 ack → Phase C~G 진행 완료. **WebAccountActivity DROP 완료, dual write 종료, dispatcher (WebAuditEvents) 단일 source-of-truth 전환**.

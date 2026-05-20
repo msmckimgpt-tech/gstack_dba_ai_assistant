@@ -10,6 +10,48 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-05-20 TASK-0091 완료 (Phase A~F 일괄) — PATCH admin/products audit before-state full snapshot + audit integrity fix** (CHG-20260520-0006, REV-20260520-0006, REQ-20260520-0006, ~~Minor~~→**Major** §12.3 — Codex outside voice 5 findings 흡수, audit integrity 결함 fix 포함 scope 확장).
+
+**본 cycle Phase 별 변경 요약**:
+- **Phase A** — 신규 helper `_audit_product_snapshot(conn, product_id)` (~line 2127): single-row WebProducts snapshot + `SELECT ... FOR UPDATE` + `system_prompt_summary` (SECURITY §9.2 정합, content 본문 제외).
+- **Phase B** — `admin_update_product()` 명시 transaction (autocommit=False + before snapshot + UPDATE + default_cleared_product_ids + after snapshot + audit + commit + finally autocommit=True). Codex C2 audit integrity fix.
+- **Phase B-2** — `_AUDIT_BUILDER_PRODUCT_FIELDS` 7→8 field 확장 (+is_default/+sort_order/+system_prompt_summary, -databases/-system_prompt). builder branch `default_cleared_product_ids` 명시 처리.
+- **Phase C** — py_compile PASS + sentinel smoke PASS (SENTINEL drop / databases drop / sort_order delta / is_default delta / default_cleared_product_ids / system_prompt_summary).
+- **Phase D** — docs 6 갱신: TASK §2.5 / MODIFY CHG-0006 / REVIEW REV-0006 / 본 REPORT / TEST §4 / FUNCTION AC-0192.
+- **Phase E** — verify-completion PASS + commit.
+- **Phase F** — cycle-finalize (issue + push + PR + merge + main worktree pull + 본 worktree cleanup).
+
+**Codex outside voice 5 findings 흡수**:
+- C1 system_prompt full content → summary only (SECURITY §9.2)
+- C2 autocommit/transaction → 명시 transaction + SELECT FOR UPDATE
+- C3 list scan → single-row helper + databases 제외
+- C4 allowlist 누락 → +is_default/+sort_order + default_cleared_product_ids
+- C5 rollback → C1 ACCEPT 로 자동 해소
+
+**핵심 발견 (Codex C2)**: 본 cycle 의 Minor 등급 추정이 **audit integrity 결함** 노출 — `admin_update_product()` 가 autocommit=True default 라 UPDATE 가 즉시 commit, audit fail 시 rollback 가능 0 인 상태. scope ~~Minor~~→Major 확장하여 일괄 fix.
+
+**Sentinel smoke 결과** (Phase C):
+- `'TASK-0091-SENTINEL' in body: False` ✓ (system_prompt full drop)
+- `'should_not_leak' in body: False` ✓ (databases drop)
+- sort_order 100→50, is_default False→True, default_cleared_product_ids [5,9] ✓
+- system_prompt_summary: {present: True, content_len: 1234/2000, updated_at}
+
+### Git 동기화 결과 (§16.3 Step 6)
+
+PR description body 명시 — REPORT.md 갱신 별 commit 회피 (§16.3 Step 7 권장, TASK-0093/0092/0086 cycle 답습).
+
+### 후속 단계
+
+- admin.product.create / delete 의 audit 도 allowlist 확장 결과 자동 정합 — 별 sentinel test 권유 (Minor)
+- admin.product.databases.update audit 의 system_prompt summary 패턴 도입 검토 (별 cycle)
+- SECURITY.md §8 strict-string-equality 계약 명시 (TASK-0092 followup)
+- rollback window (1~2 cycle) 종료 후 _migrate_web_account_activity_to_audit() 제거 (TASK-0086 followup)
+- TASK-0073 backlog 4 entries 남음 (TASK-0087/0088/0089/0090) — 각 별 cycle
+
+---
+
+## 1.archived TASK-0086 Summary (2026-05-20)
+
 **2026-05-20 TASK-0086 완료 (Phase A0~J 일괄) — `WebAccountActivity` legacy table DROP + dual write 종료** (CHG-20260520-0005, REV-20260520-0005, REQ-20260520-0001, **Major** §12.3 — 파괴적 DROP + dual write 단일화 + Codex outside voice 5 findings 흡수 v2 redesign).
 
 **본 cycle Phase 별 변경 요약**:

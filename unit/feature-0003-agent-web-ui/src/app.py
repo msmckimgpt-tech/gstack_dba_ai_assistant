@@ -2124,6 +2124,54 @@ LIMIT 1
     }
 
 
+def _audit_product_snapshot(conn, product_id: int) -> dict | None:
+    """REQ-20260520-0006 (TASK-0091): single-row WebProducts snapshot for admin.product.update audit.
+
+    SECURITY.md §9.2 정합 — `system_prompt.content` full body 제외 (`{present, content_len,
+    updated_at}` summary 만 포함). `WebProductDatabases` 도 제외 (별 endpoint
+    `admin.product.databases.update` 의 audit 으로 분리, Codex C3).
+
+    `SELECT ... FOR UPDATE` 로 row lock (Codex C2 — 명시 transaction).
+    """
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+SELECT Id AS id, ProductKey AS product_key, Name AS name, Description AS description,
+       IsActive AS is_active, IsDefault AS is_default, SortOrder AS sort_order,
+       DefaultRoleAccess AS default_role_access
+FROM WebProducts
+WHERE Id = %s
+FOR UPDATE
+        """,
+        (int(product_id),),
+    )
+    row = cur.fetchone()
+    cur.close()
+    if not row:
+        return None
+    product: dict[str, Any] = {
+        "id": int(row.get("id") or 0),
+        "product_key": str(row.get("product_key") or ""),
+        "name": str(row.get("name") or ""),
+        "description": str(row.get("description") or ""),
+        "is_active": bool(row.get("is_active")),
+        "is_default": bool(row.get("is_default")),
+        "sort_order": int(row.get("sort_order") or 0),
+        "default_role_access": bool(row.get("default_role_access", True)),
+    }
+    sp = _load_system_prompt(conn, scope="product", product_id=int(product_id))
+    if sp:
+        content = str(sp.get("content") or "")
+        product["system_prompt_summary"] = {
+            "present": True,
+            "content_len": len(content),
+            "updated_at": str(sp.get("updated_at") or ""),
+        }
+    else:
+        product["system_prompt_summary"] = {"present": False}
+    return product
+
+
 def _upsert_system_prompt(
     conn,
     *,
@@ -8344,47 +8392,82 @@ async def admin_update_product(product_id: int, request: Request) -> JSONRespons
     if not _account_has_permission(account, "product.manage"):
         conn.close()
         return _json_error("제품 관리 권한이 필요합니다.", 403)
-    cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT Id, ProductKey FROM WebProducts WHERE Id = %s", (int(product_id),))
-    existing = cur.fetchone()
-    cur.close()
-    if not existing:
-        conn.close()
-        return _json_error("product not found", 404)
-    fields: list[str] = []
-    params: list[Any] = []
-    if "name" in data:
-        fields.append("Name = %s")
-        params.append(str(data.get("name") or "").strip())
-    if "description" in data:
-        fields.append("Description = %s")
-        params.append(str(data.get("description") or "").strip())
-    if "is_active" in data:
-        fields.append("IsActive = %s")
-        params.append(1 if bool(data.get("is_active")) else 0)
-    if "sort_order" in data:
-        fields.append("SortOrder = %s")
-        params.append(int(data.get("sort_order") or 100))
-    set_default = False
-    if "is_default" in data:
-        fields.append("IsDefault = %s")
-        params.append(1 if bool(data.get("is_default")) else 0)
-        set_default = bool(data.get("is_default"))
-    # TASK-0053: default_role_access 정책 토글도 admin update 에서 변경 가능 (기존 product 정책 변경).
-    if "default_role_access" in data:
-        fields.append("DefaultRoleAccess = %s")
-        params.append(1 if bool(data.get("default_role_access")) else 0)
-    if fields:
-        params.append(int(product_id))
-        cur = conn.cursor()
-        cur.execute(f"UPDATE WebProducts SET {', '.join(fields)} WHERE Id = %s", tuple(params))
-        cur.close()
-        if set_default:
-            cur = conn.cursor()
-            cur.execute("UPDATE WebProducts SET IsDefault = 0 WHERE Id <> %s", (int(product_id),))
-            cur.close()
-    # TASK-0073 Phase A5: same-tx audit hook (product update).
+    # TASK-0091 (REQ-20260520-0006, Codex outside voice C2): 명시 transaction —
+    # autocommit=False + SELECT FOR UPDATE row lock + UPDATE + audit + commit.
+    # 기존 코드는 autocommit=True default 라 UPDATE 가 즉시 commit 되어 audit
+    # 실패 시 rollback 가능 0 였음 — audit integrity 결함. 본 cycle 에서 fix.
     try:
+        conn.autocommit = False
+    except Exception:
+        pass
+    try:
+        # before snapshot — SELECT ... FOR UPDATE 로 row lock (concurrent PATCH 차단).
+        existing = _audit_product_snapshot(conn, product_id)
+        if not existing:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            try:
+                conn.autocommit = True
+            except Exception:
+                pass
+            conn.close()
+            return _json_error("product not found", 404)
+
+        fields: list[str] = []
+        params: list[Any] = []
+        if "name" in data:
+            fields.append("Name = %s")
+            params.append(str(data.get("name") or "").strip())
+        if "description" in data:
+            fields.append("Description = %s")
+            params.append(str(data.get("description") or "").strip())
+        if "is_active" in data:
+            fields.append("IsActive = %s")
+            params.append(1 if bool(data.get("is_active")) else 0)
+        if "sort_order" in data:
+            fields.append("SortOrder = %s")
+            params.append(int(data.get("sort_order") or 100))
+        set_default = False
+        if "is_default" in data:
+            fields.append("IsDefault = %s")
+            params.append(1 if bool(data.get("is_default")) else 0)
+            set_default = bool(data.get("is_default"))
+        # TASK-0053: default_role_access 정책 토글도 admin update 에서 변경 가능 (기존 product 정책 변경).
+        if "default_role_access" in data:
+            fields.append("DefaultRoleAccess = %s")
+            params.append(1 if bool(data.get("default_role_access")) else 0)
+
+        default_cleared_product_ids: list[int] = []
+        if fields:
+            params.append(int(product_id))
+            cur = conn.cursor()
+            cur.execute(f"UPDATE WebProducts SET {', '.join(fields)} WHERE Id = %s", tuple(params))
+            cur.close()
+            if set_default:
+                # TASK-0091 (Codex C4): is_default=true side effect 추적 —
+                # 영향 받은 product ids 를 audit ChangeJson 에 기록.
+                cur = conn.cursor(dictionary=True)
+                cur.execute(
+                    "SELECT Id FROM WebProducts WHERE Id <> %s AND IsDefault = 1",
+                    (int(product_id),),
+                )
+                default_cleared_product_ids = [int(r["Id"]) for r in (cur.fetchall() or [])]
+                cur.close()
+                cur = conn.cursor()
+                cur.execute("UPDATE WebProducts SET IsDefault = 0 WHERE Id <> %s", (int(product_id),))
+                cur.close()
+
+        # after snapshot — UPDATE 결과 full row 캡처.
+        updated = _audit_product_snapshot(conn, product_id)
+
+        # TASK-0073 Phase A5 + TASK-0091: same-tx audit hook (full before/after snapshot).
+        before_for_audit: dict[str, Any] = dict(existing)
+        after_for_audit: dict[str, Any] = dict(updated) if updated else {"id": int(product_id)}
+        if set_default and default_cleared_product_ids:
+            # extra context — builder 의 allowlist 외 보조 메타.
+            after_for_audit["_default_cleared_product_ids"] = default_cleared_product_ids
         _audit_admin_mutation(
             conn,
             request,
@@ -8392,17 +8475,26 @@ async def admin_update_product(product_id: int, request: Request) -> JSONRespons
             action="admin.product.update",
             resource_type="product",
             resource_id=str(product_id),
-            before={"id": int(product_id), "product_key": existing.get("ProductKey")},
-            after={"id": int(product_id), **{k: data.get(k) for k in ("name", "description", "is_active", "sort_order", "is_default", "default_role_access") if k in data}},
+            before=before_for_audit,
+            after=after_for_audit,
         )
         conn.commit()
-    except Exception as audit_exc:
+    except Exception as exc:
         try:
             conn.rollback()
         except Exception:
             pass
+        try:
+            conn.autocommit = True
+        except Exception:
+            pass
         conn.close()
-        return _json_error(f"audit write failed: {audit_exc}", 500)
+        return _json_error(f"product update failed: {exc}", 500)
+    finally:
+        try:
+            conn.autocommit = True
+        except Exception:
+            pass
     conn.close()
     return JSONResponse({"ok": True, "product_id": int(product_id)})
 
@@ -8859,7 +8951,18 @@ async def me_put_system_prompt(request: Request) -> JSONResponse:
 
 _AUDIT_BUILDER_ACCOUNT_FIELDS = ("role_id", "is_active", "username", "permission_overrides")
 _AUDIT_BUILDER_ROLE_FIELDS = ("name", "description", "is_active", "permission_codes")
-_AUDIT_BUILDER_PRODUCT_FIELDS = ("product_key", "name", "description", "is_active", "default_role_access", "databases", "system_prompt")
+# TASK-0091 (REQ-20260520-0006, Codex outside voice C1+C4): allowlist 정정.
+# - `is_default` + `sort_order` 추가 (Codex C4 — endpoint 가 갱신 가능한데 누락이던 결함).
+# - `system_prompt_summary` 신설 (Codex C1 + SECURITY.md §9.2 — full content 금지,
+#   `{present, content_len, updated_at}` summary 만).
+# - `databases` 제거 (Codex C3 — 별 endpoint `admin.product.databases.update` 의
+#   audit 으로 분리, admin.product.update 의 ChangeJson 에서 noise + state mismatch).
+# - `system_prompt` 제거 (Codex C1 — full content 금지). admin.system_prompt.update
+#   는 별 builder branch (line 8990~) 가 `system_prompt.content_full` masked 처리.
+_AUDIT_BUILDER_PRODUCT_FIELDS = (
+    "product_key", "name", "description", "is_active", "is_default", "sort_order",
+    "default_role_access", "system_prompt_summary",
+)
 _AUDIT_MASKED_FIELDS_PASSWORD = ("password_hash", "temporary_password", "raw_password")
 _AUDIT_MASKED_FIELDS_TOKEN = ("session_token_hash", "session_token", "token")
 _AUDIT_MASKED_FIELDS_API_KEY = ("openai_api_key", "api_key", "secret")
@@ -8964,14 +9067,18 @@ def build_audit_change_json(
             [],
         )
     if action == "admin.product.update":
-        return (
-            {
-                "target_product_id": (before or {}).get("id") or (after or {}).get("id"),
-                "before": _audit_pick_fields(before, _AUDIT_BUILDER_PRODUCT_FIELDS),
-                "after": _audit_pick_fields(after, _AUDIT_BUILDER_PRODUCT_FIELDS),
-            },
-            [],
-        )
+        # TASK-0091 (Codex C4): is_default=true 시 다른 product 들의 IsDefault=0 side
+        # effect 도 audit ChangeJson 에 기록. caller (admin_update_product) 가
+        # after dict 에 `_default_cleared_product_ids` 키로 명시 전달.
+        cleared_ids = (after or {}).get("_default_cleared_product_ids") if isinstance(after, dict) else None
+        body: dict[str, Any] = {
+            "target_product_id": (before or {}).get("id") or (after or {}).get("id"),
+            "before": _audit_pick_fields(before, _AUDIT_BUILDER_PRODUCT_FIELDS),
+            "after": _audit_pick_fields(after, _AUDIT_BUILDER_PRODUCT_FIELDS),
+        }
+        if isinstance(cleared_ids, list) and cleared_ids:
+            body["default_cleared_product_ids"] = [int(x) for x in cleared_ids]
+        return (body, [])
     if action == "admin.product.delete":
         return (
             {
