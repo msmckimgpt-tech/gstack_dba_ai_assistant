@@ -8,6 +8,34 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260520-0004
+- Date: 2026-05-20
+- Summary: TASK-0092 (REQ-20260520-0007, **Minor** §12.3 — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 7 vector matrix 검증). TASK-0073 Phase E 의 사용자 위임 항목 1 건 해소 (sandbox SSH 인증 차단 환경 해소 + docker/compose 가용 확인). Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용. Code 변경 0, docs append only.
+- Files:
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md` — **§4** Test Run History 에 본 cycle 7 vector 결과 prepend (Codex C5 흡수 — §3 = Test Cases, §4 = Test Run History).
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` — §2.3 Implementation Plan (TASK-0092) 신설 (PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-20). TASK-0092 [ ]→[x] 마킹.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260520-0004 entry 추가 (head prepend, outside voice 5 findings + 2 minimum-fix 흡수 이력).
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md` — §1 Summary 갱신 + 1.archived TASK-0093 Summary 보존.
+- v2 redesign (Codex 5 findings 흡수):
+  - **C1** 테스트 명령 오류: Dockerfile 이 web UI 를 `/app/web/` 에 복사 → `--entrypoint python` + `import web.app` 으로 정정. uvicorn entrypoint 우회 명확화.
+  - **C2** compose 오염 위험: `docker run` 직접 호출 (compose 우회). `--no-deps` 동등 효과 — mysql 기동 + .env + shared volume + 다른 worktree compose project 모두 회피.
+  - **C3** flag parsing 계약: V6 추가 (`AGENT_AUDIT_ENABLED=true` + prod → exit 1). strict-string-equality (`os.getenv(...).strip() == "1"`) 계약 명시화. 운영자가 `"true"` / `"yes"` / `"01"` 명시 시 fail-closed — SECURITY.md §8 계약 명시 별 cycle 후속 권고.
+  - **C4** stderr 검증 강화: prefix-only 약함, full byte-equal strict 회피. 3 substring (`[FATAL] AUDIT REQUIRED IN PROD` + `set AGENT_AUDIT_ENABLED=1` + `TASK-0073 Phase A1`) 모두 포함 + `Traceback` / `ModuleNotFoundError` 부재 검증.
+  - **C5** docs append 위치: TEST.md §3 → §4 (Test Run History) 정정.
+- Verification (Phase A~B):
+  - (Phase A0) `repo-web:latest` image 가용 확인 (435MB). `.env` 부재 — inline `-e` 만 사용.
+  - (Phase A) 7 vector live spawn 실행 (`docker run --rm --entrypoint python repo-web:latest -c "import web.app"`).
+  - (Phase B) **7 vector PASS (7/7)**:
+    - V1 (audit=0 + mode=prod) → rc=1 + `[FATAL] ... AGENT_MODE=prod ...`
+    - V2 (audit=0 + mode=unset) → rc=1 + `[FATAL] ... AGENT_MODE=(unset → prod) ...`
+    - V3 (audit=0 + mode=staging) → rc=1 + `[FATAL] ... AGENT_MODE=staging ...`
+    - V4 (audit=0 + mode=dev) → rc=0 + `IMPORTED OK`
+    - V5 (audit=1 + mode=prod) → rc=0 + `IMPORTED OK`
+    - V6 (audit=true + mode=prod) → rc=1 + `[FATAL] ... AGENT_MODE=prod ...` (Codex C3 strict-string-equality 계약)
+    - V7 (모두 unset) → rc=0 + `IMPORTED OK`
+- Risks: V6 가 운영자 trap (`AGENT_AUDIT_ENABLED="true"` 가 fail-closed) 노출 — SECURITY.md §8 의 strict-string-equality 계약 명시 필요 (별 cycle 후속). audit prod gate 자체는 정합 — 본 cycle scope 외.
+- Trace: REQ-20260520-0007 → TASK-0092 → CHG-20260520-0004 → REV-20260520-0004.
+
 ## CHG-20260520-0003
 - Date: 2026-05-20
 - Summary: TASK-0093 (REQ-20260520-0008, **Minor** §12.3 — `bin/verify-completion.sh check_12` audit endpoint routing 정적 검사 신설). TASK-0073 Phase E hotfix (CHG-20260520-0001) 의 routing 회귀 fragility 보강. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용.

@@ -194,6 +194,19 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-05-20 (TASK-0092 Phase A~B — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed **7 vector matrix** 검증):
+  - 환경: `docker run --rm --entrypoint python repo-web:latest -c "import web.app"`. module load 시점 `_enforce_audit_prod_gate()` (app.py:76-94) trigger. compose `--no-deps` 우회 (Codex C2 — mysql 기동 회피, 다른 worktree compose project 오염 차단). `.env` 부재로 inline `-e` 만 사용.
+  - **7 vector PASS (7/7)**:
+    - **V1** (`AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod`) → rc=1, stderr `[FATAL] AUDIT REQUIRED IN PROD — set AGENT_AUDIT_ENABLED=1 (AGENT_MODE=prod; TASK-0073 Phase A1)` ✓ target fail-closed
+    - **V2** (`AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=<unset>`) → rc=1, stderr `... AGENT_MODE=(unset → prod) ...` ✓ default prod 정합
+    - **V3** (`AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=staging`) → rc=1, stderr `... AGENT_MODE=staging ...` ✓ non-dev/test 정합
+    - **V4** (`AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=dev`) → rc=0, stdout `IMPORTED OK` ✓ dev/test bypass 허용
+    - **V5** (`AGENT_AUDIT_ENABLED=1` + `AGENT_MODE=prod`) → rc=0, stdout `IMPORTED OK` ✓ positive control
+    - **V6** (`AGENT_AUDIT_ENABLED=true` + `AGENT_MODE=prod`) → rc=1, stderr `... AGENT_MODE=prod ...` ✓ Codex C3 strict-string-equality 계약 확인 (`"true"` ≠ `"1"` — 운영자 trap 가능성)
+    - **V7** (모두 unset) → rc=0, stdout `IMPORTED OK` ✓ default `1` + default prod 정상
+  - **stderr 검증** (Codex C4 강화): 모든 FAIL vector 가 rc=1 + stderr 3 substring (`[FATAL] AUDIT REQUIRED IN PROD` + `set AGENT_AUDIT_ENABLED=1` + `TASK-0073 Phase A1`) 모두 포함 + `Traceback` / `ModuleNotFoundError` 부재. PASS vector 는 stderr `[FATAL]` 부재 + stdout `IMPORTED OK` 정합.
+  - **운영자 trap 확인** (V6): `AGENT_AUDIT_ENABLED="true"` 가 fail-closed 됨 — strict string equality (`os.getenv(...).strip() == "1"`). 운영자가 truthy 표현 (`true`/`yes`/`01`) 명시 시 prod 시작 차단. **SECURITY.md §8 의 strict-string-equality 계약 명시 별 cycle 후속 권고** (본 cycle scope 외).
+  - 본 검증으로 TASK-0073 Phase E 의 사용자 위임 항목 1 건 (audit prod gate fail-closed) 해소. live container spawn 으로 코드 path 정합성 + 메시지 정확성 + dev/test bypass 정합성 모두 확인.
 - 2026-05-19 (TASK-0072 + TASK-0074 HTTP smoke — `bootstrap_admin` 1 토큰만 ad-hoc curl):
   - **S2 .any cross-account** (`GET /api/conversations?q=데이터&limit=10`): ✅ `matched_count=10`, `has_any=true`, `search_mode=true`, `next_cursor` 존재.
   - **S4 cursor disjoint** (limit=5 페이지 1 → 페이지 2):

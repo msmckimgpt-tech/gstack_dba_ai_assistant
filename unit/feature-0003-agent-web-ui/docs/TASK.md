@@ -26,7 +26,7 @@ source_of_truth: true
 - [ ] TASK-0089 (REQ-20260520-0004, Minor §12.3 — 작업 화면 audit drawer UX). TASK-0073 Phase C 의 작업 화면 placeholder 가 entry point 부재 (admin 콘솔 redirect 안내만). 본 cycle: (1) `index.html` 의 profile drawer 에 "내 감사 로그" 탭 신설, (2) `audit.read.own` 보유 사용자에게 본인 audit row (Actor or Target = self) 표시, (3) admin 콘솔의 audit pane 과 동일 ChangeJson `<pre>` HTML escape + filter (action / from_at / to_at). CSV export / purge 는 admin 한정 (작업 화면 제외).
 - [ ] TASK-0090 (REQ-20260520-0005, Minor §12.3 — CSV streaming export). TASK-0073 Phase A4 의 `/api/admin/audits/export.csv` 의 hard cap 50k row → `StreamingResponse` 로 대체 + cursor 기반 page-by-page generator. large fleet (100k+ row) 에서 audit export 가능. memory footprint 안전. 본 cycle: backend FastAPI `StreamingResponse` + `csv.writer` iterator wrapper + Content-Type / Content-Disposition 정합.
 - [ ] TASK-0091 (REQ-20260520-0006, Minor §12.3 — PATCH admin/products audit before-state full snapshot). TASK-0073 Phase A5 의 `admin.product.update` audit 의 before-state 가 `{id, product_key}` 만 — UPDATE 전 full WebProducts row + WebProductDatabases schemas + system_prompt 까지 캡처가 정합. 본 cycle: PATCH 진입 시 `_list_products(conn, ...)` 또는 SELECT 로 full snapshot → `build_audit_change_json("admin.product.update", before=full_row, after=updated_row, ...)`. `_AUDIT_BUILDER_PRODUCT_FIELDS` 확장 검토.
-- [ ] TASK-0092 (REQ-20260520-0007, Minor §12.3 — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 검증). TASK-0073 Phase E 의 사용자 위임 항목 1 건. 본 cycle: (1) `.env.override` 또는 docker compose `-e AGENT_AUDIT_ENABLED=0 -e AGENT_MODE=prod` 로 별 컨테이너 spawn, (2) stderr `[FATAL] AUDIT REQUIRED IN PROD` log 확인, (3) process exit code 1 확인, (4) `docs/TEST.md §3 Test Run History` append.
+- [x] TASK-0092 (REQ-20260520-0007, Minor §12.3 — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 검증). TASK-0073 Phase E 의 사용자 위임 항목 1 건. **7 vector matrix PASS (7/7)** — V1~V3 fail-closed + V4 dev bypass + V5 positive control + V6 strict-string-equality (Codex C3) + V7 default. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용 (`docker run --entrypoint python --no-deps` + `import web.app` + stderr 3 substring 검증 + TEST.md **§4** append). 본 cycle CHG-20260520-0004, REV-20260520-0004 on `ai/claude/0092/audit-prod-fail-closed` worktree.
 - [x] TASK-0093 (REQ-20260520-0008, Minor §12.3 — `bin/verify-completion.sh check_12` audit endpoint routing 정적 검사). TASK-0073 Phase E hotfix (CHG-20260520-0001) 의 routing 회귀 fragility 보강. Codex outside voice review 5 findings 흡수 후 plan v2 redesign (SKIP→FAIL structural / inline 4-path→auto-discovery static GET / `/purge` method-aware 제외 / helper split + fixture test / `9 checks`→`10 checks` footer). Phase A~D 모두 검증 PASS (production positive + 5 fixture negative + 5 other-feature SKIP). 본 cycle CHG-20260520-0003, REV-20260520-0003 on `ai/claude/0086/audit-followup` worktree.
 
 본 backlog 는 본 worktree 의 commit 으로 lock-in. 신규 세션이 본 worktree 에서 진입 (`/_template:entry`) 후 task 선택 + `/plan-eng-review` / `/autoplan` 등 호출.
@@ -472,6 +472,86 @@ Codex outside voice (consult mode, model_reasoning_effort=high, ~5분 실행, 13
 - 본 사용자 정책 (`feedback_outside_voice_for_rbac`) 적용 — RBAC catalog 변경 없음에도 audit 표면 회귀 방어 정책으로 outside voice 호출. Minor 등급이지만 보안 표면 자체 점검 가치 인정.
 
 REVIEW.md REV-20260520-0003 에 각 finding + 흡수 결정 + 근거 기록.
+
+---
+
+### 2.3 Implementation Plan (TASK-0092)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 Minor 등급 검증 계획이다. **상태**: `approved-after-outside-voice`. 사용자가 2026-05-20 에 plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, ~5분, 490,891 tokens) → 5 findings + 2 minimum-fix → v2 redesign → 사용자 confirm 진행. TASK-0073 Phase E 의 사용자 위임 항목 1 건 해소 — sandbox SSH 인증 차단 환경 해소 + docker/compose 가용 확인 (Docker 29.3.1 + Compose v5.1.1).
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-20 (TASK-0092 Phase A0~E 일괄, Minor 등급 audit prod gate fail-closed 7 vector matrix 검증 + Codex outside voice 5 findings 흡수) -->
+
+#### 요지
+
+`_enforce_audit_prod_gate()` (app.py:76-94) 의 startup fail-closed 정합성을 **7 vector matrix** 로 live container spawn 검증. `docker run --rm --entrypoint python repo-web:latest -c "import web.app"` 형태로 module load 시점에 gate trigger. exit code + stderr 3 substring 검증 + Traceback 부재 확인.
+
+#### Codex outside voice review 흡수 (5 findings + 2 minimum-fix)
+
+| # | finding | 흡수 결정 |
+|---|---|---|
+| C1 | 테스트 명령 오류 — Dockerfile 이 web UI 를 `/app/web/` 에 복사 (line 23). `python -c "import app"` 는 `ModuleNotFoundError`. uvicorn entrypoint 우회도 불명확 | **ACCEPT** → `--entrypoint python` + `import web.app` 으로 정정 |
+| C2 | `depends_on: mysql` + `.env` + shared volume + 다른 worktree compose project 와 엮일 위험 | **ACCEPT** → `--no-deps` + `docker run` 직접 호출 (compose 우회). `.env` 부재라 inline `-e` 만 사용 |
+| C3 | flag parsing 계약 비어있음 — `"true"`/`"yes"`/`"01"` 모두 disabled. 운영자 trap 가능 | **ACCEPT** → V6 추가 (`AGENT_AUDIT_ENABLED=true` + prod → exit 1 negative 검증). SECURITY.md §8 strict-string-equality 계약 명시 별 cycle 후속 권고 |
+| C4 | stderr 검증 강화 — prefix-only 약함, full byte-equal 너무 strict | **ACCEPT** → 3 substring (`[FATAL] AUDIT REQUIRED IN PROD` + `set AGENT_AUDIT_ENABLED=1` + `TASK-0073 Phase A1`) + Traceback 부재 검증 |
+| C5 | 문서 append 위치 오류 — TEST.md §3 = Test Cases 정의, §4 = Test Run History | **ACCEPT** → **§4** 에 append (기존 format 답습) |
+
+추가 흡수: `repo-web:latest` image 이미 build 됨 — build 부담 0. compose 우회로 multi-worktree 충돌 회피.
+
+#### 7 vector matrix v2
+
+| # | AGENT_AUDIT_ENABLED | AGENT_MODE | 기대 결과 |
+|---|---|---|---|
+| V1 | `0` | `prod` | exit 1 + stderr `[FATAL] ... AGENT_MODE=prod` (target fail-closed) |
+| V2 | `0` | unset | exit 1 + stderr `[FATAL] ... AGENT_MODE=(unset → prod)` (default prod 정합) |
+| V3 | `0` | `staging` | exit 1 + stderr `[FATAL] ... AGENT_MODE=staging` (non-dev/test 정합) |
+| V4 | `0` | `dev` | exit 0 + stdout `IMPORTED OK` (dev/test bypass 허용) |
+| V5 | `1` | `prod` | exit 0 + stdout `IMPORTED OK` (positive control) |
+| **V6** (Codex C3) | `true` | `prod` | exit 1 + stderr `[FATAL] ... AGENT_MODE=prod` (strict-string-equality 계약) |
+| **V7** | unset | unset | exit 0 + stdout `IMPORTED OK` (default `1` + default prod 정상) |
+
+#### 영향 파일 (docs only, 5 파일)
+
+- `unit/feature-0003-agent-web-ui/docs/TEST.md` — **§4** Test Run History 에 본 cycle 7 vector 결과 append
+- `unit/feature-0003-agent-web-ui/docs/TASK.md` — TASK-0092 [ ]→[x] + 본 §2.3 plan
+- `unit/feature-0003-agent-web-ui/docs/MODIFY.md` — CHG-20260520-0004 entry
+- `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260520-0004 [AGENT-TEAM:codex-outside-voice]
+- `unit/feature-0003-agent-web-ui/docs/REPORT.md` — §1 Summary 갱신
+
+#### Phase 순서
+
+1. **Phase A0** — `.env` / image 가용성 확인. `repo-web:latest` 존재 확인 (435MB). `.env` 부재 — inline `-e` 만 사용 (compose 우회).
+2. **Phase A** — 7 vector spawn (`docker run --rm --entrypoint python repo-web:latest -c "import web.app"`). 각 vector 의 stderr + rc capture.
+3. **Phase B** — rc match + stderr 3 substring 모두 포함 + Traceback 부재 검증. PASS vector 는 `[FATAL]` 부재 + `IMPORTED OK` 정합.
+4. **Phase C** — TEST.md §4 + 4 docs 갱신.
+5. **Phase D** — verify-completion PASS + commit.
+6. **Phase E** — issue + push + PR + merge + cleanup (cycle-finalize 패턴, TASK-0093 cycle 답습).
+
+#### 위험도 평가 (§12.3) — **Minor**
+
+| 영역 | 위험도 | 보강 |
+|---|---|---|
+| docker spawn 부수효과 | Minor | `--rm` 즉시 cleanup, image 이미 build, `--no-deps` mysql 우회 |
+| 7 vector 결과 unexpected | Minor | 본 PR 의 핵심 가치 — fail-closed 가정과 실제 동작 일치 검증 |
+| `.env` 부재 → compose fail | **차단 (in-cycle fix)** | docker run 직접 호출 (compose 우회). inline `-e` 만 사용 |
+| Code 변경 0 | **N/A** | docs append only |
+| multi-worktree 충돌 | Minor | `docker run` 직접 호출 (compose project 격리 불필요) |
+| 운영자 trap (`"true"` fail-closed) | Minor | V6 검증으로 명시화. SECURITY.md §8 계약 별 cycle 후속 |
+
+**전체 등급**: Minor — 비파괴 검증 작업, code 변경 0, docs append only. audit subsystem 보안 표면 자체 검증 → outside voice review 가치 (`feedback_outside_voice_for_rbac` user policy 정합).
+
+#### 검증 결과 (Phase A~B 실행 후)
+
+**7 vector PASS (7/7)**. 모든 FAIL vector 가 rc=1 + stderr 3 substring + Traceback 부재. PASS vector 는 stdout `IMPORTED OK` + stderr `[FATAL]` 부재. live container spawn 으로 코드 path 정합성 + 메시지 정확성 + dev/test bypass 정합성 모두 확인. TEST.md §4 의 본 cycle entry (2026-05-20) 참조.
+
+#### outside voice 결과 요약 (REVIEW.md REV-20260520-0004 정본)
+
+Codex outside voice (consult mode, model_reasoning_effort=high, ~5분 실행, 490,891 tokens):
+- 5 critical findings + 2 minimum-fix recommendations 도출
+- 본 plan 의 5 finding 모두 ACCEPT → v2 redesign 흡수
+- 7 vector matrix (v1 5 → v2 7 vectors) 로 확장
+- 본 사용자 정책 (`feedback_outside_voice_for_rbac`) 적용 — RBAC catalog 변경 없음에도 audit subsystem 보안 표면 자체 검증 가치로 outside voice 호출.
+
+REVIEW.md REV-20260520-0004 에 각 finding + 흡수 결정 + 근거 기록.
 
 ---
 
