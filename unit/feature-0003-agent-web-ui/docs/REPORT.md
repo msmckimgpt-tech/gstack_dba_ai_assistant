@@ -10,6 +10,52 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-05-20 TASK-0086 완료 (Phase A0~J 일괄) — `WebAccountActivity` legacy table DROP + dual write 종료** (CHG-20260520-0005, REV-20260520-0005, REQ-20260520-0001, **Major** §12.3 — 파괴적 DROP + dual write 단일화 + Codex outside voice 5 findings 흡수 v2 redesign).
+
+**본 cycle Phase 별 변경 요약**:
+- **Phase A** (backup + 검증): mysqldump 8 옵션 (Codex C4) + scratch restore rehearsal + 1:1 정합 (74=74). backup file `artifacts/mysql-backup/WebAccountActivity-20260520T074927Z.sql` (11,950 bytes, digest `a09e7898d1ce88711f7a850ab5fbcc91`).
+- **Phase B** (사용자 명시 ack): DROP 진행 ack 받음.
+- **Phase C** (코드 변경 3): `_log_search_activity()` legacy INSERT 제거 + `_ensure_web_account_activity_schema()` 호출×2+정의 제거 + `_migrate_web_account_activity_to_audit()` rollback window 보존 + docstring 갱신. py_compile PASS.
+- **Phase D+E** (lightweight smoke): host-mounted code + docker run import → `IMPORTED OK` + 함수 정의 부재/존재 정합 확인.
+- **Phase F** (DROP): `DROP TABLE IF EXISTS WebAccountActivity` 실행 → `DROP completed`.
+- **Phase G** (verify): `tables_remaining=0` + mirror 74 row 변동 없음.
+- **Phase H** (docs 5 + tests 1 갱신): 본 REPORT.md + TASK §2.4 + MODIFY CHG-20260520-0005 + REVIEW REV-20260520-0005 + TEST §4 prepend + SECURITY §9.8 + test_audit_migration.py M3 제거.
+- **Phase I** (verify-completion + commit): 본 단계 진행.
+- **Phase J** (cycle-finalize): issue + push + PR + merge + main worktree pull + 본 worktree cleanup.
+
+**Codex outside voice 5 findings 흡수**:
+- **C1** Option A 불가능 → helper Option B (호출+정의 명시 제거, migration helper 만 rollback window 보존)
+- **C2** dispatcher-only = mirror failure 가 audit 누락 → lightweight smoke + tests M3 제거
+- **C3** "single tx DROP" 표현 → "single statement" 정정 (MySQL DDL implicit commit)
+- **C4** Backup 검증 강화 → mysqldump 8 옵션 + scratch restore + canonical digest
+- **C5** Rollback 2 시나리오 분리 (DB restore only / code revert + DB restore)
+
+**핵심 baseline (Phase A 검증)**:
+- WebAccountActivity legacy = **74 rows** (id 1~74, MatchedCount sum=502)
+- WebAuditEvents `conversation.search.body` mirror = **74 rows** (1:1 정합)
+- 초기 흡수 (RequestId='account-activity:%') = 68 row (TASK-0073 Phase A2 의 1회 호출)
+- dual write 추가 (RequestId=NULL + ChangeJson._legacy_source) = 6 row
+
+### Git 동기화 결과 (§16.3 Step 6)
+
+PR description body 에 명시 — REPORT.md 갱신 별 commit 회피 (§16.3 Step 7 권장, TASK-0093/0092 cycle 답습).
+
+### Rollback runbook (2 시나리오, Codex C5)
+
+- **시나리오 1 — DB restore only**: 코드는 그대로, backup SQL 로 table 복구. `_migrate_web_account_activity_to_audit()` 의 SHOW TABLES check 가 다시 true → 재 migration 시 idempotent skip (기존 marker). 단 새 search 는 dispatcher only 라 table 이 다시 비어감.
+- **시나리오 2 — code revert + DB restore** (완전 rollback): `git revert <CHG-20260520-0005>` + `docker compose restart web` + DB restore. dual write 부활 + 새 search 가 양쪽에 들어감.
+
+### 후속 단계
+
+- **rollback window 종료 후** (1~2 cycle): `_migrate_web_account_activity_to_audit()` helper 자체 제거 별 cycle (Minor §12.3).
+- function rename `_log_search_activity()` → `_audit_conversation_search()` 별 cycle (Minor §12.3, caller 안정성 검토 후).
+- SECURITY.md §8 strict-string-equality 계약 명시 (TASK-0092 followup, V6 결과 기반).
+- TASK-0073 backlog 5 entries 남음 (TASK-0087, 0088, 0089, 0090, 0091) — 각 별 cycle.
+
+---
+
+## 1.archived TASK-0092 Summary (2026-05-20)
+
 **2026-05-20 TASK-0092 완료 (Phase A0~E 일괄) — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 7 vector matrix 검증 (TASK-0073 Phase E 위임 1 건 해소)** (CHG-20260520-0004, REV-20260520-0004, REQ-20260520-0007, **Minor** §12.3 — live container spawn + Codex outside voice 5 findings 흡수 v2 redesign).
 
 **본 cycle Phase 별 변경 요약**:

@@ -20,7 +20,7 @@ source_of_truth: true
 
 본 worktree (`ai/claude/0086/audit-followup`) 는 TASK-0073 의 후속 cycle 들을 등재한다. 본 cycle 작업자는 아래 6 entries 중 하나 이상을 선택해 plan-eng-review / plan-ceo-review / outside voice 후 진행. 각 entry 는 별 cycle (별 PLAN-APPROVED marker + 별 CHG/REV) 로 분리한다.
 
-- [ ] TASK-0086 (REQ-20260520-0001, **Major** §12.3 — `WebAccountActivity` legacy table DROP + dual write 종료). TASK-0073 Phase A2 의 dual write (legacy `WebAccountActivity` INSERT + 신규 `record_audit_event` mirror) 은 별 cycle 까지 일시 공존 의도. 본 cycle: (1) `WebAccountActivity` data 의 `artifacts/db-backup/<date>` 전체 backup 후 검증, (2) `_log_search_activity()` 의 legacy INSERT 제거 (dispatcher only), (3) `WebAccountActivity` 테이블 `DROP TABLE` (single tx), (4) `_ensure_web_account_activity_schema` + `_migrate_web_account_activity_to_audit` helper 제거 (또는 graceful skip 유지 — backward compat), (5) `docs/SECURITY.md §9.8` 의 "별 cycle DROP" 문구 → "DROP 완료" 갱신. 의존: 사용자가 backup 검증 후 진행 ack.
+- [x] TASK-0086 (REQ-20260520-0001, **Major** §12.3 — `WebAccountActivity` legacy table DROP + dual write 종료). **DROP 완료 (2026-05-20)**. backup `artifacts/mysql-backup/WebAccountActivity-20260520T074927Z.sql` (11,950 bytes, 74 row, digest `a09e7898d1ce88711f7a850ab5fbcc91`) + scratch restore rehearsal PASS + 1:1 정합 (legacy=74, mirror=74) + 사용자 명시 ack. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign (helper Option B 명시 제거 / dispatcher-only smoke / mysqldump 옵션 보강 / scratch restore / rollback 2 시나리오). 코드: `_log_search_activity()` legacy INSERT 제거 + `_ensure_web_account_activity_schema()` 호출×2+정의 제거 + `_migrate_web_account_activity_to_audit()` rollback window 보존 + test_audit_migration.py M3 제거. 본 cycle CHG-20260520-0005, REV-20260520-0005 on `ai/claude/0086/legacy-drop` worktree.
 - [ ] TASK-0087 (REQ-20260520-0002, **Major** §12.3 — 외부 LAN trust 강화, feature-0006 위임). TASK-0073 Eng review E3 의 `_get_client_ip(request)` 의 `X-Forwarded-For` trust 가 사내 LAN + Caddy proxy 전제. 외부 LAN / 공개 인터넷 노출 시 IP spoof 위험. 본 cycle: (1) Caddy `trust_forwarded_for` 또는 별 `trusted_proxies` 설정 (feature-0006-lan-proxy-access), (2) `_get_client_ip()` 의 신뢰 IP whitelist 옵션 추가 (env `WEB_TRUSTED_PROXIES=10.0.0.0/8,...`), (3) `docs/SECURITY.md §9.7` 정책 갱신. 의존: 운영 환경 외부 노출 시점 확정 후 진행.
 - [ ] TASK-0088 (REQ-20260520-0003, Minor §12.3 — `slow_query_log` 통합 ADR). TASK-0073 Codex C1 lock-in 으로 본 cycle 분리. 본 cycle: (1) `slow_query_log` 의 retention/RBAC 정합 가능성 검토 (mysql server log = file, WebAuditEvents = DB), (2) sidecar logrotate + `audit.read.any` 사용자만 접근 가능한 별 endpoint? 또는 별 분석 도구 사용 권유 → ADR-0020 결정.
 - [ ] TASK-0089 (REQ-20260520-0004, Minor §12.3 — 작업 화면 audit drawer UX). TASK-0073 Phase C 의 작업 화면 placeholder 가 entry point 부재 (admin 콘솔 redirect 안내만). 본 cycle: (1) `index.html` 의 profile drawer 에 "내 감사 로그" 탭 신설, (2) `audit.read.own` 보유 사용자에게 본인 audit row (Actor or Target = self) 표시, (3) admin 콘솔의 audit pane 과 동일 ChangeJson `<pre>` HTML escape + filter (action / from_at / to_at). CSV export / purge 는 admin 한정 (작업 화면 제외).
@@ -552,6 +552,132 @@ Codex outside voice (consult mode, model_reasoning_effort=high, ~5분 실행, 49
 - 본 사용자 정책 (`feedback_outside_voice_for_rbac`) 적용 — RBAC catalog 변경 없음에도 audit subsystem 보안 표면 자체 검증 가치로 outside voice 호출.
 
 REVIEW.md REV-20260520-0004 에 각 finding + 흡수 결정 + 근거 기록.
+
+---
+
+### 2.4 Implementation Plan (TASK-0086)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 **Major 등급 파괴적 DROP** 변경 계획이다. **상태**: `approved-after-outside-voice`. 사용자가 2026-05-20 에 plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, ~5분, 398,567 tokens) → 5 findings + 2 minimum-fix → v2 redesign → 사용자 confirm → backup 검증 → DROP ack 진행. TASK-0073 Phase A2 의 dual write 종료 + 일시 공존된 `WebAccountActivity` legacy table 제거.
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-20 (TASK-0086 Phase A0~J 일괄, Major 등급 WebAccountActivity DROP + dual write 종료 + Codex outside voice 5 findings 흡수) -->
+
+#### 요지
+
+`_log_search_activity()` 의 dual write 패턴 (legacy WebAccountActivity INSERT + dispatcher mirror) 을 dispatcher only 로 단일화 + legacy table DROP. backup + scratch restore rehearsal + 1:1 정합 (legacy=74, mirror=74) + 사용자 명시 ack 후 진행. rollback 1~2 cycle window 위해 `_migrate_web_account_activity_to_audit()` helper 만 보존 (table-absent silent skip).
+
+#### baseline 검증 (Phase A 완료)
+
+| 항목 | 값 |
+|---|---|
+| WebAccountActivity row count | 74 (id 1~74, MatchedCount sum=502) |
+| WebAuditEvents `conversation.search.body` mirror count | 74 (1:1 정합) |
+| 초기 흡수 (RequestId='account-activity:<id>') | 68 row (TASK-0073 Phase A2 의 1회 호출) |
+| dual write 추가 (RequestId=NULL, `_legacy_source="WebAccountActivity"`) | 6 row (id 132~137 in WebAuditEvents) |
+| Backup file | `artifacts/mysql-backup/WebAccountActivity-20260520T074927Z.sql` (11,950 bytes) |
+| Row digest | `a09e7898d1ce88711f7a850ab5fbcc91` |
+| File digest (md5) | `f4163df9dc1b7ac81ae4c463a0f35e98` |
+| Scratch restore rehearsal | PASS (별 schema import → digest match ✓) |
+| mysqldump options | `--single-transaction --quick --set-charset --create-options --add-drop-table --triggers --hex-blob --no-tablespaces` (Codex C4) |
+
+#### Codex outside voice review 흡수 (5 findings + 2 minimum-fix)
+
+| # | finding | 흡수 결정 |
+|---|---|---|
+| **C1** | Option A (graceful skip) 불가능 — `_ensure_web_account_activity_schema()` 가 line 2979 + 3130 에서 계속 호출. DROP 후 재기동 시 table 다시 생성 | **ACCEPT** → helper Option B 채택 — 호출 + 정의 모두 명시 제거. migration helper 만 rollback window 보존 |
+| **C2** | dispatcher-only 전환 = mirror 실패가 곧 감사 누락. record_audit_event 는 fail-open. legacy INSERT 제거 후 mirror = primary | **ACCEPT** → Phase D+E lightweight smoke (host-mounted code + docker run import). 이전 6 row (id 69~74) 가 mirror 와 1:1 정합 입증 → mirror 작동성 확인. tests/test_audit_migration.py M3 제거 |
+| **C3** | "single tx DROP" 표현 잘못됨 — MySQL DDL 은 implicit commit | **ACCEPT** → "DROP TABLE single statement" 표현으로 정정 |
+| **C4** | Backup 검증 약함 — row count 부족. mysqldump 옵션 보강 + scratch restore rehearsal 필수 | **ACCEPT** → mysqldump 8 옵션 명시 + scratch restore + canonical digest |
+| **C5** | Rollback 정의 불완전 — backup restore = legacy table 만. code revert 필요 | **ACCEPT** → rollback runbook 2 시나리오 분리 (DB restore only / code revert + DB restore) |
+
+추가 흡수:
+- function rename `_log_search_activity()` → 보류 (caller 안정성 우위, 별 cycle).
+- PR title: `chore(feature-0003): retire WebAccountActivity legacy audit table` (refactor 아닌 운영 DB DROP).
+
+#### 영향 파일 (code 1 + tests 1 + docs 5 + artifacts 1 backup)
+
+Backend:
+- `unit/feature-0003-agent-web-ui/src/app.py`:
+  - `_log_search_activity()` (line 2566~): legacy INSERT 블록 제거 (이전 line 2589-2615). dispatcher mirror 만 primary path. docstring 갱신 (TASK-0086 marker).
+  - `_ensure_web_account_activity_schema()` (이전 line 2537-2563): 함수 정의 제거 (dead code).
+  - `_ensure_web_account_activity_schema()` 호출 2 사이트 (line ~2978, ~3128) 제거.
+  - `_migrate_web_account_activity_to_audit()`: 함수 본체 + table-absent skip check 보존. docstring 갱신 (TASK-0086 rollback window 명시).
+
+Tests:
+- `unit/feature-0003-agent-web-ui/tests/test_audit_migration.py`:
+  - 모듈 docstring 갱신 (3→2 시나리오, TASK-0086 marker).
+  - `m3_log_search_activity_dual_write()` 함수 제거 (Codex C2 minimum-fix).
+  - `main()` 의 M3 호출 제거.
+
+문서:
+- `docs/SECURITY.md` §9.8 — "별 cycle DROP" → "DROP 완료 (2026-05-20)" 갱신 + 8 step 절차 명시 + backup file + rollback 2 시나리오 cross-reference.
+- `unit/feature-0003-agent-web-ui/docs/TASK.md` — TASK-0086 [ ]→[x] + 본 §2.4 plan + Completion Checklist.
+- `unit/feature-0003-agent-web-ui/docs/MODIFY.md` — CHG-20260520-0005 entry.
+- `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260520-0005 [AGENT-TEAM:codex-outside-voice].
+- `unit/feature-0003-agent-web-ui/docs/REPORT.md` — §1 Summary 갱신 + 1.archived TASK-0092 보존.
+- `unit/feature-0003-agent-web-ui/docs/TEST.md` — §4 본 cycle backup + DROP 검증 결과 prepend.
+
+Backup:
+- `artifacts/mysql-backup/WebAccountActivity-20260520T074927Z.sql` (11,950 bytes).
+
+#### Phase 순서 (Codex 7 step 정합)
+
+1. **Phase A** — mysqldump backup (8 옵션) + scratch restore rehearsal (별 schema import + digest match) + 1:1 정합 검증 (74=74). **완료**.
+2. **Phase B** — 사용자 명시 ack (DROP 실행 직전). **완료**.
+3. **Phase C** — code 변경 3:
+   - `_log_search_activity()` 의 legacy INSERT 블록 제거 (line 2589-2615 → 함수 docstring 갱신 + dispatcher mirror 만 유지).
+   - `_ensure_web_account_activity_schema()` 호출 제거 (이전 line 2979 + 3130, 2 사이트) + 함수 정의 제거.
+   - `_migrate_web_account_activity_to_audit()` 보존 (table-absent skip + docstring rollback window 명시).
+   - py_compile PASS. **완료**.
+4. **Phase D+E** — lightweight smoke: `docker run --rm --entrypoint python -v <wt-src>:/app/web repo-web:latest -c "import web.app"`. import OK + `_ensure_web_account_activity_schema` 부재 확인 + `_migrate_web_account_activity_to_audit` 존재 확인. **완료**.
+5. **Phase F** — `docker exec repo-mysql-1 mysql ... -e "DROP TABLE IF EXISTS WebAccountActivity"`. **완료**.
+6. **Phase G** — `SHOW TABLES LIKE 'WebAccountActivity'` = 0 + mirror row 74 보존 확인. **완료**.
+7. **Phase H** — docs 5 + tests 1 갱신. **완료** (본 §2.4 + SECURITY §9.8 + MODIFY + REVIEW + REPORT + TEST + test_audit_migration.py M3 제거).
+8. **Phase I** — verify-completion PASS + commit. **본 단계 진행 중**.
+9. **Phase J** — issue + push + PR + merge + cleanup (cycle-finalize 패턴, TASK-0093/0092 cycle 답습).
+
+#### 위험도 평가 (§12.3) — **Major** (파괴적 DROP, backup + ack 가 mitigation)
+
+| 영역 | 위험도 | 보강 |
+|---|---|---|
+| WebAccountActivity 데이터 영구 손실 | **Critical → Major (backup 후)** | mysqldump 8 옵션 + scratch restore rehearsal + digest match + 사용자 명시 ack (Phase B) |
+| dual write 제거 후 회귀 | Major | 이전 6 row (id 69~74) 의 mirror 1:1 정합 입증 (dual_write_only=NULL marker + ChangeJson._legacy_source) + Phase D+E lightweight smoke |
+| helper Option B 명시 제거 | Major (v1→v2) | C1 분석으로 Option A 불가능 확정. helper 호출 + 정의 모두 제거. migration helper 만 보존 (rollback window) |
+| MySQL DDL atomicity 오해 | Minor (v1→v2 정정) | "single tx" → "single statement" 표현 정정. DDL implicit commit 명시 |
+| Backup 검증 약함 | **차단 (v1→v2)** | C4 흡수 — mysqldump 8 옵션 + scratch restore rehearsal + canonical digest. 단 row count 만 의존 X |
+| Rollback 시나리오 모호 | **차단 (v1→v2)** | C5 흡수 — 2 시나리오 분리 (DB restore only / code revert + DB restore). 본 plan + SECURITY §9.8 cross-reference |
+
+**전체 등급**: Major (파괴적 DROP + dual write 제거 + helper 처리 + 5 step 일괄). backup + 사용자 ack + scratch restore 가 핵심 risk mitigation. rollback 가능성 확보.
+
+#### Rollback runbook (2 시나리오)
+
+**시나리오 1 — DB restore only**:
+- 코드는 그대로 (TASK-0086 후 상태), table 만 복구.
+- `docker exec -i repo-mysql-1 mysql -uroot -p<PWD> agent_memory < /root/download/docker/mysql_ai_delegated_dev/artifacts/mysql-backup/WebAccountActivity-20260520T074927Z.sql`.
+- 결과: WebAccountActivity 가 다시 존재. `_migrate_web_account_activity_to_audit()` 의 SHOW TABLES check 가 true 됨 → 다음 fast-path catchup 시 idempotent skip (이미 마이그레이션된 row 는 RequestId marker 로 NOT EXISTS).
+- **한계**: 새 search 호출은 dispatcher only (코드 변경 안 됨) → table 이 다시 비어가는 상태로 회귀. read-only 보존용.
+
+**시나리오 2 — code revert + DB restore** (완전 rollback):
+- `git revert <CHG-20260520-0005 commit>` + `docker compose restart web` + DB restore.
+- dual write 부활 + WebAccountActivity 새 row 도 들어감 + mirror 도 들어감.
+- 완전 회복 시 사용.
+
+#### 검증 결과 (Phase A~G 실행 후, 2026-05-20)
+
+- backup integrity: scratch restore digest match (`a09e7898d1ce88711f7a850ab5fbcc91`) ✓
+- 1:1 정합: legacy 74 = mirror 74 ✓
+- DROP 결과: `tables_remaining` = 0 (정합) ✓
+- mirror 보존: WebAuditEvents `conversation.search.body` = 74 row 변동 없음 ✓
+- py_compile: PASS ✓
+- lightweight import smoke: PASS (helper 함수 정의 제거 + migration helper 보존 확인) ✓
+
+#### outside voice 결과 요약 (REVIEW.md REV-20260520-0005 정본)
+
+Codex outside voice (consult mode, model_reasoning_effort=high, ~5분, 398,567 tokens):
+- 5 critical findings + 2 minimum-fix recommendations 도출
+- 본 plan 의 5 finding 모두 ACCEPT → v2 redesign 흡수
+- Major + 파괴적 DROP 의무 outside voice (`feedback_outside_voice_for_rbac` user policy)
+
+REVIEW.md REV-20260520-0005 에 각 finding + 흡수 결정 + 근거 기록.
 
 ---
 

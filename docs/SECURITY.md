@@ -192,12 +192,21 @@ REQ-20260519-0001 — 모든 admin mutation + user 4 high-signal action (`/api/a
 - 외부 LAN 노출 시 Caddy `trust_forwarded_for` 또는 별 `trusted_proxies` 설정 후속 cycle 필요. `feature-0006-lan-proxy-access` 위임.
 - TASK-0058 share 의 사내 IP 가정과 동일 trade-off.
 
-### 9.8 WebAccountActivity 흡수 (Codex C2)
+### 9.8 WebAccountActivity 흡수 → DROP 완료 (Codex C2 → TASK-0086, 2026-05-20)
 
-- TASK-0072 의 cross-account body search audit (`WebAccountActivity`) 가 본 cycle 의 superset 으로 흡수.
-- `_migrate_web_account_activity_to_audit(conn)` migration helper — 기존 row → `WebAuditEvents` 변환 (ActionCode `conversation.search.any` / `conversation.snippet.any`, ChangeJson `{query_hash, matched_count, _migrated_from, _original_id}`, OccurredAt = waa.CreatedAt). `RequestId='account-activity:<id>'` marker → idempotent.
-- `_log_search_activity()` dual write — (1) 기존 `WebAccountActivity` INSERT + (2) `record_audit_event` mirror. signature transparent (caller 변경 0).
-- `WebAccountActivity` 테이블 자체 DROP 은 별 cycle (data 보존 backup 후).
+- TASK-0072 의 cross-account body search audit (`WebAccountActivity`) 가 TASK-0073 cycle 에서 `WebAuditEvents` 의 superset 으로 흡수됐고, **TASK-0086 (2026-05-20) 에서 legacy table DROP 완료**.
+- `_migrate_web_account_activity_to_audit(conn)` migration helper — 기존 row → `WebAuditEvents` 변환 (ActionCode `conversation.search.body` transparent, ChangeJson `{query_hash, matched_count, _migrated_from, _original_id}`, OccurredAt = waa.CreatedAt). `RequestId='account-activity:<id>'` marker → idempotent. **TASK-0086 후 helper 는 rollback 1~2 cycle window 동안 보존** — `SHOW TABLES LIKE 'WebAccountActivity'` check 가 table-absent 시 silent return 0.
+- `_log_search_activity()` — TASK-0072 dual write 패턴 → **TASK-0086 (2026-05-20) 에서 legacy INSERT 제거, dispatcher (`record_audit_event` → WebAuditEvents) 만 primary path**. signature transparent (caller 변경 0). dispatcher fail 시 stderr log + main flow 진행 (user endpoint fail-open).
+- DROP 절차 (TASK-0086, Codex outside voice 5 findings 흡수 후 v2):
+  1. `mysqldump --single-transaction --quick --set-charset --create-options --add-drop-table --triggers --hex-blob --no-tablespaces` (Codex C4).
+  2. scratch restore rehearsal (별 schema import + digest match — `a09e7898d1ce88711f7a850ab5fbcc91`).
+  3. legacy ↔ mirror 1:1 정합 검증 (74=74).
+  4. 사용자 명시 ack.
+  5. 코드 변경 (legacy INSERT 제거 + `_ensure_web_account_activity_schema` 호출/정의 제거).
+  6. lightweight import smoke.
+  7. `DROP TABLE IF EXISTS WebAccountActivity`.
+  8. `SHOW TABLES` = 0 + mirror row 보존 확인.
+- Backup file: `artifacts/mysql-backup/WebAccountActivity-20260520T074927Z.sql` (11,950 bytes). Row digest `a09e7898d1ce88711f7a850ab5fbcc91`. Rollback runbook 2 시나리오 (DB restore only / code revert + DB restore) — REPORT.md §1 Summary 참조.
 
 ### 9.9 보관 정책 + 외부 배포 보완 (TODO)
 

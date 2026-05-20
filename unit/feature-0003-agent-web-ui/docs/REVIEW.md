@@ -8,6 +8,33 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260520-0005 [AGENT-TEAM:codex-outside-voice]
+- Date: 2026-05-20
+- Decision: TASK-0086 (REQ-20260520-0001, **Major** §12.3 — `WebAccountActivity` legacy table DROP + dual write 종료) plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, ~5분, 398,567 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign 흡수 → 사용자 confirm → Phase A backup + scratch restore + 1:1 정합 (74=74) → 사용자 명시 ack → Phase C~G 진행 완료. **WebAccountActivity DROP 완료, dual write 종료, dispatcher (WebAuditEvents) 단일 source-of-truth 전환**.
+- Reason: TASK-0073 Phase A2 의 dual source 일시 공존 종료가 본 cycle 의 목적. 1:1 정합 검증 + scratch restore rehearsal + 사용자 명시 ack 가 Major + 파괴적 DROP 의 risk mitigation. 사용자 정책 (`feedback_outside_voice_for_rbac`) 적용 — audit subsystem 보안 표면 + 파괴적 데이터 작업 의무 outside voice.
+- Codex outside voice 5 findings 흡수 결정:
+  - **C1 — Option A (graceful skip) 불가능**: `_ensure_web_account_activity_schema()` 가 line 2979 + 3130 에서 계속 호출 → DROP 후 재기동 시 table 다시 생성. **ACCEPT** → helper Option B 채택 (호출 + 정의 모두 명시 제거). migration helper (`_migrate_web_account_activity_to_audit`) 만 rollback window 보존.
+  - **C2 — dispatcher-only 전환 = mirror 실패가 곧 감사 누락**: record_audit_event 는 fail-open. legacy INSERT 제거 후 mirror = primary audit write. **ACCEPT** → Phase D+E lightweight smoke (host-mounted code + docker run import). 이전 6 row (id 69~74) 가 mirror 와 1:1 정합 입증 → mirror 작동성 확인. tests/test_audit_migration.py M3 제거 (Codex minimum-fix 2).
+  - **C3 — "single tx DROP" 표현 잘못됨**: MySQL DDL 은 implicit commit. "DROP atomic" 의미와 "multi-step single tx" 구분. **ACCEPT** → "DROP TABLE single statement" 로 표현 정정. SECURITY.md §9.8 + plan 본문 모두 갱신.
+  - **C4 — Backup 검증 약함**: row count 만 부족. mysqldump 옵션 보강 + scratch restore rehearsal + canonical digest 필요. **ACCEPT** → mysqldump 8 옵션 (`--single-transaction --quick --set-charset --create-options --add-drop-table --triggers --hex-blob --no-tablespaces`) + scratch restore 별 schema import → digest match 검증 + row digest `a09e7898d1ce88711f7a850ab5fbcc91`.
+  - **C5 — Rollback 정의 불완전**: backup restore = legacy table 만. dual write 부활 = code revert 필요. helper 제거 후 migration 경로 사라짐. **ACCEPT** → rollback runbook 2 시나리오 분리 (DB restore only / code revert + DB restore). REPORT.md + SECURITY.md §9.8 + 본 plan §2.4 모두 cross-reference.
+- 추가 흡수:
+  - function rename `_log_search_activity()` → 보류 (caller 안정성 우위, 별 cycle).
+  - PR title: `chore(feature-0003): retire WebAccountActivity legacy audit table` (refactor 아닌 운영 DB DROP).
+- Alt 거부:
+  - **v1 단독 진행 (outside voice 흡수 X)**: C1 (Option A 불가능) 가 fatal — DROP 후 재기동 시 table 다시 생성. v2 redesign 필수.
+  - **C1 완화 (migration helper 도 제거)**: rollback 1~2 cycle window 포기. dead code 0 하지만 code revert + backup restore + migration helper restore 모두 필요. 사용자 v2 단독 진행 confirm 시 거부.
+  - **Phase E smoke 경량화 (dispatcher-only 검증 완화)**: C2 의 mirror failure risk 명시 검증 약화. 사용자 v2 단독 진행 confirm 시 lightweight import smoke 진행.
+- Risks: rollback window 1~2 cycle 동안 `_migrate_web_account_activity_to_audit()` 보존 — table-absent silent skip. 그 window 후 별 cycle 에서 helper 자체 제거 검토. dispatcher-only 전환 후 mirror failure = audit 누락 risk — lightweight smoke 로 mitigated, runtime smoke (실제 search 호출) 는 PR merge 후 next deploy 자동 검증. function name `_log_search_activity()` 보존 (이름 낡았지만 caller 안정성 우위).
+- 미해결 followup:
+  - rollback window (1~2 cycle) 후 `_migrate_web_account_activity_to_audit()` helper 자체 제거 별 cycle (Minor).
+  - function rename `_log_search_activity()` → `_audit_conversation_search()` 별 cycle (Minor).
+  - SECURITY.md §8 strict-string-equality 계약 명시 (TASK-0092 followup, V6 결과 기반).
+  - TASK-0087 (Major, 외부 LAN trust) — feature-0006 위임 별 cycle.
+  - TASK-0088~0091 (Minor 4) — 각 별 cycle.
+- panel: AGENT-TEAM:codex-outside-voice — Codex consult mode 외부 voice review 실 수행 (398,567 tokens). 본 cycle 의 verification panel.
+- Trace: REQ-20260520-0001 → TASK-0086 → CHG-20260520-0005 → REV-20260520-0005. **TASK-0086 cycle 종료, TASK-0073 Phase A2 dual write 종료.**
+
 ## REV-20260520-0004 [AGENT-TEAM:codex-outside-voice]
 - Date: 2026-05-20
 - Decision: TASK-0092 (REQ-20260520-0007, **Minor** §12.3 — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 7 vector matrix 검증) plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, ~5분, 490,891 tokens) → 5 findings + 2 minimum-fix → v2 redesign 흡수 → 사용자 confirm. Phase A0~E 본 cycle 진행 완료, **7 vector PASS (7/7)**.

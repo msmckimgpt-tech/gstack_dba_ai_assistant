@@ -8,6 +8,27 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260520-0005
+- Date: 2026-05-20
+- Summary: TASK-0086 (REQ-20260520-0001, **Major** §12.3 — `WebAccountActivity` legacy table DROP + dual write 종료). TASK-0073 Phase A2 의 dual source 일시 공존을 단일 source-of-truth (WebAuditEvents) 로 전환. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용. backup + scratch restore rehearsal + 1:1 정합 (74=74) + 사용자 명시 ack 후 진행.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - `_log_search_activity()`: legacy `INSERT INTO WebAccountActivity` 블록 제거. dispatcher (`record_audit_event` → WebAuditEvents) 만 primary path. signature transparent 보존. docstring 갱신.
+    - `_ensure_web_account_activity_schema()`: 함수 정의 + 호출 2 사이트 명시 제거 (Codex C1 — helper Option B 채택).
+    - `_migrate_web_account_activity_to_audit()`: 함수 본체 + `SHOW TABLES LIKE` table-absent skip 보존. docstring 갱신 (TASK-0086 rollback 1~2 cycle window 명시).
+  - `unit/feature-0003-agent-web-ui/tests/test_audit_migration.py`: 모듈 docstring 갱신 (3→2 시나리오) + `m3_log_search_activity_dual_write()` 제거 + main() M3 호출 제거 (Codex C2 minimum-fix).
+  - `docs/SECURITY.md` §9.8: "별 cycle DROP" → "DROP 완료 (2026-05-20)" + 8 step 절차 + backup file + rollback 2 시나리오 cross-reference.
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` §2.4 Implementation Plan (TASK-0086) 신설 + TASK-0086 [x] 마킹.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` REV-20260520-0005 entry 추가.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md` §1 Summary 갱신.
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md` §4 본 cycle 결과 prepend.
+- DB: `DROP TABLE IF EXISTS WebAccountActivity` 실행. `SHOW TABLES` = 0 ✓. WebAuditEvents `conversation.search.body` row 74 변동 없음 ✓.
+- Backup: `artifacts/mysql-backup/WebAccountActivity-20260520T074927Z.sql` (11,950 bytes, 74 row, digest `a09e7898d1ce88711f7a850ab5fbcc91`, file md5 `f4163df9dc1b7ac81ae4c463a0f35e98`). mysqldump 8 옵션 + scratch restore rehearsal PASS.
+- v2 redesign (Codex 5 findings 흡수): C1 Option A 불가능 → helper Option B / C2 dispatcher-only 검증 → lightweight smoke + M3 제거 / C3 "single tx" → "single statement" / C4 backup 검증 강화 / C5 rollback 2 시나리오.
+- Verification: Phase A~G 모두 PASS (backup integrity / 1:1 정합 / py_compile / import smoke / DROP 정합 / SHOW TABLES = 0 / mirror 보존).
+- Risks: rollback window 1~2 cycle 동안 migration helper 보존. dispatcher-only 후 mirror failure = audit 누락 risk → lightweight smoke mitigated. function rename 별 cycle.
+- Trace: REQ-20260520-0001 → TASK-0086 → CHG-20260520-0005 → REV-20260520-0005. TASK-0073 Phase A2 dual write 종료.
+
 ## CHG-20260520-0004
 - Date: 2026-05-20
 - Summary: TASK-0092 (REQ-20260520-0007, **Minor** §12.3 — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 7 vector matrix 검증). TASK-0073 Phase E 의 사용자 위임 항목 1 건 해소 (sandbox SSH 인증 차단 환경 해소 + docker/compose 가용 확인). Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용. Code 변경 0, docs append only.
