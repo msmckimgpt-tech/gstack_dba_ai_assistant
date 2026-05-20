@@ -59,7 +59,7 @@ source_of_truth: true
   - [x] Phase A5 — admin 11 endpoint hook (Same tx) + ActionCode 별 build_audit_change_json builder (CHG-20260519-0021, 2026-05-19, py_compile PASS; 11 endpoint = update/delete/password-reset/role CRUD/product CRUD/databases.update/system_prompt.update — plan 의 "13" elastic 표현, 11 이 admin mutation 전부; E5 product delete cascade lock 순서 정합)
   - [x] Phase A6 — user 5 endpoint hook (fail-open) + anonymous share view (CHG-20260519-0022, 2026-05-19, py_compile PASS; _audit_user_action helper + ActorType='anonymous' for public share view + token_prefix 8 char redact)
   - [x] Phase B — 3 test 파일 신설 (CHG-20260519-0023, 2026-05-19, py_compile PASS; test_audit_dispatcher 7 시나리오 + test_audit_rbac 10 시나리오 + test_audit_migration 3 시나리오; 실 실행은 컨테이너 환경 + admin/operator 자격 필요, Phase E 위임)
-  - [ ] Phase C — Frontend (admin 탭 + filter + detail pane + CSV)
+  - [x] Phase C — Frontend (admin 탭 + filter + detail pane + CSV) (CHG-20260519-0024, 2026-05-19, node --check PASS; admin.html 새 탭 + filter row 7항목 + list-detail / admin.js loadAuditList + render + escape HTML / styles.css 10+ class / app.js + admin.js PERMISSION_GROUP_ORDER 'audit' + cache-bust v=20260519-audit-tab 4 곳)
   - [ ] Phase D — 프로젝트 수준 docs (SECURITY §8 + DECISIONS ADR-0019 + ARCHITECTURE + CONVENTIONS + STATUS)
   - [ ] Phase E — verify-completion + make web + browser smoke + commit
 

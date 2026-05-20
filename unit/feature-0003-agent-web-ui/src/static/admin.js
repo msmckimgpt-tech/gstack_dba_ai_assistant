@@ -50,13 +50,15 @@ function systemPromptPendingKey({ scope, productId = null, roleId = null, accoun
 // TASK-0052 Phase 1D: 'product' 그룹 추가. backend `PERMISSION_DEFINITIONS[*].group` (app.py) 와 키 정합 필수.
 // product 그룹은 정적 `product.manage` / `system_prompt.manage.role.any` 외에 동적 `product.access.<key>`
 // 코드들 (Phase 1B 의 _ensure_product_access_permissions backfill) 도 자동으로 그룹에 합류된다.
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "misc"];
+// TASK-0073 Phase C: audit group 추가 — backend PERMISSION_DEFINITIONS 의 group="audit" 와 key 정합.
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "audit", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
   role: "역할",
   conversation: "대화",
   product: "제품",
+  audit: "감사",
   misc: "기타",
 };
 
@@ -64,7 +66,8 @@ const PERMISSION_GROUP_LABELS = {
 // 화면 맥락이 "타인의 권한을 배치하는 관리자 시점" 이므로 console·account·role 메타권한이 위로 오고,
 // conversation·product 운영 권한은 그 아래로 분리한다. (작업 화면측 정렬은 app.js WORK_SCREEN_PERMISSION_SECTIONS)
 const ADMIN_PERMISSION_SECTIONS = [
-  { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 메타권한", groups: ["console", "account", "role"] },
+  // TASK-0073 Phase C: audit 그룹은 관리 권한 section 의 admin 콘솔 책임 — console / account / role 와 같이 배치.
+  { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 메타권한 · 감사", groups: ["console", "account", "role", "audit"] },
   { id: "operate", title: "운영 권한", description: "대화 · 제품 접근", groups: ["conversation", "product"] },
   { id: "misc", title: "기타", description: null, groups: ["misc"] },
 ];
@@ -684,6 +687,245 @@ function switchTab(tabName) {
   });
   document.querySelectorAll(".admin-pane").forEach((pane) => {
     pane.classList.toggle("is-active", pane.dataset.adminPane === tabName);
+  });
+  // TASK-0073 Phase C: audit tab 첫 진입 시 첫 페이지 로드.
+  if (tabName === "audits" && !adminState.audit.initialized) {
+    adminState.audit.initialized = true;
+    loadAuditList();
+  }
+}
+
+/* ── Audit pane (TASK-0073 Phase C) ─────────────────────────────────── */
+
+adminState.audit = {
+  items: [],
+  selectedId: null,
+  nextCursor: null,
+  scope: "",
+  loading: false,
+  initialized: false,
+  filters: {
+    action_code: "",
+    resource_type: "",
+    actor_account_id: "",
+    actor_type: "",
+    from_at: "",
+    to_at: "",
+    q: "",
+  },
+};
+
+function _auditEscapeHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function _auditFormatDt(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString("ko-KR", { hour12: false });
+  } catch {
+    return String(iso);
+  }
+}
+
+function _readAuditFilters() {
+  const f = adminState.audit.filters;
+  f.action_code = ($("auditFilterAction")?.value || "").trim();
+  f.resource_type = ($("auditFilterResourceType")?.value || "").trim();
+  f.actor_account_id = ($("auditFilterActorId")?.value || "").trim();
+  f.actor_type = ($("auditFilterActorType")?.value || "").trim();
+  f.from_at = ($("auditFilterFromAt")?.value || "").trim();
+  f.to_at = ($("auditFilterToAt")?.value || "").trim();
+  f.q = ($("auditFilterQ")?.value || "").trim();
+}
+
+function _clearAuditFilters() {
+  ["auditFilterAction", "auditFilterResourceType", "auditFilterActorId",
+   "auditFilterActorType", "auditFilterFromAt", "auditFilterToAt", "auditFilterQ"].forEach((id) => {
+    const el = $(id);
+    if (el) el.value = "";
+  });
+  adminState.audit.filters = {
+    action_code: "", resource_type: "", actor_account_id: "",
+    actor_type: "", from_at: "", to_at: "", q: "",
+  };
+}
+
+async function loadAuditList(append = false) {
+  if (adminState.audit.loading) return;
+  adminState.audit.loading = true;
+  if (!append) {
+    adminState.audit.items = [];
+    adminState.audit.nextCursor = null;
+    adminState.audit.selectedId = null;
+  }
+  const params = new URLSearchParams();
+  const f = adminState.audit.filters;
+  Object.entries(f).forEach(([k, v]) => {
+    if (v) params.set(k, v);
+  });
+  if (append && adminState.audit.nextCursor) {
+    params.set("cursor", adminState.audit.nextCursor);
+  }
+  params.set("limit", "100");
+  try {
+    const resp = await fetch(`/api/admin/audits?${params.toString()}`);
+    if (!resp.ok) {
+      showToast(`감사 로그 조회 실패 (${resp.status})`, true);
+      adminState.audit.loading = false;
+      return;
+    }
+    const data = await resp.json();
+    adminState.audit.scope = data.scope || "";
+    adminState.audit.nextCursor = data.next_cursor || null;
+    const fresh = data.items || [];
+    if (append) {
+      adminState.audit.items = adminState.audit.items.concat(fresh);
+    } else {
+      adminState.audit.items = fresh;
+    }
+    renderAuditList();
+  } catch (exc) {
+    showToast(`감사 로그 조회 실패: ${exc}`, true);
+  } finally {
+    adminState.audit.loading = false;
+  }
+}
+
+function renderAuditList() {
+  const listEl = $("auditList");
+  const countEl = $("auditListCount");
+  const scopeEl = $("auditListScope");
+  const moreBtn = $("auditLoadMoreBtn");
+  if (!listEl) return;
+  const items = adminState.audit.items;
+  if (countEl) countEl.textContent = `${items.length}건`;
+  if (scopeEl) scopeEl.textContent = `(scope: ${adminState.audit.scope || "—"})`;
+  if (moreBtn) moreBtn.style.display = adminState.audit.nextCursor ? "" : "none";
+
+  // CSV export gate (audit.export 권한 필요 — me 의 permissions 검사).
+  const csvBtn = $("auditExportCsvBtn");
+  if (csvBtn) {
+    const hasExport = Boolean(adminState.me?.permissions?.["audit.export"]);
+    csvBtn.style.display = hasExport ? "" : "none";
+    if (hasExport) {
+      const params = new URLSearchParams();
+      Object.entries(adminState.audit.filters).forEach(([k, v]) => {
+        if (v) params.set(k, v);
+      });
+      csvBtn.href = `/api/admin/audits/export.csv?${params.toString()}`;
+    }
+  }
+
+  if (items.length === 0) {
+    listEl.innerHTML = '<div class="admin-list-empty">조건에 맞는 감사 이벤트가 없습니다.</div>';
+    return;
+  }
+  // Build rows.
+  const rows = items.map((it) => {
+    const isSel = String(it.id) === String(adminState.audit.selectedId);
+    const klass = "admin-list-row admin-audit-row" + (isSel ? " is-selected" : "");
+    return `
+      <div class="${klass}" role="row" data-audit-id="${it.id}">
+        <div class="admin-audit-row-line">
+          <span class="admin-audit-row-action">${_auditEscapeHtml(it.action_code || "")}</span>
+          <span class="admin-audit-row-actor">${_auditEscapeHtml(it.actor_type || "")}${
+            it.actor_account_id ? " · #" + it.actor_account_id : ""
+          }</span>
+          <span class="admin-audit-row-ts">${_auditEscapeHtml(_auditFormatDt(it.occurred_at))}</span>
+        </div>
+        <div class="admin-audit-row-line muted">
+          <span class="admin-audit-row-resource">${_auditEscapeHtml(it.resource_type || "")}${
+            it.resource_id ? " #" + _auditEscapeHtml(it.resource_id) : ""
+          }</span>
+          ${it.target_account_id ? `<span class="admin-audit-row-target">→ target #${it.target_account_id}</span>` : ""}
+        </div>
+      </div>`;
+  }).join("");
+  listEl.innerHTML = rows;
+  listEl.querySelectorAll(".admin-audit-row").forEach((rowEl) => {
+    rowEl.addEventListener("click", () => {
+      const id = rowEl.dataset.auditId;
+      adminState.audit.selectedId = id;
+      renderAuditList();
+      renderAuditDetail(id);
+    });
+  });
+}
+
+function renderAuditDetail(id) {
+  const el = $("auditDetail");
+  if (!el) return;
+  const item = adminState.audit.items.find((it) => String(it.id) === String(id));
+  if (!item) {
+    el.innerHTML = '<div class="admin-detail-empty">좌측에서 감사 이벤트를 선택하세요.</div>';
+    return;
+  }
+  // ChangeJson + MaskedFields 안전 직렬화 + HTML escape (TASK-0058 share.html 패턴 답습).
+  const changeText = item.change_json == null ? "(없음)" : JSON.stringify(item.change_json, null, 2);
+  const maskedText = Array.isArray(item.masked_fields) && item.masked_fields.length
+    ? item.masked_fields.join(", ")
+    : "(없음)";
+  el.innerHTML = `
+    <div class="admin-audit-detail">
+      <h3>감사 이벤트 #${_auditEscapeHtml(item.id)}</h3>
+      <dl class="admin-audit-detail-fields">
+        <dt>발생 시각</dt><dd>${_auditEscapeHtml(_auditFormatDt(item.occurred_at))}</dd>
+        <dt>Action</dt><dd><code>${_auditEscapeHtml(item.action_code || "")}</code></dd>
+        <dt>Actor</dt><dd>${_auditEscapeHtml(item.actor_type || "")}${
+          item.actor_account_id ? " · 계정 #" + _auditEscapeHtml(item.actor_account_id) : ""
+        }</dd>
+        <dt>Target Account</dt><dd>${item.target_account_id ? "#" + _auditEscapeHtml(item.target_account_id) : "(없음)"}</dd>
+        <dt>Resource</dt><dd>${_auditEscapeHtml(item.resource_type || "")}${
+          item.resource_id ? " #" + _auditEscapeHtml(item.resource_id) : ""
+        }</dd>
+        <dt>Session</dt><dd>${item.session_id ? "<code>" + _auditEscapeHtml(item.session_id) + "</code>" : "(없음)"}</dd>
+        <dt>Remote Addr</dt><dd>${_auditEscapeHtml(item.remote_addr || "(없음)")}</dd>
+        <dt>User-Agent</dt><dd class="admin-audit-detail-ua">${_auditEscapeHtml(item.user_agent || "(없음)")}</dd>
+        <dt>Request ID</dt><dd>${item.request_id ? "<code>" + _auditEscapeHtml(item.request_id) + "</code>" : "(없음)"}</dd>
+        <dt>Masked Fields</dt><dd>${_auditEscapeHtml(maskedText)}</dd>
+      </dl>
+      <h4>Change JSON</h4>
+      <pre class="admin-audit-detail-change">${_auditEscapeHtml(changeText)}</pre>
+    </div>`;
+}
+
+function attachAuditFilterHandlers() {
+  const applyBtn = $("auditFilterApplyBtn");
+  const clearBtn = $("auditFilterClearBtn");
+  const moreBtn = $("auditLoadMoreBtn");
+  if (applyBtn) {
+    applyBtn.addEventListener("click", () => {
+      _readAuditFilters();
+      loadAuditList(false);
+    });
+  }
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      _clearAuditFilters();
+      loadAuditList(false);
+    });
+  }
+  if (moreBtn) {
+    moreBtn.addEventListener("click", () => loadAuditList(true));
+  }
+  // Enter on input → apply.
+  ["auditFilterAction", "auditFilterResourceType", "auditFilterActorId", "auditFilterQ"].forEach((id) => {
+    const el = $(id);
+    if (el) {
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          _readAuditFilters();
+          loadAuditList(false);
+        }
+      });
+    }
   });
 }
 
@@ -3068,6 +3310,17 @@ async function initialize() {
   document.querySelectorAll(".admin-tab").forEach((btn) => {
     btn.addEventListener("click", () => switchTab(btn.dataset.adminTab));
   });
+
+  // TASK-0073 Phase C: audit pane filter handlers + tab visibility gate.
+  attachAuditFilterHandlers();
+  const auditTab = $("adminTabAudits");
+  if (auditTab) {
+    const canRead = Boolean(
+      adminState.me?.permissions?.["audit.read.own"] ||
+      adminState.me?.permissions?.["audit.read.any"]
+    );
+    auditTab.style.display = canRead ? "" : "none";
+  }
 
   // Account filter buttons
   document.querySelectorAll("[data-account-filter]").forEach((btn) => {

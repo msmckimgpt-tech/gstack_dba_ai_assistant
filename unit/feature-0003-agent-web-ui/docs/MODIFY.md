@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0024
+- Date: 2026-05-19
+- Summary: TASK-0073 Phase C (REQ-20260519-0001, **Critical** §12.3) — Frontend admin 콘솔 "감사 로그" tab 신설 + filter / list / detail / CSV export gated + `PERMISSION_GROUP_ORDER` 'audit' group 추가. CONVENTIONS.md §10.6 정합 — admin section 의 관리 권한 묶음에 audit 그룹 합류. 작업 화면 placeholder.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/admin.html` — 새 sidebar tab `data-admin-tab="audits"` (#adminTabAudits) + filter row (action / resource_type / actor_account_id / actor_type select / from_at + to_at datetime-local / q + 적용 / 초기화) + list-detail pane (admin-audit-row + admin-audit-detail + admin-audit-detail-fields dl + admin-audit-detail-change pre) + CSV export `<a id="auditExportCsvBtn">` (hide 기본). cache-bust `v=20260518-shell-grid-rows` → `v=20260519-audit-tab` (styles + admin.js).
+  - `repo/unit/feature-0003-agent-web-ui/src/static/admin.js` — `PERMISSION_GROUP_ORDER` 에 audit 추가, `PERMISSION_GROUP_LABELS.audit="감사"`. `ADMIN_PERMISSION_SECTIONS.manage.groups` 에 audit 추가. switchTab("audits") 첫 진입 시 loadAuditList() 트리거. adminState.audit state (items / selectedId / nextCursor / scope / loading / initialized / filters). `_auditEscapeHtml` / `_auditFormatDt` / `_readAuditFilters` / `_clearAuditFilters` / `loadAuditList(append)` / `renderAuditList()` / `renderAuditDetail(id)` / `attachAuditFilterHandlers()` 함수 신설. CSV button gate = `audit.export` permission. tab 자체 hide gate = `audit.read.own || audit.read.any`. cursor pagination via "더 불러오기" button + Enter 키 apply.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/styles.css` — audit pane styles 10+ class 추가 (`.admin-audit-filter`, `.admin-audit-row` + 변형, `.admin-audit-detail-*`, `.admin-list-scope`, `.admin-audit-pagination`).
+  - `repo/unit/feature-0003-agent-web-ui/src/static/app.js` — `PERMISSION_GROUP_ORDER` 에 audit 추가, `PERMISSION_GROUP_LABELS.audit="감사"`. `WORK_SCREEN_PERMISSION_SECTIONS.manage.groups` 에 audit 추가 (작업 화면 placeholder).
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html` — cache-bust `styles.css?v=20260519-chat-pane-flex` → `v=20260519-audit-tab` + `app.js?v=20260519-pending-entries` → `v=20260519-audit-tab`.
+- Verification: `node --check admin.js && node --check app.js` PASS. backend 의 `/api/admin/audits*` 5 endpoint (Phase A4) 호출. ChangeJson 의 `<pre>` 영역은 `_auditEscapeHtml` 로 XSS 차단 (TASK-0058 share.html `<pre>` 패턴 답습). CSV gate / tab visibility gate 가 `adminState.me.permissions[<code>]` truthy 검사.
+- Risks: 작업 화면의 audit 그룹 placeholder 가 본인 `audit.read.own` 권한이라도 작업 화면에서 실 audit 진입점 부재 (admin 콘솔로 안내) — Phase E 별도 UX cycle 에서 작업 화면 audit drawer 검토 가능. 시간 정렬 `_auditFormatDt` 가 toLocaleString (browser timezone) — server OccurredAt UTC 와 mismatch 가능, 의도된 UX (사용자 local TZ).
+- Trace: REQ-20260519-0001 → TASK-0073 Phase C → CHG-20260519-0024 → REV-20260519-0020. CONVENTIONS.md §10.6 audit group section 배치 lock-in.
+
 ## CHG-20260519-0023
 - Date: 2026-05-19
 - Summary: TASK-0073 Phase B (REQ-20260519-0001, **Critical** §12.3) — 3 test 파일 신설. dispatcher / RBAC / migration 의 핵심 행위 HTTP smoke 검증. 실 실행은 컨테이너 가동 + admin/operator/sales 자격 필요 — Phase E 사용자 위임 (본 cycle 의 plan 본문 명시: "환경 미비 시 test 작성만 + 실행은 Phase E 에 위임").

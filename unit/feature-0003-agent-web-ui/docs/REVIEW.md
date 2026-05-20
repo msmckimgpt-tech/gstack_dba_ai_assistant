@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0020 [SKIPPED:multi-phase-plan-approved]
+- Date: 2026-05-19
+- Decision: TASK-0073 Phase C (REQ-20260519-0001, **Critical** §12.3) — Frontend admin 콘솔 "감사 로그" tab 신설 + 7 항목 filter row + list-detail pane + CSV export (gated) + 작업 화면 / 관리 콘솔 양쪽 PERMISSION_GROUP_ORDER 'audit' 그룹 추가.
+- Reason: plan PLAN-APPROVED 2026-05-19 의 Phase C 명시. ChangeJson 의 XSS 차단은 `<pre>` + HTML escape (TASK-0058 share.html 패턴 답습). cursor pagination 으로 audit row 수 large fleet 에서도 안전. CSV gate / tab visibility gate 는 permission map truthy 검사로 hide-vs-disable=hide (TASK-0052 패턴 답습).
+- Alt 거부:
+  - **본인 audit 작업 화면 drawer**: 본 cycle scope 외. admin 콘솔 진입 권유 위한 작업 화면 placeholder 만.
+  - **purge UI 본 cycle**: Critical 등급 + retention 정책 다양 → admin manual SQL 또는 API 직접 호출이 안전. 본 cycle scope 외.
+  - **detail pane 의 ChangeJson 인터랙티브 viewer (diff)**: 본 cycle scope 외. `<pre>` 정적 표시가 minimal viable.
+  - **action_code multi-select chip**: input + 1 value 가 minimal viable. 별 cycle UX 보강.
+- Risks: 작업 화면 placeholder 가 audit 그룹 권한 표시만 + 실 entry point 부재 → 사용자 혼란 가능 (UX wart). `_auditFormatDt` 가 browser local TZ — 다국적 운영 시 admin 간 동기화 차이. CSV button 의 href 가 filter 적용된 URL — 사용자가 후속 filter 변경 후 안 누르면 stale.
+- 미해결 followup: Phase E browser headless smoke 가 admin 탭 진입 / filter / detail / CSV button visibility / 새 admin action 발생 시 audit row 1:1 정합 확인. 작업 화면의 audit drawer (`audit.read.own` 본인 view) 별 cycle UX 보강.
+- panel: SKIPPED:multi-phase-plan-approved — Frontend 변경은 TASK-0058 share.html 패턴 답습 + CONVENTIONS.md §10.6 정합 lock-in. ChangeJson escape XSS 차단도 검증된 답습.
+- Trace: REQ-20260519-0001 → TASK-0073 Phase C → CHG-20260519-0024 → REV-20260519-0020. CONVENTIONS.md §10.6 + TASK-0052 hide-vs-disable + TASK-0058 share.html `<pre>` escape lock-in.
+
 ## REV-20260519-0019 [SKIPPED:multi-phase-plan-approved]
 - Date: 2026-05-19
 - Decision: TASK-0073 Phase B (REQ-20260519-0001, **Critical** §12.3) — 3 test 파일 신설. test_audit_dispatcher (7) + test_audit_rbac (10) + test_audit_migration (3) = 20 시나리오. 실 실행은 컨테이너 가동 + admin/operator/sales 자격 필요 — Phase E 사용자 위임 (plan 본문 명시).

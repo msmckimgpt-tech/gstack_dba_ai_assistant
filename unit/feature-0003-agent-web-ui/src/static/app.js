@@ -177,21 +177,25 @@ function _newPendingSentinel() {
 
 const PRODUCT_PREF_LS_KEY = "mad.productPref.v1";
 
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "misc"];
+// TASK-0073 Phase C: audit group 추가 — backend PERMISSION_DEFINITIONS 의 group="audit" 정합.
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "audit", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
   role: "역할",
   conversation: "대화",
   product: "제품",
+  audit: "감사",
   misc: "기타",
 };
 
 // CONVENTIONS.md §10.6 — 작업 화면은 "운영 권한 → 관리 권한 → 기타" 순. 본인의 일상 작업 권한이 위로 오고,
 // 관리 메타권한은 사용자가 실제로 보유한 경우에만 묶음 형태로 뒤쪽에 표시된다. (관리자측 정렬은 admin.js ADMIN_PERMISSION_SECTIONS)
+// TASK-0073 Phase C: audit 그룹은 관리 권한 section 에 placeholder — 본인 audit (`audit.read.own`) 만 작업 화면에
+// 표시되도록 group="audit" 을 manage section 에 추가. admin 콘솔 진입을 권유.
 const WORK_SCREEN_PERMISSION_SECTIONS = [
   { id: "operate", title: "운영 권한", description: "대화 · 제품 접근", groups: ["conversation", "product"] },
-  { id: "manage", title: "관리 권한", description: "관리 콘솔 / 계정 / 역할", groups: ["console", "account", "role"] },
+  { id: "manage", title: "관리 권한", description: "관리 콘솔 / 계정 / 역할 / 감사", groups: ["console", "account", "role", "audit"] },
   { id: "misc", title: "기타", description: null, groups: ["misc"] },
 ];
 

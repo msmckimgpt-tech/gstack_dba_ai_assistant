@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260519-d2coding-mono" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260519-audit-tab" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -36,6 +36,14 @@
         <button type="button" class="admin-tab" data-admin-tab="products">
           <span class="admin-tab-label">제품 (Products)</span>
           <span class="admin-tab-count" id="tabCountProducts">—</span>
+        </button>
+
+        <!-- TASK-0073 Phase C: 감사 로그 tab -->
+        <div class="admin-tab-group-divider"></div>
+        <div class="admin-tab-group-label">감사</div>
+        <button type="button" class="admin-tab" data-admin-tab="audits" id="adminTabAudits">
+          <span class="admin-tab-label">감사 로그</span>
+          <span class="admin-tab-count" id="tabCountAudits">—</span>
         </button>
       </nav>
       <div class="admin-sidebar-foot">
@@ -236,6 +244,64 @@
           </div>
         </div>
       </section>
+
+      <!-- TASK-0073 Phase C: Audit pane (감사 로그) -->
+      <section class="admin-pane" data-admin-pane="audits">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">Audits</div>
+            <h2>감사 로그</h2>
+          </div>
+          <div class="admin-pane-actions">
+            <a href="#" id="auditExportCsvBtn" class="btn-secondary" style="display:none">CSV 내보내기</a>
+          </div>
+        </header>
+        <div class="admin-audit-filter" id="auditFilterRow">
+          <label>액션
+            <input type="text" id="auditFilterAction" placeholder="admin.account.update" autocomplete="off" />
+          </label>
+          <label>리소스 타입
+            <input type="text" id="auditFilterResourceType" placeholder="account / role / product / share" autocomplete="off" />
+          </label>
+          <label>Actor 계정 ID
+            <input type="number" id="auditFilterActorId" placeholder="123" autocomplete="off" />
+          </label>
+          <label>Actor 유형
+            <select id="auditFilterActorType">
+              <option value="">전체</option>
+              <option value="account">account</option>
+              <option value="anonymous">anonymous</option>
+              <option value="system">system</option>
+            </select>
+          </label>
+          <label>시작 시각
+            <input type="datetime-local" id="auditFilterFromAt" />
+          </label>
+          <label>종료 시각
+            <input type="datetime-local" id="auditFilterToAt" />
+          </label>
+          <label>검색
+            <input type="text" id="auditFilterQ" placeholder="ActionCode / ResourceId" autocomplete="off" />
+          </label>
+          <button type="button" id="auditFilterApplyBtn" class="btn-primary">적용</button>
+          <button type="button" id="auditFilterClearBtn" class="btn-secondary">초기화</button>
+        </div>
+        <div class="admin-list-detail">
+          <div class="admin-list-col">
+            <div class="admin-list-head">
+              <span class="admin-list-count" id="auditListCount" aria-live="polite"></span>
+              <span class="admin-list-scope" id="auditListScope" aria-live="polite"></span>
+            </div>
+            <div class="admin-list" id="auditList" role="grid" aria-label="감사 이벤트 목록"></div>
+            <div class="admin-audit-pagination">
+              <button type="button" id="auditLoadMoreBtn" class="btn-secondary" style="display:none">더 불러오기</button>
+            </div>
+          </div>
+          <div class="admin-detail-col" id="auditDetail">
+            <div class="admin-detail-empty">좌측에서 감사 이벤트를 선택하세요.</div>
+          </div>
+        </div>
+      </section>
     </main>
 
     <!-- REQ-20260518-0006: commit bar 가 admin-column 의 하단 — sidebar 와 분리되어 workspace 하단에만 표시 -->
@@ -253,6 +319,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260518-shell-grid-rows"></script>
+  <script src="/static/admin.js?v=20260519-audit-tab"></script>
 </body>
 </html>
