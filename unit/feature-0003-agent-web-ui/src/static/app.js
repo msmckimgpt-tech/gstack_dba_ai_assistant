@@ -117,6 +117,14 @@ const state = {
   // 클릭 시 새 sentinel 으로 컨텍스트 분리되어 input 활성화 + 별개 send 가능. 첫 send 의 finally 가
   // closure 의 busyKey 만 cleanup 하므로 두 번째 컨텍스트는 보존. null = 비-pending 상태 또는 직접 send 진입.
   pendingSentinel: null,
+  // TASK-0085: lazy-create send 진입 시점에 사이드바 conversation list 에 즉시 표시되는 optimistic
+  // entry 의 sentinel-keyed Map. backend `/api/ask` 응답 도착 전까지 사용자에게 "이 대화를 만들었다"
+  // 명시. closure-aware cleanup (success/catch path 가 자기 sentinel entry 만 remove). 응답 도착 +
+  // refreshWorkspace 가 실 cid entry 등재 시 자동 정리. 사용자 클릭 시 그 sentinel 컨텍스트로 swap
+  // 가능 — activeConversationId="", pendingNewConversation=true, pendingSentinel=clicked sentinel,
+  // pendingBubble 도 entry metadata 기반 복원. multi-pending 지원.
+  // Map<sentinel, { sentinel, message, started_at, status }>. status: "in_flight" | "failed".
+  pendingConversationEntries: new Map(),
   // TASK-0061 Phase 1+2 (REQ-20260515-0003 / REQ-20260515-0003): pending assistant bubble.
   // sendPrompt() 시작 시 user message + pending bubble 즉시 prepend, polling step 으로 갱신,
   // /api/ask 응답 또는 attach 완료 시 실 assistant message 로 replace.
@@ -1208,8 +1216,9 @@ async function handlePasswordChange(event) {
 
 function renderConversationList() {
   conversationListEl.innerHTML = "";
-  const hasPending = Boolean(state.pendingNewConversation);
-  if (!state.conversations.length && !hasPending) {
+  const hasDraftPending = Boolean(state.pendingNewConversation) && !state.pendingConversationEntries.has(state.pendingSentinel);
+  const hasInFlightPending = state.pendingConversationEntries.size > 0;
+  if (!state.conversations.length && !hasDraftPending && !hasInFlightPending) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.innerHTML = "<strong>대화 없음</strong><span>새 대화를 만들어 시작하세요.</span>";
@@ -1225,6 +1234,7 @@ function renderConversationList() {
   });
 
   // TASK-0048: pending 새 대화 placeholder. cid 가 아직 없으므로 클릭 비활성, 메타 라벨만 보여준다.
+  // TASK-0085 후: 사용자가 prompt 미송신한 *작성 중* 상태에만 표시. 송신 후엔 in-flight entry 가 별도 표시.
   const appendPendingItem = () => {
     const button = document.createElement("button");
     button.type = "button";
@@ -1252,6 +1262,60 @@ function renderConversationList() {
 
     button.append(titleRow, metaEl);
     conversationListEl.appendChild(button);
+  };
+
+  // TASK-0085: optimistic in-flight pending entries. lazy-create 송신 직후 backend 응답 도착 전까지
+  // 사이드바에 즉시 표시. 클릭 시 그 sentinel 컨텍스트로 swap — pendingBubble 도 entry metadata 기반
+  // 으로 복원해 사용자가 작업 step 현황을 확인 가능. 응답 도착 시 sendPrompt 의 success/catch path 가
+  // 자기 sentinel entry 만 remove.
+  const appendInFlightPendingItems = () => {
+    const entries = Array.from(state.pendingConversationEntries.values());
+    // started_at desc — 가장 최근 진입한 entry 가 상단.
+    entries.sort((a, b) => Number(b.started_at || 0) - Number(a.started_at || 0));
+    entries.forEach((entry) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      const classes = ["conv-item", "is-own", "is-pending-inflight"];
+      if (state.pendingSentinel === entry.sentinel) classes.push("is-active");
+      if (entry.status === "failed") classes.push("is-pending-failed");
+      button.className = classes.join(" ");
+      button.dataset.pendingSentinel = entry.sentinel;
+      button.title = entry.status === "failed"
+        ? "전송에 실패했습니다. 사이드바에서 잠시 후 자동 정리됩니다."
+        : "응답을 기다리는 중입니다. 클릭하면 진행 상황을 확인할 수 있습니다.";
+
+      const titleRow = document.createElement("div");
+      titleRow.className = "conv-item-title-row";
+      const titleEl = document.createElement("div");
+      titleEl.className = "conv-item-title";
+      // prompt 첫 60 자를 라벨로. grapheme-safe slice 는 아니지만 본 cycle scope 충분.
+      const labelText = (entry.message || "새 대화").slice(0, 60);
+      titleEl.textContent = labelText;
+      titleRow.appendChild(titleEl);
+      const badge = document.createElement("span");
+      badge.className = "conv-owner-badge is-own";
+      badge.textContent = "내";
+      titleRow.appendChild(badge);
+
+      const metaEl = document.createElement("div");
+      metaEl.className = "conv-item-meta";
+      const statusEl = document.createElement("span");
+      statusEl.className = "conv-pending-status";
+      statusEl.textContent = entry.status === "failed" ? "전송 실패" : "응답 대기 중…";
+      metaEl.appendChild(statusEl);
+
+      button.append(titleRow, metaEl);
+      // 클릭 시 sentinel 컨텍스트로 swap. failed entry 는 클릭 비활성.
+      if (entry.status !== "failed") {
+        button.addEventListener("click", () => {
+          _switchToPendingConversationContext(entry);
+        });
+      } else {
+        button.disabled = true;
+        button.setAttribute("aria-disabled", "true");
+      }
+      conversationListEl.appendChild(button);
+    });
   };
 
   const renderGroup = (label, items, prependFn = null) => {
@@ -1376,7 +1440,13 @@ function renderConversationList() {
     });
   };
 
-  renderGroup("내 대화", own, hasPending ? appendPendingItem : null);
+  // TASK-0085: 내 대화 그룹의 prepend 에 (1) in-flight pending entries (응답 대기 중) +
+  // (2) 작성 중 placeholder 를 같이 표시. 두 가지가 모두 있을 수 있음 — in-flight 가 위, 작성 중이 아래.
+  const combinedPrepend = (hasInFlightPending || hasDraftPending) ? () => {
+    if (hasInFlightPending) appendInFlightPendingItems();
+    if (hasDraftPending) appendPendingItem();
+  } : null;
+  renderGroup("내 대화", own, combinedPrepend);
   renderGroup(`타 계정 대화 (${others.length})`, others);
   // TASK-0061 Phase 8: list 갱신 시 bulk bar 도 같이 동기화 + 사라진 대화 제거.
   const visibleOwnIds = new Set(own.map((it) => String(it.id)));
@@ -3027,6 +3097,44 @@ function beginPendingConversation() {
   if (promptInputEl) promptInputEl.focus();
 }
 
+// TASK-0085: pending entry 클릭 시 그 sentinel 컨텍스트로 swap. lazy-create 가 still in-flight 면
+// sendPrompt 의 closure busyKey 와 state.pendingSentinel 일치 → 응답 도착 시 success path 가
+// 자동으로 activeConversationId=newCid 갱신 + polling 시작. pendingBubble 도 entry metadata 기반
+// 으로 복원해 사용자가 작업 step 현황 (응답 도착 후 polling 시점) 을 확인 가능.
+function _switchToPendingConversationContext(entry) {
+  if (!entry || !entry.sentinel) return;
+  if (!state.pendingConversationEntries.has(entry.sentinel)) return;
+  // polling 중단 (다른 컨텍스트가 polling 중이었을 수 있음) + 상태 보존.
+  stopProgressPolling({ reset: false, abort: true });
+  state.activeConversationId = "";
+  state.pendingNewConversation = true;
+  state.pendingSentinel = entry.sentinel;
+  state.messages = [];
+  state.hasMoreHistory = false;
+  state.nextBeforeId = null;
+  // pendingBubble 복원 — entry 의 started_at 기준 elapsed timer 가 자연 이어짐.
+  // sendPrompt 의 본 send 가 아직 in-flight 라 closure 에서 startProgressPolling 미호출 (cid 없음).
+  // 응답 도착 시 success path 의 closure 일치 → state.activeConversationId=newCid + polling 시작.
+  state.pendingBubble = {
+    startedAt: Number(entry.started_at) || Date.now(),
+    runId: "",
+    steps: [],
+    status: "starting",
+    displayStatus: "starting",
+    isStale: false,
+    error: null,
+    userMessage: String(entry.message || ""),
+  };
+  renderConversationList();
+  renderConversationHeader();
+  renderAccessNotice();
+  renderMessages();
+  renderProgress();
+  renderComposer();
+  startElapsedTimer();
+  if (promptInputEl) promptInputEl.focus();
+}
+
 // REQ-20260514-0001: 대화 공유 링크 생성. anchorMessageId 가 주어지면 'anchored', 아니면 'full'.
 // 성공 시 절대 URL 을 clipboard 에 복사하고 toast 로 노출. 실패 시 throw.
 async function createConversationShare({ anchorMessageId = null, conversationId = null } = {}) {
@@ -3485,6 +3593,19 @@ async function sendPrompt() {
   }
   state.busyConversations.add(busyKey);
 
+  // TASK-0085: lazy-create 진입 시 사이드바에 즉시 optimistic entry 등재. 사용자가 응답 도착 전
+  // 다른 대화로 전환해도 새 대화 entry 가 사이드바에 지속 표시 — "잠시 사라지는" UX 회귀 차단.
+  // entry 클릭 시 그 sentinel 컨텍스트로 swap 가능 (작업 step 현황 확인 위해).
+  if (isLazyCreate) {
+    state.pendingConversationEntries.set(busyKey, {
+      sentinel: busyKey,
+      message: message,  // 사이드바 라벨 + 클릭 swap 시 pendingBubble.userMessage 복원용
+      started_at: Date.now(),
+      status: "in_flight",
+    });
+    renderConversationList();
+  }
+
   // TASK-0061 Phase 1+2 (REQ-20260515-0003 / REQ-20260515-0004 / AC-0070 / AC-0075):
   // user message 와 pending assistant bubble 을 즉시 messageLogEl 에 표시.
   // - 기존 대화: optimistic user message 추가 (실제 backend 메시지는 refreshWorkspace 가 덮어씀).
@@ -3561,6 +3682,9 @@ async function sendPrompt() {
         // ask 가 동기 완료된 경우라도 첫 polling 으로 step snapshot 을 받아 pending bubble 에 반영한다.
         startProgressPolling({ reset: true });
       }
+      // TASK-0085: optimistic pending entry 정리 — closure mismatch 여도 본 send 의 sentinel entry
+      // 는 항상 본 함수가 책임지고 remove. 실 cid entry 는 refreshWorkspace 가 backend list 로 등재.
+      state.pendingConversationEntries.delete(busyKey);
     }
     // TASK-0061 Phase 1 (AC-0072): 정상 응답 후 pending bubble 제거 → refreshWorkspace 가 실 assistant message 로 교체.
     clearPendingBubble();
@@ -3577,6 +3701,17 @@ async function sendPrompt() {
       if (state.pendingSentinel === busyKey) {
         state.pendingNewConversation = false;
         state.pendingSentinel = null;
+      }
+      // TASK-0085: catch 분기에서도 optimistic pending entry 는 본 함수가 책임지고 정리.
+      // failed status 로 짧게 표시 후 자동 remove — 사용자가 toast 안내를 확인할 시간 확보.
+      const failedEntry = state.pendingConversationEntries.get(busyKey);
+      if (failedEntry) {
+        failedEntry.status = "failed";
+        renderConversationList();
+        window.setTimeout(() => {
+          state.pendingConversationEntries.delete(busyKey);
+          renderConversationList();
+        }, 3000);
       }
       // TASK-0061 Phase 2 (AC-0077): pending bubble 을 오류 영역으로 전환.
       if (state.pendingBubble) {

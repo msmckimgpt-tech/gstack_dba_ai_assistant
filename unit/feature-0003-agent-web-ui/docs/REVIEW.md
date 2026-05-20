@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260519-0012 [SKIPPED:design-panel]
+- Date: 2026-05-19
+- Decision: TASK-0085 (REQ-20260519-0014, Minor §12.3) — lazy-create 사이드바 optimistic pending entry. multi-pending sentinel-keyed `state.pendingConversationEntries` Map + closure-aware cleanup + `_switchToPendingConversationContext` 클릭 swap. backend / RBAC / endpoint / audit / DB 무변경.
+- Reason: 사용자 직접 요청 — "+ 새 대화 송신 직후 다른 대화 전환 시 사이드바에서 잠시 사라지는 이슈" + "대화 내부 진입 가능 — 작업 step 현황 출력 위해". TASK-0048 lazy 패턴이 backend list 등재를 응답 시점까지 지연 — frontend placeholder + backend list 둘 다 새 entry 없는 구간이 사이드바 완전 소실. backend 변경 없이 frontend optimistic UI 로 해결.
+- Alt 거부:
+  - **backend eager row 생성**: TASK-0048 빈 대화 누적 방지 의도 위배.
+  - **state.conversations 에 직접 추가**: refreshWorkspace 가 통째 replace 라 사라짐.
+  - **single pendingConversation object**: multi-pending 두 번째가 첫 번째 overwrite. TASK-0082 unique sentinel 정합 깨짐.
+  - **pendingBubble 도 sentinel 별 Map**: 완전한 multi-bubble. 본 cycle scope 초과.
+- Risks: pendingBubble swap 시 step 정보 손실 (cid 전 polling 불가) / closure mismatch 시 cid binding skip / 3 s failed timer / 메모리 누수 (closure cleanup 으로 보호) / legacy appendPendingItem 보존.
+- 미해결 followup: 사용자 환경 검증 (5 시나리오) / lazy-create progress streaming (cid 미리 발급) / failed entry dismiss 버튼.
+- panel: SKIPPED:design-panel — Minor §12.3 + frontend state machine 변경 + 단일 파일 + RBAC/auth/DB 무영향. AGENTS.md §18.4 SKIPPED 정책 (단순 작업).
+- Trace: REQ-20260519-0014 → TASK-0085 → CHG-20260519-0016 → REV-20260519-0012. TASK-0048 + TASK-0082 design 의 자연 연속.
+
 ## REV-20260519-0011 [SKIPPED:design-panel]
 - Date: 2026-05-19
 - Decision: TASK-0084 (REQ-20260519-0013, Minor §12.3) — D2Coding 우선 monospace stack 으로 전역 통일 재시도. `:root` 의 `--font` / `--mono` 두 토큰을 다시 단일 D2Coding 우선 monospace stack 으로 통합 (`"D2Coding", "D2Coding ligature", "Cascadia Code", "SFMono-Regular", Consolas, "Noto Sans Mono CJK KR", ui-monospace, Menlo, monospace`) + `--font: var(--mono)` 참조. admin.html cache-bust `?v=20260519-d2coding-mono`. index.html cache-bust 는 사용자 main wt revert 의도 존중 skip.

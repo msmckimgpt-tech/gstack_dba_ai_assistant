@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260519-0016
+- Date: 2026-05-19
+- Summary: TASK-0085 (REQ-20260519-0014, Minor §12.3) — lazy-create 사이드바 optimistic pending entry 도입. "+ 새 대화 송신 직후 다른 대화 전환 시 새 대화 entry 가 사이드바에서 잠시 사라지는" UX 회귀 fix + 사용자 의도 "작업 step 현황의 출력 위해" pending entry 클릭으로 컨텍스트 swap 지원.
+- Files:
+  - `repo/unit/feature-0003-agent-web-ui/src/static/app.js`
+    - state 정의 (line 120~127) — `pendingConversationEntries: new Map()` field 추가. Map<sentinel, { sentinel, message, started_at, status }>. status: "in_flight" | "failed". multi-pending 지원 (TASK-0082 unique sentinel 정합).
+    - `sendPrompt()` lazy-create 진입 (line 3596~3605) — `state.pendingConversationEntries.set(busyKey, {...})` + `renderConversationList()` 호출 → 사이드바 즉시 표시.
+    - `sendPrompt()` success path (line 3685~3687) — closure 일치 여부와 무관하게 본 send 의 sentinel entry 만 `pendingConversationEntries.delete(busyKey)` (실 cid entry 는 `refreshWorkspace` 가 backend list refresh 로 등재 — optimistic 자연 swap).
+    - `sendPrompt()` catch path (line 3705~3715) — 본 send 의 entry status="failed" set + `renderConversationList()` + 3 s 후 자동 delete. toast 안내와 함께 양방향 신호.
+    - `renderConversationList()` 변경 (line 1209~1450) — `hasPending` 을 `hasDraftPending` (작성 중 placeholder) + `hasInFlightPending` (응답 대기 entries) 둘로 split. empty-state guard 도 둘 다 검사. 신규 `appendInFlightPendingItems()` 가 entries 를 started_at desc 정렬 후 each 표시 (라벨 = prompt 첫 60 자, meta = "응답 대기 중…" / "전송 실패", `is-pending-inflight` / `is-pending-failed` class, 활성 sentinel = `is-active`). failed entry 는 click 비활성, in_flight 는 `_switchToPendingConversationContext(entry)` 클릭 handler. `combinedPrepend` 가 own 그룹의 prepend 로 (1) in-flight entries (상단) + (2) 작성 중 placeholder (하단) 같이 표시.
+    - `_switchToPendingConversationContext(entry)` helper 신설 (line 3100~3137) — pending entry 클릭 시 sentinel 컨텍스트로 swap. `stopProgressPolling({reset:false, abort:true})` + `state.activeConversationId=""` + `state.pendingNewConversation=true` + `state.pendingSentinel=entry.sentinel` + `messages=[]` + `pendingBubble` 도 entry metadata 기반 복원 (startedAt 이어짐 → elapsed timer 자연 진행). renderComposer / renderMessages / renderProgress / startElapsedTimer 호출. 응답 도착 시 sendPrompt 의 success path closure 일치 (`state.pendingSentinel === busyKey`) → 자동 `activeConversationId=newCid` + `startProgressPolling`.
+  - `repo/unit/feature-0003-agent-web-ui/src/static/index.html` — `app.js?v=20260519-unique-sentinel` → `app.js?v=20260519-pending-entries` cache-bust 토큰 갱신.
+- Verification: `node --check app.js` PASS. backend / RBAC / endpoint / audit / DB 무변경. smoke 5 종 (송신 후 전환 / 응답 도착 / catch / click swap / multi-pending).
+- Risks: pendingBubble swap 시 step 정보 손실 (cid 전 polling 불가) / closure mismatch 시 cid binding skip / 3 s failed timer / grapheme-safe slice 미적용 / legacy appendPendingItem 보존.
+- Trace: REQ-20260519-0014 → TASK-0085 → CHG-20260519-0016 → REV-20260519-0012. TASK-0048 lazy-create + TASK-0082 unique sentinel 의 자연 연속.
+
 ## CHG-20260519-0015
 - Date: 2026-05-19
 - Summary: TASK-0084 (REQ-20260519-0013, Minor §12.3) — D2Coding 우선 monospace stack 으로 전역 통일 재시도. 사용자 후속 요청 "D2Coding 폰트를 우선해줄 수 있을까요?" + AskUserQuestion 으로 적용 범위 확인 (본문 + 코드 모두). CHG-0014 의 한글 친화 sans-serif stack 을 폐기하고, CHG-0013 의 monospace 통일 의도를 D2Coding (한글 monospace 가독성 검증된 NAVER 폰트) 우선으로 부활. `--font` 와 `--mono` 두 토큰을 다시 동일 D2Coding 우선 monospace stack 으로 통합. 사용자가 D2Coding 미설치 환경에서 fallback chain 의 Cascadia Code / SFMono-Regular / Consolas / Noto Sans Mono CJK KR / system monospace 로 자동 fallback.

@@ -9,6 +9,35 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-05-19 TASK-0085 완료 — lazy-create 사이드바 optimistic pending entry (송신 직후 다른 대화 전환 시 새 대화 entry 잠시 소실 UX 회귀 fix + 클릭 swap 으로 작업 step 현황 출력 지원)** (CHG-20260519-0016, REV-20260519-0012, REQ-20260519-0014, Minor §12.3 — frontend state machine + rendering refactor 5 영역, backend / RBAC / endpoint / audit / DB 무변경).
+
+**배경**: 사용자 직접 요청 — "+ 새 대화 에서 요청을 보내면, 해당 대화가 사용자 입장에서(웹브라우저에서) 즉시 활성화된 대화 객체로 받아들이도록 구성" + "현재는 + 새 대화 에서 요청 후 다른 대화로 전환할 때, 이전에 요청한 신규 대화가 잠시동안 목록에서 사라지는 이슈" + click UX 결정 "대화 내부 진입도 가능하도록 구성해주세요. 작업 step 현황의 출력을 위해서입니다".
+
+**원인**: TASK-0048 의 lazy-create 패턴이 backend conversation row 등재를 `/api/ask` 응답 시점까지 지연. frontend 의 `state.conversations` (사이드바 list) 는 응답 도착 시 `refreshWorkspace` 가 backend `/api/conversations` 결과로 통째 replace — 그 사이 (응답 도착 전) 사용자가 다른 대화로 전환하면 `selectConversation` 이 `state.pendingNewConversation=false` set + `appendPendingItem` 작성 중 placeholder 도 사라짐. 결과: 새 대화 entry 가 사이드바에서 완전 소실 → 응답 도착 후 refreshWorkspace 시점에야 다시 표시.
+
+**Fix design (multi-pending optimistic list entry)**:
+- `state.pendingConversationEntries: Map<sentinel, { sentinel, message, started_at, status }>` 신설. multi-pending 지원 — TASK-0082 unique sentinel design 정합.
+- `sendPrompt()` lazy-create 진입 시점에 entry add + `renderConversationList()` 호출 — 사이드바 즉시 표시.
+- success path: closure 일치 여부와 무관하게 본 send 의 sentinel entry 만 delete (실 cid entry 는 `refreshWorkspace` 가 등재).
+- catch path: status="failed" set + 3 s 후 자동 delete. 사용자에게 toast + 사이드바 양방향 안내.
+- `renderConversationList()` 의 `hasPending` split: `hasDraftPending` + `hasInFlightPending`. combined prepend 로 둘 다 own 그룹에 표시.
+- 신규 `appendInFlightPendingItems()` + `_switchToPendingConversationContext(entry)` helper.
+
+**회귀 시나리오 5 종 검증** (코드 trace 기반):
+- ①+ 새 대화 송신 직후 다른 대화 클릭 → state.pendingConversationEntries 에 entry 보존, 사이드바에 in-flight 표시 지속.
+- ②응답 도착 → success path 가 본 sentinel entry delete + refreshWorkspace 가 실 cid entry 등재. optimistic → 실 entry 자연 swap.
+- ③catch (네트워크 timeout 등) → "전송 실패" 표시 3 s 후 cleanup. 입력란 활성화로 사용자 즉시 재시도 가능.
+- ④pending entry 클릭 → `_switchToPendingConversationContext` 가 sentinel 컨텍스트로 swap. pendingBubble 복원으로 elapsed timer 이어짐. 응답 도착 시 closure 일치 → 자동 cid binding + polling 시작.
+- ⑤multi-pending 동시 진행 → 각 sentinel 별 분리 보존.
+
+**검증**: `node --check app.js` PASS. backend / RBAC / endpoint / audit / DB 무변경. cache-bust `v=20260519-unique-sentinel` → `v=20260519-pending-entries`.
+
+**Worktree 격리**: 본 작업은 다른 AI 작업자의 main 영역 변경과 격리하기 위해 worktree `ai/claude/0083/pending-list-entry` 에서 진행 후 main 으로 fast-forward merge.
+
+**Trace**: REQ-20260519-0014 → TASK-0085 → CHG-20260519-0016 → REV-20260519-0012. TASK-0048 lazy-create + TASK-0082 unique sentinel design 의 자연 연속.
+
+---
+
 **2026-05-19 TASK-0082 완료 — lazy-create unique sentinel design (첫 in-flight 중 + 새 대화 클릭 시 input 비활성 회귀 근본 fix, TASK-0081 followup)** (CHG-20260519-0012, REV-20260519-0008, REQ-20260519-0010, Minor §12.3 — frontend state machine refactor 5 군데, backend / RBAC / endpoint / audit / DB 무변경).
 
 **배경**: TASK-0081 fix 후 사용자 추가 보고 — "대화 요청을 보낸 후, + 새 대화 버튼을 클릭한 후에도 요청 텍스트 입력칸이 활성화되지 않는 이슈". TASK-0081 의 stale guard + catch cleanup 만으로는 첫 lazy-create in-flight 중 + 새 대화 클릭 시나리오를 cover 못 함.
