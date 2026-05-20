@@ -194,6 +194,17 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-05-20 (TASK-0091 Phase A~F — PATCH admin/products audit before-state full snapshot + audit integrity fix):
+  - **환경**: `docker run --rm --entrypoint python -v <wt>/unit/feature-0003-agent-web-ui/src:/app/web repo-web:latest -c "..."` host-mounted code + image dependency.
+  - **py_compile**: PASS.
+  - **Sentinel + leak checks** (Codex C1, C3): `build_audit_change_json(action='admin.product.update', before=..., after=...)` → ChangeJson body 검사:
+    - `'TASK-0091-SENTINEL-FULL-CONTENT-SHOULD-NOT-LEAK' in body: False` ✓ (Codex C1 — system_prompt full content drop, SECURITY §9.2)
+    - `'should_not_leak' in body: False` ✓ (Codex C3 — databases drop)
+  - **before/after delta checks** (Codex C4): sort_order 100→50 / is_default False→True / name 'before-name'→'after-name' 모두 정확 ✓
+  - **default_cleared_product_ids** (Codex C4 side effect): caller 가 after dict 에 `_default_cleared_product_ids` 키로 명시 전달 → builder branch 가 처리 → body 의 top-level `default_cleared_product_ids: [5, 9]` ✓
+  - **system_prompt_summary** (Codex C1, SECURITY §9.2): before/after 모두 `{present, content_len, updated_at}` 만 (content 본문 부재 sentinel 검증) ✓
+  - **결론**: Codex outside voice 5 findings 모두 흡수 정합. 8-field allowlist + transaction integrity + side effect 추적 모두 검증.
+  - **미완 (PR merge 후 사용자 위임)**: live PATCH 호출 + WebAuditEvents row 의 실 ChangeJson 검증 (real DB write path).
 - 2026-05-20 (TASK-0086 Phase A~G — `WebAccountActivity` legacy table DROP + dual write 종료):
   - **baseline**: legacy=74 row, mirror=74 row (1:1 정합). 초기 흡수 68 + dual write 추가 6.
   - **backup (Codex C4)**: `mysqldump --single-transaction --quick --set-charset --create-options --add-drop-table --triggers --hex-blob --no-tablespaces agent_memory WebAccountActivity > artifacts/mysql-backup/WebAccountActivity-20260520T074927Z.sql` (11,950 bytes). Row digest `a09e7898d1ce88711f7a850ab5fbcc91`. File md5 `f4163df9dc1b7ac81ae4c463a0f35e98`.

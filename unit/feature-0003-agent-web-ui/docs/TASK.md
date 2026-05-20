@@ -25,7 +25,7 @@ source_of_truth: true
 - [ ] TASK-0088 (REQ-20260520-0003, Minor §12.3 — `slow_query_log` 통합 ADR). TASK-0073 Codex C1 lock-in 으로 본 cycle 분리. 본 cycle: (1) `slow_query_log` 의 retention/RBAC 정합 가능성 검토 (mysql server log = file, WebAuditEvents = DB), (2) sidecar logrotate + `audit.read.any` 사용자만 접근 가능한 별 endpoint? 또는 별 분석 도구 사용 권유 → ADR-0020 결정.
 - [ ] TASK-0089 (REQ-20260520-0004, Minor §12.3 — 작업 화면 audit drawer UX). TASK-0073 Phase C 의 작업 화면 placeholder 가 entry point 부재 (admin 콘솔 redirect 안내만). 본 cycle: (1) `index.html` 의 profile drawer 에 "내 감사 로그" 탭 신설, (2) `audit.read.own` 보유 사용자에게 본인 audit row (Actor or Target = self) 표시, (3) admin 콘솔의 audit pane 과 동일 ChangeJson `<pre>` HTML escape + filter (action / from_at / to_at). CSV export / purge 는 admin 한정 (작업 화면 제외).
 - [ ] TASK-0090 (REQ-20260520-0005, Minor §12.3 — CSV streaming export). TASK-0073 Phase A4 의 `/api/admin/audits/export.csv` 의 hard cap 50k row → `StreamingResponse` 로 대체 + cursor 기반 page-by-page generator. large fleet (100k+ row) 에서 audit export 가능. memory footprint 안전. 본 cycle: backend FastAPI `StreamingResponse` + `csv.writer` iterator wrapper + Content-Type / Content-Disposition 정합.
-- [ ] TASK-0091 (REQ-20260520-0006, Minor §12.3 — PATCH admin/products audit before-state full snapshot). TASK-0073 Phase A5 의 `admin.product.update` audit 의 before-state 가 `{id, product_key}` 만 — UPDATE 전 full WebProducts row + WebProductDatabases schemas + system_prompt 까지 캡처가 정합. 본 cycle: PATCH 진입 시 `_list_products(conn, ...)` 또는 SELECT 로 full snapshot → `build_audit_change_json("admin.product.update", before=full_row, after=updated_row, ...)`. `_AUDIT_BUILDER_PRODUCT_FIELDS` 확장 검토.
+- [x] TASK-0091 (REQ-20260520-0006, ~~Minor~~ **Major** §12.3 — PATCH admin/products audit before-state full snapshot + audit integrity fix). TASK-0073 Phase A5 의 `admin.product.update` audit 의 before-state 가 `{id, product_key}` 만 → full snapshot 으로 확장 + Codex outside voice 5 findings 흡수. **scope 확장 (Minor→Major)**: Codex C2 가 `admin_update_product()` 의 `autocommit=True` default + UPDATE 즉시 commit + audit 실패 시 rollback 가능 0 인 **audit integrity 결함** 노출. 본 cycle 일괄 fix: (1) `_audit_product_snapshot()` 신규 helper (single-row + SELECT FOR UPDATE + system_prompt summary only, SECURITY §9.2 정합), (2) endpoint 명시 transaction (autocommit=False + commit + finally autocommit=True), (3) `_AUDIT_BUILDER_PRODUCT_FIELDS` 확장 (`+is_default`, `+sort_order`, `+system_prompt_summary` / `-databases`, `-system_prompt` full), (4) `default_cleared_product_ids` side effect 기록, (5) sentinel smoke PASS (SENTINEL `TASK-0091-SENTINEL` ChangeJson 부재 확인, system_prompt content drop). 본 cycle CHG-20260520-0006, REV-20260520-0006 on `ai/claude/0091/product-audit-snapshot` worktree.
 - [x] TASK-0092 (REQ-20260520-0007, Minor §12.3 — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 검증). TASK-0073 Phase E 의 사용자 위임 항목 1 건. **7 vector matrix PASS (7/7)** — V1~V3 fail-closed + V4 dev bypass + V5 positive control + V6 strict-string-equality (Codex C3) + V7 default. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용 (`docker run --entrypoint python --no-deps` + `import web.app` + stderr 3 substring 검증 + TEST.md **§4** append). 본 cycle CHG-20260520-0004, REV-20260520-0004 on `ai/claude/0092/audit-prod-fail-closed` worktree.
 - [x] TASK-0093 (REQ-20260520-0008, Minor §12.3 — `bin/verify-completion.sh check_12` audit endpoint routing 정적 검사). TASK-0073 Phase E hotfix (CHG-20260520-0001) 의 routing 회귀 fragility 보강. Codex outside voice review 5 findings 흡수 후 plan v2 redesign (SKIP→FAIL structural / inline 4-path→auto-discovery static GET / `/purge` method-aware 제외 / helper split + fixture test / `9 checks`→`10 checks` footer). Phase A~D 모두 검증 PASS (production positive + 5 fixture negative + 5 other-feature SKIP). 본 cycle CHG-20260520-0003, REV-20260520-0003 on `ai/claude/0086/audit-followup` worktree.
 
@@ -678,6 +678,89 @@ Codex outside voice (consult mode, model_reasoning_effort=high, ~5분, 398,567 t
 - Major + 파괴적 DROP 의무 outside voice (`feedback_outside_voice_for_rbac` user policy)
 
 REVIEW.md REV-20260520-0005 에 각 finding + 흡수 결정 + 근거 기록.
+
+---
+
+### 2.5 Implementation Plan (TASK-0091)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 **~~Minor~~→Major 등급 audit integrity fix** 변경 계획이다. **상태**: `approved-after-outside-voice`. 사용자가 2026-05-20 에 plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, ~5분, 687,409 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign (scope 확장 — audit integrity fix 포함) → 사용자 confirm 진행. TASK-0073 Phase A5 의 admin.product.update audit 정합성 강화 + autocommit/transaction 결함 fix.
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-20 (TASK-0091 Phase A~F 일괄, ~~Minor~~→Major audit integrity fix + before/after full snapshot + Codex outside voice 5 findings 흡수) -->
+
+#### 요지
+
+`admin.product.update` audit 의 before/after = `{id, product_key}` 만 (2 field) → full row snapshot 으로 확장. Codex outside voice 가 추가로 **audit integrity 결함** (autocommit=True default + UPDATE 즉시 commit + audit 실패 시 rollback 가능 0) 발견 — 본 cycle 일괄 fix.
+
+#### Codex outside voice review 흡수 (5 findings)
+
+| # | Codex Finding | 흡수 |
+|---|---|---|
+| **C1** | `system_prompt.content` full 저장 = SECURITY.md §9.2 위반 (full content 금지, `content_len_*` + preview 만). 기존 `admin.system_prompt.update` builder 가 이미 정합 패턴 (`content_full` masked) | **ACCEPT** → snapshot 에 `system_prompt_summary = {present, content_len, updated_at}` 만, content 본문 제외 |
+| **C2** | `admin_update_product()` 가 **same tx audit 아님** — autocommit=True default + UPDATE 즉시 commit + audit fail 시 rollback 가능 0. **Minor 아닌 audit integrity 결함** | **ACCEPT (scope 확장)** → `conn.autocommit=False` + `SELECT FOR UPDATE` + commit + finally autocommit=True |
+| **C3** | `_list_products()` 기반 snapshot 과잉 (전체 list scan + FOR UPDATE 불가). databases/system_prompt 별 endpoint = 별 audit | **ACCEPT** → single-row `SELECT FOR UPDATE`. `databases` 제외 (별 endpoint `admin.product.databases.update` 의 audit 으로 분리) |
+| **C4** | `sort_order` / `is_default` 누락 = **현재 결함**. endpoint 가 갱신하는데 allowlist 빠짐. `is_default=true` side effect 도 기록 권장 | **ACCEPT** → allowlist 에 `sort_order` + `is_default` 추가 + `default_cleared_product_ids` extra_change_json |
+| **C5** | Rollback 설명 낙관적 — full prompt 가 ChangeJson 들어가면 code revert 만으로 복구 안 됨 | **자동 해소** (C1 ACCEPT 로 system_prompt content 가 애초에 안 들어감) |
+
+#### 영향 파일 (code 1 + docs 6)
+
+Backend:
+- `unit/feature-0003-agent-web-ui/src/app.py`:
+  - **신규 helper `_audit_product_snapshot(conn, product_id)`** (~line 2127): single-row WebProducts snapshot + `SELECT ... FOR UPDATE` + `system_prompt_summary` (content 제외). `databases` 제외 (Codex C3).
+  - **`admin_update_product()` endpoint 갱신** (line 8328~): `conn.autocommit=False` + before snapshot + UPDATE + `default_cleared_product_ids` 캡처 + after snapshot + audit + commit + `finally autocommit=True` (Codex C2).
+  - **`_AUDIT_BUILDER_PRODUCT_FIELDS` 확장** (line 8862): 7 → 8 field. `+is_default`, `+sort_order`, `+system_prompt_summary` / `-databases`, `-system_prompt`.
+  - **builder branch `admin.product.update` 갱신** (line 8966~): `default_cleared_product_ids` 키 명시 처리.
+
+문서:
+- `unit/feature-0003-agent-web-ui/docs/TASK.md` §2.5 본 plan + TASK-0091 [x]
+- `unit/feature-0003-agent-web-ui/docs/MODIFY.md` CHG-20260520-0006
+- `unit/feature-0003-agent-web-ui/docs/REVIEW.md` REV-20260520-0006
+- `unit/feature-0003-agent-web-ui/docs/REPORT.md` §1 Summary
+- `unit/feature-0003-agent-web-ui/docs/TEST.md` §4 sentinel + delta smoke 결과
+- `unit/feature-0003-agent-web-ui/docs/FUNCTION.md` AC-0192
+
+#### Phase 순서
+
+1. **Phase A** — `_audit_product_snapshot()` helper 신설. **완료**.
+2. **Phase B** — endpoint 명시 transaction + before/after snapshot. **완료**.
+3. **Phase B-2** — `_AUDIT_BUILDER_PRODUCT_FIELDS` 확장 + builder branch `default_cleared_product_ids` 처리. **완료**.
+4. **Phase C** — py_compile + sentinel smoke. **PASS** — SENTINEL `TASK-0091-SENTINEL-...` ChangeJson 부재 ✓ / `should_not_leak` (databases) 부재 ✓ / sort_order 100→50 ✓ / is_default False→True ✓ / `default_cleared_product_ids: [5,9]` ✓ / `system_prompt_summary` 정합 ✓.
+5. **Phase D** — docs 6 갱신. **본 단계 진행 중**.
+6. **Phase E** — verify-completion PASS + commit.
+7. **Phase F** — cycle-finalize (issue + push + PR + merge + cleanup).
+
+#### 위험도 (§12.3) — **Major** (Minor→Major scope 확장)
+
+| 영역 | 위험도 | 보강 |
+|---|---|---|
+| `system_prompt.content` PII 노출 | **차단 (Codex C1)** | `system_prompt_summary` only (present/content_len/updated_at). full content drop sentinel test PASS |
+| `admin_update_product()` autocommit integrity | **차단 (Codex C2)** | 명시 transaction (autocommit=False + commit + finally autocommit=True). audit 실패 시 UPDATE rollback 가능 |
+| Concurrent PATCH race | **차단 (Codex C2)** | `SELECT ... FOR UPDATE` row lock |
+| allowlist 누락 (sort_order/is_default) | **차단 (Codex C4)** | allowlist 확장. before/after delta 정합 |
+| `is_default=true` side effect 추적 | **차단 (Codex C4)** | `default_cleared_product_ids` extra ChangeJson |
+| `databases` audit noise | **차단 (Codex C3)** | allowlist 제외. 별 endpoint audit 으로 분리 |
+| Rollback risk | **자동 해소** | C1 ACCEPT 로 content full drop — 별 redact SQL 불필요 |
+
+**전체 등급**: ~~Minor~~ → **Major** (audit integrity fix scope 확장). 단 사용자 영향 0 (audit row 정확성만), DB schema 변경 0.
+
+#### 검증 결과 (Phase C 실행 후)
+
+- `python3 -m py_compile app.py` → PASS
+- sentinel smoke (`docker run --rm --entrypoint python -v <src>:/app/web repo-web:latest -c "..."`):
+  - `'TASK-0091-SENTINEL' in body: False` ✓ (system_prompt full content drop)
+  - `'should_not_leak' in body: False` ✓ (databases drop)
+  - `sort_order before=100 after=50` ✓
+  - `is_default before=False after=True` ✓
+  - `default_cleared_product_ids: [5, 9]` ✓
+  - `system_prompt_summary: {present: True, content_len: 1234/2000, updated_at: '2026-05-20'}` ✓
+
+#### outside voice 결과 요약 (REVIEW.md REV-20260520-0006 정본)
+
+Codex outside voice (consult mode, model_reasoning_effort=high, ~5분, 687,409 tokens):
+- 5 critical findings 도출, 2 minimum-fix 권고
+- 본 plan 의 5 findings 모두 ACCEPT → v2 redesign (scope Minor→Major 확장)
+- `feedback_outside_voice_for_rbac` user policy 적용 — audit 표면 직접 변경
+
+REVIEW.md REV-20260520-0006 에 각 finding + 흡수 결정 + 근거 기록.
 
 ---
 

@@ -8,6 +8,34 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260520-0006
+- Date: 2026-05-20
+- Summary: TASK-0091 (REQ-20260520-0006, ~~Minor~~→**Major** §12.3 — PATCH admin/products audit before-state full snapshot + audit integrity fix). Codex outside voice review 5 critical findings + 2 minimum-fix 흡수 — Minor 등급 추정이 audit integrity 결함 (autocommit=True default) 노출 → scope 확장.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - 신규 helper `_audit_product_snapshot(conn, product_id)` (~line 2127): single-row WebProducts snapshot + `SELECT ... FOR UPDATE` + `system_prompt_summary = {present, content_len, updated_at}` (SECURITY §9.2 정합 — content 본문 제외). `databases` 제외 (Codex C3 — 별 endpoint audit).
+    - `admin_update_product()` 갱신 (line 8328~): `conn.autocommit=False` + before snapshot + UPDATE + `default_cleared_product_ids` 캡처 + after snapshot + audit + commit + `finally autocommit=True` (Codex C2 audit integrity fix).
+    - `_AUDIT_BUILDER_PRODUCT_FIELDS` 확장 (line 8862): 7→8 field. `+is_default`, `+sort_order`, `+system_prompt_summary` / `-databases`, `-system_prompt` (Codex C1+C4).
+    - builder branch `admin.product.update` (line 8966~): `default_cleared_product_ids` 키 명시 처리 (Codex C4 side effect).
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` §2.5 본 plan + TASK-0091 [x]
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` REV-20260520-0006
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md` §1 Summary
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md` §4 sentinel + delta smoke 결과
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md` AC-0192
+- Codex outside voice 5 findings 흡수:
+  - **C1**: `system_prompt.content` full drop → `system_prompt_summary` only (SECURITY §9.2)
+  - **C2**: autocommit/transaction integrity fix (audit 실패 시 UPDATE rollback 가능)
+  - **C3**: single-row `SELECT FOR UPDATE` + databases 제외
+  - **C4**: allowlist 확장 (`is_default`, `sort_order`) + `default_cleared_product_ids` side effect
+  - **C5**: C1 ACCEPT 로 자동 해소 (full content drop)
+- Verification (Phase C sentinel smoke):
+  - py_compile PASS
+  - `'TASK-0091-SENTINEL' in body: False` ✓ (system_prompt full drop)
+  - `'should_not_leak' in body: False` ✓ (databases drop)
+  - sort_order 100→50 / is_default False→True / `default_cleared_product_ids: [5,9]` / `system_prompt_summary` 정합 ✓
+- Risks: scope ~~Minor~~→Major (audit integrity fix 포함). 사용자 영향 0 (audit row 정확성). DB schema 변경 0. PATCH admin/products endpoint behavior: 외부 contract 동일, internal transaction semantics 만 변경.
+- Trace: REQ-20260520-0006 → TASK-0091 → CHG-20260520-0006 → REV-20260520-0006.
+
 ## CHG-20260520-0005
 - Date: 2026-05-20
 - Summary: TASK-0086 (REQ-20260520-0001, **Major** §12.3 — `WebAccountActivity` legacy table DROP + dual write 종료). TASK-0073 Phase A2 의 dual source 일시 공존을 단일 source-of-truth (WebAuditEvents) 로 전환. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용. backup + scratch restore rehearsal + 1:1 정합 (74=74) + 사용자 명시 ack 후 진행.
