@@ -8,6 +8,48 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260520-0003
+- Date: 2026-05-20
+- Summary: TASK-0093 (REQ-20260520-0008, **Minor** §12.3 — `bin/verify-completion.sh check_12` audit endpoint routing 정적 검사 신설). TASK-0073 Phase E hotfix (CHG-20260520-0001) 의 routing 회귀 fragility 보강. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용.
+- Files:
+  - `bin/verify-completion.sh` — `check_12_audit_endpoint_routing()` 함수 신설 (line ~936-955) + `_check_audit_routing_order()` pure helper split (line ~957-1010). `main()` 의 line 1123 에 호출 추가. footer line 1126·1129 의 "9 checks" → "10 checks: 7 pilot + worktree binding + repo immutability + audit endpoint routing". META mode footer (line 1084·1091·1094) 는 그대로 — check_12 는 feature-specific 라 META mode 에서 의도적으로 skip.
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` — §2.2 Implementation Plan (TASK-0093) 신설 (PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-20). TASK-0093 [ ]→[x] 마킹.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260520-0003 entry 추가 (head prepend, outside voice 흡수 이력 + 5 findings 표).
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md` — Phase A~F 변경 요약 + git 동기화 결과.
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md` — TEST 케이스 정의 (positive 1 + negative 5 fixture + SKIP 5 other-feature + 1 missing-app structural FAIL).
+- check_12 spec (v2, Codex outside voice 5 findings 흡수):
+  - feature_id != "feature-0003-agent-web-ui" 만 SKIP (silent return 0). 그 외 분기는 모두 FAIL — APIRouter 분리·prefix 변경·route 삭제가 silent pass 되는 v1 의 회귀 방지 게이트 의도 모순 (Codex C1) 차단.
+  - 정적 GET sibling list 는 inline 4-path hardcoded 가 아니라 auto-discovery (`@app.get("/api/admin/audits/<non-{>")` 패턴 grep). new static GET 추가 시 자동 catch (Codex C4).
+  - `/purge` (POST) 는 method-aware 라 GET `/{event_id}` 와 collision 위험 0. auto-discovery 패턴이 `@app.get(...)` 만 매치하여 자연 제외. hint 정확화 (Codex C3).
+  - helper split (`_check_audit_routing_order(app_path)`) — Phase C fixture 테스트 진입점. production app.py 외에도 임의 fixture 파일로 호출 가능 (Codex C5).
+  - `set -euo pipefail` 환경의 grep no-match (exit 1) 시 `|| true` fallback 처리 — log_check 호출 보장 (in-cycle fix during Phase C debug).
+  - FAIL hint 4 종: (1) "audit routes not found in expected '@app.get("/api/admin/audits/...")' form" — structural refactor, (2) "static audit GET sibling(s) detected but '/{event_id}' detail endpoint missing" — route removal, (3) "'/{event_id}' detail endpoint detected but no static GET siblings" — layout 변화, (4) "'/api/admin/audits/{event_id}' (line N) precedes static GET sibling 'X' (line M). FastAPI/starlette linear match would route 'X' to '{event_id}' (422 int_parsing). Move '{event_id}' definition after all static GET siblings" — ordering 위반.
+- Verification:
+  - (Phase A) `bash -n bin/verify-completion.sh` PASS — syntax 정합.
+  - (Phase B) production positive: `_check_audit_routing_order` wrapper 호출 → `CHECK#12 PASS audit endpoint routing order` (production app.py line 9522 max-static < line 9732 detail).
+  - (Phase C) 5 fixture negative: valid.py PASS / wrong_order.py FAIL ordering / no_detail.py FAIL "detail endpoint missing" / no_siblings.py FAIL "no static GET siblings" / refactored.py FAIL "routes not found in expected form".
+  - (Phase D) 5 other-feature SKIP: feature-0001 / 0002 / 0004 / 0005 / 0006 호출 → rc=0, no output.
+  - (Phase D 추가) target feature + app.py 부재 → FAIL "expected app.py at <path> but file is missing".
+- Risks: feature-0003 hardcode 는 의도적 — 일반화는 별 cycle. auto-discovery 패턴이 `@app.get(...)` 만 매치 — `@router.get(...)` / `app.include_router(prefix=...)` 등 APIRouter 패턴 채택 시 structural FAIL "routes not found in expected form" 으로 manual review 강제 (LOUD fail 의도). multi-line decorator / single quote / trailing slash 변형도 동일 — structural FAIL 로 잡힘. 본 cycle scope (Minor) 에서 AST 파서까지 도입 안 함.
+- Trace: REQ-20260520-0008 → TASK-0093 → CHG-20260520-0003 → REV-20260520-0003.
+
+## CHG-20260520-0002
+- Date: 2026-05-20
+- Summary: TASK-0073 후속 cycle backlog (TASK-0086~TASK-0093) list-up. `ai/claude/0086/audit-followup` worktree 의 단일 commit 으로 다음 세션 진입점 (`/_template:entry`) lock-in. 본 backlog 의 각 entry 는 별 cycle (별 PLAN-APPROVED + 별 CHG/REV) 로 분리.
+- Files:
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` — §2. Task Queue 의 머리에 "TASK-0073 Audit subsystem followup backlog (2026-05-20)" subsection 신설. 8 entries:
+    - TASK-0086 Major §12.3 — WebAccountActivity legacy table DROP + dual write 종료 (data backup + 5 sub-step)
+    - TASK-0087 Major §12.3 — 외부 LAN trust 강화 (Caddy trust_forwarded_for + `_get_client_ip` whitelist, feature-0006 위임)
+    - TASK-0088 Minor §12.3 — slow_query_log 통합 ADR-0020 결정
+    - TASK-0089 Minor §12.3 — 작업 화면 audit drawer UX (`audit.read.own` 본인 view)
+    - TASK-0090 Minor §12.3 — CSV streaming export (`StreamingResponse` + generator)
+    - TASK-0091 Minor §12.3 — PATCH admin/products audit before-state full snapshot
+    - TASK-0092 Minor §12.3 — AGENT_AUDIT_ENABLED=0+prod startup fail-closed 검증 (Phase E 사용자 위임 항목)
+    - TASK-0093 Minor §12.3 — verify-completion check_12 audit endpoint routing 정적 검사 (Phase E hotfix fragility 보강)
+- Verification: 본 commit 은 docs only — code 변경 없음. 신규 worktree 의 base 는 a060c64 (TASK-0073 Phase E hotfix 머지 후 main HEAD). 다음 세션 진입 시 `cd /root/download/docker/mysql_ai_delegated_dev/.worktrees/0086-audit-followup && /_template:entry <선택한 task> 진행해주세요` 형태로 사용.
+- Risks: backlog 8 entries 가 단일 worktree 에 묶임 — 다음 세션이 1 cycle 한정 1 task 만 진행. 다른 task 는 별 worktree (`ai/claude/0087/...` 등) 분기 필요. 또는 본 worktree 안에서 별 branch checkout (§13.2.2 F1 binding 위반 — 허용 안 됨). 다음 세션 작업자가 본 worktree 의 첫 task 선택 후 별 worktree 권장.
+- Trace: TASK-0073 후속 → CHG-20260520-0002 → REV-20260520-0002. 본 backlog 는 신규 cycle 들의 staging area.
+
 ## CHG-20260520-0001
 - Date: 2026-05-20
 - Summary: TASK-0073 Phase E hotfix (REQ-20260519-0001, **Critical** §12.3) — `/api/admin/audits/{event_id}` routing 순서 회귀 fix + browser smoke 검증 PASS. main worktree 의 `make web` 재배포 후 audit subsystem 8 endpoint 실 검증 중 발견.
