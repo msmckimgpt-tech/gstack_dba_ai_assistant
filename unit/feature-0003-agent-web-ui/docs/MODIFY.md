@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260520-0002
+- Date: 2026-05-20
+- Summary: TASK-0073 후속 cycle backlog (TASK-0086~TASK-0093) list-up. `ai/claude/0086/audit-followup` worktree 의 단일 commit 으로 다음 세션 진입점 (`/_template:entry`) lock-in. 본 backlog 의 각 entry 는 별 cycle (별 PLAN-APPROVED + 별 CHG/REV) 로 분리.
+- Files:
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` — §2. Task Queue 의 머리에 "TASK-0073 Audit subsystem followup backlog (2026-05-20)" subsection 신설. 8 entries:
+    - TASK-0086 Major §12.3 — WebAccountActivity legacy table DROP + dual write 종료 (data backup + 5 sub-step)
+    - TASK-0087 Major §12.3 — 외부 LAN trust 강화 (Caddy trust_forwarded_for + `_get_client_ip` whitelist, feature-0006 위임)
+    - TASK-0088 Minor §12.3 — slow_query_log 통합 ADR-0020 결정
+    - TASK-0089 Minor §12.3 — 작업 화면 audit drawer UX (`audit.read.own` 본인 view)
+    - TASK-0090 Minor §12.3 — CSV streaming export (`StreamingResponse` + generator)
+    - TASK-0091 Minor §12.3 — PATCH admin/products audit before-state full snapshot
+    - TASK-0092 Minor §12.3 — AGENT_AUDIT_ENABLED=0+prod startup fail-closed 검증 (Phase E 사용자 위임 항목)
+    - TASK-0093 Minor §12.3 — verify-completion check_12 audit endpoint routing 정적 검사 (Phase E hotfix fragility 보강)
+- Verification: 본 commit 은 docs only — code 변경 없음. 신규 worktree 의 base 는 a060c64 (TASK-0073 Phase E hotfix 머지 후 main HEAD). 다음 세션 진입 시 `cd /root/download/docker/mysql_ai_delegated_dev/.worktrees/0086-audit-followup && /_template:entry <선택한 task> 진행해주세요` 형태로 사용.
+- Risks: backlog 8 entries 가 단일 worktree 에 묶임 — 다음 세션이 1 cycle 한정 1 task 만 진행. 다른 task 는 별 worktree (`ai/claude/0087/...` 등) 분기 필요. 또는 본 worktree 안에서 별 branch checkout (§13.2.2 F1 binding 위반 — 허용 안 됨). 다음 세션 작업자가 본 worktree 의 첫 task 선택 후 별 worktree 권장.
+- Trace: TASK-0073 후속 → CHG-20260520-0002 → REV-20260520-0002. 본 backlog 는 신규 cycle 들의 staging area.
+
 ## CHG-20260520-0001
 - Date: 2026-05-20
 - Summary: TASK-0073 Phase E hotfix (REQ-20260519-0001, **Critical** §12.3) — `/api/admin/audits/{event_id}` routing 순서 회귀 fix + browser smoke 검증 PASS. main worktree 의 `make web` 재배포 후 audit subsystem 8 endpoint 실 검증 중 발견.

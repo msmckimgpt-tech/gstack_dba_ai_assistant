@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260520-0002 [SKIPPED:backlog-staging]
+- Date: 2026-05-20
+- Decision: TASK-0073 후속 cycle backlog 8 entries (TASK-0086 ~ TASK-0093) 를 `ai/claude/0086/audit-followup` worktree 의 단일 commit 으로 lock-in. 본 worktree 는 다음 세션의 진입점.
+- Reason: 사용자 명시 요청 — "후속 cycle 에 대한 항목은 별도로 진행할 신규 worktree 에 list-up". 본 worktree 의 backlog 는 staging area — 각 task 의 실 작업은 별 cycle (별 PLAN-APPROVED + 별 CHG/REV + 가능 시 별 worktree).
+- Alt 거부:
+  - **docs/TODOS.md 에 list-up**: CLAUDE.md 정책 "TODOS.md 는 feature 단위로 귀속되지 않은 repo-level 보류 아이템만 추적". 본 8 entries 는 모두 feature-0003 귀속 → feature 의 TASK.md Task Queue 가 정합.
+  - **단일 큰 worktree 안에 8 task 모두 진행**: §13.2.2 F1 binding — 한 worktree = 한 branch. 단 본 backlog staging 자체는 단일 worktree OK (단일 commit, 단일 task = backlog 등재).
+  - **다음 세션에서 직접 list-up**: 사용자 요청 위배. 본 cycle 종료 *전*에 backlog lock-in 명시.
+- Risks: 8 entries 가 단일 worktree 에 등재 — 다음 세션 작업자가 1 cycle = 1 task 분리 정합 보장 필요. NOTE: 별 task 진행 시 별 worktree (`git worktree add ../.worktrees/0086-<slice> -b ai/claude/0086/<slice>` 또는 0087+ 번호 사용) 권유.
+- 미해결 followup: 다음 세션에서 본 worktree 진입 후 task 선택 → `/plan-eng-review` 또는 `/autoplan` 호출 → outside voice (Codex) → PLAN-APPROVED → 작업 진행.
+- panel: SKIPPED:backlog-staging — 본 commit 은 docs only backlog list-up, 실 작업 cycle 진입 전. plan/eng review 는 task 선택 후 다음 세션.
+- Trace: TASK-0073 후속 → CHG-20260520-0002 → REV-20260520-0002.
+
 ## REV-20260520-0001 [SKIPPED:hotfix-after-smoke]
 - Date: 2026-05-20
 - Decision: TASK-0073 Phase E hotfix — `/api/admin/audits/{event_id}` routing 회귀 fix. 정적 sibling endpoint (export.csv / actors / resources) 가 `event_id` parameter 로 잡혀 422. detail endpoint 를 정적 path 뒤로 이동.
