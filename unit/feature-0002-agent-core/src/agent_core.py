@@ -134,7 +134,31 @@ def compose_system_prompt(
     if mem_conn is None:
         return SYSTEM_PROMPT
     is_auto = str(product_mode or "pinned").lower() == "auto"
-    parts: list[str] = [SYSTEM_PROMPT]
+
+    # TASK-0095 (Major §12.3): GLOBAL scope 가 최상위. WebSystemPrompts 의
+    # scope='global' 단일 row (Product/Role/Account 모두 NULL) 가 truth, 부재/예외 시
+    # 코드 상수 SYSTEM_PROMPT 가 bootstrap fallback. 운영자가 admin 콘솔에서 재배포
+    # 없이 BASE 를 수정할 수 있게 한다.
+    base_prompt = SYSTEM_PROMPT
+    try:
+        _bcur = mem_conn.cursor()
+        _bcur.execute(
+            "SELECT Content FROM WebSystemPrompts "
+            "WHERE Scope='global' AND ProductId IS NULL "
+            "AND RoleId IS NULL AND AccountId IS NULL LIMIT 1"
+        )
+        _brow = _bcur.fetchone()
+        if _brow and _brow[0]:
+            base_prompt = str(_brow[0])
+        try:
+            _bcur.close()
+        except Exception:
+            pass
+    except Exception:
+        # WebSystemPrompts 미존재 (bootstrap-time) 또는 SQL 예외 — 코드 상수 fallback
+        base_prompt = SYSTEM_PROMPT
+
+    parts: list[str] = [base_prompt]
     if is_auto:
         parts.append(
             "\n\n[AUTO MODE] No product is pinned to this conversation. "
@@ -143,7 +167,7 @@ def compose_system_prompt(
     try:
         cur = mem_conn.cursor()
     except Exception:
-        return SYSTEM_PROMPT
+        return base_prompt
 
     def _fetch(
         scope: str,

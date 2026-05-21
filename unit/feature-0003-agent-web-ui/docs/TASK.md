@@ -11,8 +11,8 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: critical (TASK-0094 — 첨부 multi-cycle, 4 sprint)
-- Last Updated: 2026-05-21 (TASK-0094 등재 + PLAN-APPROVED)
+- Priority: major (TASK-0095 — GLOBAL system prompt layer)
+- Last Updated: 2026-05-21 (TASK-0095 PLAN-APPROVED — 신규 `설정` 탭 + 전역 시스템 프롬프트 sub-section)
 
 ## 2. Task Queue
 
@@ -28,6 +28,7 @@ source_of_truth: true
 - [x] TASK-0091 (REQ-20260520-0006, ~~Minor~~ **Major** §12.3 — PATCH admin/products audit before-state full snapshot + audit integrity fix). TASK-0073 Phase A5 의 `admin.product.update` audit 의 before-state 가 `{id, product_key}` 만 → full snapshot 으로 확장 + Codex outside voice 5 findings 흡수. **scope 확장 (Minor→Major)**: Codex C2 가 `admin_update_product()` 의 `autocommit=True` default + UPDATE 즉시 commit + audit 실패 시 rollback 가능 0 인 **audit integrity 결함** 노출. 본 cycle 일괄 fix: (1) `_audit_product_snapshot()` 신규 helper (single-row + SELECT FOR UPDATE + system_prompt summary only, SECURITY §9.2 정합), (2) endpoint 명시 transaction (autocommit=False + commit + finally autocommit=True), (3) `_AUDIT_BUILDER_PRODUCT_FIELDS` 확장 (`+is_default`, `+sort_order`, `+system_prompt_summary` / `-databases`, `-system_prompt` full), (4) `default_cleared_product_ids` side effect 기록, (5) sentinel smoke PASS (SENTINEL `TASK-0091-SENTINEL` ChangeJson 부재 확인, system_prompt content drop). 본 cycle CHG-20260520-0006, REV-20260520-0006 on `ai/claude/0091/product-audit-snapshot` worktree.
 - [x] TASK-0092 (REQ-20260520-0007, Minor §12.3 — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 검증). TASK-0073 Phase E 의 사용자 위임 항목 1 건. **7 vector matrix PASS (7/7)** — V1~V3 fail-closed + V4 dev bypass + V5 positive control + V6 strict-string-equality (Codex C3) + V7 default. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용 (`docker run --entrypoint python --no-deps` + `import web.app` + stderr 3 substring 검증 + TEST.md **§4** append). 본 cycle CHG-20260520-0004, REV-20260520-0004 on `ai/claude/0092/audit-prod-fail-closed` worktree.
 - [x] TASK-0093 (REQ-20260520-0008, Minor §12.3 — `bin/verify-completion.sh check_12` audit endpoint routing 정적 검사). TASK-0073 Phase E hotfix (CHG-20260520-0001) 의 routing 회귀 fragility 보강. Codex outside voice review 5 findings 흡수 후 plan v2 redesign (SKIP→FAIL structural / inline 4-path→auto-discovery static GET / `/purge` method-aware 제외 / helper split + fixture test / `9 checks`→`10 checks` footer). Phase A~D 모두 검증 PASS (production positive + 5 fixture negative + 5 other-feature SKIP). 본 cycle CHG-20260520-0003, REV-20260520-0003 on `ai/claude/0086/audit-followup` worktree.
+- [x] TASK-0095 (REQ-20260521-0003, **Major** §12.3 — GLOBAL system prompt layer + 신규 `설정` 탭). 사용자 직접 요청 — "현재 서비스 사용자의 시스템 프롬프트 누적 구조에서, 최상위 전역 프롬프트도 구성해주세요." 4 layer (BASE → Product → Role → Account) 의 BASE 가 코드 상수 hard-code 라 운영자 수정 불가하던 구조를 5 layer (GLOBAL → Product → Role → Account, BASE = code constant fallback) 로 확장. WebSystemPrompts schema 무변경 (Scope VARCHAR(16) 가 이미 'global' 수용). RBAC 2 권한 신설 (`system_prompt.global.read/.write`, group=`settings`, admin auto-grant). 관리 콘솔 sidebar 에 신규 `설정` 탭 + 확장 가능한 `admin-settings-section` sub-section 패턴 도입 — 차후 운영 항목 추가 시 동일 패턴으로 sub-section 누적. AC-0011 갱신 + AC-0199 ~ AC-0204 신설. 본 cycle CHG-20260521-0003, REV-20260521-0003 on `ai/claude/global-system-prompt` worktree.
 
 ### TASK-0094 (REQ-20260521-0001, **Critical** §12.3 — 첨부 multi-cycle A+B+C+D) (2026-05-21)
 
@@ -48,6 +49,37 @@ D1 S3-compat MinIO / D2 동일 cluster + 별 schema / D3 PGVector / D4 A+B+C+D �
 본 cycle 은 PLAN-APPROVED marker 부여 후 Sprint 1 worktree 분리 + implementation 진입. 외부 영향 (PR / 외부 시스템 알림) 은 별도 confirm.
 
 본 backlog 는 본 worktree 의 commit 으로 lock-in. 신규 세션이 본 worktree 에서 진입 (`/_template:entry`) 후 task 선택 + `/plan-eng-review` / `/autoplan` 등 호출.
+
+### TASK-0095 (REQ-20260521-0002, **Major** §12.3 — GLOBAL system prompt layer + 신규 `설정` 탭) (2026-05-21)
+
+본 worktree (`ai/claude/global-system-prompt`) 의 cycle. 사용자 직접 요청 — "현재 서비스 사용자의 시스템 프롬프트 누적 구조에서, 최상위 전역 프롬프트도 구성해주세요. Product / Role / Account 에 기본적으로 처음 누적되어 요청사항에 적용될 부분입니다." `agent_core.py` 의 `SYSTEM_PROMPT` 상수 본문을 DB 화 (BASE 자체를 운영자가 재배포 없이 수정 가능) + 신규 `설정` 탭 신설 (확장성 — 차후 다른 운영 항목 추가 대비) + 그 안에 sub-section "전역 시스템 프롬프트" 마운트.
+
+**누적 순서** (최종): GLOBAL → PRODUCT → ROLE(공통+Product별) → ACCOUNT(공통+Product별).
+
+**핵심 결정** (사용자 in-cycle):
+- D1 — BASE 본문을 DB row (`scope='global'`, ProductId/RoleId/AccountId 모두 NULL) 1행으로 이전. 코드 상수 `SYSTEM_PROMPT` 는 bootstrap fallback 으로 유지 (DB row 부재 / mem_conn None / SQL exception 시 안전망).
+- D2 — RBAC 신규 2건: `system_prompt.global.read`, `system_prompt.global.write`. admin only auto-grant (다른 role 은 admin override).
+- D3 — admin endpoint scope allowlist 에 `'global'` 추가. global scope 는 product_id/role_id/account_id 무시 (force NULL).
+- D4 — 신규 admin UI 탭 `설정` (data-admin-tab="settings") + 내부 sub-section 패턴 (`admin-settings-section` data-settings-section). 첫 sub-section = 전역 시스템 프롬프트 (`buildSystemPromptEditor({scope:'global'})`). product/role/account select 미표시.
+- D5 — Bootstrap seed: 신규 deploy 시 `_ensure_web_system_prompts_schema()` 다음에 `_seed_global_system_prompt()` 가 idempotent INSERT (row 부재 시에만, SYSTEM_PROMPT 코드 상수 본문). 이후 admin 수정이 우선 — UPDATE 안 함.
+- D6 — Audit: `admin.system_prompt.update` builder 의 기존 `request_ctx['scope']` reference 자연 흡수, resource_id pattern `global:0:0:0`.
+
+**Phase 분할**:
+- Phase A — `agent_core.py compose_system_prompt()` 첫 부분 GLOBAL fetch + fallback 추가.
+- Phase B — `app.py` WebSystemPrompts schema (Scope enum 확장 — VARCHAR 라 추가 변경 0, 단 _seed_global helper 신설), `_load_system_prompt`/`_upsert_system_prompt` 는 scope str 만 받으므로 무변경.
+- Phase C — RBAC 2건 추가 (PERMISSION_DEFINITIONS) + admin role catchup 2 codes.
+- Phase D — admin endpoint scope allowlist 확장 (GET/PUT 양쪽) + 권한 검사 분기 (`system_prompt.global.read/write`).
+- Phase E — admin.html 에 `<button data-admin-tab="settings">설정</button>` + `<section data-admin-pane="settings">` + admin.js 의 settings pane 핸들러 + `buildSystemPromptEditor({scope:'global'})` 마운트. `buildSystemPromptEditor` 가 scope='global' 일 때 product select hide.
+- Phase F — docs (FUNCTION.md system prompt assembly 5 layer 갱신, MODIFY.md CHG-20260521-0003, REVIEW.md REV-20260521-0003, REPORT.md §1 sticky note).
+- Phase G — verify-completion.sh `--pre-commit feature-0003-agent-web-ui` + commit + main fast-forward.
+
+**Affected files** (estimate 8): agent_core.py / app.py / admin.html / admin.js / FUNCTION.md / MODIFY.md / REVIEW.md / REPORT.md.
+
+**Risk**: Major §12.3 — 모든 LLM 응답에 영향 (GLOBAL 이 모든 conversation 의 첫 system message). DB row 비정상 시 fallback 상수 보존으로 zero-data state 방지. Audit hook 자연 흡수 (builder 변경 0).
+
+본 cycle 은 PLAN-APPROVED marker 부여 후 즉시 Phase A 진입. 외부 영향 (PR / 배포) 은 별도 confirm.
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-21 (TASK-0095, Major §12.3 — GLOBAL system prompt layer 신설. agent_core.py SYSTEM_PROMPT 상수 본문 → WebSystemPrompts scope='global' 1 row DB 화 + 코드 상수 fallback 유지. RBAC 2건 (`system_prompt.global.read/.write`) admin only. 신규 `설정` 탭 + 내부 sub-section 확장성 패턴. compose_system_prompt() 가 GLOBAL 을 가장 먼저 누적. worktree ai/claude/global-system-prompt 에서 진행, 별도 commit 후 main fast-forward.) -->
 
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-21 (TASK-0094, Critical §12.3 — 첨부 multi-cycle A CSV ingest + B DDL/KB + C Vision + D PDF RAG 4 sprint 분리. D1~D21 21 결정 확정 (D14 SQL allowlist guard 통과를 Sprint 1 ship 조건). Codex outside-voice review 2 회 흡수 (REV-20260520-0001 1차 17 Valid + REV-20260521-0002 2차 Critical 3 / Major 11 / Minor 2 → F8 만 사용자 명시 거부, 위험 격리는 D14 + R-Claim4 + R-F4 + D20 조합으로 충족). BRIEFING-attachment-multi-cycle.md Revision 2. worktree ai/claude/0087/attachment-briefing (git worktree 명 유지, 본 cycle TASK-0094) 별도 commit. Sprint 1 implementation 은 별 worktree 분리.) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-19 (TASK-0085, Minor §12.3 — lazy-create 사이드바 optimistic pending entry (multi-pending sentinel-keyed Map + click swap to sentinel context), "+ 새 대화 송신 직후 다른 대화 전환 시 새 대화 entry 가 사이드바에서 잠시 사라지는" UX 회귀 fix + 사용자 의도 "작업 step 현황의 출력" 지원. worktree ai/claude/0083/pending-list-entry 별도 commit) -->

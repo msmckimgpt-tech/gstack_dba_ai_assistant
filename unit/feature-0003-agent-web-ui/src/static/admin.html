@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260519-audit-tab" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260521-settings-tab" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -44,6 +44,13 @@
         <button type="button" class="admin-tab" data-admin-tab="audits" id="adminTabAudits">
           <span class="admin-tab-label">감사 로그</span>
           <span class="admin-tab-count" id="tabCountAudits">—</span>
+        </button>
+
+        <!-- TASK-0095: 설정 tab — 전역 시스템 프롬프트 + 차후 운영 항목 확장 -->
+        <div class="admin-tab-group-divider"></div>
+        <div class="admin-tab-group-label">시스템</div>
+        <button type="button" class="admin-tab" data-admin-tab="settings" id="adminTabSettings">
+          <span class="admin-tab-label">설정</span>
         </button>
       </nav>
       <div class="admin-sidebar-foot">
@@ -302,6 +309,30 @@
           </div>
         </div>
       </section>
+
+      <!-- TASK-0095: 설정 pane — 확장성 패턴 (admin-settings-section 단위로 sub-section 추가). -->
+      <section class="admin-pane" data-admin-pane="settings">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">Settings</div>
+            <h2>설정</h2>
+            <p class="admin-pane-hint">시스템 전역 운영 설정. 차후 운영 항목이 추가되면 본 pane 의 sub-section 으로 확장한다.</p>
+          </div>
+          <div class="admin-pane-head-right"></div>
+        </header>
+        <div class="admin-settings-list" id="adminSettingsList">
+          <!-- 첫 sub-section: 전역 시스템 프롬프트 -->
+          <article class="admin-settings-section" data-settings-section="global-prompt">
+            <header class="admin-settings-section-head">
+              <h3>전역 시스템 프롬프트</h3>
+              <p class="admin-settings-section-hint">모든 대화의 최상위 base 가 되는 시스템 프롬프트. Product / Role / Account scope 가 이 본문 뒤에 누적된다. 비워두고 적용하면 코드 상수 fallback 으로 회귀한다.</p>
+            </header>
+            <div class="admin-settings-section-body" id="globalPromptEditorMount">
+              <!-- buildSystemPromptEditor({scope:'global'}) 가 마운트 -->
+            </div>
+          </article>
+        </div>
+      </section>
     </main>
 
     <!-- REQ-20260518-0006: commit bar 가 admin-column 의 하단 — sidebar 와 분리되어 workspace 하단에만 표시 -->
@@ -319,6 +350,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260519-audit-tab"></script>
+  <script src="/static/admin.js?v=20260521-settings-tab"></script>
 </body>
 </html>

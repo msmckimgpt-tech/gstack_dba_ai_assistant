@@ -8,6 +8,38 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260521-0003 [SKIPPED:self-review-after-plan-approved]
+- Date: 2026-05-21
+- Decision: TASK-0095 (REQ-20260521-0003, **Major** §12.3 — GLOBAL system prompt layer 신설) self-review (verify-completion CHECK#9 정합 prefix `SKIPPED:` 사용 — Codex outside voice trigger 미해당, `feedback_outside_voice_for_rbac` policy 는 admin/audit 표면 직접 변경 시 발동, 본 cycle 은 `system_prompt` 표면 + RBAC 추가지만 audit 자체 변경 없음). PLAN-APPROVED 후 7 phase 실행 — Plan (A) → agent_core compose 함수 GLOBAL fetch (B) → app.py bootstrap seed helper (C) → RBAC 2 권한 + admin auto-grant catchup (D) → admin endpoint scope='global' allowlist + 권한 가드 (E) → 관리 콘솔 `설정` 탭 + sub-section 패턴 + buildSystemPromptEditor scope='global' + CSS (F) → 문서 갱신 (FUNCTION/MODIFY/REVIEW/REPORT). 본 review 는 self-review (대화 기반 검토 — Codex outside voice trigger 미해당. `feedback_outside_voice_for_rbac` policy 는 admin/audit 표면 직접 변경 시 발동, 본 cycle 은 `system_prompt` 표면이라 self-review 채택).
+- Reason: 사용자 직접 요청 — "현재 서비스 사용자의 시스템 프롬프트 누적 구조에서, 최상위 전역 프롬프트도 구성해주세요. Product / Role / Account 에 기본적으로 처음 누적되어 요청사항에 적용될 부분입니다." 기존 4 layer (BASE → Product → Role → Account) 의 BASE 가 코드 상수 hard-code 라 운영자 수정 불가. WebSystemPrompts 테이블이 이미 scope/product_id/role_id/account_id 4-tuple 을 수용하는 schema 라 minimal change 로 GLOBAL scope 추가 가능.
+- Self-check 결과:
+  - **Schema 무변경 확인**: WebSystemPrompts.Scope VARCHAR(16) 가 이미 'global' 수용. UNIQUE INDEX `UX_WebSystemPrompts_Scope` 가 (Scope, ProductId, RoleId, AccountId) 4-tuple 정합 — global row 는 (`global`, NULL, NULL, NULL) 단 1건. DDL migration 불필요.
+  - **Fallback 정합성**: agent_core.compose_system_prompt 가 (a) row 없음 (b) Content 빈 문자열 (c) 조회 실패 (예: WebSystemPrompts 테이블 미존재 / 부트스트랩 race) 3 경로 모두 코드 상수 SYSTEM_PROMPT 로 회귀. graceful degradation 보장.
+  - **부트스트랩 순서**: `_ensure_seed_global_system_prompt(conn)` 가 `_ensure_seed_role_system_prompts(conn)` 다음 호출 — schema 가 이미 잡힌 상태 보장. agent_core import 가 부트스트랩 시점 실패할 수 있는 환경 대응 (lazy try/except). seed 본문 빈 경우 silent skip — compose_system_prompt 단의 fallback 이 인계.
+  - **RBAC 가드**: `system_prompt.global.read` / `.write` 가 admin only 자동 grant. GET/PUT endpoint 가 scope='global' branch 에서 권한 가드 실행 — operator/sales/dba/pending 은 명시 grant 없으면 403. 모든 LLM 응답에 영향 가는 권한이라 운영자 한정 패턴 의도적 채택.
+  - **Audit 정합성**: 기존 `admin.system_prompt.update` ActionCode + `_audit_admin_mutation` Same tx hook 재사용. ChangeJson 의 `scope` 필드가 `'global'` 인 row 가 새로 등장하지만 redaction allowlist (system_prompt.content 본문 미포함) 는 SECURITY §9.2 정합 그대로 적용.
+  - **UI 확장성**: `설정` 탭 안에 `<article data-settings-section="...">` 카드 list 패턴 — 차후 운영 항목 추가 시 동일 패턴으로 sub-section 누적 가능. `mountSettingsSections()` 가 single mount entry, 신규 sub-section 마다 mount 호출 1줄만 추가.
+  - **Permission group order 정합**: 작업 화면 (`app.js`) 과 관리 콘솔 (`admin.js`) 양쪽 `PERMISSION_GROUP_ORDER` 에 `settings` 추가 + 양쪽 `permissionGroupOf` 가 `system_prompt.global.` 접두사 우선 매핑. 양쪽 grid/pill 정상 노출.
+- Alt 거부:
+  - **신규 테이블 `WebGlobalSystemPrompts` 별도 분리**: WebSystemPrompts 가 이미 scope discriminator 를 갖는 generic 테이블이라 별도 테이블은 불필요한 split. 거부.
+  - **권한 신설 없이 `system_prompt.manage.role.any` 재사용**: 의미 오버로드 (role-scope 권한 코드가 global scope 까지 관할 — 권한 체계 혼란). 거부.
+  - **관리 콘솔 dashboard 상단에 직접 노출**: 사용자 명시 redirect — "`설정` 탭을 만들어주세요. 차후 항목이 추가될 수 있으므로 확장성있게 구성해주세요." 라 dashboard 상단 안 + 신규 `설정` 탭 채택.
+  - **Outside voice review (Codex consult mode)**: `feedback_outside_voice_for_rbac` policy 가 admin/audit 표면 직접 변경 시 발동. 본 cycle 은 `system_prompt` 표면 + RBAC 추가지만 audit 자체 변경 없음 (기존 hook 재사용). self-review 채택. live runtime smoke 는 사용자 검증으로 위임.
+- Verification (Phase G 에서 verify-completion.sh 통과 확인 예정):
+  - py_compile PASS (agent_core.py — pre-existing SyntaxWarning 76 line `'\``' 무관, app.py).
+  - node --check PASS (admin.js, app.js).
+  - 부트스트랩 seed idempotency: `_load_system_prompt(conn, scope='global', product_id=None, role_id=None, account_id=None)` 가 row 반환 시 helper no-op 확인 (코드 reading 기반).
+  - compose_system_prompt fallback chain: row 없음 / 빈 본문 / 조회 실패 3 경로 모두 SYSTEM_PROMPT 로 회귀 (코드 reading 기반).
+- Risks:
+  - GLOBAL row 본문이 잘못 입력되면 모든 LLM 응답에 영향 — 운영자 한정 권한 + 빈 본문 시 코드 상수 fallback 으로 위험 완화. 사용자가 textarea 비우고 적용 시 row delete (= fallback 회귀) 패턴은 기존 `_upsert_system_prompt` 가 처리.
+  - live runtime smoke (관리 콘솔 `설정` 탭 진입 + 본문 수정 + LLM 호출 시 적용 확인) 는 사용자 검증으로 위임. PR merge 후 사용자가 admin 으로 로그인 → 설정 탭 진입 → 텍스트 수정 → 임의 대화 ask → assistant 응답이 새 base prompt 반영하는지 확인 필요.
+  - 부트스트랩 race (web 컨테이너 내 worker 다중 시작 + WebSystemPrompts schema 직전 INSERT) 는 INSERT 의 UNIQUE INDEX 가 차단. helper 가 `_load` 후 INSERT 라 race 시 한쪽이 IntegrityError 가능 — `_upsert_system_prompt` 가 이미 INSERT...ON DUPLICATE KEY UPDATE 패턴이므로 idempotent.
+- 미해결 followup:
+  - 차후 `설정` 탭 sub-section 항목 추가 시 동일 `admin-settings-section` 패턴 재사용 — 본 cycle 은 1 sub-section 만 도입.
+  - GLOBAL row 의 body 가 PROMPT_LABELS 의 다른 scope 와 길이/구조 일관성 강제 정책은 별 cycle 검토 (현 시점 freeform).
+- panel: SKIPPED:self-review-after-plan-approved (Codex outside voice trigger 미해당 — system_prompt 표면 + audit 변경 없음. 사용자 PLAN-APPROVED marker 가 panel 의 외부 검증 대체).
+- Trace: REQ-20260521-0003 → TASK-0095 → CHG-20260521-0003 → REV-20260521-0003.
+
 ## REV-20260520-0008 [AGENT-TEAM:codex-outside-voice]
 - Date: 2026-05-20
 - Decision: TASK-0090 (REQ-20260520-0005, **Minor** §12.3 — CSV streaming export) plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, 550,870 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign → 사용자 confirm. `/api/admin/audits/export.csv` hard cap 50k row 제거 + StreamingResponse + keyset cursor pagination + max_id high-water + try/finally + self-audit.

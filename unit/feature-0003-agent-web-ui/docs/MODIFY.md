@@ -8,6 +8,55 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260521-0003
+- Date: 2026-05-21
+- Summary: TASK-0095 (REQ-20260521-0003, **Major** §12.3 — GLOBAL system prompt layer 신설). 시스템 프롬프트 누적 구조의 최상위 base 를 코드 상수 hard-code 에서 `WebSystemPrompts WHERE Scope='global'` row 로 이전. 모든 LLM 응답의 base prompt 가 운영자 관리 콘솔에서 관리 가능. RBAC 권한 2 종 신설 (`system_prompt.global.read` / `.write`, group=`settings`). 관리 콘솔 sidebar 에 `설정` 탭 + 확장 가능한 `admin-settings-section` sub-section 패턴 도입.
+- Files:
+  - `unit/feature-0002-agent-core/src/agent_core.py`:
+    - `compose_system_prompt(conn, ...)` 함수 진입부 — `WebSystemPrompts WHERE Scope='global' AND ProductId IS NULL AND RoleId IS NULL AND AccountId IS NULL LIMIT 1` 조회 + 성공 시 base 로 사용, 실패 / row 없음 / 빈 본문 시 코드 상수 `SYSTEM_PROMPT` fallback. `parts: list[str] = [base_prompt]` 로 누적 시작.
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - `_ensure_seed_global_system_prompt(conn)` helper 신설 (after `_ensure_seed_role_system_prompts`): idempotent — 기존 row 있으면 no-op, 없으면 `agent_core.SYSTEM_PROMPT` 본문을 seed 로 INSERT. import / seed 본문 빈 경우 silent skip.
+    - 부트스트랩 (`_ensure_seed_catchup` / `_ensure_web_tables` 후속) 에서 helper 호출.
+    - `PERMISSION_DEFINITIONS` 에 `system_prompt.global.read` / `system_prompt.global.write` 2 권한 추가 (group=`settings`).
+    - `_ensure_seed_roles` 의 admin 자동 grant catchup list 에 두 권한 코드 추가.
+    - `GET /api/admin/system-prompts` scope allowlist 에 `global` 추가 + `system_prompt.global.read` 권한 가드 + `product_id` / `role_id` / `account_id` 인자 NULL 강제.
+    - `PUT /api/admin/system-prompts` 동일 패턴 (`system_prompt.global.write` 권한 가드).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`:
+    - sidebar 에 `시스템` 그룹 라벨 + `설정` 탭 (`data-admin-tab="settings"`) 추가.
+    - `<section data-admin-pane="settings">` pane 신설 — `<article data-settings-section="global-prompt">` sub-section 컨테이너 + `<div id="globalPromptEditorMount">` mount point.
+    - cache-bust 토큰 `v=20260519-audit-tab` → `v=20260521-settings-tab`.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`:
+    - `PERMISSION_GROUP_ORDER` 에 `settings` 추가 (`product` 와 `misc` 사이).
+    - `PERMISSION_GROUP_LABELS.settings = "시스템 설정"`.
+    - `ADMIN_PERMISSION_SECTIONS.manage` 에 `settings` 그룹 포함.
+    - `buildSystemPromptEditor({scope})` — `isGlobal` boolean + product select 조건 (`!isGlobal && scope !== "product" && !fixedProductId`) 으로 global scope 일 때 product 드롭다운 미렌더.
+    - `switchTab("settings")` handler — `adminState.settings.initialized` 가드 + `mountSettingsSections()` 호출.
+    - `mountSettingsSections()` — `system_prompt.global.read` 권한 검사 + `buildSystemPromptEditor({scope:'global', mountId:'globalPromptEditorMount'})` 마운트 + `system_prompt.global.write` 미보유 시 textarea read-only.
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`:
+    - `PERMISSION_GROUP_ORDER` 에 `settings` 추가.
+    - `PERMISSION_GROUP_LABELS.settings = "시스템 설정"`.
+    - `WORK_SCREEN_PERMISSION_SECTIONS.manage` 에 `settings` 그룹 포함.
+    - `permissionGroupOf(code)` — `system_prompt.global.` 접두사 우선 `settings` 그룹으로 매핑, 그 외 `system_prompt.` 는 기존대로 `product` fallback.
+    - `PERMISSION_LABELS` / `PERMISSION_DESCRIPTIONS` 에 `system_prompt.global.read` / `.write` 2 entry 추가.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`:
+    - `.admin-pane-hint` / `.admin-settings-list` / `.admin-settings-section` / `.admin-settings-section-head h3` / `.admin-settings-section-hint` / `.admin-settings-section-body` rules 추가 — sub-section 카드 패턴 (border + padding + flex-column gap), 차후 운영 항목 추가 시 동일 패턴 재사용.
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0095 entry + Plan §2.7 PLAN-APPROVED marker (ms.mckim.gpt@gmail.com, 2026-05-21).
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: REQ-20260521-0003 추가 + AC-0011 갱신 (5 layer 명시) + AC-0199 ~ AC-0204 신설.
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260521-0003.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary sticky note.
+- Schema: 변경 없음 — `WebSystemPrompts.Scope VARCHAR(16)` 가 이미 'global' 을 수용. UNIQUE INDEX `UX_WebSystemPrompts_Scope` 가 `(Scope, ProductId, RoleId, AccountId)` 정합으로 working — global row 는 `(scope='global', product_id=NULL, role_id=NULL, account_id=NULL)` 단 1건.
+- Audit: 기존 `admin.system_prompt.update` ActionCode + `_audit_admin_mutation` Same tx hook 재사용. ChangeJson 의 `scope` 필드가 `'global'` 인 row 가 새로 등장 — `_audit_admin_mutation` 의 redaction allowlist 에 system_prompt.content 본문이 이미 미포함 (SECURITY §9.2 정합). content_full 마스킹 정책은 GLOBAL scope 에도 그대로 적용.
+- RBAC default grant 정책: admin role 만 자동 grant. operator/sales/dba/pending 은 명시 grant 가 없는 한 미보유 — 모든 LLM 응답에 영향가는 권한이라 운영자 한정 패턴 의도적으로 채택.
+- Verification:
+  - py_compile PASS (agent_core.py, app.py — 단 agent_core.py 76 line `'\``' SyntaxWarning 은 pre-existing, 본 cycle 무관).
+  - node --check PASS (admin.js, app.js).
+- Risks:
+  - GLOBAL row 본문이 잘못 입력되면 모든 LLM 응답에 영향 — 운영자 한정 권한 + 빈 본문 시 코드 상수 fallback 으로 위험 완화.
+  - 부트스트랩 시점 `from agent_core import SYSTEM_PROMPT` 가 실패할 수 있는 환경 (web 컨테이너 정상 환경에선 무관) — 본 helper 는 lazy try/except 으로 처리, seed 자체 skip 시에도 compose_system_prompt 는 자기 fallback 으로 정상 작동.
+  - live runtime smoke (관리 콘솔 `설정` 탭 진입 + 본문 수정 + LLM 호출 시 적용 확인) 는 사용자 검증으로 위임.
+- Trace: REQ-20260521-0003 → TASK-0095 → CHG-20260521-0003 → REV-20260521-0003.
+
 ## CHG-20260520-0008
 - Date: 2026-05-20
 - Summary: TASK-0090 (REQ-20260520-0005, **Minor** §12.3 — CSV streaming export). `/api/admin/audits/export.csv` hard cap 50k row 제거 + StreamingResponse + keyset cursor pagination 전환. Codex outside voice review 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign.

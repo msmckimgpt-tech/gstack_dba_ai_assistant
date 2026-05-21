@@ -51,7 +51,8 @@ function systemPromptPendingKey({ scope, productId = null, roleId = null, accoun
 // product 그룹은 정적 `product.manage` / `system_prompt.manage.role.any` 외에 동적 `product.access.<key>`
 // 코드들 (Phase 1B 의 _ensure_product_access_permissions backfill) 도 자동으로 그룹에 합류된다.
 // TASK-0073 Phase C: audit group 추가 — backend PERMISSION_DEFINITIONS 의 group="audit" 와 key 정합.
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "audit", "misc"];
+// TASK-0095: settings group 추가 — 전역 시스템 프롬프트 (system_prompt.global.read/write).
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "audit", "settings", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
@@ -59,6 +60,7 @@ const PERMISSION_GROUP_LABELS = {
   conversation: "대화",
   product: "제품",
   audit: "감사",
+  settings: "시스템 설정",
   misc: "기타",
 };
 
@@ -67,7 +69,8 @@ const PERMISSION_GROUP_LABELS = {
 // conversation·product 운영 권한은 그 아래로 분리한다. (작업 화면측 정렬은 app.js WORK_SCREEN_PERMISSION_SECTIONS)
 const ADMIN_PERMISSION_SECTIONS = [
   // TASK-0073 Phase C: audit 그룹은 관리 권한 section 의 admin 콘솔 책임 — console / account / role 와 같이 배치.
-  { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 메타권한 · 감사", groups: ["console", "account", "role", "audit"] },
+  // TASK-0095: settings 그룹은 시스템 운영 (전역 시스템 프롬프트 등) — manage 와 함께.
+  { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 메타권한 · 감사 · 시스템 설정", groups: ["console", "account", "role", "audit", "settings"] },
   { id: "operate", title: "운영 권한", description: "대화 · 제품 접근", groups: ["conversation", "product"] },
   { id: "misc", title: "기타", description: null, groups: ["misc"] },
 ];
@@ -692,6 +695,41 @@ function switchTab(tabName) {
   if (tabName === "audits" && !adminState.audit.initialized) {
     adminState.audit.initialized = true;
     loadAuditList();
+  }
+  // TASK-0095: 설정 tab 첫 진입 시 sub-section 마운트.
+  if (tabName === "settings" && !adminState.settings.initialized) {
+    adminState.settings.initialized = true;
+    mountSettingsSections();
+  }
+}
+
+/* ── Settings pane (TASK-0095) ──────────────────────────────────────── */
+
+adminState.settings = {
+  initialized: false,
+};
+
+function mountSettingsSections() {
+  // 첫 sub-section: 전역 시스템 프롬프트 (system_prompt.global.read 보유자만 표시).
+  const mount = $("globalPromptEditorMount");
+  if (mount && can("system_prompt.global.read")) {
+    mount.innerHTML = "";
+    const editor = buildSystemPromptEditor({
+      scope: "global",
+      title: "본문",
+      hint: can("system_prompt.global.write")
+        ? "비워두고 적용하면 코드 상수 fallback 으로 회귀합니다. 변경사항은 하단 '모두 적용' 으로 일괄 저장됩니다."
+        : "조회 전용 — 수정 권한이 없습니다.",
+    });
+    if (!can("system_prompt.global.write")) {
+      // read-only: textarea 비활성화는 buildSystemPromptEditor 내부 input 이벤트가
+      // pending 으로 옮기지만 PUT 단계에서 backend 가 403 — 사용자 혼동 회피 위해 disabled.
+      const ta = editor.querySelector("textarea.admin-prompt-textarea");
+      if (ta) ta.disabled = true;
+    }
+    mount.appendChild(editor);
+  } else if (mount) {
+    mount.innerHTML = '<div class="admin-detail-empty">전역 시스템 프롬프트 조회 권한이 없습니다.</div>';
   }
 }
 
@@ -3195,6 +3233,10 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
     section.appendChild(hintEl);
   }
 
+  // TASK-0095: GLOBAL scope 는 product/role/account 모두 무시 (force NULL).
+  // product select 도 표시하지 않는다 — 단일 row 운영.
+  const isGlobal = scope === "global";
+
   const products = adminState.products || [];
   let currentProductId = productId;
   if (fixedProductId !== null && fixedProductId !== undefined) {
@@ -3205,7 +3247,7 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
   }
 
   let productSelect = null;
-  if (scope !== "product" && !fixedProductId) {
+  if (!isGlobal && scope !== "product" && !fixedProductId) {
     const row = document.createElement("div");
     row.className = "admin-inline-row";
     const label = document.createElement("span");

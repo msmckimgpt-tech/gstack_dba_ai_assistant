@@ -10,6 +10,21 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-05-21 TASK-0095 완료 (Phase A~F 일괄, Phase G verify-completion + commit 진행 예정) — 시스템 프롬프트 누적 구조 최상위 GLOBAL layer 신설** (CHG-20260521-0003, REV-20260521-0003 [SELF-REVIEW], REQ-20260521-0003, **Major** §12.3). 사용자 직접 요청 — "최상위 전역 프롬프트도 구성해주세요. Product / Role / Account 에 기본적으로 처음 누적되어 요청사항에 적용될 부분입니다." 4 layer (BASE → Product → Role → Account) 의 BASE 가 코드 상수 hard-code 라 운영자 수정 불가하던 구조를 5 layer (GLOBAL → Product → Role → Account, BASE = code constant fallback) 로 확장. WebSystemPrompts 테이블의 scope discriminator 가 이미 'global' 을 수용 (VARCHAR(16)) — schema 무변경. RBAC 권한 2 종 신설 (`system_prompt.global.read` / `.write`, group=`settings`, admin only 자동 grant). 관리 콘솔 sidebar 에 신규 `설정` 탭 + 확장 가능한 `admin-settings-section` sub-section 패턴 도입 — 차후 운영 항목 추가 시 동일 패턴으로 sub-section 누적. AC-0011 갱신 + AC-0199 ~ AC-0204 신설.
+
+**Phase 별 요약**:
+- **Phase A** — `agent_core.compose_system_prompt(conn, ...)` 함수 진입부에 GLOBAL row fetch + graceful fallback (row 없음 / 빈 본문 / 조회 실패 → 코드 상수 SYSTEM_PROMPT 회귀).
+- **Phase B** — `_ensure_seed_global_system_prompt(conn)` helper 신설, 부트스트랩에서 idempotent 호출. agent_core import 실패 / seed 본문 빈 경우 silent skip.
+- **Phase C** — `PERMISSION_DEFINITIONS` 에 2 권한 추가. `_ensure_seed_roles` admin catchup list 에 두 권한 코드 추가.
+- **Phase D** — GET/PUT `/api/admin/system-prompts` scope allowlist 에 `global` 추가 + `system_prompt.global.read/.write` 권한 가드.
+- **Phase E** — `admin.html` `설정` 탭 + `admin-settings-section` sub-section 패턴, `admin.js` switchTab handler + mountSettingsSections() + buildSystemPromptEditor scope='global' 분기, `app.js` PERMISSION_GROUP_ORDER + permissionGroupOf + LABELS/DESCRIPTIONS 동기화, `styles.css` sub-section CSS rules.
+- **Phase F** — FUNCTION/MODIFY/REVIEW/REPORT 갱신.
+- **Phase G** — verify-completion + commit + main fast-forward (다음).
+
+**Verification**: py_compile PASS (agent_core.py + app.py), node --check PASS (admin.js + app.js). live runtime smoke (관리 콘솔 `설정` 탭 진입 + 본문 수정 + LLM 호출 시 적용 확인) 사용자 검증 위임.
+
+---
+
 **2026-05-21 TASK-0094 PLAN-APPROVED — 첨부 multi-cycle (A CSV + B DDL/KB + C Vision + D PDF RAG) BRIEFING Revision 2 lock-in** (CHG-20260521-0001, REV-20260521-0001 [SUBAGENT:codex], REQ-20260521-0001, **Critical** §12.3). Codex outside-voice review 2 회 흡수 (REV-20260520-0001 1차 17 Valid + REV-20260521-0002 2차 Critical 3 + Major 11 + Minor 2 — F8 만 사용자 명시 거부). D1~D21 21 결정 lock-in. 코드/스키마/RBAC catalog 변경 0 — 계획 문서 only. Sprint 1 (Cycle 0 Foundation + Cycle 1 CSV ingest) implementation 진입 가능. D14 SQL allowlist guard 통과를 Sprint 1 ship 조건.
 
 ### Git 동기화 결과 (TASK-0094)

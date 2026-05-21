@@ -352,6 +352,21 @@ PERMISSION_DEFINITIONS = (
         "description": "retention 초과 audit 이벤트를 chunked PK 삭제할 수 있다. 시작/완료 이벤트는 self-audit 으로 기록된다.",
         "group": "audit",
     },
+    # TASK-0095 (REQ-20260521-0002, Major §12.3): GLOBAL system prompt layer.
+    # `settings` 그룹은 신규 `설정` 탭 (확장성 — 차후 기타 운영 항목 추가 대비) 의 권한 묶음.
+    # admin only auto-grant. 다른 role 은 admin 콘솔에서 explicit override.
+    {
+        "code": "system_prompt.global.read",
+        "label": "전역 시스템 프롬프트 조회",
+        "description": "모든 대화의 최상위 base 가 되는 전역 시스템 프롬프트 본문을 조회할 수 있다.",
+        "group": "settings",
+    },
+    {
+        "code": "system_prompt.global.write",
+        "label": "전역 시스템 프롬프트 수정",
+        "description": "전역 시스템 프롬프트를 수정/삭제할 수 있다. 모든 LLM 응답에 영향이 가는 권한이므로 운영자 한정.",
+        "group": "settings",
+    },
 )
 PERMISSION_CODES = tuple(item["code"] for item in PERMISSION_DEFINITIONS)
 PERMISSION_DEFINITION_MAP = {item["code"]: item for item in PERMISSION_DEFINITIONS}
@@ -1530,6 +1545,9 @@ def _ensure_seed_roles(conn) -> None:
             "audit.read.any",
             "audit.export",
             "audit.purge",
+            # TASK-0095: admin 의 전역 시스템 프롬프트 read/write 2건 catchup.
+            "system_prompt.global.read",
+            "system_prompt.global.write",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -1656,6 +1674,41 @@ def _ensure_seed_role_system_prompts(conn) -> None:
             account_id=None,
             updated_by_account_id=None,
         )
+
+
+def _ensure_seed_global_system_prompt(conn) -> None:
+    """TASK-0095 (Major §12.3): GLOBAL scope system prompt 1행 idempotent seed.
+
+    `agent_core.SYSTEM_PROMPT` 상수 본문을 `WebSystemPrompts(scope='global', Product/Role/Account NULL)`
+    로 1회만 INSERT. 이미 row 가 있으면 건드리지 않는다 (관리 콘솔 수정 존중).
+    agent_core import 가 실패하면 silent skip — bootstrap-time 의존성 약화는
+    `compose_system_prompt()` 의 fallback 로직이 흡수.
+    """
+    existing = _load_system_prompt(
+        conn,
+        scope="global",
+        product_id=None,
+        role_id=None,
+        account_id=None,
+    )
+    if existing:
+        return
+    try:
+        from agent_core import SYSTEM_PROMPT as _AGENT_SYSTEM_PROMPT  # type: ignore
+        seed_content = str(_AGENT_SYSTEM_PROMPT or "").strip()
+    except Exception:
+        seed_content = ""
+    if not seed_content:
+        return
+    _upsert_system_prompt(
+        conn,
+        scope="global",
+        content=seed_content,
+        product_id=None,
+        role_id=None,
+        account_id=None,
+        updated_by_account_id=None,
+    )
 
 
 SEED_PRODUCT_DEFINITIONS = (
@@ -3294,6 +3347,8 @@ def _ensure_web_tables():
         _ensure_seed_roles(conn)
         _ensure_seed_products(conn)
         _ensure_seed_role_system_prompts(conn)
+        # TASK-0095 (Major §12.3): GLOBAL scope system prompt 1행 idempotent seed.
+        _ensure_seed_global_system_prompt(conn)
         # TASK-0052 Phase 1B: WebProducts 와 1:1 동적 권한 row 보장 + D2-A 호환성 backfill (모든 role grant).
         # 호출 순서 정합성: products 가 먼저 만들어진 후, 권한 row 가 보장되어야 admin/account 의 effective
         # permission 계산이 일관됨. _migrate_legacy_accounts_to_rbac 보다 먼저 두는 이유는 RBAC 마이그레이션
@@ -8750,11 +8805,19 @@ async def admin_get_system_prompt(
     if error:
         conn.close()
         return error
-    if scope not in ("product", "role", "account"):
+    if scope not in ("global", "product", "role", "account"):
         conn.close()
-        return _json_error("scope 은 product/role/account 중 하나여야 합니다.", 400)
+        return _json_error("scope 은 global/product/role/account 중 하나여야 합니다.", 400)
     # scope 별 권한 검사
-    if scope == "product":
+    if scope == "global":
+        # TASK-0095: GLOBAL 은 product/role/account ids 무시 (force NULL).
+        if not _account_has_permission(actor, "system_prompt.global.read"):
+            conn.close()
+            return _json_error("전역 시스템 프롬프트 조회 권한이 없습니다.", 403)
+        product_id = None
+        role_id = None
+        account_id = None
+    elif scope == "product":
         if not _account_has_permission(actor, "product.manage"):
             conn.close()
             return _json_error("제품 시스템 프롬프트 조회 권한이 없습니다.", 403)
@@ -8793,14 +8856,22 @@ async def admin_put_system_prompt(request: Request) -> JSONResponse:
         conn.close()
         return error
     scope = str(data.get("scope") or "").strip().lower()
-    if scope not in ("product", "role", "account"):
+    if scope not in ("global", "product", "role", "account"):
         conn.close()
-        return _json_error("scope 은 product/role/account 중 하나여야 합니다.", 400)
+        return _json_error("scope 은 global/product/role/account 중 하나여야 합니다.", 400)
     content = str(data.get("content") or "")
     product_id = int(data.get("product_id") or 0) or None
     role_id = int(data.get("role_id") or 0) or None
     account_id = int(data.get("account_id") or 0) or None
-    if scope == "product":
+    if scope == "global":
+        # TASK-0095: GLOBAL 은 product/role/account ids 무시 (force NULL).
+        if not _account_has_permission(actor, "system_prompt.global.write"):
+            conn.close()
+            return _json_error("전역 시스템 프롬프트 관리 권한이 없습니다.", 403)
+        product_id = None
+        role_id = None
+        account_id = None
+    elif scope == "product":
         if not _account_has_permission(actor, "product.manage"):
             conn.close()
             return _json_error("제품 시스템 프롬프트 관리 권한이 없습니다.", 403)

@@ -4380,3 +4380,41 @@ a { color: inherit; }
   font-size: 12px;
   margin-left: 8px;
 }
+
+/* TASK-0095: 설정 pane sub-section pattern. 차후 sub-section 추가 시 동일 클래스로 확장. */
+.admin-pane-hint {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.admin-settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 20px;
+}
+.admin-settings-section {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.admin-settings-section-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.admin-settings-section-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.admin-settings-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

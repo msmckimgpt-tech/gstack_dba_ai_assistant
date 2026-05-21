@@ -178,7 +178,8 @@ function _newPendingSentinel() {
 const PRODUCT_PREF_LS_KEY = "mad.productPref.v1";
 
 // TASK-0073 Phase C: audit group 추가 — backend PERMISSION_DEFINITIONS 의 group="audit" 정합.
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "audit", "misc"];
+// TASK-0095: settings group 추가 — 전역 시스템 프롬프트 권한 그룹.
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "audit", "settings", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
@@ -186,6 +187,7 @@ const PERMISSION_GROUP_LABELS = {
   conversation: "대화",
   product: "제품",
   audit: "감사",
+  settings: "시스템 설정",
   misc: "기타",
 };
 
@@ -195,14 +197,19 @@ const PERMISSION_GROUP_LABELS = {
 // 표시되도록 group="audit" 을 manage section 에 추가. admin 콘솔 진입을 권유.
 const WORK_SCREEN_PERMISSION_SECTIONS = [
   { id: "operate", title: "운영 권한", description: "대화 · 제품 접근", groups: ["conversation", "product"] },
-  { id: "manage", title: "관리 권한", description: "관리 콘솔 / 계정 / 역할 / 감사", groups: ["console", "account", "role", "audit"] },
+  // TASK-0095: settings 그룹은 작업 화면의 관리 권한 section 에 placeholder.
+  { id: "manage", title: "관리 권한", description: "관리 콘솔 / 계정 / 역할 / 감사 / 시스템 설정", groups: ["console", "account", "role", "audit", "settings"] },
   { id: "misc", title: "기타", description: null, groups: ["misc"] },
 ];
 
 function permissionGroupOf(code = "") {
-  // app.py PERMISSION_DEFINITIONS 와 정합: system_prompt.* 코드는 product 그룹으로 매핑.
-  if (String(code || "").startsWith("system_prompt.")) return "product";
-  const head = String(code || "").split(".", 1)[0] || "misc";
+  // app.py PERMISSION_DEFINITIONS 와 정합:
+  //  - `system_prompt.global.*` (TASK-0095) → settings 그룹.
+  //  - 다른 system_prompt.* (manage.role.any 등) → product 그룹 유지 (기존 호환).
+  const codeStr = String(code || "");
+  if (codeStr.startsWith("system_prompt.global.")) return "settings";
+  if (codeStr.startsWith("system_prompt.")) return "product";
+  const head = codeStr.split(".", 1)[0] || "misc";
   return PERMISSION_GROUP_LABELS[head] ? head : "misc";
 }
 
@@ -243,6 +250,9 @@ const PERMISSION_LABELS = {
   "conversation.duplicate.any": "전체 대화 복사",
   "product.manage": "제품 관리",
   "system_prompt.manage.role.any": "역할/계정 시스템 프롬프트 관리",
+  // TASK-0095: 전역 시스템 프롬프트 권한.
+  "system_prompt.global.read": "전역 시스템 프롬프트 조회",
+  "system_prompt.global.write": "전역 시스템 프롬프트 수정",
 };
 
 const PERMISSION_DESCRIPTIONS = {
@@ -282,6 +292,9 @@ const PERMISSION_DESCRIPTIONS = {
   "conversation.duplicate.any": "타 사용자가 소유한 대화까지 본 계정 소유의 새 대화로 복제할 수 있는 권한입니다. 원본은 유지됩니다.",
   "product.manage": "제품(Product) 생성/수정/삭제 및 접근 DB 스키마와 제품 시스템 프롬프트를 관리할 수 있는 권한입니다.",
   "system_prompt.manage.role.any": "다른 역할 또는 다른 계정의 시스템 프롬프트를 수정할 수 있는 권한입니다. 본인 계정 프롬프트는 이 권한 없이도 수정할 수 있습니다.",
+  // TASK-0095: 전역 시스템 프롬프트 (모든 LLM 응답의 최상위 base).
+  "system_prompt.global.read": "모든 대화의 최상위 base 가 되는 전역 시스템 프롬프트 본문을 조회할 수 있는 권한입니다. 비워져 있으면 코드 상수 fallback 으로 동작합니다.",
+  "system_prompt.global.write": "전역 시스템 프롬프트를 수정 또는 삭제할 수 있는 권한입니다. 모든 LLM 응답에 영향이 가는 권한이라 운영자 한정으로 부여하는 것을 권장합니다.",
 };
 
 function describePermission(code = "") {
