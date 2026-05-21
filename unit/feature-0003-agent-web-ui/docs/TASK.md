@@ -11,8 +11,8 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 1 진행 중)
-- Last Updated: 2026-05-21 (TASK-0094 Sprint 1 Phase 1 Pre-flight ship — ADR + compose + env + bootstrap)
+- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 2 진행 중)
+- Last Updated: 2026-05-21 (TASK-0094 Sprint 1 Phase 2 schema ship — 5 신규 table + 1 column ALTER)
 
 ## 2. Task Queue
 
@@ -39,7 +39,7 @@ source_of_truth: true
 - [x] **Sprint 0 (cycle cleanup)** — BRIEFING Revision 2 lock-in (PR #40 merged) + AGENTS.md §16.5 Step 6 사후 동기화 결과 REPORT.md 기록 (CHG-20260521-0002). 본 cycle 종료 후 worktree cleanup (§15 R-F10).
 - **Sprint 1** — Cycle 0 (Foundation: MinIO compose, multipart upload, `WebConversationAttachments`, RBAC 4 codes, D11 consent infra) + Cycle 1 (A: CSV/Excel ingest, sandbox schema, attachment_maintainer/writer/reader/cleanup MySQL users, **D14 SQL allowlist guard ship 조건**) — Critical, 3~3.5 주. D18 단일 통합 gate. worktree `ai/claude/0094/sprint-1-foundation-csv`.
   - [x] **Phase 1 (Pre-flight)** — ADR-0022 (MinIO 도입) + ADR-0023 (sandbox schema + D15 maintenance path 분리) + ADR-0025 (PGVector 사전 선언, Sprint 4 prerequisite) `docs/DECISIONS.md` 등재. docker-compose.yml `minio` + `minio-init` service 추가. `.env.example` 16 변수 (MINIO_ROOT_USER/PW + MINIO_APP_ACCESS_KEY/SECRET + endpoint/bucket/TTL + 호스트 port 2 + browser redirect + ATTACHMENT_MAX_BYTES_* 3 + ATTACHMENT_AUDIT_HMAC_KEY + SANDBOX_SQL_* 2). `unit/feature-0003-agent-web-ui/src/scripts/minio-init.sh` 부트스트랩 (idempotent bucket + bucket-scoped policy + app key). feature-0001-platform-runtime ANCHOR §1 갱신 (MinIO/Postgres 같은 비-MySQL service 의 platform 책임 명시). 2026-05-21.
-  - [ ] **Phase 2 (Cycle 0 schema)** — `WebConversationAttachments` + `WebAccountConsents` + `WebAttachmentDerivedMessages` (D19) + `WebConversationAttachmentProviderFiles` (D13) + `WebShareLinks.PolicyVersion` (R-F7) + `WebConversationAttachmentsSandboxSchemas` mapping table. `_ensure_*_schema` helper.
+  - [x] **Phase 2 (Cycle 0 schema)** — `WebConversationAttachments` + `WebAccountConsents` + `WebAttachmentDerivedMessages` (D19) + `WebConversationAttachmentProviderFiles` (D13) + `WebShareLinks.PolicyVersion` (R-F7) + `WebConversationAttachmentsSandboxSchemas` mapping table. 6 `_ensure_*_schema` / `_ensure_*_column` helper 신설. `_ensure_seed_catchup` (fast path) + `_ensure_web_tables` (slow path) 양쪽 호출 등록. py_compile PASS. 2026-05-21.
   - [ ] **Phase 3 (Cycle 0 RBAC)** — `_ensure_attachment_permissions` 4 코드 + §5.2 6 checklist + `PERMISSION_GROUP_ORDER` `attachment` 추가 + D21 pending metadata-only.
   - [ ] **Phase 4 (Cycle 0 storage)** — `storage_minio.py` wrapper (boto3 + retry + signed URL + backup smoke) + D20 dual-key rotation runbook.
   - [ ] **Phase 5 (Cycle 0 upload API)** — 6 endpoint (POST/GET/GET-by-id/DELETE attachment + POST/DELETE consent) + audit 4 ActionCode + `build_audit_change_json` case + D12 HMAC.
