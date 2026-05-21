@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260521-settings-subnav" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260521-settings-listdetail" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -310,31 +310,54 @@
         </div>
       </section>
 
-      <!-- TASK-0096: 설정 pane — sub-sidebar + panel 2-column 확장 패턴.
-           새 항목은 nav <button data-settings-tab="X"> + panel <article data-settings-panel="X"> 한 쌍 추가로 확장.
+      <!-- TASK-0096 v2: 설정 pane — 계정/역할/제품 과 동일한 list-detail 5단 구조.
+           새 항목은 list row <button data-settings-tab="X"> + detail panel <article data-settings-panel="X"> 한 쌍 추가로 확장.
            panel 마운트는 admin.js 의 SETTINGS_PANEL_MOUNTERS 맵에 (key, mount fn) 등록. -->
       <section class="admin-pane" data-admin-pane="settings">
         <header class="admin-pane-head">
           <div>
             <div class="drawer-label">Settings</div>
             <h2>설정</h2>
-            <p class="admin-pane-hint">시스템 전역 운영 설정. 좌측 nav 에서 항목을 선택한다. 항목은 차후 누적된다.</p>
           </div>
           <div class="admin-pane-head-right"></div>
         </header>
-        <div class="admin-settings-shell">
-          <!-- 좌측 sub-sidebar: 항목 nav (sticky) -->
-          <nav class="admin-settings-nav" id="adminSettingsNav" aria-label="설정 항목">
-            <div class="admin-settings-nav-group-label">시스템 프롬프트</div>
-            <button type="button" class="admin-settings-nav-item is-active" data-settings-tab="global-prompt">
-              <span class="admin-settings-nav-label">전역 시스템 프롬프트</span>
-              <span class="admin-settings-nav-hint">최상위 base. Product/Role/Account 가 뒤에 누적.</span>
-            </button>
-          </nav>
-
-          <!-- 우측 content: 활성 panel 만 노출 -->
-          <div class="admin-settings-content" id="adminSettingsContent">
-            <!-- 첫 panel: 전역 시스템 프롬프트 -->
+        <div class="admin-list-detail">
+          <div class="admin-list-col">
+            <div class="admin-list-toolbar">
+              <input
+                type="search"
+                id="settingsSearch"
+                class="admin-search"
+                placeholder="설정 항목 검색…"
+                autocomplete="off"
+              />
+            </div>
+            <div class="admin-list-head">
+              <span class="admin-list-section-label">시스템 프롬프트</span>
+              <span class="admin-list-count" id="settingsListCount" aria-live="polite"></span>
+            </div>
+            <div class="admin-list" id="settingsList" role="listbox" aria-label="설정 항목 목록">
+              <!-- 첫 항목: 전역 시스템 프롬프트. 추가 항목은 같은 .admin-list-row 형태로 등록. -->
+              <button
+                type="button"
+                class="admin-list-row admin-list-row--nav is-active"
+                role="option"
+                aria-selected="true"
+                data-settings-tab="global-prompt"
+                data-settings-group="시스템 프롬프트"
+                data-settings-keywords="전역 시스템 프롬프트 global system prompt base"
+              >
+                <span class="admin-list-row-cb" aria-hidden="true"></span>
+                <span class="admin-list-row-main">
+                  <span class="admin-list-row-title">
+                    <span class="admin-list-row-name">전역 시스템 프롬프트</span>
+                  </span>
+                  <span class="admin-list-row-meta">최상위 base. Product / Role / Account 가 뒤에 누적.</span>
+                </span>
+              </button>
+            </div>
+          </div>
+          <div class="admin-detail-col" id="settingsDetail">
             <article class="admin-settings-panel is-active" data-settings-panel="global-prompt">
               <header class="admin-settings-panel-head">
                 <h3>전역 시스템 프롬프트</h3>
@@ -364,6 +387,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260521-settings-subnav"></script>
+  <script src="/static/admin.js?v=20260521-settings-listdetail"></script>
 </body>
 </html>

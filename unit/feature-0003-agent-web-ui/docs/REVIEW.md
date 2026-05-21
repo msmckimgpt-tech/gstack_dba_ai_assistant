@@ -8,6 +8,26 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260521-0006 [SKIPPED:self-review-after-plan-approved]
+- Date: 2026-05-21
+- Decision: TASK-0096 v2 (REQ-20260521-0004 follow-up — `설정` pane 을 계정/역할/제품 과 동일한 list-detail 패턴으로 정렬). 사용자 명시 follow-up 피드백 — "계정, 역할, 제품 탭과 일관된 디자인이 아닌것으로 확인되었습니다. 검색창을 포함하여, 해당 탭들과 일관된 디자인으로 구성해주세요." → CHG-20260521-0005 의 sub-sidebar (`admin-settings-shell`) 변형 폐기, 표준 `admin-list-detail` 5단 구조 + `admin-search` 검색창 + `admin-list-row` nav 변형 채택. UI restructure only — 데이터/API/권한 무영향이라 `feedback_outside_voice_for_rbac` 발동 조건 미해당, self-review.
+- Reason: 사용자 명시 직접 요청. 시각 일관성 회복 + 검색 가용성 신설.
+- Self-check 결과:
+  - **시각 일관성 (사용자 핵심 요구)**: header (`admin-pane-head` + drawer-label/h2) → list-detail (좌측 list-col surface + border + 12px padding + `admin-search` + section-label + list rows / 우측 detail-col surface + border + 18~22px padding + panel) 패턴이 계정/역할/제품 과 1:1 정합. `admin-list-row` 의 hover/`is-active` (primary-soft) 도 그대로 상속 → row 선택 표시도 동일 색상.
+  - **검색 가용성 (사용자 명시)**: `admin-search` placeholder = "설정 항목 검색…", 입력 즉시 row 필터 + 카운트 갱신. row 의 `data-settings-keywords` 가 영문/한글 양쪽 매칭 (예: "전역", "global", "system prompt", "base").
+  - **확장성 보존**: 새 항목 추가 절차 (CHG-20260521-0005 의 v1 패턴 동일 골자) = (1) `<button class="admin-list-row admin-list-row--nav" data-settings-tab="X" data-settings-group="..." data-settings-keywords="...">` row 추가, (2) `<article class="admin-settings-panel" data-settings-panel="X">` panel 추가, (3) `SETTINGS_PANEL_MOUNTERS["X"] = mountFn` 등록 1 줄.
+  - **lazy mount 정합 보존**: `adminState.settings.mountedPanels` Set 그대로. 첫 활성화 시에만 mount 호출. row 재선택 시 mount 호출 안 됨 (편집 state 보존).
+  - **Backward compat**: `globalPromptEditorMount` id + `buildSystemPromptEditor({scope:'global'})` 호출 + `system_prompt.global.read/.write` 권한 게이트 모두 그대로. v1 의 inline panel head/hint markup 도 그대로 유지.
+  - **a11y**: nav row 가 `role="option"` + `aria-selected` toggle. 카운트는 `aria-live="polite"` 유지. 리스트 컨테이너는 `role="listbox"`.
+- Alt 거부:
+  - **header 위 별도 검색바**: list-toolbar 안에 두는 형식이 다른 탭과 정합. header 위는 패턴 outlier 가 됨.
+  - **row hover 시 placeholder check icon 추가**: 다른 탭 row 가 그렇지 않으므로 거부. 일관성 우선.
+  - **section label 을 row 위 별 div 로 분리**: `admin-list-head` 안에 section label + count 가 한 줄로 collapsed 되는 게 다른 탭의 `admin-list-select-all + count` 정렬과 시각 동형.
+- Verification:
+  - 정적 검사 N/A (frontend only).
+  - 사후 검증: web 컨테이너 재배포 → `/browse` 로 설정 탭 진입 → header (Settings 라벨 + 제목) + 좌측 list-col (검색창 + section-label `시스템 프롬프트` + nav row `전역 시스템 프롬프트`) + 우측 detail-col (panel head + textarea body 3178 자) 노출 확인 + 검색창 input 시 필터 작동 + 콘솔 errors 없음 + 권한 grid 회귀 없음.
+- Trace: REQ-20260521-0004 → TASK-0096 → CHG-20260521-0006 → REV-20260521-0006.
+
 ## REV-20260521-0005 [SKIPPED:self-review-after-plan-approved]
 - Date: 2026-05-21
 - Decision: TASK-0096 (REQ-20260521-0004, **Minor** §12.3 — `설정` pane sub-sidebar + panel 확장 패턴) self-review. `feedback_outside_voice_for_rbac` policy 는 admin/audit 표면 직접 변경 시 발동, 본 cycle 은 settings UI restructure (HTML/CSS/JS 만) 라 미해당. self-review 채택. 단일 sub-section 누적 구조 → `admin-settings-shell` (grid 240px / 1fr) + `admin-settings-nav` (sub-sidebar) + `admin-settings-content` (panel container) 의 2-column 확장 패턴으로 전환. 새 항목 추가 절차 = nav `<button data-settings-tab="X">` + content `<article data-settings-panel="X">` + `SETTINGS_PANEL_MOUNTERS["X"] = mountFn` 3 단계.

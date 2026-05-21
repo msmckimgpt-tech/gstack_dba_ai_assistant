@@ -4381,84 +4381,36 @@ a { color: inherit; }
   margin-left: 8px;
 }
 
-/* TASK-0096: 설정 pane sub-sidebar + content 2-column 확장 패턴.
- * 차후 항목 추가 시 nav button + panel article 한 쌍만 추가하면 됨. */
-.admin-pane-hint {
-  margin-top: 4px;
-  font-size: 13px;
-  color: var(--text-muted);
-}
-.admin-settings-shell {
-  display: grid;
-  grid-template-columns: 240px 1fr;
-  gap: 0;
-  padding: 16px 20px;
-  align-items: stretch;
-  min-height: 0;
-}
-.admin-settings-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 12px 8px 12px 0;
-  border-right: 1px solid var(--border);
-  align-self: start;
-  position: sticky;
-  top: 0;
-}
-.admin-settings-nav-group-label {
+/* TASK-0096 v2: 설정 pane — 계정/역할/제품 과 동일한 admin-list-detail 5단 구조 채택.
+ * list-row--nav 변형 (button 형 row, no checkbox)+ admin-settings-panel 본문 만 신규.
+ * sub-sidebar 전용 클래스(admin-settings-shell/-nav/-nav-*) 는 v1 에서 제거됨. */
+.admin-list-section-label {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
-  padding: 8px 12px 4px;
 }
-.admin-settings-nav-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  align-items: flex-start;
-  text-align: left;
-  padding: 10px 12px;
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
+.admin-list-row.admin-list-row--nav {
+  grid-template-columns: 1fr;
   background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  font-size: 13px;
-  transition: background-color 0.12s ease, border-color 0.12s ease;
+  font: inherit;
+  text-align: left;
+  width: 100%;
 }
-.admin-settings-nav-item:hover {
-  background: var(--bg-soft, rgba(0, 0, 0, 0.03));
+.admin-list-row.admin-list-row--nav .admin-list-row-cb {
+  display: none;
 }
-.admin-settings-nav-item.is-active {
-  background: var(--bg-soft, rgba(0, 0, 0, 0.04));
-  border-color: var(--border);
-  font-weight: 600;
-}
-.admin-settings-nav-label {
-  font-weight: 600;
-}
-.admin-settings-nav-hint {
-  font-size: 11px;
+.admin-list-row.admin-list-row--nav .admin-list-row-meta {
+  display: block;
+  margin-top: 2px;
   color: var(--text-muted);
-  font-weight: 400;
+  font-size: 12px;
   line-height: 1.35;
-}
-.admin-settings-content {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 0 0 0 20px;
-  min-width: 0;
+  white-space: normal;
 }
 .admin-settings-panel {
   display: none;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--surface);
-  padding: 16px 18px;
   flex-direction: column;
   gap: 12px;
 }
@@ -4467,39 +4419,19 @@ a { color: inherit; }
 }
 .admin-settings-panel-head h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--text);
 }
 .admin-settings-panel-hint {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 .admin-settings-panel-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-@media (max-width: 760px) {
-  .admin-settings-shell {
-    grid-template-columns: 1fr;
-  }
-  .admin-settings-nav {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    padding: 8px 0;
-    position: static;
-    flex-direction: row;
-    flex-wrap: wrap;
-  }
-  .admin-settings-nav-group-label {
-    width: 100%;
-  }
-  .admin-settings-content {
-    padding: 16px 0 0;
-  }
+  gap: 10px;
 }
 
 /* TASK-0089: profile drawer "내 감사 로그" 탭 styles.

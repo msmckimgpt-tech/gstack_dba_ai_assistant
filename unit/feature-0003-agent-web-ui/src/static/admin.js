@@ -703,10 +703,11 @@ function switchTab(tabName) {
   }
 }
 
-/* ── Settings pane (TASK-0096: sub-sidebar + panel 확장 패턴) ─────────
+/* ── Settings pane (TASK-0096 v2: 계정/역할/제품 과 동일한 list-detail 패턴) ─
  * 새 항목 추가 절차:
- *   1) admin.html 의 admin-settings-nav 에 <button data-settings-tab="X"> 추가
- *   2) admin-settings-content 에 <article data-settings-panel="X"> 추가
+ *   1) admin.html 의 #settingsList 에 <button class="admin-list-row admin-list-row--nav"
+ *      data-settings-tab="X" data-settings-group="..." data-settings-keywords="..."> 추가
+ *   2) #settingsDetail 에 <article class="admin-settings-panel" data-settings-panel="X"> 추가
  *   3) SETTINGS_PANEL_MOUNTERS 에 X 키로 마운트 함수 등록
  * 마운트 함수는 panel 이 처음 활성화될 때 1회 실행. 권한 게이트는 함수 내부에서. */
 
@@ -721,29 +722,73 @@ const SETTINGS_PANEL_MOUNTERS = {
 };
 
 function mountSettingsSections() {
-  bindSettingsNav();
+  bindSettingsList();
+  bindSettingsSearch();
+  updateSettingsListCount();
   activateSettingsPanel(adminState.settings.activeTab);
 }
 
-function bindSettingsNav() {
-  const nav = $("adminSettingsNav");
-  if (!nav || nav.dataset.bound === "1") return;
-  nav.dataset.bound = "1";
-  nav.addEventListener("click", (ev) => {
+function bindSettingsList() {
+  const list = $("settingsList");
+  if (!list || list.dataset.bound === "1") return;
+  list.dataset.bound = "1";
+  list.addEventListener("click", (ev) => {
     const btn = ev.target.closest("[data-settings-tab]");
-    if (!btn || !nav.contains(btn)) return;
+    if (!btn || !list.contains(btn)) return;
     const tab = btn.getAttribute("data-settings-tab");
     if (tab) activateSettingsPanel(tab);
   });
 }
 
+function bindSettingsSearch() {
+  const input = $("settingsSearch");
+  if (!input || input.dataset.bound === "1") return;
+  input.dataset.bound = "1";
+  input.addEventListener("input", () => {
+    applySettingsSearchFilter(input.value);
+  });
+}
+
+function applySettingsSearchFilter(query) {
+  const list = $("settingsList");
+  if (!list) return;
+  const q = (query || "").trim().toLowerCase();
+  list.querySelectorAll(".admin-list-row[data-settings-tab]").forEach((row) => {
+    if (!q) {
+      row.style.display = "";
+      return;
+    }
+    const haystack = [
+      row.getAttribute("data-settings-tab") || "",
+      row.getAttribute("data-settings-group") || "",
+      row.getAttribute("data-settings-keywords") || "",
+      row.textContent || "",
+    ].join(" ").toLowerCase();
+    row.style.display = haystack.includes(q) ? "" : "none";
+  });
+  updateSettingsListCount();
+}
+
+function updateSettingsListCount() {
+  const list = $("settingsList");
+  const countEl = $("settingsListCount");
+  if (!list || !countEl) return;
+  const rows = list.querySelectorAll(".admin-list-row[data-settings-tab]");
+  const visible = Array.from(rows).filter((row) => row.style.display !== "none").length;
+  countEl.textContent = visible === rows.length
+    ? `${rows.length}건`
+    : `${visible} / ${rows.length}건`;
+}
+
 function activateSettingsPanel(tab) {
-  const nav = $("adminSettingsNav");
-  const content = $("adminSettingsContent");
-  if (!nav || !content) return;
+  const list = $("settingsList");
+  const content = $("settingsDetail");
+  if (!list || !content) return;
   adminState.settings.activeTab = tab;
-  nav.querySelectorAll("[data-settings-tab]").forEach((btn) => {
-    btn.classList.toggle("is-active", btn.getAttribute("data-settings-tab") === tab);
+  list.querySelectorAll("[data-settings-tab]").forEach((btn) => {
+    const isActive = btn.getAttribute("data-settings-tab") === tab;
+    btn.classList.toggle("is-active", isActive);
+    btn.setAttribute("aria-selected", isActive ? "true" : "false");
   });
   content.querySelectorAll("[data-settings-panel]").forEach((panel) => {
     panel.classList.toggle("is-active", panel.getAttribute("data-settings-panel") === tab);

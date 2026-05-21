@@ -8,6 +8,39 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260521-0006
+- Date: 2026-05-21
+- Summary: TASK-0096 v2 (REQ-20260521-0004 follow-up). 사용자 직접 피드백 — "계정, 역할, 제품 탭과 일관된 디자인이 아닌것으로 확인되었습니다. 검색창을 포함하여, 해당 탭들과 일관된 디자인으로 구성해주세요." CHG-20260521-0005 의 sub-sidebar (`admin-settings-shell` + `admin-settings-nav`) 형태가 다른 탭의 5단 master-detail 패턴 (header → `admin-list-detail` (좌측 list-col + 우측 detail-col)) 과 시각 일관성 부족. v2 에서 sub-sidebar 전용 클래스 일괄 제거 + 계정/역할/제품 의 `admin-list-detail` / `admin-list-col` / `admin-detail-col` 그대로 차용 + `admin-list-row` 의 nav 변형 (`.admin-list-row--nav`, 체크박스 슬롯 hidden, full-width content) 추가. 검색창 = `admin-search` 재사용 (placeholder = "설정 항목 검색…"), 항목 카운트 = `admin-list-count` 재사용. 검색 필터는 row 의 `data-settings-tab` + `data-settings-group` + `data-settings-keywords` + textContent 를 합쳐 substring 매칭. UI restructure only — 데이터/API/권한 무영향.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`:
+    - `admin-settings-shell` + `admin-settings-nav` + `admin-settings-content` 구조 → 표준 `admin-list-detail` (`admin-list-col` (toolbar+search+`admin-list-head`+`admin-list`) + `admin-detail-col` (panel)) 로 교체. `admin-pane-hint` 단락 제거 (다른 탭과 일관 — pane-head 직접에 hint 없음).
+    - 신규 hook id = `settingsSearch` (`admin-search`), `settingsListCount` (`admin-list-count`), `settingsList` (`admin-list`), `settingsDetail` (`admin-detail-col`). 기존 `globalPromptEditorMount` 보존.
+    - 첫 항목은 `<button class="admin-list-row admin-list-row--nav is-active" role="option" aria-selected="true" data-settings-tab="global-prompt" data-settings-group="시스템 프롬프트" data-settings-keywords="...">`. row 본문은 `admin-list-row-cb` (visual hidden) + `admin-list-row-main` (`admin-list-row-title` + `admin-list-row-meta` 2줄).
+    - section label = `admin-list-section-label` (UPPERCASE, head row 안). 차후 항목 추가 시 새 section label + row 묶음을 등재.
+    - cache-buster `v=20260521-settings-subnav` → `v=20260521-settings-listdetail`.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`:
+    - sub-sidebar 전용 셀렉터 (`.admin-settings-shell`, `.admin-settings-nav`, `.admin-settings-nav-group-label`, `.admin-settings-nav-item[.is-active]`, `.admin-settings-nav-label`, `.admin-settings-nav-hint`, `.admin-settings-content`) + 760px responsive 블록 일괄 제거. 함께 `.admin-pane-hint` 도 제거 (markup 에서도 미사용).
+    - 신규: `.admin-list-section-label` (UPPERCASE 11px, head row 안). `.admin-list-row.admin-list-row--nav` 변형 (grid 1fr, button 전용 reset, cb 슬롯 hidden, meta 본문 영구 노출). `.admin-settings-panel`/-`head h3`/-`hint`/-`body` 본문 스타일은 유지하되 자체 border 제거 (`admin-detail-col` 의 surface 가 이미 border 책임).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`:
+    - `mountSettingsSections()` 가 `bindSettingsList()` + `bindSettingsSearch()` + `updateSettingsListCount()` + `activateSettingsPanel(activeTab)` 호출. `bindSettingsNav()` 는 v1 의 `adminSettingsNav` 셀렉터 의존이라 제거.
+    - `bindSettingsList()` — `#settingsList` 에 위임 click. row `[data-settings-tab]` 매칭.
+    - `bindSettingsSearch()` — `#settingsSearch` 에 `input` 이벤트 → `applySettingsSearchFilter(value)`.
+    - `applySettingsSearchFilter(query)` — 모든 row 에 대해 합친 haystack (`data-settings-tab` + `data-settings-group` + `data-settings-keywords` + textContent) lower-case substring 매칭, 비매칭 row 는 `display:none`.
+    - `updateSettingsListCount()` — 가시 row 수 / 전체 row 수 형식 ("1건" 또는 "1 / 2건").
+    - `activateSettingsPanel(tab)` — `#settingsList` + `#settingsDetail` 셀렉터로 갱신, `aria-selected` 동기화 추가. mount lazy 로직은 동일.
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: AC-0210 갱신 — list-detail 패턴 + 검색 hook 표기.
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0096 entry + Last Updated 갱신 (v2 흡수).
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260521-0006.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary follow-up note.
+- Verification:
+  - 정적 검사 N/A (frontend only).
+  - 사후 검증: web 컨테이너 재배포 → `/browse` 로 설정 탭 진입 → header (Settings 라벨 + 제목) + 좌측 list-col (검색창 + section-label `시스템 프롬프트` + nav row `전역 시스템 프롬프트`) + 우측 detail-col (panel head + textarea body) 노출 확인 + 검색창에 "전역" 입력 시 row 1건 표시 / "missing" 입력 시 0 / 1 표시 + 콘솔 errors 없음.
+- Risks:
+  - row 의 hidden 처리는 `style.display = "none"` 인라인. screen reader 가 카운트 mismatch 가능 — 향후 `aria-hidden` 동기화 보강 후보 (현 build 는 카운트 라이브 영역으로 충분).
+  - `admin-list-row--nav` 가 다른 탭의 row hover/active 스타일 (`admin-list-row.is-active` 의 primary-soft) 을 그대로 상속 — 시각 정합 OK 이며 권한 grid 처럼 추가 컬러 token 불필요.
+- Trace: REQ-20260521-0004 → TASK-0096 → CHG-20260521-0006 → REV-20260521-0006 (CHG-20260521-0005 follow-up redesign).
+
 ## CHG-20260521-0005
 - Date: 2026-05-21
 - Summary: TASK-0096 (REQ-20260521-0004, **Minor** §12.3 — `설정` pane sub-sidebar + panel 확장 패턴). 사용자 직접 요청 — TASK-0095 검증 완료 후속, "`설정` 탭 내부 화면을 `계정`, `역할`, `제품` 과 같이 패널을 분리해줄 수 있을까요? 차후 `전역 시스템 프롬프트` 항목 외에도 설정 내 많은 항목이 추가될 예정인데 현재는 확장성이 너무 좁게 구현되어 있습니다." 단일 sub-section 누적 구조 → 좌측 sub-sidebar (항목 nav) + 우측 panel 의 2-column grid 확장 패턴으로 전환. 새 항목 추가 절차 = `<button data-settings-tab="X">` + `<article data-settings-panel="X">` + `SETTINGS_PANEL_MOUNTERS["X"] = mountFn` 3 단계. mount 함수는 panel 첫 활성화 시 1회 실행 (lazy mount, `adminState.settings.mountedPanels` Set). UI restructure only — 데이터/API/권한 무영향.
