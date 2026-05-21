@@ -1499,3 +1499,12 @@ source_of_truth: true
   - **D21 pending role attachment metadata-only** (R-F14) — bytes download 는 승인 후, audit `attachment.bytes_download.denied_pending` 기록.
 - Impact: Sprint 1 (Cycle 0 Foundation + Cycle 1 CSV ingest) implementation 진입 가능. D14 SQL allowlist guard 통과가 Sprint 1 ship 조건. 코드 변경은 별 worktree `ai/claude/0087/sprint-1-foundation-csv` (또는 `0094/sprint-1-...`) 에서 진행. 본 cycle 자체의 코드/스키마/RBAC catalog 영향 0.
 - Rollback Notes: 본 변경은 문서 only. revert 시 BRIEFING 신규 파일 삭제 + TASK.md 의 TASK-0094 entry + PLAN-APPROVED 마커 + Current Status 갱신 revert + .gitignore 의 `.context/` 한 줄 revert. revert 후 Sprint 1 진입은 BRIEFING/계획 재작성 필요.
+
+## CHG-20260521-0002
+- Date: 2026-05-21
+- Related Requirement: TASK-0094 cleanup follow-up (AGENTS.md §16.5 Step 6 사후 동기화 결과 기록)
+- Summary: TASK-0094 PLAN-APPROVED cycle (CHG-20260521-0001, PR #40 merged 2026-05-21T02:15:30Z) 의 §16.5 Step 6 결과 기록 보강. CHG-20260521-0001 본 PR 에서 누락된 REPORT.md §1 Summary 의 cycle entry + Git 동기화 결과 표 append. 추가 코드 변경 0.
+- Files: unit/feature-0003-agent-web-ui/docs/REPORT.md (§1 Summary 상단에 TASK-0094 entry + Git 동기화 결과 표), unit/feature-0003-agent-web-ui/docs/MODIFY.md (본 entry), unit/feature-0003-agent-web-ui/docs/REVIEW.md (REV-20260521-0002 [SKIPPED:report-sync-only]).
+- Notes: 단순 운영 기록 follow-up. AGENTS.md §16.5 Step 6 의 결과 기록을 본 cycle 의 첫 PR 에 포함하지 못한 누락 보강. outside-voice review 추가 호출 없음 (REPORT.md 의 단순 사실 append 는 SUBAGENT review 대상 아님 — SKIPPED).
+- Impact: docs only. backend / RBAC / 스키마 영향 0.
+- Rollback Notes: REPORT.md TASK-0094 entry 한 블록 revert 로 즉시 복구 가능. MODIFY/REVIEW 의 본 entry 도 함께 revert.

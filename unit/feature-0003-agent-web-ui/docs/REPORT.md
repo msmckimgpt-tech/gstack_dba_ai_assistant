@@ -10,6 +10,19 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-05-21 TASK-0094 PLAN-APPROVED — 첨부 multi-cycle (A CSV + B DDL/KB + C Vision + D PDF RAG) BRIEFING Revision 2 lock-in** (CHG-20260521-0001, REV-20260521-0001 [SUBAGENT:codex], REQ-20260521-0001, **Critical** §12.3). Codex outside-voice review 2 회 흡수 (REV-20260520-0001 1차 17 Valid + REV-20260521-0002 2차 Critical 3 + Major 11 + Minor 2 — F8 만 사용자 명시 거부). D1~D21 21 결정 lock-in. 코드/스키마/RBAC catalog 변경 0 — 계획 문서 only. Sprint 1 (Cycle 0 Foundation + Cycle 1 CSV ingest) implementation 진입 가능. D14 SQL allowlist guard 통과를 Sprint 1 ship 조건.
+
+### Git 동기화 결과 (TASK-0094)
+- 커밋: 90df7c4 (ai/claude/0087/attachment-briefing → issue/39-task-0094-attachment-briefing) + follow-up b8dcbfc (issue/43-task-0094-cleanup, REPORT 사후 기록 — 본 entry)
+- verify-completion: PASS (10/10 checks, 재시도 1회 — CHECK#3/#8/#9 FAIL 후 MODIFY/REVIEW append + .gitignore 갱신으로 PASS)
+- Push: 완료 (issue/39 + issue/43 → origin)
+- PR: #40 (closes #39, MERGED 2026-05-21T02:15:30Z) + #44 (closes #43, REPORT 사후 기록 follow-up)
+- 병합 상태: PR #40 main 통합 완료. PR #44 conflict resolve 후 main 통합 진행 중.
+- 충돌 해결: PR #44 의 REPORT.md / MODIFY.md / REVIEW.md / TASK.md 가 origin/main 의 PR #42 (TASK-0090) merge 후 발생한 conflict — main 의 변경과 본 follow-up 의 변경 모두 보존하여 resolve.
+- 다음 단계: Sprint 1 implementation 진입 — 별 worktree `ai/claude/0094/sprint-1-foundation-csv` (또는 호환 `ai/claude/0087/sprint-1-...`). 본 worktree 는 §15 R-F10 cleanup 조건 따라 merge 직후 cleanup 권장.
+
+---
+
 **2026-05-20 TASK-0090 완료 (Phase A~D 일괄) — `/api/admin/audits/export.csv` CSV streaming export 전환** (CHG-20260520-0008, REV-20260520-0008, REQ-20260520-0005, **Minor** §12.3 — hard cap 50k 제거 + StreamingResponse + keyset cursor + max_id high-water + self-audit, Codex outside voice 5 findings 흡수 v2 redesign).
 
 **본 cycle Phase 별 변경 요약**:
