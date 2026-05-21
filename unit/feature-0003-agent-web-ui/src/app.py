@@ -2635,6 +2635,223 @@ def _ensure_web_conversation_shares_schema(conn) -> None:
         cur.close()
 
 
+def _ensure_web_share_links_policy_version_column(conn) -> None:
+    """TASK-0094 Sprint 1 Phase 2 (R-F7): WebConversationShares 에 PolicyVersion column 추가.
+
+    BRIEFING Revision 2 D9 갱신 — 기존 share token 의 backward-compat 문제 해소를
+    위해 share 발급 시점의 share-policy version 을 row 에 기록한다. 배포된 정책 변경
+    (예: attachment_derived redact 강화) 시 PolicyVersion < 현재 정책 version 의 token
+    이 자동 redact 대상이 되며, audit `share.policy.redact_applied` 이벤트가 기록된다.
+
+    Phase 2 본 단계는 column ALTER 만 추가 — 실제 PolicyVersion 값 채움 / redact 로직 /
+    audit 이벤트 dispatch 는 Phase 8 (share redact) 에서 ship. 기존 row 에는 NULL 또는
+    DEFAULT 1 ('initial-pre-attachment' 의미) 적용.
+    """
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute(
+                "ALTER TABLE WebConversationShares ADD COLUMN PolicyVersion INT NOT NULL DEFAULT 1"
+            )
+        except Exception:
+            pass
+    finally:
+        cur.close()
+
+
+def _ensure_web_conversation_attachments_schema(conn) -> None:
+    """TASK-0094 Sprint 1 Phase 2: WebConversationAttachments 테이블 idempotent CREATE.
+
+    BRIEFING §5.1 정본 — 첨부 객체의 metadata source-of-truth. MinIO ObjectKey (D1) +
+    HMAC filename (D12) + size bucket (D12) + Kind/UploadStatus enum (D17 7 값) +
+    DeletePending/DeleteReason taxonomy (D6 4 종) + MetaJson kind-별 부가 (sheet
+    names, page count, degraded_reason, ingest_summary).
+
+    BRIEFING Revision 2 R-Claim6 흡수 — ConversationId 는 nullable 로 두지 않고 NOT
+    NULL 유지하되, conversation hard-delete 시 application-level tombstone 처리
+    (DELETE 가 아닌 DeletePending=1 + DeleteReason='conv_soft'). reconciliation worker
+    (Phase 9) 가 SLA 따라 hard-delete.
+
+    R-F11 흡수 — derived message 목록은 본 row 의 AttachmentDerivedMessages JSON 이
+    아닌 별도 join table (`WebAttachmentDerivedMessages`) 가 source-of-truth. 본 column
+    은 deprecated 로 두며 Phase 8 (share redact) 에서 join table 로 마이그레이션.
+
+    _ensure_web_tables (slow path) 와 _ensure_seed_catchup (fast path) 양쪽에서 호출.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebConversationAttachments (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ConversationId VARCHAR(128) NOT NULL,
+                AccountId BIGINT NOT NULL,
+                ObjectKey VARCHAR(512) NOT NULL,
+                OriginalFilename VARCHAR(255) NOT NULL,
+                FilenameHmac CHAR(64) NOT NULL,
+                MimeType VARCHAR(128) NOT NULL,
+                SizeBytes BIGINT NOT NULL,
+                SizeBucket VARCHAR(16) NOT NULL,
+                Sha256 CHAR(64) NOT NULL,
+                Kind VARCHAR(16) NOT NULL,
+                UploadStatus VARCHAR(24) NOT NULL DEFAULT 'uploaded',
+                AttachmentDerivedMessages JSON NULL,
+                CreatedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                DeletedAt DATETIME(6) NULL,
+                DeletePending TINYINT NOT NULL DEFAULT 0,
+                DeleteReason VARCHAR(16) NULL,
+                MetaJson JSON NULL,
+                INDEX IX_WCA_Conversation (ConversationId, DeletedAt),
+                INDEX IX_WCA_Account (AccountId, CreatedAt),
+                INDEX IX_WCA_Status (UploadStatus, DeletePending)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+    finally:
+        cur.close()
+
+
+def _ensure_web_conversation_attachments_sandbox_schemas_schema(conn) -> None:
+    """TASK-0094 Sprint 1 Phase 2 (D2/D15/R-F4): sandbox schema mapping table.
+
+    BRIEFING §5.1 — 1 conversation = 1 sandbox schema 의 mapping. schema name 은
+    `agent_attachment_<sha256(conversation_id)[:32]>` 로 D15 R-Claim4 maintenance path
+    가 결정. 본 table 은 lifecycle 추적 (CreatedAt / DroppedAt / DeletePending) + R-F4
+    drift detection 의 expected grants source.
+
+    Phase 2 는 schema CREATE 만 — 실제 schema 생성 path (D15 maintenance) + grant 부여
+    + drift detection worker 는 Phase 10 (sandbox + MySQL users) 에서 ship.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebConversationAttachmentsSandboxSchemas (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ConversationId VARCHAR(128) NOT NULL UNIQUE,
+                SchemaName VARCHAR(64) NOT NULL UNIQUE,
+                CreatedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                DroppedAt DATETIME(6) NULL,
+                DeletePending TINYINT NOT NULL DEFAULT 0,
+                INDEX IX_WCASS_DeletePending (DeletePending, DroppedAt)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+    finally:
+        cur.close()
+
+
+def _ensure_web_account_consents_schema(conn) -> None:
+    """TASK-0094 Sprint 1 Phase 2 (D11): WebAccountConsents 테이블 idempotent CREATE.
+
+    BRIEFING §5.1 — provider × data_class × purpose 별 consent + revoke + audit + 재동의.
+    Revision 2 R-F2 흡수 — UX 는 provider 별 grouped batch modal (3 group: 파일 텍스트
+    분석 / 이미지 분석 / 문서 인덱싱). DB 는 본 세분 row 유지 (보안 단위 ↔ UX 단위 분리).
+
+    UNIQUE (AccountId, Provider, DataClass, Purpose) — 같은 조합의 active 또는 revoked
+    row 는 1 개만. 재동의 시점에는 RevokedAt 갱신 + 새 row INSERT 가 아닌 application
+    layer 의 grant/revoke history 패턴 (별 history table 없이 본 row 의 GrantedAt/RevokedAt
+    교체) 로 처리. 본 row 의 history audit 은 `attachment.consent.grant` /
+    `attachment.consent.revoke` action 으로 WebAuditEvents 에 dispatch.
+
+    Phase 2 는 schema 만 — consent modal flow / revoke endpoint 는 Phase 7 에서 ship.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebAccountConsents (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                AccountId BIGINT NOT NULL,
+                Provider VARCHAR(32) NOT NULL,
+                DataClass VARCHAR(24) NOT NULL,
+                Purpose VARCHAR(16) NOT NULL,
+                GrantedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                RevokedAt DATETIME(6) NULL,
+                UNIQUE KEY UQ_WAC_Identity (AccountId, Provider, DataClass, Purpose),
+                INDEX IX_WAC_Account (AccountId)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+    finally:
+        cur.close()
+
+
+def _ensure_web_attachment_derived_messages_schema(conn) -> None:
+    """TASK-0094 Sprint 1 Phase 2 (D19, R-F11): derived message join table.
+
+    BRIEFING Revision 2 D19 신규 — many-to-many 정규화. 한 assistant message 가 여러
+    attachment 에서 파생될 수 있고, 한 attachment 가 여러 message 에 파생 데이터를
+    제공할 수 있다. DerivationType enum:
+      - csv_sample            : CSV/XLSX의 sample row 출력
+      - csv_query_result      : sandbox SQL 실행 결과
+      - vision_analysis       : Cycle 2 vision 분석 결과
+      - pdf_excerpt           : Cycle 4 PDF excerpt 인용
+      - rag_citation          : Cycle 4 RAG retrieval citation
+
+    Share redact (D9) / audit (D12) / fork 시 derivation 보존 / message hard-delete
+    cascade 가 모두 본 join 기준. 본 row 자체에는 PII 가 없어야 함 — 실제 derived
+    content 는 message body 에 있고, 본 join 은 관계만 보존.
+
+    Phase 2 는 schema 만 — 실제 INSERT 는 Phase 5 (upload API + audit) / Phase 8 (share
+    redact) / Phase 11 (ingest pipeline) / Phase 12 (SQL guard) 에서 ship.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebAttachmentDerivedMessages (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                AttachmentId BIGINT NOT NULL,
+                MessageId BIGINT NOT NULL,
+                DerivationType VARCHAR(24) NOT NULL,
+                CreatedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                INDEX IX_WADM_Attachment (AttachmentId),
+                INDEX IX_WADM_Message (MessageId),
+                INDEX IX_WADM_Type (DerivationType, CreatedAt)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+    finally:
+        cur.close()
+
+
+def _ensure_web_conversation_attachment_provider_files_schema(conn) -> None:
+    """TASK-0094 Sprint 1 Phase 2 (D13, R-F13): provider Files API lifecycle table.
+
+    BRIEFING Revision 2 R-F13 흡수 — OpenAI Files API / Anthropic Files API 를 사용
+    하여 inference 시 attachment bytes 를 provider 에 업로드할 때, provider 측에
+    잔존하는 file object 의 lifecycle 추적. inference 직후 delete API 호출 + 실패 시
+    `reconcile_provider_files` worker 의 TTL 기반 재시도.
+
+    DeletedAt NULL = provider 측에 잔존, NOT NULL = 삭제 확인. Phase 2 는 schema 만 —
+    실제 INSERT + delete 호출 + worker 는 Phase 5 (upload API base) / Phase 4 (storage
+    wrapper) + 후속 cycle 의 provider integration 에서 ship.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebConversationAttachmentProviderFiles (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                AttachmentId BIGINT NOT NULL,
+                Provider VARCHAR(32) NOT NULL,
+                ProviderFileId VARCHAR(255) NOT NULL,
+                UploadedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                DeletedAt DATETIME(6) NULL,
+                LastDeleteAttemptAt DATETIME(6) NULL,
+                DeleteAttemptCount INT NOT NULL DEFAULT 0,
+                LastError VARCHAR(512) NULL,
+                INDEX IX_WCAPF_Attachment (AttachmentId),
+                INDEX IX_WCAPF_Provider (Provider, ProviderFileId),
+                INDEX IX_WCAPF_Pending (DeletedAt, LastDeleteAttemptAt)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+    finally:
+        cur.close()
+
+
 def _log_search_activity(
     conn,
     account_id: int,
@@ -3029,6 +3246,15 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_dynamic_permissions_schema(conn)
     # REQ-20260514-0001: 공유 링크 테이블 fast-path 보정.
     _ensure_web_conversation_shares_schema(conn)
+    # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column ALTER.
+    _ensure_web_share_links_policy_version_column(conn)
+    # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping + consent +
+    # derived join + provider files lifecycle 5 신규 테이블 fast-path 보정.
+    _ensure_web_conversation_attachments_schema(conn)
+    _ensure_web_conversation_attachments_sandbox_schemas_schema(conn)
+    _ensure_web_account_consents_schema(conn)
+    _ensure_web_attachment_derived_messages_schema(conn)
+    _ensure_web_conversation_attachment_provider_files_schema(conn)
     # TASK-0061 Phase 6: 기존 배포에 MustChangePassword 컬럼 backfill.
     _ensure_must_change_password_schema(conn)
     # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 fast-path 보정.
@@ -3180,6 +3406,15 @@ def _ensure_web_tables():
         _ensure_dynamic_permissions_schema(conn)
         # REQ-20260514-0001: 공유 링크 테이블 보장 (slow path).
         _ensure_web_conversation_shares_schema(conn)
+        # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column (slow path).
+        _ensure_web_share_links_policy_version_column(conn)
+        # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping + consent +
+        # derived join + provider files lifecycle 5 신규 테이블 (slow path).
+        _ensure_web_conversation_attachments_schema(conn)
+        _ensure_web_conversation_attachments_sandbox_schemas_schema(conn)
+        _ensure_web_account_consents_schema(conn)
+        _ensure_web_attachment_derived_messages_schema(conn)
+        _ensure_web_conversation_attachment_provider_files_schema(conn)
         # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 보장 (slow path).
         _ensure_web_audit_events_schema(conn)
         # REQ-20260520-0001 (TASK-0086): migration helper 는 rollback window 동안 보존 (slow path).

@@ -1627,3 +1627,21 @@ source_of_truth: true
   - `unit/feature-0003-agent-web-ui/src/scripts/minio-init.sh` 파일 삭제.
   - `unit/feature-0001-platform-runtime/docs/ANCHOR.md` 의 비-MySQL service 항목 revert.
   - 실제 데이터 영향 0 (Phase 1 은 인프라 / 정책만). minio container volume `../artifacts/minio-data` 도 비어 있어 별도 cleanup 불필요.
+
+## CHG-20260521-0004
+- Date: 2026-05-21
+- Related Requirement: TASK-0094 (REQ-20260521-0001, Critical §12.3) Sprint 1 Phase 2 — Cycle 0 schema (5 신규 table + 1 column ALTER)
+- Summary: BRIEFING §5.1 정본의 첨부 metadata + sandbox mapping + consent + derived join + provider files lifecycle 5 신규 테이블 + 기존 `WebConversationShares` 에 `PolicyVersion` column (R-F7) idempotent ALTER. 6 helper 신설 + fast/slow path 양쪽 호출 등록. py_compile PASS.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py` — 6 helper 신설 (line 2638~2853, 약 215 lines) + 호출 등록 2 곳 (`_ensure_seed_catchup` line 3037~3047, `_ensure_web_tables` line 3414~3424)
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md` — AC-0210~0215 추가 (6 AC)
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` — Phase 2 [x] 표시 + Current Status 갱신
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md` — 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260521-0004 [SKIPPED:schema-only] append
+- Notes: Phase 2 는 schema only — backend endpoint / RBAC catalog / UI 변경 0. 실제 INSERT / SELECT path 는 Phase 5 (upload API), Phase 8 (share redact), Phase 11 (ingest), Phase 12 (SQL guard) 에서 ship. 5 신규 table 은 모두 빈 상태로 시작 — 본 schema add 자체가 사용자에게는 영향 없음.
+- Impact: 부트스트랩 (`_ensure_seed_catchup` fast path + `_ensure_web_tables` slow path) 양쪽에서 신규 helper 가 idempotent 실행. 기존 배포에도 자동 적용. `WebConversationShares.PolicyVersion` column 은 기존 row 에 DEFAULT 1 backfill. backend / RBAC catalog 영향 0.
+- Rollback Notes:
+  - `unit/feature-0003-agent-web-ui/src/app.py` 의 6 helper 정의 + 호출 등록 revert.
+  - 5 신규 table 은 `DROP TABLE IF EXISTS WebConversationAttachments, WebConversationAttachmentsSandboxSchemas, WebAccountConsents, WebAttachmentDerivedMessages, WebConversationAttachmentProviderFiles;` 로 제거 (rollback DDL 단순).
+  - `WebConversationShares.PolicyVersion` column 은 `ALTER TABLE WebConversationShares DROP COLUMN PolicyVersion;` 으로 제거 (column 자체는 NOT NULL DEFAULT 1 이라 기존 row 영향 0).
+  - 본 Phase 2 가 ship 된 commit 후에 사용자 데이터가 누적되지 않은 시점이라 rollback risk 최소.

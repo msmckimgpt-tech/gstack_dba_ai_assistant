@@ -1209,3 +1209,14 @@ source_of_truth: true
   - Codex 2차 review (REV-20260521-0002, BRIEFING §17)
   - 정본 BRIEFING review (REV-20260521-0001 [SUBAGENT:codex])
 - **Sprint 1 cycle 의 outside-voice 추가 호출 시점**: Phase 12 의 D14 SQL allowlist guard 가 Ship 조건이라, Phase 12 진입 시 Codex 추가 review 권장. Phase 2~11 의 schema / RBAC / API / UI / share / lifecycle / sandbox / ingest 는 각 Phase 종료 시 SKIPPED 또는 짧은 SUBAGENT review 적정.
+
+## REV-20260521-0004 [SKIPPED:schema-only] TASK-0094 Sprint 1 Phase 2 (Cycle 0 schema) review
+
+- **Mode**: SKIPPED — Phase 2 는 schema 신설 (5 신규 table + 1 column ALTER) + 6 helper 정의 + bootstrap 호출 등록만. backend endpoint / RBAC catalog / UI / share / lifecycle / sandbox / ingest / SQL guard 모두 미작업. outside-voice review 의 비용 정당화 어려움. verify-completion CHECK#9 충족용 SKIPPED 마커.
+- **Subject**: 5 신규 table (`WebConversationAttachments` / `WebConversationAttachmentsSandboxSchemas` / `WebAccountConsents` / `WebAttachmentDerivedMessages` / `WebConversationAttachmentProviderFiles`) + 1 column ALTER (`WebConversationShares.PolicyVersion`). 6 helper. py_compile PASS.
+- **Reason**: BRIEFING Revision 2 §5.1 의 column 정의를 정합 그대로 SQL DDL 로 옮긴 단계. column type / NOT NULL / DEFAULT / INDEX 모두 BRIEFING 명세 따름. D6 / D11 / D12 / D17 / D19 / R-F7 / R-F11 / R-F13 의 결정 inline 반영. outside-voice review 1차/2차에서 schema 자체에 대한 추가 finding 없음 (D9/F11 의 derived join table 만 R-F11 흡수, 이미 D19 로 적용).
+- **Cross-ref**:
+  - BRIEFING §5.1 (정본 schema 정의)
+  - 정본 review: REV-20260521-0001 [SUBAGENT:codex]
+  - Phase 1 review: REV-20260521-0003 [SKIPPED:phase1-infra-only]
+- **다음 outside-voice 시점**: Phase 12 (D14 SQL allowlist guard, Ship 조건) — schema 가 아닌 보안 경계 코드. 본 cycle Critical 의 핵심 ship guarantor. Phase 12 진입 직전 Codex 추가 review 권장. Phase 3~11 의 RBAC / storage / API / UI / share / lifecycle / sandbox / ingest 도 SKIPPED 또는 짧은 SUBAGENT review 적정.
