@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MySQL AI Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260521-settings-tab" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260521-settings-subnav" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -310,27 +310,41 @@
         </div>
       </section>
 
-      <!-- TASK-0095: 설정 pane — 확장성 패턴 (admin-settings-section 단위로 sub-section 추가). -->
+      <!-- TASK-0096: 설정 pane — sub-sidebar + panel 2-column 확장 패턴.
+           새 항목은 nav <button data-settings-tab="X"> + panel <article data-settings-panel="X"> 한 쌍 추가로 확장.
+           panel 마운트는 admin.js 의 SETTINGS_PANEL_MOUNTERS 맵에 (key, mount fn) 등록. -->
       <section class="admin-pane" data-admin-pane="settings">
         <header class="admin-pane-head">
           <div>
             <div class="drawer-label">Settings</div>
             <h2>설정</h2>
-            <p class="admin-pane-hint">시스템 전역 운영 설정. 차후 운영 항목이 추가되면 본 pane 의 sub-section 으로 확장한다.</p>
+            <p class="admin-pane-hint">시스템 전역 운영 설정. 좌측 nav 에서 항목을 선택한다. 항목은 차후 누적된다.</p>
           </div>
           <div class="admin-pane-head-right"></div>
         </header>
-        <div class="admin-settings-list" id="adminSettingsList">
-          <!-- 첫 sub-section: 전역 시스템 프롬프트 -->
-          <article class="admin-settings-section" data-settings-section="global-prompt">
-            <header class="admin-settings-section-head">
-              <h3>전역 시스템 프롬프트</h3>
-              <p class="admin-settings-section-hint">모든 대화의 최상위 base 가 되는 시스템 프롬프트. Product / Role / Account scope 가 이 본문 뒤에 누적된다. 비워두고 적용하면 코드 상수 fallback 으로 회귀한다.</p>
-            </header>
-            <div class="admin-settings-section-body" id="globalPromptEditorMount">
-              <!-- buildSystemPromptEditor({scope:'global'}) 가 마운트 -->
-            </div>
-          </article>
+        <div class="admin-settings-shell">
+          <!-- 좌측 sub-sidebar: 항목 nav (sticky) -->
+          <nav class="admin-settings-nav" id="adminSettingsNav" aria-label="설정 항목">
+            <div class="admin-settings-nav-group-label">시스템 프롬프트</div>
+            <button type="button" class="admin-settings-nav-item is-active" data-settings-tab="global-prompt">
+              <span class="admin-settings-nav-label">전역 시스템 프롬프트</span>
+              <span class="admin-settings-nav-hint">최상위 base. Product/Role/Account 가 뒤에 누적.</span>
+            </button>
+          </nav>
+
+          <!-- 우측 content: 활성 panel 만 노출 -->
+          <div class="admin-settings-content" id="adminSettingsContent">
+            <!-- 첫 panel: 전역 시스템 프롬프트 -->
+            <article class="admin-settings-panel is-active" data-settings-panel="global-prompt">
+              <header class="admin-settings-panel-head">
+                <h3>전역 시스템 프롬프트</h3>
+                <p class="admin-settings-panel-hint">모든 대화의 최상위 base 가 되는 시스템 프롬프트. Product / Role / Account scope 가 이 본문 뒤에 누적된다. 비워두고 적용하면 코드 상수 fallback 으로 회귀한다.</p>
+              </header>
+              <div class="admin-settings-panel-body" id="globalPromptEditorMount">
+                <!-- buildSystemPromptEditor({scope:'global'}) 가 마운트 -->
+              </div>
+            </article>
+          </div>
         </div>
       </section>
     </main>
@@ -350,6 +364,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260521-settings-tab"></script>
+  <script src="/static/admin.js?v=20260521-settings-subnav"></script>
 </body>
 </html>

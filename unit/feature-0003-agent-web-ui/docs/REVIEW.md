@@ -8,6 +8,29 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260521-0005 [SKIPPED:self-review-after-plan-approved]
+- Date: 2026-05-21
+- Decision: TASK-0096 (REQ-20260521-0004, **Minor** §12.3 — `설정` pane sub-sidebar + panel 확장 패턴) self-review. `feedback_outside_voice_for_rbac` policy 는 admin/audit 표면 직접 변경 시 발동, 본 cycle 은 settings UI restructure (HTML/CSS/JS 만) 라 미해당. self-review 채택. 단일 sub-section 누적 구조 → `admin-settings-shell` (grid 240px / 1fr) + `admin-settings-nav` (sub-sidebar) + `admin-settings-content` (panel container) 의 2-column 확장 패턴으로 전환. 새 항목 추가 절차 = nav `<button data-settings-tab="X">` + content `<article data-settings-panel="X">` + `SETTINGS_PANEL_MOUNTERS["X"] = mountFn` 3 단계.
+- Reason: 사용자 직접 요청 — TASK-0095 검증 완료 후속, "`설정` 탭 내부 화면을 `계정`, `역할`, `제품` 과 같이 패널을 분리해줄 수 있을까요? 차후 `전역 시스템 프롬프트` 항목 외에도 설정 내 많은 항목이 추가될 예정인데 현재는 확장성이 너무 좁게 구현되어 있습니다." 사용자 의사 확인 (B안 선택 — 1차 sidebar 깔끔 유지 + 설정 그룹 안 무한 확장 가능 패턴) 후 진행.
+- Self-check 결과:
+  - **확장성 (사용자 핵심 요구)**: 새 항목 추가 = (1) admin.html 에 nav button + content article 한 쌍, (2) admin.js 의 `SETTINGS_PANEL_MOUNTERS` 에 mount 함수 등록 1줄. mount 함수 내부에서 권한 게이트 + lazy fetch — 다른 panel 의 데이터 의존 없음.
+  - **Lazy mount 정합성**: `adminState.settings.mountedPanels` Set 으로 panel 첫 활성화 시에만 mount. 재진입 시 mount 호출 안 됨 (편집 state 보존). nav 클릭 = `.is-active` toggle 만, panel 데이터는 그대로.
+  - **Backward compat**: `globalPromptEditorMount` id 보존 + `buildSystemPromptEditor({scope:'global'})` 호출 동일. 권한 게이트 (`system_prompt.global.read/write`) 그대로 유지. API/DB 무영향.
+  - **반응형**: `@media (max-width: 760px)` 에서 sub-sidebar 가 가로 wrap 으로 collapse + content 가 그 아래 stack. 기존 admin tab 패턴 (`@media (max-width: 760px)` 가 sidebar 를 hamburger 로 전환하는 경향) 과 정합.
+  - **권한 게이트 유지**: `mountGlobalPromptPanel()` 안 `can("system_prompt.global.read")` 체크 그대로. read 권한 없으면 panel 본문에 빈 placeholder 노출 (TASK-0095 동일 동작).
+- Alt 거부:
+  - **A안 (1차 sidebar tab 격상)**: 사용자 명시 의사로 거부 (B안 권장). 운영 항목 5+개 시 1차 sidebar 가 길어져 카테고리 균형 깨짐.
+  - **단일 페이지 + 항목 collapsible accordion**: vertical scroll 누적 동일 문제. 사용자가 명시적으로 거부한 패턴.
+  - **iframe / SPA route**: overengineering. admin.html 의 기존 tab 패턴과 동형 유지가 일관성 우선.
+- Verification:
+  - frontend only 변경 — py_compile / pytest 비대상.
+  - 사후 (commit 후) 재배포 절차: `make web` → `/static/admin.html` HEAD 응답 200 + grep `admin-settings-shell` PASS → `/browse` 로 admin 로그인 → 설정 tab 진입 → 좌측 sub-sidebar `전역 시스템 프롬프트` nav item 노출 (active) + 우측 panel 의 textarea 3204 자 본문 노출 확인 → `/browse` 스크린샷 캡처.
+- Risks:
+  - 향후 mount 함수가 다른 panel 데이터에 의존하면 lazy mount 가 race 일으킬 수 있음. 본 cycle 의 `global-prompt` 단일 항목은 자기 충족이므로 무영향. 추가 항목 ship 시 별 cycle 에서 ADR.
+  - 첫 활성 panel 이 hard-code (`activeTab: "global-prompt"`) — URL hash 라우팅은 별 cycle 로 미루기 (현재 단일 항목이라 의미 없음).
+- panel: SKIPPED:self-review-after-plan-approved. UI restructure only, 데이터/API/권한 무영향, 사용자 직접 요청 의사 확정 후 진행.
+- Trace: REQ-20260521-0004 → TASK-0096 → CHG-20260521-0005 → REV-20260521-0005.
+
 ## REV-20260521-0004 [SKIPPED:self-review-after-plan-approved]
 - Date: 2026-05-21
 - Decision: TASK-0095 follow-up hot-fix — fast-path catchup `_ensure_seed_catchup(conn)` 에 `_ensure_seed_global_system_prompt(conn)` 호출 추가. CHG-20260521-0003 의 부트스트랩 helper 배치 누락을 보정 (slow path `_ensure_web_tables` 에만 두었고 fast path 누락). live deploy 후 web 컨테이너 안 DB 검증으로 발견.

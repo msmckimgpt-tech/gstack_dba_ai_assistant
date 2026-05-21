@@ -25,6 +25,8 @@ source_of_truth: false
 
 **Follow-up (CHG-20260521-0004 / REV-20260521-0004)**: live deploy 후 사용자 요청 "기능적인 검증 및 스크린샷을 통하여 UI 구성도 검증해주세요." 진행 중 발견된 hot-fix — fast-path catchup `_ensure_seed_catchup(conn)` 에 `_ensure_seed_global_system_prompt(conn)` 호출 누락. CHG-20260521-0003 가 slow path (`_ensure_web_tables`) 에만 helper 를 두었지만 기존 배포는 fast path 만 타기 때문에 GLOBAL row 가 자동 seed 안 되어 textarea 빈 채 노출. `_ensure_seed_role_system_prompts(conn)` 직후 1줄 추가로 보정. idempotent — 양쪽 path 호출 시에도 INSERT 1회만.
 
+**Follow-up (TASK-0096 / CHG-20260521-0005 / REV-20260521-0005, REQ-20260521-0004, Minor §12.3 — `설정` pane sub-sidebar + panel 확장 패턴)**: 사용자 직접 요청 — TASK-0095 검증 완료 후속, "`설정` 탭 내부 화면을 `계정`, `역할`, `제품` 과 같이 패널을 분리해줄 수 있을까요? 차후 `전역 시스템 프롬프트` 항목 외에도 설정 내 많은 항목이 추가될 예정인데 현재는 확장성이 너무 좁게 구현되어 있습니다." 단일 sub-section 누적 구조 → 좌측 sub-sidebar (항목 nav) + 우측 panel 의 2-column grid 확장 패턴으로 전환. 새 항목 추가 절차 = nav button + panel article + `SETTINGS_PANEL_MOUNTERS` 등록 3 단계, panel 마운트는 첫 활성화 시 1회 lazy 실행. UI restructure only — 데이터/API/권한 무영향. AC-0210 신설, AC-0203 갱신 (sub-section → panel 명명).
+
 ---
 
 **2026-05-21 TASK-0094 PLAN-APPROVED — 첨부 multi-cycle (A CSV + B DDL/KB + C Vision + D PDF RAG) BRIEFING Revision 2 lock-in** (CHG-20260521-0001, REV-20260521-0001 [SUBAGENT:codex], REQ-20260521-0001, **Critical** §12.3). Codex outside-voice review 2 회 흡수 (REV-20260520-0001 1차 17 Valid + REV-20260521-0002 2차 Critical 3 + Major 11 + Minor 2 — F8 만 사용자 명시 거부). D1~D21 21 결정 lock-in. 코드/스키마/RBAC catalog 변경 0 — 계획 문서 only. Sprint 1 (Cycle 0 Foundation + Cycle 1 CSV ingest) implementation 진입 가능. D14 SQL allowlist guard 통과를 Sprint 1 ship 조건.

@@ -703,34 +703,84 @@ function switchTab(tabName) {
   }
 }
 
-/* ── Settings pane (TASK-0095) ──────────────────────────────────────── */
+/* ── Settings pane (TASK-0096: sub-sidebar + panel 확장 패턴) ─────────
+ * 새 항목 추가 절차:
+ *   1) admin.html 의 admin-settings-nav 에 <button data-settings-tab="X"> 추가
+ *   2) admin-settings-content 에 <article data-settings-panel="X"> 추가
+ *   3) SETTINGS_PANEL_MOUNTERS 에 X 키로 마운트 함수 등록
+ * 마운트 함수는 panel 이 처음 활성화될 때 1회 실행. 권한 게이트는 함수 내부에서. */
 
 adminState.settings = {
   initialized: false,
+  activeTab: "global-prompt",
+  mountedPanels: new Set(),
+};
+
+const SETTINGS_PANEL_MOUNTERS = {
+  "global-prompt": mountGlobalPromptPanel,
 };
 
 function mountSettingsSections() {
-  // 첫 sub-section: 전역 시스템 프롬프트 (system_prompt.global.read 보유자만 표시).
-  const mount = $("globalPromptEditorMount");
-  if (mount && can("system_prompt.global.read")) {
-    mount.innerHTML = "";
-    const editor = buildSystemPromptEditor({
-      scope: "global",
-      title: "본문",
-      hint: can("system_prompt.global.write")
-        ? "비워두고 적용하면 코드 상수 fallback 으로 회귀합니다. 변경사항은 하단 '모두 적용' 으로 일괄 저장됩니다."
-        : "조회 전용 — 수정 권한이 없습니다.",
-    });
-    if (!can("system_prompt.global.write")) {
-      // read-only: textarea 비활성화는 buildSystemPromptEditor 내부 input 이벤트가
-      // pending 으로 옮기지만 PUT 단계에서 backend 가 403 — 사용자 혼동 회피 위해 disabled.
-      const ta = editor.querySelector("textarea.admin-prompt-textarea");
-      if (ta) ta.disabled = true;
+  bindSettingsNav();
+  activateSettingsPanel(adminState.settings.activeTab);
+}
+
+function bindSettingsNav() {
+  const nav = $("adminSettingsNav");
+  if (!nav || nav.dataset.bound === "1") return;
+  nav.dataset.bound = "1";
+  nav.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-settings-tab]");
+    if (!btn || !nav.contains(btn)) return;
+    const tab = btn.getAttribute("data-settings-tab");
+    if (tab) activateSettingsPanel(tab);
+  });
+}
+
+function activateSettingsPanel(tab) {
+  const nav = $("adminSettingsNav");
+  const content = $("adminSettingsContent");
+  if (!nav || !content) return;
+  adminState.settings.activeTab = tab;
+  nav.querySelectorAll("[data-settings-tab]").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.getAttribute("data-settings-tab") === tab);
+  });
+  content.querySelectorAll("[data-settings-panel]").forEach((panel) => {
+    panel.classList.toggle("is-active", panel.getAttribute("data-settings-panel") === tab);
+  });
+  if (!adminState.settings.mountedPanels.has(tab)) {
+    const mounter = SETTINGS_PANEL_MOUNTERS[tab];
+    if (typeof mounter === "function") {
+      try {
+        mounter();
+      } catch (err) {
+        console.error("[settings] panel mount failed:", tab, err);
+      }
     }
-    mount.appendChild(editor);
-  } else if (mount) {
-    mount.innerHTML = '<div class="admin-detail-empty">전역 시스템 프롬프트 조회 권한이 없습니다.</div>';
+    adminState.settings.mountedPanels.add(tab);
   }
+}
+
+function mountGlobalPromptPanel() {
+  const mount = $("globalPromptEditorMount");
+  if (!mount) return;
+  if (!can("system_prompt.global.read")) {
+    mount.innerHTML = '<div class="admin-detail-empty">전역 시스템 프롬프트 조회 권한이 없습니다.</div>';
+    return;
+  }
+  mount.innerHTML = "";
+  const editor = buildSystemPromptEditor({
+    scope: "global",
+    title: "본문",
+    hint: can("system_prompt.global.write")
+      ? "비워두고 적용하면 코드 상수 fallback 으로 회귀합니다. 변경사항은 하단 '모두 적용' 으로 일괄 저장됩니다."
+      : "조회 전용 — 수정 권한이 없습니다.",
+  });
+  if (!can("system_prompt.global.write")) {
+    const ta = editor.querySelector("textarea.admin-prompt-textarea");
+    if (ta) ta.disabled = true;
+  }
+  mount.appendChild(editor);
 }
 
 /* ── Audit pane (TASK-0073 Phase C) ─────────────────────────────────── */

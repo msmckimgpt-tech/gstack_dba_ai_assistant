@@ -12,7 +12,7 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 3 진행 중)
-- Last Updated: 2026-05-21 (TASK-0094 Sprint 1 Phase 3 RBAC ship — 4 권한 코드 + 6 checklist)
+- Last Updated: 2026-05-21 (TASK-0096 — `설정` pane sub-sidebar + panel 확장 패턴, 본 worktree 한정. TASK-0094 Sprint 1 Phase 3 RBAC ship 은 별 worktree 에서 진행 중)
 
 ## 2. Task Queue
 
@@ -29,6 +29,7 @@ source_of_truth: true
 - [x] TASK-0092 (REQ-20260520-0007, Minor §12.3 — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 검증). TASK-0073 Phase E 의 사용자 위임 항목 1 건. **7 vector matrix PASS (7/7)** — V1~V3 fail-closed + V4 dev bypass + V5 positive control + V6 strict-string-equality (Codex C3) + V7 default. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용 (`docker run --entrypoint python --no-deps` + `import web.app` + stderr 3 substring 검증 + TEST.md **§4** append). 본 cycle CHG-20260520-0004, REV-20260520-0004 on `ai/claude/0092/audit-prod-fail-closed` worktree.
 - [x] TASK-0093 (REQ-20260520-0008, Minor §12.3 — `bin/verify-completion.sh check_12` audit endpoint routing 정적 검사). TASK-0073 Phase E hotfix (CHG-20260520-0001) 의 routing 회귀 fragility 보강. Codex outside voice review 5 findings 흡수 후 plan v2 redesign (SKIP→FAIL structural / inline 4-path→auto-discovery static GET / `/purge` method-aware 제외 / helper split + fixture test / `9 checks`→`10 checks` footer). Phase A~D 모두 검증 PASS (production positive + 5 fixture negative + 5 other-feature SKIP). 본 cycle CHG-20260520-0003, REV-20260520-0003 on `ai/claude/0086/audit-followup` worktree.
 - [x] TASK-0095 (REQ-20260521-0003, **Major** §12.3 — GLOBAL system prompt layer + 신규 `설정` 탭). 사용자 직접 요청 — "현재 서비스 사용자의 시스템 프롬프트 누적 구조에서, 최상위 전역 프롬프트도 구성해주세요." 4 layer (BASE → Product → Role → Account) 의 BASE 가 코드 상수 hard-code 라 운영자 수정 불가하던 구조를 5 layer (GLOBAL → Product → Role → Account, BASE = code constant fallback) 로 확장. WebSystemPrompts schema 무변경 (Scope VARCHAR(16) 가 이미 'global' 수용). RBAC 2 권한 신설 (`system_prompt.global.read/.write`, group=`settings`, admin auto-grant). 관리 콘솔 sidebar 에 신규 `설정` 탭 + 확장 가능한 `admin-settings-section` sub-section 패턴 도입 — 차후 운영 항목 추가 시 동일 패턴으로 sub-section 누적. AC-0011 갱신 + AC-0199 ~ AC-0204 신설. 본 cycle CHG-20260521-0003, REV-20260521-0003 on `ai/claude/global-system-prompt` worktree. **Follow-up** (CHG-20260521-0004, REV-20260521-0004): live deploy 후 사용자 검증 진행 중 발견 — `_ensure_seed_catchup` (fast path) 에 `_ensure_seed_global_system_prompt` 호출 누락. 1줄 hot-fix.
+- [x] TASK-0096 (REQ-20260521-0004, **Minor** §12.3 — `설정` pane sub-sidebar + panel 확장 패턴). 사용자 직접 요청 — TASK-0095 검증 완료 후속, "`설정` 탭 내부 화면을 `계정`, `역할`, `제품` 과 같이 패널을 분리해줄 수 있을까요?" 단일 sub-section 누적 구조 → 좌측 sub-sidebar (항목 nav) + 우측 panel 의 2-column 확장 패턴으로 전환. 새 항목 추가 절차 = `<button data-settings-tab="X">` + `<article data-settings-panel="X">` + `SETTINGS_PANEL_MOUNTERS` 등록 3 단계. mount 함수는 panel 첫 활성화 시 1회 실행 (lazy). UI restructure only — 데이터/API/권한 무영향. AC-0210 신설. 본 cycle CHG-20260521-0005, REV-20260521-0005 on `ai/claude/global-system-prompt` worktree.
 
 ### TASK-0094 (REQ-20260521-0001, **Critical** §12.3 — 첨부 multi-cycle A+B+C+D) (2026-05-21)
 

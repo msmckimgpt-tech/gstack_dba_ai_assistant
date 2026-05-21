@@ -8,6 +8,39 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260521-0005
+- Date: 2026-05-21
+- Summary: TASK-0096 (REQ-20260521-0004, **Minor** §12.3 — `설정` pane sub-sidebar + panel 확장 패턴). 사용자 직접 요청 — TASK-0095 검증 완료 후속, "`설정` 탭 내부 화면을 `계정`, `역할`, `제품` 과 같이 패널을 분리해줄 수 있을까요? 차후 `전역 시스템 프롬프트` 항목 외에도 설정 내 많은 항목이 추가될 예정인데 현재는 확장성이 너무 좁게 구현되어 있습니다." 단일 sub-section 누적 구조 → 좌측 sub-sidebar (항목 nav) + 우측 panel 의 2-column grid 확장 패턴으로 전환. 새 항목 추가 절차 = `<button data-settings-tab="X">` + `<article data-settings-panel="X">` + `SETTINGS_PANEL_MOUNTERS["X"] = mountFn` 3 단계. mount 함수는 panel 첫 활성화 시 1회 실행 (lazy mount, `adminState.settings.mountedPanels` Set). UI restructure only — 데이터/API/권한 무영향.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`:
+    - `admin-settings-list` / `admin-settings-section` (TASK-0095 단일 누적 구조) → `admin-settings-shell` (grid 240px + 1fr) + `admin-settings-nav` (sub-sidebar) + `admin-settings-content` (panel 컨테이너) 로 교체.
+    - 첫 nav item = `data-settings-tab="global-prompt"` (is-active), 첫 panel = `data-settings-panel="global-prompt"` (is-active). nav 안에 그룹 라벨 (`시스템 프롬프트`) + label/hint 2-line 구조.
+    - 신규 hook id = `adminSettingsNav`, `adminSettingsContent`. 기존 `globalPromptEditorMount` 는 panel body 안으로 이동 (변경 없음, 셀렉터 호환).
+    - cache-buster `v=20260521-settings-tab` → `v=20260521-settings-subnav`.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`:
+    - `.admin-settings-list` / `.admin-settings-section` (TASK-0095) 셀렉터 제거 (markup 에서 사용 안 됨).
+    - `.admin-settings-shell` (grid 240px / 1fr), `.admin-settings-nav` (sticky, border-right), `.admin-settings-nav-group-label` (uppercase 11px), `.admin-settings-nav-item` (vertical flex + label/hint), `.admin-settings-nav-item.is-active` (소프트 surface 강조), `.admin-settings-content` (left padding 20), `.admin-settings-panel` (default `display:none`) + `.is-active` (`display:flex`), `.admin-settings-panel-head/-hint/-body` 스타일 추가.
+    - `@media (max-width: 760px)` — sub-sidebar 가 가로 wrap 으로 collapse, content 가 그 아래로 stack.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`:
+    - `adminState.settings` 에 `activeTab` (default `"global-prompt"`) + `mountedPanels` (Set) 추가.
+    - `SETTINGS_PANEL_MOUNTERS` 객체 신설 — key=tab id, value=mount 함수. 차후 항목 추가 시 본 객체 한 줄 등록만으로 확장.
+    - `mountSettingsSections()` 가 `bindSettingsNav()` + `activateSettingsPanel(activeTab)` 호출하는 형태로 재정의.
+    - `bindSettingsNav()` — 1회 위임 click 핸들러 (`data-settings-tab` 매칭).
+    - `activateSettingsPanel(tab)` — nav/panel `.is-active` toggle + 첫 활성화 시 mount 함수 1회 실행 + `mountedPanels` 기록.
+    - `mountGlobalPromptPanel()` — TASK-0095 의 인라인 글로벌 프롬프트 마운트 로직을 단독 함수로 추출. 권한 게이트 + read-only disabled 처리 동일.
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: AC-0210 신설 (sub-sidebar + panel 패턴 정의).
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0096 entry + Last Updated 갱신.
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260521-0005.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary follow-up note.
+- Verification:
+  - py_compile / 정적 검사 N/A — 본 cycle 은 frontend 만 변경 (HTML/CSS/JS).
+  - 사후 검증: web 컨테이너 재배포 → `/static/admin.html` 응답에 `admin-settings-shell` / `admin-settings-nav-item[data-settings-tab="global-prompt"]` markup 노출 확인 + `/browse` 로 좌측 sub-sidebar 노출 + 활성 panel 의 textarea 본문 노출 확인 + 권한 grid 회귀 없음 확인.
+- Risks:
+  - 차후 항목 추가 시 mount 함수가 panel 첫 활성화 후에만 작동하므로, 첫 진입 항목에서 다른 탭 데이터 의존 시 명시적 prefetch 필요. 본 cycle 의 `global-prompt` 단일 항목은 자기 충족.
+  - `bindSettingsNav` 의 `dataset.bound = "1"` 가드로 중복 핸들러 부착 방지. 다른 admin tab 패턴과 동형.
+- Trace: REQ-20260521-0004 → TASK-0096 → CHG-20260521-0005 → REV-20260521-0005.
+
 ## CHG-20260521-0004
 - Date: 2026-05-21
 - Summary: TASK-0095 follow-up hot-fix — fast-path catchup (`_ensure_seed_catchup`) 에 `_ensure_seed_global_system_prompt(conn)` 호출 누락을 보정. CHG-20260521-0003 이 slow path (`_ensure_web_tables`) 에만 helper 를 배치했지만, 기존 배포는 fast path 만 타기 때문에 GLOBAL scope row 가 자동 seed 되지 않았다. live deploy 후 DB 검증으로 발견 — `WebSystemPrompts WHERE Scope='global'` 0 row, 모든 응답이 코드 상수 fallback 만 작동. 관리 콘솔 `설정` 탭의 textarea 가 빈 채로 노출되어 운영자가 매번 직접 base prompt 를 입력해야 하는 UX 회귀 발생.
