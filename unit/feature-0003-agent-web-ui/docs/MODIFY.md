@@ -1601,3 +1601,29 @@ source_of_truth: true
 - Notes: 단순 운영 기록 follow-up. AGENTS.md §16.5 Step 6 의 결과 기록을 본 cycle 의 첫 PR 에 포함하지 못한 누락 보강. outside-voice review 추가 호출 없음 (REPORT.md 의 단순 사실 append 는 SUBAGENT review 대상 아님 — SKIPPED).
 - Impact: docs only. backend / RBAC / 스키마 영향 0.
 - Rollback Notes: REPORT.md TASK-0094 entry 한 블록 revert 로 즉시 복구 가능. MODIFY/REVIEW 의 본 entry 도 함께 revert.
+
+## CHG-20260521-0003
+- Date: 2026-05-21
+- Related Requirement: TASK-0094 (REQ-20260521-0001, Critical §12.3) Sprint 1 Phase 1 — Pre-flight (ADR + compose + env + bootstrap script + platform-runtime ANCHOR)
+- Summary: 첨부 기능 multi-cycle Sprint 1 Cycle 0 진입 인프라 사전 작업. ADR-0022 (MinIO 도입) + ADR-0023 (sandbox schema + D15 maintenance path 분리) + ADR-0025 (PGVector for attachment Sprint 4 prerequisite) 등재. docker-compose.yml 에 `minio` + `minio-init` service 추가. `.env.example` 16 변수 추가 (MinIO 7 + 호스트 port 2 + browser redirect 1 + ATTACHMENT_MAX_BYTES_* 3 + ATTACHMENT_AUDIT_HMAC_KEY 1 + SANDBOX_SQL_* 2). `unit/feature-0003-agent-web-ui/src/scripts/minio-init.sh` 신설 (idempotent bucket + bucket-scoped policy + app key bootstrap). feature-0001-platform-runtime ANCHOR §1 갱신.
+- Files:
+  - `docs/DECISIONS.md` — ADR-0022/0023/0025 신설 (3 ADR, 약 56 lines)
+  - `docker-compose.yml` — `minio` + `minio-init` 2 service 추가 (약 50 lines)
+  - `.env.example` — MinIO + attachment + sandbox 섹션 추가 (41 lines, 16 vars)
+  - `unit/feature-0003-agent-web-ui/src/scripts/minio-init.sh` — 부트스트랩 신규 (130 lines, mc-based)
+  - `unit/feature-0001-platform-runtime/docs/ANCHOR.md` — §1 비-MySQL service platform 책임 명시 항목 추가
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` — Sprint 1 Phase 1~12 breakdown + Phase 1 [x] 표시 + Current Status 갱신
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md` — 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260521-0003 entry
+- Notes: Phase 1 은 코드 직접 변경 (Python / JS) 없이 인프라 / 정책 / 부트스트랩만. Phase 2~12 가 schema / RBAC / storage wrapper / API / UI / share / lifecycle / sandbox / ingest / SQL guard 본격 작업. **D14 SQL allowlist guard 통과** 가 Sprint 1 ship 조건 (Phase 12).
+- Impact:
+  - 본 Phase 1 ship 후 dev 환경에서 `make up` 또는 `docker compose up -d` 시 minio + minio-init 함께 가동. minio-init 부트스트랩 1 회 완료 후 minio API endpoint (`minio:9000`) 에서 app key 인증 가능. `agent-attachments` bucket 생성 확인 가능.
+  - 본 Phase 1 자체는 backend / RBAC catalog / 스키마 영향 0. Phase 2 진입 시 `_ensure_web_conversation_attachments_schema(conn)` 등 helper 와 schema column 신설.
+  - 실제 attachment upload / ingest / SQL 실행 path 는 Phase 5/11/12 ship 까지 unavailable (사용자에게는 영향 없음).
+- Rollback Notes:
+  - ADR-0022/0023/0025 의 status 를 `superseded` 또는 `rejected` 로 갱신.
+  - docker-compose.yml 의 `minio` + `minio-init` service block 제거.
+  - `.env.example` 의 MinIO/attachment/sandbox 섹션 제거.
+  - `unit/feature-0003-agent-web-ui/src/scripts/minio-init.sh` 파일 삭제.
+  - `unit/feature-0001-platform-runtime/docs/ANCHOR.md` 의 비-MySQL service 항목 revert.
+  - 실제 데이터 영향 0 (Phase 1 은 인프라 / 정책만). minio container volume `../artifacts/minio-data` 도 비어 있어 별도 cleanup 불필요.

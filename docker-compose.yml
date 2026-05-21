@@ -179,6 +179,60 @@ services:
       - "${BROWSER_PORT}:8001"
     networks: [dbnet]
 
+  # TASK-0094 (REQ-20260521-0001, Critical §12.3) Sprint 1 Phase 1 — ADR-0022
+  # MinIO S3-compat 첨부 객체 스토리지. BRIEFING D1 사용자 직접 확정. 사내망
+  # 다운로드는 signed URL (frontend 전용), 외부 LLM 송신은 server-side bytes
+  # read 후 base64/files API 로 전달 (BRIEFING D13). minio-init 부트스트랩이
+  # bucket idempotent 생성 + lifecycle policy (D6 delete_reason 별 retention) +
+  # root credential 비활성화 + app 전용 key 생성. App key rotation 은 D20
+  # dual-key rotation runbook 따름 (Sprint 1 Phase 4 ship 조건).
+  minio:
+    image: minio/minio:RELEASE.2024-12-13T22-19-12Z
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BROWSER_REDIRECT_URL: ${MINIO_BROWSER_REDIRECT_URL:-}
+      TZ: ${TZ}
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - ../artifacts/minio-data:/data
+    networks: [dbnet]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # TASK-0094 Sprint 1 Phase 1 — minio-init one-shot bootstrap.
+  # ADR-0022 의 idempotent bucket 생성 + lifecycle policy + root credential
+  # 비활성화 + app 전용 access key 생성. Container exit 0 후 종료. App key
+  # rotation 은 D20 runbook 의 dual-valid window 별 cycle subtask 로 처리.
+  minio-init:
+    image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+    restart: "no"
+    env_file:
+      - .env
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_APP_ACCESS_KEY: ${MINIO_APP_ACCESS_KEY}
+      MINIO_APP_SECRET_KEY: ${MINIO_APP_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET:-agent-attachments}
+      TZ: ${TZ}
+    volumes:
+      - ./unit/feature-0003-agent-web-ui/src/scripts/minio-init.sh:/usr/local/bin/minio-init.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/minio-init.sh"]
+    networks: [dbnet]
+    depends_on:
+      minio:
+        condition: service_healthy
+
 networks:
   dbnet:
   llm-shared:
