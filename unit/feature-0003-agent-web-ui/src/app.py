@@ -10049,6 +10049,110 @@ async def get_audit_event(event_id: int, request: Request) -> JSONResponse:
         conn.close()
 
 
+@app.get("/api/profile/audits")
+async def list_profile_audit_events(request: Request) -> JSONResponse:
+    """REQ-20260520-0004 (TASK-0089): 작업 화면 profile drawer 의 본인 audit row 조회.
+
+    권한: `audit.read.own` 또는 `audit.read.any`. **backend 가 scope="own" 강제** —
+    `.any` 보유자도 본인 row 만 조회 (admin 콘솔 `GET /api/admin/audits` 와 분리).
+    Codex outside voice C2 — `.any` 가 drawer 에서 전체 audit 보이는 위험 차단.
+
+    Query params: action_code / from_at / to_at / q / cursor / limit (admin endpoint 와 동일 schema,
+    actor_account_id / actor_type 는 본인 한정이라 무시).
+
+    Response: `{items: [...], next_cursor: <id>|None, scope: 'own'}`.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not (
+            _account_has_permission(account, "audit.read.own")
+            or _account_has_permission(account, "audit.read.any")
+        ):
+            return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
+        params = _audit_parse_filter_params(request)
+        cursor_id = _audit_parse_cursor(params["cursor"])
+        limit = _audit_clamped_limit(params["limit"])
+        # TASK-0089 (Codex C2): scope="own" 강제 — .any 보유자도 본인 row 만.
+        where_clause, args = _audit_compose_where(
+            scope="own",
+            account_id=int(account["id"]),
+            params=params,
+            cursor_id=cursor_id,
+        )
+        sql = (
+            "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
+            "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
+            "RemoteAddr, UserAgent, RequestId, OccurredAt "
+            f"FROM WebAuditEvents{where_clause} "
+            "ORDER BY Id DESC LIMIT %s"
+        )
+        args.append(int(limit) + 1)
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(sql, tuple(args))
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+        has_more = len(rows) > limit
+        items = [_audit_row_to_dict(r) for r in rows[:limit]]
+        next_cursor = str(items[-1]["id"]) if has_more and items else None
+        return JSONResponse({"items": items, "next_cursor": next_cursor, "scope": "own"})
+    finally:
+        conn.close()
+
+
+@app.get("/api/profile/audits/{event_id}")
+async def get_profile_audit_event(event_id: int, request: Request) -> JSONResponse:
+    """REQ-20260520-0004 (TASK-0089): profile drawer audit detail.
+
+    `.own` 강제 (Actor or Target = self) — `.any` 보유자도 본인 row 만. 권한 부족
+    시 무조건 404 (byte-equal, metadata leak 차단 — TASK-0073 Eng E1 정합).
+    """
+    if event_id <= 0:
+        return _json_error("invalid event_id", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not (
+            _account_has_permission(account, "audit.read.own")
+            or _account_has_permission(account, "audit.read.any")
+        ):
+            return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
+        # TASK-0089: .own 강제 (admin endpoint 의 scope dependency 제거).
+        cond, scope_args = _audit_build_self_filter_sql(int(account["id"]))
+        where_clause = f" WHERE Id = %s AND {cond}"
+        args: list[Any] = [int(event_id)]
+        args.extend(scope_args)
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
+                "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
+                "RemoteAddr, UserAgent, RequestId, OccurredAt "
+                f"FROM WebAuditEvents{where_clause} LIMIT 1",
+                tuple(args),
+            )
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        if not row:
+            return _json_error("audit event not found", 404)
+        return JSONResponse({"item": _audit_row_to_dict(row), "scope": "own"})
+    finally:
+        conn.close()
+
+
 @app.get("/api/keywords")
 async def list_keywords_removed(*_args, **_kwargs) -> JSONResponse:
     return _json_error("Keyword Management는 제거되었습니다.", 410)

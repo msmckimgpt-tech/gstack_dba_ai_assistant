@@ -194,6 +194,25 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-05-20 (TASK-0089 Phase A~E — 작업 화면 profile drawer "내 감사 로그" 탭 신설):
+  - **환경**: `docker run --rm --entrypoint python -v <wt>/unit/feature-0003-agent-web-ui/src:/app/web repo-web:latest` host-mounted code + image dependency.
+  - **py_compile**: PASS.
+  - **node --check static/app.js**: PASS.
+  - **routing smoke (Phase E)**:
+    - `list_profile_audit_events` present in app.py module ✓
+    - `get_profile_audit_event` present ✓
+    - FastAPI app routes: `['/api/profile/audits', '/api/profile/audits/{event_id}']` ✓
+  - **Codex outside voice 5 findings 흡수 검증**:
+    - C1 URL mismatch → 신규 `/api/profile/audits` endpoint 등록 확인 ✓
+    - C2 `.any > .own` 강제 → backend `_audit_compose_where(scope="own", ...)` 직접 호출 (code review) ✓
+    - C3 CSV export 미노출 → drawer-pane HTML 에 export 버튼 부재 (code review) ✓
+    - C4 1-column + 수평 스크롤 → styles.css `.profile-audit-detail-change { white-space: pre; overflow: auto; max-height: 30vh }` ✓
+    - C5 권한 race → `state.profileAudit.forbidden` + 403 handler in `loadProfileAuditList` + `updateProfileAuditTabVisibility()` in `renderProfile` ✓
+  - **미완 (PR merge 후 사용자 위임)**:
+    - live browser smoke: drawer tab 클릭 → list 표시 → row click → inline detail expand → filter 적용 / 초기화
+    - `.any` 보유자 (admin) 가 drawer 호출 시 본인 row 만 나오는지 확인 (Codex C2 검증)
+    - `audit.read.own` 권한 revoke 후 403 graceful state 진입 확인 (Codex C5 검증)
+    - drawer 폭 390px 에서 1-column layout + ChangeJson 수평 스크롤 시각 검증 (Codex C4 검증)
 - 2026-05-20 (TASK-0090 Phase A~B — `/api/admin/audits/export.csv` CSV streaming export 전환):
   - **환경**: `docker run --rm --entrypoint python -v <wt>/unit/feature-0003-agent-web-ui/src:/app/web repo-web:latest -c "..."` host-mounted code + image dependency.
   - **py_compile**: PASS.

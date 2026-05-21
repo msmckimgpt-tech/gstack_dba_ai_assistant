@@ -57,6 +57,33 @@ source_of_truth: true
   - live runtime smoke (관리 콘솔 `설정` 탭 진입 + 본문 수정 + LLM 호출 시 적용 확인) 는 사용자 검증으로 위임.
 - Trace: REQ-20260521-0003 → TASK-0095 → CHG-20260521-0003 → REV-20260521-0003.
 
+## CHG-20260520-0009
+- Date: 2026-05-20
+- Summary: TASK-0089 (REQ-20260520-0004, **Minor** §12.3 — 작업 화면 audit drawer UX). profile drawer "내 감사 로그" 탭 신설 + 신규 backend endpoint 2 (`/api/profile/audits` + detail) + frontend (HTML + JS + CSS). Codex outside voice review 5 critical findings + 2 minimum-fix 흡수 v2 redesign.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`: 신규 endpoint 2 (`list_profile_audit_events` line ~9981, `get_profile_audit_event` line ~10043). 기존 helper 재사용 (`_audit_parse_filter_params`, `_audit_compose_where(scope="own")`, `_audit_row_to_dict`, `_audit_build_self_filter_sql`). `scope="own"` **강제** — `.any` 보유자도 본인만 (Codex C2).
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`: drawer-tab "내 감사 로그" (line 228, `data-profile-tab="audit"` + id `profileAuditTab` + hidden default) + drawer-pane (filter row mini 3 필드 + 1-column list + pagination + inline detail). cache-bust `v=20260520-profile-audit`.
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`: `state.profileAudit = {items, selectedId, filters, nextCursor, loading, forbidden}` + helper 6 (`_profileAuditEscapeHtml`, `_profileAuditFormatDt`, `_profileAuditHasReadPermission`, `updateProfileAuditTabVisibility`, `_profileAuditReadFilters`, `_profileAuditClearFilters`) + loader (`loadProfileAuditList`) + renderer (`renderProfileAuditList`, `renderProfileAuditDetail`) + handlers (`attachProfileAuditHandlers`). tab click handler audit branch + `renderProfile()` tab visibility wire.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.profile-audit-*` ~15 클래스 — filter row + 1-column list + row hover/selected + pagination + inline detail dl + `<pre>` overflow:auto 수평 스크롤 (Codex C4).
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: §2.8 + TASK-0089 [x].
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260520-0009.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary.
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md`: §4 본 cycle 결과.
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: AC-0194.
+- Codex outside voice 5 findings 흡수:
+  - C1 URL 의미 mismatch → `/api/profile/audits` 신설
+  - C2 `.any > .own` 우선 → backend `scope="own"` 강제
+  - C3 CSV export drawer 위험 → 미노출 (admin 한정)
+  - C4 drawer 폭 1-column + ChangeJson 수평 스크롤
+  - C5 권한 race → tab visibility + 403 graceful
+- Verification:
+  - py_compile PASS
+  - node --check app.js PASS
+  - routing smoke: `/api/profile/audits` + `/api/profile/audits/{event_id}` 등록 확인
+  - `list_profile_audit_events` + `get_profile_audit_event` 함수 존재 확인
+- Risks: live browser smoke (drawer tab 클릭 → list 표시 → click → inline detail expand → filter 적용 / 403 시 "권한 없음") PR merge 후 사용자 위임. `audit.read.own` 권한 없는 사용자에게 tab 자체가 hidden — `updateProfileAuditTabVisibility()` 가 `renderProfile()` 마다 호출.
+- Trace: REQ-20260520-0004 → TASK-0089 → CHG-20260520-0009 → REV-20260520-0009.
+
 ## CHG-20260520-0008
 - Date: 2026-05-20
 - Summary: TASK-0090 (REQ-20260520-0005, **Minor** §12.3 — CSV streaming export). `/api/admin/audits/export.csv` hard cap 50k row 제거 + StreamingResponse + keyset cursor pagination 전환. Codex outside voice review 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign.

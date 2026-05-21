@@ -40,6 +40,33 @@ source_of_truth: true
 - panel: SKIPPED:self-review-after-plan-approved (Codex outside voice trigger 미해당 — system_prompt 표면 + audit 변경 없음. 사용자 PLAN-APPROVED marker 가 panel 의 외부 검증 대체).
 - Trace: REQ-20260521-0003 → TASK-0095 → CHG-20260521-0003 → REV-20260521-0003.
 
+## REV-20260520-0009 [AGENT-TEAM:codex-outside-voice]
+- Date: 2026-05-20
+- Decision: TASK-0089 (REQ-20260520-0004, **Minor** §12.3 — 작업 화면 audit drawer UX) plan v1 초안 → Codex outside voice review (consult mode, 829,505 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign → 사용자 confirm. profile drawer "내 감사 로그" 탭 + 신규 backend endpoint 2 (`/api/profile/audits` + detail, `scope="own"` 강제) + frontend (HTML + JS + CSS).
+- Codex outside voice 5 findings 흡수:
+  - **C1 — URL 의미 mismatch**: `/api/admin/audits` 는 `.own` 호출 가능하나 `/admin/` 이 drawer 와 부합 안 함. **ACCEPT** → 신규 `/api/profile/audits` + detail (helper 재사용).
+  - **C2 — `.any > .own` 우선**: `_audit_resolve_read_scope()` 가 `.any` 먼저 선택. frontend `scope=own` 만으로 부족. **ACCEPT** → backend `_audit_compose_where(scope="own", ...)` 강제. `.any` 보유자도 본인만.
+  - **C3 — CSV export drawer 위험**: export endpoint `scope="any"` 고정, drawer 노출 시 `audit.export` 보유자가 전체 CSV. **ACCEPT** → drawer 에 export/purge 미노출.
+  - **C4 — drawer 폭 + ChangeJson**: 390px 에 2-column 안 맞음, ChangeJson 줄바꿈 비효율. **ACCEPT** → 1-column list + inline detail expand + `<pre>` overflow:auto 수평 스크롤.
+  - **C5 — 권한 race**: backend OK (매 요청 권한 재확인), frontend 처리 필요. **ACCEPT** → tab visibility (`updateProfileAuditTabVisibility()` `renderProfile()` 마다) + 403 graceful state.profileAudit.forbidden.
+- 추가: mini filter `action_code` + `from_at` + `to_at` (3 필드, actor_id/actor_type 본인 한정 무의미 제거).
+- Alt 거부:
+  - **v1 단독 진행 (기존 endpoint 재사용)**: C1 + C2 fatal. `.any` 보유자가 drawer 에서 전체 audit 노출. backend 강제 필수.
+  - **C3 완화 (drawer 에 export 노출)**: scope="any" 고정 CSV 라 PII 전체 유출. drawer 미노출 필수.
+- Verification:
+  - py_compile PASS
+  - node --check app.js PASS
+  - routing smoke: 신규 endpoint 2 등록 확인
+- Risks: live browser smoke (drawer tab → list → inline detail expand → filter / 403 시 "권한 없음") PR merge 후 사용자. CSV export drawer 추가는 별 cycle (`/api/profile/audits/export.csv` + scope="own" 강제 필요).
+- 미해결 followup:
+  - drawer 에서 자기 audit CSV export (`/api/profile/audits/export.csv`, scope="own" 강제) 별 cycle (Minor)
+  - TASK-0073 backlog 1 entry 남음 (TASK-0087, 외부 LAN trust feature-0006 위임)
+  - SECURITY.md §8 strict-string-equality 계약 (TASK-0092 followup)
+  - `_migrate_web_account_activity_to_audit()` 제거 (TASK-0086 followup, rollback window 종료 후)
+  - 동시 export 제한 + EXPLAIN 분석 (TASK-0090 followup)
+- panel: AGENT-TEAM:codex-outside-voice — Codex consult mode (829,505 tokens).
+- Trace: REQ-20260520-0004 → TASK-0089 → CHG-20260520-0009 → REV-20260520-0009.
+
 ## REV-20260520-0008 [AGENT-TEAM:codex-outside-voice]
 - Date: 2026-05-20
 - Decision: TASK-0090 (REQ-20260520-0005, **Minor** §12.3 — CSV streaming export) plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, 550,870 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign → 사용자 confirm. `/api/admin/audits/export.csv` hard cap 50k row 제거 + StreamingResponse + keyset cursor pagination + max_id high-water + try/finally + self-audit.
