@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260521-0004
+- Date: 2026-05-21
+- Summary: TASK-0095 follow-up hot-fix — fast-path catchup (`_ensure_seed_catchup`) 에 `_ensure_seed_global_system_prompt(conn)` 호출 누락을 보정. CHG-20260521-0003 이 slow path (`_ensure_web_tables`) 에만 helper 를 배치했지만, 기존 배포는 fast path 만 타기 때문에 GLOBAL scope row 가 자동 seed 되지 않았다. live deploy 후 DB 검증으로 발견 — `WebSystemPrompts WHERE Scope='global'` 0 row, 모든 응답이 코드 상수 fallback 만 작동. 관리 콘솔 `설정` 탭의 textarea 가 빈 채로 노출되어 운영자가 매번 직접 base prompt 를 입력해야 하는 UX 회귀 발생.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - `_ensure_seed_catchup(conn)` 안 `_ensure_seed_role_system_prompts(conn)` 직후에 `_ensure_seed_global_system_prompt(conn)` 추가. idempotent — 기존 row 가 있으면 no-op, agent_core import 실패 시 silent skip.
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260521-0004.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary follow-up note.
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0095 entry sub-bullet.
+- Verification:
+  - py_compile PASS (app.py).
+  - 사후 검증 절차: web 컨테이너 재배포 → `SELECT * FROM WebSystemPrompts WHERE Scope='global'` 1 row + Content 본문 = `agent_core.SYSTEM_PROMPT` (3179 chars) 일치 → `GET /api/admin/system-prompts?scope=global` 응답 `prompt.content` 비어있지 않음 확인.
+- Risks:
+  - 기존 row 가 빈 본문으로 이미 누군가 저장한 환경에서는 본 helper 가 no-op (existing row truthy → return). 의도한 동작이며, 운영자가 직접 갱신해야 한다.
+- Trace: REQ-20260521-0003 → TASK-0095 → CHG-20260521-0004 → REV-20260521-0004 (CHG-20260521-0003 follow-up fix).
+
 ## CHG-20260521-0003
 - Date: 2026-05-21
 - Summary: TASK-0095 (REQ-20260521-0003, **Major** §12.3 — GLOBAL system prompt layer 신설). 시스템 프롬프트 누적 구조의 최상위 base 를 코드 상수 hard-code 에서 `WebSystemPrompts WHERE Scope='global'` row 로 이전. 모든 LLM 응답의 base prompt 가 운영자 관리 콘솔에서 관리 가능. RBAC 권한 2 종 신설 (`system_prompt.global.read` / `.write`, group=`settings`). 관리 콘솔 sidebar 에 `설정` 탭 + 확장 가능한 `admin-settings-section` sub-section 패턴 도입.

@@ -23,6 +23,8 @@ source_of_truth: false
 
 **Verification**: py_compile PASS (agent_core.py + app.py), node --check PASS (admin.js + app.js). live runtime smoke (관리 콘솔 `설정` 탭 진입 + 본문 수정 + LLM 호출 시 적용 확인) 사용자 검증 위임.
 
+**Follow-up (CHG-20260521-0004 / REV-20260521-0004)**: live deploy 후 사용자 요청 "기능적인 검증 및 스크린샷을 통하여 UI 구성도 검증해주세요." 진행 중 발견된 hot-fix — fast-path catchup `_ensure_seed_catchup(conn)` 에 `_ensure_seed_global_system_prompt(conn)` 호출 누락. CHG-20260521-0003 가 slow path (`_ensure_web_tables`) 에만 helper 를 두었지만 기존 배포는 fast path 만 타기 때문에 GLOBAL row 가 자동 seed 안 되어 textarea 빈 채 노출. `_ensure_seed_role_system_prompts(conn)` 직후 1줄 추가로 보정. idempotent — 양쪽 path 호출 시에도 INSERT 1회만.
+
 ---
 
 **2026-05-21 TASK-0094 PLAN-APPROVED — 첨부 multi-cycle (A CSV + B DDL/KB + C Vision + D PDF RAG) BRIEFING Revision 2 lock-in** (CHG-20260521-0001, REV-20260521-0001 [SUBAGENT:codex], REQ-20260521-0001, **Critical** §12.3). Codex outside-voice review 2 회 흡수 (REV-20260520-0001 1차 17 Valid + REV-20260521-0002 2차 Critical 3 + Major 11 + Minor 2 — F8 만 사용자 명시 거부). D1~D21 21 결정 lock-in. 코드/스키마/RBAC catalog 변경 0 — 계획 문서 only. Sprint 1 (Cycle 0 Foundation + Cycle 1 CSV ingest) implementation 진입 가능. D14 SQL allowlist guard 통과를 Sprint 1 ship 조건.

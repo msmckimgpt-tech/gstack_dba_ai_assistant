@@ -3022,6 +3022,9 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_seed_roles(conn)
     _ensure_seed_products(conn)
     _ensure_seed_role_system_prompts(conn)
+    # TASK-0095: 기존 배포는 fast-path 만 타기 때문에 GLOBAL scope row 가 부재한 채로 남는다.
+    # idempotent — row 가 이미 있으면 건드리지 않으며, agent_core import 실패 시 silent skip 한다.
+    _ensure_seed_global_system_prompt(conn)
     # TASK-0052 Phase 1B: fast-path 재기동에서도 신규 dynamic permission 컬럼 + product 권한 backfill 실행.
     _ensure_dynamic_permissions_schema(conn)
     # REQ-20260514-0001: 공유 링크 테이블 fast-path 보정.

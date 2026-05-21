@@ -8,6 +8,29 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260521-0004 [SKIPPED:self-review-after-plan-approved]
+- Date: 2026-05-21
+- Decision: TASK-0095 follow-up hot-fix — fast-path catchup `_ensure_seed_catchup(conn)` 에 `_ensure_seed_global_system_prompt(conn)` 호출 추가. CHG-20260521-0003 의 부트스트랩 helper 배치 누락을 보정 (slow path `_ensure_web_tables` 에만 두었고 fast path 누락). live deploy 후 web 컨테이너 안 DB 검증으로 발견.
+- Reason: 사용자 요청 "기능적인 검증 및 스크린샷을 통하여 UI 구성도 검증해주세요." 진행 중 발견. WebSystemPrompts row 조회 결과 GLOBAL scope 0 row + `GET /api/admin/system-prompts?scope=global` 응답이 `{prompt: null, scope: 'global'}` — 코드 상수 fallback 만 작동. 관리 콘솔 `설정` 탭 textarea 가 빈 채 노출되어 운영자가 base prompt 를 매번 직접 입력해야 하는 UX 회귀.
+- 근본 원인:
+  - `_ensure_web_tables` (slow path) 만 helper 호출 → schema 가 이미 잡힌 기존 배포는 `_runtime_tables_available()` 가 true 라 fast path `_ensure_seed_catchup` 만 타고 helper 호출 안 됨.
+  - `_ensure_seed_role_system_prompts` 등 다른 catchup-style seed helper 는 모두 양쪽 (slow + fast) 에서 호출되는 패턴. 본 helper 만 패턴 위반 — 부주의.
+- Self-check 결과:
+  - **idempotency 보존**: `_ensure_seed_global_system_prompt` 진입부 `_load_system_prompt(...)` 결과 truthy 시 early return. 양쪽 path 에서 호출돼도 INSERT 는 1회만.
+  - **agent_core import 실패 안전성**: lazy `from agent_core import SYSTEM_PROMPT` + try/except — fast path 에서도 동일하게 silent skip 보장. `compose_system_prompt` 의 fallback 이 인계.
+  - **호출 순서**: `_ensure_seed_role_system_prompts(conn)` 직후 — schema 가 잡혔다는 것을 다른 catchup helper 가 보장한 시점. 신규 dynamic permission 컬럼 backfill 보다 앞서지만 system_prompt seed 는 권한과 무관해 무영향.
+- Alt 거부:
+  - **부트스트랩 변경 없이 운영자가 첫 로그인 시 직접 채워 넣게**: UX 회귀 자체. 신규 배포는 GLOBAL row 가 자동 생성되는데 기존 배포만 미작동 = 환경 간 불일치. 거부.
+  - **fast path 폐지 + 항상 slow path**: `_runtime_tables_available()` 우회 = 매 부트스트랩마다 비싼 schema-rebuild 경로 발동. 다른 catchup helper 와 정합성 깨짐. 거부.
+- Verification:
+  - py_compile PASS (app.py).
+  - 사후 (commit 후) 재배포 절차: `make web` → DB `SELECT * FROM WebSystemPrompts WHERE Scope='global'` 1 row + Content 본문 확인 → API 응답 `prompt` 필드 비어있지 않음 확인 → admin 콘솔 `설정` 탭 textarea 본문 노출 확인.
+- Risks:
+  - 본 helper 가 fast path 에서 매 재기동마다 호출 — `_load_system_prompt` 1회 SELECT 만 추가 (truthy → return). 미미한 overhead, 무시 가능.
+  - 본 hot-fix 자체로 인한 schema migration 없음 — rollback 단순 (코드 1 줄 revert).
+- panel: SKIPPED:self-review-after-plan-approved (CHG-20260521-0003 와 동일 surface — system_prompt 표면 + audit 변경 없음. Codex outside voice trigger 미해당. 본 fix 는 1-line correction 으로 외부 검증 비용 대비 가치 낮음).
+- Trace: REQ-20260521-0003 → TASK-0095 → CHG-20260521-0004 → REV-20260521-0004 (CHG-20260521-0003 follow-up fix).
+
 ## REV-20260521-0003 [SKIPPED:self-review-after-plan-approved]
 - Date: 2026-05-21
 - Decision: TASK-0095 (REQ-20260521-0003, **Major** §12.3 — GLOBAL system prompt layer 신설) self-review (verify-completion CHECK#9 정합 prefix `SKIPPED:` 사용 — Codex outside voice trigger 미해당, `feedback_outside_voice_for_rbac` policy 는 admin/audit 표면 직접 변경 시 발동, 본 cycle 은 `system_prompt` 표면 + RBAC 추가지만 audit 자체 변경 없음). PLAN-APPROVED 후 7 phase 실행 — Plan (A) → agent_core compose 함수 GLOBAL fetch (B) → app.py bootstrap seed helper (C) → RBAC 2 권한 + admin auto-grant catchup (D) → admin endpoint scope='global' allowlist + 권한 가드 (E) → 관리 콘솔 `설정` 탭 + sub-section 패턴 + buildSystemPromptEditor scope='global' + CSS (F) → 문서 갱신 (FUNCTION/MODIFY/REVIEW/REPORT). 본 review 는 self-review (대화 기반 검토 — Codex outside voice trigger 미해당. `feedback_outside_voice_for_rbac` policy 는 admin/audit 표면 직접 변경 시 발동, 본 cycle 은 `system_prompt` 표면이라 self-review 채택).
