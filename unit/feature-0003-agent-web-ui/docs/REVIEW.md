@@ -1197,3 +1197,14 @@ source_of_truth: true
   - 정본 review: REV-20260521-0001 [SUBAGENT:codex]
   - Phase 1 review: REV-20260521-0003 [SKIPPED:phase1-infra-only]
 - **다음 outside-voice 시점**: Phase 12 (D14 SQL allowlist guard, Ship 조건) — schema 가 아닌 보안 경계 코드. 본 cycle Critical 의 핵심 ship guarantor. Phase 12 진입 직전 Codex 추가 review 권장. Phase 3~11 의 RBAC / storage / API / UI / share / lifecycle / sandbox / ingest 도 SKIPPED 또는 짧은 SUBAGENT review 적정.
+
+## REV-20260521-0005 [SKIPPED:rbac-catalog-only] TASK-0094 Sprint 1 Phase 3 (Cycle 0 RBAC) review
+
+- **Mode**: SKIPPED — Phase 3 는 RBAC catalog 4 코드 + 6 checklist (catalog + seed + 5 catchup + FE label) 적용만. endpoint / business logic / UI section 변경 0. 본 RBAC 변경은 BRIEFING Revision 2 정본 review (REV-20260521-0001 [SUBAGENT:codex]) 에서 D6/D11/D12/D14/D15/D16/D21 결정으로 이미 outside-voice review 흡수 완료. 추가 codex review 비용 정당화 어려움.
+- **Subject**: `conversation.attachment.{upload,read}.{own,any}` 4 코드 catalog + SEED_ROLE_DEFINITIONS pending/operator/sales 갱신 + _ensure_seed_roles admin/operator-sales/dba/pending 4 catchup + app.js label/description map.
+- **Reason**: 사용자 메모리 정책 ("RBAC plan 은 outside voice 필수") 와 본 Phase 의 SKIPPED 결정의 절충 — BRIEFING 정본 review 가 RBAC catalog blindspot 대응 (REV-20260520-0001 Claim #1 6 checklist + Claim #3 정적 catalog source + REV-20260521-0002 R-F14 pending metadata-only) 을 흡수 lock-in 했고, 본 Phase 는 정본 결정의 mechanical 적용. 새로운 권한 의미 결정 (예: read.any 의 범위 / pending metadata-only 범위) 은 본 Phase 에서 발생하지 않음.
+- **Risk**:
+  1. **6 checklist 누락 가능성**: Phase 3 의 작업은 (1) PERMISSION_DEFINITIONS + (2) SEED_ROLE_DEFINITIONS + (3~5) _ensure_seed_roles 의 4 catchup + (6) FE label. 검증: `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS + py_compile PASS + admin.js 는 backend label 직접 사용이라 별 map 불필요 확인.
+  2. **pending metadata-only enforcement**: catalog 수준에서는 read.own 부여 — bytes download 차단은 Phase 5 endpoint application-level. 본 Phase 만으로는 enforcement 미완. Phase 5 진입 시 `if account.role.key == 'pending': deny bytes` 분기 명시 + AC 갱신.
+- **Cross-ref**: BRIEFING §5.2 + 정본 REV-20260521-0001 + Phase 2 REV-20260521-0004.
+- **다음 outside-voice 시점**: Phase 12 (D14 SQL guard, Ship 조건). Phase 5 (upload API) 에서 attachment endpoint 의 권한 검증 + pending bytes deny 의 정합도 codex review 권장 (RBAC enforcement 의 application-level 표면).

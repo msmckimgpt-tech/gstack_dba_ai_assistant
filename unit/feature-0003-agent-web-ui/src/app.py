@@ -311,6 +311,35 @@ PERMISSION_DEFINITIONS = (
         "description": "타 사용자가 소유한 대화까지 본 계정 소유의 새 대화로 복제할 수 있다.",
         "group": "conversation",
     },
+    # TASK-0094 Sprint 1 Phase 3 (REQ-20260521-0001, Critical §12.3): 첨부 기능 RBAC.
+    # BRIEFING §5.2 1~4 row — Cycle 0 의 upload / read 권한 4 코드. group="conversation"
+    # (대화 흐름의 일부, attachment group 은 Cycle 1+ 의 attachment.execute_sql_on.* 부터
+    # 사용). D21 (R-F14): pending 은 read.own 만 — bytes download 는 Phase 5 의
+    # `/api/attachments/{id}/content` endpoint 에서 application-level deny.
+    {
+        "code": "conversation.attachment.upload.own",
+        "label": "내 대화 첨부 업로드",
+        "description": "자신의 대화에 파일 (CSV/XLSX/PDF/이미지) 을 첨부할 수 있다. MIME / size cap / consent (D11) 가 적용된다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.attachment.upload.any",
+        "label": "전체 대화 첨부 업로드",
+        "description": "모든 계정의 대화에 첨부를 업로드할 수 있다. 운영자 한정.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.attachment.read.own",
+        "label": "내 대화 첨부 조회",
+        "description": "자신의 대화에 첨부된 파일 metadata + 본문 (사내망 signed URL 다운로드) 을 조회할 수 있다. pending 계정은 metadata 만 (D21 — bytes 는 승인 후).",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.attachment.read.any",
+        "label": "전체 대화 첨부 조회",
+        "description": "모든 계정의 대화 첨부를 조회할 수 있다. 운영자 한정.",
+        "group": "conversation",
+    },
     {
         "code": "product.manage",
         "label": "제품 관리",
@@ -438,6 +467,9 @@ SEED_ROLE_DEFINITIONS = (
             # TASK-0073 Phase A3: 모든 role 에 audit.read.own auto-grant
             # (E1 self filter — 본인 actor/target 이벤트 조회).
             "audit.read.own",
+            # TASK-0094 Sprint 1 Phase 3 (D21, R-F14): pending 은 read.own 만.
+            # upload 거부 + bytes download 는 application-level (Phase 5 endpoint) 차단.
+            "conversation.attachment.read.own",
         },
     },
     {
@@ -460,6 +492,9 @@ SEED_ROLE_DEFINITIONS = (
             "conversation.duplicate.own",
             # TASK-0073 Phase A3: 모든 role audit.read.own auto-grant.
             "audit.read.own",
+            # TASK-0094 Sprint 1 Phase 3: 첨부 upload/read own.
+            "conversation.attachment.upload.own",
+            "conversation.attachment.read.own",
         },
     },
     {
@@ -481,6 +516,9 @@ SEED_ROLE_DEFINITIONS = (
             "conversation.duplicate.own",
             # TASK-0073 Phase A3: 모든 role audit.read.own auto-grant.
             "audit.read.own",
+            # TASK-0094 Sprint 1 Phase 3: 첨부 upload/read own.
+            "conversation.attachment.upload.own",
+            "conversation.attachment.read.own",
         },
     },
     {
@@ -1548,6 +1586,11 @@ def _ensure_seed_roles(conn) -> None:
             # TASK-0095: admin 의 전역 시스템 프롬프트 read/write 2건 catchup.
             "system_prompt.global.read",
             "system_prompt.global.write",
+            # TASK-0094 Sprint 1 Phase 3: admin 의 첨부 4건 catchup (upload/read × own/any).
+            "conversation.attachment.upload.own",
+            "conversation.attachment.upload.any",
+            "conversation.attachment.read.own",
+            "conversation.attachment.read.any",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -1572,6 +1615,9 @@ VALUES (%s, %s)
             "conversation.duplicate.own",
             # TASK-0073 Phase A3: 모든 role 에 audit.read.own auto-grant.
             "audit.read.own",
+            # TASK-0094 Sprint 1 Phase 3: operator/sales 의 첨부 upload/read own.
+            "conversation.attachment.upload.own",
+            "conversation.attachment.read.own",
         )
         catchup_pids = [
             int(permission_map.get(code) or 0)
@@ -1602,7 +1648,13 @@ VALUES (%s, %s)
         if dba_role_id > 0:
             permission_map = _permission_id_map(conn)
             cur = conn.cursor()
-            for code in ("audit.read.own", "audit.read.any", "audit.export"):
+            for code in (
+                "audit.read.own",
+                "audit.read.any",
+                "audit.export",
+                # TASK-0094 Sprint 1 Phase 3: dba 도 첨부 read.own catchup (운영 모니터링 자격).
+                "conversation.attachment.read.own",
+            ):
                 pid = int(permission_map.get(code) or 0)
                 if pid <= 0:
                     continue
@@ -1620,14 +1672,19 @@ VALUES (%s, %s)
         pending_role_id = int(pending_row[0] or 0)
         if pending_role_id > 0:
             permission_map = _permission_id_map(conn)
-            pid = int(permission_map.get("audit.read.own") or 0)
-            if pid > 0:
-                cur = conn.cursor()
+            cur = conn.cursor()
+            # TASK-0094 Sprint 1 Phase 3 (D21, R-F14): pending 은 audit.read.own +
+            # conversation.attachment.read.own (metadata only — bytes download 는 Phase 5
+            # endpoint 의 application-level deny). upload 권한 없음.
+            for code in ("audit.read.own", "conversation.attachment.read.own"):
+                pid = int(permission_map.get(code) or 0)
+                if pid <= 0:
+                    continue
                 cur.execute(
                     "INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId) VALUES (%s, %s)",
                     (pending_role_id, pid),
                 )
-                cur.close()
+            cur.close()
 
 
 SEED_ROLE_SYSTEM_PROMPTS = (

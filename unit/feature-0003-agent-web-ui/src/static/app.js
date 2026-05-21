@@ -265,6 +265,11 @@ const PERMISSION_LABELS = {
   // TASK-0095: 전역 시스템 프롬프트 권한.
   "system_prompt.global.read": "전역 시스템 프롬프트 조회",
   "system_prompt.global.write": "전역 시스템 프롬프트 수정",
+  // TASK-0094 Sprint 1 Phase 3: 첨부 기능 RBAC 4 코드 (group=conversation).
+  "conversation.attachment.upload.own": "내 대화 첨부 업로드",
+  "conversation.attachment.upload.any": "전체 대화 첨부 업로드",
+  "conversation.attachment.read.own": "내 대화 첨부 조회",
+  "conversation.attachment.read.any": "전체 대화 첨부 조회",
 };
 
 const PERMISSION_DESCRIPTIONS = {
@@ -307,6 +312,11 @@ const PERMISSION_DESCRIPTIONS = {
   // TASK-0095: 전역 시스템 프롬프트 (모든 LLM 응답의 최상위 base).
   "system_prompt.global.read": "모든 대화의 최상위 base 가 되는 전역 시스템 프롬프트 본문을 조회할 수 있는 권한입니다. 비워져 있으면 코드 상수 fallback 으로 동작합니다.",
   "system_prompt.global.write": "전역 시스템 프롬프트를 수정 또는 삭제할 수 있는 권한입니다. 모든 LLM 응답에 영향이 가는 권한이라 운영자 한정으로 부여하는 것을 권장합니다.",
+  // TASK-0094 Sprint 1 Phase 3: 첨부 기능 RBAC 4 코드.
+  "conversation.attachment.upload.own": "자신의 대화에 파일 (CSV/XLSX/PDF/이미지) 을 첨부할 수 있는 권한입니다. MIME / size cap / 외부 LLM 송신 consent 가 적용됩니다.",
+  "conversation.attachment.upload.any": "모든 계정의 대화에 첨부를 업로드할 수 있는 권한입니다. 운영자 한정으로 부여합니다.",
+  "conversation.attachment.read.own": "자신의 대화에 첨부된 파일 metadata + 본문 (사내망 다운로드) 을 조회할 수 있는 권한입니다. 승인 전 (pending) 계정은 metadata 만 노출됩니다.",
+  "conversation.attachment.read.any": "모든 계정의 대화 첨부를 조회할 수 있는 권한입니다. 운영자 한정으로 부여합니다.",
 };
 
 function describePermission(code = "") {
