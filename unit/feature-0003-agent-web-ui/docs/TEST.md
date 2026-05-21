@@ -194,6 +194,16 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-05-20 (TASK-0088 Phase A~D — `slow_query_log` 통합 ADR-0020 Decoupled 채택, docs only):
+  - **검증 형태**: ADR 결정 → docs only, code 변경 0, runtime side-effect 0. py_compile/runtime smoke 불필요. verify-completion PASS 만 확인.
+  - **Codex outside voice review** (consult mode, model_reasoning_effort=high, 390,785 tokens) → 5 critical findings + 2 minimum-fix 도출 → v2 redesign 흡수:
+    - **C1 (framing)**: 현재 mysql conf `99-mysql-ai-server.cnf` 에 `slow_query_log` 설정 부재 (MySQL 8.0 default disabled) → ADR framing "현재 통합" → "**향후** 통합 여부" 정정.
+    - **C2 (PII)**: slow query log = raw SQL statement literal — PasswordHash/Token/API key/임시 비밀번호/raw LLM prompt 등이 SECURITY.md §9.2 redact 정책 밖 → Decision 1순위 근거 = raw SQL text PII 차단.
+    - **C3 (Option A reject 재작성)**: ETL 의 retention/RBAC 정합 trivial. 진짜 reject = semantic pollution + raw SQL PII + ChangeJson/table bloat + actor/target 의미 부재.
+    - **C4 (Option B reject 재작성)**: raw SQL exfiltration 표면 + mount/rotation/race + 대용량 파일 DoS + `audit.read.any` 권한 의미 오염 + MySQL `log_output=TABLE` destination 우회.
+    - **C5 (PS digest-first 추가)**: MySQL 8.0 의 `events_statements_summary_by_digest` digest 집계 1차 도구 권유. slow_query_log 는 incident/deep capture 2차로 제한.
+  - **ADR-0020 4 section**: Context (current state) + Decision (Option C Decoupled) + Options 검토 (A/B reject 구체 사유 + C 채택) + Recommended performance path (PS digest-first 1차, slow_query_log incident 2차) + Security policy (raw SQL = 민감 로그) + Consequences (외부 SaaS trigger 4 선행 조건).
+  - **결론**: Codex 5 findings 모두 ACCEPT 후 v2 redesign. ADR-0019 Codex C1 lock-in 의 final 결론. docs only — runtime smoke 불필요.
 - 2026-05-20 (TASK-0091 Phase A~F — PATCH admin/products audit before-state full snapshot + audit integrity fix):
   - **환경**: `docker run --rm --entrypoint python -v <wt>/unit/feature-0003-agent-web-ui/src:/app/web repo-web:latest -c "..."` host-mounted code + image dependency.
   - **py_compile**: PASS.

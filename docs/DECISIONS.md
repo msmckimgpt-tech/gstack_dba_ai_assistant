@@ -200,8 +200,49 @@ ai_read_priority: 9
   - `.own` SQL filter `WHERE ActorAccountId = :self OR TargetAccountId = :self` (Eng review E1 B) — admin password-reset / role grant / share revoke 등 admin→user 이벤트가 user 본인 audit 에 보임
   - anonymous share view = ActorType="anonymous" + ActorAccountId NULL + share_token_prefix 8 char (full token 차단)
   - prod 에서 `AGENT_AUDIT_ENABLED=1` 강제 — flag bypass surface 차단 (dev/test 만 toggle)
-  - `slow_query_log` 통합은 별 cycle 분리 (Codex C1 — DB-only retention/RBAC 정합 안 됨)
-  - `WebAccountActivity` 테이블 DROP 은 별 cycle (data backup + dual write 검증 후)
+  - `slow_query_log` 통합은 별 cycle 분리 (Codex C1 — DB-only retention/RBAC 정합 안 됨) → **ADR-0020 (2026-05-20) 에서 Decoupled 채택 (raw SQL PII 차단 1순위)**
+  - `WebAccountActivity` 테이블 DROP 은 별 cycle (data backup + dual write 검증 후) → **TASK-0086 (2026-05-20) 에서 DROP 완료**
   - `docs/SECURITY.md §9` (Audit subsystem 정책) 가 sensitive field catalog source-of-truth 가 된다
   - `docs/CONVENTIONS.md §10.6` audit permission group 추가 — admin section 의 관리 권한 묶음에 합류
   - `bin/verify-completion.sh check_11_audit_dispatcher` 가 dispatcher SPOF guard (Eng review E7)
+
+## ADR-0020
+- Status: accepted
+- Date: 2026-05-20
+- Context:
+  - TASK-0088 (REQ-20260520-0003, Minor §12.3) — ADR-0019 의 Consequences 에 명시된 "`slow_query_log` 통합은 별 cycle 분리 (Codex C1)" lock-in 의 최종 결론 ADR. TASK-0073 cycle 진행 시 Codex outside voice C1 finding 이 DB-only retention/RBAC (WebAuditEvents 365일 + audit.purge gate + audit.read.any/.own) 과 file-based mysql server log (slow_query_log) 의 정합 불가능성 lock-in.
+  - **Current state**: `repo/unit/feature-0001-platform-runtime/src/mysql/conf.d/99-mysql-ai-server.cnf` 에 `slow_query_log` / `slow_query_log_file` / `long_query_time` / `log_output` 설정 **부재** — MySQL 8.0 default disabled. 본 ADR 은 "현재 운영 로그 통합" 이 아닌 **"향후 slow query 관측을 WebAuditEvents 에 통합할지 여부"** 의 forward-looking 결정.
+- Decision: **slow_query_log 를 WebAuditEvents 에 통합하지 않는다 (Option C — Decoupled)**. 주 근거 = **raw SQL text PII 차단** (PasswordHash / Token / API key / 임시 비밀번호 / raw LLM prompt 등이 SQL statement literal 로 들어가는 위험). 운영 성능 관측은 **`performance_schema` / `sys` digest-first** 권유, slow_query_log 는 incident / deep capture 용 제한.
+- Options 검토:
+  - **Option A — Sidecar ETL** (slow_query_log file → WebAuditEvents row 등재). **Reject**:
+    - **raw SQL text PII**: SECURITY.md §9.2 의 redact 정책 (`PasswordHash`/`session_token_hash`/`api_key_*` etc.) 밖. literal 보존 위험.
+    - **semantic pollution**: 성능 로그 ≠ 보안 audit. WebAuditEvents 의 actor/target/ResourceType 의미 모델과 충돌.
+    - **ChangeJson / table bloat**: 고빈도 slow query 가 audit table 비대화 + ChangeJson size 폭증.
+    - **actor/target 의미 부재**: WebAuditEvents schema 는 actor/target 강제, slow query 는 connection-level (account 매핑 불확실).
+  - **Option B — 별 endpoint `/api/admin/slow-query-log`** (`audit.read.any` gate, file read + line filter). **Reject**:
+    - **raw SQL exfiltration 표면 증가**: read-only mount 라도 endpoint 가 PII 노출.
+    - **mount/rotation/race**: logrotate 중 partial read race window.
+    - **대용량 파일 DoS**: tail/filter 가 대용량 slow_query_log 에서 timeout 또는 OOM.
+    - **권한 의미 오염**: `audit.read.any` 는 "보안 audit 조회" 의도, "성능 로그 원문 조회" 아님 — confused responsibility.
+    - **MySQL `log_output=TABLE` destination 도 지원** — file 접근만 차단해도 `mysql.slow_log` table 우회 가능. 별 권한 모델 필요.
+  - **Option C — Decoupled (채택)**: 통합 안 함. WebAuditEvents = 보안 audit only. 성능 관측은 별 layer (mysql server log / performance_schema / 외부 분석 도구).
+- Recommended performance path:
+  - **1차 = performance_schema / sys digest views**: MySQL 8.0 의 `performance_schema.events_statements_summary_by_digest` + `sys.statement_analysis` — digest 기반 집계라 raw SQL text 노출 최소화. 운영자 (mysql root 권한) 가 접근. 단 PS 도 `SQL_TEXT` / `QUERY_SAMPLE_TEXT` 표면 잔존.
+  - **2차 = slow_query_log incident 기반 enable**: deep capture 가 필요한 경우 운영자가 명시적으로 enable + 짧은 retention + 즉시 logrotate. host filesystem permission 통제. raw SQL = 민감 로그로 간주.
+  - **분석 도구**: `pt-query-digest` (percona toolkit, slow log digest), `sys.statement_analysis` (MySQL 8.0 sys schema). 운영자가 host shell + 권한 으로 실행.
+- Security policy:
+  - **slow query raw SQL = 민감 로그**. WebAuditEvents / ChangeJson / admin UI 에 복제 금지 (PII 차단).
+  - **host/container filesystem permission + 짧은 retention/logrotate** 로 보호.
+  - **두 log cross-reference 안 함**: audit row 의 ChangeJson 에 query text 미포함.
+- Consequences:
+  - slow_query_log 는 현재 상태 (disabled) 유지. 운영자가 incident/deep capture 시점에만 enable.
+  - 운영 성능 triage 1차 = `performance_schema` / `sys` digest views.
+  - WebAuditEvents schema / RBAC / retention 정책에 slow query 통합 영향 0.
+  - `docs/SECURITY.md §9.9` 에 본 ADR cross-reference 추가 — slow_query_log 가 보안 audit 표면 외임을 명시.
+  - **외부 SaaS / multi-tenant trigger** (별 cycle 도입 조건): 외부 고객 tenant 운영자가 UI 에서 성능 로그를 봐야 하는 요구가 승인되는 시점 + 다음 모두 선행 충족:
+    - 별도 `performance-log.read` permission 신설 (`audit.*` 와 분리, confused responsibility 차단)
+    - raw SQL redaction / sampling 정책 (PII literal 제거 또는 hash)
+    - retention + endpoint threat model ADR 선행
+    - sidecar mount/rotation/race + DoS 대응 인프라
+  - ADR-0019 의 lock-in 충실 이행 — Codex outside voice C1 finding 의 final 결론.
+- Outside voice review trace: Codex consult mode (model_reasoning_effort=high, 390,785 tokens) 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign. 본 ADR 의 v1 초안이 (1) current state 부재 framing 오류, (2) Option A reject 사유 부정확 (retention/RBAC 가능), (3) Option B reject 약함 (mount/race/DoS/권한 오염 누락), (4) PII 가 주 근거여야 함, (5) performance_schema 누락 — 모두 ACCEPT 흡수. REV-20260520-0007 정본.
