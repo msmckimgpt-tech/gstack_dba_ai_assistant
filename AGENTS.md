@@ -238,6 +238,27 @@ AI는 작업 중 다음을 발견하면 해당 기능의 `REPORT.md` §8 또는 
 
 **제안은 기록만 하며, 사용자 지시 없이 실행하지 않는다.**
 
+### §8.2 테스트 정합성 보존 정책
+
+각 작업자 AI는 코드 추가·수정 후 반드시 아래 두 단계를 순서대로 완료해야 한다.
+완료 선언(§16.2) 이전에 두 단계가 모두 PASS 상태여야 한다.
+
+#### 단계 1 — 단위 테스트 (Unit Test)
+- 해당 기능의 `unit/<feature-id>/tests/` 안에 위치한 테스트를 실행한다.
+- 추가·수정된 로직에 대응하는 테스트 케이스가 없으면 **반드시 작성 후 실행**한다.
+- 기존 단위 테스트가 회귀(regression)하지 않아야 한다.
+- 실행 결과를 `unit/<feature-id>/docs/TEST.md` §3에 append-only로 기록한다.
+
+#### 단계 2 — 전체(통합) 테스트 (Integration/Full Test)
+- `repo/tests/integration/` 에 위치한 테스트를 실행한다.
+- 새 기능이 기존 feature 간 인터페이스 또는 공유 모듈(`shared/`)에 영향을 줄 경우 해당 범위의 통합 테스트도 포함한다.
+- **현황 (2026-05-21 기준)**: `repo/tests/integration/` 디렉토리는 생성되어 있으나 통합 테스트 케이스는 아직 작성되지 않았다. 각 작업자 AI는 자신이 추가한 기능의 범위에 맞는 통합 테스트를 작성하고 실행해야 한다. 통합 테스트가 아직 미작성인 영역은 `unit/<feature-id>/docs/TEST.md` §4 Untested Areas에 명시한다.
+
+#### 공통 규칙
+- 단위 테스트 FAIL 상태로 완료 선언하지 않는다.
+- 통합 테스트가 미작성인 경우, `REPORT.md` §8에 미작성 사유와 커버 계획을 기록하고 `TEST.md` §4에 항목을 추가한다.
+- `verify-completion.sh --pre-commit <feature-id>` 는 단위 테스트 PASS를 포함한다. 통합 테스트 FAIL 또는 미작성은 BLOCKED 항목으로 기록하여 사람에게 전달한다.
+
 ## §9. 불명확성 대응 정책
 
 AI가 구현 중 요구사항이 불명확하거나 모순을 발견한 경우:
@@ -707,7 +728,8 @@ AI가 작업 완료를 선언할 때는 `TASK.md`의 Completion Checklist를 명
 ```md
 ## 7. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다
-- [ ] 자동 테스트가 통과한다
+- [ ] 단위 테스트(unit test)가 통과한다 (§8.2 단계 1)
+- [ ] 전체/통합 테스트(integration test)가 통과하거나, 미작성 사유와 커버 계획이 TEST.md §4에 기록되었다 (§8.2 단계 2)
 - [ ] FUNCTION.md가 현재 동작과 일치한다
 - [ ] MODIFY.md에 변경 이력이 기록되었다
 - [ ] REVIEW.md에 판단 근거가 기록되었다

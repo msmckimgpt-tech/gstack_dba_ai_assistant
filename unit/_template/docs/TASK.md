@@ -51,7 +51,8 @@ source_of_truth: true
 
 ## 8. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다
-- [ ] 자동 테스트가 통과한다
+- [ ] 단위 테스트(unit test)가 통과한다 (AGENTS.md §8.2 단계 1)
+- [ ] 전체/통합 테스트(integration test)가 통과하거나, 미작성 사유와 커버 계획이 TEST.md §4에 기록되었다 (AGENTS.md §8.2 단계 2)
 - [ ] FUNCTION.md가 현재 동작과 일치한다
 - [ ] MODIFY.md에 변경 이력이 기록되었다
 - [ ] REVIEW.md에 판단 근거가 기록되었다

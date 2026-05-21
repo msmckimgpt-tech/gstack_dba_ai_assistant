@@ -56,6 +56,19 @@ ai_read_priority: 3
 - 테스트 결과는 `TEST.md` §3 Test Run History에 append-only로 기록한다.
 - 구조/기동 검증과 도메인 검증은 별도 항목으로 구분한다.
 
+### 6.1 테스트 종류 및 정합성 의무 (AGENTS.md §8.2 연동)
+
+각 작업자 AI는 코드 추가·수정 후 **단위 테스트 + 전체(통합) 테스트** 두 단계를 모두 완료해야 한다.
+
+| 종류 | 위치 | 의무 |
+|------|------|------|
+| 단위 테스트 | `unit/<feature-id>/tests/` | 추가·수정 로직에 대응하는 테스트 작성 후 실행. PASS 필수 |
+| 전체/통합 테스트 | `repo/tests/integration/` | 기능 간 인터페이스·공유 모듈 변경 시 작성 후 실행. 미작성 시 `TEST.md §4`에 사유 기록 |
+
+- 단위 테스트 FAIL 상태로 완료 선언하지 않는다.
+- 통합 테스트가 미작성인 영역은 `unit/<feature-id>/docs/TEST.md` §4 Untested Areas에 명시한다.
+- 상세 정책은 `../AGENTS.md §8.2`를 따른다.
+
 ## 7. AI 에이전트 매핑 규칙
 - 이 저장소의 정본 정책 파일은 `../AGENTS.md`이다.
 - Claude Code: `../CLAUDE.md` → `../AGENTS.md` 참조
