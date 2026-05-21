@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.9.0
+template_version: v3.10.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -440,7 +440,24 @@ Variant exploration / 장기 risky refactor / QA worktree 시나리오는 별도
    checkout 의 `repo/` mutation 을 detect 한 후 사용자에게 "worktree 로 전환"
    권유.
 
-그 외 AI 의 자율 `git worktree add` / cwd 변경 / 다른 worktree 진입은 금지.
+그 외 AI 의 자율 `git worktree add` / cwd 변경 / 다른 worktree 진입은 금지
+(이하 **P1 trigger** — Position 1 trigger gating).
+
+**P1 carve-out (v3.10.0+)**: trigger #2 (`/_template:entry` arg-given dispatch)
+에서 worktree create 결정 이후, **AI 가 본 세션에서 새 worktree path 로 cd +
+Phase 6 진입까지 같은 흐름으로 진행한다**. 사용자가 entry persona 를 명시 호출
+했다는 사실 자체가 "이 세션이 해당 작업의 본체" 의도 표명이므로 cwd 변경은
+사용자 의도와 정합. cd 후 다른 mutation 도 그 worktree path 안에서만 진행 — 그
+worktree 가 binding branch 의 본체 (F1 보존). 본 carve-out 의 범위:
+
+- entry persona Phase 3.6 의 자동 cycle-init 흐름 한정 — 다른 SKILL 의 자율 cwd
+  변경에는 적용 안 됨
+- 새 worktree 가 ai/* binding branch 인 경우 한정 (main / shared 보호)
+- cd 후 작업이 그 worktree path 안에 머무는 한 — 다른 worktree 진입은 여전히
+  P1 금지
+
+trigger #1 (사용자 명시 worktree 지시) 도 동일한 carve-out 자연 적용 — 사용자가
+명시 지시했으므로 cd 도 사용자 의도.
 
 **Precedence (carve-out 우선)**: `/_template:entry` dispatch 대상이 `/_local:*` 류
 명령이면 §13.2.4 carve-out 이 trigger 보다 우선한다 — 즉, entry 가 자동으로
@@ -527,6 +544,13 @@ worktree 진입을 결정하지 않고 main worktree 컨텍스트를 강제 유�
   `--skip-repo-immutability` cli flag — check #11 SKIP+WARN. 사용 의도는 hop
   emergency fix, CI 환경 차이 등 일시적 우회. 상시 사용 금지 (REPORT.md 에
   명시).
+- **Entry persona inline execution (v3.10.0+)**: `/_template:entry` arg-given
+  dispatch 의 Phase 3.6 worktree decision 이 worktree create 를 결정한 경우,
+  AI 가 `bin/cycle-init.sh` 자동 실행 + 본 세션에서 새 worktree path 로 cd +
+  Phase 6 진입까지 같은 흐름으로 진행한다 (§13.2.1 P1 carve-out 와 동일 기반).
+  사용자가 별도 세션을 시작할 필요 없음 — `/_template:entry` 호출 1회로 cycle
+  진입 완료. cycle 종료 시 `bin/cycle-finalize.sh` 의 자동 cleanup 정책 (§16.3
+  Step 6) 과 정합 — 양쪽 끝 모두 단일 세션 자동 흐름.
 - **Carve-out 의 의미**: "정책 외" = 본 §13.2 의 forbidden actions / lifecycle /
   trigger 룰이 적용되지 않음. 단 §13.1 일반 충돌방지 룰은 계속 적용. Conductor
   / IDE multi-tab 자동 worktree 및 Codex `-C` 옵션 worktree 활용도 본 사이클

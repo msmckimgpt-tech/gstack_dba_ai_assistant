@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 # bin/cycle-init.sh
 #
-# Cycle entry helper for AGENTS.md §13.2 (v3.9.0+).
+# Cycle entry helper for AGENTS.md §13.2 (v3.9.0+, inline execution v3.10.0+).
 # 신규 ai/* worktree 를 main 최신화 후 자동 생성:
 #   1. main worktree 식별
 #   2. main 최신화 (git fetch + git pull --ff-only origin main) — stale base 차단
 #   3. git worktree add <project_root>/.worktrees/<feat> -b ai/<agent>/<feat>
-#   4. 다음 세션 진입 명령 출력 (AI 의 cwd 자율 변경 금지 P1 유지 — 사용자가
-#      새 Claude Code 세션을 worktree path 에서 시작)
+#   4. 종료 보고 — 호출 모드 분기:
+#      - inline mode (env CYCLE_INIT_FROM_ENTRY_PERSONA=1): AI 가 본 세션에서
+#        cd 후 Phase 6 진입 (AGENTS.md §13.2.1 P1 carve-out, v3.10.0+)
+#      - 직접 호출 (env 없음): 사용자가 새 Claude Code 세션을 worktree path 에서 시작
 #
 # 자동 진행 정책 (AGENTS.md §13.2 + §16.3 Step 6 정합):
 #   normal 경로 (main worktree 식별 + fetch/pull 성공 + worktree 생성 가능) 는
 #   사람 명시 요청 없이 자동 진행. abnormal 경로 (non-fast-forward, branch
 #   이미 존재 + 충돌, worktree path 이미 존재 + 다른 branch) 는 자동 중단 +
 #   사용자 결정.
+#
+# Inline execution mode (v3.10.0+, AGENTS.md §13.2.1 P1 carve-out):
+#   env CYCLE_INIT_FROM_ENTRY_PERSONA=1 로 호출 시 종료 보고에 "AI 가 cd 후 본
+#   세션에서 Phase 6 진입" 안내 출력. entry persona arg-given dispatch 가 본 모드로
+#   호출한다. 직접 호출 (env var 없음) 은 기존 안내 (사용자가 새 세션 시작).
 #
 # Usage:
 #   bash bin/cycle-init.sh --feature <feature-id>
@@ -206,6 +213,21 @@ cat >&2 <<EOF
   branch:          $NEW_BRANCH
   base commit:     $BASE_COMMIT
   mode:            $([ "$PRINT_ONLY" -eq 1 ] && echo "print-only" || ([ "$DRY_RUN" -eq 1 ] && echo "dry-run" || echo "executed"))
+EOF
+
+if [ "${CYCLE_INIT_FROM_ENTRY_PERSONA:-0}" = "1" ]; then
+  cat >&2 <<EOF
+
+Inline execution mode (entry persona dispatch — AGENTS.md §13.2.1 P1 carve-out):
+  AI 가 본 세션에서 다음 명령을 자동 진행합니다 — 사용자 추가 조치 불필요.
+
+    cd $NEW_WORKTREE_PATH
+
+  이후 entry persona Phase 6 (작업 실행) 으로 진입. cycle 종료 시
+  bin/cycle-finalize.sh 가 PR 머지 후 cleanup 자동 진행.
+EOF
+else
+  cat >&2 <<EOF
 
 다음 단계 (사용자):
   새 Claude Code 세션을 worktree path 에서 시작하세요 — AI 는 cwd 를 자율로
@@ -216,6 +238,10 @@ cat >&2 <<EOF
 
   또는 진입 직후 다음 명령으로 entry persona 호출:
     /_template:entry <작업 의도>
+
+  자동 inline execution 을 원하면 entry persona arg-given dispatch 로 호출하세요:
+    /_template:entry <작업 의도>  # mutation 신호 감지 시 본 흐름 자동 진행
 EOF
+fi
 
 exit 0
