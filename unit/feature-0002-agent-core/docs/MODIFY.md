@@ -8,6 +8,39 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260521-0002
+- Date: 2026-05-21
+- TASK-Cycle: TASK-0020 (M2-b dual-write 본 구현, **Major §12.3** — RBAC 동반)
+- Summary: §2.1 PLAN-APPROVED 의 **M2 phase 2차 (M2-b)** — M2-a (TASK-0019) 의 ABC + skeleton 위에 method body + caller 5 위치 mirror 호출 + unit test 10. **Outside-voice review (Plan subagent, `REV-20260520-0008`) Verdict NEEDS-TWEAK + Critical 6 + Blocker 2 본 cycle 내 반영**: caller 4 위치 silent/fail-loud pattern 통일 (knowledge.py:677-696 dead wrapper 제거 + `_prune_fact_entries_for_key` 광역 swallow 분리) / conftest.py + Test 9 (caller integration) / Test 10 (caplog) / REPORT.md §4 risk log 0번 entry (latency M2-c) / ADR-0021 §Consequences cross-DB audit M2-c 책임. **본 turn 의 deliverable 은 method body + caller 5 + 10 unit test + Critical 6 + Blocker 2 본 cycle 내 반영까지**. cross-DB audit explicit call + 7-day SLA + invariant test fixture/assertion 실 구현은 M2-c 별 cycle 위임.
+- Worktree: `ai/claude/0002/kb-pg-m2b` 격리. path: `<wrapper>/.worktrees/0002-kb-pg-m2b/`. 사용자 결정 (2026-05-21): "M2-b cycle 또한 진행해주세요" → 본 cycle 진행 + "작업을 이어서 진행해주세요" → Critical/Blocker 반영 + commit/push/sync.
+- Files (method body + caller + test):
+  - `unit/feature-0002-agent-core/src/modules/kb_backend.py` (rewrite ~780 LOC): ABC 의 `prune_fact_entries_keep_top` 추가 + MysqlKbBackend 6 method body + PgKbBackend 6 method body + `_DualWriteMirror` helper (`_get_pg_conn` + `_mirror` + 6 public method) + module singleton `_dual_write_kb` + `_BACKENDS_CACHE` process-level cache + 6 Postgres SQL 템플릿 (`_PG_PRUNE_FACT_ENTRIES` 추가 + GREATEST(weight) MySQL 정합).
+  - `unit/feature-0002-agent-core/src/modules/utils.py` (+50 LOC): caller 3 위치 mirror 호출 (`_text_store_insert` line 977 + `_upsert_rag_memory_from_fact` 의 RagDocuments line 1223-1235 + RagObjects line 1310-1329).
+  - `unit/feature-0002-agent-core/src/modules/knowledge.py` (+30 LOC, -20 LOC): caller 2 위치 (`_publish_fact` line 670-693 — dead try/except wrapper 제거 + `_prune_fact_entries_for_key` line 586-643 — MySQL DELETE 광역 swallow 한정 + mirror 호출 외부).
+  - `unit/feature-0002-agent-core/tests/test_dual_write_mirror.py` (신규 ~310 LOC): 10 unit test.
+  - `unit/feature-0002-agent-core/tests/conftest.py` (신규 ~15 LOC): sys.path 통합.
+  - `docs/DECISIONS.md` ADR-0021 §Consequences (+1 항목): Cross-DB audit explicit call M2-c cycle 책임 명시.
+  - `unit/feature-0002-agent-core/docs/{TASK,REVIEW,MODIFY,REPORT}.md`: cycle 등록 + `REV-20260520-0008` + 본 entry + Summary + risk log 0번.
+- Outside-voice review (Plan subagent) Critical 6 + Blocker 2 본 cycle 내 반영:
+  1. **Critical (Caller pattern 통일)**: knowledge.py:677-696 dead try/except 제거 + `_prune_fact_entries_for_key` 광역 swallow 분리 ✓
+  2. **Critical (Test isolation)**: conftest.py 신규 + sys.path 통합 + dual import path 제거 ✓
+  3. **Critical (Caller actual call test)**: Test 9 — `_text_store_insert` + mock cursor + spy mirror ✓
+  4. **Critical (silent log verification)**: Test 10 — caplog `kb_pg_mirror: connection failed` ✓
+  5. **Critical (Latency baseline)**: REPORT.md §4 risk log 0번 entry — M2-c production-like 측정 책임 ✓
+  6. **Blocker (Cross-DB audit explicit call)**: ADR-0021 §Consequences M2-c 책임 명시 (ActionCode `kb.write.mirror` INSERT) ✓
+  7. **Blocker (SLA 측정 도구 cycle 책임)**: `bin/kb-dual-write-verify.sh --audit-sla` M2-c 책임 명시 ✓
+- 검증 (본 cycle):
+  - `python3 -m py_compile kb_backend.py + knowledge.py + utils.py + test_dual_write_mirror.py + conftest.py` — PASS
+  - ABC instantiation manual verify (MysqlKbBackend / PgKbBackend 6 method callable) — PASS
+- Runtime 검증 deferral (M2-c 별 cycle 책임):
+  - main worktree `git pull --ff-only` + `.env` 의 `AGENT_KB_PG_REQUIRED=1` + `KB_DUAL_WRITE_START_TS=<ISO>`
+  - `make start` 재기동 → agent 의 fact write 시 `_DualWriteMirror` 가 양쪽 INSERT
+  - `_DualWriteMirror._mirror()` 안에 cross-DB audit explicit call (M2-c 추가)
+  - `bin/kb-dual-write-verify.sh --audit-sla --window-days 7` 본문 + 7-day stress run
+  - test_anchor_invariant_postgres.py 의 6 시나리오 + 2 negative assertion fixture 실 구현 (S1-S6 + N1 LLM 0건 + N2 TRUNCATE)
+- 사용자 결정 (2026-05-21): 즉시 자동 commit + push + main 동기화.
+- Outside-voice rationale: 호출 ✓ — `REV-20260520-0008 [SUBAGENT:Plan-subagent]`. RBAC role `agent_kb_rw` 활성 cycle + 메모리 정책 정합. NEEDS-TWEAK + Critical 6 + Blocker 2 본 cycle 내 반영 + Nice-to-have 5건 M2-c 위임.
+
 ## CHG-20260521-0001
 - Date: 2026-05-21
 - TASK-Cycle: TASK-0019 (M2-a dual-write 준비, **Major §12.3** — RBAC 동반)
