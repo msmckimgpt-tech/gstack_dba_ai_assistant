@@ -155,7 +155,7 @@ def summarize_mcp_result(result: Any) -> dict[str, Any]:
 # M0 단계의 진입점. mysql.connector 와 공존하며 기존 코드 경로는 무영향.
 # M2 dual-write phase 부터 `_pg_connect()` 가 write path 에 호출되고, M4 cutover
 # 시점에 read path 도 본 helper 를 사용한다. M1 cycle 에서 `agent_kb_rw` /
-# `agent_kb_ro` role 분리 + ADR-0023 작성 후 본 함수의 user/password 가 rw role 로
+# `agent_kb_ro` role 분리 + ADR-0021 작성 후 본 함수의 user/password 가 rw role 로
 # 전환된다 (config.AGENT_KB_PG_USER 환경변수 갱신만으로 적용).
 # ─────────────────────────────────────────────────────────────────────────────
 

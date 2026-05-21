@@ -8,6 +8,65 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260520-0006 [SKIPPED:renumber-only — ADR-0023 to ADR-0021]
+- Date: 2026-05-20
+- TASK-Cycle: TASK-0018 fixup (ADR numbering 연속성)
+- Decision: 본 cycle 1차 commit (`4bca163`) push 후 origin/main 의 ADR-0020 추가로 인한 numbering gap (0020 → 0023) 을 ADR-0021 로 연속화. text-level rename only — 의사결정 항목 / RBAC 모델 / schema 변경 / code semantic 변경 0건. Outside-voice 호출 불요로 판정.
+- Outside-voice rationale: 의사결정 0건이라 외부 시각 호출 의미 없음. sed -i 의 mechanical rename + `git grep ADR-0023` 결과 0건 검증으로 충분.
+- 참조: `CHG-20260520-0005` (fixup 의 상세 변경 목록).
+
+## REV-20260520-0005 [SUBAGENT:Plan-subagent — M1 Postgres DDL + RBAC role 신설]
+- Date: 2026-05-20
+- TASK-Cycle: TASK-0018 (M1 Postgres DDL + RBAC role, **Major §12.3** — 인증/인가 변경)
+- Outside-voice channel: Plan subagent. 사용자 메모리 `feedback_outside_voice_for_rbac.md` 의 "권한 모델 변경 plan 은 Codex/subagent 외부 시각 항상 호출" 정책 적용. ADR-0021 의 RBAC 재정의가 Critical 변경이라 본 cycle 의 핵심 검증 도구.
+- Verdict: **NEEDS-TWEAK** — schema/DDL/role 의 구조는 견고하나 (1) ADR 의 정적 catalog blindspot 핵심 답 미흡 + (2) weak password literal fallback + (3) catalog 명명 일관성 + (4) Consequences 정량 SLA 부재 4 Critical 본 cycle 내 반영 필요.
+- Section A (Postgres DDL dialect 정합성) — **대체로 정합, 미세 갭 2건**:
+  - 컬럼 매핑 완전성 ✓ (4 테이블 모든 컬럼 + 6 인덱스 + 4 UNIQUE 정확 보존)
+  - BIGINT → IDENTITY ✓, timestamp(3) → timestamptz + trigger ✓, decimal → numeric ✓, longtext → text ✓
+  - **FULLTEXT → pg_trgm 의 의미 비등가** — MySQL `MATCH ... AGAINST` 의 자연어 토큰화 + BM25-like 와 pg_trgm 의 3-gram substring 검색 차이. application-측 query rewrite 정책이 M2~M4 사이 별 cycle 책임. 본 cycle 의 SQL 헤더 주석 또는 ADR 에 명시 권고.
+  - LC_COLLATE default (docker image 의 `en_US.utf8` 가정) — 한글 정렬 byte order — Nice-to-have 명시.
+- Section B (Role 권한 모델 + ADR-0021) — **견고, 단 정적 catalog blindspot 잔존**:
+  - 2-layer hybrid 분리 합리 ✓ (connection-level + application-level)
+  - agent_kb_rw/ro 권한 범위 정확 ✓ (TRUNCATE 제외 + ALTER DEFAULT PRIVILEGES 적용)
+  - **`--apply-schema` 단독 호출 시 role 부재 → grant block silent skip risk** (Critical: ADR Consequences 에 명시 + bootstrap warning 추가)
+  - **Cross-DB audit best-effort 의 SLA 부재** (Critical: ≤0.1% target 명시)
+  - **`kb.write.any` 명명 일관성** — catalog 의 verb 패턴 (`audit.export` / `audit.purge`) 정합 안 됨 (Critical: `kb.mutate.any` 변경)
+  - **`kb.read.own` enforcement 책임 위치 모호** — `ConversationId` 별 actor 결정 로직이 KB 측 아닌 web layer (Blocker — M2~M4 별 cycle 책임)
+  - **Password rotation graceful degradation 부재** (Critical: `_pg_connect()` auth fail → backoff 3회 → mysql fallback / fail-loud 명시)
+  - **정적 catalog blindspot** — 메모리 정책 핵심 — `WebPermissions IsDynamic=1` 패턴의 `kb.*` 적용 미명시 (Critical: ADR §후속 액션에 별 cycle 명시)
+- Section C (Idempotency + 운영 안전성) — **안전, 운영 함정 1건**:
+  - `_ensure_pg_schema()` 반복 호출 안전 ✓
+  - ivfflat lists=100 + NULL embedding 의 자연 제외 (운영 함정: M3 backfill 진행 중 ANN recall 낮음 — M3 readiness gate 보강 권고)
+  - `--all` 순서 (DB → roles → schema) 안전 ✓
+  - **`has_table_privilege()` grant 검증 query 추가** (Blocker — M2 진입 전)
+- Section D (누락 / 잘못된 가정) — **3건 식별**:
+  - **schema 적용 시점의 "공백 상태"** — M2 진입까지 postgres 가 empty (Blocker: M2 plan 에 `_ensure_pg_schema()` 자동 호출 trigger 결정 명시)
+  - **Connection pool 분리 정책** (M2 plan 책임)
+  - **`agent_drag` namespace 격리 미명시** (Blocker → ADR-0024 후보, ADR-0021 §Consequences 에 명시 — Critical 항목으로 본 cycle 보강)
+  - **VIEW 의 underlying table 권한 상속 부재** ✓ (agent_kb_ro 가 underlying SELECT 도 grant — 양호)
+  - **`AGENT_KB_PG_RW_PASSWORD` default 'change_me_kb_rw' literal** (**Critical**: `.env.example` 에 변수 추가 + bootstrap fail-loud)
+- Section E (ADR-0021 의 plan 정합) — **부분 정합, blindspot 핵심 항목 미답**:
+  - §2.1.5 #1 storage 권한 매핑 → ADR Layer 1 ✓
+  - §2.1.5 #2 의미 변화 → ADR Layer 2 ✓ (단 명명 일관성 issue)
+  - §2.1.5 #3 정적 catalog blindspot → **부분 답** (Critical: dynamic grant 흐름 cycle 명시)
+  - 후속 액션 cycle 분배 일부 명확 + 일부 누락 (Critical: dynamic grant cycle 위치 + ADR-0024 후보 명시)
+- Critical (본 cycle 내 처리 완료):
+  1. **`.env.example` 에 `AGENT_KB_PG_RW_PASSWORD` + `RO_PASSWORD` 추가** + bootstrap 의 `change_me_*` literal fail-loud (`AGENT_KB_BOOTSTRAP_ALLOW_WEAK_PW=1` 명시 confirm 필요) ✓
+  2. **`kb.write.any` → `kb.mutate.any`** (catalog 명명 일관성, ADR text 수정) ✓
+  3. **ADR §Consequences 보강**: cross-DB audit SLA ≤0.1% target + password rotation graceful degradation (backoff 3회 → fallback/fail-loud) + `--apply-schema` 단독 호출 시 grant skip warning ✓
+  4. **ADR §후속 액션 보강**: dynamic grant blindspot cycle 위치 (M2~M4 사이) 명시 + ADR-0024 후보 (Sprint 4 통합) 명시 + `has_table_privilege()` 검증 query M2 책임 명시 ✓
+- Blocker (M2 dual-write 진입 전 처리 필요):
+  - FULLTEXT → pg_trgm application-측 query rewrite 정책 (또는 pg_trgm 충분성 검증)
+  - `_ensure_pg_schema()` 자동 호출 trigger 결정 (startup? 첫 write 시? CLI?)
+  - `has_table_privilege()` 검증 query 보강
+  - `agent_drag` namespace 격리 ADR-0024 작성 (Sprint 4 통합 시점)
+- Nice-to-have (후속 cycle):
+  - LC_COLLATE / IDENTITY `BY DEFAULT` 모드 명시
+  - M3 readiness gate 에 ivfflat NULL embedding 비율 게이트
+  - connection pool 정책 명시 (M2 plan)
+  - ADR-0021 의 "deprecated" → "신설 안 함" text 미세 수정
+- Decision authority: 본 cycle 의 schema/DDL/role/ADR 결정은 §2.1 PLAN-APPROVED 마커 범위 안. 사용자 별도 confirm 불요 (사용자 메시지 "다음 Cycle 이어서 진행" = 진행 의도 표명). 다만 M2 진입 시 Blocker 4건 해소가 새 cycle 의 사전 조건.
+
 ## REV-20260520-0004 [SKIPPED:outside-voice-not-required — M0 인프라 도입 cycle]
 - Date: 2026-05-20
 - TASK-Cycle: TASK-0017 (M0 인프라 도입, Minor §12.3 — 비파괴 추가)
@@ -25,12 +84,12 @@ source_of_truth: true
   - `.env` 의 AGENT_KB_PG_* 값을 사용자가 채워야 함 (특히 PASSWORD — 본 cycle 의 doc 에는 placeholder 만).
   - postgres `agent_kb` database 생성 + pgvector extension 활성화는 사용자 명시 동작 (예: `docker exec repo-postgres-1 psql -U postgres -c "CREATE EXTENSION IF NOT EXISTS vector"`). M0 cycle 의 산출에는 이 명령 자동화 안 함 — M1 cycle 의 `_ensure_pg_schema()` 가 책임.
 - 결정 영향 (후속 cycle):
-  - **M1 cycle** — Postgres DDL + `agent_kb_rw`/`agent_kb_ro` role 신설 + `_ensure_pg_schema()` + ADR-0023 작성. Blocker B-1 (Sprint 4 schema 확인) M1 진입 전 사용자 직접 확인.
+  - **M1 cycle** — Postgres DDL + `agent_kb_rw`/`agent_kb_ro` role 신설 + `_ensure_pg_schema()` + ADR-0021 작성. Blocker B-1 (Sprint 4 schema 확인) M1 진입 전 사용자 직접 확인.
   - **M2 cycle** — `KbBackend` 추상화 + dual-write phase. `_dual_write_kb()` 래퍼 추가. agent.depends_on 에 postgres 추가 (그 시점에 startup ordering 변경).
   - **M3 cycle** — backfill ETL + embedding 일괄 생성 (Blocker B-4 의 `texts.embedding` schema 결정 적용). M-1 baseline 의 row count (FactEntries 774, Texts 798) 기준 embedding cost 추정 USD <0.01 — §12.1 confirm trigger 안전.
 - 본 cycle 의 코드 mutation: db.py +60 LOC (`_pg_available` + `_pg_connect` + psycopg import), config.py +20 LOC (9 export + 9 변수 정의), docker-compose.yml +29 LOC (postgres 서비스 block), .env.example +28 LOC (17 변수 + 주석), requirements.txt +4 LOC (psycopg + pgvector + 주석), bin/kb-pg-healthcheck.sh 177 LOC 신규, bin/kb-measure-baseline.sh +75 LOC (--latency mode). Total: 신규 script 1 + 6 file modify, ~390 line 변경.
 - Outside-voice 호출 시점 (앞으로):
-  - **M1 cycle 진입 직전**: RBAC role 신설 + ADR-0023 작성 — Critical RBAC 변경이라 outside-voice 필수 (사용자 메모리 정책).
+  - **M1 cycle 진입 직전**: RBAC role 신설 + ADR-0021 작성 — Critical RBAC 변경이라 outside-voice 필수 (사용자 메모리 정책).
   - **M2 → M3 진입 직전**: dual-write 정합성 시나리오 + `KbBackend` 추상화 catalog — Major 변경.
   - **M3 → M4 진입 직전**: cutover readiness 게이트 — Critical.
 
@@ -43,7 +102,7 @@ source_of_truth: true
   - **Row count (a)**: FactEntries 774, Texts 798, RagDocuments 831, RagObjects 774, AgentMemoryFacts VIEW 774. 총 정본 ~3,177 row + VIEW 별도. 본 plan §2.1.0 의 "수천~수만" 가정 lower bound 확인. M3 backfill 의 embedding cost 추정 정합 — `texts.embedding` 798 row × `text-embedding-3-small` USD 0.02/1M tokens × 평균 500 tokens ≈ **USD 0.008** (예측 over-budget 의 1/12500). PLAN-APPROVED 의 "USD 100 시 별도 confirm" 임계는 안전 margin.
   - **EXPLAIN (b)**: Q1 (FactEntries `schema_insight:%`) range access via `IX_FactEntries_Conv_Key`. Q2 (RagDocuments) ref access via `UX_RagDocs_Conv_Scope_Key_Hash`. **Q3 / Q4 / Q5 (RagObjects + table_insight + category-filtered) ALL access** — full scan. KB row 수가 ~800 으로 작아 현재 latency 작으나 scale-up 시 pgvector ANN index (ivfflat / hnsw) 의 selectivity 이득 영역. M4 cutover gate 의 latency p99 +50% 임계 (Blocker B-6) 의 baseline 으로 활용.
   - **JOIN audit (c)**: 비-KB (Conversations / Messages / Steps) ↔ KB (FactEntries / Texts / RagDocuments / RagObjects / Facts) cross-table JOIN candidate 양방향 0건. **Open Question #9 ✓ 충족** — Postgres 분리 시 cross-DB JOIN 우려 없음. M0 의 docker-compose `postgres` 서비스 추가 + agent 컨테이너에서 dual connection (mysql + pgsql) 패턴이 자연 가능.
-  - **RBAC catalog audit (d)**: `PERMISSION_DEFINITIONS` 총 40건 中 `kb.*` / `memory.*` / `agent_kb.*` = **0건**. outside-voice review Section D 정합 — KB 접근이 현재 RBAC catalog 외부 (connection-level: agent 컨테이너의 mysql_connector 가 root 권한으로 직접 접근). Postgres 분리 후 `agent_kb_rw` / `agent_kb_ro` role 신설 + ADR-0023 작성이 M1 cycle 의 명시 게이트 (Blocker B-8 / B-9).
+  - **RBAC catalog audit (d)**: `PERMISSION_DEFINITIONS` 총 40건 中 `kb.*` / `memory.*` / `agent_kb.*` = **0건**. outside-voice review Section D 정합 — KB 접근이 현재 RBAC catalog 외부 (connection-level: agent 컨테이너의 mysql_connector 가 root 권한으로 직접 접근). Postgres 분리 후 `agent_kb_rw` / `agent_kb_ro` role 신설 + ADR-0021 작성이 M1 cycle 의 명시 게이트 (Blocker B-8 / B-9).
   - **Latency (e)**: deferral. `latency.deferred_to = "M0"` JSON 필드 명시. M0 cycle 의 docker-compose 수정 시점에 `COMPOSE_PROJECT_NAME=repo` 강제 또는 `docker exec repo-web-1` 직접 호출 패턴 결정 + N=10 회 S1~S5 시나리오 측정.
 - Blocker B-2 (M-1 baseline 측정 phase 추가) 의 부분 충족: 4/5 산출. 잔여 1/5 (latency) 는 M0 의 산출에 통합 — TASK.md §1.2 의 본 cycle plan 에 명시.
 - 결정 영향: 본 측정 결과는 §2.1 의 phase M0~M5 모두에 영향. 특히:
@@ -78,7 +137,7 @@ source_of_truth: true
   - 현재 RBAC catalog (`unit/feature-0003-agent-web-ui/src/app.py:325~412` 의 `PERMISSION_DEFINITIONS`) 가 정적 tuple + 동적 row union 의 hybrid 패턴. 정적 catalog 의 blindspot 은 **정의 자체가 안 바뀌어도 enforcement path 가 바뀌는 것** — 본 plan 의 정확한 사례.
   - 현재 catalog 에 `kb.*` / `memory.*` 항목 0건 (grep 결과 확인) — KB 권한이 catalog 외부에 있음. Postgres 분리 후 connection pool 분리 → connection-level 권한이 새 enforcement layer.
   - `agent_kb_rw` / `agent_kb_ro` Postgres role 신설 = 인증/인가 변경 → M1 위험도 Minor → Major 격상 + 사람 승인 필수.
-  - ADR-0023 (RBAC catalog 재정의) 작성 의무를 M4 cutover 전 게이트 항목에 명시 필요.
+  - ADR-0021 (RBAC catalog 재정의) 작성 의무를 M4 cutover 전 게이트 항목에 명시 필요.
   - audit log 의 cross-DB tx 약화 명시 필요 (`WebAuditEvents` 는 MySQL 유지).
 - Section E (Open Questions) — 보강 필요:
   - #4 embedding cost 추정: outside-voice 자체 추정 USD 0.01~0.5 (현재 row 수 추정 시). plan 의 "USD <100" estimate 는 over-budgeted, 그러나 **row 수 측정 자체를 plan 이 하지 않음**.
@@ -100,7 +159,7 @@ source_of_truth: true
   6. M4 latency 정량 임계.
   7. ANCHOR §3 invariant 시나리오 카탈로그 6종.
   8. RBAC role 신설 위험도 격상 (M1: Minor → Major + 사람 승인).
-  9. ADR-0023 작성을 M4 cutover 전 게이트 명시.
+  9. ADR-0021 작성을 M4 cutover 전 게이트 명시.
   10. `make ask` 5종 시나리오 구체 catalog 명시.
   11. 정책 doc 갱신 목록 보강 (ARCHITECTURE / LEARNINGS / FUNCTION §10).
 - Nice-to-have (별 ADR / 별 cycle):
@@ -124,7 +183,7 @@ source_of_truth: true
   - **외부 비용** — M3 backfill 의 embedding 호출 비용 (OpenAI `text-embedding-3-small`) 추정 USD <100. 초과 시 §12.1 별도 confirm.
   - **ANCHOR §3 invariant** — fact-우선 복구 흐름 (insight.py 의 `_check_artifact_completeness` + `_repair_from_fact`) 이 새 storage 에서도 보존되어야 한다. `KbBackend` 추상화 인터페이스 (M2 도입) 뒤에서 동일 동작 검증 필수. M2 / M4 의 검증 게이트에 명시 항목 포함.
   - **정책 doc 변경** — AGENTS.md §11.3·§14.1·§15.6·§15.7 갱신 동반. META path (§18.4) 이므로 phase 별 META mode commit 으로 분리.
-  - **RBAC catalog blindspot** — 사용자 메모리 `feedback_outside_voice_for_rbac.md` 정책에 따라 정적 catalog 의 dynamic grant blindspot 외부 검증 필수. `kb.read.any` / `kb.write.any` 의 storage 이전 후 재정의는 별 ADR (`ADR-0023` 후보) 로 분리.
+  - **RBAC catalog blindspot** — 사용자 메모리 `feedback_outside_voice_for_rbac.md` 정책에 따라 정적 catalog 의 dynamic grant blindspot 외부 검증 필수. `kb.read.any` / `kb.write.any` 의 storage 이전 후 재정의는 별 ADR (`ADR-0021` 후보) 로 분리.
 - Alternatives 검토 후 폐기:
   - **MySQL FULLTEXT + LIKE 만으로 §15.6 §4) D0~D3 라우팅 구현 강화** — coverage 기반 검색은 LIKE 패턴 매칭으로는 의미 거리 표현 불가. embedding similarity 가 자연 대응. 폐기 사유: 검색 정확도 천장이 낮음.
   - **MySQL 8.0 의 `JSON_VALUE` + 자체 cosine similarity 함수 구현** — pure-MySQL 으로 vector similarity 시뮬레이션 가능하나 index 가 없어 full scan. 대규모 데이터에서 latency 폭발. 폐기.

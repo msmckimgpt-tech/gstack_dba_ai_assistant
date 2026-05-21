@@ -1364,3 +1364,114 @@ def clear_memory_tables(conn) -> None:
     processing_ids = list_processing_conversation_ids(conn)
     preserve_ids = sorted({*processing_ids, *AGENT_MEMORY_CLEAR_KEEP_IDS})
     delete_all_conversations(conn, preserve_ids=preserve_ids)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TASK-0015 §2.1.3 M1 (TASK-0018 cycle): KB Postgres pgvector schema 적용 함수.
+#
+# 본 함수는 multi-cycle plan 의 M2 dual-write phase 시작 시점에 1회 호출되어 KB
+# Postgres database 의 5 KB 테이블 + VIEW + index + role grant 를 멱등 적용한다.
+# M1 cycle 에서는 함수 정의만 — 호출 없음. M2 cycle 에서 memory-init service 또는
+# bin/kb-pg-role-bootstrap.sh --apply-schema 가 호출.
+#
+# Idempotency: agent_kb_schema.sql 의 모든 DDL 이 IF NOT EXISTS / CREATE OR REPLACE
+# 패턴이므로 반복 실행 안전. M3 backfill 후에도 다시 호출 가능 (schema 변경 없음).
+#
+# ADR-0021 (KB Postgres 분리 후 RBAC catalog 재정의) 의 실행 도구. 본 함수 호출 후
+# `agent_kb_rw` / `agent_kb_ro` role 이 schema 권한을 가진다 (sql 의 DO $$ block).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _ensure_pg_schema(conn=None, *, schema_sql_path: str | None = None) -> dict:
+    """KB Postgres database 의 schema 를 멱등 적용한다.
+
+    M2 dual-write phase 시작 시점에 1회 호출. 본 함수는 5 KB 테이블 + VIEW +
+    index + role grant 를 모두 적용하며 idempotent (다시 호출해도 안전).
+
+    Args:
+        conn: psycopg connection. None 이면 `_pg_connect()` 로 새 connection 열고
+              종료 시 close. 호출자가 connection 을 외부에서 관리하려면 명시.
+        schema_sql_path: agent_kb_schema.sql 의 절대 경로. None 이면 본 모듈 위치
+                         기준으로 자동 탐색 (`../scripts/agent_kb_schema.sql`).
+
+    Returns:
+        dict: {
+            "schema_applied": True,
+            "tables_present": ["fact_entries", "texts", "rag_documents", "rag_objects"],
+            "view_present": True,
+            "extensions": ["vector", "pg_trgm"],
+        }
+
+    Raises:
+        RuntimeError: psycopg 또는 pgvector import 실패, 또는 agent_kb_schema.sql
+                      파일 부재 (M1 cycle 의 산출 누락 신호).
+        psycopg.errors.*: schema 적용 중 SQL 오류 (예: pgvector extension 미설치).
+    """
+    import os
+    from .db import _pg_connect, _pg_available
+
+    if not _pg_available():
+        raise RuntimeError(
+            "_ensure_pg_schema() 호출 시점에 _pg_available() == False. "
+            "psycopg import + AGENT_KB_PG_* 환경변수 둘 다 갖춰져야 한다."
+        )
+
+    if schema_sql_path is None:
+        # 본 모듈 위치 기준 ../scripts/agent_kb_schema.sql.
+        here = os.path.dirname(os.path.abspath(__file__))
+        candidate = os.path.normpath(os.path.join(here, "..", "scripts", "agent_kb_schema.sql"))
+        if not os.path.isfile(candidate):
+            raise RuntimeError(
+                f"agent_kb_schema.sql 미발견: {candidate}. "
+                f"M1 cycle 의 산출이 누락됐을 가능성 — git checkout 확인."
+            )
+        schema_sql_path = candidate
+
+    with open(schema_sql_path, "r", encoding="utf-8") as f:
+        schema_sql = f.read()
+
+    own_conn = False
+    if conn is None:
+        conn = _pg_connect()
+        own_conn = True
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(schema_sql)
+
+            # 검증: 5 KB 테이블 + VIEW + extension 존재 확인.
+            cur.execute("""
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name IN ('fact_entries', 'texts', 'rag_documents', 'rag_objects')
+                ORDER BY table_name
+            """)
+            tables = [row[0] for row in cur.fetchall()]
+
+            cur.execute("""
+                SELECT 1 FROM information_schema.views
+                WHERE table_schema = 'public' AND table_name = 'agent_memory_facts'
+            """)
+            view_present = cur.fetchone() is not None
+
+            cur.execute("""
+                SELECT extname
+                FROM pg_extension
+                WHERE extname IN ('vector', 'pg_trgm')
+                ORDER BY extname
+            """)
+            extensions = [row[0] for row in cur.fetchall()]
+
+        # psycopg autocommit 가 True 이므로 별도 commit 불요.
+        return {
+            "schema_applied": True,
+            "tables_present": tables,
+            "view_present": view_present,
+            "extensions": extensions,
+        }
+    finally:
+        if own_conn:
+            conn.close()
+
+
+__all__.append("_ensure_pg_schema")

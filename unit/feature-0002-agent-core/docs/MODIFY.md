@@ -8,6 +8,50 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260520-0005
+- Date: 2026-05-20
+- TASK-Cycle: TASK-0018 (M1 — ADR renumber fixup)
+- Summary: origin/main 이 본 cycle 의 1차 commit (`4bca163`) push 후 추가 발전 (TASK-0088 PR #38 머지로 ADR-0020 추가). 본 cycle 의 ADR-0023 가 numbering gap (0021/0022 미정의) 을 만들어 rebase 시 conflict 회피 + 연속성 위해 **ADR-0023 → ADR-0021 renumber**. text-level rename only (sed -i 18 references / 12 files).
+- Files: `docs/DECISIONS.md` (ADR header), `unit/feature-0002-agent-core/src/modules/{db,memory}.py` (주석), `.env.example` (주석), `docker-compose.yml` (주석), `bin/kb-pg-role-bootstrap.sh` (주석 + stderr 메시지), `unit/feature-0002-agent-core/src/scripts/agent_kb_schema.sql` (주석), `unit/feature-0002-agent-core/docs/{TASK,FUNCTION,REVIEW,MODIFY,REPORT}.md` (cross-reference).
+- 검증: `git grep ADR-0023` = 0건 ✓. `git grep ADR-0021` 의 모든 reference 가 본 cycle 의 ADR.
+- 사유: ADR 번호는 catalog 의 정본 — gap (0020 → 0023) 보다 연속 (0020 → 0021) 이 검색·인용 용이. semantic 변경 0건.
+- Outside-voice: 본 fixup 은 text rename only — 의사결정 항목 없음. `REV-20260520-0006 [SKIPPED:renumber-only]` entry 만 추가.
+
+## CHG-20260520-0004
+- Date: 2026-05-20
+- TASK-Cycle: TASK-0018 (M1 Postgres DDL + RBAC role 신설, **Major §12.3** — 인증/인가 변경)
+- Summary: §2.1 PLAN-APPROVED 의 **M1 phase Postgres DDL + RBAC role 신설 + ADR-0021** 실행. `agent_kb_schema.sql` (5 KB 테이블 + VIEW + ivfflat index + role grant block, ~241 LOC), `bin/kb-pg-role-bootstrap.sh` (4 mode + rotate-password + weak password fail-loud, ~200 LOC), `bin/kb-schema-compare.sh` (MySQL ↔ Postgres 컬럼 정합 비교, ~157 LOC), `modules/memory.py` 의 `_ensure_pg_schema()` 함수 추가 (~100 LOC, M2 dual-write 진입 entry), `docs/DECISIONS.md` ADR-0021 (2-layer hybrid: connection-level role + application-level `kb.*` 4 권한), `.env.example` 의 `AGENT_KB_PG_RW_PASSWORD` / `RO_PASSWORD` 추가. Outside-voice review (Plan subagent, `REV-20260520-0005`) NEEDS-TWEAK + 4 Critical 본 cycle 내 반영.
+- Worktree: `ai/claude/0002/kb-pg-m1` 격리. path: `<wrapper>/.worktrees/0002-kb-pg-m1/`. 사용자 결정 (2026-05-20): "다음 Cycle 을 이어서 진행해주세요" (이전 turn 의 worktree 정책 지속 적용).
+- Files (코드/설정 + 신규 script + ADR):
+  - `unit/feature-0002-agent-core/src/scripts/agent_kb_schema.sql` (신규, 241 LOC): pgvector + pg_trgm extension + 4 KB 테이블 (`fact_entries` / `texts` / `rag_documents` / `rag_objects`) + VIEW (`agent_memory_facts`) + index (covering + ivfflat) + role grant `DO $$` block. dialect 변환 매핑 + Blocker B-4 결정 (`texts.embedding vector(1536)` 만, TextHash 별 단일 embedding).
+  - `bin/kb-pg-role-bootstrap.sh` (신규, 200 LOC): 4 mode (`--create-db` / `--create-roles` / `--apply-schema` / `--all`) + `--rotate-password`. **Critical #1**: `change_me_*` literal fallback fail-loud (`AGENT_KB_BOOTSTRAP_ALLOW_WEAK_PW=1` 명시 confirm 필요).
+  - `bin/kb-schema-compare.sh` (신규, 157 LOC): MySQL ↔ Postgres `information_schema.columns` 비교. PascalCase ↔ snake_case normalization. missing column 검출.
+  - `unit/feature-0002-agent-core/src/modules/memory.py` (+100 LOC): `_ensure_pg_schema()` 함수 추가. M2 dual-write 진입 시 1회 호출. psycopg fail-soft + tables/view/extensions 검증 query.
+  - `docs/DECISIONS.md` (신규 ADR-0021, ~60 LOC): KB Postgres 분리 후 RBAC catalog 재정의. 2-layer hybrid 모델. Alternatives + Consequences + 후속 액션 4 섹션.
+  - `.env.example` (+11 LOC): `AGENT_KB_PG_RW_PASSWORD` + `RO_PASSWORD` 2 변수 + 주석 (outside-voice Critical #1).
+  - `unit/feature-0002-agent-core/docs/{TASK,REVIEW,MODIFY,REPORT,FUNCTION}.md`: cycle 등록 + 결과 기록.
+- Outside-voice review (Plan subagent) Critical 4건 본 cycle 내 반영:
+  1. `.env.example` 의 RW/RO PASSWORD 변수 추가 + bootstrap fail-loud ✓
+  2. `kb.write.any` → `kb.mutate.any` (catalog 명명 일관성) ✓
+  3. ADR Consequences 보강 (cross-DB audit SLA ≤0.1% + password rotation backoff + `--apply-schema` warning) ✓
+  4. ADR §후속 액션 보강 (dynamic grant blindspot cycle 위치 명시 + ADR-0024 후보 명시) ✓
+- 검증 (본 cycle, schema 정의 + script + ADR 까지):
+  - `python3 -m py_compile unit/feature-0002-agent-core/src/modules/memory.py` — PASS
+  - `bash -n bin/kb-pg-role-bootstrap.sh` — PASS
+  - `bash -n bin/kb-schema-compare.sh` — PASS
+  - SQL 의 실 syntax 검증은 사용자 별 turn 의 `_ensure_pg_schema()` 호출 또는 `bin/kb-pg-role-bootstrap.sh --apply-schema` 호출 시점 (postgres 컨테이너 가동 필요)
+- Runtime 검증 deferral (사용자 별 turn — TASK-0017 / 0018 통합):
+  1. main worktree 에서 `git pull --ff-only`
+  2. `.env` 의 `AGENT_KB_PG_*` 채움 (`HOST=postgres` / `PORT=5432` / `DB=agent_kb` / `USER=postgres` / `PASSWORD=<choose>` / `SSLMODE=prefer` + **`RW_PASSWORD=<choose>` / `RO_PASSWORD=<choose>`**)
+  3. `make start` 재기동 → postgres 컨테이너 가동
+  4. `bin/kb-pg-healthcheck.sh --container` PASS (TASK-0017 검증)
+  5. `bin/kb-pg-role-bootstrap.sh --all` 실행 (본 cycle 검증) — DB + role + schema
+  6. `bin/kb-schema-compare.sh` PASS (4 테이블 컬럼 정합)
+  7. `bin/kb-pg-healthcheck.sh --extension` + `--pg-connect` PASS
+  8. `.env` 의 `AGENT_KB_PG_USER=agent_kb_rw` 전환 + agent 재기동 (M2 사전)
+- 사용자 결정 (2026-05-20): 즉시 자동 commit + push + main 동기화 (전역 정책 + AGENTS.md §16.5 의 BLOCKED 없음 + Major 사람 confirm 권장 — 사용자 "이어서 진행" 명시로 표명).
+- Outside-voice rationale: 호출 ✓ — `REV-20260520-0005 [SUBAGENT:Plan-subagent]`. NEEDS-TWEAK + 4 Critical 본 cycle 내 반영 + 4 Blocker (M2 진입 전 처리) + 2 Nice-to-have 식별.
+
 ## CHG-20260520-0003
 - Date: 2026-05-20
 - TASK-Cycle: TASK-0017 (M0 인프라 도입, Minor §12.3 — 비파괴 추가)
