@@ -9,6 +9,10 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-05-21 TASK-0006 (= TASK-0087 in feature-0003) 완료 — Caddy XFF 정규화** (CHG-20260520-0010, REV-20260520-0010, REQ-20260520-0002, **Major** §12.3). `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile` 의 `reverse_proxy web:8000` 블록에 `header_up X-Forwarded-For {client_ip}` 추가. Caddy 가 받은 임의 `X-Forwarded-For` 를 본인이 본 TCP peer IP 로 덮어쓴다. multi-hop / 클라이언트 spoof 모두 차단. feature-0003 의 `_get_client_ip()` 조건부 trust (env `WEB_TRUSTED_PROXIES`) 와 dual ownership cycle. Codex outside voice review 흡수 (REV-20260520-0010 정본 = feature-0003).
+
+---
+
 Caddy 설정과 Windows LAN 프록시 스크립트를 별도 feature로 이관했고, 인증서/상태 파일은 `../../../../artifacts`로 분리했다.
 
 ## 2. Progress

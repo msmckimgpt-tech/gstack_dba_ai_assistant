@@ -31,6 +31,44 @@ source_of_truth: true
 - panel: SKIPPED:self-review-after-plan-approved (CHG-20260521-0003 와 동일 surface — system_prompt 표면 + audit 변경 없음. Codex outside voice trigger 미해당. 본 fix 는 1-line correction 으로 외부 검증 비용 대비 가치 낮음).
 - Trace: REQ-20260521-0003 → TASK-0095 → CHG-20260521-0004 → REV-20260521-0004 (CHG-20260521-0003 follow-up fix).
 
+## REV-20260520-0010 [AGENT-TEAM:codex-outside-voice]
+- Date: 2026-05-21
+- Decision: TASK-0087 (REQ-20260520-0002, **Major** §12.3 — 외부 LAN trust 강화) plan v2 흡수 (Codex outside voice review verdict **NEEDS_REVISION**, 6 findings Major 5 + Minor 1). 사용자 명시 결정으로 Major #1 (RFC1918 default 권장값) 거부 + 나머지 5 흡수 (Major #2-5 + Minor #1). PLAN-APPROVED 후 Phase A~E 실행 — Caddy XFF 정규화 (A) → `_get_client_ip()` 재작성 + module-level 상수 + mode-aware fail-loud (B) → SECURITY.md §9.7 정책 갱신 (C) → docs (D) → verify-completion + commit + cycle-finalize (E).
+- Mode: SUBAGENT (Codex CLI consult mode, gpt-5 default, model_reasoning_effort=high, read-only sandbox)
+- Session: model_reasoning_effort=high, 228,107 tokens
+- Review subject: Plan v1 (RFC1918 trust + silent skip + Caddy reverse_proxy 내부 trusted_proxies)
+- Result: NEEDS_REVISION → Plan v2 흡수 완료
+- Reason: AGENTS.md §17 외부 검증 정책 + `feedback_outside_voice_for_rbac` user policy — 본 변경은 IP-trust 보안 표면 + multi-feature (feature-0003 + feature-0006) + audit subsystem 의존성. 정적 review 만으로 cross-feature blindspot 검출 불가, outside voice 필수.
+- Findings:
+  - **Major #1 (RFC1918 전체 trust 위험)** — `WEB_TRUSTED_PROXIES`는 "사내 클라이언트 대역"이 아니라 "web이 직접 TCP peer로 보는 reverse proxy 대역"이어야 함. 현재 compose 구조에서 web port 가 `${WEB_PORT}:8000` 으로 LAN publish 되어 있어 사내 클라이언트가 Caddy 우회 시 자기 사설 IP 가 trusted proxy 로 판정되어 XFF spoof 가능. → **사용자 명시 거부** (사내 LAN dev/staging 전제 + 본 worktree 컨테이너는 테스트 후 정리). SECURITY.md §9.7 에 trade-off 명시.
+  - **Major #2 (Caddy 문법 부정확)** — Plan v1 의 `reverse_proxy { trusted_proxies static private_ranges }` 가 Caddy v2 문서 기준 부정확. Caddy 권장은 global option `servers > trusted_proxies static <ranges>`. → **흡수**: trusted_proxies 추가 대신 `reverse_proxy { header_up X-Forwarded-For {client_ip} }` 로 단일 hop XFF 정규화 (더 안전한 대안). multi-hop / spoof 모두 차단.
+  - **Major #3 (Caddy `private_ranges` global trust 위험)** — Caddy 가 직접 사내 LAN 클라이언트를 받는 구조에서 `trusted_proxies static private_ranges` global 은 private IP 클라이언트의 XFF 신뢰 → spoof. → **흡수**: global trusted_proxies 추가 안 함 (Major #2 와 동일 결정 — XFF 정규화로 대체).
+  - **Major #4 (malformed XFF 검증 누락)** — Plan v1 의 `_get_client_ip()` 는 XFF 첫 토큰을 IP 검증 없이 반환 (`garbage`, `1.2.3.4:1234` 등 audit 오염). → **흡수**: `ipaddress.ip_address(first)` 파싱 검증 + 실패 시 direct_ip fallback.
+  - **Major #5 (malformed env silent skip 부적합)** — Plan v1 의 `_parse_trusted_proxies` 가 invalid CIDR 토큰을 silent skip → 운영자 인지 못함. → **흡수**: mode-aware — `AGENT_MODE in {prod, staging}` 에서 `RuntimeError` startup, dev/test/"" 에서 stderr WARNING + 해당 토큰만 skip.
+  - **Minor #1 (silent regression warning)** — proxy mode (`ENABLE_WEB_TLS_PROXY=1`) + `WEB_TRUSTED_PROXIES` empty 조합 = audit IP 가 Caddy container IP 만 기록 (PIPA §29 접근기록 품질 회귀). → **흡수**: prod/staging `RuntimeError` startup, dev/test stderr WARNING.
+- 질문별 답변 흡수 매트릭스:
+  | Codex Q | 답변 | Plan v2 반영 |
+  |---|---|---|
+  | Q1 silent regression default | 보수적 default 유지 + proxy mode fail-loud | proxy-mode gate 추가 |
+  | Q2 Caddy `private_ranges` cover | docker bridge subnet 포함, but reverse_proxy 내부 `static` 문법 아님 | global trusted_proxies 자체를 추가 안 함 + XFF 정규화로 대체 |
+  | Q3 단일 hop 가정 안전성 | 안전하지 않음 (web port LAN publish) — XFF 정규화 권장 | `header_up X-Forwarded-For {client_ip}` 추가 |
+  | Q4 IPv6 support | `ipaddress.ip_address` IPv6 OK. Caddy `private_ranges` 는 fd00::/8 + ::1 만 (fc00::/7 아님) | `_get_client_ip` IPv6 자동 지원, Caddy global private_ranges 안 씀 |
+  | Q5 schema 호환 | VARCHAR(64) 가 IPv4/IPv6 모두 수용 OK | 변경 없음 |
+  | Q6 다른 surface | rate limit per-account, share token IP allowlist 별 cycle 보류, login throttling 미확인 | SECURITY.md §9.7 에 share token allowlist build 가능성 명시 |
+  | Q7 malformed env | fail-loud 권장 | Major #5 흡수 |
+  | Q8 test coverage | IPv6, invalid env fatal, malformed XFF fallback, 빈 첫항목, /32 /128, direct LAN client spoofed XFF, caddy validate | TEST.md §4 8 시나리오 추가 |
+- Decision: Codex 권고 6/6 모두 검토 + 5 흡수 + 1 사용자 명시 거부 (Major #1). PLAN-APPROVED 마커 부여 (2026-05-21).
+- Risk:
+  1. **사용자 명시 거부 #1**: RFC1918 전체 trust 의 위험 (사내 클라이언트가 web port 직접 접근 + 자기 IP 를 trusted proxy 로 가장 + XFF spoof) 은 본 worktree 컨테이너 정리 정책과 사내 dev/staging 전제 로 격리. 외부 인터넷 / 미신뢰 LAN 노출 시점에 별 cycle 에서 (a) `WEB_TRUSTED_PROXIES` 좁힘 + (b) docker-compose port mapping `127.0.0.1:${WEB_PORT}:8000` 으로 변경.
+  2. **Caddy XFF 정규화의 single-hop 의존성**: Caddy 앞에 upstream proxy (cloudflare/ALB) 가 추가되면 `{client_ip}` 가 upstream proxy IP 가 되어 진짜 클라이언트 IP 가 audit 에서 사라짐. 별 cycle 검토 필요.
+  3. **`ipaddress.ip_address()` 검증 실패 시 direct_ip fallback**: trusted proxy 가 malformed XFF 를 보내는 비정상 상황에서 audit IP 가 caddy container IP 로 기록 — 정상 동작이라 risk 아님. 단 운영 관측 (Caddy log) 필요.
+- Alternatives considered:
+  - Plan v1 그대로 진행: Codex 6/6 무시 — 거부 (보안 표면 + audit 표면 + multi-feature)
+  - docker-compose port mapping 변경 같이 진행 (Codex 더 근본 권고): 사용자 외부 접속 경로 유지 명시 결정으로 거부 — 별 cycle 분리
+  - `WEB_TRUSTED_PROXIES` default = docker bridge subnet (172.18.0.0/16): 사용자 명시 결정 (RFC1918 전체) 으로 거부 — SECURITY.md §9.7 에 trade-off 명시
+  - Caddy global `trusted_proxies static <narrow>`: 본 시스템 (Caddy 단일 hop) 에서는 효과 미미 + XFF 정규화가 더 강력 — 채택 안 함
+- Cross-ref: TASK.md §2.9 (TASK-0087 Implementation Plan + PLAN-APPROVED 마커), MODIFY.md CHG-20260520-0010, REPORT.md §1 cycle entry, docs/SECURITY.md §9.7, feature-0006-lan-proxy-access REV-20260520-0010 (dual ownership)
+
 ## REV-20260521-0003 [SKIPPED:self-review-after-plan-approved]
 - Date: 2026-05-21
 - Decision: TASK-0095 (REQ-20260521-0003, **Major** §12.3 — GLOBAL system prompt layer 신설) self-review (verify-completion CHECK#9 정합 prefix `SKIPPED:` 사용 — Codex outside voice trigger 미해당, `feedback_outside_voice_for_rbac` policy 는 admin/audit 표면 직접 변경 시 발동, 본 cycle 은 `system_prompt` 표면 + RBAC 추가지만 audit 자체 변경 없음). PLAN-APPROVED 후 7 phase 실행 — Plan (A) → agent_core compose 함수 GLOBAL fetch (B) → app.py bootstrap seed helper (C) → RBAC 2 권한 + admin auto-grant catchup (D) → admin endpoint scope='global' allowlist + 권한 가드 (E) → 관리 콘솔 `설정` 탭 + sub-section 패턴 + buildSystemPromptEditor scope='global' + CSS (F) → 문서 갱신 (FUNCTION/MODIFY/REVIEW/REPORT). 본 review 는 self-review (대화 기반 검토 — Codex outside voice trigger 미해당. `feedback_outside_voice_for_rbac` policy 는 admin/audit 표면 직접 변경 시 발동, 본 cycle 은 `system_prompt` 표면이라 self-review 채택).

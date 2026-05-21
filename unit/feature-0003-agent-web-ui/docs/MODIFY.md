@@ -25,6 +25,45 @@ source_of_truth: true
   - 기존 row 가 빈 본문으로 이미 누군가 저장한 환경에서는 본 helper 가 no-op (existing row truthy → return). 의도한 동작이며, 운영자가 직접 갱신해야 한다.
 - Trace: REQ-20260521-0003 → TASK-0095 → CHG-20260521-0004 → REV-20260521-0004 (CHG-20260521-0003 follow-up fix).
 
+## CHG-20260520-0010
+- Date: 2026-05-21
+- Related Requirement: TASK-0087, REQ-20260520-0002
+- Summary: 외부 LAN trust 강화 — TASK-0073 Eng review E3 의 deferred 항목 (`_get_client_ip(request)` X-Forwarded-For 무조건 trust = 사내 LAN + Caddy proxy 전제, 외부 LAN/공개 인터넷 노출 시 IP spoof 위험) 을 명시적 정책 + 코드로 lock-in. Plan v1 (RFC1918 trust + silent skip) → Codex outside voice review 6 findings (Major 5 + Minor 1) → Plan v2 (Caddy XFF 정규화 + mode-aware fail-loud + XFF IP 검증) 흡수. 사용자 명시 결정: RFC1918 default 유지 (사내 dev/staging 전제) + docker-compose port mapping 변경은 별 cycle. 본 변경은 feature-0003 + feature-0006 dual ownership — feature-0006 의 `CHG-20260520-0010` 와 동일 의의.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - imports 에 `ipaddress`, `sys` 추가 (알파벳 순 삽입)
+    - `_parse_trusted_proxies(raw) -> tuple[_TrustedNetwork, ...]` helper 신설 — 콤마 분리 + `ipaddress.ip_network(token, strict=False)` 파싱. invalid 토큰은 `AGENT_MODE in {prod, staging}` 에서 `RuntimeError` startup, dev/test/"" 에서 stderr WARNING + 해당 토큰만 skip
+    - module-level `WEB_TRUSTED_PROXIES = _parse_trusted_proxies(os.getenv("WEB_TRUSTED_PROXIES", ""))`
+    - `ENABLE_WEB_TLS_PROXY=1` + `WEB_TRUSTED_PROXIES` empty 조합 startup gate — prod/staging `RuntimeError`, dev/test stderr WARNING (PIPA §29 audit `IpAddr` 품질 회귀 경고)
+    - `_is_trusted_proxy(host) -> bool` helper — host 가 `WEB_TRUSTED_PROXIES` CIDR 화이트리스트 안인지 검증
+    - `_get_client_ip(request) -> str` 재작성 — `direct_ip = request.client.host`, direct_ip 가 trusted proxy 이면 `X-Forwarded-For` 첫 토큰 사용 + `ipaddress.ip_address(first)` 파싱 검증 + 실패 시 direct_ip fallback. 그 외 모두 direct_ip 반환
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0087 checkbox close + §2.9 Implementation Plan 신설 (사용자 in-cycle 결정 3 항목 + Phase A~E + 8 test 시나리오 + REV-20260520-0010 정본 + PLAN-APPROVED 마커)
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260520-0010 [AGENT-TEAM:codex-outside-voice] (Verdict: NEEDS_REVISION, 6 findings Major 5 + Minor 1, 사용자 명시 결정으로 Major 1 거부 + 나머지 5 흡수)
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 상단 TASK-0087 cycle entry 추가
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md`: §4 Audit subsystem followup 에 TASK-0087 시나리오 8 건 추가
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: AC-0205 / AC-0206 / AC-0207 신설
+  - `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile`: `reverse_proxy web:8000` 블록에 `header_up X-Forwarded-For {client_ip}` 추가 (Caddy 가 받은 임의 XFF 를 본인이 본 TCP peer IP 로 덮어씀 → multi-hop / spoof 차단)
+  - `unit/feature-0006-lan-proxy-access/docs/TASK.md`: TASK-0006 신규 entry + Task Queue
+  - `unit/feature-0006-lan-proxy-access/docs/MODIFY.md`: CHG-20260520-0010 (dual ownership)
+  - `unit/feature-0006-lan-proxy-access/docs/REVIEW.md`: REV-20260520-0010 (dual ownership)
+  - `unit/feature-0006-lan-proxy-access/docs/REPORT.md`: §1 Summary cycle entry 추가
+  - `unit/feature-0006-lan-proxy-access/docs/TEST.md`: TEST-0004 (caddy validate) 추가
+  - `unit/feature-0006-lan-proxy-access/docs/FUNCTION.md`: AC-0004 (XFF 정규화) 신설
+  - `docs/SECURITY.md` §9.7: 기존 "deferred to feature-0006" 마커를 8 bullet 정책 (Caddy XFF 정규화 / 조건부 trust / XFF token 검증 / RFC1918 사용자 명시 결정 trade-off / mode-aware fail-loud / proxy mode + empty / schema 호환 / share token 미래 결합) 으로 교체
+- Diff size: app.py +51 lines (`_parse_trusted_proxies` + `WEB_TRUSTED_PROXIES` + proxy-mode gate + `_is_trusted_proxy` + `_get_client_ip` 재작성 — 기존 9 lines → 60 lines), Caddyfile +1 line, SECURITY.md §9.7 +9 lines (3 lines → 12 lines).
+- Impact:
+  - **audit `IpAddr` 품질**: 사내 LAN dev/staging 환경에서 audit IP 가 정확히 클라이언트 IP 로 기록 — 기존 동작 유지 (`WEB_TRUSTED_PROXIES` RFC1918 권장값 설정 시).
+  - **외부 LAN spoof 차단**: Caddy 가 받는 임의 `X-Forwarded-For` 가 무시되고 Caddy 가 본 TCP peer IP 로 정규화. web 의 `_get_client_ip()` 가 direct connection IP 검증 후 XFF 사용 — 외부에서 임의 XFF 주입 attack 차단.
+  - **malformed env 운영자 인지**: prod/staging 에서 invalid CIDR 또는 proxy mode + empty env 조합이 startup 실패 → 운영자가 즉시 인지.
+  - **backward 호환 (default)**: `WEB_TRUSTED_PROXIES` 미설정 = `_get_client_ip()` 가 항상 direct_ip 반환. caddy compose 환경에서는 audit IP 가 caddy container IP 가 됨 — proxy mode + empty env warning/fatal 로 회귀 가시화.
+  - **RBAC catalog 변경 없음**.
+- Rollback Notes:
+  - 코드 revert: `_get_client_ip()` 9 lines 원본 복원 + `_parse_trusted_proxies` / `WEB_TRUSTED_PROXIES` / proxy-mode gate / `_is_trusted_proxy` 삭제 + import `ipaddress` / `sys` 제거.
+  - Caddyfile revert: `header_up X-Forwarded-For {client_ip}` 한 줄 제거.
+  - SECURITY.md §9.7 revert: 8 bullet 정책 → 기존 3 bullet ("deferred to feature-0006") 복원.
+  - schema 변경 없음 → DB rollback 불필요.
+
 ## CHG-20260521-0003
 - Date: 2026-05-21
 - Summary: TASK-0095 (REQ-20260521-0003, **Major** §12.3 — GLOBAL system prompt layer 신설). 시스템 프롬프트 누적 구조의 최상위 base 를 코드 상수 hard-code 에서 `WebSystemPrompts WHERE Scope='global'` row 로 이전. 모든 LLM 응답의 base prompt 가 운영자 관리 콘솔에서 관리 가능. RBAC 권한 2 종 신설 (`system_prompt.global.read` / `.write`, group=`settings`). 관리 콘솔 sidebar 에 `설정` 탭 + 확장 가능한 `admin-settings-section` sub-section 패턴 도입.
