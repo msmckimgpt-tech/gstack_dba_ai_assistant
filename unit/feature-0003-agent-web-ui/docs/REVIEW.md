@@ -973,3 +973,10 @@ source_of_truth: true
   - subagent review (general-purpose): codex 의 web_search_cached 와 정적 분석 깊이를 능가하지 못함 — codex 단일로 충분
   - Revision 2 직접 작성 없이 Critical 3건만 inline patch: D18~D21 의 신규 결정이 누락 — 거부
 - **Cross-ref**: BRIEFING §17 (Codex 2차 review + Revision 2 흡수 매트릭스). 본 entry 는 §17.5 의 verdict 평가와 §2.2 의 inline 결정 갱신을 review 정본으로 lock-in
+
+## REV-20260521-0002 [SKIPPED:report-sync-only] TASK-0094 cleanup follow-up REPORT.md §16.5 Step 6 사후 기록
+
+- **Mode**: SKIPPED (AGENTS.md §18.4 META mode 정책 — non-policy doc-only cycle, outside-voice review 대상 아님)
+- **Subject**: REPORT.md §1 Summary 의 TASK-0094 entry + Git 동기화 결과 표 append (CHG-20260521-0002)
+- **Reason**: 본 follow-up 은 §16.5 Step 6 의 단순 사실 (commit hash / PR # / merge timestamp) 기록 보강. 정책 / 아키텍처 / RBAC catalog / 스키마 변경 없음. SUBAGENT 또는 AGENT-TEAM review 의 비용 정당화 어려움. 본 entry 는 verify-completion CHECK#9 충족용 SKIPPED 마커
+- **Cross-ref**: CHG-20260521-0001 의 본 cycle 정본 review 는 REV-20260521-0001 [SUBAGENT:codex] (2회 outside-voice review 흡수)

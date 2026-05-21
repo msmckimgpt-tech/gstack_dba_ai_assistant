@@ -10,6 +10,19 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-05-21 TASK-0094 PLAN-APPROVED — 첨부 multi-cycle (A CSV + B DDL/KB + C Vision + D PDF RAG) BRIEFING Revision 2 lock-in** (CHG-20260521-0001, REV-20260521-0001 [SUBAGENT:codex], REQ-20260521-0001, **Critical** §12.3). Codex outside-voice review 2 회 흡수 (REV-20260520-0001 1차 17 Valid + REV-20260521-0002 2차 Critical 3 + Major 11 + Minor 2 — F8 만 사용자 명시 거부). D1~D21 21 결정 lock-in. 코드/스키마/RBAC catalog 변경 0 — 계획 문서 only. Sprint 1 (Cycle 0 Foundation + Cycle 1 CSV ingest) implementation 진입 가능. D14 SQL allowlist guard 통과를 Sprint 1 ship 조건.
+
+### Git 동기화 결과 (TASK-0094)
+- 커밋: 90df7c4 (ai/claude/0087/attachment-briefing)
+- verify-completion: PASS (10/10 checks, 재시도 1회 — CHECK#3/#8/#9 FAIL 후 MODIFY/REVIEW append + .gitignore 갱신으로 PASS)
+- Push: 완료 (issue/39-task-0094-attachment-briefing → origin)
+- PR: #40 생성 (closes #39) → mergeable CLEAN → 자동 merge (msmckimgpt-tech)
+- 병합 상태: MERGED 2026-05-21T02:15:30Z (origin main 통합 완료, branch 삭제)
+- 충돌 해결: 없음
+- 다음 단계: Sprint 1 implementation 진입 — 별 worktree `ai/claude/0094/sprint-1-foundation-csv` (또는 호환 `ai/claude/0087/sprint-1-...`). 본 worktree 는 §15 R-F10 cleanup 조건 따라 merge 직후 cleanup 권장.
+
+---
+
 **2026-05-20 TASK-0093 완료 (Phase A~F 일괄) — verify-completion check_12 audit endpoint routing 정적 검사 신설** (CHG-20260520-0003, REV-20260520-0003, REQ-20260520-0008, **Minor** §12.3 — TASK-0073 Phase E hotfix CHG-20260520-0001 의 routing 회귀 fragility 보강. Codex outside voice 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용).
 
 **본 cycle Phase 별 변경 요약**:
