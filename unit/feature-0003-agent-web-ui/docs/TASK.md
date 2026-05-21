@@ -11,8 +11,8 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: major (TASK-0095 — GLOBAL system prompt layer)
-- Last Updated: 2026-05-21 (TASK-0095 PLAN-APPROVED — 신규 `설정` 탭 + 전역 시스템 프롬프트 sub-section)
+- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 1 진행 중)
+- Last Updated: 2026-05-21 (TASK-0094 Sprint 1 Phase 1 Pre-flight ship — ADR + compose + env + bootstrap)
 
 ## 2. Task Queue
 
@@ -37,7 +37,19 @@ source_of_truth: true
 **Sprint 분할** (BRIEFING §6):
 
 - [x] **Sprint 0 (cycle cleanup)** — BRIEFING Revision 2 lock-in (PR #40 merged) + AGENTS.md §16.5 Step 6 사후 동기화 결과 REPORT.md 기록 (CHG-20260521-0002). 본 cycle 종료 후 worktree cleanup (§15 R-F10).
-- [ ] **Sprint 1** — Cycle 0 (Foundation: MinIO compose, multipart upload, `WebConversationAttachments`, RBAC 4 codes, D11 consent infra) + Cycle 1 (A: CSV/Excel ingest, sandbox schema, attachment_maintainer/writer/reader/cleanup MySQL users, **D14 SQL allowlist guard ship 조건**) — Critical, 3~3.5 주. D18 단일 통합 gate.
+- **Sprint 1** — Cycle 0 (Foundation: MinIO compose, multipart upload, `WebConversationAttachments`, RBAC 4 codes, D11 consent infra) + Cycle 1 (A: CSV/Excel ingest, sandbox schema, attachment_maintainer/writer/reader/cleanup MySQL users, **D14 SQL allowlist guard ship 조건**) — Critical, 3~3.5 주. D18 단일 통합 gate. worktree `ai/claude/0094/sprint-1-foundation-csv`.
+  - [x] **Phase 1 (Pre-flight)** — ADR-0022 (MinIO 도입) + ADR-0023 (sandbox schema + D15 maintenance path 분리) + ADR-0025 (PGVector 사전 선언, Sprint 4 prerequisite) `docs/DECISIONS.md` 등재. docker-compose.yml `minio` + `minio-init` service 추가. `.env.example` 16 변수 (MINIO_ROOT_USER/PW + MINIO_APP_ACCESS_KEY/SECRET + endpoint/bucket/TTL + 호스트 port 2 + browser redirect + ATTACHMENT_MAX_BYTES_* 3 + ATTACHMENT_AUDIT_HMAC_KEY + SANDBOX_SQL_* 2). `unit/feature-0003-agent-web-ui/src/scripts/minio-init.sh` 부트스트랩 (idempotent bucket + bucket-scoped policy + app key). feature-0001-platform-runtime ANCHOR §1 갱신 (MinIO/Postgres 같은 비-MySQL service 의 platform 책임 명시). 2026-05-21.
+  - [ ] **Phase 2 (Cycle 0 schema)** — `WebConversationAttachments` + `WebAccountConsents` + `WebAttachmentDerivedMessages` (D19) + `WebConversationAttachmentProviderFiles` (D13) + `WebShareLinks.PolicyVersion` (R-F7) + `WebConversationAttachmentsSandboxSchemas` mapping table. `_ensure_*_schema` helper.
+  - [ ] **Phase 3 (Cycle 0 RBAC)** — `_ensure_attachment_permissions` 4 코드 + §5.2 6 checklist + `PERMISSION_GROUP_ORDER` `attachment` 추가 + D21 pending metadata-only.
+  - [ ] **Phase 4 (Cycle 0 storage)** — `storage_minio.py` wrapper (boto3 + retry + signed URL + backup smoke) + D20 dual-key rotation runbook.
+  - [ ] **Phase 5 (Cycle 0 upload API)** — 6 endpoint (POST/GET/GET-by-id/DELETE attachment + POST/DELETE consent) + audit 4 ActionCode + `build_audit_change_json` case + D12 HMAC.
+  - [ ] **Phase 6 (Cycle 0 composer UI)** — paperclip + drag-drop + attachment pills + selected toggle + D16 lazy-create snapshot (busyKey + pending sentinel).
+  - [ ] **Phase 7 (Cycle 0 consent)** — D11 grouped batch modal + revoke flow.
+  - [ ] **Phase 8 (Cycle 0 share)** — D9 share builder redact + 기존 token 자동 redact + PolicyVersion column.
+  - [ ] **Phase 9 (Cycle 0 lifecycle)** — F1 delete UX 4 state + D6 reconciliation worker + R-Claim6 tombstone + lifecycle policy MinIO rule.
+  - [ ] **Phase 10 (Cycle 1 sandbox)** — `attachment_maintainer/writer/reader/cleanup` MySQL user (R-Claim4 writer 최소권한) + R-F4 drift health endpoint `/api/admin/health/attachment-grants`.
+  - [ ] **Phase 11 (Cycle 1 ingest)** — `sandbox_ingest.py` (XLSX `data_only=True` + sharedStrings cap + cell/row/col cap + CSV encoding/delimiter/locale + worker timeout/memory).
+  - [ ] **Phase 12 (Cycle 1 SQL guard + Ship)** — `sql_guard.py` D14 AST shape allowlist (SELECT/CTE only, FOR UPDATE/LOCK/EXPLAIN ANALYZE/SLEEP/BENCHMARK/INTO OUTFILE/LOAD_FILE/information_schema/mysql/performance_schema/sys 거부) + `attachment.execute_sql_on.{own,any}` RBAC + `compose_system_prompt` _build_attachment_context_section + 검증 27 case. **Ship 조건**.
 - [ ] **Sprint 2** — Cycle 2 (C: Vision 이미지, content array transient, base64 inline, **D13 + R-F13 provider Files API lifecycle**) — Major, 1~1.5 주.
 - [ ] **Sprint 3** — Cycle 3 (B: DDL/KB 보강, admin-only KB ingest, AgentMemory FactEntries pipe, `attachment.kb.write.any`) — Major, 1 주.
 - [ ] **Sprint 4** — Cycle 4 (D: PDF/MD RAG, PGVector dev 단계 도입, chunking + retrieval, **D17 + R-F6 partial_indexed retrieval policy**) — Critical, 3~4 주.

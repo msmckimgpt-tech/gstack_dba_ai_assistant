@@ -32,6 +32,14 @@ ANCHOR.md — External Anchor Document (9번째 1급 문서)
 - **"왜 인증서/로그/데이터 파일은 여기 없는가?"**
   → `../../../../artifacts/` 경계로 분리되어 있다. 버전관리 대상(설정 파일, 스크립트)과
   런타임 산출물(실제 데이터)의 거버넌스를 의도적으로 구분한다.
+- **"왜 MinIO + Postgres 같은 비-MySQL 서비스도 본 feature 의 compose 에 들어가는가?"**
+  → docker-compose.yml 자체가 본 feature 의 운영 자산이다. MySQL 단일 cluster + 부속
+  서비스 (postgres KB ADR-0021, minio attachment ADR-0022) 모두 동일 compose 파일로
+  관리되며, 각 부속 서비스의 **service-level config / volume / network** 책임이 본
+  feature 에 귀속된다. 개별 서비스의 **application-level 책임** (예: storage_minio.py
+  wrapper, agent_kb_rw role bootstrap) 은 feature-0002/0003 등 소비 feature 에 둔다.
+  본 feature 의 §3 ANCHOR 시나리오 (compose 운영) 는 "어느 서비스가 추가/제거됐는지"
+  를 6 개월 후에도 찾을 수 있게 보장한다.
 
 ## §2. 대안 분기
 

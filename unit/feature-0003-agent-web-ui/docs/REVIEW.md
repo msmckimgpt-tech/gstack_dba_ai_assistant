@@ -1175,3 +1175,14 @@ source_of_truth: true
 - **Subject**: REPORT.md §1 Summary 의 TASK-0094 entry + Git 동기화 결과 표 append (CHG-20260521-0002)
 - **Reason**: 본 follow-up 은 §16.5 Step 6 의 단순 사실 (commit hash / PR # / merge timestamp) 기록 보강. 정책 / 아키텍처 / RBAC catalog / 스키마 변경 없음. SUBAGENT 또는 AGENT-TEAM review 의 비용 정당화 어려움. 본 entry 는 verify-completion CHECK#9 충족용 SKIPPED 마커
 - **Cross-ref**: CHG-20260521-0001 의 본 cycle 정본 review 는 REV-20260521-0001 [SUBAGENT:codex] (2회 outside-voice review 흡수)
+
+## REV-20260521-0003 [SKIPPED:phase1-infra-only] TASK-0094 Sprint 1 Phase 1 (Pre-flight) review
+
+- **Mode**: SKIPPED — Phase 1 (Pre-flight) 은 인프라 추가 / 정책 ADR / 부트스트랩 스크립트만. backend / RBAC catalog / 스키마 변경 0. outside-voice review 의 비용 정당화 어려움. 본 entry 는 verify-completion CHECK#9 충족용 SKIPPED 마커.
+- **Subject**: ADR-0022 (MinIO) + ADR-0023 (sandbox schema + maintenance path) + ADR-0025 (PGVector Sprint 4 prerequisite) + docker-compose.yml minio/minio-init service + .env.example 16 변수 + minio-init.sh 부트스트랩 + feature-0001 ANCHOR §1 갱신.
+- **Reason**: 본 Phase 의 모든 결정은 TASK-0094 BRIEFING Revision 2 (REV-20260521-0001 [SUBAGENT:codex] — Codex 2회 outside-voice review 흡수) 의 D1/D2/D3/D10/D15/D20 결정 정본을 그대로 구현. ADR 본문도 BRIEFING §2.2 inline 결정 + §17 Codex 매트릭스 cross-ref. 추가 review 없음.
+- **Cross-ref**:
+  - Codex 1차 review (REV-20260520-0001, BRIEFING §13)
+  - Codex 2차 review (REV-20260521-0002, BRIEFING §17)
+  - 정본 BRIEFING review (REV-20260521-0001 [SUBAGENT:codex])
+- **Sprint 1 cycle 의 outside-voice 추가 호출 시점**: Phase 12 의 D14 SQL allowlist guard 가 Ship 조건이라, Phase 12 진입 시 Codex 추가 review 권장. Phase 2~11 의 schema / RBAC / API / UI / share / lifecycle / sandbox / ingest 는 각 Phase 종료 시 SKIPPED 또는 짧은 SUBAGENT review 적정.
