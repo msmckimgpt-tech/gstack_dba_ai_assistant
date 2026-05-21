@@ -38,6 +38,40 @@ source_of_truth: false
 
 ---
 
+**2026-05-20 TASK-0089 완료 (Phase A~G 일괄) — 작업 화면 profile drawer "내 감사 로그" 탭 신설** (CHG-20260520-0009, REV-20260520-0009, REQ-20260520-0004, **Minor** §12.3 — 신규 backend endpoint 2 + frontend 3 + Codex outside voice 5 findings 흡수 v2 redesign).
+
+**본 cycle Phase 별 변경 요약**:
+- **Phase A** — backend 2 endpoint (`/api/profile/audits` + `/api/profile/audits/{event_id}`) 신설. 기존 audit helper 재사용 + `scope="own"` 강제 (Codex C2).
+- **Phase B** — index.html drawer-tab + drawer-pane (filter row mini + 1-column list + pagination + inline detail). cache-bust `v=20260520-profile-audit`.
+- **Phase C** — app.js: state.profileAudit + helper 6 + loader + renderer 2 + handlers + tab visibility + tab click branch + renderProfile wire.
+- **Phase D** — styles.css `.profile-audit-*` ~15 클래스 (drawer 폭 적응 + ChangeJson 수평 스크롤).
+- **Phase E** — py_compile + node --check PASS + routing smoke (신규 endpoint 2 등록 확인).
+- **Phase F** — docs 6 + FUNCTION AC-0194.
+- **Phase G** — verify-completion + commit + cycle-finalize.
+
+**Codex outside voice 5 findings 흡수**:
+- C1 URL mismatch → `/api/profile/audits` 신설
+- C2 `.any > .own` → backend `scope="own"` 강제
+- C3 CSV export drawer 위험 → 미노출
+- C4 drawer 폭 → 1-column + inline detail + `<pre>` 수평 스크롤
+- C5 권한 race → tab visibility + 403 graceful
+
+### Git 동기화 결과 (§16.3 Step 6)
+
+PR description body 명시 — REPORT.md 갱신 별 commit 회피 (cycle-finalize 패턴).
+
+### 후속 단계 (별 cycle)
+
+- drawer 에서 자기 audit CSV export (`/api/profile/audits/export.csv` + scope="own", Minor)
+- TASK-0073 backlog 1 entry 남음 (TASK-0087, 외부 LAN trust feature-0006 위임)
+- SECURITY.md §8 strict-string-equality (TASK-0092 followup)
+- `_migrate_web_account_activity_to_audit()` 제거 (TASK-0086 followup)
+- 동시 export 제한 + EXPLAIN 분석 (TASK-0090 followup)
+
+---
+
+## 1.archived TASK-0090 Summary (2026-05-20)
+
 **2026-05-20 TASK-0090 완료 (Phase A~D 일괄) — `/api/admin/audits/export.csv` CSV streaming export 전환** (CHG-20260520-0008, REV-20260520-0008, REQ-20260520-0005, **Minor** §12.3 — hard cap 50k 제거 + StreamingResponse + keyset cursor + max_id high-water + self-audit, Codex outside voice 5 findings 흡수 v2 redesign).
 
 **본 cycle Phase 별 변경 요약**:
