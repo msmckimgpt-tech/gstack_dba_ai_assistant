@@ -948,3 +948,28 @@ source_of_truth: true
   - Q-13.2: bulk action apply 후 undo (toast 내부 "되돌리기") — 후속 평가.
   - Q-13.3: shift+click range 의 cross-page 동작 (현재는 visible 만) — 본 cycle 의 결정과 모순 없음.
   - Q-13.4: `assertBulkBarContract` 의 CI 화 (jsdom unit 또는 e2e snapshot) — 별 cycle.
+
+## REV-20260521-0001 [SUBAGENT:codex] TASK-0094 첨부 multi-cycle BRIEFING Revision 2 review
+
+- **Mode**: SUBAGENT (Codex CLI consult mode, gpt-5 default, reasoning=medium, web_search_cached, read-only sandbox)
+- **Session**: 019e4421-2a8f-74a2-8b91-6afc191856e0 (resume — 1차 REV-20260520-0001 후속)
+- **Review subject**: BRIEFING-attachment-multi-cycle.md (Revision 1 → Revision 2 흡수 검증)
+- **Result**: NEEDS_REVISION → Revision 2 흡수 완료
+- **Finding 수**: 1차 Claim 20 재검토 + 신규 finding F1~F14 (Critical 3 / Major 11 / Minor 2)
+- **Critical 흡수**:
+  - **F3** (D14 SQL guard): denylist → AST shape allowlist 전환 — `SELECT/CTE only`, FOR UPDATE/LOCK/EXPLAIN ANALYZE/optimizer hint/SLEEP/BENCHMARK/user variable/INTO OUTFILE/LOAD_FILE/information_schema/mysql/performance_schema/sys 전부 거부
+  - **F7** (D9 share redact): 기존 share token 도 배포 즉시 자동 redact + audit `share.policy.redact_applied` + `WebShareLinks.PolicyVersion` 저장
+  - **F8** (Sprint 1 gate 분할): 사용자 명시 거부 — 단일 통합 gate 유지 (D18 신규). 위험 격리는 D14 + R-Claim4 + R-F4 + D20 조합으로 충족
+- **Major 흡수**: Claim#4/Claim#6/F1/F2/F4/F5/F6/F9/F11/F12/F13 모두 §2.2 inline `→ Rev2 (R-XXX)` 마커로 반영
+- **Minor 흡수**: F10 (§15 worktree cleanup 완료 조건), F14 (D21 pending metadata-only)
+- **Decision**: D1~D17 의 17 결정에 D18~D21 신규 4 결정 추가하여 D1~D21 21 결정 lock-in. PLAN-APPROVED 마커 부여 (2026-05-21)
+- **Reason**: AGENTS.md §17 외부 검증 정책 — 본 BRIEFING 은 Critical §12.3 (인증/인가·개인정보·외부 공개 범위·비용 4 항목 동시 변경) 이므로 outside-voice 2 회 동반이 정합. RBAC catalog 변경 (7 신규 권한 code) + 외부 LLM PII 송신 정책 + MinIO storage + sandbox SQL 실행 모두 단일 plan 으로 묶여 있어 정적 review 만으로는 cross-feature blindspot 검출 불가
+- **Risk**:
+  1. **Codex 권고 거부 1건 (F8)**: gate 분할 거부의 위험은 D14 SQL allowlist guard 통과를 Sprint 1 ship 조건으로 격상하여 격리. 단, MinIO bootstrap / consent infra / RBAC 4 codes 가 D14 통과 전 ship 되는 경로는 운영 책임. 사용자 명시 결정이므로 본 cycle scope 안에서 추가 mitigation 없음
+  2. **2회 review 후에도 잠재 blindspot 가능**: outside-voice 는 정적 review 라 implementation-time 발견 issue 는 Sprint 1~4 각 cycle 의 `/plan-eng-review` + `/codex` review 에서 재검증
+  3. **TASK 번호 재할당**: 초기 등재 TASK-0087 → TASK-0094 로 재할당 (TASK.md TASK-0087 이미 점유). git worktree 이름 `0087-attachment-briefing` 은 cleanup 시 별 명칭으로 재생성 가능 (현재는 유지)
+- **Alternatives considered**:
+  - 3차 outside-voice review (Codex follow-up): 비용 ~$1-2 추가 + 사용자 거부 (Revision 2 흡수 후 PLAN-APPROVED 진입 선택)
+  - subagent review (general-purpose): codex 의 web_search_cached 와 정적 분석 깊이를 능가하지 못함 — codex 단일로 충분
+  - Revision 2 직접 작성 없이 Critical 3건만 inline patch: D18~D21 의 신규 결정이 누락 — 거부
+- **Cross-ref**: BRIEFING §17 (Codex 2차 review + Revision 2 흡수 매트릭스). 본 entry 는 §17.5 의 verdict 평가와 §2.2 의 inline 결정 갱신을 review 정본으로 lock-in

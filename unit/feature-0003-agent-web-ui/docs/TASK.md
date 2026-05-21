@@ -11,8 +11,8 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: medium
-- Last Updated: 2026-05-19 (TASK-0085 추가)
+- Priority: critical (TASK-0094 — 첨부 multi-cycle, 4 sprint)
+- Last Updated: 2026-05-21 (TASK-0094 등재 + PLAN-APPROVED)
 
 ## 2. Task Queue
 
@@ -29,8 +29,26 @@ source_of_truth: true
 - [ ] TASK-0092 (REQ-20260520-0007, Minor §12.3 — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 검증). TASK-0073 Phase E 의 사용자 위임 항목 1 건. 본 cycle: (1) `.env.override` 또는 docker compose `-e AGENT_AUDIT_ENABLED=0 -e AGENT_MODE=prod` 로 별 컨테이너 spawn, (2) stderr `[FATAL] AUDIT REQUIRED IN PROD` log 확인, (3) process exit code 1 확인, (4) `docs/TEST.md §3 Test Run History` append.
 - [x] TASK-0093 (REQ-20260520-0008, Minor §12.3 — `bin/verify-completion.sh check_12` audit endpoint routing 정적 검사). TASK-0073 Phase E hotfix (CHG-20260520-0001) 의 routing 회귀 fragility 보강. Codex outside voice review 5 findings 흡수 후 plan v2 redesign (SKIP→FAIL structural / inline 4-path→auto-discovery static GET / `/purge` method-aware 제외 / helper split + fixture test / `9 checks`→`10 checks` footer). Phase A~D 모두 검증 PASS (production positive + 5 fixture negative + 5 other-feature SKIP). 본 cycle CHG-20260520-0003, REV-20260520-0003 on `ai/claude/0086/audit-followup` worktree.
 
+### TASK-0094 (REQ-20260521-0001, **Critical** §12.3 — 첨부 multi-cycle A+B+C+D) (2026-05-21)
+
+본 cycle 의 정본 BRIEFING 은 [BRIEFING-attachment-multi-cycle.md](./BRIEFING-attachment-multi-cycle.md) (Revision 2). Codex outside-voice review 2 회 (REV-20260520-0001 1차 + REV-20260521-0002 2차) 흡수 후 결정 D1~D21 21 건 확정. 본 worktree (`ai/claude/0087/attachment-briefing` — git worktree 이름이 0087 로 박혀 있지만 본 cycle 의 작업 번호는 TASK-0094) 의 commit 으로 lock-in. Sprint 1 implementation 은 별 worktree `ai/claude/0094/sprint-1-foundation-csv` (또는 호환을 위해 `ai/claude/0087/sprint-1-foundation-csv` 도 허용 — §15 cleanup 조건 R-F10 준수) 에서 진행.
+
+**Sprint 분할** (BRIEFING §6):
+
+- [ ] **Sprint 1** — Cycle 0 (Foundation: MinIO compose, multipart upload, `WebConversationAttachments`, RBAC 4 codes, D11 consent infra) + Cycle 1 (A: CSV/Excel ingest, sandbox schema, attachment_maintainer/writer/reader/cleanup MySQL users, **D14 SQL allowlist guard ship 조건**) — Critical, 3~3.5 주. D18 단일 통합 gate.
+- [ ] **Sprint 2** — Cycle 2 (C: Vision 이미지, content array transient, base64 inline, **D13 + R-F13 provider Files API lifecycle**) — Major, 1~1.5 주.
+- [ ] **Sprint 3** — Cycle 3 (B: DDL/KB 보강, admin-only KB ingest, AgentMemory FactEntries pipe, `attachment.kb.write.any`) — Major, 1 주.
+- [ ] **Sprint 4** — Cycle 4 (D: PDF/MD RAG, PGVector dev 단계 도입, chunking + retrieval, **D17 + R-F6 partial_indexed retrieval policy**) — Critical, 3~4 주.
+
+**핵심 결정 21 건** (BRIEFING §2.1 + §2.2 + §17):
+
+D1 S3-compat MinIO / D2 동일 cluster + 별 schema / D3 PGVector / D4 A+B+C+D 전부 4 sprint / D5 Codex review 동반 / D6 lifecycle 4 종 + tombstone + 4 state UX + pseudonymous event id / D7 MIME allowlist / D8 size cap / D9 share derived redact + 기존 token 자동 redact + policy version / D10 PGVector 단계적 / D11 consent provider×class×purpose + grouped modal + provider files lifecycle / D12 audit HMAC + 카테고리 + pseudonym / D13 외부 LLM bytes 서버 read + Files API lifecycle / **D14 sandbox SQL AST allowlist** / D15 wildcard grant 금지 + writer 최소권한 + drift health endpoint / D16 attachment_ids selected-only + lazy-create snapshot / D17 UploadStatus 7 값 + retrieval policy / **D18 단일 통합 PLAN gate 유지** / **D19 `WebAttachmentDerivedMessages` join table** / **D20 MinIO dual-key rotation runbook** / **D21 pending role metadata-only**.
+
+본 cycle 은 PLAN-APPROVED marker 부여 후 Sprint 1 worktree 분리 + implementation 진입. 외부 영향 (PR / 외부 시스템 알림) 은 별도 confirm.
+
 본 backlog 는 본 worktree 의 commit 으로 lock-in. 신규 세션이 본 worktree 에서 진입 (`/_template:entry`) 후 task 선택 + `/plan-eng-review` / `/autoplan` 등 호출.
 
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-21 (TASK-0094, Critical §12.3 — 첨부 multi-cycle A CSV ingest + B DDL/KB + C Vision + D PDF RAG 4 sprint 분리. D1~D21 21 결정 확정 (D14 SQL allowlist guard 통과를 Sprint 1 ship 조건). Codex outside-voice review 2 회 흡수 (REV-20260520-0001 1차 17 Valid + REV-20260521-0002 2차 Critical 3 / Major 11 / Minor 2 → F8 만 사용자 명시 거부, 위험 격리는 D14 + R-Claim4 + R-F4 + D20 조합으로 충족). BRIEFING-attachment-multi-cycle.md Revision 2. worktree ai/claude/0087/attachment-briefing (git worktree 명 유지, 본 cycle TASK-0094) 별도 commit. Sprint 1 implementation 은 별 worktree 분리.) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-19 (TASK-0085, Minor §12.3 — lazy-create 사이드바 optimistic pending entry (multi-pending sentinel-keyed Map + click swap to sentinel context), "+ 새 대화 송신 직후 다른 대화 전환 시 새 대화 entry 가 사이드바에서 잠시 사라지는" UX 회귀 fix + 사용자 의도 "작업 step 현황의 출력" 지원. worktree ai/claude/0083/pending-list-entry 별도 commit) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-19 (TASK-0084, Minor §12.3 — D2Coding 우선 monospace stack 으로 전역 통일 재시도. 사용자 후속 요청 "D2Coding 폰트를 우선해줄 수 있을까요?" + AskUserQuestion 응답 "본문 + 코드 모두 (전역 monospace 통일 부활)". CHG-0013 monospace 시도 → CHG-0014 sans-serif 환원 → CHG-0015 D2Coding 우선 부활. worktree ai/claude/task-0084-d2coding 별도 commit) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-19 (TASK-0083, Minor §12.3 — :root 의 --font 토큰을 한글 가독성 우선 system-ui sans-serif stack 으로 갱신, --mono 는 원래 stack 유지. 사용자 첫 요청 (monospace 통일, CHG-0013 — a7b7ded 흡수) 후 가독성 피드백 받고 sans-serif 환원. worktree ai/claude/task-0083 별도 commit) -->
