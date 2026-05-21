@@ -1462,12 +1462,81 @@ def _ensure_pg_schema(conn=None, *, schema_sql_path: str | None = None) -> dict:
             """)
             extensions = [row[0] for row in cur.fetchall()]
 
+            # TASK-0019 (M2) outside-voice Blocker B-3 해소: agent_kb_rw / agent_kb_ro
+            # 의 schema 권한 정합 검증. ADR-0021 의 2-layer hybrid 의 Layer 1 인
+            # connection-level 권한이 schema sql 의 DO $$ block 으로 자연 적용되었는지
+            # 확인. `--apply-schema` 단독 호출 시 role 미존재 → grant skip 의 silent
+            # failure 를 본 검증 query 가 detect. M2-a outside-voice REV-20260520-0007
+            # Critical 권고 흡수: USAGE on SCHEMA + sequence USAGE + TRUNCATE 명시 검증
+            # 추가 — silent failure hot path 차단.
+            grants_present: dict[str, dict[str, bool]] = {}
+            for role_name in ("agent_kb_rw", "agent_kb_ro"):
+                role_grants: dict[str, bool] = {}
+                try:
+                    cur.execute(
+                        "SELECT 1 FROM pg_roles WHERE rolname = %s",
+                        (role_name,),
+                    )
+                    role_grants["role_exists"] = cur.fetchone() is not None
+                    if role_grants["role_exists"]:
+                        # USAGE on SCHEMA — table 권한 활성화 prerequisite (Critical)
+                        cur.execute(
+                            "SELECT has_schema_privilege(%s, 'public', 'USAGE')",
+                            (role_name,),
+                        )
+                        role_grants["public_usage"] = bool(cur.fetchone()[0])
+                        # 4 KB 테이블 × SELECT (모든 role) + INSERT/UPDATE/DELETE (rw 만)
+                        # + TRUNCATE negative assertion (defense in depth)
+                        for tbl in ("fact_entries", "texts", "rag_documents", "rag_objects"):
+                            cur.execute(
+                                "SELECT has_table_privilege(%s, %s, 'SELECT')",
+                                (role_name, tbl),
+                            )
+                            role_grants[f"{tbl}_select"] = bool(cur.fetchone()[0])
+                            if role_name == "agent_kb_rw":
+                                cur.execute(
+                                    "SELECT has_table_privilege(%s, %s, 'INSERT, UPDATE, DELETE')",
+                                    (role_name, tbl),
+                                )
+                                role_grants[f"{tbl}_mutate"] = bool(cur.fetchone()[0])
+                            # TRUNCATE 가 명시적으로 부재인지 확인 (REV-20260520-0007 Critical)
+                            cur.execute(
+                                "SELECT has_table_privilege(%s, %s, 'TRUNCATE')",
+                                (role_name, tbl),
+                            )
+                            role_grants[f"{tbl}_truncate_denied"] = not bool(cur.fetchone()[0])
+                            # IDENTITY sequence USAGE — INSERT 시 자동 ID 부여에 필수
+                            # (Critical — outside-voice REV-20260520-0007 Section A)
+                            if role_name == "agent_kb_rw":
+                                seq_name = f"{tbl}_id_seq"
+                                try:
+                                    cur.execute(
+                                        "SELECT has_sequence_privilege(%s, %s, 'USAGE')",
+                                        (role_name, seq_name),
+                                    )
+                                    role_grants[f"{seq_name}_usage"] = bool(cur.fetchone()[0])
+                                except Exception:
+                                    # 일부 Postgres 환경에서 IDENTITY sequence 가
+                                    # pg_class 의 sequence 가 아니라 owned column 으로
+                                    # 표현될 수 있음 — graceful skip
+                                    role_grants[f"{seq_name}_usage"] = None
+                        # VIEW SELECT
+                        cur.execute(
+                            "SELECT has_table_privilege(%s, 'agent_memory_facts', 'SELECT')",
+                            (role_name,),
+                        )
+                        role_grants["agent_memory_facts_select"] = bool(cur.fetchone()[0])
+                except Exception as grant_err:  # pragma: no cover — undefined_object 등
+                    role_grants["query_error"] = str(grant_err)[:200]
+                grants_present[role_name] = role_grants
+
         # psycopg autocommit 가 True 이므로 별도 commit 불요.
         return {
             "schema_applied": True,
             "tables_present": tables,
             "view_present": view_present,
             "extensions": extensions,
+            "grants_present": grants_present,
         }
     finally:
         if own_conn:

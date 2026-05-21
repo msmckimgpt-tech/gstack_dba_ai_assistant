@@ -8,6 +8,59 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260520-0007 [SUBAGENT:Plan-subagent — M2-a dual-write 준비 + 4 Blocker 해소]
+- Date: 2026-05-21
+- TASK-Cycle: TASK-0019 (M2-a dual-write 준비, **Major §12.3** — RBAC 동반)
+- Outside-voice channel: Plan subagent. 사용자 메모리 `feedback_outside_voice_for_rbac.md` 의 "권한 모델 변경 plan 은 Codex/subagent 외부 시각 항상 호출" 정책 적용. M1 의 NEEDS-TWEAK 4 Blocker 해소 + KbBackend ABC 의 single vs 4 sub-backend 분할 결정 + dual-write 정합 SLA design 의 검증.
+- Verdict: **NEEDS-TWEAK** — KbBackend ABC + Blocker 4건 해소 + Postgres SQL 템플릿의 구조는 견고하나 (1) `_ensure_pg_schema()` 의 grants 검증이 USAGE on SCHEMA + sequence USAGE + TRUNCATE 명시 negative 누락 + (2) memory-init service 의 postgres race condition + (3) init_memory 의 광역 except 가 silent skip + (4) FUNCTION.md §10 갱신 누락 + Blocker (KB_DUAL_WRITE_START_TS .env / verify.sh --since default / REPORT.md risk log) 본 cycle 내 반영 필요.
+- Section A (4 Blocker 해소 정합성) — **NEEDS-TWEAK**:
+  - Blocker 1 (FULLTEXT → pg_trgm): 3 옵션 (pg_trgm `similarity()` / tsvector / pgvector embedding) + index 보강 + 한/영 mixed 분석 ✓. tsvector 의 `simple` config 옵션 미명시 (Nice-to-have).
+  - Blocker 2 (`_ensure_pg_schema()` trigger): memory-init service 진입 선택 + 3-tier 처리 (silent skip / RuntimeError fail-loud / 광역 except graceful) ✓. **Critical**: 광역 except 의 `AGENT_KB_PG_REQUIRED` 환경 분기 필요 (M2-b 진입 시 fail-loud).
+  - Blocker 3 (`has_table_privilege()`): role_exists + 4 table SELECT + RW mutate + VIEW SELECT ✓. **Critical**: USAGE on SCHEMA + sequence USAGE + TRUNCATE 명시 negative 누락.
+  - Blocker 4 (ADR-0024): 별 database 결정 + 3 Alternatives 폐기 + Sprint 4 cycle 책임 명시 ✓.
+- Section B (KbBackend ABC) — **PASS**:
+  - 단일 ABC + 4 method group 분리 합리 ✓
+  - method signature (kwargs 만, type hint 완전) ✓
+  - partial failure 격리 책임이 caller (`_dual_write_kb()` wrapper) 위임 ✓
+  - `set_text_embedding()` base default NotImplementedError 패턴 정합 ✓
+  - `get_backends()` factory + circular import 회피 ✓
+  - Postgres SQL 템플릿 (`_PG_UPSERT_*` ON CONFLICT + RETURNING id) 정합 ✓
+- Section C (dual-write verify/stress) — **NEEDS-TWEAK**:
+  - 4 mode 분리 ✓
+  - **Blocker**: `--since` default 가 `.env` 의 `KB_DUAL_WRITE_START_TS` 자동 읽기 필요 (분모 noise 방지).
+  - `verify_content_hash()` 의 cover 범위 (fact_entries 의 fact_fingerprint + 4 column 자연키 정합 미명시) 보강 권장 (Nice-to-have, M2-b 책임).
+  - stress 의 `--ask-iterations 5` default 가 통계적 power 부족 — M2-b 진입 시 default 10 으로 조정 권장 (Nice-to-have).
+- Section D (ANCHOR §3 invariant test catalog) — **PASS**:
+  - 6 scenario + 2 negative assertion 매핑 정확 ✓
+  - S5 의 "category 보존 NULL stay NULL" 결정 + `_PG_UPSERT_RAG_OBJECT` 의 COALESCE 패턴 정합 ✓
+  - S6 multi-row priority 의 weight DESC, updated_at DESC, id DESC tie-breaker 정합 (M2-b 검증 권장)
+  - fixture / assertion 책임 M2-b cycle 위임 명확 ✓
+- Section E (잘못된 가정 / 누락) — **NEEDS-TWEAK**:
+  - **Critical**: `memory-init.depends_on` 에 `postgres: service_healthy` 추가 필요 (race condition mitigation).
+  - **Critical**: `init_memory()` 의 광역 except graceful skip 이 M2-b 진입 시 fail-loud 전환 정책 (`AGENT_KB_PG_REQUIRED=1` 환경 분기).
+  - **Critical**: FUNCTION.md §10 의 init_memory 자동 호출 + grants_present + KbBackend ABC + invariant test catalog 갱신 누락 (verify-completion check #4 trigger).
+  - **Blocker**: REPORT.md §4 risk log entry 7건 (audit SLA / FULLTEXT 비등가 / agent_drag 잔존 / depends_on required:false / except graceful / VIEW tie-breaker / psycopg autocommit) 추가 — M2-b 진입 게이트의 정본 기록.
+  - `agent_drag` 의 실 결정은 Sprint 4 cycle 책임 — Blocker B-1 잔존, 본 cycle 안 진전 불가.
+  - M2-b cycle 의 작업 분량 ~800-1000 LOC + integration test 1-2 일 — single cycle 으로 합당.
+- Critical (본 cycle 내 처리 완료):
+  1. `memory.py:_ensure_pg_schema()` 의 grants 검증 확장 — `has_schema_privilege('public', 'USAGE')` + `has_sequence_privilege('<tbl>_id_seq', 'USAGE')` + TRUNCATE 명시 negative 검증 ✓
+  2. `docker-compose.yml:memory-init.depends_on` 에 `postgres: service_healthy` (`required: false`) 추가 ✓
+  3. `agent_core.py:init_memory()` 의 `AGENT_KB_PG_REQUIRED` 환경 분기 (M0~M2-a optional / M2-b required) ✓
+  4. `unit/feature-0002-agent-core/docs/FUNCTION.md §10` 갱신 (init_memory 자동 호출 + grants_present 필드 + KbBackend ABC + invariant test catalog) ✓
+- Blocker (본 cycle 내 처리 완료):
+  1. `.env.example` 에 `AGENT_KB_PG_REQUIRED` + `KB_DUAL_WRITE_START_TS` 2 변수 추가 ✓
+  2. `bin/kb-dual-write-verify.sh --since` default 가 `.env` 의 `KB_DUAL_WRITE_START_TS` 자동 읽기 + 7-day fallback ✓
+  3. `unit/feature-0002-agent-core/docs/REPORT.md §4` risk log 7건 추가 ✓
+- Nice-to-have (M2-b cycle 책임):
+  - LC_COLLATE 영향 검증 (M4 cutover gate EXPLAIN ANALYZE)
+  - tsvector `simple` config 옵션 dialect notes 표 추가
+  - `_PG_UPSERT_RAG_DOCUMENT` 의 GREATEST(weight) 의 MySQL 정합 확인
+  - `get_backends()` 의 `functools.cache` singleton
+  - stress 의 `--ask-iterations` default 10 으로
+  - N3 (`_repair_from_fact()` idempotent) negative assertion 추가
+  - psycopg autocommit 정책 docstring
+- Decision authority: 본 cycle 의 ABC + Blocker 해소 + Critical/Blocker 반영은 §2.1 PLAN-APPROVED 마커 범위 안 (Major). 사용자 별도 confirm 불요 (사용자 메시지 "이어서 진행" = 진행 의도 표명). M2-b 진입 게이트는 사용자가 `.env` 의 `AGENT_KB_PG_REQUIRED=1` + `KB_DUAL_WRITE_START_TS` 명시 시점.
+
 ## REV-20260520-0006 [SKIPPED:renumber-only — ADR-0023 to ADR-0021]
 - Date: 2026-05-20
 - TASK-Cycle: TASK-0018 fixup (ADR numbering 연속성)

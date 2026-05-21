@@ -96,12 +96,34 @@ source_of_truth: true
 **Schema 적용 (TASK-0018 M1 cycle)**:
 - DDL 정본: `unit/feature-0002-agent-core/src/scripts/agent_kb_schema.sql` (~241 LOC, IF NOT EXISTS 멱등)
 - Bootstrap: `bin/kb-pg-role-bootstrap.sh --all` (database + role 신설 + schema 적용)
-- 적용 entry point: `modules/memory.py:_ensure_pg_schema(conn=None, *, schema_sql_path=None)` — M2 dual-write 진입 시 1회 호출. 호출 후 검증 dict 반환 (tables_present / view_present / extensions).
+- 적용 entry point: `modules/memory.py:_ensure_pg_schema(conn=None, *, schema_sql_path=None)` — M2 dual-write 진입 시 1회 호출. 호출 후 검증 dict 반환:
+  - `tables_present` (list[str])
+  - `view_present` (bool)
+  - `extensions` (list[str] — `vector`, `pg_trgm`)
+  - `grants_present` (dict — agent_kb_rw / agent_kb_ro 각 role 의 `role_exists`, `public_usage`, 4 테이블 × `_select` / `_mutate` / `_truncate_denied` + `<tbl>_id_seq_usage` + VIEW select) — **outside-voice REV-20260520-0007 Critical 권고로 USAGE on SCHEMA + sequence USAGE + TRUNCATE 명시 negative 검증 추가**
+
+**자동 호출 trigger (TASK-0019 M2-a cycle)**:
+- `docker-compose.yml` 의 `memory-init` service 가 `python /app/agent_core.py --init-memory` 진입점.
+- `agent_core.py:init_memory()` 가 mysql `_ensure_memory_tables()` 호출 후 `_pg_available()` 게이트 하 `_ensure_pg_schema()` 자동 호출.
+- 환경변수 `AGENT_KB_PG_REQUIRED` (default 0): 0 = optional (M0~M2-a, `_pg_available()` False 시 graceful skip), 1 = required (M2-b+, fail-loud + dual-write 깨진 schema 위 시작 차단).
+- `memory-init.depends_on` 에 `postgres: service_healthy` (`required: false` — postgres 미가동 환경 graceful) 로 race condition mitigation.
 
 **RBAC role (ADR-0021, M1 cycle)**:
 - `agent_kb_rw` — SELECT/INSERT/UPDATE/DELETE on 4 tables + VIEW SELECT. M2 dual-write 부터 agent 의 `_pg_connect()` 가 사용.
 - `agent_kb_ro` — SELECT only. read-only audit / debug.
 - Application-level RBAC catalog 신규 4 권한 (`PERMISSION_DEFINITIONS` 갱신은 M2~M4 별 cycle): `kb.read.own` / `kb.read.any` / `kb.mutate.any` / `kb.export`.
+
+**KbBackend 추상화 (TASK-0019 M2-a cycle, ADR-0021 §Decision Layer 1)**:
+- `modules/kb_backend.py` — 단일 `KbBackend(ABC)` + 4 method group (fact_entries / texts / rag_documents / rag_objects).
+- `MysqlKbBackend` (기존 raw SQL 의 ABC 래핑) + `PgKbBackend` (psycopg3 + pgvector adapter). 본 cycle 은 skeleton + Postgres SQL 템플릿까지 — 실 implementation 은 M2-b cycle 책임.
+- `get_backends()` factory: `_pg_available()` 기반 backend 반환. `(MysqlKbBackend, Optional[PgKbBackend])` tuple. M2-b 의 `_dual_write_kb()` 가 본 factory 호출 → partial failure 격리는 caller 책임.
+- `set_text_embedding()` base default `NotImplementedError` — MysqlKbBackend override 안 함 (embedding 컬럼 부재). PgKbBackend 는 M3 backfill cycle 의 책임.
+
+**ANCHOR §3 invariant 시나리오 catalog (TASK-0019 M2-a cycle)**:
+- `unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py` — 6 시나리오 + 2 negative assertion.
+- S1 RagDocuments 누락 / S2 RagObjects 누락 / S3 Texts 누락 / S4 ScopeKey non-common / S5 RagObjects category stale / S6 fact_entries multi-row priority.
+- N1 `_repair_from_fact()` 안에서 LLM 호출 0건 (monkeypatch). N2 `agent_kb_rw` 의 TRUNCATE 차단 (InsufficientPrivilege).
+- fixture + assertion 의 실 구현은 M2-b cycle 책임. 본 cycle 은 catalog 정본 + stub.
 
 ## 11. Acceptance Criteria
 - AC-0001: 코어 코드가 `src/` 아래로 이동되어 있다.

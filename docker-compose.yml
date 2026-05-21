@@ -77,6 +77,18 @@ services:
     entrypoint: ["python", "/app/agent_core.py", "--init-memory"]
     networks: [dbnet]
     restart: "no"
+    # TASK-0019 (M2-a) outside-voice REV-20260520-0007 Critical: postgres race
+    # condition mitigation. `agent_core.py:init_memory()` 가 `_pg_available()` true
+    # 시 `_ensure_pg_schema()` 호출 — postgres 컨테이너 가 healthy 되기 전 호출
+    # 시 OperationalError. mysql 외 postgres 도 service_healthy 까지 wait.
+    # postgres 미가동 환경 (compose 에 postgres 서비스 없음) 에서는 본 depends_on
+    # 도 silent skip (compose 가 미정의 서비스는 무시).
+    depends_on:
+      mysql:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+        required: false
 
   insight-worker:
     <<: *agent-common

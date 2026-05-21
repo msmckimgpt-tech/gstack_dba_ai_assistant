@@ -1730,7 +1730,16 @@ def get_conversation_messages(conversation_id: str, limit: int = 100) -> list[di
 # ══════════════════════════════════════════════════════════════════
 
 def init_memory():
-    """메모리 테이블 생성. Docker memory-init 서비스에서 호출."""
+    """메모리 테이블 생성. Docker memory-init 서비스에서 호출.
+
+    TASK-0015 §2.1.3 M2 (TASK-0019, outside-voice Blocker B-2 해소): KB Postgres
+    pgvector schema 도 동일 service 안에서 1회 적용. `_pg_available()` 가 True
+    (postgres 컨테이너 가동 + AGENT_KB_PG_* 환경변수 정합) 일 때만 호출. False 면
+    silent skip — postgres 미가동 환경 (M0 단계 또는 .env 미설정) 에서도 mysql
+    초기화 진행. KB Postgres schema 적용은 멱등 (IF NOT EXISTS / DO $$ guard) 이라
+    매 boot 마다 재호출 안전. `_ensure_pg_schema()` 의 has_table_privilege() 검증
+    query 가 grant 정합도 함께 확인 (Blocker B-3 해소).
+    """
     try:
         conn = _connect_memory()
         _ensure_memory_tables(conn)
@@ -1739,6 +1748,41 @@ def init_memory():
     except Exception as e:
         console.print(f"[red]메모리 초기화 실패: {e}[/red]")
         sys.exit(1)
+
+    # KB Postgres schema 적용 (M2+ 자동 trigger)
+    # outside-voice REV-20260520-0007 Critical: `AGENT_KB_PG_REQUIRED=1` 시 광역
+    # 예외도 fail-loud. M2-b dual-write 활성 시 .env 에 본 변수 1 으로 설정 — 그 후
+    # KB Postgres 가 dual-write 의 필수 의존성. M0~M2-a 까지는 default 0 (optional).
+    import os as _os
+    _pg_required = (_os.getenv("AGENT_KB_PG_REQUIRED", "0").strip() or "0") in {"1", "true", "yes", "on"}
+    try:
+        from .modules.db import _pg_available
+        if _pg_available():
+            from .modules.memory import _ensure_pg_schema
+            result = _ensure_pg_schema()
+            console.print(
+                f"[green]KB Postgres schema 적용 완료[/green]: "
+                f"tables={result.get('tables_present', [])}, "
+                f"view={result.get('view_present', False)}, "
+                f"extensions={result.get('extensions', [])}, "
+                f"grants={result.get('grants_present', {})}"
+            )
+        elif _pg_required:
+            console.print("[red]AGENT_KB_PG_REQUIRED=1 이지만 _pg_available() == False — fail-loud[/red]")
+            sys.exit(1)
+        else:
+            console.print("[yellow]KB Postgres 미가동 — schema 적용 skip (M0~M2-a 단계, AGENT_KB_PG_REQUIRED=0)[/yellow]")
+    except RuntimeError as e:
+        # _pg_available() True 이지만 connection / schema 적용 실패 — fail-loud
+        console.print(f"[red]KB Postgres schema 적용 실패: {e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        # M0~M2-a 단계 (AGENT_KB_PG_REQUIRED=0) 에서는 광역 예외 graceful — agent 부트 진행.
+        # M2-b 이후 (AGENT_KB_PG_REQUIRED=1) 에서는 fail-loud — dual-write 깨진 schema 위에서 시작 차단.
+        if _pg_required:
+            console.print(f"[red]KB Postgres schema 적용 실패 (AGENT_KB_PG_REQUIRED=1): {e}[/red]")
+            sys.exit(1)
+        console.print(f"[yellow]KB Postgres schema 적용 중 예외 (계속 진행, AGENT_KB_PG_REQUIRED=0): {e}[/yellow]")
 
 
 # ══════════════════════════════════════════════════════════════════

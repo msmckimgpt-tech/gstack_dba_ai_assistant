@@ -282,3 +282,30 @@ ai_read_priority: 9
   - **M2~M4 사이 별 cycle (TASK 미할당 — Dynamic grant blindspot cycle, outside-voice REV-20260520-0005 Section E Critical/Blocker)**: 정적 `PERMISSION_DEFINITIONS` 외에 `WebPermissions IsDynamic=1` row union 패턴 (TASK-0052 Phase 1B 같은 시간 제한부 grant) 의 `kb.*` 적용 검증. 사용자 메모리 정책 `feedback_outside_voice_for_rbac.md` 의 "정적 catalog blindspot 대응" 의 핵심 답. 예: `kb.read.any` 가 dba 만 영구 grant 외에 audit 시점에 한해 staff 임시 grant (24h TTL) 사용 사례. catalog 변경 cycle 보다 후, M4 cutover 게이트 전 완료.
   - **M4 cutover** (별 cycle): `bin/kb-cutover-readiness.sh` 에 본 ADR 시행 완료 게이트 항목 추가 — (a) `PERMISSION_DEFINITIONS` 의 `kb.*` 4 항목 존재, (b) `AGENT_KB_PG_USER=agent_kb_rw` 적용, (c) `agent_kb_rw` 로 `_pg_connect()` smoke PASS, (d) `has_table_privilege()` 검증 PASS, (e) Dynamic grant blindspot cycle 의 산출물 (PR merged) 확인, (f) Cross-DB audit SLA ≤ 0.1% 달성 (M2 stress run 결과).
   - **ADR-0024 후보 (Sprint 4 통합 시점)**: 본 cycle 의 schema 가 `public` schema 기준 — Sprint 4 의 `agent_drag` namespace 결정 시 grant scope 명시.
+
+## ADR-0024
+- Status: accepted (TASK-0019, M2 cycle, 2026-05-21)
+- Date: 2026-05-21
+- Context: TASK-0015 §2.1 PLAN-APPROVED 의 D-2 결정 (단일 Postgres cluster + 별 database) 와 outside-voice review `REV-20260520-0005` Section D 권고 ("`agent_drag` namespace 격리 미명시, ADR-0024 후보") 가 본 ADR 의 motivation. 직전 세션의 multi-cycle plan 의 Sprint 4 (D RAG, PGVector 도입) 가 동일 Postgres cluster 안 별 database 또는 schema 로 분리될 예정이지만 정본 위치를 본 cycle 에서 확인 불가 (Blocker B-1). 본 plan 의 `agent_kb` namespace 와 Sprint 4 의 `agent_drag` namespace 가 schema-level vs database-level 격리 중 무엇을 채택해야 KB 의 RBAC role (`agent_kb_rw` / `agent_kb_ro`, ADR-0021) 과 Sprint 4 의 role 이 자연 격리될지 결정.
+- Decision: **단일 Postgres cluster + 별 database 격리** 채택. KB 정본 = `agent_kb` database, Sprint 4 D RAG = `agent_drag` database (또는 Sprint 4 의 결정에 따른 다른 명 — 본 ADR 은 `agent_drag` 를 placeholder 로). Postgres role 의 `CONNECT` 권한이 database-level 이라 schema-level 분리보다 격리 강도 높음.
+- Consequences:
+  - **`agent_kb_rw` / `agent_kb_ro`** (ADR-0021) 의 `CONNECT ON DATABASE agent_kb TO ...` grant 가 `agent_drag` 접근 차단 — 자연 격리.
+  - **Sprint 4 의 D RAG role** (별도 신설 예정) — `agent_drag_rw` / `agent_drag_ro` 명 권장 (네이밍 일관성). Sprint 4 의 ADR 책임.
+  - **cluster-level fault** (shared_buffers, WAL, connection pool 등) 는 양 도메인 동시 영향 — `pgvector/pgvector:pg16` 단일 컨테이너의 메모리 footprint 가 두 도메인 합산. M4 cutover gate 의 메모리 측정 (Open Q #2) 에 포함.
+  - **백업/관측 통합** — `docker exec repo-postgres-1 pg_dump agent_kb` 와 `pg_dump agent_drag` 가 동일 컨테이너에서 호출. 단일 dump volume 사용.
+  - **schema-level 분리 옵션 폐기** — 단일 database (예: `agent_pg`) 안 두 schema (`kb`, `drag`) 분리는 role 권한 정의 복잡도 폭증 (`ALTER DEFAULT PRIVILEGES IN SCHEMA kb` + `... IN SCHEMA drag` 양쪽 따로) + 잘못된 schema 접근 risk. database 분리가 더 안전.
+  - **별 인스턴스 옵션 폐기** — Topology D-2 의 Alternative B (별 Postgres 인스턴스) 는 운영 부담 2배. 본 plan 규모에서는 과대.
+  - **agent 컨테이너의 connection pool** — `agent_kb` connection (`_pg_connect()`) + `agent_drag` connection (Sprint 4 의 helper) 2 pool 자연 분리. memory footprint ~10MB × 2 = ~20MB. 본 plan 의 `_pg_connect()` 에서 database arg 는 명시 (`AGENT_KB_PG_DB` default `agent_kb`). Sprint 4 는 별도 env (`AGENT_DRAG_PG_DB` 권장).
+  - **docker-compose `postgres` 서비스** — 본 plan M0 (TASK-0017) 가 `POSTGRES_DB=agent_kb` 로 default. Sprint 4 진입 시 `POSTGRES_DB` 환경변수가 `agent_kb` 만 보장 — Sprint 4 의 D RAG 는 `bin/kb-pg-role-bootstrap.sh` 와 유사한 `bin/drag-pg-role-bootstrap.sh --create-db` 로 별도 database 생성. 본 cycle 의 `kb-pg-role-bootstrap.sh` 가 reference 패턴.
+- Alternatives 검토 후 폐기:
+  - **단일 database 안 두 schema 분리** — 위 §Consequences 참조. role 권한 복잡도 + cross-schema 접근 risk.
+  - **별 Postgres 인스턴스** — 운영 부담 2배.
+  - **본 plan 의 KB 가 Sprint 4 의 D RAG schema 와 공유** — 본 cycle 의 schema (fact_entries / texts / rag_documents / rag_objects) 가 Sprint 4 의 D RAG schema 와 column 구조 정합 가정 필요. Sprint 4 plan 정본을 본 cycle 에서 확인 불가 → 검증 안 됨. **자연 격리 (별 database) 가 더 안전**.
+- 본 ADR 의 사전 조건 (Sprint 4 와 통합 시점 확인 필요):
+  - Sprint 4 의 D RAG 가 본 ADR 의 `agent_drag` database 가정을 수용한다면 자연 호환. Sprint 4 가 별 schema (`agent_pg.drag.*`) 또는 동일 schema 공유 (예: `agent_kb.rag_objects` 를 D RAG 가 같이 INSERT) 결정 시 본 ADR superseded — 그 시점에 ADR-0025 후보.
+  - Sprint 4 의 schema 가 본 plan 의 `rag_objects` / `rag_documents` 와 column 정합 — 동일 schema 공유 가능 시 Sprint 4 cycle 에서 본 ADR 의 격리 정책 ALTER.
+- Outside-voice rationale: 본 ADR 은 outside-voice review `REV-20260520-0005` Section D 의 Blocker 직접 해소. 본 turn 의 M2 cycle outside-voice review 가 본 ADR 의 적절성을 다시 검증.
+- 후속 액션:
+  - **본 cycle (M2, TASK-0019)**: ADR-0024 정본 작성 ✓ + Sprint 4 plan 의 D RAG schema 확인 (사용자 직접 — Blocker B-1) 시점에 재검토.
+  - **Sprint 4 cycle**: 본 ADR 의 가정 (별 database `agent_drag`) 수용 여부 결정. 다른 결정 시 본 ADR superseded.
+  - **M4 cutover gate**: `bin/kb-cutover-readiness.sh` 에 "본 ADR 의 namespace 격리 verify" 명시 항목 추가 — `psql -U agent_kb_rw -d agent_drag` 가 `permission denied for database` 실패 확인 (격리 정상).
