@@ -8,6 +8,27 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260520-0007
+- Date: 2026-05-20
+- Summary: TASK-0088 (REQ-20260520-0003, **Minor** §12.3 — `slow_query_log` 통합 ADR-0020 결정, docs only). ADR-0019 의 Codex C1 lock-in 의 최종 결론 — **Option C Decoupled 채택** (slow_query_log 와 WebAuditEvents 통합 안 함). Codex outside voice review 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign 적용.
+- Files:
+  - `docs/DECISIONS.md`: ADR-0020 신설 (line 207~ ADR-0019 Consequences 다음). 4 section — Context (current state: not enabled, forward-looking) + Decision (Option C Decoupled, raw SQL PII 차단 1순위) + Options 검토 (A/B reject 구체 사유 + C 채택) + Recommended performance path (PS digest-first 1차, slow_query_log incident enable 2차) + Security policy + Consequences (외부 SaaS trigger 4 선행 조건). ADR-0019 Consequences 의 "별 cycle 분리" 라인에 ADR-0020 cross-reference 추가.
+  - `docs/SECURITY.md §9.9`: ADR-0020 cross-reference + raw SQL = 민감 로그 + admin UI/ChangeJson 복제 금지 + PS digest-first 정책.
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0088 [ ]→[x] + §2.6 본 plan PLAN-APPROVED.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260520-0007 entry.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 갱신.
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md`: §4 본 cycle 결과 (docs only, ADR review trace).
+- Decision 요지: slow_query_log 와 WebAuditEvents 의 통합 reject. 운영 성능 관측 = performance_schema/sys digest views (1차) + slow_query_log incident enable (2차). 외부 SaaS/multi-tenant trigger 시 `performance-log.read` permission + redaction/sampling + threat model ADR 선행 필수.
+- Codex outside voice 5 findings 흡수:
+  - **C1** current state framing 정정 (not enabled, forward-looking)
+  - **C2** raw SQL PII 차단을 주 근거로 (1순위)
+  - **C3** Option A reject 재작성 (semantic pollution + raw SQL PII + ChangeJson bloat + actor/target 의미 부재)
+  - **C4** Option B reject 재작성 (raw SQL exfiltration + mount/race + DoS + 권한 의미 오염 + TABLE log destination 우회)
+  - **C5** performance_schema digest-first 권유 추가
+- Verification: docs only, code 변경 0. py_compile/runtime smoke 불필요. verify-completion PASS 만 확인.
+- Risks: ADR 자체는 future trigger 조건만 명시 — 현재 운영 영향 0. 외부 SaaS/multi-tenant 진입 시점에 별 cycle (Major §12.3) 재진입 명시 (트리거 조건 4 선행).
+- Trace: REQ-20260520-0003 → TASK-0088 → CHG-20260520-0007 → REV-20260520-0007.
+
 ## CHG-20260520-0006
 - Date: 2026-05-20
 - Summary: TASK-0091 (REQ-20260520-0006, ~~Minor~~→**Major** §12.3 — PATCH admin/products audit before-state full snapshot + audit integrity fix). Codex outside voice review 5 critical findings + 2 minimum-fix 흡수 — Minor 등급 추정이 audit integrity 결함 (autocommit=True default) 노출 → scope 확장.

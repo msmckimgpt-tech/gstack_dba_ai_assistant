@@ -212,6 +212,6 @@ REQ-20260519-0001 — 모든 admin mutation + user 4 high-signal action (`/api/a
 
 - 365 일 retention 권장. 운영자가 별 cycle 에서 cron purge 정책 결정 (PIPA §29 1 년 inherit, TASK-0072 정합).
 - chunked PK 정책 + Phase 2 partitioning 은 row 수 100M+ 시 검토.
-- `slow_query_log` (별 cycle 분리, Codex C1 lock-in) — DB-only retention / RBAC 정합 안 됨 → 본 cycle 제외, 별 cycle ADR 결정.
+- `slow_query_log` (별 cycle 분리, Codex C1 lock-in) — DB-only retention / RBAC 정합 안 됨 → **ADR-0020 (2026-05-20) 에서 Decoupled 채택** (`docs/DECISIONS.md` ADR-0020). 주 근거 = **raw SQL text PII 차단** (PasswordHash/Token/API key/임시 비밀번호/raw LLM prompt 가 SQL statement literal 로 들어가는 위험). slow_query_log 는 WebAuditEvents 와 통합 안 함. 운영 성능 관측 = `performance_schema` / `sys` digest views (1차) + slow_query_log incident 기반 enable (2차). raw SQL = 민감 로그로 간주, admin UI / ChangeJson 에 복제 금지.
 
 본 정책 정본은 본 §9. dispatcher / builder / endpoint 정합은 [`unit/feature-0003-agent-web-ui/docs/FUNCTION.md`](../unit/feature-0003-agent-web-ui/docs/FUNCTION.md) AC-0159~AC-0189.

@@ -10,6 +10,43 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-05-20 TASK-0088 완료 (Phase A~D 일괄) — `slow_query_log` 통합 ADR-0020 Decoupled 채택 (docs only)** (CHG-20260520-0007, REV-20260520-0007, REQ-20260520-0003, **Minor** §12.3 — ADR-0019 Codex C1 lock-in 의 final 결론, Codex outside voice 5 findings 흡수 v2 redesign).
+
+**본 cycle Phase 별 변경 요약**:
+- **Phase A** — `docs/DECISIONS.md` ADR-0020 신설. 4 section + Options 검토 + Recommended performance path + Security policy + Consequences. ADR-0019 의 "별 cycle 분리" 라인 cross-reference 추가.
+- **Phase B** — `docs/SECURITY.md §9.9` ADR-0020 cross-reference + raw SQL = 민감 로그 정책 + PS digest-first 권유. + docs 5 갱신 (TASK §2.6 + MODIFY CHG-0007 + REVIEW REV-0007 + TEST §4 + 본 REPORT).
+- **Phase C** — verify-completion + commit.
+- **Phase D** — cycle-finalize (issue + push + PR + merge + cleanup).
+
+**ADR-0020 핵심 결정**:
+- **Option C — Decoupled 채택**: slow_query_log 와 WebAuditEvents 통합 안 함.
+- **주 근거**: raw SQL text PII 차단 (PasswordHash/Token/API key/임시 비밀번호/raw LLM prompt literal).
+- **Option A reject** (Sidecar ETL): semantic pollution + raw SQL PII + ChangeJson/table bloat + actor/target 의미 부재.
+- **Option B reject** (별 endpoint): raw SQL exfiltration + mount/race + DoS + `audit.read.any` 권한 의미 오염 + MySQL `TABLE` log destination 우회.
+- **운영 성능 관측 권유**: `performance_schema`/`sys` digest views (1차) + slow_query_log incident enable (2차).
+- **외부 SaaS/multi-tenant trigger**: `performance-log.read` permission + redaction/sampling + threat model ADR 선행.
+
+**Codex outside voice 5 findings 흡수**:
+- C1 current state framing 정정 (not enabled, forward-looking)
+- C2 raw SQL PII 차단 = 주 근거 (1순위)
+- C3 Option A reject 재작성 (4 구체 사유)
+- C4 Option B reject 재작성 (5 구체 사유)
+- C5 performance_schema digest-first 권유 추가
+
+### Git 동기화 결과 (§16.3 Step 6)
+
+PR description body 명시 — REPORT.md 갱신 별 commit 회피 (cycle-finalize 패턴, TASK-0093/0092/0086/0091 답습).
+
+### 후속 단계
+
+- 외부 SaaS/multi-tenant 진입 시 별 cycle (Major §12.3) — 4 선행 조건 충족 후 (`performance-log.read` + redaction/sampling + retention + threat model ADR)
+- `performance_schema` digest views 운영자 access policy (별 cycle 또는 SECURITY.md §9 갱신)
+- TASK-0073 backlog 3 entries 남음 (TASK-0087/0089/0090) — 각 별 cycle
+
+---
+
+## 1.archived TASK-0091 Summary (2026-05-20)
+
 **2026-05-20 TASK-0091 완료 (Phase A~F 일괄) — PATCH admin/products audit before-state full snapshot + audit integrity fix** (CHG-20260520-0006, REV-20260520-0006, REQ-20260520-0006, ~~Minor~~→**Major** §12.3 — Codex outside voice 5 findings 흡수, audit integrity 결함 fix 포함 scope 확장).
 
 **본 cycle Phase 별 변경 요약**:

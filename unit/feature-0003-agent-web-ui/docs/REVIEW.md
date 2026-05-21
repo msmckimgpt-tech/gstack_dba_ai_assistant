@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260520-0007 [AGENT-TEAM:codex-outside-voice]
+- Date: 2026-05-20
+- Decision: TASK-0088 (REQ-20260520-0003, **Minor** §12.3 — `slow_query_log` 통합 ADR-0020, docs only) plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, 390,785 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign → 사용자 confirm → ADR-0020 accepted. ADR-0019 Codex C1 lock-in 의 최종 결론 — **Option C Decoupled 채택**.
+- Reason: ADR-0019 (audit subsystem) 에서 lock-in 된 "slow_query_log 통합은 별 cycle 분리" 의 최종 ADR 결정. 사용자 정책 (`feedback_outside_voice_for_rbac`) 적용 — ADR 자체가 audit 정책 표면 + DB-only retention/RBAC 정합 영향.
+- Codex outside voice 5 findings 흡수 결정:
+  - **C1 — current state framing 오류**: 현재 mysql conf 에 `slow_query_log` 설정 부재 (MySQL 8.0 default disabled). v1 초안이 "현재 운영 로그 통합" framing — "**향후** slow query 관측 통합 여부" 로 정정 필요. **ACCEPT** → Context 에 "current state: not enabled, forward-looking decision" 명시.
+  - **C2 — raw SQL PII = 주 근거**: slow query log 는 SQL statement literal 보존. PasswordHash/session_token_hash/api_key/임시 비밀번호/raw LLM prompt 등이 SECURITY.md §9.2 redact 정책 밖. v1 의 "의도 mismatch" 추상적. **ACCEPT** → Decision 1순위 근거 = raw SQL text PII 차단.
+  - **C3 — Option A reject 부정확**: ETL 의 retention/RBAC 정합 trivial. v1 의 "retention 정합 가능하나 RBAC overlap 모호" 가 부정확. 진짜 reject 사유 = (1) semantic pollution, (2) raw SQL PII, (3) ChangeJson/table bloat (고빈도 slow query), (4) actor/target 의미 부재. **ACCEPT** → Option A reject 재작성 (4 구체 사유).
+  - **C4 — Option B reject 약함**: "audit 와 의도 mismatch" 추상. 구체 사유 = (1) raw SQL exfiltration 표면 (read-only mount 라도 endpoint PII), (2) mount/rotation/race (logrotate 중 partial read), (3) 대용량 파일 DoS (tail/filter timeout/OOM), (4) `audit.read.any` 권한 의미 오염, (5) MySQL `log_output=TABLE` destination 우회. **ACCEPT** → Option B reject 재작성 (5 구체 사유).
+  - **C5 — performance_schema 빠짐**: MySQL 8.0 의 `events_statements_summary_by_digest` digest 집계 1차 도구. v1 ADR 가 PS 언급 부재 = 큰 구멍. "PS/sys digest-first, slow_query_log 는 incident/deep capture 제한" 가 더 방어 가능. **ACCEPT** → Consequences 에 PS digest-first 권유 (1차), slow_query_log incident enable (2차).
+- 추가 흡수: Status framing (proposed → accepted 사용자 confirm 후). 외부 SaaS/multi-tenant trigger 4 선행 조건 명확화 — `performance-log.read` permission + raw SQL redaction/sampling + retention + endpoint threat model ADR 선행.
+- Alt 거부:
+  - **v1 단독 진행 (outside voice 흡수 X)**: 5 findings 모두 fatal (C1 framing 오류 + C2 PII risk 누락 + C3/C4 reject 사유 부정확 + C5 PS digest-first 누락). v2 redesign 필수.
+  - **C5 제외 (PS 언급 생략)**: ADR 범위 밖 주장 가능하나, "성능 관측 권유" 가 ADR-0020 의 핵심 ramification. 사용자 v2 단독 진행 confirm 시 거부.
+- Risks: docs only, code 변경 0, DB schema 변경 0. ADR 자체는 future trigger 조건만 명시 — 현재 운영 영향 0. 외부 SaaS/multi-tenant 진입 시점에 별 cycle (Major §12.3) 재진입 명시.
+- 미해결 followup:
+  - 외부 SaaS/multi-tenant 진입 시 별 cycle (4 선행 조건 충족 후): `performance-log.read` permission 신설 + raw SQL redaction/sampling 정책 + retention + endpoint threat model ADR.
+  - `performance_schema` digest views 운영자 access policy (별 cycle 또는 SECURITY.md §9 갱신).
+  - TASK-0073 backlog 3 entries 남음 (TASK-0087/0089/0090) — 각 별 cycle.
+- panel: AGENT-TEAM:codex-outside-voice — Codex consult mode (390,785 tokens). 본 ADR 의 verification panel.
+- Trace: REQ-20260520-0003 → TASK-0088 → CHG-20260520-0007 → REV-20260520-0007. ADR-0020 accepted. ADR-0019 Codex C1 lock-in 의 final 결론.
+
 ## REV-20260520-0006 [AGENT-TEAM:codex-outside-voice]
 - Date: 2026-05-20
 - Decision: TASK-0091 (REQ-20260520-0006, ~~Minor~~→**Major** §12.3 — PATCH admin/products audit before-state full snapshot + audit integrity fix) plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, ~5분, 687,409 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign (scope 확장) → 사용자 confirm → Phase A~F 진행. **audit integrity 결함 fix 포함** (Codex C2).

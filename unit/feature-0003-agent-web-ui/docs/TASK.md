@@ -22,7 +22,7 @@ source_of_truth: true
 
 - [x] TASK-0086 (REQ-20260520-0001, **Major** §12.3 — `WebAccountActivity` legacy table DROP + dual write 종료). **DROP 완료 (2026-05-20)**. backup `artifacts/mysql-backup/WebAccountActivity-20260520T074927Z.sql` (11,950 bytes, 74 row, digest `a09e7898d1ce88711f7a850ab5fbcc91`) + scratch restore rehearsal PASS + 1:1 정합 (legacy=74, mirror=74) + 사용자 명시 ack. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign (helper Option B 명시 제거 / dispatcher-only smoke / mysqldump 옵션 보강 / scratch restore / rollback 2 시나리오). 코드: `_log_search_activity()` legacy INSERT 제거 + `_ensure_web_account_activity_schema()` 호출×2+정의 제거 + `_migrate_web_account_activity_to_audit()` rollback window 보존 + test_audit_migration.py M3 제거. 본 cycle CHG-20260520-0005, REV-20260520-0005 on `ai/claude/0086/legacy-drop` worktree.
 - [ ] TASK-0087 (REQ-20260520-0002, **Major** §12.3 — 외부 LAN trust 강화, feature-0006 위임). TASK-0073 Eng review E3 의 `_get_client_ip(request)` 의 `X-Forwarded-For` trust 가 사내 LAN + Caddy proxy 전제. 외부 LAN / 공개 인터넷 노출 시 IP spoof 위험. 본 cycle: (1) Caddy `trust_forwarded_for` 또는 별 `trusted_proxies` 설정 (feature-0006-lan-proxy-access), (2) `_get_client_ip()` 의 신뢰 IP whitelist 옵션 추가 (env `WEB_TRUSTED_PROXIES=10.0.0.0/8,...`), (3) `docs/SECURITY.md §9.7` 정책 갱신. 의존: 운영 환경 외부 노출 시점 확정 후 진행.
-- [ ] TASK-0088 (REQ-20260520-0003, Minor §12.3 — `slow_query_log` 통합 ADR). TASK-0073 Codex C1 lock-in 으로 본 cycle 분리. 본 cycle: (1) `slow_query_log` 의 retention/RBAC 정합 가능성 검토 (mysql server log = file, WebAuditEvents = DB), (2) sidecar logrotate + `audit.read.any` 사용자만 접근 가능한 별 endpoint? 또는 별 분석 도구 사용 권유 → ADR-0020 결정.
+- [x] TASK-0088 (REQ-20260520-0003, Minor §12.3 — `slow_query_log` 통합 **ADR-0020 Decoupled 채택**). TASK-0073 Codex C1 lock-in 의 별 cycle 분리 → 최종 ADR. **Option C — Decoupled** 채택, slow_query_log 와 WebAuditEvents 통합 안 함. 주 근거 = raw SQL text PII 차단 (PasswordHash/Token/API key/임시 비밀번호/raw LLM prompt literal). 운영 성능 관측 = `performance_schema`/`sys` digest views (1차) + slow_query_log incident enable (2차). Codex outside voice 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign (current state framing 정정 + Option A/B reject 재작성 + PS digest-first 권유 + SaaS trigger 명확화). 본 cycle CHG-20260520-0007, REV-20260520-0007 on `ai/claude/0088/slow-query-log-adr` worktree. docs only.
 - [ ] TASK-0089 (REQ-20260520-0004, Minor §12.3 — 작업 화면 audit drawer UX). TASK-0073 Phase C 의 작업 화면 placeholder 가 entry point 부재 (admin 콘솔 redirect 안내만). 본 cycle: (1) `index.html` 의 profile drawer 에 "내 감사 로그" 탭 신설, (2) `audit.read.own` 보유 사용자에게 본인 audit row (Actor or Target = self) 표시, (3) admin 콘솔의 audit pane 과 동일 ChangeJson `<pre>` HTML escape + filter (action / from_at / to_at). CSV export / purge 는 admin 한정 (작업 화면 제외).
 - [ ] TASK-0090 (REQ-20260520-0005, Minor §12.3 — CSV streaming export). TASK-0073 Phase A4 의 `/api/admin/audits/export.csv` 의 hard cap 50k row → `StreamingResponse` 로 대체 + cursor 기반 page-by-page generator. large fleet (100k+ row) 에서 audit export 가능. memory footprint 안전. 본 cycle: backend FastAPI `StreamingResponse` + `csv.writer` iterator wrapper + Content-Type / Content-Disposition 정합.
 - [x] TASK-0091 (REQ-20260520-0006, ~~Minor~~ **Major** §12.3 — PATCH admin/products audit before-state full snapshot + audit integrity fix). TASK-0073 Phase A5 의 `admin.product.update` audit 의 before-state 가 `{id, product_key}` 만 → full snapshot 으로 확장 + Codex outside voice 5 findings 흡수. **scope 확장 (Minor→Major)**: Codex C2 가 `admin_update_product()` 의 `autocommit=True` default + UPDATE 즉시 commit + audit 실패 시 rollback 가능 0 인 **audit integrity 결함** 노출. 본 cycle 일괄 fix: (1) `_audit_product_snapshot()` 신규 helper (single-row + SELECT FOR UPDATE + system_prompt summary only, SECURITY §9.2 정합), (2) endpoint 명시 transaction (autocommit=False + commit + finally autocommit=True), (3) `_AUDIT_BUILDER_PRODUCT_FIELDS` 확장 (`+is_default`, `+sort_order`, `+system_prompt_summary` / `-databases`, `-system_prompt` full), (4) `default_cleared_product_ids` side effect 기록, (5) sentinel smoke PASS (SENTINEL `TASK-0091-SENTINEL` ChangeJson 부재 확인, system_prompt content drop). 본 cycle CHG-20260520-0006, REV-20260520-0006 on `ai/claude/0091/product-audit-snapshot` worktree.
@@ -761,6 +761,63 @@ Codex outside voice (consult mode, model_reasoning_effort=high, ~5분, 687,409 t
 - `feedback_outside_voice_for_rbac` user policy 적용 — audit 표면 직접 변경
 
 REVIEW.md REV-20260520-0006 에 각 finding + 흡수 결정 + 근거 기록.
+
+---
+
+### 2.6 Implementation Plan (TASK-0088)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 **Minor 등급 docs-only ADR 결정** 변경 계획이다. **상태**: `approved-after-outside-voice`. 사용자가 2026-05-20 에 plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, 390,785 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign → 사용자 confirm 진행. ADR-0019 의 Codex C1 lock-in 최종 결론.
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-20 (TASK-0088 docs-only, ADR-0020 Decoupled 채택 + Codex outside voice 5 findings 흡수) -->
+
+#### 요지
+
+`slow_query_log` 와 `WebAuditEvents` 의 통합 가능성 — ADR-0019 (audit subsystem) 의 별 cycle 분리 lock-in 최종 결론. **Option C — Decoupled 채택**. 주 근거 = raw SQL text PII 차단.
+
+#### Codex outside voice review 흡수 (5 findings)
+
+| # | Finding | 흡수 |
+|---|---|---|
+| C1 | 현재 mysql conf 에 `slow_query_log` 설정 부재 (MySQL 8.0 default disabled). framing "현재 통합" → "**향후** 통합 여부" 정정 | **ACCEPT** → Context 에 current state 명시 |
+| C2 | Option C 의 **주 근거가 PII 차단** (raw SQL = PasswordHash/Token/API key/임시 비밀번호/raw LLM prompt literal) 이어야. "의도 mismatch" 추상적 | **ACCEPT** → Decision 1순위 근거 = raw SQL text PII 차단 |
+| C3 | Option A reject 사유 부정확 — retention/RBAC 정합 trivial. 진짜 사유 = semantic pollution + raw SQL PII + ChangeJson 비대화 + actor/target 의미 부재 + 고빈도 audit table 오염 | **ACCEPT** → Option A reject 재작성 (4 구체 사유) |
+| C4 | Option B reject 약함. 구체 사유 = raw SQL exfiltration 표면 + mount/rotation/race + 대용량 파일 DoS + `audit.read.any` 권한 의미 오염 + MySQL `TABLE` log destination 우회 | **ACCEPT** → Option B reject 재작성 (5 구체 사유) |
+| C5 | performance_schema 빠짐. MySQL 8.0 의 `events_statements_summary_by_digest` digest 집계 1차 도구 | **ACCEPT** → Consequences 에 PS digest-first 권유 (1차), slow_query_log incident enable (2차) |
+
+#### 영향 파일 (docs only, 7 파일)
+
+- `docs/DECISIONS.md` — ADR-0020 신설 (ADR-0019 Consequences 다음). ADR-0019 의 "별 cycle 분리" 라인 cross-reference 추가.
+- `docs/SECURITY.md §9.9` — ADR-0020 cross-reference (slow_query_log = 민감 로그, admin UI/ChangeJson 복제 금지).
+- `unit/feature-0003-agent-web-ui/docs/TASK.md` — TASK-0088 [x] + 본 §2.6 plan.
+- `unit/feature-0003-agent-web-ui/docs/MODIFY.md` — CHG-20260520-0007.
+- `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260520-0007.
+- `unit/feature-0003-agent-web-ui/docs/REPORT.md` — §1 Summary.
+- `unit/feature-0003-agent-web-ui/docs/TEST.md` — §4 본 cycle 결과 (docs only, ADR review trace).
+
+#### Phase 순서
+
+1. **Phase A** — `docs/DECISIONS.md` ADR-0020 작성. **완료**.
+2. **Phase B** — `docs/SECURITY.md §9.9` cross-reference + docs 5 갱신. **완료**.
+3. **Phase C** — verify-completion + commit.
+4. **Phase D** — cycle-finalize (issue + push + PR + merge + cleanup).
+
+#### 위험도 (§12.3) — **Minor**
+
+docs only, code 변경 0, DB schema 변경 0, runtime side-effect 0. ADR 자체가 future trigger condition 만 명시 — 현재 운영 영향 0.
+
+#### Decision 핵심 (Option C — Decoupled)
+
+- **slow_query_log 와 WebAuditEvents 통합 안 함**.
+- **운영 성능 관측**: `performance_schema` / `sys` digest views (1차) + slow_query_log incident enable (2차).
+- **slow_query_log raw SQL = 민감 로그**. WebAuditEvents / ChangeJson / admin UI 에 복제 금지.
+- **외부 SaaS / multi-tenant trigger**: `performance-log.read` permission 신설 + raw SQL redaction/sampling + threat model ADR 선행.
+
+#### outside voice 결과 (REVIEW.md REV-20260520-0007 정본)
+
+Codex outside voice (consult mode, model_reasoning_effort=high, 390,785 tokens):
+- 5 critical findings 도출, 2 minimum-fix 권고
+- 본 ADR 의 5 findings 모두 ACCEPT → v2 redesign
+- `feedback_outside_voice_for_rbac` user policy 적용 — ADR 자체가 audit 정책 표면 영향
 
 ---
 
