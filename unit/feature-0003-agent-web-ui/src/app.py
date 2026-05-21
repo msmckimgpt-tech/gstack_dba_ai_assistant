@@ -25,7 +25,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from modules.memory import (
@@ -9463,17 +9463,43 @@ async def list_audit_events(request: Request) -> JSONResponse:
         conn.close()
 
 
+_AUDIT_EXPORT_CHUNK_SIZE = 500   # TASK-0090 (Codex C4 minimum-fix): 1000→500.
+_AUDIT_EXPORT_FLUSH_BYTES = 65536  # 64KiB byte-threshold flush (Codex minimum-fix).
+
+
+def _audit_export_filter_hash(params: dict) -> str:
+    """TASK-0090: export self-audit 용 filter hash (PII 회피 — raw filter value 대신 hash)."""
+    import hashlib as _h
+    serialized = json.dumps(params, ensure_ascii=False, sort_keys=True, default=str)
+    return _h.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+
+
 @app.get("/api/admin/audits/export.csv")
 async def export_audit_events_csv(request: Request) -> Any:
-    """REQ-20260519-0001 (TASK-0073 Phase A4): audit event CSV export.
+    """REQ-20260519-0001 (TASK-0073 Phase A4) + REQ-20260520-0005 (TASK-0090): audit event CSV streaming export.
 
     권한: `audit.export` (admin/dba). `.any` 와 동일 SQL — 전체 row 조회. masked field
     는 ChangeJson 안의 redact policy 그대로 (`MaskedFields` column 에 redact 대상 명시).
+
+    TASK-0090 (Codex outside voice 5 findings 흡수):
+      - **StreamingResponse + sync generator** (Codex C1 — async generator 안 sync mysql.connector 호출 시 event loop blocking).
+      - **streaming-only connection** (Codex C1 — endpoint conn 은 auth + max_id capture + start self-audit 후 close, generator 내부에서 별 conn open + finally cleanup).
+      - **max_id high-water mark** (Codex C2 — long transaction 회피, append-only audit 정합. 시작 시 `MAX(Id)` 잡고 모든 page `Id <= max_id`).
+      - **chunk_size = 500** + **64KiB byte-threshold flush** (Codex minimum-fix — 1 row yield = uvicorn buffering 불효율).
+      - **try/finally cleanup** (Codex C5 — client disconnect / timeout 시 cursor/conn 누설 차단).
+      - **export self-audit** (start + complete 2 event, Codex C4 — DoS 운영 제어). `audit.purge` 와 동일 패턴 답습.
+      - **hard cap 50k 제거** (Codex C4 — cap → max_id high-water + streaming 으로 memory bounded. SECURITY.md §9.5 갱신 정합).
     """
+    import csv as _csv
+    import io as _io
+    import time as _time
+
+    # === Phase 1: 짧은 auth conn — auth + permission + params + max_id capture + start self-audit ===
     try:
         conn = _connect_memory()
     except Exception:
         return _json_error("db connection failed", 500)
+    started_at = _time.time()
     try:
         account, error = _require_account(request, conn)
         if error:
@@ -9481,58 +9507,180 @@ async def export_audit_events_csv(request: Request) -> Any:
         if not _account_has_permission(account, "audit.export"):
             return _json_error("감사 로그 export 권한이 필요합니다.", 403)
         params = _audit_parse_filter_params(request)
-        # CSV export 는 .any superset 으로 — 본인 row 만 export 는 use case 없음.
-        scope = "any"
-        where_clause, args = _audit_compose_where(
+        scope = "any"  # CSV export 는 .any superset.
+        filter_hash = _audit_export_filter_hash(params)
+        # max_id high-water mark (Codex C2) — 같은 WHERE 의 시작 시점 MAX(Id) 잡음.
+        where_clause_initial, args_initial = _audit_compose_where(
             scope=scope,
             account_id=int(account["id"]),
             params=params,
             cursor_id=None,
         )
-        # Hard cap 50k row — DoS 회피.
-        export_limit = 50000
-        sql = (
-            "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
-            "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
-            "RemoteAddr, UserAgent, RequestId, OccurredAt "
-            f"FROM WebAuditEvents{where_clause} "
-            "ORDER BY Id DESC LIMIT %s"
-        )
-        args.append(export_limit)
-        cur = conn.cursor(dictionary=True)
+        cur = conn.cursor()
         try:
-            cur.execute(sql, tuple(args))
-            rows = cur.fetchall() or []
+            sql_max = f"SELECT COALESCE(MAX(Id), 0) FROM WebAuditEvents{where_clause_initial}"
+            cur.execute(sql_max, tuple(args_initial))
+            row = cur.fetchone()
+            max_id = int(row[0] if row else 0)
         finally:
             cur.close()
-        # CSV stream.
-        import csv as _csv
-        import io as _io
+        # start self-audit.
+        try:
+            actor = {
+                "account_id": int(account["id"]),
+                "actor_type": "account",
+                "role_id": account.get("role_id"),
+                "session_id": account.get("session_id"),
+            }
+            record_audit_event(
+                conn,
+                actor=actor,
+                action="audit.export.start",
+                resource_type="audit_range",
+                resource_id=None,
+                change_json={
+                    "scope": scope,
+                    "filter_hash": filter_hash,
+                    "max_id": max_id,
+                    "chunk_size": _AUDIT_EXPORT_CHUNK_SIZE,
+                    "started_at": started_at,
+                },
+            )
+            conn.commit()
+        except Exception as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return _json_error(f"export start audit failed: {exc}", 500)
+        # capture for generator (account info, params, max_id).
+        actor_for_complete = dict(actor)
+    finally:
+        conn.close()
+
+    # === Phase 2: sync generator with streaming-only connection ===
+    def csv_iter():
         sio = _io.StringIO()
         writer = _csv.writer(sio)
+        # header.
         writer.writerow([
             "Id", "ActorAccountId", "ActorRoleId", "ActorType", "TargetAccountId",
             "SessionId", "ActionCode", "ResourceType", "ResourceId", "ChangeJson",
             "MaskedFields", "RemoteAddr", "UserAgent", "RequestId", "OccurredAt",
         ])
-        for r in rows:
-            d = _audit_row_to_dict(r)
-            writer.writerow([
-                d["id"], d["actor_account_id"], d["actor_role_id"], d["actor_type"],
-                d["target_account_id"], d["session_id"], d["action_code"], d["resource_type"],
-                d["resource_id"],
-                json.dumps(d["change_json"], ensure_ascii=False, sort_keys=True) if d["change_json"] is not None else "",
-                json.dumps(d["masked_fields"], ensure_ascii=False, sort_keys=True) if d["masked_fields"] is not None else "",
-                d["remote_addr"], d["user_agent"], d["request_id"], d["occurred_at"],
-            ])
-        csv_text = sio.getvalue()
-        return PlainTextResponse(
-            csv_text,
-            media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": 'attachment; filename="audit_events.csv"'},
-        )
-    finally:
-        conn.close()
+        yield sio.getvalue()
+        sio.seek(0)
+        sio.truncate(0)
+
+        stream_conn = None
+        stream_cur = None
+        exported_row_count = 0
+        aborted = False
+        try:
+            stream_conn = _connect_memory()
+            stream_cur = stream_conn.cursor(dictionary=True)
+            cursor_id: int | None = None  # keyset cursor (descending).
+            while True:
+                # max_id high-water + Id < cursor_id (None first page).
+                page_where_args: list[Any] = []
+                # filter where (별 args copy — initial 의 args 재사용 안전).
+                where_clause_page, args_page = _audit_compose_where(
+                    scope=scope,
+                    account_id=int(actor_for_complete["account_id"]),
+                    params=params,
+                    cursor_id=cursor_id,
+                )
+                # max_id 조건 강제 추가 (append-only high-water mark).
+                if where_clause_page:
+                    where_clause_page = where_clause_page + " AND Id <= %s"
+                else:
+                    where_clause_page = " WHERE Id <= %s"
+                args_page.append(max_id)
+                sql_page = (
+                    "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
+                    "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
+                    "RemoteAddr, UserAgent, RequestId, OccurredAt "
+                    f"FROM WebAuditEvents{where_clause_page} "
+                    "ORDER BY Id DESC LIMIT %s"
+                )
+                args_page.append(_AUDIT_EXPORT_CHUNK_SIZE)
+                stream_cur.execute(sql_page, tuple(args_page))
+                rows = stream_cur.fetchall() or []
+                if not rows:
+                    break
+                for r in rows:
+                    d = _audit_row_to_dict(r)
+                    writer.writerow([
+                        d["id"], d["actor_account_id"], d["actor_role_id"], d["actor_type"],
+                        d["target_account_id"], d["session_id"], d["action_code"], d["resource_type"],
+                        d["resource_id"],
+                        json.dumps(d["change_json"], ensure_ascii=False, sort_keys=True) if d["change_json"] is not None else "",
+                        json.dumps(d["masked_fields"], ensure_ascii=False, sort_keys=True) if d["masked_fields"] is not None else "",
+                        d["remote_addr"], d["user_agent"], d["request_id"], d["occurred_at"],
+                    ])
+                    exported_row_count += 1
+                    # byte-threshold flush.
+                    if sio.tell() >= _AUDIT_EXPORT_FLUSH_BYTES:
+                        yield sio.getvalue()
+                        sio.seek(0)
+                        sio.truncate(0)
+                cursor_id = int(rows[-1]["Id"])
+                if len(rows) < _AUDIT_EXPORT_CHUNK_SIZE:
+                    break
+            # final flush.
+            if sio.tell() > 0:
+                yield sio.getvalue()
+        except Exception:
+            aborted = True
+            raise
+        finally:
+            # try/finally cleanup (Codex C5).
+            try:
+                if stream_cur is not None:
+                    stream_cur.close()
+            except Exception:
+                pass
+            try:
+                if stream_conn is not None:
+                    stream_conn.close()
+            except Exception:
+                pass
+            # complete self-audit (별 short conn).
+            try:
+                done_at = _time.time()
+                done_conn = _connect_memory()
+                try:
+                    record_audit_event(
+                        done_conn,
+                        actor=actor_for_complete,
+                        action="audit.export.complete" if not aborted else "audit.export.aborted",
+                        resource_type="audit_range",
+                        resource_id=None,
+                        change_json={
+                            "scope": scope,
+                            "filter_hash": filter_hash,
+                            "max_id": max_id,
+                            "exported_row_count": exported_row_count,
+                            "elapsed_ms": int((done_at - started_at) * 1000),
+                            "aborted": aborted,
+                        },
+                    )
+                    done_conn.commit()
+                finally:
+                    done_conn.close()
+            except Exception:
+                # complete audit 실패는 client 응답에 영향 X (이미 yield 진행). stderr 만.
+                try:
+                    import sys as _sys
+                    _sys.stderr.write("[TASK-0090] audit.export.complete failed\n")
+                except Exception:
+                    pass
+
+    return StreamingResponse(
+        csv_iter(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="audit_events.csv"'},
+    )
 
 
 @app.get("/api/admin/audits/actors")

@@ -24,7 +24,7 @@ source_of_truth: true
 - [ ] TASK-0087 (REQ-20260520-0002, **Major** §12.3 — 외부 LAN trust 강화, feature-0006 위임). TASK-0073 Eng review E3 의 `_get_client_ip(request)` 의 `X-Forwarded-For` trust 가 사내 LAN + Caddy proxy 전제. 외부 LAN / 공개 인터넷 노출 시 IP spoof 위험. 본 cycle: (1) Caddy `trust_forwarded_for` 또는 별 `trusted_proxies` 설정 (feature-0006-lan-proxy-access), (2) `_get_client_ip()` 의 신뢰 IP whitelist 옵션 추가 (env `WEB_TRUSTED_PROXIES=10.0.0.0/8,...`), (3) `docs/SECURITY.md §9.7` 정책 갱신. 의존: 운영 환경 외부 노출 시점 확정 후 진행.
 - [x] TASK-0088 (REQ-20260520-0003, Minor §12.3 — `slow_query_log` 통합 **ADR-0020 Decoupled 채택**). TASK-0073 Codex C1 lock-in 의 별 cycle 분리 → 최종 ADR. **Option C — Decoupled** 채택, slow_query_log 와 WebAuditEvents 통합 안 함. 주 근거 = raw SQL text PII 차단 (PasswordHash/Token/API key/임시 비밀번호/raw LLM prompt literal). 운영 성능 관측 = `performance_schema`/`sys` digest views (1차) + slow_query_log incident enable (2차). Codex outside voice 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign (current state framing 정정 + Option A/B reject 재작성 + PS digest-first 권유 + SaaS trigger 명확화). 본 cycle CHG-20260520-0007, REV-20260520-0007 on `ai/claude/0088/slow-query-log-adr` worktree. docs only.
 - [ ] TASK-0089 (REQ-20260520-0004, Minor §12.3 — 작업 화면 audit drawer UX). TASK-0073 Phase C 의 작업 화면 placeholder 가 entry point 부재 (admin 콘솔 redirect 안내만). 본 cycle: (1) `index.html` 의 profile drawer 에 "내 감사 로그" 탭 신설, (2) `audit.read.own` 보유 사용자에게 본인 audit row (Actor or Target = self) 표시, (3) admin 콘솔의 audit pane 과 동일 ChangeJson `<pre>` HTML escape + filter (action / from_at / to_at). CSV export / purge 는 admin 한정 (작업 화면 제외).
-- [ ] TASK-0090 (REQ-20260520-0005, Minor §12.3 — CSV streaming export). TASK-0073 Phase A4 의 `/api/admin/audits/export.csv` 의 hard cap 50k row → `StreamingResponse` 로 대체 + cursor 기반 page-by-page generator. large fleet (100k+ row) 에서 audit export 가능. memory footprint 안전. 본 cycle: backend FastAPI `StreamingResponse` + `csv.writer` iterator wrapper + Content-Type / Content-Disposition 정합.
+- [x] TASK-0090 (REQ-20260520-0005, Minor §12.3 — CSV streaming export). `/api/admin/audits/export.csv` 의 hard cap 50k row 제거 + `StreamingResponse` + keyset cursor pagination 전환. Codex outside voice review 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign: (1) sync generator + streaming-only conn (Codex C1 — async event loop blocking 회피), (2) max_id high-water mark (Codex C2 — long transaction 회피), (3) chunk_size 500 + 64KiB byte-threshold flush (Codex minimum-fix), (4) try/finally cleanup (Codex C5 — client disconnect cursor/conn 누설 차단), (5) export self-audit start + complete/aborted (Codex C4 — DoS 운영 제어), (6) hard cap 50k 제거 + SECURITY.md §9.5 갱신. 본 cycle CHG-20260520-0008, REV-20260520-0008 on `ai/claude/0090-csv-streaming-export` worktree.
 - [x] TASK-0091 (REQ-20260520-0006, ~~Minor~~ **Major** §12.3 — PATCH admin/products audit before-state full snapshot + audit integrity fix). TASK-0073 Phase A5 의 `admin.product.update` audit 의 before-state 가 `{id, product_key}` 만 → full snapshot 으로 확장 + Codex outside voice 5 findings 흡수. **scope 확장 (Minor→Major)**: Codex C2 가 `admin_update_product()` 의 `autocommit=True` default + UPDATE 즉시 commit + audit 실패 시 rollback 가능 0 인 **audit integrity 결함** 노출. 본 cycle 일괄 fix: (1) `_audit_product_snapshot()` 신규 helper (single-row + SELECT FOR UPDATE + system_prompt summary only, SECURITY §9.2 정합), (2) endpoint 명시 transaction (autocommit=False + commit + finally autocommit=True), (3) `_AUDIT_BUILDER_PRODUCT_FIELDS` 확장 (`+is_default`, `+sort_order`, `+system_prompt_summary` / `-databases`, `-system_prompt` full), (4) `default_cleared_product_ids` side effect 기록, (5) sentinel smoke PASS (SENTINEL `TASK-0091-SENTINEL` ChangeJson 부재 확인, system_prompt content drop). 본 cycle CHG-20260520-0006, REV-20260520-0006 on `ai/claude/0091/product-audit-snapshot` worktree.
 - [x] TASK-0092 (REQ-20260520-0007, Minor §12.3 — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 검증). TASK-0073 Phase E 의 사용자 위임 항목 1 건. **7 vector matrix PASS (7/7)** — V1~V3 fail-closed + V4 dev bypass + V5 positive control + V6 strict-string-equality (Codex C3) + V7 default. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용 (`docker run --entrypoint python --no-deps` + `import web.app` + stderr 3 substring 검증 + TEST.md **§4** append). 본 cycle CHG-20260520-0004, REV-20260520-0004 on `ai/claude/0092/audit-prod-fail-closed` worktree.
 - [x] TASK-0093 (REQ-20260520-0008, Minor §12.3 — `bin/verify-completion.sh check_12` audit endpoint routing 정적 검사). TASK-0073 Phase E hotfix (CHG-20260520-0001) 의 routing 회귀 fragility 보강. Codex outside voice review 5 findings 흡수 후 plan v2 redesign (SKIP→FAIL structural / inline 4-path→auto-discovery static GET / `/purge` method-aware 제외 / helper split + fixture test / `9 checks`→`10 checks` footer). Phase A~D 모두 검증 PASS (production positive + 5 fixture negative + 5 other-feature SKIP). 본 cycle CHG-20260520-0003, REV-20260520-0003 on `ai/claude/0086/audit-followup` worktree.
@@ -836,6 +836,72 @@ Codex outside voice (consult mode, model_reasoning_effort=high, 390,785 tokens):
 - 5 critical findings 도출, 2 minimum-fix 권고
 - 본 ADR 의 5 findings 모두 ACCEPT → v2 redesign
 - `feedback_outside_voice_for_rbac` user policy 적용 — ADR 자체가 audit 정책 표면 영향
+
+---
+
+### 2.7 Implementation Plan (TASK-0090)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 **Minor 등급 backend code 변경** 계획이다. **상태**: `approved-after-outside-voice`. 사용자가 2026-05-20 에 plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, 550,870 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign → 사용자 confirm 진행.
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-20 (TASK-0090 Phase A~D 일괄, Minor backend code + Codex outside voice 5 findings 흡수) -->
+
+#### 요지
+
+`/api/admin/audits/export.csv` 의 hard cap 50k row + `cur.fetchall()` buffer + `io.StringIO()` 전체 메모리 로드를 **StreamingResponse + sync generator + keyset cursor pagination** 으로 전환. large fleet (100k+) memory footprint 안전 + export self-audit + try/finally cleanup.
+
+#### Codex outside voice review 흡수 (5 findings)
+
+| # | Finding | 흡수 |
+|---|---|---|
+| **C1** | async generator + sync mysql.connector = event loop blocking. StreamingResponse 는 sync iterator 도 받음 (iterate_in_threadpool). endpoint conn close 가 generator 보다 먼저 실행 → streaming-only conn 필요 | **ACCEPT** → `def csv_iter()` sync generator + 별 streaming conn (generator 내부 finally cleanup) |
+| **C2** | consistent snapshot 은 long transaction 부담. audit append-only → `MAX(Id)` high-water mark 권장 | **ACCEPT** → 시작 시 `SELECT MAX(Id) FROM WebAuditEvents{where}` 잡고 모든 page `Id <= max_id AND Id < cursor_id` |
+| **C3** | keyset + filter 정합 OK, 단 query plan 미보장. EXPLAIN FORMAT=JSON 권장 | **ACCEPT** → TEST.md 에 representative filters EXPLAIN 기록 (live mysql 실행 가능 시 future cycle, 본 cycle 은 코드 변경만) |
+| **C4** | 50k cap 제거 = DoS/계약 변경. SECURITY 갱신 + export self-audit + 동시 실행 제한 | **ACCEPT (부분)** → cap 제거 + SECURITY §9.5 갱신 + export self-audit (start + complete/aborted). 동시 실행 제한은 multi-worker semaphore 정합 → 별 cycle followup |
+| **C5** | cleanup generator try/finally — client disconnect / timeout 시 cursor/conn 누설 | **ACCEPT** → generator 내부 try/finally (cursor.close + conn.close + complete audit) |
+
+추가 흡수 (minimum-fix 2):
+- chunk_size **1000→500** (안전 마진)
+- 1 row yield 대신 **64KiB byte-threshold flush**
+- CRLF 유지, BOM 추가 안 함
+
+#### 영향 파일 (code 1 + docs 6)
+
+- `unit/feature-0003-agent-web-ui/src/app.py`:
+  - `StreamingResponse` import 추가 (line 28).
+  - 신규 helper `_audit_export_filter_hash(params)` (~line 9466) — filter PII 회피용 sha256[:16] hash.
+  - 신규 const `_AUDIT_EXPORT_CHUNK_SIZE = 500`, `_AUDIT_EXPORT_FLUSH_BYTES = 65536`.
+  - `export_audit_events_csv` endpoint 전면 재작성 (line 9476~9683): 2-phase (짧은 auth conn + max_id capture + start audit → sync generator with streaming-only conn + chunked SELECT + byte-threshold flush + try/finally + complete audit).
+- 문서:
+  - `docs/SECURITY.md §9.5`: `audit.export` permission 설명 갱신 (hard cap 50k 제거 + StreamingResponse + max_id high-water + self-audit).
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: §2.7 본 plan + TASK-0090 [x].
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: CHG-20260520-0008.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260520-0008.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary.
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md`: §4 본 cycle 결과.
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: AC-0193.
+
+#### Phase 순서
+
+1. **Phase A** — endpoint 재작성 + StreamingResponse import. **완료**.
+2. **Phase B** — py_compile PASS + lightweight smoke (host-mounted code + docker run): `_AUDIT_EXPORT_CHUNK_SIZE=500`, `_AUDIT_EXPORT_FLUSH_BYTES=65536`, helper 존재, `StreamingResponse` import, filter_hash deterministic. **완료**.
+3. **Phase C** — docs 6 갱신. **본 단계 진행 중**.
+4. **Phase D** — verify-completion + commit + cycle-finalize (issue + push + PR + merge + cleanup).
+
+#### 위험도 (§12.3) — **Minor**
+
+backend code 1 endpoint, runtime 영향 audit subsystem only, contract 변경 = hard cap 50k 제거 (응답 형식 CSV 동일). live PATCH runtime smoke = PR merge 후 사용자 위임.
+
+#### Recommended future cycle (Codex C4 followup)
+
+- 동시 export 제한 (multi-worker semaphore 정합 검토)
+- representative filters EXPLAIN FORMAT=JSON 분석 (live mysql)
+
+#### outside voice 결과 (REVIEW.md REV-20260520-0008 정본)
+
+Codex outside voice (consult mode, model_reasoning_effort=high, 550,870 tokens):
+- 5 critical findings + 2 minimum-fix recommendations
+- 5 findings 모두 ACCEPT → v2 redesign
+- C4 부분 흡수 — 동시 실행 제한은 별 cycle (multi-worker semaphore)
 
 ---
 
