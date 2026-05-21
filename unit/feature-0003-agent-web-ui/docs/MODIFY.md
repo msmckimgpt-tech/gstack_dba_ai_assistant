@@ -8,6 +8,35 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260520-0008
+- Date: 2026-05-20
+- Summary: TASK-0090 (REQ-20260520-0005, **Minor** §12.3 — CSV streaming export). `/api/admin/audits/export.csv` hard cap 50k row 제거 + StreamingResponse + keyset cursor pagination 전환. Codex outside voice review 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - `StreamingResponse` import 추가 (line 28).
+    - 신규 helper `_audit_export_filter_hash(params)` (~line 9466): filter PII 회피용 sha256[:16] hash.
+    - 신규 const `_AUDIT_EXPORT_CHUNK_SIZE = 500` + `_AUDIT_EXPORT_FLUSH_BYTES = 65536`.
+    - `export_audit_events_csv` endpoint 전면 재작성: 2-phase (짧은 auth conn + max_id capture + start audit → sync generator with streaming-only conn + chunked SELECT + byte-threshold flush + try/finally + complete audit).
+  - `docs/SECURITY.md §9.5`: `audit.export` 설명 갱신 (hard cap 50k 제거 + StreamingResponse + max_id high-water + self-audit + 동시 제한 별 cycle).
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: §2.7 + TASK-0090 [x].
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260520-0008.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary.
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md`: §4 본 cycle 결과.
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: AC-0193.
+- Codex outside voice 5 findings 흡수:
+  - C1 async generator + sync mysql → sync generator (def csv_iter) + streaming-only conn (generator 내부 finally)
+  - C2 consistent snapshot → max_id high-water mark (long transaction 회피)
+  - C3 query plan 미보장 → TEST.md EXPLAIN 기록 (future cycle, live mysql)
+  - C4 cap 제거 = DoS/계약 변경 → SECURITY 갱신 + export self-audit + 동시 제한 별 cycle followup
+  - C5 cleanup → generator 내부 try/finally (cursor + conn + complete audit)
+- 추가: chunk_size 1000→500, 64KiB byte-threshold flush, CRLF 유지 (BOM 추가 안 함).
+- Self-audit ActionCode 신설: `audit.export.start`, `audit.export.complete`, `audit.export.aborted` (purge 패턴 답습).
+- Verification:
+  - py_compile PASS
+  - lightweight smoke: _AUDIT_EXPORT_CHUNK_SIZE=500 ✓, _AUDIT_EXPORT_FLUSH_BYTES=65536 ✓, helper 존재 ✓, StreamingResponse import ✓, filter_hash deterministic ✓
+- Risks: live runtime smoke (PATCH 호출 + WebAuditEvents row 검증) PR merge 후 사용자 위임. 동시 export 제한 별 cycle (multi-worker semaphore 정합 검토). representative filters EXPLAIN 분석 별 cycle.
+- Trace: REQ-20260520-0005 → TASK-0090 → CHG-20260520-0008 → REV-20260520-0008.
+
 ## CHG-20260520-0007
 - Date: 2026-05-20
 - Summary: TASK-0088 (REQ-20260520-0003, **Minor** §12.3 — `slow_query_log` 통합 ADR-0020 결정, docs only). ADR-0019 의 Codex C1 lock-in 의 최종 결론 — **Option C Decoupled 채택** (slow_query_log 와 WebAuditEvents 통합 안 함). Codex outside voice review 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign 적용.

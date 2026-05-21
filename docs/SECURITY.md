@@ -141,7 +141,7 @@ REQ-20260519-0001 — 모든 admin mutation + user 4 high-signal action (`/api/a
 
 - `audit.read.own` — 모든 role (pending / operator / sales / dba 포함) 자동 grant. `.own` SQL filter = `WHERE ActorAccountId = :self OR TargetAccountId = :self` (Eng review E1, 사용자 결정 B). admin password-reset / role permission grant / share revoke 등 admin→user 이벤트가 user 본인 audit 에 노출 → 보안 가시성 정합.
 - `audit.read.any` — admin / dba auto-grant. 전체 row 조회. `.own` superset semantics (TASK-0058 share read-gate 패턴 답습).
-- `audit.export` — admin / dba auto-grant. CSV / JSON dump (hard cap 50k row). masked field 정책 유지.
+- `audit.export` — admin / dba auto-grant. CSV / JSON dump. **TASK-0090 (2026-05-20) StreamingResponse 전환 — hard cap 50k row 제거**, max_id high-water mark + keyset cursor pagination (chunk_size=500) + 64KiB byte-threshold flush + try/finally cleanup + export self-audit (start + complete event 2 건, `action="audit.export.start"` / `audit.export.complete`/`audit.export.aborted`). masked field 정책 유지. 동시 export 제한은 별 cycle (multi-worker semaphore 정합 검토).
 - `audit.purge` — admin only auto-grant. retention 초과 row chunked PK 삭제. start/complete self-audit row 동반.
 - permission group `audit` 신규 — `docs/CONVENTIONS.md §10.6` admin section "관리 권한" 묶음 합류 + 작업 화면 placeholder (manage section).
 - `_ensure_seed_catchup` 의 `_ensure_permission_catalog` 호출이 `_ensure_seed_roles` 앞 (TASK-0063 회귀 fix 패턴 답습) — 기존 배포의 신규 4 권한 backfill 보장.

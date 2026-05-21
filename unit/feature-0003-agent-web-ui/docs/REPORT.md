@@ -10,6 +10,39 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-05-20 TASK-0090 완료 (Phase A~D 일괄) — `/api/admin/audits/export.csv` CSV streaming export 전환** (CHG-20260520-0008, REV-20260520-0008, REQ-20260520-0005, **Minor** §12.3 — hard cap 50k 제거 + StreamingResponse + keyset cursor + max_id high-water + self-audit, Codex outside voice 5 findings 흡수 v2 redesign).
+
+**본 cycle Phase 별 변경 요약**:
+- **Phase A** — `export_audit_events_csv` endpoint 전면 재작성. 2-phase 구조 (auth conn + max_id capture + start audit → sync generator with streaming-only conn + chunked SELECT + byte-threshold flush + try/finally + complete audit). 신규 helper `_audit_export_filter_hash()`, const `_AUDIT_EXPORT_CHUNK_SIZE=500` / `_AUDIT_EXPORT_FLUSH_BYTES=65536`. `StreamingResponse` import.
+- **Phase B** — py_compile + lightweight smoke 모두 PASS.
+- **Phase C** — docs 6 갱신.
+- **Phase D** — verify-completion + commit + cycle-finalize.
+
+**Codex outside voice 5 findings 흡수**:
+- C1 async + sync mysql blocking → sync generator + streaming-only conn
+- C2 consistent snapshot → max_id high-water mark
+- C3 query plan EXPLAIN → future cycle
+- C4 cap 제거 = DoS → SECURITY 갱신 + export self-audit
+- C5 cleanup → generator 내부 try/finally
+
+**Self-audit ActionCode 신설**: `audit.export.start` / `audit.export.complete` / `audit.export.aborted`.
+
+### Git 동기화 결과 (§16.3 Step 6)
+
+PR description body 명시 — REPORT.md 갱신 별 commit 회피 (cycle-finalize 패턴).
+
+### 후속 단계 (별 cycle)
+
+- 동시 export 제한 (multi-worker semaphore 정합 검토 + advisory lock, Minor)
+- representative filters EXPLAIN FORMAT=JSON 분석 (Minor, live mysql)
+- TASK-0073 backlog 2 entries 남음 (TASK-0087/0089)
+- SECURITY.md §8 strict-string-equality 계약 (TASK-0092 followup)
+- `_migrate_web_account_activity_to_audit()` 제거 (TASK-0086 followup)
+
+---
+
+## 1.archived TASK-0088 Summary (2026-05-20)
+
 **2026-05-20 TASK-0088 완료 (Phase A~D 일괄) — `slow_query_log` 통합 ADR-0020 Decoupled 채택 (docs only)** (CHG-20260520-0007, REV-20260520-0007, REQ-20260520-0003, **Minor** §12.3 — ADR-0019 Codex C1 lock-in 의 final 결론, Codex outside voice 5 findings 흡수 v2 redesign).
 
 **본 cycle Phase 별 변경 요약**:

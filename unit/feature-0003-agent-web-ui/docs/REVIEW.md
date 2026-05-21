@@ -8,6 +8,41 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260520-0008 [AGENT-TEAM:codex-outside-voice]
+- Date: 2026-05-20
+- Decision: TASK-0090 (REQ-20260520-0005, **Minor** §12.3 — CSV streaming export) plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, 550,870 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign → 사용자 confirm. `/api/admin/audits/export.csv` hard cap 50k row 제거 + StreamingResponse + keyset cursor pagination + max_id high-water + try/finally + self-audit.
+- Reason: TASK-0073 Phase A4 의 50k cap 이 large fleet (100k+ row) export 부족. memory footprint (50k × 1KB = 50MB+ buffer) DoS surface. `feedback_outside_voice_for_rbac` policy — audit export 표면 직접 변경.
+- Codex outside voice 5 findings 흡수:
+  - **C1 — async + sync mysql.connector blocking**: StreamingResponse 는 sync iterator 받음 (iterate_in_threadpool). async generator 안 sync cur.execute = event loop blocking. endpoint conn close 가 generator 보다 먼저 실행 위험. **ACCEPT** → `def csv_iter()` sync generator + 별 streaming conn (generator 내부 finally cleanup).
+  - **C2 — consistent snapshot vs max_id**: `START TRANSACTION WITH CONSISTENT SNAPSHOT` long transaction 부담. audit append-only → `MAX(Id)` high-water mark 가 minimal overhead. **ACCEPT** → 시작 시 `SELECT MAX(Id) FROM WebAuditEvents{where}` 잡고 모든 page `Id <= max_id`.
+  - **C3 — keyset + filter 정합 + query plan**: keyset 자체는 정합. 단 `ORDER BY Id DESC + filter` 조합 인덱스 미보장. **ACCEPT (부분)** → TEST.md 에 EXPLAIN 분석 future cycle 명시 (본 cycle 은 코드 변경만, live mysql EXPLAIN 별 cycle).
+  - **C4 — cap 제거 = DoS/계약 변경**: cap 은 SECURITY.md §9 명시. 제거 시 운영 제어 (export self-audit + 동시 실행 제한 + EXPLAIN) 필요. **ACCEPT (부분)** → cap 제거 + SECURITY §9.5 갱신 + export self-audit (start + complete/aborted). 동시 실행 제한 (semaphore) 은 multi-worker 정합 검토 필요 → 별 cycle followup.
+  - **C5 — cleanup try/finally**: client disconnect / timeout / send error 시 cursor/conn 누설. **ACCEPT** → generator 내부 try/finally (cursor.close + conn.close + complete audit).
+- 추가 흡수 (minimum-fix 2):
+  - chunk_size 1000 → **500** (안전 마진)
+  - 1 row yield 대신 **64KiB byte-threshold flush** (uvicorn buffering 효율)
+  - CRLF 유지, BOM 추가 안 함 (기존 contract 보존)
+- Alt 거부:
+  - **v1 단독 진행 (outside voice 흡수 X)**: C1 (event loop blocking) + C5 (cleanup 누설) 모두 fatal. v2 redesign 필수.
+  - **C4 완화 (cap 1M 으로 증가만)**: large fleet 미충족 + streaming 미적용 시 memory footprint 그대로. 사용자 v2 단독 진행 confirm 시 거부.
+  - **C2 제외 (snapshot/high-water 없이)**: 중간 INSERT 가 export 에 섞일 가능성. audit append-only 가정 + max_id 가 minimal overhead 라 채택.
+- Self-audit ActionCode 신설 (purge 패턴 답습): `audit.export.start`, `audit.export.complete`, `audit.export.aborted`. ChangeJson = `{scope, filter_hash, max_id, exported_row_count, elapsed_ms, aborted}`. filter_hash = sha256[:16] (raw filter PII 회피).
+- Verification (Phase B lightweight smoke):
+  - py_compile PASS
+  - `_AUDIT_EXPORT_CHUNK_SIZE=500` ✓
+  - `_AUDIT_EXPORT_FLUSH_BYTES=65536` ✓
+  - `_audit_export_filter_hash` 존재 + sort_keys 정렬 deterministic (h1 == h2 = `42ea65e7de088de2`) ✓
+  - `StreamingResponse` imported ✓
+- Risks: live runtime smoke (실 PATCH/SSE export 호출 + WebAuditEvents row 검증) PR merge 후 사용자 위임. 동시 export 제한 (semaphore) 미구현 — 별 cycle. representative filters EXPLAIN 분석 별 cycle.
+- 미해결 followup:
+  - 동시 export 제한 (multi-worker semaphore 정합 검토 + advisory lock 또는 별 솔루션, Minor)
+  - representative filters EXPLAIN FORMAT=JSON 분석 (Minor, live mysql)
+  - SECURITY.md §8 strict-string-equality 계약 (TASK-0092 V6 followup)
+  - rollback window 종료 후 `_migrate_web_account_activity_to_audit()` 제거 (TASK-0086 followup)
+  - TASK-0073 backlog 2 entries 남음 (TASK-0087, TASK-0089) — 각 별 cycle
+- panel: AGENT-TEAM:codex-outside-voice — Codex consult mode (550,870 tokens). 본 cycle verification panel.
+- Trace: REQ-20260520-0005 → TASK-0090 → CHG-20260520-0008 → REV-20260520-0008.
+
 ## REV-20260520-0007 [AGENT-TEAM:codex-outside-voice]
 - Date: 2026-05-20
 - Decision: TASK-0088 (REQ-20260520-0003, **Minor** §12.3 — `slow_query_log` 통합 ADR-0020, docs only) plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, 390,785 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign → 사용자 confirm → ADR-0020 accepted. ADR-0019 Codex C1 lock-in 의 최종 결론 — **Option C Decoupled 채택**.
