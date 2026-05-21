@@ -1645,3 +1645,18 @@ source_of_truth: true
   - 5 신규 table 은 `DROP TABLE IF EXISTS WebConversationAttachments, WebConversationAttachmentsSandboxSchemas, WebAccountConsents, WebAttachmentDerivedMessages, WebConversationAttachmentProviderFiles;` 로 제거 (rollback DDL 단순).
   - `WebConversationShares.PolicyVersion` column 은 `ALTER TABLE WebConversationShares DROP COLUMN PolicyVersion;` 으로 제거 (column 자체는 NOT NULL DEFAULT 1 이라 기존 row 영향 0).
   - 본 Phase 2 가 ship 된 commit 후에 사용자 데이터가 누적되지 않은 시점이라 rollback risk 최소.
+
+## CHG-20260521-0005
+- Date: 2026-05-21
+- Related Requirement: TASK-0094 (REQ-20260521-0001, Critical §12.3) Sprint 1 Phase 3 — Cycle 0 RBAC (4 권한 + 6 checklist + D21 pending)
+- Summary: BRIEFING §5.2 1~4 row 정합. 첨부 기능 4 권한 코드 (`conversation.attachment.{upload,read}.{own,any}`) catalog 추가 + admin/operator/sales/dba/pending 5 role 모두 catchup + D21 (R-F14) pending metadata-only + app.js label/description map. attachment group 신설은 Phase 12 (Cycle 1 attachment.execute_sql_on.*) 까지 보류.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py` — PERMISSION_DEFINITIONS 4 코드 추가 (line 314~341, 약 28 lines), SEED_ROLE_DEFINITIONS pending/operator/sales 의 permissions set 에 attachment 권한 추가, _ensure_seed_roles 의 admin/operator-sales/dba/pending 4 곳 catchup tuple 갱신.
+  - `unit/feature-0003-agent-web-ui/src/static/app.js` — PERMISSION_LABELS (line ~267) + PERMISSION_DESCRIPTIONS (line ~310) 에 4 코드 추가 (각 8 lines).
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md` — AC-0216~0218 (3 AC).
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` — Phase 3 [x] 표시 + Current Status 갱신.
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md` — 본 entry.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260521-0005 [SKIPPED:rbac-catalog-only] append.
+- Notes: 사용자 메모리 정책 "RBAC plan 은 outside voice 필수" 대응 — 본 Phase 3 의 RBAC 변경은 TASK-0094 BRIEFING Revision 2 (Codex outside-voice review 2 회 흡수 lock-in) 의 D6/D11/D12/D14/D15/D16/D21 결정 정합. catalog blindspot 대응은 BRIEFING REV-20260520-0001 Claim #1 (6 checklist) + Claim #3 (정적 catalog source) + REV-20260521-0002 R-F14 (pending metadata-only) 흡수로 이미 정본 review 완료. 사용자 명시 진입 결정에 따라 본 Phase 진행. 후속 plan-eng-review / codex review 는 Phase 12 (D14 SQL guard, Ship 조건) 진입 시점에 권장.
+- Impact: 새 catalog 4 코드 + 5 role catchup. 기존 배포에 `_ensure_seed_catchup` fast path 진입 시 자동 INSERT IGNORE. application-level endpoint 는 Phase 5 (upload API) 에서 ship — 본 Phase 3 ship 직후 시점은 권한만 부여, 실제 upload/download 경로 unavailable.
+- Rollback Notes: PERMISSION_DEFINITIONS 의 4 코드 entry / SEED_ROLE_DEFINITIONS pending/operator/sales 추가 권한 / _ensure_seed_roles 의 5 catchup 추가 / app.js label/description map 의 4 entry revert. 기존 배포의 WebRolePermissions 에 INSERT 된 row 는 `DELETE FROM WebRolePermissions WHERE PermissionId IN (SELECT Id FROM WebPermissions WHERE Code LIKE 'conversation.attachment.%')` 또는 보존 (catalog 무관 row 는 영향 0).
