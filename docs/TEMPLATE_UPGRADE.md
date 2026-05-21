@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.8.0
+template_version: v3.9.0
 domain: [workflow, tooling]
 ai_read_priority: 5
 ---

@@ -25,7 +25,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from modules.memory import (
@@ -2124,6 +2124,54 @@ LIMIT 1
     }
 
 
+def _audit_product_snapshot(conn, product_id: int) -> dict | None:
+    """REQ-20260520-0006 (TASK-0091): single-row WebProducts snapshot for admin.product.update audit.
+
+    SECURITY.md §9.2 정합 — `system_prompt.content` full body 제외 (`{present, content_len,
+    updated_at}` summary 만 포함). `WebProductDatabases` 도 제외 (별 endpoint
+    `admin.product.databases.update` 의 audit 으로 분리, Codex C3).
+
+    `SELECT ... FOR UPDATE` 로 row lock (Codex C2 — 명시 transaction).
+    """
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+SELECT Id AS id, ProductKey AS product_key, Name AS name, Description AS description,
+       IsActive AS is_active, IsDefault AS is_default, SortOrder AS sort_order,
+       DefaultRoleAccess AS default_role_access
+FROM WebProducts
+WHERE Id = %s
+FOR UPDATE
+        """,
+        (int(product_id),),
+    )
+    row = cur.fetchone()
+    cur.close()
+    if not row:
+        return None
+    product: dict[str, Any] = {
+        "id": int(row.get("id") or 0),
+        "product_key": str(row.get("product_key") or ""),
+        "name": str(row.get("name") or ""),
+        "description": str(row.get("description") or ""),
+        "is_active": bool(row.get("is_active")),
+        "is_default": bool(row.get("is_default")),
+        "sort_order": int(row.get("sort_order") or 0),
+        "default_role_access": bool(row.get("default_role_access", True)),
+    }
+    sp = _load_system_prompt(conn, scope="product", product_id=int(product_id))
+    if sp:
+        content = str(sp.get("content") or "")
+        product["system_prompt_summary"] = {
+            "present": True,
+            "content_len": len(content),
+            "updated_at": str(sp.get("updated_at") or ""),
+        }
+    else:
+        product["system_prompt_summary"] = {"present": False}
+    return product
+
+
 def _upsert_system_prompt(
     conn,
     *,
@@ -2534,35 +2582,6 @@ def _ensure_web_conversation_shares_schema(conn) -> None:
         cur.close()
 
 
-def _ensure_web_account_activity_schema(conn) -> None:
-    """REQ-20260518-0010 (TASK-0072, Critical §12.3): cross-account body search audit log.
-
-    PIPA §29 (안전성 확보 조치) + 표준 개인정보처리방침의 "접근기록 1년 보관" 요건.
-    `.any` 보유자가 다른 계정의 대화 본문을 검색하거나 snippet 을 opt-in 할 때 INSERT.
-    query 평문 저장 금지 — SHA-256 hex 만 (재현 가능 + 평문 회피).
-    `_ensure_web_tables` (slow path) 와 `_ensure_seed_catchup` (fast path) 양쪽에서 호출.
-    """
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS WebAccountActivity (
-                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                AccountId BIGINT NOT NULL,
-                Action VARCHAR(64) NOT NULL,
-                TargetOwnerId BIGINT NULL,
-                QueryHash CHAR(64) NULL,
-                MatchedCount INT NOT NULL DEFAULT 0,
-                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                INDEX IX_WAA_Account (AccountId, CreatedAt),
-                INDEX IX_WAA_Action (Action, CreatedAt)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """
-        )
-    finally:
-        cur.close()
-
-
 def _log_search_activity(
     conn,
     account_id: int,
@@ -2573,12 +2592,15 @@ def _log_search_activity(
 ) -> None:
     """REQ-20260518-0010 (TASK-0072): cross-account body search audit. PIPA §29.
 
-    TASK-0073 Phase A2 흡수: signature transparent 보존, 본문은 dual write —
-    (1) 기존 `WebAccountActivity` INSERT 유지 (data 보존, 별 cycle 에서 DROP),
-    (2) 새 `record_audit_event` dispatcher 호출 추가 (WebAuditEvents 통합).
-    두 source 모두 실패해도 main flow 진행 (user endpoint fail-open 패턴).
+    TASK-0086 (2026-05-20): legacy `WebAccountActivity` INSERT 제거 — TASK-0073
+    Phase A2 의 dual write 종료. dispatcher mirror (`record_audit_event` →
+    WebAuditEvents) 가 단일 source-of-truth. signature transparent 보존 (caller
+    변경 0). dispatcher fail 시 stderr log 만 + main flow 진행 (user endpoint
+    fail-open 패턴 TASK-0072 답습).
 
-    query 평문 저장 금지 — SHA-256 hex 만 저장. INSERT 실패 시 stderr 로 추적.
+    query 평문 저장 금지 — SHA-256 hex 만 저장.
+    `ChangeJson._legacy_source="WebAccountActivity"` 표식은 TASK-0086 backup
+    (`artifacts/mysql-backup/WebAccountActivity-*.sql`) cross-reference 위해 보존.
     """
     import hashlib
     query_hash: str | None = None
@@ -2586,34 +2608,7 @@ def _log_search_activity(
         normalized = query.strip()
         if normalized:
             query_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-    # (1) legacy WebAccountActivity INSERT (dual write, 별 cycle 에서 DROP table 후 제거).
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            "INSERT INTO WebAccountActivity (AccountId, Action, TargetOwnerId, QueryHash, MatchedCount) "
-            "VALUES (%s, %s, %s, %s, %s)",
-            (
-                int(account_id),
-                str(action)[:64],
-                int(target_owner_id) if target_owner_id is not None else None,
-                query_hash,
-                int(matched_count),
-            ),
-        )
-        conn.commit()
-    except Exception as exc:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        try:
-            import sys as _sys
-            _sys.stderr.write(f"[TASK-0072 audit] _log_search_activity failed: {exc}\n")
-        except Exception:
-            pass
-    finally:
-        cur.close()
-    # (2) TASK-0073 Phase A2: new dispatcher mirror — best-effort, signature 무영향.
+    # TASK-0086 (2026-05-20): dispatcher only — WebAccountActivity legacy table DROP 완료.
     try:
         record_audit_event(
             conn,
@@ -2639,7 +2634,7 @@ def _log_search_activity(
         try:
             import sys as _sys
             _sys.stderr.write(
-                f"[TASK-0073 Phase A2] dispatcher mirror failed (legacy WebAccountActivity OK): {exc}\n"
+                f"[TASK-0086] _log_search_activity dispatcher failed: {exc}\n"
             )
         except Exception:
             pass
@@ -2673,7 +2668,8 @@ def _ensure_web_audit_events_schema(conn) -> None:
     - (ActorType, OccurredAt) — anonymous / system 분리 조회 (E4)
 
     `_ensure_web_tables` (slow path) 와 `_ensure_seed_catchup` (fast path) 양쪽에서
-    호출되어 idempotent 보장. TASK-0072 `_ensure_web_account_activity_schema` 패턴 답습.
+    호출되어 idempotent 보장. (TASK-0086 에서 WebAccountActivity schema helper 는
+    legacy table DROP 과 함께 제거됨 — 본 함수의 idempotent 호출 패턴은 동일.)
     """
     cur = conn.cursor()
     try:
@@ -2852,13 +2848,17 @@ def _migrate_web_account_activity_to_audit(conn) -> int:
     `query_hash` + `matched_count` 보존. RemoteAddr / UserAgent NULL (TASK-0072
     schema 에는 부재). OccurredAt = waa.CreatedAt (시간 정합).
 
-    기존 `WebAccountActivity` 테이블 자체는 본 cycle 에서 DROP 안 함 — 별 cycle
-    backup 후 DROP. dual source 일시 공존.
+    **TASK-0086 (2026-05-20)**: WebAccountActivity 테이블 DROP 완료. 본 helper 는
+    rollback 1~2 cycle window 동안 보존 (Codex outside voice C5 — code revert +
+    DB restore 시나리오) — line 2813 의 `SHOW TABLES LIKE 'WebAccountActivity'`
+    check 가 table-absent 시 silent return 0. rollback window 종료 후 별 cycle
+    에서 helper 제거.
 
     `_ensure_seed_catchup` (fast path) 와 `_ensure_web_tables` (slow path) 양쪽
     호출 → 신규 / 기존 배포 모두 자동 흡수. 실패는 stderr only (main flow 차단 X).
 
-    Returns: 새로 INSERT 된 row 수 (기존 marker 있는 row 는 skip).
+    Returns: 새로 INSERT 된 row 수 (기존 marker 있는 row 는 skip, 또는 table
+    부재 시 0).
     """
     cur = conn.cursor()
     try:
@@ -2975,12 +2975,10 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_web_conversation_shares_schema(conn)
     # TASK-0061 Phase 6: 기존 배포에 MustChangePassword 컬럼 backfill.
     _ensure_must_change_password_schema(conn)
-    # REQ-20260518-0010 (TASK-0072): cross-account body search audit log 테이블 fast-path 보정.
-    _ensure_web_account_activity_schema(conn)
     # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 fast-path 보정.
     _ensure_web_audit_events_schema(conn)
-    # REQ-20260519-0001 (TASK-0073, Phase A2): WebAccountActivity 기존 row → WebAuditEvents 흡수
-    # (idempotent — RequestId='account-activity:<id>' marker). 기존 table 자체는 별 cycle 까지 보존.
+    # REQ-20260520-0001 (TASK-0086): WebAccountActivity DROP 완료. migration helper 는
+    # rollback 1~2 cycle window 동안 보존 — table 부재 시 SHOW TABLES check 로 silent skip.
     try:
         _migrate_web_account_activity_to_audit(conn)
     except Exception:
@@ -3126,11 +3124,10 @@ def _ensure_web_tables():
         _ensure_dynamic_permissions_schema(conn)
         # REQ-20260514-0001: 공유 링크 테이블 보장 (slow path).
         _ensure_web_conversation_shares_schema(conn)
-        # REQ-20260518-0010 (TASK-0072): cross-account body search audit log 테이블 보장 (slow path).
-        _ensure_web_account_activity_schema(conn)
         # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 보장 (slow path).
         _ensure_web_audit_events_schema(conn)
-        # REQ-20260519-0001 (TASK-0073, Phase A2): WebAccountActivity 기존 row 흡수 (slow path).
+        # REQ-20260520-0001 (TASK-0086): migration helper 는 rollback window 동안 보존 (slow path).
+        # WebAccountActivity 부재 시 SHOW TABLES check 로 silent skip.
         try:
             _migrate_web_account_activity_to_audit(conn)
         except Exception:
@@ -8395,47 +8392,82 @@ async def admin_update_product(product_id: int, request: Request) -> JSONRespons
     if not _account_has_permission(account, "product.manage"):
         conn.close()
         return _json_error("제품 관리 권한이 필요합니다.", 403)
-    cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT Id, ProductKey FROM WebProducts WHERE Id = %s", (int(product_id),))
-    existing = cur.fetchone()
-    cur.close()
-    if not existing:
-        conn.close()
-        return _json_error("product not found", 404)
-    fields: list[str] = []
-    params: list[Any] = []
-    if "name" in data:
-        fields.append("Name = %s")
-        params.append(str(data.get("name") or "").strip())
-    if "description" in data:
-        fields.append("Description = %s")
-        params.append(str(data.get("description") or "").strip())
-    if "is_active" in data:
-        fields.append("IsActive = %s")
-        params.append(1 if bool(data.get("is_active")) else 0)
-    if "sort_order" in data:
-        fields.append("SortOrder = %s")
-        params.append(int(data.get("sort_order") or 100))
-    set_default = False
-    if "is_default" in data:
-        fields.append("IsDefault = %s")
-        params.append(1 if bool(data.get("is_default")) else 0)
-        set_default = bool(data.get("is_default"))
-    # TASK-0053: default_role_access 정책 토글도 admin update 에서 변경 가능 (기존 product 정책 변경).
-    if "default_role_access" in data:
-        fields.append("DefaultRoleAccess = %s")
-        params.append(1 if bool(data.get("default_role_access")) else 0)
-    if fields:
-        params.append(int(product_id))
-        cur = conn.cursor()
-        cur.execute(f"UPDATE WebProducts SET {', '.join(fields)} WHERE Id = %s", tuple(params))
-        cur.close()
-        if set_default:
-            cur = conn.cursor()
-            cur.execute("UPDATE WebProducts SET IsDefault = 0 WHERE Id <> %s", (int(product_id),))
-            cur.close()
-    # TASK-0073 Phase A5: same-tx audit hook (product update).
+    # TASK-0091 (REQ-20260520-0006, Codex outside voice C2): 명시 transaction —
+    # autocommit=False + SELECT FOR UPDATE row lock + UPDATE + audit + commit.
+    # 기존 코드는 autocommit=True default 라 UPDATE 가 즉시 commit 되어 audit
+    # 실패 시 rollback 가능 0 였음 — audit integrity 결함. 본 cycle 에서 fix.
     try:
+        conn.autocommit = False
+    except Exception:
+        pass
+    try:
+        # before snapshot — SELECT ... FOR UPDATE 로 row lock (concurrent PATCH 차단).
+        existing = _audit_product_snapshot(conn, product_id)
+        if not existing:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            try:
+                conn.autocommit = True
+            except Exception:
+                pass
+            conn.close()
+            return _json_error("product not found", 404)
+
+        fields: list[str] = []
+        params: list[Any] = []
+        if "name" in data:
+            fields.append("Name = %s")
+            params.append(str(data.get("name") or "").strip())
+        if "description" in data:
+            fields.append("Description = %s")
+            params.append(str(data.get("description") or "").strip())
+        if "is_active" in data:
+            fields.append("IsActive = %s")
+            params.append(1 if bool(data.get("is_active")) else 0)
+        if "sort_order" in data:
+            fields.append("SortOrder = %s")
+            params.append(int(data.get("sort_order") or 100))
+        set_default = False
+        if "is_default" in data:
+            fields.append("IsDefault = %s")
+            params.append(1 if bool(data.get("is_default")) else 0)
+            set_default = bool(data.get("is_default"))
+        # TASK-0053: default_role_access 정책 토글도 admin update 에서 변경 가능 (기존 product 정책 변경).
+        if "default_role_access" in data:
+            fields.append("DefaultRoleAccess = %s")
+            params.append(1 if bool(data.get("default_role_access")) else 0)
+
+        default_cleared_product_ids: list[int] = []
+        if fields:
+            params.append(int(product_id))
+            cur = conn.cursor()
+            cur.execute(f"UPDATE WebProducts SET {', '.join(fields)} WHERE Id = %s", tuple(params))
+            cur.close()
+            if set_default:
+                # TASK-0091 (Codex C4): is_default=true side effect 추적 —
+                # 영향 받은 product ids 를 audit ChangeJson 에 기록.
+                cur = conn.cursor(dictionary=True)
+                cur.execute(
+                    "SELECT Id FROM WebProducts WHERE Id <> %s AND IsDefault = 1",
+                    (int(product_id),),
+                )
+                default_cleared_product_ids = [int(r["Id"]) for r in (cur.fetchall() or [])]
+                cur.close()
+                cur = conn.cursor()
+                cur.execute("UPDATE WebProducts SET IsDefault = 0 WHERE Id <> %s", (int(product_id),))
+                cur.close()
+
+        # after snapshot — UPDATE 결과 full row 캡처.
+        updated = _audit_product_snapshot(conn, product_id)
+
+        # TASK-0073 Phase A5 + TASK-0091: same-tx audit hook (full before/after snapshot).
+        before_for_audit: dict[str, Any] = dict(existing)
+        after_for_audit: dict[str, Any] = dict(updated) if updated else {"id": int(product_id)}
+        if set_default and default_cleared_product_ids:
+            # extra context — builder 의 allowlist 외 보조 메타.
+            after_for_audit["_default_cleared_product_ids"] = default_cleared_product_ids
         _audit_admin_mutation(
             conn,
             request,
@@ -8443,17 +8475,26 @@ async def admin_update_product(product_id: int, request: Request) -> JSONRespons
             action="admin.product.update",
             resource_type="product",
             resource_id=str(product_id),
-            before={"id": int(product_id), "product_key": existing.get("ProductKey")},
-            after={"id": int(product_id), **{k: data.get(k) for k in ("name", "description", "is_active", "sort_order", "is_default", "default_role_access") if k in data}},
+            before=before_for_audit,
+            after=after_for_audit,
         )
         conn.commit()
-    except Exception as audit_exc:
+    except Exception as exc:
         try:
             conn.rollback()
         except Exception:
             pass
+        try:
+            conn.autocommit = True
+        except Exception:
+            pass
         conn.close()
-        return _json_error(f"audit write failed: {audit_exc}", 500)
+        return _json_error(f"product update failed: {exc}", 500)
+    finally:
+        try:
+            conn.autocommit = True
+        except Exception:
+            pass
     conn.close()
     return JSONResponse({"ok": True, "product_id": int(product_id)})
 
@@ -8910,7 +8951,18 @@ async def me_put_system_prompt(request: Request) -> JSONResponse:
 
 _AUDIT_BUILDER_ACCOUNT_FIELDS = ("role_id", "is_active", "username", "permission_overrides")
 _AUDIT_BUILDER_ROLE_FIELDS = ("name", "description", "is_active", "permission_codes")
-_AUDIT_BUILDER_PRODUCT_FIELDS = ("product_key", "name", "description", "is_active", "default_role_access", "databases", "system_prompt")
+# TASK-0091 (REQ-20260520-0006, Codex outside voice C1+C4): allowlist 정정.
+# - `is_default` + `sort_order` 추가 (Codex C4 — endpoint 가 갱신 가능한데 누락이던 결함).
+# - `system_prompt_summary` 신설 (Codex C1 + SECURITY.md §9.2 — full content 금지,
+#   `{present, content_len, updated_at}` summary 만).
+# - `databases` 제거 (Codex C3 — 별 endpoint `admin.product.databases.update` 의
+#   audit 으로 분리, admin.product.update 의 ChangeJson 에서 noise + state mismatch).
+# - `system_prompt` 제거 (Codex C1 — full content 금지). admin.system_prompt.update
+#   는 별 builder branch (line 8990~) 가 `system_prompt.content_full` masked 처리.
+_AUDIT_BUILDER_PRODUCT_FIELDS = (
+    "product_key", "name", "description", "is_active", "is_default", "sort_order",
+    "default_role_access", "system_prompt_summary",
+)
 _AUDIT_MASKED_FIELDS_PASSWORD = ("password_hash", "temporary_password", "raw_password")
 _AUDIT_MASKED_FIELDS_TOKEN = ("session_token_hash", "session_token", "token")
 _AUDIT_MASKED_FIELDS_API_KEY = ("openai_api_key", "api_key", "secret")
@@ -9015,14 +9067,18 @@ def build_audit_change_json(
             [],
         )
     if action == "admin.product.update":
-        return (
-            {
-                "target_product_id": (before or {}).get("id") or (after or {}).get("id"),
-                "before": _audit_pick_fields(before, _AUDIT_BUILDER_PRODUCT_FIELDS),
-                "after": _audit_pick_fields(after, _AUDIT_BUILDER_PRODUCT_FIELDS),
-            },
-            [],
-        )
+        # TASK-0091 (Codex C4): is_default=true 시 다른 product 들의 IsDefault=0 side
+        # effect 도 audit ChangeJson 에 기록. caller (admin_update_product) 가
+        # after dict 에 `_default_cleared_product_ids` 키로 명시 전달.
+        cleared_ids = (after or {}).get("_default_cleared_product_ids") if isinstance(after, dict) else None
+        body: dict[str, Any] = {
+            "target_product_id": (before or {}).get("id") or (after or {}).get("id"),
+            "before": _audit_pick_fields(before, _AUDIT_BUILDER_PRODUCT_FIELDS),
+            "after": _audit_pick_fields(after, _AUDIT_BUILDER_PRODUCT_FIELDS),
+        }
+        if isinstance(cleared_ids, list) and cleared_ids:
+            body["default_cleared_product_ids"] = [int(x) for x in cleared_ids]
+        return (body, [])
     if action == "admin.product.delete":
         return (
             {
@@ -9407,17 +9463,43 @@ async def list_audit_events(request: Request) -> JSONResponse:
         conn.close()
 
 
+_AUDIT_EXPORT_CHUNK_SIZE = 500   # TASK-0090 (Codex C4 minimum-fix): 1000→500.
+_AUDIT_EXPORT_FLUSH_BYTES = 65536  # 64KiB byte-threshold flush (Codex minimum-fix).
+
+
+def _audit_export_filter_hash(params: dict) -> str:
+    """TASK-0090: export self-audit 용 filter hash (PII 회피 — raw filter value 대신 hash)."""
+    import hashlib as _h
+    serialized = json.dumps(params, ensure_ascii=False, sort_keys=True, default=str)
+    return _h.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+
+
 @app.get("/api/admin/audits/export.csv")
 async def export_audit_events_csv(request: Request) -> Any:
-    """REQ-20260519-0001 (TASK-0073 Phase A4): audit event CSV export.
+    """REQ-20260519-0001 (TASK-0073 Phase A4) + REQ-20260520-0005 (TASK-0090): audit event CSV streaming export.
 
     권한: `audit.export` (admin/dba). `.any` 와 동일 SQL — 전체 row 조회. masked field
     는 ChangeJson 안의 redact policy 그대로 (`MaskedFields` column 에 redact 대상 명시).
+
+    TASK-0090 (Codex outside voice 5 findings 흡수):
+      - **StreamingResponse + sync generator** (Codex C1 — async generator 안 sync mysql.connector 호출 시 event loop blocking).
+      - **streaming-only connection** (Codex C1 — endpoint conn 은 auth + max_id capture + start self-audit 후 close, generator 내부에서 별 conn open + finally cleanup).
+      - **max_id high-water mark** (Codex C2 — long transaction 회피, append-only audit 정합. 시작 시 `MAX(Id)` 잡고 모든 page `Id <= max_id`).
+      - **chunk_size = 500** + **64KiB byte-threshold flush** (Codex minimum-fix — 1 row yield = uvicorn buffering 불효율).
+      - **try/finally cleanup** (Codex C5 — client disconnect / timeout 시 cursor/conn 누설 차단).
+      - **export self-audit** (start + complete 2 event, Codex C4 — DoS 운영 제어). `audit.purge` 와 동일 패턴 답습.
+      - **hard cap 50k 제거** (Codex C4 — cap → max_id high-water + streaming 으로 memory bounded. SECURITY.md §9.5 갱신 정합).
     """
+    import csv as _csv
+    import io as _io
+    import time as _time
+
+    # === Phase 1: 짧은 auth conn — auth + permission + params + max_id capture + start self-audit ===
     try:
         conn = _connect_memory()
     except Exception:
         return _json_error("db connection failed", 500)
+    started_at = _time.time()
     try:
         account, error = _require_account(request, conn)
         if error:
@@ -9425,58 +9507,180 @@ async def export_audit_events_csv(request: Request) -> Any:
         if not _account_has_permission(account, "audit.export"):
             return _json_error("감사 로그 export 권한이 필요합니다.", 403)
         params = _audit_parse_filter_params(request)
-        # CSV export 는 .any superset 으로 — 본인 row 만 export 는 use case 없음.
-        scope = "any"
-        where_clause, args = _audit_compose_where(
+        scope = "any"  # CSV export 는 .any superset.
+        filter_hash = _audit_export_filter_hash(params)
+        # max_id high-water mark (Codex C2) — 같은 WHERE 의 시작 시점 MAX(Id) 잡음.
+        where_clause_initial, args_initial = _audit_compose_where(
             scope=scope,
             account_id=int(account["id"]),
             params=params,
             cursor_id=None,
         )
-        # Hard cap 50k row — DoS 회피.
-        export_limit = 50000
-        sql = (
-            "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
-            "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
-            "RemoteAddr, UserAgent, RequestId, OccurredAt "
-            f"FROM WebAuditEvents{where_clause} "
-            "ORDER BY Id DESC LIMIT %s"
-        )
-        args.append(export_limit)
-        cur = conn.cursor(dictionary=True)
+        cur = conn.cursor()
         try:
-            cur.execute(sql, tuple(args))
-            rows = cur.fetchall() or []
+            sql_max = f"SELECT COALESCE(MAX(Id), 0) FROM WebAuditEvents{where_clause_initial}"
+            cur.execute(sql_max, tuple(args_initial))
+            row = cur.fetchone()
+            max_id = int(row[0] if row else 0)
         finally:
             cur.close()
-        # CSV stream.
-        import csv as _csv
-        import io as _io
+        # start self-audit.
+        try:
+            actor = {
+                "account_id": int(account["id"]),
+                "actor_type": "account",
+                "role_id": account.get("role_id"),
+                "session_id": account.get("session_id"),
+            }
+            record_audit_event(
+                conn,
+                actor=actor,
+                action="audit.export.start",
+                resource_type="audit_range",
+                resource_id=None,
+                change_json={
+                    "scope": scope,
+                    "filter_hash": filter_hash,
+                    "max_id": max_id,
+                    "chunk_size": _AUDIT_EXPORT_CHUNK_SIZE,
+                    "started_at": started_at,
+                },
+            )
+            conn.commit()
+        except Exception as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return _json_error(f"export start audit failed: {exc}", 500)
+        # capture for generator (account info, params, max_id).
+        actor_for_complete = dict(actor)
+    finally:
+        conn.close()
+
+    # === Phase 2: sync generator with streaming-only connection ===
+    def csv_iter():
         sio = _io.StringIO()
         writer = _csv.writer(sio)
+        # header.
         writer.writerow([
             "Id", "ActorAccountId", "ActorRoleId", "ActorType", "TargetAccountId",
             "SessionId", "ActionCode", "ResourceType", "ResourceId", "ChangeJson",
             "MaskedFields", "RemoteAddr", "UserAgent", "RequestId", "OccurredAt",
         ])
-        for r in rows:
-            d = _audit_row_to_dict(r)
-            writer.writerow([
-                d["id"], d["actor_account_id"], d["actor_role_id"], d["actor_type"],
-                d["target_account_id"], d["session_id"], d["action_code"], d["resource_type"],
-                d["resource_id"],
-                json.dumps(d["change_json"], ensure_ascii=False, sort_keys=True) if d["change_json"] is not None else "",
-                json.dumps(d["masked_fields"], ensure_ascii=False, sort_keys=True) if d["masked_fields"] is not None else "",
-                d["remote_addr"], d["user_agent"], d["request_id"], d["occurred_at"],
-            ])
-        csv_text = sio.getvalue()
-        return PlainTextResponse(
-            csv_text,
-            media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": 'attachment; filename="audit_events.csv"'},
-        )
-    finally:
-        conn.close()
+        yield sio.getvalue()
+        sio.seek(0)
+        sio.truncate(0)
+
+        stream_conn = None
+        stream_cur = None
+        exported_row_count = 0
+        aborted = False
+        try:
+            stream_conn = _connect_memory()
+            stream_cur = stream_conn.cursor(dictionary=True)
+            cursor_id: int | None = None  # keyset cursor (descending).
+            while True:
+                # max_id high-water + Id < cursor_id (None first page).
+                page_where_args: list[Any] = []
+                # filter where (별 args copy — initial 의 args 재사용 안전).
+                where_clause_page, args_page = _audit_compose_where(
+                    scope=scope,
+                    account_id=int(actor_for_complete["account_id"]),
+                    params=params,
+                    cursor_id=cursor_id,
+                )
+                # max_id 조건 강제 추가 (append-only high-water mark).
+                if where_clause_page:
+                    where_clause_page = where_clause_page + " AND Id <= %s"
+                else:
+                    where_clause_page = " WHERE Id <= %s"
+                args_page.append(max_id)
+                sql_page = (
+                    "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
+                    "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
+                    "RemoteAddr, UserAgent, RequestId, OccurredAt "
+                    f"FROM WebAuditEvents{where_clause_page} "
+                    "ORDER BY Id DESC LIMIT %s"
+                )
+                args_page.append(_AUDIT_EXPORT_CHUNK_SIZE)
+                stream_cur.execute(sql_page, tuple(args_page))
+                rows = stream_cur.fetchall() or []
+                if not rows:
+                    break
+                for r in rows:
+                    d = _audit_row_to_dict(r)
+                    writer.writerow([
+                        d["id"], d["actor_account_id"], d["actor_role_id"], d["actor_type"],
+                        d["target_account_id"], d["session_id"], d["action_code"], d["resource_type"],
+                        d["resource_id"],
+                        json.dumps(d["change_json"], ensure_ascii=False, sort_keys=True) if d["change_json"] is not None else "",
+                        json.dumps(d["masked_fields"], ensure_ascii=False, sort_keys=True) if d["masked_fields"] is not None else "",
+                        d["remote_addr"], d["user_agent"], d["request_id"], d["occurred_at"],
+                    ])
+                    exported_row_count += 1
+                    # byte-threshold flush.
+                    if sio.tell() >= _AUDIT_EXPORT_FLUSH_BYTES:
+                        yield sio.getvalue()
+                        sio.seek(0)
+                        sio.truncate(0)
+                cursor_id = int(rows[-1]["Id"])
+                if len(rows) < _AUDIT_EXPORT_CHUNK_SIZE:
+                    break
+            # final flush.
+            if sio.tell() > 0:
+                yield sio.getvalue()
+        except Exception:
+            aborted = True
+            raise
+        finally:
+            # try/finally cleanup (Codex C5).
+            try:
+                if stream_cur is not None:
+                    stream_cur.close()
+            except Exception:
+                pass
+            try:
+                if stream_conn is not None:
+                    stream_conn.close()
+            except Exception:
+                pass
+            # complete self-audit (별 short conn).
+            try:
+                done_at = _time.time()
+                done_conn = _connect_memory()
+                try:
+                    record_audit_event(
+                        done_conn,
+                        actor=actor_for_complete,
+                        action="audit.export.complete" if not aborted else "audit.export.aborted",
+                        resource_type="audit_range",
+                        resource_id=None,
+                        change_json={
+                            "scope": scope,
+                            "filter_hash": filter_hash,
+                            "max_id": max_id,
+                            "exported_row_count": exported_row_count,
+                            "elapsed_ms": int((done_at - started_at) * 1000),
+                            "aborted": aborted,
+                        },
+                    )
+                    done_conn.commit()
+                finally:
+                    done_conn.close()
+            except Exception:
+                # complete audit 실패는 client 응답에 영향 X (이미 yield 진행). stderr 만.
+                try:
+                    import sys as _sys
+                    _sys.stderr.write("[TASK-0090] audit.export.complete failed\n")
+                except Exception:
+                    pass
+
+    return StreamingResponse(
+        csv_iter(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="audit_events.csv"'},
+    )
 
 
 @app.get("/api/admin/audits/actors")

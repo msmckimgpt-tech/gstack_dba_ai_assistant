@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
-template_version: v3.8.0
+template_version: v3.9.0
 domain: [security]
 ai_read_priority: 4
 ---
@@ -141,7 +141,7 @@ REQ-20260519-0001 — 모든 admin mutation + user 4 high-signal action (`/api/a
 
 - `audit.read.own` — 모든 role (pending / operator / sales / dba 포함) 자동 grant. `.own` SQL filter = `WHERE ActorAccountId = :self OR TargetAccountId = :self` (Eng review E1, 사용자 결정 B). admin password-reset / role permission grant / share revoke 등 admin→user 이벤트가 user 본인 audit 에 노출 → 보안 가시성 정합.
 - `audit.read.any` — admin / dba auto-grant. 전체 row 조회. `.own` superset semantics (TASK-0058 share read-gate 패턴 답습).
-- `audit.export` — admin / dba auto-grant. CSV / JSON dump (hard cap 50k row). masked field 정책 유지.
+- `audit.export` — admin / dba auto-grant. CSV / JSON dump. **TASK-0090 (2026-05-20) StreamingResponse 전환 — hard cap 50k row 제거**, max_id high-water mark + keyset cursor pagination (chunk_size=500) + 64KiB byte-threshold flush + try/finally cleanup + export self-audit (start + complete event 2 건, `action="audit.export.start"` / `audit.export.complete`/`audit.export.aborted`). masked field 정책 유지. 동시 export 제한은 별 cycle (multi-worker semaphore 정합 검토).
 - `audit.purge` — admin only auto-grant. retention 초과 row chunked PK 삭제. start/complete self-audit row 동반.
 - permission group `audit` 신규 — `docs/CONVENTIONS.md §10.6` admin section "관리 권한" 묶음 합류 + 작업 화면 placeholder (manage section).
 - `_ensure_seed_catchup` 의 `_ensure_permission_catalog` 호출이 `_ensure_seed_roles` 앞 (TASK-0063 회귀 fix 패턴 답습) — 기존 배포의 신규 4 권한 backfill 보장.
@@ -192,17 +192,26 @@ REQ-20260519-0001 — 모든 admin mutation + user 4 high-signal action (`/api/a
 - 외부 LAN 노출 시 Caddy `trust_forwarded_for` 또는 별 `trusted_proxies` 설정 후속 cycle 필요. `feature-0006-lan-proxy-access` 위임.
 - TASK-0058 share 의 사내 IP 가정과 동일 trade-off.
 
-### 9.8 WebAccountActivity 흡수 (Codex C2)
+### 9.8 WebAccountActivity 흡수 → DROP 완료 (Codex C2 → TASK-0086, 2026-05-20)
 
-- TASK-0072 의 cross-account body search audit (`WebAccountActivity`) 가 본 cycle 의 superset 으로 흡수.
-- `_migrate_web_account_activity_to_audit(conn)` migration helper — 기존 row → `WebAuditEvents` 변환 (ActionCode `conversation.search.any` / `conversation.snippet.any`, ChangeJson `{query_hash, matched_count, _migrated_from, _original_id}`, OccurredAt = waa.CreatedAt). `RequestId='account-activity:<id>'` marker → idempotent.
-- `_log_search_activity()` dual write — (1) 기존 `WebAccountActivity` INSERT + (2) `record_audit_event` mirror. signature transparent (caller 변경 0).
-- `WebAccountActivity` 테이블 자체 DROP 은 별 cycle (data 보존 backup 후).
+- TASK-0072 의 cross-account body search audit (`WebAccountActivity`) 가 TASK-0073 cycle 에서 `WebAuditEvents` 의 superset 으로 흡수됐고, **TASK-0086 (2026-05-20) 에서 legacy table DROP 완료**.
+- `_migrate_web_account_activity_to_audit(conn)` migration helper — 기존 row → `WebAuditEvents` 변환 (ActionCode `conversation.search.body` transparent, ChangeJson `{query_hash, matched_count, _migrated_from, _original_id}`, OccurredAt = waa.CreatedAt). `RequestId='account-activity:<id>'` marker → idempotent. **TASK-0086 후 helper 는 rollback 1~2 cycle window 동안 보존** — `SHOW TABLES LIKE 'WebAccountActivity'` check 가 table-absent 시 silent return 0.
+- `_log_search_activity()` — TASK-0072 dual write 패턴 → **TASK-0086 (2026-05-20) 에서 legacy INSERT 제거, dispatcher (`record_audit_event` → WebAuditEvents) 만 primary path**. signature transparent (caller 변경 0). dispatcher fail 시 stderr log + main flow 진행 (user endpoint fail-open).
+- DROP 절차 (TASK-0086, Codex outside voice 5 findings 흡수 후 v2):
+  1. `mysqldump --single-transaction --quick --set-charset --create-options --add-drop-table --triggers --hex-blob --no-tablespaces` (Codex C4).
+  2. scratch restore rehearsal (별 schema import + digest match — `a09e7898d1ce88711f7a850ab5fbcc91`).
+  3. legacy ↔ mirror 1:1 정합 검증 (74=74).
+  4. 사용자 명시 ack.
+  5. 코드 변경 (legacy INSERT 제거 + `_ensure_web_account_activity_schema` 호출/정의 제거).
+  6. lightweight import smoke.
+  7. `DROP TABLE IF EXISTS WebAccountActivity`.
+  8. `SHOW TABLES` = 0 + mirror row 보존 확인.
+- Backup file: `artifacts/mysql-backup/WebAccountActivity-20260520T074927Z.sql` (11,950 bytes). Row digest `a09e7898d1ce88711f7a850ab5fbcc91`. Rollback runbook 2 시나리오 (DB restore only / code revert + DB restore) — REPORT.md §1 Summary 참조.
 
 ### 9.9 보관 정책 + 외부 배포 보완 (TODO)
 
 - 365 일 retention 권장. 운영자가 별 cycle 에서 cron purge 정책 결정 (PIPA §29 1 년 inherit, TASK-0072 정합).
 - chunked PK 정책 + Phase 2 partitioning 은 row 수 100M+ 시 검토.
-- `slow_query_log` (별 cycle 분리, Codex C1 lock-in) — DB-only retention / RBAC 정합 안 됨 → 본 cycle 제외, 별 cycle ADR 결정.
+- `slow_query_log` (별 cycle 분리, Codex C1 lock-in) — DB-only retention / RBAC 정합 안 됨 → **ADR-0020 (2026-05-20) 에서 Decoupled 채택** (`docs/DECISIONS.md` ADR-0020). 주 근거 = **raw SQL text PII 차단** (PasswordHash/Token/API key/임시 비밀번호/raw LLM prompt 가 SQL statement literal 로 들어가는 위험). slow_query_log 는 WebAuditEvents 와 통합 안 함. 운영 성능 관측 = `performance_schema` / `sys` digest views (1차) + slow_query_log incident 기반 enable (2차). raw SQL = 민감 로그로 간주, admin UI / ChangeJson 에 복제 금지.
 
 본 정책 정본은 본 §9. dispatcher / builder / endpoint 정합은 [`unit/feature-0003-agent-web-ui/docs/FUNCTION.md`](../unit/feature-0003-agent-web-ui/docs/FUNCTION.md) AC-0159~AC-0189.

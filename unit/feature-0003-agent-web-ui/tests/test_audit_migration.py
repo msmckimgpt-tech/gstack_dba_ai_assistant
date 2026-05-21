@@ -2,11 +2,17 @@
 
 `WebAccountActivity` (TASK-0072) → `WebAuditEvents` (TASK-0073) migration 의 idempotency 검증.
 
-3 시나리오:
+**TASK-0086 (2026-05-20)**: WebAccountActivity legacy table DROP 완료. M3 (dual
+write) 시나리오 제거 — dispatcher (`record_audit_event` → WebAuditEvents) 가 단일
+source-of-truth. M1/M2 는 보존 — table 부재 시 `SHOW TABLES LIKE` check 로
+silent return 0 (rollback window 동안 helper 보존).
+
+2 시나리오:
   M1 legacy WebAccountActivity 에 임시 row INSERT (직접 SQL) → fast-path catchup 호출 →
      동일 RequestId='account-activity:<id>' 의 WebAuditEvents row 가 등장
+     (TASK-0086 후: table 부재 시 catchup 이 silent return 0 → M1 자체가 skip 의미)
   M2 같은 catchup 두 번째 호출 → 새 INSERT 0 row (NOT EXISTS subquery 의 idempotency 검증)
-  M3 _log_search_activity (`/api/conversations?q=...`) dual write — legacy + new row 양쪽 등장
+     (TASK-0086 후: table 부재 시 두 번째 호출도 0 — semantic 동일)
 
 사전조건:
   - `make web` 으로 컨테이너 가동
@@ -133,25 +139,9 @@ def m2_migration_idempotent(base_url: str, admin_cookie: str) -> bool:
     return _expect("M2 idempotent (no double-INSERT)", post == pre, f"pre={pre} post={post}")
 
 
-def m3_log_search_activity_dual_write(base_url: str, admin_cookie: str) -> bool:
-    """_log_search_activity 의 dual write — legacy + new row 양쪽 INSERT.
-
-    smoke 는 conversation.search.any 의 audit count 가 legacy COUNT 와 동일 또는 더 큼 확인.
-    """
-    rc, legacy_count_s = _mysql_exec(
-        "SELECT COUNT(*) FROM WebAccountActivity WHERE Action IN ('conversation.search.any','conversation.snippet.any')"
-    )
-    if rc != 0:
-        return _expect("M3 legacy count", False, f"rc={rc}")
-    rc, new_count_s = _mysql_exec(
-        "SELECT COUNT(*) FROM WebAuditEvents WHERE ActionCode IN ('conversation.search.any','conversation.snippet.any')"
-    )
-    if rc != 0:
-        return _expect("M3 new count", False, f"rc={rc}")
-    legacy = int((legacy_count_s.strip().split() or ["0"])[0])
-    new = int((new_count_s.strip().split() or ["0"])[0])
-    # new >= legacy: dual write + migration 모두 등재.
-    return _expect("M3 dual write coverage", new >= legacy, f"legacy={legacy} new={new}")
+# M3 (dual write coverage) 시나리오는 TASK-0086 (2026-05-20) 에서 제거.
+# WebAccountActivity legacy table DROP 완료 — dispatcher (`record_audit_event` →
+# WebAuditEvents) 가 단일 source-of-truth. dual write 검증은 더 이상 적용 불가.
 
 
 def main() -> int:
@@ -171,7 +161,6 @@ def main() -> int:
     results = [
         m1_legacy_insert_migrates(base_url, admin_cookie),
         m2_migration_idempotent(base_url, admin_cookie),
-        m3_log_search_activity_dual_write(base_url, admin_cookie),
     ]
     return 0 if all(results) else 1
 

@@ -13,15 +13,213 @@ source_of_truth: false
 **2026-05-21 TASK-0094 PLAN-APPROVED — 첨부 multi-cycle (A CSV + B DDL/KB + C Vision + D PDF RAG) BRIEFING Revision 2 lock-in** (CHG-20260521-0001, REV-20260521-0001 [SUBAGENT:codex], REQ-20260521-0001, **Critical** §12.3). Codex outside-voice review 2 회 흡수 (REV-20260520-0001 1차 17 Valid + REV-20260521-0002 2차 Critical 3 + Major 11 + Minor 2 — F8 만 사용자 명시 거부). D1~D21 21 결정 lock-in. 코드/스키마/RBAC catalog 변경 0 — 계획 문서 only. Sprint 1 (Cycle 0 Foundation + Cycle 1 CSV ingest) implementation 진입 가능. D14 SQL allowlist guard 통과를 Sprint 1 ship 조건.
 
 ### Git 동기화 결과 (TASK-0094)
-- 커밋: 90df7c4 (ai/claude/0087/attachment-briefing)
+- 커밋: 90df7c4 (ai/claude/0087/attachment-briefing → issue/39-task-0094-attachment-briefing) + follow-up b8dcbfc (issue/43-task-0094-cleanup, REPORT 사후 기록 — 본 entry)
 - verify-completion: PASS (10/10 checks, 재시도 1회 — CHECK#3/#8/#9 FAIL 후 MODIFY/REVIEW append + .gitignore 갱신으로 PASS)
-- Push: 완료 (issue/39-task-0094-attachment-briefing → origin)
-- PR: #40 생성 (closes #39) → mergeable CLEAN → 자동 merge (msmckimgpt-tech)
-- 병합 상태: MERGED 2026-05-21T02:15:30Z (origin main 통합 완료, branch 삭제)
-- 충돌 해결: 없음
+- Push: 완료 (issue/39 + issue/43 → origin)
+- PR: #40 (closes #39, MERGED 2026-05-21T02:15:30Z) + #44 (closes #43, REPORT 사후 기록 follow-up)
+- 병합 상태: PR #40 main 통합 완료. PR #44 conflict resolve 후 main 통합 진행 중.
+- 충돌 해결: PR #44 의 REPORT.md / MODIFY.md / REVIEW.md / TASK.md 가 origin/main 의 PR #42 (TASK-0090) merge 후 발생한 conflict — main 의 변경과 본 follow-up 의 변경 모두 보존하여 resolve.
 - 다음 단계: Sprint 1 implementation 진입 — 별 worktree `ai/claude/0094/sprint-1-foundation-csv` (또는 호환 `ai/claude/0087/sprint-1-...`). 본 worktree 는 §15 R-F10 cleanup 조건 따라 merge 직후 cleanup 권장.
 
 ---
+
+**2026-05-20 TASK-0090 완료 (Phase A~D 일괄) — `/api/admin/audits/export.csv` CSV streaming export 전환** (CHG-20260520-0008, REV-20260520-0008, REQ-20260520-0005, **Minor** §12.3 — hard cap 50k 제거 + StreamingResponse + keyset cursor + max_id high-water + self-audit, Codex outside voice 5 findings 흡수 v2 redesign).
+
+**본 cycle Phase 별 변경 요약**:
+- **Phase A** — `export_audit_events_csv` endpoint 전면 재작성. 2-phase 구조 (auth conn + max_id capture + start audit → sync generator with streaming-only conn + chunked SELECT + byte-threshold flush + try/finally + complete audit). 신규 helper `_audit_export_filter_hash()`, const `_AUDIT_EXPORT_CHUNK_SIZE=500` / `_AUDIT_EXPORT_FLUSH_BYTES=65536`. `StreamingResponse` import.
+- **Phase B** — py_compile + lightweight smoke 모두 PASS.
+- **Phase C** — docs 6 갱신.
+- **Phase D** — verify-completion + commit + cycle-finalize.
+
+**Codex outside voice 5 findings 흡수**:
+- C1 async + sync mysql blocking → sync generator + streaming-only conn
+- C2 consistent snapshot → max_id high-water mark
+- C3 query plan EXPLAIN → future cycle
+- C4 cap 제거 = DoS → SECURITY 갱신 + export self-audit
+- C5 cleanup → generator 내부 try/finally
+
+**Self-audit ActionCode 신설**: `audit.export.start` / `audit.export.complete` / `audit.export.aborted`.
+
+### Git 동기화 결과 (§16.3 Step 6)
+
+PR description body 명시 — REPORT.md 갱신 별 commit 회피 (cycle-finalize 패턴).
+
+### 후속 단계 (별 cycle)
+
+- 동시 export 제한 (multi-worker semaphore 정합 검토 + advisory lock, Minor)
+- representative filters EXPLAIN FORMAT=JSON 분석 (Minor, live mysql)
+- TASK-0073 backlog 2 entries 남음 (TASK-0087/0089)
+- SECURITY.md §8 strict-string-equality 계약 (TASK-0092 followup)
+- `_migrate_web_account_activity_to_audit()` 제거 (TASK-0086 followup)
+
+---
+
+## 1.archived TASK-0088 Summary (2026-05-20)
+
+**2026-05-20 TASK-0088 완료 (Phase A~D 일괄) — `slow_query_log` 통합 ADR-0020 Decoupled 채택 (docs only)** (CHG-20260520-0007, REV-20260520-0007, REQ-20260520-0003, **Minor** §12.3 — ADR-0019 Codex C1 lock-in 의 final 결론, Codex outside voice 5 findings 흡수 v2 redesign).
+
+**본 cycle Phase 별 변경 요약**:
+- **Phase A** — `docs/DECISIONS.md` ADR-0020 신설. 4 section + Options 검토 + Recommended performance path + Security policy + Consequences. ADR-0019 의 "별 cycle 분리" 라인 cross-reference 추가.
+- **Phase B** — `docs/SECURITY.md §9.9` ADR-0020 cross-reference + raw SQL = 민감 로그 정책 + PS digest-first 권유. + docs 5 갱신 (TASK §2.6 + MODIFY CHG-0007 + REVIEW REV-0007 + TEST §4 + 본 REPORT).
+- **Phase C** — verify-completion + commit.
+- **Phase D** — cycle-finalize (issue + push + PR + merge + cleanup).
+
+**ADR-0020 핵심 결정**:
+- **Option C — Decoupled 채택**: slow_query_log 와 WebAuditEvents 통합 안 함.
+- **주 근거**: raw SQL text PII 차단 (PasswordHash/Token/API key/임시 비밀번호/raw LLM prompt literal).
+- **Option A reject** (Sidecar ETL): semantic pollution + raw SQL PII + ChangeJson/table bloat + actor/target 의미 부재.
+- **Option B reject** (별 endpoint): raw SQL exfiltration + mount/race + DoS + `audit.read.any` 권한 의미 오염 + MySQL `TABLE` log destination 우회.
+- **운영 성능 관측 권유**: `performance_schema`/`sys` digest views (1차) + slow_query_log incident enable (2차).
+- **외부 SaaS/multi-tenant trigger**: `performance-log.read` permission + redaction/sampling + threat model ADR 선행.
+
+**Codex outside voice 5 findings 흡수**:
+- C1 current state framing 정정 (not enabled, forward-looking)
+- C2 raw SQL PII 차단 = 주 근거 (1순위)
+- C3 Option A reject 재작성 (4 구체 사유)
+- C4 Option B reject 재작성 (5 구체 사유)
+- C5 performance_schema digest-first 권유 추가
+
+### Git 동기화 결과 (§16.3 Step 6)
+
+PR description body 명시 — REPORT.md 갱신 별 commit 회피 (cycle-finalize 패턴, TASK-0093/0092/0086/0091 답습).
+
+### 후속 단계
+
+- 외부 SaaS/multi-tenant 진입 시 별 cycle (Major §12.3) — 4 선행 조건 충족 후 (`performance-log.read` + redaction/sampling + retention + threat model ADR)
+- `performance_schema` digest views 운영자 access policy (별 cycle 또는 SECURITY.md §9 갱신)
+- TASK-0073 backlog 3 entries 남음 (TASK-0087/0089/0090) — 각 별 cycle
+
+---
+
+## 1.archived TASK-0091 Summary (2026-05-20)
+
+**2026-05-20 TASK-0091 완료 (Phase A~F 일괄) — PATCH admin/products audit before-state full snapshot + audit integrity fix** (CHG-20260520-0006, REV-20260520-0006, REQ-20260520-0006, ~~Minor~~→**Major** §12.3 — Codex outside voice 5 findings 흡수, audit integrity 결함 fix 포함 scope 확장).
+
+**본 cycle Phase 별 변경 요약**:
+- **Phase A** — 신규 helper `_audit_product_snapshot(conn, product_id)` (~line 2127): single-row WebProducts snapshot + `SELECT ... FOR UPDATE` + `system_prompt_summary` (SECURITY §9.2 정합, content 본문 제외).
+- **Phase B** — `admin_update_product()` 명시 transaction (autocommit=False + before snapshot + UPDATE + default_cleared_product_ids + after snapshot + audit + commit + finally autocommit=True). Codex C2 audit integrity fix.
+- **Phase B-2** — `_AUDIT_BUILDER_PRODUCT_FIELDS` 7→8 field 확장 (+is_default/+sort_order/+system_prompt_summary, -databases/-system_prompt). builder branch `default_cleared_product_ids` 명시 처리.
+- **Phase C** — py_compile PASS + sentinel smoke PASS (SENTINEL drop / databases drop / sort_order delta / is_default delta / default_cleared_product_ids / system_prompt_summary).
+- **Phase D** — docs 6 갱신: TASK §2.5 / MODIFY CHG-0006 / REVIEW REV-0006 / 본 REPORT / TEST §4 / FUNCTION AC-0192.
+- **Phase E** — verify-completion PASS + commit.
+- **Phase F** — cycle-finalize (issue + push + PR + merge + main worktree pull + 본 worktree cleanup).
+
+**Codex outside voice 5 findings 흡수**:
+- C1 system_prompt full content → summary only (SECURITY §9.2)
+- C2 autocommit/transaction → 명시 transaction + SELECT FOR UPDATE
+- C3 list scan → single-row helper + databases 제외
+- C4 allowlist 누락 → +is_default/+sort_order + default_cleared_product_ids
+- C5 rollback → C1 ACCEPT 로 자동 해소
+
+**핵심 발견 (Codex C2)**: 본 cycle 의 Minor 등급 추정이 **audit integrity 결함** 노출 — `admin_update_product()` 가 autocommit=True default 라 UPDATE 가 즉시 commit, audit fail 시 rollback 가능 0 인 상태. scope ~~Minor~~→Major 확장하여 일괄 fix.
+
+**Sentinel smoke 결과** (Phase C):
+- `'TASK-0091-SENTINEL' in body: False` ✓ (system_prompt full drop)
+- `'should_not_leak' in body: False` ✓ (databases drop)
+- sort_order 100→50, is_default False→True, default_cleared_product_ids [5,9] ✓
+- system_prompt_summary: {present: True, content_len: 1234/2000, updated_at}
+
+### Git 동기화 결과 (§16.3 Step 6)
+
+PR description body 명시 — REPORT.md 갱신 별 commit 회피 (§16.3 Step 7 권장, TASK-0093/0092/0086 cycle 답습).
+
+### 후속 단계
+
+- admin.product.create / delete 의 audit 도 allowlist 확장 결과 자동 정합 — 별 sentinel test 권유 (Minor)
+- admin.product.databases.update audit 의 system_prompt summary 패턴 도입 검토 (별 cycle)
+- SECURITY.md §8 strict-string-equality 계약 명시 (TASK-0092 followup)
+- rollback window (1~2 cycle) 종료 후 _migrate_web_account_activity_to_audit() 제거 (TASK-0086 followup)
+- TASK-0073 backlog 4 entries 남음 (TASK-0087/0088/0089/0090) — 각 별 cycle
+
+---
+
+## 1.archived TASK-0086 Summary (2026-05-20)
+
+**2026-05-20 TASK-0086 완료 (Phase A0~J 일괄) — `WebAccountActivity` legacy table DROP + dual write 종료** (CHG-20260520-0005, REV-20260520-0005, REQ-20260520-0001, **Major** §12.3 — 파괴적 DROP + dual write 단일화 + Codex outside voice 5 findings 흡수 v2 redesign).
+
+**본 cycle Phase 별 변경 요약**:
+- **Phase A** (backup + 검증): mysqldump 8 옵션 (Codex C4) + scratch restore rehearsal + 1:1 정합 (74=74). backup file `artifacts/mysql-backup/WebAccountActivity-20260520T074927Z.sql` (11,950 bytes, digest `a09e7898d1ce88711f7a850ab5fbcc91`).
+- **Phase B** (사용자 명시 ack): DROP 진행 ack 받음.
+- **Phase C** (코드 변경 3): `_log_search_activity()` legacy INSERT 제거 + `_ensure_web_account_activity_schema()` 호출×2+정의 제거 + `_migrate_web_account_activity_to_audit()` rollback window 보존 + docstring 갱신. py_compile PASS.
+- **Phase D+E** (lightweight smoke): host-mounted code + docker run import → `IMPORTED OK` + 함수 정의 부재/존재 정합 확인.
+- **Phase F** (DROP): `DROP TABLE IF EXISTS WebAccountActivity` 실행 → `DROP completed`.
+- **Phase G** (verify): `tables_remaining=0` + mirror 74 row 변동 없음.
+- **Phase H** (docs 5 + tests 1 갱신): 본 REPORT.md + TASK §2.4 + MODIFY CHG-20260520-0005 + REVIEW REV-20260520-0005 + TEST §4 prepend + SECURITY §9.8 + test_audit_migration.py M3 제거.
+- **Phase I** (verify-completion + commit): 본 단계 진행.
+- **Phase J** (cycle-finalize): issue + push + PR + merge + main worktree pull + 본 worktree cleanup.
+
+**Codex outside voice 5 findings 흡수**:
+- **C1** Option A 불가능 → helper Option B (호출+정의 명시 제거, migration helper 만 rollback window 보존)
+- **C2** dispatcher-only = mirror failure 가 audit 누락 → lightweight smoke + tests M3 제거
+- **C3** "single tx DROP" 표현 → "single statement" 정정 (MySQL DDL implicit commit)
+- **C4** Backup 검증 강화 → mysqldump 8 옵션 + scratch restore + canonical digest
+- **C5** Rollback 2 시나리오 분리 (DB restore only / code revert + DB restore)
+
+**핵심 baseline (Phase A 검증)**:
+- WebAccountActivity legacy = **74 rows** (id 1~74, MatchedCount sum=502)
+- WebAuditEvents `conversation.search.body` mirror = **74 rows** (1:1 정합)
+- 초기 흡수 (RequestId='account-activity:%') = 68 row (TASK-0073 Phase A2 의 1회 호출)
+- dual write 추가 (RequestId=NULL + ChangeJson._legacy_source) = 6 row
+
+### Git 동기화 결과 (§16.3 Step 6)
+
+PR description body 에 명시 — REPORT.md 갱신 별 commit 회피 (§16.3 Step 7 권장, TASK-0093/0092 cycle 답습).
+
+### Rollback runbook (2 시나리오, Codex C5)
+
+- **시나리오 1 — DB restore only**: 코드는 그대로, backup SQL 로 table 복구. `_migrate_web_account_activity_to_audit()` 의 SHOW TABLES check 가 다시 true → 재 migration 시 idempotent skip (기존 marker). 단 새 search 는 dispatcher only 라 table 이 다시 비어감.
+- **시나리오 2 — code revert + DB restore** (완전 rollback): `git revert <CHG-20260520-0005>` + `docker compose restart web` + DB restore. dual write 부활 + 새 search 가 양쪽에 들어감.
+
+### 후속 단계
+
+- **rollback window 종료 후** (1~2 cycle): `_migrate_web_account_activity_to_audit()` helper 자체 제거 별 cycle (Minor §12.3).
+- function rename `_log_search_activity()` → `_audit_conversation_search()` 별 cycle (Minor §12.3, caller 안정성 검토 후).
+- SECURITY.md §8 strict-string-equality 계약 명시 (TASK-0092 followup, V6 결과 기반).
+- TASK-0073 backlog 5 entries 남음 (TASK-0087, 0088, 0089, 0090, 0091) — 각 별 cycle.
+
+---
+
+## 1.archived TASK-0092 Summary (2026-05-20)
+
+**2026-05-20 TASK-0092 완료 (Phase A0~E 일괄) — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 7 vector matrix 검증 (TASK-0073 Phase E 위임 1 건 해소)** (CHG-20260520-0004, REV-20260520-0004, REQ-20260520-0007, **Minor** §12.3 — live container spawn + Codex outside voice 5 findings 흡수 v2 redesign).
+
+**본 cycle Phase 별 변경 요약**:
+- **Phase A0** (`.env` + image 가용성 확인): `repo-web:latest` image 가용 (435MB, 이미 build). `.env` 부재 — inline `-e` 만 사용 (compose 우회).
+- **Phase A** (7 vector live spawn): `docker run --rm --entrypoint python repo-web:latest -c "import web.app"` 형태 단발 spawn. 7 vector 명세된 환경변수 조합으로 호출.
+- **Phase B** (검증, **7 vector PASS (7/7)**):
+  - V1 (`AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod`) → rc=1 + 3 substring + Traceback 부재 ✓
+  - V2 (audit=0 + mode=unset) → rc=1 + `AGENT_MODE=(unset → prod)` 정합 ✓
+  - V3 (audit=0 + mode=staging) → rc=1 + `AGENT_MODE=staging` 정합 ✓
+  - V4 (audit=0 + mode=dev) → rc=0 + `IMPORTED OK` ✓ dev/test bypass
+  - V5 (audit=1 + mode=prod) → rc=0 + `IMPORTED OK` ✓ positive control
+  - V6 (audit=true + mode=prod) → rc=1 + `[FATAL]` ✓ Codex C3 strict-string-equality 계약
+  - V7 (모두 unset) → rc=0 + `IMPORTED OK` ✓ default `1` + default prod
+- **Phase C** (docs 5 갱신): 본 REPORT.md + TASK.md §2.3 + MODIFY.md CHG-20260520-0004 + REVIEW.md REV-20260520-0004 + TEST.md **§4** append.
+- **Phase D** (verify-completion + commit): `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS 후 사용자 명시 confirm 후 commit.
+- **Phase E** (cycle-finalize 패턴): issue + push + PR + merge + main worktree pull + 본 worktree cleanup.
+
+**Outside voice 흡수 5 findings 결정**:
+- C1 테스트 명령 오류 → `--entrypoint python` + `import web.app` 정정
+- C2 compose 오염 → `docker run` 직접 호출 (compose 우회)
+- C3 flag parsing 계약 → V6 추가 (`"true"` fail-closed 검증)
+- C4 stderr 검증 → 3 substring + Traceback 부재
+- C5 docs §3 → §4 정정 (Test Run History)
+
+**핵심 발견 (V6)**: `AGENT_AUDIT_ENABLED="true"` 는 fail-closed 됨 — strict string equality (`os.getenv(...).strip() == "1"`). 운영자가 truthy 표현 (`"true"`/`"yes"`/`"01"`) 명시 시 prod 시작 차단. SECURITY.md §8 의 strict-string-equality 계약 명시 별 cycle 후속 권고.
+
+### Git 동기화 결과 (§16.3 Step 6)
+
+PR description body 에 명시 — REPORT.md 갱신 별 commit 회피 (§16.3 Step 7 권장 패턴, TASK-0093 cycle 답습).
+
+### 후속 단계
+
+- **SECURITY.md §8 strict-string-equality 계약 명시** 별 cycle (Minor §12.3) — V6 결과 기반.
+- TASK-0073 backlog 6 entries 남음 (TASK-0086, 0087, 0088, 0089, 0090, 0091) — 각 별 cycle.
+- 본 cycle 종료 후 worktree archive — 다음 task 진입 시 별 worktree (`ai/claude/00XX/<slice>`) 권장.
+
+---
+
+## 1.archived TASK-0093 Summary (2026-05-20)
 
 **2026-05-20 TASK-0093 완료 (Phase A~F 일괄) — verify-completion check_12 audit endpoint routing 정적 검사 신설** (CHG-20260520-0003, REV-20260520-0003, REQ-20260520-0008, **Minor** §12.3 — TASK-0073 Phase E hotfix CHG-20260520-0001 의 routing 회귀 fragility 보강. Codex outside voice 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용).
 

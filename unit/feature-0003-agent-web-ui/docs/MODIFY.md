@@ -8,6 +8,133 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260520-0008
+- Date: 2026-05-20
+- Summary: TASK-0090 (REQ-20260520-0005, **Minor** §12.3 — CSV streaming export). `/api/admin/audits/export.csv` hard cap 50k row 제거 + StreamingResponse + keyset cursor pagination 전환. Codex outside voice review 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - `StreamingResponse` import 추가 (line 28).
+    - 신규 helper `_audit_export_filter_hash(params)` (~line 9466): filter PII 회피용 sha256[:16] hash.
+    - 신규 const `_AUDIT_EXPORT_CHUNK_SIZE = 500` + `_AUDIT_EXPORT_FLUSH_BYTES = 65536`.
+    - `export_audit_events_csv` endpoint 전면 재작성: 2-phase (짧은 auth conn + max_id capture + start audit → sync generator with streaming-only conn + chunked SELECT + byte-threshold flush + try/finally + complete audit).
+  - `docs/SECURITY.md §9.5`: `audit.export` 설명 갱신 (hard cap 50k 제거 + StreamingResponse + max_id high-water + self-audit + 동시 제한 별 cycle).
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: §2.7 + TASK-0090 [x].
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260520-0008.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary.
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md`: §4 본 cycle 결과.
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: AC-0193.
+- Codex outside voice 5 findings 흡수:
+  - C1 async generator + sync mysql → sync generator (def csv_iter) + streaming-only conn (generator 내부 finally)
+  - C2 consistent snapshot → max_id high-water mark (long transaction 회피)
+  - C3 query plan 미보장 → TEST.md EXPLAIN 기록 (future cycle, live mysql)
+  - C4 cap 제거 = DoS/계약 변경 → SECURITY 갱신 + export self-audit + 동시 제한 별 cycle followup
+  - C5 cleanup → generator 내부 try/finally (cursor + conn + complete audit)
+- 추가: chunk_size 1000→500, 64KiB byte-threshold flush, CRLF 유지 (BOM 추가 안 함).
+- Self-audit ActionCode 신설: `audit.export.start`, `audit.export.complete`, `audit.export.aborted` (purge 패턴 답습).
+- Verification:
+  - py_compile PASS
+  - lightweight smoke: _AUDIT_EXPORT_CHUNK_SIZE=500 ✓, _AUDIT_EXPORT_FLUSH_BYTES=65536 ✓, helper 존재 ✓, StreamingResponse import ✓, filter_hash deterministic ✓
+- Risks: live runtime smoke (PATCH 호출 + WebAuditEvents row 검증) PR merge 후 사용자 위임. 동시 export 제한 별 cycle (multi-worker semaphore 정합 검토). representative filters EXPLAIN 분석 별 cycle.
+- Trace: REQ-20260520-0005 → TASK-0090 → CHG-20260520-0008 → REV-20260520-0008.
+
+## CHG-20260520-0007
+- Date: 2026-05-20
+- Summary: TASK-0088 (REQ-20260520-0003, **Minor** §12.3 — `slow_query_log` 통합 ADR-0020 결정, docs only). ADR-0019 의 Codex C1 lock-in 의 최종 결론 — **Option C Decoupled 채택** (slow_query_log 와 WebAuditEvents 통합 안 함). Codex outside voice review 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign 적용.
+- Files:
+  - `docs/DECISIONS.md`: ADR-0020 신설 (line 207~ ADR-0019 Consequences 다음). 4 section — Context (current state: not enabled, forward-looking) + Decision (Option C Decoupled, raw SQL PII 차단 1순위) + Options 검토 (A/B reject 구체 사유 + C 채택) + Recommended performance path (PS digest-first 1차, slow_query_log incident enable 2차) + Security policy + Consequences (외부 SaaS trigger 4 선행 조건). ADR-0019 Consequences 의 "별 cycle 분리" 라인에 ADR-0020 cross-reference 추가.
+  - `docs/SECURITY.md §9.9`: ADR-0020 cross-reference + raw SQL = 민감 로그 + admin UI/ChangeJson 복제 금지 + PS digest-first 정책.
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0088 [ ]→[x] + §2.6 본 plan PLAN-APPROVED.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260520-0007 entry.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 갱신.
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md`: §4 본 cycle 결과 (docs only, ADR review trace).
+- Decision 요지: slow_query_log 와 WebAuditEvents 의 통합 reject. 운영 성능 관측 = performance_schema/sys digest views (1차) + slow_query_log incident enable (2차). 외부 SaaS/multi-tenant trigger 시 `performance-log.read` permission + redaction/sampling + threat model ADR 선행 필수.
+- Codex outside voice 5 findings 흡수:
+  - **C1** current state framing 정정 (not enabled, forward-looking)
+  - **C2** raw SQL PII 차단을 주 근거로 (1순위)
+  - **C3** Option A reject 재작성 (semantic pollution + raw SQL PII + ChangeJson bloat + actor/target 의미 부재)
+  - **C4** Option B reject 재작성 (raw SQL exfiltration + mount/race + DoS + 권한 의미 오염 + TABLE log destination 우회)
+  - **C5** performance_schema digest-first 권유 추가
+- Verification: docs only, code 변경 0. py_compile/runtime smoke 불필요. verify-completion PASS 만 확인.
+- Risks: ADR 자체는 future trigger 조건만 명시 — 현재 운영 영향 0. 외부 SaaS/multi-tenant 진입 시점에 별 cycle (Major §12.3) 재진입 명시 (트리거 조건 4 선행).
+- Trace: REQ-20260520-0003 → TASK-0088 → CHG-20260520-0007 → REV-20260520-0007.
+
+## CHG-20260520-0006
+- Date: 2026-05-20
+- Summary: TASK-0091 (REQ-20260520-0006, ~~Minor~~→**Major** §12.3 — PATCH admin/products audit before-state full snapshot + audit integrity fix). Codex outside voice review 5 critical findings + 2 minimum-fix 흡수 — Minor 등급 추정이 audit integrity 결함 (autocommit=True default) 노출 → scope 확장.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - 신규 helper `_audit_product_snapshot(conn, product_id)` (~line 2127): single-row WebProducts snapshot + `SELECT ... FOR UPDATE` + `system_prompt_summary = {present, content_len, updated_at}` (SECURITY §9.2 정합 — content 본문 제외). `databases` 제외 (Codex C3 — 별 endpoint audit).
+    - `admin_update_product()` 갱신 (line 8328~): `conn.autocommit=False` + before snapshot + UPDATE + `default_cleared_product_ids` 캡처 + after snapshot + audit + commit + `finally autocommit=True` (Codex C2 audit integrity fix).
+    - `_AUDIT_BUILDER_PRODUCT_FIELDS` 확장 (line 8862): 7→8 field. `+is_default`, `+sort_order`, `+system_prompt_summary` / `-databases`, `-system_prompt` (Codex C1+C4).
+    - builder branch `admin.product.update` (line 8966~): `default_cleared_product_ids` 키 명시 처리 (Codex C4 side effect).
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` §2.5 본 plan + TASK-0091 [x]
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` REV-20260520-0006
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md` §1 Summary
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md` §4 sentinel + delta smoke 결과
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md` AC-0192
+- Codex outside voice 5 findings 흡수:
+  - **C1**: `system_prompt.content` full drop → `system_prompt_summary` only (SECURITY §9.2)
+  - **C2**: autocommit/transaction integrity fix (audit 실패 시 UPDATE rollback 가능)
+  - **C3**: single-row `SELECT FOR UPDATE` + databases 제외
+  - **C4**: allowlist 확장 (`is_default`, `sort_order`) + `default_cleared_product_ids` side effect
+  - **C5**: C1 ACCEPT 로 자동 해소 (full content drop)
+- Verification (Phase C sentinel smoke):
+  - py_compile PASS
+  - `'TASK-0091-SENTINEL' in body: False` ✓ (system_prompt full drop)
+  - `'should_not_leak' in body: False` ✓ (databases drop)
+  - sort_order 100→50 / is_default False→True / `default_cleared_product_ids: [5,9]` / `system_prompt_summary` 정합 ✓
+- Risks: scope ~~Minor~~→Major (audit integrity fix 포함). 사용자 영향 0 (audit row 정확성). DB schema 변경 0. PATCH admin/products endpoint behavior: 외부 contract 동일, internal transaction semantics 만 변경.
+- Trace: REQ-20260520-0006 → TASK-0091 → CHG-20260520-0006 → REV-20260520-0006.
+
+## CHG-20260520-0005
+- Date: 2026-05-20
+- Summary: TASK-0086 (REQ-20260520-0001, **Major** §12.3 — `WebAccountActivity` legacy table DROP + dual write 종료). TASK-0073 Phase A2 의 dual source 일시 공존을 단일 source-of-truth (WebAuditEvents) 로 전환. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용. backup + scratch restore rehearsal + 1:1 정합 (74=74) + 사용자 명시 ack 후 진행.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - `_log_search_activity()`: legacy `INSERT INTO WebAccountActivity` 블록 제거. dispatcher (`record_audit_event` → WebAuditEvents) 만 primary path. signature transparent 보존. docstring 갱신.
+    - `_ensure_web_account_activity_schema()`: 함수 정의 + 호출 2 사이트 명시 제거 (Codex C1 — helper Option B 채택).
+    - `_migrate_web_account_activity_to_audit()`: 함수 본체 + `SHOW TABLES LIKE` table-absent skip 보존. docstring 갱신 (TASK-0086 rollback 1~2 cycle window 명시).
+  - `unit/feature-0003-agent-web-ui/tests/test_audit_migration.py`: 모듈 docstring 갱신 (3→2 시나리오) + `m3_log_search_activity_dual_write()` 제거 + main() M3 호출 제거 (Codex C2 minimum-fix).
+  - `docs/SECURITY.md` §9.8: "별 cycle DROP" → "DROP 완료 (2026-05-20)" + 8 step 절차 + backup file + rollback 2 시나리오 cross-reference.
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` §2.4 Implementation Plan (TASK-0086) 신설 + TASK-0086 [x] 마킹.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` REV-20260520-0005 entry 추가.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md` §1 Summary 갱신.
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md` §4 본 cycle 결과 prepend.
+- DB: `DROP TABLE IF EXISTS WebAccountActivity` 실행. `SHOW TABLES` = 0 ✓. WebAuditEvents `conversation.search.body` row 74 변동 없음 ✓.
+- Backup: `artifacts/mysql-backup/WebAccountActivity-20260520T074927Z.sql` (11,950 bytes, 74 row, digest `a09e7898d1ce88711f7a850ab5fbcc91`, file md5 `f4163df9dc1b7ac81ae4c463a0f35e98`). mysqldump 8 옵션 + scratch restore rehearsal PASS.
+- v2 redesign (Codex 5 findings 흡수): C1 Option A 불가능 → helper Option B / C2 dispatcher-only 검증 → lightweight smoke + M3 제거 / C3 "single tx" → "single statement" / C4 backup 검증 강화 / C5 rollback 2 시나리오.
+- Verification: Phase A~G 모두 PASS (backup integrity / 1:1 정합 / py_compile / import smoke / DROP 정합 / SHOW TABLES = 0 / mirror 보존).
+- Risks: rollback window 1~2 cycle 동안 migration helper 보존. dispatcher-only 후 mirror failure = audit 누락 risk → lightweight smoke mitigated. function rename 별 cycle.
+- Trace: REQ-20260520-0001 → TASK-0086 → CHG-20260520-0005 → REV-20260520-0005. TASK-0073 Phase A2 dual write 종료.
+
+## CHG-20260520-0004
+- Date: 2026-05-20
+- Summary: TASK-0092 (REQ-20260520-0007, **Minor** §12.3 — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 7 vector matrix 검증). TASK-0073 Phase E 의 사용자 위임 항목 1 건 해소 (sandbox SSH 인증 차단 환경 해소 + docker/compose 가용 확인). Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용. Code 변경 0, docs append only.
+- Files:
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md` — **§4** Test Run History 에 본 cycle 7 vector 결과 prepend (Codex C5 흡수 — §3 = Test Cases, §4 = Test Run History).
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` — §2.3 Implementation Plan (TASK-0092) 신설 (PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-20). TASK-0092 [ ]→[x] 마킹.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260520-0004 entry 추가 (head prepend, outside voice 5 findings + 2 minimum-fix 흡수 이력).
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md` — §1 Summary 갱신 + 1.archived TASK-0093 Summary 보존.
+- v2 redesign (Codex 5 findings 흡수):
+  - **C1** 테스트 명령 오류: Dockerfile 이 web UI 를 `/app/web/` 에 복사 → `--entrypoint python` + `import web.app` 으로 정정. uvicorn entrypoint 우회 명확화.
+  - **C2** compose 오염 위험: `docker run` 직접 호출 (compose 우회). `--no-deps` 동등 효과 — mysql 기동 + .env + shared volume + 다른 worktree compose project 모두 회피.
+  - **C3** flag parsing 계약: V6 추가 (`AGENT_AUDIT_ENABLED=true` + prod → exit 1). strict-string-equality (`os.getenv(...).strip() == "1"`) 계약 명시화. 운영자가 `"true"` / `"yes"` / `"01"` 명시 시 fail-closed — SECURITY.md §8 계약 명시 별 cycle 후속 권고.
+  - **C4** stderr 검증 강화: prefix-only 약함, full byte-equal strict 회피. 3 substring (`[FATAL] AUDIT REQUIRED IN PROD` + `set AGENT_AUDIT_ENABLED=1` + `TASK-0073 Phase A1`) 모두 포함 + `Traceback` / `ModuleNotFoundError` 부재 검증.
+  - **C5** docs append 위치: TEST.md §3 → §4 (Test Run History) 정정.
+- Verification (Phase A~B):
+  - (Phase A0) `repo-web:latest` image 가용 확인 (435MB). `.env` 부재 — inline `-e` 만 사용.
+  - (Phase A) 7 vector live spawn 실행 (`docker run --rm --entrypoint python repo-web:latest -c "import web.app"`).
+  - (Phase B) **7 vector PASS (7/7)**:
+    - V1 (audit=0 + mode=prod) → rc=1 + `[FATAL] ... AGENT_MODE=prod ...`
+    - V2 (audit=0 + mode=unset) → rc=1 + `[FATAL] ... AGENT_MODE=(unset → prod) ...`
+    - V3 (audit=0 + mode=staging) → rc=1 + `[FATAL] ... AGENT_MODE=staging ...`
+    - V4 (audit=0 + mode=dev) → rc=0 + `IMPORTED OK`
+    - V5 (audit=1 + mode=prod) → rc=0 + `IMPORTED OK`
+    - V6 (audit=true + mode=prod) → rc=1 + `[FATAL] ... AGENT_MODE=prod ...` (Codex C3 strict-string-equality 계약)
+    - V7 (모두 unset) → rc=0 + `IMPORTED OK`
+- Risks: V6 가 운영자 trap (`AGENT_AUDIT_ENABLED="true"` 가 fail-closed) 노출 — SECURITY.md §8 의 strict-string-equality 계약 명시 필요 (별 cycle 후속). audit prod gate 자체는 정합 — 본 cycle scope 외.
+- Trace: REQ-20260520-0007 → TASK-0092 → CHG-20260520-0004 → REV-20260520-0004.
+
 ## CHG-20260520-0003
 - Date: 2026-05-20
 - Summary: TASK-0093 (REQ-20260520-0008, **Minor** §12.3 — `bin/verify-completion.sh check_12` audit endpoint routing 정적 검사 신설). TASK-0073 Phase E hotfix (CHG-20260520-0001) 의 routing 회귀 fragility 보강. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용.

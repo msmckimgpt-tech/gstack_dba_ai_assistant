@@ -173,6 +173,15 @@ __all__ = [
     "REPLICA_DB_PASSWORD",
     "REPLICA_DB_PORT",
     "REPLICA_DB_USER",
+    "AGENT_KB_PG_HOST",
+    "AGENT_KB_PG_PORT",
+    "AGENT_KB_PG_DB",
+    "AGENT_KB_PG_USER",
+    "AGENT_KB_PG_PASSWORD",
+    "AGENT_KB_PG_SSLMODE",
+    "AGENT_KB_PG_ENABLED",
+    "AGENT_KB_READ_BACKEND",
+    "AGENT_KB_DUAL_WRITE",
     "FACT_SCOPE_COMMON",
     "GLOBAL_CONVERSATION_ID",
     "GLOBAL_SESSION_CONVERSATION_ID",
@@ -232,6 +241,20 @@ REPLICA_DB_PORT = int(os.getenv("REPLICA_DB_PORT", str(DB_PORT)) or DB_PORT)
 REPLICA_DB_USER = os.getenv("REPLICA_DB_USER", "").strip() or DB_USER
 REPLICA_DB_PASSWORD = os.getenv("REPLICA_DB_PASSWORD", "") or DB_PASSWORD
 REPLICA_DB_ENABLED = bool(REPLICA_DB_HOST)
+
+# ── KB Postgres pgvector (TASK-0015 §2.1.4, M0 cycle) ─────────────────
+# postgres 서비스가 docker-compose 에 추가되면 본 변수들이 활성화된다. M0 cycle
+# 에서는 standalone — agent boot 의존 아님. M2 dual-write 부터 write path 가
+# `_pg_connect()` 를 호출하고, M4 cutover 시 read path 가 backend 분기로 전환된다.
+AGENT_KB_PG_HOST = os.getenv("AGENT_KB_PG_HOST", "").strip()
+AGENT_KB_PG_PORT = int(os.getenv("AGENT_KB_PG_PORT", "5432") or "5432")
+AGENT_KB_PG_DB = os.getenv("AGENT_KB_PG_DB", "agent_kb").strip() or "agent_kb"
+AGENT_KB_PG_USER = os.getenv("AGENT_KB_PG_USER", "").strip()
+AGENT_KB_PG_PASSWORD = os.getenv("AGENT_KB_PG_PASSWORD", "")
+AGENT_KB_PG_SSLMODE = os.getenv("AGENT_KB_PG_SSLMODE", "prefer").strip() or "prefer"
+AGENT_KB_PG_ENABLED = bool(AGENT_KB_PG_HOST) and bool(AGENT_KB_PG_USER)
+AGENT_KB_READ_BACKEND = (os.getenv("AGENT_KB_READ_BACKEND", "mysql").strip() or "mysql").lower()
+AGENT_KB_DUAL_WRITE = (os.getenv("AGENT_KB_DUAL_WRITE", "0").strip() or "0") in {"1", "true", "yes", "on"}
 BLOCKED_DEFAULT_SCHEMAS = {
     s.strip().lower()
     for s in os.getenv(
