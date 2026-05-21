@@ -22,6 +22,9 @@ _archive/
 !**/config/credentials/*.example
 .gstack/
 
+# codex session id / scratch context (per-worktree, gstack /codex 호출 시 생성).
+.context/
+
 # bin/template-upgrade.sh 산출물 — backup 트리와 실행 로그.
 # `.template-state` 는 declared/applied 마이그레이션 상태라 git 추적 대상.
 .template-backups/

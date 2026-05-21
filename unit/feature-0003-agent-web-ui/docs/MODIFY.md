@@ -1441,3 +1441,32 @@ source_of_truth: true
 - Diff size: admin.js 2645 → 3080 lines (+435), admin.html 219 → 250 lines (+31), styles.css 2976 → 3052 lines (+76). cache-bust v=20260512-bulk-contract-v02.
 - Impact: 차후 admin 카테고리 추가 시 컨벤션 미준수가 runtime assertion (console.warn) 으로 감지된다. 사용자가 보고한 계정 우상단 / 역할 좌하단 / 제품 다중선택 부재 의 카테고리 간 일관성 결여 root cause 두 가지 (DOM anchor 표준 부재 + .admin-pane-head-right 슬롯 semantic 충돌) 가 정책 + 코드 두 층에서 모두 해소.
 - Rollback Notes: 본 변경은 backend 데이터 모델 변경 없음. UI/JS/CSS 만 변경. admin.js / admin.html / styles.css 의 git revert 로 즉시 복구 가능. RBAC catalog 변경 없음 (기존 권한 product.manage / account.activate 등의 row-level check 만 활용).
+
+## CHG-20260521-0001
+- Date: 2026-05-21
+- Related Requirement: TASK-0094, REQ-20260521-0001
+- Summary: 첨부 기능 multi-cycle (A CSV ingest + B DDL/KB + C Vision + D PDF RAG) 의 BRIEFING 정본 (Revision 2) 작성 + TASK.md 신규 entry 등재 + PLAN-APPROVED 마커 부여. Codex outside-voice review 2 회 (REV-20260520-0001 1차 + REV-20260521-0002 2차 follow-up) 흡수. 코드 변경 0, 계획 문서만 갱신.
+- Files: unit/feature-0003-agent-web-ui/docs/BRIEFING-attachment-multi-cycle.md (신규, 923 lines), unit/feature-0003-agent-web-ui/docs/TASK.md (TASK-0094 entry + Current Status + PLAN-APPROVED 마커), .gitignore (`.context/` 추가).
+- Notes: 본 cycle 은 코드/스키마/RBAC catalog 변경 없이 multi-cycle plan 의 정본을 lock-in 한다. 핵심 결정 21 건 (D1~D21):
+  - D1 S3-compat MinIO (compose +1 service `minio`). 사내망 다운로드용 signed URL 만 발급, 외부 LLM provider 에는 절대 송신 금지 (D13).
+  - D2 sandbox DB = 동일 cluster + 별 schema `agent_attachment_<sha256(conv_id)[:32]>`. `WebConversationAttachmentsSandboxSchemas` mapping table 유지.
+  - D3 vector store = PGVector (Postgres 도입 — compose +1 service `postgres`). 단계적 (D10): dev 1차는 agent_memory 와 동일 컨테이너 + DB 분리, prod 는 별 instance 옵션 PLAN gate 재검토.
+  - D4 4 시나리오 (A CSV + B DDL/KB + C Vision + D PDF RAG) 전부 진행. 4 sprint 분리. D18 단일 통합 PLAN gate.
+  - D5 Codex outside-voice review 2 회 완료 — 1차 17 Valid finding 흡수, 2차 Critical 3 + Major 11 + Minor 2 흡수 (F8 만 사용자 명시 거부).
+  - D6 lifecycle 4 종 (user delete / conv soft / admin purge / legal erasure) + tombstone + nullable FK (R-Claim6) + UX 4 state 표면화 (R-F1) + pseudonymous irreversible event id (R-F12).
+  - D7 MIME allowlist + archive 거부. D8 size cap (per-file 25MB / per-conv 100MB / per-account 1GB).
+  - D9 share derived redact + 기존 token 자동 redact (R-F7 Critical) + `WebShareLinks.PolicyVersion` column.
+  - D10 PGVector dev/prod 단계적.
+  - D11 consent provider×data_class×purpose + revoke + 재동의 + grouped batch modal (R-F2) + provider Files API lifecycle (R-F13).
+  - D12 audit HMAC + extension/size bucket + AST normalized SQL + denied reason + pseudonym cross-ref.
+  - D13 외부 LLM bytes = server-side read + base64 inline 또는 Files API. `WebConversationAttachmentProviderFiles` 신규 + post-inference delete (R-F13).
+  - **D14 sandbox SQL guard = AST shape allowlist (R-F3 Critical)** — single SELECT/CTE only, FOR UPDATE / LOCK / EXPLAIN ANALYZE / optimizer hint / SLEEP / BENCHMARK / user variable / INTO OUTFILE / LOAD_FILE / information_schema / mysql.* / performance_schema / sys.* 전부 거부. denylist 는 보조 secondary check.
+  - D15 wildcard grant 금지 + writer 최소권한 (CREATE/ALTER/INSERT/SELECT) (R-Claim4) + grant drift health endpoint `/api/admin/health/attachment-grants` + 주기 reconciliation (R-F4).
+  - D16 attachment_ids selected-only + lazy-create attachment snapshot (R-F5) — busyKey/pending sentinel 에 snapshot 저장.
+  - D17 UploadStatus 7 값 + retrieval-time policy (R-F6) — partial_indexed 문서 answer meta degraded_sources / UI banner / LLM system note / OCR follow-up.
+  - **D18 단일 통합 PLAN gate** — Codex F8 의 1A/1B/1C 분할 권고 사용자 명시 거부. 위험 격리는 D14 + R-Claim4 + R-F4 + D20 조합으로 충족.
+  - **D19 `WebAttachmentDerivedMessages(AttachmentId, MessageId, DerivationType, CreatedAt)` join table** (R-F11) — many-to-many 정규화, share redact/audit/fork 의 source-of-truth.
+  - **D20 MinIO dual-key rotation runbook** (R-F9) — old/new 24h dual window + canary write/read/delete + 컨테이너 순차 재기동 + rollback + audit `attachment.storage.key_rotation`.
+  - **D21 pending role attachment metadata-only** (R-F14) — bytes download 는 승인 후, audit `attachment.bytes_download.denied_pending` 기록.
+- Impact: Sprint 1 (Cycle 0 Foundation + Cycle 1 CSV ingest) implementation 진입 가능. D14 SQL allowlist guard 통과가 Sprint 1 ship 조건. 코드 변경은 별 worktree `ai/claude/0087/sprint-1-foundation-csv` (또는 `0094/sprint-1-...`) 에서 진행. 본 cycle 자체의 코드/스키마/RBAC catalog 영향 0.
+- Rollback Notes: 본 변경은 문서 only. revert 시 BRIEFING 신규 파일 삭제 + TASK.md 의 TASK-0094 entry + PLAN-APPROVED 마커 + Current Status 갱신 revert + .gitignore 의 `.context/` 한 줄 revert. revert 후 Sprint 1 진입은 BRIEFING/계획 재작성 필요.
