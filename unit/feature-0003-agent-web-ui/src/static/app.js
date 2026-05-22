@@ -4,20 +4,8 @@ const signupFormEl = document.getElementById("signupForm");
 const loginErrorEl = document.getElementById("loginError");
 const signupErrorEl = document.getElementById("signupError");
 const openAdminBtn = document.getElementById("openAdminBtn");
-const vaultModelEl = document.getElementById("vaultModel");
-const vaultCipherEl = document.getElementById("vaultCipher");
-const vaultPassphraseEl = document.getElementById("vaultPassphrase");
-const vaultPlainKeyEl = document.getElementById("vaultPlainKey");
-const saveVaultBtn = document.getElementById("saveVaultBtn");
-const clearVaultBtn = document.getElementById("clearVaultBtn");
-const vaultStatusEl = document.getElementById("vaultStatus");
-const vaultBannerEl = document.getElementById("vaultBanner");
-const vaultBannerTextEl = document.getElementById("vaultBannerText");
-const vaultSavedCardEl = document.getElementById("vaultSavedCard");
-const vaultSavedMetaEl = document.getElementById("vaultSavedMeta");
-const vaultDangerZoneEl = document.getElementById("vaultDangerZone");
-const vaultImportCipherBtn = document.getElementById("vaultImportCipherBtn");
-const vaultStepEls = Array.from(document.querySelectorAll("[data-step]"));
+// feature-0007 (REQ-20260521-0001): vault* DOM 참조 / step wizard 제거. LLM
+// 자격증명은 서비스 단일 env (BEDROCK_GATEWAY_API_KEY) 가 보유한다.
 
 // Sidebar profile trigger
 const profileAvatarEl = document.getElementById("profileAvatar");
@@ -65,11 +53,20 @@ const promptInputEl = document.getElementById("promptInput");
 const sendBtn = document.getElementById("sendBtn");
 const toastEl = document.getElementById("toast");
 
-const STORAGE_KEYS = {
-  cipher: "mysql_ai_vault_cipher_v1",
-  model: "mysql_ai_vault_model_v1",
-  passphrase: "mysql_ai_vault_passphrase_v1",
-};
+// feature-0007 (REQ-20260521-0001): vault localStorage / sessionStorage key 폐기.
+// 기존 사용자의 캐시에 남은 v1: cipher 는 cache-bust 시점에 자연 cleanup.
+// 본 cleanup 은 페이지 로드 직후 1 회 시도 (silent — key 없으면 no-op).
+const LEGACY_VAULT_KEYS = [
+  "mysql_ai_vault_cipher_v1",
+  "mysql_ai_vault_model_v1",
+  "mysql_ai_vault_passphrase_v1",
+];
+try {
+  LEGACY_VAULT_KEYS.forEach((k) => {
+    localStorage.removeItem(k);
+    sessionStorage.removeItem(k);
+  });
+} catch (_e) { /* storage 미지원 환경 */ }
 
 const PROGRESS_FETCH_TIMEOUT_MS = 4000;
 const PROGRESS_POLL_ACTIVE_MS = 1200;
@@ -92,6 +89,8 @@ const state = {
   // 대화별 요청 진행 여부 — 전역 busy 대신 대화 ID Set으로 관리하여 병렬 대화 허용
   busyConversations: new Set(),
   localLlmEnabled: false,
+  // feature-0007: apiVaultOptions 의미 단순화. /api/api-vault/options 응답은
+  // 모델 카탈로그 (default_model + models) 만 보유. 사용자 키 / passphrase 미보관.
   apiVaultOptions: null,
   progressPoller: null,
   progressPollInFlight: false,
@@ -548,6 +547,16 @@ function currentConversation() {
   return state.conversations.find((item) => item.id === state.activeConversationId) || null;
 }
 
+// feature-0007 (REQ-20260521-0001): readVaultState / writeVaultState /
+// clearVaultState / isVaultCryptoAvailable / computeVaultReadiness /
+// updateVaultReadiness / syncVaultSteps / renderVaultSavedCard / refreshVaultUI
+// 함수 일괄 제거. main 의 TASK-0103 secure context 보강 (isVaultCryptoAvailable
+// 등) 도 본 cycle 의 API Vault 전면 폐기로 superseded — 함수 자체가 사라졌다.
+// LLM 자격증명은 서비스 단일 env (BEDROCK_GATEWAY_API_KEY) 가 보유.
+//
+// 아래 origin/main 의 vault 함수 정의는 본 cycle 의 정책으로 일괄 제거 (주석
+// 만 보존). 호출 사이트 (vault 이벤트 리스너 등) 도 본 cycle 에서 모두 제거됨.
+/*
 function readVaultState() {
   return {
     cipher: localStorage.getItem(STORAGE_KEYS.cipher) || "",
@@ -707,6 +716,7 @@ function refreshVaultUI() {
   renderVaultSavedCard();
   syncVaultSteps();
 }
+*/
 
 function toggleAuthPane(tab) {
   document.querySelectorAll("[data-auth-tab]").forEach((button) => {
@@ -4078,7 +4088,7 @@ async function sendPrompt() {
     showPermissionDeniedToast("conversation.create");
     return;
   }
-  const vault = readVaultState();
+  // feature-0007: vault state 폐기. 모델 / 자격증명 모두 server-side 단일 source.
   // 요청 시작 시점의 대화 ID를 고정 — 전송 중 대화 전환이 일어나도 올바른 대화에 귀속
   const targetConvId = state.activeConversationId;
   // TASK-0082: lazy-create 시 busyKey 는 beginPendingConversation 이 부여한 unique sentinel
@@ -4143,12 +4153,15 @@ async function sendPrompt() {
   }
   // TASK-0048: lazy create 분기에서 사용자의 직전 product 의도(state.productMode/pinnedProductId)를
   // backend 에 hint 로 전달. backend `/api/ask` 가 새 cid 직후 AgentCoreConversations.product_*에 반영한다.
+  // feature-0007: model 결정은 server-side default (state.session.default_model
+  // 또는 state.apiVaultOptions.default_model = API_DEFAULT_MODEL) 기반. cipher
+  // 첨부 폐기.
   const askBody = {
     message,
     conversation_id: targetConvId || "",
-    model: vaultModelEl.value.trim() || vault.model || state.apiVaultOptions?.default_model || "auto",
-    api_key_cipher: vault.cipher,
-    api_key_passphrase: vault.passphrase,
+    model: state.session?.default_model
+      || state.apiVaultOptions?.default_model
+      || "claude-sonnet-4",
   };
   if (isLazyCreate) {
     // TASK-0059: backend `/api/ask` 가 빈 conversation_id 를 "session 초기화 후 직전 대화 이어받기"
@@ -4286,73 +4299,23 @@ async function sendPrompt() {
   }
 }
 
+// feature-0007 (REQ-20260521-0001): loadVaultOptions 의 의미를 "model catalog
+// 만 server 에서 가져와 state 에 저장" 으로 단순화. 사용자 키 wizard 가 사라져서
+// vault 입력 element 채우기 / readiness 갱신 / Local LLM banner 등은 모두 제거.
 async function loadVaultOptions() {
-  const payload = await apiFetch("/api/api-vault/options");
-  state.apiVaultOptions = payload;
-  vaultModelEl.innerHTML = "";
-  const models = Array.isArray(payload.models) ? payload.models : [];
-  models.forEach((item) => {
-    const option = document.createElement("option");
-    const value = typeof item === "string" ? item : item.value;
-    const label = typeof item === "string" ? item : item.label || item.value;
-    option.value = value;
-    option.textContent = label;
-    vaultModelEl.appendChild(option);
-  });
-  const vaultState = readVaultState();
-  vaultCipherEl.value = vaultState.cipher;
-  vaultPassphraseEl.value = vaultState.passphrase;
-  vaultModelEl.value = vaultState.model || payload.default_model || vaultModelEl.value;
-  state.localLlmEnabled = Boolean(state.session?.local_llm_enabled);
-  refreshVaultUI();
+  try {
+    const payload = await apiFetch("/api/api-vault/options");
+    state.apiVaultOptions = payload;
+  } catch (_e) {
+    state.apiVaultOptions = null;
+  }
 }
 
-async function encryptPlainApiKey() {
-  if (!isVaultCryptoAvailable()) {
-    throw new Error(
-      "현재 접속이 보안 컨텍스트(HTTPS 또는 localhost)가 아니어서 브라우저 암호화 API를 사용할 수 없습니다. HTTPS 주소로 접속한 뒤 다시 시도해 주세요."
-    );
-  }
-  const plain = vaultPlainKeyEl.value.trim();
-  const passphrase = vaultPassphraseEl.value.trim();
-  if (!plain) {
-    throw new Error("평문 API 키를 입력하세요.");
-  }
-  if (!passphrase) {
-    throw new Error("암호화 키를 입력하세요.");
-  }
-  const encoder = new TextEncoder();
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(passphrase),
-    { name: "PBKDF2" },
-    false,
-    ["deriveKey"]
-  );
-  const aesKey = await crypto.subtle.deriveKey(
-    {
-      name: "PBKDF2",
-      salt,
-      iterations: 100000,
-      hash: "SHA-256",
-    },
-    keyMaterial,
-    { name: "AES-GCM", length: 256 },
-    true,
-    ["encrypt"]
-  );
-  const cipherBuffer = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    aesKey,
-    encoder.encode(plain)
-  );
-  const toBase64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)));
-  vaultCipherEl.value = `v1:${toBase64(salt)}:${toBase64(iv)}:${toBase64(cipherBuffer)}`;
-  vaultPlainKeyEl.value = "";
-  refreshVaultUI();
-}
+// feature-0007 (REQ-20260521-0001): encryptPlainApiKey 제거됨. AES-GCM /
+// PBKDF2 / Web Crypto subtle 호출 경로 모두 폐기. main 의 TASK-0103 secure
+// context 사전 차단 patch 도 본 cycle 의 API Vault 전면 폐기로 superseded —
+// 함수 자체가 사라졌으므로 secure context guard 도 불요. 사용자 키 입력 자체
+// 가 사라졌다.
 
 async function handleLogin(event) {
   event.preventDefault();
@@ -4581,48 +4544,9 @@ async function initialize() {
   if (passwordChangeFormEl) {
     passwordChangeFormEl.addEventListener("submit", handlePasswordChange);
   }
-  // Step 3: "암호화 후 저장" — encrypt → storage persist 를 한 번에 수행.
-  saveVaultBtn.addEventListener("click", async () => {
-    try {
-      await encryptPlainApiKey();   // → vaultCipherEl.value 에 v1:... 채움
-      writeVaultState();             // → localStorage/sessionStorage 영속화
-      showToast("API 키를 암호화해 저장했습니다.");
-    } catch (error) {
-      showToast(error.message || "암호화 후 저장에 실패했습니다.", true);
-    }
-  });
-  // "저장된 키 삭제": destructive 액션. confirm() 게이트로 우발 클릭 방어.
-  clearVaultBtn.addEventListener("click", () => {
-    const ok = window.confirm(
-      "저장된 암호화 키를 삭제할까요?\n\n삭제 후에는 외부 Local LLM 게이트웨이로만 동작하게 됩니다."
-    );
-    if (!ok) return;
-    clearVaultState();
-    showToast("저장된 암호화 키를 삭제했습니다.");
-  });
-  // 키 갈아끼움 진입점은 destructive zone 의 "저장된 키 삭제" 1개만 — 별도 토글 없음.
-  // 고급: 이미 암호화된 v1:... 직접 붙여넣기 → 저장.
-  if (vaultImportCipherBtn) {
-    vaultImportCipherBtn.addEventListener("click", () => {
-      const raw = vaultCipherEl.value.trim();
-      if (!raw) {
-        showToast("붙여넣을 암호문(v1:...)이 비어 있습니다.", true);
-        return;
-      }
-      if (!raw.startsWith("v1:")) {
-        showToast("암호문 형식이 올바르지 않습니다. `v1:` 로 시작해야 합니다.", true);
-        return;
-      }
-      writeVaultState();
-      showToast("붙여넣은 암호문을 저장했습니다.");
-    });
-  }
-  // 입력이 바뀔 때마다 wizard step 상태 동기화.
-  [vaultPlainKeyEl, vaultPassphraseEl, vaultCipherEl, vaultModelEl].forEach((el) => {
-    if (!el) return;
-    el.addEventListener("input", refreshVaultUI);
-    el.addEventListener("change", refreshVaultUI);
-  });
+  // feature-0007 (REQ-20260521-0001): saveVaultBtn / clearVaultBtn /
+  // vaultImportCipherBtn 이벤트 리스너 + vault input 동기화 forEach 일괄 제거.
+  // API Vault wizard 폐기로 클릭/입력 이벤트 대상 자체가 사라졌다.
   logoutBtn.addEventListener("click", () => {
     handleLogout().catch((error) => {
       showToast(error.message || "로그아웃에 실패했습니다.", true);

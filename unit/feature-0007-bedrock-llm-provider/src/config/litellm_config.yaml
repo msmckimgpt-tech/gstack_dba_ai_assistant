@@ -1,0 +1,59 @@
+# LiteLLM Proxy 설정 — AWS Bedrock (Seoul region `ap-northeast-2`) 라우팅
+#
+# 본 파일은 bedrock-gateway 컨테이너 (docker-compose `bedrock-gateway` 서비스) 가
+# `/app/config.yaml` 경로로 read-only mount 한다. backend / frontend 는 `model`
+# 필드에 아래 `model_name` (alias) 만 보내고, LiteLLM 이 `litellm_params.model`
+# 의 실제 Bedrock model ID 로 라우팅한다.
+#
+# 실 model ID 는 AWS Bedrock 의 console (Seoul region) 에서 확인 후 갱신한다.
+# 아래 값은 2026-05-21 시점의 추정 schema 이며, 운영자가 batch 시점에 사실 검증
+# 필요. Claude 4.x 의 정확한 versioned model ID (예: `-20250514-v1:0`) 는 AWS
+# Bedrock 의 "Model access" 페이지에 표시되는 ARN 또는 invocation ID 를 그대로
+# 사용한다.
+
+model_list:
+  # ── Claude Sonnet 4.6 (frontier, ACTIVE — global inference profile) ──
+  # 2026-05-21 Phase E 검증 결과:
+  # 1. Bedrock Seoul region 의 ACTIVE Sonnet/Haiku 는 on-demand 호출 미지원
+  #    (inference profile 강제).
+  # 2. APAC inference profile 은 LEGACY Sonnet 4 만 (30일 미사용 access denied).
+  # 3. ACTIVE Sonnet 4.5 / 4.6 / Haiku 4.5 의 inference profile 은 모두
+  #    `global.*` only — global cross-region routing.
+  # 결정 (사용자 reanchor 2026-05-21): 사내 한정 + 비-개인정보 SQL 작업 가정으로
+  # global routing 수용. 데이터 잔류 정책은 PIPA 엄격 적용 시 별 cycle 의
+  # Provisioned throughput 또는 별 provider 로 재검토. ADR-0022 보강 필요.
+  - model_name: claude-sonnet-4
+    litellm_params:
+      model: bedrock/global.anthropic.claude-sonnet-4-6
+      aws_region_name: ap-northeast-2
+
+  # ── Claude Haiku 4.5 (가성비, ACTIVE — global inference profile) ─────
+  - model_name: claude-haiku-4
+    litellm_params:
+      model: bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0
+      aws_region_name: ap-northeast-2
+
+# ── 인증 ──────────────────────────────────────────────────────────────
+# backend 가 보내는 Authorization 헤더의 Bearer token 을 BEDROCK_GATEWAY_API_KEY
+# 와 대조. 일치 안 하면 401. AWS 자격증명은 컨테이너 env (AWS_ACCESS_KEY_ID /
+# AWS_SECRET_ACCESS_KEY / AWS_REGION) 로만 주입되며 본 파일에 평문 미보관.
+general_settings:
+  master_key: os.environ/BEDROCK_GATEWAY_API_KEY
+
+# ── 동작 ──────────────────────────────────────────────────────────────
+# - drop_params: OpenAI Chat Completions 의 일부 파라미터 (예: `presence_penalty`,
+#   `logit_bias`) 는 Bedrock Claude 가 지원하지 않으므로 LiteLLM 가 silently
+#   drop. 본 코드 베이스의 `_openai_chat_completion_with_deadline` 호출이
+#   `temperature` 만 추가하므로 drop 대상 거의 없음.
+# - request_timeout: 본 backend 의 `AGENT_TIMEOUT_SEC` 와 정합. 사용자 turn 응답
+#   timeout 보다 짧게 잡지 않는다.
+litellm_settings:
+  drop_params: true
+  request_timeout: 120
+
+# ── 모니터링 (옵션) ───────────────────────────────────────────────────
+# LiteLLM 의 success/failure callback hook 으로 audit 확장 가능. 본 cycle 에서는
+# stdout 로깅만 사용하고 audit row 의 token usage 누적은 후속 cycle.
+# litellm_settings:
+#   success_callback: ["log"]
+#   failure_callback: ["log"]

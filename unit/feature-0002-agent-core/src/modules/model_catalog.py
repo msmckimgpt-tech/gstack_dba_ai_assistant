@@ -15,7 +15,7 @@ __all__ = [
 ]
 
 
-API_DEFAULT_MODEL = "gpt-5.4-nano"
+API_DEFAULT_MODEL = "claude-sonnet-4"
 
 # ── 로컬 LLM 게이트웨이 모델 (LOCAL_LLM_API_BASE 설정 시 자동 추가) ──
 _LOCAL_LLM_MODELS: tuple[dict[str, Any], ...] = (
@@ -49,27 +49,27 @@ _LOCAL_LLM_MODELS: tuple[dict[str, Any], ...] = (
     },
 )
 
+# feature-0007 (REQ-20260521-0001~3): API Vault (사용자별 OpenAI API key) 폐기 후
+# AWS Bedrock (Seoul region `ap-northeast-2`) 의 Anthropic Claude 4.x 시리즈로
+# 카탈로그 교체. backend 가 보내는 `model` 필드는 본 alias 만 허용하고, LiteLLM
+# proxy gateway 가 alias → 실 Bedrock model ID (예: `bedrock/anthropic.claude-
+# haiku-4-20250514-v1:0`) 로 라우팅한다. 실 model ID 정합은
+# `unit/feature-0007-bedrock-llm-provider/src/config/litellm_config.yaml` 에서
+# 단일 source-of-truth 로 관리.
 API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = (
     {
-        "value": "gpt-5.4",
-        "label": "gpt-5.4",
-        "group": "GPT-5",
-        "description": "최신 GPT-5 base 모델",
-        "supports_temperature": False,
+        "value": "claude-sonnet-4",
+        "label": "claude-sonnet-4",
+        "group": "Claude 4",
+        "description": "Anthropic Claude Sonnet 4.x (frontier, 고품질)",
+        "supports_temperature": True,
     },
     {
-        "value": "gpt-5.4-mini",
-        "label": "gpt-5.4-mini",
-        "group": "GPT-5",
-        "description": "GPT-5.4 mini 모델",
-        "supports_temperature": False,
-    },
-    {
-        "value": "gpt-5.4-nano",
-        "label": "gpt-5.4-nano",
-        "group": "GPT-5",
-        "description": "GPT-5.4 nano 모델",
-        "supports_temperature": False,
+        "value": "claude-haiku-4",
+        "label": "claude-haiku-4",
+        "group": "Claude 4",
+        "description": "Anthropic Claude Haiku 4.x (가성비, 기본값)",
+        "supports_temperature": True,
     },
 )
 
@@ -110,8 +110,10 @@ def model_supports_temperature(value: str | None) -> bool:
 
 
 # ── 모델별 max_tokens 관리 ──
-# 상용 LLM: 제한 없음 (None) — API 기본값 사용
 # 로컬 LLM: 4K 컨텍스트 내에서 reasoning + content 수용
+# Claude (Bedrock): default cap 미명시 시 비용 폭주 worst-case (codex blindspot
+# #4, CHG-0004) — task 별 명시 cap 추가. Bedrock Sonnet 4.6 의 native max output
+# 은 64K 이지만 본 backend 의 agent loop turn 단위에서는 그보다 훨씬 작아도 충분.
 _LOCAL_LLM_MAX_TOKENS: dict[str, int] = {
     "insight": 1024,   # 인사이트: JSON 출력, reasoning ~700 + content ~200
     "agent": 2048,     # 에이전트 루프: tool calls + 복잡한 응답
@@ -120,12 +122,26 @@ _LOCAL_LLM_MAX_TOKENS: dict[str, int] = {
     "validate": 512,   # 스텝 검증: 짧은 JSON
 }
 
+# Claude (Bedrock) 의 task 별 default cap. backend 가 OpenAI Chat Completions
+# 의 max_tokens param 을 LiteLLM 에 전달 → Anthropic API 의 max_tokens 로 변환.
+# 비용 폭주 worst-case (사용자 query 가 long context 또는 model hallucination
+# 으로 max output 까지 채우는 case) 차단. plan / summary 등 짧은 출력은 작게,
+# agent loop 응답은 크게.
+_CLAUDE_MAX_TOKENS: dict[str, int] = {
+    "insight": 2048,   # 인사이트 JSON
+    "agent": 8192,     # agent loop tool calls + 복잡한 응답
+    "summary": 1024,   # 요약 / topic 짧은 출력
+    "sql_fix": 2048,   # SQL 수정
+    "validate": 1024,  # step validation
+}
+
 
 def max_tokens_for_model(model: str | None, task: str = "agent") -> int | None:
-    """모델별 max_tokens를 반환한다.
-
-    상용 LLM은 None(제한 없음), 로컬 LLM은 태스크별 제한값을 반환.
-    """
-    if not is_local_llm_model(model):
-        return None
-    return _LOCAL_LLM_MAX_TOKENS.get(task, 1024)
+    """모델별 max_tokens 반환. Bedrock Claude 도 명시 cap (비용 폭주 차단)."""
+    if is_local_llm_model(model):
+        return _LOCAL_LLM_MAX_TOKENS.get(task, 1024)
+    # Claude alias (Bedrock) 인 경우 명시 cap (CHG-0004)
+    if model and str(model).startswith("claude-"):
+        return _CLAUDE_MAX_TOKENS.get(task, 8192)
+    # 그 외 (OpenAI direct legacy 등) 은 무제한 (API default)
+    return None

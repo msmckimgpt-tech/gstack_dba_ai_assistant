@@ -54,6 +54,41 @@ ai_read_priority: 4
   ```
 - 자격증명 경로와 필요 권한은 해당 기능의 `FUNCTION.md` §10 Dependencies에 명시한다.
 
+### 6.1 LLM provider 자격증명 (feature-0007, REQ-20260521-0001~3)
+
+- LLM 호출 자격증명은 **서비스 단일 env** (`BEDROCK_GATEWAY_API_KEY`) 가
+  보유한다. 사용자별 키 입력 (구 API Vault wizard) 패턴은 폐기됨.
+- **env_file scoping 의 실제 동작 (CHG-0004 reanchor, codex blindspot #1)**:
+  AWS Bedrock IAM credential (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`)
+  은 `bedrock-gateway` 컨테이너가 직접 소비한다. 단 본 cycle 의 `docker-compose.
+  yml` 은 `x-agent-common` 의 `env_file: - .env` 를 통해 `web` / `agent` /
+  `memory-init` / `insight-worker` 컨테이너에도 동일 `.env` 가 inherit 되므로
+  **process env 로는 AWS_* 값이 노출된다**. 단:
+  - 본 컨테이너들의 application code (Python) 는 AWS_* env 를 직접 참조하지
+    않음 — backend 는 `LLM_API_KEY` / `LLM_BASE_URL` (BEDROCK_GATEWAY_* paired
+    chain) 만 인지.
+  - 사내 운영 + AWS credential 이 root-level shared secret 인 가정 하에 isolation
+    가치 낮음.
+  - 엄격 isolation 이 필요해지면 docker-compose 의 `environment:` 명시 화이트
+    리스트 refactor 로 bedrock-gateway 만 AWS_* 노출 + 다른 컨테이너는 명시
+    배제 (별 cycle).
+- IAM role 권한은 `bedrock:InvokeModel` 최소 권한 + 모델 access 명시 (Claude
+  Sonnet 4.x / Haiku 4.x). `AmazonBedrockFullAccess` 는 권장 안 함.
+- region 은 `ap-northeast-2` (Seoul) — `aws_region_name` 설정. 단 ACTIVE
+  Claude Sonnet 4.5/4.6 / Haiku 4.5 의 inference profile 이 모두 `global.*`
+  만 제공 (Phase E 검증 결과, 2026-05-21). 본 cycle 은 global inference profile
+  수용 (사용자 reanchor) — 사내 한정 + 비-개인정보 SQL 작업 가정으로 PIPA risk
+  낮음. 엄격 잔류 보장이 필요해지면 별 cycle 의 Provisioned throughput 또는
+  별 provider (Anthropic API / Azure OpenAI Korea region / on-prem LLM) 재검토.
+- `BEDROCK_GATEWAY_API_KEY` 는 사내 시크릿 관리자에서 발급. backend ↔ gateway
+  양쪽이 동일 값을 공유 (gateway 의 `master_key` + backend 의 `LLM_API_KEY`).
+- 자격증명 rotation: gateway 컨테이너 재시작으로 1 회 cycle. 기존 in-flight
+  요청은 ungraceful (사내 한정 + 짧은 응답 시간 — 운영상 허용).
+- **Paired fallback 정책 (CHG-0003)**: `LLM_BASE_URL` 과 `LLM_API_KEY` 는
+  `_select_llm_provider()` helper 가 paired tuple 로 결정. provider URL 만
+  설정 + key 미설정 시 silent misroute 차단 (다음 provider 로 fallback).
+- 본 cycle 범위 외: per-user / per-role token quota (배포 후 별 cycle).
+
 ## 7. Anonymous 접근 허용 경로 (allowlist)
 
 본 저장소의 모든 HTTP endpoint 는 기본적으로 로그인 쿠키 검증을 요구한다 (`_require_account` → 401). 다음 경로는 **명시적 예외** 로 anonymous 접근이 허용된다. RBAC refactor 시 실수로 `_require_account` 를 일괄 부착하지 않도록 주의한다.
@@ -155,7 +190,9 @@ REQ-20260519-0001 — 모든 admin mutation + user 4 high-signal action (`/api/a
 - **`_AUDIT_BUILDER_PRODUCT_FIELDS`** = (product_key, name, description, is_active, default_role_access, databases, system_prompt).
 - **`_AUDIT_MASKED_FIELDS_PASSWORD`** = (password_hash, temporary_password, raw_password) — `_audit_redact_sensitive` 가 `<redacted>` 로 shallow 치환 + MaskedFields list 명시.
 - **`_AUDIT_MASKED_FIELDS_TOKEN`** = (session_token_hash, session_token, token).
-- **`_AUDIT_MASKED_FIELDS_API_KEY`** = (openai_api_key, api_key, secret).
+- **`_AUDIT_MASKED_FIELDS_API_KEY`** = (openai_api_key, api_key, secret,
+  bedrock_gateway_api_key, aws_access_key_id, aws_secret_access_key) —
+  feature-0007 도입 시 Bedrock gateway credential 필드 추가.
 - **share token** = `token_prefix[:8]` 만 ChangeJson 에 저장. full token 64 char X (PII 차단).
 - **system_prompt 본문** = `content_len_before / content_len_after` + `content_preview_after[:120]` 만. full content 는 audit 에 미보존 (size cap).
 - **unknown action** = `build_audit_change_json` 가 `ValueError` raise → admin endpoint try/except 가 `conn.rollback()` + 500 응답 (Same tx fail-safe). user endpoint 는 stderr only.
