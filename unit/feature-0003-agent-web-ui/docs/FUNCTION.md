@@ -465,3 +465,8 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   - AC-0274 (Phase 12 — Cycle 1 SQL guard + Ship): RBAC 2 신규 (`attachment.execute_sql_on.own/.any`, group=attachment). SEED_ROLE_DEFINITIONS operator/sales 의 permission set + admin catchup 5/5 + operator-sales catchup 추가. attachment group 신설로 PERMISSION_GROUP_ORDER 9 group 확장 (CONVENTIONS.md §10.6 갱신).
   - AC-0275 (Phase 12 — Cycle 1 SQL guard + Ship): audit ActionCode 3 신규 — attachment.sandbox.sql_exec (ast_summary + table_refs + row_count + elapsed_ms, raw SQL X) / attachment.sandbox.sql_denied (denied_reason + denied_patterns, raw SQL X) / attachment.scope.all (conversation_id + attachment_count). build_audit_change_json case 3 추가.
   - AC-0276 (Phase 12 — Cycle 1 SQL guard + Ship): FE 상수 (app.js + admin.js) PERMISSION_GROUP_ORDER 에 attachment 추가, label map 에 "첨부" 추가, WORK_SCREEN/ADMIN_PERMISSION_SECTIONS 의 운영 권한 묶음에 attachment 합류. CONVENTIONS.md §10.6 9 group 갱신 (attachment + settings 신설). sqlglot>=23.0.0 requirements 추가.
+
+- REQ-20260522-0008 (TASK-0105, **Minor** §12.3 — Profile Drawer '내 감사 로그' 탭 일반 사용자 비노출): 사용자 직접 요청 — 일반 사용자에게 Profile Drawer 내 '내 감사 로그' 탭이 노출되어선 안 됨. TASK-0089 에서 추가한 탭 버튼·패널·JS·CSS 를 제거. backend endpoint 무변경.
+  - AC-0277 (TASK-0105): `index.html` 의 Profile Drawer 탭이 4 → 3 으로 축소. `profileAuditTab` 버튼 제거, `data-profile-pane="audit"` 패널 전체 제거. 탭 순서 = `[프롬프트, 보안 및 계정, API Vault]`.
+  - AC-0278 (TASK-0105): `app.js` 에서 `state.profileAudit` 초기값, `_profileAudit*` 함수 블록 (9개 함수), `renderProfile()` 내 `updateProfileAuditTabVisibility()` 호출, 탭 이벤트 핸들러의 audit 분기, `attachProfileAuditHandlers()` 호출 제거.
+  - AC-0279 (TASK-0105): `styles.css` 에서 `.profile-audit-*` CSS 블록 전체 제거. backend `/api/profile/audits` / `/api/profile/audits/{event_id}` endpoint 및 admin 콘솔 '감사 로그' 탭 무변경.
