@@ -9,20 +9,54 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: M2-d pg_branch xmax + S2/S4/S5/S6 + tagging coverage gate + Nice-to-have 7 (cycle: TASK-0022) + TASK-0101 backlog closure + TASK-0100 multipart hot-fix (모두 done)
-- Owner: AI (본 cycle: pg_branch xmax tagging + S2/S4/S5/S6 mock-pattern 실 구현 + tagging coverage gate + latency instrumentation + Nice-to-have 7 (C-1~C-7) 흡수 + outside-voice REV-20260522-0010 Blocker 2 + Critical 4 반영) → AI (M3: backfill ETL + embedding worker)
+- State: M3 backfill ETL + embedding worker (cycle: TASK-0023) + M2-d done (TASK-0022) + TASK-0101 backlog closure + TASK-0100 multipart hot-fix
+- Owner: AI (본 cycle: bin/kb-backfill.sh + scripts/kb_backfill.py + bin/kb-embedding-worker.sh + scripts/kb_embedding_worker.py + config.py 의 AGENT_KB_EMBEDDING_* binding + 10 unit test) → AI (M4: FULLTEXT → pg_trgm rewrite + AGENT_KB_READ_BACKEND routing + cutover readiness)
 - Priority: high
 - Last Updated: 2026-05-22
 
 ## 1.1 Current Cycle
-- [ ] TASK-0022 (REQ-20260522-0002, **Major §12.3** — RBAC 동반 변경) §2.1 PLAN-APPROVED 의 **M2 phase 의 4차 (M2-d)** 실행. M2-c (TASK-0021) 의 audit infrastructure 위에 outside-voice REV-20260521-0009 의 Nice-to-have 8건 中 7건 (C-1~C-7) + pg_branch xmax tagging (B-1 follow-up) + S2/S4/S5/S6 mock-pattern 실 구현 + tagging coverage gate + latency instrumentation. **outside-voice review (Plan subagent, `REV-20260522-0010`) Verdict NEEDS-TWEAK + Blocker 2 + Critical 4 본 cycle 내 반영 완료** (B-1 stress agent CLI 정정 / B-2 SLA → tagging coverage rename + 한계 명시 / B-3+B-4 `_clear_pg_branch()` 위치 mirror 첫 줄 / C-5 truncate 시 pg_branch 보존 / C-1 xmax docstring + C-2/3/4 metrics+regex + C-9 worst exit code). **본 turn 의 deliverable 은 6 산출 + Critical 6 흡수까지**. **M3 cycle (별 cycle)** 책임: backfill ETL + embedding worker.
+- [ ] TASK-0023 (REQ-20260522-0005, **Minor §12.3** — RBAC 무변경, 데이터 이전 작업) §2.1 PLAN-APPROVED 의 **M3 phase (Backfill ETL + embedding 일괄 생성)** 실행. M2 dual-write 시작 시점 이전의 MySQL 4 KB table 의 row 를 Postgres 의 4 등가 table 로 backfill + `texts.embedding` 일괄 생성. **본 cycle 산출 6건**: (a) `scripts/kb_backfill.py` (~280 LOC) — 4 table TABLE_MAPPING + 멱등 INSERT ON CONFLICT + state file resumable + dry-run + --since/--batch-size/--table/--reset-state, (b) `scripts/kb_embedding_worker.py` (~190 LOC) — OpenAI text-embedding-3-small batch API + WHERE embedding IS NULL paginate + dry-run cost estimation + max-rows cap + retry/timeout, (c) `bin/kb-backfill.sh` wrapper (docker exec agent + /shared mount), (d) `bin/kb-embedding-worker.sh` wrapper, (e) `modules/config.py` 의 AGENT_KB_EMBEDDING_{MODEL,DIM,BATCH_SIZE,TIMEOUT_SEC,MAX_ATTEMPTS} binding, (f) `tests/test_kb_backfill.py` + `tests/test_kb_embedding_worker.py` 10 unit test. outside-voice review **SKIPPED** — 본 cycle 의 ETL 은 RBAC 변경 없음, 메모리 정책 정합. **M4 cycle (별 cycle)** 책임: FULLTEXT → pg_trgm rewrite + AGENT_KB_READ_BACKEND env routing + cutover readiness script.
+
+- [x] TASK-0022 (REQ-20260522-0002, **Major §12.3**) — M2-d pg_branch xmax + S2/S4/S5/S6 + tagging coverage gate + Nice-to-have 7 + REV-20260522-0010 Critical 6 흡수. **done in commit bc3fa81**.
 
 - [x] TASK-0101 (REQ-20260522-0004, **Minor §12.3** — backlog closure batch, cross-feature docs). 본 세션 (TASK-0098 ship + TASK-0100 hot-fix 후) 의 잔여 backlog 항목 일괄 closure. (a) **feature-0002**: TASK-0010 (작업 브랜치 commit 후 clean integration worktree cherry-pick/push) + TASK-0011 (원본 워크트리 더티 동일성 재확인) → 과거 작업 흐름의 마무리 docs, 코드 작업 자체는 이미 완료. (b) **feature-0001 / 0004 / 0005 / 0006**: TASK-0004 (엄격한 시나리오 정의) → placeholder. (c) **feature-0005**: TASK-0005 (MCP 서비스 기동 검증) → 본 cycle 실 환경 검증. (d) **feature-0003**: TASK-0072 → main 의 TASK-0099 closure 재확인.
 - [x] TASK-0100 (REQ-20260522-0003, **Minor §12.3** — multipart UploadFile 의존성 hot-fix). `python-multipart>=0.0.9` 한 줄 추가 → web container 안정.
 - [x] fix/query-result-string-truncation (Minor §12.3) — render.py CSV 기반 `preview_table` 구성.
 - [x] TASK-0021 (REQ-20260522-0001, **Major §12.3**) — M2-c cross-DB audit explicit + SLA verify body + stress.sh body + S1/N1/N2 실 구현 + REV-20260521-0009 Critical 6 흡수. **done in commit 7540e17**.
 
-## 1.2 Implementation Plan (TASK-0022 — M2-d pg_branch + S2-S6 + delete/prune SLA + Nice-to-have 본 cycle)
+## 1.2 Implementation Plan (TASK-0023 — M3 Backfill ETL + embedding worker 본 cycle)
+
+영향 파일 (본 cycle, ETL + embedding + test):
+- `unit/feature-0002-agent-core/src/scripts/kb_backfill.py` (신규 ~280 LOC) — TABLE_MAPPING (4 table) + load_state/save_state + open_mysql_conn/open_pg_conn (기존 modules/db.py 재사용) + _iter_mysql_rows paginate + _insert_pg_batch ON CONFLICT DO NOTHING + backfill_table progress logging + main() argparse (--table/--since/--batch-size/--dry-run/--reset-state).
+- `unit/feature-0002-agent-core/src/scripts/kb_embedding_worker.py` (신규 ~190 LOC) — get_settings (config.py 의 5 env 변수) + open_pg_conn + call_openai_embeddings (retry + timeout) + count_pending/fetch_pending_batch/update_embeddings + estimate_cost_usd (model 별 가격 추정) + main() argparse + dry-run cost estimation.
+- `bin/kb-backfill.sh` (신규 ~45 LOC) — docker exec agent + AGENT_KB_BACKFILL_STATE_DIR=/shared.
+- `bin/kb-embedding-worker.sh` (신규 ~25 LOC) — docker exec agent + arg passthrough.
+- `unit/feature-0002-agent-core/src/modules/config.py` (+~15 LOC) — AGENT_KB_EMBEDDING_MODEL (text-embedding-3-small default) + DIM (1536) + BATCH_SIZE (100) + TIMEOUT_SEC (60) + MAX_ATTEMPTS (3) + EXPORT_VARS 등록.
+- `tests/test_kb_backfill.py` (신규 ~125 LOC) — 4 unit test (TABLE_MAPPING 정합 / state roundtrip / dry-run no-op / main smoke).
+- `tests/test_kb_embedding_worker.py` (신규 ~140 LOC) — 6 unit test (cost estimation 3 model + length mismatch + UPDATE SQL emit + dry-run no-OpenAI).
+- `docs/{TASK,REVIEW,MODIFY,REPORT,FUNCTION}.md`: cycle 등록 + 본 entry + Summary.
+
+접근 방법:
+1. TABLE_MAPPING — 4 table 의 mysql → pg 컬럼 명명 (SnakeCase 적용, KB_PG_DIALECT_NOTES.md 정합) + ON CONFLICT clause (texts/fact_entries 는 DO NOTHING, rag_documents/rag_objects 는 ON CONFLICT...DO NOTHING — backfill 은 멱등 진입이므로 DO UPDATE 불필요).
+2. backfill state file — artifacts/shared/kb-backfill-state.json (host mount /shared).
+3. dry-run path — `_insert_pg_batch` 가 INSERT 안 함, len(rows) 반환. SELECT 만.
+4. embedding batch — OpenAI text-embedding-3-small 의 input=list batch (~100 text per API call).
+5. dry-run cost — sample batch 1회 fetch + 평균 char count × pending → cost USD 추정.
+6. test — FakeConn / FakeCursor 패턴, monkeypatch 으로 실 DB/API 우회.
+
+**Outside-voice review**: SKIPPED — 본 cycle 의 ETL 은 RBAC 변경 없음 (agent_kb_rw role 의 기존 INSERT 권한 활용), endpoint 변경 없음, audit 변경 없음. 사용자 메모 `feedback_outside_voice_for_rbac.md` 정책 정합.
+
+**Runtime 검증 deferral (사용자 / M4 별 cycle 책임)**:
+1. main worktree `git pull --ff-only` + agent container 가동 확인.
+2. `bin/kb-backfill.sh --dry-run` → 분모 정의 (총 row count + 4 table 별 last_id).
+3. `bin/kb-backfill.sh --since $KB_DUAL_WRITE_START_TS` → 실제 ETL 진행.
+4. `bin/kb-embedding-worker.sh --dry-run` → cost 추정 (M-1 baseline ~800 texts ≈ USD <0.05).
+5. `bin/kb-embedding-worker.sh` → 실 OpenAI 호출.
+6. `bin/kb-dual-write-verify.sh --counts --since $KB_DUAL_WRITE_START_TS` → 4 table row count 일치.
+
+위험도: **Minor §12.3** — 데이터 이전 작업, RBAC / endpoint / audit 변경 없음. PLAN-APPROVED 범위 (§2.1.3 M3 phase).
+
+## 1.3 Implementation Plan (TASK-0022 — M2-d pg_branch + S2-S6 + delete/prune SLA + Nice-to-have, done — 보존)
 
 영향 파일 (본 cycle, instrumentation + tooling + test):
 - `unit/feature-0002-agent-core/src/modules/kb_backend.py` (+~120 LOC) — 3 UPSERT SQL 에 `RETURNING id, (xmax = 0) AS pg_inserted` + `_pg_op_local` threading.local + `_get_last_pg_branch()` / `_clear_pg_branch()` helpers + `_execute_returning_id()` branch 캡쳐 (insert/update) + delete/prune/upsert_text 의 branch 라벨 + `_log_kb_write_audit(pg_branch=...)` 시그니처 + ChangeJson `pg_branch` 필드 + `_MIRROR_METRICS` + `get_mirror_metrics()` / `reset_mirror_metrics()` + `_DualWriteMirror._mirror()` 의 timing.

@@ -162,12 +162,27 @@ source_of_truth: true
   - `--keep-agent-container` (REV-20260522-0010 B-1 흡수) — agent service 가 docker ps 에 running 시 `docker exec "$agent_container" python /app/agent_core.py "$question"` (positional, agent_core.py:1796 argparse `query` 정합) 재사용. 25-iter container churn (~20s/iter overhead) 회피.
   - `--log-dir <path>` (REV-20260521-0009 C-3 흡수) — per-step log file. `step_log()` helper 가 step id 별 timestamp + status 기록.
 
-**M3 cycle 책임 (별 cycle 위임)**:
-- Backfill ETL (`bin/kb-backfill.sh`) + embedding worker (`bin/kb-embedding-worker.sh` 또는 inline) + OpenAI `text-embedding-3-small` 호출 + dry-run mode
-- delete/prune 의 진짜 cross-DB SLA (pg_branch tagging coverage 가 아닌 in-process counter 기반)
-- Latency baseline production-like 측정 (`get_mirror_metrics()` 의 production sampling)
-- Nice-to-have (REV-20260521-0009 C-6/C-7/C-8) — verify.sh stderr 추가 노출 + JSON_EXTRACT MySQL 8.0+ 의존 문서화 + FakeCursor cosmetic
-- Nice-to-have 8건 (REV-20260521-0009 C-1~C-8): N2 env var 문서화 / stress.sh container 재사용 / per-step log / SINCE injection escape / `_BACKENDS_CACHE` test finalize / prune correlated IN 성능 / verify.sh stderr suppress 제거 / zero-denom exit 2 (본 cycle 흡수 완료)
+**Backfill ETL (TASK-0023 M3 cycle, 본 cycle 산출)**:
+- `unit/feature-0002-agent-core/src/scripts/kb_backfill.py` (~280 LOC) — MySQL → Postgres 4 KB table backfill. TABLE_MAPPING (mysql_table / pg_table / id_col / select_cols / pg_insert_cols / pg_conflict) 4 entry. 멱등 (INSERT...ON CONFLICT DO NOTHING). Resumable (artifacts/shared/kb-backfill-state.json 의 table 별 last_id checkpoint). Progress log (every 10 batches). `--since $KB_DUAL_WRITE_START_TS` filter (M2 시작 이전 row 만, 중복 방지). `--dry-run` (SELECT 만). `--table` (single or all). `--reset-state` (처음부터). main 진입: `python -m scripts.kb_backfill` (agent 컨테이너 안).
+- `unit/feature-0002-agent-core/src/scripts/kb_embedding_worker.py` (~190 LOC) — `texts.embedding` 일괄 생성. OpenAI `text-embedding-3-small` (default, .env AGENT_KB_EMBEDDING_MODEL override). batch API (input=list 100 text per call). resumable (WHERE embedding IS NULL paginate). `--dry-run` (count + cost estimation, 실 API 호출 안 함). `--max-rows N` (cost cap). `--model` override. retry + timeout (config.AGENT_KB_EMBEDDING_{TIMEOUT_SEC,MAX_ATTEMPTS}). cost estimation: text-embedding-3-small USD 0.02/1M tokens × ~3 char/token 보수 추정.
+- `bin/kb-backfill.sh` + `bin/kb-embedding-worker.sh` — host wrapper. `docker exec ${COMPOSE_PROJECT_NAME}-agent-1 python -m scripts.kb_*`. backfill state file 은 `/shared` 마운트 (host artifacts/shared/).
+- `modules/config.py` 의 5 env binding: `AGENT_KB_EMBEDDING_MODEL` (default text-embedding-3-small), `AGENT_KB_EMBEDDING_DIM` (1536), `AGENT_KB_EMBEDDING_BATCH_SIZE` (100), `AGENT_KB_EMBEDDING_TIMEOUT_SEC` (60), `AGENT_KB_EMBEDDING_MAX_ATTEMPTS` (3).
+- Test: `tests/test_kb_backfill.py` (4 unit test: TABLE_MAPPING 정합 / state roundtrip / dry-run no-op / main smoke) + `tests/test_kb_embedding_worker.py` (6 unit test: cost estimation 3 model + length mismatch raise + UPDATE SQL emit + dry-run no-OpenAI).
+
+**M4 cycle 책임 (별 cycle 위임)**:
+- FULLTEXT → pg_trgm rewrite (`knowledge.py:1434` 의 `MATCH ... AGAINST NATURAL LANGUAGE MODE` → pg_trgm `similarity()` / tsvector `to_tsvector + @@` / pgvector embedding `<=>` 3 옵션 中 1택)
+- `AGENT_KB_READ_BACKEND` env routing 활성 (M4 진입 시 1, M5 까지 유지) — `modules/db.py` 의 read path 분기
+- `bin/kb-cutover-readiness.sh` script (10+ 게이트 검증 — dual-write SLA + invariant test + p99 latency 50% 이내 + `make ask` 5 회귀 시나리오)
+- Stage A/B rollback 절차 명문화 (1줄 env 변경 + agent 재기동)
+- ADR-0021 §Consequences (e)/(f) 게이트 PASS 명시
+- delete/prune 의 진짜 cross-DB SLA (in-process counter 기반)
+- Latency baseline production-like 측정 (M2-d 의 `get_mirror_metrics()` production sampling)
+- Nice-to-have (REV-20260521-0009 C-6/C-7/C-8)
+
+**M5 cycle 책임 (별 cycle 위임)**:
+- MySQL KB 5 정본 mysqldump 보관 + DROP TABLE (또는 read-only deprecated 상태)
+- dual-write 로직 제거 (`_dual_write_kb` mirror call 제거, `_DualWriteMirror` deprecation)
+- audit ActionCode `kb.*.mirror` 의 deprecation (M4 cutover 후 의미 손실)
 
 ## 11. Acceptance Criteria
 - AC-0001: 코어 코드가 `src/` 아래로 이동되어 있다.

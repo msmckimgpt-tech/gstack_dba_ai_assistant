@@ -8,6 +8,25 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0007
+- Date: 2026-05-22
+- TASK-Cycle: TASK-0023 (M3 backfill ETL + embedding worker, **Minor §12.3** — RBAC 무변경)
+- Summary: §2.1 PLAN-APPROVED 의 **M3 phase** — M2 dual-write 시작 시점 이전의 MySQL 4 KB table row 를 Postgres 의 4 등가 table 로 backfill + `texts.embedding` 일괄 생성. **본 cycle 산출 6건**: (a) `scripts/kb_backfill.py` (~280 LOC), (b) `scripts/kb_embedding_worker.py` (~190 LOC), (c) `bin/kb-backfill.sh` wrapper, (d) `bin/kb-embedding-worker.sh` wrapper, (e) `modules/config.py` 의 AGENT_KB_EMBEDDING_* 5 env binding, (f) `tests/test_kb_backfill.py` (4 test) + `tests/test_kb_embedding_worker.py` (6 test). outside-voice review **SKIPPED** (`REV-20260522-0011`) — RBAC 변경 없음.
+- Worktree: `ai/claude/0002/kb-pg-m3` 격리. path: `<wrapper>/.worktrees/0002-kb-pg-m3/`. 사용자 결정 (2026-05-22): "이번 세션에서 남은 cycle을 모두 완수해주세요" → 본 cycle 진행.
+- Files (ETL + embedding + test):
+  - `scripts/kb_backfill.py` (신규 ~280 LOC): TABLE_MAPPING (4 table) + load_state/save_state (artifacts/shared/kb-backfill-state.json) + open_mysql_conn/open_pg_conn 재사용 + _iter_mysql_rows paginate + _insert_pg_batch ON CONFLICT DO NOTHING + backfill_table progress logging + main() argparse.
+  - `scripts/kb_embedding_worker.py` (신규 ~190 LOC): get_settings + open_pg_conn + call_openai_embeddings (retry + timeout) + count_pending/fetch_pending_batch/update_embeddings + estimate_cost_usd + main() argparse + dry-run cost estimation.
+  - `bin/kb-backfill.sh` (신규 ~45 LOC): docker exec agent + AGENT_KB_BACKFILL_STATE_DIR=/shared.
+  - `bin/kb-embedding-worker.sh` (신규 ~25 LOC): docker exec agent.
+  - `modules/config.py` (+~15 LOC): AGENT_KB_EMBEDDING_MODEL/DIM/BATCH_SIZE/TIMEOUT_SEC/MAX_ATTEMPTS binding + EXPORT_VARS 등록.
+  - `tests/test_kb_backfill.py` (신규 ~125 LOC): 4 unit test.
+  - `tests/test_kb_embedding_worker.py` (신규 ~140 LOC): 6 unit test.
+  - `docs/{TASK,REVIEW,MODIFY,REPORT,FUNCTION}.md`: cycle 등록.
+- 검증 (본 cycle): pytest 31 PASS / 2 SKIPPED + bash -n PASS.
+- Runtime 검증 deferral (사용자 / M4 별 cycle): backfill 실 ETL + embedding 실 OpenAI 호출.
+- 사용자 결정 (2026-05-22): 즉시 자동 commit + push + main 동기화.
+- Outside-voice rationale: SKIPPED ✓ — `REV-20260522-0011 [SKIPPED:rbac-unchanged-data-migration]`.
+
 ## CHG-20260522-0006
 - Date: 2026-05-22
 - TASK-Cycle: TASK-0022 (M2-d pg_branch xmax + S2/S4/S5/S6 + tagging coverage gate + Nice-to-have 7, **Major §12.3** — RBAC 동반)

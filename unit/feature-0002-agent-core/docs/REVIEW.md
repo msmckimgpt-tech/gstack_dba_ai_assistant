@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260522-0011 [SKIPPED:rbac-unchanged-data-migration — M3 backfill ETL + embedding worker]
+- Date: 2026-05-22
+- TASK-Cycle: TASK-0023 (M3 backfill ETL + embedding worker, **Minor §12.3** — RBAC 무변경)
+- Decision: outside voice / Plan subagent SKIP — 본 cycle 의 ETL 은 RBAC / endpoint / audit 변경 없음. agent_kb_rw role 의 기존 INSERT 권한을 활용한 데이터 이전 + texts.embedding 컬럼 일괄 생성만. 사용자 메모 `feedback_outside_voice_for_rbac.md` 의 "RBAC 변경 시점만 outside voice 요구" 정책 정합.
+- Reason: (a) modules/kb_backend.py / verify.sh / stress.sh 변경 없음 — audit instrumentation 무변경. (b) PG SQL template 변경 없음 — TABLE_MAPPING 의 INSERT...ON CONFLICT 만 추가, 기존 SQL 재사용. (c) OpenAI embedding 호출은 read-only API call + texts UPDATE — `agent_kb_rw` role 의 기존 SELECT/UPDATE 권한으로 충분. (d) backfill 의 분모 정의 (--since $KB_DUAL_WRITE_START_TS) 가 M2 dual-write 시작 이전 row 만 처리하므로 중복 작성 위험 없음.
+- 본 cycle 의 검증 방법:
+  - `pytest tests/test_kb_backfill.py tests/test_kb_embedding_worker.py -v` — 10 PASS (TABLE_MAPPING 정합 / state roundtrip / dry-run no-op / main smoke / cost estimation / length mismatch / UPDATE SQL / dry-run no-OpenAI)
+  - `pytest tests/` 전체 — 31 PASS, 2 SKIPPED (회귀 없음)
+  - `bash -n bin/kb-backfill.sh` / `bin/kb-embedding-worker.sh` — syntax PASS
+- Alt 거부:
+  - **outside-voice review 호출**: ETL 의 정합성은 unit test 로 충분 검증. RBAC / 보안 영향 없음.
+- Risks: (a) OpenAI API cost — M-1 baseline ~800 texts × text-embedding-3-small ≈ USD 0.01~0.05 (보수 추정), §12.1 외부 비용 조항의 USD 100 cap 안. dry-run cost estimation 으로 cap 사전 확인. (b) backfill state file (artifacts/shared/kb-backfill-state.json) 의 손상 — 재진입 시 last_id leftover, --reset-state 로 복원.
+- Test: dry-run smoke + unit test 10건.
+
 ## REV-20260522-0010 [SUBAGENT:Plan-subagent — M2-d pg_branch + S2-S6 + delete/prune SLA + Nice-to-have 7]
 - Date: 2026-05-22
 - TASK-Cycle: TASK-0022 (M2-d pg_branch xmax + S2/S4/S5/S6 + tagging coverage gate + Nice-to-have 7, **Major §12.3** — RBAC 동반)

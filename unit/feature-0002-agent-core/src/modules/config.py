@@ -182,6 +182,11 @@ __all__ = [
     "AGENT_KB_PG_ENABLED",
     "AGENT_KB_READ_BACKEND",
     "AGENT_KB_DUAL_WRITE",
+    "AGENT_KB_EMBEDDING_MODEL",
+    "AGENT_KB_EMBEDDING_DIM",
+    "AGENT_KB_EMBEDDING_BATCH_SIZE",
+    "AGENT_KB_EMBEDDING_TIMEOUT_SEC",
+    "AGENT_KB_EMBEDDING_MAX_ATTEMPTS",
     "FACT_SCOPE_COMMON",
     "GLOBAL_CONVERSATION_ID",
     "GLOBAL_SESSION_CONVERSATION_ID",
@@ -255,6 +260,18 @@ AGENT_KB_PG_SSLMODE = os.getenv("AGENT_KB_PG_SSLMODE", "prefer").strip() or "pre
 AGENT_KB_PG_ENABLED = bool(AGENT_KB_PG_HOST) and bool(AGENT_KB_PG_USER)
 AGENT_KB_READ_BACKEND = (os.getenv("AGENT_KB_READ_BACKEND", "mysql").strip() or "mysql").lower()
 AGENT_KB_DUAL_WRITE = (os.getenv("AGENT_KB_DUAL_WRITE", "0").strip() or "0") in {"1", "true", "yes", "on"}
+
+# M3 (TASK-0023) — Embedding worker (texts.embedding 컬럼 일괄 생성).
+# Blocker B-4 결정 (M1 ADR-0021): TextHash 별 단일 embedding — fact_entries /
+# rag_documents / rag_objects 가 texts join 시 자연 참조.
+AGENT_KB_EMBEDDING_MODEL = (
+    os.getenv("AGENT_KB_EMBEDDING_MODEL", "text-embedding-3-small").strip()
+    or "text-embedding-3-small"
+)
+AGENT_KB_EMBEDDING_DIM = int(os.getenv("AGENT_KB_EMBEDDING_DIM", "1536") or "1536")
+AGENT_KB_EMBEDDING_BATCH_SIZE = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_SIZE", "100") or "100")
+AGENT_KB_EMBEDDING_TIMEOUT_SEC = int(os.getenv("AGENT_KB_EMBEDDING_TIMEOUT_SEC", "60") or "60")
+AGENT_KB_EMBEDDING_MAX_ATTEMPTS = int(os.getenv("AGENT_KB_EMBEDDING_MAX_ATTEMPTS", "3") or "3")
 BLOCKED_DEFAULT_SCHEMAS = {
     s.strip().lower()
     for s in os.getenv(
