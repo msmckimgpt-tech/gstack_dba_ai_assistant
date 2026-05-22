@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260522-0004 [SKIPPED:hot-fix-dependency-only]
+- Date: 2026-05-22
+- Decision: TASK-0100 (REQ-20260522-0003, **Minor** §12.3 — multipart UploadFile 의존성 hot-fix). TASK-0098 (PR #49) ship 직후 사용자 검증 단계에서 발견된 main build 회귀 차단. `python-multipart>=0.0.9` 한 줄 추가 + annotation. outside voice / plan-eng-review skip — 의존성 추가만 + 동작 변경 0 + RBAC/DB/endpoint/audit 무변경.
+- Reason: 본 회귀의 root cause 는 PR #66 (TASK-0094 Sprint 1 Phase 5) 가 attachment upload endpoint 의 `UploadFile` 도입 시 의존성 추가를 누락. FastAPI 의 multipart UploadFile 처리에 `python-multipart` 가 필수. 본 hot-fix 는 미반영된 의존성을 명시화하는 것이며, 새 기능 추가 / 정책 변경 / 동작 분기 없음. Minor §12.3 의 통상적 build 회귀 fix 패턴.
+- 본 cycle 의 검증 방법:
+  - TASK-0098 의 사용자 위임 검증 (HTTP smoke 5/5 + UI dogfood 4 스크린샷) 이 본 hot-fix 적용 working tree 에서 PASS 확인 (artifacts/shared/task-0098-final-*.png). 즉 본 fix 위에서 본 cycle 외 다른 endpoint (`/api/auth/me`, `/api/admin/me`, Profile Drawer, admin 콘솔) 가 정상 작동 = 의존성 fix 의 부작용 없음 증명.
+  - `docker compose build web` 후 `docker compose up -d --no-deps --force-recreate web` → web container `Up` 안정 + `curl http://localhost:18080/api/auth/me` HTTP 200 (또는 비로그인 401) 응답.
+- Alt 거부:
+  - **별 PR 분리 (TASK-0094 첨부 cycle 안에 흡수)**: 그 cycle 의 head 는 main 의 활발한 후속 PR (#66/#67/#69) 으로 이미 진행 중. 본 hot-fix 를 그 큰 cycle 에 묶으면 머지 timing 지연 + cycle ownership 모호. Minor §12.3 의 명확한 회귀 차단 → 본 별 cycle 진행이 정합.
+  - **외부 시각 (Codex outside voice) 호출**: 의존성 추가 hot-fix 는 outside voice 가치 낮음. RBAC / 보안 / 데이터 영향 없음. 사용자 메모 `feedback_outside_voice_for_rbac` 도 RBAC 변경 시점만 outside voice 요구 — 본 fix 는 적용 외.
+- Risks: 의존성 추가는 새 transitive dep 의 가능성 — `python-multipart` 는 표준 FastAPI multipart parser, 추가 위험 미미. version `>=0.0.9` 는 보수적 lower bound (pip 의 dependency resolver 가 적정 버전 선택). image rebuild 시점에만 `pip install` 실행 — 기존 운영 영향 0.
+- Test: TASK-0098 사용자 검증 단계의 HTTP smoke 5/5 + UI dogfood 4 PASS (artifacts/shared/task-0098-final-01~04). 본 cycle 의 별 test 추가 불필요 (의존성 추가 hot-fix).
+
 ## REV-20260521-0009 [SUBAGENT:Plan-subagent — M2-c cross-DB audit + SLA + invariant test]
 - Date: 2026-05-22
 - TASK-Cycle: TASK-0021 (M2-c cross-DB audit explicit call + SLA verify body + stress.sh body + ANCHOR §3 invariant test S1/N1/N2, **Major §12.3** — RBAC 동반)
