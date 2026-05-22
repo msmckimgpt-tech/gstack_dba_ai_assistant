@@ -1643,3 +1643,20 @@ source_of_truth: true
 - Notes: 사용자 메모리 정책 "RBAC plan 은 outside voice 필수" 대응 — 본 Phase 3 의 RBAC 변경은 TASK-0094 BRIEFING Revision 2 (Codex outside-voice review 2 회 흡수 lock-in) 의 D6/D11/D12/D14/D15/D16/D21 결정 정합. catalog blindspot 대응은 BRIEFING REV-20260520-0001 Claim #1 (6 checklist) + Claim #3 (정적 catalog source) + REV-20260521-0002 R-F14 (pending metadata-only) 흡수로 이미 정본 review 완료. 사용자 명시 진입 결정에 따라 본 Phase 진행. 후속 plan-eng-review / codex review 는 Phase 12 (D14 SQL guard, Ship 조건) 진입 시점에 권장.
 - Impact: 새 catalog 4 코드 + 5 role catchup. 기존 배포에 `_ensure_seed_catchup` fast path 진입 시 자동 INSERT IGNORE. application-level endpoint 는 Phase 5 (upload API) 에서 ship — 본 Phase 3 ship 직후 시점은 권한만 부여, 실제 upload/download 경로 unavailable.
 - Rollback Notes: PERMISSION_DEFINITIONS 의 4 코드 entry / SEED_ROLE_DEFINITIONS pending/operator/sales 추가 권한 / _ensure_seed_roles 의 5 catchup 추가 / app.js label/description map 의 4 entry revert. 기존 배포의 WebRolePermissions 에 INSERT 된 row 는 `DELETE FROM WebRolePermissions WHERE PermissionId IN (SELECT Id FROM WebPermissions WHERE Code LIKE 'conversation.attachment.%')` 또는 보존 (catalog 무관 row 는 영향 0).
+
+## CHG-20260521-0006
+- Date: 2026-05-22
+- Related Requirement: TASK-0094 (REQ-20260521-0001, Critical §12.3) Sprint 1 Phase 4 — Cycle 0 storage wrapper + D20 rotation runbook
+- Summary: BRIEFING D1/D13/D20 + R-F9 정합. MinIO S3-compat 첨부 storage wrapper `storage_minio.py` (boto3 기반, idempotent client cache, safe filename + object key, put/get/delete/signed URL/bucket_exists/smoke_test/reset_cache/CLI entry) 신설. D20 dual-key rotation runbook 별 doc. boto3>=1.34.0 / botocore>=1.34.0 requirements 추가.
+- Files:
+  - `unit/feature-0002-agent-core/src/requirements.txt` — boto3 + botocore 4 줄 추가 (agent 이미지 + web 이미지 공통 dep).
+  - `unit/feature-0003-agent-web-ui/src/modules/__init__.py` — modules 패키지 신설 (마커 파일, 약 5 lines).
+  - `unit/feature-0003-agent-web-ui/src/modules/storage_minio.py` — 약 350 lines (config + client cache + safe_filename + make_object_key + put/get/delete/signed URL + bucket_exists + run_smoke_test + reset_client_cache + CLI smoke).
+  - `unit/feature-0003-agent-web-ui/docs/RUNBOOK-minio-key-rotation.md` — 약 150 lines (6 섹션: 전제/정상 path/rollback/체크리스트/자동화/cross-ref).
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md` — AC-0219~0221 (3 AC).
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` — Phase 4 [x] + Current Status 갱신.
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md` — 본 entry.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260521-0006 [SKIPPED:storage-wrapper-only] append.
+- Notes: storage_minio.py 는 thin wrapper — RBAC / consent / audit / size cap / MIME 검증 모두 caller (Phase 5 upload endpoint) 책임. 본 Phase 의 module 은 SDK abstraction 만 제공. 외부 boto3 호출 실패는 모두 StorageOperationError 로 wrap 되어 caller fail-fast. boto3 미설치 환경 (dev/test) 에서는 BOTO3_AVAILABLE=False 로 import 성공 후 `get_s3_client()` 호출 시점에 StorageConfigError 발생 — graceful degradation 정합.
+- Impact: 본 Phase 의 module 만 ship — 실제 upload/download endpoint 는 Phase 5 ship 후 가용. requirements.txt 변경으로 docker 이미지 rebuild 필요 (다음 compose up 시 자동). D20 runbook 은 운영자 reference — 실제 rotation 진행은 별 사용자 trigger.
+- Rollback Notes: requirements.txt 의 boto3 + botocore 2 entry revert. modules/storage_minio.py + modules/__init__.py + RUNBOOK 파일 삭제 + FUNCTION/TASK/MODIFY/REVIEW 의 본 cycle entry revert. import 한 caller 가 없으므로 (Phase 5 미시작) 즉시 revert 가능.

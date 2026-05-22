@@ -1208,3 +1208,15 @@ source_of_truth: true
   2. **pending metadata-only enforcement**: catalog 수준에서는 read.own 부여 — bytes download 차단은 Phase 5 endpoint application-level. 본 Phase 만으로는 enforcement 미완. Phase 5 진입 시 `if account.role.key == 'pending': deny bytes` 분기 명시 + AC 갱신.
 - **Cross-ref**: BRIEFING §5.2 + 정본 REV-20260521-0001 + Phase 2 REV-20260521-0004.
 - **다음 outside-voice 시점**: Phase 12 (D14 SQL guard, Ship 조건). Phase 5 (upload API) 에서 attachment endpoint 의 권한 검증 + pending bytes deny 의 정합도 codex review 권장 (RBAC enforcement 의 application-level 표면).
+
+## REV-20260521-0006 [SKIPPED:storage-wrapper-only] TASK-0094 Sprint 1 Phase 4 (Cycle 0 storage) review
+
+- **Mode**: SKIPPED — Phase 4 는 boto3 wrapper + signed URL helper + smoke test + D20 runbook docs. backend endpoint / RBAC / 스키마 / UI 변경 0. 본 module 의 함수 시그니처 + 책임 경계 (RBAC/audit/consent 는 caller 책임) 는 BRIEFING §5.3 정본 + REV-20260521-0001 [SUBAGENT:codex] (BRIEFING Revision 2 정본 review) 에서 lock-in. 추가 codex review 비용 정당화 어려움.
+- **Subject**: `storage_minio.py` (350 lines), `RUNBOOK-minio-key-rotation.md` (150 lines), requirements.txt 의 boto3 + botocore entry.
+- **Reason**: 본 module 은 SDK abstraction layer — 보안 결정 (RBAC / consent / audit / MIME / size) 모두 caller (Phase 5 upload endpoint) 책임. 본 Phase 자체의 결정은 (1) boto3 client cache 의 idempotent 패턴, (2) signed URL TTL 환경변수화, (3) D13 (외부 LLM signed URL 금지) docstring 명시, (4) D20 runbook 의 4-step rotation + 3 rollback 경로 — 모두 BRIEFING 정본 결정의 thin implementation.
+- **Risk**:
+  1. **boto3 retry/timeout config 가 default 값**: env-driven `MINIO_MAX_ATTEMPTS=3` / `connect_timeout=5s` / `read_timeout=30s` 는 dev 환경 가정. prod 대용량 upload (PDF 25 MB) 에서 read_timeout 부족 가능 — Phase 11 ingest pipeline 진입 시 재검토.
+  2. **signed URL TTL 15 분 default**: 사내망 다운로드 시점 + 사용자 화면 refresh window 정합 — Phase 6 (composer UI) 진입 시 frontend 다운로드 flow 확정 후 재검토.
+  3. **client cache 의 thread safety**: `_S3_CLIENT_CACHE` 는 module-level dict — Python GIL 하에서 single-thread access 가정. FastAPI 의 worker 가 multi-thread (uvicorn 의 default) 일 때 cache 가 dict 이라 race 가능하나 boto3 client 자체가 thread-safe 라 read race 는 무해. write race 는 1 client overwrite 1 client 으로 마무리 — 무해. 다만 명시 lock 은 향후 cycle 후보.
+- **Cross-ref**: BRIEFING §5.3 + ADR-0022 + 정본 REV-20260521-0001 + Phase 3 REV-20260521-0005.
+- **다음 outside-voice 시점**: Phase 5 (upload API + audit + D12 HMAC) 진입 시 codex review 권장 — application-level RBAC / consent 검증 + audit dispatch 정합이 본 module 위에서 결정됨.
