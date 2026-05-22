@@ -5099,7 +5099,7 @@ def get_session(request: Request) -> JSONResponse:
             {
                 "authenticated": False,
                 "local_llm_enabled": local_llm_enabled,
-                "default_model": os.getenv("OPENAI_MODEL", "auto"),
+                "default_model": os.getenv("OPENAI_MODEL", API_DEFAULT_MODEL),
             }
         )
     account = _get_authenticated_account(conn, request)
@@ -5109,7 +5109,7 @@ def get_session(request: Request) -> JSONResponse:
             {
                 "authenticated": False,
                 "local_llm_enabled": local_llm_enabled,
-                "default_model": os.getenv("OPENAI_MODEL", "auto"),
+                "default_model": os.getenv("OPENAI_MODEL", API_DEFAULT_MODEL),
             }
         )
     # TASK-0048 후속 fix: /api/session 응답 조립 시 자동으로 빈 대화를 만들지 않는다 (lazy 정책).
@@ -5132,7 +5132,7 @@ def get_session(request: Request) -> JSONResponse:
         "user": _serialize_account(account),
         "conversation_id": conversation_id,
         "local_llm_enabled": local_llm_enabled,
-        "default_model": os.getenv("OPENAI_MODEL", "auto"),
+        "default_model": os.getenv("OPENAI_MODEL", API_DEFAULT_MODEL),
         "public_url": WEB_PUBLIC_URL,
         "products": products,
         "default_product_id": int(default_pid) if default_pid else None,

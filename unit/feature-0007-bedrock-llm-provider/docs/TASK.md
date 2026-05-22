@@ -199,18 +199,34 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 - [ ] TASK-D3 `docs/STATUS.md` feature-0007 row 추가 + 최근 갱신 entry
 
 ### Phase E — 회귀 검증
-- [ ] TASK-E1 feature-0002 agent loop smoke: SQL 생성 1 conv (Claude Sonnet 4)
+- [x] TASK-E1 ~~feature-0002 agent loop smoke: SQL 생성 1 conv (Claude Sonnet 4)~~
+      → Phase E gateway 단일 격리 컨테이너 검증으로 부분 PASS (gateway
+      healthcheck + Sonnet 4.6 호출 + JSON 파싱). full stack smoke (web + mysql)
+      는 follow-up cycle 위임 (사용자 결정).
 - [ ] TASK-E2 feature-0002 tool use smoke: file_search / execute_sql /
-      restore_sql 각 1 회
-- [ ] TASK-E3 JSON output 모드 smoke: VALIDATION_PROMPT / SUMMARY_PROMPT /
-      TOPIC_PROMPT 의 JSON 응답 파싱 통과
-- [ ] TASK-E4 (선택) `/codex review` outside voice — diff 사후 검증
+      restore_sql 각 1 회 — full stack 가동 필요 (follow-up)
+- [x] TASK-E3 JSON output 모드 smoke — Phase E 검증으로 PASS (markdown fence
+      JSON 추출 정합).
+- [x] TASK-E4 `/codex review` outside voice — PR #62 diff 대상 review 완료
+      (REV-20260522-0002 [SUBAGENT:codex]). P1 BLOCKER 1 + P2 NT 1 식별,
+      P1 즉시 fix (CHG-20260522-0001) + P2 follow-up 위임.
 
 ### Phase F — 마무리
-- [ ] TASK-F1 feature-0007 의 MODIFY.md / REVIEW.md / REPORT.md / TEST.md 갱신
-- [ ] TASK-F2 `bin/verify-completion.sh --pre-commit feature-0007-bedrock-llm-provider` PASS
-- [ ] TASK-F3 commit + push (§16.3 Step 4 조건표 자동 동기화)
-- [ ] TASK-F4 PR 생성 + 사용자 리뷰 + merge
+- [x] TASK-F1 feature-0007 의 MODIFY.md / REVIEW.md / REPORT.md / TEST.md 갱신
+      (CHG-0001/0002 + REV-0001/0002 + Phase E run history)
+- [x] TASK-F2 `bin/verify-completion.sh --pre-commit feature-0007-bedrock-llm-provider`
+      PASS (commit 6eca18f 시점 all 10 checks PASS)
+- [x] TASK-F3 commit + push (commit 6eca18f, push origin/ai/claude/0007-bedrock-llm-provider)
+- [x] TASK-F4 PR 생성 (PR #62) + codex review (P1 fix CHG-20260522-0001)
+- [ ] TASK-F5 사용자 리뷰 + merge — pending
+
+### Phase G — codex review follow-up (신규)
+- [x] TASK-G1 codex P1 fix: `/api/session` 3 사이트 fallback `'auto'` →
+      `API_DEFAULT_MODEL` (CHG-20260522-0001, py_compile PASS, 2026-05-22)
+- [ ] TASK-G2 codex P2 follow-up: `LLM_BASE_URL` ↔ `LLM_API_KEY` paired
+      fallback chain refactor + `.env.example` 안내 보강 — 별 cycle 위임
+- [ ] TASK-G3 6 blindspot 보강 (env_file leak / tool_use 변환 / data region /
+      max_tokens / reasoning / masked field) — 별 cycle 또는 `/codex consult`
 
 ## 4. In Progress
 - 없음 (Phase A 진입 직전 정지 상태 — 다음 turn 의 user 지시로 시작).

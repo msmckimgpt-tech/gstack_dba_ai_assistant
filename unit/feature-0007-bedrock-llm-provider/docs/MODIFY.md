@@ -124,3 +124,35 @@ source_of_truth: true
   - global routing 정책을 다시 엄격 잔류로 회귀하려면 별 ADR 로 본 ADR-0022
     addendum 을 superseded 처리 + Provisioned throughput 또는 별 provider 도입
     plan.
+
+## CHG-20260522-0001
+- Date: 2026-05-22
+- Related Requirement: REQ-20260521-0001~3 (codex review P1 fix)
+- Summary: codex review (PR #62, 2026-05-22) 의 [P1] BLOCKER 발견 — `/api/session`
+  endpoint 의 default_model fallback 3 사이트가 `os.getenv("OPENAI_MODEL", "auto")`
+  로 정의되어 있어, upgrade 시점 `.env` 의 `OPENAI_MODEL` 미설정 또는 old GPT
+  값 잔존 시 frontend 가 invalid model alias 를 `/api/ask` body 에 첨부 → backend
+  `_is_allowed_api_model` 의 400 차단 회귀. SUBAGENT panel 의 NEEDS-TWEAK #3
+  영역을 codex 가 P1 BLOCKER 로 격상 (ship 직후 첫 사용자 turn 실패) — 즉시
+  fix 진행.
+- Files:
+  - 수정: `unit/feature-0003-agent-web-ui/src/app.py` — `/api/session` 의 3
+    사이트 (line 5102 / 5112 / 5135) 에서 `os.getenv("OPENAI_MODEL", "auto")`
+    → `os.getenv("OPENAI_MODEL", API_DEFAULT_MODEL)`. `API_DEFAULT_MODEL` 은
+    이미 line 44 에서 `from modules.model_catalog` import 되어 있어 추가 import
+    불요.
+- Impact:
+  - **Ship-after 회귀 차단**: upgrade 환경의 `.env` `OPENAI_MODEL` 잔존 / 미설정
+    상태에서도 frontend 가 catalog 안 모델 alias 를 사용 → `/api/ask` 의 첫
+    사용자 turn 이 정상 200 응답.
+  - **single source-of-truth**: `model_catalog.API_DEFAULT_MODEL = "claude-sonnet-4"`
+    가 frontend default 의 정본. 운영자가 env 미설정 시 자동 정합.
+  - **운영 호환**: 운영자가 `.env` 의 `OPENAI_MODEL` 을 명시 설정한 경우 그 값이
+    여전히 우선 — backward-compat 유지 (단 그 값이 catalog 에 포함되어야 정상
+    동작 — 운영자 책임).
+- Rollback Notes:
+  - 1-line × 3 patch. revert 시 `'auto'` fallback 회귀로 첫 turn 실패 재발.
+- Verification:
+  - `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS.
+  - codex review P1 finding 의 권고 (Option 2: "make `/api/session` return the
+    new default") 와 정합.

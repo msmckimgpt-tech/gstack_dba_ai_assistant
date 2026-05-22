@@ -45,10 +45,17 @@ Critical 후보였던 외부 노출 / PIPA / 비용 폭주 risk 가 사내 한�
     작성.
 
 ## 3. Recent Changes
+- **CHG-20260522-0001** (2026-05-22): codex review P1 fix — `/api/session` 의
+  default_model fallback 3 사이트가 `os.getenv("OPENAI_MODEL", "auto")` →
+  `os.getenv("OPENAI_MODEL", API_DEFAULT_MODEL)`. ship 직후 첫 사용자 turn
+  실패 회귀 차단. py_compile PASS.
+- **CHG-20260521-0002** (2026-05-21): Phase E 검증 결과 반영. global Sonnet 4.6
+  inference profile 수용 + `API_DEFAULT_MODEL = claude-sonnet-4` + 정책 doc
+  reanchor.
 - **CHG-20260521-0001** (2026-05-21): AWS Bedrock LLM provider 통합 + API Vault
   전면 폐기. 18 파일 변경 (인프라 3 + backend 5 + frontend 3 + 정책 doc 3 +
   feature-0007 docs 4). py_compile + node --check + YAML schema PASS.
-- 총 변경 횟수: 1
+- 총 변경 횟수: 3
 
 ## 4. Open Issues
 - ~~**Claude 4.x 실 model ID 미확정**~~: **Phase E 검증으로 확정** —
@@ -56,6 +63,15 @@ Critical 후보였던 외부 노출 / PIPA / 비용 폭주 risk 가 사내 한�
   anthropic.claude-haiku-4-5-20251001-v1:0`. region-pinned 부재 사실 확인.
 - ~~**gateway healthcheck endpoint 버전 검증**~~: **PASS** — LiteLLM
   `main-stable` 의 `/health/liveliness` 가 200 + `"I'm alive!"` 응답.
+- ~~**`/api/session` default_model fallback `'auto'` 잔존 (SUBAGENT NT #3 /
+  Codex P1)**~~: **fix 완료 (CHG-20260522-0001)** — 3 사이트가
+  `API_DEFAULT_MODEL` fallback 사용.
+- **Codex P2 (paired fallback chain)**: `LLM_BASE_URL` ↔ `LLM_API_KEY` 의 독립
+  fallback 으로 `BEDROCK_GATEWAY_URL` 만 설정 + `BEDROCK_GATEWAY_API_KEY` 미
+  설정 시 misroute 위험. 사내 한정 운영 가정으로 risk 낮음 — follow-up cycle.
+- **6 blindspot (codex 미review 영역)**: docker-compose env_file leak / Claude
+  tool_use 변환 / data region / max_tokens / reasoning / masked field drift —
+  follow-up cycle 또는 별도 `/codex consult`.
 - **OpenAI legacy 호환 잔존 가능성**: feature-0003 외 다른 unit (insight-worker,
   agent CLI 등) 가 `OPENAI_API_KEY` env 직접 참조하는지 grep 추가 검증 필요.
 - **APAC inference profile 추적**: 미래에 ACTIVE Sonnet 의 APAC profile 추가

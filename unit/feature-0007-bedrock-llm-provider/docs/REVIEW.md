@@ -161,3 +161,46 @@ source_of_truth: true
 - Human Approval Needed: 본 entry 는 PLAN-APPROVED 사용자 결정 후 commit 게이트
   panel — 별 사용자 confirm 불요. commit 결정은 사용자 명시 요청 ((1)+(2) 진행
   지시, 2026-05-22) 으로 충족.
+
+## REV-20260522-0002 [SUBAGENT:codex]
+- Related Change: CHG-20260522-0001 (P1 fix), CHG-20260521-0001/0002 (본 cycle 전체)
+- Reason: PR #62 push 후 사용자 명시 (3) "codex review 후 full stack 진행 방향
+  결정" 요청에 따라 `/codex review --commit 6eca18f` 실행. SUBAGENT panel
+  (REV-20260522-0001) 이 위임한 6 blindspot 의 second opinion + BLOCKER 후보
+  식별 + NEEDS-TWEAK 우선순위 판정 목적.
+- Verdict: **GATE: FAIL** (1 [P1] + 1 [P2]). Codex 의 cross-model verdict 가
+  SUBAGENT panel 의 ACCEPT-WITH-NEEDS-TWEAK 를 한 단계 격상.
+- Cross-model analysis:
+  - **Codex [P1] = SUBAGENT NEEDS-TWEAK #3 의 격상**: `/api/session` 의
+    `default_model` fallback `'auto'` 잔존. Codex 가 ship 직후 첫 사용자 turn
+    실패 시나리오 명시 — backend `_is_allowed_api_model` 400 차단. SUBAGENT 가
+    "1-line × 3 patch follow-up" 으로 분류했던 것을 ship-blocker 로 격상한
+    근거가 정확.
+  - **Codex [P2] = SUBAGENT 미식별 영역**: `LLM_BASE_URL` 과 `LLM_API_KEY` 의
+    독립 fallback chain. `BEDROCK_GATEWAY_URL` 설정 + `BEDROCK_GATEWAY_API_KEY`
+    미설정 시 → backend 가 gateway URL 로 OpenAI/Local key 를 전송 → gateway
+    401. 사내 한정 운영 + 운영자가 .env 신중 설정 가정 하에 risk 낮음 — 본
+    cycle 의 fix 범위 외 (follow-up cycle 의 paired fallback refactor).
+- Codex 가 본 run 에서 review 안 한 영역 (P1 발견 후 시야 집중):
+  - docker-compose env_file 의 AWS 자격증명 leak vs SECURITY.md §6.1 정합
+    (SUBAGENT NT #1, 운영 가치 낮음)
+  - Claude tool_use 변환의 LiteLLM 책임 영역 (SUBAGENT NT #4, deploy 후 canary
+    검증)
+  - AWS Bedrock global inference profile 의 data region (PIPA blindspot 4)
+  - `model_catalog.max_tokens=None` worst-case (SUBAGENT NT #5)
+  - reasoning content 처리 (blindspot 5)
+  - `_AUDIT_MASKED_FIELDS_API_KEY` doc-code drift (blindspot 6)
+  → 본 6 항목은 follow-up cycle 또는 별도 `/codex consult` 로 보강 가능.
+- Action: 사용자 결정 (2026-05-22) — P1 fix 즉시 진행. CHG-20260522-0001 에
+  3 사이트 1-line patch + py_compile PASS. P2 는 follow-up cycle 위임.
+- Risks: P1 fix 후에도 잔존 risk:
+  - P2 paired fallback (low risk, 사내 운영 신중도 의존).
+  - 6 blindspot 의 codex 미review 영역 — full stack smoke + canary 로 보강.
+  - SUBAGENT 5 NEEDS-TWEAK (env_file scoping / memory-init 의존 / tool_use
+    변환 / max_tokens cap) — follow-up cycle 큐.
+- Open Questions: full stack smoke 진행 방향 — 사용자가 (3) 결정 후 다음 cycle
+  진입 (TEST-0002~0006 web/mysql/agent full stack 가동 + Claude tool_use 실
+  사용자 turn 회귀 검증).
+- Human Approval Needed: 본 entry 는 사용자 명시 codex review 결과 기록 + P1
+  fix 결정 (사용자 옵션 1 선택) 반영. 별 사용자 confirm 불요. 다음 cycle 진입
+  은 사용자 (3) 별 cycle 결정.
