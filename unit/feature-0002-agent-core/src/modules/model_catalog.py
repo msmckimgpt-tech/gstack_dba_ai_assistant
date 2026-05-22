@@ -12,12 +12,16 @@ __all__ = [
     "is_local_llm_model",
     "max_tokens_for_model",
     "model_supports_temperature",
+    "model_supports_vision",
 ]
 
 
 API_DEFAULT_MODEL = "claude-sonnet-4"
 
 # ── 로컬 LLM 게이트웨이 모델 (LOCAL_LLM_API_BASE 설정 시 자동 추가) ──
+# supports_vision: 보수적 false. 로컬 게이트웨이 모델별 vision 지원은 배포 환경
+# 따라 다르고, D11 (file_image consent) 가 false 면 첨부 image 가 송신되지 않
+# 으므로 안전한 기본값.
 _LOCAL_LLM_MODELS: tuple[dict[str, Any], ...] = (
     {
         "value": "auto",
@@ -25,6 +29,7 @@ _LOCAL_LLM_MODELS: tuple[dict[str, Any], ...] = (
         "group": "Local LLM",
         "description": "게이트웨이 자동 라우팅",
         "supports_temperature": False,
+        "supports_vision": False,
     },
     {
         "value": "edge",
@@ -32,6 +37,7 @@ _LOCAL_LLM_MODELS: tuple[dict[str, Any], ...] = (
         "group": "Local LLM",
         "description": "경량 Edge 모델",
         "supports_temperature": False,
+        "supports_vision": False,
     },
     {
         "value": "core",
@@ -39,6 +45,7 @@ _LOCAL_LLM_MODELS: tuple[dict[str, Any], ...] = (
         "group": "Local LLM",
         "description": "Core 모델",
         "supports_temperature": False,
+        "supports_vision": False,
     },
     {
         "value": "code",
@@ -46,6 +53,7 @@ _LOCAL_LLM_MODELS: tuple[dict[str, Any], ...] = (
         "group": "Local LLM",
         "description": "코드 특화 모델",
         "supports_temperature": False,
+        "supports_vision": False,
     },
 )
 
@@ -63,6 +71,9 @@ API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = (
         "group": "Claude 4",
         "description": "Anthropic Claude Sonnet 4.x (frontier, 고품질)",
         "supports_temperature": True,
+        # TASK-0094 Sprint 2 (D13) — Claude Sonnet 4.x 는 native multimodal.
+        # _build_attachment_context_section 의 kind=image 분기 routing 활성.
+        "supports_vision": True,
     },
     {
         "value": "claude-haiku-4",
@@ -70,6 +81,8 @@ API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = (
         "group": "Claude 4",
         "description": "Anthropic Claude Haiku 4.x (가성비, 기본값)",
         "supports_temperature": True,
+        # TASK-0094 Sprint 2 (D13) — Claude Haiku 4.x 는 native multimodal.
+        "supports_vision": True,
     },
 )
 
@@ -80,12 +93,13 @@ _ALL_MODEL_OPTIONS = (
 )
 _API_MODEL_INDEX = {item["value"]: item for item in _ALL_MODEL_OPTIONS}
 
-PUBLIC_API_MODEL_OPTIONS: tuple[dict[str, str], ...] = tuple(
+PUBLIC_API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = tuple(
     {
         "value": str(item["value"]),
         "label": str(item["label"]),
         "group": str(item["group"]),
         "description": str(item["description"]),
+        "supports_vision": bool(item.get("supports_vision", False)),
     }
     for item in _ALL_MODEL_OPTIONS
 )
@@ -107,6 +121,25 @@ def is_local_llm_model(value: str | None) -> bool:
 def model_supports_temperature(value: str | None) -> bool:
     meta = get_api_model_meta(value)
     return bool(meta and meta.get("supports_temperature"))
+
+
+def model_supports_vision(value: str | None) -> bool:
+    """TASK-0094 Sprint 2 — 첨부 image kind 의 base64 inline 분기 routing 결정.
+
+    True 인 모델만 `_build_attachment_context_section` 이 image kind 첨부의 MinIO
+    bytes 를 fetch + base64 inline 으로 content array 에 주입한다. False 인 모델
+    은 image 첨부를 무시하고 사용자에게 toast 안내 ("이 모델은 이미지 분석 불가").
+
+    D11 (file_image consent) + D13 (server-side bytes + base64 inline only,
+    signed URL 외부 송신 금지) 의 정합 gate 의 모델 측 prerequisite.
+
+    feature-0007 (bedrock) 정합: backend 는 OpenAI Chat Completions spec 의
+    `image_url` content-array 로 작성, LiteLLM proxy gateway 가 Anthropic vision
+    spec (`{"type":"image","source":{"type":"base64",...}}`) 로 자동 normalize.
+    Claude Sonnet 4.x / Haiku 4.x 는 native multimodal 이므로 둘 다 True.
+    """
+    meta = get_api_model_meta(value)
+    return bool(meta and meta.get("supports_vision"))
 
 
 # ── 모델별 max_tokens 관리 ──

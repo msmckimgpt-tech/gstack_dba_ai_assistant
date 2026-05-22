@@ -49,8 +49,8 @@ from modules.memory import (
     save_memory_step,
     set_run_status,
 )
-from modules.model_catalog import is_local_llm_model, max_tokens_for_model, model_supports_temperature
-from modules.llm import llm_classify_origin_shift, llm_generate_topic
+from modules.model_catalog import is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_vision
+from modules.llm import llm_classify_origin_shift, llm_generate_topic, messages_for_provider
 from modules.domain import _derive_topic, _should_refresh_origin_request
 from modules.render import normalize_step_result_summary
 from modules.tools import (
@@ -110,6 +110,62 @@ User asks about recent orders → KNOWN SCHEMAS lists `ecommerce.orders` → You
 ## OUTPUT
 Once execute_sql has returned the data you need, stop calling tools and write the final answer in Korean Markdown. Format numbers with commas (1,234,567). Use tables when comparing rows.
 """
+
+
+# TASK-0094 Sprint 2 (D13) — image inline 의 caller 책임 분리 정합.
+#
+# storage_minio.py 는 feature-0003-agent-web-ui 의 module 이라 cross-feature import
+# 정책 위배. 대신 caller (`unit/feature-0003-agent-web-ui/src/app.py` 의 /api/ask
+# endpoint) 가 image bytes 를 미리 fetch + base64 + JSON 직렬화 → 임시 file 저장 →
+# env `ATTACHMENT_IMAGE_INLINE_PATH` 로 path 만 전달. agent_core 는 path 만 read.
+#
+# JSON spec (caller 가 작성):
+#   [
+#     {"filename": str, "mime_type": "image/png|jpeg|webp", "base64_data": str},
+#     ...
+#   ]
+#
+# size cap (단일 ≤ 5MB pre-base64), count cap (turn 당 ≤ 5) 은 caller (app.py) 의
+# 책임. 본 helper 는 file read + parse + graceful failure 만.
+_INLINE_IMAGE_ENV_VAR = "ATTACHMENT_IMAGE_INLINE_PATH"
+
+
+def _load_attachment_inline_images() -> list[dict[str, Any]]:
+    """env ATTACHMENT_IMAGE_INLINE_PATH 의 JSON 을 read 후 image_attachments 반환.
+
+    Returns: list[{filename, mime_type, base64_data}]. env 부재 / file 미존재 /
+    parse 실패 / 빈 base64 → 빈 list (graceful failure, agent 진행 차단 X).
+
+    D13 정합: 본 함수는 base64 string 만 다루고 storage_minio / signed URL 에 직접
+    접근하지 않는다. caller (app.py) 가 server-side bytes read + base64 inline 책임.
+    """
+    path = os.getenv(_INLINE_IMAGE_ENV_VAR, "").strip()
+    if not path:
+        return []
+    try:
+        if not os.path.isfile(path):
+            return []
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        b64 = str(item.get("base64_data") or "").strip()
+        if not b64:
+            continue
+        mime = str(item.get("mime_type") or "image/png").strip() or "image/png"
+        filename = str(item.get("filename") or "").strip()
+        result.append({
+            "filename": filename,
+            "mime_type": mime,
+            "base64_data": b64,
+        })
+    return result
 
 
 def _build_attachment_context_section(mem_conn, attachment_ids: list[int]) -> str:
@@ -1144,10 +1200,24 @@ def _model_supports_temperature(model: str) -> bool:
 def _call_llm(client: OpenAI, messages: list[dict], model: str,
               temperature: float | None = None,
               tools: list[dict] | None = None) -> Any:
-    """OpenAI API를 호출한다."""
+    """OpenAI API를 호출한다.
+
+    TASK-0094 Sprint 2 (D13): vision 가능 모델 + env ATTACHMENT_IMAGE_INLINE_PATH
+    가 가리키는 image_attachments JSON 이 있으면 messages_for_provider() 가 첫
+    user message 에 image inline content-array 부착 (transient — DB string 불변).
+
+    LiteLLM proxy (feature-0007) 가 OpenAI image_url → Anthropic Vision spec 으로
+    자동 normalize. backend 는 OpenAI Chat Completions spec 만 사용.
+    """
+    image_attachments = _load_attachment_inline_images()
+    effective_messages: list[dict] = messages_for_provider(
+        messages,
+        image_attachments=image_attachments or None,
+        vision_model=model_supports_vision(model),
+    )
     kwargs: dict[str, Any] = {
         "model": model,
-        "messages": messages,
+        "messages": effective_messages,
     }
     if temperature is not None:
         kwargs["temperature"] = temperature
