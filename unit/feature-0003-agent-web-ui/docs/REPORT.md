@@ -10,6 +10,10 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-05-22 TASK-0102 완료 — topbar `관리 콘솔` 버튼 role fallback gate** (CHG-20260522-0005, REV-20260522-0005 [SKIPPED:non-policy-doc], REQ-20260522-0005, **Minor** §12.3). 테스트에서 `sales` 역할 사용자에게 topbar 관리 콘솔 버튼이 노출되는 현상 확인. **근본 원인**: TASK-0100 에서 추가한 `console_access` 플래그가 서버 미재시작 또는 구버전 서버 실행 시 존재하지 않아 fallback 경로가 없었음. **수정**: `canOpenAdminConsole()` 에 `role.key` 기반 fallback 추가 — `console_access` 가 서버 응답에 포함된 경우 그것을 사용, 없으면 `role.key === "admin"` 으로 fallback. role 필드는 TASK-0098 이전부터 항상 직렬화되므로 서버 버전 무관하게 존재. app.js + index.html(cache-bust `v=20260522-admin-topbar-rbac`) 변경. backend / RBAC / DB / endpoint 무변경.
+
+---
+
 **2026-05-22 TASK-0100 완료 — `관리 콘솔` 버튼 RBAC gate 수정** (CHG-20260522-0004, REV-20260522-0004 [SKIPPED:non-policy-doc], REQ-20260522-0004, **Minor** §12.3). TASK-0098 의 `can()` 단순화(`Boolean(state.user)`) side-effect 로 인해 `canOpenAdminConsole()` 이 로그인한 모든 사용자에게 `true` 반환 → `관리 콘솔` 버튼이 admin 역할 이외의 사용자(operator/sales/pending) 에게도 노출되던 이슈 수정. **수정 방식**: `_serialize_account()` 에 `console_access: _account_has_permission(account, "console.access")` 최소 플래그 추가 + `canOpenAdminConsole()` 이 `Boolean(state.user?.console_access)` 을 검사하도록 변경. TASK-0098 의 "permissions 전체 노출 차단" 설계를 유지하면서 UI gate 에 필요한 최소 정보만 전달. backend RBAC catalog / DB schema / endpoint contract 무변경. py_compile + node --check PASS. cache-bust `v=20260522-console-access-gate`. worktree `ai/claude/issue-admin-console-btn-rbac`.
 
 ---

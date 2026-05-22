@@ -11,10 +11,14 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: minor (TASK-0100 — 관리 콘솔 버튼 RBAC gate fix)
-- Last Updated: 2026-05-22 (TASK-0100 console_access gate 수정)
+- Priority: minor (TASK-0102 — topbar 관리 콘솔 버튼 role fallback gate)
+- Last Updated: 2026-05-22 (TASK-0102 canOpenAdminConsole role fallback)
 
 ## 2. Task Queue
+
+### TASK-0102 topbar 관리 콘솔 버튼 role fallback gate (2026-05-22)
+
+- [ ] TASK-0102 (REQ-20260522-0005, **Minor** §12.3 — topbar `관리 콘솔` 버튼 role 기반 fallback gate). 테스트 결과 `sales` 역할 사용자에게 topbar 관리 콘솔 버튼이 노출되는 현상 확인. **근본 원인**: TASK-0100 에서 추가한 `console_access` 플래그가 구버전 서버(미재시작) 또는 캐시된 응답에서 `undefined` 로 오는 경우, 기존 `Boolean(undefined)` = `false` 는 정상이나, 서버가 TASK-0100 이전 코드를 실행 중이면 `canOpenAdminConsole() → can("console.access") → Boolean(state.user)` 경로로 항상 `true`. **수정**: `console_access` 가 서버 응답에 포함된 경우 그것을 사용, 없으면 `role.key === "admin"` 으로 fallback — role 필드는 TASK-0098 이전부터 항상 직렬화되므로 버전 무관하게 존재. app.js, index.html(cache-bust) 변경. backend / RBAC / DB / endpoint 무변경.
 
 ### TASK-0100 관리 콘솔 버튼 RBAC gate 수정 (2026-05-22)
 

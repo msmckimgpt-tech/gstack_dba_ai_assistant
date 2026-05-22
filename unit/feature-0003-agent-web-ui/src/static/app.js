@@ -510,10 +510,14 @@ function isOwnConversation(conversation = currentConversation()) {
 }
 
 function canOpenAdminConsole() {
-  // state.user.console_access 는 backend _serialize_account 가 주입하는 최소 gate 플래그.
-  // TASK-0098 의 can() 단순화(Boolean(state.user)) 로 인해 모든 로그인 사용자에게
-  // 관리 콘솔 버튼이 노출되던 이슈 수정. permissions 전체 노출 없이 플래그만 사용.
-  return Boolean(state.user?.console_access);
+  // TASK-0102: console_access 플래그 우선, 없으면 role.key 기반 fallback.
+  // console_access 가 서버 응답에 포함된 경우 그것을 신뢰 (TASK-0100 이후 서버).
+  // 구버전 서버(console_access 미포함)에서는 role.key === "admin" 으로 fallback —
+  // role 은 TASK-0098 이전부터 항상 직렬화되므로 버전 무관하게 존재.
+  if (state.user?.console_access !== undefined) {
+    return Boolean(state.user.console_access);
+  }
+  return state.user?.role?.key === "admin";
 }
 
 function canAskInConversation(conversation = currentConversation()) {

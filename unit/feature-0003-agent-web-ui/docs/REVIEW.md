@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260522-0005 [SKIPPED:non-policy-doc]
+- Related TASK: TASK-0102 (REQ-20260522-0005, Minor §12.3)
+- Reason: topbar 관리 콘솔 버튼 role fallback gate — `canOpenAdminConsole()` 에 `role.key` 기반 fallback 추가. app.js + index.html(cache-bust) 변경. backend / RBAC catalog / DB schema / endpoint contract 무변경. Minor §12.3 — display-only 조건 보강, RBAC 설계 변경 아님. AGENTS.md §18.8 trigger: UI/button 시그널 있으나 기존 버튼 노출 조건 강화 (신규 UI 기능 구현 아님) — SKIPPED 정당.
+- Timestamp: 2026-05-22T00:00:00Z
+
 ## REV-20260522-0004 [SKIPPED:non-policy-doc]
 - Related TASK: feature-0003-agent-web-ui
 - Reason: TASK-0100 (REQ-20260522-0004, Minor §12.3) — `관리 콘솔` 버튼 RBAC gate 수정. `_serialize_account()` 에 `console_access` 플래그 추가 + `canOpenAdminConsole()` 변경. 코드 변경이나 UI/RBAC 관련이므로 tech review 대상이나, Minor §12.3 (RBAC catalog / DB schema / endpoint contract 무변경, 표시 조건만 복원) 이며 변경 surface 가 최소화됨. 이슈의 근본 원인이 명확 (TASK-0098 can() 단순화의 side-effect) + 수정이 정확히 원래 의도(admin 전용 표시) 복원. AGENTS.md §18.8 trigger: UI/button 시그널 있으나 버튼 노출 여부만 수정 (새 UI 기능 구현 아님) — SKIPPED 정당.

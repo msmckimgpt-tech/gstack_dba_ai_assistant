@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0005
+- Date: 2026-05-22
+- Related Requirement: TASK-0102 (REQ-20260522-0005, Minor §12.3 — topbar 관리 콘솔 버튼 role fallback gate)
+- Summary: 테스트에서 `sales` 역할 사용자에게 topbar 관리 콘솔 버튼이 노출되는 현상 확인. `canOpenAdminConsole()` 에 `role.key` 기반 fallback 추가 — `console_access` 플래그가 서버 응답에 포함된 경우 그것을 사용, 없으면 `role.key === "admin"` 으로 fallback. role 필드는 TASK-0098 이전부터 항상 직렬화되므로 서버 버전 무관하게 존재. backend / RBAC / DB / endpoint 무변경. cache-bust `v=20260522-admin-topbar-rbac`.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`:
+    - `canOpenAdminConsole()` — `console_access !== undefined` 분기 추가, 없으면 `role.key === "admin"` fallback
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`:
+    - cache-bust `v=20260522-console-access-gate` → `v=20260522-admin-topbar-rbac`
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0102 entry 추가 + Current Status 갱신
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260522-0005 [SKIPPED:non-policy-doc] 추가
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 상단에 TASK-0102 entry 추가
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: AC-0269 추가
+  - `docs/STATUS.md`: feature-0003 row 갱신
+
 ## CHG-20260522-0004
 - Date: 2026-05-22
 - Related Requirement: TASK-0100 (REQ-20260522-0004, Minor §12.3 — 관리 콘솔 버튼 RBAC gate 수정)
