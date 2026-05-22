@@ -16,3 +16,9 @@ botocore>=1.34.0
 # openpyxl (XLSX parser, read_only=True + data_only=True).
 chardet>=5.0.0
 openpyxl>=3.1.0
+# TASK-0100 (REQ-20260522-0003, Minor §12.3 — multipart UploadFile 의존성).
+# PR #66 (TASK-0094 Sprint 1 Phase 5) 가 `POST /api/conversations/{cid}/attachments`
+# 의 `file: UploadFile` 을 도입했으나 본 의존성 누락 → web container `Restarting`
+# (RuntimeError: Form data requires "python-multipart" to be installed.) build 회귀.
+# TASK-0098 ship 후 사용자 검증 단계에서 발견 (REV-20260522-0004 참조).
+python-multipart>=0.0.9

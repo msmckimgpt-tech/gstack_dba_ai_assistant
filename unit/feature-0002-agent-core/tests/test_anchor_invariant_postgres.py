@@ -5,26 +5,30 @@ TASK-0015 §2.1.6 + outside-voice review `REV-20260520-0005` Section C Blocker:
 누락 / ScopeKey common 외 / RagObjs category stale / fact_entries 다중 row 우선
 순위) 자동화 + LLM 호출 0건 negative assertion".
 
-본 파일은 M2 cycle (TASK-0019) 의 **skeleton 정본** — 시나리오 catalog 정의 +
-test stub. 실 구현 (assertion + Postgres fixture + MysqlKbBackend / PgKbBackend
-호출) 은 M2-b cycle 책임. 본 cycle 의 검증 항목은 시나리오 명세 + 의도 명확화.
+M2-c cycle (TASK-0021) 실 구현 범위:
+- **S1 (RagDocuments 누락)**: 실 구현 — mirror upsert_rag_document 호출 시 Postgres
+  INSERT SQL 발행 + LLM 호출 0건 확인 (FakeConn 으로 INSERT 캡쳐).
+- **N1 (LLM 호출 0건)**: 실 구현 — `openai.OpenAI().chat.completions.create` 및
+  `modules.llm_api` 의 entry point 를 monkeypatch 하여 invocation 발생 시 fail.
+- **N2 (TRUNCATE denied)**: env-gated integration test —
+  `AGENT_KB_PG_INTEGRATION_TEST=1` 시 실 Postgres 접속 + `agent_kb_rw` 로
+  `TRUNCATE TABLE fact_entries` 시도 → `InsufficientPrivilege` raise 확인.
+
+S2~S6 는 M2-d cycle 책임 (실 DB fixture + insight worker 호출 통합 필요).
 
 ANCHOR §3 invariant 본문 (feature-0002 ANCHOR.md):
 > insight-worker 의 기존 복구 로직을 건드려야 할 때: 새 AI 세션이 REPORT.md 를
 > 읽으면 `fact/RAG/Text/Object 4종 완전성 확인 → 기존 fact 기반 복구 가능 시 즉시
 > 복구 → 복구 불가 시에만 LLM 재생성` 순서가 명시되어 있다. 이 순서를 뒤집으면
 > LLM 호출 비용이 폭발한다.
-
-본 invariant 가 Postgres backend 에서도 동일 의미로 작동하는지 6종 시나리오로 검증.
 """
 
 from __future__ import annotations
 
-import pytest
+import os
+import sys
 
-# M2-b cycle 의 fixture (placeholder).
-# 실 구현 시 docker-compose 의 repo-postgres-1 컨테이너에 임시 connection 열고
-# fact_entries / texts / rag_documents / rag_objects 에 시나리오 데이터 INSERT.
+import pytest
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -76,13 +80,12 @@ SCENARIO_CATALOG = [
     },
 ]
 
-# 추가 negative assertion: M2/M4 검증 게이트의 핵심.
 NEGATIVE_ASSERTIONS = [
     {
         "id": "N1_llm_call_zero",
         "name": "repair_from_fact path 진입 시 LLM 호출 0건 (negative assertion)",
-        "setup": "S1~S6 의 모든 시나리오 실행 중",
-        "expected": "openai.* 또는 llm_gateway.* 의 chat completion 호출 0회. monkeypatch 로 검증.",
+        "setup": "S1 시나리오 실행 중 LLM API entry point monkeypatch",
+        "expected": "openai.OpenAI().chat.completions.create / modules.llm_api 의 호출 0회",
     },
     {
         "id": "N2_no_truncate",
@@ -94,52 +97,295 @@ NEGATIVE_ASSERTIONS = [
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test stubs (M2-b cycle 책임 — 실 구현).
+# Helpers — FakeConn / Cursor + LLM monkeypatch
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.skip(reason="M2-b cycle 책임 — 실 구현은 dual-write 활성 후")
+class _FakeCursor:
+    """SQL 실행 캡쳐 + RETURNING id 모의."""
+
+    def __init__(self, captured: list, returning_id: int = 1001):
+        self._captured = captured
+        self._returning_id = returning_id
+        self._last_was_returning = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=None):
+        self._captured.append((sql, params))
+        self._last_was_returning = "RETURNING id" in sql
+
+    def fetchone(self):
+        if self._last_was_returning:
+            return (self._returning_id,)
+        return None
+
+
+class _FakeConn:
+    def __init__(self, captured: list):
+        self._captured = captured
+
+    def cursor(self):
+        return _FakeCursor(self._captured)
+
+    def close(self):
+        pass
+
+
+def _install_llm_tripwires(monkeypatch) -> list:
+    """LLM entry point 들을 monkeypatch 하여 호출 시 record + AssertionError raise.
+
+    outside-voice REV-20260521-0009 B-2 흡수: 실제 LLM 모듈은 `modules.llm` 이며
+    (`modules.llm_api` 는 존재하지 않음), 또한 `modules.llm` 이 `from openai import
+    OpenAI` 로 이미 module-local 에 binding 된 후이므로 `openai.OpenAI` 만 patch 해도
+    이미 import 된 caller 는 영향 받지 않는다. `modules.llm.OpenAI` 자체 + 호출 entry
+    point 들 (`_get_openai_client`, `_openai_chat_completion_with_deadline`,
+    `llm_*` prefix) 을 직접 patch 한다.
+
+    Returns: 호출 기록 list (정상 path 는 비어있어야 함).
+    """
+    llm_calls: list = []
+    installed: list = []
+
+    def _trip(name):
+        def _called(*args, **kwargs):
+            llm_calls.append((name, args, kwargs))
+            raise AssertionError(f"LLM 호출 발생: {name} — ANCHOR §3 invariant 위반")
+        return _called
+
+    # modules.llm 의 직접 entry point.
+    try:
+        from modules import llm as _llm  # type: ignore
+    except ImportError:
+        _llm = None
+
+    if _llm is not None:
+        # Low-level entry — 모든 chat completion 이 통과하는 함수.
+        for fn_name in ("_get_openai_client", "_openai_chat_completion_with_deadline"):
+            if hasattr(_llm, fn_name):
+                monkeypatch.setattr(_llm, fn_name, _trip(f"modules.llm.{fn_name}"))
+                installed.append(f"modules.llm.{fn_name}")
+
+        # High-level llm_* entry — caller 가 직접 호출.
+        for fn_name in dir(_llm):
+            if fn_name.startswith("llm_") and callable(getattr(_llm, fn_name)):
+                monkeypatch.setattr(_llm, fn_name, _trip(f"modules.llm.{fn_name}"))
+                installed.append(f"modules.llm.{fn_name}")
+
+        # OpenAI class — modules.llm.OpenAI 가 module-local binding 이므로 직접 교체.
+        if hasattr(_llm, "OpenAI") and getattr(_llm, "OpenAI") is not None:
+            class _TripOpenAI:
+                def __init__(self, *a, **kw):
+                    llm_calls.append(("modules.llm.OpenAI.__init__", a, kw))
+                    raise AssertionError(
+                        "LLM 호출 발생: modules.llm.OpenAI() — invariant 위반"
+                    )
+            monkeypatch.setattr(_llm, "OpenAI", _TripOpenAI)
+            installed.append("modules.llm.OpenAI")
+
+    # Smoke check — 적어도 하나의 entry point 가 patch 됐는지.
+    # 0 개라면 modules.llm import 자체가 실패했거나 expected entry point 가 모두
+    # 사라진 것 — 본 test 의 invariant 가 의미를 잃었음을 즉시 알린다.
+    assert installed, (
+        "LLM tripwire 가 하나도 설치되지 않음 — modules.llm 의 entry point 가 변경된 "
+        "것으로 추정. _install_llm_tripwires() 갱신 필요."
+    )
+
+    return llm_calls
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S1 + S2~S6 (parametrized)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 @pytest.mark.parametrize("scenario", SCENARIO_CATALOG, ids=lambda s: s["id"])
-def test_anchor_invariant_scenarios(scenario):
-    """ANCHOR §3 의 6종 fact-우선 복구 시나리오 검증.
+def test_anchor_invariant_scenarios(scenario, monkeypatch):
+    """ANCHOR §3 fact-우선 복구 시나리오.
 
-    M2-b cycle 에서 구현:
-    1. Postgres fixture 로 시나리오 setup 데이터 INSERT (`PgKbBackend.upsert_*`)
-    2. `insight._repair_from_fact()` 호출
-    3. expected 동작 assertion (RagDocuments / RagObjects / Texts row count + content)
-    4. `monkeypatch.setattr('openai.chat.completions.create', lambda *a, **k: pytest.fail('LLM called'))` 로 LLM 호출 0건 검증
+    M2-c (TASK-0021) 범위: S1 만 실 구현. S2~S6 는 M2-d cycle 책임.
     """
-    assert scenario["id"]  # placeholder — M2-b assertion 채울 위치
+    if scenario["id"] != "S1_rag_docs_missing":
+        pytest.skip(f"{scenario['id']}: M2-d cycle 책임 (실 DB fixture 통합 필요)")
+
+    # S1: RagDocuments 누락 → mirror 가 upsert_rag_document 호출 시 INSERT SQL 발행
+    #     + 동시에 LLM 호출 0건 negative assertion (N1 의 한 axis).
+    from modules import kb_backend as kb  # type: ignore
+
+    monkeypatch.setattr(
+        sys.modules["modules.db"],
+        "_pg_available",
+        lambda: True,
+        raising=True,
+    )
+
+    captured: list = []
+    fake_conn = _FakeConn(captured)
+    monkeypatch.setattr(
+        sys.modules["modules.db"],
+        "_pg_connect",
+        lambda *a, **kw: fake_conn,
+        raising=True,
+    )
+
+    # Cross-DB audit 은 MySQL 접속을 시도 — 본 unit test 에서 우회.
+    monkeypatch.setattr(
+        kb,
+        "_log_kb_write_audit",
+        lambda **kw: None,
+        raising=True,
+    )
+
+    kb._BACKENDS_CACHE = None
+
+    # LLM tripwire 설치 — 호출 발생 시 AssertionError raise.
+    llm_calls = _install_llm_tripwires(monkeypatch)
+
+    # repair_from_fact path 의 핵심 동작: fact + text 만 있는 상태에서 caller
+    # 가 RagDocuments 를 INSERT 시도 → mirror 가 Postgres upsert_rag_document 발행.
+    # caller (insight worker) 의 실 호출 패턴: scope_key='common', doc_type='fact-derived'.
+    result = kb._dual_write_kb.upsert_rag_document(
+        conversation_id=None,
+        scope_key="common",
+        doc_type="fact-derived",
+        fact_key="user-count-7d",
+        text_hash="abc123def456" * 5 + "0000",  # 64 hex
+        content_hash="aa" * 32,
+        weight=1,
+        source_type="repair_from_fact",
+        source_run_id=None,
+        source_sql=None,
+    )
+
+    # RETURNING id 의 모의 응답 확인
+    assert result == 1001, f"mirror 가 RETURNING id 반환 실패: {result}"
+
+    # rag_documents INSERT SQL 캡쳐 확인
+    assert len(captured) >= 1, "Postgres mirror INSERT 가 발행되지 않음"
+    sql_text = "\n".join(s[0] for s in captured)
+    assert "rag_documents" in sql_text.lower(), (
+        f"rag_documents INSERT SQL 미발견: captured={captured}"
+    )
+
+    # N1 의 핵심 — repair path 진입 중 LLM 호출 0건.
+    assert len(llm_calls) == 0, (
+        f"ANCHOR §3 invariant 위반 — LLM 호출 발생: {llm_calls}"
+    )
 
 
-@pytest.mark.skip(reason="M2-b cycle 책임")
+# ─────────────────────────────────────────────────────────────────────────────
+# N1 + N2 (parametrized)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 @pytest.mark.parametrize("assertion", NEGATIVE_ASSERTIONS, ids=lambda a: a["id"])
-def test_anchor_invariant_negative(assertion):
-    """negative assertion — LLM 호출 0건, TRUNCATE 차단 등."""
-    assert assertion["id"]  # placeholder
+def test_anchor_invariant_negative(assertion, monkeypatch):
+    """Negative assertion — LLM 호출 0건, TRUNCATE 차단."""
+    if assertion["id"] == "N1_llm_call_zero":
+        # S1 변형: mirror invocation 6종 (upsert_text + upsert_fact_entry +
+        # upsert_rag_document + upsert_rag_object + delete + prune) 전부 실행 중
+        # LLM 호출이 한 번도 발생하지 않음을 확인.
+        from modules import kb_backend as kb  # type: ignore
 
+        monkeypatch.setattr(
+            sys.modules["modules.db"],
+            "_pg_available",
+            lambda: True,
+            raising=True,
+        )
+        captured: list = []
+        fake_conn = _FakeConn(captured)
+        monkeypatch.setattr(
+            sys.modules["modules.db"],
+            "_pg_connect",
+            lambda *a, **kw: fake_conn,
+            raising=True,
+        )
+        monkeypatch.setattr(
+            kb,
+            "_log_kb_write_audit",
+            lambda **kw: None,
+            raising=True,
+        )
+        kb._BACKENDS_CACHE = None
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Helper — M2-b cycle 의 fixture 예시 (참조용).
-# ─────────────────────────────────────────────────────────────────────────────
+        llm_calls = _install_llm_tripwires(monkeypatch)
 
+        # 6 mirror method 모두 invoke — repair-style payload.
+        kb._dual_write_kb.upsert_text(text_hash="h" * 64, text_content="t")
+        kb._dual_write_kb.upsert_fact_entry(
+            conversation_id=None, scope_key="common", fact_key="k",
+            text_hash="h" * 64, weight=1, source_type="repair",
+        )
+        kb._dual_write_kb.upsert_rag_document(
+            conversation_id=None, scope_key="common", doc_type="fact-derived",
+            fact_key="k", text_hash="h" * 64, content_hash="c" * 64,
+            weight=1, source_type="repair", source_run_id=None, source_sql=None,
+        )
+        kb._dual_write_kb.upsert_rag_object(
+            conversation_id=None, scope_key="common",
+            object_type="metric", object_key="users.signup_7d",
+        )
+        kb._dual_write_kb.delete_fact_entries_by_conv_scope_key(
+            conversation_id=None, scope_key="common", fact_key="k",
+        )
+        # outside-voice REV-20260521-0009 B-3 흡수: prune 의 실제 PgKbBackend signature
+        # 는 `conversation_id=, scope_key=, fact_key=, keep_limit=` — 이전 cycle 의
+        # `keep_top=` kwarg 명 오타로 _mirror() 내부 silent swallow 가 발생, prune
+        # path 가 실제로 invoke 되지 않았다.
+        kb._dual_write_kb.prune_fact_entries_keep_top(
+            conversation_id=None, scope_key="common", fact_key="k", keep_limit=10,
+        )
 
-def _example_setup_scenario_s1(pg_conn, mysql_conn):
-    """S1 (RagDocuments 누락) fixture 의 reference 예시.
+        assert len(llm_calls) == 0, (
+            f"N1 위반 — repair-style mirror 호출 중 LLM 발생: {llm_calls}"
+        )
 
-    M2-b 의 실 fixture 가 본 함수 패턴 따라 구현.
+        # 6 mirror method 의 SQL 이 captured 에 실제 발행되었는지 — silent swallow
+        # 회귀 방지 (REV-20260521-0009 B-3).
+        sql_blob = "\n".join(s[0].lower() for s in captured)
+        assert "insert" in sql_blob and ("texts" in sql_blob or "text" in sql_blob), (
+            f"upsert_text SQL 미발견: captured count={len(captured)}"
+        )
+        assert "fact_entries" in sql_blob, "fact_entries 관련 SQL 미발견"
+        assert "rag_documents" in sql_blob, "rag_documents SQL 미발견"
+        assert "rag_objects" in sql_blob, "rag_objects SQL 미발견"
+        assert "delete from fact_entries" in sql_blob, (
+            "delete SQL 미발견 — delete_fact_entries_by_conv_scope_key path 미실행"
+        )
 
-    1. fact_entries.upsert (PgKbBackend) + (MysqlKbBackend) 양쪽
-    2. texts.upsert (text_hash, text_content) 양쪽
-    3. rag_documents 는 INSERT 안 함 (시나리오 setup)
-    4. rag_objects 는 INSERT — 본 시나리오는 rag_documents 만 누락
-    5. insight._repair_from_fact 호출 → rag_documents INSERT 확인
-    """
-    pass  # M2-b 책임
+    elif assertion["id"] == "N2_no_truncate":
+        # 실 Postgres 접속이 필요한 integration test. AGENT_KB_PG_INTEGRATION_TEST=1
+        # 환경에서만 실행 — 그 외엔 skip (unit test runner 의 default 환경 보호).
+        if os.environ.get("AGENT_KB_PG_INTEGRATION_TEST") != "1":
+            pytest.skip(
+                "N2 는 실 Postgres 접속 필요 — AGENT_KB_PG_INTEGRATION_TEST=1 로 활성화"
+            )
+
+        try:
+            import psycopg  # type: ignore
+            from psycopg import errors as pg_errors  # type: ignore
+        except ImportError:
+            pytest.skip("psycopg 미설치 — N2 통합 테스트 skip")
+
+        # agent_kb_rw 의 connection — bootstrap script 가 셋업한 role.
+        conninfo = os.environ.get(
+            "AGENT_KB_PG_RW_DSN",
+            "host=postgres dbname=agent_memory user=agent_kb_rw password=change_me_rw",
+        )
+        with psycopg.connect(conninfo, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                with pytest.raises(pg_errors.InsufficientPrivilege):
+                    cur.execute("TRUNCATE TABLE fact_entries")
+    else:
+        pytest.fail(f"unknown negative assertion id: {assertion['id']}")
 
 
 if __name__ == "__main__":
-    # 본 모듈 직접 실행 시 시나리오 catalog 출력 (M2-a 검증).
     import json
     print("=== ANCHOR §3 invariant 시나리오 catalog ===")
     print(json.dumps(SCENARIO_CATALOG, ensure_ascii=False, indent=2))
