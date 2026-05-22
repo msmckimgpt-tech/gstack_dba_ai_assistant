@@ -11,8 +11,8 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 4 진행 중)
-- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 4 storage wrapper + D20 rotation runbook ship. main 의 TASK-0097 DQA 브랜딩 변경도 본 branch 에 흡수.)
+- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 5 진행 중)
+- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 5 upload API ship — 6 endpoint + audit + HMAC + size cap + D21 deny)
 
 ## 2. Task Queue
 
@@ -44,7 +44,7 @@ source_of_truth: true
   - [x] **Phase 2 (Cycle 0 schema)** — `WebConversationAttachments` + `WebAccountConsents` + `WebAttachmentDerivedMessages` (D19) + `WebConversationAttachmentProviderFiles` (D13) + `WebShareLinks.PolicyVersion` (R-F7) + `WebConversationAttachmentsSandboxSchemas` mapping table. 6 `_ensure_*_schema` / `_ensure_*_column` helper 신설. `_ensure_seed_catchup` (fast path) + `_ensure_web_tables` (slow path) 양쪽 호출 등록. py_compile PASS. 2026-05-21.
   - [x] **Phase 3 (Cycle 0 RBAC)** — `conversation.attachment.upload/read.{own,any}` 4 코드 (group=conversation) `PERMISSION_DEFINITIONS` 추가 + `SEED_ROLE_DEFINITIONS` admin/operator/sales/pending 갱신 (admin=all, operator/sales=upload+read own, pending=read.own만 — D21/R-F14) + `_ensure_seed_roles` admin/operator/sales/dba/pending 5 catchup 갱신 (§5.2 6 checklist 1~5) + app.js label/description map (checklist 6) — backend group=conversation 이므로 attachment group 신설은 Phase 12 SQL guard 의 attachment.execute_sql_on.* 시점에. admin.js 는 backend `/api/admin/permissions` label 직접 사용 — 별 map 없음. py_compile PASS. 2026-05-21.
   - [x] **Phase 4 (Cycle 0 storage)** — `storage_minio.py` wrapper (boto3 + retry + signed URL + smoke test) + D20 dual-key rotation runbook (`RUNBOOK-minio-key-rotation.md`). boto3>=1.34.0 / botocore>=1.34.0 requirements 추가. modules/__init__.py + storage_minio.py 약 350 lines (idempotent client cache + get_storage_config + safe_filename + make_object_key + put/get/delete/signed URL + bucket_exists + run_smoke_test + reset_client_cache + CLI smoke entry). py_compile PASS + 모듈 import smoke 통과. D13 (외부 LLM signed URL 송신 금지) 정합 — `generate_presigned_get()` docstring 에 사내망 다운로드 전용 명시 + `get_object_bytes()` 의 외부 provider 송신 경로 권장. 2026-05-21.
-  - [ ] **Phase 5 (Cycle 0 upload API)** — 6 endpoint (POST/GET/GET-by-id/DELETE attachment + POST/DELETE consent) + audit 4 ActionCode + `build_audit_change_json` case + D12 HMAC.
+  - [x] **Phase 5 (Cycle 0 upload API)** — 6 endpoint (POST/GET/GET-by-id/DELETE attachment + POST/DELETE consent) + audit 4 ActionCode (`attachment.upload`/`.delete`/`.consent.grant`/`.consent.revoke`) + `build_audit_change_json` case 4 추가 + D7 MIME allowlist + D8 size cap (per_file/conv/account env-driven) + D12 HMAC/extension/size bucket helper + D13 외부 LLM signed URL 송신 금지 정합 (`_serialize_attachment_for_api` 의 signed_url 옵션) + D21 pending bytes deny enforcement (`_account_is_pending` + bytes_access_denied 마커) + RBAC 검증 (`_account_can_access_attachment` 신규 helper). FastAPI UploadFile/File/Form import. py_compile PASS. 2026-05-22.
   - [ ] **Phase 6 (Cycle 0 composer UI)** — paperclip + drag-drop + attachment pills + selected toggle + D16 lazy-create snapshot (busyKey + pending sentinel).
   - [ ] **Phase 7 (Cycle 0 consent)** — D11 grouped batch modal + revoke flow.
   - [ ] **Phase 8 (Cycle 0 share)** — D9 share builder redact + 기존 token 자동 redact + PolicyVersion column.
