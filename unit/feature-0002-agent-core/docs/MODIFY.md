@@ -8,14 +8,37 @@ source_of_truth: true
 
 # Modify Log
 
-## CHG-20260522-0001
+## CHG-20260522-0003
 - Date: 2026-05-22
-- TASK-Cycle: fix/query-result-string-truncation (Minor §12.3 — 비파괴 버그 수정)
-- Summary: `normalize_step_result_summary` (render.py) 에서 `execute_sql` 결과 요약 시 CSV 파일이 존재하면 `_format_result_sets` 의 셀 100자 잘림 없이 CSV 원본 데이터로 `preview_table` 을 구성하도록 변경. CSV 부재 시 기존 텍스트 파싱 fallback 유지. `_count_csv_data_rows` helper 추가 (truncated 판정용).
-- Files:
-  - `unit/feature-0002-agent-core/src/modules/render.py`: `normalize_step_result_summary` 로직 확장 + `_count_csv_data_rows` 신규.
-- Verification: `python3 -c "import ast; ast.parse(open(...)read())"` PASS. 수동 단위 테스트 — 150자 셀값 CSV → preview_table.rows 전체 길이 150 확인.
-- Notes: LLM 컨텍스트용 `_format_result_sets` 의 100자 셀 제한은 유지 (AI 컨텍스트 최적화 의도 보존). 웹 UI 미리보기 경로만 수정.
+- TASK-Cycle: TASK-0021 (M2-c cross-DB audit explicit call + SLA verify body + stress.sh body + ANCHOR §3 invariant test S1/N1/N2, **Major §12.3** — RBAC 동반)
+- Summary: §2.1 PLAN-APPROVED 의 **M2 phase 3차 (M2-c)** — M2-b (TASK-0020) 의 dual-write 위에 ADR-0021 §Consequences M2-c 책임 5건 흡수. **Outside-voice review (Plan subagent, `REV-20260521-0009`) Verdict NEEDS-TWEAK + Critical 6 본 cycle 내 반영** (B-1 audit SLA 분모/분자 정정 / B-2 N1 LLM tripwire `modules.llm` 정정 + smoke assertion / B-3 prune signature `keep_limit=` + DELETE SQL assertion / B-4 `connect_with_retry(attempts=1)` / B-5 ResourceId composite builder / B-6 ChangeJson 16KB 캡). **본 turn 의 deliverable 은 5 산출 + Critical 6 흡수까지**. S2-S6 invariant fixture + delete/prune SLA 별 metric (pg_branch xmax tagging) + latency baseline production-like 측정 + Nice-to-have 8건은 M2-d 별 cycle 위임.
+- Worktree: `ai/claude/0002/kb-pg-m2c` 격리. path: `<wrapper>/.worktrees/0002-kb-pg-m2c/`. 사용자 결정 (2026-05-22): "확인했습니다. 다음 Phase도 진행해주세요" → 본 cycle 진행 + "(1) 방향으로 진행" → Critical 5 본 cycle 흡수.
+- Files (audit + tooling + test):
+  - `unit/feature-0002-agent-core/src/modules/kb_backend.py` (+~157 LOC, 762 → ~919 → ~1085 LOC): `import threading` + `_BACKENDS_LOCK` double-checked locking (`get_backends()`) + `_KB_AUDIT_ACTION_MAP` (6 method → ActionCode/ResourceType) + `_KB_AUDIT_SENSITIVE_KEYS` (`text_content`, `source_sql` 제외) + `_build_audit_resource_id()` composite (REV-20260521-0009 B-5 — conv|scope|key|... 식별 정밀화) + `_log_kb_write_audit()` helper (`connect_with_retry(database=MEMORY_DB, autocommit=True, attempts=1)`, REV-20260521-0009 B-4 — best-effort; ChangeJson 16KB 캡, REV-20260521-0009 B-6; `pg_op_kind` 태깅 write/delete/prune, REV-20260521-0009 B-1) + `_DualWriteMirror._mirror()` 의 audit explicit call 통합 (mirror 성공 후 try/except 격리).
+  - `bin/kb-dual-write-verify.sh` (+~125 LOC): `verify_counts()` 본문 (4 table pair count diff) + `verify_content_hash()` 본문 (rag_documents content_hash CONCAT identity diff) + `verify_audit_sla()` 본문 (GREATEST(created_at, updated_at) PG denominator + `kb.write.mirror` only audit numerator + `audit > 2 × pg` fail-loud + zero-denom INCONCLUSIVE exit 2 + methodology limitation 명시, REV-20260521-0009 B-1/C-8 흡수).
+  - `bin/kb-dual-write-stress.sh` (+~40 LOC): `trigger_insight_cycles()` (docker exec insight-worker `python -c "from agent_core import run_insight_cycle; print(run_insight_cycle(...))"` + container 미가동 시 docker compose run fallback) + `trigger_ask_iterations()` (docker compose run --rm --remove-orphans agent) + FAILURES counter + exit 1 on any failure.
+  - `unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py` (+~290 LOC, 147 → ~440 LOC): S1 (RagDocuments missing) 실 구현 (FakeConn + FakeCursor SQL 캡쳐 + monkeypatch `_log_kb_write_audit` 우회 + RETURNING id mock + LLM tripwire 동반) + N1 (LLM call zero) 실 구현 (`modules.llm._get_openai_client` / `_openai_chat_completion_with_deadline` / `llm_*` prefix 전체 + `modules.llm.OpenAI` 직접 monkeypatch + smoke assertion 1 patch 미설치 시 즉시 fail, REV-20260521-0009 B-2 흡수; 6 mirror method invocation + prune `keep_limit=` 정정 + DELETE SQL assertion, REV-20260521-0009 B-3 흡수) + N2 (TRUNCATE denied) env-gated (`AGENT_KB_PG_INTEGRATION_TEST=1` 시 실 psycopg connect → `pytest.raises(InsufficientPrivilege)`) + S2-S6 skip 유지 (M2-d 위임).
+  - `unit/feature-0002-agent-core/docs/{TASK,REVIEW,MODIFY,REPORT,FUNCTION}.md`: cycle 등록 + `REV-20260521-0009` + 본 entry + Summary + risk log 갱신.
+- Outside-voice review (Plan subagent) Critical 6 본 cycle 내 반영:
+  1. **Critical B-1 (audit SLA mismatch)**: verify_audit_sla() 분모 GREATEST(created_at, updated_at) + numerator write-only + over-count fail-loud + zero-denom INCONCLUSIVE + `pg_op_kind` tagging ✓
+  2. **Critical B-2 (N1 LLM tripwire 모듈 오인)**: `modules.llm` 정정 + entry point 전수 patch + smoke assertion ✓
+  3. **Critical B-3 (prune signature swallow)**: `keep_limit=` 정정 + 6 method SQL assertion ✓
+  4. **Critical B-4 (attempts cap 부재)**: `connect_with_retry(attempts=1)` best-effort ✓
+  5. **Critical B-5 (ResourceId 평탄화)**: `_build_audit_resource_id()` composite builder 6 method layout 명시 ✓
+  6. **Critical B-6 (ChangeJson 길이 캡 부재)**: 16KB 캡 + truncate metadata ✓
+- 검증 (본 cycle):
+  - `pytest tests/test_anchor_invariant_postgres.py -v` — S1 + N1 PASS, S2-S6/N2 SKIPPED
+  - `pytest tests/` 전체 — 15 PASS, 6 SKIPPED (회귀 없음)
+  - `bash -n bin/kb-dual-write-verify.sh` / `bin/kb-dual-write-stress.sh` — syntax PASS
+  - `bash bin/kb-dual-write-stress.sh --dry-run --insight-cycles 2 --ask-iterations 1` — 모든 command 정상 echo
+- Runtime 검증 deferral (M2-d 별 cycle 책임):
+  - `bin/kb-dual-write-stress.sh --insight-cycles 3 --ask-iterations 5` 실 실행
+  - `bin/kb-dual-write-verify.sh audit-sla --since <ISO>` → miss_ppm ≤ 1000 검증
+  - S2-S6 invariant fixture 실 구현 (실 Postgres + insight worker 통합)
+  - delete/prune SLA 별 metric (`pg_branch` xmax tagging + RETURNING (id, xmax=0) 보강)
+  - Latency baseline production-like 측정
+- 사용자 결정 (2026-05-22): 즉시 자동 commit + push + main 동기화. Critical 5 본 cycle 흡수 후 진행.
+- Outside-voice rationale: 호출 ✓ — `REV-20260521-0009 [SUBAGENT:Plan-subagent]`. RBAC role audit ActionCode 신설 + N2 (TRUNCATE denied) check → 메모리 정책 정합. NEEDS-TWEAK + Critical 6 본 cycle 내 반영 + Nice-to-have 8건 M2-d 위임.
 
 ## CHG-20260521-0002
 - Date: 2026-05-21

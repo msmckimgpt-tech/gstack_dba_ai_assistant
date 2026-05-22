@@ -6629,7 +6629,7 @@ def _share_load_active(conn, token: str) -> dict[str, Any] | None:
         cur.execute(
             """
 SELECT Id, ConversationId, Token, ScopeMode, AnchorMessageId,
-       CreatedBy, CreatedAt, RevokedAt, ViewCount, LastViewedAt
+       CreatedBy, CreatedAt, RevokedAt, ViewCount, LastViewedAt, PolicyVersion
 FROM WebConversationShares
 WHERE Token = %s
 LIMIT 1
@@ -6655,10 +6655,51 @@ def _share_anchor_belongs_to_conversation(conn, conversation_id: str, anchor_mes
         cur.close()
 
 
-def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | None) -> list[dict[str, Any]]:
+# TASK-0094 Sprint 1 Phase 8 (D9 + R-F7): share-policy version 상수.
+# 정책 변경 (예: attachment_derived redact 규칙 추가) 시 본 상수 증가 → token row 의
+# PolicyVersion 비교로 stale token 자동 redact.
+SHARE_POLICY_VERSION_CURRENT = 2
+
+# 1 = TASK-0058 시점 (no attachment redact).
+# 2 = TASK-0094 Phase 8 (attachment_derived redact + R-F7 자동 적용).
+SHARE_POLICY_REDACT_TEXT = "[첨부 파일 분석 본문 — 보안 정책에 따라 공유 시 가려짐]"
+
+
+def _meta_has_attachment_derived(meta_obj) -> bool:
+    """D9 attachment_derived flag 검사. MetaJson 안의 `attachment_derived: true`."""
+    if not isinstance(meta_obj, dict):
+        return False
+    if meta_obj.get("attachment_derived"):
+        return True
+    # 향후 Phase 11 / Cycle 2 / 3 / 4 에서 추가될 derived type 도 catch.
+    return False
+
+
+def _share_redact_message_content(content: str, meta_obj) -> tuple[str, bool, dict | None]:
+    """attachment_derived 메시지 본문을 redact. 반환: (redacted_content, was_redacted, meta_obj_clean).
+
+    raw attachment payload (CSV sample / vision 분석 결과 / PDF excerpt) 가 share view
+    에 노출되지 않도록 본문을 가림. meta 의 sensitive 필드도 함께 redact (final_sql /
+    result_rows 등은 D12 정합으로 별도 categorical 메타만 유지).
+    """
+    if not _meta_has_attachment_derived(meta_obj):
+        return content, False, meta_obj
+    meta_clean = None
+    if isinstance(meta_obj, dict):
+        meta_clean = {k: v for k, v in meta_obj.items() if k not in ("final_sql", "sql", "result_rows", "result_text")}
+        meta_clean["attachment_derived"] = True
+        meta_clean["redacted_by_share_policy"] = True
+    return SHARE_POLICY_REDACT_TEXT, True, meta_clean
+
+
+def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | None, *, share_token_policy_version: int | None = None) -> list[dict[str, Any]]:
     """공유 view 용 메시지 목록. anchor 가 주어지면 `Id <= anchor` (inclusive).
 
     fork 의 `_is_internal_message` 와 동일 필터를 적용해 내부/시스템 메시지를 숨긴다.
+
+    TASK-0094 Sprint 1 Phase 8 (D9 + R-F7): share_token_policy_version 이 NULL 또는
+    SHARE_POLICY_VERSION_CURRENT 보다 작으면 attachment_derived 메시지 본문 자동 redact.
+    기존 token (PolicyVersion=1 또는 NULL) 도 배포 즉시 새 정책 적용.
     """
     cur = conn.cursor(dictionary=True)
     try:
@@ -6686,6 +6727,11 @@ ORDER BY Id ASC
     finally:
         cur.close()
     visible: list[dict[str, Any]] = []
+    # R-F7: 정책 version 비교 — token 발급 시 version < 현재 면 자동 redact 대상.
+    redact_active = (
+        share_token_policy_version is None
+        or int(share_token_policy_version or 0) < SHARE_POLICY_VERSION_CURRENT
+    )
     for row in rows:
         role = str(row.get("Role") or "")
         content = str(row.get("Content") or "")
@@ -6698,6 +6744,9 @@ ORDER BY Id ASC
                 meta_obj = json.loads(meta_json) if isinstance(meta_json, str) else meta_json
             except Exception:
                 meta_obj = None
+        # D9 + R-F7: attachment_derived 메시지 redact (token PolicyVersion 무관, 현 정책 v2 부터 활성).
+        if redact_active:
+            content, _was_redacted, meta_obj = _share_redact_message_content(content, meta_obj)
         created_at = row.get("CreatedAt")
         visible.append(
             {
@@ -6763,8 +6812,8 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
                 cur.execute(
                     """
 INSERT INTO WebConversationShares
-    (ConversationId, Token, ScopeMode, AnchorMessageId, CreatedBy)
-VALUES (%s, %s, %s, %s, %s)
+    (ConversationId, Token, ScopeMode, AnchorMessageId, CreatedBy, PolicyVersion)
+VALUES (%s, %s, %s, %s, %s, %s)
                     """,
                     (
                         cid,
@@ -6772,6 +6821,7 @@ VALUES (%s, %s, %s, %s, %s)
                         scope_mode,
                         int(anchor_id) if anchor_id is not None else None,
                         int(account["id"]),
+                        SHARE_POLICY_VERSION_CURRENT,
                     ),
                 )
                 share_id = int(cur.lastrowid or 0)
@@ -6989,7 +7039,40 @@ LIMIT 1
             conv_meta = cur.fetchone() or {}
         finally:
             cur.close()
-        messages = _share_load_messages(conn, conversation_id, anchor_id_int)
+        # TASK-0094 Sprint 1 Phase 8 (D9 + R-F7): share token row 의 PolicyVersion 추출 후 redact 결정.
+        share_policy_version_raw = share.get("PolicyVersion")
+        share_policy_version: int | None
+        try:
+            share_policy_version = int(share_policy_version_raw) if share_policy_version_raw is not None else None
+        except Exception:
+            share_policy_version = None
+        messages = _share_load_messages(
+            conn,
+            conversation_id,
+            anchor_id_int,
+            share_token_policy_version=share_policy_version,
+        )
+        # R-F7 audit dispatch — stale token (PolicyVersion < CURRENT) 의 자동 redact 활성 기록.
+        if share_policy_version is None or int(share_policy_version or 0) < SHARE_POLICY_VERSION_CURRENT:
+            try:
+                _audit_user_action(
+                    conn,
+                    request,
+                    None,  # actor_type='anonymous' / 'account' 는 본 turn 의 viewer 로 결정 (아래 다시 호출)
+                    action="share.policy.redact_applied",
+                    resource_type="share",
+                    resource_id=str(int(share.get("Id") or 0)) if share.get("Id") is not None else None,
+                    request_ctx={
+                        "share_id": int(share.get("Id") or 0) if share.get("Id") is not None else None,
+                        "token_prefix": str(token)[:8],
+                        "token_policy_version": share_policy_version,
+                        "current_policy_version": SHARE_POLICY_VERSION_CURRENT,
+                        "redact_reason": "policy_version_mismatch",
+                    },
+                    actor_type="anonymous",
+                )
+            except Exception:
+                pass
         # 로그인 상태 + conversation.create 보유 시 fork 가능 flag.
         viewer = _optional_account(request, conn)
         can_fork = bool(viewer and _account_has_permission(viewer, "conversation.create"))
@@ -7471,6 +7554,46 @@ def delete_attachment(attachment_id: int, request: Request) -> JSONResponse:
             pass
 
         return JSONResponse({"ok": True, "delete_reason": "user"})
+    finally:
+        conn.close()
+
+
+@app.get("/api/account/consents")
+def list_account_consents(request: Request) -> JSONResponse:
+    """본인 consent row 목록 (Phase 7 grouped modal 의 toggle 상태 표시용). own only."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+                SELECT Id, Provider, DataClass, Purpose, GrantedAt, RevokedAt
+                FROM WebAccountConsents
+                WHERE AccountId = %s
+                ORDER BY Provider ASC, DataClass ASC, Purpose ASC, Id ASC
+                """,
+                (int(account["id"]),),
+            )
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+        consents = [
+            {
+                "id": int(r.get("Id") or 0),
+                "provider": str(r.get("Provider") or ""),
+                "data_class": str(r.get("DataClass") or ""),
+                "purpose": str(r.get("Purpose") or ""),
+                "granted": bool(r.get("GrantedAt") and not r.get("RevokedAt")),
+            }
+            for r in rows
+        ]
+        return JSONResponse({"consents": consents})
     finally:
         conn.close()
 
@@ -10441,6 +10564,18 @@ def build_audit_change_json(
                 "source_share_id": request_ctx.get("source_share_id"),
                 "source_token_prefix": str(request_ctx.get("source_token_prefix") or "")[:8],
                 "new_conversation_id": request_ctx.get("new_conversation_id"),
+            },
+            ["share.token_full"],
+        )
+    if action == "share.policy.redact_applied":
+        # TASK-0094 Sprint 1 Phase 8 (R-F7): 기존 token 의 자동 redact 적용 기록.
+        return (
+            {
+                "share_id": request_ctx.get("share_id"),
+                "token_prefix": str(request_ctx.get("token_prefix") or "")[:8],
+                "token_policy_version": request_ctx.get("token_policy_version"),
+                "current_policy_version": request_ctx.get("current_policy_version"),
+                "redact_reason": str(request_ctx.get("redact_reason") or "policy_version_mismatch"),
             },
             ["share.token_full"],
         )

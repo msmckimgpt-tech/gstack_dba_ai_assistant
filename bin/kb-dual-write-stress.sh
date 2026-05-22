@@ -11,7 +11,8 @@
 # - **`make ask` 5종 시나리오 5회** — kb-measure-baseline.sh 의 --latency mode 와 동일
 #   시나리오. 5 × 5 = 25 ask 실행. 약 12분 + LLM API cost.
 #
-# Skeleton (본 cycle): script structure 만. 실 실행은 M2-b 의 dual-write 활성 후.
+# M2-c (TASK-0021): 실 호출 body 구현. dual-write 활성 환경에서 audit miss_rate
+# 검증 직전 강제 부하 trigger 로 사용.
 #
 # Usage:
 #   bin/kb-dual-write-stress.sh                # default — insight 3회 + ask 5×5
@@ -68,13 +69,27 @@ run_or_print() {
   fi
 }
 
+FAILURES=0
+
 trigger_insight_cycles() {
   echo "[STEP] insight cycle x ${INSIGHT_CYCLES}"
+  local insight_container="${COMPOSE_PROJECT_NAME}-insight-worker-1"
+  if [ "$DRY_RUN" != "1" ] && ! docker ps --format '{{.Names}}' | grep -qx "$insight_container"; then
+    echo "[WARN] container '${insight_container}' not running — fallback to docker compose run" >&2
+    insight_container=""
+  fi
   for i in $(seq 1 "$INSIGHT_CYCLES"); do
-    echo "[M2-a SKELETON] insight cycle $i — docker exec ${COMPOSE_PROJECT_NAME}-insight-worker-1 python -c 'from agent_core import run_insight_cycle; run_insight_cycle(\"stress-${i}\")'"
-    # M2-b: 실 호출
-    # docker exec "${COMPOSE_PROJECT_NAME}-insight-worker-1" \
-    #   python -c "from agent_core import run_insight_cycle; print(run_insight_cycle('stress-${i}'))"
+    echo "[INSIGHT] cycle ${i}/${INSIGHT_CYCLES}"
+    if [ -n "$insight_container" ]; then
+      run_or_print docker exec "$insight_container" \
+        python -c "from agent_core import run_insight_cycle; print(run_insight_cycle('stress-${i}'))" \
+        || { echo "[FAIL] insight cycle ${i}" >&2; FAILURES=$((FAILURES + 1)); }
+    else
+      run_or_print docker compose -f "${MAIN_REPO_ROOT}/docker-compose.yml" \
+        -p "$COMPOSE_PROJECT_NAME" run --rm --remove-orphans insight-worker \
+        python -c "from agent_core import run_insight_cycle; print(run_insight_cycle('stress-${i}'))" \
+        || { echo "[FAIL] insight cycle ${i}" >&2; FAILURES=$((FAILURES + 1)); }
+    fi
   done
 }
 
@@ -85,10 +100,10 @@ trigger_ask_iterations() {
     local sidx=0
     for question in "${SCENARIOS[@]}"; do
       sidx=$((sidx + 1))
-      echo "[M2-a SKELETON] iter=${iter} S${sidx}: ${question}"
-      # M2-b: 실 호출
-      # run_or_print docker compose -f "$compose_file" -p "$COMPOSE_PROJECT_NAME" \
-      #   run --rm --remove-orphans agent "$question"
+      echo "[ASK] iter=${iter}/${ASK_ITERATIONS} S${sidx}/${#SCENARIOS[@]}: ${question}"
+      run_or_print docker compose -f "$compose_file" -p "$COMPOSE_PROJECT_NAME" \
+        run --rm --remove-orphans agent "$question" \
+        || { echo "[FAIL] iter=${iter} S${sidx}" >&2; FAILURES=$((FAILURES + 1)); }
     done
   done
 }
@@ -96,8 +111,13 @@ trigger_ask_iterations() {
 trigger_insight_cycles
 trigger_ask_iterations
 
-echo "kb-dual-write-stress: M2-a SKELETON 완료 — 실 실행은 M2-b dual-write 활성 후"
+echo ""
+echo "kb-dual-write-stress 완료"
 echo "  insight cycles: ${INSIGHT_CYCLES}"
 echo "  ask iterations: ${ASK_ITERATIONS} × ${#SCENARIOS[@]} = $((ASK_ITERATIONS * ${#SCENARIOS[@]}))"
-echo "  estimated runtime (M2-b 실 호출 시): ~$((ASK_ITERATIONS * ${#SCENARIOS[@]} * 30 / 60))분 + LLM API cost (~USD <0.10)"
+echo "  failures: ${FAILURES}"
+if [ "$FAILURES" -gt 0 ]; then
+  echo "FAIL — 일부 stress step 실패" >&2
+  exit 1
+fi
 exit 0

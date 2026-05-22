@@ -8,6 +8,26 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0003
+- Date: 2026-05-22
+- Related Requirement: TASK-0099 (REQ-20260522-0003, Minor §12.3 — docs-only tracker hygiene)
+- Summary: TASK-0073 audit subsystem followup backlog 8 entries (TASK-0086~0093) 8/8 완료 후 정리 cycle. TASK.md 의 stale `[ ]` 체크박스 2건 close: (1) line 152 TASK-0072 (main 통합 `f298f90` + post-deploy hotfix bundle TASK-0074/0075/0076/0077/0078/0079/0080 모두 deployed but 상태 `outside-voice-review` 미갱신), (2) line 2767 TASK-0073 `AGENT_AUDIT_ENABLED=0 + AGENT_MODE=prod` startup fail-closed acceptance (TASK-0092 V1-V3 fail-closed scenario 가 정확히 검증 → close). TASK.md 상단 Task Queue 에 TASK-0099 entry 추가. STATUS.md feature-0003 row tail 에 audit followup backlog 8/8 완료 marker append. docs-only — 코드 / RBAC / 스키마 / endpoint 변경 0.
+- Files:
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`:
+    - line 152 TASK-0072 `[ ]` → `[x]` + 상태 텍스트 갱신 (deployed commits + hotfix bundle 명시)
+    - line 2767 TASK-0073 startup fail-closed acceptance `[ ]` → `[x]` + TASK-0092 7 vector matrix V1-V3 cross-ref
+    - 상단 Task Queue 에 TASK-0099 entry 추가 (본 closure cycle)
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260522-0003 [SKIPPED:doc-only-tracker-hygiene]
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 상단에 TASK-0099 cycle entry 추가 + audit followup backlog 8/8 closure marker table
+  - `docs/STATUS.md`: feature-0003 row tail 에 audit followup backlog 8/8 완료 marker append
+- Diff size: docs-only. TASK.md 3 entry change (2 close + 1 new) + MODIFY/REVIEW/REPORT/STATUS 5 file 갱신. 코드 line change 0.
+- Impact:
+  - tracker hygiene — TASK.md 의 deployed task 가 정확히 `[x]` 로 close 되어 future cycle 의 audit followup backlog 검색 정확도 향상
+  - TASK-0073 audit subsystem 의 7개 acceptance criteria 모두 close — Phase D 의 "deferred to followup cycle" 마지막 항목 (line 2767) 까지 정리 완료
+  - 코드 / RBAC / 스키마 / endpoint 변경 없음 → 운영 영향 0
+- Rollback Notes: docs-only. 5 file (TASK.md / MODIFY.md / REVIEW.md / REPORT.md / STATUS.md) 의 본 commit revert 로 즉시 복구 가능. 단 `[ ]` 로 돌릴 명분 없음 — 실제 deploy 상태 반영.
+
 ## CHG-20260522-0002
 - Date: 2026-05-22
 - Summary: TASK-0098 (REQ-20260522-0002, **Critical** §12.3 — Profile Drawer 탭 재구성 + 권한 정보 API 단위 차단) cycle ship. PR #49 multi-race rebase + ID reassign + squash commit. Codex outside voice 6 findings (1 blocker + 4 high + 1 medium) 흡수.
@@ -1843,3 +1863,40 @@ source_of_truth: true
 - Notes: 본 Phase 의 endpoint 가 BRIEFING D7/D8/D11/D12/D13/D21 결정의 application-level enforcement — Phase 4 의 storage 모듈 (SDK abstraction) 위에서 보안 결정 적용. 사용자 메모리 정책 "RBAC plan 은 outside voice 필수" 정합 — RBAC 변경은 Phase 3 에서 catalog 작업 완료, 본 Phase 는 catalog enforcement 이라 별 review 우선순위 낮음. 다만 D21 pending bytes deny 의 application-level 분기 (`_account_is_pending`) 는 향후 codex review 권장 항목으로 명시.
 - Impact: 본 Phase ship 직후 dev 환경에서 첨부 upload/list/get/delete + consent grant/revoke 가능. MinIO + WebConversationAttachments + WebAccountConsents 모두 활성 — Phase 6 (composer UI) 진입 시 frontend 가 본 endpoint 호출. raw bytes 는 사내망 다운로드만 (signed URL) + 외부 LLM 송신은 Phase 5 unblock 안 됨 (Cycle 2 vision / Cycle 3 KB / Cycle 4 RAG 시점 ship).
 - Rollback Notes: 6 endpoint definition + helper 묶음 + audit case 4 모두 revert. 기존 row 는 DB 에 보존 — `DELETE FROM WebConversationAttachments`/`WebAccountConsents` 또는 보존. MinIO bucket 의 객체는 운영자가 별도 `mc rm` 또는 보존.
+
+## CHG-20260521-0008
+- Date: 2026-05-22
+- Related Requirement: TASK-0094 (REQ-20260521-0001, Critical §12.3) Sprint 1 Phase 6 — Cycle 0 composer UI (paperclip + drag-drop + pills + D16 snapshot + R-F5 lazy-create)
+- Summary: BRIEFING §5.6 + D16 + R-F5 정합. composer 영역에 첨부 UI (paperclip 버튼 + hidden file input + drag-drop overlay + attachment pills + scope-all checkbox) 추가. state.composerAttachments 신규 + helper 7개 + event binding + selectConversation 진입 시 list load.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/index.html` — composer-wrap 안에 composer-attachments + composer-drop-overlay + attach-btn + file input 추가 (약 25 lines).
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` — `.composer-wrap` position relative + `.composer-attachments` + `.composer-attachment-pill` (selected/uploading/error data-attr 별 스타일) + `.composer-drop-overlay` + `.attach-btn` (약 130 lines).
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`:
+    - state.composerAttachments 추가 (byConv / uploadingCount / nextLocalId)
+    - sendPrompt 의 askBody 에 attachment_ids + attachment_scope_all 명시 (snapshot 호출)
+    - helper 7 신설: `_composerAttachmentKey`, `_ensureComposerBucket`, `_composerAttachmentSnapshot`, `_renderAttachmentPills`, `_uploadComposerAttachment`, `_guessKindFromFile`, `_toggleAttachmentPill`, `_loadConversationAttachments`, `_bindComposerAttachmentEvents` (실제 9 helper)
+    - initialize 끝에 `_bindComposerAttachmentEvents()` 호출 (paperclip click / file input change / scope-all change / pills toggle / drag-drop)
+    - selectConversation 끝에 `_loadConversationAttachments(cid)` 호출 (대화 진입 시 backend ground truth 동기화)
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md` — AC-0234~0240 (7 AC)
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` — Phase 6 [x] + Current Status 갱신
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md` — 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260521-0008 [SKIPPED:frontend-only] append
+- Notes: lazy-create 상태에서는 paperclip 클릭 시 사용자에게 "첨부는 대화 생성 후 가능" 안내 후 거부 — backend endpoint 가 cid 를 요구하기 때문. 첫 메시지 send 후 (대화 생성 후) 다시 paperclip 클릭 가능. Phase 11 (ingest pipeline) 진입 후 사용자가 실제 LLM 응답에서 CSV/XLSX 의 content 가 활용되는 것을 확인 가능 — 본 Phase 만으로는 attachment_ids 전송만 가능하고 backend `/api/ask` 가 아직 attachment 를 prompt context 에 주입하지 않음 (Phase 11 ship 후 활성).
+- Impact: 사용자 view 의 첫 표면화 — 본 Phase ship 후 사용자가 composer 의 paperclip + drag-drop 으로 파일 업로드 가능, pill 로 선택 토글 가능. 실제 LLM context 주입은 Phase 11 ship 후.
+- Rollback Notes: index.html 의 신규 마크업 4개 (composer-attachments / composer-drop-overlay / attach-btn / file input) 제거. styles.css 의 신규 130 lines block 제거. app.js 의 state.composerAttachments + 9 helper + binding + load call + sendPrompt askBody 갱신 모두 revert. backend / DB / 권한 영향 0 (Phase 5 endpoint 는 그대로 유지 — Phase 6 revert 만으로 backend 호출 안 됨).
+
+## CHG-20260521-0009
+- Date: 2026-05-22
+- Related Requirement: TASK-0094 Sprint 1 Phase 7 — D11 consent grouped batch modal (R-F2)
+- Summary: Profile Drawer 의 "보안 및 계정" 탭에 consent UI 추가. provider × 3 group grouped batch toggle. GET /api/account/consents endpoint 신규 (POST/DELETE 는 Phase 5 ship).
+- Files: app.py (GET /api/account/consents 추가), index.html (#profileConsentSection), app.js (_renderConsentSection + _handleConsentToggle + binding), styles.css (consent UI), FUNCTION/TASK/MODIFY/REVIEW.
+- Notes: DB 는 세분 row, UX 는 3 group. R-F2 modal 폭격 위험 해소 정합.
+- Rollback: 본 cycle entry revert + #profileConsentSection 마크업/CSS/JS 제거.
+
+## CHG-20260521-0010
+- Date: 2026-05-22
+- Related Requirement: TASK-0094 Sprint 1 Phase 8 — D9 share redact + R-F7 PolicyVersion 활성
+- Summary: WebConversationShares.PolicyVersion column 활성 (INSERT 명시 + SELECT 추출 + redact 로직 분기). attachment_derived 메시지 본문 자동 redact + share.policy.redact_applied audit. 기존 token (Phase 2 ship 시 DEFAULT 1 backfill) 도 배포 즉시 새 정책 적용.
+- Files: app.py (_share_redact_message_content / _share_load_messages 갱신 / public_share_view redact dispatch / INSERT PolicyVersion / build_audit_change_json case), FUNCTION/TASK/MODIFY/REVIEW.
+- Notes: attachment_derived flag 의 실제 설정은 Phase 11 (ingest) / Cycle 2/3/4 ship 시점. 본 phase 는 mechanism 만 ship.
+- Rollback: SHARE_POLICY_VERSION_CURRENT=1 로 reset 또는 redact_active 분기 비활성.

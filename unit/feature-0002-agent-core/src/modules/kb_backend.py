@@ -1,12 +1,14 @@
 """KB Backend abstraction — MySQL ↔ Postgres dual-write 의 단일 진입점.
 
 TASK-0015 §2.1 PLAN-APPROVED 의 M2 cycle. M2-a (TASK-0019) 에서 ABC + skeleton 까지,
-M2-b (본 cycle, TASK-0020) 에서 method body + dual-write wrapper + caller 수정.
+M2-b (TASK-0020) 에서 method body + dual-write wrapper + caller 수정,
+M2-c (본 cycle, TASK-0021) 에서 cross-DB audit explicit call + thread-safe cache +
+psycopg autocommit docstring + Nice-to-have 흡수.
 
 ANCHOR §3 invariant 보존을 위한 추상화 — `_check_artifact_completeness()` +
 `_repair_from_fact()` 흐름이 backend 와 무관하게 동일 의미로 작동.
 
-설계 원칙 (outside-voice REV-20260520-0005 / 0007 흡수):
+설계 원칙 (outside-voice REV-20260520-0005 / 0007 / 0008 흡수):
 1. **단일 KbBackend ABC** — 4 method group (fact_entries / texts / rag_documents
    / rag_objects) + prune. M2-b 가 method body 모두 구현.
 2. **Dual-write = Postgres mirror 패턴** — caller 의 기존 MySQL cursor.execute 는
@@ -16,12 +18,25 @@ ANCHOR §3 invariant 보존을 위한 추상화 — `_check_artifact_completenes
    함 (`AGENT_KB_PG_REQUIRED=0` 시 silent log, `=1` 시 fail-loud).
 4. **Idempotency** — 모든 method 가 `ON CONFLICT DO NOTHING` 또는 `ON CONFLICT DO
    UPDATE` 의 멱등 패턴.
+5. **Cross-DB audit explicit call (M2-c)** — mirror 성공 시 MySQL `WebAuditEvents`
+   에 ActionCode `kb.write.mirror` audit row INSERT. ADR-0021 §Consequences 의 SLA
+   ≤ 0.1% miss_rate target 의 측정 기반. agent-web-ui 의 `record_audit_event()` 와
+   별도 — agent-core 의 자체 mysql connection 으로 INSERT (cross-DB tx 불가, audit
+   실패 silent log).
+
+psycopg autocommit 정책 (outside-voice REV-20260520-0008 Nice-to-have 흡수):
+- `_get_pg_conn()` 이 `_pg_connect()` default (`autocommit=True`) 사용.
+- 의미: 각 cursor.execute 가 즉시 commit. multi-statement transaction 의도 없음.
+- `_repair_from_fact()` 의 atomic 보장은 caller 의 mysql 측 transaction 책임 (현재 흐름).
+- M3 backfill cycle 의 batch INSERT 는 `_pg_connect(autocommit=False)` + explicit
+  commit 패턴 사용 (kb-backfill.sh 책임).
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import threading
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
@@ -664,23 +679,228 @@ class PgKbBackend(KbBackend):
 # ─────────────────────────────────────────────────────────────────────────────
 
 _BACKENDS_CACHE: Optional[tuple[MysqlKbBackend, Optional[PgKbBackend]]] = None
+_BACKENDS_LOCK = threading.Lock()
 
 
 def get_backends() -> tuple[MysqlKbBackend, Optional[PgKbBackend]]:
-    """현재 환경에 가능한 backend instance 의 tuple 반환. process-level cache."""
+    """현재 환경에 가능한 backend instance 의 tuple 반환. process-level cache.
+
+    Thread-safe (outside-voice REV-20260520-0008 Nice-to-have 흡수): FastAPI 의 thread
+    executor 또는 multi-thread 환경에서 동시 호출 시 race condition 으로 instance 가
+    중복 생성될 수 있는 (semantic 정합은 유지되나 효율 저하) issue 를 `threading.Lock`
+    으로 해결. lock 의 critical section 은 cache miss 시점 (None → tuple) 만 — hot
+    path (cache hit) 는 lock 없이 직접 반환.
+    """
     global _BACKENDS_CACHE
+    # Fast path — cache hit (no lock)
     if _BACKENDS_CACHE is not None:
         return _BACKENDS_CACHE
-    from .db import _pg_available  # noqa — circular import 회피
-    mysql_b = MysqlKbBackend()
-    pg_b: Optional[PgKbBackend] = PgKbBackend() if _pg_available() else None
-    _BACKENDS_CACHE = (mysql_b, pg_b)
-    return _BACKENDS_CACHE
+    # Slow path — double-checked locking
+    with _BACKENDS_LOCK:
+        if _BACKENDS_CACHE is not None:
+            return _BACKENDS_CACHE
+        from .db import _pg_available  # noqa — circular import 회피
+        mysql_b = MysqlKbBackend()
+        pg_b: Optional[PgKbBackend] = PgKbBackend() if _pg_available() else None
+        _BACKENDS_CACHE = (mysql_b, pg_b)
+        return _BACKENDS_CACHE
 
 
 def _pg_required() -> bool:
     """AGENT_KB_PG_REQUIRED 환경변수 — M2-b 활성 후 fail-loud 정책 flag."""
     return (os.getenv("AGENT_KB_PG_REQUIRED", "0").strip() or "0") in {"1", "true", "yes", "on"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M2-c (TASK-0021) — Cross-DB audit explicit call.
+#
+# ADR-0021 §Consequences 의 "Cross-DB audit log ≤ 0.1% miss_rate target" 의 측정
+# 기반. mirror 성공 후 MySQL `WebAuditEvents` 에 audit row INSERT. agent-web-ui 의
+# `record_audit_event()` 와 별도 — agent-core 자체 mysql connection 으로 INSERT.
+#
+# ActionCode 매핑:
+#   upsert_text                              → kb.write.mirror (resource_type=kb_text, resource_id=text_hash)
+#   upsert_fact_entry                        → kb.write.mirror (resource_type=kb_fact_entry, resource_id=fact_key)
+#   upsert_rag_document                      → kb.write.mirror (resource_type=kb_rag_document, resource_id=fact_key)
+#   upsert_rag_object                        → kb.write.mirror (resource_type=kb_rag_object, resource_id=object_key)
+#   delete_fact_entries_by_conv_scope_key    → kb.delete.mirror (resource_type=kb_fact_entry, resource_id=fact_key)
+#   prune_fact_entries_keep_top              → kb.prune.mirror (resource_type=kb_fact_entry, resource_id=fact_key)
+#
+# ChangeJson: method + minimal kwargs subset (sensitive 필드 제외) + pg_returning_id.
+# ActorType: 'system' (agent 가 actor).
+#
+# Best-effort: audit 실패 silent log (SLA 측정 자체가 miss 를 count). M4 cutover gate
+# 의 (f) 항목 (Cross-DB audit SLA ≤ 0.1% 달성) verify 의 baseline.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Method → (ActionCode, ResourceType) 매핑. ResourceId 는 composite builder 가 별 생성.
+_KB_AUDIT_ACTION_MAP = {
+    "upsert_text":                            ("kb.write.mirror",  "kb_text"),
+    "upsert_fact_entry":                      ("kb.write.mirror",  "kb_fact_entry"),
+    "upsert_rag_document":                    ("kb.write.mirror",  "kb_rag_document"),
+    "upsert_rag_object":                      ("kb.write.mirror",  "kb_rag_object"),
+    "delete_fact_entries_by_conv_scope_key":  ("kb.delete.mirror", "kb_fact_entry"),
+    "prune_fact_entries_keep_top":            ("kb.prune.mirror",  "kb_fact_entry"),
+}
+
+# ChangeJson 에서 제외할 sensitive 필드 (text_content 같은 PII 가능 필드).
+_KB_AUDIT_SENSITIVE_KEYS = {"text_content", "source_sql"}
+
+
+def _build_audit_resource_id(method_name: str, kwargs: dict) -> Optional[str]:
+    """Composite ResourceId builder (outside-voice REV-20260521-0009 B-5 흡수).
+
+    이전 cycle: 단일 kwarg (예: `fact_key`) → 동일 `fact_key` 가 여러 conversation /
+    scope_key 에 걸쳐 audit row 와 KB row 의 1:N joinability 손실. 본 함수는 각 method
+    의 actual identifying tuple 을 `|` 구분 string 으로 생성하여 audit 시 KB row 를
+    정확히 식별할 수 있도록 한다.
+
+    Layout (모두 `[:64]` truncate, None 은 `-` placeholder):
+      - upsert_text:                                   `text_hash[:64]`
+      - upsert_fact_entry:                             `conv|scope|fact_key`
+      - upsert_rag_document:                           `conv|scope|fact_key|content_hash[:12]`
+      - upsert_rag_object:                             `conv|scope|object_type|object_key`
+      - delete_fact_entries_by_conv_scope_key:         `conv|scope|fact_key`
+      - prune_fact_entries_keep_top:                   `conv|scope|fact_key|keep_limit`
+    """
+    def _str_or_dash(v: Any) -> str:
+        if v is None or v == "":
+            return "-"
+        return str(v)
+
+    if method_name == "upsert_text":
+        text_hash = kwargs.get("text_hash") or ""
+        return str(text_hash)[:64]
+    if method_name in ("upsert_fact_entry", "delete_fact_entries_by_conv_scope_key"):
+        rid = "|".join((
+            _str_or_dash(kwargs.get("conversation_id")),
+            _str_or_dash(kwargs.get("scope_key")),
+            _str_or_dash(kwargs.get("fact_key")),
+        ))
+        return rid[:64]
+    if method_name == "upsert_rag_document":
+        content_hash = kwargs.get("content_hash") or ""
+        rid = "|".join((
+            _str_or_dash(kwargs.get("conversation_id")),
+            _str_or_dash(kwargs.get("scope_key")),
+            _str_or_dash(kwargs.get("fact_key")),
+            str(content_hash)[:12] if content_hash else "-",
+        ))
+        return rid[:64]
+    if method_name == "upsert_rag_object":
+        rid = "|".join((
+            _str_or_dash(kwargs.get("conversation_id")),
+            _str_or_dash(kwargs.get("scope_key")),
+            _str_or_dash(kwargs.get("object_type")),
+            _str_or_dash(kwargs.get("object_key")),
+        ))
+        return rid[:64]
+    if method_name == "prune_fact_entries_keep_top":
+        rid = "|".join((
+            _str_or_dash(kwargs.get("conversation_id")),
+            _str_or_dash(kwargs.get("scope_key")),
+            _str_or_dash(kwargs.get("fact_key")),
+            _str_or_dash(kwargs.get("keep_limit")),
+        ))
+        return rid[:64]
+    return None
+
+
+def _log_kb_write_audit(*, method_name: str, kwargs: dict, result: Any) -> None:
+    """Mirror 성공 후 MySQL `WebAuditEvents` 에 audit row INSERT.
+
+    Args:
+        method_name: `_DualWriteMirror._mirror()` 의 method_name.
+        kwargs: method 호출 시 받은 kwargs (sensitive 제외 후 ChangeJson).
+        result: PgKbBackend method 의 반환값 (RETURNING id 또는 None).
+
+    Best-effort: 실패 시 silent log (caller 측 `_mirror()` 가 외부 try/except 로 격리).
+    cross-DB tx 불가 — mirror INSERT 가 이미 commit 됐고 audit 는 별 tx.
+
+    outside-voice REV-20260521-0009 B-4 흡수: `connect_with_retry(attempts=1)` —
+    audit 는 best-effort 이므로 MySQL 일시 장애 시 caller 를 block 하지 않는다.
+    SLA 측정 자체가 miss 를 count.
+
+    outside-voice REV-20260521-0009 B-5 흡수: ResourceId 가 composite (conv|scope|
+    key|...) — KB row 와 audit row 의 joinability 보장.
+
+    outside-voice REV-20260521-0009 B-6 흡수: ChangeJson 16KB 캡 — `max_allowed_packet`
+    또는 컬럼 length 초과로 INSERT 실패하는 silent loss 방지.
+    """
+    action_code, resource_type = _KB_AUDIT_ACTION_MAP.get(
+        method_name, ("kb.unknown.mirror", "kb_unknown")
+    )
+    resource_id = _build_audit_resource_id(method_name, kwargs)
+    # ChangeJson — sensitive 키 제외 + result (pg_returning_id) 포함
+    import json as _json
+    change_payload = {k: v for k, v in kwargs.items() if k not in _KB_AUDIT_SENSITIVE_KEYS}
+    if isinstance(result, int):
+        change_payload["pg_returning_id"] = result
+    change_payload["mirror_method"] = method_name
+    # outside-voice REV-20260521-0009 B-1 흡수: pg_op_kind 태깅 — 후속 cycle 의
+    # delete/prune SLA 별 metric 분리 기반. action_code prefix 에서 도출.
+    if action_code.startswith("kb.write."):
+        change_payload["pg_op_kind"] = "write"
+    elif action_code.startswith("kb.delete."):
+        change_payload["pg_op_kind"] = "delete"
+    elif action_code.startswith("kb.prune."):
+        change_payload["pg_op_kind"] = "prune"
+    else:
+        change_payload["pg_op_kind"] = "unknown"
+    try:
+        change_json_text = _json.dumps(change_payload, ensure_ascii=False, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        change_json_text = _json.dumps({"_serialize_error": True}, ensure_ascii=False)
+
+    # B-6: 16KB 캡 — 초과 시 metadata 만 남기고 truncate 표시.
+    _CHANGE_JSON_MAX = 16384
+    if len(change_json_text) > _CHANGE_JSON_MAX:
+        change_json_text = _json.dumps(
+            {
+                "_truncated": True,
+                "_original_len": len(change_json_text),
+                "mirror_method": method_name,
+                "resource_id": resource_id,
+            },
+            ensure_ascii=False,
+        )
+
+    from .db import connect_with_retry  # noqa — circular import 회피
+    from .config import MEMORY_DB
+    # B-4: attempts=1 — best-effort. MySQL 일시 장애 시 caller block 방지.
+    conn = connect_with_retry(database=MEMORY_DB, autocommit=True, attempts=1)
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO WebAuditEvents "
+                "(ActorAccountId, ActorRoleId, ActorType, TargetAccountId, SessionId, "
+                "ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
+                "RemoteAddr, UserAgent, RequestId) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    None,          # ActorAccountId (system actor)
+                    None,          # ActorRoleId
+                    "system",      # ActorType
+                    None,          # TargetAccountId
+                    None,          # SessionId
+                    action_code[:64],
+                    resource_type[:32],
+                    resource_id,
+                    change_json_text,
+                    None,          # MaskedFields
+                    None,          # RemoteAddr
+                    "agent_core/kb_backend",  # UserAgent (식별 위해)
+                    None,          # RequestId
+                ),
+            )
+        finally:
+            cur.close()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 class _DualWriteMirror:
@@ -725,7 +945,7 @@ class _DualWriteMirror:
             return None
         try:
             method = getattr(pg_b, method_name)
-            return method(conn, **kwargs)
+            result = method(conn, **kwargs)
         except Exception as e:
             if _pg_required():
                 raise
@@ -739,6 +959,18 @@ class _DualWriteMirror:
                 conn.close()
             except Exception:
                 pass
+        # M2-c (TASK-0021) — Cross-DB audit explicit call. mirror 성공 후 MySQL
+        # WebAuditEvents 에 ActionCode `kb.write.mirror` audit row INSERT. ADR-0021
+        # §Consequences 의 SLA ≤ 0.1% miss_rate target 측정 기반. cross-DB tx 불가
+        # 라 best-effort — audit 실패 silent log (SLA 측정 자체가 miss 를 count).
+        try:
+            _log_kb_write_audit(method_name=method_name, kwargs=kwargs, result=result)
+        except Exception as audit_err:
+            logger.warning(
+                "kb_audit_log_fail",
+                extra={"method": method_name, "error": str(audit_err)[:200]},
+            )
+        return result
 
     def upsert_text(self, *, text_hash: str, text_content: str) -> None:
         self._mirror("upsert_text", text_hash=text_hash, text_content=text_content)

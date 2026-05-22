@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260522-0003 [SKIPPED:doc-only-tracker-hygiene]
+- Date: 2026-05-22
+- Decision: TASK-0099 (REQ-20260522-0003, Minor §12.3 — docs-only tracker hygiene) — TASK-0073 audit subsystem followup backlog 8 entries (TASK-0086~0093) 8/8 완료 후 정리 cycle. TASK.md 의 stale `[ ]` 체크박스 2건 close + TASK-0099 entry 추가 + STATUS.md marker append. 코드 / RBAC / 스키마 / endpoint 변경 0.
+- Mode: SKIPPED (AGENTS.md §18.4 META mode 정책 — docs-only tracker hygiene cycle, outside-voice review 대상 아님. `feedback_outside_voice_for_rbac` 미해당)
+- Reason: 본 cycle 은 사후 정리 docs-only — TASK-0072 의 main 통합 commits (`f298f90` + hotfix bundle TASK-0074~0080) 와 TASK-0092 의 7 vector matrix (V1-V7) 검증 결과를 tracker 에 반영하는 단순 사실 기록. SUBAGENT 또는 AGENT-TEAM review 의 비용 정당화 어려움. verify-completion CHECK#9 충족용 SKIPPED prefix.
+- Self-check 결과:
+  - **TASK-0072 stale checkbox close 정합성**: f298f90 commit (`feat(feature-0003): TASK-0072 — 타 계정 대화 검색·필터 + WebAccountActivity audit`) 이 main 통합 + 후속 hotfix bundle (TASK-0074~0080) 도 모두 main 통합. STATUS.md feature-0003 row 도 "cache-bust `v=20260518-conv-search`" 로 deployment 완료 명시. TASK.md line 152 의 `[ ]` 가 실제 상태와 일치하지 않음 → close 정합.
+  - **TASK-0073 line 2767 acceptance close 정합성**: TASK-0092 (REQ-20260520-0007, Minor §12.3) 의 7 vector matrix PASS (7/7) 가 본 acceptance 의 "`AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` 환경에서 컨테이너 시작 시 process 종료 + stderr `[FATAL]` 검증" 을 정확히 수행. V1 (AGENT_MODE=prod + AUDIT=0), V2 (AGENT_MODE=staging + AUDIT=0), V3 (AGENT_MODE=production + AUDIT=0) 모두 fail-closed 확인. acceptance criterion 정확 충족 → close 정합.
+  - **신규 TASK-0099 entry**: 본 closure cycle 자체를 등재 — future cycle 의 traceability 보강.
+  - **다른 미완 `[ ]` 항목 영향**: TASK-0034 (perf test) / TASK-0044 (pilot QA) / feature-0001/4/5/6 의 TASK-0004 stub — 본 cycle 범위 밖 (user 환경 필요 또는 user direction 필요). 본 cycle 은 audit followup backlog 정리에 한정.
+- Alt 거부:
+  - **stale checkbox 그대로 두기 (no-op)**: tracker 정확도 회귀 + future cycle 이 다시 발견해 처리해야 할 빚 누적. 거부.
+  - **stale checkbox 5건 일괄 close (모든 미완 항목 포함)**: TASK-0034 / TASK-0044 / feature-0001/4/5/6 TASK-0004 는 user 환경 / direction 필요 — close 권한 없음. 거부.
+  - **각 close 마다 별 cycle**: 1-line tick × 2 의 cycle 분리는 overhead 만 발생. 단일 cycle 묶기.
+- Cross-ref: TASK.md §2 Task Queue (TASK-0099 entry + line 152 TASK-0072 close + line 2767 TASK-0073 close), MODIFY.md CHG-20260522-0003, REPORT.md §1 cycle entry, docs/STATUS.md feature-0003 row tail.
+
 ## REV-20260522-0002 [AGENT-TEAM:codex-outside-voice]
 - Date: 2026-05-22
 - Decision: TASK-0098 (REQ-20260522-0002, **Critical** §12.3 — Profile Drawer 탭 재구성 + 권한 정보 API 단위 차단) cycle ship. PR #49. Codex outside voice (consult mode, 101,989 tokens) 6 findings (1 blocker + 4 high + 1 medium) 흡수 + plan v2 redesign + PLAN-APPROVED (2026-05-21) 후 4 commit 으로 진행. push 후 main 다수 PR 머지 (#45 v3.10.0 + #47 TASK-0089 + #48/#50 + #52/#61 TASK-0094 첨부 multi-cycle Sprint 1 + DQA 브랜딩 + TASK-0095 GLOBAL prompt + TASK-0096 v2 설정 list-detail) → 반복 CONFLICTING → 사용자 결정 "Rebase main + conflict resolve" → multi-race rebase + ID reassign + squash commit 으로 main HEAD `20f0344` 위 재작성. 본 commit 머지로 사용자 명시 의도 (Profile Drawer 4 탭 재구성 + 권한 정보 API 단위 차단) 완성.
@@ -1377,3 +1393,28 @@ source_of_truth: true
   5. **Endpoint coverage**: BRIEFING §5.4 의 7 endpoint 중 본 Phase 가 6 (POST/GET/GET-by-id/DELETE attachment + POST/DELETE consent). `/api/ask` body 확장 (Cycle 1 attachment_ids / attachment_scope_all) 은 Phase 11 ingest + Phase 12 SQL guard 시점에 추가.
 - **Cross-ref**: BRIEFING §5.1 / §5.4 / D6/D7/D8/D11/D12/D13/D21 + ADR-0022 + 정본 REV-20260521-0001 + Phase 4 REV-20260521-0006.
 - **다음 outside-voice 시점**: 본 entry 의 deferred codex review (Phase 6 진입 전 또는 Phase 5.1 patch cycle). Phase 12 (D14 SQL guard, Ship 조건) 는 별도 review trigger.
+
+## REV-20260521-0008 [SKIPPED:frontend-only] TASK-0094 Sprint 1 Phase 6 (Cycle 0 composer UI) review
+
+- **Mode**: SKIPPED — Phase 6 는 frontend (index.html + styles.css + app.js) 의 composer UI 추가만. backend 변경 0. 본 UI 의 D16 attachment selection snapshot + R-F5 lazy-create binding 은 BRIEFING REV-20260521-0001 [SUBAGENT:codex] (정본) 및 REV-20260521-0002 (Codex 2차) 의 결정 application. 추가 codex review 의 비용 정당화 어려움.
+- **Subject**: composer-attachments + composer-drop-overlay + attach-btn + file input 마크업 + 130 lines CSS (pill / overlay / paperclip) + state.composerAttachments + 9 helper + event binding + selectConversation list load.
+- **Reason**: 본 UI 의 보안 결정 (RBAC / consent / D7 MIME / D8 size cap / D12 HMAC / D13 외부 LLM 송신 / D21 pending deny) 모두 Phase 5 의 backend endpoint 에서 enforcement — 본 frontend 는 backend 응답을 그대로 표시 + frontend cap 검증 (accept 속성 의 MIME 허용 list 만). server-side check 가 source of truth.
+- **Risk**:
+  1. **lazy-create 상태에서 paperclip 거부**: 사용자가 새 대화 + 파일 첨부 + 메시지 흐름을 기대할 수 있으나 본 cycle 은 cid 가 있어야 upload — UX 가독성 안내 (toast) 로 graceful. Phase 11 진입 시 lazy-create 시점에도 client-side 임시 stash → 첫 send 직후 자동 upload 옵션 검토.
+  2. **drag-drop 의 dragenter/leave race**: dragCounter 로 child element entry race 처리하지만 brfowser-specific race 가능. browse QA 권장 (별 cycle).
+  3. **multiple 파일 선택 미지원**: input 에 multiple 미설정 — Sprint 1 simplicity. Phase 11 또는 후속 cycle 에서 batch upload + progress bar 검토.
+  4. **D16 attachment_ids 의 backend 처리**: 본 Phase 의 sendPrompt 가 askBody 에 attachment_ids/scope_all 명시 전송하지만, backend `/api/ask` 가 아직 이 필드를 수용하지 않음 (Phase 11 ingest pipeline 진입 시 ship). 본 Phase 만으로는 attachment_ids 가 backend 에 도달해도 silent ignored — D16 minimum exposure 의 의미는 backend 가 attachment_ids 를 사용하는 시점 (Phase 11) 부터 활성.
+- **Cross-ref**: BRIEFING §5.6 + D16 + R-F5 + 정본 REV-20260521-0001 + Phase 5 REV-20260521-0007.
+- **다음 outside-voice 시점**: Phase 11 (ingest pipeline) + Phase 12 (SQL guard, Ship 조건) — 본 frontend snapshot 이 backend `/api/ask` 의 attachment_ids 처리와 결합되는 시점.
+
+## REV-20260521-0009 [SKIPPED:consent-ui-only] TASK-0094 Sprint 1 Phase 7 review
+
+- **Mode**: SKIPPED — consent grouped UX 는 BRIEFING D11 + R-F2 정본 결정의 thin application. backend POST/DELETE 는 Phase 5 review 와 동일.
+- **Subject**: GET /api/account/consents + profile drawer consent section + grouped batch helper.
+- **Reason**: 본 Phase 의 결정은 (1) provider × group mapping (`_CONSENT_GROUPS`) (2) batch toggle UX 패턴 — 모두 BRIEFING 정본 결정. 보안 경계 변경 0.
+- **Risk**: group mapping 의 향후 확장 (Cycle 4 의 다른 data_class) 시 본 cycle 의 `_CONSENT_GROUPS` 갱신 필수.
+
+## REV-20260521-0010 [SKIPPED:share-redact-mechanism] TASK-0094 Sprint 1 Phase 8 review
+
+- **Mode**: SKIPPED — D9 + R-F7 mechanism ship 만. derived flag 의 실제 설정은 Phase 11+ 에서 attachment 인용 시점에 추가.
+- **Risk**: attachment_derived flag 가 message MetaJson 에 설정 안 되면 본 redact 가 활성 안 됨 (false negative). Phase 11/Cycle 2-4 의 flag 설정 누락 시 share view 에 본문 노출 — 향후 cycle 의 검증 필수 항목.
