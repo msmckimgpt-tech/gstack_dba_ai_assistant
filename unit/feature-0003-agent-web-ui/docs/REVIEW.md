@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260522-0006 [SKIPPED:non-policy-doc]
+- Related TASK: TASK-0103 (REQ-20260522-0006, **Major** §12.3 — API Vault secure context 사전 차단 + UX 안내)
+- Reason: 외부 IP HTTP 접속에서 `window.crypto.subtle = undefined` 로 인한 OpenAI API Key 저장 실패 hotfix. `isVaultCryptoAvailable()` helper + `updateVaultReadiness()` `blocked` 상태 + `syncVaultSteps()` 차단 + `encryptPlainApiKey()` 사전 throw + styles.css 빨간 톤. **frontend only** — backend / RBAC catalog / DB schema / endpoint contract / 암호화 알고리즘 (PBKDF2 + AES-GCM) 무변경. AGENTS.md §18.8 trigger 분석: (1) "auth/credential" 키워드 — security subagent 후보. 본 변경은 자격증명 처리 동선이지만 **암호화 알고리즘과 server-side 검증은 그대로 유지**, 추가된 것은 클라이언트 사전 가드 + 사용자 안내 메시지뿐 — 보안 모델/감쇠 위험 없음 (오히려 secure context 강제로 보안 강화). (2) UI/button 신호 — ux/design subagent 후보이나 기존 banner / step UI 재사용, 신규 컴포넌트 없음. SKIPPED 정당화: hotfix 성격 (외부 사용자 전원 영향, 즉시 가시성 회복 필요) + 보안 attack surface 축소 방향 + algorithm 변경 없음. 후속 cycle 로 분리: (a) HTTPS 종단점 (nginx/Caddy 18443 등) 인프라 추가, (b) `requires_secure_context` 신호를 `state.apiVaultOptions` 에 caching 후 cross-tab 동기화. 본 cycle 은 즉시 가시성 + UI 차단에 한정.
+- Timestamp: 2026-05-22T03:40:00Z
+
 ## REV-20260522-0005 [SKIPPED:non-policy-doc]
 - Related TASK: TASK-0102 (REQ-20260522-0005, Minor §12.3)
 - Reason: topbar 관리 콘솔 버튼 role fallback gate — `canOpenAdminConsole()` 에 `role.key` 기반 fallback 추가. app.js + index.html(cache-bust) 변경. backend / RBAC catalog / DB schema / endpoint contract 무변경. Minor §12.3 — display-only 조건 보강, RBAC 설계 변경 아님. AGENTS.md §18.8 trigger: UI/button 시그널 있으나 기존 버튼 노출 조건 강화 (신규 UI 기능 구현 아님) — SKIPPED 정당.

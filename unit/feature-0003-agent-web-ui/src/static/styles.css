@@ -1935,6 +1935,11 @@ a { color: inherit; }
 .vault-banner[data-state="needs"]   .vault-banner-dot { background: #f59e0b; }
 .vault-banner[data-state="empty"]   .vault-banner-dot { background: var(--text-muted); }
 .vault-banner[data-state="pending"] .vault-banner-dot { background: var(--border); }
+.vault-banner[data-state="blocked"] .vault-banner-dot { background: #ef4444; }
+.vault-banner[data-state="blocked"] {
+  background: rgba(239, 68, 68, 0.06);
+  border-color: rgba(239, 68, 68, 0.35);
+}
 .vault-banner-text { color: var(--text-2); line-height: 1.45; }
 
 /* stepper */

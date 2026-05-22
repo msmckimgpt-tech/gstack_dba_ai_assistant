@@ -8,6 +8,26 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0006
+- Date: 2026-05-22
+- Related Requirement: TASK-0103 (REQ-20260522-0006, **Major** §12.3 — API Vault secure context 사전 차단 + UX 안내)
+- Summary: 외부 사용자가 `http://112.185.196.20:18080/` 로 접속하여 OpenAI API Key 입력 시 모호한 toast 만 출력되며 저장 안 되던 이슈 수정. **근본 원인**: `encryptPlainApiKey()` 가 호출하는 `window.crypto.subtle` 은 secure context (HTTPS / localhost) 에서만 정의됨. 외부 IP 의 HTTP 접속에서는 `undefined` → `Cannot read properties of undefined (reading 'importKey')` 예외 → catch 블록 toast 가 사용자에게 원인을 명확히 전달 안 함. 서버는 `requires_secure_context: True` 를 내려줬으나 클라이언트가 활용 안 함. **수정**: `isVaultCryptoAvailable()` helper + `updateVaultReadiness()` `blocked` 신규 상태 (빨간 banner + 한국어 사유) + `syncVaultSteps()` 가 `cryptoOk = false` 시 모든 step disable + `encryptPlainApiKey()` 진입 시 사전 throw + styles.css `vault-banner[data-state="blocked"]` 빨간 톤. cache-bust `v=20260522-admin-topbar-rbac` → `v=20260522-vault-secure-context`. backend / RBAC / endpoint contract / DB / 암호화 알고리즘 (PBKDF2 + AES-GCM) 무변경.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`:
+    - `isVaultCryptoAvailable()` — `window.isSecureContext && window.crypto?.subtle` 체크 helper 추가
+    - `updateVaultReadiness()` — `cryptoOk = false` 시 readiness `blocked` 반환 + 한국어 사유 메시지 (`public_url` 이 https 면 보안 주소 표기)
+    - `syncVaultSteps()` — `cryptoOk = false` 분기 추가, 모든 step `data-state="disabled"` + saveVaultBtn 차단
+    - `encryptPlainApiKey()` — 진입 시점에 `isVaultCryptoAvailable()` 사전 검증, 명시적 한국어 안내 throw
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`:
+    - `.vault-banner[data-state="blocked"]` + `.vault-banner-dot` 빨간 색상 토큰 추가 (`#ef4444`)
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`:
+    - cache-bust `v=20260522-admin-topbar-rbac` → `v=20260522-vault-secure-context`
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0103 entry 추가 + Current Status 갱신
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260522-0006 [SKIPPED:non-policy-doc] 추가
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 상단에 TASK-0103 entry 추가
+  - `docs/STATUS.md`: project-level entry 추가
+
 ## CHG-20260522-0005
 - Date: 2026-05-22
 - Related Requirement: TASK-0102 (REQ-20260522-0005, Minor §12.3 — topbar 관리 콘솔 버튼 role fallback gate)

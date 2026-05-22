@@ -11,10 +11,14 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: minor (TASK-0102 — topbar 관리 콘솔 버튼 role fallback gate)
-- Last Updated: 2026-05-22 (TASK-0102 canOpenAdminConsole role fallback)
+- Priority: major (TASK-0103 — API Vault secure context 사전 차단)
+- Last Updated: 2026-05-22 (TASK-0103 vault secure context guard)
 
 ## 2. Task Queue
+
+### TASK-0103 API Vault secure context 사전 차단 + UX 안내 (2026-05-22)
+
+- [x] TASK-0103 (REQ-20260522-0006, **Major** §12.3 — 외부 사용자 전원 영향 + 자격증명 처리 동선). 외부 사용자가 `http://112.185.196.20:18080/` 로 접속하여 OpenAI API Key 입력 시 모호한 toast 만 출력되며 저장 안 되던 이슈 수정. **근본 원인**: WebCrypto SubtleCrypto (`window.crypto.subtle`) 는 secure context (HTTPS / localhost) 에서만 정의됨. 외부 IP 의 HTTP 접속 시 `undefined` → `encryptPlainApiKey()` 의 `crypto.subtle.importKey(...)` 가 `Cannot read properties of undefined (reading 'importKey')` throw → catch 블록에서 noisy toast 만 출력, 저장 실패. 서버는 `requires_secure_context: True` 를 내려줬지만 클라이언트가 활용 안 함. **수정**: (1) `isVaultCryptoAvailable()` helper (`window.isSecureContext && window.crypto?.subtle`). (2) `updateVaultReadiness()` `blocked` 신규 상태 — 빨간 banner + 한국어 사유 안내 (`public_url` 이 https 면 보안 주소 표기). (3) `syncVaultSteps()` 가 `cryptoOk = false` 시 모든 step disable + saveVaultBtn 차단. (4) `encryptPlainApiKey()` 진입 시점에 명시적 throw — UI 우회 시도도 안전 차단. (5) styles.css 에 `vault-banner[data-state="blocked"]` 빨간 톤 추가. cache-bust `v=20260522-vault-secure-context`. backend / RBAC / endpoint contract / DB schema / 암호화 알고리즘 (PBKDF2 + AES-GCM) 무변경. `docker compose build web` + `up -d --no-deps web` 으로 배포. 근본 해결 (HTTPS 종단점 추가) 은 후속 인프라 cycle 로 분리.
 
 ### TASK-0102 topbar 관리 콘솔 버튼 role fallback gate (2026-05-22)
 
