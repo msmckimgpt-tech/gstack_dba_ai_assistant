@@ -11,8 +11,8 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 9 진행 중)
-- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 9 lifecycle ship)
+- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 10 진행 중)
+- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 10 sandbox + R-F4 ship)
 
 ## 2. Task Queue
 
@@ -57,7 +57,7 @@ source_of_truth: true
   - [x] **Phase 7 (Cycle 0 consent)** — D11 + R-F2 grouped batch modal (provider × 3 group: 텍스트/이미지/인덱싱) + revoke flow + GET /api/account/consents 신규 + Profile Drawer "보안 및 계정" 탭 안 consent section. 2026-05-22.
   - [x] **Phase 8 (Cycle 0 share)** — D9 share redact + R-F7 기존 token 자동 redact + PolicyVersion 활성 + share.policy.redact_applied audit case + INSERT PolicyVersion=CURRENT 명시. SHARE_POLICY_VERSION_CURRENT=2 상수. 2026-05-22.
   - [x] **Phase 9 (Cycle 0 lifecycle)** — feature-0002-agent-core/src/modules/attachment_reconciliation.py 신규 (run_once + get_attachment_lifecycle_state + 4 종 SLA 처리). F1 4 state (active/delete_pending+restorable_until/purge_in_progress/erased) _serialize_attachment_for_api 갱신. R-Claim6 tombstone (NOT NULL ConversationId 유지) + F12 pseudonymous event id. 2026-05-22.
-  - [ ] **Phase 10 (Cycle 1 sandbox)** — `attachment_maintainer/writer/reader/cleanup` MySQL user (R-Claim4 writer 최소권한) + R-F4 drift health endpoint `/api/admin/health/attachment-grants`.
+  - [x] **Phase 10 (Cycle 1 sandbox)** — .env.example 에 4 MySQL user credentials (maintainer/writer/reader/cleanup) + sandbox_schema.py (sandbox_schema_name_for + ensure_sandbox_schema_via_maintainer R-Claim4 최소권한 (CREATE/ALTER/INSERT/SELECT) + detect_grant_drift + drop_sandbox_schema_via_cleanup) + GET /api/admin/health/attachment-grants R-F4 endpoint. 2026-05-22.
   - [ ] **Phase 11 (Cycle 1 ingest)** — `sandbox_ingest.py` (XLSX `data_only=True` + sharedStrings cap + cell/row/col cap + CSV encoding/delimiter/locale + worker timeout/memory).
   - [ ] **Phase 12 (Cycle 1 SQL guard + Ship)** — `sql_guard.py` D14 AST shape allowlist (SELECT/CTE only, FOR UPDATE/LOCK/EXPLAIN ANALYZE/SLEEP/BENCHMARK/INTO OUTFILE/LOAD_FILE/information_schema/mysql/performance_schema/sys 거부) + `attachment.execute_sql_on.{own,any}` RBAC + `compose_system_prompt` _build_attachment_context_section + 검증 27 case. **Ship 조건**.
 - [ ] **Sprint 2** — Cycle 2 (C: Vision 이미지, content array transient, base64 inline, **D13 + R-F13 provider Files API lifecycle**) — Major, 1~1.5 주.

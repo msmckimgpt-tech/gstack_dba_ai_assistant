@@ -1908,3 +1908,11 @@ source_of_truth: true
 - Files: feature-0002-agent-core/src/modules/attachment_reconciliation.py (신규), app.py (_serialize_attachment_for_api 갱신), FUNCTION/TASK/MODIFY/REVIEW.
 - Notes: worker scheduling (cron / thread) 은 Phase 10 후속 cycle. 본 phase 는 mechanism + run_once 만.
 - Rollback: 모듈 + serialize 변경 revert.
+
+## CHG-20260521-0012
+- Date: 2026-05-22
+- Related Requirement: TASK-0094 Sprint 1 Phase 10 — 4 MySQL user + R-Claim4 minimal grants + R-F4 drift health
+- Summary: .env.example 4 user credentials + modules/sandbox_schema.py (4 helper) + admin health endpoint.
+- Files: .env.example, modules/sandbox_schema.py (신규), app.py (GET /api/admin/health/attachment-grants), FUNCTION/TASK/MODIFY/REVIEW.
+- Notes: 실제 4 MySQL user 생성 + maintainer 의 wildcard grant 는 운영자가 root 로 사전 진행 (Sprint 1 ship 시 runbook 별도). 본 phase 는 application helper + drift endpoint.
+- Rollback: 4 helper module / endpoint / env entry revert.
