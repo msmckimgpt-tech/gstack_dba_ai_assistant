@@ -1924,3 +1924,11 @@ source_of_truth: true
 - Files: feature-0002-agent-core/src/modules/sandbox_ingest.py (신규), agent_core.py (compose_system_prompt 갱신), app.py (/api/ask attachment_ids env), requirements.txt (chardet/openpyxl), FUNCTION/TASK/MODIFY/REVIEW.
 - Notes: 실제 ingest 호출은 별 background worker 가 필요 (Phase 5 upload endpoint 가 RowInsert 만 ship, ingest 는 별도 trigger). 본 phase 는 helper + LLM prompt mechanism. Phase 12 의 SQL guard 와 결합 시 사용자 view 의 첨부 기반 SQL 응답 가능.
 - Rollback: 모듈/helper/env passing revert.
+
+## CHG-20260521-0014
+- Date: 2026-05-22
+- Related Requirement: TASK-0094 Sprint 1 Phase 12 — D14 + R-F3 Critical SQL allowlist guard + Sprint 1 Ship
+- Summary: sql_guard.py (sqlglot AST allowlist) + attachment.execute_sql_on.{own,any} RBAC + attachment group 신설 + audit ActionCode 3 + FE 상수 갱신. Sprint 1 Critical Ship 조건 충족.
+- Files: feature-0002-agent-core/src/modules/sql_guard.py (신규), requirements.txt (sqlglot), app.py (PERMISSION_DEFINITIONS 2 + SEED operator/sales + 3 catchup + build_audit_change_json case 3), app.js + admin.js (PERMISSION_GROUP_ORDER 9 group + label + sections), docs/CONVENTIONS.md §10.6, FUNCTION/TASK/MODIFY/REVIEW.
+- Notes: 본 Phase 가 Sprint 1 Critical Ship 조건 충족. validate_sql_for_sandbox 의 실제 호출 (LLM tool 실행 시점) 은 별 cycle 또는 후속 patch — 본 phase 는 guard module + RBAC + audit dispatch 메커니즘 + group 정합.
+- Rollback: sql_guard.py + 2 RBAC + group + 3 audit case + FE 상수 + CONVENTIONS revert.

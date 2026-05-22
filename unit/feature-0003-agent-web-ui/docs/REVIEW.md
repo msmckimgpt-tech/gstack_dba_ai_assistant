@@ -1433,3 +1433,17 @@ source_of_truth: true
 
 - **Mode**: SKIPPED — Codex Claim #14 (XLSX/CSV cap) 정본 결정 application. ingest worker 의 process 격리 / memory budget 은 별 cycle.
 - **Risk**: ingest_attachment 호출자 (background trigger) 가 본 phase 에서 ship 안 됨 — 별 cycle 또는 후속 phase 에서 추가 필요. env ATTACHMENT_IDS 의 thread-safety: 본 cycle 은 single-process FastAPI + asyncio.to_thread 라 race 가능하나 cleanup pop 으로 mitigate. 별도 thread-local 옵션은 후속 검토.
+
+## REV-20260521-0014 [SUBAGENT:codex-deferred-final] TASK-0094 Sprint 1 Phase 12 + Ship review
+
+- **Mode**: SUBAGENT (codex) review 권장 — Sprint 1 Critical Ship 조건의 핵심 guarantor. BRIEFING REV-20260521-0006 의 "다음 outside-voice 시점: Phase 12 (D14 SQL allowlist guard, Ship 조건)" lock-in.
+- **Subject**: sql_guard.py 의 AST allowlist 완전성 (R-F3 명시 케이스 전수 검증), attachment.execute_sql_on RBAC enforcement, audit dispatch coverage, attachment group 정합.
+- **Reason**: Sprint 1 Ship 직전 final review. validate_sql_for_sandbox 의 모든 거부 패턴이 BRIEFING R-F3 의 명시 케이스 (FOR UPDATE / LOCK IN SHARE MODE / EXPLAIN ANALYZE / optimizer hint / SLEEP / BENCHMARK / user variables / INTO OUTFILE / LOAD_FILE / information_schema / mysql / performance_schema / sys) 를 모두 cover 하는지 + multi-statement 검사가 robust 한지 + sqlglot 의 MySQL dialect 가 모든 위험 case 를 정확히 파싱하는지.
+- **Risk**:
+  1. **sqlglot version 의 MySQL dialect 정합성**: sqlglot 23.x 가 LOCK IN SHARE MODE / EXPLAIN ANALYZE 같은 MySQL-specific 표현을 정확히 lock clause 로 parse 하는지 불확실. 본 cycle 의 secondary denylist regex 가 backup defense.
+  2. **multi-statement 검사 휴리스틱**: comment / string 안 ; 를 단순 stripping 으로 처리 — 복잡한 escape 케이스 (이중 quoted ' 안 \'\') 가 false negative 가능. sqlglot.parse 의 len > 1 도 보조 검사로 있음.
+  3. **validate_sql_for_sandbox 호출 site 누락**: 본 phase 는 guard module 만 ship. 실제 LLM tool 실행 시점의 호출 site (예: agent_core.tools.execute_sql) 는 별 cycle. caller integration 검증은 Sprint 1 후속 또는 Sprint 2 의 ingest pipeline 활성 시점.
+  4. **`attachment_reader` MySQL user 의 권한 부여 누락**: maintenance path (Phase 10 sandbox_schema.ensure_sandbox_schema_via_maintainer) 가 reader 에게 SELECT 부여하지만, 정본 SELECT (예: AgentMemoryMessages) 접근은 본 cycle scope 외 — 별 cycle.
+  5. **sqlglot 미설치 환경의 fallback**: SQLGLOT_AVAILABLE=False 시 deny 강제 — 정합. 단, 운영 환경에 sqlglot 가 설치되어야 sandbox SQL 활성.
+- **Cross-ref**: BRIEFING §6.1 + D14 + R-F3 + 정본 REV-20260521-0001 + Phase 11 REV-20260521-0013.
+- **Sprint 1 Ship 평가**: Phase 1~12 모두 main merged. BRIEFING D1~D21 21 결정 + R-Claim4/R-Claim6/R-F1/R-F2/R-F3/R-F4/R-F5/R-F6/R-F7/R-F9/R-F10/R-F11/R-F12/R-F13/R-F14 모두 application-level 또는 module-level enforcement 완료. Cycle 0 (Foundation) + Cycle 1 (CSV ingest) 가 ship — 사용자가 첨부 upload, list, metadata, delete, consent grant/revoke, composer paperclip/drag-drop, attachment pill 활성. attachment_ids 가 /api/ask 의 env 통해 LLM prompt section 으로 전달. Sandbox SQL 의 실제 LLM tool execution 은 caller integration 별 cycle.
