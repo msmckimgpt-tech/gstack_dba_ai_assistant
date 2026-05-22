@@ -196,12 +196,44 @@ source_of_truth: true
 - **Stage B** (M4 종료 ~ M5 진입 전): dual-write 유지 + read 만 Postgres. rollback 시 MySQL 정합 보존 — 1줄 변경으로 가능. M5 진입 전까지 안전 window.
 - **Stage C** (M5 cleanup 후): MySQL DROP TABLE 완료 → rollback = 데이터 손실. M5 진입은 별 cycle 의 PLAN-APPROVED + 사람 confirm 필수.
 
-**M5 cycle 책임 (별 cycle 위임)**:
+**M5 cleanup script + ADR-0025 (TASK-0025 본 cycle 산출)**:
+- `bin/kb-cleanup-mysql.sh` (~250 LOC) — MySQL KB 5 정본 deprecation. 3 mode:
+  - `--dry-run` (default): DROP SQL 출력만.
+  - `--backup-only`: mysqldump backup 만 (integrity verify 포함).
+  - `--confirm I_UNDERSTAND_DATA_LOSS --cutover-date YYYY-MM-DD`: 모든 safety gate 통과 시 backup → DROP → 검증.
+- Backup details:
+  - VIEW `AgentMemoryFacts` DDL 포함 (mysqldump table list).
+  - `--single-transaction --routines --triggers --add-drop-table --hex-blob --default-character-set=utf8mb4`.
+  - 별 디렉터리 `m5-mysql-kb-backup-<ISO>/` (chmod 0700) + `dump.sql.gz` (chmod 0600) + SHA256 sidecar.
+  - Integrity verify: `gunzip -t` + line count ≥ 10 + per-table `CREATE TABLE` grep + VIEW DDL grep — fail 시 backup dir 삭제 + exit 1.
+- Safety gates (모두 통과 필수, `--confirm` 진행 전):
+  - `--confirm I_UNDERSTAND_DATA_LOSS` 정확 string (대문자 + underscore).
+  - `AGENT_KB_READ_BACKEND=postgres` (M4 cutover 활성, shell env 우선 fallback .env).
+  - `AGENT_KB_DUAL_WRITE=0` (M5-implementation cycle 의 caller 코드 cleanup 완료 신호 — REV-20260522-0013 B-3).
+  - `--cutover-date YYYY-MM-DD` + `(today - cutover) ≥ 14` (REV-20260522-0013 B-4 — 14-day monitoring window).
+  - TTY interactive `read -r typed_phrase` 정확 비교 (non-TTY 시 `KB_M5_RUN_FROM_HUMAN_SHELL=1` env 강제).
+  - mode 중복 / arg 누락 거부 (REV-20260522-0013 B-5).
+- DROP order: `AgentMemoryFacts` (VIEW) → `RagObjects` → `RagDocuments` → `FactEntries` → `Texts` (dependency reverse).
+- 후 검증: `information_schema.tables` 에서 5 entries 모두 부재 확인.
 
-**M5 cycle 책임 (별 cycle 위임)**:
-- MySQL KB 5 정본 mysqldump 보관 + DROP TABLE (또는 read-only deprecated 상태)
-- dual-write 로직 제거 (`_dual_write_kb` mirror call 제거, `_DualWriteMirror` deprecation)
-- audit ActionCode `kb.*.mirror` 의 deprecation (M4 cutover 후 의미 손실)
+**ADR-0025 (M5 cleanup 정책, TASK-0025 본 cycle)**:
+- **14-day monitoring window**: M4 cutover 후 14 calendar day 동안 4 metric 무회귀 (ask 5종 + p99 latency + agent error rate + KB write SLA) 필수.
+- **Stage A/B/C boundary 정량화**:
+  - Stage A (M4 진입 직후): rollback = 1줄 env 변경.
+  - Stage B (M4 종료 ~ M5 진입 전, 14-day window): rollback = 동일. dual-write 유지.
+  - Stage C (M5 cleanup 후): rollback = mysqldump restore (partial). 본 Stage = 데이터 손실 가능 시점.
+- **dual-write deprecation**: M5 진입 시점 = `_dual_write_kb` mirror call site 코드 삭제 cycle (M5-implementation) 개시. caller (utils.py:957/1179/1230 + knowledge.py:633/598) 5 위치 mirror call 제거. outside-voice review 필수.
+- **audit ActionCode `kb.*.mirror` 의 deprecation**: M5 cleanup 후 mirror 호출 0건 → audit row 자연 정지 → `--audit-sla` 분모 0 → INCONCLUSIVE. metric archive 시점.
+- 후속 액션:
+  - **M5-implementation cycle (사용자 결정, 별 cycle)**: `_DualWriteMirror` module + 5 caller mirror call site 코드 삭제.
+  - **운영 turn (사용자 책임)**: 14-day monitoring + 4 metric 무회귀 확인 + `bin/kb-cleanup-mysql.sh --backup-only` 단독 검증 + `--confirm I_UNDERSTAND_DATA_LOSS --cutover-date YYYY-MM-DD` 실 실행 (TTY typed phrase 추가).
+
+**M5-implementation cycle 책임 (별 cycle, 사용자 결정 후 진행)**:
+- `_DualWriteMirror` module + caller mirror call site 5 위치 (knowledge.py:633/598 + utils.py:957/1179/1230) 코드 삭제
+- `from .config import AGENT_KB_DUAL_WRITE` 의 caller 제거
+- `_log_kb_write_audit()` + `_KB_AUDIT_ACTION_MAP` deprecation (또는 module 자체 삭제)
+- audit ActionCode `kb.*.mirror` archive (metric 의미 손실 명시)
+- outside-voice review 필수 (audit instrumentation 제거 = RBAC instrumentation 영향)
 
 ## 11. Acceptance Criteria
 - AC-0001: 코어 코드가 `src/` 아래로 이동되어 있다.

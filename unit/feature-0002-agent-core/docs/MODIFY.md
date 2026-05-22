@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0009
+- Date: 2026-05-22
+- TASK-Cycle: TASK-0025 (M5 cleanup script + ADR-0025 + dual-write deprecation note, **Major §12.3** — RBAC 영향 + 데이터 손실 boundary)
+- Summary: §2.1 PLAN-APPROVED 의 **M5 phase (Cleanup — MySQL KB 5 정본 deprecation)** — M4 cutover 후 MySQL KB 5 정본 의 deprecation 절차 명문화 + cleanup script + ADR-0025. **Outside-voice review (Plan subagent, `REV-20260522-0013`) Verdict FAIL + Blocker 5 + Critical 4 본 cycle 내 반영** (B-1 mysqldump VIEW DDL 포함 / B-2 backup integrity verify / B-3 AGENT_KB_DUAL_WRITE=0 sentinel / B-4 14-day window runtime enforce / B-5 mode 중복 + missing arg 거부 / B-6 TTY interactive confirm / B-7 env fallback / B-8 chmod + SHA256). C-2 + C-7 동반 흡수.
+- Worktree: `ai/claude/0002/kb-pg-m5`. 사용자 결정: "이번 세션에서 남은 cycle을 모두 완수해주세요".
+- Files:
+  - `bin/kb-cleanup-mysql.sh` (신규 ~250 LOC): 3 mode + integrity verify + 14-day window + DUAL_WRITE=0 sentinel + TTY confirm + env fallback + chmod/SHA256.
+  - `docs/DECISIONS.md`: ADR-0025 추가 (M5 cleanup 정책 + 14-day window + Stage A/B/C 정량화).
+  - `modules/kb_backend.py`: `_DualWriteMirror` DEPRECATION NOTICE docstring.
+  - `tests/test_m5_cleanup.py` (신규 ~180 LOC): 11 unit test.
+- 검증: pytest 51 PASS / 2 SKIP + bash -n + dry-run.
+- Runtime 검증 deferral: M5-implementation cycle 의 caller 코드 삭제 → AGENT_KB_DUAL_WRITE=0 → mysqldump backup → DROP 실행 (TTY typed confirm 추가).
+- 사용자 결정: 즉시 자동 commit + push + main 동기화.
+- Outside-voice rationale: 호출 ✓ — `REV-20260522-0013`. FAIL → PASS 전환.
+
 ## CHG-20260522-0008
 - Date: 2026-05-22
 - TASK-Cycle: TASK-0024 (M4 cutover — FULLTEXT → pg_trgm + AGENT_KB_READ_BACKEND routing + cutover readiness, **Major §12.3** — RBAC 영향 cycle)

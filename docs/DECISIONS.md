@@ -365,6 +365,48 @@ ai_read_priority: 9
   release note 모니터링 후 region-pinned 으로 마이그레이션 별 cycle.
 - LiteLLM 의 boto3 retry / error mapping 이 Bedrock-specific error code 를
   HTTP 응답으로 transparently 전달하는지 운영 중 모니터링.
+## ADR-0025
+- Status: accepted (TASK-0025, M5 cycle, 2026-05-22)
+- Date: 2026-05-22
+- Context: TASK-0015 §2.1.3 M5 phase + ADR-0021 §Consequences (g) — M4 cutover (read path 전환) 후 MySQL KB 5 정본 (`AgentMemoryTexts` / `AgentMemoryFactEntries` / `AgentMemoryRagDocuments` / `AgentMemoryRagObjects` / `AgentMemoryFacts` VIEW) 의 deprecation 및 정리 timing/조건 결정. M2-d (TASK-0022) audit instrumentation + M3 (TASK-0023) backfill + M4 (TASK-0024) cutover 의 누적 위험 (rollback boundary) 을 본 ADR 에서 명문화. cutover 후 2주일 무회귀 confirm 의 정량 기준 + dual-write 로직 (`_DualWriteMirror`) deprecation timing 동반.
+- Decision: **M5 cleanup 진입 게이트 + Stage A/B/C boundary + cleanup script 정책**:
+  - **2주일 무회귀 confirm 정책**: M4 cutover 완료 시점 (= `.env` 의 `AGENT_KB_READ_BACKEND=postgres` 전환 + `bin/kb-cutover-readiness.sh` 10-gate PASS) 부터 **14 calendar day** 동안 다음 4 metric 모두 무회귀 (즉 baseline 대비 50% 이내 증가) 시 M5 진입 허용:
+    1. `make ask` 5종 baseline 회귀 (M-1 baseline S1~S5)
+    2. p99 latency (M2-d `get_mirror_metrics().latency_ms_max`)
+    3. agent error rate (insight_route.log `error` 빈도)
+    4. KB write SLA (`bin/kb-dual-write-verify.sh --audit-sla` ≤ 1000 ppm 유지)
+  - **Stage 의 정의** (ADR-0021 §Consequences 재정의):
+    - **Stage A** (M4 진입 직후 ~ M4 cycle 종료): rollback = 1줄 env (`AGENT_KB_READ_BACKEND=mysql`) + agent 재기동. dual-write 가 MySQL 정합 보존.
+    - **Stage B** (M4 종료 ~ M5 진입 전, **2주일 monitoring window**): rollback = 동일. dual-write 유지 — read 만 Postgres.
+    - **Stage C** (M5 cleanup 후): MySQL 5 정본 DROP 완료 → rollback = mysqldump restore (partial — M5 진입 timestamp 까지의 snapshot 만). 본 Stage 진입 = 데이터 손실 가능 시점.
+  - **cleanup script (`bin/kb-cleanup-mysql.sh`)** 의 3 mode + safety:
+    - `--dry-run` (default): DROP SQL 출력만, 실 변경 0.
+    - `--backup-only`: mysqldump backup 생성만. `artifacts/shared/mysql-kb-backup-<ISO>.sql.gz` (보통 수 MB).
+    - `--confirm I_UNDERSTAND_DATA_LOSS`: mysqldump backup → DROP 5 entries → DROP 검증. 정확한 confirm string 필수 (typo 방지). `AGENT_KB_READ_BACKEND=postgres` 확인 (cutover 전이면 진행 차단).
+  - **dual-write 로직 deprecation**: 본 ADR 의 M5 진입 = `_dual_write_kb` mirror call 의 caller (utils.py / knowledge.py 5 위치) 코드 삭제 cycle 개시. 단 코드 삭제는 별 **M5-implementation cycle** 의 책임 — 본 cycle 의 `bin/kb-cleanup-mysql.sh` 는 DB 측 정리만 다룸. 코드 cleanup 의 outside-voice review 필수 (audit instrumentation 제거 = RBAC instrumentation 영향).
+  - **audit ActionCode `kb.{write,delete,prune}.mirror`** 의 deprecation: M5 cleanup 완료 후 mirror 호출 0건 → audit table 의 `kb.*.mirror` ActionCode 도 자연 정지. `bin/kb-dual-write-verify.sh --audit-sla` 의 분모 → 0 (`INCONCLUSIVE` exit 2). 본 metric 은 M5 종료 시점에 archive (deprecated metric → M2/M3/M4 retrospective 용도 only).
+- Consequences:
+  - **rollback boundary 의 정량화** — 이전 ADR-0021 §Consequences 의 Stage A/B/C 가 정성적이었으나 본 ADR 이 14-day window + 4 metric 으로 정량화. 운영 자동화 가능 (예: 매일 cron 으로 `bin/kb-dual-write-verify.sh --all` 호출 + 14-day metric 추적).
+  - **데이터 손실 boundary 명문화** — Stage C 의 mysqldump restore 는 M5 진입 시점까지의 snapshot 만. M5 이후 PG 측 새 row 는 mysqldump 에 없음 → restore 시 데이터 inconsistency. 이 risk 수용 = M5 진입 결정의 핵심 사람 confirm.
+  - **`bin/kb-cleanup-mysql.sh --confirm` 의 정확한 string** — `I_UNDERSTAND_DATA_LOSS` 외 모든 input 거부 (대문자 + underscore). typo 또는 자동 실행 차단 의도.
+  - **`_DualWriteMirror` deprecation** — M5 진입 → 코드 cleanup cycle (M5-implementation) → `_dual_write_kb` mirror call site (knowledge.py:633 `_publish_fact` + knowledge.py:598 `_prune_fact_entries_for_key` + utils.py:957 `_text_store_insert` + utils.py:1179 RagDocs + utils.py:1230 RagObjs) 삭제. 본 코드 cleanup 은 별 outside-voice review 필요 (RBAC instrumentation 제거 시점).
+  - **`audit ActionCode kb.*.mirror`** archive — M5 후 mirror call 0건 → audit row 도 0 → `--audit-sla` exit 2 (INCONCLUSIVE). 이는 정상 — 본 metric 의 의미가 cutover-window 만 유효함을 명시.
+- Alternatives 검토 후 폐기:
+  - **M5 cleanup 없이 MySQL deprecated 상태 유지**: MySQL storage / memory / 운영 부담 누적. dual-write 코드도 유지 = M2/M3/M4 의 모든 instrumentation 영구 활성. M4 cutover 의 의미 손실.
+  - **자동 cleanup (script 가 14-day monitoring 후 자동 DROP)**: 데이터 손실 boundary 의 사람 confirm 필수 — 자동화 거부. 본 ADR 의 `--confirm I_UNDERSTAND_DATA_LOSS` 가 명시 confirm.
+  - **2주일 보다 짧은 monitoring window** (예: 1주일): 다음 회귀 risk:
+    1. 운영 day-of-week pattern (월요일 traffic spike) 의 무회귀 확인 어려움
+    2. insight_worker cycle 주기 (~수일) 가 충분히 발생하지 않음
+    3. agent_memory_facts VIEW 의 multi-row tie-break (S6 시나리오) 의 실 traffic 검증 부족.
+- 본 ADR 의 사전 조건:
+  - M4 cycle (TASK-0024) 의 cutover readiness 10-gate 모두 PASS.
+  - `bin/kb-cutover-readiness.sh` 의 Gate 7 (p99 latency) + Gate 9 (ask 5종 회귀) 가 운영 환경에서 PASS 확인 (현재 INCONCLUSIVE).
+  - mysqldump artifact 의 storage path (artifacts/shared) 가 host volume 으로 마운트 + 적정 disk 여유 확인.
+- Outside-voice rationale: 본 ADR 은 M5 cycle (TASK-0025) outside-voice review 의 PASS 결과로 채택. RBAC 영향 (audit instrumentation deprecation timing) + 데이터 손실 boundary 명문화 = 메모리 정책 `feedback_outside_voice_for_rbac.md` 정합.
+- 후속 액션:
+  - **본 cycle (M5, TASK-0025)**: ADR-0025 정본 작성 ✓ + `bin/kb-cleanup-mysql.sh` 생성 ✓ + dual-write deprecation 주석 docstring 갱신 ✓.
+  - **M5-implementation cycle (별 cycle)**: `_DualWriteMirror` module + 5 caller mirror call 삭제. outside-voice review 필수.
+  - **운영 turn (사용자 책임)**: 14-day monitoring + 4 metric 무회귀 확인 + `bin/kb-cleanup-mysql.sh --backup-only` + `--confirm I_UNDERSTAND_DATA_LOSS` 실행.
 
 ## ADR-0024
 - Status: accepted (TASK-0019, M2 cycle, 2026-05-21)

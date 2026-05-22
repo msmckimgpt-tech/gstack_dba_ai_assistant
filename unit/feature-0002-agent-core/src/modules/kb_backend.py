@@ -1201,6 +1201,21 @@ class _DualWriteMirror:
     Instrumentation (M2-d):
     - 매 mirror 호출의 latency 를 process-level counter 에 기록. `get_mirror_metrics()`
       로 snapshot 조회 가능. production-like baseline 측정의 in-process 입력.
+
+    **DEPRECATION NOTICE (M5 — TASK-0025, ADR-0025)**:
+    본 module 은 M5 cleanup 후 deprecation 예정. M5 cleanup 의 진입 게이트:
+    (a) M4 cutover 14-day 무회귀 monitoring 완료 + (b) `bin/kb-cleanup-mysql.sh
+    --confirm I_UNDERSTAND_DATA_LOSS` 실행 + (c) MySQL KB 5 정본 DROP 완료.
+    본 module 의 코드 삭제 + caller (utils.py / knowledge.py 5 위치) mirror call
+    제거는 별 **M5-implementation cycle** 의 책임 — 본 docstring 의 deprecation
+    notice 는 module 사용자에게 cleanup timing 의 명시 신호.
+
+    Removal timing:
+    - M5 cleanup → MySQL DROP → 본 module 의 mirror call 호출 부재 시 audit
+      ActionCode `kb.*.mirror` 도 자연 정지. `get_mirror_metrics().calls_total` 도
+      0 으로 수렴.
+    - M5-implementation cycle 에서 `_dual_write_kb` 호출 site (5 위치) 의 코드
+      삭제 + 본 class 의 `@deprecated` 추가 또는 module 자체 삭제.
     """
 
     def _get_pg_conn(self) -> Optional[Any]:

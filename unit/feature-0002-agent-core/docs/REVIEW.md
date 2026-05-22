@@ -8,6 +8,29 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260522-0013 [SUBAGENT:Plan-subagent — M5 cleanup script + ADR-0025 + dual-write deprecation]
+- Date: 2026-05-22
+- TASK-Cycle: TASK-0025 (M5 cleanup script + ADR-0025 + deprecation note, **Major §12.3** — RBAC 영향 cycle + 데이터 손실 boundary)
+- Outside-voice channel: Plan subagent. 사용자 메모리 `feedback_outside_voice_for_rbac.md` 정합 (audit instrumentation deprecation timing + 데이터 손실 boundary).
+- Verdict: **FAIL** → **PASS 전환** (Blocker 5 + Critical 4 본 cycle 내 흡수). 데이터 손실 가장 sensitive cycle — 표면적 safety (confirm string + dry-run + dependency-reverse drop order) 위에 outside-voice 가 식별: (B-1) mysqldump VIEW DDL 누락 → restore 불가 + (B-2) backup integrity verification 부재 → corrupt gzip silent loss + (B-3) `_DualWriteMirror` caller 제거 선행 없이 DROP → 운영 crash + (B-4) 14-day window policy-only, runtime 미강제 + (B-5) `--confirm` arg 누락 / mode 중복 silent promotion + (B-6) TTY interactive double-confirm 부재 + (B-7) env fallback 부재 + (B-8) backup chmod / SHA256 부재. 본 cycle 흡수.
+- Section A (Summary): M5 의 4 산출 (cleanup script + ADR-0025 + deprecation docstring + 6 unit test) 작성. outside-voice 가 데이터 손실 boundary silent path 식별 — 5 Blocker 모두 흡수, test 11개로 확대.
+- Section B (Blocker/Critical findings — 본 cycle 내 반영 완료):
+  - **B-1 (Blocker)**: mysqldump 가 `"${TABLES[@]:1}"` 로 VIEW skip → DDL 누락 = restore 불가. **반영**: VIEW 포함 list + `CREATE.*VIEW.*AgentMemoryFacts` grep assertion.
+  - **B-2 (Blocker)**: backup integrity verification 부재 → corrupt gzip silent. **반영**: `gunzip -t` + line count threshold + per-table `CREATE TABLE` + VIEW DDL assertion. fail 시 backup dir 삭제.
+  - **B-3 (Blocker)**: caller 제거 선행 없이 DROP → MySQL `cur.execute()` crash. **반영**: `AGENT_KB_DUAL_WRITE=0` sentinel 강제. =1/true/yes 시 진행 차단 + M5-implementation cycle 선행 안내.
+  - **B-4 (Blocker)**: 14-day window policy-only. **반영**: `--cutover-date YYYY-MM-DD` 필수 + ISO 8601 regex + `(today - cutover)/86400 < 14` 차단.
+  - **B-5 (Blocker)**: `--confirm` mode 중복 / missing arg silent promotion. **반영**: mode 중복 거부 + arg 누락 거부 + default MODE.
+  - **B-6 (Critical)**: TTY interactive double-confirm 부재. **반영**: `[ -t 0 ]` 시 `read -r typed_phrase` + 정확 비교, non-TTY 시 `KB_M5_RUN_FROM_HUMAN_SHELL=1` 강제.
+  - **B-7 (Critical)**: env fallback 부재. **반영**: `${AGENT_KB_READ_BACKEND:-$(grep ...)}` shell 우선.
+  - **B-8 (Critical)**: backup world-readable, no SHA256. **반영**: 별 디렉터리 0700 + dump.sql.gz 0600 + sha256 sidecar.
+- Section C (Nice-to-have):
+  - C-2 (MYSQL_PWD env) ✓ 흡수.
+  - C-7 (utf8mb4 + hex-blob) ✓ 흡수.
+  - C-1/C-3/C-4/C-5/C-6 M5-implementation/별 cycle 위임.
+  - B-9 test thinness ✓ — 5 신규 test 추가 (11 PASS).
+- Section D (Verdict): FAIL → **PASS 전환** — 5 Blocker + 4 Critical 본 cycle 흡수.
+- Decision authority: 사용자 메시지 "이번 세션에서 남은 cycle을 모두 완수해주세요" + 데이터 손실 safety 흡수 승인.
+
 ## REV-20260522-0012 [SUBAGENT:Plan-subagent — M4 cutover (FULLTEXT → pg_trgm + read backend routing)]
 - Date: 2026-05-22
 - TASK-Cycle: TASK-0024 (M4 cutover read path 전환 + cutover readiness script, **Major §12.3** — RBAC 영향 cycle)
