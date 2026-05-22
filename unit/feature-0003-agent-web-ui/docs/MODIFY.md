@@ -1872,3 +1872,11 @@ source_of_truth: true
 - Files: app.py (GET /api/account/consents 추가), index.html (#profileConsentSection), app.js (_renderConsentSection + _handleConsentToggle + binding), styles.css (consent UI), FUNCTION/TASK/MODIFY/REVIEW.
 - Notes: DB 는 세분 row, UX 는 3 group. R-F2 modal 폭격 위험 해소 정합.
 - Rollback: 본 cycle entry revert + #profileConsentSection 마크업/CSS/JS 제거.
+
+## CHG-20260521-0010
+- Date: 2026-05-22
+- Related Requirement: TASK-0094 Sprint 1 Phase 8 — D9 share redact + R-F7 PolicyVersion 활성
+- Summary: WebConversationShares.PolicyVersion column 활성 (INSERT 명시 + SELECT 추출 + redact 로직 분기). attachment_derived 메시지 본문 자동 redact + share.policy.redact_applied audit. 기존 token (Phase 2 ship 시 DEFAULT 1 backfill) 도 배포 즉시 새 정책 적용.
+- Files: app.py (_share_redact_message_content / _share_load_messages 갱신 / public_share_view redact dispatch / INSERT PolicyVersion / build_audit_change_json case), FUNCTION/TASK/MODIFY/REVIEW.
+- Notes: attachment_derived flag 의 실제 설정은 Phase 11 (ingest) / Cycle 2/3/4 ship 시점. 본 phase 는 mechanism 만 ship.
+- Rollback: SHARE_POLICY_VERSION_CURRENT=1 로 reset 또는 redact_active 분기 비활성.
