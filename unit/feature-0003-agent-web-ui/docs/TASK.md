@@ -11,8 +11,8 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 7 진행 중)
-- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 7 consent modal ship)
+- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 8 진행 중)
+- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 8 share redact ship)
 
 ## 2. Task Queue
 
@@ -55,7 +55,7 @@ source_of_truth: true
   - [x] **Phase 5 (Cycle 0 upload API)** — 6 endpoint (POST/GET/GET-by-id/DELETE attachment + POST/DELETE consent) + audit 4 ActionCode (`attachment.upload`/`.delete`/`.consent.grant`/`.consent.revoke`) + `build_audit_change_json` case 4 추가 + D7 MIME allowlist + D8 size cap (per_file/conv/account env-driven) + D12 HMAC/extension/size bucket helper + D13 외부 LLM signed URL 송신 금지 정합 (`_serialize_attachment_for_api` 의 signed_url 옵션) + D21 pending bytes deny enforcement (`_account_is_pending` + bytes_access_denied 마커) + RBAC 검증 (`_account_can_access_attachment` 신규 helper). FastAPI UploadFile/File/Form import. py_compile PASS. 2026-05-22.
   - [x] **Phase 6 (Cycle 0 composer UI)** — paperclip + hidden file input + drag-drop overlay (composer-wrap) + attachment pills (status badges: uploading / ready / failed / deselected) + selected toggle + "이 대화의 모든 첨부 사용" scope-all checkbox + D16 attachment selection snapshot (`_composerAttachmentSnapshot` 가 sendPrompt 시점 추출 → askBody.attachment_ids/scope_all 명시 전송) + R-F5 lazy-create 분리 (snapshot key = pending sentinel or conv id) + selectConversation 진입 시 `_loadConversationAttachments(cid)` ground truth 동기화. state.composerAttachments 신규 (byConv / uploadingCount / nextLocalId). app.js JS syntax PASS (node Function check). styles.css 약 130 lines (pill / drop-overlay / paperclip btn). index.html 약 25 lines (composer-attachments + composer-drop-overlay + attach-btn + file input). 2026-05-22.
   - [x] **Phase 7 (Cycle 0 consent)** — D11 + R-F2 grouped batch modal (provider × 3 group: 텍스트/이미지/인덱싱) + revoke flow + GET /api/account/consents 신규 + Profile Drawer "보안 및 계정" 탭 안 consent section. 2026-05-22.
-  - [ ] **Phase 8 (Cycle 0 share)** — D9 share builder redact + 기존 token 자동 redact + PolicyVersion column.
+  - [x] **Phase 8 (Cycle 0 share)** — D9 share redact + R-F7 기존 token 자동 redact + PolicyVersion 활성 + share.policy.redact_applied audit case + INSERT PolicyVersion=CURRENT 명시. SHARE_POLICY_VERSION_CURRENT=2 상수. 2026-05-22.
   - [ ] **Phase 9 (Cycle 0 lifecycle)** — F1 delete UX 4 state + D6 reconciliation worker + R-Claim6 tombstone + lifecycle policy MinIO rule.
   - [ ] **Phase 10 (Cycle 1 sandbox)** — `attachment_maintainer/writer/reader/cleanup` MySQL user (R-Claim4 writer 최소권한) + R-F4 drift health endpoint `/api/admin/health/attachment-grants`.
   - [ ] **Phase 11 (Cycle 1 ingest)** — `sandbox_ingest.py` (XLSX `data_only=True` + sharedStrings cap + cell/row/col cap + CSV encoding/delimiter/locale + worker timeout/memory).

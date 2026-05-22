@@ -1413,3 +1413,8 @@ source_of_truth: true
 - **Subject**: GET /api/account/consents + profile drawer consent section + grouped batch helper.
 - **Reason**: 본 Phase 의 결정은 (1) provider × group mapping (`_CONSENT_GROUPS`) (2) batch toggle UX 패턴 — 모두 BRIEFING 정본 결정. 보안 경계 변경 0.
 - **Risk**: group mapping 의 향후 확장 (Cycle 4 의 다른 data_class) 시 본 cycle 의 `_CONSENT_GROUPS` 갱신 필수.
+
+## REV-20260521-0010 [SKIPPED:share-redact-mechanism] TASK-0094 Sprint 1 Phase 8 review
+
+- **Mode**: SKIPPED — D9 + R-F7 mechanism ship 만. derived flag 의 실제 설정은 Phase 11+ 에서 attachment 인용 시점에 추가.
+- **Risk**: attachment_derived flag 가 message MetaJson 에 설정 안 되면 본 redact 가 활성 안 됨 (false negative). Phase 11/Cycle 2-4 의 flag 설정 누락 시 share view 에 본문 노출 — 향후 cycle 의 검증 필수 항목.
