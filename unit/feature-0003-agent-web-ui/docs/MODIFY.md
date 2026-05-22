@@ -1799,3 +1799,27 @@ source_of_truth: true
 - Notes: storage_minio.py 는 thin wrapper — RBAC / consent / audit / size cap / MIME 검증 모두 caller (Phase 5 upload endpoint) 책임. 본 Phase 의 module 은 SDK abstraction 만 제공. 외부 boto3 호출 실패는 모두 StorageOperationError 로 wrap 되어 caller fail-fast. boto3 미설치 환경 (dev/test) 에서는 BOTO3_AVAILABLE=False 로 import 성공 후 `get_s3_client()` 호출 시점에 StorageConfigError 발생 — graceful degradation 정합.
 - Impact: 본 Phase 의 module 만 ship — 실제 upload/download endpoint 는 Phase 5 ship 후 가용. requirements.txt 변경으로 docker 이미지 rebuild 필요 (다음 compose up 시 자동). D20 runbook 은 운영자 reference — 실제 rotation 진행은 별 사용자 trigger.
 - Rollback Notes: requirements.txt 의 boto3 + botocore 2 entry revert. modules/storage_minio.py + modules/__init__.py + RUNBOOK 파일 삭제 + FUNCTION/TASK/MODIFY/REVIEW 의 본 cycle entry revert. import 한 caller 가 없으므로 (Phase 5 미시작) 즉시 revert 가능.
+
+## CHG-20260521-0007
+- Date: 2026-05-22
+- Related Requirement: TASK-0094 (REQ-20260521-0001, Critical §12.3) Sprint 1 Phase 5 — Cycle 0 upload API + audit + HMAC + size cap + D21 deny
+- Summary: BRIEFING §5.4 6 endpoint + D7/D8/D11/D12/D13/D21 정합. FastAPI multipart upload (UploadFile/File/Form) + RBAC 검증 + size cap + HMAC categorical 메타 + MinIO put/get + audit dispatch + D21 pending bytes deny. 약 900 lines.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - FastAPI import 에 UploadFile/File/Form 추가
+    - `build_audit_change_json` 에 4 신규 ActionCode case (attachment.upload / .delete / .consent.grant / .consent.revoke) — D12 raw filename / bytes 절대 미노출
+    - attachment helper 묶음 신설 (`_attachment_size_caps`, `_hmac_filename`, `_extension_bucket`, `_size_bucket`, `_kind_from_mime`, `_account_role_key`, `_account_is_pending`, `_account_can_access_attachment`, `_check_attachment_size_caps`, `_load_attachment_row`, `_serialize_attachment_for_audit`, `_serialize_attachment_for_api`, `_ATTACHMENT_ALLOWED_MIME_TO_KIND` 상수)
+    - 6 endpoint 신설:
+      * `POST /api/conversations/{cid}/attachments` (multipart upload + MinIO put + INSERT + audit)
+      * `GET /api/conversations/{cid}/attachments` (list active)
+      * `GET /api/attachments/{id}` (metadata + signed URL re-issue, D21 pending deny)
+      * `DELETE /api/attachments/{id}` (soft-delete user reason, audit)
+      * `POST /api/account/consents` (D11 grant, UNIQUE upsert, audit)
+      * `DELETE /api/account/consents/{id}` (D11 revoke, RevokedAt UPDATE, audit)
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md` — AC-0226~0233 (8 AC)
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` — Phase 5 [x] + Current Status 갱신
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md` — 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260521-0007 [SUBAGENT:codex-deferred] (codex review 권장 시점인데 Phase 통합 ship 후 별 cycle 로 분리)
+- Notes: 본 Phase 의 endpoint 가 BRIEFING D7/D8/D11/D12/D13/D21 결정의 application-level enforcement — Phase 4 의 storage 모듈 (SDK abstraction) 위에서 보안 결정 적용. 사용자 메모리 정책 "RBAC plan 은 outside voice 필수" 정합 — RBAC 변경은 Phase 3 에서 catalog 작업 완료, 본 Phase 는 catalog enforcement 이라 별 review 우선순위 낮음. 다만 D21 pending bytes deny 의 application-level 분기 (`_account_is_pending`) 는 향후 codex review 권장 항목으로 명시.
+- Impact: 본 Phase ship 직후 dev 환경에서 첨부 upload/list/get/delete + consent grant/revoke 가능. MinIO + WebConversationAttachments + WebAccountConsents 모두 활성 — Phase 6 (composer UI) 진입 시 frontend 가 본 endpoint 호출. raw bytes 는 사내망 다운로드만 (signed URL) + 외부 LLM 송신은 Phase 5 unblock 안 됨 (Cycle 2 vision / Cycle 3 KB / Cycle 4 RAG 시점 ship).
+- Rollback Notes: 6 endpoint definition + helper 묶음 + audit case 4 모두 revert. 기존 row 는 DB 에 보존 — `DELETE FROM WebConversationAttachments`/`WebAccountConsents` 또는 보존. MinIO bucket 의 객체는 운영자가 별도 `mc rm` 또는 보존.

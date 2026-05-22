@@ -1330,3 +1330,25 @@ source_of_truth: true
   3. **client cache 의 thread safety**: `_S3_CLIENT_CACHE` 는 module-level dict — Python GIL 하에서 single-thread access 가정. FastAPI 의 worker 가 multi-thread (uvicorn 의 default) 일 때 cache 가 dict 이라 race 가능하나 boto3 client 자체가 thread-safe 라 read race 는 무해. write race 는 1 client overwrite 1 client 으로 마무리 — 무해. 다만 명시 lock 은 향후 cycle 후보.
 - **Cross-ref**: BRIEFING §5.3 + ADR-0022 + 정본 REV-20260521-0001 + Phase 3 REV-20260521-0005.
 - **다음 outside-voice 시점**: Phase 5 (upload API + audit + D12 HMAC) 진입 시 codex review 권장 — application-level RBAC / consent 검증 + audit dispatch 정합이 본 module 위에서 결정됨.
+
+## REV-20260521-0007 [SUBAGENT:codex-deferred] TASK-0094 Sprint 1 Phase 5 (Cycle 0 upload API) review
+
+- **Mode**: SUBAGENT (codex) review 권장 — BRIEFING REV-20260521-0006 의 "다음 outside-voice 시점: Phase 5" lock-in. 다만 본 entry 작성 시점은 ship gate 동시 진행이라 review 완료 전 commit. **deferred** = ship 후 별 cycle 에서 codex review 호출 + 발견 finding 흡수 시 Phase 5.1 (혹은 Phase 6 진입 전 patch) 로 정합.
+- **Subject**:
+  - 6 endpoint signature + 권한 검증 + audit dispatch + signed URL 발급 흐름 (storage_minio integration)
+  - D7 MIME allowlist 의 정확성 (XLSX legacy `.xls` + MIME spoof 위험)
+  - D8 size cap 의 cumulative sum 정합 (DeletePending + DeletedAt IS NULL 필터)
+  - D12 HMAC 의 dev fallback key (`_FALLBACK_AUDIT_HMAC_KEY__set_via_env_for_prod`) — prod 환경에서 ATTACHMENT_AUDIT_HMAC_KEY 부재 시 알람?
+  - D13 외부 LLM 송신 금지 정합 — `_serialize_attachment_for_api(include_signed_url=...)` 의 caller 가 외부 LLM 경로에서 None 강제하는 분기 부재 (현재는 caller 책임)
+  - D21 pending bytes deny 의 application-level enforcement — `_account_is_pending` 의 role.key 추출 logic 이 account 구조 가정에 의존 (account.role dict / account.role_key fallback)
+  - audit `attachment.upload` / `.delete` 의 categorical 메타 충분성
+  - MinIO put 실패 시 row hard-delete (orphan 방지) 의 race / partial failure
+- **Reason**: Phase 5 가 Phase 3 RBAC enforcement + Phase 4 storage 의 application-level 결합점 — Codex 1차/2차 review (REV-20260520-0001 + REV-20260521-0002) 는 BRIEFING 정본 단계에서 결정. 본 Phase 는 결정의 application-level 적용. ship 후 codex review 로 (a) endpoint signature 의 보안 경계 (b) D12 HMAC enforcement (c) D21 deny enforcement coverage (d) MinIO orphan race 패턴 검증.
+- **Risk**:
+  1. **HMAC dev fallback**: prod 환경에서 `ATTACHMENT_AUDIT_HMAC_KEY` 미설정 시 fallback key 사용으로 모든 tenant 의 HMAC 가 같은 key 로 발급 — audit row 의 cross-tenant 비교 가능. 별 cycle 또는 본 Phase patch 에서 prod fail-loud 추가 권장.
+  2. **MIME spoof**: caller 가 보낸 Content-Type 헤더에만 의존 — 실제 파일 매직 바이트 검증은 미구현. Phase 11 ingest pipeline 진입 시 (XLSX 의 zip 매직 등) 본격 검증.
+  3. **size cap race**: 동시 upload 시 size cap 검사 후 INSERT 사이 race — 본 Phase 는 single-tx 검사라 cumulative SUM 일관성 유지하나 INSERT 직후 동시 upload 의 추가 확인 미수행. 위험 낮음 (per-account 1GB cap 이라 race window 좁음).
+  4. **`_account_can_access_attachment` 의 soft-deleted 거부**: `DeletedAt IS NOT NULL` 인 row 는 caller 모두 거부 — reconciliation worker / admin restore path 미구현 (Phase 9 ship 후 추가).
+  5. **Endpoint coverage**: BRIEFING §5.4 의 7 endpoint 중 본 Phase 가 6 (POST/GET/GET-by-id/DELETE attachment + POST/DELETE consent). `/api/ask` body 확장 (Cycle 1 attachment_ids / attachment_scope_all) 은 Phase 11 ingest + Phase 12 SQL guard 시점에 추가.
+- **Cross-ref**: BRIEFING §5.1 / §5.4 / D6/D7/D8/D11/D12/D13/D21 + ADR-0022 + 정본 REV-20260521-0001 + Phase 4 REV-20260521-0006.
+- **다음 outside-voice 시점**: 본 entry 의 deferred codex review (Phase 6 진입 전 또는 Phase 5.1 patch cycle). Phase 12 (D14 SQL guard, Ship 조건) 는 별도 review trigger.

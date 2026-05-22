@@ -25,7 +25,7 @@ import mysql.connector
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, UploadFile, File, Form  # TASK-0094 Phase 5: multipart upload
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -4279,6 +4279,251 @@ def _account_can_access_conversation(
     return _conversation_owned_by_account(conn, conversation_id, int(account["id"]))
 
 
+# ============================================================================
+# TASK-0094 Sprint 1 Phase 5 (Cycle 0 upload API) helper 묶음.
+# ============================================================================
+# BRIEFING D6/D7/D8/D11/D12/D13/D16/D21 + R-F14 정합. raw filename / raw bytes 는
+# audit 에 절대 노출 안 함. HMAC + size bucket + extension bucket 의 categorical
+# 메타만.
+
+# D7 (MIME allowlist). archive (zip/tar) 거부 — XLSX 는 zip container 지만 MIME
+# magic + 구조 검증으로 별 path. text/markdown 은 text/plain alias 로도 수용.
+_ATTACHMENT_ALLOWED_MIME_TO_KIND: dict[str, str] = {
+    "text/csv": "csv",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.ms-excel": "xlsx",  # legacy .xls — Phase 11 ingest 단계에서 binary edge 처리 추가.
+    "application/pdf": "pdf",
+    "image/png": "image",
+    "image/jpeg": "image",
+    "image/webp": "image",
+    "text/plain": "text",
+    "text/markdown": "text",
+}
+
+# D8 size cap (.env 의 ATTACHMENT_MAX_BYTES_* 로 override 가능).
+_ATTACHMENT_DEFAULT_MAX_BYTES_PER_FILE = 26_214_400  # 25 MB
+_ATTACHMENT_DEFAULT_MAX_BYTES_PER_CONV = 104_857_600  # 100 MB
+_ATTACHMENT_DEFAULT_MAX_BYTES_PER_ACCOUNT = 1_073_741_824  # 1 GB
+
+
+def _attachment_size_caps() -> tuple[int, int, int]:
+    """env-driven size cap. (per_file, per_conv, per_account) tuple."""
+    return (
+        max(1, int(os.getenv("ATTACHMENT_MAX_BYTES_PER_FILE") or _ATTACHMENT_DEFAULT_MAX_BYTES_PER_FILE)),
+        max(1, int(os.getenv("ATTACHMENT_MAX_BYTES_PER_CONV") or _ATTACHMENT_DEFAULT_MAX_BYTES_PER_CONV)),
+        max(1, int(os.getenv("ATTACHMENT_MAX_BYTES_PER_ACCOUNT") or _ATTACHMENT_DEFAULT_MAX_BYTES_PER_ACCOUNT)),
+    )
+
+
+def _hmac_filename(filename: str) -> str:
+    """D12 tenant-keyed HMAC. `ATTACHMENT_AUDIT_HMAC_KEY` 가 비어 있으면 일관된
+    fallback (`_FALLBACK_AUDIT_HMAC_KEY`) — dev 환경에서 audit row 가 생성 가능
+    하도록 graceful. 운영 환경은 .env 필수.
+    """
+    key = (os.getenv("ATTACHMENT_AUDIT_HMAC_KEY") or "").strip()
+    if not key:
+        key = "_FALLBACK_AUDIT_HMAC_KEY__set_via_env_for_prod"
+    name = (filename or "").strip().encode("utf-8")
+    return hmac.new(key.encode("utf-8"), name, hashlib.sha256).hexdigest()
+
+
+def _extension_bucket(filename: str) -> str:
+    """D12 — `.csv` / `.xlsx` / `.pdf` / `.png` / ... 만 audit 에 노출."""
+    name = (filename or "").strip().lower()
+    if "." not in name:
+        return ".unknown"
+    ext = name.rsplit(".", 1)[1]
+    safe_ext = re.sub(r"[^a-z0-9]", "", ext)[:8]
+    return f".{safe_ext}" if safe_ext else ".unknown"
+
+
+def _size_bucket(size_bytes: int) -> str:
+    """D12 — coarse bucket (audit 노출용)."""
+    n = int(size_bytes or 0)
+    if n < 1_024:
+        return "<1KB"
+    if n < 10_240:
+        return "1-10KB"
+    if n < 102_400:
+        return "10-100KB"
+    if n < 1_048_576:
+        return "100KB-1MB"
+    if n < 10_485_760:
+        return "1-10MB"
+    if n < 26_214_400:
+        return "10-25MB"
+    return ">25MB"
+
+
+def _kind_from_mime(mime_type: str) -> str | None:
+    """D7 allowlist 정합 — 미허용 MIME 은 None 반환 (caller 가 415 응답)."""
+    return _ATTACHMENT_ALLOWED_MIME_TO_KIND.get((mime_type or "").lower().strip())
+
+
+def _account_role_key(account: dict[str, Any] | None) -> str:
+    """role 객체에서 RoleKey 추출. account 에 role row join 결과가 있으면 사용,
+    없으면 빈 문자열."""
+    if not account:
+        return ""
+    role = account.get("role")
+    if isinstance(role, dict):
+        return str(role.get("key") or role.get("RoleKey") or "").strip()
+    return str(account.get("role_key") or "").strip()
+
+
+def _account_is_pending(account: dict[str, Any] | None) -> bool:
+    """D21 / R-F14 — pending role 식별. application-level bytes deny 사용."""
+    return _account_role_key(account) == "pending"
+
+
+def _account_can_access_attachment(
+    conn,
+    account: dict[str, Any] | None,
+    attachment_row: dict[str, Any] | None,
+    own_permission: str,
+    any_permission: str | None = None,
+) -> bool:
+    """`_account_can_access_conversation` 의 attachment-specific 변종.
+
+    attachment 존재 + 본인 소유 conv 인지 확인 후 own_permission 검사. any_permission
+    이 있으면 conv 소유 무관 통과. soft-deleted 첨부 (DeletedAt NOT NULL) 는 거부 —
+    조회는 reconciliation worker 등 운영 path 만 (이 helper 미사용).
+    """
+    if not account or not attachment_row:
+        return False
+    if attachment_row.get("DeletedAt"):
+        return False
+    if any_permission and _account_has_permission(account, any_permission):
+        return True
+    if not _account_has_permission(account, own_permission):
+        return False
+    conversation_id = str(attachment_row.get("ConversationId") or "")
+    if not conversation_id:
+        return False
+    return _conversation_owned_by_account(conn, conversation_id, int(account["id"]))
+
+
+def _check_attachment_size_caps(
+    conn,
+    *,
+    account_id: int,
+    conversation_id: str,
+    new_size_bytes: int,
+) -> tuple[bool, str]:
+    """D8 cumulative size cap. per_file / per_conv / per_account 3 측정.
+
+    Returns: (ok, reason). ok=False 면 caller 가 413 응답 + reason 한국어 메시지.
+    """
+    per_file, per_conv, per_account = _attachment_size_caps()
+    n = int(new_size_bytes or 0)
+    if n <= 0:
+        return False, "첨부 파일이 비어 있습니다."
+    if n > per_file:
+        return False, f"단일 첨부 파일 크기 한도 ({per_file // 1_048_576}MB) 를 초과했습니다."
+
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(SizeBytes), 0)
+            FROM WebConversationAttachments
+            WHERE ConversationId = %s AND DeletedAt IS NULL AND DeletePending = 0
+            """,
+            (conversation_id,),
+        )
+        row = cur.fetchone()
+        conv_used = int((row[0] if row else 0) or 0)
+        if conv_used + n > per_conv:
+            return False, f"대화당 첨부 총 용량 한도 ({per_conv // 1_048_576}MB) 를 초과했습니다."
+
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(SizeBytes), 0)
+            FROM WebConversationAttachments
+            WHERE AccountId = %s AND DeletedAt IS NULL AND DeletePending = 0
+            """,
+            (account_id,),
+        )
+        row = cur.fetchone()
+        account_used = int((row[0] if row else 0) or 0)
+        if account_used + n > per_account:
+            return False, f"계정당 첨부 총 용량 한도 ({per_account // 1_073_741_824}GB) 를 초과했습니다."
+    finally:
+        cur.close()
+    return True, ""
+
+
+def _load_attachment_row(conn, attachment_id: int) -> dict[str, Any] | None:
+    """attachment 단일 row dict 로 반환. 없으면 None."""
+    if not attachment_id:
+        return None
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+            SELECT
+                Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
+                DeletePending, DeleteReason, MetaJson
+            FROM WebConversationAttachments
+            WHERE Id = %s
+            LIMIT 1
+            """,
+            (int(attachment_id),),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        cur.close()
+
+
+def _serialize_attachment_for_audit(row: dict[str, Any] | None) -> dict[str, Any]:
+    """audit ChangeJson 의 categorical 메타만 추출. raw filename / bytes 절대 노출 X."""
+    if not row:
+        return {}
+    return {
+        "id": int(row.get("Id") or 0),
+        "conversation_id": str(row.get("ConversationId") or ""),
+        "filename_hmac": str(row.get("FilenameHmac") or ""),
+        "extension_bucket": _extension_bucket(str(row.get("OriginalFilename") or "")),
+        "size_bucket": str(row.get("SizeBucket") or "") or _size_bucket(int(row.get("SizeBytes") or 0)),
+        "kind": str(row.get("Kind") or ""),
+        "mime_type": str(row.get("MimeType") or ""),
+        "sha256": str(row.get("Sha256") or ""),
+        "upload_status": str(row.get("UploadStatus") or ""),
+        "delete_reason": str(row.get("DeleteReason") or "") or None,
+    }
+
+
+def _serialize_attachment_for_api(row: dict[str, Any] | None, *, include_signed_url: bool = False, signed_url: str | None = None) -> dict[str, Any]:
+    """API 응답용 dict. pending role 은 caller 가 include_signed_url=False 강제 (D21)."""
+    if not row:
+        return {}
+    payload: dict[str, Any] = {
+        "id": int(row.get("Id") or 0),
+        "conversation_id": str(row.get("ConversationId") or ""),
+        "kind": str(row.get("Kind") or ""),
+        "mime_type": str(row.get("MimeType") or ""),
+        "original_filename": str(row.get("OriginalFilename") or ""),
+        "size": int(row.get("SizeBytes") or 0),
+        "size_bucket": str(row.get("SizeBucket") or ""),
+        "sha256": str(row.get("Sha256") or ""),
+        "status": str(row.get("UploadStatus") or ""),
+        "created_at": row.get("CreatedAt").isoformat() if hasattr(row.get("CreatedAt"), "isoformat") else None,
+        "delete_pending": bool(row.get("DeletePending") or 0),
+        "delete_reason": str(row.get("DeleteReason") or "") or None,
+    }
+    meta = row.get("MetaJson")
+    if isinstance(meta, dict):
+        # degraded_reason (D17 partial_indexed) 만 표면화.
+        if meta.get("degraded_reason"):
+            payload["degraded_reason"] = str(meta["degraded_reason"])
+    if include_signed_url and signed_url:
+        payload["signed_url"] = signed_url
+    return payload
+
+
 def _extract_intent_from_content(content: str) -> str:
     text = (content or "").strip()
     for prefix in ("실행 완료:", "완료:"):
@@ -6849,6 +7094,570 @@ async def list_conversations(request: Request) -> JSONResponse:
 @app.post("/api/clear_memory")
 async def clear_memory(request: Request) -> JSONResponse:
     return _json_error("전체 정리 기능은 제거되었습니다.", 410)
+
+
+# ============================================================================
+# TASK-0094 Sprint 1 Phase 5 — Cycle 0 attachment upload / list / metadata / delete
+# + consent grant / revoke (6 endpoint, BRIEFING §5.4).
+# ============================================================================
+
+
+@app.post("/api/conversations/{cid}/attachments")
+async def upload_conversation_attachment(
+    cid: str,
+    request: Request,
+    file: UploadFile = File(...),
+) -> JSONResponse:
+    """첨부 multipart upload (BRIEFING §5.4 row 1).
+
+    권한: `conversation.attachment.upload.{own,any}` + 대상 conv 접근 권한.
+    검증: D7 MIME allowlist + D8 size cap (per_file/conv/account) + D12 HMAC.
+    부작용: MinIO put_object + WebConversationAttachments INSERT + audit
+    `attachment.upload` dispatch.
+
+    Response: `{id, kind, signed_url (사내망 다운로드 전용), size, sha256, status}`
+    """
+    try:
+        from modules import storage_minio
+    except Exception as exc:
+        return _json_error(f"storage 모듈 import 실패: {exc}", 500)
+
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        # RBAC: upload.{own,any} + 대상 conv 접근.
+        if not _account_can_access_conversation(
+            conn,
+            account,
+            cid,
+            "conversation.attachment.upload.own",
+            "conversation.attachment.upload.any",
+        ):
+            return _json_error("이 대화에 첨부를 업로드할 권한이 없습니다.", 403)
+
+        # D7 MIME allowlist 검증.
+        mime_type = (file.content_type or "").strip().lower()
+        kind = _kind_from_mime(mime_type)
+        if not kind:
+            return _json_error(
+                f"지원하지 않는 MIME 입니다 ({mime_type or 'unknown'}). 허용: CSV/XLSX/PDF/PNG/JPEG/WEBP/text/markdown.",
+                415,
+            )
+
+        # 본문 read — D8 size cap pre-check 위해 in-memory read.
+        # Phase 11 (ingest pipeline) 진입 시 streaming upload + spool-to-disk 옵션 검토.
+        try:
+            body_bytes = await file.read()
+        except Exception as exc:
+            return _json_error(f"첨부 본문 read 실패: {exc}", 400)
+        if not body_bytes:
+            return _json_error("첨부 파일이 비어 있습니다.", 400)
+
+        # D8 size cap (per_file / per_conv / per_account).
+        ok, reason = _check_attachment_size_caps(
+            conn,
+            account_id=int(account["id"]),
+            conversation_id=cid,
+            new_size_bytes=len(body_bytes),
+        )
+        if not ok:
+            return _json_error(reason, 413)
+
+        # D12 categorical 메타.
+        filename = (file.filename or "unnamed").strip()
+        filename_hmac = _hmac_filename(filename)
+        ext_bucket = _extension_bucket(filename)
+        size_bucket = _size_bucket(len(body_bytes))
+        sha256_hex = hashlib.sha256(body_bytes).hexdigest()
+
+        # ObjectKey: <cid>/<attachment_uuid>/<safe_filename>.
+        import uuid as _uuid
+        attachment_uuid = str(_uuid.uuid4())
+        object_key = storage_minio.make_object_key(cid, attachment_uuid, filename)
+
+        # INSERT row first (uploaded 상태) — MinIO put 실패 시 rollback.
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                INSERT INTO WebConversationAttachments (
+                    ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                    UploadStatus, MetaJson
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'uploaded', NULL)
+                """,
+                (
+                    cid,
+                    int(account["id"]),
+                    object_key,
+                    filename,
+                    filename_hmac,
+                    mime_type,
+                    len(body_bytes),
+                    size_bucket,
+                    sha256_hex,
+                    kind,
+                ),
+            )
+            attachment_id = int(cur.lastrowid or 0)
+        finally:
+            cur.close()
+        if not attachment_id:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return _json_error("첨부 row 생성 실패", 500)
+
+        # MinIO put — D13 정합 (signed URL 송신 금지, server-side write).
+        try:
+            storage_minio.put_object_bytes(
+                object_key,
+                body_bytes,
+                content_type=mime_type,
+                metadata={
+                    "attachment-id": str(attachment_id),
+                    "conversation-id": cid,
+                    "uploader-account-id": str(account["id"]),
+                    "filename-hmac": filename_hmac,
+                },
+            )
+        except (storage_minio.StorageConfigError, storage_minio.StorageOperationError) as exc:
+            try:
+                # MinIO put 실패 → row 즉시 hard-delete (orphan 방지).
+                _cur = conn.cursor()
+                _cur.execute(
+                    "DELETE FROM WebConversationAttachments WHERE Id = %s",
+                    (attachment_id,),
+                )
+                _cur.close()
+                conn.commit()
+            except Exception:
+                pass
+            return _json_error(f"MinIO 업로드 실패: {exc}", 502)
+
+        try:
+            conn.commit()
+        except Exception:
+            pass
+
+        # audit dispatch — D12 raw filename / bytes 절대 제외.
+        attachment_row = _load_attachment_row(conn, attachment_id)
+        try:
+            _audit_user_action(
+                conn,
+                request,
+                account,
+                action="attachment.upload",
+                resource_type="attachment",
+                resource_id=str(attachment_id),
+                request_ctx=_serialize_attachment_for_audit(attachment_row),
+            )
+        except Exception:
+            pass
+
+        # signed URL 발급 (사내망 다운로드 전용 — D13). pending 은 발급 안 함 (D21).
+        signed_url: str | None = None
+        if not _account_is_pending(account):
+            try:
+                signed_url = storage_minio.generate_presigned_get(
+                    object_key,
+                    response_filename=filename,
+                )
+            except (storage_minio.StorageConfigError, storage_minio.StorageOperationError):
+                signed_url = None
+
+        payload = _serialize_attachment_for_api(
+            attachment_row,
+            include_signed_url=bool(signed_url),
+            signed_url=signed_url,
+        )
+        return JSONResponse(payload)
+    finally:
+        conn.close()
+
+
+@app.get("/api/conversations/{cid}/attachments")
+def list_conversation_attachments(cid: str, request: Request) -> JSONResponse:
+    """대화의 active 첨부 목록 (DeletedAt IS NULL). 권한: read.{own,any}."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_can_access_conversation(
+            conn,
+            account,
+            cid,
+            "conversation.attachment.read.own",
+            "conversation.attachment.read.any",
+        ):
+            return _json_error("이 대화의 첨부를 조회할 권한이 없습니다.", 403)
+
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+                SELECT
+                    Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                    UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
+                    DeletePending, DeleteReason, MetaJson
+                FROM WebConversationAttachments
+                WHERE ConversationId = %s AND DeletedAt IS NULL
+                ORDER BY Id ASC
+                """,
+                (cid,),
+            )
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+
+        results = [_serialize_attachment_for_api(dict(row)) for row in rows]
+        return JSONResponse({"attachments": results})
+    finally:
+        conn.close()
+
+
+@app.get("/api/attachments/{attachment_id}")
+def get_attachment_metadata(attachment_id: int, request: Request) -> JSONResponse:
+    """첨부 metadata + signed URL re-issue (사내망 다운로드 전용). D21 pending 은
+    metadata 만, signed URL 미발급."""
+    try:
+        from modules import storage_minio
+    except Exception as exc:
+        return _json_error(f"storage 모듈 import 실패: {exc}", 500)
+
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        row = _load_attachment_row(conn, attachment_id)
+        if not _account_can_access_attachment(
+            conn,
+            account,
+            row,
+            "conversation.attachment.read.own",
+            "conversation.attachment.read.any",
+        ):
+            return _json_error("첨부를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+
+        signed_url: str | None = None
+        if not _account_is_pending(account):
+            try:
+                signed_url = storage_minio.generate_presigned_get(
+                    str(row.get("ObjectKey") or ""),
+                    response_filename=str(row.get("OriginalFilename") or ""),
+                )
+            except (storage_minio.StorageConfigError, storage_minio.StorageOperationError):
+                signed_url = None
+
+        payload = _serialize_attachment_for_api(
+            row,
+            include_signed_url=bool(signed_url),
+            signed_url=signed_url,
+        )
+        # D21 metadata-only 마커 — frontend 가 사용자에게 안내.
+        if _account_is_pending(account):
+            payload["bytes_access_denied"] = True
+            payload["bytes_access_denied_reason"] = "승인 대기 계정은 첨부 본문을 다운로드할 수 없습니다."
+        return JSONResponse(payload)
+    finally:
+        conn.close()
+
+
+@app.delete("/api/attachments/{attachment_id}")
+def delete_attachment(attachment_id: int, request: Request) -> JSONResponse:
+    """첨부 soft-delete (D6 user delete_reason). MinIO 객체 실삭제는 Phase 9
+    reconciliation worker 가 retention 만료 후 처리. 권한: upload.{own,any}.
+
+    BRIEFING D6 의 4 종 taxonomy 중 user delete 만 본 endpoint 가 trigger.
+    admin_purge / legal erasure / conv_soft 는 별 endpoint (Phase 9 ship).
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        row = _load_attachment_row(conn, attachment_id)
+        # upload.{own,any} 가 soft-delete 권한 (uploader 가 자기 첨부 회수).
+        if not _account_can_access_attachment(
+            conn,
+            account,
+            row,
+            "conversation.attachment.upload.own",
+            "conversation.attachment.upload.any",
+        ):
+            return _json_error("첨부를 찾을 수 없거나 삭제 권한이 없습니다.", 404)
+
+        # 이미 soft-deleted 면 idempotent 응답.
+        if row.get("DeletePending"):
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "delete_reason": str(row.get("DeleteReason") or "user"),
+                    "already_pending": True,
+                }
+            )
+
+        before_snapshot = _serialize_attachment_for_audit(row)
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                UPDATE WebConversationAttachments
+                SET DeletePending = 1, DeleteReason = 'user', DeletedAt = UTC_TIMESTAMP(6)
+                WHERE Id = %s AND DeletePending = 0
+                """,
+                (int(attachment_id),),
+            )
+            updated = int(cur.rowcount or 0)
+        finally:
+            cur.close()
+
+        if updated <= 0:
+            return _json_error("삭제 처리 실패 (이미 처리됨)", 409)
+
+        try:
+            conn.commit()
+        except Exception:
+            pass
+
+        # audit dispatch.
+        try:
+            _audit_user_action(
+                conn,
+                request,
+                account,
+                action="attachment.delete",
+                resource_type="attachment",
+                resource_id=str(attachment_id),
+                request_ctx={**before_snapshot, "delete_reason": "user"},
+            )
+        except Exception:
+            pass
+
+        return JSONResponse({"ok": True, "delete_reason": "user"})
+    finally:
+        conn.close()
+
+
+@app.post("/api/account/consents")
+async def grant_account_consent(request: Request) -> JSONResponse:
+    """D11 consent grant (own only). body: {provider, data_class, purpose}.
+
+    UNIQUE (AccountId, Provider, DataClass, Purpose) 정합 — 이미 active row 있으면
+    RevokedAt 리셋 (재동의). 없으면 INSERT.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    provider = str(data.get("provider") or "").strip().lower()
+    data_class = str(data.get("data_class") or "").strip().lower()
+    purpose = str(data.get("purpose") or "").strip().lower()
+
+    if provider not in ("openai", "anthropic", "local"):
+        return _json_error("provider 값이 잘못됐습니다 (openai/anthropic/local).", 400)
+    if data_class not in ("file_text", "file_image", "file_embedding"):
+        return _json_error("data_class 값이 잘못됐습니다 (file_text/file_image/file_embedding).", 400)
+    if purpose not in ("inference", "indexing"):
+        return _json_error("purpose 값이 잘못됐습니다 (inference/indexing).", 400)
+
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+
+        # Load existing row (audit before-snapshot 용).
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+                SELECT Id, AccountId, Provider, DataClass, Purpose, GrantedAt, RevokedAt
+                FROM WebAccountConsents
+                WHERE AccountId = %s AND Provider = %s AND DataClass = %s AND Purpose = %s
+                LIMIT 1
+                """,
+                (int(account["id"]), provider, data_class, purpose),
+            )
+            before_row = cur.fetchone()
+        finally:
+            cur.close()
+
+        cur = conn.cursor()
+        try:
+            if before_row:
+                cur.execute(
+                    """
+                    UPDATE WebAccountConsents
+                    SET GrantedAt = UTC_TIMESTAMP(6), RevokedAt = NULL
+                    WHERE Id = %s
+                    """,
+                    (int(before_row["Id"]),),
+                )
+                consent_id = int(before_row["Id"])
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO WebAccountConsents (AccountId, Provider, DataClass, Purpose)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (int(account["id"]), provider, data_class, purpose),
+                )
+                consent_id = int(cur.lastrowid or 0)
+        finally:
+            cur.close()
+
+        if not consent_id:
+            return _json_error("consent 저장 실패", 500)
+
+        try:
+            conn.commit()
+        except Exception:
+            pass
+
+        # audit dispatch.
+        try:
+            _audit_user_action(
+                conn,
+                request,
+                account,
+                action="attachment.consent.grant",
+                resource_type="consent",
+                resource_id=str(consent_id),
+                request_ctx={
+                    "id": consent_id,
+                    "provider": provider,
+                    "data_class": data_class,
+                    "purpose": purpose,
+                    "revoked_at": (
+                        before_row.get("RevokedAt").isoformat()
+                        if before_row and before_row.get("RevokedAt") and hasattr(before_row.get("RevokedAt"), "isoformat")
+                        else None
+                    ),
+                },
+            )
+        except Exception:
+            pass
+
+        return JSONResponse(
+            {
+                "id": consent_id,
+                "provider": provider,
+                "data_class": data_class,
+                "purpose": purpose,
+                "granted_at": True,
+            }
+        )
+    finally:
+        conn.close()
+
+
+@app.delete("/api/account/consents/{consent_id}")
+def revoke_account_consent(consent_id: int, request: Request) -> JSONResponse:
+    """D11 consent revoke (own only). RevokedAt 만 UPDATE — row delete 안 함
+    (history 보존)."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+
+        # Load + ownership check.
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+                SELECT Id, AccountId, Provider, DataClass, Purpose, GrantedAt, RevokedAt
+                FROM WebAccountConsents
+                WHERE Id = %s
+                LIMIT 1
+                """,
+                (int(consent_id),),
+            )
+            row = cur.fetchone()
+        finally:
+            cur.close()
+
+        if not row or int(row.get("AccountId") or 0) != int(account["id"]):
+            return _json_error("consent 를 찾을 수 없거나 본인 row 가 아닙니다.", 404)
+        if row.get("RevokedAt"):
+            return JSONResponse({"revoked_at": True, "already_revoked": True})
+
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE WebAccountConsents SET RevokedAt = UTC_TIMESTAMP(6) WHERE Id = %s AND RevokedAt IS NULL",
+                (int(consent_id),),
+            )
+            updated = int(cur.rowcount or 0)
+        finally:
+            cur.close()
+
+        if updated <= 0:
+            return _json_error("revoke 처리 실패", 409)
+
+        try:
+            conn.commit()
+        except Exception:
+            pass
+
+        # audit dispatch.
+        try:
+            _audit_user_action(
+                conn,
+                request,
+                account,
+                action="attachment.consent.revoke",
+                resource_type="consent",
+                resource_id=str(consent_id),
+                request_ctx={
+                    "id": int(consent_id),
+                    "provider": str(row.get("Provider") or ""),
+                    "data_class": str(row.get("DataClass") or ""),
+                    "purpose": str(row.get("Purpose") or ""),
+                    "granted_at": (
+                        row.get("GrantedAt").isoformat()
+                        if row.get("GrantedAt") and hasattr(row.get("GrantedAt"), "isoformat")
+                        else None
+                    ),
+                },
+            )
+        except Exception:
+            pass
+
+        return JSONResponse({"revoked_at": True})
+    finally:
+        conn.close()
 
 
 @app.get("/api/conversations")
@@ -9590,6 +10399,58 @@ def build_audit_change_json(
                 "new_conversation_id": request_ctx.get("new_conversation_id"),
             },
             ["share.token_full"],
+        )
+    # TASK-0094 Sprint 1 Phase 5 — 첨부 audit ActionCode 4 종 (D12 masking 정합).
+    # raw filename / SQL / bytes 는 절대 ChangeJson 에 포함 안 함. HMAC + size bucket
+    # + extension bucket + status 같은 categorical 메타만.
+    if action == "attachment.upload":
+        return (
+            {
+                "attachment_id": (after or {}).get("id"),
+                "conversation_id": (after or {}).get("conversation_id"),
+                "filename_hmac": (after or {}).get("filename_hmac"),
+                "extension_bucket": (after or {}).get("extension_bucket"),
+                "size_bucket": (after or {}).get("size_bucket"),
+                "kind": (after or {}).get("kind"),
+                "mime_type": (after or {}).get("mime_type"),
+                "sha256": (after or {}).get("sha256"),
+                "upload_status": (after or {}).get("upload_status"),
+            },
+            ["attachment.original_filename", "attachment.bytes"],
+        )
+    if action == "attachment.delete":
+        return (
+            {
+                "attachment_id": (before or {}).get("id"),
+                "conversation_id": (before or {}).get("conversation_id"),
+                "filename_hmac": (before or {}).get("filename_hmac"),
+                "extension_bucket": (before or {}).get("extension_bucket"),
+                "size_bucket": (before or {}).get("size_bucket"),
+                "delete_reason": (before or {}).get("delete_reason") or "user",
+            },
+            ["attachment.original_filename", "attachment.bytes"],
+        )
+    if action == "attachment.consent.grant":
+        return (
+            {
+                "consent_id": (after or {}).get("id"),
+                "provider": (after or {}).get("provider"),
+                "data_class": (after or {}).get("data_class"),
+                "purpose": (after or {}).get("purpose"),
+                "previous_revoked_at": (before or {}).get("revoked_at"),
+            },
+            [],
+        )
+    if action == "attachment.consent.revoke":
+        return (
+            {
+                "consent_id": (before or {}).get("id"),
+                "provider": (before or {}).get("provider"),
+                "data_class": (before or {}).get("data_class"),
+                "purpose": (before or {}).get("purpose"),
+                "previously_granted_at": (before or {}).get("granted_at"),
+            },
+            [],
         )
     # Unknown ActionCode — explicit raise (Codex C6 builder allowlist policy).
     raise ValueError(f"unknown audit action: {action}")
