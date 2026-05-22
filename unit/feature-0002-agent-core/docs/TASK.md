@@ -9,45 +9,47 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: M2-b dual-write 본 구현 (cycle: TASK-0020)
-- Owner: AI (본 cycle: M2-b method body + caller 5 + unit test 10) → AI (M2-c: cross-DB audit explicit + 7-day SLA + integration test fixture)
+- State: M2-c cross-DB audit + SLA tooling + invariant test (cycle: TASK-0021)
+- Owner: AI (본 cycle: M2-c cross-DB audit explicit call + audit-SLA verify body + stress.sh body + ANCHOR §3 invariant test S1/N1/N2 + outside-voice REV-20260521-0009 Critical 5 반영) → AI (M2-d: S2-S6 invariant fixture + delete/prune SLA + latency baseline production-like 측정)
 - Priority: high
-- Last Updated: 2026-05-21 (TASK-0015 PLAN-APPROVED 마커: ms.mckim.gpt@gmail.com on 2026-05-20)
+- Last Updated: 2026-05-22 (TASK-0015 PLAN-APPROVED 마커: ms.mckim.gpt@gmail.com on 2026-05-20)
 
 ## 1.1 Current Cycle
-- [ ] TASK-0020 (REQ-20260521-0002, **Major §12.3** — RBAC 동반 변경) §2.1 PLAN-APPROVED 의 **M2 phase 의 2차 (M2-b)** 실행. M2-a (TASK-0019) 의 ABC + skeleton 위에 `KbBackend` method body 12 (MysqlKbBackend 6 + PgKbBackend 6) + `_DualWriteMirror` helper (`_dual_write_kb` singleton) + caller 5 위치 mirror 호출 (utils.py:957/1179/1230 + knowledge.py:598/633) + `tests/test_dual_write_mirror.py` 10 unit test + `tests/conftest.py` sys.path 통합. ABC 보강: `prune_fact_entries_keep_top()` (knowledge.py:598 의 trim 패턴 대응). **Outside-voice review (Plan subagent, `REV-20260520-0008`) Verdict NEEDS-TWEAK + Critical 6 + Blocker 2 본 cycle 내 반영 완료**: (1) caller 4 위치 silent/fail-loud pattern 통일 (knowledge.py:677-696 dead try/except 제거 + `_prune_fact_entries_for_key` 의 광역 swallow 를 MySQL DELETE 만 cover 로 한정, mirror 호출은 외부 분리 — fail-loud raise propagate), (2) caller actual call test (Test 9 `_text_store_insert` + mock cursor + spy mirror), (3) silent log caplog verification (Test 10), (4) `tests/conftest.py` 신규 (sys.path 통합 + dual import path 제거), (5) REPORT.md §4 risk log 0번 entry (latency baseline 측정 M2-c 책임), (6) `docs/DECISIONS.md` ADR-0021 §Consequences 보강 (Cross-DB audit explicit call M2-c cycle 책임 + `WebAuditEvents` ActionCode `kb.write.mirror` + M4 cutover gate (f) 항목 PASS 필수). **본 turn 의 deliverable 은 method body + caller 5 + 10 unit test + outside-voice 반영까지**. **M2-c cycle (별 cycle)** 책임: cross-DB audit explicit call + `bin/kb-dual-write-verify.sh --audit-sla` 본문 + 7-day stress run + ANCHOR §3 invariant test fixture/assertion 실 구현 + Nice-to-have 5건 (LC_COLLATE / tsvector simple / `_BACKENDS_CACHE` thread-safe lock / psycopg autocommit docstring / MysqlKbBackend caller drift 방지).
+- [ ] TASK-0021 (REQ-20260522-0001, **Major §12.3** — RBAC 동반 변경) §2.1 PLAN-APPROVED 의 **M2 phase 의 3차 (M2-c)** 실행. M2-b (TASK-0020) 의 dual-write 위에 ADR-0021 §Consequences M2-c 책임 (Cross-DB audit explicit call + SLA 측정 도구 본문) 흡수. **본 cycle 산출 5건**: (a) `modules/kb_backend.py` 의 `_log_kb_write_audit()` 헬퍼 + `_KB_AUDIT_ACTION_MAP` + `_KB_AUDIT_SENSITIVE_KEYS` + `_build_audit_resource_id()` composite + `_DualWriteMirror._mirror()` 의 audit call 통합 + `_BACKENDS_LOCK` thread-safe double-checked locking (REV-20260520-0008 Nice-to-have), (b) `bin/kb-dual-write-verify.sh` 의 `verify_counts` / `verify_content_hash` / `verify_audit_sla` 본문 (GREATEST(created_at, updated_at) 분모 정정 + write-only audit numerator + audit over-count fail-loud), (c) `bin/kb-dual-write-stress.sh` 본문 (docker exec insight-worker + docker compose run agent), (d) `tests/test_anchor_invariant_postgres.py` 의 S1 (RagDocuments missing) + N1 (LLM call zero) 실 구현 + N2 (TRUNCATE denied) env-gated integration test (S2-S6 는 M2-d 위임), (e) outside-voice review (Plan subagent, `REV-20260521-0009`) NEEDS-TWEAK Verdict + Critical 5 본 cycle 내 반영 (B-1 SLA 분모/분자 mismatch / B-2 N1 LLM tripwire `modules.llm` 정정 / B-3 prune signature `keep_limit=` 정정 + DELETE SQL assertion / B-4 `connect_with_retry(attempts=1)` / B-5 ResourceId composite + B-6 ChangeJson 16KB 캡). **본 turn 의 deliverable 은 5 산출 + Critical 5 반영까지**. **M2-d cycle (별 cycle)** 책임: S2-S6 invariant fixture (실 DB) + delete/prune SLA 별 metric (pg_branch xmax tagging) + latency baseline production-like 측정 + Nice-to-have 8건.
 
-## 1.2 Implementation Plan (TASK-0020 — M2-b dual-write 본 구현 cycle)
+## 1.2 Implementation Plan (TASK-0021 — M2-c cross-DB audit + SLA + invariant test 본 cycle)
 
-영향 파일 (본 cycle, ABC method body + caller 5 + test):
-- `unit/feature-0002-agent-core/src/modules/kb_backend.py` (~780 LOC rewrite) — ABC + `prune_fact_entries_keep_top()` 추가 + MysqlKbBackend 6 method body + PgKbBackend 6 method body + `_DualWriteMirror` helper (~110 LOC, `_get_pg_conn()` + `_mirror()` + 6 public method) + module singleton `_dual_write_kb` + `_BACKENDS_CACHE` process-level cache + 6 Postgres SQL 템플릿 (GREATEST 패턴 적용으로 MySQL ON DUPLICATE KEY UPDATE 의미 정합).
-- `unit/feature-0002-agent-core/src/modules/utils.py` (+50 LOC) — caller 3 위치: `_text_store_insert` (line 977) + `_upsert_rag_memory_from_fact` 안의 RagDocuments (line 1223-1235) + RagObjects (line 1310-1329) mirror 호출.
-- `unit/feature-0002-agent-core/src/modules/knowledge.py` (+30 LOC, -20 LOC) — caller 2 위치: `_publish_fact` (line 670-693, dead try/except wrapper 제거) + `_prune_fact_entries_for_key` (line 596-643, MySQL DELETE 의 광역 swallow 를 한정 + mirror 호출은 외부 try block).
-- `unit/feature-0002-agent-core/tests/test_dual_write_mirror.py` (신규, ~310 LOC) — 10 unit test (no-op / silent log / fail-loud / 성공 시 connection close / ABC 정합 / cache singleton / set_text_embedding / MysqlKbBackend backward-compat / caller integration / caplog verification).
-- `unit/feature-0002-agent-core/tests/conftest.py` (신규, ~15 LOC) — sys.path 통합 + dummy env. dual import path 회피.
-- `docs/DECISIONS.md` ADR-0021 §Consequences (+1 항목) — Cross-DB audit explicit call 의 M2-c cycle 책임 명시 (Blocker 7+8).
-- `unit/feature-0002-agent-core/docs/{TASK,REVIEW,MODIFY,REPORT}.md`: cycle 등록 + outside-voice review entry + 본 cycle 산출 기록 + risk log 0번 (latency baseline M2-c 책임).
+영향 파일 (본 cycle, audit + tooling + test):
+- `unit/feature-0002-agent-core/src/modules/kb_backend.py` (+~155 LOC, 919 → ~1075 LOC) — `_log_kb_write_audit()` helper + `_KB_AUDIT_ACTION_MAP` (6 method → ActionCode/ResourceType) + `_KB_AUDIT_SENSITIVE_KEYS` (text_content/source_sql 제외) + `_build_audit_resource_id()` composite builder (REV-20260521-0009 B-5 — conv|scope|key|... 식별 정밀화) + `_DualWriteMirror._mirror()` 의 audit explicit call (성공 후 best-effort) + `_BACKENDS_LOCK` thread-safe double-checked locking (REV-20260520-0008 Nice-to-have) + `threading` import + ChangeJson 16KB 캡 (REV-20260521-0009 B-6) + `pg_op_kind` tagging (REV-20260521-0009 B-1 — write/delete/prune 분리 기반).
+- `bin/kb-dual-write-verify.sh` (+~125 LOC) — `verify_counts()` 본문 (4 테이블 pair count diff) + `verify_content_hash()` 본문 (rag_documents content_hash CONCAT identity 비교) + `verify_audit_sla()` 본문 (GREATEST(created_at, updated_at) PG denominator + write-only audit numerator + over-count fail-loud + zero-denominator INCONCLUSIVE exit 2, REV-20260521-0009 B-1/C-8 흡수).
+- `bin/kb-dual-write-stress.sh` (+~40 LOC) — `trigger_insight_cycles()` + `trigger_ask_iterations()` 실 호출 구현 (docker exec insight-worker / docker compose run --rm agent) + FAILURES counter + exit code propagation.
+- `unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py` (+~290 LOC) — S1 (RagDocuments missing) 실 구현 (FakeConn + FakeCursor SQL 캡쳐 + monkeypatch `_log_kb_write_audit` 우회) + N1 (LLM call zero) 실 구현 (`modules.llm` 의 `_get_openai_client` / `_openai_chat_completion_with_deadline` / `llm_*` prefix + `OpenAI` 모두 monkeypatch tripwire, REV-20260521-0009 B-2 흡수; prune signature `keep_limit=` 정정 + DELETE SQL assertion, REV-20260521-0009 B-3 흡수) + N2 (TRUNCATE denied) env-gated (`AGENT_KB_PG_INTEGRATION_TEST=1`) + S2-S6 skip 유지 (M2-d 위임).
+- `unit/feature-0002-agent-core/docs/{TASK,REVIEW,MODIFY,REPORT,FUNCTION}.md`: cycle 등록 + outside-voice REV-20260521-0009 entry + 본 cycle 산출 기록 + Critical 5 흡수 명시 + Nice-to-have 8 → M2-d.
 
 접근 방법:
-1. caller 5 위치 정확 파악 (utils.py:957 + 1179 + 1230 / knowledge.py:598 + 633).
-2. kb_backend.py rewrite — ABC 보강 + MysqlKbBackend / PgKbBackend method body + Postgres SQL 템플릿의 GREATEST(weight) 정합 (M2-a 의 EXCLUDED.weight 단순 덮어쓰기에서 수정) + `_DualWriteMirror` helper + `_BACKENDS_CACHE` cache.
-3. Caller 5 위치 수정 — MySQL cursor.execute 직후 `_dual_write_kb.upsert_*(...)` 호출. partial failure 격리는 `_dual_write_kb._mirror()` 내부에서 처리.
-4. test_dual_write_mirror.py 작성 — monkeypatch 패턴, 실 DB 없이 작동. 10 unit test cover.
-5. Outside-voice review (Plan subagent) 호출. NEEDS-TWEAK Verdict + Critical 6 + Blocker 2 본 cycle 내 반영.
-6. **Critical 1+2+3 (caller pattern 통일)**: knowledge.py:677-696 의 dead try/except 제거. `_prune_fact_entries_for_key` 의 광역 swallow 를 MySQL DELETE 만 cover 로 분리 + mirror 호출은 외부 — fail-loud raise propagate 명시.
-7. **Critical 5+6 (test isolation + actual call test)**: conftest.py 신규 + Test 9 (caller integration) + Test 10 (caplog).
-8. **Critical 4 (latency baseline)**: REPORT.md §4 risk log 0번 entry 추가 (M2-c 측정 책임).
-9. **Blocker 7+8 (ADR-0021 보강)**: §Consequences 의 Cross-DB audit cycle 책임 명시 (M2-c 의 ActionCode `kb.write.mirror` INSERT + SLA 측정 도구 본문).
+1. WebAuditEvents schema 파악 (Id/ActorAccountId/ActorRoleId/ActorType='system'/TargetAccountId/SessionId/ActionCode/ResourceType/ResourceId/ChangeJson/MaskedFields/RemoteAddr/UserAgent/RequestId/OccurredAt).
+2. kb_backend.py 에 `_log_kb_write_audit()` 추가 — connect_with_retry(database=MEMORY_DB, autocommit=True, attempts=1, REV-20260521-0009 B-4) + ActorType='system' INSERT + ChangeJson 직렬화 (sensitive 제외) + 16KB 캡 + composite ResourceId.
+3. `_DualWriteMirror._mirror()` 에 audit explicit call 통합 — mirror 성공 후 try/except 안에서 silent log 패턴.
+4. `bin/kb-dual-write-verify.sh` 의 3 함수 본문 — counts/content-hash/audit-sla.
+5. `bin/kb-dual-write-stress.sh` 본문 — docker exec + docker compose run + FAILURES counter.
+6. `tests/test_anchor_invariant_postgres.py` 의 S1 + N1 + N2 실 구현.
+7. Outside-voice review (Plan subagent, REV-20260521-0009) 호출. NEEDS-TWEAK Verdict + Critical 5 본 cycle 내 반영:
+   - **B-1**: verify_audit_sla() 분모 GREATEST(created_at, updated_at) + write-only numerator + over-count fail-loud + zero-denom INCONCLUSIVE
+   - **B-2**: N1 LLM tripwire 를 `modules.llm` 의 entry point (`_get_openai_client` / `_openai_chat_completion_with_deadline` / `llm_*` / `OpenAI`) 로 정정 + smoke assertion (적어도 1 patch 설치)
+   - **B-3**: prune `keep_limit=` 정정 + 6 method SQL 발행 assertion
+   - **B-4**: `connect_with_retry(attempts=1)` — best-effort
+   - **B-5**: ResourceId composite (conv|scope|fact_key|... 정확 식별)
+   - **B-6**: ChangeJson 16KB 캡
 
-**Runtime 검증 deferral (M2-c 별 cycle 의 사용자 책임)**:
+**Runtime 검증 deferral (M2-d 별 cycle 의 사용자 책임)**:
 1. main worktree `git pull --ff-only`
-2. `.env` 의 `AGENT_KB_PG_REQUIRED=1` + `KB_DUAL_WRITE_START_TS=<ISO>` 명시
-3. `make start` 재기동 → `_ensure_pg_schema()` 자동 호출 + `grants_present` 검증
-4. M2-c cycle 진입: cross-DB audit explicit call (`WebAuditEvents` ActionCode `kb.write.mirror` INSERT) + `bin/kb-dual-write-verify.sh --audit-sla` 본문 구현 + 7-day stress run
-5. ANCHOR §3 invariant test 의 fixture/assertion 실 구현 (test_anchor_invariant_postgres.py 의 6 시나리오 + 2 negative)
-6. `bin/kb-dual-write-stress.sh` synthetic load 실 실행 + miss_rate ≤ 0.1% target 검증
+2. `.env` 의 `AGENT_KB_PG_REQUIRED=1` 활성 환경
+3. `bin/kb-dual-write-stress.sh --insight-cycles 3 --ask-iterations 5` 실 실행
+4. `bin/kb-dual-write-verify.sh audit-sla --since <ISO>` → miss_ppm ≤ 1000 검증
+5. S2-S6 invariant fixture 실 구현 (실 Postgres + insight worker 통합)
+6. Latency baseline production-like 측정 (REPORT.md §4 risk log 0번 entry)
 
-위험도: **Major (§12.3 — RBAC 동반 변경)**. PLAN-APPROVED 범위 + 사용자 "이어서 진행" 명시 + outside-voice review 필수 (메모리 정책 정합).
+위험도: **Major (§12.3 — RBAC 동반 변경)**. PLAN-APPROVED 범위 + 사용자 "다음 Phase도 진행" 명시 + outside-voice review 호출 + Critical 5 본 cycle 흡수.
 
 ## 1.3 Implementation Plan (TASK-0019 — M2-a dual-write 준비, done — 보존, summary)
 

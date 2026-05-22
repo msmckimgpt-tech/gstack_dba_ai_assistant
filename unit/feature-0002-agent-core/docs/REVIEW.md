@@ -8,6 +8,31 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260521-0009 [SUBAGENT:Plan-subagent — M2-c cross-DB audit + SLA + invariant test]
+- Date: 2026-05-22
+- TASK-Cycle: TASK-0021 (M2-c cross-DB audit explicit call + SLA verify body + stress.sh body + ANCHOR §3 invariant test S1/N1/N2, **Major §12.3** — RBAC 동반)
+- Outside-voice channel: Plan subagent. 사용자 메모리 `feedback_outside_voice_for_rbac.md` 정합 (audit ActionCode 신설 + agent_kb_rw role check N2). M2-b (`REV-20260520-0008`) 의 follow-up — ADR-0021 §Consequences M2-c 책임 5건 산출 검증.
+- Verdict: **NEEDS-TWEAK** → **PASS 전환** (5 Critical 본 cycle 내 반영). 구조적 shape 정상 (`_log_kb_write_audit()` 위치, audit SLA 함수 분기, S1/N1 mock 패턴, thread-safe lock). 단 (1) audit SLA 분모/분자 mismatch (UPSERT-update branch + delete/prune 행이 numerator 에는 들어가나 denominator 에서는 빠짐, 음수 ppm silent PASS) + (2) N1 LLM tripwire 가 존재하지 않는 `modules.llm_api` 패치 시도 (실 모듈은 `modules.llm`) + (3) prune signature `keep_top=` vs 실제 `keep_limit=` (silent swallow) + (4) `_log_kb_write_audit()` 매 호출 MySQL connect 무제한 retry + (5) ResourceId 가 단일 `fact_key`/`object_key` 평탄화 (conv|scope joinability 손실) + (6) ChangeJson 16KB 미캡 → 본 cycle 내 5 Critical 흡수 완료.
+- Section A (Summary): 4 산출 (kb_backend.py audit / verify.sh / stress.sh / invariant test) 정상 작성. 구조적으로 ADR-0021 §Consequences M2-c 책임 5건을 cover. 단 metric 정확성과 test 실효성에 critical 결함 다수 → 본 cycle 내 흡수.
+- Section B (Critical findings — 본 cycle 내 반영 완료):
+  - **B-1 (Critical)**: `verify_audit_sla()` 분모/분자 mismatch. PG `created_at >= since` 만 사용 → UPSERT-update branch 제외 + audit 행은 모든 mirror 호출 카운트 → audit > pg → 음수 ppm silent PASS. **반영**: `GREATEST(created_at, updated_at) >= since` (texts 는 INSERT ON CONFLICT DO NOTHING 이라 created_at 만) + audit numerator 를 `kb.write.mirror` only 로 한정 (delete/prune 제외, M2-d 별 metric) + `audit > 2 × pg` 시 fail-loud + zero-denom INCONCLUSIVE exit 2 + ChangeJson 에 `pg_op_kind` 태깅 (write/delete/prune) — 후속 cycle 의 metric 분리 기반. methodology limitation (same row N-times update 노이즈) 명시.
+  - **B-2 (Critical)**: N1 LLM tripwire 가 `modules.llm_api` monkeypatch 시도 — 실 모듈은 `modules.llm`. `from openai import OpenAI` binding 후라 `openai.OpenAI` patch 도 무효. **반영**: `modules.llm._get_openai_client` / `_openai_chat_completion_with_deadline` / `llm_*` prefix 모든 함수 + `modules.llm.OpenAI` 직접 patch. smoke assertion (1 patch 라도 미설치 시 즉시 fail).
+  - **B-3 (Critical)**: N1 prune 호출 `keep_top=10` 이 PgKbBackend `keep_limit=` 와 mismatch → `_mirror()` silent swallow → prune path 미실행. **반영**: signature 정정 (`conversation_id=None, scope_key="common", fact_key="k", keep_limit=10`) + 6 method SQL (`delete from fact_entries` / `rag_documents` / `rag_objects` / `fact_entries` / `texts`) 모두 captured 에 발행됐는지 assertion.
+  - **B-4 (Critical)**: `_log_kb_write_audit()` 매 호출 `connect_with_retry()` 기본 `AGENT_DB_CONNECT_RETRIES` backoff → MySQL 일시 장애 시 caller block. **반영**: `attempts=1` — best-effort, silent log + SLA 가 miss count.
+  - **B-5 (Critical)**: ResourceId 단일 `fact_key`/`object_key` 평탄화 → conv|scope joinability 손실. **반영**: `_build_audit_resource_id()` composite builder 신설 — `conv|scope|key|...` `|` 구분 string 64 char cap. None 은 `-` placeholder. 6 method 각 layout (text_hash[:64] / conv|scope|fact_key / conv|scope|fact_key|content_hash[:12] / conv|scope|object_type|object_key / conv|scope|fact_key|keep_limit).
+  - **B-6 (Critical)**: ChangeJson 길이 제한 없음 → `max_allowed_packet` 또는 column length 초과 시 silent loss. **반영**: 16KB 캡 — 초과 시 `_truncated`, `_original_len`, `mirror_method`, `resource_id` metadata 만.
+- Section C (Nice-to-have findings — M2-d 위임):
+  - C-1: N2 env var `AGENT_KB_PG_INTEGRATION_TEST` README/playbook 미문서화.
+  - C-2: stress.sh 25-iteration container churn — `docker exec` 재사용 옵션.
+  - C-3: FAILURES counter step 별 미식별 — per-step log file.
+  - C-4: verify.sh SINCE SQL injection escape (operator-driven, low risk).
+  - C-5: S1/N1 의 `_BACKENDS_CACHE` reset finalize 누락 (test ordering risk).
+  - C-6: `_PG_PRUNE_FACT_ENTRIES` 의 correlated IN 성능.
+  - C-7: verify.sh `2>/dev/null` connection error suppress — debugging 저해.
+  - C-8: zero-denominator PASS → 본 cycle 에서 INCONCLUSIVE exit 2 로 흡수.
+- Section D (Verdict): NEEDS-TWEAK → **PASS 전환** — 5 Critical 본 cycle 내 흡수 + 1 Critical (B-6) 동반 흡수 (총 6 Critical). Nice-to-have 8건 M2-d 위임.
+- Decision authority: 본 cycle 의 5 산출 + Critical 6 반영은 §2.1 PLAN-APPROVED 마커 범위 (Major §12.3 — RBAC 동반 변경). 사용자 메시지 "다음 Phase도 진행해주세요" + "(1) 방향으로 진행" 명시 승인.
+
 ## REV-20260520-0008 [SUBAGENT:Plan-subagent — M2-b dual-write 본 구현]
 - Date: 2026-05-21
 - TASK-Cycle: TASK-0020 (M2-b dual-write 본 구현, **Major §12.3** — RBAC 동반)
