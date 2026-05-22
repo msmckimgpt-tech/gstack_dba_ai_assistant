@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260522-0008 [SKIPPED:frontend-only]
+- Related TASK: TASK-0105 (REQ-20260522-0008, **Minor** §12.3 — Profile Drawer '내 감사 로그' 탭 일반 사용자 비노출)
+- Reason: 사용자 직접 요청에 의한 UI 요소 제거 (탭 버튼 + 패널 + JS + CSS). backend endpoint (`/api/profile/audits`) / RBAC catalog / DB schema / 암호화 알고리즘 무변경. AGENTS.md §18.8 trigger 분석: UI/button 시그널 있으나 기존 탭 UI 를 **제거** 하는 것이며 보안 표면을 줄이는 방향 — 새 기능 구현 아님. audit endpoint 자체는 backend 에 보존되어 있으므로 향후 정책 변경 시 재노출 가능. node --check + py_compile PASS 확인. SKIPPED 정당화: frontend-only 삭제 + Minor §12.3 등급 + 보안 모델 변경 없음.
+- Timestamp: 2026-05-22T06:00:00Z
+
 ## REV-20260522-0007 [SKIPPED:non-policy-doc]
 - Related TASK: TASK-0104 (REQ-20260522-0007, **Major** §12.3 — 외부 노출 web 컨테이너 HTTPS 종단 활성화)
 - Reason: TASK-0103 의 secure-context guard 의 근본 해결책 — same-port 18080 에서 HTTPS 종단을 활성화. **infra only** (compose entrypoint 변경 + override template 주석 갱신) — backend / RBAC catalog / DB schema / endpoint contract / Frontend 코드 / 암호화 알고리즘 모두 무변경. 기존 self-signed 인증서가 SAN 에 외부 IP `112.185.196.20` 을 이미 포함하므로 인증서 발급/회전 작업 없음. AGENTS.md §18.8 trigger 분석: (1) "auth/credential" 키워드 — security subagent 후보. 본 변경은 secure channel **활성화** (방향: 보안 강화), TLS 종단 자체는 base `docker-compose.yml` 에 이미 작성되어 있던 분기를 dev override 가 막고 있던 구조를 정상화. 추가 attack surface 없음 — 평문 18080 이 끊긴 것은 secure-context guard 의 정상 동작과 정렬. (2) "deploy/infra" 신호 — devex/qa 후보이나 변경 범위가 1 개 entrypoint 라인 + `.example` 주석에 한정, 운영 영향은 외부 사용자가 `https://` 로 접근하는 것 + 첫 접속에서 self-signed 경고 우회 (사전 안내 필요) 두 가지뿐. SKIPPED 정당화: 변경 surface 가 단일 entrypoint string + `.example` 문서화에 한정, 검증은 `curl -sk https://` HTTP 200 + 컨테이너 로그 `https://0.0.0.0:8000` 으로 직접 확인 완료, 보안 algorithm / 인증서 / RBAC 모두 무변경 — 외부 voice 게이트 trigger 미해당. 후속 cycle 로 분리: (a) Caddy 기반 production 운영 시 LE 인증서 자동 회전 runbook 정비, (b) 클라이언트 측 cross-tab `state.apiVaultOptions` caching (TASK-0103 의 후속 항목), (c) 외부 사용자에게 self-signed 경고 우회 안내 페이지 — 본 cycle 은 즉시 가시성 회복에 한정.
