@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260522-composer-model-selector" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260522-task-0107-attachment" />
 </head>
 <body>
 
@@ -121,7 +121,19 @@
         </header>
 
       <!-- Chat Pane -->
-      <div class="chat-pane">
+      <div class="chat-pane" id="chatPane">
+
+        <!-- TASK-0107: chat-pane 전체 drag&drop overlay. dragenter 시 표면화. -->
+        <div class="chat-drop-overlay hidden" id="chatDropOverlay" aria-hidden="true">
+          <div class="chat-drop-overlay-card">
+            <svg width="56" height="56" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 16V4m0 0l-4 4m4-4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"
+                    stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <strong>여기에 파일을 놓으세요</strong>
+            <span>CSV / XLSX / PDF / 이미지 / 텍스트 (한 번에 한 파일)</span>
+          </div>
+        </div>
 
         <!-- Access Notice -->
         <div class="access-notice hidden" id="accessNotice"></div>
@@ -431,6 +443,6 @@
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260522-composer-model-selector"></script>
+  <script src="/static/app.js?v=20260522-task-0107-attachment"></script>
 </body>
 </html>

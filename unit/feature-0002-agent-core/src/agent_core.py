@@ -169,10 +169,14 @@ def _load_attachment_inline_images() -> list[dict[str, Any]]:
 
 
 def _build_attachment_context_section(mem_conn, attachment_ids: list[int]) -> str:
-    """TASK-0094 Sprint 1 Phase 11 — selected attachment metadata 를 prompt context 에 주입.
+    """TASK-0094 Sprint 1 Phase 11 + TASK-0107 Phase B — selected attachment metadata
+    + sandbox schema/table 명 + 각 table 의 column schema + head 5 sample rows
+    를 prompt 에 주입한다.
 
-    Cycle 1 (Phase 11) 시점은 CSV/XLSX metadata 만 (sandbox table 명 + sheet/row counts).
-    Cycle 2 vision / Cycle 3 KB / Cycle 4 RAG 진입 시 본 helper 가 kind 별로 확장.
+    LLM 이 첨부 파일을 분석할 때:
+      1. ATTACHED FILES 섹션의 sandbox_schema_name + sandbox tables 를 본다
+      2. SAMPLE ROWS 로 데이터 형태를 파악한다
+      3. 필요 시 execute_sql 로 sandbox schema 의 table 을 SELECT 해 추가 분석
 
     D16 정합: attachment_ids 가 빈 list 면 본 section 미주입 (minimum exposure).
     """
@@ -204,34 +208,130 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int]) -> st
             pass
     if not rows:
         return ""
-    lines = ["", "## ATTACHED FILES (User-selected, available for analysis)"]
+
+    import json as _json
+
+    lines = ["", "## ATTACHED FILES (User-selected — analyze using sandbox tables)"]
+    sandbox_table_specs: list[tuple[str, str, str]] = []  # (schema, table, source_label)
     for row in rows:
         attachment_id = int(row[0] or 0)
         kind = str(row[3] or "")
         filename = str(row[2] or "")
         size_bucket = str(row[6] or "")
         upload_status = str(row[7] or "")
-        meta_text = ""
+        meta_obj: dict = {}
         try:
-            import json as _json
-            meta = row[8]
-            if isinstance(meta, str):
-                meta = _json.loads(meta)
-            if isinstance(meta, dict):
-                if meta.get("sandbox_table_name"):
-                    meta_text += f" sandbox_table=`{meta['sandbox_table_name']}`"
-                if meta.get("ingest_summary"):
-                    meta_text += f" summary={meta['ingest_summary']}"
-                if meta.get("degraded_reason"):
-                    meta_text += f" [DEGRADED: {meta['degraded_reason']}]"
+            meta_raw = row[8]
+            if isinstance(meta_raw, str):
+                meta_obj = _json.loads(meta_raw) or {}
+            elif isinstance(meta_raw, dict):
+                meta_obj = meta_raw
         except Exception:
-            pass
+            meta_obj = {}
+
+        meta_text = ""
+        sandbox_schema = str(meta_obj.get("sandbox_schema_name") or "").strip()
+
+        if kind == "csv":
+            sandbox_table = str(meta_obj.get("sandbox_table_name") or "").strip()
+            rows_inserted = int(meta_obj.get("rows_inserted") or 0)
+            if sandbox_schema and sandbox_table:
+                meta_text += f" rows={rows_inserted} sandbox=`{sandbox_schema}`.`{sandbox_table}`"
+                sandbox_table_specs.append((sandbox_schema, sandbox_table, f"attachment_id={attachment_id} (csv)"))
+        elif kind == "xlsx":
+            sheets = meta_obj.get("sheets") or []
+            if isinstance(sheets, list) and sandbox_schema:
+                sheet_summaries = []
+                for sh in sheets:
+                    if not isinstance(sh, dict):
+                        continue
+                    sh_name = str(sh.get("name") or "")
+                    sh_table = str(sh.get("table_name") or "")
+                    sh_rows = int(sh.get("rows") or 0)
+                    if sh_table:
+                        sheet_summaries.append(f"sheet=`{sh_name}` table=`{sandbox_schema}`.`{sh_table}` rows={sh_rows}")
+                        sandbox_table_specs.append(
+                            (sandbox_schema, sh_table, f"attachment_id={attachment_id} sheet={sh_name}")
+                        )
+                if sheet_summaries:
+                    meta_text += " " + "; ".join(sheet_summaries)
+
+        if meta_obj.get("degraded_reason"):
+            meta_text += f" [DEGRADED: {meta_obj['degraded_reason']}]"
+
         lines.append(
             f"- attachment_id={attachment_id} kind={kind} file={filename} size={size_bucket} status={upload_status}{meta_text}"
         )
-    lines.append(
-        "Use the sandbox tables for analysis. The actual file body is NOT included — refer by attachment_id when calling tools.\n"
-    )
+
+    # 각 sandbox table 의 column schema + head 5 sample rows.
+    # D16 정합: 사용자가 명시 첨부한 파일에 한정 — 다른 대화의 sandbox 접근 차단은
+    # attachment_ids → ConversationId 검증이 caller (app.py) 에서 이미 완료.
+    if sandbox_table_specs:
+        lines.append("")
+        lines.append("## SANDBOX SCHEMA & SAMPLE ROWS (head 5 per table)")
+        for schema, table, source_label in sandbox_table_specs[:20]:  # cap 20 tables
+            lines.append("")
+            lines.append(f"### `{schema}`.`{table}` — {source_label}")
+            try:
+                col_cur = mem_conn.cursor()
+                col_cur.execute(
+                    "SELECT COLUMN_NAME, COLUMN_TYPE FROM information_schema.columns "
+                    "WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s ORDER BY ORDINAL_POSITION",
+                    (schema, table),
+                )
+                col_rows = col_cur.fetchall() or []
+                col_cur.close()
+            except Exception:
+                col_rows = []
+            if col_rows:
+                col_descs = [f"`{c[0]}` {c[1]}" for c in col_rows]
+                lines.append(f"columns: {', '.join(col_descs)}")
+            else:
+                lines.append("(columns unavailable — sandbox table may not exist yet; check UploadStatus.)")
+                continue
+
+            try:
+                sample_cur = mem_conn.cursor()
+                sample_cur.execute(f"SELECT * FROM `{schema}`.`{table}` LIMIT 5")
+                sample_rows = sample_cur.fetchall() or []
+                sample_cur.close()
+            except Exception:
+                sample_rows = []
+            if sample_rows:
+                col_names = [c[0] for c in col_rows]
+                lines.append(f"sample (first {len(sample_rows)} rows):")
+                # markdown-ish table: header
+                lines.append("| " + " | ".join(col_names) + " |")
+                lines.append("|" + "|".join(["---"] * len(col_names)) + "|")
+                for sr in sample_rows:
+                    cells = []
+                    for v in sr:
+                        s_v = "" if v is None else str(v)
+                        # truncate per-cell to keep prompt size bounded
+                        if len(s_v) > 80:
+                            s_v = s_v[:77] + "..."
+                        # escape pipe
+                        s_v = s_v.replace("|", "\\|").replace("\n", " ")
+                        cells.append(s_v)
+                    lines.append("| " + " | ".join(cells) + " |")
+            else:
+                lines.append("(table empty — possibly ingest still in progress.)")
+
+        lines.append("")
+        lines.append(
+            "**INSTRUCTION**: When the user asks about an attached file's contents, "
+            "first try to answer from the sample rows above. If more data is needed, "
+            "call `execute_sql` against the sandbox table (e.g. "
+            "`SELECT COUNT(*) FROM \\`<schema>\\`.\\`<table>\\``). "
+            "Do NOT ask the user to paste the file contents — the data is already accessible."
+        )
+    else:
+        lines.append(
+            "(Sandbox tables not yet available — UploadStatus may be 'uploaded' (ingest pending) "
+            "or 'failed'. If failed, inform the user briefly.)"
+        )
+
+    lines.append("")
     return "\n".join(lines)
 
 

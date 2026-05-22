@@ -31,7 +31,19 @@ def connect(database: str | None = None, autocommit: bool = True):
     # 복제 DB (TASK-0044): REPLICA_DB_HOST 가 설정되어 있고 요청된 database 가
     # memory DB(agent_memory) 가 아닌 경우(= data-plane 쿼리) 복제 인스턴스로 라우팅.
     # memory DB 연결은 항상 primary 로 유지된다 (대화·세션·권한 정본은 primary).
-    use_replica = bool(REPLICA_DB_ENABLED) and (database is not None) and (str(database) != str(MEMORY_DB))
+    #
+    # TASK-0107: sandbox schema (agent_attachment_<sha256[:32]>) 도 primary 유지.
+    # sandbox 는 사용자 첨부 ingest 로 primary 에 동적 생성되며 replica 복제 latency
+    # 또는 미복제 환경에서도 즉시 SELECT 가능해야 한다. memory DB 와 같은 DB user
+    # 로 접근하므로 별 grant 추가 불필요 (단일-user MVP).
+    db_str = str(database) if database is not None else ""
+    is_sandbox = db_str.startswith("agent_attachment_")
+    use_replica = (
+        bool(REPLICA_DB_ENABLED)
+        and (database is not None)
+        and db_str != str(MEMORY_DB)
+        and not is_sandbox
+    )
     if use_replica:
         host, port, user, password = REPLICA_DB_HOST, REPLICA_DB_PORT, REPLICA_DB_USER, REPLICA_DB_PASSWORD
     else:
