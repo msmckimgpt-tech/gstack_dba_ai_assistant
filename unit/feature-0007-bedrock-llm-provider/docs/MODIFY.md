@@ -307,3 +307,78 @@ source_of_truth: true
   - `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS.
   - codex 의 6 blindspot 중 5 가 직접 보강, 1 (reasoning content) 은 baseline
     code 가 이미 처리 — 별 코드 변경 X.
+
+## CHG-20260522-0005
+- Date: 2026-05-22
+- Related Requirement: REQ-20260521-0001~3 (env_file scoping refactor — codex
+  blindspot #1 + SUBAGENT NT #1 의 최종 해결)
+- Summary: feature-0007 의 follow-up cycle. codex blindspot #1 (docker-compose
+  의 env_file inheritance 가 AWS_* / 다른 secret 을 모든 컨테이너에 노출) 의
+  최종 refactor. secret 영역별 5 `.env.*` 파일 분리 + docker-compose service 별
+  env_file list 가 자기에게 필요한 secret 만 inherit (least privilege).
+- Files:
+  - 신규: `.env.bedrock.example` (committed, placeholder) — `AWS_ACCESS_KEY_ID`,
+    `AWS_SECRET_ACCESS_KEY` (bedrock-gateway 전용).
+  - 신규: `.env.mysql.example` — `MYSQL_ROOT_PASSWORD`, `DB_PASSWORD`,
+    `REPLICA_DB_PASSWORD`.
+  - 신규: `.env.postgres.example` — `AGENT_KB_PG_PASSWORD`, role 별 password.
+  - 신규: `.env.minio.example` — `MINIO_ROOT_PASSWORD`, `MINIO_APP_ACCESS_KEY`,
+    `MINIO_APP_SECRET_KEY`.
+  - 신규: `.env.llm.example` — `LOCAL_LLM_API_KEY`, `BEDROCK_GATEWAY_API_KEY`.
+  - 수정: `.gitignore` — `.env.bedrock` / `.env.mysql` / `.env.postgres` /
+    `.env.minio` / `.env.llm` 5 패턴 추가.
+  - 수정: `.env.example` — 헤더에 secret 영역별 분리 정책 + 운영자 마이그레이션
+    가이드. 본 파일에서 14 secret 행 (MYSQL_ROOT_PASSWORD / DB_PASSWORD /
+    REPLICA_DB_PASSWORD / AGENT_KB_PG_PASSWORD / AGENT_KB_PG_RW_PASSWORD /
+    AGENT_KB_PG_RO_PASSWORD / MINIO_ROOT_PASSWORD / MINIO_APP_ACCESS_KEY /
+    MINIO_APP_SECRET_KEY / OPENAI_API_KEY / LOCAL_LLM_API_KEY / BEDROCK_GATEWAY_API_KEY
+    / AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) 제거. 본 파일 = 비-secret + URL
+    + tuning + port.
+  - 수정: `docker-compose.yml` — 6 service 의 `env_file` 갱신:
+    - `x-agent-common` (agent / web / insight-worker / memory-init): `[.env,
+      .env.mysql, .env.postgres, .env.minio, .env.llm]`
+    - `mysql`: `[.env, .env.mysql]`
+    - `postgres`: `[.env, .env.postgres]`
+    - `minio` + `minio-init`: `[.env, .env.minio]`
+    - `mcp`: `[.env, .env.mysql]` (DBHUB_DSN 의 DB_PASSWORD 치환).
+    - `bedrock-gateway`: `[.env, .env.bedrock, .env.llm]`
+    - `caddy` / `browser`: `[.env]` 그대로.
+- Impact:
+  - **least privilege 강제**: bedrock-gateway 만 AWS_* 노출. 다른 11 service 의
+    process env 에 AWS_* 부재. SECURITY.md §6.1 의 정책과 실 구성 완전 일치.
+  - **secret rotation 분리**: 각 영역별 (AWS / MySQL / Postgres / MinIO / LLM)
+    rotation cycle 독립. 한 영역 rotation 이 다른 영역 영향 없음.
+  - **운영 부담 1 회 ↑**: 운영자가 기존 .env 의 secret 행을 5 새 파일로 옮기는
+    1 회 마이그레이션 필요. .env.example 헤더에 가이드.
+- Rollback Notes:
+  - 단일 .env 로 회귀 시 docker-compose service 의 `env_file` list 를 `[.env]`
+    로 되돌리고 .env 에 secret 행 복원. 본 cycle 의 git revert 가능.
+- Verification:
+  - YAML schema: docker-compose 의 12 service 모두 정상. agent / bedrock-gateway
+    / mysql / minio env_file list 확인.
+  - `python3 -m py_compile config.py` PASS.
+
+## CHG-20260522-0006
+- Date: 2026-05-22
+- Related Requirement: REQ-20260521-0001~3 (OpenAI API Key 폐기, 사용자 결정
+  2026-05-22)
+- Summary: 사용자 결정 (2026-05-22) — OpenAI API Key 미사용. `_select_llm_provider()`
+  의 OpenAI direct fallback 분기 제거. LLM 호출 entry 는 Bedrock gateway 또는
+  Local LLM gateway 만.
+- Files:
+  - 수정: `unit/feature-0002-agent-core/src/modules/config.py` —
+    `_select_llm_provider()` 의 분기 3 (OpenAI direct: `OPENAI_API_KEY` 만 설정
+    시 fallback) 제거. docstring 갱신.
+  - 수정: `.env.llm.example` — `OPENAI_API_KEY=` 행 제거 + 안내 명시 (OpenAI
+    미사용).
+  - 수정: `.env.example` — LLM provider 우선순위 안내 3 → 2 옵션.
+- Impact:
+  - **OpenAI 미사용**: backend 가 OpenAI cloud direct 호출 안 함. Bedrock
+    gateway / Local LLM gateway 만 사용.
+  - **backward-compat**: 운영 .env 의 잔존 `OPENAI_API_KEY` 값은 silent ignore.
+    config.py 의 import 는 유지하여 코드 NameError 회피.
+  - **운영 안내**: 운영자가 `OPENAI_API_KEY` env 를 명시 정리 권장.
+- Rollback Notes:
+  - `_select_llm_provider()` 의 분기 3 복원으로 회귀 가능. 단 사용자 결정 위반.
+- Verification:
+  - `python3 -m py_compile config.py` PASS.

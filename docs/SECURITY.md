@@ -58,20 +58,30 @@ ai_read_priority: 4
 
 - LLM 호출 자격증명은 **서비스 단일 env** (`BEDROCK_GATEWAY_API_KEY`) 가
   보유한다. 사용자별 키 입력 (구 API Vault wizard) 패턴은 폐기됨.
-- **env_file scoping 의 실제 동작 (CHG-0004 reanchor, codex blindspot #1)**:
-  AWS Bedrock IAM credential (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`)
-  은 `bedrock-gateway` 컨테이너가 직접 소비한다. 단 본 cycle 의 `docker-compose.
-  yml` 은 `x-agent-common` 의 `env_file: - .env` 를 통해 `web` / `agent` /
-  `memory-init` / `insight-worker` 컨테이너에도 동일 `.env` 가 inherit 되므로
-  **process env 로는 AWS_* 값이 노출된다**. 단:
-  - 본 컨테이너들의 application code (Python) 는 AWS_* env 를 직접 참조하지
-    않음 — backend 는 `LLM_API_KEY` / `LLM_BASE_URL` (BEDROCK_GATEWAY_* paired
-    chain) 만 인지.
-  - 사내 운영 + AWS credential 이 root-level shared secret 인 가정 하에 isolation
-    가치 낮음.
-  - 엄격 isolation 이 필요해지면 docker-compose 의 `environment:` 명시 화이트
-    리스트 refactor 로 bedrock-gateway 만 AWS_* 노출 + 다른 컨테이너는 명시
-    배제 (별 cycle).
+- **env_file scoping 정책 (CHG-20260522-0005, feature-0007 follow-up — codex
+  blindspot #1 의 최종 해결)**: secret 영역별 `.env.*` 파일 분리. docker-compose
+  service 가 자기에게 필요한 secret 파일만 inherit — **least privilege 강제**:
+  - `.env`: 비-secret 영역 (port / tuning / public host) — 모든 service inherit.
+  - `.env.bedrock` (gitignored): `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` —
+    **`bedrock-gateway` service 만** inherit. backend / web / agent /
+    insight-worker / mysql / postgres / minio / browser / mcp / caddy 미노출.
+  - `.env.mysql` (gitignored): `MYSQL_ROOT_PASSWORD` / `DB_PASSWORD` /
+    `REPLICA_DB_PASSWORD` — `mysql` + DB 호출 service (web / agent /
+    insight-worker / memory-init / mcp) inherit.
+  - `.env.postgres` (gitignored): `AGENT_KB_PG_PASSWORD` / role 별 password —
+    `postgres` + KB-using service inherit.
+  - `.env.minio` (gitignored): `MINIO_ROOT_PASSWORD` / `MINIO_APP_*` — `minio` +
+    `minio-init` + 첨부 read/write service inherit.
+  - `.env.llm` (gitignored): `LOCAL_LLM_API_KEY` / `BEDROCK_GATEWAY_API_KEY` —
+    LLM 호출 service (web / agent / insight-worker / memory-init / bedrock-gateway)
+    inherit.
+  각 `.env.*.example` (committed) 는 placeholder 만 보유. 운영자가 사내 시크릿
+  관리자 (vault, sealed-secrets, AWS Secrets Manager 등) 에서 발급 후 채운다.
+- **`OPENAI_API_KEY` 폐기 (CHG-20260522-0006, 사용자 결정 2026-05-22)**: OpenAI
+  direct fallback 제거. `_select_llm_provider()` 의 분기 3 (OpenAI direct)
+  삭제. 운영 .env 의 잔존 값은 silent ignore (backward-compat — config.py 의
+  import 는 유지하나 분기 외). LLM 호출 entry 는 Bedrock gateway 또는 Local
+  LLM gateway 만 허용.
 - IAM role 권한은 `bedrock:InvokeModel` 최소 권한 + 모델 access 명시 (Claude
   Sonnet 4.x / Haiku 4.x). `AmazonBedrockFullAccess` 는 권장 안 함.
 - region 은 `ap-northeast-2` (Seoul) — `aws_region_name` 설정. 단 ACTIVE

@@ -448,3 +448,23 @@ ai_read_priority: 9
   - **PGVector prod 단계 = 별 instance** — D10 prod 단계 PLAN gate. backup / restore / migration restart 의 운영 경계가 컨테이너 단위라 같은 장애 도메인 묶음은 dev-only.
 - Alternatives considered: Sprint 4 의 D RAG 가 ADR-0024 의 `agent_drag` namespace 와 통합 가능하다면 본 ADR 의 attachment-specific schema 는 별 cycle 의 schema migration 로 흡수 가능. Sprint 4 cycle 의 ship 조건에 본 ADR 의 가정 검증 항목 명시.
 - Outside-voice rationale: BRIEFING REV-20260520-0001 Codex Claim #17 (PGVector dev / prod 운영 경계) 흡수. 본 ADR 은 D10 의 단계적 정책을 사전 선언 — Sprint 4 cycle 의 PLAN gate 가 prod 별 instance 결정의 final lock-in.
+
+### 2026-05-22 env_file scoping + OpenAI API Key 폐기 (ADR-0026 addendum)
+
+feature-0007 의 follow-up cycle (CHG-20260522-0005 / CHG-20260522-0006) 결과
+ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-compose 의
+실 구성으로 강제:
+
+1. **Secret 영역별 .env 분리** (CHG-0005, 사용자 결정 2026-05-22 — 모든 secret
+   영역 분리): `.env.bedrock` (AWS_*) / `.env.mysql` (MYSQL/DB password) /
+   `.env.postgres` (KB password) / `.env.minio` (MinIO root + app) / `.env.llm`
+   (gateway token). 각 docker-compose service 가 자기 secret 만 inherit.
+   `bedrock-gateway` 만 AWS_* 노출.
+2. **OpenAI API Key 폐기** (CHG-0006, 사용자 결정 2026-05-22): `_select_llm_provider()`
+   의 OpenAI direct fallback 분기 제거. LLM 호출 entry 는 Bedrock gateway
+   또는 Local LLM gateway 만. 운영 .env 의 잔존 `OPENAI_API_KEY` silent ignore.
+3. **운영자 마이그레이션 1 회**: 기존 단일 .env 의 secret 행을 새 분리 파일들
+   로 옮기는 작업. `.env.example` 헤더에 가이드 명시.
+
+본 addendum 후 SECURITY.md §6.1 의 false-claim ("gateway 컨테이너 env 에만
+주입") 이 실 구성과 정합 — least privilege 강제 보장.
