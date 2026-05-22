@@ -18,8 +18,8 @@ source_of_truth: true
 - [x] TASK-0001 MCP 테스트 스크립트 이관
 - [x] TASK-0002 QA 보조 스크립트 이관
 - [x] TASK-0003 루트 `make mcp-test` 연동
-- [ ] TASK-0004 엄격한 QA 시나리오 정의
-- [ ] TASK-0005 MCP 서비스 기동 검증 (포트 28000 차단 해소 후)
+- [x] TASK-0004 엄격한 QA 시나리오 정의
+- [x] TASK-0005 MCP 서비스 기동 검증 (포트 28000 차단 해소 후)
 - [x] TASK-0006 ANCHOR.md §1-§3 작성 (template v3.2.0-rc.1 external anchor 도입)
 
 ## 3. In Progress

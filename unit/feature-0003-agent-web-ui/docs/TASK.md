@@ -11,10 +11,26 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 12 완료 — Sprint 1 Ship)
-- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 12 + Ship 완료)
+- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Ship 완료) / major (TASK-0104 — HTTPS 종단 활성화 main)
+- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 1~12 ship 완료 / TASK-0104 main 흡수)
 
 ## 2. Task Queue
+
+### TASK-0104 외부 노출 web 컨테이너 HTTPS 종단 활성화 (2026-05-22)
+
+- [x] TASK-0104 (REQ-20260522-0007, **Major** §12.3 — 외부 사용자 전원 영향 + 자격증명 처리 동선의 secure-channel 요건 충족). 외부 사용자가 `https://112.185.196.20:18080/` 로 접속할 수 없던 이슈 수정. **근본 원인**: `repo/.env` 는 `ENABLE_WEB_TLS=1` 로 설정되었고 `docker-compose.yml` 의 web entrypoint 에는 TLS 분기가 있으나, `docker-compose.override.yml` (gitignored, dev 용 template) 가 entrypoint 를 평문 HTTP uvicorn 으로 강제 override 하고 있었음 — TASK-0103 에서 secure-context guard 는 추가했지만 secure channel 자체가 비활성. **수정**: `docker-compose.override.yml` 의 web entrypoint 를 `--ssl-keyfile /certs/mysql-ai.company.local/privkey.pem --ssl-certfile /certs/mysql-ai.company.local/fullchain.pem` 포함한 HTTPS 종단으로 교체. 기존 인증서 (`../artifacts/certs/mysql-ai.company.local/`) 는 SAN 에 `IP Address:112.185.196.20` 이미 포함되어 있어 재발급 불필요. `docker-compose.override.yml.example` 에는 Variant A (local dev plain HTTP) / Variant B (외부 노출 HTTPS, 본 cycle default) 두 형태를 주석으로 명시. 호스트 포트 18080 매핑 그대로 — same-port HTTPS 전환. **외부 영향**: 기존 HTTP 18080 사용자는 모두 HTTPS 로 전환 필요 (TLS 종단 교체이므로 동일 포트의 HTTP 동시 제공 안 됨). **검증**: `sudo docker compose up -d web` 후 `curl -sk https://112.185.196.20:18080/` → HTTP 200 + `<title>DQA — Database Query Assistant</title>` 응답. 컨테이너 로그 `Uvicorn running on https://0.0.0.0:8000`. backend / RBAC / endpoint contract / DB schema / WebCrypto 클라이언트 코드 무변경. 근본 해결 완료로 TASK-0103 의 "blocked banner" 는 외부 IP HTTP 접속자에게도 자동 안내됨 (HTTP 18080 자체가 끊겨 사용자는 즉시 HTTPS 로 이전).
+
+### TASK-0103 API Vault secure context 사전 차단 + UX 안내 (2026-05-22)
+
+- [x] TASK-0103 (REQ-20260522-0006, **Major** §12.3 — 외부 사용자 전원 영향 + 자격증명 처리 동선). 외부 사용자가 `http://112.185.196.20:18080/` 로 접속하여 OpenAI API Key 입력 시 모호한 toast 만 출력되며 저장 안 되던 이슈 수정. **근본 원인**: WebCrypto SubtleCrypto (`window.crypto.subtle`) 는 secure context (HTTPS / localhost) 에서만 정의됨. 외부 IP 의 HTTP 접속 시 `undefined` → `encryptPlainApiKey()` 의 `crypto.subtle.importKey(...)` 가 `Cannot read properties of undefined (reading 'importKey')` throw → catch 블록에서 noisy toast 만 출력, 저장 실패. 서버는 `requires_secure_context: True` 를 내려줬지만 클라이언트가 활용 안 함. **수정**: (1) `isVaultCryptoAvailable()` helper (`window.isSecureContext && window.crypto?.subtle`). (2) `updateVaultReadiness()` `blocked` 신규 상태 — 빨간 banner + 한국어 사유 안내 (`public_url` 이 https 면 보안 주소 표기). (3) `syncVaultSteps()` 가 `cryptoOk = false` 시 모든 step disable + saveVaultBtn 차단. (4) `encryptPlainApiKey()` 진입 시점에 명시적 throw — UI 우회 시도도 안전 차단. (5) styles.css 에 `vault-banner[data-state="blocked"]` 빨간 톤 추가. cache-bust `v=20260522-vault-secure-context`. backend / RBAC / endpoint contract / DB schema / 암호화 알고리즘 (PBKDF2 + AES-GCM) 무변경. `docker compose build web` + `up -d --no-deps web` 으로 배포. 근본 해결 (HTTPS 종단점 추가) 은 후속 인프라 cycle 로 분리.
+
+### TASK-0102 topbar 관리 콘솔 버튼 role fallback gate (2026-05-22)
+
+- [ ] TASK-0102 (REQ-20260522-0005, **Minor** §12.3 — topbar `관리 콘솔` 버튼 role 기반 fallback gate). 테스트 결과 `sales` 역할 사용자에게 topbar 관리 콘솔 버튼이 노출되는 현상 확인. **근본 원인**: TASK-0100 에서 추가한 `console_access` 플래그가 구버전 서버(미재시작) 또는 캐시된 응답에서 `undefined` 로 오는 경우, 기존 `Boolean(undefined)` = `false` 는 정상이나, 서버가 TASK-0100 이전 코드를 실행 중이면 `canOpenAdminConsole() → can("console.access") → Boolean(state.user)` 경로로 항상 `true`. **수정**: `console_access` 가 서버 응답에 포함된 경우 그것을 사용, 없으면 `role.key === "admin"` 으로 fallback — role 필드는 TASK-0098 이전부터 항상 직렬화되므로 버전 무관하게 존재. app.js, index.html(cache-bust) 변경. backend / RBAC / DB / endpoint 무변경.
+
+### TASK-0100 관리 콘솔 버튼 RBAC gate 수정 (2026-05-22)
+
+- [x] TASK-0100 (REQ-20260522-0004, **Minor** §12.3 — `관리 콘솔` 버튼 노출 조건 수정). "admin" 역할 이외의 사용자에게 `관리 콘솔` 버튼이 노출되는 이슈 수정. **근본 원인**: TASK-0098 에서 frontend `can()` 함수를 `Boolean(state.user)` 로 단순화하면서, `canOpenAdminConsole()` 도 로그인한 모든 사용자에게 `true` 반환 → 버튼 노출. **수정**: `_serialize_account()` 에 `console_access: bool` 최소 플래그 추가 (`_account_has_permission(account, "console.access")` 기반). `canOpenAdminConsole()` 이 `Boolean(state.user?.console_access)` 을 검사하도록 변경. TASK-0098 의 "permissions 전체 노출 차단" 설계를 유지하면서 UI gate 에 필요한 최소 정보만 전달. backend / RBAC catalog / DB schema / endpoint contract 무변경. py_compile + node --check PASS. cache-bust `v=20260522-console-access-gate`.
 
 ### TASK-0099 Audit subsystem followup backlog 사후 tracker hygiene (2026-05-22)
 

@@ -518,7 +518,14 @@ function isOwnConversation(conversation = currentConversation()) {
 }
 
 function canOpenAdminConsole() {
-  return can("console.access");
+  // TASK-0102: console_access 플래그 우선, 없으면 role.key 기반 fallback.
+  // console_access 가 서버 응답에 포함된 경우 그것을 신뢰 (TASK-0100 이후 서버).
+  // 구버전 서버(console_access 미포함)에서는 role.key === "admin" 으로 fallback —
+  // role 은 TASK-0098 이전부터 항상 직렬화되므로 버전 무관하게 존재.
+  if (state.user?.console_access !== undefined) {
+    return Boolean(state.user.console_access);
+  }
+  return state.user?.role?.key === "admin";
 }
 
 function canAskInConversation(conversation = currentConversation()) {
@@ -585,6 +592,18 @@ function clearVaultState() {
   refreshVaultUI();
 }
 
+// WebCrypto (PBKDF2 + AES-GCM) 는 secure context (HTTPS / localhost) 에서만 동작.
+// 외부 IP 의 HTTP 접속에서는 window.crypto.subtle 이 undefined → 암호화/저장 불가.
+// 이 경우 사용자가 진단 가능하도록 UI 를 사전 차단하고 명시적으로 안내한다.
+function isVaultCryptoAvailable() {
+  return Boolean(
+    typeof window !== "undefined"
+      && window.isSecureContext
+      && window.crypto
+      && window.crypto.subtle
+  );
+}
+
 // Vault 의 현재 요청 가능 상태를 단일 tri-state 로 반환.
 // 진실의 출처는 storage(영속) — input value 는 일시적인 편집 buffer 이므로 신뢰하지 않는다.
 // passphrase 는 sessionStorage 우선, 사용자가 막 입력한 미저장 값(input)은 fallback 으로만 인정.
@@ -603,13 +622,20 @@ function computeVaultReadiness() {
 // readiness 배지·접근성 텍스트 동기화.
 function updateVaultReadiness() {
   if (!vaultBannerEl || !vaultBannerTextEl) return;
-  const readiness = computeVaultReadiness();
+  const cryptoOk = isVaultCryptoAvailable();
+  const readiness = cryptoOk ? computeVaultReadiness() : "blocked";
   const model = vaultModelEl.value.trim();
   vaultBannerEl.setAttribute("data-state", readiness);
   const dot = vaultBannerEl.querySelector(".vault-banner-dot");
   if (dot) dot.setAttribute("data-state", readiness);
   let label;
-  if (readiness === "ready") {
+  if (readiness === "blocked") {
+    const publicUrl = state.apiVaultOptions && state.apiVaultOptions.public_url;
+    const httpsHint = publicUrl && /^https:/i.test(publicUrl)
+      ? ` 보안 접속 주소: ${publicUrl}`
+      : "";
+    label = `현재 접속 (${window.location.protocol}//${window.location.host}) 은 보안 컨텍스트가 아니어서 API 키를 암호화할 수 없습니다. HTTPS 또는 localhost 로 접속해 주세요.${httpsHint}`;
+  } else if (readiness === "ready") {
     label = model ? `준비 완료 · 모델: ${model}` : "준비 완료";
   } else if (readiness === "needs") {
     label = "저장된 암호화 키가 있습니다. Step 2 에서 passphrase 를 입력하면 바로 사용 가능합니다.";
@@ -631,10 +657,21 @@ function syncVaultSteps() {
   const cipherSaved = Boolean((localStorage.getItem(STORAGE_KEYS.cipher) || "").trim());
   const plain = vaultPlainKeyEl.value.trim();
   const passphrase = vaultPassphraseEl.value.trim();
+  const cryptoOk = isVaultCryptoAvailable();
 
   const step1 = vaultStepEls.find((el) => el.dataset.step === "1");
   const step2 = vaultStepEls.find((el) => el.dataset.step === "2");
   const step3 = vaultStepEls.find((el) => el.dataset.step === "3");
+
+  // 보안 컨텍스트가 아니면 모든 단계 disable + 저장 버튼 차단.
+  // (banner 의 안내 메시지에서 사유를 표시한다.)
+  if (!cryptoOk) {
+    if (step1) step1.setAttribute("data-state", "disabled");
+    if (step2) step2.setAttribute("data-state", "disabled");
+    if (step3) step3.setAttribute("data-state", "disabled");
+    saveVaultBtn.disabled = true;
+    return;
+  }
 
   if (cipherSaved) {
     if (step1) step1.setAttribute("data-state", "done");
@@ -4512,6 +4549,11 @@ async function loadVaultOptions() {
 }
 
 async function encryptPlainApiKey() {
+  if (!isVaultCryptoAvailable()) {
+    throw new Error(
+      "현재 접속이 보안 컨텍스트(HTTPS 또는 localhost)가 아니어서 브라우저 암호화 API를 사용할 수 없습니다. HTTPS 주소로 접속한 뒤 다시 시도해 주세요."
+    );
+  }
   const plain = vaultPlainKeyEl.value.trim();
   const passphrase = vaultPassphraseEl.value.trim();
   if (!plain) {

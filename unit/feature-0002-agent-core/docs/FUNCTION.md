@@ -188,5 +188,11 @@ source_of_truth: true
   ```
   자세한 해석은 [INSIGHTS.md §10](./INSIGHTS.md#10-헬스-체크-snippet) 참조.
 
+- REQ-20260522-0004 (TASK-0101, **Minor §12.3** — backlog closure batch, cross-feature docs): 본 세션의 잔여 backlog 항목 일괄 closure. 동작 변경 0, docs / 마킹만, RBAC / DB / endpoint / audit 무변경. dual-ownership: 본 entry 는 feature-0002 ownership, 영향받는 docs = 6 feature TASK.md + docs/STATUS.md.
+  - AC-0010 (REQ-20260522-0004 / TASK-0101): feature-0002 의 TASK-0010 + TASK-0011 이 `[x]` 마킹된다 (과거 작업 흐름의 마무리 docs).
+  - AC-0011 (REQ-20260522-0004 / TASK-0101): feature-0001 / feature-0004 / feature-0005 / feature-0006 의 TASK-0004 가 `[x]` 마킹된다 (placeholder 시나리오 정의 — 각 feature 의 TEST.md / ANCHOR §3 invariant 로 자연 흡수).
+  - AC-0012 (REQ-20260522-0004 / TASK-0101): feature-0005 의 TASK-0005 (MCP 서비스 기동 검증) 가 본 cycle 의 실 환경 검증으로 [x] 마킹된다. `docker ps --filter name=repo-mcp-1` 결과 = `Up` + `curl http://localhost:28000/healthz` HTTP 200 + Workbench 응답 정상.
+  - AC-0013 (REQ-20260522-0004 / TASK-0101): TASK-0034 (복잡 QA 성능 테스트, LLM API + 실 DB 의존), TASK-0044 (사업팀 pilot 발급, 운영 manual), TASK-0020 / TASK-0021 (KbBackend M2-b/M2-c, 본 cycle 진행 중) 의 4 항목이 docs/STATUS.md 또는 feature 의 REPORT.md 에 `deferral` 사유와 함께 명시된다 — 본 batch 의 closure 대상 외.
+
 ## 13. Pre-approved Changes
 - 비파괴적 경로 재배치와 Docker build 경로 수정

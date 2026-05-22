@@ -8,6 +8,85 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0007
+- Date: 2026-05-22
+- Related Requirement: TASK-0104 (REQ-20260522-0007, **Major** §12.3 — 외부 노출 web 컨테이너 HTTPS 종단 활성화)
+- Summary: 외부 사용자가 `https://112.185.196.20:18080/` 로 접속할 수 없던 이슈 수정. **근본 원인**: `repo/.env` 의 `ENABLE_WEB_TLS=1` + `WEB_TLS_CERT_FILE` / `WEB_TLS_KEY_FILE` 설정과 `docker-compose.yml` 의 TLS 분기 entrypoint 가 있었으나, dev 편의용 `docker-compose.override.yml` (gitignored) 가 entrypoint 자체를 평문 HTTP uvicorn 으로 강제 override. compose 자동 merge 로 base TLS 분기를 덮어써 외부 노출 시나리오에서도 평문만 listening. **수정**: `docker-compose.override.yml` 의 entrypoint 를 `--ssl-keyfile /certs/mysql-ai.company.local/privkey.pem --ssl-certfile /certs/mysql-ai.company.local/fullchain.pem` 포함한 HTTPS 종단으로 교체 (same-port 18080 HTTPS-only — 사용자 결정). `docker-compose.override.yml.example` 에 Variant A (local dev plain HTTP) / Variant B (외부-노출 HTTPS, default) 두 형태 주석 명시. 기존 인증서는 SAN 에 `IP Address:112.185.196.20` 이미 포함되어 재발급 불필요. 호스트 포트 매핑 `${WEB_PORT}:8000` (`18080:8000`) 그대로. backend / RBAC / endpoint contract / DB / Frontend 코드 무변경.
+- Files:
+  - `docker-compose.override.yml` (gitignored — 운영 인스턴스 직접 적용):
+    - `services.web.entrypoint` 를 plain HTTP → HTTPS 종단 (`--ssl-keyfile` + `--ssl-certfile`) 으로 교체
+    - 헤더 주석 갱신 — DEV ONLY 표기 → DEV / EXTERNAL-EXPOSED, TASK-0103 / TASK-0104 컨텍스트 명시
+  - `docker-compose.override.yml.example` (committed template):
+    - 헤더 주석에 사용 시나리오 (A) Local dev / (B) 외부 노출 single-instance / (C) Production with Caddy 3가지 명시
+    - `services.web.entrypoint` 에 Variant A (commented out) / Variant B (default) 두 형태 제공
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0104 entry 추가 + Current Status 갱신
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260522-0007 [SKIPPED:non-policy-doc] 추가
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 상단에 TASK-0104 entry 추가
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: AC-0271 (HTTPS 종단 활성화 acceptance) 추가
+  - `docs/STATUS.md`: project-level entry 추가
+
+## CHG-20260522-0006
+- Date: 2026-05-22
+- Related Requirement: TASK-0103 (REQ-20260522-0006, **Major** §12.3 — API Vault secure context 사전 차단 + UX 안내)
+- Summary: 외부 사용자가 `http://112.185.196.20:18080/` 로 접속하여 OpenAI API Key 입력 시 모호한 toast 만 출력되며 저장 안 되던 이슈 수정. **근본 원인**: `encryptPlainApiKey()` 가 호출하는 `window.crypto.subtle` 은 secure context (HTTPS / localhost) 에서만 정의됨. 외부 IP 의 HTTP 접속에서는 `undefined` → `Cannot read properties of undefined (reading 'importKey')` 예외 → catch 블록 toast 가 사용자에게 원인을 명확히 전달 안 함. 서버는 `requires_secure_context: True` 를 내려줬으나 클라이언트가 활용 안 함. **수정**: `isVaultCryptoAvailable()` helper + `updateVaultReadiness()` `blocked` 신규 상태 (빨간 banner + 한국어 사유) + `syncVaultSteps()` 가 `cryptoOk = false` 시 모든 step disable + `encryptPlainApiKey()` 진입 시 사전 throw + styles.css `vault-banner[data-state="blocked"]` 빨간 톤. cache-bust `v=20260522-admin-topbar-rbac` → `v=20260522-vault-secure-context`. backend / RBAC / endpoint contract / DB / 암호화 알고리즘 (PBKDF2 + AES-GCM) 무변경.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`:
+    - `isVaultCryptoAvailable()` — `window.isSecureContext && window.crypto?.subtle` 체크 helper 추가
+    - `updateVaultReadiness()` — `cryptoOk = false` 시 readiness `blocked` 반환 + 한국어 사유 메시지 (`public_url` 이 https 면 보안 주소 표기)
+    - `syncVaultSteps()` — `cryptoOk = false` 분기 추가, 모든 step `data-state="disabled"` + saveVaultBtn 차단
+    - `encryptPlainApiKey()` — 진입 시점에 `isVaultCryptoAvailable()` 사전 검증, 명시적 한국어 안내 throw
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`:
+    - `.vault-banner[data-state="blocked"]` + `.vault-banner-dot` 빨간 색상 토큰 추가 (`#ef4444`)
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`:
+    - cache-bust `v=20260522-admin-topbar-rbac` → `v=20260522-vault-secure-context`
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0103 entry 추가 + Current Status 갱신
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260522-0006 [SKIPPED:non-policy-doc] 추가
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 상단에 TASK-0103 entry 추가
+  - `docs/STATUS.md`: project-level entry 추가
+
+## CHG-20260522-0005
+- Date: 2026-05-22
+- Related Requirement: TASK-0102 (REQ-20260522-0005, Minor §12.3 — topbar 관리 콘솔 버튼 role fallback gate)
+- Summary: 테스트에서 `sales` 역할 사용자에게 topbar 관리 콘솔 버튼이 노출되는 현상 확인. `canOpenAdminConsole()` 에 `role.key` 기반 fallback 추가 — `console_access` 플래그가 서버 응답에 포함된 경우 그것을 사용, 없으면 `role.key === "admin"` 으로 fallback. role 필드는 TASK-0098 이전부터 항상 직렬화되므로 서버 버전 무관하게 존재. backend / RBAC / DB / endpoint 무변경. cache-bust `v=20260522-admin-topbar-rbac`.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`:
+    - `canOpenAdminConsole()` — `console_access !== undefined` 분기 추가, 없으면 `role.key === "admin"` fallback
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`:
+    - cache-bust `v=20260522-console-access-gate` → `v=20260522-admin-topbar-rbac`
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0102 entry 추가 + Current Status 갱신
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260522-0005 [SKIPPED:non-policy-doc] 추가
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 상단에 TASK-0102 entry 추가
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: AC-0269 추가
+  - `docs/STATUS.md`: feature-0003 row 갱신
+
+## CHG-20260522-0004
+- Date: 2026-05-22
+- Related Requirement: TASK-0100 (REQ-20260522-0004, Minor §12.3 — 관리 콘솔 버튼 RBAC gate 수정)
+- Summary: TASK-0098 의 `can()` 단순화(`Boolean(state.user)`)로 인해 `canOpenAdminConsole()` 이 로그인한 모든 사용자에게 `true` 반환 → `관리 콘솔` 버튼이 admin 역할 이외의 사용자에게도 노출되던 이슈 수정. `_serialize_account()` 에 `console_access: bool` 최소 플래그 추가 + `canOpenAdminConsole()` 이 `state.user.console_access` 검사하도록 변경. TASK-0098 의 "permissions 전체 노출 차단" 설계 유지. backend RBAC catalog / DB schema / endpoint contract 무변경. cache-bust `v=20260522-console-access-gate`.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - `_serialize_account()` — `console_access: _account_has_permission(account, "console.access")` 플래그 추가 (payload 에 항상 포함)
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`:
+    - `canOpenAdminConsole()` — `can("console.access")` → `Boolean(state.user?.console_access)` 로 변경
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`:
+    - cache-bust `v=20260522-task-0098-perms` → `v=20260522-console-access-gate`
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0100 entry 추가 + Current Status 갱신
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260522-0004 [SKIPPED:non-policy-doc] 추가
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 상단에 TASK-0100 entry 추가
+  - `docs/STATUS.md`: feature-0003 row tail 에 TASK-0100 완료 marker append
+- Diff size: app.py +5 lines / app.js +5 lines / index.html 2 replace / docs 5 files
+- Impact:
+  - admin 역할(`console.access` 보유) 사용자만 `관리 콘솔` 버튼 표시 — 정상 동작 복원
+  - 일반 사용자(operator/sales/pending) 는 버튼 미노출
+  - `console.access` override grant 된 사용자는 버튼 노출 (RBAC 정합)
+  - `_serialize_account()` 호출 모든 경로(로그인 / me / patch / bootstrap) 동일 적용
+  - backend API 응답에 `console_access: true/false` 필드 추가 — 클라이언트 호환 변경 (기존 필드 제거 없음)
+- Rollback Notes: `_serialize_account()` 의 `console_access` 필드 제거 + `canOpenAdminConsole()` 복원 (`return can("console.access")` 또는 `return Boolean(state.user)`) + index.html cache-bust 원복.
+
 ## CHG-20260522-0003
 - Date: 2026-05-22
 - Related Requirement: TASK-0099 (REQ-20260522-0003, Minor §12.3 — docs-only tracker hygiene)
