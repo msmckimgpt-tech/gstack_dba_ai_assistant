@@ -320,16 +320,17 @@ def _select_llm_provider() -> tuple[str | None, str | None]:
     우선순위 (paired only):
     1. Bedrock gateway   — BEDROCK_GATEWAY_URL + BEDROCK_GATEWAY_API_KEY 둘 다.
     2. Local LLM gateway — LOCAL_LLM_API_BASE + LOCAL_LLM_API_KEY 둘 다.
-    3. OpenAI direct     — OPENAI_API_KEY 만 (OPENAI_API_BASE 는 optional —
-       OpenAI cloud direct 호출 시 SDK 의 default base 사용).
-    4. 미설정            — (None, None). _get_openai_client() 가 None 반환.
+    3. 미설정            — (None, None). _get_openai_client() 가 None 반환.
+
+    feature-0007 follow-up (CHG-20260522-0006, 사용자 결정 2026-05-22): OpenAI
+    direct fallback 제거. OpenAI API Key 미사용. 운영 .env 잔존 `OPENAI_API_KEY`
+    값은 silent ignore (backward-compat — config.py 의 import 는 유지하나 본
+    helper 분기 외).
     """
     if BEDROCK_GATEWAY_URL and BEDROCK_GATEWAY_API_KEY:
         return (BEDROCK_GATEWAY_URL, BEDROCK_GATEWAY_API_KEY)
     if LOCAL_LLM_API_BASE and LOCAL_LLM_API_KEY:
         return (LOCAL_LLM_API_BASE, LOCAL_LLM_API_KEY)
-    if OPENAI_API_KEY:
-        return (OPENAI_API_BASE, OPENAI_API_KEY)
     return (None, None)
 
 

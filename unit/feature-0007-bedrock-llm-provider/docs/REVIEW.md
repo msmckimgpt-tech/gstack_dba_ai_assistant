@@ -370,3 +370,29 @@ source_of_truth: true
   변경이 정합한지 최종 검증 — Phase E 재실행 또는 코드 trace 갈음.
 - Human Approval Needed: 사용자 결정 (A→B→C→D, 2026-05-22) 의 C 단계 완료
   기록. 별 confirm 불요. D 진행 (PR merge + cycle-finalize) 계속.
+
+## REV-20260522-0006 [SUBAGENT:env-scoping-followup]
+- Related Change: CHG-20260522-0005 (env_file scoping refactor) + CHG-20260522-0006
+  (OpenAI API Key 폐기)
+- Reason: feature-0007 의 follow-up cycle. codex blindspot #1 + SUBAGENT NT #1
+  (docker-compose env_file inheritance 의 AWS_* leak) 의 최종 refactor +
+  사용자 추가 결정 (모든 secret 영역 분리 + OpenAI 미사용).
+- Verdict: **PASS** — secret 영역별 5 `.env.*` 분리 + OpenAI direct fallback 제거.
+  least privilege 강제 달성.
+- Action:
+  - .env.bedrock / .env.mysql / .env.postgres / .env.minio / .env.llm 신규
+    (각 .example committed, 실 파일 gitignored).
+  - docker-compose 의 6 service env_file list 갱신.
+  - .gitignore 5 패턴 추가.
+  - .env.example 14 secret 행 제거 + 운영자 마이그레이션 가이드.
+  - config.py 의 _select_llm_provider() OpenAI direct 분기 제거.
+  - SECURITY.md §6.1 reanchor (env_file scoping 정책 + OpenAI 폐기).
+  - DECISIONS.md ADR-0026 addendum.
+- Risks:
+  - **운영자 1 회 마이그레이션 부담**: 기존 단일 .env 의 14 secret 행을 5 분리
+    파일로 이동. .env.example 헤더 가이드 + 본 entry 의 명시.
+  - **OpenAI 미사용**: 운영 .env 의 잔존 `OPENAI_API_KEY` silent ignore. 운영자
+    가 모르고 OpenAI key 설정 시 무시 — 의도된 행동이나 운영 안내 필요.
+- Open Questions: 본 cycle 의 ship 후 운영 환경에서 실 마이그레이션 검증 필요.
+- Human Approval Needed: 사용자 결정 (2026-05-22) 의 follow-up cycle 명시 진행
+  + scope (모든 secret 영역 분리 + OpenAI 폐기) 결정. 별 confirm 불요.

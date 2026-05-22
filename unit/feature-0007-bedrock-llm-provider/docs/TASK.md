@@ -234,6 +234,17 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
       cap / masked field drift / SECURITY §6.1 정정) + 분석 결과 3 (tool_use
       Phase E PASS / data region reanchor / reasoning baseline mitigation).
 
+### Phase H — env_file scoping refactor (PR #62 머지 후 follow-up cycle)
+- [x] TASK-H1 .env secret 영역별 5 파일 분리 — `.env.bedrock` / `.env.mysql` /
+      `.env.postgres` / `.env.minio` / `.env.llm` (CHG-20260522-0005). 각
+      `.example` committed, 실 파일 gitignored. docker-compose service 별
+      env_file list 가 자기 secret 만 inherit (least privilege 강제).
+- [x] TASK-H2 OpenAI API Key 폐기 (CHG-20260522-0006, 사용자 결정 2026-05-22)
+      — `_select_llm_provider()` 의 OpenAI direct 분기 제거. LLM 호출 entry 가
+      Bedrock gateway / Local LLM gateway 만 허용.
+- [x] TASK-H3 SECURITY.md §6.1 reanchor + DECISIONS.md ADR-0026 addendum +
+      STATUS entry.
+
 ## 4. In Progress
 - 없음 (Phase A 진입 직전 정지 상태 — 다음 turn 의 user 지시로 시작).
 

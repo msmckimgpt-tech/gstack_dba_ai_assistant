@@ -1,4 +1,12 @@
 .env
+# feature-0007 follow-up: secret 영역별 env 파일 분리 (least privilege).
+# 운영자가 secret rotation 별 cycle 별도 진행 가능.
+.env.bedrock
+.env.mysql
+.env.postgres
+.env.minio
+.env.llm
+.env.local
 __pycache__/
 *.py[cod]
 .pytest_cache/
