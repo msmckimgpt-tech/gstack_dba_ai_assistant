@@ -1152,8 +1152,11 @@ def _run_agent_core(
         max_steps = AGENT_MAX_STEPS
     if model is None:
         model = OPENAI_MODEL
-    if api_key is None:
-        api_key = OPENAI_API_KEY
+    # feature-0007 (REQ-20260521-0001): per-request api_key 인자는 deprecated.
+    # API Vault 폐기 후 모든 LLM 호출은 env 단일 소스 (config.py 의 `LLM_API_KEY`
+    # / `LLM_BASE_URL` — BEDROCK_GATEWAY_* fallback chain) 를 따른다. 인자가
+    # 들어와도 무시 (signature 는 backward-compat 위해 유지).
+    _ = api_key  # explicit ignore — silence linter
     temperature = 0.0 if _model_supports_temperature(model) else None
 
     result: dict[str, Any] = {
@@ -1166,28 +1169,20 @@ def _run_agent_core(
         "error": "",
     }
 
-    # ── OpenAI 클라이언트 초기화 ──
+    # ── LLM 클라이언트 초기화 (feature-0007 단일 env 경로) ──
     if not OpenAI:
         result["error"] = "openai 패키지를 찾을 수 없습니다."
         return result
-    # 로컬 LLM 모델이면 게이트웨이 경유, 외부 모델이면 직접 OpenAI API 사용
-    use_local = is_local_llm_model(model)
-    if use_local:
-        if not LLM_BASE_URL:
-            result["error"] = "LOCAL_LLM_API_BASE가 설정되지 않았습니다."
-            return result
-        client_kwargs: dict[str, Any] = {
-            "api_key": LOCAL_LLM_API_KEY or "local-no-key",
-            "base_url": LLM_BASE_URL,
-        }
-    else:
-        if not api_key:
-            result["error"] = "OPENAI_API_KEY가 설정되지 않았습니다."
-            return result
-        client_kwargs = {"api_key": api_key}
-        # OPENAI_API_BASE가 별도로 설정된 경우(프록시 등)만 base_url 지정
-        if OPENAI_API_BASE:
-            client_kwargs["base_url"] = OPENAI_API_BASE
+    if not LLM_API_KEY:
+        result["error"] = (
+            "LLM 자격증명이 설정되지 않았습니다. "
+            "BEDROCK_GATEWAY_API_KEY (권장) / LOCAL_LLM_API_KEY / OPENAI_API_KEY "
+            "중 하나가 .env 에 채워져야 합니다."
+        )
+        return result
+    client_kwargs: dict[str, Any] = {"api_key": LLM_API_KEY}
+    if LLM_BASE_URL:
+        client_kwargs["base_url"] = LLM_BASE_URL
     client = OpenAI(
         **client_kwargs,
         timeout=max(5, int(AGENT_TIMEOUT_SEC)),

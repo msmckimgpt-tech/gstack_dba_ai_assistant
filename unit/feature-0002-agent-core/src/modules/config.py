@@ -197,6 +197,8 @@ __all__ = [
     "MEMORY_CONTEXT_KEYS",
     "MEMORY_CONVERSATION_ID",
     "MEMORY_DB",
+    "BEDROCK_GATEWAY_API_KEY",
+    "BEDROCK_GATEWAY_URL",
     "LLM_API_KEY",
     "LLM_BASE_URL",
     "LOCAL_LLM_API_BASE",
@@ -268,15 +270,24 @@ DB_CONNECT_DB = DB_NAME_EFFECTIVE or None
 DB_PROMPT_DEFAULT = DB_NAME_EFFECTIVE or "(미지정)"
 MEMORY_DB = os.getenv("AGENT_MEMORY_DB", "agent_memory")
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-nano")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "claude-sonnet-4")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 
-# ── 로컬 LLM Gateway ──
+# ── 로컬 LLM Gateway (구버전 호환 — Local LLM gateway 사용 시) ──
 LOCAL_LLM_API_BASE = os.getenv("LOCAL_LLM_API_BASE", "").strip() or None
 LOCAL_LLM_API_KEY = os.getenv("LOCAL_LLM_API_KEY", "").strip() or None
 OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "").strip() or None
-LLM_BASE_URL = LOCAL_LLM_API_BASE or OPENAI_API_BASE or None
-LLM_API_KEY = LOCAL_LLM_API_KEY or OPENAI_API_KEY
+
+# ── AWS Bedrock gateway (feature-0007, LiteLLM proxy 경유) ──
+# 본 backend 는 BEDROCK_GATEWAY_URL / BEDROCK_GATEWAY_API_KEY 만 인지하며 AWS
+# 자격증명은 직접 보유하지 않는다 (gateway 컨테이너 env 로만 주입). 본 cycle
+# 도입 후 production 의 LLM 호출 default 경로.
+BEDROCK_GATEWAY_URL = os.getenv("BEDROCK_GATEWAY_URL", "").strip() or None
+BEDROCK_GATEWAY_API_KEY = os.getenv("BEDROCK_GATEWAY_API_KEY", "").strip() or None
+
+# 우선순위: Bedrock gateway → Local LLM gateway → OpenAI direct (legacy)
+LLM_BASE_URL = BEDROCK_GATEWAY_URL or LOCAL_LLM_API_BASE or OPENAI_API_BASE or None
+LLM_API_KEY = BEDROCK_GATEWAY_API_KEY or LOCAL_LLM_API_KEY or OPENAI_API_KEY
 AGENT_OBJECT_RESOLVE_MODEL = (
     os.getenv("AGENT_OBJECT_RESOLVE_MODEL", OPENAI_MODEL).strip() or OPENAI_MODEL
 )

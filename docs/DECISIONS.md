@@ -282,3 +282,82 @@ ai_read_priority: 9
   - **M2~M4 사이 별 cycle (TASK 미할당 — Dynamic grant blindspot cycle, outside-voice REV-20260520-0005 Section E Critical/Blocker)**: 정적 `PERMISSION_DEFINITIONS` 외에 `WebPermissions IsDynamic=1` row union 패턴 (TASK-0052 Phase 1B 같은 시간 제한부 grant) 의 `kb.*` 적용 검증. 사용자 메모리 정책 `feedback_outside_voice_for_rbac.md` 의 "정적 catalog blindspot 대응" 의 핵심 답. 예: `kb.read.any` 가 dba 만 영구 grant 외에 audit 시점에 한해 staff 임시 grant (24h TTL) 사용 사례. catalog 변경 cycle 보다 후, M4 cutover 게이트 전 완료.
   - **M4 cutover** (별 cycle): `bin/kb-cutover-readiness.sh` 에 본 ADR 시행 완료 게이트 항목 추가 — (a) `PERMISSION_DEFINITIONS` 의 `kb.*` 4 항목 존재, (b) `AGENT_KB_PG_USER=agent_kb_rw` 적용, (c) `agent_kb_rw` 로 `_pg_connect()` smoke PASS, (d) `has_table_privilege()` 검증 PASS, (e) Dynamic grant blindspot cycle 의 산출물 (PR merged) 확인, (f) Cross-DB audit SLA ≤ 0.1% 달성 (M2 stress run 결과).
   - **ADR-0024 후보 (Sprint 4 통합 시점)**: 본 cycle 의 schema 가 `public` schema 기준 — Sprint 4 의 `agent_drag` namespace 결정 시 grant scope 명시.
+
+## ADR-0022
+- Status: accepted (feature-0007, 2026-05-21)
+- Date: 2026-05-21
+- Context: 기존 시스템은 사용자가 Profile drawer 의 "API Vault" wizard 에서 자기 OpenAI API key 를 평문 입력 → 브라우저에서 PBKDF2-SHA256 (100k iter) + AES-GCM 256bit 로 암호화 → `/api/ask` 호출 시마다 cipher + passphrase 동봉 → backend 가 `_decrypt_api_key` 로 transient 복호 → `OpenAI(api_key=...)` 직접 호출. 각 사용자가 OpenAI 비용을 자기 계정으로 부담하는 trust 모델. 본 시스템이 사내 직원 전용 도구로 확정되면서 (사용자 결정 2026-05-21) 운영자가 LLM 비용을 부담하는 단일 service-managed 자격증명 모델이 trust 모델 / UX / 운영 비용 책임 모두에서 자연스럽다고 판단.
+- Decision: LLM provider 자격증명 모델을 **per-user OpenAI key → service-managed AWS Bedrock via OpenAI-compatible gateway (LiteLLM proxy)** 로 전환:
+  - **Gateway 컨테이너**: `bedrock-gateway` (LiteLLM proxy) 를 `docker-compose.yml` 에 신규 추가. AWS IAM credential (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) 은 본 컨테이너 env 로만 주입. backend / frontend 는 `BEDROCK_GATEWAY_API_KEY` (gateway-token) 만 인지.
+  - **모델 카탈로그**: `model_catalog.py` 의 `API_MODEL_OPTIONS` 를 OpenAI GPT-5.4 시리즈 3 종 → Anthropic Claude 4.x 2 종 (`claude-sonnet-4`, `claude-haiku-4`) 으로 교체. `API_DEFAULT_MODEL` 도 Claude alias.
+  - **Region**: `ap-northeast-2` (Seoul) 한정 — cross-region inference 금지로 데이터 한국 region 잔류 (PIPA 정합).
+  - **API Vault 폐기**: Profile drawer "API Vault" 탭 + step wizard DOM (index.html), `encryptPlainApiKey` / `readVaultState` / `writeVaultState` / `loadVaultOptions` 등 함수 (app.js), `.vault-*` CSS 클래스 (styles.css), `/api/api-vault/options` cipher 시멘틱 + `_decrypt_api_key` / `_is_safe_api_key` / `_is_safe_passphrase` 함수 + `/api/ask` 의 cipher 분기 (app.py) 일괄 제거.
+  - **env 단일 소스**: `config.py` 의 `LLM_BASE_URL = BEDROCK_GATEWAY_URL or LOCAL_LLM_API_BASE or OPENAI_API_BASE or None`, `LLM_API_KEY = BEDROCK_GATEWAY_API_KEY or LOCAL_LLM_API_KEY or OPENAI_API_KEY` fallback chain. `_run_agent_core(api_key=...)` 인자 deprecated (받아도 무시).
+- Consequences:
+  - **사용자 결정 5 항목 정합**: (1) 사내 직원 전용 → 비용 책임 운영자 부담 OK / (2) per-user quota 후순위 (배포 후 별 cycle) / (3) 모델 1:1 매핑 보장 불필요 (사용자가 회귀 risk 수용) / (4) Seoul region 한정 / (5) API Vault 전면 폐기 (하이브리드 X).
+  - **위험도 Major (§12.3)**: Critical 후보였던 외부 노출 / PIPA / 비용 폭주 risk 가 사내 한정으로 완화. 단 인증/인가 trust 모델 변경 + 모델 catalog swap 으로 인한 agent loop 회귀 가능성은 잔존 (Phase E 회귀 검증으로 확인).
+  - **gateway SPOF**: bedrock-gateway 컨테이너가 단일 장애 지점. healthcheck 실패 시 web / agent / insight-worker 모두 502/503. 운영 mitigation = container 재시작 정책 (`restart: unless-stopped`) + healthcheck 12 retry × 10s = 2 min recovery window.
+  - **데이터 잔류**: Seoul region 한정으로 Claude 응답 데이터가 미국 region 으로 전송되지 않음. 단 Bedrock Seoul region 에 특정 Claude 4 versioned model ID 미배포 시 본 cycle 의 default 모델 (`claude-haiku-4-20250514-v1:0`) 가용성을 운영자가 사전 검증 필요. 미배포 시 catalog 교체 + ADR-0022 보강.
+  - **모델 ID drift risk**: AWS Bedrock 의 Claude 모델 versioned ID (예: `-20250514-v1:0`) 가 deprecate 될 가능성. `litellm_config.yaml` 의 model ID 가 single source-of-truth — 운영자가 AWS 의 model deprecation notice 를 모니터링 필요. 별 cycle 에서 ID rotation 정책 결정.
+  - **per-user 비용 attribution 부재**: Bedrock 자체 기능 없음. 본 cycle 범위 외. 배포 후 비용 가시화 시점에 별 cycle 로 도입 — gateway 의 callback hook 으로 `WebAuditEvents.conversation.ask` ChangeJson 에 `input_tokens` / `output_tokens` 첨부 + per-user token quota 강제.
+  - **frontend 모델 selector 단순화**: 구 API Vault 탭의 model selector 가 사라짐. 사용자는 별도 모델 선택 UI 없이 server default (`API_DEFAULT_MODEL = claude-haiku-4`) 사용. 향후 사용자 선택권이 필요해지면 composer 의 product chip 옆에 모델 selector 신설 가능 (별 cycle).
+  - **rollback path**: 단일 commit revert + cache-bust 되돌리기. 단 사용자 frontend cache (localStorage v1: cipher) 의 cleanup 이 이미 수행되어 revert 후 사용자가 새로 키 입력 필요. 긴급 시 cherry-pick 가능.
+- Outside-voice rationale: 본 ADR 은 RBAC 모델 변경 (사용자별 자격증명 → 단일 service 자격증명) + 비용 책임 이전 + 모델 catalog 전체 swap 의 결정 정본. 사용자 메모리 정책 `feedback_outside_voice_for_rbac.md` 적용 — 본 cycle 의 후속 cycle 또는 `/codex` outside voice 호출로 blindspot 검증 권장 (gateway SPOF / AWS credential leak 시 비용 폭주 시나리오 / Claude tool use schema 미호환 회귀).
+- Alternatives 검토 후 폐기:
+  - **boto3 + bedrock-runtime native 직접 호출** — provider abstraction wrapper 필요 + Anthropic Messages API / tool use / JSON mode schema 분기 도입. 폐기 사유: 본 cycle 의 코드 변경 범위 폭주. gateway 정상화 후 hotspot 만 native 로 마이그레이션 별 cycle.
+  - **API Vault 유지 + OpenAI 그대로** — 폐기 사유: 사용자 결정 — 사내 한정 운영에서 사용자별 키 입력 진입 장벽이 부적합.
+  - **하이브리드 (사용자 키 + 서비스 키 병존)** — 폐기 사유: 사용자 결정 — 두 trust 모델 동시 유지 부담 + 사내 효용 낮음.
+  - **AWS Bedrock cross-region inference 허용** — 폐기 사유: 사용자 결정 — Seoul region 한정. PIPA 잔류 통제.
+- 후속 액션:
+  - **본 cycle (feature-0007)**: gateway + backend + frontend + 정책 doc 갱신 ✓. Phase E 회귀 검증 (실 환경 + AWS 자격증명) 은 사용자 수행.
+  - **별 cycle (배포 후)**: per-user / per-role token quota + gateway callback hook 으로 token usage audit. AWS Cost Explorer tag 정책. 외부 비용 dashboard.
+  - **별 cycle (운영 정상화 후 선택)**: boto3 + bedrock-runtime native 직접 호출로 hotspot 마이그레이션 (latency / cost / streaming 최적화 시 검토).
+  - **별 cycle (PIPA 엄격 잔류 필요 시점)**: AWS Bedrock 의 Seoul region Provisioned throughput 예약 또는 별 provider (Anthropic API direct / Azure OpenAI Korea region / on-prem) 재검토. 본 cycle 의 global inference profile 사용은 사내 한정 + 비-개인정보 SQL 작업 가정 전제.
+
+### 2026-05-21 Phase E 검증 결과 (ADR-0022 addendum)
+
+본 ADR 의 초기 의도였던 "Seoul region 한정 + region-pinned model ID" 는 Phase E
+실 환경 검증 (`docker compose -p feature-0007-e up -d bedrock-gateway` + 직접
+호출 + gateway 경유 호출) 에서 다음 사실로 수정되었다:
+
+1. **AWS Bedrock Seoul region 의 ACTIVE Claude 카탈로그** (`aws bedrock list-foundation-models --region ap-northeast-2 --by-provider anthropic`):
+   - `anthropic.claude-sonnet-4-20250514-v1:0` — **LEGACY** (deprecate 진행)
+   - `anthropic.claude-sonnet-4-5-20250929-v1:0` — ACTIVE
+   - `anthropic.claude-sonnet-4-6` — ACTIVE (frontier)
+   - `anthropic.claude-haiku-4-5-20251001-v1:0` — ACTIVE
+2. **On-demand 호출 결과**: 4 모델 모두 region-pinned on-demand throughput 미지원
+   — `BedrockException: ... isn't supported. Retry your request with the ID or
+   ARN of an inference profile that contains this model.`
+3. **Inference profile 목록** (`aws bedrock list-inference-profiles --region ap-northeast-2`):
+   - `apac.anthropic.claude-sonnet-4-20250514-v1:0` — APAC, ACTIVE (단 LEGACY
+     모델이라 30일 미사용 access denied → 실용 불가)
+   - `global.anthropic.claude-sonnet-4-5-20250929-v1:0` — global, ACTIVE
+   - `global.anthropic.claude-sonnet-4-6` — global, ACTIVE
+   - `global.anthropic.claude-haiku-4-5-20251001-v1:0` — global, ACTIVE
+4. **결론**: ACTIVE Sonnet 의 region-pinned (Seoul-only) ID 부재. **APAC profile
+   도 LEGACY Sonnet 4 만 + 30일 미사용 차단**. ACTIVE Sonnet 사용 시 `global.*`
+   inference profile 수용이 유일한 경로.
+
+**사용자 reanchor 결정** (2026-05-21): Global Sonnet 4.6 수용 — 사내 한정 +
+비-개인정보 SQL 작업 가정으로 PIPA risk 낮음. 본 ADR 의 "Alternatives 검토 후
+폐기" 의 "AWS Bedrock cross-region inference 허용" 항목이 **사실상 채택** 으로
+번복됨.
+
+**`litellm_config.yaml` 변경**:
+- `claude-sonnet-4` alias → `bedrock/global.anthropic.claude-sonnet-4-6`
+- `claude-haiku-4` alias → `bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0`
+
+**Full path 검증 PASS** (alias=`claude-sonnet-4`, system+user message, JSON mode):
+- backend SDK → gateway (LiteLLM) → Bedrock `global.anthropic.claude-sonnet-4-6`
+- STATUS 200, MODEL=`claude-sonnet-4` (alias 보존), CONTENT=`{"status":"PASS","echo":"phase-e"}`
+  (markdown fence 안), FINISH=`stop`, USAGE 정상 (prompt 31 + completion 23 = 54).
+- `_extract_json_object` 의 greedy `re.search(r"\{.*\}", ...)` 가 markdown fence
+  안 JSON 도 정상 추출 — 별도 코드 변경 불요.
+
+**잔존 risk**:
+- Global routing → 데이터가 미국/EU region 으로 갈 수 있음. PIPA 엄격 적용 시
+  잔류 보장 X. 사내 한정 + 비-개인정보 SQL 가정으로 본 cycle 수용.
+- `apac.*` profile 이 미래에 ACTIVE Sonnet 으로 추가될 가능성 — 운영자가 AWS
+  release note 모니터링 후 region-pinned 으로 마이그레이션 별 cycle.
+- LiteLLM 의 boto3 retry / error mapping 이 Bedrock-specific error code 를
+  HTTP 응답으로 transparently 전달하는지 운영 중 모니터링.

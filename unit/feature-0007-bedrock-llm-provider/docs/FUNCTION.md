@@ -1,0 +1,188 @@
+---
+doc_type: FUNCTION
+feature_id: feature-0007-bedrock-llm-provider
+status: draft
+edit_policy: rewrite
+source_of_truth: true
+---
+
+# Function
+
+## 1. Summary
+사용자별 OpenAI API 키 입력 (Profile drawer "API Vault" wizard) 패턴을 폐기하고,
+서비스가 보유한 단일 AWS Bedrock 자격증명 (Seoul region `ap-northeast-2`) 으로
+모든 LLM 호출이 라우팅되도록 provider 통합을 변경한다. 코드 변경 범위를
+최소화하기 위해 OpenAI-compatible gateway (LiteLLM proxy 등) 를 경유하며,
+사용자는 별도 자격증명 입력 없이 즉시 서비스를 사용한다. 사내 직원 전용 운영
+가정으로 per-user quota 는 본 cycle 범위에서 제외한다.
+
+## 2. Goal
+- REQ-20260521-0001: API Vault (사용자별 OpenAI API key 입력) 패턴을 전면 폐기하고
+  LLM 호출 entry 를 서비스 단일 AWS Bedrock 자격증명으로 일원화한다.
+- REQ-20260521-0002: 모델 카탈로그를 Claude Sonnet 4.x / Haiku 4.x (Bedrock Seoul
+  region 가용 모델) 로 교체하고 OpenAI GPT-5.4 시리즈 alias 를 제거한다.
+- REQ-20260521-0003: OpenAI-compatible gateway (LiteLLM proxy 또는 동등 OSS) 를
+  docker-compose 에 신규 컨테이너로 추가하여 `OpenAI(api_key=..., base_url=...)`
+  SDK 호출 패턴을 그대로 재사용한다 (코드 변경 최소화).
+
+## 3. In Scope
+- AWS Bedrock 단일 service IAM credential (또는 IAM role) 로의 LLM 호출 라우팅.
+- OpenAI-compatible gateway 컨테이너 신규 도입 (LiteLLM proxy 권장).
+- Claude Sonnet 4.x / Haiku 4.x 모델 catalog 교체 (`API_MODEL_OPTIONS`).
+- `repo/unit/feature-0003-agent-web-ui/src/static/index.html` 의 Profile drawer
+  "API Vault" 탭 + step wizard DOM 제거.
+- `app.js` 의 `encryptPlainApiKey()`, `loadVaultOptions()`, vault state 코드 제거.
+- `app.py` 의 `/api/api-vault/options` endpoint, `_decrypt_api_key`,
+  `_is_safe_api_key`, `_is_safe_passphrase` 함수 제거.
+- `/api/ask` request body 의 `api_key_cipher` / `api_key_passphrase` 파라미터 +
+  관련 검증 분기 제거.
+- `agent_core.py` 의 `_run_agent_core(api_key=...)` 경로를 env-driven 단일 소스로
+  단순화 (per-request key 인자 제거).
+- `model_catalog.py` 의 `API_DEFAULT_MODEL` 을 Claude 모델 alias 로 교체.
+- `.env.example` 갱신: `BEDROCK_GATEWAY_URL`, `BEDROCK_GATEWAY_API_KEY`,
+  `AWS_REGION=ap-northeast-2`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
+  (gateway 컨테이너 측에서만 소비).
+- `docs/SECURITY.md` §6 자격증명 관리 패턴에 Bedrock gateway 정책 추가.
+- `docs/DECISIONS.md` 에 본 변경에 대한 ADR append.
+- `docs/STATUS.md` 의 feature 목록에 feature-0007 등재.
+
+## 4. Out of Scope
+- **per-user / per-role token quota** — 본 서비스가 사내 직원 전용 + 배포 전이라
+  우선순위 낮음. 배포 후 비용 가시화 시점에 별 cycle 로 위임.
+- **per-user 비용 attribution / Cost Explorer tagging** — 사내 한정 환경에서
+  단일 청구 모델로 충분. 필요 시 후속 cycle.
+- **다중 region inference fallback** — Seoul region 한정. cross-region inference
+  (us-east-1 등) 시 데이터가 미국으로 전송되는 위험을 PIPA 관점에서 회피.
+- **GPT-OSS / Nova / Llama / Mistral 등 비-Claude 모델 family 평가** — 본 cycle
+  은 Claude 단일 family 로 고정. 다중 provider 비교는 별 cycle.
+- **boto3 + bedrock-runtime native 직접 호출 경로** — 본 cycle 은 gateway 채택.
+  네이티브 전환은 latency / cost 최적화가 필요할 때 별 cycle 로 분리.
+- **Cipher format `v1:` 의 마이그레이션 호환** — API Vault 전면 폐기이므로
+  변환 / 이관 코드 없음. 기존 localStorage 의 cipher 데이터는 frontend 가
+  무시 + cleanup.
+- **하이브리드 (개인 키 + 서비스 키 병존)** — 사용자 결정으로 폐기 채택.
+- **AWS Bedrock 의 batch inference / provisioned throughput** — 기본은 on-demand.
+- **Caddy / reverse proxy 의 gateway routing 변경** — gateway 가 docker-compose
+  internal network 안에서만 노출되며 외부 expose 안 함.
+
+## 5. Inputs
+### 제거
+- `api_key_cipher: str` (request body — frontend 가 보내던 v1: cipher)
+- `api_key_passphrase: str` (request body — frontend 가 보내던 passphrase)
+- 사용자가 입력하던 OpenAI API key (`vaultPlainKey` 입력 필드)
+- 사용자가 입력하던 passphrase (`vaultPassphrase` 입력 필드)
+
+### 신규 (환경변수 — 컨테이너 시작 시 주입)
+- `BEDROCK_GATEWAY_URL`: gateway 컨테이너의 OpenAI-compatible base URL
+  (예: `http://bedrock-gateway:8080/v1`).
+- `BEDROCK_GATEWAY_API_KEY`: gateway 인증용 token (gateway → backend 양쪽 공유).
+- `AWS_REGION=ap-northeast-2` (gateway 컨테이너에서만 소비).
+- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (또는 IAM role via instance profile —
+  gateway 컨테이너에서만 소비).
+
+### 유지
+- `model` (request body — 단 Claude alias 만 허용)
+- `message`, `conversation_id` 등 기존 `/api/ask` 파라미터
+
+## 6. Outputs
+- LLM 응답 (기존과 동일 schema — gateway 가 Bedrock InvokeModel 응답을 OpenAI
+  Chat Completions schema 로 변환).
+- audit row (`WebAuditEvents.conversation.ask`) — ChangeJson 에 `model` (Claude
+  alias) 가 정확히 기록.
+- error 응답:
+  - 503: gateway 컨테이너 다운 / Bedrock 자격증명 실패
+  - 400: 허용되지 않은 모델 (`_is_allowed_api_model` 검증)
+- frontend 무변경 시각: 모델 selector 가 Claude alias 만 노출.
+
+## 7. Main Flow
+1. 사용자가 `/api/ask` 호출 (api_key_cipher / passphrase 미동봉).
+2. backend 가 model 검증 (`_is_allowed_api_model` — Claude alias 만 PASS) +
+   message 검증 + RBAC 게이팅 (`conversation.ask`, `conversation.create`).
+3. `_audit_user_action(action="conversation.ask")` 호출 — prompt_length / model
+   기록.
+4. `_run_agent_core(api_key=None)` 호출 → `_get_openai_client()` 가 env 의
+   `LLM_BASE_URL = BEDROCK_GATEWAY_URL`, `LLM_API_KEY = BEDROCK_GATEWAY_API_KEY`
+   를 단일 소스로 사용하여 `OpenAI(...)` 클라이언트 생성.
+5. agent loop 가 `client.chat.completions.create(model=<claude-alias>, ...)`
+   호출 → gateway 가 `bedrock-runtime:InvokeModel` 로 Claude (Seoul region) 호출.
+6. gateway 가 Bedrock 응답을 OpenAI Chat Completions schema 로 변환 후 반환.
+7. agent loop 가 응답을 처리하고 tool use (SQL execute / file ops) 진행.
+8. 최종 응답을 사용자에게 반환.
+
+## 8. Edge Cases
+- gateway 컨테이너 다운: backend 가 OpenAI SDK timeout → `_openai_chat_completion_with_deadline`
+  의 timeout 처리 + 503 응답.
+- Bedrock model unavailable (region access 미활성화): gateway 가 400/403 →
+  backend 가 503 + admin notification 권유 메시지.
+- Bedrock throttling (429): gateway 측 backoff 책임. backend 는 timeout 으로
+  처리.
+- 기존 frontend 캐시에 `v1:` cipher 가 남아있는 사용자: 새 코드가 해당 데이터를
+  무시 + localStorage cleanup 1 회 (cache-bust 버전 bump).
+- Claude 의 tool use schema 가 OpenAI tool_calls 와 차이: gateway 가 변환 책임.
+  변환 실패 시 `llm_warn` log 누적 → 운영자 대응.
+- Bedrock Seoul region 에 특정 모델 (예: Sonnet 4) 미배포 발견 시 Haiku 4 only
+  로 graceful degrade (catalog 갱신 + ADR 보강).
+
+## 9. Error Handling
+- gateway 503 → `/api/ask` 가 사용자에게 "LLM 서비스 일시 장애" 안내. 재시도
+  가능. agent loop 가 중단되어도 conversation 은 보존.
+- Bedrock 자격증명 회수 / 만료: gateway 컨테이너 startup fail-loud (gateway
+  healthcheck FAIL) → docker-compose 가 unhealthy 분류. backend 는 503 응답.
+- Rollback path: 단일 commit revert + cache-bust 되돌리기. API Vault 코드는
+  git history 에 보존되므로 긴급 시 cherry-pick 가능. 단 사용자 frontend cache
+  invalidation 필요.
+
+## 10. Dependencies
+### 내부 기능 의존성
+- feature-0002-agent-core — `llm.py`, `config.py`, `agent_core.py`, `model_catalog.py`
+- feature-0003-agent-web-ui — `app.py`, `app.js`, `index.html`, `styles.css`
+
+### 외부 의존성
+- AWS Bedrock (`ap-northeast-2` Seoul region) — Claude Sonnet 4.x / Haiku 4.x
+  model access 활성화 필요 (AWS console → Bedrock → Model access).
+- LiteLLM proxy (또는 동등 OSS — Bedrock Access Gateway 등). Docker image 직접
+  pull.
+- AWS IAM credential — `AmazonBedrockFullAccess` 또는 `bedrock:InvokeModel` 권한
+  포함 IAM user / role.
+
+### shared 모듈 의존성
+- 없음 (본 변경은 feature-0002 / feature-0003 의 local module 만 수정).
+
+## 11. Acceptance Criteria
+- AC-0001: `index.html` 의 Profile drawer "API Vault" 탭 / step wizard / vault
+  saved card / vault danger zone DOM 이 모두 제거되었다 (또는 deprecation 안내
+  한 줄로 대체).
+- AC-0002: `app.js` 의 `encryptPlainApiKey`, `loadVaultOptions`, `vaultState`
+  관련 함수 / state 가 모두 제거되고 `sendPrompt` 가 `api_key_cipher` /
+  `api_key_passphrase` 를 첨부하지 않는다.
+- AC-0003: `app.py` 의 `/api/api-vault/options`, `_decrypt_api_key`,
+  `_is_safe_api_key`, `_is_safe_passphrase` 가 제거되고 `/api/ask` 가 cipher
+  인자를 받지 않는다 (수신해도 무시).
+- AC-0004: `model_catalog.py` 의 `PUBLIC_API_MODEL_OPTIONS` 가 Claude alias
+  (예: `claude-sonnet-4`, `claude-haiku-4`) 만 포함하고 GPT-5.4 시리즈가 모두
+  제거되었다. `API_DEFAULT_MODEL` 도 Claude alias.
+- AC-0005: `docker-compose.yml` 에 `bedrock-gateway` 서비스가 추가되고
+  healthcheck PASS 시 `/api/ask` 호출이 정상 응답한다.
+- AC-0006: `_run_agent_core(api_key=None)` 호출 경로가 env 단일 소스로 동작한다
+  (`OPENAI_API_KEY` env 미설정 상태에서도 LLM 호출 PASS).
+- AC-0007: feature-0002 agent loop 의 SQL 생성 + tool use (file_search,
+  execute_sql, restore_sql) 가 Claude 모델로 회귀 없이 동작한다 (smoke test 1
+  conv).
+- AC-0008: `docs/SECURITY.md` §6 에 Bedrock gateway 자격증명 관리 정책이 추가
+  되고, `docs/DECISIONS.md` 에 ADR 1 건이 append 되었다.
+- AC-0009: `.env.example` 이 새 환경변수 5 개를 포함하고 실 자격증명 값은 없다.
+- AC-0010: 기존 사용자의 frontend 캐시 (localStorage v1: cipher) 가 cache-bust
+  버전 bump 후 자연 cleanup 된다 (suspicious key 면 silent drop).
+
+## 12. Observability
+- gateway 컨테이너 stdout: 모델별 호출 카운트, latency (p50/p95), error rate,
+  region별 분포. LiteLLM 의 built-in 메트릭 사용.
+- backend `llm_warn` log: timeout / parse_error 등 기존 패턴 유지.
+- audit row: `WebAuditEvents.conversation.ask` ChangeJson 에 `model` 필드로
+  Claude alias 가 기록되어 사후 분석 가능.
+- (선택, 후속 cycle): per-user token usage 누적이 필요해지면 gateway 의 callback
+  hook 으로 audit row 에 `input_tokens` / `output_tokens` 첨부.
+
+## 13. Pre-approved Changes
+<!-- 본 cycle 은 §12.3 Major 등급으로 plan-review 경유 필수. 사전 승인 범위 없음. -->
+- 없음

@@ -480,15 +480,18 @@ Rules:
 
 
 def _get_openai_client(timeout_sec: int | None = None) -> OpenAI | None:
+    # feature-0007 (REQ-20260521-0001): LLM 자격증명은 env 단일 소스. config.py 의
+    # `LLM_API_KEY` 가 BEDROCK_GATEWAY_API_KEY → LOCAL_LLM_API_KEY → OPENAI_API_KEY
+    # fallback chain 으로 이미 결정되므로 여기서 별도 분기 없음. per-request
+    # api_key 인자 패턴 (구 API Vault) 은 폐기됨.
     from .config import LLM_BASE_URL, LLM_API_KEY
-    effective_key = LLM_API_KEY or OPENAI_API_KEY
-    if not effective_key or OpenAI is None:
+    if not LLM_API_KEY or OpenAI is None:
         return None
     try:
         timeout_val = int(timeout_sec) if timeout_sec is not None else int(AGENT_TIMEOUT_SEC)
         timeout_val = max(5, timeout_val)
         kwargs: dict = {
-            "api_key": effective_key,
+            "api_key": LLM_API_KEY,
             "timeout": timeout_val,
             "max_retries": max(0, int(AGENT_OPENAI_MAX_RETRIES)),
         }

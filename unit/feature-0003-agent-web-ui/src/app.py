@@ -1273,31 +1273,10 @@ def _b64decode(text: str) -> bytes:
         return b""
 
 
-def _decrypt_api_key(cipher: str, passphrase: str) -> str:
-    cipher = str(cipher or "").strip()
-    passphrase = str(passphrase or "").strip()
-    if not cipher or not passphrase:
-        raise ValueError("missing api key payload")
-    if not cipher.startswith("v1:"):
-        raise ValueError("invalid cipher format")
-    parts = cipher.split(":")
-    if len(parts) != 4:
-        raise ValueError("invalid cipher payload")
-    salt = _b64decode(parts[1])
-    iv = _b64decode(parts[2])
-    data = _b64decode(parts[3])
-    if not salt or not iv or not data:
-        raise ValueError("invalid cipher payload")
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=salt,
-        iterations=100000,
-    )
-    key = kdf.derive(passphrase.encode("utf-8"))
-    aesgcm = AESGCM(key)
-    plain = aesgcm.decrypt(iv, data, None)
-    return plain.decode("utf-8")
+# feature-0007 (REQ-20260521-0001): `_decrypt_api_key` 함수 제거됨. 사용자별
+# OpenAI 키 입력 (API Vault) 패턴 폐기 후, LLM 자격증명은 서비스 단일 env
+# (`BEDROCK_GATEWAY_API_KEY`) 가 보유하며 backend 는 cipher 를 받지 않는다.
+# 본 위치에 있던 PBKDF2HMAC / AESGCM 복호화 로직은 더 이상 호출되지 않는다.
 
 
 def _is_safe_model_name(value: str) -> bool:
@@ -1319,28 +1298,9 @@ def _model_supports_temperature(value: str) -> bool:
     return model_supports_temperature(value)
 
 
-def _is_safe_api_key(value: str) -> bool:
-    text = str(value or "").strip()
-    if not text:
-        return False
-    if len(text) < 10 or len(text) > 200:
-        return False
-    if CONTROL_RE.search(text):
-        return False
-    if any(ch.isspace() for ch in text):
-        return False
-    return True
-
-
-def _is_safe_passphrase(value: str) -> bool:
-    text = str(value or "").strip()
-    if not text:
-        return False
-    if len(text) < 8 or len(text) > 128:
-        return False
-    if CONTROL_RE.search(text):
-        return False
-    return True
+# feature-0007 (REQ-20260521-0001): `_is_safe_api_key` / `_is_safe_passphrase`
+# 검증 함수 제거됨. API Vault 폐기로 사용자가 cipher / passphrase 를 보내지
+# 않으므로 본 검증 표면 자체가 사라졌다.
 
 
 def _acquire_request_slot(session_id: str) -> bool:
@@ -5183,6 +5143,10 @@ def get_session(request: Request) -> JSONResponse:
     return JSONResponse(payload)
 
 
+# feature-0007 (REQ-20260521-0001): API Vault 전면 폐기. 본 endpoint 의 의미를
+# "사용자 키 입력 wizard 옵션 (default_model + 가용 모델 + secure context)" →
+# "서비스 가용 모델 catalog (frontend 모델 selector 가 소비)" 로 단순화 + 경로
+# 유지. cipher 입력 / secure context 강제 안내는 제거 (서비스가 자격증명 관리).
 @app.get("/api/api-vault/options")
 def get_api_vault_options() -> JSONResponse:
     return JSONResponse(
@@ -5191,7 +5155,7 @@ def get_api_vault_options() -> JSONResponse:
             "models": list(PUBLIC_API_MODEL_OPTIONS),
             "public_host": WEB_PUBLIC_HOST,
             "public_url": WEB_PUBLIC_URL,
-            "requires_secure_context": True,
+            "provider": "bedrock-gateway",
         }
     )
 
@@ -5212,12 +5176,11 @@ async def ask(request: Request) -> JSONResponse:
         conn.close()
         return error
     message = str(data.get("message", "")).strip()
-    api_key_cipher = str(data.get("api_key_cipher", "")).strip()
-    api_key_passphrase = str(data.get("api_key_passphrase", "")).strip()
+    # feature-0007 (REQ-20260521-0001): `api_key_cipher` / `api_key_passphrase`
+    # 파라미터 폐기. backend 가 보유한 BEDROCK_GATEWAY_API_KEY (service-managed)
+    # 가 단일 자격증명. 구 클라이언트가 cipher 를 보내도 silently 무시.
     model = str(data.get("model", "") or API_DEFAULT_MODEL).strip()
     request_conversation_id = str(data.get("conversation_id", "")).strip()
-    local_llm_enabled = _is_local_llm_available()
-    has_api_key_input = bool(api_key_cipher and api_key_passphrase)
     # ── 기본 입력 검증 ──
     if not message:
         conn.close()
@@ -5231,23 +5194,9 @@ async def ask(request: Request) -> JSONResponse:
     elif not _is_allowed_api_model(model):
         conn.close()
         return _json_error("허용되지 않은 모델입니다.", 400)
-    # ── 모델 종류별 자격증명 검증 ──
-    # Local LLM 모델(auto/edge/core/code)은 외부 gateway 연결 가능 여부만 확인한다.
-    # API 모델(gpt-* 등)은 사용자가 제공한 API 키가 반드시 있어야 한다.
-    # 서버 환경변수 OPENAI_API_KEY를 대신 사용하는 것을 막기 위해 분리한다.
-    elif is_local_llm_model(model):
-        if not local_llm_enabled:
-            conn.close()
-            return _json_error("외부 Local LLM provider가 준비되지 않았습니다. 게이트웨이 상태를 확인하세요.", 503)
-    elif not has_api_key_input:
-        conn.close()
-        return _json_error("API 모델 사용 시 API 키 설정이 필요합니다.", 400)
-    elif not _is_safe_passphrase(api_key_passphrase):
-        conn.close()
-        return _json_error("암호화 키 형식이 올바르지 않습니다.", 400)
-    elif len(api_key_cipher) > 4096 or CONTROL_RE.search(api_key_cipher):
-        conn.close()
-        return _json_error("API 키 형식이 올바르지 않습니다.", 400)
+    # 자격증명 검증은 backend 단일 env 소스로 이동 (config.py 의 LLM_API_KEY).
+    # 호출 시점에 자격증명이 미설정이면 `_run_agent_core` 가 result["error"] 로
+    # 보고 → user 에게 503 안내.
     if request_conversation_id:
         if not _conversation_exists(request_conversation_id, conn=conn):
             conn.close()
@@ -5341,17 +5290,8 @@ async def ask(request: Request) -> JSONResponse:
         conn.close()
         return _json_error("동시 요청 제한에 도달했습니다. 잠시 후 다시 시도해주세요.", 429)
     try:
-        api_key: str | None = None
-        if has_api_key_input:
-            try:
-                api_key = _decrypt_api_key(api_key_cipher, api_key_passphrase)
-            except Exception:
-                conn.close()
-                return _json_error("API 키 복호화에 실패했습니다.", 400)
-            if not _is_safe_api_key(api_key):
-                conn.close()
-                return _json_error("API 키 형식이 올바르지 않습니다.", 400)
-
+        # feature-0007: per-request api_key 분기 제거. LLM 자격증명은 service env
+        # 단일 소스 (config.py 의 LLM_API_KEY → BEDROCK_GATEWAY_API_KEY chain).
         from agent_core import run_agent as _run_agent_core
 
         temp_value = 0.0 if _model_supports_temperature(model) else None
@@ -5421,13 +5361,14 @@ async def ask(request: Request) -> JSONResponse:
             role_id_for_run = None
             product_mode_for_run = "pinned"
 
+        # feature-0007: api_key 인자 제거. agent_core 가 env 단일 소스로 자격증명
+        # 결정 (LLM_API_KEY → BEDROCK_GATEWAY_API_KEY chain).
         agent_result = await asyncio.to_thread(
             _run_agent_core,
             user_message=message,
             conversation_id=conv_id or None,
             conv_file=_account_conv_file(int(account["id"])),
             model=model,
-            api_key=api_key,
             temperature=temp_value,
             output_mode="json",
             product_id=product_id_for_run,

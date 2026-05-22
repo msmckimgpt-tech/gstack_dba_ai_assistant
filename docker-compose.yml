@@ -15,6 +15,8 @@ x-agent-common: &agent-common
   depends_on:
     mysql:
       condition: service_healthy
+    bedrock-gateway:
+      condition: service_healthy
 
 services:
   mysql:
@@ -166,6 +168,38 @@ services:
     ports:
       - "${BROWSER_PORT}:8001"
     networks: [dbnet]
+
+  # ── AWS Bedrock OpenAI-compatible gateway (feature-0007) ─────────────
+  # LiteLLM proxy 가 `OpenAI(api_key, base_url)` 호출을 받아 AWS Bedrock 의
+  # `bedrock-runtime:InvokeModel` 로 라우팅한다. AWS 자격증명은 본 컨테이너 env
+  # 로만 주입되며, backend / frontend 는 BEDROCK_GATEWAY_API_KEY (gateway token)
+  # 만 인지한다 (사용자 결정 5 항목 정합). 외부 expose 안 함 — dbnet 내부에서만
+  # 접근 가능.
+  bedrock-gateway:
+    image: ghcr.io/berriai/litellm:main-stable
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ}
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      BEDROCK_GATEWAY_API_KEY: ${BEDROCK_GATEWAY_API_KEY}
+    volumes:
+      - ./unit/feature-0007-bedrock-llm-provider/src/config/litellm_config.yaml:/app/config.yaml:ro
+    command:
+      - "--config"
+      - "/app/config.yaml"
+      - "--port"
+      - "8080"
+    networks: [dbnet]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health/liveliness',timeout=2).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
 networks:
   dbnet:

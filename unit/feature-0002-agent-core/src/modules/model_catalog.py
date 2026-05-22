@@ -15,7 +15,7 @@ __all__ = [
 ]
 
 
-API_DEFAULT_MODEL = "gpt-5.4-nano"
+API_DEFAULT_MODEL = "claude-sonnet-4"
 
 # ── 로컬 LLM 게이트웨이 모델 (LOCAL_LLM_API_BASE 설정 시 자동 추가) ──
 _LOCAL_LLM_MODELS: tuple[dict[str, Any], ...] = (
@@ -49,27 +49,27 @@ _LOCAL_LLM_MODELS: tuple[dict[str, Any], ...] = (
     },
 )
 
+# feature-0007 (REQ-20260521-0001~3): API Vault (사용자별 OpenAI API key) 폐기 후
+# AWS Bedrock (Seoul region `ap-northeast-2`) 의 Anthropic Claude 4.x 시리즈로
+# 카탈로그 교체. backend 가 보내는 `model` 필드는 본 alias 만 허용하고, LiteLLM
+# proxy gateway 가 alias → 실 Bedrock model ID (예: `bedrock/anthropic.claude-
+# haiku-4-20250514-v1:0`) 로 라우팅한다. 실 model ID 정합은
+# `unit/feature-0007-bedrock-llm-provider/src/config/litellm_config.yaml` 에서
+# 단일 source-of-truth 로 관리.
 API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = (
     {
-        "value": "gpt-5.4",
-        "label": "gpt-5.4",
-        "group": "GPT-5",
-        "description": "최신 GPT-5 base 모델",
-        "supports_temperature": False,
+        "value": "claude-sonnet-4",
+        "label": "claude-sonnet-4",
+        "group": "Claude 4",
+        "description": "Anthropic Claude Sonnet 4.x (frontier, 고품질)",
+        "supports_temperature": True,
     },
     {
-        "value": "gpt-5.4-mini",
-        "label": "gpt-5.4-mini",
-        "group": "GPT-5",
-        "description": "GPT-5.4 mini 모델",
-        "supports_temperature": False,
-    },
-    {
-        "value": "gpt-5.4-nano",
-        "label": "gpt-5.4-nano",
-        "group": "GPT-5",
-        "description": "GPT-5.4 nano 모델",
-        "supports_temperature": False,
+        "value": "claude-haiku-4",
+        "label": "claude-haiku-4",
+        "group": "Claude 4",
+        "description": "Anthropic Claude Haiku 4.x (가성비, 기본값)",
+        "supports_temperature": True,
     },
 )
 
