@@ -174,6 +174,17 @@ const state = {
     loading: false,
     forbidden: false,
   },
+  // TASK-0094 Sprint 1 Phase 6 (D16 + R-F5): composer 의 첨부 selection state.
+  // - byConv: 대화 ID 또는 pending sentinel 별 첨부 목록.
+  //   { [convOrSentinel]: { items: [{id, kind, name, size, status, selected, error?}], scopeAll: bool } }
+  //   items 의 id 는 backend 의 WebConversationAttachments.Id (음수 일 때 = client-side 로컬 placeholder).
+  //   status: "uploading" | "ready" | "failed"
+  // - uploadingCount: in-flight upload 카운트 (paperclip / send 비활성화 게이트).
+  composerAttachments: {
+    byConv: {},
+    uploadingCount: 0,
+    nextLocalId: -1,
+  },
 };
 
 // TASK-0082: 글로벌 prefix 만 유지 — 실제 sentinel 은 _newPendingSentinel() 가 각 lazy-create 마다 unique 생성.
@@ -3318,6 +3329,8 @@ async function selectConversation(conversationId) {
   } catch (_) { /* ignore */ }
   // REQ-20260519-0004 (TASK-0076): search modal 에서 진입한 경우 매칭된 첫 message bubble 로 jump.
   try { _jumpToSearchMatchedMessage(); } catch (_) {}
+  // TASK-0094 Sprint 1 Phase 6: 대화 진입 시 attachment list load — backend ground truth 와 selection snapshot 동기화.
+  try { await _loadConversationAttachments(conversationId); } catch (_) {}
 }
 
 async function createConversation() {
@@ -3825,6 +3838,294 @@ async function attachAndWaitForResult(conversationId, { runId = "" } = {}) {
   }
 }
 
+// ============================================================================
+// TASK-0094 Sprint 1 Phase 6 — Composer attachment helper (D16 + R-F5).
+// ============================================================================
+// 첨부 selection state 의 key 는 현재 대화 ID 또는 pending sentinel.
+// sendPrompt 시점에 snapshot 후 askBody.attachment_ids / scope_all 에 기록.
+
+function _composerAttachmentKey(convId, sentinel = null) {
+  // 우선순위: explicit sentinel > activeConversationId > pending sentinel > ""
+  if (sentinel) return String(sentinel);
+  if (convId) return String(convId);
+  if (state.pendingSentinel) return String(state.pendingSentinel);
+  return "";
+}
+
+function _ensureComposerBucket(key) {
+  if (!key) return null;
+  if (!state.composerAttachments.byConv[key]) {
+    state.composerAttachments.byConv[key] = { items: [], scopeAll: false };
+  }
+  return state.composerAttachments.byConv[key];
+}
+
+function _composerAttachmentSnapshot(targetConvId, isLazyCreate) {
+  // R-F5 lazy-create snapshot: 현재 sendPrompt 시점의 selection 을 추출.
+  // isLazyCreate 면 pendingSentinel bucket, 그 외엔 targetConvId bucket.
+  const key = isLazyCreate
+    ? (state.pendingSentinel ? String(state.pendingSentinel) : "")
+    : String(targetConvId || "");
+  const bucket = state.composerAttachments.byConv[key];
+  if (!bucket) {
+    return { selectedIds: [], scopeAll: false };
+  }
+  const selectedIds = bucket.items
+    .filter((it) => it.selected && it.status === "ready" && Number(it.id) > 0)
+    .map((it) => Number(it.id));
+  return { selectedIds, scopeAll: Boolean(bucket.scopeAll) };
+}
+
+function _renderAttachmentPills() {
+  const container = document.getElementById("composerAttachmentsPills");
+  const wrap = document.getElementById("composerAttachments");
+  const scopeAllEl = document.getElementById("composerAttachmentsScopeAll");
+  if (!container || !wrap) return;
+
+  const key = _composerAttachmentKey(state.activeConversationId);
+  const bucket = state.composerAttachments.byConv[key];
+  const items = bucket?.items || [];
+
+  if (!items.length) {
+    container.innerHTML = "";
+    wrap.classList.add("hidden");
+    if (scopeAllEl) scopeAllEl.checked = false;
+    return;
+  }
+  wrap.classList.remove("hidden");
+  if (scopeAllEl) scopeAllEl.checked = Boolean(bucket?.scopeAll);
+
+  const html = items
+    .map((it) => {
+      const sizeKb = Math.max(1, Math.round((Number(it.size) || 0) / 1024));
+      const safeName = String(it.name || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const kindLabel = String(it.kind || "file").toUpperCase();
+      return `<span class="composer-attachment-pill"
+                    data-selected="${it.selected ? "true" : "false"}"
+                    data-uploading="${it.status === "uploading" ? "true" : "false"}"
+                    data-error="${it.status === "failed" ? "true" : "false"}"
+                    data-attachment-id="${it.id}"
+                    title="${it.status === "failed" ? "업로드 실패: " + (it.error || "알 수 없는 오류") : safeName}">
+                <span class="pill-kind">${kindLabel}</span>
+                <span class="pill-name">${safeName}</span>
+                <span class="pill-size">${sizeKb} KB</span>
+                <button type="button" class="pill-toggle" data-action="toggle" aria-label="첨부 선택 토글">
+                  ${it.selected ? "×" : "+"}
+                </button>
+              </span>`;
+    })
+    .join("");
+  container.innerHTML = html;
+}
+
+async function _uploadComposerAttachment(file) {
+  // 현재 활성 컨텍스트의 conv id 또는 pending sentinel.
+  const isLazy = state.pendingNewConversation || !state.activeConversationId;
+  const key = _composerAttachmentKey(state.activeConversationId);
+  const bucket = _ensureComposerBucket(key);
+  if (!bucket) {
+    showToast("대화 컨텍스트 미정 — 새 대화 또는 기존 대화를 선택해 주세요.", true);
+    return;
+  }
+  // backend upload endpoint 는 cid 필요 — lazy create 시점은 cid 가 없음. 사용자에게 안내.
+  if (isLazy) {
+    showToast(
+      "첨부는 대화가 생성된 후 가능합니다. 첫 메시지를 보낸 뒤 다시 시도해 주세요.",
+      true,
+    );
+    return;
+  }
+  const convId = String(state.activeConversationId);
+
+  // Optimistic local pill (status=uploading).
+  const localId = state.composerAttachments.nextLocalId;
+  state.composerAttachments.nextLocalId -= 1;
+  const optimistic = {
+    id: localId,
+    kind: _guessKindFromFile(file),
+    name: file.name || "unnamed",
+    size: Number(file.size) || 0,
+    status: "uploading",
+    selected: true,
+  };
+  bucket.items.push(optimistic);
+  state.composerAttachments.uploadingCount += 1;
+  _renderAttachmentPills();
+
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const resp = await apiFetch(`/api/conversations/${encodeURIComponent(convId)}/attachments`, {
+      method: "POST",
+      body: formData,
+      // Content-Type 헤더 명시 안 함 — fetch 가 boundary 포함 자동.
+      headers: {},
+    });
+    if (resp && Number(resp.id) > 0) {
+      // optimistic → real id 갱신.
+      const idx = bucket.items.findIndex((it) => it.id === localId);
+      if (idx >= 0) {
+        bucket.items[idx] = {
+          id: Number(resp.id),
+          kind: String(resp.kind || optimistic.kind),
+          name: String(resp.original_filename || optimistic.name),
+          size: Number(resp.size || optimistic.size),
+          status: "ready",
+          selected: true,
+        };
+      }
+      showToast(`첨부 업로드 완료: ${optimistic.name}`);
+    } else if (resp && resp.error) {
+      const idx = bucket.items.findIndex((it) => it.id === localId);
+      if (idx >= 0) {
+        bucket.items[idx] = { ...bucket.items[idx], status: "failed", error: resp.error };
+      }
+      showToast(`첨부 업로드 실패: ${resp.error}`, true);
+    }
+  } catch (exc) {
+    const idx = bucket.items.findIndex((it) => it.id === localId);
+    if (idx >= 0) {
+      bucket.items[idx] = { ...bucket.items[idx], status: "failed", error: String(exc) };
+    }
+    showToast(`첨부 업로드 실패: ${exc}`, true);
+  } finally {
+    state.composerAttachments.uploadingCount = Math.max(0, state.composerAttachments.uploadingCount - 1);
+    _renderAttachmentPills();
+  }
+}
+
+function _guessKindFromFile(file) {
+  const name = String(file?.name || "").toLowerCase();
+  const ext = name.includes(".") ? name.split(".").pop() : "";
+  const mime = String(file?.type || "").toLowerCase();
+  if (mime === "text/csv" || ext === "csv") return "csv";
+  if (
+    mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    || mime === "application/vnd.ms-excel"
+    || ext === "xlsx"
+    || ext === "xls"
+  ) return "xlsx";
+  if (mime === "application/pdf" || ext === "pdf") return "pdf";
+  if (mime.startsWith("image/")) return "image";
+  if (mime === "text/markdown" || ext === "md") return "text";
+  if (mime === "text/plain" || ext === "txt") return "text";
+  return "other";
+}
+
+function _toggleAttachmentPill(attachmentId) {
+  const key = _composerAttachmentKey(state.activeConversationId);
+  const bucket = state.composerAttachments.byConv[key];
+  if (!bucket) return;
+  const idx = bucket.items.findIndex((it) => String(it.id) === String(attachmentId));
+  if (idx < 0) return;
+  const it = bucket.items[idx];
+  if (it.status === "failed") {
+    // failed pill 토글 click = remove.
+    bucket.items.splice(idx, 1);
+  } else {
+    // selected 토글.
+    bucket.items[idx] = { ...it, selected: !it.selected };
+  }
+  _renderAttachmentPills();
+}
+
+async function _loadConversationAttachments(convId) {
+  // 대화 진입 시 active 첨부 목록 load (D16: backend ground truth 와 selected snapshot 동기화).
+  if (!convId) return;
+  try {
+    const resp = await apiFetch(`/api/conversations/${encodeURIComponent(convId)}/attachments`);
+    const arr = Array.isArray(resp?.attachments) ? resp.attachments : [];
+    const bucket = _ensureComposerBucket(String(convId));
+    // Backend 의 ready 첨부만 default selected. uploading/failed 등 client-only pill 은 보존 (다른 컨텍스트에서 들어왔을 가능성 낮음).
+    const serverIds = new Set(arr.map((a) => Number(a.id)));
+    bucket.items = bucket.items.filter((it) => Number(it.id) <= 0); // local optimistic 만 보존
+    for (const a of arr) {
+      bucket.items.push({
+        id: Number(a.id),
+        kind: String(a.kind || "other"),
+        name: String(a.original_filename || ""),
+        size: Number(a.size || 0),
+        status: String(a.status || "ready") === "deleted" ? "failed" : "ready",
+        selected: true,
+      });
+    }
+    _renderAttachmentPills();
+  } catch (exc) {
+    // 403 / 404 등 graceful — 첨부 권한 없거나 대화 부재. pill 영역 hide.
+    const wrap = document.getElementById("composerAttachments");
+    if (wrap) wrap.classList.add("hidden");
+  }
+}
+
+function _bindComposerAttachmentEvents() {
+  const attachBtn = document.getElementById("attachBtn");
+  const fileInput = document.getElementById("attachFileInput");
+  const scopeAllEl = document.getElementById("composerAttachmentsScopeAll");
+  const pillsContainer = document.getElementById("composerAttachmentsPills");
+  const composerWrap = document.querySelector(".composer-wrap");
+
+  if (attachBtn && fileInput) {
+    attachBtn.addEventListener("click", () => {
+      fileInput.click();
+    });
+    fileInput.addEventListener("change", async (ev) => {
+      const file = ev.target?.files?.[0];
+      if (file) {
+        await _uploadComposerAttachment(file);
+      }
+      // reset value so same file selectable again.
+      ev.target.value = "";
+    });
+  }
+  if (scopeAllEl) {
+    scopeAllEl.addEventListener("change", (ev) => {
+      const key = _composerAttachmentKey(state.activeConversationId);
+      const bucket = _ensureComposerBucket(key);
+      if (bucket) {
+        bucket.scopeAll = Boolean(ev.target.checked);
+        if (bucket.scopeAll) {
+          showToast(
+            "이 대화의 모든 ingested 첨부를 사용합니다. 별도 audit 이 기록됩니다.",
+            false,
+          );
+        }
+      }
+    });
+  }
+  if (pillsContainer) {
+    pillsContainer.addEventListener("click", (ev) => {
+      const btn = ev.target.closest('[data-action="toggle"]');
+      if (!btn) return;
+      const pill = btn.closest("[data-attachment-id]");
+      if (!pill) return;
+      _toggleAttachmentPill(pill.dataset.attachmentId);
+    });
+  }
+  if (composerWrap) {
+    let dragCounter = 0;
+    composerWrap.addEventListener("dragenter", (ev) => {
+      ev.preventDefault();
+      dragCounter += 1;
+      composerWrap.classList.add("is-dragover");
+    });
+    composerWrap.addEventListener("dragover", (ev) => {
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = "copy";
+    });
+    composerWrap.addEventListener("dragleave", () => {
+      dragCounter = Math.max(0, dragCounter - 1);
+      if (dragCounter === 0) composerWrap.classList.remove("is-dragover");
+    });
+    composerWrap.addEventListener("drop", async (ev) => {
+      ev.preventDefault();
+      dragCounter = 0;
+      composerWrap.classList.remove("is-dragover");
+      const file = ev.dataTransfer?.files?.[0];
+      if (file) await _uploadComposerAttachment(file);
+    });
+  }
+}
+
 async function sendPrompt() {
   const message = promptInputEl.value.trim();
   if (!message) return;
@@ -3928,6 +4229,13 @@ async function sendPrompt() {
         ? Number(state.pinnedProductId)
         : null;
   }
+  // TASK-0094 Sprint 1 Phase 6 (D16, R-F5): attachment selection snapshot.
+  // sendPrompt 시작 시점의 selected attachment_ids 와 scope_all 토글을 askBody 에
+  // 명시 전송 — 사용자가 다른 대화로 전환해 pill 을 바꿔도 in-flight 요청에는 영향 0.
+  // attachment_ids 가 명시되지 않으면 backend 가 빈 list 처리 (D16 minimum exposure).
+  const attachmentSnapshot = _composerAttachmentSnapshot(targetConvId, isLazyCreate);
+  askBody.attachment_ids = attachmentSnapshot.selectedIds;
+  askBody.attachment_scope_all = attachmentSnapshot.scopeAll;
   try {
     const payload = await apiFetch("/api/ask", {
       method: "POST",
@@ -4420,6 +4728,8 @@ async function initialize() {
       showToast(error.message || "요청 전송에 실패했습니다.", true);
     });
   });
+  // TASK-0094 Sprint 1 Phase 6: composer 첨부 (paperclip / drag-drop / pill / scope-all) 이벤트 binding.
+  try { _bindComposerAttachmentEvents(); } catch (_) { /* graceful — DOM 부재 시 무시 */ }
   promptInputEl.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       event.preventDefault();
