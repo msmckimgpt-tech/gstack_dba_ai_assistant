@@ -162,18 +162,6 @@ const state = {
     mousedownOnOverlay: false,
     mouseupOnOverlay: false,
   },
-  // TASK-0089: profile drawer "내 감사 로그" 탭 state.
-  // items: WebAuditEvents row 목록. selectedId: inline detail expand 대상.
-  // filters: { action_code, from_at, to_at } (mini filter, Codex C4 — drawer 폭 390px 1-column).
-  // nextCursor: pagination keyset. loading: 중복 호출 방지. forbidden: 403 시 UX 상태.
-  profileAudit: {
-    items: [],
-    selectedId: null,
-    filters: { action_code: "", from_at: "", to_at: "" },
-    nextCursor: null,
-    loading: false,
-    forbidden: false,
-  },
   // TASK-0094 Sprint 1 Phase 6 (D16 + R-F5): composer 의 첨부 selection state.
   // - byConv: 대화 ID 또는 pending sentinel 별 첨부 목록.
   //   { [convOrSentinel]: { items: [{id, kind, name, size, status, selected, error?}], scopeAll: bool } }
@@ -746,233 +734,6 @@ function switchProfileTab(tab) {
   });
 }
 
-// ──────────────────────────────────────────────────────────────────
-//  TASK-0089 — Profile drawer "내 감사 로그" 탭
-//  - audit.read.own 또는 audit.read.any 보유자에게 본인 audit row 표시.
-//  - backend `/api/profile/audits` 가 scope="own" 강제 (Codex outside voice C2).
-//  - 1-column list + inline detail expand (Codex C4 — drawer 폭 390px).
-//  - mini filter: action_code / from_at / to_at (Codex C4 — actor_id/actor_type 본인 한정 무의미).
-//  - CSV export / purge 미노출 (admin 한정, Codex C3).
-//  - 403 graceful: tab content 를 "권한 없음" 으로 전환 (Codex C5).
-// ──────────────────────────────────────────────────────────────────
-
-function _profileAuditEscapeHtml(s) {
-  if (s == null) return "";
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function _profileAuditFormatDt(iso) {
-  if (!iso) return "";
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return String(iso);
-    return d.toLocaleString();
-  } catch {
-    return String(iso);
-  }
-}
-
-function _profileAuditHasReadPermission() {
-  // TASK-0098: state.user.permissions 의존성 제거. audit.read.own 은 TASK-0073
-  // RBAC catalog 에서 모든 role 에 catchup grant — 로그인된 사용자라면 항상
-  // 보유. 따라서 로그인 여부만 검사 + backend 403 fallback (apiFetch 공통 toast)
-  // 가 실제 권한 거부를 처리한다.
-  return Boolean(state.user);
-  // 폐기된 코드 — 참조 보존:
-  // const perms = state.user?.permissions || {};
-  // return Boolean(perms["audit.read.own"] || perms["audit.read.any"]);
-}
-
-function updateProfileAuditTabVisibility() {
-  // tab 노출 = audit.read.own || audit.read.any (Codex C5).
-  const tab = document.getElementById("profileAuditTab");
-  if (!tab) return;
-  tab.classList.toggle("hidden", !_profileAuditHasReadPermission());
-}
-
-function _profileAuditReadFilters() {
-  const action = document.getElementById("profileAuditFilterAction");
-  const fromAt = document.getElementById("profileAuditFilterFromAt");
-  const toAt = document.getElementById("profileAuditFilterToAt");
-  state.profileAudit.filters = {
-    action_code: action ? action.value.trim() : "",
-    from_at: fromAt ? fromAt.value : "",
-    to_at: toAt ? toAt.value : "",
-  };
-}
-
-function _profileAuditClearFilters() {
-  const action = document.getElementById("profileAuditFilterAction");
-  const fromAt = document.getElementById("profileAuditFilterFromAt");
-  const toAt = document.getElementById("profileAuditFilterToAt");
-  if (action) action.value = "";
-  if (fromAt) fromAt.value = "";
-  if (toAt) toAt.value = "";
-  state.profileAudit.filters = { action_code: "", from_at: "", to_at: "" };
-}
-
-async function loadProfileAuditList(append = false) {
-  if (state.profileAudit.loading) return;
-  state.profileAudit.loading = true;
-  try {
-    const params = new URLSearchParams();
-    const f = state.profileAudit.filters || {};
-    if (f.action_code) params.set("action_code", f.action_code);
-    if (f.from_at) params.set("from_at", f.from_at);
-    if (f.to_at) params.set("to_at", f.to_at);
-    if (append && state.profileAudit.nextCursor) {
-      params.set("cursor", state.profileAudit.nextCursor);
-    }
-    const url = `/api/profile/audits?${params.toString()}`;
-    const resp = await fetch(url, { credentials: "same-origin" });
-    if (resp.status === 403) {
-      // 권한 race (Codex C5) — drawer tab 노출 후 admin 이 권한 revoke 시.
-      state.profileAudit.forbidden = true;
-      state.profileAudit.items = [];
-      state.profileAudit.nextCursor = null;
-      renderProfileAuditList();
-      return;
-    }
-    if (!resp.ok) {
-      showToast(`감사 로그 조회 실패 (${resp.status})`, true);
-      return;
-    }
-    state.profileAudit.forbidden = false;
-    const data = await resp.json();
-    state.profileAudit.nextCursor = data.next_cursor || null;
-    const fresh = data.items || [];
-    state.profileAudit.items = append ? state.profileAudit.items.concat(fresh) : fresh;
-    renderProfileAuditList();
-  } catch (exc) {
-    showToast(`감사 로그 조회 실패: ${exc}`, true);
-  } finally {
-    state.profileAudit.loading = false;
-  }
-}
-
-function renderProfileAuditList() {
-  const listEl = document.getElementById("profileAuditList");
-  const countEl = document.getElementById("profileAuditCount");
-  const moreBtn = document.getElementById("profileAuditLoadMoreBtn");
-  const detailEl = document.getElementById("profileAuditDetail");
-  if (!listEl) return;
-
-  // 403 graceful (Codex C5).
-  if (state.profileAudit.forbidden) {
-    listEl.innerHTML = '<div class="profile-audit-empty">감사 로그 조회 권한이 없습니다. 권한이 부여되면 다시 시도하세요.</div>';
-    if (countEl) countEl.textContent = "";
-    if (moreBtn) moreBtn.style.display = "none";
-    if (detailEl) detailEl.classList.add("hidden");
-    return;
-  }
-
-  const items = state.profileAudit.items;
-  if (countEl) countEl.textContent = `${items.length}건`;
-  if (moreBtn) moreBtn.style.display = state.profileAudit.nextCursor ? "" : "none";
-
-  if (items.length === 0) {
-    listEl.innerHTML = '<div class="profile-audit-empty">조건에 맞는 감사 이벤트가 없습니다.</div>';
-    if (detailEl) detailEl.classList.add("hidden");
-    return;
-  }
-
-  const rows = items.map((it) => {
-    const isSel = String(it.id) === String(state.profileAudit.selectedId);
-    const klass = "profile-audit-row" + (isSel ? " is-selected" : "");
-    return `
-      <div class="${klass}" role="listitem" data-audit-id="${_profileAuditEscapeHtml(it.id)}">
-        <div class="profile-audit-row-line">
-          <span class="profile-audit-row-action">${_profileAuditEscapeHtml(it.action_code || "")}</span>
-          <span class="profile-audit-row-ts">${_profileAuditEscapeHtml(_profileAuditFormatDt(it.occurred_at))}</span>
-        </div>
-        <div class="profile-audit-row-line muted">
-          <span class="profile-audit-row-resource">${_profileAuditEscapeHtml(it.resource_type || "")}${
-            it.resource_id ? " #" + _profileAuditEscapeHtml(it.resource_id) : ""
-          }</span>
-        </div>
-      </div>`;
-  }).join("");
-  listEl.innerHTML = rows;
-  listEl.querySelectorAll(".profile-audit-row").forEach((rowEl) => {
-    rowEl.addEventListener("click", () => {
-      const id = rowEl.dataset.auditId;
-      state.profileAudit.selectedId = id;
-      renderProfileAuditList();
-      renderProfileAuditDetail(id);
-    });
-  });
-}
-
-function renderProfileAuditDetail(id) {
-  const el = document.getElementById("profileAuditDetail");
-  if (!el) return;
-  const item = state.profileAudit.items.find((it) => String(it.id) === String(id));
-  if (!item) {
-    el.classList.add("hidden");
-    return;
-  }
-  // ChangeJson + MaskedFields 안전 직렬화 + HTML escape (admin pane 패턴 답습).
-  const changeText = item.change_json == null ? "(없음)" : JSON.stringify(item.change_json, null, 2);
-  const maskedText = Array.isArray(item.masked_fields) && item.masked_fields.length
-    ? item.masked_fields.join(", ")
-    : "(없음)";
-  el.classList.remove("hidden");
-  el.innerHTML = `
-    <h4>감사 이벤트 #${_profileAuditEscapeHtml(item.id)}</h4>
-    <dl class="profile-audit-detail-fields">
-      <dt>발생 시각</dt><dd>${_profileAuditEscapeHtml(_profileAuditFormatDt(item.occurred_at))}</dd>
-      <dt>Action</dt><dd><code>${_profileAuditEscapeHtml(item.action_code || "")}</code></dd>
-      <dt>Actor</dt><dd>${_profileAuditEscapeHtml(item.actor_type || "")}${
-        item.actor_account_id ? " · #" + _profileAuditEscapeHtml(item.actor_account_id) : ""
-      }</dd>
-      <dt>Resource</dt><dd>${_profileAuditEscapeHtml(item.resource_type || "")}${
-        item.resource_id ? " #" + _profileAuditEscapeHtml(item.resource_id) : ""
-      }</dd>
-      <dt>Masked Fields</dt><dd>${_profileAuditEscapeHtml(maskedText)}</dd>
-    </dl>
-    <h5>Change JSON</h5>
-    <pre class="profile-audit-detail-change">${_profileAuditEscapeHtml(changeText)}</pre>
-  `;
-}
-
-function attachProfileAuditHandlers() {
-  const applyBtn = document.getElementById("profileAuditFilterApplyBtn");
-  const clearBtn = document.getElementById("profileAuditFilterClearBtn");
-  const moreBtn = document.getElementById("profileAuditLoadMoreBtn");
-  if (applyBtn) {
-    applyBtn.addEventListener("click", () => {
-      _profileAuditReadFilters();
-      loadProfileAuditList(false);
-    });
-  }
-  if (clearBtn) {
-    clearBtn.addEventListener("click", () => {
-      _profileAuditClearFilters();
-      loadProfileAuditList(false);
-    });
-  }
-  if (moreBtn) {
-    moreBtn.addEventListener("click", () => loadProfileAuditList(true));
-  }
-  // Enter on filter inputs → apply.
-  ["profileAuditFilterAction", "profileAuditFilterFromAt", "profileAuditFilterToAt"].forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) {
-      el.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          _profileAuditReadFilters();
-          loadProfileAuditList(false);
-        }
-      });
-    }
-  });
-}
 
 // ──────────────────────────────────────────────────────────────────
 //  TASK-0047 — Product chip (sidebar header) 렌더 / 변경 / hydrate
@@ -1482,8 +1243,6 @@ function renderAccountState() {
 
 function renderProfile() {
   if (!state.user) return;
-  // TASK-0089: profile drawer 의 "내 감사 로그" tab 노출 여부 갱신 (audit.read.own || audit.read.any).
-  updateProfileAuditTabVisibility();
   const initials = state.user.username.slice(0, 2).toUpperCase();
 
   if (profileAvatarLgEl) profileAvatarLgEl.textContent = initials;
@@ -4787,7 +4546,6 @@ async function initialize() {
   loginFormEl.addEventListener("submit", handleLogin);
   signupFormEl.addEventListener("submit", handleSignup);
   // 프로필 드로어 open/close
-  // TASK-0098: 첫 활성 탭을 "prompt" 로 변경 (탭 순서 = [프롬프트, 보안 및 계정, API Vault, 내 감사 로그(gated)]).
   openProfileBtn.addEventListener("click", () => openProfile("prompt"));
   closeProfileBtn.addEventListener("click", closeProfile);
   profileBackdropEl.addEventListener("click", closeProfile);
@@ -4799,15 +4557,8 @@ async function initialize() {
       if (btn.dataset.profileTab === "prompt") {
         initAccountPromptEditor().catch(() => {});
       }
-      // TASK-0089: "내 감사 로그" 탭 진입 시 첫 load.
-      if (btn.dataset.profileTab === "audit") {
-        loadProfileAuditList(false).catch(() => {});
-      }
     });
   });
-
-  // TASK-0089: profile audit filter handlers wire.
-  attachProfileAuditHandlers();
 
   const savePromptBtn = document.getElementById("savePromptBtn");
   const clearPromptBtn = document.getElementById("clearPromptBtn");

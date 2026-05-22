@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0008
+- Date: 2026-05-22
+- Related Requirement: TASK-0105 (REQ-20260522-0008, **Minor** §12.3 — Profile Drawer '내 감사 로그' 탭 일반 사용자 비노출)
+- Summary: 사용자 직접 요청 — 일반 사용자에게 Profile Drawer 내 '내 감사 로그' 탭이 노출되어선 안 됨. TASK-0089 에서 추가한 `profileAuditTab` 버튼 + `data-profile-pane="audit"` 패널 + JS 함수 9개 (`_profileAuditEscapeHtml` / `_profileAuditFormatDt` / `_profileAuditHasReadPermission` / `updateProfileAuditTabVisibility` / `_profileAuditReadFilters` / `_profileAuditClearFilters` / `loadProfileAuditList` / `renderProfileAuditList` / `renderProfileAuditDetail` / `attachProfileAuditHandlers`) + `state.profileAudit` 초기값 + `profile-audit-*` CSS 블록 전체를 제거. backend `/api/profile/audits` 및 `/api/profile/audits/{event_id}` endpoint 무변경. admin 콘솔 '감사 로그' 탭 무변경. node --check + py_compile PASS. frontend-only.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`: `profileAuditTab` 버튼 제거, `data-profile-pane="audit"` 패널 전체 제거, 주석 갱신 (탭 수 4 → 3)
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`: `state.profileAudit` 초기값 제거, TASK-0089 `_profileAudit*` 함수 블록 전체 제거, `renderProfile()` 내 `updateProfileAuditTabVisibility()` 호출 제거, 탭 이벤트 핸들러의 audit 분기 제거, `attachProfileAuditHandlers()` 호출 제거
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.profile-audit-*` CSS 블록 전체 제거
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0105 entry 추가 + Current Status 갱신
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260522-0008 [SKIPPED:frontend-only] 추가
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 상단에 TASK-0105 entry 추가
+  - `docs/STATUS.md`: project-level entry 추가
+
 ## CHG-20260522-0007
 - Date: 2026-05-22
 - Related Requirement: TASK-0104 (REQ-20260522-0007, **Major** §12.3 — 외부 노출 web 컨테이너 HTTPS 종단 활성화)

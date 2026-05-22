@@ -11,10 +11,14 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Ship 완료) / major (TASK-0104 — HTTPS 종단 활성화 main)
-- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 1~12 ship 완료 / TASK-0104 main 흡수)
+- Priority: minor (TASK-0105 — Profile Drawer '내 감사 로그' 탭 제거)
+- Last Updated: 2026-05-22 (TASK-0105 — 일반 사용자 Profile Drawer에서 '내 감사 로그' 탭 비노출)
 
 ## 2. Task Queue
+
+### TASK-0105 Profile Drawer '내 감사 로그' 탭 제거 (2026-05-22)
+
+- [x] TASK-0105 (REQ-20260522-0008, **Minor** §12.3 — UI 노출 범위 축소). 사용자 직접 요청 — 일반 사용자에게 Profile Drawer 내 '내 감사 로그' 탭이 노출되어선 안 됨. TASK-0089 가 추가한 탭 버튼 (`profileAuditTab`, `data-profile-tab="audit"`) + drawer 패널 (`data-profile-pane="audit"`) + JS 로직 일체 (`_profileAuditEscapeHtml` / `_profileAuditFormatDt` / `_profileAuditHasReadPermission` / `updateProfileAuditTabVisibility` / `_profileAuditReadFilters` / `_profileAuditClearFilters` / `loadProfileAuditList` / `renderProfileAuditList` / `renderProfileAuditDetail` / `attachProfileAuditHandlers` + state.profileAudit 초기값) + CSS (`profile-audit-*` 전체 블록) 를 index.html / app.js / styles.css 에서 제거. backend `/api/profile/audits` endpoint 및 admin 콘솔 '감사 로그' 탭 무변경. node --check + py_compile PASS. cache-bust: 기존 `v=20260522-task-0098-perms` 유지 (frontend 파일 재배포 시 갱신 권장). 본 cycle worktree `ai/claude/0105/remove-audit-tab`.
 
 ### TASK-0104 외부 노출 web 컨테이너 HTTPS 종단 활성화 (2026-05-22)
 

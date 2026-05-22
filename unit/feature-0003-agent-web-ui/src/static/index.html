@@ -233,7 +233,7 @@
       </div><!-- /chat-column -->
   </div><!-- /app-shell -->
 
-  <!-- ─── Profile Drawer (탭: 프롬프트 / 보안 및 계정 / API Vault / 내 감사 로그(gated)) ────────────── -->
+  <!-- ─── Profile Drawer (탭: 프롬프트 / 보안 및 계정 / API Vault) ────────────── -->
   <div class="drawer-bg hidden" id="profileBackdrop"></div>
   <aside class="drawer hidden" id="profileDrawer">
 
@@ -250,13 +250,11 @@
       <button type="button" class="tool-btn" id="closeProfileBtn">닫기</button>
     </div>
 
-    <!-- 탭 네비게이션 (TASK-0098: 5 → 4 탭, [프롬프트, 보안 및 계정, API Vault] + TASK-0089 audit 탭 보존) -->
+    <!-- 탭 네비게이션 (TASK-0105: 4 → 3 탭, [프롬프트, 보안 및 계정, API Vault] — 내 감사 로그 탭 일반 사용자 비노출로 제거) -->
     <div class="drawer-tabs">
       <button type="button" class="drawer-tab is-active" data-profile-tab="prompt">프롬프트</button>
       <button type="button" class="drawer-tab" data-profile-tab="security-and-account">보안 및 계정</button>
       <button type="button" class="drawer-tab" data-profile-tab="vault">API Vault</button>
-      <!-- TASK-0089: 내 감사 로그 탭 (audit.read.own 또는 audit.read.any 보유 시만 visible) -->
-      <button type="button" class="drawer-tab hidden" data-profile-tab="audit" id="profileAuditTab">내 감사 로그</button>
     </div>
 
     <!-- ── 탭 패널: 보안 및 계정 (TASK-0098: 기존 계정+보안 통합. 활동 정보 최상단 + 비밀번호 변경 + 세션·로그아웃. "권한 현황" 패널은 운영자 전용 정보로 분류되어 관리 콘솔에서만 조회 가능) ── -->
@@ -425,47 +423,6 @@
       </div>
     </div><!-- /prompt -->
 
-    <!-- ── 탭 패널: 내 감사 로그 (TASK-0089) ── -->
-    <div class="drawer-pane hidden" data-profile-pane="audit">
-
-      <div class="profile-section">
-        <div class="profile-section-title">필터</div>
-        <!-- mini filter: action_code / from_at / to_at (Codex C4 — actor_id/actor_type 본인 한정 무의미) -->
-        <div class="profile-audit-filter">
-          <label class="field">
-            <span>Action</span>
-            <input type="text" id="profileAuditFilterAction" placeholder="conversation.ask" autocomplete="off" />
-          </label>
-          <label class="field">
-            <span>시작 시각</span>
-            <input type="datetime-local" id="profileAuditFilterFromAt" />
-          </label>
-          <label class="field">
-            <span>종료 시각</span>
-            <input type="datetime-local" id="profileAuditFilterToAt" />
-          </label>
-          <div class="profile-audit-filter-actions">
-            <button type="button" class="btn-primary" id="profileAuditFilterApplyBtn">적용</button>
-            <button type="button" class="btn-secondary" id="profileAuditFilterClearBtn">초기화</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="profile-section">
-        <div class="profile-section-title">
-          내 감사 이벤트
-          <span class="profile-audit-count" id="profileAuditCount" aria-live="polite"></span>
-        </div>
-        <!-- 1-column list (Codex C4 — drawer 폭 390px 에 2-column 안 맞음) -->
-        <div class="profile-audit-list" id="profileAuditList" role="list" aria-label="내 감사 이벤트 목록"></div>
-        <div class="profile-audit-pagination">
-          <button type="button" class="btn-secondary" id="profileAuditLoadMoreBtn" style="display:none">더 보기</button>
-        </div>
-        <!-- inline detail expansion (Codex C4 — 1-column view 전환 대신 inline) -->
-        <div class="profile-audit-detail hidden" id="profileAuditDetail" role="region" aria-label="감사 이벤트 상세"></div>
-      </div>
-
-    </div><!-- /audit -->
 
   </aside>
 
