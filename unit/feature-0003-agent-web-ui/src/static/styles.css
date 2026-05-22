@@ -332,7 +332,10 @@ a { color: inherit; }
 
 .brand-name {
   font-weight: 700;
-  font-size: 15px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .topbar-end {
