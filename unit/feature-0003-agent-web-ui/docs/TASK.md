@@ -2813,3 +2813,13 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
    4. 복제 인스턴스가 아직 없으면 3.1~3.3 은 후속 작업이며, `.env` 의 REPLICA_DB_* 를 비워 두면 기존 primary 경로가 그대로 동작한다 (사업팀 pilot 테스트 자체는 복제 없이 가능).
 
 4. **사업팀 prompt 튜닝 (선택)**: 관리 콘솔 `역할 (Roles)` 탭 → `사업팀` 선택 → Role scope prompt 편집기 → Product 드롭다운(`(전 Product 공통)` 또는 특정 Product) 선택 후 초안을 수정. 저장 시 `WebSystemPrompts` 의 해당 scope row 가 업데이트되고 다음 `/api/ask` 부터 새 가이던스가 즉시 적용된다.
+
+### Phase Composer Model Selector (feature-0008, 2026-05-22)
+- [x] DOM: composer-box 의 attach-btn → `+` (composer-actions-btn) + primary
+      popup (#composerActionsMenu) + secondary popup (#composerModelMenu).
+- [x] JS: state.modelCatalog + state.selectedModel 신규. dead vault code 161
+      줄 일괄 정리. `+` dropdown handlers (binding / open/close / model item
+      render / sendPrompt fallback chain).
+- [x] CSS: .composer-actions-btn / .composer-actions-menu / .composer-actions-item
+      / .composer-model-menu / .composer-model-item* + 반응형 fallback.
+- [x] cache-bust: v=20260522-composer-model-selector.

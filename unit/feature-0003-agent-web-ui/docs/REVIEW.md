@@ -1473,6 +1473,23 @@ source_of_truth: true
 - **Cross-ref**: BRIEFING §6.1 + D14 + R-F3 + 정본 REV-20260521-0001 + Phase 11 REV-20260521-0013.
 - **Sprint 1 Ship 평가**: Phase 1~12 모두 main merged. BRIEFING D1~D21 21 결정 + R-Claim4/R-Claim6/R-F1/R-F2/R-F3/R-F4/R-F5/R-F6/R-F7/R-F9/R-F10/R-F11/R-F12/R-F13/R-F14 모두 application-level 또는 module-level enforcement 완료. Cycle 0 (Foundation) + Cycle 1 (CSV ingest) 가 ship — 사용자가 첨부 upload, list, metadata, delete, consent grant/revoke, composer paperclip/drag-drop, attachment pill 활성. attachment_ids 가 /api/ask 의 env 통해 LLM prompt section 으로 전달. Sandbox SQL 의 실제 LLM tool execution 은 caller integration 별 cycle.
 
+## REV-20260522-0009 [SUBAGENT:self-review]
+- Related Change: CHG-20260522-0007 (feature-0008 composer-model-selector)
+- Reason: 사용자 명시 요청 (2026-05-22) — profile drawer 의 API Vault 잔존 +
+  모델 선택 UI 를 composer 좌측 `+` dropdown 으로 이전 (ChatGPT 패턴).
+- Verdict: PASS — frontend-only 변경, backend contract 무변경.
+- Risks (잔존):
+  - `state.apiVaultOptions` 와 `state.modelCatalog` 가 같은 응답을 alias 로
+    보존. 본 cycle 후 별 cycle 에서 `apiVaultOptions` 명 deprecation + 단일
+    `modelCatalog` 로 통합 권장.
+  - secondary popup (`.composer-model-menu`) 가 primary 우측에 표시 — 화면
+    좁을 때 (≤ 720px) 위치 fallback CSS 작동 검증 필요 (브라우저 수동 테스트).
+  - product chip + 모델 selector 의 분리 유지 결정 — 둘이 동시에 열리지 않게
+    `closeProductDropup()` 호출 + ESC / outside click 핸들러로 일관성.
+- Open Questions: per-conversation 모델 보존 (state.selectedModel 이 세션 globl
+  current — 대화 전환 시 reset 필요한지 사용자 결정). 본 cycle 은 global 유지.
+- Human Approval Needed: 사용자 명시 요청 + UX 결정 (`+` 안 [파일/모델], dropdown
+  내 모델 button → 설명 포함 선택창) 충족.
 ## REV-20260522-0014 [SKIPPED:user-decision] TASK-0094 Sprint 2 Ship review
 
 - **Mode**: SKIPPED — codex outside-voice review 가 Major §12.3 정책상 권장이나 사용자 명시 결정 (2026-05-22) 으로 SKIP.

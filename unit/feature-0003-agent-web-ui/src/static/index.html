@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260522-bedrock-cutover" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260522-composer-model-selector" />
 </head>
 <body>
 
@@ -182,13 +182,43 @@
             <span>파일을 끌어다 놓아서 첨부</span>
           </div>
           <div class="composer-box">
-            <!-- TASK-0094 Sprint 1 Phase 6: paperclip 첨부 버튼 + hidden file input. D7 MIME
-                 allowlist accept 명시. multiple 비활성 (한 번에 한 파일 — Sprint 1 simplicity). -->
-            <button type="button" class="attach-btn" id="attachBtn" title="파일 첨부 (CSV / XLSX / PDF / 이미지)" aria-label="파일 첨부">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M16.5 6.5L9 14a3 3 0 104.24 4.24l8.49-8.48a5 5 0 10-7.07-7.07L4.93 12.43" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <!-- feature-0008 (composer-model-selector): textarea 좌측의 multi-action `+`
+                 dropdown. ChatGPT 패턴 — primary popup 에 [파일 첨부, 모델 선택] 2 항목.
+                 "모델 선택" click 시 secondary popup 으로 모델 alias + description 노출.
+                 TASK-0094 Sprint 1 Phase 6 의 paperclip 첨부 버튼은 primary popup 항목
+                 으로 통합. multiple 비활성 (한 번에 한 파일). -->
+            <button type="button" class="composer-actions-btn" id="composerActionsBtn"
+                    title="파일 첨부 / 모델 선택"
+                    aria-label="추가 동작 (파일 첨부 / 모델 선택)"
+                    aria-haspopup="menu"
+                    aria-expanded="false">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
               </svg>
             </button>
+            <!-- Primary drop-up menu (composer actions). hidden 으로 시작. -->
+            <div class="composer-actions-menu hidden" id="composerActionsMenu" role="menu" aria-label="추가 동작 선택">
+              <button type="button" class="composer-actions-item" id="composerActionsAttachItem" role="menuitem">
+                <svg class="composer-actions-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M16.5 6.5L9 14a3 3 0 104.24 4.24l8.49-8.48a5 5 0 10-7.07-7.07L4.93 12.43" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span class="composer-actions-label">파일 첨부</span>
+                <span class="composer-actions-hint">CSV / XLSX / PDF / 이미지</span>
+              </button>
+              <button type="button" class="composer-actions-item" id="composerActionsModelItem" role="menuitem"
+                      aria-haspopup="menu" aria-expanded="false">
+                <svg class="composer-actions-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                  <circle cx="12" cy="12" r="3.5" stroke="currentColor" stroke-width="1.6"/>
+                </svg>
+                <span class="composer-actions-label">모델: <span id="composerActionsModelLabel">claude-sonnet-4</span></span>
+                <svg class="composer-actions-caret" width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                  <path d="M4.5 3l3 3-3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+            </div>
+            <!-- Secondary popup (모델 선택 — description 포함). hidden 으로 시작. -->
+            <div class="composer-model-menu hidden" id="composerModelMenu" role="menu" aria-label="LLM 모델 선택"></div>
             <input type="file"
                    id="attachFileInput"
                    class="hidden"
@@ -401,6 +431,6 @@
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260522-bedrock-cutover"></script>
+  <script src="/static/app.js?v=20260522-composer-model-selector"></script>
 </body>
 </html>
