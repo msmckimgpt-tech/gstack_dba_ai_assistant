@@ -1462,6 +1462,134 @@ function openProfile(tab = "prompt") {
   switchProfileTab(tab);
   profileDrawerEl.classList.remove("hidden");
   profileBackdropEl.classList.remove("hidden");
+  // TASK-0094 Sprint 1 Phase 7 (D11 + R-F2): consent grouped modal 렌더링.
+  try { _renderConsentSection(); } catch (_) { /* graceful */ }
+}
+
+// ============================================================================
+// TASK-0094 Sprint 1 Phase 7 — D11 consent grouped batch UX (R-F2).
+// ============================================================================
+// BRIEFING D11 + R-F2 — DB 는 provider × data_class × purpose 세분 row,
+// UX 는 provider 별 3 group (텍스트 / 이미지 / 인덱싱) 으로 노출. 한 group 의
+// 토글이 그 group 안의 모든 (data_class, purpose) row 를 batch grant/revoke.
+
+const _CONSENT_PROVIDERS = [
+  { code: "openai", label: "OpenAI (ChatGPT / Vision / Embeddings)" },
+  { code: "anthropic", label: "Anthropic (Claude)" },
+];
+
+// group code → 포함되는 (data_class, purpose) tuple 목록.
+const _CONSENT_GROUPS = [
+  {
+    code: "text",
+    label: "파일 텍스트 분석",
+    hint: "CSV / XLSX / PDF / 텍스트 파일의 본문을 LLM 에 송신해 분석에 활용",
+    pairs: [["file_text", "inference"]],
+  },
+  {
+    code: "image",
+    label: "이미지 분석",
+    hint: "이미지 첨부의 본문을 vision 모델에 송신",
+    pairs: [["file_image", "inference"]],
+  },
+  {
+    code: "embed",
+    label: "문서 인덱싱",
+    hint: "PDF / 텍스트 파일을 임베딩하여 RAG 검색에 활용 (Cycle 4 도입)",
+    pairs: [["file_embedding", "indexing"]],
+  },
+];
+
+let _consentRowsCache = []; // backend `/api/account/consents` 결과 cache.
+
+function _isConsentGroupGranted(provider, group) {
+  if (!_consentRowsCache.length) return false;
+  return group.pairs.every(([dc, pp]) =>
+    _consentRowsCache.some(
+      (r) => r.provider === provider && r.data_class === dc && r.purpose === pp && r.granted,
+    ),
+  );
+}
+
+async function _loadConsentRows() {
+  try {
+    const resp = await apiFetch("/api/account/consents");
+    _consentRowsCache = Array.isArray(resp?.consents) ? resp.consents : [];
+  } catch (_) {
+    _consentRowsCache = [];
+  }
+}
+
+function _renderConsentSectionMarkup() {
+  const root = document.getElementById("consentProvidersList");
+  if (!root) return;
+  const blocks = _CONSENT_PROVIDERS.map((prov) => {
+    const groupRows = _CONSENT_GROUPS.map((g) => {
+      const granted = _isConsentGroupGranted(prov.code, g);
+      return `<label class="consent-group-row" data-provider="${prov.code}" data-group="${g.code}">
+                <input type="checkbox" data-action="consent-toggle"
+                       data-provider="${prov.code}" data-group="${g.code}"
+                       ${granted ? "checked" : ""} />
+                <span class="consent-group-meta">
+                  <span class="consent-group-label">${g.label}</span>
+                  <span class="consent-group-hint">${g.hint}</span>
+                </span>
+              </label>`;
+    }).join("");
+    return `<div class="consent-provider-block">
+              <div class="consent-provider-label">${prov.label}</div>
+              ${groupRows}
+            </div>`;
+  }).join("");
+  root.innerHTML = blocks;
+}
+
+async function _renderConsentSection() {
+  await _loadConsentRows();
+  _renderConsentSectionMarkup();
+}
+
+async function _handleConsentToggle(provider, groupCode, granted) {
+  const group = _CONSENT_GROUPS.find((g) => g.code === groupCode);
+  if (!provider || !group) return;
+  // batch grant/revoke — group 안의 모든 (data_class, purpose) tuple 적용.
+  const errors = [];
+  for (const [dc, pp] of group.pairs) {
+    try {
+      if (granted) {
+        await apiFetch("/api/account/consents", {
+          method: "POST",
+          body: JSON.stringify({ provider, data_class: dc, purpose: pp }),
+        });
+      } else {
+        // 기존 row id 찾아 revoke.
+        const row = _consentRowsCache.find(
+          (r) => r.provider === provider && r.data_class === dc && r.purpose === pp && r.granted,
+        );
+        if (row?.id) {
+          await apiFetch(`/api/account/consents/${row.id}`, { method: "DELETE" });
+        }
+      }
+    } catch (exc) {
+      errors.push(String(exc));
+    }
+  }
+  if (errors.length) {
+    showToast(`동의 처리 중 일부 실패: ${errors[0]}`, true);
+  } else {
+    showToast(granted ? `${group.label} 동의 완료` : `${group.label} 동의 회수 완료`);
+  }
+  await _renderConsentSection();
+}
+
+function _bindConsentSectionEvents() {
+  const root = document.getElementById("consentProvidersList");
+  if (!root) return;
+  root.addEventListener("change", (ev) => {
+    const cb = ev.target.closest('input[data-action="consent-toggle"]');
+    if (!cb) return;
+    _handleConsentToggle(cb.dataset.provider, cb.dataset.group, cb.checked).catch(() => {});
+  });
 }
 
 function closeProfile() {
@@ -4730,6 +4858,8 @@ async function initialize() {
   });
   // TASK-0094 Sprint 1 Phase 6: composer 첨부 (paperclip / drag-drop / pill / scope-all) 이벤트 binding.
   try { _bindComposerAttachmentEvents(); } catch (_) { /* graceful — DOM 부재 시 무시 */ }
+  // TASK-0094 Sprint 1 Phase 7: D11 consent grouped modal 이벤트 binding (delegation).
+  try { _bindConsentSectionEvents(); } catch (_) { /* graceful */ }
   promptInputEl.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       event.preventDefault();

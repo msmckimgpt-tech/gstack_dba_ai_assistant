@@ -1390,3 +1390,10 @@ source_of_truth: true
   4. **D16 attachment_ids 의 backend 처리**: 본 Phase 의 sendPrompt 가 askBody 에 attachment_ids/scope_all 명시 전송하지만, backend `/api/ask` 가 아직 이 필드를 수용하지 않음 (Phase 11 ingest pipeline 진입 시 ship). 본 Phase 만으로는 attachment_ids 가 backend 에 도달해도 silent ignored — D16 minimum exposure 의 의미는 backend 가 attachment_ids 를 사용하는 시점 (Phase 11) 부터 활성.
 - **Cross-ref**: BRIEFING §5.6 + D16 + R-F5 + 정본 REV-20260521-0001 + Phase 5 REV-20260521-0007.
 - **다음 outside-voice 시점**: Phase 11 (ingest pipeline) + Phase 12 (SQL guard, Ship 조건) — 본 frontend snapshot 이 backend `/api/ask` 의 attachment_ids 처리와 결합되는 시점.
+
+## REV-20260521-0009 [SKIPPED:consent-ui-only] TASK-0094 Sprint 1 Phase 7 review
+
+- **Mode**: SKIPPED — consent grouped UX 는 BRIEFING D11 + R-F2 정본 결정의 thin application. backend POST/DELETE 는 Phase 5 review 와 동일.
+- **Subject**: GET /api/account/consents + profile drawer consent section + grouped batch helper.
+- **Reason**: 본 Phase 의 결정은 (1) provider × group mapping (`_CONSENT_GROUPS`) (2) batch toggle UX 패턴 — 모두 BRIEFING 정본 결정. 보안 경계 변경 0.
+- **Risk**: group mapping 의 향후 확장 (Cycle 4 의 다른 data_class) 시 본 cycle 의 `_CONSENT_GROUPS` 갱신 필수.

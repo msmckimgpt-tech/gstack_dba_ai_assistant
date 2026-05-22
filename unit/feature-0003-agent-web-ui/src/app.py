@@ -7475,6 +7475,46 @@ def delete_attachment(attachment_id: int, request: Request) -> JSONResponse:
         conn.close()
 
 
+@app.get("/api/account/consents")
+def list_account_consents(request: Request) -> JSONResponse:
+    """본인 consent row 목록 (Phase 7 grouped modal 의 toggle 상태 표시용). own only."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+                SELECT Id, Provider, DataClass, Purpose, GrantedAt, RevokedAt
+                FROM WebAccountConsents
+                WHERE AccountId = %s
+                ORDER BY Provider ASC, DataClass ASC, Purpose ASC, Id ASC
+                """,
+                (int(account["id"]),),
+            )
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+        consents = [
+            {
+                "id": int(r.get("Id") or 0),
+                "provider": str(r.get("Provider") or ""),
+                "data_class": str(r.get("DataClass") or ""),
+                "purpose": str(r.get("Purpose") or ""),
+                "granted": bool(r.get("GrantedAt") and not r.get("RevokedAt")),
+            }
+            for r in rows
+        ]
+        return JSONResponse({"consents": consents})
+    finally:
+        conn.close()
+
+
 @app.post("/api/account/consents")
 async def grant_account_consent(request: Request) -> JSONResponse:
     """D11 consent grant (own only). body: {provider, data_class, purpose}.
