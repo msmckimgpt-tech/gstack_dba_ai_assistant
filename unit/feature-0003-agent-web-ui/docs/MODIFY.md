@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0007
+- Date: 2026-05-22
+- Related Requirement: TASK-0104 (REQ-20260522-0007, **Major** §12.3 — 외부 노출 web 컨테이너 HTTPS 종단 활성화)
+- Summary: 외부 사용자가 `https://112.185.196.20:18080/` 로 접속할 수 없던 이슈 수정. **근본 원인**: `repo/.env` 의 `ENABLE_WEB_TLS=1` + `WEB_TLS_CERT_FILE` / `WEB_TLS_KEY_FILE` 설정과 `docker-compose.yml` 의 TLS 분기 entrypoint 가 있었으나, dev 편의용 `docker-compose.override.yml` (gitignored) 가 entrypoint 자체를 평문 HTTP uvicorn 으로 강제 override. compose 자동 merge 로 base TLS 분기를 덮어써 외부 노출 시나리오에서도 평문만 listening. **수정**: `docker-compose.override.yml` 의 entrypoint 를 `--ssl-keyfile /certs/mysql-ai.company.local/privkey.pem --ssl-certfile /certs/mysql-ai.company.local/fullchain.pem` 포함한 HTTPS 종단으로 교체 (same-port 18080 HTTPS-only — 사용자 결정). `docker-compose.override.yml.example` 에 Variant A (local dev plain HTTP) / Variant B (외부-노출 HTTPS, default) 두 형태 주석 명시. 기존 인증서는 SAN 에 `IP Address:112.185.196.20` 이미 포함되어 재발급 불필요. 호스트 포트 매핑 `${WEB_PORT}:8000` (`18080:8000`) 그대로. backend / RBAC / endpoint contract / DB / Frontend 코드 무변경.
+- Files:
+  - `docker-compose.override.yml` (gitignored — 운영 인스턴스 직접 적용):
+    - `services.web.entrypoint` 를 plain HTTP → HTTPS 종단 (`--ssl-keyfile` + `--ssl-certfile`) 으로 교체
+    - 헤더 주석 갱신 — DEV ONLY 표기 → DEV / EXTERNAL-EXPOSED, TASK-0103 / TASK-0104 컨텍스트 명시
+  - `docker-compose.override.yml.example` (committed template):
+    - 헤더 주석에 사용 시나리오 (A) Local dev / (B) 외부 노출 single-instance / (C) Production with Caddy 3가지 명시
+    - `services.web.entrypoint` 에 Variant A (commented out) / Variant B (default) 두 형태 제공
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0104 entry 추가 + Current Status 갱신
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260522-0007 [SKIPPED:non-policy-doc] 추가
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 상단에 TASK-0104 entry 추가
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: AC-0271 (HTTPS 종단 활성화 acceptance) 추가
+  - `docs/STATUS.md`: project-level entry 추가
+
 ## CHG-20260522-0006
 - Date: 2026-05-22
 - Related Requirement: TASK-0103 (REQ-20260522-0006, **Major** §12.3 — API Vault secure context 사전 차단 + UX 안내)

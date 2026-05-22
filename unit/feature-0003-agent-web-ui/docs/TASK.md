@@ -11,10 +11,14 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: major (TASK-0103 — API Vault secure context 사전 차단)
-- Last Updated: 2026-05-22 (TASK-0103 vault secure context guard)
+- Priority: major (TASK-0104 — 외부 노출 web 컨테이너 HTTPS 종단 활성화)
+- Last Updated: 2026-05-22 (TASK-0104 https endpoint enable)
 
 ## 2. Task Queue
+
+### TASK-0104 외부 노출 web 컨테이너 HTTPS 종단 활성화 (2026-05-22)
+
+- [x] TASK-0104 (REQ-20260522-0007, **Major** §12.3 — 외부 사용자 전원 영향 + 자격증명 처리 동선의 secure-channel 요건 충족). 외부 사용자가 `https://112.185.196.20:18080/` 로 접속할 수 없던 이슈 수정. **근본 원인**: `repo/.env` 는 `ENABLE_WEB_TLS=1` 로 설정되었고 `docker-compose.yml` 의 web entrypoint 에는 TLS 분기가 있으나, `docker-compose.override.yml` (gitignored, dev 용 template) 가 entrypoint 를 평문 HTTP uvicorn 으로 강제 override 하고 있었음 — TASK-0103 에서 secure-context guard 는 추가했지만 secure channel 자체가 비활성. **수정**: `docker-compose.override.yml` 의 web entrypoint 를 `--ssl-keyfile /certs/mysql-ai.company.local/privkey.pem --ssl-certfile /certs/mysql-ai.company.local/fullchain.pem` 포함한 HTTPS 종단으로 교체. 기존 인증서 (`../artifacts/certs/mysql-ai.company.local/`) 는 SAN 에 `IP Address:112.185.196.20` 이미 포함되어 있어 재발급 불필요. `docker-compose.override.yml.example` 에는 Variant A (local dev plain HTTP) / Variant B (외부 노출 HTTPS, 본 cycle default) 두 형태를 주석으로 명시. 호스트 포트 18080 매핑 그대로 — same-port HTTPS 전환. **외부 영향**: 기존 HTTP 18080 사용자는 모두 HTTPS 로 전환 필요 (TLS 종단 교체이므로 동일 포트의 HTTP 동시 제공 안 됨). **검증**: `sudo docker compose up -d web` 후 `curl -sk https://112.185.196.20:18080/` → HTTP 200 + `<title>DQA — Database Query Assistant</title>` 응답. 컨테이너 로그 `Uvicorn running on https://0.0.0.0:8000`. backend / RBAC / endpoint contract / DB schema / WebCrypto 클라이언트 코드 무변경. 근본 해결 완료로 TASK-0103 의 "blocked banner" 는 외부 IP HTTP 접속자에게도 자동 안내됨 (HTTP 18080 자체가 끊겨 사용자는 즉시 HTTPS 로 이전).
 
 ### TASK-0103 API Vault secure context 사전 차단 + UX 안내 (2026-05-22)
 
