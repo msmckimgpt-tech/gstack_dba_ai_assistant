@@ -158,6 +158,10 @@ source_of_truth: true
 - AC-0006: `compose_system_prompt(..., product_mode="pinned")`는 Account의 전 Product 공통 프롬프트와 Account×Product 프롬프트를 함께 주입하며, 공통 지침이 먼저 온다.
 - AC-0007: 최종 사용자 요청은 system message 뒤의 `{"role":"user"}` 메시지로 추가되어 Product/Role/Account 지침 뒤에 적용된다.
 
+- REQ-20260522-0003 (TASK-0100, **Minor §12.3** — multipart UploadFile 의존성 hot-fix): TASK-0098 (PR #49) ship 직후 사용자 검증 단계에서 발견된 main 의 build 회귀를 차단한다. PR #66 (TASK-0094 Sprint 1 Phase 5) 가 `POST /api/conversations/{cid}/attachments` 의 `file: UploadFile` 을 도입했으나 `python-multipart` 의존성 누락 → web container `Restarting` + `RuntimeError: Form data requires "python-multipart" to be installed.` build 회귀. `unit/feature-0002-agent-core/src/requirements.txt` 에 `python-multipart>=0.0.9` 한 줄 추가로 회귀 차단. 동작 변경 0, RBAC / DB / endpoint / audit 무변경 — 본질적으로 미반영된 의존성을 명시화. dual-ownership: 의존성 파일은 feature-0002 (agent-core, 공통 image build), 소비자는 feature-0003 (agent-web-ui attachment endpoint).
+  - AC-0008 (REQ-20260522-0003 / TASK-0100): `unit/feature-0002-agent-core/src/requirements.txt` 에 `python-multipart>=0.0.9` line 이 존재한다. 본 line 위에 4 줄 주석 (TASK 식별자 + 발견 시점 + 회귀 근거 + REV 참조) 이 동봉되어 이후 reader 가 의존성 추가 근거를 즉시 파악할 수 있다.
+  - AC-0009 (REQ-20260522-0003 / TASK-0100): `docker compose build web` + `docker compose up -d --no-deps --force-recreate web` 후 web container 가 `Up` 상태에서 안정 가동 (`Restarting` 없음). `/api/auth/me` 호출이 HTTP 200 (또는 401 비로그인) 응답을 받는다. `POST /api/conversations/{cid}/attachments` (UploadFile) 가 의존성 import error 없이 routing 된다 (실 호출은 attachment 권한 + DB 준비 필요).
+
 ## 12. Observability
 - 로그: `../../../../artifacts/shared/logs`
   - `insight_worker.log` — 백그라운드 Insight 워커 사이클 결과 (JSON lines: `run_id`, `status`, `duration_ms`, `skipped_schemas/tables`, `event=fingerprint_skip` 등). 해석 가이드는 [INSIGHTS.md §9](./INSIGHTS.md#9-로그--신호--사용자-해석-가이드).

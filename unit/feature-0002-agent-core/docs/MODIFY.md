@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0004
+- Date: 2026-05-22
+- Summary: TASK-0100 (REQ-20260522-0003, **Minor** §12.3 — multipart UploadFile 의존성 hot-fix). TASK-0098 (PR #49) ship 후 사용자 검증 단계에서 발견된 main 의 build 회귀 차단. PR #66 (TASK-0094 Sprint 1 Phase 5) 가 도입한 `POST /api/conversations/{cid}/attachments` 의 `file: UploadFile` 이 `python-multipart` 의존성을 필요로 하나 `unit/feature-0002-agent-core/src/requirements.txt` 에 추가되지 않아 web container `Restarting` + `RuntimeError: Form data requires "python-multipart" to be installed.` 발생.
+- Files:
+  - `unit/feature-0002-agent-core/src/requirements.txt`: `python-multipart>=0.0.9` 한 줄 + 4 줄 annotation (TASK-0100 / REQ-20260522-0003 / 발견 시점 / REV-20260522-0004).
+  - `unit/feature-0002-agent-core/docs/FUNCTION.md`: REQ-20260522-0003 + AC-0008 + AC-0009 신규.
+  - `unit/feature-0002-agent-core/docs/TASK.md`: TASK-0100 queue entry [x] + Current Status 갱신.
+  - `unit/feature-0002-agent-core/docs/REVIEW.md`: REV-20260522-0004 [SKIPPED:hot-fix-dependency-only].
+  - `unit/feature-0002-agent-core/docs/REPORT.md`: §1 Summary 갱신.
+- 검증: `docker compose build web` PASS + `force-recreate` 후 web container `Up` 안정 (TASK-0098 사용자 검증 단계에서 본 fix 위에서 HTTP smoke 5/5 + UI dogfood 4 스크린샷 PASS 확인).
+- 위험도: §12.3 **Minor** — 의존성 추가만, 동작 변경 0. outside voice / plan-eng-review 불필요.
+
 ## CHG-20260522-0003
 - Date: 2026-05-22
 - TASK-Cycle: TASK-0021 (M2-c cross-DB audit explicit call + SLA verify body + stress.sh body + ANCHOR §3 invariant test S1/N1/N2, **Major §12.3** — RBAC 동반)
