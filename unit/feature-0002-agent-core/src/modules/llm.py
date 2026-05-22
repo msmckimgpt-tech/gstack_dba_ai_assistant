@@ -52,13 +52,14 @@ __all__ = [
     "llm_table_insight",
     "llm_update_summary",
     "llm_validate_step",
+    "messages_for_provider",
 ]
 
 
 """OpenAI client, prompt templates, LLM call functions."""
 from .config import *
 from . import config as cfg
-from .model_catalog import max_tokens_for_model, model_supports_temperature
+from .model_catalog import max_tokens_for_model, model_supports_temperature, model_supports_vision
 from .utils import append_log_line
 import json, os, time
 from typing import Any
@@ -80,6 +81,89 @@ def _max_tokens_kwargs(model: str | None = None, task: str = "agent") -> dict[st
     if limit is None:
         return {}
     return {"max_tokens": limit}
+
+
+def messages_for_provider(
+    messages: list[dict[str, Any]],
+    *,
+    image_attachments: list[dict[str, Any]] | None = None,
+    vision_model: bool = False,
+) -> list[dict[str, Any]]:
+    """TASK-0094 Sprint 2 (D13) — DB string content 를 provider 직전 transient
+    content-array 로 변환.
+
+    DB (`AgentMemoryMessages.Content`) 는 string contract 유지 (§5.5) — share builder
+    / fork / audit 모두 string content 그대로 사용. 본 helper 는 vision 호출 직전
+    에만 호출되어 **첫 user message** 에 image inline 을 부착한다.
+
+    Args:
+        messages: 변환 전 messages list (DB string content). 각 entry 의 content 는
+            string 또는 (이미 array 인 재진입) array.
+        image_attachments: 부착할 image 첨부 목록 (None 또는 [] 면 변환 없음).
+            각 entry 는 {
+              "filename": str,       # logging 용 (provider 미송신, D12 정합)
+              "mime_type": str,      # "image/png" / "image/jpeg" / "image/webp"
+              "base64_data": str,    # D13 정합: server-side bytes read + base64 inline,
+                                     #   signed URL 외부 송신 금지.
+            }.
+        vision_model: `model_supports_vision(model)` 결과. False 면 image_attachments
+            가 있어도 변환 없이 원본 messages 반환 (caller 가 사용자 toast 책임).
+
+    Returns:
+        변환된 messages list. image_attachments 가 있고 vision_model=True 일 때만
+        첫 user message 의 content 가 [{type:text}, {type:image_url}, ...] array 로
+        변환. 그 외 경우는 원본 동등.
+
+    Provider spec — OpenAI Chat Completions vision content array:
+        {"role": "user",
+         "content": [
+            {"type": "text", "text": "<원본 string>"},
+            {"type": "image_url",
+             "image_url": {"url": "data:image/png;base64,..."}}
+         ]}
+
+    feature-0007 (bedrock) 정합: backend 는 OpenAI Chat Completions spec 으로
+    content array 를 작성, LiteLLM proxy gateway (Bedrock 라우팅) 가 Anthropic
+    Vision spec (`{"type":"image","source":{"type":"base64",...}}`) 로 자동
+    normalize. drop_params=true 로 미지원 OpenAI param 은 silent drop.
+    """
+    if not image_attachments or not vision_model:
+        return list(messages)
+
+    out: list[dict[str, Any]] = []
+    image_attached = False
+    for msg in messages:
+        if image_attached or msg.get("role") != "user":
+            out.append(msg)
+            continue
+        text_content = msg.get("content", "")
+        if not isinstance(text_content, str):
+            # 이미 array form (재진입 또는 이전 turn 의 변환 결과) — 첫 image 가
+            # 이 user message 에 이미 부착됐다고 간주. 후속 user message 의 추가
+            # 변환을 방지 (idempotent + 첫 user 만 변환 invariant 유지).
+            out.append(msg)
+            image_attached = True
+            continue
+        content_array: list[dict[str, Any]] = [
+            {"type": "text", "text": text_content},
+        ]
+        for img in image_attachments:
+            b64 = str(img.get("base64_data") or "").strip()
+            if not b64:
+                continue
+            mime = str(img.get("mime_type") or "image/png").strip() or "image/png"
+            content_array.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"},
+            })
+        if len(content_array) == 1:
+            out.append(msg)
+            continue
+        new_msg = dict(msg)
+        new_msg["content"] = content_array
+        out.append(new_msg)
+        image_attached = True
+    return out
 
 
 def _log_llm_warn(func_name: str, reason: str, extra: str = "") -> None:

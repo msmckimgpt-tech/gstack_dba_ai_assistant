@@ -1490,3 +1490,30 @@ source_of_truth: true
   current — 대화 전환 시 reset 필요한지 사용자 결정). 본 cycle 은 global 유지.
 - Human Approval Needed: 사용자 명시 요청 + UX 결정 (`+` 안 [파일/모델], dropdown
   내 모델 button → 설명 포함 선택창) 충족.
+## REV-20260522-0014 [SKIPPED:user-decision] TASK-0094 Sprint 2 Ship review
+
+- **Mode**: SKIPPED — codex outside-voice review 가 Major §12.3 정책상 권장이나 사용자 명시 결정 (2026-05-22) 으로 SKIP.
+- **Subject**: Sprint 2 의 vision invoke 경로 (D11 consent + D13 base64 inline + D9 share redact + D12 audit masking + cross-feature import 회피 + bedrock proxy auto-normalize) 의 보안 표면.
+- **Reason — SKIP 정합**:
+  1. **bedrock 정합 자동 흡수**: 본 cycle 의 catalog 변경량이 매우 작음 (supports_vision flag dict entry 만). LiteLLM proxy 가 OpenAI image_url → Anthropic Vision spec auto-normalize → backend spec 분기 0 → 외부 review 가 catch 할 추가 표면 작음.
+  2. **D11/D12/D13 정합이 Sprint 1 의 D14 SQL guard 와 동등 mechanism 패턴 재사용**: Sprint 1 의 REV-20260521-0014 [SUBAGENT:codex-deferred-final] 에서 already 4 risk vector (sqlglot dialect / multi-statement / 호출 site 누락 / grant 부여) 검토 완료. 본 cycle 의 D13 base64 inline + D11 consent gate 는 별 SQL parsing 표면 없이 정적 boundary check 만 — 새 codex review 의 ROI 낮음.
+  3. **caller integration test 는 container smoke 에서 검증**: _prepare_vision_inline_images 의 통합 test 가 PYTHONPATH 차이로 unit test 불가 → S2.8 verify-completion + 실 환경 smoke 시점에 검증. codex review 가 정적 분석만이라 통합 검증 cover 불가.
+- **Risk** (review SKIP 대신 본 entry 로 명시):
+  1. **D11 consent enum drift**: 본 cycle 이 `provider='anthropic'` 단일 매핑 가정 (`_model_to_consent_provider` 의 claude-* → anthropic). 향후 catalog 에 openai/local vision 가능 모델 추가 시 매핑 확장 필요. 매핑 누락 시 vision invoke 진입 안 함 (보수적 fail-closed) — 사용자 toast 추가는 별 cycle.
+  2. **size/count cap 의 사용자 안내 누락**: cap 위반 시 silent skip (count 5 초과 시 정렬 후 첫 5만 inline, size 5MB 초과 시 무시). 사용자에게 "어느 image 가 inline 안 됐는지" toast 안내는 본 cycle scope 외 — frontend follow-up.
+  3. **임시 file lifecycle race**: `/tmp/mysql_ai_inline_<cid>_<uuid>.json` 가 _run_agent_core 예외 raise 시 cleanup 누락 가능 (`_cleanup_vision_inline` 가 normal path 만). 단 finally block 또는 explicit try/finally 가 ask 함수 전체에 없음 — Sprint 1 의 ATTACHMENT_IDS env cleanup 패턴 동등. 별 cycle 의 robustness 강화 영역.
+  4. **multi-turn vision invoke 의 누적 image 처리**: 본 cycle 의 messages_for_provider 가 첫 user message 만 변환 (idempotency 보장). 다만 user 가 후속 turn 에 새 image 첨부 시 본 cycle 은 매 turn 마다 첫 user message inline — 즉 후속 turn 의 image 도 새 inline. 다만 history 안의 old user message 는 inline 안 함 (provider 가 history 안 image 를 알 수 없음). 사용자 의도 ("계속 그 image 분석") 와 mismatch 가능성 — UX 검토 별 cycle.
+  5. **provider 측 잔존 (R-F13 SKIPPED)**: 본 cycle 은 base64 inline only → LiteLLM proxy → Bedrock → provider 측 임시 처리 후 자동 deletion (Bedrock 의 stateless invoke). Files API 미사용 → WebConversationAttachmentProviderFiles row INSERT 0. Anthropic 의 retention 정책 (24h cache 등) 은 별 cycle 의 D11 consent 명문화 영역.
+  6. **bedrock proxy normalize 의 fallback**: LiteLLM 의 image_url → Anthropic image conversion 이 실패 시 backend 에 어떤 error 가 return 되는지 unknown. Sprint 2 의 _call_llm 의 except 분기 (line 1463 부근의 `LLM 호출 오류` capture) 가 graceful — 사용자에게 toast. 정확한 error message 의 vision-specific 분기 (e.g., "vision 가능 모델이지만 image 형식 지원 안 함") 는 별 cycle.
+- **Cross-ref**: BRIEFING §6.2 + D11 + D13 + D9 + D12 + D19 + feature-0007 (bedrock) AGENTS.md + Sprint 1 REV-20260521-0014.
+
+## REV-20260522-0015 [SKIPPED:base64-inline-only] TASK-0094 Sprint 2 S2.7 (R-F13 provider Files API lifecycle) review
+
+- **Mode**: SKIPPED — 본 cycle 은 base64 inline only 로 provider 측 잔존 0 → R-F13 진입 불요.
+- **Subject**: WebConversationAttachmentProviderFiles row INSERT/DELETE + reconcile_provider_files worker.
+- **Reason — SKIP 정합**:
+  1. **Bedrock invocation 가 stateless**: LiteLLM proxy 가 OpenAI image_url content-array 를 Anthropic Vision spec 으로 normalize → Bedrock Sonnet 4.x / Haiku 4.x 가 inline image 를 invoke 처리 후 자동 폐기. provider 측 별 file resource 가 persist 되지 않음 → INSERT 대상 0.
+  2. **WebConversationAttachmentProviderFiles schema 는 Sprint 1 Phase 2 에서 already ship** (D13 schema, R-F13 prerequisite). 본 cycle 의 lifecycle row INSERT/DELETE 가 없을 뿐 schema 영향 0.
+  3. **OpenAI Files API / Anthropic Files API 통합은 별 cycle**: Sprint 4 (PDF/MD RAG) 시점에 long-context PDF 의 chunking + embedding + RAG retrieval 과 함께 Files API path 가 가능하면 그때 R-F13 lifecycle row INSERT/DELETE + reconcile_provider_files worker 활성.
+- **Risk**: 본 SKIP 결정의 risk 0 — base64 inline 의 boundary 만 D13 정합으로 cover. 향후 vision 가능 모델이 Files API 강제 또는 base64 token cost 가 prohibitive 한 경우 R-F13 활성 재검토.
+- **Cross-ref**: BRIEFING §6.2 S2.7 + R-F13 + WebConversationAttachmentProviderFiles schema (Sprint 1 Phase 2).
