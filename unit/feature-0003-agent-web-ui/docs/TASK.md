@@ -11,10 +11,14 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 11 진행 중)
-- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 11 ingest pipeline ship)
+- Priority: minor (TASK-0100 — 관리 콘솔 버튼 RBAC gate fix)
+- Last Updated: 2026-05-22 (TASK-0100 console_access gate 수정)
 
 ## 2. Task Queue
+
+### TASK-0100 관리 콘솔 버튼 RBAC gate 수정 (2026-05-22)
+
+- [x] TASK-0100 (REQ-20260522-0004, **Minor** §12.3 — `관리 콘솔` 버튼 노출 조건 수정). "admin" 역할 이외의 사용자에게 `관리 콘솔` 버튼이 노출되는 이슈 수정. **근본 원인**: TASK-0098 에서 frontend `can()` 함수를 `Boolean(state.user)` 로 단순화하면서, `canOpenAdminConsole()` 도 로그인한 모든 사용자에게 `true` 반환 → 버튼 노출. **수정**: `_serialize_account()` 에 `console_access: bool` 최소 플래그 추가 (`_account_has_permission(account, "console.access")` 기반). `canOpenAdminConsole()` 이 `Boolean(state.user?.console_access)` 을 검사하도록 변경. TASK-0098 의 "permissions 전체 노출 차단" 설계를 유지하면서 UI gate 에 필요한 최소 정보만 전달. backend / RBAC catalog / DB schema / endpoint contract 무변경. py_compile + node --check PASS. cache-bust `v=20260522-console-access-gate`.
 
 ### TASK-0099 Audit subsystem followup backlog 사후 tracker hygiene (2026-05-22)
 

@@ -8,6 +8,31 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0004
+- Date: 2026-05-22
+- Related Requirement: TASK-0100 (REQ-20260522-0004, Minor §12.3 — 관리 콘솔 버튼 RBAC gate 수정)
+- Summary: TASK-0098 의 `can()` 단순화(`Boolean(state.user)`)로 인해 `canOpenAdminConsole()` 이 로그인한 모든 사용자에게 `true` 반환 → `관리 콘솔` 버튼이 admin 역할 이외의 사용자에게도 노출되던 이슈 수정. `_serialize_account()` 에 `console_access: bool` 최소 플래그 추가 + `canOpenAdminConsole()` 이 `state.user.console_access` 검사하도록 변경. TASK-0098 의 "permissions 전체 노출 차단" 설계 유지. backend RBAC catalog / DB schema / endpoint contract 무변경. cache-bust `v=20260522-console-access-gate`.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - `_serialize_account()` — `console_access: _account_has_permission(account, "console.access")` 플래그 추가 (payload 에 항상 포함)
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`:
+    - `canOpenAdminConsole()` — `can("console.access")` → `Boolean(state.user?.console_access)` 로 변경
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`:
+    - cache-bust `v=20260522-task-0098-perms` → `v=20260522-console-access-gate`
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0100 entry 추가 + Current Status 갱신
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260522-0004 [SKIPPED:non-policy-doc] 추가
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 상단에 TASK-0100 entry 추가
+  - `docs/STATUS.md`: feature-0003 row tail 에 TASK-0100 완료 marker append
+- Diff size: app.py +5 lines / app.js +5 lines / index.html 2 replace / docs 5 files
+- Impact:
+  - admin 역할(`console.access` 보유) 사용자만 `관리 콘솔` 버튼 표시 — 정상 동작 복원
+  - 일반 사용자(operator/sales/pending) 는 버튼 미노출
+  - `console.access` override grant 된 사용자는 버튼 노출 (RBAC 정합)
+  - `_serialize_account()` 호출 모든 경로(로그인 / me / patch / bootstrap) 동일 적용
+  - backend API 응답에 `console_access: true/false` 필드 추가 — 클라이언트 호환 변경 (기존 필드 제거 없음)
+- Rollback Notes: `_serialize_account()` 의 `console_access` 필드 제거 + `canOpenAdminConsole()` 복원 (`return can("console.access")` 또는 `return Boolean(state.user)`) + index.html cache-bust 원복.
+
 ## CHG-20260522-0003
 - Date: 2026-05-22
 - Related Requirement: TASK-0099 (REQ-20260522-0003, Minor §12.3 — docs-only tracker hygiene)
