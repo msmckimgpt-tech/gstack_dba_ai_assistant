@@ -11468,6 +11468,44 @@ async def get_audit_event(event_id: int, request: Request) -> JSONResponse:
         conn.close()
 
 
+@app.get("/api/admin/health/attachment-grants")
+def admin_health_attachment_grants(request: Request) -> JSONResponse:
+    """TASK-0094 Sprint 1 Phase 10 (R-F4): sandbox schema grant drift detection.
+
+    권한: `console.access` 보유 (admin). sandbox_schema.detect_grant_drift 호출
+    후 drift 목록 반환. drift 가 있으면 admin alert (운영자가 maintenance path
+    재실행).
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(account, "console.access"):
+            return _json_error("요청을 수행할 수 없습니다.", 403)
+        try:
+            from modules import sandbox_schema as _ssch
+        except Exception as exc:
+            return _json_error(f"sandbox_schema 모듈 import 실패: {exc}", 500)
+        try:
+            drift = _ssch.detect_grant_drift(conn)
+        except Exception as exc:
+            return _json_error(f"drift detection 실패: {exc}", 500)
+        return JSONResponse(
+            {
+                "scanned_at": datetime.utcnow().isoformat() + "Z",
+                "drift_count": len(drift),
+                "drift": drift,
+                "healthy": len(drift) == 0,
+            }
+        )
+    finally:
+        conn.close()
+
+
 @app.get("/api/profile/audits")
 async def list_profile_audit_events(request: Request) -> JSONResponse:
     """REQ-20260520-0004 (TASK-0089): 작업 화면 profile drawer 의 본인 audit row 조회.
