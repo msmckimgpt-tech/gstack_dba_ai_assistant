@@ -1274,3 +1274,9 @@ source_of_truth: true
   2. **pending metadata-only enforcement**: catalog 수준에서는 read.own 부여 — bytes download 차단은 Phase 5 endpoint application-level. 본 Phase 만으로는 enforcement 미완. Phase 5 진입 시 `if account.role.key == 'pending': deny bytes` 분기 명시 + AC 갱신.
 - **Cross-ref**: BRIEFING §5.2 + 정본 REV-20260521-0001 + Phase 2 REV-20260521-0004.
 - **다음 outside-voice 시점**: Phase 12 (D14 SQL guard, Ship 조건). Phase 5 (upload API) 에서 attachment endpoint 의 권한 검증 + pending bytes deny 의 정합도 codex review 권장 (RBAC enforcement 의 application-level 표면).
+
+## REV-20260522-0001 [SKIPPED:static-asset-only]
+- Date: 2026-05-22
+- Trigger: TASK-0097 (REQ-20260522-0001, Minor §12.3) — DQA 브랜딩 적용
+- Skip Reason: 정적 자산 변경 (HTML/CSS/SVG) 만. backend/RBAC/endpoint/DB/audit 무변경. outside-voice review 불필요 — §18.8 Minor 기준 충족.
+- Evidence: browse 스크린샷 3장 (로그인 화면 + 사이드바 + 관리 콘솔) 으로 렌더링 확인.
