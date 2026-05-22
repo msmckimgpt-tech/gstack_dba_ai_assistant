@@ -413,7 +413,7 @@ ON CONFLICT (conversation_id, scope_key, fact_key, fact_fingerprint) DO UPDATE S
     source_run_id = COALESCE(EXCLUDED.source_run_id, fact_entries.source_run_id),
     source_sql    = COALESCE(EXCLUDED.source_sql, fact_entries.source_sql),
     updated_at    = now()
-RETURNING id
+RETURNING id, (xmax = 0) AS pg_inserted
 """
 
 _PG_DELETE_FACT_ENTRIES = """
@@ -454,7 +454,7 @@ ON CONFLICT (conversation_id, scope_key, fact_key, content_hash) DO UPDATE SET
     source_run_id = COALESCE(EXCLUDED.source_run_id, rag_documents.source_run_id),
     source_sql    = COALESCE(EXCLUDED.source_sql, rag_documents.source_sql),
     updated_at    = now()
-RETURNING id
+RETURNING id, (xmax = 0) AS pg_inserted
 """
 
 _PG_UPSERT_RAG_OBJECT = """
@@ -489,7 +489,7 @@ ON CONFLICT (conversation_id, scope_key, object_type, object_key) DO UPDATE SET
     category_join_hints_json = COALESCE(NULLIF(EXCLUDED.category_join_hints_json, ''), rag_objects.category_join_hints_json),
     category_confidence      = COALESCE(EXCLUDED.category_confidence, rag_objects.category_confidence),
     updated_at               = now()
-RETURNING id
+RETURNING id, (xmax = 0) AS pg_inserted
 """
 
 _PG_SET_TEXT_EMBEDDING = """
@@ -501,14 +501,50 @@ WHERE text_hash = %(text_hash)s
 """
 
 
+_pg_op_local = threading.local()
+
+
+def _get_last_pg_branch() -> Optional[str]:
+    """Return the pg_branch label set by the most recent PgKbBackend operation on this thread.
+
+    Possible values: 'insert' / 'update' / 'noop' / 'delete' / 'prune' / None.
+    Cleared by `_clear_pg_branch()` between mirror calls to avoid stale carry-over
+    if a method skips branch tagging.
+    """
+    return getattr(_pg_op_local, "last_branch", None)
+
+
+def _clear_pg_branch() -> None:
+    _pg_op_local.last_branch = None
+
+
 class PgKbBackend(KbBackend):
     backend_name = "postgres"
 
     def _execute_returning_id(self, conn, sql: str, params: dict) -> int:
+        """Execute INSERT...ON CONFLICT...RETURNING id, (xmax = 0) AS pg_inserted.
+
+        Side effect: writes branch label ('insert' / 'update' / 'noop') to
+        `_pg_op_local.last_branch` (M2-d, TASK-0022). caller (`_DualWriteMirror._mirror`)
+        reads it for audit `pg_branch` tagging.
+
+        xmax = 0 semantics (REV-20260522-0010 C-1 흡수): PostgreSQL 에서 `xmax`=0 은
+        "이 statement 가 row 를 INSERT 했다" (no deletion/update lock holder); xmax≠0
+        은 "row 가 이미 존재했고 DO UPDATE 분기로 갱신됨" — xmax 는 그때의 xid (PG 의
+        MVCC row-level TX id) 가 들어간다. `ON CONFLICT DO UPDATE ... RETURNING
+        (xmax = 0)` 는 잘 알려진 idiom.
+        """
         with conn.cursor() as cur:
             cur.execute(sql, params)
             row = cur.fetchone()
-            return int(row[0]) if row else 0
+            if row is None:
+                _pg_op_local.last_branch = "noop"
+                return 0
+            if len(row) >= 2:
+                _pg_op_local.last_branch = "insert" if bool(row[1]) else "update"
+            else:
+                _pg_op_local.last_branch = "insert"
+            return int(row[0])
 
     def upsert_fact_entry(
         self,
@@ -554,12 +590,14 @@ class PgKbBackend(KbBackend):
                     "fact_key": fact_key,
                 },
             )
+            _pg_op_local.last_branch = "delete"
             return int(cur.rowcount or 0)
 
     def prune_fact_entries_keep_top(
         self, conn, *, conversation_id, scope_key, fact_key, keep_limit
     ):
         if keep_limit < 1:
+            _pg_op_local.last_branch = "noop"
             return 0
         with conn.cursor() as cur:
             cur.execute(
@@ -571,6 +609,7 @@ class PgKbBackend(KbBackend):
                     "keep_limit": int(keep_limit),
                 },
             )
+            _pg_op_local.last_branch = "prune"
             return int(cur.rowcount or 0)
 
     def upsert_text(self, conn, *, text_hash, text_content):
@@ -579,6 +618,8 @@ class PgKbBackend(KbBackend):
                 _PG_UPSERT_TEXT,
                 {"text_hash": text_hash, "text_content": text_content},
             )
+            # _PG_UPSERT_TEXT 는 INSERT ON CONFLICT DO NOTHING → rowcount 1=insert, 0=noop.
+            _pg_op_local.last_branch = "insert" if (cur.rowcount or 0) == 1 else "noop"
 
     def upsert_rag_document(
         self,
@@ -806,13 +847,18 @@ def _build_audit_resource_id(method_name: str, kwargs: dict) -> Optional[str]:
     return None
 
 
-def _log_kb_write_audit(*, method_name: str, kwargs: dict, result: Any) -> None:
+def _log_kb_write_audit(
+    *, method_name: str, kwargs: dict, result: Any, pg_branch: Optional[str] = None,
+) -> None:
     """Mirror 성공 후 MySQL `WebAuditEvents` 에 audit row INSERT.
 
     Args:
         method_name: `_DualWriteMirror._mirror()` 의 method_name.
         kwargs: method 호출 시 받은 kwargs (sensitive 제외 후 ChangeJson).
         result: PgKbBackend method 의 반환값 (RETURNING id 또는 None).
+        pg_branch: M2-d (TASK-0022) 신설 — Postgres 측 분기 label
+            ('insert' / 'update' / 'noop' / 'delete' / 'prune'). xmax=0 검출 기반.
+            audit SLA 의 분자/분모 정확 매칭을 위해 ChangeJson 에 기록.
 
     Best-effort: 실패 시 silent log (caller 측 `_mirror()` 가 외부 try/except 로 격리).
     cross-DB tx 불가 — mirror INSERT 가 이미 commit 됐고 audit 는 별 tx.
@@ -847,12 +893,19 @@ def _log_kb_write_audit(*, method_name: str, kwargs: dict, result: Any) -> None:
         change_payload["pg_op_kind"] = "prune"
     else:
         change_payload["pg_op_kind"] = "unknown"
+    # M2-d (TASK-0022): pg_branch fine-grained label — insert / update / noop /
+    # delete / prune. SLA 측정 시 분자 (audit) 와 분모 (PG) 를 branch 별 매칭 가능.
+    if pg_branch:
+        change_payload["pg_branch"] = pg_branch
     try:
         change_json_text = _json.dumps(change_payload, ensure_ascii=False, sort_keys=True, default=str)
     except (TypeError, ValueError):
         change_json_text = _json.dumps({"_serialize_error": True}, ensure_ascii=False)
 
     # B-6: 16KB 캡 — 초과 시 metadata 만 남기고 truncate 표시.
+    # outside-voice REV-20260522-0010 C-5 흡수: truncate 시에도 `pg_branch` 와
+    # `pg_op_kind` 는 SLA 측정에 필요한 필드이므로 metadata 에 동반 보존. 큰 rag_object
+    # payload 의 audit row 도 pg_branch tagging 보전.
     _CHANGE_JSON_MAX = 16384
     if len(change_json_text) > _CHANGE_JSON_MAX:
         change_json_text = _json.dumps(
@@ -861,6 +914,8 @@ def _log_kb_write_audit(*, method_name: str, kwargs: dict, result: Any) -> None:
                 "_original_len": len(change_json_text),
                 "mirror_method": method_name,
                 "resource_id": resource_id,
+                "pg_op_kind": change_payload.get("pg_op_kind"),
+                "pg_branch": change_payload.get("pg_branch"),
             },
             ensure_ascii=False,
         )
@@ -903,6 +958,79 @@ def _log_kb_write_audit(*, method_name: str, kwargs: dict, result: Any) -> None:
             pass
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# M2-d (TASK-0022) — Latency instrumentation. process-level counter + histogram.
+#
+# REPORT.md §4 risk log 0번 entry (REV-20260520-0008 Critical) 의 후속 — production
+# 측정 외 라도 in-process counter 로 mirror 호출 빈도 / 평균/p99 latency 를 즉시 노출.
+# 실 baseline 측정 (with/without REQUIRED=1) 은 production-like 환경 책임.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_MIRROR_METRICS_LOCK = threading.Lock()
+_MIRROR_METRICS: dict = {
+    "calls_total": 0,
+    "calls_by_method": {},        # method_name → count
+    "latency_ms_total": 0.0,
+    "latency_ms_max": 0.0,
+    "audit_calls_total": 0,
+    "audit_failures_total": 0,
+}
+
+
+def get_mirror_metrics() -> dict:
+    """Process-level mirror 호출 통계 snapshot 반환.
+
+    schema: { 'calls_total': int, 'calls_by_method': dict, 'latency_ms_total': float,
+              'latency_ms_avg': float, 'latency_ms_max': float, 'audit_calls_total': int,
+              'audit_failures_total': int }
+
+    NOTE (REV-20260522-0010 C-2 흡수): `calls_total` 은 PG-unavailable silent-skip
+    path (connection failure 시 `_record_mirror_latency()` 호출) 도 포함한다.
+    "실제 PG INSERT 수" 가 아닌 "_mirror() 진입 수" 로 해석.
+
+    NOTE (REV-20260522-0010 C-3 흡수): `latency_ms_avg` 계산은 lock 외부에서 수행하나,
+    `dict(_MIRROR_METRICS)` snapshot 의 두 필드 (total/calls) 가 같은 락 안에서 복사
+    되었으므로 averaging 자체는 atomic.
+    """
+    with _MIRROR_METRICS_LOCK:
+        snapshot = dict(_MIRROR_METRICS)
+        snapshot["calls_by_method"] = dict(snapshot["calls_by_method"])
+    calls = snapshot["calls_total"]
+    snapshot["latency_ms_avg"] = (
+        snapshot["latency_ms_total"] / calls if calls > 0 else 0.0
+    )
+    return snapshot
+
+
+def reset_mirror_metrics() -> None:
+    """test fixture 용 metrics reset."""
+    with _MIRROR_METRICS_LOCK:
+        _MIRROR_METRICS["calls_total"] = 0
+        _MIRROR_METRICS["calls_by_method"] = {}
+        _MIRROR_METRICS["latency_ms_total"] = 0.0
+        _MIRROR_METRICS["latency_ms_max"] = 0.0
+        _MIRROR_METRICS["audit_calls_total"] = 0
+        _MIRROR_METRICS["audit_failures_total"] = 0
+
+
+def _record_mirror_latency(method_name: str, latency_ms: float) -> None:
+    with _MIRROR_METRICS_LOCK:
+        _MIRROR_METRICS["calls_total"] += 1
+        _MIRROR_METRICS["calls_by_method"][method_name] = (
+            _MIRROR_METRICS["calls_by_method"].get(method_name, 0) + 1
+        )
+        _MIRROR_METRICS["latency_ms_total"] += latency_ms
+        if latency_ms > _MIRROR_METRICS["latency_ms_max"]:
+            _MIRROR_METRICS["latency_ms_max"] = latency_ms
+
+
+def _record_audit_event(*, failed: bool) -> None:
+    with _MIRROR_METRICS_LOCK:
+        _MIRROR_METRICS["audit_calls_total"] += 1
+        if failed:
+            _MIRROR_METRICS["audit_failures_total"] += 1
+
+
 class _DualWriteMirror:
     """Dual-write 의 Postgres mirror — caller 의 기존 MySQL cursor.execute 직후 호출.
 
@@ -920,6 +1048,10 @@ class _DualWriteMirror:
       (warning level) — MySQL caller 의 흐름 affect 안 함.
     - `AGENT_KB_PG_REQUIRED=1` (M2-b 후): mirror 실패 시 fail-loud (예외 raise) —
       caller 의 trans 또는 caller-level handler 가 처리.
+
+    Instrumentation (M2-d):
+    - 매 mirror 호출의 latency 를 process-level counter 에 기록. `get_mirror_metrics()`
+      로 snapshot 조회 가능. production-like baseline 측정의 in-process 입력.
     """
 
     def _get_pg_conn(self) -> Optional[Any]:
@@ -937,11 +1069,19 @@ class _DualWriteMirror:
             return None
 
     def _mirror(self, method_name: str, **kwargs):
+        import time as _time
+        # M2-d (TASK-0022) + REV-20260522-0010 B-3/B-4 흡수: thread-local branch 의
+        # leftover state 를 mirror 진입 즉시 reset. 이전 mirror 가 실패하거나 _pg_conn
+        # 가 None 일 때도 _get_last_pg_branch() 가 stale 값을 노출하지 않도록 보장.
+        _clear_pg_branch()
         _mysql_b, pg_b = get_backends()
         if pg_b is None:
             return None
+        # M2-d (TASK-0022): mirror latency 시작 시점 capture (connection + execute + audit).
+        _t0 = _time.monotonic()
         conn = self._get_pg_conn()
         if conn is None:
+            _record_mirror_latency(method_name, (_time.monotonic() - _t0) * 1000.0)
             return None
         try:
             method = getattr(pg_b, method_name)
@@ -953,23 +1093,34 @@ class _DualWriteMirror:
                 "kb_pg_mirror_fail",
                 extra={"method": method_name, "error": str(e)[:200]},
             )
+            _record_mirror_latency(method_name, (_time.monotonic() - _t0) * 1000.0)
             return None
         finally:
             try:
                 conn.close()
             except Exception:
                 pass
+        # M2-d (TASK-0022): PgKbBackend method 가 thread-local 에 기록한 branch 라벨
+        # ('insert'/'update'/'noop'/'delete'/'prune') 를 audit logger 에 전달.
+        pg_branch = _get_last_pg_branch()
         # M2-c (TASK-0021) — Cross-DB audit explicit call. mirror 성공 후 MySQL
         # WebAuditEvents 에 ActionCode `kb.write.mirror` audit row INSERT. ADR-0021
         # §Consequences 의 SLA ≤ 0.1% miss_rate target 측정 기반. cross-DB tx 불가
         # 라 best-effort — audit 실패 silent log (SLA 측정 자체가 miss 를 count).
+        _audit_failed = False
         try:
-            _log_kb_write_audit(method_name=method_name, kwargs=kwargs, result=result)
+            _log_kb_write_audit(
+                method_name=method_name, kwargs=kwargs, result=result, pg_branch=pg_branch,
+            )
         except Exception as audit_err:
+            _audit_failed = True
             logger.warning(
                 "kb_audit_log_fail",
                 extra={"method": method_name, "error": str(audit_err)[:200]},
             )
+        # M2-d (TASK-0022): latency + audit event counter.
+        _record_mirror_latency(method_name, (_time.monotonic() - _t0) * 1000.0)
+        _record_audit_event(failed=_audit_failed)
         return result
 
     def upsert_text(self, *, text_hash: str, text_content: str) -> None:
@@ -1009,4 +1160,9 @@ __all__ = [
     "_PG_UPSERT_RAG_DOCUMENT",
     "_PG_UPSERT_RAG_OBJECT",
     "_PG_SET_TEXT_EMBEDDING",
+    # M2-d (TASK-0022) — latency + branch instrumentation
+    "get_mirror_metrics",
+    "reset_mirror_metrics",
+    "_get_last_pg_branch",
+    "_clear_pg_branch",
 ]

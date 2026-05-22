@@ -122,12 +122,16 @@ source_of_truth: true
 - `get_backends()` factory: `_BACKENDS_CACHE` process-level singleton + `_BACKENDS_LOCK` thread-safe double-checked locking (Nice-to-have outside-voice REV-20260520-0008 흡수 + M2-c 정착). `(MysqlKbBackend, Optional[PgKbBackend])` tuple.
 - `set_text_embedding()` base default `NotImplementedError` — PgKbBackend 만 구현 (M3 backfill).
 
-**Cross-DB audit (TASK-0021 M2-c cycle, ADR-0021 §Consequences)**:
-- `_log_kb_write_audit(method_name, kwargs, result)` (M2-c 신규) — mirror 성공 후 MySQL `WebAuditEvents` 에 audit row INSERT. `connect_with_retry(database=MEMORY_DB, autocommit=True, attempts=1)` (REV-20260521-0009 B-4 best-effort). ActorType='system'. ChangeJson 에 kwargs (sensitive 제외) + `pg_returning_id` + `mirror_method` + `pg_op_kind` (write/delete/prune) 포함. 16KB 캡 (REV-20260521-0009 B-6).
+**Cross-DB audit (TASK-0021 M2-c cycle + TASK-0022 M2-d 보강, ADR-0021 §Consequences)**:
+- `_log_kb_write_audit(method_name, kwargs, result, pg_branch=None)` (M2-c 신규 + M2-d `pg_branch` 시그니처 추가) — mirror 성공 후 MySQL `WebAuditEvents` 에 audit row INSERT. `connect_with_retry(database=MEMORY_DB, autocommit=True, attempts=1)` (REV-20260521-0009 B-4 best-effort). ActorType='system'. ChangeJson 에 kwargs (sensitive 제외) + `pg_returning_id` + `mirror_method` + `pg_op_kind` (write/delete/prune) + **`pg_branch` (M2-d 신설 — insert/update/noop/delete/prune)** 포함. 16KB 캡 (REV-20260521-0009 B-6), truncate 시에도 `pg_op_kind` + `pg_branch` 보존 (REV-20260522-0010 C-5).
 - `_KB_AUDIT_ACTION_MAP`: 6 method → (ActionCode, ResourceType). ActionCodes: `kb.write.mirror`, `kb.delete.mirror`, `kb.prune.mirror`. ResourceTypes: `kb_text`, `kb_fact_entry`, `kb_rag_document`, `kb_rag_object`.
 - `_KB_AUDIT_SENSITIVE_KEYS = {"text_content", "source_sql"}` — PII / 큰 payload 필드 ChangeJson 제외.
 - `_build_audit_resource_id(method_name, kwargs)` (M2-c, REV-20260521-0009 B-5 흡수) — composite `conv|scope|key|...` `|` 구분 string 64 char cap. None placeholder `-`. 6 method layout: text_hash[:64] / conv|scope|fact_key / conv|scope|fact_key|content_hash[:12] / conv|scope|object_type|object_key / conv|scope|fact_key|keep_limit.
-- **SLA 측정 도구** (`bin/kb-dual-write-verify.sh audit-sla --since <ISO>`, M2-c 본문): PG denominator `GREATEST(created_at, updated_at) >= since` (texts 는 created_at only) + audit numerator `kb.write.mirror` only + `audit > 2×pg` fail-loud + zero-denom INCONCLUSIVE exit 2. target miss_ppm ≤ 1000 (= 0.1%). delete/prune SLA 별 metric 은 M2-d 위임 (pg_branch xmax tagging).
+- **pg_branch tagging (TASK-0022 M2-d)**: 3 UPSERT SQL (`_PG_UPSERT_FACT_ENTRY` / `_PG_UPSERT_RAG_DOCUMENT` / `_PG_UPSERT_RAG_OBJECT`) 에 `RETURNING id, (xmax = 0) AS pg_inserted` — xmax=0 이면 INSERT, xmax≠0 이면 UPDATE. `_pg_op_local = threading.local()` 이 branch label 을 capture; `_get_last_pg_branch()` / `_clear_pg_branch()` 로 read/reset. `_DualWriteMirror._mirror()` 첫 줄에서 `_clear_pg_branch()` (REV-20260522-0010 B-3/B-4 — early-return path 통일). delete/prune/upsert_text 는 method body 에서 직접 branch label set (delete / prune / insert-or-noop via cursor.rowcount).
+- **SLA 측정 도구**:
+  - `bin/kb-dual-write-verify.sh audit-sla --since <ISO>` (M2-c): PG denominator `GREATEST(created_at, updated_at) >= since` (texts 는 created_at only) + audit numerator `kb.write.mirror` only + `audit > 2×pg` fail-loud + zero-denom INCONCLUSIVE exit 2. target miss_ppm ≤ 1000 (= 0.1%).
+  - `bin/kb-dual-write-verify.sh --pg-branch-tag-coverage --since <ISO>` (M2-d, REV-20260522-0010 B-2 흡수 — **NOT a cross-DB SLA**): `_pg_op_local` instrumentation health gate. `JSON_UNQUOTE(JSON_EXTRACT(ChangeJson, '$.pg_branch')) IN ('delete', 'prune')` denominator 비율. target ≤ 1000 ppm. silent audit loss 는 분모/분자 모두에서 빠지므로 본 metric 만으로 SLA 보장 안 됨 — 진짜 cross-DB SLA 는 M3/M4 in-process counter 필요.
+- **Mirror metrics (TASK-0022 M2-d)**: `_MIRROR_METRICS` dict + `_MIRROR_METRICS_LOCK` thread-safe. `get_mirror_metrics()` snapshot — `calls_total` (PG-unavailable silent-skip 포함, REV-20260522-0010 C-2 명시) + `calls_by_method` + `latency_ms_total/avg/max` (REV-20260522-0010 C-3 atomic) + `audit_calls_total` + `audit_failures_total`. `reset_mirror_metrics()` test fixture 용. `_DualWriteMirror._mirror()` 의 모든 path (success / connection-fail / method-raise) 에서 `time.monotonic()` 기반 latency 기록. **production-like baseline 측정 의 in-process 입력**.
 
 **Dual-write Caller 5 위치 (TASK-0020 M2-b cycle)**:
 - `modules/utils.py:957` `_text_store_insert()` — MySQL `INSERT IGNORE` 직후 `_dual_write_kb.upsert_text()` 호출. silent log 패턴.
@@ -136,18 +140,33 @@ source_of_truth: true
 - `modules/knowledge.py:633` `_publish_fact()` fact_entries — MySQL INSERT 직후 `_dual_write_kb.upsert_fact_entry()`.
 - `modules/knowledge.py:598` `_prune_fact_entries_for_key()` — MySQL DELETE 의 광역 swallow 는 MySQL 만 cover, mirror 호출은 외부 (fail-loud raise propagate).
 
-**ANCHOR §3 invariant 시나리오 catalog (TASK-0019 M2-a 정의 + TASK-0020 M2-b 의 mirror 호출 verification test + TASK-0021 M2-c 의 S1/N1/N2 실 구현)**:
-- `unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py` (~440 LOC) — 6 시나리오 catalog + 2 negative assertion. **S1 (RagDocuments missing)** 실 구현: FakeConn + FakeCursor 의 INSERT SQL 캡쳐 + monkeypatch `_log_kb_write_audit` 우회 + RETURNING id mock + LLM tripwire 동반. **N1 (LLM call zero)** 실 구현: `_install_llm_tripwires()` 가 `modules.llm._get_openai_client` / `_openai_chat_completion_with_deadline` / `llm_*` prefix 전체 + `modules.llm.OpenAI` 모두 monkeypatch + smoke assertion (1 patch 라도 미설치 시 즉시 fail). 6 mirror method (upsert_text/fact/rag_document/rag_object + delete + prune) invocation + 각 SQL 발행 assertion. **N2 (TRUNCATE denied)** env-gated: `AGENT_KB_PG_INTEGRATION_TEST=1` 시 실 `agent_kb_rw` connection + `TRUNCATE TABLE fact_entries` → `pytest.raises(InsufficientPrivilege)`. **S2-S6 skip** — M2-d 위임 (실 Postgres + insight worker 통합 필요).
-- `unit/feature-0002-agent-core/tests/test_dual_write_mirror.py` (M2-b 신규, ~310 LOC) — 10 unit test (no-op / silent log / fail-loud / 성공 / ABC / cache / set_text_embedding / MysqlKbBackend / caller integration / caplog) — monkeypatch 기반 실 DB 없이 작동.
+**ANCHOR §3 invariant 시나리오 catalog (TASK-0019 M2-a 정의 + TASK-0020 M2-b verification test + TASK-0021 M2-c S1/N1/N2 + TASK-0022 M2-d S2/S4/S5/S6 mock 실 구현)**:
+- `unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py` (~590 LOC) — 6 시나리오 catalog + 2 negative assertion. 본 cycle 시점 구현 상태:
+  - **S1 (RagDocuments missing)** — M2-c 실 구현 (FakeConn INSERT SQL 캡쳐 + LLM tripwire 동반)
+  - **S2 (RagObjects missing)** — M2-d 실 구현 (upsert_rag_object 호출 + rag_objects INSERT SQL + COALESCE NULLIF 패턴 assertion)
+  - **S3 (Texts missing)** — SQL 정합 assertion (text_hash 컬럼 존재) + insight worker integration skip 유지 (M3+ 위임)
+  - **S4 (ScopeKey non-common)** — M2-d 실 구현 (3 mirror call 의 SQL params 모두 `scope_key='sales_q4'` 보존)
+  - **S5 (RagObjects category stale)** — M2-d 실 구현 (`_PG_UPSERT_RAG_OBJECT` SQL template 의 6 category 컬럼 모두 `COALESCE(NULLIF(EXCLUDED.x, ''), rag_objects.x)` 패턴 검증)
+  - **S6 (multi-row priority)** — M2-d 실 구현 (`agent_kb_schema.sql` 의 `agent_memory_facts` VIEW DDL DISTINCT ON + weight DESC + updated_at DESC + id DESC tie-break)
+  - **N1 (LLM call zero)** — M2-c 실 구현 (`modules.llm` entry point 전수 monkeypatch + smoke assertion)
+  - **N2 (TRUNCATE denied)** — env-gated `AGENT_KB_PG_INTEGRATION_TEST=1` (M2-c + M2-d 동일)
+- `unit/feature-0002-agent-core/tests/test_dual_write_mirror.py` (M2-b ~310 LOC + M2-d +80 LOC = ~390 LOC) — 12 unit test:
+  - Tests 1-10 (M2-b): no-op / silent log / fail-loud / 성공 / ABC / cache / set_text_embedding / MysqlKbBackend / caller integration / caplog
+  - Test 11 (M2-d): pg_branch insert/update via FakeCursor (id, pg_inserted) tuple
+  - Test 12 (M2-d): metrics counter via `reset_mirror_metrics()` + 3 mirror call + `get_mirror_metrics()` assertion
 - `unit/feature-0002-agent-core/tests/conftest.py` (M2-b 신규) — sys.path 통합 + dual import 회피.
 
-**Stress harness (TASK-0021 M2-c)**:
-- `bin/kb-dual-write-stress.sh` — `trigger_insight_cycles()` (docker exec insight-worker `run_insight_cycle()` × N, container 미가동 시 docker compose run fallback) + `trigger_ask_iterations()` (docker compose run --rm agent 5 시나리오 × M iteration) + FAILURES counter + exit 1 on any failure. `--dry-run` mode 지원 (command echo). default: 3 insight × 5 ask iter = 25 ask 총 ~12분 + LLM cost.
+**Stress harness (TASK-0021 M2-c + TASK-0022 M2-d 보강)**:
+- `bin/kb-dual-write-stress.sh` — `trigger_insight_cycles()` (docker exec insight-worker `run_insight_cycle()` × N, container 미가동 시 docker compose run fallback) + `trigger_ask_iterations()` (docker compose run --rm agent 5 시나리오 × M iteration) + FAILURES counter + exit 1 on any failure. `--dry-run` mode (command echo).
+- **M2-d 추가 options**:
+  - `--keep-agent-container` (REV-20260522-0010 B-1 흡수) — agent service 가 docker ps 에 running 시 `docker exec "$agent_container" python /app/agent_core.py "$question"` (positional, agent_core.py:1796 argparse `query` 정합) 재사용. 25-iter container churn (~20s/iter overhead) 회피.
+  - `--log-dir <path>` (REV-20260521-0009 C-3 흡수) — per-step log file. `step_log()` helper 가 step id 별 timestamp + status 기록.
 
-**M2-d cycle 책임 (별 cycle 위임)**:
-- S2-S6 invariant fixture 실 구현 (실 Postgres + insight worker 통합)
-- delete/prune SLA 별 metric (`pg_branch` xmax tagging — RETURNING (id, xmax=0) 보강, REV-20260521-0009 B-1 follow-up)
-- Latency baseline production-like 측정 (audit MySQL connection pool 검토 포함)
+**M3 cycle 책임 (별 cycle 위임)**:
+- Backfill ETL (`bin/kb-backfill.sh`) + embedding worker (`bin/kb-embedding-worker.sh` 또는 inline) + OpenAI `text-embedding-3-small` 호출 + dry-run mode
+- delete/prune 의 진짜 cross-DB SLA (pg_branch tagging coverage 가 아닌 in-process counter 기반)
+- Latency baseline production-like 측정 (`get_mirror_metrics()` 의 production sampling)
+- Nice-to-have (REV-20260521-0009 C-6/C-7/C-8) — verify.sh stderr 추가 노출 + JSON_EXTRACT MySQL 8.0+ 의존 문서화 + FakeCursor cosmetic
 - Nice-to-have 8건 (REV-20260521-0009 C-1~C-8): N2 env var 문서화 / stress.sh container 재사용 / per-step log / SINCE injection escape / `_BACKENDS_CACHE` test finalize / prune correlated IN 성능 / verify.sh stderr suppress 제거 / zero-denom exit 2 (본 cycle 흡수 완료)
 
 ## 11. Acceptance Criteria

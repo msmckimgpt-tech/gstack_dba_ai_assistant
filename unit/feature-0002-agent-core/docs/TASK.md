@@ -9,19 +9,50 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: TASK-0101 backlog closure (TASK-0010/0011/0004/0005 + cross-feature 시나리오 정의 placeholder closure) + TASK-0100 multipart hot-fix ship (cycle: TASK-0100) + M2-c cross-DB audit + SLA tooling + invariant test (cycle: TASK-0021, 진행 중)
-- Owner: AI (본 cycle: M2-c cross-DB audit explicit call + audit-SLA verify body + stress.sh body + ANCHOR §3 invariant test S1/N1/N2 + outside-voice REV-20260521-0009 Critical 5 반영) → AI (M2-d: S2-S6 invariant fixture + delete/prune SLA + latency baseline production-like 측정)
+- State: M2-d pg_branch xmax + S2/S4/S5/S6 + tagging coverage gate + Nice-to-have 7 (cycle: TASK-0022) + TASK-0101 backlog closure + TASK-0100 multipart hot-fix (모두 done)
+- Owner: AI (본 cycle: pg_branch xmax tagging + S2/S4/S5/S6 mock-pattern 실 구현 + tagging coverage gate + latency instrumentation + Nice-to-have 7 (C-1~C-7) 흡수 + outside-voice REV-20260522-0010 Blocker 2 + Critical 4 반영) → AI (M3: backfill ETL + embedding worker)
 - Priority: high
-- Last Updated: 2026-05-22 (TASK-0015 PLAN-APPROVED 마커: ms.mckim.gpt@gmail.com on 2026-05-20)
+- Last Updated: 2026-05-22
 
 ## 1.1 Current Cycle
-- [x] TASK-0101 (REQ-20260522-0004, **Minor §12.3** — backlog closure batch, cross-feature docs). 본 세션 (TASK-0098 ship + TASK-0100 hot-fix 후) 의 잔여 backlog 항목 일괄 closure. (a) **feature-0002**: TASK-0010 (작업 브랜치 commit 후 clean integration worktree cherry-pick/push) + TASK-0011 (원본 워크트리 더티 동일성 재확인) → 과거 작업 흐름의 마무리 docs, 코드 작업 자체는 이미 완료. (b) **feature-0001 / 0004 / 0005 / 0006**: TASK-0004 (엄격한 시나리오 정의) → placeholder, 각 feature 의 TEST.md / ANCHOR §3 invariant 로 시나리오가 자연 흡수 → 마킹. (c) **feature-0005**: TASK-0005 (MCP 서비스 기동 검증) → 본 cycle 실 환경 검증 (`docker ps repo-mcp-1 Up` + `curl http://localhost:28000/healthz HTTP=200` + Workbench gated UI 정상). (d) **feature-0003**: TASK-0072 (타 계정 대화 검색·필터) → main 의 TASK-0099 closure 에서 [x] DEPLOYED 완료 — 본 batch 재확인. (e) **deferral (closure 대상 외)**: TASK-0034 (복잡 QA 성능 테스트, LLM API + 실 DB 의존), TASK-0044 (사업팀 pilot 발급, 운영 manual), TASK-0020 (feature-0002 KbBackend M2-b — 본 cycle 작업 중), TASK-0021 (M2-c cross-DB audit, **본 cycle 진행 중**). 동작 변경 0, docs / 마킹만, RBAC / DB / endpoint / audit 무변경. dual-ownership: 본 entry 는 feature-0002 ownership, 영향받는 docs = 6 feature TASK.md.
+- [ ] TASK-0022 (REQ-20260522-0002, **Major §12.3** — RBAC 동반 변경) §2.1 PLAN-APPROVED 의 **M2 phase 의 4차 (M2-d)** 실행. M2-c (TASK-0021) 의 audit infrastructure 위에 outside-voice REV-20260521-0009 의 Nice-to-have 8건 中 7건 (C-1~C-7) + pg_branch xmax tagging (B-1 follow-up) + S2/S4/S5/S6 mock-pattern 실 구현 + tagging coverage gate + latency instrumentation. **outside-voice review (Plan subagent, `REV-20260522-0010`) Verdict NEEDS-TWEAK + Blocker 2 + Critical 4 본 cycle 내 반영 완료** (B-1 stress agent CLI 정정 / B-2 SLA → tagging coverage rename + 한계 명시 / B-3+B-4 `_clear_pg_branch()` 위치 mirror 첫 줄 / C-5 truncate 시 pg_branch 보존 / C-1 xmax docstring + C-2/3/4 metrics+regex + C-9 worst exit code). **본 turn 의 deliverable 은 6 산출 + Critical 6 흡수까지**. **M3 cycle (별 cycle)** 책임: backfill ETL + embedding worker.
 
-- [x] TASK-0100 (REQ-20260522-0003, **Minor §12.3** — multipart UploadFile 의존성 hot-fix). 사용자가 TASK-0098 (PR #49) ship 후 main 재배포 검증 단계에서 발견: web container `Restarting` + `RuntimeError: Form data requires "python-multipart" to be installed.` build 회귀. 원인: PR #66 (TASK-0094 Sprint 1 Phase 5 — `POST /api/conversations/{cid}/attachments` UploadFile 도입) 가 의존성 추가 없이 ship 됨. fix: `unit/feature-0002-agent-core/src/requirements.txt` 에 `python-multipart>=0.0.9` 한 줄 추가. 동작 변경 0, RBAC / DB / endpoint / audit 무변경 — 본질적으로 미반영된 의존성을 명시화한 것. AC-0226 (REQ-20260521-0001 / TASK-0094 첨부 multi-cycle) 의 attachment.upload endpoint 가 의도대로 작동하도록 backing 의존성 추가. dual-ownership: 의존성 파일은 feature-0002 (agent-core), 소비자는 feature-0003 (agent-web-ui attachment endpoint).
-- [x] fix/query-result-string-truncation (Minor §12.3) — `normalize_step_result_summary` (render.py) CSV 기반 `preview_table` 구성으로 셀 100자 잘림 이슈 수정. MODIFY CHG-20260522-0001. REVIEW [SKIPPED:non-policy-doc].
-- [ ] TASK-0021 (REQ-20260522-0001, **Major §12.3** — RBAC 동반 변경) §2.1 PLAN-APPROVED 의 **M2 phase 의 3차 (M2-c)** 실행. M2-b (TASK-0020) 의 dual-write 위에 ADR-0021 §Consequences M2-c 책임 (Cross-DB audit explicit call + SLA 측정 도구 본문) 흡수. **본 cycle 산출 5건**: (a) `modules/kb_backend.py` 의 `_log_kb_write_audit()` 헬퍼 + `_KB_AUDIT_ACTION_MAP` + `_KB_AUDIT_SENSITIVE_KEYS` + `_build_audit_resource_id()` composite + `_DualWriteMirror._mirror()` 의 audit call 통합 + `_BACKENDS_LOCK` thread-safe double-checked locking (REV-20260520-0008 Nice-to-have), (b) `bin/kb-dual-write-verify.sh` 의 `verify_counts` / `verify_content_hash` / `verify_audit_sla` 본문 (GREATEST(created_at, updated_at) 분모 정정 + write-only audit numerator + audit over-count fail-loud), (c) `bin/kb-dual-write-stress.sh` 본문 (docker exec insight-worker + docker compose run agent), (d) `tests/test_anchor_invariant_postgres.py` 의 S1 (RagDocuments missing) + N1 (LLM call zero) 실 구현 + N2 (TRUNCATE denied) env-gated integration test (S2-S6 는 M2-d 위임), (e) outside-voice review (Plan subagent, `REV-20260521-0009`) NEEDS-TWEAK Verdict + Critical 5 본 cycle 내 반영 (B-1 SLA 분모/분자 mismatch / B-2 N1 LLM tripwire `modules.llm` 정정 / B-3 prune signature `keep_limit=` 정정 + DELETE SQL assertion / B-4 `connect_with_retry(attempts=1)` / B-5 ResourceId composite + B-6 ChangeJson 16KB 캡). **본 turn 의 deliverable 은 5 산출 + Critical 5 반영까지**. **M2-d cycle (별 cycle)** 책임: S2-S6 invariant fixture (실 DB) + delete/prune SLA 별 metric (pg_branch xmax tagging) + latency baseline production-like 측정 + Nice-to-have 8건.
+- [x] TASK-0101 (REQ-20260522-0004, **Minor §12.3** — backlog closure batch, cross-feature docs). 본 세션 (TASK-0098 ship + TASK-0100 hot-fix 후) 의 잔여 backlog 항목 일괄 closure. (a) **feature-0002**: TASK-0010 (작업 브랜치 commit 후 clean integration worktree cherry-pick/push) + TASK-0011 (원본 워크트리 더티 동일성 재확인) → 과거 작업 흐름의 마무리 docs, 코드 작업 자체는 이미 완료. (b) **feature-0001 / 0004 / 0005 / 0006**: TASK-0004 (엄격한 시나리오 정의) → placeholder. (c) **feature-0005**: TASK-0005 (MCP 서비스 기동 검증) → 본 cycle 실 환경 검증. (d) **feature-0003**: TASK-0072 → main 의 TASK-0099 closure 재확인.
+- [x] TASK-0100 (REQ-20260522-0003, **Minor §12.3** — multipart UploadFile 의존성 hot-fix). `python-multipart>=0.0.9` 한 줄 추가 → web container 안정.
+- [x] fix/query-result-string-truncation (Minor §12.3) — render.py CSV 기반 `preview_table` 구성.
+- [x] TASK-0021 (REQ-20260522-0001, **Major §12.3**) — M2-c cross-DB audit explicit + SLA verify body + stress.sh body + S1/N1/N2 실 구현 + REV-20260521-0009 Critical 6 흡수. **done in commit 7540e17**.
 
-## 1.2 Implementation Plan (TASK-0021 — M2-c cross-DB audit + SLA + invariant test 본 cycle)
+## 1.2 Implementation Plan (TASK-0022 — M2-d pg_branch + S2-S6 + delete/prune SLA + Nice-to-have 본 cycle)
+
+영향 파일 (본 cycle, instrumentation + tooling + test):
+- `unit/feature-0002-agent-core/src/modules/kb_backend.py` (+~120 LOC) — 3 UPSERT SQL 에 `RETURNING id, (xmax = 0) AS pg_inserted` + `_pg_op_local` threading.local + `_get_last_pg_branch()` / `_clear_pg_branch()` helpers + `_execute_returning_id()` branch 캡쳐 (insert/update) + delete/prune/upsert_text 의 branch 라벨 + `_log_kb_write_audit(pg_branch=...)` 시그니처 + ChangeJson `pg_branch` 필드 + `_MIRROR_METRICS` + `get_mirror_metrics()` / `reset_mirror_metrics()` + `_DualWriteMirror._mirror()` 의 timing.
+- `bin/kb-dual-write-verify.sh` (+~70 LOC) — `verify_audit_sla_delete_prune()` 신규 (JSON_UNQUOTE(JSON_EXTRACT(ChangeJson, '$.pg_branch')) 기반) + `--audit-sla-delete-prune` mode + `--since` ISO 8601 validation (C-4) + stderr suppress 일부 제거 (C-7).
+- `bin/kb-dual-write-stress.sh` (+~30 LOC) — `--keep-agent-container` (C-2: docker exec agent 재사용) + `--log-dir` (C-3: per-step log file) + `step_log()` helper.
+- `unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py` (+~150 LOC) — `_setup_mock_mirror_env()` 공통 fixture (C-5 `_BACKENDS_CACHE` finalize) + S2 (rag_objs INSERT SQL 캡쳐 + category COALESCE NULLIF) + S4 (scope_key=sales_q4 보존 검증) + S5 (SQL template category COALESCE NULLIF assertion) + S6 (agent_kb_schema.sql VIEW DDL DISTINCT ON + tie-break 정합).
+- `unit/feature-0002-agent-core/tests/test_dual_write_mirror.py` (+~80 LOC) — Test 11 pg_branch insert/update (FakeCursor fetchone 가 (id, pg_inserted) tuple) + Test 12 metrics counter (3 mirror call → calls_total=3, calls_by_method 정합, audit_calls_total=3).
+- `unit/feature-0002-agent-core/docs/{TASK,REVIEW,MODIFY,REPORT,FUNCTION}.md`: cycle 등록 + outside-voice REV-20260522-0010 entry (계획) + 본 cycle 산출 기록.
+
+접근 방법:
+1. PG SQL 3 UPSERT 에 `RETURNING id, (xmax = 0) AS pg_inserted` 적용 — xmax = 0 은 INSERT, xmax != 0 은 UPDATE (PostgreSQL 의 row-level TX id semantics).
+2. `_pg_op_local` threading.local + `_clear_pg_branch()` (mirror 진입 시 reset) + `_get_last_pg_branch()` (audit 호출 시 read).
+3. `_execute_returning_id()` 의 row 가 length>=2 시 branch 캡쳐. delete/prune/upsert_text 는 method body 에서 branch 라벨 직접 set.
+4. `_log_kb_write_audit()` 시그니처 `pg_branch` 추가 + ChangeJson 에 기록.
+5. `_MIRROR_METRICS` dict + 4 metric (calls_total, calls_by_method, latency_ms_total/max, audit_calls/failures) + `_MIRROR_METRICS_LOCK` thread safety.
+6. `_DualWriteMirror._mirror()` 의 진입/실패/성공 path 모두 `_record_mirror_latency()` 호출 + audit failure flag.
+7. `bin/kb-dual-write-verify.sh` 의 `verify_audit_sla_delete_prune()` — JSON_EXTRACT 로 pg_branch 카운트.
+8. `--since` ISO 8601 정규식 검증.
+9. `bin/kb-dual-write-stress.sh` 의 `--keep-agent-container` 모드 — docker ps 로 agent service running 검출 시 docker exec 재사용. `--log-dir` per-step log file (각 step 의 timestamp + status).
+10. S2/S4/S5/S6 mock-pattern 실 구현. S3 은 schema 정합 assertion 만 + skip 유지.
+11. Test 11/12 — pg_branch + metrics 단위 검증.
+
+**Runtime 검증 deferral (M3 별 cycle / 추후 책임)**:
+1. `bin/kb-dual-write-verify.sh audit-sla-delete-prune --since <ISO>` 실 측정 (pg_branch tagging 활성 후 windowing)
+2. `--keep-agent-container` 모드의 실 latency 개선 정량 측정 (M2-c default ~12분 → 예상 ~3분)
+3. process-level latency baseline measurement: `get_mirror_metrics()` 의 production-like sampling
+
+위험도: **Major (§12.3 — RBAC 동반 변경)**. PLAN-APPROVED 범위 + 사용자 "이번 세션에서 남은 cycle 모두 완수" 명시 + outside-voice review 호출 + Nice-to-have 7건 흡수 + S2/S4/S5/S6 실 구현.
+
+## 1.3 Implementation Plan (TASK-0021 — M2-c cross-DB audit + SLA + invariant test, done — 보존)
 
 영향 파일 (본 cycle, audit + tooling + test):
 - `unit/feature-0002-agent-core/src/modules/kb_backend.py` (+~155 LOC, 919 → ~1075 LOC) — `_log_kb_write_audit()` helper + `_KB_AUDIT_ACTION_MAP` (6 method → ActionCode/ResourceType) + `_KB_AUDIT_SENSITIVE_KEYS` (text_content/source_sql 제외) + `_build_audit_resource_id()` composite builder (REV-20260521-0009 B-5 — conv|scope|key|... 식별 정밀화) + `_DualWriteMirror._mirror()` 의 audit explicit call (성공 후 best-effort) + `_BACKENDS_LOCK` thread-safe double-checked locking (REV-20260520-0008 Nice-to-have) + `threading` import + ChangeJson 16KB 캡 (REV-20260521-0009 B-6) + `pg_op_kind` tagging (REV-20260521-0009 B-1 — write/delete/prune 분리 기반).

@@ -67,7 +67,7 @@ SINCE=""
 WINDOW_DAYS="7"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --counts|--content-hash|--audit-sla|--all)
+    --counts|--content-hash|--audit-sla|--pg-branch-tag-coverage|--all)
       MODE="${1#--}"; shift ;;
     --since)
       SINCE="$2"; shift 2 ;;
@@ -80,7 +80,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -n "$MODE" ] || { echo "specify --counts / --content-hash / --audit-sla / --all" >&2; exit 2; }
+[ -n "$MODE" ] || { echo "specify --counts / --content-hash / --audit-sla / --pg-branch-tag-coverage / --all" >&2; exit 2; }
 
 # outside-voice REV-20260520-0007 Section C Blocker: --since default 가 .env 의
 # KB_DUAL_WRITE_START_TS 에서 자동 읽기. 부재 시 fail rate 분모 폭증 (M1 부터의
@@ -92,6 +92,19 @@ if [ -z "$SINCE" ]; then
     [ -n "$SINCE" ] && echo "[INFO] --since not set + KB_DUAL_WRITE_START_TS empty — using 7-day window: $SINCE" >&2
   else
     echo "[INFO] --since auto-loaded from .env KB_DUAL_WRITE_START_TS: $SINCE" >&2
+  fi
+fi
+
+# outside-voice REV-20260521-0009 C-4 흡수 + REV-20260522-0010 C-4 보강: SINCE input
+# validation — operator-driven 이지만 SQL injection 위험 차단. ISO 8601 timestamp 형식.
+# 허용: 2026-05-22 / 2026-05-22T15:30:00 / 2026-05-22 15:30:00 / 2026-05-22T15:30:00Z
+#       / 2026-05-22T15:30:00.123 / 2026-05-22T15:30:00.123+09:00 / 2026-05-22T15:30:00-05:00
+if [ -n "$SINCE" ]; then
+  if ! printf '%s' "$SINCE" | \
+       grep -Eq "^[0-9]{4}-[0-9]{2}-[0-9]{2}([ T][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:?[0-9]{2})?)?\$"; then
+    echo "ERROR: --since 형식이 ISO 8601 timestamp 가 아님: '$SINCE'" >&2
+    echo "  허용 형식: 2026-05-22 / 2026-05-22T15:30:00 / 2026-05-22T15:30:00.123+09:00" >&2
+    exit 2
   fi
 fi
 
@@ -118,10 +131,10 @@ verify_counts() {
     local my_count pg_count
     my_count=$(docker exec -i "$MYSQL_CONTAINER" mysql -uroot -p"$MYSQL_PW" \
       --skip-column-names -B -e "SELECT COUNT(*) FROM ${my_tbl}${since_clause_mysql};" \
-      "$MYSQL_DB" 2>/dev/null | grep -v '^mysql:' | head -1 | tr -d '[:space:]' || true)
+      "$MYSQL_DB" | grep -v '^mysql:' | head -1 | tr -d '[:space:]' || true)
     pg_count=$(docker exec -i -e PGPASSWORD="$PG_PW" "$PG_CONTAINER" \
       psql -h localhost -p 5432 -U "$PG_USER" -d "$PG_DB" -tAc \
-      "SELECT COUNT(*) FROM ${pg_tbl}${since_clause_pg};" 2>/dev/null | tr -d '[:space:]' || true)
+      "SELECT COUNT(*) FROM ${pg_tbl}${since_clause_pg};" | tr -d '[:space:]' || true)
     my_count="${my_count:-0}"
     pg_count="${pg_count:-0}"
     local diff=$((my_count - pg_count))
@@ -212,7 +225,7 @@ verify_audit_sla() {
     "SELECT COUNT(*) FROM WebAuditEvents \
      WHERE ActionCode = 'kb.write.mirror' \
        AND OccurredAt >= '$SINCE';" \
-    "$MYSQL_DB" 2>/dev/null | grep -v '^mysql:' | head -1 | tr -d '[:space:]' || true)
+    "$MYSQL_DB" | grep -v '^mysql:' | head -1 | tr -d '[:space:]' || true)
   audit_count="${audit_count:-0}"
 
   echo "  pg_write_count=${pg_write_count}  audit_count=${audit_count}  (scope: kb.write.mirror only)"
@@ -257,14 +270,92 @@ verify_audit_sla() {
   return 0
 }
 
+verify_pg_branch_tag_coverage() {
+  # M2-d (TASK-0022) — pg_branch tagging coverage gate. **NOT** a cross-DB SLA.
+  #
+  # outside-voice REV-20260522-0010 B-2 흡수: 본 함수는 의도적으로 SLA 가 아닌
+  # **instrumentation health gate** 임을 명시. M2-d 의 `_pg_op_local` thread-local
+  # tagging 이 정상 작동하는지 (delete/prune audit row 가 `pg_branch` 필드를 가지고
+  # 있는지) 만 측정. 진짜 delete/prune SLA (cross-DB miss rate) 는 PG-side rowcount
+  # in-process counter 가 필요하며 별 cycle (M3 추후) 책임.
+  #
+  # 측정 의미:
+  #   total       = WebAuditEvents.ActionCode IN ('kb.delete.mirror', 'kb.prune.mirror')
+  #                 since $SINCE — audit 가 도달한 delete/prune row count
+  #   with_branch = 위 + ChangeJson.pg_branch IN ('delete', 'prune')
+  #   untagged    = total - with_branch (pg_branch 누락 또는 thread-local leak 의심)
+  #   target      = ≤ 1000 ppm (audit 인스트루멘테이션 정합성 게이트)
+  #
+  # 한계 명시:
+  # - audit 자체 silent loss (`_log_kb_write_audit` 가 실패하여 row 가 작성 안 됨)
+  #   는 본 metric 의 분모/분자 모두에 등장 안 함 → coverage 100% 라도 실 SLA 가
+  #   nan 일 수 있다. cross-DB SLA 는 M3/M4 cycle 의 in-process counter 가 필요.
+  # - thread-local leak (예: fact-entry update 가 다음 delete call 의 audit row 에
+  #   'update' label leak) 은 본 metric 에서 'untagged' 로 카운트 — 라벨 mismatch
+  #   를 silent loss 와 구분 못 함.
+  echo "[INFO] --pg-branch-tag-coverage: M2-d (TASK-0022) delete/prune pg_branch tagging health gate (since=${SINCE})"
+  echo "  rationale: NOT a cross-DB SLA — measures _pg_op_local instrumentation coverage only."
+  if [ -z "$SINCE" ]; then
+    echo "  ERROR: --since 필수" >&2
+    return 1
+  fi
+
+  local total
+  total=$(docker exec -i "$MYSQL_CONTAINER" mysql -uroot -p"$MYSQL_PW" \
+    --skip-column-names -B -e \
+    "SELECT COUNT(*) FROM WebAuditEvents \
+     WHERE ActionCode IN ('kb.delete.mirror', 'kb.prune.mirror') \
+       AND OccurredAt >= '$SINCE';" \
+    "$MYSQL_DB" | grep -v '^mysql:' | head -1 | tr -d '[:space:]' || true)
+  total="${total:-0}"
+
+  local with_branch
+  with_branch=$(docker exec -i "$MYSQL_CONTAINER" mysql -uroot -p"$MYSQL_PW" \
+    --skip-column-names -B -e \
+    "SELECT COUNT(*) FROM WebAuditEvents \
+     WHERE ActionCode IN ('kb.delete.mirror', 'kb.prune.mirror') \
+       AND OccurredAt >= '$SINCE' \
+       AND JSON_UNQUOTE(JSON_EXTRACT(ChangeJson, '\$.pg_branch')) IN ('delete', 'prune');" \
+    "$MYSQL_DB" | grep -v '^mysql:' | head -1 | tr -d '[:space:]' || true)
+  with_branch="${with_branch:-0}"
+
+  echo "  delete/prune audit total=${total}  with pg_branch tagged=${with_branch}"
+
+  if [ "$total" -eq 0 ]; then
+    echo "  INCONCLUSIVE: delete/prune audit 0건 (since=${SINCE}) — prune 정책 비활성 또는 traffic 없음" >&2
+    return 2
+  fi
+
+  local untagged=$((total - with_branch))
+  local miss_ppm=$(( untagged * 1000000 / total ))
+  local target_ppm=1000
+  printf '  tag_coverage_miss = (%d - %d) / %d = %d ppm  (target ≤ %d ppm)\n' \
+    "$total" "$with_branch" "$total" "$miss_ppm" "$target_ppm"
+
+  if [ "$miss_ppm" -gt "$target_ppm" ]; then
+    echo "  FAIL: pg_branch tagging coverage miss ${miss_ppm} ppm > target ${target_ppm}" >&2
+    echo "  pg_branch 누락 (M2-d audit instrumentation 미작동) 또는 _pg_op_local thread-local leak" >&2
+    echo "  NOTE: 본 metric 은 cross-DB SLA 가 아님 — silent audit loss 는 분모/분자 모두에서 빠짐" >&2
+    return 1
+  fi
+  echo "  PASS: pg_branch tagging coverage ${miss_ppm} ppm ≤ ${target_ppm} ppm"
+  return 0
+}
+
 case "$MODE" in
-  counts)        verify_counts ;;
-  content-hash)  verify_content_hash ;;
-  audit-sla)     verify_audit_sla ;;
+  counts)                       verify_counts ;;
+  content-hash)                 verify_content_hash ;;
+  audit-sla)                    verify_audit_sla ;;
+  pg-branch-tag-coverage)       verify_pg_branch_tag_coverage ;;
   all)
-    verify_counts
-    verify_content_hash
-    verify_audit_sla
+    # outside-voice REV-20260522-0010 C-9 흡수: worst exit code propagation.
+    rc_max=0
+    verify_counts                  || { rc=$?; [ $rc -gt $rc_max ] && rc_max=$rc; }
+    verify_content_hash            || { rc=$?; [ $rc -gt $rc_max ] && rc_max=$rc; }
+    verify_audit_sla               || { rc=$?; [ $rc -gt $rc_max ] && rc_max=$rc; }
+    verify_pg_branch_tag_coverage  || { rc=$?; [ $rc -gt $rc_max ] && rc_max=$rc; }
+    [ "$rc_max" -gt 0 ] && echo "[INFO] --all worst exit code: $rc_max" >&2
+    exit $rc_max
     ;;
 esac
 

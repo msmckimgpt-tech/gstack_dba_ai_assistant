@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0006
+- Date: 2026-05-22
+- TASK-Cycle: TASK-0022 (M2-d pg_branch xmax + S2/S4/S5/S6 + tagging coverage gate + Nice-to-have 7, **Major §12.3** — RBAC 동반)
+- Summary: §2.1 PLAN-APPROVED 의 **M2 phase 4차 (M2-d)** — M2-c (TASK-0021) 의 audit infrastructure 위에 outside-voice REV-20260521-0009 Nice-to-have 8건 中 7건 (C-1~C-7 — C-8 은 M2-c 흡수) + pg_branch xmax tagging (B-1 follow-up) + S2/S4/S5/S6 mock-pattern 실 구현 + tagging coverage gate + latency instrumentation 흡수. **Outside-voice review (Plan subagent, `REV-20260522-0010`) Verdict NEEDS-TWEAK + Blocker 2 + Critical 4 본 cycle 내 반영** (B-1 stress `--keep-agent-container` agent CLI 정정 / B-2 SLA → tagging coverage rename + 한계 명시 / B-3+B-4 `_clear_pg_branch()` 위치 mirror 첫 줄 / C-5 truncate 시 pg_branch 보존 / C-1 xmax docstring / C-2-3-4 metrics+regex docstring). **본 turn 의 deliverable 은 6 산출 + Critical 6 흡수까지**. M3 backfill ETL + embedding worker 는 별 cycle 위임.
+- Worktree: `ai/claude/0002/kb-pg-m2d` 격리. path: `<wrapper>/.worktrees/0002-kb-pg-m2d/`. 사용자 결정 (2026-05-22): "이번 세션에서 남은 cycle을 모두 완수해주세요" → 본 cycle 진행.
+- Files (instrumentation + tooling + test):
+  - `unit/feature-0002-agent-core/src/modules/kb_backend.py` (+~150 LOC): 3 UPSERT SQL 에 `RETURNING id, (xmax = 0) AS pg_inserted` + `_pg_op_local = threading.local()` + `_get_last_pg_branch()` / `_clear_pg_branch()` helpers (`_mirror()` 첫 줄 clear, REV-20260522-0010 B-3/B-4 흡수) + `_execute_returning_id()` branch 캡쳐 + delete/prune/upsert_text branch 라벨 + `_log_kb_write_audit(pg_branch=...)` 시그니처 + ChangeJson `pg_branch` 필드 + truncate 의 `pg_branch`/`pg_op_kind` 보존 (REV-20260522-0010 C-5) + `_MIRROR_METRICS` + `get_mirror_metrics()` / `reset_mirror_metrics()` API + `_record_mirror_latency()` + `_record_audit_event()` + `_DualWriteMirror._mirror()` 의 `time.monotonic()` based timing 모든 path.
+  - `bin/kb-dual-write-verify.sh` (+~85 LOC): `verify_pg_branch_tag_coverage()` 신규 (REV-20260522-0010 B-2 흡수, NOT a cross-DB SLA 명시) + `--pg-branch-tag-coverage` mode + `--since` ISO 8601 정규식 보강 (C-4) + stderr suppress 일부 제거 (C-7) + `--all` worst exit code propagation (C-9).
+  - `bin/kb-dual-write-stress.sh` (+~50 LOC): `--keep-agent-container` mode (REV-20260522-0010 B-1 — agent CLI positional `python /app/agent_core.py "$question"` 정정) + `--log-dir` per-step log (C-3).
+  - `unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py` (+~150 LOC): `_setup_mock_mirror_env()` 공통 fixture + S2/S4/S5/S6 mock-pattern 실 구현 + S3 SQL 정합 assertion.
+  - `unit/feature-0002-agent-core/tests/test_dual_write_mirror.py` (+~80 LOC): Test 11 (pg_branch insert/update) + Test 12 (metrics counter).
+  - `unit/feature-0002-agent-core/docs/{TASK,REVIEW,MODIFY,REPORT,FUNCTION}.md`: cycle 등록 + `REV-20260522-0010` + 본 entry + Summary + risk log.
+- 검증: pytest 21 PASS / 2 SKIPPED + bash -n + dry-run + verify-completion 10/10 PASS.
+- Runtime 검증 deferral (M3 별 cycle): `--pg-branch-tag-coverage --since <ISO>` 실 측정 + `--keep-agent-container` latency 정량 + `get_mirror_metrics()` production sampling.
+- 사용자 결정 (2026-05-22): 즉시 자동 commit + push + main 동기화.
+- Outside-voice rationale: `REV-20260522-0010 [SUBAGENT:Plan-subagent]` — RBAC 동반 audit instrumentation 변경. Blocker 2 + Critical 4 본 cycle 내 흡수 + Nice-to-have 5 동반 흡수, 3건 M3 위임.
+
 ## CHG-20260522-0005
 - Date: 2026-05-22
 - Summary: TASK-0101 (REQ-20260522-0004, **Minor §12.3** — backlog closure batch, cross-feature docs). 본 세션의 잔여 backlog 항목 일괄 closure: feature-0002 의 TASK-0010/0011 + feature-0001/0004/0005/0006 의 TASK-0004 (시나리오 정의 placeholder) + feature-0005 의 TASK-0005 (MCP 서비스 기동 검증, 본 cycle 실 환경 검증) + TASK-0072 (이미 main 에서 closure 확인). 환경 의존 / 활발한 진행 cycle (TASK-0034/0044/0020/0021) 은 deferral 명시.

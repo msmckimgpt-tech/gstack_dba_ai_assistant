@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260522-0010 [SUBAGENT:Plan-subagent — M2-d pg_branch + S2-S6 + delete/prune SLA + Nice-to-have 7]
+- Date: 2026-05-22
+- TASK-Cycle: TASK-0022 (M2-d pg_branch xmax + S2/S4/S5/S6 + tagging coverage gate + Nice-to-have 7, **Major §12.3** — RBAC 동반)
+- Outside-voice channel: Plan subagent. 사용자 메모리 `feedback_outside_voice_for_rbac.md` 정합 (audit instrumentation 확장 + pg_branch tagging 신설). M2-c (`REV-20260521-0009`) 의 follow-up — Nice-to-have 7건 + xmax-based branch tracking 검증.
+- Verdict: **NEEDS-TWEAK** → **PASS 전환** (2 Blocker + 4 Critical 본 cycle 내 흡수). 구조적 shape 정상 (`xmax = 0` semantics, metrics counter, test catalog). 단 (B-1) `--keep-agent-container` mode 가 존재하지 않는 `python -m agent_core --ask` invocation → silent zero-traffic + (B-2) `verify_audit_sla_delete_prune()` 의 분모/분자 가 cross-DB SLA 가 아닌 tagging coverage 임이 명시 안 됨 (false-green) + (B-3) `_clear_pg_branch()` 가 mirror 진입 첫 위치 아님 → stale 노출 가능 + (B-4) connection-failure path 에서 clear 누락 + (C-5) ChangeJson 16KB truncate 시 `pg_branch` 소실 + (C-1) xmax docstring 부정확. 본 cycle 흡수 완료.
+- Section A (Summary): 6 산출 (pg_branch xmax + thread-local + audit ChangeJson 확장 + metrics + tagging coverage gate + S2/S4/S5/S6 + Nice-to-have 7) 정상 작성. 구조적으로 audit instrumentation 가 한 단계 정확해짐.
+- Section B (Critical findings — 본 cycle 내 반영 완료):
+  - **B-1 (Blocker)**: `--keep-agent-container` stress mode 가 존재하지 않는 `python -m agent_core --ask` 호출 → silent zero-traffic. **반영**: `python /app/agent_core.py "$question"` positional 정정 (agent_core.py:1796 argparse 정합).
+  - **B-2 (Blocker)**: `verify_audit_sla_delete_prune()` 의 분모/분자 가 cross-DB SLA 아닌 tagging coverage. **반영**: 함수명 `verify_pg_branch_tag_coverage` rename + CLI flag `--pg-branch-tag-coverage` + docstring 의 "NOT a cross-DB SLA" 명시 + silent audit loss / thread-local leak 한계 explicit.
+  - **B-3 (Critical)**: `_clear_pg_branch()` 위치 stale. **반영**: `_mirror()` 첫 줄로 이동 — 모든 early-return path 통일.
+  - **B-4 (Critical)**: connection-failure path clear 누락. **반영**: B-3 와 동일 fix.
+  - **C-5 (Critical)**: ChangeJson 16KB truncate 시 pg_branch 소실. **반영**: truncated dict 에 `pg_op_kind`, `pg_branch` 동반 보존.
+- Section C (Nice-to-have): C-1 xmax docstring + C-2 metrics docstring + C-3 atomicity comment + C-4 regex 보강 + C-9 worst exit code propagation 본 cycle 흡수 ✓. C-6 (schema-path skip) / C-7 (MySQL 8.0+ floor 문서) / C-8 (FakeCursor cosmetic) M3 위임.
+- Section D (Verdict): NEEDS-TWEAK → **PASS 전환** — 2 Blocker + 4 Critical 본 cycle 내 흡수.
+- Decision authority: 사용자 "이번 세션에서 남은 cycle을 모두 완수해주세요" 승인.
+
 ## REV-20260522-0005 [SKIPPED:docs-only-batch-closure]
 - Date: 2026-05-22
 - Decision: TASK-0101 (REQ-20260522-0004, **Minor §12.3** — backlog closure batch). 본 세션의 잔여 backlog 항목 (TASK-0010/0011/0004 placeholder + TASK-0005 MCP 검증 + TASK-0072 재확인) 일괄 closure 마킹. outside voice / plan-eng-review skip — docs / 마킹만 + 동작 변경 0 + RBAC/DB/endpoint/audit 무변경.

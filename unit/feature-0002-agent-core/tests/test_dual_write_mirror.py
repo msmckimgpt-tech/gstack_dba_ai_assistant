@@ -379,3 +379,102 @@ def test_mirror_silent_log_emits_warning(monkeypatch, caplog):
         "kb_pg_mirror: connection failed" in rec.message
         for rec in caplog.records
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 11 (M2-d TASK-0022): pg_branch thread-local tagging — INSERT 와 UPDATE 분기.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_pg_branch_insert_vs_update(monkeypatch):
+    """xmax = 0 returning 으로 INSERT/UPDATE 분기 검출 — thread-local 캡쳐."""
+    kb = _load_kb_backend()
+
+    # Fake cursor: returning (id, pg_inserted) tuple
+    inserted_value = {"value": True}
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, sql, params):
+            self._sql = sql
+
+        def fetchone(self):
+            return (42, inserted_value["value"])
+
+    class FakeConn:
+        def cursor(self):
+            return FakeCursor()
+
+    backend = kb.PgKbBackend()
+    # INSERT branch
+    kb._clear_pg_branch()
+    backend.upsert_fact_entry(
+        FakeConn(),
+        conversation_id=None, fact_key="k", scope_key="common", text_hash="h" * 64,
+        fact_fingerprint="fp", weight=1,
+    )
+    assert kb._get_last_pg_branch() == "insert"
+
+    # UPDATE branch
+    inserted_value["value"] = False
+    kb._clear_pg_branch()
+    backend.upsert_fact_entry(
+        FakeConn(),
+        conversation_id=None, fact_key="k", scope_key="common", text_hash="h" * 64,
+        fact_fingerprint="fp", weight=2,
+    )
+    assert kb._get_last_pg_branch() == "update"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 12 (M2-d TASK-0022): mirror latency counter — process-level metrics.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_mirror_metrics_counter(monkeypatch):
+    """_DualWriteMirror 호출이 process-level metrics counter 에 기록."""
+    kb = _load_kb_backend()
+    kb.reset_mirror_metrics()
+    monkeypatch.setattr(
+        sys.modules["modules.db"], "_pg_available", lambda: True, raising=True,
+    )
+
+    class FakeCursor:
+        rowcount = 1  # upsert_text 의 DO NOTHING branch 감지용
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, *a, **kw): pass
+        def fetchone(self): return (1, True)
+
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+        def close(self): pass
+
+    monkeypatch.setattr(
+        sys.modules["modules.db"], "_pg_connect",
+        lambda *a, **kw: FakeConn(), raising=True,
+    )
+    monkeypatch.setattr(kb, "_log_kb_write_audit", lambda **kw: None, raising=True)
+    kb._BACKENDS_CACHE = None
+
+    # mirror 3회 호출
+    kb._dual_write_kb.upsert_text(text_hash="h" * 64, text_content="t")
+    kb._dual_write_kb.upsert_fact_entry(
+        conversation_id=None, fact_key="k", scope_key="common", text_hash="h" * 64,
+        fact_fingerprint="fp", weight=1,
+    )
+    kb._dual_write_kb.upsert_text(text_hash="h2" * 32, text_content="t2")
+
+    metrics = kb.get_mirror_metrics()
+    assert metrics["calls_total"] == 3, f"calls_total={metrics['calls_total']}"
+    assert metrics["calls_by_method"]["upsert_text"] == 2
+    assert metrics["calls_by_method"]["upsert_fact_entry"] == 1
+    assert metrics["latency_ms_total"] >= 0.0
+    assert metrics["latency_ms_avg"] >= 0.0
+    assert metrics["audit_calls_total"] == 3
+    assert metrics["audit_failures_total"] == 0

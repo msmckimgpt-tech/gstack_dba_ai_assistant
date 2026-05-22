@@ -42,15 +42,36 @@ export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-repo}"
 INSIGHT_CYCLES=3
 ASK_ITERATIONS=5
 DRY_RUN=0
+KEEP_AGENT_CONTAINER=0
+LOG_DIR=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --insight-cycles) INSIGHT_CYCLES="$2"; shift 2 ;;
     --ask-iterations) ASK_ITERATIONS="$2"; shift 2 ;;
     --dry-run)        DRY_RUN=1; shift ;;
+    --keep-agent-container) KEEP_AGENT_CONTAINER=1; shift ;;
+    --log-dir)        LOG_DIR="$2"; shift 2 ;;
     -h|--help)        sed -n '2,25p' "$0"; exit 0 ;;
     *)                echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+
+# outside-voice REV-20260521-0009 C-3 흡수: per-step log file. step 실패 시 어떤
+# 명령이 어떤 출력으로 실패했는지 추적 가능.
+if [ -n "$LOG_DIR" ]; then
+  mkdir -p "$LOG_DIR"
+  echo "[INFO] per-step logs → $LOG_DIR"
+fi
+
+step_log() {
+  # Usage: step_log <step-id> <message>
+  local sid="$1"; shift
+  local msg="$*"
+  if [ -n "$LOG_DIR" ]; then
+    printf '[%s] %s\n' "$(date -Iseconds)" "$msg" >> "${LOG_DIR}/${sid}.log"
+  fi
+  echo "$msg"
+}
 
 # 5 시나리오 (M-1 baseline 의 S1~S5)
 SCENARIOS=(
@@ -96,14 +117,36 @@ trigger_insight_cycles() {
 trigger_ask_iterations() {
   echo "[STEP] ask iterations: ${ASK_ITERATIONS} × ${#SCENARIOS[@]} scenarios = $((ASK_ITERATIONS * ${#SCENARIOS[@]})) total"
   local compose_file="${MAIN_REPO_ROOT}/docker-compose.yml"
+  local agent_container="${COMPOSE_PROJECT_NAME}-agent-1"
+  # outside-voice REV-20260521-0009 C-2 흡수: --keep-agent-container 모드 — 25-iter
+  # container churn (각 docker compose run 이 fresh container 생성, ~20s overhead)
+  # 회피. agent service 가 이미 가동 중이면 docker exec 로 재사용. 단 agent 가
+  # one-shot mode (CMD=python -m ...) 일 경우 exec 가 작동 안 함 → 자동 detect.
+  local use_exec=0
+  if [ "$KEEP_AGENT_CONTAINER" = "1" ] && [ "$DRY_RUN" != "1" ] && \
+     docker ps --format '{{.Names}}' | grep -qx "$agent_container"; then
+    use_exec=1
+    echo "[INFO] --keep-agent-container: docker exec '${agent_container}' 재사용"
+  fi
   for iter in $(seq 1 "$ASK_ITERATIONS"); do
     local sidx=0
     for question in "${SCENARIOS[@]}"; do
       sidx=$((sidx + 1))
-      echo "[ASK] iter=${iter}/${ASK_ITERATIONS} S${sidx}/${#SCENARIOS[@]}: ${question}"
-      run_or_print docker compose -f "$compose_file" -p "$COMPOSE_PROJECT_NAME" \
-        run --rm --remove-orphans agent "$question" \
-        || { echo "[FAIL] iter=${iter} S${sidx}" >&2; FAILURES=$((FAILURES + 1)); }
+      local step_id="ask-iter${iter}-s${sidx}"
+      step_log "$step_id" "[ASK] iter=${iter}/${ASK_ITERATIONS} S${sidx}/${#SCENARIOS[@]}: ${question}"
+      if [ "$use_exec" = "1" ]; then
+        # docker exec 모드 — agent 가 long-running service 일 때만.
+        # outside-voice REV-20260522-0010 B-1 흡수: agent CLI 는 module `-m agent_core`
+        # 가 아닌 `python /app/agent_core.py "<query>"` positional 형식 (agent_core.py:1796
+        # 의 argparse `query` positional). `--ask` flag 미존재.
+        run_or_print docker exec "$agent_container" \
+          python /app/agent_core.py "$question" \
+          || { step_log "$step_id" "[FAIL] iter=${iter} S${sidx} (docker exec)"; FAILURES=$((FAILURES + 1)); }
+      else
+        run_or_print docker compose -f "$compose_file" -p "$COMPOSE_PROJECT_NAME" \
+          run --rm --remove-orphans agent "$question" \
+          || { step_log "$step_id" "[FAIL] iter=${iter} S${sidx}"; FAILURES=$((FAILURES + 1)); }
+      fi
     done
   done
 }
