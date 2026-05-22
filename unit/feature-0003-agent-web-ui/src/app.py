@@ -4532,6 +4532,29 @@ def _serialize_attachment_for_api(row: dict[str, Any] | None, *, include_signed_
         # degraded_reason (D17 partial_indexed) 만 표면화.
         if meta.get("degraded_reason"):
             payload["degraded_reason"] = str(meta["degraded_reason"])
+    # TASK-0094 Sprint 1 Phase 9 (F1): delete UX 4 state.
+    # active / delete_pending / restorable_until / purge_in_progress / erased
+    deleted_at = row.get("DeletedAt")
+    delete_pending = bool(row.get("DeletePending") or 0)
+    reason = str(row.get("DeleteReason") or "").lower()
+    if not delete_pending and not deleted_at:
+        payload["lifecycle_state"] = "active"
+    elif reason in ("admin_purge", "legal"):
+        payload["lifecycle_state"] = "purge_in_progress" if delete_pending else "erased"
+    else:
+        payload["lifecycle_state"] = "delete_pending"
+        # restorable_until = DeletedAt + RECON_RETENTION_DAYS (env default 30)
+        try:
+            import datetime as _dt
+            retention_days = max(1, int(os.getenv("ATTACHMENT_RECON_RETENTION_DAYS") or "30"))
+            if deleted_at:
+                deadline = (
+                    deleted_at if isinstance(deleted_at, _dt.datetime)
+                    else _dt.datetime.fromisoformat(str(deleted_at))
+                ) + _dt.timedelta(days=retention_days)
+                payload["restorable_until"] = deadline.isoformat()
+        except Exception:
+            pass
     if include_signed_url and signed_url:
         payload["signed_url"] = signed_url
     return payload
