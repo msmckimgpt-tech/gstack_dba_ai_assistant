@@ -3436,8 +3436,11 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
 /* ── Initialize ──────────────────────────────────────────────────────── */
 
 async function initialize() {
-  const me = await apiFetch("/api/auth/me");
-  if (!me.ok || !me.user?.permissions?.["console.access"]) {
+  // TASK-0098: admin self endpoint 분리 — `/api/auth/me` 의 permissions 필드가
+  // 제거되어도 admin 콘솔 진입이 깨지지 않도록 admin 전용 self endpoint
+  // `/api/admin/me` 로 전환. backend 가 console.access 미보유 시 403 → catch.
+  const me = await apiFetch("/api/admin/me").catch(() => null);
+  if (!me || !me.ok || !me.user?.permissions?.["console.access"]) {
     window.location.href = "/";
     return;
   }

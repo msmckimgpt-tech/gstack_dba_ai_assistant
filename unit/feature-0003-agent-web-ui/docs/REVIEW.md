@@ -8,6 +8,31 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260522-0002 [AGENT-TEAM:codex-outside-voice]
+- Date: 2026-05-22
+- Decision: TASK-0098 (REQ-20260522-0002, **Critical** §12.3 — Profile Drawer 탭 재구성 + 권한 정보 API 단위 차단) cycle ship. PR #49. Codex outside voice (consult mode, 101,989 tokens) 6 findings (1 blocker + 4 high + 1 medium) 흡수 + plan v2 redesign + PLAN-APPROVED (2026-05-21) 후 4 commit 으로 진행. push 후 main 다수 PR 머지 (#45 v3.10.0 + #47 TASK-0089 + #48/#50 + #52/#61 TASK-0094 첨부 multi-cycle Sprint 1 + DQA 브랜딩 + TASK-0095 GLOBAL prompt + TASK-0096 v2 설정 list-detail) → 반복 CONFLICTING → 사용자 결정 "Rebase main + conflict resolve" → multi-race rebase + ID reassign + squash commit 으로 main HEAD `20f0344` 위 재작성. 본 commit 머지로 사용자 명시 의도 (Profile Drawer 4 탭 재구성 + 권한 정보 API 단위 차단) 완성.
+- Reason: 사용자 in-cycle 결정 — (1) 탭 순서 `[프롬프트, 보안 및 계정, API Vault]` + 통합 탭 "활동 정보" 최상단, (2) "권한 현황" 패널 = 운영자 전용 분류 + UI/API 양쪽 차단, (3) PR 단위 = commit 분리 + 단일 PR, (4) multi-race rebase 시 사용자 결정 "Rebase main + 빠른 머지 시도". 사용자 메모 `feedback_outside_voice_for_rbac` 정책 적용.
+- Codex outside voice 6 findings 흡수 매핑:
+  - **F1 (blocker)** — admin.js `/api/auth/me.permissions["console.access"]` 의존 → `/api/admin/me` admin 전용 self endpoint 분리 (console.access gate).
+  - **F2 (high)** — Option Y (raw permission 비노출) 채택. `can()` 단순화 + apiFetch 403 fallback + 메시지 normalize.
+  - **F3 (high)** — 403 메시지 권한명 노출 → 5 패턴 9 callsite `"요청을 수행할 수 없습니다."` 통일.
+  - **F4 (high)** — 누출 경로 다수 → `_serialize_account` default `False` + 7 self callsite 일괄 적용.
+  - **F5 (high)** — 30+ callsite false 단순 전환 금지 → `can()` true 반환 + UI 표시 유지 + backend 403 fallback.
+  - **F6 (medium)** — CSRF/session race 점검: 현 backend SameSite cookie + 항상 fresh `_account_has_permission` 검사 → 안전.
+- Multi-race rebase 영역: 본 cycle 원래 4 commit (`2eeb22c/058d59a/2d15365/677d48a`, base `8888130`) 가 backup branch `backup/profile-tabs-restructure-pre-rebase` (677d48a tip) 에 보존. main HEAD `20f0344` 위에 단일 squash commit 으로 재작성. main 흡수 = #45 v3.10.0 + #47 TASK-0089 audit drawer + #48/#50 docs + #52 TASK-0094 첨부 multi-cycle Sprint 1 Phase 1 (MinIO + ADR + 부트스트랩) + #61 Phase 4 storage wrapper + RUNBOOK + DQA 브랜딩 (TASK-0097) + TASK-0095 GLOBAL prompt + TASK-0096 v2 (설정 list-detail). 의도 통합 = Profile Drawer 5 탭 → 4 탭 (audit 보존 + 3 탭 통합). ID reassign = TASK-0094→**TASK-0098** (main 의 TASK-0094 첨부 + TASK-0096 설정 list-detail 과 collision 회피) / REQ-20260521-0001→**REQ-20260522-0002** / AC-0199~0207→**AC-0226~0234** / CHG·REV-20260521-0001~0004→**CHG·REV-20260522-0002** / cache-bust `v=20260522-task-0098-perms`.
+- Alt 거부:
+  - **Option X (boolean ui_capabilities)**: 파생 노출 위험 → Codex reject.
+  - **PR 닫고 새 cycle**: 본 cycle 의 plan + outside voice + 검증 손실 → reject.
+  - **revert main 의 PR #45/#47/#52/#61 등**: 다른 cycle 의 기능 손실 → 부적합.
+- Risks: multi-race rebase 가 시간 비용 큼 + main 의 추가 진행 시 또 conflict 가능성. 빠른 머지 시도 필요. 회귀 위험 = (a) Profile Drawer audit 탭 visibility 단순화 (모든 로그인 사용자 → 노출), TASK-0073 audit.read.own 모든 role grant 정책 정합, (b) 30+ callsite can() 단순화 → backend 403 fallback (UX 검증 사용자 위임), (c) admin 콘솔 진입 `/api/admin/me` 호출 + 403/401 시 redirect "/".
+- 사용자 의도 완성 확인:
+  - Profile Drawer 탭 `[프롬프트, 보안 및 계정, API Vault]` ✓ + audit gated 보존
+  - 보안+계정 통합 + 활동 정보 최상단 ✓
+  - "권한 현황" 운영자 전용 + UI 비노출 ✓
+  - API 단위 권한 정보 차단 ✓ (`/api/auth/me` permissions 미포함)
+  - 관리 콘솔 권한 정보 조회 ✓ (`/api/admin/me` + admin callsite 3 곳 명시)
+- Test: py_compile (app.py + 2 tests) + node --check (app.js + admin.js) + verify-completion --pre-commit PASS. 실 컨테이너 9 시나리오 smoke + UI dogfood 2 role 사용자 위임.
+
 ## REV-20260521-0006 [SKIPPED:self-review-after-plan-approved]
 - Date: 2026-05-21
 - Decision: TASK-0096 v2 (REQ-20260521-0004 follow-up — `설정` pane 을 계정/역할/제품 과 동일한 list-detail 패턴으로 정렬). 사용자 명시 follow-up 피드백 — "계정, 역할, 제품 탭과 일관된 디자인이 아닌것으로 확인되었습니다. 검색창을 포함하여, 해당 탭들과 일관된 디자인으로 구성해주세요." → CHG-20260521-0005 의 sub-sidebar (`admin-settings-shell`) 변형 폐기, 표준 `admin-list-detail` 5단 구조 + `admin-search` 검색창 + `admin-list-row` nav 변형 채택. UI restructure only — 데이터/API/권한 무영향이라 `feedback_outside_voice_for_rbac` 발동 조건 미해당, self-review.

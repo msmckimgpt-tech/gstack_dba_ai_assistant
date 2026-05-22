@@ -32,8 +32,7 @@ const closeProfileBtn = document.getElementById("closeProfileBtn");
 const profileAvatarLgEl = document.getElementById("profileAvatarLg");
 const profileSummaryNameEl = document.getElementById("profileSummaryName");
 const profileSummaryMetaEl = document.getElementById("profileSummaryMeta");
-const profilePermPillsEl = document.getElementById("profilePermPills");
-const profileStateNoteEl = document.getElementById("profileStateNote");
+// TASK-0098: profilePermPills / profileStateNote 제거 — "권한 현황" 패널은 운영자 전용 정보로 분류 (관리 콘솔에서만 조회).
 const profileCreatedAtEl = document.getElementById("profileCreatedAt");
 const profileLastLoginEl = document.getElementById("profileLastLogin");
 const profileApprovedAtEl = document.getElementById("profileApprovedAt");
@@ -453,6 +452,13 @@ async function apiFetch(url, options = {}) {
     const error = new Error(message);
     error.status = response.status;
     error.payload = payload;
+    // TASK-0098: 403 공통 처리 (Codex outside voice F2/F3/F5).
+    // "표시 허용 + 실행은 backend 403 fallback" 패턴 — backend 가 거부한 행동은
+    // 일관된 toast 로 사용자에게 알린다. 권한명을 노출하는 backend 메시지는
+    // app.py 에서 `요청을 수행할 수 없습니다.` 로 normalize 됨.
+    if (response.status === 403) {
+      try { showToast(message || "요청을 수행할 수 없습니다.", true); } catch (_e) {}
+    }
     throw error;
   }
   return payload;
@@ -486,7 +492,12 @@ function markdownToHtml(text = "") {
 }
 
 function can(permission) {
-  return Boolean(state.user?.permissions?.[permission]);
+  // TASK-0098: state.user.permissions 의존성 제거. "표시 허용 + 실행은 backend
+  // 403 fallback" 패턴 (Codex outside voice F5). 로그인한 사용자에게는 모든 UI
+  // gate 가 true 반환 — 실제 행동 거부는 backend 403 응답 + apiFetch 의 공통
+  // catch (showToast "요청을 수행할 수 없습니다.") 가 처리.
+  void permission;
+  return Boolean(state.user);
 }
 
 function roleLabel() {
@@ -722,8 +733,14 @@ function _profileAuditFormatDt(iso) {
 }
 
 function _profileAuditHasReadPermission() {
-  const perms = state.user?.permissions || {};
-  return Boolean(perms["audit.read.own"] || perms["audit.read.any"]);
+  // TASK-0098: state.user.permissions 의존성 제거. audit.read.own 은 TASK-0073
+  // RBAC catalog 에서 모든 role 에 catchup grant — 로그인된 사용자라면 항상
+  // 보유. 따라서 로그인 여부만 검사 + backend 403 fallback (apiFetch 공통 toast)
+  // 가 실제 권한 거부를 처리한다.
+  return Boolean(state.user);
+  // 폐기된 코드 — 참조 보존:
+  // const perms = state.user?.permissions || {};
+  // return Boolean(perms["audit.read.own"] || perms["audit.read.any"]);
 }
 
 function updateProfileAuditTabVisibility() {
@@ -1430,17 +1447,7 @@ function renderProfile() {
     profileSummaryMetaEl.textContent = roleLabel();
   }
 
-  buildPermissionPills(profilePermPillsEl);
-
-  if (profileStateNoteEl) {
-    if (can("conversation.ask")) {
-      profileStateNoteEl.textContent = "요청 실행 권한이 활성화된 계정입니다.";
-    } else if (can("conversation.read.own") || can("conversation.read.any")) {
-      profileStateNoteEl.textContent = "현재는 조회 중심 권한만 부여된 계정입니다.";
-    } else {
-      profileStateNoteEl.textContent = "사용 가능한 권한이 없습니다. 관리자에게 역할 또는 override를 요청하세요.";
-    }
-  }
+  // TASK-0098: "권한 현황" 패널 (buildPermissionPills + profileStateNote) 제거 — 운영자 전용 정보 분류.
 
   if (profileCreatedAtEl) profileCreatedAtEl.textContent = formatDateTime(state.user.created_at);
   if (profileLastLoginEl) profileLastLoginEl.textContent = formatDateTime(state.user.last_login_at);
@@ -1450,7 +1457,7 @@ function renderProfile() {
   if (passwordChangeFormEl) passwordChangeFormEl.reset();
 }
 
-function openProfile(tab = "account") {
+function openProfile(tab = "prompt") {
   renderProfile();
   switchProfileTab(tab);
   profileDrawerEl.classList.remove("hidden");
@@ -4602,7 +4609,8 @@ async function initialize() {
   loginFormEl.addEventListener("submit", handleLogin);
   signupFormEl.addEventListener("submit", handleSignup);
   // 프로필 드로어 open/close
-  openProfileBtn.addEventListener("click", () => openProfile("account"));
+  // TASK-0098: 첫 활성 탭을 "prompt" 로 변경 (탭 순서 = [프롬프트, 보안 및 계정, API Vault, 내 감사 로그(gated)]).
+  openProfileBtn.addEventListener("click", () => openProfile("prompt"));
   closeProfileBtn.addEventListener("click", closeProfile);
   profileBackdropEl.addEventListener("click", closeProfile);
 

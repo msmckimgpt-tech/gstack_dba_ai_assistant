@@ -10,6 +10,12 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-05-22 TASK-0098 ship (PR #49) — Profile Drawer 탭 재구성 + 권한 정보 API 단위 차단** (CHG-20260522-0002, REV-20260522-0002 [AGENT-TEAM:codex-outside-voice], REQ-20260522-0002, **Critical** §12.3). 사용자 직접 요청 (2026-05-21). Profile Drawer 탭 5 → 4 = `[프롬프트, 보안 및 계정, API Vault, 내 감사 로그(gated)]` (보안+계정 통합 + "활동 정보" 최상단). "권한 현황" 패널 운영자 전용 분류 — 일반 사용자 UI + `/api/auth/me` 양쪽 차단. `/api/admin/me` 신규 endpoint 분리 (console.access gate, Codex F1 blocker fix). `_serialize_account(account, *, include_permissions: bool = False)` 시그너처 + 7 self callsite 자동 permissions 제거 + admin 3 callsite 명시 보존. frontend `can()` = `Boolean(state.user)` 단순화 ("표시 허용 + 실행은 backend 403 fallback" 패턴, Codex F5). `apiFetch` 403 공통 toast + backend 403 메시지 5 패턴 9 callsite normalize. admin.js `/api/auth/me` → `/api/admin/me` 전환. TASK-0089 "내 감사 로그" 탭 보존. tests 신규 9 시나리오 (4+5). Codex outside voice 6 findings 흡수 + 사용자 메모 `feedback_outside_voice_for_rbac` 정책 적용. **PR #49 multi-race rebase**: 본 cycle 원래 4 commit (base 8888130) → main stale 진행 (#45 v3.10.0 + #47 TASK-0089 + #48/#50 + #52/#61 TASK-0094 첨부 multi-cycle Sprint 1 + DQA 브랜딩 + TASK-0095/0096 v2) 흡수 후 main HEAD `20f0344` 위 단일 squash commit. ID reassign: TASK-0094→TASK-0098 / REQ-20260521-0001→REQ-20260522-0002 / AC-0199~0207→AC-0226~0234 / CHG·REV-20260521-0001~0004→CHG·REV-20260522-0002 / cache-bust `v=20260522-task-0098-perms`. 원래 4 commit backup branch `backup/profile-tabs-restructure-pre-rebase` 보존. py_compile + node --check + verify-completion --pre-commit PASS. 실 컨테이너 9 시나리오 smoke + UI dogfood 2 role 사용자 위임. worktree `ai/claude/profile-tabs-restructure`.
+
+---
+
+**이전 cycle (TASK-0087)**:
+
 **2026-05-21 TASK-0087 완료 (Phase A~E 일괄) — 외부 LAN trust 강화** (CHG-20260520-0010, REV-20260520-0010 [AGENT-TEAM:codex-outside-voice], REQ-20260520-0002, **Major** §12.3). TASK-0073 audit subsystem followup backlog 의 마지막 항목 (TASK-0086~0093 8건의 8번째 = 0087). TASK-0073 Eng review E3 의 deferred 항목 (`_get_client_ip(request)` X-Forwarded-For 무조건 trust = 사내 LAN + Caddy proxy 전제, 외부 LAN/공개 인터넷 노출 시 IP spoof 위험) 을 명시적 정책 + 코드로 lock-in. Plan v1 (RFC1918 trust + silent skip + Caddy reverse_proxy 내부 trusted_proxies) → Codex outside voice review 6 findings (Major 5 + Minor 1) → Plan v2 (Caddy XFF 정규화 + mode-aware fail-loud + XFF IP 검증) 흡수. 사용자 명시 결정: RFC1918 default 유지 (사내 dev/staging 전제) + docker-compose port mapping 변경 별 cycle. 본 변경은 feature-0003 + feature-0006 dual ownership.
 
 **Phase 별 요약**:
