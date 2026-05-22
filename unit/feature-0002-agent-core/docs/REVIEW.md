@@ -8,6 +8,25 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260522-0005 [SKIPPED:docs-only-batch-closure]
+- Date: 2026-05-22
+- Decision: TASK-0101 (REQ-20260522-0004, **Minor §12.3** — backlog closure batch). 본 세션의 잔여 backlog 항목 (TASK-0010/0011/0004 placeholder + TASK-0005 MCP 검증 + TASK-0072 재확인) 일괄 closure 마킹. outside voice / plan-eng-review skip — docs / 마킹만 + 동작 변경 0 + RBAC/DB/endpoint/audit 무변경.
+- Reason: 본 closure 의 본질은 **기존 작업의 마무리 마킹**: (a) 코드 작업 자체는 이미 완료되었으나 TASK queue checkbox 가 잔존 (`[ ]`), (b) placeholder 시나리오 항목이 각 feature 의 TEST.md / ANCHOR §3 invariant 로 자연 흡수되어 별도 작업 불필요, (c) MCP 검증은 본 cycle 실 환경 health probe 로 완료. 본 cycle 의 절차 (cycle-init.sh + verify-completion + PR + cycle-finalize) 는 그대로 적용하되 outside voice 는 docs-only 변경에 가치 낮아 SKIPPED.
+- 본 cycle 의 검증 방법:
+  - 각 feature 의 TASK.md 의 `[x]` 마킹 변경이 `git diff` 으로 확인됨 (6 feature × 1-2 line edit).
+  - TASK-0005 MCP 검증의 실 결과: `docker ps --filter name=repo-mcp-1` = `Up 23 hours`, `curl -s -o /dev/null -w "%{http_code}" http://localhost:28000/healthz` = `200`, Workbench UI 응답 정상 (서버 로그 `Workbench at http://localhost:8080/ MCP server endpoint at http://localhost:8080/mcp`).
+  - TASK-0072 main closure 재확인: `grep "^- \[.\] TASK-0072 " unit/feature-0003-agent-web-ui/docs/TASK.md` 결과 = `[x] DEPLOYED` (TASK-0099 audit followup backlog tracker hygiene cycle 에서 처리됨).
+- Alt 거부:
+  - **각 feature 별 별 PR**: 시간 비용 큼 + ownership 모호 (cross-feature placeholder closure). 본 batch closure 는 main 의 TASK-0099 (audit followup backlog tracker hygiene) 와 동일 패턴 — single closure cycle 로 cross-feature 마킹.
+  - **외부 시각 (Codex / plan-eng-review)**: docs / 마킹 closure 에 가치 낮음. 사용자 메모 `feedback_outside_voice_for_rbac` 도 RBAC 변경 시점만 요구.
+- Deferral 항목 (본 batch 의 closure 대상 외):
+  - **TASK-0034** (feature-0003 복잡 QA 성능 테스트): LLM API (gpt-5.4-mini 5 병렬) + 실 DB + truth 쿼리 작성 의존 → 사용자 운영 환경 위임.
+  - **TASK-0044** (feature-0003 사업팀 pilot): admin 콘솔 manual 발급 + 사업팀 사용자 협업 + REPLICA_DB_* 설정 의존 → 사용자 운영 위임.
+  - **TASK-0020** (feature-0002 KbBackend M2-b dual-write): main 에서 별 cycle 진행 — 본 batch 외.
+  - **TASK-0021** (feature-0002 KbBackend M2-c cross-DB audit + SLA + invariant test): main 의 별 작업자 진행 중 (TASK-0021 rebase in-progress 확인) — 본 batch 외.
+- Risks: docs / 마킹 closure 만, 회귀 위험 0.
+- Test: TASK-0005 의 실 환경 health probe 외 별 test 추가 불필요 (docs / 마킹 closure).
+
 ## REV-20260522-0004 [SKIPPED:hot-fix-dependency-only]
 - Date: 2026-05-22
 - Decision: TASK-0100 (REQ-20260522-0003, **Minor** §12.3 — multipart UploadFile 의존성 hot-fix). TASK-0098 (PR #49) ship 직후 사용자 검증 단계에서 발견된 main build 회귀 차단. `python-multipart>=0.0.9` 한 줄 추가 + annotation. outside voice / plan-eng-review skip — 의존성 추가만 + 동작 변경 0 + RBAC/DB/endpoint/audit 무변경.

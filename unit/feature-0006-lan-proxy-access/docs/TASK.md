@@ -18,7 +18,7 @@ source_of_truth: true
 - [x] TASK-0001 Caddy 설정 이관
 - [x] TASK-0002 Windows LAN 스크립트 이관
 - [x] TASK-0003 루트 TLS 경로를 `../../../../artifacts` 기준으로 수정
-- [ ] TASK-0004 엄격한 네트워크 운영 시나리오 정의
+- [x] TASK-0004 엄격한 네트워크 운영 시나리오 정의
 - [x] TASK-0005 ANCHOR.md §1-§3 작성 (template v3.2.0-rc.1 external anchor 도입, dev → prod cherry-pick 궤적 명시)
 - [x] TASK-0006 (= **TASK-0087** in feature-0003, REQ-20260520-0002, **Major** §12.3 — Caddy XFF 정규화). `reverse_proxy web:8000` 블록에 `header_up X-Forwarded-For {client_ip}` 추가 — Caddy 가 받은 임의 `X-Forwarded-For` 를 본인이 본 TCP peer IP 로 덮어쓴다. multi-hop / spoof 차단. feature-0003 의 `_get_client_ip()` 조건부 trust 와 dual ownership cycle. 본 cycle CHG-20260520-0010, REV-20260520-0010 on `ai/claude/0087-lan-trust-hardening` worktree.
 

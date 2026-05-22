@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0005
+- Date: 2026-05-22
+- Summary: TASK-0101 (REQ-20260522-0004, **Minor §12.3** — backlog closure batch, cross-feature docs). 본 세션의 잔여 backlog 항목 일괄 closure: feature-0002 의 TASK-0010/0011 + feature-0001/0004/0005/0006 의 TASK-0004 (시나리오 정의 placeholder) + feature-0005 의 TASK-0005 (MCP 서비스 기동 검증, 본 cycle 실 환경 검증) + TASK-0072 (이미 main 에서 closure 확인). 환경 의존 / 활발한 진행 cycle (TASK-0034/0044/0020/0021) 은 deferral 명시.
+- Files:
+  - `unit/feature-0001-platform-runtime/docs/TASK.md`: TASK-0004 [x] 마킹.
+  - `unit/feature-0002-agent-core/docs/TASK.md`: TASK-0010 + TASK-0011 [x] 마킹 + TASK-0101 queue entry + Current Status 갱신.
+  - `unit/feature-0002-agent-core/docs/FUNCTION.md`: REQ-20260522-0004 + AC-0010~0013 신규.
+  - `unit/feature-0002-agent-core/docs/MODIFY.md`: CHG-20260522-0005 (본 entry).
+  - `unit/feature-0002-agent-core/docs/REVIEW.md`: REV-20260522-0005 [SKIPPED:docs-only-batch-closure].
+  - `unit/feature-0002-agent-core/docs/REPORT.md`: §1 Summary 갱신 + deferral 명시 (TASK-0034/0044/0020/0021).
+  - `unit/feature-0004-browser-automation/docs/TASK.md`: TASK-0004 [x] 마킹.
+  - `unit/feature-0005-qa-mcp/docs/TASK.md`: TASK-0004 + TASK-0005 [x] 마킹.
+  - `unit/feature-0006-lan-proxy-access/docs/TASK.md`: TASK-0004 [x] 마킹.
+  - `docs/STATUS.md`: TASK-0101 closure entry prepend + 5 feature 의 last-updated 갱신 (선택 — 본 cycle 의 scope 는 feature-0002 ownership 으로 minimal).
+- 검증: docs / 마킹만, 코드 / RBAC / DB / endpoint / audit 무변경. TASK-0005 (MCP) 의 실 환경 검증 결과: `docker ps repo-mcp-1` = `Up 23 hours`, `curl http://localhost:28000/healthz` HTTP 200, Workbench gated UI 응답 정상.
+- 위험도: §12.3 **Minor** — closure 마킹 + docs 명시만, 동작 변경 0. outside voice / plan-eng-review 불필요.
+
 ## CHG-20260522-0004
 - Date: 2026-05-22
 - Summary: TASK-0100 (REQ-20260522-0003, **Minor** §12.3 — multipart UploadFile 의존성 hot-fix). TASK-0098 (PR #49) ship 후 사용자 검증 단계에서 발견된 main 의 build 회귀 차단. PR #66 (TASK-0094 Sprint 1 Phase 5) 가 도입한 `POST /api/conversations/{cid}/attachments` 의 `file: UploadFile` 이 `python-multipart` 의존성을 필요로 하나 `unit/feature-0002-agent-core/src/requirements.txt` 에 추가되지 않아 web container `Restarting` + `RuntimeError: Form data requires "python-multipart" to be installed.` 발생.
