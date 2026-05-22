@@ -8,6 +8,128 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260521-0006
+- Date: 2026-05-21
+- Summary: TASK-0096 v2 (REQ-20260521-0004 follow-up). 사용자 직접 피드백 — "계정, 역할, 제품 탭과 일관된 디자인이 아닌것으로 확인되었습니다. 검색창을 포함하여, 해당 탭들과 일관된 디자인으로 구성해주세요." CHG-20260521-0005 의 sub-sidebar (`admin-settings-shell` + `admin-settings-nav`) 형태가 다른 탭의 5단 master-detail 패턴 (header → `admin-list-detail` (좌측 list-col + 우측 detail-col)) 과 시각 일관성 부족. v2 에서 sub-sidebar 전용 클래스 일괄 제거 + 계정/역할/제품 의 `admin-list-detail` / `admin-list-col` / `admin-detail-col` 그대로 차용 + `admin-list-row` 의 nav 변형 (`.admin-list-row--nav`, 체크박스 슬롯 hidden, full-width content) 추가. 검색창 = `admin-search` 재사용 (placeholder = "설정 항목 검색…"), 항목 카운트 = `admin-list-count` 재사용. 검색 필터는 row 의 `data-settings-tab` + `data-settings-group` + `data-settings-keywords` + textContent 를 합쳐 substring 매칭. UI restructure only — 데이터/API/권한 무영향.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`:
+    - `admin-settings-shell` + `admin-settings-nav` + `admin-settings-content` 구조 → 표준 `admin-list-detail` (`admin-list-col` (toolbar+search+`admin-list-head`+`admin-list`) + `admin-detail-col` (panel)) 로 교체. `admin-pane-hint` 단락 제거 (다른 탭과 일관 — pane-head 직접에 hint 없음).
+    - 신규 hook id = `settingsSearch` (`admin-search`), `settingsListCount` (`admin-list-count`), `settingsList` (`admin-list`), `settingsDetail` (`admin-detail-col`). 기존 `globalPromptEditorMount` 보존.
+    - 첫 항목은 `<button class="admin-list-row admin-list-row--nav is-active" role="option" aria-selected="true" data-settings-tab="global-prompt" data-settings-group="시스템 프롬프트" data-settings-keywords="...">`. row 본문은 `admin-list-row-cb` (visual hidden) + `admin-list-row-main` (`admin-list-row-title` + `admin-list-row-meta` 2줄).
+    - section label = `admin-list-section-label` (UPPERCASE, head row 안). 차후 항목 추가 시 새 section label + row 묶음을 등재.
+    - cache-buster `v=20260521-settings-subnav` → `v=20260521-settings-listdetail`.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`:
+    - sub-sidebar 전용 셀렉터 (`.admin-settings-shell`, `.admin-settings-nav`, `.admin-settings-nav-group-label`, `.admin-settings-nav-item[.is-active]`, `.admin-settings-nav-label`, `.admin-settings-nav-hint`, `.admin-settings-content`) + 760px responsive 블록 일괄 제거. 함께 `.admin-pane-hint` 도 제거 (markup 에서도 미사용).
+    - 신규: `.admin-list-section-label` (UPPERCASE 11px, head row 안). `.admin-list-row.admin-list-row--nav` 변형 (grid 1fr, button 전용 reset, cb 슬롯 hidden, meta 본문 영구 노출). `.admin-settings-panel`/-`head h3`/-`hint`/-`body` 본문 스타일은 유지하되 자체 border 제거 (`admin-detail-col` 의 surface 가 이미 border 책임).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`:
+    - `mountSettingsSections()` 가 `bindSettingsList()` + `bindSettingsSearch()` + `updateSettingsListCount()` + `activateSettingsPanel(activeTab)` 호출. `bindSettingsNav()` 는 v1 의 `adminSettingsNav` 셀렉터 의존이라 제거.
+    - `bindSettingsList()` — `#settingsList` 에 위임 click. row `[data-settings-tab]` 매칭.
+    - `bindSettingsSearch()` — `#settingsSearch` 에 `input` 이벤트 → `applySettingsSearchFilter(value)`.
+    - `applySettingsSearchFilter(query)` — 모든 row 에 대해 합친 haystack (`data-settings-tab` + `data-settings-group` + `data-settings-keywords` + textContent) lower-case substring 매칭, 비매칭 row 는 `display:none`.
+    - `updateSettingsListCount()` — 가시 row 수 / 전체 row 수 형식 ("1건" 또는 "1 / 2건").
+    - `activateSettingsPanel(tab)` — `#settingsList` + `#settingsDetail` 셀렉터로 갱신, `aria-selected` 동기화 추가. mount lazy 로직은 동일.
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: AC-0210 갱신 — list-detail 패턴 + 검색 hook 표기.
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0096 entry + Last Updated 갱신 (v2 흡수).
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260521-0006.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary follow-up note.
+- Verification:
+  - 정적 검사 N/A (frontend only).
+  - 사후 검증: web 컨테이너 재배포 → `/browse` 로 설정 탭 진입 → header (Settings 라벨 + 제목) + 좌측 list-col (검색창 + section-label `시스템 프롬프트` + nav row `전역 시스템 프롬프트`) + 우측 detail-col (panel head + textarea body) 노출 확인 + 검색창에 "전역" 입력 시 row 1건 표시 / "missing" 입력 시 0 / 1 표시 + 콘솔 errors 없음.
+- Risks:
+  - row 의 hidden 처리는 `style.display = "none"` 인라인. screen reader 가 카운트 mismatch 가능 — 향후 `aria-hidden` 동기화 보강 후보 (현 build 는 카운트 라이브 영역으로 충분).
+  - `admin-list-row--nav` 가 다른 탭의 row hover/active 스타일 (`admin-list-row.is-active` 의 primary-soft) 을 그대로 상속 — 시각 정합 OK 이며 권한 grid 처럼 추가 컬러 token 불필요.
+- Trace: REQ-20260521-0004 → TASK-0096 → CHG-20260521-0006 → REV-20260521-0006 (CHG-20260521-0005 follow-up redesign).
+
+## CHG-20260521-0005
+- Date: 2026-05-21
+- Summary: TASK-0096 (REQ-20260521-0004, **Minor** §12.3 — `설정` pane sub-sidebar + panel 확장 패턴). 사용자 직접 요청 — TASK-0095 검증 완료 후속, "`설정` 탭 내부 화면을 `계정`, `역할`, `제품` 과 같이 패널을 분리해줄 수 있을까요? 차후 `전역 시스템 프롬프트` 항목 외에도 설정 내 많은 항목이 추가될 예정인데 현재는 확장성이 너무 좁게 구현되어 있습니다." 단일 sub-section 누적 구조 → 좌측 sub-sidebar (항목 nav) + 우측 panel 의 2-column grid 확장 패턴으로 전환. 새 항목 추가 절차 = `<button data-settings-tab="X">` + `<article data-settings-panel="X">` + `SETTINGS_PANEL_MOUNTERS["X"] = mountFn` 3 단계. mount 함수는 panel 첫 활성화 시 1회 실행 (lazy mount, `adminState.settings.mountedPanels` Set). UI restructure only — 데이터/API/권한 무영향.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`:
+    - `admin-settings-list` / `admin-settings-section` (TASK-0095 단일 누적 구조) → `admin-settings-shell` (grid 240px + 1fr) + `admin-settings-nav` (sub-sidebar) + `admin-settings-content` (panel 컨테이너) 로 교체.
+    - 첫 nav item = `data-settings-tab="global-prompt"` (is-active), 첫 panel = `data-settings-panel="global-prompt"` (is-active). nav 안에 그룹 라벨 (`시스템 프롬프트`) + label/hint 2-line 구조.
+    - 신규 hook id = `adminSettingsNav`, `adminSettingsContent`. 기존 `globalPromptEditorMount` 는 panel body 안으로 이동 (변경 없음, 셀렉터 호환).
+    - cache-buster `v=20260521-settings-tab` → `v=20260521-settings-subnav`.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`:
+    - `.admin-settings-list` / `.admin-settings-section` (TASK-0095) 셀렉터 제거 (markup 에서 사용 안 됨).
+    - `.admin-settings-shell` (grid 240px / 1fr), `.admin-settings-nav` (sticky, border-right), `.admin-settings-nav-group-label` (uppercase 11px), `.admin-settings-nav-item` (vertical flex + label/hint), `.admin-settings-nav-item.is-active` (소프트 surface 강조), `.admin-settings-content` (left padding 20), `.admin-settings-panel` (default `display:none`) + `.is-active` (`display:flex`), `.admin-settings-panel-head/-hint/-body` 스타일 추가.
+    - `@media (max-width: 760px)` — sub-sidebar 가 가로 wrap 으로 collapse, content 가 그 아래로 stack.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`:
+    - `adminState.settings` 에 `activeTab` (default `"global-prompt"`) + `mountedPanels` (Set) 추가.
+    - `SETTINGS_PANEL_MOUNTERS` 객체 신설 — key=tab id, value=mount 함수. 차후 항목 추가 시 본 객체 한 줄 등록만으로 확장.
+    - `mountSettingsSections()` 가 `bindSettingsNav()` + `activateSettingsPanel(activeTab)` 호출하는 형태로 재정의.
+    - `bindSettingsNav()` — 1회 위임 click 핸들러 (`data-settings-tab` 매칭).
+    - `activateSettingsPanel(tab)` — nav/panel `.is-active` toggle + 첫 활성화 시 mount 함수 1회 실행 + `mountedPanels` 기록.
+    - `mountGlobalPromptPanel()` — TASK-0095 의 인라인 글로벌 프롬프트 마운트 로직을 단독 함수로 추출. 권한 게이트 + read-only disabled 처리 동일.
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: AC-0210 신설 (sub-sidebar + panel 패턴 정의).
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0096 entry + Last Updated 갱신.
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260521-0005.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary follow-up note.
+- Verification:
+  - py_compile / 정적 검사 N/A — 본 cycle 은 frontend 만 변경 (HTML/CSS/JS).
+  - 사후 검증: web 컨테이너 재배포 → `/static/admin.html` 응답에 `admin-settings-shell` / `admin-settings-nav-item[data-settings-tab="global-prompt"]` markup 노출 확인 + `/browse` 로 좌측 sub-sidebar 노출 + 활성 panel 의 textarea 본문 노출 확인 + 권한 grid 회귀 없음 확인.
+- Risks:
+  - 차후 항목 추가 시 mount 함수가 panel 첫 활성화 후에만 작동하므로, 첫 진입 항목에서 다른 탭 데이터 의존 시 명시적 prefetch 필요. 본 cycle 의 `global-prompt` 단일 항목은 자기 충족.
+  - `bindSettingsNav` 의 `dataset.bound = "1"` 가드로 중복 핸들러 부착 방지. 다른 admin tab 패턴과 동형.
+- Trace: REQ-20260521-0004 → TASK-0096 → CHG-20260521-0005 → REV-20260521-0005.
+
+## CHG-20260521-0004
+- Date: 2026-05-21
+- Summary: TASK-0095 follow-up hot-fix — fast-path catchup (`_ensure_seed_catchup`) 에 `_ensure_seed_global_system_prompt(conn)` 호출 누락을 보정. CHG-20260521-0003 이 slow path (`_ensure_web_tables`) 에만 helper 를 배치했지만, 기존 배포는 fast path 만 타기 때문에 GLOBAL scope row 가 자동 seed 되지 않았다. live deploy 후 DB 검증으로 발견 — `WebSystemPrompts WHERE Scope='global'` 0 row, 모든 응답이 코드 상수 fallback 만 작동. 관리 콘솔 `설정` 탭의 textarea 가 빈 채로 노출되어 운영자가 매번 직접 base prompt 를 입력해야 하는 UX 회귀 발생.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - `_ensure_seed_catchup(conn)` 안 `_ensure_seed_role_system_prompts(conn)` 직후에 `_ensure_seed_global_system_prompt(conn)` 추가. idempotent — 기존 row 가 있으면 no-op, agent_core import 실패 시 silent skip.
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260521-0004.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary follow-up note.
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0095 entry sub-bullet.
+- Verification:
+  - py_compile PASS (app.py).
+  - 사후 검증 절차: web 컨테이너 재배포 → `SELECT * FROM WebSystemPrompts WHERE Scope='global'` 1 row + Content 본문 = `agent_core.SYSTEM_PROMPT` (3179 chars) 일치 → `GET /api/admin/system-prompts?scope=global` 응답 `prompt.content` 비어있지 않음 확인.
+- Risks:
+  - 기존 row 가 빈 본문으로 이미 누군가 저장한 환경에서는 본 helper 가 no-op (existing row truthy → return). 의도한 동작이며, 운영자가 직접 갱신해야 한다.
+- Trace: REQ-20260521-0003 → TASK-0095 → CHG-20260521-0004 → REV-20260521-0004 (CHG-20260521-0003 follow-up fix).
+
+## CHG-20260520-0010
+- Date: 2026-05-21
+- Related Requirement: TASK-0087, REQ-20260520-0002
+- Summary: 외부 LAN trust 강화 — TASK-0073 Eng review E3 의 deferred 항목 (`_get_client_ip(request)` X-Forwarded-For 무조건 trust = 사내 LAN + Caddy proxy 전제, 외부 LAN/공개 인터넷 노출 시 IP spoof 위험) 을 명시적 정책 + 코드로 lock-in. Plan v1 (RFC1918 trust + silent skip) → Codex outside voice review 6 findings (Major 5 + Minor 1) → Plan v2 (Caddy XFF 정규화 + mode-aware fail-loud + XFF IP 검증) 흡수. 사용자 명시 결정: RFC1918 default 유지 (사내 dev/staging 전제) + docker-compose port mapping 변경은 별 cycle. 본 변경은 feature-0003 + feature-0006 dual ownership — feature-0006 의 `CHG-20260520-0010` 와 동일 의의.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - imports 에 `ipaddress`, `sys` 추가 (알파벳 순 삽입)
+    - `_parse_trusted_proxies(raw) -> tuple[_TrustedNetwork, ...]` helper 신설 — 콤마 분리 + `ipaddress.ip_network(token, strict=False)` 파싱. invalid 토큰은 `AGENT_MODE in {prod, staging}` 에서 `RuntimeError` startup, dev/test/"" 에서 stderr WARNING + 해당 토큰만 skip
+    - module-level `WEB_TRUSTED_PROXIES = _parse_trusted_proxies(os.getenv("WEB_TRUSTED_PROXIES", ""))`
+    - `ENABLE_WEB_TLS_PROXY=1` + `WEB_TRUSTED_PROXIES` empty 조합 startup gate — prod/staging `RuntimeError`, dev/test stderr WARNING (PIPA §29 audit `IpAddr` 품질 회귀 경고)
+    - `_is_trusted_proxy(host) -> bool` helper — host 가 `WEB_TRUSTED_PROXIES` CIDR 화이트리스트 안인지 검증
+    - `_get_client_ip(request) -> str` 재작성 — `direct_ip = request.client.host`, direct_ip 가 trusted proxy 이면 `X-Forwarded-For` 첫 토큰 사용 + `ipaddress.ip_address(first)` 파싱 검증 + 실패 시 direct_ip fallback. 그 외 모두 direct_ip 반환
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0087 checkbox close + §2.9 Implementation Plan 신설 (사용자 in-cycle 결정 3 항목 + Phase A~E + 8 test 시나리오 + REV-20260520-0010 정본 + PLAN-APPROVED 마커)
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260520-0010 [AGENT-TEAM:codex-outside-voice] (Verdict: NEEDS_REVISION, 6 findings Major 5 + Minor 1, 사용자 명시 결정으로 Major 1 거부 + 나머지 5 흡수)
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 상단 TASK-0087 cycle entry 추가
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md`: §4 Audit subsystem followup 에 TASK-0087 시나리오 8 건 추가
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: AC-0205 / AC-0206 / AC-0207 신설
+  - `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile`: `reverse_proxy web:8000` 블록에 `header_up X-Forwarded-For {client_ip}` 추가 (Caddy 가 받은 임의 XFF 를 본인이 본 TCP peer IP 로 덮어씀 → multi-hop / spoof 차단)
+  - `unit/feature-0006-lan-proxy-access/docs/TASK.md`: TASK-0006 신규 entry + Task Queue
+  - `unit/feature-0006-lan-proxy-access/docs/MODIFY.md`: CHG-20260520-0010 (dual ownership)
+  - `unit/feature-0006-lan-proxy-access/docs/REVIEW.md`: REV-20260520-0010 (dual ownership)
+  - `unit/feature-0006-lan-proxy-access/docs/REPORT.md`: §1 Summary cycle entry 추가
+  - `unit/feature-0006-lan-proxy-access/docs/TEST.md`: TEST-0004 (caddy validate) 추가
+  - `unit/feature-0006-lan-proxy-access/docs/FUNCTION.md`: AC-0004 (XFF 정규화) 신설
+  - `docs/SECURITY.md` §9.7: 기존 "deferred to feature-0006" 마커를 8 bullet 정책 (Caddy XFF 정규화 / 조건부 trust / XFF token 검증 / RFC1918 사용자 명시 결정 trade-off / mode-aware fail-loud / proxy mode + empty / schema 호환 / share token 미래 결합) 으로 교체
+- Diff size: app.py +51 lines (`_parse_trusted_proxies` + `WEB_TRUSTED_PROXIES` + proxy-mode gate + `_is_trusted_proxy` + `_get_client_ip` 재작성 — 기존 9 lines → 60 lines), Caddyfile +1 line, SECURITY.md §9.7 +9 lines (3 lines → 12 lines).
+- Impact:
+  - **audit `IpAddr` 품질**: 사내 LAN dev/staging 환경에서 audit IP 가 정확히 클라이언트 IP 로 기록 — 기존 동작 유지 (`WEB_TRUSTED_PROXIES` RFC1918 권장값 설정 시).
+  - **외부 LAN spoof 차단**: Caddy 가 받는 임의 `X-Forwarded-For` 가 무시되고 Caddy 가 본 TCP peer IP 로 정규화. web 의 `_get_client_ip()` 가 direct connection IP 검증 후 XFF 사용 — 외부에서 임의 XFF 주입 attack 차단.
+  - **malformed env 운영자 인지**: prod/staging 에서 invalid CIDR 또는 proxy mode + empty env 조합이 startup 실패 → 운영자가 즉시 인지.
+  - **backward 호환 (default)**: `WEB_TRUSTED_PROXIES` 미설정 = `_get_client_ip()` 가 항상 direct_ip 반환. caddy compose 환경에서는 audit IP 가 caddy container IP 가 됨 — proxy mode + empty env warning/fatal 로 회귀 가시화.
+  - **RBAC catalog 변경 없음**.
+- Rollback Notes:
+  - 코드 revert: `_get_client_ip()` 9 lines 원본 복원 + `_parse_trusted_proxies` / `WEB_TRUSTED_PROXIES` / proxy-mode gate / `_is_trusted_proxy` 삭제 + import `ipaddress` / `sys` 제거.
+  - Caddyfile revert: `header_up X-Forwarded-For {client_ip}` 한 줄 제거.
+  - SECURITY.md §9.7 revert: 8 bullet 정책 → 기존 3 bullet ("deferred to feature-0006") 복원.
+  - schema 변경 없음 → DB rollback 불필요.
+
 ## CHG-20260521-0003
 - Date: 2026-05-21
 - Summary: TASK-0095 (REQ-20260521-0003, **Major** §12.3 — GLOBAL system prompt layer 신설). 시스템 프롬프트 누적 구조의 최상위 base 를 코드 상수 hard-code 에서 `WebSystemPrompts WHERE Scope='global'` row 로 이전. 모든 LLM 응답의 base prompt 가 운영자 관리 콘솔에서 관리 가능. RBAC 권한 2 종 신설 (`system_prompt.global.read` / `.write`, group=`settings`). 관리 콘솔 sidebar 에 `설정` 탭 + 확장 가능한 `admin-settings-section` sub-section 패턴 도입.
@@ -1644,6 +1766,23 @@ source_of_truth: true
 - Impact: 새 catalog 4 코드 + 5 role catchup. 기존 배포에 `_ensure_seed_catchup` fast path 진입 시 자동 INSERT IGNORE. application-level endpoint 는 Phase 5 (upload API) 에서 ship — 본 Phase 3 ship 직후 시점은 권한만 부여, 실제 upload/download 경로 unavailable.
 - Rollback Notes: PERMISSION_DEFINITIONS 의 4 코드 entry / SEED_ROLE_DEFINITIONS pending/operator/sales 추가 권한 / _ensure_seed_roles 의 5 catchup 추가 / app.js label/description map 의 4 entry revert. 기존 배포의 WebRolePermissions 에 INSERT 된 row 는 `DELETE FROM WebRolePermissions WHERE PermissionId IN (SELECT Id FROM WebPermissions WHERE Code LIKE 'conversation.attachment.%')` 또는 보존 (catalog 무관 row 는 영향 0).
 
+## CHG-20260522-0001
+- Date: 2026-05-22
+- Related Requirement: TASK-0097 (REQ-20260522-0001, Minor §12.3) DQA 브랜딩 적용
+- Summary: 웹 UI 전체 브랜딩을 'MySQL AI' → DQA (Database Query Assistant) 로 변경. SVG 로고 신설.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/index.html` — title / auth-title / auth-logo / sidebar brand-icon·name 변경.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` — title / sidebar brand-icon·name 변경.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` — 상단 주석 갱신, .auth-logo / .brand-icon background → transparent.
+  - `unit/feature-0003-agent-web-ui/src/static/logo-dqa.svg` — 신규 SVG 로고 (48×48, primary #2563eb, DB 실린더+돋보기).
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md` — REQ-20260522-0001 + AC-0219~0222 등재.
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` — TASK-0097 [x] + Current Status 갱신.
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md` — 본 entry.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260522-0001 [SKIPPED:static-asset-only] append.
+- Notes: 정적 자산 변경만. backend / RBAC / endpoint / DB / audit 무변경. docker cp 로 런닝 컨테이너에 즉시 반영 확인 (browse 스크린샷 3장).
+- Impact: 브라우저 출력 브랜딩만 변경. 기능 영향 0.
+- Rollback Notes: `index.html` / `admin.html` / `styles.css` 의 DQA → MySQL AI 텍스트 revert + `logo-dqa.svg` 제거.
+
 ## CHG-20260521-0006
 - Date: 2026-05-22
 - Related Requirement: TASK-0094 (REQ-20260521-0001, Critical §12.3) Sprint 1 Phase 4 — Cycle 0 storage wrapper + D20 rotation runbook
@@ -1653,7 +1792,7 @@ source_of_truth: true
   - `unit/feature-0003-agent-web-ui/src/modules/__init__.py` — modules 패키지 신설 (마커 파일, 약 5 lines).
   - `unit/feature-0003-agent-web-ui/src/modules/storage_minio.py` — 약 350 lines (config + client cache + safe_filename + make_object_key + put/get/delete/signed URL + bucket_exists + run_smoke_test + reset_client_cache + CLI smoke).
   - `unit/feature-0003-agent-web-ui/docs/RUNBOOK-minio-key-rotation.md` — 약 150 lines (6 섹션: 전제/정상 path/rollback/체크리스트/자동화/cross-ref).
-  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md` — AC-0219~0221 (3 AC).
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md` — AC-0223~0225 (3 AC, TASK-0097 의 AC-0219~0222 와 충돌하여 본 cycle AC 0223 부터 재번호).
   - `unit/feature-0003-agent-web-ui/docs/TASK.md` — Phase 4 [x] + Current Status 갱신.
   - `unit/feature-0003-agent-web-ui/docs/MODIFY.md` — 본 entry.
   - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260521-0006 [SKIPPED:storage-wrapper-only] append.

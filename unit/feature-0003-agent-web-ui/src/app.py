@@ -4,12 +4,14 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
 import secrets
 import socket
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -674,15 +676,74 @@ def _sanitize_session_id(value: str) -> str:
     return ""
 
 
+_TrustedNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+
+def _parse_trusted_proxies(raw: str) -> tuple[_TrustedNetwork, ...]:
+    items: list[_TrustedNetwork] = []
+    bad: list[str] = []
+    for token in (raw or "").split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            items.append(ipaddress.ip_network(token, strict=False))
+        except ValueError:
+            bad.append(token)
+    if bad:
+        if AGENT_MODE in {"prod", "staging"}:
+            raise RuntimeError(
+                f"WEB_TRUSTED_PROXIES: invalid CIDR(s) in {AGENT_MODE}: {bad}"
+            )
+        print(
+            f"[startup] WARNING: WEB_TRUSTED_PROXIES contains invalid CIDR(s) (skipped): {bad}",
+            file=sys.stderr,
+        )
+    return tuple(items)
+
+
+WEB_TRUSTED_PROXIES = _parse_trusted_proxies(os.getenv("WEB_TRUSTED_PROXIES", ""))
+
+# TASK-0087 §9.7: proxy mode + empty trusted proxies = PIPA audit IP quality regression.
+# In prod/staging this is a fail-loud condition; in dev/test we emit a stderr warning only.
+if not WEB_TRUSTED_PROXIES and os.getenv("ENABLE_WEB_TLS_PROXY", "").strip() == "1":
+    if AGENT_MODE in {"prod", "staging"}:
+        raise RuntimeError(
+            "WEB_TRUSTED_PROXIES is empty while ENABLE_WEB_TLS_PROXY=1 "
+            f"in {AGENT_MODE}. Set WEB_TRUSTED_PROXIES to the Caddy peer "
+            "subnet (e.g. 172.18.0.0/16 or RFC1918) — without it, "
+            "audit IpAddr regresses to the Caddy container IP only."
+        )
+    print(
+        "[startup] WARNING: WEB_TRUSTED_PROXIES is empty while "
+        "ENABLE_WEB_TLS_PROXY=1. audit IpAddr will record the Caddy "
+        "container IP only (PIPA §29 quality regression).",
+        file=sys.stderr,
+    )
+
+
+def _is_trusted_proxy(host: str) -> bool:
+    if not host or not WEB_TRUSTED_PROXIES:
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return any(ip in network for network in WEB_TRUSTED_PROXIES)
+
+
 def _get_client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "").strip()
-    if forwarded:
-        first = forwarded.split(",")[0].strip()
-        if first:
+    direct_ip = (request.client.host if request.client else "") or ""
+    if direct_ip and _is_trusted_proxy(direct_ip):
+        forwarded = request.headers.get("x-forwarded-for", "").strip()
+        if forwarded:
+            first = forwarded.split(",")[0].strip()
+            try:
+                ipaddress.ip_address(first)
+            except ValueError:
+                return direct_ip
             return first
-    if request.client:
-        return request.client.host or ""
-    return ""
+    return direct_ip
 
 
 def _get_session_id(request: Request) -> tuple[str, bool, str]:
@@ -3296,6 +3357,9 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_seed_roles(conn)
     _ensure_seed_products(conn)
     _ensure_seed_role_system_prompts(conn)
+    # TASK-0095: 기존 배포는 fast-path 만 타기 때문에 GLOBAL scope row 가 부재한 채로 남는다.
+    # idempotent — row 가 이미 있으면 건드리지 않으며, agent_core import 실패 시 silent skip 한다.
+    _ensure_seed_global_system_prompt(conn)
     # TASK-0052 Phase 1B: fast-path 재기동에서도 신규 dynamic permission 컬럼 + product 권한 backfill 실행.
     _ensure_dynamic_permissions_schema(conn)
     # REQ-20260514-0001: 공유 링크 테이블 fast-path 보정.

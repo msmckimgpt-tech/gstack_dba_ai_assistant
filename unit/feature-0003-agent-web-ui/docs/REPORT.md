@@ -10,6 +10,33 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-05-21 TASK-0087 완료 (Phase A~E 일괄) — 외부 LAN trust 강화** (CHG-20260520-0010, REV-20260520-0010 [AGENT-TEAM:codex-outside-voice], REQ-20260520-0002, **Major** §12.3). TASK-0073 audit subsystem followup backlog 의 마지막 항목 (TASK-0086~0093 8건의 8번째 = 0087). TASK-0073 Eng review E3 의 deferred 항목 (`_get_client_ip(request)` X-Forwarded-For 무조건 trust = 사내 LAN + Caddy proxy 전제, 외부 LAN/공개 인터넷 노출 시 IP spoof 위험) 을 명시적 정책 + 코드로 lock-in. Plan v1 (RFC1918 trust + silent skip + Caddy reverse_proxy 내부 trusted_proxies) → Codex outside voice review 6 findings (Major 5 + Minor 1) → Plan v2 (Caddy XFF 정규화 + mode-aware fail-loud + XFF IP 검증) 흡수. 사용자 명시 결정: RFC1918 default 유지 (사내 dev/staging 전제) + docker-compose port mapping 변경 별 cycle. 본 변경은 feature-0003 + feature-0006 dual ownership.
+
+**Phase 별 요약**:
+- **Phase A** — `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile` 의 `reverse_proxy web:8000` 블록에 `header_up X-Forwarded-For {client_ip}` 추가. Caddy 가 받은 임의 XFF 를 본인이 본 TCP peer IP 로 덮어쓴다. 단일 hop 정규화 → multi-hop / spoof 차단.
+- **Phase B** — `unit/feature-0003-agent-web-ui/src/app.py` 의 `_get_client_ip()` 재작성:
+  - imports 에 `ipaddress`, `sys` 추가
+  - `_parse_trusted_proxies(raw)` helper: 콤마 분리 + `ipaddress.ip_network(token, strict=False)` 파싱. invalid 토큰은 prod/staging `RuntimeError`, dev/test stderr WARNING + skip
+  - module-level `WEB_TRUSTED_PROXIES`
+  - `ENABLE_WEB_TLS_PROXY=1` + empty env 조합 startup gate (prod/staging RuntimeError, dev/test WARNING)
+  - `_is_trusted_proxy(host)` helper
+  - `_get_client_ip(request)`: direct_ip 가 trusted proxy 일 때만 XFF 첫 토큰 사용 + `ipaddress.ip_address(first)` 검증 + 실패 시 direct_ip fallback
+- **Phase C** — `docs/SECURITY.md §9.7` 갱신 — 기존 3 bullet "deferred to feature-0006" 마커를 8 bullet 정책 (Caddy XFF 정규화 / 조건부 trust / XFF token 검증 / RFC1918 사용자 명시 결정 trade-off / mode-aware fail-loud / proxy mode + empty / schema 호환 / share token 미래 결합) 으로 교체.
+- **Phase D** — feature-0003 + feature-0006 양쪽 docs 갱신 (TASK / MODIFY / REVIEW / REPORT / TEST / FUNCTION).
+- **Phase E** — verify-completion + commit + cycle-finalize.
+
+**Verification**:
+- py_compile PASS (app.py 51 lines 추가)
+- Caddyfile validate: `docker compose run --rm caddy caddy validate --config /etc/caddy/Caddyfile` 정상 (live 검증 사용자 위임)
+- Codex outside voice review 6 findings (Major 5 + Minor 1) — Verdict NEEDS_REVISION → Plan v2 흡수 (5 흡수 + 1 사용자 명시 거부)
+- TEST.md §4 8 시나리오 추가 (trusted+valid XFF / trusted+invalid XFF / trusted+empty 첫항목 / untrusted+XFF spoof 차단 / IPv6 trusted+XFF / invalid env prod fatal / proxy mode + empty prod fatal / caddy validate)
+
+**Backward 호환**: `WEB_TRUSTED_PROXIES` 미설정 = `_get_client_ip()` 가 항상 direct_ip 반환 (caddy 환경에서는 caddy container IP). proxy mode + empty env warning/fatal 로 회귀 가시화. 운영자가 RFC1918 권장값 설정 시 기존 audit IP 품질 유지.
+
+**TASK-0073 audit subsystem followup backlog 완료**: TASK-0086 (DROP) + TASK-0088 (slow_query_log ADR) + TASK-0089 (drawer UX) + TASK-0090 (CSV streaming) + TASK-0091 (product audit snapshot) + TASK-0092 (audit prod fail-closed) + TASK-0093 (verify-completion check_12) + **TASK-0087 (외부 LAN trust) — 본 cycle 완료** → 8건 모두 완료.
+
+---
+
 **2026-05-21 TASK-0095 완료 (Phase A~F 일괄, Phase G verify-completion + commit 진행 예정) — 시스템 프롬프트 누적 구조 최상위 GLOBAL layer 신설** (CHG-20260521-0003, REV-20260521-0003 [SELF-REVIEW], REQ-20260521-0003, **Major** §12.3). 사용자 직접 요청 — "최상위 전역 프롬프트도 구성해주세요. Product / Role / Account 에 기본적으로 처음 누적되어 요청사항에 적용될 부분입니다." 4 layer (BASE → Product → Role → Account) 의 BASE 가 코드 상수 hard-code 라 운영자 수정 불가하던 구조를 5 layer (GLOBAL → Product → Role → Account, BASE = code constant fallback) 로 확장. WebSystemPrompts 테이블의 scope discriminator 가 이미 'global' 을 수용 (VARCHAR(16)) — schema 무변경. RBAC 권한 2 종 신설 (`system_prompt.global.read` / `.write`, group=`settings`, admin only 자동 grant). 관리 콘솔 sidebar 에 신규 `설정` 탭 + 확장 가능한 `admin-settings-section` sub-section 패턴 도입 — 차후 운영 항목 추가 시 동일 패턴으로 sub-section 누적. AC-0011 갱신 + AC-0199 ~ AC-0204 신설.
 
 **Phase 별 요약**:
@@ -22,6 +49,12 @@ source_of_truth: false
 - **Phase G** — verify-completion + commit + main fast-forward (다음).
 
 **Verification**: py_compile PASS (agent_core.py + app.py), node --check PASS (admin.js + app.js). live runtime smoke (관리 콘솔 `설정` 탭 진입 + 본문 수정 + LLM 호출 시 적용 확인) 사용자 검증 위임.
+
+**Follow-up (CHG-20260521-0004 / REV-20260521-0004)**: live deploy 후 사용자 요청 "기능적인 검증 및 스크린샷을 통하여 UI 구성도 검증해주세요." 진행 중 발견된 hot-fix — fast-path catchup `_ensure_seed_catchup(conn)` 에 `_ensure_seed_global_system_prompt(conn)` 호출 누락. CHG-20260521-0003 가 slow path (`_ensure_web_tables`) 에만 helper 를 두었지만 기존 배포는 fast path 만 타기 때문에 GLOBAL row 가 자동 seed 안 되어 textarea 빈 채 노출. `_ensure_seed_role_system_prompts(conn)` 직후 1줄 추가로 보정. idempotent — 양쪽 path 호출 시에도 INSERT 1회만.
+
+**Follow-up (TASK-0096 / CHG-20260521-0005 / REV-20260521-0005, REQ-20260521-0004, Minor §12.3 — `설정` pane sub-sidebar + panel 확장 패턴)**: 사용자 직접 요청 — TASK-0095 검증 완료 후속, "`설정` 탭 내부 화면을 `계정`, `역할`, `제품` 과 같이 패널을 분리해줄 수 있을까요? 차후 `전역 시스템 프롬프트` 항목 외에도 설정 내 많은 항목이 추가될 예정인데 현재는 확장성이 너무 좁게 구현되어 있습니다." 단일 sub-section 누적 구조 → 좌측 sub-sidebar (항목 nav) + 우측 panel 의 2-column grid 확장 패턴으로 전환. 새 항목 추가 절차 = nav button + panel article + `SETTINGS_PANEL_MOUNTERS` 등록 3 단계, panel 마운트는 첫 활성화 시 1회 lazy 실행. UI restructure only — 데이터/API/권한 무영향. AC-0210 신설, AC-0203 갱신 (sub-section → panel 명명).
+
+**Follow-up v2 (TASK-0096 / CHG-20260521-0006 / REV-20260521-0006, REQ-20260521-0004, Minor §12.3 — `설정` pane 을 계정/역할/제품 과 동일한 list-detail 패턴으로 정렬 + 검색창)**: 사용자 직접 follow-up 피드백 — "계정, 역할, 제품 탭과 일관된 디자인이 아닌것으로 확인되었습니다. 검색창을 포함하여, 해당 탭들과 일관된 디자인으로 구성해주세요." v1 의 sub-sidebar (`admin-settings-shell` + `admin-settings-nav`) 변형이 다른 admin pane (계정/역할/제품) 의 5단 master-detail 패턴과 시각 일관성 부족. v2 에서 sub-sidebar 전용 클래스 일괄 제거 후 `admin-list-detail` (좌측 `admin-list-col` (검색창 + section-label + nav rows) + 우측 `admin-detail-col` (panel)) 그대로 차용. nav row 는 `.admin-list-row.admin-list-row--nav` 변형 (체크박스 슬롯 hidden). 검색창 = `admin-search` 재사용 + row 의 `data-settings-tab/-group/-keywords` + textContent 합집합 substring 매칭. AC-0210 갱신 (list-detail + 검색 hook 표기) + AC-0203 갱신 (panel 정렬 후 sentence 보강).
 
 ---
 

@@ -1,5 +1,5 @@
 /* =====================================================================
-   MySQL AI Assistant — UI v2 (2026-04-15)
+   DQA — Database Query Assistant — UI v2 (2026-04-15)
    Design reference: ChatGPT, Claude, Linear — compact app-shell layout
    ===================================================================== */
 
@@ -104,7 +104,7 @@ a { color: inherit; }
   width: 44px;
   height: 44px;
   border-radius: var(--r-md);
-  background: var(--primary);
+  background: transparent;
   color: #fff;
   display: grid;
   place-items: center;
@@ -321,7 +321,7 @@ a { color: inherit; }
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  background: var(--primary);
+  background: transparent;
   color: #fff;
   display: grid;
   place-items: center;
@@ -4381,42 +4381,57 @@ a { color: inherit; }
   margin-left: 8px;
 }
 
-/* TASK-0095: 설정 pane sub-section pattern. 차후 sub-section 추가 시 동일 클래스로 확장. */
-.admin-pane-hint {
-  margin-top: 4px;
-  font-size: 13px;
+/* TASK-0096 v2: 설정 pane — 계정/역할/제품 과 동일한 admin-list-detail 5단 구조 채택.
+ * list-row--nav 변형 (button 형 row, no checkbox)+ admin-settings-panel 본문 만 신규.
+ * sub-sidebar 전용 클래스(admin-settings-shell/-nav/-nav-*) 는 v1 에서 제거됨. */
+.admin-list-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: var(--text-muted);
 }
-.admin-settings-list {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 16px 20px;
+.admin-list-row.admin-list-row--nav {
+  grid-template-columns: 1fr;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  width: 100%;
 }
-.admin-settings-section {
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--surface);
-  padding: 16px 18px;
-  display: flex;
+.admin-list-row.admin-list-row--nav .admin-list-row-cb {
+  display: none;
+}
+.admin-list-row.admin-list-row--nav .admin-list-row-meta {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+}
+.admin-settings-panel {
+  display: none;
   flex-direction: column;
   gap: 12px;
 }
-.admin-settings-section-head h3 {
+.admin-settings-panel.is-active {
+  display: flex;
+}
+.admin-settings-panel-head h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--text);
 }
-.admin-settings-section-hint {
+.admin-settings-panel-hint {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-muted);
 }
-.admin-settings-section-body {
+.admin-settings-panel-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 /* TASK-0089: profile drawer "내 감사 로그" 탭 styles.

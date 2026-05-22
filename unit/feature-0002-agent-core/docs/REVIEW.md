@@ -8,6 +8,53 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260520-0008 [SUBAGENT:Plan-subagent — M2-b dual-write 본 구현]
+- Date: 2026-05-21
+- TASK-Cycle: TASK-0020 (M2-b dual-write 본 구현, **Major §12.3** — RBAC 동반)
+- Outside-voice channel: Plan subagent. 사용자 메모리 `feedback_outside_voice_for_rbac.md` 정합 (RBAC role `agent_kb_rw` 활성 cycle). M2-a (`REV-20260520-0007`) 의 follow-up — M2-a Critical/Blocker 가 본 cycle 까지 carry-over 안 됨을 확인 후 본 cycle 의 method body + caller 통합 + test design 검증.
+- Verdict: **NEEDS-TWEAK** — KbBackend ABC + method body + Postgres SQL 의미 정합성은 PASS. 하지만 (1) caller 4 위치 silent/fail-loud pattern 불일치 + (2) `_publish_fact` dead try/except wrapper + (3) `_prune_fact_entries_for_key` 광역 swallow 의 mirror raise 침묵 + (4) latency baseline 미측정 + (5) test isolation (sys.path + dual import path) + (6) caller actual call test 부재 + Blocker (cross-DB audit explicit call 책임 cycle 미명시 + SLA 측정 도구 cycle 책임 명시) 본 cycle 내 반영 필요.
+- Section A (KbBackend method body 의 의미 정합성) — **대체로 PASS**:
+  - MySQL ↔ Postgres `upsert_fact_entry` 의 GREATEST(weight) + GREATEST(COALESCE(confidence, 0)) 정합 ✓
+  - `upsert_rag_object` 의 카테고리 7 컬럼 `COALESCE(NULLIF(...))` 정합 ✓
+  - `prune_fact_entries_keep_top` Postgres self-reference race condition theoretical risk — Nice-to-have docstring 권고
+  - `MysqlKbBackend` ↔ caller raw SQL drift 방지 — M3 refactor TODO (Nice-to-have)
+- Section B (Caller 5 위치 회귀 risk) — **Critical 3건 + Blocker 1건**:
+  - `_text_store_insert`: silent log 패턴 ✓ (caller hot path 보호)
+  - `_publish_fact`: dead try/except wrapper (knowledge.py:677-696) — re-raise 만 + 광역 except 없음 → no-op. **Critical**: 본 wrapper 삭제 + 정책 명문화
+  - `_prune_fact_entries_for_key`: 광역 `except Exception: return 0` 가 mirror 의 fail-loud raise 까지 swallow → mysql 측 DELETE 후 postgres 측 정합 위배 silent break. **Critical**: MySQL DELETE 만 cover 분리
+  - `_upsert_rag_memory_from_fact`: outer 광역 catch (caller chain) — 동일 silent break risk
+  - Cross-DB audit explicit call 부재 (ADR-0021 §Consequences) — **Blocker**: M2-c cycle 책임 명시
+- Section C (Partial failure 격리 + AGENT_KB_PG_REQUIRED) — **Critical 1건 + Blocker 1건**:
+  - silent log format ✓ (structured `kb_pg_mirror_fail`) — aggregation 정책 부재 Nice-to-have
+  - `_get_pg_conn()` 의 매 호출 새 connection — agent hot path latency 영향. **Critical**: latency baseline 측정/문서화 (M2-c 책임 명시)
+  - `_BACKENDS_CACHE` singleton — multi-thread race condition theoretical risk (semantic 정합 유지) — Nice-to-have `threading.Lock()`
+  - SLA 측정 도구 (`bin/kb-dual-write-verify.sh --audit-sla`) — **Blocker**: M2-c cycle 책임
+- Section D (Test coverage) — **Critical 2건**:
+  - 8 unit test 가 핵심 invariant cover ✓
+  - **Critical**: caller actual call verification 부재 (regression 보호 부재)
+  - **Critical**: test isolation — sys.path.insert + dual import path → CI 안정성 risk
+  - `caplog` silent log verification — Nice-to-have
+- Section E (잘못된 가정 / 누락) — **Critical 1건 + Blocker 1건**:
+  - **Blocker**: Cross-DB audit explicit call 책임 cycle 미명시 (ADR-0021 §Consequences M2-c 책임)
+  - **Critical**: caller 4 위치 silent/fail-loud pattern 불일치 정책 명문화 (Section B 와 합산)
+  - REV-20260520-0007 Nice-to-have 7건 中 `_BACKENDS_CACHE` cache ✓, GREATEST(weight) ✓ — psycopg autocommit docstring 미흡수 (Nice-to-have)
+- Critical (본 cycle 내 처리 완료):
+  1. **Caller pattern 통일**: `knowledge.py:677-696` 의 dead try/except wrapper 삭제 + `_prune_fact_entries_for_key` 의 광역 swallow 를 MySQL DELETE 만 cover 로 한정 (mirror 호출은 외부 try block, fail-loud raise propagate)
+  2. **Test isolation**: `unit/feature-0002-agent-core/tests/conftest.py` 신규 — sys.path 통합 + dummy env. test_dual_write_mirror.py 의 dual import path 제거
+  3. **Caller actual call test** (Test 9): `_text_store_insert` + mock cursor + spy `_dual_write_kb.upsert_text` — caller integration 검증
+  4. **silent log caplog verification** (Test 10): `caplog.set_level(WARNING, logger="agent_core.kb_backend")` + `kb_pg_mirror: connection failed` warning emit 확인
+  5. **Latency baseline measurement deferral**: REPORT.md §4 risk log 0번 entry — M2-c 책임 명시 (production-like 환경 측정 + M3 process-level pool decision)
+- Blocker (본 cycle 내 처리 완료):
+  6. **Cross-DB audit explicit call**: ADR-0021 §Consequences 에 M2-c cycle 책임 명시 추가 — ActionCode `kb.write.mirror` INSERT + M4 cutover gate (f) 항목 PASS 필수
+  7. **SLA 측정 도구 cycle 책임**: `bin/kb-dual-write-verify.sh --audit-sla` 본문 구현이 M2-c 산출. miss_rate ≤ 0.1% target.
+- Nice-to-have (M2-c cycle 위임):
+  - LC_COLLATE / IDENTITY `BY DEFAULT` 모드 명시 (M4)
+  - `_BACKENDS_CACHE` thread-safe `threading.Lock()` (concurrency)
+  - psycopg autocommit 정책 docstring (kb_backend.py)
+  - `caplog` 외 추가 negative assertion (`_repair_from_fact()` idempotent N3)
+  - MysqlKbBackend ↔ caller raw SQL drift 방지 (M3 refactor TODO)
+- Decision authority: 본 cycle 의 method body + caller 수정 + 10 unit test + Critical/Blocker 반영은 §2.1 PLAN-APPROVED 마커 범위 (Major). 사용자 별도 confirm 불요 (사용자 메시지 "M2-b cycle 또한 진행" = 진행 의도 표명). M2-c 진입 게이트는 사용자가 `.env` 의 `AGENT_KB_PG_REQUIRED=1` + runtime 검증 통과 시점.
+
 ## REV-20260520-0007 [SUBAGENT:Plan-subagent — M2-a dual-write 준비 + 4 Blocker 해소]
 - Date: 2026-05-21
 - TASK-Cycle: TASK-0019 (M2-a dual-write 준비, **Major §12.3** — RBAC 동반)

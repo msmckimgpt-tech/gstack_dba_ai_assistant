@@ -113,17 +113,32 @@ source_of_truth: true
 - `agent_kb_ro` — SELECT only. read-only audit / debug.
 - Application-level RBAC catalog 신규 4 권한 (`PERMISSION_DEFINITIONS` 갱신은 M2~M4 별 cycle): `kb.read.own` / `kb.read.any` / `kb.mutate.any` / `kb.export`.
 
-**KbBackend 추상화 (TASK-0019 M2-a cycle, ADR-0021 §Decision Layer 1)**:
-- `modules/kb_backend.py` — 단일 `KbBackend(ABC)` + 4 method group (fact_entries / texts / rag_documents / rag_objects).
-- `MysqlKbBackend` (기존 raw SQL 의 ABC 래핑) + `PgKbBackend` (psycopg3 + pgvector adapter). 본 cycle 은 skeleton + Postgres SQL 템플릿까지 — 실 implementation 은 M2-b cycle 책임.
-- `get_backends()` factory: `_pg_available()` 기반 backend 반환. `(MysqlKbBackend, Optional[PgKbBackend])` tuple. M2-b 의 `_dual_write_kb()` 가 본 factory 호출 → partial failure 격리는 caller 책임.
-- `set_text_embedding()` base default `NotImplementedError` — MysqlKbBackend override 안 함 (embedding 컬럼 부재). PgKbBackend 는 M3 backfill cycle 의 책임.
+**KbBackend 추상화 (TASK-0019 M2-a + TASK-0020 M2-b cycle, ADR-0021 §Decision Layer 1)**:
+- `modules/kb_backend.py` (~780 LOC) — 단일 `KbBackend(ABC)` + 4 method group + `prune_fact_entries_keep_top` (M2-b ABC 보강).
+- `MysqlKbBackend` 6 method body (M2-b 구현) — 기존 raw SQL 의 ABC 래핑. caller backward-compat + M4 cutover 시 routing entry.
+- `PgKbBackend` 6 method body (M2-b 구현) — psycopg3 cursor.execute + named params + `RETURNING id` (`_execute_returning_id` helper). 6 SQL 템플릿: `_PG_UPSERT_TEXT` / `_PG_UPSERT_FACT_ENTRY` / `_PG_DELETE_FACT_ENTRIES` / `_PG_PRUNE_FACT_ENTRIES` / `_PG_UPSERT_RAG_DOCUMENT` / `_PG_UPSERT_RAG_OBJECT` + `_PG_SET_TEXT_EMBEDDING` (M3 cycle).
+- `_DualWriteMirror` helper (M2-b 신규) — `_get_pg_conn()` + `_mirror()` 가 partial failure 격리 (`AGENT_KB_PG_REQUIRED=0` silent log / `=1` fail-loud). 6 public method (upsert_text / upsert_fact_entry / delete_fact_entries... / prune_fact_entries_keep_top / upsert_rag_document / upsert_rag_object). Module singleton `_dual_write_kb`.
+- `get_backends()` factory: `_BACKENDS_CACHE` process-level singleton (Nice-to-have outside-voice REV-20260520-0007 흡수). `(MysqlKbBackend, Optional[PgKbBackend])` tuple.
+- `set_text_embedding()` base default `NotImplementedError` — PgKbBackend 만 구현 (M3 backfill).
 
-**ANCHOR §3 invariant 시나리오 catalog (TASK-0019 M2-a cycle)**:
-- `unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py` — 6 시나리오 + 2 negative assertion.
-- S1 RagDocuments 누락 / S2 RagObjects 누락 / S3 Texts 누락 / S4 ScopeKey non-common / S5 RagObjects category stale / S6 fact_entries multi-row priority.
-- N1 `_repair_from_fact()` 안에서 LLM 호출 0건 (monkeypatch). N2 `agent_kb_rw` 의 TRUNCATE 차단 (InsufficientPrivilege).
-- fixture + assertion 의 실 구현은 M2-b cycle 책임. 본 cycle 은 catalog 정본 + stub.
+**Dual-write Caller 5 위치 (TASK-0020 M2-b cycle)**:
+- `modules/utils.py:957` `_text_store_insert()` — MySQL `INSERT IGNORE` 직후 `_dual_write_kb.upsert_text()` 호출. silent log 패턴.
+- `modules/utils.py:1179` `_upsert_rag_memory_from_fact()` RagDocuments — MySQL INSERT 직후 `_dual_write_kb.upsert_rag_document()`.
+- `modules/utils.py:1230` `_upsert_rag_memory_from_fact()` RagObjects — MySQL INSERT 직후 `_dual_write_kb.upsert_rag_object()`.
+- `modules/knowledge.py:633` `_publish_fact()` fact_entries — MySQL INSERT 직후 `_dual_write_kb.upsert_fact_entry()`. dead try/except wrapper 없음 (outside-voice REV-20260520-0008 Critical 흡수).
+- `modules/knowledge.py:598` `_prune_fact_entries_for_key()` — MySQL DELETE 의 광역 swallow 는 MySQL 만 cover, mirror 호출은 외부 (fail-loud raise propagate, outside-voice 흡수).
+
+**ANCHOR §3 invariant 시나리오 catalog (TASK-0019 M2-a 정의 + TASK-0020 M2-b 의 mirror 호출 verification test)**:
+- `unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py` — 6 시나리오 + 2 negative assertion catalog (M2-c fixture/assertion 책임).
+- `unit/feature-0002-agent-core/tests/test_dual_write_mirror.py` (M2-b 신규, ~310 LOC) — 10 unit test (no-op / silent log / fail-loud / 성공 / ABC / cache / set_text_embedding / MysqlKbBackend / caller integration / caplog) — monkeypatch 기반 실 DB 없이 작동.
+- `unit/feature-0002-agent-core/tests/conftest.py` (M2-b 신규) — sys.path 통합 + dual import 회피.
+
+**M2-c cycle 책임 (별 cycle 위임)**:
+- Cross-DB audit explicit call (`WebAuditEvents` ActionCode `kb.write.mirror` INSERT) — ADR-0021 §Consequences
+- `bin/kb-dual-write-verify.sh --audit-sla` 본문 + 7-day stress run + miss_rate ≤ 0.1% target
+- ANCHOR §3 invariant test 의 fixture/assertion 실 구현 (S1-S6 + N1 + N2)
+- Latency baseline 측정 (production-like 환경, M3 process-level pool decision)
+- Nice-to-have 5건 (LC_COLLATE / tsvector simple / thread-safe lock / autocommit docstring / MysqlKbBackend drift 방지)
 
 ## 11. Acceptance Criteria
 - AC-0001: 코어 코드가 `src/` 아래로 이동되어 있다.

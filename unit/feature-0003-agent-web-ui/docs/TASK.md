@@ -12,7 +12,7 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 4 진행 중)
-- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 4 storage wrapper + D20 rotation runbook ship)
+- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 4 storage wrapper + D20 rotation runbook ship. main 의 TASK-0097 DQA 브랜딩 변경도 본 branch 에 흡수.)
 
 ## 2. Task Queue
 
@@ -21,14 +21,16 @@ source_of_truth: true
 본 worktree (`ai/claude/0086/audit-followup`) 는 TASK-0073 의 후속 cycle 들을 등재한다. 본 cycle 작업자는 아래 6 entries 중 하나 이상을 선택해 plan-eng-review / plan-ceo-review / outside voice 후 진행. 각 entry 는 별 cycle (별 PLAN-APPROVED marker + 별 CHG/REV) 로 분리한다.
 
 - [x] TASK-0086 (REQ-20260520-0001, **Major** §12.3 — `WebAccountActivity` legacy table DROP + dual write 종료). **DROP 완료 (2026-05-20)**. backup `artifacts/mysql-backup/WebAccountActivity-20260520T074927Z.sql` (11,950 bytes, 74 row, digest `a09e7898d1ce88711f7a850ab5fbcc91`) + scratch restore rehearsal PASS + 1:1 정합 (legacy=74, mirror=74) + 사용자 명시 ack. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign (helper Option B 명시 제거 / dispatcher-only smoke / mysqldump 옵션 보강 / scratch restore / rollback 2 시나리오). 코드: `_log_search_activity()` legacy INSERT 제거 + `_ensure_web_account_activity_schema()` 호출×2+정의 제거 + `_migrate_web_account_activity_to_audit()` rollback window 보존 + test_audit_migration.py M3 제거. 본 cycle CHG-20260520-0005, REV-20260520-0005 on `ai/claude/0086/legacy-drop` worktree.
-- [ ] TASK-0087 (REQ-20260520-0002, **Major** §12.3 — 외부 LAN trust 강화, feature-0006 위임). TASK-0073 Eng review E3 의 `_get_client_ip(request)` 의 `X-Forwarded-For` trust 가 사내 LAN + Caddy proxy 전제. 외부 LAN / 공개 인터넷 노출 시 IP spoof 위험. 본 cycle: (1) Caddy `trust_forwarded_for` 또는 별 `trusted_proxies` 설정 (feature-0006-lan-proxy-access), (2) `_get_client_ip()` 의 신뢰 IP whitelist 옵션 추가 (env `WEB_TRUSTED_PROXIES=10.0.0.0/8,...`), (3) `docs/SECURITY.md §9.7` 정책 갱신. 의존: 운영 환경 외부 노출 시점 확정 후 진행.
+- [x] TASK-0087 (REQ-20260520-0002, **Major** §12.3 — 외부 LAN trust 강화, feature-0006 + feature-0003 협업). Caddy `header_up X-Forwarded-For {client_ip}` 정규화 + `_get_client_ip()` 조건부 trust (env `WEB_TRUSTED_PROXIES`) + malformed XFF token IP 검증 + mode-aware fail-loud (prod/staging `RuntimeError`, dev/test stderr WARNING) + proxy mode + empty env regression 경고. Codex outside voice review 5 Major + 1 Minor 흡수 후 v2 redesign (RFC1918 default 사용자 명시 결정 유지 + Caddy XFF 정규화로 multi-hop 차단). `docs/SECURITY.md §9.7` 갱신. 본 cycle CHG-20260520-0010, REV-20260520-0010 on `ai/claude/0087-lan-trust-hardening` worktree.
 - [x] TASK-0088 (REQ-20260520-0003, Minor §12.3 — `slow_query_log` 통합 **ADR-0020 Decoupled 채택**). TASK-0073 Codex C1 lock-in 의 별 cycle 분리 → 최종 ADR. **Option C — Decoupled** 채택, slow_query_log 와 WebAuditEvents 통합 안 함. 주 근거 = raw SQL text PII 차단 (PasswordHash/Token/API key/임시 비밀번호/raw LLM prompt literal). 운영 성능 관측 = `performance_schema`/`sys` digest views (1차) + slow_query_log incident enable (2차). Codex outside voice 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign (current state framing 정정 + Option A/B reject 재작성 + PS digest-first 권유 + SaaS trigger 명확화). 본 cycle CHG-20260520-0007, REV-20260520-0007 on `ai/claude/0088/slow-query-log-adr` worktree. docs only.
 - [x] TASK-0089 (REQ-20260520-0004, Minor §12.3 — 작업 화면 audit drawer UX). profile drawer 5번째 탭 "내 감사 로그" 신설 + 신규 backend endpoint `/api/profile/audits` + `/api/profile/audits/{event_id}` (scope=own 강제). Codex outside voice review 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign: (1) `/admin/` endpoint 의미 mismatch → 별 `/api/profile/audits` 신설 (Codex C1), (2) backend scope="own" 강제 — `.any` 보유자도 본인 row만 (Codex C2), (3) CSV export/purge drawer 미노출 (Codex C3 — admin 한정), (4) drawer 폭 390px 1-column + inline detail expand + ChangeJson 수평 스크롤 (Codex C4), (5) tab visibility = audit.read.own || audit.read.any + 403 graceful (Codex C5). 본 cycle CHG-20260520-0009, REV-20260520-0009 on `ai/claude/0089-audit-drawer-ux` worktree.
 - [x] TASK-0090 (REQ-20260520-0005, Minor §12.3 — CSV streaming export). `/api/admin/audits/export.csv` 의 hard cap 50k row 제거 + `StreamingResponse` + keyset cursor pagination 전환. Codex outside voice review 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign: (1) sync generator + streaming-only conn (Codex C1 — async event loop blocking 회피), (2) max_id high-water mark (Codex C2 — long transaction 회피), (3) chunk_size 500 + 64KiB byte-threshold flush (Codex minimum-fix), (4) try/finally cleanup (Codex C5 — client disconnect cursor/conn 누설 차단), (5) export self-audit start + complete/aborted (Codex C4 — DoS 운영 제어), (6) hard cap 50k 제거 + SECURITY.md §9.5 갱신. 본 cycle CHG-20260520-0008, REV-20260520-0008 on `ai/claude/0090-csv-streaming-export` worktree.
 - [x] TASK-0091 (REQ-20260520-0006, ~~Minor~~ **Major** §12.3 — PATCH admin/products audit before-state full snapshot + audit integrity fix). TASK-0073 Phase A5 의 `admin.product.update` audit 의 before-state 가 `{id, product_key}` 만 → full snapshot 으로 확장 + Codex outside voice 5 findings 흡수. **scope 확장 (Minor→Major)**: Codex C2 가 `admin_update_product()` 의 `autocommit=True` default + UPDATE 즉시 commit + audit 실패 시 rollback 가능 0 인 **audit integrity 결함** 노출. 본 cycle 일괄 fix: (1) `_audit_product_snapshot()` 신규 helper (single-row + SELECT FOR UPDATE + system_prompt summary only, SECURITY §9.2 정합), (2) endpoint 명시 transaction (autocommit=False + commit + finally autocommit=True), (3) `_AUDIT_BUILDER_PRODUCT_FIELDS` 확장 (`+is_default`, `+sort_order`, `+system_prompt_summary` / `-databases`, `-system_prompt` full), (4) `default_cleared_product_ids` side effect 기록, (5) sentinel smoke PASS (SENTINEL `TASK-0091-SENTINEL` ChangeJson 부재 확인, system_prompt content drop). 본 cycle CHG-20260520-0006, REV-20260520-0006 on `ai/claude/0091/product-audit-snapshot` worktree.
 - [x] TASK-0092 (REQ-20260520-0007, Minor §12.3 — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 검증). TASK-0073 Phase E 의 사용자 위임 항목 1 건. **7 vector matrix PASS (7/7)** — V1~V3 fail-closed + V4 dev bypass + V5 positive control + V6 strict-string-equality (Codex C3) + V7 default. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용 (`docker run --entrypoint python --no-deps` + `import web.app` + stderr 3 substring 검증 + TEST.md **§4** append). 본 cycle CHG-20260520-0004, REV-20260520-0004 on `ai/claude/0092/audit-prod-fail-closed` worktree.
 - [x] TASK-0093 (REQ-20260520-0008, Minor §12.3 — `bin/verify-completion.sh check_12` audit endpoint routing 정적 검사). TASK-0073 Phase E hotfix (CHG-20260520-0001) 의 routing 회귀 fragility 보강. Codex outside voice review 5 findings 흡수 후 plan v2 redesign (SKIP→FAIL structural / inline 4-path→auto-discovery static GET / `/purge` method-aware 제외 / helper split + fixture test / `9 checks`→`10 checks` footer). Phase A~D 모두 검증 PASS (production positive + 5 fixture negative + 5 other-feature SKIP). 본 cycle CHG-20260520-0003, REV-20260520-0003 on `ai/claude/0086/audit-followup` worktree.
-- [x] TASK-0095 (REQ-20260521-0003, **Major** §12.3 — GLOBAL system prompt layer + 신규 `설정` 탭). 사용자 직접 요청 — "현재 서비스 사용자의 시스템 프롬프트 누적 구조에서, 최상위 전역 프롬프트도 구성해주세요." 4 layer (BASE → Product → Role → Account) 의 BASE 가 코드 상수 hard-code 라 운영자 수정 불가하던 구조를 5 layer (GLOBAL → Product → Role → Account, BASE = code constant fallback) 로 확장. WebSystemPrompts schema 무변경 (Scope VARCHAR(16) 가 이미 'global' 수용). RBAC 2 권한 신설 (`system_prompt.global.read/.write`, group=`settings`, admin auto-grant). 관리 콘솔 sidebar 에 신규 `설정` 탭 + 확장 가능한 `admin-settings-section` sub-section 패턴 도입 — 차후 운영 항목 추가 시 동일 패턴으로 sub-section 누적. AC-0011 갱신 + AC-0199 ~ AC-0204 신설. 본 cycle CHG-20260521-0003, REV-20260521-0003 on `ai/claude/global-system-prompt` worktree.
+- [x] TASK-0095 (REQ-20260521-0003, **Major** §12.3 — GLOBAL system prompt layer + 신규 `설정` 탭). 사용자 직접 요청 — "현재 서비스 사용자의 시스템 프롬프트 누적 구조에서, 최상위 전역 프롬프트도 구성해주세요." 4 layer (BASE → Product → Role → Account) 의 BASE 가 코드 상수 hard-code 라 운영자 수정 불가하던 구조를 5 layer (GLOBAL → Product → Role → Account, BASE = code constant fallback) 로 확장. WebSystemPrompts schema 무변경 (Scope VARCHAR(16) 가 이미 'global' 수용). RBAC 2 권한 신설 (`system_prompt.global.read/.write`, group=`settings`, admin auto-grant). 관리 콘솔 sidebar 에 신규 `설정` 탭 + 확장 가능한 `admin-settings-section` sub-section 패턴 도입 — 차후 운영 항목 추가 시 동일 패턴으로 sub-section 누적. AC-0011 갱신 + AC-0199 ~ AC-0204 신설. 본 cycle CHG-20260521-0003, REV-20260521-0003 on `ai/claude/global-system-prompt` worktree. **Follow-up** (CHG-20260521-0004, REV-20260521-0004): live deploy 후 사용자 검증 진행 중 발견 — `_ensure_seed_catchup` (fast path) 에 `_ensure_seed_global_system_prompt` 호출 누락. 1줄 hot-fix.
+- [x] TASK-0097 (REQ-20260522-0001, **Minor** §12.3 — DQA 브랜딩 적용). 사용자 요청: 웹브라우저 출력 시 'MySQL AI' 제거, DQA (Database Query Assistant) 로 명명, 로고 신설. `index.html` · `admin.html` title/brand-name/auth-title → DQA 전면 교체. `logo-dqa.svg` 신설 (48×48 primary #2563eb, DB 실린더+돋보기 조합). `.auth-logo` / `.brand-icon` CSS background → transparent (SVG 배경 직접 표시). Minor §12.3 — 정적 자산 변경만, backend/RBAC/DB/endpoint 무영향. AC-0219~AC-0222 FUNCTION.md 등재. CHG-20260522-0001, REV-20260522-0001 on `issue/58-dqa-rebrand` branch.
+- [x] TASK-0096 (REQ-20260521-0004, **Minor** §12.3 — `설정` pane 을 계정/역할/제품 과 동일한 list-detail 패턴으로 정렬). 사용자 직접 요청 v1 — "`설정` 탭 내부 화면을 `계정`, `역할`, `제품` 과 같이 패널을 분리해줄 수 있을까요?" → 1차로 좌측 sub-sidebar + 우측 panel 의 2-column 패턴으로 전환 (CHG-20260521-0005). 사용자 v2 후속 피드백 — "계정, 역할, 제품 탭과 일관된 디자인이 아닌것으로 확인되었습니다. 검색창을 포함하여, 해당 탭들과 일관된 디자인으로 구성해주세요." → 기존 sub-sidebar 클래스 (`admin-settings-shell/-nav/-nav-*`) 제거, 계정/역할/제품 의 5단 구조 (`admin-list-detail` + `admin-list-col` (검색창 + section-label + `admin-list` rows) + `admin-detail-col` (panel)) 채택. nav row 는 `.admin-list-row.admin-list-row--nav` 변형 (체크박스 슬롯 hidden). 검색 필터는 row 의 `data-settings-keywords` + `data-settings-group` + textContent 합치기 substring 매칭. 새 항목 추가 절차 = `<button class="admin-list-row admin-list-row--nav" data-settings-tab="X" data-settings-group="..." data-settings-keywords="...">` + `<article class="admin-settings-panel" data-settings-panel="X">` + `SETTINGS_PANEL_MOUNTERS` 등록 3 단계. UI restructure only — 데이터/API/권한 무영향. AC-0210 갱신. 본 cycle CHG-20260521-0005 (v1) + CHG-20260521-0006 (v2) , REV-20260521-0005 + REV-20260521-0006 on `ai/claude/global-system-prompt` worktree.
 
 ### TASK-0094 (REQ-20260521-0001, **Critical** §12.3 — 첨부 multi-cycle A+B+C+D) (2026-05-21)
 
@@ -1003,6 +1005,65 @@ backend code 2 endpoint (helper 재사용) + frontend 3 + docs 6. runtime 영향
 Codex outside voice (consult mode, model_reasoning_effort=high, 829,505 tokens):
 - 5 critical findings + 2 minimum-fix recommendations
 - 5 findings 모두 ACCEPT → v2 redesign (frontend only → backend endpoint 2 추가)
+
+---
+
+### 2.9 Implementation Plan (TASK-0087)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 Major 등급 (보안 표면 + multi-feature) 변경 계획이다. **상태**: `approved-after-outside-voice`. TASK-0073 Eng review E3 의 deferred 항목 (TASK-0058 share 사내 IP 가정과 동일 trade-off) 을 명시적 정책 + 코드로 lock-in. Plan v1 (RFC1918 trust + silent skip) → Codex outside voice review 6 findings (Major 5 + Minor 1) → Plan v2 (Caddy XFF 정규화 + mode-aware fail-loud + XFF IP 검증) 흡수.
+
+#### 사용자 in-cycle 결정 (3 항목)
+
+| 결정 | 채택안 | 근거 |
+|---|---|---|
+| Plan v2 흡수 범위 | 전부 흡수 + docker-compose port mapping 변경은 별 cycle | 본 worktree 컨테이너는 테스트 후 정리. 외부 접속 경로 유지 필요. Codex 권고 "port mapping 변경" 은 사용자 환경 외 별 사이클에서 검토 |
+| `WEB_TRUSTED_PROXIES` default 권장값 | RFC1918 전체 (`10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`) | 사내 LAN dev/staging 전제. Codex 가 "RFC1918 전체 = 사내 클라이언트 spoof 위험" Major 지적했으나 사용자 명시 결정으로 채택. SECURITY.md §9.7 에 trade-off 명시 |
+| malformed env 동작 | prod/staging fail-loud (`RuntimeError`) + dev/test stderr WARNING | Codex 권고 그대로. mode-aware — 운영자 인지 보장 + dev/test fixture/CI 부담 완화 |
+
+#### Phase 분해 (A → E)
+
+- **Phase A** — Caddy XFF 정규화 (feature-0006-lan-proxy-access)
+  - `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile` 의 `reverse_proxy web:8000` 블록에 `header_up X-Forwarded-For {client_ip}` 추가. Caddy 가 받은 임의 XFF 를 본인이 본 TCP peer IP 로 덮어쓴다. 단일 hop 정규화 → multi-hop / spoof 차단.
+- **Phase B** — `_get_client_ip()` 조건부 trust (feature-0003-agent-web-ui)
+  - `app.py` 의 imports 에 `ipaddress`, `sys` 추가
+  - `_parse_trusted_proxies(raw)` helper: 콤마 분리 + `ipaddress.ip_network(token, strict=False)` 파싱. invalid 토큰은 `AGENT_MODE in {prod, staging}` 에서는 `RuntimeError` startup, dev/test 에서는 stderr WARNING + skip
+  - module-level `WEB_TRUSTED_PROXIES = _parse_trusted_proxies(os.getenv("WEB_TRUSTED_PROXIES", ""))`
+  - `ENABLE_WEB_TLS_PROXY=1` + `WEB_TRUSTED_PROXIES` empty → prod/staging RuntimeError, dev/test stderr WARNING (PIPA §29 audit 품질 회귀 경고)
+  - `_is_trusted_proxy(host)` helper: host 가 `WEB_TRUSTED_PROXIES` CIDR 화이트리스트 안인지 검증
+  - `_get_client_ip(request)` 재작성: direct_ip 가 trusted proxy 일 때만 XFF 첫 토큰 사용 + `ipaddress.ip_address(first)` 파싱 실패 시 direct_ip fallback. 그 외 모두 direct_ip 반환
+- **Phase C** — `docs/SECURITY.md §9.7` 갱신
+  - 기존 "deferred to feature-0006" 마커를 8 bullet (Caddy XFF 정규화 / 조건부 trust / XFF token 검증 / RFC1918 사용자 명시 결정 trade-off / mode-aware fail-loud / proxy mode + empty / schema 호환 / share token 미래 결합) 정책으로 교체
+- **Phase D** — docs (양 feature)
+  - feature-0003: TASK.md TASK-0087 checkbox close + §2.9 (본 plan), MODIFY CHG-20260520-0010, REVIEW REV-20260520-0010, REPORT §1 cycle entry, TEST §4 8 시나리오, FUNCTION AC-0205~0207
+  - feature-0006: TASK.md TASK-0006 신규 entry + Task Queue, MODIFY CHG-20260520-0010 (Caddy XFF 정규화 dual ownership), REVIEW REV-20260520-0010, REPORT §1 entry, TEST §2 Caddyfile validate 시나리오, FUNCTION AC-0004
+- **Phase E** — verify-completion + commit + cycle-finalize
+  - `bin/verify-completion.sh` 10 checks PASS (특히 #6 ANCHOR + #7 audit endpoint routing + #10 worktree binding)
+  - commit + push + PR + main merge + worktree cleanup
+
+#### Test 시나리오 (Codex 권장 8건)
+
+TEST.md §4 에 추가:
+1. trusted_proxy + valid XFF → XFF 첫 토큰 반환
+2. trusted_proxy + invalid XFF (`garbage`) → direct_ip fallback
+3. trusted_proxy + XFF 첫 항목 빈 문자열 → direct_ip fallback
+4. untrusted direct_ip + XFF → direct_ip 반환 (spoof 차단)
+5. IPv6 direct_ip (trusted) + IPv6 XFF → XFF 첫 토큰
+6. invalid env CIDR + `AGENT_MODE=prod` → `RuntimeError` startup
+7. empty env + `ENABLE_WEB_TLS_PROXY=1` + `AGENT_MODE=prod` → `RuntimeError` startup
+8. `caddy validate` 가 Caddyfile 통과 + `header_up X-Forwarded-For {client_ip}` 인식
+
+#### outside voice 결과 (REVIEW.md REV-20260520-0010 정본)
+
+Codex outside voice (consult mode, model_reasoning_effort=high, 228,107 tokens):
+- 6 findings (Major 5 + Minor 1) — Verdict: **NEEDS_REVISION**
+- Major 1 (RFC1918 전체 trust 위험): **사용자 명시 거부** — RFC1918 default 유지. trade-off 는 SECURITY.md §9.7 에 명시
+- Major 2 (Caddy 문법 부정확) → 흡수: `reverse_proxy` 안의 `trusted_proxies` 대신 `header_up X-Forwarded-For {client_ip}` 로 단일 hop 정규화 (더 안전한 대안)
+- Major 3 (Caddy `private_ranges` global trust 위험) → 흡수: global trusted_proxies 추가 안 함 (Major 2 와 동일 결정)
+- Major 4 (malformed XFF IP 검증 누락) → 흡수: `ipaddress.ip_address(first)` 검증 후 반환, 실패 시 direct_ip fallback
+- Major 5 (malformed env silent skip) → 흡수: mode-aware (prod/staging RuntimeError + dev/test WARNING)
+- Minor 1 (silent regression warning) → 흡수: proxy mode + empty env 조합에 RuntimeError + WARNING
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-21 (TASK-0087 Phase A~E 일괄, Major 등급 보안 표면 + multi-feature, Codex outside voice 5 Major + 1 Minor 흡수) -->
 
 ---
 

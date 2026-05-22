@@ -75,9 +75,16 @@ scan_release_artifacts() {
   done
 }
 
+# v3.11.0: feature-bound REPORT.md 동적 enumeration (§13.1.a + §13.2.2 F2 확장).
+# unit/<feature-id>/meta/REPORT.md 는 해당 feature 의 단일 worktree mutator 전용.
+scan_feature_report_md() {
+  find unit -maxdepth 3 -path '*/meta/REPORT.md' 2>/dev/null | sort -u | sed 's|^\./||'
+}
+
 {
   scan_md_frontmatter
   scan_human_locked_marker
   scan_shared_tree
   scan_release_artifacts
+  scan_feature_report_md
 } | sort -u

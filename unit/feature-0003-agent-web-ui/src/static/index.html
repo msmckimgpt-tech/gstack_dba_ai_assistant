@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MySQL AI Assistant</title>
+  <title>DQA — Database Query Assistant</title>
   <link rel="stylesheet" href="/static/styles.css?v=20260520-profile-audit" />
 </head>
 <body>
@@ -11,8 +11,10 @@
   <!-- ─── Auth Screen ─────────────────────────────────────────────── -->
   <div class="auth-screen" id="authOverlay">
     <div class="auth-card">
-      <div class="auth-logo">MA</div>
-      <h1 class="auth-title">MySQL AI Assistant</h1>
+      <div class="auth-logo">
+        <img src="/static/logo-dqa.svg" alt="DQA" width="36" height="36" style="display:block;border-radius:6px;" />
+      </div>
+      <h1 class="auth-title">DQA — Database Query Assistant</h1>
 
       <div class="auth-tabs">
         <button type="button" class="auth-tab is-active" data-auth-tab="login">로그인</button>
@@ -61,8 +63,10 @@
       <aside class="sidebar">
         <!-- REQ-20260518-0004: brand 이전 — sidebar 의 첫 영역. -->
         <div class="sidebar-brand">
-          <div class="brand-icon">MA</div>
-          <span class="brand-name">MySQL AI</span>
+          <div class="brand-icon">
+            <img src="/static/logo-dqa.svg" alt="DQA" width="22" height="22" style="display:block;border-radius:4px;" />
+          </div>
+          <span class="brand-name">DQA</span>
         </div>
         <div class="sidebar-head">
           <!-- REQ-20260518-0005: product chip 은 composer 우측 (ChatGPT 모델 선택 패턴) 으로 이전. sidebar 는 "새 대화" 만. -->

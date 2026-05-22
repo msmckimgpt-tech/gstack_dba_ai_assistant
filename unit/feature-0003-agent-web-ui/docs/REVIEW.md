@@ -8,6 +8,110 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260521-0006 [SKIPPED:self-review-after-plan-approved]
+- Date: 2026-05-21
+- Decision: TASK-0096 v2 (REQ-20260521-0004 follow-up — `설정` pane 을 계정/역할/제품 과 동일한 list-detail 패턴으로 정렬). 사용자 명시 follow-up 피드백 — "계정, 역할, 제품 탭과 일관된 디자인이 아닌것으로 확인되었습니다. 검색창을 포함하여, 해당 탭들과 일관된 디자인으로 구성해주세요." → CHG-20260521-0005 의 sub-sidebar (`admin-settings-shell`) 변형 폐기, 표준 `admin-list-detail` 5단 구조 + `admin-search` 검색창 + `admin-list-row` nav 변형 채택. UI restructure only — 데이터/API/권한 무영향이라 `feedback_outside_voice_for_rbac` 발동 조건 미해당, self-review.
+- Reason: 사용자 명시 직접 요청. 시각 일관성 회복 + 검색 가용성 신설.
+- Self-check 결과:
+  - **시각 일관성 (사용자 핵심 요구)**: header (`admin-pane-head` + drawer-label/h2) → list-detail (좌측 list-col surface + border + 12px padding + `admin-search` + section-label + list rows / 우측 detail-col surface + border + 18~22px padding + panel) 패턴이 계정/역할/제품 과 1:1 정합. `admin-list-row` 의 hover/`is-active` (primary-soft) 도 그대로 상속 → row 선택 표시도 동일 색상.
+  - **검색 가용성 (사용자 명시)**: `admin-search` placeholder = "설정 항목 검색…", 입력 즉시 row 필터 + 카운트 갱신. row 의 `data-settings-keywords` 가 영문/한글 양쪽 매칭 (예: "전역", "global", "system prompt", "base").
+  - **확장성 보존**: 새 항목 추가 절차 (CHG-20260521-0005 의 v1 패턴 동일 골자) = (1) `<button class="admin-list-row admin-list-row--nav" data-settings-tab="X" data-settings-group="..." data-settings-keywords="...">` row 추가, (2) `<article class="admin-settings-panel" data-settings-panel="X">` panel 추가, (3) `SETTINGS_PANEL_MOUNTERS["X"] = mountFn` 등록 1 줄.
+  - **lazy mount 정합 보존**: `adminState.settings.mountedPanels` Set 그대로. 첫 활성화 시에만 mount 호출. row 재선택 시 mount 호출 안 됨 (편집 state 보존).
+  - **Backward compat**: `globalPromptEditorMount` id + `buildSystemPromptEditor({scope:'global'})` 호출 + `system_prompt.global.read/.write` 권한 게이트 모두 그대로. v1 의 inline panel head/hint markup 도 그대로 유지.
+  - **a11y**: nav row 가 `role="option"` + `aria-selected` toggle. 카운트는 `aria-live="polite"` 유지. 리스트 컨테이너는 `role="listbox"`.
+- Alt 거부:
+  - **header 위 별도 검색바**: list-toolbar 안에 두는 형식이 다른 탭과 정합. header 위는 패턴 outlier 가 됨.
+  - **row hover 시 placeholder check icon 추가**: 다른 탭 row 가 그렇지 않으므로 거부. 일관성 우선.
+  - **section label 을 row 위 별 div 로 분리**: `admin-list-head` 안에 section label + count 가 한 줄로 collapsed 되는 게 다른 탭의 `admin-list-select-all + count` 정렬과 시각 동형.
+- Verification:
+  - 정적 검사 N/A (frontend only).
+  - 사후 검증: web 컨테이너 재배포 → `/browse` 로 설정 탭 진입 → header (Settings 라벨 + 제목) + 좌측 list-col (검색창 + section-label `시스템 프롬프트` + nav row `전역 시스템 프롬프트`) + 우측 detail-col (panel head + textarea body 3178 자) 노출 확인 + 검색창 input 시 필터 작동 + 콘솔 errors 없음 + 권한 grid 회귀 없음.
+- Trace: REQ-20260521-0004 → TASK-0096 → CHG-20260521-0006 → REV-20260521-0006.
+
+## REV-20260521-0005 [SKIPPED:self-review-after-plan-approved]
+- Date: 2026-05-21
+- Decision: TASK-0096 (REQ-20260521-0004, **Minor** §12.3 — `설정` pane sub-sidebar + panel 확장 패턴) self-review. `feedback_outside_voice_for_rbac` policy 는 admin/audit 표면 직접 변경 시 발동, 본 cycle 은 settings UI restructure (HTML/CSS/JS 만) 라 미해당. self-review 채택. 단일 sub-section 누적 구조 → `admin-settings-shell` (grid 240px / 1fr) + `admin-settings-nav` (sub-sidebar) + `admin-settings-content` (panel container) 의 2-column 확장 패턴으로 전환. 새 항목 추가 절차 = nav `<button data-settings-tab="X">` + content `<article data-settings-panel="X">` + `SETTINGS_PANEL_MOUNTERS["X"] = mountFn` 3 단계.
+- Reason: 사용자 직접 요청 — TASK-0095 검증 완료 후속, "`설정` 탭 내부 화면을 `계정`, `역할`, `제품` 과 같이 패널을 분리해줄 수 있을까요? 차후 `전역 시스템 프롬프트` 항목 외에도 설정 내 많은 항목이 추가될 예정인데 현재는 확장성이 너무 좁게 구현되어 있습니다." 사용자 의사 확인 (B안 선택 — 1차 sidebar 깔끔 유지 + 설정 그룹 안 무한 확장 가능 패턴) 후 진행.
+- Self-check 결과:
+  - **확장성 (사용자 핵심 요구)**: 새 항목 추가 = (1) admin.html 에 nav button + content article 한 쌍, (2) admin.js 의 `SETTINGS_PANEL_MOUNTERS` 에 mount 함수 등록 1줄. mount 함수 내부에서 권한 게이트 + lazy fetch — 다른 panel 의 데이터 의존 없음.
+  - **Lazy mount 정합성**: `adminState.settings.mountedPanels` Set 으로 panel 첫 활성화 시에만 mount. 재진입 시 mount 호출 안 됨 (편집 state 보존). nav 클릭 = `.is-active` toggle 만, panel 데이터는 그대로.
+  - **Backward compat**: `globalPromptEditorMount` id 보존 + `buildSystemPromptEditor({scope:'global'})` 호출 동일. 권한 게이트 (`system_prompt.global.read/write`) 그대로 유지. API/DB 무영향.
+  - **반응형**: `@media (max-width: 760px)` 에서 sub-sidebar 가 가로 wrap 으로 collapse + content 가 그 아래 stack. 기존 admin tab 패턴 (`@media (max-width: 760px)` 가 sidebar 를 hamburger 로 전환하는 경향) 과 정합.
+  - **권한 게이트 유지**: `mountGlobalPromptPanel()` 안 `can("system_prompt.global.read")` 체크 그대로. read 권한 없으면 panel 본문에 빈 placeholder 노출 (TASK-0095 동일 동작).
+- Alt 거부:
+  - **A안 (1차 sidebar tab 격상)**: 사용자 명시 의사로 거부 (B안 권장). 운영 항목 5+개 시 1차 sidebar 가 길어져 카테고리 균형 깨짐.
+  - **단일 페이지 + 항목 collapsible accordion**: vertical scroll 누적 동일 문제. 사용자가 명시적으로 거부한 패턴.
+  - **iframe / SPA route**: overengineering. admin.html 의 기존 tab 패턴과 동형 유지가 일관성 우선.
+- Verification:
+  - frontend only 변경 — py_compile / pytest 비대상.
+  - 사후 (commit 후) 재배포 절차: `make web` → `/static/admin.html` HEAD 응답 200 + grep `admin-settings-shell` PASS → `/browse` 로 admin 로그인 → 설정 tab 진입 → 좌측 sub-sidebar `전역 시스템 프롬프트` nav item 노출 (active) + 우측 panel 의 textarea 3204 자 본문 노출 확인 → `/browse` 스크린샷 캡처.
+- Risks:
+  - 향후 mount 함수가 다른 panel 데이터에 의존하면 lazy mount 가 race 일으킬 수 있음. 본 cycle 의 `global-prompt` 단일 항목은 자기 충족이므로 무영향. 추가 항목 ship 시 별 cycle 에서 ADR.
+  - 첫 활성 panel 이 hard-code (`activeTab: "global-prompt"`) — URL hash 라우팅은 별 cycle 로 미루기 (현재 단일 항목이라 의미 없음).
+- panel: SKIPPED:self-review-after-plan-approved. UI restructure only, 데이터/API/권한 무영향, 사용자 직접 요청 의사 확정 후 진행.
+- Trace: REQ-20260521-0004 → TASK-0096 → CHG-20260521-0005 → REV-20260521-0005.
+
+## REV-20260521-0004 [SKIPPED:self-review-after-plan-approved]
+- Date: 2026-05-21
+- Decision: TASK-0095 follow-up hot-fix — fast-path catchup `_ensure_seed_catchup(conn)` 에 `_ensure_seed_global_system_prompt(conn)` 호출 추가. CHG-20260521-0003 의 부트스트랩 helper 배치 누락을 보정 (slow path `_ensure_web_tables` 에만 두었고 fast path 누락). live deploy 후 web 컨테이너 안 DB 검증으로 발견.
+- Reason: 사용자 요청 "기능적인 검증 및 스크린샷을 통하여 UI 구성도 검증해주세요." 진행 중 발견. WebSystemPrompts row 조회 결과 GLOBAL scope 0 row + `GET /api/admin/system-prompts?scope=global` 응답이 `{prompt: null, scope: 'global'}` — 코드 상수 fallback 만 작동. 관리 콘솔 `설정` 탭 textarea 가 빈 채 노출되어 운영자가 base prompt 를 매번 직접 입력해야 하는 UX 회귀.
+- 근본 원인:
+  - `_ensure_web_tables` (slow path) 만 helper 호출 → schema 가 이미 잡힌 기존 배포는 `_runtime_tables_available()` 가 true 라 fast path `_ensure_seed_catchup` 만 타고 helper 호출 안 됨.
+  - `_ensure_seed_role_system_prompts` 등 다른 catchup-style seed helper 는 모두 양쪽 (slow + fast) 에서 호출되는 패턴. 본 helper 만 패턴 위반 — 부주의.
+- Self-check 결과:
+  - **idempotency 보존**: `_ensure_seed_global_system_prompt` 진입부 `_load_system_prompt(...)` 결과 truthy 시 early return. 양쪽 path 에서 호출돼도 INSERT 는 1회만.
+  - **agent_core import 실패 안전성**: lazy `from agent_core import SYSTEM_PROMPT` + try/except — fast path 에서도 동일하게 silent skip 보장. `compose_system_prompt` 의 fallback 이 인계.
+  - **호출 순서**: `_ensure_seed_role_system_prompts(conn)` 직후 — schema 가 잡혔다는 것을 다른 catchup helper 가 보장한 시점. 신규 dynamic permission 컬럼 backfill 보다 앞서지만 system_prompt seed 는 권한과 무관해 무영향.
+- Alt 거부:
+  - **부트스트랩 변경 없이 운영자가 첫 로그인 시 직접 채워 넣게**: UX 회귀 자체. 신규 배포는 GLOBAL row 가 자동 생성되는데 기존 배포만 미작동 = 환경 간 불일치. 거부.
+  - **fast path 폐지 + 항상 slow path**: `_runtime_tables_available()` 우회 = 매 부트스트랩마다 비싼 schema-rebuild 경로 발동. 다른 catchup helper 와 정합성 깨짐. 거부.
+- Verification:
+  - py_compile PASS (app.py).
+  - 사후 (commit 후) 재배포 절차: `make web` → DB `SELECT * FROM WebSystemPrompts WHERE Scope='global'` 1 row + Content 본문 확인 → API 응답 `prompt` 필드 비어있지 않음 확인 → admin 콘솔 `설정` 탭 textarea 본문 노출 확인.
+- Risks:
+  - 본 helper 가 fast path 에서 매 재기동마다 호출 — `_load_system_prompt` 1회 SELECT 만 추가 (truthy → return). 미미한 overhead, 무시 가능.
+  - 본 hot-fix 자체로 인한 schema migration 없음 — rollback 단순 (코드 1 줄 revert).
+- panel: SKIPPED:self-review-after-plan-approved (CHG-20260521-0003 와 동일 surface — system_prompt 표면 + audit 변경 없음. Codex outside voice trigger 미해당. 본 fix 는 1-line correction 으로 외부 검증 비용 대비 가치 낮음).
+- Trace: REQ-20260521-0003 → TASK-0095 → CHG-20260521-0004 → REV-20260521-0004 (CHG-20260521-0003 follow-up fix).
+
+## REV-20260520-0010 [AGENT-TEAM:codex-outside-voice]
+- Date: 2026-05-21
+- Decision: TASK-0087 (REQ-20260520-0002, **Major** §12.3 — 외부 LAN trust 강화) plan v2 흡수 (Codex outside voice review verdict **NEEDS_REVISION**, 6 findings Major 5 + Minor 1). 사용자 명시 결정으로 Major #1 (RFC1918 default 권장값) 거부 + 나머지 5 흡수 (Major #2-5 + Minor #1). PLAN-APPROVED 후 Phase A~E 실행 — Caddy XFF 정규화 (A) → `_get_client_ip()` 재작성 + module-level 상수 + mode-aware fail-loud (B) → SECURITY.md §9.7 정책 갱신 (C) → docs (D) → verify-completion + commit + cycle-finalize (E).
+- Mode: SUBAGENT (Codex CLI consult mode, gpt-5 default, model_reasoning_effort=high, read-only sandbox)
+- Session: model_reasoning_effort=high, 228,107 tokens
+- Review subject: Plan v1 (RFC1918 trust + silent skip + Caddy reverse_proxy 내부 trusted_proxies)
+- Result: NEEDS_REVISION → Plan v2 흡수 완료
+- Reason: AGENTS.md §17 외부 검증 정책 + `feedback_outside_voice_for_rbac` user policy — 본 변경은 IP-trust 보안 표면 + multi-feature (feature-0003 + feature-0006) + audit subsystem 의존성. 정적 review 만으로 cross-feature blindspot 검출 불가, outside voice 필수.
+- Findings:
+  - **Major #1 (RFC1918 전체 trust 위험)** — `WEB_TRUSTED_PROXIES`는 "사내 클라이언트 대역"이 아니라 "web이 직접 TCP peer로 보는 reverse proxy 대역"이어야 함. 현재 compose 구조에서 web port 가 `${WEB_PORT}:8000` 으로 LAN publish 되어 있어 사내 클라이언트가 Caddy 우회 시 자기 사설 IP 가 trusted proxy 로 판정되어 XFF spoof 가능. → **사용자 명시 거부** (사내 LAN dev/staging 전제 + 본 worktree 컨테이너는 테스트 후 정리). SECURITY.md §9.7 에 trade-off 명시.
+  - **Major #2 (Caddy 문법 부정확)** — Plan v1 의 `reverse_proxy { trusted_proxies static private_ranges }` 가 Caddy v2 문서 기준 부정확. Caddy 권장은 global option `servers > trusted_proxies static <ranges>`. → **흡수**: trusted_proxies 추가 대신 `reverse_proxy { header_up X-Forwarded-For {client_ip} }` 로 단일 hop XFF 정규화 (더 안전한 대안). multi-hop / spoof 모두 차단.
+  - **Major #3 (Caddy `private_ranges` global trust 위험)** — Caddy 가 직접 사내 LAN 클라이언트를 받는 구조에서 `trusted_proxies static private_ranges` global 은 private IP 클라이언트의 XFF 신뢰 → spoof. → **흡수**: global trusted_proxies 추가 안 함 (Major #2 와 동일 결정 — XFF 정규화로 대체).
+  - **Major #4 (malformed XFF 검증 누락)** — Plan v1 의 `_get_client_ip()` 는 XFF 첫 토큰을 IP 검증 없이 반환 (`garbage`, `1.2.3.4:1234` 등 audit 오염). → **흡수**: `ipaddress.ip_address(first)` 파싱 검증 + 실패 시 direct_ip fallback.
+  - **Major #5 (malformed env silent skip 부적합)** — Plan v1 의 `_parse_trusted_proxies` 가 invalid CIDR 토큰을 silent skip → 운영자 인지 못함. → **흡수**: mode-aware — `AGENT_MODE in {prod, staging}` 에서 `RuntimeError` startup, dev/test/"" 에서 stderr WARNING + 해당 토큰만 skip.
+  - **Minor #1 (silent regression warning)** — proxy mode (`ENABLE_WEB_TLS_PROXY=1`) + `WEB_TRUSTED_PROXIES` empty 조합 = audit IP 가 Caddy container IP 만 기록 (PIPA §29 접근기록 품질 회귀). → **흡수**: prod/staging `RuntimeError` startup, dev/test stderr WARNING.
+- 질문별 답변 흡수 매트릭스:
+  | Codex Q | 답변 | Plan v2 반영 |
+  |---|---|---|
+  | Q1 silent regression default | 보수적 default 유지 + proxy mode fail-loud | proxy-mode gate 추가 |
+  | Q2 Caddy `private_ranges` cover | docker bridge subnet 포함, but reverse_proxy 내부 `static` 문법 아님 | global trusted_proxies 자체를 추가 안 함 + XFF 정규화로 대체 |
+  | Q3 단일 hop 가정 안전성 | 안전하지 않음 (web port LAN publish) — XFF 정규화 권장 | `header_up X-Forwarded-For {client_ip}` 추가 |
+  | Q4 IPv6 support | `ipaddress.ip_address` IPv6 OK. Caddy `private_ranges` 는 fd00::/8 + ::1 만 (fc00::/7 아님) | `_get_client_ip` IPv6 자동 지원, Caddy global private_ranges 안 씀 |
+  | Q5 schema 호환 | VARCHAR(64) 가 IPv4/IPv6 모두 수용 OK | 변경 없음 |
+  | Q6 다른 surface | rate limit per-account, share token IP allowlist 별 cycle 보류, login throttling 미확인 | SECURITY.md §9.7 에 share token allowlist build 가능성 명시 |
+  | Q7 malformed env | fail-loud 권장 | Major #5 흡수 |
+  | Q8 test coverage | IPv6, invalid env fatal, malformed XFF fallback, 빈 첫항목, /32 /128, direct LAN client spoofed XFF, caddy validate | TEST.md §4 8 시나리오 추가 |
+- Decision: Codex 권고 6/6 모두 검토 + 5 흡수 + 1 사용자 명시 거부 (Major #1). PLAN-APPROVED 마커 부여 (2026-05-21).
+- Risk:
+  1. **사용자 명시 거부 #1**: RFC1918 전체 trust 의 위험 (사내 클라이언트가 web port 직접 접근 + 자기 IP 를 trusted proxy 로 가장 + XFF spoof) 은 본 worktree 컨테이너 정리 정책과 사내 dev/staging 전제 로 격리. 외부 인터넷 / 미신뢰 LAN 노출 시점에 별 cycle 에서 (a) `WEB_TRUSTED_PROXIES` 좁힘 + (b) docker-compose port mapping `127.0.0.1:${WEB_PORT}:8000` 으로 변경.
+  2. **Caddy XFF 정규화의 single-hop 의존성**: Caddy 앞에 upstream proxy (cloudflare/ALB) 가 추가되면 `{client_ip}` 가 upstream proxy IP 가 되어 진짜 클라이언트 IP 가 audit 에서 사라짐. 별 cycle 검토 필요.
+  3. **`ipaddress.ip_address()` 검증 실패 시 direct_ip fallback**: trusted proxy 가 malformed XFF 를 보내는 비정상 상황에서 audit IP 가 caddy container IP 로 기록 — 정상 동작이라 risk 아님. 단 운영 관측 (Caddy log) 필요.
+- Alternatives considered:
+  - Plan v1 그대로 진행: Codex 6/6 무시 — 거부 (보안 표면 + audit 표면 + multi-feature)
+  - docker-compose port mapping 변경 같이 진행 (Codex 더 근본 권고): 사용자 외부 접속 경로 유지 명시 결정으로 거부 — 별 cycle 분리
+  - `WEB_TRUSTED_PROXIES` default = docker bridge subnet (172.18.0.0/16): 사용자 명시 결정 (RFC1918 전체) 으로 거부 — SECURITY.md §9.7 에 trade-off 명시
+  - Caddy global `trusted_proxies static <narrow>`: 본 시스템 (Caddy 단일 hop) 에서는 효과 미미 + XFF 정규화가 더 강력 — 채택 안 함
+- Cross-ref: TASK.md §2.9 (TASK-0087 Implementation Plan + PLAN-APPROVED 마커), MODIFY.md CHG-20260520-0010, REPORT.md §1 cycle entry, docs/SECURITY.md §9.7, feature-0006-lan-proxy-access REV-20260520-0010 (dual ownership)
+
 ## REV-20260521-0003 [SKIPPED:self-review-after-plan-approved]
 - Date: 2026-05-21
 - Decision: TASK-0095 (REQ-20260521-0003, **Major** §12.3 — GLOBAL system prompt layer 신설) self-review (verify-completion CHECK#9 정합 prefix `SKIPPED:` 사용 — Codex outside voice trigger 미해당, `feedback_outside_voice_for_rbac` policy 는 admin/audit 표면 직접 변경 시 발동, 본 cycle 은 `system_prompt` 표면 + RBAC 추가지만 audit 자체 변경 없음). PLAN-APPROVED 후 7 phase 실행 — Plan (A) → agent_core compose 함수 GLOBAL fetch (B) → app.py bootstrap seed helper (C) → RBAC 2 권한 + admin auto-grant catchup (D) → admin endpoint scope='global' allowlist + 권한 가드 (E) → 관리 콘솔 `설정` 탭 + sub-section 패턴 + buildSystemPromptEditor scope='global' + CSS (F) → 문서 갱신 (FUNCTION/MODIFY/REVIEW/REPORT). 본 review 는 self-review (대화 기반 검토 — Codex outside voice trigger 미해당. `feedback_outside_voice_for_rbac` policy 는 admin/audit 표면 직접 변경 시 발동, 본 cycle 은 `system_prompt` 표면이라 self-review 채택).
@@ -1208,6 +1312,12 @@ source_of_truth: true
   2. **pending metadata-only enforcement**: catalog 수준에서는 read.own 부여 — bytes download 차단은 Phase 5 endpoint application-level. 본 Phase 만으로는 enforcement 미완. Phase 5 진입 시 `if account.role.key == 'pending': deny bytes` 분기 명시 + AC 갱신.
 - **Cross-ref**: BRIEFING §5.2 + 정본 REV-20260521-0001 + Phase 2 REV-20260521-0004.
 - **다음 outside-voice 시점**: Phase 12 (D14 SQL guard, Ship 조건). Phase 5 (upload API) 에서 attachment endpoint 의 권한 검증 + pending bytes deny 의 정합도 codex review 권장 (RBAC enforcement 의 application-level 표면).
+
+## REV-20260522-0001 [SKIPPED:static-asset-only]
+- Date: 2026-05-22
+- Trigger: TASK-0097 (REQ-20260522-0001, Minor §12.3) — DQA 브랜딩 적용
+- Skip Reason: 정적 자산 변경 (HTML/CSS/SVG) 만. backend/RBAC/endpoint/DB/audit 무변경. outside-voice review 불필요 — §18.8 Minor 기준 충족.
+- Evidence: browse 스크린샷 3장 (로그인 화면 + 사이드바 + 관리 콘솔) 으로 렌더링 확인.
 
 ## REV-20260521-0006 [SKIPPED:storage-wrapper-only] TASK-0094 Sprint 1 Phase 4 (Cycle 0 storage) review
 

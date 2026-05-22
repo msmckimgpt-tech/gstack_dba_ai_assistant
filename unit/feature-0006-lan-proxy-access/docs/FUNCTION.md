@@ -64,6 +64,7 @@ Caddy TLS 프록시 설정과 Windows 포트 프록시 스크립트를 관리한
 - AC-0001: Caddy와 Windows 스크립트가 feature 경로로 이관되어 있다.
 - AC-0002: 루트 compose가 새 Caddy 경로를 사용한다.
 - AC-0003: 인증서와 Caddy 상태 파일은 `../../../../artifacts`에만 저장된다.
+- AC-0004 (REQ-20260520-0002 / TASK-0006 = TASK-0087 in feature-0003, **Major** §12.3): `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile` 의 `https://{$WEB_PUBLIC_HOST}, :443` 블록 안의 `reverse_proxy web:8000` 가 `header_up X-Forwarded-For {client_ip}` directive 를 포함한다. Caddy 가 클라이언트로부터 받은 임의 `X-Forwarded-For` 헤더 값을 무시하고 본인이 본 TCP peer IP (Caddy v2 `{client_ip}` placeholder) 로 덮어써서 web upstream 에 전달. 이로써 web 의 `_get_client_ip()` 가 보는 `X-Forwarded-For` 는 항상 단일 hop 정규화 값 — multi-hop chain 또는 클라이언트 spoof 가 audit 표면 (`WebAuditEvents.IpAddr`, `WebAuthSessions.RemoteAddr`) 에 도달하지 않는다. feature-0003 의 [`_get_client_ip()` 조건부 trust](../../feature-0003-agent-web-ui/docs/FUNCTION.md) (AC-0205~0207) 와 dual ownership 으로 정합.
 
 ## 12. Observability
 - Caddy 로그: `docker compose logs caddy`

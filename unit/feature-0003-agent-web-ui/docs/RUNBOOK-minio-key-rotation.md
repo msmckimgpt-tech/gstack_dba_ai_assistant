@@ -189,4 +189,4 @@ escalation. MinIO root credential 로 emergency restore (root credential 은 `.e
 - [SECURITY.md §7.2](../../../docs/SECURITY.md) — 외부 배포 보완 (Sprint 1 의 docs
   갱신 묶음에서 본 runbook cross-ref 추가 예정).
 - [FUNCTION AC-0205~0207](./FUNCTION.md) — Phase 1 Pre-flight 의 MinIO 부트스트랩.
-- [FUNCTION AC-0219](./FUNCTION.md) — Phase 4 storage wrapper (본 cycle 시점).
+- [FUNCTION AC-0223](./FUNCTION.md) — Phase 4 storage wrapper (본 cycle 시점).
