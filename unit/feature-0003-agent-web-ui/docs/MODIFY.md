@@ -1864,3 +1864,11 @@ source_of_truth: true
 - Notes: lazy-create 상태에서는 paperclip 클릭 시 사용자에게 "첨부는 대화 생성 후 가능" 안내 후 거부 — backend endpoint 가 cid 를 요구하기 때문. 첫 메시지 send 후 (대화 생성 후) 다시 paperclip 클릭 가능. Phase 11 (ingest pipeline) 진입 후 사용자가 실제 LLM 응답에서 CSV/XLSX 의 content 가 활용되는 것을 확인 가능 — 본 Phase 만으로는 attachment_ids 전송만 가능하고 backend `/api/ask` 가 아직 attachment 를 prompt context 에 주입하지 않음 (Phase 11 ship 후 활성).
 - Impact: 사용자 view 의 첫 표면화 — 본 Phase ship 후 사용자가 composer 의 paperclip + drag-drop 으로 파일 업로드 가능, pill 로 선택 토글 가능. 실제 LLM context 주입은 Phase 11 ship 후.
 - Rollback Notes: index.html 의 신규 마크업 4개 (composer-attachments / composer-drop-overlay / attach-btn / file input) 제거. styles.css 의 신규 130 lines block 제거. app.js 의 state.composerAttachments + 9 helper + binding + load call + sendPrompt askBody 갱신 모두 revert. backend / DB / 권한 영향 0 (Phase 5 endpoint 는 그대로 유지 — Phase 6 revert 만으로 backend 호출 안 됨).
+
+## CHG-20260521-0009
+- Date: 2026-05-22
+- Related Requirement: TASK-0094 Sprint 1 Phase 7 — D11 consent grouped batch modal (R-F2)
+- Summary: Profile Drawer 의 "보안 및 계정" 탭에 consent UI 추가. provider × 3 group grouped batch toggle. GET /api/account/consents endpoint 신규 (POST/DELETE 는 Phase 5 ship).
+- Files: app.py (GET /api/account/consents 추가), index.html (#profileConsentSection), app.js (_renderConsentSection + _handleConsentToggle + binding), styles.css (consent UI), FUNCTION/TASK/MODIFY/REVIEW.
+- Notes: DB 는 세분 row, UX 는 3 group. R-F2 modal 폭격 위험 해소 정합.
+- Rollback: 본 cycle entry revert + #profileConsentSection 마크업/CSS/JS 제거.

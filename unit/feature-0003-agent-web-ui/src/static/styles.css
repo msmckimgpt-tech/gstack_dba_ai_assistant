@@ -1520,6 +1520,50 @@ a { color: inherit; }
 .composer-drop-overlay.hidden { display: none; }
 .composer-wrap.is-dragover .composer-drop-overlay { display: flex; }
 
+/* TASK-0094 Sprint 1 Phase 7 (D11 + R-F2): consent grouped batch UX. */
+.consent-providers {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 8px;
+}
+.consent-provider-block {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 10px 12px;
+  background: var(--surface);
+}
+.consent-provider-label {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.consent-group-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  cursor: pointer;
+}
+.consent-group-row input[type="checkbox"] {
+  margin-top: 3px;
+  cursor: pointer;
+}
+.consent-group-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.consent-group-label {
+  font-size: 12.5px;
+  color: var(--text);
+}
+.consent-group-hint {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
 /* TASK-0094 Phase 6: paperclip 첨부 버튼 */
 .attach-btn {
   border: none;
