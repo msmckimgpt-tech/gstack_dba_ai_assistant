@@ -6114,6 +6114,23 @@ async def ask(request: Request) -> JSONResponse:
             role_id_for_run = None
             product_mode_for_run = "pinned"
 
+        # TASK-0094 Sprint 1 Phase 11: attachment_ids 를 env 로 전달 (D16 정합).
+        # compose_system_prompt 가 ATTACHMENT_IDS env 를 읽어 prompt 에 section 주입.
+        # 명시 안 되면 빈 list — 본 cycle 의 attachment 미주입 (minimum exposure).
+        attachment_ids_raw = data.get("attachment_ids") if isinstance(data.get("attachment_ids"), list) else []
+        attachment_ids_clean: list[int] = []
+        for v in attachment_ids_raw[:50]:  # cap 50 per request
+            try:
+                iv = int(v)
+                if iv > 0:
+                    attachment_ids_clean.append(iv)
+            except Exception:
+                continue
+        if attachment_ids_clean:
+            os.environ["ATTACHMENT_IDS"] = ",".join(str(i) for i in attachment_ids_clean)
+        else:
+            os.environ.pop("ATTACHMENT_IDS", None)
+
         agent_result = await asyncio.to_thread(
             _run_agent_core,
             user_message=message,
@@ -6129,6 +6146,8 @@ async def ask(request: Request) -> JSONResponse:
             allowed_schemas=allowed_schemas_for_run,
             product_mode=product_mode_for_run,
         )
+        # cleanup env to avoid leaking across requests.
+        os.environ.pop("ATTACHMENT_IDS", None)
         conversation_id = str(agent_result.get("conversation_id") or "").strip()
         if conversation_id:
             _assign_conversation_owner(conn, conversation_id, int(account["id"]))

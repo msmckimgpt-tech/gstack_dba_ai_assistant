@@ -112,6 +112,73 @@ Once execute_sql has returned the data you need, stop calling tools and write th
 """
 
 
+def _build_attachment_context_section(mem_conn, attachment_ids: list[int]) -> str:
+    """TASK-0094 Sprint 1 Phase 11 — selected attachment metadata 를 prompt context 에 주입.
+
+    Cycle 1 (Phase 11) 시점은 CSV/XLSX metadata 만 (sandbox table 명 + sheet/row counts).
+    Cycle 2 vision / Cycle 3 KB / Cycle 4 RAG 진입 시 본 helper 가 kind 별로 확장.
+
+    D16 정합: attachment_ids 가 빈 list 면 본 section 미주입 (minimum exposure).
+    """
+    if not attachment_ids or mem_conn is None:
+        return ""
+    try:
+        cur = mem_conn.cursor()
+    except Exception:
+        return ""
+    try:
+        placeholders = ", ".join(["%s"] * len(attachment_ids))
+        cur.execute(
+            f"""
+            SELECT Id, ConversationId, OriginalFilename, Kind, MimeType,
+                   SizeBytes, SizeBucket, UploadStatus, MetaJson
+            FROM WebConversationAttachments
+            WHERE Id IN ({placeholders}) AND DeletedAt IS NULL AND DeletePending = 0
+            ORDER BY Id ASC
+            """,
+            tuple(int(i) for i in attachment_ids),
+        )
+        rows = cur.fetchall() or []
+    except Exception:
+        return ""
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+    if not rows:
+        return ""
+    lines = ["", "## ATTACHED FILES (User-selected, available for analysis)"]
+    for row in rows:
+        attachment_id = int(row[0] or 0)
+        kind = str(row[3] or "")
+        filename = str(row[2] or "")
+        size_bucket = str(row[6] or "")
+        upload_status = str(row[7] or "")
+        meta_text = ""
+        try:
+            import json as _json
+            meta = row[8]
+            if isinstance(meta, str):
+                meta = _json.loads(meta)
+            if isinstance(meta, dict):
+                if meta.get("sandbox_table_name"):
+                    meta_text += f" sandbox_table=`{meta['sandbox_table_name']}`"
+                if meta.get("ingest_summary"):
+                    meta_text += f" summary={meta['ingest_summary']}"
+                if meta.get("degraded_reason"):
+                    meta_text += f" [DEGRADED: {meta['degraded_reason']}]"
+        except Exception:
+            pass
+        lines.append(
+            f"- attachment_id={attachment_id} kind={kind} file={filename} size={size_bucket} status={upload_status}{meta_text}"
+        )
+    lines.append(
+        "Use the sandbox tables for analysis. The actual file body is NOT included — refer by attachment_id when calling tools.\n"
+    )
+    return "\n".join(lines)
+
+
 def compose_system_prompt(
     mem_conn,
     *,
@@ -274,6 +341,22 @@ def compose_system_prompt(
         cur.close()
     except Exception:
         pass
+
+    # TASK-0094 Sprint 1 Phase 11: ATTACHED FILES section — env 의 ATTACHMENT_IDS
+    # (comma separated) 로 caller 가 selected attachment_ids 전달. D16 정합:
+    # 미지정/빈 list 면 본 section 미주입.
+    try:
+        import os as _os
+        attachment_ids_raw = (_os.getenv("ATTACHMENT_IDS") or "").strip()
+        if attachment_ids_raw:
+            attachment_ids = [int(x) for x in attachment_ids_raw.split(",") if x.strip().lstrip("-").isdigit() and int(x) > 0]
+            if attachment_ids:
+                section = _build_attachment_context_section(mem_conn, attachment_ids)
+                if section:
+                    parts.append(section)
+    except Exception:
+        pass
+
     return "".join(parts)
 
 
