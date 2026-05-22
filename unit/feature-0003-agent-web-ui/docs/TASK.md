@@ -11,8 +11,8 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 5 진행 중)
-- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 5 upload API ship — 6 endpoint + audit + HMAC + size cap + D21 deny)
+- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 6 진행 중)
+- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 6 composer UI ship — paperclip + drag-drop + pills + D16 snapshot + R-F5 lazy-create)
 
 ## 2. Task Queue
 
@@ -45,7 +45,7 @@ source_of_truth: true
   - [x] **Phase 3 (Cycle 0 RBAC)** — `conversation.attachment.upload/read.{own,any}` 4 코드 (group=conversation) `PERMISSION_DEFINITIONS` 추가 + `SEED_ROLE_DEFINITIONS` admin/operator/sales/pending 갱신 (admin=all, operator/sales=upload+read own, pending=read.own만 — D21/R-F14) + `_ensure_seed_roles` admin/operator/sales/dba/pending 5 catchup 갱신 (§5.2 6 checklist 1~5) + app.js label/description map (checklist 6) — backend group=conversation 이므로 attachment group 신설은 Phase 12 SQL guard 의 attachment.execute_sql_on.* 시점에. admin.js 는 backend `/api/admin/permissions` label 직접 사용 — 별 map 없음. py_compile PASS. 2026-05-21.
   - [x] **Phase 4 (Cycle 0 storage)** — `storage_minio.py` wrapper (boto3 + retry + signed URL + smoke test) + D20 dual-key rotation runbook (`RUNBOOK-minio-key-rotation.md`). boto3>=1.34.0 / botocore>=1.34.0 requirements 추가. modules/__init__.py + storage_minio.py 약 350 lines (idempotent client cache + get_storage_config + safe_filename + make_object_key + put/get/delete/signed URL + bucket_exists + run_smoke_test + reset_client_cache + CLI smoke entry). py_compile PASS + 모듈 import smoke 통과. D13 (외부 LLM signed URL 송신 금지) 정합 — `generate_presigned_get()` docstring 에 사내망 다운로드 전용 명시 + `get_object_bytes()` 의 외부 provider 송신 경로 권장. 2026-05-21.
   - [x] **Phase 5 (Cycle 0 upload API)** — 6 endpoint (POST/GET/GET-by-id/DELETE attachment + POST/DELETE consent) + audit 4 ActionCode (`attachment.upload`/`.delete`/`.consent.grant`/`.consent.revoke`) + `build_audit_change_json` case 4 추가 + D7 MIME allowlist + D8 size cap (per_file/conv/account env-driven) + D12 HMAC/extension/size bucket helper + D13 외부 LLM signed URL 송신 금지 정합 (`_serialize_attachment_for_api` 의 signed_url 옵션) + D21 pending bytes deny enforcement (`_account_is_pending` + bytes_access_denied 마커) + RBAC 검증 (`_account_can_access_attachment` 신규 helper). FastAPI UploadFile/File/Form import. py_compile PASS. 2026-05-22.
-  - [ ] **Phase 6 (Cycle 0 composer UI)** — paperclip + drag-drop + attachment pills + selected toggle + D16 lazy-create snapshot (busyKey + pending sentinel).
+  - [x] **Phase 6 (Cycle 0 composer UI)** — paperclip + hidden file input + drag-drop overlay (composer-wrap) + attachment pills (status badges: uploading / ready / failed / deselected) + selected toggle + "이 대화의 모든 첨부 사용" scope-all checkbox + D16 attachment selection snapshot (`_composerAttachmentSnapshot` 가 sendPrompt 시점 추출 → askBody.attachment_ids/scope_all 명시 전송) + R-F5 lazy-create 분리 (snapshot key = pending sentinel or conv id) + selectConversation 진입 시 `_loadConversationAttachments(cid)` ground truth 동기화. state.composerAttachments 신규 (byConv / uploadingCount / nextLocalId). app.js JS syntax PASS (node Function check). styles.css 약 130 lines (pill / drop-overlay / paperclip btn). index.html 약 25 lines (composer-attachments + composer-drop-overlay + attach-btn + file input). 2026-05-22.
   - [ ] **Phase 7 (Cycle 0 consent)** — D11 grouped batch modal + revoke flow.
   - [ ] **Phase 8 (Cycle 0 share)** — D9 share builder redact + 기존 token 자동 redact + PolicyVersion column.
   - [ ] **Phase 9 (Cycle 0 lifecycle)** — F1 delete UX 4 state + D6 reconciliation worker + R-Claim6 tombstone + lifecycle policy MinIO rule.

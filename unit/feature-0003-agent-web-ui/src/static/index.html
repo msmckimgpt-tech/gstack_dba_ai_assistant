@@ -166,7 +166,34 @@
 
         <!-- Composer -->
         <div class="composer-wrap">
+          <!-- TASK-0094 Sprint 1 Phase 6: 첨부 pills (D16 selected toggle). 현재 대화의
+               selected/ready 첨부만 sendPrompt 시 attachment_ids 로 전송. drag-drop /
+               paperclip / 새 파일 선택 시 본 영역에 pill 추가. pending sentinel 별 snapshot
+               (R-F5 lazy-create) 도 본 영역의 state 가 source-of-truth. -->
+          <div class="composer-attachments hidden" id="composerAttachments" aria-live="polite">
+            <div class="composer-attachments-pills" id="composerAttachmentsPills"></div>
+            <label class="composer-attachments-scope-all" title="이 대화의 모든 ingested 첨부를 LLM 컨텍스트에 사용합니다 (별 audit 기록).">
+              <input type="checkbox" id="composerAttachmentsScopeAll" />
+              <span>이 대화의 모든 첨부 사용</span>
+            </label>
+          </div>
+          <!-- TASK-0094 Phase 6: drag-drop overlay — 사용자가 composer 영역에 파일을 끌어다 놓으면 표면화. -->
+          <div class="composer-drop-overlay hidden" id="composerDropOverlay" aria-hidden="true">
+            <span>파일을 끌어다 놓아서 첨부</span>
+          </div>
           <div class="composer-box">
+            <!-- TASK-0094 Sprint 1 Phase 6: paperclip 첨부 버튼 + hidden file input. D7 MIME
+                 allowlist accept 명시. multiple 비활성 (한 번에 한 파일 — Sprint 1 simplicity). -->
+            <button type="button" class="attach-btn" id="attachBtn" title="파일 첨부 (CSV / XLSX / PDF / 이미지)" aria-label="파일 첨부">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M16.5 6.5L9 14a3 3 0 104.24 4.24l8.49-8.48a5 5 0 10-7.07-7.07L4.93 12.43" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <input type="file"
+                   id="attachFileInput"
+                   class="hidden"
+                   accept=".csv,.xlsx,.xls,.pdf,.png,.jpg,.jpeg,.webp,.txt,.md,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/pdf,image/png,image/jpeg,image/webp,text/plain,text/markdown"
+                   aria-hidden="true" />
             <textarea
               id="promptInput"
               rows="1"

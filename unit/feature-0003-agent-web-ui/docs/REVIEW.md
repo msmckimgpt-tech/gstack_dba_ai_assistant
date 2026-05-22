@@ -1352,3 +1352,16 @@ source_of_truth: true
   5. **Endpoint coverage**: BRIEFING §5.4 의 7 endpoint 중 본 Phase 가 6 (POST/GET/GET-by-id/DELETE attachment + POST/DELETE consent). `/api/ask` body 확장 (Cycle 1 attachment_ids / attachment_scope_all) 은 Phase 11 ingest + Phase 12 SQL guard 시점에 추가.
 - **Cross-ref**: BRIEFING §5.1 / §5.4 / D6/D7/D8/D11/D12/D13/D21 + ADR-0022 + 정본 REV-20260521-0001 + Phase 4 REV-20260521-0006.
 - **다음 outside-voice 시점**: 본 entry 의 deferred codex review (Phase 6 진입 전 또는 Phase 5.1 patch cycle). Phase 12 (D14 SQL guard, Ship 조건) 는 별도 review trigger.
+
+## REV-20260521-0008 [SKIPPED:frontend-only] TASK-0094 Sprint 1 Phase 6 (Cycle 0 composer UI) review
+
+- **Mode**: SKIPPED — Phase 6 는 frontend (index.html + styles.css + app.js) 의 composer UI 추가만. backend 변경 0. 본 UI 의 D16 attachment selection snapshot + R-F5 lazy-create binding 은 BRIEFING REV-20260521-0001 [SUBAGENT:codex] (정본) 및 REV-20260521-0002 (Codex 2차) 의 결정 application. 추가 codex review 의 비용 정당화 어려움.
+- **Subject**: composer-attachments + composer-drop-overlay + attach-btn + file input 마크업 + 130 lines CSS (pill / overlay / paperclip) + state.composerAttachments + 9 helper + event binding + selectConversation list load.
+- **Reason**: 본 UI 의 보안 결정 (RBAC / consent / D7 MIME / D8 size cap / D12 HMAC / D13 외부 LLM 송신 / D21 pending deny) 모두 Phase 5 의 backend endpoint 에서 enforcement — 본 frontend 는 backend 응답을 그대로 표시 + frontend cap 검증 (accept 속성 의 MIME 허용 list 만). server-side check 가 source of truth.
+- **Risk**:
+  1. **lazy-create 상태에서 paperclip 거부**: 사용자가 새 대화 + 파일 첨부 + 메시지 흐름을 기대할 수 있으나 본 cycle 은 cid 가 있어야 upload — UX 가독성 안내 (toast) 로 graceful. Phase 11 진입 시 lazy-create 시점에도 client-side 임시 stash → 첫 send 직후 자동 upload 옵션 검토.
+  2. **drag-drop 의 dragenter/leave race**: dragCounter 로 child element entry race 처리하지만 brfowser-specific race 가능. browse QA 권장 (별 cycle).
+  3. **multiple 파일 선택 미지원**: input 에 multiple 미설정 — Sprint 1 simplicity. Phase 11 또는 후속 cycle 에서 batch upload + progress bar 검토.
+  4. **D16 attachment_ids 의 backend 처리**: 본 Phase 의 sendPrompt 가 askBody 에 attachment_ids/scope_all 명시 전송하지만, backend `/api/ask` 가 아직 이 필드를 수용하지 않음 (Phase 11 ingest pipeline 진입 시 ship). 본 Phase 만으로는 attachment_ids 가 backend 에 도달해도 silent ignored — D16 minimum exposure 의 의미는 backend 가 attachment_ids 를 사용하는 시점 (Phase 11) 부터 활성.
+- **Cross-ref**: BRIEFING §5.6 + D16 + R-F5 + 정본 REV-20260521-0001 + Phase 5 REV-20260521-0007.
+- **다음 outside-voice 시점**: Phase 11 (ingest pipeline) + Phase 12 (SQL guard, Ship 조건) — 본 frontend snapshot 이 backend `/api/ask` 의 attachment_ids 처리와 결합되는 시점.
