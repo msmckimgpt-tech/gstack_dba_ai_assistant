@@ -1782,3 +1782,20 @@ source_of_truth: true
 - Notes: 정적 자산 변경만. backend / RBAC / endpoint / DB / audit 무변경. docker cp 로 런닝 컨테이너에 즉시 반영 확인 (browse 스크린샷 3장).
 - Impact: 브라우저 출력 브랜딩만 변경. 기능 영향 0.
 - Rollback Notes: `index.html` / `admin.html` / `styles.css` 의 DQA → MySQL AI 텍스트 revert + `logo-dqa.svg` 제거.
+
+## CHG-20260521-0006
+- Date: 2026-05-22
+- Related Requirement: TASK-0094 (REQ-20260521-0001, Critical §12.3) Sprint 1 Phase 4 — Cycle 0 storage wrapper + D20 rotation runbook
+- Summary: BRIEFING D1/D13/D20 + R-F9 정합. MinIO S3-compat 첨부 storage wrapper `storage_minio.py` (boto3 기반, idempotent client cache, safe filename + object key, put/get/delete/signed URL/bucket_exists/smoke_test/reset_cache/CLI entry) 신설. D20 dual-key rotation runbook 별 doc. boto3>=1.34.0 / botocore>=1.34.0 requirements 추가.
+- Files:
+  - `unit/feature-0002-agent-core/src/requirements.txt` — boto3 + botocore 4 줄 추가 (agent 이미지 + web 이미지 공통 dep).
+  - `unit/feature-0003-agent-web-ui/src/modules/__init__.py` — modules 패키지 신설 (마커 파일, 약 5 lines).
+  - `unit/feature-0003-agent-web-ui/src/modules/storage_minio.py` — 약 350 lines (config + client cache + safe_filename + make_object_key + put/get/delete/signed URL + bucket_exists + run_smoke_test + reset_client_cache + CLI smoke).
+  - `unit/feature-0003-agent-web-ui/docs/RUNBOOK-minio-key-rotation.md` — 약 150 lines (6 섹션: 전제/정상 path/rollback/체크리스트/자동화/cross-ref).
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md` — AC-0223~0225 (3 AC, TASK-0097 의 AC-0219~0222 와 충돌하여 본 cycle AC 0223 부터 재번호).
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` — Phase 4 [x] + Current Status 갱신.
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md` — 본 entry.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260521-0006 [SKIPPED:storage-wrapper-only] append.
+- Notes: storage_minio.py 는 thin wrapper — RBAC / consent / audit / size cap / MIME 검증 모두 caller (Phase 5 upload endpoint) 책임. 본 Phase 의 module 은 SDK abstraction 만 제공. 외부 boto3 호출 실패는 모두 StorageOperationError 로 wrap 되어 caller fail-fast. boto3 미설치 환경 (dev/test) 에서는 BOTO3_AVAILABLE=False 로 import 성공 후 `get_s3_client()` 호출 시점에 StorageConfigError 발생 — graceful degradation 정합.
+- Impact: 본 Phase 의 module 만 ship — 실제 upload/download endpoint 는 Phase 5 ship 후 가용. requirements.txt 변경으로 docker 이미지 rebuild 필요 (다음 compose up 시 자동). D20 runbook 은 운영자 reference — 실제 rotation 진행은 별 사용자 trigger.
+- Rollback Notes: requirements.txt 의 boto3 + botocore 2 entry revert. modules/storage_minio.py + modules/__init__.py + RUNBOOK 파일 삭제 + FUNCTION/TASK/MODIFY/REVIEW 의 본 cycle entry revert. import 한 caller 가 없으므로 (Phase 5 미시작) 즉시 revert 가능.

@@ -11,8 +11,8 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 3 진행 중)
-- Last Updated: 2026-05-22 (TASK-0097 — DQA 브랜딩 적용. MySQL AI → DQA (Database Query Assistant), SVG 로고 신설)
+- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Phase 4 진행 중)
+- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 4 storage wrapper + D20 rotation runbook ship. main 의 TASK-0097 DQA 브랜딩 변경도 본 branch 에 흡수.)
 
 ## 2. Task Queue
 
@@ -43,7 +43,7 @@ source_of_truth: true
   - [x] **Phase 1 (Pre-flight)** — ADR-0022 (MinIO 도입) + ADR-0023 (sandbox schema + D15 maintenance path 분리) + ADR-0025 (PGVector 사전 선언, Sprint 4 prerequisite) `docs/DECISIONS.md` 등재. docker-compose.yml `minio` + `minio-init` service 추가. `.env.example` 16 변수 (MINIO_ROOT_USER/PW + MINIO_APP_ACCESS_KEY/SECRET + endpoint/bucket/TTL + 호스트 port 2 + browser redirect + ATTACHMENT_MAX_BYTES_* 3 + ATTACHMENT_AUDIT_HMAC_KEY + SANDBOX_SQL_* 2). `unit/feature-0003-agent-web-ui/src/scripts/minio-init.sh` 부트스트랩 (idempotent bucket + bucket-scoped policy + app key). feature-0001-platform-runtime ANCHOR §1 갱신 (MinIO/Postgres 같은 비-MySQL service 의 platform 책임 명시). 2026-05-21.
   - [x] **Phase 2 (Cycle 0 schema)** — `WebConversationAttachments` + `WebAccountConsents` + `WebAttachmentDerivedMessages` (D19) + `WebConversationAttachmentProviderFiles` (D13) + `WebShareLinks.PolicyVersion` (R-F7) + `WebConversationAttachmentsSandboxSchemas` mapping table. 6 `_ensure_*_schema` / `_ensure_*_column` helper 신설. `_ensure_seed_catchup` (fast path) + `_ensure_web_tables` (slow path) 양쪽 호출 등록. py_compile PASS. 2026-05-21.
   - [x] **Phase 3 (Cycle 0 RBAC)** — `conversation.attachment.upload/read.{own,any}` 4 코드 (group=conversation) `PERMISSION_DEFINITIONS` 추가 + `SEED_ROLE_DEFINITIONS` admin/operator/sales/pending 갱신 (admin=all, operator/sales=upload+read own, pending=read.own만 — D21/R-F14) + `_ensure_seed_roles` admin/operator/sales/dba/pending 5 catchup 갱신 (§5.2 6 checklist 1~5) + app.js label/description map (checklist 6) — backend group=conversation 이므로 attachment group 신설은 Phase 12 SQL guard 의 attachment.execute_sql_on.* 시점에. admin.js 는 backend `/api/admin/permissions` label 직접 사용 — 별 map 없음. py_compile PASS. 2026-05-21.
-  - [ ] **Phase 4 (Cycle 0 storage)** — `storage_minio.py` wrapper (boto3 + retry + signed URL + backup smoke) + D20 dual-key rotation runbook.
+  - [x] **Phase 4 (Cycle 0 storage)** — `storage_minio.py` wrapper (boto3 + retry + signed URL + smoke test) + D20 dual-key rotation runbook (`RUNBOOK-minio-key-rotation.md`). boto3>=1.34.0 / botocore>=1.34.0 requirements 추가. modules/__init__.py + storage_minio.py 약 350 lines (idempotent client cache + get_storage_config + safe_filename + make_object_key + put/get/delete/signed URL + bucket_exists + run_smoke_test + reset_client_cache + CLI smoke entry). py_compile PASS + 모듈 import smoke 통과. D13 (외부 LLM signed URL 송신 금지) 정합 — `generate_presigned_get()` docstring 에 사내망 다운로드 전용 명시 + `get_object_bytes()` 의 외부 provider 송신 경로 권장. 2026-05-21.
   - [ ] **Phase 5 (Cycle 0 upload API)** — 6 endpoint (POST/GET/GET-by-id/DELETE attachment + POST/DELETE consent) + audit 4 ActionCode + `build_audit_change_json` case + D12 HMAC.
   - [ ] **Phase 6 (Cycle 0 composer UI)** — paperclip + drag-drop + attachment pills + selected toggle + D16 lazy-create snapshot (busyKey + pending sentinel).
   - [ ] **Phase 7 (Cycle 0 consent)** — D11 grouped batch modal + revoke flow.
