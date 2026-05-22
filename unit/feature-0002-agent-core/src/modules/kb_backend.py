@@ -500,6 +500,97 @@ SET embedding = %(embedding)s::vector,
 WHERE text_hash = %(text_hash)s
 """
 
+# M4 (TASK-0024) — FULLTEXT → pg_trgm rewrite (KB_PG_DIALECT_NOTES.md §2).
+# MySQL: MATCH(t.TextContent) AGAINST(%s IN NATURAL LANGUAGE MODE) AS FtScore
+# Postgres 옵션 1 (선택): pg_trgm similarity() — 한국어 / 다국어 모두 호환,
+#                       GIN index 없이도 합리적 latency (~50-100ms for ~800 row).
+#                       extension 은 M1 DDL 의 `CREATE EXTENSION IF NOT EXISTS pg_trgm`
+#                       으로 이미 보장.
+# 옵션 2 (M5+ 후보): tsvector + to_tsvector('simple', t.text_content) — 영문 위주
+#                       에서는 더 좋으나 한국어 morpheme 분석 부재 + LC_COLLATE 의존.
+# 옵션 3 (M5+ 후보): pgvector embedding `<=>` 거리 — semantic search, M3 backfill 후 가능.
+# **본 cycle 의 선택**: 옵션 1 (pg_trgm) — 한국어 호환 + extension 이미 활성 + zero schema 변경.
+# REV-20260522-0012 B2 흡수 (M4 TASK-0024): MySQL `_scope_filter_sql()` 등가성.
+# `_scope_candidates()` 는 항상 candidate list 에 `""` (blank scope) 를 포함하며,
+# MySQL clause 는 `ScopeKey IN (...) OR ScopeKey IS NULL OR ScopeKey = ''` 패턴.
+# PG `= ANY(array)` 는 NULL 매치 안 함 → silent row drop. include_null_scope flag
+# 로 SQL fragment 분기.
+_PG_SEARCH_RAG_DOCUMENTS_WITH_TEXT_INCL_NULL = """
+SELECT
+    d.conversation_id,
+    d.fact_key,
+    COALESCE(t.text_content, '') AS content,
+    d.weight,
+    d.source_type,
+    d.source_run_id,
+    d.updated_at,
+    similarity(COALESCE(t.text_content, ''), %(query_text)s) AS ft_score
+FROM rag_documents d
+LEFT JOIN texts t ON t.text_hash = d.text_hash
+WHERE d.conversation_id = ANY(%(conv_ids)s)
+  AND (
+      %(scope_keys)s::text[] IS NULL
+      OR d.scope_key = ANY(%(scope_keys)s)
+      OR d.scope_key IS NULL
+      OR d.scope_key = ''
+  )
+ORDER BY ft_score DESC NULLS LAST, d.weight DESC, d.updated_at DESC, d.id DESC
+"""
+
+_PG_SEARCH_RAG_DOCUMENTS_WITH_TEXT_STRICT = """
+SELECT
+    d.conversation_id,
+    d.fact_key,
+    COALESCE(t.text_content, '') AS content,
+    d.weight,
+    d.source_type,
+    d.source_run_id,
+    d.updated_at,
+    similarity(COALESCE(t.text_content, ''), %(query_text)s) AS ft_score
+FROM rag_documents d
+LEFT JOIN texts t ON t.text_hash = d.text_hash
+WHERE d.conversation_id = ANY(%(conv_ids)s)
+  AND d.scope_key = ANY(%(scope_keys)s)
+ORDER BY ft_score DESC NULLS LAST, d.weight DESC, d.updated_at DESC, d.id DESC
+"""
+
+_PG_SEARCH_RAG_DOCUMENTS_NO_TEXT_INCL_NULL = """
+SELECT
+    d.conversation_id,
+    d.fact_key,
+    COALESCE(t.text_content, '') AS content,
+    d.weight,
+    d.source_type,
+    d.source_run_id,
+    d.updated_at
+FROM rag_documents d
+LEFT JOIN texts t ON t.text_hash = d.text_hash
+WHERE d.conversation_id = ANY(%(conv_ids)s)
+  AND (
+      %(scope_keys)s::text[] IS NULL
+      OR d.scope_key = ANY(%(scope_keys)s)
+      OR d.scope_key IS NULL
+      OR d.scope_key = ''
+  )
+ORDER BY d.weight DESC, d.updated_at DESC, d.id DESC
+"""
+
+_PG_SEARCH_RAG_DOCUMENTS_NO_TEXT_STRICT = """
+SELECT
+    d.conversation_id,
+    d.fact_key,
+    COALESCE(t.text_content, '') AS content,
+    d.weight,
+    d.source_type,
+    d.source_run_id,
+    d.updated_at
+FROM rag_documents d
+LEFT JOIN texts t ON t.text_hash = d.text_hash
+WHERE d.conversation_id = ANY(%(conv_ids)s)
+  AND d.scope_key = ANY(%(scope_keys)s)
+ORDER BY d.weight DESC, d.updated_at DESC, d.id DESC
+"""
+
 
 _pg_op_local = threading.local()
 
@@ -713,6 +804,64 @@ class PgKbBackend(KbBackend):
                     "embedding_model": embedding_model,
                 },
             )
+
+    def search_rag_documents(
+        self,
+        conn,
+        *,
+        conversation_ids: list[str],
+        query_text: str,
+        scope_keys: Optional[list[str]] = None,
+    ) -> list[tuple]:
+        """FULLTEXT 검색의 Postgres 등가 — pg_trgm similarity() 사용 (M4 TASK-0024).
+
+        REV-20260522-0012 B2 흡수: `scope_keys` 가 None 이거나 blank string("") 을 포함
+        하면 MySQL `_scope_filter_sql()` 의 NULL/'' 매치 등가성 보존 — _INCL_NULL SQL
+        분기 (`scope_key IS NULL OR scope_key = ''` 추가). blank 비포함 시 _STRICT
+        분기 (정확 match only).
+
+        Args:
+            conversation_ids: 검색 대상 대화 id 리스트 (non-empty).
+            query_text: 자연어 query — empty 시 score 계산 skip, weight DESC 만.
+            scope_keys: scope 필터. None 또는 list 에 "" 포함 시 NULL/'' 매치도 동반.
+
+        Returns: tuple list — (conversation_id, fact_key, content, weight,
+                 source_type, source_run_id, updated_at[, ft_score]).
+        """
+        if not conversation_ids:
+            return []
+
+        # blank scope 매치 정책 — MySQL 의 `_scope_filter_sql()` 등가:
+        #   candidate list 에 "" 포함 OR None 시 NULL/'' 매치 활성
+        normalized_scopes = list(scope_keys) if scope_keys else None
+        include_null_blank = (
+            normalized_scopes is None
+            or any((s is None or s == "") for s in normalized_scopes)
+        )
+        # blank/None 제거된 strict scope list (= ANY 에는 비-blank 만 들어감)
+        strict_scopes = (
+            [s for s in normalized_scopes if s and s != ""]
+            if normalized_scopes is not None
+            else None
+        )
+        if query_text and include_null_blank:
+            sql = _PG_SEARCH_RAG_DOCUMENTS_WITH_TEXT_INCL_NULL
+        elif query_text:
+            sql = _PG_SEARCH_RAG_DOCUMENTS_WITH_TEXT_STRICT
+        elif include_null_blank:
+            sql = _PG_SEARCH_RAG_DOCUMENTS_NO_TEXT_INCL_NULL
+        else:
+            sql = _PG_SEARCH_RAG_DOCUMENTS_NO_TEXT_STRICT
+
+        params = {
+            "conv_ids": list(conversation_ids),
+            "scope_keys": strict_scopes,
+        }
+        if query_text:
+            params["query_text"] = query_text
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return list(cur.fetchall())
 
 
 # ─────────────────────────────────────────────────────────────────────────────

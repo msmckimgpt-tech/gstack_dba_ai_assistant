@@ -1,11 +1,16 @@
 import hashlib
 import uuid
 import json
+import logging
 import mysql.connector
 import os
 import re
 import sys
 import time
+
+# REV-20260522-0012 B1 흡수 (M4 TASK-0024): fail-soft `except` 가 logger 호출 시
+# NameError 로 fallback 자체가 깨지지 않도록 module-level logger 정의.
+logger = logging.getLogger("agent_core.knowledge")
 __all__ = [
     "PII_HINTS",
     "_acquire_advisory_lock",
@@ -88,7 +93,7 @@ from .config import *
 from .utils import _text_hash, _text_store_insert
 import difflib, hashlib, json, os, re, time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 
 
@@ -1446,6 +1451,29 @@ def _load_rag_documents_for_request(
     ids = [str(cid or "").strip() for cid in conversation_ids if str(cid or "").strip()]
     if not ids:
         return []
+
+    # M4 (TASK-0024) — AGENT_KB_READ_BACKEND=postgres 시 PgKbBackend 의
+    # search_rag_documents() (pg_trgm similarity) 사용. cutover invariant:
+    # MySQL FULLTEXT 와 동일 row 반환 (rank ordering 은 score function 차이로 미세
+    # 다를 수 있음 — make ask 회귀 5종 시나리오로 검증 게이트).
+    from .config import AGENT_KB_READ_BACKEND
+    if AGENT_KB_READ_BACKEND == "postgres":
+        try:
+            rows_pg = _load_rag_documents_for_request_pg(
+                ids, request, scope_keys or _scope_candidates(),
+            )
+            if rows_pg is not None:
+                return rows_pg
+        except Exception as e:
+            # cutover 진행 중 fail-soft: PG read 실패 시 MySQL fallback.
+            # Stage A rollback (1줄 env 변경) 의 대안 — runtime 분기.
+            from . import config as _cfg
+            logger.warning(
+                "kb_read_pg_fallback",
+                extra={"error": str(e)[:200], "backend": _cfg.AGENT_KB_READ_BACKEND},
+            )
+            # fallthrough → MySQL path
+
     placeholders = ",".join(["%s"] * len(ids))
     scope_clause, scope_params = _scope_filter_sql(scope_keys or _scope_candidates())
     cur = conn.cursor()
@@ -1494,11 +1522,18 @@ ORDER BY d.Weight DESC, d.UpdatedAt DESC, d.Id DESC
         rows = []
     finally:
         cur.close()
+    return _normalize_rag_doc_rows(rows)
+
+
+def _normalize_rag_doc_rows(rows: list[tuple[Any, ...]]) -> list[dict[str, Any]]:
+    """Shared row → dict post-processing — MySQL + Postgres path 공통 (M4 TASK-0024).
+
+    Row layout (둘 모두): (conversation_id, fact_key, content, weight, source_type,
+    source_run_id, updated_at[, ft_score]).
+    """
     if not rows:
         return []
-
     # Policy: disable keyword/token-based request filtering in KB retrieval.
-    # Retrieval should prefer full evidence + schema/object exact matching.
     tokens: list[str] = []
     require_match = False
     out: list[dict[str, Any]] = []
@@ -1544,6 +1579,41 @@ ORDER BY d.Weight DESC, d.UpdatedAt DESC, d.Id DESC
             }
         )
     return out
+
+
+def _load_rag_documents_for_request_pg(
+    conversation_ids: list[str],
+    request: str,
+    scope_keys: list[str],
+) -> Optional[list[dict[str, Any]]]:
+    """Postgres read path — `AGENT_KB_READ_BACKEND=postgres` 활성 시 사용 (M4 TASK-0024).
+
+    REV-20260522-0012 B3 흡수: `_pg_connect_ro()` 사용 — `agent_kb_ro` role 의
+    least-privilege read connection. RW role bypass 금지.
+
+    Returns: dict list (MySQL path 과 동일 shape) or None on PG unavailable.
+    Raises: PG SELECT 실패 시 caller (`_load_rag_documents_for_request`) 가 MySQL fallback.
+    """
+    from .db import _pg_available, _pg_connect_ro
+    if not _pg_available():
+        return None
+    from .kb_backend import PgKbBackend
+    query_text = " ".join(str(request or "").split()).strip()
+    conn = _pg_connect_ro()
+    try:
+        backend = PgKbBackend()
+        rows = backend.search_rag_documents(
+            conn,
+            conversation_ids=conversation_ids,
+            query_text=query_text,
+            scope_keys=scope_keys,
+        )
+        return _normalize_rag_doc_rows(rows)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 _KO_POSTFIX_RE = re.compile(

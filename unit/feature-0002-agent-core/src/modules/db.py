@@ -214,3 +214,48 @@ def _pg_connect(database: str | None = None, autocommit: bool = True):
     if autocommit:
         conn.autocommit = True
     return conn
+
+
+def _pg_connect_ro(database: str | None = None, autocommit: bool = True):
+    """REV-20260522-0012 B3 흡수 (M4 TASK-0024): read path least-privilege connection.
+
+    `agent_kb_ro` role 로 connection 을 연다. ADR-0021 의 2-layer hybrid RBAC 정합 —
+    read 는 read-only role 로, write 는 rw role 로 분리.
+
+    AGENT_KB_PG_USER_RO / AGENT_KB_PG_PASSWORD_RO 가 미설정 시 RW 로 fallback (warning
+    log) — backward-compat 보장 + 운영 환경에서 RO role 미배포 시 cutover 진행 가능.
+
+    Raises:
+        RuntimeError: AGENT_KB_PG_ENABLED 가 False 또는 psycopg 미설치.
+    """
+    if _psycopg is None:
+        raise RuntimeError(
+            f"psycopg not importable. original error: {_PSYCOPG_IMPORT_ERR!r}"
+        )
+    if not AGENT_KB_PG_ENABLED:
+        raise RuntimeError("AGENT_KB_PG_HOST / AGENT_KB_PG_USER 미설정")
+
+    ro_user = AGENT_KB_PG_USER_RO or AGENT_KB_PG_USER
+    ro_pw = AGENT_KB_PG_PASSWORD_RO or AGENT_KB_PG_PASSWORD
+    if not AGENT_KB_PG_USER_RO:
+        import logging
+        logging.getLogger("agent_core.db").warning(
+            "kb_pg_ro_fallback_to_rw — AGENT_KB_PG_USER_RO 미설정, RW role 로 read path 진행. "
+            "운영 환경에서는 .env 의 AGENT_KB_PG_USER_RO/AGENT_KB_PG_PASSWORD_RO 설정 권장 (ADR-0021)."
+        )
+    target_db = (database or AGENT_KB_PG_DB or "agent_kb")
+    conninfo_parts = [
+        f"host={AGENT_KB_PG_HOST}",
+        f"port={AGENT_KB_PG_PORT}",
+        f"dbname={target_db}",
+        f"user={ro_user}",
+        f"password={ro_pw}",
+        f"sslmode={AGENT_KB_PG_SSLMODE}",
+        f"connect_timeout={AGENT_TIMEOUT_SEC}",
+        "application_name=agent_core_kb_ro",
+    ]
+    conninfo = " ".join(conninfo_parts)
+    conn = _psycopg.connect(conninfo)
+    if autocommit:
+        conn.autocommit = True
+    return conn

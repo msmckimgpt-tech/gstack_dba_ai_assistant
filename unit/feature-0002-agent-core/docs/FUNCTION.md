@@ -169,15 +169,34 @@ source_of_truth: true
 - `modules/config.py` 의 5 env binding: `AGENT_KB_EMBEDDING_MODEL` (default text-embedding-3-small), `AGENT_KB_EMBEDDING_DIM` (1536), `AGENT_KB_EMBEDDING_BATCH_SIZE` (100), `AGENT_KB_EMBEDDING_TIMEOUT_SEC` (60), `AGENT_KB_EMBEDDING_MAX_ATTEMPTS` (3).
 - Test: `tests/test_kb_backfill.py` (4 unit test: TABLE_MAPPING 정합 / state roundtrip / dry-run no-op / main smoke) + `tests/test_kb_embedding_worker.py` (6 unit test: cost estimation 3 model + length mismatch raise + UPDATE SQL emit + dry-run no-OpenAI).
 
-**M4 cycle 책임 (별 cycle 위임)**:
-- FULLTEXT → pg_trgm rewrite (`knowledge.py:1434` 의 `MATCH ... AGAINST NATURAL LANGUAGE MODE` → pg_trgm `similarity()` / tsvector `to_tsvector + @@` / pgvector embedding `<=>` 3 옵션 中 1택)
-- `AGENT_KB_READ_BACKEND` env routing 활성 (M4 진입 시 1, M5 까지 유지) — `modules/db.py` 의 read path 분기
-- `bin/kb-cutover-readiness.sh` script (10+ 게이트 검증 — dual-write SLA + invariant test + p99 latency 50% 이내 + `make ask` 5 회귀 시나리오)
-- Stage A/B rollback 절차 명문화 (1줄 env 변경 + agent 재기동)
-- ADR-0021 §Consequences (e)/(f) 게이트 PASS 명시
-- delete/prune 의 진짜 cross-DB SLA (in-process counter 기반)
-- Latency baseline production-like 측정 (M2-d 의 `get_mirror_metrics()` production sampling)
-- Nice-to-have (REV-20260521-0009 C-6/C-7/C-8)
+**M4 cutover read path (TASK-0024 본 cycle 산출)**:
+- FULLTEXT → pg_trgm rewrite: `knowledge.py:1434` 의 MySQL `MATCH(t.TextContent) AGAINST(... IN NATURAL LANGUAGE MODE)` → PG `similarity(COALESCE(t.text_content, ''), %(query_text)s)` (KB_PG_DIALECT_NOTES.md §2 옵션 1 채택, 한국어 호환 + extension 이미 활성).
+- `AGENT_KB_READ_BACKEND=postgres` env 분기: `knowledge._load_rag_documents_for_request()` 안에서 PG path 우선 시도 + Exception 시 `logger.warning("kb_read_pg_fallback")` + MySQL fallthrough (fail-soft).
+- 4 PG SQL variant — `_PG_SEARCH_RAG_DOCUMENTS_WITH_TEXT_INCL_NULL` + `_STRICT` + `_NO_TEXT_INCL_NULL` + `_STRICT`. blank scope `""` 포함 시 `_INCL_NULL` 분기 (`scope_key IS NULL OR = ''` 동반), 그 외 `_STRICT` (= ANY 만). MySQL `_scope_filter_sql()` 등가성 보장 (REV-20260522-0012 B-2 흡수).
+- **agent_kb_ro role 분리**: `modules/db.py` 의 `_pg_connect_ro()` 신규 — `AGENT_KB_PG_USER_RO` / `AGENT_KB_PG_PASSWORD_RO` 사용. 미설정 시 RW fallback + warning log. `_load_rag_documents_for_request_pg()` 가 `_pg_connect_ro()` 사용 — ADR-0021 의 2-layer RBAC layer 1 정합 (REV-20260522-0012 B-3 흡수).
+- `modules/knowledge.py` 의 `import logging` + module-level `logger = logging.getLogger("agent_core.knowledge")` 정의 (REV-20260522-0012 B-1 흡수 — fail-soft except 가 NameError 로 crash 안 함).
+- `_normalize_rag_doc_rows()` extracted helper — MySQL + PG path 공통 post-processing (token filter + dedupe + dict assembly).
+
+**Cutover readiness script (TASK-0024 본 cycle 산출)**:
+- `bin/kb-cutover-readiness.sh` (~190 LOC) — 10-gate 검증:
+  1. M2 dual-write audit SLA ≤ 0.1% (calls `bin/kb-dual-write-verify.sh --audit-sla`)
+  2. M2-d pg_branch tag coverage ≤ 0.1%
+  3. ANCHOR §3 invariant test (S1 + N1 + S2/S4/S5/S6 mock)
+  4. unit test 전체 (40 PASS / 2 SKIPPED 기준)
+  5. M3 backfill 4 table row count 일치
+  6. M3 embedding worker — `texts.embedding IS NULL = 0`
+  7. p99 latency M-1 baseline 50% 이내 (INCONCLUSIVE — production-like 부재)
+  8. agent_kb_rw TRUNCATE denied (N2 env-gated)
+  9. `make ask` 5종 회귀 (INCONCLUSIVE — 운영자 책임)
+  10. env 변수 (`AGENT_KB_PG_REQUIRED=1` + `AGENT_KB_DUAL_WRITE=1` + `AGENT_KB_PG_HOST` non-empty)
+- Exit codes: 0=PASS / 1=FAIL / 2=INCONCLUSIVE. `--skip-ask-regression` / `--skip-latency` / `--since` options.
+
+**Stage A/B/C rollback 절차 (ADR-0021 §Consequences)**:
+- **Stage A** (cutover ~ M4 cycle 종료): `.env` 의 `AGENT_KB_READ_BACKEND=mysql` 1줄 변경 + agent 재기동 — full rollback. MySQL 측 정합이 dual-write 로 보존.
+- **Stage B** (M4 종료 ~ M5 진입 전): dual-write 유지 + read 만 Postgres. rollback 시 MySQL 정합 보존 — 1줄 변경으로 가능. M5 진입 전까지 안전 window.
+- **Stage C** (M5 cleanup 후): MySQL DROP TABLE 완료 → rollback = 데이터 손실. M5 진입은 별 cycle 의 PLAN-APPROVED + 사람 confirm 필수.
+
+**M5 cycle 책임 (별 cycle 위임)**:
 
 **M5 cycle 책임 (별 cycle 위임)**:
 - MySQL KB 5 정본 mysqldump 보관 + DROP TABLE (또는 read-only deprecated 상태)

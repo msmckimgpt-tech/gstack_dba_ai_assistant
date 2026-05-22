@@ -8,6 +8,29 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260522-0012 [SUBAGENT:Plan-subagent — M4 cutover (FULLTEXT → pg_trgm + read backend routing)]
+- Date: 2026-05-22
+- TASK-Cycle: TASK-0024 (M4 cutover read path 전환 + cutover readiness script, **Major §12.3** — RBAC 영향 cycle)
+- Outside-voice channel: Plan subagent. 사용자 메모리 `feedback_outside_voice_for_rbac.md` 정합 (read backend switch 는 ADR-0021 의 2-layer RBAC 의 layer 1 — connection-level role 영향).
+- Verdict: **FAIL** → **PASS 전환** (Critical 4 본 cycle 내 흡수 + B5 follow-up 명시).
+- Section A (Summary): M4 cutover 의 핵심 산출 (PG search SQL + read backend routing + cutover readiness 10-gate script + 6 unit test) 작성. 단 outside-voice review 가 **4 Critical 결함** + 1 Critical follow-up 식별: (B1) `knowledge.py` 의 logger 미정의 → fail-soft except 가 NameError 로 hard-crash + (B2) PG scope_keys 의 NULL/'' 매치 누락 → MySQL `_scope_filter_sql()` 등가성 위배, 빈 scope row silent drop + (B3) `_pg_connect()` 가 RW user 사용 → ADR-0021 의 ro role 분리 정책 위배 (RBAC 회귀) + (B4) fail-soft fallback path 의 regression test 부재 → Gate 4 가 B1 검출 못 함 + (B5, follow-up) `AGENT_KB_PG_REQUIRED=1` 시 fail-loud propagate 가 의도 — 현재는 fail-soft 가 항상 적용. 본 cycle: B1/B2/B3/B4 즉시 흡수, B5 는 ADR-0021 후속 cycle (M4-tweak).
+- Section B (Critical findings — 본 cycle 내 반영 완료):
+  - **B-1 (Critical/Blocker)**: `knowledge.py` 의 `logger` symbol 미정의 → fail-soft `except Exception` 의 `logger.warning(...)` 가 `NameError` propagate → 실 production PG 실패 시 hard-crash (500). **반영**: `import logging` + `logger = logging.getLogger("agent_core.knowledge")` module-level 정의.
+  - **B-2 (Critical/Blocker)**: PG `scope_key = ANY(%(scope_keys)s)` 가 `scope_key IS NULL` / `= ''` 매치 안 함. MySQL `_scope_filter_sql()` 는 candidate list 의 `""` 있으면 `IS NULL OR = ''` 절 emit — silent row drop. **반영**: `_INCL_NULL` vs `_STRICT` 4 variant SQL + `search_rag_documents()` 가 candidate list 검사 후 분기. blank `""` 는 `ANY()` 에는 안 들어가고 별 `IS NULL OR = ''` 절로 처리.
+  - **B-3 (Critical/Blocker)**: read path 가 `_pg_connect()` (RW user) 사용 → ADR-0021 의 layer 1 (agent_kb_rw vs agent_kb_ro 분리) 위배. **반영**: `_pg_connect_ro()` 신설 + `AGENT_KB_PG_USER_RO` / `AGENT_KB_PG_PASSWORD_RO` env 변수 + `_load_rag_documents_for_request_pg()` 가 `_pg_connect_ro()` 사용 + ro 미설정 시 RW fallback + warning log.
+  - **B-4 (Critical)**: fail-soft `except` branch 의 regression test 부재. **반영**: `test_pg_read_failure_falls_back_to_mysql` 추가 — PG path raise 시 logger.warning 호출 + MySQL path 호출 + 결과 반환 보장 + `hasattr(knowledge, "logger")` smoke assertion (B1 회귀 방지).
+- Section C (Nice-to-have findings — M4-tweak 또는 M5 위임):
+  - C-1: `_load_rag_documents_for_request_pg()` 가 매 호출 connection open+close — `psycopg_pool.ConnectionPool` 도입 권장 (M5).
+  - C-2: cutover-readiness Gate 7/9 INCONCLUSIVE 가 자동화 ambiguous — `--accept-inconclusive` flag 권장 (M4-tweak).
+  - C-3: pg_trgm vs MySQL FULLTEXT 의미적 divergence — golden fixture (M4-tweak).
+  - C-4: typing imports 정합 ✓.
+  - C-5: `_pg_connect_ro` 에 `SET TRANSACTION READ ONLY` 추가 (M4-tweak).
+  - C-6: `AGENT_KB_DUAL_WRITE=1` post-cutover 전환 doc 명시 ✓.
+  - C-7: ft_score fallback 정합 ✓.
+  - **B-5 (Critical follow-up, M4-tweak)**: `AGENT_KB_PG_REQUIRED=1` 시 fail-loud propagate vs Stage A rollback safety 의 fail-soft 모순 — 별 ADR-0021 follow-up cycle.
+- Section D (Verdict): FAIL → **PASS 전환** — 4 Critical 본 cycle 내 흡수 + B-5/C-1/C-2/C-3/C-5 M4-tweak/M5 위임.
+- Decision authority: 사용자 메시지 "이번 세션에서 남은 cycle을 모두 완수해주세요" + Critical 흡수 명시 승인.
+
 ## REV-20260522-0011 [SKIPPED:rbac-unchanged-data-migration — M3 backfill ETL + embedding worker]
 - Date: 2026-05-22
 - TASK-Cycle: TASK-0023 (M3 backfill ETL + embedding worker, **Minor §12.3** — RBAC 무변경)

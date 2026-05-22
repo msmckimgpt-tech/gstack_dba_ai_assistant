@@ -8,6 +8,37 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0008
+- Date: 2026-05-22
+- TASK-Cycle: TASK-0024 (M4 cutover — FULLTEXT → pg_trgm + AGENT_KB_READ_BACKEND routing + cutover readiness, **Major §12.3** — RBAC 영향 cycle)
+- Summary: §2.1 PLAN-APPROVED 의 **M4 phase (Cutover — read path 전환)** — `knowledge.py:1438` 의 MySQL FULLTEXT `MATCH AGAINST NATURAL LANGUAGE MODE` 를 PG pg_trgm `similarity()` 로 routing (AGENT_KB_READ_BACKEND env 분기) + cutover readiness 10-gate script + `agent_kb_ro` role 분리. **Outside-voice review (Plan subagent, `REV-20260522-0012`) Verdict FAIL + Critical 4 본 cycle 내 반영** (B-1 logger 미정의 / B-2 scope NULL/'' 매치 누락 / B-3 RW user RBAC 회귀 / B-4 fail-soft regression test 부재). B-5 (REQUIRED=1 fail-loud 모순) 는 M4-tweak follow-up.
+- Worktree: `ai/claude/0002/kb-pg-m4` 격리. path: `<wrapper>/.worktrees/0002-kb-pg-m4/`. 사용자 결정 (2026-05-22): "이번 세션에서 남은 cycle을 모두 완수해주세요" → 본 cycle 진행.
+- Files (read backend + cutover gate + test):
+  - `modules/kb_backend.py` (+~85 LOC): 4 PG SQL constants (`_PG_SEARCH_RAG_DOCUMENTS_WITH_TEXT_INCL_NULL` + `_STRICT` + `_NO_TEXT_INCL_NULL` + `_STRICT`) — pg_trgm `similarity(COALESCE(t.text_content, ''), %(query_text)s)` + `_INCL_NULL` 분기 (NULL/'' 매치 동반). `PgKbBackend.search_rag_documents()` method — scope_keys 의 blank/None 검출 → 4 variant SQL 분기.
+  - `modules/db.py` (+~45 LOC): `_pg_connect_ro()` 신규 — `AGENT_KB_PG_USER_RO` / `_PASSWORD_RO` 사용. 미설정 시 RW fallback + warning log.
+  - `modules/config.py` (+~6 LOC): `AGENT_KB_PG_USER_RO` / `AGENT_KB_PG_PASSWORD_RO` binding + EXPORT_VARS 등록.
+  - `modules/knowledge.py` (+~50 LOC): `import logging` + module-level `logger` 정의 (REV-20260522-0012 B-1) + `_load_rag_documents_for_request()` 안에 `AGENT_KB_READ_BACKEND=postgres` 분기 + fail-soft except + MySQL fallback. `_normalize_rag_doc_rows()` 추출 (MySQL + PG 공통). `_load_rag_documents_for_request_pg()` 신규 — `_pg_connect_ro()` 사용 + `PgKbBackend.search_rag_documents()` 호출.
+  - `bin/kb-cutover-readiness.sh` (신규 ~190 LOC): 10-gate readiness 검증 (dual-write SLA + pg_branch coverage + invariant test + unit test + backfill row count + embedding NULL=0 + p99 latency + TRUNCATE denied + ask 5종 회귀 + env 변수). Gate 7/9 INCONCLUSIVE (운영자 책임). `--skip-ask-regression` / `--skip-latency` / `--since` options. exit code 0=PASS / 1=FAIL / 2=INCONCLUSIVE.
+  - `tests/test_kb_read_backend.py` (신규 ~250 LOC): 9 unit test (pg_trgm SQL emit + NO_TEXT 분기 + empty conv_ids + scope_keys None + _pg_available False → None + backend 호출 spy + B-4 fail-soft regression + B-2 blank scope INCL_NULL + strict scope no NULL).
+  - `docs/{TASK,REVIEW,MODIFY,REPORT,FUNCTION}.md`: cycle 등록 + `REV-20260522-0012` + 본 entry.
+- Outside-voice review (Plan subagent) Critical 4 본 cycle 내 반영:
+  1. **Critical/Blocker B-1**: `knowledge.py` 의 `import logging` + module-level `logger` 정의 ✓
+  2. **Critical/Blocker B-2**: PG `_INCL_NULL` SQL variant + scope candidate 분기 ✓
+  3. **Critical/Blocker B-3**: `_pg_connect_ro()` + `AGENT_KB_PG_USER_RO/PASSWORD_RO` env + read path 사용 ✓
+  4. **Critical B-4**: `test_pg_read_failure_falls_back_to_mysql` + B-2 blank scope test ✓
+- 검증 (본 cycle):
+  - `pytest tests/test_kb_read_backend.py -v` — 9 PASS
+  - `pytest tests/` 전체 — 40 PASS, 2 SKIPPED (회귀 없음)
+  - `bash -n bin/kb-cutover-readiness.sh` — syntax PASS
+- Runtime 검증 deferral (사용자 / M5 별 cycle 책임):
+  - `bin/kb-cutover-readiness.sh --since <ISO>` 운영 환경 실 실행 — Gate 1~10 모두 PASS 확인
+  - production-like 환경에서 p99 latency 측정 (Gate 7)
+  - `make ask` 5종 회귀 시나리오 실 실행 (Gate 9)
+  - `.env` 의 `AGENT_KB_READ_BACKEND=postgres` 전환 → agent 재기동
+  - canary 1 주일 monitoring
+- 사용자 결정 (2026-05-22): 즉시 자동 commit + push + main 동기화.
+- Outside-voice rationale: 호출 ✓ — `REV-20260522-0012 [SUBAGENT:Plan-subagent]`. M4 cutover 가 read backend switch + RBAC 영향 cycle. FAIL Verdict + Critical 4 본 cycle 흡수 → PASS 전환. B-5 (M4-tweak) + Nice-to-have C-1/C-2/C-3/C-5 (M4-tweak/M5) 위임.
+
 ## CHG-20260522-0007
 - Date: 2026-05-22
 - TASK-Cycle: TASK-0023 (M3 backfill ETL + embedding worker, **Minor §12.3** — RBAC 무변경)

@@ -178,6 +178,8 @@ __all__ = [
     "AGENT_KB_PG_DB",
     "AGENT_KB_PG_USER",
     "AGENT_KB_PG_PASSWORD",
+    "AGENT_KB_PG_USER_RO",
+    "AGENT_KB_PG_PASSWORD_RO",
     "AGENT_KB_PG_SSLMODE",
     "AGENT_KB_PG_ENABLED",
     "AGENT_KB_READ_BACKEND",
@@ -256,6 +258,10 @@ AGENT_KB_PG_PORT = int(os.getenv("AGENT_KB_PG_PORT", "5432") or "5432")
 AGENT_KB_PG_DB = os.getenv("AGENT_KB_PG_DB", "agent_kb").strip() or "agent_kb"
 AGENT_KB_PG_USER = os.getenv("AGENT_KB_PG_USER", "").strip()
 AGENT_KB_PG_PASSWORD = os.getenv("AGENT_KB_PG_PASSWORD", "")
+# REV-20260522-0012 B3 흡수 (M4 TASK-0024): read path 의 least-privilege —
+# `agent_kb_ro` role 로 connect. 미설정 시 RW 로 fallback (RBAC 경고 log).
+AGENT_KB_PG_USER_RO = os.getenv("AGENT_KB_PG_USER_RO", "").strip()
+AGENT_KB_PG_PASSWORD_RO = os.getenv("AGENT_KB_PG_PASSWORD_RO", "")
 AGENT_KB_PG_SSLMODE = os.getenv("AGENT_KB_PG_SSLMODE", "prefer").strip() or "prefer"
 AGENT_KB_PG_ENABLED = bool(AGENT_KB_PG_HOST) and bool(AGENT_KB_PG_USER)
 AGENT_KB_READ_BACKEND = (os.getenv("AGENT_KB_READ_BACKEND", "mysql").strip() or "mysql").lower()

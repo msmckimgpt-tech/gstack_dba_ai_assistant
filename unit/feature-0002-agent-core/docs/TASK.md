@@ -9,13 +9,15 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: M3 backfill ETL + embedding worker (cycle: TASK-0023) + M2-d done (TASK-0022) + TASK-0101 backlog closure + TASK-0100 multipart hot-fix
-- Owner: AI (본 cycle: bin/kb-backfill.sh + scripts/kb_backfill.py + bin/kb-embedding-worker.sh + scripts/kb_embedding_worker.py + config.py 의 AGENT_KB_EMBEDDING_* binding + 10 unit test) → AI (M4: FULLTEXT → pg_trgm rewrite + AGENT_KB_READ_BACKEND routing + cutover readiness)
+- State: M4 cutover read path 전환 + cutover readiness (cycle: TASK-0024) + M3 done (TASK-0023) + M2-d done (TASK-0022)
+- Owner: AI (본 cycle: 4 PG search SQL variant + PgKbBackend.search_rag_documents + _pg_connect_ro + knowledge.py routing + cutover readiness 10-gate script + 9 unit test + outside-voice REV-20260522-0012 Critical 4 흡수) → AI (M5: MySQL DROP TABLE + dual-write 제거)
 - Priority: high
 - Last Updated: 2026-05-22
 
 ## 1.1 Current Cycle
-- [ ] TASK-0023 (REQ-20260522-0005, **Minor §12.3** — RBAC 무변경, 데이터 이전 작업) §2.1 PLAN-APPROVED 의 **M3 phase (Backfill ETL + embedding 일괄 생성)** 실행. M2 dual-write 시작 시점 이전의 MySQL 4 KB table 의 row 를 Postgres 의 4 등가 table 로 backfill + `texts.embedding` 일괄 생성. **본 cycle 산출 6건**: (a) `scripts/kb_backfill.py` (~280 LOC) — 4 table TABLE_MAPPING + 멱등 INSERT ON CONFLICT + state file resumable + dry-run + --since/--batch-size/--table/--reset-state, (b) `scripts/kb_embedding_worker.py` (~190 LOC) — OpenAI text-embedding-3-small batch API + WHERE embedding IS NULL paginate + dry-run cost estimation + max-rows cap + retry/timeout, (c) `bin/kb-backfill.sh` wrapper (docker exec agent + /shared mount), (d) `bin/kb-embedding-worker.sh` wrapper, (e) `modules/config.py` 의 AGENT_KB_EMBEDDING_{MODEL,DIM,BATCH_SIZE,TIMEOUT_SEC,MAX_ATTEMPTS} binding, (f) `tests/test_kb_backfill.py` + `tests/test_kb_embedding_worker.py` 10 unit test. outside-voice review **SKIPPED** — 본 cycle 의 ETL 은 RBAC 변경 없음, 메모리 정책 정합. **M4 cycle (별 cycle)** 책임: FULLTEXT → pg_trgm rewrite + AGENT_KB_READ_BACKEND env routing + cutover readiness script.
+- [ ] TASK-0024 (REQ-20260522-0006, **Major §12.3** — RBAC 영향 cycle) §2.1 PLAN-APPROVED 의 **M4 phase (Cutover — read path 전환)** 실행. `knowledge.py` 의 MySQL FULLTEXT `MATCH AGAINST` 를 PG pg_trgm `similarity()` 로 `AGENT_KB_READ_BACKEND=postgres` 분기 routing + `agent_kb_ro` role 분리 + cutover 10-gate readiness script. **outside-voice review (Plan subagent, `REV-20260522-0012`) Verdict FAIL + Critical 4 본 cycle 내 반영 완료** (B-1 logger 정의 / B-2 scope NULL/'' INCL_NULL SQL variant / B-3 `_pg_connect_ro()` 신규 + `agent_kb_ro` role / B-4 fail-soft regression test). B-5 (REQUIRED=1 fail-loud 모순) + C-1/C-2/C-3/C-5 M4-tweak/M5 위임. **본 turn 의 deliverable 은 6 산출 + Critical 4 흡수까지**. **M5 cycle (별 cycle)** 책임: MySQL DROP TABLE + dual-write 제거 + ADR.
+
+- [x] TASK-0023 (REQ-20260522-0005, **Minor §12.3** — RBAC 무변경, 데이터 이전 작업) — M3 backfill ETL + embedding worker, **done in commit 957be67**.
 
 - [x] TASK-0022 (REQ-20260522-0002, **Major §12.3**) — M2-d pg_branch xmax + S2/S4/S5/S6 + tagging coverage gate + Nice-to-have 7 + REV-20260522-0010 Critical 6 흡수. **done in commit bc3fa81**.
 
