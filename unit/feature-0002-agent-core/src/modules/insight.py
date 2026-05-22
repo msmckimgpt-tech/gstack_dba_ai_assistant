@@ -637,7 +637,7 @@ def _scan_instance_schema_insights(
     }
     if not db_conn or not mem_conn or not AGENT_SCHEMA_INSTANCE_SCAN or not AGENT_SCHEMA_INSIGHT:
         return report
-    if not OPENAI_API_KEY or OpenAI is None:
+    if not LLM_API_KEY or OpenAI is None:
         return report
     candidates = [str(s or "").strip() for s in (schemas or [])]
     candidates = [s for s in candidates if s and not _is_system_schema(s)]

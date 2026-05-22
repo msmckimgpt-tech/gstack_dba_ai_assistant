@@ -4,8 +4,11 @@ import os, time, json
 
 def main():
     from openai import OpenAI
-    key = os.environ.get("OPENAI_API_KEY", "")
-    model = os.environ.get("OPENAI_MODEL", "gpt-5-nano")
+    key = (
+        os.environ.get("BEDROCK_GATEWAY_API_KEY")
+        or os.environ.get("LOCAL_LLM_API_KEY", "")
+    )
+    model = os.environ.get("OPENAI_MODEL", "claude-haiku-4")
     print(f"Model: {model}, Key present: {bool(key)}")
     c = OpenAI(api_key=key)
     start = time.time()

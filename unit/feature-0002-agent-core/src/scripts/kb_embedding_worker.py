@@ -79,11 +79,21 @@ def call_openai_embeddings(texts: list[str], model: str, timeout_sec: int, max_a
     except ImportError as e:
         raise RuntimeError(f"openai SDK 미설치: {e}") from e
 
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = (
+        os.environ.get("BEDROCK_GATEWAY_API_KEY")
+        or os.environ.get("LOCAL_LLM_API_KEY")
+    )
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY 환경 변수 부재")
+        raise RuntimeError("LLM API 자격증명 부재 (BEDROCK_GATEWAY_API_KEY 또는 LOCAL_LLM_API_KEY 필요)")
 
-    client = OpenAI(api_key=api_key, timeout=timeout_sec)
+    api_base = (
+        os.environ.get("BEDROCK_GATEWAY_URL")
+        or os.environ.get("LOCAL_LLM_API_BASE")
+    )
+    client_kwargs: dict = {"api_key": api_key, "timeout": timeout_sec}
+    if api_base:
+        client_kwargs["base_url"] = api_base
+    client = OpenAI(**client_kwargs)
     last_exc = None
     for attempt in range(1, max_attempts + 1):
         try:

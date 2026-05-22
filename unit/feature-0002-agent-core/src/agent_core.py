@@ -24,7 +24,7 @@ from rich.markdown import Markdown
 
 from modules import config as cfg
 from modules.config import (
-    OPENAI_API_KEY, OPENAI_MODEL, OPENAI_API_BASE,
+    OPENAI_MODEL, OPENAI_API_BASE,
     LLM_BASE_URL, LLM_API_KEY, LOCAL_LLM_API_KEY,
     DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_CONNECT_DB,
     MEMORY_DB, AGENT_TIMEOUT_SEC, AGENT_MAX_STEPS, AGENT_MAX_SHOW,
@@ -1353,7 +1353,7 @@ def _run_agent_core(
     if not LLM_API_KEY:
         result["error"] = (
             "LLM 자격증명이 설정되지 않았습니다. "
-            "BEDROCK_GATEWAY_API_KEY (권장) / LOCAL_LLM_API_KEY / OPENAI_API_KEY "
+            "BEDROCK_GATEWAY_API_KEY (권장) / LOCAL_LLM_API_KEY "
             "중 하나가 .env 에 채워져야 합니다."
         )
         return result

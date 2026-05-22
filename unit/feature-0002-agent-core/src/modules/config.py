@@ -211,7 +211,6 @@ __all__ = [
     "LOCAL_LLM_API_BASE",
     "LOCAL_LLM_API_KEY",
     "OPENAI_API_BASE",
-    "OPENAI_API_KEY",
     "OPENAI_MODEL",
     "OpenAI",
     "_inline_insight_on_ask_raw",
@@ -294,7 +293,6 @@ DB_PROMPT_DEFAULT = DB_NAME_EFFECTIVE or "(미지정)"
 MEMORY_DB = os.getenv("AGENT_MEMORY_DB", "agent_memory")
 
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "claude-sonnet-4")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 
 # ── 로컬 LLM Gateway (구버전 호환 — Local LLM gateway 사용 시) ──
 LOCAL_LLM_API_BASE = os.getenv("LOCAL_LLM_API_BASE", "").strip() or None
@@ -314,7 +312,7 @@ def _select_llm_provider() -> tuple[str | None, str | None]:
     codex P2 follow-up (CHG-20260522-0003): 이전 fallback chain (`X or Y or Z`)
     이 base_url 과 api_key 를 독립적으로 선택해서, 예를 들어 BEDROCK_GATEWAY_URL
     이 설정됐지만 BEDROCK_GATEWAY_API_KEY 가 비어 있는 경우 → URL 은 gateway 로
-    가지만 key 는 LOCAL_LLM_API_KEY / OPENAI_API_KEY 로 silent fallback →
+    가지만 key 는 LOCAL_LLM_API_KEY 로 silent fallback →
     gateway 가 그 key 를 reject (misroute). 본 helper 가 paired 결정으로 차단.
 
     우선순위 (paired only):
@@ -322,10 +320,8 @@ def _select_llm_provider() -> tuple[str | None, str | None]:
     2. Local LLM gateway — LOCAL_LLM_API_BASE + LOCAL_LLM_API_KEY 둘 다.
     3. 미설정            — (None, None). _get_openai_client() 가 None 반환.
 
-    feature-0007 follow-up (CHG-20260522-0006, 사용자 결정 2026-05-22): OpenAI
-    direct fallback 제거. OpenAI API Key 미사용. 운영 .env 잔존 `OPENAI_API_KEY`
-    값은 silent ignore (backward-compat — config.py 의 import 는 유지하나 본
-    helper 분기 외).
+    feature-0007 follow-up (CHG-20260522-0006): OpenAI direct fallback 제거.
+    CHG-20260522-0010: OPENAI_API_KEY 변수 완전 제거.
     """
     if BEDROCK_GATEWAY_URL and BEDROCK_GATEWAY_API_KEY:
         return (BEDROCK_GATEWAY_URL, BEDROCK_GATEWAY_API_KEY)

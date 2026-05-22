@@ -15,7 +15,7 @@ Usage:
   python3 tests/task0034_runner.py --target all
 
 Environment:
-  Reads OPENAI_API_KEY from repo's .env.
+  Reads BEDROCK_GATEWAY_API_KEY from repo's .env.llm.
   Uses WEB_BOOTSTRAP_ADMIN_USERNAME / WEB_BOOTSTRAP_ADMIN_PASSWORD
   from .env for login.
 """
@@ -421,12 +421,12 @@ async def main() -> int:
     env = load_env_file(ENV_FILE)
     username = env.get("WEB_BOOTSTRAP_ADMIN_USERNAME", "bootstrap_admin")
     password = env.get("WEB_BOOTSTRAP_ADMIN_PASSWORD", "")
-    api_key = env.get("OPENAI_API_KEY", "")
+    api_key = env.get("BEDROCK_GATEWAY_API_KEY", "")
     if not password:
         print("ERROR: WEB_BOOTSTRAP_ADMIN_PASSWORD not in .env", file=sys.stderr)
         return 2
     if args.target in ("api", "all") and not api_key:
-        print("ERROR: OPENAI_API_KEY not in .env", file=sys.stderr)
+        print("ERROR: BEDROCK_GATEWAY_API_KEY not in .env.llm", file=sys.stderr)
         return 2
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
