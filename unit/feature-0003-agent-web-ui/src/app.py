@@ -6041,7 +6041,7 @@ def _prepare_vision_inline_images(
         }], [])
 
     # bytes pre-fetch + base64 + size cap
-    from modules import storage_minio
+    from web.modules import storage_minio
     import base64 as _b64
 
     inline_entries: list[dict[str, str]] = []
@@ -7552,7 +7552,7 @@ async def upload_conversation_attachment(
     Response: `{id, kind, signed_url (사내망 다운로드 전용), size, sha256, status}`
     """
     try:
-        from modules import storage_minio
+        from web.modules import storage_minio
     except Exception as exc:
         return _json_error(f"storage 모듈 import 실패: {exc}", 500)
 
@@ -7768,7 +7768,7 @@ def get_attachment_metadata(attachment_id: int, request: Request) -> JSONRespons
     """첨부 metadata + signed URL re-issue (사내망 다운로드 전용). D21 pending 은
     metadata 만, signed URL 미발급."""
     try:
-        from modules import storage_minio
+        from web.modules import storage_minio
     except Exception as exc:
         return _json_error(f"storage 모듈 import 실패: {exc}", 500)
 
@@ -11859,7 +11859,7 @@ def admin_health_attachment_grants(request: Request) -> JSONResponse:
         if not _account_has_permission(account, "console.access"):
             return _json_error("요청을 수행할 수 없습니다.", 403)
         try:
-            from modules import sandbox_schema as _ssch
+            from web.modules import sandbox_schema as _ssch
         except Exception as exc:
             return _json_error(f"sandbox_schema 모듈 import 실패: {exc}", 500)
         try:

@@ -11,10 +11,14 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: minor (TASK-0105 — Profile Drawer '내 감사 로그' 탭 제거)
-- Last Updated: 2026-05-22 (TASK-0105 — 일반 사용자 Profile Drawer에서 '내 감사 로그' 탭 비노출)
+- Priority: major (TASK-0106 — 첨부 import 경로 + lazy-create 첨부 staging)
+- Last Updated: 2026-05-22 (TASK-0106 — `from modules import storage_minio` 경로 + 새 대화 첨부 staging)
 
 ## 2. Task Queue
+
+### TASK-0106 첨부 모듈 import 경로 + lazy-create 첨부 staging (2026-05-22)
+
+- [x] TASK-0106 (REQ-20260522-0106, **Major** §12.3 — 외부 storage 통합 + 사용자 노출 첨부 동선 회복). 사용자 직접 보고 2건: (1) 웹 첨부 업로드 시 `Error: storage 모듈 import 실패: cannot import name 'storage_minio' from 'modules' (/app/modules/__init__.py)` toast — backend `/app/modules` 는 feature-0002-agent-core 의 unified namespace (14 module cross-injection) 인 반면 `storage_minio.py` 는 feature-0003-agent-web-ui 의 module 로 Dockerfile 이 `/app/web/modules/` 로 copy. `app.py` 의 `from modules import storage_minio` (3 callsite: vision inline `_prepare_vision_inline_images` L6044, upload endpoint L7555, metadata endpoint L7771) + `from modules import sandbox_schema` (L11862) 가 잘못된 namespace 검색 → `from web.modules import …` 으로 교체. feature-0002-agent-core/src/modules/attachment_reconciliation.py 의 `_delete_minio_object()` (worker 환경 host dev sibling path fallback 보존) 에는 `from web.modules import storage_minio` 우선 시도 + ImportError 시 기존 sys.path 삽입 fallback 의 dual-mode 보강. (2) "+ 새 대화" 클릭 후 첫 메시지 전송 전엔 첨부 불가 — `_uploadComposerAttachment` 의 `if (isLazy)` 조기 차단 toast. lazy-create 패턴 (TASK-0048) 의 부수 효과로 cid 미발급 = `/api/conversations/{cid}/attachments` 호출 불가. **수정 (Option A — client-side staging)**: lazy 분기에서 즉시 차단 대신 pendingSentinel bucket 에 status=`staged` + `_localFile=File` 로 보관, `sendPrompt()` 의 lazy-create path 가 staged 첨부 ≥1 감지 시 `/api/new_conversation` 으로 cid 즉시 발급 → `_flushStagedAttachmentsToCid(earlyCid, pendingKey)` 신규 helper 가 staged 일괄 업로드 → askBody 를 `lazy_create=true` (legacy) 에서 `conversation_id=earlyCid` (즉시-cid 모드) 로 전환 + `attachment_ids` 에 union. staged 가 0 인 lazy-create 는 기존 lazy_create=true 단일 호출 보존 (TASK-0048 정신). pill rendering 에 `data-staged="true"` 속성 + "(첫 메시지와 함께 업로드)" tooltip 추가. `_toggleAttachmentPill` 에 staged 토글 = remove (실수 클릭 시 재선택 부자연스러움 회피). py_compile + node --check PASS. backend / RBAC / DB schema / endpoint contract 무변경. 본 cycle worktree `ai/claude/0106-attachment-fix`. cache-bust 갱신 필요 (live deploy 후 별 commit).
 
 ### TASK-0105 Profile Drawer '내 감사 로그' 탭 제거 (2026-05-22)
 

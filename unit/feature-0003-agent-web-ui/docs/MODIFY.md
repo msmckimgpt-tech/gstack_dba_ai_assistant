@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0106
+- Date: 2026-05-22
+- Related Requirement: TASK-0106 (REQ-20260522-0106, **Major** §12.3 — 첨부 storage 모듈 import 경로 + lazy-create 첨부 staging)
+- Summary: 사용자 직접 보고 2건 일괄 fix. (1) 웹 첨부 업로드 시 `Error: storage 모듈 import 실패: cannot import name 'storage_minio' from 'modules' (/app/modules/__init__.py)` toast — Dockerfile 이 feature-0002-agent-core 의 unified namespace 만 `/app/modules` 로 copy + feature-0003 의 `storage_minio.py`/`sandbox_schema.py` 는 `/app/web/modules/` 로 copy 하지만 `app.py` 의 `from modules import …` (4 callsite) 가 잘못된 경로. `from web.modules import …` 로 교체. attachment_reconciliation worker 는 docker (`/app/web/modules`) + host dev (sibling sys.path) 양쪽 dual-mode fallback. (2) "+ 새 대화" 클릭 후 첫 메시지 전 첨부 차단 (`isLazy` 조기 toast). lazy-create (TASK-0048) 는 backend cid 발급을 첫 send 까지 지연시키므로 cid 필수의 `/api/conversations/{cid}/attachments` 호출 불가. **Option A — client-side staging**: lazy 분기에서 즉시 차단 대신 pendingSentinel bucket 에 status=`staged` + `_localFile=File` 보관, `sendPrompt()` 의 lazy-create path 가 staged ≥1 감지 시 `/api/new_conversation` 으로 cid 즉시 발급 → `_flushStagedAttachmentsToCid()` 신규 helper 가 staged 일괄 업로드 → askBody 를 `lazy_create=true` → `conversation_id=earlyCid` 로 전환 + `attachment_ids` union. staged 0 인 lazy-create 는 기존 단일 호출 보존 (TASK-0048 정신). pill rendering 에 `data-staged` 속성 + "(첫 메시지와 함께 업로드)" tooltip + staged 토글 = remove. py_compile + node --check PASS. backend / RBAC / DB schema / endpoint contract 무변경.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`: `from modules import storage_minio` 3 callsite (L6044 vision inline, L7555 upload endpoint, L7771 metadata endpoint) → `from web.modules import storage_minio`. `from modules import sandbox_schema` (L11862 grant drift health) → `from web.modules import sandbox_schema`.
+  - `unit/feature-0002-agent-core/src/modules/attachment_reconciliation.py`: `_delete_minio_object()` 의 storage_minio import 를 `try: from web.modules import storage_minio` 우선 시도 + ImportError 시 sys.path 삽입 fallback 의 dual-mode 보강 (docker container + host dev 양쪽 환경 호환).
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`: `_uploadComposerAttachment()` 의 `if (isLazy)` 차단 toast 제거 + pendingSentinel bucket 에 staged item 추가. `_renderAttachmentPills()` 에 `data-staged` 속성 + 조건부 tooltip. `_toggleAttachmentPill()` 에 staged 토글 = remove. `_flushStagedAttachmentsToCid()` 신규 helper. `sendPrompt()` 의 lazy-create attachment_ids 빌드 후 staged ≥1 감지 시 `/api/new_conversation` 발급 + flush + askBody 즉시-cid 모드 전환 + attachment_ids union.
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0106 entry 추가 + Current Status 갱신
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260522-0106 [SKIPPED:no-rbac-no-schema-no-secret-handling] 추가
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 상단에 TASK-0106 entry 추가
+  - `docs/STATUS.md`: project-level entry 추가
+
 ## CHG-20260522-0008
 - Date: 2026-05-22
 - Related Requirement: TASK-0105 (REQ-20260522-0008, **Minor** §12.3 — Profile Drawer '내 감사 로그' 탭 일반 사용자 비노출)
