@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260522-0106 [SKIPPED:no-rbac-no-schema-no-secret-handling]
+- Related TASK: TASK-0106 (REQ-20260522-0106, **Major** §12.3 — 첨부 storage 모듈 import 경로 + lazy-create 첨부 staging)
+- Reason: 사용자 직접 보고 2건 일괄 fix. (1) Python import 경로 교정 — `from modules import storage_minio/sandbox_schema` (4 callsite) → `from web.modules import …`. Dockerfile 의 `COPY unit/feature-0003-agent-web-ui/src /app/web` 를 정확히 반영하는 namespace 정정에 한정 — backend / RBAC catalog / DB schema / endpoint contract / 암호화 알고리즘 / signed URL / D11 consent / D13 server-side bytes / D7 MIME allowlist / D8 size cap / D12 HMAC 모두 무변경. (2) lazy-create staging — `_uploadComposerAttachment()` 의 isLazy 차단 제거 + pendingSentinel bucket 에 staged item + sendPrompt 첫 send 직전 `/api/new_conversation` 발급 + `/api/conversations/{cid}/attachments` 일괄 업로드 + askBody 즉시-cid 모드 전환. backend endpoint contract 무변경 — 기존 multipart endpoint 를 cid 발급 직후 호출하는 흐름 추가일 뿐. AGENTS.md §18.8 trigger 분석: (a) "UI/button/file/dialog" 시그널 있으나 기존 attachment UI 의 동작 회복 + 차단 토스트 → staging 흐름 전환에 한정, 새로운 보안 표면 없음. (b) "auth/credential/PII" 키워드 미해당 — 첨부 bytes 는 D11 consent gate + D13 server-side read 의 기존 정책에 그대로 귀속, 본 cycle 은 client UX 만 변경. (c) "schema/migration" 미해당 — `WebConversationAttachments` / `WebAccountConsents` / `WebAttachmentDerivedMessages` 모두 무변경. SKIPPED 정당화: import 경로 정정 (코드의 정확성 회복) + frontend UX 흐름 보강 (차단 동작 → staging 흐름) + py_compile + node --check PASS. 보안 모델 / RBAC / DB / 외부 비용 / migration 모두 미해당. 후속 모니터링: live deploy 후 사용자 브라우저에서 (1) 첨부 업로드 정상화 toast (2) "+ 새 대화" 직후 첨부 후 첫 메시지 전송 시 staged → uploaded → ask 흐름 정상화 확인.
+- Timestamp: 2026-05-22T08:00:00Z
+
 ## REV-20260522-0008 [SKIPPED:frontend-only]
 - Related TASK: TASK-0105 (REQ-20260522-0008, **Minor** §12.3 — Profile Drawer '내 감사 로그' 탭 일반 사용자 비노출)
 - Reason: 사용자 직접 요청에 의한 UI 요소 제거 (탭 버튼 + 패널 + JS + CSS). backend endpoint (`/api/profile/audits`) / RBAC catalog / DB schema / 암호화 알고리즘 무변경. AGENTS.md §18.8 trigger 분석: UI/button 시그널 있으나 기존 탭 UI 를 **제거** 하는 것이며 보안 표면을 줄이는 방향 — 새 기능 구현 아님. audit endpoint 자체는 backend 에 보존되어 있으므로 향후 정책 변경 시 재노출 가능. node --check + py_compile PASS 확인. SKIPPED 정당화: frontend-only 삭제 + Minor §12.3 등급 + 보안 모델 변경 없음.

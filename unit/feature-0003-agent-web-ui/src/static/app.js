@@ -3689,12 +3689,16 @@ function _renderAttachmentPills() {
       const sizeKb = Math.max(1, Math.round((Number(it.size) || 0) / 1024));
       const safeName = String(it.name || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       const kindLabel = String(it.kind || "file").toUpperCase();
+      const titleText = it.status === "failed"
+        ? "업로드 실패: " + (it.error || "알 수 없는 오류")
+        : (it.status === "staged" ? `${safeName} (첫 메시지와 함께 업로드)` : safeName);
       return `<span class="composer-attachment-pill"
                     data-selected="${it.selected ? "true" : "false"}"
                     data-uploading="${it.status === "uploading" ? "true" : "false"}"
+                    data-staged="${it.status === "staged" ? "true" : "false"}"
                     data-error="${it.status === "failed" ? "true" : "false"}"
                     data-attachment-id="${it.id}"
-                    title="${it.status === "failed" ? "업로드 실패: " + (it.error || "알 수 없는 오류") : safeName}">
+                    title="${titleText}">
                 <span class="pill-kind">${kindLabel}</span>
                 <span class="pill-name">${safeName}</span>
                 <span class="pill-size">${sizeKb} KB</span>
@@ -3716,12 +3720,26 @@ async function _uploadComposerAttachment(file) {
     showToast("대화 컨텍스트 미정 — 새 대화 또는 기존 대화를 선택해 주세요.", true);
     return;
   }
-  // backend upload endpoint 는 cid 필요 — lazy create 시점은 cid 가 없음. 사용자에게 안내.
+  // TASK-0106 (REQ-20260522-0106): lazy-create 단계 (cid 미발급) 에서도 첨부 가능.
+  // backend `/api/conversations/{cid}/attachments` 는 cid 필수 — 본 시점은 File 만
+  // 로컬 staging (status="staged", _localFile=file 보관). sendPrompt 의 lazy-create
+  // path 가 첫 send 직전 `/api/new_conversation` 으로 cid 를 발급한 뒤 staged 들을
+  // 일괄 업로드하고 attachment_ids 를 첫 `/api/ask` 에 포함시킨다 — TASK-0048 의
+  // "+ 새 대화 시 빈 row 누적 방지" 정신 보존 + 사용자 첫 메시지에 첨부 동행.
   if (isLazy) {
-    showToast(
-      "첨부는 대화가 생성된 후 가능합니다. 첫 메시지를 보낸 뒤 다시 시도해 주세요.",
-      true,
-    );
+    const localId = state.composerAttachments.nextLocalId;
+    state.composerAttachments.nextLocalId -= 1;
+    bucket.items.push({
+      id: localId,
+      kind: _guessKindFromFile(file),
+      name: file.name || "unnamed",
+      size: Number(file.size) || 0,
+      status: "staged",
+      selected: true,
+      _localFile: file,
+    });
+    _renderAttachmentPills();
+    showToast(`첨부가 추가되었습니다 (첫 메시지와 함께 업로드됩니다): ${file.name || "unnamed"}`);
     return;
   }
   const convId = String(state.activeConversationId);
@@ -3811,11 +3829,70 @@ function _toggleAttachmentPill(attachmentId) {
   if (it.status === "failed") {
     // failed pill 토글 click = remove.
     bucket.items.splice(idx, 1);
+  } else if (it.status === "staged") {
+    // TASK-0106: staged (lazy-create 보관) 첨부 토글 = remove. 아직 업로드 전이라 selected
+    // 토글로 둘 가치 없음. 사용자가 실수로 선택했다면 즉시 제거가 자연스러움.
+    bucket.items.splice(idx, 1);
   } else {
     // selected 토글.
     bucket.items[idx] = { ...it, selected: !it.selected };
   }
   _renderAttachmentPills();
+}
+
+// TASK-0106: lazy-create 시 staged 첨부 (status="staged", _localFile=File) 를 새로
+// 발급된 cid 로 일괄 업로드. 모두 성공해야 sendPrompt 가 첨부와 함께 진행. 일부
+// 실패 시 그 첨부만 failed pill 로 표시 + 성공한 id 만 attachment_ids 에 포함.
+// targetCid 가 없거나 staged 첨부가 없으면 빈 list 반환 (no-op).
+async function _flushStagedAttachmentsToCid(targetCid, sourceKey) {
+  if (!targetCid) return [];
+  const bucket = state.composerAttachments.byConv[sourceKey];
+  if (!bucket || !Array.isArray(bucket.items) || !bucket.items.length) return [];
+  const stagedItems = bucket.items.filter((it) => it.status === "staged" && it._localFile);
+  if (!stagedItems.length) return [];
+  const uploadedIds = [];
+  const targetBucket = _ensureComposerBucket(String(targetCid));
+  for (const staged of stagedItems) {
+    state.composerAttachments.uploadingCount += 1;
+    // pending → uploading 표시 (사용자가 진행 중임을 알 수 있도록).
+    staged.status = "uploading";
+    _renderAttachmentPills();
+    try {
+      const formData = new FormData();
+      formData.append("file", staged._localFile);
+      const resp = await apiFetch(`/api/conversations/${encodeURIComponent(targetCid)}/attachments`, {
+        method: "POST",
+        body: formData,
+        headers: {},
+      });
+      if (resp && Number(resp.id) > 0) {
+        // 발급된 server id 로 target bucket 에 이전 — pending bucket 에서는 제거.
+        const idx = bucket.items.findIndex((it) => it.id === staged.id);
+        if (idx >= 0) bucket.items.splice(idx, 1);
+        targetBucket.items.push({
+          id: Number(resp.id),
+          kind: String(resp.kind || staged.kind),
+          name: String(resp.original_filename || staged.name),
+          size: Number(resp.size || staged.size),
+          status: "ready",
+          selected: true,
+        });
+        uploadedIds.push(Number(resp.id));
+      } else {
+        staged.status = "failed";
+        staged.error = (resp && resp.error) ? String(resp.error) : "응답 형식 오류";
+        delete staged._localFile;
+      }
+    } catch (exc) {
+      staged.status = "failed";
+      staged.error = String(exc && exc.message ? exc.message : exc);
+      delete staged._localFile;
+    } finally {
+      state.composerAttachments.uploadingCount = Math.max(0, state.composerAttachments.uploadingCount - 1);
+    }
+  }
+  _renderAttachmentPills();
+  return uploadedIds;
 }
 
 async function _loadConversationAttachments(convId) {
@@ -4179,6 +4256,48 @@ async function sendPrompt() {
   const attachmentSnapshot = _composerAttachmentSnapshot(targetConvId, isLazyCreate);
   askBody.attachment_ids = attachmentSnapshot.selectedIds;
   askBody.attachment_scope_all = attachmentSnapshot.scopeAll;
+
+  // TASK-0106 (REQ-20260522-0106): lazy-create 시 staged (status="staged", _localFile=File)
+  // 첨부가 있으면 본 send 직전에 cid 를 즉시 발급 + staged 일괄 업로드 → attachment_ids 갱신.
+  // 본 분기는 사용자가 "+ 새 대화" 클릭 후 첫 메시지에 첨부를 함께 보낼 때만 발동 — staged 가
+  // 없는 lazy-create 는 기존 askBody.lazy_create=true 단일 호출 유지 (TASK-0048 정신 보존).
+  if (isLazyCreate) {
+    const pendingKey = state.pendingSentinel ? String(state.pendingSentinel) : "";
+    const pendingBucket = pendingKey ? state.composerAttachments.byConv[pendingKey] : null;
+    const stagedCount = (pendingBucket?.items || []).filter(
+      (it) => it.status === "staged" && it._localFile,
+    ).length;
+    if (stagedCount > 0) {
+      try {
+        // /api/new_conversation 으로 cid 즉시 발급. product hint 는 askBody 와 동일 source.
+        const newConvBody = state.productMode === "pinned" && state.pinnedProductId
+          ? { mode: "pinned", product_id: Number(state.pinnedProductId) }
+          : { mode: "auto" };
+        const newConvResp = await apiFetch("/api/new_conversation", {
+          method: "POST",
+          body: JSON.stringify(newConvBody),
+        });
+        const earlyCid = String(newConvResp?.conversation_id || "");
+        if (earlyCid) {
+          // staged 일괄 업로드.
+          const uploadedIds = await _flushStagedAttachmentsToCid(earlyCid, pendingKey);
+          // askBody 를 즉시-cid 모드로 전환.
+          askBody.conversation_id = earlyCid;
+          delete askBody.lazy_create;
+          delete askBody.product_mode;
+          delete askBody.product_id;
+          // 기존에 selected 였던 ready 첨부 (pending bucket 에 미리 olunmuştu — 일반 흐름엔 없음)
+          // 와 새로 업로드된 ids 를 union.
+          const union = new Set(
+            [...(askBody.attachment_ids || []), ...uploadedIds].map(Number).filter((n) => n > 0),
+          );
+          askBody.attachment_ids = Array.from(union);
+        }
+      } catch (exc) {
+        showToast(`첨부 업로드 준비에 실패했습니다: ${exc?.message || exc}`, true);
+      }
+    }
+  }
   try {
     const payload = await apiFetch("/api/ask", {
       method: "POST",

@@ -74,9 +74,13 @@ def _delete_minio_object(object_key: str) -> tuple[bool, str | None]:
         # feature-0003 의 storage_minio 를 사용.
         # 본 module 은 feature-0002-agent-core 이지만 storage_minio 는 web-ui feature
         # 의 module. agent 이미지가 web-ui src 도 포함하므로 (BRIEFING ANCHOR §1)
-        # import 가능 — sys.path 에 web-ui src 가 있어야 함.
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "feature-0003-agent-web-ui", "src"))
-        from modules import storage_minio  # type: ignore[import-not-found]
+        # import 가능. docker container (`/app/web/modules`) 와 host dev 환경
+        # (sibling path) 양쪽 모두 동작하도록 fallback 적용.
+        try:
+            from web.modules import storage_minio  # type: ignore[import-not-found]
+        except ImportError:
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "feature-0003-agent-web-ui", "src"))
+            from modules import storage_minio  # type: ignore[import-not-found]
         if not storage_minio.BOTO3_AVAILABLE:
             return False, "boto3 not available"
         storage_minio.delete_object(object_key)
