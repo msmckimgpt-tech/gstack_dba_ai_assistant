@@ -58,9 +58,20 @@ ai_read_priority: 4
 
 - LLM 호출 자격증명은 **서비스 단일 env** (`BEDROCK_GATEWAY_API_KEY`) 가
   보유한다. 사용자별 키 입력 (구 API Vault wizard) 패턴은 폐기됨.
-- AWS Bedrock IAM credential (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) 은
-  **`bedrock-gateway` 컨테이너 env 에만** 주입한다. `web` / `agent` /
-  `insight-worker` 컨테이너는 해당 값을 인지하지 않는다 (least privilege).
+- **env_file scoping 의 실제 동작 (CHG-0004 reanchor, codex blindspot #1)**:
+  AWS Bedrock IAM credential (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`)
+  은 `bedrock-gateway` 컨테이너가 직접 소비한다. 단 본 cycle 의 `docker-compose.
+  yml` 은 `x-agent-common` 의 `env_file: - .env` 를 통해 `web` / `agent` /
+  `memory-init` / `insight-worker` 컨테이너에도 동일 `.env` 가 inherit 되므로
+  **process env 로는 AWS_* 값이 노출된다**. 단:
+  - 본 컨테이너들의 application code (Python) 는 AWS_* env 를 직접 참조하지
+    않음 — backend 는 `LLM_API_KEY` / `LLM_BASE_URL` (BEDROCK_GATEWAY_* paired
+    chain) 만 인지.
+  - 사내 운영 + AWS credential 이 root-level shared secret 인 가정 하에 isolation
+    가치 낮음.
+  - 엄격 isolation 이 필요해지면 docker-compose 의 `environment:` 명시 화이트
+    리스트 refactor 로 bedrock-gateway 만 AWS_* 노출 + 다른 컨테이너는 명시
+    배제 (별 cycle).
 - IAM role 권한은 `bedrock:InvokeModel` 최소 권한 + 모델 access 명시 (Claude
   Sonnet 4.x / Haiku 4.x). `AmazonBedrockFullAccess` 는 권장 안 함.
 - region 은 `ap-northeast-2` (Seoul) — `aws_region_name` 설정. 단 ACTIVE
@@ -73,6 +84,9 @@ ai_read_priority: 4
   양쪽이 동일 값을 공유 (gateway 의 `master_key` + backend 의 `LLM_API_KEY`).
 - 자격증명 rotation: gateway 컨테이너 재시작으로 1 회 cycle. 기존 in-flight
   요청은 ungraceful (사내 한정 + 짧은 응답 시간 — 운영상 허용).
+- **Paired fallback 정책 (CHG-0003)**: `LLM_BASE_URL` 과 `LLM_API_KEY` 는
+  `_select_llm_provider()` helper 가 paired tuple 로 결정. provider URL 만
+  설정 + key 미설정 시 silent misroute 차단 (다음 provider 로 fallback).
 - 본 cycle 범위 외: per-user / per-role token quota (배포 후 별 cycle).
 
 ## 7. Anonymous 접근 허용 경로 (allowlist)

@@ -295,3 +295,78 @@ source_of_truth: true
   codex consult 로 추가 검증 권장 (전체 fallback chain 정합).
 - Human Approval Needed: 사용자 결정 (A→B→C→D 진행, 2026-05-22) 의 B 단계
   완료 기록. 별 confirm 불요. C/D 진행 계속.
+
+## REV-20260522-0005 [SUBAGENT:blindspot-reinforcement]
+- Related Change: CHG-20260522-0004 (codex 6 blindspot 보강)
+- Reason: 사용자 결정 (C 단계, 2026-05-22) — codex review (REV-20260522-0002)
+  가 본 PR diff 검토 외로 위임한 6 blindspot 의 일괄 보강. SUBAGENT panel
+  (REV-20260522-0001) 의 follow-up + Phase E full-stack 검증 (REV-20260522-0003)
+  의 발견 결합.
+- Verdict: **PASS** (코드 3 영역 fix + 분석 3 영역 기록). 각 blindspot 별 결론:
+- **Blindspot #1 (env_file scoping vs SECURITY.md §6.1 false-claim)**:
+  - **분석**: docker-compose.yml 의 `x-agent-common.env_file: - .env` 가 web /
+    agent / memory-init / insight-worker 에 inherit. mcp / caddy 도 동일 env_file
+    선언. → AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 가 bedrock-gateway 외
+    process env 로도 노출. SECURITY.md §6.1 의 "gateway 컨테이너 env 에만"
+    표현이 실 구성과 불일치 (false-claim).
+  - **결정**: 정책 doc 정정 채택 (option A) — bedrock-gateway 만 명시
+    `environment:` whitelisting 으로 refactor (option B) 는 운영 복잡도 ↑ +
+    사내 root 자격증명 전제 하에 isolation 가치 낮음 → 별 cycle 위임.
+  - **Fix**: SECURITY.md §6.1 의 표현 정정 + application code 가 AWS_* 미참조
+    명시 + 엄격 isolation 필요 시 refactor 별 cycle 안내.
+- **Blindspot #2 (Claude tool_use 변환의 LiteLLM 책임)**:
+  - **분석**: agent_core.py:1344-1365 가 OpenAI tool_calls API 사용 — LiteLLM
+    이 Anthropic tool_use 로 변환. Phase E full-stack TEST-0003 으로 검증:
+    `SHOW DATABASES` 질의 → `action=step + tool=execute_sql + sql="SHOW DATABASES"`
+    plan 정상 생성 → bedrock-gateway 가 `POST /v1/chat/completions 200 OK`
+    응답. 변환 정상.
+  - **결정**: 코드 변경 X. Phase E 검증 결과로 충분. 잠재 edge case (parallel
+    tool_calls / nested args dict / tool_choice="required") 는 운영 turn
+    누적 시 fallback / 별 cycle 검토.
+  - **Fix**: 없음 (베이스라인 충족 확인).
+- **Blindspot #3 (data region 흐름 PIPA)**:
+  - **분석**: AWS Bedrock 의 `global.*` inference profile 은 cross-region routing
+    — 미국 / EU / APAC 어느 region 으로든 hit 가능. AWS 보안 문서 (Bedrock
+    Inference Profiles docs) 에 따르면 inference 자체는 routing 후 region 안
+    잔류 (저장 X). 다만 monitoring / audit log 가 별 region 일 수 있음.
+  - **결정**: Phase E reanchor 로 사용자가 명시 수용 — 사내 한정 + 비-개인정보
+    SQL 작업 가정. SECURITY.md §6.1 region 정책 reanchor 진행.
+  - **Fix**: SECURITY.md §6.1 의 잔존 risk 명시 + 엄격 잔류 필요 시점 별 cycle
+    안내 (Provisioned throughput / 별 provider).
+- **Blindspot #4 (max_tokens=None worst-case)**:
+  - **분석**: `model_catalog.max_tokens_for_model()` 가 Claude alias 에 None
+    반환 → Bedrock Sonnet 4.6 의 default cap (64K output) 까지 채울 수 있음.
+    사용자 long query 또는 model hallucination 시 worst-case 비용 폭주.
+    Sonnet 4.6 의 output rate ($15/M token) 기준 8192 token = ~$0.12 / turn.
+    cap 없으면 ~$0.96 / turn (8x).
+  - **결정**: task 별 명시 cap 도입.
+  - **Fix**: `_CLAUDE_MAX_TOKENS` dict 신설 (agent 8192 / insight 2048 / summary
+    1024 / sql_fix 2048 / validate 1024). `max_tokens_for_model()` 가 Claude
+    alias 인 경우 본 dict cap 반환.
+- **Blindspot #5 (reasoning content 처리)**:
+  - **분석**: agent_core.py:1370 의 fallback 이 `response_message.reasoning`
+    + `response_message.reasoning_content` 둘 다 check (baseline code). Claude
+    가 LiteLLM 변환 후 OpenAI o1-style reasoning field 노출하면 본 path 가
+    정상 처리. content 가 empty + reasoning ≥ 20 char 이면 reasoning 을
+    answer 로 사용.
+  - **결정**: 코드 변경 X — baseline 이 이미 mitigation 보유.
+  - **Fix**: 없음 (baseline 충족 확인).
+- **Blindspot #6 (`_AUDIT_MASKED_FIELDS_API_KEY` doc-code drift)**:
+  - **분석**: docs/SECURITY.md §9.2 가 `bedrock_gateway_api_key`,
+    `aws_access_key_id`, `aws_secret_access_key` 를 masked field 로 명시.
+    app.py 의 tuple 은 `("openai_api_key", "api_key", "secret")` 만 — drift.
+    현 audit ChangeJson builder 가 화이트리스트 기반이라 실 leak risk 0 이나
+    future ChangeJson 에 우연 포함 시 redact 미보장.
+  - **결정**: 1-line patch — code 측을 docs 명시와 정합.
+  - **Fix**: `_AUDIT_MASKED_FIELDS_API_KEY` 에 3 항목 추가.
+- 잔존 risk:
+  - **env_file scoping refactor**: 별 cycle 위임. 엄격 isolation 필요 시점에
+    docker-compose.yml 의 `environment:` whitelist 패턴 도입 (운영 복잡도 ↑).
+  - **tool_use parallel / nested args edge case**: 운영 turn 누적 시 발견 시
+    LiteLLM 버전 pin 또는 boto3 native hotspot 마이그레이션.
+  - **Bedrock global routing 의 region 추적**: AWS Cost Explorer + CloudWatch
+    region tag 분석으로 실 routing region 모니터링 (별 cycle).
+- Open Questions: D 단계 (PR #62 merge + cycle-finalize) 직전 본 cycle 의 모든
+  변경이 정합한지 최종 검증 — Phase E 재실행 또는 코드 trace 갈음.
+- Human Approval Needed: 사용자 결정 (A→B→C→D, 2026-05-22) 의 C 단계 완료
+  기록. 별 confirm 불요. D 진행 (PR merge + cycle-finalize) 계속.

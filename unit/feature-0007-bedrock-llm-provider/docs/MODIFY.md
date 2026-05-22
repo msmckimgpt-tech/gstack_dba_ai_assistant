@@ -255,3 +255,55 @@ source_of_truth: true
   - Web container 에서 module reload 후 `LLM_BASE_URL` / `LLM_API_KEY` 둘 다
     Bedrock gateway 값으로 paired 출력 확인 (BEDROCK_GATEWAY_API_KEY 채워진
     환경 → Bedrock 분기 선택 정상).
+
+## CHG-20260522-0004
+- Date: 2026-05-22
+- Related Requirement: REQ-20260521-0001~3 (codex 6 blindspot 보강)
+- Summary: codex review (REV-20260522-0002) 가 본 PR diff 검토 외로 위임한 6
+  blindspot 의 일괄 보강. 코드 변경 3 영역 (max_tokens cap / masked field
+  drift / 정책 doc reanchor) + 분석 결과 3 영역 (tool_use 변환 / data region
+  / reasoning content) 의 REVIEW.md 기록.
+- Files (코드 + 정책 doc):
+  - 수정: `unit/feature-0002-agent-core/src/modules/model_catalog.py` —
+    blindspot #4 (max_tokens cap). `_CLAUDE_MAX_TOKENS` dict 신설 (task 별 cap:
+    insight 2048 / agent 8192 / summary 1024 / sql_fix 2048 / validate 1024).
+    `max_tokens_for_model()` 가 Claude alias (`claude-` prefix) 인 경우 본
+    dict 의 cap 반환 — 비용 폭주 worst-case 차단.
+  - 수정: `unit/feature-0003-agent-web-ui/src/app.py` — blindspot #6
+    (`_AUDIT_MASKED_FIELDS_API_KEY` doc-code drift). tuple 에 `bedrock_gateway_api_key`,
+    `aws_access_key_id`, `aws_secret_access_key` 3 항목 추가. SECURITY.md §9.2
+    명시와 code 정합.
+  - 수정: `docs/SECURITY.md` §6.1 — blindspot #1 (env_file scoping vs SECURITY
+    policy false-claim). "gateway 컨테이너 env 에만 주입" 표현을 정확한 사실로
+    교체: `env_file: - .env` inherit 으로 AWS_* 가 다른 컨테이너 process env
+    에도 노출되나, application code 는 이를 참조하지 않음 + 사내 root 자격증명
+    전제 하에 isolation 가치 낮음 명시. 엄격 isolation 필요 시점은 별 cycle
+    명시. Paired fallback 정책 (CHG-0003) 도 부가 명시.
+- Files (분석 결과 REVIEW.md 기록 — 코드 변경 X):
+  - blindspot #2 (Claude tool_use 변환): Phase E full-stack TEST-0003 으로
+    PASS 확인. LiteLLM 이 OpenAI tool_calls ↔ Anthropic tool_use 변환 정상.
+  - blindspot #3 (data region): Phase E 검증으로 `global.*` inference profile
+    수용 사용자 reanchor + SECURITY.md §6.1 region 정책 갱신 완료. AWS Bedrock
+    의 global routing 은 미국/EU/APAC 어느 region 에든 hit 가능 — PIPA 엄격
+    잔류 시점은 별 cycle.
+  - blindspot #5 (reasoning content): agent_core.py:1370 의 fallback 이 이미
+    `response_message.reasoning` + `response_message.reasoning_content` 둘 다
+    check. Claude 가 LiteLLM 변환 후 OpenAI o1-style reasoning_content 노출
+    하면 본 fallback path 가 정상 처리 — 별도 코드 변경 불요.
+- Impact:
+  - **비용 안전망 (max_tokens cap)**: Claude Sonnet 4.6 의 default cap 64K
+    까지 채우는 worst-case 비용 폭주 차단. task 별 cap 으로 운영 비용 예측
+    가능 (agent loop turn 당 최대 8192 output token).
+  - **Audit redact 정합**: AWS credential 필드가 우연 ChangeJson 에 포함될 때
+    `<redacted>` 마스킹. masked_fields list 에도 명시.
+  - **정책 doc 정확성**: SECURITY.md §6.1 의 isolation 주장이 실 구성과 일치
+    하지 않던 false-claim 정정. 운영자 / audit 신뢰도 회복.
+- Rollback Notes:
+  - 각 change 가 독립 — 부분 revert 가능. max_tokens cap revert 시 비용 worst-
+    case 노출. masked field revert 시 doc-code drift 재발.
+- Verification:
+  - `python3 -m py_compile unit/feature-0002-agent-core/src/modules/model_catalog.py`
+    PASS.
+  - `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS.
+  - codex 의 6 blindspot 중 5 가 직접 보강, 1 (reasoning content) 은 baseline
+    code 가 이미 처리 — 별 코드 변경 X.

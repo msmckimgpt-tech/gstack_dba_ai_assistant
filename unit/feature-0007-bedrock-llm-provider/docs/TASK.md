@@ -230,8 +230,9 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 - [x] TASK-G2 codex P2 follow-up: `LLM_BASE_URL` ↔ `LLM_API_KEY` paired
       fallback chain refactor + `.env.example` 안내 보강 (CHG-20260522-0003,
       py_compile PASS, 2026-05-22)
-- [ ] TASK-G3 6 blindspot 보강 (env_file leak / tool_use 변환 / data region /
-      max_tokens / reasoning / masked field) — 본 cycle 진행
+- [x] TASK-G3 6 blindspot 보강 (CHG-20260522-0004) — 코드 변경 3 (max_tokens
+      cap / masked field drift / SECURITY §6.1 정정) + 분석 결과 3 (tool_use
+      Phase E PASS / data region reanchor / reasoning baseline mitigation).
 
 ## 4. In Progress
 - 없음 (Phase A 진입 직전 정지 상태 — 다음 turn 의 user 지시로 시작).

@@ -8922,7 +8922,16 @@ _AUDIT_BUILDER_PRODUCT_FIELDS = (
 )
 _AUDIT_MASKED_FIELDS_PASSWORD = ("password_hash", "temporary_password", "raw_password")
 _AUDIT_MASKED_FIELDS_TOKEN = ("session_token_hash", "session_token", "token")
-_AUDIT_MASKED_FIELDS_API_KEY = ("openai_api_key", "api_key", "secret")
+_AUDIT_MASKED_FIELDS_API_KEY = (
+    "openai_api_key",
+    "api_key",
+    "secret",
+    # feature-0007 (CHG-0004, codex blindspot #6): Bedrock gateway + AWS
+    # credential 필드 추가. docs/SECURITY.md §9.2 doc-code drift 정정.
+    "bedrock_gateway_api_key",
+    "aws_access_key_id",
+    "aws_secret_access_key",
+)
 _AUDIT_MASKED_FIELDS_ALL = (
     _AUDIT_MASKED_FIELDS_PASSWORD
     + _AUDIT_MASKED_FIELDS_TOKEN
