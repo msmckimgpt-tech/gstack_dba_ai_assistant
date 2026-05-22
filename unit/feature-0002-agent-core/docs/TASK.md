@@ -9,12 +9,14 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: M2-c cross-DB audit + SLA tooling + invariant test (cycle: TASK-0021)
+- State: TASK-0100 multipart hot-fix ship (cycle: TASK-0100) + M2-c cross-DB audit + SLA tooling + invariant test (cycle: TASK-0021, 진행 중)
 - Owner: AI (본 cycle: M2-c cross-DB audit explicit call + audit-SLA verify body + stress.sh body + ANCHOR §3 invariant test S1/N1/N2 + outside-voice REV-20260521-0009 Critical 5 반영) → AI (M2-d: S2-S6 invariant fixture + delete/prune SLA + latency baseline production-like 측정)
 - Priority: high
 - Last Updated: 2026-05-22 (TASK-0015 PLAN-APPROVED 마커: ms.mckim.gpt@gmail.com on 2026-05-20)
 
 ## 1.1 Current Cycle
+- [x] TASK-0100 (REQ-20260522-0003, **Minor §12.3** — multipart UploadFile 의존성 hot-fix). 사용자가 TASK-0098 (PR #49) ship 후 main 재배포 검증 단계에서 발견: web container `Restarting` + `RuntimeError: Form data requires "python-multipart" to be installed.` build 회귀. 원인: PR #66 (TASK-0094 Sprint 1 Phase 5 — `POST /api/conversations/{cid}/attachments` UploadFile 도입) 가 의존성 추가 없이 ship 됨. fix: `unit/feature-0002-agent-core/src/requirements.txt` 에 `python-multipart>=0.0.9` 한 줄 추가. 동작 변경 0, RBAC / DB / endpoint / audit 무변경 — 본질적으로 미반영된 의존성을 명시화한 것. AC-0226 (REQ-20260521-0001 / TASK-0094 첨부 multi-cycle) 의 attachment.upload endpoint 가 의도대로 작동하도록 backing 의존성 추가. dual-ownership: 의존성 파일은 feature-0002 (agent-core), 소비자는 feature-0003 (agent-web-ui attachment endpoint).
+
 - [ ] TASK-0021 (REQ-20260522-0001, **Major §12.3** — RBAC 동반 변경) §2.1 PLAN-APPROVED 의 **M2 phase 의 3차 (M2-c)** 실행. M2-b (TASK-0020) 의 dual-write 위에 ADR-0021 §Consequences M2-c 책임 (Cross-DB audit explicit call + SLA 측정 도구 본문) 흡수. **본 cycle 산출 5건**: (a) `modules/kb_backend.py` 의 `_log_kb_write_audit()` 헬퍼 + `_KB_AUDIT_ACTION_MAP` + `_KB_AUDIT_SENSITIVE_KEYS` + `_build_audit_resource_id()` composite + `_DualWriteMirror._mirror()` 의 audit call 통합 + `_BACKENDS_LOCK` thread-safe double-checked locking (REV-20260520-0008 Nice-to-have), (b) `bin/kb-dual-write-verify.sh` 의 `verify_counts` / `verify_content_hash` / `verify_audit_sla` 본문 (GREATEST(created_at, updated_at) 분모 정정 + write-only audit numerator + audit over-count fail-loud), (c) `bin/kb-dual-write-stress.sh` 본문 (docker exec insight-worker + docker compose run agent), (d) `tests/test_anchor_invariant_postgres.py` 의 S1 (RagDocuments missing) + N1 (LLM call zero) 실 구현 + N2 (TRUNCATE denied) env-gated integration test (S2-S6 는 M2-d 위임), (e) outside-voice review (Plan subagent, `REV-20260521-0009`) NEEDS-TWEAK Verdict + Critical 5 본 cycle 내 반영 (B-1 SLA 분모/분자 mismatch / B-2 N1 LLM tripwire `modules.llm` 정정 / B-3 prune signature `keep_limit=` 정정 + DELETE SQL assertion / B-4 `connect_with_retry(attempts=1)` / B-5 ResourceId composite + B-6 ChangeJson 16KB 캡). **본 turn 의 deliverable 은 5 산출 + Critical 5 반영까지**. **M2-d cycle (별 cycle)** 책임: S2-S6 invariant fixture (실 DB) + delete/prune SLA 별 metric (pg_branch xmax tagging) + latency baseline production-like 측정 + Nice-to-have 8건.
 
 ## 1.2 Implementation Plan (TASK-0021 — M2-c cross-DB audit + SLA + invariant test 본 cycle)
