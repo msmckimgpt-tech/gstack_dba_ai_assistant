@@ -11,8 +11,8 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: major (TASK-0104 — 외부 노출 web 컨테이너 HTTPS 종단 활성화)
-- Last Updated: 2026-05-22 (TASK-0104 https endpoint enable)
+- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Ship 완료) / major (TASK-0104 — HTTPS 종단 활성화 main)
+- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 1~12 ship 완료 / TASK-0104 main 흡수)
 
 ## 2. Task Queue
 
@@ -75,7 +75,7 @@ source_of_truth: true
   - [x] **Phase 9 (Cycle 0 lifecycle)** — feature-0002-agent-core/src/modules/attachment_reconciliation.py 신규 (run_once + get_attachment_lifecycle_state + 4 종 SLA 처리). F1 4 state (active/delete_pending+restorable_until/purge_in_progress/erased) _serialize_attachment_for_api 갱신. R-Claim6 tombstone (NOT NULL ConversationId 유지) + F12 pseudonymous event id. 2026-05-22.
   - [x] **Phase 10 (Cycle 1 sandbox)** — .env.example 에 4 MySQL user credentials (maintainer/writer/reader/cleanup) + sandbox_schema.py (sandbox_schema_name_for + ensure_sandbox_schema_via_maintainer R-Claim4 최소권한 (CREATE/ALTER/INSERT/SELECT) + detect_grant_drift + drop_sandbox_schema_via_cleanup) + GET /api/admin/health/attachment-grants R-F4 endpoint. 2026-05-22.
   - [x] **Phase 11 (Cycle 1 ingest)** — feature-0002-agent-core/src/modules/sandbox_ingest.py 신규 (ingest_csv + ingest_xlsx + ingest_attachment, chardet/openpyxl 사용, encoding detect + delimiter detect + sharedStrings/cell/row/col cap + formula stripping + timeout). agent_core.compose_system_prompt 에 _build_attachment_context_section append (env ATTACHMENT_IDS 통해). /api/ask 가 attachment_ids 를 env 로 전달. requirements.txt chardet/openpyxl 추가. 2026-05-22.
-  - [ ] **Phase 12 (Cycle 1 SQL guard + Ship)** — `sql_guard.py` D14 AST shape allowlist (SELECT/CTE only, FOR UPDATE/LOCK/EXPLAIN ANALYZE/SLEEP/BENCHMARK/INTO OUTFILE/LOAD_FILE/information_schema/mysql/performance_schema/sys 거부) + `attachment.execute_sql_on.{own,any}` RBAC + `compose_system_prompt` _build_attachment_context_section + 검증 27 case. **Ship 조건**.
+  - [x] **Phase 12 (Cycle 1 SQL guard + Sprint 1 Ship)** — sql_guard.py (sqlglot AST shape allowlist, single SELECT/CTE, FOR UPDATE/LOCK/EXPLAIN ANALYZE/SLEEP/BENCHMARK/INTO OUTFILE/LOAD_FILE/information_schema/mysql/performance_schema/sys 거부 + 보조 denylist). attachment.execute_sql_on.{own,any} 2 RBAC (group=attachment) + sales/operator/admin catchup. audit ActionCode 3 (attachment.sandbox.sql_exec/.sql_denied/.scope.all) + build_audit_change_json case. PERMISSION_GROUP_ORDER + WORK_SCREEN/ADMIN_PERMISSION_SECTIONS attachment 그룹 추가. CONVENTIONS.md §10.6 9 group 갱신. **Sprint 1 Ship 완료**. 2026-05-22.
 - [ ] **Sprint 2** — Cycle 2 (C: Vision 이미지, content array transient, base64 inline, **D13 + R-F13 provider Files API lifecycle**) — Major, 1~1.5 주.
 - [ ] **Sprint 3** — Cycle 3 (B: DDL/KB 보강, admin-only KB ingest, AgentMemory FactEntries pipe, `attachment.kb.write.any`) — Major, 1 주.
 - [ ] **Sprint 4** — Cycle 4 (D: PDF/MD RAG, PGVector dev 단계 도입, chunking + retrieval, **D17 + R-F6 partial_indexed retrieval policy**) — Critical, 3~4 주.

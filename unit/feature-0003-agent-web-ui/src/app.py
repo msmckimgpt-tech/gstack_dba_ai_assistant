@@ -342,6 +342,21 @@ PERMISSION_DEFINITIONS = (
         "description": "모든 계정의 대화 첨부를 조회할 수 있다. 운영자 한정.",
         "group": "conversation",
     },
+    # TASK-0094 Sprint 1 Phase 12 (D14 + R-F3): 첨부 기반 sandbox SQL 실행 권한.
+    # 본 권한 부여만으로는 SQL 실행 안 됨 — D14 allowlist guard + attachment_reader
+    # MySQL user 의 권한 둘 다 통과 필요 (defense in depth). attachment group 신설.
+    {
+        "code": "attachment.execute_sql_on.own",
+        "label": "내 첨부 sandbox SQL 실행",
+        "description": "자신의 대화 첨부 데이터를 sandbox schema 에서 SELECT 실행할 수 있다.",
+        "group": "attachment",
+    },
+    {
+        "code": "attachment.execute_sql_on.any",
+        "label": "전체 첨부 sandbox SQL 실행",
+        "description": "모든 계정의 대화 첨부에 대해 sandbox SQL 을 실행할 수 있다. 운영자 한정.",
+        "group": "attachment",
+    },
     {
         "code": "product.manage",
         "label": "제품 관리",
@@ -497,6 +512,8 @@ SEED_ROLE_DEFINITIONS = (
             # TASK-0094 Sprint 1 Phase 3: 첨부 upload/read own.
             "conversation.attachment.upload.own",
             "conversation.attachment.read.own",
+            # TASK-0094 Sprint 1 Phase 12: 첨부 sandbox SQL 실행 own.
+            "attachment.execute_sql_on.own",
         },
     },
     {
@@ -521,6 +538,8 @@ SEED_ROLE_DEFINITIONS = (
             # TASK-0094 Sprint 1 Phase 3: 첨부 upload/read own.
             "conversation.attachment.upload.own",
             "conversation.attachment.read.own",
+            # TASK-0094 Sprint 1 Phase 12: 첨부 sandbox SQL 실행 own (사업팀 자가서비스).
+            "attachment.execute_sql_on.own",
         },
     },
     {
@@ -1671,6 +1690,9 @@ def _ensure_seed_roles(conn) -> None:
             "conversation.attachment.upload.any",
             "conversation.attachment.read.own",
             "conversation.attachment.read.any",
+            # TASK-0094 Sprint 1 Phase 12: admin 의 sandbox SQL 실행 2건 catchup.
+            "attachment.execute_sql_on.own",
+            "attachment.execute_sql_on.any",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -1698,6 +1720,8 @@ VALUES (%s, %s)
             # TASK-0094 Sprint 1 Phase 3: operator/sales 의 첨부 upload/read own.
             "conversation.attachment.upload.own",
             "conversation.attachment.read.own",
+            # TASK-0094 Sprint 1 Phase 12: operator/sales 의 sandbox SQL 실행 own.
+            "attachment.execute_sql_on.own",
         )
         catchup_pids = [
             int(permission_map.get(code) or 0)
@@ -10614,6 +10638,38 @@ def build_audit_change_json(
                 "new_conversation_id": request_ctx.get("new_conversation_id"),
             },
             ["share.token_full"],
+        )
+    # TASK-0094 Sprint 1 Phase 12 (D14): sandbox SQL audit case 3.
+    # D12 정합 — raw SQL 절대 ChangeJson 미포함. AST normalized + denied_patterns 만.
+    if action == "attachment.sandbox.sql_exec":
+        return (
+            {
+                "attachment_ids": list(request_ctx.get("attachment_ids") or []),
+                "conversation_id": request_ctx.get("conversation_id"),
+                "statement_type": str(request_ctx.get("statement_type") or ""),
+                "table_refs": list(request_ctx.get("table_refs") or []),
+                "row_count": int(request_ctx.get("row_count") or 0),
+                "elapsed_ms": float(request_ctx.get("elapsed_ms") or 0.0),
+            },
+            ["attachment.raw_sql"],
+        )
+    if action == "attachment.sandbox.sql_denied":
+        return (
+            {
+                "attachment_ids": list(request_ctx.get("attachment_ids") or []),
+                "conversation_id": request_ctx.get("conversation_id"),
+                "denied_reason": str(request_ctx.get("denied_reason") or ""),
+                "denied_patterns": list(request_ctx.get("denied_patterns") or []),
+            },
+            ["attachment.raw_sql"],
+        )
+    if action == "attachment.scope.all":
+        return (
+            {
+                "conversation_id": request_ctx.get("conversation_id"),
+                "attachment_count": int(request_ctx.get("attachment_count") or 0),
+            },
+            [],
         )
     if action == "share.policy.redact_applied":
         # TASK-0094 Sprint 1 Phase 8 (R-F7): 기존 token 의 자동 redact 적용 기록.

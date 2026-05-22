@@ -201,13 +201,14 @@ const PRODUCT_PREF_LS_KEY = "mad.productPref.v1";
 
 // TASK-0073 Phase C: audit group 추가 — backend PERMISSION_DEFINITIONS 의 group="audit" 정합.
 // TASK-0095: settings group 추가 — 전역 시스템 프롬프트 권한 그룹.
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "audit", "settings", "misc"];
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "attachment", "audit", "settings", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
   role: "역할",
   conversation: "대화",
   product: "제품",
+  attachment: "첨부",
   audit: "감사",
   settings: "시스템 설정",
   misc: "기타",
@@ -218,7 +219,8 @@ const PERMISSION_GROUP_LABELS = {
 // TASK-0073 Phase C: audit 그룹은 관리 권한 section 에 placeholder — 본인 audit (`audit.read.own`) 만 작업 화면에
 // 표시되도록 group="audit" 을 manage section 에 추가. admin 콘솔 진입을 권유.
 const WORK_SCREEN_PERMISSION_SECTIONS = [
-  { id: "operate", title: "운영 권한", description: "대화 · 제품 접근", groups: ["conversation", "product"] },
+  // TASK-0094 Sprint 1 Phase 12: attachment group 추가 — 첨부 sandbox SQL 권한이 운영 권한 묶음에 표시.
+  { id: "operate", title: "운영 권한", description: "대화 · 제품 접근 · 첨부", groups: ["conversation", "product", "attachment"] },
   // TASK-0095: settings 그룹은 작업 화면의 관리 권한 section 에 placeholder.
   { id: "manage", title: "관리 권한", description: "관리 콘솔 / 계정 / 역할 / 감사 / 시스템 설정", groups: ["console", "account", "role", "audit", "settings"] },
   { id: "misc", title: "기타", description: null, groups: ["misc"] },
@@ -280,6 +282,9 @@ const PERMISSION_LABELS = {
   "conversation.attachment.upload.any": "전체 대화 첨부 업로드",
   "conversation.attachment.read.own": "내 대화 첨부 조회",
   "conversation.attachment.read.any": "전체 대화 첨부 조회",
+  // TASK-0094 Sprint 1 Phase 12: 첨부 sandbox SQL 실행 2 코드 (group=attachment).
+  "attachment.execute_sql_on.own": "내 첨부 sandbox SQL 실행",
+  "attachment.execute_sql_on.any": "전체 첨부 sandbox SQL 실행",
 };
 
 const PERMISSION_DESCRIPTIONS = {
@@ -327,6 +332,9 @@ const PERMISSION_DESCRIPTIONS = {
   "conversation.attachment.upload.any": "모든 계정의 대화에 첨부를 업로드할 수 있는 권한입니다. 운영자 한정으로 부여합니다.",
   "conversation.attachment.read.own": "자신의 대화에 첨부된 파일 metadata + 본문 (사내망 다운로드) 을 조회할 수 있는 권한입니다. 승인 전 (pending) 계정은 metadata 만 노출됩니다.",
   "conversation.attachment.read.any": "모든 계정의 대화 첨부를 조회할 수 있는 권한입니다. 운영자 한정으로 부여합니다.",
+  // TASK-0094 Sprint 1 Phase 12: 첨부 sandbox SQL 실행.
+  "attachment.execute_sql_on.own": "자신의 대화 첨부 데이터를 sandbox schema 에서 SELECT 실행할 수 있는 권한입니다. D14 AST allowlist guard 가 statement 형식을 제한합니다.",
+  "attachment.execute_sql_on.any": "모든 계정의 첨부에 대해 sandbox SQL 을 실행할 수 있는 권한입니다. 운영자 한정으로 부여합니다.",
 };
 
 function describePermission(code = "") {

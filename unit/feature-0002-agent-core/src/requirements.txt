@@ -22,3 +22,6 @@ openpyxl>=3.1.0
 # (RuntimeError: Form data requires "python-multipart" to be installed.) build 회귀.
 # TASK-0098 ship 후 사용자 검증 단계에서 발견 (REV-20260522-0004 참조).
 python-multipart>=0.0.9
+# TASK-0094 Sprint 1 Phase 12 (D14 + R-F3 Critical): SQL allowlist guard.
+# sqlglot 의 AST parser — single SELECT/CTE only allowlist. denylist 는 보조.
+sqlglot>=23.0.0

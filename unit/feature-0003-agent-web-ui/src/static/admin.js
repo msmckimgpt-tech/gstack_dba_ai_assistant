@@ -52,13 +52,15 @@ function systemPromptPendingKey({ scope, productId = null, roleId = null, accoun
 // 코드들 (Phase 1B 의 _ensure_product_access_permissions backfill) 도 자동으로 그룹에 합류된다.
 // TASK-0073 Phase C: audit group 추가 — backend PERMISSION_DEFINITIONS 의 group="audit" 와 key 정합.
 // TASK-0095: settings group 추가 — 전역 시스템 프롬프트 (system_prompt.global.read/write).
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "audit", "settings", "misc"];
+// TASK-0094 Sprint 1 Phase 12: attachment group 추가 (8 group).
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "attachment", "audit", "settings", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
   role: "역할",
   conversation: "대화",
   product: "제품",
+  attachment: "첨부",
   audit: "감사",
   settings: "시스템 설정",
   misc: "기타",
@@ -71,7 +73,8 @@ const ADMIN_PERMISSION_SECTIONS = [
   // TASK-0073 Phase C: audit 그룹은 관리 권한 section 의 admin 콘솔 책임 — console / account / role 와 같이 배치.
   // TASK-0095: settings 그룹은 시스템 운영 (전역 시스템 프롬프트 등) — manage 와 함께.
   { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 메타권한 · 감사 · 시스템 설정", groups: ["console", "account", "role", "audit", "settings"] },
-  { id: "operate", title: "운영 권한", description: "대화 · 제품 접근", groups: ["conversation", "product"] },
+  // TASK-0094 Sprint 1 Phase 12: attachment 그룹은 운영 권한 묶음에 포함.
+  { id: "operate", title: "운영 권한", description: "대화 · 제품 접근 · 첨부", groups: ["conversation", "product", "attachment"] },
   { id: "misc", title: "기타", description: null, groups: ["misc"] },
 ];
 
