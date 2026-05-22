@@ -8,6 +8,265 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260522-0007 [SKIPPED:non-policy-doc]
+- Related TASK: TASK-0104 (REQ-20260522-0007, **Major** §12.3 — 외부 노출 web 컨테이너 HTTPS 종단 활성화)
+- Reason: TASK-0103 의 secure-context guard 의 근본 해결책 — same-port 18080 에서 HTTPS 종단을 활성화. **infra only** (compose entrypoint 변경 + override template 주석 갱신) — backend / RBAC catalog / DB schema / endpoint contract / Frontend 코드 / 암호화 알고리즘 모두 무변경. 기존 self-signed 인증서가 SAN 에 외부 IP `112.185.196.20` 을 이미 포함하므로 인증서 발급/회전 작업 없음. AGENTS.md §18.8 trigger 분석: (1) "auth/credential" 키워드 — security subagent 후보. 본 변경은 secure channel **활성화** (방향: 보안 강화), TLS 종단 자체는 base `docker-compose.yml` 에 이미 작성되어 있던 분기를 dev override 가 막고 있던 구조를 정상화. 추가 attack surface 없음 — 평문 18080 이 끊긴 것은 secure-context guard 의 정상 동작과 정렬. (2) "deploy/infra" 신호 — devex/qa 후보이나 변경 범위가 1 개 entrypoint 라인 + `.example` 주석에 한정, 운영 영향은 외부 사용자가 `https://` 로 접근하는 것 + 첫 접속에서 self-signed 경고 우회 (사전 안내 필요) 두 가지뿐. SKIPPED 정당화: 변경 surface 가 단일 entrypoint string + `.example` 문서화에 한정, 검증은 `curl -sk https://` HTTP 200 + 컨테이너 로그 `https://0.0.0.0:8000` 으로 직접 확인 완료, 보안 algorithm / 인증서 / RBAC 모두 무변경 — 외부 voice 게이트 trigger 미해당. 후속 cycle 로 분리: (a) Caddy 기반 production 운영 시 LE 인증서 자동 회전 runbook 정비, (b) 클라이언트 측 cross-tab `state.apiVaultOptions` caching (TASK-0103 의 후속 항목), (c) 외부 사용자에게 self-signed 경고 우회 안내 페이지 — 본 cycle 은 즉시 가시성 회복에 한정.
+- Timestamp: 2026-05-22T04:35:00Z
+
+## REV-20260522-0006 [SKIPPED:non-policy-doc]
+- Related TASK: TASK-0103 (REQ-20260522-0006, **Major** §12.3 — API Vault secure context 사전 차단 + UX 안내)
+- Reason: 외부 IP HTTP 접속에서 `window.crypto.subtle = undefined` 로 인한 OpenAI API Key 저장 실패 hotfix. `isVaultCryptoAvailable()` helper + `updateVaultReadiness()` `blocked` 상태 + `syncVaultSteps()` 차단 + `encryptPlainApiKey()` 사전 throw + styles.css 빨간 톤. **frontend only** — backend / RBAC catalog / DB schema / endpoint contract / 암호화 알고리즘 (PBKDF2 + AES-GCM) 무변경. AGENTS.md §18.8 trigger 분석: (1) "auth/credential" 키워드 — security subagent 후보. 본 변경은 자격증명 처리 동선이지만 **암호화 알고리즘과 server-side 검증은 그대로 유지**, 추가된 것은 클라이언트 사전 가드 + 사용자 안내 메시지뿐 — 보안 모델/감쇠 위험 없음 (오히려 secure context 강제로 보안 강화). (2) UI/button 신호 — ux/design subagent 후보이나 기존 banner / step UI 재사용, 신규 컴포넌트 없음. SKIPPED 정당화: hotfix 성격 (외부 사용자 전원 영향, 즉시 가시성 회복 필요) + 보안 attack surface 축소 방향 + algorithm 변경 없음. 후속 cycle 로 분리: (a) HTTPS 종단점 (nginx/Caddy 18443 등) 인프라 추가, (b) `requires_secure_context` 신호를 `state.apiVaultOptions` 에 caching 후 cross-tab 동기화. 본 cycle 은 즉시 가시성 + UI 차단에 한정.
+- Timestamp: 2026-05-22T03:40:00Z
+
+## REV-20260522-0005 [SKIPPED:non-policy-doc]
+- Related TASK: TASK-0102 (REQ-20260522-0005, Minor §12.3)
+- Reason: topbar 관리 콘솔 버튼 role fallback gate — `canOpenAdminConsole()` 에 `role.key` 기반 fallback 추가. app.js + index.html(cache-bust) 변경. backend / RBAC catalog / DB schema / endpoint contract 무변경. Minor §12.3 — display-only 조건 보강, RBAC 설계 변경 아님. AGENTS.md §18.8 trigger: UI/button 시그널 있으나 기존 버튼 노출 조건 강화 (신규 UI 기능 구현 아님) — SKIPPED 정당.
+- Timestamp: 2026-05-22T00:00:00Z
+
+## REV-20260522-0004 [SKIPPED:non-policy-doc]
+- Related TASK: feature-0003-agent-web-ui
+- Reason: TASK-0100 (REQ-20260522-0004, Minor §12.3) — `관리 콘솔` 버튼 RBAC gate 수정. `_serialize_account()` 에 `console_access` 플래그 추가 + `canOpenAdminConsole()` 변경. 코드 변경이나 UI/RBAC 관련이므로 tech review 대상이나, Minor §12.3 (RBAC catalog / DB schema / endpoint contract 무변경, 표시 조건만 복원) 이며 변경 surface 가 최소화됨. 이슈의 근본 원인이 명확 (TASK-0098 can() 단순화의 side-effect) + 수정이 정확히 원래 의도(admin 전용 표시) 복원. AGENTS.md §18.8 trigger: UI/button 시그널 있으나 버튼 노출 여부만 수정 (새 UI 기능 구현 아님) — SKIPPED 정당.
+- Timestamp: 2026-05-22T00:00:00Z
+
+## REV-20260522-0003 [SKIPPED:doc-only-tracker-hygiene]
+- Date: 2026-05-22
+- Decision: TASK-0099 (REQ-20260522-0003, Minor §12.3 — docs-only tracker hygiene) — TASK-0073 audit subsystem followup backlog 8 entries (TASK-0086~0093) 8/8 완료 후 정리 cycle. TASK.md 의 stale `[ ]` 체크박스 2건 close + TASK-0099 entry 추가 + STATUS.md marker append. 코드 / RBAC / 스키마 / endpoint 변경 0.
+- Mode: SKIPPED (AGENTS.md §18.4 META mode 정책 — docs-only tracker hygiene cycle, outside-voice review 대상 아님. `feedback_outside_voice_for_rbac` 미해당)
+- Reason: 본 cycle 은 사후 정리 docs-only — TASK-0072 의 main 통합 commits (`f298f90` + hotfix bundle TASK-0074~0080) 와 TASK-0092 의 7 vector matrix (V1-V7) 검증 결과를 tracker 에 반영하는 단순 사실 기록. SUBAGENT 또는 AGENT-TEAM review 의 비용 정당화 어려움. verify-completion CHECK#9 충족용 SKIPPED prefix.
+- Self-check 결과:
+  - **TASK-0072 stale checkbox close 정합성**: f298f90 commit (`feat(feature-0003): TASK-0072 — 타 계정 대화 검색·필터 + WebAccountActivity audit`) 이 main 통합 + 후속 hotfix bundle (TASK-0074~0080) 도 모두 main 통합. STATUS.md feature-0003 row 도 "cache-bust `v=20260518-conv-search`" 로 deployment 완료 명시. TASK.md line 152 의 `[ ]` 가 실제 상태와 일치하지 않음 → close 정합.
+  - **TASK-0073 line 2767 acceptance close 정합성**: TASK-0092 (REQ-20260520-0007, Minor §12.3) 의 7 vector matrix PASS (7/7) 가 본 acceptance 의 "`AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` 환경에서 컨테이너 시작 시 process 종료 + stderr `[FATAL]` 검증" 을 정확히 수행. V1 (AGENT_MODE=prod + AUDIT=0), V2 (AGENT_MODE=staging + AUDIT=0), V3 (AGENT_MODE=production + AUDIT=0) 모두 fail-closed 확인. acceptance criterion 정확 충족 → close 정합.
+  - **신규 TASK-0099 entry**: 본 closure cycle 자체를 등재 — future cycle 의 traceability 보강.
+  - **다른 미완 `[ ]` 항목 영향**: TASK-0034 (perf test) / TASK-0044 (pilot QA) / feature-0001/4/5/6 의 TASK-0004 stub — 본 cycle 범위 밖 (user 환경 필요 또는 user direction 필요). 본 cycle 은 audit followup backlog 정리에 한정.
+- Alt 거부:
+  - **stale checkbox 그대로 두기 (no-op)**: tracker 정확도 회귀 + future cycle 이 다시 발견해 처리해야 할 빚 누적. 거부.
+  - **stale checkbox 5건 일괄 close (모든 미완 항목 포함)**: TASK-0034 / TASK-0044 / feature-0001/4/5/6 TASK-0004 는 user 환경 / direction 필요 — close 권한 없음. 거부.
+  - **각 close 마다 별 cycle**: 1-line tick × 2 의 cycle 분리는 overhead 만 발생. 단일 cycle 묶기.
+- Cross-ref: TASK.md §2 Task Queue (TASK-0099 entry + line 152 TASK-0072 close + line 2767 TASK-0073 close), MODIFY.md CHG-20260522-0003, REPORT.md §1 cycle entry, docs/STATUS.md feature-0003 row tail.
+
+## REV-20260522-0002 [AGENT-TEAM:codex-outside-voice]
+- Date: 2026-05-22
+- Decision: TASK-0098 (REQ-20260522-0002, **Critical** §12.3 — Profile Drawer 탭 재구성 + 권한 정보 API 단위 차단) cycle ship. PR #49. Codex outside voice (consult mode, 101,989 tokens) 6 findings (1 blocker + 4 high + 1 medium) 흡수 + plan v2 redesign + PLAN-APPROVED (2026-05-21) 후 4 commit 으로 진행. push 후 main 다수 PR 머지 (#45 v3.10.0 + #47 TASK-0089 + #48/#50 + #52/#61 TASK-0094 첨부 multi-cycle Sprint 1 + DQA 브랜딩 + TASK-0095 GLOBAL prompt + TASK-0096 v2 설정 list-detail) → 반복 CONFLICTING → 사용자 결정 "Rebase main + conflict resolve" → multi-race rebase + ID reassign + squash commit 으로 main HEAD `20f0344` 위 재작성. 본 commit 머지로 사용자 명시 의도 (Profile Drawer 4 탭 재구성 + 권한 정보 API 단위 차단) 완성.
+- Reason: 사용자 in-cycle 결정 — (1) 탭 순서 `[프롬프트, 보안 및 계정, API Vault]` + 통합 탭 "활동 정보" 최상단, (2) "권한 현황" 패널 = 운영자 전용 분류 + UI/API 양쪽 차단, (3) PR 단위 = commit 분리 + 단일 PR, (4) multi-race rebase 시 사용자 결정 "Rebase main + 빠른 머지 시도". 사용자 메모 `feedback_outside_voice_for_rbac` 정책 적용.
+- Codex outside voice 6 findings 흡수 매핑:
+  - **F1 (blocker)** — admin.js `/api/auth/me.permissions["console.access"]` 의존 → `/api/admin/me` admin 전용 self endpoint 분리 (console.access gate).
+  - **F2 (high)** — Option Y (raw permission 비노출) 채택. `can()` 단순화 + apiFetch 403 fallback + 메시지 normalize.
+  - **F3 (high)** — 403 메시지 권한명 노출 → 5 패턴 9 callsite `"요청을 수행할 수 없습니다."` 통일.
+  - **F4 (high)** — 누출 경로 다수 → `_serialize_account` default `False` + 7 self callsite 일괄 적용.
+  - **F5 (high)** — 30+ callsite false 단순 전환 금지 → `can()` true 반환 + UI 표시 유지 + backend 403 fallback.
+  - **F6 (medium)** — CSRF/session race 점검: 현 backend SameSite cookie + 항상 fresh `_account_has_permission` 검사 → 안전.
+- Multi-race rebase 영역: 본 cycle 원래 4 commit (`2eeb22c/058d59a/2d15365/677d48a`, base `8888130`) 가 backup branch `backup/profile-tabs-restructure-pre-rebase` (677d48a tip) 에 보존. main HEAD `20f0344` 위에 단일 squash commit 으로 재작성. main 흡수 = #45 v3.10.0 + #47 TASK-0089 audit drawer + #48/#50 docs + #52 TASK-0094 첨부 multi-cycle Sprint 1 Phase 1 (MinIO + ADR + 부트스트랩) + #61 Phase 4 storage wrapper + RUNBOOK + DQA 브랜딩 (TASK-0097) + TASK-0095 GLOBAL prompt + TASK-0096 v2 (설정 list-detail). 의도 통합 = Profile Drawer 5 탭 → 4 탭 (audit 보존 + 3 탭 통합). ID reassign = TASK-0094→**TASK-0098** (main 의 TASK-0094 첨부 + TASK-0096 설정 list-detail 과 collision 회피) / REQ-20260521-0001→**REQ-20260522-0002** / AC-0199~0207→**AC-0226~0234** / CHG·REV-20260521-0001~0004→**CHG·REV-20260522-0002** / cache-bust `v=20260522-task-0098-perms`.
+- Alt 거부:
+  - **Option X (boolean ui_capabilities)**: 파생 노출 위험 → Codex reject.
+  - **PR 닫고 새 cycle**: 본 cycle 의 plan + outside voice + 검증 손실 → reject.
+  - **revert main 의 PR #45/#47/#52/#61 등**: 다른 cycle 의 기능 손실 → 부적합.
+- Risks: multi-race rebase 가 시간 비용 큼 + main 의 추가 진행 시 또 conflict 가능성. 빠른 머지 시도 필요. 회귀 위험 = (a) Profile Drawer audit 탭 visibility 단순화 (모든 로그인 사용자 → 노출), TASK-0073 audit.read.own 모든 role grant 정책 정합, (b) 30+ callsite can() 단순화 → backend 403 fallback (UX 검증 사용자 위임), (c) admin 콘솔 진입 `/api/admin/me` 호출 + 403/401 시 redirect "/".
+- 사용자 의도 완성 확인:
+  - Profile Drawer 탭 `[프롬프트, 보안 및 계정, API Vault]` ✓ + audit gated 보존
+  - 보안+계정 통합 + 활동 정보 최상단 ✓
+  - "권한 현황" 운영자 전용 + UI 비노출 ✓
+  - API 단위 권한 정보 차단 ✓ (`/api/auth/me` permissions 미포함)
+  - 관리 콘솔 권한 정보 조회 ✓ (`/api/admin/me` + admin callsite 3 곳 명시)
+- Test: py_compile (app.py + 2 tests) + node --check (app.js + admin.js) + verify-completion --pre-commit PASS. 실 컨테이너 9 시나리오 smoke + UI dogfood 2 role 사용자 위임.
+
+## REV-20260521-0006 [SKIPPED:self-review-after-plan-approved]
+- Date: 2026-05-21
+- Decision: TASK-0096 v2 (REQ-20260521-0004 follow-up — `설정` pane 을 계정/역할/제품 과 동일한 list-detail 패턴으로 정렬). 사용자 명시 follow-up 피드백 — "계정, 역할, 제품 탭과 일관된 디자인이 아닌것으로 확인되었습니다. 검색창을 포함하여, 해당 탭들과 일관된 디자인으로 구성해주세요." → CHG-20260521-0005 의 sub-sidebar (`admin-settings-shell`) 변형 폐기, 표준 `admin-list-detail` 5단 구조 + `admin-search` 검색창 + `admin-list-row` nav 변형 채택. UI restructure only — 데이터/API/권한 무영향이라 `feedback_outside_voice_for_rbac` 발동 조건 미해당, self-review.
+- Reason: 사용자 명시 직접 요청. 시각 일관성 회복 + 검색 가용성 신설.
+- Self-check 결과:
+  - **시각 일관성 (사용자 핵심 요구)**: header (`admin-pane-head` + drawer-label/h2) → list-detail (좌측 list-col surface + border + 12px padding + `admin-search` + section-label + list rows / 우측 detail-col surface + border + 18~22px padding + panel) 패턴이 계정/역할/제품 과 1:1 정합. `admin-list-row` 의 hover/`is-active` (primary-soft) 도 그대로 상속 → row 선택 표시도 동일 색상.
+  - **검색 가용성 (사용자 명시)**: `admin-search` placeholder = "설정 항목 검색…", 입력 즉시 row 필터 + 카운트 갱신. row 의 `data-settings-keywords` 가 영문/한글 양쪽 매칭 (예: "전역", "global", "system prompt", "base").
+  - **확장성 보존**: 새 항목 추가 절차 (CHG-20260521-0005 의 v1 패턴 동일 골자) = (1) `<button class="admin-list-row admin-list-row--nav" data-settings-tab="X" data-settings-group="..." data-settings-keywords="...">` row 추가, (2) `<article class="admin-settings-panel" data-settings-panel="X">` panel 추가, (3) `SETTINGS_PANEL_MOUNTERS["X"] = mountFn` 등록 1 줄.
+  - **lazy mount 정합 보존**: `adminState.settings.mountedPanels` Set 그대로. 첫 활성화 시에만 mount 호출. row 재선택 시 mount 호출 안 됨 (편집 state 보존).
+  - **Backward compat**: `globalPromptEditorMount` id + `buildSystemPromptEditor({scope:'global'})` 호출 + `system_prompt.global.read/.write` 권한 게이트 모두 그대로. v1 의 inline panel head/hint markup 도 그대로 유지.
+  - **a11y**: nav row 가 `role="option"` + `aria-selected` toggle. 카운트는 `aria-live="polite"` 유지. 리스트 컨테이너는 `role="listbox"`.
+- Alt 거부:
+  - **header 위 별도 검색바**: list-toolbar 안에 두는 형식이 다른 탭과 정합. header 위는 패턴 outlier 가 됨.
+  - **row hover 시 placeholder check icon 추가**: 다른 탭 row 가 그렇지 않으므로 거부. 일관성 우선.
+  - **section label 을 row 위 별 div 로 분리**: `admin-list-head` 안에 section label + count 가 한 줄로 collapsed 되는 게 다른 탭의 `admin-list-select-all + count` 정렬과 시각 동형.
+- Verification:
+  - 정적 검사 N/A (frontend only).
+  - 사후 검증: web 컨테이너 재배포 → `/browse` 로 설정 탭 진입 → header (Settings 라벨 + 제목) + 좌측 list-col (검색창 + section-label `시스템 프롬프트` + nav row `전역 시스템 프롬프트`) + 우측 detail-col (panel head + textarea body 3178 자) 노출 확인 + 검색창 input 시 필터 작동 + 콘솔 errors 없음 + 권한 grid 회귀 없음.
+- Trace: REQ-20260521-0004 → TASK-0096 → CHG-20260521-0006 → REV-20260521-0006.
+
+## REV-20260521-0005 [SKIPPED:self-review-after-plan-approved]
+- Date: 2026-05-21
+- Decision: TASK-0096 (REQ-20260521-0004, **Minor** §12.3 — `설정` pane sub-sidebar + panel 확장 패턴) self-review. `feedback_outside_voice_for_rbac` policy 는 admin/audit 표면 직접 변경 시 발동, 본 cycle 은 settings UI restructure (HTML/CSS/JS 만) 라 미해당. self-review 채택. 단일 sub-section 누적 구조 → `admin-settings-shell` (grid 240px / 1fr) + `admin-settings-nav` (sub-sidebar) + `admin-settings-content` (panel container) 의 2-column 확장 패턴으로 전환. 새 항목 추가 절차 = nav `<button data-settings-tab="X">` + content `<article data-settings-panel="X">` + `SETTINGS_PANEL_MOUNTERS["X"] = mountFn` 3 단계.
+- Reason: 사용자 직접 요청 — TASK-0095 검증 완료 후속, "`설정` 탭 내부 화면을 `계정`, `역할`, `제품` 과 같이 패널을 분리해줄 수 있을까요? 차후 `전역 시스템 프롬프트` 항목 외에도 설정 내 많은 항목이 추가될 예정인데 현재는 확장성이 너무 좁게 구현되어 있습니다." 사용자 의사 확인 (B안 선택 — 1차 sidebar 깔끔 유지 + 설정 그룹 안 무한 확장 가능 패턴) 후 진행.
+- Self-check 결과:
+  - **확장성 (사용자 핵심 요구)**: 새 항목 추가 = (1) admin.html 에 nav button + content article 한 쌍, (2) admin.js 의 `SETTINGS_PANEL_MOUNTERS` 에 mount 함수 등록 1줄. mount 함수 내부에서 권한 게이트 + lazy fetch — 다른 panel 의 데이터 의존 없음.
+  - **Lazy mount 정합성**: `adminState.settings.mountedPanels` Set 으로 panel 첫 활성화 시에만 mount. 재진입 시 mount 호출 안 됨 (편집 state 보존). nav 클릭 = `.is-active` toggle 만, panel 데이터는 그대로.
+  - **Backward compat**: `globalPromptEditorMount` id 보존 + `buildSystemPromptEditor({scope:'global'})` 호출 동일. 권한 게이트 (`system_prompt.global.read/write`) 그대로 유지. API/DB 무영향.
+  - **반응형**: `@media (max-width: 760px)` 에서 sub-sidebar 가 가로 wrap 으로 collapse + content 가 그 아래 stack. 기존 admin tab 패턴 (`@media (max-width: 760px)` 가 sidebar 를 hamburger 로 전환하는 경향) 과 정합.
+  - **권한 게이트 유지**: `mountGlobalPromptPanel()` 안 `can("system_prompt.global.read")` 체크 그대로. read 권한 없으면 panel 본문에 빈 placeholder 노출 (TASK-0095 동일 동작).
+- Alt 거부:
+  - **A안 (1차 sidebar tab 격상)**: 사용자 명시 의사로 거부 (B안 권장). 운영 항목 5+개 시 1차 sidebar 가 길어져 카테고리 균형 깨짐.
+  - **단일 페이지 + 항목 collapsible accordion**: vertical scroll 누적 동일 문제. 사용자가 명시적으로 거부한 패턴.
+  - **iframe / SPA route**: overengineering. admin.html 의 기존 tab 패턴과 동형 유지가 일관성 우선.
+- Verification:
+  - frontend only 변경 — py_compile / pytest 비대상.
+  - 사후 (commit 후) 재배포 절차: `make web` → `/static/admin.html` HEAD 응답 200 + grep `admin-settings-shell` PASS → `/browse` 로 admin 로그인 → 설정 tab 진입 → 좌측 sub-sidebar `전역 시스템 프롬프트` nav item 노출 (active) + 우측 panel 의 textarea 3204 자 본문 노출 확인 → `/browse` 스크린샷 캡처.
+- Risks:
+  - 향후 mount 함수가 다른 panel 데이터에 의존하면 lazy mount 가 race 일으킬 수 있음. 본 cycle 의 `global-prompt` 단일 항목은 자기 충족이므로 무영향. 추가 항목 ship 시 별 cycle 에서 ADR.
+  - 첫 활성 panel 이 hard-code (`activeTab: "global-prompt"`) — URL hash 라우팅은 별 cycle 로 미루기 (현재 단일 항목이라 의미 없음).
+- panel: SKIPPED:self-review-after-plan-approved. UI restructure only, 데이터/API/권한 무영향, 사용자 직접 요청 의사 확정 후 진행.
+- Trace: REQ-20260521-0004 → TASK-0096 → CHG-20260521-0005 → REV-20260521-0005.
+
+## REV-20260521-0004 [SKIPPED:self-review-after-plan-approved]
+- Date: 2026-05-21
+- Decision: TASK-0095 follow-up hot-fix — fast-path catchup `_ensure_seed_catchup(conn)` 에 `_ensure_seed_global_system_prompt(conn)` 호출 추가. CHG-20260521-0003 의 부트스트랩 helper 배치 누락을 보정 (slow path `_ensure_web_tables` 에만 두었고 fast path 누락). live deploy 후 web 컨테이너 안 DB 검증으로 발견.
+- Reason: 사용자 요청 "기능적인 검증 및 스크린샷을 통하여 UI 구성도 검증해주세요." 진행 중 발견. WebSystemPrompts row 조회 결과 GLOBAL scope 0 row + `GET /api/admin/system-prompts?scope=global` 응답이 `{prompt: null, scope: 'global'}` — 코드 상수 fallback 만 작동. 관리 콘솔 `설정` 탭 textarea 가 빈 채 노출되어 운영자가 base prompt 를 매번 직접 입력해야 하는 UX 회귀.
+- 근본 원인:
+  - `_ensure_web_tables` (slow path) 만 helper 호출 → schema 가 이미 잡힌 기존 배포는 `_runtime_tables_available()` 가 true 라 fast path `_ensure_seed_catchup` 만 타고 helper 호출 안 됨.
+  - `_ensure_seed_role_system_prompts` 등 다른 catchup-style seed helper 는 모두 양쪽 (slow + fast) 에서 호출되는 패턴. 본 helper 만 패턴 위반 — 부주의.
+- Self-check 결과:
+  - **idempotency 보존**: `_ensure_seed_global_system_prompt` 진입부 `_load_system_prompt(...)` 결과 truthy 시 early return. 양쪽 path 에서 호출돼도 INSERT 는 1회만.
+  - **agent_core import 실패 안전성**: lazy `from agent_core import SYSTEM_PROMPT` + try/except — fast path 에서도 동일하게 silent skip 보장. `compose_system_prompt` 의 fallback 이 인계.
+  - **호출 순서**: `_ensure_seed_role_system_prompts(conn)` 직후 — schema 가 잡혔다는 것을 다른 catchup helper 가 보장한 시점. 신규 dynamic permission 컬럼 backfill 보다 앞서지만 system_prompt seed 는 권한과 무관해 무영향.
+- Alt 거부:
+  - **부트스트랩 변경 없이 운영자가 첫 로그인 시 직접 채워 넣게**: UX 회귀 자체. 신규 배포는 GLOBAL row 가 자동 생성되는데 기존 배포만 미작동 = 환경 간 불일치. 거부.
+  - **fast path 폐지 + 항상 slow path**: `_runtime_tables_available()` 우회 = 매 부트스트랩마다 비싼 schema-rebuild 경로 발동. 다른 catchup helper 와 정합성 깨짐. 거부.
+- Verification:
+  - py_compile PASS (app.py).
+  - 사후 (commit 후) 재배포 절차: `make web` → DB `SELECT * FROM WebSystemPrompts WHERE Scope='global'` 1 row + Content 본문 확인 → API 응답 `prompt` 필드 비어있지 않음 확인 → admin 콘솔 `설정` 탭 textarea 본문 노출 확인.
+- Risks:
+  - 본 helper 가 fast path 에서 매 재기동마다 호출 — `_load_system_prompt` 1회 SELECT 만 추가 (truthy → return). 미미한 overhead, 무시 가능.
+  - 본 hot-fix 자체로 인한 schema migration 없음 — rollback 단순 (코드 1 줄 revert).
+- panel: SKIPPED:self-review-after-plan-approved (CHG-20260521-0003 와 동일 surface — system_prompt 표면 + audit 변경 없음. Codex outside voice trigger 미해당. 본 fix 는 1-line correction 으로 외부 검증 비용 대비 가치 낮음).
+- Trace: REQ-20260521-0003 → TASK-0095 → CHG-20260521-0004 → REV-20260521-0004 (CHG-20260521-0003 follow-up fix).
+
+## REV-20260520-0010 [AGENT-TEAM:codex-outside-voice]
+- Date: 2026-05-21
+- Decision: TASK-0087 (REQ-20260520-0002, **Major** §12.3 — 외부 LAN trust 강화) plan v2 흡수 (Codex outside voice review verdict **NEEDS_REVISION**, 6 findings Major 5 + Minor 1). 사용자 명시 결정으로 Major #1 (RFC1918 default 권장값) 거부 + 나머지 5 흡수 (Major #2-5 + Minor #1). PLAN-APPROVED 후 Phase A~E 실행 — Caddy XFF 정규화 (A) → `_get_client_ip()` 재작성 + module-level 상수 + mode-aware fail-loud (B) → SECURITY.md §9.7 정책 갱신 (C) → docs (D) → verify-completion + commit + cycle-finalize (E).
+- Mode: SUBAGENT (Codex CLI consult mode, gpt-5 default, model_reasoning_effort=high, read-only sandbox)
+- Session: model_reasoning_effort=high, 228,107 tokens
+- Review subject: Plan v1 (RFC1918 trust + silent skip + Caddy reverse_proxy 내부 trusted_proxies)
+- Result: NEEDS_REVISION → Plan v2 흡수 완료
+- Reason: AGENTS.md §17 외부 검증 정책 + `feedback_outside_voice_for_rbac` user policy — 본 변경은 IP-trust 보안 표면 + multi-feature (feature-0003 + feature-0006) + audit subsystem 의존성. 정적 review 만으로 cross-feature blindspot 검출 불가, outside voice 필수.
+- Findings:
+  - **Major #1 (RFC1918 전체 trust 위험)** — `WEB_TRUSTED_PROXIES`는 "사내 클라이언트 대역"이 아니라 "web이 직접 TCP peer로 보는 reverse proxy 대역"이어야 함. 현재 compose 구조에서 web port 가 `${WEB_PORT}:8000` 으로 LAN publish 되어 있어 사내 클라이언트가 Caddy 우회 시 자기 사설 IP 가 trusted proxy 로 판정되어 XFF spoof 가능. → **사용자 명시 거부** (사내 LAN dev/staging 전제 + 본 worktree 컨테이너는 테스트 후 정리). SECURITY.md §9.7 에 trade-off 명시.
+  - **Major #2 (Caddy 문법 부정확)** — Plan v1 의 `reverse_proxy { trusted_proxies static private_ranges }` 가 Caddy v2 문서 기준 부정확. Caddy 권장은 global option `servers > trusted_proxies static <ranges>`. → **흡수**: trusted_proxies 추가 대신 `reverse_proxy { header_up X-Forwarded-For {client_ip} }` 로 단일 hop XFF 정규화 (더 안전한 대안). multi-hop / spoof 모두 차단.
+  - **Major #3 (Caddy `private_ranges` global trust 위험)** — Caddy 가 직접 사내 LAN 클라이언트를 받는 구조에서 `trusted_proxies static private_ranges` global 은 private IP 클라이언트의 XFF 신뢰 → spoof. → **흡수**: global trusted_proxies 추가 안 함 (Major #2 와 동일 결정 — XFF 정규화로 대체).
+  - **Major #4 (malformed XFF 검증 누락)** — Plan v1 의 `_get_client_ip()` 는 XFF 첫 토큰을 IP 검증 없이 반환 (`garbage`, `1.2.3.4:1234` 등 audit 오염). → **흡수**: `ipaddress.ip_address(first)` 파싱 검증 + 실패 시 direct_ip fallback.
+  - **Major #5 (malformed env silent skip 부적합)** — Plan v1 의 `_parse_trusted_proxies` 가 invalid CIDR 토큰을 silent skip → 운영자 인지 못함. → **흡수**: mode-aware — `AGENT_MODE in {prod, staging}` 에서 `RuntimeError` startup, dev/test/"" 에서 stderr WARNING + 해당 토큰만 skip.
+  - **Minor #1 (silent regression warning)** — proxy mode (`ENABLE_WEB_TLS_PROXY=1`) + `WEB_TRUSTED_PROXIES` empty 조합 = audit IP 가 Caddy container IP 만 기록 (PIPA §29 접근기록 품질 회귀). → **흡수**: prod/staging `RuntimeError` startup, dev/test stderr WARNING.
+- 질문별 답변 흡수 매트릭스:
+  | Codex Q | 답변 | Plan v2 반영 |
+  |---|---|---|
+  | Q1 silent regression default | 보수적 default 유지 + proxy mode fail-loud | proxy-mode gate 추가 |
+  | Q2 Caddy `private_ranges` cover | docker bridge subnet 포함, but reverse_proxy 내부 `static` 문법 아님 | global trusted_proxies 자체를 추가 안 함 + XFF 정규화로 대체 |
+  | Q3 단일 hop 가정 안전성 | 안전하지 않음 (web port LAN publish) — XFF 정규화 권장 | `header_up X-Forwarded-For {client_ip}` 추가 |
+  | Q4 IPv6 support | `ipaddress.ip_address` IPv6 OK. Caddy `private_ranges` 는 fd00::/8 + ::1 만 (fc00::/7 아님) | `_get_client_ip` IPv6 자동 지원, Caddy global private_ranges 안 씀 |
+  | Q5 schema 호환 | VARCHAR(64) 가 IPv4/IPv6 모두 수용 OK | 변경 없음 |
+  | Q6 다른 surface | rate limit per-account, share token IP allowlist 별 cycle 보류, login throttling 미확인 | SECURITY.md §9.7 에 share token allowlist build 가능성 명시 |
+  | Q7 malformed env | fail-loud 권장 | Major #5 흡수 |
+  | Q8 test coverage | IPv6, invalid env fatal, malformed XFF fallback, 빈 첫항목, /32 /128, direct LAN client spoofed XFF, caddy validate | TEST.md §4 8 시나리오 추가 |
+- Decision: Codex 권고 6/6 모두 검토 + 5 흡수 + 1 사용자 명시 거부 (Major #1). PLAN-APPROVED 마커 부여 (2026-05-21).
+- Risk:
+  1. **사용자 명시 거부 #1**: RFC1918 전체 trust 의 위험 (사내 클라이언트가 web port 직접 접근 + 자기 IP 를 trusted proxy 로 가장 + XFF spoof) 은 본 worktree 컨테이너 정리 정책과 사내 dev/staging 전제 로 격리. 외부 인터넷 / 미신뢰 LAN 노출 시점에 별 cycle 에서 (a) `WEB_TRUSTED_PROXIES` 좁힘 + (b) docker-compose port mapping `127.0.0.1:${WEB_PORT}:8000` 으로 변경.
+  2. **Caddy XFF 정규화의 single-hop 의존성**: Caddy 앞에 upstream proxy (cloudflare/ALB) 가 추가되면 `{client_ip}` 가 upstream proxy IP 가 되어 진짜 클라이언트 IP 가 audit 에서 사라짐. 별 cycle 검토 필요.
+  3. **`ipaddress.ip_address()` 검증 실패 시 direct_ip fallback**: trusted proxy 가 malformed XFF 를 보내는 비정상 상황에서 audit IP 가 caddy container IP 로 기록 — 정상 동작이라 risk 아님. 단 운영 관측 (Caddy log) 필요.
+- Alternatives considered:
+  - Plan v1 그대로 진행: Codex 6/6 무시 — 거부 (보안 표면 + audit 표면 + multi-feature)
+  - docker-compose port mapping 변경 같이 진행 (Codex 더 근본 권고): 사용자 외부 접속 경로 유지 명시 결정으로 거부 — 별 cycle 분리
+  - `WEB_TRUSTED_PROXIES` default = docker bridge subnet (172.18.0.0/16): 사용자 명시 결정 (RFC1918 전체) 으로 거부 — SECURITY.md §9.7 에 trade-off 명시
+  - Caddy global `trusted_proxies static <narrow>`: 본 시스템 (Caddy 단일 hop) 에서는 효과 미미 + XFF 정규화가 더 강력 — 채택 안 함
+- Cross-ref: TASK.md §2.9 (TASK-0087 Implementation Plan + PLAN-APPROVED 마커), MODIFY.md CHG-20260520-0010, REPORT.md §1 cycle entry, docs/SECURITY.md §9.7, feature-0006-lan-proxy-access REV-20260520-0010 (dual ownership)
+
+## REV-20260521-0003 [SKIPPED:self-review-after-plan-approved]
+- Date: 2026-05-21
+- Decision: TASK-0095 (REQ-20260521-0003, **Major** §12.3 — GLOBAL system prompt layer 신설) self-review (verify-completion CHECK#9 정합 prefix `SKIPPED:` 사용 — Codex outside voice trigger 미해당, `feedback_outside_voice_for_rbac` policy 는 admin/audit 표면 직접 변경 시 발동, 본 cycle 은 `system_prompt` 표면 + RBAC 추가지만 audit 자체 변경 없음). PLAN-APPROVED 후 7 phase 실행 — Plan (A) → agent_core compose 함수 GLOBAL fetch (B) → app.py bootstrap seed helper (C) → RBAC 2 권한 + admin auto-grant catchup (D) → admin endpoint scope='global' allowlist + 권한 가드 (E) → 관리 콘솔 `설정` 탭 + sub-section 패턴 + buildSystemPromptEditor scope='global' + CSS (F) → 문서 갱신 (FUNCTION/MODIFY/REVIEW/REPORT). 본 review 는 self-review (대화 기반 검토 — Codex outside voice trigger 미해당. `feedback_outside_voice_for_rbac` policy 는 admin/audit 표면 직접 변경 시 발동, 본 cycle 은 `system_prompt` 표면이라 self-review 채택).
+- Reason: 사용자 직접 요청 — "현재 서비스 사용자의 시스템 프롬프트 누적 구조에서, 최상위 전역 프롬프트도 구성해주세요. Product / Role / Account 에 기본적으로 처음 누적되어 요청사항에 적용될 부분입니다." 기존 4 layer (BASE → Product → Role → Account) 의 BASE 가 코드 상수 hard-code 라 운영자 수정 불가. WebSystemPrompts 테이블이 이미 scope/product_id/role_id/account_id 4-tuple 을 수용하는 schema 라 minimal change 로 GLOBAL scope 추가 가능.
+- Self-check 결과:
+  - **Schema 무변경 확인**: WebSystemPrompts.Scope VARCHAR(16) 가 이미 'global' 수용. UNIQUE INDEX `UX_WebSystemPrompts_Scope` 가 (Scope, ProductId, RoleId, AccountId) 4-tuple 정합 — global row 는 (`global`, NULL, NULL, NULL) 단 1건. DDL migration 불필요.
+  - **Fallback 정합성**: agent_core.compose_system_prompt 가 (a) row 없음 (b) Content 빈 문자열 (c) 조회 실패 (예: WebSystemPrompts 테이블 미존재 / 부트스트랩 race) 3 경로 모두 코드 상수 SYSTEM_PROMPT 로 회귀. graceful degradation 보장.
+  - **부트스트랩 순서**: `_ensure_seed_global_system_prompt(conn)` 가 `_ensure_seed_role_system_prompts(conn)` 다음 호출 — schema 가 이미 잡힌 상태 보장. agent_core import 가 부트스트랩 시점 실패할 수 있는 환경 대응 (lazy try/except). seed 본문 빈 경우 silent skip — compose_system_prompt 단의 fallback 이 인계.
+  - **RBAC 가드**: `system_prompt.global.read` / `.write` 가 admin only 자동 grant. GET/PUT endpoint 가 scope='global' branch 에서 권한 가드 실행 — operator/sales/dba/pending 은 명시 grant 없으면 403. 모든 LLM 응답에 영향 가는 권한이라 운영자 한정 패턴 의도적 채택.
+  - **Audit 정합성**: 기존 `admin.system_prompt.update` ActionCode + `_audit_admin_mutation` Same tx hook 재사용. ChangeJson 의 `scope` 필드가 `'global'` 인 row 가 새로 등장하지만 redaction allowlist (system_prompt.content 본문 미포함) 는 SECURITY §9.2 정합 그대로 적용.
+  - **UI 확장성**: `설정` 탭 안에 `<article data-settings-section="...">` 카드 list 패턴 — 차후 운영 항목 추가 시 동일 패턴으로 sub-section 누적 가능. `mountSettingsSections()` 가 single mount entry, 신규 sub-section 마다 mount 호출 1줄만 추가.
+  - **Permission group order 정합**: 작업 화면 (`app.js`) 과 관리 콘솔 (`admin.js`) 양쪽 `PERMISSION_GROUP_ORDER` 에 `settings` 추가 + 양쪽 `permissionGroupOf` 가 `system_prompt.global.` 접두사 우선 매핑. 양쪽 grid/pill 정상 노출.
+- Alt 거부:
+  - **신규 테이블 `WebGlobalSystemPrompts` 별도 분리**: WebSystemPrompts 가 이미 scope discriminator 를 갖는 generic 테이블이라 별도 테이블은 불필요한 split. 거부.
+  - **권한 신설 없이 `system_prompt.manage.role.any` 재사용**: 의미 오버로드 (role-scope 권한 코드가 global scope 까지 관할 — 권한 체계 혼란). 거부.
+  - **관리 콘솔 dashboard 상단에 직접 노출**: 사용자 명시 redirect — "`설정` 탭을 만들어주세요. 차후 항목이 추가될 수 있으므로 확장성있게 구성해주세요." 라 dashboard 상단 안 + 신규 `설정` 탭 채택.
+  - **Outside voice review (Codex consult mode)**: `feedback_outside_voice_for_rbac` policy 가 admin/audit 표면 직접 변경 시 발동. 본 cycle 은 `system_prompt` 표면 + RBAC 추가지만 audit 자체 변경 없음 (기존 hook 재사용). self-review 채택. live runtime smoke 는 사용자 검증으로 위임.
+- Verification (Phase G 에서 verify-completion.sh 통과 확인 예정):
+  - py_compile PASS (agent_core.py — pre-existing SyntaxWarning 76 line `'\``' 무관, app.py).
+  - node --check PASS (admin.js, app.js).
+  - 부트스트랩 seed idempotency: `_load_system_prompt(conn, scope='global', product_id=None, role_id=None, account_id=None)` 가 row 반환 시 helper no-op 확인 (코드 reading 기반).
+  - compose_system_prompt fallback chain: row 없음 / 빈 본문 / 조회 실패 3 경로 모두 SYSTEM_PROMPT 로 회귀 (코드 reading 기반).
+- Risks:
+  - GLOBAL row 본문이 잘못 입력되면 모든 LLM 응답에 영향 — 운영자 한정 권한 + 빈 본문 시 코드 상수 fallback 으로 위험 완화. 사용자가 textarea 비우고 적용 시 row delete (= fallback 회귀) 패턴은 기존 `_upsert_system_prompt` 가 처리.
+  - live runtime smoke (관리 콘솔 `설정` 탭 진입 + 본문 수정 + LLM 호출 시 적용 확인) 는 사용자 검증으로 위임. PR merge 후 사용자가 admin 으로 로그인 → 설정 탭 진입 → 텍스트 수정 → 임의 대화 ask → assistant 응답이 새 base prompt 반영하는지 확인 필요.
+  - 부트스트랩 race (web 컨테이너 내 worker 다중 시작 + WebSystemPrompts schema 직전 INSERT) 는 INSERT 의 UNIQUE INDEX 가 차단. helper 가 `_load` 후 INSERT 라 race 시 한쪽이 IntegrityError 가능 — `_upsert_system_prompt` 가 이미 INSERT...ON DUPLICATE KEY UPDATE 패턴이므로 idempotent.
+- 미해결 followup:
+  - 차후 `설정` 탭 sub-section 항목 추가 시 동일 `admin-settings-section` 패턴 재사용 — 본 cycle 은 1 sub-section 만 도입.
+  - GLOBAL row 의 body 가 PROMPT_LABELS 의 다른 scope 와 길이/구조 일관성 강제 정책은 별 cycle 검토 (현 시점 freeform).
+- panel: SKIPPED:self-review-after-plan-approved (Codex outside voice trigger 미해당 — system_prompt 표면 + audit 변경 없음. 사용자 PLAN-APPROVED marker 가 panel 의 외부 검증 대체).
+- Trace: REQ-20260521-0003 → TASK-0095 → CHG-20260521-0003 → REV-20260521-0003.
+
+## REV-20260520-0009 [AGENT-TEAM:codex-outside-voice]
+- Date: 2026-05-20
+- Decision: TASK-0089 (REQ-20260520-0004, **Minor** §12.3 — 작업 화면 audit drawer UX) plan v1 초안 → Codex outside voice review (consult mode, 829,505 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign → 사용자 confirm. profile drawer "내 감사 로그" 탭 + 신규 backend endpoint 2 (`/api/profile/audits` + detail, `scope="own"` 강제) + frontend (HTML + JS + CSS).
+- Codex outside voice 5 findings 흡수:
+  - **C1 — URL 의미 mismatch**: `/api/admin/audits` 는 `.own` 호출 가능하나 `/admin/` 이 drawer 와 부합 안 함. **ACCEPT** → 신규 `/api/profile/audits` + detail (helper 재사용).
+  - **C2 — `.any > .own` 우선**: `_audit_resolve_read_scope()` 가 `.any` 먼저 선택. frontend `scope=own` 만으로 부족. **ACCEPT** → backend `_audit_compose_where(scope="own", ...)` 강제. `.any` 보유자도 본인만.
+  - **C3 — CSV export drawer 위험**: export endpoint `scope="any"` 고정, drawer 노출 시 `audit.export` 보유자가 전체 CSV. **ACCEPT** → drawer 에 export/purge 미노출.
+  - **C4 — drawer 폭 + ChangeJson**: 390px 에 2-column 안 맞음, ChangeJson 줄바꿈 비효율. **ACCEPT** → 1-column list + inline detail expand + `<pre>` overflow:auto 수평 스크롤.
+  - **C5 — 권한 race**: backend OK (매 요청 권한 재확인), frontend 처리 필요. **ACCEPT** → tab visibility (`updateProfileAuditTabVisibility()` `renderProfile()` 마다) + 403 graceful state.profileAudit.forbidden.
+- 추가: mini filter `action_code` + `from_at` + `to_at` (3 필드, actor_id/actor_type 본인 한정 무의미 제거).
+- Alt 거부:
+  - **v1 단독 진행 (기존 endpoint 재사용)**: C1 + C2 fatal. `.any` 보유자가 drawer 에서 전체 audit 노출. backend 강제 필수.
+  - **C3 완화 (drawer 에 export 노출)**: scope="any" 고정 CSV 라 PII 전체 유출. drawer 미노출 필수.
+- Verification:
+  - py_compile PASS
+  - node --check app.js PASS
+  - routing smoke: 신규 endpoint 2 등록 확인
+- Risks: live browser smoke (drawer tab → list → inline detail expand → filter / 403 시 "권한 없음") PR merge 후 사용자. CSV export drawer 추가는 별 cycle (`/api/profile/audits/export.csv` + scope="own" 강제 필요).
+- 미해결 followup:
+  - drawer 에서 자기 audit CSV export (`/api/profile/audits/export.csv`, scope="own" 강제) 별 cycle (Minor)
+  - TASK-0073 backlog 1 entry 남음 (TASK-0087, 외부 LAN trust feature-0006 위임)
+  - SECURITY.md §8 strict-string-equality 계약 (TASK-0092 followup)
+  - `_migrate_web_account_activity_to_audit()` 제거 (TASK-0086 followup, rollback window 종료 후)
+  - 동시 export 제한 + EXPLAIN 분석 (TASK-0090 followup)
+- panel: AGENT-TEAM:codex-outside-voice — Codex consult mode (829,505 tokens).
+- Trace: REQ-20260520-0004 → TASK-0089 → CHG-20260520-0009 → REV-20260520-0009.
+
+## REV-20260520-0008 [AGENT-TEAM:codex-outside-voice]
+- Date: 2026-05-20
+- Decision: TASK-0090 (REQ-20260520-0005, **Minor** §12.3 — CSV streaming export) plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, 550,870 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign → 사용자 confirm. `/api/admin/audits/export.csv` hard cap 50k row 제거 + StreamingResponse + keyset cursor pagination + max_id high-water + try/finally + self-audit.
+- Reason: TASK-0073 Phase A4 의 50k cap 이 large fleet (100k+ row) export 부족. memory footprint (50k × 1KB = 50MB+ buffer) DoS surface. `feedback_outside_voice_for_rbac` policy — audit export 표면 직접 변경.
+- Codex outside voice 5 findings 흡수:
+  - **C1 — async + sync mysql.connector blocking**: StreamingResponse 는 sync iterator 받음 (iterate_in_threadpool). async generator 안 sync cur.execute = event loop blocking. endpoint conn close 가 generator 보다 먼저 실행 위험. **ACCEPT** → `def csv_iter()` sync generator + 별 streaming conn (generator 내부 finally cleanup).
+  - **C2 — consistent snapshot vs max_id**: `START TRANSACTION WITH CONSISTENT SNAPSHOT` long transaction 부담. audit append-only → `MAX(Id)` high-water mark 가 minimal overhead. **ACCEPT** → 시작 시 `SELECT MAX(Id) FROM WebAuditEvents{where}` 잡고 모든 page `Id <= max_id`.
+  - **C3 — keyset + filter 정합 + query plan**: keyset 자체는 정합. 단 `ORDER BY Id DESC + filter` 조합 인덱스 미보장. **ACCEPT (부분)** → TEST.md 에 EXPLAIN 분석 future cycle 명시 (본 cycle 은 코드 변경만, live mysql EXPLAIN 별 cycle).
+  - **C4 — cap 제거 = DoS/계약 변경**: cap 은 SECURITY.md §9 명시. 제거 시 운영 제어 (export self-audit + 동시 실행 제한 + EXPLAIN) 필요. **ACCEPT (부분)** → cap 제거 + SECURITY §9.5 갱신 + export self-audit (start + complete/aborted). 동시 실행 제한 (semaphore) 은 multi-worker 정합 검토 필요 → 별 cycle followup.
+  - **C5 — cleanup try/finally**: client disconnect / timeout / send error 시 cursor/conn 누설. **ACCEPT** → generator 내부 try/finally (cursor.close + conn.close + complete audit).
+- 추가 흡수 (minimum-fix 2):
+  - chunk_size 1000 → **500** (안전 마진)
+  - 1 row yield 대신 **64KiB byte-threshold flush** (uvicorn buffering 효율)
+  - CRLF 유지, BOM 추가 안 함 (기존 contract 보존)
+- Alt 거부:
+  - **v1 단독 진행 (outside voice 흡수 X)**: C1 (event loop blocking) + C5 (cleanup 누설) 모두 fatal. v2 redesign 필수.
+  - **C4 완화 (cap 1M 으로 증가만)**: large fleet 미충족 + streaming 미적용 시 memory footprint 그대로. 사용자 v2 단독 진행 confirm 시 거부.
+  - **C2 제외 (snapshot/high-water 없이)**: 중간 INSERT 가 export 에 섞일 가능성. audit append-only 가정 + max_id 가 minimal overhead 라 채택.
+- Self-audit ActionCode 신설 (purge 패턴 답습): `audit.export.start`, `audit.export.complete`, `audit.export.aborted`. ChangeJson = `{scope, filter_hash, max_id, exported_row_count, elapsed_ms, aborted}`. filter_hash = sha256[:16] (raw filter PII 회피).
+- Verification (Phase B lightweight smoke):
+  - py_compile PASS
+  - `_AUDIT_EXPORT_CHUNK_SIZE=500` ✓
+  - `_AUDIT_EXPORT_FLUSH_BYTES=65536` ✓
+  - `_audit_export_filter_hash` 존재 + sort_keys 정렬 deterministic (h1 == h2 = `42ea65e7de088de2`) ✓
+  - `StreamingResponse` imported ✓
+- Risks: live runtime smoke (실 PATCH/SSE export 호출 + WebAuditEvents row 검증) PR merge 후 사용자 위임. 동시 export 제한 (semaphore) 미구현 — 별 cycle. representative filters EXPLAIN 분석 별 cycle.
+- 미해결 followup:
+  - 동시 export 제한 (multi-worker semaphore 정합 검토 + advisory lock 또는 별 솔루션, Minor)
+  - representative filters EXPLAIN FORMAT=JSON 분석 (Minor, live mysql)
+  - SECURITY.md §8 strict-string-equality 계약 (TASK-0092 V6 followup)
+  - rollback window 종료 후 `_migrate_web_account_activity_to_audit()` 제거 (TASK-0086 followup)
+  - TASK-0073 backlog 2 entries 남음 (TASK-0087, TASK-0089) — 각 별 cycle
+- panel: AGENT-TEAM:codex-outside-voice — Codex consult mode (550,870 tokens). 본 cycle verification panel.
+- Trace: REQ-20260520-0005 → TASK-0090 → CHG-20260520-0008 → REV-20260520-0008.
+
 ## REV-20260520-0007 [AGENT-TEAM:codex-outside-voice]
 - Date: 2026-05-20
 - Decision: TASK-0088 (REQ-20260520-0003, **Minor** §12.3 — `slow_query_log` 통합 ADR-0020, docs only) plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, 390,785 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign → 사용자 confirm → ADR-0020 accepted. ADR-0019 Codex C1 lock-in 의 최종 결론 — **Option C Decoupled 채택**.
@@ -1074,3 +1333,137 @@ source_of_truth: true
   - subagent review (general-purpose): codex 의 web_search_cached 와 정적 분석 깊이를 능가하지 못함 — codex 단일로 충분
   - Revision 2 직접 작성 없이 Critical 3건만 inline patch: D18~D21 의 신규 결정이 누락 — 거부
 - **Cross-ref**: BRIEFING §17 (Codex 2차 review + Revision 2 흡수 매트릭스). 본 entry 는 §17.5 의 verdict 평가와 §2.2 의 inline 결정 갱신을 review 정본으로 lock-in
+
+## REV-20260521-0002 [SKIPPED:report-sync-only] TASK-0094 cleanup follow-up REPORT.md §16.5 Step 6 사후 기록
+
+- **Mode**: SKIPPED (AGENTS.md §18.4 META mode 정책 — non-policy doc-only cycle, outside-voice review 대상 아님)
+- **Subject**: REPORT.md §1 Summary 의 TASK-0094 entry + Git 동기화 결과 표 append (CHG-20260521-0002)
+- **Reason**: 본 follow-up 은 §16.5 Step 6 의 단순 사실 (commit hash / PR # / merge timestamp) 기록 보강. 정책 / 아키텍처 / RBAC catalog / 스키마 변경 없음. SUBAGENT 또는 AGENT-TEAM review 의 비용 정당화 어려움. 본 entry 는 verify-completion CHECK#9 충족용 SKIPPED 마커
+- **Cross-ref**: CHG-20260521-0001 의 본 cycle 정본 review 는 REV-20260521-0001 [SUBAGENT:codex] (2회 outside-voice review 흡수)
+
+## REV-20260521-0003 [SKIPPED:phase1-infra-only] TASK-0094 Sprint 1 Phase 1 (Pre-flight) review
+
+- **Mode**: SKIPPED — Phase 1 (Pre-flight) 은 인프라 추가 / 정책 ADR / 부트스트랩 스크립트만. backend / RBAC catalog / 스키마 변경 0. outside-voice review 의 비용 정당화 어려움. 본 entry 는 verify-completion CHECK#9 충족용 SKIPPED 마커.
+- **Subject**: ADR-0022 (MinIO) + ADR-0023 (sandbox schema + maintenance path) + ADR-0025 (PGVector Sprint 4 prerequisite) + docker-compose.yml minio/minio-init service + .env.example 16 변수 + minio-init.sh 부트스트랩 + feature-0001 ANCHOR §1 갱신.
+- **Reason**: 본 Phase 의 모든 결정은 TASK-0094 BRIEFING Revision 2 (REV-20260521-0001 [SUBAGENT:codex] — Codex 2회 outside-voice review 흡수) 의 D1/D2/D3/D10/D15/D20 결정 정본을 그대로 구현. ADR 본문도 BRIEFING §2.2 inline 결정 + §17 Codex 매트릭스 cross-ref. 추가 review 없음.
+- **Cross-ref**:
+  - Codex 1차 review (REV-20260520-0001, BRIEFING §13)
+  - Codex 2차 review (REV-20260521-0002, BRIEFING §17)
+  - 정본 BRIEFING review (REV-20260521-0001 [SUBAGENT:codex])
+- **Sprint 1 cycle 의 outside-voice 추가 호출 시점**: Phase 12 의 D14 SQL allowlist guard 가 Ship 조건이라, Phase 12 진입 시 Codex 추가 review 권장. Phase 2~11 의 schema / RBAC / API / UI / share / lifecycle / sandbox / ingest 는 각 Phase 종료 시 SKIPPED 또는 짧은 SUBAGENT review 적정.
+
+## REV-20260521-0004 [SKIPPED:schema-only] TASK-0094 Sprint 1 Phase 2 (Cycle 0 schema) review
+
+- **Mode**: SKIPPED — Phase 2 는 schema 신설 (5 신규 table + 1 column ALTER) + 6 helper 정의 + bootstrap 호출 등록만. backend endpoint / RBAC catalog / UI / share / lifecycle / sandbox / ingest / SQL guard 모두 미작업. outside-voice review 의 비용 정당화 어려움. verify-completion CHECK#9 충족용 SKIPPED 마커.
+- **Subject**: 5 신규 table (`WebConversationAttachments` / `WebConversationAttachmentsSandboxSchemas` / `WebAccountConsents` / `WebAttachmentDerivedMessages` / `WebConversationAttachmentProviderFiles`) + 1 column ALTER (`WebConversationShares.PolicyVersion`). 6 helper. py_compile PASS.
+- **Reason**: BRIEFING Revision 2 §5.1 의 column 정의를 정합 그대로 SQL DDL 로 옮긴 단계. column type / NOT NULL / DEFAULT / INDEX 모두 BRIEFING 명세 따름. D6 / D11 / D12 / D17 / D19 / R-F7 / R-F11 / R-F13 의 결정 inline 반영. outside-voice review 1차/2차에서 schema 자체에 대한 추가 finding 없음 (D9/F11 의 derived join table 만 R-F11 흡수, 이미 D19 로 적용).
+- **Cross-ref**:
+  - BRIEFING §5.1 (정본 schema 정의)
+  - 정본 review: REV-20260521-0001 [SUBAGENT:codex]
+  - Phase 1 review: REV-20260521-0003 [SKIPPED:phase1-infra-only]
+- **다음 outside-voice 시점**: Phase 12 (D14 SQL allowlist guard, Ship 조건) — schema 가 아닌 보안 경계 코드. 본 cycle Critical 의 핵심 ship guarantor. Phase 12 진입 직전 Codex 추가 review 권장. Phase 3~11 의 RBAC / storage / API / UI / share / lifecycle / sandbox / ingest 도 SKIPPED 또는 짧은 SUBAGENT review 적정.
+
+## REV-20260521-0005 [SKIPPED:rbac-catalog-only] TASK-0094 Sprint 1 Phase 3 (Cycle 0 RBAC) review
+
+- **Mode**: SKIPPED — Phase 3 는 RBAC catalog 4 코드 + 6 checklist (catalog + seed + 5 catchup + FE label) 적용만. endpoint / business logic / UI section 변경 0. 본 RBAC 변경은 BRIEFING Revision 2 정본 review (REV-20260521-0001 [SUBAGENT:codex]) 에서 D6/D11/D12/D14/D15/D16/D21 결정으로 이미 outside-voice review 흡수 완료. 추가 codex review 비용 정당화 어려움.
+- **Subject**: `conversation.attachment.{upload,read}.{own,any}` 4 코드 catalog + SEED_ROLE_DEFINITIONS pending/operator/sales 갱신 + _ensure_seed_roles admin/operator-sales/dba/pending 4 catchup + app.js label/description map.
+- **Reason**: 사용자 메모리 정책 ("RBAC plan 은 outside voice 필수") 와 본 Phase 의 SKIPPED 결정의 절충 — BRIEFING 정본 review 가 RBAC catalog blindspot 대응 (REV-20260520-0001 Claim #1 6 checklist + Claim #3 정적 catalog source + REV-20260521-0002 R-F14 pending metadata-only) 을 흡수 lock-in 했고, 본 Phase 는 정본 결정의 mechanical 적용. 새로운 권한 의미 결정 (예: read.any 의 범위 / pending metadata-only 범위) 은 본 Phase 에서 발생하지 않음.
+- **Risk**:
+  1. **6 checklist 누락 가능성**: Phase 3 의 작업은 (1) PERMISSION_DEFINITIONS + (2) SEED_ROLE_DEFINITIONS + (3~5) _ensure_seed_roles 의 4 catchup + (6) FE label. 검증: `bash bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS + py_compile PASS + admin.js 는 backend label 직접 사용이라 별 map 불필요 확인.
+  2. **pending metadata-only enforcement**: catalog 수준에서는 read.own 부여 — bytes download 차단은 Phase 5 endpoint application-level. 본 Phase 만으로는 enforcement 미완. Phase 5 진입 시 `if account.role.key == 'pending': deny bytes` 분기 명시 + AC 갱신.
+- **Cross-ref**: BRIEFING §5.2 + 정본 REV-20260521-0001 + Phase 2 REV-20260521-0004.
+- **다음 outside-voice 시점**: Phase 12 (D14 SQL guard, Ship 조건). Phase 5 (upload API) 에서 attachment endpoint 의 권한 검증 + pending bytes deny 의 정합도 codex review 권장 (RBAC enforcement 의 application-level 표면).
+
+## REV-20260522-0001 [SKIPPED:static-asset-only]
+- Date: 2026-05-22
+- Trigger: TASK-0097 (REQ-20260522-0001, Minor §12.3) — DQA 브랜딩 적용
+- Skip Reason: 정적 자산 변경 (HTML/CSS/SVG) 만. backend/RBAC/endpoint/DB/audit 무변경. outside-voice review 불필요 — §18.8 Minor 기준 충족.
+- Evidence: browse 스크린샷 3장 (로그인 화면 + 사이드바 + 관리 콘솔) 으로 렌더링 확인.
+
+## REV-20260521-0006 [SKIPPED:storage-wrapper-only] TASK-0094 Sprint 1 Phase 4 (Cycle 0 storage) review
+
+- **Mode**: SKIPPED — Phase 4 는 boto3 wrapper + signed URL helper + smoke test + D20 runbook docs. backend endpoint / RBAC / 스키마 / UI 변경 0. 본 module 의 함수 시그니처 + 책임 경계 (RBAC/audit/consent 는 caller 책임) 는 BRIEFING §5.3 정본 + REV-20260521-0001 [SUBAGENT:codex] (BRIEFING Revision 2 정본 review) 에서 lock-in. 추가 codex review 비용 정당화 어려움.
+- **Subject**: `storage_minio.py` (350 lines), `RUNBOOK-minio-key-rotation.md` (150 lines), requirements.txt 의 boto3 + botocore entry.
+- **Reason**: 본 module 은 SDK abstraction layer — 보안 결정 (RBAC / consent / audit / MIME / size) 모두 caller (Phase 5 upload endpoint) 책임. 본 Phase 자체의 결정은 (1) boto3 client cache 의 idempotent 패턴, (2) signed URL TTL 환경변수화, (3) D13 (외부 LLM signed URL 금지) docstring 명시, (4) D20 runbook 의 4-step rotation + 3 rollback 경로 — 모두 BRIEFING 정본 결정의 thin implementation.
+- **Risk**:
+  1. **boto3 retry/timeout config 가 default 값**: env-driven `MINIO_MAX_ATTEMPTS=3` / `connect_timeout=5s` / `read_timeout=30s` 는 dev 환경 가정. prod 대용량 upload (PDF 25 MB) 에서 read_timeout 부족 가능 — Phase 11 ingest pipeline 진입 시 재검토.
+  2. **signed URL TTL 15 분 default**: 사내망 다운로드 시점 + 사용자 화면 refresh window 정합 — Phase 6 (composer UI) 진입 시 frontend 다운로드 flow 확정 후 재검토.
+  3. **client cache 의 thread safety**: `_S3_CLIENT_CACHE` 는 module-level dict — Python GIL 하에서 single-thread access 가정. FastAPI 의 worker 가 multi-thread (uvicorn 의 default) 일 때 cache 가 dict 이라 race 가능하나 boto3 client 자체가 thread-safe 라 read race 는 무해. write race 는 1 client overwrite 1 client 으로 마무리 — 무해. 다만 명시 lock 은 향후 cycle 후보.
+- **Cross-ref**: BRIEFING §5.3 + ADR-0022 + 정본 REV-20260521-0001 + Phase 3 REV-20260521-0005.
+- **다음 outside-voice 시점**: Phase 5 (upload API + audit + D12 HMAC) 진입 시 codex review 권장 — application-level RBAC / consent 검증 + audit dispatch 정합이 본 module 위에서 결정됨.
+
+## REV-20260521-0007 [SUBAGENT:codex-deferred] TASK-0094 Sprint 1 Phase 5 (Cycle 0 upload API) review
+
+- **Mode**: SUBAGENT (codex) review 권장 — BRIEFING REV-20260521-0006 의 "다음 outside-voice 시점: Phase 5" lock-in. 다만 본 entry 작성 시점은 ship gate 동시 진행이라 review 완료 전 commit. **deferred** = ship 후 별 cycle 에서 codex review 호출 + 발견 finding 흡수 시 Phase 5.1 (혹은 Phase 6 진입 전 patch) 로 정합.
+- **Subject**:
+  - 6 endpoint signature + 권한 검증 + audit dispatch + signed URL 발급 흐름 (storage_minio integration)
+  - D7 MIME allowlist 의 정확성 (XLSX legacy `.xls` + MIME spoof 위험)
+  - D8 size cap 의 cumulative sum 정합 (DeletePending + DeletedAt IS NULL 필터)
+  - D12 HMAC 의 dev fallback key (`_FALLBACK_AUDIT_HMAC_KEY__set_via_env_for_prod`) — prod 환경에서 ATTACHMENT_AUDIT_HMAC_KEY 부재 시 알람?
+  - D13 외부 LLM 송신 금지 정합 — `_serialize_attachment_for_api(include_signed_url=...)` 의 caller 가 외부 LLM 경로에서 None 강제하는 분기 부재 (현재는 caller 책임)
+  - D21 pending bytes deny 의 application-level enforcement — `_account_is_pending` 의 role.key 추출 logic 이 account 구조 가정에 의존 (account.role dict / account.role_key fallback)
+  - audit `attachment.upload` / `.delete` 의 categorical 메타 충분성
+  - MinIO put 실패 시 row hard-delete (orphan 방지) 의 race / partial failure
+- **Reason**: Phase 5 가 Phase 3 RBAC enforcement + Phase 4 storage 의 application-level 결합점 — Codex 1차/2차 review (REV-20260520-0001 + REV-20260521-0002) 는 BRIEFING 정본 단계에서 결정. 본 Phase 는 결정의 application-level 적용. ship 후 codex review 로 (a) endpoint signature 의 보안 경계 (b) D12 HMAC enforcement (c) D21 deny enforcement coverage (d) MinIO orphan race 패턴 검증.
+- **Risk**:
+  1. **HMAC dev fallback**: prod 환경에서 `ATTACHMENT_AUDIT_HMAC_KEY` 미설정 시 fallback key 사용으로 모든 tenant 의 HMAC 가 같은 key 로 발급 — audit row 의 cross-tenant 비교 가능. 별 cycle 또는 본 Phase patch 에서 prod fail-loud 추가 권장.
+  2. **MIME spoof**: caller 가 보낸 Content-Type 헤더에만 의존 — 실제 파일 매직 바이트 검증은 미구현. Phase 11 ingest pipeline 진입 시 (XLSX 의 zip 매직 등) 본격 검증.
+  3. **size cap race**: 동시 upload 시 size cap 검사 후 INSERT 사이 race — 본 Phase 는 single-tx 검사라 cumulative SUM 일관성 유지하나 INSERT 직후 동시 upload 의 추가 확인 미수행. 위험 낮음 (per-account 1GB cap 이라 race window 좁음).
+  4. **`_account_can_access_attachment` 의 soft-deleted 거부**: `DeletedAt IS NOT NULL` 인 row 는 caller 모두 거부 — reconciliation worker / admin restore path 미구현 (Phase 9 ship 후 추가).
+  5. **Endpoint coverage**: BRIEFING §5.4 의 7 endpoint 중 본 Phase 가 6 (POST/GET/GET-by-id/DELETE attachment + POST/DELETE consent). `/api/ask` body 확장 (Cycle 1 attachment_ids / attachment_scope_all) 은 Phase 11 ingest + Phase 12 SQL guard 시점에 추가.
+- **Cross-ref**: BRIEFING §5.1 / §5.4 / D6/D7/D8/D11/D12/D13/D21 + ADR-0022 + 정본 REV-20260521-0001 + Phase 4 REV-20260521-0006.
+- **다음 outside-voice 시점**: 본 entry 의 deferred codex review (Phase 6 진입 전 또는 Phase 5.1 patch cycle). Phase 12 (D14 SQL guard, Ship 조건) 는 별도 review trigger.
+
+## REV-20260521-0008 [SKIPPED:frontend-only] TASK-0094 Sprint 1 Phase 6 (Cycle 0 composer UI) review
+
+- **Mode**: SKIPPED — Phase 6 는 frontend (index.html + styles.css + app.js) 의 composer UI 추가만. backend 변경 0. 본 UI 의 D16 attachment selection snapshot + R-F5 lazy-create binding 은 BRIEFING REV-20260521-0001 [SUBAGENT:codex] (정본) 및 REV-20260521-0002 (Codex 2차) 의 결정 application. 추가 codex review 의 비용 정당화 어려움.
+- **Subject**: composer-attachments + composer-drop-overlay + attach-btn + file input 마크업 + 130 lines CSS (pill / overlay / paperclip) + state.composerAttachments + 9 helper + event binding + selectConversation list load.
+- **Reason**: 본 UI 의 보안 결정 (RBAC / consent / D7 MIME / D8 size cap / D12 HMAC / D13 외부 LLM 송신 / D21 pending deny) 모두 Phase 5 의 backend endpoint 에서 enforcement — 본 frontend 는 backend 응답을 그대로 표시 + frontend cap 검증 (accept 속성 의 MIME 허용 list 만). server-side check 가 source of truth.
+- **Risk**:
+  1. **lazy-create 상태에서 paperclip 거부**: 사용자가 새 대화 + 파일 첨부 + 메시지 흐름을 기대할 수 있으나 본 cycle 은 cid 가 있어야 upload — UX 가독성 안내 (toast) 로 graceful. Phase 11 진입 시 lazy-create 시점에도 client-side 임시 stash → 첫 send 직후 자동 upload 옵션 검토.
+  2. **drag-drop 의 dragenter/leave race**: dragCounter 로 child element entry race 처리하지만 brfowser-specific race 가능. browse QA 권장 (별 cycle).
+  3. **multiple 파일 선택 미지원**: input 에 multiple 미설정 — Sprint 1 simplicity. Phase 11 또는 후속 cycle 에서 batch upload + progress bar 검토.
+  4. **D16 attachment_ids 의 backend 처리**: 본 Phase 의 sendPrompt 가 askBody 에 attachment_ids/scope_all 명시 전송하지만, backend `/api/ask` 가 아직 이 필드를 수용하지 않음 (Phase 11 ingest pipeline 진입 시 ship). 본 Phase 만으로는 attachment_ids 가 backend 에 도달해도 silent ignored — D16 minimum exposure 의 의미는 backend 가 attachment_ids 를 사용하는 시점 (Phase 11) 부터 활성.
+- **Cross-ref**: BRIEFING §5.6 + D16 + R-F5 + 정본 REV-20260521-0001 + Phase 5 REV-20260521-0007.
+- **다음 outside-voice 시점**: Phase 11 (ingest pipeline) + Phase 12 (SQL guard, Ship 조건) — 본 frontend snapshot 이 backend `/api/ask` 의 attachment_ids 처리와 결합되는 시점.
+
+## REV-20260521-0009 [SKIPPED:consent-ui-only] TASK-0094 Sprint 1 Phase 7 review
+
+- **Mode**: SKIPPED — consent grouped UX 는 BRIEFING D11 + R-F2 정본 결정의 thin application. backend POST/DELETE 는 Phase 5 review 와 동일.
+- **Subject**: GET /api/account/consents + profile drawer consent section + grouped batch helper.
+- **Reason**: 본 Phase 의 결정은 (1) provider × group mapping (`_CONSENT_GROUPS`) (2) batch toggle UX 패턴 — 모두 BRIEFING 정본 결정. 보안 경계 변경 0.
+- **Risk**: group mapping 의 향후 확장 (Cycle 4 의 다른 data_class) 시 본 cycle 의 `_CONSENT_GROUPS` 갱신 필수.
+
+## REV-20260521-0010 [SKIPPED:share-redact-mechanism] TASK-0094 Sprint 1 Phase 8 review
+
+- **Mode**: SKIPPED — D9 + R-F7 mechanism ship 만. derived flag 의 실제 설정은 Phase 11+ 에서 attachment 인용 시점에 추가.
+- **Risk**: attachment_derived flag 가 message MetaJson 에 설정 안 되면 본 redact 가 활성 안 됨 (false negative). Phase 11/Cycle 2-4 의 flag 설정 누락 시 share view 에 본문 노출 — 향후 cycle 의 검증 필수 항목.
+
+## REV-20260521-0011 [SKIPPED:lifecycle-worker-only] TASK-0094 Sprint 1 Phase 9 review
+
+- **Mode**: SKIPPED — D6 4 종 SLA + F1 4 state + F12 pseudonym 모두 BRIEFING 정본 결정 application.
+- **Risk**: worker scheduling 미설정 시 DeletePending row 누적 — Phase 10 후속 cycle 에서 cron / thread 활성 필수. MinIO delete 실패 시 graceful fail (worker 다음 pass 에서 재시도). nullable FK 옵션 (R-Claim6 의 alt) 은 별 cycle 결정 영역.
+
+## REV-20260521-0012 [SKIPPED:sandbox-helper-only] TASK-0094 Sprint 1 Phase 10 review
+
+- **Mode**: SKIPPED — D15 + R-Claim4 + R-F4 BRIEFING 정본 결정 application.
+- **Risk**: maintainer connection 의 wildcard grant 가 root 또는 별 superuser 로 사전 부여되어야 함 (runbook 작업). detect_grant_drift 의 information_schema.schema_privileges 가 GRANTEE format 의 host part 매칭에 의존 — '%' host 가정 (.env 의 4 user 도 '%' host 로 생성 권장). DROP cleanup user 의 invocation 은 reconciliation worker (Phase 9) 가 사용.
+
+## REV-20260521-0013 [SKIPPED:ingest-mechanism] TASK-0094 Sprint 1 Phase 11 review
+
+- **Mode**: SKIPPED — Codex Claim #14 (XLSX/CSV cap) 정본 결정 application. ingest worker 의 process 격리 / memory budget 은 별 cycle.
+- **Risk**: ingest_attachment 호출자 (background trigger) 가 본 phase 에서 ship 안 됨 — 별 cycle 또는 후속 phase 에서 추가 필요. env ATTACHMENT_IDS 의 thread-safety: 본 cycle 은 single-process FastAPI + asyncio.to_thread 라 race 가능하나 cleanup pop 으로 mitigate. 별도 thread-local 옵션은 후속 검토.
+
+## REV-20260521-0014 [SUBAGENT:codex-deferred-final] TASK-0094 Sprint 1 Phase 12 + Ship review
+
+- **Mode**: SUBAGENT (codex) review 권장 — Sprint 1 Critical Ship 조건의 핵심 guarantor. BRIEFING REV-20260521-0006 의 "다음 outside-voice 시점: Phase 12 (D14 SQL allowlist guard, Ship 조건)" lock-in.
+- **Subject**: sql_guard.py 의 AST allowlist 완전성 (R-F3 명시 케이스 전수 검증), attachment.execute_sql_on RBAC enforcement, audit dispatch coverage, attachment group 정합.
+- **Reason**: Sprint 1 Ship 직전 final review. validate_sql_for_sandbox 의 모든 거부 패턴이 BRIEFING R-F3 의 명시 케이스 (FOR UPDATE / LOCK IN SHARE MODE / EXPLAIN ANALYZE / optimizer hint / SLEEP / BENCHMARK / user variables / INTO OUTFILE / LOAD_FILE / information_schema / mysql / performance_schema / sys) 를 모두 cover 하는지 + multi-statement 검사가 robust 한지 + sqlglot 의 MySQL dialect 가 모든 위험 case 를 정확히 파싱하는지.
+- **Risk**:
+  1. **sqlglot version 의 MySQL dialect 정합성**: sqlglot 23.x 가 LOCK IN SHARE MODE / EXPLAIN ANALYZE 같은 MySQL-specific 표현을 정확히 lock clause 로 parse 하는지 불확실. 본 cycle 의 secondary denylist regex 가 backup defense.
+  2. **multi-statement 검사 휴리스틱**: comment / string 안 ; 를 단순 stripping 으로 처리 — 복잡한 escape 케이스 (이중 quoted ' 안 \'\') 가 false negative 가능. sqlglot.parse 의 len > 1 도 보조 검사로 있음.
+  3. **validate_sql_for_sandbox 호출 site 누락**: 본 phase 는 guard module 만 ship. 실제 LLM tool 실행 시점의 호출 site (예: agent_core.tools.execute_sql) 는 별 cycle. caller integration 검증은 Sprint 1 후속 또는 Sprint 2 의 ingest pipeline 활성 시점.
+  4. **`attachment_reader` MySQL user 의 권한 부여 누락**: maintenance path (Phase 10 sandbox_schema.ensure_sandbox_schema_via_maintainer) 가 reader 에게 SELECT 부여하지만, 정본 SELECT (예: AgentMemoryMessages) 접근은 본 cycle scope 외 — 별 cycle.
+  5. **sqlglot 미설치 환경의 fallback**: SQLGLOT_AVAILABLE=False 시 deny 강제 — 정합. 단, 운영 환경에 sqlglot 가 설치되어야 sandbox SQL 활성.
+- **Cross-ref**: BRIEFING §6.1 + D14 + R-F3 + 정본 REV-20260521-0001 + Phase 11 REV-20260521-0013.
+- **Sprint 1 Ship 평가**: Phase 1~12 모두 main merged. BRIEFING D1~D21 21 결정 + R-Claim4/R-Claim6/R-F1/R-F2/R-F3/R-F4/R-F5/R-F6/R-F7/R-F9/R-F10/R-F11/R-F12/R-F13/R-F14 모두 application-level 또는 module-level enforcement 완료. Cycle 0 (Foundation) + Cycle 1 (CSV ingest) 가 ship — 사용자가 첨부 upload, list, metadata, delete, consent grant/revoke, composer paperclip/drag-drop, attachment pill 활성. attachment_ids 가 /api/ask 의 env 통해 LLM prompt section 으로 전달. Sandbox SQL 의 실제 LLM tool execution 은 caller integration 별 cycle.

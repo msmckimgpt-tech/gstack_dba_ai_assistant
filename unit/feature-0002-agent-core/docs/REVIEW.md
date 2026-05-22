@@ -8,6 +8,193 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260522-0011 [SKIPPED:rbac-unchanged-data-migration — M3 backfill ETL + embedding worker]
+- Date: 2026-05-22
+- TASK-Cycle: TASK-0023 (M3 backfill ETL + embedding worker, **Minor §12.3** — RBAC 무변경)
+- Decision: outside voice / Plan subagent SKIP — 본 cycle 의 ETL 은 RBAC / endpoint / audit 변경 없음. agent_kb_rw role 의 기존 INSERT 권한을 활용한 데이터 이전 + texts.embedding 컬럼 일괄 생성만. 사용자 메모 `feedback_outside_voice_for_rbac.md` 의 "RBAC 변경 시점만 outside voice 요구" 정책 정합.
+- Reason: (a) modules/kb_backend.py / verify.sh / stress.sh 변경 없음 — audit instrumentation 무변경. (b) PG SQL template 변경 없음 — TABLE_MAPPING 의 INSERT...ON CONFLICT 만 추가, 기존 SQL 재사용. (c) OpenAI embedding 호출은 read-only API call + texts UPDATE — `agent_kb_rw` role 의 기존 SELECT/UPDATE 권한으로 충분. (d) backfill 의 분모 정의 (--since $KB_DUAL_WRITE_START_TS) 가 M2 dual-write 시작 이전 row 만 처리하므로 중복 작성 위험 없음.
+- 본 cycle 의 검증 방법:
+  - `pytest tests/test_kb_backfill.py tests/test_kb_embedding_worker.py -v` — 10 PASS (TABLE_MAPPING 정합 / state roundtrip / dry-run no-op / main smoke / cost estimation / length mismatch / UPDATE SQL / dry-run no-OpenAI)
+  - `pytest tests/` 전체 — 31 PASS, 2 SKIPPED (회귀 없음)
+  - `bash -n bin/kb-backfill.sh` / `bin/kb-embedding-worker.sh` — syntax PASS
+- Alt 거부:
+  - **outside-voice review 호출**: ETL 의 정합성은 unit test 로 충분 검증. RBAC / 보안 영향 없음.
+- Risks: (a) OpenAI API cost — M-1 baseline ~800 texts × text-embedding-3-small ≈ USD 0.01~0.05 (보수 추정), §12.1 외부 비용 조항의 USD 100 cap 안. dry-run cost estimation 으로 cap 사전 확인. (b) backfill state file (artifacts/shared/kb-backfill-state.json) 의 손상 — 재진입 시 last_id leftover, --reset-state 로 복원.
+- Test: dry-run smoke + unit test 10건.
+
+## REV-20260522-0010 [SUBAGENT:Plan-subagent — M2-d pg_branch + S2-S6 + delete/prune SLA + Nice-to-have 7]
+- Date: 2026-05-22
+- TASK-Cycle: TASK-0022 (M2-d pg_branch xmax + S2/S4/S5/S6 + tagging coverage gate + Nice-to-have 7, **Major §12.3** — RBAC 동반)
+- Outside-voice channel: Plan subagent. 사용자 메모리 `feedback_outside_voice_for_rbac.md` 정합 (audit instrumentation 확장 + pg_branch tagging 신설). M2-c (`REV-20260521-0009`) 의 follow-up — Nice-to-have 7건 + xmax-based branch tracking 검증.
+- Verdict: **NEEDS-TWEAK** → **PASS 전환** (2 Blocker + 4 Critical 본 cycle 내 흡수). 구조적 shape 정상 (`xmax = 0` semantics, metrics counter, test catalog). 단 (B-1) `--keep-agent-container` mode 가 존재하지 않는 `python -m agent_core --ask` invocation → silent zero-traffic + (B-2) `verify_audit_sla_delete_prune()` 의 분모/분자 가 cross-DB SLA 가 아닌 tagging coverage 임이 명시 안 됨 (false-green) + (B-3) `_clear_pg_branch()` 가 mirror 진입 첫 위치 아님 → stale 노출 가능 + (B-4) connection-failure path 에서 clear 누락 + (C-5) ChangeJson 16KB truncate 시 `pg_branch` 소실 + (C-1) xmax docstring 부정확. 본 cycle 흡수 완료.
+- Section A (Summary): 6 산출 (pg_branch xmax + thread-local + audit ChangeJson 확장 + metrics + tagging coverage gate + S2/S4/S5/S6 + Nice-to-have 7) 정상 작성. 구조적으로 audit instrumentation 가 한 단계 정확해짐.
+- Section B (Critical findings — 본 cycle 내 반영 완료):
+  - **B-1 (Blocker)**: `--keep-agent-container` stress mode 가 존재하지 않는 `python -m agent_core --ask` 호출 → silent zero-traffic. **반영**: `python /app/agent_core.py "$question"` positional 정정 (agent_core.py:1796 argparse 정합).
+  - **B-2 (Blocker)**: `verify_audit_sla_delete_prune()` 의 분모/분자 가 cross-DB SLA 아닌 tagging coverage. **반영**: 함수명 `verify_pg_branch_tag_coverage` rename + CLI flag `--pg-branch-tag-coverage` + docstring 의 "NOT a cross-DB SLA" 명시 + silent audit loss / thread-local leak 한계 explicit.
+  - **B-3 (Critical)**: `_clear_pg_branch()` 위치 stale. **반영**: `_mirror()` 첫 줄로 이동 — 모든 early-return path 통일.
+  - **B-4 (Critical)**: connection-failure path clear 누락. **반영**: B-3 와 동일 fix.
+  - **C-5 (Critical)**: ChangeJson 16KB truncate 시 pg_branch 소실. **반영**: truncated dict 에 `pg_op_kind`, `pg_branch` 동반 보존.
+- Section C (Nice-to-have): C-1 xmax docstring + C-2 metrics docstring + C-3 atomicity comment + C-4 regex 보강 + C-9 worst exit code propagation 본 cycle 흡수 ✓. C-6 (schema-path skip) / C-7 (MySQL 8.0+ floor 문서) / C-8 (FakeCursor cosmetic) M3 위임.
+- Section D (Verdict): NEEDS-TWEAK → **PASS 전환** — 2 Blocker + 4 Critical 본 cycle 내 흡수.
+- Decision authority: 사용자 "이번 세션에서 남은 cycle을 모두 완수해주세요" 승인.
+
+## REV-20260522-0005 [SKIPPED:docs-only-batch-closure]
+- Date: 2026-05-22
+- Decision: TASK-0101 (REQ-20260522-0004, **Minor §12.3** — backlog closure batch). 본 세션의 잔여 backlog 항목 (TASK-0010/0011/0004 placeholder + TASK-0005 MCP 검증 + TASK-0072 재확인) 일괄 closure 마킹. outside voice / plan-eng-review skip — docs / 마킹만 + 동작 변경 0 + RBAC/DB/endpoint/audit 무변경.
+- Reason: 본 closure 의 본질은 **기존 작업의 마무리 마킹**: (a) 코드 작업 자체는 이미 완료되었으나 TASK queue checkbox 가 잔존 (`[ ]`), (b) placeholder 시나리오 항목이 각 feature 의 TEST.md / ANCHOR §3 invariant 로 자연 흡수되어 별도 작업 불필요, (c) MCP 검증은 본 cycle 실 환경 health probe 로 완료. 본 cycle 의 절차 (cycle-init.sh + verify-completion + PR + cycle-finalize) 는 그대로 적용하되 outside voice 는 docs-only 변경에 가치 낮아 SKIPPED.
+- 본 cycle 의 검증 방법:
+  - 각 feature 의 TASK.md 의 `[x]` 마킹 변경이 `git diff` 으로 확인됨 (6 feature × 1-2 line edit).
+  - TASK-0005 MCP 검증의 실 결과: `docker ps --filter name=repo-mcp-1` = `Up 23 hours`, `curl -s -o /dev/null -w "%{http_code}" http://localhost:28000/healthz` = `200`, Workbench UI 응답 정상 (서버 로그 `Workbench at http://localhost:8080/ MCP server endpoint at http://localhost:8080/mcp`).
+  - TASK-0072 main closure 재확인: `grep "^- \[.\] TASK-0072 " unit/feature-0003-agent-web-ui/docs/TASK.md` 결과 = `[x] DEPLOYED` (TASK-0099 audit followup backlog tracker hygiene cycle 에서 처리됨).
+- Alt 거부:
+  - **각 feature 별 별 PR**: 시간 비용 큼 + ownership 모호 (cross-feature placeholder closure). 본 batch closure 는 main 의 TASK-0099 (audit followup backlog tracker hygiene) 와 동일 패턴 — single closure cycle 로 cross-feature 마킹.
+  - **외부 시각 (Codex / plan-eng-review)**: docs / 마킹 closure 에 가치 낮음. 사용자 메모 `feedback_outside_voice_for_rbac` 도 RBAC 변경 시점만 요구.
+- Deferral 항목 (본 batch 의 closure 대상 외):
+  - **TASK-0034** (feature-0003 복잡 QA 성능 테스트): LLM API (gpt-5.4-mini 5 병렬) + 실 DB + truth 쿼리 작성 의존 → 사용자 운영 환경 위임.
+  - **TASK-0044** (feature-0003 사업팀 pilot): admin 콘솔 manual 발급 + 사업팀 사용자 협업 + REPLICA_DB_* 설정 의존 → 사용자 운영 위임.
+  - **TASK-0020** (feature-0002 KbBackend M2-b dual-write): main 에서 별 cycle 진행 — 본 batch 외.
+  - **TASK-0021** (feature-0002 KbBackend M2-c cross-DB audit + SLA + invariant test): main 의 별 작업자 진행 중 (TASK-0021 rebase in-progress 확인) — 본 batch 외.
+- Risks: docs / 마킹 closure 만, 회귀 위험 0.
+- Test: TASK-0005 의 실 환경 health probe 외 별 test 추가 불필요 (docs / 마킹 closure).
+
+## REV-20260522-0004 [SKIPPED:hot-fix-dependency-only]
+- Date: 2026-05-22
+- Decision: TASK-0100 (REQ-20260522-0003, **Minor** §12.3 — multipart UploadFile 의존성 hot-fix). TASK-0098 (PR #49) ship 직후 사용자 검증 단계에서 발견된 main build 회귀 차단. `python-multipart>=0.0.9` 한 줄 추가 + annotation. outside voice / plan-eng-review skip — 의존성 추가만 + 동작 변경 0 + RBAC/DB/endpoint/audit 무변경.
+- Reason: 본 회귀의 root cause 는 PR #66 (TASK-0094 Sprint 1 Phase 5) 가 attachment upload endpoint 의 `UploadFile` 도입 시 의존성 추가를 누락. FastAPI 의 multipart UploadFile 처리에 `python-multipart` 가 필수. 본 hot-fix 는 미반영된 의존성을 명시화하는 것이며, 새 기능 추가 / 정책 변경 / 동작 분기 없음. Minor §12.3 의 통상적 build 회귀 fix 패턴.
+- 본 cycle 의 검증 방법:
+  - TASK-0098 의 사용자 위임 검증 (HTTP smoke 5/5 + UI dogfood 4 스크린샷) 이 본 hot-fix 적용 working tree 에서 PASS 확인 (artifacts/shared/task-0098-final-*.png). 즉 본 fix 위에서 본 cycle 외 다른 endpoint (`/api/auth/me`, `/api/admin/me`, Profile Drawer, admin 콘솔) 가 정상 작동 = 의존성 fix 의 부작용 없음 증명.
+  - `docker compose build web` 후 `docker compose up -d --no-deps --force-recreate web` → web container `Up` 안정 + `curl http://localhost:18080/api/auth/me` HTTP 200 (또는 비로그인 401) 응답.
+- Alt 거부:
+  - **별 PR 분리 (TASK-0094 첨부 cycle 안에 흡수)**: 그 cycle 의 head 는 main 의 활발한 후속 PR (#66/#67/#69) 으로 이미 진행 중. 본 hot-fix 를 그 큰 cycle 에 묶으면 머지 timing 지연 + cycle ownership 모호. Minor §12.3 의 명확한 회귀 차단 → 본 별 cycle 진행이 정합.
+  - **외부 시각 (Codex outside voice) 호출**: 의존성 추가 hot-fix 는 outside voice 가치 낮음. RBAC / 보안 / 데이터 영향 없음. 사용자 메모 `feedback_outside_voice_for_rbac` 도 RBAC 변경 시점만 outside voice 요구 — 본 fix 는 적용 외.
+- Risks: 의존성 추가는 새 transitive dep 의 가능성 — `python-multipart` 는 표준 FastAPI multipart parser, 추가 위험 미미. version `>=0.0.9` 는 보수적 lower bound (pip 의 dependency resolver 가 적정 버전 선택). image rebuild 시점에만 `pip install` 실행 — 기존 운영 영향 0.
+- Test: TASK-0098 사용자 검증 단계의 HTTP smoke 5/5 + UI dogfood 4 PASS (artifacts/shared/task-0098-final-01~04). 본 cycle 의 별 test 추가 불필요 (의존성 추가 hot-fix).
+
+## REV-20260521-0009 [SUBAGENT:Plan-subagent — M2-c cross-DB audit + SLA + invariant test]
+- Date: 2026-05-22
+- TASK-Cycle: TASK-0021 (M2-c cross-DB audit explicit call + SLA verify body + stress.sh body + ANCHOR §3 invariant test S1/N1/N2, **Major §12.3** — RBAC 동반)
+- Outside-voice channel: Plan subagent. 사용자 메모리 `feedback_outside_voice_for_rbac.md` 정합 (audit ActionCode 신설 + agent_kb_rw role check N2). M2-b (`REV-20260520-0008`) 의 follow-up — ADR-0021 §Consequences M2-c 책임 5건 산출 검증.
+- Verdict: **NEEDS-TWEAK** → **PASS 전환** (5 Critical 본 cycle 내 반영). 구조적 shape 정상 (`_log_kb_write_audit()` 위치, audit SLA 함수 분기, S1/N1 mock 패턴, thread-safe lock). 단 (1) audit SLA 분모/분자 mismatch (UPSERT-update branch + delete/prune 행이 numerator 에는 들어가나 denominator 에서는 빠짐, 음수 ppm silent PASS) + (2) N1 LLM tripwire 가 존재하지 않는 `modules.llm_api` 패치 시도 (실 모듈은 `modules.llm`) + (3) prune signature `keep_top=` vs 실제 `keep_limit=` (silent swallow) + (4) `_log_kb_write_audit()` 매 호출 MySQL connect 무제한 retry + (5) ResourceId 가 단일 `fact_key`/`object_key` 평탄화 (conv|scope joinability 손실) + (6) ChangeJson 16KB 미캡 → 본 cycle 내 5 Critical 흡수 완료.
+- Section A (Summary): 4 산출 (kb_backend.py audit / verify.sh / stress.sh / invariant test) 정상 작성. 구조적으로 ADR-0021 §Consequences M2-c 책임 5건을 cover. 단 metric 정확성과 test 실효성에 critical 결함 다수 → 본 cycle 내 흡수.
+- Section B (Critical findings — 본 cycle 내 반영 완료):
+  - **B-1 (Critical)**: `verify_audit_sla()` 분모/분자 mismatch. PG `created_at >= since` 만 사용 → UPSERT-update branch 제외 + audit 행은 모든 mirror 호출 카운트 → audit > pg → 음수 ppm silent PASS. **반영**: `GREATEST(created_at, updated_at) >= since` (texts 는 INSERT ON CONFLICT DO NOTHING 이라 created_at 만) + audit numerator 를 `kb.write.mirror` only 로 한정 (delete/prune 제외, M2-d 별 metric) + `audit > 2 × pg` 시 fail-loud + zero-denom INCONCLUSIVE exit 2 + ChangeJson 에 `pg_op_kind` 태깅 (write/delete/prune) — 후속 cycle 의 metric 분리 기반. methodology limitation (same row N-times update 노이즈) 명시.
+  - **B-2 (Critical)**: N1 LLM tripwire 가 `modules.llm_api` monkeypatch 시도 — 실 모듈은 `modules.llm`. `from openai import OpenAI` binding 후라 `openai.OpenAI` patch 도 무효. **반영**: `modules.llm._get_openai_client` / `_openai_chat_completion_with_deadline` / `llm_*` prefix 모든 함수 + `modules.llm.OpenAI` 직접 patch. smoke assertion (1 patch 라도 미설치 시 즉시 fail).
+  - **B-3 (Critical)**: N1 prune 호출 `keep_top=10` 이 PgKbBackend `keep_limit=` 와 mismatch → `_mirror()` silent swallow → prune path 미실행. **반영**: signature 정정 (`conversation_id=None, scope_key="common", fact_key="k", keep_limit=10`) + 6 method SQL (`delete from fact_entries` / `rag_documents` / `rag_objects` / `fact_entries` / `texts`) 모두 captured 에 발행됐는지 assertion.
+  - **B-4 (Critical)**: `_log_kb_write_audit()` 매 호출 `connect_with_retry()` 기본 `AGENT_DB_CONNECT_RETRIES` backoff → MySQL 일시 장애 시 caller block. **반영**: `attempts=1` — best-effort, silent log + SLA 가 miss count.
+  - **B-5 (Critical)**: ResourceId 단일 `fact_key`/`object_key` 평탄화 → conv|scope joinability 손실. **반영**: `_build_audit_resource_id()` composite builder 신설 — `conv|scope|key|...` `|` 구분 string 64 char cap. None 은 `-` placeholder. 6 method 각 layout (text_hash[:64] / conv|scope|fact_key / conv|scope|fact_key|content_hash[:12] / conv|scope|object_type|object_key / conv|scope|fact_key|keep_limit).
+  - **B-6 (Critical)**: ChangeJson 길이 제한 없음 → `max_allowed_packet` 또는 column length 초과 시 silent loss. **반영**: 16KB 캡 — 초과 시 `_truncated`, `_original_len`, `mirror_method`, `resource_id` metadata 만.
+- Section C (Nice-to-have findings — M2-d 위임):
+  - C-1: N2 env var `AGENT_KB_PG_INTEGRATION_TEST` README/playbook 미문서화.
+  - C-2: stress.sh 25-iteration container churn — `docker exec` 재사용 옵션.
+  - C-3: FAILURES counter step 별 미식별 — per-step log file.
+  - C-4: verify.sh SINCE SQL injection escape (operator-driven, low risk).
+  - C-5: S1/N1 의 `_BACKENDS_CACHE` reset finalize 누락 (test ordering risk).
+  - C-6: `_PG_PRUNE_FACT_ENTRIES` 의 correlated IN 성능.
+  - C-7: verify.sh `2>/dev/null` connection error suppress — debugging 저해.
+  - C-8: zero-denominator PASS → 본 cycle 에서 INCONCLUSIVE exit 2 로 흡수.
+- Section D (Verdict): NEEDS-TWEAK → **PASS 전환** — 5 Critical 본 cycle 내 흡수 + 1 Critical (B-6) 동반 흡수 (총 6 Critical). Nice-to-have 8건 M2-d 위임.
+- Decision authority: 본 cycle 의 5 산출 + Critical 6 반영은 §2.1 PLAN-APPROVED 마커 범위 (Major §12.3 — RBAC 동반 변경). 사용자 메시지 "다음 Phase도 진행해주세요" + "(1) 방향으로 진행" 명시 승인.
+
+## REV-20260520-0008 [SUBAGENT:Plan-subagent — M2-b dual-write 본 구현]
+- Date: 2026-05-21
+- TASK-Cycle: TASK-0020 (M2-b dual-write 본 구현, **Major §12.3** — RBAC 동반)
+- Outside-voice channel: Plan subagent. 사용자 메모리 `feedback_outside_voice_for_rbac.md` 정합 (RBAC role `agent_kb_rw` 활성 cycle). M2-a (`REV-20260520-0007`) 의 follow-up — M2-a Critical/Blocker 가 본 cycle 까지 carry-over 안 됨을 확인 후 본 cycle 의 method body + caller 통합 + test design 검증.
+- Verdict: **NEEDS-TWEAK** — KbBackend ABC + method body + Postgres SQL 의미 정합성은 PASS. 하지만 (1) caller 4 위치 silent/fail-loud pattern 불일치 + (2) `_publish_fact` dead try/except wrapper + (3) `_prune_fact_entries_for_key` 광역 swallow 의 mirror raise 침묵 + (4) latency baseline 미측정 + (5) test isolation (sys.path + dual import path) + (6) caller actual call test 부재 + Blocker (cross-DB audit explicit call 책임 cycle 미명시 + SLA 측정 도구 cycle 책임 명시) 본 cycle 내 반영 필요.
+- Section A (KbBackend method body 의 의미 정합성) — **대체로 PASS**:
+  - MySQL ↔ Postgres `upsert_fact_entry` 의 GREATEST(weight) + GREATEST(COALESCE(confidence, 0)) 정합 ✓
+  - `upsert_rag_object` 의 카테고리 7 컬럼 `COALESCE(NULLIF(...))` 정합 ✓
+  - `prune_fact_entries_keep_top` Postgres self-reference race condition theoretical risk — Nice-to-have docstring 권고
+  - `MysqlKbBackend` ↔ caller raw SQL drift 방지 — M3 refactor TODO (Nice-to-have)
+- Section B (Caller 5 위치 회귀 risk) — **Critical 3건 + Blocker 1건**:
+  - `_text_store_insert`: silent log 패턴 ✓ (caller hot path 보호)
+  - `_publish_fact`: dead try/except wrapper (knowledge.py:677-696) — re-raise 만 + 광역 except 없음 → no-op. **Critical**: 본 wrapper 삭제 + 정책 명문화
+  - `_prune_fact_entries_for_key`: 광역 `except Exception: return 0` 가 mirror 의 fail-loud raise 까지 swallow → mysql 측 DELETE 후 postgres 측 정합 위배 silent break. **Critical**: MySQL DELETE 만 cover 분리
+  - `_upsert_rag_memory_from_fact`: outer 광역 catch (caller chain) — 동일 silent break risk
+  - Cross-DB audit explicit call 부재 (ADR-0021 §Consequences) — **Blocker**: M2-c cycle 책임 명시
+- Section C (Partial failure 격리 + AGENT_KB_PG_REQUIRED) — **Critical 1건 + Blocker 1건**:
+  - silent log format ✓ (structured `kb_pg_mirror_fail`) — aggregation 정책 부재 Nice-to-have
+  - `_get_pg_conn()` 의 매 호출 새 connection — agent hot path latency 영향. **Critical**: latency baseline 측정/문서화 (M2-c 책임 명시)
+  - `_BACKENDS_CACHE` singleton — multi-thread race condition theoretical risk (semantic 정합 유지) — Nice-to-have `threading.Lock()`
+  - SLA 측정 도구 (`bin/kb-dual-write-verify.sh --audit-sla`) — **Blocker**: M2-c cycle 책임
+- Section D (Test coverage) — **Critical 2건**:
+  - 8 unit test 가 핵심 invariant cover ✓
+  - **Critical**: caller actual call verification 부재 (regression 보호 부재)
+  - **Critical**: test isolation — sys.path.insert + dual import path → CI 안정성 risk
+  - `caplog` silent log verification — Nice-to-have
+- Section E (잘못된 가정 / 누락) — **Critical 1건 + Blocker 1건**:
+  - **Blocker**: Cross-DB audit explicit call 책임 cycle 미명시 (ADR-0021 §Consequences M2-c 책임)
+  - **Critical**: caller 4 위치 silent/fail-loud pattern 불일치 정책 명문화 (Section B 와 합산)
+  - REV-20260520-0007 Nice-to-have 7건 中 `_BACKENDS_CACHE` cache ✓, GREATEST(weight) ✓ — psycopg autocommit docstring 미흡수 (Nice-to-have)
+- Critical (본 cycle 내 처리 완료):
+  1. **Caller pattern 통일**: `knowledge.py:677-696` 의 dead try/except wrapper 삭제 + `_prune_fact_entries_for_key` 의 광역 swallow 를 MySQL DELETE 만 cover 로 한정 (mirror 호출은 외부 try block, fail-loud raise propagate)
+  2. **Test isolation**: `unit/feature-0002-agent-core/tests/conftest.py` 신규 — sys.path 통합 + dummy env. test_dual_write_mirror.py 의 dual import path 제거
+  3. **Caller actual call test** (Test 9): `_text_store_insert` + mock cursor + spy `_dual_write_kb.upsert_text` — caller integration 검증
+  4. **silent log caplog verification** (Test 10): `caplog.set_level(WARNING, logger="agent_core.kb_backend")` + `kb_pg_mirror: connection failed` warning emit 확인
+  5. **Latency baseline measurement deferral**: REPORT.md §4 risk log 0번 entry — M2-c 책임 명시 (production-like 환경 측정 + M3 process-level pool decision)
+- Blocker (본 cycle 내 처리 완료):
+  6. **Cross-DB audit explicit call**: ADR-0021 §Consequences 에 M2-c cycle 책임 명시 추가 — ActionCode `kb.write.mirror` INSERT + M4 cutover gate (f) 항목 PASS 필수
+  7. **SLA 측정 도구 cycle 책임**: `bin/kb-dual-write-verify.sh --audit-sla` 본문 구현이 M2-c 산출. miss_rate ≤ 0.1% target.
+- Nice-to-have (M2-c cycle 위임):
+  - LC_COLLATE / IDENTITY `BY DEFAULT` 모드 명시 (M4)
+  - `_BACKENDS_CACHE` thread-safe `threading.Lock()` (concurrency)
+  - psycopg autocommit 정책 docstring (kb_backend.py)
+  - `caplog` 외 추가 negative assertion (`_repair_from_fact()` idempotent N3)
+  - MysqlKbBackend ↔ caller raw SQL drift 방지 (M3 refactor TODO)
+- Decision authority: 본 cycle 의 method body + caller 수정 + 10 unit test + Critical/Blocker 반영은 §2.1 PLAN-APPROVED 마커 범위 (Major). 사용자 별도 confirm 불요 (사용자 메시지 "M2-b cycle 또한 진행" = 진행 의도 표명). M2-c 진입 게이트는 사용자가 `.env` 의 `AGENT_KB_PG_REQUIRED=1` + runtime 검증 통과 시점.
+
+## REV-20260520-0007 [SUBAGENT:Plan-subagent — M2-a dual-write 준비 + 4 Blocker 해소]
+- Date: 2026-05-21
+- TASK-Cycle: TASK-0019 (M2-a dual-write 준비, **Major §12.3** — RBAC 동반)
+- Outside-voice channel: Plan subagent. 사용자 메모리 `feedback_outside_voice_for_rbac.md` 의 "권한 모델 변경 plan 은 Codex/subagent 외부 시각 항상 호출" 정책 적용. M1 의 NEEDS-TWEAK 4 Blocker 해소 + KbBackend ABC 의 single vs 4 sub-backend 분할 결정 + dual-write 정합 SLA design 의 검증.
+- Verdict: **NEEDS-TWEAK** — KbBackend ABC + Blocker 4건 해소 + Postgres SQL 템플릿의 구조는 견고하나 (1) `_ensure_pg_schema()` 의 grants 검증이 USAGE on SCHEMA + sequence USAGE + TRUNCATE 명시 negative 누락 + (2) memory-init service 의 postgres race condition + (3) init_memory 의 광역 except 가 silent skip + (4) FUNCTION.md §10 갱신 누락 + Blocker (KB_DUAL_WRITE_START_TS .env / verify.sh --since default / REPORT.md risk log) 본 cycle 내 반영 필요.
+- Section A (4 Blocker 해소 정합성) — **NEEDS-TWEAK**:
+  - Blocker 1 (FULLTEXT → pg_trgm): 3 옵션 (pg_trgm `similarity()` / tsvector / pgvector embedding) + index 보강 + 한/영 mixed 분석 ✓. tsvector 의 `simple` config 옵션 미명시 (Nice-to-have).
+  - Blocker 2 (`_ensure_pg_schema()` trigger): memory-init service 진입 선택 + 3-tier 처리 (silent skip / RuntimeError fail-loud / 광역 except graceful) ✓. **Critical**: 광역 except 의 `AGENT_KB_PG_REQUIRED` 환경 분기 필요 (M2-b 진입 시 fail-loud).
+  - Blocker 3 (`has_table_privilege()`): role_exists + 4 table SELECT + RW mutate + VIEW SELECT ✓. **Critical**: USAGE on SCHEMA + sequence USAGE + TRUNCATE 명시 negative 누락.
+  - Blocker 4 (ADR-0024): 별 database 결정 + 3 Alternatives 폐기 + Sprint 4 cycle 책임 명시 ✓.
+- Section B (KbBackend ABC) — **PASS**:
+  - 단일 ABC + 4 method group 분리 합리 ✓
+  - method signature (kwargs 만, type hint 완전) ✓
+  - partial failure 격리 책임이 caller (`_dual_write_kb()` wrapper) 위임 ✓
+  - `set_text_embedding()` base default NotImplementedError 패턴 정합 ✓
+  - `get_backends()` factory + circular import 회피 ✓
+  - Postgres SQL 템플릿 (`_PG_UPSERT_*` ON CONFLICT + RETURNING id) 정합 ✓
+- Section C (dual-write verify/stress) — **NEEDS-TWEAK**:
+  - 4 mode 분리 ✓
+  - **Blocker**: `--since` default 가 `.env` 의 `KB_DUAL_WRITE_START_TS` 자동 읽기 필요 (분모 noise 방지).
+  - `verify_content_hash()` 의 cover 범위 (fact_entries 의 fact_fingerprint + 4 column 자연키 정합 미명시) 보강 권장 (Nice-to-have, M2-b 책임).
+  - stress 의 `--ask-iterations 5` default 가 통계적 power 부족 — M2-b 진입 시 default 10 으로 조정 권장 (Nice-to-have).
+- Section D (ANCHOR §3 invariant test catalog) — **PASS**:
+  - 6 scenario + 2 negative assertion 매핑 정확 ✓
+  - S5 의 "category 보존 NULL stay NULL" 결정 + `_PG_UPSERT_RAG_OBJECT` 의 COALESCE 패턴 정합 ✓
+  - S6 multi-row priority 의 weight DESC, updated_at DESC, id DESC tie-breaker 정합 (M2-b 검증 권장)
+  - fixture / assertion 책임 M2-b cycle 위임 명확 ✓
+- Section E (잘못된 가정 / 누락) — **NEEDS-TWEAK**:
+  - **Critical**: `memory-init.depends_on` 에 `postgres: service_healthy` 추가 필요 (race condition mitigation).
+  - **Critical**: `init_memory()` 의 광역 except graceful skip 이 M2-b 진입 시 fail-loud 전환 정책 (`AGENT_KB_PG_REQUIRED=1` 환경 분기).
+  - **Critical**: FUNCTION.md §10 의 init_memory 자동 호출 + grants_present + KbBackend ABC + invariant test catalog 갱신 누락 (verify-completion check #4 trigger).
+  - **Blocker**: REPORT.md §4 risk log entry 7건 (audit SLA / FULLTEXT 비등가 / agent_drag 잔존 / depends_on required:false / except graceful / VIEW tie-breaker / psycopg autocommit) 추가 — M2-b 진입 게이트의 정본 기록.
+  - `agent_drag` 의 실 결정은 Sprint 4 cycle 책임 — Blocker B-1 잔존, 본 cycle 안 진전 불가.
+  - M2-b cycle 의 작업 분량 ~800-1000 LOC + integration test 1-2 일 — single cycle 으로 합당.
+- Critical (본 cycle 내 처리 완료):
+  1. `memory.py:_ensure_pg_schema()` 의 grants 검증 확장 — `has_schema_privilege('public', 'USAGE')` + `has_sequence_privilege('<tbl>_id_seq', 'USAGE')` + TRUNCATE 명시 negative 검증 ✓
+  2. `docker-compose.yml:memory-init.depends_on` 에 `postgres: service_healthy` (`required: false`) 추가 ✓
+  3. `agent_core.py:init_memory()` 의 `AGENT_KB_PG_REQUIRED` 환경 분기 (M0~M2-a optional / M2-b required) ✓
+  4. `unit/feature-0002-agent-core/docs/FUNCTION.md §10` 갱신 (init_memory 자동 호출 + grants_present 필드 + KbBackend ABC + invariant test catalog) ✓
+- Blocker (본 cycle 내 처리 완료):
+  1. `.env.example` 에 `AGENT_KB_PG_REQUIRED` + `KB_DUAL_WRITE_START_TS` 2 변수 추가 ✓
+  2. `bin/kb-dual-write-verify.sh --since` default 가 `.env` 의 `KB_DUAL_WRITE_START_TS` 자동 읽기 + 7-day fallback ✓
+  3. `unit/feature-0002-agent-core/docs/REPORT.md §4` risk log 7건 추가 ✓
+- Nice-to-have (M2-b cycle 책임):
+  - LC_COLLATE 영향 검증 (M4 cutover gate EXPLAIN ANALYZE)
+  - tsvector `simple` config 옵션 dialect notes 표 추가
+  - `_PG_UPSERT_RAG_DOCUMENT` 의 GREATEST(weight) 의 MySQL 정합 확인
+  - `get_backends()` 의 `functools.cache` singleton
+  - stress 의 `--ask-iterations` default 10 으로
+  - N3 (`_repair_from_fact()` idempotent) negative assertion 추가
+  - psycopg autocommit 정책 docstring
+- Decision authority: 본 cycle 의 ABC + Blocker 해소 + Critical/Blocker 반영은 §2.1 PLAN-APPROVED 마커 범위 안 (Major). 사용자 별도 confirm 불요 (사용자 메시지 "이어서 진행" = 진행 의도 표명). M2-b 진입 게이트는 사용자가 `.env` 의 `AGENT_KB_PG_REQUIRED=1` + `KB_DUAL_WRITE_START_TS` 명시 시점.
+
 ## REV-20260520-0006 [SKIPPED:renumber-only — ADR-0023 to ADR-0021]
 - Date: 2026-05-20
 - TASK-Cycle: TASK-0018 fixup (ADR numbering 연속성)

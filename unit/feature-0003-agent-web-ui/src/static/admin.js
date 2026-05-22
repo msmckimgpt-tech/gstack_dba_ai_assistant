@@ -51,14 +51,18 @@ function systemPromptPendingKey({ scope, productId = null, roleId = null, accoun
 // product 그룹은 정적 `product.manage` / `system_prompt.manage.role.any` 외에 동적 `product.access.<key>`
 // 코드들 (Phase 1B 의 _ensure_product_access_permissions backfill) 도 자동으로 그룹에 합류된다.
 // TASK-0073 Phase C: audit group 추가 — backend PERMISSION_DEFINITIONS 의 group="audit" 와 key 정합.
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "audit", "misc"];
+// TASK-0095: settings group 추가 — 전역 시스템 프롬프트 (system_prompt.global.read/write).
+// TASK-0094 Sprint 1 Phase 12: attachment group 추가 (8 group).
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "attachment", "audit", "settings", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
   role: "역할",
   conversation: "대화",
   product: "제품",
+  attachment: "첨부",
   audit: "감사",
+  settings: "시스템 설정",
   misc: "기타",
 };
 
@@ -67,8 +71,10 @@ const PERMISSION_GROUP_LABELS = {
 // conversation·product 운영 권한은 그 아래로 분리한다. (작업 화면측 정렬은 app.js WORK_SCREEN_PERMISSION_SECTIONS)
 const ADMIN_PERMISSION_SECTIONS = [
   // TASK-0073 Phase C: audit 그룹은 관리 권한 section 의 admin 콘솔 책임 — console / account / role 와 같이 배치.
-  { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 메타권한 · 감사", groups: ["console", "account", "role", "audit"] },
-  { id: "operate", title: "운영 권한", description: "대화 · 제품 접근", groups: ["conversation", "product"] },
+  // TASK-0095: settings 그룹은 시스템 운영 (전역 시스템 프롬프트 등) — manage 와 함께.
+  { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 메타권한 · 감사 · 시스템 설정", groups: ["console", "account", "role", "audit", "settings"] },
+  // TASK-0094 Sprint 1 Phase 12: attachment 그룹은 운영 권한 묶음에 포함.
+  { id: "operate", title: "운영 권한", description: "대화 · 제품 접근 · 첨부", groups: ["conversation", "product", "attachment"] },
   { id: "misc", title: "기타", description: null, groups: ["misc"] },
 ];
 
@@ -693,6 +699,136 @@ function switchTab(tabName) {
     adminState.audit.initialized = true;
     loadAuditList();
   }
+  // TASK-0095: 설정 tab 첫 진입 시 sub-section 마운트.
+  if (tabName === "settings" && !adminState.settings.initialized) {
+    adminState.settings.initialized = true;
+    mountSettingsSections();
+  }
+}
+
+/* ── Settings pane (TASK-0096 v2: 계정/역할/제품 과 동일한 list-detail 패턴) ─
+ * 새 항목 추가 절차:
+ *   1) admin.html 의 #settingsList 에 <button class="admin-list-row admin-list-row--nav"
+ *      data-settings-tab="X" data-settings-group="..." data-settings-keywords="..."> 추가
+ *   2) #settingsDetail 에 <article class="admin-settings-panel" data-settings-panel="X"> 추가
+ *   3) SETTINGS_PANEL_MOUNTERS 에 X 키로 마운트 함수 등록
+ * 마운트 함수는 panel 이 처음 활성화될 때 1회 실행. 권한 게이트는 함수 내부에서. */
+
+adminState.settings = {
+  initialized: false,
+  activeTab: "global-prompt",
+  mountedPanels: new Set(),
+};
+
+const SETTINGS_PANEL_MOUNTERS = {
+  "global-prompt": mountGlobalPromptPanel,
+};
+
+function mountSettingsSections() {
+  bindSettingsList();
+  bindSettingsSearch();
+  updateSettingsListCount();
+  activateSettingsPanel(adminState.settings.activeTab);
+}
+
+function bindSettingsList() {
+  const list = $("settingsList");
+  if (!list || list.dataset.bound === "1") return;
+  list.dataset.bound = "1";
+  list.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-settings-tab]");
+    if (!btn || !list.contains(btn)) return;
+    const tab = btn.getAttribute("data-settings-tab");
+    if (tab) activateSettingsPanel(tab);
+  });
+}
+
+function bindSettingsSearch() {
+  const input = $("settingsSearch");
+  if (!input || input.dataset.bound === "1") return;
+  input.dataset.bound = "1";
+  input.addEventListener("input", () => {
+    applySettingsSearchFilter(input.value);
+  });
+}
+
+function applySettingsSearchFilter(query) {
+  const list = $("settingsList");
+  if (!list) return;
+  const q = (query || "").trim().toLowerCase();
+  list.querySelectorAll(".admin-list-row[data-settings-tab]").forEach((row) => {
+    if (!q) {
+      row.style.display = "";
+      return;
+    }
+    const haystack = [
+      row.getAttribute("data-settings-tab") || "",
+      row.getAttribute("data-settings-group") || "",
+      row.getAttribute("data-settings-keywords") || "",
+      row.textContent || "",
+    ].join(" ").toLowerCase();
+    row.style.display = haystack.includes(q) ? "" : "none";
+  });
+  updateSettingsListCount();
+}
+
+function updateSettingsListCount() {
+  const list = $("settingsList");
+  const countEl = $("settingsListCount");
+  if (!list || !countEl) return;
+  const rows = list.querySelectorAll(".admin-list-row[data-settings-tab]");
+  const visible = Array.from(rows).filter((row) => row.style.display !== "none").length;
+  countEl.textContent = visible === rows.length
+    ? `${rows.length}건`
+    : `${visible} / ${rows.length}건`;
+}
+
+function activateSettingsPanel(tab) {
+  const list = $("settingsList");
+  const content = $("settingsDetail");
+  if (!list || !content) return;
+  adminState.settings.activeTab = tab;
+  list.querySelectorAll("[data-settings-tab]").forEach((btn) => {
+    const isActive = btn.getAttribute("data-settings-tab") === tab;
+    btn.classList.toggle("is-active", isActive);
+    btn.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  content.querySelectorAll("[data-settings-panel]").forEach((panel) => {
+    panel.classList.toggle("is-active", panel.getAttribute("data-settings-panel") === tab);
+  });
+  if (!adminState.settings.mountedPanels.has(tab)) {
+    const mounter = SETTINGS_PANEL_MOUNTERS[tab];
+    if (typeof mounter === "function") {
+      try {
+        mounter();
+      } catch (err) {
+        console.error("[settings] panel mount failed:", tab, err);
+      }
+    }
+    adminState.settings.mountedPanels.add(tab);
+  }
+}
+
+function mountGlobalPromptPanel() {
+  const mount = $("globalPromptEditorMount");
+  if (!mount) return;
+  if (!can("system_prompt.global.read")) {
+    mount.innerHTML = '<div class="admin-detail-empty">전역 시스템 프롬프트 조회 권한이 없습니다.</div>';
+    return;
+  }
+  mount.innerHTML = "";
+  const editor = buildSystemPromptEditor({
+    scope: "global",
+    title: "본문",
+    hint: can("system_prompt.global.write")
+      ? "비워두고 적용하면 코드 상수 fallback 으로 회귀합니다. 변경사항은 하단 '모두 적용' 으로 일괄 저장됩니다."
+      : "조회 전용 — 수정 권한이 없습니다.",
+  });
+  if (!can("system_prompt.global.write")) {
+    const ta = editor.querySelector("textarea.admin-prompt-textarea");
+    if (ta) ta.disabled = true;
+  }
+  mount.appendChild(editor);
 }
 
 /* ── Audit pane (TASK-0073 Phase C) ─────────────────────────────────── */
@@ -3195,6 +3331,10 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
     section.appendChild(hintEl);
   }
 
+  // TASK-0095: GLOBAL scope 는 product/role/account 모두 무시 (force NULL).
+  // product select 도 표시하지 않는다 — 단일 row 운영.
+  const isGlobal = scope === "global";
+
   const products = adminState.products || [];
   let currentProductId = productId;
   if (fixedProductId !== null && fixedProductId !== undefined) {
@@ -3205,7 +3345,7 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
   }
 
   let productSelect = null;
-  if (scope !== "product" && !fixedProductId) {
+  if (!isGlobal && scope !== "product" && !fixedProductId) {
     const row = document.createElement("div");
     row.className = "admin-inline-row";
     const label = document.createElement("span");
@@ -3299,8 +3439,11 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
 /* ── Initialize ──────────────────────────────────────────────────────── */
 
 async function initialize() {
-  const me = await apiFetch("/api/auth/me");
-  if (!me.ok || !me.user?.permissions?.["console.access"]) {
+  // TASK-0098: admin self endpoint 분리 — `/api/auth/me` 의 permissions 필드가
+  // 제거되어도 admin 콘솔 진입이 깨지지 않도록 admin 전용 self endpoint
+  // `/api/admin/me` 로 전환. backend 가 console.access 미보유 시 403 → catch.
+  const me = await apiFetch("/api/admin/me").catch(() => null);
+  if (!me || !me.ok || !me.user?.permissions?.["console.access"]) {
     window.location.href = "/";
     return;
   }

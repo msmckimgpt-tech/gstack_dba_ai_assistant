@@ -9,15 +9,135 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: M1 Postgres DDL + RBAC role 신설 (cycle: TASK-0018)
-- Owner: AI (본 cycle: M1 schema 정의 + role bootstrap + ADR-0021) → AI (별 cycle: M2 → M3 → M4 → M5 순차 Execute)
+- State: M3 backfill ETL + embedding worker (cycle: TASK-0023) + M2-d done (TASK-0022) + TASK-0101 backlog closure + TASK-0100 multipart hot-fix
+- Owner: AI (본 cycle: bin/kb-backfill.sh + scripts/kb_backfill.py + bin/kb-embedding-worker.sh + scripts/kb_embedding_worker.py + config.py 의 AGENT_KB_EMBEDDING_* binding + 10 unit test) → AI (M4: FULLTEXT → pg_trgm rewrite + AGENT_KB_READ_BACKEND routing + cutover readiness)
 - Priority: high
-- Last Updated: 2026-05-20 (TASK-0015 PLAN-APPROVED 마커: ms.mckim.gpt@gmail.com on 2026-05-20)
+- Last Updated: 2026-05-22
 
 ## 1.1 Current Cycle
-- [ ] TASK-0018 (REQ-20260520-0004, **Major §12.3** — RBAC role 신설 = 인증/인가 변경) §2.1 PLAN-APPROVED 의 **M1 phase Postgres DDL + RBAC role 신설 + ADR-0021 작성** 실행. `unit/feature-0002-agent-core/src/scripts/agent_kb_schema.sql` 신규 (5 KB 테이블 + VIEW + ivfflat index + role grant block, ~241 LOC), `bin/kb-pg-role-bootstrap.sh` 신규 (4 mode + rotate-password, ~200 LOC, fail-loud for weak password), `bin/kb-schema-compare.sh` 신규 (MySQL ↔ Postgres 컬럼 정합 비교, ~157 LOC), `modules/memory.py` 의 `_ensure_pg_schema()` 함수 추가 (~100 LOC, M2 dual-write 진입 시 호출 entry), `docs/DECISIONS.md` 의 ADR-0021 (KB Postgres 분리 후 RBAC catalog 재정의 — 2-layer hybrid: connection-level role + application-level `kb.*` 4 권한), `.env.example` 에 `AGENT_KB_PG_RW_PASSWORD` / `RO_PASSWORD` 2 변수 추가. **Outside-voice review (Plan subagent, `REV-20260520-0005`) Verdict NEEDS-TWEAK + 4 Critical 본 cycle 내 반영 완료**. **본 turn 의 deliverable 은 schema 정의 + role bootstrap script + ADR 까지**. 실 DB 적용 (psql 실행, role 생성, schema 배포) 은 사용자 별 turn 위임 (M0 의 postgres 컨테이너 가동 후 `bin/kb-pg-role-bootstrap.sh --all` 호출).
+- [ ] TASK-0023 (REQ-20260522-0005, **Minor §12.3** — RBAC 무변경, 데이터 이전 작업) §2.1 PLAN-APPROVED 의 **M3 phase (Backfill ETL + embedding 일괄 생성)** 실행. M2 dual-write 시작 시점 이전의 MySQL 4 KB table 의 row 를 Postgres 의 4 등가 table 로 backfill + `texts.embedding` 일괄 생성. **본 cycle 산출 6건**: (a) `scripts/kb_backfill.py` (~280 LOC) — 4 table TABLE_MAPPING + 멱등 INSERT ON CONFLICT + state file resumable + dry-run + --since/--batch-size/--table/--reset-state, (b) `scripts/kb_embedding_worker.py` (~190 LOC) — OpenAI text-embedding-3-small batch API + WHERE embedding IS NULL paginate + dry-run cost estimation + max-rows cap + retry/timeout, (c) `bin/kb-backfill.sh` wrapper (docker exec agent + /shared mount), (d) `bin/kb-embedding-worker.sh` wrapper, (e) `modules/config.py` 의 AGENT_KB_EMBEDDING_{MODEL,DIM,BATCH_SIZE,TIMEOUT_SEC,MAX_ATTEMPTS} binding, (f) `tests/test_kb_backfill.py` + `tests/test_kb_embedding_worker.py` 10 unit test. outside-voice review **SKIPPED** — 본 cycle 의 ETL 은 RBAC 변경 없음, 메모리 정책 정합. **M4 cycle (별 cycle)** 책임: FULLTEXT → pg_trgm rewrite + AGENT_KB_READ_BACKEND env routing + cutover readiness script.
 
-## 1.2 Implementation Plan (TASK-0018 — M1 Postgres DDL + RBAC role cycle)
+- [x] TASK-0022 (REQ-20260522-0002, **Major §12.3**) — M2-d pg_branch xmax + S2/S4/S5/S6 + tagging coverage gate + Nice-to-have 7 + REV-20260522-0010 Critical 6 흡수. **done in commit bc3fa81**.
+
+- [x] TASK-0101 (REQ-20260522-0004, **Minor §12.3** — backlog closure batch, cross-feature docs). 본 세션 (TASK-0098 ship + TASK-0100 hot-fix 후) 의 잔여 backlog 항목 일괄 closure. (a) **feature-0002**: TASK-0010 (작업 브랜치 commit 후 clean integration worktree cherry-pick/push) + TASK-0011 (원본 워크트리 더티 동일성 재확인) → 과거 작업 흐름의 마무리 docs, 코드 작업 자체는 이미 완료. (b) **feature-0001 / 0004 / 0005 / 0006**: TASK-0004 (엄격한 시나리오 정의) → placeholder. (c) **feature-0005**: TASK-0005 (MCP 서비스 기동 검증) → 본 cycle 실 환경 검증. (d) **feature-0003**: TASK-0072 → main 의 TASK-0099 closure 재확인.
+- [x] TASK-0100 (REQ-20260522-0003, **Minor §12.3** — multipart UploadFile 의존성 hot-fix). `python-multipart>=0.0.9` 한 줄 추가 → web container 안정.
+- [x] fix/query-result-string-truncation (Minor §12.3) — render.py CSV 기반 `preview_table` 구성.
+- [x] TASK-0021 (REQ-20260522-0001, **Major §12.3**) — M2-c cross-DB audit explicit + SLA verify body + stress.sh body + S1/N1/N2 실 구현 + REV-20260521-0009 Critical 6 흡수. **done in commit 7540e17**.
+
+## 1.2 Implementation Plan (TASK-0023 — M3 Backfill ETL + embedding worker 본 cycle)
+
+영향 파일 (본 cycle, ETL + embedding + test):
+- `unit/feature-0002-agent-core/src/scripts/kb_backfill.py` (신규 ~280 LOC) — TABLE_MAPPING (4 table) + load_state/save_state + open_mysql_conn/open_pg_conn (기존 modules/db.py 재사용) + _iter_mysql_rows paginate + _insert_pg_batch ON CONFLICT DO NOTHING + backfill_table progress logging + main() argparse (--table/--since/--batch-size/--dry-run/--reset-state).
+- `unit/feature-0002-agent-core/src/scripts/kb_embedding_worker.py` (신규 ~190 LOC) — get_settings (config.py 의 5 env 변수) + open_pg_conn + call_openai_embeddings (retry + timeout) + count_pending/fetch_pending_batch/update_embeddings + estimate_cost_usd (model 별 가격 추정) + main() argparse + dry-run cost estimation.
+- `bin/kb-backfill.sh` (신규 ~45 LOC) — docker exec agent + AGENT_KB_BACKFILL_STATE_DIR=/shared.
+- `bin/kb-embedding-worker.sh` (신규 ~25 LOC) — docker exec agent + arg passthrough.
+- `unit/feature-0002-agent-core/src/modules/config.py` (+~15 LOC) — AGENT_KB_EMBEDDING_MODEL (text-embedding-3-small default) + DIM (1536) + BATCH_SIZE (100) + TIMEOUT_SEC (60) + MAX_ATTEMPTS (3) + EXPORT_VARS 등록.
+- `tests/test_kb_backfill.py` (신규 ~125 LOC) — 4 unit test (TABLE_MAPPING 정합 / state roundtrip / dry-run no-op / main smoke).
+- `tests/test_kb_embedding_worker.py` (신규 ~140 LOC) — 6 unit test (cost estimation 3 model + length mismatch + UPDATE SQL emit + dry-run no-OpenAI).
+- `docs/{TASK,REVIEW,MODIFY,REPORT,FUNCTION}.md`: cycle 등록 + 본 entry + Summary.
+
+접근 방법:
+1. TABLE_MAPPING — 4 table 의 mysql → pg 컬럼 명명 (SnakeCase 적용, KB_PG_DIALECT_NOTES.md 정합) + ON CONFLICT clause (texts/fact_entries 는 DO NOTHING, rag_documents/rag_objects 는 ON CONFLICT...DO NOTHING — backfill 은 멱등 진입이므로 DO UPDATE 불필요).
+2. backfill state file — artifacts/shared/kb-backfill-state.json (host mount /shared).
+3. dry-run path — `_insert_pg_batch` 가 INSERT 안 함, len(rows) 반환. SELECT 만.
+4. embedding batch — OpenAI text-embedding-3-small 의 input=list batch (~100 text per API call).
+5. dry-run cost — sample batch 1회 fetch + 평균 char count × pending → cost USD 추정.
+6. test — FakeConn / FakeCursor 패턴, monkeypatch 으로 실 DB/API 우회.
+
+**Outside-voice review**: SKIPPED — 본 cycle 의 ETL 은 RBAC 변경 없음 (agent_kb_rw role 의 기존 INSERT 권한 활용), endpoint 변경 없음, audit 변경 없음. 사용자 메모 `feedback_outside_voice_for_rbac.md` 정책 정합.
+
+**Runtime 검증 deferral (사용자 / M4 별 cycle 책임)**:
+1. main worktree `git pull --ff-only` + agent container 가동 확인.
+2. `bin/kb-backfill.sh --dry-run` → 분모 정의 (총 row count + 4 table 별 last_id).
+3. `bin/kb-backfill.sh --since $KB_DUAL_WRITE_START_TS` → 실제 ETL 진행.
+4. `bin/kb-embedding-worker.sh --dry-run` → cost 추정 (M-1 baseline ~800 texts ≈ USD <0.05).
+5. `bin/kb-embedding-worker.sh` → 실 OpenAI 호출.
+6. `bin/kb-dual-write-verify.sh --counts --since $KB_DUAL_WRITE_START_TS` → 4 table row count 일치.
+
+위험도: **Minor §12.3** — 데이터 이전 작업, RBAC / endpoint / audit 변경 없음. PLAN-APPROVED 범위 (§2.1.3 M3 phase).
+
+## 1.3 Implementation Plan (TASK-0022 — M2-d pg_branch + S2-S6 + delete/prune SLA + Nice-to-have, done — 보존)
+
+영향 파일 (본 cycle, instrumentation + tooling + test):
+- `unit/feature-0002-agent-core/src/modules/kb_backend.py` (+~120 LOC) — 3 UPSERT SQL 에 `RETURNING id, (xmax = 0) AS pg_inserted` + `_pg_op_local` threading.local + `_get_last_pg_branch()` / `_clear_pg_branch()` helpers + `_execute_returning_id()` branch 캡쳐 (insert/update) + delete/prune/upsert_text 의 branch 라벨 + `_log_kb_write_audit(pg_branch=...)` 시그니처 + ChangeJson `pg_branch` 필드 + `_MIRROR_METRICS` + `get_mirror_metrics()` / `reset_mirror_metrics()` + `_DualWriteMirror._mirror()` 의 timing.
+- `bin/kb-dual-write-verify.sh` (+~70 LOC) — `verify_audit_sla_delete_prune()` 신규 (JSON_UNQUOTE(JSON_EXTRACT(ChangeJson, '$.pg_branch')) 기반) + `--audit-sla-delete-prune` mode + `--since` ISO 8601 validation (C-4) + stderr suppress 일부 제거 (C-7).
+- `bin/kb-dual-write-stress.sh` (+~30 LOC) — `--keep-agent-container` (C-2: docker exec agent 재사용) + `--log-dir` (C-3: per-step log file) + `step_log()` helper.
+- `unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py` (+~150 LOC) — `_setup_mock_mirror_env()` 공통 fixture (C-5 `_BACKENDS_CACHE` finalize) + S2 (rag_objs INSERT SQL 캡쳐 + category COALESCE NULLIF) + S4 (scope_key=sales_q4 보존 검증) + S5 (SQL template category COALESCE NULLIF assertion) + S6 (agent_kb_schema.sql VIEW DDL DISTINCT ON + tie-break 정합).
+- `unit/feature-0002-agent-core/tests/test_dual_write_mirror.py` (+~80 LOC) — Test 11 pg_branch insert/update (FakeCursor fetchone 가 (id, pg_inserted) tuple) + Test 12 metrics counter (3 mirror call → calls_total=3, calls_by_method 정합, audit_calls_total=3).
+- `unit/feature-0002-agent-core/docs/{TASK,REVIEW,MODIFY,REPORT,FUNCTION}.md`: cycle 등록 + outside-voice REV-20260522-0010 entry (계획) + 본 cycle 산출 기록.
+
+접근 방법:
+1. PG SQL 3 UPSERT 에 `RETURNING id, (xmax = 0) AS pg_inserted` 적용 — xmax = 0 은 INSERT, xmax != 0 은 UPDATE (PostgreSQL 의 row-level TX id semantics).
+2. `_pg_op_local` threading.local + `_clear_pg_branch()` (mirror 진입 시 reset) + `_get_last_pg_branch()` (audit 호출 시 read).
+3. `_execute_returning_id()` 의 row 가 length>=2 시 branch 캡쳐. delete/prune/upsert_text 는 method body 에서 branch 라벨 직접 set.
+4. `_log_kb_write_audit()` 시그니처 `pg_branch` 추가 + ChangeJson 에 기록.
+5. `_MIRROR_METRICS` dict + 4 metric (calls_total, calls_by_method, latency_ms_total/max, audit_calls/failures) + `_MIRROR_METRICS_LOCK` thread safety.
+6. `_DualWriteMirror._mirror()` 의 진입/실패/성공 path 모두 `_record_mirror_latency()` 호출 + audit failure flag.
+7. `bin/kb-dual-write-verify.sh` 의 `verify_audit_sla_delete_prune()` — JSON_EXTRACT 로 pg_branch 카운트.
+8. `--since` ISO 8601 정규식 검증.
+9. `bin/kb-dual-write-stress.sh` 의 `--keep-agent-container` 모드 — docker ps 로 agent service running 검출 시 docker exec 재사용. `--log-dir` per-step log file (각 step 의 timestamp + status).
+10. S2/S4/S5/S6 mock-pattern 실 구현. S3 은 schema 정합 assertion 만 + skip 유지.
+11. Test 11/12 — pg_branch + metrics 단위 검증.
+
+**Runtime 검증 deferral (M3 별 cycle / 추후 책임)**:
+1. `bin/kb-dual-write-verify.sh audit-sla-delete-prune --since <ISO>` 실 측정 (pg_branch tagging 활성 후 windowing)
+2. `--keep-agent-container` 모드의 실 latency 개선 정량 측정 (M2-c default ~12분 → 예상 ~3분)
+3. process-level latency baseline measurement: `get_mirror_metrics()` 의 production-like sampling
+
+위험도: **Major (§12.3 — RBAC 동반 변경)**. PLAN-APPROVED 범위 + 사용자 "이번 세션에서 남은 cycle 모두 완수" 명시 + outside-voice review 호출 + Nice-to-have 7건 흡수 + S2/S4/S5/S6 실 구현.
+
+## 1.3 Implementation Plan (TASK-0021 — M2-c cross-DB audit + SLA + invariant test, done — 보존)
+
+영향 파일 (본 cycle, audit + tooling + test):
+- `unit/feature-0002-agent-core/src/modules/kb_backend.py` (+~155 LOC, 919 → ~1075 LOC) — `_log_kb_write_audit()` helper + `_KB_AUDIT_ACTION_MAP` (6 method → ActionCode/ResourceType) + `_KB_AUDIT_SENSITIVE_KEYS` (text_content/source_sql 제외) + `_build_audit_resource_id()` composite builder (REV-20260521-0009 B-5 — conv|scope|key|... 식별 정밀화) + `_DualWriteMirror._mirror()` 의 audit explicit call (성공 후 best-effort) + `_BACKENDS_LOCK` thread-safe double-checked locking (REV-20260520-0008 Nice-to-have) + `threading` import + ChangeJson 16KB 캡 (REV-20260521-0009 B-6) + `pg_op_kind` tagging (REV-20260521-0009 B-1 — write/delete/prune 분리 기반).
+- `bin/kb-dual-write-verify.sh` (+~125 LOC) — `verify_counts()` 본문 (4 테이블 pair count diff) + `verify_content_hash()` 본문 (rag_documents content_hash CONCAT identity 비교) + `verify_audit_sla()` 본문 (GREATEST(created_at, updated_at) PG denominator + write-only audit numerator + over-count fail-loud + zero-denominator INCONCLUSIVE exit 2, REV-20260521-0009 B-1/C-8 흡수).
+- `bin/kb-dual-write-stress.sh` (+~40 LOC) — `trigger_insight_cycles()` + `trigger_ask_iterations()` 실 호출 구현 (docker exec insight-worker / docker compose run --rm agent) + FAILURES counter + exit code propagation.
+- `unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py` (+~290 LOC) — S1 (RagDocuments missing) 실 구현 (FakeConn + FakeCursor SQL 캡쳐 + monkeypatch `_log_kb_write_audit` 우회) + N1 (LLM call zero) 실 구현 (`modules.llm` 의 `_get_openai_client` / `_openai_chat_completion_with_deadline` / `llm_*` prefix + `OpenAI` 모두 monkeypatch tripwire, REV-20260521-0009 B-2 흡수; prune signature `keep_limit=` 정정 + DELETE SQL assertion, REV-20260521-0009 B-3 흡수) + N2 (TRUNCATE denied) env-gated (`AGENT_KB_PG_INTEGRATION_TEST=1`) + S2-S6 skip 유지 (M2-d 위임).
+- `unit/feature-0002-agent-core/docs/{TASK,REVIEW,MODIFY,REPORT,FUNCTION}.md`: cycle 등록 + outside-voice REV-20260521-0009 entry + 본 cycle 산출 기록 + Critical 5 흡수 명시 + Nice-to-have 8 → M2-d.
+
+접근 방법:
+1. WebAuditEvents schema 파악 (Id/ActorAccountId/ActorRoleId/ActorType='system'/TargetAccountId/SessionId/ActionCode/ResourceType/ResourceId/ChangeJson/MaskedFields/RemoteAddr/UserAgent/RequestId/OccurredAt).
+2. kb_backend.py 에 `_log_kb_write_audit()` 추가 — connect_with_retry(database=MEMORY_DB, autocommit=True, attempts=1, REV-20260521-0009 B-4) + ActorType='system' INSERT + ChangeJson 직렬화 (sensitive 제외) + 16KB 캡 + composite ResourceId.
+3. `_DualWriteMirror._mirror()` 에 audit explicit call 통합 — mirror 성공 후 try/except 안에서 silent log 패턴.
+4. `bin/kb-dual-write-verify.sh` 의 3 함수 본문 — counts/content-hash/audit-sla.
+5. `bin/kb-dual-write-stress.sh` 본문 — docker exec + docker compose run + FAILURES counter.
+6. `tests/test_anchor_invariant_postgres.py` 의 S1 + N1 + N2 실 구현.
+7. Outside-voice review (Plan subagent, REV-20260521-0009) 호출. NEEDS-TWEAK Verdict + Critical 5 본 cycle 내 반영:
+   - **B-1**: verify_audit_sla() 분모 GREATEST(created_at, updated_at) + write-only numerator + over-count fail-loud + zero-denom INCONCLUSIVE
+   - **B-2**: N1 LLM tripwire 를 `modules.llm` 의 entry point (`_get_openai_client` / `_openai_chat_completion_with_deadline` / `llm_*` / `OpenAI`) 로 정정 + smoke assertion (적어도 1 patch 설치)
+   - **B-3**: prune `keep_limit=` 정정 + 6 method SQL 발행 assertion
+   - **B-4**: `connect_with_retry(attempts=1)` — best-effort
+   - **B-5**: ResourceId composite (conv|scope|fact_key|... 정확 식별)
+   - **B-6**: ChangeJson 16KB 캡
+
+**Runtime 검증 deferral (M2-d 별 cycle 의 사용자 책임)**:
+1. main worktree `git pull --ff-only`
+2. `.env` 의 `AGENT_KB_PG_REQUIRED=1` 활성 환경
+3. `bin/kb-dual-write-stress.sh --insight-cycles 3 --ask-iterations 5` 실 실행
+4. `bin/kb-dual-write-verify.sh audit-sla --since <ISO>` → miss_ppm ≤ 1000 검증
+5. S2-S6 invariant fixture 실 구현 (실 Postgres + insight worker 통합)
+6. Latency baseline production-like 측정 (REPORT.md §4 risk log 0번 entry)
+
+위험도: **Major (§12.3 — RBAC 동반 변경)**. PLAN-APPROVED 범위 + 사용자 "다음 Phase도 진행" 명시 + outside-voice review 호출 + Critical 5 본 cycle 흡수.
+
+## 1.3 Implementation Plan (TASK-0019 — M2-a dual-write 준비, done — 보존, summary)
+
+본 §1.3 의 deliverable 요약:
+- `docs/KB_PG_DIALECT_NOTES.md` (~200 LOC) + ADR-0024 (Sprint 4 namespace 격리) ✓
+- `agent_core.py:init_memory()` 확장 + `memory.py:_ensure_pg_schema()` grants 검증 + `kb_backend.py` ABC + skeleton + Postgres SQL 템플릿 ✓
+- `bin/kb-dual-write-{verify,stress}.sh` skeleton + `tests/test_anchor_invariant_postgres.py` 6 시나리오 catalog ✓
+- `docker-compose.yml memory-init.depends_on postgres` (Critical) + `.env.example` (`AGENT_KB_PG_REQUIRED` + `KB_DUAL_WRITE_START_TS`) ✓
+- M1 outside-voice review (`REV-20260520-0005`) 의 4 Blocker 모두 해소 + outside-voice (`REV-20260520-0007`) Verdict NEEDS-TWEAK + Critical 4 + Blocker 3 본 cycle 내 반영 ✓
+- commit `8dc6d8c` + push + main ff-merge ✓
+
+## 1.4 Implementation Plan (TASK-0018 — M1 Postgres DDL + RBAC role, done — 보존, summary)
+
+본 §1.3 의 deliverable 요약:
+- `agent_kb_schema.sql` (241 LOC) + `bin/kb-pg-role-bootstrap.sh` (200 LOC) + `bin/kb-schema-compare.sh` (157 LOC) + `_ensure_pg_schema()` + ADR-0021 (2-layer hybrid) ✓
+- outside-voice review (Plan subagent, `REV-20260520-0005`) Verdict NEEDS-TWEAK + 4 Critical 본 cycle 내 반영 ✓
+- commit `8152ce9` + push + main ff-merge ✓ (squashed M1 + renumber fixup)
+
+## 1.5 Implementation Plan (TASK-0017 — M0 인프라 도입, done — 보존, summary)
 
 영향 파일 (본 cycle, schema 정의 + script + ADR 만, 실 DB 적용 없음):
 - `unit/feature-0002-agent-core/src/scripts/agent_kb_schema.sql` (신규, ~241 LOC) — 5 KB 테이블 (`fact_entries` / `texts` / `rag_documents` / `rag_objects`) + VIEW (`agent_memory_facts`) + index (covering + ivfflat for `texts.embedding`) + role grant `DO $$` block. dialect 변환 (PascalCase → snake_case, AUTO_INCREMENT → IDENTITY, ON UPDATE → trigger, FULLTEXT → pg_trgm GIN). pgvector + pg_trgm extension 활성화.
@@ -47,15 +167,7 @@ source_of_truth: true
 
 위험도: **Major (§12.3 — RBAC role 신설 = 인증/인가 변경)**. PLAN-APPROVED 범위 + 사람 confirm 권장 (사용자 "다음 Cycle 이어서 진행" = 진행 의도 표명) + outside-voice review 필수 (메모리 정책).
 
-## 1.3 Implementation Plan (TASK-0017 — M0 인프라 도입, done — 보존, summary)
-
-본 §1.3 의 deliverable 요약:
-- docker-compose `postgres` 서비스 + `.env.example` AGENT_KB_PG_* 17 변수 + requirements.txt psycopg + modules/db.py `_pg_connect()` + bin/kb-pg-healthcheck.sh + bin/kb-measure-baseline.sh `--latency` mode ✓
-- FUNCTION.md §10 의 KB DB 스키마 (agent_kb Postgres) 신규 섹션 추가 ✓
-- verify-completion PASS (10/10) + commit `63f5833` + origin/main fast-forward ✓
-- Runtime 검증 (make start regression + healthcheck + latency 5/5 측정) 은 사용자 별 turn 위임 — 본 M1 cycle 에서도 동일 deferral 패턴.
-
-## 1.4 Implementation Plan (TASK-0016 — M-1 baseline 측정, done — 보존, summary)
+## 1.6 Implementation Plan (TASK-0016 — M-1 baseline 측정, done — 보존, summary)
 
 영향 파일 (본 cycle, 비파괴 추가만):
 - `docker-compose.yml` — `postgres` 서비스 신규 (pgvector/pgvector:pg16, dbnet, healthcheck `pg_isready`, `../artifacts/postgres-data` 볼륨, port `${AGENT_KB_PG_PORT:-5432}`). **agent depends_on 에는 추가 안 함** — M0 는 standalone (Section F-4 권고).
@@ -81,7 +193,7 @@ source_of_truth: true
 
 위험도: Minor (비파괴 추가). PLAN-APPROVED 범위 + outside-voice F-4 권고 정합 ("agent depends_on 비추가" 로 startup ordering 영향 0).
 
-## 1.5 Implementation Plan (TASK-0015, done — 보존, summary)
+## 1.7 Implementation Plan (TASK-0015, done — 보존, summary)
 
 본 §1.5 의 정본 plan 은 §2.1 (PLAN-APPROVED) 로 승격됨. TASK-0015 cycle 의 deliverable 요약:
 - §2.1 multi-cycle plan 정본 작성 ✓
@@ -90,7 +202,7 @@ source_of_truth: true
 - PLAN-APPROVED 마커 (2026-05-20 by ms.mckim.gpt@gmail.com) ✓
 - commit `6ac2288` + push + main ff-merge ✓
 
-## 1.6 Implementation Plan (TASK-0014 / TASK-0013, done — 보존, summary)
+## 1.8 Implementation Plan (TASK-0014 / TASK-0013, done — 보존, summary)
 
 본 §1.6 는 historical TASK plan summary. 상세 본문은 git history (commit `6ac2288` 이전의 TASK.md) 참조.
 
@@ -446,22 +558,24 @@ Nice-to-have (PLAN-APPROVED 후 별 cycle / 별 ADR — 본 §2.1 의 게이트 
 - [x] TASK-0007 worker 상세 추적 로그에 실제 참조 schema/table/column 기록 추가
 - [x] TASK-0008 실제 insight cycle 실행 후 누락 복구/로그 생성 검증
 - [x] TASK-0009 REPORT/MODIFY/TEST/AGENTS 문서 갱신
-- [ ] TASK-0010 작업 브랜치 commit 후 clean integration worktree에서 cherry-pick/push
-- [ ] TASK-0011 원본 워크트리 더티 상태 동일성 재확인
+- [x] TASK-0010 작업 브랜치 commit 후 clean integration worktree에서 cherry-pick/push
+- [x] TASK-0011 원본 워크트리 더티 상태 동일성 재확인
 - [x] TASK-0012 ANCHOR.md §1-§3 작성 (template v3.2.0-rc.1 external anchor 도입)
 - [x] TASK-0013 Role scope 시스템 프롬프트 공통 누적 적용
 - [x] TASK-0014 Account scope 누적 + Product → Role → Account 순서 정정
 - [x] TASK-0015 (Critical §12.3) KB 정본 MySQL → Postgres pgvector 마이그레이션 plan 정본 작성 + outside-voice review + PLAN-APPROVED 마커 (commit `6ac2288`)
 - [x] TASK-0016 (Minor §12.3) M-1 사전 baseline 측정 4/5 + `bin/kb-measure-baseline.sh` 신규 + `artifacts/shared/kb-baseline-2026-05-20.json` 정본 (commit `8db796c`)
 - [x] TASK-0017 (Minor §12.3) M0 인프라 도입 — docker-compose `postgres` 서비스 + `.env.example` AGENT_KB_PG_* + requirements.txt psycopg + db.py `_pg_connect()` + `bin/kb-pg-healthcheck.sh` + `bin/kb-measure-baseline.sh --latency` mode (commit `63f5833`)
-- [ ] TASK-0018 (Major §12.3, **본 cycle**) M1 Postgres DDL + RBAC role 신설 + ADR-0021. `agent_kb_schema.sql` 신규 + `bin/kb-pg-role-bootstrap.sh` 신규 + `bin/kb-schema-compare.sh` 신규 + `_ensure_pg_schema()` + ADR-0021 + `.env.example` RW/RO PASSWORD. Outside-voice review NEEDS-TWEAK 4 Critical 반영. 실 DB 적용 (psql 실행) 은 사용자 별 turn 위임.
+- [x] TASK-0018 (Major §12.3) M1 Postgres DDL + RBAC role 신설 + ADR-0021 (commit `8152ce9`)
+- [x] TASK-0019 (Major §12.3) M2-a dual-write 준비 — KbBackend ABC + skeleton + Blocker 1-4 해소 (commit `8dc6d8c`)
+- [ ] TASK-0020 (Major §12.3, **본 cycle**) M2-b dual-write 본 구현 — KbBackend method body 12 + `_DualWriteMirror` helper + caller 5 위치 mirror 호출 + 10 unit test + outside-voice REV-20260520-0008 Critical 6 / Blocker 2 본 cycle 내 반영. M2-c (cross-DB audit explicit call + 7-day SLA + invariant test fixture) 별 cycle 위임.
 
 ## 4. In Progress
-- TASK-0018 M1 Postgres DDL + RBAC role — schema/script/ADR 변경 완료, 실 DB 적용 (사용자 별 turn) 대기.
-- TASK-0010 작업 브랜치 commit 및 integration 반영 준비 (historical, TASK-0018 과 별개)
+- TASK-0020 M2-b dual-write 본 구현 — method body + caller 5 + 10 unit test + Critical/Blocker 반영 완료, M2-c cycle (cross-DB audit + 7-day SLA + invariant test fixture) 대기.
+- TASK-0010 작업 브랜치 commit 및 integration 반영 준비 (historical, 본 cycle 과 별개)
 
 ## 5. Blocked
-- 없음 (TASK-0015 PLAN-APPROVED 마커 부여 완료, 본 cycle 의 outside-voice NEEDS-TWEAK 4 Critical 반영 완료).
+- 없음 (TASK-0015 PLAN-APPROVED 마커 부여 완료, 본 cycle 의 outside-voice REV-20260520-0008 Critical 6 + Blocker 2 본 cycle 내 반영 완료).
 
 ## 6. Done
 - TASK-0001 ~ TASK-0009
@@ -469,36 +583,50 @@ Nice-to-have (PLAN-APPROVED 후 별 cycle / 별 ADR — 본 §2.1 의 게이트 
 - TASK-0015 (commit `6ac2288` + main ff-merge 2026-05-20)
 - TASK-0016 (commit `8db796c` + main ff-merge 2026-05-20)
 - TASK-0017 (commit `63f5833` + main ff-merge 2026-05-20)
+- TASK-0018 (commit `8152ce9` + main ff-merge 2026-05-20)
+- TASK-0019 (commit `8dc6d8c` + main ff-merge 2026-05-21)
 
 ## 7. Next Action
 1. (본 cycle) verify-completion PASS + commit + push + main ff-merge + worktree cleanup.
-2. (사용자 별 turn — TASK-0017 / 0018 통합 runtime 검증):
+2. (사용자 별 turn — TASK-0017 / 0018 / 0019 / 0020 통합 runtime 검증):
    - main worktree 에서 `git pull --ff-only` (origin/main 의 본 cycle commit 흡수)
-   - `.env` 의 `AGENT_KB_PG_*` 채움 (HOST/PORT/DB/USER=postgres/PASSWORD/SSLMODE + **RW_PASSWORD/RO_PASSWORD 신규 2건**)
-   - `make start` 재기동 → postgres 컨테이너 가동
-   - `bin/kb-pg-healthcheck.sh --container` PASS (TASK-0017 검증)
-   - `bin/kb-pg-role-bootstrap.sh --all` 실행 (TASK-0018 검증) — database + role 신설 + schema sql 적용
-   - `bin/kb-schema-compare.sh` PASS (4 테이블 컬럼 정합)
-   - `bin/kb-pg-healthcheck.sh --extension` + `--pg-connect` PASS
-   - `.env` 의 `AGENT_KB_PG_USER=agent_kb_rw` 전환 (M2 진입 사전) + agent 재기동 → `_pg_connect()` 가 rw role 로 연결
-   - (optional) `bin/kb-measure-baseline.sh --latency --latency-n 10` 실행 — Blocker B-2 5/5 완성
-3. (별 cycle, M2) Dual-write phase. `_dual_write_kb()` 래퍼 + `_ensure_pg_schema()` 자동 호출 trigger 결정 + `KbBackend` 추상화 인터페이스 + password rotation backoff helper + cross-DB audit explicit call.
-4. (별 cycle, M2~M4 사이) `PERMISSION_DEFINITIONS` 의 `kb.*` 4 항목 (`kb.read.own` / `kb.read.any` / `kb.mutate.any` / `kb.export`) 추가 + `docs/SECURITY.md` 갱신.
-5. (별 cycle, M2~M4 사이) **Dynamic grant blindspot cycle** (ADR-0021 §후속 액션) — `WebPermissions IsDynamic=1` 패턴의 `kb.*` 적용 검증. 사용자 메모리 정책 `feedback_outside_voice_for_rbac.md` 의 핵심 답.
+   - `.env` 의 `AGENT_KB_PG_*` 8 변수 채움 (HOST/PORT/DB/USER/PASSWORD/SSLMODE + RW/RO PASSWORD + AGENT_KB_PG_REQUIRED + KB_DUAL_WRITE_START_TS)
+   - `make start` 재기동 → postgres 컨테이너 가동 + memory-init `_ensure_pg_schema()` 자동 호출 + `grants_present` 검증 PASS
+   - `bin/kb-pg-healthcheck.sh --all` + `bin/kb-pg-role-bootstrap.sh --all` + `bin/kb-schema-compare.sh` PASS (TASK-0017/0018 통합 검증)
+   - `AGENT_KB_PG_USER=agent_kb_rw` 전환 + agent 재기동 → fact write 시 `_DualWriteMirror` 가 양쪽 INSERT
+3. (**M2-c cycle**, 별 worktree) Cross-DB audit + 7-day SLA + integration test fixture:
+   - `_DualWriteMirror._mirror()` 안에서 mirror 성공 시 `WebAuditEvents` audit row INSERT (ActionCode `kb.write.mirror`)
+   - `bin/kb-dual-write-verify.sh --audit-sla` 본문 구현 + miss_rate ≤ 0.1% target 검증
+   - `bin/kb-dual-write-stress.sh --insight-cycles 3 --ask-iterations 10` 7-day stress run
+   - `tests/test_anchor_invariant_postgres.py` 의 6 시나리오 + 2 negative assertion fixture/assertion 실 구현 (S1-S6 + N1 LLM 0건 + N2 TRUNCATE)
+   - Nice-to-have 5건 (LC_COLLATE / tsvector simple / `_BACKENDS_CACHE` thread-safe lock / psycopg autocommit docstring / MysqlKbBackend caller drift 방지)
+4. (별 cycle, M2~M4 사이) `PERMISSION_DEFINITIONS` 의 `kb.*` 4 항목 추가 (`kb.read.own` / `kb.read.any` / `kb.mutate.any` / `kb.export`) + `docs/SECURITY.md` 갱신.
+5. (별 cycle, M2~M4 사이) **Dynamic grant blindspot cycle** (ADR-0021 §후속 액션) — `WebPermissions IsDynamic=1` 패턴의 `kb.*` 적용 검증.
+6. (별 cycle, M3) Backfill ETL + embedding 일괄 생성 — `bin/kb-backfill.sh` + `texts.embedding` (Blocker B-4 결정). Embedding cost USD <0.01 추정 (M-1 baseline 기준).
+7. (별 cycle, M4) Cutover — read backend 전환 + FULLTEXT → pg_trgm rewrite + EXPLAIN ANALYZE 비교 게이트 + ADR-0021 의 §후속 액션 게이트 항목 모두 완료 확인.
 
-## 8. Completion Checklist (TASK-0018 — M1 Postgres DDL + RBAC role cycle)
-- [ ] `unit/feature-0002-agent-core/src/scripts/agent_kb_schema.sql` 신규 작성 (5 테이블 + VIEW + ivfflat + role grant)
-- [ ] `bin/kb-pg-role-bootstrap.sh` 신규 (4 mode + rotate-password + weak password fail-loud)
-- [ ] `bin/kb-schema-compare.sh` 신규 (MySQL ↔ Postgres 컬럼 정합)
-- [ ] `unit/feature-0002-agent-core/src/modules/memory.py` 에 `_ensure_pg_schema()` 함수 추가
-- [ ] `docs/DECISIONS.md` 에 ADR-0021 신규 (KB Postgres 분리 후 RBAC catalog 재정의, 2-layer hybrid)
-- [ ] `.env.example` 에 `AGENT_KB_PG_RW_PASSWORD` + `AGENT_KB_PG_RO_PASSWORD` 추가
-- [ ] Outside-voice review (Plan subagent) 호출 + Verdict NEEDS-TWEAK + 4 Critical 본 cycle 내 반영
-- [ ] py_compile memory.py PASS + bash -n 양 script PASS
+## 8. Completion Checklist (TASK-0020 — M2-b dual-write 본 구현 cycle)
+- [ ] `unit/feature-0002-agent-core/src/modules/kb_backend.py` rewrite (~780 LOC: ABC + `prune_fact_entries_keep_top` 보강 + MysqlKbBackend 6 method body + PgKbBackend 6 method body + `_DualWriteMirror` helper + `_dual_write_kb` singleton + `_BACKENDS_CACHE` process-level cache)
+- [ ] Caller 5 위치 mirror 호출 (utils.py:957 _text_store_insert + utils.py:1179 RagDoc + utils.py:1230 RagObj + knowledge.py:633 _publish_fact + knowledge.py:598 _prune_fact_entries_for_key)
+- [ ] `unit/feature-0002-agent-core/tests/test_dual_write_mirror.py` 신규 (10 unit test: no-op / silent log / fail-loud / 성공 / ABC / cache / set_text_embedding / MysqlKbBackend / caller integration / caplog)
+- [ ] `unit/feature-0002-agent-core/tests/conftest.py` 신규 (sys.path 통합)
+- [ ] `docs/DECISIONS.md` ADR-0021 §Consequences 보강 (Cross-DB audit M2-c cycle 책임)
+- [ ] Outside-voice review (Plan subagent, `REV-20260520-0008`) 호출 + Verdict NEEDS-TWEAK + Critical 6 / Blocker 2 본 cycle 내 반영:
+  - [ ] Critical 1+2+3: caller 4 위치 silent/fail-loud pattern 통일 (knowledge.py:677-696 dead try/except 제거 + `_prune_fact_entries_for_key` 광역 swallow 분리)
+  - [ ] Critical 4: REPORT.md §4 risk log 0번 entry (latency baseline 측정 M2-c 책임)
+  - [ ] Critical 5: test isolation (conftest.py + dual import path 제거)
+  - [ ] Critical 6: caller actual call test (Test 9 `_text_store_insert` + mock cursor + spy mirror)
+  - [ ] Blocker 7+8: ADR-0021 §Consequences M2-c cycle 책임 명시
+- [ ] py_compile (kb_backend.py + knowledge.py + utils.py) PASS + bash -n + test compile PASS
 - [ ] `bin/verify-completion.sh --pre-commit feature-0002-agent-core` PASS
 - [ ] Git 커밋 (`Task-Cycle: feature-0002-agent-core` trailer) + push + main ff-merge + worktree cleanup
 
-## 9. Completion Checklist (TASK-0016, TASK-0015, TASK-0017 — done, 보존)
+## 9. Completion Checklist (TASK-0019, TASK-0018, TASK-0017, TASK-0016, TASK-0015 — done, 보존)
+TASK-0019 (M2-a):
+- [x] KbBackend ABC + skeleton + Postgres SQL 템플릿 + Blocker 1-4 해소 + Critical 4 / Blocker 3 본 cycle 내 반영
+- [x] verify-completion PASS (10/10) + commit `8dc6d8c` + push + main ff-merge
+
+TASK-0016, TASK-0015, TASK-0017, TASK-0018 (보존):
 TASK-0016 (M-1 baseline 측정):
 - [x] `bin/kb-measure-baseline.sh` 신규 + 4/5 측정 + JSON artifact + REPORT/MODIFY/REVIEW 갱신
 - [x] verify-completion PASS (10/10) + commit `8db796c` + push + ff-merge

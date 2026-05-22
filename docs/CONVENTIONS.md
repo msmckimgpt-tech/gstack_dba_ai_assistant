@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
-template_version: v3.9.0
+template_version: v3.11.0
 domain: [workflow, context]
 ai_read_priority: 3
 ---
@@ -55,6 +55,19 @@ ai_read_priority: 3
 - 수동 테스트 시나리오는 `TEST.md`에 기록한다.
 - 테스트 결과는 `TEST.md` §3 Test Run History에 append-only로 기록한다.
 - 구조/기동 검증과 도메인 검증은 별도 항목으로 구분한다.
+
+### 6.1 테스트 종류 및 정합성 의무 (AGENTS.md §8.2 연동)
+
+각 작업자 AI는 코드 추가·수정 후 **단위 테스트 + 전체(통합) 테스트** 두 단계를 모두 완료해야 한다.
+
+| 종류 | 위치 | 의무 |
+|------|------|------|
+| 단위 테스트 | `unit/<feature-id>/tests/` | 추가·수정 로직에 대응하는 테스트 작성 후 실행. PASS 필수 |
+| 전체/통합 테스트 | `repo/tests/integration/` | 기능 간 인터페이스·공유 모듈 변경 시 작성 후 실행. 미작성 시 `TEST.md §4`에 사유 기록 |
+
+- 단위 테스트 FAIL 상태로 완료 선언하지 않는다.
+- 통합 테스트가 미작성인 영역은 `unit/<feature-id>/docs/TEST.md` §4 Untested Areas에 명시한다.
+- 상세 정책은 `../AGENTS.md §8.2`를 따른다.
 
 ## 7. AI 에이전트 매핑 규칙
 - 이 저장소의 정본 정책 파일은 `../AGENTS.md`이다.
@@ -261,25 +274,28 @@ TEMP_CLEANUP_ON_SUCCESS="1"
 
 ### 10.6 화면별 권한 섹션·정렬 정책 (REQ-20260512-0002)
 
-권한 (Permission) 리스트는 백엔드 단일 `PERMISSION_DEFINITIONS[*].group` (`console` / `account` / `role` / `conversation` / `product` / `audit` / `misc`) 으로 분류되지만, **사용자가 보는 정렬·섹션 구조는 화면 맥락에 따라 다르게 적용한다.** 같은 정렬을 두 화면에 공유하면 한쪽은 항상 핵심 권한이 묻힌다.
+권한 (Permission) 리스트는 백엔드 단일 `PERMISSION_DEFINITIONS[*].group` (`console` / `account` / `role` / `conversation` / `product` / `attachment` / `audit` / `settings` / `misc`) 으로 분류되지만, **사용자가 보는 정렬·섹션 구조는 화면 맥락에 따라 다르게 적용한다.** 같은 정렬을 두 화면에 공유하면 한쪽은 항상 핵심 권한이 묻힌다.
 
 #### 화면별 2단 section
 
 | 화면 | 시각 | 섹션 순서 (상→하) |
 |---|---|---|
-| 작업 화면 (`index.html` + `app.js`) | 본인이 보유한 권한을 보여주는 자기 자신 시점 | **운영 권한** (`conversation`, `product`) → **관리 권한** (`console`, `account`, `role`, `audit`) → **기타** (`misc`) |
-| 관리 콘솔 (`admin.html` + `admin.js`) | 타인의 권한을 배치하는 관리자 시점 | **관리 권한** (`console`, `account`, `role`, `audit`) → **운영 권한** (`conversation`, `product`) → **기타** (`misc`) |
+| 작업 화면 (`index.html` + `app.js`) | 본인이 보유한 권한을 보여주는 자기 자신 시점 | **운영 권한** (`conversation`, `product`, `attachment`) → **관리 권한** (`console`, `account`, `role`, `audit`, `settings`) → **기타** (`misc`) |
+| 관리 콘솔 (`admin.html` + `admin.js`) | 타인의 권한을 배치하는 관리자 시점 | **관리 권한** (`console`, `account`, `role`, `audit`, `settings`) → **운영 권한** (`conversation`, `product`, `attachment`) → **기타** (`misc`) |
 
 > TASK-0073: `audit` group 은 두 화면 모두 "관리 권한" 묶음에 합류한다. 작업 화면은 본인 `audit.read.own` 보유 여부에 따라 placeholder 만 (실 entry point 는 admin 콘솔). 관리 콘솔은 audit.read.own / .any / .export / .purge 4 권한이 모두 grid 에 노출된다.
+>
+> TASK-0094 Sprint 1 Phase 12: `attachment` group 신설 (8 group → 9 group). 첨부 sandbox SQL 실행 권한 (`attachment.execute_sql_on.{own,any}`) 이 본 group 에 등재. `conversation.attachment.*` 4 권한은 group="conversation" 유지 (대화 흐름의 일부). 작업 화면 + 관리 콘솔 모두 운영 권한 묶음에 합류.
+> TASK-0095: `settings` group 신설 — 전역 시스템 프롬프트 (`system_prompt.global.*`). 작업 화면/관리 콘솔 모두 관리 권한 묶음에 합류 (운영자 한정).
 
 #### 정합 규칙
 
-- 백엔드 group 키 (`console` / `account` / `role` / `conversation` / `product` / `audit` / `misc`) 가 진실의 근원. FE 의 section 정의는 group 키를 묶기만 한다.
+- 백엔드 group 키 (`console` / `account` / `role` / `conversation` / `product` / `attachment` / `audit` / `settings` / `misc`) 가 진실의 근원. FE 의 section 정의는 group 키를 묶기만 한다.
 - 작업 화면은 사용자가 그 section 안의 어느 group 권한도 보유하지 않으면 **section 자체를 미렌더**한다. 특히 일반 사용자의 "관리 권한" section 은 자동 hide.
 - 관리 콘솔은 사용자(관리자) 가 보유한 권한과 무관하게 **모든 section 을 항상 표시**한다. 관리자가 배치 가능한 권한 전체를 보여주는 grid 이기 때문이다.
 - 두 화면의 section 정의는 코드 상수 1 곳에서 한다: 작업 화면 = `app.js` 의 `WORK_SCREEN_PERMISSION_SECTIONS`, 관리 콘솔 = `admin.js` 의 `ADMIN_PERMISSION_SECTIONS`.
 - 새 group 키가 백엔드에 추가되면 위 두 상수에 명시적으로 매핑한다. 매핑이 빠지면 "기타" section 으로 fallback 한다 (자동, but 권장 아님).
-- group 키별 한글 label (`console`="관리 콘솔", `account`="계정", `role`="역할", `conversation`="대화", `product`="제품", `audit`="감사", `misc`="기타") 은 두 화면에서 동일하게 유지한다.
+- group 키별 한글 label (`console`="관리 콘솔", `account`="계정", `role`="역할", `conversation`="대화", `product`="제품", `attachment`="첨부", `audit`="감사", `settings`="시스템 설정", `misc`="기타") 은 두 화면에서 동일하게 유지한다.
 
 #### 동적 권한 (`product.access.<key>`, `system_prompt.*`)
 

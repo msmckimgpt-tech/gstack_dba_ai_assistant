@@ -20,8 +20,7 @@ const closeProfileBtn = document.getElementById("closeProfileBtn");
 const profileAvatarLgEl = document.getElementById("profileAvatarLg");
 const profileSummaryNameEl = document.getElementById("profileSummaryName");
 const profileSummaryMetaEl = document.getElementById("profileSummaryMeta");
-const profilePermPillsEl = document.getElementById("profilePermPills");
-const profileStateNoteEl = document.getElementById("profileStateNote");
+// TASK-0098: profilePermPills / profileStateNote 제거 — "권한 현황" 패널은 운영자 전용 정보로 분류 (관리 콘솔에서만 조회).
 const profileCreatedAtEl = document.getElementById("profileCreatedAt");
 const profileLastLoginEl = document.getElementById("profileLastLogin");
 const profileApprovedAtEl = document.getElementById("profileApprovedAt");
@@ -162,6 +161,29 @@ const state = {
     mousedownOnOverlay: false,
     mouseupOnOverlay: false,
   },
+  // TASK-0089: profile drawer "내 감사 로그" 탭 state.
+  // items: WebAuditEvents row 목록. selectedId: inline detail expand 대상.
+  // filters: { action_code, from_at, to_at } (mini filter, Codex C4 — drawer 폭 390px 1-column).
+  // nextCursor: pagination keyset. loading: 중복 호출 방지. forbidden: 403 시 UX 상태.
+  profileAudit: {
+    items: [],
+    selectedId: null,
+    filters: { action_code: "", from_at: "", to_at: "" },
+    nextCursor: null,
+    loading: false,
+    forbidden: false,
+  },
+  // TASK-0094 Sprint 1 Phase 6 (D16 + R-F5): composer 의 첨부 selection state.
+  // - byConv: 대화 ID 또는 pending sentinel 별 첨부 목록.
+  //   { [convOrSentinel]: { items: [{id, kind, name, size, status, selected, error?}], scopeAll: bool } }
+  //   items 의 id 는 backend 의 WebConversationAttachments.Id (음수 일 때 = client-side 로컬 placeholder).
+  //   status: "uploading" | "ready" | "failed"
+  // - uploadingCount: in-flight upload 카운트 (paperclip / send 비활성화 게이트).
+  composerAttachments: {
+    byConv: {},
+    uploadingCount: 0,
+    nextLocalId: -1,
+  },
 };
 
 // TASK-0082: 글로벌 prefix 만 유지 — 실제 sentinel 은 _newPendingSentinel() 가 각 lazy-create 마다 unique 생성.
@@ -177,14 +199,17 @@ function _newPendingSentinel() {
 const PRODUCT_PREF_LS_KEY = "mad.productPref.v1";
 
 // TASK-0073 Phase C: audit group 추가 — backend PERMISSION_DEFINITIONS 의 group="audit" 정합.
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "audit", "misc"];
+// TASK-0095: settings group 추가 — 전역 시스템 프롬프트 권한 그룹.
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "attachment", "audit", "settings", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
   role: "역할",
   conversation: "대화",
   product: "제품",
+  attachment: "첨부",
   audit: "감사",
+  settings: "시스템 설정",
   misc: "기타",
 };
 
@@ -193,15 +218,21 @@ const PERMISSION_GROUP_LABELS = {
 // TASK-0073 Phase C: audit 그룹은 관리 권한 section 에 placeholder — 본인 audit (`audit.read.own`) 만 작업 화면에
 // 표시되도록 group="audit" 을 manage section 에 추가. admin 콘솔 진입을 권유.
 const WORK_SCREEN_PERMISSION_SECTIONS = [
-  { id: "operate", title: "운영 권한", description: "대화 · 제품 접근", groups: ["conversation", "product"] },
-  { id: "manage", title: "관리 권한", description: "관리 콘솔 / 계정 / 역할 / 감사", groups: ["console", "account", "role", "audit"] },
+  // TASK-0094 Sprint 1 Phase 12: attachment group 추가 — 첨부 sandbox SQL 권한이 운영 권한 묶음에 표시.
+  { id: "operate", title: "운영 권한", description: "대화 · 제품 접근 · 첨부", groups: ["conversation", "product", "attachment"] },
+  // TASK-0095: settings 그룹은 작업 화면의 관리 권한 section 에 placeholder.
+  { id: "manage", title: "관리 권한", description: "관리 콘솔 / 계정 / 역할 / 감사 / 시스템 설정", groups: ["console", "account", "role", "audit", "settings"] },
   { id: "misc", title: "기타", description: null, groups: ["misc"] },
 ];
 
 function permissionGroupOf(code = "") {
-  // app.py PERMISSION_DEFINITIONS 와 정합: system_prompt.* 코드는 product 그룹으로 매핑.
-  if (String(code || "").startsWith("system_prompt.")) return "product";
-  const head = String(code || "").split(".", 1)[0] || "misc";
+  // app.py PERMISSION_DEFINITIONS 와 정합:
+  //  - `system_prompt.global.*` (TASK-0095) → settings 그룹.
+  //  - 다른 system_prompt.* (manage.role.any 등) → product 그룹 유지 (기존 호환).
+  const codeStr = String(code || "");
+  if (codeStr.startsWith("system_prompt.global.")) return "settings";
+  if (codeStr.startsWith("system_prompt.")) return "product";
+  const head = codeStr.split(".", 1)[0] || "misc";
   return PERMISSION_GROUP_LABELS[head] ? head : "misc";
 }
 
@@ -242,6 +273,17 @@ const PERMISSION_LABELS = {
   "conversation.duplicate.any": "전체 대화 복사",
   "product.manage": "제품 관리",
   "system_prompt.manage.role.any": "역할/계정 시스템 프롬프트 관리",
+  // TASK-0095: 전역 시스템 프롬프트 권한.
+  "system_prompt.global.read": "전역 시스템 프롬프트 조회",
+  "system_prompt.global.write": "전역 시스템 프롬프트 수정",
+  // TASK-0094 Sprint 1 Phase 3: 첨부 기능 RBAC 4 코드 (group=conversation).
+  "conversation.attachment.upload.own": "내 대화 첨부 업로드",
+  "conversation.attachment.upload.any": "전체 대화 첨부 업로드",
+  "conversation.attachment.read.own": "내 대화 첨부 조회",
+  "conversation.attachment.read.any": "전체 대화 첨부 조회",
+  // TASK-0094 Sprint 1 Phase 12: 첨부 sandbox SQL 실행 2 코드 (group=attachment).
+  "attachment.execute_sql_on.own": "내 첨부 sandbox SQL 실행",
+  "attachment.execute_sql_on.any": "전체 첨부 sandbox SQL 실행",
 };
 
 const PERMISSION_DESCRIPTIONS = {
@@ -281,6 +323,17 @@ const PERMISSION_DESCRIPTIONS = {
   "conversation.duplicate.any": "타 사용자가 소유한 대화까지 본 계정 소유의 새 대화로 복제할 수 있는 권한입니다. 원본은 유지됩니다.",
   "product.manage": "제품(Product) 생성/수정/삭제 및 접근 DB 스키마와 제품 시스템 프롬프트를 관리할 수 있는 권한입니다.",
   "system_prompt.manage.role.any": "다른 역할 또는 다른 계정의 시스템 프롬프트를 수정할 수 있는 권한입니다. 본인 계정 프롬프트는 이 권한 없이도 수정할 수 있습니다.",
+  // TASK-0095: 전역 시스템 프롬프트 (모든 LLM 응답의 최상위 base).
+  "system_prompt.global.read": "모든 대화의 최상위 base 가 되는 전역 시스템 프롬프트 본문을 조회할 수 있는 권한입니다. 비워져 있으면 코드 상수 fallback 으로 동작합니다.",
+  "system_prompt.global.write": "전역 시스템 프롬프트를 수정 또는 삭제할 수 있는 권한입니다. 모든 LLM 응답에 영향이 가는 권한이라 운영자 한정으로 부여하는 것을 권장합니다.",
+  // TASK-0094 Sprint 1 Phase 3: 첨부 기능 RBAC 4 코드.
+  "conversation.attachment.upload.own": "자신의 대화에 파일 (CSV/XLSX/PDF/이미지) 을 첨부할 수 있는 권한입니다. MIME / size cap / 외부 LLM 송신 consent 가 적용됩니다.",
+  "conversation.attachment.upload.any": "모든 계정의 대화에 첨부를 업로드할 수 있는 권한입니다. 운영자 한정으로 부여합니다.",
+  "conversation.attachment.read.own": "자신의 대화에 첨부된 파일 metadata + 본문 (사내망 다운로드) 을 조회할 수 있는 권한입니다. 승인 전 (pending) 계정은 metadata 만 노출됩니다.",
+  "conversation.attachment.read.any": "모든 계정의 대화 첨부를 조회할 수 있는 권한입니다. 운영자 한정으로 부여합니다.",
+  // TASK-0094 Sprint 1 Phase 12: 첨부 sandbox SQL 실행.
+  "attachment.execute_sql_on.own": "자신의 대화 첨부 데이터를 sandbox schema 에서 SELECT 실행할 수 있는 권한입니다. D14 AST allowlist guard 가 statement 형식을 제한합니다.",
+  "attachment.execute_sql_on.any": "모든 계정의 첨부에 대해 sandbox SQL 을 실행할 수 있는 권한입니다. 운영자 한정으로 부여합니다.",
 };
 
 function describePermission(code = "") {
@@ -406,6 +459,13 @@ async function apiFetch(url, options = {}) {
     const error = new Error(message);
     error.status = response.status;
     error.payload = payload;
+    // TASK-0098: 403 공통 처리 (Codex outside voice F2/F3/F5).
+    // "표시 허용 + 실행은 backend 403 fallback" 패턴 — backend 가 거부한 행동은
+    // 일관된 toast 로 사용자에게 알린다. 권한명을 노출하는 backend 메시지는
+    // app.py 에서 `요청을 수행할 수 없습니다.` 로 normalize 됨.
+    if (response.status === 403) {
+      try { showToast(message || "요청을 수행할 수 없습니다.", true); } catch (_e) {}
+    }
     throw error;
   }
   return payload;
@@ -439,7 +499,12 @@ function markdownToHtml(text = "") {
 }
 
 function can(permission) {
-  return Boolean(state.user?.permissions?.[permission]);
+  // TASK-0098: state.user.permissions 의존성 제거. "표시 허용 + 실행은 backend
+  // 403 fallback" 패턴 (Codex outside voice F5). 로그인한 사용자에게는 모든 UI
+  // gate 가 true 반환 — 실제 행동 거부는 backend 403 응답 + apiFetch 의 공통
+  // catch (showToast "요청을 수행할 수 없습니다.") 가 처리.
+  void permission;
+  return Boolean(state.user);
 }
 
 function roleLabel() {
@@ -452,7 +517,14 @@ function isOwnConversation(conversation = currentConversation()) {
 }
 
 function canOpenAdminConsole() {
-  return can("console.access");
+  // TASK-0102: console_access 플래그 우선, 없으면 role.key 기반 fallback.
+  // console_access 가 서버 응답에 포함된 경우 그것을 신뢰 (TASK-0100 이후 서버).
+  // 구버전 서버(console_access 미포함)에서는 role.key === "admin" 으로 fallback —
+  // role 은 TASK-0098 이전부터 항상 직렬화되므로 버전 무관하게 존재.
+  if (state.user?.console_access !== undefined) {
+    return Boolean(state.user.console_access);
+  }
+  return state.user?.role?.key === "admin";
 }
 
 function canAskInConversation(conversation = currentConversation()) {
@@ -488,10 +560,175 @@ function currentConversation() {
 }
 
 // feature-0007 (REQ-20260521-0001): readVaultState / writeVaultState /
-// clearVaultState / computeVaultReadiness / updateVaultReadiness / syncVaultSteps
-// / renderVaultSavedCard / refreshVaultUI 함수 일괄 제거. API Vault wizard 폐기
-// 후 사용자 키 관리 UI / state 가 사라졌다. LLM 자격증명은 서비스 단일 env
-// (BEDROCK_GATEWAY_API_KEY) 가 보유.
+// clearVaultState / isVaultCryptoAvailable / computeVaultReadiness /
+// updateVaultReadiness / syncVaultSteps / renderVaultSavedCard / refreshVaultUI
+// 함수 일괄 제거. main 의 TASK-0103 secure context 보강 (isVaultCryptoAvailable
+// 등) 도 본 cycle 의 API Vault 전면 폐기로 superseded — 함수 자체가 사라졌다.
+// LLM 자격증명은 서비스 단일 env (BEDROCK_GATEWAY_API_KEY) 가 보유.
+//
+// 아래 origin/main 의 vault 함수 정의는 본 cycle 의 정책으로 일괄 제거 (주석
+// 만 보존). 호출 사이트 (vault 이벤트 리스너 등) 도 본 cycle 에서 모두 제거됨.
+/*
+function readVaultState() {
+  return {
+    cipher: localStorage.getItem(STORAGE_KEYS.cipher) || "",
+    model: localStorage.getItem(STORAGE_KEYS.model) || "",
+    passphrase: sessionStorage.getItem(STORAGE_KEYS.passphrase) || "",
+  };
+}
+
+function writeVaultState() {
+  localStorage.setItem(STORAGE_KEYS.cipher, vaultCipherEl.value.trim());
+  localStorage.setItem(STORAGE_KEYS.model, vaultModelEl.value.trim());
+  if (vaultPassphraseEl.value.trim()) {
+    sessionStorage.setItem(STORAGE_KEYS.passphrase, vaultPassphraseEl.value.trim());
+  } else {
+    sessionStorage.removeItem(STORAGE_KEYS.passphrase);
+  }
+  refreshVaultUI();
+}
+
+function clearVaultState() {
+  localStorage.removeItem(STORAGE_KEYS.cipher);
+  localStorage.removeItem(STORAGE_KEYS.model);
+  sessionStorage.removeItem(STORAGE_KEYS.passphrase);
+  vaultCipherEl.value = "";
+  vaultPassphraseEl.value = "";
+  vaultPlainKeyEl.value = "";
+  if (state.apiVaultOptions?.default_model) {
+    vaultModelEl.value = state.apiVaultOptions.default_model;
+  }
+  refreshVaultUI();
+}
+
+// WebCrypto (PBKDF2 + AES-GCM) 는 secure context (HTTPS / localhost) 에서만 동작.
+// 외부 IP 의 HTTP 접속에서는 window.crypto.subtle 이 undefined → 암호화/저장 불가.
+// 이 경우 사용자가 진단 가능하도록 UI 를 사전 차단하고 명시적으로 안내한다.
+function isVaultCryptoAvailable() {
+  return Boolean(
+    typeof window !== "undefined"
+      && window.isSecureContext
+      && window.crypto
+      && window.crypto.subtle
+  );
+}
+
+// Vault 의 현재 요청 가능 상태를 단일 tri-state 로 반환.
+// 진실의 출처는 storage(영속) — input value 는 일시적인 편집 buffer 이므로 신뢰하지 않는다.
+// passphrase 는 sessionStorage 우선, 사용자가 막 입력한 미저장 값(input)은 fallback 으로만 인정.
+function computeVaultReadiness() {
+  const cipher = (localStorage.getItem(STORAGE_KEYS.cipher) || "").trim();
+  const passphrase = (
+    sessionStorage.getItem(STORAGE_KEYS.passphrase)
+    || (vaultPassphraseEl ? vaultPassphraseEl.value : "")
+    || ""
+  ).trim();
+  if (cipher && passphrase) return "ready";
+  if (cipher && !passphrase) return "needs";
+  return "empty";
+}
+
+// readiness 배지·접근성 텍스트 동기화.
+function updateVaultReadiness() {
+  if (!vaultBannerEl || !vaultBannerTextEl) return;
+  const cryptoOk = isVaultCryptoAvailable();
+  const readiness = cryptoOk ? computeVaultReadiness() : "blocked";
+  const model = vaultModelEl.value.trim();
+  vaultBannerEl.setAttribute("data-state", readiness);
+  const dot = vaultBannerEl.querySelector(".vault-banner-dot");
+  if (dot) dot.setAttribute("data-state", readiness);
+  let label;
+  if (readiness === "blocked") {
+    const publicUrl = state.apiVaultOptions && state.apiVaultOptions.public_url;
+    const httpsHint = publicUrl && /^https:/i.test(publicUrl)
+      ? ` 보안 접속 주소: ${publicUrl}`
+      : "";
+    label = `현재 접속 (${window.location.protocol}//${window.location.host}) 은 보안 컨텍스트가 아니어서 API 키를 암호화할 수 없습니다. HTTPS 또는 localhost 로 접속해 주세요.${httpsHint}`;
+  } else if (readiness === "ready") {
+    label = model ? `준비 완료 · 모델: ${model}` : "준비 완료";
+  } else if (readiness === "needs") {
+    label = "저장된 암호화 키가 있습니다. Step 2 에서 passphrase 를 입력하면 바로 사용 가능합니다.";
+  } else if (state.localLlmEnabled) {
+    label = "API 키 미설정 · 외부 Local LLM 게이트웨이로 동작 중입니다.";
+  } else {
+    label = "API 키가 아직 설정되지 않았습니다. 아래 단계를 순서대로 진행하세요.";
+  }
+  vaultBannerTextEl.textContent = label;
+  if (vaultStatusEl) vaultStatusEl.textContent = label;
+}
+
+// 각 step 의 data-state 와 primary 버튼 disabled 토글.
+//   - cipher 저장됨 → 모든 step done, save 버튼 disabled (saved-default)
+//   - cipher 미저장 → wizard 입력 모드 (Step 1 active 부터 시작)
+// 키를 갈아끼우려면 "저장된 키 삭제" 한 경로만 — 진입점 1개로 단순화.
+function syncVaultSteps() {
+  if (!vaultStepEls.length || !saveVaultBtn) return;
+  const cipherSaved = Boolean((localStorage.getItem(STORAGE_KEYS.cipher) || "").trim());
+  const plain = vaultPlainKeyEl.value.trim();
+  const passphrase = vaultPassphraseEl.value.trim();
+  const cryptoOk = isVaultCryptoAvailable();
+
+  const step1 = vaultStepEls.find((el) => el.dataset.step === "1");
+  const step2 = vaultStepEls.find((el) => el.dataset.step === "2");
+  const step3 = vaultStepEls.find((el) => el.dataset.step === "3");
+
+  // 보안 컨텍스트가 아니면 모든 단계 disable + 저장 버튼 차단.
+  // (banner 의 안내 메시지에서 사유를 표시한다.)
+  if (!cryptoOk) {
+    if (step1) step1.setAttribute("data-state", "disabled");
+    if (step2) step2.setAttribute("data-state", "disabled");
+    if (step3) step3.setAttribute("data-state", "disabled");
+    saveVaultBtn.disabled = true;
+    return;
+  }
+
+  if (cipherSaved) {
+    if (step1) step1.setAttribute("data-state", "done");
+    if (step2) step2.setAttribute("data-state", passphrase ? "done" : "active");
+    if (step3) step3.setAttribute("data-state", "done");
+    saveVaultBtn.disabled = true;
+    return;
+  }
+
+  if (step1) step1.setAttribute("data-state", plain ? "done" : "active");
+  if (step2) {
+    if (!plain) step2.setAttribute("data-state", "disabled");
+    else step2.setAttribute("data-state", passphrase ? "done" : "active");
+  }
+  if (step3) {
+    if (plain && passphrase) step3.setAttribute("data-state", "active");
+    else step3.setAttribute("data-state", "disabled");
+  }
+  saveVaultBtn.disabled = !(plain && passphrase);
+}
+
+// 저장된 cipher 카드(information only) 와 destructive zone(삭제) 렌더링.
+// cipher 가 저장돼 있을 때만 두 영역을 노출하고, 없으면 둘 다 숨긴다.
+// 키 갈아끼움은 "저장된 키 삭제" → confirm → 새로 입력 흐름이 유일.
+function renderVaultSavedCard() {
+  if (!vaultSavedCardEl || !vaultSavedMetaEl) return;
+  const savedCipher = (localStorage.getItem(STORAGE_KEYS.cipher) || "").trim();
+  const savedModel = (localStorage.getItem(STORAGE_KEYS.model) || "").trim();
+  if (!savedCipher) {
+    vaultSavedCardEl.hidden = true;
+    if (vaultDangerZoneEl) vaultDangerZoneEl.hidden = true;
+    return;
+  }
+  vaultSavedCardEl.hidden = false;
+  if (vaultDangerZoneEl) vaultDangerZoneEl.hidden = false;
+  const head = savedCipher.length > 10 ? `${savedCipher.slice(0, 10)}…` : savedCipher;
+  vaultSavedMetaEl.textContent = savedModel
+    ? `${head} · 모델: ${savedModel}`
+    : head;
+}
+
+// readiness / step / saved card 를 한 번에 갱신.
+function refreshVaultUI() {
+  updateVaultReadiness();
+  renderVaultSavedCard();
+  syncVaultSteps();
+}
+*/
 
 function toggleAuthPane(tab) {
   document.querySelectorAll("[data-auth-tab]").forEach((button) => {
@@ -516,6 +753,234 @@ function switchProfileTab(tab) {
   });
   document.querySelectorAll("[data-profile-pane]").forEach((pane) => {
     pane.classList.toggle("hidden", pane.dataset.profilePane !== tab);
+  });
+}
+
+// ──────────────────────────────────────────────────────────────────
+//  TASK-0089 — Profile drawer "내 감사 로그" 탭
+//  - audit.read.own 또는 audit.read.any 보유자에게 본인 audit row 표시.
+//  - backend `/api/profile/audits` 가 scope="own" 강제 (Codex outside voice C2).
+//  - 1-column list + inline detail expand (Codex C4 — drawer 폭 390px).
+//  - mini filter: action_code / from_at / to_at (Codex C4 — actor_id/actor_type 본인 한정 무의미).
+//  - CSV export / purge 미노출 (admin 한정, Codex C3).
+//  - 403 graceful: tab content 를 "권한 없음" 으로 전환 (Codex C5).
+// ──────────────────────────────────────────────────────────────────
+
+function _profileAuditEscapeHtml(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function _profileAuditFormatDt(iso) {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString();
+  } catch {
+    return String(iso);
+  }
+}
+
+function _profileAuditHasReadPermission() {
+  // TASK-0098: state.user.permissions 의존성 제거. audit.read.own 은 TASK-0073
+  // RBAC catalog 에서 모든 role 에 catchup grant — 로그인된 사용자라면 항상
+  // 보유. 따라서 로그인 여부만 검사 + backend 403 fallback (apiFetch 공통 toast)
+  // 가 실제 권한 거부를 처리한다.
+  return Boolean(state.user);
+  // 폐기된 코드 — 참조 보존:
+  // const perms = state.user?.permissions || {};
+  // return Boolean(perms["audit.read.own"] || perms["audit.read.any"]);
+}
+
+function updateProfileAuditTabVisibility() {
+  // tab 노출 = audit.read.own || audit.read.any (Codex C5).
+  const tab = document.getElementById("profileAuditTab");
+  if (!tab) return;
+  tab.classList.toggle("hidden", !_profileAuditHasReadPermission());
+}
+
+function _profileAuditReadFilters() {
+  const action = document.getElementById("profileAuditFilterAction");
+  const fromAt = document.getElementById("profileAuditFilterFromAt");
+  const toAt = document.getElementById("profileAuditFilterToAt");
+  state.profileAudit.filters = {
+    action_code: action ? action.value.trim() : "",
+    from_at: fromAt ? fromAt.value : "",
+    to_at: toAt ? toAt.value : "",
+  };
+}
+
+function _profileAuditClearFilters() {
+  const action = document.getElementById("profileAuditFilterAction");
+  const fromAt = document.getElementById("profileAuditFilterFromAt");
+  const toAt = document.getElementById("profileAuditFilterToAt");
+  if (action) action.value = "";
+  if (fromAt) fromAt.value = "";
+  if (toAt) toAt.value = "";
+  state.profileAudit.filters = { action_code: "", from_at: "", to_at: "" };
+}
+
+async function loadProfileAuditList(append = false) {
+  if (state.profileAudit.loading) return;
+  state.profileAudit.loading = true;
+  try {
+    const params = new URLSearchParams();
+    const f = state.profileAudit.filters || {};
+    if (f.action_code) params.set("action_code", f.action_code);
+    if (f.from_at) params.set("from_at", f.from_at);
+    if (f.to_at) params.set("to_at", f.to_at);
+    if (append && state.profileAudit.nextCursor) {
+      params.set("cursor", state.profileAudit.nextCursor);
+    }
+    const url = `/api/profile/audits?${params.toString()}`;
+    const resp = await fetch(url, { credentials: "same-origin" });
+    if (resp.status === 403) {
+      // 권한 race (Codex C5) — drawer tab 노출 후 admin 이 권한 revoke 시.
+      state.profileAudit.forbidden = true;
+      state.profileAudit.items = [];
+      state.profileAudit.nextCursor = null;
+      renderProfileAuditList();
+      return;
+    }
+    if (!resp.ok) {
+      showToast(`감사 로그 조회 실패 (${resp.status})`, true);
+      return;
+    }
+    state.profileAudit.forbidden = false;
+    const data = await resp.json();
+    state.profileAudit.nextCursor = data.next_cursor || null;
+    const fresh = data.items || [];
+    state.profileAudit.items = append ? state.profileAudit.items.concat(fresh) : fresh;
+    renderProfileAuditList();
+  } catch (exc) {
+    showToast(`감사 로그 조회 실패: ${exc}`, true);
+  } finally {
+    state.profileAudit.loading = false;
+  }
+}
+
+function renderProfileAuditList() {
+  const listEl = document.getElementById("profileAuditList");
+  const countEl = document.getElementById("profileAuditCount");
+  const moreBtn = document.getElementById("profileAuditLoadMoreBtn");
+  const detailEl = document.getElementById("profileAuditDetail");
+  if (!listEl) return;
+
+  // 403 graceful (Codex C5).
+  if (state.profileAudit.forbidden) {
+    listEl.innerHTML = '<div class="profile-audit-empty">감사 로그 조회 권한이 없습니다. 권한이 부여되면 다시 시도하세요.</div>';
+    if (countEl) countEl.textContent = "";
+    if (moreBtn) moreBtn.style.display = "none";
+    if (detailEl) detailEl.classList.add("hidden");
+    return;
+  }
+
+  const items = state.profileAudit.items;
+  if (countEl) countEl.textContent = `${items.length}건`;
+  if (moreBtn) moreBtn.style.display = state.profileAudit.nextCursor ? "" : "none";
+
+  if (items.length === 0) {
+    listEl.innerHTML = '<div class="profile-audit-empty">조건에 맞는 감사 이벤트가 없습니다.</div>';
+    if (detailEl) detailEl.classList.add("hidden");
+    return;
+  }
+
+  const rows = items.map((it) => {
+    const isSel = String(it.id) === String(state.profileAudit.selectedId);
+    const klass = "profile-audit-row" + (isSel ? " is-selected" : "");
+    return `
+      <div class="${klass}" role="listitem" data-audit-id="${_profileAuditEscapeHtml(it.id)}">
+        <div class="profile-audit-row-line">
+          <span class="profile-audit-row-action">${_profileAuditEscapeHtml(it.action_code || "")}</span>
+          <span class="profile-audit-row-ts">${_profileAuditEscapeHtml(_profileAuditFormatDt(it.occurred_at))}</span>
+        </div>
+        <div class="profile-audit-row-line muted">
+          <span class="profile-audit-row-resource">${_profileAuditEscapeHtml(it.resource_type || "")}${
+            it.resource_id ? " #" + _profileAuditEscapeHtml(it.resource_id) : ""
+          }</span>
+        </div>
+      </div>`;
+  }).join("");
+  listEl.innerHTML = rows;
+  listEl.querySelectorAll(".profile-audit-row").forEach((rowEl) => {
+    rowEl.addEventListener("click", () => {
+      const id = rowEl.dataset.auditId;
+      state.profileAudit.selectedId = id;
+      renderProfileAuditList();
+      renderProfileAuditDetail(id);
+    });
+  });
+}
+
+function renderProfileAuditDetail(id) {
+  const el = document.getElementById("profileAuditDetail");
+  if (!el) return;
+  const item = state.profileAudit.items.find((it) => String(it.id) === String(id));
+  if (!item) {
+    el.classList.add("hidden");
+    return;
+  }
+  // ChangeJson + MaskedFields 안전 직렬화 + HTML escape (admin pane 패턴 답습).
+  const changeText = item.change_json == null ? "(없음)" : JSON.stringify(item.change_json, null, 2);
+  const maskedText = Array.isArray(item.masked_fields) && item.masked_fields.length
+    ? item.masked_fields.join(", ")
+    : "(없음)";
+  el.classList.remove("hidden");
+  el.innerHTML = `
+    <h4>감사 이벤트 #${_profileAuditEscapeHtml(item.id)}</h4>
+    <dl class="profile-audit-detail-fields">
+      <dt>발생 시각</dt><dd>${_profileAuditEscapeHtml(_profileAuditFormatDt(item.occurred_at))}</dd>
+      <dt>Action</dt><dd><code>${_profileAuditEscapeHtml(item.action_code || "")}</code></dd>
+      <dt>Actor</dt><dd>${_profileAuditEscapeHtml(item.actor_type || "")}${
+        item.actor_account_id ? " · #" + _profileAuditEscapeHtml(item.actor_account_id) : ""
+      }</dd>
+      <dt>Resource</dt><dd>${_profileAuditEscapeHtml(item.resource_type || "")}${
+        item.resource_id ? " #" + _profileAuditEscapeHtml(item.resource_id) : ""
+      }</dd>
+      <dt>Masked Fields</dt><dd>${_profileAuditEscapeHtml(maskedText)}</dd>
+    </dl>
+    <h5>Change JSON</h5>
+    <pre class="profile-audit-detail-change">${_profileAuditEscapeHtml(changeText)}</pre>
+  `;
+}
+
+function attachProfileAuditHandlers() {
+  const applyBtn = document.getElementById("profileAuditFilterApplyBtn");
+  const clearBtn = document.getElementById("profileAuditFilterClearBtn");
+  const moreBtn = document.getElementById("profileAuditLoadMoreBtn");
+  if (applyBtn) {
+    applyBtn.addEventListener("click", () => {
+      _profileAuditReadFilters();
+      loadProfileAuditList(false);
+    });
+  }
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      _profileAuditClearFilters();
+      loadProfileAuditList(false);
+    });
+  }
+  if (moreBtn) {
+    moreBtn.addEventListener("click", () => loadProfileAuditList(true));
+  }
+  // Enter on filter inputs → apply.
+  ["profileAuditFilterAction", "profileAuditFilterFromAt", "profileAuditFilterToAt"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          _profileAuditReadFilters();
+          loadProfileAuditList(false);
+        }
+      });
+    }
   });
 }
 
@@ -1027,6 +1492,8 @@ function renderAccountState() {
 
 function renderProfile() {
   if (!state.user) return;
+  // TASK-0089: profile drawer 의 "내 감사 로그" tab 노출 여부 갱신 (audit.read.own || audit.read.any).
+  updateProfileAuditTabVisibility();
   const initials = state.user.username.slice(0, 2).toUpperCase();
 
   if (profileAvatarLgEl) profileAvatarLgEl.textContent = initials;
@@ -1035,17 +1502,7 @@ function renderProfile() {
     profileSummaryMetaEl.textContent = roleLabel();
   }
 
-  buildPermissionPills(profilePermPillsEl);
-
-  if (profileStateNoteEl) {
-    if (can("conversation.ask")) {
-      profileStateNoteEl.textContent = "요청 실행 권한이 활성화된 계정입니다.";
-    } else if (can("conversation.read.own") || can("conversation.read.any")) {
-      profileStateNoteEl.textContent = "현재는 조회 중심 권한만 부여된 계정입니다.";
-    } else {
-      profileStateNoteEl.textContent = "사용 가능한 권한이 없습니다. 관리자에게 역할 또는 override를 요청하세요.";
-    }
-  }
+  // TASK-0098: "권한 현황" 패널 (buildPermissionPills + profileStateNote) 제거 — 운영자 전용 정보 분류.
 
   if (profileCreatedAtEl) profileCreatedAtEl.textContent = formatDateTime(state.user.created_at);
   if (profileLastLoginEl) profileLastLoginEl.textContent = formatDateTime(state.user.last_login_at);
@@ -1055,11 +1512,139 @@ function renderProfile() {
   if (passwordChangeFormEl) passwordChangeFormEl.reset();
 }
 
-function openProfile(tab = "account") {
+function openProfile(tab = "prompt") {
   renderProfile();
   switchProfileTab(tab);
   profileDrawerEl.classList.remove("hidden");
   profileBackdropEl.classList.remove("hidden");
+  // TASK-0094 Sprint 1 Phase 7 (D11 + R-F2): consent grouped modal 렌더링.
+  try { _renderConsentSection(); } catch (_) { /* graceful */ }
+}
+
+// ============================================================================
+// TASK-0094 Sprint 1 Phase 7 — D11 consent grouped batch UX (R-F2).
+// ============================================================================
+// BRIEFING D11 + R-F2 — DB 는 provider × data_class × purpose 세분 row,
+// UX 는 provider 별 3 group (텍스트 / 이미지 / 인덱싱) 으로 노출. 한 group 의
+// 토글이 그 group 안의 모든 (data_class, purpose) row 를 batch grant/revoke.
+
+const _CONSENT_PROVIDERS = [
+  { code: "openai", label: "OpenAI (ChatGPT / Vision / Embeddings)" },
+  { code: "anthropic", label: "Anthropic (Claude)" },
+];
+
+// group code → 포함되는 (data_class, purpose) tuple 목록.
+const _CONSENT_GROUPS = [
+  {
+    code: "text",
+    label: "파일 텍스트 분석",
+    hint: "CSV / XLSX / PDF / 텍스트 파일의 본문을 LLM 에 송신해 분석에 활용",
+    pairs: [["file_text", "inference"]],
+  },
+  {
+    code: "image",
+    label: "이미지 분석",
+    hint: "이미지 첨부의 본문을 vision 모델에 송신",
+    pairs: [["file_image", "inference"]],
+  },
+  {
+    code: "embed",
+    label: "문서 인덱싱",
+    hint: "PDF / 텍스트 파일을 임베딩하여 RAG 검색에 활용 (Cycle 4 도입)",
+    pairs: [["file_embedding", "indexing"]],
+  },
+];
+
+let _consentRowsCache = []; // backend `/api/account/consents` 결과 cache.
+
+function _isConsentGroupGranted(provider, group) {
+  if (!_consentRowsCache.length) return false;
+  return group.pairs.every(([dc, pp]) =>
+    _consentRowsCache.some(
+      (r) => r.provider === provider && r.data_class === dc && r.purpose === pp && r.granted,
+    ),
+  );
+}
+
+async function _loadConsentRows() {
+  try {
+    const resp = await apiFetch("/api/account/consents");
+    _consentRowsCache = Array.isArray(resp?.consents) ? resp.consents : [];
+  } catch (_) {
+    _consentRowsCache = [];
+  }
+}
+
+function _renderConsentSectionMarkup() {
+  const root = document.getElementById("consentProvidersList");
+  if (!root) return;
+  const blocks = _CONSENT_PROVIDERS.map((prov) => {
+    const groupRows = _CONSENT_GROUPS.map((g) => {
+      const granted = _isConsentGroupGranted(prov.code, g);
+      return `<label class="consent-group-row" data-provider="${prov.code}" data-group="${g.code}">
+                <input type="checkbox" data-action="consent-toggle"
+                       data-provider="${prov.code}" data-group="${g.code}"
+                       ${granted ? "checked" : ""} />
+                <span class="consent-group-meta">
+                  <span class="consent-group-label">${g.label}</span>
+                  <span class="consent-group-hint">${g.hint}</span>
+                </span>
+              </label>`;
+    }).join("");
+    return `<div class="consent-provider-block">
+              <div class="consent-provider-label">${prov.label}</div>
+              ${groupRows}
+            </div>`;
+  }).join("");
+  root.innerHTML = blocks;
+}
+
+async function _renderConsentSection() {
+  await _loadConsentRows();
+  _renderConsentSectionMarkup();
+}
+
+async function _handleConsentToggle(provider, groupCode, granted) {
+  const group = _CONSENT_GROUPS.find((g) => g.code === groupCode);
+  if (!provider || !group) return;
+  // batch grant/revoke — group 안의 모든 (data_class, purpose) tuple 적용.
+  const errors = [];
+  for (const [dc, pp] of group.pairs) {
+    try {
+      if (granted) {
+        await apiFetch("/api/account/consents", {
+          method: "POST",
+          body: JSON.stringify({ provider, data_class: dc, purpose: pp }),
+        });
+      } else {
+        // 기존 row id 찾아 revoke.
+        const row = _consentRowsCache.find(
+          (r) => r.provider === provider && r.data_class === dc && r.purpose === pp && r.granted,
+        );
+        if (row?.id) {
+          await apiFetch(`/api/account/consents/${row.id}`, { method: "DELETE" });
+        }
+      }
+    } catch (exc) {
+      errors.push(String(exc));
+    }
+  }
+  if (errors.length) {
+    showToast(`동의 처리 중 일부 실패: ${errors[0]}`, true);
+  } else {
+    showToast(granted ? `${group.label} 동의 완료` : `${group.label} 동의 회수 완료`);
+  }
+  await _renderConsentSection();
+}
+
+function _bindConsentSectionEvents() {
+  const root = document.getElementById("consentProvidersList");
+  if (!root) return;
+  root.addEventListener("change", (ev) => {
+    const cb = ev.target.closest('input[data-action="consent-toggle"]');
+    if (!cb) return;
+    _handleConsentToggle(cb.dataset.provider, cb.dataset.group, cb.checked).catch(() => {});
+  });
 }
 
 function closeProfile() {
@@ -2927,6 +3512,8 @@ async function selectConversation(conversationId) {
   } catch (_) { /* ignore */ }
   // REQ-20260519-0004 (TASK-0076): search modal 에서 진입한 경우 매칭된 첫 message bubble 로 jump.
   try { _jumpToSearchMatchedMessage(); } catch (_) {}
+  // TASK-0094 Sprint 1 Phase 6: 대화 진입 시 attachment list load — backend ground truth 와 selection snapshot 동기화.
+  try { await _loadConversationAttachments(conversationId); } catch (_) {}
 }
 
 async function createConversation() {
@@ -3434,6 +4021,294 @@ async function attachAndWaitForResult(conversationId, { runId = "" } = {}) {
   }
 }
 
+// ============================================================================
+// TASK-0094 Sprint 1 Phase 6 — Composer attachment helper (D16 + R-F5).
+// ============================================================================
+// 첨부 selection state 의 key 는 현재 대화 ID 또는 pending sentinel.
+// sendPrompt 시점에 snapshot 후 askBody.attachment_ids / scope_all 에 기록.
+
+function _composerAttachmentKey(convId, sentinel = null) {
+  // 우선순위: explicit sentinel > activeConversationId > pending sentinel > ""
+  if (sentinel) return String(sentinel);
+  if (convId) return String(convId);
+  if (state.pendingSentinel) return String(state.pendingSentinel);
+  return "";
+}
+
+function _ensureComposerBucket(key) {
+  if (!key) return null;
+  if (!state.composerAttachments.byConv[key]) {
+    state.composerAttachments.byConv[key] = { items: [], scopeAll: false };
+  }
+  return state.composerAttachments.byConv[key];
+}
+
+function _composerAttachmentSnapshot(targetConvId, isLazyCreate) {
+  // R-F5 lazy-create snapshot: 현재 sendPrompt 시점의 selection 을 추출.
+  // isLazyCreate 면 pendingSentinel bucket, 그 외엔 targetConvId bucket.
+  const key = isLazyCreate
+    ? (state.pendingSentinel ? String(state.pendingSentinel) : "")
+    : String(targetConvId || "");
+  const bucket = state.composerAttachments.byConv[key];
+  if (!bucket) {
+    return { selectedIds: [], scopeAll: false };
+  }
+  const selectedIds = bucket.items
+    .filter((it) => it.selected && it.status === "ready" && Number(it.id) > 0)
+    .map((it) => Number(it.id));
+  return { selectedIds, scopeAll: Boolean(bucket.scopeAll) };
+}
+
+function _renderAttachmentPills() {
+  const container = document.getElementById("composerAttachmentsPills");
+  const wrap = document.getElementById("composerAttachments");
+  const scopeAllEl = document.getElementById("composerAttachmentsScopeAll");
+  if (!container || !wrap) return;
+
+  const key = _composerAttachmentKey(state.activeConversationId);
+  const bucket = state.composerAttachments.byConv[key];
+  const items = bucket?.items || [];
+
+  if (!items.length) {
+    container.innerHTML = "";
+    wrap.classList.add("hidden");
+    if (scopeAllEl) scopeAllEl.checked = false;
+    return;
+  }
+  wrap.classList.remove("hidden");
+  if (scopeAllEl) scopeAllEl.checked = Boolean(bucket?.scopeAll);
+
+  const html = items
+    .map((it) => {
+      const sizeKb = Math.max(1, Math.round((Number(it.size) || 0) / 1024));
+      const safeName = String(it.name || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const kindLabel = String(it.kind || "file").toUpperCase();
+      return `<span class="composer-attachment-pill"
+                    data-selected="${it.selected ? "true" : "false"}"
+                    data-uploading="${it.status === "uploading" ? "true" : "false"}"
+                    data-error="${it.status === "failed" ? "true" : "false"}"
+                    data-attachment-id="${it.id}"
+                    title="${it.status === "failed" ? "업로드 실패: " + (it.error || "알 수 없는 오류") : safeName}">
+                <span class="pill-kind">${kindLabel}</span>
+                <span class="pill-name">${safeName}</span>
+                <span class="pill-size">${sizeKb} KB</span>
+                <button type="button" class="pill-toggle" data-action="toggle" aria-label="첨부 선택 토글">
+                  ${it.selected ? "×" : "+"}
+                </button>
+              </span>`;
+    })
+    .join("");
+  container.innerHTML = html;
+}
+
+async function _uploadComposerAttachment(file) {
+  // 현재 활성 컨텍스트의 conv id 또는 pending sentinel.
+  const isLazy = state.pendingNewConversation || !state.activeConversationId;
+  const key = _composerAttachmentKey(state.activeConversationId);
+  const bucket = _ensureComposerBucket(key);
+  if (!bucket) {
+    showToast("대화 컨텍스트 미정 — 새 대화 또는 기존 대화를 선택해 주세요.", true);
+    return;
+  }
+  // backend upload endpoint 는 cid 필요 — lazy create 시점은 cid 가 없음. 사용자에게 안내.
+  if (isLazy) {
+    showToast(
+      "첨부는 대화가 생성된 후 가능합니다. 첫 메시지를 보낸 뒤 다시 시도해 주세요.",
+      true,
+    );
+    return;
+  }
+  const convId = String(state.activeConversationId);
+
+  // Optimistic local pill (status=uploading).
+  const localId = state.composerAttachments.nextLocalId;
+  state.composerAttachments.nextLocalId -= 1;
+  const optimistic = {
+    id: localId,
+    kind: _guessKindFromFile(file),
+    name: file.name || "unnamed",
+    size: Number(file.size) || 0,
+    status: "uploading",
+    selected: true,
+  };
+  bucket.items.push(optimistic);
+  state.composerAttachments.uploadingCount += 1;
+  _renderAttachmentPills();
+
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const resp = await apiFetch(`/api/conversations/${encodeURIComponent(convId)}/attachments`, {
+      method: "POST",
+      body: formData,
+      // Content-Type 헤더 명시 안 함 — fetch 가 boundary 포함 자동.
+      headers: {},
+    });
+    if (resp && Number(resp.id) > 0) {
+      // optimistic → real id 갱신.
+      const idx = bucket.items.findIndex((it) => it.id === localId);
+      if (idx >= 0) {
+        bucket.items[idx] = {
+          id: Number(resp.id),
+          kind: String(resp.kind || optimistic.kind),
+          name: String(resp.original_filename || optimistic.name),
+          size: Number(resp.size || optimistic.size),
+          status: "ready",
+          selected: true,
+        };
+      }
+      showToast(`첨부 업로드 완료: ${optimistic.name}`);
+    } else if (resp && resp.error) {
+      const idx = bucket.items.findIndex((it) => it.id === localId);
+      if (idx >= 0) {
+        bucket.items[idx] = { ...bucket.items[idx], status: "failed", error: resp.error };
+      }
+      showToast(`첨부 업로드 실패: ${resp.error}`, true);
+    }
+  } catch (exc) {
+    const idx = bucket.items.findIndex((it) => it.id === localId);
+    if (idx >= 0) {
+      bucket.items[idx] = { ...bucket.items[idx], status: "failed", error: String(exc) };
+    }
+    showToast(`첨부 업로드 실패: ${exc}`, true);
+  } finally {
+    state.composerAttachments.uploadingCount = Math.max(0, state.composerAttachments.uploadingCount - 1);
+    _renderAttachmentPills();
+  }
+}
+
+function _guessKindFromFile(file) {
+  const name = String(file?.name || "").toLowerCase();
+  const ext = name.includes(".") ? name.split(".").pop() : "";
+  const mime = String(file?.type || "").toLowerCase();
+  if (mime === "text/csv" || ext === "csv") return "csv";
+  if (
+    mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    || mime === "application/vnd.ms-excel"
+    || ext === "xlsx"
+    || ext === "xls"
+  ) return "xlsx";
+  if (mime === "application/pdf" || ext === "pdf") return "pdf";
+  if (mime.startsWith("image/")) return "image";
+  if (mime === "text/markdown" || ext === "md") return "text";
+  if (mime === "text/plain" || ext === "txt") return "text";
+  return "other";
+}
+
+function _toggleAttachmentPill(attachmentId) {
+  const key = _composerAttachmentKey(state.activeConversationId);
+  const bucket = state.composerAttachments.byConv[key];
+  if (!bucket) return;
+  const idx = bucket.items.findIndex((it) => String(it.id) === String(attachmentId));
+  if (idx < 0) return;
+  const it = bucket.items[idx];
+  if (it.status === "failed") {
+    // failed pill 토글 click = remove.
+    bucket.items.splice(idx, 1);
+  } else {
+    // selected 토글.
+    bucket.items[idx] = { ...it, selected: !it.selected };
+  }
+  _renderAttachmentPills();
+}
+
+async function _loadConversationAttachments(convId) {
+  // 대화 진입 시 active 첨부 목록 load (D16: backend ground truth 와 selected snapshot 동기화).
+  if (!convId) return;
+  try {
+    const resp = await apiFetch(`/api/conversations/${encodeURIComponent(convId)}/attachments`);
+    const arr = Array.isArray(resp?.attachments) ? resp.attachments : [];
+    const bucket = _ensureComposerBucket(String(convId));
+    // Backend 의 ready 첨부만 default selected. uploading/failed 등 client-only pill 은 보존 (다른 컨텍스트에서 들어왔을 가능성 낮음).
+    const serverIds = new Set(arr.map((a) => Number(a.id)));
+    bucket.items = bucket.items.filter((it) => Number(it.id) <= 0); // local optimistic 만 보존
+    for (const a of arr) {
+      bucket.items.push({
+        id: Number(a.id),
+        kind: String(a.kind || "other"),
+        name: String(a.original_filename || ""),
+        size: Number(a.size || 0),
+        status: String(a.status || "ready") === "deleted" ? "failed" : "ready",
+        selected: true,
+      });
+    }
+    _renderAttachmentPills();
+  } catch (exc) {
+    // 403 / 404 등 graceful — 첨부 권한 없거나 대화 부재. pill 영역 hide.
+    const wrap = document.getElementById("composerAttachments");
+    if (wrap) wrap.classList.add("hidden");
+  }
+}
+
+function _bindComposerAttachmentEvents() {
+  const attachBtn = document.getElementById("attachBtn");
+  const fileInput = document.getElementById("attachFileInput");
+  const scopeAllEl = document.getElementById("composerAttachmentsScopeAll");
+  const pillsContainer = document.getElementById("composerAttachmentsPills");
+  const composerWrap = document.querySelector(".composer-wrap");
+
+  if (attachBtn && fileInput) {
+    attachBtn.addEventListener("click", () => {
+      fileInput.click();
+    });
+    fileInput.addEventListener("change", async (ev) => {
+      const file = ev.target?.files?.[0];
+      if (file) {
+        await _uploadComposerAttachment(file);
+      }
+      // reset value so same file selectable again.
+      ev.target.value = "";
+    });
+  }
+  if (scopeAllEl) {
+    scopeAllEl.addEventListener("change", (ev) => {
+      const key = _composerAttachmentKey(state.activeConversationId);
+      const bucket = _ensureComposerBucket(key);
+      if (bucket) {
+        bucket.scopeAll = Boolean(ev.target.checked);
+        if (bucket.scopeAll) {
+          showToast(
+            "이 대화의 모든 ingested 첨부를 사용합니다. 별도 audit 이 기록됩니다.",
+            false,
+          );
+        }
+      }
+    });
+  }
+  if (pillsContainer) {
+    pillsContainer.addEventListener("click", (ev) => {
+      const btn = ev.target.closest('[data-action="toggle"]');
+      if (!btn) return;
+      const pill = btn.closest("[data-attachment-id]");
+      if (!pill) return;
+      _toggleAttachmentPill(pill.dataset.attachmentId);
+    });
+  }
+  if (composerWrap) {
+    let dragCounter = 0;
+    composerWrap.addEventListener("dragenter", (ev) => {
+      ev.preventDefault();
+      dragCounter += 1;
+      composerWrap.classList.add("is-dragover");
+    });
+    composerWrap.addEventListener("dragover", (ev) => {
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = "copy";
+    });
+    composerWrap.addEventListener("dragleave", () => {
+      dragCounter = Math.max(0, dragCounter - 1);
+      if (dragCounter === 0) composerWrap.classList.remove("is-dragover");
+    });
+    composerWrap.addEventListener("drop", async (ev) => {
+      ev.preventDefault();
+      dragCounter = 0;
+      composerWrap.classList.remove("is-dragover");
+      const file = ev.dataTransfer?.files?.[0];
+      if (file) await _uploadComposerAttachment(file);
+    });
+  }
+}
+
 async function sendPrompt() {
   const message = promptInputEl.value.trim();
   if (!message) return;
@@ -3540,6 +4415,13 @@ async function sendPrompt() {
         ? Number(state.pinnedProductId)
         : null;
   }
+  // TASK-0094 Sprint 1 Phase 6 (D16, R-F5): attachment selection snapshot.
+  // sendPrompt 시작 시점의 selected attachment_ids 와 scope_all 토글을 askBody 에
+  // 명시 전송 — 사용자가 다른 대화로 전환해 pill 을 바꿔도 in-flight 요청에는 영향 0.
+  // attachment_ids 가 명시되지 않으면 backend 가 빈 list 처리 (D16 minimum exposure).
+  const attachmentSnapshot = _composerAttachmentSnapshot(targetConvId, isLazyCreate);
+  askBody.attachment_ids = attachmentSnapshot.selectedIds;
+  askBody.attachment_scope_all = attachmentSnapshot.scopeAll;
   try {
     const payload = await apiFetch("/api/ask", {
       method: "POST",
@@ -3671,7 +4553,10 @@ async function loadVaultOptions() {
 }
 
 // feature-0007 (REQ-20260521-0001): encryptPlainApiKey 제거됨. AES-GCM /
-// PBKDF2 / Web Crypto subtle 호출 경로 모두 폐기. 사용자 키 입력 자체가 사라졌다.
+// PBKDF2 / Web Crypto subtle 호출 경로 모두 폐기. main 의 TASK-0103 secure
+// context 사전 차단 patch 도 본 cycle 의 API Vault 전면 폐기로 superseded —
+// 함수 자체가 사라졌으므로 secure context guard 도 불요. 사용자 키 입력 자체
+// 가 사라졌다.
 
 async function handleLogin(event) {
   event.preventDefault();
@@ -3865,7 +4750,8 @@ async function initialize() {
   loginFormEl.addEventListener("submit", handleLogin);
   signupFormEl.addEventListener("submit", handleSignup);
   // 프로필 드로어 open/close
-  openProfileBtn.addEventListener("click", () => openProfile("account"));
+  // TASK-0098: 첫 활성 탭을 "prompt" 로 변경 (탭 순서 = [프롬프트, 보안 및 계정, API Vault, 내 감사 로그(gated)]).
+  openProfileBtn.addEventListener("click", () => openProfile("prompt"));
   closeProfileBtn.addEventListener("click", closeProfile);
   profileBackdropEl.addEventListener("click", closeProfile);
 
@@ -3876,8 +4762,15 @@ async function initialize() {
       if (btn.dataset.profileTab === "prompt") {
         initAccountPromptEditor().catch(() => {});
       }
+      // TASK-0089: "내 감사 로그" 탭 진입 시 첫 load.
+      if (btn.dataset.profileTab === "audit") {
+        loadProfileAuditList(false).catch(() => {});
+      }
     });
   });
+
+  // TASK-0089: profile audit filter handlers wire.
+  attachProfileAuditHandlers();
 
   const savePromptBtn = document.getElementById("savePromptBtn");
   const clearPromptBtn = document.getElementById("clearPromptBtn");
@@ -3937,6 +4830,10 @@ async function initialize() {
       showToast(error.message || "요청 전송에 실패했습니다.", true);
     });
   });
+  // TASK-0094 Sprint 1 Phase 6: composer 첨부 (paperclip / drag-drop / pill / scope-all) 이벤트 binding.
+  try { _bindComposerAttachmentEvents(); } catch (_) { /* graceful — DOM 부재 시 무시 */ }
+  // TASK-0094 Sprint 1 Phase 7: D11 consent grouped modal 이벤트 binding (delegation).
+  try { _bindConsentSectionEvents(); } catch (_) { /* graceful */ }
   promptInputEl.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       event.preventDefault();

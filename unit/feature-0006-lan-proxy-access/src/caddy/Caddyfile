@@ -10,6 +10,7 @@ https://{$WEB_PUBLIC_HOST}, :443 {
 	tls {$WEB_TLS_CERT_FILE} {$WEB_TLS_KEY_FILE}
 
 	reverse_proxy web:8000 {
+		header_up X-Forwarded-For {client_ip}
 		header_up X-Forwarded-Proto https
 		header_up X-Forwarded-Port 443
 	}

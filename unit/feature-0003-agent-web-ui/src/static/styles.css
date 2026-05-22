@@ -1,5 +1,5 @@
 /* =====================================================================
-   MySQL AI Assistant — UI v2 (2026-04-15)
+   DQA — Database Query Assistant — UI v2 (2026-04-15)
    Design reference: ChatGPT, Claude, Linear — compact app-shell layout
    ===================================================================== */
 
@@ -104,7 +104,7 @@ a { color: inherit; }
   width: 44px;
   height: 44px;
   border-radius: var(--r-md);
-  background: var(--primary);
+  background: transparent;
   color: #fff;
   display: grid;
   place-items: center;
@@ -321,7 +321,7 @@ a { color: inherit; }
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  background: var(--primary);
+  background: transparent;
   color: #fff;
   display: grid;
   place-items: center;
@@ -332,7 +332,10 @@ a { color: inherit; }
 
 .brand-name {
   font-weight: 700;
-  font-size: 15px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .topbar-end {
@@ -1400,6 +1403,193 @@ a { color: inherit; }
   padding: 10px 20px 14px;
   background: var(--surface);
   border-top: 1px solid var(--border);
+  position: relative;
+}
+
+/* TASK-0094 Sprint 1 Phase 6: 첨부 pills 영역 — composer-box 위에 표시 */
+.composer-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 0;
+  margin-bottom: 6px;
+  border-radius: var(--r-md);
+  background: rgba(37, 99, 235, 0.04);
+  border: 1px dashed rgba(37, 99, 235, 0.2);
+}
+.composer-attachments.hidden { display: none; }
+.composer-attachments-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.composer-attachment-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 10px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  line-height: 1.2;
+  color: var(--text);
+  max-width: 280px;
+  cursor: default;
+  transition: border-color 0.15s, background 0.15s;
+}
+.composer-attachment-pill .pill-kind {
+  font-size: 10px;
+  color: var(--primary);
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.composer-attachment-pill .pill-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.composer-attachment-pill .pill-size {
+  font-size: 11px;
+  color: var(--muted);
+}
+.composer-attachment-pill .pill-toggle {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 999px;
+  transition: background 0.15s, color 0.15s;
+}
+.composer-attachment-pill .pill-toggle:hover {
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--danger, #ef4444);
+}
+.composer-attachment-pill[data-selected="false"] {
+  opacity: 0.55;
+  background: rgba(0, 0, 0, 0.02);
+}
+.composer-attachment-pill[data-selected="false"] .pill-name {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.composer-attachment-pill[data-uploading="true"] {
+  border-color: var(--primary);
+  background: rgba(37, 99, 235, 0.07);
+}
+.composer-attachment-pill[data-uploading="true"] .pill-kind::after {
+  content: " ⏳";
+}
+.composer-attachment-pill[data-error="true"] {
+  border-color: var(--danger, #ef4444);
+  background: rgba(239, 68, 68, 0.06);
+  color: var(--danger, #ef4444);
+}
+.composer-attachments-scope-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.composer-attachments-scope-all input[type="checkbox"] {
+  cursor: pointer;
+}
+
+/* TASK-0094 Phase 6: drag-drop overlay — composer-wrap 위 absolute */
+.composer-drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-lg);
+  background: rgba(37, 99, 235, 0.08);
+  border: 2px dashed var(--primary);
+  color: var(--primary);
+  font-size: 14px;
+  font-weight: 500;
+  z-index: 4;
+  pointer-events: none;
+}
+.composer-drop-overlay.hidden { display: none; }
+.composer-wrap.is-dragover .composer-drop-overlay { display: flex; }
+
+/* TASK-0094 Sprint 1 Phase 7 (D11 + R-F2): consent grouped batch UX. */
+.consent-providers {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 8px;
+}
+.consent-provider-block {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 10px 12px;
+  background: var(--surface);
+}
+.consent-provider-label {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.consent-group-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  cursor: pointer;
+}
+.consent-group-row input[type="checkbox"] {
+  margin-top: 3px;
+  cursor: pointer;
+}
+.consent-group-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.consent-group-label {
+  font-size: 12.5px;
+  color: var(--text);
+}
+.consent-group-hint {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* TASK-0094 Phase 6: paperclip 첨부 버튼 */
+.attach-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+  margin-bottom: 2px;
+}
+.attach-btn:hover {
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--primary);
+}
+.attach-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .composer-box {
@@ -4197,4 +4387,183 @@ a { color: inherit; }
   color: var(--text-muted);
   font-size: 12px;
   margin-left: 8px;
+}
+
+/* TASK-0096 v2: 설정 pane — 계정/역할/제품 과 동일한 admin-list-detail 5단 구조 채택.
+ * list-row--nav 변형 (button 형 row, no checkbox)+ admin-settings-panel 본문 만 신규.
+ * sub-sidebar 전용 클래스(admin-settings-shell/-nav/-nav-*) 는 v1 에서 제거됨. */
+.admin-list-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.admin-list-row.admin-list-row--nav {
+  grid-template-columns: 1fr;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+}
+.admin-list-row.admin-list-row--nav .admin-list-row-cb {
+  display: none;
+}
+.admin-list-row.admin-list-row--nav .admin-list-row-meta {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+}
+.admin-settings-panel {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+.admin-settings-panel.is-active {
+  display: flex;
+}
+.admin-settings-panel-head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.admin-settings-panel-hint {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.admin-settings-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* TASK-0089: profile drawer "내 감사 로그" 탭 styles.
+ * Codex outside voice C4 — drawer 폭 ~390px 1-column 적응.
+ * admin-audit 패턴 답습하되 drawer 폭 + inline detail 구조. */
+.profile-audit-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.profile-audit-filter .field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.profile-audit-filter .field span {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.profile-audit-filter-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.profile-audit-count {
+  margin-left: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: normal;
+}
+.profile-audit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.profile-audit-row {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--surface);
+  transition: background 0.1s ease;
+}
+.profile-audit-row:hover {
+  background: var(--surface-hover);
+}
+.profile-audit-row.is-selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.profile-audit-row-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  align-items: baseline;
+}
+.profile-audit-row-line.muted {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.profile-audit-row-action {
+  font-family: ui-monospace, monospace;
+  font-weight: 500;
+}
+.profile-audit-row-ts {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.profile-audit-pagination {
+  margin-top: 8px;
+  display: flex;
+  justify-content: center;
+}
+.profile-audit-empty {
+  padding: 16px;
+  color: var(--text-muted);
+  text-align: center;
+  font-size: 13px;
+}
+/* inline detail (Codex C4 — 2-column 대신 같은 pane 안 expand). */
+.profile-audit-detail {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.profile-audit-detail h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+}
+.profile-audit-detail h5 {
+  margin: 12px 0 4px 0;
+  font-size: 13px;
+}
+.profile-audit-detail-fields {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 4px 8px;
+  margin: 0;
+  font-size: 12px;
+}
+.profile-audit-detail-fields dt {
+  color: var(--text-muted);
+  font-weight: normal;
+}
+.profile-audit-detail-fields dd {
+  margin: 0;
+  word-break: break-all;
+}
+/* Codex C4 — ChangeJson 은 줄바꿈 대신 수평 스크롤 (audit JSON 가독성). */
+.profile-audit-detail-change {
+  background: var(--code-bg, #1e1e1e);
+  color: var(--code-fg, #e0e0e0);
+  border-radius: 4px;
+  padding: 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  white-space: pre;
+  overflow: auto;
+  max-height: 30vh;
 }

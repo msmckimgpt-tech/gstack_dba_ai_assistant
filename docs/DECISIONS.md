@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: append-only
 source_of_truth: true
-template_version: v3.9.0
+template_version: v3.11.0
 domain: [architecture, history]
 ai_read_priority: 9
 ---
@@ -265,6 +265,7 @@ ai_read_priority: 9
   - **`docs/SECURITY.md` 갱신** — RBAC 정책 표에 `kb.*` 추가, Sensitive field catalog 에 KB embedding 컬럼 (`texts.embedding`) 포함 (M3 backfill 시점부터 활성).
   - **`bin/verify-completion.sh`** 에 신규 check #13 후보: KB endpoint 가 catalog 정의대로 권한 게이트 호출하는지 정적 검증. 본 cycle 의 산출은 아님 — M2~M4 사이 별 cycle.
   - **Cross-DB audit log** (Section C 권고) — KB write 가 발생하면 `WebAuditEvents` (MySQL `agent_memory` DB) 에도 audit row INSERT. Postgres KB write 와 MySQL audit write 가 cross-DB tx 불가 → application-level best-effort 로 명시 (M2 dual-write 의 `_dual_write_kb()` 안에서 explicit audit call). 약화된 정합성은 REPORT.md 의 risk log 에 기록. **SLA 정량 약속 (outside-voice REV-20260520-0005 Section B 권고)**: audit INSERT 미실행 비율 **≤ 0.1% target** (M2 cycle 의 7-day stress run 검증). 초과 시 hard alert + M2 cycle rollback 결정. SLA 측정은 `bin/kb-dual-write-verify.sh --audit-sla` 로 별도 cycle 에서 자동화 — M2 plan 책임.
+  - **Cycle 책임 명시 (outside-voice REV-20260520-0008 Blocker 7+8)**: M2-b (TASK-0020) cycle 의 `_DualWriteMirror` 가 audit explicit call **미포함** — `WebAuditEvents` INSERT 책임은 **M2-c cycle (별 cycle, TASK 미할당)** 에 위임. M2-c 산출: (a) `_DualWriteMirror._mirror()` 안에서 mirror 성공 시 `WebAuditEvents` audit row INSERT 추가 (ActionCode `kb.write.mirror`), (b) `bin/kb-dual-write-verify.sh --audit-sla --window-days 7` 의 실 호출 본문 구현, (c) 7-day stress run + miss_rate 측정 + alert threshold ≤ 0.1% 정합. **M2-c 진입 게이트**: M2-b commit + `AGENT_KB_PG_REQUIRED=1` + 사용자 명시 진행. M2-c 미완료 상태로 M4 cutover 진입 금지 (`bin/kb-cutover-readiness.sh` 의 (f) 항목 PASS 필수).
   - **`agent_kb_ro` 의 사용 사례** — 사람 audit / debug 시 `docker exec -e PGPASSWORD=<...> repo-postgres-1 psql -U agent_kb_ro -d agent_kb -c "SELECT ..."` 패턴. PII / sensitive embedding 조회 시 별도 audit trigger (M3+ ADR).
   - **Password rotation** — `bin/kb-pg-role-bootstrap.sh --rotate-password <role> <new-pw>` 가 ALTER ROLE 실행. .env 의 `AGENT_KB_PG_PASSWORD` 동기화는 사용자 책임 + agent 재기동.
   - **M4 cutover gate** — `bin/kb-cutover-readiness.sh` 가 본 ADR 의 시행 완료 (PERMISSION_DEFINITIONS 갱신 + `AGENT_KB_PG_USER=agent_kb_rw` 적용 + `agent_kb_rw` 로 `_pg_connect()` smoke PASS) 를 명시 게이트 항목으로 검증.
@@ -283,8 +284,11 @@ ai_read_priority: 9
   - **M4 cutover** (별 cycle): `bin/kb-cutover-readiness.sh` 에 본 ADR 시행 완료 게이트 항목 추가 — (a) `PERMISSION_DEFINITIONS` 의 `kb.*` 4 항목 존재, (b) `AGENT_KB_PG_USER=agent_kb_rw` 적용, (c) `agent_kb_rw` 로 `_pg_connect()` smoke PASS, (d) `has_table_privilege()` 검증 PASS, (e) Dynamic grant blindspot cycle 의 산출물 (PR merged) 확인, (f) Cross-DB audit SLA ≤ 0.1% 달성 (M2 stress run 결과).
   - **ADR-0024 후보 (Sprint 4 통합 시점)**: 본 cycle 의 schema 가 `public` schema 기준 — Sprint 4 의 `agent_drag` namespace 결정 시 grant scope 명시.
 
-## ADR-0022
-- Status: accepted (feature-0007, 2026-05-21)
+## ADR-0026
+- Status: accepted (feature-0007, 2026-05-21, renumbered from ADR-0022 on
+  2026-05-22 due to main branch ADR collision — main 이 분기 이후 ADR-0022/0023/
+  0024/0025 추가 (TASK-0094 Sprint 1 Phase 1 MinIO 첨부 + TASK-0019 M2). 본 ADR
+  의 번호를 ADR-0026 으로 재부여하여 정합. 본문 내용은 변경 없음.)
 - Date: 2026-05-21
 - Context: 기존 시스템은 사용자가 Profile drawer 의 "API Vault" wizard 에서 자기 OpenAI API key 를 평문 입력 → 브라우저에서 PBKDF2-SHA256 (100k iter) + AES-GCM 256bit 로 암호화 → `/api/ask` 호출 시마다 cipher + passphrase 동봉 → backend 가 `_decrypt_api_key` 로 transient 복호 → `OpenAI(api_key=...)` 직접 호출. 각 사용자가 OpenAI 비용을 자기 계정으로 부담하는 trust 모델. 본 시스템이 사내 직원 전용 도구로 확정되면서 (사용자 결정 2026-05-21) 운영자가 LLM 비용을 부담하는 단일 service-managed 자격증명 모델이 trust 모델 / UX / 운영 비용 책임 모두에서 자연스럽다고 판단.
 - Decision: LLM provider 자격증명 모델을 **per-user OpenAI key → service-managed AWS Bedrock via OpenAI-compatible gateway (LiteLLM proxy)** 로 전환:
@@ -361,3 +365,86 @@ ai_read_priority: 9
   release note 모니터링 후 region-pinned 으로 마이그레이션 별 cycle.
 - LiteLLM 의 boto3 retry / error mapping 이 Bedrock-specific error code 를
   HTTP 응답으로 transparently 전달하는지 운영 중 모니터링.
+
+## ADR-0024
+- Status: accepted (TASK-0019, M2 cycle, 2026-05-21)
+- Date: 2026-05-21
+- Context: TASK-0015 §2.1 PLAN-APPROVED 의 D-2 결정 (단일 Postgres cluster + 별 database) 와 outside-voice review `REV-20260520-0005` Section D 권고 ("`agent_drag` namespace 격리 미명시, ADR-0024 후보") 가 본 ADR 의 motivation. 직전 세션의 multi-cycle plan 의 Sprint 4 (D RAG, PGVector 도입) 가 동일 Postgres cluster 안 별 database 또는 schema 로 분리될 예정이지만 정본 위치를 본 cycle 에서 확인 불가 (Blocker B-1). 본 plan 의 `agent_kb` namespace 와 Sprint 4 의 `agent_drag` namespace 가 schema-level vs database-level 격리 중 무엇을 채택해야 KB 의 RBAC role (`agent_kb_rw` / `agent_kb_ro`, ADR-0021) 과 Sprint 4 의 role 이 자연 격리될지 결정.
+- Decision: **단일 Postgres cluster + 별 database 격리** 채택. KB 정본 = `agent_kb` database, Sprint 4 D RAG = `agent_drag` database (또는 Sprint 4 의 결정에 따른 다른 명 — 본 ADR 은 `agent_drag` 를 placeholder 로). Postgres role 의 `CONNECT` 권한이 database-level 이라 schema-level 분리보다 격리 강도 높음.
+- Consequences:
+  - **`agent_kb_rw` / `agent_kb_ro`** (ADR-0021) 의 `CONNECT ON DATABASE agent_kb TO ...` grant 가 `agent_drag` 접근 차단 — 자연 격리.
+  - **Sprint 4 의 D RAG role** (별도 신설 예정) — `agent_drag_rw` / `agent_drag_ro` 명 권장 (네이밍 일관성). Sprint 4 의 ADR 책임.
+  - **cluster-level fault** (shared_buffers, WAL, connection pool 등) 는 양 도메인 동시 영향 — `pgvector/pgvector:pg16` 단일 컨테이너의 메모리 footprint 가 두 도메인 합산. M4 cutover gate 의 메모리 측정 (Open Q #2) 에 포함.
+  - **백업/관측 통합** — `docker exec repo-postgres-1 pg_dump agent_kb` 와 `pg_dump agent_drag` 가 동일 컨테이너에서 호출. 단일 dump volume 사용.
+  - **schema-level 분리 옵션 폐기** — 단일 database (예: `agent_pg`) 안 두 schema (`kb`, `drag`) 분리는 role 권한 정의 복잡도 폭증 (`ALTER DEFAULT PRIVILEGES IN SCHEMA kb` + `... IN SCHEMA drag` 양쪽 따로) + 잘못된 schema 접근 risk. database 분리가 더 안전.
+  - **별 인스턴스 옵션 폐기** — Topology D-2 의 Alternative B (별 Postgres 인스턴스) 는 운영 부담 2배. 본 plan 규모에서는 과대.
+  - **agent 컨테이너의 connection pool** — `agent_kb` connection (`_pg_connect()`) + `agent_drag` connection (Sprint 4 의 helper) 2 pool 자연 분리. memory footprint ~10MB × 2 = ~20MB. 본 plan 의 `_pg_connect()` 에서 database arg 는 명시 (`AGENT_KB_PG_DB` default `agent_kb`). Sprint 4 는 별도 env (`AGENT_DRAG_PG_DB` 권장).
+  - **docker-compose `postgres` 서비스** — 본 plan M0 (TASK-0017) 가 `POSTGRES_DB=agent_kb` 로 default. Sprint 4 진입 시 `POSTGRES_DB` 환경변수가 `agent_kb` 만 보장 — Sprint 4 의 D RAG 는 `bin/kb-pg-role-bootstrap.sh` 와 유사한 `bin/drag-pg-role-bootstrap.sh --create-db` 로 별도 database 생성. 본 cycle 의 `kb-pg-role-bootstrap.sh` 가 reference 패턴.
+- Alternatives 검토 후 폐기:
+  - **단일 database 안 두 schema 분리** — 위 §Consequences 참조. role 권한 복잡도 + cross-schema 접근 risk.
+  - **별 Postgres 인스턴스** — 운영 부담 2배.
+  - **본 plan 의 KB 가 Sprint 4 의 D RAG schema 와 공유** — 본 cycle 의 schema (fact_entries / texts / rag_documents / rag_objects) 가 Sprint 4 의 D RAG schema 와 column 구조 정합 가정 필요. Sprint 4 plan 정본을 본 cycle 에서 확인 불가 → 검증 안 됨. **자연 격리 (별 database) 가 더 안전**.
+- 본 ADR 의 사전 조건 (Sprint 4 와 통합 시점 확인 필요):
+  - Sprint 4 의 D RAG 가 본 ADR 의 `agent_drag` database 가정을 수용한다면 자연 호환. Sprint 4 가 별 schema (`agent_pg.drag.*`) 또는 동일 schema 공유 (예: `agent_kb.rag_objects` 를 D RAG 가 같이 INSERT) 결정 시 본 ADR superseded — 그 시점에 ADR-0025 후보.
+  - Sprint 4 의 schema 가 본 plan 의 `rag_objects` / `rag_documents` 와 column 정합 — 동일 schema 공유 가능 시 Sprint 4 cycle 에서 본 ADR 의 격리 정책 ALTER.
+- Outside-voice rationale: 본 ADR 은 outside-voice review `REV-20260520-0005` Section D 의 Blocker 직접 해소. 본 turn 의 M2 cycle outside-voice review 가 본 ADR 의 적절성을 다시 검증.
+- 후속 액션:
+  - **본 cycle (M2, TASK-0019)**: ADR-0024 정본 작성 ✓ + Sprint 4 plan 의 D RAG schema 확인 (사용자 직접 — Blocker B-1) 시점에 재검토.
+  - **Sprint 4 cycle**: 본 ADR 의 가정 (별 database `agent_drag`) 수용 여부 결정. 다른 결정 시 본 ADR superseded.
+  - **M4 cutover gate**: `bin/kb-cutover-readiness.sh` 에 "본 ADR 의 namespace 격리 verify" 명시 항목 추가 — `psql -U agent_kb_rw -d agent_drag` 가 `permission denied for database` 실패 확인 (격리 정상).
+
+## ADR-0022
+- Status: accepted (TASK-0094 Sprint 1 Phase 1, 2026-05-21)
+- Date: 2026-05-21
+- Context: TASK-0094 (REQ-20260521-0001, Critical §12.3 — 첨부 multi-cycle A+B+C+D) Sprint 1 의 prerequisite. BRIEFING §2.2 D1 사용자 직접 확정 "첨부 파일 저장 위치 = S3-compat (MinIO compose +1)". 첨부 객체 (CSV/XLSX/PDF/이미지) 의 영속 저장이 필요하며, AWS S3 의 protocol-compat 자가 호스팅 옵션 중 MinIO 가 docker-compose 단일 service 로 가장 간단. 사내망 다운로드는 signed URL 로 frontend 노출, 외부 LLM 송신은 server-side bytes read 후 base64/files API 로 전달 (BRIEFING D13 — signed URL 외부 송신 금지).
+- Decision: docker-compose 에 MinIO 단일 service 도입 (`minio` + `minio-init` one-shot). Bucket: `agent-attachments`. Volume: `../artifacts/minio-data:/data`. Healthcheck 포함. minio-init 부트스트랩이 bucket idempotent 생성 + lifecycle policy 적용 (D6 delete_reason 별 retention) + root credential 비활성화 + app 전용 access key 생성. App key rotation 은 ADR-0023 의 maintenance path 와 별개로 D20 dual-key rotation runbook 따름. 외부 (NAS / SaaS) 옵션은 본 cycle scope 외.
+- Consequences:
+  - compose service count +2 (`minio` api 9000 / console 9001, `minio-init` one-shot). feature-0001-platform-runtime ANCHOR §1 갱신.
+  - `feature-0003-agent-web-ui/src/modules/storage_minio.py` 신규 — boto3 + retry + signed URL helper + backup smoke test.
+  - `.env.example` MinIO 14 변수 (MINIO_ROOT_USER/PW bootstrap 전용 + MINIO_APP_ACCESS_KEY/SECRET app rotation 대상 + endpoint/bucket/TTL + ATTACHMENT_MAX_BYTES_* cap 3 + ATTACHMENT_AUDIT_HMAC_KEY + SANDBOX_SQL_* 2).
+  - SECURITY.md §7.2 (외부 배포 보완) 갱신 — 사내 IP 만 MinIO 접근 가능. signed URL 은 frontend 다운로드 전용.
+  - D20 dual-key rotation runbook 별 cycle subtask (Phase 4 — storage wrapper 와 동시 ship).
+- Options 검토:
+  - **AWS S3** (or compatible managed) — 운영 의존 + 비용. 사내망 단일 호스트 환경에 비대.
+  - **로컬 파일 시스템 (artifacts volume 직접 mount)** — D6 retention / lifecycle / signed URL / RBAC 미흡. backup/restore 곤란.
+  - **MinIO (선택)** — single docker service, S3 protocol compat, lifecycle / IAM 지원. boto3 reuse 가능. Self-host 단순.
+- Alternatives considered (Sprint 4 D RAG 통합 가능성): MinIO 단일 bucket 으로 attachment + RAG document 객체 모두 수용 가능하나, 본 ADR 은 attachment scope. RAG 객체 저장 (PDF 원본 / chunked text) 은 Sprint 4 plan 에서 별 bucket vs prefix 결정.
+- Outside-voice rationale: BRIEFING REV-20260520-0001 Codex Claim #20 "MinIO bootstrap / lifecycle / app key 운영 항목" 흡수 + REV-20260521-0002 Codex F9 "dual-key rotation runbook" 흡수. 본 ADR 은 D20 dual-key rotation 을 Sprint 1 Phase 4 의 ship 조건으로 명시.
+
+## ADR-0023
+- Status: accepted (TASK-0094 Sprint 1 Phase 1, 2026-05-21)
+- Date: 2026-05-21
+- Context: TASK-0094 (REQ-20260521-0001, Critical §12.3) Sprint 1 의 prerequisite. BRIEFING §2.2 D2 사용자 직접 확정 "Sandbox DB 격리 = 동일 cluster + 별 schema". CSV/XLSX ingest 결과를 query 가능한 SQL 객체 (table) 로 만들기 위해 dynamic schema 생성 필요. 별 cluster (cluster 분리) 는 운영 / backup / migration 비용 2배. 동일 cluster + 별 schema 가 D14 SQL guard (AST allowlist) + D15 grant 정책 + R-Claim4 maintainer wildcard 제거 + R-F4 drift health endpoint 의 조합으로 격리 요구를 충족.
+- Decision: Sandbox schema 명명 = `agent_attachment_<sha256(conversation_id)[:32]>`. Mapping table `WebConversationAttachmentsSandboxSchemas(ConversationId, SchemaName, CreatedAt, DroppedAt)`. **D15 maintenance path 분리** (R-Claim4 흡수):
+  - `attachment_maintainer` MySQL user — schema 생성/삭제 전용. wildcard `CREATE / DROP SCHEMA on agent_attachment_*` 는 maintainer 전용 grant (writer/reader 와 분리).
+  - `attachment_writer` MySQL user — schema 생성 직후 maintenance path 가 **exact backtick schema 명** 으로 `CREATE / ALTER / INSERT / SELECT` (GRANT ALL 금지) per-conversation grant. 신규 schema 만 접근 가능.
+  - `attachment_reader` MySQL user — D14 SQL 실행 user. 정본 SELECT-only + sandbox SELECT-only.
+  - `attachment_cleanup` MySQL user — DROP SCHEMA only on per-schema grant (reconciliation worker 전용).
+- Consequences:
+  - 4 MySQL user 신설 — credentials 는 `.env` 만, MODIFY 명시 + cycle CHG 에 grant pattern 명시.
+  - R-F4 drift detection: `WebConversationAttachmentsSandboxSchemas` 의 expected grants 와 실제 `information_schema.schema_privileges` 의 drift 를 `attachment_grant_audit` worker 가 5 분 주기로 detect. drift 시 admin alert + `/api/admin/health/attachment-grants` health endpoint.
+  - Sprint 1 Phase 10 (sandbox schema + MySQL users) 의 ship 조건.
+- Options 검토:
+  - **별 cluster** (D2 Alt-A) — 운영 / backup / migration 비용 2배. 본 wedge 에 비대.
+  - **단일 schema + per-conv prefix table** (D2 Alt-B) — `<conv_id>_filename` table 명. table 이름 길이 제한 64 글자 + sha256[:32] 도 그 안에 fit 하지만, schema-level isolation 부재라 `attachment_reader` 가 한 user 의 모든 첨부 table 을 다른 user 의 첨부와 동시에 SELECT 가능 → leak 위험.
+  - **동일 cluster + 별 schema (선택)** — schema-level grant 로 격리, mapping table 이 lifecycle 추적. ADR-0019 (audit) / ADR-0021 (KB 2-layer hybrid) 의 connection-level grant 패턴과 정합.
+- Outside-voice rationale: BRIEFING REV-20260520-0001 Codex Claim #5 (sandbox name collision — hash mapping 흡수) + Claim #4 (wildcard grant — R-Claim4 흡수) + REV-20260521-0002 Codex F4 (grant drift — health endpoint 흡수). 본 ADR 은 R-Claim4 의 writer 최소권한 (CREATE/ALTER/INSERT/SELECT) 을 명시 lock-in.
+
+## ADR-0025
+- Status: accepted (TASK-0094 Sprint 1 Phase 1, 2026-05-21) — supersedes ADR-0024 의 attachment scope 부분
+- Date: 2026-05-21
+- Context: TASK-0094 (REQ-20260521-0001, Critical §12.3) Sprint 4 (D PDF RAG) 의 prerequisite 사전 선언. BRIEFING §2.2 D3 사용자 직접 확정 "vector store = PGVector (Postgres 도입)" + D10 단계적 정책 "dev 1차 = agent_memory 와 동일 컨테이너 + DB 분리, prod = 별 instance 옵션 PLAN gate 재검토". ADR-0021 (KB Postgres + 2-layer hybrid) 와 ADR-0024 (KbBackend ABC + agent_drag namespace) 가 KB 도메인용. **본 ADR 은 attachment RAG 의 vector store 사전 결정** — Sprint 4 cycle 진입 시 ADR-0024 의 `agent_drag` namespace 가정 검증 + attachment-specific schema 결정 진행.
+- Decision: attachment RAG 의 vector store 는 **PGVector**. 단계적 도입:
+  - **Sprint 4 dev / 1차**: 기존 Postgres 컨테이너 (ADR-0021 의 `agent_kb` 와 같은 instance) + 별 database (`agent_drag` ADR-0024 가정 또는 `agent_attachment_rag` 본 cycle 결정 — Sprint 4 진입 시 lock-in). user 분리 (`rag_writer` / `rag_reader`) 는 ADR-0021 의 `agent_kb_rw` / `agent_kb_ro` 패턴 재사용.
+  - **Sprint 4 prod / 2차**: 운영 경계 분리 옵션 — 별 PGVector instance 사용 시 backup/restore/migration 의 독립적 cadence 확보. **PLAN gate 에서 재검토** (Sprint 4 진입 시점).
+  - 본 Sprint 1 (Cycle 0/1) 은 PGVector compose service 추가 안 함. Sprint 4 진입 cycle 의 PLAN-APPROVED 가 compose service 추가 trigger.
+- Consequences:
+  - 본 Sprint 1 Phase 1 에서는 docker-compose.yml 의 minio + minio-init 만 추가. PGVector 는 Sprint 4 진입 시 별 ADR-XXXX (또는 본 ADR 의 후속 갱신) 으로 service 추가.
+  - Sprint 4 cycle 의 first action: ADR-0024 의 `agent_drag` namespace 가정 vs 본 ADR 의 `agent_attachment_rag` 가정 정합 확인 + lock-in. 충돌 시 ADR-0024 superseded 또는 본 ADR 의 namespace 변경.
+  - 본 ADR 은 D10 의 dev/prod 단계적 정책을 ship 시점 분리 — Sprint 4 cycle 의 PLAN gate 에서 prod 별 instance 옵션 재검토.
+- Options 검토:
+  - **Pinecone / Weaviate / Milvus / Qdrant (관리형 또는 별 도커)** — 운영 의존 추가. backup/restore policy 별도 학습. 본 wedge 에 비대.
+  - **PGVector dev 단계 = agent_memory 와 동일 컨테이너** — D10 1차 정책. backup / restore / migration restart 가 같은 장애 도메인.
+  - **PGVector prod 단계 = 별 instance** — D10 prod 단계 PLAN gate. backup / restore / migration restart 의 운영 경계가 컨테이너 단위라 같은 장애 도메인 묶음은 dev-only.
+- Alternatives considered: Sprint 4 의 D RAG 가 ADR-0024 의 `agent_drag` namespace 와 통합 가능하다면 본 ADR 의 attachment-specific schema 는 별 cycle 의 schema migration 로 흡수 가능. Sprint 4 cycle 의 ship 조건에 본 ADR 의 가정 검증 항목 명시.
+- Outside-voice rationale: BRIEFING REV-20260520-0001 Codex Claim #17 (PGVector dev / prod 운영 경계) 흡수. 본 ADR 은 D10 의 단계적 정책을 사전 선언 — Sprint 4 cycle 의 PLAN gate 가 prod 별 instance 결정의 final lock-in.

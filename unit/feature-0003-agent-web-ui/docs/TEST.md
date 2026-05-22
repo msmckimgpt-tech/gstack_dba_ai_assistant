@@ -62,6 +62,58 @@ source_of_truth: true
 
 검증 시점 (2026-05-20): Phase A~D 모두 PASS — 8 scenario (1 production positive + 5 fixture negative + 5 other-feature SKIP + 1 missing-app structural FAIL) 검증 완료.
 
+### 2.3 외부 LAN trust 강화 — `_get_client_ip()` 조건부 trust + Caddy XFF 정규화 (TASK-0087, Major §12.3)
+
+본 cycle (TASK-0087, REQ-20260520-0002, **Major** §12.3) 의 검증 시나리오. Codex outside voice (REV-20260520-0010) 권장 8 시나리오 + 본 cycle 추가 확장.
+
+**Phase A** — Caddyfile 정규화 검증:
+- **TEST-0087-A1 (positive, caddy validate)**: `docker compose run --rm caddy caddy validate --config /etc/caddy/Caddyfile` → exit 0. `header_up X-Forwarded-For {client_ip}` directive 인식.
+- **TEST-0087-A2 (live, header replace)**: Caddy 컨테이너 가동 + 외부 클라이언트가 `curl -H 'X-Forwarded-For: 1.2.3.4' https://<HOST>/api/session` → web 측에서 `request.headers['x-forwarded-for']` 가 Caddy container IP (예: 172.18.0.x) 로 정규화됨 (1.2.3.4 가 아님). live 검증 사용자 위임.
+
+**Phase B** — `_get_client_ip()` unit 시나리오 (Codex 권장 8건 + 확장):
+- **TEST-0087-B1 (trusted proxy + valid XFF)**: `WEB_TRUSTED_PROXIES=172.18.0.0/16`, direct_ip=`172.18.0.5`, XFF=`1.2.3.4` → return `1.2.3.4`.
+- **TEST-0087-B2 (trusted proxy + invalid XFF)**: 같은 env, direct_ip=`172.18.0.5`, XFF=`garbage` → return `172.18.0.5` (direct_ip fallback).
+- **TEST-0087-B3 (trusted proxy + empty 첫항목)**: 같은 env, XFF=`,1.2.3.4` (콤마 시작) → 첫 토큰 빈 문자열 → `ipaddress.ip_address("")` ValueError → return `172.18.0.5`.
+- **TEST-0087-B4 (untrusted direct_ip + spoofed XFF)**: `WEB_TRUSTED_PROXIES=172.18.0.0/16`, direct_ip=`192.168.1.10`, XFF=`1.2.3.4` → return `192.168.1.10` (spoof 차단).
+- **TEST-0087-B5 (IPv6 trusted + IPv6 XFF)**: `WEB_TRUSTED_PROXIES=fd00::/8`, direct_ip=`fd12::1`, XFF=`2001:db8::1` → return `2001:db8::1`.
+- **TEST-0087-B6 (bare IP /32, /128)**: `WEB_TRUSTED_PROXIES=172.18.0.5/32`, direct_ip=`172.18.0.5` → trusted. direct_ip=`172.18.0.6` → untrusted, direct_ip return.
+- **TEST-0087-B7 (empty WEB_TRUSTED_PROXIES)**: env 미설정, direct_ip=`172.18.0.5`, XFF=`1.2.3.4` → return `172.18.0.5` (XFF 완전 무시).
+- **TEST-0087-B8 (XFF with port)**: `WEB_TRUSTED_PROXIES=172.18.0.0/16`, direct_ip=`172.18.0.5`, XFF=`1.2.3.4:5678` → `ipaddress.ip_address("1.2.3.4:5678")` ValueError → return `172.18.0.5`.
+
+**Phase C** — startup gate 검증 (mode-aware):
+- **TEST-0087-C1 (invalid CIDR + prod fatal)**: `WEB_TRUSTED_PROXIES=invalid_cidr,10.0.0.0/8`, `AGENT_MODE=prod` → app.py import 실패, `RuntimeError("WEB_TRUSTED_PROXIES: invalid CIDR(s) in prod: ['invalid_cidr']")`.
+- **TEST-0087-C2 (invalid CIDR + dev warning)**: `WEB_TRUSTED_PROXIES=invalid_cidr,10.0.0.0/8`, `AGENT_MODE=dev` → app.py import 성공, stderr WARNING 출력. `WEB_TRUSTED_PROXIES` = `(IPv4Network('10.0.0.0/8'),)` (invalid 만 skip).
+- **TEST-0087-C3 (proxy mode + empty + prod fatal)**: `WEB_TRUSTED_PROXIES=""`, `ENABLE_WEB_TLS_PROXY=1`, `AGENT_MODE=prod` → `RuntimeError("WEB_TRUSTED_PROXIES is empty while ENABLE_WEB_TLS_PROXY=1 in prod ...")`.
+- **TEST-0087-C4 (proxy mode + empty + dev warning)**: 같은 env, `AGENT_MODE=dev` → stderr WARNING. import 성공.
+
+**검증 방법** (단위):
+```bash
+# B1~B8: pytest 또는 Python REPL 으로 직접 호출 (Request mock + headers dict)
+docker compose run --rm \
+  -e WEB_TRUSTED_PROXIES=172.18.0.0/16 \
+  -e AGENT_MODE=dev \
+  --entrypoint python web -c "
+from web.app import _get_client_ip, _is_trusted_proxy
+print(_is_trusted_proxy('172.18.0.5'))   # True
+print(_is_trusted_proxy('192.168.1.10')) # False
+"
+
+# C1: prod fatal
+docker compose run --rm \
+  -e WEB_TRUSTED_PROXIES='invalid_cidr,10.0.0.0/8' \
+  -e AGENT_MODE=prod \
+  --entrypoint python web -c "import web.app" 2>&1 | grep "WEB_TRUSTED_PROXIES: invalid"
+
+# C3: proxy mode + empty + prod fatal
+docker compose run --rm \
+  -e WEB_TRUSTED_PROXIES='' \
+  -e ENABLE_WEB_TLS_PROXY=1 \
+  -e AGENT_MODE=prod \
+  --entrypoint python web -c "import web.app" 2>&1 | grep "WEB_TRUSTED_PROXIES is empty"
+```
+
+검증 시점 (2026-05-21): Phase A~B (코드 변경) 적용 완료, py_compile PASS. B1~B8 / C1~C4 단위 검증은 사용자가 docker 환경에서 위 명령으로 진행 (TEST.md §4 Test Run History 에 결과 기록).
+
 ## 3. Test Cases
 
 ### 구조/문법 검증
@@ -194,6 +246,48 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-05-20 (TASK-0089 Phase A~E — 작업 화면 profile drawer "내 감사 로그" 탭 신설):
+  - **환경**: `docker run --rm --entrypoint python -v <wt>/unit/feature-0003-agent-web-ui/src:/app/web repo-web:latest` host-mounted code + image dependency.
+  - **py_compile**: PASS.
+  - **node --check static/app.js**: PASS.
+  - **routing smoke (Phase E)**:
+    - `list_profile_audit_events` present in app.py module ✓
+    - `get_profile_audit_event` present ✓
+    - FastAPI app routes: `['/api/profile/audits', '/api/profile/audits/{event_id}']` ✓
+  - **Codex outside voice 5 findings 흡수 검증**:
+    - C1 URL mismatch → 신규 `/api/profile/audits` endpoint 등록 확인 ✓
+    - C2 `.any > .own` 강제 → backend `_audit_compose_where(scope="own", ...)` 직접 호출 (code review) ✓
+    - C3 CSV export 미노출 → drawer-pane HTML 에 export 버튼 부재 (code review) ✓
+    - C4 1-column + 수평 스크롤 → styles.css `.profile-audit-detail-change { white-space: pre; overflow: auto; max-height: 30vh }` ✓
+    - C5 권한 race → `state.profileAudit.forbidden` + 403 handler in `loadProfileAuditList` + `updateProfileAuditTabVisibility()` in `renderProfile` ✓
+  - **미완 (PR merge 후 사용자 위임)**:
+    - live browser smoke: drawer tab 클릭 → list 표시 → row click → inline detail expand → filter 적용 / 초기화
+    - `.any` 보유자 (admin) 가 drawer 호출 시 본인 row 만 나오는지 확인 (Codex C2 검증)
+    - `audit.read.own` 권한 revoke 후 403 graceful state 진입 확인 (Codex C5 검증)
+    - drawer 폭 390px 에서 1-column layout + ChangeJson 수평 스크롤 시각 검증 (Codex C4 검증)
+- 2026-05-20 (TASK-0090 Phase A~B — `/api/admin/audits/export.csv` CSV streaming export 전환):
+  - **환경**: `docker run --rm --entrypoint python -v <wt>/unit/feature-0003-agent-web-ui/src:/app/web repo-web:latest -c "..."` host-mounted code + image dependency.
+  - **py_compile**: PASS.
+  - **lightweight smoke (Phase B)**:
+    - `import web.app` → IMPORTED OK ✓
+    - `_AUDIT_EXPORT_CHUNK_SIZE = 500` ✓ (Codex minimum-fix — 1000→500)
+    - `_AUDIT_EXPORT_FLUSH_BYTES = 65536` ✓ (Codex minimum-fix — 64KiB byte-threshold)
+    - `_audit_export_filter_hash` present ✓ (Codex C4 — filter PII 회피)
+    - `StreamingResponse` imported ✓ (Codex C1 — sync generator base)
+    - `filter_hash` deterministic (sort_keys 정렬): `h1 == h2 = "42ea65e7de088de2"` ✓
+  - **Codex outside voice 5 findings 흡수**:
+    - C1 async + sync mysql blocking → sync generator (`def csv_iter()`) + streaming-only conn (generator 내부 try/finally)
+    - C2 consistent snapshot vs max_id → `SELECT MAX(Id) FROM WebAuditEvents{where}` high-water + 모든 page `Id <= max_id AND Id < cursor_id`
+    - C3 query plan EXPLAIN → future cycle (live mysql, representative filters)
+    - C4 cap 제거 = DoS/계약 변경 → SECURITY §9.5 갱신 + export self-audit (start + complete/aborted) + 동시 제한 별 cycle
+    - C5 cleanup → generator 내부 try/finally (cursor.close + conn.close + complete audit)
+  - **endpoint 구조 검증 (code review)**:
+    - **Phase 1 (auth conn)**: `_connect_memory()` + `_require_account` + `audit.export` permission + `_audit_parse_filter_params` + `_audit_compose_where` + `SELECT MAX(Id)` + `record_audit_event(action="audit.export.start", ...)` + commit + conn.close()
+    - **Phase 2 (sync generator)**: `def csv_iter()` — header yield + while loop (max_id + cursor_id + chunk_size=500) → `_audit_compose_where` per page (cursor_id 추가) + Id<=max_id 강제 + ORDER BY Id DESC LIMIT 500 → row 마다 csv.writer.writerow → sio.tell()>=65536 마다 yield + reset → cursor_id 갱신 → final flush → try/finally cleanup → complete audit
+  - **미완 (PR merge 후 사용자 위임)**:
+    - live container PATCH 호출 + WebAuditEvents row 의 실 audit.export.start/complete 검증
+    - representative filters EXPLAIN FORMAT=JSON 분석 (live mysql, query plan 보장)
+    - 100k+ row export 시 memory footprint 측정 (현재 worktree 데이터는 ~150 row, 실 검증 불가)
 - 2026-05-20 (TASK-0088 Phase A~D — `slow_query_log` 통합 ADR-0020 Decoupled 채택, docs only):
   - **검증 형태**: ADR 결정 → docs only, code 변경 0, runtime side-effect 0. py_compile/runtime smoke 불필요. verify-completion PASS 만 확인.
   - **Codex outside voice review** (consult mode, model_reasoning_effort=high, 390,785 tokens) → 5 critical findings + 2 minimum-fix 도출 → v2 redesign 흡수:

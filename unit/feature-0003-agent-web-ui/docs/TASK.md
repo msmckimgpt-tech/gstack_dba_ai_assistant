@@ -11,23 +11,50 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: critical (TASK-0094 — 첨부 multi-cycle, 4 sprint)
-- Last Updated: 2026-05-21 (TASK-0094 등재 + PLAN-APPROVED)
+- Priority: critical (TASK-0094 — 첨부 multi-cycle Sprint 1 Ship 완료) / major (TASK-0104 — HTTPS 종단 활성화 main)
+- Last Updated: 2026-05-22 (TASK-0094 Sprint 1 Phase 1~12 ship 완료 / TASK-0104 main 흡수)
 
 ## 2. Task Queue
+
+### TASK-0104 외부 노출 web 컨테이너 HTTPS 종단 활성화 (2026-05-22)
+
+- [x] TASK-0104 (REQ-20260522-0007, **Major** §12.3 — 외부 사용자 전원 영향 + 자격증명 처리 동선의 secure-channel 요건 충족). 외부 사용자가 `https://112.185.196.20:18080/` 로 접속할 수 없던 이슈 수정. **근본 원인**: `repo/.env` 는 `ENABLE_WEB_TLS=1` 로 설정되었고 `docker-compose.yml` 의 web entrypoint 에는 TLS 분기가 있으나, `docker-compose.override.yml` (gitignored, dev 용 template) 가 entrypoint 를 평문 HTTP uvicorn 으로 강제 override 하고 있었음 — TASK-0103 에서 secure-context guard 는 추가했지만 secure channel 자체가 비활성. **수정**: `docker-compose.override.yml` 의 web entrypoint 를 `--ssl-keyfile /certs/mysql-ai.company.local/privkey.pem --ssl-certfile /certs/mysql-ai.company.local/fullchain.pem` 포함한 HTTPS 종단으로 교체. 기존 인증서 (`../artifacts/certs/mysql-ai.company.local/`) 는 SAN 에 `IP Address:112.185.196.20` 이미 포함되어 있어 재발급 불필요. `docker-compose.override.yml.example` 에는 Variant A (local dev plain HTTP) / Variant B (외부 노출 HTTPS, 본 cycle default) 두 형태를 주석으로 명시. 호스트 포트 18080 매핑 그대로 — same-port HTTPS 전환. **외부 영향**: 기존 HTTP 18080 사용자는 모두 HTTPS 로 전환 필요 (TLS 종단 교체이므로 동일 포트의 HTTP 동시 제공 안 됨). **검증**: `sudo docker compose up -d web` 후 `curl -sk https://112.185.196.20:18080/` → HTTP 200 + `<title>DQA — Database Query Assistant</title>` 응답. 컨테이너 로그 `Uvicorn running on https://0.0.0.0:8000`. backend / RBAC / endpoint contract / DB schema / WebCrypto 클라이언트 코드 무변경. 근본 해결 완료로 TASK-0103 의 "blocked banner" 는 외부 IP HTTP 접속자에게도 자동 안내됨 (HTTP 18080 자체가 끊겨 사용자는 즉시 HTTPS 로 이전).
+
+### TASK-0103 API Vault secure context 사전 차단 + UX 안내 (2026-05-22)
+
+- [x] TASK-0103 (REQ-20260522-0006, **Major** §12.3 — 외부 사용자 전원 영향 + 자격증명 처리 동선). 외부 사용자가 `http://112.185.196.20:18080/` 로 접속하여 OpenAI API Key 입력 시 모호한 toast 만 출력되며 저장 안 되던 이슈 수정. **근본 원인**: WebCrypto SubtleCrypto (`window.crypto.subtle`) 는 secure context (HTTPS / localhost) 에서만 정의됨. 외부 IP 의 HTTP 접속 시 `undefined` → `encryptPlainApiKey()` 의 `crypto.subtle.importKey(...)` 가 `Cannot read properties of undefined (reading 'importKey')` throw → catch 블록에서 noisy toast 만 출력, 저장 실패. 서버는 `requires_secure_context: True` 를 내려줬지만 클라이언트가 활용 안 함. **수정**: (1) `isVaultCryptoAvailable()` helper (`window.isSecureContext && window.crypto?.subtle`). (2) `updateVaultReadiness()` `blocked` 신규 상태 — 빨간 banner + 한국어 사유 안내 (`public_url` 이 https 면 보안 주소 표기). (3) `syncVaultSteps()` 가 `cryptoOk = false` 시 모든 step disable + saveVaultBtn 차단. (4) `encryptPlainApiKey()` 진입 시점에 명시적 throw — UI 우회 시도도 안전 차단. (5) styles.css 에 `vault-banner[data-state="blocked"]` 빨간 톤 추가. cache-bust `v=20260522-vault-secure-context`. backend / RBAC / endpoint contract / DB schema / 암호화 알고리즘 (PBKDF2 + AES-GCM) 무변경. `docker compose build web` + `up -d --no-deps web` 으로 배포. 근본 해결 (HTTPS 종단점 추가) 은 후속 인프라 cycle 로 분리.
+
+### TASK-0102 topbar 관리 콘솔 버튼 role fallback gate (2026-05-22)
+
+- [ ] TASK-0102 (REQ-20260522-0005, **Minor** §12.3 — topbar `관리 콘솔` 버튼 role 기반 fallback gate). 테스트 결과 `sales` 역할 사용자에게 topbar 관리 콘솔 버튼이 노출되는 현상 확인. **근본 원인**: TASK-0100 에서 추가한 `console_access` 플래그가 구버전 서버(미재시작) 또는 캐시된 응답에서 `undefined` 로 오는 경우, 기존 `Boolean(undefined)` = `false` 는 정상이나, 서버가 TASK-0100 이전 코드를 실행 중이면 `canOpenAdminConsole() → can("console.access") → Boolean(state.user)` 경로로 항상 `true`. **수정**: `console_access` 가 서버 응답에 포함된 경우 그것을 사용, 없으면 `role.key === "admin"` 으로 fallback — role 필드는 TASK-0098 이전부터 항상 직렬화되므로 버전 무관하게 존재. app.js, index.html(cache-bust) 변경. backend / RBAC / DB / endpoint 무변경.
+
+### TASK-0100 관리 콘솔 버튼 RBAC gate 수정 (2026-05-22)
+
+- [x] TASK-0100 (REQ-20260522-0004, **Minor** §12.3 — `관리 콘솔` 버튼 노출 조건 수정). "admin" 역할 이외의 사용자에게 `관리 콘솔` 버튼이 노출되는 이슈 수정. **근본 원인**: TASK-0098 에서 frontend `can()` 함수를 `Boolean(state.user)` 로 단순화하면서, `canOpenAdminConsole()` 도 로그인한 모든 사용자에게 `true` 반환 → 버튼 노출. **수정**: `_serialize_account()` 에 `console_access: bool` 최소 플래그 추가 (`_account_has_permission(account, "console.access")` 기반). `canOpenAdminConsole()` 이 `Boolean(state.user?.console_access)` 을 검사하도록 변경. TASK-0098 의 "permissions 전체 노출 차단" 설계를 유지하면서 UI gate 에 필요한 최소 정보만 전달. backend / RBAC catalog / DB schema / endpoint contract 무변경. py_compile + node --check PASS. cache-bust `v=20260522-console-access-gate`.
+
+### TASK-0099 Audit subsystem followup backlog 사후 tracker hygiene (2026-05-22)
+
+- [x] TASK-0099 (REQ-20260522-0003, **Minor** §12.3 — docs-only tracker hygiene). TASK-0073 audit subsystem followup backlog 8 entries (TASK-0086~0093) 8/8 완료 후 정리 cycle. TASK.md 의 stale `[ ]` 체크박스 2건 close: (1) line 152 TASK-0072 (main 통합 `f298f90` + hotfix bundle TASK-0074~0080 모두 deployed but 상태 `outside-voice-review` 미갱신), (2) TASK-0073 line 2767 `AGENT_AUDIT_ENABLED=0 + AGENT_MODE=prod` startup fail-closed acceptance (TASK-0092 V1-V3 fail-closed scenario 가 정확히 검증 → close). 추가로 STATUS.md feature-0003 row 에 audit followup backlog 8/8 완료 marker append. docs-only — 코드 / RBAC / 스키마 / endpoint 변경 0. outside voice trigger 미해당 (audit/RBAC 표면 변경 없음). 본 cycle CHG-20260522-0003, REV-20260522-0003 [SKIPPED:doc-only-tracker-hygiene] on `ai/claude/feature-0003-agent-web-ui` worktree.
 
 ### TASK-0073 Audit subsystem followup backlog (2026-05-20)
 
 본 worktree (`ai/claude/0086/audit-followup`) 는 TASK-0073 의 후속 cycle 들을 등재한다. 본 cycle 작업자는 아래 6 entries 중 하나 이상을 선택해 plan-eng-review / plan-ceo-review / outside voice 후 진행. 각 entry 는 별 cycle (별 PLAN-APPROVED marker + 별 CHG/REV) 로 분리한다.
 
 - [x] TASK-0086 (REQ-20260520-0001, **Major** §12.3 — `WebAccountActivity` legacy table DROP + dual write 종료). **DROP 완료 (2026-05-20)**. backup `artifacts/mysql-backup/WebAccountActivity-20260520T074927Z.sql` (11,950 bytes, 74 row, digest `a09e7898d1ce88711f7a850ab5fbcc91`) + scratch restore rehearsal PASS + 1:1 정합 (legacy=74, mirror=74) + 사용자 명시 ack. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign (helper Option B 명시 제거 / dispatcher-only smoke / mysqldump 옵션 보강 / scratch restore / rollback 2 시나리오). 코드: `_log_search_activity()` legacy INSERT 제거 + `_ensure_web_account_activity_schema()` 호출×2+정의 제거 + `_migrate_web_account_activity_to_audit()` rollback window 보존 + test_audit_migration.py M3 제거. 본 cycle CHG-20260520-0005, REV-20260520-0005 on `ai/claude/0086/legacy-drop` worktree.
-- [ ] TASK-0087 (REQ-20260520-0002, **Major** §12.3 — 외부 LAN trust 강화, feature-0006 위임). TASK-0073 Eng review E3 의 `_get_client_ip(request)` 의 `X-Forwarded-For` trust 가 사내 LAN + Caddy proxy 전제. 외부 LAN / 공개 인터넷 노출 시 IP spoof 위험. 본 cycle: (1) Caddy `trust_forwarded_for` 또는 별 `trusted_proxies` 설정 (feature-0006-lan-proxy-access), (2) `_get_client_ip()` 의 신뢰 IP whitelist 옵션 추가 (env `WEB_TRUSTED_PROXIES=10.0.0.0/8,...`), (3) `docs/SECURITY.md §9.7` 정책 갱신. 의존: 운영 환경 외부 노출 시점 확정 후 진행.
+- [x] TASK-0087 (REQ-20260520-0002, **Major** §12.3 — 외부 LAN trust 강화, feature-0006 + feature-0003 협업). Caddy `header_up X-Forwarded-For {client_ip}` 정규화 + `_get_client_ip()` 조건부 trust (env `WEB_TRUSTED_PROXIES`) + malformed XFF token IP 검증 + mode-aware fail-loud (prod/staging `RuntimeError`, dev/test stderr WARNING) + proxy mode + empty env regression 경고. Codex outside voice review 5 Major + 1 Minor 흡수 후 v2 redesign (RFC1918 default 사용자 명시 결정 유지 + Caddy XFF 정규화로 multi-hop 차단). `docs/SECURITY.md §9.7` 갱신. 본 cycle CHG-20260520-0010, REV-20260520-0010 on `ai/claude/0087-lan-trust-hardening` worktree.
 - [x] TASK-0088 (REQ-20260520-0003, Minor §12.3 — `slow_query_log` 통합 **ADR-0020 Decoupled 채택**). TASK-0073 Codex C1 lock-in 의 별 cycle 분리 → 최종 ADR. **Option C — Decoupled** 채택, slow_query_log 와 WebAuditEvents 통합 안 함. 주 근거 = raw SQL text PII 차단 (PasswordHash/Token/API key/임시 비밀번호/raw LLM prompt literal). 운영 성능 관측 = `performance_schema`/`sys` digest views (1차) + slow_query_log incident enable (2차). Codex outside voice 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign (current state framing 정정 + Option A/B reject 재작성 + PS digest-first 권유 + SaaS trigger 명확화). 본 cycle CHG-20260520-0007, REV-20260520-0007 on `ai/claude/0088/slow-query-log-adr` worktree. docs only.
-- [ ] TASK-0089 (REQ-20260520-0004, Minor §12.3 — 작업 화면 audit drawer UX). TASK-0073 Phase C 의 작업 화면 placeholder 가 entry point 부재 (admin 콘솔 redirect 안내만). 본 cycle: (1) `index.html` 의 profile drawer 에 "내 감사 로그" 탭 신설, (2) `audit.read.own` 보유 사용자에게 본인 audit row (Actor or Target = self) 표시, (3) admin 콘솔의 audit pane 과 동일 ChangeJson `<pre>` HTML escape + filter (action / from_at / to_at). CSV export / purge 는 admin 한정 (작업 화면 제외).
-- [ ] TASK-0090 (REQ-20260520-0005, Minor §12.3 — CSV streaming export). TASK-0073 Phase A4 의 `/api/admin/audits/export.csv` 의 hard cap 50k row → `StreamingResponse` 로 대체 + cursor 기반 page-by-page generator. large fleet (100k+ row) 에서 audit export 가능. memory footprint 안전. 본 cycle: backend FastAPI `StreamingResponse` + `csv.writer` iterator wrapper + Content-Type / Content-Disposition 정합.
+- [x] TASK-0089 (REQ-20260520-0004, Minor §12.3 — 작업 화면 audit drawer UX). profile drawer 5번째 탭 "내 감사 로그" 신설 + 신규 backend endpoint `/api/profile/audits` + `/api/profile/audits/{event_id}` (scope=own 강제). Codex outside voice review 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign: (1) `/admin/` endpoint 의미 mismatch → 별 `/api/profile/audits` 신설 (Codex C1), (2) backend scope="own" 강제 — `.any` 보유자도 본인 row만 (Codex C2), (3) CSV export/purge drawer 미노출 (Codex C3 — admin 한정), (4) drawer 폭 390px 1-column + inline detail expand + ChangeJson 수평 스크롤 (Codex C4), (5) tab visibility = audit.read.own || audit.read.any + 403 graceful (Codex C5). 본 cycle CHG-20260520-0009, REV-20260520-0009 on `ai/claude/0089-audit-drawer-ux` worktree.
+- [x] TASK-0090 (REQ-20260520-0005, Minor §12.3 — CSV streaming export). `/api/admin/audits/export.csv` 의 hard cap 50k row 제거 + `StreamingResponse` + keyset cursor pagination 전환. Codex outside voice review 5 critical findings + 2 minimum-fix 흡수 후 v2 redesign: (1) sync generator + streaming-only conn (Codex C1 — async event loop blocking 회피), (2) max_id high-water mark (Codex C2 — long transaction 회피), (3) chunk_size 500 + 64KiB byte-threshold flush (Codex minimum-fix), (4) try/finally cleanup (Codex C5 — client disconnect cursor/conn 누설 차단), (5) export self-audit start + complete/aborted (Codex C4 — DoS 운영 제어), (6) hard cap 50k 제거 + SECURITY.md §9.5 갱신. 본 cycle CHG-20260520-0008, REV-20260520-0008 on `ai/claude/0090-csv-streaming-export` worktree.
 - [x] TASK-0091 (REQ-20260520-0006, ~~Minor~~ **Major** §12.3 — PATCH admin/products audit before-state full snapshot + audit integrity fix). TASK-0073 Phase A5 의 `admin.product.update` audit 의 before-state 가 `{id, product_key}` 만 → full snapshot 으로 확장 + Codex outside voice 5 findings 흡수. **scope 확장 (Minor→Major)**: Codex C2 가 `admin_update_product()` 의 `autocommit=True` default + UPDATE 즉시 commit + audit 실패 시 rollback 가능 0 인 **audit integrity 결함** 노출. 본 cycle 일괄 fix: (1) `_audit_product_snapshot()` 신규 helper (single-row + SELECT FOR UPDATE + system_prompt summary only, SECURITY §9.2 정합), (2) endpoint 명시 transaction (autocommit=False + commit + finally autocommit=True), (3) `_AUDIT_BUILDER_PRODUCT_FIELDS` 확장 (`+is_default`, `+sort_order`, `+system_prompt_summary` / `-databases`, `-system_prompt` full), (4) `default_cleared_product_ids` side effect 기록, (5) sentinel smoke PASS (SENTINEL `TASK-0091-SENTINEL` ChangeJson 부재 확인, system_prompt content drop). 본 cycle CHG-20260520-0006, REV-20260520-0006 on `ai/claude/0091/product-audit-snapshot` worktree.
 - [x] TASK-0092 (REQ-20260520-0007, Minor §12.3 — `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 검증). TASK-0073 Phase E 의 사용자 위임 항목 1 건. **7 vector matrix PASS (7/7)** — V1~V3 fail-closed + V4 dev bypass + V5 positive control + V6 strict-string-equality (Codex C3) + V7 default. Codex outside voice review 5 findings + 2 minimum-fix 흡수 후 v2 redesign 적용 (`docker run --entrypoint python --no-deps` + `import web.app` + stderr 3 substring 검증 + TEST.md **§4** append). 본 cycle CHG-20260520-0004, REV-20260520-0004 on `ai/claude/0092/audit-prod-fail-closed` worktree.
 - [x] TASK-0093 (REQ-20260520-0008, Minor §12.3 — `bin/verify-completion.sh check_12` audit endpoint routing 정적 검사). TASK-0073 Phase E hotfix (CHG-20260520-0001) 의 routing 회귀 fragility 보강. Codex outside voice review 5 findings 흡수 후 plan v2 redesign (SKIP→FAIL structural / inline 4-path→auto-discovery static GET / `/purge` method-aware 제외 / helper split + fixture test / `9 checks`→`10 checks` footer). Phase A~D 모두 검증 PASS (production positive + 5 fixture negative + 5 other-feature SKIP). 본 cycle CHG-20260520-0003, REV-20260520-0003 on `ai/claude/0086/audit-followup` worktree.
+- [x] TASK-0098 (REQ-20260522-0002, **Critical** §12.3 — Profile Drawer 탭 재구성 + 권한 정보 API 단위 차단). 사용자 직접 요청 (2026-05-21). Profile Drawer 탭 5 → 4 = `[프롬프트, 보안 및 계정, API Vault, 내 감사 로그(gated)]` (보안+계정 통합 + "활동 정보" 최상단). "권한 현황" 패널 = 운영자 전용 정보 분류 → UI + `/api/auth/me` 양쪽 차단. `/api/admin/me` 신규 endpoint 분리 (console.access gate, Codex F1 blocker fix). `_serialize_account(account, *, include_permissions: bool = False)` 시그너처 + 7 self callsite 자동 permissions 제거 + admin 3 callsite 명시 보존. frontend `can()` = `Boolean(state.user)` 단순화 ("표시 허용 + 실행은 backend 403 fallback" 패턴, Codex F5). `apiFetch` 403 공통 toast. backend 일반 사용자 경로 403 메시지 5 패턴 9 callsite normalize. admin.js `/api/auth/me` → `/api/admin/me` 전환. TASK-0089 audit 탭 보존. tests/test_admin_me_rbac.py 4 + tests/test_auth_me_rbac.py 5 시나리오 신규. Codex outside voice 6 findings 흡수. **PR #49 multi-race rebase**: 본 cycle 원래 4 commit (base 8888130) 가 main stale 진행 (#45/#47/#48/#50/#52/#61 + DQA 브랜딩 + TASK-0095/0096 v2) 흡수 후 main HEAD 20f0344 위 단일 squash commit. ID reassign: TASK-0094→TASK-0098 / REQ-20260521-0001→REQ-20260522-0002 / AC-0199~0207→AC-0226~0234 / CHG·REV-0001~0004→CHG·REV-20260522-0002 / cache-bust `v=20260522-task-0098-perms`. backup branch `backup/profile-tabs-restructure-pre-rebase`. worktree `ai/claude/profile-tabs-restructure`.
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-21 (TASK-0098 ex-0094/0096, Critical §12.3 — Profile Drawer + permission API 차단 + Codex outside voice 6 findings 흡수. multi-race rebase 시점 ID reassign + squash 재적용.) -->
+
+- [x] TASK-0095 (REQ-20260521-0003, **Major** §12.3 — GLOBAL system prompt layer + 신규 `설정` 탭). 사용자 직접 요청 — "현재 서비스 사용자의 시스템 프롬프트 누적 구조에서, 최상위 전역 프롬프트도 구성해주세요." 4 layer (BASE → Product → Role → Account) 의 BASE 가 코드 상수 hard-code 라 운영자 수정 불가하던 구조를 5 layer (GLOBAL → Product → Role → Account, BASE = code constant fallback) 로 확장. WebSystemPrompts schema 무변경 (Scope VARCHAR(16) 가 이미 'global' 수용). RBAC 2 권한 신설 (`system_prompt.global.read/.write`, group=`settings`, admin auto-grant). 관리 콘솔 sidebar 에 신규 `설정` 탭 + 확장 가능한 `admin-settings-section` sub-section 패턴 도입 — 차후 운영 항목 추가 시 동일 패턴으로 sub-section 누적. AC-0011 갱신 + AC-0199 ~ AC-0204 신설. 본 cycle CHG-20260521-0003, REV-20260521-0003 on `ai/claude/global-system-prompt` worktree. **Follow-up** (CHG-20260521-0004, REV-20260521-0004): live deploy 후 사용자 검증 진행 중 발견 — `_ensure_seed_catchup` (fast path) 에 `_ensure_seed_global_system_prompt` 호출 누락. 1줄 hot-fix.
+- [x] TASK-0097 (REQ-20260522-0001, **Minor** §12.3 — DQA 브랜딩 적용). 사용자 요청: 웹브라우저 출력 시 'MySQL AI' 제거, DQA (Database Query Assistant) 로 명명, 로고 신설. `index.html` · `admin.html` title/brand-name/auth-title → DQA 전면 교체. `logo-dqa.svg` 신설 (48×48 primary #2563eb, DB 실린더+돋보기 조합). `.auth-logo` / `.brand-icon` CSS background → transparent (SVG 배경 직접 표시). Minor §12.3 — 정적 자산 변경만, backend/RBAC/DB/endpoint 무영향. AC-0219~AC-0222 FUNCTION.md 등재. CHG-20260522-0001, REV-20260522-0001 on `issue/58-dqa-rebrand` branch.
+- [x] TASK-0096 (REQ-20260521-0004, **Minor** §12.3 — `설정` pane 을 계정/역할/제품 과 동일한 list-detail 패턴으로 정렬). 사용자 직접 요청 v1 — "`설정` 탭 내부 화면을 `계정`, `역할`, `제품` 과 같이 패널을 분리해줄 수 있을까요?" → 1차로 좌측 sub-sidebar + 우측 panel 의 2-column 패턴으로 전환 (CHG-20260521-0005). 사용자 v2 후속 피드백 — "계정, 역할, 제품 탭과 일관된 디자인이 아닌것으로 확인되었습니다. 검색창을 포함하여, 해당 탭들과 일관된 디자인으로 구성해주세요." → 기존 sub-sidebar 클래스 (`admin-settings-shell/-nav/-nav-*`) 제거, 계정/역할/제품 의 5단 구조 (`admin-list-detail` + `admin-list-col` (검색창 + section-label + `admin-list` rows) + `admin-detail-col` (panel)) 채택. nav row 는 `.admin-list-row.admin-list-row--nav` 변형 (체크박스 슬롯 hidden). 검색 필터는 row 의 `data-settings-keywords` + `data-settings-group` + textContent 합치기 substring 매칭. 새 항목 추가 절차 = `<button class="admin-list-row admin-list-row--nav" data-settings-tab="X" data-settings-group="..." data-settings-keywords="...">` + `<article class="admin-settings-panel" data-settings-panel="X">` + `SETTINGS_PANEL_MOUNTERS` 등록 3 단계. UI restructure only — 데이터/API/권한 무영향. AC-0210 갱신. 본 cycle CHG-20260521-0005 (v1) + CHG-20260521-0006 (v2) , REV-20260521-0005 + REV-20260521-0006 on `ai/claude/global-system-prompt` worktree.
 
 ### TASK-0094 (REQ-20260521-0001, **Critical** §12.3 — 첨부 multi-cycle A+B+C+D) (2026-05-21)
 
@@ -35,7 +62,20 @@ source_of_truth: true
 
 **Sprint 분할** (BRIEFING §6):
 
-- [ ] **Sprint 1** — Cycle 0 (Foundation: MinIO compose, multipart upload, `WebConversationAttachments`, RBAC 4 codes, D11 consent infra) + Cycle 1 (A: CSV/Excel ingest, sandbox schema, attachment_maintainer/writer/reader/cleanup MySQL users, **D14 SQL allowlist guard ship 조건**) — Critical, 3~3.5 주. D18 단일 통합 gate.
+- [x] **Sprint 0 (cycle cleanup)** — BRIEFING Revision 2 lock-in (PR #40 merged) + AGENTS.md §16.5 Step 6 사후 동기화 결과 REPORT.md 기록 (CHG-20260521-0002). 본 cycle 종료 후 worktree cleanup (§15 R-F10).
+- **Sprint 1** — Cycle 0 (Foundation: MinIO compose, multipart upload, `WebConversationAttachments`, RBAC 4 codes, D11 consent infra) + Cycle 1 (A: CSV/Excel ingest, sandbox schema, attachment_maintainer/writer/reader/cleanup MySQL users, **D14 SQL allowlist guard ship 조건**) — Critical, 3~3.5 주. D18 단일 통합 gate. worktree `ai/claude/0094/sprint-1-foundation-csv`.
+  - [x] **Phase 1 (Pre-flight)** — ADR-0022 (MinIO 도입) + ADR-0023 (sandbox schema + D15 maintenance path 분리) + ADR-0025 (PGVector 사전 선언, Sprint 4 prerequisite) `docs/DECISIONS.md` 등재. docker-compose.yml `minio` + `minio-init` service 추가. `.env.example` 16 변수 (MINIO_ROOT_USER/PW + MINIO_APP_ACCESS_KEY/SECRET + endpoint/bucket/TTL + 호스트 port 2 + browser redirect + ATTACHMENT_MAX_BYTES_* 3 + ATTACHMENT_AUDIT_HMAC_KEY + SANDBOX_SQL_* 2). `unit/feature-0003-agent-web-ui/src/scripts/minio-init.sh` 부트스트랩 (idempotent bucket + bucket-scoped policy + app key). feature-0001-platform-runtime ANCHOR §1 갱신 (MinIO/Postgres 같은 비-MySQL service 의 platform 책임 명시). 2026-05-21.
+  - [x] **Phase 2 (Cycle 0 schema)** — `WebConversationAttachments` + `WebAccountConsents` + `WebAttachmentDerivedMessages` (D19) + `WebConversationAttachmentProviderFiles` (D13) + `WebShareLinks.PolicyVersion` (R-F7) + `WebConversationAttachmentsSandboxSchemas` mapping table. 6 `_ensure_*_schema` / `_ensure_*_column` helper 신설. `_ensure_seed_catchup` (fast path) + `_ensure_web_tables` (slow path) 양쪽 호출 등록. py_compile PASS. 2026-05-21.
+  - [x] **Phase 3 (Cycle 0 RBAC)** — `conversation.attachment.upload/read.{own,any}` 4 코드 (group=conversation) `PERMISSION_DEFINITIONS` 추가 + `SEED_ROLE_DEFINITIONS` admin/operator/sales/pending 갱신 (admin=all, operator/sales=upload+read own, pending=read.own만 — D21/R-F14) + `_ensure_seed_roles` admin/operator/sales/dba/pending 5 catchup 갱신 (§5.2 6 checklist 1~5) + app.js label/description map (checklist 6) — backend group=conversation 이므로 attachment group 신설은 Phase 12 SQL guard 의 attachment.execute_sql_on.* 시점에. admin.js 는 backend `/api/admin/permissions` label 직접 사용 — 별 map 없음. py_compile PASS. 2026-05-21.
+  - [x] **Phase 4 (Cycle 0 storage)** — `storage_minio.py` wrapper (boto3 + retry + signed URL + smoke test) + D20 dual-key rotation runbook (`RUNBOOK-minio-key-rotation.md`). boto3>=1.34.0 / botocore>=1.34.0 requirements 추가. modules/__init__.py + storage_minio.py 약 350 lines (idempotent client cache + get_storage_config + safe_filename + make_object_key + put/get/delete/signed URL + bucket_exists + run_smoke_test + reset_client_cache + CLI smoke entry). py_compile PASS + 모듈 import smoke 통과. D13 (외부 LLM signed URL 송신 금지) 정합 — `generate_presigned_get()` docstring 에 사내망 다운로드 전용 명시 + `get_object_bytes()` 의 외부 provider 송신 경로 권장. 2026-05-21.
+  - [x] **Phase 5 (Cycle 0 upload API)** — 6 endpoint (POST/GET/GET-by-id/DELETE attachment + POST/DELETE consent) + audit 4 ActionCode (`attachment.upload`/`.delete`/`.consent.grant`/`.consent.revoke`) + `build_audit_change_json` case 4 추가 + D7 MIME allowlist + D8 size cap (per_file/conv/account env-driven) + D12 HMAC/extension/size bucket helper + D13 외부 LLM signed URL 송신 금지 정합 (`_serialize_attachment_for_api` 의 signed_url 옵션) + D21 pending bytes deny enforcement (`_account_is_pending` + bytes_access_denied 마커) + RBAC 검증 (`_account_can_access_attachment` 신규 helper). FastAPI UploadFile/File/Form import. py_compile PASS. 2026-05-22.
+  - [x] **Phase 6 (Cycle 0 composer UI)** — paperclip + hidden file input + drag-drop overlay (composer-wrap) + attachment pills (status badges: uploading / ready / failed / deselected) + selected toggle + "이 대화의 모든 첨부 사용" scope-all checkbox + D16 attachment selection snapshot (`_composerAttachmentSnapshot` 가 sendPrompt 시점 추출 → askBody.attachment_ids/scope_all 명시 전송) + R-F5 lazy-create 분리 (snapshot key = pending sentinel or conv id) + selectConversation 진입 시 `_loadConversationAttachments(cid)` ground truth 동기화. state.composerAttachments 신규 (byConv / uploadingCount / nextLocalId). app.js JS syntax PASS (node Function check). styles.css 약 130 lines (pill / drop-overlay / paperclip btn). index.html 약 25 lines (composer-attachments + composer-drop-overlay + attach-btn + file input). 2026-05-22.
+  - [x] **Phase 7 (Cycle 0 consent)** — D11 + R-F2 grouped batch modal (provider × 3 group: 텍스트/이미지/인덱싱) + revoke flow + GET /api/account/consents 신규 + Profile Drawer "보안 및 계정" 탭 안 consent section. 2026-05-22.
+  - [x] **Phase 8 (Cycle 0 share)** — D9 share redact + R-F7 기존 token 자동 redact + PolicyVersion 활성 + share.policy.redact_applied audit case + INSERT PolicyVersion=CURRENT 명시. SHARE_POLICY_VERSION_CURRENT=2 상수. 2026-05-22.
+  - [x] **Phase 9 (Cycle 0 lifecycle)** — feature-0002-agent-core/src/modules/attachment_reconciliation.py 신규 (run_once + get_attachment_lifecycle_state + 4 종 SLA 처리). F1 4 state (active/delete_pending+restorable_until/purge_in_progress/erased) _serialize_attachment_for_api 갱신. R-Claim6 tombstone (NOT NULL ConversationId 유지) + F12 pseudonymous event id. 2026-05-22.
+  - [x] **Phase 10 (Cycle 1 sandbox)** — .env.example 에 4 MySQL user credentials (maintainer/writer/reader/cleanup) + sandbox_schema.py (sandbox_schema_name_for + ensure_sandbox_schema_via_maintainer R-Claim4 최소권한 (CREATE/ALTER/INSERT/SELECT) + detect_grant_drift + drop_sandbox_schema_via_cleanup) + GET /api/admin/health/attachment-grants R-F4 endpoint. 2026-05-22.
+  - [x] **Phase 11 (Cycle 1 ingest)** — feature-0002-agent-core/src/modules/sandbox_ingest.py 신규 (ingest_csv + ingest_xlsx + ingest_attachment, chardet/openpyxl 사용, encoding detect + delimiter detect + sharedStrings/cell/row/col cap + formula stripping + timeout). agent_core.compose_system_prompt 에 _build_attachment_context_section append (env ATTACHMENT_IDS 통해). /api/ask 가 attachment_ids 를 env 로 전달. requirements.txt chardet/openpyxl 추가. 2026-05-22.
+  - [x] **Phase 12 (Cycle 1 SQL guard + Sprint 1 Ship)** — sql_guard.py (sqlglot AST shape allowlist, single SELECT/CTE, FOR UPDATE/LOCK/EXPLAIN ANALYZE/SLEEP/BENCHMARK/INTO OUTFILE/LOAD_FILE/information_schema/mysql/performance_schema/sys 거부 + 보조 denylist). attachment.execute_sql_on.{own,any} 2 RBAC (group=attachment) + sales/operator/admin catchup. audit ActionCode 3 (attachment.sandbox.sql_exec/.sql_denied/.scope.all) + build_audit_change_json case. PERMISSION_GROUP_ORDER + WORK_SCREEN/ADMIN_PERMISSION_SECTIONS attachment 그룹 추가. CONVENTIONS.md §10.6 9 group 갱신. **Sprint 1 Ship 완료**. 2026-05-22.
 - [ ] **Sprint 2** — Cycle 2 (C: Vision 이미지, content array transient, base64 inline, **D13 + R-F13 provider Files API lifecycle**) — Major, 1~1.5 주.
 - [ ] **Sprint 3** — Cycle 3 (B: DDL/KB 보강, admin-only KB ingest, AgentMemory FactEntries pipe, `attachment.kb.write.any`) — Major, 1 주.
 - [ ] **Sprint 4** — Cycle 4 (D: PDF/MD RAG, PGVector dev 단계 도입, chunking + retrieval, **D17 + R-F6 partial_indexed retrieval policy**) — Critical, 3~4 주.
@@ -47,6 +87,37 @@ D1 S3-compat MinIO / D2 동일 cluster + 별 schema / D3 PGVector / D4 A+B+C+D �
 본 cycle 은 PLAN-APPROVED marker 부여 후 Sprint 1 worktree 분리 + implementation 진입. 외부 영향 (PR / 외부 시스템 알림) 은 별도 confirm.
 
 본 backlog 는 본 worktree 의 commit 으로 lock-in. 신규 세션이 본 worktree 에서 진입 (`/_template:entry`) 후 task 선택 + `/plan-eng-review` / `/autoplan` 등 호출.
+
+### TASK-0095 (REQ-20260521-0002, **Major** §12.3 — GLOBAL system prompt layer + 신규 `설정` 탭) (2026-05-21)
+
+본 worktree (`ai/claude/global-system-prompt`) 의 cycle. 사용자 직접 요청 — "현재 서비스 사용자의 시스템 프롬프트 누적 구조에서, 최상위 전역 프롬프트도 구성해주세요. Product / Role / Account 에 기본적으로 처음 누적되어 요청사항에 적용될 부분입니다." `agent_core.py` 의 `SYSTEM_PROMPT` 상수 본문을 DB 화 (BASE 자체를 운영자가 재배포 없이 수정 가능) + 신규 `설정` 탭 신설 (확장성 — 차후 다른 운영 항목 추가 대비) + 그 안에 sub-section "전역 시스템 프롬프트" 마운트.
+
+**누적 순서** (최종): GLOBAL → PRODUCT → ROLE(공통+Product별) → ACCOUNT(공통+Product별).
+
+**핵심 결정** (사용자 in-cycle):
+- D1 — BASE 본문을 DB row (`scope='global'`, ProductId/RoleId/AccountId 모두 NULL) 1행으로 이전. 코드 상수 `SYSTEM_PROMPT` 는 bootstrap fallback 으로 유지 (DB row 부재 / mem_conn None / SQL exception 시 안전망).
+- D2 — RBAC 신규 2건: `system_prompt.global.read`, `system_prompt.global.write`. admin only auto-grant (다른 role 은 admin override).
+- D3 — admin endpoint scope allowlist 에 `'global'` 추가. global scope 는 product_id/role_id/account_id 무시 (force NULL).
+- D4 — 신규 admin UI 탭 `설정` (data-admin-tab="settings") + 내부 sub-section 패턴 (`admin-settings-section` data-settings-section). 첫 sub-section = 전역 시스템 프롬프트 (`buildSystemPromptEditor({scope:'global'})`). product/role/account select 미표시.
+- D5 — Bootstrap seed: 신규 deploy 시 `_ensure_web_system_prompts_schema()` 다음에 `_seed_global_system_prompt()` 가 idempotent INSERT (row 부재 시에만, SYSTEM_PROMPT 코드 상수 본문). 이후 admin 수정이 우선 — UPDATE 안 함.
+- D6 — Audit: `admin.system_prompt.update` builder 의 기존 `request_ctx['scope']` reference 자연 흡수, resource_id pattern `global:0:0:0`.
+
+**Phase 분할**:
+- Phase A — `agent_core.py compose_system_prompt()` 첫 부분 GLOBAL fetch + fallback 추가.
+- Phase B — `app.py` WebSystemPrompts schema (Scope enum 확장 — VARCHAR 라 추가 변경 0, 단 _seed_global helper 신설), `_load_system_prompt`/`_upsert_system_prompt` 는 scope str 만 받으므로 무변경.
+- Phase C — RBAC 2건 추가 (PERMISSION_DEFINITIONS) + admin role catchup 2 codes.
+- Phase D — admin endpoint scope allowlist 확장 (GET/PUT 양쪽) + 권한 검사 분기 (`system_prompt.global.read/write`).
+- Phase E — admin.html 에 `<button data-admin-tab="settings">설정</button>` + `<section data-admin-pane="settings">` + admin.js 의 settings pane 핸들러 + `buildSystemPromptEditor({scope:'global'})` 마운트. `buildSystemPromptEditor` 가 scope='global' 일 때 product select hide.
+- Phase F — docs (FUNCTION.md system prompt assembly 5 layer 갱신, MODIFY.md CHG-20260521-0003, REVIEW.md REV-20260521-0003, REPORT.md §1 sticky note).
+- Phase G — verify-completion.sh `--pre-commit feature-0003-agent-web-ui` + commit + main fast-forward.
+
+**Affected files** (estimate 8): agent_core.py / app.py / admin.html / admin.js / FUNCTION.md / MODIFY.md / REVIEW.md / REPORT.md.
+
+**Risk**: Major §12.3 — 모든 LLM 응답에 영향 (GLOBAL 이 모든 conversation 의 첫 system message). DB row 비정상 시 fallback 상수 보존으로 zero-data state 방지. Audit hook 자연 흡수 (builder 변경 0).
+
+본 cycle 은 PLAN-APPROVED marker 부여 후 즉시 Phase A 진입. 외부 영향 (PR / 배포) 은 별도 confirm.
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-21 (TASK-0095, Major §12.3 — GLOBAL system prompt layer 신설. agent_core.py SYSTEM_PROMPT 상수 본문 → WebSystemPrompts scope='global' 1 row DB 화 + 코드 상수 fallback 유지. RBAC 2건 (`system_prompt.global.read/.write`) admin only. 신규 `설정` 탭 + 내부 sub-section 확장성 패턴. compose_system_prompt() 가 GLOBAL 을 가장 먼저 누적. worktree ai/claude/global-system-prompt 에서 진행, 별도 commit 후 main fast-forward.) -->
 
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-21 (TASK-0094, Critical §12.3 — 첨부 multi-cycle A CSV ingest + B DDL/KB + C Vision + D PDF RAG 4 sprint 분리. D1~D21 21 결정 확정 (D14 SQL allowlist guard 통과를 Sprint 1 ship 조건). Codex outside-voice review 2 회 흡수 (REV-20260520-0001 1차 17 Valid + REV-20260521-0002 2차 Critical 3 / Major 11 / Minor 2 → F8 만 사용자 명시 거부, 위험 격리는 D14 + R-Claim4 + R-F4 + D20 조합으로 충족). BRIEFING-attachment-multi-cycle.md Revision 2. worktree ai/claude/0087/attachment-briefing (git worktree 명 유지, 본 cycle TASK-0094) 별도 commit. Sprint 1 implementation 은 별 worktree 분리.) -->
 <!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-19 (TASK-0085, Minor §12.3 — lazy-create 사이드바 optimistic pending entry (multi-pending sentinel-keyed Map + click swap to sentinel context), "+ 새 대화 송신 직후 다른 대화 전환 시 새 대화 entry 가 사이드바에서 잠시 사라지는" UX 회귀 fix + 사용자 의도 "작업 step 현황의 출력" 지원. worktree ai/claude/0083/pending-list-entry 별도 commit) -->
@@ -98,7 +169,7 @@ D1 S3-compat MinIO / D2 동일 cluster + 별 schema / D3 PGVector / D4 A+B+C+D �
   - [x] Phase E — verify-completion + Completion Checklist + 최종 commit (CHG-20260519-0026, 2026-05-19; 본 cycle TASK-0073 [x] 마킹). 외부 영향 (make web 재배포 + browser headless smoke + AGENT_AUDIT_ENABLED=0/prod startup fail 검증 + WebAccountActivity migration SQL count 검증) 은 sandbox SSH 인증 차단으로 사용자 위임 — 8 commit 모두 `ai/claude/0073/agent-audit` worktree 의 local 누적.
 
   사용자 in-cycle 결정 (CEO review 9 항목 + Codex outside voice 14 findings 흡수 후 Major redesign): Mode=HOLD SCOPE, Scope=Approach B (admin + 대화·SQL·share·search), Storage=DB-only (`WebAuditEvents` 365일 retention + chunked PK purge), Hook=Web-ui split (admin 13 endpoint = direct dispatcher + Same tx / user 4 endpoint = best-effort delegate + fail-open, TASK-0072 패턴 답습), MySQL log=별 cycle 분리 (slow_query_log 본 cycle 제외), RBAC=`audit.read.own` + `audit.read.any` + `audit.export` + `audit.purge` 4건 (.own 은 dba 포함 모든 role 자동 grant, .any 는 admin/dba) + permission group `audit` 신규 + CONVENTIONS.md §10.6 동시 갱신, Tx=split (admin Same tx fail-safe / user fail-open), Masking=Action-specific allowlist builder (raw request 검증 X, ActionCode 별 명시 화이트리스트, free-text PII explicit redact/hash), Flag=`AGENT_AUDIT_ENABLED` prod (`AGENT_MODE!=dev/test`) startup fail-closed + dev/test toggle, WebAccountActivity 흡수 (TASK-0072 PIPA §29 1년 retention inherit, ActionCode `conversation.search.any` / `conversation.snippet.any` mapping, `_log_search_activity` 는 새 dispatcher 의 user best-effort path 로 wrap). 상세 plan 은 §2.1 Implementation Plan (TASK-0073). **상태**: `approved-after-outside-voice` — CEO review 9 decision 확정 → Codex outside voice 14 findings + 6 minimum-fix dispatch → 9 decision 중 5 reset (Storage·MySQL log·Hook·Tx·Masking) → redesign 사용자 확정 (2026-05-19). **사용자 메모리**: `feedback_outside_voice_for_rbac` 정책 강제 적용 (Critical RBAC + audit 표면 신설).
-- [ ] TASK-0072 (REQ-20260518-0010, **Critical** §12.3 — 타 계정 대화 검색·필터) 사용자 in-cycle 결정 3 항목: (1) 권한 = 기존 `conversation.list.any` 재활용, (2) 검색 범위 = 제목 + 계정명 + 메시지 본문 (SQL/결과셋 제외), (3) UI = 사이드바 위 검색바 + chip. 상세 plan-review 는 §2.1 Implementation Plan (TASK-0072). **상태**: `outside-voice-review` — Codex / security / ux 3 개 외부 시각 dispatch 후 D1~D3 합의 → Phase A backend 진입. **사용자 메모리**: `feedback_outside_voice_for_rbac` 정책 강제 적용.
+- [x] TASK-0072 (REQ-20260518-0010, **Critical** §12.3 — 타 계정 대화 검색·필터) **DEPLOYED**. 사용자 in-cycle 결정 3 항목 ((1) 권한 = 기존 `conversation.list.any` 재활용, (2) 검색 범위 = 제목 + 계정명 + 메시지 본문, (3) UI = Spotlight modal Cmd/Ctrl+K) 합의 후 outside voice 3 review (security FIX-FIRST / adversarial Blocker + 3 sub-spec + 6 risk / ux NEEDS-TWEAK) 모두 흡수. 3 sub-spec (SQL composition order strict / hidden_ids SQL push / Python re-sort 삭제 + SQL ORDER BY 단일화) + 안전망 (LIKE ESCAPE '!' + min 3 char + LIMIT 50 + rate 10/min + max_execution_time 3s + DeletedAt + collation audit + owner.Username .any 한정) + audit (SHA-256 hash, 평문 X, PIPA §29) + cursor pagination 적용. 상세 plan-review 는 §2.1 Implementation Plan (TASK-0072) PLAN-APPROVED 마커. **Main 통합 commits**: `f298f90` (feat TASK-0072 본체) + Post-deploy hotfix bundle `e7fd926` (TASK-0074 light theme) / `c803134` (TASK-0076 search modal UX 3) / `cfbb8c5` (TASK-0077 5 hotfix) / `1e2e52d` (TASK-0078 3 hotfix) / `e7b9805` (TASK-0079+0080 flex + UNION). 본 closure 는 TASK-0099 (audit followup backlog tracker hygiene) cycle 에서 수행 (2026-05-22).
 - [x] TASK-0071 (REQ-20260518-0009, Minor §12.3 — shell grid row hotfix, cascade root of TASK-0068~0070) 사용자 3 차 screenshot 보고: dashboard pane 처럼 list-detail 사용 안 하는 화면에서 큰 viewport + 짧은 content 조합 시 sidebar / commit-bar 가 viewport 의 약 70% 위치까지만 차지 + 그 아래 회색 빈 영역. 원인: `.app-shell` / `.admin-shell` 의 `display: grid; height: 100vh` 만 정의 + `grid-template-rows` 미정의 → default `auto` → row track height = 자식 max-content. grid container 100vh 와 track height 의 mismatch 시 track 아래 빈 영역. 이전 cycle 의 fix 들은 column 안의 stretch chain 만 해결, column 의 height 결정 layer (grid track) 미처리 = cascade 의 root. Fix: `.app-shell` 과 `.admin-shell` 양쪽에 `grid-template-rows: minmax(0, 1fr)` 추가 (2 줄, 동일 패턴 일관성). 검증: 1320x900 viewport 에서 admin-shell h=900, column h=900, commit-bar bottom=900 (viewport bottom 정확히 sticky). screenshot 첨부. cache-bust `v=20260518-shell-grid-rows` (admin.html / index.html 양쪽 동일).
 - [x] TASK-0070 (REQ-20260518-0008, Minor §12.3 — admin list-detail grid row hotfix of TASK-0069) 사용자 2 차 screenshot 보고: `역할` / `제품` 등 항목이 적은 pane 에서 큰 viewport (height 800+) 의 경우 list-col / detail-col box 가 viewport 의 일부만 차지하고 그 아래 회색 빈 영역. 항목이 많은 `계정` (26 row) 또는 좁은 화면에서는 content 가 row 채워 정상. 원인: `.admin-list-detail` 의 grid-template-rows 미정의 → default auto → row height = content. align-items: stretch 는 row 내부 column 분배만 담당 — row 자체 height 결정 X. Fix: `grid-template-rows: minmax(0, 1fr)` 추가 (1 줄). 검증: 큰 viewport (1320x900) 에서 listDetail h=682, listCol/detailCol h=682 (이전 ~200), cbar viewport bottom sticky. screenshot 첨부. cache-bust `v=20260518-admin-list-rows`.
 - [x] TASK-0069 (REQ-20260518-0007, Minor §12.3 — admin workspace flex hotfix of TASK-0068) 사용자 screenshot 보고: admin `역할 관리` (및 다른 list-detail pane) 에서 commit-bar 가 workspace content 바로 아래에 좁게 위치하고 그 아래로 큰 회색 빈 영역. 원인: TASK-0068 에서 commit-bar 를 admin-shell grid → admin-column flex column item 으로 이전한 후 `.admin-workspace` 의 `flex: 1` 명시 누락 → flex column 안에서 workspace 가 자기 content 만큼만 차지. Fix: `.admin-workspace` 에 `flex: 1 1 auto` 추가 (1 줄). 다른 속성 무변경. 검증: DOM `wsBottom=659 / cbarTop=659 / commitBarAtBottom=true / workspaceTouchesCommitBar=true` → list-detail 이 column 의 남은 height 전부 차지 + commit-bar viewport bottom sticky. screenshot 첨부. cache-bust `v=20260518-admin-workspace-flex`.
@@ -836,6 +907,187 @@ Codex outside voice (consult mode, model_reasoning_effort=high, 390,785 tokens):
 - 5 critical findings 도출, 2 minimum-fix 권고
 - 본 ADR 의 5 findings 모두 ACCEPT → v2 redesign
 - `feedback_outside_voice_for_rbac` user policy 적용 — ADR 자체가 audit 정책 표면 영향
+
+---
+
+### 2.7 Implementation Plan (TASK-0090)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 **Minor 등급 backend code 변경** 계획이다. **상태**: `approved-after-outside-voice`. 사용자가 2026-05-20 에 plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, 550,870 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign → 사용자 confirm 진행.
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-20 (TASK-0090 Phase A~D 일괄, Minor backend code + Codex outside voice 5 findings 흡수) -->
+
+#### 요지
+
+`/api/admin/audits/export.csv` 의 hard cap 50k row + `cur.fetchall()` buffer + `io.StringIO()` 전체 메모리 로드를 **StreamingResponse + sync generator + keyset cursor pagination** 으로 전환. large fleet (100k+) memory footprint 안전 + export self-audit + try/finally cleanup.
+
+#### Codex outside voice review 흡수 (5 findings)
+
+| # | Finding | 흡수 |
+|---|---|---|
+| **C1** | async generator + sync mysql.connector = event loop blocking. StreamingResponse 는 sync iterator 도 받음 (iterate_in_threadpool). endpoint conn close 가 generator 보다 먼저 실행 → streaming-only conn 필요 | **ACCEPT** → `def csv_iter()` sync generator + 별 streaming conn (generator 내부 finally cleanup) |
+| **C2** | consistent snapshot 은 long transaction 부담. audit append-only → `MAX(Id)` high-water mark 권장 | **ACCEPT** → 시작 시 `SELECT MAX(Id) FROM WebAuditEvents{where}` 잡고 모든 page `Id <= max_id AND Id < cursor_id` |
+| **C3** | keyset + filter 정합 OK, 단 query plan 미보장. EXPLAIN FORMAT=JSON 권장 | **ACCEPT** → TEST.md 에 representative filters EXPLAIN 기록 (live mysql 실행 가능 시 future cycle, 본 cycle 은 코드 변경만) |
+| **C4** | 50k cap 제거 = DoS/계약 변경. SECURITY 갱신 + export self-audit + 동시 실행 제한 | **ACCEPT (부분)** → cap 제거 + SECURITY §9.5 갱신 + export self-audit (start + complete/aborted). 동시 실행 제한은 multi-worker semaphore 정합 → 별 cycle followup |
+| **C5** | cleanup generator try/finally — client disconnect / timeout 시 cursor/conn 누설 | **ACCEPT** → generator 내부 try/finally (cursor.close + conn.close + complete audit) |
+
+추가 흡수 (minimum-fix 2):
+- chunk_size **1000→500** (안전 마진)
+- 1 row yield 대신 **64KiB byte-threshold flush**
+- CRLF 유지, BOM 추가 안 함
+
+#### 영향 파일 (code 1 + docs 6)
+
+- `unit/feature-0003-agent-web-ui/src/app.py`:
+  - `StreamingResponse` import 추가 (line 28).
+  - 신규 helper `_audit_export_filter_hash(params)` (~line 9466) — filter PII 회피용 sha256[:16] hash.
+  - 신규 const `_AUDIT_EXPORT_CHUNK_SIZE = 500`, `_AUDIT_EXPORT_FLUSH_BYTES = 65536`.
+  - `export_audit_events_csv` endpoint 전면 재작성 (line 9476~9683): 2-phase (짧은 auth conn + max_id capture + start audit → sync generator with streaming-only conn + chunked SELECT + byte-threshold flush + try/finally + complete audit).
+- 문서:
+  - `docs/SECURITY.md §9.5`: `audit.export` permission 설명 갱신 (hard cap 50k 제거 + StreamingResponse + max_id high-water + self-audit).
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: §2.7 본 plan + TASK-0090 [x].
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: CHG-20260520-0008.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260520-0008.
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary.
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md`: §4 본 cycle 결과.
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: AC-0193.
+
+#### Phase 순서
+
+1. **Phase A** — endpoint 재작성 + StreamingResponse import. **완료**.
+2. **Phase B** — py_compile PASS + lightweight smoke (host-mounted code + docker run): `_AUDIT_EXPORT_CHUNK_SIZE=500`, `_AUDIT_EXPORT_FLUSH_BYTES=65536`, helper 존재, `StreamingResponse` import, filter_hash deterministic. **완료**.
+3. **Phase C** — docs 6 갱신. **본 단계 진행 중**.
+4. **Phase D** — verify-completion + commit + cycle-finalize (issue + push + PR + merge + cleanup).
+
+#### 위험도 (§12.3) — **Minor**
+
+backend code 1 endpoint, runtime 영향 audit subsystem only, contract 변경 = hard cap 50k 제거 (응답 형식 CSV 동일). live PATCH runtime smoke = PR merge 후 사용자 위임.
+
+#### Recommended future cycle (Codex C4 followup)
+
+- 동시 export 제한 (multi-worker semaphore 정합 검토)
+- representative filters EXPLAIN FORMAT=JSON 분석 (live mysql)
+
+#### outside voice 결과 (REVIEW.md REV-20260520-0008 정본)
+
+Codex outside voice (consult mode, model_reasoning_effort=high, 550,870 tokens):
+- 5 critical findings + 2 minimum-fix recommendations
+- 5 findings 모두 ACCEPT → v2 redesign
+- C4 부분 흡수 — 동시 실행 제한은 별 cycle (multi-worker semaphore)
+
+---
+
+### 2.8 Implementation Plan (TASK-0089)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 **Minor 등급 frontend + backend 2 endpoint 추가** 변경 계획이다. **상태**: `approved-after-outside-voice`. 사용자가 2026-05-20 에 plan v1 초안 → Codex outside voice review (consult mode, model_reasoning_effort=high, 829,505 tokens) → 5 critical findings + 2 minimum-fix → v2 redesign (scope 확장 — backend endpoint 2 신설) → 사용자 confirm 진행.
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-20 (TASK-0089 Phase A~G, Minor backend 2 endpoint + frontend 3 + Codex 5 findings 흡수) -->
+
+#### 요지
+
+profile drawer 5번째 탭 "내 감사 로그" 신설. 본인 audit row (Actor or Target = self) 표시. backend 신규 endpoint 2 — `/api/profile/audits` + `/api/profile/audits/{event_id}` — `scope="own"` 강제 (Codex C2). CSV export / purge 는 admin 한정 미노출.
+
+#### Codex outside voice 5 findings 흡수
+
+| # | Finding | 흡수 |
+|---|---|---|
+| **C1** | `/api/admin/audits` URL 의미 mismatch — `.own` 호출 가능하나 `/admin/` 이 drawer 와 부합 안 함 | **ACCEPT** → 신규 `/api/profile/audits` + `/api/profile/audits/{id}` |
+| **C2** | `_audit_resolve_read_scope()` `.any` > `.own` 우선 — frontend `scope=own` 만으로 부족, backend 강제 필요 | **ACCEPT** → backend `scope="own"` 강제 (`_audit_compose_where(scope="own", ...)`). `.any` 보유자도 본인만 |
+| **C3** | CSV export drawer 제외 — export endpoint `scope="any"` 고정, drawer 노출 시 전체 CSV 유출 | **ACCEPT** → drawer 에 export/purge 미노출 |
+| **C4** | drawer 폭 390px 에 2-column 안 맞음 + ChangeJson 가독성 | **ACCEPT** → 1-column list + inline detail expand + `<pre>` overflow:auto 수평 스크롤 |
+| **C5** | 권한 race — backend OK, frontend 처리 필요 (403 → "권한 없음", tab gate) | **ACCEPT** → `updateProfileAuditTabVisibility()` + 403 graceful state.profileAudit.forbidden |
+
+추가: mini filter = `action_code` + `from_at` + `to_at` (3 필드). actor_id / actor_type 제거 (본인 한정 무의미).
+
+#### 영향 파일 (code 4 + docs 6)
+
+Backend:
+- `unit/feature-0003-agent-web-ui/src/app.py`: 신규 endpoint 2 (`list_profile_audit_events`, `get_profile_audit_event`) — 기존 helper (`_audit_parse_filter_params`, `_audit_compose_where`, `_audit_row_to_dict`, `_audit_build_self_filter_sql`) 재사용.
+
+Frontend:
+- `unit/feature-0003-agent-web-ui/src/static/index.html`: drawer-tab "내 감사 로그" + drawer-pane (filter row mini + 1-column list + pagination + inline detail). cache-bust `v=20260520-profile-audit`.
+- `unit/feature-0003-agent-web-ui/src/static/app.js`: `state.profileAudit` + helper (`_profileAuditEscapeHtml`, `_profileAuditFormatDt`, `_profileAuditHasReadPermission`, `updateProfileAuditTabVisibility`, `_profileAuditReadFilters`, `_profileAuditClearFilters`) + loader (`loadProfileAuditList`) + renderer (`renderProfileAuditList`, `renderProfileAuditDetail`) + handlers (`attachProfileAuditHandlers`). tab click handler 의 audit branch + `renderProfile()` 의 tab visibility wire.
+- `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.profile-audit-*` ~15 클래스 (filter / row / detail / `<pre>` 수평 스크롤).
+
+문서: TASK §2.8 + MODIFY CHG-20260520-0009 + REVIEW REV-20260520-0009 + REPORT §1 + TEST §4 + FUNCTION AC-0194.
+
+#### Phase 순서
+
+1. **Phase A** — backend endpoint 2 신설. **완료**.
+2. **Phase B** — index.html drawer-tab + drawer-pane. **완료**.
+3. **Phase C** — app.js state + helper + loader + renderer + handlers + tab wire. **완료**.
+4. **Phase D** — styles.css. **완료**.
+5. **Phase E** — py_compile + node --check + routing smoke. **PASS** (`/api/profile/audits` + `/api/profile/audits/{event_id}` 등록 확인). **완료**.
+6. **Phase F** — docs 6 + FUNCTION AC-0194. **본 단계 진행 중**.
+7. **Phase G** — verify-completion + commit + cycle-finalize.
+
+#### 위험도 (§12.3) — **Minor**
+
+backend code 2 endpoint (helper 재사용) + frontend 3 + docs 6. runtime 영향 audit subsystem only. live browser smoke = PR merge 후 사용자.
+
+#### outside voice 결과 (REVIEW.md REV-20260520-0009 정본)
+
+Codex outside voice (consult mode, model_reasoning_effort=high, 829,505 tokens):
+- 5 critical findings + 2 minimum-fix recommendations
+- 5 findings 모두 ACCEPT → v2 redesign (frontend only → backend endpoint 2 추가)
+
+---
+
+### 2.9 Implementation Plan (TASK-0087)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 Major 등급 (보안 표면 + multi-feature) 변경 계획이다. **상태**: `approved-after-outside-voice`. TASK-0073 Eng review E3 의 deferred 항목 (TASK-0058 share 사내 IP 가정과 동일 trade-off) 을 명시적 정책 + 코드로 lock-in. Plan v1 (RFC1918 trust + silent skip) → Codex outside voice review 6 findings (Major 5 + Minor 1) → Plan v2 (Caddy XFF 정규화 + mode-aware fail-loud + XFF IP 검증) 흡수.
+
+#### 사용자 in-cycle 결정 (3 항목)
+
+| 결정 | 채택안 | 근거 |
+|---|---|---|
+| Plan v2 흡수 범위 | 전부 흡수 + docker-compose port mapping 변경은 별 cycle | 본 worktree 컨테이너는 테스트 후 정리. 외부 접속 경로 유지 필요. Codex 권고 "port mapping 변경" 은 사용자 환경 외 별 사이클에서 검토 |
+| `WEB_TRUSTED_PROXIES` default 권장값 | RFC1918 전체 (`10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`) | 사내 LAN dev/staging 전제. Codex 가 "RFC1918 전체 = 사내 클라이언트 spoof 위험" Major 지적했으나 사용자 명시 결정으로 채택. SECURITY.md §9.7 에 trade-off 명시 |
+| malformed env 동작 | prod/staging fail-loud (`RuntimeError`) + dev/test stderr WARNING | Codex 권고 그대로. mode-aware — 운영자 인지 보장 + dev/test fixture/CI 부담 완화 |
+
+#### Phase 분해 (A → E)
+
+- **Phase A** — Caddy XFF 정규화 (feature-0006-lan-proxy-access)
+  - `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile` 의 `reverse_proxy web:8000` 블록에 `header_up X-Forwarded-For {client_ip}` 추가. Caddy 가 받은 임의 XFF 를 본인이 본 TCP peer IP 로 덮어쓴다. 단일 hop 정규화 → multi-hop / spoof 차단.
+- **Phase B** — `_get_client_ip()` 조건부 trust (feature-0003-agent-web-ui)
+  - `app.py` 의 imports 에 `ipaddress`, `sys` 추가
+  - `_parse_trusted_proxies(raw)` helper: 콤마 분리 + `ipaddress.ip_network(token, strict=False)` 파싱. invalid 토큰은 `AGENT_MODE in {prod, staging}` 에서는 `RuntimeError` startup, dev/test 에서는 stderr WARNING + skip
+  - module-level `WEB_TRUSTED_PROXIES = _parse_trusted_proxies(os.getenv("WEB_TRUSTED_PROXIES", ""))`
+  - `ENABLE_WEB_TLS_PROXY=1` + `WEB_TRUSTED_PROXIES` empty → prod/staging RuntimeError, dev/test stderr WARNING (PIPA §29 audit 품질 회귀 경고)
+  - `_is_trusted_proxy(host)` helper: host 가 `WEB_TRUSTED_PROXIES` CIDR 화이트리스트 안인지 검증
+  - `_get_client_ip(request)` 재작성: direct_ip 가 trusted proxy 일 때만 XFF 첫 토큰 사용 + `ipaddress.ip_address(first)` 파싱 실패 시 direct_ip fallback. 그 외 모두 direct_ip 반환
+- **Phase C** — `docs/SECURITY.md §9.7` 갱신
+  - 기존 "deferred to feature-0006" 마커를 8 bullet (Caddy XFF 정규화 / 조건부 trust / XFF token 검증 / RFC1918 사용자 명시 결정 trade-off / mode-aware fail-loud / proxy mode + empty / schema 호환 / share token 미래 결합) 정책으로 교체
+- **Phase D** — docs (양 feature)
+  - feature-0003: TASK.md TASK-0087 checkbox close + §2.9 (본 plan), MODIFY CHG-20260520-0010, REVIEW REV-20260520-0010, REPORT §1 cycle entry, TEST §4 8 시나리오, FUNCTION AC-0205~0207
+  - feature-0006: TASK.md TASK-0006 신규 entry + Task Queue, MODIFY CHG-20260520-0010 (Caddy XFF 정규화 dual ownership), REVIEW REV-20260520-0010, REPORT §1 entry, TEST §2 Caddyfile validate 시나리오, FUNCTION AC-0004
+- **Phase E** — verify-completion + commit + cycle-finalize
+  - `bin/verify-completion.sh` 10 checks PASS (특히 #6 ANCHOR + #7 audit endpoint routing + #10 worktree binding)
+  - commit + push + PR + main merge + worktree cleanup
+
+#### Test 시나리오 (Codex 권장 8건)
+
+TEST.md §4 에 추가:
+1. trusted_proxy + valid XFF → XFF 첫 토큰 반환
+2. trusted_proxy + invalid XFF (`garbage`) → direct_ip fallback
+3. trusted_proxy + XFF 첫 항목 빈 문자열 → direct_ip fallback
+4. untrusted direct_ip + XFF → direct_ip 반환 (spoof 차단)
+5. IPv6 direct_ip (trusted) + IPv6 XFF → XFF 첫 토큰
+6. invalid env CIDR + `AGENT_MODE=prod` → `RuntimeError` startup
+7. empty env + `ENABLE_WEB_TLS_PROXY=1` + `AGENT_MODE=prod` → `RuntimeError` startup
+8. `caddy validate` 가 Caddyfile 통과 + `header_up X-Forwarded-For {client_ip}` 인식
+
+#### outside voice 결과 (REVIEW.md REV-20260520-0010 정본)
+
+Codex outside voice (consult mode, model_reasoning_effort=high, 228,107 tokens):
+- 6 findings (Major 5 + Minor 1) — Verdict: **NEEDS_REVISION**
+- Major 1 (RFC1918 전체 trust 위험): **사용자 명시 거부** — RFC1918 default 유지. trade-off 는 SECURITY.md §9.7 에 명시
+- Major 2 (Caddy 문법 부정확) → 흡수: `reverse_proxy` 안의 `trusted_proxies` 대신 `header_up X-Forwarded-For {client_ip}` 로 단일 hop 정규화 (더 안전한 대안)
+- Major 3 (Caddy `private_ranges` global trust 위험) → 흡수: global trusted_proxies 추가 안 함 (Major 2 와 동일 결정)
+- Major 4 (malformed XFF IP 검증 누락) → 흡수: `ipaddress.ip_address(first)` 검증 후 반환, 실패 시 direct_ip fallback
+- Major 5 (malformed env silent skip) → 흡수: mode-aware (prod/staging RuntimeError + dev/test WARNING)
+- Minor 1 (silent regression warning) → 흡수: proxy mode + empty env 조합에 RuntimeError + WARNING
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-05-21 (TASK-0087 Phase A~E 일괄, Major 등급 보안 표면 + multi-feature, Codex outside voice 5 Major + 1 Minor 흡수) -->
 
 ---
 
@@ -2532,7 +2784,7 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] TASK-0073: `docs/SECURITY.md §9` (Audit subsystem 정책 + Sensitive field catalog source-of-truth) + `docs/DECISIONS.md ADR-0019` + `docs/ARCHITECTURE.md §4·§6` + `docs/CONVENTIONS.md §10.6` audit group + `docs/STATUS.md` feature-0003 row + REPORT.md §1 + TEST.md §2.1 (Phase D)
 - [x] TASK-0073: `make web` 재배포 후 audit endpoint 8 시나리오 smoke 검증 PASS (Phase E 본 cycle 2026-05-20). admin.role.create → audit row delta=1 / ChangeJson allowlist 정합 / detail / export.csv (Content-Type text/csv + Content-Disposition) / actors facet (bootstrap_admin) / resources facet (conversation + role) / purge dry_run / anonymous share view ActorType='anonymous' (token_prefix `Wp45TbFK`, view_count_after=2, masked share.token_full) 모두 PASS. routing 회귀 1 건 (`/{event_id}` 가 정적 sibling 가로채기) 발견 + 동일 cycle hotfix (CHG-20260520-0001).
 - [x] TASK-0073: WebAccountActivity → WebAuditEvents migration 검증 PASS — `SELECT COUNT(*) FROM WebAuditEvents WHERE RequestId LIKE 'account-activity:%'` = 68 row (legacy 전부 transform, idempotent marker).
-- [ ] TASK-0073: `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` 환경에서 컨테이너 시작 시 process 종료 + stderr `[FATAL]` 검증 — 후속 cycle 위임 (env override + 별 docker compose restart 필요, 본 cycle 의 audit subsystem 정상 가동 검증 우선)
+- [x] TASK-0073: `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` 환경에서 컨테이너 시작 시 process 종료 + stderr `[FATAL]` 검증 — **TASK-0092 (REQ-20260520-0007, Minor §12.3) 에서 완료**. 7 vector matrix (V1~V7) 의 V1-V3 fail-closed scenario 가 정확히 본 acceptance 충족. `docker run --entrypoint python --no-deps` + `import web.app` + stderr `[FATAL]` 3 substring 검증 PASS. 본 closure 는 TASK-0099 (audit followup backlog tracker hygiene) cycle 에서 수행 (2026-05-22).
 - [ ] TASK-0044: 사업팀 pilot 계정(placeholder `<< pilot_username_1..N >>`) 이 admin 콘솔에서 발급된다 — 코드 auto-create 없음, 발급 절차는 본 TASK 기술부 마지막 runbook 문단 참조
 - [ ] TASK-0044: 사업팀 pilot 계정으로 로그인해 단순 조회 prompt(예: "대표 아이템 X 가 몬스터 Y 에 연결돼 있나요?") 에 문장형 응답을 받는다
 - [ ] TASK-0044: 사업팀 pilot 계정으로 집계 prompt(예: "최근 7 일 레벨별 유저 수") 에 결과셋 표 응답을 받는다

@@ -16,6 +16,7 @@ source_of_truth: true
 - REQ-0002: 새 Dockerfile과 루트 실행 파일이 코어를 정상 참조하게 한다.
 - REQ-20260515-0002: Role scope 시스템 프롬프트에서 `ProductId IS NULL`로 저장된 "전 Product 공통" 지침은 특정 Product를 선택한 대화에서도 항상 누적 적용된다. Product 전용 Role 지침이 있으면 공통 지침 뒤에 추가된다.
 - REQ-20260515-0003: 시스템 프롬프트는 `Product → Role → Account → 현재 사용자 요청` 순서로 누적 적용된다. Account scope 도 Role scope 와 동일하게 `전 Product 공통` 지침을 먼저 적용하고, Product 전용 개인 지침이 있으면 뒤에 추가한다.
+- REQ-20260522-0001: `execute_sql` 도구 실행 결과의 웹 UI 미리보기(`preview_table`)에서 셀 값이 100자로 잘리지 않아야 한다. CSV 파일이 존재하는 경우 CSV 원본 데이터에서 `preview_table` 을 구성한다.
 
 ## 3. In Scope
 - `agent_cli.py`, `agent_core.py`
@@ -96,12 +97,92 @@ source_of_truth: true
 **Schema 적용 (TASK-0018 M1 cycle)**:
 - DDL 정본: `unit/feature-0002-agent-core/src/scripts/agent_kb_schema.sql` (~241 LOC, IF NOT EXISTS 멱등)
 - Bootstrap: `bin/kb-pg-role-bootstrap.sh --all` (database + role 신설 + schema 적용)
-- 적용 entry point: `modules/memory.py:_ensure_pg_schema(conn=None, *, schema_sql_path=None)` — M2 dual-write 진입 시 1회 호출. 호출 후 검증 dict 반환 (tables_present / view_present / extensions).
+- 적용 entry point: `modules/memory.py:_ensure_pg_schema(conn=None, *, schema_sql_path=None)` — M2 dual-write 진입 시 1회 호출. 호출 후 검증 dict 반환:
+  - `tables_present` (list[str])
+  - `view_present` (bool)
+  - `extensions` (list[str] — `vector`, `pg_trgm`)
+  - `grants_present` (dict — agent_kb_rw / agent_kb_ro 각 role 의 `role_exists`, `public_usage`, 4 테이블 × `_select` / `_mutate` / `_truncate_denied` + `<tbl>_id_seq_usage` + VIEW select) — **outside-voice REV-20260520-0007 Critical 권고로 USAGE on SCHEMA + sequence USAGE + TRUNCATE 명시 negative 검증 추가**
+
+**자동 호출 trigger (TASK-0019 M2-a cycle)**:
+- `docker-compose.yml` 의 `memory-init` service 가 `python /app/agent_core.py --init-memory` 진입점.
+- `agent_core.py:init_memory()` 가 mysql `_ensure_memory_tables()` 호출 후 `_pg_available()` 게이트 하 `_ensure_pg_schema()` 자동 호출.
+- 환경변수 `AGENT_KB_PG_REQUIRED` (default 0): 0 = optional (M0~M2-a, `_pg_available()` False 시 graceful skip), 1 = required (M2-b+, fail-loud + dual-write 깨진 schema 위 시작 차단).
+- `memory-init.depends_on` 에 `postgres: service_healthy` (`required: false` — postgres 미가동 환경 graceful) 로 race condition mitigation.
 
 **RBAC role (ADR-0021, M1 cycle)**:
 - `agent_kb_rw` — SELECT/INSERT/UPDATE/DELETE on 4 tables + VIEW SELECT. M2 dual-write 부터 agent 의 `_pg_connect()` 가 사용.
 - `agent_kb_ro` — SELECT only. read-only audit / debug.
 - Application-level RBAC catalog 신규 4 권한 (`PERMISSION_DEFINITIONS` 갱신은 M2~M4 별 cycle): `kb.read.own` / `kb.read.any` / `kb.mutate.any` / `kb.export`.
+
+**KbBackend 추상화 (TASK-0019 M2-a + TASK-0020 M2-b cycle, ADR-0021 §Decision Layer 1)**:
+- `modules/kb_backend.py` (~780 LOC) — 단일 `KbBackend(ABC)` + 4 method group + `prune_fact_entries_keep_top` (M2-b ABC 보강).
+- `MysqlKbBackend` 6 method body (M2-b 구현) — 기존 raw SQL 의 ABC 래핑. caller backward-compat + M4 cutover 시 routing entry.
+- `PgKbBackend` 6 method body (M2-b 구현) — psycopg3 cursor.execute + named params + `RETURNING id` (`_execute_returning_id` helper). 6 SQL 템플릿: `_PG_UPSERT_TEXT` / `_PG_UPSERT_FACT_ENTRY` / `_PG_DELETE_FACT_ENTRIES` / `_PG_PRUNE_FACT_ENTRIES` / `_PG_UPSERT_RAG_DOCUMENT` / `_PG_UPSERT_RAG_OBJECT` + `_PG_SET_TEXT_EMBEDDING` (M3 cycle).
+- `_DualWriteMirror` helper (M2-b 신규, M2-c 의 audit explicit call 통합) — `_get_pg_conn()` + `_mirror()` 가 partial failure 격리 (`AGENT_KB_PG_REQUIRED=0` silent log / `=1` fail-loud). mirror 성공 후 `_log_kb_write_audit()` 호출 (best-effort, audit 실패 silent log). 6 public method (upsert_text / upsert_fact_entry / delete_fact_entries... / prune_fact_entries_keep_top / upsert_rag_document / upsert_rag_object). Module singleton `_dual_write_kb`.
+- `get_backends()` factory: `_BACKENDS_CACHE` process-level singleton + `_BACKENDS_LOCK` thread-safe double-checked locking (Nice-to-have outside-voice REV-20260520-0008 흡수 + M2-c 정착). `(MysqlKbBackend, Optional[PgKbBackend])` tuple.
+- `set_text_embedding()` base default `NotImplementedError` — PgKbBackend 만 구현 (M3 backfill).
+
+**Cross-DB audit (TASK-0021 M2-c cycle + TASK-0022 M2-d 보강, ADR-0021 §Consequences)**:
+- `_log_kb_write_audit(method_name, kwargs, result, pg_branch=None)` (M2-c 신규 + M2-d `pg_branch` 시그니처 추가) — mirror 성공 후 MySQL `WebAuditEvents` 에 audit row INSERT. `connect_with_retry(database=MEMORY_DB, autocommit=True, attempts=1)` (REV-20260521-0009 B-4 best-effort). ActorType='system'. ChangeJson 에 kwargs (sensitive 제외) + `pg_returning_id` + `mirror_method` + `pg_op_kind` (write/delete/prune) + **`pg_branch` (M2-d 신설 — insert/update/noop/delete/prune)** 포함. 16KB 캡 (REV-20260521-0009 B-6), truncate 시에도 `pg_op_kind` + `pg_branch` 보존 (REV-20260522-0010 C-5).
+- `_KB_AUDIT_ACTION_MAP`: 6 method → (ActionCode, ResourceType). ActionCodes: `kb.write.mirror`, `kb.delete.mirror`, `kb.prune.mirror`. ResourceTypes: `kb_text`, `kb_fact_entry`, `kb_rag_document`, `kb_rag_object`.
+- `_KB_AUDIT_SENSITIVE_KEYS = {"text_content", "source_sql"}` — PII / 큰 payload 필드 ChangeJson 제외.
+- `_build_audit_resource_id(method_name, kwargs)` (M2-c, REV-20260521-0009 B-5 흡수) — composite `conv|scope|key|...` `|` 구분 string 64 char cap. None placeholder `-`. 6 method layout: text_hash[:64] / conv|scope|fact_key / conv|scope|fact_key|content_hash[:12] / conv|scope|object_type|object_key / conv|scope|fact_key|keep_limit.
+- **pg_branch tagging (TASK-0022 M2-d)**: 3 UPSERT SQL (`_PG_UPSERT_FACT_ENTRY` / `_PG_UPSERT_RAG_DOCUMENT` / `_PG_UPSERT_RAG_OBJECT`) 에 `RETURNING id, (xmax = 0) AS pg_inserted` — xmax=0 이면 INSERT, xmax≠0 이면 UPDATE. `_pg_op_local = threading.local()` 이 branch label 을 capture; `_get_last_pg_branch()` / `_clear_pg_branch()` 로 read/reset. `_DualWriteMirror._mirror()` 첫 줄에서 `_clear_pg_branch()` (REV-20260522-0010 B-3/B-4 — early-return path 통일). delete/prune/upsert_text 는 method body 에서 직접 branch label set (delete / prune / insert-or-noop via cursor.rowcount).
+- **SLA 측정 도구**:
+  - `bin/kb-dual-write-verify.sh audit-sla --since <ISO>` (M2-c): PG denominator `GREATEST(created_at, updated_at) >= since` (texts 는 created_at only) + audit numerator `kb.write.mirror` only + `audit > 2×pg` fail-loud + zero-denom INCONCLUSIVE exit 2. target miss_ppm ≤ 1000 (= 0.1%).
+  - `bin/kb-dual-write-verify.sh --pg-branch-tag-coverage --since <ISO>` (M2-d, REV-20260522-0010 B-2 흡수 — **NOT a cross-DB SLA**): `_pg_op_local` instrumentation health gate. `JSON_UNQUOTE(JSON_EXTRACT(ChangeJson, '$.pg_branch')) IN ('delete', 'prune')` denominator 비율. target ≤ 1000 ppm. silent audit loss 는 분모/분자 모두에서 빠지므로 본 metric 만으로 SLA 보장 안 됨 — 진짜 cross-DB SLA 는 M3/M4 in-process counter 필요.
+- **Mirror metrics (TASK-0022 M2-d)**: `_MIRROR_METRICS` dict + `_MIRROR_METRICS_LOCK` thread-safe. `get_mirror_metrics()` snapshot — `calls_total` (PG-unavailable silent-skip 포함, REV-20260522-0010 C-2 명시) + `calls_by_method` + `latency_ms_total/avg/max` (REV-20260522-0010 C-3 atomic) + `audit_calls_total` + `audit_failures_total`. `reset_mirror_metrics()` test fixture 용. `_DualWriteMirror._mirror()` 의 모든 path (success / connection-fail / method-raise) 에서 `time.monotonic()` 기반 latency 기록. **production-like baseline 측정 의 in-process 입력**.
+
+**Dual-write Caller 5 위치 (TASK-0020 M2-b cycle)**:
+- `modules/utils.py:957` `_text_store_insert()` — MySQL `INSERT IGNORE` 직후 `_dual_write_kb.upsert_text()` 호출. silent log 패턴.
+- `modules/utils.py:1179` `_upsert_rag_memory_from_fact()` RagDocuments — MySQL INSERT 직후 `_dual_write_kb.upsert_rag_document()`.
+- `modules/utils.py:1230` `_upsert_rag_memory_from_fact()` RagObjects — MySQL INSERT 직후 `_dual_write_kb.upsert_rag_object()`.
+- `modules/knowledge.py:633` `_publish_fact()` fact_entries — MySQL INSERT 직후 `_dual_write_kb.upsert_fact_entry()`.
+- `modules/knowledge.py:598` `_prune_fact_entries_for_key()` — MySQL DELETE 의 광역 swallow 는 MySQL 만 cover, mirror 호출은 외부 (fail-loud raise propagate).
+
+**ANCHOR §3 invariant 시나리오 catalog (TASK-0019 M2-a 정의 + TASK-0020 M2-b verification test + TASK-0021 M2-c S1/N1/N2 + TASK-0022 M2-d S2/S4/S5/S6 mock 실 구현)**:
+- `unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py` (~590 LOC) — 6 시나리오 catalog + 2 negative assertion. 본 cycle 시점 구현 상태:
+  - **S1 (RagDocuments missing)** — M2-c 실 구현 (FakeConn INSERT SQL 캡쳐 + LLM tripwire 동반)
+  - **S2 (RagObjects missing)** — M2-d 실 구현 (upsert_rag_object 호출 + rag_objects INSERT SQL + COALESCE NULLIF 패턴 assertion)
+  - **S3 (Texts missing)** — SQL 정합 assertion (text_hash 컬럼 존재) + insight worker integration skip 유지 (M3+ 위임)
+  - **S4 (ScopeKey non-common)** — M2-d 실 구현 (3 mirror call 의 SQL params 모두 `scope_key='sales_q4'` 보존)
+  - **S5 (RagObjects category stale)** — M2-d 실 구현 (`_PG_UPSERT_RAG_OBJECT` SQL template 의 6 category 컬럼 모두 `COALESCE(NULLIF(EXCLUDED.x, ''), rag_objects.x)` 패턴 검증)
+  - **S6 (multi-row priority)** — M2-d 실 구현 (`agent_kb_schema.sql` 의 `agent_memory_facts` VIEW DDL DISTINCT ON + weight DESC + updated_at DESC + id DESC tie-break)
+  - **N1 (LLM call zero)** — M2-c 실 구현 (`modules.llm` entry point 전수 monkeypatch + smoke assertion)
+  - **N2 (TRUNCATE denied)** — env-gated `AGENT_KB_PG_INTEGRATION_TEST=1` (M2-c + M2-d 동일)
+- `unit/feature-0002-agent-core/tests/test_dual_write_mirror.py` (M2-b ~310 LOC + M2-d +80 LOC = ~390 LOC) — 12 unit test:
+  - Tests 1-10 (M2-b): no-op / silent log / fail-loud / 성공 / ABC / cache / set_text_embedding / MysqlKbBackend / caller integration / caplog
+  - Test 11 (M2-d): pg_branch insert/update via FakeCursor (id, pg_inserted) tuple
+  - Test 12 (M2-d): metrics counter via `reset_mirror_metrics()` + 3 mirror call + `get_mirror_metrics()` assertion
+- `unit/feature-0002-agent-core/tests/conftest.py` (M2-b 신규) — sys.path 통합 + dual import 회피.
+
+**Stress harness (TASK-0021 M2-c + TASK-0022 M2-d 보강)**:
+- `bin/kb-dual-write-stress.sh` — `trigger_insight_cycles()` (docker exec insight-worker `run_insight_cycle()` × N, container 미가동 시 docker compose run fallback) + `trigger_ask_iterations()` (docker compose run --rm agent 5 시나리오 × M iteration) + FAILURES counter + exit 1 on any failure. `--dry-run` mode (command echo).
+- **M2-d 추가 options**:
+  - `--keep-agent-container` (REV-20260522-0010 B-1 흡수) — agent service 가 docker ps 에 running 시 `docker exec "$agent_container" python /app/agent_core.py "$question"` (positional, agent_core.py:1796 argparse `query` 정합) 재사용. 25-iter container churn (~20s/iter overhead) 회피.
+  - `--log-dir <path>` (REV-20260521-0009 C-3 흡수) — per-step log file. `step_log()` helper 가 step id 별 timestamp + status 기록.
+
+**Backfill ETL (TASK-0023 M3 cycle, 본 cycle 산출)**:
+- `unit/feature-0002-agent-core/src/scripts/kb_backfill.py` (~280 LOC) — MySQL → Postgres 4 KB table backfill. TABLE_MAPPING (mysql_table / pg_table / id_col / select_cols / pg_insert_cols / pg_conflict) 4 entry. 멱등 (INSERT...ON CONFLICT DO NOTHING). Resumable (artifacts/shared/kb-backfill-state.json 의 table 별 last_id checkpoint). Progress log (every 10 batches). `--since $KB_DUAL_WRITE_START_TS` filter (M2 시작 이전 row 만, 중복 방지). `--dry-run` (SELECT 만). `--table` (single or all). `--reset-state` (처음부터). main 진입: `python -m scripts.kb_backfill` (agent 컨테이너 안).
+- `unit/feature-0002-agent-core/src/scripts/kb_embedding_worker.py` (~190 LOC) — `texts.embedding` 일괄 생성. OpenAI `text-embedding-3-small` (default, .env AGENT_KB_EMBEDDING_MODEL override). batch API (input=list 100 text per call). resumable (WHERE embedding IS NULL paginate). `--dry-run` (count + cost estimation, 실 API 호출 안 함). `--max-rows N` (cost cap). `--model` override. retry + timeout (config.AGENT_KB_EMBEDDING_{TIMEOUT_SEC,MAX_ATTEMPTS}). cost estimation: text-embedding-3-small USD 0.02/1M tokens × ~3 char/token 보수 추정.
+- `bin/kb-backfill.sh` + `bin/kb-embedding-worker.sh` — host wrapper. `docker exec ${COMPOSE_PROJECT_NAME}-agent-1 python -m scripts.kb_*`. backfill state file 은 `/shared` 마운트 (host artifacts/shared/).
+- `modules/config.py` 의 5 env binding: `AGENT_KB_EMBEDDING_MODEL` (default text-embedding-3-small), `AGENT_KB_EMBEDDING_DIM` (1536), `AGENT_KB_EMBEDDING_BATCH_SIZE` (100), `AGENT_KB_EMBEDDING_TIMEOUT_SEC` (60), `AGENT_KB_EMBEDDING_MAX_ATTEMPTS` (3).
+- Test: `tests/test_kb_backfill.py` (4 unit test: TABLE_MAPPING 정합 / state roundtrip / dry-run no-op / main smoke) + `tests/test_kb_embedding_worker.py` (6 unit test: cost estimation 3 model + length mismatch raise + UPDATE SQL emit + dry-run no-OpenAI).
+
+**M4 cycle 책임 (별 cycle 위임)**:
+- FULLTEXT → pg_trgm rewrite (`knowledge.py:1434` 의 `MATCH ... AGAINST NATURAL LANGUAGE MODE` → pg_trgm `similarity()` / tsvector `to_tsvector + @@` / pgvector embedding `<=>` 3 옵션 中 1택)
+- `AGENT_KB_READ_BACKEND` env routing 활성 (M4 진입 시 1, M5 까지 유지) — `modules/db.py` 의 read path 분기
+- `bin/kb-cutover-readiness.sh` script (10+ 게이트 검증 — dual-write SLA + invariant test + p99 latency 50% 이내 + `make ask` 5 회귀 시나리오)
+- Stage A/B rollback 절차 명문화 (1줄 env 변경 + agent 재기동)
+- ADR-0021 §Consequences (e)/(f) 게이트 PASS 명시
+- delete/prune 의 진짜 cross-DB SLA (in-process counter 기반)
+- Latency baseline production-like 측정 (M2-d 의 `get_mirror_metrics()` production sampling)
+- Nice-to-have (REV-20260521-0009 C-6/C-7/C-8)
+
+**M5 cycle 책임 (별 cycle 위임)**:
+- MySQL KB 5 정본 mysqldump 보관 + DROP TABLE (또는 read-only deprecated 상태)
+- dual-write 로직 제거 (`_dual_write_kb` mirror call 제거, `_DualWriteMirror` deprecation)
+- audit ActionCode `kb.*.mirror` 의 deprecation (M4 cutover 후 의미 손실)
 
 ## 11. Acceptance Criteria
 - AC-0001: 코어 코드가 `src/` 아래로 이동되어 있다.
@@ -111,6 +192,10 @@ source_of_truth: true
 - AC-0005: `compose_system_prompt(..., product_mode="auto")`는 Role×Product 프롬프트를 건너뛰고 Role의 전 Product 공통 프롬프트만 주입한다.
 - AC-0006: `compose_system_prompt(..., product_mode="pinned")`는 Account의 전 Product 공통 프롬프트와 Account×Product 프롬프트를 함께 주입하며, 공통 지침이 먼저 온다.
 - AC-0007: 최종 사용자 요청은 system message 뒤의 `{"role":"user"}` 메시지로 추가되어 Product/Role/Account 지침 뒤에 적용된다.
+
+- REQ-20260522-0003 (TASK-0100, **Minor §12.3** — multipart UploadFile 의존성 hot-fix): TASK-0098 (PR #49) ship 직후 사용자 검증 단계에서 발견된 main 의 build 회귀를 차단한다. PR #66 (TASK-0094 Sprint 1 Phase 5) 가 `POST /api/conversations/{cid}/attachments` 의 `file: UploadFile` 을 도입했으나 `python-multipart` 의존성 누락 → web container `Restarting` + `RuntimeError: Form data requires "python-multipart" to be installed.` build 회귀. `unit/feature-0002-agent-core/src/requirements.txt` 에 `python-multipart>=0.0.9` 한 줄 추가로 회귀 차단. 동작 변경 0, RBAC / DB / endpoint / audit 무변경 — 본질적으로 미반영된 의존성을 명시화. dual-ownership: 의존성 파일은 feature-0002 (agent-core, 공통 image build), 소비자는 feature-0003 (agent-web-ui attachment endpoint).
+  - AC-0008 (REQ-20260522-0003 / TASK-0100): `unit/feature-0002-agent-core/src/requirements.txt` 에 `python-multipart>=0.0.9` line 이 존재한다. 본 line 위에 4 줄 주석 (TASK 식별자 + 발견 시점 + 회귀 근거 + REV 참조) 이 동봉되어 이후 reader 가 의존성 추가 근거를 즉시 파악할 수 있다.
+  - AC-0009 (REQ-20260522-0003 / TASK-0100): `docker compose build web` + `docker compose up -d --no-deps --force-recreate web` 후 web container 가 `Up` 상태에서 안정 가동 (`Restarting` 없음). `/api/auth/me` 호출이 HTTP 200 (또는 401 비로그인) 응답을 받는다. `POST /api/conversations/{cid}/attachments` (UploadFile) 가 의존성 import error 없이 routing 된다 (실 호출은 attachment 권한 + DB 준비 필요).
 
 ## 12. Observability
 - 로그: `../../../../artifacts/shared/logs`
@@ -136,6 +221,12 @@ source_of_truth: true
   WHERE ConversationId = '__global__';
   ```
   자세한 해석은 [INSIGHTS.md §10](./INSIGHTS.md#10-헬스-체크-snippet) 참조.
+
+- REQ-20260522-0004 (TASK-0101, **Minor §12.3** — backlog closure batch, cross-feature docs): 본 세션의 잔여 backlog 항목 일괄 closure. 동작 변경 0, docs / 마킹만, RBAC / DB / endpoint / audit 무변경. dual-ownership: 본 entry 는 feature-0002 ownership, 영향받는 docs = 6 feature TASK.md + docs/STATUS.md.
+  - AC-0010 (REQ-20260522-0004 / TASK-0101): feature-0002 의 TASK-0010 + TASK-0011 이 `[x]` 마킹된다 (과거 작업 흐름의 마무리 docs).
+  - AC-0011 (REQ-20260522-0004 / TASK-0101): feature-0001 / feature-0004 / feature-0005 / feature-0006 의 TASK-0004 가 `[x]` 마킹된다 (placeholder 시나리오 정의 — 각 feature 의 TEST.md / ANCHOR §3 invariant 로 자연 흡수).
+  - AC-0012 (REQ-20260522-0004 / TASK-0101): feature-0005 의 TASK-0005 (MCP 서비스 기동 검증) 가 본 cycle 의 실 환경 검증으로 [x] 마킹된다. `docker ps --filter name=repo-mcp-1` 결과 = `Up` + `curl http://localhost:28000/healthz` HTTP 200 + Workbench 응답 정상.
+  - AC-0013 (REQ-20260522-0004 / TASK-0101): TASK-0034 (복잡 QA 성능 테스트, LLM API + 실 DB 의존), TASK-0044 (사업팀 pilot 발급, 운영 manual), TASK-0020 / TASK-0021 (KbBackend M2-b/M2-c, 본 cycle 진행 중) 의 4 항목이 docs/STATUS.md 또는 feature 의 REPORT.md 에 `deferral` 사유와 함께 명시된다 — 본 batch 의 closure 대상 외.
 
 ## 13. Pre-approved Changes
 - 비파괴적 경로 재배치와 Docker build 경로 수정

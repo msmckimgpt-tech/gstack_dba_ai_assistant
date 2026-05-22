@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.9.0
+template_version: v3.11.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -267,6 +267,24 @@ AI가 구현 중 요구사항이 불명확하거나 모순을 발견한 경우:
 3. 해당 기능의 `FUNCTION.md`
 4. 해당 기능의 `REPORT.md`
 
+### §10.1.1 소비자 프로젝트 세션 시작 — worktree context 필수 확인
+
+소비자 프로젝트 (§2.2 consumer 판정) 에서 AGENTS.md 을 첫 turn 에 읽은 후,
+`/_template:entry` 미사용 직접 세션도 다음을 수행한다:
+
+1. `git worktree list --porcelain` 으로 cwd 가 ai/* worktree 인지 main
+   checkout 인지 판정.
+2. 사용자 요청이 `repo/` 파일 생성·수정·삭제를 포함하면 mutation 의도로 간주.
+3. main checkout + mutation 의도 조합이면 §13.2.7 F0 위반 — 작업 진입 전
+   표면화:
+   > 현재 main checkout. `repo/` 직접 수정은 §13.2.7 F0 위반.
+   > `bash repo/bin/cycle-init.sh --feature <feature_id>` 로 worktree 생성 후
+   > 새 세션에서 시작하세요. (또는 `/_template:entry <task>` 사용)
+
+§13.2.4 carve-out 인 경우 (`/_local:*`, template base maintainer, `git
+pull`/`git fetch`/submodule update, `/_template:init` 부트스트랩) 위 단계는
+skip.
+
 ### §10.2 참조 읽기 (필요 시)
 
 - `/repo/docs/ARCHITECTURE.md`
@@ -384,6 +402,11 @@ AI가 위 항목에 해당하는 작업에 도달하면:
 - 문서 상단 메타데이터의 `edit_policy`를 따른다.
 - **프로젝트 수준 rewrite 문서**(ARCHITECTURE.md, CONVENTIONS.md 등)는 동시에 하나의 AI만 수정할 수 있다. 구조 변경이 필요하면 프로젝트 수준 `DECISIONS.md`에 제안을 기록하고 사람이 반영한다.
 - **append-only 문서 동시 추가 시** 각 항목에 타임스탬프와 작업자 ID(AI 세션 또는 기능 ID)를 포함하여 자동 병합이 가능하도록 한다.
+- **Feature-bound REPORT.md 충돌 방지** (v3.11.0+): `unit/<feature-id>/meta/REPORT.md`
+  는 해당 feature 의 단일 worktree mutator 에 의해서만 mutation 된다 (F2 정책의
+  feature-scoped 확장). 다른 worktree 가 동일 path 의 read 는 허용. 충돌 발생
+  시 §13.2.5 의 ai/\* main drift gate 가 보충. `bin/list-shared-paths.sh` 가
+  feature-bound REPORT.md 를 동적으로 열거한다.
 - 아래 마커를 지원한다.
 
 ```md
@@ -440,7 +463,24 @@ Variant exploration / 장기 risky refactor / QA worktree 시나리오는 별도
    checkout 의 `repo/` mutation 을 detect 한 후 사용자에게 "worktree 로 전환"
    권유.
 
-그 외 AI 의 자율 `git worktree add` / cwd 변경 / 다른 worktree 진입은 금지.
+그 외 AI 의 자율 `git worktree add` / cwd 변경 / 다른 worktree 진입은 금지
+(이하 **P1 trigger** — Position 1 trigger gating).
+
+**P1 carve-out (v3.10.0+)**: trigger #2 (`/_template:entry` arg-given dispatch)
+에서 worktree create 결정 이후, **AI 가 본 세션에서 새 worktree path 로 cd +
+Phase 6 진입까지 같은 흐름으로 진행한다**. 사용자가 entry persona 를 명시 호출
+했다는 사실 자체가 "이 세션이 해당 작업의 본체" 의도 표명이므로 cwd 변경은
+사용자 의도와 정합. cd 후 다른 mutation 도 그 worktree path 안에서만 진행 — 그
+worktree 가 binding branch 의 본체 (F1 보존). 본 carve-out 의 범위:
+
+- entry persona Phase 3.6 의 자동 cycle-init 흐름 한정 — 다른 SKILL 의 자율 cwd
+  변경에는 적용 안 됨
+- 새 worktree 가 ai/* binding branch 인 경우 한정 (main / shared 보호)
+- cd 후 작업이 그 worktree path 안에 머무는 한 — 다른 worktree 진입은 여전히
+  P1 금지
+
+trigger #1 (사용자 명시 worktree 지시) 도 동일한 carve-out 자연 적용 — 사용자가
+명시 지시했으므로 cd 도 사용자 의도.
 
 **Precedence (carve-out 우선)**: `/_template:entry` dispatch 대상이 `/_local:*` 류
 명령이면 §13.2.4 carve-out 이 trigger 보다 우선한다 — 즉, entry 가 자동으로
@@ -527,6 +567,13 @@ worktree 진입을 결정하지 않고 main worktree 컨텍스트를 강제 유�
   `--skip-repo-immutability` cli flag — check #11 SKIP+WARN. 사용 의도는 hop
   emergency fix, CI 환경 차이 등 일시적 우회. 상시 사용 금지 (REPORT.md 에
   명시).
+- **Entry persona inline execution (v3.10.0+)**: `/_template:entry` arg-given
+  dispatch 의 Phase 3.6 worktree decision 이 worktree create 를 결정한 경우,
+  AI 가 `bin/cycle-init.sh` 자동 실행 + 본 세션에서 새 worktree path 로 cd +
+  Phase 6 진입까지 같은 흐름으로 진행한다 (§13.2.1 P1 carve-out 와 동일 기반).
+  사용자가 별도 세션을 시작할 필요 없음 — `/_template:entry` 호출 1회로 cycle
+  진입 완료. cycle 종료 시 `bin/cycle-finalize.sh` 의 자동 cleanup 정책 (§16.3
+  Step 6) 과 정합 — 양쪽 끝 모두 단일 세션 자동 흐름.
 - **Carve-out 의 의미**: "정책 외" = 본 §13.2 의 forbidden actions / lifecycle /
   trigger 룰이 적용되지 않음. 단 §13.1 일반 충돌방지 룰은 계속 적용. Conductor
   / IDE multi-tab 자동 worktree 및 Codex `-C` 옵션 worktree 활용도 본 사이클
@@ -549,6 +596,24 @@ worktree 진입을 결정하지 않고 main worktree 컨텍스트를 강제 유�
   ≠ correctness). TTL cache 없음.
 - 동시 push race 는 wedge B (manual parallel) 하 이론적 가능성. 발생 시 **사용자
   수동 직렬화** 가 권장 해결. 자동 재시도 알고리즘은 본 사이클 외.
+- **ai/\* worktree 의 main drift 검출** (actor: ai/\* worktree 의 다음 turn
+  진입자, v3.11.0+): ai/\* worktree 의 entry preamble 에서 다음을 수행한다.
+
+  ```bash
+  git fetch origin main 2>&1 || true
+  behind=$(git rev-list --count HEAD..origin/main 2>/dev/null || echo 0)
+  ```
+
+  `behind > 0` 일 때만 사용자 화면에 1줄 표면화 + 권유 (자동 실행 아님):
+
+  > 본 worktree (`ai/<agent>/<feature>`) 는 main 보다 `<behind>` commit 뒤짐.
+  > `git pull --rebase origin main` 권유 — drift 누적 시 PR 머지 conflict ↑.
+
+  사용자 명시 confirm 후 rebase. fetch 실패 = WARN ("remote unavailable") +
+  계속 진행 (main worktree behavior 와 동일 정책, D11A: 네트워크 가용성 ≠
+  correctness). TTL cache 없음 — 매 turn 의 first action.
+
+  본 gate 는 §16.3 의 main worktree pull 룰의 ai/\* 미러.
 
 #### §13.2.6 샌드박스 실행
 

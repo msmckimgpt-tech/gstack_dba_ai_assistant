@@ -199,6 +199,23 @@ def normalize_step_result_summary(tool_name: str, result_summary: Any) -> Any:
         return summary
     if summary.get("preview_table"):
         return summary
+    # CSV 가 있으면 CSV 에서 preview_table 구성 — _format_result_sets 의 셀 100자
+    # 잘림 없이 원본 값 그대로 반영된다.
+    csv_paths = summary.get("csv_paths") or []
+    if isinstance(csv_paths, str):
+        csv_paths = [csv_paths]
+    for csv_path in csv_paths:
+        csv_preview = read_csv_preview(str(csv_path), max_rows=50)
+        if csv_preview:
+            total_rows_in_file = _count_csv_data_rows(str(csv_path))
+            shown = len(csv_preview.get("rows") or [])
+            summary["preview_table"] = {
+                "columns": csv_preview.get("columns") or [],
+                "rows": csv_preview.get("rows") or [],
+                "truncated": total_rows_in_file is not None and total_rows_in_file > shown,
+            }
+            return summary
+    # CSV 없을 때 기존 텍스트 파싱 경로 (값이 100자 잘린 채 표시될 수 있음)
     preview = str(summary.get("preview") or "").strip()
     if not preview:
         return summary
@@ -206,6 +223,17 @@ def normalize_step_result_summary(tool_name: str, result_summary: Any) -> Any:
     if preview_table:
         summary["preview_table"] = preview_table
     return summary
+
+
+def _count_csv_data_rows(path: str) -> int | None:
+    """CSV 파일의 데이터 행 수(헤더 제외)를 반환. 읽기 실패 시 None."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            next(reader, None)  # skip header
+            return sum(1 for _ in reader)
+    except Exception:
+        return None
 
 
 SENSITIVE_SUMMARY_KEYS = {

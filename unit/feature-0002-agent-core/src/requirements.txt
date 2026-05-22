@@ -8,3 +8,20 @@ cryptography>=42.0.0
 # M2 dual-write 단계까지 mysql.connector 와 공존. M4 cutover 시 read path 가 psycopg 로 전환.
 psycopg[binary]>=3.1
 pgvector>=0.2.4
+# TASK-0094 Sprint 1 Phase 4 (ADR-0022): MinIO S3-compat 첨부 storage. boto3 (S3 client) +
+# botocore (retry config). signed URL 은 사내망 다운로드 전용 (외부 LLM 송신 금지 — D13).
+boto3>=1.34.0
+botocore>=1.34.0
+# TASK-0094 Sprint 1 Phase 11: CSV/XLSX sandbox ingest. chardet (encoding detect) +
+# openpyxl (XLSX parser, read_only=True + data_only=True).
+chardet>=5.0.0
+openpyxl>=3.1.0
+# TASK-0100 (REQ-20260522-0003, Minor §12.3 — multipart UploadFile 의존성).
+# PR #66 (TASK-0094 Sprint 1 Phase 5) 가 `POST /api/conversations/{cid}/attachments`
+# 의 `file: UploadFile` 을 도입했으나 본 의존성 누락 → web container `Restarting`
+# (RuntimeError: Form data requires "python-multipart" to be installed.) build 회귀.
+# TASK-0098 ship 후 사용자 검증 단계에서 발견 (REV-20260522-0004 참조).
+python-multipart>=0.0.9
+# TASK-0094 Sprint 1 Phase 12 (D14 + R-F3 Critical): SQL allowlist guard.
+# sqlglot 의 AST parser — single SELECT/CTE only allowlist. denylist 는 보조.
+sqlglot>=23.0.0

@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
-template_version: v3.9.0
+template_version: v3.11.0
 domain: [security]
 ai_read_priority: 4
 ---
@@ -176,7 +176,7 @@ REQ-20260519-0001 — 모든 admin mutation + user 4 high-signal action (`/api/a
 
 - `audit.read.own` — 모든 role (pending / operator / sales / dba 포함) 자동 grant. `.own` SQL filter = `WHERE ActorAccountId = :self OR TargetAccountId = :self` (Eng review E1, 사용자 결정 B). admin password-reset / role permission grant / share revoke 등 admin→user 이벤트가 user 본인 audit 에 노출 → 보안 가시성 정합.
 - `audit.read.any` — admin / dba auto-grant. 전체 row 조회. `.own` superset semantics (TASK-0058 share read-gate 패턴 답습).
-- `audit.export` — admin / dba auto-grant. CSV / JSON dump (hard cap 50k row). masked field 정책 유지.
+- `audit.export` — admin / dba auto-grant. CSV / JSON dump. **TASK-0090 (2026-05-20) StreamingResponse 전환 — hard cap 50k row 제거**, max_id high-water mark + keyset cursor pagination (chunk_size=500) + 64KiB byte-threshold flush + try/finally cleanup + export self-audit (start + complete event 2 건, `action="audit.export.start"` / `audit.export.complete`/`audit.export.aborted`). masked field 정책 유지. 동시 export 제한은 별 cycle (multi-worker semaphore 정합 검토).
 - `audit.purge` — admin only auto-grant. retention 초과 row chunked PK 삭제. start/complete self-audit row 동반.
 - permission group `audit` 신규 — `docs/CONVENTIONS.md §10.6` admin section "관리 권한" 묶음 합류 + 작업 화면 placeholder (manage section).
 - `_ensure_seed_catchup` 의 `_ensure_permission_catalog` 호출이 `_ensure_seed_roles` 앞 (TASK-0063 회귀 fix 패턴 답습) — 기존 배포의 신규 4 권한 backfill 보장.
@@ -223,11 +223,18 @@ REQ-20260519-0001 — 모든 admin mutation + user 4 high-signal action (`/api/a
 - dev / test 만 toggle 허용 — flag bypass surface 차단.
 - env state changes 는 audit row 불가 (env 변경 = DB mutation 아님). startup stderr log 로 대체.
 
-### 9.7 RemoteAddr spoof risk (Eng review E3)
+### 9.7 RemoteAddr conditional trust (TASK-0087, 2026-05-21)
 
-- `_get_client_ip(request)` (app.py:560) 가 `X-Forwarded-For` 첫 IP 사용 — 사내 LAN + Caddy reverse proxy 전제.
-- 외부 LAN 노출 시 Caddy `trust_forwarded_for` 또는 별 `trusted_proxies` 설정 후속 cycle 필요. `feature-0006-lan-proxy-access` 위임.
-- TASK-0058 share 의 사내 IP 가정과 동일 trade-off.
+본 정책은 TASK-0073 Eng review E3 의 후속 cycle (TASK-0087) 에서 다음과 같이 lock-in 됐다.
+
+- **Caddy XFF 정규화**: `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile` 의 `reverse_proxy web:8000` 블록이 `header_up X-Forwarded-For {client_ip}` 를 명시. Caddy 가 클라이언트로부터 받은 임의 `X-Forwarded-For` 를 무시하고 **Caddy 가 본 TCP peer IP** 로 덮어쓴다. 즉 web 입장에서 `X-Forwarded-For` 는 항상 Caddy 가 정규화한 단일 IP — multi-hop / spoof 모두 차단.
+- **web `_get_client_ip()` 조건부 trust**: app.py 의 `_get_client_ip()` 는 direct 연결 IP 가 `WEB_TRUSTED_PROXIES` CIDR 화이트리스트에 포함될 때만 `X-Forwarded-For` 첫 토큰을 사용한다. 그 외 모든 경우 `request.client.host` (= 직접 TCP peer) 그대로 반환.
+- **XFF token 검증**: `X-Forwarded-For` 첫 토큰이 `ipaddress.ip_address()` 파싱 실패 (malformed) 면 direct IP 로 fallback. audit IP 가 garbage 값으로 오염되지 않는다.
+- **운영 가정 (사용자 명시 결정)**: 본 시스템은 사내 LAN dev/staging 전제로 `WEB_TRUSTED_PROXIES` 권장값을 RFC1918 전체 (`10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`) 로 설정한다. Codex outside voice (REV-20260520-0010) 는 "RFC1918 전체 trust 는 web port 가 LAN publish 되어 있는 한 사내 클라이언트가 직접 web 에 붙어 자기 사설 IP 를 trusted proxy 로 가장해 XFF spoof 가능" 을 Major 로 지적했으나, 본 cycle 의 컨테이너는 테스트 후 정리되고 외부 접속 경로를 유지하는 명시 결정으로 받아들였다. 외부 인터넷 / 미신뢰 LAN 노출이 가시화되는 시점에는 별 cycle 에서 (a) `WEB_TRUSTED_PROXIES` 를 docker bridge subnet (예 `172.18.0.0/16`) 으로 좁히고 (b) docker-compose 의 `web` port mapping 을 `127.0.0.1:${WEB_PORT}:8000` 또는 Caddy network only 로 좁히는 두 조치를 함께 적용해야 한다.
+- **malformed env 정책 (mode-aware)**: `WEB_TRUSTED_PROXIES` 에 invalid CIDR 토큰이 섞이면 `AGENT_MODE in {prod, staging}` 에서는 `RuntimeError` startup. `dev/test/""` 에서는 stderr WARNING + 해당 토큰만 skip + 진행.
+- **proxy mode + empty env**: `ENABLE_WEB_TLS_PROXY=1` 인데 `WEB_TRUSTED_PROXIES` 가 비어 있으면 audit `IpAddr` 가 Caddy container IP 만 기록 (PIPA §29 접근기록 품질 회귀). prod/staging 은 `RuntimeError` startup, dev/test 는 stderr WARNING.
+- **호환 영향 (WebAuditEvents.IpAddr / WebAuthSessions.RemoteAddr)**: 두 컬럼 모두 `VARCHAR(64)` — IPv4/IPv6 문자열 (최대 39자 + 가능 인터페이스 zone) 수용. schema 변경 없음.
+- **TASK-0058 share token**: 사내 IP 가정과 동일 trade-off 였으나, 본 cycle 의 conditional trust 가 share token 의 `_get_client_ip()` 호출 경로에도 자동 적용된다. share token IP allowlist (별 cycle 보류) 는 본 정책의 audit IP 정확도 위에 build 한다.
 
 ### 9.8 WebAccountActivity 흡수 → DROP 완료 (Codex C2 → TASK-0086, 2026-05-20)
 

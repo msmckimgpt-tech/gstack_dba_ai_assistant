@@ -4,12 +4,14 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
 import secrets
 import socket
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -23,9 +25,9 @@ import mysql.connector
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, UploadFile, File, Form  # TASK-0094 Phase 5: multipart upload
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from modules.memory import (
@@ -311,6 +313,50 @@ PERMISSION_DEFINITIONS = (
         "description": "타 사용자가 소유한 대화까지 본 계정 소유의 새 대화로 복제할 수 있다.",
         "group": "conversation",
     },
+    # TASK-0094 Sprint 1 Phase 3 (REQ-20260521-0001, Critical §12.3): 첨부 기능 RBAC.
+    # BRIEFING §5.2 1~4 row — Cycle 0 의 upload / read 권한 4 코드. group="conversation"
+    # (대화 흐름의 일부, attachment group 은 Cycle 1+ 의 attachment.execute_sql_on.* 부터
+    # 사용). D21 (R-F14): pending 은 read.own 만 — bytes download 는 Phase 5 의
+    # `/api/attachments/{id}/content` endpoint 에서 application-level deny.
+    {
+        "code": "conversation.attachment.upload.own",
+        "label": "내 대화 첨부 업로드",
+        "description": "자신의 대화에 파일 (CSV/XLSX/PDF/이미지) 을 첨부할 수 있다. MIME / size cap / consent (D11) 가 적용된다.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.attachment.upload.any",
+        "label": "전체 대화 첨부 업로드",
+        "description": "모든 계정의 대화에 첨부를 업로드할 수 있다. 운영자 한정.",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.attachment.read.own",
+        "label": "내 대화 첨부 조회",
+        "description": "자신의 대화에 첨부된 파일 metadata + 본문 (사내망 signed URL 다운로드) 을 조회할 수 있다. pending 계정은 metadata 만 (D21 — bytes 는 승인 후).",
+        "group": "conversation",
+    },
+    {
+        "code": "conversation.attachment.read.any",
+        "label": "전체 대화 첨부 조회",
+        "description": "모든 계정의 대화 첨부를 조회할 수 있다. 운영자 한정.",
+        "group": "conversation",
+    },
+    # TASK-0094 Sprint 1 Phase 12 (D14 + R-F3): 첨부 기반 sandbox SQL 실행 권한.
+    # 본 권한 부여만으로는 SQL 실행 안 됨 — D14 allowlist guard + attachment_reader
+    # MySQL user 의 권한 둘 다 통과 필요 (defense in depth). attachment group 신설.
+    {
+        "code": "attachment.execute_sql_on.own",
+        "label": "내 첨부 sandbox SQL 실행",
+        "description": "자신의 대화 첨부 데이터를 sandbox schema 에서 SELECT 실행할 수 있다.",
+        "group": "attachment",
+    },
+    {
+        "code": "attachment.execute_sql_on.any",
+        "label": "전체 첨부 sandbox SQL 실행",
+        "description": "모든 계정의 대화 첨부에 대해 sandbox SQL 을 실행할 수 있다. 운영자 한정.",
+        "group": "attachment",
+    },
     {
         "code": "product.manage",
         "label": "제품 관리",
@@ -351,6 +397,21 @@ PERMISSION_DEFINITIONS = (
         "label": "감사 로그 retention 삭제",
         "description": "retention 초과 audit 이벤트를 chunked PK 삭제할 수 있다. 시작/완료 이벤트는 self-audit 으로 기록된다.",
         "group": "audit",
+    },
+    # TASK-0095 (REQ-20260521-0002, Major §12.3): GLOBAL system prompt layer.
+    # `settings` 그룹은 신규 `설정` 탭 (확장성 — 차후 기타 운영 항목 추가 대비) 의 권한 묶음.
+    # admin only auto-grant. 다른 role 은 admin 콘솔에서 explicit override.
+    {
+        "code": "system_prompt.global.read",
+        "label": "전역 시스템 프롬프트 조회",
+        "description": "모든 대화의 최상위 base 가 되는 전역 시스템 프롬프트 본문을 조회할 수 있다.",
+        "group": "settings",
+    },
+    {
+        "code": "system_prompt.global.write",
+        "label": "전역 시스템 프롬프트 수정",
+        "description": "전역 시스템 프롬프트를 수정/삭제할 수 있다. 모든 LLM 응답에 영향이 가는 권한이므로 운영자 한정.",
+        "group": "settings",
     },
 )
 PERMISSION_CODES = tuple(item["code"] for item in PERMISSION_DEFINITIONS)
@@ -423,6 +484,9 @@ SEED_ROLE_DEFINITIONS = (
             # TASK-0073 Phase A3: 모든 role 에 audit.read.own auto-grant
             # (E1 self filter — 본인 actor/target 이벤트 조회).
             "audit.read.own",
+            # TASK-0094 Sprint 1 Phase 3 (D21, R-F14): pending 은 read.own 만.
+            # upload 거부 + bytes download 는 application-level (Phase 5 endpoint) 차단.
+            "conversation.attachment.read.own",
         },
     },
     {
@@ -445,6 +509,11 @@ SEED_ROLE_DEFINITIONS = (
             "conversation.duplicate.own",
             # TASK-0073 Phase A3: 모든 role audit.read.own auto-grant.
             "audit.read.own",
+            # TASK-0094 Sprint 1 Phase 3: 첨부 upload/read own.
+            "conversation.attachment.upload.own",
+            "conversation.attachment.read.own",
+            # TASK-0094 Sprint 1 Phase 12: 첨부 sandbox SQL 실행 own.
+            "attachment.execute_sql_on.own",
         },
     },
     {
@@ -466,6 +535,11 @@ SEED_ROLE_DEFINITIONS = (
             "conversation.duplicate.own",
             # TASK-0073 Phase A3: 모든 role audit.read.own auto-grant.
             "audit.read.own",
+            # TASK-0094 Sprint 1 Phase 3: 첨부 upload/read own.
+            "conversation.attachment.upload.own",
+            "conversation.attachment.read.own",
+            # TASK-0094 Sprint 1 Phase 12: 첨부 sandbox SQL 실행 own (사업팀 자가서비스).
+            "attachment.execute_sql_on.own",
         },
     },
     {
@@ -621,15 +695,74 @@ def _sanitize_session_id(value: str) -> str:
     return ""
 
 
+_TrustedNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+
+def _parse_trusted_proxies(raw: str) -> tuple[_TrustedNetwork, ...]:
+    items: list[_TrustedNetwork] = []
+    bad: list[str] = []
+    for token in (raw or "").split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            items.append(ipaddress.ip_network(token, strict=False))
+        except ValueError:
+            bad.append(token)
+    if bad:
+        if AGENT_MODE in {"prod", "staging"}:
+            raise RuntimeError(
+                f"WEB_TRUSTED_PROXIES: invalid CIDR(s) in {AGENT_MODE}: {bad}"
+            )
+        print(
+            f"[startup] WARNING: WEB_TRUSTED_PROXIES contains invalid CIDR(s) (skipped): {bad}",
+            file=sys.stderr,
+        )
+    return tuple(items)
+
+
+WEB_TRUSTED_PROXIES = _parse_trusted_proxies(os.getenv("WEB_TRUSTED_PROXIES", ""))
+
+# TASK-0087 §9.7: proxy mode + empty trusted proxies = PIPA audit IP quality regression.
+# In prod/staging this is a fail-loud condition; in dev/test we emit a stderr warning only.
+if not WEB_TRUSTED_PROXIES and os.getenv("ENABLE_WEB_TLS_PROXY", "").strip() == "1":
+    if AGENT_MODE in {"prod", "staging"}:
+        raise RuntimeError(
+            "WEB_TRUSTED_PROXIES is empty while ENABLE_WEB_TLS_PROXY=1 "
+            f"in {AGENT_MODE}. Set WEB_TRUSTED_PROXIES to the Caddy peer "
+            "subnet (e.g. 172.18.0.0/16 or RFC1918) — without it, "
+            "audit IpAddr regresses to the Caddy container IP only."
+        )
+    print(
+        "[startup] WARNING: WEB_TRUSTED_PROXIES is empty while "
+        "ENABLE_WEB_TLS_PROXY=1. audit IpAddr will record the Caddy "
+        "container IP only (PIPA §29 quality regression).",
+        file=sys.stderr,
+    )
+
+
+def _is_trusted_proxy(host: str) -> bool:
+    if not host or not WEB_TRUSTED_PROXIES:
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return any(ip in network for network in WEB_TRUSTED_PROXIES)
+
+
 def _get_client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "").strip()
-    if forwarded:
-        first = forwarded.split(",")[0].strip()
-        if first:
+    direct_ip = (request.client.host if request.client else "") or ""
+    if direct_ip and _is_trusted_proxy(direct_ip):
+        forwarded = request.headers.get("x-forwarded-for", "").strip()
+        if forwarded:
+            first = forwarded.split(",")[0].strip()
+            try:
+                ipaddress.ip_address(first)
+            except ValueError:
+                return direct_ip
             return first
-    if request.client:
-        return request.client.host or ""
-    return ""
+    return direct_ip
 
 
 def _get_session_id(request: Request) -> tuple[str, bool, str]:
@@ -899,11 +1032,26 @@ def _role_payload(account: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
-def _serialize_account(account: dict[str, Any] | None) -> dict[str, Any] | None:
+def _serialize_account(
+    account: dict[str, Any] | None,
+    *,
+    include_permissions: bool = False,
+) -> dict[str, Any] | None:
+    """계정 정보를 응답 payload 로 직렬화한다.
+
+    TASK-0098 (REQ-20260522-0002, Critical §12.3): default `False` — 7 self callsite
+    (bootstrap, signup, login, GET `/api/auth/me`, PATCH `/api/auth/me` 2 곳) 가
+    default 호출 → raw permission map 노출 차단. admin-context 3 callsite
+    (`_list_accounts_for_admin`, admin account update, 신규 `/api/admin/me`) 는
+    `include_permissions=True` 명시. `role` 객체는 self 응답에도 유지.
+
+    `console_access` 플래그: TASK-0098 단순화로 인해 frontend can() 가 항상 true
+    를 반환하게 되어 관리 콘솔 버튼이 모든 사용자에게 노출되는 이슈 수정.
+    permissions 전체 노출 없이 UI gate 에 필요한 최소 정보만 제공한다.
+    """
     if not account:
         return None
-    permissions = _account_permissions(account)
-    return {
+    payload: dict[str, Any] = {
         "id": int(account.get("id") or 0),
         "username": str(account.get("username") or ""),
         "role": _role_payload(account),
@@ -914,10 +1062,14 @@ def _serialize_account(account: dict[str, Any] | None) -> dict[str, Any] | None:
         "approved_at": str(account.get("approved_at") or "") or None,
         "last_login_at": str(account.get("last_login_at") or "") or None,
         "last_conversation_id": str(account.get("last_conversation_id") or ""),
-        "permissions": permissions,
         # TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0095): 다음 로그인 시 비밀번호 강제 변경.
         "must_change_password": bool(account.get("must_change_password")),
+        # UI gate 전용 최소 플래그 — permissions 전체 노출 없이 관리 콘솔 접근 여부만 전달.
+        "console_access": _account_has_permission(account, "console.access"),
     }
+    if include_permissions:
+        payload["permissions"] = _account_permissions(account)
+    return payload
 
 
 def _account_conv_file(account_id: int) -> str:
@@ -1490,6 +1642,17 @@ def _ensure_seed_roles(conn) -> None:
             "audit.read.any",
             "audit.export",
             "audit.purge",
+            # TASK-0095: admin 의 전역 시스템 프롬프트 read/write 2건 catchup.
+            "system_prompt.global.read",
+            "system_prompt.global.write",
+            # TASK-0094 Sprint 1 Phase 3: admin 의 첨부 4건 catchup (upload/read × own/any).
+            "conversation.attachment.upload.own",
+            "conversation.attachment.upload.any",
+            "conversation.attachment.read.own",
+            "conversation.attachment.read.any",
+            # TASK-0094 Sprint 1 Phase 12: admin 의 sandbox SQL 실행 2건 catchup.
+            "attachment.execute_sql_on.own",
+            "attachment.execute_sql_on.any",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -1514,6 +1677,11 @@ VALUES (%s, %s)
             "conversation.duplicate.own",
             # TASK-0073 Phase A3: 모든 role 에 audit.read.own auto-grant.
             "audit.read.own",
+            # TASK-0094 Sprint 1 Phase 3: operator/sales 의 첨부 upload/read own.
+            "conversation.attachment.upload.own",
+            "conversation.attachment.read.own",
+            # TASK-0094 Sprint 1 Phase 12: operator/sales 의 sandbox SQL 실행 own.
+            "attachment.execute_sql_on.own",
         )
         catchup_pids = [
             int(permission_map.get(code) or 0)
@@ -1544,7 +1712,13 @@ VALUES (%s, %s)
         if dba_role_id > 0:
             permission_map = _permission_id_map(conn)
             cur = conn.cursor()
-            for code in ("audit.read.own", "audit.read.any", "audit.export"):
+            for code in (
+                "audit.read.own",
+                "audit.read.any",
+                "audit.export",
+                # TASK-0094 Sprint 1 Phase 3: dba 도 첨부 read.own catchup (운영 모니터링 자격).
+                "conversation.attachment.read.own",
+            ):
                 pid = int(permission_map.get(code) or 0)
                 if pid <= 0:
                     continue
@@ -1562,14 +1736,19 @@ VALUES (%s, %s)
         pending_role_id = int(pending_row[0] or 0)
         if pending_role_id > 0:
             permission_map = _permission_id_map(conn)
-            pid = int(permission_map.get("audit.read.own") or 0)
-            if pid > 0:
-                cur = conn.cursor()
+            cur = conn.cursor()
+            # TASK-0094 Sprint 1 Phase 3 (D21, R-F14): pending 은 audit.read.own +
+            # conversation.attachment.read.own (metadata only — bytes download 는 Phase 5
+            # endpoint 의 application-level deny). upload 권한 없음.
+            for code in ("audit.read.own", "conversation.attachment.read.own"):
+                pid = int(permission_map.get(code) or 0)
+                if pid <= 0:
+                    continue
                 cur.execute(
                     "INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId) VALUES (%s, %s)",
                     (pending_role_id, pid),
                 )
-                cur.close()
+            cur.close()
 
 
 SEED_ROLE_SYSTEM_PROMPTS = (
@@ -1616,6 +1795,41 @@ def _ensure_seed_role_system_prompts(conn) -> None:
             account_id=None,
             updated_by_account_id=None,
         )
+
+
+def _ensure_seed_global_system_prompt(conn) -> None:
+    """TASK-0095 (Major §12.3): GLOBAL scope system prompt 1행 idempotent seed.
+
+    `agent_core.SYSTEM_PROMPT` 상수 본문을 `WebSystemPrompts(scope='global', Product/Role/Account NULL)`
+    로 1회만 INSERT. 이미 row 가 있으면 건드리지 않는다 (관리 콘솔 수정 존중).
+    agent_core import 가 실패하면 silent skip — bootstrap-time 의존성 약화는
+    `compose_system_prompt()` 의 fallback 로직이 흡수.
+    """
+    existing = _load_system_prompt(
+        conn,
+        scope="global",
+        product_id=None,
+        role_id=None,
+        account_id=None,
+    )
+    if existing:
+        return
+    try:
+        from agent_core import SYSTEM_PROMPT as _AGENT_SYSTEM_PROMPT  # type: ignore
+        seed_content = str(_AGENT_SYSTEM_PROMPT or "").strip()
+    except Exception:
+        seed_content = ""
+    if not seed_content:
+        return
+    _upsert_system_prompt(
+        conn,
+        scope="global",
+        content=seed_content,
+        product_id=None,
+        role_id=None,
+        account_id=None,
+        updated_by_account_id=None,
+    )
 
 
 SEED_PRODUCT_DEFINITIONS = (
@@ -2542,6 +2756,223 @@ def _ensure_web_conversation_shares_schema(conn) -> None:
         cur.close()
 
 
+def _ensure_web_share_links_policy_version_column(conn) -> None:
+    """TASK-0094 Sprint 1 Phase 2 (R-F7): WebConversationShares 에 PolicyVersion column 추가.
+
+    BRIEFING Revision 2 D9 갱신 — 기존 share token 의 backward-compat 문제 해소를
+    위해 share 발급 시점의 share-policy version 을 row 에 기록한다. 배포된 정책 변경
+    (예: attachment_derived redact 강화) 시 PolicyVersion < 현재 정책 version 의 token
+    이 자동 redact 대상이 되며, audit `share.policy.redact_applied` 이벤트가 기록된다.
+
+    Phase 2 본 단계는 column ALTER 만 추가 — 실제 PolicyVersion 값 채움 / redact 로직 /
+    audit 이벤트 dispatch 는 Phase 8 (share redact) 에서 ship. 기존 row 에는 NULL 또는
+    DEFAULT 1 ('initial-pre-attachment' 의미) 적용.
+    """
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute(
+                "ALTER TABLE WebConversationShares ADD COLUMN PolicyVersion INT NOT NULL DEFAULT 1"
+            )
+        except Exception:
+            pass
+    finally:
+        cur.close()
+
+
+def _ensure_web_conversation_attachments_schema(conn) -> None:
+    """TASK-0094 Sprint 1 Phase 2: WebConversationAttachments 테이블 idempotent CREATE.
+
+    BRIEFING §5.1 정본 — 첨부 객체의 metadata source-of-truth. MinIO ObjectKey (D1) +
+    HMAC filename (D12) + size bucket (D12) + Kind/UploadStatus enum (D17 7 값) +
+    DeletePending/DeleteReason taxonomy (D6 4 종) + MetaJson kind-별 부가 (sheet
+    names, page count, degraded_reason, ingest_summary).
+
+    BRIEFING Revision 2 R-Claim6 흡수 — ConversationId 는 nullable 로 두지 않고 NOT
+    NULL 유지하되, conversation hard-delete 시 application-level tombstone 처리
+    (DELETE 가 아닌 DeletePending=1 + DeleteReason='conv_soft'). reconciliation worker
+    (Phase 9) 가 SLA 따라 hard-delete.
+
+    R-F11 흡수 — derived message 목록은 본 row 의 AttachmentDerivedMessages JSON 이
+    아닌 별도 join table (`WebAttachmentDerivedMessages`) 가 source-of-truth. 본 column
+    은 deprecated 로 두며 Phase 8 (share redact) 에서 join table 로 마이그레이션.
+
+    _ensure_web_tables (slow path) 와 _ensure_seed_catchup (fast path) 양쪽에서 호출.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebConversationAttachments (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ConversationId VARCHAR(128) NOT NULL,
+                AccountId BIGINT NOT NULL,
+                ObjectKey VARCHAR(512) NOT NULL,
+                OriginalFilename VARCHAR(255) NOT NULL,
+                FilenameHmac CHAR(64) NOT NULL,
+                MimeType VARCHAR(128) NOT NULL,
+                SizeBytes BIGINT NOT NULL,
+                SizeBucket VARCHAR(16) NOT NULL,
+                Sha256 CHAR(64) NOT NULL,
+                Kind VARCHAR(16) NOT NULL,
+                UploadStatus VARCHAR(24) NOT NULL DEFAULT 'uploaded',
+                AttachmentDerivedMessages JSON NULL,
+                CreatedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                DeletedAt DATETIME(6) NULL,
+                DeletePending TINYINT NOT NULL DEFAULT 0,
+                DeleteReason VARCHAR(16) NULL,
+                MetaJson JSON NULL,
+                INDEX IX_WCA_Conversation (ConversationId, DeletedAt),
+                INDEX IX_WCA_Account (AccountId, CreatedAt),
+                INDEX IX_WCA_Status (UploadStatus, DeletePending)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+    finally:
+        cur.close()
+
+
+def _ensure_web_conversation_attachments_sandbox_schemas_schema(conn) -> None:
+    """TASK-0094 Sprint 1 Phase 2 (D2/D15/R-F4): sandbox schema mapping table.
+
+    BRIEFING §5.1 — 1 conversation = 1 sandbox schema 의 mapping. schema name 은
+    `agent_attachment_<sha256(conversation_id)[:32]>` 로 D15 R-Claim4 maintenance path
+    가 결정. 본 table 은 lifecycle 추적 (CreatedAt / DroppedAt / DeletePending) + R-F4
+    drift detection 의 expected grants source.
+
+    Phase 2 는 schema CREATE 만 — 실제 schema 생성 path (D15 maintenance) + grant 부여
+    + drift detection worker 는 Phase 10 (sandbox + MySQL users) 에서 ship.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebConversationAttachmentsSandboxSchemas (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ConversationId VARCHAR(128) NOT NULL UNIQUE,
+                SchemaName VARCHAR(64) NOT NULL UNIQUE,
+                CreatedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                DroppedAt DATETIME(6) NULL,
+                DeletePending TINYINT NOT NULL DEFAULT 0,
+                INDEX IX_WCASS_DeletePending (DeletePending, DroppedAt)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+    finally:
+        cur.close()
+
+
+def _ensure_web_account_consents_schema(conn) -> None:
+    """TASK-0094 Sprint 1 Phase 2 (D11): WebAccountConsents 테이블 idempotent CREATE.
+
+    BRIEFING §5.1 — provider × data_class × purpose 별 consent + revoke + audit + 재동의.
+    Revision 2 R-F2 흡수 — UX 는 provider 별 grouped batch modal (3 group: 파일 텍스트
+    분석 / 이미지 분석 / 문서 인덱싱). DB 는 본 세분 row 유지 (보안 단위 ↔ UX 단위 분리).
+
+    UNIQUE (AccountId, Provider, DataClass, Purpose) — 같은 조합의 active 또는 revoked
+    row 는 1 개만. 재동의 시점에는 RevokedAt 갱신 + 새 row INSERT 가 아닌 application
+    layer 의 grant/revoke history 패턴 (별 history table 없이 본 row 의 GrantedAt/RevokedAt
+    교체) 로 처리. 본 row 의 history audit 은 `attachment.consent.grant` /
+    `attachment.consent.revoke` action 으로 WebAuditEvents 에 dispatch.
+
+    Phase 2 는 schema 만 — consent modal flow / revoke endpoint 는 Phase 7 에서 ship.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebAccountConsents (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                AccountId BIGINT NOT NULL,
+                Provider VARCHAR(32) NOT NULL,
+                DataClass VARCHAR(24) NOT NULL,
+                Purpose VARCHAR(16) NOT NULL,
+                GrantedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                RevokedAt DATETIME(6) NULL,
+                UNIQUE KEY UQ_WAC_Identity (AccountId, Provider, DataClass, Purpose),
+                INDEX IX_WAC_Account (AccountId)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+    finally:
+        cur.close()
+
+
+def _ensure_web_attachment_derived_messages_schema(conn) -> None:
+    """TASK-0094 Sprint 1 Phase 2 (D19, R-F11): derived message join table.
+
+    BRIEFING Revision 2 D19 신규 — many-to-many 정규화. 한 assistant message 가 여러
+    attachment 에서 파생될 수 있고, 한 attachment 가 여러 message 에 파생 데이터를
+    제공할 수 있다. DerivationType enum:
+      - csv_sample            : CSV/XLSX의 sample row 출력
+      - csv_query_result      : sandbox SQL 실행 결과
+      - vision_analysis       : Cycle 2 vision 분석 결과
+      - pdf_excerpt           : Cycle 4 PDF excerpt 인용
+      - rag_citation          : Cycle 4 RAG retrieval citation
+
+    Share redact (D9) / audit (D12) / fork 시 derivation 보존 / message hard-delete
+    cascade 가 모두 본 join 기준. 본 row 자체에는 PII 가 없어야 함 — 실제 derived
+    content 는 message body 에 있고, 본 join 은 관계만 보존.
+
+    Phase 2 는 schema 만 — 실제 INSERT 는 Phase 5 (upload API + audit) / Phase 8 (share
+    redact) / Phase 11 (ingest pipeline) / Phase 12 (SQL guard) 에서 ship.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebAttachmentDerivedMessages (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                AttachmentId BIGINT NOT NULL,
+                MessageId BIGINT NOT NULL,
+                DerivationType VARCHAR(24) NOT NULL,
+                CreatedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                INDEX IX_WADM_Attachment (AttachmentId),
+                INDEX IX_WADM_Message (MessageId),
+                INDEX IX_WADM_Type (DerivationType, CreatedAt)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+    finally:
+        cur.close()
+
+
+def _ensure_web_conversation_attachment_provider_files_schema(conn) -> None:
+    """TASK-0094 Sprint 1 Phase 2 (D13, R-F13): provider Files API lifecycle table.
+
+    BRIEFING Revision 2 R-F13 흡수 — OpenAI Files API / Anthropic Files API 를 사용
+    하여 inference 시 attachment bytes 를 provider 에 업로드할 때, provider 측에
+    잔존하는 file object 의 lifecycle 추적. inference 직후 delete API 호출 + 실패 시
+    `reconcile_provider_files` worker 의 TTL 기반 재시도.
+
+    DeletedAt NULL = provider 측에 잔존, NOT NULL = 삭제 확인. Phase 2 는 schema 만 —
+    실제 INSERT + delete 호출 + worker 는 Phase 5 (upload API base) / Phase 4 (storage
+    wrapper) + 후속 cycle 의 provider integration 에서 ship.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebConversationAttachmentProviderFiles (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                AttachmentId BIGINT NOT NULL,
+                Provider VARCHAR(32) NOT NULL,
+                ProviderFileId VARCHAR(255) NOT NULL,
+                UploadedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                DeletedAt DATETIME(6) NULL,
+                LastDeleteAttemptAt DATETIME(6) NULL,
+                DeleteAttemptCount INT NOT NULL DEFAULT 0,
+                LastError VARCHAR(512) NULL,
+                INDEX IX_WCAPF_Attachment (AttachmentId),
+                INDEX IX_WCAPF_Provider (Provider, ProviderFileId),
+                INDEX IX_WCAPF_Pending (DeletedAt, LastDeleteAttemptAt)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+    finally:
+        cur.close()
+
+
 def _log_search_activity(
     conn,
     account_id: int,
@@ -2929,10 +3360,22 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_seed_roles(conn)
     _ensure_seed_products(conn)
     _ensure_seed_role_system_prompts(conn)
+    # TASK-0095: 기존 배포는 fast-path 만 타기 때문에 GLOBAL scope row 가 부재한 채로 남는다.
+    # idempotent — row 가 이미 있으면 건드리지 않으며, agent_core import 실패 시 silent skip 한다.
+    _ensure_seed_global_system_prompt(conn)
     # TASK-0052 Phase 1B: fast-path 재기동에서도 신규 dynamic permission 컬럼 + product 권한 backfill 실행.
     _ensure_dynamic_permissions_schema(conn)
     # REQ-20260514-0001: 공유 링크 테이블 fast-path 보정.
     _ensure_web_conversation_shares_schema(conn)
+    # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column ALTER.
+    _ensure_web_share_links_policy_version_column(conn)
+    # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping + consent +
+    # derived join + provider files lifecycle 5 신규 테이블 fast-path 보정.
+    _ensure_web_conversation_attachments_schema(conn)
+    _ensure_web_conversation_attachments_sandbox_schemas_schema(conn)
+    _ensure_web_account_consents_schema(conn)
+    _ensure_web_attachment_derived_messages_schema(conn)
+    _ensure_web_conversation_attachment_provider_files_schema(conn)
     # TASK-0061 Phase 6: 기존 배포에 MustChangePassword 컬럼 backfill.
     _ensure_must_change_password_schema(conn)
     # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 fast-path 보정.
@@ -3084,6 +3527,15 @@ def _ensure_web_tables():
         _ensure_dynamic_permissions_schema(conn)
         # REQ-20260514-0001: 공유 링크 테이블 보장 (slow path).
         _ensure_web_conversation_shares_schema(conn)
+        # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column (slow path).
+        _ensure_web_share_links_policy_version_column(conn)
+        # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping + consent +
+        # derived join + provider files lifecycle 5 신규 테이블 (slow path).
+        _ensure_web_conversation_attachments_schema(conn)
+        _ensure_web_conversation_attachments_sandbox_schemas_schema(conn)
+        _ensure_web_account_consents_schema(conn)
+        _ensure_web_attachment_derived_messages_schema(conn)
+        _ensure_web_conversation_attachment_provider_files_schema(conn)
         # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 보장 (slow path).
         _ensure_web_audit_events_schema(conn)
         # REQ-20260520-0001 (TASK-0086): migration helper 는 rollback window 동안 보존 (slow path).
@@ -3254,6 +3706,8 @@ def _ensure_web_tables():
         _ensure_seed_roles(conn)
         _ensure_seed_products(conn)
         _ensure_seed_role_system_prompts(conn)
+        # TASK-0095 (Major §12.3): GLOBAL scope system prompt 1행 idempotent seed.
+        _ensure_seed_global_system_prompt(conn)
         # TASK-0052 Phase 1B: WebProducts 와 1:1 동적 권한 row 보장 + D2-A 호환성 backfill (모든 role grant).
         # 호출 순서 정합성: products 가 먼저 만들어진 후, 권한 row 가 보장되어야 admin/account 의 effective
         # permission 계산이 일관됨. _migrate_legacy_accounts_to_rbac 보다 먼저 두는 이유는 RBAC 마이그레이션
@@ -3826,6 +4280,274 @@ def _account_can_access_conversation(
     if not _account_has_permission(account, own_permission):
         return False
     return _conversation_owned_by_account(conn, conversation_id, int(account["id"]))
+
+
+# ============================================================================
+# TASK-0094 Sprint 1 Phase 5 (Cycle 0 upload API) helper 묶음.
+# ============================================================================
+# BRIEFING D6/D7/D8/D11/D12/D13/D16/D21 + R-F14 정합. raw filename / raw bytes 는
+# audit 에 절대 노출 안 함. HMAC + size bucket + extension bucket 의 categorical
+# 메타만.
+
+# D7 (MIME allowlist). archive (zip/tar) 거부 — XLSX 는 zip container 지만 MIME
+# magic + 구조 검증으로 별 path. text/markdown 은 text/plain alias 로도 수용.
+_ATTACHMENT_ALLOWED_MIME_TO_KIND: dict[str, str] = {
+    "text/csv": "csv",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.ms-excel": "xlsx",  # legacy .xls — Phase 11 ingest 단계에서 binary edge 처리 추가.
+    "application/pdf": "pdf",
+    "image/png": "image",
+    "image/jpeg": "image",
+    "image/webp": "image",
+    "text/plain": "text",
+    "text/markdown": "text",
+}
+
+# D8 size cap (.env 의 ATTACHMENT_MAX_BYTES_* 로 override 가능).
+_ATTACHMENT_DEFAULT_MAX_BYTES_PER_FILE = 26_214_400  # 25 MB
+_ATTACHMENT_DEFAULT_MAX_BYTES_PER_CONV = 104_857_600  # 100 MB
+_ATTACHMENT_DEFAULT_MAX_BYTES_PER_ACCOUNT = 1_073_741_824  # 1 GB
+
+
+def _attachment_size_caps() -> tuple[int, int, int]:
+    """env-driven size cap. (per_file, per_conv, per_account) tuple."""
+    return (
+        max(1, int(os.getenv("ATTACHMENT_MAX_BYTES_PER_FILE") or _ATTACHMENT_DEFAULT_MAX_BYTES_PER_FILE)),
+        max(1, int(os.getenv("ATTACHMENT_MAX_BYTES_PER_CONV") or _ATTACHMENT_DEFAULT_MAX_BYTES_PER_CONV)),
+        max(1, int(os.getenv("ATTACHMENT_MAX_BYTES_PER_ACCOUNT") or _ATTACHMENT_DEFAULT_MAX_BYTES_PER_ACCOUNT)),
+    )
+
+
+def _hmac_filename(filename: str) -> str:
+    """D12 tenant-keyed HMAC. `ATTACHMENT_AUDIT_HMAC_KEY` 가 비어 있으면 일관된
+    fallback (`_FALLBACK_AUDIT_HMAC_KEY`) — dev 환경에서 audit row 가 생성 가능
+    하도록 graceful. 운영 환경은 .env 필수.
+    """
+    key = (os.getenv("ATTACHMENT_AUDIT_HMAC_KEY") or "").strip()
+    if not key:
+        key = "_FALLBACK_AUDIT_HMAC_KEY__set_via_env_for_prod"
+    name = (filename or "").strip().encode("utf-8")
+    return hmac.new(key.encode("utf-8"), name, hashlib.sha256).hexdigest()
+
+
+def _extension_bucket(filename: str) -> str:
+    """D12 — `.csv` / `.xlsx` / `.pdf` / `.png` / ... 만 audit 에 노출."""
+    name = (filename or "").strip().lower()
+    if "." not in name:
+        return ".unknown"
+    ext = name.rsplit(".", 1)[1]
+    safe_ext = re.sub(r"[^a-z0-9]", "", ext)[:8]
+    return f".{safe_ext}" if safe_ext else ".unknown"
+
+
+def _size_bucket(size_bytes: int) -> str:
+    """D12 — coarse bucket (audit 노출용)."""
+    n = int(size_bytes or 0)
+    if n < 1_024:
+        return "<1KB"
+    if n < 10_240:
+        return "1-10KB"
+    if n < 102_400:
+        return "10-100KB"
+    if n < 1_048_576:
+        return "100KB-1MB"
+    if n < 10_485_760:
+        return "1-10MB"
+    if n < 26_214_400:
+        return "10-25MB"
+    return ">25MB"
+
+
+def _kind_from_mime(mime_type: str) -> str | None:
+    """D7 allowlist 정합 — 미허용 MIME 은 None 반환 (caller 가 415 응답)."""
+    return _ATTACHMENT_ALLOWED_MIME_TO_KIND.get((mime_type or "").lower().strip())
+
+
+def _account_role_key(account: dict[str, Any] | None) -> str:
+    """role 객체에서 RoleKey 추출. account 에 role row join 결과가 있으면 사용,
+    없으면 빈 문자열."""
+    if not account:
+        return ""
+    role = account.get("role")
+    if isinstance(role, dict):
+        return str(role.get("key") or role.get("RoleKey") or "").strip()
+    return str(account.get("role_key") or "").strip()
+
+
+def _account_is_pending(account: dict[str, Any] | None) -> bool:
+    """D21 / R-F14 — pending role 식별. application-level bytes deny 사용."""
+    return _account_role_key(account) == "pending"
+
+
+def _account_can_access_attachment(
+    conn,
+    account: dict[str, Any] | None,
+    attachment_row: dict[str, Any] | None,
+    own_permission: str,
+    any_permission: str | None = None,
+) -> bool:
+    """`_account_can_access_conversation` 의 attachment-specific 변종.
+
+    attachment 존재 + 본인 소유 conv 인지 확인 후 own_permission 검사. any_permission
+    이 있으면 conv 소유 무관 통과. soft-deleted 첨부 (DeletedAt NOT NULL) 는 거부 —
+    조회는 reconciliation worker 등 운영 path 만 (이 helper 미사용).
+    """
+    if not account or not attachment_row:
+        return False
+    if attachment_row.get("DeletedAt"):
+        return False
+    if any_permission and _account_has_permission(account, any_permission):
+        return True
+    if not _account_has_permission(account, own_permission):
+        return False
+    conversation_id = str(attachment_row.get("ConversationId") or "")
+    if not conversation_id:
+        return False
+    return _conversation_owned_by_account(conn, conversation_id, int(account["id"]))
+
+
+def _check_attachment_size_caps(
+    conn,
+    *,
+    account_id: int,
+    conversation_id: str,
+    new_size_bytes: int,
+) -> tuple[bool, str]:
+    """D8 cumulative size cap. per_file / per_conv / per_account 3 측정.
+
+    Returns: (ok, reason). ok=False 면 caller 가 413 응답 + reason 한국어 메시지.
+    """
+    per_file, per_conv, per_account = _attachment_size_caps()
+    n = int(new_size_bytes or 0)
+    if n <= 0:
+        return False, "첨부 파일이 비어 있습니다."
+    if n > per_file:
+        return False, f"단일 첨부 파일 크기 한도 ({per_file // 1_048_576}MB) 를 초과했습니다."
+
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(SizeBytes), 0)
+            FROM WebConversationAttachments
+            WHERE ConversationId = %s AND DeletedAt IS NULL AND DeletePending = 0
+            """,
+            (conversation_id,),
+        )
+        row = cur.fetchone()
+        conv_used = int((row[0] if row else 0) or 0)
+        if conv_used + n > per_conv:
+            return False, f"대화당 첨부 총 용량 한도 ({per_conv // 1_048_576}MB) 를 초과했습니다."
+
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(SizeBytes), 0)
+            FROM WebConversationAttachments
+            WHERE AccountId = %s AND DeletedAt IS NULL AND DeletePending = 0
+            """,
+            (account_id,),
+        )
+        row = cur.fetchone()
+        account_used = int((row[0] if row else 0) or 0)
+        if account_used + n > per_account:
+            return False, f"계정당 첨부 총 용량 한도 ({per_account // 1_073_741_824}GB) 를 초과했습니다."
+    finally:
+        cur.close()
+    return True, ""
+
+
+def _load_attachment_row(conn, attachment_id: int) -> dict[str, Any] | None:
+    """attachment 단일 row dict 로 반환. 없으면 None."""
+    if not attachment_id:
+        return None
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+            SELECT
+                Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
+                DeletePending, DeleteReason, MetaJson
+            FROM WebConversationAttachments
+            WHERE Id = %s
+            LIMIT 1
+            """,
+            (int(attachment_id),),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        cur.close()
+
+
+def _serialize_attachment_for_audit(row: dict[str, Any] | None) -> dict[str, Any]:
+    """audit ChangeJson 의 categorical 메타만 추출. raw filename / bytes 절대 노출 X."""
+    if not row:
+        return {}
+    return {
+        "id": int(row.get("Id") or 0),
+        "conversation_id": str(row.get("ConversationId") or ""),
+        "filename_hmac": str(row.get("FilenameHmac") or ""),
+        "extension_bucket": _extension_bucket(str(row.get("OriginalFilename") or "")),
+        "size_bucket": str(row.get("SizeBucket") or "") or _size_bucket(int(row.get("SizeBytes") or 0)),
+        "kind": str(row.get("Kind") or ""),
+        "mime_type": str(row.get("MimeType") or ""),
+        "sha256": str(row.get("Sha256") or ""),
+        "upload_status": str(row.get("UploadStatus") or ""),
+        "delete_reason": str(row.get("DeleteReason") or "") or None,
+    }
+
+
+def _serialize_attachment_for_api(row: dict[str, Any] | None, *, include_signed_url: bool = False, signed_url: str | None = None) -> dict[str, Any]:
+    """API 응답용 dict. pending role 은 caller 가 include_signed_url=False 강제 (D21)."""
+    if not row:
+        return {}
+    payload: dict[str, Any] = {
+        "id": int(row.get("Id") or 0),
+        "conversation_id": str(row.get("ConversationId") or ""),
+        "kind": str(row.get("Kind") or ""),
+        "mime_type": str(row.get("MimeType") or ""),
+        "original_filename": str(row.get("OriginalFilename") or ""),
+        "size": int(row.get("SizeBytes") or 0),
+        "size_bucket": str(row.get("SizeBucket") or ""),
+        "sha256": str(row.get("Sha256") or ""),
+        "status": str(row.get("UploadStatus") or ""),
+        "created_at": row.get("CreatedAt").isoformat() if hasattr(row.get("CreatedAt"), "isoformat") else None,
+        "delete_pending": bool(row.get("DeletePending") or 0),
+        "delete_reason": str(row.get("DeleteReason") or "") or None,
+    }
+    meta = row.get("MetaJson")
+    if isinstance(meta, dict):
+        # degraded_reason (D17 partial_indexed) 만 표면화.
+        if meta.get("degraded_reason"):
+            payload["degraded_reason"] = str(meta["degraded_reason"])
+    # TASK-0094 Sprint 1 Phase 9 (F1): delete UX 4 state.
+    # active / delete_pending / restorable_until / purge_in_progress / erased
+    deleted_at = row.get("DeletedAt")
+    delete_pending = bool(row.get("DeletePending") or 0)
+    reason = str(row.get("DeleteReason") or "").lower()
+    if not delete_pending and not deleted_at:
+        payload["lifecycle_state"] = "active"
+    elif reason in ("admin_purge", "legal"):
+        payload["lifecycle_state"] = "purge_in_progress" if delete_pending else "erased"
+    else:
+        payload["lifecycle_state"] = "delete_pending"
+        # restorable_until = DeletedAt + RECON_RETENTION_DAYS (env default 30)
+        try:
+            import datetime as _dt
+            retention_days = max(1, int(os.getenv("ATTACHMENT_RECON_RETENTION_DAYS") or "30"))
+            if deleted_at:
+                deadline = (
+                    deleted_at if isinstance(deleted_at, _dt.datetime)
+                    else _dt.datetime.fromisoformat(str(deleted_at))
+                ) + _dt.timedelta(days=retention_days)
+                payload["restorable_until"] = deadline.isoformat()
+        except Exception:
+            pass
+    if include_signed_url and signed_url:
+        payload["signed_url"] = signed_url
+    return payload
 
 
 def _extract_intent_from_content(content: str) -> str:
@@ -4796,7 +5518,8 @@ GROUP BY owner_account_id
     conversation_counts = {int(owner_id): int(count or 0) for owner_id, count in count_rows if int(owner_id or 0) > 0}
     items: list[dict[str, Any]] = []
     for row in rows:
-        payload = _serialize_account(row) or {}
+        # TASK-0098: admin context — 권한 정보 명시 포함.
+        payload = _serialize_account(row, include_permissions=True) or {}
         payload["conversation_count"] = conversation_counts.get(int(row.get("id") or 0), 0)
         payload["permission_overrides"] = dict(row.get("permission_overrides") or {})
         items.append(payload)
@@ -5227,7 +5950,7 @@ async def ask(request: Request) -> JSONResponse:
     else:
         if not _account_has_permission(account, "conversation.create"):
             conn.close()
-            return _json_error("새 대화를 생성할 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
         if not _account_has_permission(account, "conversation.ask"):
             conn.close()
             return _json_error("권한이 없습니다.", 403)
@@ -5268,7 +5991,7 @@ async def ask(request: Request) -> JSONResponse:
                     if not _account_has_product_access(account, int(hint_pid), conn=conn):
                         if hint_raw_pid not in (None, "", 0):
                             conn.close()
-                            return _json_error("이 제품에 접근할 권한이 없습니다.", 403)
+                            return _json_error("요청을 수행할 수 없습니다.", 403)
                         hint_mode = "auto"
                         hint_pid = None
                 if conv_id:
@@ -5379,6 +6102,24 @@ async def ask(request: Request) -> JSONResponse:
 
         # feature-0007: api_key 인자 제거. agent_core 가 env 단일 소스로 자격증명
         # 결정 (LLM_API_KEY → BEDROCK_GATEWAY_API_KEY chain).
+        # TASK-0094 Sprint 1 Phase 11: attachment_ids 를 env 로 전달 (D16 정합).
+        # compose_system_prompt 가 ATTACHMENT_IDS env 를 읽어 prompt 에 section 주입.
+        # 명시 안 되면 빈 list — 본 cycle 의 attachment 미주입 (minimum exposure).
+        attachment_ids_raw = data.get("attachment_ids") if isinstance(data.get("attachment_ids"), list) else []
+        attachment_ids_clean: list[int] = []
+        for v in attachment_ids_raw[:50]:  # cap 50 per request
+            try:
+                iv = int(v)
+                if iv > 0:
+                    attachment_ids_clean.append(iv)
+            except Exception:
+                continue
+        if attachment_ids_clean:
+            os.environ["ATTACHMENT_IDS"] = ",".join(str(i) for i in attachment_ids_clean)
+        else:
+            os.environ.pop("ATTACHMENT_IDS", None)
+
+
         agent_result = await asyncio.to_thread(
             _run_agent_core,
             user_message=message,
@@ -5393,6 +6134,8 @@ async def ask(request: Request) -> JSONResponse:
             allowed_schemas=allowed_schemas_for_run,
             product_mode=product_mode_for_run,
         )
+        # cleanup env to avoid leaking across requests.
+        os.environ.pop("ATTACHMENT_IDS", None)
         conversation_id = str(agent_result.get("conversation_id") or "").strip()
         if conversation_id:
             _assign_conversation_owner(conn, conversation_id, int(account["id"]))
@@ -5481,7 +6224,7 @@ async def new_conversation(request: Request) -> JSONResponse:
             # explicit body 에 명시했는데 권한 없으면 403 (보안 명확성). default 가 강등된 경우는 auto.
             if (data or {}).get("product_id") not in (None, "", 0):
                 conn.close()
-                return _json_error("이 제품에 접근할 권한이 없습니다.", 403)
+                return _json_error("요청을 수행할 수 없습니다.", 403)
             # default product 권한도 없는 케이스 → auto 강등 (운영 가능성 유지).
             req_mode = "auto"
             req_product_id = None
@@ -5584,7 +6327,7 @@ async def update_conversation_product(cid: str, request: Request) -> JSONRespons
         # 기존 코드는 IsActive 만 검사 → 모든 logged-in account 가 임의 product 에 pin 가능했음.
         if not _account_has_product_access(account, pinned_id, conn=conn):
             conn.close()
-            return _json_error("이 제품에 접근할 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
 
     try:
         cur_u = conn.cursor()
@@ -5815,7 +6558,7 @@ async def fork_conversation(request: Request) -> JSONResponse:
         if error:
             return error
         if not _account_has_permission(account, "conversation.create"):
-            return _json_error("'새 대화 생성' 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
         if not _account_can_access_conversation(
             conn,
             account,
@@ -5869,7 +6612,7 @@ async def duplicate_conversation(cid: str, request: Request) -> JSONResponse:
         ):
             return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
         if not _account_has_permission(account, "conversation.create"):
-            return _json_error("'새 대화 생성' 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
         payload, err = _fork_conversation_impl(conn, account, cid, None)
         if err:
             return err
@@ -5916,7 +6659,7 @@ def _share_load_active(conn, token: str) -> dict[str, Any] | None:
         cur.execute(
             """
 SELECT Id, ConversationId, Token, ScopeMode, AnchorMessageId,
-       CreatedBy, CreatedAt, RevokedAt, ViewCount, LastViewedAt
+       CreatedBy, CreatedAt, RevokedAt, ViewCount, LastViewedAt, PolicyVersion
 FROM WebConversationShares
 WHERE Token = %s
 LIMIT 1
@@ -5942,10 +6685,51 @@ def _share_anchor_belongs_to_conversation(conn, conversation_id: str, anchor_mes
         cur.close()
 
 
-def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | None) -> list[dict[str, Any]]:
+# TASK-0094 Sprint 1 Phase 8 (D9 + R-F7): share-policy version 상수.
+# 정책 변경 (예: attachment_derived redact 규칙 추가) 시 본 상수 증가 → token row 의
+# PolicyVersion 비교로 stale token 자동 redact.
+SHARE_POLICY_VERSION_CURRENT = 2
+
+# 1 = TASK-0058 시점 (no attachment redact).
+# 2 = TASK-0094 Phase 8 (attachment_derived redact + R-F7 자동 적용).
+SHARE_POLICY_REDACT_TEXT = "[첨부 파일 분석 본문 — 보안 정책에 따라 공유 시 가려짐]"
+
+
+def _meta_has_attachment_derived(meta_obj) -> bool:
+    """D9 attachment_derived flag 검사. MetaJson 안의 `attachment_derived: true`."""
+    if not isinstance(meta_obj, dict):
+        return False
+    if meta_obj.get("attachment_derived"):
+        return True
+    # 향후 Phase 11 / Cycle 2 / 3 / 4 에서 추가될 derived type 도 catch.
+    return False
+
+
+def _share_redact_message_content(content: str, meta_obj) -> tuple[str, bool, dict | None]:
+    """attachment_derived 메시지 본문을 redact. 반환: (redacted_content, was_redacted, meta_obj_clean).
+
+    raw attachment payload (CSV sample / vision 분석 결과 / PDF excerpt) 가 share view
+    에 노출되지 않도록 본문을 가림. meta 의 sensitive 필드도 함께 redact (final_sql /
+    result_rows 등은 D12 정합으로 별도 categorical 메타만 유지).
+    """
+    if not _meta_has_attachment_derived(meta_obj):
+        return content, False, meta_obj
+    meta_clean = None
+    if isinstance(meta_obj, dict):
+        meta_clean = {k: v for k, v in meta_obj.items() if k not in ("final_sql", "sql", "result_rows", "result_text")}
+        meta_clean["attachment_derived"] = True
+        meta_clean["redacted_by_share_policy"] = True
+    return SHARE_POLICY_REDACT_TEXT, True, meta_clean
+
+
+def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | None, *, share_token_policy_version: int | None = None) -> list[dict[str, Any]]:
     """공유 view 용 메시지 목록. anchor 가 주어지면 `Id <= anchor` (inclusive).
 
     fork 의 `_is_internal_message` 와 동일 필터를 적용해 내부/시스템 메시지를 숨긴다.
+
+    TASK-0094 Sprint 1 Phase 8 (D9 + R-F7): share_token_policy_version 이 NULL 또는
+    SHARE_POLICY_VERSION_CURRENT 보다 작으면 attachment_derived 메시지 본문 자동 redact.
+    기존 token (PolicyVersion=1 또는 NULL) 도 배포 즉시 새 정책 적용.
     """
     cur = conn.cursor(dictionary=True)
     try:
@@ -5973,6 +6757,11 @@ ORDER BY Id ASC
     finally:
         cur.close()
     visible: list[dict[str, Any]] = []
+    # R-F7: 정책 version 비교 — token 발급 시 version < 현재 면 자동 redact 대상.
+    redact_active = (
+        share_token_policy_version is None
+        or int(share_token_policy_version or 0) < SHARE_POLICY_VERSION_CURRENT
+    )
     for row in rows:
         role = str(row.get("Role") or "")
         content = str(row.get("Content") or "")
@@ -5985,6 +6774,9 @@ ORDER BY Id ASC
                 meta_obj = json.loads(meta_json) if isinstance(meta_json, str) else meta_json
             except Exception:
                 meta_obj = None
+        # D9 + R-F7: attachment_derived 메시지 redact (token PolicyVersion 무관, 현 정책 v2 부터 활성).
+        if redact_active:
+            content, _was_redacted, meta_obj = _share_redact_message_content(content, meta_obj)
         created_at = row.get("CreatedAt")
         visible.append(
             {
@@ -6029,7 +6821,7 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
         if error:
             return error
         if not _account_has_permission(account, "conversation.share.create"):
-            return _json_error("대화 공유 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
         if not _account_can_access_conversation(
             conn,
             account,
@@ -6050,8 +6842,8 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
                 cur.execute(
                     """
 INSERT INTO WebConversationShares
-    (ConversationId, Token, ScopeMode, AnchorMessageId, CreatedBy)
-VALUES (%s, %s, %s, %s, %s)
+    (ConversationId, Token, ScopeMode, AnchorMessageId, CreatedBy, PolicyVersion)
+VALUES (%s, %s, %s, %s, %s, %s)
                     """,
                     (
                         cid,
@@ -6059,6 +6851,7 @@ VALUES (%s, %s, %s, %s, %s)
                         scope_mode,
                         int(anchor_id) if anchor_id is not None else None,
                         int(account["id"]),
+                        SHARE_POLICY_VERSION_CURRENT,
                     ),
                 )
                 share_id = int(cur.lastrowid or 0)
@@ -6186,7 +6979,7 @@ def revoke_share(share_id: int, request: Request) -> JSONResponse:
         is_creator = int(row.get("CreatedBy") or 0) == int(account["id"])
         is_admin = _account_has_permission(account, "conversation.read.any")
         if not (is_creator or is_admin):
-            return _json_error("이 공유 링크를 취소할 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
         cur = conn.cursor()
         try:
             cur.execute(
@@ -6276,7 +7069,40 @@ LIMIT 1
             conv_meta = cur.fetchone() or {}
         finally:
             cur.close()
-        messages = _share_load_messages(conn, conversation_id, anchor_id_int)
+        # TASK-0094 Sprint 1 Phase 8 (D9 + R-F7): share token row 의 PolicyVersion 추출 후 redact 결정.
+        share_policy_version_raw = share.get("PolicyVersion")
+        share_policy_version: int | None
+        try:
+            share_policy_version = int(share_policy_version_raw) if share_policy_version_raw is not None else None
+        except Exception:
+            share_policy_version = None
+        messages = _share_load_messages(
+            conn,
+            conversation_id,
+            anchor_id_int,
+            share_token_policy_version=share_policy_version,
+        )
+        # R-F7 audit dispatch — stale token (PolicyVersion < CURRENT) 의 자동 redact 활성 기록.
+        if share_policy_version is None or int(share_policy_version or 0) < SHARE_POLICY_VERSION_CURRENT:
+            try:
+                _audit_user_action(
+                    conn,
+                    request,
+                    None,  # actor_type='anonymous' / 'account' 는 본 turn 의 viewer 로 결정 (아래 다시 호출)
+                    action="share.policy.redact_applied",
+                    resource_type="share",
+                    resource_id=str(int(share.get("Id") or 0)) if share.get("Id") is not None else None,
+                    request_ctx={
+                        "share_id": int(share.get("Id") or 0) if share.get("Id") is not None else None,
+                        "token_prefix": str(token)[:8],
+                        "token_policy_version": share_policy_version,
+                        "current_policy_version": SHARE_POLICY_VERSION_CURRENT,
+                        "redact_reason": "policy_version_mismatch",
+                    },
+                    actor_type="anonymous",
+                )
+            except Exception:
+                pass
         # 로그인 상태 + conversation.create 보유 시 fork 가능 flag.
         viewer = _optional_account(request, conn)
         can_fork = bool(viewer and _account_has_permission(viewer, "conversation.create"))
@@ -6345,7 +7171,7 @@ async def public_share_fork(token: str, request: Request) -> JSONResponse:
         if error:
             return error
         if not _account_has_permission(account, "conversation.create"):
-            return _json_error("'새 대화 생성' 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
         share = _share_load_active(conn, token)
         if not share:
             return _json_error("공유 링크를 찾을 수 없습니다.", 404)
@@ -6395,6 +7221,610 @@ async def list_conversations(request: Request) -> JSONResponse:
 @app.post("/api/clear_memory")
 async def clear_memory(request: Request) -> JSONResponse:
     return _json_error("전체 정리 기능은 제거되었습니다.", 410)
+
+
+# ============================================================================
+# TASK-0094 Sprint 1 Phase 5 — Cycle 0 attachment upload / list / metadata / delete
+# + consent grant / revoke (6 endpoint, BRIEFING §5.4).
+# ============================================================================
+
+
+@app.post("/api/conversations/{cid}/attachments")
+async def upload_conversation_attachment(
+    cid: str,
+    request: Request,
+    file: UploadFile = File(...),
+) -> JSONResponse:
+    """첨부 multipart upload (BRIEFING §5.4 row 1).
+
+    권한: `conversation.attachment.upload.{own,any}` + 대상 conv 접근 권한.
+    검증: D7 MIME allowlist + D8 size cap (per_file/conv/account) + D12 HMAC.
+    부작용: MinIO put_object + WebConversationAttachments INSERT + audit
+    `attachment.upload` dispatch.
+
+    Response: `{id, kind, signed_url (사내망 다운로드 전용), size, sha256, status}`
+    """
+    try:
+        from modules import storage_minio
+    except Exception as exc:
+        return _json_error(f"storage 모듈 import 실패: {exc}", 500)
+
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        # RBAC: upload.{own,any} + 대상 conv 접근.
+        if not _account_can_access_conversation(
+            conn,
+            account,
+            cid,
+            "conversation.attachment.upload.own",
+            "conversation.attachment.upload.any",
+        ):
+            return _json_error("이 대화에 첨부를 업로드할 권한이 없습니다.", 403)
+
+        # D7 MIME allowlist 검증.
+        mime_type = (file.content_type or "").strip().lower()
+        kind = _kind_from_mime(mime_type)
+        if not kind:
+            return _json_error(
+                f"지원하지 않는 MIME 입니다 ({mime_type or 'unknown'}). 허용: CSV/XLSX/PDF/PNG/JPEG/WEBP/text/markdown.",
+                415,
+            )
+
+        # 본문 read — D8 size cap pre-check 위해 in-memory read.
+        # Phase 11 (ingest pipeline) 진입 시 streaming upload + spool-to-disk 옵션 검토.
+        try:
+            body_bytes = await file.read()
+        except Exception as exc:
+            return _json_error(f"첨부 본문 read 실패: {exc}", 400)
+        if not body_bytes:
+            return _json_error("첨부 파일이 비어 있습니다.", 400)
+
+        # D8 size cap (per_file / per_conv / per_account).
+        ok, reason = _check_attachment_size_caps(
+            conn,
+            account_id=int(account["id"]),
+            conversation_id=cid,
+            new_size_bytes=len(body_bytes),
+        )
+        if not ok:
+            return _json_error(reason, 413)
+
+        # D12 categorical 메타.
+        filename = (file.filename or "unnamed").strip()
+        filename_hmac = _hmac_filename(filename)
+        ext_bucket = _extension_bucket(filename)
+        size_bucket = _size_bucket(len(body_bytes))
+        sha256_hex = hashlib.sha256(body_bytes).hexdigest()
+
+        # ObjectKey: <cid>/<attachment_uuid>/<safe_filename>.
+        import uuid as _uuid
+        attachment_uuid = str(_uuid.uuid4())
+        object_key = storage_minio.make_object_key(cid, attachment_uuid, filename)
+
+        # INSERT row first (uploaded 상태) — MinIO put 실패 시 rollback.
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                INSERT INTO WebConversationAttachments (
+                    ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                    UploadStatus, MetaJson
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'uploaded', NULL)
+                """,
+                (
+                    cid,
+                    int(account["id"]),
+                    object_key,
+                    filename,
+                    filename_hmac,
+                    mime_type,
+                    len(body_bytes),
+                    size_bucket,
+                    sha256_hex,
+                    kind,
+                ),
+            )
+            attachment_id = int(cur.lastrowid or 0)
+        finally:
+            cur.close()
+        if not attachment_id:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return _json_error("첨부 row 생성 실패", 500)
+
+        # MinIO put — D13 정합 (signed URL 송신 금지, server-side write).
+        try:
+            storage_minio.put_object_bytes(
+                object_key,
+                body_bytes,
+                content_type=mime_type,
+                metadata={
+                    "attachment-id": str(attachment_id),
+                    "conversation-id": cid,
+                    "uploader-account-id": str(account["id"]),
+                    "filename-hmac": filename_hmac,
+                },
+            )
+        except (storage_minio.StorageConfigError, storage_minio.StorageOperationError) as exc:
+            try:
+                # MinIO put 실패 → row 즉시 hard-delete (orphan 방지).
+                _cur = conn.cursor()
+                _cur.execute(
+                    "DELETE FROM WebConversationAttachments WHERE Id = %s",
+                    (attachment_id,),
+                )
+                _cur.close()
+                conn.commit()
+            except Exception:
+                pass
+            return _json_error(f"MinIO 업로드 실패: {exc}", 502)
+
+        try:
+            conn.commit()
+        except Exception:
+            pass
+
+        # audit dispatch — D12 raw filename / bytes 절대 제외.
+        attachment_row = _load_attachment_row(conn, attachment_id)
+        try:
+            _audit_user_action(
+                conn,
+                request,
+                account,
+                action="attachment.upload",
+                resource_type="attachment",
+                resource_id=str(attachment_id),
+                request_ctx=_serialize_attachment_for_audit(attachment_row),
+            )
+        except Exception:
+            pass
+
+        # signed URL 발급 (사내망 다운로드 전용 — D13). pending 은 발급 안 함 (D21).
+        signed_url: str | None = None
+        if not _account_is_pending(account):
+            try:
+                signed_url = storage_minio.generate_presigned_get(
+                    object_key,
+                    response_filename=filename,
+                )
+            except (storage_minio.StorageConfigError, storage_minio.StorageOperationError):
+                signed_url = None
+
+        payload = _serialize_attachment_for_api(
+            attachment_row,
+            include_signed_url=bool(signed_url),
+            signed_url=signed_url,
+        )
+        return JSONResponse(payload)
+    finally:
+        conn.close()
+
+
+@app.get("/api/conversations/{cid}/attachments")
+def list_conversation_attachments(cid: str, request: Request) -> JSONResponse:
+    """대화의 active 첨부 목록 (DeletedAt IS NULL). 권한: read.{own,any}."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_can_access_conversation(
+            conn,
+            account,
+            cid,
+            "conversation.attachment.read.own",
+            "conversation.attachment.read.any",
+        ):
+            return _json_error("이 대화의 첨부를 조회할 권한이 없습니다.", 403)
+
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+                SELECT
+                    Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                    UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
+                    DeletePending, DeleteReason, MetaJson
+                FROM WebConversationAttachments
+                WHERE ConversationId = %s AND DeletedAt IS NULL
+                ORDER BY Id ASC
+                """,
+                (cid,),
+            )
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+
+        results = [_serialize_attachment_for_api(dict(row)) for row in rows]
+        return JSONResponse({"attachments": results})
+    finally:
+        conn.close()
+
+
+@app.get("/api/attachments/{attachment_id}")
+def get_attachment_metadata(attachment_id: int, request: Request) -> JSONResponse:
+    """첨부 metadata + signed URL re-issue (사내망 다운로드 전용). D21 pending 은
+    metadata 만, signed URL 미발급."""
+    try:
+        from modules import storage_minio
+    except Exception as exc:
+        return _json_error(f"storage 모듈 import 실패: {exc}", 500)
+
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        row = _load_attachment_row(conn, attachment_id)
+        if not _account_can_access_attachment(
+            conn,
+            account,
+            row,
+            "conversation.attachment.read.own",
+            "conversation.attachment.read.any",
+        ):
+            return _json_error("첨부를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+
+        signed_url: str | None = None
+        if not _account_is_pending(account):
+            try:
+                signed_url = storage_minio.generate_presigned_get(
+                    str(row.get("ObjectKey") or ""),
+                    response_filename=str(row.get("OriginalFilename") or ""),
+                )
+            except (storage_minio.StorageConfigError, storage_minio.StorageOperationError):
+                signed_url = None
+
+        payload = _serialize_attachment_for_api(
+            row,
+            include_signed_url=bool(signed_url),
+            signed_url=signed_url,
+        )
+        # D21 metadata-only 마커 — frontend 가 사용자에게 안내.
+        if _account_is_pending(account):
+            payload["bytes_access_denied"] = True
+            payload["bytes_access_denied_reason"] = "승인 대기 계정은 첨부 본문을 다운로드할 수 없습니다."
+        return JSONResponse(payload)
+    finally:
+        conn.close()
+
+
+@app.delete("/api/attachments/{attachment_id}")
+def delete_attachment(attachment_id: int, request: Request) -> JSONResponse:
+    """첨부 soft-delete (D6 user delete_reason). MinIO 객체 실삭제는 Phase 9
+    reconciliation worker 가 retention 만료 후 처리. 권한: upload.{own,any}.
+
+    BRIEFING D6 의 4 종 taxonomy 중 user delete 만 본 endpoint 가 trigger.
+    admin_purge / legal erasure / conv_soft 는 별 endpoint (Phase 9 ship).
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        row = _load_attachment_row(conn, attachment_id)
+        # upload.{own,any} 가 soft-delete 권한 (uploader 가 자기 첨부 회수).
+        if not _account_can_access_attachment(
+            conn,
+            account,
+            row,
+            "conversation.attachment.upload.own",
+            "conversation.attachment.upload.any",
+        ):
+            return _json_error("첨부를 찾을 수 없거나 삭제 권한이 없습니다.", 404)
+
+        # 이미 soft-deleted 면 idempotent 응답.
+        if row.get("DeletePending"):
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "delete_reason": str(row.get("DeleteReason") or "user"),
+                    "already_pending": True,
+                }
+            )
+
+        before_snapshot = _serialize_attachment_for_audit(row)
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                UPDATE WebConversationAttachments
+                SET DeletePending = 1, DeleteReason = 'user', DeletedAt = UTC_TIMESTAMP(6)
+                WHERE Id = %s AND DeletePending = 0
+                """,
+                (int(attachment_id),),
+            )
+            updated = int(cur.rowcount or 0)
+        finally:
+            cur.close()
+
+        if updated <= 0:
+            return _json_error("삭제 처리 실패 (이미 처리됨)", 409)
+
+        try:
+            conn.commit()
+        except Exception:
+            pass
+
+        # audit dispatch.
+        try:
+            _audit_user_action(
+                conn,
+                request,
+                account,
+                action="attachment.delete",
+                resource_type="attachment",
+                resource_id=str(attachment_id),
+                request_ctx={**before_snapshot, "delete_reason": "user"},
+            )
+        except Exception:
+            pass
+
+        return JSONResponse({"ok": True, "delete_reason": "user"})
+    finally:
+        conn.close()
+
+
+@app.get("/api/account/consents")
+def list_account_consents(request: Request) -> JSONResponse:
+    """본인 consent row 목록 (Phase 7 grouped modal 의 toggle 상태 표시용). own only."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+                SELECT Id, Provider, DataClass, Purpose, GrantedAt, RevokedAt
+                FROM WebAccountConsents
+                WHERE AccountId = %s
+                ORDER BY Provider ASC, DataClass ASC, Purpose ASC, Id ASC
+                """,
+                (int(account["id"]),),
+            )
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+        consents = [
+            {
+                "id": int(r.get("Id") or 0),
+                "provider": str(r.get("Provider") or ""),
+                "data_class": str(r.get("DataClass") or ""),
+                "purpose": str(r.get("Purpose") or ""),
+                "granted": bool(r.get("GrantedAt") and not r.get("RevokedAt")),
+            }
+            for r in rows
+        ]
+        return JSONResponse({"consents": consents})
+    finally:
+        conn.close()
+
+
+@app.post("/api/account/consents")
+async def grant_account_consent(request: Request) -> JSONResponse:
+    """D11 consent grant (own only). body: {provider, data_class, purpose}.
+
+    UNIQUE (AccountId, Provider, DataClass, Purpose) 정합 — 이미 active row 있으면
+    RevokedAt 리셋 (재동의). 없으면 INSERT.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    provider = str(data.get("provider") or "").strip().lower()
+    data_class = str(data.get("data_class") or "").strip().lower()
+    purpose = str(data.get("purpose") or "").strip().lower()
+
+    if provider not in ("openai", "anthropic", "local"):
+        return _json_error("provider 값이 잘못됐습니다 (openai/anthropic/local).", 400)
+    if data_class not in ("file_text", "file_image", "file_embedding"):
+        return _json_error("data_class 값이 잘못됐습니다 (file_text/file_image/file_embedding).", 400)
+    if purpose not in ("inference", "indexing"):
+        return _json_error("purpose 값이 잘못됐습니다 (inference/indexing).", 400)
+
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+
+        # Load existing row (audit before-snapshot 용).
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+                SELECT Id, AccountId, Provider, DataClass, Purpose, GrantedAt, RevokedAt
+                FROM WebAccountConsents
+                WHERE AccountId = %s AND Provider = %s AND DataClass = %s AND Purpose = %s
+                LIMIT 1
+                """,
+                (int(account["id"]), provider, data_class, purpose),
+            )
+            before_row = cur.fetchone()
+        finally:
+            cur.close()
+
+        cur = conn.cursor()
+        try:
+            if before_row:
+                cur.execute(
+                    """
+                    UPDATE WebAccountConsents
+                    SET GrantedAt = UTC_TIMESTAMP(6), RevokedAt = NULL
+                    WHERE Id = %s
+                    """,
+                    (int(before_row["Id"]),),
+                )
+                consent_id = int(before_row["Id"])
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO WebAccountConsents (AccountId, Provider, DataClass, Purpose)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (int(account["id"]), provider, data_class, purpose),
+                )
+                consent_id = int(cur.lastrowid or 0)
+        finally:
+            cur.close()
+
+        if not consent_id:
+            return _json_error("consent 저장 실패", 500)
+
+        try:
+            conn.commit()
+        except Exception:
+            pass
+
+        # audit dispatch.
+        try:
+            _audit_user_action(
+                conn,
+                request,
+                account,
+                action="attachment.consent.grant",
+                resource_type="consent",
+                resource_id=str(consent_id),
+                request_ctx={
+                    "id": consent_id,
+                    "provider": provider,
+                    "data_class": data_class,
+                    "purpose": purpose,
+                    "revoked_at": (
+                        before_row.get("RevokedAt").isoformat()
+                        if before_row and before_row.get("RevokedAt") and hasattr(before_row.get("RevokedAt"), "isoformat")
+                        else None
+                    ),
+                },
+            )
+        except Exception:
+            pass
+
+        return JSONResponse(
+            {
+                "id": consent_id,
+                "provider": provider,
+                "data_class": data_class,
+                "purpose": purpose,
+                "granted_at": True,
+            }
+        )
+    finally:
+        conn.close()
+
+
+@app.delete("/api/account/consents/{consent_id}")
+def revoke_account_consent(consent_id: int, request: Request) -> JSONResponse:
+    """D11 consent revoke (own only). RevokedAt 만 UPDATE — row delete 안 함
+    (history 보존)."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+
+        # Load + ownership check.
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+                SELECT Id, AccountId, Provider, DataClass, Purpose, GrantedAt, RevokedAt
+                FROM WebAccountConsents
+                WHERE Id = %s
+                LIMIT 1
+                """,
+                (int(consent_id),),
+            )
+            row = cur.fetchone()
+        finally:
+            cur.close()
+
+        if not row or int(row.get("AccountId") or 0) != int(account["id"]):
+            return _json_error("consent 를 찾을 수 없거나 본인 row 가 아닙니다.", 404)
+        if row.get("RevokedAt"):
+            return JSONResponse({"revoked_at": True, "already_revoked": True})
+
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE WebAccountConsents SET RevokedAt = UTC_TIMESTAMP(6) WHERE Id = %s AND RevokedAt IS NULL",
+                (int(consent_id),),
+            )
+            updated = int(cur.rowcount or 0)
+        finally:
+            cur.close()
+
+        if updated <= 0:
+            return _json_error("revoke 처리 실패", 409)
+
+        try:
+            conn.commit()
+        except Exception:
+            pass
+
+        # audit dispatch.
+        try:
+            _audit_user_action(
+                conn,
+                request,
+                account,
+                action="attachment.consent.revoke",
+                resource_type="consent",
+                resource_id=str(consent_id),
+                request_ctx={
+                    "id": int(consent_id),
+                    "provider": str(row.get("Provider") or ""),
+                    "data_class": str(row.get("DataClass") or ""),
+                    "purpose": str(row.get("Purpose") or ""),
+                    "granted_at": (
+                        row.get("GrantedAt").isoformat()
+                        if row.get("GrantedAt") and hasattr(row.get("GrantedAt"), "isoformat")
+                        else None
+                    ),
+                },
+            )
+        except Exception:
+            pass
+
+        return JSONResponse({"revoked_at": True})
+    finally:
+        conn.close()
 
 
 @app.get("/api/conversations")
@@ -7534,6 +8964,35 @@ async def auth_logout(request: Request) -> JSONResponse:
     return resp
 
 
+@app.get("/api/admin/me")
+async def admin_me(request: Request) -> JSONResponse:
+    """관리 콘솔 전용 self 정보 endpoint (TASK-0098).
+
+    `console.access` permission 보유자만 200 + permissions 포함 응답을 받는다.
+    미보유자 = 403, 비로그인 = 401. admin.js 가 본 endpoint 로 진입 게이트를
+    검사한다 — `/api/auth/me` (일반 self) 의 permissions 필드가 제거되어도
+    admin 콘솔 진입이 깨지지 않도록 분리한 admin-context endpoint.
+
+    Codex outside voice F1 (blocker) 흡수.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(account, "console.access"):
+        conn.close()
+        return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    conn.close()
+    return JSONResponse({
+        "ok": True,
+        "user": _serialize_account(account, include_permissions=True),
+    })
+
+
 @app.get("/api/admin/accounts")
 async def admin_accounts(request: Request) -> JSONResponse:
     try:
@@ -7698,7 +9157,8 @@ WHERE Id = %s
         conn.close()
         return _json_error(f"audit write failed: {audit_exc}", 500)
     conn.close()
-    payload = _serialize_account(updated) or {}
+    # TASK-0098: admin context — 권한 정보 명시 포함.
+    payload = _serialize_account(updated, include_permissions=True) or {}
     payload["permission_overrides"] = dict((updated or {}).get("permission_overrides") or {})
     return JSONResponse({"ok": True, "account": payload})
 
@@ -8707,11 +10167,19 @@ async def admin_get_system_prompt(
     if error:
         conn.close()
         return error
-    if scope not in ("product", "role", "account"):
+    if scope not in ("global", "product", "role", "account"):
         conn.close()
-        return _json_error("scope 은 product/role/account 중 하나여야 합니다.", 400)
+        return _json_error("scope 은 global/product/role/account 중 하나여야 합니다.", 400)
     # scope 별 권한 검사
-    if scope == "product":
+    if scope == "global":
+        # TASK-0095: GLOBAL 은 product/role/account ids 무시 (force NULL).
+        if not _account_has_permission(actor, "system_prompt.global.read"):
+            conn.close()
+            return _json_error("전역 시스템 프롬프트 조회 권한이 없습니다.", 403)
+        product_id = None
+        role_id = None
+        account_id = None
+    elif scope == "product":
         if not _account_has_permission(actor, "product.manage"):
             conn.close()
             return _json_error("제품 시스템 프롬프트 조회 권한이 없습니다.", 403)
@@ -8750,14 +10218,22 @@ async def admin_put_system_prompt(request: Request) -> JSONResponse:
         conn.close()
         return error
     scope = str(data.get("scope") or "").strip().lower()
-    if scope not in ("product", "role", "account"):
+    if scope not in ("global", "product", "role", "account"):
         conn.close()
-        return _json_error("scope 은 product/role/account 중 하나여야 합니다.", 400)
+        return _json_error("scope 은 global/product/role/account 중 하나여야 합니다.", 400)
     content = str(data.get("content") or "")
     product_id = int(data.get("product_id") or 0) or None
     role_id = int(data.get("role_id") or 0) or None
     account_id = int(data.get("account_id") or 0) or None
-    if scope == "product":
+    if scope == "global":
+        # TASK-0095: GLOBAL 은 product/role/account ids 무시 (force NULL).
+        if not _account_has_permission(actor, "system_prompt.global.write"):
+            conn.close()
+            return _json_error("전역 시스템 프롬프트 관리 권한이 없습니다.", 403)
+        product_id = None
+        role_id = None
+        account_id = None
+    elif scope == "product":
         if not _account_has_permission(actor, "product.manage"):
             conn.close()
             return _json_error("제품 시스템 프롬프트 관리 권한이 없습니다.", 403)
@@ -8839,7 +10315,7 @@ async def me_get_system_prompt(request: Request, product_id: int | None = None) 
     if product_id is not None and int(product_id) > 0:
         if not _account_has_product_access(account, int(product_id), conn=conn):
             conn.close()
-            return _json_error("이 제품에 접근할 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
     # 계정 스코프: 개인 프롬프트는 product 별 혹은 product 무관 하나씩 보유 가능.
     row = _load_system_prompt(
         conn,
@@ -8879,7 +10355,7 @@ async def me_put_system_prompt(request: Request) -> JSONResponse:
     if product_id is not None and int(product_id) > 0:
         if not _account_has_product_access(account, int(product_id), conn=conn):
             conn.close()
-            return _json_error("이 제품에 접근할 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
     new_id = _upsert_system_prompt(
         conn,
         scope="account",
@@ -9129,6 +10605,102 @@ def build_audit_change_json(
                 "new_conversation_id": request_ctx.get("new_conversation_id"),
             },
             ["share.token_full"],
+        )
+    # TASK-0094 Sprint 1 Phase 12 (D14): sandbox SQL audit case 3.
+    # D12 정합 — raw SQL 절대 ChangeJson 미포함. AST normalized + denied_patterns 만.
+    if action == "attachment.sandbox.sql_exec":
+        return (
+            {
+                "attachment_ids": list(request_ctx.get("attachment_ids") or []),
+                "conversation_id": request_ctx.get("conversation_id"),
+                "statement_type": str(request_ctx.get("statement_type") or ""),
+                "table_refs": list(request_ctx.get("table_refs") or []),
+                "row_count": int(request_ctx.get("row_count") or 0),
+                "elapsed_ms": float(request_ctx.get("elapsed_ms") or 0.0),
+            },
+            ["attachment.raw_sql"],
+        )
+    if action == "attachment.sandbox.sql_denied":
+        return (
+            {
+                "attachment_ids": list(request_ctx.get("attachment_ids") or []),
+                "conversation_id": request_ctx.get("conversation_id"),
+                "denied_reason": str(request_ctx.get("denied_reason") or ""),
+                "denied_patterns": list(request_ctx.get("denied_patterns") or []),
+            },
+            ["attachment.raw_sql"],
+        )
+    if action == "attachment.scope.all":
+        return (
+            {
+                "conversation_id": request_ctx.get("conversation_id"),
+                "attachment_count": int(request_ctx.get("attachment_count") or 0),
+            },
+            [],
+        )
+    if action == "share.policy.redact_applied":
+        # TASK-0094 Sprint 1 Phase 8 (R-F7): 기존 token 의 자동 redact 적용 기록.
+        return (
+            {
+                "share_id": request_ctx.get("share_id"),
+                "token_prefix": str(request_ctx.get("token_prefix") or "")[:8],
+                "token_policy_version": request_ctx.get("token_policy_version"),
+                "current_policy_version": request_ctx.get("current_policy_version"),
+                "redact_reason": str(request_ctx.get("redact_reason") or "policy_version_mismatch"),
+            },
+            ["share.token_full"],
+        )
+    # TASK-0094 Sprint 1 Phase 5 — 첨부 audit ActionCode 4 종 (D12 masking 정합).
+    # raw filename / SQL / bytes 는 절대 ChangeJson 에 포함 안 함. HMAC + size bucket
+    # + extension bucket + status 같은 categorical 메타만.
+    if action == "attachment.upload":
+        return (
+            {
+                "attachment_id": (after or {}).get("id"),
+                "conversation_id": (after or {}).get("conversation_id"),
+                "filename_hmac": (after or {}).get("filename_hmac"),
+                "extension_bucket": (after or {}).get("extension_bucket"),
+                "size_bucket": (after or {}).get("size_bucket"),
+                "kind": (after or {}).get("kind"),
+                "mime_type": (after or {}).get("mime_type"),
+                "sha256": (after or {}).get("sha256"),
+                "upload_status": (after or {}).get("upload_status"),
+            },
+            ["attachment.original_filename", "attachment.bytes"],
+        )
+    if action == "attachment.delete":
+        return (
+            {
+                "attachment_id": (before or {}).get("id"),
+                "conversation_id": (before or {}).get("conversation_id"),
+                "filename_hmac": (before or {}).get("filename_hmac"),
+                "extension_bucket": (before or {}).get("extension_bucket"),
+                "size_bucket": (before or {}).get("size_bucket"),
+                "delete_reason": (before or {}).get("delete_reason") or "user",
+            },
+            ["attachment.original_filename", "attachment.bytes"],
+        )
+    if action == "attachment.consent.grant":
+        return (
+            {
+                "consent_id": (after or {}).get("id"),
+                "provider": (after or {}).get("provider"),
+                "data_class": (after or {}).get("data_class"),
+                "purpose": (after or {}).get("purpose"),
+                "previous_revoked_at": (before or {}).get("revoked_at"),
+            },
+            [],
+        )
+    if action == "attachment.consent.revoke":
+        return (
+            {
+                "consent_id": (before or {}).get("id"),
+                "provider": (before or {}).get("provider"),
+                "data_class": (before or {}).get("data_class"),
+                "purpose": (before or {}).get("purpose"),
+                "previously_granted_at": (before or {}).get("granted_at"),
+            },
+            [],
         )
     # Unknown ActionCode — explicit raise (Codex C6 builder allowlist policy).
     raise ValueError(f"unknown audit action: {action}")
@@ -9429,17 +11001,43 @@ async def list_audit_events(request: Request) -> JSONResponse:
         conn.close()
 
 
+_AUDIT_EXPORT_CHUNK_SIZE = 500   # TASK-0090 (Codex C4 minimum-fix): 1000→500.
+_AUDIT_EXPORT_FLUSH_BYTES = 65536  # 64KiB byte-threshold flush (Codex minimum-fix).
+
+
+def _audit_export_filter_hash(params: dict) -> str:
+    """TASK-0090: export self-audit 용 filter hash (PII 회피 — raw filter value 대신 hash)."""
+    import hashlib as _h
+    serialized = json.dumps(params, ensure_ascii=False, sort_keys=True, default=str)
+    return _h.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+
+
 @app.get("/api/admin/audits/export.csv")
 async def export_audit_events_csv(request: Request) -> Any:
-    """REQ-20260519-0001 (TASK-0073 Phase A4): audit event CSV export.
+    """REQ-20260519-0001 (TASK-0073 Phase A4) + REQ-20260520-0005 (TASK-0090): audit event CSV streaming export.
 
     권한: `audit.export` (admin/dba). `.any` 와 동일 SQL — 전체 row 조회. masked field
     는 ChangeJson 안의 redact policy 그대로 (`MaskedFields` column 에 redact 대상 명시).
+
+    TASK-0090 (Codex outside voice 5 findings 흡수):
+      - **StreamingResponse + sync generator** (Codex C1 — async generator 안 sync mysql.connector 호출 시 event loop blocking).
+      - **streaming-only connection** (Codex C1 — endpoint conn 은 auth + max_id capture + start self-audit 후 close, generator 내부에서 별 conn open + finally cleanup).
+      - **max_id high-water mark** (Codex C2 — long transaction 회피, append-only audit 정합. 시작 시 `MAX(Id)` 잡고 모든 page `Id <= max_id`).
+      - **chunk_size = 500** + **64KiB byte-threshold flush** (Codex minimum-fix — 1 row yield = uvicorn buffering 불효율).
+      - **try/finally cleanup** (Codex C5 — client disconnect / timeout 시 cursor/conn 누설 차단).
+      - **export self-audit** (start + complete 2 event, Codex C4 — DoS 운영 제어). `audit.purge` 와 동일 패턴 답습.
+      - **hard cap 50k 제거** (Codex C4 — cap → max_id high-water + streaming 으로 memory bounded. SECURITY.md §9.5 갱신 정합).
     """
+    import csv as _csv
+    import io as _io
+    import time as _time
+
+    # === Phase 1: 짧은 auth conn — auth + permission + params + max_id capture + start self-audit ===
     try:
         conn = _connect_memory()
     except Exception:
         return _json_error("db connection failed", 500)
+    started_at = _time.time()
     try:
         account, error = _require_account(request, conn)
         if error:
@@ -9447,58 +11045,180 @@ async def export_audit_events_csv(request: Request) -> Any:
         if not _account_has_permission(account, "audit.export"):
             return _json_error("감사 로그 export 권한이 필요합니다.", 403)
         params = _audit_parse_filter_params(request)
-        # CSV export 는 .any superset 으로 — 본인 row 만 export 는 use case 없음.
-        scope = "any"
-        where_clause, args = _audit_compose_where(
+        scope = "any"  # CSV export 는 .any superset.
+        filter_hash = _audit_export_filter_hash(params)
+        # max_id high-water mark (Codex C2) — 같은 WHERE 의 시작 시점 MAX(Id) 잡음.
+        where_clause_initial, args_initial = _audit_compose_where(
             scope=scope,
             account_id=int(account["id"]),
             params=params,
             cursor_id=None,
         )
-        # Hard cap 50k row — DoS 회피.
-        export_limit = 50000
-        sql = (
-            "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
-            "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
-            "RemoteAddr, UserAgent, RequestId, OccurredAt "
-            f"FROM WebAuditEvents{where_clause} "
-            "ORDER BY Id DESC LIMIT %s"
-        )
-        args.append(export_limit)
-        cur = conn.cursor(dictionary=True)
+        cur = conn.cursor()
         try:
-            cur.execute(sql, tuple(args))
-            rows = cur.fetchall() or []
+            sql_max = f"SELECT COALESCE(MAX(Id), 0) FROM WebAuditEvents{where_clause_initial}"
+            cur.execute(sql_max, tuple(args_initial))
+            row = cur.fetchone()
+            max_id = int(row[0] if row else 0)
         finally:
             cur.close()
-        # CSV stream.
-        import csv as _csv
-        import io as _io
+        # start self-audit.
+        try:
+            actor = {
+                "account_id": int(account["id"]),
+                "actor_type": "account",
+                "role_id": account.get("role_id"),
+                "session_id": account.get("session_id"),
+            }
+            record_audit_event(
+                conn,
+                actor=actor,
+                action="audit.export.start",
+                resource_type="audit_range",
+                resource_id=None,
+                change_json={
+                    "scope": scope,
+                    "filter_hash": filter_hash,
+                    "max_id": max_id,
+                    "chunk_size": _AUDIT_EXPORT_CHUNK_SIZE,
+                    "started_at": started_at,
+                },
+            )
+            conn.commit()
+        except Exception as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return _json_error(f"export start audit failed: {exc}", 500)
+        # capture for generator (account info, params, max_id).
+        actor_for_complete = dict(actor)
+    finally:
+        conn.close()
+
+    # === Phase 2: sync generator with streaming-only connection ===
+    def csv_iter():
         sio = _io.StringIO()
         writer = _csv.writer(sio)
+        # header.
         writer.writerow([
             "Id", "ActorAccountId", "ActorRoleId", "ActorType", "TargetAccountId",
             "SessionId", "ActionCode", "ResourceType", "ResourceId", "ChangeJson",
             "MaskedFields", "RemoteAddr", "UserAgent", "RequestId", "OccurredAt",
         ])
-        for r in rows:
-            d = _audit_row_to_dict(r)
-            writer.writerow([
-                d["id"], d["actor_account_id"], d["actor_role_id"], d["actor_type"],
-                d["target_account_id"], d["session_id"], d["action_code"], d["resource_type"],
-                d["resource_id"],
-                json.dumps(d["change_json"], ensure_ascii=False, sort_keys=True) if d["change_json"] is not None else "",
-                json.dumps(d["masked_fields"], ensure_ascii=False, sort_keys=True) if d["masked_fields"] is not None else "",
-                d["remote_addr"], d["user_agent"], d["request_id"], d["occurred_at"],
-            ])
-        csv_text = sio.getvalue()
-        return PlainTextResponse(
-            csv_text,
-            media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": 'attachment; filename="audit_events.csv"'},
-        )
-    finally:
-        conn.close()
+        yield sio.getvalue()
+        sio.seek(0)
+        sio.truncate(0)
+
+        stream_conn = None
+        stream_cur = None
+        exported_row_count = 0
+        aborted = False
+        try:
+            stream_conn = _connect_memory()
+            stream_cur = stream_conn.cursor(dictionary=True)
+            cursor_id: int | None = None  # keyset cursor (descending).
+            while True:
+                # max_id high-water + Id < cursor_id (None first page).
+                page_where_args: list[Any] = []
+                # filter where (별 args copy — initial 의 args 재사용 안전).
+                where_clause_page, args_page = _audit_compose_where(
+                    scope=scope,
+                    account_id=int(actor_for_complete["account_id"]),
+                    params=params,
+                    cursor_id=cursor_id,
+                )
+                # max_id 조건 강제 추가 (append-only high-water mark).
+                if where_clause_page:
+                    where_clause_page = where_clause_page + " AND Id <= %s"
+                else:
+                    where_clause_page = " WHERE Id <= %s"
+                args_page.append(max_id)
+                sql_page = (
+                    "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
+                    "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
+                    "RemoteAddr, UserAgent, RequestId, OccurredAt "
+                    f"FROM WebAuditEvents{where_clause_page} "
+                    "ORDER BY Id DESC LIMIT %s"
+                )
+                args_page.append(_AUDIT_EXPORT_CHUNK_SIZE)
+                stream_cur.execute(sql_page, tuple(args_page))
+                rows = stream_cur.fetchall() or []
+                if not rows:
+                    break
+                for r in rows:
+                    d = _audit_row_to_dict(r)
+                    writer.writerow([
+                        d["id"], d["actor_account_id"], d["actor_role_id"], d["actor_type"],
+                        d["target_account_id"], d["session_id"], d["action_code"], d["resource_type"],
+                        d["resource_id"],
+                        json.dumps(d["change_json"], ensure_ascii=False, sort_keys=True) if d["change_json"] is not None else "",
+                        json.dumps(d["masked_fields"], ensure_ascii=False, sort_keys=True) if d["masked_fields"] is not None else "",
+                        d["remote_addr"], d["user_agent"], d["request_id"], d["occurred_at"],
+                    ])
+                    exported_row_count += 1
+                    # byte-threshold flush.
+                    if sio.tell() >= _AUDIT_EXPORT_FLUSH_BYTES:
+                        yield sio.getvalue()
+                        sio.seek(0)
+                        sio.truncate(0)
+                cursor_id = int(rows[-1]["Id"])
+                if len(rows) < _AUDIT_EXPORT_CHUNK_SIZE:
+                    break
+            # final flush.
+            if sio.tell() > 0:
+                yield sio.getvalue()
+        except Exception:
+            aborted = True
+            raise
+        finally:
+            # try/finally cleanup (Codex C5).
+            try:
+                if stream_cur is not None:
+                    stream_cur.close()
+            except Exception:
+                pass
+            try:
+                if stream_conn is not None:
+                    stream_conn.close()
+            except Exception:
+                pass
+            # complete self-audit (별 short conn).
+            try:
+                done_at = _time.time()
+                done_conn = _connect_memory()
+                try:
+                    record_audit_event(
+                        done_conn,
+                        actor=actor_for_complete,
+                        action="audit.export.complete" if not aborted else "audit.export.aborted",
+                        resource_type="audit_range",
+                        resource_id=None,
+                        change_json={
+                            "scope": scope,
+                            "filter_hash": filter_hash,
+                            "max_id": max_id,
+                            "exported_row_count": exported_row_count,
+                            "elapsed_ms": int((done_at - started_at) * 1000),
+                            "aborted": aborted,
+                        },
+                    )
+                    done_conn.commit()
+                finally:
+                    done_conn.close()
+            except Exception:
+                # complete audit 실패는 client 응답에 영향 X (이미 yield 진행). stderr 만.
+                try:
+                    import sys as _sys
+                    _sys.stderr.write("[TASK-0090] audit.export.complete failed\n")
+                except Exception:
+                    pass
+
+    return StreamingResponse(
+        csv_iter(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="audit_events.csv"'},
+    )
 
 
 @app.get("/api/admin/audits/actors")
@@ -9792,6 +11512,148 @@ async def get_audit_event(event_id: int, request: Request) -> JSONResponse:
         if not row:
             return _json_error("audit event not found", 404)
         return JSONResponse({"item": _audit_row_to_dict(row), "scope": scope})
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/health/attachment-grants")
+def admin_health_attachment_grants(request: Request) -> JSONResponse:
+    """TASK-0094 Sprint 1 Phase 10 (R-F4): sandbox schema grant drift detection.
+
+    권한: `console.access` 보유 (admin). sandbox_schema.detect_grant_drift 호출
+    후 drift 목록 반환. drift 가 있으면 admin alert (운영자가 maintenance path
+    재실행).
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(account, "console.access"):
+            return _json_error("요청을 수행할 수 없습니다.", 403)
+        try:
+            from modules import sandbox_schema as _ssch
+        except Exception as exc:
+            return _json_error(f"sandbox_schema 모듈 import 실패: {exc}", 500)
+        try:
+            drift = _ssch.detect_grant_drift(conn)
+        except Exception as exc:
+            return _json_error(f"drift detection 실패: {exc}", 500)
+        return JSONResponse(
+            {
+                "scanned_at": datetime.utcnow().isoformat() + "Z",
+                "drift_count": len(drift),
+                "drift": drift,
+                "healthy": len(drift) == 0,
+            }
+        )
+    finally:
+        conn.close()
+
+
+@app.get("/api/profile/audits")
+async def list_profile_audit_events(request: Request) -> JSONResponse:
+    """REQ-20260520-0004 (TASK-0089): 작업 화면 profile drawer 의 본인 audit row 조회.
+
+    권한: `audit.read.own` 또는 `audit.read.any`. **backend 가 scope="own" 강제** —
+    `.any` 보유자도 본인 row 만 조회 (admin 콘솔 `GET /api/admin/audits` 와 분리).
+    Codex outside voice C2 — `.any` 가 drawer 에서 전체 audit 보이는 위험 차단.
+
+    Query params: action_code / from_at / to_at / q / cursor / limit (admin endpoint 와 동일 schema,
+    actor_account_id / actor_type 는 본인 한정이라 무시).
+
+    Response: `{items: [...], next_cursor: <id>|None, scope: 'own'}`.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not (
+            _account_has_permission(account, "audit.read.own")
+            or _account_has_permission(account, "audit.read.any")
+        ):
+            return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
+        params = _audit_parse_filter_params(request)
+        cursor_id = _audit_parse_cursor(params["cursor"])
+        limit = _audit_clamped_limit(params["limit"])
+        # TASK-0089 (Codex C2): scope="own" 강제 — .any 보유자도 본인 row 만.
+        where_clause, args = _audit_compose_where(
+            scope="own",
+            account_id=int(account["id"]),
+            params=params,
+            cursor_id=cursor_id,
+        )
+        sql = (
+            "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
+            "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
+            "RemoteAddr, UserAgent, RequestId, OccurredAt "
+            f"FROM WebAuditEvents{where_clause} "
+            "ORDER BY Id DESC LIMIT %s"
+        )
+        args.append(int(limit) + 1)
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(sql, tuple(args))
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+        has_more = len(rows) > limit
+        items = [_audit_row_to_dict(r) for r in rows[:limit]]
+        next_cursor = str(items[-1]["id"]) if has_more and items else None
+        return JSONResponse({"items": items, "next_cursor": next_cursor, "scope": "own"})
+    finally:
+        conn.close()
+
+
+@app.get("/api/profile/audits/{event_id}")
+async def get_profile_audit_event(event_id: int, request: Request) -> JSONResponse:
+    """REQ-20260520-0004 (TASK-0089): profile drawer audit detail.
+
+    `.own` 강제 (Actor or Target = self) — `.any` 보유자도 본인 row 만. 권한 부족
+    시 무조건 404 (byte-equal, metadata leak 차단 — TASK-0073 Eng E1 정합).
+    """
+    if event_id <= 0:
+        return _json_error("invalid event_id", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not (
+            _account_has_permission(account, "audit.read.own")
+            or _account_has_permission(account, "audit.read.any")
+        ):
+            return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
+        # TASK-0089: .own 강제 (admin endpoint 의 scope dependency 제거).
+        cond, scope_args = _audit_build_self_filter_sql(int(account["id"]))
+        where_clause = f" WHERE Id = %s AND {cond}"
+        args: list[Any] = [int(event_id)]
+        args.extend(scope_args)
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
+                "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
+                "RemoteAddr, UserAgent, RequestId, OccurredAt "
+                f"FROM WebAuditEvents{where_clause} LIMIT 1",
+                tuple(args),
+            )
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        if not row:
+            return _json_error("audit event not found", 404)
+        return JSONResponse({"item": _audit_row_to_dict(row), "scope": "own"})
     finally:
         conn.close()
 
