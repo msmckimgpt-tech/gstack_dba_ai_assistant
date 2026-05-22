@@ -3712,6 +3712,30 @@ function _renderAttachmentPills() {
 }
 
 async function _uploadComposerAttachment(file) {
+  // TASK-0107 (이슈 #2): 새 대화 진입 전 (activeConversationId 부재 + pendingSentinel 도 없음)
+  // 에 첨부 시도하면 "대화 컨텍스트 미정" 토스트로 차단되던 결함 — 사용자가 흔히 chat 에 들어
+  // 오자마자 또는 새 대화 클릭 전에 파일을 끌어다 놓는 흐름을 봉쇄. 일반 챗봇 UX 에 어긋남.
+  // fix: 컨텍스트 미정 시 자동으로 pending 새 대화 모드 진입 — _newPendingSentinel 발급 후
+  // bucket 새로 생성. 기존 lazy-create path (sendPrompt 의 isLazyCreate) 가 그대로 인계.
+  const hasContext = Boolean(state.activeConversationId) || Boolean(state.pendingSentinel);
+  if (!hasContext) {
+    if (!can("conversation.create")) {
+      showPermissionDeniedToast("conversation.create");
+      return;
+    }
+    state.pendingNewConversation = true;
+    state.pendingSentinel = _newPendingSentinel();
+    // UI 동기화 — 새 대화 비주얼 / composer / sidebar 갱신.
+    state.messages = [];
+    state.hasMoreHistory = false;
+    state.nextBeforeId = null;
+    try { renderConversationList(); } catch (_) { /* noop */ }
+    try { renderConversationHeader(); } catch (_) { /* noop */ }
+    try { renderAccessNotice(); } catch (_) { /* noop */ }
+    try { renderMessages(); } catch (_) { /* noop */ }
+    try { renderProgress(); } catch (_) { /* noop */ }
+    try { renderComposer(); } catch (_) { /* noop */ }
+  }
   // 현재 활성 컨텍스트의 conv id 또는 pending sentinel.
   const isLazy = state.pendingNewConversation || !state.activeConversationId;
   const key = _composerAttachmentKey(state.activeConversationId);
@@ -3987,6 +4011,73 @@ function _bindComposerAttachmentEvents() {
       composerWrap.classList.remove("is-dragover");
       const file = ev.dataTransfer?.files?.[0];
       if (file) await _uploadComposerAttachment(file);
+    });
+  }
+
+  // TASK-0107: chat-pane 전체에 drag&drop 확장 + 별 visual overlay (chatDropOverlay).
+  // dragenter 가 자식 → 부모로 buble 되며 매번 발생하므로 counter 로 중첩 추적.
+  // composer-wrap 자기 dragover 는 위에서 별도 처리 (composer 안 drop 도 동일 결과).
+  const chatPane = document.getElementById("chatPane");
+  const chatOverlay = document.getElementById("chatDropOverlay");
+  if (chatPane && chatOverlay) {
+    let chatDragCounter = 0;
+    const _isFileDrag = (ev) => {
+      const types = ev.dataTransfer?.types;
+      if (!types) return false;
+      // DataTransferItemList / Array 양쪽 호환.
+      for (let i = 0; i < types.length; i++) {
+        if (String(types[i]) === "Files") return true;
+      }
+      return false;
+    };
+    chatPane.addEventListener("dragenter", (ev) => {
+      if (!_isFileDrag(ev)) return;
+      ev.preventDefault();
+      chatDragCounter += 1;
+      chatOverlay.classList.remove("hidden");
+    });
+    chatPane.addEventListener("dragover", (ev) => {
+      if (!_isFileDrag(ev)) return;
+      ev.preventDefault();
+      try { ev.dataTransfer.dropEffect = "copy"; } catch (_) { /* noop */ }
+    });
+    chatPane.addEventListener("dragleave", (ev) => {
+      if (!_isFileDrag(ev)) return;
+      chatDragCounter = Math.max(0, chatDragCounter - 1);
+      if (chatDragCounter === 0) chatOverlay.classList.add("hidden");
+    });
+    chatPane.addEventListener("drop", async (ev) => {
+      if (!_isFileDrag(ev)) return;
+      ev.preventDefault();
+      chatDragCounter = 0;
+      chatOverlay.classList.add("hidden");
+      const files = Array.from(ev.dataTransfer?.files || []);
+      if (!files.length) return;
+      // 한 번에 여러 파일 드롭 시 순차 업로드 (backend 는 1 파일/요청 단위).
+      for (const file of files) {
+        // 파일 사이 race condition 방지를 위해 await 직렬.
+        // _uploadComposerAttachment 가 lazy-create / 실 업로드 모두 처리.
+        // eslint-disable-next-line no-await-in-loop
+        await _uploadComposerAttachment(file);
+      }
+    });
+    // 윈도우 밖으로 드래그 빠져나가면 counter 리셋 (dragleave 누락 방어).
+    window.addEventListener("dragend", () => {
+      chatDragCounter = 0;
+      chatOverlay.classList.add("hidden");
+    });
+    window.addEventListener("drop", (ev) => {
+      // chat-pane 밖 drop 시 브라우저 기본 동작 (파일 새 탭 열기) 방지.
+      if (!_isFileDrag(ev)) return;
+      if (!chatPane.contains(ev.target)) {
+        ev.preventDefault();
+        chatDragCounter = 0;
+        chatOverlay.classList.add("hidden");
+      }
+    });
+    window.addEventListener("dragover", (ev) => {
+      // 같은 이유 — window 전체 dragover 의 default 가 dropEffect=none 이라 chat-pane 도 우회됨.
+      if (_isFileDrag(ev)) ev.preventDefault();
     });
   }
 }

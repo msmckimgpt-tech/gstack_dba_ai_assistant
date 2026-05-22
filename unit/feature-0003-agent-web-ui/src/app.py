@@ -7696,6 +7696,23 @@ async def upload_conversation_attachment(
         except Exception:
             pass
 
+        # TASK-0107 Phase A.2: csv/xlsx kind 면 background ingest spawn.
+        # 비동기로 sandbox schema 생성 + sandbox table INSERT + MetaJson 갱신.
+        # ingest 결과는 LLM prompt 의 ATTACHED FILES section 에서 활용된다.
+        # 실패해도 파일 자체는 업로드된 상태로 보존 (LLM 이 metadata 만 보게 됨).
+        if kind in ("csv", "xlsx"):
+            threading.Thread(
+                target=_ingest_attachment_background,
+                kwargs={
+                    "attachment_id": attachment_id,
+                    "conversation_id": cid,
+                    "object_key": object_key,
+                    "kind": kind,
+                },
+                name=f"sandbox-ingest-{attachment_id}",
+                daemon=True,
+            ).start()
+
         # signed URL 발급 (사내망 다운로드 전용 — D13). pending 은 발급 안 함 (D21).
         signed_url: str | None = None
         if not _account_is_pending(account):
@@ -7715,6 +7732,153 @@ async def upload_conversation_attachment(
         return JSONResponse(payload)
     finally:
         conn.close()
+
+
+def _ingest_attachment_background(
+    *,
+    attachment_id: int,
+    conversation_id: str,
+    object_key: str,
+    kind: str,
+) -> None:
+    """TASK-0107 Phase A.2 — upload endpoint 가 spawn 하는 background ingest.
+
+    sandbox schema 생성 → MinIO 다운로드 → ingest_attachment (csv/xlsx) →
+    MetaJson 에 sandbox_schema_name + sheets 기록 + UploadStatus='ingested'.
+
+    실패는 silent log (UploadStatus='failed' + degraded_reason). caller (upload
+    endpoint) 는 응답 후이므로 background 실패가 사용자 응답을 막지 않는다.
+    """
+    try:
+        from web.modules import storage_minio, sandbox_schema as ss
+        from modules import sandbox_ingest as si  # feature-0002 unified ns
+    except Exception as exc:  # pragma: no cover — import 실패는 fail-loud log
+        try:
+            _conn = _connect_memory()
+            _cur = _conn.cursor()
+            _cur.execute(
+                "UPDATE WebConversationAttachments SET UploadStatus='failed', "
+                "MetaJson=JSON_OBJECT('degraded_reason', %s) WHERE Id = %s",
+                (f"ingest module import failed: {exc}", attachment_id),
+            )
+            _cur.close()
+            _conn.commit()
+            _conn.close()
+        except Exception:
+            pass
+        return
+
+    schema_name = ss.sandbox_schema_name_for(conversation_id)
+
+    # 1) MinIO 에서 bytes 가져오기
+    try:
+        body_bytes = storage_minio.get_object_bytes(object_key)
+    except Exception as exc:
+        _mark_ingest_failed(attachment_id, f"minio fetch failed: {exc}")
+        return
+
+    # 2) sandbox schema 생성 (idempotent — IF NOT EXISTS).
+    #    단일-user MVP — root user 가 maintainer/writer/cleanup 모두 수행.
+    try:
+        conn = _open_memory_connection(database=None)
+    except Exception as exc:
+        _mark_ingest_failed(attachment_id, f"db connect failed: {exc}")
+        return
+
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(f"CREATE SCHEMA IF NOT EXISTS `{schema_name}` DEFAULT CHARSET=utf8mb4")
+        finally:
+            cur.close()
+        try:
+            conn.commit()
+        except Exception:
+            pass
+    except Exception as exc:
+        _mark_ingest_failed(attachment_id, f"schema create failed: {exc}")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return
+
+    # 3) sandbox 안에서 ingest. table_name base = t_<attachment_id>.
+    base_table = f"t_{attachment_id}"
+    try:
+        sandbox_conn = _open_memory_connection(database=schema_name)
+    except Exception as exc:
+        _mark_ingest_failed(attachment_id, f"sandbox connect failed: {exc}")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return
+    try:
+        result = si.ingest_attachment(
+            body_bytes,
+            kind=kind,
+            attachment_id=attachment_id,
+            sheet_table_base=base_table,
+            writer_conn=sandbox_conn,
+        )
+    except Exception as exc:
+        _mark_ingest_failed(attachment_id, f"ingest failed: {exc}")
+        try:
+            sandbox_conn.close()
+            conn.close()
+        except Exception:
+            pass
+        return
+    finally:
+        try:
+            sandbox_conn.close()
+        except Exception:
+            pass
+
+    # 4) MetaJson 갱신 + UploadStatus='ingested'.
+    meta = {"sandbox_schema_name": schema_name}
+    if kind == "csv":
+        meta["sandbox_table_name"] = base_table
+        meta["columns"] = result.get("columns") or []
+        meta["rows_inserted"] = int(result.get("rows_inserted") or 0)
+        if result.get("degraded_reason"):
+            meta["degraded_reason"] = result["degraded_reason"]
+    else:  # xlsx
+        meta["sheets"] = result.get("sheets") or []
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE WebConversationAttachments SET UploadStatus='ingested', "
+            "MetaJson=%s WHERE Id = %s",
+            (json.dumps(meta, ensure_ascii=False), attachment_id),
+        )
+        cur.close()
+        conn.commit()
+    except Exception as exc:
+        _mark_ingest_failed(attachment_id, f"meta update failed: {exc}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _mark_ingest_failed(attachment_id: int, reason: str) -> None:
+    """ingest 실패 시 UploadStatus='failed' + MetaJson.degraded_reason 기록."""
+    try:
+        conn = _connect_memory()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE WebConversationAttachments SET UploadStatus='failed', "
+            "MetaJson=%s WHERE Id = %s",
+            (json.dumps({"degraded_reason": reason}, ensure_ascii=False), attachment_id),
+        )
+        cur.close()
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 
 @app.get("/api/conversations/{cid}/attachments")
