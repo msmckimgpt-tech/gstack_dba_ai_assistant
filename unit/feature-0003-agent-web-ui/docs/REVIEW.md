@@ -1423,3 +1423,8 @@ source_of_truth: true
 
 - **Mode**: SKIPPED — D6 4 종 SLA + F1 4 state + F12 pseudonym 모두 BRIEFING 정본 결정 application.
 - **Risk**: worker scheduling 미설정 시 DeletePending row 누적 — Phase 10 후속 cycle 에서 cron / thread 활성 필수. MinIO delete 실패 시 graceful fail (worker 다음 pass 에서 재시도). nullable FK 옵션 (R-Claim6 의 alt) 은 별 cycle 결정 영역.
+
+## REV-20260521-0012 [SKIPPED:sandbox-helper-only] TASK-0094 Sprint 1 Phase 10 review
+
+- **Mode**: SKIPPED — D15 + R-Claim4 + R-F4 BRIEFING 정본 결정 application.
+- **Risk**: maintainer connection 의 wildcard grant 가 root 또는 별 superuser 로 사전 부여되어야 함 (runbook 작업). detect_grant_drift 의 information_schema.schema_privileges 가 GRANTEE format 의 host part 매칭에 의존 — '%' host 가정 (.env 의 4 user 도 '%' host 로 생성 권장). DROP cleanup user 의 invocation 은 reconciliation worker (Phase 9) 가 사용.
