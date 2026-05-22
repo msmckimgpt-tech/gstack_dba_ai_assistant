@@ -1561,10 +1561,19 @@ def _run_agent_core(
 
             # 메시지 저장 (duration_ms 포함)
             answer_duration_ms = round((time.perf_counter() - run_start) * 1000.0, 2)
+            # TASK-0094 Sprint 2 (S2.6, D9 정합) — vision invoke 의 결과 메시지에
+            # attachment_derived flag 부여. share view 의 D9 redact 가 본 flag 를
+            # 검사 (`_meta_has_attachment_derived`) — vision 분석 결과도 자동
+            # cover. WebAttachmentDerivedMessages join row INSERT (D19) 는 caller
+            # (app.py /api/ask, S2.6) 책임.
+            mirror_meta: dict[str, Any] = {"duration_ms": answer_duration_ms}
+            if os.getenv(_INLINE_IMAGE_ENV_VAR, "").strip():
+                mirror_meta["attachment_derived"] = True
+                mirror_meta["derivation_type"] = "vision_analysis"
             if _writes_allowed(mem_conn, cid):
                 _save_message(mem_conn, cid, "assistant", content=answer)
                 _mirror_message(mem_conn, cid, "assistant", answer, run_id,
-                                meta={"duration_ms": answer_duration_ms})
+                                meta=mirror_meta)
 
             # 대화 주제 자동 설정/갱신
             if answer and _writes_allowed(mem_conn, cid):
