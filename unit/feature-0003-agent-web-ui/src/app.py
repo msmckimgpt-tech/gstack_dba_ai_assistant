@@ -5089,6 +5089,22 @@ def share_page(token: str) -> FileResponse:
     return FileResponse(STATIC_DIR / "share.html")
 
 
+def _resolve_session_default_model() -> str:
+    """env 의 OPENAI_MODEL 이 catalog 안 alias 일 때만 그 값을 사용. 그 외 (미설정 /
+    invalid / Local LLM gateway 미가용 시의 'auto' / 폐기된 GPT alias) 는 catalog
+    의 API_DEFAULT_MODEL fallback. feature-0007 P1 보강 (CHG-20260522-0002) — 운영
+    .env 잔존 'auto' 또는 legacy GPT 값에서 frontend 가 invalid model 을 /api/ask
+    에 첨부 후 400 차단되던 회귀 차단. Local LLM gateway 가 실제로 가용한 경우
+    (`_is_local_llm_available()` True) 에만 `auto` 가 catalog 에 포함되어 통과 —
+    그 외 시점은 API_DEFAULT_MODEL fallback."""
+    raw = os.getenv("OPENAI_MODEL", "").strip()
+    if raw and is_allowed_api_model(raw):
+        if is_local_llm_model(raw) and not _is_local_llm_available():
+            return API_DEFAULT_MODEL
+        return raw
+    return API_DEFAULT_MODEL
+
+
 @app.get("/api/session")
 def get_session(request: Request) -> JSONResponse:
     local_llm_enabled = _is_local_llm_available()
@@ -5099,7 +5115,7 @@ def get_session(request: Request) -> JSONResponse:
             {
                 "authenticated": False,
                 "local_llm_enabled": local_llm_enabled,
-                "default_model": os.getenv("OPENAI_MODEL", API_DEFAULT_MODEL),
+                "default_model": _resolve_session_default_model(),
             }
         )
     account = _get_authenticated_account(conn, request)
@@ -5109,7 +5125,7 @@ def get_session(request: Request) -> JSONResponse:
             {
                 "authenticated": False,
                 "local_llm_enabled": local_llm_enabled,
-                "default_model": os.getenv("OPENAI_MODEL", API_DEFAULT_MODEL),
+                "default_model": _resolve_session_default_model(),
             }
         )
     # TASK-0048 후속 fix: /api/session 응답 조립 시 자동으로 빈 대화를 만들지 않는다 (lazy 정책).
@@ -5132,7 +5148,7 @@ def get_session(request: Request) -> JSONResponse:
         "user": _serialize_account(account),
         "conversation_id": conversation_id,
         "local_llm_enabled": local_llm_enabled,
-        "default_model": os.getenv("OPENAI_MODEL", API_DEFAULT_MODEL),
+        "default_model": _resolve_session_default_model(),
         "public_url": WEB_PUBLIC_URL,
         "products": products,
         "default_product_id": int(default_pid) if default_pid else None,

@@ -204,3 +204,62 @@ source_of_truth: true
 - Human Approval Needed: 본 entry 는 사용자 명시 codex review 결과 기록 + P1
   fix 결정 (사용자 옵션 1 선택) 반영. 별 사용자 confirm 불요. 다음 cycle 진입
   은 사용자 (3) 별 cycle 결정.
+
+## REV-20260522-0003 [SUBAGENT:phase-e-fullstack]
+- Related Change: CHG-20260522-0002 (P1 fix v2 보강), Phase E full-stack 검증
+- Reason: codex review (REV-20260522-0002) 의 P1 finding 을 CHG-20260522-0001
+  로 1차 fix 한 후, 사용자 결정 (A→B→C→D 순서, 2026-05-22) 따라 Phase E
+  full-stack smoke 진행. 격리 컨테이너 `-p feature-0007-e` (mysql + bedrock-gateway
+  + memory-init + web) 가동 + bootstrap admin seed + curl 직접 호출로 backend
+  → gateway → Bedrock Sonnet 4.6 full path 검증.
+- Verdict: **PASS** (TEST-0001 ~ TEST-0004 모두 PASS, TEST-0005/0006 은 코드
+  trace 갈음). 단 1 차 P1 fix (CHG-0001) 의 운영 .env 잔존 시점 보강 필요성
+  발견 → CHG-0002 즉시 추가.
+- Findings:
+  - **TEST-0001 gateway healthcheck**: PASS (LiteLLM `main-stable` /health/liveliness
+    200, container Up healthy).
+  - **TEST-0002 `/api/ask` cipher 미동봉 응답**: PASS — bootstrap admin login
+    후 cipher 인자 없이 `{model: "claude-sonnet-4"}` 만 보내 200 응답 +
+    conversation_id 생성. bedrock-gateway 가 `POST /v1/chat/completions 200 OK`
+    응답 로깅.
+  - **TEST-0003 agent loop tool_use schema 변환** (codex blindspot #2 + SUBAGENT
+    NT #4 의 최대 잠재 회귀 영역): **PASS** — `SHOW DATABASES` 질의 →
+    `action=step + tool=execute_sql + sql="SHOW DATABASES"` plan 정상 생성.
+    LiteLLM 의 OpenAI tool_calls ↔ Anthropic tool_use 변환 작동 검증. answer
+    가 empty 인 건 MCP 컨테이너 미가동 (별 issue 외)— plan generation 자체는
+    Claude 가 OpenAI Chat Completions schema 로 정상 응답.
+  - **TEST-0004 JSON 파싱**: PASS — `_extract_json_object` 가 Claude 의 plan
+    JSON 응답 정상 추출.
+  - **TEST-0005 frontend 신규 사용자**: 브라우저 필요 — `app.js` 의 sendPrompt
+    가 `state.session?.default_model` 우선 사용 + CHG-0002 가 그 값을 catalog
+    안 alias 만 반환 보장 → 첫 turn 부터 정상 동작 (코드 trace 갈음).
+  - **TEST-0006 localStorage cleanup**: 브라우저 필요 — `LEGACY_VAULT_KEYS.
+    forEach((k) => localStorage.removeItem(k))` 가 페이지 로드 1 회 silent
+    실행 (코드 trace 갈음).
+- 추가 발견 (panel):
+  - 운영 `.env` 가 실제로 `OPENAI_MODEL=auto` 설정 — codex P1 finding 의 회귀
+    시나리오 실증. CHG-0001 만으로는 부족 (env 가 set 되어 있으면 fallback
+    미발동). CHG-0002 의 catalog 검증 + Local LLM 가용성 cross-check 필수.
+  - `_LOCAL_LLM_ENABLED` cache 가 module load 시점 평가 — LOCAL_LLM_API_BASE
+    env 변경 시 web 컨테이너 재기동 필수 (운영 안내 후속 cycle).
+  - bedrock-gateway 가 LiteLLM `main-stable` (image pull 진행 시점 확인 됨) +
+    config.yaml volume mount + healthcheck 정합. 다른 컨테이너 (운영 stack)
+    와 격리 port (33306 / 28080 / 38000 / 10080 / 10443 / 25432) PASS.
+  - docker compose buildx metadata race 가 본 cycle 에서도 재현 (운영 Makefile
+    의 `dc-build` 가드 동일 영역) — `--no-build` 로 회피 가능. follow-up
+    Makefile target 갱신 별 cycle.
+- Risks:
+  - **MCP 컨테이너 미가동** 시 `tool=execute_sql` 의 backend 실 실행이 안 됨 —
+    본 검증의 scope 외 (Phase E 의 plan generation 까지). 운영 환경에서는 mcp
+    가동 후 turn 검증 필요 (canary).
+  - **Local LLM gateway 운영 transition**: `LOCAL_LLM_API_BASE=` 빈 값으로 변경
+    + web 재기동 후에야 Bedrock-only 정합. 운영자가 .env 단계적 마이그레이션
+    필요 — 안내 doc 별 cycle.
+- Open Questions: 
+  - Cleanup 시점 (격리 컨테이너 down) — 본 검증 완료 후 즉시 down 진행 권장.
+  - B (codex P2 paired fallback) + C (6 blindspot) 진행 후 본 검증 재실행 필요
+    여부 — CHG-0002 가 P1 핵심 영역이라 추가 fix 가 행동 변경 없으면 재검증
+    불요.
+- Human Approval Needed: 본 entry 는 사용자 명시 A→B→C→D 진행 결정의 A 단계
+  결과 기록. 별 사용자 confirm 불요. B/C/D 진행은 사용자가 명시한 순서 따라
+  자동 진행 (이전 turn 의 user 결정).

@@ -156,3 +156,68 @@ source_of_truth: true
   - `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS.
   - codex review P1 finding 의 권고 (Option 2: "make `/api/session` return the
     new default") 와 정합.
+
+## CHG-20260522-0002
+- Date: 2026-05-22
+- Related Requirement: REQ-20260521-0001~3 (codex P1 보강 + Phase E full-stack 회귀)
+- Summary: Phase E full-stack smoke 진행 중 CHG-20260522-0001 의 P1 fix 가
+  운영 `.env` 의 `OPENAI_MODEL=auto` 잔존 시점에 fallback 미발동 사실 발견.
+  codex P1 권고 옵션 2 ("/api/session 가 invalid model 을 catalog default 로
+  대체") 를 정확히 적용한 보강. 신규 helper `_resolve_session_default_model()`
+  이 catalog 검증 + Local LLM 가용성 cross-check.
+- Files:
+  - 수정: `unit/feature-0003-agent-web-ui/src/app.py` — `_resolve_session_default_model()`
+    helper 신설 (line 5085 부근, `@app.get("/api/session")` decorator 위쪽).
+    `/api/session` 의 3 응답 사이트 (line 5102/5112/5135) 가 `os.getenv("OPENAI_MODEL",
+    API_DEFAULT_MODEL)` → `_resolve_session_default_model()` 호출.
+- 보강 fix 로직:
+  - `OPENAI_MODEL` env 가 미설정 → `API_DEFAULT_MODEL` (= `claude-sonnet-4`)
+    fallback (CHG-0001 의 의도)
+  - `OPENAI_MODEL` env 가 설정됐지만 catalog (`is_allowed_api_model`) 통과 못
+    함 → `API_DEFAULT_MODEL` fallback
+  - `OPENAI_MODEL=auto` 류 Local LLM alias + `LOCAL_LLM_API_BASE` 미가용 →
+    `API_DEFAULT_MODEL` fallback (Local LLM gateway 비활성화 시점에 invalid
+    alias 차단)
+  - `OPENAI_MODEL=auto` + Local LLM gateway 가용 → `auto` 반환 (transition 호환)
+  - `OPENAI_MODEL=claude-sonnet-4` 등 명시적 valid alias → 그대로 반환
+- Impact:
+  - **운영 .env 청소 부담 감소**: Bedrock 전환 시 `OPENAI_MODEL` 의 stale 값
+    (예: `auto`, `gpt-5.4-nano`) 가 잔존해도 frontend 가 invalid model 을
+    `/api/ask` 에 첨부 안 함.
+  - **transitional 호환**: Local LLM gateway 동시 가용 시점에는 `auto` 그대로
+    사용 가능 — 운영자가 한 번에 모든 env 변경 부담 X.
+  - **codex P1 권고 옵션 2 직접 반영**: "make /api/session return the new
+    default" 가 본 보강 fix 의 행동.
+- Phase E full-stack smoke 결과 (격리 컨테이너 `-p feature-0007-e`):
+  - TEST-0001 gateway healthcheck PASS (Phase E Run 2026-05-21-002 이미 PASS)
+  - **TEST-0002 `/api/ask` cipher 미동봉**: PASS — bootstrap admin 로그인 후
+    `model: claude-sonnet-4` body 로 호출 → 200 응답 + conversation_id 생성
+    + bedrock-gateway 가 `POST /v1/chat/completions 200 OK` 로깅.
+  - **TEST-0003 agent loop tool_use schema 변환**: PASS — `SHOW DATABASES`
+    질의 → Claude Sonnet 4.6 plan generation 결과 `action=step + tool=execute_sql
+    + sql=SHOW DATABASES`. LiteLLM 의 OpenAI tool_calls ↔ Anthropic tool_use
+    변환 작동 검증 (codex blindspot #2 + SUBAGENT NT #4 의 최대 잠재 회귀
+    영역 PASS).
+  - **TEST-0004 JSON 파싱**: PASS — agent loop 의 plan 이 markdown fence 안
+    JSON 으로 반환되어도 `_extract_json_object` 의 greedy regex 가 정상 추출.
+  - **TEST-0005 frontend 신규 사용자 진입 + TEST-0006 localStorage cleanup**:
+    브라우저 필요 — 코드 trace 로 갈음 (LEGACY_VAULT_KEYS cleanup 페이지 로드
+    1 회 실행 + drawer-tabs 3 탭만 노출 + sendPrompt 의 model fallback chain
+    이 `state.session.default_model` (P1 fix 보장) 사용).
+- 발견 및 검증된 추가 사실:
+  - 운영 `.env` 가 실제로 `OPENAI_MODEL=auto` 로 설정되어 있음 (운영 repo/.env
+    확인) — 본 cycle 의 codex P1 finding 의 정확한 회귀 시나리오 검증.
+  - `_LOCAL_LLM_ENABLED` cache 가 module load 시점 한 번 평가 — `LOCAL_LLM_API_BASE`
+    env 변경 시 web 컨테이너 재기동 필수 (운영 안내 필요 — 별 cycle).
+  - LiteLLM `main-stable` 의 `/health/liveliness` endpoint 정상 동작.
+  - bedrock-gateway 와 LiteLLM proxy 의 schema 변환이 본 backend 의 system
+    prompt + JSON mode + tool_calls 모두 cover.
+- Rollback Notes:
+  - `_resolve_session_default_model()` 함수 제거 + 3 사이트의 호출을 다시
+    `os.getenv("OPENAI_MODEL", API_DEFAULT_MODEL)` 로 변경하면 CHG-0001 상태
+    복귀.
+  - 운영 `.env` 의 `OPENAI_MODEL=auto` 잔존 + LOCAL_LLM 비활성화 시점에는 첫
+    `/api/ask` 가 다시 400 차단 회귀 — rollback 비권장.
+- Verification:
+  - `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS.
+  - docker compose -p feature-0007-e (격리) 의 full stack smoke 4 case PASS.

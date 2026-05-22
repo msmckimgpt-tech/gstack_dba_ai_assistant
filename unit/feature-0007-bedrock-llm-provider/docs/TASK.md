@@ -220,13 +220,17 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 - [x] TASK-F4 PR 생성 (PR #62) + codex review (P1 fix CHG-20260522-0001)
 - [ ] TASK-F5 사용자 리뷰 + merge — pending
 
-### Phase G — codex review follow-up (신규)
-- [x] TASK-G1 codex P1 fix: `/api/session` 3 사이트 fallback `'auto'` →
+### Phase G — codex review follow-up
+- [x] TASK-G1 codex P1 fix v1: `/api/session` 3 사이트 fallback `'auto'` →
       `API_DEFAULT_MODEL` (CHG-20260522-0001, py_compile PASS, 2026-05-22)
+- [x] TASK-G1b codex P1 fix v2 (full-stack smoke 검증 후 보강):
+      `_resolve_session_default_model()` helper 신설 + catalog 검증 + Local
+      LLM 가용성 cross-check (CHG-20260522-0002). 운영 .env 잔존 `OPENAI_MODEL=
+      auto` 시점 frontend 회귀 차단 검증 PASS.
 - [ ] TASK-G2 codex P2 follow-up: `LLM_BASE_URL` ↔ `LLM_API_KEY` paired
-      fallback chain refactor + `.env.example` 안내 보강 — 별 cycle 위임
+      fallback chain refactor + `.env.example` 안내 보강 — 본 cycle 진행
 - [ ] TASK-G3 6 blindspot 보강 (env_file leak / tool_use 변환 / data region /
-      max_tokens / reasoning / masked field) — 별 cycle 또는 `/codex consult`
+      max_tokens / reasoning / masked field) — 본 cycle 진행
 
 ## 4. In Progress
 - 없음 (Phase A 진입 직전 정지 상태 — 다음 turn 의 user 지시로 시작).

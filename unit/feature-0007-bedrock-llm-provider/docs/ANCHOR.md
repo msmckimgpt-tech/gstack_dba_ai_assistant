@@ -1,7 +1,7 @@
 ---
 doc_type: ANCHOR
 feature_id: feature-0007-bedrock-llm-provider
-created_at: 2026-05-21T02:24:52Z
+created_at: 2026-05-22T02:24:52Z
 status: active
 edit_policy: mixed
 source_of_truth: true
