@@ -221,3 +221,37 @@ source_of_truth: true
 - Verification:
   - `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py` PASS.
   - docker compose -p feature-0007-e (격리) 의 full stack smoke 4 case PASS.
+
+## CHG-20260522-0003
+- Date: 2026-05-22
+- Related Requirement: REQ-20260521-0001~3 (codex P2 follow-up — paired
+  fallback chain)
+- Summary: codex review (REV-20260522-0002) 의 [P2] finding — `LLM_BASE_URL`
+  과 `LLM_API_KEY` 의 독립 fallback chain 으로 partial 설정 시 silent misroute
+  위험 — 의 follow-up 보강. 신규 helper `_select_llm_provider()` 가 (base_url,
+  api_key) tuple 을 paired 결정. .env.example 도 paired 정책 명시 안내 추가.
+- Files:
+  - 수정: `unit/feature-0002-agent-core/src/modules/config.py` — `LLM_BASE_URL`
+    / `LLM_API_KEY` 결정을 `_select_llm_provider()` paired tuple 로 교체. 우선
+    순위: Bedrock paired → Local LLM paired → OpenAI direct (API_KEY only,
+    BASE optional).
+  - 수정: `.env.example` — Bedrock 섹션에 "paired 설정 필수" 안내 + LLM provider
+    우선순위 3 항목 명시.
+- Impact:
+  - **Silent misroute 차단**: BEDROCK_GATEWAY_URL 만 설정 + BEDROCK_GATEWAY_API_KEY
+    비어있는 경우 → Bedrock 분기 skip → 다음 provider (Local LLM 또는 OpenAI)
+    선택. gateway 가 잘못된 key 받아 401 응답하던 회귀 차단.
+  - **운영 안내 명확화**: .env.example 의 주석이 paired 정책을 명시하여 운영자
+    가 부분 설정 시 행동 예측 가능.
+  - **transitional 호환**: 기존 운영 (OPENAI_API_KEY only) 환경은 본 변경
+    영향 없음 — `_select_llm_provider()` 의 fallback 3 단계가 OpenAI direct.
+- Rollback Notes:
+  - `_select_llm_provider()` 함수 제거 후 이전 `LLM_BASE_URL = X or Y or Z`
+    /`LLM_API_KEY = X or Y or Z` 패턴 복원 가능. 단 codex P2 의 silent misroute
+    회귀 재발.
+- Verification:
+  - `python3 -m py_compile unit/feature-0002-agent-core/src/modules/config.py`
+    PASS.
+  - Web container 에서 module reload 후 `LLM_BASE_URL` / `LLM_API_KEY` 둘 다
+    Bedrock gateway 값으로 paired 출력 확인 (BEDROCK_GATEWAY_API_KEY 채워진
+    환경 → Bedrock 분기 선택 정상).

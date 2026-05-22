@@ -263,3 +263,35 @@ source_of_truth: true
 - Human Approval Needed: 본 entry 는 사용자 명시 A→B→C→D 진행 결정의 A 단계
   결과 기록. 별 사용자 confirm 불요. B/C/D 진행은 사용자가 명시한 순서 따라
   자동 진행 (이전 turn 의 user 결정).
+
+## REV-20260522-0004 [SUBAGENT:codex-p2-direct-fix]
+- Related Change: CHG-20260522-0003 (codex P2 paired fallback chain refactor)
+- Reason: 사용자 결정 (B 단계, 2026-05-22) — codex P2 finding (LLM_BASE_URL ↔
+  LLM_API_KEY 독립 fallback 으로 partial 설정 시 silent misroute) 의 follow-up
+  보강. 본 entry 는 fix 의 reasoning 정본 (별도 panel 호출 없이 codex 원본
+  finding 을 직접 반영하는 [SUBAGENT:codex-p2-direct-fix] 형식).
+- Verdict: **PASS** — codex P2 권고 직접 반영. `_select_llm_provider()` helper
+  가 paired tuple 보장.
+- Codex P2 원문 (REV-20260522-0002 cross-reference):
+  > "With `BEDROCK_GATEWAY_URL` set but `BEDROCK_GATEWAY_API_KEY` empty, which
+  > is exactly the shape shown in `.env.example` and also plausible for legacy
+  > OpenAI/Local deployments, `LLM_BASE_URL` points at the Bedrock gateway
+  > while `LLM_API_KEY` falls through to the Local/OpenAI key... the documented
+  > fallback chain cannot work unless each provider's URL and key are selected
+  > as a matched pair."
+- Fix 행동 (config.py + .env.example):
+  - `_select_llm_provider() -> tuple[str|None, str|None]` helper 가 paired
+    priority chain (Bedrock paired → Local LLM paired → OpenAI direct → None).
+  - `LLM_BASE_URL, LLM_API_KEY = _select_llm_provider()` 결정 단일화.
+  - `.env.example` Bedrock 섹션에 "paired 설정 필수" 안내 + LLM provider 우선
+    순위 3 항목 명시.
+- Risks: 본 fix 후에도 잔존 risk:
+  - **OPENAI_API_BASE optional** (OpenAI direct 경로) — `OPENAI_API_KEY` 만
+    있고 `OPENAI_API_BASE` 미설정 시 (None, KEY) tuple 이고, SDK 가 default
+    OpenAI cloud base 사용. 정상 — OpenAI direct fallback path 보존.
+  - **legacy 호환**: 운영자가 기존 OPENAI_API_KEY only 설정 환경에서 본 변경
+    영향 없음.
+- Open Questions: 본 entry 는 single-line 검증 reasoning 기록. 별 cycle 의
+  codex consult 로 추가 검증 권장 (전체 fallback chain 정합).
+- Human Approval Needed: 사용자 결정 (A→B→C→D 진행, 2026-05-22) 의 B 단계
+  완료 기록. 별 confirm 불요. C/D 진행 계속.

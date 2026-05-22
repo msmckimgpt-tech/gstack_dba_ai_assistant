@@ -227,8 +227,9 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
       `_resolve_session_default_model()` helper 신설 + catalog 검증 + Local
       LLM 가용성 cross-check (CHG-20260522-0002). 운영 .env 잔존 `OPENAI_MODEL=
       auto` 시점 frontend 회귀 차단 검증 PASS.
-- [ ] TASK-G2 codex P2 follow-up: `LLM_BASE_URL` ↔ `LLM_API_KEY` paired
-      fallback chain refactor + `.env.example` 안내 보강 — 본 cycle 진행
+- [x] TASK-G2 codex P2 follow-up: `LLM_BASE_URL` ↔ `LLM_API_KEY` paired
+      fallback chain refactor + `.env.example` 안내 보강 (CHG-20260522-0003,
+      py_compile PASS, 2026-05-22)
 - [ ] TASK-G3 6 blindspot 보강 (env_file leak / tool_use 변환 / data region /
       max_tokens / reasoning / masked field) — 본 cycle 진행
 

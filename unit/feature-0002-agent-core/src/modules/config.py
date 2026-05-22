@@ -285,9 +285,32 @@ OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "").strip() or None
 BEDROCK_GATEWAY_URL = os.getenv("BEDROCK_GATEWAY_URL", "").strip() or None
 BEDROCK_GATEWAY_API_KEY = os.getenv("BEDROCK_GATEWAY_API_KEY", "").strip() or None
 
-# 우선순위: Bedrock gateway → Local LLM gateway → OpenAI direct (legacy)
-LLM_BASE_URL = BEDROCK_GATEWAY_URL or LOCAL_LLM_API_BASE or OPENAI_API_BASE or None
-LLM_API_KEY = BEDROCK_GATEWAY_API_KEY or LOCAL_LLM_API_KEY or OPENAI_API_KEY
+
+def _select_llm_provider() -> tuple[str | None, str | None]:
+    """LLM provider 선택 — base_url 과 api_key 를 **paired tuple** 로 결정.
+    codex P2 follow-up (CHG-20260522-0003): 이전 fallback chain (`X or Y or Z`)
+    이 base_url 과 api_key 를 독립적으로 선택해서, 예를 들어 BEDROCK_GATEWAY_URL
+    이 설정됐지만 BEDROCK_GATEWAY_API_KEY 가 비어 있는 경우 → URL 은 gateway 로
+    가지만 key 는 LOCAL_LLM_API_KEY / OPENAI_API_KEY 로 silent fallback →
+    gateway 가 그 key 를 reject (misroute). 본 helper 가 paired 결정으로 차단.
+
+    우선순위 (paired only):
+    1. Bedrock gateway   — BEDROCK_GATEWAY_URL + BEDROCK_GATEWAY_API_KEY 둘 다.
+    2. Local LLM gateway — LOCAL_LLM_API_BASE + LOCAL_LLM_API_KEY 둘 다.
+    3. OpenAI direct     — OPENAI_API_KEY 만 (OPENAI_API_BASE 는 optional —
+       OpenAI cloud direct 호출 시 SDK 의 default base 사용).
+    4. 미설정            — (None, None). _get_openai_client() 가 None 반환.
+    """
+    if BEDROCK_GATEWAY_URL and BEDROCK_GATEWAY_API_KEY:
+        return (BEDROCK_GATEWAY_URL, BEDROCK_GATEWAY_API_KEY)
+    if LOCAL_LLM_API_BASE and LOCAL_LLM_API_KEY:
+        return (LOCAL_LLM_API_BASE, LOCAL_LLM_API_KEY)
+    if OPENAI_API_KEY:
+        return (OPENAI_API_BASE, OPENAI_API_KEY)
+    return (None, None)
+
+
+LLM_BASE_URL, LLM_API_KEY = _select_llm_provider()
 AGENT_OBJECT_RESOLVE_MODEL = (
     os.getenv("AGENT_OBJECT_RESOLVE_MODEL", OPENAI_MODEL).strip() or OPENAI_MODEL
 )

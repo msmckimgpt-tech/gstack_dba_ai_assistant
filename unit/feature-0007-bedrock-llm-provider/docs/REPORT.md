@@ -130,3 +130,10 @@ Critical 후보였던 외부 노출 / PIPA / 비용 폭주 risk 가 사내 한�
 - **모델 selector UI 신설** (사용자 요청 발생 시): 현 구현은 server default
   (`claude-haiku-4`) 사용. 사용자가 turn 별로 Sonnet ↔ Haiku 선택권 필요 시
   composer chip 옆에 모델 selector dropup 신설.
+
+<!-- 본 cycle 의 누적 변경 — REPORT.md 는 rewrite 정책 이지만 추가 commit 의
+     사항을 §3 Recent Changes 의 last commit 기록 형태로 누적. -->
+
+> CHG-20260522-0003 추가 (2026-05-22): codex P2 follow-up. paired fallback chain
+> refactor — `_select_llm_provider()` helper 가 (base_url, api_key) tuple 을
+> paired 결정. silent misroute 회귀 차단. .env.example paired 정책 안내.
