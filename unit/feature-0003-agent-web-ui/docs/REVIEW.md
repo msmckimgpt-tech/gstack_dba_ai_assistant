@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260522-0004 [SKIPPED:non-policy-doc]
+- Related TASK: feature-0003-agent-web-ui
+- Reason: TASK-0100 (REQ-20260522-0004, Minor §12.3) — `관리 콘솔` 버튼 RBAC gate 수정. `_serialize_account()` 에 `console_access` 플래그 추가 + `canOpenAdminConsole()` 변경. 코드 변경이나 UI/RBAC 관련이므로 tech review 대상이나, Minor §12.3 (RBAC catalog / DB schema / endpoint contract 무변경, 표시 조건만 복원) 이며 변경 surface 가 최소화됨. 이슈의 근본 원인이 명확 (TASK-0098 can() 단순화의 side-effect) + 수정이 정확히 원래 의도(admin 전용 표시) 복원. AGENTS.md §18.8 trigger: UI/button 시그널 있으나 버튼 노출 여부만 수정 (새 UI 기능 구현 아님) — SKIPPED 정당.
+- Timestamp: 2026-05-22T00:00:00Z
+
 ## REV-20260522-0003 [SKIPPED:doc-only-tracker-hygiene]
 - Date: 2026-05-22
 - Decision: TASK-0099 (REQ-20260522-0003, Minor §12.3 — docs-only tracker hygiene) — TASK-0073 audit subsystem followup backlog 8 entries (TASK-0086~0093) 8/8 완료 후 정리 cycle. TASK.md 의 stale `[ ]` 체크박스 2건 close + TASK-0099 entry 추가 + STATUS.md marker append. 코드 / RBAC / 스키마 / endpoint 변경 0.

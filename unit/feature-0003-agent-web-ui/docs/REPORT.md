@@ -10,6 +10,10 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-05-22 TASK-0100 완료 — `관리 콘솔` 버튼 RBAC gate 수정** (CHG-20260522-0004, REV-20260522-0004 [SKIPPED:non-policy-doc], REQ-20260522-0004, **Minor** §12.3). TASK-0098 의 `can()` 단순화(`Boolean(state.user)`) side-effect 로 인해 `canOpenAdminConsole()` 이 로그인한 모든 사용자에게 `true` 반환 → `관리 콘솔` 버튼이 admin 역할 이외의 사용자(operator/sales/pending) 에게도 노출되던 이슈 수정. **수정 방식**: `_serialize_account()` 에 `console_access: _account_has_permission(account, "console.access")` 최소 플래그 추가 + `canOpenAdminConsole()` 이 `Boolean(state.user?.console_access)` 을 검사하도록 변경. TASK-0098 의 "permissions 전체 노출 차단" 설계를 유지하면서 UI gate 에 필요한 최소 정보만 전달. backend RBAC catalog / DB schema / endpoint contract 무변경. py_compile + node --check PASS. cache-bust `v=20260522-console-access-gate`. worktree `ai/claude/issue-admin-console-btn-rbac`.
+
+---
+
 **2026-05-22 TASK-0099 완료 (docs-only tracker hygiene) — audit subsystem followup backlog 8/8 closure marker** (CHG-20260522-0003, REV-20260522-0003 [SKIPPED:doc-only-tracker-hygiene], REQ-20260522-0003, **Minor** §12.3). TASK-0073 audit subsystem followup backlog 의 8 entries (TASK-0086 ~ 0093) 8/8 완료를 tracker 에 정확히 반영. TASK.md 의 stale `[ ]` 체크박스 2건 close: (1) line 152 TASK-0072 (main 통합 `f298f90` + post-deploy hotfix bundle TASK-0074/0075/0076/0077/0078/0079/0080 deployed but 상태 `outside-voice-review` 미갱신), (2) line 2767 TASK-0073 `AGENT_AUDIT_ENABLED=0 + AGENT_MODE=prod` startup fail-closed acceptance (TASK-0092 의 7 vector matrix V1-V3 fail-closed scenario 가 정확히 검증). TASK-0073 의 acceptance criteria 7건 모두 close. docs-only cycle — 코드 / RBAC / 스키마 / endpoint 변경 0. outside voice trigger 미해당 (`feedback_outside_voice_for_rbac` 미발동).
 
 ### TASK-0073 audit subsystem followup backlog 8/8 완료 (2026-05-20~22)

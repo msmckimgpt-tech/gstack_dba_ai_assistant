@@ -1025,6 +1025,10 @@ def _serialize_account(
     default 호출 → raw permission map 노출 차단. admin-context 3 callsite
     (`_list_accounts_for_admin`, admin account update, 신규 `/api/admin/me`) 는
     `include_permissions=True` 명시. `role` 객체는 self 응답에도 유지.
+
+    `console_access` 플래그: TASK-0098 단순화로 인해 frontend can() 가 항상 true
+    를 반환하게 되어 관리 콘솔 버튼이 모든 사용자에게 노출되는 이슈 수정.
+    permissions 전체 노출 없이 UI gate 에 필요한 최소 정보만 제공한다.
     """
     if not account:
         return None
@@ -1041,6 +1045,8 @@ def _serialize_account(
         "last_conversation_id": str(account.get("last_conversation_id") or ""),
         # TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0095): 다음 로그인 시 비밀번호 강제 변경.
         "must_change_password": bool(account.get("must_change_password")),
+        # UI gate 전용 최소 플래그 — permissions 전체 노출 없이 관리 콘솔 접근 여부만 전달.
+        "console_access": _account_has_permission(account, "console.access"),
     }
     if include_permissions:
         payload["permissions"] = _account_permissions(account)
