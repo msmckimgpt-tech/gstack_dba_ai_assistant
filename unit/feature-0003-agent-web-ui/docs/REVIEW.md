@@ -1428,3 +1428,8 @@ source_of_truth: true
 
 - **Mode**: SKIPPED — D15 + R-Claim4 + R-F4 BRIEFING 정본 결정 application.
 - **Risk**: maintainer connection 의 wildcard grant 가 root 또는 별 superuser 로 사전 부여되어야 함 (runbook 작업). detect_grant_drift 의 information_schema.schema_privileges 가 GRANTEE format 의 host part 매칭에 의존 — '%' host 가정 (.env 의 4 user 도 '%' host 로 생성 권장). DROP cleanup user 의 invocation 은 reconciliation worker (Phase 9) 가 사용.
+
+## REV-20260521-0013 [SKIPPED:ingest-mechanism] TASK-0094 Sprint 1 Phase 11 review
+
+- **Mode**: SKIPPED — Codex Claim #14 (XLSX/CSV cap) 정본 결정 application. ingest worker 의 process 격리 / memory budget 은 별 cycle.
+- **Risk**: ingest_attachment 호출자 (background trigger) 가 본 phase 에서 ship 안 됨 — 별 cycle 또는 후속 phase 에서 추가 필요. env ATTACHMENT_IDS 의 thread-safety: 본 cycle 은 single-process FastAPI + asyncio.to_thread 라 race 가능하나 cleanup pop 으로 mitigate. 별도 thread-local 옵션은 후속 검토.

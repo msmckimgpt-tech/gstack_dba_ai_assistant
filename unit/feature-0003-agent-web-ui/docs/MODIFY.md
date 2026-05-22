@@ -1916,3 +1916,11 @@ source_of_truth: true
 - Files: .env.example, modules/sandbox_schema.py (신규), app.py (GET /api/admin/health/attachment-grants), FUNCTION/TASK/MODIFY/REVIEW.
 - Notes: 실제 4 MySQL user 생성 + maintainer 의 wildcard grant 는 운영자가 root 로 사전 진행 (Sprint 1 ship 시 runbook 별도). 본 phase 는 application helper + drift endpoint.
 - Rollback: 4 helper module / endpoint / env entry revert.
+
+## CHG-20260521-0013
+- Date: 2026-05-22
+- Related Requirement: TASK-0094 Sprint 1 Phase 11 — CSV/XLSX ingest pipeline + LLM prompt integration
+- Summary: sandbox_ingest.py (ingest_csv + ingest_xlsx + ingest_attachment) + agent_core._build_attachment_context_section + /api/ask attachment_ids env passing.
+- Files: feature-0002-agent-core/src/modules/sandbox_ingest.py (신규), agent_core.py (compose_system_prompt 갱신), app.py (/api/ask attachment_ids env), requirements.txt (chardet/openpyxl), FUNCTION/TASK/MODIFY/REVIEW.
+- Notes: 실제 ingest 호출은 별 background worker 가 필요 (Phase 5 upload endpoint 가 RowInsert 만 ship, ingest 는 별도 trigger). 본 phase 는 helper + LLM prompt mechanism. Phase 12 의 SQL guard 와 결합 시 사용자 view 의 첨부 기반 SQL 응답 가능.
+- Rollback: 모듈/helper/env passing revert.
