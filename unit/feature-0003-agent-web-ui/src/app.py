@@ -48,6 +48,7 @@ from modules.model_catalog import (
     is_allowed_api_model,
     is_local_llm_model,
     model_supports_temperature,
+    model_supports_vision,
 )
 from modules.render import normalize_step_result_summary
 
@@ -5899,6 +5900,202 @@ def get_api_vault_options() -> JSONResponse:
     )
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# TASK-0094 Sprint 2 (D11 + D13) — vision inline image pre-fetch + consent gate
+# ══════════════════════════════════════════════════════════════════════════
+# `/api/ask` 가 첨부 image (kind=image) 를 vision 가능 모델에 inline 전송하기 전
+# server-side 책임:
+#   (1) D11 consent (file_image / inference) 가 active 한지 확인 — 미동의 시
+#       409 + consent_required 응답으로 frontend modal trigger.
+#   (2) D13 server-side bytes read + base64 inline — signed URL 외부 송신 0.
+#   (3) 임시 file 작성 + env ATTACHMENT_IMAGE_INLINE_PATH 로 agent_core 에 path 만
+#       전달 (cross-feature import 회피 — storage_minio 는 본 module 에서만 사용).
+#   (4) size cap (단일 ≤ 5MB pre-base64) + count cap (turn 당 ≤ 5) — 비용 폭주 +
+#       context overflow 방지.
+#   (5) 호출 후 cleanup (env unset + 임시 file 삭제).
+_VISION_IMAGE_SIZE_CAP_BYTES = 5 * 1024 * 1024  # 5MB pre-base64
+_VISION_IMAGE_COUNT_CAP = 5  # turn 당 최대 inline image 개수
+_VISION_INLINE_TMP_DIR = os.getenv("WEB_VISION_INLINE_TMP_DIR", "/tmp").rstrip("/")
+
+
+def _model_to_consent_provider(model: str | None) -> str | None:
+    """vision invoke 모델 → D11 consent provider enum 매핑.
+
+    feature-0007 (bedrock) 머지 후 catalog 는 claude-* 만 → 'anthropic'. backward
+    -compat: gpt-* → 'openai'. Local LLM (auto/edge/core/code) 은 supports_vision
+    =False 라 본 매핑이 호출되기 전 차단되지만 안전하게 'local' 매핑. catalog
+    미등록 alias → None (vision 진입 안 함).
+    """
+    if not model:
+        return None
+    m = str(model).strip().lower()
+    if m.startswith("claude-"):
+        return "anthropic"
+    if m.startswith("gpt-"):
+        return "openai"
+    if m in ("auto", "edge", "core", "code"):
+        return "local"
+    return None
+
+
+def _has_active_consent(
+    conn,
+    account_id: int,
+    provider: str,
+    data_class: str,
+    purpose: str,
+) -> bool:
+    """D11 — WebAccountConsents 의 active row 존재 확인 (RevokedAt IS NULL)."""
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                SELECT 1 FROM WebAccountConsents
+                WHERE AccountId = %s AND Provider = %s AND DataClass = %s
+                  AND Purpose = %s AND RevokedAt IS NULL
+                LIMIT 1
+                """,
+                (int(account_id), provider, data_class, purpose),
+            )
+            return cur.fetchone() is not None
+        finally:
+            cur.close()
+    except Exception:
+        return False
+
+
+def _prepare_vision_inline_images(
+    conn,
+    account_id: int,
+    attachment_ids: list[int],
+    *,
+    model: str,
+    conversation_id: str | None,
+) -> tuple[str | None, int, list[dict[str, str]] | None, list[dict[str, Any]]]:
+    """vision 첨부 (kind=image) 의 D11 consent gate + pre-fetch + 임시 file 작성.
+
+    Returns:
+        (temp_file_path, image_count, consent_required, audit_attachments)
+
+        - vision 미지원 모델 / image kind 0 → (None, 0, None, []).
+        - D11 consent 미동의 → (None, 0, [{provider, data_class, purpose}], []).
+          caller 가 409 + body 로 응답, frontend modal trigger.
+        - 정상 → (path, count, None, audit_attachments). caller 가 env
+          ATTACHMENT_IMAGE_INLINE_PATH 로 전달, finally 에서 cleanup.
+          audit_attachments 는 S2.5 (attachment.vision.invoke) 의 ChangeJson 용
+          metadata — D12 정합: filename / object_key 미포함, id 와 size_bucket
+          만.
+
+    D13 정합: server-side bytes read + base64 inline. signed URL 외부 송신 0.
+    D12 정합: audit ChangeJson 은 metadata-only (별 caller 책임 — 본 helper 는
+              결과만 제공).
+    """
+    if not attachment_ids or not model_supports_vision(model):
+        return (None, 0, None, [])
+
+    provider = _model_to_consent_provider(model)
+    if not provider:
+        return (None, 0, None, [])
+
+    # image kind 첨부 선별 (count cap 적용)
+    try:
+        cur = conn.cursor(dictionary=True)
+        try:
+            placeholders = ", ".join(["%s"] * len(attachment_ids))
+            params = tuple(int(i) for i in attachment_ids) + (int(_VISION_IMAGE_COUNT_CAP),)
+            cur.execute(
+                f"""
+                SELECT Id, ObjectKey, MimeType, OriginalFilename, SizeBytes, SizeBucket
+                FROM WebConversationAttachments
+                WHERE Id IN ({placeholders})
+                  AND Kind = 'image'
+                  AND DeletedAt IS NULL
+                  AND DeletePending = 0
+                ORDER BY Id ASC
+                LIMIT %s
+                """,
+                params,
+            )
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+    except Exception:
+        return (None, 0, None, [])
+
+    if not rows:
+        return (None, 0, None, [])
+
+    # D11 consent gate
+    if not _has_active_consent(conn, account_id, provider, "file_image", "inference"):
+        return (None, 0, [{
+            "provider": provider,
+            "data_class": "file_image",
+            "purpose": "inference",
+        }], [])
+
+    # bytes pre-fetch + base64 + size cap
+    from modules import storage_minio
+    import base64 as _b64
+
+    inline_entries: list[dict[str, str]] = []
+    audit_attachments: list[dict[str, Any]] = []
+    for row in rows:
+        object_key = str(row.get("ObjectKey") or "").strip()
+        mime_type = str(row.get("MimeType") or "image/png").strip() or "image/png"
+        filename = str(row.get("OriginalFilename") or "").strip()
+        size_bytes = int(row.get("SizeBytes") or 0)
+        size_bucket = str(row.get("SizeBucket") or "").strip()
+        attachment_id = int(row.get("Id") or 0)
+        if not object_key or attachment_id <= 0:
+            continue
+        if size_bytes > _VISION_IMAGE_SIZE_CAP_BYTES:
+            continue
+        try:
+            data_bytes = storage_minio.get_object_bytes(object_key)
+        except (storage_minio.StorageConfigError, storage_minio.StorageOperationError):
+            continue
+        if len(data_bytes) > _VISION_IMAGE_SIZE_CAP_BYTES:
+            continue
+        b64 = _b64.b64encode(data_bytes).decode("ascii")
+        inline_entries.append({
+            "filename": filename,  # caller (agent_core) 가 provider 미송신 — 로그용
+            "mime_type": mime_type,
+            "base64_data": b64,
+        })
+        # S2.5 audit ChangeJson 용 metadata (D12 정합 — filename / object_key 미포함)
+        audit_attachments.append({
+            "attachment_id": attachment_id,
+            "mime_type": mime_type,
+            "size_bucket": size_bucket,
+        })
+
+    if not inline_entries:
+        return (None, 0, None, [])
+
+    # 임시 file 작성 (caller 가 finally 에서 cleanup)
+    suffix = uuid.uuid4().hex[:12]
+    cid_seg = str(conversation_id or "no-cid")[:24].replace("/", "_")
+    path = f"{_VISION_INLINE_TMP_DIR}/mysql_ai_inline_{cid_seg}_{suffix}.json"
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(inline_entries, f, ensure_ascii=False)
+    except OSError:
+        return (None, 0, None, [])
+
+    return (path, len(inline_entries), None, audit_attachments)
+
+
+def _cleanup_vision_inline(temp_path: str | None) -> None:
+    """vision inline 임시 file + env cleanup."""
+    os.environ.pop("ATTACHMENT_IMAGE_INLINE_PATH", None)
+    if temp_path:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+
+
 @app.post("/api/ask")
 async def ask(request: Request) -> JSONResponse:
     start_ts = time.time()
@@ -6119,6 +6316,49 @@ async def ask(request: Request) -> JSONResponse:
         else:
             os.environ.pop("ATTACHMENT_IDS", None)
 
+        # TASK-0094 Sprint 2 (S2.4) — vision inline image pre-fetch + D11 consent gate.
+        # vision 미지원 모델 / image kind 0 → (None, 0, None, []) — 본 분기 skip.
+        # D11 미동의 → 409 + consent_required body 로 즉시 응답 (frontend modal trigger).
+        # 정상 → env ATTACHMENT_IMAGE_INLINE_PATH 로 path 전달 + finally cleanup.
+        vision_inline_path: str | None = None
+        vision_inline_count = 0
+        vision_audit_attachments: list[dict[str, Any]] = []
+        try:
+            (
+                _vision_path,
+                _vision_count,
+                _vision_consent_required,
+                _vision_audit,
+            ) = _prepare_vision_inline_images(
+                conn,
+                int(account["id"]),
+                attachment_ids_clean,
+                model=model,
+                conversation_id=conv_id,
+            )
+        except Exception:
+            _vision_path, _vision_count, _vision_consent_required, _vision_audit = None, 0, None, []
+        if _vision_consent_required:
+            os.environ.pop("ATTACHMENT_IDS", None)
+            try:
+                conn.close()
+            except Exception:
+                pass
+            return JSONResponse(
+                {
+                    "error": "vision 모델에 이미지 송신 동의가 필요합니다.",
+                    "error_code": "consent_required",
+                    "consent_required": _vision_consent_required,
+                },
+                status_code=409,
+            )
+        if _vision_path:
+            vision_inline_path = _vision_path
+            vision_inline_count = int(_vision_count or 0)
+            vision_audit_attachments = list(_vision_audit or [])
+            os.environ["ATTACHMENT_IMAGE_INLINE_PATH"] = _vision_path
+        else:
+            os.environ.pop("ATTACHMENT_IMAGE_INLINE_PATH", None)
 
         agent_result = await asyncio.to_thread(
             _run_agent_core,
@@ -6136,6 +6376,67 @@ async def ask(request: Request) -> JSONResponse:
         )
         # cleanup env to avoid leaking across requests.
         os.environ.pop("ATTACHMENT_IDS", None)
+        # Sprint 2 (S2.4) — vision inline cleanup (env + 임시 file).
+        _cleanup_vision_inline(vision_inline_path)
+        vision_inline_path = None
+
+        # Sprint 2 (S2.5) — attachment.vision.invoke audit dispatch.
+        # vision_inline_count > 0 일 때만 (실제로 image 가 inline 송신된 경우).
+        # agent_result.error 가 있으면 status='failure' + error_reason 기록.
+        _agent_error = str(agent_result.get("error") or "").strip()
+        _vision_conv_id = str(agent_result.get("conversation_id") or conv_id or "")
+        if vision_inline_count > 0:
+            try:
+                _audit_user_action(
+                    conn,
+                    request,
+                    account,
+                    action="attachment.vision.invoke",
+                    resource_type="conversation",
+                    resource_id=_vision_conv_id,
+                    request_ctx={
+                        "provider": _model_to_consent_provider(model),
+                        "model": model,
+                        "conversation_id": _vision_conv_id,
+                        "attachment_count": vision_inline_count,
+                        "attachment_metas": vision_audit_attachments,
+                        "status": "failure" if _agent_error else "success",
+                        "error_reason": _agent_error or None,
+                    },
+                )
+            except Exception:
+                # audit 실패는 사용자 응답을 막지 않음 (fail-open, Sprint 1 패턴).
+                pass
+
+            # Sprint 2 (S2.6, D19) — vision invoke 성공 시 WebAttachmentDerivedMessages
+            # join row INSERT. D9 share redact 가 `_meta_has_attachment_derived` 검사
+            # (agent_core 가 mirror 시 MetaJson.attachment_derived=True 추가) +
+            # 본 join 으로 어떤 attachment 가 derive 했는지 추적.
+            # fail-open: INSERT 실패는 사용자 응답 차단 안 함.
+            if not _agent_error and _vision_conv_id:
+                try:
+                    _latest_msg = _load_latest_assistant_message(conn, _vision_conv_id)
+                    _msg_id = int(_latest_msg.get("id") or 0)
+                    if _msg_id > 0 and vision_audit_attachments:
+                        _cur_d = conn.cursor()
+                        try:
+                            for _att in vision_audit_attachments:
+                                _att_id = int(_att.get("attachment_id") or 0)
+                                if _att_id <= 0:
+                                    continue
+                                _cur_d.execute(
+                                    """
+                                    INSERT INTO WebAttachmentDerivedMessages
+                                        (AttachmentId, MessageId, DerivationType)
+                                    VALUES (%s, %s, 'vision_analysis')
+                                    """,
+                                    (_att_id, _msg_id),
+                                )
+                            conn.commit()
+                        finally:
+                            _cur_d.close()
+                except Exception:
+                    pass
         conversation_id = str(agent_result.get("conversation_id") or "").strip()
         if conversation_id:
             _assign_conversation_owner(conn, conversation_id, int(account["id"]))
@@ -10701,6 +11002,23 @@ def build_audit_change_json(
                 "previously_granted_at": (before or {}).get("granted_at"),
             },
             [],
+        )
+    # TASK-0094 Sprint 2 (S2.5) — vision invoke audit. D12 정합:
+    # raw bytes / raw filename / raw object_key 절대 미노출. attachment_metas 는
+    # [{attachment_id, mime_type, size_bucket}] 만 — categorical 버킷 한정.
+    # provider/model 은 catalog alias (e.g., 'anthropic' / 'claude-sonnet-4') 만.
+    if action == "attachment.vision.invoke":
+        return (
+            {
+                "provider": request_ctx.get("provider"),
+                "model": request_ctx.get("model"),
+                "conversation_id": request_ctx.get("conversation_id"),
+                "attachment_count": int(request_ctx.get("attachment_count") or 0),
+                "attachment_metas": list(request_ctx.get("attachment_metas") or []),
+                "status": str(request_ctx.get("status") or "success"),
+                "error_reason": request_ctx.get("error_reason"),
+            },
+            ["attachment.bytes", "attachment.original_filename", "attachment.object_key"],
         )
     # Unknown ActionCode — explicit raise (Codex C6 builder allowlist policy).
     raise ValueError(f"unknown audit action: {action}")

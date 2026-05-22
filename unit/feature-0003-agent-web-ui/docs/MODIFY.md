@@ -2025,3 +2025,33 @@ source_of_truth: true
 - Files: feature-0002-agent-core/src/modules/sql_guard.py (신규), requirements.txt (sqlglot), app.py (PERMISSION_DEFINITIONS 2 + SEED operator/sales + 3 catchup + build_audit_change_json case 3), app.js + admin.js (PERMISSION_GROUP_ORDER 9 group + label + sections), docs/CONVENTIONS.md §10.6, FUNCTION/TASK/MODIFY/REVIEW.
 - Notes: 본 Phase 가 Sprint 1 Critical Ship 조건 충족. validate_sql_for_sandbox 의 실제 호출 (LLM tool 실행 시점) 은 별 cycle 또는 후속 patch — 본 phase 는 guard module + RBAC + audit dispatch 메커니즘 + group 정합.
 - Rollback: sql_guard.py + 2 RBAC + group + 3 audit case + FE 상수 + CONVENTIONS revert.
+
+## CHG-20260522-0007
+- Date: 2026-05-22
+- Related Requirement: TASK-0094 Sprint 2 — Cycle 2 Vision Ship (Major §12.3, BRIEFING §6.2)
+- Summary: 첨부 image (kind=image) 의 vision 가능 모델 (Claude Sonnet 4 / Haiku 4) inline 송신 + D11 consent gate + D13 base64 inline + D9 share redact + D19 derived join. feature-0007 (bedrock) 머지 위에서 LiteLLM proxy auto-normalize 활용.
+- Files:
+  - feature-0002-agent-core/src/modules/model_catalog.py (S2.1 — supports_vision flag + model_supports_vision helper + __all__)
+  - feature-0002-agent-core/src/modules/llm.py (S2.2 — messages_for_provider helper + __all__ + import)
+  - feature-0002-agent-core/src/agent_core.py (S2.3 + S2.6 — _load_attachment_inline_images + _call_llm self-contained injection + mirror_meta attachment_derived flag + imports)
+  - feature-0003-agent-web-ui/src/app.py (S2.4 + S2.5 + S2.6 — _prepare_vision_inline_images + _model_to_consent_provider + _has_active_consent + _cleanup_vision_inline + build_audit_change_json case attachment.vision.invoke + ask 안 vision pre-fetch/cleanup/audit dispatch + WebAttachmentDerivedMessages INSERT + model_supports_vision import)
+  - feature-0003-agent-web-ui/docs/FUNCTION.md (AC-0280~0285)
+  - feature-0003-agent-web-ui/docs/TASK.md (Sprint 2 [x] mark)
+  - feature-0003-agent-web-ui/docs/MODIFY.md (본 entry)
+  - feature-0003-agent-web-ui/docs/REVIEW.md (REV-20260522-0014/0015)
+  - feature-0003-agent-web-ui/docs/TODO-SPRINT-2-PLUS.md (Sprint 2 step 들 [x] mark + Sprint 3/4 인계 정본 보존)
+- Notes:
+  - **Cross-feature import 회피 (option A)**: storage_minio (feature-0003) 를 agent_core (feature-0002) 가 직접 import 안 함. caller (app.py /api/ask) 가 image bytes pre-fetch + base64 + 임시 file 작성, env `ATTACHMENT_IMAGE_INLINE_PATH` 로 path 만 전달. agent_core 는 path read only.
+  - **DB string contract 불변**: messages_for_provider 는 provider 직전 transient 변환 — `AgentMemoryMessages.Content` 는 string 유지. share builder / fork / audit 영향 0.
+  - **D11 consent gate**: image 첨부 + vision 가능 모델 시 `(account_id, provider=anthropic, data_class=file_image, purpose=inference)` 의 active row 확인. 미동의 시 409 + `{error_code: "consent_required", consent_required: [...]}` body 응답 (frontend modal trigger).
+  - **D12 audit masking**: vision audit ChangeJson 는 `{attachment_id, mime_type, size_bucket}` 만. raw filename / bytes / object_key 절대 미노출.
+  - **D13 정합**: server-side bytes read + base64 inline only. signed URL 외부 송신 0.
+  - **D9 share redact**: agent_core 가 vision invoke 결과 메시지 mirror 시 MetaJson 에 `attachment_derived=true` + `derivation_type="vision_analysis"` 추가 → Sprint 1 Phase 8 의 `_meta_has_attachment_derived` 가 자동 redact 적용.
+  - **D19 join**: app.py 가 audit dispatch 직후 (vision 성공 시) `_load_latest_assistant_message` 로 message_id 확보 + `WebAttachmentDerivedMessages` INSERT (각 inline attachment 별 1 row).
+  - **size/count cap**: 단일 image ≤ 5MB (pre-base64), turn 당 ≤ 5. 비용 폭주 + context overflow 방지.
+  - **R-F13 provider Files API lifecycle SKIPPED**: 본 cycle 은 base64 inline only → provider 측 잔존 0 → Files API 미사용 → R-F13 진입 불요. WebConversationAttachmentProviderFiles schema 는 Sprint 1 Phase 2 에서 already ship (D13 schema), 본 cycle 의 lifecycle row INSERT/DELETE 가 없음.
+  - **bedrock 정합**: catalog 변경 0 (option A 사용자 결정), flag 만 추가. LiteLLM proxy (feature-0007) 가 OpenAI Chat Completions `image_url` content-array → Anthropic Vision spec (`{type:image, source:{type:base64, ...}}`) auto-normalize. `drop_params: true` 로 미지원 OpenAI param silent drop.
+  - **테스트**: 14 unit test pass — messages_for_provider 8 (empty / vision_off / conversion / empty base64 skip / multi-turn idempotency / 다중 image inline / DB string 불변 / integration with claude-sonnet-4) + _load_attachment_inline_images 6 (env 부재 / file 부재 / 정상 JSON / 빈 base64 skip / 잘못된 schema / invalid JSON). _prepare_vision_inline_images 통합 test 는 container smoke 시점.
+  - **codex outside-voice review SKIPPED** (사용자 결정 2026-05-22) — REV-20260522-0014 에 사유 명시.
+  - Sprint 2 의 commit 분리 (rebase 후 hash): S2.1+S2.2+S2.3 backend / S2.4+S2.5+S2.6 source / S2.8 docs ship.
+- Rollback: 본 4 source 파일 + 5 docs revert. Sprint 1 산출물 (storage_minio, sandbox_*, sql_guard, attachment_reconciliation, RBAC 6, audit 10, endpoint 7) 은 보존.
