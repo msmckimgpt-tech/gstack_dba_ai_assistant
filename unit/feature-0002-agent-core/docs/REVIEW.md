@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260522-0001 [SKIPPED:non-policy-doc]
+- Related TASK: feature-0002-agent-core (fix/query-result-string-truncation)
+- Reason: changed paths are docs/comments only outside policy-doc list — `src/modules/render.py` 단일 파일 버그 수정, 인증/인가/스키마/API 변경 없음.
+- Timestamp: 2026-05-22T00:00:00Z
+
 ## REV-20260520-0008 [SUBAGENT:Plan-subagent — M2-b dual-write 본 구현]
 - Date: 2026-05-21
 - TASK-Cycle: TASK-0020 (M2-b dual-write 본 구현, **Major §12.3** — RBAC 동반)

@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0001
+- Date: 2026-05-22
+- TASK-Cycle: fix/query-result-string-truncation (Minor §12.3 — 비파괴 버그 수정)
+- Summary: `normalize_step_result_summary` (render.py) 에서 `execute_sql` 결과 요약 시 CSV 파일이 존재하면 `_format_result_sets` 의 셀 100자 잘림 없이 CSV 원본 데이터로 `preview_table` 을 구성하도록 변경. CSV 부재 시 기존 텍스트 파싱 fallback 유지. `_count_csv_data_rows` helper 추가 (truncated 판정용).
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/render.py`: `normalize_step_result_summary` 로직 확장 + `_count_csv_data_rows` 신규.
+- Verification: `python3 -c "import ast; ast.parse(open(...)read())"` PASS. 수동 단위 테스트 — 150자 셀값 CSV → preview_table.rows 전체 길이 150 확인.
+- Notes: LLM 컨텍스트용 `_format_result_sets` 의 100자 셀 제한은 유지 (AI 컨텍스트 최적화 의도 보존). 웹 UI 미리보기 경로만 수정.
+
 ## CHG-20260521-0002
 - Date: 2026-05-21
 - TASK-Cycle: TASK-0020 (M2-b dual-write 본 구현, **Major §12.3** — RBAC 동반)

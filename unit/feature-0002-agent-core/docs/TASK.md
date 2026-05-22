@@ -9,12 +9,13 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: M2-b dual-write 본 구현 (cycle: TASK-0020)
-- Owner: AI (본 cycle: M2-b method body + caller 5 + unit test 10) → AI (M2-c: cross-DB audit explicit + 7-day SLA + integration test fixture)
+- State: M2-b dual-write 본 구현 (cycle: TASK-0020) + query result string truncation fix 완료
+- Owner: AI
 - Priority: high
-- Last Updated: 2026-05-21 (TASK-0015 PLAN-APPROVED 마커: ms.mckim.gpt@gmail.com on 2026-05-20)
+- Last Updated: 2026-05-22 (fix/query-result-string-truncation — CHG-20260522-0001)
 
 ## 1.1 Current Cycle
+- [x] fix/query-result-string-truncation (Minor §12.3) — `normalize_step_result_summary` (render.py) CSV 기반 `preview_table` 구성으로 셀 100자 잘림 이슈 수정. MODIFY CHG-20260522-0001. REVIEW [SKIPPED:non-policy-doc].
 - [ ] TASK-0020 (REQ-20260521-0002, **Major §12.3** — RBAC 동반 변경) §2.1 PLAN-APPROVED 의 **M2 phase 의 2차 (M2-b)** 실행. M2-a (TASK-0019) 의 ABC + skeleton 위에 `KbBackend` method body 12 (MysqlKbBackend 6 + PgKbBackend 6) + `_DualWriteMirror` helper (`_dual_write_kb` singleton) + caller 5 위치 mirror 호출 (utils.py:957/1179/1230 + knowledge.py:598/633) + `tests/test_dual_write_mirror.py` 10 unit test + `tests/conftest.py` sys.path 통합. ABC 보강: `prune_fact_entries_keep_top()` (knowledge.py:598 의 trim 패턴 대응). **Outside-voice review (Plan subagent, `REV-20260520-0008`) Verdict NEEDS-TWEAK + Critical 6 + Blocker 2 본 cycle 내 반영 완료**: (1) caller 4 위치 silent/fail-loud pattern 통일 (knowledge.py:677-696 dead try/except 제거 + `_prune_fact_entries_for_key` 의 광역 swallow 를 MySQL DELETE 만 cover 로 한정, mirror 호출은 외부 분리 — fail-loud raise propagate), (2) caller actual call test (Test 9 `_text_store_insert` + mock cursor + spy mirror), (3) silent log caplog verification (Test 10), (4) `tests/conftest.py` 신규 (sys.path 통합 + dual import path 제거), (5) REPORT.md §4 risk log 0번 entry (latency baseline 측정 M2-c 책임), (6) `docs/DECISIONS.md` ADR-0021 §Consequences 보강 (Cross-DB audit explicit call M2-c cycle 책임 + `WebAuditEvents` ActionCode `kb.write.mirror` + M4 cutover gate (f) 항목 PASS 필수). **본 turn 의 deliverable 은 method body + caller 5 + 10 unit test + outside-voice 반영까지**. **M2-c cycle (별 cycle)** 책임: cross-DB audit explicit call + `bin/kb-dual-write-verify.sh --audit-sla` 본문 + 7-day stress run + ANCHOR §3 invariant test fixture/assertion 실 구현 + Nice-to-have 5건 (LC_COLLATE / tsvector simple / `_BACKENDS_CACHE` thread-safe lock / psycopg autocommit docstring / MysqlKbBackend caller drift 방지).
 
 ## 1.2 Implementation Plan (TASK-0020 — M2-b dual-write 본 구현 cycle)
