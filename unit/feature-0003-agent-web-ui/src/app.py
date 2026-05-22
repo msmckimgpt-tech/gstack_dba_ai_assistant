@@ -1013,11 +1013,22 @@ def _role_payload(account: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
-def _serialize_account(account: dict[str, Any] | None) -> dict[str, Any] | None:
+def _serialize_account(
+    account: dict[str, Any] | None,
+    *,
+    include_permissions: bool = False,
+) -> dict[str, Any] | None:
+    """계정 정보를 응답 payload 로 직렬화한다.
+
+    TASK-0098 (REQ-20260522-0002, Critical §12.3): default `False` — 7 self callsite
+    (bootstrap, signup, login, GET `/api/auth/me`, PATCH `/api/auth/me` 2 곳) 가
+    default 호출 → raw permission map 노출 차단. admin-context 3 callsite
+    (`_list_accounts_for_admin`, admin account update, 신규 `/api/admin/me`) 는
+    `include_permissions=True` 명시. `role` 객체는 self 응답에도 유지.
+    """
     if not account:
         return None
-    permissions = _account_permissions(account)
-    return {
+    payload: dict[str, Any] = {
         "id": int(account.get("id") or 0),
         "username": str(account.get("username") or ""),
         "role": _role_payload(account),
@@ -1028,10 +1039,12 @@ def _serialize_account(account: dict[str, Any] | None) -> dict[str, Any] | None:
         "approved_at": str(account.get("approved_at") or "") or None,
         "last_login_at": str(account.get("last_login_at") or "") or None,
         "last_conversation_id": str(account.get("last_conversation_id") or ""),
-        "permissions": permissions,
         # TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0095): 다음 로그인 시 비밀번호 강제 변경.
         "must_change_password": bool(account.get("must_change_password")),
     }
+    if include_permissions:
+        payload["permissions"] = _account_permissions(account)
+    return payload
 
 
 def _account_conv_file(account_id: int) -> str:
@@ -5492,7 +5505,8 @@ GROUP BY owner_account_id
     conversation_counts = {int(owner_id): int(count or 0) for owner_id, count in count_rows if int(owner_id or 0) > 0}
     items: list[dict[str, Any]] = []
     for row in rows:
-        payload = _serialize_account(row) or {}
+        # TASK-0098: admin context — 권한 정보 명시 포함.
+        payload = _serialize_account(row, include_permissions=True) or {}
         payload["conversation_count"] = conversation_counts.get(int(row.get("id") or 0), 0)
         payload["permission_overrides"] = dict(row.get("permission_overrides") or {})
         items.append(payload)
@@ -5918,7 +5932,7 @@ async def ask(request: Request) -> JSONResponse:
     else:
         if not _account_has_permission(account, "conversation.create"):
             conn.close()
-            return _json_error("새 대화를 생성할 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
         if not _account_has_permission(account, "conversation.ask"):
             conn.close()
             return _json_error("권한이 없습니다.", 403)
@@ -5959,7 +5973,7 @@ async def ask(request: Request) -> JSONResponse:
                     if not _account_has_product_access(account, int(hint_pid), conn=conn):
                         if hint_raw_pid not in (None, "", 0):
                             conn.close()
-                            return _json_error("이 제품에 접근할 권한이 없습니다.", 403)
+                            return _json_error("요청을 수행할 수 없습니다.", 403)
                         hint_mode = "auto"
                         hint_pid = None
                 if conv_id:
@@ -6180,7 +6194,7 @@ async def new_conversation(request: Request) -> JSONResponse:
             # explicit body 에 명시했는데 권한 없으면 403 (보안 명확성). default 가 강등된 경우는 auto.
             if (data or {}).get("product_id") not in (None, "", 0):
                 conn.close()
-                return _json_error("이 제품에 접근할 권한이 없습니다.", 403)
+                return _json_error("요청을 수행할 수 없습니다.", 403)
             # default product 권한도 없는 케이스 → auto 강등 (운영 가능성 유지).
             req_mode = "auto"
             req_product_id = None
@@ -6283,7 +6297,7 @@ async def update_conversation_product(cid: str, request: Request) -> JSONRespons
         # 기존 코드는 IsActive 만 검사 → 모든 logged-in account 가 임의 product 에 pin 가능했음.
         if not _account_has_product_access(account, pinned_id, conn=conn):
             conn.close()
-            return _json_error("이 제품에 접근할 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
 
     try:
         cur_u = conn.cursor()
@@ -6514,7 +6528,7 @@ async def fork_conversation(request: Request) -> JSONResponse:
         if error:
             return error
         if not _account_has_permission(account, "conversation.create"):
-            return _json_error("'새 대화 생성' 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
         if not _account_can_access_conversation(
             conn,
             account,
@@ -6568,7 +6582,7 @@ async def duplicate_conversation(cid: str, request: Request) -> JSONResponse:
         ):
             return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
         if not _account_has_permission(account, "conversation.create"):
-            return _json_error("'새 대화 생성' 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
         payload, err = _fork_conversation_impl(conn, account, cid, None)
         if err:
             return err
@@ -6728,7 +6742,7 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
         if error:
             return error
         if not _account_has_permission(account, "conversation.share.create"):
-            return _json_error("대화 공유 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
         if not _account_can_access_conversation(
             conn,
             account,
@@ -6885,7 +6899,7 @@ def revoke_share(share_id: int, request: Request) -> JSONResponse:
         is_creator = int(row.get("CreatedBy") or 0) == int(account["id"])
         is_admin = _account_has_permission(account, "conversation.read.any")
         if not (is_creator or is_admin):
-            return _json_error("이 공유 링크를 취소할 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
         cur = conn.cursor()
         try:
             cur.execute(
@@ -7044,7 +7058,7 @@ async def public_share_fork(token: str, request: Request) -> JSONResponse:
         if error:
             return error
         if not _account_has_permission(account, "conversation.create"):
-            return _json_error("'새 대화 생성' 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
         share = _share_load_active(conn, token)
         if not share:
             return _json_error("공유 링크를 찾을 수 없습니다.", 404)
@@ -8797,6 +8811,35 @@ async def auth_logout(request: Request) -> JSONResponse:
     return resp
 
 
+@app.get("/api/admin/me")
+async def admin_me(request: Request) -> JSONResponse:
+    """관리 콘솔 전용 self 정보 endpoint (TASK-0098).
+
+    `console.access` permission 보유자만 200 + permissions 포함 응답을 받는다.
+    미보유자 = 403, 비로그인 = 401. admin.js 가 본 endpoint 로 진입 게이트를
+    검사한다 — `/api/auth/me` (일반 self) 의 permissions 필드가 제거되어도
+    admin 콘솔 진입이 깨지지 않도록 분리한 admin-context endpoint.
+
+    Codex outside voice F1 (blocker) 흡수.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(account, "console.access"):
+        conn.close()
+        return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    conn.close()
+    return JSONResponse({
+        "ok": True,
+        "user": _serialize_account(account, include_permissions=True),
+    })
+
+
 @app.get("/api/admin/accounts")
 async def admin_accounts(request: Request) -> JSONResponse:
     try:
@@ -8961,7 +9004,8 @@ WHERE Id = %s
         conn.close()
         return _json_error(f"audit write failed: {audit_exc}", 500)
     conn.close()
-    payload = _serialize_account(updated) or {}
+    # TASK-0098: admin context — 권한 정보 명시 포함.
+    payload = _serialize_account(updated, include_permissions=True) or {}
     payload["permission_overrides"] = dict((updated or {}).get("permission_overrides") or {})
     return JSONResponse({"ok": True, "account": payload})
 
@@ -10118,7 +10162,7 @@ async def me_get_system_prompt(request: Request, product_id: int | None = None) 
     if product_id is not None and int(product_id) > 0:
         if not _account_has_product_access(account, int(product_id), conn=conn):
             conn.close()
-            return _json_error("이 제품에 접근할 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
     # 계정 스코프: 개인 프롬프트는 product 별 혹은 product 무관 하나씩 보유 가능.
     row = _load_system_prompt(
         conn,
@@ -10158,7 +10202,7 @@ async def me_put_system_prompt(request: Request) -> JSONResponse:
     if product_id is not None and int(product_id) > 0:
         if not _account_has_product_access(account, int(product_id), conn=conn):
             conn.close()
-            return _json_error("이 제품에 접근할 권한이 없습니다.", 403)
+            return _json_error("요청을 수행할 수 없습니다.", 403)
     new_id = _upsert_system_prompt(
         conn,
         scope="account",

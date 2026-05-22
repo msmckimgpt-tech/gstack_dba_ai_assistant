@@ -8,6 +8,26 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0002
+- Date: 2026-05-22
+- Summary: TASK-0098 (REQ-20260522-0002, **Critical** §12.3 — Profile Drawer 탭 재구성 + 권한 정보 API 단위 차단) cycle ship. PR #49 multi-race rebase + ID reassign + squash commit. Codex outside voice 6 findings (1 blocker + 4 high + 1 medium) 흡수.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`: Profile Drawer 탭 5 → 4 (`[프롬프트, 보안 및 계정, API Vault, 내 감사 로그(gated)]`). 보안+계정 통합 pane (활동 정보 최상단 → 비밀번호 변경 → 세션/로그아웃). "권한 현황" DOM 제거. 첫 탭 `is-active` = "프롬프트". cache-bust `v=20260520-profile-audit` → `v=20260522-task-0098-perms`.
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`: `profilePermPillsEl` + `profileStateNoteEl` 변수 제거 + `renderProfile()` 의 호출 + `profileStateNote` 분기 제거. `openProfile(tab = "prompt")` 기본값 + `openProfileBtn` click handler 변경. `can(permission)` 함수를 `Boolean(state.user)` 분기로 단순화 (Codex F5). `apiFetch` 의 403 공통 처리 — toast `"요청을 수행할 수 없습니다."` + Promise reject. `_profileAuditHasReadPermission()` 도 `Boolean(state.user)` 분기. `buildPermissionPills()` 함수 자체는 dead code (호출 없음) 로 남김 — 별 cycle 의 cleanup 위임.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: initialize() 가 `/api/auth/me` → `/api/admin/me` 전환 + `.catch(() => null)` 추가.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: cache-bust `v=20260521-settings-listdetail` → `v=20260522-task-0098-perms`.
+  - `unit/feature-0003-agent-web-ui/src/app.py`: `_serialize_account(account, *, include_permissions: bool = False)` 시그너처 + default `False`. 7 self callsite 자동 permissions 제거. admin callsite 3 곳 (`_list_accounts_for_admin`, admin account update, 신규 `/api/admin/me`) `include_permissions=True` 명시. 신규 `@app.get("/api/admin/me")` endpoint (console.access 보유자 200, 미보유 403, 비로그인 401). 일반 사용자 경로 403 메시지 5 패턴 9 callsite normalize — 모두 `"요청을 수행할 수 없습니다."` 통일. admin endpoint 의 403 메시지 보존.
+  - `unit/feature-0003-agent-web-ui/tests/test_admin_me_rbac.py`: 신규 4 시나리오.
+  - `unit/feature-0003-agent-web-ui/tests/test_auth_me_rbac.py`: 신규 5 시나리오.
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: REQ-20260522-0002 + AC-0226~0234 9 항목 신규.
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0098 queue entry + PLAN-APPROVED marker.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260522-0002 [AGENT-TEAM:codex-outside-voice].
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 갱신.
+  - `docs/STATUS.md`: feature-0003 row prepend.
+- 검증: py_compile + node --check + verify-completion --pre-commit PASS. 실 컨테이너 9 시나리오 smoke + UI dogfood 2 role 사용자 위임.
+- Codex 6 findings 흡수 매핑: F1 (admin.js console.access blocker) → `/api/admin/me` 분리 / F2 (Option Y raw permission 비노출) → can() 단순화 + apiFetch 403 fallback + 메시지 normalize / F3 (403 메시지 권한명 노출) → 5 패턴 9 callsite normalize / F4 (누출 경로 다수) → default False 일괄 적용 / F5 (false 단순 전환 금지) → can() true 반환 + UI 표시 유지 / F6 (CSRF/race) → 현 backend SameSite + fresh permission 검사 안전.
+- Multi-race rebase 영역: backup branch `backup/profile-tabs-restructure-pre-rebase` (677d48a tip) 에 원래 4 commit 보존. main HEAD `20f0344` 위에 squash commit. main 흡수 = PR #45 v3.10.0 + #47 TASK-0089 audit drawer + #48/#50 docs + #52 TASK-0094 첨부 multi-cycle Sprint 1 Phase 1 + #61 Phase 4 storage + DQA 브랜딩 (TASK-0097) + TASK-0095 GLOBAL prompt + TASK-0096 v2 (설정 list-detail). 의도 통합 = Profile Drawer 5 탭 → 4 탭 (audit 보존 + 3 탭 통합). ID reassign = TASK-0094→TASK-0098 / REQ-20260521-0001→REQ-20260522-0002 / AC-0199~0207→AC-0226~0234 / CHG·REV-20260521-0001~0004→CHG·REV-20260522-0002 / cache-bust `v=20260522-task-0098-perms`.
+
 ## CHG-20260521-0006
 - Date: 2026-05-21
 - Summary: TASK-0096 v2 (REQ-20260521-0004 follow-up). 사용자 직접 피드백 — "계정, 역할, 제품 탭과 일관된 디자인이 아닌것으로 확인되었습니다. 검색창을 포함하여, 해당 탭들과 일관된 디자인으로 구성해주세요." CHG-20260521-0005 의 sub-sidebar (`admin-settings-shell` + `admin-settings-nav`) 형태가 다른 탭의 5단 master-detail 패턴 (header → `admin-list-detail` (좌측 list-col + 우측 detail-col)) 과 시각 일관성 부족. v2 에서 sub-sidebar 전용 클래스 일괄 제거 + 계정/역할/제품 의 `admin-list-detail` / `admin-list-col` / `admin-detail-col` 그대로 차용 + `admin-list-row` 의 nav 변형 (`.admin-list-row--nav`, 체크박스 슬롯 hidden, full-width content) 추가. 검색창 = `admin-search` 재사용 (placeholder = "설정 항목 검색…"), 항목 카운트 = `admin-list-count` 재사용. 검색 필터는 row 의 `data-settings-tab` + `data-settings-group` + `data-settings-keywords` + textContent 를 합쳐 substring 매칭. UI restructure only — 데이터/API/권한 무영향.
