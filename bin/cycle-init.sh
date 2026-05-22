@@ -112,6 +112,12 @@ WORKTREE_PARENT="$PROJECT_ROOT/.worktrees"
 NEW_WORKTREE_PATH="$WORKTREE_PARENT/$FEATURE_ID"
 NEW_BRANCH="ai/$AGENT_NAME/$FEATURE_ID"
 
+# v3.11.0: nested worktree 거부 — <wrapper>/.worktrees/<feat> 외 위치 금지 (§13.2.3).
+case "$NEW_WORKTREE_PATH" in
+  */repo/.worktrees/*)
+    die "nested worktree 거부 — worktree path 가 repo/ 내부에 있습니다: '$NEW_WORKTREE_PATH'. <wrapper>/.worktrees/<feat> 위치를 사용하세요 (§13.2.3 lifecycle)." ;;
+esac
+
 log_info "main worktree:   $MAIN_WORKTREE_PATH"
 log_info "project root:    $PROJECT_ROOT"
 log_info "new worktree:    $NEW_WORKTREE_PATH"

@@ -1765,3 +1765,20 @@ source_of_truth: true
 - Notes: 사용자 메모리 정책 "RBAC plan 은 outside voice 필수" 대응 — 본 Phase 3 의 RBAC 변경은 TASK-0094 BRIEFING Revision 2 (Codex outside-voice review 2 회 흡수 lock-in) 의 D6/D11/D12/D14/D15/D16/D21 결정 정합. catalog blindspot 대응은 BRIEFING REV-20260520-0001 Claim #1 (6 checklist) + Claim #3 (정적 catalog source) + REV-20260521-0002 R-F14 (pending metadata-only) 흡수로 이미 정본 review 완료. 사용자 명시 진입 결정에 따라 본 Phase 진행. 후속 plan-eng-review / codex review 는 Phase 12 (D14 SQL guard, Ship 조건) 진입 시점에 권장.
 - Impact: 새 catalog 4 코드 + 5 role catchup. 기존 배포에 `_ensure_seed_catchup` fast path 진입 시 자동 INSERT IGNORE. application-level endpoint 는 Phase 5 (upload API) 에서 ship — 본 Phase 3 ship 직후 시점은 권한만 부여, 실제 upload/download 경로 unavailable.
 - Rollback Notes: PERMISSION_DEFINITIONS 의 4 코드 entry / SEED_ROLE_DEFINITIONS pending/operator/sales 추가 권한 / _ensure_seed_roles 의 5 catchup 추가 / app.js label/description map 의 4 entry revert. 기존 배포의 WebRolePermissions 에 INSERT 된 row 는 `DELETE FROM WebRolePermissions WHERE PermissionId IN (SELECT Id FROM WebPermissions WHERE Code LIKE 'conversation.attachment.%')` 또는 보존 (catalog 무관 row 는 영향 0).
+
+## CHG-20260522-0001
+- Date: 2026-05-22
+- Related Requirement: TASK-0097 (REQ-20260522-0001, Minor §12.3) DQA 브랜딩 적용
+- Summary: 웹 UI 전체 브랜딩을 'MySQL AI' → DQA (Database Query Assistant) 로 변경. SVG 로고 신설.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/index.html` — title / auth-title / auth-logo / sidebar brand-icon·name 변경.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` — title / sidebar brand-icon·name 변경.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` — 상단 주석 갱신, .auth-logo / .brand-icon background → transparent.
+  - `unit/feature-0003-agent-web-ui/src/static/logo-dqa.svg` — 신규 SVG 로고 (48×48, primary #2563eb, DB 실린더+돋보기).
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md` — REQ-20260522-0001 + AC-0219~0222 등재.
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md` — TASK-0097 [x] + Current Status 갱신.
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md` — 본 entry.
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md` — REV-20260522-0001 [SKIPPED:static-asset-only] append.
+- Notes: 정적 자산 변경만. backend / RBAC / endpoint / DB / audit 무변경. docker cp 로 런닝 컨테이너에 즉시 반영 확인 (browse 스크린샷 3장).
+- Impact: 브라우저 출력 브랜딩만 변경. 기능 영향 0.
+- Rollback Notes: `index.html` / `admin.html` / `styles.css` 의 DQA → MySQL AI 텍스트 revert + `logo-dqa.svg` 제거.

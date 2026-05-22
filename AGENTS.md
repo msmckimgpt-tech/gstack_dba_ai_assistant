@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.10.0
+template_version: v3.11.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -238,27 +238,6 @@ AI는 작업 중 다음을 발견하면 해당 기능의 `REPORT.md` §8 또는 
 
 **제안은 기록만 하며, 사용자 지시 없이 실행하지 않는다.**
 
-### §8.2 테스트 정합성 보존 정책
-
-각 작업자 AI는 코드 추가·수정 후 반드시 아래 두 단계를 순서대로 완료해야 한다.
-완료 선언(§16.2) 이전에 두 단계가 모두 PASS 상태여야 한다.
-
-#### 단계 1 — 단위 테스트 (Unit Test)
-- 해당 기능의 `unit/<feature-id>/tests/` 안에 위치한 테스트를 실행한다.
-- 추가·수정된 로직에 대응하는 테스트 케이스가 없으면 **반드시 작성 후 실행**한다.
-- 기존 단위 테스트가 회귀(regression)하지 않아야 한다.
-- 실행 결과를 `unit/<feature-id>/docs/TEST.md` §3에 append-only로 기록한다.
-
-#### 단계 2 — 전체(통합) 테스트 (Integration/Full Test)
-- `repo/tests/integration/` 에 위치한 테스트를 실행한다.
-- 새 기능이 기존 feature 간 인터페이스 또는 공유 모듈(`shared/`)에 영향을 줄 경우 해당 범위의 통합 테스트도 포함한다.
-- **현황 (2026-05-21 기준)**: `repo/tests/integration/` 디렉토리는 생성되어 있으나 통합 테스트 케이스는 아직 작성되지 않았다. 각 작업자 AI는 자신이 추가한 기능의 범위에 맞는 통합 테스트를 작성하고 실행해야 한다. 통합 테스트가 아직 미작성인 영역은 `unit/<feature-id>/docs/TEST.md` §4 Untested Areas에 명시한다.
-
-#### 공통 규칙
-- 단위 테스트 FAIL 상태로 완료 선언하지 않는다.
-- 통합 테스트가 미작성인 경우, `REPORT.md` §8에 미작성 사유와 커버 계획을 기록하고 `TEST.md` §4에 항목을 추가한다.
-- `verify-completion.sh --pre-commit <feature-id>` 는 단위 테스트 PASS를 포함한다. 통합 테스트 FAIL 또는 미작성은 BLOCKED 항목으로 기록하여 사람에게 전달한다.
-
 ## §9. 불명확성 대응 정책
 
 AI가 구현 중 요구사항이 불명확하거나 모순을 발견한 경우:
@@ -287,6 +266,24 @@ AI가 구현 중 요구사항이 불명확하거나 모순을 발견한 경우:
 2. 해당 기능의 `TASK.md`
 3. 해당 기능의 `FUNCTION.md`
 4. 해당 기능의 `REPORT.md`
+
+### §10.1.1 소비자 프로젝트 세션 시작 — worktree context 필수 확인
+
+소비자 프로젝트 (§2.2 consumer 판정) 에서 AGENTS.md 을 첫 turn 에 읽은 후,
+`/_template:entry` 미사용 직접 세션도 다음을 수행한다:
+
+1. `git worktree list --porcelain` 으로 cwd 가 ai/* worktree 인지 main
+   checkout 인지 판정.
+2. 사용자 요청이 `repo/` 파일 생성·수정·삭제를 포함하면 mutation 의도로 간주.
+3. main checkout + mutation 의도 조합이면 §13.2.7 F0 위반 — 작업 진입 전
+   표면화:
+   > 현재 main checkout. `repo/` 직접 수정은 §13.2.7 F0 위반.
+   > `bash repo/bin/cycle-init.sh --feature <feature_id>` 로 worktree 생성 후
+   > 새 세션에서 시작하세요. (또는 `/_template:entry <task>` 사용)
+
+§13.2.4 carve-out 인 경우 (`/_local:*`, template base maintainer, `git
+pull`/`git fetch`/submodule update, `/_template:init` 부트스트랩) 위 단계는
+skip.
 
 ### §10.2 참조 읽기 (필요 시)
 
@@ -405,6 +402,11 @@ AI가 위 항목에 해당하는 작업에 도달하면:
 - 문서 상단 메타데이터의 `edit_policy`를 따른다.
 - **프로젝트 수준 rewrite 문서**(ARCHITECTURE.md, CONVENTIONS.md 등)는 동시에 하나의 AI만 수정할 수 있다. 구조 변경이 필요하면 프로젝트 수준 `DECISIONS.md`에 제안을 기록하고 사람이 반영한다.
 - **append-only 문서 동시 추가 시** 각 항목에 타임스탬프와 작업자 ID(AI 세션 또는 기능 ID)를 포함하여 자동 병합이 가능하도록 한다.
+- **Feature-bound REPORT.md 충돌 방지** (v3.11.0+): `unit/<feature-id>/meta/REPORT.md`
+  는 해당 feature 의 단일 worktree mutator 에 의해서만 mutation 된다 (F2 정책의
+  feature-scoped 확장). 다른 worktree 가 동일 path 의 read 는 허용. 충돌 발생
+  시 §13.2.5 의 ai/\* main drift gate 가 보충. `bin/list-shared-paths.sh` 가
+  feature-bound REPORT.md 를 동적으로 열거한다.
 - 아래 마커를 지원한다.
 
 ```md
@@ -594,6 +596,24 @@ worktree 진입을 결정하지 않고 main worktree 컨텍스트를 강제 유�
   ≠ correctness). TTL cache 없음.
 - 동시 push race 는 wedge B (manual parallel) 하 이론적 가능성. 발생 시 **사용자
   수동 직렬화** 가 권장 해결. 자동 재시도 알고리즘은 본 사이클 외.
+- **ai/\* worktree 의 main drift 검출** (actor: ai/\* worktree 의 다음 turn
+  진입자, v3.11.0+): ai/\* worktree 의 entry preamble 에서 다음을 수행한다.
+
+  ```bash
+  git fetch origin main 2>&1 || true
+  behind=$(git rev-list --count HEAD..origin/main 2>/dev/null || echo 0)
+  ```
+
+  `behind > 0` 일 때만 사용자 화면에 1줄 표면화 + 권유 (자동 실행 아님):
+
+  > 본 worktree (`ai/<agent>/<feature>`) 는 main 보다 `<behind>` commit 뒤짐.
+  > `git pull --rebase origin main` 권유 — drift 누적 시 PR 머지 conflict ↑.
+
+  사용자 명시 confirm 후 rebase. fetch 실패 = WARN ("remote unavailable") +
+  계속 진행 (main worktree behavior 와 동일 정책, D11A: 네트워크 가용성 ≠
+  correctness). TTL cache 없음 — 매 turn 의 first action.
+
+  본 gate 는 §16.3 의 main worktree pull 룰의 ai/\* 미러.
 
 #### §13.2.6 샌드박스 실행
 
@@ -752,8 +772,7 @@ AI가 작업 완료를 선언할 때는 `TASK.md`의 Completion Checklist를 명
 ```md
 ## 7. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다
-- [ ] 단위 테스트(unit test)가 통과한다 (§8.2 단계 1)
-- [ ] 전체/통합 테스트(integration test)가 통과하거나, 미작성 사유와 커버 계획이 TEST.md §4에 기록되었다 (§8.2 단계 2)
+- [ ] 자동 테스트가 통과한다
 - [ ] FUNCTION.md가 현재 동작과 일치한다
 - [ ] MODIFY.md에 변경 이력이 기록되었다
 - [ ] REVIEW.md에 판단 근거가 기록되었다

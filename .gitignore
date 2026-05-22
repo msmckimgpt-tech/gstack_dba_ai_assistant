@@ -33,3 +33,6 @@ _archive/
 # docker-compose dev override — 환경별 (developer machine 의 dev 가동 옵션).
 # template 은 `docker-compose.override.yml.example` 로 추적. 실제 사용 파일은 gitignore.
 docker-compose.override.yml
+
+# worktree checkout paths (git worktree add 로 생성, repo 외부 경로)
+.worktrees/
