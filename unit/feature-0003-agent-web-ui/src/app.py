@@ -1444,6 +1444,10 @@ def _is_safe_model_name(value: str) -> bool:
 
 
 def _is_allowed_api_model(value: str) -> bool:
+    # 웹 UI /api/ask 에서는 로컬 LLM 모델(auto/edge/core/code) 거부 —
+    # insight-worker 전용 모델을 사용자가 직접 지정해 호출하는 경로 차단.
+    if is_local_llm_model(value):
+        return False
     return is_allowed_api_model(value)
 
 
@@ -5823,7 +5827,9 @@ def _resolve_session_default_model() -> str:
     그 외 시점은 API_DEFAULT_MODEL fallback."""
     raw = os.getenv("OPENAI_MODEL", "").strip()
     if raw and is_allowed_api_model(raw):
-        if is_local_llm_model(raw) and not _is_local_llm_available():
+        # 로컬 LLM 모델(auto/edge/core/code)은 웹 UI 기본값으로 노출하지 않음 —
+        # insight-worker 전용. 웹 세션은 항상 Bedrock Claude 계열 기본값 사용.
+        if is_local_llm_model(raw):
             return API_DEFAULT_MODEL
         return raw
     return API_DEFAULT_MODEL

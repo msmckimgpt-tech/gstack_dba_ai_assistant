@@ -16,7 +16,7 @@ __all__ = [
 ]
 
 
-API_DEFAULT_MODEL = "claude-sonnet-4"
+API_DEFAULT_MODEL = "claude-haiku-4"
 
 # ── 로컬 LLM 게이트웨이 모델 (LOCAL_LLM_API_BASE 설정 시 자동 추가) ──
 # supports_vision: 보수적 false. 로컬 게이트웨이 모델별 vision 지원은 배포 환경
@@ -88,11 +88,15 @@ API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = (
 
 _LOCAL_LLM_ENABLED = bool(os.getenv("LOCAL_LLM_API_BASE", "").strip())
 _LOCAL_LLM_VALUES: frozenset[str] = frozenset(item["value"] for item in _LOCAL_LLM_MODELS)
+# 내부 유효성 검사 (is_allowed_api_model) 에는 로컬 LLM 포함 — insight-worker 가
+# edge/core/auto/code 를 사용하므로 허용 목록에서 제거하면 안 됨.
 _ALL_MODEL_OPTIONS = (
     API_MODEL_OPTIONS + _LOCAL_LLM_MODELS if _LOCAL_LLM_ENABLED else API_MODEL_OPTIONS
 )
 _API_MODEL_INDEX = {item["value"]: item for item in _ALL_MODEL_OPTIONS}
 
+# 웹 UI 모델 선택기에는 Bedrock Claude 모델만 노출 — 로컬 LLM(auto/edge/core/code)은
+# insight-worker 전용이므로 사용자 선택 목록에서 제외.
 PUBLIC_API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = tuple(
     {
         "value": str(item["value"]),
@@ -101,7 +105,7 @@ PUBLIC_API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = tuple(
         "description": str(item["description"]),
         "supports_vision": bool(item.get("supports_vision", False)),
     }
-    for item in _ALL_MODEL_OPTIONS
+    for item in API_MODEL_OPTIONS
 )
 
 

@@ -213,10 +213,6 @@ services:
       - .env.llm
     environment:
       TZ: ${TZ}
-      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      BEDROCK_GATEWAY_API_KEY: ${BEDROCK_GATEWAY_API_KEY}
     volumes:
       - ./unit/feature-0007-bedrock-llm-provider/src/config/litellm_config.yaml:/app/config.yaml:ro
     command:
@@ -247,8 +243,6 @@ services:
       - .env
       - .env.minio
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BROWSER_REDIRECT_URL: ${MINIO_BROWSER_REDIRECT_URL:-}
       TZ: ${TZ}
     command: server /data --console-address ":9001"
@@ -276,10 +270,6 @@ services:
       - .env
       - .env.minio
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      MINIO_APP_ACCESS_KEY: ${MINIO_APP_ACCESS_KEY}
-      MINIO_APP_SECRET_KEY: ${MINIO_APP_SECRET_KEY}
       MINIO_BUCKET: ${MINIO_BUCKET:-agent-attachments}
       TZ: ${TZ}
     volumes:
