@@ -2025,3 +2025,50 @@ source_of_truth: true
 - Files: feature-0002-agent-core/src/modules/sql_guard.py (신규), requirements.txt (sqlglot), app.py (PERMISSION_DEFINITIONS 2 + SEED operator/sales + 3 catchup + build_audit_change_json case 3), app.js + admin.js (PERMISSION_GROUP_ORDER 9 group + label + sections), docs/CONVENTIONS.md §10.6, FUNCTION/TASK/MODIFY/REVIEW.
 - Notes: 본 Phase 가 Sprint 1 Critical Ship 조건 충족. validate_sql_for_sandbox 의 실제 호출 (LLM tool 실행 시점) 은 별 cycle 또는 후속 patch — 본 phase 는 guard module + RBAC + audit dispatch 메커니즘 + group 정합.
 - Rollback: sql_guard.py + 2 RBAC + group + 3 audit case + FE 상수 + CONVENTIONS revert.
+
+## CHG-20260522-0007 (feature-0008: composer model selector)
+- Date: 2026-05-22
+- Related Requirement: 사용자 요청 (2026-05-22) — profile drawer 의 API Vault
+  잔존 영역 + 모델 선택 UI 를 composer textarea 좌측 `+` dropdown 으로 이전
+  (ChatGPT 패턴).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`: composer-box 의
+    `#attachBtn` (paperclip) 제거 → `#composerActionsBtn` (`+` icon) 신규 +
+    `#composerActionsMenu` (primary drop-up popup) + `#composerModelMenu`
+    (secondary popup) 추가.
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`:
+    - `state.modelCatalog` + `state.selectedModel` 신규 (선택 모델 보존).
+    - dead vault code (주석화된 readVaultState 등 함수 정의 161 줄) 일괄 삭제.
+    - `_bindComposerAttachmentEvents()` 의 attachBtn 직접 binding → fileInput
+      change 핸들러만 유지. `+` 버튼 → primary popup 의 "파일 첨부" 항목으로
+      통합.
+    - 신규 helpers: `_composerCurrentModel()`, `_updateComposerModelLabel()`,
+      `_closeComposerActionsMenus()`, `_openComposerActionsMenu()`,
+      `_renderComposerModelMenu()`, `_openComposerModelMenu()`,
+      `_bindComposerActionsEvents()`.
+    - `sendPrompt()` 의 askBody.model fallback chain: `state.selectedModel` →
+      `state.session.default_model` → `state.modelCatalog.default_model` →
+      `state.apiVaultOptions.default_model` → literal "claude-sonnet-4".
+    - `loadVaultOptions()` 가 `state.modelCatalog` 도 채우고 composer model
+      label 즉시 갱신.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.attach-btn`
+    rename → `.composer-actions-btn` + 신규 `.composer-actions-menu` +
+    `.composer-actions-item` + `.composer-model-menu` + `.composer-model-item*`.
+    `.composer-box` 에 `position: relative` (popup anchor).
+    반응형 fallback (max-width 720px) — secondary popup 위치 조정.
+  - `unit/feature-0003-agent-web-ui/src/static/index.html` + `admin.html`:
+    cache-bust `v=20260522-bedrock-cutover` → `v=20260522-composer-model-selector`.
+- Impact:
+  - UX: ChatGPT-스타일 multi-action `+` dropdown — 첨부 + 모델 선택을 한 곳에
+    통합. textarea 좌측 영역 정리.
+  - 사용자가 turn 별 모델 (Sonnet 4.6 / Haiku 4.5) 명시 선택 가능 — backend
+    default 보다 우선 적용.
+  - product chip (composer 우측) 은 별 영역 유지 — product 선택 의도와 모델
+    선택 의도가 분리되어 명확.
+- Rollback: 본 cycle 의 변경은 frontend-only — revert 시 attach-btn paperclip
+  복원 + 모델 selector 제거 + cache-bust 회귀. backend 영향 0.
+- Verification:
+  - `node --check app.js` PASS.
+  - DOM 구조: 12 service docker-compose 무영향. backend `/api/api-vault/options`
+    응답 contract 무변경.
+

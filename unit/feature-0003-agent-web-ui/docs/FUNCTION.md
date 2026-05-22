@@ -470,3 +470,13 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   - AC-0277 (TASK-0105): `index.html` 의 Profile Drawer 탭이 4 → 3 으로 축소. `profileAuditTab` 버튼 제거, `data-profile-pane="audit"` 패널 전체 제거. 탭 순서 = `[프롬프트, 보안 및 계정, API Vault]`.
   - AC-0278 (TASK-0105): `app.js` 에서 `state.profileAudit` 초기값, `_profileAudit*` 함수 블록 (9개 함수), `renderProfile()` 내 `updateProfileAuditTabVisibility()` 호출, 탭 이벤트 핸들러의 audit 분기, `attachProfileAuditHandlers()` 호출 제거.
   - AC-0279 (TASK-0105): `styles.css` 에서 `.profile-audit-*` CSS 블록 전체 제거. backend `/api/profile/audits` / `/api/profile/audits/{event_id}` endpoint 및 admin 콘솔 '감사 로그' 탭 무변경.
+
+- REQ-20260522-0009 (feature-0008 composer-model-selector, **Minor** §12.3 — UI 재구성, frontend-only): composer textarea 좌측의 paperclip 첨부 버튼을 ChatGPT 패턴의 `+` dropdown 으로 교체. primary popup 에 [파일 첨부, 모델 선택] 2 항목. "모델 선택" click 시 secondary popup 에서 alias + description 노출. 사용자가 명시 선택 시 `state.selectedModel` 보존 + `sendPrompt` 최우선. profile drawer dead vault code (161 줄) 정리. backend / RBAC / DB schema 무변경.
+  - AC-0280: `#composerActionsBtn` (`+` icon) 이 paperclip `#attachBtn` 을 대체. click 시 `#composerActionsMenu` (primary drop-up popup) open.
+  - AC-0281: primary popup 의 첫 항목 "파일 첨부" click 시 hidden `#attachFileInput` click → 기존 첨부 흐름 (`_uploadComposerAttachment`) 재사용.
+  - AC-0282: primary popup 의 둘째 항목 "모델: <current>" click 시 `#composerModelMenu` (secondary popup) open. catalog source = `state.modelCatalog` (또는 `state.apiVaultOptions` legacy alias). 모델 alias / group / description 표시. 현재 선택 항목에 `is-selected` + ✓ marker.
+  - AC-0283: secondary popup 의 모델 항목 click → `state.selectedModel` 갱신 + primary/secondary 둘 다 close + label 즉시 갱신.
+  - AC-0284: `sendPrompt()` 의 `askBody.model` fallback chain = `state.selectedModel` → `state.session.default_model` → `state.modelCatalog.default_model` → `state.apiVaultOptions.default_model` → literal `"claude-sonnet-4"`. 사용자 명시 선택 우선.
+  - AC-0285: outside click + Esc 둘 다 primary/secondary 닫음. primary popup open 시 product chip dropup 은 닫는다 (`closeProductDropup()` 호출).
+  - AC-0286: profile drawer 의 dead vault code (주석화된 `readVaultState` / `writeVaultState` / `clearVaultState` / `isVaultCryptoAvailable` / `computeVaultReadiness` / `updateVaultReadiness` / `syncVaultSteps` / `renderVaultSavedCard` / `refreshVaultUI` 161 줄) 일괄 삭제. `state.modelCatalog` 신규 (의미 명확 alias of `state.apiVaultOptions`).
+  - AC-0287: cache-bust `v=20260522-bedrock-cutover` → `v=20260522-composer-model-selector` (index.html + admin.html). backend / RBAC / DB schema 무변경.

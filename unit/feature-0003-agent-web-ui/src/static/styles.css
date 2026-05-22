@@ -1567,8 +1567,10 @@ a { color: inherit; }
   color: var(--muted);
 }
 
-/* TASK-0094 Phase 6: paperclip 첨부 버튼 */
-.attach-btn {
+/* feature-0008 (composer-model-selector): `+` action button — paperclip 첨부
+   버튼을 대체. ChatGPT 패턴. click 시 primary popup (.composer-actions-menu)
+   open — [파일 첨부, 모델 선택]. */
+.composer-actions-btn {
   border: none;
   background: transparent;
   color: var(--muted);
@@ -1583,16 +1585,152 @@ a { color: inherit; }
   flex-shrink: 0;
   margin-bottom: 2px;
 }
-.attach-btn:hover {
+.composer-actions-btn:hover,
+.composer-actions-btn[aria-expanded="true"] {
   background: rgba(37, 99, 235, 0.08);
   color: var(--primary);
 }
-.attach-btn:disabled {
+.composer-actions-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
+/* Primary popup — composer-box 안 absolute, `+` 버튼 위로 펼침. */
+.composer-actions-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--border, rgba(0,0,0,0.08));
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.15);
+  padding: 4px;
+  min-width: 240px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.composer-actions-menu.hidden { display: none; }
+.composer-actions-item {
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text, #111827);
+  transition: background 0.12s;
+  font-size: 13.5px;
+}
+.composer-actions-item:hover {
+  background: rgba(37, 99, 235, 0.06);
+}
+.composer-actions-icon {
+  color: var(--muted, #6b7280);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.composer-actions-label {
+  font-weight: 500;
+  color: var(--text, #111827);
+}
+.composer-actions-hint {
+  font-size: 11.5px;
+  color: var(--text-muted, #9ca3af);
+  margin-left: 6px;
+}
+.composer-actions-caret {
+  color: var(--muted, #9ca3af);
+}
+
+/* Secondary popup — 모델 선택 (description 포함). primary 우측에 띄움. */
+.composer-model-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 250px;
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--border, rgba(0,0,0,0.08));
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.15);
+  padding: 4px;
+  min-width: 280px;
+  max-width: 360px;
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.composer-model-menu.hidden { display: none; }
+.composer-model-empty {
+  padding: 12px;
+  color: var(--text-muted, #9ca3af);
+  font-size: 13px;
+  text-align: center;
+}
+.composer-model-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+}
+.composer-model-item:hover {
+  background: rgba(37, 99, 235, 0.06);
+}
+.composer-model-item.is-selected {
+  background: rgba(37, 99, 235, 0.08);
+}
+.composer-model-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+}
+.composer-model-item-label {
+  font-weight: 600;
+  color: var(--text, #111827);
+}
+.composer-model-item-group {
+  font-size: 11px;
+  color: var(--text-muted, #9ca3af);
+  background: rgba(0,0,0,0.04);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.composer-model-item-check {
+  margin-left: auto;
+  color: var(--primary, #2563eb);
+  font-weight: 700;
+}
+.composer-model-item-desc {
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+  line-height: 1.4;
+}
+
+/* 화면 좁을 때 secondary popup 이 화면 밖으로 튀어나가지 않도록 fallback. */
+@media (max-width: 720px) {
+  .composer-model-menu {
+    left: 0;
+    bottom: calc(100% + 56px);
+  }
+}
+
 .composer-box {
+  /* feature-0008: position:relative — `.composer-actions-menu` / `.composer-model-menu`
+     의 absolute anchor. */
+  position: relative;
   display: flex;
   align-items: flex-end;
   gap: 6px;

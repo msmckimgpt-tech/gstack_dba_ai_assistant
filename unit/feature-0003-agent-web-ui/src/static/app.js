@@ -92,6 +92,14 @@ const state = {
   // feature-0007: apiVaultOptions 의미 단순화. /api/api-vault/options 응답은
   // 모델 카탈로그 (default_model + models) 만 보유. 사용자 키 / passphrase 미보관.
   apiVaultOptions: null,
+  // feature-0008 (composer-model-selector): backend `/api/api-vault/options`
+  // 응답의 alias (= API Vault 의 deprecated wrapper, 본 응답 = 모델 카탈로그).
+  // 본 state 가 alias 와 동등하나 의미 명확. 본 cycle 후 `apiVaultOptions` 도
+  // `modelCatalog` 로 rename 가능 (별 cycle).
+  modelCatalog: null,
+  // 사용자가 composer 의 `+` dropdown 에서 명시 선택한 모델 alias.
+  // null = backend default (state.session.default_model) 사용.
+  selectedModel: null,
   progressPoller: null,
   progressPollInFlight: false,
   progressPollSeq: 0,
@@ -556,167 +564,6 @@ function currentConversation() {
 //
 // 아래 origin/main 의 vault 함수 정의는 본 cycle 의 정책으로 일괄 제거 (주석
 // 만 보존). 호출 사이트 (vault 이벤트 리스너 등) 도 본 cycle 에서 모두 제거됨.
-/*
-function readVaultState() {
-  return {
-    cipher: localStorage.getItem(STORAGE_KEYS.cipher) || "",
-    model: localStorage.getItem(STORAGE_KEYS.model) || "",
-    passphrase: sessionStorage.getItem(STORAGE_KEYS.passphrase) || "",
-  };
-}
-
-function writeVaultState() {
-  localStorage.setItem(STORAGE_KEYS.cipher, vaultCipherEl.value.trim());
-  localStorage.setItem(STORAGE_KEYS.model, vaultModelEl.value.trim());
-  if (vaultPassphraseEl.value.trim()) {
-    sessionStorage.setItem(STORAGE_KEYS.passphrase, vaultPassphraseEl.value.trim());
-  } else {
-    sessionStorage.removeItem(STORAGE_KEYS.passphrase);
-  }
-  refreshVaultUI();
-}
-
-function clearVaultState() {
-  localStorage.removeItem(STORAGE_KEYS.cipher);
-  localStorage.removeItem(STORAGE_KEYS.model);
-  sessionStorage.removeItem(STORAGE_KEYS.passphrase);
-  vaultCipherEl.value = "";
-  vaultPassphraseEl.value = "";
-  vaultPlainKeyEl.value = "";
-  if (state.apiVaultOptions?.default_model) {
-    vaultModelEl.value = state.apiVaultOptions.default_model;
-  }
-  refreshVaultUI();
-}
-
-// WebCrypto (PBKDF2 + AES-GCM) 는 secure context (HTTPS / localhost) 에서만 동작.
-// 외부 IP 의 HTTP 접속에서는 window.crypto.subtle 이 undefined → 암호화/저장 불가.
-// 이 경우 사용자가 진단 가능하도록 UI 를 사전 차단하고 명시적으로 안내한다.
-function isVaultCryptoAvailable() {
-  return Boolean(
-    typeof window !== "undefined"
-      && window.isSecureContext
-      && window.crypto
-      && window.crypto.subtle
-  );
-}
-
-// Vault 의 현재 요청 가능 상태를 단일 tri-state 로 반환.
-// 진실의 출처는 storage(영속) — input value 는 일시적인 편집 buffer 이므로 신뢰하지 않는다.
-// passphrase 는 sessionStorage 우선, 사용자가 막 입력한 미저장 값(input)은 fallback 으로만 인정.
-function computeVaultReadiness() {
-  const cipher = (localStorage.getItem(STORAGE_KEYS.cipher) || "").trim();
-  const passphrase = (
-    sessionStorage.getItem(STORAGE_KEYS.passphrase)
-    || (vaultPassphraseEl ? vaultPassphraseEl.value : "")
-    || ""
-  ).trim();
-  if (cipher && passphrase) return "ready";
-  if (cipher && !passphrase) return "needs";
-  return "empty";
-}
-
-// readiness 배지·접근성 텍스트 동기화.
-function updateVaultReadiness() {
-  if (!vaultBannerEl || !vaultBannerTextEl) return;
-  const cryptoOk = isVaultCryptoAvailable();
-  const readiness = cryptoOk ? computeVaultReadiness() : "blocked";
-  const model = vaultModelEl.value.trim();
-  vaultBannerEl.setAttribute("data-state", readiness);
-  const dot = vaultBannerEl.querySelector(".vault-banner-dot");
-  if (dot) dot.setAttribute("data-state", readiness);
-  let label;
-  if (readiness === "blocked") {
-    const publicUrl = state.apiVaultOptions && state.apiVaultOptions.public_url;
-    const httpsHint = publicUrl && /^https:/i.test(publicUrl)
-      ? ` 보안 접속 주소: ${publicUrl}`
-      : "";
-    label = `현재 접속 (${window.location.protocol}//${window.location.host}) 은 보안 컨텍스트가 아니어서 API 키를 암호화할 수 없습니다. HTTPS 또는 localhost 로 접속해 주세요.${httpsHint}`;
-  } else if (readiness === "ready") {
-    label = model ? `준비 완료 · 모델: ${model}` : "준비 완료";
-  } else if (readiness === "needs") {
-    label = "저장된 암호화 키가 있습니다. Step 2 에서 passphrase 를 입력하면 바로 사용 가능합니다.";
-  } else if (state.localLlmEnabled) {
-    label = "API 키 미설정 · 외부 Local LLM 게이트웨이로 동작 중입니다.";
-  } else {
-    label = "API 키가 아직 설정되지 않았습니다. 아래 단계를 순서대로 진행하세요.";
-  }
-  vaultBannerTextEl.textContent = label;
-  if (vaultStatusEl) vaultStatusEl.textContent = label;
-}
-
-// 각 step 의 data-state 와 primary 버튼 disabled 토글.
-//   - cipher 저장됨 → 모든 step done, save 버튼 disabled (saved-default)
-//   - cipher 미저장 → wizard 입력 모드 (Step 1 active 부터 시작)
-// 키를 갈아끼우려면 "저장된 키 삭제" 한 경로만 — 진입점 1개로 단순화.
-function syncVaultSteps() {
-  if (!vaultStepEls.length || !saveVaultBtn) return;
-  const cipherSaved = Boolean((localStorage.getItem(STORAGE_KEYS.cipher) || "").trim());
-  const plain = vaultPlainKeyEl.value.trim();
-  const passphrase = vaultPassphraseEl.value.trim();
-  const cryptoOk = isVaultCryptoAvailable();
-
-  const step1 = vaultStepEls.find((el) => el.dataset.step === "1");
-  const step2 = vaultStepEls.find((el) => el.dataset.step === "2");
-  const step3 = vaultStepEls.find((el) => el.dataset.step === "3");
-
-  // 보안 컨텍스트가 아니면 모든 단계 disable + 저장 버튼 차단.
-  // (banner 의 안내 메시지에서 사유를 표시한다.)
-  if (!cryptoOk) {
-    if (step1) step1.setAttribute("data-state", "disabled");
-    if (step2) step2.setAttribute("data-state", "disabled");
-    if (step3) step3.setAttribute("data-state", "disabled");
-    saveVaultBtn.disabled = true;
-    return;
-  }
-
-  if (cipherSaved) {
-    if (step1) step1.setAttribute("data-state", "done");
-    if (step2) step2.setAttribute("data-state", passphrase ? "done" : "active");
-    if (step3) step3.setAttribute("data-state", "done");
-    saveVaultBtn.disabled = true;
-    return;
-  }
-
-  if (step1) step1.setAttribute("data-state", plain ? "done" : "active");
-  if (step2) {
-    if (!plain) step2.setAttribute("data-state", "disabled");
-    else step2.setAttribute("data-state", passphrase ? "done" : "active");
-  }
-  if (step3) {
-    if (plain && passphrase) step3.setAttribute("data-state", "active");
-    else step3.setAttribute("data-state", "disabled");
-  }
-  saveVaultBtn.disabled = !(plain && passphrase);
-}
-
-// 저장된 cipher 카드(information only) 와 destructive zone(삭제) 렌더링.
-// cipher 가 저장돼 있을 때만 두 영역을 노출하고, 없으면 둘 다 숨긴다.
-// 키 갈아끼움은 "저장된 키 삭제" → confirm → 새로 입력 흐름이 유일.
-function renderVaultSavedCard() {
-  if (!vaultSavedCardEl || !vaultSavedMetaEl) return;
-  const savedCipher = (localStorage.getItem(STORAGE_KEYS.cipher) || "").trim();
-  const savedModel = (localStorage.getItem(STORAGE_KEYS.model) || "").trim();
-  if (!savedCipher) {
-    vaultSavedCardEl.hidden = true;
-    if (vaultDangerZoneEl) vaultDangerZoneEl.hidden = true;
-    return;
-  }
-  vaultSavedCardEl.hidden = false;
-  if (vaultDangerZoneEl) vaultDangerZoneEl.hidden = false;
-  const head = savedCipher.length > 10 ? `${savedCipher.slice(0, 10)}…` : savedCipher;
-  vaultSavedMetaEl.textContent = savedModel
-    ? `${head} · 모델: ${savedModel}`
-    : head;
-}
-
-// readiness / step / saved card 를 한 번에 갱신.
-function refreshVaultUI() {
-  updateVaultReadiness();
-  renderVaultSavedCard();
-  syncVaultSteps();
-}
-*/
 
 function toggleAuthPane(tab) {
   document.querySelectorAll("[data-auth-tab]").forEach((button) => {
@@ -4000,16 +3847,15 @@ async function _loadConversationAttachments(convId) {
 }
 
 function _bindComposerAttachmentEvents() {
-  const attachBtn = document.getElementById("attachBtn");
+  // feature-0008: 구 `#attachBtn` (paperclip) 는 제거되고 `#composerActionsBtn`
+  // (+ icon) 의 dropdown 안 "파일 첨부" 항목 (`#composerActionsAttachItem`) 으로
+  // 통합. fileInput 의 change 핸들러는 그대로 유지.
   const fileInput = document.getElementById("attachFileInput");
   const scopeAllEl = document.getElementById("composerAttachmentsScopeAll");
   const pillsContainer = document.getElementById("composerAttachmentsPills");
   const composerWrap = document.querySelector(".composer-wrap");
 
-  if (attachBtn && fileInput) {
-    attachBtn.addEventListener("click", () => {
-      fileInput.click();
-    });
+  if (fileInput) {
     fileInput.addEventListener("change", async (ev) => {
       const file = ev.target?.files?.[0];
       if (file) {
@@ -4066,6 +3912,154 @@ function _bindComposerAttachmentEvents() {
       if (file) await _uploadComposerAttachment(file);
     });
   }
+}
+
+// feature-0008 (composer-model-selector): `+` dropdown 안 primary popup +
+// secondary "모델 선택" popup 핸들러. ChatGPT 패턴 — primary 가 [파일 첨부,
+// 모델 선택] 2 항목. 모델 선택 click 시 secondary popup 에 alias + description
+// 노출.
+function _composerCurrentModel() {
+  return state.selectedModel
+    || state.session?.default_model
+    || state.modelCatalog?.default_model
+    || state.apiVaultOptions?.default_model
+    || "claude-sonnet-4";
+}
+
+function _updateComposerModelLabel() {
+  const labelEl = document.getElementById("composerActionsModelLabel");
+  if (labelEl) labelEl.textContent = _composerCurrentModel();
+}
+
+function _closeComposerActionsMenus() {
+  const primary = document.getElementById("composerActionsMenu");
+  const secondary = document.getElementById("composerModelMenu");
+  const trigger = document.getElementById("composerActionsBtn");
+  const modelItem = document.getElementById("composerActionsModelItem");
+  if (primary) primary.classList.add("hidden");
+  if (secondary) secondary.classList.add("hidden");
+  if (trigger) trigger.setAttribute("aria-expanded", "false");
+  if (modelItem) modelItem.setAttribute("aria-expanded", "false");
+}
+
+function _openComposerActionsMenu() {
+  const primary = document.getElementById("composerActionsMenu");
+  const trigger = document.getElementById("composerActionsBtn");
+  if (!primary || !trigger) return;
+  // product chip dropup 등 다른 popup 은 닫는다.
+  if (typeof closeProductDropup === "function") closeProductDropup();
+  _updateComposerModelLabel();
+  primary.classList.remove("hidden");
+  trigger.setAttribute("aria-expanded", "true");
+}
+
+function _renderComposerModelMenu() {
+  const menu = document.getElementById("composerModelMenu");
+  if (!menu) return;
+  // 카탈로그 source — `/api/api-vault/options` 의 응답 (state.modelCatalog 또는
+  // legacy alias state.apiVaultOptions). 미가용 시 default 만.
+  const catalog = state.modelCatalog || state.apiVaultOptions;
+  const models = Array.isArray(catalog?.models) ? catalog.models : [];
+  const current = _composerCurrentModel();
+  menu.innerHTML = "";
+  if (models.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "composer-model-empty";
+    empty.textContent = "모델 카탈로그 로딩 중...";
+    menu.appendChild(empty);
+    return;
+  }
+  models.forEach((m) => {
+    const value = typeof m === "string" ? m : (m.value || "");
+    const label = typeof m === "string" ? m : (m.label || value);
+    const description = typeof m === "string" ? "" : (m.description || "");
+    const group = typeof m === "string" ? "" : (m.group || "");
+    if (!value) return;
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "composer-model-item" + (value === current ? " is-selected" : "");
+    item.setAttribute("role", "menuitem");
+    item.setAttribute("data-model-value", value);
+    item.innerHTML = `
+      <div class="composer-model-item-head">
+        <span class="composer-model-item-label">${escapeHtml(label)}</span>
+        ${group ? `<span class="composer-model-item-group">${escapeHtml(group)}</span>` : ""}
+        ${value === current ? '<span class="composer-model-item-check" aria-label="현재 선택">✓</span>' : ""}
+      </div>
+      ${description ? `<div class="composer-model-item-desc">${escapeHtml(description)}</div>` : ""}
+    `;
+    item.addEventListener("click", () => {
+      state.selectedModel = value;
+      _updateComposerModelLabel();
+      _renderComposerModelMenu();
+      _closeComposerActionsMenus();
+    });
+    menu.appendChild(item);
+  });
+}
+
+function _openComposerModelMenu() {
+  const menu = document.getElementById("composerModelMenu");
+  const modelItem = document.getElementById("composerActionsModelItem");
+  if (!menu || !modelItem) return;
+  _renderComposerModelMenu();
+  menu.classList.remove("hidden");
+  modelItem.setAttribute("aria-expanded", "true");
+}
+
+function _bindComposerActionsEvents() {
+  const trigger = document.getElementById("composerActionsBtn");
+  const attachItem = document.getElementById("composerActionsAttachItem");
+  const modelItem = document.getElementById("composerActionsModelItem");
+  const fileInput = document.getElementById("attachFileInput");
+  const primary = document.getElementById("composerActionsMenu");
+  const secondary = document.getElementById("composerModelMenu");
+
+  if (trigger) {
+    trigger.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const expanded = trigger.getAttribute("aria-expanded") === "true";
+      if (expanded) {
+        _closeComposerActionsMenus();
+      } else {
+        _openComposerActionsMenu();
+      }
+    });
+  }
+  if (attachItem && fileInput) {
+    attachItem.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      _closeComposerActionsMenus();
+      fileInput.click();
+    });
+  }
+  if (modelItem) {
+    modelItem.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const expanded = modelItem.getAttribute("aria-expanded") === "true";
+      if (expanded) {
+        secondary && secondary.classList.add("hidden");
+        modelItem.setAttribute("aria-expanded", "false");
+      } else {
+        _openComposerModelMenu();
+      }
+    });
+  }
+  // outside click — primary/secondary 둘 다 닫기. menu 내부 click 은 stopPropagation.
+  document.addEventListener("click", (ev) => {
+    if (!trigger || trigger.getAttribute("aria-expanded") !== "true") return;
+    if (primary && primary.contains(ev.target)) return;
+    if (secondary && secondary.contains(ev.target)) return;
+    if (trigger.contains(ev.target)) return;
+    _closeComposerActionsMenus();
+  });
+  // Esc — 닫기.
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") _closeComposerActionsMenus();
+  });
 }
 
 async function sendPrompt() {
@@ -4153,13 +4147,17 @@ async function sendPrompt() {
   }
   // TASK-0048: lazy create 분기에서 사용자의 직전 product 의도(state.productMode/pinnedProductId)를
   // backend 에 hint 로 전달. backend `/api/ask` 가 새 cid 직후 AgentCoreConversations.product_*에 반영한다.
-  // feature-0007: model 결정은 server-side default (state.session.default_model
-  // 또는 state.apiVaultOptions.default_model = API_DEFAULT_MODEL) 기반. cipher
-  // 첨부 폐기.
+  // feature-0008 (composer-model-selector): model 결정 fallback chain.
+  //   1. state.selectedModel — 사용자가 composer 의 `+` dropdown 에서 명시 선택한 모델
+  //   2. state.session.default_model — backend `/api/session` 의 `_resolve_session_default_model()` (catalog 검증 후만)
+  //   3. state.modelCatalog.default_model — `/api/api-vault/options` 의 API_DEFAULT_MODEL
+  //   4. literal "claude-sonnet-4" — 최종 안전망
   const askBody = {
     message,
     conversation_id: targetConvId || "",
-    model: state.session?.default_model
+    model: state.selectedModel
+      || state.session?.default_model
+      || state.modelCatalog?.default_model
       || state.apiVaultOptions?.default_model
       || "claude-sonnet-4",
   };
@@ -4303,12 +4301,20 @@ async function sendPrompt() {
 // 만 server 에서 가져와 state 에 저장" 으로 단순화. 사용자 키 wizard 가 사라져서
 // vault 입력 element 채우기 / readiness 갱신 / Local LLM banner 등은 모두 제거.
 async function loadVaultOptions() {
+  // feature-0008: backend `/api/api-vault/options` 응답 = 모델 카탈로그 + default.
+  // `state.modelCatalog` (의미 명확 alias) + `state.apiVaultOptions` (legacy
+  // 호환) 양쪽 채움. composer 의 model label 도 즉시 갱신.
   try {
     const payload = await apiFetch("/api/api-vault/options");
     state.apiVaultOptions = payload;
+    state.modelCatalog = payload;
   } catch (_e) {
     state.apiVaultOptions = null;
+    state.modelCatalog = null;
   }
+  try {
+    if (typeof _updateComposerModelLabel === "function") _updateComposerModelLabel();
+  } catch (_e) { /* graceful */ }
 }
 
 // feature-0007 (REQ-20260521-0001): encryptPlainApiKey 제거됨. AES-GCM /
@@ -4583,6 +4589,8 @@ async function initialize() {
   });
   // TASK-0094 Sprint 1 Phase 6: composer 첨부 (paperclip / drag-drop / pill / scope-all) 이벤트 binding.
   try { _bindComposerAttachmentEvents(); } catch (_) { /* graceful — DOM 부재 시 무시 */ }
+  // feature-0008 (composer-model-selector): `+` dropdown 핸들러 binding.
+  try { _bindComposerActionsEvents(); } catch (_) { /* graceful */ }
   // TASK-0094 Sprint 1 Phase 7: D11 consent grouped modal 이벤트 binding (delegation).
   try { _bindConsentSectionEvents(); } catch (_) { /* graceful */ }
   promptInputEl.addEventListener("keydown", (event) => {
