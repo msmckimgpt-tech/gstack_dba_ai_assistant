@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MySQL AI Assistant Admin</title>
+  <title>DQA — Database Query Assistant Admin</title>
   <link rel="stylesheet" href="/static/styles.css?v=20260521-settings-listdetail" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
@@ -13,8 +13,10 @@
     <aside class="admin-sidebar">
       <!-- REQ-20260518-0006: brand 가 sidebar 의 첫 영역 — index.html 의 .sidebar-brand 와 동일 패턴 -->
       <div class="sidebar-brand">
-        <div class="brand-icon">MA</div>
-        <span class="brand-name">MySQL AI</span>
+        <div class="brand-icon">
+          <img src="/static/logo-dqa.svg" alt="DQA" width="22" height="22" style="display:block;border-radius:4px;" />
+        </div>
+        <span class="brand-name">DQA</span>
       </div>
       <nav class="admin-tabs" id="adminTabs">
         <button type="button" class="admin-tab is-active" data-admin-tab="dashboard">
