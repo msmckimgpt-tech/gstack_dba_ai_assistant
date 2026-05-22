@@ -10,6 +10,26 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-05-22 TASK-0099 완료 (docs-only tracker hygiene) — audit subsystem followup backlog 8/8 closure marker** (CHG-20260522-0003, REV-20260522-0003 [SKIPPED:doc-only-tracker-hygiene], REQ-20260522-0003, **Minor** §12.3). TASK-0073 audit subsystem followup backlog 의 8 entries (TASK-0086 ~ 0093) 8/8 완료를 tracker 에 정확히 반영. TASK.md 의 stale `[ ]` 체크박스 2건 close: (1) line 152 TASK-0072 (main 통합 `f298f90` + post-deploy hotfix bundle TASK-0074/0075/0076/0077/0078/0079/0080 deployed but 상태 `outside-voice-review` 미갱신), (2) line 2767 TASK-0073 `AGENT_AUDIT_ENABLED=0 + AGENT_MODE=prod` startup fail-closed acceptance (TASK-0092 의 7 vector matrix V1-V3 fail-closed scenario 가 정확히 검증). TASK-0073 의 acceptance criteria 7건 모두 close. docs-only cycle — 코드 / RBAC / 스키마 / endpoint 변경 0. outside voice trigger 미해당 (`feedback_outside_voice_for_rbac` 미발동).
+
+### TASK-0073 audit subsystem followup backlog 8/8 완료 (2026-05-20~22)
+
+| TASK | 등급 | Summary | CHG | REV |
+|---|---|---|---|---|
+| TASK-0086 | Major §12.3 | `WebAccountActivity` legacy table DROP + dual write 종료 | CHG-20260520-0005 | REV-20260520-0005 [AGENT-TEAM:codex] |
+| TASK-0087 | Major §12.3 | 외부 LAN trust 강화 — Caddy XFF 정규화 + `_get_client_ip()` 조건부 trust | CHG-20260520-0010 | REV-20260520-0010 [AGENT-TEAM:codex] |
+| TASK-0088 | Minor §12.3 | `slow_query_log` 통합 ADR-0020 Decoupled 채택 (docs only) | CHG-20260520-0007 | REV-20260520-0007 [AGENT-TEAM:codex] |
+| TASK-0089 | Minor §12.3 | 작업 화면 audit drawer UX (profile drawer "내 감사 로그" 탭) | CHG-20260520-0009 | REV-20260520-0009 [AGENT-TEAM:codex] |
+| TASK-0090 | Minor §12.3 | CSV streaming export (hard cap 50k 제거 + keyset cursor pagination) | CHG-20260520-0008 | REV-20260520-0008 [AGENT-TEAM:codex] |
+| TASK-0091 | Major §12.3 | PATCH admin/products audit before-state full snapshot + audit integrity fix | CHG-20260520-0006 | REV-20260520-0006 [AGENT-TEAM:codex] |
+| TASK-0092 | Minor §12.3 | `AGENT_AUDIT_ENABLED=0` + `AGENT_MODE=prod` startup fail-closed 7 vector matrix 검증 | CHG-20260520-0004 | REV-20260520-0004 [AGENT-TEAM:codex] |
+| TASK-0093 | Minor §12.3 | `bin/verify-completion.sh check_12` audit endpoint routing 정적 검사 | CHG-20260520-0003 | REV-20260520-0003 [AGENT-TEAM:codex] |
+| TASK-0099 | Minor §12.3 | Audit followup backlog tracker hygiene (docs-only closure) | CHG-20260522-0003 | REV-20260522-0003 [SKIPPED] |
+
+**8 audit followup task 의 외부 voice review 결과 요약**: 각 task 모두 Codex outside voice (consult mode, model_reasoning_effort=high) 흡수 후 Plan v2 redesign. 사용자 명시 결정으로 1 finding (TASK-0087 Major #1) 만 거부, 나머지 47 findings 모두 흡수.
+
+---
+
 **2026-05-22 TASK-0098 ship (PR #49) — Profile Drawer 탭 재구성 + 권한 정보 API 단위 차단** (CHG-20260522-0002, REV-20260522-0002 [AGENT-TEAM:codex-outside-voice], REQ-20260522-0002, **Critical** §12.3). 사용자 직접 요청 (2026-05-21). Profile Drawer 탭 5 → 4 = `[프롬프트, 보안 및 계정, API Vault, 내 감사 로그(gated)]` (보안+계정 통합 + "활동 정보" 최상단). "권한 현황" 패널 운영자 전용 분류 — 일반 사용자 UI + `/api/auth/me` 양쪽 차단. `/api/admin/me` 신규 endpoint 분리 (console.access gate, Codex F1 blocker fix). `_serialize_account(account, *, include_permissions: bool = False)` 시그너처 + 7 self callsite 자동 permissions 제거 + admin 3 callsite 명시 보존. frontend `can()` = `Boolean(state.user)` 단순화 ("표시 허용 + 실행은 backend 403 fallback" 패턴, Codex F5). `apiFetch` 403 공통 toast + backend 403 메시지 5 패턴 9 callsite normalize. admin.js `/api/auth/me` → `/api/admin/me` 전환. TASK-0089 "내 감사 로그" 탭 보존. tests 신규 9 시나리오 (4+5). Codex outside voice 6 findings 흡수 + 사용자 메모 `feedback_outside_voice_for_rbac` 정책 적용. **PR #49 multi-race rebase**: 본 cycle 원래 4 commit (base 8888130) → main stale 진행 (#45 v3.10.0 + #47 TASK-0089 + #48/#50 + #52/#61 TASK-0094 첨부 multi-cycle Sprint 1 + DQA 브랜딩 + TASK-0095/0096 v2) 흡수 후 main HEAD `20f0344` 위 단일 squash commit. ID reassign: TASK-0094→TASK-0098 / REQ-20260521-0001→REQ-20260522-0002 / AC-0199~0207→AC-0226~0234 / CHG·REV-20260521-0001~0004→CHG·REV-20260522-0002 / cache-bust `v=20260522-task-0098-perms`. 원래 4 commit backup branch `backup/profile-tabs-restructure-pre-rebase` 보존. py_compile + node --check + verify-completion --pre-commit PASS. 실 컨테이너 9 시나리오 smoke + UI dogfood 2 role 사용자 위임. worktree `ai/claude/profile-tabs-restructure`.
 
 ---

@@ -8,6 +8,26 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260522-0003
+- Date: 2026-05-22
+- Related Requirement: TASK-0099 (REQ-20260522-0003, Minor §12.3 — docs-only tracker hygiene)
+- Summary: TASK-0073 audit subsystem followup backlog 8 entries (TASK-0086~0093) 8/8 완료 후 정리 cycle. TASK.md 의 stale `[ ]` 체크박스 2건 close: (1) line 152 TASK-0072 (main 통합 `f298f90` + post-deploy hotfix bundle TASK-0074/0075/0076/0077/0078/0079/0080 모두 deployed but 상태 `outside-voice-review` 미갱신), (2) line 2767 TASK-0073 `AGENT_AUDIT_ENABLED=0 + AGENT_MODE=prod` startup fail-closed acceptance (TASK-0092 V1-V3 fail-closed scenario 가 정확히 검증 → close). TASK.md 상단 Task Queue 에 TASK-0099 entry 추가. STATUS.md feature-0003 row tail 에 audit followup backlog 8/8 완료 marker append. docs-only — 코드 / RBAC / 스키마 / endpoint 변경 0.
+- Files:
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`:
+    - line 152 TASK-0072 `[ ]` → `[x]` + 상태 텍스트 갱신 (deployed commits + hotfix bundle 명시)
+    - line 2767 TASK-0073 startup fail-closed acceptance `[ ]` → `[x]` + TASK-0092 7 vector matrix V1-V3 cross-ref
+    - 상단 Task Queue 에 TASK-0099 entry 추가 (본 closure cycle)
+  - `unit/feature-0003-agent-web-ui/docs/MODIFY.md`: 본 entry
+  - `unit/feature-0003-agent-web-ui/docs/REVIEW.md`: REV-20260522-0003 [SKIPPED:doc-only-tracker-hygiene]
+  - `unit/feature-0003-agent-web-ui/docs/REPORT.md`: §1 Summary 상단에 TASK-0099 cycle entry 추가 + audit followup backlog 8/8 closure marker table
+  - `docs/STATUS.md`: feature-0003 row tail 에 audit followup backlog 8/8 완료 marker append
+- Diff size: docs-only. TASK.md 3 entry change (2 close + 1 new) + MODIFY/REVIEW/REPORT/STATUS 5 file 갱신. 코드 line change 0.
+- Impact:
+  - tracker hygiene — TASK.md 의 deployed task 가 정확히 `[x]` 로 close 되어 future cycle 의 audit followup backlog 검색 정확도 향상
+  - TASK-0073 audit subsystem 의 7개 acceptance criteria 모두 close — Phase D 의 "deferred to followup cycle" 마지막 항목 (line 2767) 까지 정리 완료
+  - 코드 / RBAC / 스키마 / endpoint 변경 없음 → 운영 영향 0
+- Rollback Notes: docs-only. 5 file (TASK.md / MODIFY.md / REVIEW.md / REPORT.md / STATUS.md) 의 본 commit revert 로 즉시 복구 가능. 단 `[ ]` 로 돌릴 명분 없음 — 실제 deploy 상태 반영.
+
 ## CHG-20260522-0002
 - Date: 2026-05-22
 - Summary: TASK-0098 (REQ-20260522-0002, **Critical** §12.3 — Profile Drawer 탭 재구성 + 권한 정보 API 단위 차단) cycle ship. PR #49 multi-race rebase + ID reassign + squash commit. Codex outside voice 6 findings (1 blocker + 4 high + 1 medium) 흡수.
