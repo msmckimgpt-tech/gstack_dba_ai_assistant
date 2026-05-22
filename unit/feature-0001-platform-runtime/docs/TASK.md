@@ -24,7 +24,7 @@ source_of_truth: true
 - [x] TASK-0001 운영 자산 위치 재정의
 - [x] TASK-0002 MySQL/DAB/SQL 유틸리티 이관
 - [x] TASK-0003 루트 실행 파일 경로 반영
-- [ ] TASK-0004 엄격한 운영 검증 시나리오 정리
+- [x] TASK-0004 엄격한 운영 검증 시나리오 정리
 - [x] TASK-0045 AI 전용 복제 MySQL 접속 레이어 (compose 네트워크 + `.env.example` 자리 + `scripts/check_replica.sh` + `make replica-check`). AI DBA 가 라이브 DB 가 아닌 복제 인스턴스에만 접근한다는 design doc Premise 3 을 repo 쪽에서 구현한다. 네이밍은 기존 `REPLICA_DB_*` (TASK-0044) 유지 + 누락되어 있던 `REPLICA_DB_NAME` 신설. docker-compose 에 external network `replica-net` (이름은 `REPLICA_NETWORK_NAME` 로 override 가능) 을 선언하고 `agent` / `insight-worker` / `web` 에 연결, `Makefile::ensure-replica-network` 로 idempotent 자동 생성해 외부 network 미존재로 `make up` 이 깨지지 않게 한다. 복제본 자체의 생성·replication 설정·초기 덤프·동기화 주기·조직 보안 정책은 범위 밖. 검증: (a) `.env.example` 에 `REPLICA_DB_HOST/PORT/USER/PASSWORD/NAME` + `REPLICA_NETWORK_NAME` placeholder 존재, (b) `.env` 에 실값 채운 뒤 `make replica-check` 가 `SELECT 1 AS replica_ok` 를 agent 컨테이너에서 반환하며 exit 0, (c) `docker compose config` 가 `replica-net` external network 를 `agent` / `insight-worker` / `web` 에 attach 한 상태로 렌더링.
 - [x] TASK-0046 ANCHOR.md §1-§3 작성 (template v3.2.0-rc.1 external anchor 도입)
 
