@@ -1880,3 +1880,11 @@ source_of_truth: true
 - Files: app.py (_share_redact_message_content / _share_load_messages 갱신 / public_share_view redact dispatch / INSERT PolicyVersion / build_audit_change_json case), FUNCTION/TASK/MODIFY/REVIEW.
 - Notes: attachment_derived flag 의 실제 설정은 Phase 11 (ingest) / Cycle 2/3/4 ship 시점. 본 phase 는 mechanism 만 ship.
 - Rollback: SHARE_POLICY_VERSION_CURRENT=1 로 reset 또는 redact_active 분기 비활성.
+
+## CHG-20260521-0011
+- Date: 2026-05-22
+- Related Requirement: TASK-0094 Sprint 1 Phase 9 — F1 delete UX + D6 reconciliation + R-Claim6 tombstone + F12 pseudonym
+- Summary: attachment lifecycle reconciliation worker (feature-0002-agent-core) + 4 state 표면화 (_serialize_attachment_for_api) + R-Claim6 tombstone 정합.
+- Files: feature-0002-agent-core/src/modules/attachment_reconciliation.py (신규), app.py (_serialize_attachment_for_api 갱신), FUNCTION/TASK/MODIFY/REVIEW.
+- Notes: worker scheduling (cron / thread) 은 Phase 10 후속 cycle. 본 phase 는 mechanism + run_once 만.
+- Rollback: 모듈 + serialize 변경 revert.

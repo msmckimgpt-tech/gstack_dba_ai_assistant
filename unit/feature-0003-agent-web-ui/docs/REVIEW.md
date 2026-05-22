@@ -1402,3 +1402,8 @@ source_of_truth: true
 
 - **Mode**: SKIPPED — D9 + R-F7 mechanism ship 만. derived flag 의 실제 설정은 Phase 11+ 에서 attachment 인용 시점에 추가.
 - **Risk**: attachment_derived flag 가 message MetaJson 에 설정 안 되면 본 redact 가 활성 안 됨 (false negative). Phase 11/Cycle 2-4 의 flag 설정 누락 시 share view 에 본문 노출 — 향후 cycle 의 검증 필수 항목.
+
+## REV-20260521-0011 [SKIPPED:lifecycle-worker-only] TASK-0094 Sprint 1 Phase 9 review
+
+- **Mode**: SKIPPED — D6 4 종 SLA + F1 4 state + F12 pseudonym 모두 BRIEFING 정본 결정 application.
+- **Risk**: worker scheduling 미설정 시 DeletePending row 누적 — Phase 10 후속 cycle 에서 cron / thread 활성 필수. MinIO delete 실패 시 graceful fail (worker 다음 pass 에서 재시도). nullable FK 옵션 (R-Claim6 의 alt) 은 별 cycle 결정 영역.
