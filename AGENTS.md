@@ -350,6 +350,37 @@ AI는 작업 대상 파일의 패턴을 확인하고, 매칭되는 규칙을 추
 - 새 AI 세션 시작 시 최근 10건을 참조하는 것을 권장한다.
 - 사용자 피드백으로 확인된 학습은 `verified: true`를 추가한다.
 
+### §11.3 KB Fact 등록 정책 (Manual ingest vs 자동 수집)
+
+`AgentMemoryFactEntries` 의 fact row 는 출처별로 Weight scale 이 분리된다.
+`AgentMemoryFacts` VIEW 의 tie-break (Weight DESC → UpdatedAt DESC → Id DESC) 가
+어떤 row 를 active fact 로 노출할지 결정하므로 Weight 가 우선순위 source-of-truth.
+
+| Source | SourceType | Weight | ConversationId | 비고 |
+|---|---|---|---|---|
+| Manual ingest (admin curation) | `manual` | **90** | `__kb_manual__` (reserved sentinel) | BRIEFING-attachment-multi-cycle.md §6.3 Sprint 3. admin 콘솔 "스키마 정의서 KB 등록" pane (`attachment.kb.write.any` RBAC). |
+| 자동 수집 (insight worker, agent loop) | 기존 source 별 | **1** (default) | 실 ConversationId | memory.py / insight.py 의 INSERT 기본 동작. |
+
+**Manual fact supersede 정책 (Status 컬럼 회피)**:
+
+- 동일 (`ConversationId='__kb_manual__'`, `ScopeKey=<key>`, `FactKey=<key>`) 에
+  새 본문 ingest 시 기존 `Weight > 0` row 는 `Weight=0` 으로 logical supersede.
+- 새 row 는 `Weight=90` 로 INSERT (또는 동일 `FactFingerprint` 의 이전 row 가
+  이미 있으면 `ON DUPLICATE KEY UPDATE` 로 reactivate — `superseded_count` 응답에
+  반영).
+- `AgentMemoryFacts` VIEW 가 `Weight DESC` 정렬이라 `Weight=0` row 는 자동 hide
+  — 별 `Status` 컬럼 없이도 active fact 만 노출. 회귀 0.
+
+**Manual ingest 책임 분담**:
+
+- Frontend 표시 제어 (admin pane) 는 `attachment.kb.write.any` 보유자만 보지만,
+  표시 누락은 fail-safe 가 아님 — backend endpoint 가 단일 RBAC gate.
+- ScopeKey 는 manual fact 의 격리 기준이자 FactKey 역할 (한 ScopeKey = 한 active
+  manual fact). 동일 ScopeKey 재ingest 는 의도적 update 흐름.
+- `attachment.kb.ingest` action 의 audit ChangeJson 은 `attachment_id`, `scope_key`,
+  `body_size`, `body_sha256_prefix`, `superseded_count`, `fact_entry_id`, `reactivated`
+  를 포함 (D12 정합 — raw filename / bytes / object_key 미포함).
+
 ---
 
 # Part E — 안전 및 협업

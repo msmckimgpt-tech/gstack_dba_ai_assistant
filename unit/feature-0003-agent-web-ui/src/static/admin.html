@@ -54,6 +54,11 @@
         <button type="button" class="admin-tab" data-admin-tab="settings" id="adminTabSettings">
           <span class="admin-tab-label">설정</span>
         </button>
+        <!-- TASK-0108 Sprint 3 (B: DDL/KB 보강): 스키마 정의서 KB 등록 pane.
+             RBAC `attachment.kb.write.any` (admin only) 가 backend gate. -->
+        <button type="button" class="admin-tab" data-admin-tab="kb-ingest" id="adminTabKbIngest">
+          <span class="admin-tab-label">KB 등록</span>
+        </button>
       </nav>
       <div class="admin-sidebar-foot">
         <div class="admin-pending-summary" id="adminPendingSummary">pending 변경 0건</div>
@@ -372,6 +377,53 @@
           </div>
         </div>
       </section>
+
+      <!-- TASK-0108 Sprint 3 (B: DDL/KB 보강) — admin-only manual KB ingest pane.
+           BRIEFING-attachment-multi-cycle.md §6.3 정합. text/markdown/.sql 첨부
+           본문을 AgentMemoryFactEntries 의 manual fact (SourceType='manual',
+           Weight=90) 로 등록. ScopeKey 단위 격리, 재ingest 시 logical supersede. -->
+      <section class="admin-pane" data-admin-pane="kb-ingest">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">Knowledge Base</div>
+            <h2>스키마 정의서 KB 등록</h2>
+            <p class="admin-pane-hint">text / markdown / SQL 첨부 본문을 AgentMemoryFactEntries 의 manual fact 로 등록합니다. ScopeKey 단위 격리, 동일 ScopeKey 재ingest 시 기존 row 는 Weight=0 으로 logical supersede 됩니다.</p>
+          </div>
+          <div class="admin-pane-head-right">
+            <button type="button" class="btn-secondary" id="kbIngestRefreshBtn">새로고침</button>
+          </div>
+        </header>
+        <div class="admin-list-detail">
+          <div class="admin-list-col">
+            <div class="admin-list-head">
+              <span class="admin-list-section-label">대상 첨부 (text / markdown / .sql)</span>
+              <span class="admin-list-count" id="kbIngestListCount" aria-live="polite">—</span>
+            </div>
+            <div class="admin-list" id="kbIngestList" role="listbox" aria-label="KB 등록 대상 첨부 목록">
+              <div class="admin-list-empty" id="kbIngestListEmpty">불러오는 중…</div>
+            </div>
+          </div>
+          <div class="admin-detail-col" id="kbIngestDetail">
+            <div class="admin-detail-empty" id="kbIngestDetailEmpty">좌측 목록에서 첨부를 선택하세요.</div>
+            <article class="admin-settings-panel" data-kb-ingest-panel="form" hidden>
+              <header class="admin-settings-panel-head">
+                <h3 id="kbIngestSelectedFilename">—</h3>
+                <p class="admin-settings-panel-hint" id="kbIngestSelectedMeta"></p>
+              </header>
+              <div class="admin-settings-panel-body">
+                <label class="form-label" for="kbIngestScopeKey">ScopeKey (영숫자 / . / _ / - 만, 1~96자)</label>
+                <input type="text" id="kbIngestScopeKey" class="form-input" placeholder="예: products.orders" maxlength="96" pattern="[A-Za-z0-9_.\-]{1,96}" autocomplete="off" />
+                <div class="form-helper" style="margin-top: 8px;">SourceType='manual', Weight=90, ConversationId='__kb_manual__' 로 등록됩니다 (서버 상수). 동일 ScopeKey 재등록 시 기존 active fact 는 Weight=0 으로 supersede 됩니다.</div>
+                <div class="form-actions" style="margin-top: 16px; display: flex; gap: 8px;">
+                  <button type="button" class="btn-primary" id="kbIngestSubmitBtn" disabled>KB 등록</button>
+                  <button type="button" class="btn-secondary" id="kbIngestCancelBtn">취소</button>
+                </div>
+                <div id="kbIngestResult" class="form-helper" style="margin-top: 12px;" role="status" aria-live="polite"></div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
     </main>
 
     <!-- REQ-20260518-0006: commit bar 가 admin-column 의 하단 — sidebar 와 분리되어 workspace 하단에만 표시 -->
@@ -389,6 +441,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260522-composer-model-selector"></script>
+  <script src="/static/admin.js?v=20260526-task-0108-kb-ingest"></script>
 </body>
 </html>
