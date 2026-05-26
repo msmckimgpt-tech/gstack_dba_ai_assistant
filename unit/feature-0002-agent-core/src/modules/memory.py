@@ -1407,7 +1407,16 @@ def _ensure_pg_schema(conn=None, *, schema_sql_path: str | None = None) -> dict:
         psycopg.errors.*: schema 적용 중 SQL 오류 (예: pgvector extension 미설치).
     """
     import os
-    from .db import _pg_connect, _pg_available
+    # B-3 (REV-20260526-0001 흡수): relative import 컨텍스트 부재 (__package__ is None,
+    # agent_core.py 가 `python /app/agent_core.py` 로 직접 실행되는 경로) 일 때만
+    # absolute import 로 fallback. `.db` 내부에서 발생한 실제 ImportError
+    # (psycopg 부재 등) 까지 덮지 않도록 e.name 조건으로 범위 좁힘.
+    try:
+        from .db import _pg_connect, _pg_available
+    except ImportError as _imp_err:
+        if not (_imp_err.name is None or _imp_err.name == __package__):
+            raise
+        from db import _pg_connect, _pg_available  # type: ignore[no-redef]
 
     if not _pg_available():
         raise RuntimeError(
@@ -1429,6 +1438,45 @@ def _ensure_pg_schema(conn=None, *, schema_sql_path: str | None = None) -> dict:
     with open(schema_sql_path, "r", encoding="utf-8") as f:
         schema_sql = f.read()
 
+    # DDL (schema SQL) 적용: superuser connection 이 있으면 사용, 없으면 skip.
+    # agent_kb_rw 는 DML 전용 role 이라 DDL (CREATE TABLE / EXTENSION 등) 권한 없음.
+    # `kb-pg-role-bootstrap.sh --apply-schema` 가 이미 schema 를 적용했다면 skip 해도 무방.
+    #
+    # B-1 (REV-20260526-0001 흡수): runtime DDL credential 이름은 `AGENT_KB_PG_SUPERUSER` /
+    # `AGENT_KB_PG_SUPERPASSWORD` 가 1순위. unset 인 경우 bootstrap.sh 가 사용하는
+    # `AGENT_KB_PG_USER` / `AGENT_KB_PG_PASSWORD` 를 legacy fallback 으로 시도 — 운영자가
+    # bootstrap 환경을 그대로 재사용해도 silent skip 되지 않도록 보강.
+    # 권장 운영: 별 SUPER* 변수 사용 (`.env.example` 참조). USER/PASSWORD fallback 은
+    # legacy compat 만, 신규 배포는 SUPER* 명시 설정.
+    import os as _os
+    su_host = _os.environ.get("AGENT_KB_PG_SUPERUSER_HOST") or _os.environ.get("AGENT_KB_PG_HOST", "")
+    su_user = _os.environ.get("AGENT_KB_PG_SUPERUSER") or _os.environ.get("AGENT_KB_PG_USER", "postgres")
+    su_pw   = _os.environ.get("AGENT_KB_PG_SUPERPASSWORD") or _os.environ.get("AGENT_KB_PG_PASSWORD", "")
+    if su_pw:
+        try:
+            from .db import _pg_connect, _pg_available, AGENT_KB_PG_PORT, AGENT_KB_PG_DB, AGENT_KB_PG_SSLMODE
+        except ImportError as _imp_err:
+            if not (_imp_err.name is None or _imp_err.name == __package__):
+                raise
+            from db import _pg_connect, _pg_available, AGENT_KB_PG_PORT, AGENT_KB_PG_DB, AGENT_KB_PG_SSLMODE  # type: ignore[no-redef]
+        try:
+            import psycopg as _psycopg_mod
+        except ImportError as _e:
+            raise RuntimeError(f"psycopg not importable: {_e}") from _e
+        su_conninfo = (
+            f"host={su_host} port={AGENT_KB_PG_PORT} dbname={AGENT_KB_PG_DB or 'agent_kb'} "
+            f"user={su_user} password={su_pw} sslmode={AGENT_KB_PG_SSLMODE} "
+            f"connect_timeout=30 application_name=agent_core_schema_init"
+        )
+        su_conn = _psycopg_mod.connect(su_conninfo)
+        su_conn.autocommit = True
+        try:
+            with su_conn.cursor() as su_cur:
+                su_cur.execute(schema_sql)
+        finally:
+            su_conn.close()
+    # else: bootstrap 에서 이미 schema 적용됨 — DDL skip, 검증만 수행.
+
     own_conn = False
     if conn is None:
         conn = _pg_connect()
@@ -1436,8 +1484,6 @@ def _ensure_pg_schema(conn=None, *, schema_sql_path: str | None = None) -> dict:
 
     try:
         with conn.cursor() as cur:
-            cur.execute(schema_sql)
-
             # 검증: 5 KB 테이블 + VIEW + extension 존재 확인.
             cur.execute("""
                 SELECT table_name
@@ -1529,6 +1575,26 @@ def _ensure_pg_schema(conn=None, *, schema_sql_path: str | None = None) -> dict:
                 except Exception as grant_err:  # pragma: no cover — undefined_object 등
                     role_grants["query_error"] = str(grant_err)[:200]
                 grants_present[role_name] = role_grants
+
+        # B-2 (REV-20260526-0001 흡수): schema 검증을 fail-loud 로 격상.
+        # 누락 시 raise — agent_core.py 의 init_memory() 가 `AGENT_KB_PG_REQUIRED=1`
+        # 환경에서 sys.exit(1) 로 변환. SUPERPASSWORD 미설정 + schema 미적용 조합에서
+        # "KB Postgres schema 적용 완료" 라고 출력하면서 통과하는 silent failure 차단.
+        expected_tables = {"fact_entries", "texts", "rag_documents", "rag_objects"}
+        missing_tables = sorted(expected_tables - set(tables))
+        missing_extensions = sorted({"vector", "pg_trgm"} - set(extensions))
+        if missing_tables or not view_present or missing_extensions:
+            ddl_hint = (
+                "DDL 적용이 필요합니다. 다음 중 하나를 수행하세요: "
+                "(a) 환경변수에 `AGENT_KB_PG_SUPERPASSWORD` (또는 legacy `AGENT_KB_PG_PASSWORD`) "
+                "를 설정 후 memory-init 재시작 — runtime DDL 자동 적용, "
+                "(b) `bin/kb-pg-role-bootstrap.sh --apply-schema` 를 사전 실행."
+            )
+            raise RuntimeError(
+                "KB Postgres schema verification failed: "
+                f"missing_tables={missing_tables}, view_present={view_present}, "
+                f"missing_extensions={missing_extensions}. {ddl_hint}"
+            )
 
         # psycopg autocommit 가 True 이므로 별도 commit 불요.
         return {
