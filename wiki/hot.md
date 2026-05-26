@@ -22,10 +22,10 @@ ai_generated: true
 
 ## 목차
 
-1. [Last Updated](#last-updated)
-2. [Key Recent Facts](#key-recent-facts)
-3. [Recent Changes](#recent-changes)
-4. [Active Threads](#active-threads)
+- [Last Updated](#last-updated)
+- [Key Recent Facts](#key-recent-facts)
+- [Recent Changes](#recent-changes)
+- [Active Threads](#active-threads)
 
 ## Last Updated
 

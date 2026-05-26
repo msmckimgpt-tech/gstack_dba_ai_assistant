@@ -31,20 +31,19 @@ sources:
 ## 목차
 
 1. [개요](#1-개요)
-2. [입구점 — Karpathy 3-layer](#2-입구점--karpathy-3-layer)
-   - 2.1 [raw layer (immutable sources)](#21-raw-layer-immutable-sources)
-   - 2.2 [wiki layer (LLM-maintained)](#22-wiki-layer-llm-maintained)
-   - 2.3 [schema layer](#23-schema-layer)
-3. [프로젝트 도메인 영역](#3-프로젝트-도메인-영역)
-   - 3.1 [아키텍처](#31-아키텍처)
-   - 3.2 [Feature 카드](#32-feature-카드)
-   - 3.3 [결정 mirror](#33-결정-mirror)
-   - 3.4 [용어집](#34-용어집)
-4. [Operations](#4-operations)
-5. [AI 의 운용 명령](#5-ai-의-운용-명령)
-6. [AI 와 사람의 영역 구분](#6-ai-와-사람의-영역-구분)
-7. [관련 문서](#7-관련-문서)
-8. [분류](#8-분류)
+2. [상세](#2-상세)
+     - [2.1 도메인](#21-도메인)
+     - [2.2 핵심 영역 입구](#22-핵심-영역-입구)
+     - [2.3 Feature 카드](#23-feature-카드)
+     - [2.4 Decisions (ADR mirror)](#24-decisions-adr-mirror)
+     - [2.5 Concepts / Entities / Sources / Syntheses](#25-concepts--entities--sources--syntheses)
+     - [2.6 Glossary](#26-glossary)
+     - [2.7 Operations](#27-operations)
+3. [AI / 사람 영역 구분](#3-ai--사람-영역-구분)
+4. [관련 문서](#4-관련-문서)
+5. [둘러보기](#5-둘러보기)
+6. [외부 link](#6-외부-link)
+- [분류](#분류)
 
 ## 1. 개요
 

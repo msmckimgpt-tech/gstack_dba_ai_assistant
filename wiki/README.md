@@ -20,24 +20,12 @@ ai_generated: false
 
 ## 목차
 
-1. [개요](#1-개요)
-2. [처음 열 때 — Obsidian 으로 열기](#2-처음-열-때--obsidian-으로-열기)
-   - 2.1 [Obsidian 설치](#21-obsidian-설치)
-   - 2.2 [vault 열기](#22-vault-열기)
-   - 2.3 [Obsidian 없이도 작동](#23-obsidian-없이도-작동)
-3. [상세](#3-상세)
-   - 3.1 [디렉토리 구성](#31-디렉토리-구성)
-   - 3.2 [영역 구분](#32-영역-구분)
-   - 3.3 [노트 종류 (`wiki_role`)](#33-노트-종류-wiki_role)
-4. [특징](#4-특징)
-   - 4.1 [namu-style 사람 친숙 형식](#41-namu-style-사람-친숙-형식)
-   - 4.2 [Karpathy 3-layer](#42-karpathy-3-layer)
-   - 4.3 [multi-agent 호환](#43-multi-agent-호환)
-   - 4.4 [frontmatter / wikilink 컨벤션](#44-frontmatter--wikilink-컨벤션)
-5. [안 하는 것](#5-안-하는-것)
-6. [관련 문서](#6-관련-문서)
-7. [외부 link](#7-외부-link)
-8. [분류](#8-분류)
+1. [처음 열 때 — Obsidian 으로 열기](#1-처음-열-때--obsidian-으로-열기)
+2. [영역 구분](#2-영역-구분)
+3. [디렉토리 구성](#3-디렉토리-구성)
+4. [노트 종류 (`wiki_role`)](#4-노트-종류-wiki_role)
+5. [추가 정책 (요약 — 정본은 [[../docs/WIKI|docs/WIKI.md]])](#5-추가-정책-요약--정본은-docswikidocswikimd)
+6. [안 하는 것](#6-안-하는-것)
 
 ## 1. 처음 열 때 — Obsidian 으로 열기
 

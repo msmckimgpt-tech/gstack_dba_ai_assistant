@@ -29,16 +29,13 @@ sources:
 ## 목차
 
 1. [개요](#1-개요)
-2. [상세](#2-상세)
-   - 2.1 [Active features](#21-active-features)
-   - 2.2 [Archived / completed](#22-archived--completed)
-   - 2.3 [Skeleton](#23-skeleton)
-3. [특징](#3-특징)
-4. [비교](#4-비교)
-   - 4.1 [Feature card vs 정본 FUNCTION.md](#41-feature-card-vs-정본-functionmd)
+2. [Active features](#2-active-features)
+3. [Archived / completed](#3-archived--completed)
+4. [Skeleton](#4-skeleton)
 5. [관련 문서](#5-관련-문서)
-6. [외부 link](#6-외부-link)
-7. [분류](#7-분류)
+6. [둘러보기](#6-둘러보기)
+7. [외부 link](#7-외부-link)
+- [분류](#분류)
 
 ## 1. 개요
 
