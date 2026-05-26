@@ -588,6 +588,17 @@ def _bootstrap_memory_runtime() -> None:
         daemon=True,
     ).start()
 
+
+@app.on_event("startup")
+def _start_attachment_recon_worker() -> None:
+    """TASK-0108: attachment reconciliation worker 백그라운드 기동."""
+    try:
+        from web.modules import attachment_reconciliation as _ar
+        _ar.start_background_worker(_open_memory_connection)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("attachment_recon worker start failed: %s", exc)
+
 WEB_PARALLEL_LIMIT = max(1, int(os.getenv("WEB_PARALLEL_LIMIT", "6")))
 # TASK-0061 Phase 3 (REQ-20260515-0005): processing 상태가 만료 시간 동안 step/status 갱신 없이
 # 멈춰 있으면 stale_error 로 표시한다. 장시간 SQL/LLM 작업을 고려해 기본 20 분 (1200 sec).
@@ -8735,8 +8746,20 @@ def _delete_conversation_impl(
             run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
             mark_cancel_requested(conn, conversation_id, run_id=run_id)
             mark_delete_requested(conn, conversation_id, run_id=run_id)
+            # TASK-0108: 처리 중 삭제도 첨부 conv_soft cascade 마킹.
+            try:
+                from web.modules import attachment_reconciliation as _ar
+                _ar.cascade_conv_soft(conn, conversation_id)
+            except Exception:
+                pass
             _clear_accounts_current_conversation(conn, conversation_id)
             return {"status": "deleted_pending"}
+        # TASK-0108: conversation 삭제 전 첨부 conv_soft cascade 마킹.
+        try:
+            from web.modules import attachment_reconciliation as _ar
+            _ar.cascade_conv_soft(conn, conversation_id)
+        except Exception:
+            pass
         delete_conversation_records(conn, conversation_id)
         _clear_accounts_current_conversation(conn, conversation_id)
         return {"status": "deleted"}
