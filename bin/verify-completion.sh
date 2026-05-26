@@ -942,6 +942,80 @@ check_11_repo_immutability() {
 }
 
 # -----------------------------------------------------------------------------
+# Check #12: Wiki feature card companion (AGENTS.md §21.2 #1, v3.12.0+ WARN-only)
+# -----------------------------------------------------------------------------
+# Diff 에서 unit/feature-* 신규 추가 감지 시 wiki/Features/<slug>.md 동반 검사.
+# v3.12.0: WARN-only (PR block 아님 — §21.4 staged rollout).
+# v3.13.0+: strict 모드 격상 예정 (--strict flag 또는 default 변경).
+# Skip 조건:
+#   - wiki/ 디렉토리 부재 (v3.11.0 이전 buildup)
+#   - non-git working tree
+#   - META mode (별도 호출 안 함, 본 check 는 feature mode 전용)
+
+check_12_wiki_feature_card() {
+  local mode="${1:-pre-commit}"
+  if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    log_check 12 WARN "wiki feature card" "SKIP (not a git work tree)"
+    return 0
+  fi
+
+  local repo_root
+  repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    log_check 12 WARN "wiki feature card" "SKIP (could not resolve repo root)"
+    return 0
+  }
+
+  # v3.11.0 이전 buildup 은 본 check skip.
+  if [ ! -d "$repo_root/wiki" ]; then
+    log_check 12 PASS "wiki feature card" "(wiki/ 미도입 — v3.11.0 이전 buildup skip)"
+    return 0
+  fi
+
+  # 신규 feature 디렉토리 찾기 (Added 한정).
+  local new_feature_files=""
+  case "$mode" in
+    pre-commit|shared-pre-commit)
+      new_feature_files=$(git diff --cached --diff-filter=A --name-only 2>/dev/null | grep -E '^unit/feature-[^/]+/' || true)
+      ;;
+    post-commit)
+      new_feature_files=$(git diff HEAD~1 HEAD --diff-filter=A --name-only 2>/dev/null | grep -E '^unit/feature-[^/]+/' || true)
+      ;;
+    *)
+      log_check 12 WARN "wiki feature card" "SKIP (unknown mode: $mode)"
+      return 0
+      ;;
+  esac
+
+  if [ -z "$new_feature_files" ]; then
+    log_check 12 PASS "wiki feature card" "(no new feature dir in diff)"
+    return 0
+  fi
+
+  local feature_slugs
+  feature_slugs=$(echo "$new_feature_files" | awk -F/ '{print $2}' | sort -u)
+
+  local missing_cards=()
+  local fslug card
+  while IFS= read -r fslug; do
+    [ -z "$fslug" ] && continue
+    card="$repo_root/wiki/Features/$fslug.md"
+    if [ ! -f "$card" ]; then
+      missing_cards+=("$fslug")
+    fi
+  done <<< "$feature_slugs"
+
+  if [ ${#missing_cards[@]} -eq 0 ]; then
+    log_check 12 PASS "wiki feature card" "(all new features have wiki/Features cards)"
+    return 0
+  fi
+
+  log_check 12 WARN "wiki feature card" \
+    "AGENTS.md §21.2 #1 (SHOULD): wiki/Features/<slug>.md 동반 누락 — ${missing_cards[*]}. v3.12.0 WARN-only (PR block 아님). baseline: wiki/Features/_template-card.md. v3.13.0+ strict 격상 예정."
+  # WARN: exit 0 유지, failed counter 영향 X. 본 check 는 항상 0 return.
+  return 0
+}
+
+# -----------------------------------------------------------------------------
 # Main dispatch
 # -----------------------------------------------------------------------------
 
@@ -1047,9 +1121,11 @@ main() {
   check_7_anchor_4 "$fdir" || failed=$((failed + 1))
   check_8_unstaged_residual "$effective_mode" || failed=$((failed + 1))
   check_9_review_entry "$effective_mode" "$feature_id" || failed=$((failed + 1))
+  # Check #12 (v3.12.0+): wiki feature card companion — WARN-only, failed 영향 X.
+  check_12_wiki_feature_card "$effective_mode" || true
 
   if [ "$failed" -eq 0 ]; then
-    printf '\nverify-completion: PASS (all 9 checks: 7 pilot + worktree binding + repo immutability)\n' >&2
+    printf '\nverify-completion: PASS (9 checks: 7 pilot + worktree binding + repo immutability) + check #12 informational (wiki feature card, WARN-only)\n' >&2
     exit 0
   else
     printf '\nverify-completion: FAIL (%d of 9 checks failed)\n' "$failed" >&2

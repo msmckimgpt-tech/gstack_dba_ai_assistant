@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.11.0
+template_version: v3.12.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -1661,3 +1661,67 @@ pain 호소는 위 1~3 에서 먼저 처리된 후, 필요 시 persona 호출로
 - **Customization 보호**: consumer 가 작성한 Makefile 은 template upgrade 시 보존 — 마이그레이션 hop 이 덮어쓰지 않는다 (`bin/migrations/lib/customization-detect.sh` 의 `is_marker_protected` 패턴 따름).
 - **`/_template:makefile` SKILL 의 scope**: project-agnostic (§19.7) — 특정 feature 이름·도메인을 가정하지 않는다. 사용자가 입력한 entry 명령을 Q&A 로 수집한 후 Makefile 본문을 조립.
 - **Shell-injection 경고 (필수)**: SKILL 의 Q1 (entry-point inventory) 으로 수집한 명령은 Makefile recipe 본문에 그대로 들어가며 `make <target>` 실행 시 `/bin/sh -c` 로 evaluate 된다. metachar (`;`, `&&`, `|`, backticks, `$()`, `>`, `&`) 가 active 이므로 SKILL 이 Q1.5 단계에서 수집 명령 echo + 1줄 경고 + 사용자 confirm 을 강제한다.
+
+---
+
+## §21. Obsidian LLM Wiki Integration
+
+본 프로젝트는 v3.12.0 부터 `repo/wiki/` 라는 **Obsidian 호환 vault** 를 사람용 graph 입구로 분리 운영한다. AI 가 작업 시 *읽는* 정책·컨텍스트 영역 (`AGENTS.md`, `docs/`, `unit/<id>/docs/`) 과 사람이 시각적으로 *탐색하는* 영역 (`wiki/`) 이 디렉토리 수준에서 분리된다. 본 § 는 그 영역 분리의 정책 정본이다. 운용 디테일 (frontmatter, wikilink, lint) 정본은 [`docs/WIKI.md`](docs/WIKI.md).
+
+### §21.1 영역 구분
+
+| 영역 | 위치 | 작성 주체 | 읽는 주체 | source of truth |
+|---|---|---|---|---|
+| **HUMAN vault** | `repo/wiki/` | AI 가 카드·인덱스 유지, 사람이 sources 큐레이션 | 사람이 Obsidian graph 로 탐색 | **mirror** (정본 X) |
+| **AI policy** | `repo/AGENTS.md` (이 문서) | 사람이 정책 결정 (PR 경유) | AI 가 작업 시 *반드시* 읽음 | **정본** |
+| **AI context** | `repo/docs/*.md`, `repo/unit/<id>/docs/*.md` | 사람이 정책 / AI 가 작업 시 갱신 | AI 가 §3.1 우선순위대로 읽음 | **정본** |
+
+**Rule of thumb**: 사실·결정·정책은 AI 영역의 정본에. 사람이 graph 로 탐색할 *입구점*·*mirror*·*시각화* 는 HUMAN vault. **충돌 시 정본 우선** — wiki 는 정본을 따라간다.
+
+### §21.2 AI 의무 (3가지 — v3.12.0 SHOULD, v3.13.0+ MUST 예정)
+
+AI 가 본 프로젝트에서 작업할 때 다음을 **권장 (SHOULD)** 으로 따른다. v3.12.0 에서는 self-discipline + opportunistic 동반 정책이며, 후속 cycle (v3.13.0+) 에서 enforcement (verify-completion check #12 의 차단 모드 격상 + `/review-panel` wiki-reviewer dispatch) 와 함께 **의무 (MUST)** 로 격상 예정이다. v3.12.0 의 staged rollout 은 reviewer 의 정직성 권유 (META-CYCLE-009 review artifact 참조) 를 반영한 의도된 design.
+
+1. **Feature 신규 생성 시 wiki 카드 동반 작성 (SHOULD)**
+   - `unit/feature-XXXX-<slug>/` 가 신규 생성될 때 `wiki/Features/feature-XXXX-<slug>.md` 카드를 동반 생성한다.
+   - baseline: `repo/wiki/Features/_template-card.md` 또는 `repo/wiki/_templates/feature-card.md`.
+   - `repo/wiki/Features/_Index.md` 표에 1줄 entry 를 add 한다.
+   - 검증: v3.12.0 — `bin/verify-completion.sh` check #12 가 WARN-only 로 catch (PR block 아님). `/review-panel` (META mode) 가 §18.8 의 wiki keyword 매칭으로 dispatch.
+
+2. **ADR 신규 생성 시 wiki mirror 동반 작성 (SHOULD)**
+   - `docs/DECISIONS.md` 에 새 ADR append 시 `wiki/Decisions/<adr-id>-<slug>.md` mirror 노트를 동반 생성한다.
+   - baseline: `repo/wiki/_templates/adr-mirror.md`.
+   - `repo/wiki/Decisions/_Index.md` 표에 1줄 entry 를 add 한다.
+   - mirror 본문은 결정 *입구점* 뿐 — 결정 본문은 정본에.
+
+3. **wiki/ 안의 모든 create/update 는 Log.md append (SHOULD)**
+   - format: `[<ISO timestamp>] <operation> | <wiki_role> | <path> | <one-line note>`
+   - `<operation>`: `create` | `update` | `link` | `lint-fix` | `graduate`
+   - append-only — 기존 entry 수정·삭제 금지.
+
+### §21.3 운용 디테일
+
+frontmatter 컨벤션, wikilink 표기, provenance (extracted/inferred/ambiguous), tag, lint 정책 정본은 [`docs/WIKI.md`](docs/WIKI.md). 본 § 는 *영역 분리와 의무* 만 정의한다.
+
+### §21.4 v3.12.0 enforcement 상태 (정직 표기)
+
+위 §21.2 의무의 자동 catch 는 v3.12.0 에서 *부분적* 이다. reviewer (META-CYCLE-009) 의 권유를 받아 다음 보강이 본 cycle 에 함께 들어갔다:
+
+- **§18.8 dispatch table** 에 wiki keyword (`wiki/`, `Features/`, `Decisions/`, `Log.md`) 가 등록 — 정책 doc 변경 시 review-panel 이 META mode 로 dispatch 되며, feature 작업에서 wiki keyword 매칭 시 적합 reviewer 가 호출됨.
+- **`bin/verify-completion.sh` check #12** 가 WARN-only 로 추가 — diff 가 신규 feature 디렉토리 (`unit/feature-*`) 를 추가했는데 `wiki/Features/<slug>.md` 동반이 없으면 stderr warn (exit 0 유지, PR block 아님).
+
+**v3.12.0 에서 의도된 한계**: PR block 까지의 strict enforcement 는 v3.13.0+ 의 후속 cycle 에서 다음과 함께 격상. (a) check #12 의 WARN → BLOCK 분기 (`--strict` flag 또는 default 변경), (b) wiki-reviewer subagent persona 신설, (c) Mirror staleness 시간 sentinel (30 일 이상 누락 시 warn). v3.12.0 buildup 의 feature 들은 backfill 강제 대상이 아니다.
+
+이 staged rollout 은 reviewer (qa-reviewer Q-2 finding) 의 "v3.12.0 SHOULD → v3.13.0 MUST" 권유를 직접 채택한 결과이며, "정책 선언만 + enforcement 미보강 으로 ship" 의 anti-pattern (v3.8.0 worktree drift 누적 패턴) 을 회피한다.
+
+### §21.5 Lint (현재 수동, future automation)
+
+`wiki/` 의 health 점검 — broken wikilink, orphan, drift, source 부재 — 은 현재 수동 책임이다. future automation: `bin/wiki-lint.sh` (TBD). 본 § 는 lint *책임* 만 정의하고, 구현은 후속 cycle 에서.
+
+### §21.6 vault config
+
+`repo/wiki/.obsidian/` 의 4 config 파일 (`app.json`, `core-plugins.json`, `appearance.json`, `templates.json`) 은 sane defaults 만 포함한다. consumer 가 community plugin·theme 을 추가하면 `wiki/.gitignore` 에 의해 제외된다 (vault 의 portability 유지).
+
+### §21.7 Customization 보호
+
+consumer 가 wiki/ 안의 노트를 자체 작성한 경우 template upgrade 시 hop 은 그것을 덮어쓰지 않는다 — `bin/migrations/lib/customization-detect.sh` 의 marker / 존재 기반 보호. consumer 가 `wiki/Features/feature-0001-XXX.md` 를 이미 갖고 있다면 그 카드는 보존되고, `wiki/Features/_template-card.md` 만 갱신된다.

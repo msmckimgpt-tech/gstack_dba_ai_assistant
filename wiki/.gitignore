@@ -1,0 +1,18 @@
+# Obsidian vault local state — do not commit
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/workspace-mobile-v2.json
+.obsidian/cache
+.obsidian/plugins/
+.obsidian/community-plugins.json
+.obsidian/snippets/
+.obsidian/themes/
+.obsidian/types.json
+.obsidian/graph.json
+.obsidian/canvas.json
+.obsidian/hotkeys.json
+.obsidian/bookmarks.json
+
+# Obsidian per-user state — keep local
+.trash/
+_attachments/.tmp/

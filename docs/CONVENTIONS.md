@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
-template_version: v3.11.0
+template_version: v3.12.0
 domain: [workflow, context]
 ai_read_priority: 3
 ---
@@ -323,3 +323,41 @@ TEMP_CLEANUP_ON_SUCCESS="1"
 
 - 새 target 추가/제거 시 `docs/DECISIONS.md` 의 ADR 작성 (Makefile = "실행 진입점" anchor, §18).
 - 본 § 은 PROJECT.md §9.1 (자동화 도구) 의 categorization 과 일관 — Makefile 은 테스트 프레임워크가 아닌 자동화 영역. CI/CD 도구는 PROJECT.md §10 참조.
+
+## 11. Wikilink 및 Wiki vault 표기 (v3.12.0+)
+
+`repo/wiki/` (Obsidian vault, AGENTS.md §21) 를 도입한 v3.12.0 부터 적용. 운용 정본은 `docs/WIKI.md`. 본 § 는 *AI 와 사람이 문서 본문에 쓰는 link 표기* 만 정의.
+
+### 11.1 vault 내부 link
+
+| 패턴 | 예시 | 설명 |
+|---|---|---|
+| 같은 디렉토리 | `[[Overview]]` | `wiki/Architecture/Overview.md` 안에서 `[[Data-Flow]]` |
+| 다른 sub-디렉토리 | `[[../Decisions/_Index]]` | relative path 우선 |
+| 별칭 (한국어) | `[[../docs/PROJECT\|프로젝트]]` | alias 로 표시명 자유 지정 |
+| heading anchor | `[[../docs/DECISIONS#ADR-001\|ADR-001]]` | `#` 뒤에 heading text |
+
+### 11.2 vault → 정본 docs link
+
+wiki 노트에서 정본 문서로 link 할 때:
+
+```markdown
+[[../../docs/PROJECT|Project]]
+[[../../docs/DECISIONS#ADR-001|ADR-001 — 분리 결정]]
+[[../../unit/feature-0001-example/docs/FUNCTION|Feature 0001 — FUNCTION]]
+```
+
+### 11.3 정본 docs → vault link (선택)
+
+정본 docs 는 일반적으로 vault 를 참조하지 않는다 (정본은 vault 의 mirror 가 아니다). 단, 다음 경우는 예외로 link 가능:
+- `docs/WIKI.md` — vault 운용 가이드 자체
+- `AGENTS.md §21` — vault 책임 분배
+- 사람용 onboarding (`README.md`, `CONTRIBUTING.md`) 에서 "graph 로 탐색하려면 wiki/ 를 Obsidian 으로 열어라" 안내
+
+이 외의 정본은 vault 를 참조하지 않는다 (정본 ↔ mirror 단방향 의존).
+
+### 11.4 표기 일관성
+
+- **markdown link 와 wikilink 의 혼용**: vault *내부* 는 `[[wikilink]]` 우선, 정본 docs *내부* 는 `[markdown](relative/path.md)` 우선. 정본은 GitHub web preview 에서 가독성 우선이라 markdown link 가 portable.
+- **alias 권장**: link target 의 path 가 길거나 한국어 표시명이 필요할 때.
+- **anchor 사용**: heading 이 있는 문서로 link 할 때는 anchor 명시 (`#ADR-001`, `#§21.2-ai-의무`).
