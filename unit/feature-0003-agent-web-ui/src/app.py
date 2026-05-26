@@ -6322,6 +6322,49 @@ async def ask(request: Request) -> JSONResponse:
         else:
             os.environ.pop("ATTACHMENT_IDS", None)
 
+        # TASK-0107 hotfix: UploadStatus 가 'uploaded' (ingest 미완) 또는 'failed' 인
+        # csv/xlsx attachment 를 /api/ask 진입 시점에 동기 ingest 해 LLM 호출 전에
+        # sandbox table 이 준비되도록 한다. timeout (최대 30s) 이내 완료 못 하면
+        # background 로 fallback — 이번 turn 은 metadata 만, 다음 turn 부터 full context.
+        if attachment_ids_clean:
+            try:
+                _placeholders = ", ".join(["%s"] * len(attachment_ids_clean))
+                _pending_cur = conn.cursor(dictionary=True)
+                _pending_cur.execute(
+                    f"SELECT Id, ConversationId, ObjectKey, Kind FROM WebConversationAttachments "
+                    f"WHERE Id IN ({_placeholders}) AND UploadStatus IN ('uploaded','failed') "
+                    f"AND Kind IN ('csv','xlsx') AND DeletedAt IS NULL AND DeletePending = 0 LIMIT 10",
+                    tuple(attachment_ids_clean),
+                )
+                _pending_rows = _pending_cur.fetchall() or []
+                _pending_cur.close()
+            except Exception:
+                _pending_rows = []
+            _ingest_threads = []
+            for _pr in _pending_rows:
+                try:
+                    _t = threading.Thread(
+                        target=_ingest_attachment_background,
+                        kwargs={
+                            "attachment_id": int(_pr["Id"]),
+                            "conversation_id": str(_pr["ConversationId"]),
+                            "object_key": str(_pr["ObjectKey"]),
+                            "kind": str(_pr["Kind"]),
+                        },
+                        name=f"sandbox-sync-{_pr['Id']}",
+                        daemon=True,
+                    )
+                    _t.start()
+                    _ingest_threads.append(_t)
+                except Exception:
+                    pass
+            # LLM 호출 전 최대 25s 대기 — 대부분의 소형 파일은 이 내에 완료.
+            for _t in _ingest_threads:
+                try:
+                    _t.join(timeout=25)
+                except Exception:
+                    pass
+
         # TASK-0094 Sprint 2 (S2.4) — vision inline image pre-fetch + D11 consent gate.
         # vision 미지원 모델 / image kind 0 → (None, 0, None, []) — 본 분기 skip.
         # D11 미동의 → 409 + consent_required body 로 즉시 응답 (frontend modal trigger).
@@ -7779,8 +7822,11 @@ def _ingest_attachment_background(
 
     # 2) sandbox schema 생성 (idempotent — IF NOT EXISTS).
     #    단일-user MVP — root user 가 maintainer/writer/cleanup 모두 수행.
+    #    database=None → database=MEMORY_DB 로 열어야 step 4 의 UPDATE 가 같은
+    #    conn 으로 agent_memory.WebConversationAttachments 를 찾을 수 있다.
+    #    CREATE SCHEMA DDL 은 current-database 와 무관하게 동작하므로 문제 없음.
     try:
-        conn = _open_memory_connection(database=None)
+        conn = _open_memory_connection()
     except Exception as exc:
         _mark_ingest_failed(attachment_id, f"db connect failed: {exc}")
         return
