@@ -6365,6 +6365,36 @@ async def ask(request: Request) -> JSONResponse:
                 except Exception:
                     pass
 
+        # TASK-0107: attachment sandbox 스키마를 allowed_schemas_for_run 에 추가.
+        # WebProductDatabases 기반 whitelist 는 동적 생성 sandbox 스키마를 모르므로
+        # 요청된 attachment_ids 의 MetaJson 에서 sandbox_schema_name 을 읽어 보충한다.
+        # allowed_schemas_for_run 이 None (whitelist 미적용) 이면 아무 작업 없음.
+        if attachment_ids_clean and allowed_schemas_for_run is not None:
+            try:
+                _sb_placeholders = ", ".join(["%s"] * len(attachment_ids_clean))
+                _sb_cur = conn.cursor()
+                _sb_cur.execute(
+                    f"SELECT MetaJson FROM WebConversationAttachments "
+                    f"WHERE Id IN ({_sb_placeholders}) AND UploadStatus = 'ingested' "
+                    f"AND Kind IN ('csv','xlsx') AND DeletedAt IS NULL",
+                    tuple(attachment_ids_clean),
+                )
+                _sb_rows = _sb_cur.fetchall() or []
+                _sb_cur.close()
+                _sandbox_schemas: list[str] = []
+                for _sbr in _sb_rows:
+                    try:
+                        _meta = json.loads(_sbr[0] or "{}") if _sbr[0] else {}
+                        _sn = str(_meta.get("sandbox_schema_name") or "").strip()
+                        if _sn.startswith("agent_attachment_") and _sn not in _sandbox_schemas:
+                            _sandbox_schemas.append(_sn)
+                    except Exception:
+                        pass
+                if _sandbox_schemas:
+                    allowed_schemas_for_run = list(allowed_schemas_for_run) + _sandbox_schemas
+            except Exception:
+                pass
+
         # TASK-0094 Sprint 2 (S2.4) — vision inline image pre-fetch + D11 consent gate.
         # vision 미지원 모델 / image kind 0 → (None, 0, None, []) — 본 분기 skip.
         # D11 미동의 → 409 + consent_required body 로 즉시 응답 (frontend modal trigger).
