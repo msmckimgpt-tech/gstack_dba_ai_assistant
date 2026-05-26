@@ -29,6 +29,23 @@ sources:
 | 정본 sources | [[../docs/PROJECT\|PROJECT]] · [[../docs/ARCHITECTURE\|ARCHITECTURE]] · [[../docs/DECISIONS\|DECISIONS]] · [[../docs/STATUS\|STATUS]] |
 | Wiki layer | mirror (single page synthesis) |
 
+## 목차
+
+1. [개요](#1-개요)
+2. [핵심 영역](#2-핵심-영역)
+   - 2.1 [도메인](#21-도메인)
+   - 2.2 [핵심 모듈](#22-핵심-모듈)
+   - 2.3 [진행 중인 작업](#23-진행-중인-작업)
+   - 2.4 [결정 이력](#24-결정-이력)
+3. [외부 source 합성](#3-외부-source-합성)
+   - 3.1 [인용한 source 들](#31-인용한-source-들)
+   - 3.2 [합성된 결론](#32-합성된-결론)
+   - 3.3 [미해결 contradiction](#33-미해결-contradiction)
+4. [알려진 한계](#4-알려진-한계)
+5. [다음 단계](#5-다음-단계)
+6. [관련 문서](#6-관련-문서)
+7. [분류](#7-분류)
+
 ## 1. 개요
 
 본 프로젝트는 **기존 `mysql_ai` 운영 자산을 AI 위임 개발 (`ai_delegated_dev`) 템플릿 구조로 이관한 실행형 사본** 이다. 자연어 입력 → LLM tool-call loop → MySQL replica 에 대한 read-only DBA 작업 자동화를 7 개 feature unit + 단일 docker-compose 로 제공한다. 정책 정본 (`AGENTS.md`) + 도메인 정본 (`docs/`) + 기능 정본 (`unit/<id>/docs/`) 의 3-tier 문서 체계로 다중 AI 가 동시에 작업 가능.

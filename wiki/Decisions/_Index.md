@@ -25,6 +25,18 @@ sources:
 | ADR 수 | 27 entries (ADR-0001 ~ ADR-0026, ADR-0025 가 정본 안 두 entry 로 존재) |
 | Wiki layer | mirror (입구점) |
 
+## 목차
+
+1. [개요](#1-개요)
+2. [상세](#2-상세)
+   - 2.1 [ADR Index](#21-adr-index)
+   - 2.2 [상태 legend](#22-상태-legend)
+   - 2.3 [추가 절차](#23-추가-절차)
+3. [특징](#3-특징)
+4. [관련 문서](#4-관련-문서)
+5. [외부 link](#5-외부-link)
+6. [분류](#6-분류)
+
 ## 1. 개요
 
 ADR 의 *사람용 mirror 입구*. **정본은 [[../../docs/DECISIONS|docs/DECISIONS.md]]** — 단일 파일에 append-only 누적. mirror 는 결정 본문이 아닌 *입구점·backlink 그래프* 만 제공.

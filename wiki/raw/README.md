@@ -18,6 +18,14 @@ ai_generated: false
 
 > Karpathy LLM Wiki 패턴 (https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) 의 **3-layer 의 첫 번째 layer**: immutable raw sources. 본 디렉토리는 *AI 가 ingest 하기 위한 원본 source 가 누적되는 영역*이다.
 
+## 목차
+
+1. [개요](#1-개요)
+2. [구조](#2-구조)
+3. [Ingest workflow](#3-ingest-workflow)
+4. [사용자 책임](#4-사용자-책임)
+5. [관련 문서](#5-관련-문서)
+
 ## 1. 개요
 
 `wiki/raw/` 는 **사람이 큐레이션** 하고 **AI 는 읽기만** 하는 영역이다. AI 가 `wiki/sources/` 의 source summary 노트와 `wiki/{entities,concepts,syntheses}/` 의 합성 페이지를 생성할 때 *원본* 으로 사용한다.

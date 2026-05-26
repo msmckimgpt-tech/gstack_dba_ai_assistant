@@ -28,6 +28,20 @@ sources:
 | 정본 | [[../../docs/ARCHITECTURE\|docs/ARCHITECTURE.md]] + [[../../docs/SECURITY\|docs/SECURITY.md]] |
 | diagram 유형 | mermaid flowchart + 컴포넌트 표 |
 
+## 목차
+
+1. [개요](#1-개요)
+2. [상세](#2-상세)
+   - 2.1 [요청 → 처리 → 저장](#21-요청--처리--저장)
+   - 2.2 [경계 통과 지점](#22-경계-통과-지점)
+   - 2.3 [비동기 / 동기](#23-비동기--동기)
+3. [특징](#3-특징)
+4. [비교 (선택)](#4-비교-선택)
+   - 4.1 [동기 vs 비동기 처리](#41-동기-vs-비동기-처리-tbd)
+5. [관련 문서](#5-관련-문서)
+6. [외부 link](#6-외부-link)
+7. [분류](#7-분류)
+
 ## 1. 개요
 
 사용자 요청 → Caddy (TLS termination) → web (FastAPI) → agent loop (LLM tool-call) → MySQL replica + Postgres KB + MinIO storage 의 데이터 흐름을 정본 doc 의 §4 (기능 맵) + feature FUNCTION.md 의 *Main Flow* 섹션 mirror 로 시각화한다.

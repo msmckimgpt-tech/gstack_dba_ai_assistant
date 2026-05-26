@@ -24,6 +24,17 @@ sources:
 | 정본 (template 용어) | [[../../docs/CONVENTIONS\|docs/CONVENTIONS.md]] §9 |
 | Entry 수 | 24 (inline) |
 
+## 목차
+
+1. [개요](#1-개요)
+2. [상세](#2-상세)
+   - 2.1 [Terms](#21-terms)
+   - 2.2 [분리 정책](#22-분리-정책)
+3. [특징](#3-특징)
+4. [관련 문서](#4-관련-문서)
+5. [외부 link](#5-외부-link)
+6. [분류](#6-분류)
+
 ## 1. 개요
 
 프로젝트 도메인 용어집. 정본은 `docs/CONVENTIONS.md §9`. 본 vault 의 도메인 용어는 그 mirror + 본 프로젝트만의 추가 용어.

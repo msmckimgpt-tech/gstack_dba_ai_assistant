@@ -21,6 +21,15 @@ ai_generated: true
 | 분류 | `#wiki/index` |
 | 등록 entity | 9 |
 
+## 목차
+
+1. [개요](#1-개요)
+2. [Entity 분류](#2-entity-분류)
+3. [등록된 entities](#3-등록된-entities)
+4. [Skeleton](#4-skeleton)
+5. [관련 문서](#5-관련-문서)
+6. [분류](#6-분류)
+
 ## 1. 개요
 
 사람·조직·도구·프로토콜 등 *고유 명사 entity* 의 page 누적 영역. source / 본 프로젝트 doc 에서 3 회 이상 등장한 entity 를 page 로 추출.

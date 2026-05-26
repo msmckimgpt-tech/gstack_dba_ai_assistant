@@ -26,6 +26,18 @@ sources:
 | 정본 | [[../../docs/ARCHITECTURE\|docs/ARCHITECTURE.md]] §4·§9 + [[../../docs/CODEBASE_MAP\|docs/CODEBASE_MAP.md]] |
 | 디렉토리 수 | top-level 8 (정책 / unit / shared / docs / bin / wiki / artifacts / .worktrees) |
 
+## 목차
+
+1. [개요](#1-개요)
+2. [상세](#2-상세)
+   - 2.1 [Top-level 매핑](#21-top-level-매핑)
+   - 2.2 [Feature 인덱스](#22-feature-인덱스)
+   - 2.3 [의존성](#23-의존성)
+3. [특징](#3-특징)
+4. [관련 문서](#4-관련-문서)
+5. [외부 link](#5-외부-link)
+6. [분류](#6-분류)
+
 ## 1. 개요
 
 저장소 top-level 디렉토리 ↔ 책임 매핑. 정본 [[../../docs/ARCHITECTURE|ARCHITECTURE]] §4 + [[../../docs/CODEBASE_MAP|CODEBASE_MAP]] 의 시각적 mirror.

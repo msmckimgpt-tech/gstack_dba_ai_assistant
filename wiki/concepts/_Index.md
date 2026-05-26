@@ -21,6 +21,15 @@ ai_generated: true
 | 분류 | `#wiki/index` |
 | 등록 concept | 6 |
 
+## 목차
+
+1. [개요](#1-개요)
+2. [Concept 분류](#2-concept-분류)
+3. [등록된 concepts](#3-등록된-concepts)
+4. [Skeleton](#4-skeleton)
+5. [관련 문서](#5-관련-문서)
+6. [분류](#6-분류)
+
 ## 1. 개요
 
 source 들에서 추출된 *반복 등장 개념* 의 page 누적 영역. `entities/` 가 *고유 명사* 라면 `concepts/` 는 *일반 명사* (RAG, embedding, audit, vault, ...). 출처: SamurAIGPT/llm-wiki-agent (2.7k) + AgriciDaniel/claude-obsidian (5.5k) 의 공통 패턴.

@@ -28,6 +28,24 @@ sources:
 | 정본 영역 | [[../AGENTS\|AGENTS.md]] · [[../docs/PROJECT\|docs/PROJECT.md]] · [[../docs/ARCHITECTURE\|docs/ARCHITECTURE.md]] · [[../docs/DECISIONS\|docs/DECISIONS.md]] · `unit/<id>/docs/` |
 | 책임 분배 | [[../docs/WIKI\|WIKI 운용 가이드]] · `AGENTS.md §21` |
 
+## 목차
+
+1. [개요](#1-개요)
+2. [입구점 — Karpathy 3-layer](#2-입구점--karpathy-3-layer)
+   - 2.1 [raw layer (immutable sources)](#21-raw-layer-immutable-sources)
+   - 2.2 [wiki layer (LLM-maintained)](#22-wiki-layer-llm-maintained)
+   - 2.3 [schema layer](#23-schema-layer)
+3. [프로젝트 도메인 영역](#3-프로젝트-도메인-영역)
+   - 3.1 [아키텍처](#31-아키텍처)
+   - 3.2 [Feature 카드](#32-feature-카드)
+   - 3.3 [결정 mirror](#33-결정-mirror)
+   - 3.4 [용어집](#34-용어집)
+4. [Operations](#4-operations)
+5. [AI 의 운용 명령](#5-ai-의-운용-명령)
+6. [AI 와 사람의 영역 구분](#6-ai-와-사람의-영역-구분)
+7. [관련 문서](#7-관련-문서)
+8. [분류](#8-분류)
+
 ## 1. 개요
 
 이 vault 는 **사람이 graph 로 탐색하는 mirror 영역** 이다. 정책·결정·기능 사양의 *정본* 은 wiki 외부 (`repo/AGENTS.md`, `repo/docs/*.md`, `repo/unit/<id>/docs/*.md`) 에 있으며, 본 vault 는 그것의 *시각적 입구* 와 *그래프 backlink* 만 제공한다. 충돌 시 정본 우선.

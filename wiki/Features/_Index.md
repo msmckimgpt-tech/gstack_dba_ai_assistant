@@ -26,6 +26,20 @@ sources:
 | Feature 수 | 7 active |
 | Wiki layer | mirror (입구점) |
 
+## 목차
+
+1. [개요](#1-개요)
+2. [상세](#2-상세)
+   - 2.1 [Active features](#21-active-features)
+   - 2.2 [Archived / completed](#22-archived--completed)
+   - 2.3 [Skeleton](#23-skeleton)
+3. [특징](#3-특징)
+4. [비교](#4-비교)
+   - 4.1 [Feature card vs 정본 FUNCTION.md](#41-feature-card-vs-정본-functionmd)
+5. [관련 문서](#5-관련-문서)
+6. [외부 link](#6-외부-link)
+7. [분류](#7-분류)
+
 ## 1. 개요
 
 7 개 active feature 의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).

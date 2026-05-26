@@ -20,6 +20,14 @@ ai_generated: true
 >
 > 출처: SamurAIGPT/llm-wiki-agent (2.7k stars) + AgriciDaniel/claude-obsidian (5.5k stars) — 2/4 high-star repo (누적 8.2k) 의 공통 패턴.
 
+## 목차
+
+1. [개요](#1-개요)
+2. [등록된 sources](#2-등록된-sources)
+3. [Skeleton](#3-skeleton)
+4. [관련 문서](#4-관련-문서)
+5. [분류](#5-분류)
+
 ## 1. 개요
 
 `wiki/sources/` 는 **하나의 raw source 당 하나의 summary 노트** 가 누적되는 영역. 노트 한 개의 schema 는 [[_template-source|_template-source]] 참고.
