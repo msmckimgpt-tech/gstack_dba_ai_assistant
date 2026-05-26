@@ -10,90 +10,128 @@ ai_read_priority: 7
 wiki_role: article
 wiki_name: project
 confidence: high
-maturity: stub
+maturity: substantial
 ai_generated: true
 sources:
-  - ./Index.md
   - ../docs/PROJECT.md
   - ../docs/ARCHITECTURE.md
+  - ../docs/DECISIONS.md
+  - ../docs/STATUS.md
+  - ./Index.md
 ---
 
 # Wiki — Overview (living synthesis)
 
-> **이 페이지의 역할**: `Index.md` 가 *MOC (Map of Content) — 입구 목록* 이라면, `overview.md` 는 *읽어서 답이 나오는 single page synthesis*. Karpathy LLM Wiki 패턴 (https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) 의 *living synthesis* 영역.
->
-> 출처: SamurAIGPT/llm-wiki-agent (2.7k stars), AgriciDaniel/claude-obsidian (5.5k stars), lucasastorian/llmwiki (971 stars) — 3/4 high-star repo 가 채택한 공통 패턴.
->
-> AI 는 source ingest 시 본 페이지를 *revise* 한다 (`wiki-ingest` workflow step 5).
+| 항목 | 값 |
+|---|---|
+| 분류 | `#wiki/overview` |
+| 프로젝트 | MySQL DBA AI Assistant (`mysql_ai_delegated_dev`) |
+| 정본 sources | [[../docs/PROJECT\|PROJECT]] · [[../docs/ARCHITECTURE\|ARCHITECTURE]] · [[../docs/DECISIONS\|DECISIONS]] · [[../docs/STATUS\|STATUS]] |
+| Wiki layer | mirror (single page synthesis) |
 
 ## 1. 개요
 
-> *Copy-base 직후 placeholder*. 첫 source ingest 또는 사용자의 명시 작성 시 AI 가 본 섹션을 *프로젝트 전체의 단일 paragraph 요약* 으로 채운다.
+본 프로젝트는 **기존 `mysql_ai` 운영 자산을 AI 위임 개발 (`ai_delegated_dev`) 템플릿 구조로 이관한 실행형 사본** 이다. 자연어 입력 → LLM tool-call loop → MySQL replica 에 대한 read-only DBA 작업 자동화를 7 개 feature unit + 단일 docker-compose 로 제공한다. 정책 정본 (`AGENTS.md`) + 도메인 정본 (`docs/`) + 기능 정본 (`unit/<id>/docs/`) 의 3-tier 문서 체계로 다중 AI 가 동시에 작업 가능.
 
-이 프로젝트는 (TBD: 한 문장 요약).
+## 2. 상세
 
-## 2. 핵심 영역
+### 2.1 핵심 영역
 
-> AI 는 본 섹션을 *주요 도메인 / 기능 영역 별 1~2 문장 요약* 으로 작성한다. wiki 의 *sources / entities / concepts / Features / Architecture / Decisions* 가 누적되면서 본 섹션이 점점 풍부해진다.
+| Feature | 책임 | 카드 |
+|---|---|---|
+| feature-0001-platform-runtime | MySQL 8.0 / DAB 설정, SQL 유틸리티, replica 연결 정책, redo log 1 GiB | [[Features/feature-0001-platform-runtime\|카드]] |
+| feature-0002-agent-core | agent CLI / `agent_core.py` / modules / Postgres KB / insight worker | [[Features/feature-0002-agent-core\|카드]] |
+| feature-0003-agent-web-ui | FastAPI Web UI + 정적 자산 + audit subsystem + attachment + admin console | [[Features/feature-0003-agent-web-ui\|카드]] |
+| feature-0004-browser-automation | Playwright 기반 browser 자동화 service | [[Features/feature-0004-browser-automation\|카드]] |
+| feature-0005-qa-mcp | MCP test + QA script | [[Features/feature-0005-qa-mcp\|카드]] |
+| feature-0006-lan-proxy-access | Caddy TLS + Windows LAN proxy + `X-Forwarded-For` trust 정책 | [[Features/feature-0006-lan-proxy-access\|카드]] |
+| feature-0007-bedrock-llm-provider | AWS Bedrock (Claude) gateway + per-user OpenAI key 폐기 | [[Features/feature-0007-bedrock-llm-provider\|카드]] |
 
-### 2.1 도메인
+### 2.2 핵심 결정 (ADR)
 
-(TBD)
+7-feature 위에 다음 결정이 누적되어 현재 시스템을 형성한다:
 
-### 2.2 핵심 모듈
+- **ADR-0019** ([[Decisions/ADR-0019-web-audit-events|mirror]]) — `WebAuditEvents` 단일 테이블 + `record_audit_event` dispatcher + 16 endpoint hook + 4 RBAC 권한
+- **ADR-0021** ([[Decisions/ADR-0021-kb-postgres-rbac|mirror]]) — KB Postgres 분리 + `agent_kb_rw` / `agent_kb_ro` 2-layer RBAC
+- **ADR-0024** ([[Decisions/ADR-0024-postgres-database-isolation|mirror]]) — 단일 Postgres cluster + 별 database (`agent_kb` / `agent_drag`)
+- **ADR-0025** ([[Decisions/ADR-0025-m5-cleanup|mirror]]) — M5 cleanup 14-day window + Stage A/B/C boundary
+- **ADR-0026** ([[Decisions/ADR-0026-bedrock-llm-provider|mirror]]) — per-user OpenAI key → service-managed AWS Bedrock (Seoul region)
+- **ADR-0022 / ADR-0023 / ADR-0025-pgvector** — TASK-0094 첨부 multi-cycle: MinIO storage + sandbox MySQL user 4종 + PGVector
 
-- [[Architecture/Overview|Architecture Overview]] — 시스템 구성
-- [[Architecture/Data-Flow|Data Flow]] — 데이터 흐름
-- [[Architecture/Module-Map|Module Map]] — 디렉토리 ↔ 책임
+[[Decisions/_Index|전체 Decisions MOC]] 참조.
 
-### 2.3 진행 중인 작업
+### 2.3 데이터 흐름
 
-- [[Features/_Index|Features MOC]]
+```
+User → Caddy/web (TLS) → FastAPI (feature-0003)
+                              ├→ MySQL (agent_memory + replica data plane)
+                              ├→ MinIO (첨부 storage)
+                              └→ agent loop (feature-0002)
+                                    ├→ Bedrock gateway → Claude (feature-0007)
+                                    └→ Postgres agent_kb (KB cutover, pgvector)
+```
 
-### 2.4 결정 이력
+자세한 그림과 trust boundary 는 [[Architecture/Data-Flow|Data Flow]] 참조.
 
-- [[Decisions/_Index|Decisions MOC]] (정본: [[../docs/DECISIONS|docs/DECISIONS.md]])
+### 2.4 진행 중인 흐름
+
+- **KB Postgres 마이그레이션** (TASK-0015 M0~M5 multi-cycle) — M4 cutover 완료, M5 cleanup window 진행. 자세히는 ADR-0021 / ADR-0025 mirror.
+- **TASK-0094 첨부 / sandbox / RAG multi-cycle** — Sprint 1 (MinIO + sandbox MySQL user + reconciliation worker) Ship, Sprint 2 vision ingest 진행. ADR-0022 / ADR-0023 / ADR-0025-pgvector mirror.
+- **자동화 폐기 → 수동 PR 흐름** — ADR-0018 (`ai-*` 워크플로 폐기, 단순화).
 
 ## 3. 외부 source 합성
 
-> `wiki/sources/` 의 source summary 들이 *어떻게 종합되는지* 본 섹션이 보여준다. AI 는 ingest 시 본 섹션을 갱신.
+### 3.1 인용 source
 
-### 3.1 인용한 source 들
+본 vault 의 *템플릿 패턴* 자체는 다음 외부 source 에 매핑되어 있다 (`AGENTS.md §21.10` 출처 표 정본):
 
-- (TBD) `sources/_Index.md` 참고
+- [Karpathy LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) (33k stars) — raw / wiki / schema 3-layer
+- [SamurAIGPT/llm-wiki-agent](https://github.com/SamurAIGPT/llm-wiki-agent) (2.7k) — `wiki-ingest` 10-step / `wiki-query` 4-step / `wiki-lint` 6-category
+- [AgriciDaniel/claude-obsidian](https://github.com/AgriciDaniel/claude-obsidian) (5.5k) — vault skeleton
+- [namu.wiki 편집지침](https://namu.wiki/w/%EB%82%98%EB%AC%B4%EC%9C%84%ED%82%A4:%ED%8E%B8%EC%A7%91%EC%A7%80%EC%B9%A8/%EC%9D%BC%EB%B0%98%20%EB%AC%B8%EC%84%9C) — namu-style 사람 facing 형식
+
+`wiki/sources/` 디렉토리는 도메인 source summary 누적 영역이며 현재는 placeholder (raw/ 큐레이션 시 ingest 예정).
 
 ### 3.2 합성된 결론
 
-- (TBD)
+> 합성: 본 프로젝트는 *기존 운영 자산의 구조 이관* 으로 시작 (ADR-0012~0014) → *Plan-Review-Execute + playbook 도입* (ADR-0016) → *GitHub 자동화 폐기 + 단순 PR 흐름* (ADR-0018) → *audit subsystem + KB Postgres 분리 + Bedrock 통합* (ADR-0019/0021/0026) → *첨부 multi-cycle* (ADR-0022/0023/0025) 의 4 단계로 진화했다. 정본 docs 의 ADR 표 그대로의 mirror.
 
 ### 3.3 미해결 contradiction
 
-- (TBD)
+- ADR-0025 가 정본 `docs/DECISIONS.md` 안에 *두 entry* 로 존재 (M5 cleanup, 2026-05-22 + PGVector attachment RAG, 2026-05-21) — wiki mirror 는 `ADR-0025-m5-cleanup` 과 `ADR-0025-pgvector-attachment-rag` 두 page 로 분리해 양쪽 정본 참조 보존.
 
 ## 4. 알려진 한계
 
-> *limitations* / *what we don't know yet*. AI 가 query 시 *근거 부족 영역* 을 본 섹션에 누적.
-
-- (TBD)
+- *통합 테스트 자동화 부재* — `repo/tests/integration/` 가 구조만 갖춤. ([[../docs/ARCHITECTURE|ARCHITECTURE §7]])
+- *Bedrock model deprecation drift* — `litellm_config.yaml` 의 versioned model ID 가 AWS rotation 에 끌려간다 (ADR-0026 Consequences).
+- *production-like baseline 부재* — KB Postgres p99 latency / `make ask` 회귀가 INCONCLUSIVE 인 상태로 cutover 진행 (ADR-0025).
+- *wiki layer 의 stale risk* — 정본 변경 시 mirror 가 자동 update 되지 않는다. v3.13.0 의 `check #12` 는 WARN-only, v3.14.0+ 에서 BLOCK 격상 예정 (`AGENTS.md §21.4`).
 
 ## 5. 다음 단계
 
-> 사용자가 prioritize 하는 *다음 ingest 대상* 또는 *다음 작업 영역*. AI 가 본 섹션을 보고 *autonomous research* (`/wiki-autoresearch`, future cycle) 의 starting point 로 사용 가능.
-
-- (TBD)
+- M5-implementation cycle — `_DualWriteMirror` + 5 caller mirror call 코드 삭제 (ADR-0025).
+- per-user / per-role token quota — 배포 후 비용 가시화 시점 별 cycle (ADR-0026 후속 액션).
+- Sprint 4 D RAG — `agent_drag` namespace + PGVector compose service 추가 (ADR-0024 / ADR-0025-pgvector).
 
 ## 6. 관련 문서
 
 - [[Index|Index — MOC]]
-- [[README|README — 사용 안내]]
-- [[Log|Log — append-only ledger]]
-- [[sources/_Index|Sources]]
-- [[entities/_Index|Entities]]
-- [[concepts/_Index|Concepts]]
-- [[syntheses/_Index|Syntheses]]
-- [[../docs/WIKI|운용 정본 (docs/WIKI.md)]]
-- [`AGENTS.md §21`](../AGENTS.md) — 영역 분리 + AI 의무
+- [[Architecture/Overview|Architecture Overview]]
+- [[Features/_Index|Features MOC]]
+- [[Decisions/_Index|Decisions MOC]]
 
-## 7. 분류
+## 7. 둘러보기
 
-`#wiki/overview` · `#status/stub` · `#confidence/high` · `#maturity/stub`
+- 상위: [[Index|Index]]
+- 하위 영역: [[Architecture/Overview]] · [[Features/_Index]] · [[Decisions/_Index]] · [[concepts/_Index]] · [[entities/_Index]] · [[Glossary/_Index]]
+- sibling: [[Log|Log.md]] · [[README]]
+
+## 8. 외부 link
+
+- [Karpathy LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
+- [namu.wiki 편집지침](https://namu.wiki/w/%EB%82%98%EB%AC%B4%EC%9C%84%ED%82%A4:%ED%8E%B8%EC%A7%91%EC%A7%80%EC%B9%A8/%EC%9D%BC%EB%B0%98%20%EB%AC%B8%EC%84%9C)
+- [AWS Bedrock Anthropic models — Seoul region](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html)
+
+## 분류
+
+`#wiki/overview` · `#status/active` · `#confidence/high` · `#maturity/substantial`

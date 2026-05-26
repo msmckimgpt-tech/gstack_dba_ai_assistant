@@ -10,35 +10,43 @@ ai_read_priority: 8
 wiki_role: index
 wiki_name: project
 confidence: high
-maturity: stub
+maturity: substantial
 ai_generated: true
 ---
 
 # Entities — MOC
 
-> 사람, 조직, 프로젝트, 도구 등 *고유 명사 entity* 의 page 누적 영역. 출처: SamurAIGPT/llm-wiki-agent (2.7k stars) + AgriciDaniel/claude-obsidian (5.5k stars) — `wiki/entities/`.
+| 항목 | 값 |
+|---|---|
+| 분류 | `#wiki/index` |
+| 등록 entity | 9 |
 
 ## 1. 개요
 
-`/wiki-ingest` 시 AI 는 source 에서 3회 이상 언급된 인물/조직/도구를 본 디렉토리에 page 로 추출한다 (출처: SamurAIGPT lint workflow 의 "Missing entity pages — names referenced in 3+ pages but lacking their own page").
+사람·조직·도구·프로토콜 등 *고유 명사 entity* 의 page 누적 영역. source / 본 프로젝트 doc 에서 3 회 이상 등장한 entity 를 page 로 추출.
 
 ## 2. Entity 분류
 
 | 분류 | 예시 |
 |---|---|
-| 인물 (Person) | 저자, 핵심 contributor |
-| 조직 (Organization) | 회사, 오픈 소스 프로젝트, 표준 기구 |
-| 도구 (Tool) | software, library, framework |
-| 프로토콜 (Protocol) | API, 통신 규약 |
+| 인물 (Person) | Andrej Karpathy |
+| 도구 (Tool) | MySQL · Postgres · MinIO · LiteLLM · Playwright · Caddy · Obsidian |
+| 조직 (Organization) | (없음) |
+| 프로토콜 (Protocol) | (없음) |
 
 ## 3. 등록된 entities
 
-> *Copy-base 직후 placeholder*.
-
 | Entity | Type | Tags | Page |
 |---|---|---|---|
-| (예시) Andrej Karpathy | Person | `#llm #researcher` | [[karpathy]] |
-| (예시) Obsidian | Tool | `#wiki #markdown` | [[obsidian]] |
+| MySQL 8.0 | tool | `#mysql #db` | [[mysql]] |
+| PostgreSQL 16 (pgvector) | tool | `#postgres #pgvector` | [[postgres]] |
+| AWS Bedrock | tool | `#aws #bedrock #llm` | [[aws-bedrock]] |
+| LiteLLM proxy | tool | `#litellm #gateway` | [[litellm]] |
+| MinIO | tool | `#minio #s3 #storage` | [[minio]] |
+| Playwright | tool | `#playwright #browser` | [[playwright]] |
+| Caddy | tool | `#caddy #tls #proxy` | [[caddy]] |
+| Andrej Karpathy | person | `#llm #researcher` | [[karpathy]] |
+| Obsidian | tool | `#obsidian #wiki` | [[obsidian]] |
 
 ## 4. Skeleton
 
@@ -46,10 +54,15 @@ ai_generated: true
 
 ## 5. 관련 문서
 
-- [[../sources/_Index|Sources]] — entity 가 추출된 source
+- [[../sources/_Index|Sources]] — entity 추출 source
 - [[../concepts/_Index|Concepts]] — entity 와 관련된 개념
 - [[../overview|Wiki Overview]]
 
-## 6. 분류
+## 6. 둘러보기
 
-`#wiki/index` · `#wiki/entities`
+- 상위: [[../Index|Index]]
+- sibling: [[../concepts/_Index]] · [[../Glossary/_Index]]
+
+## 7. 분류
+
+`#wiki/index` · `#wiki/entities` · `#confidence/high`

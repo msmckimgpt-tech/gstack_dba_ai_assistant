@@ -37,7 +37,7 @@ ai_generated: true
 
 | Synthesis | Date | Question | Page |
 |---|---|---|---|
-| (예시) Karpathy LLM Wiki vs RAG | 2026-XX-XX | "LLM wiki 가 RAG 와 어떻게 다른가?" | [[llm-wiki-vs-rag]] |
+| (예시) Karpathy LLM Wiki vs RAG | 2026-XX-XX | "LLM wiki 가 RAG 와 어떻게 다른가?" | `llm-wiki-vs-rag` (placeholder) |
 
 ## 4. 관련 문서
 

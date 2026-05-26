@@ -32,8 +32,8 @@ AI 는 [`/wiki-ingest <raw-path>`](../../.claude/commands/_template/wiki-ingest.
 
 | Source | Date | Type | Tags | Source page |
 |---|---|---|---|---|
-| (예시) Karpathy LLM Wiki gist | 2026-04-XX | article | `#llm-wiki #karpathy` | [[karpathy-llm-wiki]] |
-| (예시) Sébastien Dubois OSK | 2026-05-XX | article | `#obsidian #wiki` | [[dubois-osk]] |
+| (예시) Karpathy LLM Wiki gist | 2026-04-XX | article | `#llm-wiki #karpathy` | `karpathy-llm-wiki` (placeholder) |
+| (예시) Sébastien Dubois OSK | 2026-05-XX | article | `#obsidian #wiki` | `dubois-osk` (placeholder) |
 
 ## 3. Skeleton
 
