@@ -20,6 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY unit/feature-0002-agent-core/src/agent_cli.py ./agent_cli.py
 COPY unit/feature-0002-agent-core/src/agent_core.py ./agent_core.py
 COPY unit/feature-0002-agent-core/src/modules /app/modules
+COPY unit/feature-0002-agent-core/src/scripts /app/scripts
 COPY unit/feature-0003-agent-web-ui/src /app/web
 
 ENTRYPOINT ["python", "/app/agent_core.py"]

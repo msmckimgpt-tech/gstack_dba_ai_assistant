@@ -8,6 +8,29 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260526-0001
+- Date: 2026-05-26
+- TASK-Cycle: TASK-0026 (KB Postgres bootstrap fix, **Major §12.3** — RBAC role 분리 인지 변경 + DDL credential path 도입)
+- Summary: 직전 main 배포 (f03c270) 검증 중 `repo-memory-init-1` exit 1 (`KB Postgres schema 적용 실패 (AGENT_KB_PG_REQUIRED=1): attempted relative import with no known parent package`) 증상 정식 fix. **Outside-voice review (Codex `codex-cli 0.130.0`, `REV-20260526-0001`) Verdict BLOCK → PASS 전환 (Critical 3 본 cycle 내 흡수)**: (B-1) memory.py 의 superuser env (`AGENT_KB_PG_SUPERUSER` / `_SUPERPASSWORD`) 가 bootstrap.sh 의 `AGENT_KB_PG_USER` / `_PASSWORD` 와 이름 갈라짐 → unset 시 legacy fallback / (B-2) schema 검증이 fail-loud 아님 → missing_tables / missing_extensions / view_present 검사 후 RuntimeError + actionable hint / (B-3) `except ImportError` 가 `.db` 내부 실제 ImportError (psycopg 부재 등) 까지 덮음 → `e.name` 검사로 fallback 좁힘. Nice-to-have 2 동반 흡수 (.env.example 3 변수 + kb_backfill.py frozen 가정 주석).
+- Worktree: `ai/claude/kb-postgres-bootstrap-fix`, base f03c270 (main HEAD). 분리 배경: 이전 세션에서 main worktree `repo/` 직접 수정 (§13.2.7 F0 위반) → stash 로 본 worktree 분리 + main drop 완료, 본 cycle 은 정식 cycle.
+- Files:
+  - `unit/feature-0002-agent-core/src/Dockerfile` (+1 LOC): `COPY .../src/scripts /app/scripts` 추가 — agent image 가 kb_backfill.py 등 ship.
+  - `unit/feature-0002-agent-core/src/agent_core.py` (+/- 2 LOC, line 2016/2018): `from .modules.db import _pg_available` → `from modules.db import _pg_available`, `.modules.memory` → `modules.memory`. entry point `python /app/agent_core.py` 가 `__package__ = None` 라 relative import 실패 — absolute 로 정정.
+  - `unit/feature-0002-agent-core/src/modules/memory.py` (+45 LOC, 1410-1467 + 1564-1582): `_ensure_pg_schema()` 의 DDL 을 별 superuser connection 으로 분리. agent_kb_rw 는 DML 전용 (CREATE TABLE / EXTENSION 권한 없음). `AGENT_KB_PG_SUPERUSER` / `AGENT_KB_PG_SUPERPASSWORD` 1순위 + `AGENT_KB_PG_USER` / `AGENT_KB_PG_PASSWORD` legacy fallback (B-1). `try/except ImportError` 의 `e.name is None or e.name == __package__` 검사로 fallback 범위 좁힘 (B-3). schema 누락 시 RuntimeError + actionable hint (B-2).
+  - `unit/feature-0002-agent-core/src/scripts/kb_backfill.py` (+45 LOC): `AgentMemoryTexts` PK = `TextHash` (char 64) 반영. texts 만 OFFSET pagination (~800 행 frozen 가정 + 주석 명시) + 다른 테이블 (fact_entries / rag_documents / rag_objects) Id-based cursor pagination 유지 (회귀 0). `_insert_pg_batch()` 의 `row[1:]` slicing 도 `text_hash_pk` flag 분기.
+  - `.env.example` (+11 LOC): `AGENT_KB_PG_SUPERUSER` / `AGENT_KB_PG_SUPERPASSWORD` / `AGENT_KB_PG_SUPERUSER_HOST` 3 변수 + bootstrap.sh 와의 정합 주석.
+  - `unit/feature-0002-agent-core/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`: REQ-20260526-0001 + TASK-0026 + CHG-20260526-0001 + REV-20260526-0001 + REPORT Summary append.
+- 검증 (본 cycle):
+  - `python3 -m py_compile` — memory.py + agent_core.py + kb_backfill.py 3 파일 모두 PASS (SyntaxWarning 은 pre-existing, 본 fix 무관).
+  - codex `--sandbox read-only` 로 outside-voice review 호출 → 3 Critical 본 cycle 내 흡수 → Verdict BLOCK → PASS 전환.
+- Runtime 검증 deferral (사용자 운영 turn 책임):
+  - PR squash merge + main pull --ff-only.
+  - production stack `docker compose build memory-init` 또는 `agent` (공유 image).
+  - `docker compose up -d memory-init` → exit 0 + 로그에 `KB Postgres schema 적용 완료: tables=[fact_entries, rag_documents, rag_objects, texts], view=True, extensions=[pg_trgm, vector], grants=...` 확인.
+  - 만약 production schema 가 부재이면 (history 검증 필요) RuntimeError + actionable hint 출력 → `bin/kb-pg-role-bootstrap.sh --apply-schema` 사전 실행 후 재시도.
+- 사용자 결정: AGENTS.md §16.3 Step 2 조건표 (BLOCKED 없음 + Critical/Major 승인 대기 없음) 충족 → 자동 commit + push + PR + squash merge 진행. PLAN-APPROVED 범위는 §2.1 의 M2 phase 의 KB Postgres bootstrap path 가 사전 승인 — 본 fix 는 그 path 의 implementation defect 정정.
+- Outside-voice rationale: 호출 ✓ — `REV-20260526-0001` (Codex). RBAC role 분리 인지 변경 = 사용자 메모 `feedback_outside_voice_for_rbac.md` 정합 (정적 catalog blindspot 대응).
+
 ## CHG-20260522-0009
 - Date: 2026-05-22
 - TASK-Cycle: TASK-0025 (M5 cleanup script + ADR-0025 + dual-write deprecation note, **Major §12.3** — RBAC 영향 + 데이터 손실 boundary)

@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260526-0001 [SUBAGENT:codex — KB Postgres bootstrap fix (memory-init exit 1 정식 fix)]
+- Date: 2026-05-26
+- TASK-Cycle: TASK-0026 (KB Postgres bootstrap fix, **Major §12.3** — RBAC role 분리 인지 변경 + DDL credential path 도입)
+- Outside-voice channel: codex (`codex-cli 0.130.0`, `codex exec --sandbox read-only`). 사용자 메모리 `feedback_outside_voice_for_rbac.md` 정합 — RBAC role catalog 변경 + DDL credential path 도입은 정적 catalog blindspot 위험 영역.
+- Trigger: 사용자 args 명시 호출 + §18.8 dispatch 키워드 (schema/role/RBAC) 매칭.
+- Verdict: **BLOCK** → **PASS 전환** (Critical 3 본 cycle 내 흡수 + Nice-to-have 2 동반 흡수).
+- Section A (Summary): 본 cycle 의 4 코드 파일 변경 (Dockerfile + agent_core.py + memory.py + kb_backfill.py, 총 +83/-26) 작성. 초안은 production memory-init 의 `attempted relative import` 증상을 해결 (absolute import + DDL superuser 분리). outside-voice review 가 3 Critical 식별: (B-1) memory.py 의 `AGENT_KB_PG_SUPERUSER` / `_SUPERPASSWORD` 이름이 bootstrap.sh 의 `AGENT_KB_PG_USER` / `_PASSWORD` 와 갈라짐 + .env.example 누락 → 운영자가 bootstrap 환경 재사용 가정하면 silent skip + (B-2) verification 이 fail-loud 아님 → SUPERPASSWORD 미설정 + schema 부재 + `AGENT_KB_PG_REQUIRED=1` 조합에서 "KB Postgres schema 적용 완료" 라고 출력하며 통과 = production symptom 재발 + (B-3) `except ImportError` 가 너무 광범 → `.db` 내부 실제 ImportError (psycopg 부재 등) 까지 덮어 원인 변경. 본 cycle 흡수 + Nice-to-have 2 동반.
+- Section B (Critical findings — 본 cycle 내 반영 완료):
+  - **B-1 (Critical)**: memory.py line 1439-1441 — `_ensure_pg_schema()` 의 superuser env contract 가 bootstrap.sh 와 갈라짐. **반영**: `AGENT_KB_PG_SUPERUSER` / `_SUPERPASSWORD` / `_SUPERUSER_HOST` 1순위 + `AGENT_KB_PG_USER` / `_PASSWORD` legacy fallback (`os.getenv(SUPER*) or os.getenv(LEGACY*)`). 운영자가 bootstrap 환경 그대로 재사용해도 silent skip 안 됨. `.env.example` 에 3 SUPER* 변수 추가 + bootstrap.sh 와의 정합 주석.
+  - **B-2 (Critical)**: memory.py line 1571-1582 — return dict 직전에 verification 만 하고 누락 시 raise 안 함 → silent PASS. **반영**: `expected_tables = {fact_entries, texts, rag_documents, rag_objects}` + `expected_extensions = {vector, pg_trgm}` + `view_present` 검사 → 누락 시 `RuntimeError("KB Postgres schema verification failed: missing_tables=..., view_present=..., missing_extensions=...{ddl_hint}")` raise. `ddl_hint` 는 actionable — `AGENT_KB_PG_SUPERPASSWORD` 설정 또는 `bin/kb-pg-role-bootstrap.sh --apply-schema` 사전 실행 안내. `init_memory()` 의 `AGENT_KB_PG_REQUIRED=1` 분기가 RuntimeError 를 sys.exit(1) 로 변환 — production symptom 재발 차단.
+  - **B-3 (Critical)**: memory.py line 1410-1413 (+ 1444-1448) — `try/except ImportError` 가 `.db` 내부의 실제 ImportError (예: psycopg 미설치) 까지 덮어 원인 변경. **반영**: `except ImportError as _imp_err:` + `if not (_imp_err.name is None or _imp_err.name == __package__): raise` — relative import 컨텍스트 부재 (`__package__ is None`) 일 때만 absolute fallback. `.db` 내부의 진짜 ImportError 는 그대로 전파.
+- Section C (Nice-to-have — 본 cycle 동반 흡수):
+  - C-1: `.env.example` 에 3 SUPER* 변수 + bootstrap.sh 와의 정합 주석 ✓.
+  - C-2: kb_backfill.py 의 OFFSET pagination 에 "MySQL source must be frozen/read-only during backfill" 주석 추가 ✓ (M3 backfill 운영 가정 명시).
+- Section D (Verdict): BLOCK → **PASS 전환** — 3 Critical + 2 Nice-to-have 본 cycle 흡수.
+- Decision authority: 사용자 args 명시 + 사용자 메모 `feedback_outside_voice_for_rbac.md` 정책 정합. BLOCK verdict 가 본 cycle 의 변경 자체를 reject 한 것이 아니라 추가 safety 보강 요구 — 모두 반영 완료.
+
 ## REV-20260522-0013 [SUBAGENT:Plan-subagent — M5 cleanup script + ADR-0025 + dual-write deprecation]
 - Date: 2026-05-22
 - TASK-Cycle: TASK-0025 (M5 cleanup script + ADR-0025 + deprecation note, **Major §12.3** — RBAC 영향 cycle + 데이터 손실 boundary)

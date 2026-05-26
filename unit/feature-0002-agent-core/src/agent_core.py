@@ -2013,9 +2013,9 @@ def init_memory():
     import os as _os
     _pg_required = (_os.getenv("AGENT_KB_PG_REQUIRED", "0").strip() or "0") in {"1", "true", "yes", "on"}
     try:
-        from .modules.db import _pg_available
+        from modules.db import _pg_available
         if _pg_available():
-            from .modules.memory import _ensure_pg_schema
+            from modules.memory import _ensure_pg_schema
             result = _ensure_pg_schema()
             console.print(
                 f"[green]KB Postgres schema 적용 완료[/green]: "

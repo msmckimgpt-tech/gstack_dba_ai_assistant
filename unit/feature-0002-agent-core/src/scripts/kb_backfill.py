@@ -46,10 +46,11 @@ TABLE_MAPPING = {
     "texts": {
         "mysql_table": "AgentMemoryTexts",
         "pg_table": "texts",
-        "id_col": "Id",
-        "select_cols": ["Id", "TextHash", "TextContent", "CreatedAt"],
+        "id_col": "TextHash",       # PK는 TextHash (char 64) — Id 컬럼 없음
+        "select_cols": ["TextHash", "TextContent", "CreatedAt"],
         "pg_insert_cols": ["text_hash", "text_content", "created_at"],
         "pg_conflict": "ON CONFLICT (text_hash) DO NOTHING",
+        "text_hash_pk": True,       # pagination 방식을 TextHash 기반으로 전환
     },
     "fact_entries": {
         "mysql_table": "AgentMemoryFactEntries",
@@ -178,25 +179,57 @@ def open_pg_conn():
 def _iter_mysql_rows(
     mysql_conn, table_meta: dict, since: Optional[str], batch_size: int, last_id: int,
 ) -> Iterator[list]:
-    """MySQL 에서 paginate. (id > last_id AND CreatedAt < since) order by id."""
+    """MySQL 에서 paginate. (id > last_id AND CreatedAt < since) order by id.
+
+    texts 테이블 특수 처리: PK=TextHash (char) 라 Id 없음 → OFFSET pagination 사용.
+
+    [주의 — REV-20260526-0001 Nice-to-have 흡수]
+    OFFSET pagination 은 concurrent INSERT / DELETE 가 발생하면 row 를 skip 하거나
+    중복할 수 있다. 본 backfill 은 **MySQL agent_memory 의 KB 5 정본이 backfill
+    실행 동안 frozen (read-only)** 이라는 가정 위에서 동작한다. 운영 절차:
+    - M3 backfill 은 dual-write 시작 (KB_DUAL_WRITE_START_TS) 이전 row 한정
+      (`--since` argument 가 cutoff 역할). 그 이후 row 는 dual-write 가 mirror 함.
+    - M5 cutover 시점에는 dual-write=0 + read=postgres 라 MySQL KB 는 자연 idle.
+    - 만약을 대비해 `bin/kb-dual-write-verify.sh --counts` 가 row count diff 를 감지.
+    """
     cur = mysql_conn.cursor()
     cols = ", ".join(table_meta["select_cols"])
     table = table_meta["mysql_table"]
-    id_col = table_meta["id_col"]
-    while True:
-        params = [last_id]
-        sql = f"SELECT {cols} FROM {table} WHERE {id_col} > %s"
-        if since:
-            sql += f" AND CreatedAt < %s"
-            params.append(since)
-        sql += f" ORDER BY {id_col} ASC LIMIT %s"
-        params.append(batch_size)
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-        if not rows:
-            break
-        yield rows
-        last_id = rows[-1][0]  # Id 는 select_cols[0]
+    text_hash_pk = table_meta.get("text_hash_pk", False)
+
+    if text_hash_pk:
+        # OFFSET 방식 (texts 전용 — 규모 ~800행, 성능 충분)
+        offset = int(last_id)  # last_id를 offset으로 재활용
+        while True:
+            params: list = []
+            sql = f"SELECT {cols} FROM {table}"
+            if since:
+                sql += " WHERE CreatedAt < %s"
+                params.append(since)
+            sql += f" ORDER BY TextHash ASC LIMIT %s OFFSET %s"
+            params.extend([batch_size, offset])
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            if not rows:
+                break
+            yield rows
+            offset += len(rows)
+    else:
+        id_col = table_meta["id_col"]
+        while True:
+            params = [last_id]
+            sql = f"SELECT {cols} FROM {table} WHERE {id_col} > %s"
+            if since:
+                sql += " AND CreatedAt < %s"
+                params.append(since)
+            sql += f" ORDER BY {id_col} ASC LIMIT %s"
+            params.append(batch_size)
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            if not rows:
+                break
+            yield rows
+            last_id = rows[-1][0]  # Id 는 select_cols[0]
     cur.close()
 
 
@@ -219,11 +252,12 @@ def _insert_pg_batch(
         f"VALUES ({placeholders}) "
         f"{pg_conflict}"
     )
+    text_hash_pk = table_meta.get("text_hash_pk", False)
     with pg_conn.cursor() as cur:
-        # MySQL row 의 Id 컬럼은 PG 의 id (auto-generated) 와 별, skip.
-        # select_cols[0]=Id 이므로 row[1:] 만 INSERT.
         for row in rows:
-            cur.execute(sql, row[1:])
+            # texts 는 Id 컬럼 없음 (PK=TextHash) → row 전체 전달.
+            # 다른 테이블은 select_cols[0]=Id (PG auto-generated) → skip.
+            cur.execute(sql, row if text_hash_pk else row[1:])
     pg_conn.commit()
     return len(rows)
 
