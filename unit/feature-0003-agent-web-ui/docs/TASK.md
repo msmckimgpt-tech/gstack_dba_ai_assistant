@@ -11,10 +11,14 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: major (TASK-0107 — 첨부 sandbox 활성화 + LLM context inject + drag&drop UX)
-- Last Updated: 2026-05-22 (TASK-0107 — sandbox ingest spawn + prompt schema/sample inject + chat-pane drag&drop + 새 대화 auto-pending)
+- Priority: major (TASK-0108 — Sprint 3 (B: DDL/KB 보강) admin-only manual KB ingest)
+- Last Updated: 2026-05-26 (TASK-0108 — manual KB ingest endpoint + admin pane + RBAC attachment.kb.write.any)
 
 ## 2. Task Queue
+
+### TASK-0108 Sprint 3 — Admin-only manual KB ingest (B: DDL/KB 보강) (2026-05-26)
+
+- [ ] TASK-0108 (REQ-20260526-0108, **Major** §12.3 — RBAC 신규 코드 1개 + 신규 admin endpoint + AgentMemoryFactEntries manual ingest path 신설). BRIEFING-attachment-multi-cycle.md §6.3 Sprint 3 Cycle 3 (B: DDL/KB 보강, Major, ~1주). TASK-0094 PLAN-APPROVED (2026-05-21) 의 multi-cycle plan 안 sprint 3 implementation. **본 cycle 산출 (예정)**: (a) `app.py` PERMISSION_DEFINITIONS 에 `attachment.kb.write.any` (admin only) 1 코드 + role grants 4 catchup (admin/dba 만), (b) `unit/feature-0002-agent-core/src/modules/kb_ingest.py` 신규 — 첨부 본문 → AgentMemoryTexts INSERT + AgentMemoryFactEntries INSERT 의 멱등 path. ConversationId='__kb_manual__' reserved sentinel + FactKey=ScopeKey 자체 + Weight=90 (BRIEFING D 의 0.9 scale, manual fact 우선) + SourceType='manual' + FactFingerprint=SHA1(normalized body). 동일 (conv, scope, key) 기존 active row (Weight>0) UPDATE Weight=0 으로 logical supersede (Status 컬럼 추가 회피, 회귀 0), (c) `app.py` `POST /api/admin/attachments/kb-ingest` 신규 endpoint — RBAC gate `attachment.kb.write.any` + body `{attachment_id, scope_key, source_type='manual', weight=90}` validation + storage_minio 본문 fetch + kb_ingest.ingest_manual() 호출 + audit `attachment.kb.ingest` dispatch + 응답 `{fact_entry_id, scope_key, text_hash, superseded_count}`, (d) `admin.html` "스키마 정의서 KB 등록" pane (kind=text/markdown 또는 .sql ext 표기 첨부 list + ScopeKey 입력 + preview + ingest 버튼), (e) `admin.js` pane 이벤트 핸들러, (f) `repo/AGENTS.md` §11.3 확장 — "manual ingest fact 의 SourceType='manual', Weight=90 (= BRIEFING 의 0.9 scale, 자동 수집 Weight=1 대비 우선)", (g) tests — `unit/feature-0003-agent-web-ui/tests/test_kb_ingest_rbac.py` (RBAC matrix 4 case + ScopeKey 충돌 superseded + audit dispatch) + `unit/feature-0002-agent-core/tests/test_kb_ingest.py` (module unit test). **outside-voice review (Codex) 호출** — RBAC 신규 코드 + audit + ScopeKey supersede semantics = 사용자 메모 `feedback_outside_voice_for_rbac.md` 정합. **본 turn 의 deliverable 은 backend (a~c) + frontend (d~e) + AGENTS.md (f) + tests (g) + docs + Codex review + commit/PR/merge**. base = main HEAD (5448611 — KB Postgres bootstrap fix 흡수 후, `_pg_available()` true 환경 자연).
 
 ### TASK-0107 첨부 내용 LLM 직접 인지 + drag&drop UX 확장 (2026-05-22)
 

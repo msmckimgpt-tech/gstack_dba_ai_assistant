@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260526-0108
+- Date: 2026-05-26
+- Related Requirement: TASK-0108 (REQ-20260526-0108, **Major** §12.3 — Sprint 3 (B: DDL/KB 보강) admin-only manual KB ingest)
+- Summary: BRIEFING-attachment-multi-cycle.md §6.3 Sprint 3 Cycle 3 implementation. admin 콘솔 "스키마 정의서 KB 등록" pane 에서 text/markdown/.sql 첨부를 `AgentMemoryFactEntries` 의 manual fact 로 등록. SourceType='manual' 고정, Weight=90 고정 (BRIEFING D 의 0.9 scale ×100, 자동 수집 Weight=1 대비 90× 우선), ConversationId='__kb_manual__' reserved sentinel, FactKey=ScopeKey 자체. 동일 ScopeKey 재ingest 시 기존 active row 는 Weight=0 으로 logical supersede (Status 컬럼 추가 회피, `AgentMemoryFacts` VIEW 의 Weight DESC tie-break 가 자연 hide → 회귀 0). RBAC 1 코드 신설: `attachment.kb.write.any` (admin/dba role catchup). audit `attachment.kb.ingest` dispatch. AGENTS.md §11.3 신설 — manual ingest fact 정책 명문화. **outside-voice review (Codex `codex-cli 0.130.0`, `REV-20260526-0002`) Verdict BLOCK → PASS 전환 (Critical 5 + Nice-to-have 1 본 cycle 내 흡수)**: (B-1) 동시 ingest race → SELECT FOR UPDATE 명시 lock + reactivated 명시 계산 / (B-2) source_type/weight client spoofable → endpoint 가 서버 상수 고정 (request body 입력 무시) / (B-3) admin endpoint 가 `console.access` + `attachment.kb.write.any` 둘 다 require / (B-4) ingest 먼저 commit + audit fail-soft = canonical KB 변경만 + audit 누락 가능 → single transaction + audit 실패 시 rollback / (B-5) scope_key arbitrary string + audit 평문 → regex `^[A-Za-z0-9_.-]{1,96}$` validation + audit ChangeJson 에는 `scope_key_hash_prefix` (SHA256 prefix) 만 + masked_fields=["scope_key", ...]. Nice-to-have: `ON DUPLICATE KEY UPDATE Id = LAST_INSERT_ID(Id)` 로 fact_entry_id 명시 확보.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py` (+~330 LOC): PERMISSION_DEFINITIONS 의 `attachment.kb.write.any` 1 코드 신설 (group="attachment") + SEED admin role grant + dba catchup. 신규 endpoint `GET /api/admin/attachments` (list, RBAC `console.access` AND `attachment.kb.write.any`). 신규 endpoint `POST /api/admin/attachments/kb-ingest` (RBAC + scope_key regex + 1 MB size cap + storage_minio body fetch + UTF-8 decode + kb_ingest.ingest_manual() + audit dispatch, single transaction). `_KB_INGEST_SCOPE_KEY_RE` module-level.
+  - `unit/feature-0002-agent-core/src/modules/kb_ingest.py` (신규 ~205 LOC): `KB_MANUAL_CONVERSATION_ID="__kb_manual__"` + `DEFAULT_MANUAL_WEIGHT=90` + `DEFAULT_SOURCE_TYPE="manual"`. `ingest_manual(conn, *, scope_key, body, source_filename, source_sha256, source_type, weight) -> dict` — 4-step: INSERT IGNORE Texts → SELECT FOR UPDATE → UPDATE Id IN (active) → INSERT FactEntries ON DUPLICATE KEY UPDATE Id=LAST_INSERT_ID(Id). 응답 `{fact_entry_id, text_hash, fact_fingerprint, superseded_count, reactivated}`.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (+~50 LOC): sidebar "시스템" 그룹에 신규 tab `kb-ingest` + workspace 의 신규 `<section data-admin-pane="kb-ingest">` (pane-head + list-detail layout — 좌 첨부 list, 우 form panel with ScopeKey input + 안내 + submit/cancel). cache-bust `v=20260526-task-0108-kb-ingest`.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (+~230 LOC): `adminState.kbIngest` state + `switchTab("kb-ingest")` 분기 + `mountKbIngestPane()` + `loadKbIngestList()` (kind=text,markdown + .sql 별 호출 merge + CreatedAt DESC) + `renderKbIngestList()` + `renderKbIngestDetail()` + `submitKbIngest()` (client regex + source_type/weight 안 보냄). `KB_INGEST_SCOPE_KEY_RE` constant.
+  - `unit/feature-0002-agent-core/tests/test_kb_ingest.py` (신규 ~190 LOC): 10 unit test (FakeConn 패턴 — happy path / supersede 3건 / reactivate 동일 본문 / mixed active+inactive 시나리오 / scope_key empty,long / body empty / fingerprint normalization / text_hash determinism / 상수). 10 PASS.
+  - `unit/feature-0003-agent-web-ui/tests/test_kb_ingest_rbac.py` (신규 ~165 LOC): 8 e2e RBAC 시나리오 (admin ingest / 동일 ScopeKey reactivate / operator 403 / anonymous 401 / 비-허용 kind 400 / scope_key 누락 400 / 비존재 attachment 404). 운영 turn 에 `make web` 후 실행.
+  - `AGENTS.md` (+31 LOC): §11.3 신설 — KB Fact 등록 정책 (Source/SourceType/Weight/ConversationId 4열 테이블 + manual fact supersede 정책 + 책임 분담).
+  - `unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`: docs append.
+- 검증 (본 cycle):
+  - `python3 -m pytest unit/feature-0002-agent-core/tests/test_kb_ingest.py -v` — 10 PASS.
+  - `python3 -m py_compile` (변경 4 .py 파일) PASS.
+  - `node --check unit/feature-0003-agent-web-ui/src/static/admin.js` PASS.
+- Runtime 검증 deferral (사용자 운영 turn 책임):
+  - PR 머지 + `docker compose -p repo build memory-init web` + `up -d --force-recreate web` 후 admin 콘솔 → "KB 등록" tab → text/markdown 첨부 1건 ingest → AgentMemoryFactEntries 에 ConversationId='__kb_manual__' Weight=90 row + WebAuditEvents 에 attachment.kb.ingest row 1개 (ChangeJson 의 scope_key_hash_prefix 확인, raw scope_key 미기록).
+  - `test_kb_ingest_rbac.py` 8 시나리오 e2e PASS.
+- Outside-voice rationale: 호출 ✓ — `REV-20260526-0002` (Codex). RBAC 신규 코드 + admin endpoint + DB mutation = 사용자 메모 `feedback_outside_voice_for_rbac.md` 정합. BLOCK → PASS 전환.
+
 ## CHG-20260522-0107
 - Date: 2026-05-22
 - Related Requirement: TASK-0107 (REQ-20260522-0107, **Major** §12.3 — 첨부 sandbox 활성화 + LLM context inject + drag&drop UX 확장)
