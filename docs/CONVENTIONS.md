@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
-template_version: v3.12.0
+template_version: v3.13.0
 domain: [workflow, context]
 ai_read_priority: 3
 ---
@@ -361,3 +361,16 @@ wiki 노트에서 정본 문서로 link 할 때:
 - **markdown link 와 wikilink 의 혼용**: vault *내부* 는 `[[wikilink]]` 우선, 정본 docs *내부* 는 `[markdown](relative/path.md)` 우선. 정본은 GitHub web preview 에서 가독성 우선이라 markdown link 가 portable.
 - **alias 권장**: link target 의 path 가 길거나 한국어 표시명이 필요할 때.
 - **anchor 사용**: heading 이 있는 문서로 link 할 때는 anchor 명시 (`#ADR-001`, `#§21.2-ai-의무`).
+
+### 11.5 namu-style 사람 facing 형식 (v3.13.0+)
+
+본 프로젝트의 `wiki/` 안의 모든 사람 facing 노트 (즉 `Log.md` 와 `raw/<원본>` 외) 는 [나무위키 표준 형식](https://namu.wiki/w/%EB%82%98%EB%AC%B4%EC%9C%84%ED%82%A4:%ED%8E%B8%EC%A7%91%EC%A7%80%EC%B9%A8/%EC%9D%BC%EB%B0%98%20%EB%AC%B8%EC%84%9C) 을 따른다 (사용자 명시 요청, AGENTS.md §21.8).
+
+**필수 표기**:
+
+- 제목 직후 *인포박스* (`| 항목 | 값 |` 표) — 메타데이터 한 눈에.
+- `## 1. 개요` → `## 2. 상세` → (선택 `## 3. 특징`, `## 4. 비교`, `## 5. 평가`) → `## n. 관련 문서` (최대 4개) → `## n+1. 둘러보기` → `## n+2. 외부 link` → `## 분류` (footer tag).
+- *비교* sub-section 은 namu 의 "언어 모델" entry ([https://namu.wiki/w/%EC%96%B8%EC%96%B4%20%EB%AA%A8%EB%8D%B8](https://namu.wiki/w/%EC%96%B8%EC%96%B4%20%EB%AA%A8%EB%8D%B8)) 의 "A vs B" 표 패턴.
+- *각주* `[^N]` markdown footnote 활용.
+
+자세한 spec: `docs/WIKI.md §11.3` 와 `AGENTS.md §21.8`.

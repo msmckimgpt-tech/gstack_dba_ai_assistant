@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.12.0
+template_version: v3.13.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -1697,38 +1697,55 @@ pain 호소는 위 1~3 에서 먼저 처리된 후, 필요 시 persona 호출로
 
 ## §21. Obsidian LLM Wiki Integration
 
-본 프로젝트는 v3.12.0 부터 `repo/wiki/` 라는 **Obsidian 호환 vault** 를 사람용 graph 입구로 분리 운영한다. AI 가 작업 시 *읽는* 정책·컨텍스트 영역 (`AGENTS.md`, `docs/`, `unit/<id>/docs/`) 과 사람이 시각적으로 *탐색하는* 영역 (`wiki/`) 이 디렉토리 수준에서 분리된다. 본 § 는 그 영역 분리의 정책 정본이다. 운용 디테일 (frontmatter, wikilink, lint) 정본은 [`docs/WIKI.md`](docs/WIKI.md).
+본 프로젝트는 v3.12.0 부터 `repo/wiki/` 라는 **Obsidian 호환 vault** 를 사람용 graph 입구로 분리 운영하며, v3.13.0 에서 **Karpathy LLM Wiki 패턴 (raw / wiki / schema 3-layer)** 을 완성하고 **namu.wiki 표준 entry 형식** 을 사람 facing 노트에 적용했다. 본 § 는 영역 분리·AI 의무·운용 명령의 정책 정본이다. 운용 디테일 (frontmatter, wikilink, lint) 정본은 [`docs/WIKI.md`](docs/WIKI.md).
 
-### §21.1 영역 구분
+**v3.13.0 web evidence (4 high-star repo, 누적 9.6k stars)**:
+- [Karpathy LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) (33,388 stars) — 3-layer 원전
+- [AgriciDaniel/claude-obsidian](https://github.com/AgriciDaniel/claude-obsidian) (5.5k) — vault 구조 + 10 skill
+- [SamurAIGPT/llm-wiki-agent](https://github.com/SamurAIGPT/llm-wiki-agent) (2.7k) — `CLAUDE.md` + `AGENTS.md` + `GEMINI.md` multi-agent + Ingest/Query/Lint workflow spec
+- [lucasastorian/llmwiki](https://github.com/lucasastorian/llmwiki) (971), [nvk/llm-wiki](https://github.com/nvk/llm-wiki) (468) — 보조 검증
 
-| 영역 | 위치 | 작성 주체 | 읽는 주체 | source of truth |
+**namu.wiki 표준 형식 출처**: [나무위키:편집지침/일반 문서](https://namu.wiki/w/%EB%82%98%EB%AC%B4%EC%9C%84%ED%82%A4:%ED%8E%B8%EC%A7%91%EC%A7%80%EC%B9%A8/%EC%9D%BC%EB%B0%98%20%EB%AC%B8%EC%84%9C), [언어 모델 entry](https://namu.wiki/w/%EC%96%B8%EC%96%B4%20%EB%AA%A8%EB%8D%B8) — 표준 섹션 (`## 1. 개요`, `## 2. 상세`, `## n. 관련 문서`, `## 분류`), 인포박스 ("틀"), 관련 문서 ↔ 둘러보기 분리 (관련 4개 한도), 비교 sub-section ("A vs B").
+
+### §21.1 영역 구분 (Karpathy 3-layer + namu-style 사람 입구)
+
+| Layer | 위치 | 작성 주체 | 읽는 주체 | source of truth |
 |---|---|---|---|---|
-| **HUMAN vault** | `repo/wiki/` | AI 가 카드·인덱스 유지, 사람이 sources 큐레이션 | 사람이 Obsidian graph 로 탐색 | **mirror** (정본 X) |
-| **AI policy** | `repo/AGENTS.md` (이 문서) | 사람이 정책 결정 (PR 경유) | AI 가 작업 시 *반드시* 읽음 | **정본** |
+| **raw layer** (immutable sources) | `repo/wiki/raw/` | 사람 (큐레이션) | AI (read-only, ingest 시) | **immutable 원본** |
+| **wiki layer** (LLM-maintained) | `repo/wiki/{sources,entities,concepts,syntheses,overview.md,Index.md,Log.md,Architecture/,Features/,Decisions/,Glossary/}` | AI 가 maintain, 사람이 view | 사람이 graph 탐색 | **mirror** (정본 X) |
+| **schema layer** | `repo/AGENTS.md` (정본), `repo/CLAUDE.md` (thin redirect), `repo/GEMINI.md` (Gemini compat) | 사람이 정책 결정 (PR) | AI 가 작업 시 *반드시* 읽음 | **정본** |
 | **AI context** | `repo/docs/*.md`, `repo/unit/<id>/docs/*.md` | 사람이 정책 / AI 가 작업 시 갱신 | AI 가 §3.1 우선순위대로 읽음 | **정본** |
 
-**Rule of thumb**: 사실·결정·정책은 AI 영역의 정본에. 사람이 graph 로 탐색할 *입구점*·*mirror*·*시각화* 는 HUMAN vault. **충돌 시 정본 우선** — wiki 는 정본을 따라간다.
+**Rule of thumb**: 사실·결정·정책은 AI 영역 정본에. 사람이 graph 로 탐색할 *입구점*·*mirror*·*시각화* 는 wiki layer. raw layer 는 *immutable 원본 누적*. **충돌 시 정본 우선** — wiki layer 가 따라간다.
 
-### §21.2 AI 의무 (3가지 — v3.12.0 SHOULD, v3.13.0+ MUST 예정)
+### §21.2 AI 의무 (5가지 — v3.13.0 SHOULD, 후속 cycle MUST 예정)
 
-AI 가 본 프로젝트에서 작업할 때 다음을 **권장 (SHOULD)** 으로 따른다. v3.12.0 에서는 self-discipline + opportunistic 동반 정책이며, 후속 cycle (v3.13.0+) 에서 enforcement (verify-completion check #12 의 차단 모드 격상 + `/review-panel` wiki-reviewer dispatch) 와 함께 **의무 (MUST)** 로 격상 예정이다. v3.12.0 의 staged rollout 은 reviewer 의 정직성 권유 (META-CYCLE-009 review artifact 참조) 를 반영한 의도된 design.
+AI 가 본 프로젝트에서 작업할 때 다음을 **권장 (SHOULD)** 으로 따른다. v3.13.0 에서는 self-discipline + opportunistic 동반 + WARN-only enforcement (`check #12` + `bin/wiki-lint.sh` structural) 이며, 후속 cycle 에서 **의무 (MUST)** 로 격상 예정.
 
 1. **Feature 신규 생성 시 wiki 카드 동반 작성 (SHOULD)**
-   - `unit/feature-XXXX-<slug>/` 가 신규 생성될 때 `wiki/Features/feature-XXXX-<slug>.md` 카드를 동반 생성한다.
-   - baseline: `repo/wiki/Features/_template-card.md` 또는 `repo/wiki/_templates/feature-card.md`.
-   - `repo/wiki/Features/_Index.md` 표에 1줄 entry 를 add 한다.
-   - 검증: v3.12.0 — `bin/verify-completion.sh` check #12 가 WARN-only 로 catch (PR block 아님). `/review-panel` (META mode) 가 §18.8 의 wiki keyword 매칭으로 dispatch.
+   - `unit/feature-XXXX-<slug>/` 신규 생성 시 `wiki/Features/feature-XXXX-<slug>.md` 카드 동반.
+   - baseline: `repo/wiki/Features/_template-card.md` 또는 `repo/wiki/_templates/feature-card.md` (namu-style).
+   - `repo/wiki/Features/_Index.md` 표에 1줄 entry add.
+   - 검증: `bin/verify-completion.sh` check #12 (WARN-only).
 
 2. **ADR 신규 생성 시 wiki mirror 동반 작성 (SHOULD)**
-   - `docs/DECISIONS.md` 에 새 ADR append 시 `wiki/Decisions/<adr-id>-<slug>.md` mirror 노트를 동반 생성한다.
-   - baseline: `repo/wiki/_templates/adr-mirror.md`.
-   - `repo/wiki/Decisions/_Index.md` 표에 1줄 entry 를 add 한다.
-   - mirror 본문은 결정 *입구점* 뿐 — 결정 본문은 정본에.
+   - `docs/DECISIONS.md` 에 새 ADR append 시 `wiki/Decisions/<adr-id>-<slug>.md` mirror 동반.
+   - baseline: `repo/wiki/_templates/adr-mirror.md` (namu-style).
+   - `repo/wiki/Decisions/_Index.md` 표에 1줄 entry add.
 
 3. **wiki/ 안의 모든 create/update 는 Log.md append (SHOULD)**
    - format: `[<ISO timestamp>] <operation> | <wiki_role> | <path> | <one-line note>`
-   - `<operation>`: `create` | `update` | `link` | `lint-fix` | `graduate`
+   - `<operation>`: `create` | `update` | `link` | `lint-fix` | `graduate` | `ingest` | `query`
    - append-only — 기존 entry 수정·삭제 금지.
+
+4. **`/wiki-ingest` 시 5-domain 갱신 (v3.13.0 신설, SHOULD)** — 출처: SamurAIGPT/llm-wiki-agent CLAUDE.md "Ingest Workflow" 10-step verbatim
+   - `wiki/raw/<file>` 의 새 source 처리 시 `wiki/sources/<slug>.md` 생성 + `wiki/Index.md` Sources 행 갱신 + `wiki/overview.md` 합성 revise + `wiki/entities/`, `wiki/concepts/` 의 관련 page 생성/갱신 + contradiction flag + `Log.md` ingest entry append.
+   - SKILL: [`.claude/commands/_template/wiki-ingest.md`](.claude/commands/_template/wiki-ingest.md).
+
+5. **`/wiki-query` 답변 시 inline citation 필수 (v3.13.0 신설, SHOULD)** — 출처: SamurAIGPT/llm-wiki-agent CLAUDE.md "Query Workflow" 4-step
+   - 답변의 *모든 claim* 은 source wikilink citation 필수.
+   - 사용자 옵션 yes 시 `wiki/syntheses/<slug>.md` 로 답변 저장 + `Log.md` query entry append.
+   - SKILL: [`.claude/commands/_template/wiki-query.md`](.claude/commands/_template/wiki-query.md).
 
 ### §21.3 운용 디테일
 
@@ -1745,9 +1762,23 @@ frontmatter 컨벤션, wikilink 표기, provenance (extracted/inferred/ambiguous
 
 이 staged rollout 은 reviewer (qa-reviewer Q-2 finding) 의 "v3.12.0 SHOULD → v3.13.0 MUST" 권유를 직접 채택한 결과이며, "정책 선언만 + enforcement 미보강 으로 ship" 의 anti-pattern (v3.8.0 worktree drift 누적 패턴) 을 회피한다.
 
-### §21.5 Lint (현재 수동, future automation)
+### §21.5 Lint (v3.13.0 부터 structural 자동화)
 
-`wiki/` 의 health 점검 — broken wikilink, orphan, drift, source 부재 — 은 현재 수동 책임이다. future automation: `bin/wiki-lint.sh` (TBD). 본 § 는 lint *책임* 만 정의하고, 구현은 후속 cycle 에서.
+`wiki/` 의 health 점검 — 출처: SamurAIGPT/llm-wiki-agent CLAUDE.md "Lint Workflow" 6-category verbatim.
+
+**Structural (v3.13.0 자동화)** — `bin/wiki-lint.sh` 또는 [`/_template:wiki-lint`](.claude/commands/_template/wiki-lint.md):
+
+1. **Orphan pages** — 어떤 page 에서도 wikilink 가 들어오지 않는 page.
+2. **Broken wikilinks** — `[[...]]` 의 target 이 vault 안에 부재.
+3. **Missing entity pages** — name 이 3+ page 에 언급되었지만 `entities/` 에 page 부재.
+
+**Semantic (v3.13.0 AI reasoning 보조)** — SKILL 호출 시 AI 가 처리:
+
+4. **Contradictions** — page 간 claim 모순.
+5. **Stale summaries** — 새 source ingest 후 관련 기존 page 미갱신.
+6. **Data gaps** — `wiki/overview.md` §4, §5 의 (TBD) — *suggest specific sources*.
+
+**Suggested action (v3.13.0 신설, namu 편집지침 출처)**: page 의 *개요·관련 문서·둘러보기 제외* sub-문단 150자 이상 5개 이상이면 *page 분리 권장* — `bin/wiki-lint.sh` 가 stderr 에 안내. 출처: [나무위키:편집지침/일반 문서](https://namu.wiki/w/%EB%82%98%EB%AC%B4%EC%9C%84%ED%82%A4:%ED%8E%B8%EC%A7%91%EC%A7%80%EC%B9%A8/%EC%9D%BC%EB%B0%98%20%EB%AC%B8%EC%84%9C) — 본 프로젝트의 wiki 가 *살아있는 namu 문서처럼 성장* 하는 시점 가이드.
 
 ### §21.6 vault config
 
@@ -1756,3 +1787,88 @@ frontmatter 컨벤션, wikilink 표기, provenance (extracted/inferred/ambiguous
 ### §21.7 Customization 보호
 
 consumer 가 wiki/ 안의 노트를 자체 작성한 경우 template upgrade 시 hop 은 그것을 덮어쓰지 않는다 — `bin/migrations/lib/customization-detect.sh` 의 marker / 존재 기반 보호. consumer 가 `wiki/Features/feature-0001-XXX.md` 를 이미 갖고 있다면 그 카드는 보존되고, `wiki/Features/_template-card.md` 만 갱신된다.
+
+### §21.8 namu-style 사람 facing 형식 (v3.13.0 신설)
+
+본 vault 의 **모든 사람 facing 노트** (즉 `Log.md` operational 외 모든 markdown) 는 [나무위키 표준 형식](https://namu.wiki/w/%EB%82%98%EB%AC%B4%EC%9C%84%ED%82%A4:%ED%8E%B8%EC%A7%91%EC%A7%80%EC%B9%A8/%EC%9D%BC%EB%B0%98%20%EB%AC%B8%EC%84%9C) 을 따른다 — 한국 사용자에게 친숙한 패턴 (사용자 명시 요청).
+
+**필수 sections**:
+
+| § 번호 | section 명 | 역할 |
+|---|---|---|
+| (title 직후) | 인포박스 (`\| 항목 \| 값 \|` 표) | 메타데이터 한 눈에 |
+| `## 1. 개요` | overview | 1~2 문장 요약 |
+| `## 2. 상세` | detail | 본문, sub-section 자유 |
+| `## 3. 특징` (선택) | features | 글머리표 핵심 특성 |
+| `## 4. 비교` (선택) | comparison | "A vs B" 표 (namu 의 "언어 모델" entry 패턴) |
+| `## 5. 평가` (선택) | evaluation | 장단점·위험·trade-off |
+| `## n. 관련 문서` | related docs | 종속 관계가 아닌 *밀접 연관* page **최대 4개** (출처: namu 편집지침) |
+| `## n+1. 둘러보기` | navigation | 상위/하위/sibling page wikilinks (관련 문서와 분리) |
+| `## n+2. 외부 link` | external links | http(s) URLs |
+| `## 분류` (footer) | classification | `#wiki/<role>` · `#status/<state>` · `#confidence/<level>` |
+
+**규칙**:
+
+- 사용자 명시 reference: [namu.wiki RecentChanges](https://namu.wiki/RecentChanges) — *활발히 update 되는 entry* 의 형식 trend 와 일관 (인포박스 + section 번호 + 관련/둘러보기 분리 + footnote `[^N]`).
+- 사람 facing 노트는 `Log.md` 와 `raw/` 의 immutable 원본 외 모두 적용 — `Index.md`, `overview.md`, `README.md`, `sources/*.md`, `entities/*.md`, `concepts/*.md`, `syntheses/*.md`, `Architecture/*.md`, `Features/*.md`, `Decisions/*.md`, `Glossary/*.md`, `_templates/*.md`.
+- *비교 sub-section* 의 표 형식은 namu 의 "언어 모델" entry ([https://namu.wiki/w/%EC%96%B8%EC%96%B4%20%EB%AA%A8%EB%8D%B8](https://namu.wiki/w/%EC%96%B8%EC%96%B4%20%EB%AA%A8%EB%8D%B8)) 의 "생성형 vs 판별형", "대규모 vs 소규모" 같은 패턴 그대로.
+- *각주* 는 `[^N]` markdown footnote 활용 — 본문 anchor + footer block.
+
+#### §21.8.1 광범위 entry 카테고리 출처 (편중 회피, generic 화)
+
+사용자 명시 정정 — sports entry (LCK, KBO) 편중 회피, *광범위 entry* 의 generic 패턴으로 추상화:
+
+| 카테고리 | namu 출처 entry 예시 | 본 vault 의 매핑 | 사용 sub-section |
+|---|---|---|---|
+| **모든 entry 공통** | [namu 편집지침/일반 문서](https://namu.wiki/w/%EB%82%98%EB%AC%B4%EC%9C%84%ED%82%A4:%ED%8E%B8%EC%A7%91%EC%A7%80%EC%B9%A8/%EC%9D%BC%EB%B0%98%20%EB%AC%B8%EC%84%9C) | 모든 사람 facing 노트 | 개요 / 상세 / 관련 문서 / 분류 (4 필수) |
+| **도구 / 기술** | [Python](https://namu.wiki/w/Python), [Git](https://namu.wiki/w/Git), [Docker](https://namu.wiki/w/Docker), [NumPy](https://namu.wiki/w/NumPy) | Features/, Architecture/, concepts/ | + 특징 / 사용법 |
+| **학문 / 개념** | [알고리즘](https://namu.wiki/w/%EC%95%8C%EA%B3%A0%EB%A6%AC%EC%A6%98), [언어 모델](https://namu.wiki/w/%EC%96%B8%EC%96%B4%20%EB%AA%A8%EB%8D%B8) | concepts/, Decisions/ | + 종류·분류 / 비교 |
+| **인물 / 조직** | (namu 인물 template) | entities/ | + 역사·이력 |
+| **시기·변천 (선택 한정)** | [KBO 한국시리즈](https://namu.wiki/w/KBO%20%ED%95%9C%EA%B5%AD%EC%8B%9C%EB%A6%AC%EC%A6%88) (sports 의 변천 — 패턴만 채택, sport-specific section 은 미적용) | 주요 architectural 결정 또는 long-lived feature 만 | + 변천·역사 (시기별 sub-section) |
+| **평가 분리 (선택)** | [LCK Characteristics](https://namu.wiki/w/League%20of%20Legends%20Champions%20Korea) (긍정·부정 평가) | 도구/제품/feature 평가 | + 평가 (7.1 장점 / 7.2 단점 / 7.3 한계) |
+
+**편중 회피 원칙** — 다음 sport/뉴스/만화 entry 특수 sub-section 은 SW 프로젝트 wiki 에 *적용하지 않음*:
+
+- 영구 결번 / 응원 문화 / BGM (sport)
+- broadcast and VOD / cast and crew (방송)
+- 우승 트로피 (시기별 sport)
+- "Controversies / 논란" 의 *gossip-style* — SW context 의 *위험·trade-off* 명시 (객관) 와 구분.
+
+**generic SW wiki 적용 가이드**:
+
+- *대개 비어있는 sub-section 은 본문에서 제거*. 본 cycle 의 template 노트 (`_template-card.md`, `_templates/feature-card.md`, `_templates/adr-mirror.md`) 가 *full sub-section* 을 보여주지만, 실 작성 시 *불필요 sub-section 제거 권장*.
+- 4 필수 section + 카테고리별 1~2 선택 sub-section 만으로 *대다수 SW feature* 표현 가능.
+- 본 spec 은 *광범위 entry 카테고리* 에서 추출된 *generic* 형식 — 특정 도메인 특수 section 은 *프로젝트 자체 ADR* 로 결정 후 *AGENTS.md 의 customize* 로 추가.
+
+### §21.9 운용 slash command (v3.13.0 신설)
+
+본 § 의 SKILL 들은 정본이 `.claude/commands/_template/` 에 있고, Codex 호환 shim 이 `.codex/commands/_template/` 에 있다.
+
+| SKILL | 본문 길이 | 자연어 trigger | 책임 |
+|---|---|---|---|
+| [`/_template:wiki-ingest <raw-path>`](.claude/commands/_template/wiki-ingest.md) | 10-step | "ingest <path>" | raw/ → sources/entities/concepts/overview/Index/Log |
+| [`/_template:wiki-query <question>`](.claude/commands/_template/wiki-query.md) | 4-step | "what does the wiki say about X" | Index → relevant pages → 답변 + 옵션 syntheses/ 저장 |
+| [`/_template:wiki-lint`](.claude/commands/_template/wiki-lint.md) | 6-category | "lint the wiki" | structural (자동) + semantic (AI) |
+
+**자연어 trigger 호환**: Codex / Gemini / OpenCode 같이 slash command 외 자연어 호환 — `GEMINI.md` 에 mapping 명시.
+
+### §21.10 v3.13.0 web evidence 출처
+
+본 §21 의 모든 design 결정은 다음 web evidence 에 매핑:
+
+| 결정 | 출처 (stars) |
+|---|---|
+| 3-layer (raw / wiki / schema) | Karpathy gist (33k) + 4 high-star repo 의 4/4 채택 |
+| `raw/` 디렉토리 | SamurAIGPT (2.7k) + AgriciDaniel (5.5k) + nvk (468) = 8.7k 누적 |
+| `wiki/sources/` + source page schema (frontmatter + 5 body sections) | SamurAIGPT (2.7k) CLAUDE.md verbatim |
+| `wiki/overview.md` "living synthesis" | SamurAIGPT + AgriciDaniel + lucasastorian = 9.2k 누적 |
+| `wiki/entities/`, `wiki/concepts/`, `wiki/syntheses/` | SamurAIGPT (2.7k) + AgriciDaniel (5.5k) |
+| `GEMINI.md` schema 파일 | SamurAIGPT (2.7k) 의 CLAUDE.md + AGENTS.md + GEMINI.md 3-schema |
+| `wiki-ingest` 10-step + `wiki-query` 4-step + `wiki-lint` 6-category | SamurAIGPT CLAUDE.md verbatim |
+| Contradiction detection at ingest | SamurAIGPT (2.7k) + nvk `/wiki:audit` |
+| namu-style section 구조 (`1. 개요`, `2. 상세`, `n. 관련 문서`, `분류`) | [나무위키:편집지침/일반 문서](https://namu.wiki/w/%EB%82%98%EB%AC%B4%EC%9C%84%ED%82%A4:%ED%8E%B8%EC%A7%91%EC%A7%80%EC%B9%A8/%EC%9D%BC%EB%B0%98%20%EB%AC%B8%EC%84%9C) (사용자 명시) |
+| 비교 sub-section 패턴 ("A vs B") | namu "언어 모델" entry (사용자 명시) |
+| 관련 문서 (최대 4개) ↔ 둘러보기 분리 | namu 편집지침 (web search 확인) |
+| 150자 ≥ sub-문단 5개 ≥ 이상 시 분리 권장 | namu 편집지침 (web search 확인) |
+
+본 cycle (v3.13.0) 에서 모든 설계 결정은 *내부 판단 단독* 이 아닌 *web evidence 매핑* — 사용자 명시 정책.

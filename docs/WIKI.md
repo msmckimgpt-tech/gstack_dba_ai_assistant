@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
-template_version: v3.12.0
+template_version: v3.13.0
 domain: [workflow, wiki, navigation]
 ai_read_priority: 5
 ---
@@ -157,3 +157,101 @@ future automation: `bin/wiki-lint.sh` (TBD, 본 cycle 의 scope 외 — `_templa
 - Andrej Karpathy, "LLM Wiki" gist — 3-layer (raw/wiki/schema), `/ingest` `/query` `/lint` 의 의도
 - Sébastien Dubois, "Obsidian Starter Kit — LLM Wiki System" — frontmatter `wiki_role`, `confidence`, `maturity`, `sources`
 - 일반 Karpathy LLM 지식 베이스 가이드 (a2a-mcp, mindstudio.ai) — `index.md` MOC + `log.md` ledger 패턴, Claude Code 와의 통합
+
+## 11. v3.13.0 — 3-layer 완성 + 운용 명령 + namu-style
+
+v3.13.0 에서 GitHub star 기준 high-impact LLM wiki repo 4종 (총 9.6k stars 누적) 의 공통 표준 패턴을 web evidence 매핑으로 흡수. 본 § 는 그 매핑의 정본이다.
+
+### 11.1 raw / wiki / schema 3-layer
+
+| Layer | 위치 | 본 cycle 추가 |
+|---|---|---|
+| raw | `wiki/raw/` | v3.13.0 신설 — immutable source 누적 |
+| wiki | `wiki/sources/`, `wiki/entities/`, `wiki/concepts/`, `wiki/syntheses/`, `wiki/overview.md` | v3.13.0 신설 — generic Karpathy 분류 |
+| schema | `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` | v3.13.0 신설 `GEMINI.md` thin redirect |
+
+**기존 프로젝트 도메인 분류** (`wiki/Architecture/`, `wiki/Features/`, `wiki/Decisions/`, `wiki/Glossary/`) 는 *그대로 유지* — generic 분류와 *공존*.
+
+### 11.2 운용 명령 — slash command framework
+
+v3.13.0 에 신설 (출처: SamurAIGPT/llm-wiki-agent 2.7k stars 의 verbatim spec):
+
+| SKILL | 위치 (정본) | 호출 |
+|---|---|---|
+| wiki-ingest | `.claude/commands/_template/wiki-ingest.md` | `/_template:wiki-ingest <raw-path>` |
+| wiki-query | `.claude/commands/_template/wiki-query.md` | `/_template:wiki-query <question>` |
+| wiki-lint | `.claude/commands/_template/wiki-lint.md` | `/_template:wiki-lint` |
+
+Codex compat shim: `.codex/commands/_template/wiki-*.md`.
+Gemini CLI 자연어 trigger: `GEMINI.md` 의 매핑 표.
+
+### 11.3 namu-style 사람 facing 형식 (사용자 명시 요청)
+
+본 vault 의 모든 사람 facing 노트는 [나무위키 표준](https://namu.wiki/w/%EB%82%98%EB%AC%B4%EC%9C%84%ED%82%A4:%ED%8E%B8%EC%A7%91%EC%A7%80%EC%B9%A8/%EC%9D%BC%EB%B0%98%20%EB%AC%B8%EC%84%9C) 을 따른다.
+
+**필수 sections** (자세히 `AGENTS.md §21.8`):
+
+```
+# <Title>
+
+| 항목 | 값 |
+|---|---|
+| 분류 | ... |
+| ... | ... |
+
+## 1. 개요
+## 2. 상세
+  ### 2.1 ...
+  ### 2.2 ...
+## 3. 특징 (선택)
+## 4. 비교 (선택, "A vs B" 표)
+## 5. 평가 (선택)
+## n. 관련 문서 (최대 4개)
+## n+1. 둘러보기 (상위/하위/sibling)
+## n+2. 외부 link
+## 분류 (footer, #tag block)
+```
+
+**제외 영역**: `wiki/Log.md` (operational, append-only ledger), `wiki/raw/<file>` (immutable 원본).
+
+**Page 분리 기준** (출처: [namu 편집지침](https://namu.wiki/w/%EB%82%98%EB%AC%B4%EC%9C%84%ED%82%A4:%ED%8E%B8%EC%A7%91%EC%A7%80%EC%B9%A8/%EC%9D%BC%EB%B0%98%20%EB%AC%B8%EC%84%9C)): "개요·관련 문서·둘러보기 제외, 150자 이상 sub-문단 5개 이상" 이면 분리 권장. `bin/wiki-lint.sh` 의 suggested action 으로 안내.
+
+**관련 문서 vs 둘러보기 (namu 편집지침)**:
+- *관련 문서*: 종속 관계가 아닌 *밀접 연관* — 최대 4개.
+- *둘러보기*: 상위 분류 / 하위 / sibling.
+
+### 11.4 비교 sub-section 패턴 (사용자 명시 reference)
+
+[namu "언어 모델" entry](https://namu.wiki/w/%EC%96%B8%EC%96%B4%20%EB%AA%A8%EB%8D%B8) 의 "생성형 모델 vs 판별형 모델", "대규모 vs 소규모" 같은 *vs-style 비교 sub-section* 을 채택. 본 vault 의 노트에서 *대안 분석* 이 의미 있을 때 `## 4. 비교` 안에 표 형식으로 작성.
+
+```markdown
+## 4. 비교
+
+### 4.1 본 feature vs 대안
+
+| 항목 | 본 feature | 대안 A | 대안 B |
+|---|---|---|---|
+| (TBD) | (TBD) | (TBD) | (TBD) |
+```
+
+### 11.5 Multi-agent 호환 — schema 파일
+
+| Agent | Schema 파일 | 호출 형식 |
+|---|---|---|
+| Claude Code | `CLAUDE.md` (thin redirect) + `.claude/commands/_template/wiki-*.md` (정본) | slash command |
+| Codex / OpenCode | `AGENTS.md` (정본) + `.codex/commands/_template/wiki-*.md` (shim) | slash command |
+| Gemini CLI | `GEMINI.md` (자연어 trigger 매핑) | 자연어 |
+| Cursor | `.cursorrules` (있다면, thin redirect) | (agent 자체 형식) |
+| Copilot | `.github/copilot-instructions.md` (있다면) | (agent 자체 형식) |
+
+### 11.6 향후 v3.14.0+ (Next)
+
+- `bin/wiki-lint.sh` 의 WARN → BLOCK 격상 (`--strict` 또는 default 변경)
+- wiki-reviewer subagent persona 신설
+- Mirror staleness 시간 sentinel (30 일 누락 시 warn)
+- 외부 source ingestion 의 batch 처리 (`/wiki-ingest --inbox` 패턴, nvk/llm-wiki 출처)
+- `§21.2` 의무 SHOULD → MUST 격상
+
+## 12. v3.13.0 web evidence summary
+
+`AGENTS.md §21.10` 의 출처 매핑 표를 *완전 동일* 사본으로 본 doc 에서도 참고 가능. 본 cycle 의 모든 design 결정은 *내부 판단 단독* 이 아닌 *web evidence 매핑* — 사용자 명시 정책.
