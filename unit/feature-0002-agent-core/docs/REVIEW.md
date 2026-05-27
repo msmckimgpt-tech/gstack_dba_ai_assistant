@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260526-0003 [SKIPPED:plan-only-no-code-no-rbac-no-schema]
+- Related TASK: TASK-0109 (REQ-20260526-0109, **Minor §12.3** — plan-only, project-level cross-cutting migration plan 등록)
+- Reason: 본 cycle 은 markdown plan 문서 1개 신규 (`docs/MIGRATION_AGENT_MEMORY_TO_PG.md`) + feature-0002 docs append 만. 실 code mutation 0건, RBAC catalog 변경 0건, schema mutation 0건, endpoint contract 변경 0건. 사용자 메모 `feedback_outside_voice_for_rbac.md` (RBAC 변경 시 outside-voice 강제) 정합 — 본 cycle 은 적용 trigger 외. AGENTS.md §18.8 dispatch 표 매칭: (a) "schema/migration" 키워드는 plan 문서 본문에서 등장하지만 본 cycle 의 실 변경은 docs 만 — schema mutation 부재. (b) "RBAC/auth" — 본 plan 의 Phase 2 AR-M1 시점에 RBAC role 결정 필요 (`agent_kb_rw` 재사용 vs `agent_runtime_rw` 신설) 이지만 본 cycle 의 deliverable 외. (c) "code change" — 0건. plan 문서 자체의 design 결정 (Phase 2 의 schema 선택 `agent_runtime` vs 별 DB) 은 실 implementation cycle (AR-M0/M1) 진입 시 outside-voice 호출 — 본 cycle 의 책임 외. 신규 세션이 Phase 2 AR-M1 진입 시 outside-voice 호출 필수 (DDL + RBAC 변경 = §18.8 trigger).
+- Timestamp: 2026-05-26T07:00:00Z
+
 ## REV-20260526-0001 [SUBAGENT:codex — KB Postgres bootstrap fix (memory-init exit 1 정식 fix)]
 - Date: 2026-05-26
 - TASK-Cycle: TASK-0026 (KB Postgres bootstrap fix, **Major §12.3** — RBAC role 분리 인지 변경 + DDL credential path 도입)

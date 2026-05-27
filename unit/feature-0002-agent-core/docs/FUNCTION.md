@@ -18,6 +18,7 @@ source_of_truth: true
 - REQ-20260515-0003: 시스템 프롬프트는 `Product → Role → Account → 현재 사용자 요청` 순서로 누적 적용된다. Account scope 도 Role scope 와 동일하게 `전 Product 공통` 지침을 먼저 적용하고, Product 전용 개인 지침이 있으면 뒤에 추가한다.
 - REQ-20260522-0001: `execute_sql` 도구 실행 결과의 웹 UI 미리보기(`preview_table`)에서 셀 값이 100자로 잘리지 않아야 한다. CSV 파일이 존재하는 경우 CSV 원본 데이터에서 `preview_table` 을 구성한다.
 - REQ-20260526-0001: `memory-init` 컨테이너가 KB Postgres schema 검증 단계를 통과 (exit 0) 한다. agent_core entry point (`python /app/agent_core.py`) 에서 `__package__` 가 None 일 때도 modules import 가 정상 동작하고, `agent_kb_rw` role 이 DML 전용임을 인지해 DDL (CREATE TABLE / EXTENSION) 은 별 superuser connection (`AGENT_KB_PG_SUPERUSER*` 또는 legacy `AGENT_KB_PG_USER`/`PASSWORD` fallback) 으로만 시도한다. schema 가 누락된 상태로 검증이 silent PASS 되지 않고 actionable hint 와 함께 fail-loud 한다.
+- REQ-20260526-0109: agent_memory MySQL DB 의 모든 테이블 (agent\* 11개 + web\* 18개) 을 PostgreSQL 영역으로 이관 + 최종 agent_memory MySQL DB 자체 deprecation 한다. 정본 plan: `docs/MIGRATION_AGENT_MEMORY_TO_PG.md`. agent\* 11개 → `agent_kb` DB 안 새 schema `agent_runtime` 신설. 본 plan 은 4-phase multi-cycle 구조 — Phase 1 (기존 KB plan TASK-0015 의 M5 마무리) + Phase 2 (6 agent runtime 테이블 신규 cycle AR-M-1~M5) + Phase 3 (18 web\* 별 DB outline) + Phase 4 (agent_memory MySQL DB deprecation). 각 sub-phase = 별 ai/\* worktree + 별 PR + 별 verify-completion.
 
 ## 3. In Scope
 - `agent_cli.py`, `agent_core.py`

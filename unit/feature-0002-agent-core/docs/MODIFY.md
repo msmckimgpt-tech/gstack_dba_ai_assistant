@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260526-0109
+- Date: 2026-05-26
+- TASK-Cycle: TASK-0109 (REQ-20260526-0109, **Minor §12.3** — plan-only, project-level cross-cutting migration plan 등록)
+- Summary: 사용자 결정 (2026-05-26): agent_memory MySQL DB 의 모든 테이블 (agent\* 11개 + web\* 18개) 을 PostgreSQL 로 이관 + 최종 agent_memory MySQL DB 자체 deprecation. agent\* 11개 → agent_kb DB 안 새 schema `agent_runtime` 신설. 본 cycle 은 **plan-only** (실 code/schema/RBAC mutation 0건). 정본 plan 문서 신규 작성 + 신규 세션 진입 자료 정착.
+- Worktree: `ai/claude/agent-memory-pg-plan` (base = main HEAD 12b06b2).
+- Files:
+  - `docs/MIGRATION_AGENT_MEMORY_TO_PG.md` (신규, ~280 LOC): project-level cross-cutting plan 정본. Phase 1 (KB 5 정본 cleanup 마무리 — 기존 TASK-0015 §2.1 의 M5 마무리) + Phase 2 (6 agent runtime 테이블 신규 이관 cycle, AR-M-1~M5 7-phase 답습) + Phase 3 (18 web\* 별 DB 분리 outline) + Phase 4 (agent_memory MySQL DB 자체 deprecation). 각 Phase 의 Detailed Task List + Acceptance Criteria + 정책 정합 + 진행 기록 append-only.
+  - `unit/feature-0002-agent-core/docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT}.md`: cycle 등록 + REQ-20260526-0109 + CHG-20260526-0109 + REV-20260526-0003 (SKIPPED) + Summary append.
+- 검증: 실 code 변경 0 → py_compile / node check 불요. plan 문서 markdown lint 만.
+- Runtime 검증 deferral: 본 cycle 은 plan 문서 등록 — runtime 변경 0. 신규 세션이 Phase 2 AR-M-1 (baseline 측정) 부터 진입 시 실 작업 시작.
+- 사용자 결정: AGENTS.md §16.3 Step 2 조건표 (BLOCKED 없음 + Critical/Major 승인 대기 없음) 충족 → 자동 commit + push + PR + squash merge 진행.
+- Outside-voice rationale: **SKIPPED** — `REV-20260526-0003 [SKIPPED:plan-only-no-code-no-rbac-no-schema]`. 사용자 메모 `feedback_outside_voice_for_rbac.md` 정합 — 본 cycle 은 RBAC catalog 변경 0, code path 변경 0, schema mutation 0. 단지 markdown plan 문서 1개 신규 + docs append. 실 design 결정 (Phase 2 의 schema 선택 `agent_runtime` vs 별 DB) 은 본 plan 의 결과이지만 implementation cycle 별로 outside-voice 호출 (AR-M1 DDL+RBAC, AR-M4 cutover, AR-M5 cleanup 시점).
+
 ## CHG-20260526-0001
 - Date: 2026-05-26
 - TASK-Cycle: TASK-0026 (KB Postgres bootstrap fix, **Major §12.3** — RBAC role 분리 인지 변경 + DDL credential path 도입)
