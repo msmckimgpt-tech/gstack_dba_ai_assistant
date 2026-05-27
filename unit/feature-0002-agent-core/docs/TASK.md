@@ -701,3 +701,20 @@ TASK-0015 (plan-review):
 
 ### AR-M4-read — PgRuntimeBackend read 메서드 구현 (2026-05-27)
 - [x] `PgRuntimeBackend` 에 10개 read 메서드 추가 — SQL 상수 이미 정의됨 (CHG-20260527-AR-M4-read): load_kv / load_kv_all / load_kv_by_key / load_kv_by_key_value / load_summary / load_messages / load_steps / list_conversations / load_core_messages / get_conv_messages_full. MySQL fallback 제거로 인해 `agent_memory.agentmemorykv` 없음 오류 해소.
+
+### TASK-0121 — AR-M5 PG cutover 잔존 MySQL 쿼리 차단 (2026-05-27)
+- [x] `delete_conversation`: `_pg_delete_conversation()` 신규 — PG agent_runtime + public KB 테이블 삭제 + MySQL try/except 보호
+- [x] verify-completion PASS + commit + push + main ff-merge
+
+### TASK-0121 — delete_conversation + ask_status 500 오류 수정 (2026-05-27)
+- [x] memory.py `delete_conversation`: `_pg_delete_conversation()` 헬퍼 추가 (CHG-20260527-CONV-DELETE-PG)
+  - PG: agent_runtime.kv 수동 + core_conversations CASCADE + public KB 3테이블
+  - MySQL DELETE: try/except 보호 (테이블 DROP 후 silent fail)
+- [x] app.py `_load_latest_assistant_message`: PG routing 추가 (CHG-20260527-ASK-STATUS-PG)
+  - agent_runtime.messages WHERE role='assistant' ORDER BY id DESC LIMIT 50
+  - JSONB dict → json.dumps() 직렬화 → 기존 json.loads() 루프 호환
+- [x] py_compile 양 파일 구문 확인 OK
+- [x] feature-0002 pytest 146 PASS / 2 SKIP 유지 확인
+- [x] Docker 재빌드 + 재배포 (web + insight-worker)
+- [ ] 기능 검증: ask_status 200 + delete_conversation 200 확인
+- [ ] verify-completion + 커밋 + push + main ff-merge

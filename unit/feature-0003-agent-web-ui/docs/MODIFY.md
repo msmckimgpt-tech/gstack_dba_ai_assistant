@@ -2166,3 +2166,22 @@ source_of_truth: true
   - MySQL fallback 유지: `AGENT_RUNTIME_READ_BACKEND != postgres` 시 기존 `AgentMemorySteps` 쿼리 동작.
   - web 이미지 재빌드 필요: `docker compose build web && docker compose up -d web` (feature-0002 의 pass-only `ensure_memory_schema()` 가 빌드에 포함).
 - Rollback: app.py 의 본 PG 가드 블록 제거 + web 컨테이너 재빌드.
+
+## CHG-20260527-ASK-STATUS-FIX
+- Date: 2026-05-27
+- Related Requirement: TASK-0121 (**Critical §12.3** — AR-M5 PG cutover 후 `ask_status` 500 fix)
+- Summary: `_load_latest_assistant_message` 가 MySQL `AgentMemoryMessages`(AR-M5 에서 DROP됨)를 직접 쿼리하던 경로를 PG routing으로 전환. `agent_runtime.messages WHERE role='assistant' ORDER BY id DESC LIMIT 50` 쿼리 추가. psycopg2 JSONB는 dict이므로 json.dumps로 직렬화 후 기존 루프에 투입. MySQL 쿼리는 PG 예외 발생 시 fallback으로 유지.
+- Files: unit/feature-0003-agent-web-ui/src/app.py
+- Rollback: PG routing 블록 제거 + MySQL 직접 쿼리 복원.
+
+## CHG-20260527-ASK-STATUS-PG
+- Date: 2026-05-27
+- Related Requirement: TASK-0121 (ask_status 500 오류 수정)
+- Summary: `_load_latest_assistant_message` 에 PG routing 추가. AR-M5에서 MySQL `AgentMemoryMessages` 테이블 DROP 후 `ask_status` 500 오류. PG `agent_runtime.messages` WHERE role='assistant' ORDER BY id DESC LIMIT 50 쿼리로 대체. JSONB meta_json은 `json.dumps()` 직렬화 후 기존 `json.loads()` 루프에 전달 (호환 유지). PG 실패 시 MySQL fallback (try/except).
+- Files:
+  - feature-0003-agent-web-ui/src/app.py (_load_latest_assistant_message PG 경로 추가)
+- Notes:
+  - psycopg2 JSONB → dict 반환 → `json.dumps()` → 기존 `json.loads()` 흐름 유지.
+  - MySQL fallback 경로 유지 (PG 연결 실패 시).
+  - `from modules.db import _pg_connect` 기존 app.py PG 패턴 일치.
+- Rollback: PG routing 블록 제거, MySQL 직접 쿼리 복원.

@@ -572,3 +572,23 @@ source_of_truth: true
 - Summary: 서비스 전체 풀 테스트 실행 — 46개 실패 원인 분석 후 전부 수정
 - Files: unit/feature-0002-agent-core/src/agent_core.py, unit/feature-0002-agent-core/src/modules/llm.py, unit/feature-0002-agent-core/src/modules/kb_backend.py, unit/feature-0002-agent-core/src/modules/runtime_backend.py, unit/feature-0002-agent-core/src/modules/utils.py, unit/feature-0002-agent-core/src/modules/memory.py, unit/feature-0002-agent-core/src/scripts/kb_backfill.py
 - Notes: (1) Python 3.12 SyntaxWarning 2건 수정 (agent_core.py:95, llm.py:412 — 백틱 앞 \\ 이스케이프 제거). (2) kb_backfill.py: texts TABLE_MAPPING id_col="Id" + select_cols에 "Id" 추가 + _insert_pg_batch 항상 row[1:] 사용. (3) kb_backend.py: _DualWriteMirror 클래스 신규 (DEPRECATION NOTICE / M5 / ADR-0025 포함, 6 mirror method) + _dual_write_kb 모듈 인스턴스. (4) runtime_backend.py: AGENT_RUNTIME_DUAL_WRITE env var + RuntimeBackend ABC (6 abstract method) + MysqlRuntimeBackend (NotImplementedError skeleton) + PgRuntimeBackend 10 read method + _dual_write_runtime_mirror 함수. (5) utils.py _text_store_insert + memory.py save_memory_kv caller 연동. pytest 146/148 PASS (2 SKIP, 0 FAIL).
+
+## CHG-20260527-CONV-DELETE-PG
+- Date: 2026-05-27
+- Related Requirement: TASK-0121 (delete_conversation 500 오류 수정)
+- Summary: `delete_conversation` 에 `_pg_delete_conversation()` PG 경로 추가. AR-M5에서 MySQL agent_runtime 6개 테이블 DROP 후 MySQL DELETE 실패 → 500 오류 발생. PG에서 `agent_runtime.kv` 수동 삭제 + `agent_runtime.core_conversations` DELETE (CASCADE: core_messages, messages, steps, summary) + `public.fact_entries/rag_documents/rag_objects` 삭제. MySQL DELETE 구문은 try/except로 보호(테이블 없어도 오류 미전파).
+- Files:
+  - feature-0002-agent-core/src/modules/memory.py (_pg_delete_conversation 헬퍼 신규 + delete_conversation MySQL 구문 try/except 보호)
+- Notes:
+  - `_get_pg_runtime_conn()` 재사용 (runtime_backend 패턴 일치).
+  - PG 단일 connection으로 agent_runtime + public schema 모두 처리 (같은 agent_kb DB).
+  - ON DELETE CASCADE: core_conversations 삭제 시 core_messages/messages/steps/summary 자동 삭제.
+  - kv는 FK CASCADE 제외 → 수동 DELETE FROM agent_runtime.kv.
+- Rollback: _pg_delete_conversation 헬퍼 제거 + delete_conversation 원복.
+
+## CHG-20260527-CONV-DELETE-FIX
+- Date: 2026-05-27
+- Related Requirement: TASK-0121 (**Critical §12.3** — AR-M5 PG cutover 후 `delete_conversation` 500 fix)
+- Summary: `delete_conversation` 이 MySQL agent_runtime 테이블(AR-M5 에서 DROP됨)에 직접 DELETE 하던 경로를 PG로 전환. `_pg_delete_conversation()` 신규 — agent_runtime.kv (수동), agent_runtime.core_conversations (CASCADE: messages/steps/summary/core_messages), public.fact_entries, public.rag_documents, public.rag_objects 삭제. MySQL DELETE 구문은 try/except 보호로 유지(호환성).
+- Files: unit/feature-0002-agent-core/src/modules/memory.py
+- Rollback: `_pg_delete_conversation` 호출 제거 + MySQL DELETE 구문 try/except 제거.

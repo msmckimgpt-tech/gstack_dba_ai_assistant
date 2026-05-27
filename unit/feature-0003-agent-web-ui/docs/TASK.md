@@ -2838,3 +2838,7 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 
 ### AR-M5-impl web hotfix — PG cutover MySQL 잔존 쿼리 차단 (2026-05-27)
 - [x] `_last_step_at_for_run()`: `AGENT_RUNTIME_READ_BACKEND=postgres` 시 `agent_runtime.steps` 쿼리로 전환 — MySQL `AgentMemorySteps` 직접 의존 제거 (CHG-20260527-0001).
+
+### TASK-0121 — AR-M5 PG cutover 잔존 MySQL 쿼리 차단 (2026-05-27)
+- [x] `_load_latest_assistant_message`: PG `agent_runtime.messages` 경로 추가 + MySQL fallback 유지
+- [x] commit + push + main ff-merge

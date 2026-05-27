@@ -6228,19 +6228,42 @@ LIMIT 1
 
 
 def _load_latest_assistant_message(conn, conversation_id: str) -> dict[str, Any]:
-    cur = conn.cursor()
-    cur.execute(
-        """
+    # PG routing (AR-M5: AgentMemoryMessages MySQL 테이블 삭제됨)
+    rows: list = []
+    try:
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+        with pg.cursor() as pgcur:
+            pgcur.execute(
+                """
+SELECT id, role, content, created_at, meta_json
+FROM agent_runtime.messages
+WHERE conversation_id = %s AND role = 'assistant'
+ORDER BY id DESC
+LIMIT 50
+                """,
+                (conversation_id,),
+            )
+            pg_rows = pgcur.fetchall() or []
+        pg.close()
+        # meta_json은 JSONB (dict) — 기존 json.loads() 로직 호환을 위해 직렬화
+        for msg_id, role, content, created_at, meta_json in pg_rows:
+            meta_str = json.dumps(meta_json) if isinstance(meta_json, dict) else (meta_json or None)
+            rows.append((msg_id, role, content, created_at, meta_str))
+    except Exception:
+        cur = conn.cursor()
+        cur.execute(
+            """
 SELECT Id, Role, Content, CreatedAt, MetaJson
 FROM AgentMemoryMessages
 WHERE ConversationId = %s AND Role = 'assistant'
 ORDER BY Id DESC
 LIMIT 50
-        """,
-        (conversation_id,),
-    )
-    rows = cur.fetchall() or []
-    cur.close()
+            """,
+            (conversation_id,),
+        )
+        rows = cur.fetchall() or []
+        cur.close()
     for msg_id, role, content, created_at, meta_json in rows:
         if _is_internal_message(role, content, meta_json):
             continue

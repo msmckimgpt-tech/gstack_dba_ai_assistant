@@ -617,18 +617,56 @@ LIMIT %s
     return rows
 
 
+def _pg_delete_conversation(conversation_id: str) -> None:
+    """PG agent_runtime + public KB 테이블에서 대화 데이터 삭제."""
+    import logging as _log
+    from .runtime_backend import _get_pg_runtime_conn
+    pg_conn = _get_pg_runtime_conn()
+    if pg_conn is None:
+        return
+    try:
+        with pg_conn.cursor() as cur:
+            # kv는 CASCADE 제외 — 수동 삭제
+            cur.execute("DELETE FROM agent_runtime.kv WHERE conversation_id = %s", (conversation_id,))
+            # core_conversations 삭제 시 CASCADE: core_messages, messages, steps, summary
+            cur.execute("DELETE FROM agent_runtime.core_conversations WHERE conversation_id = %s", (conversation_id,))
+            # KB public 테이블
+            cur.execute("DELETE FROM public.fact_entries WHERE conversation_id = %s", (conversation_id,))
+            cur.execute("DELETE FROM public.rag_documents WHERE conversation_id = %s", (conversation_id,))
+            cur.execute("DELETE FROM public.rag_objects WHERE conversation_id = %s", (conversation_id,))
+        pg_conn.commit()
+    except Exception as exc:
+        _log.getLogger(__name__).warning("_pg_delete_conversation: %s", exc)
+        try:
+            pg_conn.rollback()
+        except Exception:
+            pass
+    finally:
+        try:
+            pg_conn.close()
+        except Exception:
+            pass
+
+
 def delete_conversation(conn, conversation_id: str) -> None:
+    _pg_delete_conversation(conversation_id)
     cur = conn.cursor()
-    cur.execute("DELETE FROM AgentCoreMessages WHERE conversation_id = %s", (conversation_id,))
-    cur.execute("DELETE FROM AgentCoreConversations WHERE conversation_id = %s", (conversation_id,))
-    cur.execute("DELETE FROM AgentMemoryMessages WHERE ConversationId = %s", (conversation_id,))
-    cur.execute("DELETE FROM AgentMemorySummary WHERE ConversationId = %s", (conversation_id,))
-    cur.execute("DELETE FROM AgentMemoryKv WHERE ConversationId = %s", (conversation_id,))
-    cur.execute("DELETE FROM AgentMemorySteps WHERE ConversationId = %s", (conversation_id,))
-    # AgentMemoryFacts는 FactEntries 기반 VIEW — FactEntries 삭제만 필요
-    cur.execute("DELETE FROM AgentMemoryFactEntries WHERE ConversationId = %s", (conversation_id,))
-    cur.execute("DELETE FROM AgentMemoryRagObjects WHERE ConversationId = %s", (conversation_id,))
-    cur.execute("DELETE FROM AgentMemoryRagDocuments WHERE ConversationId = %s", (conversation_id,))
+    for sql, params in [
+        ("DELETE FROM AgentCoreMessages WHERE conversation_id = %s", (conversation_id,)),
+        ("DELETE FROM AgentCoreConversations WHERE conversation_id = %s", (conversation_id,)),
+        ("DELETE FROM AgentMemoryMessages WHERE ConversationId = %s", (conversation_id,)),
+        ("DELETE FROM AgentMemorySummary WHERE ConversationId = %s", (conversation_id,)),
+        ("DELETE FROM AgentMemoryKv WHERE ConversationId = %s", (conversation_id,)),
+        ("DELETE FROM AgentMemorySteps WHERE ConversationId = %s", (conversation_id,)),
+        # AgentMemoryFacts는 FactEntries 기반 VIEW — FactEntries 삭제만 필요
+        ("DELETE FROM AgentMemoryFactEntries WHERE ConversationId = %s", (conversation_id,)),
+        ("DELETE FROM AgentMemoryRagObjects WHERE ConversationId = %s", (conversation_id,)),
+        ("DELETE FROM AgentMemoryRagDocuments WHERE ConversationId = %s", (conversation_id,)),
+    ]:
+        try:
+            cur.execute(sql, params)
+        except Exception:
+            pass
     cur.close()
 
 
