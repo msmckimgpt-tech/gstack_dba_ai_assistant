@@ -147,24 +147,21 @@ worktree + 별 PR.
 
 ##### AR-M2-a: ABC + skeleton
 
-- [ ] **AR-M2-a-T1**: `modules/runtime_backend.py` 신규 — `RuntimeBackend`
+- [x] **AR-M2-a-T1**: `modules/runtime_backend.py` 신규 — `RuntimeBackend`
   ABC + `MysqlRuntimeBackend` + `PgRuntimeBackend` skeleton
   (KbBackend 패턴 답습 — TASK-0019)
-- [ ] **AR-M2-a-T2**: 6 method skeleton (save_conversation, save_message,
+- [x] **AR-M2-a-T2**: 6 method skeleton (save_conversation, save_message,
   save_kv, save_step, save_summary, save_memory_message)
-- [ ] **AR-M2-a-T3**: `tests/test_anchor_invariant_runtime.py` 시나리오 catalog
-  (TASK-0019 답습)
+- [x] **AR-M2-a-T3**: `tests/test_anchor_invariant_runtime.py` 시나리오 catalog
+  (TASK-0019 답습) — 10 test PASS.
 
 ##### AR-M2-b: method body + caller mirror
 
-- [ ] **AR-M2-b-T1**: 6 method body 구현 (PG SQL UPSERT + RETURNING id)
-- [ ] **AR-M2-b-T2**: caller mirror 호출 추가 — memory.py / agent_core.py /
-  insight.py 의 INSERT 위치에 `_dual_write_runtime()` wrapper 삽입
-- [ ] **AR-M2-b-T3**: `tests/test_dual_write_runtime.py` unit test
-  (10+, FakeConn 패턴)
-- [ ] **AR-M2-b-T4**: outside-voice review
-- [ ] **AR-M2-b-T5**: `KB_DUAL_WRITE_START_TS` 류 `AGENT_RUNTIME_DUAL_WRITE_START_TS`
-  + AGENT_RUNTIME_DUAL_WRITE + AGENT_RUNTIME_REQUIRED env 신설
+- [x] **AR-M2-b-T1**: 6 method body 구현 (PG SQL UPSERT + RETURNING id) — `_PG_UPSERT_CONVERSATION` / `_PG_INSERT_CORE_MESSAGE` / `_PG_UPSERT_KV` / `_PG_INSERT_MEMORY_MESSAGE` / `_PG_INSERT_STEP` / `_PG_UPSERT_SUMMARY`. `tool_calls::jsonb` 캐스트 포함 (outside-voice C1).
+- [x] **AR-M2-b-T2**: caller mirror 호출 추가 — `memory.py` 4개 함수 (`save_memory_message` / `save_memory_kv` / `save_memory_summary` / `save_memory_step`) + `agent_core.py` 3개 함수 (`_save_message` / `_ensure_conversation` / `_update_conversation_topic`). MySQL write 후 `_dual_write_runtime_mirror(method_name, **kwargs)` 호출.
+- [x] **AR-M2-b-T3**: `tests/test_dual_write_runtime.py` unit test (13 test, FakeConn 패턴) — 전 13 PASS. `test_anchor_invariant_runtime.py` M2-b API 반영 수정.
+- [x] **AR-M2-b-T4**: outside-voice review (general-purpose subagent, REV-20260527-0005) — Verdict NEEDS-FIX → tool_calls::jsonb 캐스트 본 cycle 내 반영.
+- [x] **AR-M2-b-T5**: `AGENT_RUNTIME_DUAL_WRITE` + `AGENT_RUNTIME_PG_REQUIRED` + `AGENT_RUNTIME_DUAL_WRITE_START_TS` env 신설 (runtime_backend.py 모듈 상수).
 
 ##### AR-M2-c: cross-DB audit + SLA
 
@@ -279,7 +276,8 @@ Phase 1~3 완료 후만 진입 가능. agent_memory DB 가 비어 있어야 함.
 - 2026-05-27 AR-M-1 완료 — commit c2308dc, PR #95 (merge 67a853b), baseline: artifacts/shared/agent-runtime-baseline-2026-05-27.json (총 2676 row), service smoke: read-only 측정 (production stack 무변경)
 - 2026-05-27 AR-M0 완료 — commit 89c63f4, PR #96, agent_kb.agent_runtime schema CREATE + role USAGE grant (has_schema_privilege rw/ro=t), docs/SECURITY.md §10
 - 2026-05-27 AR-M1 완료 — commit d2d2915, PR #97, outside-voice REV-20260527-0003 (backend+qa PASS). 산출: agent_runtime_schema.sql + ADR-0027 + agent-runtime-schema-compare.sh PASS. 설계 결정: kv FK 의도적 생략(__global__ sentinel) / meta_json jsonb / search_path 전역 변경 없음.
-- ...
+- 2026-05-27 AR-M2-a 완료 — commit (AR-M2-b worktree 연속), PR #98. 산출: modules/runtime_backend.py 신규 (RuntimeBackend ABC + skeleton + _dual_write_runtime_mirror no-op) + test_anchor_invariant_runtime.py 10 test. outside-voice SKIPPED (비파괴 신규 파일만).
+- 2026-05-27 AR-M2-b 완료 — commit TBD, PR TBD, outside-voice REV-20260527-0005 (general-purpose NEEDS-FIX → tool_calls::jsonb 반영). 산출: PgRuntimeBackend 6 method body + _dual_write_runtime_mirror connection 내부화 + memory.py 4 callsite + agent_core.py 3 callsite + test_dual_write_runtime.py 13 test. pytest 23/23 PASS (runtime) + 82/82 PASS (전체). 다음: AR-M2-c.
 ```
 
 ## 8. 참조

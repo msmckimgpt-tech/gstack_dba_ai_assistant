@@ -8,6 +8,30 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260527-0005 [SUBAGENT:general-purpose — AR-M2-b dual-write 구현 review]
+- Date: 2026-05-27
+- TASK-Cycle: TASK-0114 (REQ-20260527-AR-M2-b, **Major §12.3** — PgRuntimeBackend 구현 + caller mirror callsite 추가)
+- Outside-voice channel: general-purpose subagent (독립 컨텍스트 검토).
+- Trigger: AGENTS.md §18.3 Major 분류 — caller 수정 7건 포함 (memory.py 4 + agent_core.py 3).
+- Verdict: **NEEDS-FIX** (1 actionable + 1 observation)
+  - **NEEDS-FIX (반영 완료)**: `_PG_INSERT_CORE_MESSAGE` 의 `%(tool_calls)s` 에 `::jsonb` 캐스트 누락 — DDL 상 `core_messages.tool_calls` 가 `jsonb` 타입이므로 캐스트 필수. `%(tool_calls)s::jsonb` 로 수정 완료 (runtime_backend.py line 92).
+  - **Observation (문서화)**: `AGENT_RUNTIME_DUAL_WRITE` / `AGENT_RUNTIME_PG_REQUIRED` 는 module import 시 1회 평가. test fixture 가 env var 사후 설정 시 모듈 수준 상수에 미반영 → monkeypatch 로 직접 attribute 패치 필요 (현행 test 패턴이 이를 따르고 있음).
+- SQL correctness: 전 6 SQL 상수 schema-qualified (`agent_runtime.*`) + named params `%(name)s` + ON CONFLICT 3개 (kv/summary/core_conversations) + RETURNING id + `::jsonb` cast (meta_json + tool_calls) — PASS.
+- Exception isolation: conn open / method 호출 양 단계 try/except + PG_REQUIRED 분기 + conn.close() finally — PASS.
+- Caller integration: 7개 callsite 모두 MySQL write 후 호출 + kwargs 정확 — PASS.
+- Timestamp: 2026-05-27T14:00:00Z
+
+## REV-20260527-0004 [SUBAGENT:general-purpose — AR-M1 DDL + RBAC review]
+- Date: 2026-05-27
+- TASK-Cycle: TASK-0112 (REQ-20260527-AR-M1)
+- Verdict: PASS (Critical 2 반영 완료 — C1 kv FK 주석 + C2 meta_json jsonb)
+- Timestamp: 2026-05-27T12:00:00Z
+
+## REV-20260527-0003 [SKIPPED:plan-doc-m2a-skeleton]
+- Related TASK: TASK-0113 (REQ-20260527-AR-M2-a, **Minor §12.3** — ABC + skeleton)
+- Reason: code mutation 비파괴 (신규 파일만, 기존 caller 0 수정, RBAC 무변경, AGENT_RUNTIME_DUAL_WRITE default False).
+- Timestamp: 2026-05-27T13:00:00Z
+
 ## REV-20260527-0002 [SKIPPED:infra-schema-only-no-new-role]
 - Related TASK: TASK-0111 (REQ-20260527-AR-M0, **Minor §12.3** — Phase 2 AR-M0 Postgres 인프라)
 - Reason: 본 cycle 은 기존 `agent_kb_rw` / `agent_kb_ro` role 재사용 + `agent_runtime` schema CREATE 만. 신규 Postgres role 신설 없음, 신규 RBAC PERMISSION_DEFINITIONS 항목 없음, production Python code path 변경 없음. 사용자 메모 `feedback_outside_voice_for_rbac.md` (RBAC catalog 변경 시 outside-voice 강제) 정합 — 본 cycle 은 catalog 변경 0건 (schema CREATE 는 Postgres infrastructure 레벨, PERMISSION_DEFINITIONS 변경 아님). AGENTS.md §18.8 dispatch: (a) "DDL" — schema 1개 CREATE 만, table DDL 없음. (b) "RBAC" — catalog 변경 없음. (c) code change — production Python code 0건. 본 KB M0 cycle 패턴 답습 (`REV-20260520-0004 [SKIPPED:outside-voice-not-required — M0 인프라 도입 cycle]`). 다음 cycle (AR-M1 DDL+RBAC — 6 runtime 테이블 CREATE + ADR-0026 + GRANT TABLE 권한) 진입 시 outside-voice 호출 필수.

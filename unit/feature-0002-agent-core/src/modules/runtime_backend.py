@@ -1,7 +1,7 @@
 """Runtime Backend abstraction — MySQL ↔ Postgres dual-write 의 단일 진입점.
 
-TASK-0109 Phase 2 AR plan 의 M2 cycle. M2-a (TASK-0113) 에서 ABC + skeleton 까지,
-M2-b (TASK-0114) 에서 method body + dual-write wrapper + caller 수정,
+TASK-0109 Phase 2 AR plan 의 M2 cycle. M2-a (TASK-0113) 에서 ABC + skeleton,
+M2-b (TASK-0114) 에서 method body + dual-write wrapper + caller 수정 (본 cycle),
 M2-c (TASK-0115) 에서 cross-DB audit + SLA 검증 도구.
 
 KB backend (kb_backend.py, TASK-0019 M2-a) 패턴 답습.
@@ -63,6 +63,69 @@ def _env_bool(key: str, default: bool = False) -> bool:
 
 AGENT_RUNTIME_DUAL_WRITE: bool = _env_bool("AGENT_RUNTIME_DUAL_WRITE", False)
 AGENT_RUNTIME_PG_REQUIRED: bool = _env_bool("AGENT_RUNTIME_PG_REQUIRED", False)
+
+# M2-b: dual-write 시작 timestamp (운영 지표용, optional)
+AGENT_RUNTIME_DUAL_WRITE_START_TS: str = os.environ.get("AGENT_RUNTIME_DUAL_WRITE_START_TS", "")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Postgres SQL constants (agent_runtime schema-qualified, ADR-0027)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PG_UPSERT_CONVERSATION = """
+INSERT INTO agent_runtime.core_conversations
+    (conversation_id, topic, owner_account_id, product_id, product_mode)
+VALUES
+    (%(conversation_id)s, %(topic)s, %(owner_account_id)s, %(product_id)s, %(product_mode)s)
+ON CONFLICT (conversation_id) DO UPDATE SET
+    topic            = COALESCE(EXCLUDED.topic, core_conversations.topic),
+    owner_account_id = COALESCE(EXCLUDED.owner_account_id, core_conversations.owner_account_id),
+    product_id       = COALESCE(EXCLUDED.product_id, core_conversations.product_id),
+    product_mode     = COALESCE(EXCLUDED.product_mode, core_conversations.product_mode),
+    updated_at       = now()
+"""
+
+_PG_INSERT_CORE_MESSAGE = """
+INSERT INTO agent_runtime.core_messages
+    (conversation_id, role, content, tool_calls, tool_call_id, name)
+VALUES
+    (%(conversation_id)s, %(role)s, %(content)s, %(tool_calls)s::jsonb, %(tool_call_id)s, %(name)s)
+RETURNING id
+"""
+
+_PG_UPSERT_KV = """
+INSERT INTO agent_runtime.kv (conversation_id, key, value)
+VALUES (%(conversation_id)s, %(key)s, %(value)s)
+ON CONFLICT (conversation_id, key) DO UPDATE SET
+    value      = EXCLUDED.value,
+    updated_at = now()
+"""
+
+_PG_INSERT_MEMORY_MESSAGE = """
+INSERT INTO agent_runtime.messages
+    (conversation_id, role, content, meta_json)
+VALUES
+    (%(conversation_id)s, %(role)s, %(content)s, %(meta_json)s::jsonb)
+"""
+
+_PG_INSERT_STEP = """
+INSERT INTO agent_runtime.steps
+    (conversation_id, run_id, step_index, action, tool, intent,
+     work_text, work_source, reason_text, reason_source,
+     args_json, sql_text, result_summary_json, error_text)
+VALUES
+    (%(conversation_id)s, %(run_id)s, %(step_index)s, %(action)s, %(tool)s, %(intent)s,
+     %(work_text)s, %(work_source)s, %(reason_text)s, %(reason_source)s,
+     %(args_json)s, %(sql_text)s, %(result_summary_json)s, %(error_text)s)
+"""
+
+_PG_UPSERT_SUMMARY = """
+INSERT INTO agent_runtime.summary (conversation_id, summary)
+VALUES (%(conversation_id)s, %(summary)s)
+ON CONFLICT (conversation_id) DO UPDATE SET
+    summary    = EXCLUDED.summary,
+    updated_at = now()
+"""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -190,10 +253,10 @@ class RuntimeBackend(ABC):
 class MysqlRuntimeBackend(RuntimeBackend):
     """MySQL agent_memory 쪽 write backend.
 
-    M2-a skeleton: 모든 method 가 NotImplementedError.
-    M2-b: 기존 memory.py / agent_core.py 의 SQL 을 그대로 래핑.
-    실 dual-write 에서는 사용되지 않음 — caller 의 기존 cursor.execute 가 MySQL write.
-    본 class 는 test harness / future cutover 준비용.
+    dual-write 에서는 사용되지 않음 — caller 의 기존 cursor.execute 가 MySQL write.
+    본 class 는 test harness / AR-M4 cutover 이후 legacy read 준비용.
+    M2-b: 기존 memory.py / agent_core.py 의 SQL 래핑 (NotImplementedError 유지 —
+    cutover 시점에 구현. 현재 M4 전이라 caller 직접 MySQL 쓰기 사용).
     """
 
     backend_name: str = "mysql"
@@ -201,28 +264,28 @@ class MysqlRuntimeBackend(RuntimeBackend):
     def save_conversation(self, conn, *, conversation_id, topic=None,
                           owner_account_id=None, product_id=None,
                           product_mode="pinned") -> None:
-        raise NotImplementedError("MysqlRuntimeBackend.save_conversation — M2-b")
+        raise NotImplementedError("MysqlRuntimeBackend — AR-M4 cutover 시 구현")
 
     def save_core_message(self, conn, *, conversation_id, role, content=None,
                           tool_calls=None, tool_call_id=None, name=None) -> int:
-        raise NotImplementedError("MysqlRuntimeBackend.save_core_message — M2-b")
+        raise NotImplementedError("MysqlRuntimeBackend — AR-M4 cutover 시 구현")
 
     def save_kv(self, conn, *, conversation_id, key, value) -> None:
-        raise NotImplementedError("MysqlRuntimeBackend.save_kv — M2-b")
+        raise NotImplementedError("MysqlRuntimeBackend — AR-M4 cutover 시 구현")
 
     def save_memory_message(self, conn, *, conversation_id, role, content,
                             meta_json=None) -> None:
-        raise NotImplementedError("MysqlRuntimeBackend.save_memory_message — M2-b")
+        raise NotImplementedError("MysqlRuntimeBackend — AR-M4 cutover 시 구현")
 
     def save_memory_step(self, conn, *, conversation_id, run_id, step_index,
                          action, tool, intent, work_text=None, work_source=None,
                          reason_text=None, reason_source=None, args_json="{}",
                          sql_text=None, result_summary_json=None,
                          error_text=None) -> None:
-        raise NotImplementedError("MysqlRuntimeBackend.save_memory_step — M2-b")
+        raise NotImplementedError("MysqlRuntimeBackend — AR-M4 cutover 시 구현")
 
     def save_memory_summary(self, conn, *, conversation_id, summary) -> None:
-        raise NotImplementedError("MysqlRuntimeBackend.save_memory_summary — M2-b")
+        raise NotImplementedError("MysqlRuntimeBackend — AR-M4 cutover 시 구현")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -232,40 +295,139 @@ class MysqlRuntimeBackend(RuntimeBackend):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class PgRuntimeBackend(RuntimeBackend):
-    """PostgreSQL agent_kb.agent_runtime write backend.
+    """PostgreSQL agent_kb.agent_runtime write backend (M2-b: 실 구현).
 
-    M2-a skeleton: 모든 method 가 NotImplementedError.
-    M2-b: psycopg3 conn 으로 INSERT / UPSERT SQL 실행.
-          autocommit=True (kb_backend.py 패턴 정합).
+    psycopg3 conn 으로 INSERT / UPSERT SQL 실행 (autocommit=True, kb_backend.py 정합).
+    모든 SQL은 `agent_runtime.table_name` schema-qualified (ADR-0027, search_path 전역 변경 없음).
     """
 
     backend_name: str = "postgres"
 
-    def save_conversation(self, conn, *, conversation_id, topic=None,
-                          owner_account_id=None, product_id=None,
-                          product_mode="pinned") -> None:
-        raise NotImplementedError("PgRuntimeBackend.save_conversation — M2-b")
+    def save_conversation(
+        self,
+        conn: Any,
+        *,
+        conversation_id: str,
+        topic: Optional[str] = None,
+        owner_account_id: Optional[int] = None,
+        product_id: Optional[int] = None,
+        product_mode: str = "pinned",
+    ) -> None:
+        with conn.cursor() as cur:
+            cur.execute(_PG_UPSERT_CONVERSATION, {
+                "conversation_id": conversation_id,
+                "topic": topic,
+                "owner_account_id": owner_account_id,
+                "product_id": product_id,
+                "product_mode": product_mode or "pinned",
+            })
 
-    def save_core_message(self, conn, *, conversation_id, role, content=None,
-                          tool_calls=None, tool_call_id=None, name=None) -> int:
-        raise NotImplementedError("PgRuntimeBackend.save_core_message — M2-b")
+    def save_core_message(
+        self,
+        conn: Any,
+        *,
+        conversation_id: str,
+        role: str,
+        content: Optional[str] = None,
+        tool_calls: Optional[Any] = None,
+        tool_call_id: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> int:
+        import json as _json
+        tc_json = _json.dumps(tool_calls, ensure_ascii=False) if tool_calls is not None else None
+        with conn.cursor() as cur:
+            cur.execute(_PG_INSERT_CORE_MESSAGE, {
+                "conversation_id": conversation_id,
+                "role": role,
+                "content": content,
+                "tool_calls": tc_json,
+                "tool_call_id": tool_call_id,
+                "name": name,
+            })
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
 
-    def save_kv(self, conn, *, conversation_id, key, value) -> None:
-        raise NotImplementedError("PgRuntimeBackend.save_kv — M2-b")
+    def save_kv(
+        self,
+        conn: Any,
+        *,
+        conversation_id: str,
+        key: str,
+        value: str,
+    ) -> None:
+        with conn.cursor() as cur:
+            cur.execute(_PG_UPSERT_KV, {
+                "conversation_id": conversation_id,
+                "key": key,
+                "value": value,
+            })
 
-    def save_memory_message(self, conn, *, conversation_id, role, content,
-                            meta_json=None) -> None:
-        raise NotImplementedError("PgRuntimeBackend.save_memory_message — M2-b")
+    def save_memory_message(
+        self,
+        conn: Any,
+        *,
+        conversation_id: str,
+        role: str,
+        content: str,
+        meta_json: Optional[str] = None,
+    ) -> None:
+        with conn.cursor() as cur:
+            cur.execute(_PG_INSERT_MEMORY_MESSAGE, {
+                "conversation_id": conversation_id,
+                "role": role,
+                "content": content,
+                "meta_json": meta_json,
+            })
 
-    def save_memory_step(self, conn, *, conversation_id, run_id, step_index,
-                         action, tool, intent, work_text=None, work_source=None,
-                         reason_text=None, reason_source=None, args_json="{}",
-                         sql_text=None, result_summary_json=None,
-                         error_text=None) -> None:
-        raise NotImplementedError("PgRuntimeBackend.save_memory_step — M2-b")
+    def save_memory_step(
+        self,
+        conn: Any,
+        *,
+        conversation_id: str,
+        run_id: str,
+        step_index: int,
+        action: str,
+        tool: str,
+        intent: str,
+        work_text: Optional[str] = None,
+        work_source: Optional[str] = None,
+        reason_text: Optional[str] = None,
+        reason_source: Optional[str] = None,
+        args_json: str = "{}",
+        sql_text: Optional[str] = None,
+        result_summary_json: Optional[str] = None,
+        error_text: Optional[str] = None,
+    ) -> None:
+        with conn.cursor() as cur:
+            cur.execute(_PG_INSERT_STEP, {
+                "conversation_id": conversation_id,
+                "run_id": run_id,
+                "step_index": step_index,
+                "action": action,
+                "tool": tool,
+                "intent": intent,
+                "work_text": work_text,
+                "work_source": work_source,
+                "reason_text": reason_text,
+                "reason_source": reason_source,
+                "args_json": args_json,
+                "sql_text": sql_text,
+                "result_summary_json": result_summary_json,
+                "error_text": error_text,
+            })
 
-    def save_memory_summary(self, conn, *, conversation_id, summary) -> None:
-        raise NotImplementedError("PgRuntimeBackend.save_memory_summary — M2-b")
+    def save_memory_summary(
+        self,
+        conn: Any,
+        *,
+        conversation_id: str,
+        summary: str,
+    ) -> None:
+        with conn.cursor() as cur:
+            cur.execute(_PG_UPSERT_SUMMARY, {
+                "conversation_id": conversation_id,
+                "summary": summary,
+            })
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -286,36 +448,65 @@ def _get_pg_runtime_backend() -> PgRuntimeBackend:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# dual-write entry point (M2-b 에서 caller 가 호출).
-# M2-a skeleton: 항상 no-op (AGENT_RUNTIME_DUAL_WRITE=0 가 default).
+# internal connection helper (kb_backend.py _get_pg_conn 패턴 답습)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _dual_write_runtime_mirror(method_name: str, pg_conn_factory, **kwargs) -> None:
+def _get_pg_runtime_conn():
+    """매 호출마다 Postgres connection open. process-level pool 은 M3+ cycle 책임."""
+    from .db import _pg_available, _pg_connect
+    if not _pg_available():
+        return None
+    try:
+        return _pg_connect()
+    except Exception as exc:
+        if AGENT_RUNTIME_PG_REQUIRED:
+            raise
+        logger.warning("runtime_backend: pg connection failed: %s", exc)
+        return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# dual-write entry point — caller (memory.py / agent_core.py) 가 호출.
+# AGENT_RUNTIME_DUAL_WRITE=0 이면 no-op (기존 MySQL callsite 무영향).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _dual_write_runtime_mirror(method_name: str, **kwargs) -> None:
     """Postgres mirror write entry point.
 
-    caller (memory.py / agent_core.py) 에서 MySQL write 직후 호출.
-    AGENT_RUNTIME_DUAL_WRITE=0 이면 즉시 반환 (no-op).
+    caller 에서 MySQL write 직후 호출. AGENT_RUNTIME_DUAL_WRITE=0 이면 no-op.
 
     Args:
         method_name: PgRuntimeBackend 의 method 이름 (e.g. "save_kv").
-        pg_conn_factory: callable — 호출 시 psycopg3 connection 반환.
         **kwargs: method 에 전달할 keyword arguments.
     """
     if not AGENT_RUNTIME_DUAL_WRITE:
+        return
+
+    try:
+        conn = _get_pg_runtime_conn()
+    except Exception as exc:
+        if AGENT_RUNTIME_PG_REQUIRED:
+            raise
+        logger.warning(
+            "runtime_backend: pg connection failed (non-fatal, AGENT_RUNTIME_PG_REQUIRED=0): %s",
+            exc,
+        )
+        return
+    if conn is None:
         return
 
     backend = _get_pg_runtime_backend()
     method = getattr(backend, method_name, None)
     if method is None:
         logger.error("runtime_backend: unknown method %s", method_name)
+        try:
+            conn.close()
+        except Exception:
+            pass
         return
 
     try:
-        pg_conn = pg_conn_factory()
-        method(pg_conn, **kwargs)
-    except NotImplementedError:
-        # M2-a skeleton — 정상 (M2-b 구현 전)
-        logger.debug("runtime_backend: %s not yet implemented (M2-a)", method_name)
+        method(conn, **kwargs)
     except Exception as exc:
         if AGENT_RUNTIME_PG_REQUIRED:
             raise
@@ -323,3 +514,8 @@ def _dual_write_runtime_mirror(method_name: str, pg_conn_factory, **kwargs) -> N
             "runtime_backend: mirror %s failed (non-fatal, AGENT_RUNTIME_PG_REQUIRED=0): %s",
             method_name, exc,
         )
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
