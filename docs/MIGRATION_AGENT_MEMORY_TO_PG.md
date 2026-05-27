@@ -277,8 +277,8 @@ Phase 1~3 완료 후만 진입 가능. agent_memory DB 가 비어 있어야 함.
 
 ```
 - 2026-05-27 AR-M-1 완료 — commit c2308dc, PR #95 (merge 67a853b), baseline: artifacts/shared/agent-runtime-baseline-2026-05-27.json (총 2676 row), service smoke: read-only 측정 (production stack 무변경)
-- 2026-05-27 AR-M0 완료 — commit <hash>, PR #<n>, agent_kb.agent_runtime schema CREATE + role USAGE grant (has_schema_privilege rw/ro=t), docs/SECURITY.md §10
-- 2026-05-27 AR-M1 완료 — commit <hash>, PR #<n>, outside-voice REV-20260527-0003 (backend+qa PASS). 산출: agent_runtime_schema.sql + ADR-0027 + agent-runtime-schema-compare.sh PASS. 설계 결정: kv FK 의도적 생략(__global__ sentinel) / meta_json jsonb / search_path 전역 변경 없음.
+- 2026-05-27 AR-M0 완료 — commit 89c63f4, PR #96, agent_kb.agent_runtime schema CREATE + role USAGE grant (has_schema_privilege rw/ro=t), docs/SECURITY.md §10
+- 2026-05-27 AR-M1 완료 — commit d2d2915, PR #97, outside-voice REV-20260527-0003 (backend+qa PASS). 산출: agent_runtime_schema.sql + ADR-0027 + agent-runtime-schema-compare.sh PASS. 설계 결정: kv FK 의도적 생략(__global__ sentinel) / meta_json jsonb / search_path 전역 변경 없음.
 - ...
 ```
 
