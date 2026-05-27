@@ -111,17 +111,17 @@ worktree + 별 PR.
 
 #### AR-M-1: Baseline 측정 (Minor §12.3, read-only)
 
-- [ ] **AR-M-1-T1**: 6 테이블 각각의 row count + DATA_LENGTH + 최근 30일 INSERT
+- [x] **AR-M-1-T1**: 6 테이블 각각의 row count + DATA_LENGTH + 최근 30일 INSERT
   rate (write 빈도 estimation)
-- [ ] **AR-M-1-T2**: read/write call site 인벤토리 (grep 기반)
+- [x] **AR-M-1-T2**: read/write call site 인벤토리 (grep 기반)
   - `modules/memory.py` 의 KV / conversation / message CRUD
   - `agent_core.py` 의 conversation / message INSERT
   - `modules/insight.py` 의 summary / steps
   - `app.py` 의 read endpoint (`/api/conversations`, `/api/messages`)
-- [ ] **AR-M-1-T3**: FK 관계 분석 (Messages → Conversations 등)
-- [ ] **AR-M-1-T4**: AgentMemoryKv 의 (Key, Value) PK 와 conversation_id
+- [x] **AR-M-1-T3**: FK 관계 분석 (Messages → Conversations 등)
+- [x] **AR-M-1-T4**: AgentMemoryKv 의 (Key, Value) PK 와 conversation_id
   scoping 정합 확인
-- [ ] **AR-M-1-T5**: 산출 → `artifacts/shared/agent-runtime-baseline-YYYY-MM-DD.json`
+- [x] **AR-M-1-T5**: 산출 → `artifacts/shared/agent-runtime-baseline-2026-05-27.json`
 
 #### AR-M0: Postgres 인프라 (Minor §12.3, 비파괴 추가)
 
@@ -286,7 +286,7 @@ Phase 1~3 완료 후만 진입 가능. agent_memory DB 가 비어 있어야 함.
 각 cycle 완료 시 timestamp + commit hash + PR# 기록:
 
 ```
-- 2026-MM-DD AR-M-1 완료 — commit <hash>, PR #<n>, baseline 산출 path
+- 2026-05-27 AR-M-1 완료 — commit <hash>, PR #<n>, baseline: artifacts/shared/agent-runtime-baseline-2026-05-27.json (총 2676 row: Conversations 33 / Messages 392 / Kv 1987 / MemoryMessages 123 / Steps 141 / Summary 0), service smoke: read-only 측정 (production stack 무변경)
 - 2026-MM-DD AR-M0 완료 — commit <hash>, PR #<n>
 - 2026-MM-DD AR-M1 완료 — commit <hash>, PR #<n>, outside-voice REV-<id>
 - ...

@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260527-AR-M-1
+- Date: 2026-05-27
+- TASK-Cycle: TASK-0110 (REQ-20260527-AR-M-1, **Minor §12.3** — read-only baseline 측정)
+- Summary: Phase 2 AR-M-1 cycle. 6 agent runtime 테이블 (AgentCoreConversations / AgentCoreMessages / AgentMemoryKv / AgentMemoryMessages / AgentMemorySteps / AgentMemorySummary) 의 사전 baseline 측정 실행. 총 2676 row (Conversations 33 / Messages 392 / Kv 1987 / MemoryMessages 123 / Steps 141 / Summary 0). insert rate 측정: AgentCoreMessages ~9.5 row/day, AgentMemoryMessages ~3.0/day, AgentMemorySteps ~3.4/day. callsite 인벤토리: feature-0002-agent-core/src 54건 + feature-0003-agent-web-ui/src 105건. explicit FK constraint 0건 (application-level implicit FK 확인). AgentMemoryKv PK = (ConversationId, Key) composite — __global__ scope 1588건 + conversation-scoped 399건. outside-voice 불요 (read-only, code/schema/RBAC mutation 0건).
+- Worktree: `ai/claude/agent-runtime/m-1` (base = main HEAD 9a0610a).
+- Files:
+  - `bin/agent-runtime-measure-baseline.sh` (신규, ~190 LOC): Phase 2 AR-M-1 baseline 측정 스크립트. kb-measure-baseline.sh 패턴 답습. wrapper path auto-detect + docker exec repo-mysql-1 + 5 mode (--rows/--schema/--callsites/--fk/--kv/--all). JSON artifact 생성.
+  - `unit/feature-0002-agent-core/docs/{TASK,MODIFY,REPORT}.md`: TASK-0110 등록 + CHG-20260527-AR-M-1 + REPORT Summary append.
+  - `docs/MIGRATION_AGENT_MEMORY_TO_PG.md`: §7 진행 기록 TASK-0110 entry append.
+- 검증: 실 code 변경 0 → py_compile 불요. bash -n agent-runtime-measure-baseline.sh PASS. baseline script --all 실행 PASS (artifacts/shared/agent-runtime-baseline-2026-05-27.json 생성).
+- Outside-voice rationale: **SKIPPED** — read-only baseline 측정. code/schema/RBAC mutation 0건. 사용자 메모 `feedback_outside_voice_for_rbac.md` 정합.
+
 ## CHG-20260526-0109
 - Date: 2026-05-26
 - TASK-Cycle: TASK-0109 (REQ-20260526-0109, **Minor §12.3** — plan-only, project-level cross-cutting migration plan 등록)
