@@ -486,3 +486,11 @@ source_of_truth: true
 - Decision: agent 이미지는 core feature Dockerfile에서 web-ui feature 소스를 함께 복사한다
 - Reason: import 경로를 깨지 않으면서 기능 소유권을 분리하기 위함
 - Risk: 이미지 빌드 경로가 루트 context에 의존한다
+
+## REV-20260527-0003 [SUBAGENT:backend+qa — AR-M1 DDL+RBAC agent_runtime_schema.sql review]
+- Date: 2026-05-27
+- Cycle: TASK-0112 (AR-M1 DDL + RBAC)
+- Subagent: backend+qa (§18.8 dispatch: schema, migration, foreign key → backend, qa)
+- Verdict: PASS (no blockers)
+- Absorbed: C1 (kv FK 의도적 생략 주석 명시화 — __global__ sentinel 로 인해 FK 적용 불가), C2 (meta_json text → jsonb), N5 (CREATE SCHEMA IF NOT EXISTS 방어 guard)
+- Deferred: C3 n/a (MySQL AgentMemoryKv에 created_at 없음 확인), N1 (agent_kb_ro SEQUENCES — 현재 currval() 사용 사례 없음), N2 (product_mode varchar 확장 — MVP scope 외), N3 (steps (run_id, step_index) 복합 인덱스 — AR-M2 query pattern 확인 후 결정, ADR-0027 후속액션 명시), N4 (summary created_at — MVP scope 외)

@@ -135,22 +135,13 @@ worktree + 별 PR.
 
 #### AR-M1: DDL + RBAC (Major §12.3, RBAC 동반)
 
-- [ ] **AR-M1-T1**: `unit/feature-0002-agent-core/src/scripts/agent_runtime_schema.sql`
-  신규 작성 — 6 테이블 DDL
-  - `core_conversations` (id BIGINT identity, account_id, started_at, ...)
-  - `core_messages` (id, conversation_id FK, role, content TEXT/JSON, ...)
-  - `kv` (id, conversation_id, key, value JSON, ...)
-  - `messages` (id, run_id, role, content, ...)
-  - `steps` (id, run_id, step_no, tool, args JSON, ...)
-  - `summary` (id, conversation_id, summary TEXT, ...)
-- [ ] **AR-M1-T2**: 각 테이블의 인덱스 (conversation_id / run_id / updated_at)
-- [ ] **AR-M1-T3**: `modules/memory.py` 의 `_ensure_pg_schema()` 확장 또는 별
-  `_ensure_runtime_pg_schema()` — 본 plan 의 M2 진입 시 자동 적용
-- [ ] **AR-M1-T4**: ADR-0026 신규 — Postgres `agent_runtime` schema 분리
-  결정 (vs 별 DB / public schema 대안 비교)
-- [ ] **AR-M1-T5**: **outside-voice review** (DDL + RBAC = §18.8 + 사용자 메모
-  `feedback_outside_voice_for_rbac.md`)
-- [ ] **AR-M1-T6**: bin/agent-runtime-schema-compare.sh 신규 (kb-schema-compare 패턴 답습)
+- [x] **AR-M1-T1**: `unit/feature-0002-agent-core/src/scripts/agent_runtime_schema.sql`
+  신규 작성 — 6 테이블 DDL (core_conversations / core_messages / kv / messages / steps / summary). Postgres 직접 apply 완료.
+- [x] **AR-M1-T2**: 각 테이블의 인덱스 (conversation_id / run_id / updated_at) — DDL에 포함 완료.
+- [x] **AR-M1-T3**: schema 적용 방식: `bin/agent-runtime-bootstrap.sh --apply-schema` 또는 `docker exec` 직접 apply — AR-M1에서 직접 apply 완료. `_ensure_runtime_pg_schema()` 자동 적용은 AR-M2-a에서 결정.
+- [x] **AR-M1-T4**: ADR-0027 신규 — Postgres `agent_runtime` schema 분리 결정 (kv FK 의도적 생략 / meta_json jsonb / search_path 전역 변경 없음 / Alternatives 검토). Note: ADR-0026은 이미 존재(LLM gateway), ADR-0027 사용.
+- [x] **AR-M1-T5**: **outside-voice review** — backend+qa subagent (REV-20260527-0003) Verdict PASS. Critical 2 (C1 kv FK 주석 / C2 meta_json jsonb) 반영.
+- [x] **AR-M1-T6**: `bin/agent-runtime-schema-compare.sh` 신규 (~120 LOC) — 6 테이블 MySQL↔Postgres 컬럼 정합 비교, PASS 확인.
 
 #### AR-M2: dual-write (Major §12.3, multi-sub-cycle)
 
@@ -287,7 +278,7 @@ Phase 1~3 완료 후만 진입 가능. agent_memory DB 가 비어 있어야 함.
 ```
 - 2026-05-27 AR-M-1 완료 — commit c2308dc, PR #95 (merge 67a853b), baseline: artifacts/shared/agent-runtime-baseline-2026-05-27.json (총 2676 row), service smoke: read-only 측정 (production stack 무변경)
 - 2026-05-27 AR-M0 완료 — commit <hash>, PR #<n>, agent_kb.agent_runtime schema CREATE + role USAGE grant (has_schema_privilege rw/ro=t), docs/SECURITY.md §10
-- 2026-MM-DD AR-M1 완료 — commit <hash>, PR #<n>, outside-voice REV-<id>
+- 2026-05-27 AR-M1 완료 — commit <hash>, PR #<n>, outside-voice REV-20260527-0003 (backend+qa PASS). 산출: agent_runtime_schema.sql + ADR-0027 + agent-runtime-schema-compare.sh PASS. 설계 결정: kv FK 의도적 생략(__global__ sentinel) / meta_json jsonb / search_path 전역 변경 없음.
 - ...
 ```
 

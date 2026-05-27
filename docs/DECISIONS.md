@@ -510,3 +510,28 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
 
 본 addendum 후 SECURITY.md §6.1 의 false-claim ("gateway 컨테이너 env 에만
 주입") 이 실 구성과 정합 — least privilege 강제 보장.
+
+## ADR-0027
+- Status: accepted (TASK-0112, AR-M1 cycle, 2026-05-27)
+- Date: 2026-05-27
+- Context: TASK-0109 `docs/MIGRATION_AGENT_MEMORY_TO_PG.md` Phase 2 AR plan 의 M1 phase. MySQL `agent_memory` DB 의 6 agent runtime 테이블 (AgentCoreConversations / AgentCoreMessages / AgentMemoryKv / AgentMemoryMessages / AgentMemorySteps / AgentMemorySummary) 을 PostgreSQL `agent_kb.agent_runtime` schema 로 이관하기 위해 DDL 정본 및 RBAC grant 결정이 필요하다. AR-M0 (TASK-0111) 에서 `agent_runtime` schema 와 role grant (USAGE + DEFAULT PRIVILEGES on `agent_kb_rw` / `agent_kb_ro`) 가 기설정됨. 본 ADR 은 M1 의 테이블 구조 설계 결정을 명문화한다. outside-voice review (backend+qa subagent, `REV-20260527-0003`) Verdict PASS — Critical 2건 (C1 kv FK 생략 명시화, C2 meta_json jsonb 전환) 반영 후 apply.
+- Decision: **6 테이블 DDL 설계 정책**:
+  - **스키마**: 모든 테이블을 `agent_runtime` schema 에 생성 (search_path 전역 변경 없음 — schema-qualified SQL 강제). AR-M2+ 의 dual-write SQL 에서 `agent_runtime.core_conversations` 등 명시 필수.
+  - **PK 전략**: conversation_id varchar(128) PRIMARY KEY (core_conversations, summary) — UUID 스타일 string, MySQL 원본 그대로 유지. bigint GENERATED ALWAYS AS IDENTITY (core_messages, messages, steps) — MySQL AUTO_INCREMENT 대체, ALWAYS 정책 (override 금지). 복합 PK (conversation_id, key) (kv) — MySQL 원본과 동일.
+  - **타입 변환**: `varchar(N) COLLATE utf8mb4_*` → `varchar(N)` (Postgres default UTF-8), `longtext` → `text`, `timestamp(3) ON UPDATE CURRENT_TIMESTAMP` → `timestamptz + BEFORE UPDATE trigger`, `json` → `jsonb`.
+  - **FK 정책**: core_messages, messages, steps, summary 4 테이블에 `CONSTRAINT fk_* FOREIGN KEY (conversation_id) REFERENCES agent_runtime.core_conversations (conversation_id) ON DELETE CASCADE` 명시. **kv 테이블은 FK 의도적 생략** — `conversation_id='__global__'` sentinel (cross-conversation KV; baseline 측정 기준 1588건) 이 core_conversations 에 미존재하므로 FK 적용 시 전체 INSERT 실패. application-level validation 으로 대체 (MySQL 원본 정책 유지). 이 결정을 SQL 파일 주석 및 본 ADR 에 명시하여 향후 reviewer 의 "oversight인지 intentional인지" 혼동 차단.
+  - **meta_json 타입**: `agent_runtime.messages.meta_json` 는 `jsonb` (outside-voice C2 반영 — MySQL AgentMemoryMessages.MetaJson 의 내용이 JSON 구조이며, Postgres jsonb 사용 시 `->` / `@>` 연산자 및 압축 이점 확보; AR-M3 backfill 시 JSON 유효성 검증 게이트 추가 예정).
+  - **RBAC grant**: `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA agent_runtime TO agent_kb_rw` + `GRANT SELECT ON ALL TABLES IN SCHEMA agent_runtime TO agent_kb_ro` + `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA agent_runtime TO agent_kb_rw`. 신규 role 신설 없음 — ADR-0021 의 기존 2-layer hybrid (agent_kb_rw / agent_kb_ro) 재사용.
+  - **인덱스 전략**: owner_account_id, product_id, updated_at (core_conversations), (conversation_id, id) (core_messages), updated_at (kv), (conversation_id, created_at DESC) (messages), (conversation_id, created_at DESC) + (conversation_id, run_id) (steps). `steps.(conversation_id, run_id, step_index)` 복합 인덱스는 N3 (nice-to-have) — AR-M2+ 실 query pattern 확인 후 추가.
+- Consequences:
+  - **AR-M2 dual-write 진입 전**: `bin/agent-runtime-schema-compare.sh` PASS 확인 필수. 6 테이블 × 컬럼 정합 검증 (MySQL 원본 PascalCase ↔ Postgres snake_case norm 비교).
+  - **AR-M3 backfill**: kv 테이블의 `__global__` 행 (1588건) 을 FK 없이 삽입 — 정상. messages.meta_json 의 jsonb 전환 시 MySQL 측 non-JSON 값이 있으면 CAST 실패 → backfill 에 JSON 유효성 pre-check 게이트 추가 (본 ADR 의 의도적 설계 결과).
+  - **search_path 전역 변경 없음** — `_pg_connect()` 및 `_pg_connect_ro()` 의 conninfo 에 `search_path` 파라미터 추가 금지. AR-M2 SQL 작성자는 `agent_runtime.table_name` 형식으로 명시.
+  - **superuser vs rw role**: AR-M0 의 `agent_runtime` schema CREATE 는 superuser (`postgres`) 로 실행. AR-M1 DDL apply 도 superuser. AR-M2+ 의 DML (INSERT/UPDATE/DELETE) 은 `agent_kb_rw` role 로 전환 — `_pg_connect()` 의 `AGENT_KB_PG_USER=agent_kb_rw` 설정 기준.
+- Alternatives 검토 후 폐기:
+  - **kv 에 FK 추가 + __global__ 별 table 분리**: `__global__` scope 를 별도 `agent_runtime.kv_global` 테이블로 분리하면 FK 적용 가능. 폐기 사유 — callsite 54건 (feature-0002) + 105건 (feature-0003) 의 `agent_memory_kv` 접근이 모두 단일 table 가정. 분리 시 AR-M2 dual-write callsite 전수 수정 + AR-M3 backfill 분리 필요 → scope 폭증. MVP 불필요 복잡도.
+  - **search_path global 설정**: `ALTER DATABASE agent_kb SET search_path = agent_runtime, public`. 폐기 사유 — agent_kb 에는 agent_runtime schema 외에 pgvector 관련 public 테이블 (fact_entries 등) 이 공존. global search_path 변경 시 KB 5 정본 테이블 접근 SQL 이 `agent_runtime` 안에서 해석되어 "table not found" 오류 유발 가능성.
+- 후속 액션:
+  - **AR-M2-a** (다음 cycle): `modules/runtime_backend.py` 신규 — Postgres write path. dual-write entry 추가.
+  - **AR-M3**: backfill ETL 에 messages.meta_json JSON 유효성 pre-check 게이트 추가 (본 ADR 결정 사항).
+  - **AR-M4 cutover 전**: `bin/agent-runtime-schema-compare.sh` 를 `bin/agent-runtime-cutover-readiness.sh` 의 게이트 항목으로 포함 (예정).
