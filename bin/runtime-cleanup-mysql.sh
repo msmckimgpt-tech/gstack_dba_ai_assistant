@@ -216,13 +216,19 @@ if [ "$MODE" = "backup" ] || [ "$MODE" = "drop" ]; then
     exit 1
   fi
   # M-3: backtick-anchored pattern (`table`) to avoid substring matches.
+  # case-insensitive — Linux MySQL lower_case_table_names=1 으로 소문자 저장.
+  # 파이프 대신 임시 파일: grep -q early-exit → gunzip SIGPIPE(141) → pipefail false-negative 회피.
+  _VERIFY_TMP=$(mktemp /tmp/runtime-m5-verify.XXXXXX)
+  gunzip -c "$BACKUP_FILE" > "$_VERIFY_TMP"
   for tbl in "${TABLES[@]}"; do
-    if ! gunzip -c "$BACKUP_FILE" | grep -Eq "CREATE TABLE \`${tbl}\`"; then
+    if ! grep -Eqi "CREATE TABLE \`${tbl}\`" "$_VERIFY_TMP"; then
       echo "ERROR: backup 에 ${tbl} CREATE TABLE 누락 — restore 불가" >&2
+      rm -f "$_VERIFY_TMP"
       rm -rf "$BACKUP_DIR"
       exit 1
     fi
   done
+  rm -f "$_VERIFY_TMP"
 
   # SHA256 sidecar.
   BACKUP_SHA256="${BACKUP_FILE}.sha256"
