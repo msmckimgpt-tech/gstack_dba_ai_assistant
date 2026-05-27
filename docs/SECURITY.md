@@ -269,3 +269,32 @@ REQ-20260519-0001 — 모든 admin mutation + user 4 high-signal action (`/api/a
 - `slow_query_log` (별 cycle 분리, Codex C1 lock-in) — DB-only retention / RBAC 정합 안 됨 → **ADR-0020 (2026-05-20) 에서 Decoupled 채택** (`docs/DECISIONS.md` ADR-0020). 주 근거 = **raw SQL text PII 차단** (PasswordHash/Token/API key/임시 비밀번호/raw LLM prompt 가 SQL statement literal 로 들어가는 위험). slow_query_log 는 WebAuditEvents 와 통합 안 함. 운영 성능 관측 = `performance_schema` / `sys` digest views (1차) + slow_query_log incident 기반 enable (2차). raw SQL = 민감 로그로 간주, admin UI / ChangeJson 에 복제 금지.
 
 본 정책 정본은 본 §9. dispatcher / builder / endpoint 정합은 [`unit/feature-0003-agent-web-ui/docs/FUNCTION.md`](../unit/feature-0003-agent-web-ui/docs/FUNCTION.md) AC-0159~AC-0189.
+
+## 10. agent_runtime Postgres schema RBAC (AR-M0, 2026-05-27)
+
+Phase 2 AR-M0 cycle 에서 `agent_kb` DB 안에 `agent_runtime` schema 신설. 기존 `agent_kb_rw` / `agent_kb_ro` role 을 재사용하고 새 schema 에 USAGE 부여.
+
+### 10.1 schema 설계 원칙
+
+- `agent_kb` DB 안 별도 schema 분리 (`agent_runtime`) — public schema 와 KB schema 오염 방지.
+- DDL 은 superuser (`postgres`) 전용 — `agent_kb_rw` 는 DML 전용 (SELECT/INSERT/UPDATE/DELETE).
+- schema-qualified SQL (`agent_runtime.core_conversations` 등) 로 명시 참조 — `search_path` 전역 변경 없음.
+
+### 10.2 role 권한 (AR-M0 신설)
+
+| Role | agent_runtime schema | 상세 |
+|---|---|---|
+| `agent_kb_rw` | USAGE + DEFAULT ALL TABLES | AR-M2 dual-write 부터 runtime INSERT/UPDATE. DEFAULT PRIVILEGES 설정으로 이후 생성 테이블에 자동 grant. |
+| `agent_kb_ro` | USAGE + DEFAULT SELECT | read-only audit / debug 용. |
+| `postgres` (superuser) | ALL | DDL (CREATE TABLE/INDEX) 전용. |
+
+### 10.3 운영 절차
+
+- `bin/agent-runtime-bootstrap.sh` — schema CREATE + role grant + 멱등. AR-M1 DDL 전에 1회 실행.
+- AR-M1 DDL (6 runtime 테이블 CREATE) 후: `GRANT ALL ON ALL TABLES IN SCHEMA agent_runtime TO agent_kb_rw;` + `GRANT SELECT ON ALL TABLES IN SCHEMA agent_runtime TO agent_kb_ro;` 추가 실행 (AR-M1 bootstrap.sh 확장 예정).
+- outside-voice review (REV-20260527-0002 SKIPPED) — AR-M0 는 기존 role 재사용 + schema 신설만. 신규 role 신설 없음. AR-M1 (DDL + RBAC) 에서 outside-voice 필수 (`feedback_outside_voice_for_rbac.md` 정합).
+
+### 10.4 ADR 참조
+
+- ADR-0021 (`docs/DECISIONS.md`) — KB Postgres role 분리 결정 (agent_kb_rw/ro 원조 정의).
+- ADR-0026 (AR-M1 cycle 예정) — agent_runtime schema 분리 결정.

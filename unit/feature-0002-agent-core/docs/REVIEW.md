@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260527-0002 [SKIPPED:infra-schema-only-no-new-role]
+- Related TASK: TASK-0111 (REQ-20260527-AR-M0, **Minor §12.3** — Phase 2 AR-M0 Postgres 인프라)
+- Reason: 본 cycle 은 기존 `agent_kb_rw` / `agent_kb_ro` role 재사용 + `agent_runtime` schema CREATE 만. 신규 Postgres role 신설 없음, 신규 RBAC PERMISSION_DEFINITIONS 항목 없음, production Python code path 변경 없음. 사용자 메모 `feedback_outside_voice_for_rbac.md` (RBAC catalog 변경 시 outside-voice 강제) 정합 — 본 cycle 은 catalog 변경 0건 (schema CREATE 는 Postgres infrastructure 레벨, PERMISSION_DEFINITIONS 변경 아님). AGENTS.md §18.8 dispatch: (a) "DDL" — schema 1개 CREATE 만, table DDL 없음. (b) "RBAC" — catalog 변경 없음. (c) code change — production Python code 0건. 본 KB M0 cycle 패턴 답습 (`REV-20260520-0004 [SKIPPED:outside-voice-not-required — M0 인프라 도입 cycle]`). 다음 cycle (AR-M1 DDL+RBAC — 6 runtime 테이블 CREATE + ADR-0026 + GRANT TABLE 권한) 진입 시 outside-voice 호출 필수.
+- Timestamp: 2026-05-27T11:30:00Z
+
 ## REV-20260527-0001 [SKIPPED:read-only-baseline-no-code-no-rbac-no-schema]
 - Related TASK: TASK-0110 (REQ-20260527-AR-M-1, **Minor §12.3** — Phase 2 AR-M-1 runtime baseline 측정)
 - Reason: 본 cycle 은 `bin/agent-runtime-measure-baseline.sh` 신규 (read-only bash script — docker exec + mysql SELECT 만) + docs append 만. 실 code mutation 0건, RBAC catalog 변경 0건, schema mutation 0건, endpoint contract 변경 0건. 사용자 메모 `feedback_outside_voice_for_rbac.md` (RBAC 변경 시 outside-voice 강제) 정합 — 본 cycle 은 적용 trigger 외. AGENTS.md §18.8 dispatch 표 매칭: (a) schema/migration — 본 cycle 의 실 변경은 docs + read-only script 만, schema mutation 0건. (b) RBAC/auth — RBAC role 변경 0건. (c) code change — 0건 (bash read-only script 는 production path 외). 다음 cycle (AR-M0 Postgres schema CREATE + agent-runtime-bootstrap.sh, AR-M1 DDL+RBAC) 진입 시 outside-voice 호출 필수 (§18.8 trigger — DDL + RBAC 변경).
