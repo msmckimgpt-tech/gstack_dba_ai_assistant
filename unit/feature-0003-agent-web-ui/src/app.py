@@ -2291,6 +2291,26 @@ def _last_step_at_for_run(conn, conversation_id: str, run_id: str) -> datetime |
     """주어진 run 의 최근 step CreatedAt 을 datetime 으로 반환. 실패/없음 시 None."""
     if not conversation_id or not run_id:
         return None
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT MAX(created_at) FROM agent_runtime.steps"
+                    " WHERE conversation_id = %s AND run_id = %s",
+                    (conversation_id, run_id),
+                )
+                row = pgcur.fetchone()
+            pg.close()
+        except Exception:
+            return None
+        if not row or row[0] is None:
+            return None
+        raw = row[0]
+        if isinstance(raw, datetime):
+            return raw.replace(tzinfo=None)
+        return _parse_kv_timestamp(str(raw))
     try:
         cur = conn.cursor()
         cur.execute(
