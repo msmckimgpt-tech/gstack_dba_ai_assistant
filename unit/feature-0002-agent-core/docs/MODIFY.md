@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260527-0120
+- Date: 2026-05-27
+- TASK-Cycle: TASK-0120, **Minor §12.3** — reasoning fallback 노출 차단
+- Summary: `agent_core.py` 가 최종 답변 `content` 공백 시 `reasoning` / `reasoning_content` 를 사용자 답변으로 fallback 하던 경로를 제거했다. 내부 추론은 공개하지 않고, 공개 가능한 한국어 Markdown 답변 재요청으로 전환한다.
+- Files:
+  - `unit/feature-0002-agent-core/src/agent_core.py`: reasoning fallback 제거 + empty content 재요청 경로 보강.
+  - `unit/feature-0002-agent-core/docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`: REQ/TASK/CHG/REV/REPORT 기록.
+
 ## CHG-20260527-AR-M5
 - Date: 2026-05-27
 - TASK-Cycle: TASK-0119, **Major §12.3** — MySQL agent_runtime 6 테이블 cleanup (outside-voice 필수)

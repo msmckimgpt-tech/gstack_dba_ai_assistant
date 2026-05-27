@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260527-0120 [SKIPPED:Minor security hardening — single-file fallback removal]
+- Date: 2026-05-27
+- Cycle: TASK-0120 (reasoning fallback 노출 차단), **Minor §12.3**
+- Verdict: PASS
+- Reason: 단일 `agent_core.py` 변경으로 provider-private `reasoning` / `reasoning_content` 를 사용자 답변으로 내보내던 fallback 만 제거. RBAC, DB schema, audit, endpoint, tool 권한 변경 없음.
+- Security note: "thinking 과정 출력" 요구는 raw chain-of-thought 노출이 아니라 공개 가능한 step trace (`work`, `reason`, `result_summary`) 로 처리해야 한다.
+
 ## REV-20260527-0009 [SUBAGENT:general-purpose — AR-M5 MySQL cleanup script review]
 - Date: 2026-05-27
 - Cycle: TASK-0119 (AR-M5 MySQL runtime tables cleanup), **Major §12.3** — data-loss boundary
