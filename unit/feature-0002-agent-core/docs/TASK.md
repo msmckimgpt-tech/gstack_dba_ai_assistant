@@ -696,3 +696,6 @@ TASK-0015 (plan-review):
 - [x] PLAN-APPROVED 마커 부여 (ms.mckim.gpt@gmail.com on 2026-05-20)
 - [x] verify-completion PASS (10/10 checks)
 - [x] commit `6ac2288` + push + main ff-merge + worktree cleanup
+
+### AR-M4-read — PgRuntimeBackend read 메서드 구현 (2026-05-27)
+- [x] `PgRuntimeBackend` 에 10개 read 메서드 추가 — SQL 상수 이미 정의됨 (CHG-20260527-AR-M4-read): load_kv / load_kv_all / load_kv_by_key / load_kv_by_key_value / load_summary / load_messages / load_steps / list_conversations / load_core_messages / get_conv_messages_full. MySQL fallback 제거로 인해 `agent_memory.agentmemorykv` 없음 오류 해소.

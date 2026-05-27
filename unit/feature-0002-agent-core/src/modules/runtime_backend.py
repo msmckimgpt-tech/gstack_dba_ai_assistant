@@ -352,6 +352,61 @@ class PgRuntimeBackend:
                 "summary": summary,
             })
 
+    # ── M4 read methods ──────────────────────────────────────────────────────
+
+    def load_kv(self, conn: Any, *, conversation_id: str, key: str) -> str:
+        with conn.cursor() as cur:
+            cur.execute(_PG_LOAD_KV, {"conversation_id": conversation_id, "key": key})
+            row = cur.fetchone()
+        return str(row[0]) if row and row[0] is not None else ""
+
+    def load_kv_all(self, conn: Any, *, conversation_id: str) -> list:
+        with conn.cursor() as cur:
+            cur.execute(_PG_LOAD_KV_ALL, {"conversation_id": conversation_id})
+            return cur.fetchall() or []
+
+    def load_kv_by_key(self, conn: Any, *, key: str) -> list:
+        with conn.cursor() as cur:
+            cur.execute(_PG_LOAD_KV_BY_KEY, {"key": key})
+            return cur.fetchall() or []
+
+    def load_kv_by_key_value(self, conn: Any, *, key: str, value: str) -> list:
+        with conn.cursor() as cur:
+            cur.execute(_PG_LOAD_KV_BY_KEY_VALUE, {"key": key, "value": value})
+            rows = cur.fetchall() or []
+        return [str(r[0]) for r in rows if r and r[0]]
+
+    def load_summary(self, conn: Any, *, conversation_id: str) -> Optional[str]:
+        with conn.cursor() as cur:
+            cur.execute(_PG_LOAD_SUMMARY, {"conversation_id": conversation_id})
+            row = cur.fetchone()
+        return str(row[0]) if row and row[0] is not None else None
+
+    def load_messages(self, conn: Any, *, conversation_id: str, limit: int) -> list:
+        with conn.cursor() as cur:
+            cur.execute(_PG_LOAD_MESSAGES, {"conversation_id": conversation_id, "limit": limit})
+            return cur.fetchall() or []
+
+    def load_steps(self, conn: Any, *, conversation_id: str, limit: int) -> list:
+        with conn.cursor() as cur:
+            cur.execute(_PG_LOAD_STEPS, {"conversation_id": conversation_id, "limit": limit})
+            return cur.fetchall() or []
+
+    def list_conversations(self, conn: Any, *, limit: int) -> list:
+        with conn.cursor() as cur:
+            cur.execute(_PG_LIST_CONVERSATIONS, {"limit": limit})
+            return cur.fetchall() or []
+
+    def load_core_messages(self, conn: Any, *, conversation_id: str, limit: int) -> list:
+        with conn.cursor() as cur:
+            cur.execute(_PG_LOAD_CORE_MESSAGES, {"conversation_id": conversation_id, "limit": limit})
+            return cur.fetchall() or []
+
+    def get_conv_messages_full(self, conn: Any, *, conversation_id: str, limit: int) -> list:
+        with conn.cursor() as cur:
+            cur.execute(_PG_GET_CONV_MESSAGES_FULL, {"conversation_id": conversation_id, "limit": limit})
+            return cur.fetchall() or []
+
 # Module-level singleton (thread-safe lazy init, kb_backend.py 패턴 답습).
 # ─────────────────────────────────────────────────────────────────────────────
 

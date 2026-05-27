@@ -313,3 +313,7 @@ source_of_truth: true
   - AC-AR-M2-a-1: `modules/runtime_backend.py` 존재 — RuntimeBackend ABC (6 abstract method), MysqlRuntimeBackend, PgRuntimeBackend, _dual_write_runtime_mirror.
   - AC-AR-M2-a-2: `tests/test_anchor_invariant_runtime.py` PASS (10 tests) — 6 시나리오 카탈로그 + skeleton 구조 검증.
   - AC-AR-M2-a-3: AGENT_RUNTIME_DUAL_WRITE=0 (default) — 기존 MySQL write callsite 무영향.
+
+- REQ-20260527-AR-M4-read (hotfix, **Minor §12.3** — read 메서드 누락 보완): PgRuntimeBackend read 메서드 구현.
+  - AC-AR-M4-read-1: `PgRuntimeBackend` 에 10개 read 메서드 구현 — load_kv / load_kv_all / load_kv_by_key / load_kv_by_key_value / load_summary / load_messages / load_steps / list_conversations / load_core_messages / get_conv_messages_full. `_read_runtime_pg()` dispatcher 가 `getattr(backend, method_name, None)` 로 호출 — 메서드 누락 시 None 반환 → MySQL fallback 경로 진입 버그 해소.
+  - AC-AR-M4-read-2: `AGENT_RUNTIME_READ_BACKEND=postgres` 환경에서 `list_delete_requested_conversation_ids()` 가 MySQL `agentmemorykv` 쿼리 없이 PG `agent_runtime.kv` 에서 정상 반환.

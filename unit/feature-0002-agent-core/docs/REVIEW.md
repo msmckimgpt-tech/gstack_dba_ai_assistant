@@ -567,3 +567,9 @@ source_of_truth: true
 - Date: 2026-05-27
 - Cycle: TASK-0113 (AR-M2-a ABC + skeleton)
 - Reason: 신규 파일 추가만 (runtime_backend.py + test_anchor_invariant_runtime.py). 기존 caller (memory.py / agent_core.py) 수정 0건. AGENT_RUNTIME_DUAL_WRITE 기본값 False — runtime write path 무변경. RBAC 변경 0건. outside-voice 불필요 조건 충족.
+
+## REV-20260527-0005 [SKIPPED:pattern-match-sql-constants-already-reviewed]
+- Date: 2026-05-27
+- Cycle: AR-M4-read (CHG-20260527-AR-M4-read)
+- Reason: read 메서드 10개 추가. SQL 상수는 기존 M4 절(lines 134~210)에 이미 정의·검토됨. 메서드 본체는 단순 `with conn.cursor() as cur: cur.execute(SQL_CONST, params); return cur.fetchall()` 패턴 — write 메서드와 동일 구조. RBAC 변경 0건. Caller (memory.py / agent_core.py) 수정 0건 (기존 PG guard가 None fallback으로 MySQL 경로 진입하던 것을 이제 정상 PG 경로로 처리). outside-voice 불필요 조건 충족.
+- Risk: low — write 메서드 무변경. PG read 실패 시 기존 `_read_runtime_pg` except 가 None 반환 → caller 의 MySQL fallback 진행 (graceful degradation 보존).

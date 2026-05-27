@@ -544,3 +544,16 @@ source_of_truth: true
 - Summary: Phase 2 AR-M2-a: RuntimeBackend ABC + skeleton + dual-write mirror entry point + test catalog
 - Files: unit/feature-0002-agent-core/src/modules/runtime_backend.py (신규), unit/feature-0002-agent-core/tests/test_anchor_invariant_runtime.py (신규), unit/feature-0002-agent-core/docs/TASK.md, unit/feature-0002-agent-core/docs/MODIFY.md, unit/feature-0002-agent-core/docs/REVIEW.md, unit/feature-0002-agent-core/docs/REPORT.md, unit/feature-0002-agent-core/docs/FUNCTION.md
 - Notes: 비파괴 신규 파일 추가. AGENT_RUNTIME_DUAL_WRITE 기본값 False — 기존 MySQL callsite 무영향. MysqlRuntimeBackend / PgRuntimeBackend 모두 NotImplementedError skeleton (M2-b에서 구현 예정). outside-voice 생략 (RBAC 무변경, code mutation 0건, caller 수정 0건).
+
+## CHG-20260527-AR-M4-read
+- Date: 2026-05-27
+- Related Requirement: AR-M4-read — PgRuntimeBackend read 메서드 구현 (MySQL fallback 오류 해소)
+- Summary: `PgRuntimeBackend` 에 10개 read 메서드 추가. SQL 상수(`_PG_LOAD_KV` 등)는 이미 M4 절에 정의되어 있었으나 메서드 구현 누락. `_read_runtime_pg()` 가 `method is None` 경로로 None 반환 → MySQL fallback → `agentmemorykv` 없음 오류(1146) 연쇄. 메서드 구현으로 PG 경로 정상화.
+- Files:
+  - feature-0002-agent-core/src/modules/runtime_backend.py (PgRuntimeBackend 에 read 메서드 10개 추가)
+- Notes:
+  - 추가 메서드: load_kv / load_kv_all / load_kv_by_key / load_kv_by_key_value / load_summary / load_messages / load_steps / list_conversations / load_core_messages / get_conv_messages_full.
+  - 기존 write 메서드 (save_*) 무변경. SQL 상수 (lines 134~210) 그대로 재사용.
+  - `load_summary()` : None 반환 시 caller `load_memory_context()` 가 MySQL fallback 으로 진입했던 경로 → 이제 `""` 아닌 `None` (row 없음)을 정상 반환 (MySQL parity).
+  - web + insight-worker 재빌드 필요.
+- Rollback: PgRuntimeBackend 의 read 메서드 10개 제거 (write 메서드 영향 없음).
