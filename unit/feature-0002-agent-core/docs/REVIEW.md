@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260527-0008 [SUBAGENT:general-purpose — AR-M4 cutover read path review]
+- Date: 2026-05-27
+- Cycle: TASK-0118 (AR-M4 cutover read path), **Major §12.3**
+- Outside-voice channel: general-purpose subagent (독립 컨텍스트 검토).
+- Verdict: **NEEDS-FIX** → 수정 후 **PASS**
+- Critical 2건 (C1/C2) 반영 완료:
+  - C1: `_PG_LIST_CONVERSATIONS` 에 single-tenant 의도 주석 추가 (web UI multi-tenant 경로는 별도 cycle 명시).
+  - C2: `list_delete_requested_conversation_ids` PG 경로를 `load_kv_by_key_value(value="1")` 에서 `load_kv_by_key` + client-side `_is_truthy_flag` 필터로 수정 — "true"/"yes" 값 포함하여 MySQL 패리티 완전 일치.
+- Major 2건 (M1/M2) 반영 완료:
+  - M1: `load_memory_context` PG partial failure 시 `logger.warning` 추가 — summary/msgs/kv None 여부 출력.
+  - M2: `load_memory_context` happy path + partial failure fallthrough + list_delete_requested truthy values 3개 테스트 추가 (총 27 test).
+- Minor 3건: m1 (메시지 순서 ordering 테스트 없음), m2 (tool_calls/content 동시 존재 주석), m3 (module-level env var 재로딩 문서화) — non-blocking, 다음 cycle 이슈 트래킹.
+
 ## REV-20260527-0007 [SKIPPED:Minor §12.3 — 신규 파일만, caller 수정 0건, RBAC 무변경]
 - Date: 2026-05-27
 - Cycle: TASK-0117 (AR-M3 backfill ETL)

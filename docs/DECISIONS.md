@@ -535,3 +535,21 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
   - **AR-M2-a** (다음 cycle): `modules/runtime_backend.py` 신규 — Postgres write path. dual-write entry 추가.
   - **AR-M3**: backfill ETL 에 messages.meta_json JSON 유효성 pre-check 게이트 추가 (본 ADR 결정 사항).
   - **AR-M4 cutover 전**: `bin/agent-runtime-schema-compare.sh` 를 `bin/agent-runtime-cutover-readiness.sh` 의 게이트 항목으로 포함 (예정).
+
+### ADR-0027 Addendum — AR-M4 read path cutover 결정 (2026-05-27)
+- Status: accepted (TASK-0118, AR-M4 cycle, 2026-05-27)
+- Context: AR-M4 (cutover read path) 에서 PG read path 활성화 설계를 결정한다. 6 runtime 테이블 write 는 AR-M2 dual-write 가 완료됨. M3 backfill 은 `bin/runtime-backfill.sh` 로 데이터 동기화. M4 에서 read 를 Postgres 로 전환하는 cutover 결정이 필요.
+- Decision: **fail-soft read path cutover 패턴**:
+  - **env-driven cutover**: `AGENT_RUNTIME_READ_BACKEND=postgres` (default: `"mysql"`) 로 read 전환. `.env` 한 줄 변경으로 활성화/비활성화 가능.
+  - **fail-soft dispatcher**: `_read_runtime_pg(method_name, **kwargs)` — PG 연결 실패, method 미존재, exception 발생 시 모두 `None` 반환. caller 가 None 수신 시 MySQL fallback path 진행.
+  - **read-only role 사용**: `_pg_connect_ro()` 우선. 미설정 시 `_pg_connect()` fallback. AR-M5 cleanup 전 read 전용 role 분리 권장 (ADR-0021 §3 2-layer 정책).
+  - **JSONB 역직렬화 처리**: psycopg3 JSONB 컬럼은 Python 객체 자동 파싱. `core_messages.tool_calls` 는 PG read 후 `json.dumps()` 로 재직렬화하여 `_normalize_history_rows/_parse_saved_tool_calls` 균일 처리 (MySQL 경로와 동일 코드).
+  - **범위**: memory.py (7 read 함수) + agent_core.py (3 함수: `_load_conversation_messages`, `list_all_conversations`, `get_conversation_messages`) + `runtime_backend.py` (`PgRuntimeBackend` 9 read method + dispatcher).
+  - **web UI app.py 제외**: feature-0003 `_list_conversations` 는 MySQL `Accounts` 테이블과 cross-DB JOIN 의존 (PG 미이관 테이블). PG-only read 불가 → 별도 sub-cycle (AR-M4b 또는 Phase 3) 책임. 현재 cutover 활성화 시에도 web 경로는 MySQL fallback 유지.
+- Consequences:
+  - **cutover gate**: `bin/runtime-cutover-readiness.sh` 7 gate PASS 필수 (특히 Gate 2 row count 일치, Gate 4 unit test PASS).
+  - **canary 기간**: `AGENT_RUNTIME_READ_BACKEND=postgres` 활성 후 최소 7일 agent loop + insight worker 정상 확인 후 AR-M5 진입 결정.
+  - **web UI 제한**: app.py `_list_conversations` 는 MySQL 유지. Phase 3 (18 web\* 테이블 분리) 진입 시점에 전환.
+- Alternatives 검토 후 폐기:
+  - **read-after-write 보장 단일 connection**: PG write + read 를 같은 connection 트랜잭션 내 처리 — MySQL dual-write 구조와 근본적으로 충돌. AR-M5 cleanup 후 MySQL 제거 시점에서 단일 PG transaction 가능.
+  - **web UI app.py 동시 전환**: cross-DB JOIN (AgentCoreConversations + Accounts) 을 Python 단에서 분리 조회 + merge 로 전환 — RBAC 로직, 검색, cursor pagination 전체 재구현 필요. scope 폭증, 별도 cycle 지정.

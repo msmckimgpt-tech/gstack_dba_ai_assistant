@@ -74,6 +74,11 @@ AGENT_RUNTIME_AUDIT_ENABLED: bool = _env_bool("AGENT_RUNTIME_AUDIT_ENABLED", Fal
 # M2-d: thread-local pg_branch storage (kb_backend.py _pg_op_local 패턴 답습)
 _rt_pg_op_local: threading.local = threading.local()
 
+# M4: read backend 선택 ("mysql" default, "postgres" = cutover 활성)
+AGENT_RUNTIME_READ_BACKEND: str = (
+    os.environ.get("AGENT_RUNTIME_READ_BACKEND", "mysql").strip() or "mysql"
+).lower()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Postgres SQL constants (agent_runtime schema-qualified, ADR-0027)
@@ -135,6 +140,84 @@ ON CONFLICT (conversation_id) DO UPDATE SET
     summary    = EXCLUDED.summary,
     updated_at = now()
 RETURNING conversation_id, (xmax = 0) AS pg_inserted
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M4: Postgres read SQL (agent_runtime schema-qualified, ADR-0027)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PG_LOAD_KV = """
+SELECT value FROM agent_runtime.kv
+WHERE conversation_id = %(conversation_id)s AND key = %(key)s
+LIMIT 1
+"""
+
+_PG_LOAD_KV_ALL = """
+SELECT key, value FROM agent_runtime.kv
+WHERE conversation_id = %(conversation_id)s
+"""
+
+_PG_LOAD_KV_BY_KEY_VALUE = """
+SELECT DISTINCT conversation_id FROM agent_runtime.kv
+WHERE key = %(key)s AND value = %(value)s
+"""
+
+_PG_LOAD_KV_BY_KEY = """
+SELECT conversation_id, value FROM agent_runtime.kv
+WHERE key = %(key)s
+"""
+
+_PG_LOAD_SUMMARY = """
+SELECT summary FROM agent_runtime.summary
+WHERE conversation_id = %(conversation_id)s
+LIMIT 1
+"""
+
+_PG_LOAD_MESSAGES = """
+SELECT role, content, meta_json, created_at
+FROM agent_runtime.messages
+WHERE conversation_id = %(conversation_id)s
+ORDER BY created_at DESC
+LIMIT %(limit)s
+"""
+
+_PG_LOAD_STEPS = """
+SELECT
+    step_index, action, tool, intent,
+    work_text, work_source, reason_text, reason_source,
+    args_json, sql_text, result_summary_json, error_text,
+    run_id, created_at
+FROM agent_runtime.steps
+WHERE conversation_id = %(conversation_id)s
+ORDER BY created_at DESC
+LIMIT %(limit)s
+"""
+
+_PG_LOAD_CORE_MESSAGES = """
+SELECT role, content, tool_calls, tool_call_id, name
+FROM agent_runtime.core_messages
+WHERE conversation_id = %(conversation_id)s
+ORDER BY id ASC
+LIMIT %(limit)s
+"""
+
+_PG_LIST_CONVERSATIONS = """
+SELECT conversation_id, COALESCE(topic, '(미설정)') AS topic, created_at
+FROM agent_runtime.core_conversations
+ORDER BY created_at DESC
+LIMIT %(limit)s
+"""
+# No owner_account_id filter — intentional parity with MySQL list_conversations which
+# also returns all conversations without per-owner scoping (single-tenant CLI context).
+# Multi-tenant web UI _list_conversations (feature-0003 app.py) is a separate code path
+# with its own RBAC; it is NOT migrated in AR-M4 due to cross-DB JOIN dependency.
+
+_PG_GET_CONV_MESSAGES_FULL = """
+SELECT id, role, content, tool_calls, tool_call_id, name, created_at
+FROM agent_runtime.core_messages
+WHERE conversation_id = %(conversation_id)s
+ORDER BY id ASC
+LIMIT %(limit)s
 """
 
 
@@ -456,6 +539,85 @@ class PgRuntimeBackend(RuntimeBackend):
             "summary": summary,
         })
 
+    # ──────────────────── M4 read methods (non-abstract) ────────────────────
+
+    def load_kv(self, conn: Any, *, conversation_id: str, key: str) -> str:
+        with conn.cursor() as cur:
+            cur.execute(_PG_LOAD_KV, {"conversation_id": conversation_id, "key": key})
+            row = cur.fetchone()
+        return str(row[0]) if row else ""
+
+    def load_kv_all(self, conn: Any, *, conversation_id: str) -> list:
+        with conn.cursor() as cur:
+            cur.execute(_PG_LOAD_KV_ALL, {"conversation_id": conversation_id})
+            return list(cur.fetchall() or [])
+
+    def load_kv_by_key_value(self, conn: Any, *, key: str, value: str) -> list:
+        """conversation_id 목록 — kv WHERE key=key AND value=value (exact match)."""
+        with conn.cursor() as cur:
+            cur.execute(_PG_LOAD_KV_BY_KEY_VALUE, {"key": key, "value": value})
+            rows = cur.fetchall() or []
+        return [str(row[0]) for row in rows if row and row[0]]
+
+    def load_kv_by_key(self, conn: Any, *, key: str) -> list:
+        """(conversation_id, value) tuple list — kv WHERE key=key.
+
+        Caller is responsible for value filtering (e.g. truthy flag check) to match MySQL semantics.
+        """
+        with conn.cursor() as cur:
+            cur.execute(_PG_LOAD_KV_BY_KEY, {"key": key})
+            rows = cur.fetchall() or []
+        return [(str(row[0]), str(row[1] or "")) for row in rows if row and row[0]]
+
+    def load_summary(self, conn: Any, *, conversation_id: str) -> Optional[str]:
+        with conn.cursor() as cur:
+            cur.execute(_PG_LOAD_SUMMARY, {"conversation_id": conversation_id})
+            row = cur.fetchone()
+        return str(row[0]) if row else None
+
+    def load_messages(self, conn: Any, *, conversation_id: str, limit: int) -> list:
+        """(role, content, meta_json, created_at) tuple list (DESC order from PG, reversed by caller)."""
+        with conn.cursor() as cur:
+            cur.execute(_PG_LOAD_MESSAGES, {"conversation_id": conversation_id, "limit": limit})
+            return list(cur.fetchall() or [])
+
+    def load_steps(self, conn: Any, *, conversation_id: str, limit: int) -> list:
+        """(step_index, action, tool, intent, ..., run_id, created_at) tuple list (DESC from PG)."""
+        with conn.cursor() as cur:
+            cur.execute(_PG_LOAD_STEPS, {"conversation_id": conversation_id, "limit": limit})
+            return list(cur.fetchall() or [])
+
+    def load_core_messages(self, conn: Any, *, conversation_id: str, limit: int) -> list:
+        """(role, content, tool_calls, tool_call_id, name) tuple list (ASC order)."""
+        with conn.cursor() as cur:
+            cur.execute(_PG_LOAD_CORE_MESSAGES, {"conversation_id": conversation_id, "limit": limit})
+            return list(cur.fetchall() or [])
+
+    def get_conv_messages_full(self, conn: Any, *, conversation_id: str, limit: int) -> list:
+        """(id, role, content, tool_calls, tool_call_id, name, created_at) — Web UI format."""
+        with conn.cursor() as cur:
+            cur.execute(_PG_GET_CONV_MESSAGES_FULL, {"conversation_id": conversation_id, "limit": limit})
+            return list(cur.fetchall() or [])
+
+    def list_conversations(self, conn: Any, *, limit: int) -> list:
+        """(conversation_id, topic, created_at) tuple list (DESC by created_at).
+
+        PG 의 created_at 는 timestamptz 오브젝트 — caller 가 isoformat() 으로 변환.
+        MySQL 의 created_at 는 kv.Value string — 둘 다 ISO 8601 문자열 반환으로 정규화.
+        """
+        with conn.cursor() as cur:
+            cur.execute(_PG_LIST_CONVERSATIONS, {"limit": limit})
+            rows = cur.fetchall() or []
+        result = []
+        for row in rows:
+            conv_id = row[0]
+            topic = row[1]
+            created_at = row[2]
+            if hasattr(created_at, "isoformat"):
+                created_at = created_at.isoformat()
+            result.append((conv_id, topic, created_at))
+        return result
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Module-level singleton (thread-safe lazy init, kb_backend.py 패턴 답습).
@@ -479,7 +641,7 @@ def _get_pg_runtime_backend() -> PgRuntimeBackend:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _get_pg_runtime_conn():
-    """매 호출마다 Postgres connection open. process-level pool 은 M3+ cycle 책임."""
+    """매 호출마다 Postgres connection open (RW). process-level pool 은 M3+ cycle 책임."""
     from .db import _pg_available, _pg_connect
     if not _pg_available():
         return None
@@ -489,6 +651,24 @@ def _get_pg_runtime_conn():
         if AGENT_RUNTIME_PG_REQUIRED:
             raise
         logger.warning("runtime_backend: pg connection failed: %s", exc)
+        return None
+
+
+def _get_pg_runtime_conn_ro():
+    """매 호출마다 Postgres read-only connection open (agent_kb_ro role, M4).
+
+    _pg_connect_ro() 미설정 시 _pg_connect() fallback (같은 패턴: KB M4 _pg_connect_ro).
+    """
+    from .db import _pg_available, _pg_connect_ro, _pg_connect
+    if not _pg_available():
+        return None
+    try:
+        try:
+            return _pg_connect_ro()
+        except Exception:
+            return _pg_connect()
+    except Exception as exc:
+        logger.warning("runtime_backend: pg RO connection failed: %s", exc)
         return None
 
 
@@ -553,6 +733,53 @@ def _dual_write_runtime_mirror(method_name: str, **kwargs) -> None:
                 method_name=method_name, kwargs=kwargs,
                 result=result, pg_branch=pg_branch,
             )
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M4: PG read dispatcher — memory.py / agent_core.py 가 호출.
+# AGENT_RUNTIME_READ_BACKEND != "postgres" 이면 None 반환 (caller 가 MySQL fallback).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _read_runtime_pg(method_name: str, **kwargs):
+    """PgRuntimeBackend read method 호출. fail-soft — exception 시 None 반환.
+
+    caller pattern (memory.py / agent_core.py):
+        if AGENT_RUNTIME_READ_BACKEND == "postgres":
+            result = _read_runtime_pg("load_kv", conversation_id=cid, key=k)
+            if result is not None:
+                return result
+        # MySQL fallback path...
+    """
+    if AGENT_RUNTIME_READ_BACKEND != "postgres":
+        return None
+
+    conn = _get_pg_runtime_conn_ro()
+    if conn is None:
+        return None
+
+    backend = _get_pg_runtime_backend()
+    method = getattr(backend, method_name, None)
+    if method is None:
+        logger.error("_read_runtime_pg: unknown method %s", method_name)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return None
+
+    try:
+        return method(conn, **kwargs)
+    except Exception as exc:
+        logger.warning(
+            "runtime_read_pg_fallback: method=%s error=%s",
+            method_name, str(exc)[:200],
+        )
+        return None
     finally:
         try:
             conn.close()
