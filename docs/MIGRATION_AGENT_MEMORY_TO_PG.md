@@ -165,16 +165,15 @@ worktree + 별 PR.
 
 ##### AR-M2-c: cross-DB audit + SLA
 
-- [ ] **AR-M2-c-T1**: `_log_runtime_write_audit()` helper (KbBackend 답습)
-- [ ] **AR-M2-c-T2**: `bin/runtime-dual-write-verify.sh` 신규 (count diff +
-  content hash + audit SLA)
-- [ ] **AR-M2-c-T3**: `bin/runtime-dual-write-stress.sh` 신규
-- [ ] **AR-M2-c-T4**: outside-voice review
+- [x] **AR-M2-c-T1**: `_log_runtime_write_audit()` helper (KbBackend 답습) — `_RT_AUDIT_ACTION_MAP` 6 method + sensitive key 필터 + 16KB cap + best-effort `connect_with_retry(attempts=1)` + pg_branch ChangeJson 포함.
+- [x] **AR-M2-c-T2**: `bin/runtime-dual-write-verify.sh` 신규 (~155 LOC, --counts/--audit-sla/--all 3 mode). SINCE auto-load + ISO 8601 timezone 허용. 검증 PASS.
+- [x] **AR-M2-c-T3**: `bin/runtime-dual-write-stress.sh` 신규 (~80 LOC, 5 scenario × N iterations, --dry-run).
+- [x] **AR-M2-c-T4**: outside-voice review (general-purpose, REV-20260527-0006) Verdict PASS.
 
 ##### AR-M2-d: instrumentation + tagging
 
-- [ ] **AR-M2-d-T1**: pg_branch xmax tagging (KB 패턴 답습)
-- [ ] **AR-M2-d-T2**: metrics counter + latency histogram
+- [x] **AR-M2-d-T1**: pg_branch xmax tagging (KB 패턴 답습) — `_execute_upsert_with_branch()` + `RETURNING (xmax = 0) AS pg_inserted` + `_rt_pg_op_local` thread-local. 3 upsert method 적용.
+- [ ] **AR-M2-d-T2**: metrics counter + latency histogram — AR-M3 이후 (현재 scope 외).
 
 #### AR-M3: backfill ETL (Minor §12.3, 데이터 이전)
 
@@ -278,6 +277,7 @@ Phase 1~3 완료 후만 진입 가능. agent_memory DB 가 비어 있어야 함.
 - 2026-05-27 AR-M1 완료 — commit d2d2915, PR #97, outside-voice REV-20260527-0003 (backend+qa PASS). 산출: agent_runtime_schema.sql + ADR-0027 + agent-runtime-schema-compare.sh PASS. 설계 결정: kv FK 의도적 생략(__global__ sentinel) / meta_json jsonb / search_path 전역 변경 없음.
 - 2026-05-27 AR-M2-a 완료 — commit (AR-M2-b worktree 연속), PR #98. 산출: modules/runtime_backend.py 신규 (RuntimeBackend ABC + skeleton + _dual_write_runtime_mirror no-op) + test_anchor_invariant_runtime.py 10 test. outside-voice SKIPPED (비파괴 신규 파일만).
 - 2026-05-27 AR-M2-b 완료 — commit 5360c70 (merge), PR #99, outside-voice REV-20260527-0005 (general-purpose NEEDS-FIX → tool_calls::jsonb 반영). 산출: PgRuntimeBackend 6 method body + _dual_write_runtime_mirror connection 내부화 + memory.py 4 callsite + agent_core.py 3 callsite + test_dual_write_runtime.py 13 test. pytest 23/23 PASS (runtime) + 82/82 PASS (전체). 다음: AR-M2-c.
+- 2026-05-27 AR-M2-c/d 완료 — commit TBD, PR TBD, outside-voice REV-20260527-0006 (general-purpose PASS). 산출: _log_runtime_write_audit + xmax pg_branch tagging (_execute_upsert_with_branch) + bin/runtime-dual-write-verify.sh + bin/runtime-dual-write-stress.sh. pytest 82/82 PASS. verify.sh --counts PASS. 다음: AR-M3 backfill ETL.
 ```
 
 ## 8. 참조

@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260527-0006 [SUBAGENT:general-purpose — AR-M2-c/d audit + xmax review]
+- Date: 2026-05-27
+- TASK-Cycle: TASK-0115 (AR-M2-c) + TASK-0116 (AR-M2-d), **Minor §12.3**
+- Outside-voice channel: general-purpose subagent (독립 컨텍스트 검토).
+- Verdict: **PASS** (minor note 3개, non-blocking — Note 3 반영 완료)
+  - Audit helper: `_RT_AUDIT_ACTION_MAP` 6 method + sensitive key 필터 + 16KB cap + best-effort connect + pg_branch opt + AGENT_RUNTIME_AUDIT_ENABLED opt-in — PASS.
+  - xmax tagging: `_execute_upsert_with_branch()` + thread-local clear + 3 upsert 사용 + 3 insert pg_branch=None — PASS.
+  - verify script: timestamp 컬럼 매핑 + ISO 8601 timezone + audit SLA 0.1% threshold — PASS.
+- Timestamp: 2026-05-27T15:00:00Z
+
 ## REV-20260527-0005 [SUBAGENT:general-purpose — AR-M2-b dual-write 구현 review]
 - Date: 2026-05-27
 - TASK-Cycle: TASK-0114 (REQ-20260527-AR-M2-b, **Major §12.3** — PgRuntimeBackend 구현 + caller mirror callsite 추가)
