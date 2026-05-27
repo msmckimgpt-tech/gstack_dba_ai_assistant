@@ -573,3 +573,8 @@ source_of_truth: true
 - Cycle: AR-M4-read (CHG-20260527-AR-M4-read)
 - Reason: read 메서드 10개 추가. SQL 상수는 기존 M4 절(lines 134~210)에 이미 정의·검토됨. 메서드 본체는 단순 `with conn.cursor() as cur: cur.execute(SQL_CONST, params); return cur.fetchall()` 패턴 — write 메서드와 동일 구조. RBAC 변경 0건. Caller (memory.py / agent_core.py) 수정 0건 (기존 PG guard가 None fallback으로 MySQL 경로 진입하던 것을 이제 정상 PG 경로로 처리). outside-voice 불필요 조건 충족.
 - Risk: low — write 메서드 무변경. PG read 실패 시 기존 `_read_runtime_pg` except 가 None 반환 → caller 의 MySQL fallback 진행 (graceful degradation 보존).
+
+## REV-20260527-0010 [SKIPPED:bug-fix-only-no-rbac-no-new-feature]
+- Date: 2026-05-27
+- Cycle: TASK-0120 (풀 테스트 + 버그 제거)
+- Reason: 버그 수정 전용 cycle — RBAC 변경 0건, 새 기능 0건, 기존 테스트 명세 구현. 모든 수정은 기존 테스트(test_dual_write_mirror.py / test_anchor_invariant_runtime.py / test_dual_write_runtime.py / test_runtime_read_backend.py / test_kb_backfill.py / test_m5_cleanup.py)가 요구하는 동작을 채우는 것에 한정. outside-voice 불필요 조건 충족 (코드 mutation이 새로운 위험을 도입하지 않음).

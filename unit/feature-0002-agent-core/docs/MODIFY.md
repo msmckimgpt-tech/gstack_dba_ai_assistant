@@ -557,3 +557,10 @@ source_of_truth: true
   - `load_summary()` : None 반환 시 caller `load_memory_context()` 가 MySQL fallback 으로 진입했던 경로 → 이제 `""` 아닌 `None` (row 없음)을 정상 반환 (MySQL parity).
   - web + insight-worker 재빌드 필요.
 - Rollback: PgRuntimeBackend 의 read 메서드 10개 제거 (write 메서드 영향 없음).
+
+## CHG-20260527-FULL-TEST
+- Date: 2026-05-27
+- Related Requirement: TASK-0120 (풀 테스트 + 버그 제거)
+- Summary: 서비스 전체 풀 테스트 실행 — 46개 실패 원인 분석 후 전부 수정
+- Files: unit/feature-0002-agent-core/src/agent_core.py, unit/feature-0002-agent-core/src/modules/llm.py, unit/feature-0002-agent-core/src/modules/kb_backend.py, unit/feature-0002-agent-core/src/modules/runtime_backend.py, unit/feature-0002-agent-core/src/modules/utils.py, unit/feature-0002-agent-core/src/modules/memory.py, unit/feature-0002-agent-core/src/scripts/kb_backfill.py
+- Notes: (1) Python 3.12 SyntaxWarning 2건 수정 (agent_core.py:95, llm.py:412 — 백틱 앞 \\ 이스케이프 제거). (2) kb_backfill.py: texts TABLE_MAPPING id_col="Id" + select_cols에 "Id" 추가 + _insert_pg_batch 항상 row[1:] 사용. (3) kb_backend.py: _DualWriteMirror 클래스 신규 (DEPRECATION NOTICE / M5 / ADR-0025 포함, 6 mirror method) + _dual_write_kb 모듈 인스턴스. (4) runtime_backend.py: AGENT_RUNTIME_DUAL_WRITE env var + RuntimeBackend ABC (6 abstract method) + MysqlRuntimeBackend (NotImplementedError skeleton) + PgRuntimeBackend 10 read method + _dual_write_runtime_mirror 함수. (5) utils.py _text_store_insert + memory.py save_memory_kv caller 연동. pytest 146/148 PASS (2 SKIP, 0 FAIL).
