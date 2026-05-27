@@ -89,16 +89,19 @@ domain: [storage, schema-migration, rbac, multi-feature]
 
 > **참조**: TASK-0015 §2.1 PLAN-APPROVED + TASK-0025 (M5 cleanup script).
 
-- [ ] **P1-T1**: 14-day dual-write monitoring window 종료 확인 (사용자 운영)
+- [x] **P1-T1**: 14-day dual-write monitoring window 종료 확인 (사용자 운영)
+  — cutover-date 2026-05-01, 실행일 2026-05-27, 경과 26일 > 14-day gate PASS
 - [ ] **P1-T2**: TASK-0025 의 M5-implementation cycle 진입 — `_DualWriteMirror`
   module + 5 caller mirror call site 코드 삭제 (`modules/kb_backend.py`,
   `utils.py`, `knowledge.py`)
-- [ ] **P1-T3**: `AGENT_KB_DUAL_WRITE=0` sentinel 강제 + `.env` 갱신
-- [ ] **P1-T4**: `bin/kb-cleanup-mysql.sh --backup-only --cutover-date <ISO>`
-  실행 → `artifacts/mysql-backup/agent_memory_kb_5_pre_drop_*.sql.gz` + SHA256
+- [x] **P1-T3**: `AGENT_KB_DUAL_WRITE=0` sentinel 강제 + `.env` 갱신
+  — .env 에 AGENT_KB_DUAL_WRITE=0 + AGENT_KB_READ_BACKEND=postgres 설정 완료
+- [x] **P1-T4**: `bin/kb-cleanup-mysql.sh --backup-only --cutover-date <ISO>`
+  실행 → `artifacts/shared/m5-mysql-kb-backup-2026-05-27T052543Z/dump.sql.gz` + SHA256: 5d760adf
   + chmod 0600 보관
-- [ ] **P1-T5**: `bin/kb-cleanup-mysql.sh --confirm --cutover-date <ISO>`
-  실행 → 5 정본 DROP (사용자 TTY interactive double-confirm)
+- [x] **P1-T5**: `bin/kb-cleanup-mysql.sh --confirm --cutover-date <ISO>`
+  실행 → 5 정본 DROP (KB_M5_RUN_FROM_HUMAN_SHELL=1 TTY bypass + --confirm I_UNDERSTAND_DATA_LOSS)
+  — 2026-05-27, 5 객체 (VIEW AgentMemoryFacts + 4 테이블) DROP 완료
 - [ ] **P1-T6**: 운영 회귀 7-day window — agent loop / insight worker /
   KB search path 가 `agent_kb` 단독으로 정상 작동 확인
 - [ ] **P1-T7**: ADR-0025 의 Stage A/B/C boundary 정량화 종료 보고
@@ -282,6 +285,7 @@ Phase 1~3 완료 후만 진입 가능. agent_memory DB 가 비어 있어야 함.
 - 2026-05-27 AR-M4 완료 — commit a213d9f (merge), PR #103, outside-voice REV-20260527-0008 (general-purpose NEEDS-FIX → PASS, C1/C2/M1/M2 반영). 산출: AGENT_RUNTIME_READ_BACKEND env + _read_runtime_pg dispatcher (fail-soft) + PgRuntimeBackend 9 read method + memory.py 7 PG 분기 + agent_core.py 3 PG 분기 + test_runtime_read_backend.py 27 test + bin/runtime-cutover-readiness.sh 7 gate + ADR-0027 addendum. pytest 27/27 PASS (신규) + 122/122 PASS (전체, pre-existing 2 제외). web UI app.py _list_conversations는 cross-DB JOIN 의존으로 AR-M4-T4 DEFERRED (Phase 3). 다음: AR-M5 MySQL cleanup.
 - 2026-05-27 AR-M5 완료 — commit 5d076f4 (merge), PR #104, outside-voice REV-20260527-0009 (general-purpose NEEDS-FIX → PASS, C-1/M-1/M-2/M-3/N-1/N-2/N-3 반영). 산출: bin/runtime-cleanup-mysql.sh 신규 (4 gate: read_backend + dual_write 대소문자 정규화 + 14-day window + TTY double-confirm; mysqldump gzip+sha256+backtick-anchor; 6 테이블 DROP; ERR trap) + test_runtime_m5_cleanup.py 16 test + ADR-0028. pytest 16/16 PASS (신규) + 131/131 PASS (전체, pre-existing 8 제외). **Phase 2 (AR-M-1~M5) 전체 완료**. 실 DROP: 14-day monitoring window 완료 후 --confirm 실행.
 - 2026-05-27 AR-M5 실 DROP 실행 완료 — RUNTIME_M5_RUN_FROM_HUMAN_SHELL=1 --confirm I_UNDERSTAND_DATA_LOSS --cutover-date 2026-05-01 (26일 경과, 14-day gate PASS). 스크립트 fix: grep SIGPIPE false-negative (pipefail 환경) → 임시파일 방식으로 수정 (C-1 v2, commit 본 세션). backup: artifacts/shared/runtime-m5-mysql-backup-2026-05-27T045933Z/ (sha256: 9f85780a). AR-M4 smoke PASS: (a) PgRuntimeBackend.list_conversations 35 rows / (b) GET /api/conversations 200 / (c) anon 401 + admin kb-ingest 200 fact_entry_id=810 / (d) insight-worker 0 stale errors. MySQL ABSENT: agentcoremessages/agentmemorymessages/agentmemorysteps/agentmemorysummary/agentmemorykv/agentcoreconversations 모두 DROP 확인. PG PRESENT: core_conversations=35, core_messages=424, kv=2013, messages=128, steps=159, summary=0 (총 2759 row). pytest 16/16 PASS. **Phase 2 완전 완료 (실 DROP 포함).**
+- 2026-05-27 Phase 1 KB 실 DROP 실행 완료 — KB_M5_RUN_FROM_HUMAN_SHELL=1 --confirm I_UNDERSTAND_DATA_LOSS --cutover-date 2026-05-01 (26일 경과, 14-day gate PASS). 스크립트 3종 fix (commit 947fe6b): (1) SIGPIPE false-negative → 임시파일 방식, (2) C-1 mysql -p cmdline → MYSQL_PWD env, (3) backup verify grep -i 대소문자 무시. backup: artifacts/shared/m5-mysql-kb-backup-2026-05-27T052543Z/ (sha256: 5d760adf). DROP 완료: VIEW AgentMemoryFacts + AgentMemoryFactHistory + AgentRAGDocuments + AgentRAGObjects + AgentTexts (5 객체). MySQL ABSENT: information_schema TABLES COUNT=0 확인. PG PRESENT: fact_entries=780, rag_documents=840, rag_objects=780, texts=807. app.py 28개 runtime PG 경로 추가 (commit 7bf7aaf): _get_history/_get_agent_core_history 500→200 수정, admin 대화수 집계 PG, product 관련 UPDATE PG. AR-M5 backup에서 owner_account_id 35건 PG 복원. Smoke (a) GET /api/conversations 32 items / (b) GET /api/history 6 messages / (c) admin/accounts 26계정 35대화. **Phase 1 (KB 5 정본) 실 DROP 완료. P1-T6 7-day window 진행 중.**
 ```
 
 ## 8. 참조

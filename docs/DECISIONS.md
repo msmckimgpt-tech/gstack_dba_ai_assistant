@@ -408,6 +408,18 @@ ai_read_priority: 9
   - **M5-implementation cycle (별 cycle)**: `_DualWriteMirror` module + 5 caller mirror call 삭제. outside-voice review 필수.
   - **운영 turn (사용자 책임)**: 14-day monitoring + 4 metric 무회귀 확인 + `bin/kb-cleanup-mysql.sh --backup-only` + `--confirm I_UNDERSTAND_DATA_LOSS` 실행.
 
+### ADR-0025 Addendum — Stage C 완료 (2026-05-27)
+- Status: **Stage C 완료 (2026-05-27)**
+- Context: 14-day monitoring window 만료 (cutover-date 2026-05-01, 경과 26일 > 14-day gate PASS). `KB_M5_RUN_FROM_HUMAN_SHELL=1 bin/kb-cleanup-mysql.sh --confirm I_UNDERSTAND_DATA_LOSS --cutover-date 2026-05-01` 실행. 스크립트 3종 수정 (commit 947fe6b): SIGPIPE false-negative 임시파일 방식, C-1 MYSQL_PWD env, grep -i 대소문자 무시.
+- Outcome:
+  - **backup**: artifacts/shared/m5-mysql-kb-backup-2026-05-27T052543Z/ (sha256: 5d760adf)
+  - **DROP 완료**: VIEW AgentMemoryFacts + AgentMemoryFactHistory + AgentRAGDocuments + AgentRAGObjects + AgentTexts (5 객체)
+  - **MySQL ABSENT**: information_schema TABLES COUNT=0 확인
+  - **PG PRESENT**: fact_entries=780, rag_documents=840, rag_objects=780, texts=807
+  - **app.py 28개 runtime PG 경로 추가** (commit 7bf7aaf): _get_history 500→200 수정, admin 대화수 PG, product UPDATE PG
+  - **owner_account_id 복원**: AR-M5 backup 에서 core_conversations 35건 PG 업데이트
+- 다음 단계: P1-T2 (M5-implementation cycle — `_DualWriteMirror` 코드 삭제), P1-T6 (7-day monitoring window 진행 중)
+
 ## ADR-0024
 - Status: accepted (TASK-0019, M2 cycle, 2026-05-21)
 - Date: 2026-05-21
