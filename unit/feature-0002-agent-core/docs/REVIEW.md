@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260527-0009 [SUBAGENT:general-purpose — AR-M5 MySQL cleanup script review]
+- Date: 2026-05-27
+- Cycle: TASK-0119 (AR-M5 MySQL runtime tables cleanup), **Major §12.3** — data-loss boundary
+- Outside-voice channel: general-purpose subagent (독립 컨텍스트 검토, `bin/runtime-cleanup-mysql.sh` + `docs/DECISIONS.md` ADR-0028 리뷰).
+- Verdict: **NEEDS-FIX** → 수정 후 **PASS**
+- Critical 1건 (C-1) 반영 완료:
+  - C-1: Stage 4(DROP) + Stage 5(verify) 에서 `mysql -uroot -p"$MYSQL_PW"` cmdline 비밀번호 노출 → `docker exec -e MYSQL_PWD="$MYSQL_PW"` + `mysql -uroot` 로 수정. Stage 2(mysqldump)는 이미 올바른 방식 사용 중이었음.
+- Major 3건 (M-1/M-2/M-3) 반영 완료:
+  - M-1: `AGENT_RUNTIME_DUAL_WRITE` 체크가 case-sensitive (`"1"/"true"/"yes"` 만) — `TRUE/YES/On` 등 통과. `tr '[:upper:]' '[:lower:]'` 정규화 추가 + `"on"` 값도 차단.
+  - M-2: Stage 5 실패 시 rollback hint 누락. `echo "FAIL ${tbl} 여전히 존재 — rollback: ${BACKUP_FILE} 으로 restore"` 추가. `trap ERR` 로 중단 시 backup path 항상 출력.
+  - M-3: backup CREATE TABLE grep 패턴 `"CREATE TABLE.*\`?${tbl}\`?"` 이 서브스트링 매칭 허용 + 주석행 매칭 가능성. `"CREATE TABLE \`${tbl}\`"` (backtick-anchored) 로 강화. 최소 라인 수 10 → 50 으로 상향 (빈 6-table mysqldump ~80 lines).
+- Minor 3건 (N-1/N-2/N-3) 반영 완료:
+  - N-1: FK 코멘트 수정 — MySQL 에는 FK constraint 없음, PG only. 코멘트에 명시.
+  - N-2: `MYSQL_PW` empty guard — backup/drop mode 진입 시 빈 비밀번호 early exit.
+  - N-3: non-TTY bypass (`RUNTIME_M5_RUN_FROM_HUMAN_SHELL=1`) 시 audit 로그 `[WARN] TTY bypass active` 추가.
+
 ## REV-20260527-0008 [SUBAGENT:general-purpose — AR-M4 cutover read path review]
 - Date: 2026-05-27
 - Cycle: TASK-0118 (AR-M4 cutover read path), **Major §12.3**
