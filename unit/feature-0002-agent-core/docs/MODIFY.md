@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260527-AR-M5
+- Date: 2026-05-27
+- TASK-Cycle: TASK-0119, **Major §12.3** — MySQL agent_runtime 6 테이블 cleanup (outside-voice 필수)
+- Summary: Phase 2 AR-M5 MySQL cleanup. `bin/runtime-cleanup-mysql.sh` 신규 — 4 gate (AGENT_RUNTIME_READ_BACKEND=postgres + dual-write 종료 sentinel + 14-day window + TTY double-confirm) + mysqldump backup (gzip+sha256+integrity) + 6 테이블 DROP FK 역순. ADR-0028 신규 (Stage A/B/C 3단계 정책). test_runtime_m5_cleanup.py 16 test.
+- Worktree: `ai/claude/agent-runtime/m5` (base = main HEAD a213d9f (AR-M4 merge)).
+- Files:
+  - `bin/runtime-cleanup-mysql.sh` (신규): --dry-run/--backup-only/--confirm 3 mode + 4 precondition gate + mysqldump+gzip backup + 6 테이블 DROP FK 역순 + 검증 Stage 5.
+  - `unit/feature-0002-agent-core/tests/test_runtime_m5_cleanup.py` (신규, 16 tests): script 존재/syntax/dry-run 출력/DROP 순서/confirm 거부/mode 중복/4 gate 검증/ADR-0028 문서화.
+  - `docs/DECISIONS.md` (수정): ADR-0028 신규 (Stage A/B/C 정책 + DROP 순서 + confirm string + 대안 폐기).
+
 ## CHG-20260527-AR-M4
 - Date: 2026-05-27
 - TASK-Cycle: TASK-0118, **Major §12.3** — cutover read path (outside-voice 필수)

@@ -553,3 +553,24 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
 - Alternatives 검토 후 폐기:
   - **read-after-write 보장 단일 connection**: PG write + read 를 같은 connection 트랜잭션 내 처리 — MySQL dual-write 구조와 근본적으로 충돌. AR-M5 cleanup 후 MySQL 제거 시점에서 단일 PG transaction 가능.
   - **web UI app.py 동시 전환**: cross-DB JOIN (AgentCoreConversations + Accounts) 을 Python 단에서 분리 조회 + merge 로 전환 — RBAC 로직, 검색, cursor pagination 전체 재구현 필요. scope 폭증, 별도 cycle 지정.
+
+## ADR-0028
+- Status: accepted (TASK-0119, AR-M5 cycle, 2026-05-27)
+- Context: AR-M4 cutover read path 완료 후 MySQL `agent_memory` DB 의 agent_runtime 6 테이블을 안전하게 DROP 하는 시점 · 절차 · 실패 모드를 결정해야 한다. KB M5 (ADR-0025) 와 동일한 Stage A/B/C 패턴을 runtime 도메인에 적용.
+- Decision: **Stage A/B/C 3단계 cleanup 정책**:
+  - **Stage A (dual-write 활성 — AR-M2~AR-M4 기간)**: MySQL + PG 모두 write. MySQL read 유지. rollback = PG write 비활성화만.
+  - **Stage B (read cutover 완료 — AR-M4 이후)**: MySQL write 는 dual-write 로 유지되나 read 는 PG 전용. 최소 **14일** 무회귀 monitoring 필수. MySQL 은 hot standby. 이 창에서 `bin/runtime-cutover-readiness.sh` 재실행 + agent loop / insight worker 지표 점검.
+  - **Stage C (MySQL DROP — AR-M5)**: `bin/runtime-cleanup-mysql.sh --confirm I_UNDERSTAND_DATA_LOSS --cutover-date YYYY-MM-DD` 로 mysqldump backup → 6 테이블 DROP. cutover-date 후 14일 미달 시 script 가 exit 2 로 차단. rollback = mysqldump restore (Stage C 진입 후 신규 write 는 PG only 이므로 partial restore).
+  - **DROP 순서** (FK 의존 역순): AgentCoreMessages → AgentMemoryMessages → AgentMemorySteps → AgentMemorySummary → AgentMemoryKv → AgentCoreConversations (parent).
+  - **사전 조건 gate** (script 강제): (1) `AGENT_RUNTIME_READ_BACKEND=postgres`, (2) `AGENT_RUNTIME_DUAL_WRITE≠1/true/yes`, (3) `--cutover-date` + 14-day window PASS, (4) TTY interactive double-confirm 또는 `RUNTIME_M5_RUN_FROM_HUMAN_SHELL=1`.
+  - **backup**: mysqldump `--single-transaction --routines --triggers --hex-blob --default-character-set=utf8mb4`. gzip 압축 + sha256 sidecar. chmod 0600. `gunzip -t` + line count ≥ 10 + 6 테이블 CREATE TABLE 존재 확인.
+  - **dual-write 코드 삭제**: `runtime_backend.py` 의 dual-write 경로 코드 삭제는 별 AR-M5-impl cycle 책임 — 본 ADR 의 DB 측 cleanup 이후 별도 PR.
+  - **confirm string**: `I_UNDERSTAND_DATA_LOSS` (대문자 + underscore 정확).
+- Consequences:
+  - **web UI 제한**: feature-0003 app.py `_list_conversations` 는 MySQL 유지 (Accounts cross-DB JOIN). Phase 3 이관 시점에 전환.
+  - **AR-M5-impl cycle**: cleanup 완료 후 `runtime_backend.py` dual-write 코드 + `AGENT_RUNTIME_DUAL_WRITE` env 참조 제거.
+  - **agent_memory DB 존재**: runtime 6 테이블 DROP 후에도 다른 테이블 (KB 정본 포함) 이 남아있으면 DB 자체는 유지. 완전 DB DROP 은 Phase 3 영역.
+- Alternatives 검토 후 폐기:
+  - **7-day window**: ADR-0025 의 KB M5 와 동일한 14-day window 적용. 7일은 weekend + 평일 배포 주기를 모두 포함하지 못해 폐기.
+  - **즉시 DROP (cutover 당일)**: Stage B 없이 바로 Stage C 진입 — rollback 창 없음, 고객 영향 위험. 폐기.
+  - **dual-write 코드 동시 삭제**: DB DROP + 코드 삭제를 같은 PR 에 포함 — diff 복잡도 폭증, outside-voice 2회 병렬 요구. 분리.
