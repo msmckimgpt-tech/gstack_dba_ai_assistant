@@ -9,12 +9,14 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: Phase 2 AR-M2-c/d 완료 (cycle: TASK-0115/0116) — AR-M3 (backfill ETL) 준비 중
-- Owner: AI (본 cycle: _log_runtime_write_audit + xmax pg_branch tagging + bin/runtime-dual-write-verify.sh + bin/runtime-dual-write-stress.sh)
+- State: Phase 2 AR-M3 완료 (cycle: TASK-0117) — AR-M4 (cutover read path) 준비 중
+- Owner: AI (본 cycle: scripts/runtime_backfill.py + bin/runtime-backfill.sh + test_runtime_backfill.py)
 - Priority: high
 - Last Updated: 2026-05-27
 
 ## 1.1 Current Cycle
+- [x] TASK-0117 (REQ-20260527-AR-M3, **Minor §12.3** — backfill ETL, 신규 파일만). Phase 2 AR-M3: MySQL agent_memory → Postgres agent_runtime 6 테이블 초기 backfill ETL. **본 cycle 산출 3건**: (a) `scripts/runtime_backfill.py` 신규 (~280 LOC, kb_backfill.py 패턴 답습) — `TABLE_ORDER` (FK 의존성 순서: core_conversations → core_messages → messages → steps → summary → kv) + `TABLE_MAPPING` (6 entry, id_col/offset_pk/since_col/jsonb_indices 이분법) + `_iter_mysql_rows()` (offset_pk=True→OFFSET pagination, False→Id>last_id) + `_build_insert_sql()` (jsonb_indices 기반 `%s::jsonb` cast) + `_insert_pg_batch()` (has_id→row[1:] skip, offset_pk→row 전체) + `backfill_table()` + `main()`. 멱등: upsert 테이블(conversations/kv/summary)은 ON CONFLICT DO NOTHING. append-only(core_messages/messages/steps)는 state file last_checkpoint 재개 기반. `--since AGENT_RUNTIME_DUAL_WRITE_START_TS` filter. (b) `bin/runtime-backfill.sh` 신규 — docker exec wrapper (kb-backfill.sh 패턴, `/shared` state dir). (c) `tests/test_runtime_backfill.py` 신규 (19 test) — TABLE_ORDER/MAPPING 정합 / state roundtrip / corrupted state / build_insert_sql (ON CONFLICT / jsonb cast / append-only) / _insert_pg_batch dry-run / kv full-row / core_messages id skip / steps id skip / empty rows / main smoke / single table / failure→1. **outside-voice 불요** (신규 파일만, 기존 caller 수정 0건, RBAC 무변경, write path 무변경). pytest 19/19 PASS (신규) + 101/103 PASS (전체, pre-existing 2 failure 제외). 다음 cycle: AR-M4 (cutover read path — AGENT_RUNTIME_READ_BACKEND env 분기 + PgRuntimeBackend read method).
+
 - [x] TASK-0116 (REQ-20260527-AR-M2-d, **Minor §12.3** — xmax pg_branch tagging, code mutation 비파괴). Phase 2 AR-M2-d: PgRuntimeBackend `_execute_upsert_with_branch()` 헬퍼 + UPSERT 3개 SQL에 `RETURNING (xmax = 0) AS pg_inserted` 절 추가 + `_rt_pg_op_local` thread-local pg_branch 기록. 3 upsert (save_conversation/save_kv/save_memory_summary) → `_execute_upsert_with_branch` 호출. insert 3개 (save_core_message/save_memory_message/save_memory_step) → pg_branch=None. **outside-voice 불요** (기존 caller 수정 없음, KB M2-d 답습). pytest 82/82 PASS.
 
 - [x] TASK-0115 (REQ-20260527-AR-M2-c, **Minor §12.3** — audit helper + verify/stress 스크립트, code mutation 비파괴). Phase 2 AR-M2-c: `_log_runtime_write_audit()` helper + `_build_runtime_audit_resource_id()` + `_RT_AUDIT_ACTION_MAP` + `_dual_write_runtime_mirror` 내 audit 호출 (mirror 성공 후) + `bin/runtime-dual-write-verify.sh` (~155 LOC, --counts/--audit-sla/--all 3 mode) + `bin/runtime-dual-write-stress.sh` (~80 LOC). `AGENT_RUNTIME_AUDIT_ENABLED=False` 기본값 (opt-in). 검증: verify.sh --counts PASS (PG=0 예상, dual-write 비활성). **outside-voice review (general-purpose, REV-20260527-0006) Verdict PASS (minor note 3개 non-blocking)**. pytest 82/82 PASS.

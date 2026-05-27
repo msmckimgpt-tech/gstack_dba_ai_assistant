@@ -18,6 +18,7 @@ source_of_truth: true
 - REQ-20260515-0003: 시스템 프롬프트는 `Product → Role → Account → 현재 사용자 요청` 순서로 누적 적용된다. Account scope 도 Role scope 와 동일하게 `전 Product 공통` 지침을 먼저 적용하고, Product 전용 개인 지침이 있으면 뒤에 추가한다.
 - REQ-20260522-0001: `execute_sql` 도구 실행 결과의 웹 UI 미리보기(`preview_table`)에서 셀 값이 100자로 잘리지 않아야 한다. CSV 파일이 존재하는 경우 CSV 원본 데이터에서 `preview_table` 을 구성한다.
 - REQ-20260526-0001: `memory-init` 컨테이너가 KB Postgres schema 검증 단계를 통과 (exit 0) 한다. agent_core entry point (`python /app/agent_core.py`) 에서 `__package__` 가 None 일 때도 modules import 가 정상 동작하고, `agent_kb_rw` role 이 DML 전용임을 인지해 DDL (CREATE TABLE / EXTENSION) 은 별 superuser connection (`AGENT_KB_PG_SUPERUSER*` 또는 legacy `AGENT_KB_PG_USER`/`PASSWORD` fallback) 으로만 시도한다. schema 가 누락된 상태로 검증이 silent PASS 되지 않고 actionable hint 와 함께 fail-loud 한다.
+- REQ-20260527-AR-M3: AR-M3 — MySQL agent_memory 의 6 runtime 테이블 row 를 M2 dual-write 시작 이전 시점까지 Postgres agent_runtime schema 로 일회성 backfill. `scripts/runtime_backfill.py` + `bin/runtime-backfill.sh` wrapper. FK 의존성 순서 (core_conversations 선행). upsert 테이블 ON CONFLICT DO NOTHING 멱등. append-only 테이블 state file checkpoint 재개. `--since AGENT_RUNTIME_DUAL_WRITE_START_TS` filter.
 - REQ-20260527-AR-M2-cd: AR-M2-c/d — dual-write mirror 성공 후 MySQL `webauditevents` 에 audit row INSERT (`AGENT_RUNTIME_AUDIT_ENABLED=1` 시). 6 method → `runtime.write.mirror` + `rt_*` ResourceType + composite ResourceId. 16KB ChangeJson cap. best-effort. M2-d: 3 upsert method 에서 `RETURNING (xmax = 0) AS pg_inserted` 로 pg_branch ('insert'/'update'/'noop') 기록 → audit ChangeJson 포함. `bin/runtime-dual-write-verify.sh` + `bin/runtime-dual-write-stress.sh` 검증 도구 신규.
 - REQ-20260527-AR-M2-b: agent_memory MySQL 의 6 runtime 테이블 쓰기 이벤트를 Postgres `agent_runtime` schema 에 병렬 dual-write 한다. `AGENT_RUNTIME_DUAL_WRITE=1` 환경변수 활성화 시 `memory.py` (4개 함수) + `agent_core.py` (3개 함수) 의 MySQL write 직후 `_dual_write_runtime_mirror(method_name, **kwargs)` 가 호출되어 `PgRuntimeBackend` 의 해당 method 가 Postgres 에도 동일 row 를 기록한다. `AGENT_RUNTIME_DUAL_WRITE=0` (default) 이면 no-op — 기존 MySQL callsites 무영향. `AGENT_RUNTIME_PG_REQUIRED=0` (default) 이면 PG 장애 시 non-fatal (logger.warning). `=1` 이면 fail-loud.
 - REQ-20260526-0109: agent_memory MySQL DB 의 모든 테이블 (agent\* 11개 + web\* 18개) 을 PostgreSQL 영역으로 이관 + 최종 agent_memory MySQL DB 자체 deprecation 한다. 정본 plan: `docs/MIGRATION_AGENT_MEMORY_TO_PG.md`. agent\* 11개 → `agent_kb` DB 안 새 schema `agent_runtime` 신설. 본 plan 은 4-phase multi-cycle 구조 — Phase 1 (기존 KB plan TASK-0015 의 M5 마무리) + Phase 2 (6 agent runtime 테이블 신규 cycle AR-M-1~M5) + Phase 3 (18 web\* 별 DB outline) + Phase 4 (agent_memory MySQL DB deprecation). 각 sub-phase = 별 ai/\* worktree + 별 PR + 별 verify-completion.
@@ -291,6 +292,13 @@ source_of_truth: true
   - AC-AR-M1-2: Postgres `agent_kb.agent_runtime` schema 에 6 테이블 CREATE 완료 (`pg_tables WHERE schemaname='agent_runtime'` 6 rows).
   - AC-AR-M1-3: `bin/agent-runtime-schema-compare.sh` PASS — 6 테이블 MySQL↔Postgres 컬럼 정합.
   - AC-AR-M1-4: `docs/DECISIONS.md` ADR-0027 — kv FK 의도적 생략 / meta_json jsonb / search_path 전역 변경 없음 설계 결정 명문화.
+
+- REQ-20260527-AR-M3 (TASK-0117, **Minor §12.3** — backfill ETL, 비파괴): Phase 2 AR-M3 6 테이블 MySQL→Postgres backfill ETL.
+  - AC-AR-M3-1: `scripts/runtime_backfill.py` 존재 — TABLE_ORDER (FK 순서 6 entry) + TABLE_MAPPING (id_col/offset_pk/since_col/jsonb_indices) + _iter_mysql_rows + _build_insert_sql + _insert_pg_batch + backfill_table + main.
+  - AC-AR-M3-2: `bin/runtime-backfill.sh` 존재 — docker exec wrapper, AGENT_RUNTIME_BACKFILL_STATE_DIR=/shared.
+  - AC-AR-M3-3: `tests/test_runtime_backfill.py` PASS (19 tests) — TABLE_ORDER/MAPPING 정합, state round-trip, SQL/jsonb/id-skip 검증.
+  - AC-AR-M3-4: TABLE_ORDER[0]='core_conversations' — FK 의존성 순서 보장.
+  - AC-AR-M3-5: upsert 테이블 ON CONFLICT DO NOTHING (conversations/kv/summary) + append-only 테이블 state checkpoint 재개 (core_messages/messages/steps).
 
 - REQ-20260527-AR-M2-a (TASK-0113, **Minor §12.3** — ABC + skeleton, 비파괴): Phase 2 AR-M2-a RuntimeBackend ABC + skeleton.
   - AC-AR-M2-a-1: `modules/runtime_backend.py` 존재 — RuntimeBackend ABC (6 abstract method), MysqlRuntimeBackend, PgRuntimeBackend, _dual_write_runtime_mirror.

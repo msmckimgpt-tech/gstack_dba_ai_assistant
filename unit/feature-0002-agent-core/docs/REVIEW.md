@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260527-0007 [SKIPPED:Minor §12.3 — 신규 파일만, caller 수정 0건, RBAC 무변경]
+- Date: 2026-05-27
+- Cycle: TASK-0117 (AR-M3 backfill ETL)
+- Reason: 신규 파일 추가만 (runtime_backfill.py + runtime-backfill.sh + test_runtime_backfill.py). 기존 caller (memory.py / agent_core.py / runtime_backend.py) 수정 0건. write path 무변경. RBAC 변경 0건. 실 DB 접근은 docker exec 환경에서만 발생 — 운영 read path/write path 에 영향 없음. outside-voice 불필요 조건 충족 (AGENTS.md §18.8: 신규 파일, 비파괴 추가, RBAC 무변경).
+
 ## REV-20260527-0006 [SUBAGENT:general-purpose — AR-M2-c/d audit + xmax review]
 - Date: 2026-05-27
 - TASK-Cycle: TASK-0115 (AR-M2-c) + TASK-0116 (AR-M2-d), **Minor §12.3**

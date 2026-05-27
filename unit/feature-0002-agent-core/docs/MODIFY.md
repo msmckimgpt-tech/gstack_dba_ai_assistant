@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260527-AR-M3
+- Date: 2026-05-27
+- TASK-Cycle: TASK-0117, **Minor §12.3** — backfill ETL (신규 파일만)
+- Summary: Phase 2 AR-M3 backfill ETL. `scripts/runtime_backfill.py` 신규 (~280 LOC) — TABLE_ORDER(FK 순서) + TABLE_MAPPING(6 entry, id_col/offset_pk/since_col/jsonb_indices) + _iter_mysql_rows + _build_insert_sql + _insert_pg_batch + backfill_table + main. `bin/runtime-backfill.sh` wrapper 신규. `tests/test_runtime_backfill.py` 신규 (19 test). outside-voice 생략 (신규 파일만, caller 수정 0건, RBAC 무변경). pytest 19/19 PASS (신규) + 101/103 PASS (전체, pre-existing 2 제외).
+- Worktree: `ai/claude/agent-runtime/m3` (base = main HEAD 0048c10).
+- Files:
+  - `unit/feature-0002-agent-core/src/scripts/runtime_backfill.py` (신규, ~280 LOC): 6 테이블 MySQL→Postgres backfill. TABLE_ORDER FK 순서 (core_conversations 선행). offset_pk=True→OFFSET pagination (conversations/kv/summary). id_col→Id>last_id pagination (core_messages/messages/steps). `%s::jsonb` cast (tool_calls index=3, meta_json index=3). append-only 테이블은 ON CONFLICT 없음 (state file checkpoint 재개 기반). `--since AGENT_RUNTIME_DUAL_WRITE_START_TS` filter. AGENT_RUNTIME_BACKFILL_STATE_DIR env.
+  - `bin/runtime-backfill.sh` (신규): docker exec wrapper. `python -m scripts.runtime_backfill "$@"`. state dir=/shared.
+  - `unit/feature-0002-agent-core/tests/test_runtime_backfill.py` (신규, 19 tests): TABLE_ORDER/MAPPING 정합 + state round-trip + SQL 검증 + dry-run no-op + id skip + jsonb cast 확인 + main smoke.
+  - `unit/feature-0002-agent-core/docs/{TASK,MODIFY,REVIEW,FUNCTION}.md`: TASK-0117 등록 + CHG-20260527-AR-M3 + REV-20260527-0007 + FUNCTION REQ append.
+
 ## CHG-20260527-AR-M2-cd
 - Date: 2026-05-27
 - TASK-Cycle: TASK-0115 (AR-M2-c) + TASK-0116 (AR-M2-d), **Minor §12.3** — audit helper + verify/stress scripts + xmax tagging
