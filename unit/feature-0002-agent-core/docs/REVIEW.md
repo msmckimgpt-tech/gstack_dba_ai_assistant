@@ -585,3 +585,9 @@ source_of_truth: true
 - Date: 2026-05-27
 - Cycle: TASK-0120 (풀 테스트 + 버그 제거)
 - Reason: 버그 수정 전용 cycle — RBAC 변경 0건, 새 기능 0건, 기존 테스트 명세 구현. 모든 수정은 기존 테스트(test_dual_write_mirror.py / test_anchor_invariant_runtime.py / test_dual_write_runtime.py / test_runtime_read_backend.py / test_kb_backfill.py / test_m5_cleanup.py)가 요구하는 동작을 채우는 것에 한정. outside-voice 불필요 조건 충족 (코드 mutation이 새로운 위험을 도입하지 않음).
+
+## REV-20260527-0011 [SKIPPED:bug-fix-only-no-rbac-no-new-endpoint]
+- Date: 2026-05-27
+- Cycle: TASK-0121 (delete_conversation + ask_status 500 수정)
+- Reason: PG routing 추가 전용 — 기존 동작을 MySQL 삭제된 테이블에서 PG로 이관. RBAC 변경 0건, 새 endpoint 0건, 새 기능 0건. `_pg_delete_conversation()` 은 기존 `delete_conversation()` 과 동일한 데이터를 PG에서 삭제. `_load_latest_assistant_message()` 는 동일 결과를 PG `agent_runtime.messages`에서 조회. outside-voice 불필요 조건 충족 (구조 변화 없는 backend migration).
+- Risk: low — MySQL fallback try/except 유지. PG 실패 시 MySQL fallback(테이블 없어도 try/except로 silent fail). 기능 검증: ask_status 200 + delete_conversation 200 실서비스 확인.

@@ -716,5 +716,5 @@ TASK-0015 (plan-review):
 - [x] py_compile 양 파일 구문 확인 OK
 - [x] feature-0002 pytest 146 PASS / 2 SKIP 유지 확인
 - [x] Docker 재빌드 + 재배포 (web + insight-worker)
-- [ ] 기능 검증: ask_status 200 + delete_conversation 200 확인
-- [ ] verify-completion + 커밋 + push + main ff-merge
+- [x] 기능 검증: ask_status 200 + delete_conversation 200 확인 (실서비스)
+- [x] verify-completion + 커밋 + push + main ff-merge
