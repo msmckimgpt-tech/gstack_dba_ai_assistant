@@ -3132,6 +3132,7 @@ function buildRoleProductCard({ role, product, perm, disabled, onToggle }) {
   toggleLabel.addEventListener("click", (e) => e.stopPropagation());
   const toggleInput = document.createElement("input");
   toggleInput.type = "checkbox";
+  toggleInput.value = perm.code;
   const granted = Array.isArray(role.permission_codes) && role.permission_codes.includes(perm.code);
   toggleInput.checked = granted;
   toggleInput.disabled = disabled;
