@@ -494,3 +494,8 @@ source_of_truth: true
 - Verdict: PASS (no blockers)
 - Absorbed: C1 (kv FK 의도적 생략 주석 명시화 — __global__ sentinel 로 인해 FK 적용 불가), C2 (meta_json text → jsonb), N5 (CREATE SCHEMA IF NOT EXISTS 방어 guard)
 - Deferred: C3 n/a (MySQL AgentMemoryKv에 created_at 없음 확인), N1 (agent_kb_ro SEQUENCES — 현재 currval() 사용 사례 없음), N2 (product_mode varchar 확장 — MVP scope 외), N3 (steps (run_id, step_index) 복합 인덱스 — AR-M2 query pattern 확인 후 결정, ADR-0027 후속액션 명시), N4 (summary created_at — MVP scope 외)
+
+## REV-20260527-0004 [SKIPPED:minor-abc-skeleton-no-caller-mutation-no-rbac]
+- Date: 2026-05-27
+- Cycle: TASK-0113 (AR-M2-a ABC + skeleton)
+- Reason: 신규 파일 추가만 (runtime_backend.py + test_anchor_invariant_runtime.py). 기존 caller (memory.py / agent_core.py) 수정 0건. AGENT_RUNTIME_DUAL_WRITE 기본값 False — runtime write path 무변경. RBAC 변경 0건. outside-voice 불필요 조건 충족.

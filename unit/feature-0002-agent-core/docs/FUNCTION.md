@@ -289,3 +289,8 @@ source_of_truth: true
   - AC-AR-M1-2: Postgres `agent_kb.agent_runtime` schema 에 6 테이블 CREATE 완료 (`pg_tables WHERE schemaname='agent_runtime'` 6 rows).
   - AC-AR-M1-3: `bin/agent-runtime-schema-compare.sh` PASS — 6 테이블 MySQL↔Postgres 컬럼 정합.
   - AC-AR-M1-4: `docs/DECISIONS.md` ADR-0027 — kv FK 의도적 생략 / meta_json jsonb / search_path 전역 변경 없음 설계 결정 명문화.
+
+- REQ-20260527-AR-M2-a (TASK-0113, **Minor §12.3** — ABC + skeleton, 비파괴): Phase 2 AR-M2-a RuntimeBackend ABC + skeleton.
+  - AC-AR-M2-a-1: `modules/runtime_backend.py` 존재 — RuntimeBackend ABC (6 abstract method), MysqlRuntimeBackend, PgRuntimeBackend, _dual_write_runtime_mirror.
+  - AC-AR-M2-a-2: `tests/test_anchor_invariant_runtime.py` PASS (10 tests) — 6 시나리오 카탈로그 + skeleton 구조 검증.
+  - AC-AR-M2-a-3: AGENT_RUNTIME_DUAL_WRITE=0 (default) — 기존 MySQL write callsite 무영향.
