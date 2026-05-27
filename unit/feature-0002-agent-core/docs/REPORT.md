@@ -154,3 +154,21 @@ source_of_truth: false
 - **Sprint 4 D RAG schema 확인 필요 (Blocker B-1)**: M1 cycle 진입 전 사용자 직접 확인 — 본 plan 의 `rag_documents` / `rag_objects` 와 schema 공유 가능 여부.
 - **Sprint 4 (D RAG, PGVector 도입) plan 의 schema 상세 확인** (Blocker B-1): 직전 세션의 multi-cycle plan 정본을 본 cycle 에서 확인할 수 없으므로, 본 plan 의 D-1 sequencing 최종 결정을 위해 사용자가 Sprint 4 의 D RAG schema 가 본 plan 의 `rag_documents` / `rag_objects` 와 공유 가능한지 직접 확인 필요. 공유 가능 → A (선행 + M3~M5 와 Sprint 4 병행) 확정. 별 namespace → C (Sprint 4 후행) 검토.
 - `agent_memory` 계열 일부 테이블에 대해 모델 출력이 빈 텍스트로 떨어지는 원인은 별도 프롬프트/모델 품질 과제로 분리 검토가 필요하다.
+
+---
+## Phase 2 AR-M1 완료 기록 (TASK-0112, 2026-05-27)
+
+**산출 4건 완료**:
+1. `unit/feature-0002-agent-core/src/scripts/agent_runtime_schema.sql` (신규, ~140 LOC) — 6 테이블 DDL 정본. C1(kv FK 의도적 생략 주석), C2(meta_json jsonb), N5(CREATE SCHEMA 방어 guard) outside-voice Critical 반영.
+2. Postgres `agent_kb.agent_runtime` schema DDL 직접 apply 완료 — 6 테이블 CREATE 확인 (`SELECT schemaname, tablename FROM pg_tables WHERE schemaname='agent_runtime'` 6 rows).
+3. `bin/agent-runtime-schema-compare.sh` (신규, ~120 LOC) — 6 테이블 MySQL↔Postgres 컬럼 정합 비교. PASS 확인.
+4. `docs/DECISIONS.md` ADR-0027 추가 — agent_runtime schema 설계 결정 (PK 전략 / FK 정책 / kv __global__ 의도적 생략 / meta_json jsonb / search_path 전역 변경 없음 / 인덱스 전략 / RBAC grant / Alternatives 검토).
+
+**outside-voice review**: backend+qa subagent (`REV-20260527-0003`) Verdict PASS. Critical 2 (C1/C2) + N5 본 cycle 반영. N1~N4 deferred (scope 외 또는 AR-M2+ 확인 후).
+
+**설계 결정 핵심**:
+- kv.FK 의도적 생략: `__global__` sentinel (cross-conversation KV, baseline 1588건) 로 인해 FK 적용 불가. ADR-0027에 명문화.
+- search_path 전역 변경 없음: AR-M2+ dual-write SQL은 `agent_runtime.table_name` schema-qualified 명시 필수.
+- meta_json jsonb 전환: AR-M3 backfill 시 JSON 유효성 pre-check 게이트 추가 예정 (ADR-0027 후속액션).
+
+**다음 cycle**: AR-M2-a — `modules/runtime_backend.py` 신규 (Postgres write path) + dual-write entry.

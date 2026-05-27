@@ -283,3 +283,9 @@ source_of_truth: true
 
 ## 13. Pre-approved Changes
 - 비파괴적 경로 재배치와 Docker build 경로 수정
+
+- REQ-20260527-AR-M1 (TASK-0112, **Major §12.3** — DDL + RBAC, outside-voice 필수): Phase 2 AR-M1 agent_runtime 6 테이블 DDL 정본 Postgres 적용.
+  - AC-AR-M1-1: `unit/feature-0002-agent-core/src/scripts/agent_runtime_schema.sql` 존재 — 6 테이블 (core_conversations / core_messages / kv / messages / steps / summary) DDL + GRANT. outside-voice C1/C2/N5 반영.
+  - AC-AR-M1-2: Postgres `agent_kb.agent_runtime` schema 에 6 테이블 CREATE 완료 (`pg_tables WHERE schemaname='agent_runtime'` 6 rows).
+  - AC-AR-M1-3: `bin/agent-runtime-schema-compare.sh` PASS — 6 테이블 MySQL↔Postgres 컬럼 정합.
+  - AC-AR-M1-4: `docs/DECISIONS.md` ADR-0027 — kv FK 의도적 생략 / meta_json jsonb / search_path 전역 변경 없음 설계 결정 명문화.

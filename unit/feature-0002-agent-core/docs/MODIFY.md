@@ -458,3 +458,10 @@ source_of_truth: true
 - Files: unit/feature-0002-agent-core/docs/ANCHOR.md, unit/feature-0002-agent-core/docs/TASK.md
 - Impact: feature 방향성 stable reference 확립. insight-worker 복구 순서를 바꾸려는 향후 요청은 §3과 충돌 감지 대상 (Conflict Protocol 발화).
 - Rollback Notes: ANCHOR.md 내용 revert 시 verify-completion check #6이 24h grace 만료 후 FAIL. 사용자 직접 §1-§3 재작성 필요.
+
+## CHG-20260527-AR-M1
+- Date: 2026-05-27
+- Related Requirement: TASK-0112 (REQ-20260527-AR-M1, Major §12.3 — DDL + RBAC)
+- Summary: Phase 2 AR-M1: agent_runtime 6 테이블 DDL 정본 Postgres 적용 + ADR-0027 + schema compare 검증 도구
+- Files: unit/feature-0002-agent-core/src/scripts/agent_runtime_schema.sql (신규), bin/agent-runtime-schema-compare.sh (신규), docs/DECISIONS.md (ADR-0027 추가), unit/feature-0002-agent-core/docs/TASK.md, unit/feature-0002-agent-core/docs/MODIFY.md, unit/feature-0002-agent-core/docs/REVIEW.md, unit/feature-0002-agent-core/docs/REPORT.md
+- Notes: DDL 을 Postgres `agent_kb.agent_runtime` schema 에 직접 apply (6 테이블 CREATE 완료). outside-voice review PASS (REV-20260527-0003) — C1(kv FK 의도적 생략 주석) + C2(meta_json jsonb) + N5(CREATE SCHEMA 방어 guard) 반영. kv.conversation_id='__global__' sentinel (1588건) 로 인해 FK 의도적 생략 — ADR-0027에 명문화. search_path 전역 변경 없음 — AR-M2 SQL은 schema-qualified 명시 필수.
