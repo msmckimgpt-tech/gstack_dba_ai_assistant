@@ -187,13 +187,13 @@ worktree + 별 PR.
 
 #### AR-M4: cutover read path (Major §12.3, read 전환)
 
-- [ ] **AR-M4-T1**: `AGENT_RUNTIME_READ_BACKEND=postgres` env 신설
-- [ ] **AR-M4-T2**: `modules/memory.py` 의 conversation/message/kv read 분기
-- [ ] **AR-M4-T3**: `agent_core.py` 의 conversation list / message list 분기
-- [ ] **AR-M4-T4**: `app.py` 의 `/api/conversations` / `/api/messages` 분기
-- [ ] **AR-M4-T5**: `bin/runtime-cutover-readiness.sh` (kb-cutover-readiness 패턴)
-- [ ] **AR-M4-T6**: outside-voice review
-- [ ] **AR-M4-T7**: ADR-0027 — read path cutover 결정
+- [x] **AR-M4-T1**: `AGENT_RUNTIME_READ_BACKEND=postgres` env 신설
+- [x] **AR-M4-T2**: `modules/memory.py` 의 conversation/message/kv read 분기
+- [x] **AR-M4-T3**: `agent_core.py` 의 conversation list / message list 분기
+- [ ] **AR-M4-T4**: `app.py` 의 `/api/conversations` / `/api/messages` 분기 ← DEFERRED: feature-0003 `_list_conversations` MySQL Accounts cross-DB JOIN 의존 — Phase 3 또는 AR-M4b 별도 cycle
+- [x] **AR-M4-T5**: `bin/runtime-cutover-readiness.sh` (kb-cutover-readiness 패턴)
+- [x] **AR-M4-T6**: outside-voice review (REV-20260527-0008, NEEDS-FIX→PASS)
+- [x] **AR-M4-T7**: ADR-0027 addendum — read path cutover 결정
 
 #### AR-M5: cleanup (Major §12.3, 데이터 손실 boundary)
 
@@ -279,6 +279,7 @@ Phase 1~3 완료 후만 진입 가능. agent_memory DB 가 비어 있어야 함.
 - 2026-05-27 AR-M2-b 완료 — commit 5360c70 (merge), PR #99, outside-voice REV-20260527-0005 (general-purpose NEEDS-FIX → tool_calls::jsonb 반영). 산출: PgRuntimeBackend 6 method body + _dual_write_runtime_mirror connection 내부화 + memory.py 4 callsite + agent_core.py 3 callsite + test_dual_write_runtime.py 13 test. pytest 23/23 PASS (runtime) + 82/82 PASS (전체). 다음: AR-M2-c.
 - 2026-05-27 AR-M2-c/d 완료 — commit 08b70ad (merge), PR #100, outside-voice REV-20260527-0006 (general-purpose PASS). 산출: _log_runtime_write_audit + xmax pg_branch tagging (_execute_upsert_with_branch) + bin/runtime-dual-write-verify.sh + bin/runtime-dual-write-stress.sh. pytest 82/82 PASS. verify.sh --counts PASS. 다음: AR-M3 backfill ETL.
 - 2026-05-27 AR-M3 완료 — commit 335a5b8 (merge), PR #102. 산출: scripts/runtime_backfill.py 신규 (~280 LOC, TABLE_ORDER FK 순서 + TABLE_MAPPING 6 entry + offset_pk/id_col 이분법 + jsonb cast + ON CONFLICT / state checkpoint) + bin/runtime-backfill.sh wrapper + tests/test_runtime_backfill.py 19 test. outside-voice SKIPPED (신규 파일만, caller 수정 0건, RBAC 무변경). pytest 19/19 PASS (신규) + 101/103 PASS (전체, pre-existing 2 제외). 다음: AR-M4 cutover read path.
+- 2026-05-27 AR-M4 완료 — commit a213d9f (merge), PR #103. 산출: runtime_backend.py 10 read method + _read_runtime_pg dispatcher + _get_pg_runtime_conn_ro + _PG_LOAD_KV_BY_KEY 신규 SQL + memory.py 7 read 분기 + _assemble_steps() helper + agent_core.py _assemble_core_messages() + 3 read 분기 + tests/test_runtime_read_backend.py 27 test + bin/runtime-cutover-readiness.sh 7 gate + ADR-0027 addendum. outside-voice REV-20260527-0008 NEEDS-FIX→PASS (C2 truthy fix / C1 single-tenant 문서화 / M1 warning log / M2 context test). AR-M4-T4 DEFERRED (feature-0003 _list_conversations cross-DB JOIN). pytest 27/27 PASS (신규) + 126/126 PASS (전체, pre-existing 2 제외). 다음: AR-M5 MySQL 6 table cleanup.
 ```
 
 ## 8. 참조
