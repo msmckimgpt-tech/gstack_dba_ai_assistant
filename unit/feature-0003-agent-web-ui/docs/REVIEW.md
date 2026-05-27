@@ -1545,3 +1545,16 @@ source_of_truth: true
   3. **OpenAI Files API / Anthropic Files API 통합은 별 cycle**: Sprint 4 (PDF/MD RAG) 시점에 long-context PDF 의 chunking + embedding + RAG retrieval 과 함께 Files API path 가 가능하면 그때 R-F13 lifecycle row INSERT/DELETE + reconcile_provider_files worker 활성.
 - **Risk**: 본 SKIP 결정의 risk 0 — base64 inline 의 boundary 만 D13 정합으로 cover. 향후 vision 가능 모델이 Files API 강제 또는 base64 token cost 가 prohibitive 한 경우 R-F13 활성 재검토.
 - **Cross-ref**: BRIEFING §6.2 S2.7 + R-F13 + WebConversationAttachmentProviderFiles schema (Sprint 1 Phase 2).
+
+## REV-20260527-0001 [SKIPPED:trivial-pattern-match] AR-M5-impl web hotfix — _last_step_at_for_run PG 가드
+
+- **Mode**: AGENT (pattern-match with existing `_conversation_is_processing()` guard)
+- **Subject**: `app.py` `_last_step_at_for_run()` PG 가드 추가 (CHG-20260527-0001)
+- **Scope**: 단순 guard 추가 — 기존 `_conversation_is_processing()` 과 동일한 패턴(`os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres"` → `_pg_connect()` → SQL) 의 반복 적용.
+- **Review findings**:
+  1. **패턴 일관성 확인**: `_conversation_is_processing()` 과 동일한 guard 구조 사용 — `_pg_connect()` 호출, `with pg.cursor()`, `pg.close()`, `except Exception: return None`. 패턴 drift 없음.
+  2. **tzinfo 정규화**: PG `timestamptz` 반환 시 `datetime` 은 aware (tz 포함). `datetime.utcnow()` (naive) 와 비교를 위해 `.replace(tzinfo=None)` 추가 — 기존 MySQL fallback (`datetime` aware 아님) 과 동등.
+  3. **MySQL fallback 보존**: `AGENT_RUNTIME_READ_BACKEND != postgres` 시 기존 `AgentMemorySteps` 쿼리 그대로 유지 — 런타임 분기 안전.
+  4. **PG schema 정합**: `agent_runtime.steps.created_at` (timestamptz) + index `ix_steps_conv_run` (conversation_id, run_id) 존재 확인 — 쿼리 효율 적절.
+- **Risk**: low — exception catch 가 `return None` (graceful degradation). `_compute_display_status()` 호출자가 None 처리 이미 완료.
+- **Cross-ref**: CHG-20260527-0001 / TASK-AR-M5 / AR-M5-impl.

@@ -2154,3 +2154,15 @@ source_of_truth: true
   - **codex outside-voice review SKIPPED** (사용자 결정 2026-05-22) — REV-20260522-0014 에 사유 명시.
   - Sprint 2 의 commit 분리 (rebase 후 hash): S2.1+S2.2+S2.3 backend / S2.4+S2.5+S2.6 source / S2.8 docs ship.
 - Rollback: 본 4 source 파일 + 5 docs revert. Sprint 1 산출물 (storage_minio, sandbox_*, sql_guard, attachment_reconciliation, RBAC 6, audit 10, endpoint 7) 은 보존.
+
+## CHG-20260527-0001
+- Date: 2026-05-27
+- Related Requirement: AR-M5-impl web hotfix — PG cutover MySQL 잔존 쿼리 차단 (TASK-AR-M5)
+- Summary: `_last_step_at_for_run()` 에 `AGENT_RUNTIME_READ_BACKEND=postgres` 가드 추가. PG 모드에서 MySQL `AgentMemorySteps` 직접 조회 제거 → `agent_runtime.steps` 쿼리로 대체. web 컨테이너 재빌드 시 `ensure_memory_schema()` 가 `pass` 로만 동작하여 MySQL `agent*` 테이블 재생성 차단.
+- Files:
+  - feature-0003-agent-web-ui/src/app.py (_last_step_at_for_run PG 가드 추가)
+- Notes:
+  - PG 경로: `_pg_connect()` 로 연결 → `SELECT MAX(created_at) FROM agent_runtime.steps WHERE conversation_id=%s AND run_id=%s`. tzinfo=None 정규화 (datetime.utcnow() 비교 기준 일치).
+  - MySQL fallback 유지: `AGENT_RUNTIME_READ_BACKEND != postgres` 시 기존 `AgentMemorySteps` 쿼리 동작.
+  - web 이미지 재빌드 필요: `docker compose build web && docker compose up -d web` (feature-0002 의 pass-only `ensure_memory_schema()` 가 빌드에 포함).
+- Rollback: app.py 의 본 PG 가드 블록 제거 + web 컨테이너 재빌드.
