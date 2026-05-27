@@ -1,8 +1,9 @@
 """Runtime Backend abstraction — MySQL ↔ Postgres dual-write 의 단일 진입점.
 
 TASK-0109 Phase 2 AR plan 의 M2 cycle. M2-a (TASK-0113) 에서 ABC + skeleton,
-M2-b (TASK-0114) 에서 method body + dual-write wrapper + caller 수정 (본 cycle),
-M2-c (TASK-0115) 에서 cross-DB audit + SLA 검증 도구.
+M2-b (TASK-0114) 에서 method body + dual-write wrapper + caller 수정,
+M2-c (TASK-0115) 에서 cross-DB audit + SLA 검증 도구 (본 cycle),
+M2-d (TASK-0116) 에서 xmax pg_branch tagging (본 cycle).
 
 KB backend (kb_backend.py, TASK-0019 M2-a) 패턴 답습.
 
@@ -67,6 +68,12 @@ AGENT_RUNTIME_PG_REQUIRED: bool = _env_bool("AGENT_RUNTIME_PG_REQUIRED", False)
 # M2-b: dual-write 시작 timestamp (운영 지표용, optional)
 AGENT_RUNTIME_DUAL_WRITE_START_TS: str = os.environ.get("AGENT_RUNTIME_DUAL_WRITE_START_TS", "")
 
+# M2-c: audit 활성화 여부 (기본 False — M4 cutover SLA 측정 단계에서 True)
+AGENT_RUNTIME_AUDIT_ENABLED: bool = _env_bool("AGENT_RUNTIME_AUDIT_ENABLED", False)
+
+# M2-d: thread-local pg_branch storage (kb_backend.py _pg_op_local 패턴 답습)
+_rt_pg_op_local: threading.local = threading.local()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Postgres SQL constants (agent_runtime schema-qualified, ADR-0027)
@@ -83,6 +90,7 @@ ON CONFLICT (conversation_id) DO UPDATE SET
     product_id       = COALESCE(EXCLUDED.product_id, core_conversations.product_id),
     product_mode     = COALESCE(EXCLUDED.product_mode, core_conversations.product_mode),
     updated_at       = now()
+RETURNING conversation_id, (xmax = 0) AS pg_inserted
 """
 
 _PG_INSERT_CORE_MESSAGE = """
@@ -99,6 +107,7 @@ VALUES (%(conversation_id)s, %(key)s, %(value)s)
 ON CONFLICT (conversation_id, key) DO UPDATE SET
     value      = EXCLUDED.value,
     updated_at = now()
+RETURNING conversation_id, (xmax = 0) AS pg_inserted
 """
 
 _PG_INSERT_MEMORY_MESSAGE = """
@@ -125,6 +134,7 @@ VALUES (%(conversation_id)s, %(summary)s)
 ON CONFLICT (conversation_id) DO UPDATE SET
     summary    = EXCLUDED.summary,
     updated_at = now()
+RETURNING conversation_id, (xmax = 0) AS pg_inserted
 """
 
 
@@ -295,13 +305,33 @@ class MysqlRuntimeBackend(RuntimeBackend):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class PgRuntimeBackend(RuntimeBackend):
-    """PostgreSQL agent_kb.agent_runtime write backend (M2-b: 실 구현).
+    """PostgreSQL agent_kb.agent_runtime write backend (M2-b: 실 구현, M2-d: xmax tagging).
 
     psycopg3 conn 으로 INSERT / UPSERT SQL 실행 (autocommit=True, kb_backend.py 정합).
     모든 SQL은 `agent_runtime.table_name` schema-qualified (ADR-0027, search_path 전역 변경 없음).
+
+    M2-d (TASK-0116): upsert method 가 RETURNING (xmax = 0) AS pg_inserted 를 읽어
+    `_rt_pg_op_local.last_branch` 에 'insert'/'update'/'noop' 저장.
+    `_dual_write_runtime_mirror` 가 mirror 후 이 값을 audit ChangeJson 에 포함.
     """
 
     backend_name: str = "postgres"
+
+    def _execute_upsert_with_branch(self, conn, sql: str, params: dict) -> None:
+        """UPSERT ... RETURNING (xmax = 0) AS pg_inserted 실행 + pg_branch 기록.
+
+        xmax = 0 → INSERT branch ('insert'), xmax ≠ 0 → UPDATE branch ('update').
+        RETURNING row 없으면 'noop'.
+        """
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+            if row is None:
+                _rt_pg_op_local.last_branch = "noop"
+            elif len(row) >= 2:
+                _rt_pg_op_local.last_branch = "insert" if bool(row[1]) else "update"
+            else:
+                _rt_pg_op_local.last_branch = "insert"
 
     def save_conversation(
         self,
@@ -313,14 +343,13 @@ class PgRuntimeBackend(RuntimeBackend):
         product_id: Optional[int] = None,
         product_mode: str = "pinned",
     ) -> None:
-        with conn.cursor() as cur:
-            cur.execute(_PG_UPSERT_CONVERSATION, {
-                "conversation_id": conversation_id,
-                "topic": topic,
-                "owner_account_id": owner_account_id,
-                "product_id": product_id,
-                "product_mode": product_mode or "pinned",
-            })
+        self._execute_upsert_with_branch(conn, _PG_UPSERT_CONVERSATION, {
+            "conversation_id": conversation_id,
+            "topic": topic,
+            "owner_account_id": owner_account_id,
+            "product_id": product_id,
+            "product_mode": product_mode or "pinned",
+        })
 
     def save_core_message(
         self,
@@ -355,12 +384,11 @@ class PgRuntimeBackend(RuntimeBackend):
         key: str,
         value: str,
     ) -> None:
-        with conn.cursor() as cur:
-            cur.execute(_PG_UPSERT_KV, {
-                "conversation_id": conversation_id,
-                "key": key,
-                "value": value,
-            })
+        self._execute_upsert_with_branch(conn, _PG_UPSERT_KV, {
+            "conversation_id": conversation_id,
+            "key": key,
+            "value": value,
+        })
 
     def save_memory_message(
         self,
@@ -423,11 +451,10 @@ class PgRuntimeBackend(RuntimeBackend):
         conversation_id: str,
         summary: str,
     ) -> None:
-        with conn.cursor() as cur:
-            cur.execute(_PG_UPSERT_SUMMARY, {
-                "conversation_id": conversation_id,
-                "summary": summary,
-            })
+        self._execute_upsert_with_branch(conn, _PG_UPSERT_SUMMARY, {
+            "conversation_id": conversation_id,
+            "summary": summary,
+        })
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -505,8 +532,13 @@ def _dual_write_runtime_mirror(method_name: str, **kwargs) -> None:
             pass
         return
 
+    result = None
+    pg_branch: Optional[str] = None
+    _rt_pg_op_local.last_branch = None  # M2-d: clear before each call
     try:
-        method(conn, **kwargs)
+        result = method(conn, **kwargs)
+        # M2-d: xmax pg_branch tagging — _execute_upsert_with_branch 가 기록한 last_branch.
+        pg_branch = getattr(_rt_pg_op_local, "last_branch", None)
     except Exception as exc:
         if AGENT_RUNTIME_PG_REQUIRED:
             raise
@@ -514,8 +546,115 @@ def _dual_write_runtime_mirror(method_name: str, **kwargs) -> None:
             "runtime_backend: mirror %s failed (non-fatal, AGENT_RUNTIME_PG_REQUIRED=0): %s",
             method_name, exc,
         )
+    else:
+        # M2-c: audit — mirror 성공 후 audit row INSERT (best-effort).
+        if AGENT_RUNTIME_AUDIT_ENABLED:
+            _log_runtime_write_audit(
+                method_name=method_name, kwargs=kwargs,
+                result=result, pg_branch=pg_branch,
+            )
     finally:
         try:
             conn.close()
         except Exception:
             pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M2-c: Cross-DB audit helper — kb_backend.py _log_kb_write_audit 패턴 답습.
+#
+# mirror 성공 후 MySQL `webauditevents` 에 audit row INSERT.
+# ActionCode 매핑:
+#   save_conversation    → runtime.write.mirror (resource_type=rt_conversation)
+#   save_core_message    → runtime.write.mirror (resource_type=rt_core_message)
+#   save_kv              → runtime.write.mirror (resource_type=rt_kv)
+#   save_memory_message  → runtime.write.mirror (resource_type=rt_memory_message)
+#   save_memory_step     → runtime.write.mirror (resource_type=rt_step)
+#   save_memory_summary  → runtime.write.mirror (resource_type=rt_summary)
+#
+# Best-effort: 실패 시 silent log. audit 실패 자체가 miss_rate 분자.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_RT_AUDIT_ACTION_MAP = {
+    "save_conversation":   ("runtime.write.mirror", "rt_conversation"),
+    "save_core_message":   ("runtime.write.mirror", "rt_core_message"),
+    "save_kv":             ("runtime.write.mirror", "rt_kv"),
+    "save_memory_message": ("runtime.write.mirror", "rt_memory_message"),
+    "save_memory_step":    ("runtime.write.mirror", "rt_step"),
+    "save_memory_summary": ("runtime.write.mirror", "rt_summary"),
+}
+
+_RT_AUDIT_SENSITIVE_KEYS = {"content", "summary", "value"}
+
+_CHANGE_JSON_MAX = 16384
+
+
+def _build_runtime_audit_resource_id(method_name: str, kwargs: dict) -> Optional[str]:
+    """conversation_id + key 조합으로 audit ResourceId 생성 (joinability 보장)."""
+    cid = str(kwargs.get("conversation_id") or "-")[:40]
+    if method_name == "save_kv":
+        key = str(kwargs.get("key") or "-")[:20]
+        return f"{cid}|{key}"
+    if method_name == "save_memory_step":
+        run_id = str(kwargs.get("run_id") or "-")[:20]
+        step_idx = str(kwargs.get("step_index") or "-")[:5]
+        return f"{cid}|{run_id}|{step_idx}"
+    return cid[:64]
+
+
+def _log_runtime_write_audit(
+    *, method_name: str, kwargs: dict, result: Any, pg_branch: Optional[str] = None,
+) -> None:
+    """Mirror 성공 후 MySQL `webauditevents` 에 audit row INSERT.
+
+    Best-effort — 실패 시 logger.warning (caller block 없음).
+    cross-DB tx 불가 — mirror INSERT 가 이미 commit 됐고 audit 는 별 tx.
+    """
+    import json as _json
+
+    action_code, resource_type = _RT_AUDIT_ACTION_MAP.get(
+        method_name, ("runtime.unknown.mirror", "rt_unknown")
+    )
+    resource_id = _build_runtime_audit_resource_id(method_name, kwargs)
+
+    change_payload: dict = {k: v for k, v in kwargs.items() if k not in _RT_AUDIT_SENSITIVE_KEYS}
+    if isinstance(result, int):
+        change_payload["pg_returning_id"] = result
+    change_payload["mirror_method"] = method_name
+    change_payload["pg_op_kind"] = "write"
+    if pg_branch:
+        change_payload["pg_branch"] = pg_branch
+    if AGENT_RUNTIME_DUAL_WRITE_START_TS:
+        change_payload["dual_write_start_ts"] = AGENT_RUNTIME_DUAL_WRITE_START_TS
+
+    try:
+        change_json_text = _json.dumps(change_payload, ensure_ascii=False, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        change_json_text = _json.dumps({"_serialize_error": True})
+
+    if len(change_json_text) > _CHANGE_JSON_MAX:
+        change_json_text = _json.dumps({
+            "_truncated": True,
+            "_original_len": len(change_json_text),
+            "mirror_method": method_name,
+            "pg_op_kind": "write",
+            "pg_branch": pg_branch,
+        }, ensure_ascii=False)
+
+    try:
+        from .db import connect_with_retry
+        my_conn = connect_with_retry(attempts=1)
+        cur = my_conn.cursor()
+        try:
+            cur.execute(
+                """INSERT INTO webauditevents
+                   (ActorType, ActionCode, ResourceType, ResourceId, ChangeJson)
+                   VALUES ('system', %s, %s, %s, %s)""",
+                (action_code, resource_type, resource_id, change_json_text),
+            )
+            my_conn.commit()
+        finally:
+            cur.close()
+            my_conn.close()
+    except Exception as exc:
+        logger.warning("runtime_backend: audit INSERT failed (non-fatal): %s", exc)

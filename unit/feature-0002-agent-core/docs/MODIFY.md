@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260527-AR-M2-cd
+- Date: 2026-05-27
+- TASK-Cycle: TASK-0115 (AR-M2-c) + TASK-0116 (AR-M2-d), **Minor §12.3** — audit helper + verify/stress scripts + xmax tagging
+- Summary: Phase 2 AR-M2-c/d cycle. `_log_runtime_write_audit()` + `_build_runtime_audit_resource_id()` + `_RT_AUDIT_ACTION_MAP` + `_rt_pg_op_local` thread-local + `_execute_upsert_with_branch()` (xmax pg_branch tagging) + 3 upsert SQL에 `RETURNING (xmax = 0) AS pg_inserted` 절 추가 + `bin/runtime-dual-write-verify.sh` + `bin/runtime-dual-write-stress.sh`. outside-voice review (general-purpose subagent) Verdict PASS (minor note 3개 non-blocking). pytest 82/82 PASS. verify.sh --counts PASS.
+- Worktree: `ai/claude/agent-runtime/m2cd` (base = main HEAD 5719e21).
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/runtime_backend.py` (수정): `AGENT_RUNTIME_AUDIT_ENABLED` + `_rt_pg_op_local` thread-local + `_RT_AUDIT_ACTION_MAP` + `_RT_AUDIT_SENSITIVE_KEYS` + `_CHANGE_JSON_MAX` + `_build_runtime_audit_resource_id()` + `_log_runtime_write_audit()` + `PgRuntimeBackend._execute_upsert_with_branch()` + 3 upsert SQL에 `RETURNING (xmax = 0) AS pg_inserted` 절 + `_dual_write_runtime_mirror` 내 pg_branch 수집 + audit 호출 (mirror 성공 후 `else` 절).
+  - `bin/runtime-dual-write-verify.sh` (신규, ~155 LOC): --counts/--audit-sla/--all 3 mode. 6 테이블 MySQL↔PG count 비교 + audit miss_rate SLA (≤0.1% target). ISO 8601 timezone offset 허용. SINCE auto-load from AGENT_RUNTIME_DUAL_WRITE_START_TS.
+  - `bin/runtime-dual-write-stress.sh` (신규, ~80 LOC): 5 scenario × N iterations. --dry-run mode. docker compose run.
+  - `unit/feature-0002-agent-core/docs/{TASK,MODIFY,REVIEW,FUNCTION,REPORT}.md`: TASK-0115/0116 등록 + CHG-20260527-AR-M2-cd + REV-20260527-0006 + FUNCTION REQ append.
+- 검증: pytest 82/82 PASS (pre-existing 2 제외). bash -n PASS. verify.sh --counts PASS (PG=0 정상, dual-write 비활성).
+- Outside-voice rationale: **실행** (`REV-20260527-0006 [SUBAGENT:general-purpose]`) — AR-M2-c Minor 이지만 cross-DB audit SQL (MySQL webauditevents INSERT) + 2 bash script 신규. Verdict: PASS.
+
 ## CHG-20260527-AR-M2-b
 - Date: 2026-05-27
 - TASK-Cycle: TASK-0114 (REQ-20260527-AR-M2-b, **Major §12.3** — PgRuntimeBackend 구현 + caller mirror callsite 추가)

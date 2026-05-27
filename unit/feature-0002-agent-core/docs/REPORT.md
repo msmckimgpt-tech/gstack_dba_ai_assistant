@@ -202,3 +202,16 @@ source_of_truth: false
 **pytest**: 23/23 PASS (runtime test files) + 82/82 PASS (전체 suite, pre-existing 2 failure: test_kb_backfill.py).
 
 **다음 cycle**: AR-M2-c — cross-DB audit + `bin/runtime-dual-write-verify.sh` + stress test.
+
+## Phase 2 AR-M2-c/d 완료 기록 (TASK-0115/0116, 2026-05-27)
+
+**산출 3건 완료**:
+1. `unit/feature-0002-agent-core/src/modules/runtime_backend.py` (수정, +~130 LOC) — `AGENT_RUNTIME_AUDIT_ENABLED` + `_rt_pg_op_local` thread-local + `_RT_AUDIT_ACTION_MAP` / `_RT_AUDIT_SENSITIVE_KEYS` / `_CHANGE_JSON_MAX` 상수 + `_build_runtime_audit_resource_id()` + `_log_runtime_write_audit()` + `PgRuntimeBackend._execute_upsert_with_branch()` (xmax pg_branch, M2-d) + 3 upsert SQL에 `RETURNING (xmax = 0) AS pg_inserted` + `_dual_write_runtime_mirror` 내 pg_branch 수집 + audit 호출.
+2. `bin/runtime-dual-write-verify.sh` (신규, ~155 LOC) — --counts (6 테이블 MySQL↔PG row count) / --audit-sla (miss_rate ≤0.1% SLA) / --all 3 mode. SINCE auto-load (AGENT_RUNTIME_DUAL_WRITE_START_TS). ISO 8601 timezone 허용. 검증 PASS.
+3. `bin/runtime-dual-write-stress.sh` (신규, ~80 LOC) — 5 scenario × N iterations. --dry-run mode.
+
+**outside-voice review**: general-purpose subagent (`REV-20260527-0006`) Verdict PASS (minor note 3개 non-blocking — Note 3 stress script 주석 불일치 반영 완료).
+
+**pytest**: 82/82 PASS (전체 suite, pre-existing 2 failure: test_kb_backfill.py).
+
+**다음 cycle**: AR-M3 — runtime_backfill.py ETL + bin/runtime-backfill.sh.
