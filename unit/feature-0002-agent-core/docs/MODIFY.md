@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260527-AR-M0
+- Date: 2026-05-27
+- TASK-Cycle: TASK-0111 (REQ-20260527-AR-M0, **Minor §12.3** — Postgres 인프라 도입, 비파괴 추가)
+- Summary: Phase 2 AR-M0 cycle. `agent_kb` DB 안 `agent_runtime` schema 신설 + agent_kb_rw/ro role 에 USAGE + DEFAULT PRIVILEGES grant. schema 설계 원칙: schema-qualified SQL (`agent_runtime.*`) 사용 — search_path 전역 변경 없음. 실제 적용 결과: has_schema_privilege(agent_kb_rw, agent_runtime, USAGE)=t / agent_kb_ro=t. docs/SECURITY.md §10 신규 (agent_runtime schema RBAC 정책). outside-voice 불요 (기존 role 재사용, 신규 role 신설 없음, 비파괴 추가).
+- Worktree: `ai/claude/agent-runtime/m0` (base = main HEAD 67a853b).
+- Files:
+  - `bin/agent-runtime-bootstrap.sh` (신규, ~110 LOC): agent_runtime schema CREATE IF NOT EXISTS + role USAGE grant + DEFAULT PRIVILEGES. 멱등 + --check mode. kb-pg-role-bootstrap.sh 패턴 답습.
+  - `docs/SECURITY.md`: §10 신규 — agent_runtime Postgres schema RBAC 정책.
+  - `docs/MIGRATION_AGENT_MEMORY_TO_PG.md`: §7 진행 기록 AR-M0 entry + AR-M0 task 완료 마킹.
+  - `unit/feature-0002-agent-core/docs/{TASK,MODIFY,REPORT,REVIEW}.md`: TASK-0111 등록 + CHG-20260527-AR-M0 + REPORT Summary append + REVIEW SKIPPED entry.
+- 검증: bash -n PASS + `bash bin/agent-runtime-bootstrap.sh` PASS (schema=t, rw_usage=t, ro_usage=t). code/RBAC mutation 0건 (신규 role 신설 없음).
+- Outside-voice rationale: **SKIPPED** (`REV-20260527-0002 [SKIPPED:infra-schema-only-no-new-role]`) — 기존 role 재사용 + schema CREATE 만. ARR-M1 (DDL + RBAC, outside-voice 필수) 에서 outside-voice 호출.
+
 ## CHG-20260527-AR-M-1
 - Date: 2026-05-27
 - TASK-Cycle: TASK-0110 (REQ-20260527-AR-M-1, **Minor §12.3** — read-only baseline 측정)

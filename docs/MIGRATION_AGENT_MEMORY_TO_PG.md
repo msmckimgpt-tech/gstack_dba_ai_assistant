@@ -125,14 +125,13 @@ worktree + 별 PR.
 
 #### AR-M0: Postgres 인프라 (Minor §12.3, 비파괴 추가)
 
-- [ ] **AR-M0-T1**: `agent_kb` DB 안 `agent_runtime` schema CREATE — schema
-  level grant (agent_kb_rw 에 USAGE + 추후 ALL TABLES IN SCHEMA grant)
-- [ ] **AR-M0-T2**: `bin/agent-runtime-bootstrap.sh` 신규 — schema CREATE
+- [x] **AR-M0-T1**: `agent_kb` DB 안 `agent_runtime` schema CREATE — schema
+  level grant (agent_kb_rw 에 USAGE + DEFAULT PRIVILEGES grant 완료)
+- [x] **AR-M0-T2**: `bin/agent-runtime-bootstrap.sh` 신규 — schema CREATE
   + role grant + idempotent
-- [ ] **AR-M0-T3**: `modules/db.py` 의 `_pg_connect()` 가 `search_path =
-  agent_runtime, public` 옵션 추가 검토 또는 SQL 에 schema-qualified
-  (`agent_runtime.core_conversations`) 명시 결정
-- [ ] **AR-M0-T4**: docs/SECURITY.md §RBAC 갱신 (새 schema grant 명시)
+- [x] **AR-M0-T3**: `modules/db.py` 의 `_pg_connect()` — schema-qualified SQL
+  (`agent_runtime.core_conversations` 등) 명시 결정 (search_path 전역 변경 없음)
+- [x] **AR-M0-T4**: docs/SECURITY.md §10 신규 (agent_runtime Postgres schema RBAC 정책)
 
 #### AR-M1: DDL + RBAC (Major §12.3, RBAC 동반)
 
@@ -286,8 +285,8 @@ Phase 1~3 완료 후만 진입 가능. agent_memory DB 가 비어 있어야 함.
 각 cycle 완료 시 timestamp + commit hash + PR# 기록:
 
 ```
-- 2026-05-27 AR-M-1 완료 — commit <hash>, PR #<n>, baseline: artifacts/shared/agent-runtime-baseline-2026-05-27.json (총 2676 row: Conversations 33 / Messages 392 / Kv 1987 / MemoryMessages 123 / Steps 141 / Summary 0), service smoke: read-only 측정 (production stack 무변경)
-- 2026-MM-DD AR-M0 완료 — commit <hash>, PR #<n>
+- 2026-05-27 AR-M-1 완료 — commit c2308dc, PR #95 (merge 67a853b), baseline: artifacts/shared/agent-runtime-baseline-2026-05-27.json (총 2676 row), service smoke: read-only 측정 (production stack 무변경)
+- 2026-05-27 AR-M0 완료 — commit <hash>, PR #<n>, agent_kb.agent_runtime schema CREATE + role USAGE grant (has_schema_privilege rw/ro=t), docs/SECURITY.md §10
 - 2026-MM-DD AR-M1 완료 — commit <hash>, PR #<n>, outside-voice REV-<id>
 - ...
 ```
