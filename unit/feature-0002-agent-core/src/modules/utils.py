@@ -971,6 +971,8 @@ def _text_store_insert(cur, text: str) -> str:
         )
     except Exception:
         pass
+    from .kb_backend import _dual_write_kb
+    _dual_write_kb.upsert_text(text_hash=h, text_content=t)
     return h
 
 

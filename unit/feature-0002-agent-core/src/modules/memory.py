@@ -165,17 +165,22 @@ def save_memory_message(
 
 
 def save_memory_kv(conn, conversation_id: str, key: str, value: str) -> None:
-    from .runtime_backend import _get_pg_runtime_backend, _get_pg_runtime_conn
-    pg_conn = _get_pg_runtime_conn()
-    if pg_conn:
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO AgentMemoryKV (ConversationId, `Key`, Value) VALUES (%s, %s, %s)"
+            " ON DUPLICATE KEY UPDATE Value = VALUES(Value), UpdatedAt = CURRENT_TIMESTAMP(3)",
+            (conversation_id, key, value),
+        )
+    except Exception:
+        pass
+    finally:
         try:
-            _get_pg_runtime_backend().save_kv(pg_conn,
-                conversation_id=conversation_id, key=key, value=value)
-        except Exception as _exc:
-            import logging as _log
-            _log.getLogger("agent_core.memory").warning("save_memory_kv PG write failed: %s", _exc)
-        finally:
-            pg_conn.close()
+            cur.close()
+        except Exception:
+            pass
+    from .runtime_backend import _dual_write_runtime_mirror
+    _dual_write_runtime_mirror("save_kv", conversation_id=conversation_id, key=key, value=value)
 
 
 def load_memory_kv(conn, conversation_id: str, key: str) -> str:

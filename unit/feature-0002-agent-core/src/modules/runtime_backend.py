@@ -44,6 +44,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from abc import ABC, abstractmethod
 from typing import Any, Optional
 
 logger = logging.getLogger("agent_core.runtime_backend")
@@ -67,6 +68,9 @@ AGENT_RUNTIME_PG_REQUIRED: bool = _env_bool("AGENT_RUNTIME_PG_REQUIRED", False)
 AGENT_RUNTIME_READ_BACKEND: str = (
     os.environ.get("AGENT_RUNTIME_READ_BACKEND", "mysql").strip() or "mysql"
 ).lower()
+
+# M2-b: dual-write 활성 여부 (default: False, M2-b 활성 시 .env 에 설정)
+AGENT_RUNTIME_DUAL_WRITE: bool = _env_bool("AGENT_RUNTIME_DUAL_WRITE", False)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -209,6 +213,88 @@ ORDER BY id ASC
 LIMIT %(limit)s
 """
 
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RuntimeBackend ABC — 6 method group (KB 패턴 답습, TASK-0113 M2-a).
+# ─────────────────────────────────────────────────────────────────────────────
+
+class RuntimeBackend(ABC):
+    """Agent runtime write 추상화 — MySQL ↔ Postgres dual-write 단일 진입점."""
+
+    backend_name: str = "abstract"
+
+    @abstractmethod
+    def save_conversation(
+        self, conn: Any, *, conversation_id: str, topic: Optional[str] = None,
+        owner_account_id: Optional[int] = None, product_id: Optional[int] = None,
+        product_mode: str = "pinned",
+    ) -> None: ...
+
+    @abstractmethod
+    def save_core_message(
+        self, conn: Any, *, conversation_id: str, role: str,
+        content: Optional[str] = None, tool_calls: Optional[Any] = None,
+        tool_call_id: Optional[str] = None, name: Optional[str] = None,
+    ) -> int: ...
+
+    @abstractmethod
+    def save_kv(
+        self, conn: Any, *, conversation_id: str, key: str, value: str,
+    ) -> None: ...
+
+    @abstractmethod
+    def save_memory_message(
+        self, conn: Any, *, conversation_id: str, role: str, content: str,
+        meta_json: Optional[str] = None,
+    ) -> None: ...
+
+    @abstractmethod
+    def save_memory_step(
+        self, conn: Any, *, conversation_id: str, run_id: str, step_index: int,
+        action: str, tool: str, intent: str,
+        work_text: Optional[str] = None, work_source: Optional[str] = None,
+        reason_text: Optional[str] = None, reason_source: Optional[str] = None,
+        args_json: str = "{}", sql_text: Optional[str] = None,
+        result_summary_json: Optional[str] = None, error_text: Optional[str] = None,
+    ) -> None: ...
+
+    @abstractmethod
+    def save_memory_summary(
+        self, conn: Any, *, conversation_id: str, summary: str,
+    ) -> None: ...
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MysqlRuntimeBackend — M4 cutover 이전의 backward-compat placeholder.
+# M4 완료 시점에 caller 가 본 backend 로 routing (현재는 caller 가 raw SQL 직접 실행).
+# ─────────────────────────────────────────────────────────────────────────────
+
+class MysqlRuntimeBackend(RuntimeBackend):
+    backend_name = "mysql"
+
+    def save_conversation(self, conn, *, conversation_id, topic=None,
+                          owner_account_id=None, product_id=None, product_mode="pinned"):
+        raise NotImplementedError("M4 cutover 이전: caller 가 raw SQL 직접 실행")
+
+    def save_core_message(self, conn, *, conversation_id, role, content=None,
+                          tool_calls=None, tool_call_id=None, name=None):
+        raise NotImplementedError("M4 cutover 이전: caller 가 raw SQL 직접 실행")
+
+    def save_kv(self, conn, *, conversation_id, key, value):
+        raise NotImplementedError("M4 cutover 이전: caller 가 raw SQL 직접 실행")
+
+    def save_memory_message(self, conn, *, conversation_id, role, content, meta_json=None):
+        raise NotImplementedError("M4 cutover 이전: caller 가 raw SQL 직접 실행")
+
+    def save_memory_step(self, conn, *, conversation_id, run_id, step_index,
+                         action, tool, intent, work_text=None, work_source=None,
+                         reason_text=None, reason_source=None, args_json="{}",
+                         sql_text=None, result_summary_json=None, error_text=None):
+        raise NotImplementedError("M4 cutover 이전: caller 가 raw SQL 직접 실행")
+
+    def save_memory_summary(self, conn, *, conversation_id, summary):
+        raise NotImplementedError("M4 cutover 이전: caller 가 raw SQL 직접 실행")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -366,11 +452,13 @@ class PgRuntimeBackend:
             return cur.fetchall() or []
 
     def load_kv_by_key(self, conn: Any, *, key: str) -> list:
+        """(conversation_id, value) 튜플 리스트 반환 — value 필터 없음 (client-side 필터용)."""
         with conn.cursor() as cur:
             cur.execute(_PG_LOAD_KV_BY_KEY, {"key": key})
             return cur.fetchall() or []
 
     def load_kv_by_key_value(self, conn: Any, *, key: str, value: str) -> list:
+        """conversation_id 리스트 반환 — key + value 양쪽 일치."""
         with conn.cursor() as cur:
             cur.execute(_PG_LOAD_KV_BY_KEY_VALUE, {"key": key, "value": value})
             rows = cur.fetchall() or []
@@ -382,30 +470,37 @@ class PgRuntimeBackend:
             row = cur.fetchone()
         return str(row[0]) if row and row[0] is not None else None
 
-    def load_messages(self, conn: Any, *, conversation_id: str, limit: int) -> list:
+    def load_messages(self, conn: Any, *, conversation_id: str, limit: int = 50) -> list:
         with conn.cursor() as cur:
             cur.execute(_PG_LOAD_MESSAGES, {"conversation_id": conversation_id, "limit": limit})
             return cur.fetchall() or []
 
-    def load_steps(self, conn: Any, *, conversation_id: str, limit: int) -> list:
+    def load_steps(self, conn: Any, *, conversation_id: str, limit: int = 50) -> list:
         with conn.cursor() as cur:
             cur.execute(_PG_LOAD_STEPS, {"conversation_id": conversation_id, "limit": limit})
             return cur.fetchall() or []
 
-    def list_conversations(self, conn: Any, *, limit: int) -> list:
-        with conn.cursor() as cur:
-            cur.execute(_PG_LIST_CONVERSATIONS, {"limit": limit})
-            return cur.fetchall() or []
-
-    def load_core_messages(self, conn: Any, *, conversation_id: str, limit: int) -> list:
+    def load_core_messages(self, conn: Any, *, conversation_id: str, limit: int = 200) -> list:
         with conn.cursor() as cur:
             cur.execute(_PG_LOAD_CORE_MESSAGES, {"conversation_id": conversation_id, "limit": limit})
             return cur.fetchall() or []
 
-    def get_conv_messages_full(self, conn: Any, *, conversation_id: str, limit: int) -> list:
+    def list_conversations(self, conn: Any, *, limit: int = 50) -> list:
+        """(conversation_id, topic, created_at_isoformat) 튜플 리스트 반환."""
+        with conn.cursor() as cur:
+            cur.execute(_PG_LIST_CONVERSATIONS, {"limit": limit})
+            raw = cur.fetchall() or []
+        return [
+            (row[0], row[1], row[2].isoformat() if hasattr(row[2], "isoformat") else row[2])
+            for row in raw
+        ]
+
+    def get_conv_messages_full(self, conn: Any, *, conversation_id: str, limit: int = 1000) -> list:
+        """(id, role, content, tool_calls, tool_call_id, name, created_at) 튜플 리스트 반환."""
         with conn.cursor() as cur:
             cur.execute(_PG_GET_CONV_MESSAGES_FULL, {"conversation_id": conversation_id, "limit": limit})
             return cur.fetchall() or []
+
 
 # Module-level singleton (thread-safe lazy init, kb_backend.py 패턴 답습).
 # ─────────────────────────────────────────────────────────────────────────────
@@ -499,6 +594,47 @@ def _read_runtime_pg(method_name: str, **kwargs):
             method_name, str(exc)[:200],
         )
         return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M2-b: dual-write mirror — MySQL write 직후 PgRuntimeBackend 동일 method 호출.
+# AGENT_RUNTIME_DUAL_WRITE=0 (default) 시 no-op.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _dual_write_runtime_mirror(method_name: str, **kwargs) -> None:
+    """PgRuntimeBackend write mirror. AGENT_RUNTIME_DUAL_WRITE=0 이면 no-op.
+
+    AGENT_RUNTIME_PG_REQUIRED=0 (default): 실패 시 silent log.
+    AGENT_RUNTIME_PG_REQUIRED=1: 실패 시 exception propagate (fail-loud).
+    """
+    if not AGENT_RUNTIME_DUAL_WRITE:
+        return None
+
+    conn = None
+    try:
+        conn = _get_pg_runtime_conn()
+    except Exception as exc:
+        if AGENT_RUNTIME_PG_REQUIRED:
+            raise
+        logger.warning("dual_write_runtime_mirror: PG conn failed [%s]: %s", method_name, exc)
+        return None
+
+    if conn is None:
+        return None
+
+    try:
+        backend = _get_pg_runtime_backend()
+        method = getattr(backend, method_name)
+        method(conn, **kwargs)
+    except Exception as exc:
+        if AGENT_RUNTIME_PG_REQUIRED:
+            raise
+        logger.warning("dual_write_runtime_mirror: PG call failed [%s]: %s", method_name, exc)
     finally:
         try:
             conn.close()

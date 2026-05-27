@@ -1180,6 +1180,214 @@ def _record_audit_event(*, failed: bool) -> None:
             _MIRROR_METRICS["audit_failures_total"] += 1
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# _DualWriteMirror — KB MySQL write 와 동시에 PgKbBackend 를 호출하는 facade.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _DualWriteMirror:
+    """Postgres mirror facade — KB MySQL write 와 동시에 PgKbBackend 를 호출.
+
+    DEPRECATION NOTICE: 이 클래스는 M5 (TASK-0025, ADR-0025) cutover 완료 후
+    삭제 예정. M5 완료 시점에 본 파일 전체가 kb_backend_mysql.py 로 분리되고,
+    agent-core 는 PgKbBackend 만 직접 호출한다.
+
+    M5 cutover 사전 조건 (ADR-0025 §3):
+    - AGENT_KB_DUAL_WRITE=0 (dual-write 비활성)
+    - AGENT_KB_READ_BACKEND=postgres (읽기 전환 완료)
+    - 14-day monitoring window 경과
+    - cross-DB audit SLA ≤ 0.1% miss_rate
+
+    본 class 의 모든 method 는 `_mirror(method_name, **kwargs)` 경유:
+    1. `_pg_available()` False → silent no-op (None 반환).
+    2. `_pg_connect()` 실패 or PG method 실패:
+       - `AGENT_KB_PG_REQUIRED=0`: logger.warning + None 반환 (caller flow 보호).
+       - `AGENT_KB_PG_REQUIRED=1`: exception propagate (fail-loud).
+    3. PG 성공 시 latency 기록 + audit INSERT (best-effort).
+    """
+
+    def _mirror(self, method_name: str, **kwargs):
+        import time
+        from .db import _pg_available, _pg_connect
+
+        t0 = time.monotonic()
+        if not _pg_available():
+            _record_mirror_latency(method_name, 0.0)
+            return None
+
+        conn = None
+        try:
+            conn = _pg_connect()
+        except Exception as exc:
+            latency_ms = (time.monotonic() - t0) * 1000
+            _record_mirror_latency(method_name, latency_ms)
+            if _pg_required():
+                raise
+            logger.warning(f"kb_pg_mirror: connection failed [{method_name}]: {exc}")
+            return None
+
+        try:
+            _clear_pg_branch()
+            pg_backend = PgKbBackend()
+            result = getattr(pg_backend, method_name)(conn, **kwargs)
+            latency_ms = (time.monotonic() - t0) * 1000
+            _record_mirror_latency(method_name, latency_ms)
+
+            pg_branch = _get_last_pg_branch()
+            audit_failed = False
+            try:
+                _log_kb_write_audit(
+                    method_name=method_name,
+                    kwargs=kwargs,
+                    result=result,
+                    pg_branch=pg_branch,
+                )
+            except Exception as audit_exc:
+                audit_failed = True
+                logger.warning(f"kb_pg_mirror: audit failed [{method_name}]: {audit_exc}")
+            _record_audit_event(failed=audit_failed)
+
+            return result
+        except Exception as exc:
+            latency_ms = (time.monotonic() - t0) * 1000
+            _record_mirror_latency(method_name, latency_ms)
+            if _pg_required():
+                raise
+            logger.warning(f"kb_pg_mirror: mirror call failed [{method_name}]: {exc}")
+            return None
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    def upsert_text(self, *, text_hash: str, text_content: str):
+        return self._mirror("upsert_text", text_hash=text_hash, text_content=text_content)
+
+    def upsert_fact_entry(
+        self,
+        *,
+        conversation_id,
+        fact_key,
+        scope_key,
+        text_hash,
+        fact_fingerprint="",
+        weight=1,
+        confidence=None,
+        source_type=None,
+        source_run_id=None,
+        source_sql=None,
+    ):
+        return self._mirror(
+            "upsert_fact_entry",
+            conversation_id=conversation_id,
+            fact_key=fact_key,
+            scope_key=scope_key,
+            text_hash=text_hash,
+            fact_fingerprint=fact_fingerprint,
+            weight=weight,
+            confidence=confidence,
+            source_type=source_type,
+            source_run_id=source_run_id,
+            source_sql=source_sql,
+        )
+
+    def delete_fact_entries_by_conv_scope_key(
+        self, *, conversation_id, scope_key, fact_key
+    ):
+        return self._mirror(
+            "delete_fact_entries_by_conv_scope_key",
+            conversation_id=conversation_id,
+            scope_key=scope_key,
+            fact_key=fact_key,
+        )
+
+    def prune_fact_entries_keep_top(
+        self, *, conversation_id, scope_key, fact_key, keep_limit
+    ):
+        return self._mirror(
+            "prune_fact_entries_keep_top",
+            conversation_id=conversation_id,
+            scope_key=scope_key,
+            fact_key=fact_key,
+            keep_limit=keep_limit,
+        )
+
+    def upsert_rag_document(
+        self,
+        *,
+        conversation_id,
+        scope_key,
+        doc_type,
+        fact_key=None,
+        text_hash,
+        content_hash,
+        weight=1,
+        source_type=None,
+        source_run_id=None,
+        source_sql=None,
+    ):
+        return self._mirror(
+            "upsert_rag_document",
+            conversation_id=conversation_id,
+            scope_key=scope_key,
+            doc_type=doc_type,
+            fact_key=fact_key,
+            text_hash=text_hash,
+            content_hash=content_hash,
+            weight=weight,
+            source_type=source_type,
+            source_run_id=source_run_id,
+            source_sql=source_sql,
+        )
+
+    def upsert_rag_object(
+        self,
+        *,
+        conversation_id,
+        scope_key,
+        object_type,
+        object_key,
+        schema_name=None,
+        table_name=None,
+        column_name=None,
+        text_hash=None,
+        weight=1,
+        source_type=None,
+        source_run_id=None,
+        category_domain=None,
+        category_entity_type=None,
+        category_metric_family=None,
+        category_event_type=None,
+        category_time_grain=None,
+        category_join_hints_json=None,
+        category_confidence=None,
+    ):
+        return self._mirror(
+            "upsert_rag_object",
+            conversation_id=conversation_id,
+            scope_key=scope_key,
+            object_type=object_type,
+            object_key=object_key,
+            schema_name=schema_name,
+            table_name=table_name,
+            column_name=column_name,
+            text_hash=text_hash,
+            weight=weight,
+            source_type=source_type,
+            source_run_id=source_run_id,
+            category_domain=category_domain,
+            category_entity_type=category_entity_type,
+            category_metric_family=category_metric_family,
+            category_event_type=category_event_type,
+            category_time_grain=category_time_grain,
+            category_join_hints_json=category_join_hints_json,
+            category_confidence=category_confidence,
+        )
+
+
+_dual_write_kb = _DualWriteMirror()
+
 
 __all__ = [
     "KbBackend",
@@ -1197,4 +1405,6 @@ __all__ = [
     "reset_mirror_metrics",
     "_get_last_pg_branch",
     "_clear_pg_branch",
+    "_DualWriteMirror",
+    "_dual_write_kb",
 ]

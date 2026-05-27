@@ -409,7 +409,7 @@ SYSTEM_PROMPT_MCP = f"""
 - MySQL 8.0은 CTE, 윈도우 함수, JSON 함수, HEX/UNHEX, CONV, BIT_COUNT 등을 모두 지원한다.
 - 3중·4중 서브쿼리나 재귀 CTE가 필요하면 주저 없이 작성하라.
 - **크로스 스키마 JOIN**: 하나의 SQL에서 `schema_a`.`table_x` JOIN `schema_b`.`table_y` 형태로 여러 스키마의 테이블을 자유롭게 조인할 수 있다.
-  - 예: `SELECT ... FROM \`have_00\`.\`limitgacha\` lg JOIN \`dev_1_1_1_20\`.\`limitgachainfo\` li ON lg.\`lg_groupid\` = li.\`lg_groupid\``
+  - 예: `SELECT ... FROM `have_00`.`limitgacha` lg JOIN `dev_1_1_1_20`.`limitgachainfo` li ON lg.`lg_groupid` = li.`lg_groupid``
   - knowledge 근거에 서로 다른 스키마의 객체가 있으면 크로스 스키마 조인을 적극 활용하라.
 - **BINARY/비트 연산**: MySQL의 BINARY(N) 컬럼에서 특정 비트를 추출하려면 바이트 단위로 처리한다.
   - `SUBSTRING(col, byte_pos, 1)` → 특정 바이트 추출 (1-based 인덱스)

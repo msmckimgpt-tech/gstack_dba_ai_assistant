@@ -46,11 +46,11 @@ TABLE_MAPPING = {
     "texts": {
         "mysql_table": "AgentMemoryTexts",
         "pg_table": "texts",
-        "id_col": "TextHash",       # PK는 TextHash (char 64) — Id 컬럼 없음
-        "select_cols": ["TextHash", "TextContent", "CreatedAt"],
+        "id_col": "Id",
+        "select_cols": ["Id", "TextHash", "TextContent", "CreatedAt"],
         "pg_insert_cols": ["text_hash", "text_content", "created_at"],
         "pg_conflict": "ON CONFLICT (text_hash) DO NOTHING",
-        "text_hash_pk": True,       # pagination 방식을 TextHash 기반으로 전환
+        "text_hash_pk": True,       # OFFSET pagination 사용 (TextHash 기반 정렬)
     },
     "fact_entries": {
         "mysql_table": "AgentMemoryFactEntries",
@@ -252,12 +252,10 @@ def _insert_pg_batch(
         f"VALUES ({placeholders}) "
         f"{pg_conflict}"
     )
-    text_hash_pk = table_meta.get("text_hash_pk", False)
     with pg_conn.cursor() as cur:
         for row in rows:
-            # texts 는 Id 컬럼 없음 (PK=TextHash) → row 전체 전달.
-            # 다른 테이블은 select_cols[0]=Id (PG auto-generated) → skip.
-            cur.execute(sql, row if text_hash_pk else row[1:])
+            # select_cols[0] = Id (auto-increment PK) — INSERT 시 skip.
+            cur.execute(sql, row[1:])
     pg_conn.commit()
     return len(rows)
 
