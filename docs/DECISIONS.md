@@ -586,3 +586,11 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
   - **7-day window**: ADR-0025 의 KB M5 와 동일한 14-day window 적용. 7일은 weekend + 평일 배포 주기를 모두 포함하지 못해 폐기.
   - **즉시 DROP (cutover 당일)**: Stage B 없이 바로 Stage C 진입 — rollback 창 없음, 고객 영향 위험. 폐기.
   - **dual-write 코드 동시 삭제**: DB DROP + 코드 삭제를 같은 PR 에 포함 — diff 복잡도 폭증, outside-voice 2회 병렬 요구. 분리.
+
+### ADR-0028 Addendum — Phase 2 agent* MySQL 완전 제거 (2026-05-27)
+- Status: **Phase 2 agent* MySQL 완전 제거 완료 (2026-05-27)**
+- 추가 발견: AR-M5 6 테이블 DROP 직후 insight-worker가 memory.py::ensure_memory_schema()와 agent_core.py::_ensure_memory_tables() 를 PG guard 없이 호출하여 10개 테이블 재생성. DUAL_WRITE=0이어도 MySQL이 primary write 경로로 동작 (PG mirror만 bypass) → orphaned data (14:57 run: 25 core_msgs + 15 steps + 9 kv) 발생.
+- 대응: memory.py 5함수 + agent_core.py 4함수에 `AGENT_RUNTIME_READ_BACKEND=postgres` guard 추가 → PG direct write + MySQL bypass (commit 0745862). orphaned data PG 마이그레이션 후 10 테이블 DROP.
+- 최종 백업: artifacts/shared/agent-memory-final-backup-2026-05-27T061637Z/ (sha256: 104eea69)
+- MySQL ABSENT: agent_memory DB 내 agent* 테이블 COUNT=0. web* 18 테이블만 잔존 (Phase 3 대상).
+- 다음: AR-M5-impl cycle (runtime_backend.py dual-write 코드 제거) + Phase 3 (web* 테이블 이관)
