@@ -187,23 +187,23 @@ worktree + 별 PR.
 
 #### AR-M4: cutover read path (Major §12.3, read 전환)
 
-- [ ] **AR-M4-T1**: `AGENT_RUNTIME_READ_BACKEND=postgres` env 신설
-- [ ] **AR-M4-T2**: `modules/memory.py` 의 conversation/message/kv read 분기
-- [ ] **AR-M4-T3**: `agent_core.py` 의 conversation list / message list 분기
-- [ ] **AR-M4-T4**: `app.py` 의 `/api/conversations` / `/api/messages` 분기
-- [ ] **AR-M4-T5**: `bin/runtime-cutover-readiness.sh` (kb-cutover-readiness 패턴)
-- [ ] **AR-M4-T6**: outside-voice review
-- [ ] **AR-M4-T7**: ADR-0027 — read path cutover 결정
+- [x] **AR-M4-T1**: `AGENT_RUNTIME_READ_BACKEND=postgres` env 신설
+- [x] **AR-M4-T2**: `modules/memory.py` 의 conversation/message/kv read 분기 (7 함수)
+- [x] **AR-M4-T3**: `agent_core.py` 의 conversation list / message list 분기 (3 함수)
+- [ ] **AR-M4-T4**: `app.py` 의 `/api/conversations` 분기 — **DEFERRED** (cross-DB JOIN 의존, Phase 3)
+- [x] **AR-M4-T5**: `bin/runtime-cutover-readiness.sh` 7 gate (kb-cutover-readiness 패턴)
+- [x] **AR-M4-T6**: outside-voice review (REV-20260527-0008, NEEDS-FIX→PASS)
+- [x] **AR-M4-T7**: ADR-0027 addendum — read path cutover 결정
 
 #### AR-M5: cleanup (Major §12.3, 데이터 손실 boundary)
 
-- [ ] **AR-M5-T1**: `bin/runtime-cleanup-mysql.sh` 신규 (KB cleanup 패턴)
-- [ ] **AR-M5-T2**: 14-day window enforce + AGENT_RUNTIME_DUAL_WRITE=0 sentinel
-- [ ] **AR-M5-T3**: mysqldump backup + integrity verify + chmod 0600
-- [ ] **AR-M5-T4**: TTY interactive double-confirm + I_UNDERSTAND_DATA_LOSS
-- [ ] **AR-M5-T5**: 6 테이블 DROP 후 검증
-- [ ] **AR-M5-T6**: outside-voice review
-- [ ] **AR-M5-T7**: ADR-0028 — runtime cleanup 정책 + Stage A/B/C boundary
+- [x] **AR-M5-T1**: `bin/runtime-cleanup-mysql.sh` 신규 (KB cleanup 패턴)
+- [x] **AR-M5-T2**: 14-day window enforce + AGENT_RUNTIME_DUAL_WRITE=0 sentinel (대소문자 정규화 포함)
+- [x] **AR-M5-T3**: mysqldump backup + integrity verify (backtick-anchored, 50-line min) + chmod 0600
+- [x] **AR-M5-T4**: TTY interactive double-confirm + I_UNDERSTAND_DATA_LOSS (+ ERR trap)
+- [x] **AR-M5-T5**: 6 테이블 DROP 후 검증 (Stage 5, rollback hint 포함)
+- [x] **AR-M5-T6**: outside-voice review (REV-20260527-0009, NEEDS-FIX→PASS)
+- [x] **AR-M5-T7**: ADR-0028 — runtime cleanup 정책 + Stage A/B/C boundary
 
 ### Phase 3 — 18 web\* 테이블 별 DB 분리 (outline, 별 plan 필요)
 
@@ -279,6 +279,8 @@ Phase 1~3 완료 후만 진입 가능. agent_memory DB 가 비어 있어야 함.
 - 2026-05-27 AR-M2-b 완료 — commit 5360c70 (merge), PR #99, outside-voice REV-20260527-0005 (general-purpose NEEDS-FIX → tool_calls::jsonb 반영). 산출: PgRuntimeBackend 6 method body + _dual_write_runtime_mirror connection 내부화 + memory.py 4 callsite + agent_core.py 3 callsite + test_dual_write_runtime.py 13 test. pytest 23/23 PASS (runtime) + 82/82 PASS (전체). 다음: AR-M2-c.
 - 2026-05-27 AR-M2-c/d 완료 — commit 08b70ad (merge), PR #100, outside-voice REV-20260527-0006 (general-purpose PASS). 산출: _log_runtime_write_audit + xmax pg_branch tagging (_execute_upsert_with_branch) + bin/runtime-dual-write-verify.sh + bin/runtime-dual-write-stress.sh. pytest 82/82 PASS. verify.sh --counts PASS. 다음: AR-M3 backfill ETL.
 - 2026-05-27 AR-M3 완료 — commit 335a5b8 (merge), PR #102. 산출: scripts/runtime_backfill.py 신규 (~280 LOC, TABLE_ORDER FK 순서 + TABLE_MAPPING 6 entry + offset_pk/id_col 이분법 + jsonb cast + ON CONFLICT / state checkpoint) + bin/runtime-backfill.sh wrapper + tests/test_runtime_backfill.py 19 test. outside-voice SKIPPED (신규 파일만, caller 수정 0건, RBAC 무변경). pytest 19/19 PASS (신규) + 101/103 PASS (전체, pre-existing 2 제외). 다음: AR-M4 cutover read path.
+- 2026-05-27 AR-M4 완료 — commit a213d9f (merge), PR #103, outside-voice REV-20260527-0008 (general-purpose NEEDS-FIX → PASS, C1/C2/M1/M2 반영). 산출: AGENT_RUNTIME_READ_BACKEND env + _read_runtime_pg dispatcher (fail-soft) + PgRuntimeBackend 9 read method + memory.py 7 PG 분기 + agent_core.py 3 PG 분기 + test_runtime_read_backend.py 27 test + bin/runtime-cutover-readiness.sh 7 gate + ADR-0027 addendum. pytest 27/27 PASS (신규) + 122/122 PASS (전체, pre-existing 2 제외). web UI app.py _list_conversations는 cross-DB JOIN 의존으로 AR-M4-T4 DEFERRED (Phase 3). 다음: AR-M5 MySQL cleanup.
+- 2026-05-27 AR-M5 완료 — commit 5d076f4 (merge), PR #104, outside-voice REV-20260527-0009 (general-purpose NEEDS-FIX → PASS, C-1/M-1/M-2/M-3/N-1/N-2/N-3 반영). 산출: bin/runtime-cleanup-mysql.sh 신규 (4 gate: read_backend + dual_write 대소문자 정규화 + 14-day window + TTY double-confirm; mysqldump gzip+sha256+backtick-anchor; 6 테이블 DROP; ERR trap) + test_runtime_m5_cleanup.py 16 test + ADR-0028. pytest 16/16 PASS (신규) + 131/131 PASS (전체, pre-existing 8 제외). **Phase 2 (AR-M-1~M5) 전체 완료**. 실 DROP: 14-day monitoring window 완료 후 --confirm 실행.
 ```
 
 ## 8. 참조
