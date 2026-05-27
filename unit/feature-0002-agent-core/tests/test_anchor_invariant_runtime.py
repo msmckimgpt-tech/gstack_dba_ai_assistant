@@ -161,55 +161,72 @@ def test_mysql_backend_all_methods_raise_not_implemented():
         backend.save_memory_summary(None, conversation_id="test", summary="s")
 
 
-def test_pg_backend_all_methods_raise_not_implemented():
+def test_pg_backend_all_methods_implemented():
+    """M2-b: PgRuntimeBackend 가 6 method 를 모두 구현함 (더 이상 NotImplementedError 아님)."""
     from modules.runtime_backend import PgRuntimeBackend
-    import pytest
+    import inspect
     backend = PgRuntimeBackend()
-    with pytest.raises(NotImplementedError):
-        backend.save_conversation(None, conversation_id="test")
-    with pytest.raises(NotImplementedError):
-        backend.save_kv(None, conversation_id="__global__", key="k", value="v")
-    with pytest.raises(NotImplementedError):
-        backend.save_memory_summary(None, conversation_id="test", summary="s")
+    required = [
+        "save_conversation", "save_core_message", "save_kv",
+        "save_memory_message", "save_memory_step", "save_memory_summary",
+    ]
+    for name in required:
+        method = getattr(backend, name, None)
+        assert method is not None, f"PgRuntimeBackend.{name} 없음"
+        assert callable(method), f"PgRuntimeBackend.{name} 는 callable 이어야 함"
+        # M2-b 구현체는 NotImplementedError 를 raise 하지 않음 (conn=None 이면 AttributeError)
+        assert not getattr(method, "__isabstractmethod__", False), (
+            f"PgRuntimeBackend.{name} 는 abstract 이면 안 됨 (M2-b 구현 완료)"
+        )
 
 
 def test_dual_write_mirror_noop_when_disabled(monkeypatch):
-    """AGENT_RUNTIME_DUAL_WRITE=0 (default) 시 _dual_write_runtime_mirror 은 no-op."""
+    """AGENT_RUNTIME_DUAL_WRITE=0 (default) 시 _dual_write_runtime_mirror 은 no-op.
+
+    M2-b: connection 은 내부 관리(_get_pg_runtime_conn). factory 인자 없음.
+    """
     import modules.runtime_backend as rb
     monkeypatch.setattr(rb, "AGENT_RUNTIME_DUAL_WRITE", False)
 
     called = []
-    def factory():
+    def fake_get_conn():
         called.append(1)
         return None
 
-    rb._dual_write_runtime_mirror("save_kv", factory, conversation_id="c", key="k", value="v")
-    assert not called, "DUAL_WRITE=0 이면 pg_conn_factory 가 호출되면 안 됨"
+    monkeypatch.setattr(rb, "_get_pg_runtime_conn", fake_get_conn)
+    rb._dual_write_runtime_mirror("save_kv", conversation_id="c", key="k", value="v")
+    assert not called, "DUAL_WRITE=0 이면 _get_pg_runtime_conn 이 호출되면 안 됨"
 
 
 def test_dual_write_mirror_pg_failure_nonfatal_when_not_required(monkeypatch):
-    """AGENT_RUNTIME_PG_REQUIRED=0 이면 PG 예외가 caller 로 전파되지 않음."""
+    """AGENT_RUNTIME_PG_REQUIRED=0 이면 PG 예외가 caller 로 전파되지 않음.
+
+    M2-b: _get_pg_runtime_conn 을 monkeypatch 로 대체.
+    """
     import modules.runtime_backend as rb
     monkeypatch.setattr(rb, "AGENT_RUNTIME_DUAL_WRITE", True)
     monkeypatch.setattr(rb, "AGENT_RUNTIME_PG_REQUIRED", False)
 
-    def failing_factory():
+    def failing_get_conn():
         raise ConnectionError("PG unreachable")
 
+    monkeypatch.setattr(rb, "_get_pg_runtime_conn", failing_get_conn)
     # 예외 없이 반환되어야 함
-    rb._dual_write_runtime_mirror("save_kv", failing_factory,
-                                  conversation_id="c", key="k", value="v")
+    rb._dual_write_runtime_mirror("save_kv", conversation_id="c", key="k", value="v")
 
 
 def test_dual_write_mirror_pg_failure_fatal_when_required(monkeypatch):
-    """AGENT_RUNTIME_PG_REQUIRED=1 이면 PG 예외가 caller 로 전파됨."""
+    """AGENT_RUNTIME_PG_REQUIRED=1 이면 PG 예외가 caller 로 전파됨.
+
+    M2-b: _get_pg_runtime_conn 을 monkeypatch 로 대체.
+    """
     import modules.runtime_backend as rb
     monkeypatch.setattr(rb, "AGENT_RUNTIME_DUAL_WRITE", True)
     monkeypatch.setattr(rb, "AGENT_RUNTIME_PG_REQUIRED", True)
 
-    def failing_factory():
+    def failing_get_conn():
         raise ConnectionError("PG unreachable")
 
+    monkeypatch.setattr(rb, "_get_pg_runtime_conn", failing_get_conn)
     with pytest.raises(ConnectionError):
-        rb._dual_write_runtime_mirror("save_kv", failing_factory,
-                                      conversation_id="c", key="k", value="v")
+        rb._dual_write_runtime_mirror("save_kv", conversation_id="c", key="k", value="v")

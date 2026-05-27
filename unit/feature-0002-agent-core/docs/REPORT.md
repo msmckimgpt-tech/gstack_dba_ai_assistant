@@ -188,3 +188,17 @@ source_of_truth: false
 **pytest**: 67 passed, 2 skipped (test_kb_backfill pre-existing 제외).
 
 **다음 cycle**: AR-M2-b — 6 method body 구현 + memory.py/agent_core.py caller mirror 추가 + outside-voice review 필수 (caller 수정 = code mutation).
+
+## Phase 2 AR-M2-b 완료 기록 (TASK-0114, 2026-05-27)
+
+**산출 4건 완료**:
+1. `unit/feature-0002-agent-core/src/modules/runtime_backend.py` (수정, +~185 LOC) — 6 SQL 상수 신규 (schema-qualified `agent_runtime.*`, named params, ON CONFLICT, RETURNING id, `::jsonb` cast) + `PgRuntimeBackend` 6 method body + `_get_pg_runtime_conn()` 신규 + `_dual_write_runtime_mirror` connection 내부화 (pg_conn_factory 파라미터 제거).
+2. `unit/feature-0002-agent-core/src/modules/memory.py` (수정, +4 callsite) — `save_memory_message` / `save_memory_kv` / `save_memory_summary` / `save_memory_step` MySQL write 후 `_dual_write_runtime_mirror()` 호출.
+3. `unit/feature-0002-agent-core/src/agent_core.py` (수정, +3 callsite) — `_save_message` / `_ensure_conversation` / `_update_conversation_topic` MySQL write 후 mirror 호출.
+4. `unit/feature-0002-agent-core/tests/test_dual_write_runtime.py` (신규, 13 test PASS) — FakeConn/FakeCursor 패턴. `test_anchor_invariant_runtime.py` M2-b API 반영 수정 (총 10 test PASS).
+
+**outside-voice review**: general-purpose subagent (`REV-20260527-0005`) Verdict NEEDS-FIX → `tool_calls::jsonb` 캐스트 누락 (DDL 상 jsonb 타입) 본 cycle 내 반영 완료.
+
+**pytest**: 23/23 PASS (runtime test files) + 82/82 PASS (전체 suite, pre-existing 2 failure: test_kb_backfill.py).
+
+**다음 cycle**: AR-M2-c — cross-DB audit + `bin/runtime-dual-write-verify.sh` + stress test.

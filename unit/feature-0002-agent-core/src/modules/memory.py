@@ -870,6 +870,10 @@ VALUES (%s, %s, %s, %s)
         (conversation_id, role, content, meta_json),
     )
     cur.close()
+    from .runtime_backend import _dual_write_runtime_mirror
+    _dual_write_runtime_mirror("save_memory_message",
+                               conversation_id=conversation_id, role=role,
+                               content=content, meta_json=meta_json)
 
 
 def save_memory_kv(conn, conversation_id: str, key: str, value: str) -> None:
@@ -885,6 +889,9 @@ ON DUPLICATE KEY UPDATE
         (conversation_id, key, value),
     )
     cur.close()
+    from .runtime_backend import _dual_write_runtime_mirror
+    _dual_write_runtime_mirror("save_kv",
+                               conversation_id=conversation_id, key=key, value=value)
 
 
 def load_memory_kv(conn, conversation_id: str, key: str) -> str:
@@ -1088,6 +1095,9 @@ ON DUPLICATE KEY UPDATE
         (conversation_id, summary),
     )
     cur.close()
+    from .runtime_backend import _dual_write_runtime_mirror
+    _dual_write_runtime_mirror("save_memory_summary",
+                               conversation_id=conversation_id, summary=summary)
 
 
 def save_memory_step(
@@ -1147,6 +1157,15 @@ INSERT INTO AgentMemorySteps (
         ),
     )
     cur.close()
+    from .runtime_backend import _dual_write_runtime_mirror
+    _dual_write_runtime_mirror("save_memory_step",
+                               conversation_id=conversation_id, run_id=run_id,
+                               step_index=int(entry.get("step_index", 0) or 0),
+                               action=action, tool=tool, intent=intent,
+                               work_text=work_text or None, work_source=work_source or None,
+                               reason_text=reason_text or None, reason_source=reason_source or None,
+                               args_json=args_json, sql_text=sql_text or None,
+                               result_summary_json=result_json, error_text=error_text or None)
 
 
 def load_recent_steps(

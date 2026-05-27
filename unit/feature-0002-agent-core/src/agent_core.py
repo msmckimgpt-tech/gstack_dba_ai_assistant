@@ -867,6 +867,11 @@ def _save_message(conn, conversation_id: str, role: str,
         (conversation_id, role, content, tc_json, tool_call_id, name),
     )
     cur.close()
+    from modules.runtime_backend import _dual_write_runtime_mirror
+    _dual_write_runtime_mirror("save_core_message",
+                               conversation_id=conversation_id, role=role,
+                               content=content, tool_calls=tool_calls,
+                               tool_call_id=tool_call_id, name=name)
 
 
 def _ensure_conversation(conn, conversation_id: str):
@@ -877,6 +882,8 @@ def _ensure_conversation(conn, conversation_id: str):
         (conversation_id,),
     )
     cur.close()
+    from modules.runtime_backend import _dual_write_runtime_mirror
+    _dual_write_runtime_mirror("save_conversation", conversation_id=conversation_id)
 
 
 def _update_conversation_topic(conn, conversation_id: str, topic: str):
@@ -886,6 +893,9 @@ def _update_conversation_topic(conn, conversation_id: str, topic: str):
         (topic[:256], conversation_id),
     )
     cur.close()
+    from modules.runtime_backend import _dual_write_runtime_mirror
+    _dual_write_runtime_mirror("save_conversation",
+                               conversation_id=conversation_id, topic=topic[:256])
 
 
 def _try_update_topic(conn, conversation_id: str, user_message: str, answer: str, history_len: int):

@@ -8,6 +8,30 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260527-AR-M2-b
+- Date: 2026-05-27
+- TASK-Cycle: TASK-0114 (REQ-20260527-AR-M2-b, **Major §12.3** — PgRuntimeBackend 구현 + caller mirror callsite 추가)
+- Summary: Phase 2 AR-M2-b cycle. `PgRuntimeBackend` 6 method body 실제 구현 + `_dual_write_runtime_mirror` connection 내부화 + `memory.py` / `agent_core.py` 7개 caller mirror callsite 추가 + `test_dual_write_runtime.py` 13 test 신규 + `test_anchor_invariant_runtime.py` M2-b API 반영 수정. outside-voice review (general-purpose subagent): tool_calls::jsonb 캐스트 누락 발견 → 본 cycle 내 반영 완료. pytest 23/23 PASS (runtime test files) + 전체 suite 82/82 PASS.
+- Worktree: `ai/claude/agent-runtime/m2b` (base = main HEAD AR-M2-a commit).
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/runtime_backend.py` (수정, +~185 LOC): 6 SQL 상수 신규 (schema-qualified, named params %(name)s) + `PgRuntimeBackend` 6 method body + `_get_pg_runtime_conn()` 신규 + `_dual_write_runtime_mirror` 시그니처 변경 (pg_conn_factory 제거 → connection 내부화) + conn open 단계 try/except (PG_REQUIRED 분기) + tool_calls::jsonb 캐스트 (outside-voice C1 반영).
+  - `unit/feature-0002-agent-core/src/modules/memory.py` (수정, +4 mirror callsite): `save_memory_message` / `save_memory_kv` / `save_memory_summary` / `save_memory_step` — MySQL write 후 `_dual_write_runtime_mirror()` 호출.
+  - `unit/feature-0002-agent-core/src/agent_core.py` (수정, +3 mirror callsite): `_save_message` / `_ensure_conversation` / `_update_conversation_topic` — MySQL write 후 `_dual_write_runtime_mirror()` 호출.
+  - `unit/feature-0002-agent-core/tests/test_dual_write_runtime.py` (신규, 13 test): FakeConn/FakeCursor 패턴. 12개 검증 항목 (no-op / pg unavailable / SQL 정합 / conn lifecycle / memory.py caller 연동).
+  - `unit/feature-0002-agent-core/tests/test_anchor_invariant_runtime.py` (수정): `test_pg_backend_all_methods_raise_not_implemented` → `test_pg_backend_all_methods_implemented` (M2-b 구현 완료 반영). 3개 mirror 테스트 monkeypatch 패턴 업데이트 (`_get_pg_runtime_conn` 직접 패치).
+  - `unit/feature-0002-agent-core/docs/{TASK,MODIFY,REVIEW,FUNCTION}.md`: TASK-0114 등록 + CHG-20260527-AR-M2-b + REV-20260527-0005 + FUNCTION REQ append.
+- 검증: pytest 23/23 PASS (runtime test files) + 전체 suite 82/82 PASS (pre-existing 2 failure: test_kb_backfill.py, main 브랜치 동일). bash -n PASS.
+- Outside-voice rationale: **실행** (`REV-20260527-0005 [SUBAGENT:general-purpose]`) — AGENTS.md §18.3 Major 분류 (caller 수정 7건 포함). Verdict: NEEDS-FIX → tool_calls::jsonb 캐스트 추가로 해소.
+
+## CHG-20260527-AR-M2-a
+- Date: 2026-05-27
+- TASK-Cycle: TASK-0113 (REQ-20260527-AR-M2-a, **Minor §12.3** — ABC + skeleton, code mutation 비파괴)
+- Summary: Phase 2 AR-M2-a cycle. `RuntimeBackend` ABC + `MysqlRuntimeBackend` / `PgRuntimeBackend` skeleton + `_dual_write_runtime_mirror` entry point (no-op) + `test_anchor_invariant_runtime.py` 시나리오 카탈로그 (10 test). AGENT_RUNTIME_DUAL_WRITE default False — 기존 MySQL callsites 전혀 무영향. outside-voice 불요 (신규 파일만, 기존 caller 0 수정).
+- Worktree: `ai/claude/agent-runtime/m2b` (연속).
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/runtime_backend.py` (신규, ~220 LOC)
+  - `unit/feature-0002-agent-core/tests/test_anchor_invariant_runtime.py` (신규, 10 test)
+
 ## CHG-20260527-AR-M0
 - Date: 2026-05-27
 - TASK-Cycle: TASK-0111 (REQ-20260527-AR-M0, **Minor §12.3** — Postgres 인프라 도입, 비파괴 추가)
