@@ -177,13 +177,13 @@ worktree + 별 PR.
 
 #### AR-M3: backfill ETL (Minor §12.3, 데이터 이전)
 
-- [ ] **AR-M3-T1**: `unit/feature-0002-agent-core/src/scripts/runtime_backfill.py`
+- [x] **AR-M3-T1**: `unit/feature-0002-agent-core/src/scripts/runtime_backfill.py`
   신규 (KB backfill 패턴 답습)
-- [ ] **AR-M3-T2**: 6 테이블 TABLE_MAPPING + 멱등 INSERT ON CONFLICT
-- [ ] **AR-M3-T3**: FK 순서 (Conversations 먼저, Messages/Steps 후)
-- [ ] **AR-M3-T4**: AgentMemoryKv 의 (Key, Value) PK 정합
-- [ ] **AR-M3-T5**: `bin/runtime-backfill.sh` wrapper
-- [ ] **AR-M3-T6**: dry-run + 실제 backfill 검증
+- [x] **AR-M3-T2**: 6 테이블 TABLE_MAPPING + 멱등 INSERT ON CONFLICT
+- [x] **AR-M3-T3**: FK 순서 (Conversations 먼저, Messages/Steps 후)
+- [x] **AR-M3-T4**: AgentMemoryKv 의 (Key, Value) PK 정합 (offset_pk=True, OFFSET pagination)
+- [x] **AR-M3-T5**: `bin/runtime-backfill.sh` wrapper
+- [ ] **AR-M3-T6**: dry-run + 실제 backfill 검증 (운영 환경 환경변수 설정 후 실행 예정)
 
 #### AR-M4: cutover read path (Major §12.3, read 전환)
 
@@ -278,6 +278,7 @@ Phase 1~3 완료 후만 진입 가능. agent_memory DB 가 비어 있어야 함.
 - 2026-05-27 AR-M2-a 완료 — commit (AR-M2-b worktree 연속), PR #98. 산출: modules/runtime_backend.py 신규 (RuntimeBackend ABC + skeleton + _dual_write_runtime_mirror no-op) + test_anchor_invariant_runtime.py 10 test. outside-voice SKIPPED (비파괴 신규 파일만).
 - 2026-05-27 AR-M2-b 완료 — commit 5360c70 (merge), PR #99, outside-voice REV-20260527-0005 (general-purpose NEEDS-FIX → tool_calls::jsonb 반영). 산출: PgRuntimeBackend 6 method body + _dual_write_runtime_mirror connection 내부화 + memory.py 4 callsite + agent_core.py 3 callsite + test_dual_write_runtime.py 13 test. pytest 23/23 PASS (runtime) + 82/82 PASS (전체). 다음: AR-M2-c.
 - 2026-05-27 AR-M2-c/d 완료 — commit 08b70ad (merge), PR #100, outside-voice REV-20260527-0006 (general-purpose PASS). 산출: _log_runtime_write_audit + xmax pg_branch tagging (_execute_upsert_with_branch) + bin/runtime-dual-write-verify.sh + bin/runtime-dual-write-stress.sh. pytest 82/82 PASS. verify.sh --counts PASS. 다음: AR-M3 backfill ETL.
+- 2026-05-27 AR-M3 완료 — commit 335a5b8 (merge), PR #102. 산출: scripts/runtime_backfill.py 신규 (~280 LOC, TABLE_ORDER FK 순서 + TABLE_MAPPING 6 entry + offset_pk/id_col 이분법 + jsonb cast + ON CONFLICT / state checkpoint) + bin/runtime-backfill.sh wrapper + tests/test_runtime_backfill.py 19 test. outside-voice SKIPPED (신규 파일만, caller 수정 0건, RBAC 무변경). pytest 19/19 PASS (신규) + 101/103 PASS (전체, pre-existing 2 제외). 다음: AR-M4 cutover read path.
 ```
 
 ## 8. 참조
