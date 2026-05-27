@@ -2185,3 +2185,10 @@ source_of_truth: true
   - MySQL fallback 경로 유지 (PG 연결 실패 시).
   - `from modules.db import _pg_connect` 기존 app.py PG 패턴 일치.
 - Rollback: PG routing 블록 제거, MySQL 직접 쿼리 복원.
+
+## CHG-20260527-PERM-TOGGLE-VALUE
+- Date: 2026-05-27
+- Related Requirement: TASK-0121 (**Critical §12.3** — 역할 권한 저장 시 "unknown permissions: on" 오류)
+- Summary: `buildRoleProductCard()` 의 product access 토글 checkbox 에 `value` 속성 미설정으로 인해 브라우저 기본값 `"on"` 이 `permission_codes` 배열에 포함되어 서버 검증 실패. `toggleInput.value = perm.code` 추가. admin.js 캐시 버스팅 `v=20260527-task-0121-perm-toggle-value`.
+- Files: unit/feature-0003-agent-web-ui/src/static/admin.js, unit/feature-0003-agent-web-ui/src/static/admin.html
+- Rollback: admin.js 의 `toggleInput.value = perm.code` 라인 제거 + admin.html 캐시 버스트 이전 버전으로 복원.
