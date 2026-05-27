@@ -3734,7 +3734,7 @@ function renderKbIngestList() {
   const items = adminState.kbIngest.items || [];
   if (count) count.textContent = `${items.length}건`;
   if (items.length === 0) {
-    if (empty) empty.textContent = "표시할 첨부가 없습니다 (text/markdown/.sql).";
+    if (empty) empty.textContent = "KB 등록 가능한 첨부가 없습니다. 먼저 대화 화면에서 text / markdown / .sql 파일을 첨부한 후 이 화면에서 KB로 등록하세요.";
     list.innerHTML = "";
     if (empty) list.appendChild(empty);
     return;

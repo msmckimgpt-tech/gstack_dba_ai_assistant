@@ -387,7 +387,7 @@
           <div>
             <div class="drawer-label">Knowledge Base</div>
             <h2>스키마 정의서 KB 등록</h2>
-            <p class="admin-pane-hint">text / markdown / SQL 첨부 본문을 AgentMemoryFactEntries 의 manual fact 로 등록합니다. ScopeKey 단위 격리, 동일 ScopeKey 재ingest 시 기존 row 는 Weight=0 으로 logical supersede 됩니다.</p>
+            <p class="admin-pane-hint">AI 에게 DB 스키마 지식을 등록합니다. <strong>사용 방법</strong>: ① 대화 화면에서 스키마 문서나 DDL 파일(text / markdown / .sql)을 첨부 → ② 이 화면에서 해당 파일 선택 → ③ ScopeKey 입력 후 [KB 등록] 클릭. 등록된 항목은 AI 응답 시 자동 수집 항목보다 높은 우선순위(Weight=90)로 참조됩니다. 동일 ScopeKey 재등록 시 기존 항목은 자동 비활성화됩니다.</p>
           </div>
           <div class="admin-pane-head-right">
             <button type="button" class="btn-secondary" id="kbIngestRefreshBtn">새로고침</button>
