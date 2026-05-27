@@ -1375,6 +1375,19 @@ def _set_account_current_conversation(conn, account_id: int, conversation_id: st
 def _ensure_conversation_row(conn, conversation_id: str) -> None:
     if not conversation_id:
         return
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "INSERT INTO agent_runtime.core_conversations (conversation_id) VALUES (%s) ON CONFLICT DO NOTHING",
+                    (conversation_id,),
+                )
+            pg.close()
+        except Exception:
+            pass
+        return
     cur = conn.cursor()
     cur.execute(
         "INSERT IGNORE INTO AgentCoreConversations (conversation_id, topic) VALUES (%s, '')",
@@ -1385,6 +1398,30 @@ def _ensure_conversation_row(conn, conversation_id: str) -> None:
 
 def _assign_conversation_owner(conn, conversation_id: str, account_id: int, *, force: bool = False) -> None:
     if not conversation_id:
+        return
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        _ensure_conversation_row(conn, conversation_id)
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                if force:
+                    pgcur.execute(
+                        "UPDATE agent_runtime.core_conversations "
+                        "SET owner_account_id = %s, owner_assigned_at = COALESCE(owner_assigned_at, NOW()) "
+                        "WHERE conversation_id = %s",
+                        (int(account_id), conversation_id),
+                    )
+                else:
+                    pgcur.execute(
+                        "UPDATE agent_runtime.core_conversations "
+                        "SET owner_account_id = %s, owner_assigned_at = COALESCE(owner_assigned_at, NOW()) "
+                        "WHERE conversation_id = %s AND owner_account_id IS NULL",
+                        (int(account_id), conversation_id),
+                    )
+            pg.close()
+        except Exception:
+            pass
         return
     _ensure_conversation_row(conn, conversation_id)
     cur = conn.cursor()
@@ -2168,6 +2205,38 @@ def _load_conversation_product(conn, conversation_id: str) -> dict[str, Any] | N
     """대화의 현재 product_id / product_mode / product_key / name 을 통합 반환."""
     if not conversation_id:
         return None
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT product_id, product_mode FROM agent_runtime.core_conversations WHERE conversation_id = %s LIMIT 1",
+                    (conversation_id,),
+                )
+                pg_row = pgcur.fetchone()
+            pg.close()
+        except Exception:
+            return None
+        if not pg_row:
+            return None
+        pid = int(pg_row[0] or 0) or None
+        mode = _normalize_product_mode(pg_row[1], default="pinned")
+        product_key = product_name = product_is_active = None
+        if pid:
+            try:
+                cur2 = conn.cursor(dictionary=True)
+                cur2.execute("SELECT ProductKey, Name, IsActive FROM WebProducts WHERE Id = %s LIMIT 1", (pid,))
+                wp_row = cur2.fetchone()
+                cur2.close()
+                if wp_row:
+                    product_key = str(wp_row.get("ProductKey") or "") or None
+                    product_name = str(wp_row.get("Name") or "") or None
+                    product_is_active = bool(wp_row.get("IsActive")) if wp_row.get("IsActive") is not None else None
+            except Exception:
+                pass
+        return {"product_id": pid, "product_mode": mode, "product_key": product_key,
+                "product_name": product_name, "product_is_active": product_is_active}
     try:
         cur = conn.cursor(dictionary=True)
         cur.execute(
@@ -2269,6 +2338,21 @@ def _conversation_is_processing(conn, conversation_id: str) -> bool:
     """진행 중 ask 가 있는지 (race 가드용). AgentMemoryKv.last_status 를 진실원으로 사용한다."""
     if not conversation_id:
         return False
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT value FROM agent_runtime.kv WHERE conversation_id = %s AND key = 'last_status' LIMIT 1",
+                    (conversation_id,),
+                )
+                row = pgcur.fetchone()
+            pg.close()
+        except Exception:
+            return False
+        status = str((row or [""])[0] or "").strip().lower()
+        return status == "processing"
     try:
         cur = conn.cursor()
         cur.execute(
@@ -2590,6 +2674,8 @@ INSERT INTO WebAccounts (
 
 
 def _seed_legacy_conversations(conn, bootstrap_admin_id: int) -> None:
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        return
     cur = conn.cursor()
     try:
         cur.execute(
@@ -2655,6 +2741,35 @@ def _open_memory_connection(*, database: str | None = MEMORY_DB):
 
 
 def _runtime_tables_available() -> bool:
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            conn = _open_memory_connection()
+        except mysql.connector.Error as exc:
+            if int(getattr(exc, "errno", 0) or 0) == 1049:
+                return False
+            raise
+        try:
+            cur = conn.cursor()
+            try:
+                for table_name in ("WebAccounts", "WebRoles", "WebAuthSessions",
+                                   "WebProducts", "WebProductDatabases", "WebSystemPrompts"):
+                    cur.execute(f"SELECT 1 FROM `{table_name}` LIMIT 1")
+                    cur.fetchall()
+                for column_check in (
+                    "SELECT `ProductPrefMode` FROM `WebAccounts` LIMIT 1",
+                    "SELECT `ProductPrefPinnedId` FROM `WebAccounts` LIMIT 1",
+                ):
+                    cur.execute(column_check)
+                    cur.fetchall()
+            finally:
+                cur.close()
+        except mysql.connector.Error as exc:
+            if int(getattr(exc, "errno", 0) or 0) in (1146, 1054):
+                return False
+            raise
+        finally:
+            conn.close()
+        return True
     try:
         conn = _open_memory_connection()
     except mysql.connector.Error as exc:
@@ -3628,8 +3743,9 @@ def _ensure_web_tables():
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """
         )
-        cur.execute(
-            """
+        if os.environ.get("AGENT_RUNTIME_READ_BACKEND") != "postgres":
+            cur.execute(
+                """
             CREATE TABLE IF NOT EXISTS AgentCoreConversations (
                 conversation_id VARCHAR(128) PRIMARY KEY,
                 topic VARCHAR(256) DEFAULT '',
@@ -3637,45 +3753,45 @@ def _ensure_web_tables():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """
-        )
-        try:
-            cur.execute(
-                "ALTER TABLE AgentCoreConversations ADD COLUMN owner_account_id BIGINT NULL"
             )
-        except Exception:
-            pass
-        try:
-            cur.execute(
-                "ALTER TABLE AgentCoreConversations ADD COLUMN owner_assigned_at DATETIME NULL"
-            )
-        except Exception:
-            pass
-        try:
-            cur.execute(
-                "CREATE INDEX IX_AgentCoreConversations_Owner ON AgentCoreConversations (owner_account_id)"
-            )
-        except Exception:
-            pass
-        try:
-            cur.execute(
-                "ALTER TABLE AgentCoreConversations ADD COLUMN product_id BIGINT NULL"
-            )
-        except Exception:
-            pass
-        try:
-            cur.execute(
-                "CREATE INDEX IX_AgentCoreConversations_Product ON AgentCoreConversations (product_id)"
-            )
-        except Exception:
-            pass
-        # TASK-0047: 대화별 product_mode ('pinned'|'auto') — auto 는 일반 대화 모드.
-        try:
-            cur.execute(
-                "ALTER TABLE AgentCoreConversations "
-                "ADD COLUMN product_mode VARCHAR(8) NOT NULL DEFAULT 'pinned'"
-            )
-        except Exception:
-            pass
+            try:
+                cur.execute(
+                    "ALTER TABLE AgentCoreConversations ADD COLUMN owner_account_id BIGINT NULL"
+                )
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    "ALTER TABLE AgentCoreConversations ADD COLUMN owner_assigned_at DATETIME NULL"
+                )
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    "CREATE INDEX IX_AgentCoreConversations_Owner ON AgentCoreConversations (owner_account_id)"
+                )
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    "ALTER TABLE AgentCoreConversations ADD COLUMN product_id BIGINT NULL"
+                )
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    "CREATE INDEX IX_AgentCoreConversations_Product ON AgentCoreConversations (product_id)"
+                )
+            except Exception:
+                pass
+            # TASK-0047: 대화별 product_mode ('pinned'|'auto') — auto 는 일반 대화 모드.
+            try:
+                cur.execute(
+                    "ALTER TABLE AgentCoreConversations "
+                    "ADD COLUMN product_mode VARCHAR(8) NOT NULL DEFAULT 'pinned'"
+                )
+            except Exception:
+                pass
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS WebProducts (
@@ -3976,6 +4092,211 @@ def _parse_search_cursor(cursor: str | None) -> tuple[str, str] | None:
     return parts[0], parts[1]
 
 
+def _list_conversations_pg(
+    limit: int,
+    *,
+    has_any: bool,
+    self_id: int | None,
+    owner_id: int | None,
+    hidden_ids: list,
+    normalized_q: str | None,
+    date_from: str | None,
+    date_to: str | None,
+    parsed_cursor: tuple | None,
+    mysql_conn,
+) -> list[dict[str, Any]]:
+    """AR-M4-T4 (TASK-0118): AGENT_RUNTIME_READ_BACKEND=postgres 활성 시 PG read path.
+
+    agent_runtime.core_conversations + agent_runtime.kv 를 PG 에서 읽고,
+    owner_username 조회만 MySQL WebAccounts 에서 수행 (Phase 3 web* 이관 전까지).
+    """
+    from modules.db import _pg_connect
+    try:
+        pg = _pg_connect()
+    except Exception:
+        return []
+
+    try:
+        query = """
+SELECT
+    c.conversation_id AS id,
+    COALESCE(NULLIF(TRIM(c.topic), ''), NULLIF(TRIM(kv_topic.value), ''), '새 대화') AS topic,
+    c.created_at AS created_at,
+    c.updated_at AS last_activity_at,
+    c.owner_account_id AS owner_account_id
+FROM agent_runtime.core_conversations c
+LEFT JOIN agent_runtime.kv kv_topic
+  ON kv_topic.conversation_id = c.conversation_id AND kv_topic.key = 'topic'
+"""
+        where_clauses: list[str] = []
+        params: list[Any] = []
+
+        if has_any:
+            if owner_id is not None:
+                where_clauses.append("c.owner_account_id = %s")
+                params.append(int(owner_id))
+        else:
+            if self_id is not None:
+                where_clauses.append("c.owner_account_id = %s")
+                params.append(int(self_id))
+
+        if hidden_ids:
+            where_clauses.append("c.conversation_id != ALL(%s)")
+            params.append(list(str(h) for h in hidden_ids))
+
+        if normalized_q:
+            pattern = f"%{normalized_q}%"
+            where_clauses.append("""(
+                c.topic ILIKE %s OR kv_topic.value ILIKE %s
+                OR EXISTS (
+                    SELECT 1 FROM agent_runtime.messages m
+                    WHERE m.conversation_id = c.conversation_id AND m.content ILIKE %s
+                )
+                OR EXISTS (
+                    SELECT 1 FROM agent_runtime.core_messages cm
+                    WHERE cm.conversation_id = c.conversation_id AND cm.content ILIKE %s
+                )
+            )""")
+            params.extend([pattern, pattern, pattern, pattern])
+
+        if date_from:
+            where_clauses.append("c.updated_at >= %s")
+            params.append(date_from)
+        if date_to:
+            where_clauses.append("c.updated_at <= %s")
+            params.append(date_to)
+
+        if parsed_cursor:
+            cur_at, cur_id = parsed_cursor
+            where_clauses.append(
+                "(c.updated_at < %s OR (c.updated_at = %s AND c.conversation_id < %s))"
+            )
+            params.extend([cur_at, cur_at, cur_id])
+
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
+        query += " ORDER BY c.updated_at DESC, c.conversation_id DESC LIMIT %s"
+        params.append(int(limit))
+
+        with pg.cursor() as pgcur:
+            pgcur.execute(query, params)
+            rows = pgcur.fetchall() or []
+
+        # owner_username — still in MySQL WebAccounts (Phase 3 이관 전).
+        owner_ids_needed = list({r[4] for r in rows if r[4] is not None})
+        owner_map: dict[int, str] = {}
+        if owner_ids_needed and mysql_conn:
+            try:
+                mcur = mysql_conn.cursor()
+                placeholders_o = ",".join(["%s"] * len(owner_ids_needed))
+                mcur.execute(
+                    f"SELECT Id, Username FROM WebAccounts WHERE Id IN ({placeholders_o})",
+                    tuple(owner_ids_needed),
+                )
+                for oid, uname in mcur.fetchall() or []:
+                    owner_map[int(oid)] = str(uname or "")
+                mcur.close()
+            except Exception:
+                pass
+
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            conv_id, topic, created_at, updated_at, oid = row
+            items.append({
+                "id": str(conv_id or ""),
+                "topic": _normalize_topic(topic, "새 대화"),
+                "created_at": str(created_at or ""),
+                "last_activity_at": str(updated_at or ""),
+                "owner_account_id": int(oid or 0) or None,
+                "owner_username": owner_map.get(int(oid or 0), "") if oid else "",
+            })
+
+        # KV 상태/메타 (last_status / duration / run_id) — agent_runtime.kv 에서 읽기.
+        conv_ids = [it["id"] for it in items]
+        status_map: dict[str, dict[str, str]] = {}
+        count_map: dict[str, dict[str, int]] = {}
+        run_id_map: dict[str, str] = {}
+        if conv_ids:
+            with pg.cursor() as pgcur:
+                placeholders_pg = ",".join(["%s"] * len(conv_ids))
+                pgcur.execute(
+                    f"""
+SELECT conversation_id, key, value FROM agent_runtime.kv
+WHERE conversation_id IN ({placeholders_pg})
+  AND key IN ('last_status', 'last_status_at', 'last_duration_ms', 'last_status_run_id')
+                    """,
+                    tuple(conv_ids),
+                )
+                for cid, k, v in pgcur.fetchall() or []:
+                    if k == 'last_status_run_id':
+                        run_id_map[str(cid)] = str(v or "")
+                    else:
+                        status_map.setdefault(str(cid), {})[str(k)] = str(v or "")
+
+                pgcur.execute(
+                    f"""
+SELECT conversation_id,
+       COUNT(*) AS total_count,
+       SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) AS user_count
+FROM agent_runtime.messages
+WHERE conversation_id IN ({placeholders_pg})
+GROUP BY conversation_id
+                    """,
+                    tuple(conv_ids),
+                )
+                for cid, total, user in pgcur.fetchall() or []:
+                    count_map[str(cid)] = {"total": int(total or 0), "user": int(user or 0)}
+
+                pgcur.execute(
+                    f"""
+SELECT conversation_id,
+       COUNT(*) AS total_count,
+       SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) AS user_count
+FROM agent_runtime.core_messages
+WHERE conversation_id IN ({placeholders_pg})
+  AND role IN ('user', 'assistant')
+  AND (tool_calls IS NULL OR tool_calls::text = 'null')
+  AND content IS NOT NULL AND content <> ''
+GROUP BY conversation_id
+                    """,
+                    tuple(conv_ids),
+                )
+                for cid, total, user in pgcur.fetchall() or []:
+                    existing = count_map.get(str(cid), {})
+                    count_map[str(cid)] = {
+                        "total": max(int(existing.get("total", 0) or 0), int(total or 0)),
+                        "user": max(int(existing.get("user", 0) or 0), int(user or 0)),
+                    }
+
+        for item in items:
+            info = status_map.get(item["id"], {})
+            counts = count_map.get(item["id"], {})
+            raw_status = info.get("last_status") or ""
+            status_at = info.get("last_status_at") or ""
+            run_id = run_id_map.get(item["id"], "")
+            display_status, is_stale = _compute_display_status(
+                mysql_conn, item["id"], raw_status, status_at, run_id
+            )
+            item["status"] = display_status
+            item["raw_status"] = raw_status
+            item["display_status"] = display_status
+            item["is_stale"] = is_stale
+            item["status_at"] = status_at
+            try:
+                item["duration_ms"] = float(info.get("last_duration_ms")) if info.get("last_duration_ms") else None
+            except Exception:
+                item["duration_ms"] = None
+            item["message_count"] = counts.get("total", 0)
+            item["user_message_count"] = counts.get("user", 0)
+
+        return items
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+
+
 def _list_conversations(
     limit: int = 200,
     *,
@@ -4024,6 +4345,23 @@ def _list_conversations(
         normalized_q = _normalize_search_query(q)
         if normalized_q:
             _audit_message_table_collations(conn)
+
+        # AR-M4-T4 (TASK-0118): AGENT_RUNTIME_READ_BACKEND=postgres 시 PG 경로 사용.
+        # AgentCoreConversations / AgentMemoryKv / AgentCoreMessages / AgentMemoryMessages
+        # 가 MySQL에서 DROP 된 이후 PG 단독으로 읽어야 함.
+        if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+            return _list_conversations_pg(
+                limit,
+                has_any=has_any,
+                self_id=self_id,
+                owner_id=owner_id,
+                hidden_ids=hidden_ids,
+                normalized_q=normalized_q,
+                date_from=date_from,
+                date_to=date_to,
+                parsed_cursor=_parse_search_cursor(cursor),
+                mysql_conn=conn,
+            )
 
         cur = conn.cursor(dictionary=True)
         query = """
@@ -4265,6 +4603,21 @@ def _conversation_exists(
     try:
         if conversation_id in set(list_delete_requested_conversation_ids(conn)):
             return False
+        # AR-M4-T4: PG read path
+        if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+            try:
+                from modules.db import _pg_connect
+                pg = _pg_connect()
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        "SELECT 1 FROM agent_runtime.core_conversations WHERE conversation_id = %s LIMIT 1",
+                        (conversation_id,),
+                    )
+                    row = pgcur.fetchone()
+                pg.close()
+                return bool(row)
+            except Exception:
+                pass
         cur = conn.cursor()
         cur.execute("SELECT 1 FROM AgentCoreConversations WHERE conversation_id = %s LIMIT 1", (conversation_id,))
         row = cur.fetchone()
@@ -4278,6 +4631,23 @@ def _conversation_exists(
 def _conversation_owner_account_id(conn, conversation_id: str) -> int | None:
     if not conversation_id:
         return None
+    # AR-M4-T4: PG read path
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT owner_account_id FROM agent_runtime.core_conversations WHERE conversation_id = %s LIMIT 1",
+                    (conversation_id,),
+                )
+                row = pgcur.fetchone()
+            pg.close()
+            if not row:
+                return None
+            return int(row[0] or 0) or None
+        except Exception:
+            pass
     cur = conn.cursor()
     cur.execute(
         "SELECT owner_account_id FROM AgentCoreConversations WHERE conversation_id = %s LIMIT 1",
@@ -4803,6 +5173,48 @@ def _load_step_meta(
     intent: str,
     created_at,
 ) -> dict[str, Any]:
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            pg_row = None
+            with pg.cursor() as pgcur:
+                if intent:
+                    pgcur.execute(
+                        "SELECT sql_text, result_summary_json FROM agent_runtime.steps "
+                        "WHERE conversation_id = %s AND intent = %s AND created_at <= %s "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        (conversation_id, intent, str(created_at)),
+                    )
+                    pg_row = pgcur.fetchone()
+                if not pg_row:
+                    pgcur.execute(
+                        "SELECT sql_text, result_summary_json FROM agent_runtime.steps "
+                        "WHERE conversation_id = %s AND created_at <= %s "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        (conversation_id, str(created_at)),
+                    )
+                    pg_row = pgcur.fetchone()
+            pg.close()
+        except Exception:
+            return {}
+        if not pg_row:
+            return {}
+        sql_text, result_json = pg_row
+        meta: dict[str, Any] = {}
+        if sql_text:
+            meta["sql"] = str(sql_text)
+        if result_json:
+            try:
+                parsed = json.loads(result_json) if isinstance(result_json, str) else (result_json or {})
+            except Exception:
+                parsed = {}
+            if isinstance(parsed, dict):
+                parsed = normalize_step_result_summary("execute_sql" if sql_text else "", parsed)
+                csv_paths = parsed.get("csv_paths")
+                if isinstance(csv_paths, list) and csv_paths:
+                    meta["csv_paths"] = csv_paths
+        return meta
     cur = conn.cursor()
     row = None
     if intent:
@@ -4861,6 +5273,20 @@ def _stringify_summary(value: Any) -> str:
 
 
 def _load_last_run_id(conn, conversation_id: str) -> str:
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT value FROM agent_runtime.kv WHERE conversation_id = %s AND key = 'last_run_id' LIMIT 1",
+                    (conversation_id,),
+                )
+                row = pgcur.fetchone()
+            pg.close()
+            return str(row[0]) if row else ""
+        except Exception:
+            return ""
     cur = conn.cursor()
     cur.execute(
         """
@@ -4877,6 +5303,26 @@ LIMIT 1
 
 
 def _load_progress_status(conn, conversation_id: str) -> tuple[str, str, str]:
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT key, value FROM agent_runtime.kv "
+                    "WHERE conversation_id = %s AND key IN ('last_status', 'last_status_at', 'last_status_run_id')",
+                    (conversation_id,),
+                )
+                rows = pgcur.fetchall() or []
+            pg.close()
+            kv = {str(k or ""): str(v or "") for k, v in rows}
+            return (
+                str(kv.get("last_status") or "").strip(),
+                str(kv.get("last_status_at") or "").strip(),
+                str(kv.get("last_status_run_id") or "").strip(),
+            )
+        except Exception:
+            return "", "", ""
     cur = conn.cursor()
     cur.execute(
         """
@@ -4903,6 +5349,22 @@ _ASK_SUCCESS_STATUSES = frozenset({"done", "canceled"})
 
 def _load_run_meta_kv(conn, conversation_id: str) -> dict[str, str]:
     """status/duration/error 관련 KV 키를 단일 쿼리로 조회."""
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT key, value FROM agent_runtime.kv "
+                    "WHERE conversation_id = %s AND key IN "
+                    "('last_status','last_status_at','last_status_run_id','last_duration_ms','last_error')",
+                    (conversation_id,),
+                )
+                rows = pgcur.fetchall() or []
+            pg.close()
+            return {str(k or ""): str(v or "") for k, v in rows}
+        except Exception:
+            return {}
     cur = conn.cursor()
     cur.execute(
         """
@@ -4924,6 +5386,20 @@ WHERE ConversationId = %s
 def _load_step_count_for_run(conn, conversation_id: str, run_id: str) -> int:
     if not conversation_id or not run_id:
         return 0
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT COUNT(*) FROM agent_runtime.steps WHERE conversation_id = %s AND run_id = %s",
+                    (conversation_id, run_id),
+                )
+                row = pgcur.fetchone()
+            pg.close()
+            return int(row[0] or 0) if row else 0
+        except Exception:
+            return 0
     cur = conn.cursor()
     cur.execute(
         """
@@ -4950,6 +5426,67 @@ def _load_steps_for_run(
 ) -> list[dict[str, Any]]:
     if not conversation_id or not run_id:
         return []
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            params_pg: list[Any] = [conversation_id, run_id]
+            step_clause_pg = ""
+            if int(after_step or 0) > 0:
+                step_clause_pg = " AND step_index > %s"
+                params_pg.append(int(after_step))
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    f"""
+SELECT step_index, action, tool, intent, work_text, work_source,
+       reason_text, reason_source, args_json, sql_text,
+       result_summary_json, error_text, created_at
+FROM agent_runtime.steps
+WHERE conversation_id = %s AND run_id = %s{step_clause_pg}
+ORDER BY step_index ASC, created_at ASC
+                    """,
+                    tuple(params_pg),
+                )
+                pg_rows = pgcur.fetchall() or []
+            pg.close()
+        except Exception:
+            pg_rows = []
+        steps: list[dict[str, Any]] = []
+        for (
+            step_index, action, tool, intent, work_text, work_source,
+            reason_text, reason_source, args_json, sql_text,
+            result_json, error_text, created_at,
+        ) in pg_rows:
+            try:
+                args = json.loads(args_json) if args_json else {}
+            except Exception:
+                args = {}
+            result_summary: Any = None
+            if result_json:
+                try:
+                    result_summary = json.loads(result_json) if isinstance(result_json, str) else result_json
+                except Exception:
+                    result_summary = result_json
+            result_summary = normalize_step_result_summary(str(tool or ""), result_summary)
+            steps.append(
+                _resolve_step_display({
+                    "step_index": int(step_index or 0),
+                    "action": str(action or ""),
+                    "tool": str(tool or ""),
+                    "intent": str(intent or ""),
+                    "work": str(work_text or ""),
+                    "work_source": str(work_source or ""),
+                    "reason": str(reason_text or ""),
+                    "reason_source": str(reason_source or ""),
+                    "args": args,
+                    "sql": str(sql_text or ""),
+                    "result_summary": result_summary,
+                    "error": str(error_text or ""),
+                    "created_at": str(created_at),
+                    "run_id": str(run_id),
+                })
+            )
+        return steps
     cur = conn.cursor()
     params: list[Any] = [conversation_id, run_id]
     step_clause = ""
@@ -5040,6 +5577,25 @@ def _load_steps_for_message(
     run_id = ""
     if isinstance(meta, dict):
         run_id = str(meta.get("run_id") or "").strip()
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        if run_id:
+            return _load_steps_for_run(conn, conversation_id, run_id)
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT run_id FROM agent_runtime.steps "
+                    "WHERE conversation_id = %s AND created_at <= %s "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (conversation_id, str(created_at)),
+                )
+                row = pgcur.fetchone()
+            pg.close()
+            run_id = str(row[0]) if row else ""
+        except Exception:
+            run_id = ""
+        return _load_steps_for_run(conn, conversation_id, run_id)
     if run_id:
         return _load_steps_for_run(conn, conversation_id, run_id)
     cur = conn.cursor()
@@ -5160,6 +5716,86 @@ def _get_agent_core_history(
     before_id: int | None = None,
 ) -> tuple[list[dict[str, Any]], bool, int | None, int, int]:
     fetch_limit = max(10, int(limit) * 3)
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                if before_id:
+                    pgcur.execute(
+                        """
+SELECT id, role, content, created_at
+FROM agent_runtime.core_messages
+WHERE conversation_id = %s AND id < %s
+  AND role IN ('user', 'assistant')
+  AND tool_calls IS NULL
+  AND COALESCE(content, '') <> ''
+ORDER BY id DESC
+LIMIT %s
+                        """,
+                        (conversation_id, int(before_id), int(fetch_limit) + 1),
+                    )
+                else:
+                    pgcur.execute(
+                        """
+SELECT id, role, content, created_at
+FROM agent_runtime.core_messages
+WHERE conversation_id = %s
+  AND role IN ('user', 'assistant')
+  AND tool_calls IS NULL
+  AND COALESCE(content, '') <> ''
+ORDER BY id DESC
+LIMIT %s
+                        """,
+                        (conversation_id, int(fetch_limit) + 1),
+                    )
+                pg_rows = pgcur.fetchall() or []
+                has_more_pg = len(pg_rows) > fetch_limit
+                pg_rows = pg_rows[:fetch_limit]
+                pg_rows_rev = list(reversed(pg_rows))
+                pgcur.execute(
+                    """
+SELECT COUNT(*) AS total_count,
+       SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) AS user_count
+FROM agent_runtime.core_messages
+WHERE conversation_id = %s
+  AND role IN ('user', 'assistant')
+  AND tool_calls IS NULL
+  AND COALESCE(content, '') <> ''
+                    """,
+                    (conversation_id,),
+                )
+                count_row_pg = pgcur.fetchone() or (0, 0)
+            pg.close()
+        except Exception:
+            return [], False, None, 0, 0
+        messages_pg: list[dict[str, Any]] = []
+        for msg_id, role, content, created_at in pg_rows_rev:
+            meta: dict[str, Any] = {}
+            if str(role or "").lower() == "assistant":
+                intent_val = _extract_intent_from_content(str(content or ""))
+                meta = _load_step_meta(conn, conversation_id, intent_val, created_at) or {}
+                steps_val = _load_steps_for_message(conn, conversation_id, created_at, meta)
+                if steps_val:
+                    meta = dict(meta) if isinstance(meta, dict) else {}
+                    meta["steps"] = steps_val
+                    meta["rationale"] = _summarize_rationale(steps_val)
+                    meta["run_id"] = steps_val[0].get("run_id")
+            messages_pg.append({
+                "id": int(msg_id),
+                "role": str(role),
+                "content": _normalize_output(str(content or "")),
+                "created_at": str(created_at),
+                "meta": meta,
+            })
+        oldest_id_pg = messages_pg[0]["id"] if messages_pg else None
+        return (
+            messages_pg,
+            has_more_pg,
+            oldest_id_pg,
+            int(count_row_pg[0] or 0),
+            int(count_row_pg[1] or 0),
+        )
     cur = conn.cursor()
     if before_id:
         cur.execute(
@@ -5244,6 +5880,77 @@ def _get_history(
 ) -> tuple[list[dict[str, Any]], bool, int | None, int, int]:
     if not conversation_id:
         return [], False, None, 0, 0
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            conn = _connect_memory()
+        except Exception:
+            return [], False, None, 0, 0
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                if before_id:
+                    pgcur.execute(
+                        "SELECT id, role, content, created_at, meta_json FROM agent_runtime.messages "
+                        "WHERE conversation_id = %s AND id < %s ORDER BY id DESC LIMIT %s",
+                        (conversation_id, int(before_id), max(10, int(limit) * 3) + 1),
+                    )
+                else:
+                    pgcur.execute(
+                        "SELECT id, role, content, created_at, meta_json FROM agent_runtime.messages "
+                        "WHERE conversation_id = %s ORDER BY id DESC LIMIT %s",
+                        (conversation_id, max(10, int(limit) * 3) + 1),
+                    )
+                pg_rows = pgcur.fetchall() or []
+            pg.close()
+        except Exception:
+            pg_rows = []
+        fetch_limit_pg = max(10, int(limit) * 3)
+        has_more_pg = len(pg_rows) > fetch_limit_pg
+        pg_rows = pg_rows[:fetch_limit_pg]
+        pg_rows_rev = list(reversed(pg_rows))
+        messages_pg: list[dict[str, Any]] = []
+        for row in pg_rows_rev:
+            msg_id, role, content, created_at, meta_json = row
+            if _is_internal_message(role, content, meta_json):
+                continue
+            meta: dict[str, Any] = {}
+            if meta_json:
+                try:
+                    meta = json.loads(meta_json) if isinstance(meta_json, str) else (meta_json or {})
+                except Exception:
+                    meta = {}
+            if str(role or "").lower() == "assistant":
+                if not meta:
+                    intent_v = _extract_intent_from_content(str(content or ""))
+                    meta = _load_step_meta(conn, conversation_id, intent_v, created_at) or meta
+                steps_v = _load_steps_for_message(conn, conversation_id, created_at, meta)
+                if steps_v:
+                    meta = dict(meta) if isinstance(meta, dict) else {}
+                    meta["steps"] = steps_v
+                    meta["rationale"] = _summarize_rationale(steps_v)
+                    meta["run_id"] = steps_v[0].get("run_id")
+            messages_pg.append({
+                "id": int(msg_id),
+                "role": str(role),
+                "content": _normalize_output(str(content or "")),
+                "created_at": str(created_at),
+                "meta": meta,
+            })
+        needs_core_pg = not messages_pg or not any(str(i.get("role", "")).lower() == "assistant" for i in messages_pg)
+        if needs_core_pg:
+            core_msgs, core_hm, core_oid, core_tc, core_uc = _get_agent_core_history(
+                conn, conversation_id, limit=limit, before_id=before_id
+            )
+            if core_msgs and any(str(i.get("role", "")).lower() == "assistant" for i in core_msgs):
+                conn.close()
+                return core_msgs, core_hm, core_oid, core_tc, core_uc
+            if not messages_pg and (core_msgs or core_tc or _conversation_exists(conversation_id)):
+                conn.close()
+                return core_msgs, core_hm, core_oid, core_tc, core_uc
+        oldest_id_pg = messages_pg[0]["id"] if messages_pg else None
+        conn.close()
+        return messages_pg, has_more_pg, oldest_id_pg, len(messages_pg), sum(1 for m in messages_pg if str(m.get("role", "")).lower() == "user")
     try:
         conn = _connect_memory()
     except Exception:
@@ -5395,6 +6102,51 @@ def _extract_csv_paths(output: str) -> list[str]:
 def _load_last_step_meta(conversation_id: str) -> dict[str, Any]:
     if not conversation_id:
         return {}
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT value FROM agent_runtime.kv WHERE conversation_id = %s AND key = 'last_run_id' LIMIT 1",
+                    (conversation_id,),
+                )
+                row = pgcur.fetchone()
+                run_id_pg = str(row[0]) if row else ""
+                if run_id_pg:
+                    pgcur.execute(
+                        "SELECT sql_text, result_summary_json FROM agent_runtime.steps "
+                        "WHERE conversation_id = %s AND run_id = %s "
+                        "ORDER BY step_index DESC, created_at DESC LIMIT 1",
+                        (conversation_id, run_id_pg),
+                    )
+                else:
+                    pgcur.execute(
+                        "SELECT sql_text, result_summary_json FROM agent_runtime.steps "
+                        "WHERE conversation_id = %s ORDER BY created_at DESC LIMIT 1",
+                        (conversation_id,),
+                    )
+                step_row = pgcur.fetchone()
+            pg.close()
+        except Exception:
+            return {}
+        if not step_row:
+            return {}
+        sql_text_pg, result_json_pg = step_row
+        meta_pg: dict[str, Any] = {}
+        if sql_text_pg:
+            meta_pg["sql"] = str(sql_text_pg)
+        if result_json_pg:
+            try:
+                parsed_pg = json.loads(result_json_pg) if isinstance(result_json_pg, str) else (result_json_pg or {})
+            except Exception:
+                parsed_pg = {}
+            if isinstance(parsed_pg, dict):
+                parsed_pg = normalize_step_result_summary("execute_sql" if sql_text_pg else "", parsed_pg)
+                csv_paths_pg = parsed_pg.get("csv_paths")
+                if isinstance(csv_paths_pg, list) and csv_paths_pg:
+                    meta_pg["csv_paths"] = csv_paths_pg
+        return meta_pg
     try:
         conn = _connect_memory()
     except Exception:
@@ -5605,18 +6357,33 @@ def _list_admin_accounts(conn) -> list[dict[str, Any]]:
         order_sql="ORDER BY (a.DeletedAt IS NULL) DESC, a.IsActive DESC, a.CreatedAt DESC",
     )
     rows = _decorate_account_rows(conn, rows)
-    cur = conn.cursor()
-    cur.execute(
-        """
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT owner_account_id, COUNT(*) FROM agent_runtime.core_conversations "
+                    "WHERE owner_account_id IS NOT NULL GROUP BY owner_account_id"
+                )
+                count_rows = pgcur.fetchall() or []
+            pg.close()
+        except Exception:
+            count_rows = []
+        conversation_counts = {int(oid): int(cnt or 0) for oid, cnt in count_rows if int(oid or 0) > 0}
+    else:
+        cur = conn.cursor()
+        cur.execute(
+            """
 SELECT owner_account_id, COUNT(*)
 FROM AgentCoreConversations
 WHERE owner_account_id IS NOT NULL
 GROUP BY owner_account_id
-        """
-    )
-    count_rows = cur.fetchall() or []
-    cur.close()
-    conversation_counts = {int(owner_id): int(count or 0) for owner_id, count in count_rows if int(owner_id or 0) > 0}
+            """
+        )
+        count_rows2 = cur.fetchall() or []
+        cur.close()
+        conversation_counts = {int(owner_id): int(count or 0) for owner_id, count in count_rows2 if int(owner_id or 0) > 0}
     items: list[dict[str, Any]] = []
     for row in rows:
         # TASK-0098: admin context — 권한 정보 명시 포함.
@@ -6294,13 +7061,26 @@ async def ask(request: Request) -> JSONResponse:
                         hint_mode = "auto"
                         hint_pid = None
                 if conv_id:
-                    cur_h = conn.cursor()
-                    cur_h.execute(
-                        "UPDATE AgentCoreConversations SET product_id = %s, product_mode = %s "
-                        "WHERE conversation_id = %s",
-                        (int(hint_pid) if hint_pid else None, hint_mode, conv_id),
-                    )
-                    cur_h.close()
+                    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+                        try:
+                            from modules.db import _pg_connect
+                            _pg_tmp = _pg_connect()
+                            with _pg_tmp.cursor() as _pgc:
+                                _pgc.execute(
+                                    "UPDATE agent_runtime.core_conversations SET product_id = %s, product_mode = %s WHERE conversation_id = %s",
+                                    (int(hint_pid) if hint_pid else None, hint_mode, conv_id),
+                                )
+                            _pg_tmp.close()
+                        except Exception:
+                            pass
+                    else:
+                        cur_h = conn.cursor()
+                        cur_h.execute(
+                            "UPDATE AgentCoreConversations SET product_id = %s, product_mode = %s "
+                            "WHERE conversation_id = %s",
+                            (int(hint_pid) if hint_pid else None, hint_mode, conv_id),
+                        )
+                        cur_h.close()
                     _save_account_product_pref(
                         conn, int(account["id"]), mode=hint_mode, pinned_id=hint_pid
                     )
@@ -6342,13 +7122,27 @@ async def ask(request: Request) -> JSONResponse:
         try:
             product_id_for_run: int | None = None
             if conv_id:
-                cur_p = conn.cursor()
-                cur_p.execute(
-                    "SELECT product_id, product_mode FROM AgentCoreConversations WHERE conversation_id = %s",
-                    (conv_id,),
-                )
-                row_p = cur_p.fetchone()
-                cur_p.close()
+                if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+                    try:
+                        from modules.db import _pg_connect
+                        _pg_tmp2 = _pg_connect()
+                        with _pg_tmp2.cursor() as _pgc2:
+                            _pgc2.execute(
+                                "SELECT product_id, product_mode FROM agent_runtime.core_conversations WHERE conversation_id = %s",
+                                (conv_id,),
+                            )
+                            row_p = _pgc2.fetchone()
+                        _pg_tmp2.close()
+                    except Exception:
+                        row_p = None
+                else:
+                    cur_p = conn.cursor()
+                    cur_p.execute(
+                        "SELECT product_id, product_mode FROM AgentCoreConversations WHERE conversation_id = %s",
+                        (conv_id,),
+                    )
+                    row_p = cur_p.fetchone()
+                    cur_p.close()
                 if row_p:
                     if row_p[0] is not None:
                         product_id_for_run = int(row_p[0])
@@ -6373,13 +7167,24 @@ async def ask(request: Request) -> JSONResponse:
                     )
                 if product_id_for_run and conv_id:
                     try:
-                        cur_u = conn.cursor()
-                        cur_u.execute(
-                            "UPDATE AgentCoreConversations SET product_id = %s "
-                            "WHERE conversation_id = %s AND (product_id IS NULL OR product_id = 0)",
-                            (int(product_id_for_run), conv_id),
-                        )
-                        cur_u.close()
+                        if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+                            from modules.db import _pg_connect
+                            _pg_tmp3 = _pg_connect()
+                            with _pg_tmp3.cursor() as _pgc3:
+                                _pgc3.execute(
+                                    "UPDATE agent_runtime.core_conversations SET product_id = %s "
+                                    "WHERE conversation_id = %s AND (product_id IS NULL OR product_id = 0)",
+                                    (int(product_id_for_run), conv_id),
+                                )
+                            _pg_tmp3.close()
+                        else:
+                            cur_u = conn.cursor()
+                            cur_u.execute(
+                                "UPDATE AgentCoreConversations SET product_id = %s "
+                                "WHERE conversation_id = %s AND (product_id IS NULL OR product_id = 0)",
+                                (int(product_id_for_run), conv_id),
+                            )
+                            cur_u.close()
                     except Exception:
                         pass
                 allowed_schemas_for_run = (
@@ -6709,13 +7514,24 @@ async def new_conversation(request: Request) -> JSONResponse:
     _assign_conversation_owner(conn, cid, int(account["id"]), force=True)
     _set_account_current_conversation(conn, int(account["id"]), cid)
     try:
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE AgentCoreConversations SET product_id = %s, product_mode = %s "
-            "WHERE conversation_id = %s",
-            (int(req_product_id) if req_product_id else None, req_mode, cid),
-        )
-        cur.close()
+        if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+            from modules.db import _pg_connect
+            _pg_nc = _pg_connect()
+            with _pg_nc.cursor() as _pgcnc:
+                _pgcnc.execute(
+                    "UPDATE agent_runtime.core_conversations SET product_id = %s, product_mode = %s "
+                    "WHERE conversation_id = %s",
+                    (int(req_product_id) if req_product_id else None, req_mode, cid),
+                )
+            _pg_nc.close()
+        else:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE AgentCoreConversations SET product_id = %s, product_mode = %s "
+                "WHERE conversation_id = %s",
+                (int(req_product_id) if req_product_id else None, req_mode, cid),
+            )
+            cur.close()
     except Exception:
         pass
     # 사용자 직전 선택을 서버에 보존 (재로그인 시 hydrate 용).
@@ -6806,13 +7622,24 @@ async def update_conversation_product(cid: str, request: Request) -> JSONRespons
             return _json_error("요청을 수행할 수 없습니다.", 403)
 
     try:
-        cur_u = conn.cursor()
-        cur_u.execute(
-            "UPDATE AgentCoreConversations SET product_id = %s, product_mode = %s "
-            "WHERE conversation_id = %s",
-            (pinned_id, mode, cid),
-        )
-        cur_u.close()
+        if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+            from modules.db import _pg_connect
+            _pg_patch = _pg_connect()
+            with _pg_patch.cursor() as _pgpatch:
+                _pgpatch.execute(
+                    "UPDATE agent_runtime.core_conversations SET product_id = %s, product_mode = %s "
+                    "WHERE conversation_id = %s",
+                    (pinned_id, mode, cid),
+                )
+            _pg_patch.close()
+        else:
+            cur_u = conn.cursor()
+            cur_u.execute(
+                "UPDATE AgentCoreConversations SET product_id = %s, product_mode = %s "
+                "WHERE conversation_id = %s",
+                (pinned_id, mode, cid),
+            )
+            cur_u.close()
     except Exception:
         conn.close()
         return _json_error("대화 제품 정보를 변경하지 못했습니다.", 500)
