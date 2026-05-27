@@ -153,6 +153,8 @@ if [ "$MODE" = "drop" ]; then
     echo "ERROR: non-TTY 환경 — KB_M5_RUN_FROM_HUMAN_SHELL=1 설정 후 재시도" >&2
     echo "  CI/cron 등의 자동 실행 차단" >&2
     exit 2
+  else
+    echo "[WARN] TTY bypass active (KB_M5_RUN_FROM_HUMAN_SHELL=1) — interactive confirm skipped"
   fi
 fi
 
@@ -201,19 +203,25 @@ if [ "$MODE" = "backup" ] || [ "$MODE" = "drop" ]; then
     rm -rf "$BACKUP_DIR"
     exit 1
   fi
+  # VIEW DDL + TABLE DDL 포함 확인.
+  # 임시 파일 방식: grep -q early-exit → gunzip SIGPIPE(141) → pipefail false-negative 회피.
+  # case-insensitive (-i): Linux MySQL lower_case_table_names=1 으로 소문자 저장.
+  _VERIFY_TMP=$(mktemp /tmp/m5-kb-verify.XXXXXX)
+  gunzip -c "$BACKUP_FILE" > "$_VERIFY_TMP"
   # VIEW DDL 포함 확인 (B1 enforcement)
-  if ! gunzip -c "$BACKUP_FILE" | grep -Eq "CREATE.*(OR REPLACE.*)?VIEW.*AgentMemoryFacts"; then
+  if ! grep -Eqi "CREATE.*(OR REPLACE.*)?VIEW.*AgentMemoryFacts" "$_VERIFY_TMP"; then
     echo "ERROR: backup 에 AgentMemoryFacts VIEW DDL 누락 — restore 불가" >&2
-    rm -rf "$BACKUP_DIR"
+    rm -f "$_VERIFY_TMP"; rm -rf "$BACKUP_DIR"
     exit 1
   fi
   for tbl in "${TABLES[@]:1}"; do
-    if ! gunzip -c "$BACKUP_FILE" | grep -Eq "CREATE TABLE.*\`?${tbl}\`?"; then
+    if ! grep -Eqi "CREATE TABLE.*\`?${tbl}\`?" "$_VERIFY_TMP"; then
       echo "ERROR: backup 에 ${tbl} CREATE TABLE 누락 — restore 불가" >&2
-      rm -rf "$BACKUP_DIR"
+      rm -f "$_VERIFY_TMP"; rm -rf "$BACKUP_DIR"
       exit 1
     fi
   done
+  rm -f "$_VERIFY_TMP"
 
   # REV-20260522-0013 B8 흡수: SHA256 sidecar.
   BACKUP_SHA256="${BACKUP_FILE}.sha256"
@@ -251,8 +259,9 @@ if [ "$MODE" = "dry-run" ]; then
 fi
 
 # ─── Stage 4: DROP 실행 ─────────────────────────────────────────────────────
+# C-1: MYSQL_PWD env var (not -p cmdline) — 비밀번호 ps aux 노출 차단.
 echo "[STAGE 4] DROP 실행 (영구 삭제 — backup file: $BACKUP_FILE)"
-if ! docker exec -i "$MYSQL_CONTAINER" mysql -uroot -p"$MYSQL_PW" \
+if ! docker exec -i -e MYSQL_PWD="$MYSQL_PW" "$MYSQL_CONTAINER" mysql -uroot \
      "$MYSQL_DB" <<< "$DROP_SQL" 2>/tmp/m5-drop-err.log; then
   echo "ERROR: DROP 실행 실패. detail: $(cat /tmp/m5-drop-err.log)" >&2
   echo "  rollback: $BACKUP_FILE 으로 mysqldump restore" >&2
@@ -262,14 +271,14 @@ fi
 # 검증 — table 존재 확인
 echo "[STAGE 5] 검증 — DROP 완료 확인"
 for tbl in "${TABLES[@]}"; do
-  exists=$(docker exec -i "$MYSQL_CONTAINER" mysql -uroot -p"$MYSQL_PW" \
+  exists=$(docker exec -i -e MYSQL_PWD="$MYSQL_PW" "$MYSQL_CONTAINER" mysql -uroot \
     --skip-column-names -B -e \
-    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${MYSQL_DB}' AND table_name='${tbl}';" \
-    | grep -v '^mysql:' | head -1 | tr -d '[:space:]' || echo "1")
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${MYSQL_DB}' AND table_name=LOWER('${tbl}');" \
+    2>/dev/null | head -1 | tr -d '[:space:]' || echo "1")
   if [ "$exists" = "0" ]; then
-    echo "  ✓ ${tbl} dropped"
+    echo "  OK ${tbl} dropped"
   else
-    echo "  ✗ ${tbl} 여전히 존재" >&2
+    echo "  FAIL ${tbl} 여전히 존재" >&2
     exit 1
   fi
 done
