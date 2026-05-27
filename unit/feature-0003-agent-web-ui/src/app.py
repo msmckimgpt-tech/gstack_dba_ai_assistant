@@ -4318,18 +4318,77 @@ def _account_can_access_conversation(
 # audit 에 절대 노출 안 함. HMAC + size bucket + extension bucket 의 categorical
 # 메타만.
 
-# D7 (MIME allowlist). archive (zip/tar) 거부 — XLSX 는 zip container 지만 MIME
-# magic + 구조 검증으로 별 path. text/markdown 은 text/plain alias 로도 수용.
-_ATTACHMENT_ALLOWED_MIME_TO_KIND: dict[str, str] = {
+# D7 — 확장자 우선 kind 추론 (클라이언트 MIME 보다 신뢰도 높음).
+# MIME 은 클라이언트가 잘못 보내는 경우가 많으므로 fallback 역할만 한다.
+_EXTENSION_KIND_MAP: dict[str, str] = {
+    "csv": "csv",
+    "xlsx": "xlsx",
+    "xls": "xlsx",
+    "pdf": "pdf",
+    "png": "image",
+    "jpg": "image",
+    "jpeg": "image",
+    "webp": "image",
+    "gif": "image",
+    "bmp": "image",
+    "tiff": "image",
+    "tif": "image",
+    "svg": "image",
+    # 텍스트 계열 — SQL, 소스코드, 설정, 마크업 포함.
+    "txt": "text",
+    "md": "text",
+    "markdown": "text",
+    "sql": "text",
+    "json": "text",
+    "yaml": "text",
+    "yml": "text",
+    "xml": "text",
+    "log": "text",
+    "sh": "text",
+    "bash": "text",
+    "py": "text",
+    "js": "text",
+    "ts": "text",
+    "jsx": "text",
+    "tsx": "text",
+    "html": "text",
+    "htm": "text",
+    "css": "text",
+    "java": "text",
+    "go": "text",
+    "rb": "text",
+    "php": "text",
+    "c": "text",
+    "cpp": "text",
+    "h": "text",
+    "ini": "text",
+    "toml": "text",
+    "conf": "text",
+    "cfg": "text",
+    "env": "text",
+}
+
+# MIME 힌트 테이블 — 확장자 판별 실패 시 fallback.
+_MIME_KIND_HINTS: dict[str, str] = {
     "text/csv": "csv",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
-    "application/vnd.ms-excel": "xlsx",  # legacy .xls — Phase 11 ingest 단계에서 binary edge 처리 추가.
+    "application/vnd.ms-excel": "xlsx",
     "application/pdf": "pdf",
     "image/png": "image",
     "image/jpeg": "image",
     "image/webp": "image",
+    "image/gif": "image",
+    "image/bmp": "image",
+    "image/svg+xml": "image",
     "text/plain": "text",
     "text/markdown": "text",
+    "text/html": "text",
+    "application/json": "text",
+    "application/xml": "text",
+    "text/xml": "text",
+    "text/x-sql": "text",
+    "application/sql": "text",
+    "text/sql": "text",
 }
 
 # D8 size cap (.env 의 ATTACHMENT_MAX_BYTES_* 로 override 가능).
@@ -4387,9 +4446,22 @@ def _size_bucket(size_bytes: int) -> str:
     return ">25MB"
 
 
-def _kind_from_mime(mime_type: str) -> str | None:
-    """D7 allowlist 정합 — 미허용 MIME 은 None 반환 (caller 가 415 응답)."""
-    return _ATTACHMENT_ALLOWED_MIME_TO_KIND.get((mime_type or "").lower().strip())
+def _infer_kind(filename: str, mime_type: str) -> str:
+    """서비스 자체 kind 추론. 확장자 우선 → MIME 힌트 → text/* 패턴 → 'other'.
+    클라이언트 MIME 을 신뢰하지 않으므로 확장자가 일치하면 확장자 결과를 사용한다."""
+    name = (filename or "").strip().lower()
+    ext = name.rsplit(".", 1)[1] if "." in name else ""
+    if ext:
+        kind = _EXTENSION_KIND_MAP.get(ext)
+        if kind:
+            return kind
+    mime_lower = (mime_type or "").lower().strip()
+    kind = _MIME_KIND_HINTS.get(mime_lower)
+    if kind:
+        return kind
+    if mime_lower.startswith("text/"):
+        return "text"
+    return "other"
 
 
 def _account_role_key(account: dict[str, Any] | None) -> str:
@@ -7642,7 +7714,7 @@ async def upload_conversation_attachment(
     """첨부 multipart upload (BRIEFING §5.4 row 1).
 
     권한: `conversation.attachment.upload.{own,any}` + 대상 conv 접근 권한.
-    검증: D7 MIME allowlist + D8 size cap (per_file/conv/account) + D12 HMAC.
+    검증: D7 서비스 자체 kind 추론(확장자 우선) + D8 size cap (per_file/conv/account) + D12 HMAC.
     부작용: MinIO put_object + WebConversationAttachments INSERT + audit
     `attachment.upload` dispatch.
 
@@ -7672,14 +7744,11 @@ async def upload_conversation_attachment(
         ):
             return _json_error("이 대화에 첨부를 업로드할 권한이 없습니다.", 403)
 
-        # D7 MIME allowlist 검증.
+        # D7 — 서비스 자체 kind 추론 (확장자 우선, MIME 힌트 fallback).
+        # 클라이언트 MIME 을 신뢰하지 않으며 확장자 + MIME 조합으로 판단한다.
         mime_type = (file.content_type or "").strip().lower()
-        kind = _kind_from_mime(mime_type)
-        if not kind:
-            return _json_error(
-                f"지원하지 않는 MIME 입니다 ({mime_type or 'unknown'}). 허용: CSV/XLSX/PDF/PNG/JPEG/WEBP/text/markdown.",
-                415,
-            )
+        filename = (file.filename or "unnamed").strip()
+        kind = _infer_kind(filename, mime_type)
 
         # 본문 read — D8 size cap pre-check 위해 in-memory read.
         # Phase 11 (ingest pipeline) 진입 시 streaming upload + spool-to-disk 옵션 검토.
@@ -7701,7 +7770,7 @@ async def upload_conversation_attachment(
             return _json_error(reason, 413)
 
         # D12 categorical 메타.
-        filename = (file.filename or "unnamed").strip()
+        # filename 은 위 kind 추론 단계에서 이미 추출.
         filename_hmac = _hmac_filename(filename)
         ext_bucket = _extension_bucket(filename)
         size_bucket = _size_bucket(len(body_bytes))
