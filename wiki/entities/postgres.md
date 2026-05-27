@@ -23,17 +23,28 @@ tags: [postgres, pgvector, kb]
 |---|---|
 | 분류 | `#wiki/entity` |
 | 유형 | tool |
-| 본 프로젝트 사용 | KB 정본 (`agent_kb` database) + Sprint 4 D RAG (`agent_drag`, 예정) |
+| 본 프로젝트 사용 | KB 정본 + agent runtime state (`agent_kb` database) + Sprint 4 D RAG (`agent_drag`, 예정) |
+
+> **2026-05-27 변경**: `agent_runtime` schema 추가 — agent 대화·메시지·단계 state 가 MySQL `agent_memory` 에서 완전 이관. Postgres 가 KB + runtime 통합 storage.
 
 ## 1. 개요
 
-본 프로젝트의 KB / vector 정본 storage. Docker image = `pgvector/pgvector:pg16`. M4 cutover (2026-05-22) 부터 KB read path 가 정본.
+본 프로젝트의 **KB / vector + agent runtime state 통합 storage**. Docker image = `pgvector/pgvector:pg16`. KB는 M4 cutover (2026-05-22), runtime state는 AR-M4 cutover (2026-05-27) 부터 Postgres 가 정본.
 
 ## 2. 상세
 
-### 2.1 5 KB 정본 테이블 (`agent_kb`)
+### 2.1 5 KB 정본 테이블 (`agent_kb.public`)
 
 - `fact_entries` · `texts` (embedding 컬럼) · `rag_documents` · `rag_objects` · `agent_memory_facts` (VIEW)
+
+### 2.2 agent runtime state (`agent_kb.agent_runtime` schema, Phase 2 완료 2026-05-27)
+
+- `core_conversations` — 대화 목록 (owner_account_id, product_id 포함)
+- `core_messages` — LLM 메시지 전체 (tool_calls JSONB)
+- `kv` — 대화·글로벌 key-value 상태
+- `messages` — memory 메시지 (role/content/meta_json)
+- `steps` — 에이전트 실행 단계 (run_id, step_index, sql_text 등)
+- `summary` — 대화 요약
 
 ### 2.2 Extensions
 

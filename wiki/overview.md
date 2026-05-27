@@ -75,6 +75,8 @@ sources:
 - **ADR-0024** ([[Decisions/ADR-0024-postgres-database-isolation|mirror]]) — 단일 Postgres cluster + 별 database (`agent_kb` / `agent_drag`)
 - **ADR-0025** ([[Decisions/ADR-0025-m5-cleanup|mirror]]) — M5 cleanup 14-day window + Stage A/B/C boundary
 - **ADR-0026** ([[Decisions/ADR-0026-bedrock-llm-provider|mirror]]) — per-user OpenAI key → service-managed AWS Bedrock (Seoul region)
+- **ADR-0027** — agent_runtime Postgres schema 설계 + search_path 전역 변경 금지
+- **ADR-0028** — runtime 6 테이블 MySQL cleanup 14-day window + Stage A/B/C boundary (Phase 2 완료 2026-05-27)
 - **ADR-0022 / ADR-0023 / ADR-0025-pgvector** — TASK-0094 첨부 multi-cycle: MinIO storage + sandbox MySQL user 4종 + PGVector
 
 [[Decisions/_Index|전체 Decisions MOC]] 참조.
@@ -83,18 +85,22 @@ sources:
 
 ```
 User → Caddy/web (TLS) → FastAPI (feature-0003)
-                              ├→ MySQL (agent_memory + replica data plane)
+                              ├→ MySQL (agent_memory web* + replica data plane)
                               ├→ MinIO (첨부 storage)
                               └→ agent loop (feature-0002)
                                     ├→ Bedrock gateway → Claude (feature-0007)
-                                    └→ Postgres agent_kb (KB cutover, pgvector)
+                                    └→ Postgres agent_kb (KB + runtime state, pgvector)
 ```
+
+> **2026-05-27**: agent runtime state (`agent*` 10 테이블) 가 MySQL → Postgres 이관 완료. MySQL `agent_memory` 에는 `web*` 18 테이블만 잔존.
 
 자세한 그림과 trust boundary 는 [[Architecture/Data-Flow|Data Flow]] 참조.
 
 ### 2.4 진행 중인 흐름
 
-- **KB Postgres 마이그레이션** (TASK-0015 M0~M5 multi-cycle) — M4 cutover 완료, M5 cleanup window 진행. 자세히는 ADR-0021 / ADR-0025 mirror.
+- **KB Postgres 이관 (Phase 1)** — M5 cleanup 완료 (2026-05-27). KB 5 정본 + View DROP. ADR-0021 / ADR-0025.
+- **agent runtime state Postgres 이관 (Phase 2)** — 완료 (2026-05-27). MySQL `agent*` 10 테이블 전체 DROP. Postgres `agent_runtime` 단일 정본. ADR-0027 / ADR-0028.
+- **다음: Phase 3** — `web*` 18 테이블 (RBAC / audit / auth) Postgres 이관. 미진행.
 - **TASK-0094 첨부 / sandbox / RAG multi-cycle** — Sprint 1 (MinIO + sandbox MySQL user + reconciliation worker) Ship, Sprint 2 vision ingest 진행. ADR-0022 / ADR-0023 / ADR-0025-pgvector mirror.
 - **자동화 폐기 → 수동 PR 흐름** — ADR-0018 (`ai-*` 워크플로 폐기, 단순화).
 
@@ -134,16 +140,16 @@ User → Caddy/web (TLS) → FastAPI (feature-0003)
 
 ## 6. 관련 문서
 
-- [[Index|Index — MOC]]
-- [[Architecture/Overview|Architecture Overview]]
-- [[Features/_Index|Features MOC]]
-- [[Decisions/_Index|Decisions MOC]]
+- [[wiki/Index|Index — MOC]]
+- [[wiki/Architecture/Overview|Architecture Overview]]
+- [[wiki/Features/_Index|Features MOC]]
+- [[wiki/Decisions/_Index|Decisions MOC]]
 
 ## 7. 둘러보기
 
-- 상위: [[Index|Index]]
-- 하위 영역: [[Architecture/Overview]] · [[Features/_Index]] · [[Decisions/_Index]] · [[concepts/_Index]] · [[entities/_Index]] · [[Glossary/_Index]]
-- sibling: [[Log|Log.md]] · [[README]]
+- 상위: [[wiki/Index|Index]]
+- 하위 영역: [[wiki/Architecture/Overview]] · [[wiki/Features/_Index]] · [[wiki/Decisions/_Index]] · [[wiki/concepts/_Index]] · [[wiki/entities/_Index]] · [[wiki/Glossary/_Index]]
+- sibling: [[wiki/Log|Log.md]] · [[wiki/README]]
 
 ## 8. 외부 link
 

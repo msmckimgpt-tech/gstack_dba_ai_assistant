@@ -23,20 +23,24 @@ tags: [mysql, db, storage]
 |---|---|
 | 분류 | `#wiki/entity` |
 | 유형 | tool |
-| 본 프로젝트 사용 | `agent_memory` DB (M5 까지) + replica data plane + audit + sandbox schema |
+| 본 프로젝트 사용 | `agent_memory` DB (`web*` 18 테이블) + replica data plane + audit + sandbox schema |
+
+> **2026-05-27 변경**: `agent_memory` DB 의 `agent*` 테이블 (KB 5 정본 + runtime state 10개) 이 모두 Postgres `agent_kb` 로 이관 완료. MySQL `agent_memory` 에는 `web*` 18 테이블만 잔존 (Phase 3 이관 대상).
 
 ## 1. 개요
 
-본 프로젝트의 **primary storage** — `agent_memory` 메모리 DB + AI 전용 replica data plane + audit (`WebAuditEvents`) + 첨부 sandbox schema 의 모든 영역.
+본 프로젝트의 **web 레이어 storage** — `agent_memory` 의 `web*` 테이블 (RBAC / audit / auth / 첨부) + AI 전용 replica data plane + 첨부 sandbox schema. agent runtime state 와 KB 정본은 Postgres 로 완전 이관됨 (2026-05-27).
 
 ## 2. 상세
 
 ### 2.1 핵심 테이블 영역
 
-- `agent_memory` DB: 대화 / 메시지 / 단계 / facts / RAG / KV (M5 까지 KB 5 정본 보유)
-- `WebAuditEvents`: audit 단일 테이블 (ADR-0019)
-- `WebAccounts`, `WebPermissions`, `WebRoles`, `WebProducts`: RBAC catalog
+- `agent_memory` DB — `web*` 18 테이블 (Phase 3 이관 대상):
+  - `WebAuditEvents`: audit 단일 테이블 (ADR-0019)
+  - `WebAccounts`, `WebPermissions`, `WebRoles`, `WebProducts`: RBAC catalog
+  - `WebAuthSessions`, `WebConversationShares`, `WebKeywords` 등
 - `agent_attachment_<hash>`: 첨부 sandbox schema (ADR-0023)
+- ~~`agent*` 테이블~~: Phase 1 (KB, 2026-05-27) + Phase 2 (runtime, 2026-05-27) 이관 완료 → Postgres `agent_kb` 로 이전
 
 ### 2.2 운영 설정
 
@@ -62,7 +66,7 @@ tags: [mysql, db, storage]
 
 ## 5. 관련 entity
 
-- [[postgres]]
+- [[entities/postgres|postgres]]
 
 ## 6. 관련 concept
 

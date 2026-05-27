@@ -43,7 +43,9 @@ sources:
 
 ## 1. 개요
 
-사용자 요청 → Caddy (TLS termination) → web (FastAPI) → agent loop (LLM tool-call) → MySQL replica + Postgres KB + MinIO storage 의 데이터 흐름을 정본 doc 의 §4 (기능 맵) + feature FUNCTION.md 의 *Main Flow* 섹션 mirror 로 시각화한다.
+사용자 요청 → Caddy (TLS termination) → web (FastAPI) → agent loop (LLM tool-call) → MySQL replica + Postgres (KB + runtime) + MinIO storage 의 데이터 흐름을 정본 doc 의 §4 (기능 맵) + feature FUNCTION.md 의 *Main Flow* 섹션 mirror 로 시각화한다.
+
+> **2026-05-27 아키텍처 변경**: `agent_memory` DB 의 `agent*` 10 테이블 (runtime state) 이 Postgres `agent_runtime` schema 로 완전 이관. MySQL `agent_memory` 에는 `web*` 18 테이블만 잔존.
 
 ## 2. 상세
 
@@ -57,21 +59,21 @@ flowchart LR
     agent[agent loop]
     bedrock[bedrock-gateway<br/>LiteLLM]
     claude[AWS Bedrock<br/>Claude Seoul]
-    mysql[(MySQL 8.0<br/>agent_memory + replica)]
-    pg[(Postgres 16<br/>agent_kb pgvector)]
+    mysql[(MySQL 8.0<br/>agent_memory web* + replica)]
+    pg[(Postgres 16<br/>agent_kb:<br/>KB + agent_runtime)]
     minio[(MinIO<br/>agent-attachments)]
     browser[browser service<br/>Playwright]
     mcp[mcp service]
 
     user -->|HTTPS| caddy
     caddy -->|X-Forwarded-For client_ip| web
-    web -->|RBAC + audit| mysql
+    web -->|RBAC + audit + web*| mysql
     web -->|첨부 read/write| minio
     web -->|/api/ask| agent
     agent -->|OpenAI SDK| bedrock
     bedrock -->|InvokeModel| claude
-    agent -->|read/write KB| mysql
-    agent -->|read/write KB cutover| pg
+    agent -->|runtime state read/write| pg
+    agent -->|KB read/write| pg
     agent -->|tool: execute_sql| mysql
     web -->|browser-up| browser
     agent -.->|MCP optional| mcp
@@ -98,13 +100,32 @@ flowchart LR
 | 4 | user = fail-open (`_audit_user_action`) — `/api/ask` 같은 long-running 실행은 audit 실패 격리 |
 | 5 | KB mirror write 도 best-effort `_log_kb_write_audit()` 호출 (M2-c+) |
 
-### 2.4 KB 마이그레이션 흐름 (TASK-0015, ADR-0021/0024/0025)
+### 2.4 Storage 이관 현황 (Phase 1 + Phase 2 완료, 2026-05-27)
+
+#### KB 이관 (Phase 1 — ADR-0021/0025, 완료)
 
 ```
 M0 standalone → M1 schema → M2 dual-write (audit + pg_branch tag)
   → M3 backfill ETL + embedding worker → M4 cutover (read=Postgres)
-  → M5 cleanup (MySQL drop, 14-day window)
+  → M5 cleanup (MySQL drop, 14-day window) ✅ 완료 2026-05-27
 ```
+
+`agent_kb` schema: `fact_entries`, `texts`, `rag_documents`, `rag_objects`, `agent_memory_facts` (VIEW).
+
+#### agent runtime state 이관 (Phase 2 — ADR-0027/0028, 완료)
+
+```
+AR-M1 schema → AR-M2 dual-write → AR-M3 backfill
+  → AR-M4 cutover (AGENT_RUNTIME_READ_BACKEND=postgres)
+  → AR-M5 cleanup: 6 테이블 DROP ✅ → insight-worker PG primary write 전환
+  → MySQL agent* 10 테이블 완전 제거 ✅ 완료 2026-05-27
+```
+
+`agent_runtime` schema: `core_conversations`, `core_messages`, `kv`, `messages`, `steps`, `summary`.
+
+#### 현재 MySQL agent_memory 잔존 범위
+
+`web*` 18 테이블 (RBAC catalog + audit + auth) — Phase 3 이관 대상.
 
 자세히는 [[../Features/feature-0002-agent-core|feature-0002 카드]] + [[../Decisions/ADR-0021-kb-postgres-rbac|ADR-0021 mirror]] + [[../Decisions/ADR-0025-m5-cleanup|ADR-0025 mirror]].
 
