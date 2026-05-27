@@ -674,6 +674,9 @@ def _connect_memory():
 
 def _ensure_memory_tables(conn):
     """에이전트 대화 테이블이 존재하는지 확인하고 없으면 생성."""
+    from modules.runtime_backend import AGENT_RUNTIME_READ_BACKEND
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        return  # PG cutover 완료 — MySQL schema 재생성 불필요
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS AgentCoreMessages (
@@ -882,6 +885,20 @@ def _save_message(conn, conversation_id: str, role: str,
                   tool_call_id: str | None = None,
                   name: str | None = None):
     """메시지를 DB에 저장."""
+    from modules.runtime_backend import AGENT_RUNTIME_READ_BACKEND, _get_pg_runtime_backend, _get_pg_runtime_conn
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        pg_conn = _get_pg_runtime_conn()
+        if pg_conn:
+            try:
+                _get_pg_runtime_backend().save_core_message(pg_conn,
+                    conversation_id=conversation_id, role=role,
+                    content=content, tool_calls=tool_calls,
+                    tool_call_id=tool_call_id, name=name)
+            except Exception as _exc:
+                logger.warning("_save_message PG write failed: %s", _exc)
+            finally:
+                pg_conn.close()
+        return  # MySQL write 생략 (PG cutover 완료)
     cur = conn.cursor()
     tc_json = json.dumps(tool_calls, ensure_ascii=False) if tool_calls else None
     cur.execute(
@@ -899,6 +916,18 @@ def _save_message(conn, conversation_id: str, role: str,
 
 
 def _ensure_conversation(conn, conversation_id: str):
+    from modules.runtime_backend import AGENT_RUNTIME_READ_BACKEND, _get_pg_runtime_backend, _get_pg_runtime_conn
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        pg_conn = _get_pg_runtime_conn()
+        if pg_conn:
+            try:
+                _get_pg_runtime_backend().save_conversation(pg_conn,
+                    conversation_id=conversation_id)
+            except Exception as _exc:
+                logger.warning("_ensure_conversation PG write failed: %s", _exc)
+            finally:
+                pg_conn.close()
+        return  # MySQL write 생략 (PG cutover 완료)
     cur = conn.cursor()
     cur.execute(
         """INSERT IGNORE INTO AgentCoreConversations (conversation_id)
@@ -911,6 +940,18 @@ def _ensure_conversation(conn, conversation_id: str):
 
 
 def _update_conversation_topic(conn, conversation_id: str, topic: str):
+    from modules.runtime_backend import AGENT_RUNTIME_READ_BACKEND, _get_pg_runtime_backend, _get_pg_runtime_conn
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        pg_conn = _get_pg_runtime_conn()
+        if pg_conn:
+            try:
+                _get_pg_runtime_backend().save_conversation(pg_conn,
+                    conversation_id=conversation_id, topic=topic[:256])
+            except Exception as _exc:
+                logger.warning("_update_conversation_topic PG write failed: %s", _exc)
+            finally:
+                pg_conn.close()
+        return  # MySQL write 생략 (PG cutover 완료)
     cur = conn.cursor()
     cur.execute(
         """UPDATE AgentCoreConversations SET topic = %s WHERE conversation_id = %s""",
@@ -1676,16 +1717,22 @@ def _run_agent_core(
         if not tool_calls:
             # LLM이 텍스트로 응답 — 최종 답변
             raw_answer = getattr(response_message, "content", "") or ""
-            # reasoning만 있고 content가 비어있으면 reasoning을 사용
             if not raw_answer.strip():
-                reasoning = getattr(response_message, "reasoning", None) or getattr(response_message, "reasoning_content", None) or ""
-                if reasoning and len(reasoning) > 20:
-                    raw_answer = reasoning
-                elif step_count > 0 and empty_retries < 3:
+                # Reasoning/reasoning_content can contain provider-private chain of thought.
+                # Never surface it as a user-facing answer; ask the model for a concise
+                # answer based on tool results instead.
+                if step_count > 0 and empty_retries < 3:
                     empty_retries += 1
                     messages.append({
                         "role": "user",
                         "content": "Write your answer in Korean Markdown based on the tool results above.",
+                    })
+                    continue
+                if empty_retries < 3:
+                    empty_retries += 1
+                    messages.append({
+                        "role": "user",
+                        "content": "Write a concise Korean Markdown answer. Do not expose hidden reasoning; summarize the result only.",
                     })
                     continue
             # 대형 표 → CSV 링크 후처리

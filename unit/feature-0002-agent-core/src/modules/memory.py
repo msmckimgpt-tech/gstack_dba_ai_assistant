@@ -45,6 +45,9 @@ def _is_truthy_flag(value: Any) -> bool:
     return str(value or "").strip().lower() in ("1", "true", "yes")
 
 def ensure_memory_schema() -> None:
+    from .runtime_backend import AGENT_RUNTIME_READ_BACKEND
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        return  # PG cutover 완료 — MySQL schema 재생성 불필요
     admin_conn = connect(database=None, autocommit=True)
     admin_cur = admin_conn.cursor()
     admin_cur.execute(
@@ -886,6 +889,20 @@ def save_memory_message(
             meta_json = json.dumps(auto_meta, ensure_ascii=False)
         except Exception:
             meta_json = json.dumps({"value": str(auto_meta)}, ensure_ascii=False)
+    from .runtime_backend import AGENT_RUNTIME_READ_BACKEND, _get_pg_runtime_backend, _get_pg_runtime_conn
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        pg_conn = _get_pg_runtime_conn()
+        if pg_conn:
+            try:
+                _get_pg_runtime_backend().save_memory_message(pg_conn,
+                    conversation_id=conversation_id, role=role,
+                    content=content, meta_json=meta_json)
+            except Exception as _exc:
+                import logging as _log
+                _log.getLogger("agent_core.memory").warning("save_memory_message PG write failed: %s", _exc)
+            finally:
+                pg_conn.close()
+        return  # MySQL write 생략 (PG cutover 완료)
     cur = conn.cursor()
     cur.execute(
         """
@@ -902,6 +919,19 @@ VALUES (%s, %s, %s, %s)
 
 
 def save_memory_kv(conn, conversation_id: str, key: str, value: str) -> None:
+    from .runtime_backend import AGENT_RUNTIME_READ_BACKEND, _get_pg_runtime_backend, _get_pg_runtime_conn
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        pg_conn = _get_pg_runtime_conn()
+        if pg_conn:
+            try:
+                _get_pg_runtime_backend().save_kv(pg_conn,
+                    conversation_id=conversation_id, key=key, value=value)
+            except Exception as _exc:
+                import logging as _log
+                _log.getLogger("agent_core.memory").warning("save_memory_kv PG write failed: %s", _exc)
+            finally:
+                pg_conn.close()
+        return  # MySQL write 생략 (PG cutover 완료)
     cur = conn.cursor()
     cur.execute(
         """
@@ -1137,6 +1167,19 @@ WHERE ConversationId = %s AND RunId = %s
 
 
 def save_memory_summary(conn, conversation_id: str, summary: str) -> None:
+    from .runtime_backend import AGENT_RUNTIME_READ_BACKEND, _get_pg_runtime_backend, _get_pg_runtime_conn
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        pg_conn = _get_pg_runtime_conn()
+        if pg_conn:
+            try:
+                _get_pg_runtime_backend().save_memory_summary(pg_conn,
+                    conversation_id=conversation_id, summary=summary)
+            except Exception as _exc:
+                import logging as _log
+                _log.getLogger("agent_core.memory").warning("save_memory_summary PG write failed: %s", _exc)
+            finally:
+                pg_conn.close()
+        return  # MySQL write 생략 (PG cutover 완료)
     cur = conn.cursor()
     cur.execute(
         """
@@ -1185,6 +1228,25 @@ def save_memory_step(
         except Exception:
             result_json = json.dumps({"value": str(result_summary)}, ensure_ascii=False)
 
+    step_index = int(entry.get("step_index", 0) or 0)
+    from .runtime_backend import AGENT_RUNTIME_READ_BACKEND, _get_pg_runtime_backend, _get_pg_runtime_conn
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        pg_conn = _get_pg_runtime_conn()
+        if pg_conn:
+            try:
+                _get_pg_runtime_backend().save_memory_step(pg_conn,
+                    conversation_id=conversation_id, run_id=run_id,
+                    step_index=step_index, action=action, tool=tool, intent=intent,
+                    work_text=work_text or None, work_source=work_source or None,
+                    reason_text=reason_text or None, reason_source=reason_source or None,
+                    args_json=args_json, sql_text=sql_text or None,
+                    result_summary_json=result_json, error_text=error_text or None)
+            except Exception as _exc:
+                import logging as _log
+                _log.getLogger("agent_core.memory").warning("save_memory_step PG write failed: %s", _exc)
+            finally:
+                pg_conn.close()
+        return  # MySQL write 생략 (PG cutover 완료)
     cur.execute(
         """
 INSERT INTO AgentMemorySteps (
@@ -1196,7 +1258,7 @@ INSERT INTO AgentMemorySteps (
         (
             conversation_id,
             run_id,
-            int(entry.get("step_index", 0) or 0),
+            step_index,
             action,
             tool,
             intent,
@@ -1214,7 +1276,7 @@ INSERT INTO AgentMemorySteps (
     from .runtime_backend import _dual_write_runtime_mirror
     _dual_write_runtime_mirror("save_memory_step",
                                conversation_id=conversation_id, run_id=run_id,
-                               step_index=int(entry.get("step_index", 0) or 0),
+                               step_index=step_index,
                                action=action, tool=tool, intent=intent,
                                work_text=work_text or None, work_source=work_source or None,
                                reason_text=reason_text or None, reason_source=reason_source or None,
