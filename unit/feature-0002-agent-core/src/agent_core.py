@@ -818,26 +818,13 @@ def _build_step_payload(
     }
 
 
-def _load_conversation_messages(conn, conversation_id: str, max_messages: int = 50) -> list[dict]:
-    """대화 메시지를 OpenAI 메시지 형식으로 로드."""
-    raw_limit = max(int(max_messages or 50) * 4, 80)
-    cur = conn.cursor(dictionary=True)
-    cur.execute(
-        """SELECT id, role, content, tool_calls, tool_call_id, name
-           FROM AgentCoreMessages
-           WHERE conversation_id = %s
-           ORDER BY id DESC LIMIT %s""",
-        (conversation_id, raw_limit),
-    )
-    rows = cur.fetchall() or []
-    cur.close()
-
-    normalized_rows = _normalize_history_rows(list(reversed(rows)))
-    if len(normalized_rows) > max_messages:
-        normalized_rows = _normalize_history_rows(normalized_rows[-max_messages:])
-
-    messages = []
-    for row in normalized_rows:
+def _assemble_core_messages(rows: list[dict], max_messages: int) -> list[dict]:
+    """normalize + truncate + format for OpenAI API. shared by MySQL and PG paths."""
+    normalized = _normalize_history_rows(rows)
+    if len(normalized) > max_messages:
+        normalized = _normalize_history_rows(normalized[-max_messages:])
+    messages: list[dict] = []
+    for row in normalized:
         msg: dict[str, Any] = {"role": row["role"]}
         parsed_tool_calls = row.get("_parsed_tool_calls")
         if row["content"] and not parsed_tool_calls and not row.get("tool_calls"):
@@ -850,6 +837,43 @@ def _load_conversation_messages(conn, conversation_id: str, max_messages: int = 
             msg["name"] = row["name"]
         messages.append(msg)
     return messages
+
+
+def _load_conversation_messages(conn, conversation_id: str, max_messages: int = 50) -> list[dict]:
+    """대화 메시지를 OpenAI 메시지 형식으로 로드."""
+    raw_limit = max(int(max_messages or 50) * 4, 80)
+
+    # M4: PG read path
+    from modules.runtime_backend import _read_runtime_pg, AGENT_RUNTIME_READ_BACKEND
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        pg_rows = _read_runtime_pg("load_core_messages",
+                                   conversation_id=conversation_id, limit=raw_limit)
+        if pg_rows is not None:
+            # PG: (role, content, tool_calls, tool_call_id, name) — tool_calls is already
+            # a Python object (psycopg3 JSONB auto-parse). Serialize back to JSON string so
+            # _normalize_history_rows/_parse_saved_tool_calls can process it uniformly.
+            # PG rows are ASC ordered (ORDER BY id ASC) — no reverse needed.
+            dict_rows = [
+                {
+                    "role": r[0], "content": r[1],
+                    "tool_calls": json.dumps(r[2], ensure_ascii=False) if r[2] is not None else None,
+                    "tool_call_id": r[3], "name": r[4],
+                }
+                for r in pg_rows
+            ]
+            return _assemble_core_messages(dict_rows, max_messages)
+
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """SELECT id, role, content, tool_calls, tool_call_id, name
+           FROM AgentCoreMessages
+           WHERE conversation_id = %s
+           ORDER BY id DESC LIMIT %s""",
+        (conversation_id, raw_limit),
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    return _assemble_core_messages(list(reversed(rows)), max_messages)
 
 
 def _save_message(conn, conversation_id: str, role: str,
@@ -1917,6 +1941,12 @@ def _run_agent_core(
 
 def list_all_conversations() -> list[dict]:
     """모든 대화 목록을 반환."""
+    # M4: PG read path
+    from modules.runtime_backend import _read_runtime_pg, AGENT_RUNTIME_READ_BACKEND
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        pg_result = _read_runtime_pg("list_conversations", limit=50)
+        if pg_result is not None:
+            return [{"conversation_id": r[0], "topic": r[1], "created_at": r[2]} for r in pg_result]
     try:
         conn = _connect_memory()
         _ensure_memory_tables(conn)
@@ -1955,6 +1985,32 @@ def clear_conversation(conversation_id: str):
 
 def get_conversation_messages(conversation_id: str, limit: int = 100) -> list[dict]:
     """대화 메시지를 반환 (Web UI용)."""
+    # M4: PG read path
+    from modules.runtime_backend import _read_runtime_pg, AGENT_RUNTIME_READ_BACKEND
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        pg_rows = _read_runtime_pg("get_conv_messages_full",
+                                   conversation_id=conversation_id, limit=limit)
+        if pg_rows is not None:
+            result = []
+            for pg_id, role, content, tool_calls, tool_call_id, name, created_at in pg_rows:
+                msg = {
+                    "id": pg_id,
+                    "role": role,
+                    "content": "" if tool_calls else (content or ""),
+                    "created_at": (
+                        created_at.isoformat()
+                        if hasattr(created_at, "isoformat")
+                        else str(created_at or "")
+                    ),
+                }
+                if tool_calls:
+                    msg["tool_calls"] = tool_calls  # already Python obj from JSONB
+                if tool_call_id:
+                    msg["tool_call_id"] = tool_call_id
+                if name:
+                    msg["name"] = name
+                result.append(msg)
+            return result
     try:
         conn = _connect_memory()
         _ensure_memory_tables(conn)

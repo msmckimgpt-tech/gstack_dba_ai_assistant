@@ -784,6 +784,31 @@ ON DUPLICATE KEY UPDATE
 
 
 def load_memory_context(conn, conversation_id: str, max_turns: int):
+    # M4: PG read path — summary + messages + kv 를 각각 PgRuntimeBackend read method 로.
+    from .runtime_backend import _read_runtime_pg, AGENT_RUNTIME_READ_BACKEND
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        max_fetch = max(10, max_turns * 3)
+        summary_pg = _read_runtime_pg("load_summary", conversation_id=conversation_id)
+        msgs_pg = _read_runtime_pg("load_messages", conversation_id=conversation_id, limit=max_fetch)
+        kv_pg = _read_runtime_pg("load_kv_all", conversation_id=conversation_id)
+        if summary_pg is not None and msgs_pg is not None and kv_pg is not None:
+            rows: list = []
+            for role, content, meta_json, created_at in msgs_pg:
+                if _is_internal_message(role, content, meta_json):
+                    continue
+                rows.append((role, content, created_at))
+                if len(rows) >= max_turns:
+                    break
+            rows.reverse()
+            kv = {k: v for k, v in kv_pg}
+            return summary_pg, rows, kv
+        # one of the PG reads returned None (connection/method failure) — log and fall through to MySQL
+        import logging as _lg
+        _lg.getLogger("agent_core.memory").warning(
+            "load_memory_context: PG partial failure (summary=%s msgs=%s kv=%s), falling back to MySQL",
+            summary_pg is not None, msgs_pg is not None, kv_pg is not None,
+        )
+
     cur = conn.cursor()
 
     cur.execute(
@@ -895,6 +920,13 @@ ON DUPLICATE KEY UPDATE
 
 
 def load_memory_kv(conn, conversation_id: str, key: str) -> str:
+    # M4: PG read path (fail-soft, AGENT_RUNTIME_READ_BACKEND=postgres 시 활성)
+    from .runtime_backend import _read_runtime_pg, AGENT_RUNTIME_READ_BACKEND
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        result = _read_runtime_pg("load_kv", conversation_id=conversation_id, key=key)
+        if result is not None:
+            return result
+
     cur = conn.cursor()
     cur.execute(
         """
@@ -911,6 +943,13 @@ LIMIT 1
 
 
 def load_memory_kv_all(conn, conversation_id: str) -> dict[str, str]:
+    # M4: PG read path
+    from .runtime_backend import _read_runtime_pg, AGENT_RUNTIME_READ_BACKEND
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        rows_pg = _read_runtime_pg("load_kv_all", conversation_id=conversation_id)
+        if rows_pg is not None:
+            return {k: v for k, v in rows_pg}
+
     cur = conn.cursor()
     cur.execute(
         """
@@ -958,6 +997,13 @@ def is_delete_requested(conn, conversation_id: str) -> bool:
 
 
 def list_processing_conversation_ids(conn) -> list[str]:
+    # M4: PG read path
+    from .runtime_backend import _read_runtime_pg, AGENT_RUNTIME_READ_BACKEND
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        result = _read_runtime_pg("load_kv_by_key_value", key="last_status", value="processing")
+        if result is not None:
+            return result
+
     cur = conn.cursor()
     cur.execute(
         """
@@ -972,6 +1018,14 @@ WHERE `Key` = 'last_status' AND `Value` = 'processing'
 
 
 def list_delete_requested_conversation_ids(conn) -> list[str]:
+    # M4: PG read path — fetch all delete_requested rows, filter truthy client-side (MySQL 패리티).
+    # load_kv_by_key returns (conversation_id, value) tuples; _is_truthy_flag mirrors MySQL semantics.
+    from .runtime_backend import _read_runtime_pg, AGENT_RUNTIME_READ_BACKEND
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        kv_rows = _read_runtime_pg("load_kv_by_key", key="delete_requested")
+        if kv_rows is not None:
+            return [conv_id for conv_id, val in kv_rows if _is_truthy_flag(val)]
+
     cur = conn.cursor()
     cur.execute(
         """
@@ -1168,58 +1222,18 @@ INSERT INTO AgentMemorySteps (
                                result_summary_json=result_json, error_text=error_text or None)
 
 
-def load_recent_steps(
-    conn,
-    conversation_id: str,
-    limit: int,
-) -> list[dict[str, Any]]:
-    if limit <= 0:
-        return []
-    cur = conn.cursor()
-    cur.execute(
-        """
-SELECT
-    StepIndex,
-    Action,
-    Tool,
-    Intent,
-    WorkText,
-    WorkSource,
-    ReasonText,
-    ReasonSource,
-    ArgsJson,
-    SqlText,
-    ResultSummaryJson,
-    ErrorText,
-    RunId,
-    CreatedAt
-FROM AgentMemorySteps
-WHERE ConversationId = %s
-ORDER BY CreatedAt DESC
-LIMIT %s
-        """,
-        (conversation_id, limit),
-    )
-    rows = cur.fetchall() or []
-    cur.close()
-    rows = list(rows)
-    rows.reverse()
+def _assemble_steps(rows: list) -> list[dict[str, Any]]:
+    """step 행 튜플 목록 → dict 목록. MySQL + PG 공용 (컬럼 순서 동일).
+
+    컬럼 순서: step_index, action, tool, intent, work_text, work_source,
+               reason_text, reason_source, args_json, sql_text,
+               result_summary_json, error_text, run_id, created_at
+    """
     steps: list[dict[str, Any]] = []
     for (
-        step_index,
-        action,
-        tool,
-        intent,
-        work_text,
-        work_source,
-        reason_text,
-        reason_source,
-        args_json,
-        sql_text,
-        result_json,
-        error_text,
-        run_id,
-        created_at,
+        step_index, action, tool, intent, work_text, work_source,
+        reason_text, reason_source, args_json, sql_text,
+        result_json, error_text, run_id, created_at,
     ) in rows:
         try:
             args = json.loads(args_json) if args_json else {}
@@ -1250,6 +1264,53 @@ LIMIT %s
             }
         )
     return steps
+
+
+def load_recent_steps(
+    conn,
+    conversation_id: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    if limit <= 0:
+        return []
+
+    # M4: PG read path
+    from .runtime_backend import _read_runtime_pg, AGENT_RUNTIME_READ_BACKEND
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        pg_rows = _read_runtime_pg("load_steps", conversation_id=conversation_id, limit=limit)
+        if pg_rows is not None:
+            return _assemble_steps(list(reversed(list(pg_rows))))
+
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT
+    StepIndex,
+    Action,
+    Tool,
+    Intent,
+    WorkText,
+    WorkSource,
+    ReasonText,
+    ReasonSource,
+    ArgsJson,
+    SqlText,
+    ResultSummaryJson,
+    ErrorText,
+    RunId,
+    CreatedAt
+FROM AgentMemorySteps
+WHERE ConversationId = %s
+ORDER BY CreatedAt DESC
+LIMIT %s
+        """,
+        (conversation_id, limit),
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    rows = list(rows)
+    rows.reverse()
+    return _assemble_steps(rows)
 
 
 def load_step_trace_from_kv(kv: dict[str, str]) -> list[dict[str, Any]]:
@@ -1286,6 +1347,13 @@ def create_conversation(conn, conversation_id: str, topic: str | None = None) ->
 
 
 def list_conversations(conn, limit: int = 50):
+    # M4: PG read path — core_conversations 테이블 사용 (proper created_at column)
+    from .runtime_backend import _read_runtime_pg, AGENT_RUNTIME_READ_BACKEND
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        rows_pg = _read_runtime_pg("list_conversations", limit=limit)
+        if rows_pg is not None:
+            return rows_pg
+
     cur = conn.cursor()
     cur.execute(
         """

@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260527-AR-M4
+- Date: 2026-05-27
+- TASK-Cycle: TASK-0118, **Major §12.3** — cutover read path (outside-voice 필수)
+- Summary: Phase 2 AR-M4 PG read path 전환. `AGENT_RUNTIME_READ_BACKEND` env + `_read_runtime_pg` dispatcher + `PgRuntimeBackend` 9 read method + memory.py 7 분기 + agent_core.py 3 분기 + 23 test + cutover readiness script + ADR-0027 addendum. web UI app.py 는 cross-DB JOIN 의존으로 별도 cycle.
+- Worktree: `ai/claude/agent-runtime/m4` (base = main HEAD 335a5b8 (AR-M3 merge)).
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/runtime_backend.py` (수정): `AGENT_RUNTIME_READ_BACKEND` env var + `_PG_GET_CONV_MESSAGES_FULL` SQL 상수 추가 + `PgRuntimeBackend` 9 read method 추가 (load_kv/all/by_key_value/summary/messages/steps/core_messages/list_conversations/get_conv_messages_full) + `_get_pg_runtime_conn_ro()` + `_read_runtime_pg(method_name, **kwargs)` dispatcher.
+  - `unit/feature-0002-agent-core/src/modules/memory.py` (수정): 7 read 함수 PG 분기 + `_assemble_steps()` helper 추출.
+  - `unit/feature-0002-agent-core/src/agent_core.py` (수정): `_assemble_core_messages()` helper 추출 + `_load_conversation_messages` / `list_all_conversations` / `get_conversation_messages` PG 분기.
+  - `unit/feature-0002-agent-core/tests/test_runtime_read_backend.py` (신규, 23 tests): _read_runtime_pg routing 5건 / PgRuntimeBackend 9 method SQL 검증 / memory.py 4건 / agent_core.py 4건.
+  - `bin/runtime-cutover-readiness.sh` (신규): 7 gate cutover readiness check (dual-write 활성/row count/ANCHOR/unit test/PG read test/env 정합/backfill state).
+  - `docs/DECISIONS.md` (수정): ADR-0027 addendum — AR-M4 read path cutover 결정 (fail-soft 패턴 / JSONB 역직렬화 / web UI 제외 rationale).
+  - `unit/feature-0002-agent-core/docs/{TASK,MODIFY,REVIEW,FUNCTION}.md`: TASK-0118 등록 + CHG-20260527-AR-M4 + REV-20260527-0008 + FUNCTION REQ append.
+
 ## CHG-20260527-AR-M3
 - Date: 2026-05-27
 - TASK-Cycle: TASK-0117, **Minor §12.3** — backfill ETL (신규 파일만)
