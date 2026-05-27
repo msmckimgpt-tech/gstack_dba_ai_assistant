@@ -673,33 +673,7 @@ def _connect_memory():
 
 
 def _ensure_memory_tables(conn):
-    """에이전트 대화 테이블이 존재하는지 확인하고 없으면 생성."""
-    from modules.runtime_backend import AGENT_RUNTIME_READ_BACKEND
-    if AGENT_RUNTIME_READ_BACKEND == "postgres":
-        return  # PG cutover 완료 — MySQL schema 재생성 불필요
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS AgentCoreMessages (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
-            conversation_id VARCHAR(128) NOT NULL,
-            role VARCHAR(20) NOT NULL,
-            content LONGTEXT,
-            tool_calls JSON DEFAULT NULL,
-            tool_call_id VARCHAR(128) DEFAULT NULL,
-            name VARCHAR(64) DEFAULT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            INDEX idx_conv (conversation_id, id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS AgentCoreConversations (
-            conversation_id VARCHAR(128) PRIMARY KEY,
-            topic VARCHAR(256) DEFAULT '',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    """)
-    cur.close()
+    pass  # PG cutover 완료 — MySQL schema 재생성 불필요
 
 
 def _parse_saved_tool_calls(raw_value: Any) -> list[dict[str, Any]]:
@@ -885,82 +859,44 @@ def _save_message(conn, conversation_id: str, role: str,
                   tool_call_id: str | None = None,
                   name: str | None = None):
     """메시지를 DB에 저장."""
-    from modules.runtime_backend import AGENT_RUNTIME_READ_BACKEND, _get_pg_runtime_backend, _get_pg_runtime_conn
-    if AGENT_RUNTIME_READ_BACKEND == "postgres":
-        pg_conn = _get_pg_runtime_conn()
-        if pg_conn:
-            try:
-                _get_pg_runtime_backend().save_core_message(pg_conn,
-                    conversation_id=conversation_id, role=role,
-                    content=content, tool_calls=tool_calls,
-                    tool_call_id=tool_call_id, name=name)
-            except Exception as _exc:
-                logger.warning("_save_message PG write failed: %s", _exc)
-            finally:
-                pg_conn.close()
-        return  # MySQL write 생략 (PG cutover 완료)
-    cur = conn.cursor()
-    tc_json = json.dumps(tool_calls, ensure_ascii=False) if tool_calls else None
-    cur.execute(
-        """INSERT INTO AgentCoreMessages
-           (conversation_id, role, content, tool_calls, tool_call_id, name)
-           VALUES (%s, %s, %s, %s, %s, %s)""",
-        (conversation_id, role, content, tc_json, tool_call_id, name),
-    )
-    cur.close()
-    from modules.runtime_backend import _dual_write_runtime_mirror
-    _dual_write_runtime_mirror("save_core_message",
-                               conversation_id=conversation_id, role=role,
-                               content=content, tool_calls=tool_calls,
-                               tool_call_id=tool_call_id, name=name)
+    from modules.runtime_backend import _get_pg_runtime_backend, _get_pg_runtime_conn
+    pg_conn = _get_pg_runtime_conn()
+    if pg_conn:
+        try:
+            _get_pg_runtime_backend().save_core_message(pg_conn,
+                conversation_id=conversation_id, role=role,
+                content=content, tool_calls=tool_calls,
+                tool_call_id=tool_call_id, name=name)
+        except Exception as _exc:
+            logger.warning("_save_message PG write failed: %s", _exc)
+        finally:
+            pg_conn.close()
 
 
 def _ensure_conversation(conn, conversation_id: str):
-    from modules.runtime_backend import AGENT_RUNTIME_READ_BACKEND, _get_pg_runtime_backend, _get_pg_runtime_conn
-    if AGENT_RUNTIME_READ_BACKEND == "postgres":
-        pg_conn = _get_pg_runtime_conn()
-        if pg_conn:
-            try:
-                _get_pg_runtime_backend().save_conversation(pg_conn,
-                    conversation_id=conversation_id)
-            except Exception as _exc:
-                logger.warning("_ensure_conversation PG write failed: %s", _exc)
-            finally:
-                pg_conn.close()
-        return  # MySQL write 생략 (PG cutover 완료)
-    cur = conn.cursor()
-    cur.execute(
-        """INSERT IGNORE INTO AgentCoreConversations (conversation_id)
-           VALUES (%s)""",
-        (conversation_id,),
-    )
-    cur.close()
-    from modules.runtime_backend import _dual_write_runtime_mirror
-    _dual_write_runtime_mirror("save_conversation", conversation_id=conversation_id)
+    from modules.runtime_backend import _get_pg_runtime_backend, _get_pg_runtime_conn
+    pg_conn = _get_pg_runtime_conn()
+    if pg_conn:
+        try:
+            _get_pg_runtime_backend().save_conversation(pg_conn,
+                conversation_id=conversation_id)
+        except Exception as _exc:
+            logger.warning("_ensure_conversation PG write failed: %s", _exc)
+        finally:
+            pg_conn.close()
 
 
 def _update_conversation_topic(conn, conversation_id: str, topic: str):
-    from modules.runtime_backend import AGENT_RUNTIME_READ_BACKEND, _get_pg_runtime_backend, _get_pg_runtime_conn
-    if AGENT_RUNTIME_READ_BACKEND == "postgres":
-        pg_conn = _get_pg_runtime_conn()
-        if pg_conn:
-            try:
-                _get_pg_runtime_backend().save_conversation(pg_conn,
-                    conversation_id=conversation_id, topic=topic[:256])
-            except Exception as _exc:
-                logger.warning("_update_conversation_topic PG write failed: %s", _exc)
-            finally:
-                pg_conn.close()
-        return  # MySQL write 생략 (PG cutover 완료)
-    cur = conn.cursor()
-    cur.execute(
-        """UPDATE AgentCoreConversations SET topic = %s WHERE conversation_id = %s""",
-        (topic[:256], conversation_id),
-    )
-    cur.close()
-    from modules.runtime_backend import _dual_write_runtime_mirror
-    _dual_write_runtime_mirror("save_conversation",
-                               conversation_id=conversation_id, topic=topic[:256])
+    from modules.runtime_backend import _get_pg_runtime_backend, _get_pg_runtime_conn
+    pg_conn = _get_pg_runtime_conn()
+    if pg_conn:
+        try:
+            _get_pg_runtime_backend().save_conversation(pg_conn,
+                conversation_id=conversation_id, topic=topic[:256])
+        except Exception as _exc:
+            logger.warning("_update_conversation_topic PG write failed: %s", _exc)
+        finally:
+            pg_conn.close()
 
 
 def _try_update_topic(conn, conversation_id: str, user_message: str, answer: str, history_len: int):

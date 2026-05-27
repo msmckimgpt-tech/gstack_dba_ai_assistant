@@ -971,10 +971,6 @@ def _text_store_insert(cur, text: str) -> str:
         )
     except Exception:
         pass
-    # Dual-write mirror (M2-b) — _dual_write_kb 내부에서 partial failure 격리.
-    # AGENT_KB_PG_REQUIRED=1 시 fail-loud propagate.
-    from .kb_backend import _dual_write_kb
-    _dual_write_kb.upsert_text(text_hash=h, text_content=t)
     return h
 
 
@@ -1219,21 +1215,6 @@ ON DUPLICATE KEY UPDATE
                 src_sql,
             ),
         )
-        # TASK-0020 (M2-b) dual-write mirror — rag_documents
-        from .kb_backend import _dual_write_kb
-        _dual_write_kb.upsert_rag_document(
-            conversation_id=conv,
-            scope_key=scope,
-            doc_type="fact",
-            fact_key=key,
-            text_hash=text_hash,
-            content_hash=hash_val,
-            weight=weight_val,
-            source_type=src_type,
-            source_run_id=src_run,
-            source_sql=src_sql,
-        )
-
         object_type, object_key, schema_name, table_name, column_name = _infer_rag_object_from_fact(
             key, text_for_doc
         )
@@ -1305,27 +1286,6 @@ ON DUPLICATE KEY UPDATE
                     category_join_hints_json or None,
                     category_confidence,
                 ),
-            )
-            # TASK-0020 (M2-b) dual-write mirror — rag_objects
-            _dual_write_kb.upsert_rag_object(
-                conversation_id=conv,
-                scope_key=scope,
-                object_type=object_type,
-                object_key=object_key,
-                schema_name=schema_name or None,
-                table_name=table_name or None,
-                column_name=column_name or None,
-                text_hash=obj_text_hash,
-                weight=weight_val,
-                source_type=src_type,
-                source_run_id=src_run,
-                category_domain=category_domain or None,
-                category_entity_type=category_entity_type or None,
-                category_metric_family=category_metric_family or None,
-                category_event_type=category_event_type or None,
-                category_time_grain=category_time_grain or None,
-                category_join_hints_json=category_join_hints_json or None,
-                category_confidence=category_confidence,
             )
     finally:
         cur.close()

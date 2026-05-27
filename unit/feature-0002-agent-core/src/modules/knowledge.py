@@ -635,15 +635,6 @@ WHERE ConversationId = %s
             deleted = int(cur_obj.rowcount or 0)
         except Exception:
             return 0
-        # MySQL DELETE 성공 후 별도 try block 으로 mirror 호출.
-        # AGENT_KB_PG_REQUIRED=1 시 raise 가 caller chain 으로 propagate.
-        from .kb_backend import _dual_write_kb
-        _dual_write_kb.prune_fact_entries_keep_top(
-            conversation_id=conv_id,
-            scope_key=scoped_key,
-            fact_key=key_name,
-            keep_limit=int(keep_limit),
-        )
         return deleted
 
     cur = conn.cursor()
@@ -684,23 +675,6 @@ ON DUPLICATE KEY UPDATE
             str(source_run_id or "").strip() or None,
             str(source_sql or "").strip() or None,
         ),
-    )
-    # TASK-0020 (M2-b) dual-write mirror — fact_entries upsert.
-    # outside-voice REV-20260520-0008 Critical: partial failure 격리는 _dual_write_kb
-    # 내부에서 처리 — AGENT_KB_PG_REQUIRED=0 silent log / =1 fail-loud raise. caller
-    # 는 try/except 없이 호출 (raise 가 outer caller chain 으로 propagate).
-    from .kb_backend import _dual_write_kb
-    _dual_write_kb.upsert_fact_entry(
-        conversation_id=conversation_id,
-        fact_key=fact_key,
-        scope_key=scope,
-        text_hash=text_hash,
-        fact_fingerprint=fingerprint,
-        weight=weight_val,
-        confidence=confidence_val,
-        source_type=source,
-        source_run_id=str(source_run_id or "").strip() or None,
-        source_sql=str(source_sql or "").strip() or None,
     )
     try:
         if int(cur.rowcount or 0) >= 2:

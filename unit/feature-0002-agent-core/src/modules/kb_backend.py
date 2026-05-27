@@ -1180,143 +1180,12 @@ def _record_audit_event(*, failed: bool) -> None:
             _MIRROR_METRICS["audit_failures_total"] += 1
 
 
-class _DualWriteMirror:
-    """Dual-write 의 Postgres mirror — caller 의 기존 MySQL cursor.execute 직후 호출.
-
-    MySQL 측은 caller 가 이미 실행 (기존 cur.execute() 유지). 본 mirror 는 Postgres
-    측만 호출 + partial failure 격리. `_pg_available()` False 시 silent no-op.
-
-    Usage (caller 에서):
-        # 기존 MySQL 호출 (unchanged)
-        cur.execute("INSERT IGNORE INTO AgentMemoryTexts ...", (h, t))
-        # Postgres mirror (신규 한 줄)
-        _dual_write_kb.upsert_text(text_hash=h, text_content=t)
-
-    Partial failure 정책:
-    - `AGENT_KB_PG_REQUIRED=0` (M0~M2-a default): Postgres mirror 실패 시 silent log
-      (warning level) — MySQL caller 의 흐름 affect 안 함.
-    - `AGENT_KB_PG_REQUIRED=1` (M2-b 후): mirror 실패 시 fail-loud (예외 raise) —
-      caller 의 trans 또는 caller-level handler 가 처리.
-
-    Instrumentation (M2-d):
-    - 매 mirror 호출의 latency 를 process-level counter 에 기록. `get_mirror_metrics()`
-      로 snapshot 조회 가능. production-like baseline 측정의 in-process 입력.
-
-    **DEPRECATION NOTICE (M5 — TASK-0025, ADR-0025)**:
-    본 module 은 M5 cleanup 후 deprecation 예정. M5 cleanup 의 진입 게이트:
-    (a) M4 cutover 14-day 무회귀 monitoring 완료 + (b) `bin/kb-cleanup-mysql.sh
-    --confirm I_UNDERSTAND_DATA_LOSS` 실행 + (c) MySQL KB 5 정본 DROP 완료.
-    본 module 의 코드 삭제 + caller (utils.py / knowledge.py 5 위치) mirror call
-    제거는 별 **M5-implementation cycle** 의 책임 — 본 docstring 의 deprecation
-    notice 는 module 사용자에게 cleanup timing 의 명시 신호.
-
-    Removal timing:
-    - M5 cleanup → MySQL DROP → 본 module 의 mirror call 호출 부재 시 audit
-      ActionCode `kb.*.mirror` 도 자연 정지. `get_mirror_metrics().calls_total` 도
-      0 으로 수렴.
-    - M5-implementation cycle 에서 `_dual_write_kb` 호출 site (5 위치) 의 코드
-      삭제 + 본 class 의 `@deprecated` 추가 또는 module 자체 삭제.
-    """
-
-    def _get_pg_conn(self) -> Optional[Any]:
-        """매 호출마다 PgKbBackend connection 을 open + close. process-level pool
-        은 M3 이후 cycle 의 책임."""
-        from .db import _pg_available, _pg_connect
-        if not _pg_available():
-            return None
-        try:
-            return _pg_connect()
-        except Exception as e:
-            if _pg_required():
-                raise
-            logger.warning(f"kb_pg_mirror: connection failed: {e}")
-            return None
-
-    def _mirror(self, method_name: str, **kwargs):
-        import time as _time
-        # M2-d (TASK-0022) + REV-20260522-0010 B-3/B-4 흡수: thread-local branch 의
-        # leftover state 를 mirror 진입 즉시 reset. 이전 mirror 가 실패하거나 _pg_conn
-        # 가 None 일 때도 _get_last_pg_branch() 가 stale 값을 노출하지 않도록 보장.
-        _clear_pg_branch()
-        _mysql_b, pg_b = get_backends()
-        if pg_b is None:
-            return None
-        # M2-d (TASK-0022): mirror latency 시작 시점 capture (connection + execute + audit).
-        _t0 = _time.monotonic()
-        conn = self._get_pg_conn()
-        if conn is None:
-            _record_mirror_latency(method_name, (_time.monotonic() - _t0) * 1000.0)
-            return None
-        try:
-            method = getattr(pg_b, method_name)
-            result = method(conn, **kwargs)
-        except Exception as e:
-            if _pg_required():
-                raise
-            logger.warning(
-                "kb_pg_mirror_fail",
-                extra={"method": method_name, "error": str(e)[:200]},
-            )
-            _record_mirror_latency(method_name, (_time.monotonic() - _t0) * 1000.0)
-            return None
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
-        # M2-d (TASK-0022): PgKbBackend method 가 thread-local 에 기록한 branch 라벨
-        # ('insert'/'update'/'noop'/'delete'/'prune') 를 audit logger 에 전달.
-        pg_branch = _get_last_pg_branch()
-        # M2-c (TASK-0021) — Cross-DB audit explicit call. mirror 성공 후 MySQL
-        # WebAuditEvents 에 ActionCode `kb.write.mirror` audit row INSERT. ADR-0021
-        # §Consequences 의 SLA ≤ 0.1% miss_rate target 측정 기반. cross-DB tx 불가
-        # 라 best-effort — audit 실패 silent log (SLA 측정 자체가 miss 를 count).
-        _audit_failed = False
-        try:
-            _log_kb_write_audit(
-                method_name=method_name, kwargs=kwargs, result=result, pg_branch=pg_branch,
-            )
-        except Exception as audit_err:
-            _audit_failed = True
-            logger.warning(
-                "kb_audit_log_fail",
-                extra={"method": method_name, "error": str(audit_err)[:200]},
-            )
-        # M2-d (TASK-0022): latency + audit event counter.
-        _record_mirror_latency(method_name, (_time.monotonic() - _t0) * 1000.0)
-        _record_audit_event(failed=_audit_failed)
-        return result
-
-    def upsert_text(self, *, text_hash: str, text_content: str) -> None:
-        self._mirror("upsert_text", text_hash=text_hash, text_content=text_content)
-
-    def upsert_fact_entry(self, **kwargs) -> Optional[int]:
-        return self._mirror("upsert_fact_entry", **kwargs)
-
-    def delete_fact_entries_by_conv_scope_key(self, **kwargs) -> Optional[int]:
-        return self._mirror("delete_fact_entries_by_conv_scope_key", **kwargs)
-
-    def prune_fact_entries_keep_top(self, **kwargs) -> Optional[int]:
-        return self._mirror("prune_fact_entries_keep_top", **kwargs)
-
-    def upsert_rag_document(self, **kwargs) -> Optional[int]:
-        return self._mirror("upsert_rag_document", **kwargs)
-
-    def upsert_rag_object(self, **kwargs) -> Optional[int]:
-        return self._mirror("upsert_rag_object", **kwargs)
-
-
-# Singleton — caller 가 module-level 로 import.
-_dual_write_kb = _DualWriteMirror()
-
 
 __all__ = [
     "KbBackend",
     "MysqlKbBackend",
     "PgKbBackend",
     "get_backends",
-    "_dual_write_kb",
-    "_DualWriteMirror",
     "_PG_UPSERT_TEXT",
     "_PG_UPSERT_FACT_ENTRY",
     "_PG_DELETE_FACT_ENTRIES",
@@ -1324,7 +1193,6 @@ __all__ = [
     "_PG_UPSERT_RAG_DOCUMENT",
     "_PG_UPSERT_RAG_OBJECT",
     "_PG_SET_TEXT_EMBEDDING",
-    # M2-d (TASK-0022) — latency + branch instrumentation
     "get_mirror_metrics",
     "reset_mirror_metrics",
     "_get_last_pg_branch",

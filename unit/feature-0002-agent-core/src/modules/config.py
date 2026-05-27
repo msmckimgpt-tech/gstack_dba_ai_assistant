@@ -183,7 +183,6 @@ __all__ = [
     "AGENT_KB_PG_SSLMODE",
     "AGENT_KB_PG_ENABLED",
     "AGENT_KB_READ_BACKEND",
-    "AGENT_KB_DUAL_WRITE",
     "AGENT_KB_EMBEDDING_MODEL",
     "AGENT_KB_EMBEDDING_DIM",
     "AGENT_KB_EMBEDDING_BATCH_SIZE",
@@ -266,7 +265,6 @@ AGENT_KB_PG_PASSWORD_RO = os.getenv("AGENT_KB_PG_PASSWORD_RO", "")
 AGENT_KB_PG_SSLMODE = os.getenv("AGENT_KB_PG_SSLMODE", "prefer").strip() or "prefer"
 AGENT_KB_PG_ENABLED = bool(AGENT_KB_PG_HOST) and bool(AGENT_KB_PG_USER)
 AGENT_KB_READ_BACKEND = (os.getenv("AGENT_KB_READ_BACKEND", "mysql").strip() or "mysql").lower()
-AGENT_KB_DUAL_WRITE = (os.getenv("AGENT_KB_DUAL_WRITE", "0").strip() or "0") in {"1", "true", "yes", "on"}
 
 # M3 (TASK-0023) — Embedding worker (texts.embedding 컬럼 일괄 생성).
 # Blocker B-4 결정 (M1 ADR-0021): TextHash 별 단일 embedding — fact_entries /
