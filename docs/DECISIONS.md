@@ -594,3 +594,18 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
 - 최종 백업: artifacts/shared/agent-memory-final-backup-2026-05-27T061637Z/ (sha256: 104eea69)
 - MySQL ABSENT: agent_memory DB 내 agent* 테이블 COUNT=0. web* 18 테이블만 잔존 (Phase 3 대상).
 - 다음: AR-M5-impl cycle (runtime_backend.py dual-write 코드 제거) + Phase 3 (web* 테이블 이관)
+
+### ADR-0028 Addendum — AR-M5-impl + P1-T2 dual-write code 완전 제거 (2026-05-27)
+- Status: **AR-M5-impl + P1-T2 완료 (2026-05-27)**
+- **runtime 측 (AR-M5-impl)**:
+  - `runtime_backend.py`: `RuntimeBackend` ABC, `MysqlRuntimeBackend`, `_dual_write_runtime_mirror()`, `AGENT_RUNTIME_DUAL_WRITE`, `AGENT_RUNTIME_DUAL_WRITE_START_TS`, `AGENT_RUNTIME_AUDIT_ENABLED`, `_rt_pg_op_local`, `_log_runtime_write_audit()`, `_build_runtime_audit_resource_id()`, audit 상수 제거. `PgRuntimeBackend` → standalone class; `_execute_upsert_with_branch` 제거 → 직접 `with conn.cursor()`.
+  - `memory.py`: `ensure_memory_schema()` MySQL DDL 전체 → `pass`. `save_memory_message/kv/summary/step` PG guard+return 패턴 → 무조건 PG 직접 쓰기 (MySQL else-branch + `_dual_write_runtime_mirror` 호출 제거).
+  - `agent_core.py`: `_ensure_memory_tables()` MySQL DDL → `pass`. `_save_message / _ensure_conversation / _update_conversation_topic` MySQL else-branch 제거.
+- **KB 측 (P1-T2)**:
+  - `kb_backend.py`: `_DualWriteMirror` class (lines 1183-1310) + `_dual_write_kb` singleton + `__all__` 항목 제거.
+  - `knowledge.py`: `_dual_write_kb.prune_fact_entries_keep_top()` + `_dual_write_kb.upsert_fact_entry()` 2 call site 제거.
+  - `utils.py`: `_dual_write_kb.upsert_text()` + `_dual_write_kb.upsert_rag_document()` + `_dual_write_kb.upsert_rag_object()` 3 call site 제거.
+  - `config.py`: `AGENT_KB_DUAL_WRITE` 변수 제거.
+  - `.env`: `AGENT_KB_DUAL_WRITE=0`, `KB_DUAL_WRITE_START_TS`, `AGENT_RUNTIME_DUAL_WRITE=0`, `AGENT_RUNTIME_AUDIT_ENABLED=0` 4 항목 제거.
+- 코드 순감: −1,630 lines (7 파일). commit 6621ef3.
+- 현 상태: agent runtime + KB 모두 Postgres 단독 write/read. MySQL `agent_memory` 에 `web*` 18 테이블만 잔존. dual-write 인프라 코드 없음.

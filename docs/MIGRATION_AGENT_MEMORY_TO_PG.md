@@ -91,9 +91,10 @@ domain: [storage, schema-migration, rbac, multi-feature]
 
 - [x] **P1-T1**: 14-day dual-write monitoring window 종료 확인 (사용자 운영)
   — cutover-date 2026-05-01, 실행일 2026-05-27, 경과 26일 > 14-day gate PASS
-- [ ] **P1-T2**: TASK-0025 의 M5-implementation cycle 진입 — `_DualWriteMirror`
-  module + 5 caller mirror call site 코드 삭제 (`modules/kb_backend.py`,
-  `utils.py`, `knowledge.py`)
+- [x] **P1-T2**: TASK-0025 의 M5-implementation cycle 진입 — `_DualWriteMirror`
+  class + _dual_write_kb singleton + 5 caller mirror call site 코드 삭제
+  (`modules/kb_backend.py`, `utils.py`, `knowledge.py`). 완료 2026-05-27.
+  config.py AGENT_KB_DUAL_WRITE 제거 포함.
 - [x] **P1-T3**: `AGENT_KB_DUAL_WRITE=0` sentinel 강제 + `.env` 갱신
   — .env 에 AGENT_KB_DUAL_WRITE=0 + AGENT_KB_READ_BACKEND=postgres 설정 완료
 - [x] **P1-T4**: `bin/kb-cleanup-mysql.sh --backup-only --cutover-date <ISO>`
@@ -207,6 +208,20 @@ worktree + 별 PR.
 - [x] **AR-M5-T5**: 6 테이블 DROP 후 검증 (Stage 5, rollback hint 포함)
 - [x] **AR-M5-T6**: outside-voice review (REV-20260527-0009, NEEDS-FIX→PASS)
 - [x] **AR-M5-T7**: ADR-0028 — runtime cleanup 정책 + Stage A/B/C boundary
+
+#### AR-M5-impl: dual-write code 완전 제거 (2026-05-27, 완료)
+
+- [x] **AR-M5-impl-T1**: `runtime_backend.py` — `RuntimeBackend` ABC, `MysqlRuntimeBackend`,
+  `_dual_write_runtime_mirror()`, `AGENT_RUNTIME_DUAL_WRITE`, `AGENT_RUNTIME_DUAL_WRITE_START_TS`,
+  `AGENT_RUNTIME_AUDIT_ENABLED`, `_rt_pg_op_local`, audit 인프라 전체 제거.
+  `PgRuntimeBackend` → standalone class. `_execute_upsert_with_branch` 제거 → 직접 cursor.execute.
+- [x] **AR-M5-impl-T2**: `memory.py` — `ensure_memory_schema()` MySQL DDL 블록 pass-only 교체.
+  `save_memory_message/kv/summary/step` 4개 함수: PG guard+return 패턴 → 무조건 PG 직접 쓰기.
+  MySQL else-branch + `_dual_write_runtime_mirror` 호출 제거.
+- [x] **AR-M5-impl-T3**: `agent_core.py` — `_ensure_memory_tables()` MySQL DDL 제거 (pass-only).
+  `_save_message / _ensure_conversation / _update_conversation_topic` MySQL else-branch 제거.
+- [x] **AR-M5-impl-T4**: `.env` — `AGENT_RUNTIME_DUAL_WRITE=0`, `AGENT_RUNTIME_AUDIT_ENABLED=0`,
+  `AGENT_KB_DUAL_WRITE=0`, `KB_DUAL_WRITE_START_TS` 제거.
 
 ### Phase 3 — 18 web\* 테이블 별 DB 분리 (outline, 별 plan 필요)
 
