@@ -465,3 +465,10 @@ source_of_truth: true
 - Summary: Phase 2 AR-M1: agent_runtime 6 테이블 DDL 정본 Postgres 적용 + ADR-0027 + schema compare 검증 도구
 - Files: unit/feature-0002-agent-core/src/scripts/agent_runtime_schema.sql (신규), bin/agent-runtime-schema-compare.sh (신규), docs/DECISIONS.md (ADR-0027 추가), unit/feature-0002-agent-core/docs/TASK.md, unit/feature-0002-agent-core/docs/MODIFY.md, unit/feature-0002-agent-core/docs/REVIEW.md, unit/feature-0002-agent-core/docs/REPORT.md
 - Notes: DDL 을 Postgres `agent_kb.agent_runtime` schema 에 직접 apply (6 테이블 CREATE 완료). outside-voice review PASS (REV-20260527-0003) — C1(kv FK 의도적 생략 주석) + C2(meta_json jsonb) + N5(CREATE SCHEMA 방어 guard) 반영. kv.conversation_id='__global__' sentinel (1588건) 로 인해 FK 의도적 생략 — ADR-0027에 명문화. search_path 전역 변경 없음 — AR-M2 SQL은 schema-qualified 명시 필수.
+
+## CHG-20260527-AR-M2-a
+- Date: 2026-05-27
+- Related Requirement: TASK-0113 (REQ-20260527-AR-M2-a, Minor §12.3 — ABC + skeleton)
+- Summary: Phase 2 AR-M2-a: RuntimeBackend ABC + skeleton + dual-write mirror entry point + test catalog
+- Files: unit/feature-0002-agent-core/src/modules/runtime_backend.py (신규), unit/feature-0002-agent-core/tests/test_anchor_invariant_runtime.py (신규), unit/feature-0002-agent-core/docs/TASK.md, unit/feature-0002-agent-core/docs/MODIFY.md, unit/feature-0002-agent-core/docs/REVIEW.md, unit/feature-0002-agent-core/docs/REPORT.md, unit/feature-0002-agent-core/docs/FUNCTION.md
+- Notes: 비파괴 신규 파일 추가. AGENT_RUNTIME_DUAL_WRITE 기본값 False — 기존 MySQL callsite 무영향. MysqlRuntimeBackend / PgRuntimeBackend 모두 NotImplementedError skeleton (M2-b에서 구현 예정). outside-voice 생략 (RBAC 무변경, code mutation 0건, caller 수정 0건).

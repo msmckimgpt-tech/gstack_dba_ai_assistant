@@ -172,3 +172,19 @@ source_of_truth: false
 - meta_json jsonb 전환: AR-M3 backfill 시 JSON 유효성 pre-check 게이트 추가 예정 (ADR-0027 후속액션).
 
 **다음 cycle**: AR-M2-a — `modules/runtime_backend.py` 신규 (Postgres write path) + dual-write entry.
+
+---
+## Phase 2 AR-M2-a 완료 기록 (TASK-0113, 2026-05-27)
+
+**산출 2건 완료**:
+1. `unit/feature-0002-agent-core/src/modules/runtime_backend.py` (신규, ~220 LOC) — RuntimeBackend ABC (6 abstract methods) + MysqlRuntimeBackend skeleton + PgRuntimeBackend skeleton + _dual_write_runtime_mirror entry point (no-op when AGENT_RUNTIME_DUAL_WRITE=0) + thread-safe singleton.
+2. `unit/feature-0002-agent-core/tests/test_anchor_invariant_runtime.py` (신규, 10 tests PASS) — 6 시나리오 카탈로그 (RT-S1~RT-S6) + ABC/skeleton 구조 검증.
+
+**설계 결정 핵심**:
+- KB backend (kb_backend.py) 패턴 그대로 답습 (singleton, thread-safe lock, REQUIRED 분기).
+- AGENT_RUNTIME_DUAL_WRITE 기본값 False — M2-b caller 수정 전 기존 MySQL callsite 완전 무영향.
+- search_path 전역 변경 없음 (ADR-0027) — M2-b Postgres SQL은 `agent_runtime.table_name` schema-qualified.
+
+**pytest**: 67 passed, 2 skipped (test_kb_backfill pre-existing 제외).
+
+**다음 cycle**: AR-M2-b — 6 method body 구현 + memory.py/agent_core.py caller mirror 추가 + outside-voice review 필수 (caller 수정 = code mutation).
