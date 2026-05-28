@@ -179,6 +179,7 @@ const state = {
     byConv: {},
     uploadingCount: 0,
     nextLocalId: -1,
+    lazyConvCreating: false,
   },
   // UX-COMPACT: 대화목록 날짜 그룹 접힘 상태 (Set of dateKey | "__others__")
   collapsedDateGroups: new Set(),
@@ -2119,6 +2120,19 @@ function renderMessages() {
       message._attachments.forEach((att) => {
         const chip = document.createElement("span");
         chip.className = "message-bubble-attach-chip";
+        if (att.signed_url) {
+          chip.classList.add("has-download");
+          chip.title = "클릭하여 다운로드";
+          chip.addEventListener("click", () => {
+            const a = document.createElement("a");
+            a.href = att.signed_url;
+            a.download = att.name || "파일";
+            a.rel = "noopener";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+          });
+        }
         const nameEl = document.createElement("span");
         nameEl.className = "attach-chip-name";
         nameEl.textContent = att.name || "파일";
@@ -2126,7 +2140,14 @@ function renderMessages() {
         sizeEl.className = "attach-chip-size";
         const sizeKb = Math.max(1, Math.round((Number(att.size) || 0) / 1024));
         sizeEl.textContent = `${sizeKb} KB`;
-        chip.append(nameEl, sizeEl);
+        const parts = [nameEl, sizeEl];
+        if (att.signed_url) {
+          const dlIcon = document.createElement("span");
+          dlIcon.className = "attach-chip-dl";
+          dlIcon.textContent = "↓";
+          parts.push(dlIcon);
+        }
+        chip.append(...parts);
         attachRow.appendChild(chip);
       });
       bubble.appendChild(attachRow);
@@ -2257,10 +2278,11 @@ function renderPendingAssistantBubble(pending) {
     bubble.appendChild(errorEl);
   }
 
-  // 누적 step 목록 (접을 수 있음)
+  // 누적 step 목록 (step 이 있으면 자동 펼침)
   if (steps.length) {
     const detailsEl = document.createElement("details");
     detailsEl.className = "pending-bubble-steps";
+    detailsEl.open = true;
     const summary = document.createElement("summary");
     summary.textContent = `누적 ${steps.length}단계`;
     detailsEl.appendChild(summary);
@@ -2817,6 +2839,8 @@ function renderProgress(statusPayload = null) {
   }
 
   progressCardEl.classList.remove("hidden");
+  // 처리 중 + step 이 있으면 자동으로 펼침
+  if (status === "processing" && steps.length > 0) progressCardEl.open = true;
   progressTitleEl.textContent = status === "processing" ? "처리 중" : "최근 실행";
   progressStatusEl.textContent = status || "unknown";
 
@@ -3792,26 +3816,74 @@ async function _uploadComposerAttachment(file) {
     showToast("대화 컨텍스트 미정 — 새 대화 또는 기존 대화를 선택해 주세요.", true);
     return;
   }
-  // TASK-0106 (REQ-20260522-0106): lazy-create 단계 (cid 미발급) 에서도 첨부 가능.
-  // backend `/api/conversations/{cid}/attachments` 는 cid 필수 — 본 시점은 File 만
-  // 로컬 staging (status="staged", _localFile=file 보관). sendPrompt 의 lazy-create
-  // path 가 첫 send 직전 `/api/new_conversation` 으로 cid 를 발급한 뒤 staged 들을
-  // 일괄 업로드하고 attachment_ids 를 첫 `/api/ask` 에 포함시킨다 — TASK-0048 의
-  // "+ 새 대화 시 빈 row 누적 방지" 정신 보존 + 사용자 첫 메시지에 첨부 동행.
+  // UX-COMPACT: lazy-create 단계에서도 파일 선택 즉시 대화 생성 + 업로드 + ingest 병렬 시작.
+  // 대화 생성 중인 경우(race) staged 방식으로 fallback — sendPrompt 가 첫 send 전 _flushStagedAttachmentsToCid 로 처리.
   if (isLazy) {
+    if (state.composerAttachments.lazyConvCreating) {
+      const localId = state.composerAttachments.nextLocalId;
+      state.composerAttachments.nextLocalId -= 1;
+      bucket.items.push({ id: localId, kind: _guessKindFromFile(file), name: file.name || "unnamed", size: Number(file.size) || 0, status: "staged", selected: true, _localFile: file });
+      _renderAttachmentPills();
+      showToast(`첨부가 추가되었습니다 (첫 메시지와 함께 업로드됩니다): ${file.name || "unnamed"}`);
+      return;
+    }
+    state.composerAttachments.lazyConvCreating = true;
     const localId = state.composerAttachments.nextLocalId;
     state.composerAttachments.nextLocalId -= 1;
-    bucket.items.push({
-      id: localId,
-      kind: _guessKindFromFile(file),
-      name: file.name || "unnamed",
-      size: Number(file.size) || 0,
-      status: "staged",
-      selected: true,
-      _localFile: file,
-    });
+    bucket.items.push({ id: localId, kind: _guessKindFromFile(file), name: file.name || "unnamed", size: Number(file.size) || 0, status: "uploading", selected: true });
+    state.composerAttachments.uploadingCount += 1;
     _renderAttachmentPills();
-    showToast(`첨부가 추가되었습니다 (첫 메시지와 함께 업로드됩니다): ${file.name || "unnamed"}`);
+    const pendingKey = state.pendingSentinel ? String(state.pendingSentinel) : "";
+    try {
+      const newConvBody = (state.productMode === "pinned" && state.pinnedProductId)
+        ? { mode: "pinned", product_id: Number(state.pinnedProductId) }
+        : { mode: "auto" };
+      const newConvResp = await apiFetch("/api/new_conversation", { method: "POST", body: JSON.stringify(newConvBody) });
+      const earlyCid = String(newConvResp?.conversation_id || "");
+      if (!earlyCid) throw new Error("대화 ID 발급 실패");
+      // pending bucket → earlyCid 로 이전
+      const srcBucket = pendingKey ? state.composerAttachments.byConv[pendingKey] : null;
+      if (srcBucket) {
+        state.composerAttachments.byConv[earlyCid] = srcBucket;
+        delete state.composerAttachments.byConv[pendingKey];
+      }
+      // lazy-create → real conversation 전환
+      state.activeConversationId = earlyCid;
+      state.pendingNewConversation = false;
+      state.pendingSentinel = null;
+      // minimal sidebar entry (refreshWorkspace 가 확정 데이터로 교체)
+      if (!state.conversations.find((c) => String(c.id) === earlyCid)) {
+        state.conversations.unshift({ id: earlyCid, title: "(파일 첨부 중)", display_status: "idle", created_at: new Date().toISOString(), account_id: state.session?.account_id || null, owner_username: state.session?.username || null });
+      }
+      renderConversationList();
+      renderConversationHeader();
+      renderComposer();
+      // 업로드
+      const uploadBucket = state.composerAttachments.byConv[earlyCid];
+      const formData = new FormData();
+      formData.append("file", file);
+      const resp = await apiFetch(`/api/conversations/${encodeURIComponent(earlyCid)}/attachments`, { method: "POST", body: formData, headers: {} });
+      if (resp && Number(resp.id) > 0) {
+        const idx2 = uploadBucket?.items.findIndex((it) => it.id === localId) ?? -1;
+        if (idx2 >= 0) uploadBucket.items[idx2] = { id: Number(resp.id), kind: String(resp.kind || _guessKindFromFile(file)), name: String(resp.original_filename || file.name || "unnamed"), size: Number(resp.size || file.size || 0), status: "ready", selected: true, signed_url: resp.signed_url || null };
+        showToast(`첨부 업로드 완료: ${file.name || "unnamed"}`);
+      } else {
+        const idx2 = uploadBucket?.items.findIndex((it) => it.id === localId) ?? -1;
+        if (idx2 >= 0) uploadBucket.items[idx2] = { ...uploadBucket.items[idx2], status: "failed", error: resp?.error || "업로드 실패" };
+        showToast(`첨부 업로드 실패: ${resp?.error || "알 수 없는 오류"}`, true);
+      }
+    } catch (exc) {
+      const curBucket = state.activeConversationId
+        ? state.composerAttachments.byConv[state.activeConversationId]
+        : (pendingKey ? state.composerAttachments.byConv[pendingKey] : null);
+      const idx2 = curBucket?.items.findIndex((it) => it.id === localId) ?? -1;
+      if (idx2 >= 0) curBucket.items[idx2] = { ...curBucket.items[idx2], status: "failed", error: String(exc?.message || exc) };
+      showToast(`첨부 업로드 실패: ${exc?.message || exc}`, true);
+    } finally {
+      state.composerAttachments.uploadingCount = Math.max(0, state.composerAttachments.uploadingCount - 1);
+      state.composerAttachments.lazyConvCreating = false;
+      _renderAttachmentPills();
+    }
     return;
   }
   const convId = String(state.activeConversationId);
@@ -3851,6 +3923,7 @@ async function _uploadComposerAttachment(file) {
           size: Number(resp.size || optimistic.size),
           status: "ready",
           selected: true,
+          signed_url: resp.signed_url || null,
         };
       }
       showToast(`첨부 업로드 완료: ${optimistic.name}`);
@@ -3932,6 +4005,7 @@ async function _flushStagedAttachmentsToCid(targetCid, sourceKey) {
           size: Number(resp.size || staged.size),
           status: "ready",
           selected: true,
+          signed_url: resp.signed_url || null,
         });
         uploadedIds.push(Number(resp.id));
       } else {
@@ -4333,7 +4407,7 @@ async function sendPrompt() {
     const bucket = state.composerAttachments.byConv[isLazyCreate ? pendingKey : key];
     return (bucket?.items || []).filter(
       (it) => it.status === "ready" || it.status === "staged"
-    ).map((it) => ({ id: it.id, name: it.name, size: it.size }));
+    ).map((it) => ({ id: it.id, name: it.name, size: it.size, signed_url: it.signed_url || null }));
   })();
 
   const optimisticUserMessage = {
@@ -4472,6 +4546,19 @@ async function sendPrompt() {
         state.pendingNewConversation = false;
         state.activeConversationId = newCid;
         state.pendingSentinel = null;
+        // UX-COMPACT: polling 첫 tick 에서 _updateConversationStatusDot 가 DOM 에서 실패하지 않도록
+        // 최소 conversation entry 를 선행 등재. refreshWorkspace 가 실 데이터로 교체.
+        if (!state.conversations.find((c) => String(c.id) === newCid)) {
+          state.conversations.unshift({
+            id: newCid,
+            title: message.slice(0, 60) || "새 대화",
+            display_status: "processing",
+            created_at: new Date().toISOString(),
+            account_id: state.session?.account_id || null,
+            owner_username: state.session?.username || null,
+          });
+          renderConversationList();
+        }
         // TASK-0061 Phase 2 (AC-0076): lazy-create 응답으로 cid 가 발급된 즉시 polling 시작.
         // ask 가 동기 완료된 경우라도 첫 polling 으로 step snapshot 을 받아 pending bubble 에 반영한다.
         startProgressPolling({ reset: true });
@@ -4483,6 +4570,15 @@ async function sendPrompt() {
     // TASK-0061 Phase 1 (AC-0072): 정상 응답 후 pending bubble 제거 → refreshWorkspace 가 실 assistant message 로 교체.
     clearPendingBubble();
     await refreshWorkspace(newCid);
+    // UX-COMPACT: 백엔드 history 가 사용자 메시지에 첨부 정보를 포함하지 않는 문제를 클라이언트에서 보완.
+    // refreshWorkspace 완료 후 최신 사용자 메시지에 _attachments 를 주입해 말풍선에 표시.
+    if (_sendAttachmentSnapshot.length) {
+      const lastUserMsg = [...state.messages].reverse().find((m) => m.role === "user" && m.content === message && !m._attachments);
+      if (lastUserMsg) {
+        lastUserMsg._attachments = _sendAttachmentSnapshot;
+        renderMessages();
+      }
+    }
   } catch (error) {
     // TASK-0048: pending 단계에서 ask 가 실패하면 cid 발급 여부가 client 에는 불확실 →
     // attach/resume 다이얼로그 대신 사용자에게 재시도/사이드바 새로고침을 안내한다.

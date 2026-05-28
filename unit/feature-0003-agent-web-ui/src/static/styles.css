@@ -1094,6 +1094,22 @@ a { color: inherit; }
   font-size: 10px;
   flex-shrink: 0;
 }
+.message-bubble-attach-chip.has-download {
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.message-bubble-attach-chip.has-download:hover {
+  background: rgba(255,255,255,.32);
+}
+.message.is-user.is-other-message .message-bubble-attach-chip.has-download:hover {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+.attach-chip-dl {
+  font-size: 10px;
+  opacity: .75;
+  flex-shrink: 0;
+}
 
 /* UX-COMPACT: 말풍선 hover 시 버튼 — absolute 배치로 레이아웃 이동 없음 */
 .message-actions {
@@ -1810,7 +1826,7 @@ a { color: inherit; }
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 9px 12px;
+  padding: 7px 12px;
   border-radius: var(--r-lg);
   border: 1px solid var(--border);
   background: var(--bg);
