@@ -135,6 +135,9 @@ const state = {
   // sendPrompt() 시작 시 user message + pending bubble 즉시 prepend, polling step 으로 갱신,
   // /api/ask 응답 또는 attach 완료 시 실 assistant message 로 replace.
   pendingBubble: null,  // null | { startedAt, runId, steps, status, displayStatus, isStale, error, userMessage }
+  lastCompletedRunSteps: null,  // null | { steps, runId, convId } — 완료된 run 의 단계 목록 (단계 보기 버튼용)
+  messageAttachments: {},  // { messageId: attachment[] } — refreshWorkspace 이후에도 칩 유지용 persistent 맵
+  stepSidePanelConvId: null,
   elapsedTimer: null,
   // TASK-0061 Phase 3 (REQ-20260515-0005): stale 감지 toast 가 같은 대화에서 반복 노출되지 않도록 1 회 가드.
   staleToastShownFor: new Set(),
@@ -2111,13 +2114,28 @@ function renderMessages() {
       if (details) {
         bubble.appendChild(details);
       }
+      // meta.steps 가 있는 모든 assistant 말풍선에 "단계 보기" 버튼 부착.
+      const msgMetaSteps = Array.isArray(message.meta?.steps) ? message.meta.steps : [];
+      if (msgMetaSteps.length && !state.pendingBubble) {
+        const stepsBtn = document.createElement("button");
+        stepsBtn.type = "button";
+        stepsBtn.className = "bubble-steps-btn";
+        stepsBtn.textContent = `단계 보기 (${msgMetaSteps.length})`;
+        const stepsSource = { steps: msgMetaSteps, runId: String(message.meta?.run_id || ""), convId: state.activeConversationId };
+        stepsBtn.addEventListener("click", () => openStepSidePanel(stepsSource));
+        bubble.appendChild(stepsBtn);
+      }
     }
 
-    // UX-COMPACT: 사용자 메시지 버블에 첨부 파일 목록 표시
-    if (role === "user" && Array.isArray(message._attachments) && message._attachments.length) {
+    // UX-COMPACT: 사용자 메시지 버블에 첨부 파일 목록 표시.
+    // 소스 우선순위: (1) message._attachments (현 세션 인젝션), (2) messageAttachments 맵 (새로고침 후 유지).
+    const _displayAttachments = (Array.isArray(message._attachments) && message._attachments.length)
+      ? message._attachments
+      : (message.id ? (state.messageAttachments[String(message.id)] || null) : null);
+    if (role === "user" && _displayAttachments && _displayAttachments.length) {
       const attachRow = document.createElement("div");
       attachRow.className = "message-bubble-attachments";
-      message._attachments.forEach((att) => {
+      _displayAttachments.forEach((att) => {
         const chip = document.createElement("span");
         chip.className = "message-bubble-attach-chip";
         if (att.signed_url) {
@@ -2202,6 +2220,27 @@ function renderMessages() {
     messageLogEl.appendChild(row);
   });
 
+  // 마지막 assistant 말풍선에 lastCompletedRunSteps 기반 "단계 보기" 버튼 보충.
+  // meta.steps 없는 최신 run (현 세션에서 막 완료된 것) 을 위한 fallback.
+  if (!state.pendingBubble) {
+    const cr = state.lastCompletedRunSteps;
+    if (cr && cr.steps && cr.steps.length && cr.convId === state.activeConversationId) {
+      const allMsgRows = messageLogEl.querySelectorAll("article.message.is-assistant:not(.is-pending)");
+      const lastMsgRow = allMsgRows[allMsgRows.length - 1];
+      if (lastMsgRow) {
+        const lastMsgBubble = lastMsgRow.querySelector(".message-bubble");
+        if (lastMsgBubble && !lastMsgBubble.querySelector(".bubble-steps-btn")) {
+          const stepsBtn = document.createElement("button");
+          stepsBtn.type = "button";
+          stepsBtn.className = "bubble-steps-btn";
+          stepsBtn.textContent = `단계 보기 (${cr.steps.length})`;
+          stepsBtn.addEventListener("click", () => openStepSidePanel(cr));
+          lastMsgBubble.appendChild(stepsBtn);
+        }
+      }
+    }
+  }
+
   // TASK-0061 Phase 1 (REQ-20260515-0003): pending assistant bubble 은 메시지 흐름 가장 아래 위치.
   if (state.pendingBubble) {
     const pendingRow = renderPendingAssistantBubble(state.pendingBubble);
@@ -2253,45 +2292,34 @@ function renderPendingAssistantBubble(pending) {
   header.append(spinner, statusLabel, elapsedEl);
   bubble.appendChild(header);
 
-  // 최신 step 의 work + reason
+  // Compact one-liner: 현재 단계 텍스트 + "N단계 보기" 버튼
   const steps = Array.isArray(pending.steps) ? pending.steps : [];
-  if (steps.length) {
-    const latest = steps[steps.length - 1] || {};
-    const latestEl = document.createElement("div");
-    latestEl.className = "pending-bubble-latest";
-    latestEl.appendChild(buildStepDetailEl(latest, steps.length - 1, { compact: true }));
-    bubble.appendChild(latestEl);
-  } else if (pending.error) {
-    const errorEl = document.createElement("div");
-    errorEl.className = "pending-bubble-error";
-    errorEl.textContent = String(pending.error);
-    bubble.appendChild(errorEl);
+  const stepRow = document.createElement("div");
+  stepRow.className = "pending-bubble-step-row";
+  const currentStepEl = document.createElement("span");
+  currentStepEl.className = "pending-bubble-current-step";
+  if (pending.error) {
+    currentStepEl.textContent = String(pending.error);
   } else if (pending.isStale) {
-    const errorEl = document.createElement("div");
-    errorEl.className = "pending-bubble-error";
-    errorEl.textContent = "작업이 중단된 것으로 보입니다. 사이드바에서 취소 또는 삭제 액션을 사용해 주세요.";
-    bubble.appendChild(errorEl);
+    currentStepEl.textContent = "작업이 중단된 것으로 보입니다. 취소 또는 삭제 액션을 사용해 주세요.";
+  } else if (steps.length) {
+    const latest = steps[steps.length - 1];
+    const lbl = latest.tool ? toolLabel(latest.tool) : "";
+    const work = latest.work || latest.intent || "";
+    currentStepEl.textContent = lbl ? `${lbl} · ${work}` : work || `단계 ${steps.length}`;
+  } else {
+    currentStepEl.textContent = "시작 중…";
   }
-
-  // 누적 step 목록 (step 이 있으면 자동 펼침)
-  if (steps.length) {
-    const detailsEl = document.createElement("details");
-    detailsEl.className = "pending-bubble-steps";
-    detailsEl.open = true;
-    const summary = document.createElement("summary");
-    summary.textContent = `누적 ${steps.length}단계`;
-    detailsEl.appendChild(summary);
-    const list = document.createElement("ol");
-    list.className = "pending-bubble-step-list";
-    steps.forEach((step, idx) => {
-      const li = document.createElement("li");
-      li.className = "pending-bubble-step-item";
-      li.appendChild(buildStepDetailEl(step, idx));
-      list.appendChild(li);
-    });
-    detailsEl.appendChild(list);
-    bubble.appendChild(detailsEl);
+  stepRow.appendChild(currentStepEl);
+  if (steps.length && !pending.error && !pending.isStale) {
+    const viewBtn = document.createElement("button");
+    viewBtn.type = "button";
+    viewBtn.className = "pending-bubble-view-btn";
+    viewBtn.textContent = `${steps.length}단계 보기`;
+    viewBtn.addEventListener("click", () => openStepSidePanel(pending));
+    stepRow.appendChild(viewBtn);
   }
+  bubble.appendChild(stepRow);
 
   row.append(meta, bubble);
   return row;
@@ -2384,6 +2412,63 @@ function pendingStatusLabel(status) {
   if (s === "error") return "오류";
   if (s === "canceled") return "취소";
   return s || "처리 중";
+}
+
+// ── Step 실행 단계 사이드 패널 ────────────────────────────────────────
+function openStepSidePanel(pending, { convId = null } = {}) {
+  const panel = document.getElementById("stepSidePanel");
+  if (!panel) return;
+  state.stepSidePanelConvId = convId || (pending && pending.convId) || state.activeConversationId || null;
+  _renderStepSidePanelBody(pending);
+  panel.classList.remove("hidden");
+}
+
+function closeStepSidePanel() {
+  const panel = document.getElementById("stepSidePanel");
+  if (panel) panel.classList.add("hidden");
+}
+
+function refreshStepSidePanel(pending) {
+  const panel = document.getElementById("stepSidePanel");
+  if (!panel || panel.classList.contains("hidden")) return;
+  _renderStepSidePanelBody(pending);
+}
+
+function _renderStepSidePanelBody(pending) {
+  const body = document.getElementById("stepSidePanelBody");
+  const badge = document.getElementById("stepSidePanelBadge");
+  if (!body) return;
+  body.innerHTML = "";
+  const steps = Array.isArray(pending && pending.steps) ? pending.steps : [];
+  if (badge) badge.textContent = steps.length ? `${steps.length}단계` : "";
+  if (!steps.length) {
+    const empty = document.createElement("p");
+    empty.style.cssText = "font-size:12px;color:var(--text-muted);padding:8px 0";
+    empty.textContent = "아직 실행된 단계가 없습니다.";
+    body.appendChild(empty);
+    return;
+  }
+  steps.forEach((step, idx) => {
+    const item = document.createElement("div");
+    item.className = "step-side-panel-item";
+    const itemHeader = document.createElement("div");
+    itemHeader.className = "step-side-panel-item-header";
+    const numEl = document.createElement("span");
+    numEl.className = "step-side-panel-num";
+    numEl.textContent = `${idx + 1}.`;
+    itemHeader.appendChild(numEl);
+    if (step.tool) {
+      const badge = document.createElement("span");
+      badge.className = "step-tool-badge";
+      badge.textContent = toolLabel(step.tool);
+      itemHeader.appendChild(badge);
+    }
+    item.appendChild(itemHeader);
+    item.appendChild(buildStepDetailEl(step, idx, { compact: false }));
+    body.appendChild(item);
+  });
+  // 항상 최하단으로 스크롤
+  body.scrollTop = body.scrollHeight;
 }
 
 function formatElapsed(ms) {
@@ -3034,6 +3119,8 @@ function applyProgressPayload(payload = {}) {
     } else {
       renderMessages();
     }
+    // side panel 이 열려 있으면 실시간 갱신
+    refreshStepSidePanel(state.pendingBubble);
   }
   // UX-COMPACT: 폴링 결과로 대화 목록 dot 실시간 갱신
   if (state.activeConversationId) {
@@ -3067,6 +3154,14 @@ async function pollProgress(seq = state.progressPollSeq) {
     state.progressErrorCount = 0;
     applyProgressPayload(payload);
     if (payload.status && payload.status !== "processing") {
+      // 완료 시 steps 저장 (단계 보기 버튼용)
+      if (state.progressSteps.length) {
+        state.lastCompletedRunSteps = {
+          steps: state.progressSteps.slice(),
+          runId: state.progressRunId,
+          convId: state.activeConversationId,
+        };
+      }
       stopProgressPolling({ abort: false });
       await refreshWorkspace(state.activeConversationId);
       return;
@@ -3148,6 +3243,24 @@ async function loadHistory({ append = false } = {}) {
   loadMoreBtn.classList.toggle("hidden", !state.hasMoreHistory);
   renderMessages();
   if (payload.last_status === "processing") {
+    // 새 대화 전송 후 clearPendingBubble 이 먼저 호출되는 경우, 또는 페이지 새로고침 후
+    // initializeWorkspace 가 아닌 loadHistory 경로로 처리 상태를 감지한 경우 pending bubble 복원.
+    if (!state.pendingBubble) {
+      state.busyConversations.add(state.activeConversationId);
+      state.pendingBubble = {
+        startedAt: Date.now(),
+        runId: payload.last_run_id || "",
+        steps: state.progressSteps.slice(),
+        status: "processing",
+        displayStatus: "processing",
+        isStale: false,
+        error: null,
+        userMessage: "",
+        convId: state.activeConversationId,
+      };
+      startElapsedTimer();
+      renderMessages();
+    }
     startProgressPolling({
       reset: payload.last_run_id !== state.progressRunId,
       runId: payload.last_run_id || "",
@@ -3779,6 +3892,37 @@ function _composerAttachmentSnapshot(targetConvId, isLazyCreate) {
   return { selectedIds, scopeAll: Boolean(bucket.scopeAll) };
 }
 
+// 전송 완료 후 대화의 ingested 첨부 목록을 composer bucket 에 동기화.
+// 다음 요청에서 이전 첨부 파일 ID 가 attachment_ids 에 자동 포함되도록 한다.
+async function _syncConversationAttachmentsToBucket(convId) {
+  if (!convId) return;
+  try {
+    const resp = await apiFetch(`/api/conversations/${encodeURIComponent(convId)}/attachments`);
+    const arr = Array.isArray(resp?.attachments) ? resp.attachments : [];
+    if (!arr.length) return;
+    const key = _composerAttachmentKey(convId);
+    const bucket = _ensureComposerBucket(key);
+    if (!bucket) return;
+    const existingIds = new Set(bucket.items.map((it) => Number(it.id)));
+    for (const a of arr) {
+      const aid = Number(a.id);
+      if (aid > 0 && !existingIds.has(aid) && (a.status === "ingested" || a.status === "uploaded")) {
+        bucket.items.push({
+          id: aid,
+          kind: String(a.kind || ""),
+          name: String(a.original_filename || "unnamed"),
+          size: Number(a.size || 0),
+          status: "ready",
+          selected: true,
+          signed_url: a.signed_url || null,
+        });
+        existingIds.add(aid);
+      }
+    }
+    _renderAttachmentPills();
+  } catch (_) { /* 네트워크 오류 무시 */ }
+}
+
 function _renderAttachmentPills() {
   // UX-COMPACT: 오른쪽 사이드 패널에 렌더. 기존 composerAttachments 는 숨김 유지.
   const sidePanel = document.getElementById("attachSidePanel");
@@ -3792,12 +3936,15 @@ function _renderAttachmentPills() {
 
   if (!sidePanelList) return;
 
+  const countBadge = document.getElementById("composerAttachCountBadge");
   if (!items.length) {
     sidePanelList.innerHTML = "";
     if (sidePanel) sidePanel.classList.add("hidden");
+    if (countBadge) countBadge.textContent = "";
     return;
   }
-  if (sidePanel) sidePanel.classList.remove("hidden");
+  // 패널은 사용자가 "첨부파일 목록" 메뉴를 클릭할 때만 열림 — 자동 open 금지.
+  if (countBadge) countBadge.textContent = String(items.length);
 
   sidePanelList.innerHTML = "";
   items.forEach((it) => {
@@ -3918,7 +4065,7 @@ async function _uploadComposerAttachment(file) {
       state.pendingSentinel = null;
       // minimal sidebar entry (refreshWorkspace 가 확정 데이터로 교체)
       if (!state.conversations.find((c) => String(c.id) === earlyCid)) {
-        state.conversations.unshift({ id: earlyCid, title: "(파일 첨부 중)", display_status: "idle", created_at: new Date().toISOString(), account_id: state.session?.account_id || null, owner_username: state.session?.username || null });
+        state.conversations.unshift({ id: earlyCid, title: "(파일 첨부 중)", display_status: "idle", created_at: new Date().toISOString(), account_id: state.session?.account_id || null, owner_account_id: state.user?.id || null, owner_username: state.user?.username || null });
       }
       renderConversationList();
       renderConversationHeader();
@@ -4250,6 +4397,12 @@ function _bindComposerAttachmentEvents() {
     });
   }
 
+  // UX-COMPACT: 단계 사이드 패널 닫기 버튼
+  const stepSidePanelClose = document.getElementById("stepSidePanelClose");
+  if (stepSidePanelClose) {
+    stepSidePanelClose.addEventListener("click", closeStepSidePanel);
+  }
+
   // TASK-0107: chat-pane 전체에 drag&drop 확장 + 별 visual overlay (chatDropOverlay).
   // dragenter 가 자식 → 부모로 buble 되며 매번 발생하므로 counter 로 중첩 추적.
   // composer-wrap 자기 dragover 는 위에서 별도 처리 (composer 안 drop 도 동일 결과).
@@ -4509,6 +4662,10 @@ async function sendPrompt() {
     showToast("타 계정 소유의 대화에는 요청을 보낼 수 없습니다. 새 대화를 생성하세요.", true);
     return;
   }
+  if (state.composerAttachments.uploadingCount > 0) {
+    showToast("파일 업로드가 완료될 때까지 기다려주세요.", true);
+    return;
+  }
   // TASK-0048: pending 모드는 client-side 만 진입한 빈 대화 단계. cid 가 없으니 lazy create.
   const isPending = Boolean(state.pendingNewConversation);
   const isLazyCreate = isPending || !state.activeConversationId;
@@ -4706,7 +4863,8 @@ async function sendPrompt() {
             display_status: "processing",
             created_at: new Date().toISOString(),
             account_id: state.session?.account_id || null,
-            owner_username: state.session?.username || null,
+            owner_account_id: state.user?.id || null,
+            owner_username: state.user?.username || null,
           });
           renderConversationList();
         }
@@ -4727,8 +4885,14 @@ async function sendPrompt() {
       const lastUserMsg = [...state.messages].reverse().find((m) => m.role === "user" && m.content === message && !m._attachments);
       if (lastUserMsg) {
         lastUserMsg._attachments = _sendAttachmentSnapshot;
+        // messageAttachments 맵에도 저장 — 다음 refreshWorkspace 이후에도 칩 유지.
+        if (lastUserMsg.id) {
+          state.messageAttachments[String(lastUserMsg.id)] = _sendAttachmentSnapshot;
+        }
         renderMessages();
       }
+      // 대화의 모든 ingested 첨부를 bucket 에 동기화 → 다음 요청에도 attachment_ids 포함.
+      _syncConversationAttachmentsToBucket(newCid || state.activeConversationId).catch(() => {});
     }
   } catch (error) {
     // TASK-0048: pending 단계에서 ask 가 실패하면 cid 발급 여부가 client 에는 불확실 →
@@ -5013,6 +5177,22 @@ async function initializeWorkspace() {
     const status = await fetchAskStatus(resumeCid);
     if (status && status.is_processing) {
       state.busyConversations.add(resumeCid);
+      // 새로고침 후 pending bubble 복원 — polling 이 steps 를 채우면 갱신됨.
+      if (!state.pendingBubble) {
+        state.pendingBubble = {
+          startedAt: Date.now(),
+          runId: status.run_id || "",
+          steps: [],
+          status: "processing",
+          displayStatus: "processing",
+          isStale: false,
+          error: null,
+          userMessage: "",
+          convId: resumeCid,
+        };
+        renderMessages();
+        startElapsedTimer();
+      }
       renderComposer();
       startProgressPolling({ reset: true, runId: status.run_id || "" });
       showToast("이전에 남아있던 응답 요청을 이어받습니다.");

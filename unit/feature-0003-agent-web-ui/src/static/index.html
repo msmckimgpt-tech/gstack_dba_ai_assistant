@@ -137,8 +137,8 @@
         <!-- Access Notice -->
         <div class="access-notice hidden" id="accessNotice"></div>
 
-        <!-- Progress Strip (collapsible dropdown) -->
-        <details class="progress-strip hidden" id="progressCard">
+        <!-- Progress Strip: hidden permanently (step details moved to #stepSidePanel) -->
+        <details class="progress-strip hidden" id="progressCard" style="display:none">
           <summary class="progress-row">
             <span class="progress-label" id="progressTitle">처리 중</span>
             <span class="progress-badge" id="progressStatus">processing</span>
@@ -278,13 +278,25 @@
       </div><!-- /chat-column -->
   </div><!-- /app-shell -->
 
-  <!-- UX-COMPACT: 첨부 파일 사이드 패널 (backdrop 없음, blur 없음) -->
+  <!-- UX-COMPACT: 첨부 파일 사이드 패널 -->
   <aside class="attach-side-panel hidden" id="attachSidePanel" aria-label="첨부 파일">
     <div class="attach-side-panel-header">
       <span class="attach-side-panel-title">첨부 파일</span>
       <button type="button" class="attach-side-panel-close" id="attachSidePanelClose" aria-label="패널 닫기">×</button>
     </div>
     <div class="attach-side-panel-list" id="attachSidePanelList" aria-live="polite"></div>
+  </aside>
+
+  <!-- 실행 단계 사이드 패널 (처리 중 / 완료 후 단계 조회) -->
+  <aside class="step-side-panel hidden" id="stepSidePanel" aria-label="실행 단계">
+    <div class="step-side-panel-header">
+      <div class="step-side-panel-title-row">
+        <span class="step-side-panel-title">실행 단계</span>
+        <span class="step-side-panel-badge" id="stepSidePanelBadge"></span>
+      </div>
+      <button type="button" class="step-side-panel-close" id="stepSidePanelClose" aria-label="닫기">×</button>
+    </div>
+    <div class="step-side-panel-body" id="stepSidePanelBody" aria-live="polite"></div>
   </aside>
 
   <!-- ─── Profile Drawer (탭: 프롬프트 / 보안 및 계정) ──────────────
