@@ -1566,50 +1566,6 @@ a { color: inherit; }
   to { opacity: 1; }
 }
 
-/* TASK-0094 Sprint 1 Phase 7 (D11 + R-F2): consent grouped batch UX. */
-.consent-providers {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  margin-top: 8px;
-}
-.consent-provider-block {
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  padding: 10px 12px;
-  background: var(--surface);
-}
-.consent-provider-label {
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 6px;
-  color: var(--text);
-}
-.consent-group-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 6px 0;
-  cursor: pointer;
-}
-.consent-group-row input[type="checkbox"] {
-  margin-top: 3px;
-  cursor: pointer;
-}
-.consent-group-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.consent-group-label {
-  font-size: 12.5px;
-  color: var(--text);
-}
-.consent-group-hint {
-  font-size: 11.5px;
-  color: var(--muted);
-}
-
 /* feature-0008 (composer-model-selector): `+` action button — paperclip 첨부
    버튼을 대체. ChatGPT 패턴. click 시 primary popup (.composer-actions-menu)
    open — [파일 첨부, 모델 선택]. */

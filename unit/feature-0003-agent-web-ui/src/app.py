@@ -322,7 +322,7 @@ PERMISSION_DEFINITIONS = (
     {
         "code": "conversation.attachment.upload.own",
         "label": "내 대화 첨부 업로드",
-        "description": "자신의 대화에 파일 (CSV/XLSX/PDF/이미지) 을 첨부할 수 있다. MIME / size cap / consent (D11) 가 적용된다.",
+        "description": "자신의 대화에 파일 (CSV/XLSX/PDF/이미지) 을 첨부할 수 있다. MIME / size cap 이 적용된다.",
         "group": "conversation",
     },
     {
@@ -356,17 +356,6 @@ PERMISSION_DEFINITIONS = (
         "code": "attachment.execute_sql_on.any",
         "label": "전체 첨부 sandbox SQL 실행",
         "description": "모든 계정의 대화 첨부에 대해 sandbox SQL 을 실행할 수 있다. 운영자 한정.",
-        "group": "attachment",
-    },
-    # TASK-0108 Sprint 3 Phase 1 (REQ-20260526-0108, Major §12.3): admin-only manual KB
-    # ingest. BRIEFING-attachment-multi-cycle.md §6.3 Sprint 3 — text/markdown/SQL 첨부
-    # 본문을 AgentMemoryFactEntries 의 manual fact 로 등록. ScopeKey 단위 격리,
-    # 동일 ScopeKey 재ingest 시 기존 row 는 Weight=0 logical supersede.
-    # 본 권한 단독으로 SQL 실행 / DB mutation 안 일어남 — endpoint level 에서 RBAC gate.
-    {
-        "code": "attachment.kb.write.any",
-        "label": "첨부 KB 등록",
-        "description": "admin 한정 — text/markdown/SQL 첨부 본문을 AgentMemoryFactEntries 의 manual fact (SourceType='manual', Weight=90) 로 등록한다. ScopeKey 단위 격리, 재ingest 시 기존 row 는 Weight=0 으로 logical supersede.",
         "group": "attachment",
     },
     {
@@ -1717,8 +1706,6 @@ def _ensure_seed_roles(conn) -> None:
             # TASK-0094 Sprint 1 Phase 12: admin 의 sandbox SQL 실행 2건 catchup.
             "attachment.execute_sql_on.own",
             "attachment.execute_sql_on.any",
-            # TASK-0108 Sprint 3 Phase 1: admin 의 manual KB ingest catchup.
-            "attachment.kb.write.any",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -3026,42 +3013,6 @@ def _ensure_web_conversation_attachments_sandbox_schemas_schema(conn) -> None:
         cur.close()
 
 
-def _ensure_web_account_consents_schema(conn) -> None:
-    """TASK-0094 Sprint 1 Phase 2 (D11): WebAccountConsents 테이블 idempotent CREATE.
-
-    BRIEFING §5.1 — provider × data_class × purpose 별 consent + revoke + audit + 재동의.
-    Revision 2 R-F2 흡수 — UX 는 provider 별 grouped batch modal (3 group: 파일 텍스트
-    분석 / 이미지 분석 / 문서 인덱싱). DB 는 본 세분 row 유지 (보안 단위 ↔ UX 단위 분리).
-
-    UNIQUE (AccountId, Provider, DataClass, Purpose) — 같은 조합의 active 또는 revoked
-    row 는 1 개만. 재동의 시점에는 RevokedAt 갱신 + 새 row INSERT 가 아닌 application
-    layer 의 grant/revoke history 패턴 (별 history table 없이 본 row 의 GrantedAt/RevokedAt
-    교체) 로 처리. 본 row 의 history audit 은 `attachment.consent.grant` /
-    `attachment.consent.revoke` action 으로 WebAuditEvents 에 dispatch.
-
-    Phase 2 는 schema 만 — consent modal flow / revoke endpoint 는 Phase 7 에서 ship.
-    """
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS WebAccountConsents (
-                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                AccountId BIGINT NOT NULL,
-                Provider VARCHAR(32) NOT NULL,
-                DataClass VARCHAR(24) NOT NULL,
-                Purpose VARCHAR(16) NOT NULL,
-                GrantedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-                RevokedAt DATETIME(6) NULL,
-                UNIQUE KEY UQ_WAC_Identity (AccountId, Provider, DataClass, Purpose),
-                INDEX IX_WAC_Account (AccountId)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """
-        )
-    finally:
-        cur.close()
-
-
 def _ensure_web_attachment_derived_messages_schema(conn) -> None:
     """TASK-0094 Sprint 1 Phase 2 (D19, R-F11): derived message join table.
 
@@ -3533,11 +3484,10 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_web_conversation_shares_schema(conn)
     # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column ALTER.
     _ensure_web_share_links_policy_version_column(conn)
-    # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping + consent +
-    # derived join + provider files lifecycle 5 신규 테이블 fast-path 보정.
+    # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping +
+    # derived join + provider files lifecycle 4 신규 테이블 fast-path 보정.
     _ensure_web_conversation_attachments_schema(conn)
     _ensure_web_conversation_attachments_sandbox_schemas_schema(conn)
-    _ensure_web_account_consents_schema(conn)
     _ensure_web_attachment_derived_messages_schema(conn)
     _ensure_web_conversation_attachment_provider_files_schema(conn)
     # TASK-0061 Phase 6: 기존 배포에 MustChangePassword 컬럼 backfill.
@@ -3693,11 +3643,10 @@ def _ensure_web_tables():
         _ensure_web_conversation_shares_schema(conn)
         # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column (slow path).
         _ensure_web_share_links_policy_version_column(conn)
-        # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping + consent +
-        # derived join + provider files lifecycle 5 신규 테이블 (slow path).
+        # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping +
+        # derived join + provider files lifecycle 4 신규 테이블 (slow path).
         _ensure_web_conversation_attachments_schema(conn)
         _ensure_web_conversation_attachments_sandbox_schemas_schema(conn)
-        _ensure_web_account_consents_schema(conn)
         _ensure_web_attachment_derived_messages_schema(conn)
         _ensure_web_conversation_attachment_provider_files_schema(conn)
         # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 보장 (slow path).
@@ -6813,25 +6762,23 @@ def get_api_vault_options() -> JSONResponse:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# TASK-0094 Sprint 2 (D11 + D13) — vision inline image pre-fetch + consent gate
+# TASK-0094 Sprint 2 (D13) — vision inline image pre-fetch
 # ══════════════════════════════════════════════════════════════════════════
 # `/api/ask` 가 첨부 image (kind=image) 를 vision 가능 모델에 inline 전송하기 전
 # server-side 책임:
-#   (1) D11 consent (file_image / inference) 가 active 한지 확인 — 미동의 시
-#       409 + consent_required 응답으로 frontend modal trigger.
-#   (2) D13 server-side bytes read + base64 inline — signed URL 외부 송신 0.
-#   (3) 임시 file 작성 + env ATTACHMENT_IMAGE_INLINE_PATH 로 agent_core 에 path 만
+#   (1) D13 server-side bytes read + base64 inline — signed URL 외부 송신 0.
+#   (2) 임시 file 작성 + env ATTACHMENT_IMAGE_INLINE_PATH 로 agent_core 에 path 만
 #       전달 (cross-feature import 회피 — storage_minio 는 본 module 에서만 사용).
-#   (4) size cap (단일 ≤ 5MB pre-base64) + count cap (turn 당 ≤ 5) — 비용 폭주 +
+#   (3) size cap (단일 ≤ 5MB pre-base64) + count cap (turn 당 ≤ 5) — 비용 폭주 +
 #       context overflow 방지.
-#   (5) 호출 후 cleanup (env unset + 임시 file 삭제).
+#   (4) 호출 후 cleanup (env unset + 임시 file 삭제).
 _VISION_IMAGE_SIZE_CAP_BYTES = 5 * 1024 * 1024  # 5MB pre-base64
 _VISION_IMAGE_COUNT_CAP = 5  # turn 당 최대 inline image 개수
 _VISION_INLINE_TMP_DIR = os.getenv("WEB_VISION_INLINE_TMP_DIR", "/tmp").rstrip("/")
 
 
-def _model_to_consent_provider(model: str | None) -> str | None:
-    """vision invoke 모델 → D11 consent provider enum 매핑.
+def _model_to_llm_provider(model: str | None) -> str | None:
+    """vision invoke 모델 → LLM provider 식별자 매핑 (audit 용).
 
     feature-0007 (bedrock) 머지 후 catalog 는 claude-* 만 → 'anthropic'. backward
     -compat: gpt-* → 'openai'. Local LLM (auto/edge/core/code) 은 supports_vision
@@ -6850,33 +6797,6 @@ def _model_to_consent_provider(model: str | None) -> str | None:
     return None
 
 
-def _has_active_consent(
-    conn,
-    account_id: int,
-    provider: str,
-    data_class: str,
-    purpose: str,
-) -> bool:
-    """D11 — WebAccountConsents 의 active row 존재 확인 (RevokedAt IS NULL)."""
-    try:
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                """
-                SELECT 1 FROM WebAccountConsents
-                WHERE AccountId = %s AND Provider = %s AND DataClass = %s
-                  AND Purpose = %s AND RevokedAt IS NULL
-                LIMIT 1
-                """,
-                (int(account_id), provider, data_class, purpose),
-            )
-            return cur.fetchone() is not None
-        finally:
-            cur.close()
-    except Exception:
-        return False
-
-
 def _prepare_vision_inline_images(
     conn,
     account_id: int,
@@ -6884,16 +6804,14 @@ def _prepare_vision_inline_images(
     *,
     model: str,
     conversation_id: str | None,
-) -> tuple[str | None, int, list[dict[str, str]] | None, list[dict[str, Any]]]:
-    """vision 첨부 (kind=image) 의 D11 consent gate + pre-fetch + 임시 file 작성.
+) -> tuple[str | None, int, list[dict[str, Any]]]:
+    """vision 첨부 (kind=image) pre-fetch + 임시 file 작성.
 
     Returns:
-        (temp_file_path, image_count, consent_required, audit_attachments)
+        (temp_file_path, image_count, audit_attachments)
 
-        - vision 미지원 모델 / image kind 0 → (None, 0, None, []).
-        - D11 consent 미동의 → (None, 0, [{provider, data_class, purpose}], []).
-          caller 가 409 + body 로 응답, frontend modal trigger.
-        - 정상 → (path, count, None, audit_attachments). caller 가 env
+        - vision 미지원 모델 / image kind 0 → (None, 0, []).
+        - 정상 → (path, count, audit_attachments). caller 가 env
           ATTACHMENT_IMAGE_INLINE_PATH 로 전달, finally 에서 cleanup.
           audit_attachments 는 S2.5 (attachment.vision.invoke) 의 ChangeJson 용
           metadata — D12 정합: filename / object_key 미포함, id 와 size_bucket
@@ -6904,11 +6822,7 @@ def _prepare_vision_inline_images(
               결과만 제공).
     """
     if not attachment_ids or not model_supports_vision(model):
-        return (None, 0, None, [])
-
-    provider = _model_to_consent_provider(model)
-    if not provider:
-        return (None, 0, None, [])
+        return (None, 0, [])
 
     # image kind 첨부 선별 (count cap 적용)
     try:
@@ -6933,18 +6847,10 @@ def _prepare_vision_inline_images(
         finally:
             cur.close()
     except Exception:
-        return (None, 0, None, [])
+        return (None, 0, [])
 
     if not rows:
-        return (None, 0, None, [])
-
-    # D11 consent gate
-    if not _has_active_consent(conn, account_id, provider, "file_image", "inference"):
-        return (None, 0, [{
-            "provider": provider,
-            "data_class": "file_image",
-            "purpose": "inference",
-        }], [])
+        return (None, 0, [])
 
     # bytes pre-fetch + base64 + size cap
     from web.modules import storage_minio
@@ -6983,7 +6889,7 @@ def _prepare_vision_inline_images(
         })
 
     if not inline_entries:
-        return (None, 0, None, [])
+        return (None, 0, [])
 
     # 임시 file 작성 (caller 가 finally 에서 cleanup)
     suffix = uuid.uuid4().hex[:12]
@@ -6993,9 +6899,9 @@ def _prepare_vision_inline_images(
         with open(path, "w", encoding="utf-8") as f:
             json.dump(inline_entries, f, ensure_ascii=False)
     except OSError:
-        return (None, 0, None, [])
+        return (None, 0, [])
 
-    return (path, len(inline_entries), None, audit_attachments)
+    return (path, len(inline_entries), audit_attachments)
 
 
 def _cleanup_vision_inline(temp_path: str | None) -> None:
@@ -7339,9 +7245,8 @@ async def ask(request: Request) -> JSONResponse:
             except Exception:
                 pass
 
-        # TASK-0094 Sprint 2 (S2.4) — vision inline image pre-fetch + D11 consent gate.
-        # vision 미지원 모델 / image kind 0 → (None, 0, None, []) — 본 분기 skip.
-        # D11 미동의 → 409 + consent_required body 로 즉시 응답 (frontend modal trigger).
+        # TASK-0094 Sprint 2 (S2.4) — vision inline image pre-fetch.
+        # vision 미지원 모델 / image kind 0 → (None, 0, []) — 본 분기 skip.
         # 정상 → env ATTACHMENT_IMAGE_INLINE_PATH 로 path 전달 + finally cleanup.
         vision_inline_path: str | None = None
         vision_inline_count = 0
@@ -7350,7 +7255,6 @@ async def ask(request: Request) -> JSONResponse:
             (
                 _vision_path,
                 _vision_count,
-                _vision_consent_required,
                 _vision_audit,
             ) = _prepare_vision_inline_images(
                 conn,
@@ -7360,21 +7264,7 @@ async def ask(request: Request) -> JSONResponse:
                 conversation_id=conv_id,
             )
         except Exception:
-            _vision_path, _vision_count, _vision_consent_required, _vision_audit = None, 0, None, []
-        if _vision_consent_required:
-            os.environ.pop("ATTACHMENT_IDS", None)
-            try:
-                conn.close()
-            except Exception:
-                pass
-            return JSONResponse(
-                {
-                    "error": "vision 모델에 이미지 송신 동의가 필요합니다.",
-                    "error_code": "consent_required",
-                    "consent_required": _vision_consent_required,
-                },
-                status_code=409,
-            )
+            _vision_path, _vision_count, _vision_audit = None, 0, []
         if _vision_path:
             vision_inline_path = _vision_path
             vision_inline_count = int(_vision_count or 0)
@@ -7418,7 +7308,7 @@ async def ask(request: Request) -> JSONResponse:
                     resource_type="conversation",
                     resource_id=_vision_conv_id,
                     request_ctx={
-                        "provider": _model_to_consent_provider(model),
+                        "provider": _model_to_llm_provider(model),
                         "model": model,
                         "conversation_id": _vision_conv_id,
                         "attachment_count": vision_inline_count,
@@ -8571,7 +8461,7 @@ async def clear_memory(request: Request) -> JSONResponse:
 
 # ============================================================================
 # TASK-0094 Sprint 1 Phase 5 — Cycle 0 attachment upload / list / metadata / delete
-# + consent grant / revoke (6 endpoint, BRIEFING §5.4).
+# (4 endpoint, BRIEFING §5.4).
 # ============================================================================
 
 
@@ -9094,245 +8984,6 @@ def delete_attachment(attachment_id: int, request: Request) -> JSONResponse:
             pass
 
         return JSONResponse({"ok": True, "delete_reason": "user"})
-    finally:
-        conn.close()
-
-
-@app.get("/api/account/consents")
-def list_account_consents(request: Request) -> JSONResponse:
-    """본인 consent row 목록 (Phase 7 grouped modal 의 toggle 상태 표시용). own only."""
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        cur = conn.cursor(dictionary=True)
-        try:
-            cur.execute(
-                """
-                SELECT Id, Provider, DataClass, Purpose, GrantedAt, RevokedAt
-                FROM WebAccountConsents
-                WHERE AccountId = %s
-                ORDER BY Provider ASC, DataClass ASC, Purpose ASC, Id ASC
-                """,
-                (int(account["id"]),),
-            )
-            rows = cur.fetchall() or []
-        finally:
-            cur.close()
-        consents = [
-            {
-                "id": int(r.get("Id") or 0),
-                "provider": str(r.get("Provider") or ""),
-                "data_class": str(r.get("DataClass") or ""),
-                "purpose": str(r.get("Purpose") or ""),
-                "granted": bool(r.get("GrantedAt") and not r.get("RevokedAt")),
-            }
-            for r in rows
-        ]
-        return JSONResponse({"consents": consents})
-    finally:
-        conn.close()
-
-
-@app.post("/api/account/consents")
-async def grant_account_consent(request: Request) -> JSONResponse:
-    """D11 consent grant (own only). body: {provider, data_class, purpose}.
-
-    UNIQUE (AccountId, Provider, DataClass, Purpose) 정합 — 이미 active row 있으면
-    RevokedAt 리셋 (재동의). 없으면 INSERT.
-    """
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    provider = str(data.get("provider") or "").strip().lower()
-    data_class = str(data.get("data_class") or "").strip().lower()
-    purpose = str(data.get("purpose") or "").strip().lower()
-
-    if provider not in ("openai", "anthropic", "local"):
-        return _json_error("provider 값이 잘못됐습니다 (openai/anthropic/local).", 400)
-    if data_class not in ("file_text", "file_image", "file_embedding"):
-        return _json_error("data_class 값이 잘못됐습니다 (file_text/file_image/file_embedding).", 400)
-    if purpose not in ("inference", "indexing"):
-        return _json_error("purpose 값이 잘못됐습니다 (inference/indexing).", 400)
-
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-
-        # Load existing row (audit before-snapshot 용).
-        cur = conn.cursor(dictionary=True)
-        try:
-            cur.execute(
-                """
-                SELECT Id, AccountId, Provider, DataClass, Purpose, GrantedAt, RevokedAt
-                FROM WebAccountConsents
-                WHERE AccountId = %s AND Provider = %s AND DataClass = %s AND Purpose = %s
-                LIMIT 1
-                """,
-                (int(account["id"]), provider, data_class, purpose),
-            )
-            before_row = cur.fetchone()
-        finally:
-            cur.close()
-
-        cur = conn.cursor()
-        try:
-            if before_row:
-                cur.execute(
-                    """
-                    UPDATE WebAccountConsents
-                    SET GrantedAt = UTC_TIMESTAMP(6), RevokedAt = NULL
-                    WHERE Id = %s
-                    """,
-                    (int(before_row["Id"]),),
-                )
-                consent_id = int(before_row["Id"])
-            else:
-                cur.execute(
-                    """
-                    INSERT INTO WebAccountConsents (AccountId, Provider, DataClass, Purpose)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (int(account["id"]), provider, data_class, purpose),
-                )
-                consent_id = int(cur.lastrowid or 0)
-        finally:
-            cur.close()
-
-        if not consent_id:
-            return _json_error("consent 저장 실패", 500)
-
-        try:
-            conn.commit()
-        except Exception:
-            pass
-
-        # audit dispatch.
-        try:
-            _audit_user_action(
-                conn,
-                request,
-                account,
-                action="attachment.consent.grant",
-                resource_type="consent",
-                resource_id=str(consent_id),
-                request_ctx={
-                    "id": consent_id,
-                    "provider": provider,
-                    "data_class": data_class,
-                    "purpose": purpose,
-                    "revoked_at": (
-                        before_row.get("RevokedAt").isoformat()
-                        if before_row and before_row.get("RevokedAt") and hasattr(before_row.get("RevokedAt"), "isoformat")
-                        else None
-                    ),
-                },
-            )
-        except Exception:
-            pass
-
-        return JSONResponse(
-            {
-                "id": consent_id,
-                "provider": provider,
-                "data_class": data_class,
-                "purpose": purpose,
-                "granted_at": True,
-            }
-        )
-    finally:
-        conn.close()
-
-
-@app.delete("/api/account/consents/{consent_id}")
-def revoke_account_consent(consent_id: int, request: Request) -> JSONResponse:
-    """D11 consent revoke (own only). RevokedAt 만 UPDATE — row delete 안 함
-    (history 보존)."""
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-
-        # Load + ownership check.
-        cur = conn.cursor(dictionary=True)
-        try:
-            cur.execute(
-                """
-                SELECT Id, AccountId, Provider, DataClass, Purpose, GrantedAt, RevokedAt
-                FROM WebAccountConsents
-                WHERE Id = %s
-                LIMIT 1
-                """,
-                (int(consent_id),),
-            )
-            row = cur.fetchone()
-        finally:
-            cur.close()
-
-        if not row or int(row.get("AccountId") or 0) != int(account["id"]):
-            return _json_error("consent 를 찾을 수 없거나 본인 row 가 아닙니다.", 404)
-        if row.get("RevokedAt"):
-            return JSONResponse({"revoked_at": True, "already_revoked": True})
-
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                "UPDATE WebAccountConsents SET RevokedAt = UTC_TIMESTAMP(6) WHERE Id = %s AND RevokedAt IS NULL",
-                (int(consent_id),),
-            )
-            updated = int(cur.rowcount or 0)
-        finally:
-            cur.close()
-
-        if updated <= 0:
-            return _json_error("revoke 처리 실패", 409)
-
-        try:
-            conn.commit()
-        except Exception:
-            pass
-
-        # audit dispatch.
-        try:
-            _audit_user_action(
-                conn,
-                request,
-                account,
-                action="attachment.consent.revoke",
-                resource_type="consent",
-                resource_id=str(consent_id),
-                request_ctx={
-                    "id": int(consent_id),
-                    "provider": str(row.get("Provider") or ""),
-                    "data_class": str(row.get("DataClass") or ""),
-                    "purpose": str(row.get("Purpose") or ""),
-                    "granted_at": (
-                        row.get("GrantedAt").isoformat()
-                        if row.get("GrantedAt") and hasattr(row.get("GrantedAt"), "isoformat")
-                        else None
-                    ),
-                },
-            )
-        except Exception:
-            pass
-
-        return JSONResponse({"revoked_at": True})
     finally:
         conn.close()
 
@@ -12202,28 +11853,6 @@ def build_audit_change_json(
             },
             ["attachment.original_filename", "attachment.bytes"],
         )
-    if action == "attachment.consent.grant":
-        return (
-            {
-                "consent_id": (after or {}).get("id"),
-                "provider": (after or {}).get("provider"),
-                "data_class": (after or {}).get("data_class"),
-                "purpose": (after or {}).get("purpose"),
-                "previous_revoked_at": (before or {}).get("revoked_at"),
-            },
-            [],
-        )
-    if action == "attachment.consent.revoke":
-        return (
-            {
-                "consent_id": (before or {}).get("id"),
-                "provider": (before or {}).get("provider"),
-                "data_class": (before or {}).get("data_class"),
-                "purpose": (before or {}).get("purpose"),
-                "previously_granted_at": (before or {}).get("granted_at"),
-            },
-            [],
-        )
     # TASK-0094 Sprint 2 (S2.5) — vision invoke audit. D12 정합:
     # raw bytes / raw filename / raw object_key 절대 미노출. attachment_metas 는
     # [{attachment_id, mime_type, size_bucket}] 만 — categorical 버킷 한정.
@@ -13051,270 +12680,6 @@ async def get_audit_event(event_id: int, request: Request) -> JSONResponse:
         if not row:
             return _json_error("audit event not found", 404)
         return JSONResponse({"item": _audit_row_to_dict(row), "scope": scope})
-    finally:
-        conn.close()
-
-
-@app.get("/api/admin/attachments")
-async def admin_list_attachments(request: Request) -> JSONResponse:
-    """TASK-0108 Sprint 3 supplement — admin pane 에서 KB ingest 대상 첨부 list.
-
-    RBAC: `console.access` AND `attachment.kb.write.any` (REV-20260526-0002 B-3
-    흡수 — admin 콘솔 패턴 정합, 커스텀 role 에 단일 권한만 부여된 경우 차단).
-    Query: `kind` (optional CSV — 'text,markdown' 등 필터), `limit` (default 100, max 500).
-    Response: `{items: [{id, conversation_id, account_id, original_filename, mime_type,
-                       size_bytes, kind, upload_status, ext, created_at, sha256_prefix}]}`
-    DeletedAt IS NULL 만, 최근 CreatedAt DESC.
-    """
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_has_permission(account, "console.access"):
-            return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
-        if not _account_has_permission(account, "attachment.kb.write.any"):
-            return _json_error("요청을 수행할 수 없습니다.", 403)
-        kind_filter_raw = (request.query_params.get("kind") or "").strip()
-        kinds = [k.strip().lower() for k in kind_filter_raw.split(",") if k.strip()]
-        try:
-            limit = int(request.query_params.get("limit") or 100)
-        except (TypeError, ValueError):
-            limit = 100
-        limit = max(1, min(limit, 500))
-
-        where = ["DeletedAt IS NULL"]
-        params: list[Any] = []
-        if kinds:
-            placeholders = ",".join(["%s"] * len(kinds))
-            where.append(f"LOWER(Kind) IN ({placeholders})")
-            params.extend(kinds)
-        sql = (
-            "SELECT Id, ConversationId, AccountId, OriginalFilename, MimeType, "
-            "SizeBytes, Kind, UploadStatus, Sha256, CreatedAt "
-            "FROM WebConversationAttachments "
-            f"WHERE {' AND '.join(where)} "
-            "ORDER BY CreatedAt DESC LIMIT %s"
-        )
-        params.append(limit)
-        cur = conn.cursor(dictionary=True)
-        try:
-            cur.execute(sql, params)
-            rows = cur.fetchall() or []
-        finally:
-            cur.close()
-        items = []
-        for r in rows:
-            fname = str(r.get("OriginalFilename") or "")
-            ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
-            items.append(
-                {
-                    "id": int(r.get("Id") or 0),
-                    "conversation_id": str(r.get("ConversationId") or ""),
-                    "account_id": int(r.get("AccountId") or 0),
-                    "original_filename": fname,
-                    "mime_type": str(r.get("MimeType") or ""),
-                    "size_bytes": int(r.get("SizeBytes") or 0),
-                    "kind": str(r.get("Kind") or "").lower(),
-                    "upload_status": str(r.get("UploadStatus") or ""),
-                    "ext": ext,
-                    "sha256_prefix": str(r.get("Sha256") or "")[:16],
-                    "created_at": (
-                        r.get("CreatedAt").isoformat() if r.get("CreatedAt") else None
-                    ),
-                }
-            )
-        return JSONResponse({"items": items, "count": len(items)})
-    finally:
-        conn.close()
-
-
-# TASK-0108 Sprint 3 (REV-20260526-0002 B-5 흡수): scope_key 입력 정규식.
-# 영숫자 + 점 + 언더스코어 + 하이픈. 제어문자 / 공백 변형 / log 혼동 source 차단.
-_KB_INGEST_SCOPE_KEY_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,96}$")
-
-
-@app.post("/api/admin/attachments/kb-ingest")
-async def admin_attachments_kb_ingest(request: Request) -> JSONResponse:
-    """TASK-0108 Sprint 3 (B: DDL/KB 보강) — admin-only manual KB ingest.
-
-    BRIEFING-attachment-multi-cycle.md §6.3 정합. text/markdown 또는 .sql 첨부
-    본문을 `AgentMemoryFactEntries` 의 manual fact (SourceType='manual' 고정,
-    Weight=90 고정) 로 등록한다. ScopeKey 단위 격리, 재ingest 시 기존 active
-    row 는 Weight=0 으로 logical supersede.
-
-    REV-20260526-0002 흡수:
-    - B-2: `source_type`, `weight` 는 서버 상수 — request body 입력 무시 (오염 차단).
-    - B-3: RBAC = `console.access` AND `attachment.kb.write.any`.
-    - B-4: ingest + audit 을 같은 transaction 으로 묶고 마지막에 1회 commit.
-    - B-5: `scope_key` 는 `^[A-Za-z0-9_.-]{1,96}$` regex validation + audit 에는
-      `scope_key_hash_prefix` (SHA256 prefix) 만 기록.
-
-    RBAC: `console.access` AND `attachment.kb.write.any`.
-    Body: `{attachment_id: int, scope_key: str}` — source_type/weight 는 무시.
-    Response: `{ok: true, fact_entry_id, scope_key, text_hash, superseded_count, reactivated}`
-    Audit: `attachment.kb.ingest` dispatch (scope_key 평문 미기록, hash prefix 만).
-    """
-    try:
-        body = await request.json()
-    except Exception:
-        return _json_error("invalid json", 400)
-    if not isinstance(body, dict):
-        return _json_error("invalid body", 400)
-    try:
-        attachment_id = int(body.get("attachment_id") or 0)
-    except (TypeError, ValueError):
-        return _json_error("attachment_id must be int", 400)
-    if attachment_id <= 0:
-        return _json_error("attachment_id 필수", 400)
-    scope_key = str(body.get("scope_key") or "").strip()
-    if not scope_key:
-        return _json_error("scope_key 필수", 400)
-    # B-5 흡수: regex validation (length ≤ 96 + 허용 문자만).
-    if not _KB_INGEST_SCOPE_KEY_RE.match(scope_key):
-        return _json_error(
-            "scope_key 형식 오류 — 영숫자 / 점(.) / 언더스코어(_) / 하이픈(-) 만 허용, 길이 1~96자.",
-            400,
-        )
-    # B-2 흡수: source_type / weight 서버 상수 고정 — request body 입력 무시.
-    # 향후 정책 조정이 필요하면 별 admin policy field 로 설계.
-    enforced_source_type = "manual"
-    enforced_weight = 90
-
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        # B-3 흡수: admin 콘솔 + 세부 권한 둘 다 require.
-        if not _account_has_permission(account, "console.access"):
-            return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
-        if not _account_has_permission(account, "attachment.kb.write.any"):
-            return _json_error("요청을 수행할 수 없습니다.", 403)
-
-        cur = conn.cursor(dictionary=True)
-        try:
-            cur.execute(
-                "SELECT Id, ObjectKey, OriginalFilename, MimeType, SizeBytes, "
-                "Sha256, Kind, UploadStatus, DeletedAt "
-                "FROM WebConversationAttachments WHERE Id = %s",
-                (attachment_id,),
-            )
-            row = cur.fetchone()
-        finally:
-            cur.close()
-        if not row:
-            return _json_error("첨부를 찾을 수 없습니다.", 404)
-        if row.get("DeletedAt") is not None:
-            return _json_error("삭제된 첨부입니다.", 404)
-
-        kind = str(row.get("Kind") or "").lower()
-        original_filename = str(row.get("OriginalFilename") or "")
-        ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else ""
-        is_text_kind = kind in ("text", "markdown")
-        is_sql_ext = ext == "sql"
-        if not (is_text_kind or is_sql_ext):
-            return _json_error(
-                "KB 등록 가능 첨부 유형이 아닙니다 (text / markdown / .sql 만 허용).",
-                400,
-            )
-
-        size_bytes = int(row.get("SizeBytes") or 0)
-        if size_bytes > 1_048_576:  # 1 MB cap (defense; UI 도 별도 가드)
-            return _json_error("본문 크기 1 MB 초과 — KB ingest 거부", 413)
-
-        # 본문 fetch.
-        try:
-            from web.modules import storage_minio
-        except Exception as exc:
-            return _json_error(f"storage 모듈 import 실패: {exc}", 500)
-        try:
-            object_key = str(row.get("ObjectKey") or "")
-            if not object_key:
-                return _json_error("ObjectKey 부재", 500)
-            body_bytes = storage_minio.get_object_bytes(object_key)
-        except Exception as exc:
-            return _json_error(f"첨부 본문 fetch 실패: {exc}", 500)
-        if not body_bytes:
-            return _json_error("첨부 본문이 비어 있음", 400)
-        try:
-            body_text = body_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            return _json_error("본문 UTF-8 디코드 실패 (binary 첨부는 KB ingest 불가)", 400)
-
-        # B-4 흡수: kb_ingest + audit 을 단일 transaction 으로. 실패 시 rollback,
-        # 성공 시 마지막에 1회 commit.
-        try:
-            from modules import kb_ingest
-        except Exception as exc:
-            return _json_error(f"kb_ingest 모듈 import 실패: {exc}", 500)
-        try:
-            result = kb_ingest.ingest_manual(
-                conn,
-                scope_key=scope_key,
-                body=body_text,
-                source_filename=original_filename,
-                source_sha256=str(row.get("Sha256") or ""),
-                source_type=enforced_source_type,
-                weight=enforced_weight,
-            )
-        except ValueError as ve:
-            conn.rollback()
-            return _json_error(str(ve), 400)
-        except Exception as exc:
-            conn.rollback()
-            return _json_error(f"kb_ingest 실패: {exc}", 500)
-
-        # audit dispatch — D12 정합 (B-5 흡수 — scope_key 평문 미기록, hash prefix 만).
-        body_sha256 = hashlib.sha256(body_bytes).hexdigest()
-        scope_key_sha256 = hashlib.sha256(scope_key.encode("utf-8")).hexdigest()
-        try:
-            actor = _build_actor_from_request(request, account)
-            record_audit_event(
-                conn,
-                actor=actor,
-                action="attachment.kb.ingest",
-                resource_type="attachment",
-                resource_id=str(attachment_id),
-                change_json={
-                    "attachment_id": attachment_id,
-                    "scope_key_hash_prefix": scope_key_sha256[:16],
-                    "source_type": enforced_source_type,
-                    "weight": enforced_weight,
-                    "body_size": len(body_bytes),
-                    "body_sha256_prefix": body_sha256[:16],
-                    "fact_entry_id": result.get("fact_entry_id"),
-                    "text_hash_prefix": str(result.get("text_hash") or "")[:16],
-                    "superseded_count": result.get("superseded_count"),
-                    "reactivated": result.get("reactivated"),
-                    "attachment_kind": kind,
-                    "attachment_ext": ext,
-                },
-                masked_fields=["attachment.bytes", "attachment.original_filename", "scope_key"],
-            )
-        except Exception as exc:
-            # B-4 흡수: audit 실패는 admin mutation 패턴이라 rollback (canonical KB 변경 + audit 누락 차단).
-            conn.rollback()
-            sys.stderr.write(f"[kb-ingest] audit dispatch failed (rolling back): {exc}\n")
-            return _json_error(f"audit dispatch 실패: {exc}", 500)
-        conn.commit()
-
-        return JSONResponse(
-            {
-                "ok": True,
-                "fact_entry_id": result.get("fact_entry_id"),
-                "scope_key": scope_key,
-                "text_hash": result.get("text_hash"),
-                "superseded_count": result.get("superseded_count"),
-                "reactivated": result.get("reactivated"),
-            }
-        )
     finally:
         conn.close()
 

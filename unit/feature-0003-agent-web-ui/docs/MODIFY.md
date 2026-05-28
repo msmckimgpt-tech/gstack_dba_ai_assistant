@@ -8,6 +8,26 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260528-0123
+- Date: 2026-05-28
+- Related Requirement: REQ-20260527-0001 (**Major** §12.3 — KB 등록 UI/endpoint 제거)
+- Summary: 관리 콘솔 "KB 등록" pane + backend endpoint 2개 + RBAC 권한 1코드 완전 제거. 제거 사유: (1) 대화 첨부(`WebConversationAttachments`) 의존 — 관리 영역이 사용자 대화에 기생하는 설계 결함, (2) Weight=90 manual fact 가 DB 스키마 변경 시 오래된 정보를 자동 수집(Weight=1)보다 우선 참조 → 스키마 오염 위험. `kb_ingest.py` 모듈 + 테스트는 재설계 시 재활용 가능하므로 보존.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: "KB 등록" tab 버튼 + `<section data-admin-pane="kb-ingest">` 전체 제거
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: `adminState.kbIngest` state + `mountKbIngestPane` + `loadKbIngestList` + `renderKbIngestList` + `renderKbIngestDetail` + `submitKbIngest` + `KB_INGEST_SCOPE_KEY_RE` + tab 분기 핸들러 (~221 LOC) 제거
+  - `unit/feature-0003-agent-web-ui/src/app.py`: `attachment.kb.write.any` PERMISSION_DEFINITIONS 엔트리 + admin seed grant 항목 + `GET /api/admin/attachments` endpoint + `POST /api/admin/attachments/kb-ingest` endpoint + `_KB_INGEST_SCOPE_KEY_RE` (~264 LOC) 제거
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0108 항목에 제거 사유 및 범위 기록
+
+## CHG-20260528-0122
+- Date: 2026-05-28
+- Related Requirement: TASK-0122 (REQ-20260528-0122, **Minor** §12.3 — 외부 LLM 수신 동의 UI·권한·로직 전면 제거)
+- Summary: 사용자 프로필 > 보안 및 계정 탭의 "외부 LLM 송신 동의" 섹션 제거. 서비스 사용 자체를 묵시 동의로 간주. `index.html` DOM 제거 / `app.js` consent 함수·변수·이벤트 바인딩 일체 제거 / `styles.css` consent CSS 블록 제거 / `app.py` `_ensure_web_account_consents_schema` + `_has_active_consent` 함수 제거, `_prepare_vision_inline_images` D11 consent gate + 409 응답 제거 (vision pre-fetch D13 보존, 4-tuple→3-tuple), `/api/account/consents` 3 엔드포인트 제거, `attachment.consent.grant|revoke` audit 핸들러 제거, `_model_to_consent_provider`→`_model_to_llm_provider` rename. py_compile + node --check PASS.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`: `profileConsentSection` div 제거
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`: consent 함수·변수 9개 제거 + RBAC description 갱신 + 이벤트 바인딩 제거
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: consent CSS 블록 (~43 LOC) 제거
+  - `unit/feature-0003-agent-web-ui/src/app.py`: `_ensure_web_account_consents_schema` 제거 + `_has_active_consent` 제거 + consent gate 제거 + 3 엔드포인트 제거 + audit 핸들러 제거 + rename
+
 ## CHG-20260526-0108
 - Date: 2026-05-26
 - Related Requirement: TASK-0108 (REQ-20260526-0108, **Major** §12.3 — Sprint 3 (B: DDL/KB 보강) admin-only manual KB ingest)

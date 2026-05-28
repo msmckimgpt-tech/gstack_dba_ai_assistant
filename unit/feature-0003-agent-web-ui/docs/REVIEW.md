@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260528-0123 [SKIPPED:removal-only-no-new-rbac-no-schema-mutation]
+- Date: 2026-05-28
+- TASK-Cycle: REQ-20260527-0001 (**Major** §12.3 — KB 등록 UI/endpoint 제거)
+- Skip reason: 신규 RBAC 코드 추가 없음 (기존 코드 삭제만) / DB schema 변경 없음 / secret handling 없음 / 순수 제거 작업 (UI pane + JS ~221 LOC + endpoint 2개 + RBAC 권한 정의 + seed grant). 기존 `AgentMemoryFactEntries` 데이터 DROP 안 함 — 이미 등록된 manual KB fact 는 Weight=90 으로 잔존하나 UI 진입점이 없어 신규 등록 불가. 재설계 시 별 cycle 에서 Codex outside-voice 호출 예정.
+
+## REV-20260528-0122 [SKIPPED:no-rbac-no-schema-no-secret-handling]
+- Date: 2026-05-28
+- TASK-Cycle: TASK-0122 (REQ-20260528-0122, **Minor** §12.3 — 외부 LLM 수신 동의 UI·권한·로직 제거)
+- Skip reason: RBAC 권한 코드 신규 추가 없음 (기존 description 텍스트 수정만) / DB schema 변경 없음 / secret handling 없음 / 순수 제거 작업 (UI DOM + JS 함수 + CSS + backend 엔드포인트 3개 + audit 핸들러). 기존 `WebAccountConsents` 테이블 DROP 안 함 — 데이터 보존 목적.
+
 ## REV-20260526-0002 [SUBAGENT:codex — Sprint 3 admin-only manual KB ingest]
 - Date: 2026-05-26
 - TASK-Cycle: TASK-0108 (REQ-20260526-0108, **Major** §12.3 — RBAC 신규 코드 + admin endpoint + manual KB fact ingest path)

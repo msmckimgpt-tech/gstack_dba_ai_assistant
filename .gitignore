@@ -44,3 +44,4 @@ docker-compose.override.yml
 
 # worktree checkout paths (git worktree add 로 생성, repo 외부 경로)
 .worktrees/
+artifacts/
