@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260528-0109 [SKIPPED:removal-only-no-new-rbac-no-schema-mutation]
+- Date: 2026-05-28
+- TASK-Cycle: REQ-20260527-0001 (**Major** §12.3 — KB 등록 UI/endpoint 제거)
+- Skip reason: 신규 RBAC 코드 추가 없음 (기존 코드 삭제만). 신규 스키마 변경 없음. 신규 시크릿 처리 없음. 제거 전용 changeset — outside-voice review 트리거 조건 미충족.
+
 ## REV-20260526-0002 [SUBAGENT:codex — Sprint 3 admin-only manual KB ingest]
 - Date: 2026-05-26
 - TASK-Cycle: TASK-0108 (REQ-20260526-0108, **Major** §12.3 — RBAC 신규 코드 + admin endpoint + manual KB fact ingest path)

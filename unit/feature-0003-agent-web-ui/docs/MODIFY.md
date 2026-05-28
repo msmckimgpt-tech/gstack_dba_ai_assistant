@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260528-0109
+- Date: 2026-05-28
+- Related Requirement: REQ-20260527-0001 (**Major** §12.3 — KB 등록 UI/endpoint 제거)
+- Summary: 관리 콘솔 "KB 등록" pane(admin.html), JS 핸들러(admin.js), backend endpoint 2개(`GET /api/admin/attachments`, `POST /api/admin/attachments/kb-ingest`), RBAC 권한 코드 `attachment.kb.write.any` 완전 제거. 설계 결함 2건 — (1) KB pane 이 대화 첨부(`WebConversationAttachments`) 에 의존, 대화 화면과 관리 콘솔의 독립 원칙 위반; (2) Weight=90 manual fact 가 DB 스키마 변경 시 stale 정의서를 우선 참조하게 되어 AI 답변 오염 위험. `unit/feature-0002-agent-core/src/modules/kb_ingest.py` 모듈·테스트는 재설계 시 재활용 가능하여 보존.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: sidebar "KB 등록" 탭 버튼 + `<section data-admin-pane="kb-ingest">` 전체 제거. script src cache-bust 태그 정리.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: `adminState.kbIngest` state + switchTab kb-ingest 분기 + `mountKbIngestPane` / `loadKbIngestList` / `renderKbIngestList` / `renderKbIngestDetail` / `submitKbIngest` 5 함수 (~219 LOC) 제거.
+  - `unit/feature-0003-agent-web-ui/src/app.py`: PERMISSION_DEFINITIONS 의 `attachment.kb.write.any` 항목 제거 + admin role seed grant 제거 + `GET /api/admin/attachments` + `POST /api/admin/attachments/kb-ingest` + `_KB_INGEST_SCOPE_KEY_RE` 제거 (~265 LOC).
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0108 섹션 헤더 "⚠ 제거됨 (2026-05-28)" 마킹 + REQ-20260527-0001 블록 추가.
+  - `unit/feature-0003-agent-web-ui/docs/FUNCTION.md`: REQ-20260526-0108 항목 취소선 처리 + 제거 사유 명기.
+
 ## CHG-20260526-0108
 - Date: 2026-05-26
 - Related Requirement: TASK-0108 (REQ-20260526-0108, **Major** §12.3 — Sprint 3 (B: DDL/KB 보강) admin-only manual KB ingest)
