@@ -2259,12 +2259,7 @@ function renderPendingAssistantBubble(pending) {
     const latest = steps[steps.length - 1] || {};
     const latestEl = document.createElement("div");
     latestEl.className = "pending-bubble-latest";
-    const title = document.createElement("strong");
-    title.textContent = latest.work || latest.intent || latest.tool || "단계";
-    const reason = document.createElement("div");
-    reason.className = "pending-bubble-reason";
-    reason.textContent = latest.reason || latest.result_summary || latest.tool || "";
-    latestEl.append(title, reason);
+    latestEl.appendChild(buildStepDetailEl(latest, steps.length - 1, { compact: true }));
     bubble.appendChild(latestEl);
   } else if (pending.error) {
     const errorEl = document.createElement("div");
@@ -2291,12 +2286,7 @@ function renderPendingAssistantBubble(pending) {
     steps.forEach((step, idx) => {
       const li = document.createElement("li");
       li.className = "pending-bubble-step-item";
-      const title = document.createElement("strong");
-      title.textContent = step.work || step.intent || step.tool || `단계 ${idx + 1}`;
-      const reason = document.createElement("span");
-      reason.className = "pending-bubble-step-reason";
-      reason.textContent = step.reason || step.result_summary || "";
-      li.append(title, reason);
+      li.appendChild(buildStepDetailEl(step, idx));
       list.appendChild(li);
     });
     detailsEl.appendChild(list);
@@ -2305,6 +2295,84 @@ function renderPendingAssistantBubble(pending) {
 
   row.append(meta, bubble);
   return row;
+}
+
+const TOOL_LABEL_MAP = {
+  execute_sql: "SQL 실행",
+  schema_lookup: "스키마 조회",
+  list_tables: "테이블 목록",
+  describe_table: "테이블 구조",
+  search_data: "데이터 검색",
+  generate_report: "리포트 생성",
+  plan: "계획 수립",
+};
+
+function toolLabel(toolName) {
+  return TOOL_LABEL_MAP[toolName] || toolName || "도구";
+}
+
+// step 하나를 상세 표시 DOM 요소로 변환.
+// compact=true 이면 SQL/결과 미리보기 생략 (pending bubble 헤더용).
+function buildStepDetailEl(step, idx, { compact = false } = {}) {
+  const wrap = document.createElement("div");
+  wrap.className = "step-detail";
+
+  // tool badge
+  if (step.tool) {
+    const badge = document.createElement("span");
+    badge.className = "step-tool-badge";
+    badge.textContent = toolLabel(step.tool);
+    wrap.appendChild(badge);
+  }
+
+  // work 제목
+  const title = document.createElement("strong");
+  title.className = "step-title";
+  title.textContent = step.work || step.intent || step.tool || `단계 ${(idx || 0) + 1}`;
+  wrap.appendChild(title);
+
+  // reason
+  if (step.reason) {
+    const reason = document.createElement("div");
+    reason.className = "step-reason";
+    reason.textContent = step.reason;
+    wrap.appendChild(reason);
+  }
+
+  if (!compact) {
+    // SQL 블록
+    if (step.sql) {
+      const sqlWrap = document.createElement("div");
+      sqlWrap.className = "step-sql-wrap";
+      const pre = document.createElement("pre");
+      pre.className = "step-sql";
+      const code = document.createElement("code");
+      code.textContent = step.sql;
+      pre.appendChild(code);
+      sqlWrap.appendChild(pre);
+      wrap.appendChild(sqlWrap);
+    }
+
+    // 결과 미리보기 (result_summary.preview 는 markdown 테이블 문자열)
+    const preview = step.result_summary && step.result_summary.preview
+      ? step.result_summary.preview
+      : (typeof step.result_summary === "string" ? step.result_summary : null);
+    if (preview) {
+      const resultWrap = document.createElement("div");
+      resultWrap.className = "step-result-wrap";
+      const label = document.createElement("span");
+      label.className = "step-result-label";
+      label.textContent = "결과";
+      resultWrap.appendChild(label);
+      const pre = document.createElement("pre");
+      pre.className = "step-result-preview";
+      pre.textContent = preview;
+      resultWrap.appendChild(pre);
+      wrap.appendChild(resultWrap);
+    }
+  }
+
+  return wrap;
 }
 
 function pendingStatusLabel(status) {
@@ -2861,11 +2929,8 @@ function renderProgress(statusPayload = null) {
     const indexEl = document.createElement("span");
     indexEl.className = "progress-step-index";
     indexEl.textContent = `${idx + 1}.`;
-    const title = document.createElement("strong");
-    title.textContent = step.work || step.intent || step.tool || "단계";
-    const desc = document.createElement("span");
-    desc.textContent = step.reason || step.result_summary || step.tool || "";
-    item.append(indexEl, title, desc);
+    item.appendChild(indexEl);
+    item.appendChild(buildStepDetailEl(step, idx));
     progressStepsEl.appendChild(item);
   });
 }

@@ -947,12 +947,20 @@ a { color: inherit; }
 }
 
 .progress-step {
-  padding: 6px 10px;
+  padding: 8px 10px;
   border-radius: var(--r-sm);
   background: rgba(255,255,255,.75);
   font-size: 12px;
   color: var(--text-2);
   border: 1px solid rgba(37,99,235,.08);
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.progress-step > .step-detail {
+  flex: 1;
+  min-width: 0;
 }
 
 .progress-step strong {
@@ -962,10 +970,12 @@ a { color: inherit; }
 .progress-step-index {
   display: inline-block;
   min-width: 18px;
-  margin-right: 6px;
+  margin-right: 0;
   color: var(--primary);
   font-weight: 700;
   font-size: 11px;
+  padding-top: 1px;
+  flex-shrink: 0;
 }
 
 /* ─── Messages ───────────────────────────────────────────────────── */
@@ -3858,6 +3868,80 @@ a { color: inherit; }
   font-size: 11px;
   color: var(--text-muted, #6b7280);
   margin-top: 1px;
+}
+
+/* Step detail — shared between pending bubble and progress card */
+.step-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.step-tool-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 20px;
+  background: rgba(37,99,235,.1);
+  color: var(--primary, #2563eb);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .3px;
+  align-self: flex-start;
+  margin-bottom: 2px;
+}
+.step-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1, #111827);
+  line-height: 1.4;
+}
+.step-reason {
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+  line-height: 1.4;
+}
+.step-sql-wrap {
+  margin-top: 4px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #1e1e2e;
+}
+.step-sql {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #cdd6f4;
+  font-family: 'Fira Mono', 'Consolas', 'Courier New', monospace;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.step-result-wrap {
+  margin-top: 4px;
+}
+.step-result-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted, #6b7280);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  margin-bottom: 2px;
+}
+.step-result-preview {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--text-2, #374151);
+  background: rgba(0,0,0,.04);
+  border-radius: 4px;
+  font-family: 'Fira Mono', 'Consolas', 'Courier New', monospace;
+  max-height: 120px;
+  overflow-y: auto;
 }
 
 /* Phase 3 (REQ-20260515-0005): stale_error dot */

@@ -9603,6 +9603,48 @@ async def finalize_request(request: Request) -> JSONResponse:
     return JSONResponse({"conversation_id": conversation_id, "run_id": run_id, "output": "즉시 답변을 요청합니다."})
 
 
+def _load_latest_run_id_from_steps(conversation_id: str) -> tuple[str, bool]:
+    """agent_runtime.steps 에서 가장 최근 run_id 와 활성 여부를 반환.
+    KV 에 status 가 없을 때 fallback 으로 사용. (최근 3분 내 step 이 있으면 processing)
+    Returns (run_id, is_recent) — run_id 없으면 ("", False).
+    """
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") != "postgres":
+        return "", False
+    try:
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+        with pg.cursor() as pgcur:
+            pgcur.execute(
+                """
+SELECT run_id, MAX(created_at) AS last_step_at
+FROM agent_runtime.steps
+WHERE conversation_id = %s
+GROUP BY run_id
+ORDER BY last_step_at DESC
+LIMIT 1
+                """,
+                (conversation_id,),
+            )
+            row = pgcur.fetchone()
+        pg.close()
+        if not row:
+            return "", False
+        run_id = str(row[0] or "")
+        last_step_at = row[1]
+        import datetime
+        if last_step_at:
+            if hasattr(last_step_at, "tzinfo") and last_step_at.tzinfo is None:
+                last_step_at = last_step_at.replace(tzinfo=datetime.timezone.utc)
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            age_seconds = (now_utc - last_step_at).total_seconds()
+            is_recent = age_seconds < 180
+        else:
+            is_recent = False
+        return run_id, is_recent
+    except Exception:
+        return "", False
+
+
 @app.get("/api/progress")
 def progress(
     request: Request,
@@ -9626,6 +9668,14 @@ def progress(
             conn.close()
             return empty
         status, status_at, run_id = _load_progress_status(conn, cid)
+        # KV 에 run_id 가 없는 경우 steps 테이블에서 최신 run 을 fallback 조회.
+        fallback_status = ""
+        if not run_id:
+            fallback_run_id, is_recent = _load_latest_run_id_from_steps(cid)
+            if fallback_run_id:
+                run_id = fallback_run_id
+                fallback_status = "processing" if is_recent else "done"
+                status = fallback_status
         next_after_step = max(0, int(after_step or 0))
         if not run_id or str(client_run_id or "").strip() != run_id:
             next_after_step = 0
@@ -9635,7 +9685,10 @@ def progress(
             if run_id else []
         )
         # TASK-0061 Phase 3: stale 판정 — processing 이지만 만료 시간 동안 갱신 없음.
-        display_status, is_stale = _compute_display_status(conn, cid, status, status_at, run_id)
+        if fallback_status:
+            display_status, is_stale = fallback_status, False
+        else:
+            display_status, is_stale = _compute_display_status(conn, cid, status, status_at, run_id)
         conn.close()
     except Exception:
         try:
