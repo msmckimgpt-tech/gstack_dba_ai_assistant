@@ -583,6 +583,12 @@ a { color: inherit; }
 }
 .conv-date-group-header:first-child { margin-top: 0; }
 .conv-date-group-header:hover { color: var(--text-2); }
+/* 타 계정 owner 서브 헤더: 한 단계 들여쓰기 + 살짝 작은 폰트 */
+.conv-owner-header {
+  padding-left: 18px;
+  font-size: 10px;
+  opacity: .85;
+}
 .conv-date-group-chevron {
   font-size: 10px;
   transition: transform .15s;
@@ -1872,7 +1878,7 @@ a { color: inherit; }
 /* drop-up menu — chip 위로 펼침 (composer 위쪽) */
 .product-dropup-menu {
   position: absolute;
-  right: 0;
+  left: 0;
   bottom: calc(100% + 6px);
   z-index: 50;
   min-width: 220px;
@@ -1980,6 +1986,39 @@ a { color: inherit; }
 .send-btn:hover   { background: var(--primary-dark); }
 .send-btn:active  { transform: scale(.94); }
 .send-btn:disabled { opacity: .38; cursor: not-allowed; transform: none; }
+
+/* Send mode toggle tooltip — appears above send button on hover */
+.send-mode-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  background: var(--surface-1, #fff);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.12);
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  white-space: nowrap;
+  z-index: 60;
+  min-width: 160px;
+}
+.send-mode-tip-current {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.send-mode-tip-toggle {
+  font-size: 12px;
+  color: var(--primary);
+  background: none;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+  text-align: left;
+  font-weight: 500;
+}
+.send-mode-tip-toggle:hover { text-decoration: underline; }
 
 /* UX-COMPACT: 정상 상태에서 자동 숨김 (내용 없으면 hidden). 에러/경고 상태에서만 표시. */
 .composer-footer {

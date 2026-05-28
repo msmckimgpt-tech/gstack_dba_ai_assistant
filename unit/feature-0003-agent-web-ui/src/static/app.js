@@ -195,6 +195,20 @@ function _newPendingSentinel() {
 }
 
 const PRODUCT_PREF_LS_KEY = "mad.productPref.v1";
+const COLLAPSED_GROUPS_LS_KEY = "mad.collapsedGroups.v1";
+const SEND_MODE_LS_KEY = "mad.sendMode.v1";
+
+// Restore collapsed groups from localStorage
+try {
+  const _cgRaw = localStorage.getItem(COLLAPSED_GROUPS_LS_KEY);
+  if (_cgRaw) {
+    const _cgArr = JSON.parse(_cgRaw);
+    if (Array.isArray(_cgArr)) state.collapsedDateGroups = new Set(_cgArr);
+  }
+} catch (_) {}
+
+// Restore send mode from localStorage
+state.sendMode = localStorage.getItem(SEND_MODE_LS_KEY) === "enter" ? "enter" : "ctrl+enter";
 
 // TASK-0073 Phase C: audit group 추가 — backend PERMISSION_DEFINITIONS 의 group="audit" 정합.
 // TASK-0095: settings group 추가 — 전역 시스템 프롬프트 권한 그룹.
@@ -1188,6 +1202,12 @@ function _formatDateGroupLabel(dateKey) {
   return `${d.getMonth() + 1}월 ${d.getDate()}일 (${days[d.getDay()]})`;
 }
 
+function _saveCollapsedGroups() {
+  try {
+    localStorage.setItem(COLLAPSED_GROUPS_LS_KEY, JSON.stringify(Array.from(state.collapsedDateGroups)));
+  } catch (_) {}
+}
+
 function renderConversationList() {
   conversationListEl.innerHTML = "";
   const hasDraftPending = Boolean(state.pendingNewConversation) && !state.pendingConversationEntries.has(state.pendingSentinel);
@@ -1386,6 +1406,7 @@ function renderConversationList() {
       } else {
         state.collapsedDateGroups.add(dateKey);
       }
+      _saveCollapsedGroups();
       renderConversationList();
     });
     conversationListEl.appendChild(header);
@@ -1398,7 +1419,7 @@ function renderConversationList() {
     }
   });
 
-  // --- 타 계정 대화: 접을 수 있는 섹션 ---
+  // --- 타 계정 대화: owner별 그룹화, 최신 activity 순 정렬 ---
   if (others.length) {
     const othersKey = "__others__";
     const othersCollapsed = state.collapsedDateGroups.has(othersKey);
@@ -1408,7 +1429,7 @@ function renderConversationList() {
     othersHeader.setAttribute("aria-expanded", String(!othersCollapsed));
 
     const labelSpan = document.createElement("span");
-    labelSpan.textContent = `타 계정 대화 (${others.length})`;
+    labelSpan.textContent = "타 계정 대화";
     const chevron = document.createElement("span");
     chevron.className = "conv-date-group-chevron";
     othersHeader.append(labelSpan, chevron);
@@ -1419,13 +1440,55 @@ function renderConversationList() {
       } else {
         state.collapsedDateGroups.add(othersKey);
       }
+      _saveCollapsedGroups();
       renderConversationList();
     });
     conversationListEl.appendChild(othersHeader);
 
     if (!othersCollapsed) {
-      others.forEach((item, idx) => {
-        conversationListEl.appendChild(buildCompactItem(item, idx, []));
+      // owner별 그룹화
+      const ownerMap = new Map();
+      others.forEach((item) => {
+        const owner = item.owner_username || "(알 수 없음)";
+        if (!ownerMap.has(owner)) ownerMap.set(owner, []);
+        ownerMap.get(owner).push(item);
+      });
+      // 각 그룹의 최신 activity 기준 내림차순 정렬
+      const sortedOwners = Array.from(ownerMap.keys()).sort((a, b) => {
+        const aMax = Math.max(...ownerMap.get(a).map((i) => new Date(i.last_activity_at || i.created_at || 0).getTime()));
+        const bMax = Math.max(...ownerMap.get(b).map((i) => new Date(i.last_activity_at || i.created_at || 0).getTime()));
+        return bMax - aMax;
+      });
+      sortedOwners.forEach((owner) => {
+        const ownerKey = `__owner__${owner}`;
+        const ownerCollapsed = state.collapsedDateGroups.has(ownerKey);
+        const ownerItems = ownerMap.get(owner);
+        // owner 서브 헤더
+        const ownerHeader = document.createElement("div");
+        ownerHeader.className = `conv-date-group-header conv-owner-header${ownerCollapsed ? " is-collapsed" : ""}`;
+        ownerHeader.setAttribute("role", "button");
+        ownerHeader.setAttribute("aria-expanded", String(!ownerCollapsed));
+        ownerHeader.dataset.dateKey = ownerKey;
+        const ownerLabel = document.createElement("span");
+        ownerLabel.textContent = owner;
+        const ownerChevron = document.createElement("span");
+        ownerChevron.className = "conv-date-group-chevron";
+        ownerHeader.append(ownerLabel, ownerChevron);
+        ownerHeader.addEventListener("click", () => {
+          if (state.collapsedDateGroups.has(ownerKey)) {
+            state.collapsedDateGroups.delete(ownerKey);
+          } else {
+            state.collapsedDateGroups.add(ownerKey);
+          }
+          _saveCollapsedGroups();
+          renderConversationList();
+        });
+        conversationListEl.appendChild(ownerHeader);
+        if (!ownerCollapsed) {
+          ownerItems.forEach((item, idx) => {
+            conversationListEl.appendChild(buildCompactItem(item, idx, []));
+          });
+        }
       });
     }
   }
@@ -3048,6 +3111,12 @@ async function selectConversation(conversationId) {
   if (state.pendingNewConversation) {
     state.pendingNewConversation = false;
   }
+  // 현재 in-flight pending bubble 보존 — 전환 후 돌아올 때 복원
+  const _prevConvId = state.activeConversationId;
+  if (_prevConvId && state.pendingBubble) {
+    if (!state._savedPendingBubbles) state._savedPendingBubbles = {};
+    state._savedPendingBubbles[_prevConvId] = state.pendingBubble;
+  }
   await apiFetch("/api/use_conversation", {
     method: "POST",
     body: JSON.stringify({ conversation_id: conversationId }),
@@ -3056,6 +3125,12 @@ async function selectConversation(conversationId) {
   renderConversationList();
   renderConversationHeader();
   await loadHistory();
+  // in-flight 이었던 대화로 복귀 시 pending bubble 복원
+  if (!state.pendingBubble && state._savedPendingBubbles?.[conversationId]) {
+    state.pendingBubble = state._savedPendingBubbles[conversationId];
+    delete state._savedPendingBubbles[conversationId];
+    renderMessages();
+  }
   // 대화 전환 시 새 대화의 product 컨텍스트로 chip 갱신.
   try {
     const fresh = await apiFetch("/api/session");
@@ -4790,13 +4865,42 @@ async function initialize() {
   // feature-0008 (composer-model-selector): `+` dropdown 핸들러 binding.
   try { _bindComposerActionsEvents(); } catch (_) { /* graceful */ }
   promptInputEl.addEventListener("keydown", (event) => {
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      sendPrompt().catch((error) => {
-        showToast(error.message || "요청 전송에 실패했습니다.", true);
-      });
+    if (event.key === "Enter") {
+      const isCtrl = event.ctrlKey || event.metaKey;
+      const shouldSend = state.sendMode === "enter" ? !isCtrl : isCtrl;
+      if (shouldSend) {
+        event.preventDefault();
+        sendPrompt().catch((error) => {
+          showToast(error.message || "요청 전송에 실패했습니다.", true);
+        });
+      }
     }
   });
+  // Send button hover — send mode toggle tooltip
+  if (sendBtn) {
+    sendBtn.addEventListener("mouseenter", () => {
+      const existing = document.getElementById("sendModeTooltip");
+      if (existing) return;
+      const tip = document.createElement("div");
+      tip.id = "sendModeTooltip";
+      tip.className = "send-mode-tooltip";
+      const currentLabel = state.sendMode === "enter" ? "Enter" : "Ctrl+Enter";
+      const switchLabel = state.sendMode === "enter" ? "Ctrl+Enter 로 전환" : "Enter 로 전환";
+      tip.innerHTML = `<span class="send-mode-tip-current">전송: ${currentLabel}</span><button type="button" class="send-mode-tip-toggle">${switchLabel}</button>`;
+      tip.querySelector(".send-mode-tip-toggle").addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        state.sendMode = state.sendMode === "enter" ? "ctrl+enter" : "enter";
+        try { localStorage.setItem(SEND_MODE_LS_KEY, state.sendMode); } catch (_) {}
+        tip.remove();
+      });
+      sendBtn.parentElement.style.position = "relative";
+      sendBtn.parentElement.appendChild(tip);
+    });
+    sendBtn.addEventListener("mouseleave", (ev) => {
+      const tip = document.getElementById("sendModeTooltip");
+      if (tip && !tip.contains(ev.relatedTarget)) tip.remove();
+    });
+  }
   loadMoreBtn.addEventListener("click", () => {
     loadHistory({ append: true }).catch((error) => {
       showToast(error.message || "이전 기록을 불러오지 못했습니다.", true);
