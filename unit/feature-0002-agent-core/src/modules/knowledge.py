@@ -529,6 +529,11 @@ def _acquire_advisory_lock(conn, name: str, timeout_sec: int = 3) -> bool:
     name = str(name or "").strip()
     if not name:
         return False
+    # T4-11: Postgres 분기 — pg_try_advisory_lock(bigint) 사용.
+    # hashtext() 로 문자열 → int8 변환 (Postgres 내장 해시 함수).
+    from .config import AGENT_KB_READ_BACKEND as _KB_BACKEND
+    if _KB_BACKEND == "postgres":
+        return _acquire_advisory_lock_pg(conn, name, timeout_sec)
     cur = conn.cursor()
     try:
         cur.execute("SELECT GET_LOCK(%s, %s)", (name, int(timeout_sec)))
@@ -540,9 +545,41 @@ def _acquire_advisory_lock(conn, name: str, timeout_sec: int = 3) -> bool:
         cur.close()
 
 
+def _acquire_advisory_lock_pg(conn, name: str, timeout_sec: int = 3) -> bool:
+    """Postgres advisory lock — pg_try_advisory_lock(hashtext(name)).
+
+    T4-11: MySQL GET_LOCK 대체. hashtext() 는 Postgres 내장 함수로 varchar → int4
+    해시를 반환하며 advisory lock 의 bigint key 로 그대로 사용 가능.
+    pg_try_advisory_lock 는 non-blocking (즉시 false 반환) 이므로 timeout_sec 동안
+    retry loop 를 돌아 MySQL 의 blocking 동작을 모사한다.
+    """
+    import time as _time
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT hashtext(%s)::bigint", (name,))
+            lock_key = cur.fetchone()[0]
+        deadline = _time.monotonic() + timeout_sec
+        while True:
+            with conn.cursor() as cur:
+                cur.execute("SELECT pg_try_advisory_lock(%s)", (lock_key,))
+                acquired = cur.fetchone()[0]
+            if acquired:
+                return True
+            if _time.monotonic() >= deadline:
+                return False
+            _time.sleep(0.05)
+    except Exception:
+        return False
+
+
 def _release_advisory_lock(conn, name: str) -> None:
     name = str(name or "").strip()
     if not name:
+        return
+    # T4-11: Postgres 분기
+    from .config import AGENT_KB_READ_BACKEND as _KB_BACKEND
+    if _KB_BACKEND == "postgres":
+        _release_advisory_lock_pg(conn, name)
         return
     cur = conn.cursor()
     try:
@@ -558,6 +595,18 @@ def _release_advisory_lock(conn, name: str) -> None:
             cur.close()
         except Exception:
             pass
+
+
+def _release_advisory_lock_pg(conn, name: str) -> None:
+    """Postgres advisory lock 해제 — pg_advisory_unlock(hashtext(name))."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT hashtext(%s)::bigint", (name,))
+            lock_key = cur.fetchone()[0]
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_unlock(%s)", (lock_key,))
+    except Exception:
+        pass
 
 
 def _upsert_fact(
@@ -848,6 +897,65 @@ ORDER BY Weight DESC, UpdatedAt DESC
             rows = cur.fetchall() or []
     cur.close()
     return rows
+
+
+def _load_top_facts_pg(
+    conversation_ids: list[str],
+    scope_keys: list[str] | None = None,
+) -> list[tuple]:
+    """Postgres read path — DISTINCT ON으로 최신 fact를 단일 쿼리에서 조회.
+
+    M4 TASK-0024 / T1 최적화:
+    - NOT EXISTS O(N²) 안티패턴 → DISTINCT ON 으로 교체
+    - 다중 conversation_id (ANY array) 로 N+1 루프 제거
+    - ix_fact_entries_conv_scope_key_rank covering index 활용
+
+    Returns 7-tuple: (conversation_id, fact_key, fact_text, weight, updated_at,
+                      source_type, source_run_id)
+    Returns [] on PG unavailable.
+    """
+    from .db import _pg_available, _pg_connect_ro
+    if not _pg_available() or not conversation_ids:
+        return []
+    cleaned_ids = [str(cid).strip() for cid in conversation_ids if str(cid).strip()]
+    if not cleaned_ids:
+        return []
+    scope_keys_clean: list[str] | None = None
+    if scope_keys is not None:
+        scope_keys_clean = [str(k).strip() for k in scope_keys]
+    conn = _pg_connect_ro()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+SELECT DISTINCT ON (e.conversation_id, e.scope_key, e.fact_key)
+    e.conversation_id,
+    e.fact_key,
+    COALESCE(t.text_content, '') AS fact_text,
+    e.weight,
+    e.updated_at,
+    COALESCE(e.source_type, '') AS source_type,
+    COALESCE(e.source_run_id, '') AS source_run_id
+FROM fact_entries e
+LEFT JOIN texts t ON t.text_hash = e.text_hash
+WHERE e.conversation_id = ANY(%(conv_ids)s)
+  AND (
+    %(scope_keys)s::varchar[] IS NULL
+    OR e.scope_key = ANY(%(scope_keys)s)
+    OR e.scope_key IS NULL
+    OR e.scope_key = ''
+  )
+ORDER BY e.conversation_id, e.scope_key, e.fact_key,
+         e.weight DESC, e.updated_at DESC, e.id DESC
+                """,
+                {"conv_ids": cleaned_ids, "scope_keys": scope_keys_clean},
+            )
+            return cur.fetchall() or []
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _load_fact_text(
@@ -2229,25 +2337,51 @@ def _build_knowledge_payload(
     # Policy: 고정 상한 기반 샘플링 설계 금지 — 항상 coverage 모드(전량 로딩).
     # local_limit / global_limit 파라미터는 하위 호환용으로 유지하되 무시한다.
     local_fetch_limit = 0
-    global_fetch_limit = 0
+    global_fetch_limit = 0  # noqa: F841
     scope_candidates = _scope_candidates(scope_key)
-    local_rows = _load_top_facts(
-        conn,
-        conversation_id,
-        local_fetch_limit,
-        scope_keys=scope_candidates,
-    )
-    global_rows: list[tuple[str, str, int, datetime, str, str]] = []
-    per_source_limit = 0  # coverage 모드: 소스별 제한 없음
-    for global_cid in _global_fact_conversation_ids(include_shared=True):
-        rows = _load_top_facts(
+
+    # T1 최적화: AGENT_KB_READ_BACKEND=postgres 시 DISTINCT ON + ANY() 단일 쿼리
+    # (NOT EXISTS O(N²) 안티패턴 + N+1 루프 동시 제거)
+    local_rows: list[tuple] = []
+    global_rows: list[tuple] = []
+    _pg_facts_used = False
+    from .config import AGENT_KB_READ_BACKEND as _KB_BACKEND
+    from .db import _pg_available as _pg_avail
+    if _KB_BACKEND == "postgres" and _pg_avail():
+        try:
+            _global_cids = list(_global_fact_conversation_ids(include_shared=True))
+            _all_conv_ids = [conversation_id] + _global_cids
+            # 7-tuple: (conversation_id, fact_key, fact_text, weight, updated_at,
+            #           source_type, source_run_id)
+            _pg_all = _load_top_facts_pg(_all_conv_ids, scope_keys=scope_candidates)
+            _global_cid_set = set(_global_cids)
+            # 다운스트림 코드(_rows_to_items 등)는 6-tuple을 expect → conversation_id 드롭
+            local_rows = [row[1:] for row in _pg_all if row[0] == conversation_id]
+            global_rows = [row[1:] for row in _pg_all if row[0] in _global_cid_set]
+            _pg_facts_used = True
+        except Exception as _pg_exc:
+            logger.warning(
+                "_load_top_facts_pg failed — falling back to MySQL",
+                extra={"error": str(_pg_exc)[:200]},
+            )
+
+    if not _pg_facts_used:
+        local_rows = _load_top_facts(
             conn,
-            global_cid,
-            per_source_limit,
+            conversation_id,
+            local_fetch_limit,
             scope_keys=scope_candidates,
         )
-        if rows:
-            global_rows.extend(rows)
+        per_source_limit = 0  # coverage 모드: 소스별 제한 없음
+        for global_cid in _global_fact_conversation_ids(include_shared=True):
+            rows = _load_top_facts(
+                conn,
+                global_cid,
+                per_source_limit,
+                scope_keys=scope_candidates,
+            )
+            if rows:
+                global_rows.extend(rows)
     if global_rows:
         global_rows = sorted(
             global_rows,
@@ -2781,8 +2915,21 @@ def _is_refresh_due(refresh_map: dict[str, str], key: str, interval_sec: int) ->
         return True
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
+    last_refresh_epoch = parsed.astimezone(timezone.utc).timestamp()
     elapsed = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds()
-    return elapsed >= max(5, span)
+    if elapsed < max(5, span):
+        # T4-12: TTL 미경과 시에도 PG 무효화 플래그 확인 — 즉각 캐시 무효화.
+        # kb_global key 에만 적용 (글로벌 KB 캐시 채널).
+        if "global_kb" in str(key).lower() or "global" in str(key).lower():
+            try:
+                from .db import _pg_check_kb_invalidation
+                inv_epoch = _pg_check_kb_invalidation("kb_global")
+                if inv_epoch is not None and inv_epoch > last_refresh_epoch:
+                    return True
+            except Exception:
+                pass
+        return False
+    return True
 
 
 def _mark_refresh_kv(mem_conn, refresh_map: dict[str, str], key: str) -> None:

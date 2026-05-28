@@ -58,6 +58,11 @@ services:
   # 흐름에 무영향 (agent.depends_on 에는 M2 dual-write phase 부터 추가). M1 cycle 에서
   # `agent_kb_rw` / `agent_kb_ro` role 신설 + ADR-0021 작성. M3 cycle 에서 `vector(N)`
   # 컬럼 + `ivfflat` / `hnsw` index 활용.
+  # T3-9: PostgreSQL 서버 파라미터 조정 (command 절). WAL 별도 볼륨 (postgres-wal)은
+  #   신규 설치 시에만 적용 가능 (기존 data dir 내 pg_wal 은 이동 불가). 신규 설치 시
+  #   PGDATA=/var/lib/postgresql/data, PGWALDIR=/var/lib/postgresql/wal 지정.
+  # T3-8: 에이전트는 직접 postgres:5432 가 아닌 pgbouncer:5432 로 연결 권장.
+  #   .env.postgres 에서 AGENT_KB_PG_HOST=pgbouncer 으로 변경하면 자동 전환.
   postgres:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
@@ -70,10 +75,51 @@ services:
       POSTGRES_USER: ${AGENT_KB_PG_USER:-postgres}
       POSTGRES_PASSWORD: ${AGENT_KB_PG_PASSWORD:-change_me_pg}
       TZ: ${TZ}
+    # T3-9: 서버 파라미터. Docker 환경 기준 (2–4 CPU, 2–4 GB RAM 가정).
+    # shared_buffers=256MB: RAM 의 25% 목표. effective_cache_size=768MB: OS 페이지 캐시 포함.
+    # wal_level=replica: T5-14 streaming replica 준비. max_wal_senders=3: replica 1개 + 여유.
+    # shared_preload_libraries=pg_stat_statements: T3-10 슬로우 쿼리 추적.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - wal_buffers=16MB
+      - -c
+      - default_statistics_target=100
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - work_mem=4MB
+      - -c
+      - min_wal_size=512MB
+      - -c
+      - max_wal_size=2GB
+      - -c
+      - max_connections=100
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=3
+      - -c
+      - hot_standby=on
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
     ports:
       - "${AGENT_KB_PG_PORT:-5432}:5432"
     volumes:
       - ../artifacts/postgres-data:/var/lib/postgresql/data
+      - ../artifacts/postgres-wal:/var/lib/postgresql/wal
       - ../artifacts/shared:/shared
     networks: [dbnet]
     healthcheck:
@@ -81,6 +127,106 @@ services:
       interval: 10s
       timeout: 5s
       retries: 20
+
+  # T3-8: PgBouncer — transaction-mode connection pooler.
+  # 에이전트가 call 마다 새 TCP connection 을 여는 비용을 제거 (_pg_connect 패턴).
+  # 에이전트는 pgbouncer:5432 (dbnet 내부) 로 연결 → PgBouncer 가 postgres 에 재사용.
+  # 활성화: .env.postgres 에 AGENT_KB_PG_HOST=pgbouncer 설정.
+  # pool mode: transaction — short-lived query 에 최적. prepared statement 비활성화 필요.
+  #   (psycopg3 에서는 prepare=False 또는 pipeline 비활성화로 호환 가능.)
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    restart: unless-stopped
+    env_file:
+      - .env.postgres
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${AGENT_KB_PG_USER:-postgres}
+      DB_PASSWORD: ${AGENT_KB_PG_PASSWORD:-change_me_pg}
+      DB_NAME: ${AGENT_KB_PG_DB:-agent_kb}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "100"
+      DEFAULT_POOL_SIZE: "20"
+      AUTH_TYPE: scram-sha-256
+      TZ: ${TZ}
+    ports:
+      - "${AGENT_KB_PGB_PORT:-6432}:5432"
+    networks: [dbnet]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432 -U ${AGENT_KB_PG_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # T5-14: Postgres streaming replica (opt-in, profiles: [replica]).
+  # 기동 전 1회 초기화 필요:
+  #   docker compose run --rm postgres-replica-init
+  # 그 후: docker compose --profile replica up -d postgres-replica
+  # 에이전트 read-only 연결: .env.postgres 에 AGENT_KB_PG_HOST_RO=postgres-replica 설정.
+  postgres-replica:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    profiles: [replica]
+    env_file:
+      - .env.postgres
+    environment:
+      POSTGRES_DB: ${AGENT_KB_PG_DB:-agent_kb}
+      POSTGRES_USER: ${AGENT_KB_PG_USER:-postgres}
+      POSTGRES_PASSWORD: ${AGENT_KB_PG_PASSWORD:-change_me_pg}
+      PGUSER: ${AGENT_KB_PG_USER:-postgres}
+      PGPASSWORD: ${AGENT_KB_PG_PASSWORD:-change_me_pg}
+      TZ: ${TZ}
+    command:
+      - postgres
+      - -c
+      - hot_standby=on
+      - -c
+      - max_connections=100
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - effective_cache_size=384MB
+    volumes:
+      - ../artifacts/postgres-replica-data:/var/lib/postgresql/data
+    networks: [dbnet]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-agent_kb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # T5-14: 1회성 replica 초기화 (pg_basebackup). 완료 후 컨테이너 종료.
+  # 실행: docker compose run --rm postgres-replica-init
+  postgres-replica-init:
+    image: pgvector/pgvector:pg16
+    restart: "no"
+    profiles: [replica]
+    env_file:
+      - .env.postgres
+    environment:
+      PGPASSWORD: ${AGENT_KB_PG_PASSWORD:-change_me_pg}
+      TZ: ${TZ}
+    entrypoint:
+      - "bash"
+      - "-c"
+      - >-
+        rm -rf /replica-data/* &&
+        pg_basebackup -h postgres -p 5432
+        -U agent_kb_rw -D /replica-data -Xs -P -R &&
+        echo 'pg_basebackup done. run: docker compose --profile replica up -d postgres-replica'
+    volumes:
+      - ../artifacts/postgres-replica-data:/replica-data
+    networks: [dbnet]
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   agent:
     <<: *agent-common

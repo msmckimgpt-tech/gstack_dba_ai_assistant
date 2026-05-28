@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260528-T1T5
+- Date: 2026-05-28
+- TASK-Cycle: TASK-0123, **Major §12.3** — Postgres KB 성능 최적화 T1~T5 + PgBouncer/Replica 전체 활성화
+- Summary: T1~T5 Postgres 성능 최적화 로드맵 전체 구현 및 활성화. DISTINCT ON/ANY N+1 제거 + MATERIALIZED VIEW + JSONB GIN + pg_stat_statements + PgBouncer scram-sha-256 + kb_invalidations + streaming replica. pgbouncer AUTH_TYPE md5→scram-sha-256 수정 (pg_hba.conf IP 우회 규칙 제거), GIN 인덱스 순서 버그 수정, memory.py MV 감지 버그 수정.
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/knowledge.py`: `_load_top_facts_pg()` 신규 + `_build_knowledge_payload()` PG fast path + advisory lock PG 분기.
+  - `unit/feature-0002-agent-core/src/modules/db.py`: `_pg_connect_ro()` replica 라우팅 + `_pg_mark_kb_invalidation()` + `_pg_check_kb_invalidation()`.
+  - `unit/feature-0002-agent-core/src/modules/config.py`: `AGENT_KB_PG_HOST_RO` / `AGENT_KB_PG_PORT_RO` 추가.
+  - `unit/feature-0002-agent-core/src/modules/kb_backend.py`: `_mirror()` fact write 후 kb_invalidations 호출.
+  - `unit/feature-0002-agent-core/src/modules/memory.py`: `_ensure_pg_schema()` pg_matviews UNION 추가.
+  - `unit/feature-0002-agent-core/src/scripts/agent_kb_schema.sql`: MV + JSONB + GIN + autovacuum + kb_invalidations + kb_slow_queries + partial ivfflat + pg_stat_statements. GIN 인덱스 DO block 이후 배치 수정.
+  - `docker-compose.yml`: pgbouncer (AUTH_TYPE=scram-sha-256) + PostgreSQL command 파라미터 + postgres-replica (max_connections=100) + postgres-replica-init (entrypoint list 형식).
+  - `.env`: `AGENT_KB_PG_HOST=pgbouncer` + RO 환경변수 블록 추가.
+  - `docs/ARCHITECTURE.md`: §7 KB Postgres 성능 최적화 레이어 신규.
+  - `wiki/Architecture/Data-Flow.md`: pgbouncer + replica mermaid 다이어그램 갱신.
+  - `wiki/concepts/kb-postgres-pgvector.md`: T1~T5 최적화 전면 갱신.
+  - `wiki/hot.md` / `wiki/Log.md`: 세션 컨텍스트 갱신.
+
 ## CHG-20260527-0120
 - Date: 2026-05-27
 - TASK-Cycle: TASK-0120, **Minor §12.3** — reasoning fallback 노출 차단

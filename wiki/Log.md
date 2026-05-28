@@ -35,6 +35,10 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 
 <!-- AI: 새 entry 는 위 "## Entries" 헤딩 직후, 다음 줄에 prepend (최신순) -->
 
+[2026-05-28T15:50:00Z] update | hot_cache | hot.md | T1~T5 전체 활성화 완료 — PgBouncer md5/pg_hba 정합 수정 + replica streaming 확인
+[2026-05-28T00:00:00Z] update | article | concepts/kb-postgres-pgvector.md | T1~T5 성능 최적화 로드맵 완수 반영 — DISTINCT ON/ANY/MV/JSONB/PgBouncer/replica/advisory-lock/LISTEN-NOTIFY
+[2026-05-28T00:00:00Z] update | article | Architecture/Data-Flow.md | pgbouncer sidecar + postgres-replica 다이어그램 추가 (T3-8, T5-14)
+[2026-05-28T00:00:00Z] update | hot_cache | hot.md | T1~T5 완수 세션 컨텍스트 압축 저장
 [2026-05-26T06:52:40Z] update | index | Index.md | namu-style 인포박스 + 7-feature 매핑 + namu sections 정리 (v3.13.0 follow-up wiki sync)
 [2026-05-26T06:52:40Z] update | article | overview.md | living synthesis — 7 feature 표 + 핵심 ADR + KB / 첨부 / Bedrock 흐름 합성
 [2026-05-26T06:52:40Z] update | article | Architecture/Overview.md | ARCHITECTURE.md §1~§6 mirror — 4-layer 책임 / 7 feature 표 / 의존 표

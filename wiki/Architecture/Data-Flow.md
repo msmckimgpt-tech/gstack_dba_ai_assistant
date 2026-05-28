@@ -60,7 +60,9 @@ flowchart LR
     bedrock[bedrock-gateway<br/>LiteLLM]
     claude[AWS Bedrock<br/>Claude Seoul]
     mysql[(MySQL 8.0<br/>agent_memory web* + replica)]
-    pg[(Postgres 16<br/>agent_kb:<br/>KB + agent_runtime)]
+    pgb[pgbouncer:5432<br/>transaction pool]
+    pg[(Postgres 16 primary<br/>agent_kb: KB + runtime)]
+    pgr[(Postgres 16 replica<br/>read-only, profile:replica)]
     minio[(MinIO<br/>agent-attachments)]
     browser[browser service<br/>Playwright]
     mcp[mcp service]
@@ -72,8 +74,10 @@ flowchart LR
     web -->|/api/ask| agent
     agent -->|OpenAI SDK| bedrock
     bedrock -->|InvokeModel| claude
-    agent -->|runtime state read/write| pg
-    agent -->|KB read/write| pg
+    agent -->|write path agent_kb_rw| pgb
+    pgb -->|pool → primary| pg
+    agent -->|read-only agent_kb_ro| pgr
+    pg -.->|streaming replication| pgr
     agent -->|tool: execute_sql| mysql
     web -->|browser-up| browser
     agent -.->|MCP optional| mcp
@@ -131,15 +135,15 @@ AR-M1 schema → AR-M2 dual-write → AR-M3 backfill
 
 ## 3. 관련 문서
 
-- [[Overview]] — 시스템 개요
-- [[Module-Map]] — 디렉토리 매핑
+- [[Architecture/Overview|Overview]] — 시스템 개요
+- [[Architecture/Module-Map|Module-Map]] — 디렉토리 매핑
 - [[../../docs/SECURITY|docs/SECURITY.md]] — trust boundary 정본
 - [[../../docs/ARCHITECTURE|docs/ARCHITECTURE.md]] (정본)
 
 ## 4. 둘러보기
 
-- 상위: [[Overview]]
-- sibling: [[Module-Map]]
+- 상위: [[Architecture/Overview|Overview]]
+- sibling: [[Architecture/Module-Map|Module-Map]]
 - 관련 feature: [[../Features/feature-0002-agent-core]] · [[../Features/feature-0003-agent-web-ui]] · [[../Features/feature-0007-bedrock-llm-provider]]
 
 ## 5. 외부 link

@@ -174,7 +174,9 @@ __all__ = [
     "REPLICA_DB_PORT",
     "REPLICA_DB_USER",
     "AGENT_KB_PG_HOST",
+    "AGENT_KB_PG_HOST_RO",
     "AGENT_KB_PG_PORT",
+    "AGENT_KB_PG_PORT_RO",
     "AGENT_KB_PG_DB",
     "AGENT_KB_PG_USER",
     "AGENT_KB_PG_PASSWORD",
@@ -264,6 +266,10 @@ AGENT_KB_PG_USER_RO = os.getenv("AGENT_KB_PG_USER_RO", "").strip()
 AGENT_KB_PG_PASSWORD_RO = os.getenv("AGENT_KB_PG_PASSWORD_RO", "")
 AGENT_KB_PG_SSLMODE = os.getenv("AGENT_KB_PG_SSLMODE", "prefer").strip() or "prefer"
 AGENT_KB_PG_ENABLED = bool(AGENT_KB_PG_HOST) and bool(AGENT_KB_PG_USER)
+# T5-14: read replica 호스트 분리. 미설정 시 primary(AGENT_KB_PG_HOST) 로 fallback.
+# docker-compose replica profile 활성화 시 AGENT_KB_PG_HOST_RO=postgres-replica 설정.
+AGENT_KB_PG_HOST_RO = os.getenv("AGENT_KB_PG_HOST_RO", "").strip() or AGENT_KB_PG_HOST
+AGENT_KB_PG_PORT_RO = int(os.getenv("AGENT_KB_PG_PORT_RO", "5432") or "5432")
 AGENT_KB_READ_BACKEND = (os.getenv("AGENT_KB_READ_BACKEND", "mysql").strip() or "mysql").lower()
 
 # M3 (TASK-0023) — Embedding worker (texts.embedding 컬럼 일괄 생성).

@@ -1246,6 +1246,14 @@ class _DualWriteMirror:
                 logger.warning(f"kb_pg_mirror: audit failed [{method_name}]: {audit_exc}")
             _record_audit_event(failed=audit_failed)
 
+            # T4-12: fact 쓰기 완료 후 글로벌 KB 캐시 무효화 플래그 갱신.
+            _write_methods = {"upsert_fact_entry", "delete_fact_entry", "upsert_rag_document", "upsert_rag_object"}
+            if method_name in _write_methods:
+                try:
+                    from .db import _pg_mark_kb_invalidation
+                    _pg_mark_kb_invalidation(conn, "kb_global")
+                except Exception:
+                    pass
             return result
         except Exception as exc:
             latency_ms = (time.monotonic() - t0) * 1000

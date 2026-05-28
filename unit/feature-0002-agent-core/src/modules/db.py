@@ -2,6 +2,9 @@ __all__ = [
     "_collect_cursor_result",
     "_pg_available",
     "_pg_connect",
+    "_pg_connect_ro",
+    "_pg_mark_kb_invalidation",
+    "_pg_check_kb_invalidation",
     "_should_retry_db_error",
     "connect",
     "connect_with_retry",
@@ -255,10 +258,13 @@ def _pg_connect_ro(database: str | None = None, autocommit: bool = True):
             "kb_pg_ro_fallback_to_rw — AGENT_KB_PG_USER_RO 미설정, RW role 로 read path 진행. "
             "운영 환경에서는 .env 의 AGENT_KB_PG_USER_RO/AGENT_KB_PG_PASSWORD_RO 설정 권장 (ADR-0021)."
         )
+    # T5-14: AGENT_KB_PG_HOST_RO 설정 시 replica 로 라우팅 (미설정=primary fallback).
+    ro_host = AGENT_KB_PG_HOST_RO or AGENT_KB_PG_HOST
+    ro_port = AGENT_KB_PG_PORT_RO or AGENT_KB_PG_PORT
     target_db = (database or AGENT_KB_PG_DB or "agent_kb")
     conninfo_parts = [
-        f"host={AGENT_KB_PG_HOST}",
-        f"port={AGENT_KB_PG_PORT}",
+        f"host={ro_host}",
+        f"port={ro_port}",
         f"dbname={target_db}",
         f"user={ro_user}",
         f"password={ro_pw}",
@@ -271,3 +277,62 @@ def _pg_connect_ro(database: str | None = None, autocommit: bool = True):
     if autocommit:
         conn.autocommit = True
     return conn
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# T4-12: KB 무효화 플래그 — LISTEN/NOTIFY 대용 공유 시계.
+#
+# 에이전트가 per-call 방식으로 connection 을 열어 LISTEN 을 유지할 수 없는 구조이므로,
+# `kb_invalidations` 테이블에 channel 별 최신 write 시각을 기록한다.
+#   - 쓰기 완료 시: _pg_mark_kb_invalidation(conn, "kb_global") 호출.
+#   - 캐시 유효성 판단 시: _pg_check_kb_invalidation(channel) 으로 last epoch 반환.
+# _is_refresh_due 에서 TTL 판단에 추가로 이 시각을 활용한다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _pg_mark_kb_invalidation(conn, channel: str = "kb_global") -> None:
+    """fact 쓰기 완료 후 kb_invalidations 에 invalidated_at 갱신."""
+    channel = str(channel or "kb_global").strip()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+INSERT INTO kb_invalidations (channel, invalidated_at)
+VALUES (%s, now())
+ON CONFLICT (channel) DO UPDATE SET invalidated_at = now()
+                """,
+                (channel,),
+            )
+        # NOTIFY 도 함께 발행 — 미래 persistent-listener 구현을 위한 groundwork.
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_notify(%s, %s)", (channel, "write"))
+    except Exception:
+        pass
+
+
+def _pg_check_kb_invalidation(channel: str = "kb_global") -> float | None:
+    """kb_invalidations 에서 해당 channel 의 invalidated_at (Unix timestamp) 반환.
+
+    Returns: float epoch or None (table absent / channel not found / PG unavailable).
+    """
+    if not _pg_available():
+        return None
+    channel = str(channel or "kb_global").strip()
+    conn = None
+    try:
+        conn = _pg_connect_ro()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT EXTRACT(EPOCH FROM invalidated_at) FROM kb_invalidations WHERE channel = %s",
+                (channel,),
+            )
+            row = cur.fetchone()
+            return float(row[0]) if row else None
+    except Exception:
+        return None
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass

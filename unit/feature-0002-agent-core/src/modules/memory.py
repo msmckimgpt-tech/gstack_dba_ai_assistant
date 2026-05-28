@@ -863,6 +863,10 @@ def _ensure_pg_schema(conn=None, *, schema_sql_path: str | None = None) -> dict:
             cur.execute("""
                 SELECT 1 FROM information_schema.views
                 WHERE table_schema = 'public' AND table_name = 'agent_memory_facts'
+                UNION ALL
+                SELECT 1 FROM pg_matviews
+                WHERE schemaname = 'public' AND matviewname = 'agent_memory_facts'
+                LIMIT 1
             """)
             view_present = cur.fetchone() is not None
 

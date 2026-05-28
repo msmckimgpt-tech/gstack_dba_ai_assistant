@@ -43,7 +43,7 @@ ai_read_priority: 4
 | 기능 ID | 책임 |
 |---------|------|
 | feature-0001-platform-runtime | MySQL 설정, DAB 설정, SQL 유틸리티 |
-| feature-0002-agent-core | agent CLI 및 코어 모듈 |
+| feature-0002-agent-core | agent CLI 및 코어 모듈 + KB Postgres 최적화 (T1~T5, 2026-05-28) |
 | feature-0003-agent-web-ui | FastAPI Web UI 및 정적 자산 + **audit subsystem (TASK-0073)** — `WebAuditEvents` + `record_audit_event` dispatcher + admin 11 / user 5 endpoint hook + `audit.*` 4 RBAC + chunked PK purge. SECURITY.md §9 정합. |
 | feature-0004-browser-automation | Playwright 브라우저 제어 |
 | feature-0005-qa-mcp | MCP 테스트와 QA 스크립트 |
@@ -75,7 +75,34 @@ ai_read_priority: 4
 - `uses`: 대상 기능의 API/인터페이스를 사용하지만 독립 개발 가능
 - `extends`: 대상 기능을 확장하는 관계
 
-## 7. 통합 테스트 정책
+## 7. KB Postgres 성능 최적화 레이어 (2026-05-28)
+
+T1~T5 로드맵 완수 후의 Postgres 데이터 경로 구성.
+
+### 7.1 쿼리 최적화 (T1)
+- `_load_top_facts_pg()`: NOT EXISTS O(N²) → `DISTINCT ON` + covering index (`ix_fact_entries_conv_scope_key_rank`)
+- `_build_knowledge_payload()`: N+1 루프 → `ANY(array)` 단일 쿼리 (local+global 통합)
+
+### 7.2 스키마 최적화 (T2)
+- `agent_memory_facts`: regular VIEW → **MATERIALIZED VIEW** (CONCURRENTLY refresh 지원)
+- `category_join_hints_json`: TEXT → **JSONB** + GIN index
+- `texts.embedding`: partial ivfflat index (WHERE embedding IS NOT NULL)
+
+### 7.3 인프라 최적화 (T3)
+- PgBouncer transaction-mode sidecar (`edoburu/pgbouncer`, `pgbouncer:5432`)
+- PostgreSQL 서버 파라미터 전면 조정 (shared_buffers, WAL, checkpoint 등)
+- `pg_stat_statements` + `kb_slow_queries` view + autovacuum scale_factor=0
+
+### 7.4 Lock / 캐시 최적화 (T4)
+- Advisory lock: MySQL GET_LOCK → `pg_try_advisory_lock(hashtext(name))`
+- 캐시 무효화: TTL 폴링 → `kb_invalidations` 테이블 + `pg_notify` groundwork
+- `_is_refresh_due()` PG 무효화 플래그 연동
+
+### 7.5 Replica 분리 (T5)
+- `postgres-replica` streaming replica 서비스 (profile: replica)
+- `AGENT_KB_PG_HOST_RO` / `AGENT_KB_PG_PORT_RO` 환경변수로 read-only 라우팅
+
+## 8. 통합 테스트 정책
 - 현재 단계에서는 구조/기동 검증 위주로 운영한다.
 - 엄격한 도메인 시나리오는 기능별 `docs/TEST.md`를 정본으로 후속 작성한다.
 - 통합 테스트 자동화가 생기면 `../tests/integration/`로 승격한다.

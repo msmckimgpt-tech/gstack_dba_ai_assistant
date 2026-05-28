@@ -10,7 +10,7 @@ ai_read_priority: 9
 wiki_role: hot_cache
 wiki_name: project
 confidence: high
-maturity: stub
+maturity: active
 ai_generated: true
 ---
 
@@ -29,20 +29,31 @@ ai_generated: true
 
 ## Last Updated
 
-`<TBD: 첫 세션 종료 시 AI 가 채움>`
+`2026-05-28T15:50:00Z` — T1~T5 로드맵 + PgBouncer/Replica 전체 활성화 완료
 
 ## Key Recent Facts
 
-- `<TBD: 프로젝트 핵심 상태 1~3줄>`
+- T1~T5 + 후속 활성화 **전체 완수**: DISTINCT ON/ANY/MV/JSONB/PgBouncer/replica/advisory-lock/kb_invalidations
+- `AGENT_KB_PG_HOST=pgbouncer` 활성화 (transaction-mode pool, md5 auth via pg_hba.conf 172.18.0.10/32)
+- `postgres-replica` 기동: streaming async 복제 중 (sent_lsn = replay_lsn)
+- `AGENT_KB_PG_HOST_RO=postgres-replica` + `AGENT_KB_PG_USER_RO=agent_kb_ro` 활성화 — RO 읽기 replica 라우팅
+- `agent_kb_rw` 비밀번호 md5 형식으로 재설정 (pgbouncer md5 ↔ pg_authid 정합)
+- docker-compose.yml 수정: `postgres-replica` max_connections=100, `postgres-replica-init` entrypoint list 형식 수정
 
 ## Recent Changes
 
-- `<TBD: 최근 변경된 주요 파일 또는 기능>`
+- `.env`: `AGENT_KB_PG_HOST=pgbouncer` + RO 환경변수 블록 추가
+- `docker-compose.yml`: replica max_connections 50→100, entrypoint YAML list 형식 수정
+- `pg_hba.conf`: `host all all 172.18.0.10/32 md5` 추가 (pgbouncer 전용)
+- `pg_hba.conf`: `host replication all all scram-sha-256` 추가 (replica 초기화용)
+- `agent_kb_rw` 비밀번호: scram→md5 형식 변환 (pgbouncer userlist 정합)
 
 ## Active Threads
 
-- `<TBD: 다음 세션에서 이어갈 작업>`
+- HNSW 전환 (ADR-0024 후보) — 100K+ row 이후 ivfflat → hnsw ALTER 검토
+- `REFRESH MATERIALIZED VIEW CONCURRENTLY agent_memory_facts` 주기적 실행 연동 미완 (cron 또는 fact write hook 추가 필요)
+- pg_hba.conf 변경사항은 컨테이너 재생성 시 초기화됨 — schema SQL에 반영 필요
 
 ---
 
-`#wiki/hot-cache` · `#status/stub`
+`#wiki/hot-cache` · `#status/active`
