@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.14.0
+template_version: v3.15.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -1362,6 +1362,27 @@ entry를 남긴다:
 - all-subagents rejected가 반복되어 prompt/context 설계 자체를 재검토해야 함
 - 요구사항/acceptance criteria가 서로 충돌해 구현 방향을 다시 선택해야 함
 
+
+#### `context: fork` Subagent 격리 패턴 (v2.1.126+)
+
+WebSearch / WebFetch 등 **지연 도구 (Deferred Tools)** 를 subagent 에서 첫 번째 턴부터 사용하려면 `context: fork` 옵션을 설정한다. Fork subagent 는 부모 세션과 격리된 컨텍스트에서 실행되므로, 외부 정보 수집 작업을 주 컨텍스트 오염 없이 분리할 수 있다.
+
+다음은 개념 pseudocode 예시 (실제 SDK call 형식은 사용 환경에 따라 다름):
+
+```javascript
+Agent({
+  subagent_type: "Explore",
+  context: "fork",
+  prompt: "WebSearch로 최신 트렌드 수집 후 요약 보고..."
+})
+```
+
+**권장 사용 케이스:**
+- scheduled-inspection cron 내 Web Search 트렌드 수집을 주 컨텍스트와 분리
+- MCP 도구 등 지연 로딩 도구를 첫 턴부터 필요로 하는 subagent
+
+**참고:** `alwaysLoad` 옵션 (v2.1.121+) 으로 MCP 서버 도구의 tool-search 지연 로딩을 제어할 수도 있다.
+
 ### §18.9 REVIEW.md Subagent Index + Artifact Schema
 
 §18.2는 ANCHOR.md §4가 `human:<name>` only임을 규정한다. AI subagent 출력은
@@ -1940,3 +1961,60 @@ consumer 가 wiki/ 안의 노트를 자체 작성한 경우 template upgrade 시
 | 150자 ≥ sub-문단 5개 ≥ 이상 시 분리 권장 | namu 편집지침 (web search 확인) |
 
 본 cycle (v3.13.0) 에서 모든 설계 결정은 *내부 판단 단독* 이 아닌 *web evidence 매핑* — 사용자 명시 정책.
+
+---
+
+## §22. Claude Code 운영 확장 패턴
+
+### §22.1 PreCompact Hook — 컨텍스트 압축 정책 제어
+
+Claude Code v2.1.105+ 는 `PreCompact` hook 을 통해 컨텍스트 압축(compaction) 발생 직전에 스크립트를 실행할 수 있다. 압축을 차단하려면 stdout 에 `{"decision":"block"}` JSON 을 출력하고 exit code 2 를 반환한다. JSON stdout 이 우선 파싱되며 exit 2 는 fallback 신호이므로, 두 신호를 함께 사용하는 것이 권장 패턴이다.
+
+**`.claude/settings.json` hook 등록 예:**
+
+```json
+{
+  "hooks": {
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash repo/bin/hooks/pre-compact.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**`pre-compact.sh` 예시 — in-progress TASK 존재 시 압축 차단:**
+
+```bash
+#!/usr/bin/env bash
+# TASK.md에 in-progress 항목이 있으면 압축 차단 — 중요 컨텍스트 손실 방지
+if grep -q "status: in-progress" repo/meta/TASK.md 2>/dev/null; then
+  echo '{"decision":"block","reason":"in-progress TASK exists — context loss risk"}'
+  exit 2
+fi
+exit 0
+```
+
+**참고:**
+- `$CLAUDE_EFFORT` 환경변수로 현재 effort level 을 확인할 수 있다 (예: hook 로그에 기록).
+- 압축 허용이 기본값이므로, 차단이 필요한 조건만 명시적으로 체크하는 것이 권장 패턴.
+
+### §22.2 `/fewer-permission-prompts` — 권한 설정 자동화
+
+Claude Code v2.1.105+ 는 `/fewer-permission-prompts` 명령으로 transcript 를 분석해 `.claude/settings.json` 의 `allowedTools` allowlist 를 자동 제안한다. 신규 소비자 init 직후 또는 초기 작업 세션 후 실행하면 반복 권한 승인 프롬프트를 크게 줄일 수 있다.
+
+**사용 시점:**
+- `/_template:init` 완료 후 첫 번째 또는 두 번째 작업 세션 종료 시점
+- 반복적으로 동일한 Bash / MCP 도구에 대한 권한 프롬프트가 발생할 때
+
+```
+/fewer-permission-prompts
+```
+
+명령 실행 후 Claude 가 제안한 allowlist 를 검토하고 `.claude/settings.json` 에 반영한다.

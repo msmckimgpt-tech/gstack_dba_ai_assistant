@@ -207,12 +207,6 @@ PERMISSION_DEFINITIONS = (
         "group": "conversation",
     },
     {
-        "code": "conversation.suggestions.read",
-        "label": "질문 제안 조회",
-        "description": "대화 히스토리 기반 질문 제안을 볼 수 있다.",
-        "group": "conversation",
-    },
-    {
         "code": "conversation.list.own",
         "label": "내 대화 목록 조회",
         "description": "자신의 대화 목록을 볼 수 있다.",
@@ -481,7 +475,6 @@ SEED_ROLE_DEFINITIONS = (
         "permissions": {
             "conversation.list.own",
             "conversation.read.own",
-            "conversation.file.read.own",
             # TASK-0073 Phase A3: 모든 role 에 audit.read.own auto-grant
             # (E1 self filter — 본인 actor/target 이벤트 조회).
             "audit.read.own",
@@ -498,7 +491,6 @@ SEED_ROLE_DEFINITIONS = (
         "permissions": {
             "conversation.create",
             "conversation.ask",
-            "conversation.suggestions.read",
             "conversation.list.own",
             "conversation.read.own",
             "conversation.file.read.own",
@@ -525,11 +517,11 @@ SEED_ROLE_DEFINITIONS = (
         "permissions": {
             "conversation.create",
             "conversation.ask",
-            "conversation.suggestions.read",
             "conversation.list.own",
             "conversation.read.own",
             "conversation.file.read.own",
             "conversation.rename.own",
+            "conversation.delete.own",
             "conversation.cancel.own",
             "conversation.finalize.own",
             "conversation.share.create",
@@ -934,7 +926,7 @@ def _legacy_permission_codes_from_row(row: dict[str, Any] | None) -> set[str]:
     }
     if role_key == "operator":
         if bool(row.get("legacy_can_send_request")):
-            codes.update({"conversation.create", "conversation.ask", "conversation.suggestions.read"})
+            codes.update({"conversation.create", "conversation.ask"})
         if bool(row.get("legacy_can_cancel_request")):
             codes.add("conversation.cancel.own")
         if bool(row.get("legacy_can_finalize_request")):
@@ -1719,6 +1711,8 @@ VALUES (%s, %s)
             )
         cur.close()
     # REQ-20260514-0001 / REQ-20260518-0001 / TASK-0073 Phase A3: operator/sales role 에 신규 권한 catchup.
+    # sales 권한 정합 (대화 생성·실행 가능한 role 은 자기 대화 삭제도 가능해야 한다):
+    #   conversation.delete.own 을 sales catchup 에 추가 (기존 operator 는 이미 보유, INSERT IGNORE 로 안전).
     cur = conn.cursor()
     cur.execute("SELECT Id FROM WebRoles WHERE RoleKey IN ('operator', 'sales')")
     role_rows = cur.fetchall() or []
@@ -1728,6 +1722,8 @@ VALUES (%s, %s)
         catchup_codes = (
             "conversation.share.create",
             "conversation.duplicate.own",
+            # 대화 생성·실행 role 의 자기 대화 삭제 권한 (sales 정합 fix).
+            "conversation.delete.own",
             # TASK-0073 Phase A3: 모든 role 에 audit.read.own auto-grant.
             "audit.read.own",
             # TASK-0094 Sprint 1 Phase 3: operator/sales 의 첨부 upload/read own.
@@ -1802,6 +1798,48 @@ VALUES (%s, %s)
                     (pending_role_id, pid),
                 )
             cur.close()
+    # 폐기 권한 정리 catchup (기존 DB 에 남아 있는 레코드 제거 — idempotent DELETE IGNORE 패턴).
+    # 1) conversation.suggestions.read: PERMISSION_DEFINITIONS 에서 제거됨 (conversation.ask 에 내포).
+    #    모든 롤에서 WebRolePermissions 행 삭제.
+    # 2) conversation.file.read.own: pending 롤은 조회 전용(read-only) 의도 — 결과 파일 다운로드 불필요.
+    #    pending 롤에서만 WebRolePermissions 행 삭제.
+    _cleanup_deprecated_role_permissions(conn)
+
+
+def _cleanup_deprecated_role_permissions(conn) -> None:
+    """폐기/정리된 권한을 기존 WebRolePermissions 에서 제거한다 (idempotent)."""
+    cur = conn.cursor()
+    # 삭제 대상 (code, role_key | None=전체 롤) 쌍 목록.
+    removals = [
+        ("conversation.suggestions.read", None),         # 전체 롤에서 제거
+        ("conversation.file.read.own",    "pending"),    # pending 롤에서만 제거
+    ]
+    for perm_code, role_key in removals:
+        cur.execute("SELECT Id FROM WebPermissions WHERE Code = %s LIMIT 1", (perm_code,))
+        perm_row = cur.fetchone()
+        if not perm_row:
+            continue
+        perm_id = int(perm_row[0] or 0)
+        if perm_id <= 0:
+            continue
+        if role_key is None:
+            cur.execute(
+                "DELETE FROM WebRolePermissions WHERE PermissionId = %s",
+                (perm_id,),
+            )
+        else:
+            cur.execute("SELECT Id FROM WebRoles WHERE RoleKey = %s LIMIT 1", (role_key,))
+            role_row = cur.fetchone()
+            if not role_row:
+                continue
+            role_id = int(role_row[0] or 0)
+            if role_id <= 0:
+                continue
+            cur.execute(
+                "DELETE FROM WebRolePermissions WHERE RoleId = %s AND PermissionId = %s",
+                (role_id, perm_id),
+            )
+    cur.close()
 
 
 SEED_ROLE_SYSTEM_PROMPTS = (
@@ -9854,7 +9892,7 @@ def suggestions(request: Request, limit: int = 40) -> JSONResponse:
     if error:
         conn.close()
         return JSONResponse({"items": []})
-    if not _account_has_permission(account, "conversation.suggestions.read"):
+    if not _account_has_permission(account, "conversation.ask"):
         conn.close()
         return JSONResponse({"items": []})
     conv_ids = [item["id"] for item in _list_conversations(limit=200, account=account, conn=conn)]

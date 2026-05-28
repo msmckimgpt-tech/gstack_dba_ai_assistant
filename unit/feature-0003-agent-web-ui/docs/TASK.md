@@ -11,10 +11,14 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: minor (TASK-0122 — 외부 LLM 수신 동의 UI·권한·로직 제거)
-- Last Updated: 2026-05-28 (TASK-0122 — profile drawer 보안 및 계정 탭에서 외부 LLM 송신 동의 섹션 제거 + backend consent 엔드포인트·스키마·게이트 제거)
+- Priority: minor (TASK-0124 — 관리 콘솔 RBAC 권한 정합 및 폐기 권한 정리)
+- Last Updated: 2026-05-28 (TASK-0124 — sales 롤 conversation.delete.own 추가 + conversation.suggestions.read 폐기 + pending 롤 conversation.file.read.own 제거 + _cleanup_deprecated_role_permissions() 신설)
 
 ## 2. Task Queue
+
+### TASK-0124 관리 콘솔 RBAC 권한 정합 및 폐기 권한 정리 (2026-05-28)
+
+- [x] TASK-0124 (REQ-20260528-0124, **Minor** §12.3 — RBAC 시드 롤 정합 + 폐기 권한 DB 정리). 사용자 직접 요청: (1) `sales` 롤이 `conversation.create` + `conversation.ask` 를 보유하면서 `conversation.delete.own` 이 없어 자신의 대화를 삭제할 수 없는 구조적 비정합. (2) `conversation.suggestions.read` 가 `conversation.ask` 와 항상 함께 부여되는 종속 권한 — 단독 실효성 없는 zombie 권한. (3) `pending` 롤의 `conversation.file.read.own` — "승인 전 조회 전용" 의미와 파일 다운로드 혼재. **수정**: (a) `SEED_ROLE_DEFINITIONS` 의 `sales` 에 `conversation.delete.own` 추가. (b) `conversation.suggestions.read` 를 `PERMISSION_DEFINITIONS` + 모든 시드 롤에서 제거, suggestions endpoint 게이트를 `conversation.ask` 로 변경, `_legacy_permission_codes_from_row` 에서 제거. (c) `pending` 의 `conversation.file.read.own` 제거. (d) `_ensure_seed_roles()` 의 catchup_codes 에 `conversation.delete.own` 추가 (sales 기존 계정 반영). (e) `_cleanup_deprecated_role_permissions(conn)` 신규 함수 — `DELETE FROM WebRolePermissions` 로 폐기 권한을 기존 롤 rows 에서 멱등 제거. (f) `docs/STATUS.md` 변경 이력 2건 추가. 신규 RBAC 권한 코드 추가 없음 / DB 스키마 변경 없음 / secret handling 없음 → outside-voice review SKIPPED.
 
 ### TASK-0108 Sprint 3 — Admin-only manual KB ingest (B: DDL/KB 보강) (2026-05-26) — ⚠ 제거됨 (2026-05-27)
 

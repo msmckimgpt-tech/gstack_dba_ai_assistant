@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260528-0124
+- Date: 2026-05-28
+- Related Requirement: TASK-0124 (REQ-20260528-0124, **Minor** §12.3 — 관리 콘솔 RBAC 권한 정합 및 폐기 권한 정리)
+- Summary: (1) `sales` 롤에 `conversation.delete.own` 추가 — 대화 생성·실행 권한과 삭제 권한 정합. (2) `conversation.suggestions.read` 폐기 — 항상 `conversation.ask` 종속, 단독 실효성 없는 zombie 권한; suggestions 엔드포인트 게이트를 `conversation.ask` 로 교체. (3) `pending` 롤에서 `conversation.file.read.own` 제거 — 승인 전 조회 전용 롤 의미와 파일 다운로드 혼재 제거. (4) `_cleanup_deprecated_role_permissions(conn)` 신설 — 기존 DB `WebRolePermissions` rows 에서 폐기 권한을 `DELETE` 로 멱등 제거.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`: `PERMISSION_DEFINITIONS` 에서 `conversation.suggestions.read` 제거; `SEED_ROLE_DEFINITIONS` sales 에 `conversation.delete.own` 추가, operator/sales 에서 `suggestions.read` 제거, pending 에서 `file.read.own` 제거; suggestions 엔드포인트 RBAC 게이트 `conversation.ask` 로 변경; `_legacy_permission_codes_from_row` 에서 `suggestions.read` 제거; `_ensure_seed_roles` catchup_codes 에 `conversation.delete.own` 추가; `_cleanup_deprecated_role_permissions` 신설 및 호출.
+  - `docs/STATUS.md`: RBAC 권한 정합 변경 이력 2건 추가 (sales delete.own 추가 + suggestions.read 폐기 + file.read.own from pending 제거).
+
 ## CHG-20260528-0123
 - Date: 2026-05-28
 - Related Requirement: REQ-20260527-0001 (**Major** §12.3 — KB 등록 UI/endpoint 제거)
