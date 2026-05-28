@@ -128,6 +128,56 @@ Once execute_sql has returned the data you need, stop calling tools and write th
 # size cap (단일 ≤ 5MB pre-base64), count cap (turn 당 ≤ 5) 은 caller (app.py) 의
 # 책임. 본 helper 는 file read + parse + graceful failure 만.
 _INLINE_IMAGE_ENV_VAR = "ATTACHMENT_IMAGE_INLINE_PATH"
+# TASK-0124: text kind 첨부파일 (SQL/코드/텍스트) 의 raw content 를
+# caller (app.py) 가 MinIO 에서 읽어 JSON 직렬화 → 임시 file 저장 →
+# env ATTACHMENT_TEXT_INLINE_PATH 로 path 만 전달. agent_core 는 path 만 read.
+#
+# JSON spec (caller 가 작성):
+#   [
+#     {"attachment_id": 130, "filename": "query.sql", "content": "SELECT ...", "truncated": false},
+#     ...
+#   ]
+#
+# size cap (단일 ≤ 64KB UTF-8), count cap (turn 당 ≤ 20) 은 caller 의 책임.
+_INLINE_TEXT_ENV_VAR = "ATTACHMENT_TEXT_INLINE_PATH"
+
+
+def _load_attachment_inline_texts() -> dict[int, dict]:
+    """env ATTACHMENT_TEXT_INLINE_PATH 의 JSON 을 read 후 {attachment_id: {filename, content, truncated}} 반환.
+
+    Returns: dict keyed by attachment_id. 부재 / parse 실패 / 빈 content → 빈 dict (graceful failure).
+    """
+    path = os.getenv(_INLINE_TEXT_ENV_VAR, "").strip()
+    if not path:
+        return {}
+    try:
+        if not os.path.isfile(path):
+            return {}
+        with open(path, "r", encoding="utf-8") as _f:
+            data = json.load(_f)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, list):
+        return {}
+    result: dict[int, dict] = {}
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        try:
+            aid = int(item.get("attachment_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if aid <= 0:
+            continue
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        result[aid] = {
+            "filename": str(item.get("filename") or ""),
+            "content": content,
+            "truncated": bool(item.get("truncated")),
+        }
+    return result
 
 
 def _load_attachment_inline_images() -> list[dict[str, Any]]:
@@ -211,8 +261,12 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int]) -> st
 
     import json as _json
 
-    lines = ["", "## ATTACHED FILES (User-selected — analyze using sandbox tables)"]
+    # TASK-0124: text kind 첨부파일 내용 로드 (env ATTACHMENT_TEXT_INLINE_PATH).
+    text_inline_map = _load_attachment_inline_texts()
+
+    lines = ["", "## ATTACHED FILES (User-selected)"]
     sandbox_table_specs: list[tuple[str, str, str]] = []  # (schema, table, source_label)
+    text_content_entries: list[tuple[int, str, str]] = []  # (attachment_id, filename, content)
     for row in rows:
         attachment_id = int(row[0] or 0)
         kind = str(row[3] or "")
@@ -255,12 +309,45 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int]) -> st
                         )
                 if sheet_summaries:
                     meta_text += " " + "; ".join(sheet_summaries)
+        elif kind == "text":
+            # TASK-0124: text 파일은 sandbox ingest 대상이 아니라 raw content 직접 주입.
+            inline = text_inline_map.get(attachment_id)
+            if inline:
+                content = inline["content"]
+                truncated = inline.get("truncated", False)
+                trunc_note = " [truncated]" if truncated else ""
+                meta_text += f" content_len={len(content)}{trunc_note}"
+                text_content_entries.append((attachment_id, filename, content))
+            else:
+                meta_text += " (content unavailable — check MinIO connectivity)"
 
         if meta_obj.get("degraded_reason"):
             meta_text += f" [DEGRADED: {meta_obj['degraded_reason']}]"
 
         lines.append(
             f"- attachment_id={attachment_id} kind={kind} file={filename} size={size_bucket} status={upload_status}{meta_text}"
+        )
+
+    # text kind 파일 내용 주입 (TASK-0124).
+    if text_content_entries:
+        lines.append("")
+        lines.append("## ATTACHED FILE CONTENTS (text/code files — read directly)")
+        for att_id, fname, content in text_content_entries:
+            lines.append("")
+            # 확장자로 코드 펜스 언어 결정
+            ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+            lang = ext if ext in {"sql", "py", "js", "ts", "json", "yaml", "yml",
+                                   "sh", "bash", "xml", "html", "css", "java",
+                                   "go", "rb", "php", "c", "cpp", "h", "md"} else ""
+            lines.append(f"### {fname} (attachment_id={att_id})")
+            lines.append(f"```{lang}")
+            lines.append(content)
+            lines.append("```")
+        lines.append("")
+        lines.append(
+            "**INSTRUCTION**: The file contents above are the actual raw content of the attached files. "
+            "Read them directly to answer the user's question. "
+            "Do NOT ask the user to paste the file contents — they are already provided above."
         )
 
     # 각 sandbox table 의 column schema + head 5 sample rows.
@@ -319,13 +406,13 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int]) -> st
 
         lines.append("")
         lines.append(
-            "**INSTRUCTION**: When the user asks about an attached file's contents, "
+            "**INSTRUCTION**: When the user asks about an attached CSV/XLSX file's contents, "
             "first try to answer from the sample rows above. If more data is needed, "
             "call `execute_sql` against the sandbox table (e.g. "
             "`SELECT COUNT(*) FROM \\`<schema>\\`.\\`<table>\\``). "
             "Do NOT ask the user to paste the file contents — the data is already accessible."
         )
-    else:
+    elif not text_content_entries:
         lines.append(
             "(Sandbox tables not yet available — UploadStatus may be 'uploaded' (ingest pending) "
             "or 'failed'. If failed, inform the user briefly.)"

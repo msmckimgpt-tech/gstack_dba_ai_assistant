@@ -3996,6 +3996,18 @@ function _removeAttachmentPill(attachmentId) {
 }
 
 async function _uploadComposerAttachment(file) {
+  // TASK-0124 de-duplication: 같은 이름+크기 파일이 이미 bucket 에 존재하면 재업로드 차단.
+  const _deupKey = _composerAttachmentKey(state.activeConversationId);
+  const _dedupBucket = state.composerAttachments.byConv[_deupKey];
+  if (_dedupBucket && file) {
+    const _dupExists = _dedupBucket.items.some(
+      (it) => it.name === (file.name || "unnamed") && it.size === (Number(file.size) || 0) && it.status !== "failed"
+    );
+    if (_dupExists) {
+      showToast(`이미 첨부된 파일입니다: ${file.name || "unnamed"}`, true);
+      return;
+    }
+  }
   // TASK-0107 (이슈 #2): 새 대화 진입 전 (activeConversationId 부재 + pendingSentinel 도 없음)
   // 에 첨부 시도하면 "대화 컨텍스트 미정" 토스트로 차단되던 결함 — 사용자가 흔히 chat 에 들어
   // 오자마자 또는 새 대화 클릭 전에 파일을 끌어다 놓는 흐름을 봉쇄. 일반 챗봇 UX 에 어긋남.
