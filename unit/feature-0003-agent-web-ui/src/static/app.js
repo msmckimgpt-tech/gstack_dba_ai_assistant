@@ -2839,8 +2839,8 @@ function renderProgress(statusPayload = null) {
   }
 
   progressCardEl.classList.remove("hidden");
-  // 처리 중 + step 이 있으면 자동으로 펼침
-  if (status === "processing" && steps.length > 0) progressCardEl.open = true;
+  // 처리 중이면 step 유무 관계없이 자동 펼침
+  if (status === "processing") progressCardEl.open = true;
   progressTitleEl.textContent = status === "processing" ? "처리 중" : "최근 실행";
   progressStatusEl.textContent = status || "unknown";
 
@@ -4053,6 +4053,62 @@ async function _loadConversationAttachments(convId) {
   }
 }
 
+async function _loadConversationAttachmentList(convId) {
+  const listEl = document.getElementById("attachSidePanelList");
+  if (!listEl || !convId) return;
+  listEl.innerHTML = `<div class="attach-list-empty">불러오는 중...</div>`;
+  try {
+    const resp = await apiFetch(`/api/conversations/${encodeURIComponent(convId)}/attachments`);
+    const arr = Array.isArray(resp?.attachments) ? resp.attachments : [];
+    if (arr.length === 0) {
+      listEl.innerHTML = `<div class="attach-list-empty">첨부 파일이 없습니다.</div>`;
+      return;
+    }
+    listEl.innerHTML = "";
+    const kindIcon = (k) => ({csv:"📊", xlsx:"📊", pdf:"📄", txt:"📝", image:"🖼️"})[k] || "📎";
+    const fmtSize = (b) => b > 1048576 ? `${(b/1048576).toFixed(1)}MB` : b > 1024 ? `${(b/1024).toFixed(0)}KB` : `${b}B`;
+    for (const a of arr) {
+      const item = document.createElement("div");
+      item.className = "attach-list-item";
+      const statusLabel = a.status === "ingested" ? "읽기 완료" : a.status === "failed" ? "오류" : a.status || "";
+      item.innerHTML = `
+        <span class="attach-list-item-icon">${kindIcon(a.kind)}</span>
+        <div class="attach-list-item-info">
+          <div class="attach-list-item-name" title="${escapeHtml(a.original_filename || "")}">${escapeHtml(a.original_filename || "알 수 없음")}</div>
+          <div class="attach-list-item-meta">${fmtSize(a.size || 0)}${statusLabel ? " · " + statusLabel : ""}</div>
+        </div>
+        <button class="attach-list-item-dl" title="다운로드" data-id="${a.id}">⬇</button>
+      `;
+      const dlBtn = item.querySelector(".attach-list-item-dl");
+      dlBtn.addEventListener("click", async () => {
+        dlBtn.disabled = true;
+        try {
+          const detail = await apiFetch(`/api/attachments/${encodeURIComponent(a.id)}`);
+          const url = detail?.signed_url;
+          if (url) {
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = a.original_filename || "download";
+            link.target = "_blank";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+          } else {
+            showToast("다운로드 URL을 가져올 수 없습니다.", true);
+          }
+        } catch (e) {
+          showToast("다운로드 중 오류가 발생했습니다.", true);
+        } finally {
+          dlBtn.disabled = false;
+        }
+      });
+      listEl.appendChild(item);
+    }
+  } catch (exc) {
+    listEl.innerHTML = `<div class="attach-list-empty">목록을 불러올 수 없습니다.</div>`;
+  }
+}
+
 function _bindComposerAttachmentEvents() {
   // feature-0008: 구 `#attachBtn` (paperclip) 는 제거되고 `#composerActionsBtn`
   // (+ icon) 의 dropdown 안 "파일 첨부" 항목 (`#composerActionsAttachItem`) 으로
@@ -4232,6 +4288,10 @@ function _openComposerActionsMenu() {
   // product chip dropup 등 다른 popup 은 닫는다.
   if (typeof closeProductDropup === "function") closeProductDropup();
   _updateComposerModelLabel();
+  // fixed 포지셔닝: 버튼 위치 기준으로 좌표 설정
+  const rect = trigger.getBoundingClientRect();
+  primary.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+  primary.style.left = `${rect.left}px`;
   primary.classList.remove("hidden");
   trigger.setAttribute("aria-expanded", "true");
 }
@@ -4284,8 +4344,15 @@ function _renderComposerModelMenu() {
 function _openComposerModelMenu() {
   const menu = document.getElementById("composerModelMenu");
   const modelItem = document.getElementById("composerActionsModelItem");
+  const primary = document.getElementById("composerActionsMenu");
   if (!menu || !modelItem) return;
   _renderComposerModelMenu();
+  // fixed 포지셔닝: primary popup 의 오른쪽에, bottom 정렬
+  if (primary) {
+    const pRect = primary.getBoundingClientRect();
+    menu.style.bottom = `${window.innerHeight - pRect.bottom}px`;
+    menu.style.left = `${pRect.right + 8}px`;
+  }
   menu.classList.remove("hidden");
   modelItem.setAttribute("aria-expanded", "true");
 }
@@ -4316,6 +4383,25 @@ function _bindComposerActionsEvents() {
       ev.stopPropagation();
       _closeComposerActionsMenus();
       fileInput.click();
+    });
+  }
+  const listItem = document.getElementById("composerActionsListItem");
+  if (listItem) {
+    listItem.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      _closeComposerActionsMenus();
+      const panel = document.getElementById("attachSidePanel");
+      if (panel) panel.classList.remove("hidden");
+      const cid = state.activeConversationId;
+      if (cid) _loadConversationAttachmentList(cid);
+    });
+  }
+  const sidePanelClose = document.getElementById("attachSidePanelClose");
+  if (sidePanelClose) {
+    sidePanelClose.addEventListener("click", () => {
+      const panel = document.getElementById("attachSidePanel");
+      if (panel) panel.classList.add("hidden");
     });
   }
   if (modelItem) {

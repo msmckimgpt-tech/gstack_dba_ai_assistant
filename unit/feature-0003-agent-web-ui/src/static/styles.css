@@ -1493,7 +1493,7 @@ a { color: inherit; }
 /* ─── Composer ───────────────────────────────────────────────────── */
 .composer-wrap {
   flex-shrink: 0;
-  padding: 10px 20px 14px;
+  padding: 8px 20px 8px;
   background: var(--surface);
   border-top: 1px solid var(--border);
   position: relative;
@@ -1687,18 +1687,16 @@ a { color: inherit; }
   cursor: not-allowed;
 }
 
-/* Primary popup — composer-box 안 absolute, `+` 버튼 위로 펼침. */
+/* Primary popup — fixed 포지셔닝으로 overflow:hidden 클리핑 우회. */
 .composer-actions-menu {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
+  position: fixed;
   background: var(--surface, #ffffff);
   border: 1px solid var(--border, rgba(0,0,0,0.08));
   border-radius: 10px;
   box-shadow: 0 6px 24px rgba(15, 23, 42, 0.15);
   padding: 4px;
   min-width: 240px;
-  z-index: 60;
+  z-index: 200;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1741,11 +1739,9 @@ a { color: inherit; }
   color: var(--muted, #9ca3af);
 }
 
-/* Secondary popup — 모델 선택 (description 포함). primary 우측에 띄움. */
+/* Secondary popup — 모델 선택 (description 포함). primary 우측 fixed 로 띄움. */
 .composer-model-menu {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 250px;
+  position: fixed;
   background: var(--surface, #ffffff);
   border: 1px solid var(--border, rgba(0,0,0,0.08));
   border-radius: 10px;
@@ -1753,7 +1749,7 @@ a { color: inherit; }
   padding: 4px;
   min-width: 280px;
   max-width: 360px;
-  z-index: 61;
+  z-index: 201;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2147,6 +2143,58 @@ a { color: inherit; }
 .attach-side-panel .composer-attachment-pill .pill-remove:hover { color: var(--danger, #dc2626); }
 .attach-side-panel .composer-attachment-pill[data-error="true"] { border-color: var(--danger, #dc2626); }
 .attach-side-panel .composer-attachment-pill[data-uploading="true"] { opacity: .6; }
+
+/* 대화 첨부파일 목록 아이템 (다운로드 포함) */
+.attach-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 12px;
+}
+.attach-list-item-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  color: var(--muted, #6b7280);
+}
+.attach-list-item-info {
+  flex: 1;
+  min-width: 0;
+}
+.attach-list-item-name {
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attach-list-item-meta {
+  font-size: 10.5px;
+  color: var(--text-muted, #9ca3af);
+  margin-top: 1px;
+}
+.attach-list-item-dl {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--primary, #2563eb);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  transition: background 0.12s;
+}
+.attach-list-item-dl:hover { background: rgba(37, 99, 235, 0.08); }
+.attach-list-item-dl:disabled { color: var(--text-muted); cursor: default; }
+.attach-list-empty {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--text-muted, #9ca3af);
+  font-size: 13px;
+}
 
 /* =====================================================================
    SETTINGS DRAWER

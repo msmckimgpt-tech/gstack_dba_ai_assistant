@@ -8622,22 +8622,23 @@ async def upload_conversation_attachment(
         except Exception:
             pass
 
-        # TASK-0107 Phase A.2: csv/xlsx kind 면 background ingest spawn.
-        # 비동기로 sandbox schema 생성 + sandbox table INSERT + MetaJson 갱신.
-        # ingest 결과는 LLM prompt 의 ATTACHED FILES section 에서 활용된다.
-        # 실패해도 파일 자체는 업로드된 상태로 보존 (LLM 이 metadata 만 보게 됨).
+        # TASK-0107 Phase A.2 (수정): csv/xlsx kind 면 동기 ingest.
+        # 업로드 응답 전에 sandbox schema 생성 + table INSERT + MetaJson 갱신 완료.
+        # ingest 결과는 LLM prompt 의 ATTACHED FILES section 에서 즉시 활용된다.
         if kind in ("csv", "xlsx"):
-            threading.Thread(
-                target=_ingest_attachment_background,
-                kwargs={
-                    "attachment_id": attachment_id,
-                    "conversation_id": cid,
-                    "object_key": object_key,
-                    "kind": kind,
-                },
-                name=f"sandbox-ingest-{attachment_id}",
-                daemon=True,
-            ).start()
+            _ingest_attachment_background(
+                attachment_id=attachment_id,
+                conversation_id=cid,
+                object_key=object_key,
+                kind=kind,
+            )
+            # 동기 ingest 후 최신 row 재조회 (UploadStatus='ingested' 반영)
+            try:
+                refreshed = _load_attachment_row(conn, attachment_id)
+                if refreshed:
+                    attachment_row = refreshed
+            except Exception:
+                pass
 
         # signed URL 발급 (사내망 다운로드 전용 — D13). pending 은 발급 안 함 (D21).
         signed_url: str | None = None
