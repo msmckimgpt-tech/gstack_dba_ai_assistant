@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
-template_version: v3.13.2
+template_version: v3.14.0
 domain: [workflow, wiki, navigation]
 ai_read_priority: 5
 ---

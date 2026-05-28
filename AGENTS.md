@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.13.2
+template_version: v3.14.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -722,6 +722,74 @@ META mode 우회 정책은 check #10 와 동일 (META mode 에서도 호출 — 
 - WSL / Mac 경로 normalization 차이: `realpath` 로 main worktree path 정규화
   후 비교.
 
+
+#### §13.2.8 Foreign Change Detection & Notification (v3.14.0+)
+
+**목적**: `/_template:entry` 가 main worktree 에서 다른 AI 세션이 남긴
+uncommitted 변경을 감지할 때, 해당 세션에 즉시 고유 worktree 진입을 알리는 정책.
+
+**발동 조건**:
+- 소비자 프로젝트 (template base 는 §13.2.4 carve-out 으로 제외)
+- `cwd_inside_policy_root_main_worktree = true`
+- `git status --porcelain` 결과 ≥ 1건 (uncommitted changes)
+
+**발동 시점 (lifecycle)**:
+
+| 시점 | entry.md Phase | 설명 |
+|---|---|---|
+| 세션 시작 (시작) | Phase 2.6 | entry persona 첫 bootstrap 시 즉시 탐지 |
+| 배포·커밋 직전 (중간 검토) | Phase 6.4 Step 0 | commit 직전 re-check — 작업 도중 외부 주입 차단 |
+
+두 시점 모두 동일한 서브 프로시저(탐지 → SendMessage → filesystem fallback → 표면화)를 실행한다.
+
+**알림 메커니즘 (우선순위 순)**:
+1. **SendMessage (FleetView / multi-agent 환경)**: `<project_root>/worktrees/REGISTRY.md`
+   의 해당 세션 entry 의 `session_id:` 필드를 `to:` 인자로 사용.
+   `session_id` 부재 시 fallback.
+2. **Filesystem fallback (항상 수행)**: `<policy_root>/meta/FOREIGN_CHANGE_ALERT.md`
+   에 1 entry append. 세션 폴링 또는 다음 entry 호출 시 자동 감지.
+
+**알림 메시지 형식**:
+```
+⚠ [/_template:entry foreign-change alert]
+main worktree 에 미커밋 변경 <N>건이 감지됩니다.
+AGENTS.md §13.2.7 F0 위반 — 즉시 고유 worktree 에서 작업해 주세요.
+
+  bash bin/cycle-init.sh --feature <slug>
+
+변경을 새 worktree 로 이동 (git stash → cd <new_worktree> → git stash pop) 후 계속 작업하세요.
+```
+
+**수신 세션의 의무**:
+- 알림 수신 즉시 (또는 다음 entry preamble 에서) F0 위반 해소:
+  ```bash
+  bash bin/cycle-init.sh --feature <feature_id>
+  git stash
+  cd <new_worktree_path>
+  git stash pop
+  ```
+- `meta/FOREIGN_CHANGE_ALERT.md` 의 해당 entry 를 `status: resolved` 로 갱신 후 작업 계속.
+
+**REGISTRY.md `session_id` 필드 규약 (v3.14.0+)**:
+- 활성 세션 등록 시 `session_id:` 필드를 포함한다.
+- FleetView 환경: `Agent(name=<session_id>)` 로 시작된 에이전트의 name 값과 일치.
+- standalone CLI 환경: `claude-session-<PID>` 형식 (예: `claude-session-12345`).
+- 부재 시 SendMessage 는 skip 되고 filesystem fallback 만 동작 (degraded mode).
+
+**FOREIGN_CHANGE_ALERT.md entry 형식**:
+```markdown
+## [YYYY-MM-DD HH:MM:SS UTC] foreign-change alert
+- detected_by: /_template:entry Phase 2.6
+- dirty_count: <N>
+- responsible_session_id: <session_id | unknown>
+- message_sent: <yes | no>
+- status: pending
+```
+`status` 값: `pending` → 미해소, `resolved` → 수신 세션이 worktree 로 이동 완료.
+
+**template base 예외**: `_template_maintainer/HISTORY.md` 가 존재하는 repo (template
+base 자체) 는 §13.2.4 carve-out 에 따라 본 §13.2.8 이 비적용. maintainer 의
+main checkout 직접 수정은 정상 워크플로.
 ### §13.3 계획-실행 분리 에이전트 (선택적 고급 패턴)
 
 프로젝트가 계획 에이전트와 실행 에이전트를 분리 운용하는 경우:
