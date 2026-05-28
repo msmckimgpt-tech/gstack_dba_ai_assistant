@@ -83,3 +83,11 @@ source_of_truth: true
 - Diff size: 신규 docker-compose.override.yml.example 28 lines, CONTRIBUTING.md +33 lines, .gitignore +4 lines.
 - Impact: 개발자 머신마다 `cp docker-compose.override.yml.example docker-compose.override.yml && make web` 1회 setup 으로 host `localhost:18080` 이 plain HTTP 가동. browser 자동화 도구가 env var · opt-in 옵션 추가 없이 자연 동작. gstack-upgrade 마다 별도 patch 적용 불필요. production / staging 환경 영향 0 — production compose 파일에 override 를 두지 않으면 무시 (Caddy frontline TLS 종단 그대로 유지).
 - Rollback Notes: `mv docker-compose.override.yml docker-compose.override.yml.disabled` 후 `make web` 재기동하면 base compose 의 entrypoint 분기로 복귀해 `ENABLE_WEB_TLS=1` (`.env` 기본) self-signed HTTPS 가동. revert 시점에 .gitignore + CONTRIBUTING.md §10 만 git revert 로 되돌리면 template 만 남고 dev 가동은 기존 HTTPS 로 유지.
+
+## CHG-20260528-0001
+- Date: 2026-05-28
+- Related Requirement: TASK-0124, REQ-20260528-0001
+- Summary: MySQL 서버 설정 파일에 개발 편의 옵션 2종 영구 추가 — `log_bin_trust_function_creators = 1` (binlog 활성화 환경에서 SUPER 권한 없이 stored function/procedure 생성 허용) + `local_infile = 1` (클라이언트 측 LOAD DATA LOCAL INFILE 허용). runtime `SET GLOBAL` 은 이미 사용자 측에서 적용 완료된 상태이며, 본 변경은 다음 컨테이너 재시작 시 자동 영구 적용되도록 설정 파일에 반영.
+- Files:
+  - `repo/unit/feature-0001-platform-runtime/src/mysql/conf.d/99-mysql-ai-server.cnf` — `[mysqld]` 섹션 하단에 2개 옵션 추가 (dev convenience 주석 동봉).
+- Notes: 개발 편의 목적 설정. 프로덕션 환경 사용 시 security posture 재평가 권고 (log_bin_trust_function_creators 는 SUPER 우회, local_infile 은 클라이언트 인젝션 경로). 본 변경은 컨테이너 재시작 없이 적용되지 않음 — 사용자 요청으로 즉시 restart 는 보류.

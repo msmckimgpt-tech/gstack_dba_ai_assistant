@@ -28,6 +28,9 @@ source_of_truth: true
   - AC-0019: `insight-worker` 의 기존 `restart: unless-stopped` 정책은 유지한다.
   - AC-0020: `agent` 와 `memory-init` 은 일회성/수동 실행 컨테이너이므로 restart 대상에서 제외한다.
   - AC-0021: `make up` 후 `make status` 에서 `mysql`, `web`, `browser`, `insight-worker`, `mcp` 가 실행 상태로 표시된다.
+- REQ-20260528-0001 (TASK-0124, Minor §12.3): MySQL 서버 설정에 개발 편의 옵션 2종 영구 추가.
+  - AC-0026: `99-mysql-ai-server.cnf` 의 `[mysqld]` 섹션에 `log_bin_trust_function_creators = 1` 이 포함된다 (binlog 활성화 환경에서 SUPER 없이 stored function/procedure 생성 허용).
+  - AC-0027: `99-mysql-ai-server.cnf` 의 `[mysqld]` 섹션에 `local_infile = 1` 이 포함된다 (클라이언트 측 LOAD DATA LOCAL INFILE 허용).
 - REQ-20260518-0002 (TASK-0064, Major §12.3 — 운영 인프라 / 데이터 영역 무변경): `mysql` 컨테이너의 `innodb_redo_log_capacity` 를 기본 100M (MySQL 8.0+ default) 에서 1 GiB 로 상향해, 장시간 가동 중 redo log saturation (`[InnoDB] Threads are unable to reserve space in redo log ... log_checkpointer ... lagging`, `[InnoDB] Redo log writer is waiting for a new redo log file`) 으로 healthcheck 가 unhealthy 로 분류되는 회귀를 차단한다.
   - AC-0022: `repo/unit/feature-0001-platform-runtime/src/mysql/conf.d/99-mysql-ai-server.cnf` 의 `[mysqld]` 섹션에 `innodb_redo_log_capacity = 1073741824` (= 1 GiB, 1024×1024×1024) 가 명시된다. 주석은 회귀 사유 (MY-014084 / MY-014089) 와 trade-off (디스크 +900 MiB, 메모리 변화 0) 를 한 단락으로 남긴다.
   - AC-0023: `docker compose restart mysql` 또는 `make restart` 후 컨테이너 healthcheck 가 30 초 이내에 `(healthy)` 로 전환되며, `SELECT @@innodb_redo_log_capacity;` 결과가 `1073741824` 을 반환한다.

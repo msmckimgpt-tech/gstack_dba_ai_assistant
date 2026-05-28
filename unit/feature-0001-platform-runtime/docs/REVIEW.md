@@ -40,3 +40,9 @@ source_of_truth: true
 - Decision: 운영 자산만 버전관리 대상으로 두고 데이터/로그는 외부 산출물로 분리
 - Reason: 기능 단위 추적성과 런타임 안전성 확보
 - Risk: 엄격한 운영 검증 시나리오가 아직 없다
+
+## REV-20260528-0001 [SKIPPED:no-rbac-no-schema-no-secret-handling]
+- Date: 2026-05-28
+- Decision: 99-mysql-ai-server.cnf 에 `log_bin_trust_function_creators = 1` + `local_infile = 1` 추가. backend/frontend/RBAC/DB schema/endpoint contract 무변경.
+- Reason: 사용자 명시 요청 (개발 편의). config-only Minor 변경 — 외부 패널 리뷰 불필요.
+- Risk: log_bin_trust_function_creators=1 은 binlog 환경에서 SUPER 권한 우회 가능 — 개발 환경 한정 사용 전제. local_infile=1 은 클라이언트 측 파일 인젝션 경로 열림 — 신뢰 클라이언트 환경 전제. 프로덕션 배포 전 재평가 권고.

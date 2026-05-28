@@ -19,3 +19,9 @@ innodb_redo_log_capacity = 1073741824
 
 # Do not enable ANSI_QUOTES. Keep backtick (`) as identifier quote style.
 sql_mode = STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+
+# DEV convenience: allow stored function/procedure creation without SUPER when binlog on.
+log_bin_trust_function_creators = 1
+
+# DEV convenience: allow LOAD DATA LOCAL INFILE from client side.
+local_infile = 1
