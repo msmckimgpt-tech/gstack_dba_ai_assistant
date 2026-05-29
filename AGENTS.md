@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.18.0
+template_version: v3.19.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -381,6 +381,19 @@ AI는 작업 대상 파일의 패턴을 확인하고, 매칭되는 규칙을 추
   `body_size`, `body_sha256_prefix`, `superseded_count`, `fact_entry_id`, `reactivated`
   를 포함 (D12 정합 — raw filename / bytes / object_key 미포함).
 
+
+**`/model`, `/effort` — 작업 난이도별 model·effort 선택 (v2.1.154+)**
+
+작업 난이도에 따라 model 과 effort level 을 맞춘다. **단, entry persona 가 런타임에
+risk 를 판단해서 자기 model/effort 를 바꿀 수는 없다** — frontmatter `model:`/`effort:`
+는 선언적 지정(skill 활성 동안 적용 후 세션 model 복귀)이라 "진입 후 동적 자기전환" 은
+불가하고, `/model`·/effort` 는 사용자 입력만 인식한다. 따라서 자율 조절이 아니라
+**사용자에게 권장하는** 패턴이다.
+
+- **Critical 등급 (§12.3)** 또는 복잡한 분석·설계: `/model opus` + `/effort xhigh`
+  (Opus 4.8 고노력). entry persona 가 Critical 추정 시 1줄 권장 표면화 (전환은 사용자).
+- **단순·반복 작업** (lint fix, 포맷, 오타): 기본 model + effort 낮춤으로 비용 절감.
+- subagent 단위 model 분기는 §18.8 참조 (per-invocation 지정은 프로그래매틱 가능).
 ---
 
 # Part E — 안전 및 협업
@@ -1371,6 +1384,19 @@ check #9 evidence가 없으면 스스로 이 protocol을 수행해야 한다.
 - skip 결정 시에도 REVIEW.md에 `[SKIPPED:non-policy-doc]` index entry 1줄을
   남겨야 한다 — check #9가 인식하여 SKIP cycle도 통과시킨다 (§18.10.1).
 
+#### Subagent per-invocation model 분기 (v2.1.154+, 비용·품질 최적화)
+
+subagent 는 entry persona 와 달리 **호출 시점에 model 을 지정할 수 있다**
+(Task/Agent tool 의 per-invocation `model` parameter). dispatch 한 subagent 의
+작업 난이도에 따라 model 을 맞춘다:
+
+- **고난도 도메인** (security 인증·인가, 복잡한 backend·migration): Opus 계열.
+- **경량·기계적 검토** (포맷·lint·단순 정합): Haiku 계열 — 비용 절감.
+- **기본**: main 세션 model 상속 (지정 안 하면 inherit).
+
+⚠️ 신규 기능은 사용 환경 Claude Code 버전에서 실작동 확인 후 채택. 미지원 환경은
+inherit fallback. entry persona 자신의 model 은 진입 전 고정 (§11.3) — 본 분기는
+subagent 에만 적용.
 #### Agent Team escalation
 
 AI 작업자는 일반 subagent panel만으로 판단이 닫히지 않으면 agent team을 스스로
