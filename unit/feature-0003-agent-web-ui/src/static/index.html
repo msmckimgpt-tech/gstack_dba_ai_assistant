@@ -131,15 +131,14 @@
                     stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
             <strong>여기에 파일을 놓으세요</strong>
-            <span>CSV / XLSX / PDF / 이미지 / 텍스트 (한 번에 한 파일)</span>
           </div>
         </div>
 
         <!-- Access Notice -->
         <div class="access-notice hidden" id="accessNotice"></div>
 
-        <!-- Progress Strip (collapsible dropdown) -->
-        <details class="progress-strip hidden" id="progressCard">
+        <!-- Progress Strip: hidden permanently (step details moved to #stepSidePanel) -->
+        <details class="progress-strip hidden" id="progressCard" style="display:none">
           <summary class="progress-row">
             <span class="progress-label" id="progressTitle">처리 중</span>
             <span class="progress-badge" id="progressStatus">processing</span>
@@ -182,12 +181,9 @@
                selected/ready 첨부만 sendPrompt 시 attachment_ids 로 전송. drag-drop /
                paperclip / 새 파일 선택 시 본 영역에 pill 추가. pending sentinel 별 snapshot
                (R-F5 lazy-create) 도 본 영역의 state 가 source-of-truth. -->
-          <div class="composer-attachments hidden" id="composerAttachments" aria-live="polite">
+          <!-- UX-COMPACT: composer-attachments 영역 제거 (파일은 오른쪽 사이드 패널로 이동) -->
+          <div class="composer-attachments hidden" id="composerAttachments" aria-live="polite" aria-hidden="true">
             <div class="composer-attachments-pills" id="composerAttachmentsPills"></div>
-            <label class="composer-attachments-scope-all" title="이 대화의 모든 ingested 첨부를 LLM 컨텍스트에 사용합니다 (별 audit 기록).">
-              <input type="checkbox" id="composerAttachmentsScopeAll" />
-              <span>이 대화의 모든 첨부 사용</span>
-            </label>
           </div>
           <!-- TASK-0094 Phase 6: drag-drop overlay — 사용자가 composer 영역에 파일을 끌어다 놓으면 표면화. -->
           <div class="composer-drop-overlay hidden" id="composerDropOverlay" aria-hidden="true">
@@ -215,7 +211,15 @@
                   <path d="M16.5 6.5L9 14a3 3 0 104.24 4.24l8.49-8.48a5 5 0 10-7.07-7.07L4.93 12.43" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
                 <span class="composer-actions-label">파일 첨부</span>
-                <span class="composer-actions-hint">CSV / XLSX / PDF / 이미지</span>
+              </button>
+              <button type="button" class="composer-actions-item" id="composerActionsListItem" role="menuitem">
+                <svg class="composer-actions-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M4 6h16M4 10h16M4 14h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                  <circle cx="18" cy="17" r="3" stroke="currentColor" stroke-width="1.6"/>
+                  <path d="M20.5 19.5l2 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                </svg>
+                <span class="composer-actions-label">첨부파일 목록</span>
+                <span class="composer-actions-hint" id="composerAttachCountBadge"></span>
               </button>
               <button type="button" class="composer-actions-item" id="composerActionsModelItem" role="menuitem"
                       aria-haspopup="menu" aria-expanded="false">
@@ -235,29 +239,29 @@
                    id="attachFileInput"
                    class="hidden"
                    aria-hidden="true" />
-            <textarea
-              id="promptInput"
-              rows="1"
-              placeholder="예) 최근 7일 신규 사용자 수와 평균 접속 시간을 보여줘"
-              autocomplete="off"
-            ></textarea>
-            <!-- REQ-20260518-0005: composer 우측 product chip (ChatGPT 모델 선택 패턴). click 시 drop-up dropdown. -->
+            <!-- UX-COMPACT: Product chip 왼쪽으로 이동 (textarea 앞) -->
             <div class="composer-product-chip-wrap">
               <button type="button"
                       class="composer-product-chip"
                       id="productChip"
                       aria-haspopup="menu"
                       aria-expanded="false"
-                      aria-label="이 대화의 제품 선택, 현재 auto"
-                      title="이 대화에 적용할 제품을 선택합니다. auto 는 일반 대화 모드입니다.">
+                      aria-label="이 대화의 제품 선택, 현재 Product"
+                      title="이 대화에 적용할 제품을 선택합니다. Product 는 일반 대화 모드입니다.">
                 <span class="composer-product-chip-dot" id="productChipDot" aria-hidden="true"></span>
-                <span class="composer-product-chip-label" id="productChipLabel">auto</span>
+                <span class="composer-product-chip-label" id="productChipLabel">Product</span>
                 <svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                   <path d="M3 7.5l3-3 3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
               </button>
               <div class="product-dropup-menu hidden" id="productDropupMenu" role="menu" aria-label="제품 선택"></div>
             </div>
+            <textarea
+              id="promptInput"
+              rows="1"
+              placeholder="예) 최근 7일 신규 사용자 수와 평균 접속 시간을 보여줘"
+              autocomplete="off"
+            ></textarea>
             <button type="button" class="send-btn" id="sendBtn" title="전송 (Ctrl+Enter)">
               <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
                 <path d="M1.5 7.5L13.5 1.5L7.5 13.5L6.5 8.5L1.5 7.5Z" fill="currentColor"/>
@@ -273,6 +277,27 @@
       </div><!-- /chat-pane -->
       </div><!-- /chat-column -->
   </div><!-- /app-shell -->
+
+  <!-- UX-COMPACT: 첨부 파일 사이드 패널 -->
+  <aside class="attach-side-panel hidden" id="attachSidePanel" aria-label="첨부 파일">
+    <div class="attach-side-panel-header">
+      <span class="attach-side-panel-title">첨부 파일</span>
+      <button type="button" class="attach-side-panel-close" id="attachSidePanelClose" aria-label="패널 닫기">×</button>
+    </div>
+    <div class="attach-side-panel-list" id="attachSidePanelList" aria-live="polite"></div>
+  </aside>
+
+  <!-- 실행 단계 사이드 패널 (처리 중 / 완료 후 단계 조회) -->
+  <aside class="step-side-panel hidden" id="stepSidePanel" aria-label="실행 단계">
+    <div class="step-side-panel-header">
+      <div class="step-side-panel-title-row">
+        <span class="step-side-panel-title">실행 단계</span>
+        <span class="step-side-panel-badge" id="stepSidePanelBadge"></span>
+      </div>
+      <button type="button" class="step-side-panel-close" id="stepSidePanelClose" aria-label="닫기">×</button>
+    </div>
+    <div class="step-side-panel-body" id="stepSidePanelBody" aria-live="polite"></div>
+  </aside>
 
   <!-- ─── Profile Drawer (탭: 프롬프트 / 보안 및 계정) ──────────────
        feature-0007 (REQ-20260521-0001): "API Vault" 탭 제거. LLM 자격증명은

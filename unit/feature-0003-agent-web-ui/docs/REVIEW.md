@@ -13,6 +13,11 @@ source_of_truth: true
 - TASK-Cycle: TASK-0124 (REQ-20260528-0124, **Minor** §12.3 — RBAC 권한 정합 및 폐기 권한 정리)
 - Skip reason: 신규 RBAC 권한 코드 추가 없음 (기존 코드 제거 + 기존 삭제 권한을 누락된 롤에 부여만) / DB 스키마 변경 없음 / secret handling 없음 / 폐기 권한 DB 정리는 DELETE 뿐 — 신규 attack surface 없음. outside-voice (Codex) 트리거 미해당.
 
+## REV-20260528-0125 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]
+- Date: 2026-05-28
+- TASK-Cycle: TASK-0125 (REQ-20260528-0125, **Minor** §12.3 — UX 2차 보완 7개 항목; ux-compact-redesign 병합 시 재부여 — 브랜치 원번호 TASK-0123)
+- Skip reason: 신규 RBAC 권한 코드 없음 / DB schema 변경 없음 / secret handling 없음 / backend endpoint 추가·변경 없음. 순수 frontend-only (app.js + styles.css + share.js + share.css) 변경. TASK-0102 미해결 상태이나 본 cycle 변경과 교차점 없음.
+
 ## REV-20260528-0123 [SKIPPED:removal-only-no-new-rbac-no-schema-mutation]
 - Date: 2026-05-28
 - TASK-Cycle: REQ-20260527-0001 (**Major** §12.3 — KB 등록 UI/endpoint 제거)

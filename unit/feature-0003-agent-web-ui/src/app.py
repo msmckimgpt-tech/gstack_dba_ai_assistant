@@ -6952,6 +6952,188 @@ def _cleanup_vision_inline(temp_path: str | None) -> None:
             pass
 
 
+# TASK-0124: text kind 첨부파일 (SQL/코드/텍스트) 내용을 MinIO 에서 읽어
+# 임시 JSON 에 직렬화 → env ATTACHMENT_TEXT_INLINE_PATH 로 agent_core 에 전달.
+_TEXT_INLINE_SIZE_CAP_BYTES = 64 * 1024   # 64KB per file (prompt overflow 방지)
+_TEXT_INLINE_COUNT_CAP = 20               # turn 당 최대 text 파일 수
+
+
+def _prepare_text_inline_attachments(
+    conn,
+    account_id: int,
+    attachment_ids: list[int],
+    *,
+    conversation_id: str | None = None,
+) -> str | None:
+    """text kind 첨부파일의 raw content 를 MinIO 에서 읽어 임시 JSON file 저장.
+
+    Returns: 임시 file path (env 로 전달) 또는 None (text 파일 없음 / 오류).
+    성공 시 caller 는 env["ATTACHMENT_TEXT_INLINE_PATH"] 를 설정하고,
+    LLM 호출 완료 후 _cleanup_text_inline(path) 로 정리해야 한다.
+    """
+    if not attachment_ids:
+        return None
+    try:
+        from web.modules import storage_minio
+    except (ImportError, Exception):
+        return None
+
+    try:
+        cur = conn.cursor(dictionary=True)
+        placeholders = ", ".join(["%s"] * len(attachment_ids))
+        cur.execute(
+            f"SELECT Id, OriginalFilename, ObjectKey, Kind, SizeBytes, AccountId "
+            f"FROM WebConversationAttachments "
+            f"WHERE Id IN ({placeholders}) AND Kind = 'text' "
+            f"AND UploadStatus = 'uploaded' AND DeletedAt IS NULL AND DeletePending = 0 "
+            f"ORDER BY Id ASC LIMIT %s",
+            tuple(int(i) for i in attachment_ids) + (_TEXT_INLINE_COUNT_CAP,),
+        )
+        rows = cur.fetchall() or []
+        cur.close()
+    except Exception:
+        return None
+
+    if not rows:
+        return None
+
+    inline_entries: list[dict] = []
+    for row in rows:
+        aid = int(row.get("Id") or 0)
+        filename = str(row.get("OriginalFilename") or "")
+        object_key = str(row.get("ObjectKey") or "").strip()
+        size_bytes = int(row.get("SizeBytes") or 0)
+        if not object_key:
+            continue
+        # owner 검증 — AccountId 일치 필요 (D16 정합)
+        row_account_id = int(row.get("AccountId") or 0)
+        if row_account_id != account_id:
+            continue
+        # size cap — 큰 파일은 skip (prompt overflow 방지)
+        if size_bytes > _TEXT_INLINE_SIZE_CAP_BYTES:
+            # 용량 초과 파일은 잘려서 주입 (앞 64KB 만)
+            cap_note = True
+        else:
+            cap_note = False
+        try:
+            data_bytes = storage_minio.get_object_bytes(object_key)
+        except (storage_minio.StorageConfigError, storage_minio.StorageOperationError):
+            continue
+        try:
+            text_content = data_bytes[:_TEXT_INLINE_SIZE_CAP_BYTES].decode("utf-8", errors="replace")
+        except Exception:
+            continue
+        if not text_content.strip():
+            continue
+        inline_entries.append({
+            "attachment_id": aid,
+            "filename": filename,
+            "content": text_content,
+            "truncated": cap_note or (len(data_bytes) > _TEXT_INLINE_SIZE_CAP_BYTES),
+        })
+
+    if not inline_entries:
+        return None
+
+    suffix = uuid.uuid4().hex[:12]
+    cid_seg = str(conversation_id or "no-cid")[:24].replace("/", "_")
+    path = f"{_VISION_INLINE_TMP_DIR}/mysql_ai_text_{cid_seg}_{suffix}.json"
+    try:
+        with open(path, "w", encoding="utf-8") as _tf:
+            json.dump(inline_entries, _tf, ensure_ascii=False)
+    except OSError:
+        return None
+    return path
+
+
+def _cleanup_text_inline(temp_path: str | None) -> None:
+    """text inline 임시 file + env cleanup."""
+    os.environ.pop("ATTACHMENT_TEXT_INLINE_PATH", None)
+    if temp_path:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+
+
+def _cleanup_orphan_conversations(conn, account_id: int) -> int:
+    """TASK-0124: 고아 대화 soft-delete.
+
+    대상: topic IS NULL + 해당 account 소유 + 생성 1시간 이상 경과 +
+          agent_runtime.core_messages 에 메시지가 0개인 대화.
+
+    실제 message count 는 PostgreSQL agent_runtime 에 있으므로
+    PG 사용 가능 시 PG 조인, 불가 시 MySQL WebConversations 상태만 체크.
+    soft-delete: WebConversations.DeletedAt = NOW(), DeletePending = 0.
+
+    Returns: 정리된 대화 수 (감사·디버깅용).
+    """
+    deleted = 0
+    try:
+        # 1. MySQL 에서 topic NULL + 1시간 이상 경과 대화 목록 추출.
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """
+            SELECT ConversationId FROM WebConversations
+            WHERE OwnerAccountId = %s
+              AND Topic IS NULL
+              AND DeletedAt IS NULL
+              AND CreatedAt < DATE_SUB(NOW(), INTERVAL 1 HOUR)
+            LIMIT 50
+            """,
+            (account_id,),
+        )
+        candidates = [str(r["ConversationId"]) for r in (cur.fetchall() or [])]
+        cur.close()
+        if not candidates:
+            return 0
+    except Exception:
+        return 0
+
+    # 2. PG agent_runtime 에서 메시지 0개인 대화 필터링.
+    no_message_cids: list[str] = candidates
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            _pg = _pg_connect()
+            with _pg.cursor() as _pgcur:
+                _ph = ", ".join(["%s"] * len(candidates))
+                _pgcur.execute(
+                    f"SELECT conversation_id, COUNT(*) AS cnt "
+                    f"FROM agent_runtime.core_messages "
+                    f"WHERE conversation_id IN ({_ph}) GROUP BY conversation_id",
+                    candidates,
+                )
+                has_messages = {str(r[0]) for r in (_pgcur.fetchall() or []) if int(r[1]) > 0}
+            _pg.close()
+            no_message_cids = [c for c in candidates if c not in has_messages]
+        except Exception:
+            pass  # PG 조회 실패 시 전체 candidates 를 orphan 으로 간주
+
+    if not no_message_cids:
+        return 0
+
+    # 3. soft-delete.
+    try:
+        del_cur = conn.cursor()
+        ph2 = ", ".join(["%s"] * len(no_message_cids))
+        del_cur.execute(
+            f"UPDATE WebConversations SET DeletedAt = NOW() "
+            f"WHERE ConversationId IN ({ph2}) AND DeletedAt IS NULL",
+            no_message_cids,
+        )
+        conn.commit()
+        deleted = del_cur.rowcount or 0
+        del_cur.close()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+    return deleted
+
+
 @app.post("/api/ask")
 async def ask(request: Request) -> JSONResponse:
     start_ts = time.time()
@@ -7210,6 +7392,22 @@ async def ask(request: Request) -> JSONResponse:
         else:
             os.environ.pop("ATTACHMENT_IDS", None)
 
+        # new_attachment_ids: 이번 요청에 새로 첨부된 파일 ID (프론트에서 source="new" 기준).
+        # agent_core 가 LLM 컨텍스트에서 신규/세션 파일을 구분해 라벨링하는 데 사용.
+        new_attachment_ids_raw = data.get("new_attachment_ids") if isinstance(data.get("new_attachment_ids"), list) else []
+        new_attachment_ids_clean: list[int] = []
+        for v in new_attachment_ids_raw[:50]:
+            try:
+                iv = int(v)
+                if iv > 0:
+                    new_attachment_ids_clean.append(iv)
+            except Exception:
+                continue
+        if new_attachment_ids_clean:
+            os.environ["NEW_ATTACHMENT_IDS"] = ",".join(str(i) for i in new_attachment_ids_clean)
+        else:
+            os.environ.pop("NEW_ATTACHMENT_IDS", None)
+
         # TASK-0107 hotfix: UploadStatus 가 'uploaded' (ingest 미완) 또는 'failed' 인
         # csv/xlsx attachment 를 /api/ask 진입 시점에 동기 ingest 해 LLM 호출 전에
         # sandbox table 이 준비되도록 한다. timeout (최대 30s) 이내 완료 못 하면
@@ -7311,6 +7509,25 @@ async def ask(request: Request) -> JSONResponse:
         else:
             os.environ.pop("ATTACHMENT_IMAGE_INLINE_PATH", None)
 
+        # TASK-0124 — text kind 첨부파일 내용 pre-fetch.
+        # SQL/코드/텍스트 파일은 sandbox ingest 대상이 아니므로 MinIO 에서 직접 읽어
+        # env ATTACHMENT_TEXT_INLINE_PATH 로 agent_core 에 전달.
+        text_inline_path: str | None = None
+        if attachment_ids_clean:
+            try:
+                text_inline_path = _prepare_text_inline_attachments(
+                    conn,
+                    int(account["id"]),
+                    attachment_ids_clean,
+                    conversation_id=conv_id,
+                )
+            except Exception:
+                text_inline_path = None
+        if text_inline_path:
+            os.environ["ATTACHMENT_TEXT_INLINE_PATH"] = text_inline_path
+        else:
+            os.environ.pop("ATTACHMENT_TEXT_INLINE_PATH", None)
+
         agent_result = await asyncio.to_thread(
             _run_agent_core,
             user_message=message,
@@ -7327,9 +7544,13 @@ async def ask(request: Request) -> JSONResponse:
         )
         # cleanup env to avoid leaking across requests.
         os.environ.pop("ATTACHMENT_IDS", None)
+        os.environ.pop("NEW_ATTACHMENT_IDS", None)
         # Sprint 2 (S2.4) — vision inline cleanup (env + 임시 file).
         _cleanup_vision_inline(vision_inline_path)
         vision_inline_path = None
+        # TASK-0124 — text inline cleanup.
+        _cleanup_text_inline(text_inline_path)
+        text_inline_path = None
 
         # Sprint 2 (S2.5) — attachment.vision.invoke audit dispatch.
         # vision_inline_count > 0 일 때만 (실제로 image 가 inline 송신된 경우).
@@ -7433,6 +7654,12 @@ async def ask(request: Request) -> JSONResponse:
         return JSONResponse(result)
     finally:
         _release_request_slot(slot_key)
+        # TASK-0124: exception 경로에서도 text inline temp file 정리.
+        try:
+            _cleanup_text_inline(locals().get("text_inline_path"))
+        except Exception:
+            pass
+        os.environ.pop("NEW_ATTACHMENT_IDS", None)
 
 
 @app.post("/api/new_conversation")
@@ -8660,22 +8887,23 @@ async def upload_conversation_attachment(
         except Exception:
             pass
 
-        # TASK-0107 Phase A.2: csv/xlsx kind 면 background ingest spawn.
-        # 비동기로 sandbox schema 생성 + sandbox table INSERT + MetaJson 갱신.
-        # ingest 결과는 LLM prompt 의 ATTACHED FILES section 에서 활용된다.
-        # 실패해도 파일 자체는 업로드된 상태로 보존 (LLM 이 metadata 만 보게 됨).
+        # TASK-0107 Phase A.2 (수정): csv/xlsx kind 면 동기 ingest.
+        # 업로드 응답 전에 sandbox schema 생성 + table INSERT + MetaJson 갱신 완료.
+        # ingest 결과는 LLM prompt 의 ATTACHED FILES section 에서 즉시 활용된다.
         if kind in ("csv", "xlsx"):
-            threading.Thread(
-                target=_ingest_attachment_background,
-                kwargs={
-                    "attachment_id": attachment_id,
-                    "conversation_id": cid,
-                    "object_key": object_key,
-                    "kind": kind,
-                },
-                name=f"sandbox-ingest-{attachment_id}",
-                daemon=True,
-            ).start()
+            _ingest_attachment_background(
+                attachment_id=attachment_id,
+                conversation_id=cid,
+                object_key=object_key,
+                kind=kind,
+            )
+            # 동기 ingest 후 최신 row 재조회 (UploadStatus='ingested' 반영)
+            try:
+                refreshed = _load_attachment_row(conn, attachment_id)
+                if refreshed:
+                    attachment_row = refreshed
+            except Exception:
+                pass
 
         # signed URL 발급 (사내망 다운로드 전용 — D13). pending 은 발급 안 함 (D21).
         signed_url: str | None = None
@@ -9053,6 +9281,13 @@ def conversations(
         [q, owner_id is not None, product_id is not None, date_from, date_to, cursor]
     )
     if not search_mode:
+        # TASK-0124: 고아 대화 (topic=NULL, 메시지 없음, 1시간 이상 경과) 자동 soft-delete.
+        # early_cid 패턴으로 생성된 후 메시지가 오지 않은 빈 대화를 정리한다.
+        # fail-open: 정리 실패는 목록 조회를 차단하지 않는다.
+        try:
+            _cleanup_orphan_conversations(conn, int(account["id"]))
+        except Exception:
+            pass
         payload = _build_conversations_payload(conn, account)
         conn.close()
         return JSONResponse(payload)
@@ -9640,6 +9875,48 @@ async def finalize_request(request: Request) -> JSONResponse:
     return JSONResponse({"conversation_id": conversation_id, "run_id": run_id, "output": "즉시 답변을 요청합니다."})
 
 
+def _load_latest_run_id_from_steps(conversation_id: str) -> tuple[str, bool]:
+    """agent_runtime.steps 에서 가장 최근 run_id 와 활성 여부를 반환.
+    KV 에 status 가 없을 때 fallback 으로 사용. (최근 3분 내 step 이 있으면 processing)
+    Returns (run_id, is_recent) — run_id 없으면 ("", False).
+    """
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") != "postgres":
+        return "", False
+    try:
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+        with pg.cursor() as pgcur:
+            pgcur.execute(
+                """
+SELECT run_id, MAX(created_at) AS last_step_at
+FROM agent_runtime.steps
+WHERE conversation_id = %s
+GROUP BY run_id
+ORDER BY last_step_at DESC
+LIMIT 1
+                """,
+                (conversation_id,),
+            )
+            row = pgcur.fetchone()
+        pg.close()
+        if not row:
+            return "", False
+        run_id = str(row[0] or "")
+        last_step_at = row[1]
+        import datetime
+        if last_step_at:
+            if hasattr(last_step_at, "tzinfo") and last_step_at.tzinfo is None:
+                last_step_at = last_step_at.replace(tzinfo=datetime.timezone.utc)
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            age_seconds = (now_utc - last_step_at).total_seconds()
+            is_recent = age_seconds < 180
+        else:
+            is_recent = False
+        return run_id, is_recent
+    except Exception:
+        return "", False
+
+
 @app.get("/api/progress")
 def progress(
     request: Request,
@@ -9663,6 +9940,14 @@ def progress(
             conn.close()
             return empty
         status, status_at, run_id = _load_progress_status(conn, cid)
+        # KV 에 run_id 가 없는 경우 steps 테이블에서 최신 run 을 fallback 조회.
+        fallback_status = ""
+        if not run_id:
+            fallback_run_id, is_recent = _load_latest_run_id_from_steps(cid)
+            if fallback_run_id:
+                run_id = fallback_run_id
+                fallback_status = "processing" if is_recent else "done"
+                status = fallback_status
         next_after_step = max(0, int(after_step or 0))
         if not run_id or str(client_run_id or "").strip() != run_id:
             next_after_step = 0
@@ -9672,7 +9957,10 @@ def progress(
             if run_id else []
         )
         # TASK-0061 Phase 3: stale 판정 — processing 이지만 만료 시간 동안 갱신 없음.
-        display_status, is_stale = _compute_display_status(conn, cid, status, status_at, run_id)
+        if fallback_status:
+            display_status, is_stale = fallback_status, False
+        else:
+            display_status, is_stale = _compute_display_status(conn, cid, status, status_at, run_id)
         conn.close()
     except Exception:
         try:

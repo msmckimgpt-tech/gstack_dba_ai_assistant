@@ -11,8 +11,8 @@ source_of_truth: true
 ## 1. Current Status
 - State: in_progress
 - Owner: AI
-- Priority: minor (TASK-0124 — 관리 콘솔 RBAC 권한 정합 및 폐기 권한 정리)
-- Last Updated: 2026-05-28 (TASK-0124 — sales 롤 conversation.delete.own 추가 + conversation.suggestions.read 폐기 + pending 롤 conversation.file.read.own 제거 + _cleanup_deprecated_role_permissions() 신설)
+- Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
+- Last Updated: 2026-05-29 (ai/claude/remediation-cutover-hardening 병합: TASK-0124 관리 콘솔 RBAC 권한 정합 및 폐기 권한 정리 + TASK-0125[브랜치 원번호 TASK-0123] UX 2차 보완 7개 항목 — 입력창 높이 일치 + 파일 즉시 업로드 + 말풍선 첨부파일 표시 + 첨부파일 다운로드 + 공유뷰 CSV 다운로드 + LLM step/thinking 표시 + 첫 대화 상태 dot 갱신)
 
 ## 2. Task Queue
 
@@ -2853,3 +2853,7 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 ### TASK-0122 — 외부 LLM 수신 동의 UI·권한·로직 제거 (2026-05-28)
 - [x] REQ-20260528-0122 (**Minor** §12.3 — 사용자 프로필 > 보안 및 계정 > 외부 LLM 수신 동의 섹션 전면 제거. 서비스 사용 = 묵시 동의로 간주). `index.html` `profileConsentSection` DOM 제거. `app.js` `_CONSENT_PROVIDERS` / `_CONSENT_GROUPS` / `_consentRowsCache` / `_isConsentGroupGranted` / `_loadConsentRows` / `_renderConsentSectionMarkup` / `_renderConsentSection` / `_handleConsentToggle` / `_bindConsentSectionEvents` 함수·변수 전체 제거 + `openProfile` 내 렌더링 호출 + 이벤트 바인딩 제거. `styles.css` `.consent-providers` / `.consent-provider-block` 등 consent CSS 블록 제거. `app.py` `_ensure_web_account_consents_schema` 함수·호출 2곳 제거 / `_has_active_consent` 함수 제거 / `_prepare_vision_inline_images` D11 consent gate 분기 + 409 응답 제거 (vision pre-fetch D13 로직 보존, 반환 4-tuple → 3-tuple) / `GET|POST /api/account/consents`, `DELETE /api/account/consents/{id}` 3 엔드포인트 제거 / `attachment.consent.grant|revoke` audit 핸들러 제거 / `_model_to_consent_provider` → `_model_to_llm_provider` 이름 변경 (audit 용도 유지). py_compile + node --check PASS. DB schema (`WebAccountConsents`) 는 기존 데이터 보존 목적으로 DROP 안 함 — 신규 row 추가만 없어지는 것.
 - [x] commit + push + main merge
+
+### TASK-0123 — UX 2차 보완 7개 항목 구현 (2026-05-28)
+- [x] REQ-20260528-0123 (**Minor** §12.3 — frontend-only UX 보완, backend / RBAC / DB schema / endpoint contract 무변경). 7개 항목 일괄 구현: **(1) 입력창 높이 일치** — `.composer-box` padding `9px→7px` 로 축소 (프로필 버튼 48px = composer textarea 34px + padding 7×2, 정렬 맞춤). **(2) 파일 즉시 업로드 + ingest 병렬** — `_uploadComposerAttachment()` lazy 분기 완전 재작성: staged 방식 대신 파일 선택 즉시 `/api/new_conversation` 호출로 cid 발급 + 업로드 실행 + `state.composerAttachments.lazyConvCreating` 경쟁 방지 플래그 추가. 대화 목록에 임시 "(파일 첨부 중)" 항목 추가 + 렌더 갱신. **(3) 말풍선 첨부파일 표시** — 업로드 응답의 `signed_url` 을 bucket item 에 보존 + `_sendAttachmentSnapshot` 에 `signed_url` 포함 + `refreshWorkspace()` 후 `lastUserMsg._attachments = _sendAttachmentSnapshot` 재주입 (loadHistory 로 attachments 필드 소실 방지). **(4) 첨부파일 다운로드** — 말풍선 attach chip 에 `signed_url` 존재 시 `has-download` class + click 핸들러 (presigned GET 다운로드). styles.css 에 `.attach-chip-dl` + hover 효과 추가. **(5) 공유뷰 CSV 다운로드** — `share.js` 에 `downloadRowsAsCsv()` helper (BOM UTF-8, RFC4180 escape) + `renderAssistantDetails()` 내 SQL 결과표 하단에 "CSV 다운로드" 버튼 추가. `share.css` 에 `.share-csv-download-btn` 스타일. (공유뷰 file attachment 는 backend 가 permission-gated 로 숨김 — SQL 결과 CSV 로 대체). **(6) LLM step/thinking 표시** — `renderProgress()` 내 `progressCardEl.open = true` + `renderPendingAssistantBubble()` 의 `<details>` step 항목 `detailsEl.open = true` (step 도착 즉시 자동 펼침). **(7) 첫 대화 상태 dot 갱신** — `sendPrompt()` 의 lazy-create 성공 path 에서 `startProgressPolling` 직전 `state.conversations` 에 신규 conv 최소 항목 추가 + `renderConversationList()` 호출 → polling 첫 tick 에서 DOM 요소가 존재해 dot 갱신 가능. node --check PASS. worktree `ux-compact-redesign` (branch `ai/root/ux-compact-redesign`), commit `095f9b1`.
+- [x] docker cp 배포 (repo-web-1:/app/web/static/ — app.js, share.js, share.css, styles.css)

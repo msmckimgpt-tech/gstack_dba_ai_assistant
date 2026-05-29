@@ -135,6 +135,9 @@ const state = {
   // sendPrompt() 시작 시 user message + pending bubble 즉시 prepend, polling step 으로 갱신,
   // /api/ask 응답 또는 attach 완료 시 실 assistant message 로 replace.
   pendingBubble: null,  // null | { startedAt, runId, steps, status, displayStatus, isStale, error, userMessage }
+  lastCompletedRunSteps: null,  // null | { steps, runId, convId } — 완료된 run 의 단계 목록 (단계 보기 버튼용)
+  messageAttachments: {},  // { messageId: attachment[] } — refreshWorkspace 이후에도 칩 유지용 persistent 맵
+  stepSidePanelConvId: null,
   elapsedTimer: null,
   // TASK-0061 Phase 3 (REQ-20260515-0005): stale 감지 toast 가 같은 대화에서 반복 노출되지 않도록 1 회 가드.
   staleToastShownFor: new Set(),
@@ -179,7 +182,10 @@ const state = {
     byConv: {},
     uploadingCount: 0,
     nextLocalId: -1,
+    lazyConvCreating: false,
   },
+  // UX-COMPACT: 대화목록 날짜 그룹 접힘 상태 (Set of dateKey | "__others__")
+  collapsedDateGroups: new Set(),
 };
 
 // TASK-0082: 글로벌 prefix 만 유지 — 실제 sentinel 은 _newPendingSentinel() 가 각 lazy-create 마다 unique 생성.
@@ -193,6 +199,20 @@ function _newPendingSentinel() {
 }
 
 const PRODUCT_PREF_LS_KEY = "mad.productPref.v1";
+const COLLAPSED_GROUPS_LS_KEY = "mad.collapsedGroups.v1";
+const SEND_MODE_LS_KEY = "mad.sendMode.v1";
+
+// Restore collapsed groups from localStorage
+try {
+  const _cgRaw = localStorage.getItem(COLLAPSED_GROUPS_LS_KEY);
+  if (_cgRaw) {
+    const _cgArr = JSON.parse(_cgRaw);
+    if (Array.isArray(_cgArr)) state.collapsedDateGroups = new Set(_cgArr);
+  }
+} catch (_) {}
+
+// Restore send mode from localStorage
+state.sendMode = localStorage.getItem(SEND_MODE_LS_KEY) === "enter" ? "enter" : "ctrl+enter";
 
 // TASK-0073 Phase C: audit group 추가 — backend PERMISSION_DEFINITIONS 의 group="audit" 정합.
 // TASK-0095: settings group 추가 — 전역 시스템 프롬프트 권한 그룹.
@@ -636,12 +656,11 @@ function renderProductChip() {
   const products = Array.isArray(state.products) ? state.products : [];
   const pinned = products.find((p) => Number(p.id) === Number(state.pinnedProductId));
   const fullLabel = mode === "auto"
-    ? "auto · 자동 (제품 미선택)"
-    : (pinned ? `${pinned.name} (${pinned.product_key})` : "auto · 자동 (제품 미선택)");
-  // chip 본체 label 은 compact (chip width 보존)
+    ? "Product · 제품"
+    : (pinned ? `${pinned.name} (${pinned.product_key})` : "Product · 제품");
   const compactLabel = mode === "auto"
-    ? "auto"
-    : (pinned ? pinned.product_key : "auto");
+    ? "Product"
+    : (pinned ? pinned.product_key : "Product");
   const labelEl = document.getElementById("productChipLabel");
   if (labelEl) labelEl.textContent = compactLabel;
   chipEl.setAttribute("aria-label", `이 대화의 제품 선택, 현재 ${fullLabel}`);
@@ -677,7 +696,7 @@ function renderProductDropupMenu() {
   menu.appendChild(buildProductDropupItem({
     mode: "auto",
     pid: null,
-    label: "auto · 자동 (제품 미선택)",
+    label: "Product · 제품",
     selected: mode === "auto",
   }));
 
@@ -1156,6 +1175,43 @@ async function handlePasswordChange(event) {
   }
 }
 
+// UX-COMPACT: 날짜 그룹 키 계산 — today / yesterday / YYYY-MM-DD / __other__
+function _getDateGroupKey(dateStr) {
+  if (!dateStr) return "__other__";
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "__other__";
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today.getTime() - 86400000);
+  const dDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  if (dDay.getTime() === today.getTime()) return "__today__";
+  if (dDay.getTime() === yesterday.getTime()) return "__yesterday__";
+  return dDay.toISOString().slice(0, 10);
+}
+
+// UX-COMPACT: 날짜 키를 표시 라벨로 변환
+function _formatDateGroupLabel(dateKey) {
+  if (dateKey === "__today__") return "오늘";
+  if (dateKey === "__yesterday__") return "어제";
+  if (dateKey === "__other__") return "날짜 미확인";
+  const d = new Date(dateKey);
+  if (isNaN(d.getTime())) return dateKey;
+  const now = new Date();
+  const diffDays = Math.floor((now - d) / 86400000);
+  const days = ["일", "월", "화", "수", "목", "금", "토"];
+  if (diffDays > 30 && d.getFullYear() !== now.getFullYear()) {
+    return `${d.getFullYear()}년 ${d.getMonth() + 1}월`;
+  }
+  if (diffDays > 30) return `${d.getMonth() + 1}월`;
+  return `${d.getMonth() + 1}월 ${d.getDate()}일 (${days[d.getDay()]})`;
+}
+
+function _saveCollapsedGroups() {
+  try {
+    localStorage.setItem(COLLAPSED_GROUPS_LS_KEY, JSON.stringify(Array.from(state.collapsedDateGroups)));
+  } catch (_) {}
+}
+
 function renderConversationList() {
   conversationListEl.innerHTML = "";
   const hasDraftPending = Boolean(state.pendingNewConversation) && !state.pendingConversationEntries.has(state.pendingSentinel);
@@ -1175,8 +1231,7 @@ function renderConversationList() {
     else others.push(item);
   });
 
-  // TASK-0048: pending 새 대화 placeholder. cid 가 아직 없으므로 클릭 비활성, 메타 라벨만 보여준다.
-  // TASK-0085 후: 사용자가 prompt 미송신한 *작성 중* 상태에만 표시. 송신 후엔 in-flight entry 가 별도 표시.
+  // TASK-0048: 작성 중 placeholder — compact 한 줄
   const appendPendingItem = () => {
     const button = document.createElement("button");
     button.type = "button";
@@ -1184,35 +1239,18 @@ function renderConversationList() {
     button.setAttribute("aria-disabled", "true");
     button.disabled = true;
     button.title = "첫 메시지를 입력하면 대화가 만들어집니다.";
-
-    const titleRow = document.createElement("div");
-    titleRow.className = "conv-item-title-row";
-    const titleEl = document.createElement("div");
+    const dot = document.createElement("span");
+    dot.className = "conv-dot";
+    const titleEl = document.createElement("span");
     titleEl.className = "conv-item-title";
     titleEl.textContent = "새 대화 (작성 중)";
-    titleRow.appendChild(titleEl);
-    const badge = document.createElement("span");
-    badge.className = "conv-owner-badge is-own";
-    badge.textContent = "내";
-    titleRow.appendChild(badge);
-
-    const metaEl = document.createElement("div");
-    metaEl.className = "conv-item-meta";
-    const dateEl = document.createElement("span");
-    dateEl.textContent = "첫 메시지를 입력하세요";
-    metaEl.appendChild(dateEl);
-
-    button.append(titleRow, metaEl);
+    button.append(dot, titleEl);
     conversationListEl.appendChild(button);
   };
 
-  // TASK-0085: optimistic in-flight pending entries. lazy-create 송신 직후 backend 응답 도착 전까지
-  // 사이드바에 즉시 표시. 클릭 시 그 sentinel 컨텍스트로 swap — pendingBubble 도 entry metadata 기반
-  // 으로 복원해 사용자가 작업 step 현황을 확인 가능. 응답 도착 시 sendPrompt 의 success/catch path 가
-  // 자기 sentinel entry 만 remove.
+  // TASK-0085: in-flight pending entries — compact 한 줄
   const appendInFlightPendingItems = () => {
     const entries = Array.from(state.pendingConversationEntries.values());
-    // started_at desc — 가장 최근 진입한 entry 가 상단.
     entries.sort((a, b) => Number(b.started_at || 0) - Number(a.started_at || 0));
     entries.forEach((entry) => {
       const button = document.createElement("button");
@@ -1223,35 +1261,16 @@ function renderConversationList() {
       button.className = classes.join(" ");
       button.dataset.pendingSentinel = entry.sentinel;
       button.title = entry.status === "failed"
-        ? "전송에 실패했습니다. 사이드바에서 잠시 후 자동 정리됩니다."
-        : "응답을 기다리는 중입니다. 클릭하면 진행 상황을 확인할 수 있습니다.";
-
-      const titleRow = document.createElement("div");
-      titleRow.className = "conv-item-title-row";
-      const titleEl = document.createElement("div");
+        ? "전송에 실패했습니다."
+        : "응답을 기다리는 중입니다.";
+      const dot = document.createElement("span");
+      dot.className = "conv-dot is-pending";
+      const titleEl = document.createElement("span");
       titleEl.className = "conv-item-title";
-      // prompt 첫 60 자를 라벨로. grapheme-safe slice 는 아니지만 본 cycle scope 충분.
-      const labelText = (entry.message || "새 대화").slice(0, 60);
-      titleEl.textContent = labelText;
-      titleRow.appendChild(titleEl);
-      const badge = document.createElement("span");
-      badge.className = "conv-owner-badge is-own";
-      badge.textContent = "내";
-      titleRow.appendChild(badge);
-
-      const metaEl = document.createElement("div");
-      metaEl.className = "conv-item-meta";
-      const statusEl = document.createElement("span");
-      statusEl.className = "conv-pending-status";
-      statusEl.textContent = entry.status === "failed" ? "전송 실패" : "응답 대기 중…";
-      metaEl.appendChild(statusEl);
-
-      button.append(titleRow, metaEl);
-      // 클릭 시 sentinel 컨텍스트로 swap. failed entry 는 클릭 비활성.
+      titleEl.textContent = (entry.message || "새 대화").slice(0, 60);
+      button.append(dot, titleEl);
       if (entry.status !== "failed") {
-        button.addEventListener("click", () => {
-          _switchToPendingConversationContext(entry);
-        });
+        button.addEventListener("click", () => _switchToPendingConversationContext(entry));
       } else {
         button.disabled = true;
         button.setAttribute("aria-disabled", "true");
@@ -1260,137 +1279,225 @@ function renderConversationList() {
     });
   };
 
-  const renderGroup = (label, items, prependFn = null) => {
-    if (!items.length && !prependFn) return;
-    const header = document.createElement("div");
-    header.className = "conv-group-title";
-    header.textContent = label;
-    conversationListEl.appendChild(header);
+  // UX-COMPACT: 대화 항목 한 줄 컴팩트 빌더 — dot + title + date-tip(hover) + menu
+  const ownVisibleIds = own.map((it) => String(it.id));
+  const buildCompactItem = (item, visibleIdx, ownIds) => {
+    const mine = isOwnConversation(item);
+    const button = document.createElement("button");
+    button.type = "button";
+    const classes = ["conv-item", mine ? "is-own" : "is-other"];
+    if (item.id === state.activeConversationId) classes.push("is-active");
+    if (mine && state.conversationSelected.has(String(item.id))) classes.push("is-multi-selected");
+    button.className = classes.join(" ");
+    button.dataset.conversationId = String(item.id);
+    if (mine) button.dataset.idx = String(visibleIdx);
 
-    if (prependFn) prependFn();
-
-    // TASK-0061 Phase 8 (REQ-20260515-0010 / AC-0101): own 그룹 안의 visible 순서 = Shift range 의 기준.
-    const ownVisibleIds = label === "내 대화" ? items.map((it) => String(it.id)) : [];
-    items.forEach((item, visibleIdx) => {
-      const mine = isOwnConversation(item);
-      const button = document.createElement("button");
-      button.type = "button";
-      const classes = ["conv-item", mine ? "is-own" : "is-other"];
-      if (item.id === state.activeConversationId) classes.push("is-active");
-      if (mine && state.conversationSelected.has(String(item.id))) classes.push("is-multi-selected");
-      button.className = classes.join(" ");
-      button.dataset.conversationId = String(item.id);
-      if (mine) button.dataset.idx = String(visibleIdx);
-      button.addEventListener("click", (ev) => {
-        if (mine && can("conversation.delete.own") && (ev.ctrlKey || ev.metaKey || ev.shiftKey)) {
-          // TASK-0062 (REQ-20260515-0011): Ctrl/Meta = 토글, Shift = range. 일반 click 은 선택 해제.
-          ev.preventDefault();
-          ev.stopPropagation();
-          if (ev.shiftKey && state.conversationLastClickIdx >= 0 && ownVisibleIds.length) {
-            const from = Math.min(state.conversationLastClickIdx, visibleIdx);
-            const to = Math.max(state.conversationLastClickIdx, visibleIdx);
-            for (let i = from; i <= to; i += 1) {
-              state.conversationSelected.add(String(ownVisibleIds[i]));
-            }
-          } else {
-            if (state.conversationSelected.has(String(item.id))) {
-              state.conversationSelected.delete(String(item.id));
-            } else {
-              state.conversationSelected.add(String(item.id));
-            }
-            state.conversationLastClickIdx = visibleIdx;
-          }
-          renderConversationList();
-          renderConversationBulkBar();
-          return;
-        }
-        // TASK-0062: 일반 click — 단일 선택 + 다중 선택 set 비우기.
-        state.conversationSelected.clear();
-        state.conversationLastClickIdx = -1;
-        selectConversation(item.id);
-      });
-
-      const titleRow = document.createElement("div");
-      titleRow.className = "conv-item-title-row";
-
-      const titleEl = document.createElement("div");
-      titleEl.className = "conv-item-title";
-      titleEl.textContent = item.topic || "새 대화";
-      titleRow.appendChild(titleEl);
-
-      const badge = document.createElement("span");
-      badge.className = `conv-owner-badge ${mine ? "is-own" : "is-other"}`;
-      badge.textContent = mine ? "내" : (item.owner_username || "타 계정");
-      if (!mine && item.owner_username) {
-        badge.title = `소유자: ${item.owner_username}`;
-      }
-      titleRow.appendChild(badge);
-
-      const metaEl = document.createElement("div");
-      metaEl.className = "conv-item-meta";
-
-      // TASK-0061 Phase 3 (REQ-20260515-0005 / AC-0082): stale_error 가 들어오면 붉은 dot + tooltip.
-      const normalizedStatus = String(item.display_status || item.status || "").trim().toLowerCase();
-      const dot = document.createElement("span");
-      dot.className = `conv-dot ${normalizedStatus ? `is-${normalizedStatus}` : ""}`.trim();
-      if (normalizedStatus === "stale_error") {
-        const lastActivity = item.last_activity_at || item.created_at || "";
-        dot.title = lastActivity
-          ? `작업이 중단된 것으로 보입니다 — 마지막 활동: ${formatDateTime(lastActivity)}`
-          : "작업이 중단된 것으로 보입니다";
-      }
-
-      const dateEl = document.createElement("span");
-      dateEl.textContent = formatDateTime(item.last_activity_at || item.created_at);
-
-      metaEl.append(dot, dateEl);
-      if (!mine && item.owner_username) {
-        const ownerEl = document.createElement("span");
-        ownerEl.className = "conv-owner";
-        ownerEl.textContent = item.owner_username;
-        metaEl.append(ownerEl);
-      }
-      button.append(titleRow, metaEl);
-
-      // REQ-20260518-0001: per-conversation "···" menu trigger.
-      // hover 시 fade-in, active 시 상시 표시 (CSS 처리). click 은 conv-item click 과 분리되어 menu 만 토글.
-      const menuTrigger = document.createElement("span");
-      menuTrigger.className = "conv-item-menu-trigger";
-      menuTrigger.setAttribute("role", "button");
-      menuTrigger.setAttribute("tabindex", "0");
-      menuTrigger.setAttribute("aria-haspopup", "menu");
-      menuTrigger.setAttribute("aria-expanded", "false");
-      menuTrigger.setAttribute("aria-label", "대화 메뉴 열기");
-      menuTrigger.textContent = "···";
-      const toggleMenu = (ev) => {
+    button.addEventListener("click", (ev) => {
+      if (mine && can("conversation.delete.own") && (ev.ctrlKey || ev.metaKey || ev.shiftKey)) {
         ev.preventDefault();
         ev.stopPropagation();
-        const existing = document.getElementById("convItemMenu");
-        if (existing && existing.dataset.conversationId === String(item.id)) {
-          closeConversationItemMenu();
+        if (ev.shiftKey && state.conversationLastClickIdx >= 0 && ownIds.length) {
+          const from = Math.min(state.conversationLastClickIdx, visibleIdx);
+          const to = Math.max(state.conversationLastClickIdx, visibleIdx);
+          for (let i = from; i <= to; i += 1) state.conversationSelected.add(String(ownIds[i]));
         } else {
-          openConversationItemMenu(String(item.id), menuTrigger);
+          if (state.conversationSelected.has(String(item.id))) {
+            state.conversationSelected.delete(String(item.id));
+          } else {
+            state.conversationSelected.add(String(item.id));
+          }
+          state.conversationLastClickIdx = visibleIdx;
         }
-      };
-      menuTrigger.addEventListener("click", toggleMenu);
-      menuTrigger.addEventListener("keydown", (ev) => {
-        if (ev.key === "Enter" || ev.key === " ") toggleMenu(ev);
-      });
-      button.appendChild(menuTrigger);
-
-      conversationListEl.appendChild(button);
+        renderConversationList();
+        renderConversationBulkBar();
+        return;
+      }
+      state.conversationSelected.clear();
+      state.conversationLastClickIdx = -1;
+      selectConversation(item.id);
     });
+
+    // 상태 dot
+    const normalizedStatus = String(item.display_status || item.status || "").trim().toLowerCase();
+    const dot = document.createElement("span");
+    dot.className = `conv-dot${normalizedStatus ? ` is-${normalizedStatus}` : ""}`;
+    if (normalizedStatus === "stale_error") {
+      const lastActivity = item.last_activity_at || item.created_at || "";
+      dot.title = lastActivity
+        ? `작업이 중단된 것으로 보입니다 — 마지막 활동: ${formatDateTime(lastActivity)}`
+        : "작업이 중단된 것으로 보입니다";
+    }
+
+    // 제목
+    const titleEl = document.createElement("span");
+    titleEl.className = "conv-item-title";
+    titleEl.textContent = item.topic || "새 대화";
+
+    // 날짜 tooltip (hover 시만 표시)
+    const dateTip = document.createElement("span");
+    dateTip.className = "conv-item-date-tip";
+    dateTip.textContent = formatDateTime(item.last_activity_at || item.created_at);
+
+    button.append(dot, titleEl, dateTip);
+
+    // "···" menu trigger
+    const menuTrigger = document.createElement("span");
+    menuTrigger.className = "conv-item-menu-trigger";
+    menuTrigger.setAttribute("role", "button");
+    menuTrigger.setAttribute("tabindex", "0");
+    menuTrigger.setAttribute("aria-haspopup", "menu");
+    menuTrigger.setAttribute("aria-expanded", "false");
+    menuTrigger.setAttribute("aria-label", "대화 메뉴 열기");
+    menuTrigger.textContent = "···";
+    const toggleMenu = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const existing = document.getElementById("convItemMenu");
+      if (existing && existing.dataset.conversationId === String(item.id)) {
+        closeConversationItemMenu();
+      } else {
+        openConversationItemMenu(String(item.id), menuTrigger);
+      }
+    };
+    menuTrigger.addEventListener("click", toggleMenu);
+    menuTrigger.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") toggleMenu(ev);
+    });
+    button.appendChild(menuTrigger);
+    return button;
   };
 
-  // TASK-0085: 내 대화 그룹의 prepend 에 (1) in-flight pending entries (응답 대기 중) +
-  // (2) 작성 중 placeholder 를 같이 표시. 두 가지가 모두 있을 수 있음 — in-flight 가 위, 작성 중이 아래.
-  const combinedPrepend = (hasInFlightPending || hasDraftPending) ? () => {
-    if (hasInFlightPending) appendInFlightPendingItems();
-    if (hasDraftPending) appendPendingItem();
-  } : null;
-  renderGroup("내 대화", own, combinedPrepend);
-  renderGroup(`타 계정 대화 (${others.length})`, others);
-  // TASK-0061 Phase 8: list 갱신 시 bulk bar 도 같이 동기화 + 사라진 대화 제거.
+  // --- 내 대화: pending 항목 먼저, 이후 날짜 기준 그룹 ---
+  if (hasInFlightPending) appendInFlightPendingItems();
+  if (hasDraftPending) appendPendingItem();
+
+  // 날짜별 그룹화
+  const dateGroups = new Map();
+  own.forEach((item) => {
+    const key = _getDateGroupKey(item.last_activity_at || item.created_at);
+    if (!dateGroups.has(key)) dateGroups.set(key, []);
+    dateGroups.get(key).push(item);
+  });
+
+  // 최신 날짜 우선 정렬 (today → yesterday → YYYY-MM-DD desc → __other__)
+  const sortedDateKeys = Array.from(dateGroups.keys()).sort((a, b) => {
+    const rank = { "__today__": 0, "__yesterday__": 1, "__other__": 999 };
+    const ra = rank[a] ?? 2;
+    const rb = rank[b] ?? 2;
+    if (ra !== rb) return ra - rb;
+    return b.localeCompare(a);
+  });
+
+  sortedDateKeys.forEach((dateKey) => {
+    const groupItems = dateGroups.get(dateKey);
+    const isCollapsed = state.collapsedDateGroups.has(dateKey);
+
+    const header = document.createElement("div");
+    header.className = `conv-date-group-header${isCollapsed ? " is-collapsed" : ""}`;
+    header.setAttribute("role", "button");
+    header.setAttribute("aria-expanded", String(!isCollapsed));
+    header.dataset.dateKey = dateKey;
+
+    const labelSpan = document.createElement("span");
+    labelSpan.textContent = _formatDateGroupLabel(dateKey);
+    const chevron = document.createElement("span");
+    chevron.className = "conv-date-group-chevron";
+    header.append(labelSpan, chevron);
+
+    header.addEventListener("click", () => {
+      if (state.collapsedDateGroups.has(dateKey)) {
+        state.collapsedDateGroups.delete(dateKey);
+      } else {
+        state.collapsedDateGroups.add(dateKey);
+      }
+      _saveCollapsedGroups();
+      renderConversationList();
+    });
+    conversationListEl.appendChild(header);
+
+    if (!isCollapsed) {
+      groupItems.forEach((item) => {
+        const idx = ownVisibleIds.indexOf(String(item.id));
+        conversationListEl.appendChild(buildCompactItem(item, idx, ownVisibleIds));
+      });
+    }
+  });
+
+  // --- 타 계정 대화: owner별 그룹화, 최신 activity 순 정렬 ---
+  if (others.length) {
+    const othersKey = "__others__";
+    const othersCollapsed = state.collapsedDateGroups.has(othersKey);
+    const othersHeader = document.createElement("div");
+    othersHeader.className = `conv-group-title conv-group-collapsible${othersCollapsed ? " is-collapsed" : ""}`;
+    othersHeader.setAttribute("role", "button");
+    othersHeader.setAttribute("aria-expanded", String(!othersCollapsed));
+
+    const labelSpan = document.createElement("span");
+    labelSpan.textContent = "타 계정 대화";
+    const chevron = document.createElement("span");
+    chevron.className = "conv-date-group-chevron";
+    othersHeader.append(labelSpan, chevron);
+
+    othersHeader.addEventListener("click", () => {
+      if (state.collapsedDateGroups.has(othersKey)) {
+        state.collapsedDateGroups.delete(othersKey);
+      } else {
+        state.collapsedDateGroups.add(othersKey);
+      }
+      _saveCollapsedGroups();
+      renderConversationList();
+    });
+    conversationListEl.appendChild(othersHeader);
+
+    if (!othersCollapsed) {
+      // owner별 그룹화
+      const ownerMap = new Map();
+      others.forEach((item) => {
+        const owner = item.owner_username || "(알 수 없음)";
+        if (!ownerMap.has(owner)) ownerMap.set(owner, []);
+        ownerMap.get(owner).push(item);
+      });
+      // 각 그룹의 최신 activity 기준 내림차순 정렬
+      const sortedOwners = Array.from(ownerMap.keys()).sort((a, b) => {
+        const aMax = Math.max(...ownerMap.get(a).map((i) => new Date(i.last_activity_at || i.created_at || 0).getTime()));
+        const bMax = Math.max(...ownerMap.get(b).map((i) => new Date(i.last_activity_at || i.created_at || 0).getTime()));
+        return bMax - aMax;
+      });
+      sortedOwners.forEach((owner) => {
+        const ownerKey = `__owner__${owner}`;
+        const ownerCollapsed = state.collapsedDateGroups.has(ownerKey);
+        const ownerItems = ownerMap.get(owner);
+        // owner 서브 헤더
+        const ownerHeader = document.createElement("div");
+        ownerHeader.className = `conv-date-group-header conv-owner-header${ownerCollapsed ? " is-collapsed" : ""}`;
+        ownerHeader.setAttribute("role", "button");
+        ownerHeader.setAttribute("aria-expanded", String(!ownerCollapsed));
+        ownerHeader.dataset.dateKey = ownerKey;
+        const ownerLabel = document.createElement("span");
+        ownerLabel.textContent = owner;
+        const ownerChevron = document.createElement("span");
+        ownerChevron.className = "conv-date-group-chevron";
+        ownerHeader.append(ownerLabel, ownerChevron);
+        ownerHeader.addEventListener("click", () => {
+          if (state.collapsedDateGroups.has(ownerKey)) {
+            state.collapsedDateGroups.delete(ownerKey);
+          } else {
+            state.collapsedDateGroups.add(ownerKey);
+          }
+          _saveCollapsedGroups();
+          renderConversationList();
+        });
+        conversationListEl.appendChild(ownerHeader);
+        if (!ownerCollapsed) {
+          ownerItems.forEach((item, idx) => {
+            conversationListEl.appendChild(buildCompactItem(item, idx, []));
+          });
+        }
+      });
+    }
+  }
+
+  // TASK-0061 Phase 8: bulk bar 동기화
   const visibleOwnIds = new Set(own.map((it) => String(it.id)));
   state.conversationSelected = new Set(
     Array.from(state.conversationSelected).filter((id) => visibleOwnIds.has(String(id)))
@@ -2007,6 +2114,61 @@ function renderMessages() {
       if (details) {
         bubble.appendChild(details);
       }
+      // meta.steps 가 있는 모든 assistant 말풍선에 "단계 보기" 버튼 부착.
+      const msgMetaSteps = Array.isArray(message.meta?.steps) ? message.meta.steps : [];
+      if (msgMetaSteps.length && !state.pendingBubble) {
+        const stepsBtn = document.createElement("button");
+        stepsBtn.type = "button";
+        stepsBtn.className = "bubble-steps-btn";
+        stepsBtn.textContent = `단계 보기 (${msgMetaSteps.length})`;
+        const stepsSource = { steps: msgMetaSteps, runId: String(message.meta?.run_id || ""), convId: state.activeConversationId };
+        stepsBtn.addEventListener("click", () => openStepSidePanel(stepsSource));
+        bubble.appendChild(stepsBtn);
+      }
+    }
+
+    // UX-COMPACT: 사용자 메시지 버블에 첨부 파일 목록 표시.
+    // 소스 우선순위: (1) message._attachments (현 세션 인젝션), (2) messageAttachments 맵 (새로고침 후 유지).
+    const _displayAttachments = (Array.isArray(message._attachments) && message._attachments.length)
+      ? message._attachments
+      : (message.id ? (state.messageAttachments[String(message.id)] || null) : null);
+    if (role === "user" && _displayAttachments && _displayAttachments.length) {
+      const attachRow = document.createElement("div");
+      attachRow.className = "message-bubble-attachments";
+      _displayAttachments.forEach((att) => {
+        const chip = document.createElement("span");
+        chip.className = "message-bubble-attach-chip";
+        if (att.signed_url) {
+          chip.classList.add("has-download");
+          chip.title = "클릭하여 다운로드";
+          chip.addEventListener("click", () => {
+            const a = document.createElement("a");
+            a.href = att.signed_url;
+            a.download = att.name || "파일";
+            a.rel = "noopener";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+          });
+        }
+        const nameEl = document.createElement("span");
+        nameEl.className = "attach-chip-name";
+        nameEl.textContent = att.name || "파일";
+        const sizeEl = document.createElement("span");
+        sizeEl.className = "attach-chip-size";
+        const sizeKb = Math.max(1, Math.round((Number(att.size) || 0) / 1024));
+        sizeEl.textContent = `${sizeKb} KB`;
+        const parts = [nameEl, sizeEl];
+        if (att.signed_url) {
+          const dlIcon = document.createElement("span");
+          dlIcon.className = "attach-chip-dl";
+          dlIcon.textContent = "↓";
+          parts.push(dlIcon);
+        }
+        chip.append(...parts);
+        attachRow.appendChild(chip);
+      });
+      bubble.appendChild(attachRow);
     }
 
     // 말풍선 단위 분기 / 공유 버튼.
@@ -2057,6 +2219,27 @@ function renderMessages() {
     row.append(meta, bubble);
     messageLogEl.appendChild(row);
   });
+
+  // 마지막 assistant 말풍선에 lastCompletedRunSteps 기반 "단계 보기" 버튼 보충.
+  // meta.steps 없는 최신 run (현 세션에서 막 완료된 것) 을 위한 fallback.
+  if (!state.pendingBubble) {
+    const cr = state.lastCompletedRunSteps;
+    if (cr && cr.steps && cr.steps.length && cr.convId === state.activeConversationId) {
+      const allMsgRows = messageLogEl.querySelectorAll("article.message.is-assistant:not(.is-pending)");
+      const lastMsgRow = allMsgRows[allMsgRows.length - 1];
+      if (lastMsgRow) {
+        const lastMsgBubble = lastMsgRow.querySelector(".message-bubble");
+        if (lastMsgBubble && !lastMsgBubble.querySelector(".bubble-steps-btn")) {
+          const stepsBtn = document.createElement("button");
+          stepsBtn.type = "button";
+          stepsBtn.className = "bubble-steps-btn";
+          stepsBtn.textContent = `단계 보기 (${cr.steps.length})`;
+          stepsBtn.addEventListener("click", () => openStepSidePanel(cr));
+          lastMsgBubble.appendChild(stepsBtn);
+        }
+      }
+    }
+  }
 
   // TASK-0061 Phase 1 (REQ-20260515-0003): pending assistant bubble 은 메시지 흐름 가장 아래 위치.
   if (state.pendingBubble) {
@@ -2109,57 +2292,115 @@ function renderPendingAssistantBubble(pending) {
   header.append(spinner, statusLabel, elapsedEl);
   bubble.appendChild(header);
 
-  // 최신 step 의 work + reason
+  // Compact one-liner: 현재 단계 텍스트 + "N단계 보기" 버튼
   const steps = Array.isArray(pending.steps) ? pending.steps : [];
-  if (steps.length) {
-    const latest = steps[steps.length - 1] || {};
-    const latestEl = document.createElement("div");
-    latestEl.className = "pending-bubble-latest";
-    const title = document.createElement("strong");
-    title.textContent = latest.work || latest.intent || latest.tool || "단계";
-    const reason = document.createElement("div");
-    reason.className = "pending-bubble-reason";
-    reason.textContent = latest.reason || latest.result_summary || latest.tool || "";
-    latestEl.append(title, reason);
-    bubble.appendChild(latestEl);
-  } else if (pending.error) {
-    const errorEl = document.createElement("div");
-    errorEl.className = "pending-bubble-error";
-    errorEl.textContent = String(pending.error);
-    bubble.appendChild(errorEl);
+  const stepRow = document.createElement("div");
+  stepRow.className = "pending-bubble-step-row";
+  const currentStepEl = document.createElement("span");
+  currentStepEl.className = "pending-bubble-current-step";
+  if (pending.error) {
+    currentStepEl.textContent = String(pending.error);
   } else if (pending.isStale) {
-    const errorEl = document.createElement("div");
-    errorEl.className = "pending-bubble-error";
-    errorEl.textContent = "작업이 중단된 것으로 보입니다. 사이드바에서 취소 또는 삭제 액션을 사용해 주세요.";
-    bubble.appendChild(errorEl);
+    currentStepEl.textContent = "작업이 중단된 것으로 보입니다. 취소 또는 삭제 액션을 사용해 주세요.";
+  } else if (steps.length) {
+    const latest = steps[steps.length - 1];
+    const lbl = latest.tool ? toolLabel(latest.tool) : "";
+    const work = latest.work || latest.intent || "";
+    currentStepEl.textContent = lbl ? `${lbl} · ${work}` : work || `단계 ${steps.length}`;
+  } else {
+    currentStepEl.textContent = "시작 중…";
   }
-
-  // 누적 step 목록 (접을 수 있음)
-  if (steps.length) {
-    const detailsEl = document.createElement("details");
-    detailsEl.className = "pending-bubble-steps";
-    const summary = document.createElement("summary");
-    summary.textContent = `누적 ${steps.length}단계`;
-    detailsEl.appendChild(summary);
-    const list = document.createElement("ol");
-    list.className = "pending-bubble-step-list";
-    steps.forEach((step, idx) => {
-      const li = document.createElement("li");
-      li.className = "pending-bubble-step-item";
-      const title = document.createElement("strong");
-      title.textContent = step.work || step.intent || step.tool || `단계 ${idx + 1}`;
-      const reason = document.createElement("span");
-      reason.className = "pending-bubble-step-reason";
-      reason.textContent = step.reason || step.result_summary || "";
-      li.append(title, reason);
-      list.appendChild(li);
-    });
-    detailsEl.appendChild(list);
-    bubble.appendChild(detailsEl);
+  stepRow.appendChild(currentStepEl);
+  if (steps.length && !pending.error && !pending.isStale) {
+    const viewBtn = document.createElement("button");
+    viewBtn.type = "button";
+    viewBtn.className = "pending-bubble-view-btn";
+    viewBtn.textContent = `${steps.length}단계 보기`;
+    viewBtn.addEventListener("click", () => openStepSidePanel(pending));
+    stepRow.appendChild(viewBtn);
   }
+  bubble.appendChild(stepRow);
 
   row.append(meta, bubble);
   return row;
+}
+
+const TOOL_LABEL_MAP = {
+  execute_sql: "SQL 실행",
+  schema_lookup: "스키마 조회",
+  list_tables: "테이블 목록",
+  describe_table: "테이블 구조",
+  search_data: "데이터 검색",
+  generate_report: "리포트 생성",
+  plan: "계획 수립",
+};
+
+function toolLabel(toolName) {
+  return TOOL_LABEL_MAP[toolName] || toolName || "도구";
+}
+
+// step 하나를 상세 표시 DOM 요소로 변환.
+// compact=true 이면 SQL/결과 미리보기 생략 (pending bubble 헤더용).
+function buildStepDetailEl(step, idx, { compact = false } = {}) {
+  const wrap = document.createElement("div");
+  wrap.className = "step-detail";
+
+  // tool badge
+  if (step.tool) {
+    const badge = document.createElement("span");
+    badge.className = "step-tool-badge";
+    badge.textContent = toolLabel(step.tool);
+    wrap.appendChild(badge);
+  }
+
+  // work 제목
+  const title = document.createElement("strong");
+  title.className = "step-title";
+  title.textContent = step.work || step.intent || step.tool || `단계 ${(idx || 0) + 1}`;
+  wrap.appendChild(title);
+
+  // reason
+  if (step.reason) {
+    const reason = document.createElement("div");
+    reason.className = "step-reason";
+    reason.textContent = step.reason;
+    wrap.appendChild(reason);
+  }
+
+  if (!compact) {
+    // SQL 블록
+    if (step.sql) {
+      const sqlWrap = document.createElement("div");
+      sqlWrap.className = "step-sql-wrap";
+      const pre = document.createElement("pre");
+      pre.className = "step-sql";
+      const code = document.createElement("code");
+      code.textContent = step.sql;
+      pre.appendChild(code);
+      sqlWrap.appendChild(pre);
+      wrap.appendChild(sqlWrap);
+    }
+
+    // 결과 미리보기 (result_summary.preview 는 markdown 테이블 문자열)
+    const preview = step.result_summary && step.result_summary.preview
+      ? step.result_summary.preview
+      : (typeof step.result_summary === "string" ? step.result_summary : null);
+    if (preview) {
+      const resultWrap = document.createElement("div");
+      resultWrap.className = "step-result-wrap";
+      const label = document.createElement("span");
+      label.className = "step-result-label";
+      label.textContent = "결과";
+      resultWrap.appendChild(label);
+      const pre = document.createElement("pre");
+      pre.className = "step-result-preview";
+      pre.textContent = preview;
+      resultWrap.appendChild(pre);
+      wrap.appendChild(resultWrap);
+    }
+  }
+
+  return wrap;
 }
 
 function pendingStatusLabel(status) {
@@ -2171,6 +2412,63 @@ function pendingStatusLabel(status) {
   if (s === "error") return "오류";
   if (s === "canceled") return "취소";
   return s || "처리 중";
+}
+
+// ── Step 실행 단계 사이드 패널 ────────────────────────────────────────
+function openStepSidePanel(pending, { convId = null } = {}) {
+  const panel = document.getElementById("stepSidePanel");
+  if (!panel) return;
+  state.stepSidePanelConvId = convId || (pending && pending.convId) || state.activeConversationId || null;
+  _renderStepSidePanelBody(pending);
+  panel.classList.remove("hidden");
+}
+
+function closeStepSidePanel() {
+  const panel = document.getElementById("stepSidePanel");
+  if (panel) panel.classList.add("hidden");
+}
+
+function refreshStepSidePanel(pending) {
+  const panel = document.getElementById("stepSidePanel");
+  if (!panel || panel.classList.contains("hidden")) return;
+  _renderStepSidePanelBody(pending);
+}
+
+function _renderStepSidePanelBody(pending) {
+  const body = document.getElementById("stepSidePanelBody");
+  const badge = document.getElementById("stepSidePanelBadge");
+  if (!body) return;
+  body.innerHTML = "";
+  const steps = Array.isArray(pending && pending.steps) ? pending.steps : [];
+  if (badge) badge.textContent = steps.length ? `${steps.length}단계` : "";
+  if (!steps.length) {
+    const empty = document.createElement("p");
+    empty.style.cssText = "font-size:12px;color:var(--text-muted);padding:8px 0";
+    empty.textContent = "아직 실행된 단계가 없습니다.";
+    body.appendChild(empty);
+    return;
+  }
+  steps.forEach((step, idx) => {
+    const item = document.createElement("div");
+    item.className = "step-side-panel-item";
+    const itemHeader = document.createElement("div");
+    itemHeader.className = "step-side-panel-item-header";
+    const numEl = document.createElement("span");
+    numEl.className = "step-side-panel-num";
+    numEl.textContent = `${idx + 1}.`;
+    itemHeader.appendChild(numEl);
+    if (step.tool) {
+      const badge = document.createElement("span");
+      badge.className = "step-tool-badge";
+      badge.textContent = toolLabel(step.tool);
+      itemHeader.appendChild(badge);
+    }
+    item.appendChild(itemHeader);
+    item.appendChild(buildStepDetailEl(step, idx, { compact: false }));
+    body.appendChild(item);
+  });
+  // 항상 최하단으로 스크롤
+  body.scrollTop = body.scrollHeight;
 }
 
 function formatElapsed(ms) {
@@ -2660,8 +2958,9 @@ function renderComposer() {
     composerTitleEl.textContent = "요청 처리 중";
     composerHintEl.textContent = "이 대화의 요청이 처리 중입니다. 다른 대화에서 새 요청을 보낼 수 있습니다.";
   } else {
-    composerTitleEl.textContent = "요청 작성";
-    composerHintEl.textContent = "자연어 요청, 검증 요청, SQL 확인 요청을 그대로 입력할 수 있습니다.";
+    // UX-COMPACT: 정상 상태에서 불필요한 안내 문구 제거
+    composerTitleEl.textContent = "";
+    composerHintEl.textContent = "";
   }
 
   const active = currentConversation();
@@ -2693,6 +2992,8 @@ function renderProgress(statusPayload = null) {
   }
 
   progressCardEl.classList.remove("hidden");
+  // 처리 중이면 step 유무 관계없이 자동 펼침
+  if (status === "processing") progressCardEl.open = true;
   progressTitleEl.textContent = status === "processing" ? "처리 중" : "최근 실행";
   progressStatusEl.textContent = status || "unknown";
 
@@ -2713,11 +3014,8 @@ function renderProgress(statusPayload = null) {
     const indexEl = document.createElement("span");
     indexEl.className = "progress-step-index";
     indexEl.textContent = `${idx + 1}.`;
-    const title = document.createElement("strong");
-    title.textContent = step.work || step.intent || step.tool || "단계";
-    const desc = document.createElement("span");
-    desc.textContent = step.reason || step.result_summary || step.tool || "";
-    item.append(indexEl, title, desc);
+    item.appendChild(indexEl);
+    item.appendChild(buildStepDetailEl(step, idx));
     progressStepsEl.appendChild(item);
   });
 }
@@ -2821,6 +3119,12 @@ function applyProgressPayload(payload = {}) {
     } else {
       renderMessages();
     }
+    // side panel 이 열려 있으면 실시간 갱신
+    refreshStepSidePanel(state.pendingBubble);
+  }
+  // UX-COMPACT: 폴링 결과로 대화 목록 dot 실시간 갱신
+  if (state.activeConversationId) {
+    _updateConversationStatusDot(state.activeConversationId, displayStatus || rawStatus || "processing");
   }
   if (isStale && state.activeConversationId && !state.staleToastShownFor.has(state.activeConversationId)) {
     state.staleToastShownFor.add(state.activeConversationId);
@@ -2850,6 +3154,14 @@ async function pollProgress(seq = state.progressPollSeq) {
     state.progressErrorCount = 0;
     applyProgressPayload(payload);
     if (payload.status && payload.status !== "processing") {
+      // 완료 시 steps 저장 (단계 보기 버튼용)
+      if (state.progressSteps.length) {
+        state.lastCompletedRunSteps = {
+          steps: state.progressSteps.slice(),
+          runId: state.progressRunId,
+          convId: state.activeConversationId,
+        };
+      }
       stopProgressPolling({ abort: false });
       await refreshWorkspace(state.activeConversationId);
       return;
@@ -2875,6 +3187,19 @@ async function pollProgress(seq = state.progressPollSeq) {
       scheduleProgressPolling(nextDelay, seq);
     }
   }
+}
+
+// UX-COMPACT: 폴링 중 대화 목록의 상태 dot 를 DOM 에서 직접 갱신 (전체 재렌더 불필요)
+function _updateConversationStatusDot(convId, status) {
+  if (!convId) return;
+  const conv = state.conversations.find((c) => String(c.id) === String(convId));
+  if (conv) conv.display_status = status;
+  const btn = document.querySelector(`.conv-item[data-conversation-id="${CSS.escape(String(convId))}"]`);
+  if (!btn) return;
+  const dot = btn.querySelector(".conv-dot");
+  if (!dot) return;
+  const normalized = String(status || "").trim().toLowerCase();
+  dot.className = `conv-dot${normalized ? ` is-${normalized}` : ""}`;
 }
 
 function startProgressPolling({ reset = false, runId = "" } = {}) {
@@ -2918,6 +3243,24 @@ async function loadHistory({ append = false } = {}) {
   loadMoreBtn.classList.toggle("hidden", !state.hasMoreHistory);
   renderMessages();
   if (payload.last_status === "processing") {
+    // 새 대화 전송 후 clearPendingBubble 이 먼저 호출되는 경우, 또는 페이지 새로고침 후
+    // initializeWorkspace 가 아닌 loadHistory 경로로 처리 상태를 감지한 경우 pending bubble 복원.
+    if (!state.pendingBubble) {
+      state.busyConversations.add(state.activeConversationId);
+      state.pendingBubble = {
+        startedAt: Date.now(),
+        runId: payload.last_run_id || "",
+        steps: state.progressSteps.slice(),
+        status: "processing",
+        displayStatus: "processing",
+        isStale: false,
+        error: null,
+        userMessage: "",
+        convId: state.activeConversationId,
+      };
+      startElapsedTimer();
+      renderMessages();
+    }
     startProgressPolling({
       reset: payload.last_run_id !== state.progressRunId,
       runId: payload.last_run_id || "",
@@ -2970,6 +3313,12 @@ async function selectConversation(conversationId) {
   if (state.pendingNewConversation) {
     state.pendingNewConversation = false;
   }
+  // 현재 in-flight pending bubble 보존 — 전환 후 돌아올 때 복원
+  const _prevConvId = state.activeConversationId;
+  if (_prevConvId && state.pendingBubble) {
+    if (!state._savedPendingBubbles) state._savedPendingBubbles = {};
+    state._savedPendingBubbles[_prevConvId] = state.pendingBubble;
+  }
   await apiFetch("/api/use_conversation", {
     method: "POST",
     body: JSON.stringify({ conversation_id: conversationId }),
@@ -2978,6 +3327,12 @@ async function selectConversation(conversationId) {
   renderConversationList();
   renderConversationHeader();
   await loadHistory();
+  // in-flight 이었던 대화로 복귀 시 pending bubble 복원
+  if (!state.pendingBubble && state._savedPendingBubbles?.[conversationId]) {
+    state.pendingBubble = state._savedPendingBubbles[conversationId];
+    delete state._savedPendingBubbles[conversationId];
+    renderMessages();
+  }
   // 대화 전환 시 새 대화의 product 컨텍스트로 chip 갱신.
   try {
     const fresh = await apiFetch("/api/session");
@@ -3537,53 +3892,144 @@ function _composerAttachmentSnapshot(targetConvId, isLazyCreate) {
   return { selectedIds, scopeAll: Boolean(bucket.scopeAll) };
 }
 
+// 전송 완료 후 대화의 ingested 첨부 목록을 composer bucket 에 동기화.
+// 다음 요청에서 이전 첨부 파일 ID 가 attachment_ids 에 자동 포함되도록 한다.
+async function _syncConversationAttachmentsToBucket(convId) {
+  if (!convId) return;
+  try {
+    const resp = await apiFetch(`/api/conversations/${encodeURIComponent(convId)}/attachments`);
+    const arr = Array.isArray(resp?.attachments) ? resp.attachments : [];
+    if (!arr.length) return;
+    const key = _composerAttachmentKey(convId);
+    const bucket = _ensureComposerBucket(key);
+    if (!bucket) return;
+    const existingIds = new Set(bucket.items.map((it) => Number(it.id)));
+    for (const a of arr) {
+      const aid = Number(a.id);
+      if (aid > 0 && !existingIds.has(aid) && (a.status === "ingested" || a.status === "uploaded")) {
+        bucket.items.push({
+          id: aid,
+          kind: String(a.kind || ""),
+          name: String(a.original_filename || "unnamed"),
+          size: Number(a.size || 0),
+          status: "ready",
+          selected: true,
+          signed_url: a.signed_url || null,
+          source: "session",
+        });
+        existingIds.add(aid);
+      }
+    }
+    _renderAttachmentPills();
+  } catch (_) { /* 네트워크 오류 무시 */ }
+}
+
 function _renderAttachmentPills() {
-  const container = document.getElementById("composerAttachmentsPills");
-  const wrap = document.getElementById("composerAttachments");
-  const scopeAllEl = document.getElementById("composerAttachmentsScopeAll");
-  if (!container || !wrap) return;
+  // UX-COMPACT: 오른쪽 사이드 패널에 렌더. 기존 composerAttachments 는 숨김 유지.
+  const sidePanel = document.getElementById("attachSidePanel");
+  const sidePanelList = document.getElementById("attachSidePanelList");
+  const oldWrap = document.getElementById("composerAttachments");
+  if (oldWrap) oldWrap.classList.add("hidden");
 
   const key = _composerAttachmentKey(state.activeConversationId);
   const bucket = state.composerAttachments.byConv[key];
   const items = bucket?.items || [];
 
+  if (!sidePanelList) return;
+
+  const newItems = items.filter((it) => it.source !== "session");
+  const sessionItems = items.filter((it) => it.source === "session");
+
+  const countBadge = document.getElementById("composerAttachCountBadge");
   if (!items.length) {
-    container.innerHTML = "";
-    wrap.classList.add("hidden");
-    if (scopeAllEl) scopeAllEl.checked = false;
+    sidePanelList.innerHTML = "";
+    if (sidePanel) sidePanel.classList.add("hidden");
+    if (countBadge) countBadge.textContent = "";
     return;
   }
-  wrap.classList.remove("hidden");
-  if (scopeAllEl) scopeAllEl.checked = Boolean(bucket?.scopeAll);
+  // 패널은 사용자가 "첨부파일 목록" 메뉴를 클릭할 때만 열림 — 자동 open 금지.
+  // 배지: 신규 첨부 수 우선, 없으면 전체 수.
+  if (countBadge) countBadge.textContent = newItems.length ? String(newItems.length) : String(items.length);
 
-  const html = items
-    .map((it) => {
-      const sizeKb = Math.max(1, Math.round((Number(it.size) || 0) / 1024));
-      const safeName = String(it.name || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      const kindLabel = String(it.kind || "file").toUpperCase();
-      const titleText = it.status === "failed"
-        ? "업로드 실패: " + (it.error || "알 수 없는 오류")
-        : (it.status === "staged" ? `${safeName} (첫 메시지와 함께 업로드)` : safeName);
-      return `<span class="composer-attachment-pill"
-                    data-selected="${it.selected ? "true" : "false"}"
-                    data-uploading="${it.status === "uploading" ? "true" : "false"}"
-                    data-staged="${it.status === "staged" ? "true" : "false"}"
-                    data-error="${it.status === "failed" ? "true" : "false"}"
-                    data-attachment-id="${it.id}"
-                    title="${titleText}">
-                <span class="pill-kind">${kindLabel}</span>
-                <span class="pill-name">${safeName}</span>
-                <span class="pill-size">${sizeKb} KB</span>
-                <button type="button" class="pill-toggle" data-action="toggle" aria-label="첨부 선택 토글">
-                  ${it.selected ? "×" : "+"}
-                </button>
-              </span>`;
-    })
-    .join("");
-  container.innerHTML = html;
+  sidePanelList.innerHTML = "";
+
+  const _buildPill = (it, isSession) => {
+    const sizeKb = Math.max(1, Math.round((Number(it.size) || 0) / 1024));
+    const safeName = String(it.name || "unnamed");
+    const titleText = it.status === "failed"
+      ? "업로드 실패: " + (it.error || "알 수 없는 오류")
+      : (it.status === "staged" ? `${safeName} (첫 메시지와 함께 업로드)` : safeName);
+
+    const pill = document.createElement("span");
+    pill.className = "composer-attachment-pill" + (isSession ? " session-source" : "");
+    pill.dataset.attachmentId = String(it.id);
+    pill.dataset.uploading = it.status === "uploading" ? "true" : "false";
+    pill.dataset.staged = it.status === "staged" ? "true" : "false";
+    pill.dataset.error = it.status === "failed" ? "true" : "false";
+    pill.title = titleText;
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "pill-name";
+    nameEl.textContent = safeName;
+
+    const sizeEl = document.createElement("span");
+    sizeEl.className = "pill-size";
+    sizeEl.textContent = `${sizeKb} KB`;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "pill-remove";
+    removeBtn.setAttribute("aria-label", "첨부 제거");
+    removeBtn.textContent = "×";
+    removeBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      _removeAttachmentPill(String(it.id));
+    });
+
+    pill.append(nameEl, sizeEl, removeBtn);
+    return pill;
+  };
+
+  if (newItems.length) {
+    const hdr = document.createElement("div");
+    hdr.className = "attach-section-label";
+    hdr.textContent = "이번 요청에 첨부";
+    sidePanelList.appendChild(hdr);
+    newItems.forEach((it) => sidePanelList.appendChild(_buildPill(it, false)));
+  }
+
+  if (sessionItems.length) {
+    const hdr = document.createElement("div");
+    hdr.className = "attach-section-label session-label";
+    hdr.textContent = "세션 파일 (이전 첨부 — LLM 컨텍스트 유지)";
+    sidePanelList.appendChild(hdr);
+    sessionItems.forEach((it) => sidePanelList.appendChild(_buildPill(it, true)));
+  }
+}
+
+function _removeAttachmentPill(attachmentId) {
+  // UX-COMPACT: x 버튼 → 목록에서 즉시 제거 (기존 toggle 동작 대체)
+  const key = _composerAttachmentKey(state.activeConversationId);
+  const bucket = state.composerAttachments.byConv[key];
+  if (!bucket) return;
+  const idx = bucket.items.findIndex((it) => String(it.id) === String(attachmentId));
+  if (idx >= 0) bucket.items.splice(idx, 1);
+  _renderAttachmentPills();
 }
 
 async function _uploadComposerAttachment(file) {
+  // TASK-0124 de-duplication: 같은 이름+크기 파일이 이미 bucket 에 존재하면 재업로드 차단.
+  const _deupKey = _composerAttachmentKey(state.activeConversationId);
+  const _dedupBucket = state.composerAttachments.byConv[_deupKey];
+  if (_dedupBucket && file) {
+    const _dupExists = _dedupBucket.items.some(
+      (it) => it.name === (file.name || "unnamed") && it.size === (Number(file.size) || 0) && it.status !== "failed"
+    );
+    if (_dupExists) {
+      showToast(`이미 첨부된 파일입니다: ${file.name || "unnamed"}`, true);
+      return;
+    }
+  }
   // TASK-0107 (이슈 #2): 새 대화 진입 전 (activeConversationId 부재 + pendingSentinel 도 없음)
   // 에 첨부 시도하면 "대화 컨텍스트 미정" 토스트로 차단되던 결함 — 사용자가 흔히 chat 에 들어
   // 오자마자 또는 새 대화 클릭 전에 파일을 끌어다 놓는 흐름을 봉쇄. 일반 챗봇 UX 에 어긋남.
@@ -3616,26 +4062,74 @@ async function _uploadComposerAttachment(file) {
     showToast("대화 컨텍스트 미정 — 새 대화 또는 기존 대화를 선택해 주세요.", true);
     return;
   }
-  // TASK-0106 (REQ-20260522-0106): lazy-create 단계 (cid 미발급) 에서도 첨부 가능.
-  // backend `/api/conversations/{cid}/attachments` 는 cid 필수 — 본 시점은 File 만
-  // 로컬 staging (status="staged", _localFile=file 보관). sendPrompt 의 lazy-create
-  // path 가 첫 send 직전 `/api/new_conversation` 으로 cid 를 발급한 뒤 staged 들을
-  // 일괄 업로드하고 attachment_ids 를 첫 `/api/ask` 에 포함시킨다 — TASK-0048 의
-  // "+ 새 대화 시 빈 row 누적 방지" 정신 보존 + 사용자 첫 메시지에 첨부 동행.
+  // UX-COMPACT: lazy-create 단계에서도 파일 선택 즉시 대화 생성 + 업로드 + ingest 병렬 시작.
+  // 대화 생성 중인 경우(race) staged 방식으로 fallback — sendPrompt 가 첫 send 전 _flushStagedAttachmentsToCid 로 처리.
   if (isLazy) {
+    if (state.composerAttachments.lazyConvCreating) {
+      const localId = state.composerAttachments.nextLocalId;
+      state.composerAttachments.nextLocalId -= 1;
+      bucket.items.push({ id: localId, kind: _guessKindFromFile(file), name: file.name || "unnamed", size: Number(file.size) || 0, status: "staged", selected: true, _localFile: file, source: "new" });
+      _renderAttachmentPills();
+      showToast(`첨부가 추가되었습니다 (첫 메시지와 함께 업로드됩니다): ${file.name || "unnamed"}`);
+      return;
+    }
+    state.composerAttachments.lazyConvCreating = true;
     const localId = state.composerAttachments.nextLocalId;
     state.composerAttachments.nextLocalId -= 1;
-    bucket.items.push({
-      id: localId,
-      kind: _guessKindFromFile(file),
-      name: file.name || "unnamed",
-      size: Number(file.size) || 0,
-      status: "staged",
-      selected: true,
-      _localFile: file,
-    });
+    bucket.items.push({ id: localId, kind: _guessKindFromFile(file), name: file.name || "unnamed", size: Number(file.size) || 0, status: "uploading", selected: true, source: "new" });
+    state.composerAttachments.uploadingCount += 1;
     _renderAttachmentPills();
-    showToast(`첨부가 추가되었습니다 (첫 메시지와 함께 업로드됩니다): ${file.name || "unnamed"}`);
+    const pendingKey = state.pendingSentinel ? String(state.pendingSentinel) : "";
+    try {
+      const newConvBody = (state.productMode === "pinned" && state.pinnedProductId)
+        ? { mode: "pinned", product_id: Number(state.pinnedProductId) }
+        : { mode: "auto" };
+      const newConvResp = await apiFetch("/api/new_conversation", { method: "POST", body: JSON.stringify(newConvBody) });
+      const earlyCid = String(newConvResp?.conversation_id || "");
+      if (!earlyCid) throw new Error("대화 ID 발급 실패");
+      // pending bucket → earlyCid 로 이전
+      const srcBucket = pendingKey ? state.composerAttachments.byConv[pendingKey] : null;
+      if (srcBucket) {
+        state.composerAttachments.byConv[earlyCid] = srcBucket;
+        delete state.composerAttachments.byConv[pendingKey];
+      }
+      // lazy-create → real conversation 전환
+      state.activeConversationId = earlyCid;
+      state.pendingNewConversation = false;
+      state.pendingSentinel = null;
+      // minimal sidebar entry (refreshWorkspace 가 확정 데이터로 교체)
+      if (!state.conversations.find((c) => String(c.id) === earlyCid)) {
+        state.conversations.unshift({ id: earlyCid, title: "(파일 첨부 중)", display_status: "idle", created_at: new Date().toISOString(), account_id: state.session?.account_id || null, owner_account_id: state.user?.id || null, owner_username: state.user?.username || null });
+      }
+      renderConversationList();
+      renderConversationHeader();
+      renderComposer();
+      // 업로드
+      const uploadBucket = state.composerAttachments.byConv[earlyCid];
+      const formData = new FormData();
+      formData.append("file", file);
+      const resp = await apiFetch(`/api/conversations/${encodeURIComponent(earlyCid)}/attachments`, { method: "POST", body: formData, headers: {} });
+      if (resp && Number(resp.id) > 0) {
+        const idx2 = uploadBucket?.items.findIndex((it) => it.id === localId) ?? -1;
+        if (idx2 >= 0) uploadBucket.items[idx2] = { id: Number(resp.id), kind: String(resp.kind || _guessKindFromFile(file)), name: String(resp.original_filename || file.name || "unnamed"), size: Number(resp.size || file.size || 0), status: "ready", selected: true, signed_url: resp.signed_url || null, source: "new" };
+        showToast(`첨부 업로드 완료: ${file.name || "unnamed"}`);
+      } else {
+        const idx2 = uploadBucket?.items.findIndex((it) => it.id === localId) ?? -1;
+        if (idx2 >= 0) uploadBucket.items[idx2] = { ...uploadBucket.items[idx2], status: "failed", error: resp?.error || "업로드 실패" };
+        showToast(`첨부 업로드 실패: ${resp?.error || "알 수 없는 오류"}`, true);
+      }
+    } catch (exc) {
+      const curBucket = state.activeConversationId
+        ? state.composerAttachments.byConv[state.activeConversationId]
+        : (pendingKey ? state.composerAttachments.byConv[pendingKey] : null);
+      const idx2 = curBucket?.items.findIndex((it) => it.id === localId) ?? -1;
+      if (idx2 >= 0) curBucket.items[idx2] = { ...curBucket.items[idx2], status: "failed", error: String(exc?.message || exc) };
+      showToast(`첨부 업로드 실패: ${exc?.message || exc}`, true);
+    } finally {
+      state.composerAttachments.uploadingCount = Math.max(0, state.composerAttachments.uploadingCount - 1);
+      state.composerAttachments.lazyConvCreating = false;
+      _renderAttachmentPills();
+    }
     return;
   }
   const convId = String(state.activeConversationId);
@@ -3650,6 +4144,7 @@ async function _uploadComposerAttachment(file) {
     size: Number(file.size) || 0,
     status: "uploading",
     selected: true,
+    source: "new",
   };
   bucket.items.push(optimistic);
   state.composerAttachments.uploadingCount += 1;
@@ -3675,6 +4170,8 @@ async function _uploadComposerAttachment(file) {
           size: Number(resp.size || optimistic.size),
           status: "ready",
           selected: true,
+          signed_url: resp.signed_url || null,
+          source: "new",
         };
       }
       showToast(`첨부 업로드 완료: ${optimistic.name}`);
@@ -3716,24 +4213,8 @@ function _guessKindFromFile(file) {
 }
 
 function _toggleAttachmentPill(attachmentId) {
-  const key = _composerAttachmentKey(state.activeConversationId);
-  const bucket = state.composerAttachments.byConv[key];
-  if (!bucket) return;
-  const idx = bucket.items.findIndex((it) => String(it.id) === String(attachmentId));
-  if (idx < 0) return;
-  const it = bucket.items[idx];
-  if (it.status === "failed") {
-    // failed pill 토글 click = remove.
-    bucket.items.splice(idx, 1);
-  } else if (it.status === "staged") {
-    // TASK-0106: staged (lazy-create 보관) 첨부 토글 = remove. 아직 업로드 전이라 selected
-    // 토글로 둘 가치 없음. 사용자가 실수로 선택했다면 즉시 제거가 자연스러움.
-    bucket.items.splice(idx, 1);
-  } else {
-    // selected 토글.
-    bucket.items[idx] = { ...it, selected: !it.selected };
-  }
-  _renderAttachmentPills();
+  // UX-COMPACT: _removeAttachmentPill 로 위임 (모든 경우 즉시 제거)
+  _removeAttachmentPill(attachmentId);
 }
 
 // TASK-0106: lazy-create 시 staged 첨부 (status="staged", _localFile=File) 를 새로
@@ -3772,6 +4253,8 @@ async function _flushStagedAttachmentsToCid(targetCid, sourceKey) {
           size: Number(resp.size || staged.size),
           status: "ready",
           selected: true,
+          signed_url: resp.signed_url || null,
+          source: "new",
         });
         uploadedIds.push(Number(resp.id));
       } else {
@@ -3809,6 +4292,7 @@ async function _loadConversationAttachments(convId) {
         size: Number(a.size || 0),
         status: String(a.status || "ready") === "deleted" ? "failed" : "ready",
         selected: true,
+        source: "session",
       });
     }
     _renderAttachmentPills();
@@ -3816,6 +4300,62 @@ async function _loadConversationAttachments(convId) {
     // 403 / 404 등 graceful — 첨부 권한 없거나 대화 부재. pill 영역 hide.
     const wrap = document.getElementById("composerAttachments");
     if (wrap) wrap.classList.add("hidden");
+  }
+}
+
+async function _loadConversationAttachmentList(convId) {
+  const listEl = document.getElementById("attachSidePanelList");
+  if (!listEl || !convId) return;
+  listEl.innerHTML = `<div class="attach-list-empty">불러오는 중...</div>`;
+  try {
+    const resp = await apiFetch(`/api/conversations/${encodeURIComponent(convId)}/attachments`);
+    const arr = Array.isArray(resp?.attachments) ? resp.attachments : [];
+    if (arr.length === 0) {
+      listEl.innerHTML = `<div class="attach-list-empty">첨부 파일이 없습니다.</div>`;
+      return;
+    }
+    listEl.innerHTML = "";
+    const kindIcon = (k) => ({csv:"📊", xlsx:"📊", pdf:"📄", txt:"📝", image:"🖼️"})[k] || "📎";
+    const fmtSize = (b) => b > 1048576 ? `${(b/1048576).toFixed(1)}MB` : b > 1024 ? `${(b/1024).toFixed(0)}KB` : `${b}B`;
+    for (const a of arr) {
+      const item = document.createElement("div");
+      item.className = "attach-list-item";
+      const statusLabel = a.status === "ingested" ? "읽기 완료" : a.status === "failed" ? "오류" : a.status || "";
+      item.innerHTML = `
+        <span class="attach-list-item-icon">${kindIcon(a.kind)}</span>
+        <div class="attach-list-item-info">
+          <div class="attach-list-item-name" title="${escapeHtml(a.original_filename || "")}">${escapeHtml(a.original_filename || "알 수 없음")}</div>
+          <div class="attach-list-item-meta">${fmtSize(a.size || 0)}${statusLabel ? " · " + statusLabel : ""}</div>
+        </div>
+        <button class="attach-list-item-dl" title="다운로드" data-id="${a.id}">⬇</button>
+      `;
+      const dlBtn = item.querySelector(".attach-list-item-dl");
+      dlBtn.addEventListener("click", async () => {
+        dlBtn.disabled = true;
+        try {
+          const detail = await apiFetch(`/api/attachments/${encodeURIComponent(a.id)}`);
+          const url = detail?.signed_url;
+          if (url) {
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = a.original_filename || "download";
+            link.target = "_blank";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+          } else {
+            showToast("다운로드 URL을 가져올 수 없습니다.", true);
+          }
+        } catch (e) {
+          showToast("다운로드 중 오류가 발생했습니다.", true);
+        } finally {
+          dlBtn.disabled = false;
+        }
+      });
+      listEl.appendChild(item);
+    }
+  } catch (exc) {
+    listEl.innerHTML = `<div class="attach-list-empty">목록을 불러올 수 없습니다.</div>`;
   }
 }
 
@@ -3884,6 +4424,21 @@ function _bindComposerAttachmentEvents() {
       const file = ev.dataTransfer?.files?.[0];
       if (file) await _uploadComposerAttachment(file);
     });
+  }
+
+  // UX-COMPACT: 첨부 사이드 패널 닫기 버튼
+  const attachSidePanelClose = document.getElementById("attachSidePanelClose");
+  if (attachSidePanelClose) {
+    attachSidePanelClose.addEventListener("click", () => {
+      const sidePanel = document.getElementById("attachSidePanel");
+      if (sidePanel) sidePanel.classList.add("hidden");
+    });
+  }
+
+  // UX-COMPACT: 단계 사이드 패널 닫기 버튼
+  const stepSidePanelClose = document.getElementById("stepSidePanelClose");
+  if (stepSidePanelClose) {
+    stepSidePanelClose.addEventListener("click", closeStepSidePanel);
   }
 
   // TASK-0107: chat-pane 전체에 drag&drop 확장 + 별 visual overlay (chatDropOverlay).
@@ -3989,6 +4544,10 @@ function _openComposerActionsMenu() {
   // product chip dropup 등 다른 popup 은 닫는다.
   if (typeof closeProductDropup === "function") closeProductDropup();
   _updateComposerModelLabel();
+  // fixed 포지셔닝: 버튼 위치 기준으로 좌표 설정
+  const rect = trigger.getBoundingClientRect();
+  primary.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+  primary.style.left = `${rect.left}px`;
   primary.classList.remove("hidden");
   trigger.setAttribute("aria-expanded", "true");
 }
@@ -4041,8 +4600,15 @@ function _renderComposerModelMenu() {
 function _openComposerModelMenu() {
   const menu = document.getElementById("composerModelMenu");
   const modelItem = document.getElementById("composerActionsModelItem");
+  const primary = document.getElementById("composerActionsMenu");
   if (!menu || !modelItem) return;
   _renderComposerModelMenu();
+  // fixed 포지셔닝: primary popup 의 오른쪽에, bottom 정렬
+  if (primary) {
+    const pRect = primary.getBoundingClientRect();
+    menu.style.bottom = `${window.innerHeight - pRect.bottom}px`;
+    menu.style.left = `${pRect.right + 8}px`;
+  }
   menu.classList.remove("hidden");
   modelItem.setAttribute("aria-expanded", "true");
 }
@@ -4073,6 +4639,25 @@ function _bindComposerActionsEvents() {
       ev.stopPropagation();
       _closeComposerActionsMenus();
       fileInput.click();
+    });
+  }
+  const listItem = document.getElementById("composerActionsListItem");
+  if (listItem) {
+    listItem.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      _closeComposerActionsMenus();
+      const panel = document.getElementById("attachSidePanel");
+      if (panel) panel.classList.remove("hidden");
+      const cid = state.activeConversationId;
+      if (cid) _loadConversationAttachmentList(cid);
+    });
+  }
+  const sidePanelClose = document.getElementById("attachSidePanelClose");
+  if (sidePanelClose) {
+    sidePanelClose.addEventListener("click", () => {
+      const panel = document.getElementById("attachSidePanel");
+      if (panel) panel.classList.add("hidden");
     });
   }
   if (modelItem) {
@@ -4113,6 +4698,10 @@ async function sendPrompt() {
   const active = currentConversation();
   if (active && !isOwnConversation(active)) {
     showToast("타 계정 소유의 대화에는 요청을 보낼 수 없습니다. 새 대화를 생성하세요.", true);
+    return;
+  }
+  if (state.composerAttachments.uploadingCount > 0) {
+    showToast("파일 업로드가 완료될 때까지 기다려주세요.", true);
     return;
   }
   // TASK-0048: pending 모드는 client-side 만 진입한 빈 대화 단계. cid 가 없으니 lazy create.
@@ -4157,6 +4746,17 @@ async function sendPrompt() {
   // user message 와 pending assistant bubble 을 즉시 messageLogEl 에 표시.
   // - 기존 대화: optimistic user message 추가 (실제 backend 메시지는 refreshWorkspace 가 덮어씀).
   // - lazy-create: pending bubble 만 표시 (user message 는 backend 가 cid 와 함께 기록 후 refreshWorkspace 가 hydrate).
+  // UX-COMPACT: 전송 전 현재 첨부 파일 스냅샷 (메시지 버블에 표시용)
+  // source !== "session" 인 파일만 — 이번 요청에 새로 첨부한 파일만 말풍선에 표시.
+  const _sendAttachmentSnapshot = (() => {
+    const key = _composerAttachmentKey(isLazyCreate ? null : targetConvId);
+    const pendingKey = state.pendingSentinel ? String(state.pendingSentinel) : "";
+    const bucket = state.composerAttachments.byConv[isLazyCreate ? pendingKey : key];
+    return (bucket?.items || []).filter(
+      (it) => (it.status === "ready" || it.status === "staged") && it.source !== "session"
+    ).map((it) => ({ id: it.id, name: it.name, size: it.size, signed_url: it.signed_url || null }));
+  })();
+
   const optimisticUserMessage = {
     id: null,
     role: "user",
@@ -4164,6 +4764,7 @@ async function sendPrompt() {
     created_at: new Date().toISOString(),
     meta: {},
     _optimistic: true,
+    _attachments: _sendAttachmentSnapshot.length ? _sendAttachmentSnapshot : undefined,
   };
   if (!isLazyCreate) {
     state.messages = [...state.messages, optimisticUserMessage];
@@ -4184,6 +4785,9 @@ async function sendPrompt() {
   renderComposer();
   if (!isLazyCreate && targetConvId) {
     startProgressPolling({ reset: true });
+  } else if (isLazyCreate) {
+    // UX-COMPACT: 새 대화 전송 즉시 progress 카드 표시 (cid 발급 전에도 "처리 중" 피드백)
+    renderProgress({ status: "processing", steps: [] });
   }
   // TASK-0048: lazy create 분기에서 사용자의 직전 product 의도(state.productMode/pinnedProductId)를
   // backend 에 hint 로 전달. backend `/api/ask` 가 새 cid 직후 AgentCoreConversations.product_*에 반영한다.
@@ -4219,6 +4823,16 @@ async function sendPrompt() {
   const attachmentSnapshot = _composerAttachmentSnapshot(targetConvId, isLazyCreate);
   askBody.attachment_ids = attachmentSnapshot.selectedIds;
   askBody.attachment_scope_all = attachmentSnapshot.scopeAll;
+  // new_attachment_ids: 이번 요청에 새로 첨부된 파일만 (LLM 컨텍스트에서 신규/세션 구분용).
+  askBody.new_attachment_ids = (() => {
+    const _bKey = isLazyCreate
+      ? (state.pendingSentinel ? String(state.pendingSentinel) : "")
+      : String(targetConvId || "");
+    const _b = state.composerAttachments.byConv[_bKey];
+    return (_b?.items || [])
+      .filter((it) => it.selected && it.status === "ready" && Number(it.id) > 0 && it.source !== "session")
+      .map((it) => Number(it.id));
+  })();
 
   // TASK-0106 (REQ-20260522-0106): lazy-create 시 staged (status="staged", _localFile=File)
   // 첨부가 있으면 본 send 직전에 cid 를 즉시 발급 + staged 일괄 업로드 → attachment_ids 갱신.
@@ -4268,6 +4882,17 @@ async function sendPrompt() {
     });
     promptInputEl.value = "";
     promptInputEl.style.height = "auto";
+    // UX-COMPACT: 전송 성공 시 new → session 전환 (버킷 유지 — 세션 컨텍스트 보존).
+    // 파일은 삭제하지 않고 source 만 변경해 다음 요청에도 LLM 이 참조 가능하게 한다.
+    const _clearKey = isLazyCreate
+      ? (busyKey ? String(busyKey) : "")
+      : String(targetConvId || "");
+    if (_clearKey && state.composerAttachments.byConv[_clearKey]) {
+      state.composerAttachments.byConv[_clearKey].items.forEach((it) => {
+        if (it.source !== "session") it.source = "session";
+      });
+    }
+    _renderAttachmentPills();
     showToast(payload.error ? payload.error : "응답을 갱신했습니다.");
     const newCid = String(payload.conversation_id || targetConvId || "");
     if (isLazyCreate && newCid) {
@@ -4281,6 +4906,20 @@ async function sendPrompt() {
         state.pendingNewConversation = false;
         state.activeConversationId = newCid;
         state.pendingSentinel = null;
+        // UX-COMPACT: polling 첫 tick 에서 _updateConversationStatusDot 가 DOM 에서 실패하지 않도록
+        // 최소 conversation entry 를 선행 등재. refreshWorkspace 가 실 데이터로 교체.
+        if (!state.conversations.find((c) => String(c.id) === newCid)) {
+          state.conversations.unshift({
+            id: newCid,
+            title: message.slice(0, 60) || "새 대화",
+            display_status: "processing",
+            created_at: new Date().toISOString(),
+            account_id: state.session?.account_id || null,
+            owner_account_id: state.user?.id || null,
+            owner_username: state.user?.username || null,
+          });
+          renderConversationList();
+        }
         // TASK-0061 Phase 2 (AC-0076): lazy-create 응답으로 cid 가 발급된 즉시 polling 시작.
         // ask 가 동기 완료된 경우라도 첫 polling 으로 step snapshot 을 받아 pending bubble 에 반영한다.
         startProgressPolling({ reset: true });
@@ -4292,6 +4931,21 @@ async function sendPrompt() {
     // TASK-0061 Phase 1 (AC-0072): 정상 응답 후 pending bubble 제거 → refreshWorkspace 가 실 assistant message 로 교체.
     clearPendingBubble();
     await refreshWorkspace(newCid);
+    // UX-COMPACT: 백엔드 history 가 사용자 메시지에 첨부 정보를 포함하지 않는 문제를 클라이언트에서 보완.
+    // refreshWorkspace 완료 후 최신 사용자 메시지에 _attachments 를 주입해 말풍선에 표시.
+    if (_sendAttachmentSnapshot.length) {
+      const lastUserMsg = [...state.messages].reverse().find((m) => m.role === "user" && m.content === message && !m._attachments);
+      if (lastUserMsg) {
+        lastUserMsg._attachments = _sendAttachmentSnapshot;
+        // messageAttachments 맵에도 저장 — 다음 refreshWorkspace 이후에도 칩 유지.
+        if (lastUserMsg.id) {
+          state.messageAttachments[String(lastUserMsg.id)] = _sendAttachmentSnapshot;
+        }
+        renderMessages();
+      }
+      // 대화의 모든 ingested 첨부를 bucket 에 동기화 → 다음 요청에도 attachment_ids 포함.
+      _syncConversationAttachmentsToBucket(newCid || state.activeConversationId).catch(() => {});
+    }
   } catch (error) {
     // TASK-0048: pending 단계에서 ask 가 실패하면 cid 발급 여부가 client 에는 불확실 →
     // attach/resume 다이얼로그 대신 사용자에게 재시도/사이드바 새로고침을 안내한다.
@@ -4575,6 +5229,22 @@ async function initializeWorkspace() {
     const status = await fetchAskStatus(resumeCid);
     if (status && status.is_processing) {
       state.busyConversations.add(resumeCid);
+      // 새로고침 후 pending bubble 복원 — polling 이 steps 를 채우면 갱신됨.
+      if (!state.pendingBubble) {
+        state.pendingBubble = {
+          startedAt: Date.now(),
+          runId: status.run_id || "",
+          steps: [],
+          status: "processing",
+          displayStatus: "processing",
+          isStale: false,
+          error: null,
+          userMessage: "",
+          convId: resumeCid,
+        };
+        renderMessages();
+        startElapsedTimer();
+      }
       renderComposer();
       startProgressPolling({ reset: true, runId: status.run_id || "" });
       showToast("이전에 남아있던 응답 요청을 이어받습니다.");
@@ -4674,13 +5344,42 @@ async function initialize() {
   // feature-0008 (composer-model-selector): `+` dropdown 핸들러 binding.
   try { _bindComposerActionsEvents(); } catch (_) { /* graceful */ }
   promptInputEl.addEventListener("keydown", (event) => {
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      sendPrompt().catch((error) => {
-        showToast(error.message || "요청 전송에 실패했습니다.", true);
-      });
+    if (event.key === "Enter") {
+      const isCtrl = event.ctrlKey || event.metaKey;
+      const shouldSend = state.sendMode === "enter" ? !isCtrl : isCtrl;
+      if (shouldSend) {
+        event.preventDefault();
+        sendPrompt().catch((error) => {
+          showToast(error.message || "요청 전송에 실패했습니다.", true);
+        });
+      }
     }
   });
+  // Send button hover — send mode toggle tooltip
+  if (sendBtn) {
+    sendBtn.addEventListener("mouseenter", () => {
+      const existing = document.getElementById("sendModeTooltip");
+      if (existing) return;
+      const tip = document.createElement("div");
+      tip.id = "sendModeTooltip";
+      tip.className = "send-mode-tooltip";
+      const currentLabel = state.sendMode === "enter" ? "Enter" : "Ctrl+Enter";
+      const switchLabel = state.sendMode === "enter" ? "Ctrl+Enter 로 전환" : "Enter 로 전환";
+      tip.innerHTML = `<span class="send-mode-tip-current">전송: ${currentLabel}</span><button type="button" class="send-mode-tip-toggle">${switchLabel}</button>`;
+      tip.querySelector(".send-mode-tip-toggle").addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        state.sendMode = state.sendMode === "enter" ? "ctrl+enter" : "enter";
+        try { localStorage.setItem(SEND_MODE_LS_KEY, state.sendMode); } catch (_) {}
+        tip.remove();
+      });
+      sendBtn.parentElement.style.position = "relative";
+      sendBtn.parentElement.appendChild(tip);
+    });
+    sendBtn.addEventListener("mouseleave", (ev) => {
+      const tip = document.getElementById("sendModeTooltip");
+      if (tip && !tip.contains(ev.relatedTarget)) tip.remove();
+    });
+  }
   loadMoreBtn.addEventListener("click", () => {
     loadHistory({ append: true }).catch((error) => {
       showToast(error.message || "이전 기록을 불러오지 못했습니다.", true);
