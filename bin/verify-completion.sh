@@ -944,6 +944,27 @@ check_11_repo_immutability() {
     grep -q "^bootstrap=false" "$repo_root/.template-state" 2>/dev/null && init_graduated=true
   fi
   if [ "$init_graduated" = false ]; then
+    # silent re-disable 방어 (v3.18.0): 졸업 신호가 모두 없는데 이 repo 가 "신규
+    # 부트스트랩 중" 이 아니라 "이미 운영 중" 으로 보이면, 졸업 신호가 삭제/유실된
+    # tamper/drift 의심 상황이다 (F0 가 silent 하게 무력화될 수 있음 — v3.8.0 버그와
+    # 같은 실패 양상). carve-out 으로 PASS 시키되 WARN 으로 표면화한다.
+    #   운영 중 판정 지표 (모두 만족 시 = 신규 init 아님):
+    #     - git commit 이 2개 이상 (신규 init 직후는 1 commit)
+    #     - example feature(unit/feature-0001-example-*) 가 이미 정리됨 (init cleanup 흔적)
+    #   휴리스틱 완전성 한계: commit<2 이면서 example 정리된 운영 repo 는 놓칠 수 있음
+    #   (false negative). 단 WARN-only 라 F0 차단엔 영향 없고, 표면화만 누락 — 보수적.
+    local looks_operational=false
+    local commit_count
+    commit_count=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+    if [ "${commit_count:-0}" -ge 2 ] && \
+       ! ls -d "$repo_root"/unit/feature-0001-example-* >/dev/null 2>&1; then
+      looks_operational=true
+    fi
+    if [ "$looks_operational" = true ]; then
+      log_check 11 WARN "repo immutability" \
+        "init 졸업 신호(.template-init-marker / initialized_at / bootstrap=false)가 모두 없으나 운영 중인 repo 로 보입니다 (commit ${commit_count}개, example 정리됨). 졸업 신호 유실/삭제로 F0 가 silent 하게 비활성됐을 수 있습니다 — \`bash bin/template-upgrade.sh --apply\` 로 bootstrap latch 재기록 또는 \`.template-init-marker\` 복원 권장. (carve-out 으로 통과하되 점검 필요.)"
+      return 0
+    fi
     log_check 11 PASS "repo immutability" "(init bootstrap — carve-out)"
     return 0
   fi
