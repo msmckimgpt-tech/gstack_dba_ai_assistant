@@ -180,6 +180,25 @@ def _load_attachment_inline_texts() -> dict[int, dict]:
     return result
 
 
+def _load_new_attachment_ids() -> set[int]:
+    """env NEW_ATTACHMENT_IDS (comma-separated) 를 읽어 이번 요청에 새로 첨부된 파일 ID set 반환.
+
+    agent_core 가 LLM 컨텍스트에서 신규 vs 세션 파일을 구분 라벨링할 때 사용.
+    부재 / parse 실패 → 빈 set (graceful failure).
+    """
+    raw = os.getenv("NEW_ATTACHMENT_IDS", "").strip()
+    if not raw:
+        return set()
+    result: set[int] = set()
+    for x in raw.split(","):
+        x = x.strip()
+        if x.lstrip("-").isdigit():
+            v = int(x)
+            if v > 0:
+                result.add(v)
+    return result
+
+
 def _load_attachment_inline_images() -> list[dict[str, Any]]:
     """env ATTACHMENT_IMAGE_INLINE_PATH 의 JSON 을 read 후 image_attachments 반환.
 
@@ -263,10 +282,14 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int]) -> st
 
     # TASK-0124: text kind 첨부파일 내용 로드 (env ATTACHMENT_TEXT_INLINE_PATH).
     text_inline_map = _load_attachment_inline_texts()
+    # NEW_ATTACHMENT_IDS: 이번 요청에 새로 첨부된 파일 ID set (신규 vs 세션 라벨링용).
+    new_ids_set = _load_new_attachment_ids()
 
     lines = ["", "## ATTACHED FILES (User-selected)"]
+    if new_ids_set:
+        lines.append("<!-- ★ = 이번 요청에 새로 첨부 | ◆ = 이전 세션에서 첨부 (LLM 컨텍스트 유지) -->")
     sandbox_table_specs: list[tuple[str, str, str]] = []  # (schema, table, source_label)
-    text_content_entries: list[tuple[int, str, str]] = []  # (attachment_id, filename, content)
+    text_content_entries: list[tuple[int, str, str, bool]] = []  # (attachment_id, filename, content, is_new)
     for row in rows:
         attachment_id = int(row[0] or 0)
         kind = str(row[3] or "")
@@ -317,29 +340,33 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int]) -> st
                 truncated = inline.get("truncated", False)
                 trunc_note = " [truncated]" if truncated else ""
                 meta_text += f" content_len={len(content)}{trunc_note}"
-                text_content_entries.append((attachment_id, filename, content))
+                is_new = attachment_id in new_ids_set
+                text_content_entries.append((attachment_id, filename, content, is_new))
             else:
                 meta_text += " (content unavailable — check MinIO connectivity)"
 
         if meta_obj.get("degraded_reason"):
             meta_text += f" [DEGRADED: {meta_obj['degraded_reason']}]"
 
+        # 신규 vs 세션 라벨 (NEW_ATTACHMENT_IDS 기반).
+        source_label = " ★신규" if attachment_id in new_ids_set else " ◆세션"
         lines.append(
-            f"- attachment_id={attachment_id} kind={kind} file={filename} size={size_bucket} status={upload_status}{meta_text}"
+            f"- attachment_id={attachment_id} kind={kind} file={filename} size={size_bucket} status={upload_status}{source_label}{meta_text}"
         )
 
     # text kind 파일 내용 주입 (TASK-0124).
     if text_content_entries:
         lines.append("")
         lines.append("## ATTACHED FILE CONTENTS (text/code files — read directly)")
-        for att_id, fname, content in text_content_entries:
+        for att_id, fname, content, is_new in text_content_entries:
             lines.append("")
             # 확장자로 코드 펜스 언어 결정
             ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
             lang = ext if ext in {"sql", "py", "js", "ts", "json", "yaml", "yml",
                                    "sh", "bash", "xml", "html", "css", "java",
                                    "go", "rb", "php", "c", "cpp", "h", "md"} else ""
-            lines.append(f"### {fname} (attachment_id={att_id})")
+            ctx_label = "★ 이번 요청 신규 첨부" if is_new else "◆ 이전 세션 첨부"
+            lines.append(f"### {fname} (attachment_id={att_id}) [{ctx_label}]")
             lines.append(f"```{lang}")
             lines.append(content)
             lines.append("```")
@@ -347,6 +374,8 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int]) -> st
         lines.append(
             "**INSTRUCTION**: The file contents above are the actual raw content of the attached files. "
             "Read them directly to answer the user's question. "
+            "Files marked '★ 이번 요청 신규 첨부' were just attached in this message. "
+            "Files marked '◆ 이전 세션 첨부' are from earlier in this conversation and remain available. "
             "Do NOT ask the user to paste the file contents — they are already provided above."
         )
 

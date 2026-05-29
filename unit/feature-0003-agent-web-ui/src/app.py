@@ -7354,6 +7354,22 @@ async def ask(request: Request) -> JSONResponse:
         else:
             os.environ.pop("ATTACHMENT_IDS", None)
 
+        # new_attachment_ids: 이번 요청에 새로 첨부된 파일 ID (프론트에서 source="new" 기준).
+        # agent_core 가 LLM 컨텍스트에서 신규/세션 파일을 구분해 라벨링하는 데 사용.
+        new_attachment_ids_raw = data.get("new_attachment_ids") if isinstance(data.get("new_attachment_ids"), list) else []
+        new_attachment_ids_clean: list[int] = []
+        for v in new_attachment_ids_raw[:50]:
+            try:
+                iv = int(v)
+                if iv > 0:
+                    new_attachment_ids_clean.append(iv)
+            except Exception:
+                continue
+        if new_attachment_ids_clean:
+            os.environ["NEW_ATTACHMENT_IDS"] = ",".join(str(i) for i in new_attachment_ids_clean)
+        else:
+            os.environ.pop("NEW_ATTACHMENT_IDS", None)
+
         # TASK-0107 hotfix: UploadStatus 가 'uploaded' (ingest 미완) 또는 'failed' 인
         # csv/xlsx attachment 를 /api/ask 진입 시점에 동기 ingest 해 LLM 호출 전에
         # sandbox table 이 준비되도록 한다. timeout (최대 30s) 이내 완료 못 하면
@@ -7490,6 +7506,7 @@ async def ask(request: Request) -> JSONResponse:
         )
         # cleanup env to avoid leaking across requests.
         os.environ.pop("ATTACHMENT_IDS", None)
+        os.environ.pop("NEW_ATTACHMENT_IDS", None)
         # Sprint 2 (S2.4) — vision inline cleanup (env + 임시 file).
         _cleanup_vision_inline(vision_inline_path)
         vision_inline_path = None
@@ -7604,6 +7621,7 @@ async def ask(request: Request) -> JSONResponse:
             _cleanup_text_inline(locals().get("text_inline_path"))
         except Exception:
             pass
+        os.environ.pop("NEW_ATTACHMENT_IDS", None)
 
 
 @app.post("/api/new_conversation")

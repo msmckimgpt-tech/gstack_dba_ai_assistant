@@ -2154,6 +2154,35 @@ a { color: inherit; }
 .attach-side-panel .composer-attachment-pill[data-error="true"] { border-color: var(--danger, #dc2626); }
 .attach-side-panel .composer-attachment-pill[data-uploading="true"] { opacity: .6; }
 
+/* 세션 파일 섹션 헤더 */
+.attach-section-label {
+  font-size: .65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-muted, #8b949e);
+  padding: 6px 0 3px;
+  margin-top: 4px;
+}
+.attach-section-label:first-child { margin-top: 0; }
+.attach-section-label.session-label {
+  color: var(--text-muted, #8b949e);
+  opacity: .75;
+}
+
+/* 세션 파일 pill — 이전 요청에서 첨부된 파일 (LLM 컨텍스트 유지) */
+.attach-side-panel .composer-attachment-pill.session-source {
+  background: transparent;
+  border-color: var(--border, #30363d);
+  opacity: .65;
+}
+.attach-side-panel .composer-attachment-pill.session-source .pill-name {
+  color: var(--text-muted, #8b949e);
+}
+.attach-side-panel .composer-attachment-pill.session-source:hover {
+  opacity: .85;
+}
+
 /* =====================================================================
    UX-COMPACT: 실행 단계 사이드 패널
    ===================================================================== */

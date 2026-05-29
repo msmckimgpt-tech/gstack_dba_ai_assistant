@@ -3915,6 +3915,7 @@ async function _syncConversationAttachmentsToBucket(convId) {
           status: "ready",
           selected: true,
           signed_url: a.signed_url || null,
+          source: "session",
         });
         existingIds.add(aid);
       }
@@ -3936,6 +3937,9 @@ function _renderAttachmentPills() {
 
   if (!sidePanelList) return;
 
+  const newItems = items.filter((it) => it.source !== "session");
+  const sessionItems = items.filter((it) => it.source === "session");
+
   const countBadge = document.getElementById("composerAttachCountBadge");
   if (!items.length) {
     sidePanelList.innerHTML = "";
@@ -3944,10 +3948,12 @@ function _renderAttachmentPills() {
     return;
   }
   // 패널은 사용자가 "첨부파일 목록" 메뉴를 클릭할 때만 열림 — 자동 open 금지.
-  if (countBadge) countBadge.textContent = String(items.length);
+  // 배지: 신규 첨부 수 우선, 없으면 전체 수.
+  if (countBadge) countBadge.textContent = newItems.length ? String(newItems.length) : String(items.length);
 
   sidePanelList.innerHTML = "";
-  items.forEach((it) => {
+
+  const _buildPill = (it, isSession) => {
     const sizeKb = Math.max(1, Math.round((Number(it.size) || 0) / 1024));
     const safeName = String(it.name || "unnamed");
     const titleText = it.status === "failed"
@@ -3955,7 +3961,7 @@ function _renderAttachmentPills() {
       : (it.status === "staged" ? `${safeName} (첫 메시지와 함께 업로드)` : safeName);
 
     const pill = document.createElement("span");
-    pill.className = "composer-attachment-pill";
+    pill.className = "composer-attachment-pill" + (isSession ? " session-source" : "");
     pill.dataset.attachmentId = String(it.id);
     pill.dataset.uploading = it.status === "uploading" ? "true" : "false";
     pill.dataset.staged = it.status === "staged" ? "true" : "false";
@@ -3981,8 +3987,24 @@ function _renderAttachmentPills() {
     });
 
     pill.append(nameEl, sizeEl, removeBtn);
-    sidePanelList.appendChild(pill);
-  });
+    return pill;
+  };
+
+  if (newItems.length) {
+    const hdr = document.createElement("div");
+    hdr.className = "attach-section-label";
+    hdr.textContent = "이번 요청에 첨부";
+    sidePanelList.appendChild(hdr);
+    newItems.forEach((it) => sidePanelList.appendChild(_buildPill(it, false)));
+  }
+
+  if (sessionItems.length) {
+    const hdr = document.createElement("div");
+    hdr.className = "attach-section-label session-label";
+    hdr.textContent = "세션 파일 (이전 첨부 — LLM 컨텍스트 유지)";
+    sidePanelList.appendChild(hdr);
+    sessionItems.forEach((it) => sidePanelList.appendChild(_buildPill(it, true)));
+  }
 }
 
 function _removeAttachmentPill(attachmentId) {
@@ -4046,7 +4068,7 @@ async function _uploadComposerAttachment(file) {
     if (state.composerAttachments.lazyConvCreating) {
       const localId = state.composerAttachments.nextLocalId;
       state.composerAttachments.nextLocalId -= 1;
-      bucket.items.push({ id: localId, kind: _guessKindFromFile(file), name: file.name || "unnamed", size: Number(file.size) || 0, status: "staged", selected: true, _localFile: file });
+      bucket.items.push({ id: localId, kind: _guessKindFromFile(file), name: file.name || "unnamed", size: Number(file.size) || 0, status: "staged", selected: true, _localFile: file, source: "new" });
       _renderAttachmentPills();
       showToast(`첨부가 추가되었습니다 (첫 메시지와 함께 업로드됩니다): ${file.name || "unnamed"}`);
       return;
@@ -4054,7 +4076,7 @@ async function _uploadComposerAttachment(file) {
     state.composerAttachments.lazyConvCreating = true;
     const localId = state.composerAttachments.nextLocalId;
     state.composerAttachments.nextLocalId -= 1;
-    bucket.items.push({ id: localId, kind: _guessKindFromFile(file), name: file.name || "unnamed", size: Number(file.size) || 0, status: "uploading", selected: true });
+    bucket.items.push({ id: localId, kind: _guessKindFromFile(file), name: file.name || "unnamed", size: Number(file.size) || 0, status: "uploading", selected: true, source: "new" });
     state.composerAttachments.uploadingCount += 1;
     _renderAttachmentPills();
     const pendingKey = state.pendingSentinel ? String(state.pendingSentinel) : "";
@@ -4089,7 +4111,7 @@ async function _uploadComposerAttachment(file) {
       const resp = await apiFetch(`/api/conversations/${encodeURIComponent(earlyCid)}/attachments`, { method: "POST", body: formData, headers: {} });
       if (resp && Number(resp.id) > 0) {
         const idx2 = uploadBucket?.items.findIndex((it) => it.id === localId) ?? -1;
-        if (idx2 >= 0) uploadBucket.items[idx2] = { id: Number(resp.id), kind: String(resp.kind || _guessKindFromFile(file)), name: String(resp.original_filename || file.name || "unnamed"), size: Number(resp.size || file.size || 0), status: "ready", selected: true, signed_url: resp.signed_url || null };
+        if (idx2 >= 0) uploadBucket.items[idx2] = { id: Number(resp.id), kind: String(resp.kind || _guessKindFromFile(file)), name: String(resp.original_filename || file.name || "unnamed"), size: Number(resp.size || file.size || 0), status: "ready", selected: true, signed_url: resp.signed_url || null, source: "new" };
         showToast(`첨부 업로드 완료: ${file.name || "unnamed"}`);
       } else {
         const idx2 = uploadBucket?.items.findIndex((it) => it.id === localId) ?? -1;
@@ -4122,6 +4144,7 @@ async function _uploadComposerAttachment(file) {
     size: Number(file.size) || 0,
     status: "uploading",
     selected: true,
+    source: "new",
   };
   bucket.items.push(optimistic);
   state.composerAttachments.uploadingCount += 1;
@@ -4148,6 +4171,7 @@ async function _uploadComposerAttachment(file) {
           status: "ready",
           selected: true,
           signed_url: resp.signed_url || null,
+          source: "new",
         };
       }
       showToast(`첨부 업로드 완료: ${optimistic.name}`);
@@ -4230,6 +4254,7 @@ async function _flushStagedAttachmentsToCid(targetCid, sourceKey) {
           status: "ready",
           selected: true,
           signed_url: resp.signed_url || null,
+          source: "new",
         });
         uploadedIds.push(Number(resp.id));
       } else {
@@ -4267,6 +4292,7 @@ async function _loadConversationAttachments(convId) {
         size: Number(a.size || 0),
         status: String(a.status || "ready") === "deleted" ? "failed" : "ready",
         selected: true,
+        source: "session",
       });
     }
     _renderAttachmentPills();
@@ -4721,12 +4747,13 @@ async function sendPrompt() {
   // - 기존 대화: optimistic user message 추가 (실제 backend 메시지는 refreshWorkspace 가 덮어씀).
   // - lazy-create: pending bubble 만 표시 (user message 는 backend 가 cid 와 함께 기록 후 refreshWorkspace 가 hydrate).
   // UX-COMPACT: 전송 전 현재 첨부 파일 스냅샷 (메시지 버블에 표시용)
+  // source !== "session" 인 파일만 — 이번 요청에 새로 첨부한 파일만 말풍선에 표시.
   const _sendAttachmentSnapshot = (() => {
     const key = _composerAttachmentKey(isLazyCreate ? null : targetConvId);
     const pendingKey = state.pendingSentinel ? String(state.pendingSentinel) : "";
     const bucket = state.composerAttachments.byConv[isLazyCreate ? pendingKey : key];
     return (bucket?.items || []).filter(
-      (it) => it.status === "ready" || it.status === "staged"
+      (it) => (it.status === "ready" || it.status === "staged") && it.source !== "session"
     ).map((it) => ({ id: it.id, name: it.name, size: it.size, signed_url: it.signed_url || null }));
   })();
 
@@ -4796,6 +4823,16 @@ async function sendPrompt() {
   const attachmentSnapshot = _composerAttachmentSnapshot(targetConvId, isLazyCreate);
   askBody.attachment_ids = attachmentSnapshot.selectedIds;
   askBody.attachment_scope_all = attachmentSnapshot.scopeAll;
+  // new_attachment_ids: 이번 요청에 새로 첨부된 파일만 (LLM 컨텍스트에서 신규/세션 구분용).
+  askBody.new_attachment_ids = (() => {
+    const _bKey = isLazyCreate
+      ? (state.pendingSentinel ? String(state.pendingSentinel) : "")
+      : String(targetConvId || "");
+    const _b = state.composerAttachments.byConv[_bKey];
+    return (_b?.items || [])
+      .filter((it) => it.selected && it.status === "ready" && Number(it.id) > 0 && it.source !== "session")
+      .map((it) => Number(it.id));
+  })();
 
   // TASK-0106 (REQ-20260522-0106): lazy-create 시 staged (status="staged", _localFile=File)
   // 첨부가 있으면 본 send 직전에 cid 를 즉시 발급 + staged 일괄 업로드 → attachment_ids 갱신.
@@ -4845,12 +4882,15 @@ async function sendPrompt() {
     });
     promptInputEl.value = "";
     promptInputEl.style.height = "auto";
-    // UX-COMPACT: 전송 성공 시 첨부 파일 목록 클리어 + 사이드 패널 숨김
+    // UX-COMPACT: 전송 성공 시 new → session 전환 (버킷 유지 — 세션 컨텍스트 보존).
+    // 파일은 삭제하지 않고 source 만 변경해 다음 요청에도 LLM 이 참조 가능하게 한다.
     const _clearKey = isLazyCreate
       ? (busyKey ? String(busyKey) : "")
       : String(targetConvId || "");
     if (_clearKey && state.composerAttachments.byConv[_clearKey]) {
-      state.composerAttachments.byConv[_clearKey].items = [];
+      state.composerAttachments.byConv[_clearKey].items.forEach((it) => {
+        if (it.source !== "session") it.source = "session";
+      });
     }
     _renderAttachmentPills();
     showToast(payload.error ? payload.error : "응답을 갱신했습니다.");
