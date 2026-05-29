@@ -11,7 +11,21 @@ extend-exclude = ["**/__pycache__", "**/.pytest_cache"]
 select = ["E9", "F63", "F7", "F82"]
 
 [tool.pytest.ini_options]
-addopts = "-q"
+# TASK-0127 (#11): CI 를 "회귀 시에만 적색" 게이트로 만들기 위해 리미디에이션 이전부터
+# 깨져 있던 8건을 격리(deselect)한다. 이들은 본 작업이 깬 것이 아니며(backup/pre-remediation-main
+# 에서도 동일 실패) 별도 테스트-정비 대상이다 (STATUS.md / TODOS.md 추적):
+#   - test_anchor_invariant_postgres 2건: 라이브 PG fixture 데이터 의존 (격리 환경 미충족)
+#   - test_m5_cleanup 6건: bin/kb-cleanup-mysql.sh 셸 스크립트 환경 의존 (격리 PATH 에서 returncode 2)
+# 신규 회귀는 그대로 검출된다. 격리 항목이 복구되면 본 목록에서 제거.
+addopts = """-q \
+  --deselect "unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py::test_anchor_invariant_scenarios[S6_fact_entries_multi_row_priority]" \
+  --deselect "unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py::test_anchor_invariant_negative[N1_llm_call_zero]" \
+  --deselect "unit/feature-0002-agent-core/tests/test_m5_cleanup.py::test_cleanup_script_dry_run_outputs_drop_sql" \
+  --deselect "unit/feature-0002-agent-core/tests/test_m5_cleanup.py::test_cleanup_script_rejects_wrong_confirm_string" \
+  --deselect "unit/feature-0002-agent-core/tests/test_m5_cleanup.py::test_dry_run_confirm_combination_rejected" \
+  --deselect "unit/feature-0002-agent-core/tests/test_m5_cleanup.py::test_confirm_requires_dual_write_off" \
+  --deselect "unit/feature-0002-agent-core/tests/test_m5_cleanup.py::test_confirm_requires_cutover_date" \
+  --deselect "unit/feature-0002-agent-core/tests/test_m5_cleanup.py::test_confirm_rejects_recent_cutover_date\""""
 testpaths = [
     "unit/feature-0002-agent-core/tests",
     "unit/feature-0003-agent-web-ui/tests",

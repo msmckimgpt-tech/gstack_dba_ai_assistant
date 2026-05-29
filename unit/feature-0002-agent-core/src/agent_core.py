@@ -9,6 +9,7 @@ LLM이 도구를 선택하고 실행 결과를 바탕으로 사용자에게 응�
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sys
@@ -16,6 +17,11 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+
+# TASK-0127 (#1): ux-compact-redesign 병합으로 들어온 _save_message/_ensure_conversation/
+# _update_conversation_topic 가 PG 쓰기 실패 시 `logger.warning` 을 호출하나 모듈 레벨 logger
+# 정의가 없어 NameError(F821) 였다 — ruff 게이트가 검출. 라이브 ask 경로이므로 정의 추가.
+logger = logging.getLogger("agent_core")
 
 import mysql.connector
 from rich.console import Console

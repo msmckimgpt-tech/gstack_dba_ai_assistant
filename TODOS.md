@@ -12,6 +12,11 @@
 
 ## Active
 
+- [ ] **P2** 리미디에이션(TASK-0127 #11) CI 격리 8건 테스트 정비
+  - **Why**: 리미디에이션 이전부터 깨진 8건을 CI 게이트 녹색화를 위해 `pyproject.toml` addopts `--deselect` 로 격리. 회귀 검출은 유지되나 격리 항목은 미검증 상태.
+  - **Where**: `pyproject.toml` [tool.pytest.ini_options] addopts + `unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py`(2: 라이브 PG fixture 의존) + `test_m5_cleanup.py`(6: `bin/kb-cleanup-mysql.sh` 셸 환경 의존, 격리 PATH 에서 returncode 2)
+  - **Next step**: anchor 2건은 PG fixture(testcontainers 또는 세션 스코프 ephemeral PG) 도입, m5_cleanup 6건은 스크립트 실행 환경(PATH/필요 바이너리) 재현 또는 테스트를 환경 비의존으로 재작성. 복구 시 deselect 목록에서 제거.
+
 - [ ] **P2** gstack 스킬 도입 후속: `/setup-deploy` 로 배포 파이프라인 구성 여부 결정
   - **Why**: 현재 배포는 `make web` + docker compose 로컬 재빌드 중심. 공식 deploy target 이 없어 `/ship` 이후 자동화가 비어있음.
   - **Where**: repo 루트 `Makefile` + `docker-compose.yml`

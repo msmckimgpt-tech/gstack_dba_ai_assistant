@@ -326,29 +326,37 @@ def test_conn_closed_after_failure(monkeypatch):
 # Test 12: memory.py save_memory_kv caller mirror 연동
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_memory_save_kv_calls_mirror(monkeypatch):
-    """memory.save_memory_kv 가 MySQL write 후 _dual_write_runtime_mirror 호출."""
+def test_memory_save_kv_writes_pg_direct(monkeypatch):
+    """TASK-0127 (#1): save_memory_kv 가 PgRuntimeBackend.save_kv 로 PG 에 직접 쓴다.
+
+    2026-05-27 cutover 이전엔 raw MySQL `INSERT INTO AgentMemoryKV` + AGENT_RUNTIME_DUAL_WRITE
+    게이트 mirror 였으나, MySQL 테이블 DROP 후 KV 쓰기가 조용히 동결됐다. save_memory_message
+    와 동일하게 PG 직접 쓰기로 전환 — 본 테스트가 회귀(mirror 게이트 재도입)를 차단한다.
+    """
     import modules.runtime_backend as rb
-    monkeypatch.setattr(rb, "AGENT_RUNTIME_DUAL_WRITE", True)
 
-    mirror_calls = []
-    def fake_mirror(method_name, **kwargs):
-        mirror_calls.append((method_name, kwargs))
-    monkeypatch.setattr(rb, "_dual_write_runtime_mirror", fake_mirror)
+    saved = []
+    closed = {"n": 0}
 
-    # Fake MySQL conn
-    class FakeMyConn:
-        def cursor(self):
-            class C:
-                def execute(self, *a, **k): pass
-                def close(self): pass
-            return C()
+    class FakePgConn:
+        def close(self):
+            closed["n"] += 1
+
+    class FakeBackend:
+        def save_kv(self, conn, *, conversation_id, key, value):
+            saved.append(
+                {"conn": conn, "conversation_id": conversation_id, "key": key, "value": value}
+            )
+
+    monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: FakePgConn())
+    monkeypatch.setattr(rb, "_get_pg_runtime_backend", lambda: FakeBackend())
 
     from modules import memory
-    memory.save_memory_kv(FakeMyConn(), "conv-1", "mykey", "myval")
+    # conn 인자는 시그니처 호환용 — PG 경로가 자체 conn 을 쓰므로 None 으로 호출 가능.
+    memory.save_memory_kv(None, "conv-1", "mykey", "myval")
 
-    assert len(mirror_calls) == 1
-    assert mirror_calls[0][0] == "save_kv"
-    assert mirror_calls[0][1]["conversation_id"] == "conv-1"
-    assert mirror_calls[0][1]["key"] == "mykey"
-    assert mirror_calls[0][1]["value"] == "myval"
+    assert len(saved) == 1
+    assert saved[0]["conversation_id"] == "conv-1"
+    assert saved[0]["key"] == "mykey"
+    assert saved[0]["value"] == "myval"
+    assert closed["n"] == 1  # finally 에서 pg_conn.close()
