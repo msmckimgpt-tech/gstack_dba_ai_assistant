@@ -2,6 +2,9 @@ x-agent-common: &agent-common
   build:
     context: .
     dockerfile: unit/feature-0002-agent-core/src/Dockerfile
+    # TASK-0126 (#5 split-brain): 빌드 시 HEAD SHA 각인 (Makefile 이 export GIT_COMMIT).
+    args:
+      GIT_COMMIT: "${GIT_COMMIT:-unknown}"
   # CHG-20260522-0005 (feature-0007 follow-up): secret 영역별 env 분리. agent-
   # common 은 DB / KB / MinIO / LLM 자격증명을 모두 사용 (agent loop tool_use +
   # KB read + 첨부 read + LLM 호출). bedrock-gateway 의 AWS_* 는 본 chain 에

@@ -127,6 +127,12 @@
       const table = renderResultTable(rows);
       if (table) {
         container.appendChild(table);
+        const dlBtn = document.createElement("button");
+        dlBtn.type = "button";
+        dlBtn.className = "share-csv-download-btn";
+        dlBtn.textContent = "CSV 다운로드";
+        dlBtn.addEventListener("click", () => downloadRowsAsCsv(rows, "result.csv"));
+        container.appendChild(dlBtn);
         hasAny = true;
       }
     }
@@ -168,6 +174,26 @@
     table.appendChild(tbody);
 
     return table;
+  }
+
+  function downloadRowsAsCsv(rows, filename) {
+    if (!rows || !rows.length) return;
+    const headers = Object.keys(rows[0] || {});
+    const escape = (v) => {
+      const s = v == null ? "" : String(v);
+      return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [headers.map(escape).join(",")];
+    rows.forEach((row) => lines.push(headers.map((h) => escape(row[h])).join(",")));
+    const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename || "result.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   async function doFork(tok, btn) {

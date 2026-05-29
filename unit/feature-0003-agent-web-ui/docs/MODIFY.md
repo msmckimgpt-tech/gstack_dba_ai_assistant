@@ -16,6 +16,16 @@ source_of_truth: true
   - `unit/feature-0003-agent-web-ui/src/app.py`: `PERMISSION_DEFINITIONS` 에서 `conversation.suggestions.read` 제거; `SEED_ROLE_DEFINITIONS` sales 에 `conversation.delete.own` 추가, operator/sales 에서 `suggestions.read` 제거, pending 에서 `file.read.own` 제거; suggestions 엔드포인트 RBAC 게이트 `conversation.ask` 로 변경; `_legacy_permission_codes_from_row` 에서 `suggestions.read` 제거; `_ensure_seed_roles` catchup_codes 에 `conversation.delete.own` 추가; `_cleanup_deprecated_role_permissions` 신설 및 호출.
   - `docs/STATUS.md`: RBAC 권한 정합 변경 이력 2건 추가 (sales delete.own 추가 + suggestions.read 폐기 + file.read.own from pending 제거).
 
+## CHG-20260528-0125
+- Date: 2026-05-28
+- Related Requirement: TASK-0125 (REQ-20260528-0125, **Minor** §12.3 — UX 2차 보완 7개 항목 구현; ux-compact-redesign 병합 시 재부여 — 브랜치 원번호 TASK-0123, main TASK-0123/0124 와 ID 충돌하여 다음 feature-0003 시퀀스로 정합)
+- Summary: frontend-only UX 보완 7개 항목 일괄 구현. (1) `.composer-box` padding `9px→7px` (입력창 높이 프로필 버튼 48px 일치). (2) `_uploadComposerAttachment()` lazy 분기 재작성: 파일 선택 즉시 `/api/new_conversation` cid 발급 + 업로드 + `lazyConvCreating` 경쟁 방지 플래그. (3) 업로드 응답 `signed_url` bucket 보존 + `_sendAttachmentSnapshot` 포함 + `refreshWorkspace()` 후 lastUserMsg._attachments 재주입. (4) 첨부 chip `has-download` class + click 핸들러 (presigned GET). (5) `share.js` `downloadRowsAsCsv()` helper + SQL 결과표 하단 CSV 버튼. `share.css` `.share-csv-download-btn`. (6) `renderProgress()` `progressCardEl.open=true` + step details `detailsEl.open=true`. (7) lazy-create 성공 path `state.conversations` 최소 항목 추가 + `renderConversationList()`. node --check PASS. backend / RBAC / DB schema / endpoint contract 무변경.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`: lazy upload 재작성 + signed_url 보존 + lastUserMsg._attachments 재주입 + progressCardEl.open + detailsEl.open + state.conversations 최소 항목
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.composer-box` padding 축소 + `.attach-chip-dl` + `.message-bubble-attach-chip.has-download` hover 효과
+  - `unit/feature-0003-agent-web-ui/src/static/share.js`: `downloadRowsAsCsv()` helper + CSV 버튼 삽입
+  - `unit/feature-0003-agent-web-ui/src/static/share.css`: `.share-csv-download-btn` 스타일
+
 ## CHG-20260528-0123
 - Date: 2026-05-28
 - Related Requirement: REQ-20260527-0001 (**Major** §12.3 — KB 등록 UI/endpoint 제거)

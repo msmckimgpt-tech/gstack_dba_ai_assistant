@@ -170,3 +170,19 @@
 }
 
 .hidden { display: none !important; }
+
+.share-csv-download-btn {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--share-border);
+  background: var(--share-surface);
+  color: var(--share-text);
+  cursor: pointer;
+  transition: background .12s;
+}
+.share-csv-download-btn:hover {
+  background: #f0f0f0;
+}

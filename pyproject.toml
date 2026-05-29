@@ -1,0 +1,18 @@
+# TASK-0126 (#11): 프로젝트 도구 설정 (ruff 린트 + pytest). 패키징 메타는 아님.
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["**/__pycache__", "**/.pytest_cache"]
+
+[tool.ruff.lint]
+# 초기 게이트: 실제 버그성 규칙 위주 (pyflakes F + 구문 E9). 스타일/임포트 정리는
+# Task 9(죽은 코드 정리)에서 점진 확대. 현재는 CI 에서 continue-on-error 로 비차단.
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = [
+    "unit/feature-0002-agent-core/tests",
+    "unit/feature-0003-agent-web-ui/tests",
+]

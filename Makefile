@@ -3,6 +3,10 @@ export PATH := /snap/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin
 
 DC := COMPOSE_BAKE=false docker compose
 DC_QUIET := $(DC) --ansi=never
+# TASK-0126 (#5 split-brain): 빌드 시 현재 HEAD SHA 를 컨테이너에 각인.
+# docker-compose.yml 의 build.args GIT_COMMIT 으로 전달 → Dockerfile ARG/ENV → /healthz 노출.
+GIT_COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+export GIT_COMMIT
 RUNTIME_DIR := ../artifacts
 SHARED_DIR := $(RUNTIME_DIR)/shared
 MYSQL_DATA_DIR := $(RUNTIME_DIR)/mysql-data
@@ -34,7 +38,7 @@ BROWSER_CTL := $(DC_QUIET) run --rm --entrypoint python --env BROWSER_SESSION_FI
 
 .PHONY: help \
         check-llm-network ensure-replica-network replica-check wait-mysql ensure-memory-db \
-        up down start stop restart status build ps logs init clean clear \
+        up down start stop restart status build test ps logs init clean clear \
         sh repl ask mysql out dump session-info dc-build \
         mcp-up mcp-down mcp-test \
         convo-list convo-new convo-use convo-delete convo-rename convo-clear \
@@ -179,6 +183,17 @@ restart: down up  ## lifecycle: down 후 up
 
 build:  ## lifecycle: 모든 서비스 이미지를 --no-cache 로 재빌드
 	@$(DC_QUIET) build --no-cache
+
+test:  ## ci: 단위 테스트(pytest) + 린트(ruff) — agent 이미지 격리 컨테이너에서 실행 (psycopg 등 런타임 의존 포함, --no-deps 로 DB 미기동)
+	@$(MAKE) -s dc-build SERVICE=agent
+	@$(DC_QUIET) run --rm --no-deps -v "$(CURDIR):/work" -w /work --entrypoint sh agent -lc '\
+	  pip install -q --no-cache-dir pytest ruff >/tmp/pip-dev.log 2>&1 || { cat /tmp/pip-dev.log; exit 1; }; \
+	  export PYTHONPATH=/work/unit/feature-0002-agent-core/src:/work/unit/feature-0003-agent-web-ui/src; \
+	  echo "=== pytest ==="; \
+	  python -m pytest -q unit/feature-0002-agent-core/tests unit/feature-0003-agent-web-ui/tests; rc=$$?; \
+	  echo "=== ruff (참고용, 비차단) ==="; \
+	  ruff check unit/feature-0002-agent-core/src unit/feature-0003-agent-web-ui/src || true; \
+	  exit $$rc'
 
 # =============================================================================
 # Status — 상태 / 로그 / 진단
