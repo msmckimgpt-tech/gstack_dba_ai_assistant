@@ -22,16 +22,26 @@ model_list:
   # 결정 (사용자 reanchor 2026-05-21): 사내 한정 + 비-개인정보 SQL 작업 가정으로
   # global routing 수용. 데이터 잔류 정책은 PIPA 엄격 적용 시 별 cycle 의
   # Provisioned throughput 또는 별 provider 로 재검토. ADR-0022 보강 필요.
+  # Extended thinking: effort=high 수준 (budget_tokens=16000). thinking 활성화 시
+  # temperature 는 LiteLLM 내부에서 1로 고정 (Anthropic 요구사항).
   - model_name: claude-sonnet-4
     litellm_params:
       model: bedrock/global.anthropic.claude-sonnet-4-6
       aws_region_name: ap-northeast-2
+      thinking:
+        type: "enabled"
+        budget_tokens: 16000
 
   # ── Claude Haiku 4.5 (가성비, ACTIVE — global inference profile) ─────
+  # Extended thinking 활성화 (budget_tokens=5000). Haiku 4.5 는 Claude 4 시리즈로
+  # extended thinking 을 지원한다. thinking 활성화 시 temperature 는 1로 고정.
   - model_name: claude-haiku-4
     litellm_params:
       model: bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0
       aws_region_name: ap-northeast-2
+      thinking:
+        type: "enabled"
+        budget_tokens: 5000
 
 # ── 인증 ──────────────────────────────────────────────────────────────
 # backend 가 보내는 Authorization 헤더의 Bearer token 을 BEDROCK_GATEWAY_API_KEY

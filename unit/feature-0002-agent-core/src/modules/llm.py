@@ -599,6 +599,7 @@ def _openai_chat_completion_with_deadline(
     model: str,
     messages: list[dict[str, Any]],
     timeout_sec: int | None = None,
+    task: str = "agent",
 ):
     if client is None:
         return None
@@ -609,6 +610,7 @@ def _openai_chat_completion_with_deadline(
         "messages": messages,
         "timeout": _openai_request_timeout(timeout_sec),
     }
+    create_kwargs.update(_max_tokens_kwargs(model, task))
     create_kwargs.update(_temperature_kwargs(model))
     future = executor.submit(
         client.chat.completions.create,
@@ -909,6 +911,7 @@ def llm_plan(
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
         ],
         timeout_sec=timeout_sec,
+        task="agent",
     )
     if resp is None:
         _log_llm_warn("llm_plan", "no_response", f"model={_plan_model}")
@@ -984,6 +987,7 @@ def llm_plan_rag_priority(
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
         ],
         timeout_sec=timeout_sec,
+        task="agent",
     )
     if resp is None:
         _log_llm_warn("llm_plan_rag_priority", "no_response", f"model={_plan_model}")

@@ -70,7 +70,9 @@ API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = (
         "label": "claude-sonnet-4",
         "group": "Claude 4",
         "description": "Anthropic Claude Sonnet 4.x (frontier, 고품질)",
-        "supports_temperature": True,
+        # Extended thinking (effort=high) 활성화 — temperature 는 반드시 1 이어야
+        # 하므로 _temperature_kwargs 에서 temperature=0 을 주입하지 않도록 False.
+        "supports_temperature": False,
         # TASK-0094 Sprint 2 (D13) — Claude Sonnet 4.x 는 native multimodal.
         # _build_attachment_context_section 의 kind=image 분기 routing 활성.
         "supports_vision": True,
@@ -80,7 +82,8 @@ API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = (
         "label": "claude-haiku-4",
         "group": "Claude 4",
         "description": "Anthropic Claude Haiku 4.x (가성비, 기본값)",
-        "supports_temperature": True,
+        # Extended thinking 활성화 — temperature=1 고정 요구사항으로 False.
+        "supports_temperature": False,
         # TASK-0094 Sprint 2 (D13) — Claude Haiku 4.x 는 native multimodal.
         "supports_vision": True,
     },
@@ -161,15 +164,16 @@ _LOCAL_LLM_MAX_TOKENS: dict[str, int] = {
 
 # Claude (Bedrock) 의 task 별 default cap. backend 가 OpenAI Chat Completions
 # 의 max_tokens param 을 LiteLLM 에 전달 → Anthropic API 의 max_tokens 로 변환.
-# 비용 폭주 worst-case (사용자 query 가 long context 또는 model hallucination
-# 으로 max output 까지 채우는 case) 차단. plan / summary 등 짧은 출력은 작게,
-# agent loop 응답은 크게.
+# Extended thinking 활성화 시 max_tokens 가 budget_tokens 보다 커야 하며, 실제
+# 출력 = thinking_tokens + content_tokens 를 포함한다.
+# Sonnet: budget=16000 → max_tokens≥16001. Haiku: budget=5000 → max_tokens≥5001.
+# plan/insight/agent 등 thinking 을 소비하는 task 는 넉넉하게 설정.
 _CLAUDE_MAX_TOKENS: dict[str, int] = {
-    "insight": 2048,   # 인사이트 JSON
-    "agent": 8192,     # agent loop tool calls + 복잡한 응답
-    "summary": 1024,   # 요약 / topic 짧은 출력
-    "sql_fix": 2048,   # SQL 수정
-    "validate": 1024,  # step validation
+    "insight": 18000,  # thinking(≤16000) + 인사이트 JSON 출력
+    "agent": 20000,    # thinking(≤16000) + agent loop tool calls + 복잡한 응답
+    "summary": 7000,   # thinking(≤5000, haiku) + 요약 출력
+    "sql_fix": 18000,  # thinking + SQL 수정
+    "validate": 7000,  # thinking + step validation
 }
 
 
