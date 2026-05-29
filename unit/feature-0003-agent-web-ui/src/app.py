@@ -6728,6 +6728,66 @@ def _resolve_session_default_model() -> str:
     return API_DEFAULT_MODEL
 
 
+@app.get("/healthz")
+def healthz() -> JSONResponse:
+    """TASK-0126 (#5 split-brain / #4 워커 가시성): 배포 provenance + readiness probe.
+    인증 불필요, 최소 정보만 노출한다. git_commit 으로 web·insight-worker 가 동일 빌드인지
+    검증하고, insight_heartbeat_age_sec 로 워커 생존을 확인한다. Docker HEALTHCHECK 가
+    본 endpoint 를 사용한다 (mysql·pg 둘 다 정상이면 200, 아니면 503)."""
+    git_commit = os.environ.get("GIT_COMMIT", "unknown")
+    mysql_ok = False
+    pg_ok = False
+    heartbeat_age_sec: int | None = None
+
+    conn = None
+    try:
+        conn = _connect_memory()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.fetchone()
+        cur.close()
+        mysql_ok = True
+    except Exception:
+        logging.getLogger(__name__).warning("healthz: mysql check failed", exc_info=True)
+
+    if conn is not None:
+        try:
+            from modules.config import GLOBAL_CONVERSATION_ID
+
+            raw = load_memory_kv(conn, GLOBAL_CONVERSATION_ID, "insight_worker_last_cycle_at")
+            if raw:
+                ts = str(raw).strip().replace("Z", "+00:00")
+                dt = datetime.fromisoformat(ts)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                heartbeat_age_sec = max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
+        except Exception:
+            logging.getLogger(__name__).warning("healthz: insight heartbeat read failed", exc_info=True)
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    try:
+        from modules.db import _pg_available
+
+        pg_ok = bool(_pg_available())
+    except Exception:
+        logging.getLogger(__name__).warning("healthz: pg check failed", exc_info=True)
+
+    ok = mysql_ok and pg_ok
+    return JSONResponse(
+        {
+            "status": "ok" if ok else "degraded",
+            "git_commit": git_commit,
+            "mysql_ok": mysql_ok,
+            "pg_ok": pg_ok,
+            "insight_heartbeat_age_sec": heartbeat_age_sec,
+        },
+        status_code=200 if ok else 503,
+    )
+
+
 @app.get("/api/session")
 def get_session(request: Request) -> JSONResponse:
     local_llm_enabled = _is_local_llm_available()
