@@ -1151,8 +1151,9 @@ def _upsert_rag_memory_from_fact(
     source_sql: str | None = None,
     source_meta: dict[str, Any] | None = None,
 ) -> None:
-    if not conn:
-        return
+    # TASK-0127 (#1): conn 은 더 이상 쓰지 않는다 (PG 는 _dual_write_kb 가 자체 관리). 이전
+    # `if not conn: return` 가드는 vestigial 이며, conn=None 호출 시 rag doc/object 쓰기를
+    # 잘못 차단하는 footgun 이라 제거. conversation/key/text 유효성 검사만 유지.
     conv = str(conversation_id or "").strip()
     key = _fit_fact_key_storage(fact_key, max_len=128)
     text = str(fact_text or "").strip()
