@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.15.0
+template_version: v3.16.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -415,6 +415,26 @@ AI가 위 항목에 해당하는 작업에 도달하면:
 
 사전 승인된 범위 내의 변경은 §12 승인 없이 진행 가능하되, `REVIEW.md`에 사전 승인 근거와 함께 기록한다.
 
+**`deploy_scope` 선언 (배포 포함 여부)**: 기본적으로 배포(컨테이너 재빌드/재시작,
+CD hook, 외부 배포 명령)는 외부 영향 행동이라 cycle-final(commit/push) 이후 **별도
+confirm** 대상이다. 그러나 프로젝트가 `FUNCTION.md` 의 `## Pre-approved Changes` 에
+`deploy_scope: included` 를 선언하면, 해당 feature 의 cycle-final 후 배포까지가 사전
+승인 범위에 포함되어 AI 가 confirm 없이 배포를 이어서 진행한다.
+
+- **선언 위치 + 우선순위**: 프로젝트 전역 기본값은 `FIRST_REQUEST.md` 의 `deploy_scope:`
+  키 (init 시점 사람 Q&A 하에 선언). feature 단위는 `unit/<id>/docs/FUNCTION.md` 의
+  `## Pre-approved Changes`. **feature-level `deploy_scope: included` 가 cycle 시작
+  시점에 이미 존재했을 때만 자동 배포** — cycle 진행 중 같은 AI 가 새로 추가한 선언은
+  그 cycle 에서 자동 배포 근거로 쓰지 않는다 (1회 confirm 필요). 자율 확대 방지.
+- **미선언 시 (기본)**: cycle-final 후 entry Phase 6.8 이 deploy script 감지 시 1회
+  confirm. 사용자가 "배포까지 진행" 답하면 그 turn 한정 수행 (사전 승인 아님).
+- **발효 가시화**: `deploy_scope: included` 가 활성인 cycle 의 첫 배포 직전, AI 는
+  "deploy_scope: included 활성 — 이후 자동 배포" 를 1줄 표면화한다 (silent 자동배포 금지).
+- **파일이 ground truth**: 세션 간 지속·context rollover 에도 선언이 보존되며, 자율
+  배포라도 승인 근거가 `REVIEW.md` 에 기록되어 §12.2 정합. (별도 in-memory mode flag
+  방식은 외부영향 경계 우회 + rollover 망각 위험으로 불채택.) 단 F0 와 마찬가지로 본
+  선언은 **anti-friction 편의 장치이지 인가 통제가 아니다** — 파일 보유자가 편집 가능.
+
 ### §12.3 위험도 등급 분류
 
 | 등급 | 대상 | 대응 |
@@ -591,7 +611,7 @@ worktree 진입을 결정하지 않고 main worktree 컨텍스트를 강제 유�
 - **`git pull` / `git fetch` / `git submodule update --remote`**: read-only 또는
   fast-forward update 는 mutation 아님 — §13.2.7 F0 외. 단 conflict resolution
   merge commit 이 발생할 경우는 worktree 에서 수행 (이는 customization 영역).
-- **`/_template:init` 부트스트랩**: `<wrapper>/repo/.template/init-completed`
+- **`/_template:init` 부트스트랩**: `<wrapper>/repo/init 졸업 신호 (.template-init-marker / initialized_at / bootstrap=false)`
   마커 부재 시 1회 carve-out — 신규 consumer 의 첫 setup 시점은 worktree 없는
   main checkout 에서 진행. init 종료 시 마커 생성으로 carve-out 자동 만료.
 - **Escape hatch (긴급 회피)**: `GSTACK_SKIP_REPO_IMMUTABILITY=1` env 또는
@@ -700,7 +720,7 @@ META mode 우회 정책은 check #10 와 동일 (META mode 에서도 호출 — 
 2. Non-git working tree (gate 비적용)
 3. Template base (`_template_maintainer/HISTORY.md` 존재)
 4. ai/* worktree (main worktree 아닌 linked worktree)
-5. `/_template:init` 부트스트랩 (`.template/init-completed` 마커 부재)
+5. `/_template:init` 부트스트랩 (`init 졸업 신호 (.template-init-marker / initialized_at / bootstrap=false)` 마커 부재)
 6. Clean working tree (mutation 없음)
 
 위 6 조건 모두 부정 → FAIL with actionable guidance.
@@ -713,7 +733,7 @@ META mode 우회 정책은 check #10 와 동일 (META mode 에서도 호출 — 
   로 유지
 
 **Edge cases**:
-- 신규 consumer 첫 commit (`/_template:init` 직후): `.template/init-completed`
+- 신규 consumer 첫 commit (`/_template:init` 직후): `init 졸업 신호 (.template-init-marker / initialized_at / bootstrap=false)`
   마커가 init 종료 시 생성됨. init 자체는 carve-out 으로 통과, init 종료 후
   첫 commit 시점부터 F0 발동.
 - consumer 가 `_template_maintainer/HISTORY.md` 를 잘못 복제: template base

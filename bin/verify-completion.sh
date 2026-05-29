@@ -117,9 +117,11 @@ feature_dir() {
 is_meta_path() {
   local path="$1"
   case "$path" in
-    AGENTS.md|CLAUDE.md) return 0 ;;
+    AGENTS.md|CLAUDE.md|GEMINI.md) return 0 ;;
     bin/*|shared/docs/*|docs/*) return 0 ;;
     unit/_template/*) return 0 ;;
+    # v3.13.0 — wiki/ 사람 facing vault (AGENTS.md §21) 는 META path.
+    wiki/*) return 0 ;;
     unit/META-*) return 0 ;;
     # v3.6.0 — template maintainer archive (NOT distributed to consumers,
     # but classified as META for verify-completion check #9 attribution).
@@ -864,7 +866,8 @@ check_10_worktree_binding() {
 #   - non-git working tree
 #   - template base (sentinel `_template_maintainer/HISTORY.md` 존재)
 #   - ai/* worktree (linked worktree, main 아님)
-#   - `/_template:init` 부트스트랩 (`.template/init-completed` 마커 부재)
+#   - `/_template:init` 부트스트랩 (init 졸업 신호 .template-init-marker /
+#     initialized_at / bootstrap=false 모두 부재 — init 작업 중 일시 면제)
 #   - working tree clean (mutation 없음)
 # FAIL: 위 6 조건 모두 부정 → main checkout 의 mutation = F0 위반.
 
@@ -923,8 +926,24 @@ check_11_repo_immutability() {
     fi
   fi
 
-  # `/_template:init` 부트스트랩 carve-out: init-completed 마커 부재 시 첫 setup.
-  if [ ! -f "$repo_root/.template/init-completed" ]; then
+  # `/_template:init` 부트스트랩 carve-out: init 졸업 신호가 "모두 부재" 일 때만
+  # 일시 면제 (init 작업 중 example 정리로 main 이 dirty 해지는 구간 보호).
+  # 졸업 신호 (이중 — init 경로 / upgrade 경로 모두 커버):
+  #   (a) .template-init-marker 파일 — /_template:init 이 생성하는 sentinel
+  #   (b) AGENTS.md frontmatter 의 initialized_at: — init 의 이중 마커
+  #   (c) .template-state 의 bootstrap=false — template-upgrade.sh --apply 졸업 latch
+  # 하나라도 있으면 init 졸업 = carve-out 안 함 (F0 정상 발동).
+  # (구버전은 .template/init-completed 를 봤으나 어느 경로도 그 파일을 생성하지
+  #  않아 carve-out 영구 발동 버그 — v3.16.0 에서 실제 신호로 교체.)
+  local init_graduated=false
+  [ -f "$repo_root/.template-init-marker" ] && init_graduated=true
+  # initialized_at: frontmatter — 선행 공백 허용 (들여쓰기 변형 내성). prose 오매칭은
+  # 'initialized_at:' 가 라인 시작(±공백)이어야 하므로 backtick 내 인용·문중 언급과 구분됨.
+  grep -qE "^[[:space:]]*initialized_at:" "$repo_root/AGENTS.md" 2>/dev/null && init_graduated=true
+  if [ -f "$repo_root/.template-state" ]; then
+    grep -q "^bootstrap=false" "$repo_root/.template-state" 2>/dev/null && init_graduated=true
+  fi
+  if [ "$init_graduated" = false ]; then
     log_check 11 PASS "repo immutability" "(init bootstrap — carve-out)"
     return 0
   fi
