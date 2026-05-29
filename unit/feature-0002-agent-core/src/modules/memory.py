@@ -165,22 +165,22 @@ def save_memory_message(
 
 
 def save_memory_kv(conn, conversation_id: str, key: str, value: str) -> None:
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            "INSERT INTO AgentMemoryKV (ConversationId, `Key`, Value) VALUES (%s, %s, %s)"
-            " ON DUPLICATE KEY UPDATE Value = VALUES(Value), UpdatedAt = CURRENT_TIMESTAMP(3)",
-            (conversation_id, key, value),
-        )
-    except Exception:
-        pass
-    finally:
+    # TASK-0127 (#1): 2026-05-27 MySQL→PG cutover 잔재 수정. 이전엔 DROP 된 MySQL
+    # `AgentMemoryKV` 에 raw INSERT 를 하고 (`except: pass` 로 오류를 삼킴) PG mirror 는
+    # `AGENT_RUNTIME_DUAL_WRITE`(기본 off) 게이트라, KV 쓰기가 2026-05-27 부터 조용히
+    # 동결돼 run status/topic/last_sql/insight heartbeat 가 갱신되지 않았다. message/step/
+    # summary 와 동일하게 PG 런타임 백엔드로 직접 쓴다 (conn 인자는 시그니처 호환용으로 유지).
+    from .runtime_backend import _get_pg_runtime_backend, _get_pg_runtime_conn
+    pg_conn = _get_pg_runtime_conn()
+    if pg_conn:
         try:
-            cur.close()
-        except Exception:
-            pass
-    from .runtime_backend import _dual_write_runtime_mirror
-    _dual_write_runtime_mirror("save_kv", conversation_id=conversation_id, key=key, value=value)
+            _get_pg_runtime_backend().save_kv(pg_conn,
+                conversation_id=conversation_id, key=key, value=value)
+        except Exception as _exc:
+            import logging as _log
+            _log.getLogger("agent_core.memory").warning("save_memory_kv PG write failed: %s", _exc)
+        finally:
+            pg_conn.close()
 
 
 def load_memory_kv(conn, conversation_id: str, key: str) -> str:
@@ -389,15 +389,31 @@ def _clear_delete_request(conn, conversation_id: str) -> None:
 def _purge_run_steps(conn, conversation_id: str, run_id: str) -> None:
     if not conversation_id or not run_id:
         return
-    cur = conn.cursor()
-    cur.execute(
-        """
-DELETE FROM AgentMemorySteps
-WHERE ConversationId = %s AND RunId = %s
-        """,
-        (conversation_id, run_id),
-    )
-    cur.close()
+    # TASK-0127 (#1): agent_runtime.steps (PG) 에서 삭제. MySQL AgentMemorySteps 는 DROP 됨.
+    # 이전 코드는 except 없이 DROP 된 테이블에 DELETE → 호출 시 예외 전파(잠재 크래시)였다.
+    from .runtime_backend import _get_pg_runtime_conn
+    pg_conn = _get_pg_runtime_conn()
+    if not pg_conn:
+        return
+    try:
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM agent_runtime.steps WHERE conversation_id = %s AND run_id = %s",
+                (conversation_id, run_id),
+            )
+        pg_conn.commit()
+    except Exception as exc:
+        import logging as _log
+        _log.getLogger("agent_core.memory").warning("_purge_run_steps PG delete failed: %s", exc)
+        try:
+            pg_conn.rollback()
+        except Exception:
+            pass
+    finally:
+        try:
+            pg_conn.close()
+        except Exception:
+            pass
 
 
 def save_memory_summary(conn, conversation_id: str, summary: str) -> None:
@@ -649,59 +665,47 @@ def _pg_delete_conversation(conversation_id: str) -> None:
 
 
 def delete_conversation(conn, conversation_id: str) -> None:
+    # TASK-0127 (#1): 모든 런타임/KB 데이터는 PG (agent_kb) 에 있다. MySQL Agent*/AgentCore*
+    # 테이블은 2026-05-27 DROP 됐으므로 기존 MySQL DELETE 루프는 dead no-op 이라 제거.
+    # _pg_delete_conversation 이 agent_runtime.kv/core_conversations(CASCADE) + public.fact_entries/
+    # rag_documents/rag_objects 를 모두 삭제한다. conn 인자는 caller 시그니처 호환용으로 유지.
     _pg_delete_conversation(conversation_id)
-    cur = conn.cursor()
-    for sql, params in [
-        ("DELETE FROM AgentCoreMessages WHERE conversation_id = %s", (conversation_id,)),
-        ("DELETE FROM AgentCoreConversations WHERE conversation_id = %s", (conversation_id,)),
-        ("DELETE FROM AgentMemoryMessages WHERE ConversationId = %s", (conversation_id,)),
-        ("DELETE FROM AgentMemorySummary WHERE ConversationId = %s", (conversation_id,)),
-        ("DELETE FROM AgentMemoryKv WHERE ConversationId = %s", (conversation_id,)),
-        ("DELETE FROM AgentMemorySteps WHERE ConversationId = %s", (conversation_id,)),
-        # AgentMemoryFacts는 FactEntries 기반 VIEW — FactEntries 삭제만 필요
-        ("DELETE FROM AgentMemoryFactEntries WHERE ConversationId = %s", (conversation_id,)),
-        ("DELETE FROM AgentMemoryRagObjects WHERE ConversationId = %s", (conversation_id,)),
-        ("DELETE FROM AgentMemoryRagDocuments WHERE ConversationId = %s", (conversation_id,)),
-    ]:
-        try:
-            cur.execute(sql, params)
-        except Exception:
-            pass
-    cur.close()
 
 
 def _list_all_conversation_ids(conn) -> list[str]:
-    cur = conn.cursor()
+    # TASK-0127 (#1): PG (agent_kb) 에서 conversation_id 수집. MySQL Agent*/AgentCore* DROP 됨
+    # → 이전 MySQL 조회는 항상 [] 반환 → delete_all_conversations 가 무동작이었다.
+    from .runtime_backend import _get_pg_runtime_conn
+    pg_conn = _get_pg_runtime_conn()
+    if not pg_conn:
+        return []
     ids: set[str] = set()
     table_specs = (
-        ("AgentCoreConversations", "conversation_id"),
-        ("AgentCoreMessages", "conversation_id"),
-        ("AgentMemoryMessages", "ConversationId"),
-        ("AgentMemorySummary", "ConversationId"),
-        ("AgentMemoryKv", "ConversationId"),
-        ("AgentMemorySteps", "ConversationId"),
-        ("AgentMemoryFacts", "ConversationId"),
-        ("AgentMemoryFactEntries", "ConversationId"),
-        ("AgentMemoryRagDocuments", "ConversationId"),
-        ("AgentMemoryRagObjects", "ConversationId"),
+        ("agent_runtime.core_conversations", "conversation_id"),
+        ("agent_runtime.kv", "conversation_id"),
+        ("public.fact_entries", "conversation_id"),
+        ("public.rag_documents", "conversation_id"),
+        ("public.rag_objects", "conversation_id"),
     )
-    for table_name, column_name in table_specs:
+    try:
+        with pg_conn.cursor() as cur:
+            for table_name, column_name in table_specs:
+                try:
+                    cur.execute(
+                        f"SELECT DISTINCT {column_name} FROM {table_name} "
+                        f"WHERE {column_name} IS NOT NULL AND {column_name} <> ''"
+                    )
+                    for row in cur.fetchall() or []:
+                        conv_id = str(row[0] or "").strip() if row else ""
+                        if conv_id:
+                            ids.add(conv_id)
+                except Exception:
+                    continue
+    finally:
         try:
-            cur.execute(
-                f"""
-SELECT DISTINCT {column_name}
-FROM {table_name}
-WHERE {column_name} IS NOT NULL AND {column_name} <> ''
-                """
-            )
-            rows = cur.fetchall() or []
+            pg_conn.close()
         except Exception:
-            continue
-        for row in rows:
-            conv_id = str(row[0] or "").strip() if row else ""
-            if conv_id:
-                ids.add(conv_id)
-    cur.close()
+            pass
     return sorted(ids)
 
 

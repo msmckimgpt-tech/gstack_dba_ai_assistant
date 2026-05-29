@@ -954,23 +954,17 @@ def _text_hash(text: str) -> str:
 
 
 def _text_store_insert(cur, text: str) -> str:
-    """AgentMemoryTexts에 텍스트를 저장하고 해시를 반환한다.
+    """텍스트를 PG `texts` 에 저장하고 해시를 반환한다.
 
-    TASK-0020 (M2-b) dual-write: MySQL INSERT IGNORE 직후 Postgres mirror 호출.
-    `_dual_write_kb.upsert_text()` 가 `_pg_available()` 게이트 하 silent no-op
-    (M0~M2-a) 또는 fail-loud (M2-b, AGENT_KB_PG_REQUIRED=1).
+    TASK-0127 (#1): 2026-05-27 cutover 로 MySQL `AgentMemoryTexts` 는 DROP 됨. 이제
+    `_dual_write_kb.upsert_text()` (conn 자체 관리, `AGENT_KB_PG_REQUIRED` 에 따라
+    silent-log 또는 fail-loud) 로 PG 에만 쓴다. `cur` 인자는 caller 시그니처 호환용으로
+    유지하며 사용하지 않는다.
     """
     t = str(text or "").strip()
     if not t:
         return ""
     h = _text_hash(t)
-    try:
-        cur.execute(
-            "INSERT IGNORE INTO AgentMemoryTexts (TextHash, TextContent) VALUES (%s, %s)",
-            (h, t),
-        )
-    except Exception:
-        pass
     from .kb_backend import _dual_write_kb
     _dual_write_kb.upsert_text(text_hash=h, text_content=t)
     return h
@@ -1178,119 +1172,57 @@ def _upsert_rag_memory_from_fact(
         weight_val = 1
     weight_val = max(1, min(9, weight_val))
 
-    cur = conn.cursor()
-    text_hash = _text_store_insert(cur, text_for_doc)
-    try:
-        cur.execute(
-            """
-INSERT INTO AgentMemoryRagDocuments (
-    ConversationId,
-    ScopeKey,
-    DocType,
-    FactKey,
-    TextHash,
-    ContentHash,
-    Weight,
-    SourceType,
-    SourceRunId,
-    SourceSql
-)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-ON DUPLICATE KEY UPDATE
-    TextHash = VALUES(TextHash),
-    UpdatedAt = CURRENT_TIMESTAMP(3),
-    Weight = GREATEST(Weight, VALUES(Weight)),
-    SourceType = COALESCE(VALUES(SourceType), SourceType),
-    SourceRunId = COALESCE(VALUES(SourceRunId), SourceRunId),
-    SourceSql = COALESCE(VALUES(SourceSql), SourceSql)
-            """,
-            (
-                conv,
-                scope,
-                "fact",
-                key,
-                text_hash,
-                hash_val,
-                weight_val,
-                src_type,
-                src_run,
-                src_sql,
-            ),
+    # TASK-0127 (#1): 2026-05-27 cutover 로 MySQL `AgentMemoryRagDocuments`/`RagObjects`
+    # 는 DROP 됨. 이전엔 raw INSERT (오류 swallow) 라 rag doc/object 가 동결됐다. 이제
+    # `_dual_write_kb` (PgKbBackend 미러, conn 자체 관리) 로 PG 직접 쓰기.
+    from .kb_backend import _dual_write_kb
+    text_hash = _text_store_insert(None, text_for_doc)
+    _dual_write_kb.upsert_rag_document(
+        conversation_id=conv,
+        scope_key=scope,
+        doc_type="fact",
+        fact_key=key,
+        text_hash=text_hash,
+        content_hash=hash_val,
+        weight=weight_val,
+        source_type=src_type,
+        source_run_id=src_run,
+        source_sql=src_sql,
+    )
+    object_type, object_key, schema_name, table_name, column_name = _infer_rag_object_from_fact(
+        key, text_for_doc
+    )
+    if object_type and object_key:
+        (
+            category_domain,
+            category_entity_type,
+            category_metric_family,
+            category_event_type,
+            category_time_grain,
+            category_join_hints_json,
+            category_confidence,
+        ) = _extract_rag_category_meta(source_meta, object_type)
+        obj_text_hash = _text_store_insert(None, _trim_fact_text(text_for_doc, max_len=800))
+        _dual_write_kb.upsert_rag_object(
+            conversation_id=conv,
+            scope_key=scope,
+            object_type=object_type,
+            object_key=object_key,
+            schema_name=schema_name or None,
+            table_name=table_name or None,
+            column_name=column_name or None,
+            text_hash=obj_text_hash,
+            weight=weight_val,
+            source_type=src_type,
+            source_run_id=src_run,
+            category_domain=category_domain or None,
+            category_entity_type=category_entity_type or None,
+            category_metric_family=category_metric_family or None,
+            category_event_type=category_event_type or None,
+            category_time_grain=category_time_grain or None,
+            category_join_hints_json=category_join_hints_json or None,
+            category_confidence=category_confidence,
         )
-        object_type, object_key, schema_name, table_name, column_name = _infer_rag_object_from_fact(
-            key, text_for_doc
-        )
-        if object_type and object_key:
-            (
-                category_domain,
-                category_entity_type,
-                category_metric_family,
-                category_event_type,
-                category_time_grain,
-                category_join_hints_json,
-                category_confidence,
-            ) = _extract_rag_category_meta(source_meta, object_type)
-            obj_text_hash = _text_store_insert(cur, _trim_fact_text(text_for_doc, max_len=800))
-            cur.execute(
-                """
-INSERT INTO AgentMemoryRagObjects (
-    ConversationId,
-    ScopeKey,
-    ObjectType,
-    ObjectKey,
-    SchemaName,
-    TableName,
-    ColumnName,
-    TextHash,
-    Weight,
-    SourceType,
-    SourceRunId,
-    CategoryDomain,
-    CategoryEntityType,
-    CategoryMetricFamily,
-    CategoryEventType,
-    CategoryTimeGrain,
-    CategoryJoinHintsJson,
-    CategoryConfidence
-)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-ON DUPLICATE KEY UPDATE
-    TextHash = VALUES(TextHash),
-    Weight = GREATEST(Weight, VALUES(Weight)),
-    SourceType = COALESCE(VALUES(SourceType), SourceType),
-    SourceRunId = COALESCE(VALUES(SourceRunId), SourceRunId),
-    CategoryDomain = COALESCE(NULLIF(VALUES(CategoryDomain), ''), CategoryDomain),
-    CategoryEntityType = COALESCE(NULLIF(VALUES(CategoryEntityType), ''), CategoryEntityType),
-    CategoryMetricFamily = COALESCE(NULLIF(VALUES(CategoryMetricFamily), ''), CategoryMetricFamily),
-    CategoryEventType = COALESCE(NULLIF(VALUES(CategoryEventType), ''), CategoryEventType),
-    CategoryTimeGrain = COALESCE(NULLIF(VALUES(CategoryTimeGrain), ''), CategoryTimeGrain),
-    CategoryJoinHintsJson = COALESCE(NULLIF(VALUES(CategoryJoinHintsJson), ''), CategoryJoinHintsJson),
-    CategoryConfidence = COALESCE(VALUES(CategoryConfidence), CategoryConfidence),
-    UpdatedAt = CURRENT_TIMESTAMP(3)
-                """,
-                (
-                    conv,
-                    scope,
-                    object_type,
-                    object_key,
-                    schema_name or None,
-                    table_name or None,
-                    column_name or None,
-                    obj_text_hash,
-                    weight_val,
-                    src_type,
-                    src_run,
-                    category_domain or None,
-                    category_entity_type or None,
-                    category_metric_family or None,
-                    category_event_type or None,
-                    category_time_grain or None,
-                    category_join_hints_json or None,
-                    category_confidence,
-                ),
-            )
-    finally:
-        cur.close()
 
 
 def _normalize_fact_key(question: str) -> str:

@@ -637,111 +637,33 @@ def _upsert_fact(
     weight_val = max(1, min(9, weight_val))
     confidence_val = round(min(0.99, max(0.1, weight_val / 10.0)), 2)
 
-    def _prune_fact_entries_for_key(
-        cur_obj,
-        conv_id: str,
-        scoped_key: str,
-        key_name: str,
-        keep_limit: int,
-    ) -> int:
-        # outside-voice REV-20260520-0008 Critical: 광역 swallow 가 mirror 의 fail-loud
-        # raise 까지 silent → mysql 측 DELETE 후 postgres 측 정합 위배 시 사용자/agent
-        # 가 알림 받지 못함. 본 함수에서 (1) MySQL DELETE 의 광역 catch 는 기존 패턴
-        # 유지 (caller hot path 보호), (2) mirror 호출은 별도 — `_dual_write_kb` 의
-        # silent log / fail-loud 정책에 그대로 위임 (raise propagate).
-        if keep_limit < 1:
-            return 0
-        try:
-            cur_obj.execute(
-                """
-DELETE FROM AgentMemoryFactEntries
-WHERE ConversationId = %s
-  AND ScopeKey = %s
-  AND FactKey = %s
-  AND Id NOT IN (
-      SELECT Id
-      FROM (
-          SELECT Id
-          FROM AgentMemoryFactEntries
-          WHERE ConversationId = %s
-            AND ScopeKey = %s
-            AND FactKey = %s
-          ORDER BY Weight DESC, UpdatedAt DESC, Id DESC
-          LIMIT %s
-      ) keep_rows
-  )
-                """,
-                (
-                    conv_id,
-                    scoped_key,
-                    key_name,
-                    conv_id,
-                    scoped_key,
-                    key_name,
-                    int(keep_limit),
-                ),
-            )
-            deleted = int(cur_obj.rowcount or 0)
-        except Exception:
-            return 0
-        return deleted
-
-    cur = conn.cursor()
-    text_hash = _text_store_insert(cur, fact_text)
-    cur.execute(
-        """
-INSERT INTO AgentMemoryFactEntries (
-    ConversationId,
-    FactKey,
-    ScopeKey,
-    TextHash,
-    FactFingerprint,
-    Weight,
-    Confidence,
-    SourceType,
-    SourceRunId,
-    SourceSql
-)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-ON DUPLICATE KEY UPDATE
-    TextHash = VALUES(TextHash),
-    UpdatedAt = CURRENT_TIMESTAMP(3),
-    Weight = GREATEST(Weight, VALUES(Weight)),
-    Confidence = GREATEST(COALESCE(Confidence, 0), COALESCE(VALUES(Confidence), 0)),
-    SourceType = COALESCE(VALUES(SourceType), SourceType),
-    SourceRunId = COALESCE(VALUES(SourceRunId), SourceRunId),
-    SourceSql = COALESCE(VALUES(SourceSql), SourceSql)
-        """,
-        (
-            conversation_id,
-            fact_key,
-            scope,
-            text_hash,
-            fingerprint,
-            weight_val,
-            confidence_val,
-            source,
-            str(source_run_id or "").strip() or None,
-            str(source_sql or "").strip() or None,
-        ),
+    # TASK-0127 (#1): 2026-05-27 cutover 로 MySQL `AgentMemoryFactEntries` 는 DROP 됨.
+    # 이전엔 raw INSERT/DELETE (오류 swallow) 로 fact 가 2026-05-21 부터 동결됐다. 이제
+    # `_dual_write_kb` (PgKbBackend 미러, conn 자체 관리) 로 PG 직접 쓰기. rowcount 기반
+    # fact_dedupe_blocked 진단 로그는 PG ON CONFLICT 의미와 불일치하여 제거.
+    from .kb_backend import _dual_write_kb
+    text_hash = _text_store_insert(None, fact_text)
+    _dual_write_kb.upsert_fact_entry(
+        conversation_id=conversation_id,
+        fact_key=fact_key,
+        scope_key=scope,
+        text_hash=text_hash,
+        fact_fingerprint=fingerprint,
+        weight=weight_val,
+        confidence=confidence_val,
+        source_type=source,
+        source_run_id=str(source_run_id or "").strip() or None,
+        source_sql=str(source_sql or "").strip() or None,
     )
-    try:
-        if int(cur.rowcount or 0) >= 2:
-            log_fact_quality(
-                "fact_dedupe_blocked",
-                {
-                    "conversation_id": conversation_id,
-                    "scope_key": scope,
-                    "fact_key": fact_key,
-                    "fingerprint": fingerprint[:16],
-                },
-            )
-    except Exception:
-        pass
     keep_limit = 1 if single_key_mode else int(AGENT_FACT_ENTRIES_MAX_PER_KEY)
-    deleted_rows = _prune_fact_entries_for_key(cur, conversation_id, scope, fact_key, keep_limit)
-    if deleted_rows > 0:
-        try:
+    try:
+        deleted_rows = _dual_write_kb.prune_fact_entries_keep_top(
+            conversation_id=conversation_id,
+            scope_key=scope,
+            fact_key=fact_key,
+            keep_limit=keep_limit,
+        )
+        if isinstance(deleted_rows, int) and deleted_rows > 0:
             log_fact_quality(
                 "fact_key_pruned",
                 {
@@ -752,10 +674,9 @@ ON DUPLICATE KEY UPDATE
                     "deleted_rows": deleted_rows,
                 },
             )
-        except Exception:
-            pass
-    # AgentMemoryFacts는 FactEntries 기반 VIEW로 전환됨 — 별도 INSERT 불필요
-    cur.close()
+    except Exception:
+        pass
+    # AgentMemoryFacts 는 fact_entries 기반 (이전 VIEW) — 별도 INSERT 불필요
     try:
         _upsert_rag_memory_from_fact(
             conn,
@@ -1227,38 +1148,40 @@ def _publish_fact(
 
 
 def _purge_transient_schema_usage_facts(conn, conversation_id: str) -> None:
-    if not conn or not conversation_id:
+    if not conversation_id:
         return
-    cur = conn.cursor()
+    # TASK-0127 (#1): public.fact_entries (PG) 에서 삭제. MySQL AgentMemoryFactEntries 는
+    # 2026-05-27 DROP 됨 → 이전 코드는 swallow 되어 transient (schema_usage/search_pref/
+    # schema_pref:/table_pref:) fact 가 정리되지 않고 누적됐다. 두 MySQL DELETE 는 PG 단일
+    # DELETE 로 통합 (두 번째는 첫 번째의 부분집합).
+    from .runtime_backend import _get_pg_runtime_conn
+    pg_conn = _get_pg_runtime_conn()
+    if not pg_conn:
+        return
     try:
-        cur.execute(
-            """
-DELETE FROM AgentMemoryFactEntries
-WHERE ConversationId = %s
-  AND (SourceType IN ('schema_usage', 'search_pref')
-       OR FactKey LIKE 'schema_pref:%%'
-       OR FactKey LIKE 'table_pref:%%')
-            """,
-            (conversation_id,),
-        )
-        # AgentMemoryFacts는 VIEW — FactEntries에서 직접 삭제
-        cur.execute(
-            """
-DELETE FROM AgentMemoryFactEntries
-WHERE ConversationId = %s
-  AND (FactKey LIKE 'schema_pref:%%'
-       OR FactKey LIKE 'table_pref:%%')
-            """,
-            (conversation_id,),
-        )
-        conn.commit()
-    except Exception:
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                """
+DELETE FROM public.fact_entries
+WHERE conversation_id = %s
+  AND (source_type IN ('schema_usage', 'search_pref')
+       OR fact_key LIKE 'schema_pref:%%'
+       OR fact_key LIKE 'table_pref:%%')
+                """,
+                (conversation_id,),
+            )
+        pg_conn.commit()
+    except Exception as exc:
+        logger.warning("_purge_transient_schema_usage_facts PG delete failed: %s", str(exc)[:200])
         try:
-            conn.rollback()
+            pg_conn.rollback()
         except Exception:
             pass
     finally:
-        cur.close()
+        try:
+            pg_conn.close()
+        except Exception:
+            pass
 
 
 def _trim_fact_text(text: str, max_len: int = 220) -> str:

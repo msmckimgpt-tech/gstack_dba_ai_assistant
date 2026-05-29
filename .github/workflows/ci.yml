@@ -30,6 +30,20 @@ jobs:
         continue-on-error: true
         run: ruff check unit/feature-0002-agent-core/src unit/feature-0003-agent-web-ui/src
 
+      - name: Guard — no raw AgentMemory* write SQL in live KB/runtime callers (TASK-0127 #1)
+        run: |
+          # 2026-05-27 cutover 회귀 차단: 라이브 ask/insight write 경로(memory/knowledge/utils)에
+          # DROP 된 MySQL AgentMemory* 테이블 대상 raw INSERT/UPDATE/DELETE 재출현 시 실패.
+          # (kb_backend.py 의 MysqlKbBackend 방언 구현체와 admin-only kb_ingest.py 는 별도 정리 대상이라 제외.)
+          if grep -rnE "(INSERT( IGNORE)? INTO|UPDATE|DELETE FROM)\s+\`?AgentMemory" \
+               unit/feature-0002-agent-core/src/modules/memory.py \
+               unit/feature-0002-agent-core/src/modules/knowledge.py \
+               unit/feature-0002-agent-core/src/modules/utils.py; then
+            echo "::error::raw AgentMemory* write SQL 재출현 (cutover 회귀) — PG 백엔드(_dual_write_kb / PgRuntimeBackend) 사용 필요"
+            exit 1
+          fi
+          echo "OK: 라이브 write 경로에 raw AgentMemory* SQL 없음"
+
       - name: Unit tests (pytest)
         env:
           PYTHONPATH: unit/feature-0002-agent-core/src:unit/feature-0003-agent-web-ui/src
