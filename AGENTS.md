@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.19.0
+template_version: v3.20.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -394,6 +394,18 @@ risk 를 판단해서 자기 model/effort 를 바꿀 수는 없다** — frontma
   (Opus 4.8 고노력). entry persona 가 Critical 추정 시 1줄 권장 표면화 (전환은 사용자).
 - **단순·반복 작업** (lint fix, 포맷, 오타): 기본 model + effort 낮춤으로 비용 절감.
 - subagent 단위 model 분기는 §18.8 참조 (per-invocation 지정은 프로그래매틱 가능).
+
+**`/recap` — 세션 재진입 컨텍스트 복원 (v2.1.x, 2026-05)**
+
+`/recap` 은 세션 재진입 시 이전 작업 컨텍스트를 자동 요약·복원한다 (`/config` 에서
+활성화 설정, 수동 호출도 가능). 장기 delegation 세션을 quota 만료·세션 종료 후 다시
+열 때, harness-native 요약으로 직전 흐름을 빠르게 되살리는 보조 수단이다.
+
+- **권장 시점**: 며칠에 걸친 장기 작업의 세션 재진입, context rollover 직후 재개.
+- **정본은 여전히 문서**: `/recap` 은 §11.1 의 문서 기반 재개(TASK.md/REPORT.md 정본)를
+  *대체하지 않고 보완*한다. `/config` 활성화 여부가 환경마다 다르므로 **권장 수준**이며,
+  확정 사항은 항상 문서에서 확인한다.
+- subagent/workflow 의 비재개성과 재개 전략은 §22.3.2 참조.
 ---
 
 # Part E — 안전 및 협업
@@ -2064,3 +2076,70 @@ Claude Code v2.1.105+ 는 `/fewer-permission-prompts` 명령으로 transcript �
 ```
 
 명령 실행 후 Claude 가 제안한 allowlist 를 검토하고 `.claude/settings.json` 에 반영한다.
+
+### §22.3 Dynamic Workflow Tool 운용 — 신뢰성·subagent lifecycle
+
+Claude Code 의 `Workflow` tool 은 다수 subagent 를 `parallel()` / `pipeline()` 으로
+fan-out 해 결정적으로 오케스트레이션한다. 대규모 위임 작업(심층 감사, 마이그레이션,
+광범위 sweep)에 강력하지만, 두 가지 구조적 함정이 실제 소비자 작업에서 마찰로
+표면화됐다. 본 § 는 그 경감 정책이다. (subagent **panel** 의 dispatch·context bundle
+정본은 §18.8 / §18.11. 본 § 는 *dynamic workflow* 실행 신뢰성에 한정.)
+
+#### §22.3.1 StructuredOutput 신뢰성 — 복잡 schema fan-out 의 대량 실패 위험
+
+`agent(prompt, {schema})` 는 subagent 에게 `StructuredOutput` tool 호출을 강제한다.
+**schema 가 복잡하거나(다차원·중첩) context 가 길면 subagent 가 StructuredOutput 을
+끝내 호출하지 못하고 실패**할 수 있다 (`subagent completed without calling
+StructuredOutput`). 병렬 슬롯 전체가 동일 원인을 공유하면 단일 실행이 통째로
+전멸하기도 한다.
+
+**경감 패턴 (MUST when schema 가 복잡하거나 fan-out 폭이 클 때):**
+
+- **text-first → 별도 synthesis 단계 schema 강제**: 1차 fan-out 은 `schema` 없이
+  raw text 로 수집하고, 그 결과를 모아 **별도의 단순 synthesis agent 1개**에서만
+  schema 를 강제한다. 수집과 구조화를 분리하면 병렬 슬롯의 schema 부담이 사라진다.
+- **schema 단순화**: 한 agent 가 채워야 할 schema 는 flat·소수 필드로 유지한다.
+  중첩 객체·대형 배열·교차 의존 필드는 실패율을 높인다. 필요하면 schema 를 여러
+  단계로 쪼갠다.
+- **부분 실패 내성 (관측 동반)**: `parallel()` 의 thunk 실패는 `null` 로 떨어지므로
+  `.filter(Boolean)` 로 거르되, **거른 개수를 반드시 로깅·검증**한다
+  (`results.length` 와 기대치 비교). silent drop 은 fail-open 이다 — 필수 reviewer/감사
+  agent 가 실패로 누락됐는데 "전부 통과" 로 오인될 수 있다. 전멸 시 재시도(예: quota
+  리셋 후 재실행)나 schema 완화로 재구성하고, 단일 실행 결과를 "전부 성공" 으로
+  가정하지 않는다.
+
+```js
+// 안티패턴: 75-agent 병렬이 전부 복잡 schema 강제 → 슬롯 전멸 위험
+const all = await parallel(items.map(it => () => agent(prompt(it), {schema: BIG_SCHEMA})))
+
+// 권장: text-first 수집 → 단순 synthesis 1개에서만 schema 강제
+const raw = await parallel(items.map(it => () => agent(prompt(it))))        // schema 없음
+const merged = await agent(`다음 수집 결과를 구조화: ${raw.filter(Boolean).join("\n---\n")}`,
+                           {schema: FLAT_SCHEMA})                            // 단일·flat
+```
+
+#### §22.3.2 Subagent lifecycle — quota 만료/세션 종료 시 비재개 원칙
+
+Subagent(및 workflow 가 spawn 한 agent)는 **부모 세션에 종속된 비영속 프로세스**다.
+quota 만료·세션 종료·context rollover 로 중단되면 **그 subagent 는 이어서 재개되지
+않는다**. "기존 subagent 들을 이어서 진행" 같은 지시는 subagent 를 독립 영속
+프로세스로 오인한 것이며, 실제로는 새 실행이 필요하다.
+
+**재개 전략 (중단 후):**
+
+- **`Workflow({scriptPath, resumeFromRunId})`**: 동일 세션 내에서 직전 workflow 의
+  완료된 `agent()` 호출은 캐시로 즉시 반환되고, 미완료분만 live 재실행된다 (같은
+  스크립트+같은 args → 100% 캐시 hit). 중단된 대규모 workflow 재개의 정본.
+- **새 workflow 시작**: 세션이 바뀌었거나 journal 이 없으면 새 workflow 를 실행한다.
+  TASK.md / REPORT.md 에 누적된 결론(§11.1)을 입력으로 삼아 이미 끝난 부분은 건너뛰게
+  스크립트를 구성한다.
+- **개별 `Agent` 호출 재시도**: workflow 가 아닌 단발 subagent 는 단순히 다시 호출한다.
+
+⚠️ **재개 시 §12 승인 게이트 재평가 (MUST)**: 재개되는 workflow/subagent 가 §12 의
+승인 필요 항목(인증·인가, 파괴적 변경)이나 외부 영향 행동(PR 생성, deploy, 외부
+알림)을 포함하면, **중단 전 세션에서 받은 승인을 유효한 것으로 간주하지 않는다**.
+세션이 종료된 시점에 승인 컨텍스트도 함께 만료된 것으로 보고, 재개 시점에 §12 게이트를
+다시 평가한다. stale 승인으로 외부 영향 행동을 자동 실행하지 않는다.
+
+작업 중단 가능성이 있는 장기 위임은 **중간 산출물을 문서(TASK.md/REPORT.md)에
+누적**(§11.1)해, subagent 비재개성과 무관하게 문서 기준으로 재개할 수 있게 한다.
