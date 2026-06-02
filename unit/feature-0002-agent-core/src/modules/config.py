@@ -160,6 +160,8 @@ __all__ = [
     "CURRENT_FACT_SCOPE_KEY",
     "CURRENT_RUN_DEADLINE_TS",
     "CURRENT_RUN_ID",
+    "AGENT_DATA_DB_USER",
+    "AGENT_DATA_DB_PASSWORD",
     "DB_CONNECT_DB",
     "DB_HOST",
     "DB_NAME",
@@ -238,6 +240,11 @@ DB_HOST = os.getenv("DB_HOST", "mysql")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+# TASK-0128 (#2): data-plane(고객 데이터/sandbox 분석) 전용 최소권한 RO 유저. 미설정 시
+# DB_USER(root) 로 폴백(기존 동작 — 무중단). MEMORY_DB(제어) 연결은 항상 DB_USER 유지.
+# db.connect() 가 database != MEMORY_DB 일 때 본 유저로 분기한다.
+AGENT_DATA_DB_USER = os.getenv("AGENT_DATA_DB_USER", "").strip()
+AGENT_DATA_DB_PASSWORD = os.getenv("AGENT_DATA_DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "mysql").strip()
 
 # ── 복제(read-only) DB 인스턴스 (TASK-0044) ─────────────────────────

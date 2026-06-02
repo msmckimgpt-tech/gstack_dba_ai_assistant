@@ -67,6 +67,11 @@ _DENYLIST_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bLOCK\s+IN\s+SHARE\s+MODE\b", re.IGNORECASE),
     re.compile(r"\bEXPLAIN\s+ANALYZE\b", re.IGNORECASE),
     re.compile(r"\bLOAD\s+DATA\b", re.IGNORECASE),
+    # TASK-0128 (#2): DoS/정보유출 함수 — AST Func 검출이 Anonymous 를 놓치는 경우 대비 regex 보강.
+    re.compile(r"\bSLEEP\s*\(", re.IGNORECASE),
+    re.compile(r"\bBENCHMARK\s*\(", re.IGNORECASE),
+    re.compile(r"\bLOAD_FILE\s*\(", re.IGNORECASE),
+    re.compile(r"\bGET_LOCK\s*\(", re.IGNORECASE),
     re.compile(r"/\*\+\s*[^*]*\*/"),  # optimizer hints
     re.compile(r"@@", re.IGNORECASE),  # system variables
     re.compile(r"\bSET\s+@", re.IGNORECASE),  # user variable write
@@ -143,13 +148,20 @@ def _collect_function_names(node) -> list[str]:
     return out
 
 
-def validate_sql_for_sandbox(sql: str) -> SqlGuardResult:
+def validate_sql_for_sandbox(
+    sql: str, *, forbidden_schemas: "set[str] | frozenset[str] | None" = None
+) -> SqlGuardResult:
     """D14 + R-F3 — single SELECT (with optional CTE) only.
 
     Returns SqlGuardResult. ok=False 면 caller 가 audit `attachment.sandbox.sql_denied`
     dispatch + 사용자 에러 응답.
+
+    TASK-0128 (#2): forbidden_schemas 로 호출 컨텍스트별 금지 스키마를 주입한다. 기본값
+    None 이면 sandbox 기본 집합(_FORBIDDEN_SCHEMAS = information_schema/mysql/sys/perf).
+    agent 의 execute_sql 은 카탈로그 조회가 필요하므로 {agent_memory} 만 금지해 호출한다.
     """
     raw = (sql or "").strip()
+    forbid = forbidden_schemas if forbidden_schemas is not None else _FORBIDDEN_SCHEMAS
     if not raw:
         return SqlGuardResult(False, error_reason="empty SQL")
 
@@ -200,14 +212,14 @@ def validate_sql_for_sandbox(sql: str) -> SqlGuardResult:
     # table refs 의 schema 검사.
     table_refs = _collect_table_refs(root)
     for db, name in table_refs:
-        if db and db in _FORBIDDEN_SCHEMAS:
+        if db and db in forbid:
             return SqlGuardResult(
                 False,
                 error_reason=f"forbidden schema: {db}",
                 denied_patterns=[f"schema:{db}"],
             )
         # un-qualified table 이름이 forbidden schema 와 동일하면 (잠재 escape) 도 거부.
-        if name in _FORBIDDEN_SCHEMAS:
+        if name in forbid:
             return SqlGuardResult(
                 False,
                 error_reason=f"forbidden table name: {name}",
