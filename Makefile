@@ -40,6 +40,7 @@ BROWSER_CTL := $(DC_QUIET) run --rm --entrypoint python --env BROWSER_SESSION_FI
         check-llm-network ensure-replica-network replica-check wait-mysql ensure-memory-db \
         up down start stop restart status build test backup gc embed ps logs init clean clear \
         sh repl ask mysql out dump session-info dc-build \
+        migrate migrate-stamp migrate-new \
         mcp-up mcp-down mcp-test \
         convo-list convo-new convo-use convo-delete convo-rename convo-clear \
         web web-down web-tls-cert web-tls-up web-tls-down web-tls-status web-tls-logs \
@@ -280,6 +281,41 @@ dump:  ## db: 특정 데이터베이스 덤프 (사용법: make dump db=name [fi
 	@f="$${file:-$(db)_$$(date +%Y%m%d_%H%M%S).sql}"; \
 	$(DC_QUIET) exec -T mysql sh -lc 'mysqldump --defaults-extra-file=/etc/mysql/conf.d/99-mysql-ai-client.cnf --quote-names -uroot -p"$$MYSQL_ROOT_PASSWORD" --databases '"$(db)"' > /shared/mysql-backup/'"$$f"'' \
 	&& echo "덤프 저장: $(MYSQL_BACKUP_DIR)/$$f"
+
+# =============================================================================
+# Migrations — Alembic (KB Postgres agent_kb) — TASK-0143 (#15)
+# 스키마 정본은 unit/feature-0002-agent-core/alembic/. agent 이미지 격리 컨테이너에서
+# 실행하고 .env 의 AGENT_KB_PG_* 를 env.py 가 URL 로 조립한다. additive 도입:
+# 라이브 기존 DB 는 migrate-stamp 로 baseline 표시(스키마 변경 0), 신규 변경만 versioned.
+# 자세한 절차는 unit/feature-0002-agent-core/docs/MIGRATIONS.md 참조.
+# =============================================================================
+ALEMBIC_DIR := unit/feature-0002-agent-core
+# agent 컨테이너 안에서 alembic 실행 — psycopg/sqlalchemy/alembic 을 격리 설치.
+# --no-deps 로 DB 서비스는 기동하지 않으나, .env 의 AGENT_KB_PG_* 는 env_file 로 주입된다.
+define ALEMBIC_RUN
+$(DC_QUIET) run --rm --no-deps -w /app/$(ALEMBIC_DIR) --entrypoint sh agent -lc '\
+  pip install -q --no-cache-dir alembic "psycopg[binary]" sqlalchemy >/tmp/pip-alembic.log 2>&1 || { cat /tmp/pip-alembic.log; exit 1; }; \
+  alembic $(1)'
+endef
+
+migrate:  ## db: KB 스키마 마이그레이션 적용 (alembic upgrade head) — 신규 revision 반영
+	@$(MAKE) check-llm-network
+	@$(MAKE) -s dc-build SERVICE=agent
+	@$(call ALEMBIC_RUN,upgrade head)
+
+migrate-stamp:  ## db: 라이브 기존 DB 를 baseline 으로 표시 (alembic stamp head, 스키마 변경 0)
+	@$(MAKE) check-llm-network
+	@$(MAKE) -s dc-build SERVICE=agent
+	@$(call ALEMBIC_RUN,stamp head)
+
+migrate-new:  ## db: 신규 revision 생성 (사용법: make migrate-new name="add_xyz" [auto=1])
+	@if [[ -z "$(name)" ]]; then \
+		echo '사용법: make migrate-new name="add_xyz" [auto=1]'; \
+		exit 1; \
+	fi
+	@$(MAKE) check-llm-network
+	@$(MAKE) -s dc-build SERVICE=agent
+	@$(call ALEMBIC_RUN,revision $(if $(filter 1,$(auto)),--autogenerate ,)-m "$(name)")
 
 # =============================================================================
 # Conversation — agent 대화 슬롯 관리
