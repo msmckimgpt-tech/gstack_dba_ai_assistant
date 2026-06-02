@@ -43,6 +43,16 @@ model_list:
         type: "enabled"
         budget_tokens: 5000
 
+  # ── Titan Embeddings v2 (KB 벡터, 1024-dim) — TASK-0135 (#13) ────────
+  # texts.embedding(vector(1024)) 백필 + `<=>` cosine 검색용. amazon.titan-embed-text-v2:0
+  # 는 Seoul region 접근 가능 확인(2026-06-02 boto3 probe, dim=1024). kb_embedding_worker
+  # 가 본 alias 로 /v1/embeddings 호출 → LiteLLM 이 Bedrock 으로 라우팅. AGENT_KB_EMBEDDING_MODEL
+  # =titan-embed, AGENT_KB_EMBEDDING_DIM=1024 (.env).
+  - model_name: titan-embed
+    litellm_params:
+      model: bedrock/amazon.titan-embed-text-v2:0
+      aws_region_name: ap-northeast-2
+
 # ── 인증 ──────────────────────────────────────────────────────────────
 # backend 가 보내는 Authorization 헤더의 Bearer token 을 BEDROCK_GATEWAY_API_KEY
 # 와 대조. 일치 안 하면 401. AWS 자격증명은 컨테이너 env (AWS_ACCESS_KEY_ID /
