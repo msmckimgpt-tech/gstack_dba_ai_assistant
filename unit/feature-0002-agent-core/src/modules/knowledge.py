@@ -1313,13 +1313,26 @@ def _load_rag_objects_for_request(
     ids = [str(cid or "").strip() for cid in conversation_ids if str(cid or "").strip()]
     if not ids:
         return []
-    placeholders = ",".join(["%s"] * len(ids))
-    scope_clause, scope_params = _scope_filter_sql(scope_keys or _scope_candidates())
-    cur = conn.cursor()
     rows: list[tuple[Any, ...]] = []
-    try:
-        cur.execute(
-            f"""
+    # TASK-0135 (#13): PG read 분기 — _load_rag_documents_for_request 와 동형. 이전엔 PG 분기가
+    # 없어 DROP 된 MySQL AgentMemoryRagObjects 를 조회 → 항상 [] (D0-D3 스키마 routing 죽음).
+    from .config import AGENT_KB_READ_BACKEND
+    used_pg = False
+    if AGENT_KB_READ_BACKEND == "postgres":
+        try:
+            rows_pg = _load_rag_objects_for_request_pg(ids, request, scope_keys or _scope_candidates())
+            if rows_pg is not None:
+                rows = rows_pg
+                used_pg = True
+        except Exception as e:
+            logger.warning("kb_rag_objects_pg_fallback", extra={"error": str(e)[:200]})
+    if not used_pg:
+        placeholders = ",".join(["%s"] * len(ids))
+        scope_clause, scope_params = _scope_filter_sql(scope_keys or _scope_candidates())
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                f"""
 SELECT
     o.ConversationId,
     o.ObjectType,
@@ -1343,17 +1356,23 @@ FROM AgentMemoryRagObjects o
 LEFT JOIN AgentMemoryTexts t ON t.TextHash = o.TextHash
 WHERE o.ConversationId IN ({placeholders}){scope_clause}
 ORDER BY o.Weight DESC, o.UpdatedAt DESC, o.Id DESC
-            """,
-            [*ids, *scope_params],
-        )
-        rows = cur.fetchall() or []
-    except Exception:
-        rows = []
-    finally:
-        cur.close()
+                """,
+                [*ids, *scope_params],
+            )
+            rows = cur.fetchall() or []
+        except Exception:
+            rows = []
+        finally:
+            cur.close()
+    return _normalize_rag_object_rows(rows, request)
+
+
+def _normalize_rag_object_rows(rows: list[tuple[Any, ...]], request: str) -> list[dict[str, Any]]:
+    """MySQL + PG read path 공통 row → dict 처리 (TASK-0135). 18-col tuple:
+    (conversation_id, object_type, object_key, schema, table, column, summary, weight,
+    source_type, source_run_id, updated_at, category_domain/entity/metric/event/time/join_hints/confidence)."""
     if not rows:
         return []
-
     # Policy: disable keyword/token-based request filtering in KB retrieval.
     # Retrieval should prefer full evidence + schema/object exact matching.
     tokens: list[str] = []
@@ -1361,7 +1380,6 @@ ORDER BY o.Weight DESC, o.UpdatedAt DESC, o.Id DESC
     schema_hint = _detect_requested_schema(request, KNOWN_SCHEMAS)
     require_match = False
     # Merge duplicated objects coming from session/global KB shards.
-    # Keep the strongest/latest evidence per object_key.
     best_by_object: dict[str, dict[str, Any]] = {}
     for row in rows:
         conv_id = str(row[0] or "").strip()
@@ -1623,6 +1641,33 @@ def _load_rag_documents_for_request_pg(
             scope_keys=scope_keys,
         )
         return _normalize_rag_doc_rows(rows)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _load_rag_objects_for_request_pg(
+    conversation_ids: list[str],
+    request: str,
+    scope_keys: list[str],
+) -> Optional[list[tuple[Any, ...]]]:
+    """TASK-0135 (#13): rag_objects Postgres read path (AGENT_KB_READ_BACKEND=postgres).
+    `_load_rag_documents_for_request_pg` 와 동형 — `_pg_connect_ro()`(agent_kb_ro least-priv) +
+    `PgKbBackend.search_rag_objects`. 18-col raw tuple 반환(caller _normalize_rag_object_rows 처리)
+    또는 PG 미가용 시 None(caller MySQL fallback)."""
+    from .db import _pg_available, _pg_connect_ro
+    if not _pg_available():
+        return None
+    from .kb_backend import PgKbBackend
+    conn = _pg_connect_ro()
+    try:
+        return PgKbBackend().search_rag_objects(
+            conn,
+            conversation_ids=conversation_ids,
+            scope_keys=scope_keys,
+        )
     finally:
         try:
             conn.close()

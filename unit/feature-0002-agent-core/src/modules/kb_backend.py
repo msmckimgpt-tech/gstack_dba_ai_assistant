@@ -863,6 +863,48 @@ class PgKbBackend(KbBackend):
             cur.execute(sql, params)
             return list(cur.fetchall())
 
+    def search_rag_objects(
+        self,
+        conn,
+        *,
+        conversation_ids: list[str],
+        scope_keys: Optional[list[str]] = None,
+    ) -> list[tuple]:
+        """TASK-0135 (#13): rag_objects PG read — `_load_rag_objects_for_request` 의 MySQL 쿼리
+        등가. 이전엔 rag_objects 읽기에 PG 분기가 없어 DROP 된 MySQL 테이블을 조회 → 항상 []
+        (D0-D3 스키마 routing 죽음). text 스코어링 없이 weight DESC 정렬(필터는 caller Python).
+        scope 매치는 search_rag_documents 와 동일(STRICT/INCL_NULL). category_join_hints_json 은
+        ::text 캐스팅해 MySQL string shape 보존. 18-col tuple (caller 인라인 처리와 동형) 반환.
+        """
+        if not conversation_ids:
+            return []
+        normalized = list(scope_keys) if scope_keys else None
+        include_null_blank = normalized is None or any((s is None or s == "") for s in normalized)
+        strict = [s for s in normalized if s and s != ""] if normalized is not None else None
+        where = ["o.conversation_id = ANY(%(conv_ids)s)"]
+        params: dict[str, Any] = {"conv_ids": list(conversation_ids)}
+        if strict:
+            if include_null_blank:
+                where.append("(o.scope_key = ANY(%(scopes)s) OR o.scope_key IS NULL OR o.scope_key = '')")
+            else:
+                where.append("o.scope_key = ANY(%(scopes)s)")
+            params["scopes"] = strict
+        elif not include_null_blank:
+            where.append("FALSE")  # strict 지정인데 비-blank 없음 → 매치 0 (방어)
+        sql = (
+            "SELECT o.conversation_id, o.object_type, o.object_key, o.schema_name, o.table_name, "
+            "o.column_name, COALESCE(t.text_content, '') AS summary, o.weight, o.source_type, "
+            "o.source_run_id, o.updated_at, o.category_domain, o.category_entity_type, "
+            "o.category_metric_family, o.category_event_type, o.category_time_grain, "
+            "o.category_join_hints_json::text, o.category_confidence "
+            "FROM rag_objects o LEFT JOIN texts t ON t.text_hash = o.text_hash "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY o.weight DESC, o.updated_at DESC, o.id DESC"
+        )
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return list(cur.fetchall())
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Backend factory + dual-write mirror helper.
