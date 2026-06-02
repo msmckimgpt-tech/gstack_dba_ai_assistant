@@ -102,6 +102,42 @@ T1~T5 로드맵 완수 후의 Postgres 데이터 경로 구성.
 - `postgres-replica` streaming replica 서비스 (profile: replica)
 - `AGENT_KB_PG_HOST_RO` / `AGENT_KB_PG_PORT_RO` 환경변수로 read-only 라우팅
 
+### 7.6 KB 모듈 레이어 구조 (TASK-0142, 2026-06-02)
+이전 단일 `modules/knowledge.py` (약 3376줄 god-module) 를 책임별 3개 모듈로 분할했다.
+순수 구조 리팩터 — 함수 본문 로직 무변경.
+
+| 모듈 | 책임 |
+|---|---|
+| `modules/kb_scope.py` | scope SQL clause (`_scope_filter_sql`, STRICT/INCL_NULL), PII 마스킹, 에러 분류, 요청 유사도, advisory lock(MySQL/PG), schema/search cache key, refresh 무효화 |
+| `modules/kb_retrieval.py` | RAG document/object 검색, 쿼리 임베딩(벡터)·trigram 읽기, fact 로딩(`_load_top_facts*`), schema-meta cache, retrieval depth, prompt 선택, `_build_knowledge_payload` |
+| `modules/kb_write.py` | fact/rag upsert(`_upsert_fact`), dual-write 미러, global publish, KB entry 영속화, step-trace, zero-result 진단 |
+
+- 의존 방향은 단방향: `kb_scope`(leaf) ← `kb_retrieval` ← `kb_write`. 순환 없음.
+- `modules/knowledge.py` 는 **얇은 facade** 로 남아 세 모듈의 모든 top-level 심볼(public
+  `__all__` + private `_helper`) 을 re-export 한다. 기존 `from modules.knowledge import X`
+  / `knowledge.X` 소비처(agent_core·insight·schema·render·sql_ops·domain·utils·db·llm·
+  kb_backend·tests) blast-radius 0. public `__all__` 73개 심볼 그대로 보존.
+- cross-module 이름은 `modules/__init__.py` 의 주입 메커니즘으로 런타임 해석된다(기존과 동일).
+  facade 는 추가로 세 모듈 함수의 `__globals__` 를 단일 facade 네임스페이스로 재바인딩해,
+  분할 전처럼 `monkeypatch.setattr(knowledge, "_helper", ...)` 가 호출 함수 내부 조회까지
+  전파되는 test seam 을 보존한다(코드 객체 자체는 불변).
+
+### 7.7 KB 검색 파이프라인 (벡터 + trigram, 활성)
+`AGENT_KB_READ_BACKEND=postgres` 시 read 경로는 다음 순서로 동작한다. (read-only 는
+`agent_kb_ro` least-privilege role `_pg_connect_ro()` 사용 — RW role bypass 금지.)
+
+- **rag_documents** (`_load_rag_documents_for_request` → `_load_rag_documents_for_request_pg`):
+  1. `_embed_query_vector()` 로 쿼리 임베딩(`AGENT_KB_EMBEDDING_MODEL=titan-embed`, Bedrock
+     gateway). 성공 시 `PgKbBackend.search_rag_documents_vector()` (pgvector, 한국어 의미검색).
+  2. 임베딩 미설정/실패 또는 벡터 결과 없음(미임베딩 row) → `search_rag_documents()`
+     **pg_trgm trigram similarity** fallback.
+- **rag_objects** (`_load_rag_objects_for_request` → `_load_rag_objects_for_request_pg`):
+  `PgKbBackend.search_rag_objects()` 로 D0–D3 스키마/객체 routing 근거 제공.
+- **fail-soft fallback (라이브 경로)**: 위 PG 경로가 예외/PG 미가용 시, 동일 함수가
+  `conn` 기반 MySQL-dialect SQL 로 fallthrough 한다. cutover 미완 구간의 안전망으로
+  **여전히 도달 가능** — 따라서 dead code 가 아니다 (TASK-0142 에서 보존). 이미 사장된
+  MySQL 전용 분기는 선행 TASK-0127/0135 에서 제거 완료.
+
 ## 8. 통합 테스트 정책
 - 현재 단계에서는 구조/기동 검증 위주로 운영한다.
 - 엄격한 도메인 시나리오는 기능별 `docs/TEST.md`를 정본으로 후속 작성한다.

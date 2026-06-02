@@ -9,6 +9,11 @@ from . import config
 from . import utils
 from . import db
 from . import memory
+# TASK-0142: knowledge.py 분할 — kb_scope/kb_retrieval/kb_write 를 knowledge(facade)
+# 보다 먼저 로드해야 facade 의 `from .kb_* import *` 가 해석된다.
+from . import kb_scope
+from . import kb_retrieval
+from . import kb_write
 from . import knowledge
 from . import insight
 from . import render
@@ -21,7 +26,8 @@ from . import sql_ops
 
 # Collect all exported names from every module
 _all_modules = [
-    config, utils, db, memory, knowledge, insight,
+    config, utils, db, memory,
+    kb_scope, kb_retrieval, kb_write, knowledge, insight,
     render, schema, domain, llm, mcp_client, file_ops,
     sql_ops,
 ]
@@ -49,6 +55,9 @@ from .config import *
 from .utils import *
 from .db import *
 from .memory import *
+from .kb_scope import *
+from .kb_retrieval import *
+from .kb_write import *
 from .knowledge import *
 from .insight import *
 from .render import *
