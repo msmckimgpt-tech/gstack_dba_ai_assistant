@@ -686,6 +686,48 @@ function getSystemPromptPending(args) {
 
 /* ── Tab navigation ──────────────────────────────────────────────────── */
 
+// TASK-0136 (#11): LLM 사용량 패널 — admin 전용(console.usage.read). /api/admin/usage 집계 표시.
+adminState.usage = { initialized: false };
+
+async function loadUsage() {
+  const sel = document.getElementById("usageDaysSel");
+  const days = sel ? sel.value : "30";
+  const summaryEl = document.getElementById("usageSummary");
+  const modelEl = document.getElementById("usageByModel");
+  const acctEl = document.getElementById("usageByAccount");
+  if (summaryEl) summaryEl.textContent = "로딩 중…";
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const num = (v) => (Number(v) || 0).toLocaleString();
+  const tbl = (rows, cols) => {
+    if (!rows || !rows.length) return "<p style='color:#888;'>데이터 없음</p>";
+    const head = cols.map((c) => `<th style='text-align:left;padding:4px 12px;'>${esc(c.label)}</th>`).join("");
+    const body = rows.map((r) => "<tr>" + cols.map((c) => `<td style='padding:4px 12px;border-top:1px solid #eee;'>${esc(c.fmt ? c.fmt(r[c.key]) : r[c.key])}</td>`).join("") + "</tr>").join("");
+    return `<table style='border-collapse:collapse;width:100%;max-width:560px;'><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  };
+  try {
+    const data = await apiFetch(`/api/admin/usage?days=${encodeURIComponent(days)}`);
+    const t = data.totals || {};
+    if (summaryEl) {
+      summaryEl.innerHTML =
+        `<div style='display:flex;gap:24px;flex-wrap:wrap;'>` +
+        `<div><div class='drawer-label'>호출</div><strong>${num(t.calls)}</strong></div>` +
+        `<div><div class='drawer-label'>총 토큰</div><strong>${num(t.total_tokens)}</strong></div>` +
+        `<div><div class='drawer-label'>prompt</div><strong>${num(t.prompt_tokens)}</strong></div>` +
+        `<div><div class='drawer-label'>completion</div><strong>${num(t.completion_tokens)}</strong></div>` +
+        `</div>`;
+    }
+    if (modelEl) modelEl.innerHTML = tbl(data.by_model, [
+      { key: "model", label: "모델" }, { key: "calls", label: "호출", fmt: num }, { key: "total_tokens", label: "토큰", fmt: num },
+    ]);
+    if (acctEl) acctEl.innerHTML = tbl(data.by_account, [
+      { key: "account_id", label: "계정 ID", fmt: (v) => (v == null ? "(시스템)" : v) },
+      { key: "calls", label: "호출", fmt: num }, { key: "total_tokens", label: "토큰", fmt: num },
+    ]);
+  } catch (e) {
+    if (summaryEl) summaryEl.textContent = "사용량 조회 실패 (권한 또는 저장소 오류)";
+  }
+}
+
 function switchTab(tabName) {
   adminState.tab = tabName;
   document.querySelectorAll(".admin-tab").forEach((btn) => {
@@ -698,6 +740,11 @@ function switchTab(tabName) {
   if (tabName === "audits" && !adminState.audit.initialized) {
     adminState.audit.initialized = true;
     loadAuditList();
+  }
+  // TASK-0136: LLM 사용량 tab 첫 진입 시 로드.
+  if (tabName === "usage" && !adminState.usage.initialized) {
+    adminState.usage.initialized = true;
+    loadUsage();
   }
   // TASK-0095: 설정 tab 첫 진입 시 sub-section 마운트.
   if (tabName === "settings" && !adminState.settings.initialized) {
@@ -3464,6 +3511,16 @@ async function initialize() {
       adminState.me?.permissions?.["audit.read.any"]
     );
     auditTab.style.display = canRead ? "" : "none";
+  }
+  // TASK-0136: LLM 사용량 tab 가시성 게이트 (admin 전용 console.usage.read).
+  const usageTab = $("adminTabUsage");
+  if (usageTab) {
+    usageTab.style.display = adminState.me?.permissions?.["console.usage.read"] ? "" : "none";
+  }
+  const usageDaysSel = $("usageDaysSel");
+  if (usageDaysSel && !usageDaysSel.dataset.bound) {
+    usageDaysSel.dataset.bound = "1";
+    usageDaysSel.addEventListener("change", () => loadUsage());
   }
 
   // Account filter buttons

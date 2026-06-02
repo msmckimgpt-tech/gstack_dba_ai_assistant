@@ -48,6 +48,11 @@
           <span class="admin-tab-count" id="tabCountAudits">—</span>
         </button>
 
+        <!-- TASK-0136: LLM 사용량 tab (admin 전용 — console.usage.read 없으면 숨김) -->
+        <button type="button" class="admin-tab" data-admin-tab="usage" id="adminTabUsage" style="display:none">
+          <span class="admin-tab-label">LLM 사용량</span>
+        </button>
+
         <!-- TASK-0095: 설정 tab — 전역 시스템 프롬프트 + 차후 운영 항목 확장 -->
         <div class="admin-tab-group-divider"></div>
         <div class="admin-tab-group-label">시스템</div>
@@ -312,6 +317,28 @@
         </div>
       </section>
 
+      <!-- TASK-0136: LLM 사용량 pane (admin 전용). /api/admin/usage 집계 표시. -->
+      <section class="admin-pane" data-admin-pane="usage">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">Usage</div>
+            <h2>LLM 토큰 사용량</h2>
+          </div>
+          <div class="admin-pane-actions">
+            <select id="usageDaysSel" class="btn-secondary">
+              <option value="7">최근 7일</option>
+              <option value="30" selected>최근 30일</option>
+              <option value="90">최근 90일</option>
+            </select>
+          </div>
+        </header>
+        <div id="usageSummary" style="margin:12px 0;">로딩 중…</div>
+        <h3 style="margin-top:18px;">모델별</h3>
+        <div id="usageByModel"></div>
+        <h3 style="margin-top:18px;">계정별</h3>
+        <div id="usageByAccount"></div>
+      </section>
+
       <!-- TASK-0096 v2: 설정 pane — 계정/역할/제품 과 동일한 list-detail 5단 구조.
            새 항목은 list row <button data-settings-tab="X"> + detail panel <article data-settings-panel="X"> 한 쌍 추가로 확장.
            panel 마운트는 admin.js 의 SETTINGS_PANEL_MOUNTERS 맵에 (key, mount fn) 등록. -->
@@ -390,6 +417,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260527-task-0121-perm-toggle-value"></script>
+  <script src="/static/admin.js?v=20260602-task-0136-usage"></script>
 </body>
 </html>
