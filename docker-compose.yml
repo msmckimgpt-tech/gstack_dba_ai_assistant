@@ -21,6 +21,10 @@ x-agent-common: &agent-common
     LANGUAGE: ${APP_LANGUAGE}
     LC_ALL: ${APP_LC_ALL}
     PYTHONIOENCODING: utf-8
+    # TASK-0130 (#5): 런타임/KB 정본이 PG 이므로 PG 장애 시 silent 빈-메모리 degradation
+    # 대신 fail-loud. depends_on(postgres healthy) 과 함께 cold-boot 시 PG 미준비 상태로
+    # ask 받는 것을 차단.
+    AGENT_RUNTIME_PG_REQUIRED: "1"
   volumes:
     - ../artifacts/shared:/shared
   depends_on:
@@ -28,6 +32,16 @@ x-agent-common: &agent-common
       condition: service_healthy
     bedrock-gateway:
       condition: service_healthy
+    # TASK-0130 (#5): 런타임(agent_runtime)·KB·첨부 정본이 PG/pgbouncer/minio 에 있는데
+    # 이전엔 depends_on 에 없어 cold up 시 web 이 PG ready 전 ask 수신 → silent degradation.
+    postgres:
+      condition: service_healthy
+    pgbouncer:
+      condition: service_healthy
+    # minio 는 첨부 전용(보조) — healthcheck 일시 실패가 web/agent boot 를 막지 않도록
+    # service_started(존재만 보장)로 둔다. 런타임 정본 postgres/pgbouncer 만 healthy 강제.
+    minio:
+      condition: service_started
 
 services:
   mysql:
@@ -263,9 +277,19 @@ services:
       PYTHONIOENCODING: utf-8
       AGENT_SESSION: insight_worker
       AGENT_CONVERSATION_ID: __insight_worker__
+      # TASK-0130: environment override 시 anchor 의 PG_REQUIRED 가 상속 안 되므로 명시.
+      AGENT_RUNTIME_PG_REQUIRED: "1"
     entrypoint: ["python", "/app/agent_core.py", "--insight-worker"]
     networks: [dbnet, llm-shared, replica-net]
     restart: unless-stopped
+    # TASK-0130 (#4): heartbeat 신선도 기반 healthcheck. advisory-lock 버그로 매 사이클
+    # skip_locked 라 24h+ 무동작이어도 Docker 가 healthy 로 표기하던 것을 가시화.
+    healthcheck:
+      test: ["CMD", "python", "/app/scripts/healthcheck_insight_worker.py"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   mcp:
     image: bytebase/dbhub:${DBHUB_IMAGE_TAG}
@@ -307,6 +331,13 @@ services:
     ports:
       - "${WEB_PORT}:8000"
     networks: [dbnet, llm-shared, replica-net]
+    # TASK-0130 (#5): /healthz 기반 healthcheck (https→http). 200=healthy, 503/미응답=unhealthy.
+    healthcheck:
+      test: ["CMD", "python", "/app/scripts/healthcheck_web.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   caddy:
     image: caddy:2
