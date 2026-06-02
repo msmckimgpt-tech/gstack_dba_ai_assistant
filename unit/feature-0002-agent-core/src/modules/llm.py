@@ -59,7 +59,7 @@ __all__ = [
 """OpenAI client, prompt templates, LLM call functions."""
 from .config import *
 from . import config as cfg
-from .model_catalog import max_tokens_for_model, model_supports_temperature, model_supports_vision
+from .model_catalog import max_tokens_for_model, model_supports_temperature, model_supports_vision, is_local_llm_model
 from .utils import append_log_line
 import json, os, time
 from typing import Any
@@ -563,25 +563,53 @@ Rules:
 """.strip()
 
 
-def _get_openai_client(timeout_sec: int | None = None) -> OpenAI | None:
-    # feature-0007 (REQ-20260521-0001): LLM 자격증명은 env 단일 소스. config.py 의
-    # `LLM_API_KEY` 가 BEDROCK_GATEWAY_API_KEY → LOCAL_LLM_API_KEY paired chain 으로
-    # 이미 결정되므로 여기서 별도 분기 없음. per-request
-    # api_key 인자 패턴 (구 API Vault) 은 폐기됨.
-    from .config import LLM_BASE_URL, LLM_API_KEY
-    if not LLM_API_KEY or OpenAI is None:
+# TASK-0129 (#3): tier-aware LLM client. 이전엔 단일 LLM_BASE_URL(Bedrock 우선) 로 모든
+# 호출이 가서 edge-tier 모델명('edge'/'core'/'auto'/'code')이 Bedrock gateway 에 전달돼
+# HTTP 400 ("Invalid model name passed in model=edge") — 하루 ~47만건 silent 실패 + 전체
+# cost/quality tier 라우팅 무력화. 이제 model 의 tier 로 base_url/key 를 선택하고 tier 별로
+# client 를 캐시한다. local gateway 는 'edge'/'core' 별칭을, Bedrock 은 'claude-*' 를 받는다.
+_TIER_CLIENT_CACHE: "dict[tuple, Any]" = {}
+
+
+def _resolve_tier_endpoint(model: str | None) -> "tuple[str | None, str | None]":
+    """model 의 tier 에 맞는 (base_url, api_key) 반환. 해당 tier creds 미설정 시 기본 provider 폴백."""
+    from .config import (
+        LLM_BASE_URL, LLM_API_KEY,
+        BEDROCK_GATEWAY_URL, BEDROCK_GATEWAY_API_KEY,
+        LOCAL_LLM_API_BASE, LOCAL_LLM_API_KEY,
+    )
+    if model is not None and is_local_llm_model(model):
+        if LOCAL_LLM_API_BASE and LOCAL_LLM_API_KEY:
+            return (LOCAL_LLM_API_BASE, LOCAL_LLM_API_KEY)
+    else:
+        if BEDROCK_GATEWAY_URL and BEDROCK_GATEWAY_API_KEY:
+            return (BEDROCK_GATEWAY_URL, BEDROCK_GATEWAY_API_KEY)
+    return (LLM_BASE_URL, LLM_API_KEY)
+
+
+def _get_openai_client(timeout_sec: int | None = None, model: str | None = None) -> OpenAI | None:
+    # feature-0007: LLM 자격증명은 env 단일 소스. TASK-0129: model tier 로 endpoint 분기 + 캐시.
+    if OpenAI is None:
         return None
+    base_url, api_key = _resolve_tier_endpoint(model)
+    if not api_key:
+        return None
+    timeout_val = max(5, int(timeout_sec) if timeout_sec is not None else int(AGENT_TIMEOUT_SEC))
+    cache_key = (base_url, api_key, timeout_val)
+    cached = _TIER_CLIENT_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
     try:
-        timeout_val = int(timeout_sec) if timeout_sec is not None else int(AGENT_TIMEOUT_SEC)
-        timeout_val = max(5, timeout_val)
         kwargs: dict = {
-            "api_key": LLM_API_KEY,
+            "api_key": api_key,
             "timeout": timeout_val,
             "max_retries": max(0, int(AGENT_OPENAI_MAX_RETRIES)),
         }
-        if LLM_BASE_URL:
-            kwargs["base_url"] = LLM_BASE_URL
-        return OpenAI(**kwargs)
+        if base_url:
+            kwargs["base_url"] = base_url
+        client = OpenAI(**kwargs)
+        _TIER_CLIENT_CACHE[cache_key] = client
+        return client
     except Exception:
         return None
 
@@ -601,6 +629,11 @@ def _openai_chat_completion_with_deadline(
     timeout_sec: int | None = None,
     task: str = "agent",
 ):
+    # TASK-0129 (#3): model 의 tier 에 맞는 client 로 재해석. caller 가 default client 를
+    # 넘겨도 'edge'/'core' 는 local gateway, 'claude-*' 는 Bedrock 으로 보장 (라우팅 회귀 차단).
+    resolved = _get_openai_client(timeout_sec=timeout_sec, model=model)
+    if resolved is not None:
+        client = resolved
     if client is None:
         return None
     wall_sec = _openai_request_timeout(timeout_sec)
@@ -626,7 +659,21 @@ def _openai_chat_completion_with_deadline(
             pass
         return None
     except Exception as exc:
-        _log_llm_warn("_openai_chat_completion_with_deadline", "exception", f"model={model} {type(exc).__name__}: {exc}")
+        # TASK-0129 (#3): HTTP status/body 를 로그에 포함 — tier 별칭 거부(400) 등이
+        # 'exception' 한 줄로만 보이던 것을 진단 가능하게.
+        status = getattr(exc, "status_code", None)
+        body = ""
+        resp = getattr(exc, "response", None)
+        if resp is not None:
+            try:
+                body = (getattr(resp, "text", "") or "")[:300]
+            except Exception:
+                body = ""
+        _log_llm_warn(
+            "_openai_chat_completion_with_deadline",
+            "exception",
+            f"model={model} {type(exc).__name__} status={status}: {str(exc)[:200]} body={body}",
+        )
         return None
     finally:
         executor.shutdown(wait=False, cancel_futures=True)

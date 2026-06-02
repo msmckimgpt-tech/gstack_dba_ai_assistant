@@ -525,14 +525,24 @@ def _compact_kb(entries: list[dict[str, Any]], limit: int = 6) -> str:
     return "\n".join(lines)
 
 
+def _is_pg_connection(conn) -> bool:
+    """커넥션이 psycopg(Postgres) 인지 판별. TASK-0129 (#4): advisory lock 이 전역
+    AGENT_KB_READ_BACKEND 플래그가 아니라 실제 커넥션 타입으로 분기하도록."""
+    try:
+        return str(type(conn).__module__ or "").split(".", 1)[0] == "psycopg"
+    except Exception:
+        return False
+
+
 def _acquire_advisory_lock(conn, name: str, timeout_sec: int = 3) -> bool:
     name = str(name or "").strip()
     if not name:
         return False
-    # T4-11: Postgres 분기 — pg_try_advisory_lock(bigint) 사용.
-    # hashtext() 로 문자열 → int8 변환 (Postgres 내장 해시 함수).
-    from .config import AGENT_KB_READ_BACKEND as _KB_BACKEND
-    if _KB_BACKEND == "postgres":
+    # TASK-0129 (#4): 실제 커넥션 타입으로 분기. 이전엔 전역 AGENT_KB_READ_BACKEND=="postgres"
+    # 로 분기해, run_insight_cycle 이 넘긴 MySQL 커넥션에 PG SQL(hashtext::bigint)을 실행 →
+    # ERROR 1064 → except 가 False 반환 → 매 사이클 skip_locked, insight 워커 24h+ 무동작이었다.
+    # psycopg 커넥션이면 pg_try_advisory_lock, mysql.connector 면 GET_LOCK.
+    if _is_pg_connection(conn):
         return _acquire_advisory_lock_pg(conn, name, timeout_sec)
     cur = conn.cursor()
     try:
@@ -576,9 +586,8 @@ def _release_advisory_lock(conn, name: str) -> None:
     name = str(name or "").strip()
     if not name:
         return
-    # T4-11: Postgres 분기
-    from .config import AGENT_KB_READ_BACKEND as _KB_BACKEND
-    if _KB_BACKEND == "postgres":
+    # TASK-0129 (#4): acquire 와 동일하게 실제 커넥션 타입으로 분기.
+    if _is_pg_connection(conn):
         _release_advisory_lock_pg(conn, name)
         return
     cur = conn.cursor()
