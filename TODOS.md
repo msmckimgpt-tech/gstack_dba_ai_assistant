@@ -15,12 +15,12 @@
 - [ ] **P2** 리미디에이션(Task 10 #13) RAG 레이어 정리 — 3개 분리 작업
   - **Why**: KB 쓰기는 TASK-0127 로 복구됐으나 retrieval 측 (a) `_load_rag_objects_for_request` 에 PG 분기 없어 항상 [](복구된 rag_objects 미사용 — D0-D3 스키마 routing 죽음), (b) "pgvector RAG" 가 실제론 trigram(임베딩 807건 NULL, 사용자 결정 B=벡터 강제활성화), (c) `knowledge.py` 3376줄 god-module + fact_entries/rag_documents 중복 + 미사용 matview.
   - **Where**: `knowledge.py`(_load_rag_objects_for_request ~1294, _load_rag_documents_for_request_pg 패턴), `kb_backend.py`(search_rag_documents 모델 → search_rag_objects 신설), `litellm_config.yaml`(임베딩 모델), `kb_embedding_worker.py`(스케줄)
-  - **Next step**: (a) `PgKbBackend.search_rag_objects` + `_load_rag_objects_for_request_pg` + AGENT_KB_READ_BACKEND 분기 추가(search_rag_documents 와 동형, 18컬럼+category). (b) gateway 임베딩 모델 가용성 확인 → kb_embedding_worker 스케줄 + `<=>` 읽기 경로. (c) knowledge.py 를 kb_write/kb_retrieval/kb_scope 로 분할 + 죽은 MySQL SQL 제거 + matview 폐기 + ARCHITECTURE.md §7 정정. admin-only `kb_ingest.py`(TASK-0127 이월) PG 전환도 동반.
+  - **Next step**: ~~(a)~~ **완료 TASK-0135**: `PgKbBackend.search_rag_objects` + `_load_rag_objects_for_request_pg` + 분기(780행 검증). ~~(b)~~ **완료 TASK-0135**: titan-embed(1024d) gateway 라우트 + `<=>` 벡터-우선 읽기 + 임베딩 백필 810/810(edge400 880→0). **(c) 잔여 (P3)**: knowledge.py(3376줄) god-module → kb_write/kb_retrieval/kb_scope 분할 + 죽은 MySQL SQL 제거 + matview(`public.agent_memory_facts`, 780행, 라이브 코드 read 0=진단용뿐, 자동 refresh 없음) 폐기 + ARCHITECTURE.md §7 정정 + admin-only `kb_ingest.py` PG 전환. **보류 사유**: 활성 고장 아님(읽기·쓰기·벡터 전부 복구됨), 대형 분할은 회귀 위험만 크고 사용자 대면 실효성 낮음.
 
-- [ ] **P3** 리미디에이션(Task 11, 후순위) LLM 비용/토큰 회계 + 예산/레이트리밋
+- [~] **P3** 리미디에이션(Task 11, 후순위) LLM 비용/토큰 회계 + 예산/레이트리밋 — **회계·노출 완료 TASK-0136**, 예산/캐싱 잔여
   - **Why**: 사용자 지정 후순위. ~128 step frontier 호출에 토큰 회계/계정별 cap/circuit breaker 없음. 활성 고장 아닌 운영·비용 가시성 강화.
-  - **Where**: app.py /api/ask + llm.py(response.usage) + litellm_config.yaml(per-key budget) + 신규 usage 테이블(agent_runtime)
-  - **Next step**: response.usage 수집 → conversation/account 집계 + admin 노출, LiteLLM per-key budget + 일일 토큰 cap, prompt caching, topic/summary/classify thinking 비활성 별칭.
+  - **완료 (TASK-0136)**: `agent_runtime.llm_usage` 테이블 + 전 LLM 호출 사이트(메인 루프 + 7개 direct-create) capture + admin 한정 `GET /api/admin/usage`(RBAC `console.usage.read`, 비인증 401·authed admin 200+집계 검증) + admin 콘솔 'LLM 사용량' 패널(권한 게이트). UX 노출 범위·권한 충족.
+  - **잔여 (P3)**: LiteLLM per-key budget + 계정별 일일 토큰 cap/circuit breaker(비용 **제어**), prompt caching, topic/summary/classify thinking 비활성 별칭. **보류 사유**: 가시성(핵심)은 출하됨, 제어/캐싱은 LiteLLM 설정 레이어 최적화로 활성 고장 아님.
 
 - [ ] **P3** 리미디에이션(TASK-0134 #15) alembic 마이그레이션 프레임워크 도입
   - **Why**: 스키마가 startup/handler 의 raw `CREATE TABLE IF NOT EXISTS`/`ALTER` 부작용으로 적용 — 버전드·가역 이력 없음, 라이브 ivfflat index 가 DDL 파일과 drift(lists=100 vs 32). GC 는 TASK-0134 로 처리됨(kv 고아 sweep + 세션 purge, `make gc`).
@@ -32,10 +32,9 @@
   - **Where**: `modules/planner.py`, `modules/__init__.py`(20,61), `modules/config.py` AGENT_* + `docs/CODEBASE_MAP.md`(agent_cli 'primary source' 표기 정정)
   - **Next step**: planner export 사용처 grep → 미사용 확인 후 import 제거 + 파일 삭제. config AGENT_* 를 live/dead/phantom 분류 후 phantom 삭제.
 
-- [ ] **P2** 리미디에이션(TASK-0132 #8) os.environ 첨부 채널 → kwargs 전면 제거
-  - **Why**: ATTACHMENT_IDS/NEW_ATTACHMENT_IDS/ATTACHMENT_IMAGE_INLINE_PATH/ATTACHMENT_TEXT_INLINE_PATH 가 프로세스 전역 os.environ 으로 web→agent 전달돼 동시요청 race. **교차테넌트 데이터 유출은 TASK-0132 의 AccountId 스코프로 이미 차단**됨 — 남은 위험은 본인 계정 내 attachment 혼선/유실(정확성 glitch).
-  - **Where**: `app.py`(os.environ set ~7452/7569/7588) + `agent_core.py`(read ~195/209/632)
-  - **Next step**: run_agent/_run_agent_core/compose_system_prompt 에 attachment_ids/new_attachment_ids/image_path/text_path 를 명시 kwarg 로 전달, os.environ set/read/pop 제거.
+- [x] **P2** 리미디에이션(TASK-0137 #8) os.environ 첨부 채널 → contextvar 전환 **완료**
+  - **해결**: 첨부 메타(ids/new_ids/inline image·text path)를 프로세스 전역 os.environ → run_agent 의 요청별 `contextvars.ContextVar`(allowlist 패턴과 동형, `asyncio.to_thread` 가 context 복사 전파)로 전환. app.py 의 env set/pop 전부 제거 + run_agent kwarg 전달. ctx 미설정(CLI/테스트) 시 `_ctx_or_env` 로 env fallback(하위호환).
+  - **검증**: `asyncio.to_thread` 동시 2요청이 각자 첨부만 read(A=11,12/new12, B=21,22,23/new23 교차오염 0) + env fallback PASS, ruff/160 tests + 라이브 ask(첨부 없음 경로) error='' 정상.
 
 - [ ] **P2** 리미디에이션(#9) async 핸들러 동기 DB I/O + ask 커넥션 lifecycle 리팩터
   - **Why**: 48개 async 라우트가 이벤트 루프에서 동기 mysql.connector 호출 → 느린 쿼리 1건이 전체 in-flight 요청 stall. ask() 가 to_thread 에이전트 실행 내내 커넥션 점유. 커넥션 풀 없음(connect-per-request), pgbouncer 미사용.
