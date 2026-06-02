@@ -15,7 +15,7 @@
 - [ ] **P2** 리미디에이션(Task 10 #13) RAG 레이어 정리 — 3개 분리 작업
   - **Why**: KB 쓰기는 TASK-0127 로 복구됐으나 retrieval 측 (a) `_load_rag_objects_for_request` 에 PG 분기 없어 항상 [](복구된 rag_objects 미사용 — D0-D3 스키마 routing 죽음), (b) "pgvector RAG" 가 실제론 trigram(임베딩 807건 NULL, 사용자 결정 B=벡터 강제활성화), (c) `knowledge.py` 3376줄 god-module + fact_entries/rag_documents 중복 + 미사용 matview.
   - **Where**: `knowledge.py`(_load_rag_objects_for_request ~1294, _load_rag_documents_for_request_pg 패턴), `kb_backend.py`(search_rag_documents 모델 → search_rag_objects 신설), `litellm_config.yaml`(임베딩 모델), `kb_embedding_worker.py`(스케줄)
-  - **Next step**: ~~(a)~~ **완료 TASK-0135**: `PgKbBackend.search_rag_objects` + `_load_rag_objects_for_request_pg` + 분기(780행 검증). ~~(b)~~ **완료 TASK-0135**: titan-embed(1024d) gateway 라우트 + `<=>` 벡터-우선 읽기 + 임베딩 백필 810/810(edge400 880→0). **(c) 잔여 (P3)**: knowledge.py(3376줄) god-module → kb_write/kb_retrieval/kb_scope 분할 + 죽은 MySQL SQL 제거 + matview(`public.agent_memory_facts`, 780행, 라이브 코드 read 0=진단용뿐, 자동 refresh 없음) 폐기 + ARCHITECTURE.md §7 정정 + admin-only `kb_ingest.py` PG 전환. **보류 사유**: 활성 고장 아님(읽기·쓰기·벡터 전부 복구됨), 대형 분할은 회귀 위험만 크고 사용자 대면 실효성 낮음.
+  - **Next step**: ~~(a)~~ **완료 TASK-0135**: `PgKbBackend.search_rag_objects` + `_load_rag_objects_for_request_pg` + 분기(780행 검증). ~~(b)~~ **완료 TASK-0135**: titan-embed(1024d) gateway 라우트 + `<=>` 벡터-우선 읽기 + 임베딩 백필 810/810(edge400 880→0). **(c) 잔여 (P3)**: knowledge.py(3376줄) god-module → kb_write/kb_retrieval/kb_scope 분할 + 죽은 MySQL SQL 제거 + ARCHITECTURE.md §7 정정 + admin-only `kb_ingest.py` PG 전환. ~~matview 폐기~~ **완료 TASK-0140**(`public.agent_memory_facts` DROP + 진단/schema 제거, fact_entries 무손상). **분할 보류 사유**: 활성 고장 아님(읽기·쓰기·벡터 전부 복구), 순수 대형 리팩터.
 
 - [~] **P3** 리미디에이션(Task 11, 후순위) LLM 비용/토큰 회계 + 예산/레이트리밋 — **회계·노출 완료 TASK-0136**, 예산/캐싱 잔여
   - **Why**: 사용자 지정 후순위. ~128 step frontier 호출에 토큰 회계/계정별 cap/circuit breaker 없음. 활성 고장 아닌 운영·비용 가시성 강화.
@@ -27,10 +27,9 @@
   - **Where**: app.py/agent_core 부트스트랩 DDL + `scripts/agent_kb_schema.sql`
   - **Next step**: alembic 도입(라이브 36GB 주의 — Task 5 백업 선행), 모든 DDL 을 versioned 마이그레이션으로, agent_kb_schema.sql 을 라이브에서 재생성 + drift 체크. 죽은 Agent* DDL 삭제.
 
-- [ ] **P3** 리미디에이션(TASK-0133 #7) planner.py(2276줄) + phantom AGENT_* 플래그 정리
-  - **Why**: planner.plan_next_step 은 죽은 agent_cli 만 호출했으나 `modules/__init__.py` 가 `from .planner import *` 로 import → 삭제 전 dead-export 분석 필요. phantom 플래그(소비처 0, 예: AGENT_ENABLE_QUERY_CONTRACT_GRADER) 도 정리 대상.
-  - **Where**: `modules/planner.py`, `modules/__init__.py`(20,61), `modules/config.py` AGENT_* + `docs/CODEBASE_MAP.md`(agent_cli 'primary source' 표기 정정)
-  - **Next step**: planner export 사용처 grep → 미사용 확인 후 import 제거 + 파일 삭제. config AGENT_* 를 live/dead/phantom 분류 후 phantom 삭제.
+- [x] **P3** 리미디에이션(TASK-0138 #7) planner.py + phantom AGENT_* 플래그 정리 **완료**
+  - **해결**: call-graph 도달성 분석으로 `planner.py`(2276줄) 라이브 미도달 확인 후 `from .planner import *` 제거 + 파일 삭제. phantom `AGENT_*` 18개(소비처 0) 삭제, 라이브 소비 플래그는 보존. CODEBASE_MAP 의 `agent_cli` "primary source" 오표기 → agent_core 정정. import smoke + 167 tests + 라이브 ask 통과.
+  - **잔여(후속)**: planner 를 유일 호출처로 가졌던 죽은 소비 함수 7개(llm/sql_ops/knowledge/render/schema 내, 정적 미도달)는 본 작업 범위 밖 — 별도 dead-path 정리 시 함께.
 
 - [x] **P2** 리미디에이션(TASK-0137 #8) os.environ 첨부 채널 → contextvar 전환 **완료**
   - **해결**: 첨부 메타(ids/new_ids/inline image·text path)를 프로세스 전역 os.environ → run_agent 의 요청별 `contextvars.ContextVar`(allowlist 패턴과 동형, `asyncio.to_thread` 가 context 복사 전파)로 전환. app.py 의 env set/pop 전부 제거 + run_agent kwarg 전달. ctx 미설정(CLI/테스트) 시 `_ctx_or_env` 로 env fallback(하위호환).
@@ -41,15 +40,11 @@
   - **Where**: `app.py` 49개 async 핸들러 + ask() 6963~7432 + db.py
   - **Next step**: 핸들러를 def(Starlette threadpool) 또는 to_thread 래핑, mysql.connector.pooling 또는 pgbouncer 경유, ask() 커넥션을 에이전트 실행 전 반환. 단계적(핸들러별).
 
-- [ ] **P2** 리미디에이션(TASK-0131 #10) app.py silent except 113건 점진 감사
-  - **Why**: `except Exception: pass` 113건이 실패를 삼켜 가시성 저하(감사 #10). 핫패스(KB/KV/ask/healthz)는 Task 2~5 에서 로깅 추가됨. 나머지는 제어흐름 오인 위험이 있어 일괄 변경 대신 핸들러별 판단 필요.
-  - **Where**: `unit/feature-0003-agent-web-ui/src/app.py` (`grep -A1 'except Exception:' | grep pass`)
-  - **Next step**: 핸들러별로 (a) 진짜 fail-open(정당화 주석+로깅) vs (b) 제어흐름(유지) 분류 후 (a) 를 `logger.warning(exc_info=True)` + conversation_id/run_id 동반으로 전환. 모듈 레벨 `logger` 도입.
+- [x] **P2** 리미디에이션(TASK-0141 #10) app.py silent except 가시화 **완료(판단 기반)**
+  - **해결**: except 364건 전수 분류 후 명백한 fail-open swallow(bare `pass`) **26건**만 `logger.warning(exc_info=True)`로 가시화(PG 듀얼라이트/첨부 cascade/audit dispatch/best-effort enrichment 등 — 조용한 cutover 회귀·orphan 탐지 가치). **333건은 의도된 제어흐름**(멱등 ALTER, cleanup-of-cleanup, parse-후-default, 재시도 루프)이라 보존 — 로깅 시 노이즈/동작 위험. **동작 무변경**(제거 26줄 전부 bare pass, 제어흐름 라인 0) diff 확약 + ruff/compile 통과.
 
-- [ ] **P2** 리미디에이션(TASK-0127 #11) CI 격리 8건 테스트 정비
-  - **Why**: 리미디에이션 이전부터 깨진 8건을 CI 게이트 녹색화를 위해 `pyproject.toml` addopts `--deselect` 로 격리. 회귀 검출은 유지되나 격리 항목은 미검증 상태.
-  - **Where**: `pyproject.toml` [tool.pytest.ini_options] addopts + `unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py`(2: 라이브 PG fixture 의존) + `test_m5_cleanup.py`(6: `bin/kb-cleanup-mysql.sh` 셸 환경 의존, 격리 PATH 에서 returncode 2)
-  - **Next step**: anchor 2건은 PG fixture(testcontainers 또는 세션 스코프 ephemeral PG) 도입, m5_cleanup 6건은 스크립트 실행 환경(PATH/필요 바이너리) 재현 또는 테스트를 환경 비의존으로 재작성. 복구 시 deselect 목록에서 제거.
+- [x] **P2** 리미디에이션(TASK-0139 #11) CI 격리 8건 테스트 정비 **완료 — deselect 8→0**
+  - **해결**: 실제 실패 원인이 "라이브/PATH 환경 의존"이 아니라 **stale 결함**임을 실행근거로 규명·수정. anchor S6=matview DDL marker 미반영(matview 폐기로 시나리오 제거), N1=`_FakeCursor` rowcount/lastrowid 미구현(fixture 보강), m5_cleanup 6건=`kb-cleanup-mysql.sh` 의 `set -euo pipefail`+`.env` grep rc=2 조용한 종료(`|| true` 무해화). 전부 환경 비의존, deselect 0. **167 passed/0 deselected**.
 
 - [ ] **P2** gstack 스킬 도입 후속: `/setup-deploy` 로 배포 파이프라인 구성 여부 결정
   - **Why**: 현재 배포는 `make web` + docker compose 로컬 재빌드 중심. 공식 deploy target 이 없어 `/ship` 이후 자동화가 비어있음.
