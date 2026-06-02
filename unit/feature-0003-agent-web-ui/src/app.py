@@ -6928,12 +6928,15 @@ def _prepare_vision_inline_images(
         cur = conn.cursor(dictionary=True)
         try:
             placeholders = ", ".join(["%s"] * len(attachment_ids))
-            params = tuple(int(i) for i in attachment_ids) + (int(_VISION_IMAGE_COUNT_CAP),)
+            # TASK-0132 (#8 IDOR): AccountId 스코프 — 이전엔 Id IN(...) 만이라 타 계정 첨부
+            # ID 를 주입하면 그 이미지 bytes 가 본인 대화에 inject 됐다. 인증 account 로 한정.
+            params = tuple(int(i) for i in attachment_ids) + (int(account_id), int(_VISION_IMAGE_COUNT_CAP))
             cur.execute(
                 f"""
                 SELECT Id, ObjectKey, MimeType, OriginalFilename, SizeBytes, SizeBucket
                 FROM WebConversationAttachments
                 WHERE Id IN ({placeholders})
+                  AND AccountId = %s
                   AND Kind = 'image'
                   AND DeletedAt IS NULL
                   AND DeletePending = 0
@@ -7045,10 +7048,11 @@ def _prepare_text_inline_attachments(
         cur.execute(
             f"SELECT Id, OriginalFilename, ObjectKey, Kind, SizeBytes, AccountId "
             f"FROM WebConversationAttachments "
-            f"WHERE Id IN ({placeholders}) AND Kind = 'text' "
+            f"WHERE Id IN ({placeholders}) AND AccountId = %s AND Kind = 'text' "
             f"AND UploadStatus = 'uploaded' AND DeletedAt IS NULL AND DeletePending = 0 "
             f"ORDER BY Id ASC LIMIT %s",
-            tuple(int(i) for i in attachment_ids) + (_TEXT_INLINE_COUNT_CAP,),
+            # TASK-0132 (#8 IDOR): AccountId 스코프 — 타 계정 text 첨부 내용 inject 차단.
+            tuple(int(i) for i in attachment_ids) + (int(account_id), _TEXT_INLINE_COUNT_CAP),
         )
         rows = cur.fetchall() or []
         cur.close()
@@ -7479,9 +7483,9 @@ async def ask(request: Request) -> JSONResponse:
                 _pending_cur = conn.cursor(dictionary=True)
                 _pending_cur.execute(
                     f"SELECT Id, ConversationId, ObjectKey, Kind FROM WebConversationAttachments "
-                    f"WHERE Id IN ({_placeholders}) AND UploadStatus IN ('uploaded','failed') "
+                    f"WHERE Id IN ({_placeholders}) AND AccountId = %s AND UploadStatus IN ('uploaded','failed') "
                     f"AND Kind IN ('csv','xlsx') AND DeletedAt IS NULL AND DeletePending = 0 LIMIT 10",
-                    tuple(attachment_ids_clean),
+                    tuple(attachment_ids_clean) + (int(account["id"]),),  # TASK-0132 (#8 IDOR)
                 )
                 _pending_rows = _pending_cur.fetchall() or []
                 _pending_cur.close()
@@ -7522,9 +7526,11 @@ async def ask(request: Request) -> JSONResponse:
                 _sb_cur = conn.cursor()
                 _sb_cur.execute(
                     f"SELECT MetaJson FROM WebConversationAttachments "
-                    f"WHERE Id IN ({_sb_placeholders}) AND UploadStatus = 'ingested' "
+                    f"WHERE Id IN ({_sb_placeholders}) AND AccountId = %s AND UploadStatus = 'ingested' "
                     f"AND Kind IN ('csv','xlsx') AND DeletedAt IS NULL",
-                    tuple(attachment_ids_clean),
+                    # TASK-0132 (#8 IDOR): 타 계정 ingested 첨부의 sandbox 스키마를 allowlist 에
+                    # 추가하지 못하도록 AccountId 한정 (sandbox 교차테넌트 접근 차단).
+                    tuple(attachment_ids_clean) + (int(account["id"]),),
                 )
                 _sb_rows = _sb_cur.fetchall() or []
                 _sb_cur.close()

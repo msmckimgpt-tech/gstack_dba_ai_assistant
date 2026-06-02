@@ -243,7 +243,7 @@ def _load_attachment_inline_images() -> list[dict[str, Any]]:
     return result
 
 
-def _build_attachment_context_section(mem_conn, attachment_ids: list[int]) -> str:
+def _build_attachment_context_section(mem_conn, attachment_ids: list[int], account_id: int | None = None) -> str:
     """TASK-0094 Sprint 1 Phase 11 + TASK-0107 Phase B — selected attachment metadata
     + sandbox schema/table 명 + 각 table 의 column schema + head 5 sample rows
     를 prompt 에 주입한다.
@@ -255,7 +255,10 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int]) -> st
 
     D16 정합: attachment_ids 가 빈 list 면 본 section 미주입 (minimum exposure).
     """
-    if not attachment_ids or mem_conn is None:
+    # TASK-0132 (#8 IDOR/env-race): account_id 필수 — AccountId 스코프로 타 계정 첨부
+    # 메타(파일명/sandbox 스키마명) 가 prompt 에 유출되는 것을 차단. 이 스코프는 ATTACHMENT_IDS
+    # 가 os.environ 으로 전달되며 동시 요청 간 race 가 나도 교차테넌트 유출을 막는 안전망이다.
+    if not attachment_ids or mem_conn is None or not account_id:
         return ""
     try:
         cur = mem_conn.cursor()
@@ -268,10 +271,10 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int]) -> st
             SELECT Id, ConversationId, OriginalFilename, Kind, MimeType,
                    SizeBytes, SizeBucket, UploadStatus, MetaJson
             FROM WebConversationAttachments
-            WHERE Id IN ({placeholders}) AND DeletedAt IS NULL AND DeletePending = 0
+            WHERE Id IN ({placeholders}) AND AccountId = %s AND DeletedAt IS NULL AND DeletePending = 0
             ORDER BY Id ASC
             """,
-            tuple(int(i) for i in attachment_ids),
+            tuple(int(i) for i in attachment_ids) + (int(account_id),),
         )
         rows = cur.fetchall() or []
     except Exception:
@@ -629,7 +632,7 @@ def compose_system_prompt(
         if attachment_ids_raw:
             attachment_ids = [int(x) for x in attachment_ids_raw.split(",") if x.strip().lstrip("-").isdigit() and int(x) > 0]
             if attachment_ids:
-                section = _build_attachment_context_section(mem_conn, attachment_ids)
+                section = _build_attachment_context_section(mem_conn, attachment_ids, account_id)
                 if section:
                     parts.append(section)
     except Exception:

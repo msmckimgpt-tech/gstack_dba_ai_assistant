@@ -12,6 +12,16 @@
 
 ## Active
 
+- [ ] **P2** 리미디에이션(TASK-0132 #8) os.environ 첨부 채널 → kwargs 전면 제거
+  - **Why**: ATTACHMENT_IDS/NEW_ATTACHMENT_IDS/ATTACHMENT_IMAGE_INLINE_PATH/ATTACHMENT_TEXT_INLINE_PATH 가 프로세스 전역 os.environ 으로 web→agent 전달돼 동시요청 race. **교차테넌트 데이터 유출은 TASK-0132 의 AccountId 스코프로 이미 차단**됨 — 남은 위험은 본인 계정 내 attachment 혼선/유실(정확성 glitch).
+  - **Where**: `app.py`(os.environ set ~7452/7569/7588) + `agent_core.py`(read ~195/209/632)
+  - **Next step**: run_agent/_run_agent_core/compose_system_prompt 에 attachment_ids/new_attachment_ids/image_path/text_path 를 명시 kwarg 로 전달, os.environ set/read/pop 제거.
+
+- [ ] **P2** 리미디에이션(#9) async 핸들러 동기 DB I/O + ask 커넥션 lifecycle 리팩터
+  - **Why**: 48개 async 라우트가 이벤트 루프에서 동기 mysql.connector 호출 → 느린 쿼리 1건이 전체 in-flight 요청 stall. ask() 가 to_thread 에이전트 실행 내내 커넥션 점유. 커넥션 풀 없음(connect-per-request), pgbouncer 미사용.
+  - **Where**: `app.py` 49개 async 핸들러 + ask() 6963~7432 + db.py
+  - **Next step**: 핸들러를 def(Starlette threadpool) 또는 to_thread 래핑, mysql.connector.pooling 또는 pgbouncer 경유, ask() 커넥션을 에이전트 실행 전 반환. 단계적(핸들러별).
+
 - [ ] **P2** 리미디에이션(TASK-0131 #10) app.py silent except 113건 점진 감사
   - **Why**: `except Exception: pass` 113건이 실패를 삼켜 가시성 저하(감사 #10). 핫패스(KB/KV/ask/healthz)는 Task 2~5 에서 로깅 추가됨. 나머지는 제어흐름 오인 위험이 있어 일괄 변경 대신 핸들러별 판단 필요.
   - **Where**: `unit/feature-0003-agent-web-ui/src/app.py` (`grep -A1 'except Exception:' | grep pass`)
