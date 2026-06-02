@@ -71,13 +71,9 @@ SCENARIO_CATALOG = [
         "expected": "repair 후 category_* 가 보존 (NULL 유지) 또는 명시적 갱신 정책 따라 갱신 — 본 cycle 의 결정: **보존 (NULL stay NULL)**. category 갱신은 별 cycle 의 책임 (RagObjects category re-classification 의 별 ADR 후보).",
         "ddl_table_focus": ["rag_objects"],
     },
-    {
-        "id": "S6_fact_entries_multi_row_priority",
-        "name": "fact_entries 다중 row → weight DESC, updated_at DESC, id DESC 우선순위",
-        "setup": "동일 (conv, scope, fact_key) 에 fact_entries row 3개 — (weight=5, updated_at=t1, id=10), (weight=5, updated_at=t2 > t1, id=20), (weight=7, updated_at=t0 < t1, id=5)",
-        "expected": "agent_memory_facts VIEW 가 (weight=7, id=5) row 선택. weight 최우선, 동률 시 updated_at 최신, 동률 시 id 최신.",
-        "ddl_table_focus": ["fact_entries", "agent_memory_facts"],
-    },
+    # S6 (agent_memory_facts matview multi-row priority) 은 TASK-0140 에서 제거.
+    # matview 폐기로 검증 대상 자체가 사라짐 (fact_entries 가 정본). DISTINCT ON
+    # tie-break 의미는 향후 read path 가 fact_entries 직접 조회 시 별 cycle 에서 재검증.
 ]
 
 NEGATIVE_ASSERTIONS = [
@@ -373,32 +369,8 @@ def test_anchor_invariant_scenarios(scenario, monkeypatch):
                 "(COALESCE(NULLIF(EXCLUDED.x, ''), rag_objects.x) 패턴 부재)"
             )
 
-    elif sid == "S6_fact_entries_multi_row_priority":
-        # S6: agent_memory_facts VIEW 의 multi-row 우선순위 정합 — DISTINCT ON
-        # (conv, scope, fact_key) ORDER BY weight DESC, updated_at DESC, id DESC.
-        # M-1 baseline 의 MySQL VIEW 와 동일 tie-break 정합 검증 (DDL schema 자체).
-        from pathlib import Path
-        schema_path = Path(__file__).parent.parent / "src" / "scripts" / "agent_kb_schema.sql"
-        ddl = schema_path.read_text(encoding="utf-8").lower()
-        # T2-4: agent_memory_facts 가 regular VIEW → MATERIALIZED VIEW 로 전환됨
-        # (CONCURRENTLY refresh + 고유 인덱스). 본 invariant 가 검증하는 것은 VIEW 의
-        # 종류가 아니라 multi-row tie-break 정합 (DISTINCT ON + ORDER BY) 이므로,
-        # marker 를 'create materialized view ... agent_memory_facts' 로 갱신한다.
-        import re as _re
-        m = _re.search(
-            r"create\s+(or\s+replace\s+|materialized\s+)?view\s+"
-            r"(if\s+not\s+exists\s+)?agent_memory_facts",
-            ddl,
-        )
-        assert m is not None, "agent_memory_facts VIEW/MATERIALIZED VIEW DDL 누락"
-        # DISTINCT ON + ORDER BY weight DESC, updated_at DESC, id DESC 정합
-        view_start = m.start()
-        view_end = ddl.find(";", view_start)
-        view_ddl = ddl[view_start:view_end + 1] if view_end != -1 else ddl[view_start:]
-        assert "distinct on" in view_ddl, "VIEW 가 DISTINCT ON 패턴 미사용"
-        assert "weight desc" in view_ddl, "tie-break: weight DESC 누락"
-        assert "updated_at desc" in view_ddl, "tie-break: updated_at DESC 누락"
-        assert "id desc" in view_ddl, "tie-break: id DESC 누락"
+    # S6 (agent_memory_facts matview multi-row priority) 분기는 TASK-0140 에서 제거 —
+    # matview 폐기로 검증 대상 DDL 부재.
 
     else:
         pytest.fail(f"unknown scenario id: {sid}")

@@ -2245,7 +2245,6 @@ def init_memory():
             console.print(
                 f"[green]KB Postgres schema 적용 완료[/green]: "
                 f"tables={result.get('tables_present', [])}, "
-                f"view={result.get('view_present', False)}, "
                 f"extensions={result.get('extensions', [])}, "
                 f"grants={result.get('grants_present', {})}"
             )
