@@ -16,9 +16,80 @@ __all__ = [
 
 """Database connection management and SQL execution."""
 from .config import *
+import logging
+import threading
 import time
 from typing import Any
 import mysql.connector
+import mysql.connector.pooling  # MySQLConnectionPool (TASK-0144)
+from mysql.connector.errors import PoolError  # 풀 소진 시그널 (TASK-0144)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TASK-0144: opt-in MySQL 커넥션 풀 (기본 OFF, 폴백 안전).
+#
+# 안전 계약:
+#   - AGENT_DB_POOL_ENABLED 기본 False → connect() 가 기존 connect-per-request
+#     경로 그대로 (mysql.connector.connect(**params)) → 동작 0 변경.
+#   - True(canary 로만) 일 때만 (host,user,database) 시그니처별 풀에서 대여.
+#   - 풀 소진(PoolError) / 풀 생성 실패 시 direct connect 로 폴백 (절대 raise 로
+#     요청을 실패시키지 않음) + logger.warning. 즉 풀은 best-effort 최적화.
+#   - 풀에서 꺼낸 커넥션은 호출측이 .close() 하면 mysql.connector 기본 동작으로
+#     풀에 반환된다 (추가 반환 API 불필요). direct connect 폴백 커넥션도 .close()
+#     로 정상 종료되므로 호출측 수명주기 코드는 풀/비풀 구분 없이 동일하다.
+#
+# 풀 키 설계: (host, port, user, database) 4-tuple 을 풀 이름으로 직렬화.
+#   - mysql.connector 풀은 생성 시 user/password/database 가 고정되므로, connect()
+#     의 3분기 라우팅(replica / RO data-plane(agent_ro) / memory primary(root)) 이
+#     고른 (host,user) 조합과, database 값까지 키에 포함해야 cross-contamination 이
+#     없다. database=None(서버 default) 와 특정 database 는 서로 다른 풀.
+# ─────────────────────────────────────────────────────────────────────────────
+_db_logger = logging.getLogger("agent_core.db")
+_POOL_REGISTRY: dict[str, "mysql.connector.pooling.MySQLConnectionPool"] = {}
+_POOL_LOCK = threading.Lock()
+
+
+def _pool_key(params: dict[str, Any]) -> str:
+    """풀 레지스트리 키 — (host, port, user, database) 시그니처를 직렬화.
+
+    password 는 (host,user) 에 종속이므로 키에서 제외. database=None 은 빈 문자열로
+    구분(서버 default DB 전용 풀). user 라우팅(root vs agent_ro) 과 replica host 분기는
+    자연히 다른 키가 된다.
+    """
+    return "|".join(
+        str(params.get(k, ""))
+        for k in ("host", "port", "user", "database")
+    )
+
+
+def _get_or_create_pool(params: dict[str, Any]):
+    """시그니처별 풀을 lazy 생성 후 반환. thread-safe.
+
+    풀 생성 실패 시 None 을 반환하여 connect() 가 direct connect 로 폴백하게 한다
+    (raise 하지 않음 — 풀은 best-effort).
+    """
+    key = _pool_key(params)
+    pool = _POOL_REGISTRY.get(key)
+    if pool is not None:
+        return pool
+    with _POOL_LOCK:
+        # double-checked locking — 다른 스레드가 먼저 생성했을 수 있음.
+        pool = _POOL_REGISTRY.get(key)
+        if pool is not None:
+            return pool
+        try:
+            pool_params = dict(params)
+            pool_params["pool_name"] = f"agent_pool_{abs(hash(key)) & 0xFFFFFFFF:x}"
+            pool_params["pool_size"] = AGENT_DB_POOL_SIZE
+            pool_params["pool_reset_session"] = bool(AGENT_DB_POOL_RESET_SESSION)
+            pool = mysql.connector.pooling.MySQLConnectionPool(**pool_params)
+            _POOL_REGISTRY[key] = pool
+            return pool
+        except Exception as exc:
+            _db_logger.warning(
+                "db_pool_create_failed key=%s err=%r — direct connect 로 폴백", key, exc
+            )
+            return None
+
 
 # TASK-0015 §2.1.3 M0: psycopg3 import 는 optional. requirements.txt 에는 포함되어
 # 있으나 M0~M1 단계에서는 코드가 호출되지 않을 수도 (postgres 컨테이너 미가동 환경).
@@ -67,7 +138,41 @@ def connect(database: str | None = None, autocommit: bool = True):
     }
     if database:
         params["database"] = database
-    return mysql.connector.connect(**params)
+
+    # TASK-0144: 기본 OFF — 풀 비활성 시 기존 connect-per-request 경로 그대로
+    # (동작 0 변경). opt-in(canary) True 일 때만 풀 경로 + 폴백.
+    if not AGENT_DB_POOL_ENABLED:
+        return mysql.connector.connect(**params)
+    return _pooled_connect(params)
+
+
+def _pooled_connect(params: dict[str, Any]):
+    """풀에서 커넥션 대여 — 풀 소진/생성 실패 시 direct connect 로 폴백 (TASK-0144).
+
+    절대 raise 로 요청을 실패시키지 않는다. 풀이 없거나(생성 실패) 소진(PoolError)
+    되면 logger.warning 후 mysql.connector.connect(**params) 로 direct connect 한다.
+    direct connect 자체가 실패(DB down 등) 하면 그 예외는 평소처럼 전파(폴백 대상 아님).
+    """
+    pool = _get_or_create_pool(params)
+    if pool is None:
+        # 풀 생성 실패 — 이미 warning 로깅됨. direct connect 로 폴백.
+        return mysql.connector.connect(**params)
+    try:
+        return pool.get_connection()
+    except PoolError as exc:
+        # 풀 소진 — overflow 허용(기본) 여부와 무관히 안전하게 direct connect 폴백.
+        _db_logger.warning(
+            "db_pool_exhausted key=%s overflow_allowed=%s err=%r — direct connect 로 폴백",
+            _pool_key(params), bool(AGENT_DB_POOL_MAX_OVERFLOW), exc,
+        )
+        return mysql.connector.connect(**params)
+    except Exception as exc:
+        # 예기치 못한 풀 오류도 요청 실패로 번지지 않게 폴백.
+        _db_logger.warning(
+            "db_pool_get_failed key=%s err=%r — direct connect 로 폴백",
+            _pool_key(params), exc,
+        )
+        return mysql.connector.connect(**params)
 
 
 def _should_retry_db_error(err: Exception) -> bool:
