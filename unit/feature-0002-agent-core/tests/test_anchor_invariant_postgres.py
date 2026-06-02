@@ -108,6 +108,11 @@ class _FakeCursor:
         self._captured = captured
         self._returning_id = returning_id
         self._last_was_returning = False
+        # psycopg DBAPI 호환 — PgKbBackend 가 INSERT ON CONFLICT DO NOTHING / DELETE /
+        # prune path 에서 `cur.rowcount` 를, MySQL path 에서 `cur.lastrowid` 를 읽는다.
+        # REV: rowcount=1 → upsert_text 의 last_branch="insert" 분기로 평가 (회귀 안전).
+        self.rowcount = 1
+        self.lastrowid = returning_id
 
     def __enter__(self):
         return self
@@ -121,7 +126,11 @@ class _FakeCursor:
 
     def fetchone(self):
         if self._last_was_returning:
-            return (self._returning_id,)
+            # PgKbBackend._execute_returning_id 는 (id, pg_inserted) 2-튜플을 기대
+            # (RETURNING id, (xmax = 0) AS pg_inserted). pg_inserted=True → branch
+            # "insert". 1-튜플도 동 코드가 허용하지만 production RETURNING 절과
+            # 정합 맞춰 2-튜플 반환.
+            return (self._returning_id, True)
         return None
 
 
@@ -371,10 +380,19 @@ def test_anchor_invariant_scenarios(scenario, monkeypatch):
         from pathlib import Path
         schema_path = Path(__file__).parent.parent / "src" / "scripts" / "agent_kb_schema.sql"
         ddl = schema_path.read_text(encoding="utf-8").lower()
-        view_marker = "create or replace view agent_memory_facts"
-        assert view_marker in ddl, "agent_memory_facts VIEW DDL 누락"
+        # T2-4: agent_memory_facts 가 regular VIEW → MATERIALIZED VIEW 로 전환됨
+        # (CONCURRENTLY refresh + 고유 인덱스). 본 invariant 가 검증하는 것은 VIEW 의
+        # 종류가 아니라 multi-row tie-break 정합 (DISTINCT ON + ORDER BY) 이므로,
+        # marker 를 'create materialized view ... agent_memory_facts' 로 갱신한다.
+        import re as _re
+        m = _re.search(
+            r"create\s+(or\s+replace\s+|materialized\s+)?view\s+"
+            r"(if\s+not\s+exists\s+)?agent_memory_facts",
+            ddl,
+        )
+        assert m is not None, "agent_memory_facts VIEW/MATERIALIZED VIEW DDL 누락"
         # DISTINCT ON + ORDER BY weight DESC, updated_at DESC, id DESC 정합
-        view_start = ddl.find(view_marker)
+        view_start = m.start()
         view_end = ddl.find(";", view_start)
         view_ddl = ddl[view_start:view_end + 1] if view_end != -1 else ddl[view_start:]
         assert "distinct on" in view_ddl, "VIEW 가 DISTINCT ON 패턴 미사용"

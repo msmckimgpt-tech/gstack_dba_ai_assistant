@@ -46,8 +46,14 @@ mkdir -p "$SHARED_DIR"
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-repo}"
 MYSQL_CONTAINER="${COMPOSE_PROJECT_NAME}-mysql-1"
 
-MYSQL_PW="$(grep -E '^MYSQL_ROOT_PASSWORD=' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
-MYSQL_DB="$(grep -E '^AGENT_MEMORY_DB=' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
+# .env 파싱 — `.env` 부재/무매칭 시 grep 이 rc=1(no-match)/2(file 부재) 를 반환하고,
+# `set -euo pipefail` (특히 pipefail) 이 이 command-substitution 할당을 치명적 종료로
+# 만든다. 단위 테스트 (test_m5_cleanup.py) 는 wrapper `.env` 없이 `bash script --dry-run`
+# 등으로 호출하므로 arg 파싱/Stage 1 진입 전 rc=2 로 조용히 죽었다 (이것이 deselect
+# 사유였음). `|| true` 로 grep 의 비치명적 처리 — 운영 시엔 .env 존재, 부재 시에도
+# MYSQL_DB 는 아래 default 로 fallback, MYSQL_PW 는 실제 DB 접속 단계에서만 필요.
+MYSQL_PW="$( { grep -E '^MYSQL_ROOT_PASSWORD=' "$ENV_FILE" 2>/dev/null || true; } | cut -d= -f2-)"
+MYSQL_DB="$( { grep -E '^AGENT_MEMORY_DB=' "$ENV_FILE" 2>/dev/null || true; } | cut -d= -f2-)"
 MYSQL_DB="${MYSQL_DB:-agent_memory}"
 
 MODE=""
