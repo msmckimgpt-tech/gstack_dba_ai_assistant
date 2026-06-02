@@ -38,7 +38,7 @@ BROWSER_CTL := $(DC_QUIET) run --rm --entrypoint python --env BROWSER_SESSION_FI
 
 .PHONY: help \
         check-llm-network ensure-replica-network replica-check wait-mysql ensure-memory-db \
-        up down start stop restart status build test backup ps logs init clean clear \
+        up down start stop restart status build test backup gc ps logs init clean clear \
         sh repl ask mysql out dump session-info dc-build \
         mcp-up mcp-down mcp-test \
         convo-list convo-new convo-use convo-delete convo-rename convo-clear \
@@ -197,6 +197,9 @@ test:  ## ci: 단위 테스트(pytest) + 린트(ruff) — agent 이미지 격리
 
 backup:  ## ops: 플랫폼 정본 데이터 논리 백업 (PG agent_kb + MySQL agent_memory) — TASK-0130
 	@bash bin/backup.sh
+
+gc:  ## ops: 운영 데이터 GC — kv 고아행 + 만료 세션 정리 (멱등) — TASK-0134
+	@bash bin/gc.sh
 
 # =============================================================================
 # Status — 상태 / 로그 / 진단

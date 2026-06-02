@@ -12,6 +12,11 @@
 
 ## Active
 
+- [ ] **P3** 리미디에이션(TASK-0134 #15) alembic 마이그레이션 프레임워크 도입
+  - **Why**: 스키마가 startup/handler 의 raw `CREATE TABLE IF NOT EXISTS`/`ALTER` 부작용으로 적용 — 버전드·가역 이력 없음, 라이브 ivfflat index 가 DDL 파일과 drift(lists=100 vs 32). GC 는 TASK-0134 로 처리됨(kv 고아 sweep + 세션 purge, `make gc`).
+  - **Where**: app.py/agent_core 부트스트랩 DDL + `scripts/agent_kb_schema.sql`
+  - **Next step**: alembic 도입(라이브 36GB 주의 — Task 5 백업 선행), 모든 DDL 을 versioned 마이그레이션으로, agent_kb_schema.sql 을 라이브에서 재생성 + drift 체크. 죽은 Agent* DDL 삭제.
+
 - [ ] **P3** 리미디에이션(TASK-0133 #7) planner.py(2276줄) + phantom AGENT_* 플래그 정리
   - **Why**: planner.plan_next_step 은 죽은 agent_cli 만 호출했으나 `modules/__init__.py` 가 `from .planner import *` 로 import → 삭제 전 dead-export 분석 필요. phantom 플래그(소비처 0, 예: AGENT_ENABLE_QUERY_CONTRACT_GRADER) 도 정리 대상.
   - **Where**: `modules/planner.py`, `modules/__init__.py`(20,61), `modules/config.py` AGENT_* + `docs/CODEBASE_MAP.md`(agent_cli 'primary source' 표기 정정)
