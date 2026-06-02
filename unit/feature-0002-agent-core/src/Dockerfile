@@ -17,7 +17,7 @@ ENV TZ=Asia/Seoul \
 COPY unit/feature-0002-agent-core/src/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY unit/feature-0002-agent-core/src/agent_cli.py ./agent_cli.py
+# TASK-0133 (#7): agent_cli.py(216KB) 삭제 — entrypoint/import 0 의 죽은 레거시. live loop 는 agent_core.py.
 COPY unit/feature-0002-agent-core/src/agent_core.py ./agent_core.py
 COPY unit/feature-0002-agent-core/src/modules /app/modules
 COPY unit/feature-0002-agent-core/src/scripts /app/scripts

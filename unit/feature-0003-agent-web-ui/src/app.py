@@ -615,9 +615,21 @@ if allowed:
         allow_headers=["*"],
     )
 else:
+    # TASK-0133 (#14): WEB_ALLOWED_ORIGINS 미설정 시 이전엔 allow_origin_regex='.*' +
+    # allow_credentials=True → 모든 origin 에 credentialed CORS 허용(취약). frontend 는
+    # same-origin 이라 CORS 불필요하므로 localhost 한정으로 fail-safe (외부 cross-origin 은
+    # env 명시 필수). 새 deploy/dev/test 가 env 를 잊어도 open 되지 않는다.
+    logging.getLogger("web.app").warning(
+        "WEB_ALLOWED_ORIGINS 미설정 — CORS 를 localhost 한정으로 제한. "
+        "cross-origin 접근이 필요하면 WEB_ALLOWED_ORIGINS 를 명시하세요."
+    )
     app.add_middleware(
         CORSMiddleware,
-        allow_origin_regex=r".*",
+        allow_origins=[
+            "http://localhost", "https://localhost",
+            "http://localhost:8000", "https://localhost:8000",
+            "http://127.0.0.1", "https://127.0.0.1",
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -1187,7 +1199,9 @@ SELECT rp.RoleId, p.Code
 FROM WebRolePermissions rp
 JOIN WebPermissions p
   ON p.Id = rp.PermissionId
-WHERE rp.RoleId IN ({placeholders})
+JOIN WebRoles r
+  ON r.Id = rp.RoleId
+WHERE rp.RoleId IN ({placeholders}) AND r.IsActive = 1
         """,
         tuple(role_ids),
     )

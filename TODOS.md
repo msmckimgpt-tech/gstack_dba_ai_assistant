@@ -12,6 +12,11 @@
 
 ## Active
 
+- [ ] **P3** 리미디에이션(TASK-0133 #7) planner.py(2276줄) + phantom AGENT_* 플래그 정리
+  - **Why**: planner.plan_next_step 은 죽은 agent_cli 만 호출했으나 `modules/__init__.py` 가 `from .planner import *` 로 import → 삭제 전 dead-export 분석 필요. phantom 플래그(소비처 0, 예: AGENT_ENABLE_QUERY_CONTRACT_GRADER) 도 정리 대상.
+  - **Where**: `modules/planner.py`, `modules/__init__.py`(20,61), `modules/config.py` AGENT_* + `docs/CODEBASE_MAP.md`(agent_cli 'primary source' 표기 정정)
+  - **Next step**: planner export 사용처 grep → 미사용 확인 후 import 제거 + 파일 삭제. config AGENT_* 를 live/dead/phantom 분류 후 phantom 삭제.
+
 - [ ] **P2** 리미디에이션(TASK-0132 #8) os.environ 첨부 채널 → kwargs 전면 제거
   - **Why**: ATTACHMENT_IDS/NEW_ATTACHMENT_IDS/ATTACHMENT_IMAGE_INLINE_PATH/ATTACHMENT_TEXT_INLINE_PATH 가 프로세스 전역 os.environ 으로 web→agent 전달돼 동시요청 race. **교차테넌트 데이터 유출은 TASK-0132 의 AccountId 스코프로 이미 차단**됨 — 남은 위험은 본인 계정 내 attachment 혼선/유실(정확성 glitch).
   - **Where**: `app.py`(os.environ set ~7452/7569/7588) + `agent_core.py`(read ~195/209/632)

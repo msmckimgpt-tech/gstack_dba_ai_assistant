@@ -1,14 +1,20 @@
 ---
 doc_type: GOAL
 scope: feature-0003-agent-web-ui
-status: active
-updated_at: 2026-05-15
-source_of_truth: true
+status: archived
+updated_at: 2026-06-02
+source_of_truth: false
 ---
 
-# GOAL: Web UI 실시간 진행 표시, 대화 이동, 계정 관리, 대화 일괄 삭제
+> **⚠️ ARCHIVED (TASK-0133, 2026-06-02)** — 본 문서가 "미구현"으로 나열한 8개 Web UI 기능
+> (실시간 progress, point rail, 캘린더 이동, stale badge, 비밀번호 초기화, select-all 버그,
+> bulk delete 등)은 **이미 전부 출하**됐다 (STATUS.md TASK-0048~0124 참조). 2026-05-29 심층 감사가
+> /goal 세션이 본 문서를 보고 이미 완료된 작업을 재구현하던 오도를 확인했다. **프로젝트 현황의
+> 단일 정본은 `docs/STATUS.md`** 이다. 본 문서는 이력 참고용으로만 보존한다.
 
-이 문서는 신규 세션에서 `/goal` 로 바로 구현에 들어갈 수 있도록 현재 확인된 누락 기능과 구현 순서를 정리한 작업 진입점이다.
+# GOAL (ARCHIVED): Web UI 실시간 진행 표시, 대화 이동, 계정 관리, 대화 일괄 삭제
+
+이 문서는 신규 세션에서 `/goal` 로 바로 구현에 들어갈 수 있도록 현재 확인된 누락 기능과 구현 순서를 정리한 작업 진입점이다. (※ 위 ARCHIVED 안내 참조 — 아래 내용은 2026-05-15 시점 기준이며 대부분 이미 구현됨.)
 
 ## 1. 목표
 
