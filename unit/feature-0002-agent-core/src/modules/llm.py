@@ -1518,6 +1518,7 @@ def llm_validate_step(payload: dict[str, Any]) -> dict[str, Any] | None:
             **_temperature_kwargs(_validation_model),
             timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
         )
+        _record_llm_usage(_validation_model, "validate", resp)  # TASK-0136 (#11)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_validate_step", "exception", str(exc))
@@ -1543,6 +1544,7 @@ def llm_update_summary(payload: dict[str, Any]) -> str | None:
             **_temperature_kwargs(_summary_model),
             timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
         )
+        _record_llm_usage(_summary_model, "summary", resp)  # TASK-0136 (#11)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_update_summary", "exception", str(exc))
@@ -1620,6 +1622,7 @@ def llm_classify_origin_shift(origin: str, current: str) -> str:
             **_temperature_kwargs(_classify_model),
             timeout=_openai_request_timeout(_classify_timeout),
         )
+        _record_llm_usage(_classify_model, "classify", resp)  # TASK-0136 (#11)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_classify_origin_shift", "exception", str(exc))
@@ -1666,6 +1669,7 @@ def llm_generate_topic(payload: dict[str, Any]) -> str | None:
             **_temperature_kwargs(_topic_model),
             timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
         )
+        _record_llm_usage(_topic_model, "topic", resp)  # TASK-0136 (#11)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_generate_topic", "exception", str(exc))
@@ -1696,6 +1700,7 @@ def llm_fix_sql(payload: dict[str, Any]) -> str | None:
             **_temperature_kwargs(_fix_model),
             timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
         )
+        _record_llm_usage(_fix_model, "sql_fix", resp)  # TASK-0136 (#11)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_fix_sql", "exception", str(exc))
@@ -1727,6 +1732,7 @@ def llm_schema_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
             **_temperature_kwargs(_insight_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
         )
+        _record_llm_usage(_insight_model, "schema_insight", resp)  # TASK-0136 (#11)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_schema_insight", "exception", str(exc))
@@ -1763,6 +1769,7 @@ def llm_table_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
             **_temperature_kwargs(_insight_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
         )
+        _record_llm_usage(_insight_model, "table_insight", resp)  # TASK-0136 (#11)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_table_insight", "exception", str(exc))
