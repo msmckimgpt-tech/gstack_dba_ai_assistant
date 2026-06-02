@@ -22,7 +22,7 @@
 --   AgentMemoryTexts        → texts
 --   AgentMemoryRagDocuments → rag_documents
 --   AgentMemoryRagObjects   → rag_objects
---   AgentMemoryFacts (VIEW) → agent_memory_facts (MATERIALIZED VIEW, T2-4)
+--   AgentMemoryFacts (VIEW) → (TASK-0140 폐기 — fact_entries 가 정본, 중복 스냅샷 제거)
 --   ConversationId          → conversation_id
 --   FactKey                 → fact_key
 --   ... (전반적으로 snake_case 적용)
@@ -39,7 +39,8 @@
 -- KB row ~800 (M-1 baseline) 에서 충분. 100K+ scale-up 시점에 hnsw 로 ALTER
 -- (M5 후 ADR-0024 후보).
 --
--- T2-4: agent_memory_facts → MATERIALIZED VIEW (CONCURRENTLY refresh 지원)
+-- T2-4: agent_memory_facts MATERIALIZED VIEW → TASK-0140 (2026-06) 폐기. 자동
+--       refresh 미연동으로 drift, 라이브 read 0. 정의 제거 (라이브 DROP 은 오케스트레이터).
 -- T2-6: category_join_hints_json TEXT → JSONB + GIN index
 -- T3-10: pg_stat_statements + kb_slow_queries + autovacuum 조정
 -- ============================================================================
@@ -228,42 +229,12 @@ CREATE INDEX IF NOT EXISTS ix_rag_objects_join_hints_gin
     ON rag_objects USING gin (category_join_hints_json);
 
 -- ============================================================================
--- 6. agent_memory_facts MATERIALIZED VIEW (T2-4) — 주기적 CONCURRENTLY refresh.
---    MySQL AgentMemoryFacts (VIEW) 등가 → pre-computed 로 전환.
---    REFRESH MATERIALIZED VIEW CONCURRENTLY 는 고유 인덱스 필수.
+-- 6. agent_memory_facts — TASK-0140 (2026-06)에서 폐기.
+--    사유: fact_entries(정본, 780행)의 중복 스냅샷이며 자동 refresh hook 가
+--    연동되지 않아 drift 위험만 남음. 라이브 코드 데이터 read 0 (진단 참조뿐).
+--    matview / index / grant / comment 정의를 모두 제거. 라이브 객체 DROP 은
+--    오케스트레이터가 별도 실행: DROP MATERIALIZED VIEW IF EXISTS public.agent_memory_facts;
 -- ============================================================================
-
--- 기존 regular VIEW 가 남아있으면 제거 후 MATERIALIZED VIEW 생성 (idempotent).
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM pg_views WHERE viewname = 'agent_memory_facts'
-    ) THEN
-        DROP VIEW agent_memory_facts;
-    END IF;
-END
-$$;
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS agent_memory_facts AS
-SELECT DISTINCT ON (e.conversation_id, e.scope_key, e.fact_key)
-    e.conversation_id  AS conversation_id,
-    e.scope_key        AS scope_key,
-    e.fact_key         AS fact_key,
-    coalesce(t.text_content, '') AS fact_text,
-    e.weight           AS weight,
-    e.updated_at       AS updated_at
-FROM fact_entries e
-LEFT JOIN texts t ON t.text_hash = e.text_hash
-ORDER BY e.conversation_id, e.scope_key, e.fact_key, e.weight DESC, e.updated_at DESC, e.id DESC
-WITH DATA;
-
--- CONCURRENTLY refresh 를 위한 고유 인덱스 (필수).
-CREATE UNIQUE INDEX IF NOT EXISTS ux_agent_memory_facts_conv_scope_key
-    ON agent_memory_facts (conversation_id, scope_key, fact_key);
-
--- 빠른 조회를 위한 보조 인덱스.
-CREATE INDEX IF NOT EXISTS ix_agent_memory_facts_weight
-    ON agent_memory_facts (conversation_id, weight DESC, updated_at DESC);
 
 -- ============================================================================
 -- 7. T4-12: kb_invalidations — 글로벌 KB 캐시 무효화 공유 시계.
@@ -306,7 +277,6 @@ BEGIN
         GRANT SELECT, INSERT, UPDATE, DELETE
             ON TABLE fact_entries, texts, rag_documents, rag_objects,
                       kb_invalidations TO agent_kb_rw;
-        GRANT SELECT ON TABLE agent_memory_facts TO agent_kb_rw;
         GRANT SELECT ON TABLE kb_slow_queries TO agent_kb_rw;
         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO agent_kb_rw;
         ALTER DEFAULT PRIVILEGES IN SCHEMA public
@@ -319,7 +289,7 @@ BEGIN
         GRANT USAGE ON SCHEMA public TO agent_kb_ro;
         GRANT SELECT
             ON TABLE fact_entries, texts, rag_documents, rag_objects,
-                      agent_memory_facts, kb_invalidations, kb_slow_queries TO agent_kb_ro;
+                      kb_invalidations, kb_slow_queries TO agent_kb_ro;
         ALTER DEFAULT PRIVILEGES IN SCHEMA public
             GRANT SELECT ON TABLES TO agent_kb_ro;
     END IF;
@@ -333,5 +303,5 @@ COMMENT ON TABLE fact_entries IS 'TASK-0015 §2.1 M1 — MySQL AgentMemoryFactEn
 COMMENT ON TABLE texts IS 'TASK-0015 §2.1 M1 — MySQL AgentMemoryTexts 의 Postgres 등가. embedding 컬럼은 본 테이블에만 (Blocker B-4). T2: partial ivfflat index (WHERE embedding IS NOT NULL).';
 COMMENT ON TABLE rag_documents IS 'TASK-0015 §2.1 M1 — MySQL AgentMemoryRagDocuments 의 Postgres 등가.';
 COMMENT ON TABLE rag_objects IS 'TASK-0015 §2.1 M1 — MySQL AgentMemoryRagObjects 의 Postgres 등가. T2-6: category_join_hints_json JSONB + GIN index.';
-COMMENT ON MATERIALIZED VIEW agent_memory_facts IS 'T2-4: regular VIEW → MATERIALIZED VIEW 전환. REFRESH MATERIALIZED VIEW CONCURRENTLY 로 쓰기 차단 없이 갱신 가능. ux_agent_memory_facts_conv_scope_key 고유 인덱스 필수.';
+-- TASK-0140: agent_memory_facts matview 폐기 — COMMENT 제거.
 COMMENT ON VIEW kb_slow_queries IS 'T3-10: pg_stat_statements 기반 KB 테이블 슬로우 쿼리 모니터링. mean_exec_time > 10ms 필터.';

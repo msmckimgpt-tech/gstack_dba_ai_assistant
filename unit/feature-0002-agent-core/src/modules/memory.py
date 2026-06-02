@@ -754,8 +754,9 @@ def clear_memory_tables(conn) -> None:
 def _ensure_pg_schema(conn=None, *, schema_sql_path: str | None = None) -> dict:
     """KB Postgres database 의 schema 를 멱등 적용한다.
 
-    M2 dual-write phase 시작 시점에 1회 호출. 본 함수는 5 KB 테이블 + VIEW +
+    M2 dual-write phase 시작 시점에 1회 호출. 본 함수는 4 KB 테이블 +
     index + role grant 를 모두 적용하며 idempotent (다시 호출해도 안전).
+    (TASK-0140: agent_memory_facts matview 폐기 — fact_entries 가 정본.)
 
     Args:
         conn: psycopg connection. None 이면 `_pg_connect()` 로 새 connection 열고
@@ -767,7 +768,6 @@ def _ensure_pg_schema(conn=None, *, schema_sql_path: str | None = None) -> dict:
         dict: {
             "schema_applied": True,
             "tables_present": ["fact_entries", "texts", "rag_documents", "rag_objects"],
-            "view_present": True,
             "extensions": ["vector", "pg_trgm"],
         }
 
@@ -864,15 +864,8 @@ def _ensure_pg_schema(conn=None, *, schema_sql_path: str | None = None) -> dict:
             """)
             tables = [row[0] for row in cur.fetchall()]
 
-            cur.execute("""
-                SELECT 1 FROM information_schema.views
-                WHERE table_schema = 'public' AND table_name = 'agent_memory_facts'
-                UNION ALL
-                SELECT 1 FROM pg_matviews
-                WHERE schemaname = 'public' AND matviewname = 'agent_memory_facts'
-                LIMIT 1
-            """)
-            view_present = cur.fetchone() is not None
+            # TASK-0140: agent_memory_facts matview 폐기 — 존재 검증 제거.
+            # fact_entries 가 정본 (matview 는 중복 스냅샷, 자동 refresh 없어 drift).
 
             cur.execute("""
                 SELECT extname
@@ -940,12 +933,7 @@ def _ensure_pg_schema(conn=None, *, schema_sql_path: str | None = None) -> dict:
                                     # pg_class 의 sequence 가 아니라 owned column 으로
                                     # 표현될 수 있음 — graceful skip
                                     role_grants[f"{seq_name}_usage"] = None
-                        # VIEW SELECT
-                        cur.execute(
-                            "SELECT has_table_privilege(%s, 'agent_memory_facts', 'SELECT')",
-                            (role_name,),
-                        )
-                        role_grants["agent_memory_facts_select"] = bool(cur.fetchone()[0])
+                        # TASK-0140: agent_memory_facts matview 폐기 — VIEW SELECT 권한 검증 제거.
                 except Exception as grant_err:  # pragma: no cover — undefined_object 등
                     role_grants["query_error"] = str(grant_err)[:200]
                 grants_present[role_name] = role_grants
@@ -957,7 +945,8 @@ def _ensure_pg_schema(conn=None, *, schema_sql_path: str | None = None) -> dict:
         expected_tables = {"fact_entries", "texts", "rag_documents", "rag_objects"}
         missing_tables = sorted(expected_tables - set(tables))
         missing_extensions = sorted({"vector", "pg_trgm"} - set(extensions))
-        if missing_tables or not view_present or missing_extensions:
+        # TASK-0140: agent_memory_facts matview 폐기 — view_present 검증 제거.
+        if missing_tables or missing_extensions:
             ddl_hint = (
                 "DDL 적용이 필요합니다. 다음 중 하나를 수행하세요: "
                 "(a) 환경변수에 `AGENT_KB_PG_SUPERPASSWORD` (또는 legacy `AGENT_KB_PG_PASSWORD`) "
@@ -966,7 +955,7 @@ def _ensure_pg_schema(conn=None, *, schema_sql_path: str | None = None) -> dict:
             )
             raise RuntimeError(
                 "KB Postgres schema verification failed: "
-                f"missing_tables={missing_tables}, view_present={view_present}, "
+                f"missing_tables={missing_tables}, "
                 f"missing_extensions={missing_extensions}. {ddl_hint}"
             )
 
@@ -974,7 +963,6 @@ def _ensure_pg_schema(conn=None, *, schema_sql_path: str | None = None) -> dict:
         return {
             "schema_applied": True,
             "tables_present": tables,
-            "view_present": view_present,
             "extensions": extensions,
             "grants_present": grants_present,
         }
