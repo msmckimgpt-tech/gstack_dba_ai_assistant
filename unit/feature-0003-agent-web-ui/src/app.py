@@ -1116,7 +1116,11 @@ def _write_conversation_id(path: str, conversation_id: str) -> None:
     try:
         Path(path).write_text(str(conversation_id or "").strip(), encoding="utf-8")
     except Exception:
-        pass
+        # best-effort: 현재 대화 포인터 파일 기록 실패는 동작을 막지 않는다 (fail-open).
+        logging.getLogger(__name__).warning(
+            "_write_conversation_id: persist failed (conversation_id=%s)",
+            conversation_id, exc_info=True,
+        )
 
 
 def _permission_id_map(conn) -> dict[str, int]:
@@ -1390,7 +1394,12 @@ def _ensure_conversation_row(conn, conversation_id: str) -> None:
                 )
             pg.close()
         except Exception:
-            pass
+            # fail-open: PG core_conversations 보장 실패는 호출자 흐름을 막지 않으나,
+            # 조용한 쓰기 실패(cutover 회귀) 탐지를 위해 가시화한다.
+            logging.getLogger(__name__).warning(
+                "_ensure_conversation_row: PG upsert failed (conversation_id=%s)",
+                conversation_id, exc_info=True,
+            )
         return
     cur = conn.cursor()
     cur.execute(
@@ -1425,7 +1434,12 @@ def _assign_conversation_owner(conn, conversation_id: str, account_id: int, *, f
                     )
             pg.close()
         except Exception:
-            pass
+            # fail-open: 소유자 지정 실패는 흐름을 막지 않으나 조용한 PG 쓰기 실패를 가시화.
+            logging.getLogger(__name__).warning(
+                "_assign_conversation_owner: PG owner update failed "
+                "(conversation_id=%s account_id=%s force=%s)",
+                conversation_id, account_id, force, exc_info=True,
+            )
         return
     _ensure_conversation_row(conn, conversation_id)
     cur = conn.cursor()
@@ -2248,7 +2262,11 @@ def _save_account_product_pref(
         )
         cur.close()
     except Exception:
-        pass
+        # best-effort: 제품 선호 보존 실패는 흐름을 막지 않으나 조용한 쓰기 실패를 가시화.
+        logging.getLogger(__name__).warning(
+            "_save_account_product_pref: persist failed (account_id=%s mode=%s)",
+            account_id, norm_mode, exc_info=True,
+        )
 
 
 def _load_conversation_product(conn, conversation_id: str) -> dict[str, Any] | None:
@@ -2284,7 +2302,11 @@ def _load_conversation_product(conn, conversation_id: str) -> dict[str, Any] | N
                     product_name = str(wp_row.get("Name") or "") or None
                     product_is_active = bool(wp_row.get("IsActive")) if wp_row.get("IsActive") is not None else None
             except Exception:
-                pass
+                # best-effort: 제품 메타(이름/활성) enrichment 실패는 pid/mode 반환을 막지 않는다.
+                logging.getLogger(__name__).warning(
+                    "_load_conversation_product: product meta lookup failed (product_id=%s)",
+                    pid, exc_info=True,
+                )
         return {"product_id": pid, "product_mode": mode, "product_key": product_key,
                 "product_name": product_name, "product_is_active": product_is_active}
     try:
@@ -4229,7 +4251,10 @@ LEFT JOIN agent_runtime.kv kv_topic
                     owner_map[int(oid)] = str(uname or "")
                 mcur.close()
             except Exception:
-                pass
+                # best-effort: owner 이름 enrichment 실패는 목록 반환을 막지 않는다 (이름 공란).
+                logging.getLogger(__name__).warning(
+                    "_list_conversations_pg: owner name enrichment failed", exc_info=True,
+                )
 
         items: list[dict[str, Any]] = []
         for row in rows:
@@ -4359,7 +4384,10 @@ def _list_conversations(
     try:
         cleanup_pending_delete_conversations(conn)
     except Exception:
-        pass
+        # best-effort: pending-delete 정리 실패는 목록 조회를 막지 않는다 (fail-open).
+        logging.getLogger(__name__).warning(
+            "_list_conversations: pending-delete cleanup failed", exc_info=True,
+        )
     try:
         # Permission gate.
         if account and not (
@@ -4586,7 +4614,10 @@ WHERE ConversationId IN ({placeholders2})
                 for conv_id, value in cur.fetchall() or []:
                     run_id_map[str(conv_id)] = str(value or "")
             except Exception:
-                pass
+                # best-effort: run_id enrichment 실패는 목록 반환을 막지 않는다.
+                logging.getLogger(__name__).warning(
+                    "_list_conversations: last_status_run_id enrichment failed", exc_info=True,
+                )
             cur.close()
         for item in items:
             info = status_map.get(item["id"], {})
@@ -5047,7 +5078,10 @@ def _serialize_attachment_for_api(row: dict[str, Any] | None, *, include_signed_
                 ) + _dt.timedelta(days=retention_days)
                 payload["restorable_until"] = deadline.isoformat()
         except Exception:
-            pass
+            # best-effort: restorable_until 계산 실패는 직렬화를 막지 않는다 (optional 필드 생략).
+            logging.getLogger(__name__).warning(
+                "_serialize_attachment_for_api: restorable_until compute failed", exc_info=True,
+            )
     if include_signed_url and signed_url:
         payload["signed_url"] = signed_url
     return payload
@@ -7328,7 +7362,11 @@ async def ask(request: Request) -> JSONResponse:
                                 )
                             _pg_tmp.close()
                         except Exception:
-                            pass
+                            # fail-open: product hint 적용 실패는 ask 를 막지 않으나 조용한 PG 쓰기 실패를 가시화.
+                            logging.getLogger(__name__).warning(
+                                "ask: PG product hint update failed (conversation_id=%s mode=%s)",
+                                conv_id, hint_mode, exc_info=True,
+                            )
                     else:
                         cur_h = conn.cursor()
                         cur_h.execute(
@@ -7442,7 +7480,12 @@ async def ask(request: Request) -> JSONResponse:
                             )
                             cur_u.close()
                     except Exception:
-                        pass
+                        # fail-open: 대화 product_id backfill 실패는 ask 를 막지 않으나 조용한 쓰기 실패를 가시화.
+                        logging.getLogger(__name__).warning(
+                            "ask: conversation product_id backfill failed "
+                            "(conversation_id=%s product_id=%s)",
+                            conv_id, product_id_for_run, exc_info=True,
+                        )
                 allowed_schemas_for_run = (
                     _product_allowed_schemas(conn, int(product_id_for_run))
                     if product_id_for_run else None
@@ -7525,7 +7568,11 @@ async def ask(request: Request) -> JSONResponse:
                     _t.start()
                     _ingest_threads.append(_t)
                 except Exception:
-                    pass
+                    # fail-open: 첨부 ingest 스레드 기동 실패는 ask 를 막지 않으나 가시화 (해당 첨부 미처리).
+                    logging.getLogger(__name__).warning(
+                        "ask: attachment ingest thread spawn failed (attachment_id=%s)",
+                        _pr.get("Id"), exc_info=True,
+                    )
             # LLM 호출 전 최대 25s 대기 — 대부분의 소형 파일은 이 내에 완료.
             for _t in _ingest_threads:
                 try:
@@ -7689,7 +7736,11 @@ async def ask(request: Request) -> JSONResponse:
                         finally:
                             _cur_d.close()
                 except Exception:
-                    pass
+                    # best-effort: vision 파생 메시지 provenance 기록 실패는 응답을 막지 않는다.
+                    logging.getLogger(__name__).warning(
+                        "ask: vision derived-message link write failed (conversation_id=%s)",
+                        _vision_conv_id, exc_info=True,
+                    )
         conversation_id = str(agent_result.get("conversation_id") or "").strip()
         if conversation_id:
             _assign_conversation_owner(conn, conversation_id, int(account["id"]))
@@ -7698,7 +7749,11 @@ async def ask(request: Request) -> JSONResponse:
             try:
                 Path(_account_conv_file(int(account["id"]))).write_text(conversation_id, encoding="utf-8")
             except Exception:
-                pass
+                # best-effort: 계정별 현재 대화 포인터 파일 기록 실패는 응답을 막지 않는다 (fail-open).
+                logging.getLogger(__name__).warning(
+                    "ask: account current-conversation pointer write failed (account_id=%s)",
+                    account.get("id"), exc_info=True,
+                )
 
         render_output = agent_result.get("answer", "")
         render_sql = agent_result.get("executed_sql", "")
@@ -7812,7 +7867,11 @@ async def new_conversation(request: Request) -> JSONResponse:
             )
             cur.close()
     except Exception:
-        pass
+        # fail-open: 새 대화 product 정보 기록 실패는 생성을 막지 않으나 조용한 쓰기 실패를 가시화.
+        logging.getLogger(__name__).warning(
+            "new_conversation: product info write failed (conversation_id=%s mode=%s)",
+            cid, req_mode, exc_info=True,
+        )
     # 사용자 직전 선택을 서버에 보존 (재로그인 시 hydrate 용).
     _save_account_product_pref(
         conn, int(account["id"]), mode=req_mode, pinned_id=req_product_id
@@ -8095,7 +8154,11 @@ VALUES (%s, %s, %s, %s, %s)
     try:
         _set_account_current_conversation(conn, int(account["id"]), new_cid)
     except Exception:
-        pass
+        # best-effort: fork 후 현재 대화 전환 실패는 fork 결과 반환을 막지 않는다 (fail-open).
+        logging.getLogger(__name__).warning(
+            "_fork_conversation_impl: set current conversation failed (new_cid=%s)",
+            new_cid, exc_info=True,
+        )
     return (
         {
             "conversation_id": new_cid,
@@ -8216,7 +8279,11 @@ WHERE conversation_id = %s
             )
             cur.close()
         except Exception:
-            pass
+            # best-effort: 사본 topic 갱신 실패는 응답을 막지 않으나 조용한 쓰기 실패를 가시화.
+            logging.getLogger(__name__).warning(
+                "duplicate_conversation: topic update failed (conversation_id=%s)",
+                payload.get("conversation_id"), exc_info=True,
+            )
         payload["topic"] = new_topic
         return JSONResponse(payload)
     finally:
@@ -8684,7 +8751,10 @@ LIMIT 1
                     actor_type="anonymous",
                 )
             except Exception:
-                pass
+                # fail-open: redact audit dispatch 실패는 공유 뷰 렌더를 막지 않으나 가시화.
+                logging.getLogger(__name__).warning(
+                    "public_share_view: redact audit dispatch failed", exc_info=True,
+                )
         # 로그인 상태 + conversation.create 보유 시 fork 가능 flag.
         viewer = _optional_account(request, conn)
         can_fork = bool(viewer and _account_has_permission(viewer, "conversation.create"))
@@ -8966,7 +9036,11 @@ async def upload_conversation_attachment(
                 request_ctx=_serialize_attachment_for_audit(attachment_row),
             )
         except Exception:
-            pass
+            # fail-open: attachment.upload audit dispatch 실패는 업로드 응답을 막지 않으나 가시화.
+            logging.getLogger(__name__).warning(
+                "upload_conversation_attachment: upload audit dispatch failed (attachment_id=%s)",
+                attachment_id, exc_info=True,
+            )
 
         # TASK-0107 Phase A.2 (수정): csv/xlsx kind 면 동기 ingest.
         # 업로드 응답 전에 sandbox schema 생성 + table INSERT + MetaJson 갱신 완료.
@@ -8984,7 +9058,11 @@ async def upload_conversation_attachment(
                 if refreshed:
                     attachment_row = refreshed
             except Exception:
-                pass
+                # best-effort: ingest 후 row 재조회 실패는 응답을 막지 않는다 (기존 row 사용).
+                logging.getLogger(__name__).warning(
+                    "upload_conversation_attachment: post-ingest row refresh failed (attachment_id=%s)",
+                    attachment_id, exc_info=True,
+                )
 
         # signed URL 발급 (사내망 다운로드 전용 — D13). pending 은 발급 안 함 (D21).
         signed_url: str | None = None
@@ -9328,7 +9406,11 @@ def delete_attachment(attachment_id: int, request: Request) -> JSONResponse:
                 request_ctx={**before_snapshot, "delete_reason": "user"},
             )
         except Exception:
-            pass
+            # fail-open: attachment.delete audit dispatch 실패는 삭제 응답을 막지 않으나 가시화.
+            logging.getLogger(__name__).warning(
+                "delete_attachment: delete audit dispatch failed (attachment_id=%s)",
+                attachment_id, exc_info=True,
+            )
 
         return JSONResponse({"ok": True, "delete_reason": "user"})
     finally:
@@ -9368,7 +9450,10 @@ def conversations(
         try:
             _cleanup_orphan_conversations(conn, int(account["id"]))
         except Exception:
-            pass
+            logging.getLogger(__name__).warning(
+                "conversations: orphan cleanup failed (account_id=%s)",
+                account.get("id"), exc_info=True,
+            )
         payload = _build_conversations_payload(conn, account)
         conn.close()
         return JSONResponse(payload)
@@ -9441,7 +9526,11 @@ def conversations(
                 matched_count=len(items),
             )
         except Exception:
-            pass
+            # fail-open: 검색 활동 audit 실패는 검색 응답을 막지 않으나 가시화.
+            logging.getLogger(__name__).warning(
+                "conversations: search activity audit failed (account_id=%s)",
+                account.get("id"), exc_info=True,
+            )
 
     # REQ-20260519-0005 (TASK-0077): body-search 시 각 conv 의 매칭 message excerpt 첨부.
     matched_excerpts: dict[str, str] = {}
@@ -9555,7 +9644,11 @@ def history(
             if last_status == "processing":
                 last_run_id = str(load_memory_kv(conn, conv_id, "last_status_run_id") or "").strip()
         except Exception:
-            pass
+            # best-effort: 상태 bubble 복원용 KV 조회 실패는 history 응답을 막지 않는다.
+            logging.getLogger(__name__).warning(
+                "history: status KV read failed (conversation_id=%s)",
+                conv_id, exc_info=True,
+            )
     payload = {
         "conversation_id": conv_id,
         "messages": messages,
@@ -9708,7 +9801,12 @@ def _delete_conversation_impl(
                 from web.modules import attachment_reconciliation as _ar
                 _ar.cascade_conv_soft(conn, conversation_id)
             except Exception:
-                pass
+                # best-effort: 첨부 cascade 마킹 실패는 삭제를 막지 않으나 orphan 위험을 가시화.
+                logging.getLogger(__name__).warning(
+                    "_delete_conversation_impl: attachment cascade (pending) failed "
+                    "(conversation_id=%s)",
+                    conversation_id, exc_info=True,
+                )
             _clear_accounts_current_conversation(conn, conversation_id)
             return {"status": "deleted_pending"}
         # TASK-0108: conversation 삭제 전 첨부 conv_soft cascade 마킹.
@@ -9716,7 +9814,11 @@ def _delete_conversation_impl(
             from web.modules import attachment_reconciliation as _ar
             _ar.cascade_conv_soft(conn, conversation_id)
         except Exception:
-            pass
+            # best-effort: 첨부 cascade 마킹 실패는 삭제를 막지 않으나 orphan 위험을 가시화.
+            logging.getLogger(__name__).warning(
+                "_delete_conversation_impl: attachment cascade failed (conversation_id=%s)",
+                conversation_id, exc_info=True,
+            )
         delete_conversation_records(conn, conversation_id)
         _clear_accounts_current_conversation(conn, conversation_id)
         return {"status": "deleted"}
