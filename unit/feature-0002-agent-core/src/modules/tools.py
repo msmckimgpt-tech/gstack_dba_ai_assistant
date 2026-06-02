@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
 import time
 from typing import Any
@@ -33,20 +34,24 @@ _INTERNAL_SCHEMAS = frozenset({"agent_memory"})
 _SYSTEM_SCHEMAS = _METADATA_SCHEMAS | _INTERNAL_SCHEMAS
 
 # ── Product 단위 스키마 whitelist (None 이면 기존 동작, set 이면 교집합 필터) ──
-_ACTIVE_SCHEMA_ALLOWLIST: set[str] | None = None
+# TASK-0128 (#2/#8 race): 이전엔 plain 모듈 전역이라 공유 threadpool 에서 동시 ask 가
+# 서로의 allowlist 를 덮어쓰는 교차테넌트 레이스가 있었다. ContextVar 로 전환 — asyncio.to_thread
+# 가 호출 task 의 context 를 복사해 스레드로 전파하므로 ask 별 격리된다.
+_ACTIVE_SCHEMA_ALLOWLIST: contextvars.ContextVar[set[str] | None] = contextvars.ContextVar(
+    "agent_active_schema_allowlist", default=None
+)
 
 
 def set_active_schema_allowlist(schemas: list[str] | set[str] | None) -> None:
-    """agent 실행 시작 시 Product 에 배정된 스키마 whitelist 를 설정.
+    """agent 실행 시작 시 Product 에 배정된 스키마 whitelist 를 설정 (ContextVar, ask 별 격리).
 
     None 을 넣으면 기존 동작(모든 user schema 접근 가능).
-    빈 list/set 을 넣으면 **접근 가능 스키마가 없는 상태** (모든 조회/실행이 거부).
+    빈 list/set 을 넣으면 **접근 가능 스키마가 없는 상태** (모든 조회/실행이 거부 — fail-closed).
     """
-    global _ACTIVE_SCHEMA_ALLOWLIST
     if schemas is None:
-        _ACTIVE_SCHEMA_ALLOWLIST = None
+        _ACTIVE_SCHEMA_ALLOWLIST.set(None)
     else:
-        _ACTIVE_SCHEMA_ALLOWLIST = {str(s).strip().lower() for s in schemas if str(s).strip()}
+        _ACTIVE_SCHEMA_ALLOWLIST.set({str(s).strip().lower() for s in schemas if str(s).strip()})
 
 
 def clear_active_schema_allowlist() -> None:
@@ -57,7 +62,8 @@ def _is_user_schema(name: str) -> bool:
     lower = str(name or "").lower()
     if lower in _SYSTEM_SCHEMAS:
         return False
-    if _ACTIVE_SCHEMA_ALLOWLIST is not None and lower not in _ACTIVE_SCHEMA_ALLOWLIST:
+    allow = _ACTIVE_SCHEMA_ALLOWLIST.get()
+    if allow is not None and lower not in allow:
         return False
     return True
 
@@ -111,13 +117,14 @@ def _whitelist_violation(refs: set[str]) -> str | None:
     `agent_memory` 는 whitelist 로 차단 유지 — 타 계정 대화/세션/권한 override 를
     LLM 이 직접 조회하는 경로를 막는다.
     """
-    if _ACTIVE_SCHEMA_ALLOWLIST is None:
+    allow = _ACTIVE_SCHEMA_ALLOWLIST.get()
+    if allow is None:
         return None
-    allowed = set(_ACTIVE_SCHEMA_ALLOWLIST) | _METADATA_SCHEMAS
+    allowed = set(allow) | _METADATA_SCHEMAS
     blocked = [r for r in refs if r and r not in allowed]
     if not blocked:
         return None
-    allowed_str = ", ".join(sorted(_ACTIVE_SCHEMA_ALLOWLIST)) or "(none)"
+    allowed_str = ", ".join(sorted(allow)) or "(none)"
     return (
         f"오류: 접근이 허용되지 않은 스키마 참조: {', '.join(sorted(blocked))}. "
         f"현재 Product 에 허용된 스키마: {allowed_str}. "
@@ -567,12 +574,21 @@ def _tool_execute_sql(conn, args: dict) -> str:
     sql = str(args.get("sql", "")).strip()
     if not sql:
         return "오류: sql은 필수입니다."
-    # 위험한 SQL 차단
-    upper = sql.upper().lstrip()
-    blocked = ("DROP ", "TRUNCATE ", "DELETE ", "ALTER ", "GRANT ", "REVOKE ", "CREATE USER", "SET PASSWORD")
-    for prefix in blocked:
-        if upper.startswith(prefix):
-            return f"오류: {prefix.strip()} 구문은 보안상 차단됩니다."
+    # TASK-0128 (#2): LLM 작성 SQL 신뢰경계 — 이전엔 uppercase prefix denylist 뿐이라
+    # `/* */ DELETE`, 탭 우회, `SELECT 1; DELETE ...` 다중문, INSERT/UPDATE 가 모두 통과했다.
+    # sqlglot AST 가드로 교체: 단일 SELECT/CTE only, 다중문·write verb·lock·INTO·금지함수·
+    # 금지스키마(agent_memory 등) reject. (스키마 탐색은 별도 구조화 도구가 담당 — 본 도구는
+    # LLM freeform 분석 SELECT 전용.)
+    from .sql_guard import validate_sql_for_sandbox
+    # agent 는 카탈로그(information_schema/sys 등) 조회가 필요하므로 내부 스키마(agent_memory)만 금지.
+    guard = validate_sql_for_sandbox(sql, forbidden_schemas=_INTERNAL_SCHEMAS)
+    if not guard.ok:
+        return (
+            f"오류: 보안 정책상 차단된 SQL — {guard.error_reason}. "
+            f"execute_sql 은 단일 SELECT/CTE 분석 쿼리만 허용됩니다 "
+            f"(스키마 구조 탐색은 list_schemas/describe_table 등 전용 도구 사용)."
+        )
+    # Product 단위 스키마 allowlist (교차 product 격리) — 기존 regex 추출 유지.
     err = _whitelist_violation(_extract_sql_schema_refs(sql))
     if err:
         return err

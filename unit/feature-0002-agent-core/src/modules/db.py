@@ -49,6 +49,10 @@ def connect(database: str | None = None, autocommit: bool = True):
     )
     if use_replica:
         host, port, user, password = REPLICA_DB_HOST, REPLICA_DB_PORT, REPLICA_DB_USER, REPLICA_DB_PASSWORD
+    elif db_str != str(MEMORY_DB) and AGENT_DATA_DB_USER:
+        # TASK-0128 (#2): data-plane(고객 데이터/sandbox 분석) 연결은 최소권한 RO 유저로 라우팅.
+        # MEMORY_DB(제어) 연결은 root 유지. AGENT_DATA_DB_USER 미설정 시 아래 else(root) 로 폴백.
+        host, port, user, password = DB_HOST, DB_PORT, AGENT_DATA_DB_USER, AGENT_DATA_DB_PASSWORD
     else:
         host, port, user, password = DB_HOST, DB_PORT, DB_USER, DB_PASSWORD
     params = {
@@ -115,7 +119,10 @@ def execute_sql(conn, sql: str) -> tuple[list[tuple[str, Any, Any]], float]:
     results: list[tuple[str, Any, Any]] = []
     try:
         try:
-            iterator = cur.execute(sql, multi=True)
+            # TASK-0128 (#2): multi=False — 다중문 실행 차단(SQL injection 방어 심층).
+            # LLM freeform SQL 은 sql_guard 가 이미 다중문 reject 하고, 구조화 도구는
+            # 단일 statement 만 생성하므로 multi 비활성이 안전하다.
+            iterator = cur.execute(sql, multi=False)
             if iterator is not None:
                 for item in iterator:
                     results.extend(_collect_cursor_result(item))
