@@ -15,17 +15,16 @@
 - [ ] **P2** 리미디에이션(Task 10 #13) RAG 레이어 정리 — 3개 분리 작업
   - **Why**: KB 쓰기는 TASK-0127 로 복구됐으나 retrieval 측 (a) `_load_rag_objects_for_request` 에 PG 분기 없어 항상 [](복구된 rag_objects 미사용 — D0-D3 스키마 routing 죽음), (b) "pgvector RAG" 가 실제론 trigram(임베딩 807건 NULL, 사용자 결정 B=벡터 강제활성화), (c) `knowledge.py` 3376줄 god-module + fact_entries/rag_documents 중복 + 미사용 matview.
   - **Where**: `knowledge.py`(_load_rag_objects_for_request ~1294, _load_rag_documents_for_request_pg 패턴), `kb_backend.py`(search_rag_documents 모델 → search_rag_objects 신설), `litellm_config.yaml`(임베딩 모델), `kb_embedding_worker.py`(스케줄)
-  - **Next step**: ~~(a)~~ **완료 TASK-0135**: `PgKbBackend.search_rag_objects` + `_load_rag_objects_for_request_pg` + 분기(780행 검증). ~~(b)~~ **완료 TASK-0135**: titan-embed(1024d) gateway 라우트 + `<=>` 벡터-우선 읽기 + 임베딩 백필 810/810(edge400 880→0). **(c) 잔여 (P3)**: knowledge.py(3376줄) god-module → kb_write/kb_retrieval/kb_scope 분할 + 죽은 MySQL SQL 제거 + ARCHITECTURE.md §7 정정 + admin-only `kb_ingest.py` PG 전환. ~~matview 폐기~~ **완료 TASK-0140**(`public.agent_memory_facts` DROP + 진단/schema 제거, fact_entries 무손상). **분할 보류 사유**: 활성 고장 아님(읽기·쓰기·벡터 전부 복구), 순수 대형 리팩터.
+  - **Next step**: ~~(a)~~ **완료 TASK-0135**: `PgKbBackend.search_rag_objects` + `_load_rag_objects_for_request_pg` + 분기(780행 검증). ~~(b)~~ **완료 TASK-0135**: titan-embed(1024d) gateway 라우트 + `<=>` 벡터-우선 읽기 + 임베딩 백필 810/810(edge400 880→0). **(c) 거의 완료**: ~~knowledge.py 분할~~ **완료 TASK-0142**(→kb_scope/kb_retrieval/kb_write + 71줄 facade, 소비처 무수정, ARCHITECTURE.md §7 갱신, 173 tests). ~~matview 폐기~~ **완료 TASK-0140**. **잔여(후속)**: kb_retrieval.py(2170줄) 추가 분할 여지 + admin-only `kb_ingest.py` PG 전환 + MySQL fail-soft fallback 경로(cutover 완결 시 제거 — [[project_may27_cutover_broke_writes]] 의존).
 
 - [~] **P3** 리미디에이션(Task 11, 후순위) LLM 비용/토큰 회계 + 예산/레이트리밋 — **회계·노출 완료 TASK-0136**, 예산/캐싱 잔여
   - **Why**: 사용자 지정 후순위. ~128 step frontier 호출에 토큰 회계/계정별 cap/circuit breaker 없음. 활성 고장 아닌 운영·비용 가시성 강화.
   - **완료 (TASK-0136)**: `agent_runtime.llm_usage` 테이블 + 전 LLM 호출 사이트(메인 루프 + 7개 direct-create) capture + admin 한정 `GET /api/admin/usage`(RBAC `console.usage.read`, 비인증 401·authed admin 200+집계 검증) + admin 콘솔 'LLM 사용량' 패널(권한 게이트). UX 노출 범위·권한 충족.
   - **잔여 (P3)**: LiteLLM per-key budget + 계정별 일일 토큰 cap/circuit breaker(비용 **제어**), prompt caching, topic/summary/classify thinking 비활성 별칭. **보류 사유**: 가시성(핵심)은 출하됨, 제어/캐싱은 LiteLLM 설정 레이어 최적화로 활성 고장 아님.
 
-- [ ] **P3** 리미디에이션(TASK-0134 #15) alembic 마이그레이션 프레임워크 도입
-  - **Why**: 스키마가 startup/handler 의 raw `CREATE TABLE IF NOT EXISTS`/`ALTER` 부작용으로 적용 — 버전드·가역 이력 없음, 라이브 ivfflat index 가 DDL 파일과 drift(lists=100 vs 32). GC 는 TASK-0134 로 처리됨(kv 고아 sweep + 세션 purge, `make gc`).
-  - **Where**: app.py/agent_core 부트스트랩 DDL + `scripts/agent_kb_schema.sql`
-  - **Next step**: alembic 도입(라이브 36GB 주의 — Task 5 백업 선행), 모든 DDL 을 versioned 마이그레이션으로, agent_kb_schema.sql 을 라이브에서 재생성 + drift 체크. 죽은 Agent* DDL 삭제.
+- [~] **P3** 리미디에이션(TASK-0143 #15) alembic 마이그레이션 — **프레임워크/baseline 완료**, 이관 잔여
+  - **완료(TASK-0143)**: alembic 프레임워크 + env.py(.env AGENT_KB_PG_* 재사용) + 빈 baseline + `make migrate/migrate-stamp/migrate-new` + MIGRATIONS.md. 라이브는 `make migrate-stamp` 로 baseline 표시(스키마 불변). additive — 기존 부트스트랩 DDL 과 공존.
+  - **잔여(후속, 위험)**: `_ensure_pg_schema`/`agent_kb_schema.sql` 의 CREATE/ALTER 를 versioned migration 으로 점진 이관 후 부트스트랩에서 제거(라이브 36GB, 백업 선행). MySQL `agent_memory` 별도 alembic 환경. **embedding 인덱스 drift 정정**: 라이브 `texts` 는 실측 HNSW(`ix_texts_embedding_hnsw`)인데 schema.sql 은 ivfflat lists=32(헤더주석 100) 정의 — 정본 확정 후 명시 migration 으로 정렬.
 
 - [x] **P3** 리미디에이션(TASK-0138 #7) planner.py + phantom AGENT_* 플래그 정리 **완료**
   - **해결**: call-graph 도달성 분석으로 `planner.py`(2276줄) 라이브 미도달 확인 후 `from .planner import *` 제거 + 파일 삭제. phantom `AGENT_*` 18개(소비처 0) 삭제, 라이브 소비 플래그는 보존. CODEBASE_MAP 의 `agent_cli` "primary source" 오표기 → agent_core 정정. import smoke + 167 tests + 라이브 ask 통과.
@@ -35,10 +34,9 @@
   - **해결**: 첨부 메타(ids/new_ids/inline image·text path)를 프로세스 전역 os.environ → run_agent 의 요청별 `contextvars.ContextVar`(allowlist 패턴과 동형, `asyncio.to_thread` 가 context 복사 전파)로 전환. app.py 의 env set/pop 전부 제거 + run_agent kwarg 전달. ctx 미설정(CLI/테스트) 시 `_ctx_or_env` 로 env fallback(하위호환).
   - **검증**: `asyncio.to_thread` 동시 2요청이 각자 첨부만 read(A=11,12/new12, B=21,22,23/new23 교차오염 0) + env fallback PASS, ruff/160 tests + 라이브 ask(첨부 없음 경로) error='' 정상.
 
-- [ ] **P2** 리미디에이션(#9) async 핸들러 동기 DB I/O + ask 커넥션 lifecycle 리팩터
-  - **Why**: 48개 async 라우트가 이벤트 루프에서 동기 mysql.connector 호출 → 느린 쿼리 1건이 전체 in-flight 요청 stall. ask() 가 to_thread 에이전트 실행 내내 커넥션 점유. 커넥션 풀 없음(connect-per-request), pgbouncer 미사용.
-  - **Where**: `app.py` 49개 async 핸들러 + ask() 6963~7432 + db.py
-  - **Next step**: 핸들러를 def(Starlette threadpool) 또는 to_thread 래핑, mysql.connector.pooling 또는 pgbouncer 경유, ask() 커넥션을 에이전트 실행 전 반환. 단계적(핸들러별).
+- [~] **P2** 리미디에이션(#9) async 핸들러 동기 DB I/O — **풀 인프라 출하(무익 판명, OFF)**, 핸들러 offload 잔여
+  - **풀 결론(TASK-0144)**: db.py opt-in 커넥션 풀 출하(기본 OFF, +6 테스트). canary 실측 — 풀 ON=ask당 신규 conn **16** vs OFF=**2**. 기존 connect 패턴이 ask당 단일 conn 재사용으로 이미 lean, 풀은 (user,db)별 eager pool_size 생성으로 **악화**. → **풀은 무익, 기본 OFF 유지**(재프로파일 없이 켜지 말 것). pgbouncer 도 PG 측엔 이미 사용 중.
+  - **실제 병목·잔여(staged, 부하테스트 필요)**: 진짜 문제는 커넥션 churn 이 아니라 **55개 async 핸들러가 이벤트 루프에서 동기 mysql.connector 호출 → 느린 쿼리 1건이 in-flight 요청 stall**. Next: await-없는 async 핸들러를 `def`(Starlette threadpool) 전환 또는 to_thread 래핑(핸들러별 판단), ask() 커넥션을 에이전트 to_thread 실행 전 반환. **보류 사유**: 단위 테스트로 동시성/이벤트루프 회귀 검출 불가 → 라이브 부하테스트·staged rollout 필요(빅뱅 위험).
 
 - [x] **P2** 리미디에이션(TASK-0141 #10) app.py silent except 가시화 **완료(판단 기반)**
   - **해결**: except 364건 전수 분류 후 명백한 fail-open swallow(bare `pass`) **26건**만 `logger.warning(exc_info=True)`로 가시화(PG 듀얼라이트/첨부 cascade/audit dispatch/best-effort enrichment 등 — 조용한 cutover 회귀·orphan 탐지 가치). **333건은 의도된 제어흐름**(멱등 ALTER, cleanup-of-cleanup, parse-후-default, 재시도 루프)이라 보존 — 로깅 시 노이즈/동작 위험. **동작 무변경**(제거 26줄 전부 bare pass, 제어흐름 라인 0) diff 확약 + ruff/compile 통과.
