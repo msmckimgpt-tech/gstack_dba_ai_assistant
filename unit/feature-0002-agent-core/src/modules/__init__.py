@@ -17,14 +17,13 @@ from . import domain
 from . import llm
 from . import mcp_client
 from . import file_ops
-from . import planner
 from . import sql_ops
 
 # Collect all exported names from every module
 _all_modules = [
     config, utils, db, memory, knowledge, insight,
     render, schema, domain, llm, mcp_client, file_ops,
-    planner, sql_ops,
+    sql_ops,
 ]
 
 _all_names: dict[str, object] = {}
@@ -58,5 +57,4 @@ from .domain import *
 from .llm import *
 from .mcp_client import *
 from .file_ops import *
-from .planner import *
 from .sql_ops import *

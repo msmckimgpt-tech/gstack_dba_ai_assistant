@@ -65,7 +65,7 @@ repo/
 | Feature | 역할 | 주요 소스 |
 |---------|------|-----------|
 | `feature-0001-platform-runtime` | 플랫폼 런타임/공통 자산 | (scaffold — `src/README.md`, `tests/README.md`) |
-| `feature-0002-agent-core` | Agent 핵심 로직 | `src/agent_core.py`, `src/agent_cli.py`, `tests/test_llm_api.py` |
+| `feature-0002-agent-core` | Agent 핵심 로직 | `src/agent_core.py` (라이브 진입점 = in-process tool-calling 루프), `src/modules/*` (config/llm/knowledge/sql_ops 등), `tests/test_llm_api.py` |
 | `feature-0003-agent-web-ui` | Agent Web UI | `src/app.py` |
 | `feature-0004-browser-automation` | 브라우저 자동화 | `src/app.py`, `src/ctl.py` |
 | `feature-0005-qa-mcp` | QA 및 MCP 테스트 | `src/mcp_tests.py` |
