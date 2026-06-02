@@ -8,6 +8,7 @@ LLM이 도구를 선택하고 실행 결과를 바탕으로 사용자에게 응�
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import os
@@ -148,12 +149,48 @@ _INLINE_IMAGE_ENV_VAR = "ATTACHMENT_IMAGE_INLINE_PATH"
 _INLINE_TEXT_ENV_VAR = "ATTACHMENT_TEXT_INLINE_PATH"
 
 
+# ── 첨부 채널 per-request 격리 (contextvars) ──────────────────────────
+# TASK-0137 (#8 잔여): 첨부 메타(ids / new_ids / inline image·text 임시파일 path)를
+# 과거엔 os.environ 프로세스 전역으로 web→agent_core 에 전달했다. 동시 ask 요청이
+# 한 프로세스를 공유하므로 한 요청의 첨부가 다른 요청에 새는 race 가 있었다.
+# 교차계정 유출은 app.py 의 AccountId 스코프(IDOR fix)로 이미 fail-closed 이고,
+# 잔여 위험은 '같은 계정 내 동시 요청의 첨부 혼선'(사용자 대면 정확성 glitch).
+# Task 3 의 _ACTIVE_SCHEMA_ALLOWLIST 와 동일하게 contextvars 로 전환 —
+# asyncio.to_thread 가 호출 context 를 복사 전파하므로 요청별로 완전 격리된다.
+# ctx 값이 None(=run_agent 미경유: 직접 _run_agent_core 호출/테스트/CLI)이면
+# 하위호환을 위해 os.getenv 로 fallback 한다. 빈 문자열은 '명시적 없음'(env 미참조).
+_ATTACHMENT_IDS_CTX: "contextvars.ContextVar[str | None]" = contextvars.ContextVar(
+    "attachment_ids_ctx", default=None
+)
+_NEW_ATTACHMENT_IDS_CTX: "contextvars.ContextVar[str | None]" = contextvars.ContextVar(
+    "new_attachment_ids_ctx", default=None
+)
+_INLINE_IMAGE_PATH_CTX: "contextvars.ContextVar[str | None]" = contextvars.ContextVar(
+    "inline_image_path_ctx", default=None
+)
+_INLINE_TEXT_PATH_CTX: "contextvars.ContextVar[str | None]" = contextvars.ContextVar(
+    "inline_text_path_ctx", default=None
+)
+
+
+def _ctx_or_env(ctx_var: "contextvars.ContextVar", env_name: str) -> str:
+    """첨부 채널 값을 contextvar 우선으로 읽되, ctx 미설정(None) 시 os.getenv 로 fallback.
+
+    run_agent 를 경유한 web 요청은 ctx 가 항상 설정되므로 os.environ 을 보지 않는다
+    (요청별 격리). ctx 가 None 이면 run_agent 미경유 → 레거시 env 경로.
+    """
+    v = ctx_var.get()
+    if v is not None:
+        return v
+    return os.getenv(env_name) or ""
+
+
 def _load_attachment_inline_texts() -> dict[int, dict]:
     """env ATTACHMENT_TEXT_INLINE_PATH 의 JSON 을 read 후 {attachment_id: {filename, content, truncated}} 반환.
 
     Returns: dict keyed by attachment_id. 부재 / parse 실패 / 빈 content → 빈 dict (graceful failure).
     """
-    path = os.getenv(_INLINE_TEXT_ENV_VAR, "").strip()
+    path = _ctx_or_env(_INLINE_TEXT_PATH_CTX, _INLINE_TEXT_ENV_VAR).strip()
     if not path:
         return {}
     try:
@@ -192,7 +229,7 @@ def _load_new_attachment_ids() -> set[int]:
     agent_core 가 LLM 컨텍스트에서 신규 vs 세션 파일을 구분 라벨링할 때 사용.
     부재 / parse 실패 → 빈 set (graceful failure).
     """
-    raw = os.getenv("NEW_ATTACHMENT_IDS", "").strip()
+    raw = _ctx_or_env(_NEW_ATTACHMENT_IDS_CTX, "NEW_ATTACHMENT_IDS").strip()
     if not raw:
         return set()
     result: set[int] = set()
@@ -214,7 +251,7 @@ def _load_attachment_inline_images() -> list[dict[str, Any]]:
     D13 정합: 본 함수는 base64 string 만 다루고 storage_minio / signed URL 에 직접
     접근하지 않는다. caller (app.py) 가 server-side bytes read + base64 inline 책임.
     """
-    path = os.getenv(_INLINE_IMAGE_ENV_VAR, "").strip()
+    path = _ctx_or_env(_INLINE_IMAGE_PATH_CTX, _INLINE_IMAGE_ENV_VAR).strip()
     if not path:
         return []
     try:
@@ -627,8 +664,7 @@ def compose_system_prompt(
     # (comma separated) 로 caller 가 selected attachment_ids 전달. D16 정합:
     # 미지정/빈 list 면 본 section 미주입.
     try:
-        import os as _os
-        attachment_ids_raw = (_os.getenv("ATTACHMENT_IDS") or "").strip()
+        attachment_ids_raw = _ctx_or_env(_ATTACHMENT_IDS_CTX, "ATTACHMENT_IDS").strip()
         if attachment_ids_raw:
             attachment_ids = [int(x) for x in attachment_ids_raw.split(",") if x.strip().lstrip("-").isdigit() and int(x) > 0]
             if attachment_ids:
@@ -1507,9 +1543,20 @@ def run_agent(
     account_id: int | None = None,
     allowed_schemas: list[str] | None = None,
     product_mode: str = "pinned",
+    attachment_ids: list[int] | None = None,
+    new_attachment_ids: list[int] | None = None,
+    image_inline_path: str | None = None,
+    text_inline_path: str | None = None,
 ) -> dict[str, Any]:
-    """Product whitelist 를 설정한 뒤 실제 에이전트 루프를 호출하는 얇은 래퍼."""
+    """Product whitelist + 첨부 채널을 요청별 contextvar 로 설정한 뒤 실제 루프를 호출하는 얇은 래퍼."""
     set_active_schema_allowlist(allowed_schemas)
+    # TASK-0137: 첨부 메타를 os.environ 대신 contextvar 로 — 동시 요청 격리.
+    _att_tokens = (
+        _ATTACHMENT_IDS_CTX.set(",".join(str(int(i)) for i in (attachment_ids or []))),
+        _NEW_ATTACHMENT_IDS_CTX.set(",".join(str(int(i)) for i in (new_attachment_ids or []))),
+        _INLINE_IMAGE_PATH_CTX.set(image_inline_path or ""),
+        _INLINE_TEXT_PATH_CTX.set(text_inline_path or ""),
+    )
     try:
         return _run_agent_core(
             user_message,
@@ -1527,6 +1574,10 @@ def run_agent(
         )
     finally:
         clear_active_schema_allowlist()
+        _ATTACHMENT_IDS_CTX.reset(_att_tokens[0])
+        _NEW_ATTACHMENT_IDS_CTX.reset(_att_tokens[1])
+        _INLINE_IMAGE_PATH_CTX.reset(_att_tokens[2])
+        _INLINE_TEXT_PATH_CTX.reset(_att_tokens[3])
 
 
 def _run_agent_core(

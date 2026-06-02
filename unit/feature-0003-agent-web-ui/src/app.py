@@ -7031,8 +7031,7 @@ def _prepare_vision_inline_images(
 
 
 def _cleanup_vision_inline(temp_path: str | None) -> None:
-    """vision inline 임시 file + env cleanup."""
-    os.environ.pop("ATTACHMENT_IMAGE_INLINE_PATH", None)
+    """vision inline 임시 file cleanup (TASK-0137: env 채널 제거 — contextvar 전환)."""
     if temp_path:
         try:
             os.unlink(temp_path)
@@ -7136,8 +7135,7 @@ def _prepare_text_inline_attachments(
 
 
 def _cleanup_text_inline(temp_path: str | None) -> None:
-    """text inline 임시 file + env cleanup."""
-    os.environ.pop("ATTACHMENT_TEXT_INLINE_PATH", None)
+    """text inline 임시 file cleanup (TASK-0137: env 채널 제거 — contextvar 전환)."""
     if temp_path:
         try:
             os.unlink(temp_path)
@@ -7476,10 +7474,8 @@ async def ask(request: Request) -> JSONResponse:
                     attachment_ids_clean.append(iv)
             except Exception:
                 continue
-        if attachment_ids_clean:
-            os.environ["ATTACHMENT_IDS"] = ",".join(str(i) for i in attachment_ids_clean)
-        else:
-            os.environ.pop("ATTACHMENT_IDS", None)
+        # TASK-0137: 첨부 메타는 os.environ 전역 대신 run_agent 의 contextvar kwarg 로 전달
+        # (동시 요청 격리). attachment_ids_clean 은 아래 to_thread 호출에서 kwarg 로 넘긴다.
 
         # new_attachment_ids: 이번 요청에 새로 첨부된 파일 ID (프론트에서 source="new" 기준).
         # agent_core 가 LLM 컨텍스트에서 신규/세션 파일을 구분해 라벨링하는 데 사용.
@@ -7492,10 +7488,7 @@ async def ask(request: Request) -> JSONResponse:
                     new_attachment_ids_clean.append(iv)
             except Exception:
                 continue
-        if new_attachment_ids_clean:
-            os.environ["NEW_ATTACHMENT_IDS"] = ",".join(str(i) for i in new_attachment_ids_clean)
-        else:
-            os.environ.pop("NEW_ATTACHMENT_IDS", None)
+        # TASK-0137: new_attachment_ids 도 contextvar kwarg 로 전달 (아래 to_thread 참조).
 
         # TASK-0107 hotfix: UploadStatus 가 'uploaded' (ingest 미완) 또는 'failed' 인
         # csv/xlsx attachment 를 /api/ask 진입 시점에 동기 ingest 해 LLM 호출 전에
@@ -7596,9 +7589,7 @@ async def ask(request: Request) -> JSONResponse:
             vision_inline_path = _vision_path
             vision_inline_count = int(_vision_count or 0)
             vision_audit_attachments = list(_vision_audit or [])
-            os.environ["ATTACHMENT_IMAGE_INLINE_PATH"] = _vision_path
-        else:
-            os.environ.pop("ATTACHMENT_IMAGE_INLINE_PATH", None)
+            # TASK-0137: inline image path 는 contextvar kwarg (image_inline_path) 로 전달.
 
         # TASK-0124 — text kind 첨부파일 내용 pre-fetch.
         # SQL/코드/텍스트 파일은 sandbox ingest 대상이 아니므로 MinIO 에서 직접 읽어
@@ -7614,10 +7605,7 @@ async def ask(request: Request) -> JSONResponse:
                 )
             except Exception:
                 text_inline_path = None
-        if text_inline_path:
-            os.environ["ATTACHMENT_TEXT_INLINE_PATH"] = text_inline_path
-        else:
-            os.environ.pop("ATTACHMENT_TEXT_INLINE_PATH", None)
+        # TASK-0137: inline text path 는 contextvar kwarg (text_inline_path) 로 전달.
 
         agent_result = await asyncio.to_thread(
             _run_agent_core,
@@ -7632,11 +7620,13 @@ async def ask(request: Request) -> JSONResponse:
             account_id=int(account["id"]),
             allowed_schemas=allowed_schemas_for_run,
             product_mode=product_mode_for_run,
+            # TASK-0137: 첨부 메타를 os.environ 전역 대신 요청별 contextvar kwarg 로 전달.
+            attachment_ids=attachment_ids_clean,
+            new_attachment_ids=new_attachment_ids_clean,
+            image_inline_path=vision_inline_path,
+            text_inline_path=text_inline_path,
         )
-        # cleanup env to avoid leaking across requests.
-        os.environ.pop("ATTACHMENT_IDS", None)
-        os.environ.pop("NEW_ATTACHMENT_IDS", None)
-        # Sprint 2 (S2.4) — vision inline cleanup (env + 임시 file).
+        # Sprint 2 (S2.4) — vision inline cleanup (임시 file).
         _cleanup_vision_inline(vision_inline_path)
         vision_inline_path = None
         # TASK-0124 — text inline cleanup.
@@ -7750,7 +7740,7 @@ async def ask(request: Request) -> JSONResponse:
             _cleanup_text_inline(locals().get("text_inline_path"))
         except Exception:
             pass
-        os.environ.pop("NEW_ATTACHMENT_IDS", None)
+        # TASK-0137: 첨부 채널은 contextvar 로 전환 — run_agent finally 에서 자동 reset.
 
 
 @app.post("/api/new_conversation")
