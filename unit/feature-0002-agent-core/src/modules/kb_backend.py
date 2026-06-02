@@ -905,6 +905,47 @@ class PgKbBackend(KbBackend):
             cur.execute(sql, params)
             return list(cur.fetchall())
 
+    def search_rag_documents_vector(
+        self,
+        conn,
+        *,
+        conversation_ids: list[str],
+        query_vector: list[float],
+        scope_keys: Optional[list[str]] = None,
+        limit: int = 200,
+    ) -> list[tuple]:
+        """TASK-0135 (#13, 결정 B): pgvector cosine(`<=>`) 시맨틱 검색. trigram 보다 한국어
+        의미 검색에 강하다. texts.embedding(vector(1024), Titan v2) 기준. embedding IS NOT NULL
+        만 대상(미임베딩 row 는 trigram fallback 이 커버). ft_score = 1 - cosine_distance(유사도).
+        반환 tuple shape 은 search_rag_documents 와 동일(_normalize_rag_doc_rows 호환)."""
+        if not conversation_ids or not query_vector:
+            return []
+        normalized = list(scope_keys) if scope_keys else None
+        include_null_blank = normalized is None or any((s is None or s == "") for s in normalized)
+        strict = [s for s in normalized if s and s != ""] if normalized is not None else None
+        where = ["d.conversation_id = ANY(%(conv_ids)s)", "t.embedding IS NOT NULL"]
+        params: dict[str, Any] = {"conv_ids": list(conversation_ids), "qvec": query_vector, "lim": int(limit)}
+        if strict:
+            if include_null_blank:
+                where.append("(d.scope_key = ANY(%(scopes)s) OR d.scope_key IS NULL OR d.scope_key = '')")
+            else:
+                where.append("d.scope_key = ANY(%(scopes)s)")
+            params["scopes"] = strict
+        elif not include_null_blank:
+            where.append("FALSE")
+        sql = (
+            "SELECT d.conversation_id, d.fact_key, COALESCE(t.text_content, '') AS content, "
+            "d.weight, d.source_type, d.source_run_id, d.updated_at, "
+            "(1 - (t.embedding <=> %(qvec)s::vector)) AS ft_score "
+            "FROM rag_documents d JOIN texts t ON t.text_hash = d.text_hash "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY t.embedding <=> %(qvec)s::vector "
+            "LIMIT %(lim)s"
+        )
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return list(cur.fetchall())
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Backend factory + dual-write mirror helper.

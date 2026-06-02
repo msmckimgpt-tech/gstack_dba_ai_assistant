@@ -38,7 +38,7 @@ BROWSER_CTL := $(DC_QUIET) run --rm --entrypoint python --env BROWSER_SESSION_FI
 
 .PHONY: help \
         check-llm-network ensure-replica-network replica-check wait-mysql ensure-memory-db \
-        up down start stop restart status build test backup gc ps logs init clean clear \
+        up down start stop restart status build test backup gc embed ps logs init clean clear \
         sh repl ask mysql out dump session-info dc-build \
         mcp-up mcp-down mcp-test \
         convo-list convo-new convo-use convo-delete convo-rename convo-clear \
@@ -200,6 +200,9 @@ backup:  ## ops: 플랫폼 정본 데이터 논리 백업 (PG agent_kb + MySQL a
 
 gc:  ## ops: 운영 데이터 GC — kv 고아행 + 만료 세션 정리 (멱등) — TASK-0134
 	@bash bin/gc.sh
+
+embed:  ## ops: KB 임베딩 백필 (texts.embedding NULL 채움, Titan v2) — TASK-0135
+	@$(DC_QUIET) exec -T -w /app web python -m scripts.kb_embedding_worker || docker exec -w /app repo-web-1 python -m scripts.kb_embedding_worker
 
 # =============================================================================
 # Status — 상태 / 로그 / 진단

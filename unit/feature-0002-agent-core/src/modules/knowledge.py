@@ -1634,6 +1634,18 @@ def _load_rag_documents_for_request_pg(
     conn = _pg_connect_ro()
     try:
         backend = PgKbBackend()
+        # TASK-0135 (#13, 결정 B): 벡터 검색 우선 (titan-embed 임베딩, 한국어 의미검색 강함).
+        # 쿼리 임베딩 실패/미설정 또는 벡터 결과 없음(미임베딩) 시 trigram 으로 fallback.
+        qvec = _embed_query_vector(query_text) if query_text else None
+        if qvec is not None:
+            vrows = backend.search_rag_documents_vector(
+                conn,
+                conversation_ids=conversation_ids,
+                query_vector=qvec,
+                scope_keys=scope_keys,
+            )
+            if vrows:
+                return _normalize_rag_doc_rows(vrows)
         rows = backend.search_rag_documents(
             conn,
             conversation_ids=conversation_ids,
@@ -1646,6 +1658,26 @@ def _load_rag_documents_for_request_pg(
             conn.close()
         except Exception:
             pass
+
+
+def _embed_query_vector(text: str) -> "Optional[list[float]]":
+    """TASK-0135 (#13): 쿼리 텍스트를 gateway 임베딩(AGENT_KB_EMBEDDING_MODEL=titan-embed)으로
+    벡터화. 미설정/빈텍스트/실패 시 None → caller 가 trigram fallback. 티어 라우터가 임베딩
+    모델명을 Bedrock gateway 로 보낸다(is_local_llm_model=False)."""
+    from .config import AGENT_KB_EMBEDDING_MODEL
+    model = str(AGENT_KB_EMBEDDING_MODEL or "").strip()
+    if not model or not str(text or "").strip():
+        return None
+    try:
+        from .llm import _get_openai_client
+        client = _get_openai_client(model=model)
+        if client is None:
+            return None
+        resp = client.embeddings.create(model=model, input=[text])
+        return list(resp.data[0].embedding)
+    except Exception as e:
+        logger.warning("kb_query_embed_failed", extra={"error": str(e)[:200]})
+        return None
 
 
 def _load_rag_objects_for_request_pg(
