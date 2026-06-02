@@ -9,6 +9,10 @@ __all__ = [
     "AGENT_CSV_PREVIEW_ROWS",
     "AGENT_DB_CONNECT_BACKOFF_SEC",
     "AGENT_DB_CONNECT_RETRIES",
+    "AGENT_DB_POOL_ENABLED",
+    "AGENT_DB_POOL_MAX_OVERFLOW",
+    "AGENT_DB_POOL_RESET_SESSION",
+    "AGENT_DB_POOL_SIZE",
     "AGENT_DISABLE_AUTO_RETRY",
     "AGENT_DOMAIN_DRIFT_GUARD",
     "AGENT_EARLY_FINALIZE_MS",
@@ -468,6 +472,20 @@ AGENT_SIMILAR_RETRY_LIMIT = int(os.getenv("AGENT_SIMILAR_RETRY_LIMIT", "2"))
 AGENT_SIMILAR_RETRY_THRESHOLD = float(os.getenv("AGENT_SIMILAR_RETRY_THRESHOLD", "0.85"))
 AGENT_DB_CONNECT_RETRIES = int(os.getenv("AGENT_DB_CONNECT_RETRIES", "3"))
 AGENT_DB_CONNECT_BACKOFF_SEC = float(os.getenv("AGENT_DB_CONNECT_BACKOFF_SEC", "0.5"))
+# ── MySQL 커넥션 풀 (TASK-0144, opt-in / 기본 OFF / 폴백 안전) ──────────────
+# 기본 비활성(False) → db.connect() 가 기존 connect-per-request 경로 그대로 사용
+# (동작 0 변경). True(canary 로만) 일 때만 (host,user,database) 시그니처별 풀에서
+# 커넥션을 대여하고, 풀 소진(PoolError)/풀 생성 실패 시 direct connect 로 폴백한다
+# (절대 요청을 실패시키지 않음). app.py async 전환과 무관한 독립 opt-in.
+AGENT_DB_POOL_ENABLED = os.getenv("AGENT_DB_POOL_ENABLED", "0").strip().lower() in ("1", "true", "yes")
+# 시그니처별 풀 크기. mysql.connector 풀은 1..32 범위만 허용하므로 clamp.
+AGENT_DB_POOL_SIZE = max(1, min(32, int(os.getenv("AGENT_DB_POOL_SIZE", "8") or "8")))
+# overflow 의미: 풀 소진 시 풀 밖 direct connect 를 추가 허용할지(True=폴백 허용,
+# 기본 True 라 풀 소진이 절대 요청 실패가 되지 않음). False 면 풀 소진 시에도 폴백
+# 하지만(안전 우선) 경고 로그만 강화 — 의미적으로 "풀 밖 커넥션을 허용하느냐" 신호.
+AGENT_DB_POOL_MAX_OVERFLOW = os.getenv("AGENT_DB_POOL_MAX_OVERFLOW", "1").strip().lower() in ("1", "true", "yes")
+# 풀 커넥션 대여 시 reset_session(autocommit/세션상태 초기화) 적용 여부.
+AGENT_DB_POOL_RESET_SESSION = os.getenv("AGENT_DB_POOL_RESET_SESSION", "1").strip().lower() in ("1", "true", "yes")
 AGENT_SEARCH_CACHE_TTL_SEC = int(os.getenv("AGENT_SEARCH_CACHE_TTL_SEC", "600"))
 AGENT_META_SEARCH_REPEAT_LIMIT = int(os.getenv("AGENT_META_SEARCH_REPEAT_LIMIT", "2"))
 AGENT_META_EXPLORATION_BUDGET = int(
