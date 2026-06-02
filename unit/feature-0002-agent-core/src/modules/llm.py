@@ -1462,11 +1462,11 @@ def _maybe_override_plan_with_rag_priority(
 
 
 def llm_validate_step(payload: dict[str, Any]) -> dict[str, Any] | None:
-    client = _get_openai_client()
+    _validation_model = AGENT_STEP_GRADE_MODEL or AGENT_SUMMARY_MODEL or OPENAI_MODEL
+    client = _get_openai_client(model=_validation_model)  # TASK-0135 (#3): 티어 라우팅
     if client is None:
         return None
 
-    _validation_model = AGENT_STEP_GRADE_MODEL or AGENT_SUMMARY_MODEL or OPENAI_MODEL
     try:
         resp = client.chat.completions.create(
             model=_validation_model,
@@ -1487,11 +1487,11 @@ def llm_validate_step(payload: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def llm_update_summary(payload: dict[str, Any]) -> str | None:
-    client = _get_openai_client()
+    _summary_model = AGENT_SUMMARY_MODEL or OPENAI_MODEL
+    client = _get_openai_client(model=_summary_model)  # TASK-0135 (#3): 티어 라우팅
     if client is None:
         return None
 
-    _summary_model = AGENT_SUMMARY_MODEL or OPENAI_MODEL
     try:
         resp = client.chat.completions.create(
             model=_summary_model,
@@ -1564,10 +1564,10 @@ Return JSON only:
 def llm_classify_origin_shift(origin: str, current: str) -> str:
     """LLM을 사용하여 주제 전환 여부를 판별한다. 'shift', 'evolve', 또는 'continue' 반환."""
     _classify_timeout = 30
-    client = _get_openai_client(timeout_sec=_classify_timeout)
+    _classify_model = AGENT_TASK_CLASSIFY_MODEL or AGENT_PLAN_MODEL or OPENAI_MODEL
+    client = _get_openai_client(timeout_sec=_classify_timeout, model=_classify_model)  # TASK-0135 (#3)
     if client is None:
         return "continue"
-    _classify_model = AGENT_TASK_CLASSIFY_MODEL or AGENT_PLAN_MODEL or OPENAI_MODEL
     payload = {"origin": origin[:500], "current": current[:500]}
     try:
         resp = client.chat.completions.create(
@@ -1610,11 +1610,11 @@ def llm_classify_origin_shift(origin: str, current: str) -> str:
 
 
 def llm_generate_topic(payload: dict[str, Any]) -> str | None:
-    client = _get_openai_client()
+    _topic_model = AGENT_TOPIC_MODEL or AGENT_SUMMARY_MODEL or OPENAI_MODEL
+    client = _get_openai_client(model=_topic_model)  # TASK-0135 (#3): 티어 라우팅
     if client is None:
         return None
 
-    _topic_model = AGENT_TOPIC_MODEL or AGENT_SUMMARY_MODEL or OPENAI_MODEL
     try:
         resp = client.chat.completions.create(
             model=_topic_model,
@@ -1640,11 +1640,11 @@ def llm_generate_topic(payload: dict[str, Any]) -> str | None:
 
 
 def llm_fix_sql(payload: dict[str, Any]) -> str | None:
-    client = _get_openai_client()
+    _fix_model = AGENT_SQL_FIX_MODEL or OPENAI_MODEL
+    client = _get_openai_client(model=_fix_model)  # TASK-0135 (#3): 티어 라우팅
     if client is None:
         return None
 
-    _fix_model = AGENT_SQL_FIX_MODEL or OPENAI_MODEL
     try:
         resp = client.chat.completions.create(
             model=_fix_model,
@@ -1670,10 +1670,12 @@ def llm_fix_sql(payload: dict[str, Any]) -> str | None:
 
 
 def llm_schema_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
-    client = _get_openai_client(timeout_sec=AGENT_INSIGHT_TIMEOUT_SEC)
+    # TASK-0135 (#3 fix): model 을 client 생성에 전달 — 직접 create 호출이 티어 라우터를
+    # 우회해 edge 모델을 Bedrock 에 보내 400 폭증하던 버그(Task4 미커버 경로) 수정.
+    _insight_model = AGENT_INSIGHT_MODEL or OPENAI_MODEL
+    client = _get_openai_client(timeout_sec=AGENT_INSIGHT_TIMEOUT_SEC, model=_insight_model)
     if client is None:
         return None
-    _insight_model = AGENT_INSIGHT_MODEL or OPENAI_MODEL
     try:
         resp = client.chat.completions.create(
             model=_insight_model,
@@ -1704,10 +1706,12 @@ def llm_schema_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def llm_table_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
-    client = _get_openai_client(timeout_sec=AGENT_INSIGHT_TIMEOUT_SEC)
+    # TASK-0135 (#3 fix): model 을 client 생성에 전달 — 직접 create 호출이 티어 라우터를
+    # 우회해 edge 모델을 Bedrock 에 보내 400 폭증하던 버그(Task4 미커버 경로) 수정.
+    _insight_model = AGENT_INSIGHT_MODEL or OPENAI_MODEL
+    client = _get_openai_client(timeout_sec=AGENT_INSIGHT_TIMEOUT_SEC, model=_insight_model)
     if client is None:
         return None
-    _insight_model = AGENT_INSIGHT_MODEL or OPENAI_MODEL
     try:
         resp = client.chat.completions.create(
             model=_insight_model,

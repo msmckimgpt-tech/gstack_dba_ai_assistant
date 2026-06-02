@@ -179,6 +179,9 @@ def test_load_rag_documents_pg_calls_backend(monkeypatch):
             ("conv1", "k1", "PG content", 3, "repair", None, "2026-05-22", 0.7),
         ]
     monkeypatch.setattr(kb_backend.PgKbBackend, "search_rag_documents", _spy_search)
+    # TASK-0135: 본 테스트는 trigram 경로 검증 — 쿼리 임베딩을 None 으로 mock 해
+    # 결정적으로 trigram fallback 을 타게 한다 (벡터 경로는 라이브 canary 로 검증).
+    monkeypatch.setattr(knowledge, "_embed_query_vector", lambda *a, **k: None)
 
     result = knowledge._load_rag_documents_for_request_pg(
         ["conv1"], "test request", ["common"],
