@@ -12,6 +12,16 @@
 
 ## Active
 
+- [ ] **P2** 리미디에이션(Task 10 #13) RAG 레이어 정리 — 3개 분리 작업
+  - **Why**: KB 쓰기는 TASK-0127 로 복구됐으나 retrieval 측 (a) `_load_rag_objects_for_request` 에 PG 분기 없어 항상 [](복구된 rag_objects 미사용 — D0-D3 스키마 routing 죽음), (b) "pgvector RAG" 가 실제론 trigram(임베딩 807건 NULL, 사용자 결정 B=벡터 강제활성화), (c) `knowledge.py` 3376줄 god-module + fact_entries/rag_documents 중복 + 미사용 matview.
+  - **Where**: `knowledge.py`(_load_rag_objects_for_request ~1294, _load_rag_documents_for_request_pg 패턴), `kb_backend.py`(search_rag_documents 모델 → search_rag_objects 신설), `litellm_config.yaml`(임베딩 모델), `kb_embedding_worker.py`(스케줄)
+  - **Next step**: (a) `PgKbBackend.search_rag_objects` + `_load_rag_objects_for_request_pg` + AGENT_KB_READ_BACKEND 분기 추가(search_rag_documents 와 동형, 18컬럼+category). (b) gateway 임베딩 모델 가용성 확인 → kb_embedding_worker 스케줄 + `<=>` 읽기 경로. (c) knowledge.py 를 kb_write/kb_retrieval/kb_scope 로 분할 + 죽은 MySQL SQL 제거 + matview 폐기 + ARCHITECTURE.md §7 정정. admin-only `kb_ingest.py`(TASK-0127 이월) PG 전환도 동반.
+
+- [ ] **P3** 리미디에이션(Task 11, 후순위) LLM 비용/토큰 회계 + 예산/레이트리밋
+  - **Why**: 사용자 지정 후순위. ~128 step frontier 호출에 토큰 회계/계정별 cap/circuit breaker 없음. 활성 고장 아닌 운영·비용 가시성 강화.
+  - **Where**: app.py /api/ask + llm.py(response.usage) + litellm_config.yaml(per-key budget) + 신규 usage 테이블(agent_runtime)
+  - **Next step**: response.usage 수집 → conversation/account 집계 + admin 노출, LiteLLM per-key budget + 일일 토큰 cap, prompt caching, topic/summary/classify thinking 비활성 별칭.
+
 - [ ] **P3** 리미디에이션(TASK-0134 #15) alembic 마이그레이션 프레임워크 도입
   - **Why**: 스키마가 startup/handler 의 raw `CREATE TABLE IF NOT EXISTS`/`ALTER` 부작용으로 적용 — 버전드·가역 이력 없음, 라이브 ivfflat index 가 DDL 파일과 drift(lists=100 vs 32). GC 는 TASK-0134 로 처리됨(kv 고아 sweep + 세션 purge, `make gc`).
   - **Where**: app.py/agent_core 부트스트랩 DDL + `scripts/agent_kb_schema.sql`
