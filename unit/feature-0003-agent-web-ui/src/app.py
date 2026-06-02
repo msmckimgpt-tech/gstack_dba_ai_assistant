@@ -124,6 +124,14 @@ PERMISSION_DEFINITIONS = (
         "group": "console",
     },
     {
+        # TASK-0136 (#11): LLM 토큰/비용 사용량 조회. 운영·비용 민감 정보 → admin 한정
+        # (admin seed = set(PERMISSION_CODES) 로 자동 부여, operator/sales/pending 미부여).
+        "code": "console.usage.read",
+        "label": "LLM 사용량 조회",
+        "description": "LLM 토큰 사용량/비용 집계를 조회할 수 있다 (운영자 전용).",
+        "group": "console",
+    },
+    {
         "code": "account.read",
         "label": "계정 조회",
         "description": "계정 목록과 상세 정보를 조회할 수 있다.",
@@ -1713,6 +1721,8 @@ def _ensure_seed_roles(conn) -> None:
             # TASK-0094 Sprint 1 Phase 12: admin 의 sandbox SQL 실행 2건 catchup.
             "attachment.execute_sql_on.own",
             "attachment.execute_sql_on.any",
+            # TASK-0136 (#11): admin 의 LLM 사용량 조회 권한 catchup (운영자 전용 비용 가시성).
+            "console.usage.read",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -12520,6 +12530,86 @@ def _audit_clamped_limit(raw: str) -> int:
     if n <= 0:
         return _AUDIT_LIST_DEFAULT_LIMIT
     return min(n, _AUDIT_LIST_MAX_LIMIT)
+
+
+@app.get("/api/admin/usage")
+async def admin_llm_usage(request: Request) -> JSONResponse:
+    """TASK-0136 (#11): LLM 토큰 사용량/비용 집계 — admin 한정(console.usage.read).
+
+    감사 #11/cost gap: ~128 step frontier 호출에 비용 가시성이 전무했다. 모든 LLM 호출이
+    agent_runtime.llm_usage 에 기록되며 본 endpoint 가 기간(days)별 총합 + 모델별 + 계정별
+    (conversation→owner join) + 일별 집계를 반환. 운영·비용 민감 정보이므로 일반 사용자에게
+    노출하지 않는다(권한 console.usage.read = admin 전용).
+
+    Query: days (기본 30, 1~365). Response: {window_days, totals, by_model, by_account, by_day}.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(account, "console.usage.read"):
+            return _json_error("LLM 사용량 조회 권한이 필요합니다 (운영자 전용).", 403)
+        try:
+            days = int(request.query_params.get("days", "30"))
+        except Exception:
+            days = 30
+        days = max(1, min(365, days))
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+        except Exception as exc:
+            logging.getLogger(__name__).warning("admin_usage: pg connect failed", exc_info=True)
+            return _json_error("usage 저장소(PG) 연결 실패", 503)
+        try:
+            win = f"now() - interval '{days} days'"
+            with pg.cursor() as cur:
+                cur.execute(
+                    f"SELECT COALESCE(count(*),0), COALESCE(sum(prompt_tokens),0), "
+                    f"COALESCE(sum(completion_tokens),0), COALESCE(sum(total_tokens),0) "
+                    f"FROM agent_runtime.llm_usage WHERE created_at >= {win}"
+                )
+                t = cur.fetchone() or (0, 0, 0, 0)
+                totals = {"calls": int(t[0]), "prompt_tokens": int(t[1]),
+                          "completion_tokens": int(t[2]), "total_tokens": int(t[3])}
+                cur.execute(
+                    f"SELECT model, count(*), sum(total_tokens) FROM agent_runtime.llm_usage "
+                    f"WHERE created_at >= {win} GROUP BY model ORDER BY 3 DESC NULLS LAST LIMIT 50"
+                )
+                by_model = [{"model": r[0], "calls": int(r[1]), "total_tokens": int(r[2] or 0)} for r in (cur.fetchall() or [])]
+                cur.execute(
+                    f"SELECT c.owner_account_id, count(*), sum(u.total_tokens) "
+                    f"FROM agent_runtime.llm_usage u "
+                    f"LEFT JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
+                    f"WHERE u.created_at >= {win} GROUP BY c.owner_account_id ORDER BY 3 DESC NULLS LAST LIMIT 100"
+                )
+                by_account = [{"account_id": (int(r[0]) if r[0] is not None else None),
+                               "calls": int(r[1]), "total_tokens": int(r[2] or 0)} for r in (cur.fetchall() or [])]
+                cur.execute(
+                    f"SELECT date(created_at)::text, count(*), sum(total_tokens) FROM agent_runtime.llm_usage "
+                    f"WHERE created_at >= {win} GROUP BY 1 ORDER BY 1 DESC LIMIT 90"
+                )
+                by_day = [{"day": r[0], "calls": int(r[1]), "total_tokens": int(r[2] or 0)} for r in (cur.fetchall() or [])]
+        finally:
+            try:
+                pg.close()
+            except Exception:
+                pass
+        return JSONResponse({
+            "window_days": days,
+            "totals": totals,
+            "by_model": by_model,
+            "by_account": by_account,
+            "by_day": by_day,
+        })
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 @app.get("/api/admin/audits")

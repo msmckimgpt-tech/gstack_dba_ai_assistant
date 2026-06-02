@@ -614,6 +614,44 @@ def _get_openai_client(timeout_sec: int | None = None, model: str | None = None)
         return None
 
 
+def _record_llm_usage(model: str, task: str, resp) -> None:
+    """TASK-0136 (#11): LLM 호출 토큰 사용량을 agent_runtime.llm_usage 에 기록 (best-effort).
+    모든 LLM 호출의 단일 chokepoint 에서 포착 → 비용 가시성. 실패해도 LLM 응답에 무영향.
+    conversation_id/run_id 는 cfg 전역에서, account 는 admin 조회 시 core_conversations join 으로 도출.
+    (pgbouncer transaction pool 경유라 per-call conn 비용 낮음.)"""
+    try:
+        usage = getattr(resp, "usage", None)
+        if usage is None:
+            return
+        pt = int(getattr(usage, "prompt_tokens", 0) or 0)
+        ct = int(getattr(usage, "completion_tokens", 0) or 0)
+        tt = int(getattr(usage, "total_tokens", 0) or (pt + ct))
+        if tt <= 0:
+            return
+        conv = str(getattr(cfg, "MEMORY_CONVERSATION_ID", "") or "") or None
+        run = str(getattr(cfg, "CURRENT_RUN_ID", "") or "") or None
+        from .runtime_backend import _get_pg_runtime_conn
+        pg = _get_pg_runtime_conn()
+        if not pg:
+            return
+        try:
+            with pg.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO agent_runtime.llm_usage "
+                    "(conversation_id, run_id, model, task, prompt_tokens, completion_tokens, total_tokens) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    (conv, run, str(model or "")[:128], str(task or "")[:64], pt, ct, tt),
+                )
+            pg.commit()
+        finally:
+            try:
+                pg.close()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def _openai_request_timeout(timeout_sec: int | None = None) -> int:
     try:
         val = int(timeout_sec) if timeout_sec is not None else int(AGENT_TIMEOUT_SEC)
@@ -650,7 +688,9 @@ def _openai_chat_completion_with_deadline(
         **create_kwargs,
     )
     try:
-        return future.result(timeout=wall_sec)
+        resp = future.result(timeout=wall_sec)
+        _record_llm_usage(model, task, resp)  # TASK-0136 (#11): best-effort 토큰 회계
+        return resp
     except concurrent.futures.TimeoutError:
         _log_llm_warn("_openai_chat_completion_with_deadline", "timeout", f"model={model} wall_sec={wall_sec}")
         try:

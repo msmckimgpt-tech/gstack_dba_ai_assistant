@@ -207,6 +207,26 @@ CREATE OR REPLACE TRIGGER trg_summary_updated_at
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ============================================================================
+-- 6b. LLM usage 회계 (TASK-0136 #11) — 토큰 사용량 기록. 비용 가시성/예산용.
+--     account_id 는 conversation_id → core_conversations.owner_account_id join 으로 도출
+--     (insight 워커 등 시스템 사용은 owner NULL). admin 한정 노출(console.usage.read RBAC).
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS agent_runtime.llm_usage (
+    id                BIGSERIAL PRIMARY KEY,
+    conversation_id   VARCHAR(255),
+    run_id            VARCHAR(255),
+    model             VARCHAR(128),
+    task              VARCHAR(64),
+    prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens      INTEGER NOT NULL DEFAULT 0,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_llm_usage_created ON agent_runtime.llm_usage (created_at DESC);
+CREATE INDEX IF NOT EXISTS ix_llm_usage_conv ON agent_runtime.llm_usage (conversation_id);
+CREATE INDEX IF NOT EXISTS ix_llm_usage_model ON agent_runtime.llm_usage (model);
+
+-- ============================================================================
 -- 7. Role grants (post-table creation)
 --    DEFAULT PRIVILEGES 가 이미 설정됐으므로 bootstrapped role 에는 자동 적용됨.
 --    하지만 명시적 grant 로 이중 보장.
