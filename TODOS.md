@@ -12,6 +12,11 @@
 
 ## Active
 
+- [ ] **P2** 리미디에이션(TASK-0131 #10) app.py silent except 113건 점진 감사
+  - **Why**: `except Exception: pass` 113건이 실패를 삼켜 가시성 저하(감사 #10). 핫패스(KB/KV/ask/healthz)는 Task 2~5 에서 로깅 추가됨. 나머지는 제어흐름 오인 위험이 있어 일괄 변경 대신 핸들러별 판단 필요.
+  - **Where**: `unit/feature-0003-agent-web-ui/src/app.py` (`grep -A1 'except Exception:' | grep pass`)
+  - **Next step**: 핸들러별로 (a) 진짜 fail-open(정당화 주석+로깅) vs (b) 제어흐름(유지) 분류 후 (a) 를 `logger.warning(exc_info=True)` + conversation_id/run_id 동반으로 전환. 모듈 레벨 `logger` 도입.
+
 - [ ] **P2** 리미디에이션(TASK-0127 #11) CI 격리 8건 테스트 정비
   - **Why**: 리미디에이션 이전부터 깨진 8건을 CI 게이트 녹색화를 위해 `pyproject.toml` addopts `--deselect` 로 격리. 회귀 검출은 유지되나 격리 항목은 미검증 상태.
   - **Where**: `pyproject.toml` [tool.pytest.ini_options] addopts + `unit/feature-0002-agent-core/tests/test_anchor_invariant_postgres.py`(2: 라이브 PG fixture 의존) + `test_m5_cleanup.py`(6: `bin/kb-cleanup-mysql.sh` 셸 환경 의존, 격리 PATH 에서 returncode 2)

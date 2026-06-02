@@ -634,6 +634,8 @@ def _scan_instance_schema_insights(
         "deferred_tables": 0,
         "pending_schema_repairs": 0,
         "pending_table_repairs": 0,
+        # TASK-0131 (#10): publish 실패(주로 LLM 호출 실패) 누적 — 사이클 status degrade 판정용.
+        "publish_failed": 0,
     }
     if not db_conn or not mem_conn or not AGENT_SCHEMA_INSTANCE_SCAN or not AGENT_SCHEMA_INSIGHT:
         return report
@@ -859,6 +861,7 @@ ORDER BY TABLE_NAME
                     result = "ok" if schema_complete else "partial_persist"
                     if schema_error:
                         result = "publish_failed"
+                        report["publish_failed"] = int(report.get("publish_failed", 0)) + 1
                     _trace_insight_worker_event(
                         run_id,
                         "publish",
@@ -1151,6 +1154,7 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                     result = "ok" if table_complete else "partial_persist"
                     if table_error:
                         result = "publish_failed"
+                        report["publish_failed"] = int(report.get("publish_failed", 0)) + 1
                     _trace_insight_worker_event(
                         run_id,
                         "publish",
@@ -1352,6 +1356,17 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
         except Exception:
             pass
 
+    # TASK-0131 (#10): publish 가 시도됐으나 전부 실패(생성/복구 0)면 'ok' 가 아니라 'degraded'.
+    # 이전엔 모든 publish 가 실패해도 status='ok' 라 operator 에게 거짓 신호를 줬다.
+    _pub_failed = int(scan_report.get("publish_failed", 0) or 0)
+    _generated = (
+        int(scan_report.get("schemas_generated", 0) or 0)
+        + int(scan_report.get("tables_generated", 0) or 0)
+        + int(scan_report.get("schemas_repaired", 0) or 0)
+        + int(scan_report.get("tables_repaired", 0) or 0)
+    )
+    if status == "ok" and _pub_failed > 0 and _generated == 0:
+        status = "degraded"
     timing["total_ms"] = round((time.perf_counter() - started) * 1000.0, 2)
     timing["updated_at"] = utc_now_iso()
     timing["status"] = status
@@ -1386,6 +1401,7 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             "deferred_tables": int(scan_report.get("deferred_tables", 0) or 0),
             "skipped_schemas": int(scan_report.get("skipped_schemas", 0) or 0),
             "skipped_tables": int(scan_report.get("skipped_tables", 0) or 0),
+            "publish_failed": int(scan_report.get("publish_failed", 0) or 0),
         }
     )
     should_log = status != "ok" or bool(scan_report.get("scan_started"))
