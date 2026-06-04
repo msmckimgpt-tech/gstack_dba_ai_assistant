@@ -46,3 +46,22 @@ source_of_truth: true
   바인딩(LAN 노출 없음, F1 정합). 기존 런타임/스키마/RBAC 무변경.
 - Rollback Notes: 비파괴·가역. relay 자동기동은 `WIN_BROWSER_NO_RELAY=1` 로 비활성, ignore-cert 는
   `WIN_BROWSER_IGNORE_CERT=0` 로 비활성. 되돌리려면 본 CHG 의 win-browser.py 변경 revert.
+
+## CHG-20260604-0003
+- Date: 2026-06-04
+- Related Requirement: 사용자 후속 요청 — "구현 환경에 적합한 구성요소(Playwright MCP / Browser Agent for Claude) 검토 후 적합하면 적용".
+- Summary: **Playwright MCP(`@playwright/mcp`)를 무권한 relay 에 attach 해 Claude Code(VSCode/CLI)에
+  native in-loop 브라우저 도구 제공.** 검토 결과 Playwright MCP 채택(CDP attach 지원, a11y 스냅샷
+  토큰 효율, node/npx) / **Claude for Chrome 미채택**(Chrome 확장·MCP/API 부재·수동 UI → 프로그래매틱
+  dev 워크플로 부적합). MCP 서버 → relay → 실제 Windows Chrome e2e 스모크 PASS (initialize +
+  browser_navigate → Page Title "DQA — Database Query Assistant").
+- Files:
+  - 신규: `bin/playwright-mcp.sh`(relay endpoint 자동 해석 + npx @playwright/mcp exec, 옵션 autolaunch),
+    `repo/.mcp.json`(project-scope playwright 서버; CLAUDE_PROJECT_DIR 기반 경로; 첫 사용 시 승인).
+  - 수정: `bin/WIN-BROWSER-SETUP.md`(Playwright MCP 섹션 + Claude for Chrome 미채택 사유), `CLAUDE.md`
+    (skill routing), `playbooks/PB-0008`(대화형 옵션), feature docs.
+- Impact: 대화형 UI 탐색이 모델 루프에서 first-class(MCP 도구)로 가능 — win-browser.py(브리지/시나리오/게이트)와
+  역할 분담·공존. 보안 posture 동일(같은 vEthernet 한정 relay 에 attach, RBAC/스키마/시크릿 무변경).
+  MCP 서버는 project `.mcp.json` 라 첫 사용 시 사용자 승인 필요(자동 활성 아님).
+- Rollback Notes: 비파괴. `.mcp.json` 삭제(또는 `claude mcp remove playwright`) + `bin/playwright-mcp.sh`
+  제거로 원복. win-browser.py 등 기존 경로 무영향.

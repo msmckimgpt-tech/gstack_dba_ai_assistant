@@ -126,6 +126,29 @@ python3 bin/win-browser.py down
 참조. 환경 분류(CLI / WSL-headless / **Windows-browser**)와 게이트 규칙은 AGENTS.md
 §15.4 + 각 feature `docs/TEST.md` §3.
 
+## Playwright MCP (대화형 in-loop, 선택)
+
+같은 브리지/Chrome 위에서 **Claude Code(VSCode/CLI)에 native 브라우저 도구**(browser_snapshot
+a11y 트리 · browser_click/type/navigate 등)를 제공하려면 Playwright MCP(`@playwright/mcp`)를
+attach 한다. `bin/playwright-mcp.sh` 가 relay endpoint 를 자동 해석해 `--cdp-endpoint` 로 띄운다.
+
+```bash
+# 0) 브리지 먼저 성립 (Chrome + 무권한 relay)
+python3 bin/win-browser.py launch
+# 1) Claude Code 에 등록 (project scope) — 첫 사용 시 승인 필요
+claude mcp add --scope project playwright -- bash "$PWD/bin/playwright-mcp.sh"
+#    (또는 repo/.mcp.json 커밋본 사용. VSCode 확장은 같은 config 를 읽고 /mcp 로 활성화)
+```
+
+**역할 분담**: MCP = 대화형 탐색·조작(모델 루프에서 직접, a11y 스냅샷 토큰 효율). win-browser.py
+= 브리지 성립 + 반복 가능한 시나리오/완료 게이트 증거(TEST.md §3)/CI. 둘 다 같은 실제 Windows
+브라우저에 attach. MCP 도 CDP 로 붙으므로 로컬 브라우저 바이너리 불요.
+
+> **Claude for Chrome 는 미채택** — Anthropic 의 Chrome 확장(2025-12 GA)은 사용자의 실제
+> Chrome 을 수동 UI 로 조작하는 소비자용 에이전트이며 **MCP/프로그래매틱 API 가 없어** 본
+> delegated-dev/CDP 워크플로에 부적합(헤드리스·스크립트 불가). 대화형 보조가 필요하면 사용자가
+> 별도로 쓸 수 있으나 본 프로젝트 자동화에는 통합하지 않는다.
+
 ## Troubleshooting
 
 | 증상 | 원인 / 조치 |

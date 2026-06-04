@@ -49,6 +49,12 @@ source_of_truth: true
 - Steps: `down` → `launch --url …` → `"bridge_mode"`/`"relay"` 확인.
 - Expected Result: `bridge_mode=relay`, relay note "… no-admin", endpoint http://<vEthernet>:9223. (§3 Run 003 — PASS)
 
+### TEST-0006 — Playwright MCP attach (in-loop 도구)
+- Purpose: `@playwright/mcp` 가 무권한 relay 경유로 실제 Windows Chrome 에 attach 해 MCP 도구로 구동되는지.
+- Preconditions: 브리지 기동 + node/npx + `bin/playwright-mcp.sh`.
+- Steps: `win-browser.py launch` → MCP 서버에 JSON-RPC initialize + `browser_navigate` 호출.
+- Expected Result: serverInfo Playwright, browser_navigate 가 실제 Chrome 을 https://localhost:18080 로 이동 + Page Title "DQA…" 반환. (§3 Run 005 — PASS)
+
 ## 3. Test Run History
 <!-- append-only: 새 실행 결과를 아래에 추가한다. 기존 결과를 수정하거나 삭제하지 않는다. -->
 
@@ -91,6 +97,16 @@ source_of_truth: true
 - Result Summary: 시나리오 10 step 전부 PASS. `#loginUsername`/`#loginPassword` 실제 키보드 입력 반영(eval `qa_invalid_user|pwlen=23`) → `#loginForm button[type=submit]` 클릭 → 백엔드 인증 거부 → 화면에 빨간 **"로그인에 실패했습니다."** 표시 + stillOnLogin=true. 풀스택(실 Windows 브라우저 → WSL web → 백엔드 auth → UI 에러) 동작 확인.
 - Pass/Fail: PASS
 - Notes: 비파괴(오입력 → 실패). 스크린샷 시각 확인. CLI(curl)/WSL-headless 로는 못 보던 실제 사용자 화면을 AI 가 직접 검증.
+
+### Run 2026-06-04-005 — Playwright MCP → relay → 실제 Windows Chrome (in-loop)
+- Date: 2026-06-04
+- Environment: **Windows-browser** (via Playwright MCP)
+- Runner: AI (claude)
+- Bridge: relay (무권한 userspace) @ http://172.28.64.1:9223
+- Evidence: MCP JSON-RPC stdout — serverInfo `Playwright`, browser_navigate 결과 "Page URL: https://localhost:18080/ · Page Title: DQA — Database Query Assistant"
+- Result Summary: `bin/playwright-mcp.sh` 가 relay endpoint 자동 해석 → `npx @playwright/mcp@latest --cdp-endpoint=…` 기동 → initialize + `browser_navigate` 가 실제 Windows Chrome 을 DQA 로 이동. MCP 도구가 실 브라우저 구동 확인 (TEST-0006).
+- Pass/Fail: PASS
+- Notes: wrapper 조립/endpoint 해석은 stub-npx 로 별도 검증. MCP = 대화형 in-loop, win-browser.py = 게이트 증거 — 같은 브리지 공존.
 
 ## 4. Untested Areas
 - 인증 성공 후 흐름(대화 생성/쿼리 실행) — 유효 자격증명 필요, 본 검증 범위 외(비파괴 원칙).

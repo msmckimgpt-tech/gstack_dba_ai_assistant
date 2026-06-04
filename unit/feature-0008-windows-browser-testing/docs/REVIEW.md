@@ -46,3 +46,16 @@ source_of_truth: true
   → 신규 보안 표면 없음. 전 패널(REV-0001/0002)의 ACCEPT 범위 내. 별도 패널 불요로 판단(SKIPPED).
 - 검증: 실제 Windows Chrome 148 e2e (TEST.md §3 Run 003/004) + 단위 테스트 10/10 + py_compile.
 - Human Approval Needed: 아니오.
+
+## REV-20260604-0004 [SKIPPED:no-rbac-no-schema-no-secret-handling] — Playwright MCP 통합 검토·적용
+- challenge: 외부 구성요소(Playwright MCP / Claude for Chrome)가 본 환경에 적합한가, 적용 시 신규 위험은.
+- Related Change: bin/playwright-mcp.sh, .mcp.json, SETUP.md/CLAUDE.md/PB-0008 문서.
+- 판단: 웹 조사(2건) 근거 — **Playwright MCP 채택**(--cdp-endpoint 로 실행 중 브라우저 attach,
+  로컬 바이너리 불요, a11y 스냅샷, node/npx; Claude Code project `.mcp.json` 첫 사용 승인). **Claude
+  for Chrome 미채택**(Chrome 확장·MCP/API 없음·수동 UI → 프로그래매틱/헤드리스 dev 워크플로 부적합).
+  보안: MCP 는 이미 REV-0001/0003 에서 ACCEPT 된 동일 vEthernet 한정 relay 에 attach — 신규 노출
+  표면 없음. `.mcp.json` 는 첫 사용 시 사용자 승인 게이트(자동 활성 아님). RBAC/스키마/시크릿 무관.
+  → 별도 패널 불요(SKIPPED).
+- 검증: MCP 서버 JSON-RPC e2e 스모크 PASS — initialize(serverInfo Playwright) + browser_navigate →
+  실제 Windows Chrome 가 https://localhost:18080 로드 + Page Title "DQA — Database Query Assistant" 반환.
+- Human Approval Needed: 아니오 (적용은 opt-in 승인 게이트, 사용자가 enable).
