@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.21.1
+template_version: v3.22.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -622,6 +622,66 @@ worktree 진입을 결정하지 않고 main worktree 컨텍스트를 강제 유�
     자동 orphan sweep 은 본 사이클 외 (Reviewer Concerns 참조, ADR-0020).
   - `/_local:*` cron 은 worktree carve-out 이므로 자동 sweep 책임 없음.
 
+
+#### §13.2.3-A Worktree / Branch 만료 판정 기준
+
+> 근거 세션: root_download_docker_mysql_ai_delegated_dev `5eb851e9-5839-4812-a245-47808db68a01` (2026-06-04T08:28~08:29 KST)
+> 사용자 원문: "만료된 워크트리 및 브랜치를 정리하기 위한 기준을 개선사항으로 알려줄 수 있을까요? 이후 inbox에 명시하여 template base에 배포할 예정입니다."
+
+**상태 분류 및 판정 흐름**:
+
+수치는 "언제 점검할지"를 결정하는 트리거이며, 실제 폐기 판정은 AI 맥락 질문으로 수행한다.
+
+**1단계 — SAFE_REMOVE (수치 판정, 즉시 적용)**:
+
+| 판정 조건 | 조치 |
+|---|---|
+| `git branch --merged main` = true (behind=0, ahead=0) | 즉시 제거 |
+| `gh pr list --state merged --head <branch>` + main에 동일 내용 확인 | 즉시 제거 (squash merge 대응) |
+
+**2단계 — 점검 트리거 (behind ≥ 50 OR last commit ≥ 7일)**:
+
+위 조건 중 하나라도 해당하면 AI는 아래 맥락 질문 3가지를 수행한다.
+SAFE_REMOVE가 아닌 branch에만 적용 (ahead = 0 AND Open PR 없는 경우).
+
+**맥락 판정 질문 (AI 직관 판정)**:
+1. 이 작업의 목적이 현재 main에 더 나은 구현으로 대체됐는가?
+2. 이 branch가 해결하려던 요구사항이 아직 유효한가, 아니면 사라진 요구인가?
+3. TASK.md에 BLOCKED 또는 HOLD 마커가 있는가?
+
+판정 결과:
+- 질문 1·2에서 "대체됨/사라짐" → **LIKELY_ABANDON** (사용자 확인 후 폐기)
+- 질문 3에서 BLOCKED/HOLD AND 질문 1·2에서 유효 → **NEEDS_REVIEW** (TASK.md + PR 이력 검토 후 판정)
+- 나머지 → **ACTIVE** (유지)
+
+**예외 — 무조건 ACTIVE 처리**:
+- Open PR 존재
+- ahead = 0 AND 커밋 없음 (작업 준비 중, 세션 내 신규 생성)
+
+**감지 Gap — squash merge 미감지**:
+`git branch --merged main`은 squash merge를 인식하지 못한다 (behind > 0으로 표시).
+→ 판정 시 `gh pr list --state merged --head <branch>` 조회를 git check와 병행 필수.
+
+**감지 Gap — remote-only 브랜치 누락**:
+`git worktree list`에는 나타나지 않는 remote-only 브랜치가 누적될 수 있다.
+→ 감사 범위에 `git branch -r | grep ai/` 포함. MERGED PR 대응 remote branch는 `git push origin --delete <branch>` 대상으로 별도 목록화.
+
+**정리 주기 권장**:
+
+| 조건 | 주기 |
+|---|---|
+| 워크트리 수 ≥ 6 | 즉시 감사 |
+| 워크트리 수 < 6 | 격주 |
+| main에 대형 PR 병합 직후 | 해당 도메인 worktree 즉시 점검 |
+
+**bin/worktree-audit.sh 구조 (권장 구현)**:
+각 worktree를 위 4단계로 분류해 출력하는 감사 스크립트 — 실제 구현은 소비자 프로젝트 repo/bin/ 에 추가 권장:
+1. `git branch --merged main` → SAFE_REMOVE 후보
+2. `gh pr list --state merged --head <branch>` → SAFE_REMOVE 후보 (squash 대응)
+3. ahead / behind / last_commit_days 계산
+4. 기준표 적용 → 상태 출력
+5. NEEDS_REVIEW 항목만 TASK.md 발췌 + 마지막 PR 제목 병기
+
 #### §13.2.4 Carve-outs
 
 - **`/_local:*` 명령과 scheduled-inspection cron 은 main checkout 전용**. 임의
@@ -959,6 +1019,7 @@ AI가 작업 완료를 선언할 때는 `TASK.md`의 Completion Checklist를 명
 - [ ] `bin/verify-completion.sh --pre-commit <feature-id>`가 PASS한다 (§16.3)
 - [ ] Git 커밋이 완료되었다 (§16.3)
 - [ ] Git 원격 동기화가 완료되었다 또는 동기화 불가 사유가 기록되었다 (§16.3)
+- [ ] (웹 UI 프로젝트만) 웹 UI 변경 시 `/browse` 스킬로 Windows 브라우저 렌더링 시각적 확인 완료 — WSL curl/wget/playwright 응답만으로 완료 보고 금지 (§16.6)
 ```
 
 ### §16.3 Git 동기화 절차 (verify-completion 기반)
@@ -1231,6 +1292,30 @@ AI 작업자는 완료 가능한 cycle에서 아래 응답으로 작업을 멈�
 
 예외가 아니면 AI는 §16.3에 따라 commit하고, 가능한 경우 push까지 완료한 뒤 결과를
 `REPORT.md`와 최종 응답에 기록한다.
+
+
+### §16.6 웹 UI 프로젝트 시각적 검증 기준
+
+**적용 대상**: 웹 브라우저 UI(HTML/CSS/JS 렌더링)가 포함된 프로젝트에만 적용.
+CLI 전용·API 전용·데이터 파이프라인 프로젝트에는 적용하지 않는다.
+
+**원칙**: AI 작업자가 웹 UI 변경을 완료했다고 선언하려면 실제 브라우저 렌더링 확인이 필요하다.
+WSL 내 curl, wget, requests, pytest 등 HTTP 응답 검사만으로는 시각적 완료 조건을 충족하지 않는다.
+
+**필수 확인 방법**: `/browse` 스킬(gstack headless-but-real-engine)로 변경된 페이지를 열고
+레이아웃·버튼·폼·모달 등 변경 영역을 스크린샷 또는 element 상태로 확인한다.
+`/browse` 스킬은 내부적으로 MCP 브라우저 도구를 사용하며, 이 경로만 시각적 확인으로 인정한다.
+
+Playwright를 사용해야 하는 경우, `/browse` 스킬의 MCP 경로를 통해 실행해야 한다.
+WSL bash에서 `playwright` CLI를 직접 실행하는 것은 렌더링 확인으로 인정되지 않는다.
+
+**금지 패턴**:
+- "curl 응답 200 OK — 완료" (렌더링 미확인)
+- WSL bash에서 `playwright test` 직접 실행 후 "테스트 통과 — 완료" (`/browse` MCP 경로 미사용)
+- 스크린샷 없이 "UI 정상 확인" 선언
+
+**체크리스트 연동**: §16.2 Completion Checklist 의 `(웹 UI 프로젝트만)` 항목으로 자동 참조.
+해당 항목 미체크 상태로 완료 선언 시 §16.5 금지 패턴과 동일하게 처리.
 
 ## §17. shared/ 거버넌스
 
