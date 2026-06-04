@@ -15,8 +15,8 @@ source_of_truth: true
   보안 강화(allow_origins 비-와일드카드, profile per-user, relay vEthernet 한정),
   verify-completion check #13 의 web 변경 게이팅 로직.
 - 환경 분류는 AGENTS.md §15.4.1 / `unit/_template/docs/TEST.md` §1 참조.
-- 제외: 실제 Windows 브라우저로의 CDP wire end-to-end — 1회 브리지 setup(관리자
-  portproxy 또는 mirrored)이 구성된 환경에서만 가능 (§4 참조).
+- 실 검증 완료(2026-06-04): 무권한 auto-relay 로 실제 Windows Chrome CDP wire end-to-end +
+  웹 UI 로드 + 로그인 기능 e2e (§3 Run 003/004).
 
 ## 2. Test Cases
 ### TEST-0001 — 시나리오 엔진 dispatch
@@ -37,11 +37,17 @@ source_of_truth: true
 - Steps: allow_origins()/profile_path() 호출 + launch flag 검사.
 - Expected Result: origins = loopback+relay 구체값, profile = `C:\Users\...\AppData\Local\win-browser-cdp`.
 
-### TEST-0004 — check #13 web 게이팅 (실 Windows 브라우저)
-- Purpose: 웹/UI 변경 시 TEST.md §3 Windows-browser Run 누락 경고, 비웹 변경은 PASS, 템플릿 메뉴 라인 false-PASS 방지.
-- Preconditions: 브리지 setup 완료 + 웹앱 기동.
+### TEST-0004 — 실제 Windows 브라우저 e2e (DQA 웹 UI)
+- Purpose: 실제 Windows Chrome 을 CDP 자동 구동해 웹앱을 로드·조작하고 기능을 검증.
+- Preconditions: 웹앱 기동(https://localhost:18080) + Windows python(무권한 relay).
 - Steps: PB-0008 절차로 `launch` → `run --scenario` → 스크린샷 → §3 기록.
-- Expected Result: 실제 Windows 브라우저에서 시나리오 실행, `bridge_endpoint`=relay|mirrored, 스크린샷 생성. (후속 — §4)
+- Expected Result: `bridge_mode=relay`, 웹 UI 로드(200, "DQA"), 로그인 e2e 인증실패 경로 동작, 스크린샷 생성. (§3 Run 003/004 — PASS)
+
+### TEST-0005 — 무권한 auto-relay turnkey
+- Purpose: admin/WSL재시작 없이 `launch` 한 번으로 Chrome+relay 브리지 성립.
+- Preconditions: Windows python 설치.
+- Steps: `down` → `launch --url …` → `"bridge_mode"`/`"relay"` 확인.
+- Expected Result: `bridge_mode=relay`, relay note "… no-admin", endpoint http://<vEthernet>:9223. (§3 Run 003 — PASS)
 
 ## 3. Test Run History
 <!-- append-only: 새 실행 결과를 아래에 추가한다. 기존 결과를 수정하거나 삭제하지 않는다. -->
@@ -66,12 +72,27 @@ source_of_truth: true
 - Pass/Fail: PASS
 - Notes: 브리지 미구성 상태에서 next_steps(A/B) 정상 안내. spike 에서 Windows Chrome 기동 + CDP 127.0.0.1 바인딩 확인됨.
 
-<!-- 후속: 브리지 1회 setup 후 TEST-0004 의 Windows-browser Run 을 여기에 추가. -->
+### Run 2026-06-04-003 — 첫 실제 Windows-browser 검증 (smoke)
+- Date: 2026-06-04
+- Environment: **Windows-browser**
+- Runner: AI (claude)
+- Bridge: relay (무권한 userspace, `launch` 자동 기동) @ http://172.28.64.1:9223, Chrome/148.0.7778.217
+- Evidence: `artifacts/shared/out/win-browser/01_login.png`
+- Result Summary: `launch --url https://localhost:18080/` → 실제 Windows Chrome 가 웹앱 로드. eval 결과 title="DQA — Database Query Assistant", url=https://localhost:18080/, form+12 inputs+38 buttons. status 200. self-signed 는 `--ignore-certificate-errors` 로 통과.
+- Pass/Fail: PASS
+- Notes: admin·WSL재시작 없이 무권한 relay(Windows python)로 브리지 성립 — TEST-0005 충족. screenshot 시각 확인됨(로그인 카드 정상 렌더).
+
+### Run 2026-06-04-004 — 로그인 기능 e2e (인증 실패 경로, 비파괴)
+- Date: 2026-06-04
+- Environment: **Windows-browser**
+- Runner: AI (claude)
+- Bridge: relay (무권한 userspace) @ http://172.28.64.1:9223
+- Evidence: `artifacts/shared/out/win-browser/02_after_attempt.png`
+- Result Summary: 시나리오 10 step 전부 PASS. `#loginUsername`/`#loginPassword` 실제 키보드 입력 반영(eval `qa_invalid_user|pwlen=23`) → `#loginForm button[type=submit]` 클릭 → 백엔드 인증 거부 → 화면에 빨간 **"로그인에 실패했습니다."** 표시 + stillOnLogin=true. 풀스택(실 Windows 브라우저 → WSL web → 백엔드 auth → UI 에러) 동작 확인.
+- Pass/Fail: PASS
+- Notes: 비파괴(오입력 → 실패). 스크린샷 시각 확인. CLI(curl)/WSL-headless 로는 못 보던 실제 사용자 화면을 AI 가 직접 검증.
 
 ## 4. Untested Areas
-- **실제 Windows 브라우저 CDP wire end-to-end (TEST-0004)**: host 에 Linux chromium 공유
-  라이브러리가 없어 로컬 CDP 타겟을 띄울 수 없었고, NAT relay 는 관리자 권한(netsh
-  portproxy)이 필요해 본 cycle 에서 미수행. 커버 계획: 사용자가 `bin/WIN-BROWSER-SETUP.md`
-  의 옵션 A(관리자 1회) 또는 B(mirrored)로 브리지를 구성한 뒤 PB-0008 절차로 실 검증 →
-  본 feature 의 첫 Windows-browser Run 으로 §3 기록. connect_over_cdp/launch flag 는
-  spike + 단위 테스트로 부분 검증됨.
+- 인증 성공 후 흐름(대화 생성/쿼리 실행) — 유효 자격증명 필요, 본 검증 범위 외(비파괴 원칙).
+- Edge(msedge) 경로, mirrored networking 모드(B), 영속 portproxy(A) — 본 cycle 은 무권한 relay(옵션 0)만 실 검증. A/B 는 코드/문서상 지원하나 미실측.
+- 다른 머신/계정에서의 Windows python 자동 탐지 견고성(여러 설치본/스토어 stub 혼재 시).

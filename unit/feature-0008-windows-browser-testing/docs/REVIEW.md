@@ -33,3 +33,16 @@ source_of_truth: true
   - 라벨 일관성(`CLI`/`WSL-headless`/`Windows-browser`), PB-0008 ↔ CLI 서브커맨드/플래그 정합 — clean.
 - Risks (잔여): 비-UI `.ts/.js` 변경 시 spurious WARN(WARN-only 라 무해). §10.5 에 jinja glob 후속 보강 권장.
 - Human Approval Needed: 아니오.
+
+## REV-20260604-0003 [SKIPPED:no-rbac-no-schema-no-secret-handling] — 무권한 auto-relay follow-up
+- challenge: 무권한 userspace relay 도입이 새로운 보안 노출을 만드는가 (지난 패널 F1 CRITICAL 재발 여부).
+- Related Change: bin/win-browser.py (relay_start/find_win_python/launch auto-relay + ignore-cert), SETUP.md, PB-0008, feature docs.
+- 판단: 본 변경은 RBAC/스키마/시크릿 처리 무관한 opt-in 로컬 dev 도구. 신규 relay 의 보안 posture 는
+  REV-0001 에서 ACCEPT 된 portproxy 와 **동일** — RELAY_SCRIPT 가 `start_server(vEthernet-IP, 9223)`
+  로 vEthernet(WSL) IP 에만 바인딩(0.0.0.0 아님)하여 LAN 노출 없음(F1 정합). 실측에서 `172.28.64.1:9223`
+  바인딩 + WSL 도달 + LAN 비노출 확인. relay_stop 의 PS 매칭자(marker)는 상수(주입 없음). 스크립트는
+  per-user `%LOCALAPPDATA%` 에 기록(F4 정합). find_win_python 은 Store stub 제외(py 런처/where 필터).
+  `--ignore-certificate-errors` 는 전용 격리 프로필 + 로컬 self-signed 대상 한정(env 로 비활성 가능).
+  → 신규 보안 표면 없음. 전 패널(REV-0001/0002)의 ACCEPT 범위 내. 별도 패널 불요로 판단(SKIPPED).
+- 검증: 실제 Windows Chrome 148 e2e (TEST.md §3 Run 003/004) + 단위 테스트 10/10 + py_compile.
+- Human Approval Needed: 아니오.

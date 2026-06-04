@@ -14,19 +14,20 @@ scope: feature
 > 절차다. 환경 분류·게이트는 AGENTS.md §15.4, 각 feature `docs/TEST.md` §3.
 
 ## Prerequisites
-- 검증 대상 웹앱이 기동 중 (`docker compose ps` 로 `web` 서비스 healthy 확인; 기본 `localhost:18080`).
-- 브리지 1회 setup 완료 — `bin/WIN-BROWSER-SETUP.md` (옵션 A relay 또는 B mirrored).
-- `python3 bin/win-browser.py doctor` 가 `"ok": true`.
+- 검증 대상 웹앱이 기동 중 (`docker compose ps` 로 `web` 서비스 healthy 확인; 기본 `https://localhost:18080`, self-signed).
+- 브리지: **기본은 별도 setup 불요** — `launch` 가 무권한 userspace relay 를 자동 기동한다 (Windows python 필요, admin·WSL재시작 불요). 영속/대안은 `bin/WIN-BROWSER-SETUP.md` 옵션 A(portproxy)/B(mirrored).
+- `pip install playwright`(host) + Windows Chrome/Edge + Windows python.
 
 ## Steps
 
 1. **Preflight** — `python3 bin/win-browser.py doctor`.
-   - `"ok": false` 면 출력의 `next_steps` 를 따라 setup 을 먼저 완료한다. 미완 상태로
-     "검증함"을 선언하지 않는다.
-2. **대상 앱 기동 확인** — `docker compose ps` (또는 프로젝트 기동 명령). 웹 서비스가
-   `localhost:<port>` 로 응답하는지 `curl -sf http://localhost:18080/ -o /dev/null` 로 1차 확인.
-3. **브라우저 기동** — `python3 bin/win-browser.py launch --url http://localhost:18080/`
-   (idempotent — 이미 떠 있으면 reuse). 사용자 화면에 실제 Windows 브라우저 창이 뜬다.
+   - chrome / playwright / win_python 가용성과 브리지 상태를 확인. 미비 시 `next_steps` 안내를 따른다.
+     미완 상태로 "검증함"을 선언하지 않는다.
+2. **대상 앱 기동 확인** — `docker compose ps`. 웹 서비스가 응답하는지
+   `curl -skf https://localhost:18080/ -o /dev/null` 로 1차 확인 (self-signed → `-k`).
+3. **브라우저 기동 (브리지 자동)** — `python3 bin/win-browser.py launch --url https://localhost:18080/`.
+   실제 Windows 브라우저 창이 뜨고, 무권한 relay 가 자동 기동되어 브리지가 성립한다
+   (출력 `"bridge_mode": "relay"` + `"relay": "... no-admin"`). self-signed 는 `--ignore-certificate-errors`(기본 on)로 통과. idempotent — 이미 떠 있으면 reuse.
 4. **시나리오 작성** — 검증할 사용자 흐름을 `unit/<feature-id>/src/scenario.*.json` 으로
    정의한다 (예시: `unit/feature-0008-windows-browser-testing/src/scenario.example.json`).
    각 step 은 `goto|click|type|press|hover|wait_for|eval|assert_text|assert_visible|screenshot`.
