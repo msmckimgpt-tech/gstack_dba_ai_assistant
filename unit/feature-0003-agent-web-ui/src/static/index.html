@@ -4,7 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260522-task-0107-attachment" />
+  <link rel="preconnect" href="https://fonts.bunny.net" />
+  <link href="https://fonts.bunny.net/css?family=geist:300,400,500,600,700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260604-ui-warmup" />
 </head>
 <body>
 
@@ -156,8 +158,14 @@
         <div class="messages-wrap">
           <div class="messages" id="messageLog">
             <div class="empty-state">
-              <strong>대화를 선택하거나 새 대화를 시작하세요</strong>
-              <span>좌측 목록에서 대화를 선택하거나 새 대화 버튼을 클릭하세요.</span>
+              <div class="empty-logo">
+                <img src="/static/logo-dqa.svg" alt="DQA" width="40" height="40" />
+              </div>
+              <strong>Database Query Assistant</strong>
+              <span>SQL을 자연어로. 좌측에서 대화를 선택하거나 새 대화를 시작하세요.</span>
+              <div class="empty-hints">
+                <kbd>Ctrl+K</kbd> 검색 &nbsp;·&nbsp; <kbd>Ctrl+Enter</kbd> 전송
+              </div>
             </div>
           </div>
           <nav class="message-point-rail hidden" id="messagePointRail" aria-label="대화 메시지 빠른 이동"></nav>

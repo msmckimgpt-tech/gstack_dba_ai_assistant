@@ -1,21 +1,21 @@
 /* =====================================================================
-   DQA — Database Query Assistant — UI v2 (2026-04-15)
-   Design reference: ChatGPT, Claude, Linear — compact app-shell layout
+   DQA — Database Query Assistant — UI v3 (2026-06-04)
+   Design reference: ChatGPT layout + Cursor DS warm canvas palette
    ===================================================================== */
 
 /* ─── Design Tokens ─────────────────────────────────────────────── */
 :root {
-  /* Surface colors */
-  --bg:            #f4f4f5;
+  /* Surface colors — warm canvas palette (Cursor DS 참조) */
+  --bg:            #f7f7f4;
   --surface:       #ffffff;
-  --sidebar-bg:    #fafafa;
-  --border:        #e4e4e7;
-  --border-subtle: #f0f0f2;
+  --sidebar-bg:    #fafaf7;
+  --border:        #e6e5e0;
+  --border-subtle: #f0efea;
 
-  /* Text */
-  --text:          #18181b;
-  --text-2:        #3f3f46;
-  --text-muted:    #71717a;
+  /* Text — warm near-black ink */
+  --text:          #26251e;
+  --text-2:        #5a5852;
+  --text-muted:    #807d72;
 
   /* Brand / actions */
   --primary:       #2563eb;
@@ -30,9 +30,16 @@
   --bubble-user:   #2563eb;
   --bubble-ai:     #ffffff;
 
-  /* Typography — D2Coding 우선 monospace 통일: 한글·영문 등폭 정렬 + D2Coding 가독성. var(--mono) 명시 사용처도 동일. */
+  /* AI 처리 단계 시맨틱 색상 (Cursor DS AI Timeline 참조) */
+  --stage-thinking: #dfa88f;
+  --stage-grep:     #9fc9a2;
+  --stage-read:     #9fbbe0;
+  --stage-edit:     #c0a8dd;
+  --stage-done:     #c08532;
+
+  /* Typography — UI는 비례 폰트, 코드/SQL은 D2Coding 등폭 유지 */
+  --font: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
   --mono: "D2Coding", "D2Coding ligature", "Cascadia Code", "SFMono-Regular", Consolas, "Noto Sans Mono CJK KR", ui-monospace, Menlo, monospace;
-  --font: var(--mono);
 
   /* Radii */
   --r-xs: 4px;
@@ -86,7 +93,7 @@ a { color: inherit; }
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 60%, #0f172a 100%);
+  background: #f0efe8;
 }
 
 .auth-card {
@@ -95,6 +102,7 @@ a { color: inherit; }
   border-radius: var(--r-xl);
   padding: 32px 28px;
   box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -116,7 +124,7 @@ a { color: inherit; }
 
 .auth-title {
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -.3px;
   line-height: 1.2;
 }
@@ -345,29 +353,6 @@ a { color: inherit; }
   margin-left: auto;
 }
 
-.user-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px 4px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  font-size: 13px;
-}
-
-.user-name { font-weight: 600; }
-
-.role-badge {
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--primary-soft);
-  color: var(--primary);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .02em;
-}
-
 .topbar-btn {
   padding: 6px 10px;
   border-radius: var(--r-sm);
@@ -440,77 +425,6 @@ a { color: inherit; }
   outline-offset: 2px;
 }
 
-/* TASK-0047: 제품 컨텍스트 칩. 사이드바 헤더 상단, "+ 새 대화" 위에 위치한다.
-   대화 단위 상태(전역 계정 설정이 아님)를 명시하기 위해 caption 으로 보강한다. */
-.product-chip-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.product-chip-caption {
-  font-size: 10px;
-  color: var(--text-muted);
-  letter-spacing: .02em;
-  padding-left: 2px;
-}
-.product-chip {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px 6px 10px;
-  border-radius: var(--r-md);
-  border: 1px solid var(--border);
-  background: var(--bg-elev, rgba(255,255,255,.03));
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 500;
-  transition: background .13s, border-color .13s;
-  cursor: pointer;
-  max-width: 100%;
-}
-.product-chip:hover { border-color: var(--primary); }
-.product-chip[data-mode="auto"] .product-chip-dot {
-  background: var(--accent, #8ab4f8);
-  box-shadow: 0 0 0 2px rgba(138,180,248,.18);
-}
-.product-chip[data-mode="pinned"] .product-chip-dot {
-  background: var(--text-primary);
-  opacity: .55;
-}
-.product-chip[aria-disabled="true"],
-.product-chip.is-disabled {
-  opacity: .55;
-  cursor: not-allowed;
-}
-.product-chip-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.product-chip-select {
-  flex: 1;
-  background: transparent;
-  border: 0;
-  outline: none;
-  color: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  appearance: none;
-  -webkit-appearance: none;
-  cursor: inherit;
-  padding-right: 2px;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
-.product-chip-select:focus { outline: none; }
-.product-chip-select:disabled { cursor: not-allowed; }
-@media (max-width: 720px) {
-  .product-chip-caption { display: none; }
-  .product-chip-select { max-width: 16ch; }
-}
-
 .btn-new-conv {
   display: flex;
   align-items: center;
@@ -558,7 +472,7 @@ a { color: inherit; }
 /* Conversation group header */
 .conv-group-title {
   font-size: 10.5px;
-  font-weight: 700;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: .08em;
   color: var(--text-muted);
@@ -704,127 +618,6 @@ a { color: inherit; }
 .conv-dot.is-processing { background: var(--warning); }
 .conv-dot.is-completed  { background: var(--success); }
 
-/* Sidebar footer */
-.sidebar-foot {
-  flex-shrink: 0;
-  padding: 10px 12px;
-  border-top: 1px solid var(--border-subtle);
-}
-
-.account-state {
-  font-size: 11px;
-  color: var(--text-muted);
-  line-height: 1.55;
-  margin-bottom: 6px;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.perm-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.perm-sections {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-/* CONVENTIONS.md §10.6 — 작업 화면 2단 묶음 wrapper (운영/관리/기타) */
-.perm-section-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.perm-section-meta-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 0 2px;
-}
-.perm-section-meta-title {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: .04em;
-  color: var(--text);
-}
-.perm-section-meta-description {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-.perm-section-meta-groups {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.perm-section-meta[data-perm-section="manage"] .perm-section-meta-title {
-  color: var(--text-muted);
-}
-.perm-section-meta[data-perm-section="manage"] {
-  opacity: .92;
-}
-
-.perm-section {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--surface);
-}
-
-.perm-section-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.perm-section-title {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .06em;
-  color: var(--text-muted);
-}
-
-.perm-section-count {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--primary);
-  background: var(--primary-soft);
-  padding: 1px 8px;
-  border-radius: 999px;
-}
-
-/* Permission pills (shared with admin) */
-.permission-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 7px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-muted);
-}
-.permission-pill.is-enabled {
-  background: var(--primary-soft);
-  border-color: rgba(37,99,235,.18);
-  color: var(--primary);
-}
-.permission-pill.is-pending {
-  background: #fffbeb;
-  border-color: rgba(217,119,6,.2);
-  color: #92400e;
-}
-
 /* =====================================================================
    CHAT PANE
    ===================================================================== */
@@ -847,7 +640,7 @@ a { color: inherit; }
    .chat-title / .chat-subtitle 의 typography 는 그대로 유지 (topbar-info 안에서 사용). */
 .chat-title {
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.3;
   color: var(--text);
 }
@@ -1002,6 +795,22 @@ a { color: inherit; }
 }
 .empty-state strong { font-size: 14px; color: var(--text-2); font-weight: 600; }
 .empty-state span   { font-size: 13px; }
+.empty-logo { margin-bottom: 4px; opacity: .6; }
+.empty-hints {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.empty-hints kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+}
 
 /* Message rows */
 .message {
