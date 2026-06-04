@@ -121,6 +121,8 @@ source_of_truth: true
 | feature-0006-lan-proxy-access | in-progress | AI | 2026-04-06 | 운영 자산 이관 완료 |
 | feature-0007-bedrock-llm-provider | in-progress | AI | 2026-05-21 | **REQ-20260521-0001~3 (Major §12.3) AWS Bedrock LLM provider 통합** — API Vault (사용자별 OpenAI API key) 패턴을 전면 폐기하고 service-managed AWS Bedrock (Seoul region `ap-northeast-2`) 으로 일원화. LiteLLM proxy gateway 컨테이너 (`bedrock-gateway`) 를 docker-compose 에 신규 추가, `OpenAI(api_key, base_url)` SDK 호출 패턴 그대로 재사용 (코드 변경 최소화). 모델 catalog Claude Sonnet/Haiku 4.x 로 교체, `_run_agent_core(api_key=...)` env 단일 소스 단순화, frontend Profile drawer "API Vault" 탭 + `encryptPlainApiKey` / `loadVaultOptions` / `.vault-*` CSS 일괄 제거. cache-bust `v=20260521-bedrock-cutover`. 사용자 결정 5 항목 정합 (사내 한정 / per-user quota 후순위 / 모델 1:1 매핑 보장 X / Seoul region 한정 / API Vault 전면 폐기). ADR-0022 정본. Phase A (gateway+config+model catalog) + B (backend) + C (frontend) + D (정책 doc) 완료. Phase E (실 환경 회귀 검증) 사용자 위임 — AWS 자격증명 + Bedrock 모델 access 활성화 + docker compose up 후 smoke test 1 conv. py_compile + node --check + YAML schema 검증 PASS. |
 
+| feature-0008-windows-browser-testing | review | AI (claude) | 2026-06-04 | **(REQ-20260604, Major §12.3) AI 자동 구동 Windows 브라우저 테스트 워크플로** — AI 가 WSL 에서 실제 Windows Chrome/Edge 를 CDP(`connect_over_cdp`)로 자동 구동해 웹/UI 를 검증. 기존 CLI/WSL-headless 검증의 사용자 관점 괴리 해소. 드라이버 `bin/win-browser.py`(doctor/launch/down/goto/click/type/eval/screenshot/run), 1회 브리지 setup `bin/win-browser-setup.ps1`(vEthernet 한정 relay)+`bin/WIN-BROWSER-SETUP.md`(mirrored 대안), 검증 절차 PB-0008, 완료 게이트 AGENTS.md §15.4.1+TEST.md 환경 분류(CLI/WSL-headless/**Windows-browser**)+verify-completion check #13(WARN-only). §18.8 검증 패널(security+qa) must-fix 반영: CDP LAN 노출 차단(F1), allow-origins 비-와일드카드(F2), per-user 프로필(F4), PS injection escape(F5), check #13 false-positive·jinja 누락 수정. 단위 테스트 10/10. **후속(사용자)**: 브리지 1회 setup 후 PB-0008 로 첫 Windows-browser run 기록 (TEST.md §4). |
+
 ### 상태 값 정의
 - `planned`: 요구사항 정리 단계
 - `in-progress`: 구현 진행 중
@@ -134,6 +136,7 @@ ARCHITECTURE.md §6 참조. 현재 등록된 의존 관계:
 - `feature-0004-browser-automation` uses `feature-0001-platform-runtime`
 - `feature-0005-qa-mcp` uses `feature-0001-platform-runtime`, `feature-0002-agent-core`, `feature-0004-browser-automation`
 - `feature-0006-lan-proxy-access` uses `feature-0001-platform-runtime`
+- `feature-0008-windows-browser-testing` uses `feature-0003-agent-web-ui` (검증 대상), `feature-0004-browser-automation` (headless 보조)
 
 ## 3. 블로킹 항목
 현재 사람 승인 또는 확인이 필요한 항목:
@@ -149,7 +152,7 @@ ARCHITECTURE.md §6 참조. 현재 등록된 의존 관계:
 - 2026-04-15 갱신: 현재 repo 내부 Local LLM runtime 제거 작업을 반영했고, 외부 provider 계약 기준으로 문서와 실행 경로를 정리
 
 ## 5. 전체 진행률
-- 총 기능 수: 6
+- 총 기능 수: 8
 - 완료: 0
-- 진행 중: 6
+- 진행 중: 8
 - 차단: 0

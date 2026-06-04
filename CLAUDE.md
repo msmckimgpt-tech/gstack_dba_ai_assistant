@@ -32,7 +32,8 @@ gstack 스킬이 본 저장소 맥락과 충돌하지 않는 경우에 한해, �
 - 진행 상태 저장 / 복원 → `/context-save` / `/context-restore`
 - 편집 범위 제한 → `/freeze` / `/unfreeze` / `/guard` / `/careful`
 - PDF 문서 출력 → `/make-pdf`
-- 실제 브라우저 QA → `/connect-chrome` + `/browse`
+- 실제 Windows 브라우저 검증(웹/UI 완료 게이트) → `bin/win-browser.py` + **PB-0008** (AGENTS.md §15.4.1). gstack `/browse`·`/connect-chrome` 는 **WSL 내부 headless** 라 실제 Windows 화면 검증을 대체하지 못한다(화면 괴리). 빠른 탐색엔 `/browse`, 완료 검증엔 Windows-browser.
+- WSL 내부 headless 브라우저 QA(보조) → `/connect-chrome` + `/browse`
 - 인증 쿠키 임포트 → `/setup-browser-cookies`
 - 성능 회귀 감지 → `/benchmark`
 - 모델 벤치마크 → `/benchmark-models`

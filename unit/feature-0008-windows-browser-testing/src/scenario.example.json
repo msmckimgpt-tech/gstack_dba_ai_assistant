@@ -1,0 +1,12 @@
+{
+  "name": "web-ui-smoke (예시 — 실제 selector 로 교체할 것)",
+  "base_url": "http://localhost:18080",
+  "shot_dir": "/tmp/win-browser-shots",
+  "steps": [
+    { "action": "goto", "url": "/" },
+    { "action": "screenshot", "path": "01_home.png" },
+    { "action": "eval", "script": "document.title" },
+    { "action": "assert_visible", "selector": "body" },
+    { "action": "screenshot", "path": "02_loaded.png", "full_page": true }
+  ]
+}

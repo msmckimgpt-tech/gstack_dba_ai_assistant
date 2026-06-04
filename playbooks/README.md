@@ -13,6 +13,7 @@ AI는 해당 작업 수행 시 Playbook의 Steps를 순서대로 따른다.
 | PB-0004 | [hotfix](PB-0004-hotfix.md) | 긴급 수정 절차 |
 | PB-0005 | [dependency-update](PB-0005-dependency-update.md) | 외부 의존성 업데이트 |
 | PB-0006 | [template-migration](PB-0006-template-migration.md) | 공용 템플릿 버전 업 마이그레이션 |
+| PB-0008 | [windows-browser-verification](PB-0008-windows-browser-verification.md) | AI 가 실제 Windows 브라우저를 CDP 자동 구동하여 웹/UI 검증 |
 
 ## 규칙
 - Playbook은 참조 문서이며, AGENTS.md의 우선순위에서 기능 문서와 동일 수준이다.

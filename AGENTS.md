@@ -317,6 +317,7 @@ AI는 작업 대상 파일의 패턴을 확인하고, 매칭되는 규칙을 추
 
 | 파일 패턴 | 추가 참조 문서 | 비고 |
 |-----------|--------------|------|
+| `unit/feature-0003-agent-web-ui/**`, `**/*.html`, `**/templates/**`, `**/static/**` | AGENTS.md §15.4.1 + `playbooks/PB-0008-windows-browser-verification.md` | 웹/UI 변경 — 완료 검증은 실제 Windows 브라우저(`bin/win-browser.py`)로 수행, `TEST.md` §3 에 `Environment: Windows-browser` Run 기록 |
 <!-- 프로젝트 초기화 시 도메인에 맞게 최소 3~5개 이상을 채운다. 예시는 아래 주석 참조. -->
 <!-- | *.sql | docs/SECURITY.md §3 | SQL 인젝션 방지 규칙 확인 | -->
 <!-- | *.env*, *.cnf | docs/SECURITY.md §2 | 민감정보 처리 규칙 확인 | -->
@@ -891,6 +892,33 @@ main checkout 직접 수정은 정상 워크플로.
 ### §15.4 도메인별 품질 게이트
 기능 완료 시 도메인 특화 검증 항목이 있으면 여기에 추가한다.
 
+#### §15.4.1 웹/UI 변경 — Windows 브라우저 검증 게이트 (필수)
+
+본 프로젝트는 WSL2 위에서 동작하고 실제 사용자는 **Windows 브라우저**를 사용한다.
+AI 가 CLI(curl) 또는 WSL 내부 headless 브라우저로만 검증하면 실제 사용자 화면과
+괴리가 발생한다 (feature-0008-windows-browser-testing 도입 배경). 따라서:
+
+- **웹/UI(화면·상호작용) 변경의 완료 검증은 실제 Windows 브라우저에서 수행한다.**
+  AI 가 `bin/win-browser.py` 로 Windows Chrome/Edge 를 CDP 자동 구동(connect_over_cdp)하여
+  조작·스크린샷한다 — 절차는 **PB-0008** (`playbooks/PB-0008-windows-browser-verification.md`).
+- **검증 환경 분류** (각 feature `docs/TEST.md` §3 의 `Environment`):
+
+  | Environment | UI 검증 인정 |
+  |---|---|
+  | `CLI` (curl / pytest / API 계약) | ✗ — 서버 계약 검증만 |
+  | `WSL-headless` (feature-0004 browser service, gstack /browse) | ✗ — 화면 검증 불가 |
+  | `Windows-browser` (`bin/win-browser.py` CDP 자동 구동) | ✓ |
+
+- **웹/UI 변경은 `TEST.md` §3 에 `Environment: Windows-browser` Run 이 1건 이상 없으면
+  "완료" 로 선언하지 않는다.** CLI·WSL-headless 결과만으로 "검증함"을 주장하지 않는다.
+- 1회 브리지 setup 은 `bin/WIN-BROWSER-SETUP.md` (NAT+portproxy relay 또는 mirrored).
+  `python3 bin/win-browser.py doctor` 가 준비 상태를 게이팅한다.
+- **예외**: 브리지 setup 이 환경상 불가하거나(공용 CI 등) 변경에 UI 표면이 전혀 없으면,
+  그 사유를 `TEST.md` §3 또는 `REPORT.md` 에 명시한다 — 누락을 "검증함"으로 오인 금지.
+- **enforcement (staged)**: `bin/verify-completion.sh` check #13 이 웹 대상 파일 변경에
+  `Windows-browser` Run 누락을 감지하면 경고한다 (v1 WARN-only, PR block 아님; 후속
+  cycle MUST 격상 예정 — wiki check #12 와 동일한 staged rollout).
+
 ---
 
 # Part G — 완료 및 동기화
@@ -903,6 +931,7 @@ main checkout 직접 수정은 정상 워크플로.
 - 기능 동작이 구현되었다.
 - `FUNCTION.md`가 현재 동작과 일치한다.
 - `TASK.md`, `MODIFY.md`, `REVIEW.md`, `REPORT.md`, `TEST.md`가 필요한 수준으로 갱신되었다.
+- **웹/UI 변경인 경우** `TEST.md` §3 에 `Environment: Windows-browser` Run 이 1건 이상 기록되었다 (§15.4.1 · PB-0008). UI 표면이 없거나 브리지 setup 불가 시 사유가 명시되었다.
 - `ANCHOR.md` §1~§3이 작성되었다 (24h bootstrap grace 이후).
 - `ANCHOR.md` §4 human 검증 로그는 일반 TASK cycle 완료 조건이 아니며, release/milestone 검토 또는 방향 전환 검증이 필요할 때만 요구된다 (§18 참조).
 - 남은 리스크와 후속 작업이 `REPORT.md`에 정리되었다.
@@ -917,6 +946,7 @@ AI가 작업 완료를 선언할 때는 `TASK.md`의 Completion Checklist를 명
 ## 7. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다
 - [ ] 자동 테스트가 통과한다
+- [ ] 웹/UI 변경 시 실제 Windows 브라우저 검증을 수행하고 TEST.md §3에 `Environment: Windows-browser` Run을 기록했다 (§15.4.1 · PB-0008) — 또는 UI 표면 없음/브리지 불가 사유 명시
 - [ ] FUNCTION.md가 현재 동작과 일치한다
 - [ ] MODIFY.md에 변경 이력이 기록되었다
 - [ ] REVIEW.md에 판단 근거가 기록되었다
