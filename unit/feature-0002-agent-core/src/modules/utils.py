@@ -414,8 +414,29 @@ def log_text(name: str, text: str) -> str:
     return path
 
 
+def _rotate_log_if_oversized(path: str) -> None:
+    """단일 로그 파일이 AGENT_LOG_MAX_BYTES 를 넘으면 `<path>.1` 로 1회 회전한다.
+
+    회전 없이 append 만 하던 과거엔 바쁜 날 단일 파일(예: insight_route.log)이
+    1GB+ 까지 자라 디스크/페이지캐시를 잠식했다. 회전 1단(.1)만 유지 — 단일 파일
+    상한 ≈ cap, 디렉토리 합계 ≈ 2×cap. 더 오래된 day-dir 누적은 bin/gc.sh 가 정리."""
+    cap = AGENT_LOG_MAX_BYTES
+    if cap <= 0:
+        return
+    try:
+        if os.path.getsize(path) < cap:
+            return
+    except OSError:
+        return
+    try:
+        os.replace(path, path + ".1")
+    except OSError:
+        pass
+
+
 def append_log_line(name: str, text: str) -> str:
     path = _log_file_path(name, suffix="log", timestamped=False)
+    _rotate_log_if_oversized(path)
     with open(path, "a", encoding="utf-8") as f:
         f.write(text.rstrip() + "\n")
     return path

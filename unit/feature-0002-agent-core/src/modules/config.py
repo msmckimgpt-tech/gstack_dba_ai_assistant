@@ -63,6 +63,7 @@ __all__ = [
     "AGENT_KNOWLEDGE_SQL_FALLBACK_TIMEOUT_SEC",
     "AGENT_LLM_REQUEST_PASSTHROUGH",
     "AGENT_LOG_DIR",
+    "AGENT_LOG_MAX_BYTES",
     "AGENT_MASK_PII",
     "AGENT_MAX_SHOW",
     "AGENT_MAX_STEPS",
@@ -364,6 +365,9 @@ AGENT_INSIGHT_MODEL = (
 )
 
 AGENT_LOG_DIR = os.getenv("AGENT_LOG_DIR", "/shared/logs")
+# 단일 앱 로그 파일 크기 상한(bytes). 초과 시 .1 로 1회 회전. 회전 없이 append 만
+# 하던 과거엔 바쁜 날 insight_route.log 가 1GB+ 까지 자랐다. 0 이하면 비활성.
+AGENT_LOG_MAX_BYTES = int(os.getenv("AGENT_LOG_MAX_BYTES", str(50 * 1024 * 1024)))
 AGENT_OUT_DIR = os.getenv("AGENT_OUT_DIR", "/shared/out")
 AGENT_TOP_N = int(os.getenv("AGENT_TOP_N", "200"))
 AGENT_MAX_SHOW = int(os.getenv("AGENT_MAX_SHOW", "10"))

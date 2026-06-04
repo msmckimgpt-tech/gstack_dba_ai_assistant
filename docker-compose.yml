@@ -1,4 +1,20 @@
+# 무제한 docker json-file 로그 누적 차단. 기본 driver 는 rotation 이 없어 장기
+# 실행 시 컨테이너 로그가 수 GB 까지 자라 디스크/페이지캐시를 잠식한다(예: postgres·
+# pgbouncer json 로그가 ~90MB/6h). 모든 서비스가 *default-logging 으로 상한.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 x-agent-common: &agent-common
+  # 장기 실행 데몬의 누수/스레드 폭주가 호스트(특히 WSL2 vmmem)를 무한 잠식하지
+  # 않도록 cgroup 상한. 현재 사용량(web ~96MB / insight ~122MB) 대비 넉넉한 headroom
+  # 이라 정상 동작엔 무영향, runaway 만 차단. mem_limit 은 page cache 까지 cgroup 에
+  # 귀속시켜 WSL2 VM 팽창 억제에도 기여한다.
+  logging: *default-logging
+  mem_limit: 1g
+  pids_limit: 512
   build:
     context: .
     dockerfile: unit/feature-0002-agent-core/src/Dockerfile
@@ -47,6 +63,9 @@ services:
   mysql:
     image: mysql:${MYSQL_IMAGE_TAG}
     restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 4g
+    pids_limit: 512
     # CHG-20260522-0005: .env.mysql 별 파일 (MYSQL_ROOT_PASSWORD / DB_PASSWORD).
     env_file:
       - .env
@@ -83,6 +102,9 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 2g
+    pids_limit: 512
     # CHG-20260522-0005: .env.postgres 별 파일 (AGENT_KB_PG_PASSWORD 외 role 별).
     env_file:
       - .env
@@ -154,6 +176,9 @@ services:
   pgbouncer:
     image: edoburu/pgbouncer:latest
     restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 256m
+    pids_limit: 128
     env_file:
       - .env.postgres
     environment:
@@ -188,6 +213,9 @@ services:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
     profiles: [replica]
+    logging: *default-logging
+    mem_limit: 1g
+    pids_limit: 512
     env_file:
       - .env.postgres
     environment:
@@ -225,6 +253,7 @@ services:
     image: pgvector/pgvector:pg16
     restart: "no"
     profiles: [replica]
+    logging: *default-logging
     env_file:
       - .env.postgres
     environment:
@@ -295,6 +324,9 @@ services:
     image: bytebase/dbhub:${DBHUB_IMAGE_TAG}
     restart: unless-stopped
     profiles: ["mcp"]
+    logging: *default-logging
+    mem_limit: 512m
+    pids_limit: 256
     # CHG-20260522-0005: .env.mysql (DBHUB_DSN 의 DB_PASSWORD 치환용).
     env_file:
       - .env
@@ -342,6 +374,9 @@ services:
   caddy:
     image: caddy:2
     restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 256m
+    pids_limit: 128
     env_file:
       - .env
     environment:
@@ -365,6 +400,10 @@ services:
       context: .
       dockerfile: unit/feature-0004-browser-automation/src/Dockerfile
     restart: unless-stopped
+    # Chromium/Playwright 은 장기 세션에서 메모리 누수가 흔하다 — 넉넉히 캡.
+    logging: *default-logging
+    mem_limit: 3g
+    pids_limit: 1024
     env_file:
       - .env
     environment:
@@ -384,6 +423,9 @@ services:
   bedrock-gateway:
     image: ghcr.io/berriai/litellm:main-stable
     restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 1g
+    pids_limit: 256
     # CHG-20260522-0005: .env.bedrock (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
     # bedrock-gateway 전용 least privilege) + .env.llm (BEDROCK_GATEWAY_API_KEY
     # 인증 token).
@@ -418,6 +460,9 @@ services:
   minio:
     image: minio/minio:RELEASE.2024-12-13T22-19-12Z
     restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 1g
+    pids_limit: 256
     # CHG-20260522-0005: .env.minio 별 파일 (MINIO_ROOT_PASSWORD / app key/secret).
     env_file:
       - .env
@@ -445,6 +490,7 @@ services:
   minio-init:
     image: minio/mc:RELEASE.2024-11-21T17-21-54Z
     restart: "no"
+    logging: *default-logging
     # CHG-20260522-0005: .env.minio 별 파일 (root + app key/secret 부트스트랩).
     env_file:
       - .env

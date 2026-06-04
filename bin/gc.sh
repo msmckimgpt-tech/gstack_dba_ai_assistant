@@ -32,4 +32,16 @@ docker exec "$MYSQL_CONTAINER" mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" agent_mem
      WHERE ExpiresAt IS NOT NULL AND ExpiresAt < (NOW() - INTERVAL ${GRACE} DAY);
    SELECT ROW_COUNT() AS purged_sessions;"
 
+# 앱 로그 day-dir(logs/<YYYY-MM-DD>) + timing_breakdown_*.json 은 회전/정리가 없으면
+# 영구 누적된다(매 insight 사이클당 파일 생성). 보존 기간 지난 day-dir 를 통째로 삭제.
+LOG_ROOT="${GC_LOG_ROOT:-../artifacts/shared/logs}"
+LOG_RETENTION="${GC_LOG_RETENTION_DAYS:-14}"
+echo "[gc] (3) 오래된 로그 day-dir 삭제 (${LOG_ROOT}/<YYYY-MM-DD>, mtime > ${LOG_RETENTION}d)"
+if [ -d "$LOG_ROOT" ]; then
+  find "$LOG_ROOT" -mindepth 1 -maxdepth 1 -type d -name '20[0-9][0-9]-[0-1][0-9]-[0-3][0-9]' \
+    -mtime "+${LOG_RETENTION}" -print -exec rm -rf {} + 2>/dev/null || true
+else
+  echo "[gc]   (skip — ${LOG_ROOT} 미존재)"
+fi
+
 echo "[gc] 완료"

@@ -132,10 +132,290 @@ def _remember_repair_text(state: dict[str, Any], text: str) -> None:
         state["repair_text"] = candidate
 
 
+# 검증 read-back 실패를 가시화하기 위한 1회성 경고 마커. 과거엔 각 쿼리가
+# `except Exception: rows = []` 로 오류를 조용히 삼켜, backend drift(예: 05-27
+# cutover 로 MySQL AgentMemory* 테이블이 DROP)가 "artifact 전부 missing" 으로
+# 오인되어 insight 무한 재생성(livelock)을 일으켜도 어떤 신호도 남지 않았다.
+_INSIGHT_READBACK_WARNED: set[str] = set()
+
+
+def _warn_insight_readback_failed(stage: str, exc: Exception) -> None:
+    """insight artifact 검증 read-back 실패를 insight_worker 로그에 1회 surface."""
+    if stage in _INSIGHT_READBACK_WARNED:
+        return
+    _INSIGHT_READBACK_WARNED.add(stage)
+    try:
+        append_log_line(
+            "insight_worker",
+            json.dumps(
+                {
+                    "event": "insight_artifact_readback_failed",
+                    "stage": stage,
+                    "error": str(exc)[:200],
+                },
+                ensure_ascii=False,
+            ),
+        )
+    except Exception:
+        pass
+
+
+def _build_insight_object_maps(
+    keys: list[str],
+) -> tuple[dict[str, str], dict[tuple[str, str], str]]:
+    """fact_key → (schema rag-object, table rag-object) 매핑을 만든다 (backend 무관)."""
+    schema_object_map: dict[str, str] = {}
+    table_object_map: dict[tuple[str, str], str] = {}
+    for fact_key in keys:
+        object_type, _, schema_name, table_name, _ = _infer_rag_object_from_fact(fact_key, "")
+        if object_type == "schema" and schema_name:
+            schema_object_map[schema_name] = fact_key
+        elif object_type == "table" and schema_name and table_name:
+            table_object_map[(schema_name, table_name)] = fact_key
+    return schema_object_map, table_object_map
+
+
+def _apply_insight_fact_rows(states: dict[str, dict[str, Any]], rows: list) -> None:
+    """fact_entries 행 → state(has_fact/has_text/meta). MySQL·PG 공용 (컬럼 순서 동일)."""
+    seen_fact_keys: set[str] = set()
+    for row in rows:
+        fact_key = str(row[0] or "").strip()
+        if not fact_key or fact_key in seen_fact_keys:
+            continue
+        seen_fact_keys.add(fact_key)
+        state = states.setdefault(fact_key, _empty_insight_artifact_state(fact_key))
+        fact_text = str(row[3] or "").strip()
+        state["has_fact"] = True
+        state["conversation_id"] = str(row[1] or "").strip()
+        state["scope_key"] = str(row[2] or "").strip() or FACT_SCOPE_COMMON
+        state["fact_text"] = fact_text
+        state["weight"] = int(row[4]) if row[4] is not None else 4
+        state["source_type"] = str(row[5] or "").strip() or "schema_insight"
+        state["source_run_id"] = str(row[6] or "").strip()
+        state["source_sql"] = str(row[7] or "").strip()
+        if fact_text:
+            state["has_text"] = True
+            _remember_repair_text(state, fact_text)
+
+
+def _apply_insight_doc_rows(states: dict[str, dict[str, Any]], rows: list) -> None:
+    """rag_documents 행 → state(has_rag_document/has_text). MySQL·PG 공용."""
+    seen_doc_keys: set[str] = set()
+    for row in rows:
+        fact_key = str(row[0] or "").strip()
+        if not fact_key or fact_key in seen_doc_keys:
+            continue
+        seen_doc_keys.add(fact_key)
+        state = states.setdefault(fact_key, _empty_insight_artifact_state(fact_key))
+        doc_text = str(row[1] or "").strip()
+        state["has_rag_document"] = True
+        if doc_text:
+            state["has_text"] = True
+            _remember_repair_text(state, doc_text)
+
+
+def _apply_insight_schema_object_rows(
+    states: dict[str, dict[str, Any]], rows: list, schema_object_map: dict[str, str]
+) -> None:
+    """schema rag_objects 행 → state(has_rag_object/has_text). MySQL·PG 공용."""
+    seen_schema_objects: set[str] = set()
+    for row in rows:
+        schema_name = str(row[0] or "").strip()
+        if not schema_name or schema_name in seen_schema_objects:
+            continue
+        seen_schema_objects.add(schema_name)
+        fact_key = schema_object_map.get(schema_name)
+        if not fact_key:
+            continue
+        state = states.setdefault(fact_key, _empty_insight_artifact_state(fact_key))
+        object_text = str(row[1] or "").strip()
+        state["has_rag_object"] = True
+        if object_text:
+            state["has_text"] = True
+            _remember_repair_text(state, object_text)
+
+
+def _apply_insight_table_object_rows(
+    states: dict[str, dict[str, Any]], rows: list, table_object_map: dict[tuple[str, str], str]
+) -> None:
+    """table rag_objects 행 → state(has_rag_object/has_text). MySQL·PG 공용."""
+    seen_table_objects: set[tuple[str, str]] = set()
+    for row in rows:
+        schema_name = str(row[0] or "").strip()
+        table_name = str(row[1] or "").strip()
+        key_ref = (schema_name, table_name)
+        if not schema_name or not table_name or key_ref in seen_table_objects:
+            continue
+        seen_table_objects.add(key_ref)
+        fact_key = table_object_map.get(key_ref)
+        if not fact_key:
+            continue
+        state = states.setdefault(fact_key, _empty_insight_artifact_state(fact_key))
+        object_text = str(row[2] or "").strip()
+        state["has_rag_object"] = True
+        if object_text:
+            state["has_text"] = True
+            _remember_repair_text(state, object_text)
+
+
+def _load_insight_artifact_states_pg(
+    fact_keys: list[str],
+) -> dict[str, dict[str, Any]] | None:
+    """`_load_insight_artifact_states` 의 Postgres read-back 경로.
+
+    `AGENT_KB_READ_BACKEND=postgres` 일 때 KB write 정본인 PG 테이블
+    (public.fact_entries/rag_documents/rag_objects + texts join)에서 artifact 존재
+    여부를 읽어, MySQL 경로와 동일한 state dict 를 만든다. `_pg_connect_ro()`
+    (agent_kb_ro least-priv) 사용. PG 미가용이면 None 반환 → caller MySQL fallback.
+
+    이 경로가 없으면 영속 검증이 (DROP 된) MySQL 테이블을 조회해 매 사이클 4-part
+    전부 missing 으로 오판 → insight 무한 재생성(livelock)을 일으킨다."""
+    keys = [str(key or "").strip() for key in (fact_keys or []) if str(key or "").strip()]
+    states = {key: _empty_insight_artifact_state(key) for key in keys}
+    if not keys:
+        return states
+    if not _pg_available():
+        return None
+    conversation_ids = _global_fact_conversation_ids(include_shared=True)
+    if not conversation_ids:
+        return states
+    cid_placeholders = ",".join(["%s"] * len(conversation_ids))
+    key_placeholders = ",".join(["%s"] * len(keys))
+    scope_clause, scope_params = _scope_filter_sql_pg(_scope_candidates(FACT_SCOPE_COMMON))
+
+    try:
+        conn = _pg_connect_ro()
+    except Exception as exc:
+        _warn_insight_readback_failed("pg_connect", exc)
+        return None
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                f"""
+SELECT
+    e.fact_key,
+    e.conversation_id,
+    e.scope_key,
+    COALESCE(t.text_content, '') AS fact_text,
+    e.weight,
+    COALESCE(e.source_type, '') AS source_type,
+    COALESCE(e.source_run_id, '') AS source_run_id,
+    COALESCE(e.source_sql, '') AS source_sql
+FROM public.fact_entries e
+LEFT JOIN public.texts t ON t.text_hash = e.text_hash
+WHERE e.conversation_id IN ({cid_placeholders})
+  AND e.fact_key IN ({key_placeholders}){scope_clause}
+ORDER BY e.fact_key, e.weight DESC, e.updated_at DESC, e.id DESC
+                """,
+                [*conversation_ids, *keys, *scope_params],
+            )
+            fact_rows = cur.fetchall() or []
+        finally:
+            cur.close()
+        _apply_insight_fact_rows(states, fact_rows)
+
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                f"""
+SELECT
+    d.fact_key,
+    COALESCE(t.text_content, '') AS doc_text
+FROM public.rag_documents d
+LEFT JOIN public.texts t ON t.text_hash = d.text_hash
+WHERE d.conversation_id IN ({cid_placeholders})
+  AND d.fact_key IN ({key_placeholders}){scope_clause}
+ORDER BY d.fact_key, d.weight DESC, d.updated_at DESC, d.id DESC
+                """,
+                [*conversation_ids, *keys, *scope_params],
+            )
+            doc_rows = cur.fetchall() or []
+        finally:
+            cur.close()
+        _apply_insight_doc_rows(states, doc_rows)
+
+        schema_object_map, table_object_map = _build_insight_object_maps(keys)
+
+        if schema_object_map:
+            cur = conn.cursor()
+            try:
+                schema_placeholders = ",".join(["%s"] * len(schema_object_map))
+                cur.execute(
+                    f"""
+SELECT
+    o.schema_name,
+    COALESCE(t.text_content, '') AS object_text
+FROM public.rag_objects o
+LEFT JOIN public.texts t ON t.text_hash = o.text_hash
+WHERE o.conversation_id IN ({cid_placeholders})
+  AND o.object_type = 'schema'
+  AND o.schema_name IN ({schema_placeholders}){scope_clause}
+ORDER BY o.schema_name, o.weight DESC, o.updated_at DESC, o.id DESC
+                    """,
+                    [*conversation_ids, *schema_object_map.keys(), *scope_params],
+                )
+                schema_rows = cur.fetchall() or []
+            finally:
+                cur.close()
+            _apply_insight_schema_object_rows(states, schema_rows, schema_object_map)
+
+        if table_object_map:
+            cur = conn.cursor()
+            table_filters = []
+            table_params: list[str] = []
+            for schema_name, table_name in table_object_map.keys():
+                table_filters.append("(o.schema_name = %s AND o.table_name = %s)")
+                table_params.extend([schema_name, table_name])
+            try:
+                cur.execute(
+                    f"""
+SELECT
+    o.schema_name,
+    o.table_name,
+    COALESCE(t.text_content, '') AS object_text
+FROM public.rag_objects o
+LEFT JOIN public.texts t ON t.text_hash = o.text_hash
+WHERE o.conversation_id IN ({cid_placeholders})
+  AND o.object_type = 'table'
+  AND ({' OR '.join(table_filters)}){scope_clause}
+ORDER BY o.schema_name, o.table_name, o.weight DESC, o.updated_at DESC, o.id DESC
+                    """,
+                    [*conversation_ids, *table_params, *scope_params],
+                )
+                table_rows = cur.fetchall() or []
+            finally:
+                cur.close()
+            _apply_insight_table_object_rows(states, table_rows, table_object_map)
+    except Exception as exc:
+        # PG read 실패 → 가시화 후 None 반환(caller MySQL fallback, cutover 미완 안전망).
+        _warn_insight_readback_failed("pg_query", exc)
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    return states
+
+
 def _load_insight_artifact_states(mem_conn, fact_keys: list[str]) -> dict[str, dict[str, Any]]:
     keys = [str(key or "").strip() for key in (fact_keys or []) if str(key or "").strip()]
     states = {key: _empty_insight_artifact_state(key) for key in keys}
-    if not mem_conn or not keys:
+    if not keys:
+        return states
+    # 05-27 cutover 이후 KB write 정본은 Postgres(public.fact_entries/rag_documents/
+    # rag_objects/texts)다. MySQL AgentMemory* 테이블은 DROP 되어 더 이상 존재하지
+    # 않으므로 영속 검증 read-back 도 동일 backend(PG)에서 읽어야 한다. 이 분기가
+    # 없으면 매 사이클 4-part 전부 missing 으로 오판 → insight 무한 재생성(livelock).
+    from .config import AGENT_KB_READ_BACKEND
+    if AGENT_KB_READ_BACKEND == "postgres":
+        pg_states = _load_insight_artifact_states_pg(keys)
+        if pg_states is not None:
+            return pg_states
+        # PG 미가용 → 아래 MySQL fallback (cutover 미완 환경 안전망)
+    if not mem_conn:
         return states
     conversation_ids = _global_fact_conversation_ids(include_shared=True)
     if not conversation_ids:
@@ -166,29 +446,12 @@ ORDER BY e.FactKey, e.Weight DESC, e.UpdatedAt DESC, e.Id DESC
             [*conversation_ids, *keys, *scope_params],
         )
         rows = cur.fetchall() or []
-    except Exception:
+    except Exception as exc:
+        _warn_insight_readback_failed("mysql_fact", exc)
         rows = []
     finally:
         cur.close()
-    seen_fact_keys: set[str] = set()
-    for row in rows:
-        fact_key = str(row[0] or "").strip()
-        if not fact_key or fact_key in seen_fact_keys:
-            continue
-        seen_fact_keys.add(fact_key)
-        state = states.setdefault(fact_key, _empty_insight_artifact_state(fact_key))
-        fact_text = str(row[3] or "").strip()
-        state["has_fact"] = True
-        state["conversation_id"] = str(row[1] or "").strip()
-        state["scope_key"] = str(row[2] or "").strip() or FACT_SCOPE_COMMON
-        state["fact_text"] = fact_text
-        state["weight"] = int(row[4]) if row[4] is not None else 4
-        state["source_type"] = str(row[5] or "").strip() or "schema_insight"
-        state["source_run_id"] = str(row[6] or "").strip()
-        state["source_sql"] = str(row[7] or "").strip()
-        if fact_text:
-            state["has_text"] = True
-            _remember_repair_text(state, fact_text)
+    _apply_insight_fact_rows(states, rows)
 
     cur = mem_conn.cursor()
     try:
@@ -206,31 +469,14 @@ ORDER BY d.FactKey, d.Weight DESC, d.UpdatedAt DESC, d.Id DESC
             [*conversation_ids, *keys, *scope_params],
         )
         rows = cur.fetchall() or []
-    except Exception:
+    except Exception as exc:
+        _warn_insight_readback_failed("mysql_doc", exc)
         rows = []
     finally:
         cur.close()
-    seen_doc_keys: set[str] = set()
-    for row in rows:
-        fact_key = str(row[0] or "").strip()
-        if not fact_key or fact_key in seen_doc_keys:
-            continue
-        seen_doc_keys.add(fact_key)
-        state = states.setdefault(fact_key, _empty_insight_artifact_state(fact_key))
-        doc_text = str(row[1] or "").strip()
-        state["has_rag_document"] = True
-        if doc_text:
-            state["has_text"] = True
-            _remember_repair_text(state, doc_text)
+    _apply_insight_doc_rows(states, rows)
 
-    schema_object_map: dict[str, str] = {}
-    table_object_map: dict[tuple[str, str], str] = {}
-    for fact_key in keys:
-        object_type, _, schema_name, table_name, _ = _infer_rag_object_from_fact(fact_key, "")
-        if object_type == "schema" and schema_name:
-            schema_object_map[schema_name] = fact_key
-        elif object_type == "table" and schema_name and table_name:
-            table_object_map[(schema_name, table_name)] = fact_key
+    schema_object_map, table_object_map = _build_insight_object_maps(keys)
 
     if schema_object_map:
         cur = mem_conn.cursor()
@@ -251,25 +497,12 @@ ORDER BY o.SchemaName, o.Weight DESC, o.UpdatedAt DESC, o.Id DESC
                 [*conversation_ids, *schema_object_map.keys(), *scope_params],
             )
             rows = cur.fetchall() or []
-        except Exception:
+        except Exception as exc:
+            _warn_insight_readback_failed("mysql_schema_obj", exc)
             rows = []
         finally:
             cur.close()
-        seen_schema_objects: set[str] = set()
-        for row in rows:
-            schema_name = str(row[0] or "").strip()
-            if not schema_name or schema_name in seen_schema_objects:
-                continue
-            seen_schema_objects.add(schema_name)
-            fact_key = schema_object_map.get(schema_name)
-            if not fact_key:
-                continue
-            state = states.setdefault(fact_key, _empty_insight_artifact_state(fact_key))
-            object_text = str(row[1] or "").strip()
-            state["has_rag_object"] = True
-            if object_text:
-                state["has_text"] = True
-                _remember_repair_text(state, object_text)
+        _apply_insight_schema_object_rows(states, rows, schema_object_map)
 
     if table_object_map:
         cur = mem_conn.cursor()
@@ -295,27 +528,12 @@ ORDER BY o.SchemaName, o.TableName, o.Weight DESC, o.UpdatedAt DESC, o.Id DESC
                 [*conversation_ids, *table_params, *scope_params],
             )
             rows = cur.fetchall() or []
-        except Exception:
+        except Exception as exc:
+            _warn_insight_readback_failed("mysql_table_obj", exc)
             rows = []
         finally:
             cur.close()
-        seen_table_objects: set[tuple[str, str]] = set()
-        for row in rows:
-            schema_name = str(row[0] or "").strip()
-            table_name = str(row[1] or "").strip()
-            key_ref = (schema_name, table_name)
-            if not schema_name or not table_name or key_ref in seen_table_objects:
-                continue
-            seen_table_objects.add(key_ref)
-            fact_key = table_object_map.get(key_ref)
-            if not fact_key:
-                continue
-            state = states.setdefault(fact_key, _empty_insight_artifact_state(fact_key))
-            object_text = str(row[2] or "").strip()
-            state["has_rag_object"] = True
-            if object_text:
-                state["has_text"] = True
-                _remember_repair_text(state, object_text)
+        _apply_insight_table_object_rows(states, rows, table_object_map)
 
     return states
 
