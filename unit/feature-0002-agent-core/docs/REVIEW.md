@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260604-0146 [SKIPPED:동일 cutover read-back 불일치의 두 번째 면 — REV-0145 와 동일 패턴/리스크]
+- Date: 2026-06-04
+- Cycle: TASK-0145 후속 (`_load_kv_prefix_map` fingerprint KV read-back PG 라우팅), **Major §12.3**
+- Verdict: PASS
+- Reason: REV-20260604-0145 가 검증한 "cutover 후 read-back 을 write 정본(PG)으로 라우팅" 패턴과 동일. `_load_kv_prefix_map` 의 PG 분기는 이미 라이브로 검증된 `load_memory_kv` 패턴(`_read_runtime_pg("load_kv_all")`)을 그대로 따르며, 미가용 시 MySQL fallback 보존. RBAC/schema/secret/endpoint 무변경. 라이브 functional(PG fingerprint 765 read) + 재배포 후 generate_insight 수렴으로 실증.
+- Note: 두 read-back 경로(artifact-verify, fingerprint-KV)를 모두 고쳐야 livelock 이 완전 정지 — 1번만 고치면 reason 이 `artifact_missing`→`fingerprint_changed` 로 전환되며 ollama 점유가 지속됨(라이브로 관찰·확인).
+
 ## REV-20260604-0145 [SUBAGENT:general-purpose — insight livelock PG read-back review]
 - Date: 2026-06-04
 - Cycle: TASK-0145 (insight worker livelock 근본 수정 + 운영 하드닝), **Major §12.3** — core 데이터 파이프라인 correctness
