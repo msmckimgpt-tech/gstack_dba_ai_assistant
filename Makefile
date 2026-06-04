@@ -290,34 +290,36 @@ dump:  ## db: 특정 데이터베이스 덤프 (사용법: make dump db=name [fi
 # 자세한 절차는 unit/feature-0002-agent-core/docs/MIGRATIONS.md 참조.
 # =============================================================================
 # TASK-0149 (#15): alembic.ini/alembic 는 Dockerfile 이 이미지의 /app 에 baking 한다.
-# 이전엔 /app/unit/feature-0002-agent-core 를 가정했으나 그 경로가 이미지에 없어
-# `make migrate*` 가 프로덕션에서 'No script_location' 으로 실패했다. -w /app 으로 교정.
-# agent 컨테이너 안에서 alembic 실행 — psycopg/sqlalchemy/alembic 을 격리 설치.
-# --no-deps 로 DB 서비스는 기동하지 않으나, .env 의 AGENT_KB_PG_* 는 env_file 로 주입된다.
-define ALEMBIC_RUN
-$(DC_QUIET) run --rm --no-deps -w /app --entrypoint sh agent -lc '\
-  pip install -q --no-cache-dir alembic "psycopg[binary]" sqlalchemy >/tmp/pip-alembic.log 2>&1 || { cat /tmp/pip-alembic.log; exit 1; }; \
-  alembic $(1)'
-endef
+# privileged DDL(스키마 변경)은 postgres 로컬 trust 소켓 전용이므로 적용은
+# bin/alembic-migrate.sh 가 담당한다(agent 컨테이너 offline `--sql` → postgres 소켓).
+# =============================================================================
 
-migrate:  ## db: KB 스키마 마이그레이션 적용 (alembic upgrade head) — 신규 revision 반영
-	@$(MAKE) check-llm-network
+# TASK-0149 (#15): privileged DDL 은 postgres 로컬 trust 소켓 전용(agent 컨테이너 TCP scram
+# 불가). 그래서 migrate/migrate-stamp 는 bin/alembic-migrate.sh 가 agent 컨테이너에서 offline
+# `--sql` 생성 → postgres 컨테이너 로컬 소켓 superuser 로 적용한다(인증 변경 0). app(agent_kb_rw)
+# 은 의도적 무-DDL 이라 online alembic 을 app 유저로 돌리면 'permission denied' 로 실패한다.
+migrate:  ## db: KB 스키마 마이그레이션 적용 (offline SQL → postgres 로컬 소켓 superuser)
 	@$(MAKE) -s dc-build SERVICE=agent
-	@$(call ALEMBIC_RUN,upgrade head)
+	@bin/alembic-migrate.sh upgrade
 
-migrate-stamp:  ## db: 라이브 기존 DB 를 baseline 으로 표시 (alembic stamp head, 스키마 변경 0)
-	@$(MAKE) check-llm-network
+migrate-stamp:  ## db: 라이브 기존 DB 를 head baseline 으로 표시 (스키마 변경 0, 멱등)
 	@$(MAKE) -s dc-build SERVICE=agent
-	@$(call ALEMBIC_RUN,stamp head)
+	@bin/alembic-migrate.sh stamp
 
-migrate-new:  ## db: 신규 revision 생성 (사용법: make migrate-new name="add_xyz" [auto=1])
+migrate-current:  ## db: 라이브 현재 alembic revision 조회
+	@bin/alembic-migrate.sh current
+
+migrate-new:  ## db: 신규 revision 생성 (사용법: make migrate-new name="add_xyz" [auto=1]) — 생성 파일은 repo 의 alembic/versions 에 저장
 	@if [[ -z "$(name)" ]]; then \
 		echo '사용법: make migrate-new name="add_xyz" [auto=1]'; \
 		exit 1; \
 	fi
-	@$(MAKE) check-llm-network
 	@$(MAKE) -s dc-build SERVICE=agent
-	@$(call ALEMBIC_RUN,revision $(if $(filter 1,$(auto)),--autogenerate ,)-m "$(name)")
+	$(DC_QUIET) run --rm --no-deps -w /app \
+	  -v "$(PWD)/unit/feature-0002-agent-core/alembic:/app/alembic" \
+	  --entrypoint sh agent -lc '\
+	  pip install -q --no-cache-dir alembic "psycopg[binary]" sqlalchemy >/tmp/pip-alembic.log 2>&1 || { cat /tmp/pip-alembic.log; exit 1; }; \
+	  alembic revision $(if $(filter 1,$(auto)),--autogenerate ,)-m "$(name)"'
 
 # =============================================================================
 # Conversation — agent 대화 슬롯 관리
