@@ -21,6 +21,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY unit/feature-0002-agent-core/src/agent_core.py ./agent_core.py
 COPY unit/feature-0002-agent-core/src/modules /app/modules
 COPY unit/feature-0002-agent-core/src/scripts /app/scripts
+# TASK-0149 (#15): alembic 프레임워크를 이미지에 baking — `make migrate`/`migrate-stamp` 가
+# 빌드 이미지(`/app`)에서 동작하도록(이전엔 src/ 밖이라 미포함=프로덕션 미동작). alembic.ini 의
+# script_location=%(here)s/alembic → /app/alembic. env.py 는 AGENT_KB_PG_* 만 읽음(앱 모듈 무의존).
+COPY unit/feature-0002-agent-core/alembic.ini /app/alembic.ini
+COPY unit/feature-0002-agent-core/alembic /app/alembic
 COPY unit/feature-0003-agent-web-ui/src /app/web
 
 # TASK-0126 (#5 split-brain): 배포 provenance. 빌드 시 main HEAD SHA 를 각인하여
