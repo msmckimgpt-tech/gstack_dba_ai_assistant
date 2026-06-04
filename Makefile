@@ -289,11 +289,13 @@ dump:  ## db: 특정 데이터베이스 덤프 (사용법: make dump db=name [fi
 # 라이브 기존 DB 는 migrate-stamp 로 baseline 표시(스키마 변경 0), 신규 변경만 versioned.
 # 자세한 절차는 unit/feature-0002-agent-core/docs/MIGRATIONS.md 참조.
 # =============================================================================
-ALEMBIC_DIR := unit/feature-0002-agent-core
+# TASK-0149 (#15): alembic.ini/alembic 는 Dockerfile 이 이미지의 /app 에 baking 한다.
+# 이전엔 /app/unit/feature-0002-agent-core 를 가정했으나 그 경로가 이미지에 없어
+# `make migrate*` 가 프로덕션에서 'No script_location' 으로 실패했다. -w /app 으로 교정.
 # agent 컨테이너 안에서 alembic 실행 — psycopg/sqlalchemy/alembic 을 격리 설치.
 # --no-deps 로 DB 서비스는 기동하지 않으나, .env 의 AGENT_KB_PG_* 는 env_file 로 주입된다.
 define ALEMBIC_RUN
-$(DC_QUIET) run --rm --no-deps -w /app/$(ALEMBIC_DIR) --entrypoint sh agent -lc '\
+$(DC_QUIET) run --rm --no-deps -w /app --entrypoint sh agent -lc '\
   pip install -q --no-cache-dir alembic "psycopg[binary]" sqlalchemy >/tmp/pip-alembic.log 2>&1 || { cat /tmp/pip-alembic.log; exit 1; }; \
   alembic $(1)'
 endef
