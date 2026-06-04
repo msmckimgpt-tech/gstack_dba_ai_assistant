@@ -34,9 +34,10 @@
   - **해결**: 첨부 메타(ids/new_ids/inline image·text path)를 프로세스 전역 os.environ → run_agent 의 요청별 `contextvars.ContextVar`(allowlist 패턴과 동형, `asyncio.to_thread` 가 context 복사 전파)로 전환. app.py 의 env set/pop 전부 제거 + run_agent kwarg 전달. ctx 미설정(CLI/테스트) 시 `_ctx_or_env` 로 env fallback(하위호환).
   - **검증**: `asyncio.to_thread` 동시 2요청이 각자 첨부만 read(A=11,12/new12, B=21,22,23/new23 교차오염 0) + env fallback PASS, ruff/160 tests + 라이브 ask(첨부 없음 경로) error='' 정상.
 
-- [~] **P2** 리미디에이션(#9) async 핸들러 동기 DB I/O — **풀 인프라 출하(무익 판명, OFF)**, 핸들러 offload 잔여
-  - **풀 결론(TASK-0144)**: db.py opt-in 커넥션 풀 출하(기본 OFF, +6 테스트). canary 실측 — 풀 ON=ask당 신규 conn **16** vs OFF=**2**. 기존 connect 패턴이 ask당 단일 conn 재사용으로 이미 lean, 풀은 (user,db)별 eager pool_size 생성으로 **악화**. → **풀은 무익, 기본 OFF 유지**(재프로파일 없이 켜지 말 것). pgbouncer 도 PG 측엔 이미 사용 중.
-  - **실제 병목·잔여(staged, 부하테스트 필요)**: 진짜 문제는 커넥션 churn 이 아니라 **55개 async 핸들러가 이벤트 루프에서 동기 mysql.connector 호출 → 느린 쿼리 1건이 in-flight 요청 stall**. Next: await-없는 async 핸들러를 `def`(Starlette threadpool) 전환 또는 to_thread 래핑(핸들러별 판단), ask() 커넥션을 에이전트 to_thread 실행 전 반환. **보류 사유**: 단위 테스트로 동시성/이벤트루프 회귀 검출 불가 → 라이브 부하테스트·staged rollout 필요(빅뱅 위험).
+- [~] **P2** 리미디에이션(#9) async 핸들러 동기 DB I/O — **핸들러 offload 30건 완료**, [B] 22건 잔여
+  - **풀 결론(TASK-0144)**: db.py opt-in 커넥션 풀 출하(기본 OFF, +6 테스트). canary 실측 — 풀 ON=ask당 신규 conn **16** vs OFF=**2**. 기존 connect 패턴이 이미 lean, 풀은 eager pool_size 생성으로 **악화** → **무익, 기본 OFF 유지**. pgbouncer 는 PG 측 이미 사용 중.
+  - **핸들러 offload(TASK-0148, 완료)**: await 0(동기 DB I/O 만)인 async 핸들러 **30건 → `def` 전환**(Starlette anyio threadpool). 느린 쿼리 1건이 이벤트 루프를 stall 시키던 핫스팟 제거, 동작 무변경(잃을 await 없음). ruff/177 tests + 라이브 6엔드포인트 200 검증.
+  - **잔여(staged)**: [B] body-파싱 22건(`await request.json()` 후 동기 DB 작업) → async 유지 + 동기부 `to_thread` 추출 필요(핸들러별·회귀위험). [C] ask/upload/ask_result 는 이미 적정 async. ask() 커넥션 lifecycle(에이전트 실행 전 반환)은 별도·복잡. **보류 사유**: [B]/[C] 는 단위테스트로 동시성 회귀 검출 불가 → 부하테스트 필요.
 
 - [x] **P2** 리미디에이션(TASK-0141 #10) app.py silent except 가시화 **완료(판단 기반)**
   - **해결**: except 364건 전수 분류 후 명백한 fail-open swallow(bare `pass`) **26건**만 `logger.warning(exc_info=True)`로 가시화(PG 듀얼라이트/첨부 cascade/audit dispatch/best-effort enrichment 등 — 조용한 cutover 회귀·orphan 탐지 가치). **333건은 의도된 제어흐름**(멱등 ALTER, cleanup-of-cleanup, parse-후-default, 재시도 루프)이라 보존 — 로깅 시 노이즈/동작 위험. **동작 무변경**(제거 26줄 전부 bare pass, 제어흐름 라인 0) diff 확약 + ruff/compile 통과.
