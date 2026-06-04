@@ -53,6 +53,7 @@ __all__ = [
     "AGENT_INSIGHT_WORKER_LOCK_TIMEOUT_SEC",
     "AGENT_INSIGHT_WORKER_STALE_SEC",
     "AGENT_INSIGHT_WORKER_TICK_SEC",
+    "AGENT_INSIGHT_WORKER_DEGRADED_BACKOFF_SEC",
     "AGENT_KB_ALLOWED_SOURCE_TYPES",
     "AGENT_KB_FACT_LIMIT",
     "AGENT_KB_INSIGHT",
@@ -622,6 +623,13 @@ _insight_worker_enabled_raw = os.getenv("AGENT_INSIGHT_WORKER_ENABLED", "1").str
 AGENT_INSIGHT_WORKER_ENABLED = _insight_worker_enabled_raw.lower() in ("1", "true", "yes")
 AGENT_INSIGHT_WORKER_TICK_SEC = int(
     (os.getenv("AGENT_INSIGHT_WORKER_TICK_SEC", "8") or "8").strip()
+)
+# read 정본(PG)이 닿지 않는 degraded 상태에서 worker 가 tick 대신 쉬는 backoff(sec).
+# PG 부재 시 read-back 이 (빈) MySQL fallback 으로 떨어져 모든 artifact/fingerprint 가
+# missing/changed 로 오판 → 무의미한 재생성(livelock 동력)을 반복하므로, 그 상태에선
+# 짧은 tick(8s) 대신 길게 쉬며 PG 복구를 기다린다.
+AGENT_INSIGHT_WORKER_DEGRADED_BACKOFF_SEC = int(
+    (os.getenv("AGENT_INSIGHT_WORKER_DEGRADED_BACKOFF_SEC", "300") or "300").strip()
 )
 AGENT_INSIGHT_WORKER_JITTER_SEC = int(
     (os.getenv("AGENT_INSIGHT_WORKER_JITTER_SEC", "0") or "0").strip()
