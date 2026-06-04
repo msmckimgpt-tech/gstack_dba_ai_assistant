@@ -47,6 +47,8 @@ source_of_truth: true
 - [x] TASK-0008 무권한 auto-relay 내장 (launch 자동 relay, admin 불요) + ignore-cert + 단일 emit
 - [x] TASK-0009 실제 Windows 브라우저 e2e 검증 완수 (DQA 로드 + 로그인 기능, TEST.md §3 Run 003/004)
 - [x] TASK-0010 SETUP.md/PB-0008 무권한 relay 반영 + feature docs 갱신
+- [x] TASK-0011 Playwright MCP / Claude for Chrome 검토 (조사 2건) — Playwright MCP 채택, Claude for Chrome 미채택
+- [x] TASK-0012 Playwright MCP 적용 (bin/playwright-mcp.sh + .mcp.json) + MCP→relay→Chrome e2e 스모크 PASS + 문서
 
 ## 4. In Progress
 - 없음
@@ -58,7 +60,7 @@ source_of_truth: true
 - 드라이버 + 브리지 setup + 워크플로 게이트 + 검증 + 패널 반영 + 문서
 
 ## 7. Next Action
-- verify-completion --pre-commit PASS → commit → PR 병합. 후속: Playwright MCP 통합 검토(사용자 요청), 인증 성공 흐름·Edge·A/B 모드 실측, check #13 strict 격상.
+- verify-completion --pre-commit PASS → commit → PR 병합. 후속: 인증 성공 흐름·Edge·A/B 모드 실측, check #13 strict 격상, (선택) Playwright CLI 모드 토큰 비교.
 
 ## 8. Completion Checklist
 - [x] 모든 REQ의 AC가 구현되었다

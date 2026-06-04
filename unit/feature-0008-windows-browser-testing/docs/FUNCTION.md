@@ -22,10 +22,11 @@ setup(`bin/win-browser-setup.ps1` / mirrored), 검증 절차(PB-0008), 완료 �
 - REQ-0003: 웹/UI 변경의 "완료" 선언이 Windows 브라우저 검증 없이는 통과되지 않도록 워크플로에 게이트를 둔다.
 
 ## 3. In Scope
-- WSL → 실제 Windows Chrome/Edge CDP 브리지 (mirrored / NAT+portproxy relay 자동 감지).
-- Playwright `connect_over_cdp` 기반 드라이버: doctor/launch/down + goto/click/type/eval/text/screenshot + 시나리오 일괄 실행(`run`).
+- WSL → 실제 Windows Chrome/Edge CDP 브리지 (mirrored / NAT+portproxy relay / **무권한 userspace relay** 자동 감지·기동).
+- Playwright `connect_over_cdp` 기반 드라이버: doctor/launch/down/relay-start/relay-stop + goto/click/type/eval/text/screenshot + 시나리오 일괄 실행(`run`).
+- **Playwright MCP 통합** (`bin/playwright-mcp.sh` + `.mcp.json`): 같은 relay 에 attach 해 Claude Code 에 native in-loop 브라우저 도구 제공 (대화형). Claude for Chrome 은 검토 후 미채택(MCP/API 부재).
 - 환경 분류(CLI / WSL-headless / Windows-browser)와 완료 게이트(정책 + WARN-only 검증).
-- 1회 브리지 setup 스크립트 + 가이드.
+- 브리지 setup 스크립트 + 가이드 (무권한 auto-relay 기본, portproxy/mirrored 대안).
 
 ## 4. Out of Scope
 - gstack `/browse`·feature-0004 headless 서비스 대체 (보조 수단으로 공존 — 빠른 탐색용).

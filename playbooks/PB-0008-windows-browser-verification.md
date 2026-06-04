@@ -67,3 +67,6 @@ scope: feature
   TEST.md 에 `Windows-browser` 미수행 사유를 명시한다 — "검증함"으로 오인되지 않게.
 - verify-completion check #13 (WARN-only, v1) 이 웹 대상 변경에 `Windows-browser` Run 누락 시
   경고한다. 후속 cycle 에서 strict 격상 예정.
+- **대화형(in-loop) 탐색**은 Playwright MCP(`bin/playwright-mcp.sh` + `.mcp.json`)로 같은 브리지에
+  attach 해 browser_snapshot/click/type 도구를 모델 루프에서 직접 쓸 수 있다(`bin/WIN-BROWSER-SETUP.md`).
+  단 **반복 가능한 완료 게이트 증거**(TEST.md §3 Run)는 win-browser.py `run --scenario` 로 남긴다.

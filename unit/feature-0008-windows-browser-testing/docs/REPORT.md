@@ -24,14 +24,15 @@ AI 가 WSL 에서 **실제 Windows 브라우저**를 CDP 자동 구동해 웹/UI
 - **무권한 auto-relay**: `launch` 가 Windows python 으로 vEthernet IP:9223 relay 자동 기동 (admin·WSL재시작 불요) — 지난 cycle 교훈 해소. `--ignore-certificate-errors`(self-signed) 추가.
 - 정책 게이트: TEST.md 환경 분류, AGENTS §10.5/§15.4.1/§16, check #13.
 - 보안: relay vEthernet 한정(LAN 노출 없음), allow_origins 비-와일드카드, profile per-user, PS injection escape.
-- 총 변경 횟수: 2
+- **Playwright MCP 통합(CHG-0003)**: `bin/playwright-mcp.sh` + `.mcp.json` 로 같은 relay 에 attach → Claude Code 대화형 in-loop 브라우저 도구. Claude for Chrome 은 검토 후 미채택(MCP/API 부재).
+- 총 변경 횟수: 3
 
 ## 4. Open Issues
 - 인증 성공 후 흐름(대화/쿼리)·Edge·mirrored(B)·영속 portproxy(A) 모드는 미실측 (TEST.md §4). 무권한 relay(옵션 0)만 실 검증.
 
 ## 5. Test Status
 - 자동 테스트: 시나리오 엔진 단위 테스트 10/10 PASS.
-- **실 검증(2026-06-04)**: 무권한 relay 로 실제 Windows Chrome 148 → DQA 웹 UI 로드(200) + 로그인 기능 e2e(인증 실패 경로) PASS. 스크린샷 `artifacts/shared/out/win-browser/`. (TEST.md §3 Run 003/004)
+- **실 검증(2026-06-04)**: 무권한 relay 로 실제 Windows Chrome 148 → DQA 웹 UI 로드(200) + 로그인 기능 e2e(인증 실패 경로) PASS (TEST.md §3 Run 003/004). **Playwright MCP** → relay → Chrome e2e 스모크 PASS (browser_navigate → "DQA…", Run 005). 스크린샷 `artifacts/shared/out/win-browser/`.
 - 미검증 항목: 인증 성공 흐름, A/B 브리지 모드.
 
 ## 6. Blocked Items
