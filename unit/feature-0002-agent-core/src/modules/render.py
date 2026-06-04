@@ -12,7 +12,6 @@ __all__ = [
     "SQLISH_TEXT_RE",
     "SQL_FILENAME_RE",
     "SQL_INLINE_RE",
-    "_auto_resolve_ambiguity",
     "_auto_select_file_for_request",
     "_build_forced_conclusion",
     "_build_user_facing_answer",
@@ -31,7 +30,6 @@ __all__ = [
     "_is_restore_list_request",
     "_last_step_ok_for_autodone",
     "_load_last_summary_dict_from_kv",
-    "_looks_like_file_question",
     "_looks_like_followup_question",
     "_maybe_build_sql_from_file",
     "_normalize_mcp_plan",
@@ -356,14 +354,6 @@ def _looks_like_followup_question(question: str) -> bool:
     return any(cue in question for cue in FOLLOWUP_QUESTION_CUES)
 
 
-def _looks_like_file_question(question: str) -> bool:
-    if not question:
-        return False
-    lowered = question.lower()
-    cues = ("파일", "sql 파일", "쿼리 파일", "경로", "복원", "복구", "dump", "restore")
-    return any(cue in lowered for cue in cues)
-
-
 def _is_list_only_request(text: str) -> bool:
     if not text:
         return False
@@ -491,43 +481,6 @@ def _auto_select_file_for_request(request: str, last_search_raw: str | None) -> 
     if not allow_any:
         return None
     return _pick_file_from_last_search(last_search_raw)
-
-
-def _auto_resolve_ambiguity(
-    question: str, original_request: str, kv: dict[str, Any] | None = None
-) -> str | None:
-    if AGENT_LLM_REQUEST_PASSTHROUGH:
-        return None
-    if not question:
-        return None
-    lower_q = question.lower()
-    lower_req = (original_request or "").lower()
-    if (
-        "레벨 분포" in question
-        or "히스토그램" in question
-        or "구간" in question
-    ) and ("분포" in original_request or "hist" in lower_req):
-        return f"{original_request} (레벨 분포는 10단위 구간 히스토그램으로 계산)"
-    if (
-        ("기간" in question and ("조정" in question or "변경" in question))
-        and ("다시" in original_request or "재집계" in original_request)
-    ):
-        return f"{original_request} (진단된 데이터 존재 기간으로 조정)"
-    if ("스키마" in question or "db/" in lower_q or "db명" in question or "db" in lower_q) and kv:
-        known_schemas = _load_known_schemas_from_kv(kv) or KNOWN_SCHEMAS
-        target_schema = _detect_requested_schema(original_request, known_schemas)
-        if target_schema:
-            return f"{original_request} (대상 스키마: {target_schema})"
-    if _looks_like_file_question(question) and kv:
-        allow_any = any(
-            token in original_request
-            for token in ("그 중", "아무", "임의", "아무거나", "아무 파일", "하나만", "추천")
-        )
-        if allow_any:
-            picked = _pick_file_from_last_search(kv.get("last_file_search"))
-            if picked:
-                return f"{original_request} (선택 파일: {picked})"
-    return None
 
 
 def build_summary_text(intent: str, result_summary: dict[str, Any] | None, last_error: str | None) -> str:

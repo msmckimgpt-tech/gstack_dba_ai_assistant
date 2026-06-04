@@ -33,7 +33,6 @@ __all__ = [
     "_extract_first_table_from_sql",
     "_is_zero_summary",
     "_load_kb_entries",
-    "_plan_zero_result_diagnostic",
     "_publish_fact",
     "_purge_transient_schema_usage_facts",
     "_record_step_trace",
@@ -521,80 +520,8 @@ def _update_zero_result_flags(
         save_memory_kv(conn, conversation_id, "last_zero_intent", "")
         save_memory_kv(conn, conversation_id, "last_zero_run_id", "")
         save_memory_kv(conn, conversation_id, "last_zero_diag_run", "")
-def _plan_zero_result_diagnostic(
-    conn,
-    conversation_id: str,
-    kv: dict[str, str],
-    run_id: str,
-    mcp_tools: list[str] | None,
-) -> dict[str, Any] | None:
-    if not conn or not conversation_id:
-        return None
-    kv = kv or {}
-    if str(kv.get("last_zero_result") or "").strip() != "1":
-        return None
-    if str(kv.get("last_zero_diag_run") or "").strip() == str(run_id or "").strip():
-        return None
 
-    req = str(kv.get("last_user_request") or "").strip()
-    if not req:
-        req = str(kv.get("origin_request") or "").strip()
-    if not req:
-        return None
 
-    scope_key = _build_request_scope_key(req, kv)
-    knowledge = _build_knowledge_payload(
-        conn,
-        conversation_id,
-        req,
-        AGENT_KB_FACT_LIMIT,
-        AGENT_GLOBAL_KB_FACT_LIMIT,
-        scope_key=scope_key,
-        kv=kv,
-    )
-    if not _knowledge_has_table_evidence(knowledge):
-        return None
-
-    timeout_sec = max(6, int(AGENT_KNOWLEDGE_SQL_FALLBACK_TIMEOUT_SEC or 20))
-    plan, reason = _build_knowledge_sql_fallback_plan(
-        req,
-        knowledge,
-        mcp_tools,
-        kv=kv,
-        schema_meta={},
-        db_conn=None,
-        timeout_sec=timeout_sec,
-    )
-    if not plan:
-        return None
-
-    new_sql = _extract_plan_sql_text(plan)
-    if not new_sql:
-        return None
-    prev_sql = str(kv.get("last_zero_sql") or "").strip()
-    if prev_sql:
-        if _normalize_sql_for_dedupe(prev_sql) == _normalize_sql_for_dedupe(new_sql):
-            return None
-        prev_schema, prev_table = _extract_first_table_from_sql(prev_sql)
-        new_schema, new_table = _extract_first_table_from_sql(new_sql)
-        if (
-            prev_table
-            and new_table
-            and prev_table.lower() == new_table.lower()
-            and (
-                not prev_schema
-                or not new_schema
-                or prev_schema.lower() == new_schema.lower()
-            )
-        ):
-            # Avoid retrying the same table after a zero-result step.
-            return None
-    try:
-        save_memory_kv(conn, conversation_id, "last_zero_diag_run", run_id)
-        save_memory_kv(conn, conversation_id, "last_zero_diag_reason", str(reason or ""))
-    except Exception:
-        pass
-    return plan
 def _trim_step_trace(step_trace: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if AGENT_STEP_TRACE_MAX <= 0:
         return []
