@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260604-0147 [SKIPPED:read 경로 방어 가드 — RBAC/schema/secret 무변경, REV-0145 패턴 연장]
+- Date: 2026-06-04
+- Cycle: TASK-0147 (insight worker degraded read-back backoff), **Major §12.3**
+- Verdict: PASS
+- Reason: PG 부재 시 insight 생성을 멈추고 backoff 하는 방어 가드 추가뿐. write 경로·RBAC·schema·secret·endpoint 무변경. `_pg_connect_ro()` 사용(least-priv) + 모든 경로 conn close(finally). MySQL 모드면 가드가 항상 False 라 기존 동작 무영향. 신규 단위테스트 4건 + 라이브 functional 로 분기 검증. REV-20260604-0145(외부 subagent 리뷰) 가 검증한 "cutover read-back 정본=PG" 인식의 robustness 연장이라 별도 outside-voice 불요.
+- Note: backoff(기본 300s)는 PG 다운 시에만 발동 — 정상 운영(PG up)에선 status=ok → tick(8s) 유지라 heartbeat 신선도/healthcheck 무영향.
+
 ## REV-20260604-0146 [SKIPPED:동일 cutover read-back 불일치의 두 번째 면 — REV-0145 와 동일 패턴/리스크]
 - Date: 2026-06-04
 - Cycle: TASK-0145 후속 (`_load_kv_prefix_map` fingerprint KV read-back PG 라우팅), **Major §12.3**

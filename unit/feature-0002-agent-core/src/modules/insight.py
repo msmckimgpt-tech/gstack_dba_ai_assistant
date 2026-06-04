@@ -1479,6 +1479,48 @@ def _new_insight_worker_run_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "-iw" + uuid.uuid4().hex[:6]
 
 
+def _insight_readback_degraded() -> bool:
+    """read 정본(PG)이 닿지 않으면 True — 그 상태에선 생성을 멈춰야 한다.
+
+    cutover 이후 insight read-back(artifact 검증·fingerprint 맵)의 정본은 PG다.
+    read backend 가 postgres 인데 PG 가 부재하면 read-back 이 (DROP 된) MySQL fallback
+    으로 떨어져 모든 artifact/fingerprint 가 missing/changed 로 오판 → 매 tick 무의미한
+    재생성(과거 livelock 의 동력)을 반복한다. 이 함수가 True 면 cycle 은 생성을 skip 하고
+    loop 는 길게 backoff 한다. MySQL 모드(postgres 미사용)면 read-back 이 live mem_conn
+    을 쓰므로 불일치가 없어 False."""
+    from .config import AGENT_KB_READ_BACKEND
+    try:
+        from .runtime_backend import AGENT_RUNTIME_READ_BACKEND
+    except Exception:
+        AGENT_RUNTIME_READ_BACKEND = ""
+    pg_mode = (AGENT_KB_READ_BACKEND == "postgres") or (
+        AGENT_RUNTIME_READ_BACKEND == "postgres"
+    )
+    if not pg_mode:
+        return False
+    if not _pg_available():
+        return True
+    # 실제 연결 probe — 서버 down 시 _pg_available()(env/드라이버만 검사)만으론 못 잡는다.
+    conn = None
+    try:
+        conn = _pg_connect_ro()
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        finally:
+            cur.close()
+        return False
+    except Exception:
+        return True
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
     cycle_run_id = str(run_id or "").strip() or _new_insight_worker_run_id()
     started = time.perf_counter()
@@ -1525,6 +1567,11 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
         )
         if not lock_acquired:
             status = "skip_locked"
+        elif _insight_readback_degraded():
+            # read 정본(PG) 부재 — 생성 시 read-back 이 빈 MySQL fallback 으로 떨어져
+            # 전부 missing/changed 오판 → livelock 재발. 본 cycle 은 scan/generate 를
+            # skip 하고 loop 가 degraded backoff 로 PG 복구를 기다린다.
+            status = "degraded_readback"
         else:
             known = load_known_schemas(db_conn)
             if known:
@@ -1636,9 +1683,17 @@ def run_insight_worker_loop() -> None:
         console.print("insight worker disabled: AGENT_INSIGHT_WORKER_ENABLED=0")
         return
     tick_sec = max(5, int(AGENT_INSIGHT_WORKER_TICK_SEC))
+    degraded_backoff_sec = max(tick_sec, int(AGENT_INSIGHT_WORKER_DEGRADED_BACKOFF_SEC))
     jitter_sec = max(0, int(AGENT_INSIGHT_WORKER_JITTER_SEC))
     if jitter_sec > 0:
         time.sleep(random.uniform(0, float(jitter_sec)))
     while True:
-        run_insight_cycle()
-        time.sleep(tick_sec)
+        result = run_insight_cycle()
+        status = str((result or {}).get("status", "")).strip()
+        # PG read 정본 부재(degraded_readback) / 연결 오류(error) 시엔 짧은 tick 대신
+        # 길게 backoff — MySQL fallback 으로 떨어져 무의미한 재시도(livelock 동력)를
+        # 반복하지 않고 PG 복구를 기다린다.
+        if status in ("degraded_readback", "error"):
+            time.sleep(degraded_backoff_sec)
+        else:
+            time.sleep(tick_sec)

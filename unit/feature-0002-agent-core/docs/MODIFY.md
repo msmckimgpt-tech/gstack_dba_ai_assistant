@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260604-0147
+- Date: 2026-06-04
+- TASK-Cycle: TASK-0147, **Major §12.3** — insight worker degraded read-back backoff (livelock 재발 방지)
+- Summary: TASK-0145/0146 이 read-back 2경로를 PG 로 고친 뒤에도, PG 가 다운되면 두 경로가 빈 MySQL fallback 으로 떨어져 livelock 이 재발할 수 있는 잔여 위험을 차단. read backend 가 postgres 인데 PG 가 닿지 않으면 cycle 이 생성을 skip 하고 loop 가 짧은 tick(8s) 대신 긴 backoff(기본 300s)로 PG 복구를 기다린다.
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/insight.py`: `_insight_readback_degraded()` 신규(postgres 모드 + `_pg_available()`/`_pg_connect_ro()+SELECT 1` probe) + `run_insight_cycle` 에 degraded 시 scan skip + status=`degraded_readback` + `run_insight_worker_loop` 이 status 기반 backoff(`degraded_readback`/`error`→degraded_backoff_sec, else tick_sec).
+  - `unit/feature-0002-agent-core/src/modules/config.py`: `AGENT_INSIGHT_WORKER_DEGRADED_BACKOFF_SEC`(기본 300) 추가 + `__all__`.
+  - `unit/feature-0002-agent-core/tests/test_insight_degraded_backoff.py`: 신규 4건(mysql 모드 False / pg 미가용 True / probe 실패 True / probe 정상 False).
+- 검증: ruff PASS + pytest 177 passed/2 skipped + 라이브 functional(PG up→False, 미가용→True).
+- Backend/DB schema/RBAC/endpoint/secret: 무변경(read 경로 방어 가드 + loop 타이밍 only).
+
 ## CHG-20260604-0145b
 - Date: 2026-06-04
 - TASK-Cycle: TASK-0145 (후속 — 동일 livelock 의 두 번째 read-back 불일치), **Major §12.3**
