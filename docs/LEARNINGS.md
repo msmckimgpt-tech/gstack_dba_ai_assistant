@@ -269,6 +269,12 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Applies to: `make web` 류의 image 빌드 + 기동 명령. 향후 docker compose 또는 buildx 가 fix 되면 가드를 제거할 수 있다 — 가드는 `compose-build-metadataFile` 문자열 매칭으로만 race 를 흡수하므로 race 가 사라지면 자연스럽게 일반 build 경로로 흐른다.
 - Verification: `make web` EXIT=0, 로그에 "[make] note: ... provenance metadata file race 우회 ... compose EXIT=1 무시" 출력 후 `Container repo-web-1 Recreate/Recreated/Started` + `Web UI (HTTPS): https://localhost:18080`. `docker exec repo-web-1 grep -n PENDING_CONV_SENTINEL /app/web/static/app.js` 으로 새 코드 반영 확인.
 
+### LRN-20260604-0001 — WSL2 에서 Windows Chrome CDP 는 항상 127.0.0.1 에만 바인딩된다 (relay 필수)
+- Source: feature-0008-windows-browser-testing spike (2026-06-04)
+- Quirk: WSL 에서 Windows Chrome 을 `--remote-debugging-port=9222 --remote-debugging-address=0.0.0.0` 로 띄워도, 최신 Chrome 은 보안상 `--remote-debugging-address` 를 무시하고 **127.0.0.1 에만 CDP 를 바인딩**한다 (`netsh netstat` 으로 `TCP 127.0.0.1:9222 LISTENING` 확인). NAT 모드 WSL2 는 Windows loopback 에 직접 도달할 수 없어, 단순히 게이트웨이 IP(`172.x.x.1:9222`)로 접속하면 실패한다. 또한 WSL 경로(UNC) cwd 에서 `cmd.exe` 를 호출하면 "UNC 경로는 지원되지 않습니다" 경고를 **stderr** 로 내보내며 cwd 를 C:\Windows 로 바꾼다 — stdout 파싱 시 마지막 유효 라인만 취하고 cwd 를 `/mnt/c` 로 고정해야 안전하다.
+- Mitigation: (1) Chrome 은 127.0.0.1 바인딩 그대로 두고, Windows 측 `netsh portproxy` relay 를 **vEthernet(WSL) IP 한정** 으로 세워 `<wsl-host>:9223 → 127.0.0.1:9222` forward (0.0.0.0 금지 — CDP 는 무인증이라 LAN 노출 시 브라우저 탈취). 또는 mirrored networking(`.wslconfig`)으로 loopback 공유 — 인바운드 hole 불요. (2) Playwright `connect_over_cdp(http_endpoint)` 는 endpoint host 로 ws host 를 정규화하므로 relay 경유 가능. `--remote-allow-origins` 는 `*` 대신 loopback+relay 의 구체 origin 으로 scope (DNS rebinding 방어 유지).
+- Applies to: WSL2 에서 실제 Windows 브라우저를 CDP 로 구동하는 모든 작업. `bin/win-browser.py` + `bin/WIN-BROWSER-SETUP.md` 참조.
+
 ## Category: preference
 
 ### LRN-20260326-0001 — `AGENTS.md`가 정책 정본, `CLAUDE.md`는 참조 shim

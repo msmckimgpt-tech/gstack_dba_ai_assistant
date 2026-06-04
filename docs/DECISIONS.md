@@ -609,3 +609,21 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
   - `.env`: `AGENT_KB_DUAL_WRITE=0`, `KB_DUAL_WRITE_START_TS`, `AGENT_RUNTIME_DUAL_WRITE=0`, `AGENT_RUNTIME_AUDIT_ENABLED=0` 4 항목 제거.
 - 코드 순감: −1,630 lines (7 파일). commit 6621ef3.
 - 현 상태: agent runtime + KB 모두 Postgres 단독 write/read. MySQL `agent_memory` 에 `web*` 18 테이블만 잔존. dual-write 인프라 코드 없음.
+
+## ADR-0029
+- Status: accepted (feature-0008-windows-browser-testing, REQ-20260604, 2026-06-04)
+- Context: AI 작업자의 웹/UI 테스트가 CLI(curl)·WSL 내부 headless 브라우저(feature-0004 service, gstack /browse)에 머물러, 실제 사용자가 보는 Windows 브라우저 화면과 자주 괴리가 발생했다 (렌더링·상호작용 차이). 사용자가 "웹브라우저 테스트는 cli·wsl 제외, windows 환경에서, AI 자동 구동 중심" 으로 워크플로 개선을 요청. 신규 Playbook(PB-0008) 추가는 AGENTS.md §4.1 상 본 DECISIONS.md ADR 기록 대상.
+- Decision: **실제 Windows 브라우저를 AI 가 CDP 자동 구동하는 검증 워크플로 도입.**
+  - **드라이버** `bin/win-browser.py`: Playwright `connect_over_cdp` 로 Windows Chrome/Edge attach. doctor/launch/down + goto/click/type/eval/text/screenshot + 시나리오 일괄 `run`. 브리지 모드(mirrored localhost / NAT portproxy relay) 자동 감지.
+  - **브리지**: WSL2 에서 Chrome CDP 가 127.0.0.1 에만 바인딩되는 제약을 (A) vEthernet 한정 portproxy relay(`bin/win-browser-setup.ps1`, 관리자 1회) 또는 (B) mirrored networking 으로 해소. 가이드 `bin/WIN-BROWSER-SETUP.md`.
+  - **환경 분류**: 각 feature `docs/TEST.md` §3 `Environment` 를 `CLI` / `WSL-headless` / `Windows-browser` 로 구분. **웹/UI 화면 검증은 `Windows-browser` 만 인정** (CLI·WSL-headless 는 서버 계약 검증용).
+  - **완료 게이트**: AGENTS.md §15.4.1 (웹/UI 변경 → Windows-browser 검증 필수) + §10.5 조건부 규칙 row + §16.1/§16.2 체크리스트 + `bin/verify-completion.sh` check #13 (WARN-only v1, web 변경 시 Windows-browser run 누락 경고). 절차 = **PB-0008**.
+  - **enforcement staged**: check #13 v1 은 WARN-only (PR block 아님), 후속 cycle MUST 격상 — wiki check #12 와 동일 staged rollout.
+- Consequences:
+  - 1회 브리지 setup(관리자 portproxy 또는 mirrored + `pip install playwright`)이 환경당 필요. doctor 가 게이팅.
+  - **보안**: CDP 는 무인증 원격제어 채널 → setup.ps1 이 LAN 노출을 차단(vEthernet 한정 + 방화벽 Private/서브넷). Chrome `--remote-debugging-address=0.0.0.0` 미사용, `--remote-allow-origins` 구체 origin, per-user 격리 프로필. (§18.8 security 패널 F1/F2/F4/F5 반영.)
+  - gstack `/browse`·feature-0004 headless 는 폐기 아닌 보조(빠른 탐색)로 공존.
+- Alternatives 검토 후 폐기:
+  - **사람 확인 게이트(human-in-the-loop)**: AI 가 브라우저만 열고 사람이 확인. 사용자가 "AI 자동 구동 중심" 명시 → 폐기.
+  - **WSLg headful chromium**: 표시는 되나 Linux chromium 이라 실제 Windows Chrome 렌더링과 다름 ("wsl 내부 아닌" 요구 위배) → 폐기.
+  - **`*` allow-origins + 0.0.0.0 relay**: 가장 단순하나 무인증 CDP 를 LAN 전체 노출(CRITICAL) → 보안 패널 must-fix 로 폐기.
