@@ -109,8 +109,8 @@ T1~T5 로드맵 완수 후의 Postgres 데이터 경로 구성.
 | 모듈 | 책임 |
 |---|---|
 | `modules/kb_scope.py` | scope SQL clause (`_scope_filter_sql`, STRICT/INCL_NULL), PII 마스킹, 에러 분류, 요청 유사도, advisory lock(MySQL/PG), schema/search cache key, refresh 무효화 |
-| `modules/kb_retrieval.py` | RAG document/object 검색, 쿼리 임베딩(벡터)·trigram 읽기, fact 로딩(`_load_top_facts*`), schema-meta cache, retrieval depth, prompt 선택, `_build_knowledge_payload` |
-| `modules/kb_write.py` | fact/rag upsert(`_upsert_fact`), dual-write 미러, global publish, KB entry 영속화, step-trace, zero-result 진단 |
+| `modules/kb_retrieval.py` | RAG document/object 검색(`_load_rag_documents_for_request*`/`_load_rag_objects_for_request*`), 쿼리 임베딩(벡터)·trigram 읽기, fact 텍스트 로딩(`_load_fact_text`/`_trim_fact_text`), insight 존재 로더(`_load_existing_schema_insights`/`_load_existing_table_insight_map`) (TASK-0150: planner 경로 전용이던 `_build_knowledge_payload`·`_load_top_facts*`·prompt 선택/retrieval-depth/schema-meta cache helper 죽은 subtree 제거) |
+| `modules/kb_write.py` | fact/rag upsert(`_upsert_fact`), dual-write 미러, global publish, KB entry 영속화, step-trace (TASK-0150: 죽은 `_plan_zero_result_diagnostic` 제거) |
 
 - 의존 방향은 단방향: `kb_scope`(leaf) ← `kb_retrieval` ← `kb_write`. 순환 없음.
 - `modules/knowledge.py` 는 **얇은 facade** 로 남아 세 모듈의 모든 top-level 심볼(public
