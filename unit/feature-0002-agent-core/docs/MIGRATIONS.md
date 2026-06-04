@@ -79,24 +79,39 @@ pgvector/HNSW/GIN 은 alembic `op.create_table`/`op.create_index` 로 정밀 표
 이로써 **부트스트랩 DDL(`_ensure_pg_schema()`)과 공존**해도 충돌 없이 재적용 가능하다
 (belt-and-suspenders).
 
+### 인증 모델 — 왜 online alembic 을 app 유저로 못 돌리나 (TASK-0149 실측)
+
+본 배포는 **privileged DDL 경로가 postgres 컨테이너의 로컬 trust 소켓 전용**이다:
+- `postgres` superuser(스키마 owner) 는 컨테이너 로컬 소켓/127.0.0.1 trust 로만 접근
+  가능하고, agent 컨테이너에서 **TCP scram 인증은 실패**한다(비밀번호 미공유).
+- `agent_kb_rw`(앱 유저, env_file 로 주입)는 least-privilege 라 `public`/`agent_runtime`
+  스키마에 **CREATE 권한이 없다**. 따라서 online alembic 을 agent_kb_rw 로 돌리면
+  `alembic_version` 생성 단계에서 `permission denied for schema public` 으로 실패한다.
+
+그래서 마이그레이션 적용은 **`bin/alembic-migrate.sh`** 가 담당한다: agent 컨테이너에서
+alembic **offline `--sql`** 로 SQL 만 생성 → 그 SQL 을 `docker exec -i …-postgres-1
+psql -U postgres`(로컬 소켓 superuser)로 적용한다. **DB 인증/비밀번호 변경 0.**
+
 ### 운영 절차 — 라이브 기존 DB (스키마 변경 0)
 
 ```
-make migrate-stamp        # = alembic stamp head
+make migrate-current      # 라이브 현재 revision 조회
+make migrate-stamp        # 기존 스키마를 head baseline 으로 마킹 (멱등, DDL 0)
 ```
 
 라이브는 스키마가 **이미 존재**하므로 baseline upgrade 를 실행하면 안 된다. `stamp`
-로 `alembic_version` 테이블만 생성하고 baseline revision 으로 마킹한다. **DDL 한 줄도
-실행하지 않는다.** (baseline upgrade 는 `IF NOT EXISTS` 라 실행해도 라이브에선 사실상
-no-op 이지만, 운영 표준은 어디까지나 `make migrate-stamp` 다.)
+는 `alembic_version` 테이블만 생성/마킹하고 **DDL 한 줄도 실행하지 않는다**.
+(TASK-0149 에서 라이브 `agent_kb` 는 `0001_baseline` 로 stamp 완료.)
 
-### 운영 절차 — fresh deploy (빈 DB)
+### 운영 절차 — fresh deploy (빈 DB) / 신규 revision 적용
 
 ```
-make migrate              # = alembic upgrade head
+make migrate              # current:head 의 pending 마이그레이션만 적용 (current==head 면 no-op)
 ```
 
-빈 DB 에 위 객체 전체(확장/스키마/함수/테이블/뷰/인덱스/트리거/FK)를 구축한다.
+빈 DB 면 baseline 전체(확장/스키마/함수/테이블/뷰/인덱스/트리거/FK)를 구축하고, 기존
+DB 면 `live current → head` 의 신규 revision DDL 만 생성·적용한다. 적용은 위 로컬 소켓
+superuser 경로를 거친다(헬퍼가 자동 처리).
 
 ### 검증(라이브 무영향, scratch DB)
 

@@ -22,9 +22,10 @@
   - **완료 (TASK-0136)**: `agent_runtime.llm_usage` 테이블 + 전 LLM 호출 사이트(메인 루프 + 7개 direct-create) capture + admin 한정 `GET /api/admin/usage`(RBAC `console.usage.read`, 비인증 401·authed admin 200+집계 검증) + admin 콘솔 'LLM 사용량' 패널(권한 게이트). UX 노출 범위·권한 충족.
   - **잔여 (P3)**: LiteLLM per-key budget + 계정별 일일 토큰 cap/circuit breaker(비용 **제어**), prompt caching, topic/summary/classify thinking 비활성 별칭. **보류 사유**: 가시성(핵심)은 출하됨, 제어/캐싱은 LiteLLM 설정 레이어 최적화로 활성 고장 아님.
 
-- [~] **P3** 리미디에이션(TASK-0143 #15) alembic 마이그레이션 — **프레임워크/baseline 완료**, 이관 잔여
-  - **완료(TASK-0143)**: alembic 프레임워크 + env.py(.env AGENT_KB_PG_* 재사용) + 빈 baseline + `make migrate/migrate-stamp/migrate-new` + MIGRATIONS.md. 라이브는 `make migrate-stamp` 로 baseline 표시(스키마 불변). additive — 기존 부트스트랩 DDL 과 공존.
-  - **잔여(후속, 위험)**: `_ensure_pg_schema`/`agent_kb_schema.sql` 의 CREATE/ALTER 를 versioned migration 으로 점진 이관 후 부트스트랩에서 제거(라이브 36GB, 백업 선행). MySQL `agent_memory` 별도 alembic 환경. **embedding 인덱스 drift 정정**: 라이브 `texts` 는 실측 HNSW(`ix_texts_embedding_hnsw`)인데 schema.sql 은 ivfflat lists=32(헤더주석 100) 정의 — 정본 확정 후 명시 migration 으로 정렬.
+- [~] **P3** 리미디에이션(TASK-0143/0149 #15) alembic 마이그레이션 — **DDL 이관·라이브 stamp 완료**, 부트스트랩 제거만 잔여
+  - **완료(TASK-0143)**: alembic 프레임워크 + env.py(.env AGENT_KB_PG_* 재사용) + MIGRATIONS.md.
+  - **완료(TASK-0149)**: 빈 baseline → **라이브 스키마 전체 재현**(확장3+12테이블+인덱스40+(HNSW)+트리거6+FK4+함수/뷰, scratch DB 검증 차이 0). HNSW drift 정본화. **프레임워크 실동작 수정**(Dockerfile baking + `-w /app` — 이전엔 이미지 미포함으로 프로덕션 미동작). **인증 모델 대응**: postgres superuser=로컬 trust 소켓 전용 → `bin/alembic-migrate.sh`(offline `--sql`→postgres 소켓 적용, 인증 변경 0). 라이브 `agent_kb`→`0001_baseline` stamp 완료, `make migrate*` 동작 검증.
+  - **잔여(후속, 위험)**: `_ensure_pg_schema`/`agent_kb_schema.sql` 의 부트스트랩 CREATE/ALTER 를 제거하고 alembic 단독 소유로 전환(현재는 idempotent backstop 공존 — 라이브 36GB, 백업 선행). MySQL `agent_memory` 별도 alembic 환경. `make migrate-new` autogenerate 는 metadata(target_metadata) 미정의라 빈 revision 수기 작성만 지원.
 
 - [x] **P3** 리미디에이션(TASK-0138 #7) planner.py + phantom AGENT_* 플래그 정리 **완료**
   - **해결**: call-graph 도달성 분석으로 `planner.py`(2276줄) 라이브 미도달 확인 후 `from .planner import *` 제거 + 파일 삭제. phantom `AGENT_*` 18개(소비처 0) 삭제, 라이브 소비 플래그는 보존. CODEBASE_MAP 의 `agent_cli` "primary source" 오표기 → agent_core 정정. import smoke + 167 tests + 라이브 ask 통과.
