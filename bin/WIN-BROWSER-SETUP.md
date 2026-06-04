@@ -7,15 +7,21 @@
 ## 왜 필요한가
 
 WSL2 의 Chrome remote-debugging 포트(CDP)는 보안상 **항상 `127.0.0.1` 에만
-바인딩**된다. NAT 모드 WSL2 에서는 WSL → Windows loopback 직결이 불가하므로,
-둘 중 하나의 브리지가 필요하다.
+바인딩**된다. NAT 모드 WSL2 에서는 WSL → Windows loopback 직결이 불가하므로
+브리지가 필요하다. 아래 3가지 중 하나.
 
 | 모드 | 관리자 | WSL 재시작 | 보안 노출면 | 비고 |
 |---|---|---|---|---|
-| **B. mirrored networking** | 불필요 | 필요(1회) | 인바운드 규칙 없음 (loopback 공유) | 가장 안전. WSL 전역 네트워킹에 영향 |
-| **A. NAT + portproxy relay** | 필요(1회) | 불필요 | vEthernet(WSL) 서브넷 한정 | 기존 NAT 환경 유지 시. setup.ps1 이 LAN 노출 차단 |
+| **0. 무권한 auto-relay (권장)** | 불필요 | 불필요 | vEthernet(WSL) IP 한정 | `launch` 가 자동 기동. Windows python 필요. 별도 setup 0 단계 |
+| **A. NAT + portproxy relay** | 필요(1회) | 불필요 | vEthernet(WSL) 서브넷 한정 | 영속 relay 가 필요할 때. 관리자 netsh |
+| **B. mirrored networking** | 불필요 | 필요(1회) | 인바운드 규칙 없음 (loopback 공유) | loopback 공유. WSL 전역 네트워킹 영향 |
 
-`python3 bin/win-browser.py doctor` 가 현재 어떤 모드가 동작 중인지 진단한다.
+**기본은 옵션 0** — `python3 bin/win-browser.py launch` 한 번으로 Chrome 기동 +
+무권한 userspace relay 자동 기동(Windows python 으로 vEthernet IP:9223 → 127.0.0.1:9222
+forward)까지 끝난다. **관리자도 WSL 재시작도 불필요.** Windows python 이 없거나
+영속 relay 를 원하면 옵션 A/B.
+
+`python3 bin/win-browser.py doctor` 가 현재 브리지 상태 + Windows python 가용성을 진단한다.
 
 > **보안 (필독)** — CDP 는 **인증이 없는 브라우저 원격제어 채널**이다. 노출되면 열린
 > 페이지·쿠키·세션 탈취, 임의 JS 실행이 가능하다. 따라서:
@@ -38,6 +44,22 @@ pip install playwright          # 이미 설치돼 있으면 skip
 
 Windows 측에 Chrome 또는 Edge 가 설치돼 있어야 한다 (표준 경로 자동 탐색;
 비표준 경로면 `WIN_BROWSER_CHROME` 환경변수로 `.exe` 지정).
+
+**옵션 0(권장)을 쓰려면 Windows 측 python 이 필요하다** (무권한 relay 구동용 — Microsoft
+Store stub 이 아닌 실제 설치본). `python3 bin/win-browser.py doctor` 의 `win_python`
+필드로 탐지 결과 확인. 비표준 경로면 `WIN_BROWSER_WIN_PYTHON` 으로 지정.
+
+## 옵션 0 — 무권한 auto-relay (권장, 별도 setup 불요)
+
+```bash
+python3 bin/win-browser.py launch --url https://localhost:18080/
+# → Chrome 기동 + 무권한 relay 자동 기동 + 해당 URL navigate. 끝.
+python3 bin/win-browser.py down          # chrome + relay 함께 정리
+```
+
+`launch` 출력의 `"bridge_mode": "relay"` + `"relay": "relay started (... no-admin)"` 가
+무권한 relay 가동을 의미. relay 만 따로 제어하려면 `relay-start` / `relay-stop`.
+relay 는 vEthernet(WSL) IP 에만 바인딩되어 LAN 에 노출되지 않는다.
 
 ## 옵션 A — NAT + portproxy relay (권장)
 

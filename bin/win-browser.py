@@ -28,8 +28,9 @@
 #     (`playwright install` 불요 — 브라우저는 Windows 측 실물 사용).
 #
 # 사용
-#   python3 bin/win-browser.py doctor              # 브리지 진단 + 1회 setup 안내
-#   python3 bin/win-browser.py launch [--url URL]  # Windows Chrome 기동 (idempotent)
+#   python3 bin/win-browser.py doctor              # 브리지 진단 + setup 안내
+#   python3 bin/win-browser.py launch [--url URL]  # Chrome 기동 + 무권한 relay 자동(admin 불요)
+#   python3 bin/win-browser.py relay-start|relay-stop  # 무권한 relay 단독 제어
 #   python3 bin/win-browser.py goto --url URL
 #   python3 bin/win-browser.py click --selector CSS
 #   python3 bin/win-browser.py type  --selector CSS --text STR
@@ -47,6 +48,9 @@
 #   WIN_BROWSER_PROFILE      Windows 측 전용 프로필 경로 (default %LOCALAPPDATA%\\win-browser-cdp)
 #   WIN_BROWSER_CHROME       Chrome/Edge .exe 경로 강제 지정 (미설정 시 표준 경로 탐색)
 #   WIN_BROWSER_ALLOW_ORIGINS  CDP --remote-allow-origins 값 강제 지정 (미설정 시 loopback+relay origin)
+#   WIN_BROWSER_IGNORE_CERT  launch 시 --ignore-certificate-errors (self-signed 로컬 dev, default 1)
+#   WIN_BROWSER_WIN_PYTHON   무권한 relay 용 Windows python.exe 경로 강제 지정 (미설정 시 자동 탐지)
+#   WIN_BROWSER_NO_RELAY     launch 의 무권한 relay 자동 기동 비활성 (1=비활성)
 #   WIN_BROWSER_SHOT_DIR     스크린샷 출력 디렉토리 (default $TMPDIR/win-browser-shots)
 #   WIN_BROWSER_CDP_ENDPOINT 브리지 자동감지 무시하고 HTTP CDP endpoint 강제 지정
 #   WIN_BROWSER_TIMEOUT_MS   기본 동작 timeout (default 15000)
@@ -183,6 +187,145 @@ def find_chrome():
     return None
 
 
+# ── 무권한 userspace relay (Windows python) ──────────────────────────────────
+# NAT 모드 WSL2 에서 admin(netsh portproxy) 없이 브리지를 세우는 경로.
+# Windows python 으로 relay 프로세스를 띄워 vEthernet(WSL) IP:RELAY_PORT →
+# 127.0.0.1:CDP_PORT 로 forward. relay 는 vEthernet IP 에만 바인딩(LAN 노출 회피).
+RELAY_SCRIPT = r'''import asyncio, sys
+LH=sys.argv[1] if len(sys.argv)>1 else "127.0.0.1"
+LP=int(sys.argv[2]) if len(sys.argv)>2 else 9223
+TH="127.0.0.1"; TP=int(sys.argv[3]) if len(sys.argv)>3 else 9222
+async def pipe(r,w):
+    try:
+        while True:
+            d=await r.read(65536)
+            if not d: break
+            w.write(d); await w.drain()
+    except Exception: pass
+    finally:
+        try: w.close()
+        except Exception: pass
+async def handle(cr,cw):
+    try: ur,uw=await asyncio.open_connection(TH,TP)
+    except Exception:
+        try: cw.close()
+        except Exception: pass
+        return
+    await asyncio.gather(pipe(cr,uw),pipe(ur,cw))
+async def main():
+    s=await asyncio.start_server(handle,LH,LP)
+    print(f"relay {LH}:{LP} -> {TH}:{TP}",flush=True)
+    async with s: await s.serve_forever()
+asyncio.run(main())
+'''
+RELAY_MARKER = "win-browser-relay"  # 프로세스 식별 + 스크립트 파일명
+
+
+def _winpath_to_wsl(p):
+    """C:\\X\\Y → /mnt/c/X/Y. wslpath 우선, 실패 시 수동 변환."""
+    p = (p or "").strip()
+    try:
+        out = subprocess.run(["wslpath", "-u", p], capture_output=True, text=True, timeout=5).stdout.strip()
+        if out:
+            return out
+    except Exception:
+        pass
+    m = _re.match(r"^([A-Za-z]):\\(.*)$", p)
+    if m:
+        return "/mnt/" + m.group(1).lower() + "/" + m.group(2).replace("\\", "/")
+    return p
+
+
+def find_win_python():
+    """Windows python.exe 의 WSL 경로 반환 (store stub 제외). 실패 시 None."""
+    forced = os.getenv("WIN_BROWSER_WIN_PYTHON", "").strip()
+    if forced:
+        wp = _winpath_to_wsl(forced) if _WIN_PATH_RE.match(forced) else forced
+        return wp if os.path.isfile(wp) else None
+    # py 런처로 실제 interpreter 경로 해석 (store stub 회피).
+    try:
+        out = subprocess.run(["/mnt/c/Windows/py.exe", "-3", "-c", "import sys;print(sys.executable)"],
+                             capture_output=True, text=True, timeout=8, cwd="/mnt/c").stdout
+        p = _last_win_path(out)
+        if p:
+            wp = _winpath_to_wsl(p)
+            if os.path.isfile(wp):
+                return wp
+    except Exception:
+        pass
+    # where.exe fallback — WindowsApps store stub 제외.
+    try:
+        out = subprocess.run(["/mnt/c/Windows/System32/where.exe", "python.exe"],
+                             capture_output=True, text=True, timeout=8, cwd="/mnt/c").stdout
+        for line in out.replace("\r", "").splitlines():
+            line = line.strip()
+            if line and "WindowsApps" not in line and _WIN_PATH_RE.match(line):
+                wp = _winpath_to_wsl(line)
+                if os.path.isfile(wp):
+                    return wp
+    except Exception:
+        pass
+    return None
+
+
+def _relay_script_winpath():
+    """relay 스크립트를 둘 Windows 경로 (LocalAppData 하위). (winpath, wslpath) 반환."""
+    la = win_localappdata() or r"C:\temp"
+    winpath = la.rstrip("\\") + "\\" + RELAY_MARKER + ".py"
+    return winpath, _winpath_to_wsl(winpath)
+
+
+def relay_start():
+    """무권한 relay 기동. (ok, detail) 반환."""
+    pyexe = find_win_python()
+    if not pyexe:
+        return False, "Windows python 미발견 — pip 아닌 Windows python 설치 또는 WIN_BROWSER_WIN_PYTHON 지정 (또는 admin portproxy/mirrored 사용)"
+    host = win_host_ip()
+    if not host:
+        return False, "win_host_ip 해석 실패"
+    winpath, wslpath = _relay_script_winpath()
+    try:
+        with open(wslpath, "w", encoding="utf-8") as f:
+            f.write(RELAY_SCRIPT)
+    except Exception as e:
+        return False, f"relay 스크립트 기록 실패: {e}"
+    logf = open(os.path.join(tempfile.gettempdir(), "win-browser-relay.log"), "ab")
+    try:
+        subprocess.Popen([pyexe, winpath, host, str(RELAY_PORT), str(CDP_PORT)],
+                         stdout=logf, stderr=logf, start_new_session=True)
+    except Exception as e:
+        return False, f"relay 기동 실패: {e}"
+    return True, f"relay started ({host}:{RELAY_PORT} -> 127.0.0.1:{CDP_PORT}, no-admin)"
+
+
+def relay_stop():
+    """relay 프로세스(win-browser-relay) 종료. killed pid 목록 반환."""
+    if not os.path.isfile(_PS_EXE):
+        return []
+    script = (
+        "Get-CimInstance Win32_Process -Filter \"Name='python.exe' or Name='pythonw.exe'\" "
+        f"| Where-Object {{ $_.CommandLine -like '*{RELAY_MARKER}*' }} "
+        "| ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $_.ProcessId }"
+    )
+    try:
+        r = subprocess.run([_PS_EXE, "-NoProfile", "-Command", script],
+                           capture_output=True, text=True, timeout=30)
+        return [x for x in r.stdout.split() if x.strip().isdigit()]
+    except Exception:
+        return []
+
+
+def wait_for_bridge(timeout_s):
+    """timeout 동안 detect_endpoint 반복. (mode, ep, ver) 또는 (None, None, None)."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        mode, ep, ver = detect_endpoint()
+        if ep:
+            return mode, ep, ver
+        time.sleep(1)
+    return None, None, None
+
+
 def probe_cdp(http_endpoint, timeout=3):
     """CDP HTTP endpoint 의 /json/version 을 조회. 성공 시 dict, 실패 시 None."""
     url = http_endpoint.rstrip("/") + "/json/version"
@@ -256,22 +399,26 @@ def cmd_doctor(_args):
                 f"브리지 동작 중 ({mode} @ {ep}). 'python3 bin/win-browser.py launch --url <URL>' 로 시작."
             )
     else:
+        report["win_python"] = find_win_python()
         report["issues"].append(
             "동작 중인 CDP 브리지 없음 — Windows Chrome 미기동이거나 WSL→Windows relay 미구성."
         )
         report["next_steps"].append(
-            "먼저 'python3 bin/win-browser.py launch' 로 Windows Chrome 을 기동하세요."
+            "'python3 bin/win-browser.py launch [--url URL]' 실행 — Windows Chrome 기동 + "
+            "무권한 userspace relay 자동 기동(admin 불요)까지 한 번에 수행합니다."
         )
+        if not report["win_python"]:
+            report["next_steps"].append(
+                "  ※ 무권한 relay 는 Windows python 필요 — 미발견. Windows python 설치 또는 "
+                "WIN_BROWSER_WIN_PYTHON 지정. 대안은 아래 (A)/(B)."
+            )
         report["next_steps"].append(
-            "그래도 감지 안 되면 1회 브리지 setup 필요 — 아래 둘 중 하나:"
-        )
-        report["next_steps"].append(
-            "  (A) NAT+relay: PowerShell(관리자)에서 bin/win-browser-setup.ps1 실행 "
-            f"(netsh portproxy {RELAY_PORT}→127.0.0.1:{CDP_PORT} + 방화벽 인바운드)."
+            "  (A, 영속) NAT+portproxy: 관리자 PowerShell 에서 bin/win-browser-setup.ps1 "
+            f"(netsh portproxy {RELAY_PORT}→127.0.0.1:{CDP_PORT} + 방화벽, vEthernet 한정)."
         )
         report["next_steps"].append(
             "  (B) mirrored: %USERPROFILE%\\.wslconfig 에 [wsl2] networkingMode=mirrored "
-            "추가 후 'wsl --shutdown' (관리자 불요, WSL 재시작 필요)."
+            "추가 후 'wsl --shutdown' (관리자 불요지만 WSL 재시작 필요 — 현재 세션 종료)."
         )
 
     emit(report)
@@ -284,14 +431,30 @@ def already_up():
     return (mode, ep, ver) if ep else (None, None, None)
 
 
+def _navigate_silent(ep, url):
+    """connect → goto → nav 결과 dict 반환 (emit 안 함). launch 의 단일 emit 용."""
+    pw, browser, page = _connect(ep)
+    try:
+        resp = page.goto(url, wait_until="domcontentloaded", timeout=TIMEOUT_MS)
+        return {"url": url, "status": resp.status if resp else None, "title": page.title()}
+    except Exception as e:
+        return {"url": url, "error": str(e)}
+    finally:
+        try:
+            browser.close()
+        except Exception:
+            pass
+        pw.stop()
+
+
 def cmd_launch(args):
     mode, ep, ver = already_up()
     if ep:
-        emit({"ok": True, "reused": True, "bridge_mode": mode, "endpoint": ep,
-              "browser": ver.get("Browser") if isinstance(ver, dict) else None})
+        out = {"ok": True, "reused": True, "bridge_mode": mode, "endpoint": ep,
+               "browser": ver.get("Browser") if isinstance(ver, dict) else None}
         if args.url:
-            _drive(ep, lambda page: page.goto(args.url, wait_until="domcontentloaded",
-                                              timeout=TIMEOUT_MS))
+            out["navigated"] = _navigate_silent(ep, args.url)
+        emit(out)
         return 0
 
     chrome = find_chrome()
@@ -300,6 +463,9 @@ def cmd_launch(args):
               "hint": "WIN_BROWSER_CHROME 로 .exe 경로 지정 또는 Chrome 설치"})
         return 1
 
+    # Chrome 의 CDP 는 항상 127.0.0.1 에만 바인딩된다 (--remote-debugging-address 무시).
+    # 0.0.0.0 명시는 의도상 LAN 노출 신호이므로 제거 — Windows→WSL 도달은 relay 가
+    # 127.0.0.1:CDP_PORT 로 forward (security review F1). origin 은 구체값으로 scope (F2).
     # Chrome 의 CDP 는 항상 127.0.0.1 에만 바인딩된다 (--remote-debugging-address 무시).
     # 0.0.0.0 명시는 의도상 LAN 노출 신호이므로 제거 — Windows→WSL 도달은 relay 가
     # 127.0.0.1:CDP_PORT 로 forward (security review F1). origin 은 구체값으로 scope (F2).
@@ -312,26 +478,41 @@ def cmd_launch(args):
         "--no-first-run",
         "--no-default-browser-check",
         "--new-window",
-        args.url or "about:blank",
     ]
+    # self-signed 로컬 dev (예: https://localhost:18080 자체서명) 대응 — 기본 on.
+    # 전용 격리 프로필 + 로컬 대상이므로 허용; 비활성은 WIN_BROWSER_IGNORE_CERT=0.
+    if os.getenv("WIN_BROWSER_IGNORE_CERT", "1").strip().lower() not in ("0", "false", "no"):
+        flags.append("--ignore-certificate-errors")
+    flags.append(args.url or "about:blank")
+
     logf = open(os.path.join(tempfile.gettempdir(), "win-browser-launch.log"), "ab")
     subprocess.Popen(flags, stdout=logf, stderr=logf, start_new_session=True)
 
-    # CDP up 대기 (최대 ~12s).
-    deadline = time.time() + 12
-    while time.time() < deadline:
-        time.sleep(1)
-        mode, ep, ver = detect_endpoint()
-        if ep:
-            emit({"ok": True, "reused": False, "bridge_mode": mode, "endpoint": ep,
-                  "browser": ver.get("Browser") if isinstance(ver, dict) else None,
-                  "profile": profile})
-            return 0
+    # 1차 대기: mirrored 모드면 곧바로 localhost 로 도달.
+    mode, ep, ver = wait_for_bridge(8)
 
-    # 기동은 했으나 WSL 에서 도달 불가 → relay 미구성.
+    relay_note = None
+    # NAT 모드라 도달 불가 + relay 미구성 → 무권한 userspace relay 자동 기동 (admin 불요).
+    if not ep and os.getenv("WIN_BROWSER_NO_RELAY", "0").strip().lower() not in ("1", "true", "yes"):
+        ok, detail = relay_start()
+        relay_note = detail
+        if ok:
+            mode, ep, ver = wait_for_bridge(8)
+
+    if ep:
+        out = {"ok": True, "reused": False, "bridge_mode": mode, "endpoint": ep,
+               "browser": ver.get("Browser") if isinstance(ver, dict) else None,
+               "profile": profile, "relay": relay_note}
+        if args.url:
+            out["navigated"] = _navigate_silent(ep, args.url)
+        emit(out)
+        return 0
+
+    # 기동은 했으나 WSL 에서 도달 불가 + relay 자동기동 실패.
     emit({"ok": False, "error": "bridge_unreachable",
-          "hint": "Windows Chrome 은 기동됐지만 WSL 에서 CDP 도달 불가. "
-                  "'python3 bin/win-browser.py doctor' 의 1회 setup(A/B) 안내를 따르세요.",
+          "hint": "Windows Chrome 은 기동됐으나 WSL→CDP 도달 불가. 무권한 relay 자동기동도 실패 "
+                  "— 'doctor' 의 setup(A relay / B mirrored) 안내 참조.",
+          "relay_attempt": relay_note,
           "win_host": win_host_ip(), "relay_port": RELAY_PORT, "cdp_port": CDP_PORT})
     return 1
 
@@ -354,7 +535,25 @@ def cmd_down(_args):
     r = subprocess.run([ps, "-NoProfile", "-Command", script],
                        capture_output=True, text=True, timeout=30)
     killed = [x for x in r.stdout.split() if x.strip().isdigit()]
-    emit({"ok": True, "killed_pids": killed, "marker": marker})
+    # 무권한 relay 프로세스도 함께 종료 (launch 가 자동기동했을 수 있음).
+    relay_killed = relay_stop()
+    emit({"ok": True, "killed_pids": killed, "relay_killed_pids": relay_killed, "marker": marker})
+    return 0
+
+
+def cmd_relay_start(_args):
+    ok, detail = relay_start()
+    if ok:
+        time.sleep(2)
+        mode, ep, ver = detect_endpoint()
+        emit({"ok": True, "detail": detail, "endpoint": ep, "bridge_mode": mode})
+        return 0
+    emit({"ok": False, "error": "relay_start_failed", "detail": detail})
+    return 1
+
+
+def cmd_relay_stop(_args):
+    emit({"ok": True, "relay_killed_pids": relay_stop()})
     return 0
 
 
@@ -590,7 +789,9 @@ def build_parser():
     pl = sub.add_parser("launch", help="Windows Chrome 기동 (idempotent)")
     pl.add_argument("--url", default="")
 
-    sub.add_parser("down", help="본 드라이버가 띄운 인스턴스만 종료")
+    sub.add_parser("down", help="본 드라이버가 띄운 chrome + relay 인스턴스 종료")
+    sub.add_parser("relay-start", help="무권한 userspace relay 만 기동 (admin 불요)")
+    sub.add_parser("relay-stop", help="무권한 relay 종료")
 
     pg = sub.add_parser("goto"); pg.add_argument("--url", required=True)
     pc = sub.add_parser("click"); pc.add_argument("--selector", required=True)
@@ -604,6 +805,7 @@ def build_parser():
 
 HANDLERS = {
     "doctor": cmd_doctor, "launch": cmd_launch, "down": cmd_down,
+    "relay-start": cmd_relay_start, "relay-stop": cmd_relay_stop,
     "goto": cmd_goto, "click": cmd_click, "type": cmd_type, "eval": cmd_eval,
     "text": cmd_text, "screenshot": cmd_screenshot, "run": cmd_run,
 }

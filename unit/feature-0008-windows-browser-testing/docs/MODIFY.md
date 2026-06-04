@@ -29,3 +29,20 @@ source_of_truth: true
 - Rollback Notes: 비파괴·가역. 되돌리려면 본 cycle 의 신규 파일 삭제 + AGENTS.md/TEST.md/
   verify-completion.sh/CLAUDE.md/STATUS.md/DECISIONS.md 의 해당 변경 revert. 런타임 의존
   없음(브리지 setup 미적용 시에도 기존 워크플로 그대로 동작, check #13 은 WARN 만).
+
+## CHG-20260604-0002
+- Date: 2026-06-04
+- Related Requirement: REQ-0002 (AI 자동 구동), 실 환경 검증 완수 (사용자 후속 요청)
+- Summary: **무권한(admin 불요) auto-relay 내장 + 실제 Windows 브라우저 첫 e2e 검증 완수.**
+  지난 cycle 의 교훈(relay=admin netsh, mirrored=WSL재시작 → 둘 다 마찰)을 해소: `launch` 가
+  Windows python 으로 userspace TCP relay(vEthernet IP:9223 → 127.0.0.1:9222)를 자동 기동
+  하여 admin·WSL재시작 없이 브리지를 성립한다. self-signed 로컬 dev 대응 `--ignore-certificate-errors`
+  (기본 on). 실제 Windows Chrome 148 로 DQA 웹 UI 로드 + 로그인 기능 e2e(인증 실패 경로) 검증
+  완료 (TEST.md §3 Run 003/004, artifacts 스크린샷).
+- Files:
+  - 수정: `bin/win-browser.py` — find_win_python/relay_start/relay_stop/wait_for_bridge 추가, `launch` 무권한 relay 자동기동 + `--ignore-certificate-errors` + 단일 emit(_navigate_silent), `down` relay 동반 종료, `relay-start`/`relay-stop` 서브커맨드, doctor win_python 진단.
+  - 수정: `bin/WIN-BROWSER-SETUP.md`(옵션 0 무권한 relay 권장), `playbooks/PB-0008-…`(브리지 자동), feature docs(TEST/REPORT/TASK).
+- Impact: 브리지 진입장벽 제거(admin 불요). 보안 posture 동일 — relay 는 vEthernet IP 에만
+  바인딩(LAN 노출 없음, F1 정합). 기존 런타임/스키마/RBAC 무변경.
+- Rollback Notes: 비파괴·가역. relay 자동기동은 `WIN_BROWSER_NO_RELAY=1` 로 비활성, ignore-cert 는
+  `WIN_BROWSER_IGNORE_CERT=0` 로 비활성. 되돌리려면 본 CHG 의 win-browser.py 변경 revert.

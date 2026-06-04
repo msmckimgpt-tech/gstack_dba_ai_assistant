@@ -44,6 +44,9 @@ source_of_truth: true
 - [x] TASK-0005 워크플로/정책 (TEST.md 분류 · PB-0008 · AGENTS §15.4.1 · check #13)
 - [x] TASK-0006 §18.8 검증 패널 (security + qa) 반영 (must-fix F1/F2/F4/F5 + check#13 false-pos/jinja)
 - [x] TASK-0007 문서 정리 (feature docs · STATUS · DECISIONS ADR · wiki card)
+- [x] TASK-0008 무권한 auto-relay 내장 (launch 자동 relay, admin 불요) + ignore-cert + 단일 emit
+- [x] TASK-0009 실제 Windows 브라우저 e2e 검증 완수 (DQA 로드 + 로그인 기능, TEST.md §3 Run 003/004)
+- [x] TASK-0010 SETUP.md/PB-0008 무권한 relay 반영 + feature docs 갱신
 
 ## 4. In Progress
 - 없음
@@ -55,7 +58,7 @@ source_of_truth: true
 - 드라이버 + 브리지 setup + 워크플로 게이트 + 검증 + 패널 반영 + 문서
 
 ## 7. Next Action
-- verify-completion --pre-commit PASS → commit/push → PR. 실 환경 1회 브리지 setup 후 PB-0008 로 실제 Windows-browser run 1건 기록(후속).
+- verify-completion --pre-commit PASS → commit → PR 병합. 후속: Playwright MCP 통합 검토(사용자 요청), 인증 성공 흐름·Edge·A/B 모드 실측, check #13 strict 격상.
 
 ## 8. Completion Checklist
 - [x] 모든 REQ의 AC가 구현되었다
