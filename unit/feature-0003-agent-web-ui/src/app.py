@@ -8221,7 +8221,7 @@ async def fork_conversation(request: Request) -> JSONResponse:
 
 
 @app.post("/api/conversations/{cid}/duplicate")
-async def duplicate_conversation(cid: str, request: Request) -> JSONResponse:
+def duplicate_conversation(cid: str, request: Request) -> JSONResponse:
     """REQ-20260518-0001: 본인 대화 또는 (.any) 타 사용자 대화를 본 계정 소유의 새 대화로 복제.
 
     fork (`/api/fork_conversation`) 와의 차이:
@@ -8808,7 +8808,7 @@ LIMIT 1
 
 
 @app.post("/api/public/share/{token}/fork")
-async def public_share_fork(token: str, request: Request) -> JSONResponse:
+def public_share_fork(token: str, request: Request) -> JSONResponse:
     """공유 링크 viewer 가 로그인 상태일 때 본인 계정으로 대화 fork.
 
     권한: `conversation.create`. share-token 자체가 source 접근의 grant 역할이므로
@@ -8856,7 +8856,7 @@ async def public_share_fork(token: str, request: Request) -> JSONResponse:
 
 
 @app.post("/api/list_conversations")
-async def list_conversations(request: Request) -> JSONResponse:
+def list_conversations(request: Request) -> JSONResponse:
     try:
         conn = _connect_memory()
     except Exception:
@@ -8871,7 +8871,7 @@ async def list_conversations(request: Request) -> JSONResponse:
 
 
 @app.post("/api/clear_memory")
-async def clear_memory(request: Request) -> JSONResponse:
+def clear_memory(request: Request) -> JSONResponse:
     return _json_error("전체 정리 기능은 제거되었습니다.", 410)
 
 
@@ -10539,7 +10539,7 @@ async def auth_login(request: Request) -> JSONResponse:
 
 
 @app.get("/api/auth/me")
-async def auth_me(request: Request) -> JSONResponse:
+def auth_me(request: Request) -> JSONResponse:
     try:
         conn = _connect_memory()
     except Exception:
@@ -10627,7 +10627,7 @@ async def auth_me_patch(request: Request) -> JSONResponse:
 
 
 @app.post("/api/auth/logout")
-async def auth_logout(request: Request) -> JSONResponse:
+def auth_logout(request: Request) -> JSONResponse:
     token = _sanitize_session_id(request.cookies.get(SESSION_COOKIE, ""))
     try:
         conn = _connect_memory()
@@ -10647,7 +10647,7 @@ async def auth_logout(request: Request) -> JSONResponse:
 
 
 @app.get("/api/admin/me")
-async def admin_me(request: Request) -> JSONResponse:
+def admin_me(request: Request) -> JSONResponse:
     """관리 콘솔 전용 self 정보 endpoint (TASK-0098).
 
     `console.access` permission 보유자만 200 + permissions 포함 응답을 받는다.
@@ -10676,7 +10676,7 @@ async def admin_me(request: Request) -> JSONResponse:
 
 
 @app.get("/api/admin/accounts")
-async def admin_accounts(request: Request) -> JSONResponse:
+def admin_accounts(request: Request) -> JSONResponse:
     try:
         conn = _connect_memory()
     except Exception:
@@ -10849,7 +10849,7 @@ WHERE Id = %s
 # 1 회용 임시 비밀번호로 초기화. self-reset 거부. 임시 비번은 응답에만 1 회 포함되고 평문 저장 금지.
 # 대상 계정의 모든 WebAuthSessions row 는 IsRevoked=1 처리.
 @app.post("/api/admin/accounts/{account_id}/password-reset")
-async def admin_account_password_reset(account_id: int, request: Request) -> JSONResponse:
+def admin_account_password_reset(account_id: int, request: Request) -> JSONResponse:
     if account_id <= 0:
         return _json_error("invalid account_id", 400)
     try:
@@ -10934,7 +10934,7 @@ async def admin_account_password_reset(account_id: int, request: Request) -> JSO
 
 
 @app.delete("/api/admin/accounts/{account_id}")
-async def admin_delete_account(account_id: int, request: Request) -> JSONResponse:
+def admin_delete_account(account_id: int, request: Request) -> JSONResponse:
     if account_id <= 0:
         return _json_error("invalid account_id", 400)
     try:
@@ -11008,7 +11008,7 @@ WHERE Id = %s
 
 
 @app.get("/api/admin/roles")
-async def admin_roles(request: Request) -> JSONResponse:
+def admin_roles(request: Request) -> JSONResponse:
     try:
         conn = _connect_memory()
     except Exception:
@@ -11226,7 +11226,7 @@ WHERE Id = %s
 
 
 @app.delete("/api/admin/roles/{role_id}")
-async def admin_delete_role(role_id: int, request: Request) -> JSONResponse:
+def admin_delete_role(role_id: int, request: Request) -> JSONResponse:
     if role_id <= 0:
         return _json_error("invalid role_id", 400)
     try:
@@ -11293,7 +11293,7 @@ WHERE RoleId = %s
 
 
 @app.get("/api/admin/permissions")
-async def admin_permissions(request: Request) -> JSONResponse:
+def admin_permissions(request: Request) -> JSONResponse:
     try:
         conn = _connect_memory()
     except Exception:
@@ -11314,7 +11314,7 @@ async def admin_permissions(request: Request) -> JSONResponse:
 
 
 @app.get("/api/admin/products")
-async def admin_list_products(request: Request) -> JSONResponse:
+def admin_list_products(request: Request) -> JSONResponse:
     try:
         conn = _connect_memory()
     except Exception:
@@ -11599,7 +11599,7 @@ async def admin_update_product(product_id: int, request: Request) -> JSONRespons
 
 
 @app.delete("/api/admin/products/{product_id}")
-async def admin_delete_product(product_id: int, request: Request) -> JSONResponse:
+def admin_delete_product(product_id: int, request: Request) -> JSONResponse:
     if product_id <= 0:
         return _json_error("invalid product_id", 400)
     try:
@@ -11691,7 +11691,7 @@ _DATABASES_AVAILABLE_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]{0,63}$")
 
 
 @app.get("/api/admin/databases/available")
-async def admin_list_available_databases(request: Request) -> JSONResponse:
+def admin_list_available_databases(request: Request) -> JSONResponse:
     """Live MySQL `SHOW DATABASES` enumeration for the product DB whitelist picker.
 
     - 권한: `console.access` (등록은 별도로 `product.manage` 가 필요한 PUT /api/admin/products/{id}/databases 에서 검사).
@@ -11834,7 +11834,7 @@ VALUES (%s, %s, %s, %s)
 
 
 @app.get("/api/admin/system-prompts")
-async def admin_get_system_prompt(
+def admin_get_system_prompt(
     request: Request,
     scope: str,
     product_id: int | None = None,
@@ -11984,7 +11984,7 @@ async def admin_put_system_prompt(request: Request) -> JSONResponse:
 
 
 @app.get("/api/auth/me/system-prompt")
-async def me_get_system_prompt(request: Request, product_id: int | None = None) -> JSONResponse:
+def me_get_system_prompt(request: Request, product_id: int | None = None) -> JSONResponse:
     try:
         conn = _connect_memory()
     except Exception:
@@ -12625,7 +12625,7 @@ def _audit_clamped_limit(raw: str) -> int:
 
 
 @app.get("/api/admin/usage")
-async def admin_llm_usage(request: Request) -> JSONResponse:
+def admin_llm_usage(request: Request) -> JSONResponse:
     """TASK-0136 (#11): LLM 토큰 사용량/비용 집계 — admin 한정(console.usage.read).
 
     감사 #11/cost gap: ~128 step frontier 호출에 비용 가시성이 전무했다. 모든 LLM 호출이
@@ -12705,7 +12705,7 @@ async def admin_llm_usage(request: Request) -> JSONResponse:
 
 
 @app.get("/api/admin/audits")
-async def list_audit_events(request: Request) -> JSONResponse:
+def list_audit_events(request: Request) -> JSONResponse:
     """REQ-20260519-0001 (TASK-0073 Phase A4): audit event 조회 (filter + cursor).
 
     권한: `audit.read.own` 또는 `audit.read.any`. `.own` 은 `WHERE ActorAccountId=:self
@@ -12770,7 +12770,7 @@ def _audit_export_filter_hash(params: dict) -> str:
 
 
 @app.get("/api/admin/audits/export.csv")
-async def export_audit_events_csv(request: Request) -> Any:
+def export_audit_events_csv(request: Request) -> Any:
     """REQ-20260519-0001 (TASK-0073 Phase A4) + REQ-20260520-0005 (TASK-0090): audit event CSV streaming export.
 
     권한: `audit.export` (admin/dba). `.any` 와 동일 SQL — 전체 row 조회. masked field
@@ -12979,7 +12979,7 @@ async def export_audit_events_csv(request: Request) -> Any:
 
 
 @app.get("/api/admin/audits/actors")
-async def list_audit_actors(request: Request) -> JSONResponse:
+def list_audit_actors(request: Request) -> JSONResponse:
     """REQ-20260519-0001 (TASK-0073 Phase A4): facet — distinct actor 목록."""
     try:
         conn = _connect_memory()
@@ -13019,7 +13019,7 @@ async def list_audit_actors(request: Request) -> JSONResponse:
 
 
 @app.get("/api/admin/audits/resources")
-async def list_audit_resources(request: Request) -> JSONResponse:
+def list_audit_resources(request: Request) -> JSONResponse:
     """REQ-20260519-0001 (TASK-0073 Phase A4): facet — distinct resource_type 목록."""
     try:
         conn = _connect_memory()
@@ -13229,7 +13229,7 @@ async def purge_audit_events(request: Request) -> JSONResponse:
 # match order, and `/{event_id}` would otherwise swallow `/export.csv` /
 # `/actors` / `/resources` with int_parsing 422 (TASK-0073 Phase E hotfix).
 @app.get("/api/admin/audits/{event_id}")
-async def get_audit_event(event_id: int, request: Request) -> JSONResponse:
+def get_audit_event(event_id: int, request: Request) -> JSONResponse:
     """REQ-20260519-0001 (TASK-0073 Phase A4): audit event 단건 detail.
 
     `.own` 보유자는 ActorAccountId/TargetAccountId 가 본인일 때만 조회 가능 (404
@@ -13312,7 +13312,7 @@ def admin_health_attachment_grants(request: Request) -> JSONResponse:
 
 
 @app.get("/api/profile/audits")
-async def list_profile_audit_events(request: Request) -> JSONResponse:
+def list_profile_audit_events(request: Request) -> JSONResponse:
     """REQ-20260520-0004 (TASK-0089): 작업 화면 profile drawer 의 본인 audit row 조회.
 
     권한: `audit.read.own` 또는 `audit.read.any`. **backend 가 scope="own" 강제** —
@@ -13370,7 +13370,7 @@ async def list_profile_audit_events(request: Request) -> JSONResponse:
 
 
 @app.get("/api/profile/audits/{event_id}")
-async def get_profile_audit_event(event_id: int, request: Request) -> JSONResponse:
+def get_profile_audit_event(event_id: int, request: Request) -> JSONResponse:
     """REQ-20260520-0004 (TASK-0089): profile drawer audit detail.
 
     `.own` 강제 (Actor or Target = self) — `.any` 보유자도 본인 row 만. 권한 부족
@@ -13416,21 +13416,21 @@ async def get_profile_audit_event(event_id: int, request: Request) -> JSONRespon
 
 
 @app.get("/api/keywords")
-async def list_keywords_removed(*_args, **_kwargs) -> JSONResponse:
+def list_keywords_removed(*_args, **_kwargs) -> JSONResponse:
     return _json_error("Keyword Management는 제거되었습니다.", 410)
 
 
 @app.post("/api/keywords")
-async def upsert_keyword_removed(*_args, **_kwargs) -> JSONResponse:
+def upsert_keyword_removed(*_args, **_kwargs) -> JSONResponse:
     return _json_error("Keyword Management는 제거되었습니다.", 410)
 
 
 @app.delete("/api/keywords/{keyword_id}")
-async def delete_keyword_removed(keyword_id: int) -> JSONResponse:
+def delete_keyword_removed(keyword_id: int) -> JSONResponse:
     _ = keyword_id
     return _json_error("Keyword Management는 제거되었습니다.", 410)
 
 
 @app.get("/api/keywords/categories")
-async def keyword_categories_removed() -> JSONResponse:
+def keyword_categories_removed() -> JSONResponse:
     return _json_error("Keyword Management는 제거되었습니다.", 410)
