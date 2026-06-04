@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260604-0145b
+- Date: 2026-06-04
+- TASK-Cycle: TASK-0145 (후속 — 동일 livelock 의 두 번째 read-back 불일치), **Major §12.3**
+- Summary: CHG-0145 의 artifact-verify PG read-back 수정 후 라이브 관찰에서, insight 재생성 reason 이 `artifact_missing`(해소됨)에서 `fingerprint_changed`로 전환되며 **재생성·ollama CPU 점유가 지속**됨을 발견. 원인은 동일 cutover 잔재의 두 번째 면: fingerprint/refresh_at 맵을 읽는 `_load_kv_prefix_map` 이 (DROP 된) MySQL `AgentMemoryKv` 를 조회 → 항상 빈 맵 → 저장 fingerprint 없음 → 매 사이클 `fingerprint_changed` 오탐. fingerprint 정본은 PG `agent_runtime.kv`(table_fp 765·schema_fp 15·refresh_at 780). `load_memory_kv` 와 동형으로 PG 분기 추가해 해소.
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/kb_scope.py`: `_load_kv_prefix_map` 에 `AGENT_RUNTIME_READ_BACKEND=postgres` 분기 추가 — `runtime_backend._read_runtime_pg("load_kv_all", …)` 로 PG `agent_runtime.kv` 읽고 prefix 필터(미가용 시 MySQL fallback).
+- 검증: ruff PASS + pytest 173 passed/2 skipped + 라이브 functional(`_load_kv_prefix_map("__global__","table_fp:")` → 765 entries) + 재배포 후 generate_insight 수렴·ollama CPU 급감(라이브).
+
 ## CHG-20260604-0145
 - Date: 2026-06-04
 - TASK-Cycle: TASK-0145, **Major §12.3** — insight worker livelock 근본 수정 + 운영 하드닝

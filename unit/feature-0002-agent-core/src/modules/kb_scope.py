@@ -447,11 +447,30 @@ def _scope_filter_sql_pg(scope_keys: list[str] | None = None) -> tuple[str, list
 
 
 def _load_kv_prefix_map(conn, conversation_id: str, prefix: str) -> dict[str, str]:
-    if not conn:
-        return {}
     cid = str(conversation_id or "").strip()
     head = str(prefix or "").strip()
     if not cid or not head:
+        return {}
+    # 05-27 cutover 이후 KV 정본은 Postgres(agent_runtime.kv)다. MySQL AgentMemoryKv 는
+    # DROP 되어 더 이상 존재하지 않으므로, prefix 맵(schema_fp:/table_fp:/schema_insight_
+    # refresh_at:/table_insight_refresh_at:)도 동일 backend(PG)에서 읽어야 한다. 이 분기가
+    # 없으면 fingerprint 가 항상 빈 맵으로 읽혀 매 사이클 fingerprint_changed 오탐 →
+    # insight 무한 재생성(ollama CPU 연속 점유)을 유발한다. (load_memory_kv 와 동형 패턴.)
+    from .runtime_backend import _read_runtime_pg, AGENT_RUNTIME_READ_BACKEND
+    if AGENT_RUNTIME_READ_BACKEND == "postgres":
+        rows = _read_runtime_pg("load_kv_all", conversation_id=cid)
+        if rows is not None:
+            out: dict[str, str] = {}
+            for row in rows:
+                if not row:
+                    continue
+                key = str(row[0] or "").strip()
+                if not key.startswith(head):
+                    continue
+                out[key] = str(row[1] or "").strip()
+            return out
+        # PG 미가용 → 아래 MySQL fallback (cutover 미완 환경 안전망)
+    if not conn:
         return {}
     cur = conn.cursor()
     try:
