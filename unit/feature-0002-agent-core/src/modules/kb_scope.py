@@ -47,6 +47,7 @@ __all__ = [
     "_rotate_list",
     "_schema_cache_key",
     "_scope_filter_sql",
+    "_scope_filter_sql_pg",
     "_search_cache_key",
     "_should_cache_schema",
     "_tokenize_for_similarity",
@@ -414,6 +415,37 @@ def _scope_filter_sql(scope_keys: list[str] | None = None) -> tuple[str, list[An
     if include_blank_scope:
         return " AND (ScopeKey IS NULL OR ScopeKey = '')", []
     return "", []
+
+
+def _scope_filter_sql_pg(scope_keys: list[str] | None = None) -> tuple[str, list[Any]]:
+    """`_scope_filter_sql` 의 Postgres 방언.
+
+    MySQL 정본 테이블(AgentMemory*)은 PascalCase `ScopeKey` 컬럼을, Postgres 정본
+    테이블(public.fact_entries/rag_documents/rag_objects)은 snake_case `scope_key`
+    컬럼을 쓴다. `AGENT_KB_READ_BACKEND=postgres` 경로의 정확 lookup(예: insight
+    artifact 영속 검증)에서 동일한 scope 후보 의미를 PG 컬럼명으로 표현한다."""
+    scope_keys = scope_keys or _scope_candidates()
+    normalized_scopes: list[str] = []
+    include_blank_scope = False
+    for key in scope_keys:
+        key_str = str(key or "").strip()
+        if key_str == "":
+            include_blank_scope = True
+            continue
+        normalized_scopes.append(_normalize_scope_key(key_str))
+    if normalized_scopes:
+        placeholders = ",".join(["%s"] * len(normalized_scopes))
+        clause = f" AND (scope_key IN ({placeholders})"
+        params: list[Any] = list(normalized_scopes)
+        if include_blank_scope:
+            clause += " OR scope_key IS NULL OR scope_key = ''"
+        clause += ")"
+        return clause, params
+    if include_blank_scope:
+        return " AND (scope_key IS NULL OR scope_key = '')", []
+    return "", []
+
+
 def _load_kv_prefix_map(conn, conversation_id: str, prefix: str) -> dict[str, str]:
     if not conn:
         return {}

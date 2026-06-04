@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260604-0145 [SUBAGENT:general-purpose — insight livelock PG read-back review]
+- Date: 2026-06-04
+- Cycle: TASK-0145 (insight worker livelock 근본 수정 + 운영 하드닝), **Major §12.3** — core 데이터 파이프라인 correctness
+- Outside-voice channel: general-purpose subagent (독립 컨텍스트 — `git diff` + 변경 4개 모듈 + `agent_kb_schema.sql` DDL 대조 검토).
+- Verdict: **PASS** (BLOCKER 0)
+- 확인 결과:
+  - A. PG read-back 가 MySQL 의미를 충실히 미러 — 8컬럼 select 순서/공유 `_apply_*` 인덱싱 일치, `texts` join + `COALESCE` 동형, `public.` schema-qualify 정확(ADR-0027, `_pg_connect_ro` search_path 미설정), `_scope_filter_sql_pg` 가 `IN(...) OR scope_key IS NULL OR ''` 로 `= ANY()` NULL-drop 함정 회피.
+  - B. false-positive 위험 낮음(플래그는 실제 행/비어있지 않은 텍스트일 때만 set, completeness 는 4파트 AND), false-negative 위험은 원본 MySQL 설계와 동일(미회귀).
+  - C. psycopg3(psycopg[binary]>=3.1) — `IN(%s,…)` placeholder 와 평탄화 param list 길이 일치, `dict.keys()` 는 list 리터럴로 spread(안전), 모든 경로(except→return None 포함) finally 에서 cursor/conn close — 누수 없음.
+  - D. fallback(PG 미가용→MySQL 경로)은 이제 예외 surface 로 가시화 — 과거 완전 silent 대비 개선. (SHOULD-FIX: degraded 시 재생성 backoff 는 본 fix scope 밖 → TODOS 이월.)
+  - E. 헬퍼 추출 리팩터는 MySQL 경로 출력 byte-동일(의도된 차이는 예외 로깅뿐).
+  - F. 전역 `_INSIGHT_READBACK_WARNED` 동시성 무관 — worker 는 단일 프로세스/단일 `while True` 루프.
+  - NIT: `_scope_filter_sql_pg`/`_pg_available`/`_pg_connect_ro` 의 `__all__` 등재가 load-bearing(주입 메커니즘) — 셋 다 등재 확인.
+
 ## REV-20260527-0120 [SKIPPED:Minor security hardening — single-file fallback removal]
 - Date: 2026-05-27
 - Cycle: TASK-0120 (reasoning fallback 노출 차단), **Minor §12.3**

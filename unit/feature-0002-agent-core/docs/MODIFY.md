@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260604-0145
+- Date: 2026-06-04
+- TASK-Cycle: TASK-0145, **Major §12.3** — insight worker livelock 근본 수정 + 운영 하드닝
+- Summary: insight worker 의 영속 검증 read-back 이 05-27 cutover 로 DROP 된 MySQL `AgentMemory*` 테이블을 조회(예외 silent swallow)해 매 8s 동일 객체를 무한 재생성하던 livelock 을, 쓰기 정본인 Postgres 에서 read-back 하도록 라우팅해 해소. 부수로 docker 로그 로테이션·리소스 제한·앱 로그 위생(회전+retention)을 추가해 장기 실행 시 WSL2 vmmem/디스크 무한 팽창을 상한.
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/insight.py`: `_load_insight_artifact_states_pg()` 신규(PG `public.fact_entries`/`rag_documents`/`rag_objects` + `texts` join, `_pg_connect_ro()`) + `_load_insight_artifact_states` 가 `AGENT_KB_READ_BACKEND=postgres` 시 PG 분기(미가용 시 MySQL fallback) + row-처리 공유 헬퍼 5종(`_apply_insight_fact_rows`/`_apply_insight_doc_rows`/`_apply_insight_schema_object_rows`/`_apply_insight_table_object_rows`/`_build_insight_object_maps`) 추출 + `_warn_insight_readback_failed`(삼켜지던 예외 1회 surface).
+  - `unit/feature-0002-agent-core/src/modules/kb_scope.py`: `_scope_filter_sql_pg` 신규(snake_case `scope_key` — `_scope_filter_sql` 의 PG 방언) + `__all__` 등재.
+  - `unit/feature-0002-agent-core/src/modules/config.py`: `AGENT_LOG_MAX_BYTES`(기본 50MB) 추가 + `__all__` 등재.
+  - `unit/feature-0002-agent-core/src/modules/utils.py`: `_rotate_log_if_oversized()` + `append_log_line` 가 회전 호출(단일 앱 로그 파일 상한).
+  - `docker-compose.yml`: `x-logging` 앵커(json-file max-size 20m/max-file 5) — 15개 서비스 전부 적용 + 서비스별 `mem_limit`/`pids_limit`(현재 사용량 대비 넉넉한 상한, WSL2 vmmem 억제 겸용; web/insight/agent 는 `x-agent-common` 앵커로 상속).
+  - `bin/gc.sh`: 로그 day-dir(`logs/<YYYY-MM-DD>`) retention 단계 추가(`GC_LOG_RETENTION_DAYS`, 기본 14d).
+- 검증: py_compile + ruff(All checks passed) + pytest 173 passed/2 skipped + 라이브 functional(재생성 반복 3키 `complete=True`) + 라이브 SQL(4파트 PG 실재).
+- Backend/DB schema/RBAC/endpoint/secret: 무변경(읽기 경로 backend 라우팅 + infra limits only).
+
 ## CHG-20260528-T1T5
 - Date: 2026-05-28
 - TASK-Cycle: TASK-0123, **Major §12.3** — Postgres KB 성능 최적화 T1~T5 + PgBouncer/Replica 전체 활성화
