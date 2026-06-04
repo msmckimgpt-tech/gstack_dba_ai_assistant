@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.20.1
+template_version: v3.21.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -2143,3 +2143,77 @@ quota 만료·세션 종료·context rollover 로 중단되면 **그 subagent �
 
 작업 중단 가능성이 있는 장기 위임은 **중간 산출물을 문서(TASK.md/REPORT.md)에
 누적**(§11.1)해, subagent 비재개성과 무관하게 문서 기준으로 재개할 수 있게 한다.
+
+### §22.4 security-guidance plugin — 작업 중 inline 취약점 리뷰 (v2.1.150+)
+
+Claude Code v2.1.150 (Week 22) 부터 제공되는 `security-guidance` plugin 은
+AI 가 코드를 변경하는 동안 **실시간으로** 보안 취약점을 리뷰한다.
+
+**현재 보안 리뷰 워크플로우와의 관계:**
+
+| 채널 | 시점 | 성격 |
+|---|---|---|
+| `/cso` (gstack) | 작업 완료 후 | 최종 게이트 — 보안 전담 리뷰어가 전체 변경 감사 (권위 있는 판단) |
+| `codex review` | 작업 완료 후 | 최종 게이트 — 독립 관점 코드 리뷰 |
+| `security-guidance` plugin | 작업 **중** | 조기 경보 — 변경 즉시 취약점 경고 (자동화된 1차 시그널) |
+
+세 채널은 대체 관계가 아닌 보완 관계다. `security-guidance` 는 **조기 경보**(빠른 피드백·
+방어 선제), `/cso`·`codex review` 는 **최종 게이트** (완성 후 심층 감사, 더 높은 권위).
+
+**등록 방법 (소비자 선택적, v2.1.150+ 필요):**
+
+`.claude/skills/` 디렉토리에 플러그인을 배치하면 Claude Code 세션 시작 시 자동으로 로딩된다:
+
+```bash
+# 스캐폴딩 생성 (소스 직접 확인 후 사용 권장)
+claude plugin init security-guidance --dir .claude/skills/
+```
+
+⚠️ `claude plugin install <name>` 패턴은 외부 마켓플레이스에서 코드를 내려받는다.
+설치 전 반드시 소스 출처·버전·서명을 확인하고, 팀 배포 시 `plugins/ai-delegated-dev-template/`
+경로 파일의 무결성을 repo admin 권한으로 관리한다.
+
+**비활성화:**
+
+```bash
+# 세션 비활성화 (스캐폴딩 제거)
+rm -rf .claude/skills/security-guidance/
+# 또는 플러그인 비활성화 명령 (v2.1.150+ CLI 버전에 따라 다름)
+claude plugin disable security-guidance
+```
+
+**참고:** 실시간 리뷰는 응답 지연을 유발할 수 있다. 고빈도 단순 수정 작업에서는
+비활성화 후 작업 완료 시점에 `/cso` 최종 게이트로 감사하는 것도 유효한 패턴이다.
+`/cso` 는 항상 최종 판단 권위를 가지며 `security-guidance` 가 없는 것을 대체하지 않는다.
+
+### §22.5 worktree 설정 금지 항목 — F0/F1 isolation 정책과의 충돌
+
+Claude Code v2.1.162 에서 신설된 `worktree.bgIsolation` / `worktree.baseRef` 설정은
+§13.2.7 F0 · F1 binding 정책과 충돌할 수 있다.
+
+**`worktree.bgIsolation: "none"` — 사용 금지**
+
+이 설정은 배경 세션이 별도 worktree 없이 **현재 working copy(`./repo`)를 직접 편집**
+하도록 허용한다. 이는 다음 정책과 정면 충돌한다:
+
+- §13.2.7 **F0** (주 위반): consumer main checkout 의 `repo/` 직접 수정 금지
+- §13.2 **F1** binding: `repo/` mutation 은 전용 ai/* worktree + branch 경유 필수
+
+**소비자 설정에서 반드시 제거하거나 기본값(worktree 격리) 유지:**
+
+```json
+// .claude/settings.json — 다음 설정은 금지
+{
+  "worktree": {
+    "bgIsolation": "none"   // ← 이 설정 금지: F0/F1 정책 위반
+  }
+}
+```
+
+**감지:** `grep -r '"bgIsolation"' .claude/settings.json` 으로 수동 확인 가능.
+향후 `bin/verify-completion.sh` 에 자동 감지 check 추가 예정.
+
+**`worktree.baseRef: "fresh" | "head"` — 사용 가능 (격리 유지 시)**
+
+bgIsolation 이 기본값(격리 활성) 상태에서 baseRef 는 배경 세션의 worktree 기준 커밋을
+지정하는 설정으로, F0/F1 정책과 무충돌이다. 필요 시 소비자 설정에서 사용 가능.
