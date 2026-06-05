@@ -70,7 +70,7 @@
       <header class="topbar">
         <div class="topbar-info">
           <h2 class="chat-title">관리 콘솔</h2>
-          <span class="chat-subtitle">계정 · 역할 · 제품 · 시스템 프롬프트 운영</span>
+          <span class="chat-subtitle">계정 · 역할 · 제품 · 설정</span>
         </div>
         <div class="topbar-tools"></div>
         <div class="topbar-end">
@@ -162,7 +162,7 @@
             <div class="admin-list-pagination" id="accountPagination"></div>
           </div>
           <div class="admin-detail-col" id="accountDetail">
-            <div class="admin-detail-empty">좌측에서 계정을 선택하세요.</div>
+            <div class="admin-detail-empty">계정을 선택하세요.</div>
           </div>
         </div>
       </section>
@@ -173,7 +173,7 @@
         <header class="admin-pane-head">
           <div>
             <div class="drawer-label">Products</div>
-            <h2>제품 관리 — DB 접근 묶음</h2>
+            <h2>제품 관리</h2>
           </div>
           <div class="admin-pane-head-right">
             <button type="button" class="btn-primary" id="newProductBtn">+ 새 제품</button>
@@ -208,7 +208,7 @@
             ></div>
           </div>
           <div class="admin-detail-col" id="productDetail">
-            <div class="admin-detail-empty">좌측에서 제품을 선택하거나 "+ 새 제품"을 누르세요.</div>
+            <div class="admin-detail-empty">제품을 선택하세요.</div>
           </div>
         </div>
       </section>
@@ -254,7 +254,7 @@
             ></div>
           </div>
           <div class="admin-detail-col" id="roleDetail">
-            <div class="admin-detail-empty">좌측에서 역할을 선택하거나 "+ 새 역할"을 누르세요.</div>
+            <div class="admin-detail-empty">역할을 선택하세요.</div>
           </div>
         </div>
       </section>
@@ -312,7 +312,7 @@
             </div>
           </div>
           <div class="admin-detail-col" id="auditDetail">
-            <div class="admin-detail-empty">좌측에서 감사 이벤트를 선택하세요.</div>
+            <div class="admin-detail-empty">이벤트를 선택하세요.</div>
           </div>
         </div>
       </section>
@@ -381,7 +381,7 @@
                   <span class="admin-list-row-title">
                     <span class="admin-list-row-name">전역 시스템 프롬프트</span>
                   </span>
-                  <span class="admin-list-row-meta">최상위 base. Product / Role / Account 가 뒤에 누적.</span>
+                  <span class="admin-list-row-meta">모든 대화 기본값</span>
                 </span>
               </button>
             </div>
@@ -390,7 +390,7 @@
             <article class="admin-settings-panel is-active" data-settings-panel="global-prompt">
               <header class="admin-settings-panel-head">
                 <h3>전역 시스템 프롬프트</h3>
-                <p class="admin-settings-panel-hint">모든 대화의 최상위 base 가 되는 시스템 프롬프트. Product / Role / Account scope 가 이 본문 뒤에 누적된다. 비워두고 적용하면 코드 상수 fallback 으로 회귀한다.</p>
+                <p class="admin-settings-panel-hint">모든 대화의 기본 프롬프트입니다. 비워두고 적용하면 기본값으로 되돌아갑니다.</p>
               </header>
               <div class="admin-settings-panel-body" id="globalPromptEditorMount">
                 <!-- buildSystemPromptEditor({scope:'global'}) 가 마운트 -->
@@ -405,7 +405,7 @@
     <!-- REQ-20260518-0006: commit bar 가 admin-column 의 하단 — sidebar 와 분리되어 workspace 하단에만 표시 -->
     <footer class="admin-commit-bar" id="adminCommitBar">
       <div class="admin-commit-info">
-        <span class="admin-commit-count" id="commitBarCount">변경사항 0건</span>
+        <span class="admin-commit-count" id="commitBarCount">변경 없음</span>
         <span class="admin-commit-detail" id="commitBarDetail"></span>
       </div>
       <div class="admin-commit-actions">
@@ -417,6 +417,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260602-task-0136-usage"></script>
+  <script src="/static/admin.js?v=20260605-tmi-cleanup"></script>
 </body>
 </html>

@@ -95,11 +95,11 @@ function confirmBulkAction({ entity, action, count, danger = false }) {
   const verb = actionLabel(action);
   const summary = `${count}${unit} ${verb}`;
   if (!danger || count < CONFIRM_TYPED_THRESHOLD) {
-    return window.confirm(`${summary} pending 반영. 적용 전에는 되돌릴 수 있습니다. 계속할까요?`);
+    return window.confirm(`${summary} 반영하시겠습니까?`);
   }
   const expected = String(count);
   const typed = window.prompt(
-    `${summary} pending 반영 — 위험 작업입니다.\n확인을 위해 ${expected} 를 정확히 입력하세요:`
+    `위험 작업: ${expected} 을(를) 입력하세요:`
   );
   return typed === expected;
 }
@@ -120,7 +120,7 @@ function runBulkActionWithPartialFail({ entity, ids, action, applyFn, canTargetR
     showToast(baseMsg);
   } else {
     // skipped chip 은 styles.css .toast-skipped 와 짝
-    const skipChip = ` (${skipped.length}${unit} 권한 부족·보호 row 제외)`;
+    const skipChip = ` (${skipped.length}${unit} 제외)`;
     showToast(baseMsg + skipChip, false);
   }
   return { applied, skipped };
@@ -169,7 +169,7 @@ function renderCrossPageBanner({ entity, selected, visibleIds, totalCount, onCle
   const clearAllBtn = document.createElement("button");
   clearAllBtn.type = "button";
   clearAllBtn.className = "tool-btn";
-  clearAllBtn.textContent = "전체 페이지 선택 해제";
+  clearAllBtn.textContent = "모두 해제";
   clearAllBtn.addEventListener("click", onClearAll);
   banner.appendChild(clearAllBtn);
   const showCurOnlyBtn = document.createElement("button");
@@ -699,7 +699,7 @@ async function loadUsage() {
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const num = (v) => (Number(v) || 0).toLocaleString();
   const tbl = (rows, cols) => {
-    if (!rows || !rows.length) return "<p style='color:#888;'>데이터 없음</p>";
+    if (!rows || !rows.length) return "<p style='color:#888;'>없음</p>";
     const head = cols.map((c) => `<th style='text-align:left;padding:4px 12px;'>${esc(c.label)}</th>`).join("");
     const body = rows.map((r) => "<tr>" + cols.map((c) => `<td style='padding:4px 12px;border-top:1px solid #eee;'>${esc(c.fmt ? c.fmt(r[c.key]) : r[c.key])}</td>`).join("") + "</tr>").join("");
     return `<table style='border-collapse:collapse;width:100%;max-width:560px;'><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
@@ -724,7 +724,7 @@ async function loadUsage() {
       { key: "calls", label: "호출", fmt: num }, { key: "total_tokens", label: "토큰", fmt: num },
     ]);
   } catch (e) {
-    if (summaryEl) summaryEl.textContent = "사용량 조회 실패 (권한 또는 저장소 오류)";
+    if (summaryEl) summaryEl.textContent = "조회 실패";
   }
 }
 
@@ -1007,7 +1007,7 @@ function renderAuditList() {
   }
 
   if (items.length === 0) {
-    listEl.innerHTML = '<div class="admin-list-empty">조건에 맞는 감사 이벤트가 없습니다.</div>';
+    listEl.innerHTML = '<div class="admin-list-empty">이벤트 없음</div>';
     return;
   }
   // Build rows.
@@ -1047,7 +1047,7 @@ function renderAuditDetail(id) {
   if (!el) return;
   const item = adminState.audit.items.find((it) => String(it.id) === String(id));
   if (!item) {
-    el.innerHTML = '<div class="admin-detail-empty">좌측에서 감사 이벤트를 선택하세요.</div>';
+    el.innerHTML = '<div class="admin-detail-empty">이벤트를 선택하세요.</div>';
     return;
   }
   // ChangeJson + MaskedFields 안전 직렬화 + HTML escape (TASK-0058 share.html 패턴 답습).
@@ -1142,7 +1142,7 @@ function renderDashboard() {
 
   const heading = document.createElement("div");
   heading.className = "admin-dashboard-pending-head";
-  heading.textContent = "Pending 변경 미리보기";
+  heading.textContent = "미리보기";
   listEl.appendChild(heading);
 
   adminState.pending.accounts.forEach((patch, id) => {
@@ -1179,7 +1179,7 @@ function renderDashboard() {
     const row = document.createElement("div");
     row.className = "admin-dashboard-pending-row";
     const count = Array.isArray(draft) ? draft.length : 0;
-    row.textContent = `제품 DB · ${base ? base.name : `#${id}`} · ${count} schema (메타 4 종 제외)`;
+    row.textContent = `제품 DB · ${base ? base.name : `#${id}`} · ${count} schema`;
     listEl.appendChild(row);
   });
   adminState.pending.systemPrompts.forEach((entry, key) => {
@@ -1252,7 +1252,7 @@ function renderAccountList() {
   if (!all.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.innerHTML = "<strong>표시할 계정이 없습니다.</strong><span>검색어 또는 필터를 변경하세요.</span>";
+    empty.innerHTML = "<strong>계정 없음</strong><span>검색 조건을 변경하세요</span>";
     listEl.appendChild(empty);
     return;
   }
@@ -1323,7 +1323,7 @@ function renderAccountList() {
     const meta = document.createElement("div");
     meta.className = "admin-list-row-meta";
     const role = adminState.roles.find((r) => Number(r.id) === Number(merged.role_id));
-    meta.textContent = `${role ? role.name : "(역할 없음)"} · 대화 ${account.conversation_count || 0}`;
+    meta.textContent = `${role ? role.name : "—"} · ${account.conversation_count || 0}`;
 
     main.append(title, meta);
 
@@ -1566,7 +1566,7 @@ function renderAccountDetail() {
   if (merged._delete) {
     const note = document.createElement("div");
     note.className = "admin-detail-note";
-    note.textContent = "이 계정은 삭제 대기 상태입니다. 적용 시 soft delete 됩니다. ";
+    note.textContent = "삭제 대기 중. 모두 적용 시 삭제됩니다.";
     const undo = document.createElement("button");
     undo.type = "button";
     undo.className = "tool-btn";
@@ -1703,7 +1703,7 @@ function renderAccountDetail() {
     deleteBtn.className = "btn-secondary danger";
     deleteBtn.textContent = "삭제 pending";
     deleteBtn.addEventListener("click", () => {
-      if (!window.confirm(`${base.username} 계정을 삭제 대기열에 넣을까요? (적용 전 취소 가능)`)) return;
+      if (!window.confirm(`${base.username} 계정을 삭제할까요? (취소 가능)`)) return;
       setAccountPending(adminState.selectedAccountId, { _delete: true });
       renderAccountDetail();
       renderAccountList();
@@ -1727,7 +1727,7 @@ function renderAccountDetail() {
     resetBtn.id = "adminPasswordResetBtn";
     resetBtn.className = "btn-secondary";
     resetBtn.textContent = "비밀번호 초기화";
-    resetBtn.title = "임시 비밀번호를 생성하고 대상 계정의 기존 세션을 모두 종료합니다. 임시 비밀번호는 1회만 표시됩니다.";
+    resetBtn.title = "임시 비밀번호 생성 및 세션 종료. 1회만 표시됨.";
     resetBtn.addEventListener("click", () => triggerPasswordResetFlow(base));
     actions.appendChild(resetBtn);
   }
@@ -1740,8 +1740,7 @@ async function triggerPasswordResetFlow(account) {
   if (!account || !account.id) return;
   if (!window.confirm(
     `${account.username} 계정의 비밀번호를 초기화하시겠습니까?\n\n` +
-    "임시 비밀번호가 생성되며 대상 계정의 기존 세션이 모두 종료됩니다. " +
-    "임시 비밀번호는 modal 에서 1 회만 표시되므로 즉시 복사해 안전하게 전달해야 합니다."
+    "임시 비밀번호가 생성되며 세션이 종료됩니다. 복사 후 안전하게 전달하세요."
   )) {
     return;
   }
@@ -1777,7 +1776,7 @@ function showTemporaryPasswordModal(payload) {
 
   const note = document.createElement("p");
   note.className = "admin-modal-note";
-  note.textContent = "이 비밀번호는 1 회만 표시됩니다. 이 창을 닫으면 다시 확인할 수 없으므로 즉시 복사해 안전한 채널로 대상자에게 전달해 주세요. 대상 계정은 다음 로그인 시 즉시 비밀번호를 변경해야 합니다.";
+  note.textContent = "일회용 비밀번호입니다. 지금 바로 복사해 전달하세요.";
   modal.appendChild(note);
 
   const passwordRow = document.createElement("div");
@@ -1793,7 +1792,7 @@ function showTemporaryPasswordModal(payload) {
       await navigator.clipboard.writeText(String(payload.temporary_password || ""));
       showToast("임시 비밀번호를 클립보드에 복사했습니다.");
     } catch (_err) {
-      showToast("자동 복사에 실패했습니다. 직접 선택해 복사해 주세요.", true);
+      showToast("자동 복사 실패. 직접 복사하세요.", true);
     }
   });
   passwordRow.append(code, copyBtn);
@@ -1845,7 +1844,7 @@ function renderRoleList() {
   if (!total) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.innerHTML = "<strong>표시할 역할이 없습니다.</strong><span>검색어를 바꾸거나 새 역할을 생성하세요.</span>";
+    empty.innerHTML = "<strong>역할 없음</strong><span>새 역할을 생성하세요</span>";
     listEl.appendChild(empty);
     return;
   }
@@ -1930,8 +1929,8 @@ function buildRoleRow(roleKey, visibleIdx = -1, visibleRoleIds = []) {
   const meta = document.createElement("div");
   meta.className = "admin-list-row-meta";
   meta.textContent = merged._isNew
-    ? "저장되지 않음"
-    : `멤버 ${merged.member_count || 0}명 · 권한 ${(merged.permission_codes || []).length}개`;
+    ? "미저장"
+    : `${merged.member_count || 0}명 · ${(merged.permission_codes || []).length}개`;
 
   main.append(title, meta);
 
@@ -2054,7 +2053,7 @@ function renderRoleDetail() {
   if (!adminState.selectedRoleId) {
     const empty = document.createElement("div");
     empty.className = "admin-detail-empty";
-    empty.textContent = "좌측에서 역할을 선택하거나 \"+ 새 역할\"을 누르세요.";
+    empty.textContent = "역할을 선택하세요.";
     paneEl.appendChild(empty);
     return;
   }
@@ -2081,7 +2080,7 @@ function renderRoleDetail() {
   const metaEl = document.createElement("div");
   metaEl.className = "admin-meta";
   if (merged._isNew) {
-    metaEl.textContent = "저장 적용 시 새 역할이 생성됩니다.";
+    metaEl.textContent = "모두 적용 시 생성됩니다.";
   } else {
     metaEl.innerHTML = `
       <span>멤버 ${merged.member_count || 0}명</span>
@@ -2104,7 +2103,7 @@ function renderRoleDetail() {
   if (merged._delete) {
     const note = document.createElement("div");
     note.className = "admin-detail-note";
-    note.textContent = "이 역할은 삭제 대기 상태입니다. ";
+    note.textContent = "삭제 대기 중. ";
     const undo = document.createElement("button");
     undo.type = "button";
     undo.className = "tool-btn";
@@ -2258,7 +2257,7 @@ function renderRoleDetail() {
     const discardBtn = document.createElement("button");
     discardBtn.type = "button";
     discardBtn.className = "btn-secondary";
-    discardBtn.textContent = "이 신규 역할 버리기";
+    discardBtn.textContent = "신규 역할 버리기";
     discardBtn.addEventListener("click", () => {
       adminState.pending.newRoles.delete(adminState.selectedRoleId);
       adminState.selectedRoleId = null;
@@ -2272,7 +2271,7 @@ function renderRoleDetail() {
       const revertBtn = document.createElement("button");
       revertBtn.type = "button";
       revertBtn.className = "btn-secondary";
-      revertBtn.textContent = "이 역할 pending 취소";
+      revertBtn.textContent = "변경 취소";
       revertBtn.addEventListener("click", () => {
         adminState.pending.roles.delete(Number(adminState.selectedRoleId));
         refreshPendingUI();
@@ -2287,7 +2286,7 @@ function renderRoleDetail() {
       deleteBtn.className = "btn-secondary danger";
       deleteBtn.textContent = "삭제 pending";
       deleteBtn.addEventListener("click", () => {
-        if (!window.confirm(`${merged.name} 역할을 삭제 대기열에 넣을까요?`)) return;
+        if (!window.confirm(`${merged.name} 역할을 삭제할까요?`)) return;
         setRolePending(adminState.selectedRoleId, { _delete: true });
         renderRoleDetail();
         renderRoleList();
@@ -2303,12 +2302,12 @@ function renderRoleDetail() {
 
 function refreshPendingUI() {
   const total = pendingChangeCount();
-  $("commitBarCount").textContent = `변경사항 ${total}건`;
+  $("commitBarCount").textContent = `${total}건 pending`;
   $("tabCountAccounts").textContent = `${adminState.accounts.length}`;
   $("tabCountRoles").textContent = `${adminState.roles.length + adminState.pending.newRoles.size}`;
   const tabCountProducts = $("tabCountProducts");
   if (tabCountProducts) tabCountProducts.textContent = `${adminState.products.length}`;
-  $("adminPendingSummary").textContent = total ? `pending 변경 ${total}건` : "pending 변경 0건";
+  $("adminPendingSummary").textContent = total ? `${total}건 pending` : "변경 없음";
   $("adminCommitBar").classList.toggle("has-pending", total > 0);
   $("commitApplyBtn").disabled = total === 0;
   $("commitCancelBtn").disabled = total === 0;
@@ -2482,9 +2481,9 @@ async function applyAllPending() {
 
   if (failures.length) {
     const first = failures[0];
-    showToast(`${failures.length}건 실패 (성공 ${ok}건): ${first.error?.message || ""}`, true);
+    showToast(`${failures.length}건 실패, ${ok}건 성공`, true);
   } else {
-    showToast(`${ok}건을 적용했습니다.`);
+    showToast(`${ok}건 적용됨`);
   }
 
   try {
@@ -2496,7 +2495,7 @@ async function applyAllPending() {
 
 function cancelAllPending() {
   if (pendingChangeCount() === 0) return;
-  if (!window.confirm("pending 변경사항을 모두 취소하시겠습니까?")) return;
+  if (!window.confirm("변경사항을 취소하시겠습니까?")) return;
   adminState.pending.accounts.clear();
   adminState.pending.roles.clear();
   adminState.pending.newRoles.clear();
@@ -2513,7 +2512,7 @@ function cancelAllPending() {
   renderRoleList();
   renderRoleDetail();
   renderProductDetail();
-  showToast("pending 변경사항을 취소했습니다.");
+  showToast("변경사항 취소됨");
 }
 
 /* ── Load ────────────────────────────────────────────────────────────── */
@@ -2821,13 +2820,13 @@ function renderProductDetail() {
   if (!adminState.selectedProductId) {
     const empty = document.createElement("div");
     empty.className = "admin-detail-empty";
-    empty.textContent = "좌측에서 제품을 선택하거나 \"+ 새 제품\"을 누르세요.";
+    empty.textContent = "제품을 선택하세요.";
     paneEl.appendChild(empty);
     return;
   }
   const product = adminState.products.find((p) => Number(p.id) === Number(adminState.selectedProductId));
   if (!product) {
-    paneEl.textContent = "제품 정보를 찾을 수 없습니다.";
+    paneEl.textContent = "제품 없음";
     return;
   }
   const canManage = can("product.manage");
@@ -2951,11 +2950,11 @@ function renderProductDetail() {
   dbSection.className = "admin-detail-section";
   const dbTitle = document.createElement("div");
   dbTitle.className = "admin-detail-section-title";
-  dbTitle.textContent = "접근 가능 데이터베이스 (스키마 Whitelist)";
+  dbTitle.textContent = "접근 가능 데이터베이스";
   dbSection.appendChild(dbTitle);
   const dbHint = document.createElement("div");
   dbHint.className = "admin-detail-hint";
-  dbHint.textContent = "이 제품 대화에서 agent 가 조회/실행 가능한 스키마만 나열됩니다. 목록에 없는 스키마는 agent 가 접근할 수 없습니다. 메타데이터 4 종(information_schema/mysql/sys/performance_schema)은 정책상 항상 접근 가능하며 변경할 수 없습니다.";
+  dbHint.textContent = "Agent가 접근 가능한 스키마. 메타데이터(information_schema 등)는 고정됩니다.";
   dbSection.appendChild(dbHint);
 
   // pending 우선, 다음으로 fresh draft, 최후로 서버 값.
@@ -3014,14 +3013,14 @@ function renderProductDetail() {
       const chip = document.createElement("span");
       chip.className = "admin-chip is-locked";
       chip.title = meta.present
-        ? "메타데이터 스키마 — 정책상 항상 접근 가능 (변경 불가)"
-        : "메타데이터 스키마 — 현 서버에는 없지만 정책상 항상 허용";
+        ? "메타데이터 (고정)"
+        : "메타데이터 (고정, 미감지)";
       const txt = document.createElement("span");
       txt.textContent = meta.schema_name;
       chip.appendChild(txt);
       const tag = document.createElement("small");
       tag.className = "admin-chip-locked-hint";
-      tag.textContent = "항상 접근";
+      tag.textContent = "고정";
       chip.appendChild(tag);
       chipWrap.appendChild(chip);
     });
@@ -3050,7 +3049,7 @@ function renderProductDetail() {
     if (!draft.length) {
       const empty = document.createElement("div");
       empty.className = "admin-meta";
-      empty.textContent = "(사용자 schema 가 없습니다 — 메타데이터 4 종만 접근 가능)";
+      empty.textContent = "(스키마 없음)";
       chipWrap.appendChild(empty);
     }
   };
@@ -3098,8 +3097,8 @@ function renderProductDetail() {
       productId: Number(product.id),
       roleId: null,
       accountId: null,
-      title: "제품 시스템 프롬프트 (Product Scope)",
-      hint: "이 제품의 모든 대화에 누적 적용됩니다.",
+      title: "제품 프롬프트",
+      hint: "이 제품에만 적용됩니다.",
       fixedProductId: Number(product.id),
     });
     paneEl.appendChild(promptSection);
@@ -3112,13 +3111,13 @@ function renderProductDetail() {
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
     deleteBtn.className = "btn-secondary danger";
-    deleteBtn.textContent = "이 제품 삭제";
+    deleteBtn.textContent = "삭제";
     deleteBtn.addEventListener("click", async () => {
       if (!window.confirm(`${product.name} 제품을 삭제할까요? (참조 대화가 있으면 실패합니다)`)) return;
       try {
         await apiFetch(`/api/admin/products/${Number(product.id)}`, { method: "DELETE" });
         adminState.selectedProductId = null;
-        showToast("제품을 삭제했습니다.");
+        showToast("삭제됨");
         await loadAdminData();
       } catch (error) {
         showToast(error.message || "삭제 실패", true);
@@ -3130,10 +3129,10 @@ function renderProductDetail() {
 }
 
 function startNewProduct() {
-  const key = (window.prompt("product_key (A-Z/0-9/_, 영문대문자 시작, 1~32자)") || "").trim().toUpperCase();
+  const key = (window.prompt("Product Key (A-Z0-9_, 32자 이내)") || "").trim().toUpperCase();
   if (!key) return;
   if (!/^[A-Z][A-Z0-9_]{0,31}$/.test(key)) {
-    showToast("product_key 형식이 올바르지 않습니다.", true);
+    showToast("Key 형식 오류", true);
     return;
   }
   const name = (window.prompt("표시 이름", key) || "").trim();
@@ -3201,8 +3200,8 @@ function buildRoleProductCard({ role, product, perm, disabled, onToggle }) {
     const editor = buildSystemPromptEditor({
       scope: "role",
       roleId: Number(role.id),
-      title: `${product.name} 시스템 프롬프트 (Role × Product)`,
-      hint: `${product.name} 제품의 ${role.name || role.key} 역할에만 누적 적용됩니다.`,
+      title: `${product.name} × ${role.name || role.key} 프롬프트`,
+      hint: `이 제품과 역할에만 적용됩니다.`,
       fixedProductId: Number(product.id),
     });
     promptBody.appendChild(editor);
@@ -3220,14 +3219,14 @@ function buildRoleProductCardList(role, disabled, opts = {}) {
   if (!embed) {
     const head = document.createElement("div");
     head.className = "admin-detail-section-title";
-    head.textContent = "제품별 접근 + 시스템 프롬프트";
+    head.textContent = "제품별 접근";
     wrap.appendChild(head);
   }
   const hint = document.createElement("div");
   hint.className = "admin-detail-hint";
   hint.textContent = embed
-    ? "각 제품의 접근 권한을 토글하고, 펼쳐서 그 제품×역할 한정 system prompt 를 편집할 수 있습니다."
-    : "각 제품의 접근 권한을 토글하고, 펼쳐서 그 제품×역할 한정 system prompt 를 편집할 수 있습니다. 변경은 footer '모두 적용' 으로 일괄 저장됩니다.";
+    ? "제품별 접근 및 프롬프트 편집"
+    : "제품별 접근 및 프롬프트 편집. 변경은 일괄 저장됩니다.";
   wrap.appendChild(hint);
 
   const dynamicPerms = dynamicProductPermissions();
@@ -3245,7 +3244,7 @@ function buildRoleProductCardList(role, disabled, opts = {}) {
   if (!products.length) {
     const empty = document.createElement("div");
     empty.className = "admin-meta";
-    empty.textContent = "(등록된 제품이 없습니다)";
+    empty.textContent = "(없음)";
     wrap.appendChild(empty);
   } else {
     products.forEach((product) => {
@@ -3265,7 +3264,7 @@ function buildRoleProductCardList(role, disabled, opts = {}) {
     const info = document.createElement("span");
     info.className = "admin-product-card-info";
     const name = document.createElement("strong");
-    name.textContent = "전 Product 공통";
+    name.textContent = "전체 제품";
     const meta = document.createElement("small");
     meta.textContent = "Product 와 무관하게 이 역할에 누적 적용";
     info.append(name, meta);
@@ -3276,8 +3275,8 @@ function buildRoleProductCardList(role, disabled, opts = {}) {
     const editor = buildSystemPromptEditor({
       scope: "role",
       roleId: Number(role.id),
-      title: "전 Product 공통 — 시스템 프롬프트 (Role)",
-      hint: "Product 와 무관하게 이 역할 구성원 전부에게 누적 적용됩니다.",
+      title: "전체 제품 프롬프트",
+      hint: "모든 제품에 적용됩니다.",
       fixedProductId: 0, // 0 = product 무관 (Phase 1B catalog 의 NULL 매칭)
     });
     body.appendChild(editor);
@@ -3298,12 +3297,12 @@ function buildAccountProductOverrideList(account, disabled, opts = {}) {
   if (!embed) {
     const head = document.createElement("div");
     head.className = "admin-detail-section-title";
-    head.textContent = "제품별 접근 (Override)";
+    head.textContent = "제품별 접근";
     wrap.appendChild(head);
   }
   const hint = document.createElement("div");
   hint.className = "admin-detail-hint";
-  hint.textContent = "역할의 기본 접근 권한을 계정 단위로 override 합니다. '상속' 은 역할의 grant 를 따릅니다.";
+  hint.textContent = "역할 권한을 계정별로 재설정합니다.";
   wrap.appendChild(hint);
 
   const dynamicPerms = dynamicProductPermissions();
@@ -3324,7 +3323,7 @@ function buildAccountProductOverrideList(account, disabled, opts = {}) {
   if (!products.length) {
     const empty = document.createElement("div");
     empty.className = "admin-meta";
-    empty.textContent = "(등록된 제품이 없습니다)";
+    empty.textContent = "(없음)";
     wrap.appendChild(empty);
     return wrap;
   }
@@ -3398,11 +3397,11 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
     row.className = "admin-inline-row";
     const label = document.createElement("span");
     label.className = "field-label";
-    label.textContent = "Product 범위";
+    label.textContent = "제품 범위";
     productSelect = document.createElement("select");
     const optNone = document.createElement("option");
     optNone.value = "";
-    optNone.textContent = "(Product 무관)";
+    optNone.textContent = "(모든 제품)";
     productSelect.appendChild(optNone);
     products.forEach((p) => {
       const opt = document.createElement("option");
@@ -3417,7 +3416,7 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
 
   const noticeEl = document.createElement("div");
   noticeEl.className = "admin-detail-hint";
-  noticeEl.textContent = "변경사항은 하단 '모두 적용' 버튼으로 일괄 저장됩니다. 빈 문자열로 저장하면 해당 스코프의 프롬프트가 삭제됩니다.";
+  noticeEl.textContent = "변경은 하단에서 일괄 저장됩니다.";
   section.appendChild(noticeEl);
 
   const textarea = document.createElement("textarea");
@@ -3444,7 +3443,7 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
     const pendingEntry = getSystemPromptPending({ scope, productId: pid, roleId, accountId });
     if (pendingEntry) {
       textarea.value = pendingEntry.content;
-      metaEl.textContent = "(pending 변경 — 아직 저장되지 않음)";
+      metaEl.textContent = "(미저장 변경)";
       return;
     }
     const params = new URLSearchParams({ scope });
@@ -3459,7 +3458,7 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
         metaEl.textContent = `마지막 수정: ${formatDateTime(row.updated_at)}`;
       } else {
         textarea.value = "";
-        metaEl.textContent = "(저장된 프롬프트 없음)";
+        metaEl.textContent = "(없음)";
       }
     } catch (error) {
       metaEl.textContent = `조회 실패: ${error.message || error}`;
@@ -3478,7 +3477,7 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
       accountId,
       content: textarea.value,
     });
-    metaEl.textContent = "(pending 변경 — 아직 저장되지 않음)";
+    metaEl.textContent = "(미저장 변경)";
   });
 
   return section;
@@ -3581,7 +3580,7 @@ async function initialize() {
   // New role
   $("newRoleBtn").addEventListener("click", () => {
     if (!can("console.manage") || !can("role.create")) {
-      showToast("역할 생성 권한이 없습니다.", true);
+      showToast("권한 없음", true);
       return;
     }
     startNewRole();
@@ -3603,7 +3602,7 @@ async function initialize() {
   if (newProductBtn) {
     newProductBtn.addEventListener("click", () => {
       if (!can("product.manage")) {
-        showToast("제품 관리 권한이 없습니다.", true);
+        showToast("권한 없음", true);
         return;
       }
       startNewProduct();
@@ -3661,7 +3660,7 @@ async function initialize() {
   // REQ-20260518-0006: refreshAdminBtn / adminLogoutBtn 제거 — 사용자 직접 테스트에서 거의 사용 안 되는 것으로 확인.
   // backToAppBtn 만 유지 (작업 화면 ↔ 관리 콘솔 빠른 전환). 로그아웃은 작업 화면의 프로필 drawer 에서 가능.
   $("backToAppBtn").addEventListener("click", () => {
-    if (pendingChangeCount() > 0 && !window.confirm("pending 변경사항이 있습니다. 이동하면 모두 사라집니다. 진행할까요?")) return;
+    if (pendingChangeCount() > 0 && !window.confirm("저장되지 않은 변경사항이 있습니다. 계속하시겠습니까?")) return;
     document.body.classList.add("is-leaving");
     setTimeout(() => { window.location.href = "/"; }, 150);
   });
@@ -3683,6 +3682,6 @@ async function initialize() {
 }
 
 initialize().catch((error) => {
-  showToast(error.message || "관리 콘솔 초기화에 실패했습니다.", true);
+  showToast(error.message || "콘솔 로드 실패", true);
 });
 
