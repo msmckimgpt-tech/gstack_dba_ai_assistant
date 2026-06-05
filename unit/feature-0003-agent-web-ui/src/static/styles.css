@@ -68,12 +68,27 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
 
+/* ─── 페이지 전환 애니메이션 ─────────────────────────────────────── */
+@keyframes page-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
 body {
   font-family: var(--font);
   font-size: 14px;
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  animation: page-fade-in 200ms ease forwards;
+  transition: opacity 150ms ease;
+}
+
+/* 페이지 이동 직전 fade-out */
+body.is-leaving {
+  opacity: 0 !important;
+  transition: opacity 150ms ease !important;
+  animation: none !important;
 }
 
 button  { cursor: pointer; font: inherit; border: none; background: none; }
@@ -2147,7 +2162,10 @@ a { color: inherit; }
   z-index: 195;
   background: rgba(0,0,0,.22);
   backdrop-filter: blur(2px);
+  opacity: 1;
+  transition: opacity 200ms ease;
 }
+.drawer-bg.hidden { opacity: 0; pointer-events: none; }
 
 .drawer {
   position: fixed;
@@ -2164,6 +2182,13 @@ a { color: inherit; }
   flex-direction: column;
   gap: 16px;
   overflow-y: auto;
+  transform: translateX(0);
+  transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1), opacity 200ms ease;
+}
+.drawer.hidden {
+  transform: translateX(100%);
+  opacity: 0;
+  pointer-events: none;
 }
 
 .drawer-header {
@@ -3835,11 +3860,8 @@ a { color: inherit; }
   color: var(--text-1, #111827);
   line-height: 1.4;
 }
-.step-reason {
-  font-size: 11px;
-  color: var(--text-muted, #6b7280);
-  line-height: 1.4;
-}
+/* TMI: step-reason은 시각적으로 숨기고 hover title(브라우저 네이티브 툴팁)으로 전달 */
+.step-reason { display: none; }
 .step-sql-wrap {
   margin-top: 4px;
   border-radius: 6px;

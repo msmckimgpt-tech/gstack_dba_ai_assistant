@@ -3662,7 +3662,8 @@ async function initialize() {
   // backToAppBtn 만 유지 (작업 화면 ↔ 관리 콘솔 빠른 전환). 로그아웃은 작업 화면의 프로필 drawer 에서 가능.
   $("backToAppBtn").addEventListener("click", () => {
     if (pendingChangeCount() > 0 && !window.confirm("pending 변경사항이 있습니다. 이동하면 모두 사라집니다. 진행할까요?")) return;
-    window.location.href = "/";
+    document.body.classList.add("is-leaving");
+    setTimeout(() => { window.location.href = "/"; }, 150);
   });
 
   window.addEventListener("beforeunload", (ev) => {

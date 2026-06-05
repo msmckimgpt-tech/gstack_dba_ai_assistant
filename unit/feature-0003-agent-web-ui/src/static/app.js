@@ -2345,8 +2345,9 @@ function buildStepDetailEl(step, idx, { compact = false } = {}) {
   const wrap = document.createElement("div");
   wrap.className = "step-detail";
 
-  // tool badge
-  if (step.tool) {
+  // tool badge — step 사이드 패널에서는 itemHeader에 이미 표시되므로 생략.
+  // progress-strip 같은 다른 호출처에서는 유지됨(compact mode).
+  if (step.tool && compact) {
     const badge = document.createElement("span");
     badge.className = "step-tool-badge";
     badge.textContent = toolLabel(step.tool);
@@ -2359,13 +2360,7 @@ function buildStepDetailEl(step, idx, { compact = false } = {}) {
   title.textContent = step.work || step.intent || step.tool || `단계 ${(idx || 0) + 1}`;
   wrap.appendChild(title);
 
-  // reason
-  if (step.reason) {
-    const reason = document.createElement("div");
-    reason.className = "step-reason";
-    reason.textContent = step.reason;
-    wrap.appendChild(reason);
-  }
+  // reason — TMI 개선: 텍스트 노출 제거, 상위 item.title로 hover 툴팁 전달됨
 
   if (!compact) {
     // SQL 블록
@@ -2438,6 +2433,9 @@ function _renderStepSidePanelBody(pending) {
   const body = document.getElementById("stepSidePanelBody");
   const badge = document.getElementById("stepSidePanelBadge");
   if (!body) return;
+  // 재렌더 전 스크롤 위치 스냅샷 — 사용자가 위로 스크롤했으면 자동 이동 안 함
+  const scrollBottom = body.scrollHeight - body.scrollTop - body.clientHeight;
+  const wasAtBottom = scrollBottom < 80;
   body.innerHTML = "";
   const steps = Array.isArray(pending && pending.steps) ? pending.steps : [];
   if (badge) badge.textContent = steps.length ? `${steps.length}단계` : "";
@@ -2451,6 +2449,8 @@ function _renderStepSidePanelBody(pending) {
   steps.forEach((step, idx) => {
     const item = document.createElement("div");
     item.className = "step-side-panel-item";
+    // reason이 있으면 item 자체에 title(브라우저 툴팁)으로 붙임 (TMI 개선)
+    if (step.reason) item.title = step.reason;
     const itemHeader = document.createElement("div");
     itemHeader.className = "step-side-panel-item-header";
     const numEl = document.createElement("span");
@@ -2467,8 +2467,8 @@ function _renderStepSidePanelBody(pending) {
     item.appendChild(buildStepDetailEl(step, idx, { compact: false }));
     body.appendChild(item);
   });
-  // 항상 최하단으로 스크롤
-  body.scrollTop = body.scrollHeight;
+  // 사용자가 아래쪽에 있을 때만 최하단으로 스크롤
+  if (wasAtBottom) body.scrollTop = body.scrollHeight;
 }
 
 function formatElapsed(ms) {
@@ -5311,7 +5311,8 @@ async function initialize() {
     });
   });
   openAdminBtn.addEventListener("click", () => {
-    window.location.href = "/admin";
+    document.body.classList.add("is-leaving");
+    setTimeout(() => { window.location.href = "/admin"; }, 150);
   });
   newConversationBtn.addEventListener("click", () => {
     // TASK-0048: 빈 대화 누적 방지. backend row 는 첫 메시지 전송 시 lazy 생성된다.
@@ -5356,10 +5357,16 @@ async function initialize() {
     }
   });
   // Send button hover — send mode toggle tooltip
+  // UX fix: timer로 hover gap 문제 해결 (버튼↔툴팁 사이 빈 공간에서 mouseleave 발생해도 툴팁 유지)
   if (sendBtn) {
+    let _sendTipLeaveTimer = null;
+    const _removeSendTip = () => {
+      const tip = document.getElementById("sendModeTooltip");
+      if (tip) tip.remove();
+    };
     sendBtn.addEventListener("mouseenter", () => {
-      const existing = document.getElementById("sendModeTooltip");
-      if (existing) return;
+      clearTimeout(_sendTipLeaveTimer);
+      if (document.getElementById("sendModeTooltip")) return;
       const tip = document.createElement("div");
       tip.id = "sendModeTooltip";
       tip.className = "send-mode-tooltip";
@@ -5370,14 +5377,15 @@ async function initialize() {
         ev.stopPropagation();
         state.sendMode = state.sendMode === "enter" ? "ctrl+enter" : "enter";
         try { localStorage.setItem(SEND_MODE_LS_KEY, state.sendMode); } catch (_) {}
-        tip.remove();
+        _removeSendTip();
       });
+      tip.addEventListener("mouseenter", () => clearTimeout(_sendTipLeaveTimer));
+      tip.addEventListener("mouseleave", () => _removeSendTip());
       sendBtn.parentElement.style.position = "relative";
       sendBtn.parentElement.appendChild(tip);
     });
-    sendBtn.addEventListener("mouseleave", (ev) => {
-      const tip = document.getElementById("sendModeTooltip");
-      if (tip && !tip.contains(ev.relatedTarget)) tip.remove();
+    sendBtn.addEventListener("mouseleave", () => {
+      _sendTipLeaveTimer = setTimeout(_removeSendTip, 120);
     });
   }
   loadMoreBtn.addEventListener("click", () => {
