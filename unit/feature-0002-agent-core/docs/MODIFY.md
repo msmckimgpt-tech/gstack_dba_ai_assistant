@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260605-0151
+- Date: 2026-06-05
+- TASK-Cycle: TASK-0151, **Major §12.3** — DB 조회 사용자 경험 개선 (환각·반복질문·첨부무시·사고미확장 해소)
+- Summary: 사용자 보고 6건의 root cause 를 라이브로 규명·수정. (1) 05-27 cutover 로 DROP 된 MySQL 을 조회하던 스키마 grounding 을 PG 정본으로 전환해 "KNOWN SCHEMAS" 섹션을 복구(환각 차단). (2) base SYSTEM_PROMPT 을 "answer-not-explore" 철학에서 "grounding 없으면 발견·검증, 추측 금지, 0-rows 환각 가드, 첨부 리뷰 우선, 애매하면 가정명시 후 되묻기"로 전면 개편. (3) 멀티턴 윈도우에서 초기 user 의도가 tool 결과에 밀려 탈락하던 것을 user 메시지 보존으로 완화 + 인사/메타가 origin 으로 고정되는 버그 차단. (4) 첨부 text cap 초과 시 최신 파일이 무음 누락되던 정렬 버그 수정 + 리뷰 우선순위 INSTRUCTION 강화.
+- Files:
+  - `unit/feature-0002-agent-core/src/agent_core.py`: `_extract_schema_desc`/`_global_insight_rows_pg`/`_kb_read_is_pg` 신규; `_load_schema_list`·`_load_relevant_table_insights` PG 정본 분기(+MySQL fallback 보존); base `SYSTEM_PROMPT` 전면 개편; `_build_knowledge_context` 헤더 과신 문구 완화; `_format_core_messages` 추출 + `_assemble_core_messages` user-turn 보존(`_USER_TURN_KEEP=8`); `_build_attachment_context_section` text INSTRUCTION 리뷰 우선순위 명시; run_agent origin 설정에 저정보 가드.
+  - `unit/feature-0002-agent-core/src/modules/domain.py`: `_is_low_information_request` 신규 + `_should_refresh_origin_request` 의 "빈 origin=무조건 shift"를 "저정보면 보류(continue)"로 보정.
+  - `unit/feature-0003-agent-web-ui/src/app.py`: `_prepare_text_inline_attachments` 의 `ORDER BY Id ASC`→`DESC`(+표시 reverse) — count cap 초과 시 최신 첨부 보존.
+  - `unit/feature-0002-agent-core/tests/test_db_query_ux.py`: 신규 회귀 테스트 12건.
+- 라이브 운영 변경(코드 외): `WebSystemPrompts` scope=global Content 를 새 SYSTEM_PROMPT 으로 갱신(백업 보관) — 기존 row 가 있으면 startup seed 가 덮어쓰지 않으므로 배포 시 1회 수동 갱신 필요.
+
 ## CHG-20260604-0147
 - Date: 2026-06-04
 - TASK-Cycle: TASK-0147, **Major §12.3** — insight worker degraded read-back backoff (livelock 재발 방지)

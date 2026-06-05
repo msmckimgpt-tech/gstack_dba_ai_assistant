@@ -28,6 +28,13 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 
 ## Category: pattern
 
+### LRN-20260605-0001 — DB cutover 의 read-back 누락은 워커뿐 아니라 "사용자 대면 grounding 경로"까지 조용히 무력화한다
+- Source: feature-0002 DB 조회 UX 개선 (TASK-0151, 2026-06-05)
+- Pattern: 05-27 MySQL→PG cutover 가 쓰기는 PG 로 옮기고 DROP 까지 했지만, **여러 read 경로가 DROP 된 MySQL 테이블을 `try/except: pass` 로 조회**해 빈 결과를 반환하고 있었다. TASK-0145 는 insight worker 면(livelock)을 고쳤고, TASK-0151 은 **사용자 질의의 스키마 grounding(`_load_schema_list`/`_load_relevant_table_insights` → "KNOWN SCHEMAS" 주입)** 면을 고쳤다. 둘 다 같은 원인의 다른 얼굴이다.
+- 교훈: (1) **대규모 cutover 후에는 "쓰기 복구"만이 아니라 모든 read-back/조회 callsite 를 grep 으로 전수 점검**해야 한다 — 특히 `except: pass` 로 감싼 raw `AgentMemory*` SQL 은 실패해도 침묵하므로 "동작하는 것처럼" 보인다. (2) **침묵 fallback(빈 결과)이 가장 위험**하다: grounding 이 비면 LLM 이 환각하지만 에러는 안 나서 모니터링에 안 잡힌다. (3) prompt 가 "이 (외부 주입) 섹션을 신뢰하고 검증하지 말라"고 지시할 때, 그 섹션을 채우는 데이터 경로가 죽으면 prompt 의 강한 지시가 환각을 증폭한다 — **데이터 경로와 prompt 의 신뢰 가정은 한 쌍으로 검증**해야 한다.
+- 잔존 점검 대상: `kb_retrieval._load_existing_schema_insights`/`_load_existing_table_insight_map` 도 죽은 `AgentMemoryFacts` VIEW 를 조회한다(insight worker dedup 경로 — 현재 사용자 대면 영향은 없으나 동일 버그 인스턴스, 후속 정리 대상).
+- Applies to: cutover/마이그레이션 후속 작업 + 외부 컨텍스트 주입에 의존하는 모든 LLM 경로.
+
 ### LRN-20260415-0002 — Web UI 설계는 검증된 상용 앱 패턴을 우선 따른다
 - Source: feature-0003 UI 개편 작업 (2026-04-15)
 - Pattern: 채팅형 AI 도구 UI는 ChatGPT/Claude 검증 패턴인 `[Topbar | Sidebar + Chat Pane]` 2단 고정 레이아웃을 기본으로 한다. 상태 설명, 마케팅 카피, eyebrow 레이블은 기능적으로 필요할 때만 노출한다. 성공 레퍼런스를 먼저 파악하고 따르는 것이 사용자 피드백 반복보다 효율적이다.

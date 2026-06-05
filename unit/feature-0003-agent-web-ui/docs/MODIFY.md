@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260605-0151
+- Date: 2026-06-05
+- TASK-Cycle: TASK-0151, **Major §12.3** — 첨부 text inline cap 정렬 버그 수정 (DB 조회 UX 개선의 web 면)
+- Summary: text 첨부가 count cap(20)을 초과하는 대화에서 가장 오래된 20개만 inline 주입되고 방금 첨부한 최신 파일이 조용히 누락되던 정렬 버그를 수정. 최신 cap개를 보존하도록 DESC 선별 후 표시 순서는 시간순으로 복원.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`: `_prepare_text_inline_attachments` 의 `ORDER BY Id ASC LIMIT %s` → `ORDER BY Id DESC LIMIT %s`, 선별 후 `inline_entries.reverse()` 추가. AccountId IDOR 스코프(`AND AccountId = %s` + per-row 검증) 및 64KB size cap 무변경.
+
 ## CHG-20260528-0124
 - Date: 2026-05-28
 - Related Requirement: TASK-0124 (REQ-20260528-0124, **Minor** §12.3 — 관리 콘솔 RBAC 권한 정합 및 폐기 권한 정리)

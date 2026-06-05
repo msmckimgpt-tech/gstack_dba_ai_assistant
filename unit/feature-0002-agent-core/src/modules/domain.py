@@ -124,6 +124,40 @@ def _is_meta_state_check_request(text: str) -> bool:
     return ("?" in raw) or ("확인" in raw) or ("맞" in raw)
 
 
+_GREETING_CUES = ("안녕", "하이", "hi", "hello", "ㅎㅇ", "반가", "처음", "테스트", "test")
+
+
+def _is_low_information_request(text: str) -> bool:
+    """origin_request 로 삼기에 부적절한 저정보 발화(인사/메타/극단 짧음)인지 판단한다.
+
+    이런 발화가 origin_request 로 고정되면 이후 실제 질문과의 유사도가 낮아져 매 턴
+    origin 이 흔들리고 멀티턴 맥락이 유실된다("앞 내용을 왜 또 묻나"). origin 설정을
+    보류시키는 가드로 사용한다. 데이터 작업 신호가 있으면 저정보가 아니다.
+    """
+    t = str(text or "").strip()
+    if not t:
+        return True
+    if _is_meta_state_check_request(t):
+        return True
+    lowered = t.lower()
+    if any(tok in lowered for tok in (
+        "조회", "집계", "통계", "샘플", "테이블", "컬럼", "쿼리", "리뷰",
+        "분석", "데이터", "매출", "회원", "주문", "가입", "결제", "유저",
+        "사용자", "상품", "방문", "접속", "수익", "count", "select",
+    )):
+        return False
+    meaningful = re.findall(r"[가-힣A-Za-z0-9_]+", t)
+    if not meaningful:
+        # 의미 토큰이 전혀 없음(인사 자모 ㅇㅇ/ㅋㅋ, 문장부호, 이모지 등) → 저정보.
+        return True
+    # 순수 인사/잡담(인사 큐 + 짧음)만 저정보로 본다. 짧은 한국어 실질 질문
+    # ('매출?', '회원수', 'DAU')은 의미 토큰이 있으므로 저정보가 아니다 — 길이
+    # 기반 컷오프는 짧은 한글 명사를 오판하므로 사용하지 않는다.
+    if len(t) <= 12 and any(cue in lowered for cue in _GREETING_CUES):
+        return True
+    return False
+
+
 def _should_refresh_origin_request(prev_origin: str, new_request: str, kv: dict[str, str] | None) -> str:
     """주제 전환 여부를 판단한다.
 
@@ -141,7 +175,9 @@ def _should_refresh_origin_request(prev_origin: str, new_request: str, kv: dict[
     if not new_request:
         return "continue"
     if not prev_origin:
-        return "shift"
+        # 첫 발화가 인사/메타 등 저정보면 origin 설정을 보류(continue) — 다음 실질
+        # 발화를 origin 으로. 저정보 인사가 origin 으로 고정되는 버그 방지.
+        return "continue" if _is_low_information_request(new_request) else "shift"
 
     # ── 안전한 fast-path: 상태를 오염시키지 않는 발화 유형 ──
     if _is_meta_state_check_request(new_request):

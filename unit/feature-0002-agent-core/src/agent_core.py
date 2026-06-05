@@ -58,7 +58,7 @@ from modules.memory import (
 )
 from modules.model_catalog import is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_vision
 from modules.llm import llm_classify_origin_shift, llm_generate_topic, messages_for_provider
-from modules.domain import _derive_topic, _should_refresh_origin_request
+from modules.domain import _derive_topic, _is_low_information_request, _should_refresh_origin_request
 from modules.render import normalize_step_result_summary
 from modules.tools import (
     TOOL_DEFINITIONS,
@@ -80,42 +80,44 @@ PLACEHOLDER_TOPIC = "새 대화"
 #  시스템 프롬프트
 # ══════════════════════════════════════════════════════════════════
 
-SYSTEM_PROMPT = """You are a MySQL DBA expert assistant. Your job is to answer the user's question with data, not to explore.
+SYSTEM_PROMPT = """You are an expert MySQL data analyst assistant for non-technical users. Your job is to understand what the user actually wants — even when their request is short, vague, or in casual Korean — and answer it with correct, real data from the database.
 
-## CRITICAL DIRECTIVE
-**Execute SQL first, explore later (only if needed).** You have a limited step budget. Every search_tables or describe_table call that could have been an execute_sql is a wasted step. When the KNOWN SCHEMAS section below provides candidate tables, write SQL immediately.
+## PRIME DIRECTIVE: BE CORRECT, NOT JUST FAST
+Never present a table name, column name, or number you have not verified against the real database. A confident answer built on a guessed schema is the single worst failure — it destroys user trust. When in doubt, look it up with a tool. Verifying once is never a wasted step. The step budget is generous; correctness comes before saving a tool call.
 
-## CORE RULES
-1. Never fabricate data. Only present rows returned by execute_sql.
-2. Always use `schema`.`table` format in SQL.
-3. Your goal is to produce one or a few execute_sql calls that directly answer the question, then write the final answer.
-4. Table and column names are in English. Translate Korean keywords in the user's question to likely English identifiers before acting.
+## GROUNDING — KNOW THE SCHEMA BEFORE YOU QUERY
+1. If a "KNOWN SCHEMAS & TABLES" section is present below and clearly lists a table relevant to the question, trust it and go straight to execute_sql.
+2. If that section is ABSENT, EMPTY, or does NOT contain a clearly matching table for the question, you do NOT yet know the schema — discover it before writing SQL:
+   - Use search_tables to find candidate tables by keyword.
+   - Use describe_table to confirm the exact columns before writing the query.
+   Translate Korean keywords to likely English identifiers, then VERIFY them. Never invent table or column names.
+3. Discovery budget (stay efficient): before the first execute_sql for a target, use at most ~2 search_tables and ~1 describe_table per table; do not re-describe a table you already inspected in this run. Once names are confirmed, write the SQL.
 
-## STRATEGY (in priority order)
-1. **Use the KNOWN SCHEMAS & TABLES section below as your primary source.** If it lists tables relevant to the question, go straight to execute_sql against those tables. Do NOT call search_tables when a plausible table is already listed.
-2. **Prefer execute_sql from the start.** A well-formed SELECT against a likely table is more productive than exploration. If your SQL fails with an unknown column/table error, read the error and adjust — do not fall back to broad searching.
-3. **describe_table is only for resolving ambiguity** about columns when execute_sql has failed or when the insight text is too vague to form a correct query. Limit to at most one describe_table per target table per run.
-4. **search_tables is a last resort** — use it only when the knowledge section is empty for the relevant domain. Never call search_tables twice with the same keyword, and never call it after you already have a candidate table.
-5. **get_sample_rows is almost never needed** — only use it when column content format (e.g., JSON structure) cannot be inferred from describe_table.
+## HANDLING RESULTS — NEVER FABRICATE
+- Only present rows actually returned by execute_sql. Format numbers with commas (1,234,567).
+- If execute_sql returns 0 rows, do NOT assume the value is zero/none or invent data. Re-check the table/column/filter (describe_table, or sample the table), or tell the user no matching data was found and why.
+- If execute_sql errors (unknown column/table), read the error and fix it via describe_table/search_tables — do not retry the same guessed name repeatedly.
 
-## IDEAL FLOW EXAMPLE
-User asks about recent orders → KNOWN SCHEMAS lists `ecommerce.orders` → You immediately call execute_sql with `SELECT ... FROM `ecommerce`.`orders` WHERE ...` → Get data → Write answer. Total: 1 tool call.
+## UNDERSTAND INTENT — THINK, DON'T JUST OBEY LITERALLY
+- Users are often non-experts. Infer the real intent generously instead of reading words hyper-literally. When it is cheap and clearly helpful, expand on the obvious adjacent need (e.g. a "count" question often also wants the breakdown or recent trend).
+- Reuse everything already established in this conversation (CONVERSATION CONTEXT, prior turns, confirmed facts). NEVER re-ask the user for something they already told you.
+- When a request is genuinely ambiguous or underspecified: pick the most reasonable interpretation, state that assumption in one line, answer it, THEN offer a short clarifying question or alternative interpretations. One good answer plus "did you mean X or Y?" beats a wrong silent guess — but do not stall with questions when a reasonable interpretation exists.
 
-## ANTI-PATTERNS (avoid these — each one wastes your limited steps)
-- Chaining search_tables → describe_table → describe_table → ... before any execute_sql. This wastes steps.
-- Re-exploring a table you already described in an earlier step of this run.
-- Calling tools just to "verify" — if you have enough information to write SQL, write it.
-- Using search_tables when KNOWN SCHEMAS already lists relevant tables.
-- Describing a table before attempting execute_sql — try the query first, fix errors after.
+## ATTACHED FILES — REVIEW THEM AS THE SUBJECT
+If an "ATTACHED FILE CONTENTS" or "ATTACHED FILES" section is present and the user asks you to review / explain / fix / compare / optimize the attached SQL, code, or data:
+- Treat the attached content as the PRIMARY subject of your answer.
+- Do NOT run execute_sql against your own database unless the user explicitly asks you to run or validate the query there. KNOWN SCHEMAS are background, not the answer source for a review task.
+- These attachment instructions take precedence over the general "query the database" guidance whenever the user's request is about the attached files.
 
-## SQL PATTERNS
+## SQL CONVENTIONS
+- Always use `schema`.`table` format. This assistant has read-only access — SELECT statements only.
 - Cross-schema JOIN:
   SELECT d.name, COUNT(*) cnt FROM `data_schema`.`t` a JOIN `config_schema`.`d` d ON a.id = d.id GROUP BY d.name ORDER BY cnt DESC
 - JSON array column:
   SELECT jt.col, COUNT(*) cnt FROM `s`.`t` CROSS JOIN JSON_TABLE(json_col, '$[*]' COLUMNS(col INT PATH '$.key')) jt GROUP BY jt.col ORDER BY cnt DESC
 
 ## OUTPUT
-Once execute_sql has returned the data you need, stop calling tools and write the final answer in Korean Markdown. Format numbers with commas (1,234,567). Use tables when comparing rows.
+Once you have the data you need, stop calling tools and write the final answer in Korean Markdown. Lead with the answer, use tables for comparisons, format numbers with commas, and state any assumptions you made. Keep any clarifying question short and at the end.
 """
 
 
@@ -420,6 +422,10 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int], accou
         lines.append(
             "**INSTRUCTION**: The file contents above are the actual raw content of the attached files. "
             "Read them directly to answer the user's question. "
+            "If the user asks to review / explain / fix / compare / optimize these files (e.g. 쿼리 리뷰, "
+            "코드 검토), the attached content is the PRIMARY subject — answer about it directly and do NOT "
+            "run execute_sql against your own database unless the user explicitly asks you to run or validate "
+            "the query there. This takes precedence over the general 'query the database' guidance. "
             "Files marked '★ 이번 요청 신규 첨부' were just attached in this message. "
             "Files marked '◆ 이전 세션 첨부' are from earlier in this conversation and remain available. "
             "Do NOT ask the user to paste the file contents — they are already provided above."
@@ -681,69 +687,175 @@ def compose_system_prompt(
 #  지식 주입 (Knowledge Injection)
 # ══════════════════════════════════════════════════════════════════
 
-def _load_schema_list(mem_conn, max_total: int = 2000) -> str:
-    """스키마별 테이블 수와 인사이트 DB의 도메인 설명을 로드한다."""
-    if not mem_conn:
-        return ""
+def _extract_schema_desc(raw: str) -> str:
+    """schema_insight 텍스트에서 표시용 도메인 설명을 추출한다.
 
-    cur = mem_conn.cursor()
-    parts: list[str] = []
+    MySQL/PG 공용. "domain:" 이후 설명을 우선 추출하고, 없으면 레거시 한국어
+    " / " 분할 형식을 폴백으로 사용한다.
+    """
+    raw = str(raw or "")
+    desc = ""
+    lower = raw.lower()
+    if "domain:" in lower:
+        idx = lower.index("domain:")
+        after = raw[idx + len("domain:"):].strip()
+        segments = after.split(" / ")
+        if len(segments) >= 2:
+            desc = segments[0].strip() + " — " + segments[1].strip()[:80]
+        else:
+            desc = segments[0].strip()[:100]
+    elif " / " in raw:
+        segments = raw.split(" / ")
+        desc = segments[0].strip()[:100]
+    return desc
 
-    # 스키마별 테이블 수 집계
-    schema_counts: dict[str, int] = {}
+
+def _global_insight_rows_pg(
+    like_pattern: str,
+    *,
+    with_text: bool,
+    tokens: list[str] | None = None,
+    limit: int | None = None,
+) -> list[tuple] | None:
+    """PG `public.fact_entries` 에서 __global__/common scope insight fact 를 읽는다.
+
+    05-27 MySQL→PG cutover 로 insight fact 의 정본이 PG 로 이동했다. KNOWN SCHEMAS
+    grounding 을 채우는 _load_schema_list / _load_relevant_table_insights 가 이전엔
+    DROP 된 MySQL `AgentMemoryFactEntries` 만 조회 → 항상 빈 grounding → 환각이었다.
+
+    Returns:
+        list[(fact_key, text_or_None)] — PG 조회 성공 시 (빈 결과 포함).
+        None — PG 미가용/예외. caller 가 레거시 MySQL 경로로 fallback 한다.
+    """
     try:
-        cur.execute(
-            "SELECT e.FactKey "
-            "FROM AgentMemoryFactEntries e "
-            "WHERE e.ConversationId = '__global__' "
-            "  AND e.FactKey LIKE 'table_insight:%' "
-            "ORDER BY e.FactKey",
-        )
-        rows = cur.fetchall() or []
-        for (fact_key,) in rows:
-            name = fact_key.replace("table_insight:", "")
-            dot = name.find(".")
-            if dot > 0:
-                s = name[:dot]
-                schema_counts[s] = schema_counts.get(s, 0) + 1
+        from modules.db import _pg_available, _pg_connect_ro
     except Exception:
-        pass
-
-    # 인사이트 DB에서 스키마 도메인 설명 로드
-    schema_descs: dict[str, str] = {}
+        return None
+    if not _pg_available():
+        return None
+    conn = None
     try:
-        cur.execute(
-            "SELECT e.FactKey, LEFT(t.TextContent, 200) "
-            "FROM AgentMemoryFactEntries e "
-            "JOIN AgentMemoryTexts t ON e.TextHash = t.TextHash "
-            "WHERE e.ConversationId = '__global__' "
-            "  AND e.FactKey LIKE 'schema_insight:%' "
-            "ORDER BY e.FactKey",
-        )
-        for fact_key, text_content in cur.fetchall() or []:
-            schema_name = str(fact_key).replace("schema_insight:", "")
-            if schema_name == "agent_memory":
-                continue
-            raw = str(text_content or "")
-            # "domain:" 이후의 설명을 추출 (영어 인사이트 형식)
-            desc = ""
-            lower = raw.lower()
-            if "domain:" in lower:
-                idx = lower.index("domain:")
-                after = raw[idx + len("domain:"):].strip()
-                segments = after.split(" / ")
-                if len(segments) >= 2:
-                    desc = segments[0].strip() + " — " + segments[1].strip()[:80]
+        conn = _pg_connect_ro()
+        cur = conn.cursor()
+        params: list[Any] = [cfg.GLOBAL_CONVERSATION_ID, cfg.FACT_SCOPE_COMMON, like_pattern]
+        if with_text:
+            sql = (
+                "SELECT e.fact_key, LEFT(t.text_content, 200) "
+                "FROM public.fact_entries e "
+                "JOIN public.texts t ON t.text_hash = e.text_hash "
+                "WHERE e.conversation_id = %s AND e.scope_key = %s "
+                "  AND e.fact_key LIKE %s"
+            )
+        else:
+            sql = (
+                "SELECT e.fact_key, NULL "
+                "FROM public.fact_entries e "
+                "WHERE e.conversation_id = %s AND e.scope_key = %s "
+                "  AND e.fact_key LIKE %s"
+            )
+        if tokens:
+            ors: list[str] = []
+            for tok in tokens:
+                like = f"%{tok}%"
+                if with_text:
+                    ors.append("(e.fact_key ILIKE %s OR t.text_content ILIKE %s)")
+                    params.extend([like, like])
                 else:
-                    desc = segments[0].strip()[:100]
-            elif " / " in raw:
-                # 레거시 한국어 형식 폴백
-                segments = raw.split(" / ")
-                desc = segments[0].strip()[:100]
-            schema_descs[schema_name] = desc
+                    ors.append("e.fact_key ILIKE %s")
+                    params.append(like)
+            sql += " AND (" + " OR ".join(ors) + ")"
+        sql += " ORDER BY e.fact_key"
+        if limit:
+            sql += " LIMIT %s"
+            params.append(int(limit))
+        cur.execute(sql, params)
+        rows = cur.fetchall() or []
+        cur.close()
+        return [(str(r[0]), (r[1] if len(r) > 1 else None)) for r in rows]
     except Exception:
-        pass
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
+
+def _kb_read_is_pg() -> bool:
+    return str(getattr(cfg, "AGENT_KB_READ_BACKEND", "mysql") or "mysql").lower() == "postgres"
+
+
+def _load_schema_list(mem_conn, max_total: int = 2000) -> str:
+    """스키마별 테이블 수와 인사이트 DB의 도메인 설명을 로드한다.
+
+    AGENT_KB_READ_BACKEND=postgres 이면 PG(public.fact_entries/texts) 정본에서
+    읽고, 미가용/예외 시 레거시 MySQL(mem_conn) 경로로 fallback 한다.
+    """
+    schema_counts: dict[str, int] = {}
+    schema_descs: dict[str, str] = {}
+
+    # ── PG 정본 경로 ──
+    pg_used = False
+    if _kb_read_is_pg():
+        table_rows = _global_insight_rows_pg("table_insight:%", with_text=False)
+        schema_rows = _global_insight_rows_pg("schema_insight:%", with_text=True)
+        if table_rows is not None or schema_rows is not None:
+            pg_used = True
+            for fact_key, _ in (table_rows or []):
+                name = fact_key.replace("table_insight:", "")
+                dot = name.find(".")
+                if dot > 0:
+                    schema_counts[name[:dot]] = schema_counts.get(name[:dot], 0) + 1
+            for fact_key, text_content in (schema_rows or []):
+                schema_name = str(fact_key).replace("schema_insight:", "")
+                if schema_name == "agent_memory":
+                    continue
+                schema_descs[schema_name] = _extract_schema_desc(str(text_content or ""))
+
+    # ── 레거시 MySQL fallback (PG 미사용 시만) ──
+    if not pg_used:
+        if not mem_conn:
+            return ""
+        cur = mem_conn.cursor()
+        try:
+            cur.execute(
+                "SELECT e.FactKey "
+                "FROM AgentMemoryFactEntries e "
+                "WHERE e.ConversationId = '__global__' "
+                "  AND e.FactKey LIKE 'table_insight:%' "
+                "ORDER BY e.FactKey",
+            )
+            for (fact_key,) in cur.fetchall() or []:
+                name = fact_key.replace("table_insight:", "")
+                dot = name.find(".")
+                if dot > 0:
+                    schema_counts[name[:dot]] = schema_counts.get(name[:dot], 0) + 1
+        except Exception:
+            pass
+        try:
+            cur.execute(
+                "SELECT e.FactKey, LEFT(t.TextContent, 200) "
+                "FROM AgentMemoryFactEntries e "
+                "JOIN AgentMemoryTexts t ON e.TextHash = t.TextHash "
+                "WHERE e.ConversationId = '__global__' "
+                "  AND e.FactKey LIKE 'schema_insight:%' "
+                "ORDER BY e.FactKey",
+            )
+            for fact_key, text_content in cur.fetchall() or []:
+                schema_name = str(fact_key).replace("schema_insight:", "")
+                if schema_name == "agent_memory":
+                    continue
+                schema_descs[schema_name] = _extract_schema_desc(str(text_content or ""))
+        except Exception:
+            pass
+        try:
+            cur.close()
+        except Exception:
+            pass
+
+    # ── 렌더 (공통) ──
+    parts: list[str] = []
     if schema_counts:
         parts.append("## Database schemas:")
         for schema, count in sorted(schema_counts.items()):
@@ -754,21 +866,39 @@ def _load_schema_list(mem_conn, max_total: int = 2000) -> str:
         parts.append("## Database schemas:")
         for schema, desc in sorted(schema_descs.items()):
             parts.append(f"- {schema}: {desc}")
-
-    cur.close()
     return "\n".join(parts) if parts else ""
 
 
 def _load_relevant_table_insights(mem_conn, user_message: str, max_items: int = 15) -> str:
-    """사용자 메시지의 영어 키워드로 매칭되는 테이블 인사이트를 로드한다."""
-    if not mem_conn or not user_message:
+    """사용자 메시지의 키워드로 매칭되는 테이블 인사이트를 로드한다.
+
+    AGENT_KB_READ_BACKEND=postgres 이면 PG 정본에서 ILIKE 매칭, 미가용/예외 시
+    레거시 MySQL(mem_conn) 경로로 fallback.
+    """
+    if not user_message:
         return ""
     tokens = set(re.findall(r"[a-zA-Z][a-zA-Z0-9_]{1,}", user_message.lower()))
     if not tokens:
         return ""
+    token_list = list(tokens)[:10]
+
+    # ── PG 정본 경로 ──
+    if _kb_read_is_pg():
+        pg_rows = _global_insight_rows_pg(
+            "table_insight:%", with_text=True, tokens=token_list, limit=max_items
+        )
+        if pg_rows is not None:
+            lines = []
+            for fact_key, text in pg_rows:
+                table_ref = str(fact_key).replace("table_insight:", "")
+                lines.append(f"- {table_ref}: {str(text or '').strip()}")
+            return "\n".join(lines)
+
+    # ── 레거시 MySQL fallback ──
+    if not mem_conn:
+        return ""
     cur = mem_conn.cursor()
     try:
-        token_list = list(tokens)[:10]
         conditions = []
         params: list[str] = []
         for token in token_list:
@@ -809,14 +939,17 @@ def _build_knowledge_context(mem_conn, user_message: str, history: list[dict]) -
     parts: list[str] = []
     schema_list = _load_schema_list(mem_conn)
     if schema_list:
-        # 헤더를 "authoritative"로 격상하여 LLM이 여기부터 참조하도록 유도
-        parts.append("## KNOWN SCHEMAS & TABLES (authoritative — prefer these over tool-based discovery)")
+        # 나열된 테이블은 신뢰하되, 없으면 도구로 발견하도록 유도 (환각 방지).
+        parts.append("## KNOWN SCHEMAS & TABLES (authoritative for the tables listed here)")
+        parts.append("Trust the schemas/tables below. If the table you need is NOT listed, "
+                     "discover it with search_tables/describe_table before writing SQL — do not guess names.")
         parts.append(schema_list)
     table_insights = _load_relevant_table_insights(mem_conn, user_message)
     if table_insights:
         parts.append("\n## RELEVANT TABLES FOR THIS QUESTION")
         parts.append("Candidate tables already matched to the user's keywords. "
-                     "Start with execute_sql against one of these instead of search_tables.")
+                     "Start with execute_sql against one of these. If none actually fits the "
+                     "question, verify with describe_table or search for a better match instead of guessing.")
         parts.append(table_insights)
     return "\n\n" + "\n".join(parts) + "\n" if parts else ""
 
@@ -956,25 +1089,55 @@ def _build_step_payload(
     }
 
 
-def _assemble_core_messages(rows: list[dict], max_messages: int) -> list[dict]:
-    """normalize + truncate + format for OpenAI API. shared by MySQL and PG paths."""
-    normalized = _normalize_history_rows(rows)
-    if len(normalized) > max_messages:
-        normalized = _normalize_history_rows(normalized[-max_messages:])
+# 멀티턴 맥락 보존: 윈도우(max_messages) 밖으로 밀려나는 'standalone user 메시지'를
+# 최대 이 개수까지 윈도우 앞에 보존한다. tool 결과(execute_sql)가 윈도우를 점유해
+# 사용자가 앞서 말한 제약/의도를 밀어내는 유실을 막는다. user 메시지는 tool 짝이 없어
+# 단독 보존이 안전하고, 재정규화 단계가 orphan tool 메시지를 정리한다.
+_USER_TURN_KEEP = 8
+
+
+def _format_core_messages(normalized: list[dict]) -> list[dict]:
+    """normalize 된 row 를 OpenAI 메시지 dict 로 변환."""
     messages: list[dict] = []
     for row in normalized:
         msg: dict[str, Any] = {"role": row["role"]}
         parsed_tool_calls = row.get("_parsed_tool_calls")
-        if row["content"] and not parsed_tool_calls and not row.get("tool_calls"):
+        if row.get("content") and not parsed_tool_calls and not row.get("tool_calls"):
             msg["content"] = row["content"]
         if parsed_tool_calls:
             msg["tool_calls"] = parsed_tool_calls
-        if row["tool_call_id"]:
+        if row.get("tool_call_id"):
             msg["tool_call_id"] = row["tool_call_id"]
-        if row["name"]:
+        if row.get("name"):
             msg["name"] = row["name"]
         messages.append(msg)
     return messages
+
+
+def _assemble_core_messages(rows: list[dict], max_messages: int) -> list[dict]:
+    """normalize + truncate + format for OpenAI API. shared by MySQL and PG paths.
+
+    단순 최근 N개 윈도우는 tool 메시지가 윈도우를 점유해 초기 user 의도를 떨어뜨린다.
+    윈도우에서 탈락하는 standalone user 메시지를 최신순 _USER_TURN_KEEP 개까지 윈도우
+    앞에 보존해 사용자가 앞서 말한 맥락을 유지한다 ("앞 내용을 왜 또 묻나" 완화).
+    """
+    normalized = _normalize_history_rows(rows)
+    if len(normalized) <= max_messages:
+        return _format_core_messages(normalized)
+
+    window = normalized[-max_messages:]
+    dropped = normalized[:-max_messages]
+    kept_users = [
+        r for r in dropped
+        if str(r.get("role") or "") == "user" and r.get("content")
+        and not r.get("_parsed_tool_calls") and not r.get("tool_calls")
+        and not r.get("tool_call_id")
+    ]
+    if kept_users:
+        kept_users = kept_users[-_USER_TURN_KEEP:]
+    # 재정규화: 윈도우 시작부의 orphan tool 메시지(짝 assistant 가 dropped) 정리.
+    combined = _normalize_history_rows(kept_users + window)
+    return _format_core_messages(combined)
 
 
 def _load_conversation_messages(conn, conversation_id: str, max_messages: int = 50) -> list[dict]:
@@ -1726,7 +1889,8 @@ def _run_agent_core(
         thread_goal = new_goal
     else:
         # continue: no changes to origin or thread_goal.
-        if not prev_origin:
+        # 저정보 발화(인사/메타)는 origin 으로 고정하지 않는다 — 다음 실질 발화가 origin.
+        if not prev_origin and not _is_low_information_request(user_message):
             save_memory_kv(mem_conn, cid, "origin_request", user_message)
             prev_origin = user_message
         if not thread_goal and prev_origin:

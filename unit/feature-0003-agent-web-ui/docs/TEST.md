@@ -246,6 +246,10 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-06-05 (TASK-0151 DB 조회 UX 개선 — web 면: 첨부 text inline cap 정렬):
+  - 변경 성격: `app.py _prepare_text_inline_attachments` 의 SQL 정렬(`ASC`→`DESC`+reverse) — **시각 UI 표면 변경 없음**(LLM 컨텍스트로 들어가는 inline 첨부 선별 로직, 백엔드). PB-0008 Windows-browser 화면 검증 대상 아님(Environment: Windows-browser N/A — UI 표면 없음). CHECK#13 WARN 의 사유 = 시각 표면 부재.
+  - 검증: ruff(All passed) + pytest **191 passed/2 skipped**(feature-0002 신규 `test_db_query_ux.py` 14건 포함, 회귀 0). 동작 검증은 라이브 canary ask(첨부 리뷰 + 스키마 grounding)로 배포 후 수행 — STATUS TASK-0151 참조.
+
 - 2026-05-20 (TASK-0089 Phase A~E — 작업 화면 profile drawer "내 감사 로그" 탭 신설):
   - **환경**: `docker run --rm --entrypoint python -v <wt>/unit/feature-0003-agent-web-ui/src:/app/web repo-web:latest` host-mounted code + image dependency.
   - **py_compile**: PASS.

@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260605-0151 [SUBAGENT: general-purpose 적대적 diff 리뷰 — Verdict NEEDS-TWEAK→ACCEPTED, BLOCKER 0]
+- Date: 2026-06-05
+- Cycle: TASK-0151 (DB 조회 사용자 경험 개선 — grounding PG 전환 + prompt 개편 + 멀티턴 보존 + 첨부 cap), **Major §12.3**
+- Reviewer: general-purpose subagent (적대적 diff 리뷰 — agent_core.py / domain.py / app.py 전체 diff + 호출 컨텍스트)
+- Verdict: NEEDS-TWEAK → (S1 보정 후) ACCEPTED. **BLOCKER 0**.
+- Findings:
+  - BLOCKER 0 — 인젝션(파라미터화 confirmed) / PG scope·cid 정합(write path 와 `__global__`+`common` 일치) / `pg_used` 빈결과 fallback 오작동 없음 / `with_text=False` NULL 분기 / IDOR 스코프 유지 / DESC+reverse 최신보존 / 멀티턴 orphan tool 재정규화 제거 전부 confirmed-clear.
+  - **SHOULD-FIX [S1] (수정 완료)**: `domain._is_low_information_request` 의 `meaningful 길이 ≤3` 컷오프가 짧은 한국어 실질 질문('매출?','회원수','DAU','상품?')을 저정보로 오판 → origin 설정이 보류되어 본 cycle 의 목표(맥락 유실 해소)와 상충. **조치**: 길이 컷오프 제거 → "의미 토큰 부재(자모/문장부호/이모지)" 만 저정보로 판정 + 데이터 신호 명사셋 확장(매출/회원/주문/가입/결제/유저/사용자/상품/방문/접속/수익). 단일토큰 회귀 테스트 2건 추가(`test_low_info_request_short_korean_substantive_not_low_info` / `..._meaningless_tokens_are_low_info`). 라이브 확인: '매출?'/'회원수'/'DAU'→substantive, 'ㅇㅇ'/'...'→low-info.
+  - NICE (수용/track): [N1] +8 user 보존의 prompt 예산 순증(bounded, 모니터링), [N2] window 말미 dangling assistant tool_calls(pre-existing), [N3] `_load_relevant_table_insights` 영어 전용 토크나이저(pre-existing — schema-list 한국어 설명이 보완).
+- Resolution: BLOCKER 0 + S1 머지 전 반영 완료. 잔여 NICE 는 회귀 아님(pre-existing) — 별도 track.
+
 ## REV-20260604-0147 [SKIPPED:read 경로 방어 가드 — RBAC/schema/secret 무변경, REV-0145 패턴 연장]
 - Date: 2026-06-04
 - Cycle: TASK-0147 (insight worker degraded read-back backoff), **Major §12.3**

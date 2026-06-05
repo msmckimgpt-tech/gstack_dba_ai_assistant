@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260605-0151 [SUBAGENT: general-purpose 적대적 diff 리뷰 — app.py 첨부 cap, BLOCKER 0]
+- Date: 2026-06-05
+- Cycle: TASK-0151 (DB 조회 사용자 경험 개선 — 첨부 text inline cap 정렬 버그 수정), **Major §12.3**
+- Reviewer: general-purpose subagent (적대적 diff 리뷰 — 본 cycle 의 app.py 변경 포함 전체 diff). 정본 기록은 feature-0002 `REV-20260605-0151`.
+- Verdict: ACCEPTED. **BLOCKER 0**.
+- Findings (app.py 한정): `_prepare_text_inline_attachments` 의 `ORDER BY Id DESC LIMIT cap` + `inline_entries.reverse()` 가 최신 cap개 보존 후 시간순 복원으로 correct(confirmed). AccountId IDOR 스코프(`AND AccountId=%s` + per-row 검증) 무변경 유지(confirmed). 빈 결과 처리 정상. BLOCKER/SHOULD-FIX 0.
+
 ## REV-20260528-0124 [SKIPPED:no-rbac-expansion-no-schema-no-secret-handling]
 - Date: 2026-05-28
 - TASK-Cycle: TASK-0124 (REQ-20260528-0124, **Minor** §12.3 — RBAC 권한 정합 및 폐기 권한 정리)

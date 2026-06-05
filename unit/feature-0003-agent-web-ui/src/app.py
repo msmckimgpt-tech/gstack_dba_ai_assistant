@@ -7107,7 +7107,9 @@ def _prepare_text_inline_attachments(
             f"FROM WebConversationAttachments "
             f"WHERE Id IN ({placeholders}) AND AccountId = %s AND Kind = 'text' "
             f"AND UploadStatus = 'uploaded' AND DeletedAt IS NULL AND DeletePending = 0 "
-            f"ORDER BY Id ASC LIMIT %s",
+            # count cap 초과 시 가장 최근(=방금 첨부한) 파일을 보존하도록 DESC. 이전엔 ASC 라
+            # 한 대화에 cap(20) 초과 첨부 시 방금 올린 파일이 조용히 누락됐다(사용자 불만).
+            f"ORDER BY Id DESC LIMIT %s",
             # TASK-0132 (#8 IDOR): AccountId 스코프 — 타 계정 text 첨부 내용 inject 차단.
             tuple(int(i) for i in attachment_ids) + (int(account_id), _TEXT_INLINE_COUNT_CAP),
         )
@@ -7156,6 +7158,9 @@ def _prepare_text_inline_attachments(
 
     if not inline_entries:
         return None
+
+    # DESC 로 최신 우선 선별했으므로, 표시는 시간순(오래된→최신)으로 되돌린다.
+    inline_entries.reverse()
 
     suffix = uuid.uuid4().hex[:12]
     cid_seg = str(conversation_id or "no-cid")[:24].replace("/", "_")

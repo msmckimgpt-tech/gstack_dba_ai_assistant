@@ -16,6 +16,10 @@ source_of_truth: true
 
 ## 2. Task Queue
 
+### TASK-0151 첨부 text inline cap 정렬 버그 수정 (2026-06-05)
+
+- [x] TASK-0151 (REQ-20260605-0151, **Major §12.3** — DB 조회 UX 개선의 web 면). `_prepare_text_inline_attachments` 의 SELECT 정렬 `ORDER BY Id ASC LIMIT %s` → `ORDER BY Id DESC LIMIT %s` + 선별 후 `inline_entries.reverse()`. text 첨부가 count cap(20) 초과 시 이전엔 가장 오래된 20개만 inline 주입되고 방금 첨부한 최신 파일이 조용히 누락됐던 것을, 최신 cap개 보존 후 표시 순서를 시간순으로 복원하도록 수정. AccountId IDOR 스코프·size cap 무변경. agent_core 의 첨부 리뷰 우선순위 prompt 개편(feature-0002 TASK-0151)과 한 쌍. outside-voice 적대적 diff 리뷰 ACCEPTED (REV-20260605-0151, BLOCKER 0).
+
 ### TASK-0124 관리 콘솔 RBAC 권한 정합 및 폐기 권한 정리 (2026-05-28)
 
 - [x] TASK-0124 (REQ-20260528-0124, **Minor** §12.3 — RBAC 시드 롤 정합 + 폐기 권한 DB 정리). 사용자 직접 요청: (1) `sales` 롤이 `conversation.create` + `conversation.ask` 를 보유하면서 `conversation.delete.own` 이 없어 자신의 대화를 삭제할 수 없는 구조적 비정합. (2) `conversation.suggestions.read` 가 `conversation.ask` 와 항상 함께 부여되는 종속 권한 — 단독 실효성 없는 zombie 권한. (3) `pending` 롤의 `conversation.file.read.own` — "승인 전 조회 전용" 의미와 파일 다운로드 혼재. **수정**: (a) `SEED_ROLE_DEFINITIONS` 의 `sales` 에 `conversation.delete.own` 추가. (b) `conversation.suggestions.read` 를 `PERMISSION_DEFINITIONS` + 모든 시드 롤에서 제거, suggestions endpoint 게이트를 `conversation.ask` 로 변경, `_legacy_permission_codes_from_row` 에서 제거. (c) `pending` 의 `conversation.file.read.own` 제거. (d) `_ensure_seed_roles()` 의 catchup_codes 에 `conversation.delete.own` 추가 (sales 기존 계정 반영). (e) `_cleanup_deprecated_role_permissions(conn)` 신규 함수 — `DELETE FROM WebRolePermissions` 로 폐기 권한을 기존 롤 rows 에서 멱등 제거. (f) `docs/STATUS.md` 변경 이력 2건 추가. 신규 RBAC 권한 코드 추가 없음 / DB 스키마 변경 없음 / secret handling 없음 → outside-voice review SKIPPED.
