@@ -6,7 +6,7 @@
   <title>DQA — Database Query Assistant</title>
   <link rel="preconnect" href="https://fonts.bunny.net" />
   <link href="https://fonts.bunny.net/css?family=geist:300,400,500,600,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260605-ui-ux-polish" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260605-tmi-cleanup" />
 </head>
 <body>
 
@@ -321,7 +321,6 @@
       <div class="profile-header-identity">
         <div class="profile-avatar-lg" id="profileAvatarLg">—</div>
         <div>
-          <div class="drawer-label">My Account</div>
           <div class="profile-summary-name" id="profileSummaryName">—</div>
           <div class="profile-summary-meta" id="profileSummaryMeta">—</div>
         </div>
@@ -329,78 +328,61 @@
       <button type="button" class="tool-btn" id="closeProfileBtn">닫기</button>
     </div>
 
-    <!-- 탭 네비게이션 (TASK-0105: 4 → 3 탭, [프롬프트, 보안 및 계정, API Vault] — 내 감사 로그 탭 일반 사용자 비노출로 제거) -->
     <div class="drawer-tabs">
       <button type="button" class="drawer-tab is-active" data-profile-tab="prompt">프롬프트</button>
       <button type="button" class="drawer-tab" data-profile-tab="security-and-account">보안 및 계정</button>
-      <!-- feature-0007 (REQ-20260521-0001): API Vault 탭 제거. -->
-      <!-- TASK-0105: 내 감사 로그 탭 일반 사용자 비노출 — 제거. -->
-
     </div>
 
-    <!-- ── 탭 패널: 보안 및 계정 (TASK-0098: 기존 계정+보안 통합. 활동 정보 최상단 + 비밀번호 변경 + 세션·로그아웃. "권한 현황" 패널은 운영자 전용 정보로 분류되어 관리 콘솔에서만 조회 가능) ── -->
     <div class="drawer-pane hidden" data-profile-pane="security-and-account">
 
-      <!-- 활동 정보 (최상단) -->
       <div class="profile-section">
-        <div class="profile-section-title">활동 정보</div>
+        <div class="profile-section-title">활동</div>
         <dl class="profile-dl">
-          <dt>계정 생성</dt><dd id="profileCreatedAt">—</dd>
-          <dt>마지막 로그인</dt><dd id="profileLastLogin">—</dd>
-          <dt>권한 부여일</dt><dd id="profileApprovedAt">—</dd>
+          <dt>가입</dt><dd id="profileCreatedAt">—</dd>
+          <dt>최근 로그인</dt><dd id="profileLastLogin">—</dd>
+          <dt>권한 부여</dt><dd id="profileApprovedAt">—</dd>
         </dl>
       </div>
 
-      <!-- 비밀번호 변경 -->
       <div class="profile-section">
         <div class="profile-section-title">비밀번호 변경</div>
         <form id="passwordChangeForm" class="profile-form">
           <label class="field">
-            <span>현재 비밀번호</span>
+            <span>현재</span>
             <input id="currentPassword" type="password" autocomplete="current-password" />
           </label>
           <label class="field">
-            <span>새 비밀번호 (10자 이상)</span>
+            <span>새 비밀번호</span>
             <input id="newPassword" type="password" autocomplete="new-password" />
           </label>
           <label class="field">
-            <span>새 비밀번호 확인</span>
+            <span>확인</span>
             <input id="confirmPassword" type="password" autocomplete="new-password" />
           </label>
           <div class="form-error" id="passwordError"></div>
-          <button type="submit" class="btn-primary">비밀번호 변경</button>
+          <button type="submit" class="btn-primary">변경</button>
         </form>
       </div>
 
-      <!-- 세션 / 로그아웃 -->
       <div class="profile-section profile-danger-zone">
-        <div class="profile-section-title">세션</div>
         <button type="button" class="btn-secondary" id="logoutBtn">로그아웃</button>
       </div>
 
     </div><!-- /security-and-account -->
 
-    <!-- feature-0007 (REQ-20260521-0001): 구 "API Vault" 탭 패널 DOM 제거됨.
-         사용자 키 입력 / passphrase / cipher 저장 wizard 가 모두 사라졌다.
-         LLM 자격증명은 서비스 단일 env (BEDROCK_GATEWAY_API_KEY) 가 보유. -->
-
-    <!-- ── 탭 패널: 프롬프트 (계정 스코프 시스템 프롬프트) ── -->
     <div class="drawer-pane hidden" data-profile-pane="prompt">
-      <p class="drawer-desc">
-        이 프롬프트는 내 계정이 참여하는 대화의 시스템 프롬프트에 추가됩니다. Product 범위를 선택하면 해당 Product 에서만 적용됩니다.
-      </p>
       <label class="field">
-        <span>Product 범위</span>
+        <span>제품 범위</span>
         <select id="promptProductSelect"></select>
       </label>
       <label class="field">
-        <span>내 프롬프트 (빈 값으로 저장하면 삭제)</span>
-        <textarea id="promptContent" rows="8" placeholder="예: 숫자는 천 단위 구분자, 금액은 KRW 기준으로 답변해 주세요."></textarea>
+        <span>내 프롬프트</span>
+        <textarea id="promptContent" rows="8" placeholder="예: 숫자는 천 단위 구분자로 표시해 주세요."></textarea>
       </label>
       <div class="helper-text" id="promptMeta"></div>
       <div class="drawer-actions">
         <button type="button" class="btn-primary" id="savePromptBtn">저장</button>
-        <button type="button" class="btn-secondary" id="clearPromptBtn">비우기 (삭제)</button>
+        <button type="button" class="btn-secondary" id="clearPromptBtn">비우기</button>
       </div>
     </div><!-- /prompt -->
 
