@@ -1834,6 +1834,82 @@ a { color: inherit; }
 #promptInput::placeholder { color: var(--text-muted); }
 #promptInput:disabled { opacity: .5; cursor: not-allowed; }
 
+/* TASK-0158: composer 즉시 답변 버튼 (처리 중에만 노출, send 버튼 좌측, 중립 secondary) */
+.composer-finalize-btn {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background .13s, border-color .13s, color .13s;
+}
+.composer-finalize-btn:hover { background: var(--primary-soft); border-color: var(--primary); color: var(--primary-dark); }
+.composer-finalize-btn.is-access-blocked { opacity: .55; cursor: not-allowed; }
+
+/* TASK-0158: 공유 링크 관리 모달 (목록 + 취소) */
+.share-mgr-backdrop {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,.4);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.share-mgr-panel {
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  width: 100%; max-width: 560px; max-height: 80vh;
+  display: flex; flex-direction: column;
+}
+.share-mgr-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid var(--border-subtle);
+}
+.share-mgr-title { margin: 0; font-size: 15px; font-weight: 600; }
+.share-mgr-close {
+  font-size: 20px; line-height: 1; color: var(--text-muted);
+  background: none; border: none; cursor: pointer; padding: 2px 6px; border-radius: var(--r-xs);
+}
+.share-mgr-close:hover { background: var(--border-subtle); color: var(--text); }
+.share-mgr-body { padding: 12px 20px 18px; overflow-y: auto; }
+.share-mgr-msg { padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px; }
+.share-mgr-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 0; border-bottom: 1px solid var(--border-subtle);
+}
+.share-mgr-row:last-child { border-bottom: none; }
+.share-mgr-row.is-revoked { opacity: .6; }
+.share-mgr-row-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.share-mgr-token { font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+.share-mgr-meta { font-size: 12px; color: var(--text-muted); }
+.share-mgr-badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
+.share-mgr-badge.is-active { background: #ecfdf3; color: var(--success); }
+.share-mgr-badge.is-revoked { background: var(--border-subtle); color: var(--text-muted); }
+.share-mgr-row-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.share-mgr-btn {
+  font-size: 12px; padding: 4px 9px; border-radius: var(--r-sm);
+  background: var(--surface); border: 1px solid var(--border); color: var(--text-2); cursor: pointer;
+}
+.share-mgr-btn:hover { background: var(--primary-soft); border-color: var(--primary); color: var(--primary-dark); }
+.share-mgr-btn.is-danger { color: var(--danger); }
+.share-mgr-btn.is-danger:hover { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+.share-mgr-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* TASK-0158: 첨부 scopeAll 토글 (attach 사이드패널) */
+.attach-scope-all {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px 14px; margin: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+}
+.attach-scope-all input { margin-top: 2px; flex-shrink: 0; accent-color: var(--primary); }
+.attach-scope-all-text { display: flex; flex-direction: column; gap: 2px; }
+.attach-scope-all-label { font-size: 13px; color: var(--text); }
+.attach-scope-all-hint { font-size: 11px; color: var(--text-muted); line-height: 1.35; }
+
 .send-btn {
   display: grid;
   place-items: center;

@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260608-0158 [SKIPPED:frontend-only-no-new-rbac-no-schema-no-secret]
+- Date: 2026-06-08
+- TASK-Cycle: TASK-0158 (REQ-20260608-0158, **Minor** §12.3 — 진입점 전수조사 후 구성, Tier 1)
+- Skip reason: frontend-only (index.html/app.js/styles.css + docs). **신규 RBAC 권한 코드 없음** — 기존 권한(`conversation.finalize.*`, `conversation.read.*`, `conversation.share.create`)·엔드포인트(`/api/finalize`, `/api/conversations/{cid}/shares`, `/api/share/{id}`, `attachment_scope_all`)에 UI 진입점만 추가. `requiredPermissionsFor` 의 `conversation.read` case 는 **클라이언트 게이트 매핑**일 뿐 백엔드 RBAC 무변경(서버가 read.own/.any + DELETE creator/read.any 를 권위적으로 강제). DB 스키마/시크릿 무변경. 신규 attack surface 없음 → outside-voice 트리거 미해당. node --check PASS. **주의(이월)**: Tier 3 의 `attachment.execute_sql_on.*` enforce-or-remove 는 RBAC 모델 변경이므로 착수 시 outside-voice 필수([[feedback_outside_voice_for_rbac]]).
+
 ## REV-20260608-0157 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]
 - Date: 2026-06-08
 - TASK-Cycle: TASK-0157 (REQ-20260608-0157, **Minor** §12.3 — 요청 중단(interrupt) 진입점 복구)

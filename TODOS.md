@@ -12,6 +12,15 @@
 
 ## Active
 
+- [~] **P1** 구현됐으나 진입점 없는 기능 전수조사 — 진입점 구성 (2026-06-08, TASK-0158 진행 중)
+  - **Why**: TASK-0157(중단 버튼 복구)과 동일 클래스 — 백엔드·로직·RBAC 는 완성됐으나 사용자가 도달할 UI 진입점이 없는 기능을 3축(엔드포인트 77 ↔ 호출자 / UI 요소 ↔ JS 배선 / RBAC 권한 48 ↔ 진입경로) 병렬 감사로 전수 발굴. 발급은 되는데 보완 동작 진입점이 없는 lifecycle 갭 다수.
+  - **Where**: feature-0003 `static/{index.html,app.js,admin.html,admin.js,styles.css}` + `app.py`. 디자인은 design.md 9섹션 형식 적용 → `unit/feature-0003-agent-web-ui/docs/DESIGN-entry-points.md`.
+  - **Next step (진입점 구성 — 우선순위 순)**:
+    - **Tier 1 (사용자 대면, 명백)**: [ ] 즉시답변(finalize) — `#finalizeBtn` 가 영구숨김 `#progressCard` 트랩, send-stop 옆에 재배치(`/api/finalize`, `conversation.finalize.*`). [ ] 공유 링크 관리(목록+취소) — 생성만 가능, `GET /api/conversations/{cid}/shares`+`DELETE /api/share/{id}` UI 없음 → ··· 메뉴 + 모달. [ ] scopeAll 토글 — `#composerAttachmentsScopeAll` 마크업 부재(핸들러·백엔드 live) → attach 사이드패널 체크박스.
+    - **Tier 2 (관리자/자기서비스)**: [ ] audit.purge — `POST /api/admin/audits/purge`(파괴적) 버튼 없음 → dry-run+typed-confirm. [ ] 내 활동기록 — `GET /api/profile/audits`(+상세) 프로필 탭 없음(TASK-0105 에서 제거됨, 재추가). [ ] 감사 필터 facet — `/api/admin/audits/{actors,resources}` 미배선 → datalist. [ ] attachment-grants 진단 — `GET /api/admin/health/attachment-grants` 대시보드 카드. ([ ] 감사 단건 상세 endpoint 는 중복이라 후순위/생략 검토)
+    - **Tier 3 (진입점 아님 — 결정 필요, 별 처리)**: `attachment.execute_sql_on.own/.any` = 정의·부여·관리그리드 노출되나 **어디서도 체크 안 함**(거짓 컨트롤) → enforce 하거나 PERMISSION_DEFINITIONS 에서 제거 결정 필요(RBAC 변경 → [[feedback_outside_voice_for_rbac]] outside-voice). `conversation.attachment.upload.any` = 관리자 타계정 업로드, UI 없음이 의도일 수 있음(product 결정). 죽은 중복(`#cancelBtn`/`#composerAttachments`/`POST /api/list_conversations`/`#tabCountAudits`) 정리.
+  - **제외(정상 no-UI)**: `/healthz`·페이지셸·public share(호출됨)·폴링·410 stub(clear_memory/keywords)·`kb_ingest.py`(TASK-0108 의도적 보존).
+
 - [~] **P2** 리미디에이션(Task 10 #13) RAG 레이어 정리 — **(a)(b)(c) 핵심 완료**, cosmetic/dead 잔여만
   - **Why**: KB 쓰기는 TASK-0127 로 복구됐으나 retrieval 측 (a) `_load_rag_objects_for_request` 에 PG 분기 없어 항상 [](복구된 rag_objects 미사용 — D0-D3 스키마 routing 죽음), (b) "pgvector RAG" 가 실제론 trigram(임베딩 807건 NULL, 사용자 결정 B=벡터 강제활성화), (c) `knowledge.py` 3376줄 god-module + fact_entries/rag_documents 중복 + 미사용 matview.
   - **Where**: `knowledge.py`(_load_rag_objects_for_request ~1294, _load_rag_documents_for_request_pg 패턴), `kb_backend.py`(search_rag_documents 모델 → search_rag_objects 신설), `litellm_config.yaml`(임베딩 모델), `kb_embedding_worker.py`(스케줄)

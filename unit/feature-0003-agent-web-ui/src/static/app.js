@@ -40,8 +40,9 @@ const progressStepsEl = document.getElementById("progressSteps");
 const progressSummaryEl = document.getElementById("progressSummary");
 const messageLogEl = document.getElementById("messageLog");
 const loadMoreBtn = document.getElementById("loadMoreBtn");
-const cancelBtn = document.getElementById("cancelBtn");
-const finalizeBtn = document.getElementById("finalizeBtn");
+// REQ-20260608-0158 (TASK-0158): 즉시 답변 진입점을 composer 로 재배치. 구 #cancelBtn/#finalizeBtn 은
+// 영구 숨김 #progressCard 안 고아였음 — 제거. 중단은 send-버튼 모핑(TASK-0157)으로 이미 노출.
+const composerFinalizeBtn = document.getElementById("composerFinalizeBtn");
 // REQ-20260518-0003: 헤더의 대화 복사 / 공유 / 제목 변경 / 삭제 4 버튼은
 // 좌측 conv-item "···" menu 로 일원화되어 제거됨. 동일 action 의 backend
 // helper (createConversationShare / renameCurrentConversation /
@@ -377,6 +378,8 @@ function requiredPermissionsFor(action, conversation = currentConversation()) {
       return { label: "대화 복사", codes: own ? ["conversation.duplicate.any", "conversation.duplicate.own"] : ["conversation.duplicate.any"] };
     case "conversation.share":
       return { label: "대화 공유", codes: ["conversation.share.create"] };
+    case "conversation.read":
+      return { label: "공유 링크 관리", codes: own ? ["conversation.read.any", "conversation.read.own"] : ["conversation.read.any"] };
     default:
       return { label: action, codes: [] };
   }
@@ -3055,6 +3058,11 @@ function renderComposer() {
       sendBtn.classList.add("is-access-blocked");
       sendBtn.title = "'대화 취소' 권한이 없습니다. 필요 권한: `conversation.cancel`";
     }
+    // REQ-20260608-0158: 즉시 답변 버튼 — 처리 중에만 노출 (구 #finalizeBtn 재배치).
+    if (composerFinalizeBtn) {
+      composerFinalizeBtn.classList.remove("hidden");
+      markAccessBlocked(composerFinalizeBtn, "conversation.finalize", currentConversation());
+    }
   } else {
     // 정상 → "전송" 버튼.
     sendBtn.disabled = false;
@@ -3073,6 +3081,7 @@ function renderComposer() {
       sendBtn.classList.add("is-access-blocked");
       sendBtn.title = "'대화 요청 실행' 권한이 없습니다. 필요 권한: `conversation.ask`";
     }
+    if (composerFinalizeBtn) composerFinalizeBtn.classList.add("hidden");
   }
   // 새 대화 버튼: 동일 패턴 — 클릭 시 토스트를 노출하기 위해 aria-disabled 로 표시.
   if (can("conversation.create")) {
@@ -3103,19 +3112,6 @@ function renderComposer() {
     composerHintEl.textContent = "";
   }
 
-  const active = currentConversation();
-  const processing = active && String(active.status || "").toLowerCase() === "processing";
-  // 가림 정책: context 상 의미있는 조건(처리 중 / 대화 선택됨) 은 그대로 가시성에 반영하되,
-  // "권한 없음" 은 hidden 이 아닌 is-access-blocked 로 표현해 버튼이 존재함을 알 수 있게 한다.
-  cancelBtn.classList.toggle("hidden", !processing);
-  finalizeBtn.classList.toggle("hidden", !processing);
-  // REQ-20260518-0003: 헤더의 대화 복사 / 공유 / 제목 변경 / 삭제 4 버튼 가시성/blocked 로직 제거.
-  // 동일 action 은 좌측 conv-item "···" menu 가 단일 진입점이며 (REQ-20260518-0001),
-  // 각 menu item 이 markAccessBlocked + 권한 게이트를 따로 적용한다.
-  if (processing) {
-    markAccessBlocked(cancelBtn, "conversation.cancel", active);
-    markAccessBlocked(finalizeBtn, "conversation.finalize", active);
-  }
 }
 
 function renderProgress(statusPayload = null) {
@@ -3607,6 +3603,96 @@ async function createConversationShare({ anchorMessageId = null, conversationId 
   return payload;
 }
 
+// REQ-20260608-0158 (TASK-0158): 공유 링크 관리 — 발급된 공유 링크 목록 조회 + 취소(revoke).
+// 기존엔 생성(createConversationShare)만 가능했고 목록/취소 UI 가 없어 백엔드
+// GET /api/conversations/{cid}/shares + DELETE /api/share/{id} 가 진입점 부재였다.
+async function openShareManager(cid) {
+  const backdrop = document.createElement("div");
+  backdrop.className = "share-mgr-backdrop";
+  backdrop.setAttribute("role", "dialog");
+  backdrop.setAttribute("aria-modal", "true");
+  backdrop.innerHTML =
+    '<div class="share-mgr-panel">' +
+    '  <div class="share-mgr-head">' +
+    '    <h3 class="share-mgr-title">공유 링크 관리</h3>' +
+    '    <button type="button" class="share-mgr-close" aria-label="닫기">×</button>' +
+    '  </div>' +
+    '  <div class="share-mgr-body" aria-live="polite"></div>' +
+    '</div>';
+  const close = () => {
+    if (backdrop.parentNode) document.body.removeChild(backdrop);
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); });
+  backdrop.querySelector(".share-mgr-close").addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(backdrop);
+
+  const body = backdrop.querySelector(".share-mgr-body");
+  const load = async () => {
+    body.innerHTML = '<div class="share-mgr-msg">불러오는 중…</div>';
+    let data;
+    try {
+      data = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/shares`);
+    } catch (err) {
+      body.innerHTML = '<div class="share-mgr-msg">목록을 불러오지 못했습니다.</div>';
+      return;
+    }
+    const items = (data && data.items) || [];
+    if (!items.length) {
+      body.innerHTML = '<div class="share-mgr-msg">발급된 공유 링크가 없습니다.</div>';
+      return;
+    }
+    body.innerHTML = "";
+    items.forEach((it) => {
+      const url = `${window.location.origin}${it.url}`;
+      const scopeLabel = it.scope_mode === "anchored" ? "특정 메시지까지" : "전체";
+      const row = document.createElement("div");
+      row.className = "share-mgr-row" + (it.is_active ? "" : " is-revoked");
+      const main = document.createElement("div");
+      main.className = "share-mgr-row-main";
+      main.innerHTML =
+        `<code class="share-mgr-token">${escapeHtml(String(it.token || "").slice(0, 10))}…</code>` +
+        `<span class="share-mgr-meta">${escapeHtml(scopeLabel)} · ${escapeHtml(formatDateTime(it.created_at))} · 조회 ${Number(it.view_count) || 0}</span>` +
+        (it.is_active
+          ? '<span class="share-mgr-badge is-active">활성</span>'
+          : '<span class="share-mgr-badge is-revoked">취소됨</span>');
+      const actions = document.createElement("div");
+      actions.className = "share-mgr-row-actions";
+      if (it.is_active) {
+        const openBtn = document.createElement("button");
+        openBtn.type = "button"; openBtn.className = "share-mgr-btn"; openBtn.textContent = "열기";
+        openBtn.addEventListener("click", () => window.open(url, "_blank", "noopener"));
+        const copyBtn = document.createElement("button");
+        copyBtn.type = "button"; copyBtn.className = "share-mgr-btn"; copyBtn.textContent = "링크 복사";
+        copyBtn.addEventListener("click", async () => {
+          try { await navigator.clipboard.writeText(url); showToast("공유 링크가 복사되었습니다."); }
+          catch (e) { window.prompt("공유 링크를 복사하세요:", url); }
+        });
+        const revokeBtn = document.createElement("button");
+        revokeBtn.type = "button"; revokeBtn.className = "share-mgr-btn is-danger"; revokeBtn.textContent = "취소";
+        revokeBtn.addEventListener("click", async () => {
+          if (!window.confirm("이 공유 링크를 취소(revoke)하시겠습니까?\n받은 사람은 더 이상 이 링크로 열 수 없습니다.")) return;
+          revokeBtn.disabled = true;
+          try {
+            await apiFetch(`/api/share/${encodeURIComponent(it.id)}`, { method: "DELETE" });
+            showToast("공유 링크를 취소했습니다.");
+            await load();
+          } catch (err) {
+            revokeBtn.disabled = false;
+            showToast(err.message || "취소에 실패했습니다.", true);
+          }
+        });
+        actions.append(openBtn, copyBtn, revokeBtn);
+      }
+      row.append(main, actions);
+      body.appendChild(row);
+    });
+  };
+  await load();
+}
+
 async function forkConversation({ fromMessageId = null } = {}) {
   const sourceId = state.activeConversationId;
   if (!sourceId) return;
@@ -3767,6 +3853,7 @@ function openConversationItemMenu(cid, triggerEl) {
   menu.appendChild(makeItem("공유", "conversation.share", async () => {
     await createConversationShare({ conversationId: cid });
   }));
+  menu.appendChild(makeItem("공유 관리", "conversation.read", () => openShareManager(cid)));
   menu.appendChild(makeItem("제목 변경", "conversation.rename", () => renameCurrentConversation(cid)));
   menu.appendChild(makeItem("삭제", "conversation.delete", () => deleteConversation(cid), { danger: true }));
 
@@ -4446,6 +4533,14 @@ async function _loadConversationAttachments(convId) {
 async function _loadConversationAttachmentList(convId) {
   const listEl = document.getElementById("attachSidePanelList");
   if (!listEl || !convId) return;
+  // TASK-0158: scopeAll 체크박스 상태 동기화 (대화별 bucket 반영, 첨부 0개면 숨김).
+  const scopeAllRow = document.getElementById("attachScopeAllRow");
+  const scopeAllBox = document.getElementById("composerAttachmentsScopeAll");
+  if (scopeAllBox) {
+    const bucket = _ensureComposerBucket(_composerAttachmentKey(convId));
+    scopeAllBox.checked = Boolean(bucket && bucket.scopeAll);
+  }
+  if (scopeAllRow) scopeAllRow.classList.add("hidden");
   listEl.innerHTML = `<div class="attach-list-empty">불러오는 중...</div>`;
   try {
     const resp = await apiFetch(`/api/conversations/${encodeURIComponent(convId)}/attachments`);
@@ -4455,6 +4550,7 @@ async function _loadConversationAttachmentList(convId) {
       return;
     }
     listEl.innerHTML = "";
+    if (scopeAllRow) scopeAllRow.classList.remove("hidden"); // TASK-0158: 첨부 존재 시 scopeAll 노출
     const kindIcon = (k) => ({csv:"📊", xlsx:"📊", pdf:"📄", txt:"📝", image:"🖼️"})[k] || "📎";
     const fmtSize = (b) => b > 1048576 ? `${(b/1048576).toFixed(1)}MB` : b > 1024 ? `${(b/1024).toFixed(0)}KB` : `${b}B`;
     for (const a of arr) {
@@ -5541,20 +5637,16 @@ async function initialize() {
       showToast(error.message || "이전 기록을 불러오지 못했습니다.", true);
     });
   });
-  cancelBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    cancelCurrentRun().catch((error) => {
-      showToast(error.message || "취소 요청에 실패했습니다.", true);
+  // REQ-20260608-0158: 즉시 답변 진입점 — composer 버튼. (중단은 send-버튼 모핑 TASK-0157.)
+  if (composerFinalizeBtn) {
+    composerFinalizeBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      finalizeCurrentRun().catch((error) => {
+        showToast(error.message || "즉시 답변 요청에 실패했습니다.", true);
+      });
     });
-  });
-  finalizeBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    finalizeCurrentRun().catch((error) => {
-      showToast(error.message || "즉시 답변 요청에 실패했습니다.", true);
-    });
-  });
+  }
   // REQ-20260518-0003: 헤더 4 버튼 (대화 복사 / 공유 / 제목 변경 / 삭제) 의 click handler 도 정리.
   // 동일 backend helper (deleteConversation / renameCurrentConversation / forkConversation /
   // createConversationShare / duplicateConversationFromMenu) 는 좌측 conv-item "···" menu 에서

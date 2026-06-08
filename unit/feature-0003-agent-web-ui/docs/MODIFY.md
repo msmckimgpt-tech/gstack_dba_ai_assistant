@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260608-0158
+- Date: 2026-06-08
+- TASK-Cycle: TASK-0158, **Minor §12.3** — "진입점 없는 기능" 전수조사 후 진입점 구성 (Tier 1, frontend-only)
+- Summary: 백엔드·로직·RBAC 는 완성됐으나 사용자 진입점이 없던 기능에 UI 길을 추가 (Tier 1: 즉시답변·공유링크관리·scopeAll). 신규 RBAC 코드/스키마/시크릿/엔드포인트 무변경.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`: composer 에 `#composerFinalizeBtn`("즉시 답변") 신설 + 영구숨김 `#progressCard` 의 고아 `#cancelBtn`/`#finalizeBtn` 제거; attach 사이드패널에 `#composerAttachmentsScopeAll` 체크박스 행 신설.
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`: 구 cancelBtn/finalizeBtn const·toggle·listener 제거 + `composerFinalizeBtn` 신규 배선(renderComposer busy 분기 노출/권한 + click→finalizeCurrentRun); `openShareManager(cid)` 신규(공유 링크 목록/취소 모달, `GET /api/conversations/{cid}/shares`·`DELETE /api/share/{id}`) + ··· 메뉴 "공유 관리" 항목 + `requiredPermissionsFor` 에 `conversation.read` case 추가; `_loadConversationAttachmentList` 에 scopeAll 체크박스 상태 동기화/표시.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.composer-finalize-btn`, `.share-mgr-*`(모달), `.attach-scope-all*` 스타일 신설 (기존 토큰만 사용).
+  - `unit/feature-0003-agent-web-ui/docs/DESIGN-entry-points.md`: design.md 9섹션 형식 신규 작성.
+
 ## CHG-20260608-0157
 - Date: 2026-06-08
 - TASK-Cycle: TASK-0157, **Minor §12.3** — 요청 중단(interrupt) 진입점 복구 (frontend-only)

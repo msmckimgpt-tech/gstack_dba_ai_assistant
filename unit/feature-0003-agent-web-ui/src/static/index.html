@@ -145,10 +145,8 @@
             <span class="progress-label" id="progressTitle">처리 중</span>
             <span class="progress-badge" id="progressStatus">processing</span>
             <span class="progress-summary" id="progressSummary"></span>
-            <div class="progress-actions">
-              <button type="button" class="tool-btn hidden" id="cancelBtn">중단</button>
-              <button type="button" class="tool-btn hidden" id="finalizeBtn">즉시 답변</button>
-            </div>
+            <!-- TASK-0158: 중단/즉시 답변 진입점은 composer 로 이전 (이 strip 은 영구 숨김). -->
+            <div class="progress-actions"></div>
             <span class="progress-caret" aria-hidden="true">▾</span>
           </summary>
           <div class="progress-steps" id="progressSteps"></div>
@@ -270,6 +268,8 @@
               placeholder="예) 최근 7일 신규 사용자 수와 평균 접속 시간을 보여줘"
               autocomplete="off"
             ></textarea>
+            <!-- TASK-0158: 즉시 답변 — 처리 중에만 노출 (send 버튼 좌측). -->
+            <button type="button" class="composer-finalize-btn hidden" id="composerFinalizeBtn" title="즉시 답변 — 지금까지 모은 정보로 답변을 생성합니다">즉시 답변</button>
             <button type="button" class="send-btn" id="sendBtn" title="전송 (Ctrl+Enter)">
               <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
                 <path d="M1.5 7.5L13.5 1.5L7.5 13.5L6.5 8.5L1.5 7.5Z" fill="currentColor"/>
@@ -292,6 +292,14 @@
       <span class="attach-side-panel-title">첨부 파일</span>
       <button type="button" class="attach-side-panel-close" id="attachSidePanelClose" aria-label="패널 닫기">×</button>
     </div>
+    <!-- TASK-0158: scopeAll 진입점 — 핸들러(app.js)·백엔드(attachment_scope_all)는 이미 존재했고 마크업만 부재였음. -->
+    <label class="attach-scope-all hidden" id="attachScopeAllRow">
+      <input type="checkbox" id="composerAttachmentsScopeAll" />
+      <span class="attach-scope-all-text">
+        <span class="attach-scope-all-label">이 대화의 모든 첨부 사용</span>
+        <span class="attach-scope-all-hint">현재 선택뿐 아니라 이 대화에 올린 전체 첨부를 컨텍스트로 사용합니다.</span>
+      </span>
+    </label>
     <div class="attach-side-panel-list" id="attachSidePanelList" aria-live="polite"></div>
   </aside>
 
