@@ -1680,6 +1680,8 @@ function buildResultTable(previewTable) {
   wrap._tableEl = tableEl;
   wrap._metaEl = meta;
   wrap._colCount = colCount;
+  // 전체 데이터 로드 시 CSV 헤더 검증용 — 미리보기 컬럼 보관 (#118)
+  wrap._previewColumns = columns.map((c) => String(c));
   return wrap;
 }
 
@@ -1701,6 +1703,19 @@ async function loadFullCsvIntoTable(csvPath, tableWrap, buttonEl) {
     }
     const header = rows[0];
     const body = rows.slice(1);
+    // 방어 가드 (#118): 불러온 CSV 헤더가 미리보기 컬럼과 불일치하면 잘못된
+    // 결과 파일(과거 save_csv 파일명 충돌로 덮어써진 케이스 등)이므로 표 교체를
+    // 거부한다. 다른 쿼리 데이터를 조용히 "전체"로 표시하던 오염을 차단한다.
+    const expectedCols = tableWrap._previewColumns;
+    if (Array.isArray(expectedCols) && expectedCols.length) {
+      const norm = (s) => String(s == null ? "" : s).trim();
+      const mismatch =
+        header.length !== expectedCols.length ||
+        header.some((h, i) => norm(h) !== norm(expectedCols[i]));
+      if (mismatch) {
+        throw new Error("결과 파일이 미리보기와 일치하지 않아 전체 데이터를 표시할 수 없습니다.");
+      }
+    }
     const tableEl = tableWrap._tableEl;
     // 헤더 재구성 (RowCount 가상 컬럼 유지)
     const thead = tableEl.querySelector("thead");
