@@ -1848,6 +1848,10 @@ a { color: inherit; }
 .send-btn:hover   { background: var(--primary-dark); }
 .send-btn:active  { transform: scale(.94); }
 .send-btn:disabled { opacity: .38; cursor: not-allowed; transform: none; }
+/* REQ-20260608-0157: 요청 처리 중 "중단" 모드 — 위험색으로 전송과 구분 */
+.send-btn.is-stop { background: var(--danger); }
+.send-btn.is-stop:hover { background: #b91c1c; }
+.send-btn.is-stop.is-access-blocked { opacity: .55; cursor: not-allowed; }
 
 /* Send mode toggle tooltip — appears above send button on hover */
 .send-mode-tooltip {

@@ -3020,6 +3020,14 @@ async function bulkDeleteConversations() {
   await refreshWorkspace(state.activeConversationId);
 }
 
+// REQ-20260608-0157 (TASK-0157): 요청 처리 중 전송 버튼을 "중단" 버튼으로 모핑한다 (ChatGPT 패턴).
+// 기존 중단/즉시 답변 버튼은 영구 숨김(style="display:none")된 #progressCard 안에 고아로 남아
+// 화면에 노출되지 않았다(취소 진입점 부재). 백엔드 /api/cancel + 에이전트 루프 폴링은 정상.
+const SEND_BTN_SEND_ICON =
+  '<svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true"><path d="M1.5 7.5L13.5 1.5L7.5 13.5L6.5 8.5L1.5 7.5Z" fill="currentColor"/></svg>';
+const SEND_BTN_STOP_ICON =
+  '<svg width="14" height="14" viewBox="0 0 15 15" fill="none" aria-hidden="true"><rect x="3.5" y="3.5" width="8" height="8" rx="1.5" fill="currentColor"/></svg>';
+
 function renderComposer() {
   const busy = isCurrentConvBusy();
   const hasAsk = can("conversation.ask");
@@ -3028,15 +3036,43 @@ function renderComposer() {
   renderProductChip();
   // 전송 버튼: 권한이 없어도 클릭이 통과하여 토스트로 안내되도록 native disabled 대신 aria-disabled 사용.
   promptInputEl.disabled = busy;
-  sendBtn.disabled = busy;
-  if (hasAsk) {
-    sendBtn.removeAttribute("aria-disabled");
-    sendBtn.classList.remove("is-access-blocked");
-    sendBtn.title = "";
+  if (busy) {
+    // REQ-20260608-0157: 처리 중 → "중단" 버튼. native disabled 를 풀어 클릭이 통과하게 한다.
+    const canCancel = canCancelConversation();
+    sendBtn.disabled = false;
+    sendBtn.classList.add("is-stop");
+    if (sendBtn.dataset.mode !== "stop") {
+      sendBtn.innerHTML = SEND_BTN_STOP_ICON;
+      sendBtn.dataset.mode = "stop";
+    }
+    sendBtn.setAttribute("aria-label", "중단");
+    if (canCancel) {
+      sendBtn.removeAttribute("aria-disabled");
+      sendBtn.classList.remove("is-access-blocked");
+      sendBtn.title = "중단 (요청 취소)";
+    } else {
+      sendBtn.setAttribute("aria-disabled", "true");
+      sendBtn.classList.add("is-access-blocked");
+      sendBtn.title = "'대화 취소' 권한이 없습니다. 필요 권한: `conversation.cancel`";
+    }
   } else {
-    sendBtn.setAttribute("aria-disabled", "true");
-    sendBtn.classList.add("is-access-blocked");
-    sendBtn.title = "'대화 요청 실행' 권한이 없습니다. 필요 권한: `conversation.ask`";
+    // 정상 → "전송" 버튼.
+    sendBtn.disabled = false;
+    sendBtn.classList.remove("is-stop");
+    if (sendBtn.dataset.mode !== "send") {
+      sendBtn.innerHTML = SEND_BTN_SEND_ICON;
+      sendBtn.dataset.mode = "send";
+    }
+    sendBtn.setAttribute("aria-label", "전송");
+    if (hasAsk) {
+      sendBtn.removeAttribute("aria-disabled");
+      sendBtn.classList.remove("is-access-blocked");
+      sendBtn.title = "";
+    } else {
+      sendBtn.setAttribute("aria-disabled", "true");
+      sendBtn.classList.add("is-access-blocked");
+      sendBtn.title = "'대화 요청 실행' 권한이 없습니다. 필요 권한: `conversation.ask`";
+    }
   }
   // 새 대화 버튼: 동일 패턴 — 클릭 시 토스트를 노출하기 위해 aria-disabled 로 표시.
   if (can("conversation.create")) {
@@ -5440,6 +5476,13 @@ async function initialize() {
     });
   }
   sendBtn.addEventListener("click", () => {
+    // REQ-20260608-0157: 처리 중에는 전송 버튼이 "중단" 으로 동작한다.
+    if (isCurrentConvBusy()) {
+      cancelCurrentRun().catch((error) => {
+        showToast(error.message || "취소 요청에 실패했습니다.", true);
+      });
+      return;
+    }
     sendPrompt().catch((error) => {
       showToast(error.message || "요청 전송에 실패했습니다.", true);
     });
@@ -5469,6 +5512,7 @@ async function initialize() {
       if (tip) tip.remove();
     };
     sendBtn.addEventListener("mouseenter", () => {
+      if (isCurrentConvBusy()) return; // REQ-20260608-0157: 중단 모드에서는 전송 모드 툴팁 숨김
       clearTimeout(_sendTipLeaveTimer);
       if (document.getElementById("sendModeTooltip")) return;
       const tip = document.createElement("div");

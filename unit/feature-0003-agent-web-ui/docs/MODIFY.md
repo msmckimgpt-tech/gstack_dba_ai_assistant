@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260608-0157
+- Date: 2026-06-08
+- TASK-Cycle: TASK-0157, **Minor §12.3** — 요청 중단(interrupt) 진입점 복구 (frontend-only)
+- Summary: 요청 처리 중 사용자가 실행을 멈출 수 있는 "중단" 버튼이 화면에 노출되지 않던 결함 복구. 근본 원인은 중단(`#cancelBtn`)·즉시 답변(`#finalizeBtn`) 버튼이 커밋 `4ba71f5` 에서 영구 숨김(`style="display:none"`)된 `#progressCard` 안에 고아로 남아 `renderProgress()` 의 `classList.remove("hidden")` 가 인라인 style 우선순위에 가려 무효였기 때문. 백엔드 `/api/cancel` + 에이전트 루프 폴링 + RBAC 는 정상. 사용자 선택(ChatGPT 패턴)에 따라 처리 중 전송 버튼을 "중단" 버튼으로 모핑.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`: `SEND_BTN_SEND_ICON`/`SEND_BTN_STOP_ICON` 상수 추가; `renderComposer()` 가 `isCurrentConvBusy()` 동안 `#sendBtn` 을 `.is-stop`(stop 아이콘 + `aria-label="중단"`, native disabled 해제) 로 모핑하고 종료 시 전송 버튼 환원 + 중단 권한 access-blocked 반영; `#sendBtn` click 핸들러 busy→`cancelCurrentRun()` / else `sendPrompt()` 분기; hover 전송모드 툴팁을 중단 모드에서 숨김.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.send-btn.is-stop { background: var(--danger) }` + hover `#b91c1c` + `.is-stop.is-access-blocked` muted 규칙.
+  - `index.html` 무변경 (영구 숨김 strip 미복원 — 기존 TMI 정리 UX 보존).
+
 ## CHG-20260605-0151
 - Date: 2026-06-05
 - TASK-Cycle: TASK-0151, **Major §12.3** — 첨부 text inline cap 정렬 버그 수정 (DB 조회 UX 개선의 web 면)

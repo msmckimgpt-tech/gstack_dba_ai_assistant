@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260608-0157 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]
+- Date: 2026-06-08
+- TASK-Cycle: TASK-0157 (REQ-20260608-0157, **Minor** §12.3 — 요청 중단(interrupt) 진입점 복구)
+- Skip reason: frontend-only (static/app.js + static/styles.css). 신규 RBAC 권한 코드 없음 — 기존 `conversation.cancel.own/.any` 게이트(`/api/cancel`, `canCancelConversation`)를 **그대로 재사용**하여 이미 존재하던 진입점을 노출만 함. DB 스키마/엔드포인트/시크릿 무변경. 백엔드 취소 경로(에이전트 루프 폴링)도 무변경. 신규 attack surface 없음 → outside-voice 트리거 미해당. node --check PASS.
+
 ## REV-20260605-0151 [SUBAGENT: general-purpose 적대적 diff 리뷰 — app.py 첨부 cap, BLOCKER 0]
 - Date: 2026-06-05
 - Cycle: TASK-0151 (DB 조회 사용자 경험 개선 — 첨부 text inline cap 정렬 버그 수정), **Major §12.3**

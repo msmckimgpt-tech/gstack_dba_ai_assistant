@@ -12,9 +12,13 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-05-29 (ai/claude/remediation-cutover-hardening 병합: TASK-0124 관리 콘솔 RBAC 권한 정합 및 폐기 권한 정리 + TASK-0125[브랜치 원번호 TASK-0123] UX 2차 보완 7개 항목 — 입력창 높이 일치 + 파일 즉시 업로드 + 말풍선 첨부파일 표시 + 첨부파일 다운로드 + 공유뷰 CSV 다운로드 + LLM step/thinking 표시 + 첫 대화 상태 dot 갱신)
+- Last Updated: 2026-06-08 (TASK-0157 요청 중단(interrupt) 진입점 복구 — 전송 버튼 stop 모핑)
 
 ## 2. Task Queue
+
+### TASK-0157 요청 중단(interrupt) 진입점 복구 (2026-06-08)
+
+- [x] TASK-0157 (REQ-20260608-0157, **Minor §12.3** — frontend-only). 사용자 보고: 요청 후 "중단" 기능이 UI에 안 나타나고 진입 경로가 없음. /investigate 근본 원인: 중단/즉시 답변 버튼이 커밋 `4ba71f5` 의 영구 숨김(`style="display:none"`) `#progressCard` 안에 고아로 남아 `renderProgress()` 의 `classList.remove("hidden")` 가 인라인 style 에 가려 무효 → 정상 동작 중 취소 진입점 0개. 백엔드 `/api/cancel`·에이전트 루프 폴링·RBAC 는 정상. **수정(ChatGPT 패턴)**: `renderComposer()` 가 처리 중 `#sendBtn` 을 "중단" 버튼으로 모핑(stop 아이콘 + `.is-stop` 위험색 + native disabled 해제) + click 핸들러 busy→`cancelCurrentRun()` 분기 + hover 툴팁 숨김 + 중단 권한 access-blocked 반영(AC-0306/0307). 변경 2파일(app.js/styles.css). node --check PASS. **이월**: finalize 진입점 미노출(동일 근본 원인, 사용자가 단일-버튼 send-morph 선택으로 본 cycle 범위 밖). REV-20260608-0157 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret].
 
 ### TASK-0151 첨부 text inline cap 정렬 버그 수정 (2026-06-05)
 
