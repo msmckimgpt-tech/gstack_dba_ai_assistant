@@ -12,9 +12,13 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-08 (TASK-0159 고아 run 무한 폴링 수정 — stale tz 회귀 + 부팅 reconciliation; TASK-0158 진입점 Tier1·2 병행 세션)
+- Last Updated: 2026-06-08 (TASK-0161 RBAC 카탈로그 정리 + 죽은 코드 제거 — TASK-0158 Tier 3 종결)
 
 ## 2. Task Queue
+
+### TASK-0161 RBAC 카탈로그 정리 + 죽은 코드 제거 (TASK-0158 Tier 3 종결) (2026-06-08)
+
+- [x] TASK-0161 (REQ-20260608-0161, **Major §12.3** — RBAC 권한 모델 변경 + 죽은 코드). TASK-0158 Tier 3 결정 항목을 권장 방향대로 처리. (1) **거짓 컨트롤 권한 제거** `attachment.execute_sql_on.own/.any`(enforce 0, 관리 그리드 무동작 체크박스) — 정의·시드·catchup 제거 + `_cleanup_deprecated_role_permissions` removals 로 DB 행 멱등 정리 + app.js map 제거. 실제 게이트(allowlist+attachment_reader+sql_guard) 무변경, 런타임 동작 0(교차계정 이미 차단)(AC-0315). (2) **죽은 중복 제거** — `POST /api/list_conversations`(호출자 0, 내부 PG 메서드명과 무관) + `#composerAttachments`/`Pills` DOM·잔여참조·고아 `_toggleAttachmentPill` + `#tabCountAudits` stale 뱃지(AC-0316). (3) **`upload.any` 유지+문서화**(실제 enforce, 의도적 UI 미노출)(AC-0317). **outside-voice 적대적 RBAC 리뷰 PASS-WITH-NITS, BLOCKER 0**(REV-20260608-0161, NIT 2건 본 cycle 흡수). py_compile/node --check PASS. 동시 세션 TASK-0160(agent_core tool_use fix) 점유로 0160→0161 재배정, base a4a2d28 rebase. **이월(별 cycle)**: in-process(to_thread) 실행모델 구조적 재설계(TASK-0159 이월과 동일), attachment 빈 그룹 키 정리(무해).
 
 ### TASK-0159 고아 run 무한 폴링 수정 — PG timestamptz stale 회귀 + 부팅 reconciliation (2026-06-08)
 

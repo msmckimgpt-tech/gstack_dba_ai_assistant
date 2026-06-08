@@ -45,7 +45,7 @@
         <div class="admin-tab-group-label">감사</div>
         <button type="button" class="admin-tab" data-admin-tab="audits" id="adminTabAudits">
           <span class="admin-tab-label">감사 로그</span>
-          <span class="admin-tab-count" id="tabCountAudits">—</span>
+          <!-- TASK-0161: #tabCountAudits stale 뱃지 제거 (admin.js 가 채우지 않아 영구 "—"). 감사는 cursor 페이지네이션이라 고정 총계 없음. -->
         </button>
 
         <!-- TASK-0136: LLM 사용량 tab (admin 전용 — console.usage.read 없으면 숨김) -->

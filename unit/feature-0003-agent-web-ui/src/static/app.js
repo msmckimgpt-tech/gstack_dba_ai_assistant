@@ -299,8 +299,7 @@ const PERMISSION_LABELS = {
   "conversation.attachment.read.own": "내 대화 첨부 조회",
   "conversation.attachment.read.any": "전체 대화 첨부 조회",
   // TASK-0094 Sprint 1 Phase 12: 첨부 sandbox SQL 실행 2 코드 (group=attachment).
-  "attachment.execute_sql_on.own": "내 첨부 sandbox SQL 실행",
-  "attachment.execute_sql_on.any": "전체 첨부 sandbox SQL 실행",
+  // TASK-0161: attachment.execute_sql_on.* 라벨 제거 (권한 카탈로그에서 제거됨 — 거짓 컨트롤).
 };
 
 const PERMISSION_DESCRIPTIONS = {
@@ -349,8 +348,7 @@ const PERMISSION_DESCRIPTIONS = {
   "conversation.attachment.read.own": "자신의 대화에 첨부된 파일 metadata + 본문 (사내망 다운로드) 을 조회할 수 있는 권한입니다. 승인 전 (pending) 계정은 metadata 만 노출됩니다.",
   "conversation.attachment.read.any": "모든 계정의 대화 첨부를 조회할 수 있는 권한입니다. 운영자 한정으로 부여합니다.",
   // TASK-0094 Sprint 1 Phase 12: 첨부 sandbox SQL 실행.
-  "attachment.execute_sql_on.own": "자신의 대화 첨부 데이터를 sandbox schema 에서 SELECT 실행할 수 있는 권한입니다. D14 AST allowlist guard 가 statement 형식을 제한합니다.",
-  "attachment.execute_sql_on.any": "모든 계정의 첨부에 대해 sandbox SQL 을 실행할 수 있는 권한입니다. 운영자 한정으로 부여합니다.",
+  // TASK-0161: attachment.execute_sql_on.* 설명 제거 (권한 카탈로그에서 제거됨 — 거짓 컨트롤).
 };
 
 function describePermission(code = "") {
@@ -4202,11 +4200,9 @@ async function _syncConversationAttachmentsToBucket(convId) {
 }
 
 function _renderAttachmentPills() {
-  // UX-COMPACT: 오른쪽 사이드 패널에 렌더. 기존 composerAttachments 는 숨김 유지.
+  // 오른쪽 사이드 패널(#attachSidePanel)에 렌더. (TASK-0161: 죽은 #composerAttachments 숨김 코드 제거)
   const sidePanel = document.getElementById("attachSidePanel");
   const sidePanelList = document.getElementById("attachSidePanelList");
-  const oldWrap = document.getElementById("composerAttachments");
-  if (oldWrap) oldWrap.classList.add("hidden");
 
   const key = _composerAttachmentKey(state.activeConversationId);
   const bucket = state.composerAttachments.byConv[key];
@@ -4489,10 +4485,8 @@ function _guessKindFromFile(file) {
   return "other";
 }
 
-function _toggleAttachmentPill(attachmentId) {
-  // UX-COMPACT: _removeAttachmentPill 로 위임 (모든 경우 즉시 제거)
-  _removeAttachmentPill(attachmentId);
-}
+// TASK-0161: _toggleAttachmentPill 제거 — 유일 호출처(죽은 #composerAttachmentsPills 핸들러)
+// 제거로 고아화. 실제 제거 로직 _removeAttachmentPill 은 #attachSidePanel 경로가 사용.
 
 // TASK-0106: lazy-create 시 staged 첨부 (status="staged", _localFile=File) 를 새로
 // 발급된 cid 로 일괄 업로드. 모두 성공해야 sendPrompt 가 첨부와 함께 진행. 일부
@@ -4574,9 +4568,7 @@ async function _loadConversationAttachments(convId) {
     }
     _renderAttachmentPills();
   } catch (exc) {
-    // 403 / 404 등 graceful — 첨부 권한 없거나 대화 부재. pill 영역 hide.
-    const wrap = document.getElementById("composerAttachments");
-    if (wrap) wrap.classList.add("hidden");
+    // 403 / 404 등 graceful — 첨부 권한 없거나 대화 부재. (TASK-0161: 죽은 #composerAttachments hide 제거)
   }
 }
 
@@ -4651,7 +4643,7 @@ function _bindComposerAttachmentEvents() {
   // 통합. fileInput 의 change 핸들러는 그대로 유지.
   const fileInput = document.getElementById("attachFileInput");
   const scopeAllEl = document.getElementById("composerAttachmentsScopeAll");
-  const pillsContainer = document.getElementById("composerAttachmentsPills");
+  // TASK-0161: #composerAttachmentsPills 제거됨 (죽은 DOM) — pill 토글은 #attachSidePanel 경로 사용.
   const composerWrap = document.querySelector(".composer-wrap");
 
   if (fileInput) {
@@ -4677,15 +4669,6 @@ function _bindComposerAttachmentEvents() {
           );
         }
       }
-    });
-  }
-  if (pillsContainer) {
-    pillsContainer.addEventListener("click", (ev) => {
-      const btn = ev.target.closest('[data-action="toggle"]');
-      if (!btn) return;
-      const pill = btn.closest("[data-attachment-id]");
-      if (!pill) return;
-      _toggleAttachmentPill(pill.dataset.attachmentId);
     });
   }
   if (composerWrap) {

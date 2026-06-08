@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260608-0161 [SUBAGENT: general-purpose 적대적 RBAC/보안 리뷰 — execute_sql_on 제거, BLOCKER 0]
+- Date: 2026-06-08
+- Cycle: TASK-0161 (REQ-20260608-0161, **Major §12.3** — RBAC 권한 모델 변경: 거짓 컨트롤 권한 제거 + 죽은 코드). [[feedback_outside_voice_for_rbac]] 정책에 따라 outside-voice 필수.
+- Reviewer: general-purpose subagent (적대적 검증 — 권한 제거가 보안 회귀인지 독립 코드 검증).
+- Verdict: **PASS-WITH-NITS. BLOCKER 0.**
+- Findings (A~F 전부 confirmed-safe):
+  - (A) `attachment.execute_sql_on.*` enforce 호출처 **0** 재확인(app.py 60+ `_account_has_permission` callsite 전수 + agent_core/tools/modules grep). BRIEFING 이 `/api/ask` gate 를 계획했으나 미구현 — `/api/ask` 는 `conversation.ask` 만 체크. 제거는 회귀 아님.
+  - (B) 실제 게이트 3중(① 계정-스코프 allowlist app.py:7663-7687 `AccountId=%s` IDOR fix + tools `_whitelist_violation` fail-closed ② `sql_guard.validate_sql_for_sandbox` tools.py:582 ③ `attachment_reader` SELECT-only) 무손상 — 권한 제거로 열리는 경로 없음(교차계정은 이미 allowlist 차단).
+  - (C) `_cleanup_deprecated_role_permissions` 가 두 코드 `role_key=None` 전 롤 DELETE(멱등), `_legacy_permission_codes_from_row` 는 현 카탈로그 기반이라 KeyError 없음, 시드 가정 코드 없음, CI-safe(테스트 미참조).
+  - (D) `POST /api/list_conversations` 호출자 0, HTTP 핸들러만 제거, 내부 PG 메서드명 `list_conversations`(memory.py/runtime_backend.py/agent_core.py)·web 헬퍼 `_list_conversations` 무관 무손상.
+  - (E) `upload.any` 는 `_account_can_access_attachment`(app.py:5004) 로 실제 enforce — execute_sql_on 과 본질적으로 다름(문서화 주장 정확).
+  - (F) 빈 attachment 그룹 admin.js 자동 제외, `state.composerAttachments` live, py_compile/node PASS.
+- NITs(본 cycle 흡수): (1) `#composerAttachments` 잔여 참조 2건(app.js 4574/4650 null-guard)·고아 `_toggleAttachmentPill` → **제거 완료**. (2) `ADMIN_PERMISSION_SECTIONS` 의 attachment 그룹 키 잔존 → 무해(빈 그룹 자동 제외) + 향후 attachment 권한 추가 시 forward-compatible 위해 **의도적 유지**.
+
 ## REV-20260608-0158 [SKIPPED:test-evidence-no-code-change] (PB-0008 Windows-browser 검증 기록)
 - Date: 2026-06-08
 - TASK-Cycle: TASK-0158 — Windows-browser 완료 게이트 증거 기록 (코드 변경 0)

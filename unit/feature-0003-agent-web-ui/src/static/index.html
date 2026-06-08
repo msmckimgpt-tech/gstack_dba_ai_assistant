@@ -187,10 +187,7 @@
                selected/ready 첨부만 sendPrompt 시 attachment_ids 로 전송. drag-drop /
                paperclip / 새 파일 선택 시 본 영역에 pill 추가. pending sentinel 별 snapshot
                (R-F5 lazy-create) 도 본 영역의 state 가 source-of-truth. -->
-          <!-- UX-COMPACT: composer-attachments 영역 제거 (파일은 오른쪽 사이드 패널로 이동) -->
-          <div class="composer-attachments hidden" id="composerAttachments" aria-live="polite" aria-hidden="true">
-            <div class="composer-attachments-pills" id="composerAttachmentsPills"></div>
-          </div>
+          <!-- TASK-0161: 죽은 composer-attachments DOM 제거 (첨부 UI 는 #attachSidePanel 로 이전 완료). state.composerAttachments 버킷은 live 유지. -->
           <!-- TASK-0094 Phase 6: drag-drop overlay — 사용자가 composer 영역에 파일을 끌어다 놓으면 표면화. -->
           <div class="composer-drop-overlay hidden" id="composerDropOverlay" aria-hidden="true">
             <span>파일을 끌어다 놓아서 첨부</span>

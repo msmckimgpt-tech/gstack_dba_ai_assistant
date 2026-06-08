@@ -18,7 +18,7 @@
   - **Next step (진입점 구성 — 우선순위 순)**:
     - **Tier 1 (완료 ✓ — TASK-0158, main 714e20e 배포)**: [x] 즉시답변(finalize) — 고아 `#finalizeBtn` 제거 + composer `#composerFinalizeBtn`(`/api/finalize`). [x] 공유 링크 관리 — ··· 메뉴 "공유 관리" + `openShareManager` 모달(`GET shares`/`DELETE share`). [x] scopeAll — attach 패널 `#composerAttachmentsScopeAll`.
     - **Tier 2 (완료 ✓ — TASK-0158)**: [x] audit.purge — `#auditPurgeBtn` + dry-run 미리보기 + typed-confirm. [x] 내 활동기록 — 프로필 `data-profile-tab="audits"` + `loadProfileAudits`. [x] 감사 필터 facet — datalist + `loadAuditFacets`. [x] attachment-grants 진단 — 대시보드 `loadGrantHealth` 카드. (감사 단건 상세 endpoint 는 목록이 full field 반환이라 중복 → 생략.)
-    - **Tier 3 (진입점 아님 — 결정 필요, 별 처리)**: `attachment.execute_sql_on.own/.any` = 정의·부여·관리그리드 노출되나 **어디서도 체크 안 함**(거짓 컨트롤) → enforce 하거나 PERMISSION_DEFINITIONS 에서 제거 결정 필요(RBAC 변경 → [[feedback_outside_voice_for_rbac]] outside-voice). `conversation.attachment.upload.any` = 관리자 타계정 업로드, UI 없음이 의도일 수 있음(product 결정). 죽은 중복(`#cancelBtn`/`#composerAttachments`/`POST /api/list_conversations`/`#tabCountAudits`) 정리.
+    - **Tier 3 (완료 ✓ — TASK-0161, outside-voice PASS)**: [x] `attachment.execute_sql_on.*` **제거**(거짓 컨트롤 — enforce 0, 실제 게이트 allowlist+attachment_reader+sql_guard 무변경) + DB removals 정리. [x] `conversation.attachment.upload.any` **유지+문서화**(실제 enforce, 의도적 UI 미노출 — ADR-WEB-0003). [x] 죽은 중복 제거(`POST /api/list_conversations`·`#composerAttachments`/`Pills`·`#tabCountAudits`·고아 `_toggleAttachmentPill`; `#cancelBtn` 은 Tier1 에서 이미 제거). 결정 근거 ADR-WEB-0002/0003.
   - **제외(정상 no-UI)**: `/healthz`·페이지셸·public share(호출됨)·폴링·410 stub(clear_memory/keywords)·`kb_ingest.py`(TASK-0108 의도적 보존).
 
 - [~] **P2** 리미디에이션(Task 10 #13) RAG 레이어 정리 — **(a)(b)(c) 핵심 완료**, cosmetic/dead 잔여만

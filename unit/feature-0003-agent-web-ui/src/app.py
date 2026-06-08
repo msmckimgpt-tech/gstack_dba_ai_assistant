@@ -320,8 +320,9 @@ PERMISSION_DEFINITIONS = (
     },
     # TASK-0094 Sprint 1 Phase 3 (REQ-20260521-0001, Critical §12.3): 첨부 기능 RBAC.
     # BRIEFING §5.2 1~4 row — Cycle 0 의 upload / read 권한 4 코드. group="conversation"
-    # (대화 흐름의 일부, attachment group 은 Cycle 1+ 의 attachment.execute_sql_on.* 부터
-    # 사용). D21 (R-F14): pending 은 read.own 만 — bytes download 는 Phase 5 의
+    # (대화 흐름의 일부). attachment group 은 TASK-0161 에서 execute_sql_on.* 제거 후
+    # 현재 비어 있다(권한 0 — admin.js 가 빈 group 자동 제외). D21 (R-F14): pending 은
+    # read.own 만 — bytes download 는 Phase 5 의
     # `/api/attachments/{id}/content` endpoint 에서 application-level deny.
     {
         "code": "conversation.attachment.upload.own",
@@ -330,6 +331,9 @@ PERMISSION_DEFINITIONS = (
         "group": "conversation",
     },
     {
+        # TASK-0161: enforce 됨(_account_can_access_attachment, 업로드 엔드포인트가 권위적 게이트)이나
+        # composer 가 비소유 대화 업로드를 차단해 UI 진입점이 없는 *의도적 latent* admin 역량.
+        # 거짓 컨트롤 아님 — UI 신설은 product 결정 시에만(관리자가 타 계정 대화에 콘텐츠 주입은 민감).
         "code": "conversation.attachment.upload.any",
         "label": "전체 대화 첨부 업로드",
         "description": "모든 계정의 대화에 첨부를 업로드할 수 있다. 운영자 한정.",
@@ -347,21 +351,15 @@ PERMISSION_DEFINITIONS = (
         "description": "모든 계정의 대화 첨부를 조회할 수 있다. 운영자 한정.",
         "group": "conversation",
     },
-    # TASK-0094 Sprint 1 Phase 12 (D14 + R-F3): 첨부 기반 sandbox SQL 실행 권한.
-    # 본 권한 부여만으로는 SQL 실행 안 됨 — D14 allowlist guard + attachment_reader
-    # MySQL user 의 권한 둘 다 통과 필요 (defense in depth). attachment group 신설.
-    {
-        "code": "attachment.execute_sql_on.own",
-        "label": "내 첨부 sandbox SQL 실행",
-        "description": "자신의 대화 첨부 데이터를 sandbox schema 에서 SELECT 실행할 수 있다.",
-        "group": "attachment",
-    },
-    {
-        "code": "attachment.execute_sql_on.any",
-        "label": "전체 첨부 sandbox SQL 실행",
-        "description": "모든 계정의 대화 첨부에 대해 sandbox SQL 을 실행할 수 있다. 운영자 한정.",
-        "group": "attachment",
-    },
+    # TASK-0161: attachment.execute_sql_on.own/.any 제거 (거짓 컨트롤).
+    #   TASK-0094 Sprint 1 Phase 12 가 이를 defense-in-depth 의 RBAC 층으로 정의했으나
+    #   enforce 가 한 번도 배선되지 않아(권한 체크 호출처 0) 관리 권한 그리드의 두 체크박스가
+    #   무동작이었다 — 끄더라도 첨부 sandbox SQL 이 차단되지 않아 잘못된 보안 안심을 줌.
+    #   첨부 sandbox SQL 의 *실제* 게이트는: (1) tools._ACTIVE_SCHEMA_ALLOWLIST(요청별 계정-
+    #   스코프 allowlist, TASK-0132 IDOR fix) + (2) agent_ro/attachment_reader DB 유저 최소권한
+    #   + (3) sql_guard AST 가드. 이 권한 제거 후에도 위 3중 방어선은 그대로 유효(런타임
+    #   동작 무변경 — 교차계정 경로는 이미 계정-스코프 allowlist 가 차단). 기존 DB
+    #   WebRolePermissions 행은 _cleanup_deprecated_role_permissions 가 멱등 정리한다.
     {
         "code": "product.manage",
         "label": "제품 관리",
@@ -515,8 +513,7 @@ SEED_ROLE_DEFINITIONS = (
             # TASK-0094 Sprint 1 Phase 3: 첨부 upload/read own.
             "conversation.attachment.upload.own",
             "conversation.attachment.read.own",
-            # TASK-0094 Sprint 1 Phase 12: 첨부 sandbox SQL 실행 own.
-            "attachment.execute_sql_on.own",
+            # TASK-0161: attachment.execute_sql_on.own 시드 제거 (거짓 컨트롤 — 실제 게이트는 allowlist+attachment_reader+sql_guard).
         },
     },
     {
@@ -541,8 +538,7 @@ SEED_ROLE_DEFINITIONS = (
             # TASK-0094 Sprint 1 Phase 3: 첨부 upload/read own.
             "conversation.attachment.upload.own",
             "conversation.attachment.read.own",
-            # TASK-0094 Sprint 1 Phase 12: 첨부 sandbox SQL 실행 own (사업팀 자가서비스).
-            "attachment.execute_sql_on.own",
+            # TASK-0161: attachment.execute_sql_on.own 시드 제거 (거짓 컨트롤).
         },
     },
     {
@@ -1800,9 +1796,7 @@ def _ensure_seed_roles(conn) -> None:
             "conversation.attachment.upload.any",
             "conversation.attachment.read.own",
             "conversation.attachment.read.any",
-            # TASK-0094 Sprint 1 Phase 12: admin 의 sandbox SQL 실행 2건 catchup.
-            "attachment.execute_sql_on.own",
-            "attachment.execute_sql_on.any",
+            # TASK-0161: admin 의 attachment.execute_sql_on.own/.any catchup 제거 (거짓 컨트롤).
             # TASK-0136 (#11): admin 의 LLM 사용량 조회 권한 catchup (운영자 전용 비용 가시성).
             "console.usage.read",
         ):
@@ -1836,8 +1830,7 @@ VALUES (%s, %s)
             # TASK-0094 Sprint 1 Phase 3: operator/sales 의 첨부 upload/read own.
             "conversation.attachment.upload.own",
             "conversation.attachment.read.own",
-            # TASK-0094 Sprint 1 Phase 12: operator/sales 의 sandbox SQL 실행 own.
-            "attachment.execute_sql_on.own",
+            # TASK-0161: operator/sales 의 attachment.execute_sql_on.own catchup 제거 (거짓 컨트롤).
         )
         catchup_pids = [
             int(permission_map.get(code) or 0)
@@ -1920,6 +1913,9 @@ def _cleanup_deprecated_role_permissions(conn) -> None:
     removals = [
         ("conversation.suggestions.read", None),         # 전체 롤에서 제거
         ("conversation.file.read.own",    "pending"),    # pending 롤에서만 제거
+        # TASK-0161: 거짓 컨트롤 권한 — enforce 미배선(실제 게이트는 allowlist+attachment_reader+sql_guard).
+        ("attachment.execute_sql_on.own", None),         # 전체 롤에서 제거
+        ("attachment.execute_sql_on.any", None),         # 전체 롤에서 제거
     ]
     for perm_code, role_key in removals:
         cur.execute("SELECT Id FROM WebPermissions WHERE Code = %s LIMIT 1", (perm_code,))
@@ -8935,19 +8931,9 @@ def public_share_fork(token: str, request: Request) -> JSONResponse:
         conn.close()
 
 
-@app.post("/api/list_conversations")
-def list_conversations(request: Request) -> JSONResponse:
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
-    payload = _build_conversations_payload(conn, account)
-    conn.close()
-    return JSONResponse(payload)
+# TASK-0161: POST /api/list_conversations 제거 — 클라이언트 호출자 0 의 레거시 중복
+# (GET /api/conversations 가 동일 _build_conversations_payload 를 제공). 내부 PG 백엔드
+# 메서드명 _read_runtime_pg("list_conversations") 와는 무관(이름만 동일).
 
 
 @app.post("/api/clear_memory")

@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260608-0161
+- Date: 2026-06-08
+- TASK-Cycle: TASK-0161, **Major §12.3** — RBAC 카탈로그 정리(거짓 컨트롤 권한 제거) + 죽은 코드 제거 (TASK-0158 Tier 3 종결)
+- Summary: ① `attachment.execute_sql_on.own/.any` 제거(enforce 미배선 거짓 컨트롤 — 실제 게이트 allowlist+attachment_reader+sql_guard 무변경). ② 죽은 중복 제거(list_conversations HTTP 핸들러·#composerAttachments DOM·#tabCountAudits). ③ `upload.any` 유지+문서화. outside-voice 적대적 RBAC 리뷰 PASS-WITH-NITS(BLOCKER 0).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`: `PERMISSION_DEFINITIONS` 에서 `attachment.execute_sql_on.own/.any` 제거(실제 게이트 문서화 주석으로 대체) + operator/sales/admin 시드·catchup 제거 + `_cleanup_deprecated_role_permissions.removals` 2 코드 추가(전 롤 멱등 DELETE) + `upload.any` 의도적 UI 미노출 주석 + `POST /api/list_conversations` 핸들러 제거(내부 `_read_runtime_pg` 무관) + attachment 그룹 주석 갱신.
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`: execute_sql_on 라벨/설명 map 제거; 죽은 `#composerAttachments`/`Pills` 참조(렌더 hide·catch·pillsContainer 핸들러)·고아 `_toggleAttachmentPill` 제거(`state.composerAttachments`·`_removeAttachmentPill` 은 live 유지).
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`: 죽은 `#composerAttachments`/`#composerAttachmentsPills` DOM 제거.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: `#tabCountAudits` stale 뱃지 제거.
+
 ## CHG-20260608-0158-V (PB-0008 Windows-browser 검증 기록)
 - Date: 2026-06-08
 - TASK-Cycle: TASK-0158 — 진입점 구성 Tier1·2 의 실제 Windows 브라우저 완료 게이트 검증 (코드 변경 없음, 테스트 증거만)
