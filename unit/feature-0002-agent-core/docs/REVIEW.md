@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260608-0160 [SUBAGENT: general-purpose 적대적 diff 리뷰 — _normalize_history_rows, APPROVE-WITH-NITS, BLOCKER 0]
+- Date: 2026-06-08
+- Cycle: TASK-0160 (REQ-20260608-0160, **Major §12.3** — 중단 run 고아 tool_use → LLM payload 400 방지)
+- Reviewer: general-purpose subagent (적대적 backend 리뷰 — `_normalize_history_rows` + `_assemble_core_messages`/`_format_core_messages` 호출부 + 신규 테스트). §18.8 trigger: LLM payload/response shape = backend 면.
+- Verdict: **APPROVE-WITH-NITS**. **BLOCKER 0**. (6 요청 케이스 + ~15 적대적 시나리오 직접 추적, 관련 테스트 47개 PASS.)
+- VERIFIED-CORRECT: (1) 모든 케이스(고아 mid/EOF, 부분 멀티툴, 유효 멀티툴, 고아 tool 행, 빈 tool_calls, 재정렬/중복 tool, asst-tool_calls 연속)에서 commit 된 assistant tool_use id 가 직후 tool 로 전부 해소되고 고아 tool 행 미생존. (2) `_parsed_tool_calls` 마커 보존(1021-1022 → `_format_core_messages` 1134-1138 소비), 유효 인접 턴 오삭제 없음. (3) commit 순서 = 원본 순서(assistant 먼저, tool 도착순). (4) 윈도잉(`normalized[-max:]` 후 재정규화)은 경계 절단 고아를 drop 하는 안전망 — dangling tool_use 생성 불가(tool 은 항상 assistant 뒤). (5) 비-tool 평문 대화 byte-identical(회귀 0). (6) asst(tc)→asst(tc) 연속 시 두 번째가 `_flush` 트리거해 첫 미완 턴 drop(정확).
+- Nits (Low): (a) **id 없는 tool_calls** 가 가드를 빠져나가 commit 될 수 있음(라이브 트리거 아님 — Anthropic 이 항상 toolu_* 부여 + save 경로 동일 id, **회귀 아님** — 구코드도 동일 맹점) → **반영함**: usable id 0개면 매칭 불가 sentinel 로 강제 drop + 회귀 테스트 `test_drops_idless_tool_calls_turn` 추가. (b) assistant-with-tool_calls 의 content(tool_notes) 가 formatted payload 에서 누락 — **기존 동작, 본 diff 무관**, display-only 메타라 payload 유효성 무영향(오해 방지용 명시).
+- 결론: deploy 안전. 테스트 7 passed (하드닝 포함).
+
 ## REV-20260605-0151 [SUBAGENT: general-purpose 적대적 diff 리뷰 — Verdict NEEDS-TWEAK→ACCEPTED, BLOCKER 0]
 - Date: 2026-06-05
 - Cycle: TASK-0151 (DB 조회 사용자 경험 개선 — grounding PG 전환 + prompt 개편 + 멀티턴 보존 + 첨부 cap), **Major §12.3**

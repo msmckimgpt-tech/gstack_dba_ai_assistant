@@ -981,33 +981,67 @@ def _parse_saved_tool_calls(raw_value: Any) -> list[dict[str, Any]]:
 
 
 def _normalize_history_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """대화 히스토리를 LLM payload 용으로 정합화한다 (TASK-0160).
+
+    Anthropic/Bedrock 은 assistant 의 tool_use 블록마다 바로 다음에 대응하는
+    tool_result 가 있어야 한다 (`messages.N: tool_use ... without tool_result` → 400).
+    중단된 run(예: web 재배포로 in-process ask 가 execute_sql 도중 종료 — [[TASK-0159]])은
+    tool_use 만 저장하고 tool_result 전에 죽어, 재생성 시 이 제약을 깨뜨린다.
+
+    그래서 assistant(tool_calls) 턴을 **버퍼링**해, 그 턴의 모든 tool_use id 가
+    뒤따르는 tool 행으로 해소된 경우에만 commit 한다. 하나라도 미해소(중단 잔재 또는
+    윈도우 경계 절단)면 그 턴(assistant + 부분 tool 결과)을 통째로 drop 해 payload
+    정합성을 보장한다. 매칭 assistant 없는 고아 tool 행도 drop (기존 동작 유지).
+    """
     normalized: list[dict[str, Any]] = []
+    # 진행 중 assistant tool_use 턴 버퍼
+    pending_assistant: dict[str, Any] | None = None
     pending_tool_ids: set[str] = set()
+    pending_tool_rows: list[dict[str, Any]] = []
+
+    def _flush() -> None:
+        nonlocal pending_assistant, pending_tool_ids, pending_tool_rows
+        # 모든 tool_use 가 해소된 유효 턴만 commit; 미해소 턴은 통째로 drop.
+        if pending_assistant is not None and not pending_tool_ids:
+            normalized.append(pending_assistant)
+            normalized.extend(pending_tool_rows)
+        pending_assistant = None
+        pending_tool_ids = set()
+        pending_tool_rows = []
+
     for row in rows:
         role = str(row.get("role") or "")
         raw_tool_calls = row.get("tool_calls")
         if role == "assistant" and raw_tool_calls:
+            _flush()  # 직전 턴 마감
             parsed_tool_calls = _parse_saved_tool_calls(raw_tool_calls)
             if not parsed_tool_calls:
-                pending_tool_ids.clear()
                 continue
             next_row = dict(row)
             next_row["_parsed_tool_calls"] = parsed_tool_calls
-            normalized.append(next_row)
+            pending_assistant = next_row
             pending_tool_ids = {
                 str(item.get("id") or "").strip()
                 for item in parsed_tool_calls
                 if isinstance(item, dict) and str(item.get("id") or "").strip()
             }
+            if not pending_tool_ids:
+                # tool_calls 가 있으나 사용 가능한 id 가 0개 → 페어링 검증 불가
+                # → 매칭 불가능한 sentinel 로 강제 drop (정합성 보수적 보장).
+                pending_tool_ids = {"\x00__unverifiable_tool_use__"}
+            pending_tool_rows = []
             continue
         if role == "tool":
             tool_call_id = str(row.get("tool_call_id") or "").strip()
-            if pending_tool_ids and tool_call_id and tool_call_id in pending_tool_ids:
+            if pending_assistant is not None and tool_call_id and tool_call_id in pending_tool_ids:
                 pending_tool_ids.discard(tool_call_id)
-                normalized.append(row)
+                pending_tool_rows.append(row)
+            # 매칭 assistant 없는 고아 tool 행 → drop
             continue
-        pending_tool_ids.clear()
+        # user 또는 tool_calls 없는 assistant → 진행 턴 마감 후 그대로 추가
+        _flush()
         normalized.append(row)
+    _flush()  # EOF — 마지막 턴 마감
     return normalized
 
 

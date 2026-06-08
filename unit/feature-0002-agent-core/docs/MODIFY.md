@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260608-0160
+- Date: 2026-06-08
+- TASK-Cycle: TASK-0160, **Major §12.3** — 중단 run 의 고아 tool_use → LLM payload 400 방지
+- Summary: 웹 DBA 챗 재질의 시 `BedrockException ... tool_use ids ... without tool_result` 400 으로 대화가 영구 막히던 결함 수정. `/api/ask` 의 in-process(`asyncio.to_thread`) 실행([[TASK-0159]])이 web 재배포로 `execute_sql` 도중 죽으면 assistant 의 tool_use 만 저장되고 tool_result 전에 종료 → 재생성 시 고아 tool_use 가 LLM payload 에 실려 Anthropic/Bedrock 거부. `_normalize_history_rows` 의 미완성 페어링 가드(assistant 를 먼저 append 후 회수 못함)를 버퍼링 방식으로 재작성.
+- Files:
+  - `unit/feature-0002-agent-core/src/agent_core.py`: `_normalize_history_rows` 재작성 — assistant(tool_calls) 턴을 버퍼(`pending_assistant`/`pending_tool_ids`/`pending_tool_rows`)링하고, 턴 종료 시 `_flush()` 가 모든 tool_use id 해소 시에만 commit·미해소면 턴 전체 drop. 매칭 없는 고아 tool 행 drop 유지. 윈도우 경계 절단 고아도 무해화.
+  - `unit/feature-0002-agent-core/tests/test_history_tooluse_sanitize.py`: 신규 6 case.
+- Note(즉시 해소, 코드 외): 라이브 PG `agent_runtime.core_messages` 의 대화 `20260608025216-3014b095` 고아 msg 1147(orphan tool_use) + 1184(에러 버블) 삭제. 전수 점검 결과 해당 대화 잔존 고아 0. (배포 후엔 query-time 정합화로 모든 대화의 동류 고아가 자동 무해화되어 별도 DB 정리 불요.)
+
 ## CHG-20260605-0151
 - Date: 2026-06-05
 - TASK-Cycle: TASK-0151, **Major §12.3** — DB 조회 사용자 경험 개선 (환각·반복질문·첨부무시·사고미확장 해소)

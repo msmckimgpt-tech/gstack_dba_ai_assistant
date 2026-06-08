@@ -31,6 +31,11 @@ source_of_truth: true
 - TEST-0008: 오래된 샘플 디렉토리 생성 후 `append_log_line('archive_probe', ...)` 호출 시 `archive/YYYY-MM-DD.tar.gz` 가 생성되는지 확인
 
 ## 3. Test Run History
+- 2026-06-08 (TASK-0160 중단 run 고아 tool_use 히스토리 정합화):
+  - `python3 -m py_compile unit/feature-0002-agent-core/src/agent_core.py` → 통과.
+  - 신규 `tests/test_history_tooluse_sanitize.py` (agent 이미지, `--no-deps`, DB 없이 순수 함수) → **6 passed**:
+    - 고아 tool_use 턴 drop / 부분(2개 중 1개 결과) 턴 drop / EOF·윈도우 경계 고아 drop / 매칭 없는 고아 tool 행 drop / 유효 멀티턴 보존 / `_parsed_tool_calls` 마커 보존.
+  - 비-web/UI 백엔드 변경(`agent_core._normalize_history_rows`) → PB-0008 Windows-browser N/A. 라이브 검증: 배포 후 대화 `20260608025216-3014b095` 재질의 200 + 신규 중단 시 query-time 자동 정합화 — STATUS/REPORT TASK-0160 참조.
 - 2026-05-15:
   - 추가 검증:
     - `python3 -m py_compile unit/feature-0002-agent-core/src/agent_core.py`
