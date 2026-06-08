@@ -55,13 +55,17 @@ __all__ = [
 
 """Output formatting, result rendering, response building."""
 from .config import *
-import csv, json, os, re
+import csv, json, os, re, uuid
 from typing import Any
 from rich.table import Table
 
 def save_csv(prefix: str, columns: list[str], rows: list[list[Any]]) -> str:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = os.path.join(AGENT_OUT_DIR, f"{ts}_{prefix}.csv")
+    # 같은 초에 저장되는 서로 다른 result set 의 파일명 충돌 방지 (#118).
+    # 초 단위 ts 만으로는 멀티-step 에이전트가 동일 초에 실행한 여러 SQL 결과가
+    # 같은 `{ts}_{prefix}.csv` 를 공유해 나중 결과가 앞 결과를 덮어썼다 (open 'w').
+    # get_conversation_id() 와 동일하게 uuid 접미를 붙여 유니크성을 보장한다.
+    path = os.path.join(AGENT_OUT_DIR, f"{ts}_{prefix}_{uuid.uuid4().hex[:8]}.csv")
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(columns)
