@@ -1582,6 +1582,7 @@ function enhanceFilePreviewLinks(target) {
 
 async function loadCsvAsInlineTable(csvPath, anchorEl) {
   const block = anchorEl.closest("p") || anchorEl;
+  if (block.dataset.fullTableExpanded === "1") return; // 이미 펼침
   const originalText = anchorEl.textContent;
   anchorEl.textContent = "불러오는 중...";
   anchorEl.style.pointerEvents = "none";
@@ -1597,15 +1598,47 @@ async function loadCsvAsInlineTable(csvPath, anchorEl) {
     if (!rows.length) {
       throw new Error("CSV에 표시할 데이터가 없습니다.");
     }
-    const tableWrap = buildResultTable({ columns: rows[0], rows: rows.slice(1), truncated: false });
+    const body = rows.slice(1);
+    const tableWrap = buildResultTable({ columns: rows[0], rows: body, truncated: false });
     if (!tableWrap) {
       throw new Error("표를 생성할 수 없습니다.");
     }
     tableWrap.classList.add("is-full-data");
-    // 직전 markdown 미리보기 표가 있으면 전체 표로 대체, 없으면 링크 자리에 삽입.
-    const prev = block.previousElementSibling;
-    block.replaceWith(tableWrap);
-    if (prev && prev.tagName === "TABLE") prev.remove();
+
+    // 펼친 표를 헤더바(행수 + 접기)와 함께 감싸 메시지를 영구 점유하지 않게 한다 (#122).
+    const container = document.createElement("div");
+    container.className = "inline-full-table";
+    const bar = document.createElement("div");
+    bar.className = "inline-full-table-bar";
+    const count = document.createElement("span");
+    count.className = "inline-full-table-count";
+    count.textContent = `전체 ${body.length}행`;
+    const collapseBtn = document.createElement("button");
+    collapseBtn.type = "button";
+    collapseBtn.className = "tool-btn";
+    collapseBtn.textContent = "접기";
+    bar.append(count, collapseBtn);
+    container.append(bar, tableWrap);
+
+    // 직전 markdown 미리보기 표(있으면)와 링크 단락을 숨기고 그 자리에 펼친 표 삽입.
+    const previewTable =
+      block.previousElementSibling && block.previousElementSibling.tagName === "TABLE"
+        ? block.previousElementSibling
+        : null;
+    block.after(container);
+    block.style.display = "none";
+    if (previewTable) previewTable.style.display = "none";
+    block.dataset.fullTableExpanded = "1";
+    anchorEl.textContent = originalText;
+    anchorEl.style.pointerEvents = "";
+
+    // 접기 — 펼친 표 제거 후 미리보기/링크 복원 (토글).
+    collapseBtn.addEventListener("click", () => {
+      container.remove();
+      block.style.display = "";
+      if (previewTable) previewTable.style.display = "";
+      delete block.dataset.fullTableExpanded;
+    });
   } catch (error) {
     anchorEl.textContent = originalText;
     anchorEl.style.pointerEvents = "";

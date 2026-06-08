@@ -1135,6 +1135,22 @@ a { color: inherit; }
   min-width: 0;
 }
 
+/* 메시지 본문 "전체 N행 미리보기" 펼침 — 헤더바(행수 + 접기) (#122) */
+.inline-full-table {
+  margin: .5rem 0;
+}
+.inline-full-table-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  margin-bottom: .35rem;
+}
+.inline-full-table-count {
+  font-size: .8rem;
+  color: var(--text-2);
+}
+
 .result-table {
   /* sticky 헤더·첫 열에 border 가 따라가도록 separate 모델 사용.
      border 대체는 .result-table th/td 의 box-shadow 로 처리. */
