@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260608-0159 [SUBAGENT: general-purpose 적대적 backend/qa diff 리뷰 — 고아 run/tz stale, BLOCKER 0]
+- Date: 2026-06-08
+- Cycle: TASK-0159 (REQ-20260608-0159, **Major §12.3** — 고아 run 무한 폴링 수정: tz stale 회귀 + 부팅 reconciliation)
+- Reviewer: general-purpose subagent (적대적 backend/QA diff 리뷰 — app.py 변경 + 신규 테스트). §18.8 trigger: run-status/query 생명주기 = backend 면.
+- Verdict: **APPROVE-WITH-NITS**. **BLOCKER 0**.
+- VERIFIED-CORRECT: (1) tz 변환 `raw.astimezone(timezone.utc).replace(tzinfo=None)` 가 `_parse_kv_timestamp`·`datetime.utcnow()` 와 정합 — 3개 `_compute_display_status` 호출처 모두 복구. (2) 쓰기 백엔드 정합 — `set_run_status`→`save_memory_kv` 가 PG runtime conn(`agent_runtime.kv`)에 쓰고 read 도 동일 PG → 일치. (3) boot-guard 타이밍 — `_PROCESS_BOOT_UTC` 가 모듈 import(요청 처리 전) 시 캡처 → 새 ask(`agent_core.py:1869`, to_thread 내부)는 항상 boot 이후 → 정상 skip, 오탐 없음. (4) 이벤트루프/startup 비차단 — 동기 hook 은 daemon thread spawn 만(기존 hook 패턴 동일), 모든 DB/sleep/except 는 thread 내부. (5) `error` 시맨틱 — `_ASK_TERMINAL_STATUSES`∈error(스피너 해제) ∧ `_ASK_SUCCESS_STATUSES`∌error(phantom 답변 방지) ∧ `_conversation_is_processing`=False(409 해제).
+- Nits (Low, non-blocking): (a) `utc_now_iso()` 초 절삭 vs `_PROCESS_BOOT_UTC` 마이크로초 → 동일-초 race 이론적 가능 → **반영함**: `_PROCESS_BOOT_UTC = datetime.utcnow().replace(microsecond=0)`. (b) MySQL fallback 분기 naive==UTC 가정 미변경 — cutover dead path, 본 버그 아님. (c) `_load_latest_run_id_from_steps` 는 aware-aware 비교로 내부 정합, 영향 없음.
+- 결론: deploy 안전. 테스트 6 passed.
+
 ## REV-20260608-0158 [SKIPPED:frontend-only-no-new-rbac-no-schema-no-secret] (Tier 2)
 - Date: 2026-06-08
 - TASK-Cycle: TASK-0158 Tier 2 (REQ-20260608-0158, **Minor** §12.3 — 진입점 구성 Tier 2; Tier 1 리뷰는 아래 동일 id 항목)

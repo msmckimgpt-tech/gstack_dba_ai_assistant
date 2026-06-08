@@ -12,9 +12,13 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-08 (TASK-0158 진입점 전수조사·구성 Tier 1·2 완료 — 즉시답변·공유관리·scopeAll·audit.purge·내활동기록·facet·grant진단)
+- Last Updated: 2026-06-08 (TASK-0159 고아 run 무한 폴링 수정 — stale tz 회귀 + 부팅 reconciliation; TASK-0158 진입점 Tier1·2 병행 세션)
 
 ## 2. Task Queue
+
+### TASK-0159 고아 run 무한 폴링 수정 — PG timestamptz stale 회귀 + 부팅 reconciliation (2026-06-08)
+
+- [x] TASK-0159 (REQ-20260608-0159, **Major §12.3** — 런타임 run 생명주기/데이터 경로). 사용자 보고: 웹 DBA 챗 요청이 "오랜 시간 안 끝남". 진단: `/api/ask` 는 agent 를 `asyncio.to_thread` 로 web 프로세스 안에서 in-process 실행 → web 재배포(14:37 컨테이너 재생성 — 병행 TASK-0158 세션의 배포로 추정)가 in-flight run(`f47482aa`)을 죽여 `set_run_status("done")` 미도달 → KV `last_status='processing'` 영구 고착 → 프런트엔드 `/api/ask_result`·`/api/progress` 무한 폴링(+ 신규 질의 409 차단), 최종 답변 미합성. **추가 결함**: 20분 stale 자동복구가 안 터짐 — `_last_step_at_for_run`(PG 경로)이 `timestamptz`(KST aware)를 UTC 변환 없이 `replace(tzinfo=None)` 해 KST wall-clock 을 UTC 로 오인 → `_compute_display_status` 의 `datetime.utcnow()` 비교에서 elapsed 음수 → stale 영구 거짓 (CHG-20260527-0001 cutover 회귀). **수정(app.py 단일 파일)**: (1) `_last_step_at_for_run` aware→`astimezone(timezone.utc).replace(tzinfo=None)` 변환(naive 통과), (2) `@app.on_event("startup")` `_reconcile_orphaned_runs_on_startup` — in-process 모델상 새 프로세스엔 살아있는 run 이 없으므로 부팅 전 시각의 `last_status='processing'` 고아를 `error` 로 일괄 정리(daemon thread + `last_status_at >= _PROCESS_BOOT_UTC` race 가드, boot 시각 초 절삭), (3) `set_run_status` import. **즉시 해소**: 라이브 PG KV 의 고아 run f47482aa 를 `error` 로 표시(스피너 해제 + 409 해제). **회귀 테스트**: `tests/test_orphan_run_stale_recovery.py` 6 case (tz 변환·stale 판정·boot-guard) PASS. **이월(후속 TASK)**: SIGTERM graceful finalizer + in-process→out-of-process 실행모델 재설계. 검증: py_compile PASS / pytest 6 passed / verify-completion PASS / REV-20260608-0159 APPROVE-WITH-NITS(BLOCKER 0). **병행 충돌 메모**: 본 cycle 중 다른 세션이 TASK-0158(진입점 Tier1·2, frontend-only)을 main 에 연속 병합 → 본 작업을 0159 로 재배정, app.py 무충돌(그쪽은 app.js/admin.js/index.html/styles.css)로 rebase.
 
 ### TASK-0158 "진입점 없는 기능" 전수조사 후 진입점 구성 (2026-06-08, 진행 중)
 

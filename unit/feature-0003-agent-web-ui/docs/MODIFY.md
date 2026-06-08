@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260608-0159
+- Date: 2026-06-08
+- TASK-Cycle: TASK-0159, **Major §12.3** — 고아 run 무한 폴링 수정 (런타임 run 생명주기/데이터 경로)
+- Summary: 웹 DBA 챗 요청이 무한 "처리중"으로 멈추던 결함 복구. `/api/ask` 는 agent 를 `asyncio.to_thread` 로 web 프로세스 안에서 in-process 실행하므로, web 재배포/재시작이 in-flight run 을 죽이면 `set_run_status("done")` 미도달 → KV `last_status='processing'` 영구 고착 → 프런트엔드 무한 폴링 + 신규 질의 409 차단. 더해 20분 stale 자동복구가 `_last_step_at_for_run` 의 timestamptz(KST aware)→UTC 미변환 회귀(CHG-20260527-0001)로 elapsed 음수가 되어 영구히 안 터졌다. tz 변환 수정 + 부팅 시 고아 reconciliation 으로 재배포 즉시 자동복구를 보장.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`: (1) `_last_step_at_for_run` PG 분기 — aware timestamptz 를 `astimezone(timezone.utc).replace(tzinfo=None)` 으로 UTC naive 변환(이미 naive 면 통과). (2) 모듈 레벨 `_PROCESS_BOOT_UTC = datetime.utcnow().replace(microsecond=0)` (부팅 시각, 초 절삭 race 가드). (3) 신규 `@app.on_event("startup")` `_reconcile_orphaned_runs_on_startup` — daemon thread 에서 `last_status='processing'` 중 `last_status_at < _PROCESS_BOOT_UTC` 고아만 `set_run_status(..., "error", ...)` 정리. (4) `set_run_status` import.
+  - `unit/feature-0003-agent-web-ui/tests/test_orphan_run_stale_recovery.py`: 신규 6 case (tz 변환·stale 판정·boot-guard).
+- Note(즉시 해소, 코드 외): 라이브 PG `agent_runtime.kv` 의 고아 run `20260608053241-f47482aa` 를 `last_status=error` 로 수동 표시. 답변 미합성이라 재질의 필요.
+- Note(병행 충돌): 본 cycle 중 다른 세션이 TASK-0158(진입점 Tier1·2, frontend)을 main 에 연속 병합 → 본 작업을 0159 로 재배정. app.py 무충돌(disjoint), docs 만 rebase 재삽입.
+
 ## CHG-20260608-0158-T2
 - Date: 2026-06-08
 - TASK-Cycle: TASK-0158, **Minor §12.3** — 진입점 구성 Tier 2 (관리자/자기서비스, frontend-only)

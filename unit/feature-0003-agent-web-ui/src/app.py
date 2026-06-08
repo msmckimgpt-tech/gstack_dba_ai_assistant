@@ -42,6 +42,7 @@ from modules.memory import (
     mark_cancel_requested,
     mark_delete_requested,
     mark_finalize_requested,
+    set_run_status,
 )
 from modules.model_catalog import (
     API_DEFAULT_MODEL,
@@ -562,6 +563,13 @@ BOOTSTRAP_ADMIN_PASSWORD = str(os.getenv("WEB_BOOTSTRAP_ADMIN_PASSWORD", "") or 
 
 app = FastAPI(title="mysql_ai web")
 
+# TASK-0159: 프로세스 부팅 시각(UTC naive). startup orphan reconciliation 이
+# "이 프로세스 기동 전부터 processing 이던" 고아 run 만 정리하도록 가드로 사용한다
+# (부팅 후 새로 시작된 ask 의 race 오탐 방지). last_status_at 은 utc_now_iso() 가
+# 초 단위로 절삭 저장하므로(timespec="seconds"), 가드 비교가 안전 쪽(skip)으로
+# inclusive 하도록 boot 시각도 초로 내린다 — 동일-초 race 시 살아있는 run 오탐 방지.
+_PROCESS_BOOT_UTC = datetime.utcnow().replace(microsecond=0)
+
 WEB_PUBLIC_HOST = os.getenv("WEB_PUBLIC_HOST", "localhost").strip()
 WEB_PUBLIC_URL = f"https://{WEB_PUBLIC_HOST}" if WEB_PUBLIC_HOST else ""
 WEB_ALLOWED_HOSTS = [
@@ -599,6 +607,66 @@ def _start_attachment_recon_worker() -> None:
     except Exception as exc:
         import logging
         logging.getLogger(__name__).warning("attachment_recon worker start failed: %s", exc)
+
+
+@app.on_event("startup")
+def _reconcile_orphaned_runs_on_startup() -> None:
+    """TASK-0159: 재배포/재시작으로 끊긴 고아 run 을 startup 에 정리한다.
+
+    `/api/ask` 는 agent 를 `asyncio.to_thread` 로 web 프로세스 안에서 in-process
+    실행한다 → 진행 중 run 은 web 프로세스와 생사를 같이한다. 새로 기동된 프로세스
+    에는 살아있는 run 이 없으므로, KV 에 `last_status='processing'` 으로 (그리고 이
+    프로세스 기동 전 시각으로) 남은 run 은 직전 프로세스가 중단시킨 고아다. 이를
+    `error` 로 정리해 프런트엔드(ask_result/progress) 무한 폴링·신규 질의 409 차단을
+    해소한다. tz stale 가드 수정과 별개로, 재배포 즉시 복구를 보장하는 안전망이다.
+
+    가드: `last_status_at` 이 `_PROCESS_BOOT_UTC` 이후이면 이 프로세스가 시작한
+    run 이므로 건드리지 않는다(부팅 후 새 ask 의 race 오탐 방지).
+    """
+    def _run() -> None:
+        import logging
+        log = logging.getLogger(__name__)
+        conn = None
+        for _ in range(10):
+            try:
+                conn = _open_memory_connection()
+                break
+            except Exception:
+                time.sleep(2.0)
+        if conn is None:
+            log.warning("orphan reconcile: runtime 미가용으로 포기 (startup)")
+            return
+        try:
+            cids = list_processing_conversation_ids(conn) or []
+            marked = 0
+            for cid in cids:
+                try:
+                    parsed = _parse_kv_timestamp(load_memory_kv(conn, cid, "last_status_at"))
+                    if parsed is not None and parsed >= _PROCESS_BOOT_UTC:
+                        continue  # 이 프로세스가 시작한 run — 건드리지 않음
+                    run_id = load_memory_kv(conn, cid, "last_status_run_id") or ""
+                    set_run_status(
+                        conn, cid, "error", run_id=run_id,
+                        error="이전 요청이 서버 재시작으로 중단되었습니다. 다시 질의해 주세요.",
+                    )
+                    marked += 1
+                except Exception as exc:
+                    log.warning("orphan reconcile: cid=%s 실패: %s", cid, exc)
+            log.info("orphan reconcile: 고아 processing run %d/%d건 정리 (startup)", marked, len(cids))
+        except Exception as exc:
+            log.warning("orphan reconcile: 조회 실패 (startup): %s", exc)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    threading.Thread(
+        target=_run,
+        name="web-orphan-run-reconcile",
+        daemon=True,
+    ).start()
+
 
 WEB_PARALLEL_LIMIT = max(1, int(os.getenv("WEB_PARALLEL_LIMIT", "6")))
 # TASK-0061 Phase 3 (REQ-20260515-0005): processing 상태가 만료 시간 동안 step/status 갱신 없이
@@ -2381,7 +2449,14 @@ def _last_step_at_for_run(conn, conversation_id: str, run_id: str) -> datetime |
             return None
         raw = row[0]
         if isinstance(raw, datetime):
-            return raw.replace(tzinfo=None)
+            # CHG-20260527-0001 회귀 수정 (TASK-0159): PG timestamptz 는 세션 타임존
+            # (KST) 으로 aware 하게 반환된다. tzinfo 만 strip 하면 KST wall-clock 이
+            # UTC 로 오인돼, _compute_display_status 의 datetime.utcnow() 비교에서
+            # elapsed 가 음수가 되고 stale 가드(20분)가 영구히 안 터진다 → 고아 run
+            # 무한 폴링. UTC 로 변환 후 naive 화한다 (_parse_kv_timestamp 와 정합).
+            if raw.tzinfo is not None:
+                return raw.astimezone(timezone.utc).replace(tzinfo=None)
+            return raw
         return _parse_kv_timestamp(str(raw))
     try:
         cur = conn.cursor()
