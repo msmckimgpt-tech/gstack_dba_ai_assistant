@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260608-0162 [SUBAGENT: general-purpose 적대적 diff 리뷰 — 진행중 말풍선 생명주기, BLOCKER 0]
+- Date: 2026-06-08
+- Cycle: TASK-0162 (REQ-20260608-0162, **Minor §12.3** — 대화 전환 누출 + 새로고침 경과시간 초기화)
+- Reviewer: general-purpose subagent (적대적 diff 리뷰 — app.js 상태머신 + app.py thin 필드). §18.8 trigger: API/endpoint(backend) + UI/screen(ux) 면 + 타임스탬프(TASK-0159 fragile 영역) 정합.
+- Verdict: **APPROVE-WITH-NITS**. **BLOCKER 0**.
+- VERIFIED-CORRECT: (1) `clearPendingBubble()` 가 `state.pendingBubble = null` (reassign) 이라 직전에 `_savedPendingBubbles[_prevConvId]` 에 저장한 **객체 참조** 손상 없음 — 복원 경로 정상. (2) processing 대화로 전환 시 중복 말풍선 없음 — `stopProgressPolling` 가 비운 뒤 `loadHistory` 가 정확히 1개 생성, 복원 가드(`!state.pendingBubble`)는 false 라 재생성 안 함, 단일 `#pendingAssistantBubble` id in-place 교체. (3) dangling poll race 없음 — `stopProgressPolling` 가 `progressPollSeq++` + 타이머 취소, `pollProgress` 의 `seq` 가드 + `applyProgressPayload` 는 pendingBubble 이 이미 있을 때만 갱신(생성 안 함)이라 누출 말풍선 부활 불가. (4) Bug B 시각수학 tz-safe — `last_status_at` 은 `utc_now_iso()`(명시 offset) 문자열, 클라 `new Date(str).getTime()` 절대 epoch → 브라우저 TZ 무관. TASK-0159 PG timestamptz 컬럼 경로와 무관(클라에서 `_parse_kv_timestamp` 미사용). (5) 'processing'(=`last_status_at`)는 run 당 1회 기록 — 모든 `set_run_status` 호출 grep 확인(agent_core.py:1903 start 1회 / 2253·2266·2271 terminal / app.py:648 orphan error). (6) RBAC/IDOR clean + backward-compat — `last_run_started_at` 은 `if conv_id:`(권한 게이트 통과 후)에서만 계산, 신규 노출 없음. 폴백(`Number.isFinite`→`Date.now()`) + `formatElapsed` 음수 clamp 로 빈/미래/파싱불가값 안전.
+- Nits (반영): (1) `initializeWorkspace` resume 경로(line ~5532)도 `Date.now()` 사용 → 본 cycle **반영**: `status.status_at` 기준점 + 폴백으로 대칭화(loadHistory 가 실무상 shadow 하지만 divergence 시 elapsed 리셋 방지). (2) 선존 stale 부활(전환 후 완료 대화 복귀 시 `_savedPendingBubbles` 잔존 → 죽은 말풍선 복원) → 본 cycle **반영**: loadHistory 비-processing 분기에서 `_savedPendingBubbles[cid]` 폐기.
+- Nit (note-only): (3) legacy offset-less `last_status_at` 포맷이 deploy 를 가로질러 processing 으로 남아있을 이론적 케이스 — `utc_now_iso()` 항상 offset 출력 + 부팅 orphan-reconcile 이 pre-boot processing 을 error 처리 → 실질 window 0.
+- 결론: deploy 안전. 라이브 거동 검증(PB-0008 Windows-browser)은 배포 후 완료 게이트로 수행.
+
 ## REV-20260608-0161 [SUBAGENT: general-purpose 적대적 RBAC/보안 리뷰 — execute_sql_on 제거, BLOCKER 0]
 - Date: 2026-06-08
 - Cycle: TASK-0161 (REQ-20260608-0161, **Major §12.3** — RBAC 권한 모델 변경: 거짓 컨트롤 권한 제거 + 죽은 코드). [[feedback_outside_voice_for_rbac]] 정책에 따라 outside-voice 필수.

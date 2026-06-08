@@ -9704,11 +9704,18 @@ def history(
     # 대화의 현재 처리 상태를 포함 (progress bubble 복원용)
     last_status = ""
     last_run_id = ""
+    last_run_started_at = ""
     if conv_id:
         try:
             last_status = str(load_memory_kv(conn, conv_id, "last_status") or "").strip()
             if last_status == "processing":
                 last_run_id = str(load_memory_kv(conn, conv_id, "last_status_run_id") or "").strip()
+                # 새로고침 후 pending bubble 의 경과시간이 0 으로 초기화되지 않도록 run
+                # 시작 시각(last_status_at)을 함께 반환한다. set_run_status 는 'processing'
+                # 전이 시 last_status_at 을 1 회만 기록하고 terminal(done/error/canceled)
+                # 시점까지 갱신하지 않으므로, processing 상태에서의 last_status_at 은 곧
+                # run 시작 시각이다(클라이언트가 elapsed 기준점으로 사용).
+                last_run_started_at = str(load_memory_kv(conn, conv_id, "last_status_at") or "").strip()
         except Exception:
             # best-effort: 상태 bubble 복원용 KV 조회 실패는 history 응답을 막지 않는다.
             logging.getLogger(__name__).warning(
@@ -9720,6 +9727,7 @@ def history(
         "messages": messages,
         "last_status": last_status,
         "last_run_id": last_run_id,
+        "last_run_started_at": last_run_started_at,
         "has_more": has_more,
         "next_before_id": oldest_id,
         "total_messages": total_count,

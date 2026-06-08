@@ -3431,8 +3431,15 @@ async function loadHistory({ append = false } = {}) {
     // initializeWorkspace 가 아닌 loadHistory 경로로 처리 상태를 감지한 경우 pending bubble 복원.
     if (!state.pendingBubble) {
       state.busyConversations.add(state.activeConversationId);
+      // 새로고침/복원 경로에서는 클라이언트 현재 시각이 아니라 서버가 알려준 run 시작
+      // 시각(last_run_started_at = KV last_status_at)을 elapsed 기준점으로 쓴다. 이게
+      // 없으면 새로고침할 때마다 경과시간이 0 으로 초기화된다. 서버 시각이 없거나
+      // 파싱 불가하면 기존 동작(현재 시각)으로 안전하게 폴백.
+      const _serverStartedMs = payload.last_run_started_at
+        ? new Date(payload.last_run_started_at).getTime()
+        : NaN;
       state.pendingBubble = {
-        startedAt: Date.now(),
+        startedAt: Number.isFinite(_serverStartedMs) ? _serverStartedMs : Date.now(),
         runId: payload.last_run_id || "",
         steps: state.progressSteps.slice(),
         status: "processing",
@@ -3452,6 +3459,13 @@ async function loadHistory({ append = false } = {}) {
     renderProgress({ status: payload.last_status, steps: state.progressSteps.slice() });
   } else {
     stopProgressPolling({ reset: true });
+    // 이 대화가 더 이상 processing 이 아니면 전환 시 보존해 둔 pending 말풍선
+    // 스냅샷도 폐기한다. 이게 없으면 "처리 중 다른 대화로 떠남 → 그 사이 이 대화
+    // 완료 → 다시 돌아옴" 시 selectConversation 의 복원 분기가 완료된 대화에 stale
+    // "작업 중" 말풍선을 (elapsed timer 도 없이) 부활시킨다.
+    if (state._savedPendingBubbles && state.activeConversationId) {
+      delete state._savedPendingBubbles[state.activeConversationId];
+    }
     renderProgress();
   }
   renderComposer();
@@ -3503,6 +3517,12 @@ async function selectConversation(conversationId) {
     if (!state._savedPendingBubbles) state._savedPendingBubbles = {};
     state._savedPendingBubbles[_prevConvId] = state.pendingBubble;
   }
+  // 이전 대화의 진행 상태(pending 말풍선 + progress polling + elapsed timer)를 현재
+  // 컨텍스트에서 분리한다. 이 detach 가 없으면 직전 대화의 "작업 중" 말풍선이 전환된
+  // 대화 하단에 그대로 누출된다(loadHistory→renderMessages 가 잔존 state.pendingBubble 을
+  // 렌더). beginPendingConversation 이 새 대화 진입 시 쓰는 것과 동일한 패턴이며,
+  // 위에서 스냅샷을 _savedPendingBubbles 에 보존했으므로 복귀 시 복원 가능하다.
+  stopProgressPolling({ reset: true });
   await apiFetch("/api/use_conversation", {
     method: "POST",
     body: JSON.stringify({ conversation_id: conversationId }),
@@ -5500,8 +5520,14 @@ async function initializeWorkspace() {
       state.busyConversations.add(resumeCid);
       // 새로고침 후 pending bubble 복원 — polling 이 steps 를 채우면 갱신됨.
       if (!state.pendingBubble) {
+        // loadHistory 경로와 대칭: 서버가 알려준 run 시작 시각(status_at = KV
+        // last_status_at)을 elapsed 기준점으로 써서 새로고침 시 경과시간이 0 으로
+        // 초기화되지 않게 한다. 없거나 파싱 불가하면 현재 시각으로 안전 폴백.
+        const _resumeStartedMs = status.status_at
+          ? new Date(status.status_at).getTime()
+          : NaN;
         state.pendingBubble = {
-          startedAt: Date.now(),
+          startedAt: Number.isFinite(_resumeStartedMs) ? _resumeStartedMs : Date.now(),
           runId: status.run_id || "",
           steps: [],
           status: "processing",

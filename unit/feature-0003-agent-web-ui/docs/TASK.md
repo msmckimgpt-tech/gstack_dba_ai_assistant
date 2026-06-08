@@ -12,9 +12,18 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-08 (TASK-0161 RBAC 카탈로그 정리 + 죽은 코드 제거 — TASK-0158 Tier 3 종결)
+- Last Updated: 2026-06-08 (TASK-0162 진행중 말풍선 생명주기 수정 — 대화 전환 누출 + 새로고침 경과시간 초기화; TASK-0159 고아 run 무한 폴링 수정; TASK-0158 진입점 Tier1·2)
 
 ## 2. Task Queue
+
+### TASK-0162 진행중("작업 중") 말풍선 생명주기 수정 — 대화 전환 누출 + 새로고침 경과시간 초기화 (2026-06-08)
+
+- [x] TASK-0162 (REQ-20260608-0162, **Minor §12.3** — frontend SPA + thin read-only backend 필드). 사용자 보고 2건: (A) 요청 처리 중 다른 대화로 전환하면 직전 작업의 "작업 중" 말풍선이 전환한 대화에 나타남. (B) 새로고침 시 말풍선 경과시간이 0 으로 초기화됨.
+  - **근본 원인 A**: `selectConversation` 이 직전 대화의 `state.pendingBubble` 을 `_savedPendingBubbles` 에 스냅샷 저장만 하고 `state.pendingBubble` 을 비우지 않아, 전환 후 `loadHistory→renderMessages` 가 잔존 말풍선을 새 대화 하단에 렌더. (이미 `beginPendingConversation` 은 `stopProgressPolling({reset:true})` 로 분리하는데 `selectConversation` 만 누락.)
+  - **근본 원인 B**: 새로고침 시 `loadHistory`(및 `initializeWorkspace` resume 경로)가 말풍선을 `startedAt: Date.now()` 로 재생성 → 실제 run 시작이 아니라 새로고침 시각 기준이라 elapsed 리셋. 서버는 KV `last_status_at`(processing 전이 시 1회만 기록 = run 시작 시각)을 갖고 있으나 `/api/history` 가 반환하지 않아 클라가 알 수 없었음.
+  - **수정**: (1) `selectConversation` 스냅샷 저장 직후 `stopProgressPolling({reset:true})` 로 진행 상태(말풍선+polling+elapsed timer) 분리. (2) 백엔드 `/api/history` 가 processing 시 `last_run_started_at`(=KV `last_status_at`) 반환. (3) 프론트 `loadHistory` + `initializeWorkspace` resume 경로가 `Date.now()` 대신 서버 시각(`last_run_started_at` / `ask_status.status_at`)을 `startedAt` 기준점으로 사용(파싱 불가 시 `Date.now()` 폴백). (4) 인접 엣지(리뷰 Nit): loadHistory 가 비-processing 확정 시 `_savedPendingBubbles[cid]` 폐기 → 전환 후 완료된 대화로 복귀 시 stale 말풍선 부활 차단. (5) 정적자산 `?v=` 캐시버스터 task-0156→task-0162 bump(app.js·styles.css).
+  - **tz 안전**: 클라 elapsed 는 `new Date("…+00:00").getTime()` 절대 epoch − `Date.now()` 절대 epoch 이라 브라우저 타임존 무관. TASK-0159 의 server-side PG `timestamptz` naive 변환 버그와 무관(이 경로는 `_parse_kv_timestamp` 미사용).
+  - **검증**: node --check PASS / py_compile PASS. 적대적 subagent diff 리뷰 REV-20260608-0162 **APPROVE-WITH-NITS, BLOCKER 0** (Nit 2건 본 cycle 반영, Nit 3 실질 window 0 note-only). PB-0008 Windows-browser 라이브 게이트는 배포 후 수행.
 
 ### TASK-0161 RBAC 카탈로그 정리 + 죽은 코드 제거 (TASK-0158 Tier 3 종결) (2026-06-08)
 

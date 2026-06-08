@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260608-0162
+- Date: 2026-06-08
+- TASK-Cycle: TASK-0162, **Minor §12.3** — 진행중("작업 중") 말풍선 생명주기 수정 (대화 전환 누출 + 새로고침 경과시간 초기화)
+- Summary: 사용자 보고 2건 복구. (A) 요청 처리 중 다른 대화로 전환 시 직전 작업의 "작업 중" 말풍선이 전환한 대화에 누출 렌더되던 문제 — `selectConversation` 이 pendingBubble 스냅샷만 저장하고 `state.pendingBubble` 을 비우지 않아 잔존 말풍선이 새 대화에 렌더됨. (B) 새로고침 시 말풍선 경과시간이 0 으로 초기화되던 문제 — 말풍선이 `startedAt: Date.now()` 로 재생성되어 실제 run 시작 시각을 잃음. 서버가 보유한 run 시작 시각(KV `last_status_at`)을 `/api/history` 가 반환하고 프론트가 elapsed 기준점으로 쓰도록 수정.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`: `history()` 엔드포인트가 `last_status=='processing'` 일 때 `last_run_started_at`(=`load_memory_kv(conn, conv_id, "last_status_at")`)를 응답에 포함. 기존 `_account_can_access_conversation` 권한 게이트 안(`if conv_id:`)에서만 계산 — 신규 노출/IDOR 없음.
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`: (1) `selectConversation` — 스냅샷 저장 직후 `stopProgressPolling({reset:true})` 로 진행 상태(pendingBubble+polling+elapsed timer) 분리(`beginPendingConversation` 과 동일 패턴; 스냅샷은 reassign-null 이라 보존). (2) `loadHistory` processing 분기 — `startedAt` 을 `payload.last_run_started_at`(서버 run 시작) 파싱값으로, `Number.isFinite` 폴백 `Date.now()`. (3) `initializeWorkspace` resume 분기 — `startedAt` 을 `status.status_at`(ask_status snapshot) 파싱값으로 대칭 수정. (4) `loadHistory` 비-processing(else) 분기 — `_savedPendingBubbles[activeConversationId]` 폐기(stale 말풍선 부활 차단).
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`: 정적자산 캐시버스터 `?v=20260608-task-0156` → `?v=20260608-task-0162` (styles.css·app.js 양쪽).
+- Note(tz): 클라 elapsed = `new Date(서버ISO).getTime()`(절대 epoch) − `Date.now()`(절대 epoch) → 브라우저 타임존 무관. `last_status_at` 은 `set_run_status` 가 'processing' 전이 시 1회만 기록(agent_core.py:1903)하고 terminal 시점까지 미갱신 → processing 상태에서 run 시작 시각으로 안정적. TASK-0159 의 PG timestamptz naive 변환 회귀와 무관(이 경로는 `_parse_kv_timestamp`/timestamptz 컬럼 미사용).
+- Review: REV-20260608-0162 [SUBAGENT 적대적 diff 리뷰] APPROVE-WITH-NITS, BLOCKER 0.
+
 ## CHG-20260608-0161
 - Date: 2026-06-08
 - TASK-Cycle: TASK-0161, **Major §12.3** — RBAC 카탈로그 정리(거짓 컨트롤 권한 제거) + 죽은 코드 제거 (TASK-0158 Tier 3 종결)
