@@ -740,6 +740,7 @@ function switchTab(tabName) {
   if (tabName === "audits" && !adminState.audit.initialized) {
     adminState.audit.initialized = true;
     loadAuditList();
+    loadAuditFacets(); // TASK-0158: actor/resource facet 드롭다운 채우기
   }
   // TASK-0136: LLM 사용량 tab 첫 진입 시 로드.
   if (tabName === "usage" && !adminState.usage.initialized) {
@@ -1005,6 +1006,11 @@ function renderAuditList() {
       csvBtn.href = `/api/admin/audits/export.csv?${params.toString()}`;
     }
   }
+  // TASK-0158: audit.purge 버튼 가시성 (파괴적 — audit.purge 권한자만 노출).
+  const purgeBtn = $("auditPurgeBtn");
+  if (purgeBtn) {
+    purgeBtn.style.display = Boolean(adminState.me?.permissions?.["audit.purge"]) ? "" : "none";
+  }
 
   if (items.length === 0) {
     listEl.innerHTML = '<div class="admin-list-empty">이벤트 없음</div>';
@@ -1110,6 +1116,131 @@ function attachAuditFilterHandlers() {
       });
     }
   });
+  // TASK-0158: audit.purge 진입점 바인딩 (파괴적 — dry-run 미리보기 + typed-confirm).
+  const purgeBtn = $("auditPurgeBtn");
+  if (purgeBtn && !purgeBtn.dataset.bound) {
+    purgeBtn.dataset.bound = "1";
+    purgeBtn.addEventListener("click", () => openAuditPurgeModal());
+  }
+}
+
+// TASK-0158: 감사 필터 facet — actor/resource 드롭다운 채우기 (GET /api/admin/audits/{actors,resources}).
+// 이전엔 두 facet 엔드포인트에 호출자가 없어 필터가 free-text only 였다.
+async function loadAuditFacets() {
+  const resourceDl = $("auditResourceTypeOptions");
+  if (resourceDl) {
+    try {
+      const r = await apiFetch("/api/admin/audits/resources");
+      resourceDl.innerHTML = (r.items || [])
+        .map((it) => `<option value="${_auditEscapeHtml(it.resource_type || "")}"></option>`)
+        .join("");
+    } catch (e) { /* facet 실패는 비차단 */ }
+  }
+  const actorDl = $("auditActorOptions");
+  if (actorDl) {
+    try {
+      const a = await apiFetch("/api/admin/audits/actors");
+      actorDl.innerHTML = (a.items || [])
+        .map((it) => `<option value="${Number(it.actor_account_id) || ""}">${_auditEscapeHtml(it.username || "")}</option>`)
+        .join("");
+    } catch (e) { /* */ }
+  }
+}
+
+// TASK-0158: audit.purge 모달 — 기준 날짜 → dry-run 미리보기 → 건수 typed-confirm → 실 삭제.
+function openAuditPurgeModal() {
+  const overlay = document.createElement("div");
+  overlay.className = "admin-modal-overlay";
+  const d = new Date(Date.now() - 90 * 86400000);
+  const defCutoff = d.toISOString().slice(0, 10);
+  overlay.innerHTML =
+    '<div class="admin-modal" role="dialog" aria-modal="true">' +
+    '  <h3>감사 로그 정리 (purge)</h3>' +
+    '  <p class="admin-modal-note">기준 날짜 <strong>이전</strong>의 감사 로그를 영구 삭제합니다. 되돌릴 수 없습니다. 먼저 미리보기로 삭제 대상 건수를 확인하세요.</p>' +
+    '  <label class="admin-modal-field">기준 날짜 (이 날짜 0시 이전 삭제)' +
+    `    <input type="date" id="purgeCutoff" class="field-input" value="${defCutoff}" />` +
+    '  </label>' +
+    '  <div class="admin-modal-preview" id="purgePreview">미리보기를 눌러 삭제 대상을 확인하세요.</div>' +
+    '  <div class="admin-modal-actions">' +
+    '    <button type="button" class="btn-secondary" id="purgeCancelBtn">취소</button>' +
+    '    <button type="button" class="btn-secondary" id="purgeDryRunBtn">미리보기</button>' +
+    '    <button type="button" class="btn-danger" id="purgeRunBtn" disabled>삭제 실행</button>' +
+    '  </div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  const close = () => {
+    if (overlay.parentNode) document.body.removeChild(overlay);
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  const cutoffEl = $("purgeCutoff");
+  const previewEl = $("purgePreview");
+  const runBtn = $("purgeRunBtn");
+  let lastCount = -1;
+  const cutoffIso = () => (cutoffEl.value ? new Date(cutoffEl.value + "T00:00:00").toISOString() : "");
+  $("purgeCancelBtn").addEventListener("click", close);
+  $("purgeDryRunBtn").addEventListener("click", async () => {
+    const cutoff = cutoffIso();
+    if (!cutoff) { showToast("기준 날짜를 선택하세요.", true); return; }
+    previewEl.textContent = "미리보기 중…";
+    runBtn.disabled = true;
+    try {
+      const r = await apiFetch("/api/admin/audits/purge", {
+        method: "POST", body: JSON.stringify({ cutoff, dry_run: true }),
+      });
+      lastCount = Number(r.to_purge) || 0;
+      previewEl.textContent = `삭제 대상: ${lastCount}건 (${formatDateTime(cutoff)} 이전)`;
+      runBtn.disabled = lastCount <= 0;
+    } catch (e) {
+      previewEl.textContent = "미리보기 실패: " + (e.message || "");
+    }
+  });
+  runBtn.addEventListener("click", async () => {
+    const cutoff = cutoffIso();
+    if (!cutoff || lastCount <= 0) return;
+    const typed = window.prompt(`정말 ${lastCount}건을 영구 삭제하시겠습니까?\n확인하려면 삭제 건수(${lastCount})를 그대로 입력하세요.`);
+    if (typed == null) return;
+    if (String(typed).trim() !== String(lastCount)) { showToast("입력이 일치하지 않아 취소했습니다.", true); return; }
+    runBtn.disabled = true;
+    try {
+      const r = await apiFetch("/api/admin/audits/purge", {
+        method: "POST", body: JSON.stringify({ cutoff, dry_run: false }),
+      });
+      showToast(`감사 로그 ${Number(r.purged) || 0}건을 삭제했습니다.`);
+      close();
+      loadAuditList(false);
+    } catch (e) {
+      runBtn.disabled = false;
+      showToast("삭제 실패: " + (e.message || ""), true);
+    }
+  });
+}
+
+// TASK-0158: 첨부 DB 권한 drift 진단 카드 (GET /api/admin/health/attachment-grants, console.access).
+async function loadGrantHealth() {
+  const el = $("dashboardGrantHealth");
+  if (!el) return;
+  if (!can("console.access")) { el.innerHTML = ""; return; }
+  try {
+    const r = await apiFetch("/api/admin/health/attachment-grants");
+    const healthy = Boolean(r.healthy);
+    const drift = Array.isArray(r.drift) ? r.drift : [];
+    const driftCount = Number(r.drift_count) || drift.length;
+    const badge = healthy
+      ? '<strong class="grant-health-ok">정상</strong>'
+      : `<strong class="grant-health-bad">${driftCount}건 drift</strong>`;
+    let detail = "";
+    if (!healthy && drift.length) {
+      detail = '<ul class="grant-health-detail">' + drift.map((dd) =>
+        `<li><code>${_auditEscapeHtml(dd.schema_name || "")}</code>: ${_auditEscapeHtml([].concat(dd.missing || [], dd.extra || []).join(", "))}</li>`
+      ).join("") + "</ul>";
+    }
+    el.innerHTML = `<article class="metric-card grant-health-card"><span>첨부 DB 권한 상태</span>${badge}${detail}</article>`;
+  } catch (e) {
+    el.innerHTML = "";
+  }
 }
 
 /* ── Dashboard pane ──────────────────────────────────────────────────── */
@@ -3521,6 +3652,8 @@ async function initialize() {
     usageDaysSel.dataset.bound = "1";
     usageDaysSel.addEventListener("change", () => loadUsage());
   }
+  // TASK-0158: 대시보드 첨부 권한 drift 진단 카드 (console.access 권한자만, 진입 시 1회 로드).
+  loadGrantHealth();
 
   // Account filter buttons
   document.querySelectorAll("[data-account-filter]").forEach((btn) => {

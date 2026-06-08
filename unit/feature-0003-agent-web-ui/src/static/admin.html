@@ -112,6 +112,8 @@
             <strong id="metricPending">0</strong>
           </article>
         </div>
+        <!-- TASK-0158: 첨부 DB 권한 drift 진단 (GET /api/admin/health/attachment-grants). console.access 권한자만. -->
+        <div class="admin-grant-health" id="dashboardGrantHealth"></div>
         <div class="admin-dashboard-pending" id="dashboardPendingList"></div>
       </section>
 
@@ -268,6 +270,8 @@
           </div>
           <div class="admin-pane-actions">
             <a href="#" id="auditExportCsvBtn" class="btn-secondary" style="display:none">CSV 내보내기</a>
+            <!-- TASK-0158: audit.purge 진입점 (파괴적 — dry-run + typed-confirm). audit.purge 권한자만 노출. -->
+            <button type="button" id="auditPurgeBtn" class="btn-danger" style="display:none">보존기간 초과 로그 정리</button>
           </div>
         </header>
         <div class="admin-audit-filter" id="auditFilterRow">
@@ -275,10 +279,12 @@
             <input type="text" id="auditFilterAction" placeholder="admin.account.update" autocomplete="off" />
           </label>
           <label>리소스 타입
-            <input type="text" id="auditFilterResourceType" placeholder="account / role / product / share" autocomplete="off" />
+            <input type="text" id="auditFilterResourceType" placeholder="account / role / product / share" autocomplete="off" list="auditResourceTypeOptions" />
+            <datalist id="auditResourceTypeOptions"></datalist>
           </label>
           <label>Actor 계정 ID
-            <input type="number" id="auditFilterActorId" placeholder="123" autocomplete="off" />
+            <input type="number" id="auditFilterActorId" placeholder="123" autocomplete="off" list="auditActorOptions" />
+            <datalist id="auditActorOptions"></datalist>
           </label>
           <label>Actor 유형
             <select id="auditFilterActorType">

@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260608-0158 [SKIPPED:frontend-only-no-new-rbac-no-schema-no-secret] (Tier 2)
+- Date: 2026-06-08
+- TASK-Cycle: TASK-0158 Tier 2 (REQ-20260608-0158, **Minor** §12.3 — 진입점 구성 Tier 2; Tier 1 리뷰는 아래 동일 id 항목)
+- Skip reason: frontend-only (admin.html/admin.js + index.html/app.js + styles.css). 신규 RBAC 권한 코드 없음 — 기존 `audit.purge`(파괴적 endpoint 는 백엔드가 권위적으로 게이트)·`audit.read.own/.any`·`console.access` 에 UI 진입점만 추가. DB 스키마/시크릿/엔드포인트 무변경. **audit.purge(파괴적) 안전장치**: UI 가 dry-run 미리보기로 삭제 대상 건수 확인 후 typed-confirm(건수 일치) 통과 시에만 실 삭제 호출 — 백엔드 검증(권한·idempotency)에 더해 클라 2단계 가드. 신규 attack surface 없음 → outside-voice 미해당. node --check PASS(app.js·admin.js). **Tier 3 의 execute_sql_on enforce-or-remove 착수 시에는 RBAC 모델 변경이므로 outside-voice 필수**([[feedback_outside_voice_for_rbac]]).
+
 ## REV-20260608-0158 [SKIPPED:frontend-only-no-new-rbac-no-schema-no-secret]
 - Date: 2026-06-08
 - TASK-Cycle: TASK-0158 (REQ-20260608-0158, **Minor** §12.3 — 진입점 전수조사 후 구성, Tier 1)

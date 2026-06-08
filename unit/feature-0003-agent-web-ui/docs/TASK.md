@@ -12,7 +12,7 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-08 (TASK-0158 진입점 전수조사·구성 Tier 1 — 즉시답변·공유관리·scopeAll)
+- Last Updated: 2026-06-08 (TASK-0158 진입점 전수조사·구성 Tier 1·2 완료 — 즉시답변·공유관리·scopeAll·audit.purge·내활동기록·facet·grant진단)
 
 ## 2. Task Queue
 
@@ -20,7 +20,7 @@ source_of_truth: true
 
 - [~] TASK-0158 (REQ-20260608-0158, **Minor §12.3** — frontend-only). 사용자 요청: TASK-0157 과 동일 클래스(구현 완료·진입점 부재) 기능 전수조사 후 순서대로 진입점 구성. design.md 9섹션 형식 적용(`docs/DESIGN-entry-points.md`). repo-level 전수조사 결과는 `TODOS.md` 에 기록.
   - **Tier 1 (완료)**: [x] 즉시답변 — `#finalizeBtn` 고아 제거 + composer `#composerFinalizeBtn` 신설(AC-0308). [x] 공유 링크 관리 — ··· 메뉴 "공유 관리" + `openShareManager` 모달(목록+취소, `GET shares`/`DELETE share`)(AC-0309). [x] scopeAll — attach 패널 `#composerAttachmentsScopeAll` 체크박스(핸들러·백엔드 기존, 마크업만 신설)(AC-0310). node --check PASS. REV-20260608-0158 [SKIPPED:frontend-only-no-new-rbac-no-schema-no-secret].
-  - **Tier 2 (진행 예정)**: [ ] audit.purge 버튼(dry-run+typed-confirm) [ ] 내 활동기록 profile 탭(`/api/profile/audits`) [ ] 감사 필터 facet 드롭다운 [ ] attachment-grants 대시보드 카드.
+  - **Tier 2 (완료)**: [x] audit.purge 버튼(dry-run 미리보기+typed-confirm, `#auditPurgeBtn`/`openAuditPurgeModal`)(AC-0311). [x] 내 활동기록 profile 탭(`data-profile-tab="audits"`/`loadProfileAudits`, `/api/profile/audits`)(AC-0312). [x] 감사 필터 facet 드롭다운(datalist+`loadAuditFacets`)(AC-0313). [x] attachment-grants 대시보드 카드(`#dashboardGrantHealth`/`loadGrantHealth`)(AC-0314). admin.html/admin.js + index.html/app.js + styles.css. node --check PASS(app.js·admin.js).
   - **Tier 3 (진입점 아님 — 결정/정리)**: [ ] `attachment.execute_sql_on.*` 미적용 권한(enforce or remove, RBAC 변경→outside-voice) [ ] `conversation.attachment.upload.any`(product 결정) [ ] 죽은 중복 정리.
 
 ### TASK-0157 요청 중단(interrupt) 진입점 복구 (2026-06-08)

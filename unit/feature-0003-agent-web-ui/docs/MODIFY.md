@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260608-0158-T2
+- Date: 2026-06-08
+- TASK-Cycle: TASK-0158, **Minor §12.3** — 진입점 구성 Tier 2 (관리자/자기서비스, frontend-only)
+- Summary: Tier 2 진입점 4종 — audit.purge(파괴적, dry-run+typed-confirm)·내 활동기록 profile 탭·감사 필터 facet 드롭다운·첨부 권한 drift 진단 카드. 신규 RBAC 코드/스키마/시크릿/엔드포인트 무변경(기존 `audit.purge`·`audit.read.*`·`console.access` 권한과 엔드포인트에 UI 진입점만 추가).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: Audits pane 에 `#auditPurgeBtn`(.btn-danger) + resource/actor `<datalist>` + 대시보드 `#dashboardGrantHealth` 카드 컨테이너 신설.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: `openAuditPurgeModal`(dry-run 미리보기 + typed-confirm)·`loadAuditFacets`(actors/resources)·`loadGrantHealth`(attachment-grants) 신규 + `renderAuditList` purge 가시성 게이트 + `attachAuditFilterHandlers` purge 바인딩 + `switchTab` audit init facet 로드 + setup grant 로드.
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`: 프로필 drawer 에 `data-profile-tab="audits"`("내 활동 기록") 탭 + pane(`#profileAuditList`/`#profileAuditMoreBtn`) 신설.
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`: `loadProfileAudits`(cursor 페이지네이션) 신규 + 프로필 탭 hook + `renderProfile` audit 권한 게이트 + more 버튼 바인딩.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.btn-danger`·`.admin-modal-field/-preview/-actions`·`.admin-grant-health`/`.grant-health-*`·`.profile-audit-*` 신설 (기존 토큰만).
+
 ## CHG-20260608-0158
 - Date: 2026-06-08
 - TASK-Cycle: TASK-0158, **Minor §12.3** — "진입점 없는 기능" 전수조사 후 진입점 구성 (Tier 1, frontend-only)

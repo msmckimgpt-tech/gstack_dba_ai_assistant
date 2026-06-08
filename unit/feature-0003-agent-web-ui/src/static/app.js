@@ -1138,6 +1138,56 @@ function renderProfile() {
 
   if (passwordErrorEl) passwordErrorEl.textContent = "";
   if (passwordChangeFormEl) passwordChangeFormEl.reset();
+
+  // TASK-0158: 내 활동 기록 탭은 audit.read 권한자만 노출.
+  const auditsTab = document.getElementById("profileAuditsTab");
+  if (auditsTab) {
+    const canAudit = can("audit.read.own") || can("audit.read.any");
+    auditsTab.classList.toggle("hidden", !canAudit);
+  }
+}
+
+// TASK-0158: 내 활동 기록 — 본인 감사 이력 (GET /api/profile/audits; 백엔드가 scope=own 강제).
+// 이전엔 이 자기서비스 엔드포인트에 진입점이 없었다(프로필 탭은 TASK-0105 에서 제거됨).
+async function loadProfileAudits(reset = false) {
+  const listEl = document.getElementById("profileAuditList");
+  const moreBtn = document.getElementById("profileAuditMoreBtn");
+  if (!listEl) return;
+  if (reset) {
+    state.profileAuditCursor = "";
+    state.profileAuditItems = [];
+    listEl.innerHTML = `<div class="profile-audit-empty">불러오는 중…</div>`;
+  }
+  let data;
+  try {
+    const params = new URLSearchParams();
+    if (state.profileAuditCursor) params.set("cursor", state.profileAuditCursor);
+    params.set("limit", "30");
+    data = await apiFetch(`/api/profile/audits?${params.toString()}`);
+  } catch (err) {
+    if (reset) listEl.innerHTML = `<div class="profile-audit-empty">활동 기록을 불러오지 못했습니다.</div>`;
+    return;
+  }
+  const items = Array.isArray(data && data.items) ? data.items : [];
+  state.profileAuditItems = (state.profileAuditItems || []).concat(items);
+  state.profileAuditCursor = (data && data.next_cursor) || "";
+  if (!state.profileAuditItems.length) {
+    listEl.innerHTML = `<div class="profile-audit-empty">활동 기록이 없습니다.</div>`;
+    if (moreBtn) moreBtn.classList.add("hidden");
+    return;
+  }
+  listEl.innerHTML = "";
+  state.profileAuditItems.forEach((it) => {
+    const row = document.createElement("div");
+    row.className = "profile-audit-row";
+    const resource = [it.resource_type, it.resource_id].filter(Boolean).join(":");
+    row.innerHTML =
+      `<span class="profile-audit-time">${escapeHtml(formatDateTime(it.occurred_at))}</span>` +
+      `<code class="profile-audit-action">${escapeHtml(it.action_code || "")}</code>` +
+      (resource ? `<span class="profile-audit-resource">${escapeHtml(resource)}</span>` : "");
+    listEl.appendChild(row);
+  });
+  if (moreBtn) moreBtn.classList.toggle("hidden", !state.profileAuditCursor);
 }
 
 function openProfile(tab = "prompt") {
@@ -5513,9 +5563,15 @@ async function initialize() {
       switchProfileTab(btn.dataset.profileTab);
       if (btn.dataset.profileTab === "prompt") {
         initAccountPromptEditor().catch(() => {});
+      } else if (btn.dataset.profileTab === "audits") {
+        loadProfileAudits(true).catch(() => {}); // TASK-0158: 내 활동 기록 lazy 로드
       }
     });
   });
+  const profileAuditMoreBtn = document.getElementById("profileAuditMoreBtn");
+  if (profileAuditMoreBtn) {
+    profileAuditMoreBtn.addEventListener("click", () => loadProfileAudits(false).catch(() => {}));
+  }
 
   const savePromptBtn = document.getElementById("savePromptBtn");
   const clearPromptBtn = document.getElementById("clearPromptBtn");

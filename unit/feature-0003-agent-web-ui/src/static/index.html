@@ -339,7 +339,17 @@
     <div class="drawer-tabs">
       <button type="button" class="drawer-tab is-active" data-profile-tab="prompt">프롬프트</button>
       <button type="button" class="drawer-tab" data-profile-tab="security-and-account">보안 및 계정</button>
+      <!-- TASK-0158: 내 활동 기록 (GET /api/profile/audits). audit.read.own 권한자만 노출(JS 게이트). -->
+      <button type="button" class="drawer-tab hidden" data-profile-tab="audits" id="profileAuditsTab">내 활동 기록</button>
     </div>
+
+    <div class="drawer-pane hidden" data-profile-pane="audits">
+      <div class="profile-section">
+        <div class="profile-section-title">내 활동 기록</div>
+        <div class="profile-audit-list" id="profileAuditList" aria-live="polite"></div>
+        <button type="button" class="btn-secondary hidden" id="profileAuditMoreBtn">더 보기</button>
+      </div>
+    </div><!-- /audits -->
 
     <div class="drawer-pane hidden" data-profile-pane="security-and-account">
 
