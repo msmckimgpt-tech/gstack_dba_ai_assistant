@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.22.0
+template_version: v3.23.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -408,6 +408,23 @@ risk 를 판단해서 자기 model/effort 를 바꿀 수는 없다** — frontma
   확정 사항은 항상 문서에서 확인한다.
 - subagent/workflow 의 비재개성과 재개 전략은 §22.3.2 참조.
 ---
+
+**`/usage` — plan limit 소진 요인 관측 (v2.1.149+)**
+
+`/usage` 는 plan limit(요금제 rate-limit) 소진 요인을 **skill · subagent · plugin · MCP 서버별로
+분해**해 표시한다. 멀티 소비자 운영 + §22.3 dynamic workflow fan-out(수십~수백 subagent)으로
+plan limit 을 빠르게 소진하는 환경에서, 어느 차원이 비용을 끄는지 진단하는 수단이다.
+
+**사용 권장 시점:**
+- 대규모 fan-out / 장기 위임 세션 직후 — 어떤 skill·subagent·MCP 가 limit 을 끌었는지 점검.
+- rate-limit 경고를 만났을 때 driver 식별.
+
+```
+/usage
+```
+
+**`/context` 와 차원 구분**: `/context`(§11.1 보조)는 **context window**(단일 세션 토큰 점유)를,
+`/usage` 는 **plan rate-limit**(요금제 한도 소진)을 본다 — 측정 대상이 다르므로 혼동하지 않는다.
 
 # Part E — 안전 및 협업
 
@@ -2178,6 +2195,61 @@ exit 0
 - `$CLAUDE_EFFORT` 환경변수로 현재 effort level 을 확인할 수 있다 (예: hook 로그에 기록).
 - 압축 허용이 기본값이므로, 차단이 필요한 조건만 명시적으로 체크하는 것이 권장 패턴.
 
+
+### §22.1.1 Stop / SubagentStop Hook — 능동적 피드백 반환 (v2.1.166+)
+
+Claude Code v2.1.166+ 는 `Stop` / `SubagentStop` hook 이 `hookSpecificOutput.additionalContext`
+를 반환해 **턴을 종료하지 않고 Claude 에 비차단(non-error) 피드백을 주입**할 수 있다. §22.1 의
+PreCompact 패턴(`{"decision":"block"}` + exit 2 — *차단형*)과 달리, 본 패턴은 **exit 0 + 텍스트
+컨텍스트 반환**으로 대화를 이어가며 다음 턴에 Claude 가 그 정보를 활용하게 한다 (*안내형*).
+
+**`.claude/settings.json` 등록 예 (Stop hook):**
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash repo/bin/hooks/stop-feedback.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**`stop-feedback.sh` — 미완료 TASK 알림 (exit 0 + additionalContext):**
+
+```bash
+#!/usr/bin/env bash
+# 세션 종료 시점에 in-progress TASK 가 남아 있으면 Claude 에 알림 (차단하지 않고 안내)
+if grep -q "status: in-progress" repo/meta/TASK.md 2>/dev/null; then
+  cat <<'JSON'
+{
+  "hookSpecificOutput": {
+    "hookEventName": "Stop",
+    "additionalContext": "in-progress TASK 가 meta/TASK.md 에 남아 있습니다. 완료 여부를 재확인하세요."
+  }
+}
+JSON
+fi
+exit 0
+```
+
+**활용 시점:**
+- 세션 종료 직전 TASK.md / REPORT.md 의 미완료·BLOCKED 항목을 1차 환기 (§16 완료 게이트 보조).
+- subagent 완료 후(`SubagentStop`) 오케스트레이터에 결과 요지·다음 단계 컨텍스트 주입 (§18.8 panel 결과 브리핑).
+- 현재 브랜치·배포 타깃·읽기전용 디렉토리 등 *환경 상태* 를 다음 턴 판단 재료로 전달.
+
+**차단형(§22.1)과의 구분 (혼용 금지):**
+- *차단이 목적* (압축 방지, 위험 종료 방지) → PreCompact `decision:block` + exit 2.
+- *피드백이 목적* (정보 전달 후 진행) → Stop/SubagentStop `additionalContext` + exit 0.
+- additionalContext 로 반환하는 내용도 §12 민감정보 처리 규칙을 따른다 (secret·credential 비노출).
+
 ### §22.2 `/fewer-permission-prompts` — 권한 설정 자동화
 
 Claude Code v2.1.105+ 는 `/fewer-permission-prompts` 명령으로 transcript 를 분석해 `.claude/settings.json` 의 `allowedTools` allowlist 를 자동 제안한다. 신규 소비자 init 직후 또는 초기 작업 세션 후 실행하면 반복 권한 승인 프롬프트를 크게 줄일 수 있다.
@@ -2191,6 +2263,10 @@ Claude Code v2.1.105+ 는 `/fewer-permission-prompts` 명령으로 transcript �
 ```
 
 명령 실행 후 Claude 가 제안한 allowlist 를 검토하고 `.claude/settings.json` 에 반영한다.
+
+
+> **보완 관계**: 본 § 는 *사전(pre-built) allowlist* 를 구축한다. 런타임에 권한을 classifier 로
+> 처리하는 **auto mode** 와 절대 차단 규칙은 §22.6 참조 — 두 패턴은 대체가 아닌 보완 관계다.
 
 ### §22.3 Dynamic Workflow Tool 운용 — 신뢰성·subagent lifecycle
 
@@ -2301,6 +2377,21 @@ claude plugin disable security-guidance
 비활성화 후 작업 완료 시점에 `/cso` 최종 게이트로 감사하는 것도 유효한 패턴이다.
 `/cso` 는 항상 최종 판단 권위를 가지며 `security-guidance` 가 없는 것을 대체하지 않는다.
 
+
+**plugin 상태 조회 — `/plugin list` (v2.1.163+):**
+
+등록(`claude plugin init`) · 비활성화(`claude plugin disable`) 와 대칭으로, 현재 설치·활성화
+상태를 확인하는 명령이다. lifecycle 의 "점검" 단계를 채운다.
+
+```
+/plugin list              # 설치된 plugin 전체
+/plugin list --enabled    # 활성화된 것만
+/plugin list --disabled   # 비활성화된 것만
+```
+
+장기 위임 세션에서 plugin 설치 상태를 확인하거나, cron 점검 스크립트에서 `security-guidance`
+등 plugin 활성 여부를 진단할 때 사용한다.
+
 ### §22.5 worktree 설정 금지 항목 — F0/F1 isolation 정책과의 충돌
 
 Claude Code v2.1.162 에서 신설된 `worktree.bgIsolation` / `worktree.baseRef` 설정은
@@ -2332,3 +2423,92 @@ Claude Code v2.1.162 에서 신설된 `worktree.bgIsolation` / `worktree.baseRef
 
 bgIsolation 이 기본값(격리 활성) 상태에서 baseRef 는 배경 세션의 worktree 기준 커밋을
 지정하는 설정으로, F0/F1 정책과 무충돌이다. 필요 시 소비자 설정에서 사용 가능.
+
+
+### §22.6 Auto mode — 자율 위임 세션의 런타임 권한 모델 (v2.1.136+)
+
+본 템플릿은 "최대한 공격적/적대적" 자율 위임을 일상적으로 수행한다 (예: `/goal` 기반
+무중단 반복). 이때 권한 처리에는 세 가지 선택지가 있다:
+
+| 모드 | 성격 | 위험 |
+|---|---|---|
+| approve-all (모든 프롬프트 수락) | 무분별 승인 | 파괴적/비가역 동작도 통과 |
+| `--dangerously-skip-permissions` | 권한 시스템 우회 | 안전망 전무 |
+| **auto mode** | classifier 가 각 도구 호출을 평가 — 비가역·파괴적·환경 외부 동작은 차단, 안전 동작은 무중단 | **중간지대 (권장)** |
+
+auto mode 는 위 둘의 **안전한 중간지대**다. 활성화·기본 차단 규칙·가용성(Anthropic API
+전체 사용 가능, Bedrock/Vertex/Foundry 는 `CLAUDE_CODE_ENABLE_AUTO_MODE` 필요)은
+Claude Code `permission-modes` 문서를 따른다. 자율/적대적 위임 세션의 **안전 기본값으로 권장**한다.
+
+#### 2-layer 차단 모델 — 결정적 차단 vs classifier
+
+§절대금지(소비자 repo mutation, `git push --force`, `.env`/secret 읽기, `--admin`, submodule
+pointer 강제변경 등)를 인코딩할 때 **두 메커니즘을 혼동하지 않는다**:
+
+**L1 — `permissions.deny` (결정적, classifier *이전* 차단, override 불가):**
+
+구조화 패턴 `Action(pattern)` 으로 표현. classifier 가 consult 되기 전에 차단되며 사용자 의도로도
+우회 불가. **절대 강제가 필요한 결정적 항목은 반드시 이 레이어** (가능하면 managed settings).
+`permissions.deny` 는 committed project `.claude/settings.json` 에서도 읽힌다.
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)"
+    ]
+  }
+}
+```
+
+**L2 — `autoMode` (classifier 가 평가하는 prose 규칙):**
+
+`autoMode.{environment, allow, soft_deny, hard_deny}` 4개 배열은 **자연어(prose) 규칙**이며
+classifier 가 해석한다. 결정적 패턴이 아니라 "맥락 판단" 용도다.
+
+- `hard_deny`: 무조건 차단 (사용자 의도·allow 예외 무효).
+- `soft_deny`: 차단하되 명시적 사용자 의도/allow 로 override 가능.
+- `allow`: soft_deny 예외.
+- `environment`: 신뢰 인프라(repo·bucket·domain) 명시 — 무엇이 "외부"인지 classifier 가 판단.
+
+```json
+{
+  "autoMode": {
+    "soft_deny": ["$defaults", "Never run database migrations outside the migrations CLI"],
+    "hard_deny": ["$defaults", "Never send repository contents to third-party code-review APIs"]
+  }
+}
+```
+
+> ⚠ **`"$defaults"` 누락 금지**: 배열에서 `"$defaults"` 를 빼면 해당 섹션의 **빌트인 규칙
+> 전체가 폐기**된다 — `soft_deny` 의 force-push/`curl|bash`/prod-deploy 빌트인, `hard_deny`
+> 의 data-exfiltration/auto-mode-bypass 빌트인이 사라진다. 항상 `"$defaults"` 를 포함하고
+> 그 위에 프로젝트 규칙을 얹는다.
+
+#### 적용 시 주의 (배포 경로)
+
+- **`autoMode` 는 committed project settings 에서 읽히지 않는다.** classifier 가 읽는 scope 는
+  `~/.claude/settings.json`(개발자), `.claude/settings.local.json`(per-project, gitignored),
+  managed settings(조직 배포), `--settings`/SDK inline 뿐이다. 즉 **템플릿이 소비자 repo 의
+  committed `.claude/settings.json` 으로 autoMode 규칙을 배포할 수 없다** — `permissions.deny`
+  (committed 가능) 또는 managed settings 로 분리 배포해야 한다.
+- classifier 는 `CLAUDE.md` 내용도 읽는다. "never force push" 같은 행동 규칙을 CLAUDE.md 에
+  두면 Claude 와 classifier 를 동시에 지도한다 — 본 템플릿의 §절대금지 요지를 소비자
+  CLAUDE.md 에서 닿게 두면 classifier 차단에도 반영된다.
+- §22.2(`/fewer-permission-prompts`, 사전 allowlist)와 **보완 관계**: §22.2 는 정적 allowlist,
+  §22.6 은 런타임 classifier. 함께 쓰면 반복 프롬프트 감소 + 위험 동작 차단을 모두 얻는다.
+
+#### 점검 명령
+
+```bash
+claude auto-mode defaults   # 빌트인 규칙 출력
+claude auto-mode config     # $defaults 전개된 effective 규칙 확인
+claude auto-mode critique   # 커스텀 규칙의 모호·중복·오탐 위험 AI 검토
+```
+
+설정 변경 후 `claude auto-mode config` 로 effective 규칙을 검증한다. 거부 이력은 `/permissions`
+의 Recently denied 탭에 기록되며, 반복 거부는 보통 `autoMode.environment` 컨텍스트 부족 신호다.
