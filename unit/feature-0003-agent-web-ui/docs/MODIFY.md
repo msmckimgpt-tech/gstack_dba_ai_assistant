@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260608-0158-V (PB-0008 Windows-browser 검증 기록)
+- Date: 2026-06-08
+- TASK-Cycle: TASK-0158 — 진입점 구성 Tier1·2 의 실제 Windows 브라우저 완료 게이트 검증 (코드 변경 없음, 테스트 증거만)
+- Summary: `bin/win-browser.py`(무권한 relay)로 실제 Windows Chrome 에서 7개 진입점을 시나리오 검증(39/39 PASS). 결과·증거를 TEST.md §4 에 기록하고 재현용 시나리오를 tests 에 추가.
+- Files:
+  - `unit/feature-0003-agent-web-ui/docs/TEST.md`: §4 Test Run History 에 "Environment: Windows-browser" Run 추가(PASS 상세 + 스크린샷 10장 참조).
+  - `unit/feature-0003-agent-web-ui/tests/win-browser-task0158.scenario.json`: 재현 가능 win-browser 시나리오 신규(비밀번호 없음 — authed-session 가정).
+  - `unit/feature-0003-agent-web-ui/docs/TASK.md`: TASK-0158 완료 표시 + PB-0008 게이트 [x].
+
 ## CHG-20260608-0159
 - Date: 2026-06-08
 - TASK-Cycle: TASK-0159, **Major §12.3** — 고아 run 무한 폴링 수정 (런타임 run 생명주기/데이터 경로)

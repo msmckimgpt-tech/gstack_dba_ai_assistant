@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260608-0158 [SKIPPED:test-evidence-no-code-change] (PB-0008 Windows-browser 검증 기록)
+- Date: 2026-06-08
+- TASK-Cycle: TASK-0158 — Windows-browser 완료 게이트 증거 기록 (코드 변경 0)
+- Skip reason: 코드/RBAC/스키마/시크릿 변경 없음 — TEST.md §4 Run + 재현 시나리오(tests) + TASK 완료 표시뿐인 **검증 증거 커밋**. 진입점 구현(Tier1·2)의 적대적 리뷰는 본 cycle 의 REV-20260608-0158/-T2(아래) 가 이미 수행. outside-voice 미해당.
+
 ## REV-20260608-0159 [SUBAGENT: general-purpose 적대적 backend/qa diff 리뷰 — 고아 run/tz stale, BLOCKER 0]
 - Date: 2026-06-08
 - Cycle: TASK-0159 (REQ-20260608-0159, **Major §12.3** — 고아 run 무한 폴링 수정: tz stale 회귀 + 부팅 reconciliation)

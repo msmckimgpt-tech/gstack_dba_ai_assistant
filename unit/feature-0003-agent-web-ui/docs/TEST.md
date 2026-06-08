@@ -246,6 +246,19 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-06-08 (TASK-0158 "진입점 없는 기능" 진입점 구성 Tier 1·2 — **PB-0008 Windows-browser 완료 게이트**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148 via `bin/win-browser.py` 무권한 relay, https://localhost:18080, self-signed ignore). WSL headless 가 아닌 실제 Windows 화면 검증.
+  - 시나리오: `unit/feature-0003-agent-web-ui/tests/win-browser-task0158.scenario.json` (authed-session 가정 — 영속 프로필 로그인 상태). 재현: `python3 bin/win-browser.py launch --url https://localhost:18080/` → `run --scenario <위 파일>` → `down`.
+  - **결과: OK=True, 39/39 step PASS.** 7개 진입점 전부 실제 브라우저 동작 확인:
+    - **Tier1 즉시답변** — ask 전송 직후 `#sendBtn` 이 `.send-btn.is-stop`(중단)으로 모핑 + `#composerFinalizeBtn`("즉시 답변") 노출 `assert_visible` PASS(shot 03), 중단 클릭으로 취소 PASS(shot 04).
+    - **Tier1 공유 링크 관리** — 대화 ··· 메뉴 "공유 관리" → `.share-mgr-panel` 모달 렌더("발급된 공유 링크가 없습니다." — 새 대화 정상)(shot 05·06).
+    - **Tier1 scopeAll** — `#composerAttachmentsScopeAll` DOM 존재 eval=True (마크업 배포 확인).
+    - **Tier2 내 활동기록** — 프로필 drawer "내 활동 기록" 탭 → `#profileAuditList` 렌더(shot 07).
+    - **Tier2 grant 진단** — 관리콘솔 대시보드 `#dashboardGrantHealth` eval=True(shot 08).
+    - **Tier2 audit.purge** — Audits pane 빨간 "보존기간 초과 로그 정리"(`#auditPurgeBtn`) `assert_visible` PASS → 모달(`.admin-modal`) "감사 로그 정리 (purge)" + 기준날짜 + 미리보기/삭제실행(disabled) 렌더 → 취소(삭제 미실행)(shot 09·10).
+    - **Tier2 감사 facet** — `auditResourceTypeOptions`/`auditActorOptions` datalist 채워짐 eval `{res:9, actor:5}`.
+  - 증거 스크린샷 10장: `/tmp/win-browser-shots/task0158/` (02_app_loaded ~ 10_purge_modal). CHECK#13(PB-0008 Windows-browser) **충족** — Tier1/2 커밋 시점 WARN 의 후행 보강.
+
 - 2026-06-08 (TASK-0159 고아 run 무한 폴링 수정 — tz stale 회귀 + 부팅 reconciliation):
   - 변경 성격: 백엔드 (`app.py` run-status 생명주기 + stale 판정 tz). **시각 UI 표면 변경 없음** → PB-0008 Windows-browser N/A, CHECK#13 PASS(web/UI diff 없음).
   - 신규 `tests/test_orphan_run_stale_recovery.py` — agent 이미지(`--no-deps`, DB 없이 monkeypatch) 에서 **6 passed in 0.65s**:
