@@ -1552,9 +1552,65 @@ function renderMessageContent(target, content = "", role = "assistant") {
   target.className = "message-content";
   if (role === "assistant") {
     target.innerHTML = markdownToHtml(content);
+    enhanceFilePreviewLinks(target);
     return;
   }
   target.innerHTML = markdownToHtml(content || "");
+}
+
+// 메시지 본문의 "📎 전체 N행 미리보기" 링크(에이전트가 생성한 /api/file?path=... 마크다운)를
+// 인터랙티브 표 로더로 전환한다 (#120). 에이전트 마크다운에는 conversation_id 가 없어
+// 그대로 클릭하면 /api/file 이 422 를 내고, 표가 아닌 문자열 링크로만 보였다.
+function enhanceFilePreviewLinks(target) {
+  const anchors = target.querySelectorAll('a[href*="/api/file?"]');
+  anchors.forEach((anchor) => {
+    let csvPath = "";
+    try {
+      csvPath = new URL(anchor.getAttribute("href"), window.location.origin)
+        .searchParams.get("path") || "";
+    } catch (_) {
+      return;
+    }
+    if (!csvPath) return;
+    anchor.classList.add("file-preview-link");
+    anchor.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      loadCsvAsInlineTable(csvPath, anchor);
+    });
+  });
+}
+
+async function loadCsvAsInlineTable(csvPath, anchorEl) {
+  const block = anchorEl.closest("p") || anchorEl;
+  const originalText = anchorEl.textContent;
+  anchorEl.textContent = "불러오는 중...";
+  anchorEl.style.pointerEvents = "none";
+  try {
+    // conversation_id 는 항상 현재 활성 대화 기준으로 주입 (에이전트 링크엔 없음 → 422 원인).
+    const url = `/api/file?path=${encodeURIComponent(csvPath)}&conversation_id=${encodeURIComponent(state.activeConversationId || "")}`;
+    const response = await fetch(url, { credentials: "same-origin" });
+    if (!response.ok) {
+      throw new Error(`CSV 요청 실패 (${response.status})`);
+    }
+    const text = await response.text();
+    const rows = parseCsv(text).filter((r) => r.length && !(r.length === 1 && r[0] === ""));
+    if (!rows.length) {
+      throw new Error("CSV에 표시할 데이터가 없습니다.");
+    }
+    const tableWrap = buildResultTable({ columns: rows[0], rows: rows.slice(1), truncated: false });
+    if (!tableWrap) {
+      throw new Error("표를 생성할 수 없습니다.");
+    }
+    tableWrap.classList.add("is-full-data");
+    // 직전 markdown 미리보기 표가 있으면 전체 표로 대체, 없으면 링크 자리에 삽입.
+    const prev = block.previousElementSibling;
+    block.replaceWith(tableWrap);
+    if (prev && prev.tagName === "TABLE") prev.remove();
+  } catch (error) {
+    anchorEl.textContent = originalText;
+    anchorEl.style.pointerEvents = "";
+    showToast(error.message || "전체 데이터를 불러오지 못했습니다.", true);
+  }
 }
 
 function appendDetailBlock(parentEl, title, contentNode) {
