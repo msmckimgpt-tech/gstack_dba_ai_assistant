@@ -696,9 +696,88 @@ async function loadUsage() {
   const modelEl = document.getElementById("usageByModel");
   const roleEl = document.getElementById("usageByRole");
   const acctEl = document.getElementById("usageByAccount");
+  const dayChartEl = document.getElementById("usageDayChart");
+  const modelChartEl = document.getElementById("usageModelChart");
+  const roleChartEl = document.getElementById("usageRoleChart");
   if (summaryEl) summaryEl.textContent = "로딩 중…";
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const num = (v) => (Number(v) || 0).toLocaleString();
+  // TASK-0164: 상용 사용량 대시보드 참조 차트 (순수 SVG, 의존성 0).
+  // 색상 팔레트 — 로컬/시스템(edge·시스템·역할없음)은 회색 계열로 구분.
+  const CHART_COLORS = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16", "#0ea5e9", "#f43f5e"];
+  const SYS_COLOR = "#94a3b8";
+  const colorMapFor = (keys) => {
+    const m = {}; let i = 0;
+    keys.forEach((k) => {
+      if (k === "(시스템)" || k === "(역할 없음)" || k === "edge") m[k] = SYS_COLOR;
+      else { m[k] = CHART_COLORS[i % CHART_COLORS.length]; i += 1; }
+    });
+    return m;
+  };
+  // 일별 토큰 사용량 — 모델별 누적(stacked) 세로 막대.
+  const renderStacked = (el, byDayModel) => {
+    if (!el) return;
+    const rows = byDayModel || [];
+    if (!rows.length) { el.innerHTML = "<p style='color:#888;'>데이터 없음</p>"; return; }
+    const dayMap = {}; const models = [];
+    rows.forEach((r) => {
+      dayMap[r.day] = dayMap[r.day] || {};
+      dayMap[r.day][r.model] = (dayMap[r.day][r.model] || 0) + (r.total_tokens || 0);
+      if (!models.includes(r.model)) models.push(r.model);
+    });
+    const days = Object.keys(dayMap).sort();
+    const cmap = colorMapFor(models);
+    const maxT = Math.max(1, ...days.map((d) => Object.values(dayMap[d]).reduce((a, b) => a + b, 0)));
+    const W = 760, H = 240, pL = 60, pB = 30, pT = 12, pR = 12;
+    const plotW = W - pL - pR, plotH = H - pT - pB, n = days.length;
+    const step = plotW / n, bw = Math.max(2, Math.min(46, step * 0.7));
+    let bars = "";
+    days.forEach((d, di) => {
+      const x = pL + di * step + (step - bw) / 2;
+      let y = pT + plotH;
+      models.forEach((m) => {
+        const v = dayMap[d][m] || 0; if (v <= 0) return;
+        const h = (v / maxT) * plotH; y -= h;
+        bars += `<rect x='${x.toFixed(1)}' y='${y.toFixed(1)}' width='${bw.toFixed(1)}' height='${h.toFixed(1)}' fill='${cmap[m]}' rx='1'><title>${esc(d)} · ${esc(m)}: ${num(v)}</title></rect>`;
+      });
+    });
+    const axis = `<line x1='${pL}' y1='${pT + plotH}' x2='${W - pR}' y2='${pT + plotH}' stroke='#e5e7eb'/>`
+      + `<text x='${pL - 6}' y='${pT + 9}' text-anchor='end' font-size='10' fill='#999'>${num(maxT)}</text>`
+      + `<text x='${pL - 6}' y='${pT + plotH}' text-anchor='end' font-size='10' fill='#999'>0</text>`;
+    let xl = "";
+    [...new Set(n <= 1 ? [0] : [0, Math.floor(n / 2), n - 1])].forEach((di) => {
+      const x = pL + di * step + step / 2;
+      xl += `<text x='${x.toFixed(1)}' y='${H - 9}' text-anchor='middle' font-size='10' fill='#999'>${esc(String(days[di]).slice(5))}</text>`;
+    });
+    const legend = models.map((m) => `<span style='display:inline-flex;align-items:center;gap:5px;margin:2px 14px 2px 0;font-size:12px;'><span style='width:11px;height:11px;border-radius:2px;background:${cmap[m]};display:inline-block;'></span>${esc(m)}</span>`).join("");
+    el.innerHTML = `<svg viewBox='0 0 ${W} ${H}' style='width:100%;max-width:780px;height:auto;'>${axis}${bars}${xl}</svg><div style='margin-top:6px;'>${legend}</div>`;
+  };
+  // 모델별 비중 — 도넛.
+  const renderDonut = (el, byModel) => {
+    if (!el) return;
+    const rows = (byModel || []).map((r) => ({ label: (r.resolved_model && r.resolved_model !== r.model) ? r.resolved_model : (r.model || "(미상)"), value: r.total_tokens || 0 })).filter((r) => r.value > 0);
+    if (!rows.length) { el.innerHTML = "<p style='color:#888;'>데이터 없음</p>"; return; }
+    const total = rows.reduce((a, b) => a + b.value, 0);
+    const cmap = colorMapFor(rows.map((r) => r.label));
+    const R = 54, C = 2 * Math.PI * R, cx = 70, cy = 70;
+    let off = 0, segs = "";
+    rows.forEach((r) => {
+      const len = (r.value / total) * C;
+      segs += `<circle cx='${cx}' cy='${cy}' r='${R}' fill='none' stroke='${cmap[r.label]}' stroke-width='22' stroke-dasharray='${len.toFixed(2)} ${(C - len).toFixed(2)}' stroke-dashoffset='${(-off).toFixed(2)}' transform='rotate(-90 ${cx} ${cy})'><title>${esc(r.label)}: ${num(r.value)} (${(r.value / total * 100).toFixed(1)}%)</title></circle>`;
+      off += len;
+    });
+    const legend = rows.map((r) => `<div style='display:flex;align-items:center;gap:6px;font-size:12px;margin:3px 0;'><span style='width:11px;height:11px;border-radius:2px;background:${cmap[r.label]};display:inline-block;flex:none;'></span><span style='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>${esc(r.label)}</span><strong>${(r.value / total * 100).toFixed(1)}%</strong></div>`).join("");
+    el.innerHTML = `<div style='display:flex;align-items:center;gap:18px;flex-wrap:wrap;'><svg viewBox='0 0 140 140' style='width:130px;height:130px;flex:none;'>${segs}<text x='70' y='66' text-anchor='middle' font-size='11' fill='#888'>총 토큰</text><text x='70' y='83' text-anchor='middle' font-size='13' font-weight='700' fill='#333'>${num(total)}</text></svg><div style='flex:1;min-width:150px;'>${legend}</div></div>`;
+  };
+  // 역할별 — 가로 막대.
+  const renderHBar = (el, data, labelKey, valueKey) => {
+    if (!el) return;
+    const rows = (data || []).map((r) => ({ label: String(r[labelKey] == null ? "-" : r[labelKey]), value: r[valueKey] || 0 })).filter((r) => r.value > 0);
+    if (!rows.length) { el.innerHTML = "<p style='color:#888;'>데이터 없음</p>"; return; }
+    const max = Math.max(...rows.map((r) => r.value));
+    const cmap = colorMapFor(rows.map((r) => r.label));
+    el.innerHTML = rows.map((r) => `<div style='margin:8px 0;'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;'><span>${esc(r.label)}</span><strong>${num(r.value)}</strong></div><div style='background:#f1f5f9;border-radius:4px;height:14px;overflow:hidden;'><div style='width:${(r.value / max * 100).toFixed(1)}%;height:100%;background:${cmap[r.label]};border-radius:4px;'></div></div></div>`).join("");
+  };
   // TASK-0163: fmt 에 행 전체(r)도 전달 — "별칭 → 해소모델" 등 다중 필드 표시용.
   const tbl = (rows, cols) => {
     if (!rows || !rows.length) return "<p style='color:#888;'>없음</p>";
@@ -718,6 +797,10 @@ async function loadUsage() {
         `<div><div class='drawer-label'>completion</div><strong>${num(t.completion_tokens)}</strong></div>` +
         `</div>`;
     }
+    // TASK-0164: 차트 렌더 (일별 stacked / 모델별 도넛 / 역할별 가로막대).
+    renderStacked(dayChartEl, data.by_day_model);
+    renderDonut(modelChartEl, data.by_model);
+    renderHBar(roleChartEl, data.by_role, "role", "total_tokens");
     // 모델별: 별칭(model)과 실제 서빙 모델(resolved_model)이 다르면 "별칭 → 해소" 표시.
     if (modelEl) modelEl.innerHTML = tbl(data.by_model, [
       { key: "resolved_model", label: "모델", fmt: (v, r) => {

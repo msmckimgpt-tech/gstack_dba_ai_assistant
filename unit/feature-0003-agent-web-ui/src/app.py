@@ -12886,6 +12886,14 @@ def admin_llm_usage(request: Request) -> JSONResponse:
                     f"WHERE created_at >= {win} GROUP BY 1 ORDER BY 1 DESC LIMIT 90"
                 )
                 by_day = [{"day": r[0], "calls": int(r[1]), "total_tokens": int(r[2] or 0)} for r in (cur.fetchall() or [])]
+                # TASK-0164: 일별 × 모델 분해 (상용 사용량 대시보드의 stacked bar 차트용).
+                # resolved_model(실제 서빙 모델) 기준 — 별칭 뒤 실제 모델별 추이.
+                cur.execute(
+                    f"SELECT date(created_at)::text, COALESCE(resolved_model, model), sum(total_tokens) "
+                    f"FROM agent_runtime.llm_usage WHERE created_at >= {win} GROUP BY 1, 2 ORDER BY 1"
+                )
+                by_day_model = [{"day": r[0], "model": r[1], "total_tokens": int(r[2] or 0)}
+                                for r in (cur.fetchall() or [])]
         finally:
             try:
                 pg.close()
@@ -12924,6 +12932,7 @@ def admin_llm_usage(request: Request) -> JSONResponse:
             "by_account": by_account,
             "by_role": by_role,
             "by_day": by_day,
+            "by_day_model": by_day_model,
         })
     finally:
         try:

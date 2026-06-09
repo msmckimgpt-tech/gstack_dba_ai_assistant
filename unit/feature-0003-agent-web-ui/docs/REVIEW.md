@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260609-0165 [SKIPPED:frontend-viz-no-rbac-no-schema]
+- Date: 2026-06-09
+- Cycle: TASK-0165 (LLM 사용량 화면 차트화 — 상용 AI 대시보드 구조 참조), **Minor §12.3**
+- 사유: frontend 시각화 추가(순수 SVG 차트) + 백엔드는 기존 llm_usage 컬럼 read 집계(`by_day_model`) 1건만 추가(파라미터화된 기존 `win` 패턴 답습). RBAC/스키마/시크릿/신규 엔드포인트 0, 권한 게이트(`console.usage.read` admin) 무변경. 동작 위험면 없음 — 사용자 메모 `feedback_outside_voice_for_rbac.md`(RBAC 변경 시 outside-voice) 비해당. node --check/py_compile PASS. 시각 검증은 Windows-browser(PB-0008) screenshot 으로 대체(배포 후 완료). 동시 세션 TASK-0164(SIGTERM) 머지 충돌로 0164→0165 재부여.
+
 ## REV-20260609-0164 [SUBAGENT: general-purpose 적대적 RBAC/런타임 리뷰 — SIGTERM finalizer + catalog prune, BLOCKER 0]
 - Date: 2026-06-09
 - Cycle: TASK-0164 (REQ-20260609-0164, **Major §12.3** — run 생명주기 + RBAC catalog delete). [[feedback_outside_voice_for_rbac]] 정책상 outside-voice 필수.

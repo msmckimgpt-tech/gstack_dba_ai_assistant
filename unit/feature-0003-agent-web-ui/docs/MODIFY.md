@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260609-0165
+- Date: 2026-06-09
+- TASK-Cycle: TASK-0165, **Minor §12.3** — LLM 사용량 화면 차트화 (상용 AI 사용량 대시보드 구조 참조)
+- Summary: TASK-0163 후속(사용자 요청). 관리 콘솔 > 감사 > LLM 사용량을 표 위주에서 Anthropic Console / OpenAI Usage 류 차트로 시각화. 일별 토큰 모델별 누적 막대 + 모델별 도넛 + 역할별 가로 막대. 의존성 0 순수 SVG(CDN 회피 — 정적자산 baked·WSL 내부). 동시 세션 TASK-0164(SIGTERM) 머지 충돌로 0164→0165 재부여.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`: `admin_llm_usage` 에 `by_day_model` 집계 추가 — `SELECT date(created_at)::text, COALESCE(resolved_model, model), sum(total_tokens) ... GROUP BY 1,2 ORDER BY 1` (기존 컬럼만, 비파괴 read). 응답에 `by_day_model` 추가.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: `loadUsage` 에 SVG 차트 헬퍼 3종 추가 — `renderStacked`(일별 stacked 세로 막대 + 날짜축 + 범례), `renderDonut`(모델별 비중 도넛, 실제 서빙 모델 라벨 + % 범례), `renderHBar`(역할별 가로 막대). `colorMapFor`(모델/카테고리 안정 색상, 로컬/시스템=회색). data 수신 후 3 차트 렌더 호출.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: usage pane 에 차트 컨테이너(#usageDayChart, #usageModelChart, #usageRoleChart) 추가 + 기존 모델별/역할별/계정별 표를 `<details>` "상세 표" 로 접이식 보존. 캐시버스터 `?v=20260609-usage-roles` → `?v=20260609-usage-charts`.
+- Note: 권한 `console.usage.read`(admin)/엔드포인트/스키마/시크릿 신규 0. by_day_model 은 기존 llm_usage 컬럼만 사용(마이그레이션 불요).
+- Review: REV-20260609-0165 [SKIPPED:frontend-viz-no-rbac-no-schema]. Windows-browser(PB-0008) 라이브 screenshot 검증 완료(배포 후).
+
 ## CHG-20260609-0164
 - Date: 2026-06-09
 - TASK-Cycle: TASK-0164, **Major §12.3** — 이월 처리: SIGTERM graceful finalizer(A1) + RBAC 고아 catalog prune(A2) + out-of-process 설계(B, 이월)

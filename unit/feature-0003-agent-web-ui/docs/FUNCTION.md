@@ -411,6 +411,11 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   `by_role` 은 `_aggregate_usage_by_role` 가 계정별을 역할로 폴딩(`(시스템)`/`(역할 없음)`
   버킷 포함). 관리 콘솔 > 감사 > LLM 사용량 pane(admin.html `data-admin-pane="usage"`)
   의 모델별/역할별/계정별 표(`#usageByModel`/`#usageByRole`/`#usageByAccount`)로 표시.
+- LLM 사용량 차트 (TASK-0164, 상용 AI 대시보드 구조 참조): `GET /api/admin/usage` 가
+  `by_day_model`(일별 × `COALESCE(resolved_model, model)` 토큰 합)도 반환. admin.js 가
+  순수 SVG(의존성 0, CDN 미사용)로 ① 일별 토큰 모델별 누적 막대(`renderStacked`, #usageDayChart)
+  ② 모델별 비중 도넛(`renderDonut`, #usageModelChart) ③ 역할별 가로 막대(`renderHBar`,
+  #usageRoleChart) 렌더. 기존 표는 `<details>` 접이식 "상세 표" 로 보존.
 
 ## 13. Pre-approved Changes
 - 비파괴적 경로 재배치와 이미지 복사 경로 수정

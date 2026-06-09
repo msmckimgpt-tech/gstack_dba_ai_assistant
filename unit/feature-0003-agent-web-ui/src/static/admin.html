@@ -339,12 +339,28 @@
           </div>
         </header>
         <div id="usageSummary" style="margin:12px 0;">로딩 중…</div>
-        <h3 style="margin-top:18px;">모델별</h3>
-        <div id="usageByModel"></div>
-        <h3 style="margin-top:18px;">역할별</h3>
-        <div id="usageByRole"></div>
-        <h3 style="margin-top:18px;">계정별</h3>
-        <div id="usageByAccount"></div>
+        <!-- TASK-0164: 상용 사용량 대시보드(Anthropic Console / OpenAI Usage) 참조 차트. 의존성 0 (순수 SVG). -->
+        <h3 style="margin-top:22px;">일별 토큰 사용량 <span style="color:#888;font-weight:400;font-size:.85em;">(모델별 누적)</span></h3>
+        <div id="usageDayChart"></div>
+        <div class="usage-chart-row" style="display:flex;gap:32px;flex-wrap:wrap;margin-top:8px;">
+          <div style="flex:1;min-width:300px;">
+            <h3 style="margin-top:18px;">모델별 비중</h3>
+            <div id="usageModelChart"></div>
+          </div>
+          <div style="flex:1;min-width:300px;">
+            <h3 style="margin-top:18px;">역할별</h3>
+            <div id="usageRoleChart"></div>
+          </div>
+        </div>
+        <details style="margin-top:26px;">
+          <summary style="cursor:pointer;color:#555;font-weight:600;">상세 표 (모델별 · 역할별 · 계정별)</summary>
+          <h3 style="margin-top:14px;">모델별</h3>
+          <div id="usageByModel"></div>
+          <h3 style="margin-top:18px;">역할별</h3>
+          <div id="usageByRole"></div>
+          <h3 style="margin-top:18px;">계정별</h3>
+          <div id="usageByAccount"></div>
+        </details>
       </section>
 
       <!-- TASK-0096 v2: 설정 pane — 계정/역할/제품 과 동일한 list-detail 5단 구조.
@@ -425,6 +441,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260609-usage-roles"></script>
+  <script src="/static/admin.js?v=20260609-usage-charts"></script>
 </body>
 </html>

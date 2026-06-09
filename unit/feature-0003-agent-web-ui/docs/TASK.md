@@ -12,9 +12,12 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-09 (TASK-0164 이월 처리 — SIGTERM graceful finalizer + RBAC catalog prune + out-of-process 설계; TASK-0163 LLM 사용량 admin 집계 — feature-0002 주관)
+- Last Updated: 2026-06-09 (TASK-0165 LLM 사용량 화면 차트화; TASK-0164 SIGTERM graceful finalizer + RBAC catalog prune; TASK-0163 LLM 사용량 admin 계정/역할 집계)
 
 ## 2. Task Queue
+
+### TASK-0165 LLM 사용량 화면 차트화 (상용 AI 사용량 대시보드 참조) (2026-06-09)
+- [x] **Minor §12.3** — TASK-0163 후속(사용자 요청: "상용 ai 제공 서비스의 구조를 참조하여 차트 형식으로"). 표 위주 화면을 Anthropic Console / OpenAI Usage 류로 시각화. **백엔드**: `admin_llm_usage` 에 `by_day_model`(일별 × `COALESCE(resolved_model, model)` 토큰 합) 집계 추가 — 기존 컬럼만(비파괴 read, 스키마 0). **프론트(의존성 0 순수 SVG)**: admin.js ① `renderStacked`(일별 토큰 모델별 누적 세로 막대 + 날짜축 + 범례), ② `renderDonut`(모델별 비중 도넛 + % 범례, 실제 서빙 모델 라벨), ③ `renderHBar`(역할별 가로 막대). 색상 팔레트 `colorMapFor`(로컬/시스템=회색). admin.html usage pane 에 차트 컨테이너(#usageDayChart/#usageModelChart/#usageRoleChart) + 기존 표는 `<details>` 접이식 보존. CDN 미사용(정적자산 baked·WSL 내부 — Chart.js 등 외부 의존 회피). 캐시버스터 `?v=20260609-usage-charts`. 권한/엔드포인트/스키마/시크릿 신규 0. node --check/py_compile PASS. REV-20260609-0165 [SKIPPED:frontend-viz]. Windows-browser(PB-0008) 라이브 screenshot 검증 완료(배포 후). 동시 세션이 TASK-0164(SIGTERM)를 먼저 머지(a207bb4)해 번호 충돌 → 0164→0165 재부여 + main 위로 rebase. worktree `ai/claude/llm-usage-metering`(TASK-0163 연장).
 
 ### TASK-0164 이월 처리 — SIGTERM graceful finalizer + RBAC catalog prune + out-of-process 설계 (2026-06-09)
 
