@@ -2400,3 +2400,19 @@ source_of_truth: true
   - 컨테이너 in-process 3/3 PASS 확인(2e89ac3 위, TASK-0167 _share_load_messages PG 경로 대상).
   - redaction/internal-filter 코드(`_share_redact_message_content`/`_is_internal_message`)는 TASK-0167·0168 모두 무변경 — F2 는 cutover refactor 후에도 불변식이 살아있음을 가드.
 - Rollback: F1 try/except 제거(원래 bare 호출 복원) + 테스트 파일 삭제. 동작 회귀 없음(F1 은 실패경로만, F2 는 테스트).
+
+## CHG-20260609-FORK-CORE-CONTEXT
+- Date: 2026-06-09
+- Related Requirement: TASK-0170 (**Major §12.3** — fork 문맥 상실 수정, 하이브리드 Phase 1, ADR-WEB-0005)
+- Summary: fork/duplicate/공유-fork 본에서 어시스턴트가 이전 대화 문맥을 인지 못 하던 버그 수정. 원인: LLM 문맥은 `agent_runtime.core_messages`(agent_core `_load_conversation_messages` → `_PG_LOAD_CORE_MESSAGES`)에서 읽는데, fork(`_fork_conversation_impl`)는 표시 메시지(`agent_runtime.messages`)만 복사하고 core_messages 를 복사 안 해 복사본 core_messages 가 비어 문맥 0. 신규 헬퍼 `_conv_load_core_messages_raw`/`_conv_copy_core_messages`(PG 전용)로 fork 시 core_messages 를 deep-copy(role/content/tool_calls/tool_call_id/name/created_at, tool_calls jsonb 직렬화 후 `::jsonb` 재삽입). anchored fork 는 앵커 메시지 created_at 까지(`src_rows[-1][3]`), full fork/duplicate 는 전체. 교차계정 공유 fork 도 이 복사로 snapshot(상시 cross-tenant 흐름 없음). core 복사 실패 시 fork 통째 cleanup(`delete_conversation_records`, PG CASCADE)+500(반쪽 fork 금지). 응답 dict 에 `core_copied` 추가.
+- 설계 경위: 사용자가 git식 reference 아키텍처 희망 → `DESIGN-fork-reference.md` 설계 → outside-voice 적대적 검토(REV-20260609-0003)가 순수 reference 의 BLOCKER 2(cross-table 시각 cut 불가, 로더 오기술)+보안 안티패턴 3(`.any` 영구 tap, 교차계정 live read, sandbox 공유) 발견 → **하이브리드 확정(ADR-WEB-0005)**: Phase 1=core_messages 복사(본 변경), Phase 2=첨부(후속 cycle).
+- Files:
+  - unit/feature-0003-agent-web-ui/src/app.py (_conv_load_core_messages_raw/_conv_copy_core_messages + _fork_conversation_impl 배선 + core_copied)
+  - unit/feature-0003-agent-web-ui/tests/test_fork_share_cutover.py (T1b 문맥 복사 단언)
+  - unit/feature-0003-agent-web-ui/docs/DESIGN-fork-reference.md (설계 정본)
+  - unit/feature-0003-agent-web-ui/docs/DECISIONS.md (ADR-WEB-0005)
+- Notes:
+  - cross-table 시각 cut 의 한계(DESIGN §14 F1): anchored fork 경계 ±1턴. copy 라 straddling turn 은 로드 시 `_normalize_history_rows` 가 자가 치유(reference 와 달리 corruption 아님).
+  - 스키마 변경·코어 로더 변경 0 — 순수 복사라 마이그레이션 0, 회귀 표면 최소(무-fork·기존 대화 무영향).
+  - PG 전용: 비-postgres 배포는 core 복사 skip([]), fork 는 표시 메시지로 진행.
+- Rollback: 두 헬퍼 + _fork_conversation_impl 의 core 복사 블록 + core_copied 제거. fork 는 TASK-0167 동작(표시만 복사)으로 회귀(문맥 상실 재발).

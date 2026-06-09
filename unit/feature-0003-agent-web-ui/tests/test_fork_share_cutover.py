@@ -141,7 +141,20 @@ def main() -> int:
                        data={"source_conversation_id": source_id}, cookie=cookie, ctx=ctx)
     fork_payload = check("T1 fork_conversation", s, b)
     if isinstance(fork_payload, dict):
-        print(f"      copied={fork_payload.get('copied')} new_cid={fork_payload.get('conversation_id')}")
+        print(f"      copied={fork_payload.get('copied')} core_copied={fork_payload.get('core_copied')} new_cid={fork_payload.get('conversation_id')}")
+
+    # T1b (TASK-0170): fork 가 LLM 문맥(core_messages)도 복사했는지 — 어시스턴트가 fork 에서
+    # 이전 대화를 인지하려면 core_messages 가 채워져야 한다(보고된 문맥 상실 버그의 핵심).
+    # 표시 메시지가 복사됐는데 core_copied=0 이면 문맥 미복원 = 버그 재발.
+    if isinstance(fork_payload, dict):
+        copied = int(fork_payload.get("copied") or 0)
+        core_copied = int(fork_payload.get("core_copied") or 0)
+        ok = (copied == 0) or (core_copied > 0)
+        note = f"copied={copied} core_copied={core_copied}"
+        if not ok:
+            note += " (core_messages 미복사 — fork 문맥 상실 회귀!)"
+        results.append(("T1b fork copies LLM context (core_messages)", ok, note))
+        print(f"[{'PASS' if ok else 'FAIL'}] T1b fork copies LLM context (core_messages): {note}")
 
     # T2 share (full)
     s, _, b = _request("POST", f"{base}/api/conversations/{source_id}/share",

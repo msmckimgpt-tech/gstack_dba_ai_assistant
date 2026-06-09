@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Feature Decisions
 
+## ADR-WEB-0005
+- Date: 2026-06-09 (TASK-0170)
+- Context: Fork(`_fork_conversation_impl`)가 웹 표시 메시지(`agent_runtime.messages`)만 복사하고 LLM 문맥(`agent_runtime.core_messages`, agent_core 가 매 ask 마다 읽음)은 복사 안 해, 복사본 대화에서 어시스턴트가 이전 문맥을 인지 못 함(사용자 보고). 또 첨부(`WebConversationAttachments` blob + `agent_attachment_<sha256(cid)>` sandbox)도 미복사. 사용자가 "전체 복사처럼 보이되 내부적으로 원문 참조" 하는 git 식 reference 아키텍처를 희망.
+- Options: (A) **하이브리드** — core_messages(+로컬 sandbox) deep-copy + 동일소유자 file blob 만 참조. (B) 순수 git-reference — 본문·첨부 모두 런타임에 원문 참조(lineage 컬럼 + 코어 로더 merge + IDOR 게이트 확장 + 교차계정 live read). (C) 본문만 복사, 첨부 이월.
+- Decision: **(A) 하이브리드** (사용자 결정, outside-voice REV-20260609-0003 권고 수용). 순수 git-reference(B)는 적대적 설계 검토에서 **BLOCKER 2건**(F1 cross-table 시각 cut 불가 — messages/core_messages 독립 clock 이라 앵커 시각으로 core 자르면 turn 갈라져 `_normalize_history_rows` 가 통째 drop → 문맥 소실 재발; F2 로더 오기술 — tail 윈도우라 lineage merge 후 조상 evict) + **보안 안티패턴**(F3 `.any`-source fork 가 권한 회수 후에도 피해자 데이터 영구 live tap; F4 교차계정 live reference 는 매 ask 마다 A 데이터가 B LLM 으로 상시 흐름 — deep-copy snapshot 과 비등가; F5 sandbox 조상 스키마 공유가 1-conv-1-schema 격리 파괴)로 기각. 하이브리드는 사용자 4대 목표(문맥 인지·첨부 포함·전체 본문·"복사처럼 보이되 참조")를 충족하며 F1/F3/F4/F5 를 구조적 제거.
+- Decision (구현 분할):
+  - **Phase 1 (본 cycle 구현)**: fork 시 `core_messages` deep-copy(anchored=앵커 시각 cut, full/duplicate=전체). 교차계정 fork 도 snapshot. 스키마 변경·코어 로더 변경 0(순수 복사). → **보고된 버그 해결.**
+  - **Phase 2 (후속 cycle)**: 첨부 행 복사(동일 ObjectKey, blob 재업로드 0) + 로컬 sandbox 스키마 복제(공유 아님) + 동일소유자 blob 참조. IDOR 게이트 변경 동반 시 outside-voice.
+- Consequence: fork/duplicate/공유-fork 본에서 어시스턴트가 이전 문맥 인지(Phase 1). 첨부는 Phase 2 까지 미포함(표시 메시지의 분석 텍스트는 core_messages 복사로 문맥엔 포함). 순수 reference 의 저장 절감은 미획득(텍스트는 복사가 정답이라 무의미; blob 참조 이득은 Phase 2). 설계 정본 `DESIGN-fork-reference.md`.
+
 ## ADR-WEB-0004
 - Date: 2026-06-09 (TASK-0164)
 - Context: `/api/ask` 가 agent 를 web 프로세스 안 `asyncio.to_thread` 로 실행 → web 재배포/SIGTERM 이 in-flight run 을 죽여 orphan("처리중" 고착). TASK-0159(부팅 reconciliation)·0160(히스토리 정합)은 증상 완화. 구조적 정답은 실행을 web 밖으로 분리하는 것(out-of-process ask-worker)이나 대규모(신규 서비스·job 큐·slot DB 이전·배포계약 변경, Critical).
