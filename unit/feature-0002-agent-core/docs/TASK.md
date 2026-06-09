@@ -736,3 +736,10 @@ TASK-0015 (plan-review):
 - [x] make test 컨테이너 PASS (0 fail) + ruff PASS
 - [x] §18.8 검증 패널(SUBAGENT) → REV-20260609-0173, MAJOR 2건(측정값-only 표 링크소실/JS 오탐) FIX-FIRST 반영(컬럼수 폴백 + JS 임계≥2)
 - [ ] verify-completion PASS → 커밋 → push → main ff-merge → 재배포(web+ask-worker) → 라이브 검증
+
+### TASK-0175 — 실행 단계 reason(왜) derived fallback (2026-06-09)
+- [x] **Minor §12.3** — 사용자 "각 단계 근거가 화면에 안 보인다" 재보고. 라이브 진단: 모든 step `work_source='derived'`·`reason_text=''`. 근본 ① SYSTEM_PROMPT 가 LLM 에 tool_notes(work/reason) 방출 미지시 → reason 미생성, ② reason 에 derived fallback 부재(work 와 달리). CHG-0173 프런트는 빈 reason 미표시라 표시할 데이터 자체가 없었음. (CHG-20260609-0175)
+- [x] `_derive_step_reason(tool_name, args)` 신규 — `_derive_step_work` 대칭, tool 목적별 결정적 근거(execute_sql 은 집계/조회 분기). 미지원 tool=`""`.
+- [x] 루프 배선: work 파생 직후 reason 도 비면 파생 + `reason_source='derived'`. LLM 참값 비덮어쓰기 가드.
+- [x] 회귀 테스트 `tests/test_derive_step_reason.py` 4종(전 tool 비빔·집계vs조회·미지원 빈값·대소문자/None 방어). make test 컨테이너 **269 passed/2 skipped**(회귀 0). outside-voice [SKIPPED:display-metadata] (REV-20260609-0175).
+- [ ] verify-completion PASS → 커밋 → push → main ff-merge → **재배포(ask-worker+web — 실행모드=worker 라 agent 루프는 ask-worker 컨테이너)** → 라이브 ask 후 step reason 노출 확인

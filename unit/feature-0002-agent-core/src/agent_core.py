@@ -1652,6 +1652,38 @@ def _derive_step_work(tool_name: str, args: dict[str, Any] | None = None, tool_r
     return "단계를 수행한다"
 
 
+def _derive_step_reason(tool_name: str, args: dict[str, Any] | None = None) -> str:
+    """LLM 이 tool_notes.reason 을 제공하지 않을 때, tool 의 목적에서 단계 수행
+    근거(왜)를 결정적으로 파생한다. `_derive_step_work`(무엇을)의 대칭 — work 는
+    이미 derived fallback 이 있으나 reason 은 부재해 사용자에게 항상 빈 값이었다.
+    참값(LLM tool_notes.reason)이 있으면 호출되지 않는다(호출부에서 가드)."""
+    payload = args if isinstance(args, dict) else {}
+    tool = str(tool_name or "").strip().lower()
+    if tool == "list_schemas":
+        return "접근 가능한 데이터베이스(스키마)를 파악하기 위해"
+    if tool == "describe_schema":
+        return "해당 스키마에 어떤 테이블이 있는지 파악하기 위해"
+    if tool == "describe_table":
+        return "쿼리에 사용할 컬럼과 자료형을 정확히 확인하기 위해"
+    if tool == "search_tables":
+        return "질문에 필요한 테이블을 찾기 위해"
+    if tool == "get_sample_rows":
+        return "실제 데이터의 형태와 값을 확인하기 위해"
+    if tool == "get_table_indexes":
+        return "효율적인 조회 경로(인덱스)를 파악하기 위해"
+    if tool == "get_foreign_keys":
+        return "테이블 간 연관 관계를 파악하기 위해"
+    if tool == "explain_query":
+        return "쿼리의 실행 계획과 비용을 미리 점검하기 위해"
+    if tool == "execute_sql":
+        sql_text = str(payload.get("sql", "") or "").strip()
+        aggregate = bool(re.search(r"\b(COUNT|SUM|AVG|MIN|MAX)\s*\(|\bGROUP\s+BY\b", sql_text, re.IGNORECASE))
+        if aggregate:
+            return "요청한 집계 결과를 산출하기 위해"
+        return "요청한 데이터를 조회하기 위해"
+    return ""
+
+
 def _parse_tool_notes(content: Any, expected_count: int) -> list[dict[str, str]]:
     count = max(0, int(expected_count or 0))
     payload = _extract_json_object(_coerce_message_text(content))
@@ -2275,6 +2307,9 @@ def _run_agent_core(
             if not work_text:
                 work_text = _derive_step_work(tool_name, tool_args)
                 work_source = "derived" if work_text else ""
+            if not reason_text:
+                reason_text = _derive_step_reason(tool_name, tool_args)
+                reason_source = "derived" if reason_text else ""
 
             step_count += 1
             if output_mode == "console":
