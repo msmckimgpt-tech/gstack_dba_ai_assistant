@@ -1,9 +1,9 @@
 # .template-state — managed by bin/template-upgrade.sh. Do not edit by hand.
 state_schema_version=1
-declared_version=v3.23.0
-detected_version=v3.23.0
-applied_migrations=v3.0.0-to-v3.1.0,v3.1.0-to-v3.2.0,v3.2.0-to-v3.3.0,v3.3.0-to-v3.4.0,v3.4.0-to-v3.5.0,v3.5.0-to-v3.5.1,v3.5.1-to-v3.6.0,v3.6.0-to-v3.6.1,v3.6.1-to-v3.7.0,v3.7.0-to-v3.8.0,v3.8.0-rc.1-to-v3.8.0,v3.8.0-to-v3.9.0,v3.9.0-to-v3.10.0,v3.10.0-to-v3.11.0,v3.11.0-to-v3.12.0,v3.12.0-to-v3.13.0,v3.13.0-to-v3.13.1,v3.13.1-to-v3.13.2,v3.13.2-to-v3.14.0,v3.14.0-to-v3.15.0,v3.15.0-to-v3.16.0,v3.16.0-to-v3.17.0,v3.17.0-to-v3.18.0,v3.18.0-to-v3.19.0,v3.19.0-to-v3.20.0,v3.20.0-to-v3.20.1,v3.20.1-to-v3.21.0,v3.21.0-to-v3.21.1,v3.21.1-to-v3.22.0,v3.22.0-to-v3.23.0
+declared_version=v3.24.0
+detected_version=v3.24.0
+applied_migrations=v3.0.0-to-v3.1.0,v3.1.0-to-v3.2.0,v3.2.0-to-v3.3.0,v3.3.0-to-v3.4.0,v3.4.0-to-v3.5.0,v3.5.0-to-v3.5.1,v3.5.1-to-v3.6.0,v3.6.0-to-v3.6.1,v3.6.1-to-v3.7.0,v3.7.0-to-v3.8.0,v3.8.0-rc.1-to-v3.8.0,v3.8.0-to-v3.9.0,v3.9.0-to-v3.10.0,v3.10.0-to-v3.11.0,v3.11.0-to-v3.12.0,v3.12.0-to-v3.13.0,v3.13.0-to-v3.13.1,v3.13.1-to-v3.13.2,v3.13.2-to-v3.14.0,v3.14.0-to-v3.15.0,v3.15.0-to-v3.16.0,v3.16.0-to-v3.17.0,v3.17.0-to-v3.18.0,v3.18.0-to-v3.19.0,v3.19.0-to-v3.20.0,v3.20.0-to-v3.20.1,v3.20.1-to-v3.21.0,v3.21.0-to-v3.21.1,v3.21.1-to-v3.22.0,v3.22.0-to-v3.23.0,v3.23.0-to-v3.24.0
 strategy=preserve
-last_synced_at=2026-06-08T06:51:52Z
+last_synced_at=2026-06-09T05:05:37Z
 bootstrap=false
-last_synced_template_commit=0553a14
+last_synced_template_commit=7558f8f

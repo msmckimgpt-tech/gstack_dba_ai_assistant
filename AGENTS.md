@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.23.0
+template_version: v3.24.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -1462,7 +1462,9 @@ commit:
 commit이 cycle 시작이 된다.
 
 META cycle 내 REVIEW.md(§18.10.1) index entry가 `[SUBAGENT:*]` /
-`[AGENT-TEAM:*]` / `[SKIPPED:*]` 중 ≥ 1개 존재해야 check #9가 PASS한다.
+`[AGENT-TEAM:*]` / `[SKIPPED:*]` / `[CODEX:*]` 중 ≥ 1개 존재해야 check #9가 PASS한다.
+`[CODEX:*]`는 docs-only 정책 변경(§18.8.1)에서 codex-review로 panel을 대체한
+accepted verdict다.
 `[REJECTED:*]`는 실패 진단용 trace이며 accepted review로 계산하지 않는다. META
 cycle은 §18.4의 "check #1~#8 skip + check #9 적용" 정책 하에서 운영된다.
 
@@ -1510,7 +1512,7 @@ check #9 evidence가 없으면 스스로 이 protocol을 수행해야 한다.
 | API, endpoint, contract, response shape, REST, GraphQL / API, 엔드포인트, 응답 스키마 | backend, security, qa |
 | performance, memory, latency, N+1, caching, throttle / 성능, 메모리, 지연, 캐싱 | backend, qa |
 | 비정책 doc-only OR comment-only | (panel SKIP) |
-| 정책 doc (`AGENTS.md`, `CLAUDE.md`, `_template/`, `docs/CONVENTIONS.md`, `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/PROJECT.md`, ANCHOR.md skeleton) doc-only | full panel (META mode) |
+| 정책 doc (`AGENTS.md`, `CLAUDE.md`, `_template/`, `docs/CONVENTIONS.md`, `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/PROJECT.md`, ANCHOR.md skeleton) doc-only | §18.8.1 경량 경로 (security subset / codex-review / opt-in full panel) |
 | Code change (line-count 무관) | dispatch 키워드 매칭 → subset, 매칭 0건이면 full panel |
 | 키워드 0개 + cross-domain 키워드 ≥ 2개 | full panel (5명) |
 
@@ -1520,14 +1522,40 @@ check #9 evidence가 없으면 스스로 이 protocol을 수행해야 한다.
 - main session은 dispatch 결정의 근거(매칭된 키워드)를 REVIEW.md entry의
   `Trigger` 필드에 기록한다 — 어느 신호로 어느 subagent가 호출됐는지 추적 가능.
 - 사용자가 명시적으로 "전체 panel"을 요청하면 full panel.
-- 매칭 0건 + code change 또는 정책 doc → full panel default. **fallback 빈도
+- 매칭 0건 + code change → full panel default. **fallback 빈도
   자체가 측정 신호** — 자주 발화 시 "병렬 처리 불필요 영역"이라는 evidence.
+  (정책 doc-only는 이 측정의 결론을 반영해 §18.8.1 경량 경로로 분기한다 — v3.24.0.
+  META-CYCLE-021/025의 반복 [SKIPPED]가 docs full panel의 저가치를 입증.)
 - 사용자 노출 surface (REVIEW.md verdict 라벨, `/review-panel` summary stderr)는
   영어 keyword + 한국어 명사 병기 (예: `Trigger: schema/스키마 keyword matched`).
   internal dispatch 매칭 자체는 영어 그대로.
 - skip 결정 시에도 REVIEW.md에 `[SKIPPED:non-policy-doc]` index entry 1줄을
   남겨야 한다 — check #9가 인식하여 SKIP cycle도 통과시킨다 (§18.10.1).
 
+#### §18.8.1 docs-only 정책 변경 경량 dispatch (v3.24.0+)
+
+위 표의 "정책 doc ... doc-only" 행(순수 prose/§ 추가·수정)은 full panel(5 reviewer)
+대신 다음 경량 경로를 **기본**으로 한다. 근거: bundle-only reviewer(repo 접근 없음)는
+대용량 정책 doc의 cross-ref/factual 정확성을 검증할 수 없고, ux/design 도메인은 정책
+prose에 대부분 N/A다. (evidence: META-CYCLE-021/025의 반복 `[SKIPPED]` — docs 변경에
+full panel은 저가치로 측정됨.)
+
+1. **subset dispatch (기본):** `security`를 기본 호출하고, 변경된 doc 내용이 위 표의
+   키워드(schema/migration/API/performance 등)에 매칭되면 해당 도메인(backend/qa)을
+   추가한다. ux/design은 명시적 UI 정책 변경일 때만.
+2. **codex-review (대안, check #9 accepted):** factual/cross-ref 정확성 검증이 핵심인
+   변경은 `codex review --uncommitted`(또는 `/codex review`)로 대체할 수 있다. 결과를
+   REVIEW.md에 `[CODEX:<scope>]` index entry로 기록하면 check #9가 accepted review로
+   인식한다 (§18.4, §18.9). codex P1(GATE) 0건이면 PASS, P1 ≥ 1이면 수정 후 재실행.
+3. **full panel은 opt-in:** 사용자가 명시적으로 "전체 panel"을 요청하거나, 변경이
+   cross-domain 정책(보안+백엔드+UX 동시 영향)일 때만 full panel을 호출한다.
+
+**모든 경로 공통 (MUST):** docs-only 정책 변경은 위 경로 선택과 무관하게 기계적
+cross-ref/anchor 무결성 점검을 1회 수행한다 — 내부 §-참조가 실제 heading으로 resolve되는지,
+삽입 anchor가 존재하는지, 표/링크 정합성. 정책 doc은 모든 후속 cycle의 판단 기준이라
+blast radius가 가장 크고, 이 기계적 점검은 bundle-only reviewer가 검증 못하는 영역을 메운다.
+
+순수 비정책 doc은 기존대로 표 첫 행의 `[SKIPPED:non-policy-doc]`로 처리한다.
 #### Subagent per-invocation model 분기 (v2.1.154+, 비용·품질 최적화)
 
 subagent 는 entry persona 와 달리 **호출 시점에 model 을 지정할 수 있다**
@@ -1627,6 +1655,21 @@ Agent({
 - Timestamp: <ISO8601>
 ```
 
+#### 신규 REV entry — CODEX (codex-review in lieu of panel)
+
+docs-only 정책 변경(§18.8.1)에서 codex-review로 panel을 대체한 경우. check #9는
+accepted review로 인식한다(§18.4).
+
+```
+## REV-YYYYMMDD-NNNN [CODEX:<scope>] — <verdict>
+- Related TASK: <feature-id | _meta_>
+- Source: codex review (<codex-version> --uncommitted)
+- Trigger: docs-only 정책 변경 (§18.8.1 경량 경로)
+- Timestamp: <ISO8601>
+- Verdict: PASS (P1 0건) | CONCERN (P2만) | BLOCK (P1 ≥ 1)
+- Critical issue (if BLOCK/CONCERN): <1-line excerpt>
+- Human Approval Needed: yes/no
+```
 #### 신규 REV entry — REJECTED (diagnostic trace)
 
 wrapper post 단계에서 일부 또는 모든 subagent가 validator에 reject되거나
