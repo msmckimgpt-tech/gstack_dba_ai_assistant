@@ -1687,3 +1687,14 @@ source_of_truth: true
   - F1 (MINOR): `_share_load_messages` 의 `_conv_load_messages_raw` PG read 미가드 → 전파 500. fork 의 명시적 500 래핑과 비대칭이나 "DB 오류 시 빈 공유뷰 렌더보다 정직한 500" 이 의도. error contract 일관화는 cosmetic.
   - F2 (HIGH-VALUE): 회귀 e2e 가 "500 미발생" 만 단언. public-exposure 면이므로 stale-policy attachment_derived 메시지 redact 단언 추가 권장. 단 redaction 코드 면 무변경이라 본 cycle 회귀위험 낮음 — 별 cycle 에서 fixture 동반 추가.
 - **Cross-ref**: CHG-20260609-FORK-SHARE-PG-CUTOVER / TASK-0167 / CHG-20260527-ASK-STATUS-PG(형제) / runtime_backend._PG_INSERT_MEMORY_MESSAGE.
+
+## REV-20260609-0002 [SKIPPED:defensive-errorhandling-and-test-only] TASK-0168 공유뷰 error contract(F1) + redaction 회귀 가드(F2)
+
+- **Mode**: SKIPPED — 본 cycle 자체가 직전 REV-20260609-0001(SUBAGENT) 의 accepted follow-up(F1·F2) 구현이며, 추가 적대적 패널 불요.
+- **Subject**: CHG-20260609-SHARE-ERRCONTRACT — `public_share_view` graceful 500 래핑(F1) + `tests/test_share_redaction_invariant.py`(F2).
+- **Reason — SKIP 정합**:
+  1. **성공경로·RBAC·스키마·계약 무변경**: F1 은 데이터 로드 *실패경로* 에만 작용(bare 500 → JSON 500). 익명 공유뷰의 노출 필드·접근 게이트·정상 렌더는 한 글자도 안 바뀜. 신규 데이터 노출 0.
+  2. **F2 는 테스트 전용**: redaction/internal-filter 로직(`_share_redact_message_content`/`_is_internal_message`)은 TASK-0167·0168 모두 무변경. F2 는 그 불변식을 PG dict-meta 경로에서 *자동 가드* 할 뿐 동작을 바꾸지 않는다.
+  3. **보안 변경의 검증을 테스트 자체가 수행**: 직전 패널이 "unverified by automation" 으로 지적한 redaction 불변식을 본 cycle 의 F2 가 컨테이너 in-process 3/3 PASS 로 충족(stale/NULL→redact, internal 필터, 정상 보존, version gate). 별도 패널보다 실증 가드가 우월.
+- **Risk**: low — F1 실패경로는 더 보수적(빈 뷰 대신 명시 실패)이고, ViewCount 1 과대카운트(로드 실패 시)는 soft-metric 오차로 명시 수용. F2 무위험.
+- **Cross-ref**: REV-20260609-0001 F1·F2 / CHG-20260609-SHARE-ERRCONTRACT / TASK-0168 / AC-0327·AC-0328.

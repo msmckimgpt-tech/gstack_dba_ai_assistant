@@ -2913,4 +2913,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] `_fork_conversation_impl` / `_share_anchor_belongs_to_conversation` / `_share_load_messages` / `public_share_view`(cross-DB merge: core_conversations PG + WebProducts/WebAccounts MySQL) / `duplicate_conversation` 라우팅.
 - [x] jsonb meta_json: PG read=dict 정규화, insert=`%s::jsonb` 캐스트. MySQL else 분기는 비-postgres 배포용 legacy fallback 보존.
 - [x] 회귀 e2e `tests/test_fork_share_cutover.py` (T1~T5 — fork/share(full)/public-view(anon)/duplicate/share(anchored), 500 미발생 단언) + py_compile PASS.
-- [ ] outside-voice panel → REVIEW.md / PR → main 머지 → web 재배포 → 라이브 e2e 검증
+- [x] outside-voice panel(SUBAGENT SHIP, REV-20260609-0001) → REVIEW.md / PR #126 → main 머지(2e89ac3) → web 재배포 → 라이브 e2e 5/5 PASS
+
+### TASK-0168 — 공유뷰 follow-up: error contract + redaction 회귀 가드 (2026-06-09)
+- [x] **Minor §12.3** — TASK-0167 outside-voice(REV-20260609-0001) 권고 F1·F2 처리. 성공경로·RBAC·스키마·계약 무변경(방어적 에러처리 + 테스트). (CHG-20260609-SHARE-ERRCONTRACT)
+- [x] **F1** `public_share_view`: 데이터 로드(`_conv_load_share_meta`/`_share_load_messages` PG read) 실패 시 bare 500 대신 graceful JSON 500(`"공유 대화를 불러오지 못했습니다."`) — fork 의 명시 500 래핑과 대칭. ViewCount++(revoke race 가드 겸용)는 보존, 실패 시 1 과대카운트는 허용 soft-metric 오차로 주석화.
+- [x] **F2** `tests/test_share_redaction_invariant.py`: `_pg_connect` mock 으로 **PG dict-meta 경로**를 결정적 재현 → attachment_derived redact(stale/null token) + internal 메시지 필터 + 정상 본문 보존 + 정책 version gate(CURRENT=비redact) 단언. 컨테이너 in-process 3/3 PASS.
+- [ ] py_compile / verify-completion / PR → main 머지 → 재배포 → 라이브 e2e(양 테스트 green)

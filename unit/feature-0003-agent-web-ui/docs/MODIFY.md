@@ -2373,3 +2373,16 @@ source_of_truth: true
   - `_pg_connect()` 는 autocommit=True (mysql.connector 기본 동작 일치) → 명시 commit 불요.
   - fork 메시지 복제 시 FK(fk_messages_conv) 충족: create_new_conversation + _assign_conversation_owner 가 새 conv row 를 선커밋 → 이후 messages INSERT.
 - Rollback: backend-aware helper 블록 제거 + 각 함수의 raw MySQL 쿼리 복원. 단 MySQL 런타임 테이블은 DROP 상태이므로 rollback 시 500 재발 — PG 경로가 정본.
+
+## CHG-20260609-SHARE-ERRCONTRACT
+- Date: 2026-06-09
+- Related Requirement: TASK-0168 (**Minor §12.3** — TASK-0167 outside-voice REV-20260609-0001 권고 F1·F2 처리)
+- Summary: **F1** `public_share_view` 의 대화 메타/메시지 로드(`_conv_load_share_meta`/`_share_load_messages`, PG read)를 `try/except` 로 감싸 PG 일시 장애 시 bare 500(FastAPI 기본) 대신 graceful JSON 500(`"공유 대화를 불러오지 못했습니다."`)을 반환 — fork(`_fork_conversation_impl`)의 명시 500 래핑과 에러 계약 대칭. 상단 `ViewCount++`(revoke race 가드 겸용 UPDATE)는 그대로 두며, 로드 실패 시 1 과대카운트는 허용 가능한 soft-metric 오차(race 정합 우선)로 주석화. **F2** 신규 `tests/test_share_redaction_invariant.py` — `modules.db._pg_connect` 를 mock + `AGENT_RUNTIME_READ_BACKEND=postgres` set 으로 cutover 후 PG dict-meta(jsonb→dict) 경로를 결정적 재현하고, 익명 공유뷰 보안 불변식(attachment_derived redact / internal 메시지 필터 / 정상 본문 보존 / 정책 version gate)을 단언. 성공경로 동작·RBAC·스키마·엔드포인트 계약 무변경.
+- Files:
+  - unit/feature-0003-agent-web-ui/src/app.py (public_share_view F1 try/except)
+  - unit/feature-0003-agent-web-ui/tests/test_share_redaction_invariant.py (F2 신규)
+- Notes:
+  - F2 는 web 컨테이너 in-process 실행(`docker exec -w /app repo-web-1 python <test>`) 또는 make test(pytest 수집)로 검증. 라이브 DB 불요(mock).
+  - 컨테이너 in-process 3/3 PASS 확인(2e89ac3 위, TASK-0167 _share_load_messages PG 경로 대상).
+  - redaction/internal-filter 코드(`_share_redact_message_content`/`_is_internal_message`)는 TASK-0167·0168 모두 무변경 — F2 는 cutover refactor 후에도 불변식이 살아있음을 가드.
+- Rollback: F1 try/except 제거(원래 bare 호출 복원) + 테스트 파일 삭제. 동작 회귀 없음(F1 은 실패경로만, F2 는 테스트).
