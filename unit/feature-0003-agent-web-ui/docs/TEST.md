@@ -246,6 +246,12 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-06-09 (TASK-0164 SIGTERM graceful finalizer + RBAC catalog prune + out-of-process 설계):
+  - 변경 성격: **백엔드** (`app.py` shutdown hook + run 생명주기 정리 + RBAC catalog DELETE) + 설계 문서. **시각 UI 표면 변경 없음** → **Environment: Windows-browser N/A** (PB-0008 화면 검증 대상 아님 — 관리 그리드는 PERMISSION_DEFINITIONS 기반이라 A2 도 비가시). CHECK#13 WARN 사유 = 시각 표면 부재.
+  - 단위(DB-free, agent 이미지 mount): 신규 `test_shutdown_finalizer.py` 3건(S1 역 boot-guard 선정 / S2 부팅이전 skip / S3 race 가드) + 기존 `test_orphan_run_stale_recovery.py` 6건 → 전체 pytest 통과(회귀 0), py_compile PASS.
+  - 라이브(배포 후): (a) ask mid-flight 중 `docker stop`/재배포 → web 로그 `shutdown finalize: 진행중 run N건 정리` + 해당 cid KV `last_status='error'`(고착 아님), (b) SIGKILL(`kill`) 대조 시 부팅 reconciliation 이 정리, (c) A2 — 재기동 후 `WebPermissions` 의 3 폐기 코드 행 0 — STATUS TASK-0164 참조.
+  - outside-voice 적대적 리뷰 PASS-WITH-NITS, BLOCKER 0 (REV-20260609-0164).
+
 - 2026-06-08 (TASK-0158 "진입점 없는 기능" 진입점 구성 Tier 1·2 — **PB-0008 Windows-browser 완료 게이트**):
   - **Environment: Windows-browser** (실제 Windows Chrome/148 via `bin/win-browser.py` 무권한 relay, https://localhost:18080, self-signed ignore). WSL headless 가 아닌 실제 Windows 화면 검증.
   - 시나리오: `unit/feature-0003-agent-web-ui/tests/win-browser-task0158.scenario.json` (authed-session 가정 — 영속 프로필 로그인 상태). 재현: `python3 bin/win-browser.py launch --url https://localhost:18080/` → `run --scenario <위 파일>` → `down`.

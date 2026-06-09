@@ -566,6 +566,10 @@ app = FastAPI(title="mysql_ai web")
 # inclusive 하도록 boot 시각도 초로 내린다 — 동일-초 race 시 살아있는 run 오탐 방지.
 _PROCESS_BOOT_UTC = datetime.utcnow().replace(microsecond=0)
 
+# TASK-0164: 종료(SIGTERM) graceful finalizer 가 in-flight run 에 남기는 메시지.
+# 부팅 reconciliation 메시지와 구분해 어느 경로가 정리했는지 로그/운영 식별 가능.
+_SHUTDOWN_FINALIZE_MESSAGE = "서버 재시작으로 중단되었습니다 — 다시 질의해 주세요."
+
 WEB_PUBLIC_HOST = os.getenv("WEB_PUBLIC_HOST", "localhost").strip()
 WEB_PUBLIC_URL = f"https://{WEB_PUBLIC_HOST}" if WEB_PUBLIC_HOST else ""
 WEB_ALLOWED_HOSTS = [
@@ -662,6 +666,66 @@ def _reconcile_orphaned_runs_on_startup() -> None:
         name="web-orphan-run-reconcile",
         daemon=True,
     ).start()
+
+
+@app.on_event("shutdown")
+def _finalize_inflight_runs_on_shutdown() -> None:
+    """TASK-0164: SIGTERM(재배포/docker stop) 시 이 프로세스가 실행 중이던 in-flight
+    run 을 terminal(error)로 마킹해 orphan(처리중 고착)을 종료 시점에 차단한다.
+
+    `_reconcile_orphaned_runs_on_startup` 의 대칭 역: 부팅 hook 은 `< _PROCESS_BOOT_UTC`
+    (이전 프로세스 고아)를 정리하고, 본 hook 은 `>= _PROCESS_BOOT_UTC`(이 프로세스가
+    시작해 아직 processing 인 run)를 정리한다. 두 경로가 run 을 깔끔히 분할한다.
+
+    메커니즘: uvicorn 이 PID1 으로 SIGTERM 을 직접 받아(`exec uvicorn`) graceful drain
+    후 lifespan shutdown 에서 본 hook 을 **동기 실행**한다(daemon thread 금지 — 루프
+    종료 시 죽는다). Docker 기본 grace(10s, stop_grace_period 미설정) 내 best-effort 이며,
+    SIGKILL 로 미실행 시 부팅 reconciliation 이 보장 backstop. set_run_status 직전 status
+    재조회로 에이전트의 정상 terminal write 와의 last-writer race 를 좁힌다.
+    """
+    import logging
+    log = logging.getLogger(__name__)
+    deadline = time.monotonic() + 8.0  # 아래 마킹 루프용 소프트캡 (connect 단계는 별도)
+    conn = None
+    # 단일 connect 시도 — 종료 예산(Docker grace 기본 10s)이 짧다. connect 가 막히면
+    # 재시도 없이 포기하고 부팅 reconciliation backstop 에 맡긴다(worst-case = 1×connection_timeout).
+    try:
+        conn = _open_memory_connection()
+    except Exception:
+        conn = None
+    if conn is None:
+        log.warning("shutdown finalize: runtime 미가용으로 포기 (부팅 reconciliation 이 backstop)")
+        return
+    try:
+        cids = list_processing_conversation_ids(conn) or []
+        marked = 0
+        for cid in cids:
+            if time.monotonic() > deadline:
+                log.warning("shutdown finalize: 시간 예산 초과 — 나머지는 부팅 reconciliation 이 처리")
+                break
+            try:
+                parsed = _parse_kv_timestamp(load_memory_kv(conn, cid, "last_status_at"))
+                if parsed is None or parsed < _PROCESS_BOOT_UTC:
+                    continue  # 이 프로세스가 시작한 run 이 아님 — 부팅 hook 담당
+                # race 가드: 마킹 직전 재조회 — 에이전트가 막 terminal 을 썼으면 건드리지 않음
+                if str(load_memory_kv(conn, cid, "last_status") or "").strip() != "processing":
+                    continue
+                run_id = load_memory_kv(conn, cid, "last_status_run_id") or ""
+                set_run_status(
+                    conn, cid, "error", run_id=run_id,
+                    error=_SHUTDOWN_FINALIZE_MESSAGE,
+                )
+                marked += 1
+            except Exception as exc:
+                log.warning("shutdown finalize: cid=%s 실패: %s", cid, exc)
+        log.info("shutdown finalize: 진행중 run %d/%d건 정리", marked, len(cids))
+    except Exception as exc:
+        log.warning("shutdown finalize: 조회 실패: %s", exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 WEB_PARALLEL_LIMIT = max(1, int(os.getenv("WEB_PARALLEL_LIMIT", "6")))
@@ -1904,6 +1968,8 @@ VALUES (%s, %s)
     # 2) conversation.file.read.own: pending 롤은 조회 전용(read-only) 의도 — 결과 파일 다운로드 불필요.
     #    pending 롤에서만 WebRolePermissions 행 삭제.
     _cleanup_deprecated_role_permissions(conn)
+    # TASK-0164: 위에서 링크가 제거된 완전-폐기 권한의 고아 WebPermissions catalog 행도 정리.
+    _prune_orphaned_permission_catalog(conn)
 
 
 def _cleanup_deprecated_role_permissions(conn) -> None:
@@ -1943,6 +2009,43 @@ def _cleanup_deprecated_role_permissions(conn) -> None:
                 (role_id, perm_id),
             )
     cur.close()
+
+
+def _prune_orphaned_permission_catalog(conn) -> None:
+    """TASK-0164: 완전 폐기된(코드가 PERMISSION_DEFINITIONS 에서 사라진) 권한의 고아
+    WebPermissions catalog 행을 제거한다 (idempotent, 가드).
+
+    `_cleanup_deprecated_role_permissions` 가 WebRolePermissions 링크를 먼저 지운 뒤
+    호출된다. 어떤 롤/계정도 참조하지 않을 때만 catalog 행을 삭제한다(WebRolePermissions
+    + WebAccountPermissionOverrides 둘 다 0 참조 가드). FK 제약은 없으나 논리적 순서
+    (링크 먼저 → catalog) + 가드로 고아만 제거. 그리드는 PERMISSION_DEFINITIONS 기반이라
+    행 잔존도 무해하지만 카탈로그 정합을 위해 정리한다. (역할별 부분 제거 권한
+    `conversation.file.read.own` 은 다른 롤에 live 라 prune 대상 아님.)
+    """
+    prune_codes = [
+        "conversation.suggestions.read",   # TASK-0124 폐기
+        "attachment.execute_sql_on.own",   # TASK-0161 폐기 (거짓 컨트롤)
+        "attachment.execute_sql_on.any",   # TASK-0161 폐기 (거짓 컨트롤)
+    ]
+    cur = conn.cursor()
+    try:
+        for perm_code in prune_codes:
+            cur.execute("SELECT Id FROM WebPermissions WHERE Code = %s LIMIT 1", (perm_code,))
+            row = cur.fetchone()
+            if not row:
+                continue
+            perm_id = int(row[0] or 0)
+            if perm_id <= 0:
+                continue
+            cur.execute("SELECT COUNT(*) FROM WebRolePermissions WHERE PermissionId = %s", (perm_id,))
+            if int((cur.fetchone() or [0])[0] or 0) > 0:
+                continue  # 아직 롤이 참조 — catalog 보존
+            cur.execute("SELECT COUNT(*) FROM WebAccountPermissionOverrides WHERE PermissionId = %s", (perm_id,))
+            if int((cur.fetchone() or [0])[0] or 0) > 0:
+                continue  # 계정 override 가 참조 — catalog 보존
+            cur.execute("DELETE FROM WebPermissions WHERE Id = %s", (perm_id,))
+    finally:
+        cur.close()
 
 
 SEED_ROLE_SYSTEM_PROMPTS = (

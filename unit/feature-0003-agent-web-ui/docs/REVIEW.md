@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260609-0164 [SUBAGENT: general-purpose 적대적 RBAC/런타임 리뷰 — SIGTERM finalizer + catalog prune, BLOCKER 0]
+- Date: 2026-06-09
+- Cycle: TASK-0164 (REQ-20260609-0164, **Major §12.3** — run 생명주기 + RBAC catalog delete). [[feedback_outside_voice_for_rbac]] 정책상 outside-voice 필수.
+- Reviewer: general-purpose subagent (적대적 검증 — A1 종료 finalizer 정확성 + A2 RBAC delete 안전성 독립 검증, 코드/테스트 실행 포함).
+- Verdict: **PASS-WITH-NITS. BLOCKER 0.**
+- Findings:
+  - (A1) 부팅/종료 partition **정확**(진리표: None→부팅마킹·종료skip / `<boot`→부팅 / `>=boot`→종료, 중복·누락 0). race 가드 충분(uvicorn 이 awaited `/api/ask` 를 drain → 에이전트 terminal write 가 shutdown hook 보다 선행 → 재조회 skip; 덮어써도 error+재시도 메시지로 무해, 부팅 backstop). sync handler 는 shutdown 시 loop inline 실행(정상), partial state 멱등·안전. 공통 케이스 no-op, 예외 경로 shutdown 크래시 없음. helper 부팅 hook 과 동일.
+  - (A2) DELETE 가드(WebRolePermissions 0 AND WebAccountPermissionOverrides 0) 실제 안전, 순서(링크 제거 → prune) 정확, `_ensure_permission_catalog` 가 prune 전 재시드(폐기 코드 제외)라 멱등. catalog ROW 의존 없음(그리드/엔드포인트는 `_resolve_permission_catalog`=PERMISSION_DEFINITIONS+IsDynamic만). `conversation.file.read.own` 정확히 제외(타롤 live·`/api/file` enforce). FK 0 — DELETE 위반 없음, PermissionId 참조 테이블 2개 모두 가드.
+  - py_compile PASS, 신규 테스트 3 통과(리뷰어 실행 확인).
+- NITs(반영): (1) shutdown connect 가 8s 소프트캡 밖이라 hung DB 시 grace 초과 가능 → **단일 connect 시도로 단축**(재시도 제거, worst-case 1×timeout, boot backstop degrade). (2) 테스트 mock 기본값 None→`""`(프로덕션 contract 정합) **수정**. (3) set_run_status 4-conn(기존 helper, 대상 near-empty라 무해) — 이월. (4) `@app.on_event` deprecation(기존 패턴, lifespan 마이그레이션) — 이월.
+
 ## REV-20260609-0163 [SUBAGENT: general-purpose 적대적 diff 리뷰 — LLM 사용량 회계, NEEDS-TWEAK→PASS, BLOCKER 1 흡수 (cross-feature, 정본 feature-0002)]
 - Date: 2026-06-09
 - Cycle: TASK-0163 (REQ-20260609-0163, **Major §12.3** — LLM 사용량 admin 계정별/역할별 집계 + 모델 해소)

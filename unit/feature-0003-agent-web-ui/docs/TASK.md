@@ -12,9 +12,13 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-09 (TASK-0163 LLM 사용량 admin 계정/역할 집계 — feature-0002 주관 cross-feature; TASK-0162 진행중 말풍선 생명주기 수정; TASK-0159 고아 run 무한 폴링 수정)
+- Last Updated: 2026-06-09 (TASK-0164 이월 처리 — SIGTERM graceful finalizer + RBAC catalog prune + out-of-process 설계; TASK-0163 LLM 사용량 admin 집계 — feature-0002 주관)
 
 ## 2. Task Queue
+
+### TASK-0164 이월 처리 — SIGTERM graceful finalizer + RBAC catalog prune + out-of-process 설계 (2026-06-09)
+
+- [x] TASK-0164 (REQ-20260609-0164, **Major §12.3** — run 생명주기 + RBAC catalog delete). in-process(`asyncio.to_thread`) ask 실행이 web 재배포로 orphan("처리중" 고착)을 만드는 근본을 종료 시점에 차단(A) + cosmetic 정리 + 구조적 정답 설계(B, 이월). **A1**: `@app.on_event("shutdown")` finalizer 가 이 프로세스 in-flight run(`>= _PROCESS_BOOT_UTC`)을 error 로 마킹(부팅 reconciliation 의 대칭 역, race 가드 + 8s 소프트캡 + 단일 connect)(AC-0322). **A2**: `_prune_orphaned_permission_catalog` 가 완전 폐기 권한(suggestions.read·execute_sql_on.*)의 고아 WebPermissions 행을 0-참조 가드 하에 DELETE(AC-0323). **A3**: 빈 attachment 그룹 키 = LEAVE(forward-compat). **B**: `DESIGN-ask-worker.md`(ask-worker + ask_jobs 큐 + 롤아웃 플래그) 설계만, 구현 이월(AC-0324, ADR-WEB-0004). 신규 단위테스트 3(`test_shutdown_finalizer.py`) + 전체 pytest 통과(회귀 0) + py_compile. **outside-voice 적대적 리뷰 PASS-WITH-NITS, BLOCKER 0**(REV-20260609-0164, NIT 2건 흡수). 동시 세션 TASK-0162/0163 점유로 0164 재배정, base bf0a61f. **이월**: out-of-process 구현(B), set_run_status 4-conn(기존 helper), on_event→lifespan 마이그레이션.
 
 ### TASK-0163 LLM 사용량 admin 계정별/역할별 집계 + 모델 해소 표시 (2026-06-09, cross-feature — 주관 feature-0002)
 - [x] **Major §12.3** — 관리 콘솔 > 감사 > LLM 사용량의 모델별/계정별/역할별 집계 복구. 본 feature 면은 **엔드포인트 + 프론트**: `admin_llm_usage`(GET /api/admin/usage) 가 by_model 을 `COALESCE(resolved_model, model)` 로 집계(요청 별칭+실제 모델 둘 다 노출), by_account 를 이미 열린 MySQL conn 으로 `WebAccounts LEFT JOIN WebRoles ON r.Id=a.RoleId` 로 username·role enrich(추가 conn 개방 0), 신규 순수 헬퍼 `_aggregate_usage_by_role`(account None→`(시스템)`, role None→`(역할 없음)`, total_tokens desc) Python 폴딩 후 응답에 `by_role` 추가. 프론트 `admin.html` 역할별 표(#usageByRole) + `admin.js loadUsage` 가 `tbl(rows,cols)` fmt 에 row 전달, by_role 렌더·계정 username·역할 컬럼·모델 `별칭 → 해소` 표시, 캐시버스터 `?v=20260609-usage-roles`. 권한 `console.usage.read`(admin) **무변경 — RBAC 카탈로그/엔드포인트 신규 0**. 계측·마이그레이션(`resolved_model` 컬럼)·RC1 race 수정은 feature-0002 주관([[feature-0002-agent-core/docs/TASK.md]] TASK-0163, REV-20260609-0163). 검증: make test 215 passed/5 skipped + node --check + outside-voice 적대적 diff 리뷰 PASS(BLOCKER 1 흡수).

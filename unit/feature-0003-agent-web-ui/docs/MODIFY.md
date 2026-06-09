@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260609-0164
+- Date: 2026-06-09
+- TASK-Cycle: TASK-0164, **Major §12.3** — 이월 처리: SIGTERM graceful finalizer(A1) + RBAC 고아 catalog prune(A2) + out-of-process 설계(B, 이월)
+- Summary: in-process ask 실행의 orphan-on-redeploy 근본을 종료 시점 finalizer 로 저위험 차단 + RBAC catalog 정합 정리 + 구조적 재설계는 설계 문서로 이월. outside-voice PASS-WITH-NITS(BLOCKER 0).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`: `_SHUTDOWN_FINALIZE_MESSAGE` 상수 + `@app.on_event("shutdown") _finalize_inflight_runs_on_shutdown`(부팅 reconciliation 대칭 역, race 가드, 8s 소프트캡, 단일 connect) + `_prune_orphaned_permission_catalog(conn)`(고아 WebPermissions 행 가드 DELETE) + `_ensure_seed_roles` 에서 호출 연결.
+  - `unit/feature-0003-agent-web-ui/tests/test_shutdown_finalizer.py`: 신규 단위테스트 3(역 boot-guard 선정 / 부팅이전 skip / race 가드).
+  - `unit/feature-0003-agent-web-ui/docs/DESIGN-ask-worker.md`: 신규 — out-of-process ask-worker 아키텍처 설계(구현 안 함, B 이월).
+  - (무변경 — A3) 빈 attachment 그룹 키는 forward-compatible 유지.
+
 ## CHG-20260609-0163
 - Date: 2026-06-09
 - TASK-Cycle: TASK-0163, **Major §12.3** — LLM 사용량 admin 계정별/역할별 집계 + 모델 해소 표시 (cross-feature, 주관 feature-0002)
