@@ -342,10 +342,15 @@ def run_ask_worker_loop() -> None:
         return
 
     # 콜드부트 안전: 마이그레이션이 권위이나 dev/미적용 환경 대비 멱등 ensure.
+    # 정상 운영(테이블 존재)에서는 app role 이 DDL 권한이 없어 _ensure 가 오해성
+    # 'permission denied' 경고를 내므로, 테이블이 실제로 없을 때만 시도한다.
     try:
-        ask_jobs._ensure_ask_jobs(conn)
+        if ask_jobs.ask_jobs_table_exists(conn):
+            log.info("ask-worker: ask_jobs 테이블 확인됨 (DDL ensure skip — least-privilege)")
+        else:
+            ask_jobs._ensure_ask_jobs(conn)
     except Exception as exc:
-        log.warning("ask-worker: _ensure_ask_jobs 실패(마이그레이션 미적용?): %s", exc)
+        log.warning("ask-worker: ask_jobs 테이블 준비 실패(마이그레이션 미적용 + DDL 권한 없음?): %s", exc)
     # 이전 인스턴스가 SIGKILL 등으로 남긴 자기 소유 running job 자가 정리.
     try:
         n = ask_jobs.reclaim_worker_jobs_on_boot(conn, worker_id)

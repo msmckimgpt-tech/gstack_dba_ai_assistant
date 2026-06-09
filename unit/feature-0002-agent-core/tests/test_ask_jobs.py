@@ -198,6 +198,15 @@ def test_reclaim_worker_jobs_on_boot():
     assert "CLAIMED_BY = %(WORKER)S" in conn.last_sql().upper()
 
 
+def test_ask_jobs_table_exists():
+    # to_regclass 가 True → 존재, None/False → 미존재. (boot 시 오해성 DDL 경고 회피용)
+    assert aj.ask_jobs_table_exists(FakeConn(one_results=[(True,)])) is True
+    assert aj.ask_jobs_table_exists(FakeConn(one_results=[(False,)])) is False
+    conn = FakeConn(one_results=[(True,)])
+    aj.ask_jobs_table_exists(conn)
+    assert "TO_REGCLASS('AGENT_RUNTIME.ASK_JOBS')" in conn.last_sql().upper()
+
+
 # ── 멱등 DDL ───────────────────────────────────────────────────────────────
 def test_ensure_ask_jobs_idempotent_ddl():
     conn = FakeConn()

@@ -246,6 +246,13 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-06-09 (TASK-0169 out-of-process ask-worker 실행모델 — **PB-0008 Windows-browser 완료 게이트**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148 via `bin/win-browser.py` 무권한 relay, https://localhost:18080, self-signed ignore). WSL headless 가 아닌 실제 Windows 화면 검증.
+  - 시나리오(라이브 cutover, flag=worker): bootstrap_admin 로그인 상태 → `#newConversationBtn` 새 대화 → `#promptInput` 질문 입력 → `#sendBtn` 전송 → ask_jobs `running→done`(worker 처리) → **답변 정상 렌더**("7 곱하기 8 = 56, 경로: worker 직접 계산, ✅ 검증 완료"). browser→ask_jobs enqueue→worker claim→run→result_json→browser 렌더 전체 왕복 PASS. 스크린샷 `/tmp/pb0008_answer.png`. CHECK#13(PB-0008) **충족**.
+  - 라이브 부하/백프레셔: 9 동시 ask(동일 계정) → 6× 200(실답변) + **3× 429**("동시 요청 제한") = `WEB_PARALLEL_LIMIT`(6) 정확 enforce(M5). burst 중 ask_jobs `pending=5,running=1`(6 active=limit), 단일 worker 직렬 처리로 6건 모두 동기 응답. 잡 전부 done(stuck 0).
+  - 라이브 핵심(AC-0327): ask `running` 중 web `force-recreate` → 동일 run_id·attempts=1·lease=1 로 `done` 도달, backstop 미오염(last_status=done/last_error 빈값, B1). **web 재배포가 in-flight worker run 을 건드리지 않음** 실측.
+  - 단위(DB-free, agent 이미지 mount): 신규 `test_ask_jobs.py`(claim/enqueue/fencing/sweep/cancel/ownership/active_inline_paths/table_exists 16건) + `test_ask_worker.py`(payload round-trip/config 불변식/run_id 6건) + `test_clear_cancel_runid.py`(MJ-2 fencing 4건) → make test 회귀 0 + ruff clean + py_compile.
+  - hotfix(라이브 포착): `_ask_worker_ready` naive/aware datetime 비교 TypeError→readiness 영구 503 버그 수정([[project_task0159_orphan_run_stale_tz]] tz 함정 동형).
 - 2026-06-09 (TASK-0164 SIGTERM graceful finalizer + RBAC catalog prune + out-of-process 설계):
   - 변경 성격: **백엔드** (`app.py` shutdown hook + run 생명주기 정리 + RBAC catalog DELETE) + 설계 문서. **시각 UI 표면 변경 없음** → **Environment: Windows-browser N/A** (PB-0008 화면 검증 대상 아님 — 관리 그리드는 PERMISSION_DEFINITIONS 기반이라 A2 도 비가시). CHECK#13 WARN 사유 = 시각 표면 부재.
   - 단위(DB-free, agent 이미지 mount): 신규 `test_shutdown_finalizer.py` 3건(S1 역 boot-guard 선정 / S2 부팅이전 skip / S3 race 가드) + 기존 `test_orphan_run_stale_recovery.py` 6건 → 전체 pytest 통과(회귀 0), py_compile PASS.

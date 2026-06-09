@@ -82,6 +82,16 @@ def _ensure_ask_jobs(conn) -> None:
         cur.execute(_ENSURE_ASK_JOBS_SQL)
 
 
+def ask_jobs_table_exists(conn) -> bool:
+    """ask_jobs 테이블 존재 여부. 정상 운영(마이그레이션 적용)에서는 app role(agent_kb_rw)
+    이 DDL 권한이 없어 _ensure_ask_jobs 가 'permission denied for schema' 로 실패하는데,
+    그건 오해를 부르는 경고다(테이블은 이미 있음). 이 체크로 존재 시 DDL 시도를 건너뛴다."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('agent_runtime.ask_jobs') IS NOT NULL")
+        row = cur.fetchone()
+    return bool(row and row[0])
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # enqueue (web) — 단일문 slot enforce (MAJOR 5 TOCTOU 차단)
 # ──────────────────────────────────────────────────────────────────────────
