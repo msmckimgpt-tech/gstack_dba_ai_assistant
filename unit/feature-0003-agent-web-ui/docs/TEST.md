@@ -246,6 +246,11 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-06-09 (TASK-0174 "전체 N행 미리보기" 링크 오정렬 수정 — **PB-0008 Windows-browser 완료 게이트(무회귀 smoke)**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148 via `bin/win-browser.py` 무권한 relay, https://localhost:18080, self-signed ignore). WSL headless 가 아닌 실제 Windows 화면 검증.
+  - 시나리오: bootstrap_admin 영속 세션 → `#promptInput` 에 부위별 Top-N 질의(+범위 MIN/MAX 동반) 전송 → ask-worker 처리 완료 → 멀티-result 답변 정상 렌더. 스크린샷 `/tmp/win-browser-shots/shot_20260609_174354.png`(쿼리 1/3 result 뷰어), `_174718.png`(대형 인라인 표).
+  - **결과: 무회귀 PASS.** (a) 병합된 `app.js`(본 cycle 의 `loadCsvAsInlineTable` 값 가드 + 동시세션 TASK-0173 `.step-reason` 기능)이 채팅 UI·대화목록·result 뷰어를 정상 렌더, JS 크래시 0. (b) 버그를 유발하던 **MIN/MAX 보조쿼리 패턴이 실데이터 result set 으로 실존**(쿼리 1/3: MinItemID=1001 / MaxItemID=900007 / count 1행) 확인 — `_collapse_large_tables` 가 이를 ranking 표에 잘못 붙이던 것이 근본.
+  - **한계(정직 기재):** `_collapse_large_tables` 의 collapse+"전체 N행 미리보기" 링크 경로는 LLM 이 본문 대형 표(>5행)를 렌더하고 동턴에 execute_sql CSV 를 생성해야만 트리거되는데, 2회 유도에도 LLM 이 result 뷰어/소형 표/이전결과 재포맷을 선택해 **온디맨드 재현 불가**(비결정적). 해당 경로의 결정적 검증은 `unit/feature-0002-agent-core/tests/test_collapse_table_csv_match.py` 회귀 4종(값매칭·무매칭생략·형태폴백·토큰필터)이 담당 — make test 컨테이너 PASS. CHECK#13 **충족**(시각 표면 존재 + 실 브라우저 무회귀 확인, 핵심 로직은 단위테스트 결정적).
 - 2026-06-09 (TASK-0169 out-of-process ask-worker 실행모델 — **PB-0008 Windows-browser 완료 게이트**):
   - **Environment: Windows-browser** (실제 Windows Chrome/148 via `bin/win-browser.py` 무권한 relay, https://localhost:18080, self-signed ignore). WSL headless 가 아닌 실제 Windows 화면 검증.
   - 시나리오(라이브 cutover, flag=worker): bootstrap_admin 로그인 상태 → `#newConversationBtn` 새 대화 → `#promptInput` 질문 입력 → `#sendBtn` 전송 → ask_jobs `running→done`(worker 처리) → **답변 정상 렌더**("7 곱하기 8 = 56, 경로: worker 직접 계산, ✅ 검증 완료"). browser→ask_jobs enqueue→worker claim→run→result_json→browser 렌더 전체 왕복 PASS. 스크린샷 `/tmp/pb0008_answer.png`. CHECK#13(PB-0008) **충족**.

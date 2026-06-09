@@ -2998,4 +2998,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 ### TASK-0174 — 미리보기 인라인 로더 방어 가드 (2026-06-09)
 - [x] `loadCsvAsInlineTable` 값 기반 방어 가드 + `distinctiveValueTokens` 헬퍼 (CHG-20260609-PREVIEW-CSV-GUARD)
 - [x] §18.8 패널 JS 오탐 지적 반영 (previewTokens≥2 임계)
-- [ ] verify-completion → main 머지 → 재배포(web) → PB-0008 Windows 검증
+- [x] verify-completion → main ff-merge(2b4da2a) → 재배포(web) → PB-0008 Windows-browser 무회귀 확인 (TEST.md §4 2026-06-09 TASK-0174 항목)

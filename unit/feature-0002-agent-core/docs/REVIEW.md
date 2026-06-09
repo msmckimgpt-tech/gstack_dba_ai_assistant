@@ -673,3 +673,8 @@ source_of_truth: true
 - Verdict: 핵심 접근(값 토큰 overlap + consume-once + drop-on-no-match) sound, 회귀 테스트 유효. MAJOR 2건(동일 근본): ID/라벨 열 없는 측정값-only 대형 표는 토큰 추출 0 또는 LLM 재포맷으로 overlap 0 → backend 링크 소실(기존 동작 회귀)·JS 강제 거부 오탐.
 - Resolution (FIX-FIRST): (1) backend 컬럼 수 일치 폴백 추가(_match_csv_for_table 2순위) — 측정값-only 표도 형태로 링크 복구, 형태 불일치 보조쿼리는 여전히 배제. (2) JS 가드 previewTokens≥2 임계 — 단일 토큰 우연 불일치 오탐 차단. MINOR(greedy 비전역최적)·NIT(날짜/전화 우연토큰)는 distinct-ID 우세로 실무 영향 낮음 — 수용.
 - Risk: low — make test 컨테이너 PASS. 값/형태 모두 불일치 시 링크 생략 → 잘못된 링크 어느 경로로도 미부착.
+
+## REV-20260609-0176 [SKIPPED:docs-only-cycle-closure]
+- Date: 2026-06-09
+- Cycle: TASK-0174 cycle closure (체크박스 완료 표기)
+- Reason: 문서 한정 변경(TASK.md 체크박스 [ ]→[x]). 코드·RBAC·스키마·엔드포인트·시크릿 0건. 실질 수정은 이미 REV-20260609-0173(SUBAGENT 패널)에서 검토·배포됨. outside-voice 불필요 조건 충족.

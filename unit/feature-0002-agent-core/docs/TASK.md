@@ -735,7 +735,7 @@ TASK-0015 (plan-review):
 - [x] 회귀 테스트 `tests/test_collapse_table_csv_match.py` (값매칭·무매칭생략·형태폴백·토큰필터 4종)
 - [x] make test 컨테이너 PASS (0 fail) + ruff PASS
 - [x] §18.8 검증 패널(SUBAGENT) → REV-20260609-0173, MAJOR 2건(측정값-only 표 링크소실/JS 오탐) FIX-FIRST 반영(컬럼수 폴백 + JS 임계≥2)
-- [ ] verify-completion PASS → 커밋 → push → main ff-merge → 재배포(web+ask-worker) → 라이브 검증
+- [x] verify-completion PASS(9 checks) → 커밋 → push → main ff-merge(2b4da2a) → 재배포(web+ask-worker, healthz git_commit 일치·베이킹/서빙 확인) → 라이브 PB-0008 무회귀 확인 (collapse+링크 경로는 LLM 렌더 비결정성으로 온디맨드 재현 불가 — 회귀테스트가 결정적 증거)
 
 ### TASK-0175 — 실행 단계 reason(왜) derived fallback (2026-06-09)
 - [x] **Minor §12.3** — 사용자 "각 단계 근거가 화면에 안 보인다" 재보고. 라이브 진단: 모든 step `work_source='derived'`·`reason_text=''`. 근본 ① SYSTEM_PROMPT 가 LLM 에 tool_notes(work/reason) 방출 미지시 → reason 미생성, ② reason 에 derived fallback 부재(work 와 달리). CHG-0173 프런트는 빈 reason 미표시라 표시할 데이터 자체가 없었음. (CHG-20260609-0175)

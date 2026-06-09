@@ -2458,3 +2458,12 @@ source_of_truth: true
   - 1차 방어는 backend(agent_core _collapse_large_tables 값매칭, CHG-20260609-PREVIEW-CSV-MATCH). 본 가드는 방어심층(defense-in-depth) 최종선.
   - §18.8 패널(REV-20260609-0173) JS 오탐 지적 반영(≥2 임계).
 - Rollback: distinctiveValueTokens + loadCsvAsInlineTable 가드 블록 제거.
+
+## CHG-20260609-TASK0174-CLOSE
+- Date: 2026-06-09
+- Related Requirement: TASK-0174 (cycle closure — 라이브 검증 기록)
+- Summary: TASK-0174 인라인 가드(CHG-20260609-PREVIEW-CSV-GUARD) cycle 마감 — TASK.md 체크박스 [x] 갱신 + TEST.md §4 에 PB-0008 Windows-browser 무회귀 검증 Run 기록(2026-06-09 TASK-0174 항목, CHECK#13 충족). 코드 변경 없음(문서 한정).
+- Files:
+  - unit/feature-0003-agent-web-ui/docs/TASK.md (TASK-0174 체크박스 완료)
+  - unit/feature-0003-agent-web-ui/docs/TEST.md (§4 Test Run History PB-0008 Run 추가)
+- Rollback: 체크박스 환원 + TEST.md §4 항목 제거.

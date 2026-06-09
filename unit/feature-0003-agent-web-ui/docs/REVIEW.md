@@ -1753,3 +1753,8 @@ source_of_truth: true
 - Panel: backend+QA adversarial subagent (REV-20260609-0173 과 동일 패널, app.js 가드 포함 리뷰).
 - Verdict/Resolution: block.previousElementSibling=TABLE 가정 신뢰(#122 기확립, marked 가 본문=td/헤더=th 렌더). MAJOR(재포맷 오탐) → previewTokens≥2 임계 + backend 값매칭이 1차이므로 본 가드는 심층방어. DOM 가정 안전.
 - Risk: low — backend 가 이미 잘못된 링크 미부착. 가드는 우연 잔존 케이스 최종 차단.
+
+## REV-20260609-0175 [SKIPPED:docs-only-cycle-closure]
+- Date: 2026-06-09
+- Cycle: TASK-0174 cycle closure (체크박스 + TEST.md Run 기록)
+- Reason: 문서 한정(TASK.md 체크박스 + TEST.md §4 검증 기록). 코드·RBAC·스키마·시크릿 0건. 실질 수정은 REV-20260609-0174(SUBAGENT 패널)에서 검토·배포됨. outside-voice 불필요 조건 충족.

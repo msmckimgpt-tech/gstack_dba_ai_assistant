@@ -723,3 +723,11 @@ source_of_truth: true
   - §18.8 SUBAGENT 패널(REV-20260609-0173) MAJOR 2건 반영: (1) 측정값(%·소수)뿐인 표는 식별 토큰이 없어 링크 소실 → 컬럼 수 폴백 추가, (2) JS 가드 단일토큰 우연 오탐 → previewTokens≥2 임계.
   - read_csv_preview 는 header+50행만 읽어 대형 CSV unbounded read 없음. None-safety: 읽기 실패=(None,0) → 매칭 제외.
 - Rollback: _collapse_large_tables 및 헬퍼 5종 제거 + 위치-인덱스 버전 원복.
+
+## CHG-20260609-TASK0174-CLOSE
+- Date: 2026-06-09
+- Related Requirement: TASK-0174 (cycle closure — 배포·라이브 검증 완료 기록)
+- Summary: TASK-0174 (미리보기 링크 값매칭 수정, CHG-20260609-PREVIEW-CSV-MATCH) 의 cycle 마감 — TASK.md 마지막 체크박스를 [x] 로 갱신(main 2b4da2a ff-merge·재배포·healthz 일치·PB-0008 라이브 무회귀 반영). 코드 변경 없음(문서 한정).
+- Files:
+  - unit/feature-0002-agent-core/docs/TASK.md (TASK-0174 verify/배포/검증 체크박스 완료 표기)
+- Rollback: 체크박스 [x]→[ ] 환원.
