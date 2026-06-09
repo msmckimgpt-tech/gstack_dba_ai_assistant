@@ -1711,3 +1711,18 @@ source_of_truth: true
   3. **보안 변경의 검증을 테스트 자체가 수행**: 직전 패널이 "unverified by automation" 으로 지적한 redaction 불변식을 본 cycle 의 F2 가 컨테이너 in-process 3/3 PASS 로 충족(stale/NULL→redact, internal 필터, 정상 보존, version gate). 별도 패널보다 실증 가드가 우월.
 - **Risk**: low — F1 실패경로는 더 보수적(빈 뷰 대신 명시 실패)이고, ViewCount 1 과대카운트(로드 실패 시)는 soft-metric 오차로 명시 수용. F2 무위험.
 - **Cross-ref**: REV-20260609-0001 F1·F2 / CHG-20260609-SHARE-ERRCONTRACT / TASK-0168 / AC-0327·AC-0328.
+
+## REV-20260609-0003 [SUBAGENT:revise-to-hybrid] TASK-0170 fork 문맥 복원 — git식 reference 설계 적대적 검토
+
+- **Mode**: SUBAGENT (적대적 staff 아키텍트 + appsec). 대상: **설계 문서** `DESIGN-fork-reference.md`(코드 아님) — 사용자가 선택한 git식 reference 아키텍처를 구현 전 검증.
+- **Verdict**: **RECOMMEND-SIMPLER-APPROACH (하이브리드로 수정)** — 순수 reference 는 착수 전 must-fix 다수.
+- **Findings (요지, 상세 DESIGN §14)**:
+  - F1 [BLOCKER] cross-table 시각 cut 불가 — `messages`/`core_messages` 독립 clock, 앵커 시각으로 core 자르면 turn 갈라져 `_normalize_history_rows` 가 통째 drop → 문맥 소실 재발.
+  - F2 [BLOCKER] 로더 오기술 — 실제는 tail 윈도우(+user 보존)라 lineage merge 후 조상 evict.
+  - F3 [MAJOR] `.any`-source fork 가 권한 회수 후에도 피해자 데이터 영구 live tap(IDOR 지속화).
+  - F4 [MAJOR] 교차계정 live reference 는 매 ask 마다 A→B LLM 데이터 상시 흐름 — deep-copy snapshot 과 비등가(데이터 격리 위반).
+  - F5 [MAJOR] sandbox 조상 스키마 공유가 1-conv-1-schema 격리 파괴.
+  - F6/F7 [MINOR] 토큰 예산 부재(depth≤32 과대), fork_depth silent copy 강등, copy-on-delete race.
+- **권고 = 하이브리드**: ① core_messages(+로컬 sandbox) deep-copy now, ② 동일소유자 file blob 만 참조(후속), 코어 로더·IDOR 게이트·교차계정 reference 폐기.
+- **반영**: 사용자 결정으로 하이브리드 채택(ADR-WEB-0005). **Phase 1(core_messages 복사) 본 cycle 구현** — 코어 로더 무변경·스키마 변경 0·교차계정=snapshot 으로 F1(완화: copy 라 로더 자가치유)/F3/F4/F5 구조적 제거. 첨부는 Phase 2(후속, IDOR 동반 시 재-패널).
+- **Cross-ref**: DESIGN-fork-reference.md §14·§15 / ADR-WEB-0005 / CHG-20260609-FORK-CORE-CONTEXT / TASK-0170 / AC-0329.

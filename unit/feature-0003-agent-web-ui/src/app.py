@@ -8750,6 +8750,82 @@ VALUES (%s, %s, %s, %s, %s)
             pg.close()
 
 
+def _conv_load_core_messages_raw(conn, conversation_id: str, upto_created_at) -> list[tuple]:
+    """대화의 LLM 문맥 턴 (role, content, tool_calls, tool_call_id, name, created_at) 목록 (id ASC).
+
+    TASK-0170 Phase 1 (ADR-WEB-0005 하이브리드): fork 가 LLM 문맥을 복원하도록 복사할
+    소스. 어시스턴트는 `agent_runtime.core_messages` 에서 문맥을 읽으므로(agent_core.
+    _load_conversation_messages) 이 테이블을 복사해야 fork 본이 이전 문맥을 인지한다.
+    upto_created_at 가 주어지면 created_at <= upto_created_at 만 (anchored fork cut).
+    tool_calls 는 PG(jsonb)면 dict/list 로 반환됨 — 호출자가 직렬화한다.
+
+    PG 런타임 전용: cutover 후 MySQL AgentCoreMessages 는 DROP 됐고 비-postgres 배포에는
+    core_messages 개념이 없으므로 [] 반환(fork 는 표시 메시지만으로 진행).
+    """
+    if not _runtime_backend_is_pg():
+        return []
+    from modules.db import _pg_connect
+    pg = _pg_connect()
+    try:
+        with pg.cursor() as pgcur:
+            if upto_created_at is not None:
+                pgcur.execute(
+                    "SELECT role, content, tool_calls, tool_call_id, name, created_at "
+                    "FROM agent_runtime.core_messages "
+                    "WHERE conversation_id = %s AND created_at <= %s ORDER BY id ASC",
+                    (conversation_id, upto_created_at),
+                )
+            else:
+                pgcur.execute(
+                    "SELECT role, content, tool_calls, tool_call_id, name, created_at "
+                    "FROM agent_runtime.core_messages "
+                    "WHERE conversation_id = %s ORDER BY id ASC",
+                    (conversation_id,),
+                )
+            return list(pgcur.fetchall() or [])
+    finally:
+        pg.close()
+
+
+def _conv_copy_core_messages(conn, new_cid: str, src_core_rows: list[tuple]) -> int:
+    """src_core_rows((role, content, tool_calls, tool_call_id, name, created_at))를 new_cid 의
+    core_messages 로 복제. 복제 수 반환. 실패 시 예외 전파(호출자가 cleanup).
+
+    이것이 fork 문맥 복원의 핵심 — agent_core 가 읽는 LLM 문맥을 새 대화에 채운다.
+    created_at 보존(로더는 id ASC 정렬이라 삽입순=소스순으로 순서 보존되며, created_at 은
+    향후 Phase 의 cut 계산·표시 정합용). tool_calls(jsonb)는 직렬화 후 ::jsonb 재삽입.
+    """
+    if not _runtime_backend_is_pg() or not src_core_rows:
+        return 0
+    from modules.db import _pg_connect
+    pg = _pg_connect()
+    writer = pg.cursor()
+    copied = 0
+    try:
+        for row in src_core_rows:
+            role, content, tool_calls, tool_call_id, name, created_at = row
+            if tool_calls is None:
+                tc_param = None
+            elif isinstance(tool_calls, (dict, list)):
+                tc_param = json.dumps(tool_calls, ensure_ascii=False, default=str)
+            else:
+                tc_param = str(tool_calls)
+            writer.execute(
+                "INSERT INTO agent_runtime.core_messages "
+                "(conversation_id, role, content, tool_calls, tool_call_id, name, created_at) "
+                "VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)",
+                (new_cid, role, content, tc_param, tool_call_id, name, created_at),
+            )
+            copied += 1
+        return copied
+    finally:
+        try:
+            writer.close()
+        except Exception:
+            pass
+        pg.close()
+
+
 def _conv_load_share_meta(conn, conversation_id: str) -> dict[str, Any]:
     """public share view 용 대화 메타.
 
@@ -8904,6 +8980,27 @@ def _fork_conversation_impl(
             pass
         return None, _json_error("failed to copy messages", 500)
 
+    # TASK-0170 Phase 1 (ADR-WEB-0005 하이브리드): LLM 문맥(core_messages)도 복사한다.
+    # 어시스턴트는 agent_runtime.core_messages 에서 대화 문맥을 읽으므로(agent_core.
+    # _load_conversation_messages), 이를 복사하지 않으면 fork 본의 문맥이 비어 어시스턴트가
+    # 이전 대화를 인지 못 한다(보고된 버그). anchored fork 는 앵커 메시지 시각까지, full
+    # fork/duplicate 는 전체 복사. 교차계정(공유 fork)도 이 복사로 snapshot 이 된다(상시
+    # 참조 아님 — DESIGN §14 F4). 경계 턴의 미세 불일치는 로드 시 _normalize_history_rows
+    # 가 정규화한다(DESIGN §14 F1).
+    core_copied = 0
+    try:
+        core_cutoff = src_rows[-1][3] if (from_id is not None and src_rows) else None
+        src_core_rows = _conv_load_core_messages_raw(conn, source_id, core_cutoff)
+        core_copied = _conv_copy_core_messages(conn, new_cid, src_core_rows)
+    except Exception:
+        # core_messages 복사 실패 시 fork 를 통째로 정리하고 fail-loud — 문맥 없는 반쪽
+        # fork(보고된 버그 상태)를 남기지 않는다. delete 는 PG CASCADE 로 messages+core 정리.
+        try:
+            delete_conversation_records(conn, new_cid)
+        except Exception:
+            pass
+        return None, _json_error("failed to copy conversation context", 500)
+
     try:
         _set_account_current_conversation(conn, int(account["id"]), new_cid)
     except Exception:
@@ -8917,6 +9014,7 @@ def _fork_conversation_impl(
             "conversation_id": new_cid,
             "source": source_id,
             "copied": copied,
+            "core_copied": core_copied,
             "from_message_id": int(from_id) if from_id is not None else None,
             "topic": new_topic,
         },

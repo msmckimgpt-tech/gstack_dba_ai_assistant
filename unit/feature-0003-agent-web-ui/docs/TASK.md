@@ -2972,3 +2972,11 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **F1** `public_share_view`: 데이터 로드(`_conv_load_share_meta`/`_share_load_messages` PG read) 실패 시 bare 500 대신 graceful JSON 500(`"공유 대화를 불러오지 못했습니다."`) — fork 의 명시 500 래핑과 대칭. ViewCount++(revoke race 가드 겸용)는 보존, 실패 시 1 과대카운트는 허용 soft-metric 오차로 주석화.
 - [x] **F2** `tests/test_share_redaction_invariant.py`: `_pg_connect` mock 으로 **PG dict-meta 경로**를 결정적 재현 → attachment_derived redact(stale/null token) + internal 메시지 필터 + 정상 본문 보존 + 정책 version gate(CURRENT=비redact) 단언. 컨테이너 in-process 3/3 PASS.
 - [ ] py_compile / verify-completion / PR → main 머지 → 재배포 → 라이브 e2e(양 테스트 green)
+
+### TASK-0170 — Fork 문맥 복원: core_messages 복사 (하이브리드 Phase 1) (2026-06-09)
+- [x] **Major §12.3** — fork/duplicate/공유-fork 본에서 어시스턴트가 이전 문맥을 인지 못 하던 버그. 원인: LLM 문맥은 `agent_runtime.core_messages`(agent_core `_load_conversation_messages`)에서 읽는데 fork 는 표시 메시지(`messages`)만 복사하고 `core_messages` 미복사 → 복사본 core_messages 가 비어 문맥 0. (CHG-20260609-FORK-CORE-CONTEXT)
+- [x] 설계: git식 reference 아키텍처 검토(`DESIGN-fork-reference.md`) → outside-voice(REV-20260609-0003) BLOCKER 2 + 보안 안티패턴 3 발견 → **하이브리드 확정**(ADR-WEB-0005). 사용자 결정.
+- [x] **Phase 1 구현**: `_conv_load_core_messages_raw`/`_conv_copy_core_messages`(PG 전용, tool_calls jsonb 보존) 추가 + `_fork_conversation_impl` 에 배선. anchored fork=앵커 created_at 까지, full/duplicate=전체. 교차계정 공유 fork 도 snapshot(상시 cross-tenant 흐름 0). core 복사 실패 시 fork 통째 cleanup(fail-loud, 반쪽 fork 금지). 응답에 `core_copied` 노출.
+- [x] 회귀 테스트 `tests/test_fork_share_cutover.py` T1b 추가(copied>0 이면 core_copied>0 — 문맥 복사 단언). py_compile PASS.
+- [ ] **Phase 2 (후속 cycle)**: 첨부 — 행 복사(동일 ObjectKey)+로컬 sandbox 스키마 복제+동일소유자 blob 참조. IDOR 게이트 변경 시 outside-voice.
+- [ ] verify-completion / PR → main 머지 → 재배포 → 라이브 e2e(T1b green)
