@@ -70,8 +70,11 @@ def test_slim_result_handles_non_dict():
 
 def test_config_ask_worker_defaults():
     import modules.config as cfg
-    # 기본 실행모델은 inprocess (기본 동작 무변경).
-    assert cfg.AGENT_ASK_EXECUTION_MODE == "inprocess"
+    # 실행모델 flag 는 유효한 값이어야 한다. 코드 default 는 inprocess(os.getenv 의 2번째
+    # 인자)이나 .env 로 override 가능하며, 라이브 cutover 후엔 worker 로 설정돼 있을 수 있다
+    # (TASK-0169). 따라서 특정 값이 아니라 유효 집합 membership 을 단언한다 — make test 가
+    # 라이브 .env(env_file)를 로드하므로 `== "inprocess"` 고정은 cutover 후 false-positive.
+    assert cfg.AGENT_ASK_EXECUTION_MODE in ("inprocess", "worker")
     # stale 임계는 run_timeout(agent_core 와 동일 공식) 보다 커야 false-positive
     # requeue 가 없다(BLOCKER 3/E 정합). AGENT_TIMEOUT_SEC 를 키운 배포에서도 성립해야 함.
     run_timeout = max(cfg.AGENT_TIMEOUT_SEC * 3, max(1, int(cfg.AGENT_EARLY_FINALIZE_MS / 1000)))
