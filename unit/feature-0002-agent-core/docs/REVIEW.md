@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260609-0172 [SUBAGENT: general-purpose 적대적 리뷰 ×2 — 무거운쿼리 자가규제, 설계 RECONSIDER + diff FIX-BEFORE-ENABLING-GATE]
+- Date: 2026-06-09 (TASK-0172, **Major §12.3** — agent-core query path). feedback_outside_voice_for_rbac 정책(LLM-SQL 신뢰경계 인접).
+- **1차(설계, self-interrupt 안)**: **RECONSIDER-APPROACH** — ① "LLM 판단만(가드레일 없음)" 은 내부 모순(비동기 쿼리 중 *언제 LLM 에 물을지* 는 비-LLM 휴리스틱 필수 = 사실상 가드레일; 순수형은 쿼리당 ~180 LLM 호출) ② 단일 `db_conn` 공유 → KILL 후 후속 step `Commands out of sync` ③ LLM 자발 중단 의존 → 인시던트 미해결 가능 ④ `agent_ro` 는 processlist 부하신호 관측 불가(PROCESS 권한). 더 간단·직접적 대안(EXPLAIN 사전게이팅 / per-query cap / replica 라우팅) 권고. → **사용자 결정: EXPLAIN 게이팅+cap 으로 전환**, self-interrupt 보류(DESIGN §10).
+- **2차(전환안 구현 diff)**: **FIX-BEFORE-ENABLING-GATE**(off-default 머지 안전, sql_guard 무변경). 흡수: M1 `confirm_heavy` 문자열 "false" truthy 우회 → robust 파싱 / M2 `MAX_EXECUTION_TIME` session-scoped sticky → docstring 정정 / m3 rows 곱이 `filtered` 무시 false-positive → `rows×filtered/100` 반영 / m4 미지원 mode → off clamp. m5(EXPLAIN fail-open) 수용. 회귀테스트 15(문자열-false 우회 방지·filtered 반영 포함).
+- Verdict: **SAFE-TO-MERGE (flag off 기본)** — gate 활성화 전 위 fix 완료. make test 회귀 0.
+
 ## REV-20260609-0168 [SUBAGENT: general-purpose 적대적 리뷰 ×2 — ask-worker 큐/실행/fencing, NEEDS-FIXES→FIXED, BLOCKER 3 + MAJOR 4 흡수]
 - Date: 2026-06-09 (TASK-0169). 정본 리뷰 기록은 feature-0003 REV-20260609-0168 (양면 작업). 본 항목은 feature-0002 측 cross-reference.
 - agent-core 측 핵심 검증·수정: B2 단일문 atomic claim(autocommit 안전) / B3 lease fencing + 시간기반 heartbeat 스레드(긴 LLM step false-positive requeue 차단) / M4 set_run_status 순서 / MJ-2 `_clear_cancel_request` run_id-scoped(fencing cancel 보존) / MJ-1 reaper 활성 job 첨부 제외 / config stale 동적 산출(AGENT_TIMEOUT_SEC=300→run_timeout 900 환경 false-positive 수정, 테스트가 포착).

@@ -262,6 +262,8 @@ source_of_truth: true
 - AC-0161 (REQ-20260609-0168 / TASK-0169, **Critical** §12.3): `python agent_core.py --ask-worker` 는 `run_ask_worker_loop` 를 기동해 `agent_runtime.ask_jobs` 의 pending job 을 단일문 `FOR UPDATE SKIP LOCKED` 로 exactly-once claim 한 뒤 `run_agent(run_id=…)` 를 실행하고 terminal 시 `result_json`·KV 를 기록한다.
 - AC-0162 (REQ-20260609-0168 / TASK-0169, **Critical** §12.3): 실행 중 별도 heartbeat 스레드가 시간 기반으로 `ask_jobs.heartbeat_at` 를 갱신해 긴 LLM step 중에도 stale 오판이 없다. stale 임계는 run_timeout(`max(AGENT_TIMEOUT_SEC*3, AGENT_EARLY_FINALIZE_MS/1000)`)+margin 으로 동적 산출돼 정상 장기 run 이 false-positive requeue 되지 않는다.
 - AC-0163 (REQ-20260609-0168 / TASK-0169, **Critical** §12.3): stale sweeper 는 heartbeat 가 끊긴 running job 을 attempts<cap 이면 requeue(lease_epoch++로 기존 worker fencing), ≥cap 이면 terminal error 로 회수한다. requeue 로 lease 를 빼앗긴 worker 는 heartbeat 가 박탈을 감지해 해당 run 의 KV cancel 을 set, agent 루프가 스스로 멈춘다(double-run 무해화). `_clear_cancel_request` 는 run_id-scoped 라 다른 run 을 겨냥한 fencing cancel 을 덮어쓰지 않는다.
+- AC-0164 (REQ-20260609-0172 / TASK-0172, **Major** §12.3): `AGENT_QUERY_GUARD_MODE=gate` 일 때 `execute_sql` 은 실행 전 EXPLAIN 으로 예상 스캔 rows(테이블별 `rows × filtered/100` 곱)를 추정하고, `AGENT_QUERY_EXPLAIN_ROWS_WARN` 초과 + `confirm_heavy` 미설정이면 쿼리를 실행하지 않고 좁히기 안내를 반환한다. `confirm_heavy=true`(bool 또는 "true"/"1"/"yes")면 추정 무관 실행한다. `warn` 은 실행하되 비용 경고를 prepend, `off`(기본)는 현행 무변경(EXPLAIN 오버헤드 0). EXPLAIN 실패 시 fail-open(실행 허용).
+- AC-0165 (REQ-20260609-0172 / TASK-0172, **Major** §12.3): `AGENT_QUERY_MAX_EXECUTION_MS`>0 이면 `_tool_execute_sql` 이 `SET SESSION max_execution_time` 으로 SELECT 시간 상한을 세션에 적용한다(폭주 backstop). 0/비활성 또는 적용 실패 시 무영향(fail-open). "무거운 쿼리는 감수" 정책상 기본 generous/off.
 
 ## 12. Observability
 - LLM 토큰 사용량 회계 (TASK-0136 + TASK-0163): 모든 LLM 호출은 단일 chokepoint

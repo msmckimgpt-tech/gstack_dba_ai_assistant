@@ -151,6 +151,9 @@ __all__ = [
     "AGENT_TABLE_MAX_COLS",
     "AGENT_TABLE_MAX_COL_WIDTH",
     "AGENT_TIMEOUT_SEC",
+    "AGENT_QUERY_GUARD_MODE",
+    "AGENT_QUERY_EXPLAIN_ROWS_WARN",
+    "AGENT_QUERY_MAX_EXECUTION_MS",
     "AGENT_TIMING_LOG",
     "AGENT_TOPIC_MODEL",
     "AGENT_TOP_N",
@@ -385,6 +388,28 @@ AGENT_MAX_SHOW = int(os.getenv("AGENT_MAX_SHOW", "10"))
 AGENT_TABLE_MAX_COLS = int(os.getenv("AGENT_TABLE_MAX_COLS", "12"))
 AGENT_TABLE_MAX_COL_WIDTH = int(os.getenv("AGENT_TABLE_MAX_COL_WIDTH", "24"))
 AGENT_TIMEOUT_SEC = int(os.getenv("AGENT_TIMEOUT_SEC", "60"))
+
+# ── 무거운 쿼리 자가규제 (TASK-0172, DESIGN-self-interrupt §11) ──
+# execute_sql(LLM freeform 분석 SELECT) 의 사전 EXPLAIN 게이팅 + per-query 시간 cap.
+# self-interrupt(mid-query KILL)의 reconsider 대안 — 사전 규제라 KILL/스레드/async 불요.
+#   off  : 현행(무변경, 기본).
+#   warn : 무거운 쿼리도 실행하되 EXPLAIN 추정 비용을 결과에 prepend(LLM 학습용).
+#   gate : EXPLAIN 추정 rows 가 임계 초과 + confirm_heavy 미설정이면 실행 대신 좁히기 유도.
+AGENT_QUERY_GUARD_MODE = (
+    os.getenv("AGENT_QUERY_GUARD_MODE", "off").strip().lower() or "off"
+)
+# 오타 등 미지원 값은 off 로 정규화(예측가능 — 잘못된 모드로 silent 미보호/과보호 방지).
+if AGENT_QUERY_GUARD_MODE not in ("off", "warn", "gate"):
+    AGENT_QUERY_GUARD_MODE = "off"
+# EXPLAIN 추정 스캔 rows(테이블별 rows 곱) 임계 — 초과 시 무거운 쿼리로 판정.
+AGENT_QUERY_EXPLAIN_ROWS_WARN = int(
+    (os.getenv("AGENT_QUERY_EXPLAIN_ROWS_WARN", "1000000") or "1000000").strip()
+)
+# per-query 시간 상한(ms) — SELECT 한정 MAX_EXECUTION_TIME backstop. 0=비활성.
+# "무거운 쿼리는 감수" 정책상 정상 장기 쿼리를 끊지 않도록 generous/off 기본 — 폭주 차단용.
+AGENT_QUERY_MAX_EXECUTION_MS = int(
+    (os.getenv("AGENT_QUERY_MAX_EXECUTION_MS", "0") or "0").strip()
+)
 AGENT_OPENAI_MAX_RETRIES = int(os.getenv("AGENT_OPENAI_MAX_RETRIES", "0"))
 AGENT_MEMORY_MAX_TURNS = int(os.getenv("AGENT_MEMORY_MAX_TURNS", "10"))
 AGENT_CSV_PREVIEW_ROWS = int(os.getenv("AGENT_CSV_PREVIEW_ROWS", "20"))

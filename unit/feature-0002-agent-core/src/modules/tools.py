@@ -146,7 +146,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "description": (
                 "SELECT SQL을 실행하여 데이터를 조회한다. "
                 "반드시 `schema`.`table` 형식을 사용한다. "
-                "이 도구를 가장 먼저 사용하라 — 시스템 프롬프트의 KNOWN SCHEMAS 정보로 SQL을 즉시 작성할 수 있다."
+                "이 도구를 가장 먼저 사용하라 — 시스템 프롬프트의 KNOWN SCHEMAS 정보로 SQL을 즉시 작성할 수 있다. "
+                "무거운 쿼리는 DB 부하 경고(EXPLAIN 게이트)에 걸릴 수 있다 — 그 경우 WHERE/기간/집계 "
+                "범위를 좁히거나 LIMIT 을 추가하라. 전체 스캔이 정말 필요하면 confirm_heavy=true 로 다시 호출한다."
             ),
             "parameters": {
                 "type": "object",
@@ -154,6 +156,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "sql": {
                         "type": "string",
                         "description": "실행할 SELECT SQL",
+                    },
+                    "confirm_heavy": {
+                        "type": "boolean",
+                        "description": (
+                            "true 면 무거운 쿼리 EXPLAIN 게이트를 우회해 그대로 실행한다. "
+                            "범위를 좁힐 수 없고 전체 스캔이 반드시 필요할 때만 사용."
+                        ),
                     },
                 },
                 "required": ["sql"],
@@ -570,6 +579,69 @@ def _tool_get_sample_rows(conn, args: dict) -> str:
 _TOOL_PREVIEW_ROWS = 50
 
 
+def _estimate_explain_rows(conn, sql: str) -> int | None:
+    """EXPLAIN 으로 예상 스캔 rows 추정 — 테이블별 (rows × filtered/100) 곱 = join 후
+    예상 카디널리티. `filtered`(옵티마이저 선택률 %)를 반영해 잘 인덱싱된 조인의 과대추정
+    (false-positive 게이팅)을 줄인다(diff review m3).
+
+    TASK-0172: 무거운 쿼리 사전 게이팅용. EXPLAIN 은 본 쿼리를 실행하지 않으므로 cheap
+    (EXPLAIN ANALYZE 는 sql_guard 가 차단). 실패(구문/권한/플랜불가) 시 None → caller 가
+    fail-open(게이트가 정상 작업을 막지 않음)."""
+    try:
+        result_sets, _ = _raw_execute_sql(conn, f"EXPLAIN {sql}")
+    except Exception:
+        return None
+    for kind, columns, rows in result_sets:
+        if kind != "rows" or not isinstance(columns, list) or not isinstance(rows, list):
+            continue
+        lcols = [str(c).lower() for c in columns]
+        try:
+            ridx = lcols.index("rows")
+        except ValueError:
+            continue
+        fidx = lcols.index("filtered") if "filtered" in lcols else None
+        product = 1
+        seen = False
+        for r in rows:
+            try:
+                v = int(r[ridx])
+            except (ValueError, TypeError, IndexError):
+                continue
+            eff = float(v)
+            if fidx is not None:
+                try:
+                    filt = float(r[fidx])
+                    if 0.0 <= filt <= 100.0:
+                        eff = v * (filt / 100.0)
+                except (ValueError, TypeError, IndexError):
+                    pass
+            product *= max(1, int(round(eff)))
+            seen = True
+        if seen:
+            return product
+    return None
+
+
+def _apply_query_cap(conn) -> None:
+    """시간 상한(MAX_EXECUTION_TIME, ms)을 **세션 스코프**로 적용(SELECT 한정 효력).
+    conn 은 run 전체 공유라 한 번 SET 하면 그 conn 의 이후 SELECT(스키마 탐색 도구 포함)
+    에도 sticky 하게 적용된다 — generous 기본이라 빠른 도구엔 무해, 폭주만 차단. 매 호출
+    재-SET 은 idempotent. 0/비활성이면 no-op, 실패 시 fail-open. "무거운 쿼리는 감수"
+    정책상 기본 generous/off."""
+    import modules.config as _cfg
+    ms = int(getattr(_cfg, "AGENT_QUERY_MAX_EXECUTION_MS", 0) or 0)
+    if ms <= 0:
+        return
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(f"SET SESSION max_execution_time = {int(ms)}")
+        finally:
+            cur.close()
+    except Exception:
+        pass
+
+
 def _tool_execute_sql(conn, args: dict) -> str:
     sql = str(args.get("sql", "")).strip()
     if not sql:
@@ -592,6 +664,33 @@ def _tool_execute_sql(conn, args: dict) -> str:
     err = _whitelist_violation(_extract_sql_schema_refs(sql))
     if err:
         return err
+    # TASK-0172: 무거운 쿼리 자가규제 — 실행 전 EXPLAIN 으로 예상 스캔 rows 추정해
+    # 임계 초과 시 gate(좁히기 유도) 또는 warn(비용 경고 prepend). confirm_heavy=true 면
+    # 추정 무관 실행("무거운 쿼리는 감수" — LLM 이 필요 판단 시 override). guard off=현행.
+    import modules.config as _cfg
+    guard_mode = str(getattr(_cfg, "AGENT_QUERY_GUARD_MODE", "off") or "off").lower()
+    # diff review M1: bool(args.get(...)) 은 LLM 이 문자열 "false" 를 보내면 truthy → 게이트
+    # 우회. true/1/yes(대소문자) 또는 bool True 만 confirm 으로 인정.
+    _cv = args.get("confirm_heavy")
+    confirm_heavy = (_cv is True) or (
+        isinstance(_cv, str) and _cv.strip().lower() in ("true", "1", "yes")
+    )
+    cost_note: str | None = None
+    if guard_mode in ("warn", "gate") and not confirm_heavy:
+        est = _estimate_explain_rows(conn, sql)
+        warn_thr = int(getattr(_cfg, "AGENT_QUERY_EXPLAIN_ROWS_WARN", 1000000) or 1000000)
+        if est is not None and est > warn_thr:
+            if guard_mode == "gate":
+                return (
+                    f"⚠ 무거운 쿼리로 추정됩니다 (EXPLAIN 예상 스캔 ~{est:,}행 > 임계 {warn_thr:,}행). "
+                    f"DB 부하를 줄이도록 WHERE 조건·기간·집계 범위를 좁히거나 LIMIT 을 추가해 다시 시도하세요. "
+                    f"전체 스캔이 정말 필요하면 같은 쿼리를 confirm_heavy=true 로 다시 호출하면 실행합니다."
+                )
+            cost_note = (
+                f"⚠ 무거운 쿼리 (EXPLAIN 예상 스캔 ~{est:,}행). 가능하면 다음엔 범위를 좁히세요."
+            )
+    # per-query 시간 cap(폭주 backstop) 적용 — generous/off 기본.
+    _apply_query_cap(conn)
     try:
         result_sets, elapsed = _raw_execute_sql(conn, sql)
         csv_paths: list[str] = []
@@ -620,6 +719,8 @@ def _tool_execute_sql(conn, args: dict) -> str:
                     f"답변에 전체 표를 삽입하지 말고, CSV 다운로드 링크를 제공하세요.)"
                 )
         parts.append(f"(실행 시간: {elapsed:.2f}초)")
+        if cost_note:
+            parts.insert(0, cost_note)
         return "\n\n".join(parts)
     except Exception as e:
         return f"SQL 실행 오류: {e}"

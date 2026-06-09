@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260609-0172
+- Date: 2026-06-09 (TASK-0172, **Major §12.3** — agent-core)
+- Scope: 무거운 쿼리 자가규제 — EXPLAIN 사전 게이팅 + per-query 시간 cap. (라이브 인시던트 "분기 대화 처리중 단계 안 진행" = 5~6분 대용량 집계 쿼리 근본 대응. self-interrupt(mid-query KILL)는 outside-voice RECONSIDER 로 보류 — DESIGN-self-interrupt.md §10 참조.)
+- 변경:
+  - `modules/tools.py`: `_estimate_explain_rows`(EXPLAIN 으로 테이블별 `rows × filtered/100` 곱 = 예상 카디널리티 추정, fail-open) + `_apply_query_cap`(`SET SESSION max_execution_time`, SELECT 한정 session-scoped backstop) 신규. `_tool_execute_sql` 에 게이트 분기: `AGENT_QUERY_GUARD_MODE=gate` 시 추정 rows > 임계 + `confirm_heavy` 미설정이면 실행 대신 좁히기 유도, `warn` 시 비용 경고 prepend 후 실행, `off`(기본) 무변경. execute_sql tool 스키마에 `confirm_heavy: bool` 추가(LLM override — "무거운 쿼리는 감수").
+  - `modules/config.py`: `AGENT_QUERY_GUARD_MODE`(off|warn|gate, 미지원값→off 정규화) + `AGENT_QUERY_EXPLAIN_ROWS_WARN`(기본 1,000,000) + `AGENT_QUERY_MAX_EXECUTION_MS`(기본 0=비활성, generous backstop).
+- outside-voice 적대적 리뷰 2회: 설계 RECONSIDER(self-interrupt→사전게이팅 전환) + diff FIX-BEFORE-ENABLING-GATE(M1 confirm_heavy 문자열 truthy 우회 / M2 cap session-scoped 정정 / m3 filtered 반영 / m4 mode clamp 흡수). REV-20260609-0172.
+- 게이트: make test 회귀 0(신규 `test_query_guard.py` 15) + ruff + py_compile. **flag 기본 off 라 배포 자체 동작 무변경** — canary 는 off→warn→gate env 전환.
+- 미해결(이월): 정상 5~6분 쿼리의 UX(frozen step)·collateral 포화는 replica 라우팅(인프라) 영역 — 본 cycle 범위 밖.
+
 ## CHG-20260609-0168
 - Date: 2026-06-09 (TASK-0169)
 - Scope: out-of-process ask-worker 실행모델 — agent-core 측(feature-0002). 짝: feature-0003 CHG-20260609-0168.
