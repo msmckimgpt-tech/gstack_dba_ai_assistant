@@ -1664,3 +1664,21 @@ source_of_truth: true
   4. **PG schema 정합**: `agent_runtime.steps.created_at` (timestamptz) + index `ix_steps_conv_run` (conversation_id, run_id) 존재 확인 — 쿼리 효율 적절.
 - **Risk**: low — exception catch 가 `return None` (graceful degradation). `_compute_display_status()` 호출자가 None 처리 이미 완료.
 - **Cross-ref**: CHG-20260527-0001 / TASK-AR-M5 / AR-M5-impl.
+
+## REV-20260609-0001 [SUBAGENT:ship] TASK-0167 fork/share/duplicate/public-share-view PG cutover 회귀 수정 review
+
+- **Mode**: SUBAGENT (adversarial outside-voice — security + backend lens). 결정: RBAC 변경 아님(권한 게이트 불변, 데이터 라우팅만)이나 **anonymous public-share 표면 포함**이라 outside-voice 1회 호출 (사용자 결정 "구현 후 1회 패널").
+- **Subject**: CHG-20260609-FORK-SHARE-PG-CUTOVER — backend-aware helper 10종 + 5개 함수(`_fork_conversation_impl`/`_share_anchor_belongs_to_conversation`/`_share_load_messages`/`public_share_view`/`duplicate_conversation`) PG 라우팅.
+- **Scope**: 정착된 `AGENT_RUNTIME_READ_BACKEND=postgres` + `_pg_connect()` 패턴 답습(`_list_conversations_pg`/`_ensure_conversation_row`/`_assign_conversation_owner` 대조). `public_share_view` cross-DB merge(core_conversations PG + WebProducts/WebAccounts MySQL) 신설.
+- **Verdict**: **SHIP** — 모든 findings MINOR/NIT, blocker 0.
+- **Review findings (외부 시각 독립 확인)**:
+  1. **anonymous 표면 무누출**: old 단일 JOIN 과 노출 필드 동일(topic/owner_username/product_key/product_name/product_mode, 전부 `.get() or default`). token 유효성 게이트(revoke/404/race) 가 merge helper 보다 선행 — 접근 의미 불변. `product_id` 는 load 되나 미노출. KeyError/오owner 위험 없음.
+  2. **redaction/internal-filter 생존**: tuple+dict-meta 전환 후에도 `_is_internal_message`(dict→`json.dumps` 직렬화 전달) + `_share_redact_message_content`(dict `dict(meta_json)` shallow-copy, source jsonb 비변형) 정상 작동. `_share_redact_message_content` 본문은 무변경.
+  3. **fork write FK 순서 정합**: `_assign_conversation_owner`(autocommit `_pg_connect`)가 새 `core_conversations` row 를 message INSERT 전 **선커밋** → `fk_messages_conv` 충족(다른 connection 이어도). jsonb `%s::jsonb` 캐스트 = runtime_backend 패턴 일치. created_at 보존(timestamptz round-trip).
+  4. **cleanup PG-aware**: 부분 실패 시 `delete_conversation_records`→`memory.delete_conversation`→`_pg_delete_conversation`(core_conversations CASCADE→messages) 로 완전 정리.
+  5. **누수 없음**: 모든 helper `try/finally` 로 cursor/`_pg_connect` close (예외 경로 포함). fork 당 ~6 PG conn 은 perf NIT.
+  6. **injection 안전**: 전부 bound `%s`. 정수 overflow/유니코드/collation 무영향.
+- **Accepted follow-ups (non-blocking, 별 cycle)**:
+  - F1 (MINOR): `_share_load_messages` 의 `_conv_load_messages_raw` PG read 미가드 → 전파 500. fork 의 명시적 500 래핑과 비대칭이나 "DB 오류 시 빈 공유뷰 렌더보다 정직한 500" 이 의도. error contract 일관화는 cosmetic.
+  - F2 (HIGH-VALUE): 회귀 e2e 가 "500 미발생" 만 단언. public-exposure 면이므로 stale-policy attachment_derived 메시지 redact 단언 추가 권장. 단 redaction 코드 면 무변경이라 본 cycle 회귀위험 낮음 — 별 cycle 에서 fixture 동반 추가.
+- **Cross-ref**: CHG-20260609-FORK-SHARE-PG-CUTOVER / TASK-0167 / CHG-20260527-ASK-STATUS-PG(형제) / runtime_backend._PG_INSERT_MEMORY_MESSAGE.

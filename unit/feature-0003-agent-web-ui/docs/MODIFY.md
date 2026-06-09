@@ -2350,3 +2350,16 @@ source_of_truth: true
 - Summary: `buildRoleProductCard()` 의 product access 토글 checkbox 에 `value` 속성 미설정으로 인해 브라우저 기본값 `"on"` 이 `permission_codes` 배열에 포함되어 서버 검증 실패. `toggleInput.value = perm.code` 추가. admin.js 캐시 버스팅 `v=20260527-task-0121-perm-toggle-value`.
 - Files: unit/feature-0003-agent-web-ui/src/static/admin.js, unit/feature-0003-agent-web-ui/src/static/admin.html
 - Rollback: admin.js 의 `toggleInput.value = perm.code` 라인 제거 + admin.html 캐시 버스트 이전 버전으로 복원.
+
+## CHG-20260609-FORK-SHARE-PG-CUTOVER
+- Date: 2026-06-09
+- Related Requirement: TASK-0167 (**Major §12.3** — 대화 분기/공유 cutover 회귀 HTTP 500 수정)
+- Summary: 2026-05-27 MySQL→PG cutover 로 `AgentCoreConversations`/`AgentMemoryMessages`/`AgentMemoryKv` 가 DROP 됐는데 fork/share/duplicate/public-share-view 가 raw MySQL 경로를 유지해 `Table 'agent_memory.agentmemorymessages' doesn't exist` / `agentcoreconversations` 500 을 던졌다 (CHG-20260527-ASK-STATUS-PG 의 형제 회귀 — 당시 `_load_latest_assistant_message` 만 고치고 fork/share 면은 누락). `AGENT_RUNTIME_READ_BACKEND=postgres` 분기 + `_pg_connect()` 로 PG `agent_runtime.{core_conversations,messages,kv}` 라우팅하는 backend-aware helper 10종 신설(`_runtime_backend_is_pg`/`_meta_json_to_dict`/`_conv_load_topic`/`_conv_load_product`/`_conv_load_messages_raw`/`_conv_message_exists`/`_conv_update_topic_product`/`_conv_update_topic`/`_conv_copy_messages`/`_conv_load_share_meta`). `public_share_view` 는 core_conversations(PG) + WebProducts/WebAccounts(MySQL) cross-DB 이므로 단일 JOIN 을 PG read + MySQL enrichment + Python merge(`_conv_load_share_meta`)로 분리. jsonb meta_json 은 read 시 dict 정규화 / insert 시 `%s::jsonb` 캐스트. MySQL else 분기는 비-postgres 배포용 legacy fallback 보존(`_ensure_conversation_row`/`_assign_conversation_owner` 관례 답습).
+- Files:
+  - unit/feature-0003-agent-web-ui/src/app.py (backend-aware helper 블록 + 5개 함수 라우팅)
+  - unit/feature-0003-agent-web-ui/tests/test_fork_share_cutover.py (회귀 e2e T1~T5)
+- Notes:
+  - jsonb meta_json: PG psycopg 는 jsonb→dict 반환 → `_meta_json_to_dict` 로 정규화 후 `_is_internal_message`(str|None 시그니처)에는 `json.dumps` 직렬화 전달. insert 는 `%(...)s::jsonb` 와 동등한 `%s::jsonb` 캐스트(runtime_backend._PG_INSERT_MEMORY_MESSAGE 패턴 일치).
+  - `_pg_connect()` 는 autocommit=True (mysql.connector 기본 동작 일치) → 명시 commit 불요.
+  - fork 메시지 복제 시 FK(fk_messages_conv) 충족: create_new_conversation + _assign_conversation_owner 가 새 conv row 를 선커밋 → 이후 messages INSERT.
+- Rollback: backend-aware helper 블록 제거 + 각 함수의 raw MySQL 쿼리 복원. 단 MySQL 런타임 테이블은 DROP 상태이므로 rollback 시 500 재발 — PG 경로가 정본.

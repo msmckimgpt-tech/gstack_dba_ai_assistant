@@ -8173,17 +8173,66 @@ async def update_conversation_product(cid: str, request: Request) -> JSONRespons
     return JSONResponse(payload)
 
 
-def _fork_conversation_impl(
-    conn,
-    account: dict[str, Any],
-    source_id: str,
-    from_id: int | None,
-) -> tuple[dict[str, Any] | None, JSONResponse | None]:
-    """REQ-20260514-0001: fork 본체 로직. 호출자가 source 접근 권한 + create 권한을 사전 검증한다.
+# ---------------------------------------------------------------------------
+# TASK-0167: fork / share / duplicate 의 대화·메시지 read/write 를 backend-aware
+# 로 라우팅.
+#
+# 배경: agent runtime 데이터(AgentCoreConversations / AgentMemoryMessages /
+# AgentMemoryKv)는 2026-05-27 cutover 로 PostgreSQL `agent_runtime`
+# (core_conversations / messages / kv) 로 이관됐고 MySQL 원본 테이블은 DROP 됐다
+# (modules/memory.py delete_conversation 주석 참조). 그런데 fork / share /
+# duplicate / public-share-view 는 이관 당시 raw MySQL 경로가 남아
+# `Table 'agent_memory.agentmemorymessages' doesn't exist` 류 500 을 던졌다.
+# `/api/history`(_list_conversations_pg) 등 정상 endpoint 와 동일하게
+# AGENT_RUNTIME_READ_BACKEND=postgres 분기 + _pg_connect() 로 정정한다.
+# (MySQL else 분기는 app.py 의 _ensure_conversation_row / _assign_conversation_owner
+#  와 동일하게 legacy fallback 으로 보존 — 비-postgres 배포 호환용 dead path.)
+# ---------------------------------------------------------------------------
 
-    Returns: (success_dict, None) on success, (None, JSONResponse) on error.
-    """
-    # 원본 topic 조회 (AgentCoreConversations.topic 우선, 없으면 AgentMemoryKv 의 'topic').
+
+def _runtime_backend_is_pg() -> bool:
+    return os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres"
+
+
+def _meta_json_to_dict(meta_json: Any) -> dict[str, Any]:
+    """PG(jsonb→dict) / MySQL(longtext→str) 양쪽 meta_json 을 dict 로 정규화."""
+    if isinstance(meta_json, dict):
+        return dict(meta_json)
+    if meta_json:
+        try:
+            parsed = json.loads(meta_json)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return {}
+    return {}
+
+
+def _conv_load_topic(conn, conversation_id: str) -> str:
+    """원본 대화 topic. core_conversations.topic 우선, kv 'topic' fallback. 실패 시 '새 대화'."""
+    if _runtime_backend_is_pg():
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        """
+SELECT COALESCE(NULLIF(TRIM(c.topic), ''), NULLIF(TRIM(kv.value), ''), '새 대화')
+FROM agent_runtime.core_conversations c
+LEFT JOIN agent_runtime.kv kv
+  ON kv.conversation_id = c.conversation_id AND kv.key = 'topic'
+WHERE c.conversation_id = %s
+LIMIT 1
+                        """,
+                        (conversation_id,),
+                    )
+                    row = pgcur.fetchone()
+            finally:
+                pg.close()
+            return str(row[0]) if row and row[0] is not None else "새 대화"
+        except Exception:
+            return "새 대화"
     try:
         cur = conn.cursor()
         cur.execute(
@@ -8196,59 +8245,361 @@ LEFT JOIN AgentMemoryKv kv
 WHERE c.conversation_id = %s
 LIMIT 1
             """,
-            (source_id,),
+            (conversation_id,),
         )
         row = cur.fetchone()
         cur.close()
-        source_topic = str(row[0]) if row and row[0] is not None else "새 대화"
+        return str(row[0]) if row and row[0] is not None else "새 대화"
     except Exception:
-        source_topic = "새 대화"
+        return "새 대화"
 
-    # 복사 대상 메시지 조회 (내부/시스템 메시지는 제외, 표시되는 스트림만 보존).
-    try:
-        cur = conn.cursor()
-        if from_id is not None:
+
+def _conv_load_product(conn, conversation_id: str) -> tuple[int | None, Any]:
+    """(product_id, product_mode_raw). 미존재/실패 시 (None, None)."""
+    row = None
+    if _runtime_backend_is_pg():
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        "SELECT product_id, product_mode FROM agent_runtime.core_conversations "
+                        "WHERE conversation_id = %s",
+                        (conversation_id,),
+                    )
+                    row = pgcur.fetchone()
+            finally:
+                pg.close()
+        except Exception:
+            return None, None
+    else:
+        try:
+            cur = conn.cursor()
             cur.execute(
-                """
-SELECT Id, Role, Content, CreatedAt, MetaJson
-FROM AgentMemoryMessages
-WHERE ConversationId = %s AND Id <= %s
-ORDER BY Id ASC
-                """,
-                (source_id, int(from_id)),
+                "SELECT product_id, product_mode FROM AgentCoreConversations WHERE conversation_id = %s",
+                (conversation_id,),
+            )
+            row = cur.fetchone()
+            cur.close()
+        except Exception:
+            return None, None
+    if not row:
+        return None, None
+    return (int(row[0]) if row[0] is not None else None, row[1])
+
+
+def _conv_load_messages_raw(conn, conversation_id: str, upto_id: int | None) -> list[tuple]:
+    """대화의 (id, role, content, created_at, meta_json) 행 목록 (id ASC).
+
+    upto_id 가 주어지면 id <= upto_id inclusive. meta_json 은 PG(jsonb)면 dict,
+    MySQL(longtext)이면 str 로 올 수 있어 호출자가 _meta_json_to_dict 로 정규화한다.
+    """
+    if _runtime_backend_is_pg():
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                if upto_id is not None:
+                    pgcur.execute(
+                        "SELECT id, role, content, created_at, meta_json "
+                        "FROM agent_runtime.messages "
+                        "WHERE conversation_id = %s AND id <= %s ORDER BY id ASC",
+                        (conversation_id, int(upto_id)),
+                    )
+                else:
+                    pgcur.execute(
+                        "SELECT id, role, content, created_at, meta_json "
+                        "FROM agent_runtime.messages "
+                        "WHERE conversation_id = %s ORDER BY id ASC",
+                        (conversation_id,),
+                    )
+                return list(pgcur.fetchall() or [])
+        finally:
+            pg.close()
+    cur = conn.cursor()
+    try:
+        if upto_id is not None:
+            cur.execute(
+                "SELECT Id, Role, Content, CreatedAt, MetaJson FROM AgentMemoryMessages "
+                "WHERE ConversationId = %s AND Id <= %s ORDER BY Id ASC",
+                (conversation_id, int(upto_id)),
             )
         else:
             cur.execute(
-                """
-SELECT Id, Role, Content, CreatedAt, MetaJson
-FROM AgentMemoryMessages
-WHERE ConversationId = %s
-ORDER BY Id ASC
-                """,
-                (source_id,),
+                "SELECT Id, Role, Content, CreatedAt, MetaJson FROM AgentMemoryMessages "
+                "WHERE ConversationId = %s ORDER BY Id ASC",
+                (conversation_id,),
             )
-        src_rows = cur.fetchall() or []
+        return list(cur.fetchall() or [])
+    finally:
         cur.close()
+
+
+def _conv_message_exists(conn, conversation_id: str, message_id: int) -> bool:
+    """message_id 가 conversation_id 의 메시지인지 검증."""
+    if _runtime_backend_is_pg():
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        "SELECT 1 FROM agent_runtime.messages WHERE conversation_id = %s AND id = %s LIMIT 1",
+                        (conversation_id, int(message_id)),
+                    )
+                    return pgcur.fetchone() is not None
+            finally:
+                pg.close()
+        except Exception:
+            return False
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT 1 FROM AgentMemoryMessages WHERE ConversationId = %s AND Id = %s LIMIT 1",
+            (conversation_id, int(message_id)),
+        )
+        return cur.fetchone() is not None
+    finally:
+        cur.close()
+
+
+def _conv_update_topic_product(
+    conn, conversation_id: str, topic: str, product_id: int | None, product_mode: str
+) -> None:
+    """새 대화 topic/product 갱신 (fork)."""
+    if _runtime_backend_is_pg():
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "UPDATE agent_runtime.core_conversations "
+                    "SET topic = %s, product_id = %s, product_mode = %s, updated_at = now() "
+                    "WHERE conversation_id = %s",
+                    (topic, int(product_id) if product_id else None, product_mode, conversation_id),
+                )
+        finally:
+            pg.close()
+        return
+    cur = conn.cursor()
+    cur.execute(
+        """
+UPDATE AgentCoreConversations
+SET topic = %s, product_id = %s, product_mode = %s, updated_at = CURRENT_TIMESTAMP
+WHERE conversation_id = %s
+        """,
+        (topic, int(product_id) if product_id else None, product_mode, conversation_id),
+    )
+    cur.close()
+
+
+def _conv_update_topic(conn, conversation_id: str, topic: str) -> None:
+    """대화 topic 만 갱신 (duplicate '사본:' prefix 적용)."""
+    if _runtime_backend_is_pg():
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "UPDATE agent_runtime.core_conversations "
+                    "SET topic = %s, updated_at = now() WHERE conversation_id = %s",
+                    (topic, conversation_id),
+                )
+        finally:
+            pg.close()
+        return
+    cur = conn.cursor()
+    cur.execute(
+        """
+UPDATE AgentCoreConversations
+SET topic = %s, updated_at = CURRENT_TIMESTAMP
+WHERE conversation_id = %s
+        """,
+        (topic, conversation_id),
+    )
+    cur.close()
+
+
+def _conv_copy_messages(
+    conn, new_cid: str, src_rows: list[tuple], source_id: str, from_id: int | None
+) -> int:
+    """src_rows((id, role, content, created_at, meta_json))를 new_cid 로 복제. 복제 수 반환.
+
+    내부/시스템 메시지(_is_internal_message)는 제외. 실패 시 예외를 전파하여 호출자가
+    delete_conversation_records 로 cleanup 하도록 한다.
+    """
+    use_pg = _runtime_backend_is_pg()
+    pg = None
+    if use_pg:
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+        writer = pg.cursor()
+    else:
+        writer = conn.cursor()
+    copied = 0
+    try:
+        for row in src_rows:
+            msg_id, role, content, created_at, meta_json = row
+            meta = _meta_json_to_dict(meta_json)
+            # _is_internal_message 는 str|None 시그니처 — PG dict 는 직렬화해서 전달.
+            meta_str_for_filter = json.dumps(meta) if meta else None
+            if _is_internal_message(role, content, meta_str_for_filter):
+                continue
+            meta["forked_from_conversation_id"] = source_id
+            meta["forked_from_message_id"] = int(msg_id) if msg_id is not None else None
+            if from_id is not None:
+                meta["forked_cut_message_id"] = int(from_id)
+            try:
+                meta_out = json.dumps(meta, ensure_ascii=False, default=str)
+            except Exception:
+                meta_out = json.dumps({"forked_from_conversation_id": source_id})
+            if use_pg:
+                writer.execute(
+                    "INSERT INTO agent_runtime.messages "
+                    "(conversation_id, role, content, created_at, meta_json) "
+                    "VALUES (%s, %s, %s, %s, %s::jsonb)",
+                    (new_cid, role, content, created_at, meta_out),
+                )
+            else:
+                writer.execute(
+                    """
+INSERT INTO AgentMemoryMessages (ConversationId, Role, Content, CreatedAt, MetaJson)
+VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (new_cid, role, content, created_at, meta_out),
+                )
+            copied += 1
+        return copied
+    finally:
+        try:
+            writer.close()
+        except Exception:
+            pass
+        if pg is not None:
+            pg.close()
+
+
+def _conv_load_share_meta(conn, conversation_id: str) -> dict[str, Any]:
+    """public share view 용 대화 메타.
+
+    topic / product_id / product_mode / owner_account_id 는 PG(core_conversations) 에서,
+    product_key / product_name(WebProducts) + owner_username(WebAccounts) 는 MySQL 에서
+    읽어 merge 한다 (web* 테이블은 Phase 3 이관 전까지 MySQL 잔존 → cross-DB join 불가).
+    반환 dict 키: topic, product_id, product_mode, product_key, product_name, owner_username.
+    """
+    if _runtime_backend_is_pg():
+        meta: dict[str, Any] = {}
+        owner_account_id: int | None = None
+        product_id: int | None = None
+        row = None
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        "SELECT topic, product_id, product_mode, owner_account_id "
+                        "FROM agent_runtime.core_conversations WHERE conversation_id = %s LIMIT 1",
+                        (conversation_id,),
+                    )
+                    row = pgcur.fetchone()
+            finally:
+                pg.close()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "_conv_load_share_meta: PG core_conversations read failed (conversation_id=%s)",
+                conversation_id, exc_info=True,
+            )
+        if row:
+            meta["topic"] = row[0]
+            product_id = int(row[1]) if row[1] is not None else None
+            meta["product_id"] = product_id
+            meta["product_mode"] = row[2]
+            owner_account_id = int(row[3]) if row[3] is not None else None
+        # MySQL enrichment: product (WebProducts) + owner display name (WebAccounts).
+        try:
+            if product_id is not None:
+                cur = conn.cursor(dictionary=True)
+                try:
+                    cur.execute(
+                        "SELECT ProductKey, Name FROM WebProducts WHERE Id = %s LIMIT 1",
+                        (product_id,),
+                    )
+                    prow = cur.fetchone() or {}
+                finally:
+                    cur.close()
+                meta["product_key"] = prow.get("ProductKey")
+                meta["product_name"] = prow.get("Name")
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "_conv_load_share_meta: product enrichment failed (conversation_id=%s)",
+                conversation_id, exc_info=True,
+            )
+        try:
+            if owner_account_id is not None:
+                cur = conn.cursor(dictionary=True)
+                try:
+                    cur.execute(
+                        "SELECT Username FROM WebAccounts WHERE Id = %s LIMIT 1",
+                        (owner_account_id,),
+                    )
+                    orow = cur.fetchone() or {}
+                finally:
+                    cur.close()
+                meta["owner_username"] = orow.get("Username")
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "_conv_load_share_meta: owner enrichment failed (conversation_id=%s)",
+                conversation_id, exc_info=True,
+            )
+        return meta
+    # MySQL legacy fallback (cutover 전 / 비-postgres 배포).
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+SELECT c.topic AS topic, c.product_id AS product_id, c.product_mode AS product_mode,
+       p.ProductKey AS product_key, p.Name AS product_name,
+       owner.Username AS owner_username
+FROM AgentCoreConversations c
+LEFT JOIN WebProducts p ON p.Id = c.product_id
+LEFT JOIN WebAccounts owner ON owner.Id = c.owner_account_id
+WHERE c.conversation_id = %s
+LIMIT 1
+            """,
+            (conversation_id,),
+        )
+        return cur.fetchone() or {}
+    finally:
+        cur.close()
+
+
+def _fork_conversation_impl(
+    conn,
+    account: dict[str, Any],
+    source_id: str,
+    from_id: int | None,
+) -> tuple[dict[str, Any] | None, JSONResponse | None]:
+    """REQ-20260514-0001: fork 본체 로직. 호출자가 source 접근 권한 + create 권한을 사전 검증한다.
+
+    Returns: (success_dict, None) on success, (None, JSONResponse) on error.
+    """
+    # cutover 후 topic/메시지/product 는 PG(agent_runtime) 에서 읽는다 (backend-aware helper).
+    source_topic = _conv_load_topic(conn, source_id)
+
+    # 복사 대상 메시지 조회 (내부/시스템 메시지는 _conv_copy_messages 가 제외).
+    try:
+        src_rows = _conv_load_messages_raw(conn, source_id, from_id)
     except Exception:
         return None, _json_error("failed to load source messages", 500)
 
-    # 원본 대화의 product_id 를 조회 (없으면 기본 Product).
+    # 원본 대화의 product_id / product_mode 조회 (없으면 기본 Product).
     # TASK-0052 Phase 1C G5 (Codex Claim 4 fork product_mode 복사 fix): product_mode 도 함께 조회하여 'auto' 보존.
     forked_product_mode = "pinned"
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT product_id, product_mode FROM AgentCoreConversations WHERE conversation_id = %s",
-            (source_id,),
-        )
-        row_pid = cur.fetchone()
-        cur.close()
-        forked_product_id = int(row_pid[0]) if row_pid and row_pid[0] is not None else None
-        if row_pid and row_pid[1] is not None:
-            forked_product_mode = _normalize_product_mode(row_pid[1], default="pinned")
-    except Exception:
-        forked_product_id = None
-        forked_product_mode = "pinned"
+    forked_product_id, _src_product_mode = _conv_load_product(conn, source_id)
+    if _src_product_mode is not None:
+        forked_product_mode = _normalize_product_mode(_src_product_mode, default="pinned")
     # auto 모드는 product_id 가 의미 없으므로 명시적으로 NULL 유지. pinned 인데 product_id 없으면 default 채움.
     if forked_product_mode == "auto":
         forked_product_id = None
@@ -8269,59 +8620,12 @@ ORDER BY Id ASC
         new_cid = _create_conv(conv_file=_account_conv_file(int(account["id"])))
         _assign_conversation_owner(conn, new_cid, int(account["id"]), force=True)
         new_topic = f"[Fork] {source_topic}"[:256]
-        cur = conn.cursor()
-        cur.execute(
-            """
-UPDATE AgentCoreConversations
-SET topic = %s,
-    product_id = %s,
-    product_mode = %s,
-    updated_at = CURRENT_TIMESTAMP
-WHERE conversation_id = %s
-            """,
-            (
-                new_topic,
-                int(forked_product_id) if forked_product_id else None,
-                forked_product_mode,
-                new_cid,
-            ),
-        )
-        cur.close()
+        _conv_update_topic_product(conn, new_cid, new_topic, forked_product_id, forked_product_mode)
     except Exception:
         return None, _json_error("failed to create forked conversation", 500)
 
-    copied = 0
     try:
-        cur = conn.cursor()
-        for row in src_rows:
-            msg_id, role, content, created_at, meta_json = row
-            if _is_internal_message(role, content, meta_json):
-                continue
-            meta: dict[str, Any] = {}
-            if meta_json:
-                try:
-                    parsed = json.loads(meta_json)
-                    if isinstance(parsed, dict):
-                        meta = parsed
-                except Exception:
-                    meta = {}
-            meta["forked_from_conversation_id"] = source_id
-            meta["forked_from_message_id"] = int(msg_id) if msg_id is not None else None
-            if from_id is not None:
-                meta["forked_cut_message_id"] = int(from_id)
-            try:
-                meta_out = json.dumps(meta, ensure_ascii=False, default=str)
-            except Exception:
-                meta_out = json.dumps({"forked_from_conversation_id": source_id})
-            cur.execute(
-                """
-INSERT INTO AgentMemoryMessages (ConversationId, Role, Content, CreatedAt, MetaJson)
-VALUES (%s, %s, %s, %s, %s)
-                """,
-                (new_cid, role, content, created_at, meta_out),
-            )
-            copied += 1
-        cur.close()
+        copied = _conv_copy_messages(conn, new_cid, src_rows, source_id, from_id)
     except Exception:
         # 중간 실패 시 새 대화 기록을 정리하고 error 반환.
         try:
@@ -8446,17 +8750,7 @@ def duplicate_conversation(cid: str, request: Request) -> JSONResponse:
         max_base = max(0, 256 - len("사본: "))
         new_topic = f"사본: {base[:max_base]}"
         try:
-            cur = conn.cursor()
-            cur.execute(
-                """
-UPDATE AgentCoreConversations
-SET topic = %s,
-    updated_at = CURRENT_TIMESTAMP
-WHERE conversation_id = %s
-                """,
-                (new_topic, payload["conversation_id"]),
-            )
-            cur.close()
+            _conv_update_topic(conn, str(payload["conversation_id"]), new_topic)
         except Exception:
             # best-effort: 사본 topic 갱신 실패는 응답을 막지 않으나 조용한 쓰기 실패를 가시화.
             logging.getLogger(__name__).warning(
@@ -8501,16 +8795,8 @@ LIMIT 1
 
 
 def _share_anchor_belongs_to_conversation(conn, conversation_id: str, anchor_message_id: int) -> bool:
-    """AnchorMessageId 가 해당 ConversationId 의 메시지인지 검증."""
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            "SELECT 1 FROM AgentMemoryMessages WHERE ConversationId = %s AND Id = %s LIMIT 1",
-            (conversation_id, int(anchor_message_id)),
-        )
-        return cur.fetchone() is not None
-    finally:
-        cur.close()
+    """AnchorMessageId 가 해당 ConversationId 의 메시지인지 검증 (backend-aware)."""
+    return _conv_message_exists(conn, conversation_id, int(anchor_message_id))
 
 
 # TASK-0094 Sprint 1 Phase 8 (D9 + R-F7): share-policy version 상수.
@@ -8559,31 +8845,9 @@ def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | No
     SHARE_POLICY_VERSION_CURRENT 보다 작으면 attachment_derived 메시지 본문 자동 redact.
     기존 token (PolicyVersion=1 또는 NULL) 도 배포 즉시 새 정책 적용.
     """
-    cur = conn.cursor(dictionary=True)
-    try:
-        if anchor_message_id is not None:
-            cur.execute(
-                """
-SELECT Id, Role, Content, CreatedAt, MetaJson
-FROM AgentMemoryMessages
-WHERE ConversationId = %s AND Id <= %s
-ORDER BY Id ASC
-                """,
-                (conversation_id, int(anchor_message_id)),
-            )
-        else:
-            cur.execute(
-                """
-SELECT Id, Role, Content, CreatedAt, MetaJson
-FROM AgentMemoryMessages
-WHERE ConversationId = %s
-ORDER BY Id ASC
-                """,
-                (conversation_id,),
-            )
-        rows = cur.fetchall() or []
-    finally:
-        cur.close()
+    # cutover 후 메시지는 PG(agent_runtime.messages) 에서 읽는다 (backend-aware helper).
+    # 반환 행은 (id, role, content, created_at, meta_json) tuple. meta_json 은 PG 면 dict.
+    rows = _conv_load_messages_raw(conn, conversation_id, anchor_message_id)
     visible: list[dict[str, Any]] = []
     # R-F7: 정책 version 비교 — token 발급 시 version < 현재 면 자동 redact 대상.
     redact_active = (
@@ -8591,24 +8855,28 @@ ORDER BY Id ASC
         or int(share_token_policy_version or 0) < SHARE_POLICY_VERSION_CURRENT
     )
     for row in rows:
-        role = str(row.get("Role") or "")
-        content = str(row.get("Content") or "")
-        meta_json = row.get("MetaJson")
-        if _is_internal_message(role, content, meta_json if isinstance(meta_json, str) else None):
+        msg_id, role_raw, content_raw, created_at, meta_json = row
+        role = str(role_raw or "")
+        content = str(content_raw or "")
+        meta_str = meta_json if isinstance(meta_json, str) else (
+            json.dumps(meta_json) if isinstance(meta_json, dict) else None
+        )
+        if _is_internal_message(role, content, meta_str):
             continue
         meta_obj: Any = None
-        if meta_json:
+        if isinstance(meta_json, dict):
+            meta_obj = dict(meta_json)
+        elif meta_json:
             try:
-                meta_obj = json.loads(meta_json) if isinstance(meta_json, str) else meta_json
+                meta_obj = json.loads(meta_json)
             except Exception:
                 meta_obj = None
         # D9 + R-F7: attachment_derived 메시지 redact (token PolicyVersion 무관, 현 정책 v2 부터 활성).
         if redact_active:
             content, _was_redacted, meta_obj = _share_redact_message_content(content, meta_obj)
-        created_at = row.get("CreatedAt")
         visible.append(
             {
-                "id": int(row.get("Id") or 0),
+                "id": int(msg_id or 0),
                 "role": role,
                 "content": content,
                 "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else (str(created_at) if created_at else None),
@@ -8878,25 +9146,9 @@ WHERE Token = %s AND RevokedAt IS NULL
         conversation_id = str(share.get("ConversationId") or "")
         anchor_id = share.get("AnchorMessageId")
         anchor_id_int = int(anchor_id) if anchor_id is not None else None
-        # 대화 topic + product context 조회.
-        cur = conn.cursor(dictionary=True)
-        try:
-            cur.execute(
-                """
-SELECT c.topic AS topic, c.product_id AS product_id, c.product_mode AS product_mode,
-       p.ProductKey AS product_key, p.Name AS product_name,
-       owner.Username AS owner_username
-FROM AgentCoreConversations c
-LEFT JOIN WebProducts p ON p.Id = c.product_id
-LEFT JOIN WebAccounts owner ON owner.Id = c.owner_account_id
-WHERE c.conversation_id = %s
-LIMIT 1
-                """,
-                (conversation_id,),
-            )
-            conv_meta = cur.fetchone() or {}
-        finally:
-            cur.close()
+        # 대화 topic + product context 조회 (cutover: core_conversations 는 PG,
+        # WebProducts/WebAccounts 는 MySQL → backend-aware merge helper).
+        conv_meta = _conv_load_share_meta(conn, conversation_id)
         # TASK-0094 Sprint 1 Phase 8 (D9 + R-F7): share token row 의 PolicyVersion 추출 후 redact 결정.
         share_policy_version_raw = share.get("PolicyVersion")
         share_policy_version: int | None
