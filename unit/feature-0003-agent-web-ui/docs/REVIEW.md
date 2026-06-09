@@ -1726,3 +1726,18 @@ source_of_truth: true
 - **권고 = 하이브리드**: ① core_messages(+로컬 sandbox) deep-copy now, ② 동일소유자 file blob 만 참조(후속), 코어 로더·IDOR 게이트·교차계정 reference 폐기.
 - **반영**: 사용자 결정으로 하이브리드 채택(ADR-WEB-0005). **Phase 1(core_messages 복사) 본 cycle 구현** — 코어 로더 무변경·스키마 변경 0·교차계정=snapshot 으로 F1(완화: copy 라 로더 자가치유)/F3/F4/F5 구조적 제거. 첨부는 Phase 2(후속, IDOR 동반 시 재-패널).
 - **Cross-ref**: DESIGN-fork-reference.md §14·§15 / ADR-WEB-0005 / CHG-20260609-FORK-CORE-CONTEXT / TASK-0170 / AC-0329.
+
+## REV-20260609-0004 [SUBAGENT:fix-first-then-ship] TASK-0171 fork 첨부 복사 (하이브리드 Phase 2)
+
+- **Mode**: SUBAGENT (적대적 staff 백엔드 + appsec/IDOR). 대상: `_copy_conversation_attachments` + fork 배선 코드.
+- **Verdict**: **FIX-FIRST → (수정 후) SHIP**. 접근모델 OK(IDOR/JSON/sandbox 격리/SQLi/commit), 교차계정 복사는 사용자 의도(full-copy) 정합. MAJOR 2 + MINOR 2 수정 요구.
+- **Findings & 반영**:
+  - #1 IDOR — **OK**: 새 ConversationId+fork AccountId 행은 `_account_can_access_attachment`(conv 소유) 그대로 통과, 게이트 변경 0.
+  - #2 [MAJOR] orphan blob: put→INSERT + fail-open 이 행 없는 blob 을 남겨 reconciliation 이 GC 못 함. → **수정**: INSERT 먼저 → put → put 실패 시 행 보상삭제(업로드 endpoint 패턴).
+  - #3 MetaJson — **OK**: mysql-connector 는 JSON 을 str 반환, pass-through 재삽입은 MySQL 이 JSON 파싱(이중인코딩 없음). csv/xlsx=NULL 정합.
+  - #4 재적재 — **OK**: 스키마명 `sha256(new_cid)` 라 fork 전용(공유 없음, F5 충족). blob 선복사로 재적재 입력 보장.
+  - #5 [MINOR] audit gap(교차계정 첨부 이동 미감사). → **수정**: `share.fork` ctx 에 attachments_copied/core_messages_copied 추가.
+  - #6 [MAJOR] quota 우회: 복사가 `_check_attachment_size_caps` 미수행 → 반복 fork storage 증식. → **수정**: 복사 전 per-file/conv/account cap 검사, 초과 skip.
+  - #7 [MINOR] test flap(ingest 타이밍/skip). → **수정**: ⊆+count 일관성으로 완화.
+- **Residual(수용)**: cap 초과 첨부는 silent skip(quota 정합 우선 — 제품이 fork 면제 원하면 별도 결정). 현 배포 sandbox 0 라 CSV 재적재는 미라이브검증(방어적 코드).
+- **Cross-ref**: CHG-20260609-FORK-ATTACHMENTS / ADR-WEB-0005 Phase 2 / TASK-0171 / AC-0330 / DESIGN-fork-reference.md §15.

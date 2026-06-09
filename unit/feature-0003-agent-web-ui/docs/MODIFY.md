@@ -2416,3 +2416,20 @@ source_of_truth: true
   - 스키마 변경·코어 로더 변경 0 — 순수 복사라 마이그레이션 0, 회귀 표면 최소(무-fork·기존 대화 무영향).
   - PG 전용: 비-postgres 배포는 core 복사 skip([]), fork 는 표시 메시지로 진행.
 - Rollback: 두 헬퍼 + _fork_conversation_impl 의 core 복사 블록 + core_copied 제거. fork 는 TASK-0167 동작(표시만 복사)으로 회귀(문맥 상실 재발).
+
+## CHG-20260609-FORK-ATTACHMENTS
+- Date: 2026-06-09
+- Related Requirement: TASK-0171 (**Major §12.3** — fork 첨부 복사, 하이브리드 Phase 2, ADR-WEB-0005)
+- Summary: fork/duplicate/공유-fork 본에서 사용자가 원본 첨부 파일을 열람·다운로드하고 어시스턴트가 첨부 맥락을 이어가도록, fork 시 첨부를 복사한다. 신규 `_copy_conversation_attachments(conn, source_cid, new_cid, fork_account_id)` 가 `WebConversationAttachments` 활성 행(`DeletedAt IS NULL`)을 새 ConversationId + fork 소유 AccountId 로 복사하고, blob 은 **독립 복사**(`storage_minio.get_object_bytes`→`put_object_bytes`, 새 ObjectKey)한다. ObjectKey 공유는 reconciliation 이 공유 blob 을 hard-delete 해 fork 가 404 되는 refcount 위험이 있고 server-side copy 가 없어 get+put 으로 독립 복사한다(ADR 의 "blob 재업로드 0" 에서 안전상 이탈). CSV/XLSX 는 `_ingest_attachment_background` background 재적재로 **fork 전용 sandbox 스키마**(`sha256(new_cid)`)를 만든다(조상 스키마 공유 금지 — DESIGN §14 F5). `_fork_conversation_impl` 에 배선(core_messages 복사 직후), 응답에 `attachments_copied` 추가. 첨부는 보조물이라 per-attachment fail-open(단일 실패가 fork 를 막지 않음). IDOR 게이트(`_account_can_access_attachment`, conversation 소유 기반) 무변경 — fork 가 자기 행 소유라 그대로 통과.
+- outside-voice(REV-20260609-0004, FIX-FIRST) 반영:
+  - #2 (MAJOR) orphan blob: put→INSERT + fail-open 이 행 없는 blob 을 남겨 reconciliation 이 GC 못 함 → **INSERT 먼저 → put → put 실패 시 행 보상삭제**(업로드 endpoint 검증 순서). 양방향 고아(행 없는 blob / blob 없는 행) 차단.
+  - #6 (MAJOR) quota 우회: 복사가 cap 검사 미수행 → 반복 fork 로 storage 무한 증식 → 복사 전 `_check_attachment_size_caps`(per-file/conv/account 누적) 검사, 초과분 skip(log).
+  - #5 (MINOR) audit: 교차계정 fork 가 타 계정 첨부를 forker 로 이동하는 보안민감 이벤트 → `public_share_fork` 의 `share.fork` audit ctx 에 `attachments_copied`/`core_messages_copied` 건수 기록(파일명·바이트 비노출, D12).
+  - #7 (MINOR) test flap: ingest 타이밍/cap-skip 대비 테스트를 ⊆+count 일관성으로 완화.
+- Files:
+  - unit/feature-0003-agent-web-ui/src/app.py (_copy_conversation_attachments + fork 배선 + share.fork audit ctx)
+  - unit/feature-0003-agent-web-ui/tests/test_fork_attachments.py (A1~A4 신규)
+- Notes:
+  - 현 배포엔 활성 sandbox 0개(첨부는 text kind) — CSV 재적재 경로는 미사용/미라이브검증, 코드는 방어적 포함.
+  - WebConversationAttachments 는 MySQL web 테이블(conn autocommit=True → 즉시 커밋). soft-deleted(DeletedAt) 첨부는 SELECT 에서 제외(tombstone 미복사).
+- Rollback: `_copy_conversation_attachments` + fork 배선 + audit ctx 2키 + 테스트 제거. fork 는 TASK-0170 동작(첨부 미복사)으로 회귀.

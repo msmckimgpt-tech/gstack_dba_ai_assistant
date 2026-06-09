@@ -8826,6 +8826,126 @@ def _conv_copy_core_messages(conn, new_cid: str, src_core_rows: list[tuple]) -> 
         pg.close()
 
 
+def _copy_conversation_attachments(
+    conn, source_conversation_id: str, new_cid: str, fork_account_id: int
+) -> tuple[int, list[tuple[int, str, str]]]:
+    """TASK-0171 Phase 2 (ADR-WEB-0005 하이브리드): 원본 대화의 활성 첨부를 fork 본으로 복사.
+
+    - `WebConversationAttachments` 행을 새 ConversationId + fork 소유 AccountId 로 복사
+      → fork 소유자가 목록/다운로드 게이트(`_account_can_access_attachment`, conversation
+      소유 기반)를 그대로 통과(IDOR 게이트 변경 0).
+    - blob 은 **독립 복사**(get_object_bytes → put_object_bytes, 새 ObjectKey). ObjectKey
+      공유 시 원본 삭제→reconciliation 이 공유 blob 을 hard-delete 해 fork 가 404 되는
+      refcount 위험이 있고, storage_minio 에 server-side copy 가 없어 get+put 으로 복사한다
+      (DESIGN §6 / ADR-WEB-0005 의 "blob 재업로드 0" 에서 안전상 이탈 — 근거 주석).
+    - CSV/XLSX 는 fork 전용 sandbox 를 위해 재적재 대상으로 표시(UploadStatus='uploaded' +
+      MetaJson NULL)하고 (new_att_id, new_object_key, kind) 를 반환 → 호출자가 background
+      ingest 를 spawn(조상 sandbox 공유 금지 — DESIGN §14 F5).
+    - 첨부는 보조물이므로 **per-attachment fail-open**: 단일 첨부 복사 실패가 fork 전체를
+      막지 않는다(대화·문맥은 이미 복사됨). 실패는 log + skip, 성공분만 카운트.
+
+    반환: (copied_count, reingest_specs). reingest_specs = csv/xlsx 의 [(new_att_id, new_object_key, kind), ...].
+    `WebConversationAttachments` 는 MySQL web 테이블이므로 conn(MySQL) 사용.
+    """
+    import uuid as _uuid
+    from web.modules import storage_minio
+
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            "SELECT Id, ObjectKey, OriginalFilename, FilenameHmac, MimeType, SizeBytes, "
+            "SizeBucket, Sha256, Kind, UploadStatus, MetaJson "
+            "FROM WebConversationAttachments "
+            "WHERE ConversationId = %s AND DeletedAt IS NULL ORDER BY Id ASC",
+            (source_conversation_id,),
+        )
+        src_atts = cur.fetchall() or []
+    finally:
+        cur.close()
+
+    copied = 0
+    reingest: list[tuple[int, str, str]] = []
+    for att in src_atts:
+        old_att_id = att.get("Id")
+        kind = str(att.get("Kind") or "other")
+        old_key = str(att.get("ObjectKey") or "")
+        filename = str(att.get("OriginalFilename") or "file")
+        mime = str(att.get("MimeType") or "application/octet-stream")
+        size_bytes = int(att.get("SizeBytes") or 0)
+        try:
+            # 0) 용량 cap 검사 (per-file / per-conv / per-account, D8). 업로드와 동일 게이트로
+            #    반복 fork 를 통한 quota/storage 우회를 차단(REV-20260609-0004 #6). 누적 측정이라
+            #    같은 fork 안에서 이미 복사한 첨부도 다음 검사에 반영된다. 초과분은 skip(fail-open).
+            cap_ok, cap_reason = _check_attachment_size_caps(
+                conn,
+                account_id=int(fork_account_id),
+                conversation_id=new_cid,
+                new_size_bytes=size_bytes,
+            )
+            if not cap_ok:
+                logging.getLogger(__name__).warning(
+                    "_copy_conversation_attachments: 용량 cap 초과로 첨부 skip "
+                    "(source=%s old_att_id=%s size=%s reason=%s)",
+                    source_conversation_id, old_att_id, size_bytes, cap_reason,
+                )
+                continue
+            new_key = storage_minio.make_object_key(new_cid, _uuid.uuid4().hex, filename)
+            is_sandbox_kind = kind in ("csv", "xlsx")
+            new_status = "uploaded" if is_sandbox_kind else str(att.get("UploadStatus") or "uploaded")
+            meta_raw = att.get("MetaJson")
+            if is_sandbox_kind:
+                new_meta = None
+            elif isinstance(meta_raw, (dict, list)):
+                new_meta = json.dumps(meta_raw, ensure_ascii=False, default=str)
+            else:
+                new_meta = meta_raw
+            # 1) 행 INSERT 먼저 (업로드 endpoint 패턴 — REV-20260609-0004 #2 orphan 방지).
+            wcur = conn.cursor()
+            try:
+                wcur.execute(
+                    "INSERT INTO WebConversationAttachments "
+                    "(ConversationId, AccountId, ObjectKey, OriginalFilename, FilenameHmac, "
+                    " MimeType, SizeBytes, SizeBucket, Sha256, Kind, UploadStatus, MetaJson) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        new_cid, int(fork_account_id), new_key, filename,
+                        att.get("FilenameHmac"), mime, size_bytes,
+                        att.get("SizeBucket"), att.get("Sha256"), kind, new_status, new_meta,
+                    ),
+                )
+                new_att_id = int(wcur.lastrowid or 0)
+            finally:
+                wcur.close()
+            # 2) blob 독립 복사 (get → put). 실패 시 방금 INSERT 한 행을 보상 삭제 —
+            #    blob 없는 고아 행도, 행 없는 고아 blob 도 남기지 않는다(reconciliation 정합).
+            try:
+                blob = storage_minio.get_object_bytes(old_key)
+                storage_minio.put_object_bytes(new_key, blob, content_type=mime)
+            except Exception:
+                try:
+                    dcur = conn.cursor()
+                    dcur.execute("DELETE FROM WebConversationAttachments WHERE Id = %s", (new_att_id,))
+                    dcur.close()
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "_copy_conversation_attachments: blob 실패 후 행 보상삭제 실패 (att_id=%s)",
+                        new_att_id, exc_info=True,
+                    )
+                raise
+            copied += 1
+            if is_sandbox_kind and new_att_id:
+                reingest.append((new_att_id, new_key, kind))
+        except Exception:
+            # fail-open: 단일 첨부 복사 실패는 fork 를 막지 않는다(가시화 후 skip).
+            logging.getLogger(__name__).warning(
+                "_copy_conversation_attachments: 첨부 복사 실패 skip "
+                "(source=%s old_att_id=%s kind=%s)",
+                source_conversation_id, old_att_id, kind, exc_info=True,
+            )
+            continue
+    return copied, reingest
+
+
 def _conv_load_share_meta(conn, conversation_id: str) -> dict[str, Any]:
     """public share view 용 대화 메타.
 
@@ -9001,6 +9121,42 @@ def _fork_conversation_impl(
             pass
         return None, _json_error("failed to copy conversation context", 500)
 
+    # TASK-0171 Phase 2 (ADR-WEB-0005 하이브리드): 첨부 복사 — 행 + 독립 blob.
+    # 사용자가 fork 본에서 첨부 파일을 열람/다운로드할 수 있도록 WebConversationAttachments
+    # 행을 fork 소유로 복사하고 blob 을 독립 복사한다(IDOR 게이트 무변경). CSV/XLSX 는
+    # fork 전용 sandbox 를 background 재적재로 생성(조상 sandbox 공유 금지). 첨부는 보조물
+    # 이라 fail-open — 복사 실패가 대화/문맥 fork 를 막지 않는다(대화·문맥은 이미 복사됨).
+    att_copied = 0
+    reingest_specs: list[tuple[int, str, str]] = []
+    try:
+        att_copied, reingest_specs = _copy_conversation_attachments(
+            conn, source_id, new_cid, int(account["id"])
+        )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_fork_conversation_impl: 첨부 복사 단계 실패 (new_cid=%s source=%s)",
+            new_cid, source_id, exc_info=True,
+        )
+    # CSV/XLSX fork sandbox 재적재 (upload endpoint 와 동일 background 패턴).
+    for _att_id, _obj_key, _kind in reingest_specs:
+        try:
+            threading.Thread(
+                target=_ingest_attachment_background,
+                kwargs={
+                    "attachment_id": int(_att_id),
+                    "conversation_id": new_cid,
+                    "object_key": str(_obj_key),
+                    "kind": str(_kind),
+                },
+                name=f"fork-reingest-{_att_id}",
+                daemon=True,
+            ).start()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "_fork_conversation_impl: fork sandbox 재적재 spawn 실패 (att_id=%s)",
+                _att_id, exc_info=True,
+            )
+
     try:
         _set_account_current_conversation(conn, int(account["id"]), new_cid)
     except Exception:
@@ -9015,6 +9171,7 @@ def _fork_conversation_impl(
             "source": source_id,
             "copied": copied,
             "core_copied": core_copied,
+            "attachments_copied": att_copied,
             "from_message_id": int(from_id) if from_id is not None else None,
             "topic": new_topic,
         },
@@ -9658,6 +9815,10 @@ def public_share_fork(token: str, request: Request) -> JSONResponse:
                 "source_share_id": int(share.get("Id") or 0) if share.get("Id") is not None else None,
                 "source_token_prefix": str(token)[:8],
                 "new_conversation_id": str(new_cid) if new_cid else None,
+                # REV-20260609-0004 #5: 교차계정 fork 가 원본 첨부/문맥을 forker 계정으로
+                # 복제하는 보안민감 이벤트의 forensics — 건수만 기록(파일명/바이트 비노출, D12).
+                "attachments_copied": int(payload.get("attachments_copied") or 0) if isinstance(payload, dict) else 0,
+                "core_messages_copied": int(payload.get("core_copied") or 0) if isinstance(payload, dict) else 0,
             },
         )
         return JSONResponse(payload)
