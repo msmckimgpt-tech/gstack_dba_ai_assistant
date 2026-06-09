@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260609-0173 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]
+- Date: 2026-06-09
+- Cycle: TASK-0173 (실행 단계 "근거(reason)" 사용자 노출), **Minor §12.3**
+- 사유: web-ui 정적자산(app.js/styles.css/index.html)만 변경. 백엔드(app.py/agent_core)·RBAC·스키마·엔드포인트·시크릿 무변경. 변경 본질은 **이미 end-to-end 로 흐르는 `reason` 데이터의 프런트 렌더링 복원**(과거 `.step-reason{display:none}` 으로 숨긴 것을 가시화) — 신규 데이터 노출 경로 없음. 노출되는 `reason` 은 LLM tool_notes 의 명시 user-facing 근거이며 provider chain-of-thought(`reasoning_content`)와 분리·폐기되어 민감정보 누출 면 없음(agent_core.py:2054-2056). XSS=`textContent` 사용. node --check PASS. 시각 검증=Windows-browser(PB-0008) 권장.
+
 ## REV-20260609-0169 [SUBAGENT: general-purpose 적대적 리뷰 ×2 (설계 전 + 구현 diff) — ask-worker, NEEDS-FIXES→FIXED, BLOCKER 3 + MAJOR 4 흡수]
 - Date: 2026-06-09 (TASK-0169)
 - 대상: out-of-process ask-worker 실행모델(feature-0003 web + feature-0002 agent-core 양면). Critical §12.3 (agent 실행 경계·동시성·크래시 시맨틱). feedback_outside_voice_for_rbac 정책 → outside-voice 필수.
