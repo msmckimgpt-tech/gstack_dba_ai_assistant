@@ -702,6 +702,8 @@ async function loadUsage() {
   const modelChartEl = document.getElementById("usageModelChart");
   const roleChartEl = document.getElementById("usageRoleChart");
   const acctChartEl = document.getElementById("usageAccountChart");
+  const roleCostChartEl = document.getElementById("usageRoleCostChart");
+  const acctCostChartEl = document.getElementById("usageAccountCostChart");
   const trendTitleEl = document.getElementById("usageTrendTitle");
   const GRAN_LABEL = { hour: "시간별", day: "일별", week: "주별", month: "월별" };
   if (trendTitleEl) trendTitleEl.textContent = GRAN_LABEL[gran] || "일별";
@@ -816,13 +818,14 @@ async function loadUsage() {
     bindTip(el);
   };
   // 가로 막대 (역할별/계정별). rows = [{label, value, tip}].
-  const renderHBar = (el, rows) => {
+  const renderHBar = (el, rows, valueFmt) => {
     if (!el) return;
+    const fmt = valueFmt || num;
     const data = (rows || []).filter((r) => r.value > 0);
     if (!data.length) { el.innerHTML = "<p style='color:#888;'>데이터 없음</p>"; return; }
     const max = Math.max(...data.map((r) => r.value));
     const cmap = colorMapFor(data.map((r) => r.label));
-    el.innerHTML = data.map((r) => `<div style='margin:8px 0;' data-tip='${r.tip || (esc(r.label) + "<br><b>" + num(r.value) + "</b> 토큰")}'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;'><span>${esc(r.label)}</span><strong>${num(r.value)}</strong></div><div style='background:#f1f5f9;border-radius:4px;height:14px;overflow:hidden;'><div style='width:${(r.value / max * 100).toFixed(1)}%;height:100%;background:${cmap[r.label]};border-radius:4px;'></div></div></div>`).join("");
+    el.innerHTML = data.map((r) => `<div style='margin:8px 0;' data-tip='${r.tip || (esc(r.label) + "<br><b>" + fmt(r.value) + "</b>")}'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;'><span>${esc(r.label)}</span><strong>${fmt(r.value)}</strong></div><div style='background:#f1f5f9;border-radius:4px;height:14px;overflow:hidden;'><div style='width:${(r.value / max * 100).toFixed(1)}%;height:100%;background:${cmap[r.label]};border-radius:4px;'></div></div></div>`).join("");
     bindTip(el);
   };
   // TASK-0163: fmt 에 행 전체(r)도 전달 — "별칭 → 해소모델" 등 다중 필드 표시용.
@@ -859,6 +862,15 @@ async function loadUsage() {
       label: acctLabel(r), value: r.total_tokens || 0,
       tip: `${esc(acctLabel(r))}${r.role ? " · " + esc(r.role) : ""}<br><b>${num(r.total_tokens)}</b> 토큰<br>${num(r.calls)} 호출`,
     })));
+    // TASK-0176: 역할별·계정별 추정 비용 가로 막대 (claude 등 과금 모델만 > $0).
+    renderHBar(roleCostChartEl, (data.by_role || []).map((r) => ({
+      label: String(r.role == null ? "-" : r.role), value: r.cost_usd || 0,
+      tip: `${esc(String(r.role == null ? "-" : r.role))}<br><b>${usd(r.cost_usd)}</b> 추정 비용`,
+    })), usd);
+    renderHBar(acctCostChartEl, (data.by_account || []).map((r) => ({
+      label: acctLabel(r), value: r.cost_usd || 0,
+      tip: `${esc(acctLabel(r))}${r.role ? " · " + esc(r.role) : ""}<br><b>${usd(r.cost_usd)}</b> 추정 비용`,
+    })), usd);
     // 상세 표 — 모델별(별칭→해소 + prompt/completion + 추정비용) / 역할별 / 계정별.
     if (modelEl) modelEl.innerHTML = tbl(data.by_model, [
       { key: "resolved_model", label: "모델", fmt: (v, r) => {

@@ -429,6 +429,11 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   (`#usageAccountChart`) ⑤ 커스텀 hover 툴팁(`data-tip`/`bindTip`, SVG `<title>` 대체 — 값/비중/호출/비용)
   ⑥ 막대 위 총합 값 라벨 ⑦ 집계단위 드롭다운(`#usageGranSel`)·기간 옵션(1일/1년) ⑧ 요약 추정비용
   카드 + 모델별 표 prompt/completion·비용 컬럼. 비용은 추정(로컬=$0).
+- LLM 사용량 역할별·계정별 추정 비용 차트 (TASK-0176): `admin_llm_usage` by_account 를 계정 ×
+  `COALESCE(resolved_model, model)` 분해로 집계 후 Python 으로 계정별 `cost_usd`(모델별 단가 합)
+  산출, `_aggregate_usage_by_role` 가 역할별 `cost_usd` 재합산 → `by_account[].cost_usd`·`by_role[].cost_usd`.
+  admin.js `renderHBar(el, rows, valueFmt)` 의 valueFmt(usd)로 역할별/계정별 추정 비용 가로 막대
+  (`#usageRoleCostChart`/`#usageAccountCostChart`, 비용 0 행 제외). 비용은 claude 등 과금 모델 추정만(로컬=$0).
 - 관리 콘솔 레이아웃 스크롤 (TASK-0167): `.admin-shell`·`.admin-workspace` 는 `height:100vh;
   overflow:hidden` 이고 각 `.admin-pane` 이 자체 스크롤한다. 단순 세로 흐름 pane(dashboard·usage)은
   `overflow-y:auto` 를 직접 가지며(styles.css), list-detail pane(accounts/roles/products/audits)은

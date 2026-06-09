@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260609-0176
+- Date: 2026-06-09
+- TASK-Cycle: TASK-0176, **Minor §12.3** — LLM 사용량 역할별·계정별 추정 비용 차트
+- Summary: 사용자 요청. 역할별/계정별 토큰 막대 외에 추정 비용 막대 차트 추가. 비용은 모델별 단가라 계정×모델 분해로 집계.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`: `admin_llm_usage` by_account 쿼리를 `c.owner_account_id` 단일 GROUP BY → `owner_account_id, COALESCE(resolved_model,model)` 분해 + prompt/completion 추가, Python 계정별 fold(`_estimate_llm_cost_usd` 모델별 합 = `cost_usd`). `_aggregate_usage_by_role` 가 by_account 의 `cost_usd` 를 역할 버킷별 재합산(`by_role[].cost_usd`).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: `renderHBar(el, rows, valueFmt)` 에 valueFmt 인자(기본 num, 비용은 usd) — strong·tip 포맷 적용. 역할별/계정별 추정 비용 차트 렌더 호출(`#usageRoleCostChart`/`#usageAccountCostChart`, cost_usd, 0 행 제외). element 선언 2개 추가.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: 계정별 차트 다음에 "추정 비용" 섹션(역할별·계정별 2열 #usageRoleCostChart/#usageAccountCostChart) 추가. 캐시버스터 admin.js `?v=20260609-usage-charts2` → `?v=20260609-usage-cost`.
+- Note: 권한/엔드포인트/스키마/시크릿 신규 0. 단가는 TASK-0166 의 `_LLM_PRICE_USD_PER_1M` 재사용(claude 근사 추정, 로컬=$0). by_account 가 모델 분해 fold 로 바뀌어도 응답 shape(account_id/calls/total_tokens + enrich username/role)는 동일 + cost_usd 추가.
+- Review: REV-20260609-0176 [SKIPPED:frontend-viz-no-rbac-no-schema]. Windows-browser(PB-0008) 검증 배포 후.
+
 ## CHG-20260609-0173
 - Date: 2026-06-09 (TASK-0173)
 - Scope: 실행 단계(step) "근거(reason)" 사용자 노출 — frontend-only(web-ui 정적자산만).

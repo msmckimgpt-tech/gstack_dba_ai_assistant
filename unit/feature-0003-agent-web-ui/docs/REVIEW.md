@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260609-0176 [SKIPPED:frontend-viz-no-rbac-no-schema]
+- Date: 2026-06-09
+- Cycle: TASK-0176 (LLM 사용량 역할별·계정별 추정 비용 차트), **Minor §12.3**
+- 사유: frontend 시각화(순수 SVG 비용 막대) + 백엔드는 기존 llm_usage 컬럼 read 집계를 계정×모델 분해로 확장(파라미터화된 기존 `win` 패턴, 신규 SQL 삽입 없음). 비용은 TASK-0166 의 추정 단가 상수 재사용(부정확성 기존 명시). RBAC/스키마/시크릿/신규 엔드포인트 0, 권한 게이트(`console.usage.read` admin) 무변경. node --check/py_compile + make test 269 passed/5 skipped(회귀 0). 시각 검증 Windows-browser(PB-0008).
+
 ## REV-20260609-0173 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]
 - Date: 2026-06-09
 - Cycle: TASK-0173 (실행 단계 "근거(reason)" 사용자 노출), **Minor §12.3**

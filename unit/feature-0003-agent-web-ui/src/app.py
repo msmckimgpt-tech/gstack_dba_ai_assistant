@@ -9673,7 +9673,7 @@ WHERE Token = %s AND RevokedAt IS NULL
         anchor_id_int = int(anchor_id) if anchor_id is not None else None
         # 대화 topic + product context 조회 (cutover: core_conversations 는 PG,
         # WebProducts/WebAccounts 는 MySQL → backend-aware merge helper).
-        # TASK-0168 (F1, REV-20260609-0001): 데이터 로드(PG core_conversations/messages) 실패 시
+        # TASK-0176 (F1, REV-20260609-0001): 데이터 로드(PG core_conversations/messages) 실패 시
         # bare 500 대신 graceful JSON 500 으로 일관된 에러 계약을 준다 (fork 의 명시 500 래핑과 대칭).
         # 주의: 상단 ViewCount++ 는 revoke race 가드 겸용이라 그대로 두며 — 로드 실패 시 1 과대
         # 카운트는 허용 가능한 soft-metric 오차(race 정합 우선). 빈 공유뷰를 렌더하느니 명시 실패.
@@ -13647,9 +13647,12 @@ def _aggregate_usage_by_role(by_account: list[dict]) -> list[dict]:
             key = "(시스템)"
         else:
             key = row.get("role") or "(역할 없음)"
-        b = buckets.setdefault(key, {"role": key, "calls": 0, "total_tokens": 0})
+        b = buckets.setdefault(key, {"role": key, "calls": 0, "total_tokens": 0, "cost_usd": 0.0})
         b["calls"] += int(row.get("calls") or 0)
         b["total_tokens"] += int(row.get("total_tokens") or 0)
+        b["cost_usd"] += float(row.get("cost_usd") or 0)  # TASK-0176: 역할별 추정 비용 합산
+    for b in buckets.values():
+        b["cost_usd"] = round(b["cost_usd"], 4)
     return sorted(buckets.values(), key=lambda x: x["total_tokens"], reverse=True)
 
 
@@ -13719,14 +13722,27 @@ def admin_llm_usage(request: Request) -> JSONResponse:
                                      "total_tokens": int(r[3] or 0), "prompt_tokens": pt_m,
                                      "completion_tokens": ct_m,
                                      "cost_usd": _estimate_llm_cost_usd(r[1], pt_m, ct_m)})
+                # TASK-0176: 계정 × 모델 분해 → 계정별 추정 비용 산출(비용은 모델별 단가라
+                # 모델 분해 필수). Python 으로 계정별 fold(calls/tokens/cost). 역할별 비용은
+                # _aggregate_usage_by_role 가 enrich 된 by_account 의 cost_usd 를 재합산.
                 cur.execute(
-                    f"SELECT c.owner_account_id, count(*), sum(u.total_tokens) "
+                    f"SELECT c.owner_account_id, COALESCE(u.resolved_model, u.model), count(*), "
+                    f"sum(u.total_tokens), sum(u.prompt_tokens), sum(u.completion_tokens) "
                     f"FROM agent_runtime.llm_usage u "
                     f"LEFT JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
-                    f"WHERE u.created_at >= {win} GROUP BY c.owner_account_id ORDER BY 3 DESC NULLS LAST LIMIT 100"
+                    f"WHERE u.created_at >= {win} GROUP BY c.owner_account_id, COALESCE(u.resolved_model, u.model)"
                 )
-                by_account = [{"account_id": (int(r[0]) if r[0] is not None else None),
-                               "calls": int(r[1]), "total_tokens": int(r[2] or 0)} for r in (cur.fetchall() or [])]
+                _acct_fold: dict = {}
+                for r in (cur.fetchall() or []):
+                    aid = int(r[0]) if r[0] is not None else None
+                    mk, calls_r, tok_r, pt_r, ct_r = r[1], int(r[2]), int(r[3] or 0), int(r[4] or 0), int(r[5] or 0)
+                    e = _acct_fold.setdefault(aid, {"account_id": aid, "calls": 0, "total_tokens": 0, "cost_usd": 0.0})
+                    e["calls"] += calls_r
+                    e["total_tokens"] += tok_r
+                    e["cost_usd"] += _estimate_llm_cost_usd(mk, pt_r, ct_r)
+                by_account = sorted(_acct_fold.values(), key=lambda x: x["total_tokens"], reverse=True)[:100]
+                for a in by_account:
+                    a["cost_usd"] = round(a["cost_usd"], 4)
                 # TASK-0166: granularity bucket(시/일/주/월) 시계열 — 호출/토큰/prompt/completion.
                 cur.execute(
                     f"SELECT {bucket_expr} AS b, count(*), sum(total_tokens), "

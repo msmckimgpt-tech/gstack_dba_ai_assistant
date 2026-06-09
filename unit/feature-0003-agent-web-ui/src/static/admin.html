@@ -363,6 +363,18 @@
         </div>
         <h3 style="margin-top:22px;">계정별</h3>
         <div id="usageAccountChart"></div>
+        <!-- TASK-0176: 역할별·계정별 추정 비용 차트 (claude 등 과금 모델만 > $0). -->
+        <h3 style="margin-top:22px;">추정 비용 <span style="color:#888;font-weight:400;font-size:.85em;">(역할별 · 계정별 — claude 등 과금 모델 기준 추정, 로컬 LLM=$0)</span></h3>
+        <div class="usage-chart-row" style="display:flex;gap:32px;flex-wrap:wrap;margin-top:8px;">
+          <div style="flex:1;min-width:300px;">
+            <h4 style="margin:6px 0;color:#555;">역할별 비용</h4>
+            <div id="usageRoleCostChart"></div>
+          </div>
+          <div style="flex:1;min-width:300px;">
+            <h4 style="margin:6px 0;color:#555;">계정별 비용</h4>
+            <div id="usageAccountCostChart"></div>
+          </div>
+        </div>
         <details style="margin-top:26px;">
           <summary style="cursor:pointer;color:#555;font-weight:600;">상세 표 (모델별 · 역할별 · 계정별)</summary>
           <h3 style="margin-top:14px;">모델별</h3>
@@ -452,6 +464,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260609-usage-charts2"></script>
+  <script src="/static/admin.js?v=20260609-usage-cost"></script>
 </body>
 </html>
