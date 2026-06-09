@@ -1599,10 +1599,37 @@ function renderAccessNotice() {
   }
 }
 
+function collapseSqlCodeBlocksInContent(target) {
+  // marked 렌더 결과의 ```sql 블록을 기본 숨김 + "쿼리 보기" 토글로 교체.
+  // 쿼리를 직접 노출하지 않고, 표 형식이 주된 답변 전달 수단이 되도록 함.
+  const codeEls = target.querySelectorAll("code.language-sql, code.language-SQL");
+  codeEls.forEach((codeEl) => {
+    const preEl = codeEl.parentElement;
+    if (!preEl || preEl.tagName !== "PRE") return;
+    const wrap = document.createElement("div");
+    wrap.className = "sql-toggle-wrap";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "tool-btn sql-toggle-btn";
+    btn.textContent = "쿼리 보기";
+    btn.setAttribute("aria-expanded", "false");
+    preEl.hidden = true;
+    btn.addEventListener("click", () => {
+      const willShow = preEl.hidden;
+      preEl.hidden = !willShow;
+      btn.textContent = willShow ? "쿼리 닫기" : "쿼리 보기";
+      btn.setAttribute("aria-expanded", String(willShow));
+    });
+    preEl.parentNode.insertBefore(wrap, preEl);
+    wrap.append(btn, preEl);
+  });
+}
+
 function renderMessageContent(target, content = "", role = "assistant") {
   target.className = "message-content";
   if (role === "assistant") {
     target.innerHTML = markdownToHtml(content);
+    collapseSqlCodeBlocksInContent(target);
     enhanceFilePreviewLinks(target);
     return;
   }
@@ -1945,17 +1972,12 @@ function buildSqlStepPanel(step) {
   const panel = document.createElement("div");
   panel.className = "sql-result-group";
 
-  if (step.sql) {
-    const pre = document.createElement("pre");
-    pre.className = "sql-block";
-    pre.textContent = formatSqlForDisplay(step.sql);
-    panel.appendChild(pre);
-  }
-
+  // 결과 테이블을 쿼리보다 먼저 표시 — 표 형식이 주된 답변 전달 수단
   const rs = step.result_summary;
   let tableWrap = null;
   let firstCsvPath = "";
   let truncated = false;
+  let csvPaths = [];
   if (rs && typeof rs === "object") {
     const pt = rs.preview_table;
     if (pt && pt.columns?.length) {
@@ -1963,7 +1985,7 @@ function buildSqlStepPanel(step) {
       truncated = Boolean(pt.truncated);
       if (tableWrap) panel.appendChild(tableWrap);
     }
-    const csvPaths = Array.isArray(rs.csv_paths) ? rs.csv_paths : [];
+    csvPaths = Array.isArray(rs.csv_paths) ? rs.csv_paths : [];
     if (csvPaths.length) firstCsvPath = csvPaths[0];
 
     if (csvPaths.length || (tableWrap && truncated)) {
@@ -1997,6 +2019,30 @@ function buildSqlStepPanel(step) {
       panel.appendChild(actions);
     }
   }
+
+  // SQL 블록 — 기본 숨김, "쿼리 보기" 버튼 클릭 시 토글
+  if (step.sql) {
+    const sqlWrap = document.createElement("div");
+    sqlWrap.className = "sql-toggle-wrap";
+    const toggleBtn = document.createElement("button");
+    toggleBtn.type = "button";
+    toggleBtn.className = "tool-btn sql-toggle-btn";
+    toggleBtn.textContent = "쿼리 보기";
+    toggleBtn.setAttribute("aria-expanded", "false");
+    const pre = document.createElement("pre");
+    pre.className = "sql-block";
+    pre.hidden = true;
+    pre.textContent = formatSqlForDisplay(step.sql);
+    toggleBtn.addEventListener("click", () => {
+      const willShow = pre.hidden;
+      pre.hidden = !willShow;
+      toggleBtn.textContent = willShow ? "쿼리 닫기" : "쿼리 보기";
+      toggleBtn.setAttribute("aria-expanded", String(willShow));
+    });
+    sqlWrap.append(toggleBtn, pre);
+    panel.appendChild(sqlWrap);
+  }
+
   return panel;
 }
 
@@ -2145,8 +2191,10 @@ function renderMessageDetails(meta = {}) {
 
   const detailsEl = document.createElement("details");
   detailsEl.className = "message-details";
+  // SQL 결과가 있으면 테이블이 기본 노출되도록 자동 펼침
+  if (hasSql) detailsEl.open = true;
   const summary = document.createElement("summary");
-  summary.textContent = "실행 단계 및 쿼리 결과 보기";
+  summary.textContent = hasSql ? "쿼리 결과" : "실행 단계";
   detailsEl.appendChild(summary);
 
   // 스크롤 앵커: 펼침/접힘 시 summary 라인이 뷰포트 내 동일 위치에 유지되도록 보정.
@@ -2171,12 +2219,27 @@ function renderMessageDetails(meta = {}) {
   if (steps.length) {
     buildStepBlocks(steps, body);
   } else {
-    // steps가 없는 구형 메시지 — 기존 필드로 폴백
+    // steps가 없는 구형 메시지 — 기존 필드로 폴백 (SQL도 토글로 표시)
     if (meta.sql) {
+      const sqlWrap = document.createElement("div");
+      sqlWrap.className = "sql-toggle-wrap";
+      const toggleBtn = document.createElement("button");
+      toggleBtn.type = "button";
+      toggleBtn.className = "tool-btn sql-toggle-btn";
+      toggleBtn.textContent = "쿼리 보기";
+      toggleBtn.setAttribute("aria-expanded", "false");
       const pre = document.createElement("pre");
       pre.className = "sql-block";
+      pre.hidden = true;
       pre.textContent = String(meta.sql);
-      appendDetailBlock(body, "실행 SQL", pre);
+      toggleBtn.addEventListener("click", () => {
+        const willShow = pre.hidden;
+        pre.hidden = !willShow;
+        toggleBtn.textContent = willShow ? "쿼리 닫기" : "쿼리 보기";
+        toggleBtn.setAttribute("aria-expanded", String(willShow));
+      });
+      sqlWrap.append(toggleBtn, pre);
+      appendDetailBlock(body, "실행 SQL", sqlWrap);
     }
     if (Array.isArray(meta.csv_paths) && meta.csv_paths.length) {
       const wrap = document.createElement("div");
