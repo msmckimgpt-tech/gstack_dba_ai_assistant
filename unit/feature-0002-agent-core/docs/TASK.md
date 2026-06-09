@@ -729,3 +729,10 @@ TASK-0015 (plan-review):
 - [x] Docker 재빌드 + 재배포 (web + insight-worker)
 - [x] 기능 검증: ask_status 200 + delete_conversation 200 확인 (실서비스)
 - [x] verify-completion + 커밋 + push + main ff-merge
+
+### TASK-0174 — "전체 N행 미리보기" 링크 오정렬 수정 (2026-06-09)
+- [x] 근본: `_collapse_large_tables` 위치-인덱스 매칭 → 값 토큰 overlap + 컬럼수 폴백 매칭으로 교체 (`_distinctive_tokens`/`_md_table_body_cells`/`_md_table_col_count`/`_csv_signatures`/`_match_csv_for_table`). 형태 불일치 보조쿼리(MIN/MAX) CSV 배제.
+- [x] 회귀 테스트 `tests/test_collapse_table_csv_match.py` (값매칭·무매칭생략·형태폴백·토큰필터 4종)
+- [x] make test 컨테이너 PASS (0 fail) + ruff PASS
+- [x] §18.8 검증 패널(SUBAGENT) → REV-20260609-0173, MAJOR 2건(측정값-only 표 링크소실/JS 오탐) FIX-FIRST 반영(컬럼수 폴백 + JS 임계≥2)
+- [ ] verify-completion PASS → 커밋 → push → main ff-merge → 재배포(web+ask-worker) → 라이브 검증

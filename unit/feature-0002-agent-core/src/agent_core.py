@@ -59,7 +59,7 @@ from modules.memory import (
 from modules.model_catalog import is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_vision
 from modules.llm import _record_llm_usage, llm_classify_origin_shift, llm_generate_topic, messages_for_provider
 from modules.domain import _derive_topic, _is_low_information_request, _should_refresh_origin_request
-from modules.render import normalize_step_result_summary
+from modules.render import normalize_step_result_summary, read_csv_preview
 from modules.tools import (
     TOOL_DEFINITIONS,
     execute_tool,
@@ -1321,20 +1321,131 @@ def _mirror_message(
 _MD_TABLE_ROW_RE = re.compile(r"^\|.*\|$")
 _MD_TABLE_SEP_RE = re.compile(r"^\|[\s\-:|]+\|$")
 _TABLE_ROW_THRESHOLD = 5
+# 표↔CSV 매칭 시 CSV 에서 표본으로 읽을 데이터 행 수 (식별 토큰 수집용).
+_CSV_MATCH_SAMPLE_ROWS = 50
+
+
+def _distinctive_tokens(cells: list[Any]) -> set[str]:
+    """셀 값에서 식별력 있는 토큰만 추출.
+
+    TASK-0174: 답변 표를 올바른 CSV 와 잇기 위한 값 기반 join key.
+    - 천단위 콤마 제거 후 길이 ≥3 숫자열 (ID·집계값 — "10,112명"→"10112",
+      "2520504" 등). 1~2자리(순위 1·2·3 류)는 식별력이 낮아 제외.
+    - 숫자가 없는 라벨 문자열은 길이 ≥2 면 포함.
+    헤더 이름은 LLM 이 가독성 위해 리네이밍(ItemID→아이템ID)하므로 헤더가 아닌
+    **값** 으로 매칭한다.
+    """
+    tokens: set[str] = set()
+    for cell in cells:
+        s = str(cell if cell is not None else "").strip()
+        if not s:
+            continue
+        compact = s.replace(",", "")
+        for num in re.findall(r"\d{3,}", compact):
+            tokens.add(num)
+        if not re.search(r"\d", s) and len(s) >= 2:
+            tokens.add(s)
+    return tokens
+
+
+def _md_table_body_cells(table_lines: list[str]) -> list[str]:
+    """마크다운 표 라인에서 헤더·구분자 제외한 본문 셀 값 목록."""
+    cells: list[str] = []
+    header_seen = False
+    for tl in table_lines:
+        s = tl.strip()
+        if _MD_TABLE_SEP_RE.match(s):
+            continue
+        if not header_seen:
+            header_seen = True  # 첫 데이터 행 = 헤더 → 값 매칭에서 제외
+            continue
+        cells.extend(c.strip() for c in s.strip("|").split("|"))
+    return cells
+
+
+def _md_table_col_count(table_lines: list[str]) -> int:
+    """마크다운 표의 컬럼 수 (헤더 행의 셀 수)."""
+    for tl in table_lines:
+        s = tl.strip()
+        if _MD_TABLE_SEP_RE.match(s):
+            continue
+        return len(s.strip("|").split("|"))
+    return 0
+
+
+def _csv_signatures(csv_paths: list[str]) -> list[tuple[set[str] | None, int]]:
+    """각 CSV 의 (데이터 값 식별 토큰 집합, 컬럼 수). 읽기 실패 시 (None, 0)."""
+    sigs: list[tuple[set[str] | None, int]] = []
+    for path in csv_paths:
+        prev = read_csv_preview(path, _CSV_MATCH_SAMPLE_ROWS)
+        if not prev:
+            sigs.append((None, 0))
+            continue
+        cells: list[Any] = []
+        for row in prev.get("rows") or []:
+            cells.extend(row)
+        ncol = len(prev.get("columns") or [])
+        sigs.append((_distinctive_tokens(cells), ncol))
+    return sigs
+
+
+def _match_csv_for_table(
+    table_tokens: set[str],
+    table_ncol: int,
+    csv_sigs: list[tuple[set[str] | None, int]],
+    used: list[bool],
+) -> int | None:
+    """표에 맞는 미사용 CSV 인덱스.
+
+    1순위: 값 토큰 overlap 최대(≥1) — ID·집계값이 일치하는 정확 매칭.
+    2순위(값 매칭 실패 시): 컬럼 수가 일치하는 미사용 CSV 중 앞 순서.
+       측정값(%·소수)뿐이라 식별 토큰이 없거나 LLM 재포맷으로 값이 어긋난
+       표도 형태(shape)로 링크를 복구한다. 형태 불일치 보조 쿼리(MIN/MAX 등)는
+       여전히 배제되므로 위치-매칭 오정렬 버그는 재발하지 않는다.
+    """
+    best_idx: int | None = None
+    best_score = 0
+    if table_tokens:
+        for j, (tok, _ncol) in enumerate(csv_sigs):
+            if used[j] or not tok:
+                continue
+            score = len(table_tokens & tok)
+            if score > best_score:
+                best_score = score
+                best_idx = j
+    if best_idx is not None and best_score >= 1:
+        return best_idx
+    # 값으로 확정 못 함 → 컬럼 수 일치 폴백 (형태 불일치 CSV 는 제외).
+    if table_ncol > 0:
+        for j, (tok, ncol) in enumerate(csv_sigs):
+            if used[j] or tok is None:
+                continue
+            if ncol == table_ncol:
+                return j
+    return None
 
 
 def _collapse_large_tables(answer: str, csv_paths: list[str]) -> str:
-    """답변 내 대형 마크다운 표를 미리보기 + CSV 링크로 치환."""
+    """답변 내 대형 마크다운 표를 미리보기 + CSV 링크로 치환.
+
+    TASK-0174: 기존엔 답변 속 대형 표를 csv_paths 에 **위치 인덱스**로 1:1
+    매칭했으나, csv_paths 에는 표로 렌더되지 않은 보조 쿼리(MIN/MAX 등) 결과
+    CSV 까지 실행 순서대로 섞여 있어 인덱스가 어긋났다 (#118 후속 — 첫 대형
+    표에 MIN/MAX CSV 가 붙어 "전체 N행 미리보기" 가 다른 쿼리 결과를 로드).
+    → 표의 데이터 값 토큰과 각 CSV 의 값 토큰 overlap 으로 매칭(_match_csv_for_table)
+    하고, 값으로 확정 못 하면 컬럼 수 일치 CSV 로 폴백한다. 형태 불일치 보조
+    쿼리 CSV 는 어느 경로로도 붙지 않는다.
+    """
     if not answer or not csv_paths:
         return answer
+    csv_sigs = _csv_signatures(csv_paths)
+    used = [False] * len(csv_paths)
     lines = answer.split("\n")
     result: list[str] = []
     i = 0
-    csv_idx = 0
     while i < len(lines):
         line = lines[i].strip()
         if _MD_TABLE_ROW_RE.match(line):
-            table_start = i
             table_lines: list[str] = [lines[i]]
             i += 1
             while i < len(lines) and _MD_TABLE_ROW_RE.match(lines[i].strip()):
@@ -1347,8 +1458,8 @@ def _collapse_large_tables(answer: str, csv_paths: list[str]) -> str:
             )
             header_rows = 1  # 헤더
             body_rows = data_rows - header_rows
-            if body_rows > _TABLE_ROW_THRESHOLD and csv_idx < len(csv_paths):
-                # 헤더 + 구분자 + 미리보기 행(최대 3행) 유지
+            if body_rows > _TABLE_ROW_THRESHOLD:
+                # 헤더 + 구분자 + 미리보기 행(최대 threshold행) 유지
                 kept: list[str] = []
                 preview_count = 0
                 for tl in table_lines:
@@ -1361,14 +1472,19 @@ def _collapse_large_tables(answer: str, csv_paths: list[str]) -> str:
                     else:
                         break
                 result.extend(kept)
-                csv_path = csv_paths[csv_idx]
-                result.append("")
-                result.append(
-                    f"📎 [전체 {body_rows}행 미리보기]"
-                    f"(/api/file?path={csv_path})"
-                )
-                result.append("")
-                csv_idx += 1
+                # 값 기반 매칭(+컬럼수 폴백) — 위치 인덱스 대신 표 내용과 일치 CSV.
+                table_tokens = _distinctive_tokens(_md_table_body_cells(table_lines))
+                table_ncol = _md_table_col_count(table_lines)
+                match_idx = _match_csv_for_table(table_tokens, table_ncol, csv_sigs, used)
+                if match_idx is not None:
+                    used[match_idx] = True
+                    result.append("")
+                    result.append(
+                        f"📎 [전체 {body_rows}행 미리보기]"
+                        f"(/api/file?path={csv_paths[match_idx]})"
+                    )
+                    result.append("")
+                # 확신 매칭 없으면 링크 생략 (잘못된 CSV 링크 방지).
             else:
                 result.extend(table_lines)
         else:

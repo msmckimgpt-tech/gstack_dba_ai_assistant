@@ -2994,3 +2994,8 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] `_renderStepSidePanelBody` 중복 `item.title` 제거 + `buildSqlStepPanel`(완료 상세 SQL 단계)에 동일 reason 추가(일관성 — non-SQL 단계는 `buildStepBlocks` 가 이미 `work — reason` 표시 중이었음). styles.css `.step-reason` 가시 스타일 복원 + 캐시버스터 bump.
 - [x] node --check app.js PASS. RBAC/스키마/엔드포인트/시크릿/백엔드 무변경. outside-voice [SKIPPED:frontend-only] (REV-20260609-0173).
 - [ ] verify-completion / PR → main 머지 → 재배포 → Windows-browser(PB-0008) 시각 검증
+
+### TASK-0174 — 미리보기 인라인 로더 방어 가드 (2026-06-09)
+- [x] `loadCsvAsInlineTable` 값 기반 방어 가드 + `distinctiveValueTokens` 헬퍼 (CHG-20260609-PREVIEW-CSV-GUARD)
+- [x] §18.8 패널 JS 오탐 지적 반영 (previewTokens≥2 임계)
+- [ ] verify-completion → main 머지 → 재배포(web) → PB-0008 Windows 검증

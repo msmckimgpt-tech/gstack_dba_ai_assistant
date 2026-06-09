@@ -64,6 +64,7 @@ source_of_truth: true
 - Insight 워커 부재 / heartbeat stale: `_should_run_inline_insight_scan()` 이 감지해 질의 시점 인라인 스캔으로 품질을 유지 ([INSIGHTS.md §5.4](./INSIGHTS.md#54-인라인-fallback-워커-부재--장애)).
 - `tool_result` 가 4000 자 초과: `(truncated)` 로 절단하되, 전체 결과는 CSV 로 별도 저장되어 사용자 접근 가능.
 - 결과 행 수가 50 초과: LLM 에는 상위 50 행만 전달, 답변 렌더링 시 대형 마크다운 표는 `_collapse_large_tables()` 가 상위 5 행 + CSV 링크로 치환.
+  - 표 ↔ CSV 매칭은 **위치 인덱스가 아니라 값 기반**이다 (TASK-0174, CHG-20260609-PREVIEW-CSV-MATCH). `csv_paths` 에는 표로 렌더되지 않은 보조 쿼리(예: MIN/MAX 범위) 결과 CSV 까지 실행 순서로 섞이므로, 각 표는 본문 셀의 식별 값 토큰(콤마제거 후 ≥3자리 숫자·라벨)과 overlap 이 최대(≥1)인 미사용 CSV 에 링크한다. 값으로 확정 못 하면 컬럼 수가 일치하는 미사용 CSV 로 폴백하고, 값·형태 모두 불일치면 잘못된 링크 대신 링크를 생략한다.
 - LLM 이 빈 응답을 반환: `reasoning` 을 fallback 으로 쓰거나 "Korean Markdown 으로 답하라" 메시지를 최대 3 회 재시도.
 
 ## 9. Error Handling

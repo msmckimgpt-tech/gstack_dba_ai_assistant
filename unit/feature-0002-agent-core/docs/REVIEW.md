@@ -660,3 +660,11 @@ source_of_truth: true
 - Cycle: TASK-0121 (delete_conversation + ask_status 500 수정)
 - Reason: PG routing 추가 전용 — 기존 동작을 MySQL 삭제된 테이블에서 PG로 이관. RBAC 변경 0건, 새 endpoint 0건, 새 기능 0건. `_pg_delete_conversation()` 은 기존 `delete_conversation()` 과 동일한 데이터를 PG에서 삭제. `_load_latest_assistant_message()` 는 동일 결과를 PG `agent_runtime.messages`에서 조회. outside-voice 불필요 조건 충족 (구조 변화 없는 backend migration).
 - Risk: low — MySQL fallback try/except 유지. PG 실패 시 MySQL fallback(테이블 없어도 try/except로 silent fail). 기능 검증: ask_status 200 + delete_conversation 200 실서비스 확인.
+
+## REV-20260609-0173 [SUBAGENT:preview-csv-value-match]
+- Date: 2026-06-09
+- Cycle: TASK-0174 ("전체 N행 미리보기" 링크 오정렬 수정)
+- Panel: backend+QA adversarial subagent(general-purpose), diff 전수 + _distinctive_tokens 프로브.
+- Verdict: 핵심 접근(값 토큰 overlap + consume-once + drop-on-no-match) sound, 회귀 테스트 유효. MAJOR 2건(동일 근본): ID/라벨 열 없는 측정값-only 대형 표는 토큰 추출 0 또는 LLM 재포맷으로 overlap 0 → backend 링크 소실(기존 동작 회귀)·JS 강제 거부 오탐.
+- Resolution (FIX-FIRST): (1) backend 컬럼 수 일치 폴백 추가(_match_csv_for_table 2순위) — 측정값-only 표도 형태로 링크 복구, 형태 불일치 보조쿼리는 여전히 배제. (2) JS 가드 previewTokens≥2 임계 — 단일 토큰 우연 불일치 오탐 차단. MINOR(greedy 비전역최적)·NIT(날짜/전화 우연토큰)는 distinct-ID 우세로 실무 영향 낮음 — 수용.
+- Risk: low — make test 컨테이너 PASS. 값/형태 모두 불일치 시 링크 생략 → 잘못된 링크 어느 경로로도 미부착.

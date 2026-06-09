@@ -700,3 +700,15 @@ source_of_truth: true
 - Summary: `delete_conversation` 이 MySQL agent_runtime 테이블(AR-M5 에서 DROP됨)에 직접 DELETE 하던 경로를 PG로 전환. `_pg_delete_conversation()` 신규 — agent_runtime.kv (수동), agent_runtime.core_conversations (CASCADE: messages/steps/summary/core_messages), public.fact_entries, public.rag_documents, public.rag_objects 삭제. MySQL DELETE 구문은 try/except 보호로 유지(호환성).
 - Files: unit/feature-0002-agent-core/src/modules/memory.py
 - Rollback: `_pg_delete_conversation` 호출 제거 + MySQL DELETE 구문 try/except 제거.
+
+## CHG-20260609-PREVIEW-CSV-MATCH
+- Date: 2026-06-09
+- Related Requirement: TASK-0174 ("전체 N행 미리보기" 링크가 다른 쿼리 CSV 로딩 — #118 후속)
+- Summary: `_collapse_large_tables` 가 답변 속 대형 표를 csv_paths 에 **위치 인덱스**로 1:1 매칭하던 것을 값 기반 매칭으로 교체. csv_paths 에는 표로 렌더 안 된 보조 쿼리(MIN/MAX 등) 결과 CSV 까지 실행 순서로 섞여 있어, 첫 대형 표에 MIN/MAX CSV(2열 1행)가 붙어 "전체 15행 미리보기" 가 1행 결과를 로드. → 표 본문 셀의 식별 값 토큰(콤마제거 후 ≥3자리 숫자·라벨)과 각 CSV 데이터 값 토큰 overlap 최대(≥1)로 매칭, 값으로 확정 못 하면 컬럼 수 일치 CSV 로 폴백, 형태 불일치 보조쿼리는 어느 경로로도 배제.
+- Files:
+  - unit/feature-0002-agent-core/src/agent_core.py (_collapse_large_tables 재작성 + _distinctive_tokens/_md_table_body_cells/_md_table_col_count/_csv_signatures/_match_csv_for_table 신규, render.read_csv_preview import 추가)
+  - unit/feature-0002-agent-core/tests/test_collapse_table_csv_match.py (신규 회귀 4종)
+- Notes:
+  - §18.8 SUBAGENT 패널(REV-20260609-0173) MAJOR 2건 반영: (1) 측정값(%·소수)뿐인 표는 식별 토큰이 없어 링크 소실 → 컬럼 수 폴백 추가, (2) JS 가드 단일토큰 우연 오탐 → previewTokens≥2 임계.
+  - read_csv_preview 는 header+50행만 읽어 대형 CSV unbounded read 없음. None-safety: 읽기 실패=(None,0) → 매칭 제외.
+- Rollback: _collapse_large_tables 및 헬퍼 5종 제거 + 위치-인덱스 버전 원복.

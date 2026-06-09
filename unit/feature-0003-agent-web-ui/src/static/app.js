@@ -1636,6 +1636,20 @@ function renderMessageContent(target, content = "", role = "assistant") {
   target.innerHTML = markdownToHtml(content || "");
 }
 
+// 값 기반 식별 토큰 추출 (TASK-0174) — backend _distinctive_tokens 의 JS 판.
+// 천단위 콤마 제거 후 길이 ≥3 숫자열(ID·집계값) + 숫자 없는 라벨(길이 ≥2).
+function distinctiveValueTokens(cells) {
+  const tokens = new Set();
+  for (const cell of cells) {
+    const s = String(cell == null ? "" : cell).trim();
+    if (!s) continue;
+    const nums = s.replace(/,/g, "").match(/\d{3,}/g);
+    if (nums) for (const n of nums) tokens.add(n);
+    if (!/\d/.test(s) && s.length >= 2) tokens.add(s);
+  }
+  return tokens;
+}
+
 // 메시지 본문의 "📎 전체 N행 미리보기" 링크(에이전트가 생성한 /api/file?path=... 마크다운)를
 // 인터랙티브 표 로더로 전환한다 (#120). 에이전트 마크다운에는 conversation_id 가 없어
 // 그대로 클릭하면 /api/file 이 422 를 내고, 표가 아닌 문자열 링크로만 보였다.
@@ -1677,6 +1691,34 @@ async function loadCsvAsInlineTable(csvPath, anchorEl) {
       throw new Error("CSV에 표시할 데이터가 없습니다.");
     }
     const body = rows.slice(1);
+
+    // 방어 가드 (#118 인라인 경로, TASK-0174): 로드한 CSV 의 값 토큰이 인접
+    // 미리보기 표와 전혀 겹치지 않으면 다른 쿼리 결과(과거 링크 오정렬 등)이므로
+    // 인라인 렌더를 거부한다. 헤더명이 아닌 값으로 비교(LLM 헤더 리네이밍 오탐 방지).
+    const previewTableEl =
+      block.previousElementSibling && block.previousElementSibling.tagName === "TABLE"
+        ? block.previousElementSibling
+        : null;
+    if (previewTableEl) {
+      const previewTokens = distinctiveValueTokens(
+        Array.from(previewTableEl.querySelectorAll("td")).map((td) => td.textContent)
+      );
+      const csvCells = [];
+      for (const r of body) for (const c of r) csvCells.push(c);
+      const csvTokens = distinctiveValueTokens(csvCells);
+      // previewTokens 가 2개 이상일 때만 강제 거부 — 단일 토큰 우연 불일치로
+      // 정상 데이터를 막는 오탐을 줄인다 (재포맷·반올림 내성).
+      if (previewTokens.size >= 2 && csvTokens.size) {
+        let overlaps = false;
+        for (const t of previewTokens) {
+          if (csvTokens.has(t)) { overlaps = true; break; }
+        }
+        if (!overlaps) {
+          throw new Error("결과 파일이 미리보기와 일치하지 않아 전체 데이터를 표시할 수 없습니다.");
+        }
+      }
+    }
+
     const tableWrap = buildResultTable({ columns: rows[0], rows: body, truncated: false });
     if (!tableWrap) {
       throw new Error("표를 생성할 수 없습니다.");

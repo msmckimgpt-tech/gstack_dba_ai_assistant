@@ -2447,3 +2447,14 @@ source_of_truth: true
   - 현 배포엔 활성 sandbox 0개(첨부는 text kind) — CSV 재적재 경로는 미사용/미라이브검증, 코드는 방어적 포함.
   - WebConversationAttachments 는 MySQL web 테이블(conn autocommit=True → 즉시 커밋). soft-deleted(DeletedAt) 첨부는 SELECT 에서 제외(tombstone 미복사).
 - Rollback: `_copy_conversation_attachments` + fork 배선 + audit ctx 2키 + 테스트 제거. fork 는 TASK-0170 동작(첨부 미복사)으로 회귀.
+
+## CHG-20260609-PREVIEW-CSV-GUARD
+- Date: 2026-06-09
+- Related Requirement: TASK-0174 ("전체 N행 미리보기" 인라인 로더 방어막 — #118 인라인 경로)
+- Summary: 본문 "📎 전체 N행 미리보기" 링크가 타는 `loadCsvAsInlineTable` 에 값 기반 방어 가드 추가. 기존엔 #118 가드가 SQL-nav 경로(`loadFullCsvIntoTable`)에만 있고 본문 인라인 경로엔 없어, 잘못된 CSV 링크를 그대로 인라인 렌더했다. 로드한 CSV 의 식별 값 토큰이 인접 미리보기 표(td)와 전혀 겹치지 않으면 렌더 거부(헤더명이 아닌 값 비교 — LLM 헤더 리네이밍 오탐 방지). previewTokens≥2 일 때만 거부해 단일 토큰 우연 불일치 오탐 차단.
+- Files:
+  - unit/feature-0003-agent-web-ui/src/static/app.js (distinctiveValueTokens 헬퍼 신규 + loadCsvAsInlineTable 가드)
+- Notes:
+  - 1차 방어는 backend(agent_core _collapse_large_tables 값매칭, CHG-20260609-PREVIEW-CSV-MATCH). 본 가드는 방어심층(defense-in-depth) 최종선.
+  - §18.8 패널(REV-20260609-0173) JS 오탐 지적 반영(≥2 임계).
+- Rollback: distinctiveValueTokens + loadCsvAsInlineTable 가드 블록 제거.

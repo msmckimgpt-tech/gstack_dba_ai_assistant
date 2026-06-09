@@ -1746,3 +1746,10 @@ source_of_truth: true
   - #7 [MINOR] test flap(ingest 타이밍/skip). → **수정**: ⊆+count 일관성으로 완화.
 - **Residual(수용)**: cap 초과 첨부는 silent skip(quota 정합 우선 — 제품이 fork 면제 원하면 별도 결정). 현 배포 sandbox 0 라 CSV 재적재는 미라이브검증(방어적 코드).
 - **Cross-ref**: CHG-20260609-FORK-ATTACHMENTS / ADR-WEB-0005 Phase 2 / TASK-0171 / AC-0330 / DESIGN-fork-reference.md §15.
+
+## REV-20260609-0174 [SUBAGENT:preview-csv-inline-guard]
+- Date: 2026-06-09
+- Cycle: TASK-0174 (미리보기 인라인 로더 방어 가드)
+- Panel: backend+QA adversarial subagent (REV-20260609-0173 과 동일 패널, app.js 가드 포함 리뷰).
+- Verdict/Resolution: block.previousElementSibling=TABLE 가정 신뢰(#122 기확립, marked 가 본문=td/헤더=th 렌더). MAJOR(재포맷 오탐) → previewTokens≥2 임계 + backend 값매칭이 1차이므로 본 가드는 심층방어. DOM 가정 안전.
+- Risk: low — backend 가 이미 잘못된 링크 미부착. 가드는 우연 잔존 케이스 최종 차단.
