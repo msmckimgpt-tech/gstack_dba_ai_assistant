@@ -2779,7 +2779,12 @@ a { color: inherit; }
 
 .admin-pane.is-active { display: flex; }
 
-.admin-pane[data-admin-pane="dashboard"].is-active {
+/* TASK-0167: dashboard·usage pane 은 list-detail(내부 admin-list 스크롤)이 아니라 단순
+   세로 흐름이라 pane 자체에 세로 스크롤이 필요. admin-shell/admin-workspace 가
+   overflow:hidden + height:100vh 이므로, 누락 시 작은 화면에서 하단(차트·표)이 잘린다.
+   다른 pane(accounts/roles/products/audits)은 내부 admin-list 가 스크롤하므로 제외. */
+.admin-pane[data-admin-pane="dashboard"].is-active,
+.admin-pane[data-admin-pane="usage"].is-active {
   overflow-y: auto;
 }
 

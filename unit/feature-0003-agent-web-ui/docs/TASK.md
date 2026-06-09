@@ -12,9 +12,12 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-09 (TASK-0166 LLM 사용량 차트 고도화; TASK-0165 LLM 사용량 화면 차트화; TASK-0164 SIGTERM finalizer)
+- Last Updated: 2026-06-09 (TASK-0167 관리콘솔 작은화면 세로 잘림 수정; TASK-0166 LLM 사용량 차트 고도화; TASK-0165 차트화)
 
 ## 2. Task Queue
+
+### TASK-0167 관리 콘솔 작은 화면 세로 잘림 수정 (CSS) (2026-06-09)
+- [x] **Minor §12.3** — 사용자 보고: 웹브라우저 화면이 작을 때 화면 전체가 안 나오고 잘림. **근본 원인**: `.admin-shell`·`.admin-workspace` 가 `height:100vh; overflow:hidden` 인데 `.admin-pane` 중 dashboard 만 `overflow-y:auto` 보유, usage pane 누락 → 차트(0165/0166)·표로 길어진 usage pane 이 작은 화면에서 세로 스크롤 불가로 하단 잘림(다른 pane 은 내부 `admin-list` 스크롤이라 무관). **수정**: `styles.css` dashboard overflow 규칙에 `[data-admin-pane="usage"].is-active` 셀렉터 추가(dashboard 와 동일 패턴) + admin.html styles.css 캐시버스터 `?v=20260609-usage-overflow`. 권한/엔드포인트/스키마/JS/HTML 구조 무변경 — CSS 셀렉터 1개. REV-20260609-0167 [SKIPPED:css-only]. worktree `ai/claude/usage-overflow-fix`(base main).
 
 ### TASK-0166 LLM 사용량 차트 고도화 — 계정별 차트·hover 툴팁·막대 값·시간단위·추가지표 (2026-06-09)
 - [x] **Minor §12.3** — TASK-0165 후속(사용자 지적 누락 항목). **백엔드 `admin_llm_usage`**: ① `granularity`(hour/day/week/month) — `date_trunc` 단위 화이트리스트(`_USAGE_GRAN`)로만 삽입(인젝션 차단), bucket 포맷 + 막대 상한. by_day/by_day_model bucket 집계(서브쿼리로 동일 버킷 집합 보장). ② by_model/by_day prompt/completion 분해. ③ `_estimate_llm_cost_usd`+`_LLM_PRICE_USD_PER_1M`(claude 근사, 로컬=0) 모델별·총 추정 비용. 응답 `granularity`/`cost_usd` 추가. **프론트(의존성 0 SVG)**: ① 계정별 가로 막대(`#usageAccountChart`) 신규(역할별 대칭). ② 커스텀 hover 툴팁(`data-tip`+`bindTip`, `<title>` 대체) 전 차트 — 값/비중/호출/비용. ③ 막대 위 총합 값 라벨. ④ 집계단위 드롭다운(`#usageGranSel`) + 기간(1일/1년 추가). ⑤ 요약 추정비용 카드 + 모델별 표 prompt/completion·비용 컬럼. 권한/엔드포인트/스키마/시크릿 신규 0. 캐시버스터 `?v=20260609-usage-charts2`. node --check/py_compile + make test 218 passed/5 skipped(회귀 0). REV-20260609-0166 [SKIPPED:frontend-viz]. **한계**: 비용은 공시가 근사 추정(로컬=$0). Windows-browser(PB-0008) 검증 배포 후. worktree `ai/claude/usage-charts-v2`(base main).

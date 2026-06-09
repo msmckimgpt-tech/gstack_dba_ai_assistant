@@ -423,6 +423,10 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   (`#usageAccountChart`) ⑤ 커스텀 hover 툴팁(`data-tip`/`bindTip`, SVG `<title>` 대체 — 값/비중/호출/비용)
   ⑥ 막대 위 총합 값 라벨 ⑦ 집계단위 드롭다운(`#usageGranSel`)·기간 옵션(1일/1년) ⑧ 요약 추정비용
   카드 + 모델별 표 prompt/completion·비용 컬럼. 비용은 추정(로컬=$0).
+- 관리 콘솔 레이아웃 스크롤 (TASK-0167): `.admin-shell`·`.admin-workspace` 는 `height:100vh;
+  overflow:hidden` 이고 각 `.admin-pane` 이 자체 스크롤한다. 단순 세로 흐름 pane(dashboard·usage)은
+  `overflow-y:auto` 를 직접 가지며(styles.css), list-detail pane(accounts/roles/products/audits)은
+  내부 `admin-list` 가 스크롤한다. usage pane 누락 시 작은 화면에서 차트·표 하단이 잘렸던 것을 수정.
 
 ## 13. Pre-approved Changes
 - 비파괴적 경로 재배치와 이미지 복사 경로 수정

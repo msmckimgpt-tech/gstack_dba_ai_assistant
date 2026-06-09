@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260609-0167
+- Date: 2026-06-09
+- TASK-Cycle: TASK-0167, **Minor §12.3** — 관리 콘솔 작은 화면 세로 잘림 수정 (CSS)
+- Summary: 사용자 보고(작은 브라우저 화면에서 화면 전체가 안 나오고 잘림). admin-shell/admin-workspace 가 height:100vh+overflow:hidden 인데 usage pane 만 자체 overflow-y 누락 → 차트·표로 길어진 usage pane 하단 잘림. usage pane 에 overflow-y:auto 추가(dashboard 와 동일 패턴).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: dashboard overflow 규칙(`[data-admin-pane="dashboard"].is-active`)에 `,[data-admin-pane="usage"].is-active` 셀렉터 추가 + 사유 주석.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: styles.css 캐시버스터 `?v=20260605-ui-ux-polish` → `?v=20260609-usage-overflow`.
+- Note: 권한/엔드포인트/스키마/시크릿/JS/HTML 구조 무변경 — CSS 셀렉터 1개 추가. 다른 pane(accounts/roles/products/audits)은 내부 admin-list 스크롤이라 제외(이중 스크롤 방지).
+- Review: REV-20260609-0167 [SKIPPED:css-only-no-rbac-no-schema]. Windows-browser(PB-0008) 검증 배포 후.
+
 ## CHG-20260609-0166
 - Date: 2026-06-09
 - TASK-Cycle: TASK-0166, **Minor §12.3** — LLM 사용량 차트 고도화 (계정별 차트·hover 툴팁·막대 값·시간단위·추가지표)

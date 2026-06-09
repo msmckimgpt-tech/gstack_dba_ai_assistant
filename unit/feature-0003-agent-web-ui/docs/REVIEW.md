@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260609-0167 [SKIPPED:css-only-no-rbac-no-schema]
+- Date: 2026-06-09
+- Cycle: TASK-0167 (관리 콘솔 작은 화면 세로 잘림 수정), **Minor §12.3**
+- 사유: CSS 셀렉터 1개 추가(usage pane 에 overflow-y:auto, 기존 dashboard pane 과 동일·검증된 패턴) + 캐시버스터. JS/HTML 구조·RBAC·스키마·엔드포인트·시크릿 무변경, 동작 위험면 없음. 이중 스크롤 위험은 내부 admin-list 스크롤을 가진 다른 pane 을 셀렉터에서 제외해 회피. 시각 검증은 Windows-browser(PB-0008) screenshot(작은 viewport).
+
 ## REV-20260609-0166 [SKIPPED:frontend-viz-no-rbac-no-schema]
 - Date: 2026-06-09
 - Cycle: TASK-0166 (LLM 사용량 차트 고도화 — 계정별 차트·hover 툴팁·막대 값·시간단위·추가지표), **Minor §12.3**

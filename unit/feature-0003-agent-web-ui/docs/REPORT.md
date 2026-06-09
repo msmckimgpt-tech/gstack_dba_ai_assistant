@@ -10,6 +10,8 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-06-09 TASK-0167 — 관리 콘솔 작은 화면 세로 잘림 수정 (CSS)** (REQ-20260609-0167, REV-20260609-0167 [SKIPPED:css-only], **Minor §12.3**). 사용자 보고(작은 브라우저 화면에서 화면이 잘림). admin-shell/admin-workspace 가 100vh+overflow:hidden 인데 usage pane 만 자체 overflow-y 누락 → 차트·표로 길어진 usage pane 이 작은 화면에서 세로 스크롤 불가로 하단 잘림. styles.css 의 usage pane 에 overflow-y:auto 추가(dashboard 패턴). CSS 셀렉터 1개 + 캐시버스터. 권한/엔드포인트/스키마/JS/HTML 구조 무변경.
+
 **2026-06-09 TASK-0166 — LLM 사용량 차트 고도화** (REQ-20260609-0166, REV-20260609-0166 [SKIPPED:frontend-viz], **Minor §12.3**). TASK-0165 후속(사용자 지적 누락): 계정별 차트·hover 상세·막대 정확한 값·시간 단위 선택·추가 지표. 백엔드 `admin_llm_usage` 에 granularity(시/일/주/월, date_trunc 화이트리스트) + prompt/completion 분해 + 추정 비용(`_estimate_llm_cost_usd`, claude 근사·로컬 0) 추가. 프론트(의존성 0 SVG): 계정별 가로 막대 차트, 커스텀 hover 툴팁(전 차트, 값/비중/호출/비용), 막대 위 총합 값 라벨, 집계단위 드롭다운, 요약 비용 카드 + 모델별 표 prompt/completion·비용 컬럼. 권한/엔드포인트/스키마/시크릿 신규 0. node --check/py_compile + make test 218 passed/5 skipped(회귀 0). 비용은 추정(로컬=$0). Windows-browser(PB-0008) 검증 배포 후.
 
 **2026-06-09 TASK-0164 — LLM 사용량 화면 차트화 (상용 AI 대시보드 구조 참조)** (REQ-20260609-0164, REV-20260609-0164 [SKIPPED:frontend-viz], **Minor §12.3**). TASK-0163 후속(사용자 요청 "상용 ai 제공 서비스 구조 참조 차트 형식"). 표 위주 화면을 Anthropic Console / OpenAI Usage 류로 시각화 — ① 일별 토큰 모델별 누적(stacked) 세로 막대, ② 모델별 비중 도넛(% 범례), ③ 역할별 가로 막대. 백엔드는 `by_day_model`(일별 × resolved_model 토큰) 집계만 추가(기존 컬럼·비파괴 read, 스키마 0). 프론트는 **순수 SVG·의존성 0**(CDN 회피 — 정적자산 baked·WSL 내부). 기존 표는 `<details>` 접이식 보존. 권한 `console.usage.read`(admin)/엔드포인트/스키마/시크릿 신규 0. node --check/py_compile PASS. Windows-browser(PB-0008) screenshot 검증 배포 후 수행.
