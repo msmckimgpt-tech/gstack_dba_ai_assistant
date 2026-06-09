@@ -2980,3 +2980,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 회귀 테스트 `tests/test_fork_share_cutover.py` T1b 추가(copied>0 이면 core_copied>0 — 문맥 복사 단언). py_compile PASS.
 - [ ] **Phase 2 (후속 cycle)**: 첨부 — 행 복사(동일 ObjectKey)+로컬 sandbox 스키마 복제+동일소유자 blob 참조. IDOR 게이트 변경 시 outside-voice.
 - [ ] verify-completion / PR → main 머지 → 재배포 → 라이브 e2e(T1b green)
+
+### TASK-0171 — Fork 첨부 복사 (하이브리드 Phase 2) (2026-06-09)
+- [x] **Major §12.3** — fork 본에서 사용자가 원본 첨부 파일을 볼 수 없던 문제(TASK-0167/0170 은 messages/core_messages 만 복사). ADR-WEB-0005 Phase 2. (CHG-20260609-FORK-ATTACHMENTS)
+- [x] **구현**: `_copy_conversation_attachments`(WebConversationAttachments 행을 새 ConversationId+fork AccountId 로 복사 + blob **독립 복사**(get+put 새 ObjectKey — refcount 위험 회피, server-side copy 부재)) + `_fork_conversation_impl` 배선. CSV/XLSX 는 `_ingest_attachment_background` 로 **fork 전용 sandbox 재적재**(조상 스키마 공유 금지). per-attachment fail-open. 응답 `attachments_copied`. IDOR 게이트 무변경(fork 가 자기 행 소유).
+- [x] **outside-voice(REV-20260609-0004) FIX-FIRST 반영**: #2 orphan blob → **INSERT 먼저→put→실패 시 행 보상삭제**(업로드 패턴). #6 quota 우회 → 복사 전 `_check_attachment_size_caps`(per-file/conv/account) 검사·초과분 skip. #5 audit → `share.fork` ctx 에 `attachments_copied`/`core_messages_copied` 추가(교차계정 forensics). #7 → 테스트 robust 화(⊆+count).
+- [x] 라이브 검증 테스트 `tests/test_fork_attachments.py`(A1~A4: copied 수·시그니처⊆·독립 id·signed_url). py_compile PASS.
+- [ ] verify-completion / PR → main 머지 → 재배포 → 라이브 e2e(A1~A4 green)

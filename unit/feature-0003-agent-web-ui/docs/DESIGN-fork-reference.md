@@ -251,9 +251,16 @@ git-reference 안은 **기각**(F1/F3/F4/F5 사유). 확정 범위:
   - 경계 턴: cut 이 turn 중간을 가르면 로드 시 `_normalize_history_rows` 가 정규화(F1 완화).
   - cross-table 시각 cut 의 F1 한계는 **anchored fork 의 경계 ±1턴** 수준이며, copy 라
     straddling 도 로더가 자가 치유(reference 와 달리 corruption 아님).
-- **Phase 2 (후속 cycle):** 첨부 — `WebConversationAttachments` 행 복사(동일 ObjectKey, blob
-  재업로드 0) + 로컬 CSV sandbox 스키마 복제(F5: 공유 아닌 복제) + derived 메시지 정합.
-  동일 소유자 file blob 참조 최적화는 그 다음. IDOR 게이트 변경 동반 시 outside-voice.
+- **Phase 2 (TASK-0171, 구현 완료):** 첨부 — `WebConversationAttachments` 행을 새 ConversationId
+  + fork AccountId 로 복사 + blob **독립 복사**(get+put 새 ObjectKey). CSV/XLSX 는
+  `_ingest_attachment_background` 로 fork 전용 sandbox 재적재(F5: 공유 아닌 복제). IDOR 게이트
+  무변경(fork 가 자기 행 소유). derived 메시지는 skip(분석본은 Phase 1 core_messages 에 포함).
+  - **설계 대비 이탈(근거)**: ADR 의 "동일 ObjectKey / blob 재업로드 0" 대신 **blob 독립 복사**
+    채택 — storage_minio 에 server-side copy 부재 + ObjectKey 공유 시 원본 삭제→reconciliation
+    이 공유 blob hard-delete→fork 404 의 refcount 위험(REV-20260609-0004 #2). 안전 우선.
+  - outside-voice REV-20260609-0004 FIX-FIRST 반영: INSERT-먼저-put(고아 방지) + 용량 cap 검사
+    (quota 우회 차단) + 교차계정 audit. SHIP.
+  - **이월**: 동일 소유자 file blob *참조* 최적화(재업로드 0)는 refcount/리스 관리 동반이라 후속.
 - **폐기**: lineage-aware 코어 로더, 교차계정 live reference, 조상 sandbox 스키마 공유,
   `forked_from_*`/`fork_cut_at` 런타임 참조 컬럼(§2). per-message `forked_from_*` 메타는 추적용 유지.
 
