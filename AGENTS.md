@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.24.0
+template_version: v3.24.1
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -202,9 +202,15 @@ PR #12 가 본 repo (template base) 에 소비자 cleanup checklist 를 잘못 �
 **계획 작성 위치:** `TASK.md` §2.1 Implementation Plan
 
 **계획에 포함할 항목:**
-- 영향받는 파일 목록
+- 영향받는 파일의 **구체 경로** (예: `repo/src/auth.ts`, `unit/feat-001/docs/TASK.md`)
+- 변경 대상 **symbol name** — 함수·클래스·변수명 (예: `AuthService.login`, `USER_TABLE`)
 - 접근 방법 요약 (3~5줄)
+- **완료 판정 기준 (acceptance criteria)**: 변경 항목마다 "이 조건이 충족되면 완료" 1줄 이상
 - 위험도 평가 (§12.3 기준: Minor / Major / Critical)
+
+> **원칙 — structure in, structure out**: 계획에서 file path·symbol name·acceptance
+> criteria를 고정할수록 구현 산출물이 예측 가능해지고, human review gate(아래 표)가
+> 실질적으로 작동한다.
 
 **위험도별 진행 규칙:**
 
@@ -1499,6 +1505,13 @@ main session은 새 TASK 또는 변경 요청을 처리한 뒤 완료 선언 전
 panel protocol을 실행한다. `/review-panel` slash command는 같은 protocol을 실행하기
 위한 Claude Code entrypoint일 뿐이며, 사용자 실행을 전제로 하지 않는다. AI 작업자는
 check #9 evidence가 없으면 스스로 이 protocol을 수행해야 한다.
+**위임 세션 내 built-in review 직접 호출**: Skill tool 이 허용된 위임 세션에서 model 은
+Claude Code 내장 슬래시명령 `/review`·`/security-review` 를 스스로 호출해 review 를
+선제적으로 시작할 수 있다 — 사용자 실행을 기다리지 않고 AI 작업자가 직접 review 루프를
+개시하는 경로다. 단, 이 채널만으로 check #9 를 충족하지 않는다. review 산출물은
+§18.9 형식에 따라 REVIEW.md index entry 로 기록해야 check #9 가 인식한다. 이 채널은
+§18.8.1 경량 dispatch 와 §22.4 `security-guidance` plugin 의 보완재이며,
+§18.8 panel protocol 자체를 대체하지 않는다.
 
 다음 dispatch 표에 따라 관련 도메인 subagent subset을 결정한다.
 **no separate planner LLM** — main session prompt context에 이 표가 포함되어 main이
