@@ -12801,6 +12801,30 @@ def _audit_clamped_limit(raw: str) -> int:
     return min(n, _AUDIT_LIST_MAX_LIMIT)
 
 
+# TASK-0166: LLM 비용 추정 단가 (USD per 1M tokens). 로컬 LLM(edge/core/auto/code)=0.
+# Bedrock claude 공시가 근사 — 정확 단가는 시점/리전별 변동하므로 운영자 참고용 "추정"이다.
+# 별칭(model) 기준 매핑(LiteLLM 이 resolved_model 에도 별칭을 반환하는 경우가 많음).
+_LLM_PRICE_USD_PER_1M = {
+    "claude-haiku-4": {"in": 1.0, "out": 5.0},
+    "claude-sonnet-4": {"in": 3.0, "out": 15.0},
+}
+# date_trunc granularity 화이트리스트 + 표시 포맷 + bucket 개수 상한(차트 막대 과밀 방지).
+_USAGE_GRAN = {
+    "hour":  {"fmt": "YYYY-MM-DD HH24:00", "limit": 168},
+    "day":   {"fmt": "YYYY-MM-DD",          "limit": 90},
+    "week":  {"fmt": "YYYY-MM-DD",          "limit": 53},
+    "month": {"fmt": "YYYY-MM",             "limit": 36},
+}
+
+
+def _estimate_llm_cost_usd(model: str | None, prompt_tokens: int, completion_tokens: int) -> float:
+    """TASK-0166: 모델 토큰 → 추정 비용(USD). 단가 미상(로컬 등)은 0."""
+    p = _LLM_PRICE_USD_PER_1M.get(str(model or "").strip())
+    if not p:
+        return 0.0
+    return round((prompt_tokens or 0) / 1e6 * p["in"] + (completion_tokens or 0) / 1e6 * p["out"], 4)
+
+
 def _aggregate_usage_by_role(by_account: list[dict]) -> list[dict]:
     """TASK-0163: 계정별 LLM usage 를 역할별로 폴딩.
 
@@ -12846,6 +12870,13 @@ def admin_llm_usage(request: Request) -> JSONResponse:
         except Exception:
             days = 30
         days = max(1, min(365, days))
+        # TASK-0166: granularity (시/일/주/월). date_trunc 단위는 화이트리스트로만 SQL 삽입.
+        gran = request.query_params.get("gran", "day").lower()
+        if gran not in _USAGE_GRAN:
+            gran = "day"
+        gran_cfg = _USAGE_GRAN[gran]
+        bucket_expr = f"to_char(date_trunc('{gran}', created_at), '{gran_cfg['fmt']}')"
+        bucket_limit = gran_cfg["limit"]
         try:
             from modules.db import _pg_connect
             pg = _pg_connect()
@@ -12866,13 +12897,19 @@ def admin_llm_usage(request: Request) -> JSONResponse:
                 # TASK-0163: resolved_model(실제 서빙 모델, LiteLLM 해소 결과) 기준으로
                 # 집계하되 요청 별칭(model)도 함께 노출 → claude 계열 식별 + 별칭 추적.
                 cur.execute(
-                    f"SELECT COALESCE(resolved_model, model) AS m, model, count(*), sum(total_tokens) "
+                    f"SELECT COALESCE(resolved_model, model) AS m, model, count(*), sum(total_tokens), "
+                    f"sum(prompt_tokens), sum(completion_tokens) "
                     f"FROM agent_runtime.llm_usage "
                     f"WHERE created_at >= {win} GROUP BY COALESCE(resolved_model, model), model "
                     f"ORDER BY 4 DESC NULLS LAST LIMIT 50"
                 )
-                by_model = [{"model": r[1], "resolved_model": r[0], "calls": int(r[2]),
-                             "total_tokens": int(r[3] or 0)} for r in (cur.fetchall() or [])]
+                by_model = []
+                for r in (cur.fetchall() or []):
+                    pt_m, ct_m = int(r[4] or 0), int(r[5] or 0)
+                    by_model.append({"model": r[1], "resolved_model": r[0], "calls": int(r[2]),
+                                     "total_tokens": int(r[3] or 0), "prompt_tokens": pt_m,
+                                     "completion_tokens": ct_m,
+                                     "cost_usd": _estimate_llm_cost_usd(r[1], pt_m, ct_m)})
                 cur.execute(
                     f"SELECT c.owner_account_id, count(*), sum(u.total_tokens) "
                     f"FROM agent_runtime.llm_usage u "
@@ -12881,16 +12918,23 @@ def admin_llm_usage(request: Request) -> JSONResponse:
                 )
                 by_account = [{"account_id": (int(r[0]) if r[0] is not None else None),
                                "calls": int(r[1]), "total_tokens": int(r[2] or 0)} for r in (cur.fetchall() or [])]
+                # TASK-0166: granularity bucket(시/일/주/월) 시계열 — 호출/토큰/prompt/completion.
                 cur.execute(
-                    f"SELECT date(created_at)::text, count(*), sum(total_tokens) FROM agent_runtime.llm_usage "
-                    f"WHERE created_at >= {win} GROUP BY 1 ORDER BY 1 DESC LIMIT 90"
+                    f"SELECT {bucket_expr} AS b, count(*), sum(total_tokens), "
+                    f"sum(prompt_tokens), sum(completion_tokens) FROM agent_runtime.llm_usage "
+                    f"WHERE created_at >= {win} GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}"
                 )
-                by_day = [{"day": r[0], "calls": int(r[1]), "total_tokens": int(r[2] or 0)} for r in (cur.fetchall() or [])]
-                # TASK-0164: 일별 × 모델 분해 (상용 사용량 대시보드의 stacked bar 차트용).
-                # resolved_model(실제 서빙 모델) 기준 — 별칭 뒤 실제 모델별 추이.
+                by_day = [{"day": r[0], "calls": int(r[1]), "total_tokens": int(r[2] or 0),
+                           "prompt_tokens": int(r[3] or 0), "completion_tokens": int(r[4] or 0)}
+                          for r in (cur.fetchall() or [])]
+                # TASK-0164/0166: bucket × 모델 분해 (stacked bar). 최근 bucket_limit 버킷만
+                # (서브쿼리로 by_day 와 동일 버킷 집합 보장 → 차트 정합).
                 cur.execute(
-                    f"SELECT date(created_at)::text, COALESCE(resolved_model, model), sum(total_tokens) "
-                    f"FROM agent_runtime.llm_usage WHERE created_at >= {win} GROUP BY 1, 2 ORDER BY 1"
+                    f"SELECT {bucket_expr} AS b, COALESCE(resolved_model, model), sum(total_tokens) "
+                    f"FROM agent_runtime.llm_usage WHERE created_at >= {win} "
+                    f"AND {bucket_expr} IN (SELECT {bucket_expr} FROM agent_runtime.llm_usage "
+                    f"WHERE created_at >= {win} GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}) "
+                    f"GROUP BY 1, 2 ORDER BY 1"
                 )
                 by_day_model = [{"day": r[0], "model": r[1], "total_tokens": int(r[2] or 0)}
                                 for r in (cur.fetchall() or [])]
@@ -12925,8 +12969,11 @@ def admin_llm_usage(request: Request) -> JSONResponse:
             row["username"] = (meta or {}).get("username")
             row["role"] = (meta or {}).get("role")
         by_role = _aggregate_usage_by_role(by_account)
+        # TASK-0166: 총 추정 비용 = 모델별 추정 비용 합(단가 미상 로컬은 0).
+        totals["cost_usd"] = round(sum(m.get("cost_usd", 0) for m in by_model), 4)
         return JSONResponse({
             "window_days": days,
+            "granularity": gran,
             "totals": totals,
             "by_model": by_model,
             "by_account": by_account,

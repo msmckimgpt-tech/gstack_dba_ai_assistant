@@ -416,6 +416,13 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   순수 SVG(의존성 0, CDN 미사용)로 ① 일별 토큰 모델별 누적 막대(`renderStacked`, #usageDayChart)
   ② 모델별 비중 도넛(`renderDonut`, #usageModelChart) ③ 역할별 가로 막대(`renderHBar`,
   #usageRoleChart) 렌더. 기존 표는 `<details>` 접이식 "상세 표" 로 보존.
+- LLM 사용량 차트 고도화 (TASK-0166): `GET /api/admin/usage?days=N&gran=hour|day|week|month`
+  — `gran`(date_trunc 화이트리스트 `_USAGE_GRAN`)으로 시/일/주/월 bucket 시계열(by_day/by_day_model),
+  by_model/by_day 에 prompt/completion 분해, `_estimate_llm_cost_usd`(claude 근사 단가·로컬 0)로
+  모델별·총 추정 비용(`cost_usd`), 응답에 `granularity` 추가. admin.js 는 ④ 계정별 가로 막대
+  (`#usageAccountChart`) ⑤ 커스텀 hover 툴팁(`data-tip`/`bindTip`, SVG `<title>` 대체 — 값/비중/호출/비용)
+  ⑥ 막대 위 총합 값 라벨 ⑦ 집계단위 드롭다운(`#usageGranSel`)·기간 옵션(1일/1년) ⑧ 요약 추정비용
+  카드 + 모델별 표 prompt/completion·비용 컬럼. 비용은 추정(로컬=$0).
 
 ## 13. Pre-approved Changes
 - 비파괴적 경로 재배치와 이미지 복사 경로 수정

@@ -12,9 +12,12 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-09 (TASK-0165 LLM 사용량 화면 차트화; TASK-0164 SIGTERM graceful finalizer + RBAC catalog prune; TASK-0163 LLM 사용량 admin 계정/역할 집계)
+- Last Updated: 2026-06-09 (TASK-0166 LLM 사용량 차트 고도화; TASK-0165 LLM 사용량 화면 차트화; TASK-0164 SIGTERM finalizer)
 
 ## 2. Task Queue
+
+### TASK-0166 LLM 사용량 차트 고도화 — 계정별 차트·hover 툴팁·막대 값·시간단위·추가지표 (2026-06-09)
+- [x] **Minor §12.3** — TASK-0165 후속(사용자 지적 누락 항목). **백엔드 `admin_llm_usage`**: ① `granularity`(hour/day/week/month) — `date_trunc` 단위 화이트리스트(`_USAGE_GRAN`)로만 삽입(인젝션 차단), bucket 포맷 + 막대 상한. by_day/by_day_model bucket 집계(서브쿼리로 동일 버킷 집합 보장). ② by_model/by_day prompt/completion 분해. ③ `_estimate_llm_cost_usd`+`_LLM_PRICE_USD_PER_1M`(claude 근사, 로컬=0) 모델별·총 추정 비용. 응답 `granularity`/`cost_usd` 추가. **프론트(의존성 0 SVG)**: ① 계정별 가로 막대(`#usageAccountChart`) 신규(역할별 대칭). ② 커스텀 hover 툴팁(`data-tip`+`bindTip`, `<title>` 대체) 전 차트 — 값/비중/호출/비용. ③ 막대 위 총합 값 라벨. ④ 집계단위 드롭다운(`#usageGranSel`) + 기간(1일/1년 추가). ⑤ 요약 추정비용 카드 + 모델별 표 prompt/completion·비용 컬럼. 권한/엔드포인트/스키마/시크릿 신규 0. 캐시버스터 `?v=20260609-usage-charts2`. node --check/py_compile + make test 218 passed/5 skipped(회귀 0). REV-20260609-0166 [SKIPPED:frontend-viz]. **한계**: 비용은 공시가 근사 추정(로컬=$0). Windows-browser(PB-0008) 검증 배포 후. worktree `ai/claude/usage-charts-v2`(base main).
 
 ### TASK-0165 LLM 사용량 화면 차트화 (상용 AI 사용량 대시보드 참조) (2026-06-09)
 - [x] **Minor §12.3** — TASK-0163 후속(사용자 요청: "상용 ai 제공 서비스의 구조를 참조하여 차트 형식으로"). 표 위주 화면을 Anthropic Console / OpenAI Usage 류로 시각화. **백엔드**: `admin_llm_usage` 에 `by_day_model`(일별 × `COALESCE(resolved_model, model)` 토큰 합) 집계 추가 — 기존 컬럼만(비파괴 read, 스키마 0). **프론트(의존성 0 순수 SVG)**: admin.js ① `renderStacked`(일별 토큰 모델별 누적 세로 막대 + 날짜축 + 범례), ② `renderDonut`(모델별 비중 도넛 + % 범례, 실제 서빙 모델 라벨), ③ `renderHBar`(역할별 가로 막대). 색상 팔레트 `colorMapFor`(로컬/시스템=회색). admin.html usage pane 에 차트 컨테이너(#usageDayChart/#usageModelChart/#usageRoleChart) + 기존 표는 `<details>` 접이식 보존. CDN 미사용(정적자산 baked·WSL 내부 — Chart.js 등 외부 의존 회피). 캐시버스터 `?v=20260609-usage-charts`. 권한/엔드포인트/스키마/시크릿 신규 0. node --check/py_compile PASS. REV-20260609-0165 [SKIPPED:frontend-viz]. Windows-browser(PB-0008) 라이브 screenshot 검증 완료(배포 후). 동시 세션이 TASK-0164(SIGTERM)를 먼저 머지(a207bb4)해 번호 충돌 → 0164→0165 재부여 + main 위로 rebase. worktree `ai/claude/llm-usage-metering`(TASK-0163 연장).

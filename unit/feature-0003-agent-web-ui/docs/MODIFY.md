@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260609-0166
+- Date: 2026-06-09
+- TASK-Cycle: TASK-0166, **Minor §12.3** — LLM 사용량 차트 고도화 (계정별 차트·hover 툴팁·막대 값·시간단위·추가지표)
+- Summary: TASK-0165 후속(사용자 지적: 계정별 차트 부재·추가 지표·hover 상세·막대 정확한 값·시간 기준 선택). 상용 대시보드 수준으로 보강. 의존성 0 순수 SVG 유지.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`: `_LLM_PRICE_USD_PER_1M`(claude 근사 단가)+`_estimate_llm_cost_usd`+`_USAGE_GRAN`(date_trunc 화이트리스트+포맷+상한) 모듈 상수/헬퍼 추가. `admin_llm_usage` — `gran` 파라미터(화이트리스트 검증) + bucket_expr(`to_char(date_trunc('{gran}',...))`); by_model 에 prompt/completion + cost_usd; by_day/by_day_model 을 bucket 집계(by_day_model 은 서브쿼리로 by_day 와 동일 버킷); totals.cost_usd; 응답 `granularity` 추가.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: `loadUsage` 재작성 — 커스텀 hover 툴팁(`tip`/`bindTip`, data-tip), renderStacked(막대 값 라벨 + data-tip + gran 라벨축약), renderDonut(data-tip 토큰/비중/호출/비용), renderHBar((el,rows[{label,value,tip}]) 일반화), 계정별 차트 렌더, 요약 추정비용 카드, 모델별 표 prompt/completion·비용 컬럼, gran/days URL 파라미터. usageGranSel change 바인딩 추가.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: usage pane 에 `#usageGranSel`(시/일/주/월) + 기간 옵션(1일/1년) + `#usageAccountChart`(계정별 차트) + `#usageTrendTitle`(동적 단위 라벨). 캐시버스터 `?v=20260609-usage-charts` → `?v=20260609-usage-charts2`.
+- Note: 권한 `console.usage.read`(admin)/엔드포인트/스키마/시크릿 신규 0. granularity 는 date_trunc 단위 화이트리스트로만 SQL 삽입(인젝션 차단). 비용은 공시가 근사 "추정"(로컬 LLM=$0).
+- Review: REV-20260609-0166 [SKIPPED:frontend-viz-no-rbac-no-schema]. Windows-browser(PB-0008) 검증 배포 후.
+
 ## CHG-20260609-0165
 - Date: 2026-06-09
 - TASK-Cycle: TASK-0165, **Minor §12.3** — LLM 사용량 화면 차트화 (상용 AI 사용량 대시보드 구조 참조)

@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260609-0166 [SKIPPED:frontend-viz-no-rbac-no-schema]
+- Date: 2026-06-09
+- Cycle: TASK-0166 (LLM 사용량 차트 고도화 — 계정별 차트·hover 툴팁·막대 값·시간단위·추가지표), **Minor §12.3**
+- 사유: frontend 시각화 고도화(순수 SVG) + 백엔드는 기존 llm_usage 컬럼 read 집계 확장. **granularity SQL 안전성**: `date_trunc` 단위는 `_USAGE_GRAN` 화이트리스트 키로만, 포맷도 화이트리스트 상수 → 동적 SQL 삽입 없음(인젝션 차단). days 는 clamp 된 int. 비용은 추정 표시(부정확성 명시, 로컬=$0). RBAC/스키마/시크릿/신규 엔드포인트 0, 권한 게이트(`console.usage.read` admin) 무변경 → `feedback_outside_voice_for_rbac` 비해당. node --check/py_compile PASS + make test 218 passed/5 skipped(회귀 0). 시각 검증은 Windows-browser(PB-0008) screenshot.
+
 ## REV-20260609-0165 [SKIPPED:frontend-viz-no-rbac-no-schema]
 - Date: 2026-06-09
 - Cycle: TASK-0165 (LLM 사용량 화면 차트화 — 상용 AI 대시보드 구조 참조), **Minor §12.3**
