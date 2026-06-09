@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260609-0175 [SKIPPED:display-metadata-no-rbac-no-schema-no-behavior-change]
+- Date: 2026-06-09
+- Cycle: TASK-0175 (실행 단계 reason derived fallback), **Minor §12.3**
+- 사유: 변경은 순수 함수 `_derive_step_reason`(tool명→한국어 근거 문자열) 신규 + 루프 2줄 배선(`reason_text` 가 빈 경우에만 파생, **LLM 참값 비덮어쓰기**). step **표시 메타데이터**만 채울 뿐 쿼리 실행/결과/answer/RBAC/스키마/엔드포인트/프롬프트/회계 무변경 — agent 동작 위험면 0. `_derive_step_work`(이미 라이브 운영 중인 동형 derived 패턴)의 대칭 추가라 신규 설계 표면 없음. make test 269 passed/2 skipped(신규 4, 회귀 0). 시각 검증=라이브 ask 후 step 사이드 패널 reason 노출 확인(Windows-browser PB-0008 권장).
+
 ## REV-20260609-0172 [SUBAGENT: general-purpose 적대적 리뷰 ×2 — 무거운쿼리 자가규제, 설계 RECONSIDER + diff FIX-BEFORE-ENABLING-GATE]
 - Date: 2026-06-09 (TASK-0172, **Major §12.3** — agent-core query path). feedback_outside_voice_for_rbac 정책(LLM-SQL 신뢰경계 인접).
 - **1차(설계, self-interrupt 안)**: **RECONSIDER-APPROACH** — ① "LLM 판단만(가드레일 없음)" 은 내부 모순(비동기 쿼리 중 *언제 LLM 에 물을지* 는 비-LLM 휴리스틱 필수 = 사실상 가드레일; 순수형은 쿼리당 ~180 LLM 호출) ② 단일 `db_conn` 공유 → KILL 후 후속 step `Commands out of sync` ③ LLM 자발 중단 의존 → 인시던트 미해결 가능 ④ `agent_ro` 는 processlist 부하신호 관측 불가(PROCESS 권한). 더 간단·직접적 대안(EXPLAIN 사전게이팅 / per-query cap / replica 라우팅) 권고. → **사용자 결정: EXPLAIN 게이팅+cap 으로 전환**, self-interrupt 보류(DESIGN §10).

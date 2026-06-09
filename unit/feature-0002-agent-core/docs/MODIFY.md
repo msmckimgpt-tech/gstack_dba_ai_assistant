@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260609-0175
+- Date: 2026-06-09 (TASK-0175, **Minor §12.3** — agent-core)
+- Scope: 실행 단계 `reason`(왜) derived fallback 추가 — 표시 메타데이터만.
+- 문제: 사용자가 "각 단계 근거가 화면에 안 보인다" 재보고. 라이브 진단(PG `agent_runtime.steps`)에서 **모든 최근 step 이 `work_source='derived'`, `reason_text=''`**. 근본: ① base SYSTEM_PROMPT 가 LLM 에게 `tool_notes`(work/reason JSON) 방출을 **지시하지 않음**(TASK-0061 파싱 인프라는 있으나 TASK-0151 프롬프트 개편에 지시 미포함) → LLM 이 tool_notes 미생성 → `_parse_tool_notes` 빈 결과. ② work 는 `_derive_step_work` fallback 으로 복구되나 **reason 은 derived fallback 부재** → 항상 빈 값. (CHG-0173 프런트는 `step.reason` 이 비면 미표시 → 표시할 데이터 자체가 없었음.)
+- 변경 ([src/agent_core.py](../src/agent_core.py)):
+  - `_derive_step_reason(tool_name, args)` 신규 — `_derive_step_work`(무엇을)의 대칭(왜). tool 목적별 결정적 근거 문자열(list_schemas/describe_schema/describe_table/search_tables/get_sample_rows/get_table_indexes/get_foreign_keys/explain_query/execute_sql[집계/조회 분기]). 미지원 tool 은 `""`(무의미 근거 노출 방지 — 프런트가 빈 reason 미표시).
+  - 호출부(루프): work 파생 직후 `if not reason_text: reason_text = _derive_step_reason(...); reason_source = "derived" if reason_text else ""`. **LLM 참값(tool_notes.reason)이 있으면 덮어쓰지 않음**(work 와 동일 가드).
+- 비변경: 쿼리 실행·결과·RBAC·스키마·엔드포인트·프롬프트 무변경. reason_text 는 step 표시 메타데이터일 뿐 agent 동작/answer 에 무영향. 회계(`_record_llm_usage`)·tool 분기 등 다른 경로 무관.
+- 게이트: make test(컨테이너) **269 passed / 2 skipped**(신규 `test_derive_step_reason.py` 4, 회귀 0). py_compile OK. outside-voice [SKIPPED:display-metadata-no-rbac-no-schema-no-behavior-change] (REV-20260609-0175).
+- 후속(이월): LLM 생성 근거(richer)는 SYSTEM_PROMPT 에 tool_notes 지시 추가 + 라이브 `WebSystemPrompts` global row 갱신 + 카나리아 필요(별 cycle — 프롬프트 변경 리스크, TASK-0151 패턴). 본 cycle 은 결정적 derived 로 즉시·전건 가시화.
+
 ## CHG-20260609-0172
 - Date: 2026-06-09 (TASK-0172, **Major §12.3** — agent-core)
 - Scope: 무거운 쿼리 자가규제 — EXPLAIN 사전 게이팅 + per-query 시간 cap. (라이브 인시던트 "분기 대화 처리중 단계 안 진행" = 5~6분 대용량 집계 쿼리 근본 대응. self-interrupt(mid-query KILL)는 outside-voice RECONSIDER 로 보류 — DESIGN-self-interrupt.md §10 참조.)
