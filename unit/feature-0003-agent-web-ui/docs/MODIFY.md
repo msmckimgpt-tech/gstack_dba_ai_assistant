@@ -20,6 +20,7 @@ source_of_truth: true
   - BL-1(outside-voice): 403 product-access early-return 의 slot 이중 release 제거(finally 단일 release) — 기존 동시성 카운터 손상 수정.
 - 게이트: make test 회귀 0(244 pass), py_compile OK, ruff clean. outside-voice 적대적 리뷰 2회(설계 전 + diff) — BLOCKER 3 + MAJOR 4 흡수.
 - flag 기본 inprocess 라 본 배포 자체로는 동작 무변경(shadow). cutover 는 env 전환.
+- **라이브 cutover 검증(2026-06-09, main 1320bca→후속 hotfix)**: 마이그레이션 0003 적용(live=0003, agent_kb_rw 권한 OK) → web+ask-worker 배포(healthz git_commit 일치) → `AGENT_ASK_EXECUTION_MODE=worker` 전환. 실측: ① ask enqueue→worker claim(atomic, lease=1)→run→result_json→/api/ask 동기 응답 shape 패리티 PASS, exactly-once(attempts=1). ② **web force-recreate 중 in-flight run 생존**(AC-0327): 동일 run_id·attempts=1·lease=1 로 done 도달, backstop 미오염(last_status=done/last_error 빈값, B1). ③ **hotfix**: `_ask_worker_ready` 가 `_parse_kv_timestamp`(naive UTC) 와 `datetime.now(timezone.utc)`(aware) 를 빼 TypeError→항상 False→readiness 영구 503 이던 tz 버그 라이브 포착·수정(naive 비교). project_task0159 KV tz stale 와 동형 함정.
 
 ## CHG-20260609-0167
 - Date: 2026-06-09

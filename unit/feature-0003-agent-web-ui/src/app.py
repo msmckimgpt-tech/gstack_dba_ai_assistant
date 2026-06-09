@@ -7522,7 +7522,12 @@ def _ask_worker_ready(conn) -> bool:
         parsed = _parse_kv_timestamp(raw)
         if parsed is None:
             return False
-        age = (datetime.now(timezone.utc) - parsed).total_seconds()
+        # _parse_kv_timestamp 는 tzinfo 를 strip 한 naive UTC datetime 을 반환하므로
+        # naive UTC now 와 비교한다(aware now() 와 빼면 TypeError → except → 항상 False
+        # = readiness 영구 실패. TASK-0169 라이브 cutover 에서 포착·수정. project_task0159
+        # 의 KV tz stale 함정과 동형).
+        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        age = (now_naive - parsed).total_seconds()
         return age <= _ASK_WORKER_READY_MAX_AGE_SEC
     except Exception:
         return False
