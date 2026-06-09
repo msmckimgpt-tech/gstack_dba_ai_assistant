@@ -3984,8 +3984,33 @@ a { color: inherit; }
   color: var(--text-1, #111827);
   line-height: 1.4;
 }
-/* TMI: step-reason은 시각적으로 숨기고 hover title(브라우저 네이티브 툴팁)으로 전달 */
-.step-reason { display: none; }
+/* step-reason: 각 실행 단계의 수행 근거를 제목 아래 secondary 라인으로 노출.
+   굵은 step-title(=무엇을) 아래에 "근거"(=왜) 를 명시해 작업의 합리성을 보임. */
+.step-reason {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 1px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted, #6b7280);
+}
+.step-reason-label {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  color: var(--primary, #2563eb);
+  padding: 0 5px;
+  border: 1px solid rgba(37,99,235,.28);
+  border-radius: 10px;
+  line-height: 1.55;
+}
+.step-reason-text {
+  flex: 1 1 auto;
+  word-break: break-word;
+}
 .step-sql-wrap {
   margin-top: 4px;
   border-radius: 6px;

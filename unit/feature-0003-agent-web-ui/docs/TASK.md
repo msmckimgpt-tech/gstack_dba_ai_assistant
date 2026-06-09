@@ -2987,3 +2987,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **outside-voice(REV-20260609-0004) FIX-FIRST 반영**: #2 orphan blob → **INSERT 먼저→put→실패 시 행 보상삭제**(업로드 패턴). #6 quota 우회 → 복사 전 `_check_attachment_size_caps`(per-file/conv/account) 검사·초과분 skip. #5 audit → `share.fork` ctx 에 `attachments_copied`/`core_messages_copied` 추가(교차계정 forensics). #7 → 테스트 robust 화(⊆+count).
 - [x] 라이브 검증 테스트 `tests/test_fork_attachments.py`(A1~A4: copied 수·시그니처⊆·독립 id·signed_url). py_compile PASS.
 - [ ] verify-completion / PR → main 머지 → 재배포 → 라이브 e2e(A1~A4 green)
+
+### TASK-0173 — 실행 단계 "근거(reason)" 사용자 노출 (frontend-only) (2026-06-09)
+- [x] **Minor §12.3** — assistant 답변 시 각 실행 단계의 수행 근거가 화면에 안 나와 사용자가 작업의 합리성을 확인 불가. `reason` 데이터는 end-to-end 정상(LLM tool_notes → `agent_runtime.steps.reason_text` → `/api/progress`)인데 프런트가 과거 "TMI 개선"으로 step 사이드 패널에서 reason 을 hover 툴팁(`item.title`)에만 넣고 `.step-reason{display:none}` 으로 숨긴 게 근본. (CHG-20260609-0173)
+- [x] `buildStepDetailEl` 에 `.step-reason`(라벨 "근거" pill + 텍스트) 인라인 렌더링 추가 — step 사이드 패널 전 단계가 근거 표시.
+- [x] `_renderStepSidePanelBody` 중복 `item.title` 제거 + `buildSqlStepPanel`(완료 상세 SQL 단계)에 동일 reason 추가(일관성 — non-SQL 단계는 `buildStepBlocks` 가 이미 `work — reason` 표시 중이었음). styles.css `.step-reason` 가시 스타일 복원 + 캐시버스터 bump.
+- [x] node --check app.js PASS. RBAC/스키마/엔드포인트/시크릿/백엔드 무변경. outside-voice [SKIPPED:frontend-only] (REV-20260609-0173).
+- [ ] verify-completion / PR → main 머지 → 재배포 → Windows-browser(PB-0008) 시각 검증

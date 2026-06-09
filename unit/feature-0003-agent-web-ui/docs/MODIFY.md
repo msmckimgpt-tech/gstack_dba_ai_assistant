@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260609-0173
+- Date: 2026-06-09 (TASK-0173)
+- Scope: 실행 단계(step) "근거(reason)" 사용자 노출 — frontend-only(web-ui 정적자산만).
+- 문제: assistant 답변 시 실행 단계의 수행 근거가 화면에 나오지 않아, 사용자가 각 단계가 합리적으로 진행됐는지 확인 불가. 근본은 `reason` 데이터는 end-to-end 정상(LLM tool_notes → `agent_runtime.steps.reason_text` → `/api/progress` 응답)인데 프런트가 과거 "TMI 개선" 결정으로 step 사이드 패널에서 reason 을 `item.title`(hover 툴팁)에만 넣고 `.step-reason { display:none }` 으로 숨김.
+- 변경:
+  - [src/static/app.js](../src/static/app.js):
+    - `buildStepDetailEl`: 숨김 주석 자리를 실제 `.step-reason`(라벨 "근거" pill + 텍스트) DOM 렌더링으로 교체 → step 사이드 패널의 모든 단계가 근거를 표시. compact/non-compact 공통.
+    - `_renderStepSidePanelBody`: 인라인 렌더링으로 대체되었으므로 중복 `item.title = step.reason` 제거.
+    - `buildSqlStepPanel`: 완료 메시지 상세의 execute_sql 단계 패널 상단에도 동일 `.step-reason` 추가(side panel 과 일관 — non-SQL 단계는 `buildStepBlocks` 가 이미 `work — reason` 표시 중이었음).
+  - [src/static/styles.css](../src/static/styles.css): `.step-reason { display:none }` → 가시 secondary 라인(제목 아래 muted, "근거" pill) 스타일로 복원 + `.step-reason-label` / `.step-reason-text`.
+  - [src/static/index.html](../src/static/index.html): styles.css·app.js 캐시버스터 `?v=20260609-query-toggle` → `?v=20260609-step-reason`.
+- 비변경: 백엔드(app.py/agent_core)·RBAC·스키마·엔드포인트·시크릿 무변경. `reason` 텍스트는 LLM tool_notes 의 명시 user-facing 근거(provider chain-of-thought=`reasoning_content` 와 분리·폐기됨, agent_core.py:2054-2056) 이므로 노출 안전. XSS: `textContent` 사용.
+- 게이트: node --check app.js PASS. outside-voice [SKIPPED:frontend-only] (REV-20260609-0173). 시각 검증=Windows-browser(PB-0008) 권장.
+
 ## CHG-20260609-0169
 - Date: 2026-06-09 (TASK-0169)
 - Scope: out-of-process ask-worker 실행모델 — web 측(feature-0003). 짝: feature-0002 CHG-20260609-0169.

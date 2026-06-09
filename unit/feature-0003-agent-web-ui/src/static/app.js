@@ -1972,6 +1972,22 @@ function buildSqlStepPanel(step) {
   const panel = document.createElement("div");
   panel.className = "sql-result-group";
 
+  // 근거 — execute_sql 단계도 수행 이유를 표 위에 명시(side panel 과 일관).
+  const reason = String((step && step.reason) || "").trim();
+  if (reason) {
+    const reasonEl = document.createElement("div");
+    reasonEl.className = "step-reason";
+    const reasonLabel = document.createElement("span");
+    reasonLabel.className = "step-reason-label";
+    reasonLabel.textContent = "근거";
+    reasonEl.appendChild(reasonLabel);
+    const reasonText = document.createElement("span");
+    reasonText.className = "step-reason-text";
+    reasonText.textContent = reason;
+    reasonEl.appendChild(reasonText);
+    panel.appendChild(reasonEl);
+  }
+
   // 결과 테이블을 쿼리보다 먼저 표시 — 표 형식이 주된 답변 전달 수단
   const rs = step.result_summary;
   let tableWrap = null;
@@ -2578,7 +2594,21 @@ function buildStepDetailEl(step, idx, { compact = false } = {}) {
   title.textContent = step.work || step.intent || step.tool || `단계 ${(idx || 0) + 1}`;
   wrap.appendChild(title);
 
-  // reason — TMI 개선: 텍스트 노출 제거, 상위 item.title로 hover 툴팁 전달됨
+  // reason — 각 실행 단계의 수행 근거를 사용자에게 노출(작업이 합리적으로 진행됐음을
+  // 명시적으로 알 수 있게). 데이터는 step.reason(LLM tool_notes)에 이미 존재.
+  if (step.reason) {
+    const reasonEl = document.createElement("div");
+    reasonEl.className = "step-reason";
+    const reasonLabel = document.createElement("span");
+    reasonLabel.className = "step-reason-label";
+    reasonLabel.textContent = "근거";
+    reasonEl.appendChild(reasonLabel);
+    const reasonText = document.createElement("span");
+    reasonText.className = "step-reason-text";
+    reasonText.textContent = step.reason;
+    reasonEl.appendChild(reasonText);
+    wrap.appendChild(reasonEl);
+  }
 
   if (!compact) {
     // SQL 블록
@@ -2667,8 +2697,8 @@ function _renderStepSidePanelBody(pending) {
   steps.forEach((step, idx) => {
     const item = document.createElement("div");
     item.className = "step-side-panel-item";
-    // reason이 있으면 item 자체에 title(브라우저 툴팁)으로 붙임 (TMI 개선)
-    if (step.reason) item.title = step.reason;
+    // reason은 buildStepDetailEl 이 .step-reason 으로 인라인 렌더링하므로
+    // 별도 hover 툴팁(item.title)은 두지 않는다(중복 방지).
     const itemHeader = document.createElement("div");
     itemHeader.className = "step-side-panel-item-header";
     const numEl = document.createElement("span");
