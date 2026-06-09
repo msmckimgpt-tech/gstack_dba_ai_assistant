@@ -12,9 +12,12 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-08 (TASK-0162 진행중 말풍선 생명주기 수정 — 대화 전환 누출 + 새로고침 경과시간 초기화; TASK-0159 고아 run 무한 폴링 수정; TASK-0158 진입점 Tier1·2)
+- Last Updated: 2026-06-09 (TASK-0163 LLM 사용량 admin 계정/역할 집계 — feature-0002 주관 cross-feature; TASK-0162 진행중 말풍선 생명주기 수정; TASK-0159 고아 run 무한 폴링 수정)
 
 ## 2. Task Queue
+
+### TASK-0163 LLM 사용량 admin 계정별/역할별 집계 + 모델 해소 표시 (2026-06-09, cross-feature — 주관 feature-0002)
+- [x] **Major §12.3** — 관리 콘솔 > 감사 > LLM 사용량의 모델별/계정별/역할별 집계 복구. 본 feature 면은 **엔드포인트 + 프론트**: `admin_llm_usage`(GET /api/admin/usage) 가 by_model 을 `COALESCE(resolved_model, model)` 로 집계(요청 별칭+실제 모델 둘 다 노출), by_account 를 이미 열린 MySQL conn 으로 `WebAccounts LEFT JOIN WebRoles ON r.Id=a.RoleId` 로 username·role enrich(추가 conn 개방 0), 신규 순수 헬퍼 `_aggregate_usage_by_role`(account None→`(시스템)`, role None→`(역할 없음)`, total_tokens desc) Python 폴딩 후 응답에 `by_role` 추가. 프론트 `admin.html` 역할별 표(#usageByRole) + `admin.js loadUsage` 가 `tbl(rows,cols)` fmt 에 row 전달, by_role 렌더·계정 username·역할 컬럼·모델 `별칭 → 해소` 표시, 캐시버스터 `?v=20260609-usage-roles`. 권한 `console.usage.read`(admin) **무변경 — RBAC 카탈로그/엔드포인트 신규 0**. 계측·마이그레이션(`resolved_model` 컬럼)·RC1 race 수정은 feature-0002 주관([[feature-0002-agent-core/docs/TASK.md]] TASK-0163, REV-20260609-0163). 검증: make test 215 passed/5 skipped + node --check + outside-voice 적대적 diff 리뷰 PASS(BLOCKER 1 흡수).
 
 ### TASK-0162 진행중("작업 중") 말풍선 생명주기 수정 — 대화 전환 누출 + 새로고침 경과시간 초기화 (2026-06-08)
 

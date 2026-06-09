@@ -12698,6 +12698,25 @@ def _audit_clamped_limit(raw: str) -> int:
     return min(n, _AUDIT_LIST_MAX_LIMIT)
 
 
+def _aggregate_usage_by_role(by_account: list[dict]) -> list[dict]:
+    """TASK-0163: 계정별 LLM usage 를 역할별로 폴딩.
+
+    account_id 가 None(insight 워커 등 owner 없는 시스템 호출) → "(시스템)" 버킷,
+    계정은 있으나 역할 미지정(role NULL) → "(역할 없음)" 버킷. total_tokens desc 정렬.
+    PG(usage)·MySQL(역할) cross-DB 라 SQL join 불가 → enrich 된 by_account 를 Python 집계.
+    """
+    buckets: dict[str, dict] = {}
+    for row in by_account:
+        if row.get("account_id") is None:
+            key = "(시스템)"
+        else:
+            key = row.get("role") or "(역할 없음)"
+        b = buckets.setdefault(key, {"role": key, "calls": 0, "total_tokens": 0})
+        b["calls"] += int(row.get("calls") or 0)
+        b["total_tokens"] += int(row.get("total_tokens") or 0)
+    return sorted(buckets.values(), key=lambda x: x["total_tokens"], reverse=True)
+
+
 @app.get("/api/admin/usage")
 def admin_llm_usage(request: Request) -> JSONResponse:
     """TASK-0136 (#11): LLM 토큰 사용량/비용 집계 — admin 한정(console.usage.read).
@@ -12741,11 +12760,16 @@ def admin_llm_usage(request: Request) -> JSONResponse:
                 t = cur.fetchone() or (0, 0, 0, 0)
                 totals = {"calls": int(t[0]), "prompt_tokens": int(t[1]),
                           "completion_tokens": int(t[2]), "total_tokens": int(t[3])}
+                # TASK-0163: resolved_model(실제 서빙 모델, LiteLLM 해소 결과) 기준으로
+                # 집계하되 요청 별칭(model)도 함께 노출 → claude 계열 식별 + 별칭 추적.
                 cur.execute(
-                    f"SELECT model, count(*), sum(total_tokens) FROM agent_runtime.llm_usage "
-                    f"WHERE created_at >= {win} GROUP BY model ORDER BY 3 DESC NULLS LAST LIMIT 50"
+                    f"SELECT COALESCE(resolved_model, model) AS m, model, count(*), sum(total_tokens) "
+                    f"FROM agent_runtime.llm_usage "
+                    f"WHERE created_at >= {win} GROUP BY COALESCE(resolved_model, model), model "
+                    f"ORDER BY 4 DESC NULLS LAST LIMIT 50"
                 )
-                by_model = [{"model": r[0], "calls": int(r[1]), "total_tokens": int(r[2] or 0)} for r in (cur.fetchall() or [])]
+                by_model = [{"model": r[1], "resolved_model": r[0], "calls": int(r[2]),
+                             "total_tokens": int(r[3] or 0)} for r in (cur.fetchall() or [])]
                 cur.execute(
                     f"SELECT c.owner_account_id, count(*), sum(u.total_tokens) "
                     f"FROM agent_runtime.llm_usage u "
@@ -12764,11 +12788,38 @@ def admin_llm_usage(request: Request) -> JSONResponse:
                 pg.close()
             except Exception:
                 pass
+        # TASK-0163: 계정 ID → 사용자명·역할 매핑(MySQL, cross-DB) + 역할별 집계.
+        # usage 는 PG·계정/역할은 MySQL 이라 SQL join 불가 → Python 으로 enrich/fold.
+        acct_ids = [row["account_id"] for row in by_account if row["account_id"] is not None]
+        acct_meta: dict[int, dict] = {}
+        if acct_ids:
+            try:
+                placeholders = ",".join(["%s"] * len(acct_ids))
+                mcur = conn.cursor(dictionary=True)
+                try:
+                    mcur.execute(
+                        f"SELECT a.Id AS id, a.Username AS username, r.Name AS role "
+                        f"FROM WebAccounts a LEFT JOIN WebRoles r ON r.Id = a.RoleId "
+                        f"WHERE a.Id IN ({placeholders})",
+                        tuple(acct_ids),
+                    )
+                    for m in (mcur.fetchall() or []):
+                        acct_meta[int(m["id"])] = {"username": m.get("username"), "role": m.get("role")}
+                finally:
+                    mcur.close()
+            except Exception:
+                logging.getLogger(__name__).warning("admin_usage: role enrichment failed", exc_info=True)
+        for row in by_account:
+            meta = acct_meta.get(row["account_id"]) if row["account_id"] is not None else None
+            row["username"] = (meta or {}).get("username")
+            row["role"] = (meta or {}).get("role")
+        by_role = _aggregate_usage_by_role(by_account)
         return JSONResponse({
             "window_days": days,
             "totals": totals,
             "by_model": by_model,
             "by_account": by_account,
+            "by_role": by_role,
             "by_day": by_day,
         })
     finally:

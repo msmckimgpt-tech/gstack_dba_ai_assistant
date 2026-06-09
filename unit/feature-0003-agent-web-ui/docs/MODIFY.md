@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260609-0163
+- Date: 2026-06-09
+- TASK-Cycle: TASK-0163, **Major §12.3** — LLM 사용량 admin 계정별/역할별 집계 + 모델 해소 표시 (cross-feature, 주관 feature-0002)
+- Summary: 관리 콘솔 > 감사 > LLM 사용량에 모델별(claude 포함 실제 모델)·계정별(이름/역할)·역할별 집계를 노출. 토큰 계측 복구·`resolved_model` 마이그레이션·in-process race 수정은 feature-0002 주관. 본 feature 는 엔드포인트 집계/표시 면.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`: `admin_llm_usage`(GET /api/admin/usage) — by_model `SELECT COALESCE(resolved_model, model) AS m, model, count(*), sum(total_tokens) ... GROUP BY COALESCE(resolved_model,model), model`(별칭+실제 모델 노출); by_account 를 이미 열린 MySQL `conn`(추가 개방 0)으로 `WebAccounts a LEFT JOIN WebRoles r ON r.Id=a.RoleId WHERE a.Id IN (%s,...)`(파라미터화) username·role enrich(실패 시 graceful null); 신규 모듈 헬퍼 `_aggregate_usage_by_role`(account None→`(시스템)`, role None→`(역할 없음)`, total_tokens desc) Python 폴딩; 응답에 `by_role` 추가. 권한 `console.usage.read`(admin) 게이트 무변경.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: usage pane 에 역할별 표(`<h3>역할별</h3><div id="usageByRole">`) 추가; 정적자산 캐시버스터 `?v=20260605-tmi-cleanup` → `?v=20260609-usage-roles`.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: `loadUsage` — `tbl(rows,cols)` 의 fmt 에 행 전체(r) 전달; 모델별에 `별칭 → 해소모델` 표시; 역할별 표(`#usageByRole`) 렌더; 계정별에 사용자명(`username (#id)`)·역할 컬럼 추가. `esc()` XSS 이스케이프 유지.
+- Note: RBAC 카탈로그/엔드포인트/시크릿 신규 0. cross-DB(PG usage + MySQL 역할)는 SQL join 불가라 Python 으로 enrich/fold.
+- Review: REV-20260609-0163 (정본 feature-0002) NEEDS-TWEAK→PASS, BLOCKER 1 흡수. **Windows-browser(PB-0008) 라이브 검증은 배포 후 수행.**
+
 ## CHG-20260608-0162
 - Date: 2026-06-08
 - TASK-Cycle: TASK-0162, **Minor §12.3** — 진행중("작업 중") 말풍선 생명주기 수정 (대화 전환 누출 + 새로고침 경과시간 초기화)

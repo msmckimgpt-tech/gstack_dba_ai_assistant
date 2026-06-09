@@ -57,7 +57,7 @@ from modules.memory import (
     set_run_status,
 )
 from modules.model_catalog import is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_vision
-from modules.llm import llm_classify_origin_shift, llm_generate_topic, messages_for_provider
+from modules.llm import _record_llm_usage, llm_classify_origin_shift, llm_generate_topic, messages_for_provider
 from modules.domain import _derive_topic, _is_low_information_request, _should_refresh_origin_request
 from modules.render import normalize_step_result_summary
 from modules.tools import (
@@ -1668,7 +1668,9 @@ def _model_supports_temperature(model: str) -> bool:
 
 def _call_llm(client: OpenAI, messages: list[dict], model: str,
               temperature: float | None = None,
-              tools: list[dict] | None = None) -> Any:
+              tools: list[dict] | None = None,
+              conversation_id: str | None = None,
+              run_id: str | None = None) -> Any:
     """OpenAI API를 호출한다.
 
     TASK-0094 Sprint 2 (D13): vision 가능 모델 + env ATTACHMENT_IMAGE_INLINE_PATH
@@ -1697,6 +1699,15 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
     if token_limit is not None:
         kwargs["max_tokens"] = token_limit
     response = client.chat.completions.create(**kwargs)
+    # TASK-0163: 메인 agentic loop 의 LLM 호출을 토큰 회계에 기록(best-effort).
+    # 이전엔 _record_llm_usage chokepoint 를 우회해 사용자 대화 메인 추론이 한 건도
+    # llm_usage 에 잡히지 않았다(계정별/역할별 집계가 비던 근본 원인 RC1).
+    # in-process 동시 ask 의 cfg 전역 race 를 피하려 conversation_id/run_id 를 명시 전달.
+    try:
+        _record_llm_usage(model, "agent", response,
+                          conversation_id=conversation_id, run_id=run_id)
+    except Exception:
+        pass
     return response.choices[0].message
 
 
@@ -2009,6 +2020,8 @@ def _run_agent_core(
                 client, messages, model,
                 temperature=temperature,
                 tools=use_tools,
+                conversation_id=cid,  # TASK-0163: race-free 토큰 귀속 (in-process 동시 ask)
+                run_id=run_id,
             )
         except Exception as e:
             error_msg = f"LLM 호출 오류: {e}"

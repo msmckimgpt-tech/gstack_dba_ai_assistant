@@ -216,6 +216,7 @@ CREATE TABLE IF NOT EXISTS agent_runtime.llm_usage (
     conversation_id   VARCHAR(255),
     run_id            VARCHAR(255),
     model             VARCHAR(128),
+    resolved_model    VARCHAR(128),
     task              VARCHAR(64),
     prompt_tokens     INTEGER NOT NULL DEFAULT 0,
     completion_tokens INTEGER NOT NULL DEFAULT 0,

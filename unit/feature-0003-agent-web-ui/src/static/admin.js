@@ -694,14 +694,16 @@ async function loadUsage() {
   const days = sel ? sel.value : "30";
   const summaryEl = document.getElementById("usageSummary");
   const modelEl = document.getElementById("usageByModel");
+  const roleEl = document.getElementById("usageByRole");
   const acctEl = document.getElementById("usageByAccount");
   if (summaryEl) summaryEl.textContent = "로딩 중…";
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const num = (v) => (Number(v) || 0).toLocaleString();
+  // TASK-0163: fmt 에 행 전체(r)도 전달 — "별칭 → 해소모델" 등 다중 필드 표시용.
   const tbl = (rows, cols) => {
     if (!rows || !rows.length) return "<p style='color:#888;'>없음</p>";
     const head = cols.map((c) => `<th style='text-align:left;padding:4px 12px;'>${esc(c.label)}</th>`).join("");
-    const body = rows.map((r) => "<tr>" + cols.map((c) => `<td style='padding:4px 12px;border-top:1px solid #eee;'>${esc(c.fmt ? c.fmt(r[c.key]) : r[c.key])}</td>`).join("") + "</tr>").join("");
+    const body = rows.map((r) => "<tr>" + cols.map((c) => `<td style='padding:4px 12px;border-top:1px solid #eee;'>${esc(c.fmt ? c.fmt(r[c.key], r) : r[c.key])}</td>`).join("") + "</tr>").join("");
     return `<table style='border-collapse:collapse;width:100%;max-width:560px;'><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
   };
   try {
@@ -716,11 +718,21 @@ async function loadUsage() {
         `<div><div class='drawer-label'>completion</div><strong>${num(t.completion_tokens)}</strong></div>` +
         `</div>`;
     }
+    // 모델별: 별칭(model)과 실제 서빙 모델(resolved_model)이 다르면 "별칭 → 해소" 표시.
     if (modelEl) modelEl.innerHTML = tbl(data.by_model, [
-      { key: "model", label: "모델" }, { key: "calls", label: "호출", fmt: num }, { key: "total_tokens", label: "토큰", fmt: num },
+      { key: "resolved_model", label: "모델", fmt: (v, r) => {
+        const alias = r.model == null ? "" : String(r.model);
+        const resolved = v == null ? "" : String(v);
+        return (!resolved || resolved === alias) ? (alias || "(미상)") : `${alias} → ${resolved}`;
+      } },
+      { key: "calls", label: "호출", fmt: num }, { key: "total_tokens", label: "토큰", fmt: num },
+    ]);
+    if (roleEl) roleEl.innerHTML = tbl(data.by_role, [
+      { key: "role", label: "역할" }, { key: "calls", label: "호출", fmt: num }, { key: "total_tokens", label: "토큰", fmt: num },
     ]);
     if (acctEl) acctEl.innerHTML = tbl(data.by_account, [
-      { key: "account_id", label: "계정 ID", fmt: (v) => (v == null ? "(시스템)" : v) },
+      { key: "account_id", label: "계정", fmt: (v, r) => (v == null ? "(시스템)" : (r.username ? `${r.username} (#${v})` : `#${v}`)) },
+      { key: "role", label: "역할", fmt: (v) => (v == null ? "—" : v) },
       { key: "calls", label: "호출", fmt: num }, { key: "total_tokens", label: "토큰", fmt: num },
     ]);
   } catch (e) {

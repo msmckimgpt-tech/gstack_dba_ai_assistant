@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260609-0163 [SUBAGENT: general-purpose 적대적 diff 리뷰 — LLM 사용량 회계, NEEDS-TWEAK→PASS, BLOCKER 1 흡수 (cross-feature, 정본 feature-0002)]
+- Date: 2026-06-09
+- Cycle: TASK-0163 (REQ-20260609-0163, **Major §12.3** — LLM 사용량 admin 계정별/역할별 집계 + 모델 해소)
+- 본 feature 면(엔드포인트 `admin_llm_usage`+`_aggregate_usage_by_role`, 프론트 admin.html/js)에 대한 적대적 리뷰 결과는 feature-0002 정본([[feature-0002-agent-core/docs/REVIEW.md]] REV-20260609-0163)에 기록. 요지: BLOCKER 1(B1, in-process 동시 ask cfg 전역 race — 명시 인자 전환으로 흡수) + cross-DB enrich 파라미터화·XSS `esc()`·MySQL conn 재사용·by_model GROUP BY·권한 `console.usage.read` 무변경 전부 VERIFIED-CLEAR. Verdict PASS.
+
 ## REV-20260608-0162 [SUBAGENT: general-purpose 적대적 diff 리뷰 — 진행중 말풍선 생명주기, BLOCKER 0]
 - Date: 2026-06-08
 - Cycle: TASK-0162 (REQ-20260608-0162, **Minor §12.3** — 대화 전환 누출 + 새로고침 경과시간 초기화)

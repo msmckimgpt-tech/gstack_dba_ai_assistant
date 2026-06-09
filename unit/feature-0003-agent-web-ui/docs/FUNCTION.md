@@ -402,6 +402,15 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 ## 12. Observability
 - 웹 세션: `../../../../artifacts/shared/web_sessions`
 - 로그: `../../../../artifacts/shared/logs`
+- LLM 사용량 admin 대시보드 (TASK-0136 + TASK-0163): `GET /api/admin/usage?days=N`
+  (권한 `console.usage.read` = admin 전용) 가 기간별 `totals` + `by_model` + `by_account`
+  + `by_role` + `by_day` 를 반환. `by_model` 은 `COALESCE(resolved_model, model)` 기준
+  집계로 요청 별칭(edge/core/auto)과 실제 서빙 모델(claude 계열 등)을 함께 노출.
+  `by_account` 는 PG `core_conversations.owner_account_id` 집계를 MySQL `WebAccounts
+  ⋈ WebRoles` 로 username·role enrich(owner 없는 insight worker = `(시스템)`).
+  `by_role` 은 `_aggregate_usage_by_role` 가 계정별을 역할로 폴딩(`(시스템)`/`(역할 없음)`
+  버킷 포함). 관리 콘솔 > 감사 > LLM 사용량 pane(admin.html `data-admin-pane="usage"`)
+  의 모델별/역할별/계정별 표(`#usageByModel`/`#usageByRole`/`#usageByAccount`)로 표시.
 
 ## 13. Pre-approved Changes
 - 비파괴적 경로 재배치와 이미지 복사 경로 수정

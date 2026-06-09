@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260609-0163 [SUBAGENT: general-purpose 적대적 diff 리뷰 — LLM 사용량 회계, NEEDS-TWEAK→PASS, BLOCKER 1 흡수]
+- Date: 2026-06-09
+- Cycle: TASK-0163 (REQ-20260609-0163, **Major §12.3** — LLM 사용량 회계 복구: 메인 추론 계측 + resolved_model + 계정별/역할별)
+- Reviewer: general-purpose subagent (적대적 backend diff 리뷰 — llm.py `_record_llm_usage` / agent_core `_call_llm`+`run_agent` / app.py `admin_llm_usage`+`_aggregate_usage_by_role` / alembic 0002 / schema parity / 프론트). §18.8 trigger: schema/migration + 메인 LLM 경로 = backend 면.
+- Verdict: **NEEDS-TWEAK → (B1 보정 후) PASS**. **BLOCKER 1 흡수.**
+- **BLOCKER B1 (흡수 완료)**: 토큰 귀속의 전제가 동시성 하에서 불안전. `cfg.MEMORY_CONVERSATION_ID`/`CURRENT_RUN_ID` 는 contextvar 가 아닌 module global 인데, `/api/ask` 는 agent 를 subprocess 가 아니라 **in-process(`asyncio.to_thread`)로 실행**([[TASK-0159]], `_run_agent` subprocess helper 는 호출자 0 = 죽은 코드). `WEB_PARALLEL_LIMIT=6` per-account 동시 ask 시 thread A 의 cid 를 thread B 가 덮어써 A 의 토큰이 B 의 계정/역할로 오귀속 → 본 cycle 의 RC3(정확한 계정별/역할별) 목표 자체를 깨뜨림. 게다가 본 변경이 메인 추론(최대 토큰 소비)을 처음으로 이 racy 경로로 끌어들여 노출 확대. (Plan subagent 가 "subprocess per ask" 라 단언했으나 실제는 in-process — 외부 시각이 정정.) **조치**: `_record_llm_usage`/`_call_llm` 에 `conversation_id`/`run_id` optional 인자 추가 → 메인 추론은 `run_agent` 의 정확한 cid/run_id 를 명시 인자로 전달(thread 격리·race-free), 초안의 `cfg.MEMORY_CONVERSATION_ID=cid` 직접 set 은 race window 확대라 제거. helper(classify/topic 소량)는 미전달=cfg fallback 유지(기존 동작·회귀 아님). 회귀 테스트 2 추가(명시 인자 우선 / cfg fallback). **잔여(follow-up)**: helper 의 cfg 전역 race 는 기존 동작이며 contextvar 전면 전환(TASK-0137 attachment 패턴)은 별도 cycle.
+- SHOULD-FIX S1 (문서화): 마이그레이션 선행 의존 — `_record_llm_usage` 의 bare except 가 "컬럼 없음" 을 삼켜 코드가 컬럼보다 먼저 배포되면 RC1 이 silent 0행. → 배포 순서 "make migrate 선행 후 web/insight 재배포" 강제(STATUS/REPORT/plan 명시).
+- VERIFIED-CLEAR: INSERT 튜플 순서 정확(테스트 고정) / down_revision="0001_baseline" 정합·멱등 / cross-DB enrich 파라미터화(인젝션 0) / `_aggregate_usage_by_role` 폴딩 정확(중복계산 0, 시스템 버킷 정합) / 권한 `console.usage.read` 무변경 / 프론트 `esc()` XSS 안전 / MySQL conn 재사용·커서 close·enrich 실패 graceful / by_model ORDER BY 4·LIMIT 50 정합.
+- 결론: B1 흡수 + 배포 순서 강제 후 deploy 안전. make test 215 passed/5 skipped(신규 9).
+
 ## REV-20260608-0160 [SUBAGENT: general-purpose 적대적 diff 리뷰 — _normalize_history_rows, APPROVE-WITH-NITS, BLOCKER 0]
 - Date: 2026-06-08
 - Cycle: TASK-0160 (REQ-20260608-0160, **Major §12.3** — 중단 run 고아 tool_use → LLM payload 400 방지)

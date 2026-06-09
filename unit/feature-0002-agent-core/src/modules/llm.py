@@ -601,11 +601,21 @@ def _get_openai_client(timeout_sec: int | None = None, model: str | None = None)
         return None
 
 
-def _record_llm_usage(model: str, task: str, resp) -> None:
+def _record_llm_usage(
+    model: str, task: str, resp,
+    conversation_id: str | None = None, run_id: str | None = None,
+) -> None:
     """TASK-0136 (#11): LLM 호출 토큰 사용량을 agent_runtime.llm_usage 에 기록 (best-effort).
     모든 LLM 호출의 단일 chokepoint 에서 포착 → 비용 가시성. 실패해도 LLM 응답에 무영향.
-    conversation_id/run_id 는 cfg 전역에서, account 는 admin 조회 시 core_conversations join 으로 도출.
-    (pgbouncer transaction pool 경유라 per-call conn 비용 낮음.)"""
+    account 는 admin 조회 시 core_conversations join 으로 도출.
+    (pgbouncer transaction pool 경유라 per-call conn 비용 낮음.)
+
+    TASK-0163: `/api/ask` 는 agent 를 web 프로세스 안 in-process(`asyncio.to_thread`)로
+    실행하므로([[TASK-0159]]) cfg.MEMORY_CONVERSATION_ID/CURRENT_RUN_ID 전역은 동시 ask
+    (WEB_PARALLEL_LIMIT) 간 덮어써져 토큰이 잘못된 계정/역할에 귀속될 수 있다. 따라서
+    메인 추론 경로는 호출 스택의 정확한 conversation_id/run_id 를 **명시 인자**로 전달한다
+    (thread 격리). 미전달 helper(classify/topic 등 소량 호출)는 기존 cfg 전역 fallback —
+    이들의 전역 race 는 기존 동작이며 본 cycle 범위 밖(follow-up)."""
     try:
         usage = getattr(resp, "usage", None)
         if usage is None:
@@ -615,8 +625,11 @@ def _record_llm_usage(model: str, task: str, resp) -> None:
         tt = int(getattr(usage, "total_tokens", 0) or (pt + ct))
         if tt <= 0:
             return
-        conv = str(getattr(cfg, "MEMORY_CONVERSATION_ID", "") or "") or None
-        run = str(getattr(cfg, "CURRENT_RUN_ID", "") or "") or None
+        conv = conversation_id if conversation_id is not None else (str(getattr(cfg, "MEMORY_CONVERSATION_ID", "") or "") or None)
+        run = run_id if run_id is not None else (str(getattr(cfg, "CURRENT_RUN_ID", "") or "") or None)
+        # TASK-0163: provider 가 응답으로 반환한 실제 서빙 모델명(LiteLLM 이 별칭을 해소한
+        # 결과). 요청 별칭(model)만으론 claude 계열 구분 불가 → resolved_model 로 보존.
+        served = str(getattr(resp, "model", "") or "")[:128] or None
         from .runtime_backend import _get_pg_runtime_conn
         pg = _get_pg_runtime_conn()
         if not pg:
@@ -625,9 +638,9 @@ def _record_llm_usage(model: str, task: str, resp) -> None:
             with pg.cursor() as cur:
                 cur.execute(
                     "INSERT INTO agent_runtime.llm_usage "
-                    "(conversation_id, run_id, model, task, prompt_tokens, completion_tokens, total_tokens) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                    (conv, run, str(model or "")[:128], str(task or "")[:64], pt, ct, tt),
+                    "(conversation_id, run_id, model, resolved_model, task, prompt_tokens, completion_tokens, total_tokens) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    (conv, run, str(model or "")[:128], served, str(task or "")[:64], pt, ct, tt),
                 )
             pg.commit()
         finally:

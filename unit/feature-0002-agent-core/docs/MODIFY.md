@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260609-0163
+- Date: 2026-06-09
+- TASK-Cycle: TASK-0163, **Major §12.3** — LLM 사용량 회계 복구 (메인 추론 계측 + resolved_model + 계정별/역할별)
+- Summary: 관리 콘솔 > 감사 > LLM 사용량이 `edge`·`시스템`만 보이던 근본 원인을 라이브 진단으로 규명·수정. PG `agent_runtime.llm_usage` 19,602행이 전부 insight worker(`__insight_worker__`, owner 없음) 의 별칭 `edge` 였고, **사용자 대화 메인 추론은 0건 기록**. (RC1) 메인 agentic loop 호출 `_call_llm` 이 `client.chat.completions.create()` 의 message 만 반환하고 `response.usage` 를 버려 `_record_llm_usage` chokepoint 를 우회 → 계측. (RC2) 요청 별칭만 기록하고 실제 서빙 모델(`resp.model`) 미기록 → `resolved_model` 컬럼 도입. RC3(엔드포인트/프론트)는 feature-0003. **outside-voice B1 흡수**: `/api/ask` 는 in-process(`asyncio.to_thread`) 실행이라 cfg 전역(conv/run)이 동시 ask 간 race → 메인 추론은 명시 인자로 race-free 귀속.
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/llm.py`: `_record_llm_usage` 에 `conversation_id`/`run_id` optional 인자 추가(미전달=cfg 전역 fallback) + `resolved_model`(=`getattr(resp,"model")`) 컬럼 INSERT.
+  - `unit/feature-0002-agent-core/src/agent_core.py`: import 에 `_record_llm_usage` 추가; `_call_llm` 에 `conversation_id`/`run_id` 인자 추가 + 응답 직후 `_record_llm_usage(model,"agent",response,conversation_id,run_id)` 호출(self-guard 위 try/except); 메인 loop 호출부가 `cid`/`run_id` 전달. (초안의 `cfg.MEMORY_CONVERSATION_ID=cid` 직접 set 은 race window 확대로 제거.)
+  - `unit/feature-0002-agent-core/alembic/versions/20260608_0002_llm_usage_resolved_model.py`: 신규 — `ADD COLUMN IF NOT EXISTS resolved_model varchar(128)` (down_revision 0001_baseline, 멱등 offline SQL).
+  - `unit/feature-0002-agent-core/src/scripts/agent_runtime_schema.sql`: 부트스트랩 parity — llm_usage 정의에 `resolved_model VARCHAR(128)` 추가.
+  - `unit/feature-0002-agent-core/tests/test_llm_usage_record.py` + `test_call_llm_records_agent_task.py`: 신규 9 test.
+- Note(배포 순서, S1): `_record_llm_usage` 의 best-effort except 가 "컬럼 없음" 을 삼키므로 **make migrate(컬럼 추가)를 web/insight-worker 재배포보다 먼저** 적용해야 RC1 이 silent 0행이 되지 않음.
+- Review: REV-20260609-0163 [SUBAGENT 적대적 diff 리뷰] NEEDS-TWEAK→PASS, BLOCKER 1 흡수.
+
 ## CHG-20260608-0160
 - Date: 2026-06-08
 - TASK-Cycle: TASK-0160, **Major §12.3** — 중단 run 의 고아 tool_use → LLM payload 400 방지

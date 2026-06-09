@@ -260,6 +260,19 @@ source_of_truth: true
   - AC-0009 (REQ-20260522-0003 / TASK-0100): `docker compose build web` + `docker compose up -d --no-deps --force-recreate web` 후 web container 가 `Up` 상태에서 안정 가동 (`Restarting` 없음). `/api/auth/me` 호출이 HTTP 200 (또는 401 비로그인) 응답을 받는다. `POST /api/conversations/{cid}/attachments` (UploadFile) 가 의존성 import error 없이 routing 된다 (실 호출은 attachment 권한 + DB 준비 필요).
 
 ## 12. Observability
+- LLM 토큰 사용량 회계 (TASK-0136 + TASK-0163): 모든 LLM 호출은 단일 chokepoint
+  `_record_llm_usage(model, task, resp, conversation_id=None, run_id=None)` 에서 best-effort
+  로 PG `agent_runtime.llm_usage` 에 기록된다. **메인 agentic loop 의 추론 호출(`_call_llm`,
+  task="agent")이 회계의 주 소비처**이며, `_call_llm` 이 응답 직후 호출 스택의 정확한
+  `conversation_id`/`run_id` 를 명시 인자로 넘겨 기록한다(TASK-0163 — 이전엔 `_call_llm` 이
+  chokepoint 를 우회해 메인 추론이 한 건도 기록되지 않았음). `/api/ask` 가 in-process
+  (`asyncio.to_thread`)라 cfg 전역 conv/run 은 동시 ask 간 race → 명시 인자 전달로 race-free.
+  helper 호출(classify/topic/summary/insight 등)은 인자 미전달 시 cfg 전역 fallback.
+  컬럼: `conversation_id`, `run_id`, `model`(요청 별칭 edge/core/auto), `resolved_model`
+  (provider 가 반환한 실제 서빙 모델 `resp.model`, TASK-0163), `task`, `prompt/completion/total_tokens`,
+  `created_at`. account/role 귀속은 admin 조회(`GET /api/admin/usage`) 시 conversation_id →
+  `core_conversations.owner_account_id` → MySQL `WebAccounts⋈WebRoles` join 으로 도출(owner
+  없는 insight worker = "(시스템)" 버킷).
 - 로그: `../../../../artifacts/shared/logs`
   - `insight_worker.log` — 백그라운드 Insight 워커 사이클 결과 (JSON lines: `run_id`, `status`, `duration_ms`, `skipped_schemas/tables`, `event=fingerprint_skip` 등). 해석 가이드는 [INSIGHTS.md §9](./INSIGHTS.md#9-로그--신호--사용자-해석-가이드).
   - `llm_warn.log` — LLM 호출 실패/빈 응답/JSON 파싱 실패 (`_log_llm_warn()`).
