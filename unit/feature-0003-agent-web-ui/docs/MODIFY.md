@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260609-0169
+- Date: 2026-06-09 (TASK-0169)
+- Scope: out-of-process ask-worker 실행모델 — web 측(feature-0003). 짝: feature-0002 CHG-20260609-0169.
+- 변경 ([src/app.py](../src/app.py)):
+  - `/api/ask`: `asyncio.to_thread(run_agent,…)` 를 `_dispatch_ask_run()` 으로 추상화. `AGENT_ASK_EXECUTION_MODE=inprocess`(기본) 는 현행 to_thread 그대로, `worker` 는 `ask_jobs` enqueue + 내부 `/api/ask_result` long-poll attach(동기 응답 계약 유지). 두 경로 동일 shape 의 agent_result 반환.
+  - `_dispatch_ask_run_worker` / `_build_worker_agent_result`: readiness gate(worker heartbeat 신선도 → 부재 시 503), 단일문 slot enforce(`enqueue_ask_job`), run_timeout 까지 attach loop, `ask_jobs.result_json` 으로 응답 shape 패리티(answer/executed_sql/steps/result_csv_paths/rationale/error).
+  - backstop ownership-aware(B1): `_reconcile_orphaned_runs_on_startup`(0159)·`_finalize_inflight_runs_on_shutdown`(0164)이 worker mode 에서 활성 `ask_jobs`(pending/running) conversation 을 skip — web 재배포가 worker run 을 오염하지 않음. `_active_ask_job_conversation_ids()` 신설.
+  - `/api/cancel`: worker mode 에서 pending `ask_jobs` 도 canceled 로(2g — pending cancel 유실 방지). running 은 기존 KV 플래그 폴링 무변경.
+  - 첨부 inline temp(M6): worker mode 는 `_inline_tmp_dir()` 가 `/shared/ask-inline`(web·worker 공통 볼륨) 반환, web 은 cleanup 안 함(worker terminal-only + reaper 소유).
+  - BL-1(outside-voice): 403 product-access early-return 의 slot 이중 release 제거(finally 단일 release) — 기존 동시성 카운터 손상 수정.
+- 게이트: make test 회귀 0(244 pass), py_compile OK, ruff clean. outside-voice 적대적 리뷰 2회(설계 전 + diff) — BLOCKER 3 + MAJOR 4 흡수.
+- flag 기본 inprocess 라 본 배포 자체로는 동작 무변경(shadow). cutover 는 env 전환.
+
 ## CHG-20260609-0167
 - Date: 2026-06-09
 - TASK-Cycle: TASK-0167, **Minor §12.3** — 관리 콘솔 작은 화면 세로 잘림 수정 (CSS)

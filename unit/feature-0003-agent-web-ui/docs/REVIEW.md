@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260609-0169 [SUBAGENT: general-purpose 적대적 리뷰 ×2 (설계 전 + 구현 diff) — ask-worker, NEEDS-FIXES→FIXED, BLOCKER 3 + MAJOR 4 흡수]
+- Date: 2026-06-09 (TASK-0169)
+- 대상: out-of-process ask-worker 실행모델(feature-0003 web + feature-0002 agent-core 양면). Critical §12.3 (agent 실행 경계·동시성·크래시 시맨틱). feedback_outside_voice_for_rbac 정책 → outside-voice 필수.
+- **1차(설계 전)**: DESIGN-ask-worker.md 를 "as written 구현 불가" 판정. BLOCKER 3 + MAJOR 4 + MINOR n → plan(TASK.md §2.1)에 8 하드닝 흡수:
+  - B1 backstop ownership-aware / B2 단일문 atomic claim / B3 lease fencing + 시간기반 heartbeat / M4 set_run_status 순서 / M5 단일문 slot enforce / M6 temp /shared·terminal-only·reaper / M7 readiness gate + result_json 패리티 / cancel-pending·worker SIGTERM·stop_grace.
+- **2차(구현 diff)**: 8 하드닝 VERIFIED correct + 신규 결함 3건 발견·즉시 수정:
+  - **BL-1 (BLOCKER, mode 무관)**: 403 product-access 경로 slot 이중 release → 동시성 카운터 손상. **수정**: 명시 release 제거(finally 단일). (기존 main 잠복 버그, outside-voice 가 표면화.)
+  - **MJ-1 (MAJOR)**: inline temp reaper 가 mtime 만 보고 활성 job 첨부 삭제 → 장기 queued/requeue job read-after-delete. **수정**: `active_inline_paths()` 로 활성 job 경로 제외.
+  - **MJ-2 (MAJOR)**: `_clear_cancel_request` 가 conversation 단위라 fencing cancel 을 덮어쓸 수 있음. **수정**: run_id-scoped clear(다른 run 겨냥 cancel 보존). (run_timeout<stale 불변식이 실무상 대부분 차단 + 방어.)
+  - MINOR 3(worker SIGTERM 장기 run 미중단=sweeper backstop / set_job_run_id 실패 무해 / pending 슬롯 점유=readiness gate 바운드): 문서화 수용.
+- 회귀 테스트 추가: test_ask_jobs(claim/enqueue/fencing/sweep/cancel/ownership/active_inline_paths), test_ask_worker(payload round-trip/config 불변식/run_id 파라미터), test_clear_cancel_runid(MJ-2). make test 244 pass·회귀 0.
+- Verdict: **SAFE TO MERGE (flag 기본 inprocess)** — BL-1/MJ-1/MJ-2 모두 fix. worker cutover 전 라이브 검증 이월(부하·web 재배포 중 run 생존 실측).
+
 ## REV-20260609-0167 [SKIPPED:css-only-no-rbac-no-schema]
 - Date: 2026-06-09
 - Cycle: TASK-0167 (관리 콘솔 작은 화면 세로 잘림 수정), **Minor §12.3**

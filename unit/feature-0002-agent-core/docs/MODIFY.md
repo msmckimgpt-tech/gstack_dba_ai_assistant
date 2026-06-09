@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260609-0168
+- Date: 2026-06-09 (TASK-0169)
+- Scope: out-of-process ask-worker 실행모델 — agent-core 측(feature-0002). 짝: feature-0003 CHG-20260609-0168.
+- 신규 파일:
+  - `alembic/versions/20260609_0003_ask_jobs.py`: `agent_runtime.ask_jobs` 큐 테이블(status/claim/lease_epoch/heartbeat/attempts/payload/result_json + 인덱스 4). FK 없음(큐 decoupled).
+  - `src/modules/ask_jobs.py`: 큐 헬퍼 — `claim_ask_job`(단일문 FOR UPDATE SKIP LOCKED, B2), `enqueue_ask_job`(단일문 slot enforce, M5), `heartbeat_ask_job`/`finish_ask_job`/`set_job_run_id`(lease 가드, B3), `sweep_stale_jobs`(requeue<cap / error≥cap), `cancel_pending_jobs`(2g), `has_active_job_for_conversation`/`active_inline_paths`(B1/M6), `reclaim_worker_jobs_on_boot`, 멱등 `_ensure_ask_jobs`.
+  - `src/modules/ask.py`: `run_ask_worker_loop` — atomic claim → `run_agent` → terminal(result_json)·KV. 시간기반 heartbeat 스레드(lease 박탈 시 KV cancel 마킹 → agent 루프 무수정 fencing). stale sweeper·고아 inline reaper(활성 job 제외)·boot self-reclaim·SIGTERM graceful.
+  - `src/scripts/healthcheck_ask_worker.py`: KV `ask_worker_last_cycle_at` 신선도 healthcheck(insight 클론).
+- 변경:
+  - `src/agent_core.py`: `run_agent`/`_run_agent_core` 에 optional `run_id` 추가(worker 가 claim 별 run_id 주입). `main()` `--ask-worker` dispatch → `run_ask_worker_loop`.
+  - `src/modules/config.py`: `AGENT_ASK_EXECUTION_MODE`(기본 inprocess) + `AGENT_ASK_WORKER_*`. stale 기본값을 run_timeout(max(AGENT_TIMEOUT_SEC*3, EARLY_FINALIZE/1000)) + 180 로 **동적 산출**(make test 가 AGENT_TIMEOUT_SEC=300 환경에서 정적 300 의 false-positive requeue 위험을 잡아 수정).
+  - `src/modules/memory.py`: `set_run_status` run_id→status 순서(M4). `_clear_cancel_request` run_id-scoped(MJ-2).
+- 게이트: make test 회귀 0(244 pass) + py_compile + ruff clean. outside-voice 적대적 리뷰 흡수(REV-20260609-0168).
+
 ## CHG-20260609-0163
 - Date: 2026-06-09
 - TASK-Cycle: TASK-0163, **Major §12.3** — LLM 사용량 회계 복구 (메인 추론 계측 + resolved_model + 계정별/역할별)

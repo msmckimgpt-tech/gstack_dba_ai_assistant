@@ -238,10 +238,14 @@ def set_run_status(
 ) -> None:
     if not conversation_id:
         return
-    save_memory_kv(conn, conversation_id, "last_status", str(status))
-    save_memory_kv(conn, conversation_id, "last_status_at", utc_now_iso())
+    # TASK-0169 (M4): run_id 를 status 보다 먼저 기록한다. set_run_status 는 멀티-tx
+    # (save_memory_kv 마다 독립 PG tx) 라, status 를 먼저 쓰면 reader 가 terminal status
+    # 를 직전 run 의 run_id 로 잘못 귀속해 읽는 torn-read 창이 생긴다. run_id→status
+    # 순서면 reader 가 보는 terminal status 는 항상 올바른 run_id 와 짝지어진다.
     if run_id:
         save_memory_kv(conn, conversation_id, "last_status_run_id", run_id)
+    save_memory_kv(conn, conversation_id, "last_status", str(status))
+    save_memory_kv(conn, conversation_id, "last_status_at", utc_now_iso())
     if duration_ms is not None:
         save_memory_kv(conn, conversation_id, "last_duration_ms", str(duration_ms))
     if error is not None:
@@ -343,7 +347,20 @@ def _cancel_requested(conn, conversation_id: str, run_id: str) -> bool:
         return False
 
 
-def _clear_cancel_request(conn, conversation_id: str) -> None:
+def _clear_cancel_request(conn, conversation_id: str, run_id: str = "") -> None:
+    # TASK-0169 (MJ-2): run_id 지정 시, 저장된 cancel_run_id 가 *다른* run 을 겨냥하면
+    # 지우지 않는다. ask-worker fencing 은 lease 박탈된 worker(run R1)를 멈추려 cancel 을
+    # R1 으로 마킹하는데, 같은 conversation 의 새 worker(run R2)가 종료하며 무조건 clear
+    # 하면 R1 대상 cancel 이 지워져 R1 이 계속 돌 수 있다(double-run). cancel_run_id 가
+    # 빈값이거나 내 run 과 같을 때만 clear 한다.
+    rid = str(run_id or "").strip()
+    if rid:
+        try:
+            cancel_run = str(load_memory_kv(conn, conversation_id, "cancel_run_id") or "").strip()
+        except Exception:
+            cancel_run = ""
+        if cancel_run and cancel_run != rid:
+            return
     save_memory_kv(conn, conversation_id, "cancel_requested", "")
     save_memory_kv(conn, conversation_id, "cancel_run_id", "")
     save_memory_kv(conn, conversation_id, "cancel_at", "")

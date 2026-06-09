@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260609-0168 [SUBAGENT: general-purpose 적대적 리뷰 ×2 — ask-worker 큐/실행/fencing, NEEDS-FIXES→FIXED, BLOCKER 3 + MAJOR 4 흡수]
+- Date: 2026-06-09 (TASK-0169). 정본 리뷰 기록은 feature-0003 REV-20260609-0168 (양면 작업). 본 항목은 feature-0002 측 cross-reference.
+- agent-core 측 핵심 검증·수정: B2 단일문 atomic claim(autocommit 안전) / B3 lease fencing + 시간기반 heartbeat 스레드(긴 LLM step false-positive requeue 차단) / M4 set_run_status 순서 / MJ-2 `_clear_cancel_request` run_id-scoped(fencing cancel 보존) / MJ-1 reaper 활성 job 첨부 제외 / config stale 동적 산출(AGENT_TIMEOUT_SEC=300→run_timeout 900 환경 false-positive 수정, 테스트가 포착).
+- 회귀 테스트: test_ask_jobs / test_ask_worker / test_clear_cancel_runid. make test 244 pass·회귀 0.
+
 ## REV-20260609-0163 [SUBAGENT: general-purpose 적대적 diff 리뷰 — LLM 사용량 회계, NEEDS-TWEAK→PASS, BLOCKER 1 흡수]
 - Date: 2026-06-09
 - Cycle: TASK-0163 (REQ-20260609-0163, **Major §12.3** — LLM 사용량 회계 복구: 메인 추론 계측 + resolved_model + 계정별/역할별)

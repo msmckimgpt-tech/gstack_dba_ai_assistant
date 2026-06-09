@@ -27,6 +27,7 @@ source_of_truth: true
 
 ### TASK-0164 이월 처리 — SIGTERM graceful finalizer + RBAC catalog prune + out-of-process 설계 (2026-06-09)
 
+- [x] TASK-0169 (REQ-20260609-0168, **Critical §12.3** — out-of-process ask-worker 실행모델 / ADR-WEB-0004 B). TASK-0159/0160/0164 의 이월 B 구현. `/api/ask` 의 in-process(`asyncio.to_thread`) 실행을 전용 `ask-worker` 로 분리(ask_jobs 큐 claim·실행) → web 재배포/SIGTERM 이 in-flight run 을 죽이지 않음(orphan 구조 제거). **flag `AGENT_ASK_EXECUTION_MODE`(기본 inprocess) 라 본 배포 자체로는 동작 무변경(shadow)**, cutover 는 env 전환. **web 측(app.py)**: `_dispatch_ask_run`(inprocess|worker 분기) + readiness gate(503) + 단일문 slot enforce + 내부 attach loop + `result_json` 응답 shape 패리티 + backstop ownership-aware(B1, 0159/0164 가 worker run skip) + cancel-pending(2g) + 첨부 temp `/shared`(M6). **agent-core 측(feature-0002 CHG-0168)**: `ask_jobs` 마이그레이션·`ask_jobs.py`(atomic claim/lease fencing/sweep)·`ask.py`(worker loop·시간기반 heartbeat·reaper)·`--ask-worker`·healthcheck·config·`set_run_status` 순서(M4). docker-compose `ask-worker` 서비스(stop_grace 70s). **outside-voice 적대적 리뷰 2회(설계 전 + diff) — BLOCKER 3 + MAJOR 4 흡수, 구현 BL-1/MJ-1/MJ-2 추가 수정**(REV-20260609-0168). make test 244 pass(회귀 0)·신규 테스트 3파일·py_compile·ruff clean. PLAN-APPROVED(§2.1, 2026-06-09). worktree `ai/claude/ask-worker`(base 2ad6d03, 동시세션 0166/0167 점유로 0168 재배정). **이월(cutover 게이트)**: 마이그레이션 라이브 적용 → worker=on shadow → 점진 cutover, PB-0008 Windows-browser + 부하·web 재배포 중 run 생존 실측, on_event→lifespan 마이그레이션.
 - [x] TASK-0164 (REQ-20260609-0164, **Major §12.3** — run 생명주기 + RBAC catalog delete). in-process(`asyncio.to_thread`) ask 실행이 web 재배포로 orphan("처리중" 고착)을 만드는 근본을 종료 시점에 차단(A) + cosmetic 정리 + 구조적 정답 설계(B, 이월). **A1**: `@app.on_event("shutdown")` finalizer 가 이 프로세스 in-flight run(`>= _PROCESS_BOOT_UTC`)을 error 로 마킹(부팅 reconciliation 의 대칭 역, race 가드 + 8s 소프트캡 + 단일 connect)(AC-0322). **A2**: `_prune_orphaned_permission_catalog` 가 완전 폐기 권한(suggestions.read·execute_sql_on.*)의 고아 WebPermissions 행을 0-참조 가드 하에 DELETE(AC-0323). **A3**: 빈 attachment 그룹 키 = LEAVE(forward-compat). **B**: `DESIGN-ask-worker.md`(ask-worker + ask_jobs 큐 + 롤아웃 플래그) 설계만, 구현 이월(AC-0324, ADR-WEB-0004). 신규 단위테스트 3(`test_shutdown_finalizer.py`) + 전체 pytest 통과(회귀 0) + py_compile. **outside-voice 적대적 리뷰 PASS-WITH-NITS, BLOCKER 0**(REV-20260609-0164, NIT 2건 흡수). 동시 세션 TASK-0162/0163 점유로 0164 재배정, base bf0a61f. **이월**: out-of-process 구현(B), set_run_status 4-conn(기존 helper), on_event→lifespan 마이그레이션.
 
 ### TASK-0163 LLM 사용량 admin 계정별/역할별 집계 + 모델 해소 표시 (2026-06-09, cross-feature — 주관 feature-0002)
@@ -254,6 +255,57 @@ D1 S3-compat MinIO / D2 동일 cluster + 별 schema / D3 PGVector / D4 A+B+C+D �
 - [x] TASK-0061 (REQ-20260515-0003 ~ REQ-20260515-0010, **Major** §12.3 — UI 상태 / auth(비밀번호 초기화) / 파괴적 데이터(bulk delete) 일괄 변경) GOAL.md 8 항목 합본 cycle. **/qa round 2 심층 검증 완료 (2026-05-15, CHG-20260515-0004)** — Phase 4 Point rail dot click smooth scroll + active dot id 갱신, Phase 5 캘린더 월 이동 + day click → 시각 list 모두 정상. Phase 3/6/8 destructive endpoints 는 운영 환경 사용자 명시 시점에 실 호출 검증 권고. round 2 신규 이슈 0 건. 답변 버블 내부 실시간 step 진행 (Phase 1) + 신규 대화 첫 요청 polling 즉시 연결 (Phase 2) + processing 만료 감지 + 붉은 badge (Phase 3) + 우측 Point rail (Phase 4) + 캘린더/시각 이동 (Phase 5) + 관리자 비밀번호 초기화 (Phase 6) + admin select-all 현재 페이지 fix (Phase 7) + 내 대화 Ctrl/Shift bulk delete (Phase 8). 상세 plan-review 는 §2.1 Implementation Plan (TASK-0061). **사용자 승인 요청 시점**: §2.1 Plan 확정 후 Phase 6 (Critical 분면 — 비밀번호 초기화, 인증 모델 영향) 진입 전. Phase 1~5, 7, 8 (Major) 는 plan-review 통과 후 Execute.
 - [x] TASK-0060 (REQ-20260515-0002, Minor §12.3) Product별 접근 가능 DB의 실제 스키마/데이터를 분석해 Product scope 시스템 프롬프트를 작성하고, Role detail 의 `전 Product 공통` 프롬프트를 역할명에 맞게 채움. 분석 대상: `KR(킹스레이드)` 접근 DB `dbgame,dblog,dbauth`, `MV(마이크로볼츠)` 접근 DB `account_db,dev_1_1_1_20,have_00,log_v2,global_db`. `log_v2`는 DB는 존재하지만 테이블 0개로 확인. 실제 DB에는 product prompt 2건 + role 공통 prompt 5건(`pending/operator/admin/sales/dba`) upsert 완료. runtime 의 누적 적용은 feature-0002 `compose_system_prompt()` 수정으로 보장.
 - [x] TASK-0059 (REQ-20260515-0001, **Major** §12.3 — 사용자 대화 routing 데이터 영역, 인증/인가 모델 무변경) "새 대화" 버튼 누른 후 첫 메시지를 보내도 backend 가 직전 active 대화에 메시지를 추가하는 lazy-create routing 결함 수정. 사용자가 신규 대화 의도로 보낸 첫 메시지가 잘못된 대화 컨텍스트로 귀속되어 발견. **근본 원인**: frontend `beginPendingConversation()` 이 `state.activeConversationId=""` 로 두고 backend row 를 lazy 생성 위임하나 (TASK-0048 정책), `/api/ask` 의 빈 `conversation_id` 경로가 `_resolve_conversation_for_account` → `_repair_current_conversation` 으로 폴백해 `account.last_conversation_id` (직전 대화) 를 반환. frontend 의 "pending = 신규 의도" 가 backend 로 전달되지 않아 "session 초기화 후 직전 대화 이어받기" 와 구분 불가. **Fix Phase A**: frontend `sendPrompt()` 가 `isLazyCreate=true` 일 때 `askBody.lazy_create = true` 를 추가. **Phase B**: backend `_resolve_conversation_for_account(..., force_new=False)` kwarg 추가, `_repair_current_conversation` 의 기존 `force_new` 파라미터로 위임. `/api/ask` 의 빈 `request_conversation_id` 경로에서 `data.get("lazy_create")` 가 truthy 이면 `force_new=True` 호출. **Phase C**: frontend `loadConversations()` 의 `state.activeConversationId` 덮어쓰기에 `!state.pendingNewConversation` 가드 추가 — pending 모드 race 시 직전 대화로 복귀 차단. **Phase D**: MODIFY.md CHG-20260515-0001 + REVIEW.md REV-20260515-0001 기록.
+
+### 2.1 Implementation Plan (TASK-0169)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 **Critical** 등급 (agent 실행 경계·동시성·크래시 시맨틱 변경) 변경 계획이다. **상태**: `approved-after-outside-voice`. DESIGN-ask-worker.md (ADR-WEB-0004 의 B) 를 정본으로, out-of-process `ask-worker` 실행모델을 구현해 web 재배포/SIGTERM 이 in-flight run 을 죽이는 구조적 한계(TASK-0159/0160/0164 의 양끝 backstop 으로만 완화됐던)를 제거한다. feature-0003(web) + feature-0002(agent-core) 양면. 전 경로 `AGENT_ASK_EXECUTION_MODE` flag 기본 `inprocess` 로 격리 — 기본 동작 무변경.
+
+<!-- PLAN-APPROVED by ms.mckim.gpt@gmail.com on 2026-06-09 (TASK-0169 ask-worker out-of-process 실행모델, Critical 등급, outside-voice 적대적 리뷰 8건(BLOCKER 3 + MAJOR 4 + MINOR n) 흡수, flag 기본 inprocess shadow→cutover) -->
+
+#### outside-voice 적대적 리뷰가 흡수한 8건 (DESIGN §4 → 하드닝)
+
+DESIGN-ask-worker.md 는 위험을 §4 에 나열했으나 hard 한 것을 해결하지 않음 → 적대적 리뷰(general-purpose subagent, RBAC/런타임 경계 — feedback_outside_voice_for_rbac 정책)가 "as written 구현 불가" 판정. 흡수 결정:
+
+| # | 발견 (severity) | 하드닝 결정 |
+|---|---|---|
+| B1 | TASK-0159/0164 backstop 이 ownership-blind → 매 web 재배포마다 live worker run 을 error 오염. DESIGN §2.7 의 "no-op 격하" 는 실제로 active corruptor (BLOCKER) | 두 hook 을 **ownership-aware**: worker mode 일 때 `ask_jobs` 가 claimed/running 인 conversation skip |
+| B2 | `_pg_connect` autocommit=True 에서 `SELECT FOR UPDATE SKIP LOCKED`+별도 `UPDATE` → 락 미유지, double-claim (BLOCKER) | **단일문 atomic claim**: `UPDATE … WHERE id=(SELECT … FOR UPDATE SKIP LOCKED ORDER BY created_at LIMIT 1) RETURNING` |
+| B3 | heartbeat-stale requeue 가 살아있는 느린 worker 와 경합 → 같은 run_id 동시 double-run, steps/core_messages 오염(TASK-0160 류 Bedrock 400) (BLOCKER) | **lease_epoch fencing**(재claim 시 ++; worker 가 주기적 재확인해 빼앗겼으면 중단) + stale 임계 ≥ run_timeout+margin + 긴 LLM step **내부** heartbeat |
+| M4 | `set_run_status` 가 3~5 독립 autocommit tx → torn state, 2-writer 시 Frankenstein (MAJOR) | run_id→status 기록 순서 보장 + `ask_jobs.status` ops 권위 / KV terminal mirror + lease fencing 으로 2-writer 차단 |
+| M5 | slot COUNT TOCTOU + stuck-running 영구 계정 DoS (MAJOR) | **단일문 enforce** (`INSERT…SELECT…WHERE count<limit RETURNING`, rowcount=0→429) + **stale-aware count**(heartbeat-stale running 제외) |
+| M6 | temp 파일 GC 주인 없음 + requeue 시 read-after-delete + `/tmp`→`/shared` + replica 파일명 충돌(TASK-0154 류) (MAJOR) | `/shared` + **uuid 파일명** + **terminal 시에만** cleanup + 고아 reaper(worker tick) + inline reader `/tmp` 가정 감사 |
+| M7 | 60s long-poll cap 이 180~1200s run 못 덮음 + error shape drift + no-worker 무한 hang (MAJOR) | 내부 attach 를 run_timeout 까지 loop(영속 conn) + **`result_json` 영속화로 응답 shape 패리티** + **worker readiness gate**(heartbeat 신선 검사, 부재 시 503/fallback) |
+| 기타 | pending job cancel 유실, heartbeat conn churn, attempts-cap→무한 requeue, worker SIGTERM/stop_grace 부재 (MINOR) | cancel 을 `ask_jobs.status='canceled'` 도 set / worker 영속 conn / cap 도달 시 terminal error / worker SIGTERM handler(claimed job clean requeue) + compose `stop_grace_period: 70s` |
+
+#### 검증된 payload 계약 (grounding 정정)
+
+호출 함수는 `agent_core.run_agent` (app.py:7586 `from agent_core import run_agent as _run_agent_core` — inner `_run_agent_core` 아님). enqueue payload(jsonb) = run_agent kwargs 12개: `user_message, conversation_id, model, product_id, role_id, account_id, allowed_schemas, product_mode, attachment_ids, new_attachment_ids, image_inline_path, text_inline_path`. (`conv_file`=account_id 에서 재계산, `temperature`=내부 재계산, `api_key`=무시, `output_mode`="json" 고정.)
+
+#### 컴포넌트
+
+1. **`agent_runtime.ask_jobs` 테이블** — alembic `0003_ask_jobs`(권위) + `_ensure_ask_jobs()` IF NOT EXISTS fast-path(동일 DDL). 컬럼: `id, conversation_id, run_id, account_id, status(pending/claimed/running/done/error/canceled), claimed_by, claimed_at, started_at, finished_at, attempts, lease_epoch, heartbeat_at, created_at, payload jsonb, result_json jsonb`. 인덱스 `(status,created_at)`,`(account_id,status)`,`(heartbeat_at)`. mode=worker 인데 table 부재면 fail-loud.
+2. **`ask-worker` 서비스** (insight-worker 템플릿) — `<<: *agent-common`, `entrypoint: --ask-worker`, `restart: unless-stopped`, `stop_grace_period: 70s`, heartbeat KV `ask_worker_last_cycle_at` + `scripts/healthcheck_ask_worker.py`(`ASK_WORKER_HEARTBEAT_MAX_AGE_SEC`). agent_core.py main() `--ask-worker` → `modules/ask.py::run_ask_worker_loop()`. SIGTERM handler: claimed job clean requeue(lease++).
+3. **claim/실행 루프** — 단일문 atomic claim(B2) → `run_agent(**payload)` → terminal 시 `result_json`+`set_run_status` → temp cleanup(terminal only). 매 step+긴 LLM call 내부 heartbeat(영속 conn). lease 주기 재확인.
+4. **stale sweeper** — `status='running' AND heartbeat_at < now-임계(≥run_timeout+margin)` → requeue(lease++,attempts++) 또는 cap 도달 시 terminal error+set_run_status('error').
+5. **`/api/ask` worker mode** — 검증/conversation·product·role 해석 무변경 → readiness gate → 단일문 slot enforce → enqueue → 내부 ask_result attach loop(run_timeout 까지) → `result_json` 으로 기존 응답 shape 반환. inprocess mode 는 현행 to_thread(+0164 finalizer) 보존.
+6. **backstop ownership-aware(B1)** — TASK-0159 boot reconcile + 0164 SIGTERM finalizer 가 worker mode 에서 `ask_jobs` claimed/running conversation skip.
+7. **cancel/finalize** — KV 플래그 폴링 무변경 + cancel 은 pending/claimed `ask_jobs.status='canceled'` 도 set.
+
+#### 롤아웃
+`AGENT_ASK_EXECUTION_MODE=inprocess(기본)|worker`. shadow(worker 가동) → 점진 cutover → env 한 번에 rollback. inprocess 경로 + 0164 finalizer 는 worker 프로덕션 검증까지 보존.
+
+#### 검증
+- 단위: atomic claim race(동시 N worker 중 1), lease fencing(빼앗긴 worker write no-op), stale sweeper requeue/error/cap, slot 단일문 429 TOCTOU, payload round-trip, readiness gate, cancel-pending.
+- 통합: enqueue→worker→KV/steps→attach shape 패리티; **web 재배포 중 worker run 생존**(핵심 B1); worker 크래시→requeue 1회만; cancel/finalize.
+- 게이트: `make test`(컨테이너 pytest 회귀 0) + py_compile + **outside-voice /codex diff 리뷰**(merge 전).
+- 라이브: PB-0008 Windows-browser(ask 전체 흐름) + 부하(백프레셔) + worker=on 재배포 실측(0164 finalizer 거의 미발동 확인).
+
+#### 영향 파일
+- feature-0002: `agent_core.py`(--ask-worker dispatch + run_agent heartbeat/lease), `modules/ask.py`(신규 worker loop/claim/sweeper/reaper/cancel-pending), `modules/memory.py`(set_run_status 순서 M4, ask_jobs 헬퍼), `alembic/versions/0003_ask_jobs*.py`(신규), `scripts/healthcheck_ask_worker.py`(신규), docs(FUNCTION/TASK/MODIFY/REVIEW/MIGRATIONS).
+- feature-0003: `src/app.py`(/api/ask worker 경로 + readiness gate + slot 단일문 + 내부 attach + _ensure_ask_jobs + backstop ownership-aware + temp /shared/uuid/terminal cleanup), docs(FUNCTION/TASK/MODIFY/REVIEW).
+- repo: `docker-compose.yml`(ask-worker 서비스), `.env*`(AGENT_ASK_EXECUTION_MODE 등 신규 env 문서화).
+
+---
 
 ### 2.1 Implementation Plan (TASK-0073)
 

@@ -1755,8 +1755,14 @@ def run_agent(
     new_attachment_ids: list[int] | None = None,
     image_inline_path: str | None = None,
     text_inline_path: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
-    """Product whitelist + 첨부 채널을 요청별 contextvar 로 설정한 뒤 실제 루프를 호출하는 얇은 래퍼."""
+    """Product whitelist + 첨부 채널을 요청별 contextvar 로 설정한 뒤 실제 루프를 호출하는 얇은 래퍼.
+
+    run_id: None 이면 루프가 새로 생성(현행 in-process 경로). ask-worker 가 job claim
+    별로 stable run_id 를 주입할 때 사용(TASK-0169 — KV/steps/cancel 의 전 구간 correlate
+    + lease fencing 정합).
+    """
     set_active_schema_allowlist(allowed_schemas)
     # TASK-0137: 첨부 메타를 os.environ 대신 contextvar 로 — 동시 요청 격리.
     _att_tokens = (
@@ -1779,6 +1785,7 @@ def run_agent(
             role_id=role_id,
             account_id=account_id,
             product_mode=product_mode,
+            run_id=run_id,
         )
     finally:
         clear_active_schema_allowlist()
@@ -1802,6 +1809,7 @@ def _run_agent_core(
     role_id: int | None = None,
     account_id: int | None = None,
     product_mode: str = "pinned",
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """에이전트 메인 루프.
 
@@ -1864,7 +1872,9 @@ def _run_agent_core(
     # ── 대화 ID 관리 ──
     cid = conversation_id or _get_conversation_id(conv_file)
     result["conversation_id"] = cid
-    run_id = _new_run_id()
+    # run_id: caller(ask-worker)가 claim 별로 주입하면 그대로, 아니면(in-process) 새로 생성.
+    run_id = run_id or _new_run_id()
+    result["run_id"] = run_id
     cfg.CURRENT_RUN_ID = run_id
     canceled_by_user = False
 
@@ -2252,7 +2262,7 @@ def _run_agent_core(
     if canceled_by_user:
         result["error"] = "요청이 취소되었습니다."
         try:
-            _clear_cancel_request(mem_conn, cid)
+            _clear_cancel_request(mem_conn, cid, run_id=run_id)
         except Exception:
             pass
         if pending_delete:
@@ -2286,7 +2296,7 @@ def _run_agent_core(
             pass
     if not pending_delete and not canceled_by_user:
         try:
-            _clear_cancel_request(mem_conn, cid)
+            _clear_cancel_request(mem_conn, cid, run_id=run_id)
         except Exception:
             pass
 
@@ -2488,6 +2498,7 @@ def main():
     parser.add_argument("query", nargs="?", default="", help="자연어 질의")
     parser.add_argument("--init-memory", action="store_true", help="메모리 테이블 초기화")
     parser.add_argument("--insight-worker", action="store_true", help="인사이트 워커 실행")
+    parser.add_argument("--ask-worker", action="store_true", help="ask 실행 워커 (out-of-process, TASK-0169)")
     parser.add_argument("--list-conversations", action="store_true", help="대화 목록")
     parser.add_argument("--new-conversation", action="store_true", help="새 대화 생성")
     parser.add_argument("--use-conversation-index", type=int, default=None, help="대화 전환")
@@ -2510,6 +2521,15 @@ def main():
             run_insight_worker_loop()
         except ImportError:
             console.print("[yellow]인사이트 워커를 찾을 수 없습니다.[/yellow]")
+        return
+
+    if args.ask_worker:
+        # TASK-0169: out-of-process ask 실행 워커. ask_jobs 큐에서 claim 해 run_agent 실행.
+        try:
+            from modules.ask import run_ask_worker_loop
+            run_ask_worker_loop()
+        except ImportError:
+            console.print("[yellow]ask 워커를 찾을 수 없습니다.[/yellow]")
         return
 
     if args.list_conversations:

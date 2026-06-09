@@ -320,6 +320,36 @@ services:
       retries: 3
       start_period: 60s
 
+  # TASK-0169: out-of-process ask 실행 워커 (DESIGN-ask-worker.md / ADR-WEB-0004 B).
+  # ask_jobs 큐에서 claim 해 run_agent 를 실행 → web 재배포/SIGTERM 이 in-flight run 을
+  # 죽이지 않는다. web 은 AGENT_ASK_EXECUTION_MODE=worker 일 때만 enqueue 한다(기본
+  # inprocess 라 이 서비스가 떠 있어도 그 자체로는 동작 변경 없음 — shadow 안전).
+  ask-worker:
+    <<: *agent-common
+    environment:
+      TZ: ${TZ}
+      LANG: ${APP_LANG}
+      LANGUAGE: ${APP_LANGUAGE}
+      LC_ALL: ${APP_LC_ALL}
+      PYTHONIOENCODING: utf-8
+      AGENT_SESSION: ask_worker
+      AGENT_CONVERSATION_ID: __ask_worker__
+      # anchor 의 PG_REQUIRED 가 environment override 시 상속 안 되므로 명시(TASK-0130 패턴).
+      AGENT_RUNTIME_PG_REQUIRED: "1"
+      AGENT_ASK_WORKER_ENABLED: "1"
+    entrypoint: ["python", "/app/agent_core.py", "--ask-worker"]
+    networks: [dbnet, llm-shared, replica-net]
+    restart: unless-stopped
+    # SIGTERM 후 현재 실행 중 run 이 step 을 마칠 시간을 준다(기본 10s 면 mid-LLM-call
+    # SIGKILL → stale → requeue). 한 step 예산(LLM timeout 60s + 여유) 보다 크게.
+    stop_grace_period: 70s
+    healthcheck:
+      test: ["CMD", "python", "/app/scripts/healthcheck_ask_worker.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
   mcp:
     image: bytebase/dbhub:${DBHUB_IMAGE_TAG}
     restart: unless-stopped

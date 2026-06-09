@@ -259,6 +259,10 @@ source_of_truth: true
   - AC-0008 (REQ-20260522-0003 / TASK-0100): `unit/feature-0002-agent-core/src/requirements.txt` 에 `python-multipart>=0.0.9` line 이 존재한다. 본 line 위에 4 줄 주석 (TASK 식별자 + 발견 시점 + 회귀 근거 + REV 참조) 이 동봉되어 이후 reader 가 의존성 추가 근거를 즉시 파악할 수 있다.
   - AC-0009 (REQ-20260522-0003 / TASK-0100): `docker compose build web` + `docker compose up -d --no-deps --force-recreate web` 후 web container 가 `Up` 상태에서 안정 가동 (`Restarting` 없음). `/api/auth/me` 호출이 HTTP 200 (또는 401 비로그인) 응답을 받는다. `POST /api/conversations/{cid}/attachments` (UploadFile) 가 의존성 import error 없이 routing 된다 (실 호출은 attachment 권한 + DB 준비 필요).
 
+- AC-0161 (REQ-20260609-0168 / TASK-0169, **Critical** §12.3): `python agent_core.py --ask-worker` 는 `run_ask_worker_loop` 를 기동해 `agent_runtime.ask_jobs` 의 pending job 을 단일문 `FOR UPDATE SKIP LOCKED` 로 exactly-once claim 한 뒤 `run_agent(run_id=…)` 를 실행하고 terminal 시 `result_json`·KV 를 기록한다.
+- AC-0162 (REQ-20260609-0168 / TASK-0169, **Critical** §12.3): 실행 중 별도 heartbeat 스레드가 시간 기반으로 `ask_jobs.heartbeat_at` 를 갱신해 긴 LLM step 중에도 stale 오판이 없다. stale 임계는 run_timeout(`max(AGENT_TIMEOUT_SEC*3, AGENT_EARLY_FINALIZE_MS/1000)`)+margin 으로 동적 산출돼 정상 장기 run 이 false-positive requeue 되지 않는다.
+- AC-0163 (REQ-20260609-0168 / TASK-0169, **Critical** §12.3): stale sweeper 는 heartbeat 가 끊긴 running job 을 attempts<cap 이면 requeue(lease_epoch++로 기존 worker fencing), ≥cap 이면 terminal error 로 회수한다. requeue 로 lease 를 빼앗긴 worker 는 heartbeat 가 박탈을 감지해 해당 run 의 KV cancel 을 set, agent 루프가 스스로 멈춘다(double-run 무해화). `_clear_cancel_request` 는 run_id-scoped 라 다른 run 을 겨냥한 fencing cancel 을 덮어쓰지 않는다.
+
 ## 12. Observability
 - LLM 토큰 사용량 회계 (TASK-0136 + TASK-0163): 모든 LLM 호출은 단일 chokepoint
   `_record_llm_usage(model, task, resp, conversation_id=None, run_id=None)` 에서 best-effort

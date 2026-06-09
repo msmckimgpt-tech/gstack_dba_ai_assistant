@@ -609,6 +609,37 @@ def _start_attachment_recon_worker() -> None:
         logging.getLogger(__name__).warning("attachment_recon worker start failed: %s", exc)
 
 
+def _active_ask_job_conversation_ids() -> set[str]:
+    """worker mode 에서 활성(pending/running) ask_jobs 를 가진 conversation_id 집합.
+
+    TASK-0169 (B1): backstop(boot reconcile / SIGTERM finalizer)은 'processing' KV 만
+    보고 orphan 을 판정하는데, worker mode 에선 실행이 web 밖에서 도므로 web 재배포가
+    worker run 을 끊지 않는다. 그런데 backstop 이 그 run 을 'processing' 이라는 이유로
+    error 마킹하면 살아있는 worker run 을 오염시킨다. 활성 ask_jobs 를 가진 conversation
+    은 worker-owned 이므로 backstop 에서 제외한다. 비-worker mode / 조회 실패 시 빈 집합
+    (= 현행 동작 보존)."""
+    if not _is_worker_mode():
+        return set()
+    pg = None
+    try:
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT conversation_id FROM agent_runtime.ask_jobs "
+                "WHERE status IN ('pending','running')"
+            )
+            return {str(r[0]) for r in cur.fetchall() if r and r[0]}
+    except Exception:
+        return set()
+    finally:
+        if pg is not None:
+            try:
+                pg.close()
+            except Exception:
+                pass
+
+
 @app.on_event("startup")
 def _reconcile_orphaned_runs_on_startup() -> None:
     """TASK-0159: 재배포/재시작으로 끊긴 고아 run 을 startup 에 정리한다.
@@ -638,9 +669,12 @@ def _reconcile_orphaned_runs_on_startup() -> None:
             return
         try:
             cids = list_processing_conversation_ids(conn) or []
+            worker_owned = _active_ask_job_conversation_ids()  # B1: worker run 제외
             marked = 0
             for cid in cids:
                 try:
+                    if cid in worker_owned:
+                        continue  # worker-owned run — web 수명과 무관(B1)
                     parsed = _parse_kv_timestamp(load_memory_kv(conn, cid, "last_status_at"))
                     if parsed is not None and parsed >= _PROCESS_BOOT_UTC:
                         continue  # 이 프로세스가 시작한 run — 건드리지 않음
@@ -698,12 +732,15 @@ def _finalize_inflight_runs_on_shutdown() -> None:
         return
     try:
         cids = list_processing_conversation_ids(conn) or []
+        worker_owned = _active_ask_job_conversation_ids()  # B1: worker run 제외
         marked = 0
         for cid in cids:
             if time.monotonic() > deadline:
                 log.warning("shutdown finalize: 시간 예산 초과 — 나머지는 부팅 reconciliation 이 처리")
                 break
             try:
+                if cid in worker_owned:
+                    continue  # worker-owned run — web SIGTERM 과 무관(B1)
                 parsed = _parse_kv_timestamp(load_memory_kv(conn, cid, "last_status_at"))
                 if parsed is None or parsed < _PROCESS_BOOT_UTC:
                     continue  # 이 프로세스가 시작한 run 이 아님 — 부팅 hook 담당
@@ -7106,6 +7143,23 @@ def get_api_vault_options() -> JSONResponse:
 _VISION_IMAGE_SIZE_CAP_BYTES = 5 * 1024 * 1024  # 5MB pre-base64
 _VISION_IMAGE_COUNT_CAP = 5  # turn 당 최대 inline image 개수
 _VISION_INLINE_TMP_DIR = os.getenv("WEB_VISION_INLINE_TMP_DIR", "/tmp").rstrip("/")
+# worker mode 에서 첨부 inline temp 를 두는 web·worker 공통 마운트(../artifacts/shared).
+_ASK_SHARED_INLINE_DIR = os.getenv("ASK_SHARED_INLINE_DIR", "/shared/ask-inline").rstrip("/")
+
+
+def _inline_tmp_dir() -> str:
+    """첨부 inline temp 파일 디렉토리(TASK-0169 M6).
+
+    worker mode: /shared/ask-inline (web 이 쓰고 worker 가 읽어야 하므로 공통 볼륨).
+    inprocess(기본): 현행 /tmp (프로세스 로컬).
+    """
+    if _is_worker_mode():
+        try:
+            os.makedirs(_ASK_SHARED_INLINE_DIR, exist_ok=True)
+            return _ASK_SHARED_INLINE_DIR
+        except OSError:
+            return _VISION_INLINE_TMP_DIR
+    return _VISION_INLINE_TMP_DIR
 
 
 def _model_to_llm_provider(model: str | None) -> str | None:
@@ -7228,7 +7282,7 @@ def _prepare_vision_inline_images(
     # 임시 file 작성 (caller 가 finally 에서 cleanup)
     suffix = uuid.uuid4().hex[:12]
     cid_seg = str(conversation_id or "no-cid")[:24].replace("/", "_")
-    path = f"{_VISION_INLINE_TMP_DIR}/mysql_ai_inline_{cid_seg}_{suffix}.json"
+    path = f"{_inline_tmp_dir()}/mysql_ai_inline_{cid_seg}_{suffix}.json"
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(inline_entries, f, ensure_ascii=False)
@@ -7338,7 +7392,7 @@ def _prepare_text_inline_attachments(
 
     suffix = uuid.uuid4().hex[:12]
     cid_seg = str(conversation_id or "no-cid")[:24].replace("/", "_")
-    path = f"{_VISION_INLINE_TMP_DIR}/mysql_ai_text_{cid_seg}_{suffix}.json"
+    path = f"{_inline_tmp_dir()}/mysql_ai_text_{cid_seg}_{suffix}.json"
     try:
         with open(path, "w", encoding="utf-8") as _tf:
             json.dump(inline_entries, _tf, ensure_ascii=False)
@@ -7432,6 +7486,196 @@ def _cleanup_orphan_conversations(conn, account_id: int) -> int:
             pass
 
     return deleted
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# ask 실행 dispatch — inprocess(현행) | worker(out-of-process, TASK-0169)
+# ──────────────────────────────────────────────────────────────────────────
+def _ask_execution_mode() -> str:
+    """AGENT_ASK_EXECUTION_MODE — 'worker' 면 ask_jobs enqueue, 그 외(기본)는 inprocess."""
+    try:
+        from modules.config import AGENT_ASK_EXECUTION_MODE
+        return str(AGENT_ASK_EXECUTION_MODE or "inprocess").strip().lower()
+    except Exception:
+        return "inprocess"
+
+
+def _is_worker_mode() -> bool:
+    return _ask_execution_mode() == "worker"
+
+
+# worker liveness heartbeat 가 이보다 오래되면 readiness gate 가 미준비로 판정(503).
+_ASK_WORKER_READY_MAX_AGE_SEC = int(os.getenv("WEB_ASK_WORKER_READY_MAX_AGE_SEC", "60"))
+
+
+def _ask_worker_ready(conn) -> bool:
+    """ask-worker 생존 여부 — KV ask_worker_last_cycle_at heartbeat 신선도.
+
+    worker mode 인데 worker 가 죽어 있으면 enqueue 한 job 을 아무도 claim 안 해
+    /api/ask 가 무한 대기(timeout)한다. enqueue 전에 gate 로 차단(503)해 빠른 실패 +
+    명확한 안내를 준다(adversarial review M7 — no-worker hang)."""
+    try:
+        from modules.config import GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY
+        raw = load_memory_kv(conn, GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY)
+        if not raw:
+            return False
+        parsed = _parse_kv_timestamp(raw)
+        if parsed is None:
+            return False
+        age = (datetime.now(timezone.utc) - parsed).total_seconds()
+        return age <= _ASK_WORKER_READY_MAX_AGE_SEC
+    except Exception:
+        return False
+
+
+async def _dispatch_ask_run(*, conn, account, conv_id, run_kwargs, inproc_fn):
+    """agent 실행을 mode 에 따라 분기. 두 경로 모두 동일 shape 의 agent_result dict 반환.
+
+    - inprocess(기본): 현행 asyncio.to_thread(run_agent, …). 동작 무변경.
+    - worker: ask_jobs enqueue 후 KV last_status 를 내부 long-poll attach 해 동기 응답
+      계약 유지(클라 무변경). 결과 shape 는 ask_jobs.result_json 으로 패리티.
+    """
+    if not _is_worker_mode():
+        return await asyncio.to_thread(inproc_fn, **run_kwargs)
+    return await _dispatch_ask_run_worker(conn=conn, account=account,
+                                          conv_id=conv_id, run_kwargs=run_kwargs)
+
+
+async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs) -> dict[str, Any]:
+    from modules.db import _pg_connect
+    from modules import ask_jobs as _aj
+    from modules.config import AGENT_ASK_WORKER_STALE_SEC
+
+    account_id = int(account["id"])
+    if not conv_id:
+        return {"error": "대화 컨텍스트를 확인할 수 없습니다.", "conversation_id": "",
+                "_http_status": 400}
+
+    # readiness gate (M7) — 살아있는 worker 없으면 무한 대기 대신 즉시 503.
+    if not _ask_worker_ready(conn):
+        return {"error": "요청 처리 워커가 일시적으로 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.",
+                "conversation_id": conv_id, "_http_status": 503}
+
+    # enqueue payload = run_agent kwargs 12개 (conv_file/temperature/api_key/output_mode 제외).
+    payload = {
+        "user_message": run_kwargs.get("user_message", ""),
+        "conversation_id": conv_id,
+        "model": run_kwargs.get("model"),
+        "product_id": run_kwargs.get("product_id"),
+        "role_id": run_kwargs.get("role_id"),
+        "account_id": account_id,
+        "allowed_schemas": run_kwargs.get("allowed_schemas"),
+        "product_mode": run_kwargs.get("product_mode", "pinned"),
+        "attachment_ids": run_kwargs.get("attachment_ids") or [],
+        "new_attachment_ids": run_kwargs.get("new_attachment_ids") or [],
+        "image_inline_path": run_kwargs.get("image_inline_path"),
+        "text_inline_path": run_kwargs.get("text_inline_path"),
+    }
+
+    def _enqueue() -> int | None:
+        pg = _pg_connect()
+        try:
+            # enqueue~claim 갭에도 프런트가 '처리중' 을 보도록 last_status 선기록(현행 race
+            # 가드와 동등). worker 가 claim 시 run_id 와 함께 다시 processing 기록.
+            try:
+                set_run_status(conn, conv_id, "processing")
+            except Exception:
+                pass
+            return _aj.enqueue_ask_job(
+                pg, conversation_id=conv_id, run_id=None, account_id=account_id,
+                payload=payload, account_limit=WEB_PARALLEL_LIMIT,
+                stale_seconds=int(AGENT_ASK_WORKER_STALE_SEC),
+            )
+        finally:
+            try:
+                pg.close()
+            except Exception:
+                pass
+
+    try:
+        job_id = await asyncio.to_thread(_enqueue)
+    except Exception as exc:
+        return {"error": f"요청 큐 등록에 실패했습니다: {exc}", "conversation_id": conv_id,
+                "_http_status": 500}
+    if job_id is None:
+        return {"error": "동시 요청 제한에 도달했습니다. 잠시 후 다시 시도해주세요.",
+                "conversation_id": conv_id, "_http_status": 429}
+
+    # 내부 attach: KV last_status 가 terminal 될 때까지 long-poll. run budget 보다 길게
+    # 대기(stale + margin) — to_thread 가 full run 을 await 하던 것과 동일하게 동기 블록.
+    max_wait = int(AGENT_ASK_WORKER_STALE_SEC) + 30
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + max_wait
+    while loop.time() < deadline:
+        try:
+            snap = await asyncio.to_thread(_build_ask_status_snapshot, conn, conv_id)
+        except Exception:
+            snap = None
+        if snap and (str(snap.get("raw_status") or "") in _ASK_TERMINAL_STATUSES
+                     or snap.get("is_stale")):
+            break
+        await asyncio.sleep(0.5)
+
+    return await asyncio.to_thread(_build_worker_agent_result, job_id, conv_id)
+
+
+def _build_worker_agent_result(job_id: int, conv_id: str) -> dict[str, Any]:
+    """worker 실행 결과를 agent_result shape 로 복원(M7 패리티).
+
+    1순위: ask_jobs.result_json (worker 가 terminal 시 기록 — answer/executed_sql/steps/
+    result_csv_paths/rationale/error). 부재(timeout 등) 시 KV snapshot 으로 fallback.
+    """
+    from modules.db import _pg_connect
+    from modules import ask_jobs as _aj
+    base = {
+        "answer": "", "conversation_id": conv_id, "steps": [],
+        "executed_sql": "", "result_csv_paths": [], "rationale": "", "error": "",
+    }
+    pg = None
+    try:
+        pg = _pg_connect()
+        job = _aj.get_ask_job(pg, job_id)
+    except Exception:
+        job = None
+    finally:
+        if pg is not None:
+            try:
+                pg.close()
+            except Exception:
+                pass
+    if job and isinstance(job.get("result_json"), dict):
+        rj = job["result_json"]
+        for k in base:
+            if k in rj and rj[k] is not None:
+                base[k] = rj[k]
+        if not base.get("conversation_id"):
+            base["conversation_id"] = conv_id
+        return base
+    # fallback: 아직 result_json 미기록(worker 느림/미완) — KV snapshot 으로 최선 응답.
+    try:
+        sconn = _connect_memory()
+    except Exception:
+        sconn = None
+    if sconn is not None:
+        try:
+            snap = _build_ask_status_snapshot(sconn, conv_id)
+            latest = snap.get("_latest_assistant") or {}
+            if snap.get("has_answer") and isinstance(latest, dict):
+                base["answer"] = str(latest.get("content") or "")
+            if snap.get("error"):
+                base["error"] = str(snap.get("error"))
+            elif not base["answer"]:
+                base["error"] = "요청 처리가 시간 내 완료되지 않았습니다. 잠시 후 결과를 다시 확인해 주세요."
+        except Exception:
+            base["error"] = base["error"] or "요청 처리 상태를 확인할 수 없습니다."
+        finally:
+            try:
+                sconn.close()
+            except Exception:
+                pass
+    else:
+        base["error"] = "요청 처리 상태를 확인할 수 없습니다."
+    return base
 
 
 @app.post("/api/ask")
@@ -7632,7 +7876,9 @@ async def ask(request: Request) -> JSONResponse:
                 # 권한 없으면 403 + "이 대화의 제품 접근 권한이 회수되었습니다" 안내. frontend 에서 사용자가
                 # auto 모드로 전환하거나 admin 에게 권한 요청 후 재시도하도록 가이드.
                 if product_id_for_run and not _account_has_product_access(account, int(product_id_for_run), conn=conn):
-                    _release_request_slot(slot_key)
+                    # TASK-0169 (BL-1, outside-voice): slot 은 finally 가 단일 release 한다.
+                    # 여기서 명시 release 하면 finally 와 합쳐 이중 감산 → 계정 동시성 카운터
+                    # 손상(다른 in-flight 요청의 슬롯을 훔침). 다른 early-return 처럼 finally 에 위임.
                     conn.close()
                     return _json_error(
                         "이 대화의 제품 접근 권한이 회수되었습니다. 사이드바에서 auto 모드로 전환하거나 관리자에게 권한 요청 후 다시 시도해 주세요.",
@@ -7833,30 +8079,46 @@ async def ask(request: Request) -> JSONResponse:
                 text_inline_path = None
         # TASK-0137: inline text path 는 contextvar kwarg (text_inline_path) 로 전달.
 
-        agent_result = await asyncio.to_thread(
-            _run_agent_core,
-            user_message=message,
-            conversation_id=conv_id or None,
-            conv_file=_account_conv_file(int(account["id"])),
-            model=model,
-            temperature=temp_value,
-            output_mode="json",
-            product_id=product_id_for_run,
-            role_id=role_id_for_run,
-            account_id=int(account["id"]),
-            allowed_schemas=allowed_schemas_for_run,
-            product_mode=product_mode_for_run,
-            # TASK-0137: 첨부 메타를 os.environ 전역 대신 요청별 contextvar kwarg 로 전달.
-            attachment_ids=attachment_ids_clean,
-            new_attachment_ids=new_attachment_ids_clean,
-            image_inline_path=vision_inline_path,
-            text_inline_path=text_inline_path,
+        # TASK-0169: 실행 dispatch — inprocess(현행 to_thread) | worker(ask_jobs enqueue +
+        # 내부 attach). 두 경로 모두 동일 shape 의 agent_result dict 반환(동기 응답 계약 유지).
+        agent_result = await _dispatch_ask_run(
+            conn=conn,
+            account=account,
+            conv_id=conv_id,
+            inproc_fn=_run_agent_core,
+            run_kwargs=dict(
+                user_message=message,
+                conversation_id=conv_id or None,
+                conv_file=_account_conv_file(int(account["id"])),
+                model=model,
+                temperature=temp_value,
+                output_mode="json",
+                product_id=product_id_for_run,
+                role_id=role_id_for_run,
+                account_id=int(account["id"]),
+                allowed_schemas=allowed_schemas_for_run,
+                product_mode=product_mode_for_run,
+                # TASK-0137: 첨부 메타를 os.environ 전역 대신 요청별 contextvar kwarg 로 전달.
+                attachment_ids=attachment_ids_clean,
+                new_attachment_ids=new_attachment_ids_clean,
+                image_inline_path=vision_inline_path,
+                text_inline_path=text_inline_path,
+            ),
         )
-        # Sprint 2 (S2.4) — vision inline cleanup (임시 file).
-        _cleanup_vision_inline(vision_inline_path)
+        # worker mode 의 빠른 실패(readiness 503 / slot 429 / enqueue 500)는 표준 에러로 표면화.
+        _dispatch_http_status = int(agent_result.get("_http_status") or 0)
+        if _dispatch_http_status and _dispatch_http_status != 200:
+            conn.close()
+            return _json_error(
+                str(agent_result.get("error") or "요청 처리에 실패했습니다."),
+                _dispatch_http_status,
+            )
+        # 첨부 inline temp cleanup. worker mode 는 worker 가 terminal 시 정리(+고아 reaper)
+        # 하므로 web 은 손대지 않는다(requeue read-after-delete 방지 — M6). inprocess 만 정리.
+        if not _is_worker_mode():
+            _cleanup_vision_inline(vision_inline_path)
+            _cleanup_text_inline(text_inline_path)
         vision_inline_path = None
-        # TASK-0124 — text inline cleanup.
-        _cleanup_text_inline(text_inline_path)
         text_inline_path = None
 
         # Sprint 2 (S2.5) — attachment.vision.invoke audit dispatch.
@@ -7970,10 +8232,13 @@ async def ask(request: Request) -> JSONResponse:
     finally:
         _release_request_slot(slot_key)
         # TASK-0124: exception 경로에서도 text inline temp file 정리.
-        try:
-            _cleanup_text_inline(locals().get("text_inline_path"))
-        except Exception:
-            pass
+        # TASK-0169 (M6): worker mode 는 worker 가 terminal 시 정리(+고아 reaper)하므로
+        # web 은 손대지 않는다(enqueue 후 worker 가 아직 읽는 중이면 read-after-delete).
+        if not _is_worker_mode():
+            try:
+                _cleanup_text_inline(locals().get("text_inline_path"))
+            except Exception:
+                pass
         # TASK-0137: 첨부 채널은 contextvar 로 전환 — run_agent finally 에서 자동 reset.
 
 
@@ -10447,7 +10712,24 @@ async def cancel_request(request: Request) -> JSONResponse:
         return _json_error("권한이 없습니다.", 403)
     try:
         run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
+        # running run 은 KV cancel_requested 플래그를 run_agent 가 폴링해 처리(§2.6 무변경).
         mark_cancel_requested(conn, conversation_id, run_id=run_id)
+        # TASK-0169 (2g): worker mode 에서 아직 claim 안 된 pending job 은 run_id 매칭
+        # 대상이 없어 KV 플래그가 유실된다. 큐 레벨로 취소(canceled)해 취소 유실 방지.
+        if _is_worker_mode():
+            try:
+                from modules.db import _pg_connect
+                from modules import ask_jobs as _aj
+                _pgc = _pg_connect()
+                try:
+                    _canceled = _aj.cancel_pending_jobs(_pgc, conversation_id)
+                finally:
+                    _pgc.close()
+                if _canceled:
+                    # pending job 을 취소했으면 KV 도 즉시 canceled 로 정리(프런트 '처리중' 해제).
+                    set_run_status(conn, conversation_id, "canceled", run_id=run_id)
+            except Exception:
+                pass  # 큐 취소 실패는 KV 플래그 폴링 경로가 backstop
     except Exception:
         conn.close()
         return _json_error("cancel failed", 500)

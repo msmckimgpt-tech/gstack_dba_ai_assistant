@@ -399,6 +399,11 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 - AC-0206 (REQ-20260520-0002 / TASK-0087, **Major** §12.3): 모듈 import 시 `WEB_TRUSTED_PROXIES = _parse_trusted_proxies(os.getenv("WEB_TRUSTED_PROXIES", ""))` 가 평가된다. `_parse_trusted_proxies(raw)` 는 콤마 분리 + `ipaddress.ip_network(token, strict=False)` 파싱. invalid CIDR 토큰은 `AGENT_MODE in {"prod", "staging"}` 에서 `RuntimeError` startup, 그 외 (dev/test/"") 에서 stderr WARNING + 해당 토큰만 skip + 진행. 정상 토큰은 `tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]` 로 저장.
 - AC-0207 (REQ-20260520-0002 / TASK-0087, **Major** §12.3): 모듈 import 시 `ENABLE_WEB_TLS_PROXY == "1"` + `WEB_TRUSTED_PROXIES` 가 빈 tuple 인 조합이 감지되면 `AGENT_MODE in {"prod", "staging"}` 에서는 `RuntimeError` startup (audit `IpAddr` PIPA §29 품질 회귀 fail-loud), 그 외 (dev/test/"") 에서 stderr WARNING + 진행. WARNING 메시지는 `[startup] WARNING: WEB_TRUSTED_PROXIES is empty while ENABLE_WEB_TLS_PROXY=1. audit IpAddr will record the Caddy container IP only (PIPA §29 quality regression).` 형식.
 
+- AC-0325 (REQ-20260609-0168 / TASK-0169, **Critical** §12.3): `AGENT_ASK_EXECUTION_MODE=inprocess`(기본)에서 `/api/ask` 는 현행 `asyncio.to_thread(run_agent,…)` 그대로 실행하며 응답·동작이 변경되지 않는다(배포 자체로는 무변경 shadow).
+- AC-0326 (REQ-20260609-0168 / TASK-0169, **Critical** §12.3): `AGENT_ASK_EXECUTION_MODE=worker` 에서 `/api/ask` 는 `agent_runtime.ask_jobs` 에 enqueue 하고 KV `last_status` 를 내부 long-poll attach 해 기존과 동일 shape(answer/executed_sql/steps/result_csv_paths/rationale/error)로 동기 응답한다. 살아있는 worker 가 없으면(heartbeat stale) enqueue 전에 503 으로 빠르게 실패한다(무한 대기 금지).
+- AC-0327 (REQ-20260609-0168 / TASK-0169, **Critical** §12.3): worker mode 에서 web 재배포/SIGTERM 은 in-flight worker run 을 죽이지 않으며, TASK-0159 부팅 reconcile·TASK-0164 SIGTERM finalizer 는 활성 `ask_jobs`(pending/running) conversation 을 error 마킹하지 않는다(ownership-aware).
+- AC-0328 (REQ-20260609-0168 / TASK-0169, **Critical** §12.3): 계정별 동시 실행 한도(`WEB_PARALLEL_LIMIT`)는 worker mode 에서 `ask_jobs` 활성 job count 단일문 enforce 로 초과 시 429 를 반환하며, heartbeat-stale running job 은 슬롯에서 제외된다(크래시 후 계정 영구 잠금 방지).
+
 ## 12. Observability
 - 웹 세션: `../../../../artifacts/shared/web_sessions`
 - 로그: `../../../../artifacts/shared/logs`

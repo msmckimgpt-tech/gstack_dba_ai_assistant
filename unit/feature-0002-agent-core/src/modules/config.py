@@ -54,6 +54,16 @@ __all__ = [
     "AGENT_INSIGHT_WORKER_STALE_SEC",
     "AGENT_INSIGHT_WORKER_TICK_SEC",
     "AGENT_INSIGHT_WORKER_DEGRADED_BACKOFF_SEC",
+    "AGENT_ASK_EXECUTION_MODE",
+    "AGENT_ASK_WORKER_ENABLED",
+    "AGENT_ASK_WORKER_TICK_SEC",
+    "AGENT_ASK_WORKER_HEARTBEAT_SEC",
+    "AGENT_ASK_WORKER_STALE_SEC",
+    "AGENT_ASK_WORKER_SWEEP_EVERY_SEC",
+    "AGENT_ASK_WORKER_ATTEMPTS_CAP",
+    "AGENT_ASK_WORKER_JITTER_SEC",
+    "AGENT_ASK_WORKER_CONVERSATION_ID",
+    "AGENT_ASK_WORKER_HEARTBEAT_KEY",
     "AGENT_KB_ALLOWED_SOURCE_TYPES",
     "AGENT_KB_FACT_LIMIT",
     "AGENT_KB_INSIGHT",
@@ -646,6 +656,50 @@ AGENT_INSIGHT_WORKER_LOCK_NAME = os.getenv(
     "AGENT_INSIGHT_WORKER_LOCK_NAME", "agent_insight_worker_scan"
 ).strip()
 AGENT_INSIGHT_WORKER_CONVERSATION_ID = "__insight_worker__"
+
+# ── out-of-process ask-worker (TASK-0169, DESIGN-ask-worker.md) ──
+# 실행모델 토글: inprocess(기본, 현행 asyncio.to_thread) | worker(ask_jobs enqueue).
+# worker 검증 전까지 inprocess 경로 + TASK-0164 finalizer 를 보존(즉시 rollback 용).
+AGENT_ASK_EXECUTION_MODE = (
+    os.getenv("AGENT_ASK_EXECUTION_MODE", "inprocess").strip().lower() or "inprocess"
+)
+_ask_worker_enabled_raw = os.getenv("AGENT_ASK_WORKER_ENABLED", "1").strip() or "1"
+AGENT_ASK_WORKER_ENABLED = _ask_worker_enabled_raw.lower() in ("1", "true", "yes")
+# claim 폴링 주기(sec) — pending job 이 없으면 이 간격으로 재시도.
+AGENT_ASK_WORKER_TICK_SEC = int(
+    (os.getenv("AGENT_ASK_WORKER_TICK_SEC", "2") or "2").strip()
+)
+# job heartbeat 주기(sec) — 실행 중 별도 스레드가 이 간격으로 ask_jobs.heartbeat_at 갱신.
+# step 이 아니라 시간 기반이라 긴 LLM step 중에도 갱신돼 false-positive requeue 를 막는다.
+AGENT_ASK_WORKER_HEARTBEAT_SEC = int(
+    (os.getenv("AGENT_ASK_WORKER_HEARTBEAT_SEC", "10") or "10").strip()
+)
+# stale 임계(sec) — running job 의 heartbeat 가 이보다 오래 끊기면 죽은 worker 로 보고
+# 회수(requeue/error). 정상 장기 run 을 false-positive 로 회수하지 않으려면 run_timeout_sec
+# (= agent_core 의 max(AGENT_TIMEOUT_SEC*3, AGENT_EARLY_FINALIZE_MS/1000)) 보다 충분히
+# 커야 한다(BLOCKER/E). 따라서 기본값을 그 추정치 + 180s margin 으로 동적 산출한다 —
+# AGENT_TIMEOUT_SEC 를 키운 배포(예: 300 → run_timeout 900)에서도 안전. heartbeat 는
+# 시간 기반(step 무관)이라 실제론 worker 프로세스 death 일 때만 트리거된다.
+_ask_run_timeout_est = max(int(AGENT_TIMEOUT_SEC) * 3, max(1, int(AGENT_EARLY_FINALIZE_MS / 1000)))
+_ask_stale_default = _ask_run_timeout_est + 180
+AGENT_ASK_WORKER_STALE_SEC = int(
+    (os.getenv("AGENT_ASK_WORKER_STALE_SEC", str(_ask_stale_default)) or str(_ask_stale_default)).strip()
+)
+# sweeper 실행 주기(sec) — stale job 회수 스캔 간격.
+AGENT_ASK_WORKER_SWEEP_EVERY_SEC = int(
+    (os.getenv("AGENT_ASK_WORKER_SWEEP_EVERY_SEC", "30") or "30").strip()
+)
+# requeue attempts cap — 이 횟수 도달 시 terminal error(무한 requeue 차단).
+AGENT_ASK_WORKER_ATTEMPTS_CAP = int(
+    (os.getenv("AGENT_ASK_WORKER_ATTEMPTS_CAP", "3") or "3").strip()
+)
+AGENT_ASK_WORKER_JITTER_SEC = int(
+    (os.getenv("AGENT_ASK_WORKER_JITTER_SEC", "0") or "0").strip()
+)
+AGENT_ASK_WORKER_CONVERSATION_ID = "__ask_worker__"
+# worker 생존 heartbeat KV 키(healthcheck + /api/ask readiness gate 가 신선도 검사).
+AGENT_ASK_WORKER_HEARTBEAT_KEY = "ask_worker_last_cycle_at"
+
 MCP_URL = os.getenv("MCP_URL", "http://mcp:5000/mcp")
 MCP_TIMEOUT_SEC = int(os.getenv("MCP_TIMEOUT_SEC", "20"))
 MCP_PROTOCOL = os.getenv("MCP_PROTOCOL", "jsonrpc").lower()
