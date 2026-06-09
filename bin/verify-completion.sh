@@ -650,7 +650,7 @@ check_9_review_entry() {
   local unique_paths
   unique_paths=$(printf '%s\n' "${review_paths[@]}" | sort -u)
 
-  local entry_pattern='^\+## REV-[0-9]{8}-[0-9]{4} \[(SUBAGENT|AGENT-TEAM|SKIPPED):'
+  local entry_pattern='^\+## REV-[0-9]{8}-[0-9]{4} \[(SUBAGENT|AGENT-TEAM|SKIPPED|CODEX):'
   local found=0
   local rmd
   while IFS= read -r rmd; do
@@ -679,7 +679,7 @@ check_9_review_entry() {
     return 0
   fi
 
-  local hint="no accepted [SUBAGENT|AGENT-TEAM|SKIPPED]:* entry added to REVIEW.md in this cycle"
+  local hint="no accepted [SUBAGENT|AGENT-TEAM|SKIPPED|CODEX]:* entry added to REVIEW.md in this cycle"
   hint="${hint}. Run the verification panel protocol (/review-panel entrypoint or AGENTS.md §18.8 flow) and stage the resulting REVIEW.md change"
   log_check 9 FAIL "REVIEW.md cycle entry" "$hint"
   return 1
