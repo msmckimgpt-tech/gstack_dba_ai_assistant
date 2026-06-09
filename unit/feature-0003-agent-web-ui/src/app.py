@@ -9148,20 +9148,31 @@ WHERE Token = %s AND RevokedAt IS NULL
         anchor_id_int = int(anchor_id) if anchor_id is not None else None
         # 대화 topic + product context 조회 (cutover: core_conversations 는 PG,
         # WebProducts/WebAccounts 는 MySQL → backend-aware merge helper).
-        conv_meta = _conv_load_share_meta(conn, conversation_id)
-        # TASK-0094 Sprint 1 Phase 8 (D9 + R-F7): share token row 의 PolicyVersion 추출 후 redact 결정.
-        share_policy_version_raw = share.get("PolicyVersion")
-        share_policy_version: int | None
+        # TASK-0168 (F1, REV-20260609-0001): 데이터 로드(PG core_conversations/messages) 실패 시
+        # bare 500 대신 graceful JSON 500 으로 일관된 에러 계약을 준다 (fork 의 명시 500 래핑과 대칭).
+        # 주의: 상단 ViewCount++ 는 revoke race 가드 겸용이라 그대로 두며 — 로드 실패 시 1 과대
+        # 카운트는 허용 가능한 soft-metric 오차(race 정합 우선). 빈 공유뷰를 렌더하느니 명시 실패.
         try:
-            share_policy_version = int(share_policy_version_raw) if share_policy_version_raw is not None else None
+            conv_meta = _conv_load_share_meta(conn, conversation_id)
+            # TASK-0094 Sprint 1 Phase 8 (D9 + R-F7): share token row 의 PolicyVersion 추출 후 redact 결정.
+            share_policy_version_raw = share.get("PolicyVersion")
+            share_policy_version: int | None
+            try:
+                share_policy_version = int(share_policy_version_raw) if share_policy_version_raw is not None else None
+            except Exception:
+                share_policy_version = None
+            messages = _share_load_messages(
+                conn,
+                conversation_id,
+                anchor_id_int,
+                share_token_policy_version=share_policy_version,
+            )
         except Exception:
-            share_policy_version = None
-        messages = _share_load_messages(
-            conn,
-            conversation_id,
-            anchor_id_int,
-            share_token_policy_version=share_policy_version,
-        )
+            logging.getLogger(__name__).warning(
+                "public_share_view: 공유 대화 로드 실패 (conversation_id=%s)",
+                conversation_id, exc_info=True,
+            )
+            return _json_error("공유 대화를 불러오지 못했습니다.", 500)
         # R-F7 audit dispatch — stale token (PolicyVersion < CURRENT) 의 자동 redact 활성 기록.
         if share_policy_version is None or int(share_policy_version or 0) < SHARE_POLICY_VERSION_CURRENT:
             try:
