@@ -2066,6 +2066,10 @@ def run_agent(
         )
     finally:
         clear_active_schema_allowlist()
+        # 멀티 datasource(P5 M1): run-wide datasource·dialect 컨텍스트를 **예외 안전**하게 해제.
+        # 다른 request-scoped ContextVar 와 동일 위치(run_agent finally)에서 — _run_agent_core
+        # 의 평문 해제는 예외 시 누락돼 ask-worker 스레드 재사용 stale 위험(REV-20260610-P5 M1).
+        cfg.set_active_datasource(None)
         _ATTACHMENT_IDS_CTX.reset(_att_tokens[0])
         _NEW_ATTACHMENT_IDS_CTX.reset(_att_tokens[1])
         _INLINE_IMAGE_PATH_CTX.reset(_att_tokens[2])
@@ -2242,18 +2246,22 @@ def _run_agent_core(
             save_memory_kv(mem_conn, cid, "thread_goal", thread_goal)
 
     # ── 지식 주입 ──
-    # 멀티 datasource (P3, Codex-3): grounding 읽기를 이 대화의 datasource 로 한정.
-    # _ds(위에서 해석)를 ContextVar 로 설정 → _load_schema_list/_load_relevant_table_insights
-    # 의 ds_fact_like/ds_strip_prefix 가 datasource 키만 매치(기본은 ds 키 제외). 직후 해제로
-    # 스레드 재사용 시 stale 방지.
+    # 멀티 datasource: 이 run 의 datasource 키·엔진을 ContextVar 로 설정한다(run-wide).
+    #  - P3(Codex-3): grounding 읽기(_load_schema_list 등)가 ds_fact_like/strip 으로 datasource
+    #    키만 매치(기본은 ds 키 제외) → 교차노출 차단.
+    #  - P5: tools.py 의 introspection/sample SQL 이 dialects.active() 로 엔진별 방언 산출.
+    # **본 set 은 grounding 직후 해제하지 않는다** — 이후 tool 루프(execute_sql/describe_*)도 같은
+    # datasource·dialect 컨텍스트여야 하기 때문. 해제는 run_agent 의 finally(다른 request-scoped
+    # ContextVar 와 동일 위치)에서 **예외 안전**하게 수행한다(P5 M1). 매 run 시작에서 다시 set 한다.
+    cfg.set_active_datasource(
+        (_ds["key"] if _ds else None),
+        engine=(_ds.get("engine") if _ds else None),
+    )
     knowledge_ctx = ""
     try:
-        cfg.set_active_datasource(_ds["key"] if _ds else None)
         knowledge_ctx = _build_knowledge_context(mem_conn, user_message, history)
     except Exception:
         pass
-    finally:
-        cfg.set_active_datasource(None)
 
     # ── LLM 메시지 구성 ──
     try:
@@ -2622,6 +2630,8 @@ def _run_agent_core(
         mem_conn.close()
     except Exception:
         pass
+    # 멀티 datasource(P5): run-wide datasource·dialect 컨텍스트 해제 (스레드 재사용 stale 방지).
+    cfg.set_active_datasource(None)
     cfg.CURRENT_RUN_ID = ""
 
     return result

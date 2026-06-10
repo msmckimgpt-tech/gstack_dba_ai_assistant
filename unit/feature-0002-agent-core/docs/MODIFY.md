@@ -860,3 +860,16 @@ source_of_truth: true
   - unit/feature-0002-agent-core/tests/test_multi_datasource.py (신규 P4 5)
   - unit/feature-0002-agent-core/docs/{FUNCTION,REVIEW,REPORT,TASK}.md, docs/STATUS.md
 - Rollback: flag OFF 라 런타임 영향 0. 코드 환원 시 pymssql 의존성·engine 디스패치 제거. `_collect_cursor_result` description 전환은 mysql 등가라 환원 불요(회귀 0).
+
+## CHG-20260610-MULTI-DATASOURCE-P5-DIALECT
+- Date: 2026-06-10
+- Related Requirement: TASK-0193 (REQ-20260610-0193, Major §12.3 — 멀티 datasource Stage 2 P5 Dialect)
+- Summary: tools.py introspection/sample SQL 을 engine 별 dialect 로 추상화. `modules/dialects.py`(MySQLDialect 골든 그대로 + MSSQLDialect 동일 컬럼순서 T-SQL). tools.py 8사이트 치환. config 엔진 ContextVar + agent_core run-wide 설정(run_agent finally 해제). outside-voice SHIP-able(REV-20260610-0193), MAJOR M1(ContextVar 예외안전) 흡수. MySQL 골든 회귀 0. **보안 게이트 MySQL 방언 — P6 전 MSSQL 활성화 금지.**
+- Files:
+  - unit/feature-0002-agent-core/src/modules/dialects.py (신규)
+  - unit/feature-0002-agent-core/src/modules/tools.py (8 SQL 사이트 → _dialects.active())
+  - unit/feature-0002-agent-core/src/modules/config.py (_ACTIVE_DATASOURCE_ENGINE + set_active_datasource engine 인자 + __all__)
+  - unit/feature-0002-agent-core/src/agent_core.py (run-wide engine 설정 + run_agent finally 해제[M1])
+  - unit/feature-0002-agent-core/tests/test_multi_datasource.py (신규 P5 6)
+  - unit/feature-0002-agent-core/docs/{FUNCTION,REVIEW,REPORT,TASK}.md, docs/STATUS.md
+- Rollback: MySQL 골든이라 환원 시 dialect → inline SQL 복귀(기능 동일). flag OFF shadow.

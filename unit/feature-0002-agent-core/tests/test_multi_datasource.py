@@ -370,3 +370,79 @@ def test_collect_cursor_result_cross_engine():
     cur2.rowcount = 5
     out2 = db._collect_cursor_result(cur2)
     assert out2 == [("rowcount", 5, None)]
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 6. Stage 2 P5: Dialect 어댑터 (MySQL 골든 회귀 + MSSQL T-SQL)
+# ──────────────────────────────────────────────────────────────────────────
+from modules import dialects as _dia
+
+
+def test_mysql_dialect_golden_unchanged():
+    """MySQLDialect 는 P5 이전 SQL 을 그대로 산출 (골든 회귀 0)."""
+    my = _dia.get("mysql")
+    assert my.sample("s", "t", 5) == "SELECT * FROM `s`.`t` LIMIT 5"
+    assert my.list_indexes("s", "t") == "SHOW INDEX FROM `s`.`t`"
+    assert my.explain("SELECT 1 FROM x") == "EXPLAIN SELECT 1 FROM x"
+    assert my.quote_qualified("s", "t") == "`s`.`t`"
+    assert my.list_schema_names() == "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME"
+    # 핵심 introspection 이 information_schema 기반(MySQL)
+    assert "information_schema.SCHEMATA" in my.list_schemas_with_counts()
+    assert "information_schema.TABLES" in my.describe_schema_tables("s")
+    assert "information_schema.COLUMNS" in my.describe_columns("s", "t")
+
+
+def test_mssql_dialect_tsql():
+    ms = _dia.get("mssql")
+    assert ms.name == "mssql" and ms.sqlglot == "tsql"
+    assert ms.quote_qualified("s", "t") == "[s].[t]"
+    assert ms.sample("s", "t", 5) == "SELECT TOP 5 * FROM [s].[t]"
+    # sys.* 카탈로그 사용 (information_schema 플레이버 아님)
+    assert "sys.schemas" in ms.list_schemas_with_counts()
+    assert "sys.tables" in ms.describe_schema_tables("s")
+    assert "sys.indexes" in ms.list_indexes("s", "t")
+    # EXPLAIN 없음 → None (부하게이트 P6)
+    assert ms.explain("SELECT 1") is None
+
+
+def test_mssql_describe_columns_same_column_order():
+    """MSSQL describe_columns 가 MySQL 과 동일한 7 컬럼 순서 (tools.py row[i] 파싱 호환)."""
+    ms = _dia.get("mssql")
+    sql = ms.describe_columns("s", "t").upper()
+    # 7개 별칭이 MySQL 순서대로
+    order = ["COLUMN_NAME", "COLUMN_TYPE", "IS_NULLABLE", "COLUMN_KEY",
+             "COLUMN_DEFAULT", "EXTRA", "COLUMN_COMMENT"]
+    positions = [sql.find(a) for a in order]
+    assert all(p > 0 for p in positions)
+    assert positions == sorted(positions)  # 순서 유지
+
+
+def test_dialect_active_via_contextvar():
+    cfg.set_active_datasource(None)
+    try:
+        assert _dia.active().name == "mysql"
+        cfg.set_active_datasource("prod", engine="mssql")
+        assert _dia.active().name == "mssql"
+        cfg.set_active_datasource("prod2", engine="mysql")
+        assert _dia.active().name == "mysql"
+    finally:
+        cfg.set_active_datasource(None)
+
+
+def test_mssql_list_indexes_position_mapping():
+    """MSSQL list_indexes SELECT 가 SHOW INDEX 소비 위치(row[1]non_unique/[2]key/[3]seq/[4]col/[6]card)와 정렬."""
+    sql = _dia.get("mssql").list_indexes("s", "t").upper()
+    aliases = ["TABLE_", "NON_UNIQUE", "KEY_NAME", "SEQ_IN_INDEX", "COLUMN_NAME", "COLLATION", "CARDINALITY"]
+    pos = [sql.find(a) for a in aliases]
+    assert all(p > 0 for p in pos) and pos == sorted(pos)
+
+
+def test_run_agent_finally_clears_datasource_on_exception():
+    """P5 M1: run_agent 의 finally 가 예외에도 datasource·engine ContextVar 를 해제(스레드 stale 방지)."""
+    ac = _agent_core()
+    cfg.set_active_datasource("stale", engine="mssql")  # 직전 run 의 잔여 시뮬레이션
+    with mock.patch.object(ac, "_run_agent_core", side_effect=RuntimeError("boom")):
+        with pytest.raises(RuntimeError):
+            ac.run_agent("hi")
+    assert cfg.get_active_datasource() is None
+    assert cfg.get_active_datasource_engine() == "mysql"

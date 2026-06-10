@@ -14,6 +14,7 @@ from typing import Any
 from .config import AGENT_TOP_N, AGENT_MAX_SHOW
 from .db import execute_sql as _raw_execute_sql
 from .render import save_csv
+from . import dialects as _dialects  # Stage 2 P5: engine 별 introspection/sample SQL
 
 __all__ = [
     "TOOL_DEFINITIONS",
@@ -396,17 +397,7 @@ def _safe_ident(name: str) -> str:
 
 
 def _tool_list_schemas(conn, _args: dict) -> str:
-    sql = """
-        SELECT
-            s.SCHEMA_NAME,
-            COUNT(t.TABLE_NAME) AS table_count,
-            COALESCE(SUM(t.TABLE_ROWS), 0) AS approx_total_rows
-        FROM information_schema.SCHEMATA s
-        LEFT JOIN information_schema.TABLES t
-            ON s.SCHEMA_NAME = t.TABLE_SCHEMA
-        GROUP BY s.SCHEMA_NAME
-        ORDER BY s.SCHEMA_NAME
-    """
+    sql = _dialects.active().list_schemas_with_counts()
     result_sets, _ = _raw_execute_sql(conn, sql)
     # 시스템 스키마 필터링
     filtered: list[str] = []
@@ -429,17 +420,7 @@ def _tool_describe_schema(conn, args: dict) -> str:
     err = _whitelist_violation({schema.lower()})
     if err:
         return err
-    sql = f"""
-        SELECT
-            TABLE_NAME,
-            TABLE_ROWS AS approx_rows,
-            ENGINE,
-            TABLE_COMMENT,
-            CREATE_TIME
-        FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = '{schema}'
-        ORDER BY TABLE_NAME
-    """
+    sql = _dialects.active().describe_schema_tables(schema)
     result_sets, _ = _raw_execute_sql(conn, sql)
     parts = [f"## 스키마: {schema}\n"]
     for kind, cols, rows in result_sets:
@@ -465,18 +446,11 @@ def _tool_describe_table(conn, args: dict) -> str:
         return err
 
     # 컬럼 정보
-    col_sql = f"""
-        SELECT
-            COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY,
-            COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT
-        FROM information_schema.COLUMNS
-        WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{table}'
-        ORDER BY ORDINAL_POSITION
-    """
+    col_sql = _dialects.active().describe_columns(schema, table)
     col_results, _ = _raw_execute_sql(conn, col_sql)
 
     # 인덱스 정보
-    idx_sql = f"SHOW INDEX FROM `{schema}`.`{table}`"
+    idx_sql = _dialects.active().list_indexes(schema, table)
     try:
         idx_results, _ = _raw_execute_sql(conn, idx_sql)
     except Exception:
@@ -518,7 +492,7 @@ def _tool_describe_table(conn, args: dict) -> str:
                     break
     if has_complex:
         try:
-            sample_sql = f"SELECT * FROM `{schema}`.`{table}` LIMIT 1"
+            sample_sql = _dialects.active().sample(schema, table, 1)
             sample_results, _ = _raw_execute_sql(conn, sample_sql)
             sample_text = _format_result_sets(sample_results, max_rows=1)
             if sample_text:
@@ -544,31 +518,13 @@ def _tool_search_tables(conn, args: dict) -> str:
     # 시스템 스키마 제외 조건
     sys_exclude = " AND ".join(f"t.TABLE_SCHEMA != '{s}'" for s in _SYSTEM_SCHEMAS)
 
-    sql = f"""
-        SELECT DISTINCT
-            t.TABLE_SCHEMA,
-            t.TABLE_NAME,
-            t.TABLE_ROWS AS approx_rows,
-            t.TABLE_COMMENT
-        FROM information_schema.TABLES t
-        LEFT JOIN information_schema.COLUMNS c
-            ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME
-        WHERE ({sys_exclude})
-            {where_schema}
-            AND (
-                t.TABLE_NAME LIKE '%{keyword}%'
-                OR c.COLUMN_NAME LIKE '%{keyword}%'
-                OR t.TABLE_COMMENT LIKE '%{keyword}%'
-            )
-        ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
-        LIMIT 50
-    """
+    sql = _dialects.active().search_tables(keyword, sys_exclude, where_schema)
     result_sets, _ = _raw_execute_sql(conn, sql)
 
     # 사용 가능한 전체 스키마 목록 조회
     all_schemas: list[str] = []
     try:
-        schema_sql = "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME"
+        schema_sql = _dialects.active().list_schema_names()
         schema_rs, _ = _raw_execute_sql(conn, schema_sql)
         for kind, _, rows in schema_rs:
             if kind == "rows" and rows:
@@ -607,7 +563,7 @@ def _tool_get_sample_rows(conn, args: dict) -> str:
     err = _whitelist_violation({schema.lower()})
     if err:
         return err
-    sql = f"SELECT * FROM `{schema}`.`{table}` LIMIT {limit}"
+    sql = _dialects.active().sample(schema, table, limit)
     try:
         result_sets, elapsed = _raw_execute_sql(conn, sql)
         formatted = _format_result_sets(result_sets, max_rows=limit)
@@ -634,8 +590,13 @@ def _estimate_explain_rows(conn, sql: str) -> int | None:
     TASK-0172: 무거운 쿼리 사전 게이팅용. EXPLAIN 은 본 쿼리를 실행하지 않으므로 cheap
     (EXPLAIN ANALYZE 는 sql_guard 가 차단). 실패(구문/권한/플랜불가) 시 None → caller 가
     fail-open(게이트가 정상 작업을 막지 않음)."""
+    # Stage 2 P5: dialect 별 EXPLAIN. MSSQL 은 explain()=None → 추정 skip(None).
+    # MSSQL 부하게이트 fail-closed/SHOWPLAN 은 P6. (현재 MySQL 만 EXPLAIN rows/filtered 파싱.)
+    explain_sql = _dialects.active().explain(sql)
+    if not explain_sql:
+        return None
     try:
-        result_sets, _ = _raw_execute_sql(conn, f"EXPLAIN {sql}")
+        result_sets, _ = _raw_execute_sql(conn, explain_sql)
     except Exception:
         return None
     for kind, columns, rows in result_sets:

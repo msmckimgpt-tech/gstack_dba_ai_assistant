@@ -20,6 +20,15 @@ source_of_truth: true
 - Risk: low — 읽기 라우팅, RBAC/스키마/파괴 0. make test exit=0.
 - Cross-ref: CHG-20260610-0196 / TASK-0196 / feature-0003 REV-20260610-0196.
 
+## REV-20260610-0193 [SUBAGENT:p5-dialect-golden-regression]
+- Date: 2026-06-10 (TASK-0193)
+- Cycle: 멀티 datasource Stage 2 P5 (Dialect 어댑터 — tools.py introspection/sample SQL 의 MySQL/MSSQL 추상화). **Major §12.3**.
+- Panel: 적대적 subagent — MySQL 골든 회귀 + run-wide ContextVar 가 P3 grounding 격리/엔진 지속을 깨는지 집중.
+- Verdict: **SHIP-able, BLOCKER 0, MAJOR 1(흡수)**. **MySQL 골든 회귀 byte-identical 검증**(MySQLDialect 8 메서드가 기존 inline SQL 그대로, `explain()`=`EXPLAIN {sql}` 동일, `_estimate_explain_rows` MySQL 동작 0 변경). **MSSQL 컬럼순서 정합**(describe_columns 7컬럼·list_indexes row[1/2/3/4/6]·Non_unique is_unique 반전). **P3 grounding 격리 유지**(set 이 _build_knowledge_context 전, ds_fact_like/un-scoped MySQL fallback 가드 유효). **엔진 tool 루프 지속 OK**(run-wide set, grounding 후 미해제).
+- 흡수: **MAJOR M1** datasource ContextVar 해제가 _run_agent_core 평문(예외 시 누락→ask-worker 스레드 재사용 stale, 주석은 finally 거짓) → **run_agent 의 finally(allowlist 해제와 동일 위치)로 이동**(예외 안전) + 주석 정정 + 회귀 테스트(예외 시 해제 단언).
+- MINOR(이월): m3 `_SYSTEM_SCHEMAS`/`_is_user_schema` 가 MySQL 방언(sys/INFORMATION_SCHEMA/guest/db_* 미필터) → **P6** dialect-aware 시스템 스키마 필터. (P5 범위 외, MSSQL shadow-only)
+- Resolution: M1 흡수 후 make test 318 passed/회귀 0. **보안 게이트(allowlist/sql_guard)는 아직 MySQL 방언 — P6 전 MSSQL datasource 활성화 금지(dialects.py·_estimate_explain_rows 주석 명시).** flag OFF shadow.
+
 ## REV-20260610-0192 [SKIPPED:driver-infra-security-deferred-p6]
 - Date: 2026-06-10 (TASK-0192)
 - Cycle: 멀티 datasource Stage 2 P4 (MSSQL 드라이버 pymssql + 연결 디스패치 + 크로스엔진 결과 수집). **Major §12.3**.

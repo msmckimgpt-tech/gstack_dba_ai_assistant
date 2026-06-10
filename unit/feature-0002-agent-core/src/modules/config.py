@@ -176,6 +176,7 @@ __all__ = [
     "datasource_public",
     "set_active_datasource",
     "get_active_datasource",
+    "get_active_datasource_engine",
     "ds_fact_key",
     "ds_fact_like",
     "ds_strip_prefix",
@@ -352,11 +353,22 @@ _ACTIVE_DATASOURCE_KEY: "_contextvars.ContextVar[str | None]" = _contextvars.Con
     "active_datasource_key", default=None
 )
 _DS_KEY_SENTINEL = object()
+_ACTIVE_DATASOURCE_ENGINE: "_contextvars.ContextVar[str]" = _contextvars.ContextVar(
+    "active_datasource_engine", default="mysql"
+)
 
 
-def set_active_datasource(key) -> None:
-    """현재 컨텍스트(스레드/태스크)의 활성 datasource 키 설정. None=기본 단일 MySQL."""
+def set_active_datasource(key, engine: str | None = None) -> None:
+    """현재 컨텍스트(스레드/태스크)의 활성 datasource 키·엔진 설정. None=기본 단일 MySQL.
+
+    engine(Stage 2 P5): 활성 datasource 엔진(mysql|mssql) — dialect 선택용. 미지정=mysql.
+    """
     _ACTIVE_DATASOURCE_KEY.set((str(key).strip().lower() or None) if key else None)
+    _ACTIVE_DATASOURCE_ENGINE.set((str(engine).strip().lower() or "mysql") if engine else "mysql")
+
+
+def get_active_datasource_engine() -> str:
+    return _ACTIVE_DATASOURCE_ENGINE.get()
 
 
 def get_active_datasource():
