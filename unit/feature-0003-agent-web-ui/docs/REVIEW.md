@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0197 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]
+- Date: 2026-06-10
+- Cycle: TASK-0197 (assistant 말풍선 타임스탬프 옆 소요시간 표시), **Minor §12.3**
+- 사유: 정적자산(app.js·styles.css·index.html) 3파일만 변경. 백엔드(app.py)·API 엔드포인트·DB 스키마·RBAC·시크릿 무변경. `message.meta.duration_ms` 는 agent_core 가 이미 저장하는 기존 필드를 읽기만 함(신규 데이터 수집/노출 경로 없음). node --check PASS. 시각 검증 = Windows-browser(PB-0008) 배포 후.
+
 ## REV-20260610-0196 [SUBAGENT:cutover-routing-gaps-adversarial]
 - Date: 2026-06-10
 - Cycle: TASK-0196 (AR-M5 cutover 잔존 라우팅 누락 일괄 복구 — web 3건 + agent-core convo_search), **Minor §12.3**

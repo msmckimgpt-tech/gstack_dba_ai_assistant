@@ -16,6 +16,9 @@ source_of_truth: true
 
 ## 2. Task Queue
 
+### TASK-0197 assistant 말풍선 타임스탬프 옆 소요시간 표시 (2026-06-10)
+- [x] **Minor §12.3** — 사용자 요청: assistant 응답 완료 시 각 대화 bubble 의 타임스탬프 옆에 소요시간 표시. `message.meta.duration_ms`(agent_core 가 `_mirror_message` 에 mirror_meta 로 저장)가 있는 assistant 말풍선에 한해, 기존 `formatElapsed()` 재사용, `.message-meta-duration` span 추가. 백엔드/API/스키마/RBAC/시크릿 무변경 — 프런트 3파일(app.js·styles.css·index.html 캐시버스터) 만. node --check PASS. REV-20260610-0197 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]. worktree `ai/claude/response-duration-display`.
+
 ### TASK-0188 공유 대화 페이지 markdown 미적용 수정 + 수신자 가독성 디자인 (2026-06-10)
 - [x] **Minor §12.3** — 사용자 보고: 공유 링크로 전달받은 대화가 markdown 미적용 raw 텍스트로 보임(수신자 입장 가독성 저하). **근본 원인**: `share.html` 이 marked+purify 미로드 + `share.js` 가 `content.textContent` 평문 렌더(메인 채팅은 `markdownToHtml()` marked+DOMPurify). **수정(3파일, 백엔드/API/스키마/RBAC/시크릿 무변경)**: ① `share.html` marked+purify 로드(순서 share.js 앞) + 캐시버스터 `?v=20260610-share-md` + 브랜드 라벨 + 링크복사 버튼. ② `share.js` `renderMarkdownContent`(marked.parse→DOMPurify.sanitize, 라이브러리 부재 평문 폴백) + sql 코드블록 "쿼리 보기" 토글 + 외부링크 `target=_blank rel=noopener` + 역할 배지 + 링크복사. ③ `share.css` 렌더 markdown 요소 스타일(제목·리스트·인용·코드·GFM 표·hr·img·링크) + 역할 배지·좌측 accent border + 반응형 + 인쇄/PDF 스타일시트. **보안**: 익명 페이지 XSS 는 메인과 동일 DOMPurify.sanitize 차단, 데이터 redaction 무변경. node --check PASS. REV-20260610-0188 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]. Windows-browser(PB-0008) 검증 배포 후. 동시세션 0182~0186 선점→0188. worktree `ai/claude/share-md-render`.
 

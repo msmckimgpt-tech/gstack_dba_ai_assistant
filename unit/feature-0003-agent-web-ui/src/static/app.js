@@ -2474,7 +2474,16 @@ function renderMessages() {
     if (role === "user") {
       speaker = isOwn ? selfLabel : ownerLabel;
     }
-    meta.textContent = `${speaker} · ${formatDateTime(message.created_at)}`;
+    const durationMs = role === "assistant" ? Number(message.meta?.duration_ms || 0) : 0;
+    if (durationMs > 0) {
+      meta.appendChild(document.createTextNode(`${speaker} · ${formatDateTime(message.created_at)} `));
+      const durEl = document.createElement("span");
+      durEl.className = "message-meta-duration";
+      durEl.textContent = formatElapsed(durationMs);
+      meta.appendChild(durEl);
+    } else {
+      meta.textContent = `${speaker} · ${formatDateTime(message.created_at)}`;
+    }
 
     const bubble = document.createElement("div");
     bubble.className = "message-bubble";
