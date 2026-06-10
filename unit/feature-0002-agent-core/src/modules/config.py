@@ -171,6 +171,9 @@ __all__ = [
     "DB_PORT",
     "DB_PROMPT_DEFAULT",
     "DB_USER",
+    "AGENT_MULTI_DATASOURCE_ENABLED",
+    "DATASOURCES",
+    "datasource_public",
     "REPLICA_DB_ENABLED",
     "REPLICA_DB_HOST",
     "REPLICA_DB_PASSWORD",
@@ -258,6 +261,69 @@ REPLICA_DB_PORT = int(os.getenv("REPLICA_DB_PORT", str(DB_PORT)) or DB_PORT)
 REPLICA_DB_USER = os.getenv("REPLICA_DB_USER", "").strip() or DB_USER
 REPLICA_DB_PASSWORD = os.getenv("REPLICA_DB_PASSWORD", "") or DB_PASSWORD
 REPLICA_DB_ENABLED = bool(REPLICA_DB_HOST)
+
+# ── 멀티 datasource (P1, DESIGN-multi-datasource.md Stage 1) ────────────────────
+# multi-MySQL: 사용자가 여러 MySQL datasource 를 등록하고 product 별로 분석 대상을
+# 고를 수 있게 한다. P1 은 MySQL 전용(engine='mysql'), MSSQL 은 Stage 2.
+#
+# 보안 전제 (DESIGN §4 Q7 security-first):
+#   - 자격증명은 .env (named credential) 에만 — DB·job payload 에 평문 비저장 (MVP 시크릿 전략).
+#   - DS_<KEY>_USER 는 해당 datasource 의 **최소권한 RO 유저**여야 한다(product 의 허용 스키마에만
+#     GRANT SELECT, db_datareader 류 광권한 금지 — Codex-2). 코드는 강제 안 하며 운영 책임.
+#   - datasource 접근 RBAC 와 스키마 allowlist 는 기존 product 머신러리(product.access.<key> +
+#     _product_allowed_schemas)가 그대로 담당 → datasource 는 product 에 매달리고, product 권한이
+#     곧 datasource 접근 게이트(연결 전 web /api/ask 에서 enforce).
+#
+# Env 규약:
+#   AGENT_MULTI_DATASOURCE_ENABLED=1            # flag, 기본 OFF(미설정=기존 단일 MySQL 동작 0 변경)
+#   AGENT_DATASOURCE_KEYS=prod,bi               # 등록 datasource 키 (comma)
+#   DS_PROD_HOST=...  DS_PROD_PORT=3306  DS_PROD_USER=ro_prod  DS_PROD_PASSWORD=...  DS_PROD_DEFAULT_DB=appdb
+# 키는 대문자로 env 조회, dict 에는 소문자로 저장. HOST 미설정 키는 무시(불완전 등록 방어).
+AGENT_MULTI_DATASOURCE_ENABLED = os.getenv(
+    "AGENT_MULTI_DATASOURCE_ENABLED", "0"
+).strip().lower() in ("1", "true", "yes")
+
+
+def _parse_datasources() -> dict:
+    """`.env` 의 DS_<KEY>_* named credential 을 {key_lower: {coords}} dict 로 파싱.
+
+    flag 와 무관하게 항상 파싱한다(관리 화면·테스트가 키 목록을 보려면 필요). 실제 라우팅
+    활성화는 db.connect() 가 flag 로 게이트한다. HOST 없는 키는 제외(불완전 등록). password 는
+    dict 에 담되 로깅 시 마스킹은 호출측 책임(datasource_public 사용).
+    """
+    keys = [k.strip() for k in os.getenv("AGENT_DATASOURCE_KEYS", "").split(",") if k.strip()]
+    out: dict = {}
+    for key in keys:
+        env_key = key.upper()
+        host = os.getenv(f"DS_{env_key}_HOST", "").strip()
+        user = os.getenv(f"DS_{env_key}_USER", "").strip()
+        # HOST·USER 둘 다 필수. USER 는 해당 datasource 전용 최소권한 RO 유저여야 하며 root(DB_USER)
+        # 폴백을 의도적으로 금지한다 (REV-20260610-0187 N-2 — datasource 를 광권한으로 조회하는 심층방어
+        # 약화 차단). 둘 중 하나라도 없으면 미등록 처리 → 그 키에 바인딩된 product 는 fail-closed(M-2).
+        if not host or not user:
+            continue
+        out[key.lower()] = {
+            "key": key.lower(),
+            "engine": (os.getenv(f"DS_{env_key}_ENGINE", "mysql").strip().lower() or "mysql"),
+            "host": host,
+            "port": int(os.getenv(f"DS_{env_key}_PORT", str(DB_PORT)) or DB_PORT),
+            "user": user,
+            "password": os.getenv(f"DS_{env_key}_PASSWORD", ""),
+            # default_db 는 P1 에서 연결의 암묵 기본 스키마로 적용하지 않는다 (REV-0187 M-1: 미접두 쿼리가
+            # allowlist 를 우회해 default_db 를 조회하는 구멍 차단). datasource 경로는 schema-prefixed
+            # 쿼리만 허용(database=None) — allowlist 가 유일 게이트. 본 필드는 P2 관리화면 표시용 보존.
+            "default_db": (os.getenv(f"DS_{env_key}_DEFAULT_DB", "").strip() or None),
+        }
+    return out
+
+
+# {key_lower: {key, engine, host, port, user, password, default_db}}
+DATASOURCES = _parse_datasources()
+
+
+def datasource_public(ds: dict) -> dict:
+    """로깅·관리화면 노출용 — password 제거한 사본."""
+    return {k: v for k, v in (ds or {}).items() if k != "password"}
 
 # ── KB Postgres pgvector (TASK-0015 §2.1.4, M0 cycle) ─────────────────
 # postgres 서비스가 docker-compose 에 추가되면 본 변수들이 활성화된다. M0 cycle

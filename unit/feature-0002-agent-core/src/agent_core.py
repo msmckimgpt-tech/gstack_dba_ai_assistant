@@ -1927,6 +1927,67 @@ def _log(category: str, data: dict):
 
 
 # ══════════════════════════════════════════════════════════════════
+#  멀티 datasource 해석 (P1, DESIGN Stage 1)
+# ══════════════════════════════════════════════════════════════════
+
+class DatasourceResolutionError(Exception):
+    """product 에 명시 datasource 바인딩이 있으나 해석 불가(미등록 키) — fail-closed 신호."""
+
+
+def _resolve_product_datasource(mem_conn, product_id):
+    """product 에 바인딩된 datasource 좌표를 해석한다 (None=기본 단일 MySQL).
+
+    단일 chokepoint: in-process(app.py)·ask-worker(ask.py) 둘 다 run_agent→_run_agent_core
+    를 통하므로 여기 한 곳에서 product→datasource 를 매핑하면 양 경로가 모두 커버된다.
+
+    **보안 (DESIGN §4 Q7/Codex-4 security-first)**: datasource 접근 인가는 이 함수가 아니라
+    web /api/ask 의 `_account_has_product_access`(연결 *전*)에서 이미 enforce 된다. 여기서는
+    인가된 product 의 datasource 좌표를 *매핑*만 한다(authz 결정 아님). product 권한 = datasource
+    접근 게이트(datasource 는 product 에 매달림).
+
+    fail 방향 (REV-20260610-0187 M-2):
+      - flag OFF / product 없음 / **DatasourceKey NULL**(미바인딩) → None (=기본 DB, 정상 동작).
+      - **DatasourceKey 가 있으나 .env 미등록** → `DatasourceResolutionError` raise (**fail-closed**).
+        명시 바인딩된 datasource 대화를 운영 DB 로 silent 폴백시키지 않는다(엉뚱한 DB 조회·혼선 차단).
+      - DatasourceKey **읽기 자체 실패** → None (mem_conn 은 직전 단계에서 성공했으므로 극히 드물고,
+        transient 오류로 미바인딩 product 까지 막는 건 과함 — 경고만).
+    """
+    if not cfg.AGENT_MULTI_DATASOURCE_ENABLED:
+        return None
+    if not product_id or int(product_id) <= 0:
+        return None
+    try:
+        cur = mem_conn.cursor()
+        try:
+            cur.execute(
+                "SELECT DatasourceKey FROM WebProducts WHERE Id=%s LIMIT 1",
+                (int(product_id),),
+            )
+            row = cur.fetchone()
+        finally:
+            cur.close()
+    except Exception as exc:
+        logging.getLogger("agent_core").warning(
+            "resolve_product_datasource_read_failed product_id=%s err=%r — 기본 DB", product_id, exc,
+        )
+        return None
+    key = (str(row[0]).strip().lower() if row and row[0] else "")
+    if not key:
+        return None  # 미바인딩 = 기본 DB (정상)
+    ds = cfg.DATASOURCES.get(key)
+    if not ds:
+        # 명시 바인딩 + 미등록 키 → fail-closed (운영 DB 로 silent 폴백 금지)
+        logging.getLogger("agent_core").error(
+            "datasource_key_not_registered product_id=%s key=%s — fail-closed(run 중단)", product_id, key,
+        )
+        raise DatasourceResolutionError(
+            f"product {product_id} 의 datasource 키 '{key}' 가 .env 에 미등록입니다 "
+            f"(AGENT_DATASOURCE_KEYS / DS_{key.upper()}_* 확인)."
+        )
+    return ds
+
+
+# ══════════════════════════════════════════════════════════════════
 #  메인 에이전트 루프
 # ══════════════════════════════════════════════════════════════════
 
@@ -2092,13 +2153,25 @@ def _run_agent_core(
             console.print(Panel.fit(result["error"], title="오류"))
         return result
 
+    # 멀티 datasource (P1): product 에 바인딩된 datasource 좌표 해석 (None=기본 단일 MySQL).
+    # flag OFF / 미바인딩 시 None → connect_with_retry 가 기존 경로 그대로 (동작 0 변경).
+    # 명시 바인딩 + 미등록 키 → fail-closed (REV-0187 M-2: 운영 DB 폴백 금지, run 중단).
     try:
-        db_conn = connect_with_retry(database=DB_CONNECT_DB, autocommit=True)
+        _ds = _resolve_product_datasource(mem_conn, product_id)
+    except DatasourceResolutionError as e:
+        cfg.CURRENT_RUN_ID = ""
+        result["error"] = f"데이터 소스 설정 오류: {e}"
+        if output_mode == "console":
+            console.print(Panel.fit(result["error"], title="오류"))
+        return result
+    _data_db = None if _ds else DB_CONNECT_DB  # ds 경로는 database=None(schema-prefixed 강제, M-1)
+    try:
+        db_conn = connect_with_retry(database=_data_db, autocommit=True, datasource=_ds)
     except Exception as e:
         # DB 연결 실패 시 연결 없이 진행 (도구에서 개별 처리)
         db_conn = None
         try:
-            db_conn = connect_with_retry(database=None, autocommit=True)
+            db_conn = connect_with_retry(database=None, autocommit=True, datasource=_ds)
         except Exception:
             cfg.CURRENT_RUN_ID = ""
             result["error"] = f"DB 연결 실패: {e}"

@@ -319,15 +319,33 @@ guard 의 `forbidden_schemas`(execute_sql 은 `{agent_memory}` 만 주입) 는 �
 > 보안 재작성 위험이 0 이다.
 
 ### Stage 1 — multi-MySQL (방언/MSSQL 보안 재작성 없음)
-1. **P1 — 레지스트리 + 연결 디스패치 + 보안경계 (security-first, 한 증분)**:
-   - `datasources` 테이블(engine 컬럼은 두되 P1 은 `mysql` 만) + `connect(datasource_id,...)` 의 **명시
-     plane(control|data)+datasource_id 라우팅**(M-3, 문자열 휴리스틱 폐기) + 대화↔datasource 바인딩 +
-     기존 단일 datasource `datasource_id=1` 백필 + **백필 실패 정책**(Codex-8).
-   - **보안경계 동시(Q7/Codex-4)**: datasource 접근 RBAC(역할→datasource) + **datasource-스코프
-     allowlist**(datasource A 스키마 ≠ B, `set_active_schema_allowlist` 를 datasource 차원으로) +
-     **per-datasource MySQL RO 자격증명**(스키마 화이트리스트 = `GRANT SELECT` 대상, db_datareader 류
-     광권한 금지) + audit. **flag 가 권한검사를 대체하지 않음** — datasource_id 는 항상 서버측 권한검증.
-   - 시크릿 MVP(`.env` named credential + 로그 마스킹). flag OFF 기본, 합격선 "기존 단일 MySQL 동작 0 변경".
+1. **P1 — 레지스트리 + 연결 디스패치 + 보안경계 (security-first, 한 증분) — ✅ 구현됨 (TASK-0187)**:
+   > **구현 시 설계 개선 (product-바인딩)**: 별도 `datasources` 테이블 + 대화↔datasource 바인딩 대신,
+   > **이미 존재하는 `WebProducts` 추상화에 datasource 를 매달았다**(product = 스키마 묶음, 대화에
+   > `product_id` 로 이미 바인딩). 이로써 설계가 P1 에 요구한 두 보안 항목이 **기존 product 머신러리로
+   > 자동 충족**된다 — datasource-스코프 allowlist = `_product_allowed_schemas`(이미 product-scope),
+   > datasource 접근 RBAC = `product.access.<key>`(이미 /api/ask 연결 *전* enforce). 대화는
+   > 대화→product→datasource 로 datasource 를 얻는다(별도 conversation↔datasource 컬럼 불필요).
+   - **레지스트리 = .env named credential** (`AGENT_DATASOURCE_KEYS` + `DS_<KEY>_HOST/PORT/USER/PASSWORD/
+     DEFAULT_DB`, `config.DATASOURCES` 로 파싱). 좌표/비밀번호는 **DB·job payload 에 비저장** — 키만
+     `WebProducts.DatasourceKey`(MySQL ALTER) 에 저장(security-first 시크릿 MVP). DB 테이블 레지스트리는
+     P2(CRUD UI) 진화 대상.
+   - **연결 디스패치**: `db.connect(datasource=<coords>)` 가 flag ON+datasource 시 좌표 라우팅(문자열
+     휴리스틱 우회), flag OFF/None 시 기존 경로 0 변경. 단일 chokepoint `agent_core._resolve_product_datasource`
+     (product_id→`WebProducts.DatasourceKey`→`config.DATASOURCES`)가 in-process·ask-worker 양 경로 커버.
+   - **보안경계 동시(Q7/Codex-4)**: ① datasource 접근 = product.access 권한(연결 전 enforce, flag≠권한검사)
+     ② allowlist = product 허용 스키마(자동 datasource-scope) ③ per-datasource RO 자격증명(`DS_<KEY>_USER` =
+     product 허용 스키마에만 GRANT SELECT 한 RO 유저, 운영 책임; db_datareader 류 광권한 금지 Codex-2)
+     ④ 관리 `PATCH /api/admin/products/{id}/datasource`(console.manage) audit + 미등록 키 거부.
+   - flag `AGENT_MULTI_DATASOURCE_ENABLED` 기본 OFF. 합격선 "기존 단일 MySQL 동작 0 변경" — 회귀
+     테스트(flag OFF / datasource 미바인딩 시 DB_HOST 그대로) PASS. **이월(P3)**: insight_worker 는 본
+     P1 에서 미변경(기본 DB 분석 유지) — per-datasource insight 는 P3.
+   - **outside-voice 보안 하드닝(REV-20260610-0187)**: ① (M-1) datasource 의 `default_db` 를 연결의
+     암묵 기본 스키마로 적용하지 않는다(`database=None`) — 미접두 쿼리가 allowlist 를 우회해 default_db
+     를 읽는 구멍 차단, schema-prefixed 쿼리만 허용해 allowlist 가 유일 게이트. ② (M-2) 명시 바인딩된
+     product 의 datasource 키가 .env 미등록이면 운영 DB 로 silent 폴백하지 않고 **fail-closed**(run 중단,
+     `DatasourceResolutionError`). ③ (N-2) `DS_<KEY>_USER` 는 필수 — 미설정 시 root(DB_USER) 폴백 금지
+     (datasource=RO 원칙). make test 회귀 0.
 2. **P2 — multi-MySQL Web UI**: datasource CRUD(등록·연결테스트·enable/disable) + 대화 datasource 선택기.
 3. **P3 — insight_worker per-datasource (MySQL)**: fingerprint/KV/CSV **+ fact 스코프**(`schema_insight`/
    `FACT_SCOPE_COMMON`/RAG/grounding 전부 datasource_id, Codex-3) + stagger 스케줄(PF2) + 연결실패 격리.

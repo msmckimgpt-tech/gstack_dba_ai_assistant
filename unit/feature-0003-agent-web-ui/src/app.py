@@ -3154,6 +3154,13 @@ def _ensure_dynamic_permissions_schema(conn) -> None:
             cur.execute("ALTER TABLE WebProducts ADD COLUMN DefaultRoleAccess TINYINT(1) NOT NULL DEFAULT 1")
         except Exception:
             pass
+        # 멀티 datasource (P1, DESIGN Stage 1): product → datasource 바인딩.
+        # NULL = 기본 단일 MySQL(DB_HOST). 값 = config.DATASOURCES 의 키 (agent_core 가 해석).
+        # 좌표/비밀번호는 DB 에 저장하지 않는다 — .env named credential 만 (security-first).
+        try:
+            cur.execute("ALTER TABLE WebProducts ADD COLUMN DatasourceKey VARCHAR(64) NULL")
+        except Exception:
+            pass
         # WebRoles.DefaultProductAccess (deprecated, 이전 설계 잔재) 의 ALTER 는 더 이상 추가하지 않는다.
         # 기존 deploy 에 컬럼이 이미 있다면 그대로 보존 (다음 cleanup cycle 의 DROP 대상).
     finally:
@@ -9177,6 +9184,107 @@ def _fork_conversation_impl(
         },
         None,
     )
+
+
+@app.get("/api/admin/datasources")
+async def admin_list_datasources(request: Request) -> JSONResponse:
+    """등록된 datasource 키 목록 + product 바인딩 현황 (멀티 datasource P1, DESIGN Stage 1).
+
+    좌표/비밀번호는 절대 반환하지 않는다 (datasource_public 마스킹). 관리 콘솔 접근 권한 필요.
+    """
+    from modules.config import DATASOURCES, datasource_public, AGENT_MULTI_DATASOURCE_ENABLED
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(actor, "console.access"):
+        conn.close()
+        return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    try:
+        # host/port/engine 만 노출 (user/password 제외) — 관리자가 매핑할 키 식별용.
+        datasources = [
+            {"key": v["key"], "engine": v["engine"], "host": datasource_public(v).get("host"),
+             "port": v["port"], "default_db": v.get("default_db")}
+            for v in DATASOURCES.values()
+        ]
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT Id, ProductKey, Name, DatasourceKey FROM WebProducts ORDER BY Id")
+            products = [
+                {"id": int(r[0]), "product_key": str(r[1] or ""), "name": str(r[2] or ""),
+                 "datasource_key": (str(r[3]).lower() if r[3] else None)}
+                for r in (cur.fetchall() or [])
+            ]
+        finally:
+            cur.close()
+        return JSONResponse({
+            "enabled": bool(AGENT_MULTI_DATASOURCE_ENABLED),
+            "datasources": datasources,
+            "products": products,
+        })
+    finally:
+        conn.close()
+
+
+@app.patch("/api/admin/products/{product_id}/datasource")
+async def admin_set_product_datasource(product_id: int, request: Request) -> JSONResponse:
+    """product → datasource 키 바인딩 설정 (멀티 datasource P1).
+
+    body: { datasource_key: str|null }. null/"" → 기본 단일 MySQL(DB_HOST)로 환원.
+    값은 .env 에 등록된 datasource 키(config.DATASOURCES)여야 한다 — 미등록 키 거부(오타로 인한
+    조용한 기본 폴백 방지). 좌표/비밀번호는 저장하지 않는다 (키만 — security-first, secret in env).
+    관리 콘솔 수정 권한(console.access + console.manage) 필요.
+    """
+    from modules.config import DATASOURCES
+    if product_id <= 0:
+        return _json_error("invalid product_id", 400)
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    raw_key = (data.get("datasource_key") if isinstance(data, dict) else None)
+    key = (str(raw_key).strip().lower() if raw_key not in (None, "") else None)
+    if key is not None and key not in DATASOURCES:
+        return _json_error(f"미등록 datasource 키: {key} (.env AGENT_DATASOURCE_KEYS 확인)", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+        conn.close()
+        return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT Id FROM WebProducts WHERE Id=%s LIMIT 1", (int(product_id),))
+            if not cur.fetchone():
+                return _json_error("product not found", 404)
+            cur.execute(
+                "UPDATE WebProducts SET DatasourceKey=%s WHERE Id=%s",
+                (key, int(product_id)),
+            )
+        finally:
+            cur.close()
+        record_audit_event(
+            conn,
+            actor=_build_actor_from_request(request, actor, actor_type="account"),
+            action="admin.product.datasource.set",
+            resource_type="product",
+            resource_id=str(product_id),
+            change_json={"datasource_key": key},
+        )
+        conn.commit()
+        return JSONResponse({"product_id": int(product_id), "datasource_key": key})
+    finally:
+        conn.close()
 
 
 @app.post("/api/fork_conversation")

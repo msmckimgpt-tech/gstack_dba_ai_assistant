@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0187 [SUBAGENT:p1-security-boundary]
+- Date: 2026-06-10 (TASK-0187)
+- Cycle: 멀티 datasource P1 구현 (multi-MySQL 레지스트리 + 연결 디스패치 + 보안경계). **Critical §12.3** — 데이터 접근 경계·자격증명·RBAC.
+- Panel: RBAC outside-voice 적대적 보안 리뷰. **Codex 시도 → `/tmp` sandbox 오류("No usable temporary directory")로 실패 → gstack 정책대로 Claude 적대적 subagent fallback**(별 컨텍스트, 보안 엔지니어). diff + db.py/config.py/agent_core.py/app.py + RBAC enforce 경로(`_account_has_product_access`) 추적.
+- Verdict: **NEEDS-TWEAK, BLOCKER 0** — 핵심 보안 모델(product RBAC=datasource 게이트 연결 전 enforce, 자격증명 .env 전용 비저장, flag OFF=0변경, admin authz/injection) 코드에서 성립 확인. MAJOR 2 + MINOR 3 출시 전 수정.
+- Findings·흡수: **M-1** datasource `default_db` 가 product allowlist 우회(미접두 쿼리 `SELECT * FROM t` → schema-ref 0 → 통과 → default_db 조회) → **FIX: db.connect datasource 경로가 default_db 를 암묵 기본 스키마로 적용 안 함(database=None 강제), allowlist 가 유일 게이트, schema-prefixed 쿼리만**. **M-2** 명시 바인딩 product 의 키 미등록/해석실패 시 운영 DB 로 fail-open → **FIX: 미등록 키는 `DatasourceResolutionError` raise(fail-closed, run 중단), 읽기실패만 None(기본 DB)**. **N-2** `DS_<KEY>_USER` 미설정 시 root 폴백 → **FIX: USER 필수(미설정 키 등록 제외)**. N-3(default_db BLOCKED_DEFAULT_SCHEMAS 미필터)=M-1 근인, FIX 에 포함. **N-1**(연결 실패 raw 예외에 host/port 노출, password 無) = **기존 단일-DB 경로와 동일한 pre-existing 패턴(P1 회귀 아님)** → 사용자향 메시지 일반화는 follow-up.
+- 검증된 강점: RBAC 가 stored product_id(user 직접입력 아님, 3 write 경로 모두 게이트)로 run_agent 전 enforce + auto 모드 product_id=None→datasource 미해석+allowlist `[]`(fail-closed) / worker payload 에 좌표 무·product_id 만(재해석) / 자격증명 DB·payload·_pool_key·admin응답·로그 어디에도 비유출 / `_INTERNAL_SCHEMAS`(agent_memory) 차단 host 무관 유효.
+- Resolution: M-1/M-2/N-2 흡수 후 make test 회귀 0(신규 test 갱신 — database 미적용·fail-closed raise·USER 필수 단언). 코드 mutation: config.py/db.py/agent_core.py. [[feedback_outside_voice_for_rbac]] 정합.
+
 ## REV-20260610-0185 [SKIPPED:decision-recording-design-only]
 - Date: 2026-06-10 (TASK-0185)
 - Cycle: 멀티 datasource 롤아웃 시퀀싱 결정 기록 (DESIGN §4 Q6/Q7/Q8 → ADR-CORE-0003, §5 재구성)

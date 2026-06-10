@@ -101,7 +101,38 @@ except Exception as _e:  # pragma: no cover — env without psycopg
     _psycopg = None  # type: ignore[assignment]
     _PSYCOPG_IMPORT_ERR = _e
 
-def connect(database: str | None = None, autocommit: bool = True):
+def connect(database: str | None = None, autocommit: bool = True, datasource: dict | None = None):
+    # ── 멀티 datasource (P1, DESIGN Stage 1): 명시 datasource 좌표 우선 ──────────
+    # datasource(dict: host/port/user/password/default_db) 가 주어지고 flag 가 켜져 있으면
+    # 문자열 휴리스틱(MEMORY_DB/replica/AGENT_DATA_DB) 라우팅을 **건너뛰고** 그 좌표로 연결한다.
+    # data-plane(분석 대상) 전용 경로 — 호출측(agent_core/insight)이 conversation 의 product 에
+    # 바인딩된 datasource 를 해석해 넘긴다. flag OFF 또는 datasource=None 이면 아래 기존 라우팅이
+    # 100% 그대로 — 기존 단일 MySQL 동작 0 변경(M-3: plane 은 호출측이 명시).
+    if datasource and AGENT_MULTI_DATASOURCE_ENABLED:
+        host = datasource.get("host") or DB_HOST
+        port = int(datasource.get("port") or DB_PORT)
+        user = datasource.get("user") or DB_USER
+        password = datasource.get("password", "")
+        # REV-20260610-0187 M-1: datasource 의 default_db 를 연결의 암묵 기본 스키마로 적용하지
+        # 않는다. 적용하면 미접두 쿼리(`SELECT * FROM t`)가 schema-ref 0개로 allowlist 를 우회해
+        # default_db 를 조회하게 된다. database 는 caller 가 명시한 값만 사용(agent_core 는 datasource
+        # 경로에서 None 전달) → schema-prefixed 쿼리만 가능 → allowlist 가 유일 게이트.
+        params = {
+            "host": host,
+            "port": port,
+            "user": user,
+            "password": password,
+            "autocommit": autocommit,
+            "connection_timeout": AGENT_TIMEOUT_SEC,
+            "charset": "utf8mb4",
+            "use_unicode": True,
+        }
+        if database:
+            params["database"] = database
+        if not AGENT_DB_POOL_ENABLED:
+            return mysql.connector.connect(**params)
+        return _pooled_connect(params)
+
     # 복제 DB (TASK-0044): REPLICA_DB_HOST 가 설정되어 있고 요청된 database 가
     # memory DB(agent_memory) 가 아닌 경우(= data-plane 쿼리) 복제 인스턴스로 라우팅.
     # memory DB 연결은 항상 primary 로 유지된다 (대화·세션·권한 정본은 primary).
@@ -186,14 +217,15 @@ def _should_retry_db_error(err: Exception) -> bool:
 
 
 def connect_with_retry(
-    database: str | None = None, autocommit: bool = True, attempts: int | None = None
+    database: str | None = None, autocommit: bool = True, attempts: int | None = None,
+    datasource: dict | None = None,
 ):
     attempts = attempts if attempts is not None else AGENT_DB_CONNECT_RETRIES
     attempts = max(1, int(attempts))
     last_exc = None
     for attempt in range(1, attempts + 1):
         try:
-            return connect(database=database, autocommit=autocommit)
+            return connect(database=database, autocommit=autocommit, datasource=datasource)
         except Exception as exc:
             last_exc = exc
             if not _should_retry_db_error(exc):

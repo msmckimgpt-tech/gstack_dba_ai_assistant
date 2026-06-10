@@ -795,3 +795,17 @@ source_of_truth: true
   - unit/feature-0002-agent-core/docs/TASK.md (TASK-0185 cycle + current status)
   - docs/STATUS.md (TASK-0185 프로젝트 현황 entry)
 - Rollback: 위 문서 변경 환원(코드·런타임 영향 0 — 문서만).
+
+## CHG-20260610-MULTI-DATASOURCE-P1
+- Date: 2026-06-10
+- Related Requirement: TASK-0187 (REQ-20260610-0187, Critical §12.3 — 멀티 datasource P1)
+- Summary: ADR-CORE-0003 Stage 1 첫 구현 — assistant 가 product 별 다른 MySQL datasource 분석. flag `AGENT_MULTI_DATASOURCE_ENABLED` 기본 OFF → 기존 단일 MySQL 동작 0 변경. 기존 `WebProducts` 에 `DatasourceKey` 바인딩으로 product RBAC·allowlist 재사용(별도 테이블·PG 마이그레이션 0). 좌표/비밀번호는 `.env` named credential 만(DB/payload 비저장). outside-voice 보안 리뷰(REV-20260610-0187) M-1(default_db allowlist 우회→database=None)·M-2(미등록키 fail-open→fail-closed)·N-2(DS_USER root 폴백 금지) 흡수. make test 297 passed/회귀 0.
+- Files:
+  - unit/feature-0002-agent-core/src/modules/config.py (DATASOURCES 파싱·flag·datasource_public·__all__)
+  - unit/feature-0002-agent-core/src/modules/db.py (connect/connect_with_retry datasource param)
+  - unit/feature-0002-agent-core/src/agent_core.py (_resolve_product_datasource + DatasourceResolutionError + 연결 site)
+  - unit/feature-0003-agent-web-ui/src/app.py (WebProducts.DatasourceKey ALTER + admin_list_datasources/admin_set_product_datasource)
+  - unit/feature-0002-agent-core/tests/test_multi_datasource.py (신규 15)
+  - .env.example / .env.mysql.example (멀티 datasource 변수)
+  - unit/feature-0002-agent-core/docs/{DESIGN-multi-datasource,FUNCTION,REVIEW,REPORT,TASK}.md, docs/STATUS.md
+- Rollback: flag 기본 OFF 라 배포 자체로 동작 무변경(shadow). 코드 환원 시 db.connect datasource 분기·agent_core resolver·web 엔드포인트·WebProducts.DatasourceKey 제거(컬럼은 비파괴 보존 가능).
