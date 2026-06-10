@@ -3024,4 +3024,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **(B)** 신규 `GET /api/profile/usage`(app.py `profile_llm_usage`) — `admin_llm_usage`(console.usage.read, admin) 의 본인-범위 축소판(owner_account_id=로그인 계정 강제, INNER JOIN, 추정 비용·역할 enrich 제외). **별도 RBAC 권한 없이 로그인만**(본인 소유 대화 usage 한정 → 권한 카탈로그 무변경). index.html '사용 내역' 탭 + app.js `loadProfileUsage`/미니 SVG 차트(모델별 stacked 세로막대·donut, `<title>` 툴팁) + profile-usage 스타일.
 - [x] **(C)** index.html audits 탭/패널 제거, app.js `loadProfileAudits`·renderProfile 권한 게이트·탭 핸들러 제거. 엔드포인트 `/api/profile/audits` 는 호출처 없이 잔존(UI 비노출, 백엔드 게이트 유지).
 - [x] make test(컨테이너 pytest+ruff) exit=0 / node --check(app.js·admin.js) / py_compile(app.py) PASS. outside-voice [SKIPPED:RBAC·스키마 무변경, 조회 UI 전용].
-- [ ] verify-completion → main ff-merge → 재배포(web) → PB-0008 Windows-browser 시각 검증(drill-down · 프로필 차트 · 활동기록 비노출)
+- [x] verify-completion PASS → main ff-merge(0181301) → 재배포(web, healthz `git_commit=0181301`) → PB-0008 Windows-browser 시각 검증 **PASS**(drill-down · 프로필 차트 · 활동기록 비노출, TEST.md §4 2026-06-10)

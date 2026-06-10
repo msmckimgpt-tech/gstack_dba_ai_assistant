@@ -246,6 +246,12 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-06-10 (TASK-0184 LLM 사용량 계정 drill-down + 프로필 사용 내역 차트 + 내 활동기록 제거 — **PB-0008 Windows-browser 완료 게이트**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148 via `bin/win-browser.py` 무권한 relay, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증. 라이브 배포 검증(healthz `git_commit=0181301`, mysql/pg ok, 베이킹·자산 서빙 PASS) 후 수행.
+  - **(C 활동기록 제거)** bootstrap_admin 프로필 → 탭 = [프롬프트, 사용 내역, 보안 및 계정], '내 활동 기록' 탭 부재(`hasActivityTab=false`). PASS.
+  - **(B 프로필 사용내역)** '사용 내역' 탭 → 요약(요청 24·호출 57·총 토큰 515,443) + 일별 모델별 누적 막대(06-09/06-10 claude-haiku-4) + 모델별 비중 도넛(claude-haiku-4 100%) 정상 렌더. 스크린샷 `/tmp/0184_profile_usage.png`. PASS.
+  - **(A 계정 drill-down)** 관리 콘솔 > LLM 사용량 → 역할별 차트 막대(역할 = (시스템)·Admin) 클릭 → 그 역할의 계정만 펼치는 drill 패널 노출(계정 검색 input + 10/20/50 page size select). (시스템) 클릭 시 "계정별 · (시스템) — 1개 계정" + 계정 막대 1개(15,866,265 토큰) + 검색·페이저(계정 1개라 페이저 숨김) 정상. 계정별 독립 차트는 제거됨. 스크린샷 `/tmp/0184_admin_drill2.png`. PASS.
+  - CHECK#13(PB-0008 Windows-browser) **충족**.
 - 2026-06-09 (TASK-0174 "전체 N행 미리보기" 링크 오정렬 수정 — **PB-0008 Windows-browser 완료 게이트(무회귀 smoke)**):
   - **Environment: Windows-browser** (실제 Windows Chrome/148 via `bin/win-browser.py` 무권한 relay, https://localhost:18080, self-signed ignore). WSL headless 가 아닌 실제 Windows 화면 검증.
   - 시나리오: bootstrap_admin 영속 세션 → `#promptInput` 에 부위별 Top-N 질의(+범위 MIN/MAX 동반) 전송 → ask-worker 처리 완료 → 멀티-result 답변 정상 렌더. 스크린샷 `/tmp/win-browser-shots/shot_20260609_174354.png`(쿼리 1/3 result 뷰어), `_174718.png`(대형 인라인 표).
