@@ -9,6 +9,7 @@ __all__ = [
     "connect",
     "connect_with_retry",
     "execute_sql",
+    "probe_datasource",
     "records_to_columns_rows",
     "summarize_mcp_result",
 ]
@@ -236,6 +237,48 @@ def connect_with_retry(
     if last_exc:
         raise last_exc
     raise RuntimeError("DB 연결 실패")
+
+
+def probe_datasource(datasource: dict, *, timeout: int | None = None) -> tuple[bool, float, str]:
+    """datasource 좌표로 직접 연결 + `SELECT 1` (관리자 명시 연결테스트, P2).
+
+    **flag(AGENT_MULTI_DATASOURCE_ENABLED) 무관**으로 좌표에 연결한다 — 운영자가 flag 활성화
+    *전*에 자격증명·연결성을 검증하는 용도. authz 는 호출측(web admin 권한)이 담당한다.
+    database(default_db) 는 설정하지 않는다 — host/port/user/password 연결성만 검증(에이전트가
+    schema-prefixed 로 동작하므로 특정 DB 기본 선택 불요, M-1 정합).
+
+    password 유출 방지: 예외 전문(host/user 포함 가능)을 반환하지 않고 errno/예외타입만 반환한다.
+    Returns: (ok, elapsed_ms, error_message).
+    """
+    params = {
+        "host": datasource.get("host") or DB_HOST,
+        "port": int(datasource.get("port") or DB_PORT),
+        "user": datasource.get("user") or DB_USER,
+        "password": datasource.get("password", ""),
+        "connection_timeout": int(timeout or 8),
+        "charset": "utf8mb4",
+        "use_unicode": True,
+    }
+    start = time.time()
+    conn = None
+    try:
+        conn = mysql.connector.connect(**params)
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.fetchall()
+        cur.close()
+        return True, (time.time() - start) * 1000.0, ""
+    except Exception as exc:
+        errno = getattr(exc, "errno", None)
+        # errno 만 노출 (1045=인증실패, 2003=연결불가, 1044/1049=DB/권한 등). host/pw 비유출.
+        msg = f"errno={errno}" if errno else type(exc).__name__
+        return False, (time.time() - start) * 1000.0, msg
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _collect_cursor_result(cur) -> list[tuple[str, Any, Any]]:

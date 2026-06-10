@@ -2332,7 +2332,7 @@ def _list_products(conn, *, include_inactive: bool = False) -> list[dict[str, An
         f"""
 SELECT Id AS id, ProductKey AS product_key, Name AS name, Description AS description,
        IsActive AS is_active, IsDefault AS is_default, SortOrder AS sort_order,
-       DefaultRoleAccess AS default_role_access,
+       DefaultRoleAccess AS default_role_access, DatasourceKey AS datasource_key,
        CreatedAt AS created_at, UpdatedAt AS updated_at
 FROM WebProducts
 {where}
@@ -2343,6 +2343,7 @@ ORDER BY IsDefault DESC, SortOrder ASC, Id ASC
     cur.close()
     out: list[dict[str, Any]] = []
     for row in rows:
+        _dsk = row.get("datasource_key")
         out.append({
             "id": int(row.get("id") or 0),
             "product_key": str(row.get("product_key") or ""),
@@ -2352,6 +2353,8 @@ ORDER BY IsDefault DESC, SortOrder ASC, Id ASC
             "is_default": bool(row.get("is_default")),
             "sort_order": int(row.get("sort_order") or 0),
             "default_role_access": bool(row.get("default_role_access", True)),
+            # 멀티 datasource (P2): product 가 바인딩된 datasource 키 (None=기본 단일 MySQL).
+            "datasource_key": (str(_dsk).lower() if _dsk else None),
             "created_at": str(row.get("created_at") or ""),
             "updated_at": str(row.get("updated_at") or ""),
         })
@@ -9285,6 +9288,33 @@ async def admin_set_product_datasource(product_id: int, request: Request) -> JSO
         return JSONResponse({"product_id": int(product_id), "datasource_key": key})
     finally:
         conn.close()
+
+
+@app.post("/api/admin/datasources/{key}/test")
+async def admin_test_datasource(key: str, request: Request) -> JSONResponse:
+    """datasource 연결 테스트 (멀티 datasource P2) — 좌표로 직접 SELECT 1.
+
+    flag 활성화 *전* 운영자가 자격증명·연결성을 검증. 관리 콘솔 접근 권한 필요. password/host
+    는 응답에 비노출(errno 만). flag 무관(명시 테스트).
+    """
+    from modules.config import DATASOURCES
+    from modules import db as _db
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    conn.close()
+    if error:
+        return error
+    if not _account_has_permission(actor, "console.access"):
+        return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    ds = DATASOURCES.get(str(key).strip().lower())
+    if not ds:
+        return _json_error(f"미등록 datasource 키: {key}", 404)
+    ok, elapsed_ms, err = _db.probe_datasource(ds)
+    return JSONResponse({"key": str(key).strip().lower(), "ok": bool(ok),
+                         "elapsed_ms": round(elapsed_ms, 1), "error": err})
 
 
 @app.post("/api/fork_conversation")

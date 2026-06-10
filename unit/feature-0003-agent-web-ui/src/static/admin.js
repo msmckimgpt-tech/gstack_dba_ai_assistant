@@ -10,6 +10,8 @@ const adminState = {
   roles: [],
   accounts: [],
   products: [],
+  datasources: [],            // 멀티 datasource (P2): 등록 datasource 키 목록
+  datasourcesEnabled: false,  // AGENT_MULTI_DATASOURCE_ENABLED flag
   tab: "dashboard",
   accountFilter: "all",
   accountSearch: "",
@@ -2923,7 +2925,7 @@ function cancelAllPending() {
 /* ── Load ────────────────────────────────────────────────────────────── */
 
 async function loadAdminData() {
-  const [permissionsPayload, rolesPayload, accountsPayload, productsPayload, databasesPayload] = await Promise.all([
+  const [permissionsPayload, rolesPayload, accountsPayload, productsPayload, databasesPayload, datasourcesPayload] = await Promise.all([
     apiFetch("/api/admin/permissions").catch((error) => {
       if (error.status === 403) return { permissions: [] };
       throw error;
@@ -2946,12 +2948,19 @@ async function loadAdminData() {
       }
       throw error;
     }),
+    // 멀티 datasource (P2): 등록된 datasource 키 목록 (좌표/비밀번호 미노출).
+    apiFetch("/api/admin/datasources").catch((error) => {
+      if (error.status === 403 || error.status === 404) return { enabled: false, datasources: [] };
+      throw error;
+    }),
   ]);
 
   adminState.permissions = Array.isArray(permissionsPayload.permissions) ? permissionsPayload.permissions : [];
   adminState.roles = Array.isArray(rolesPayload.roles) ? rolesPayload.roles : [];
   adminState.accounts = Array.isArray(accountsPayload.accounts) ? accountsPayload.accounts : [];
   adminState.products = Array.isArray(productsPayload.products) ? productsPayload.products : [];
+  adminState.datasourcesEnabled = Boolean(datasourcesPayload && datasourcesPayload.enabled);
+  adminState.datasources = Array.isArray(datasourcesPayload && datasourcesPayload.datasources) ? datasourcesPayload.datasources : [];
   adminState.availableDatabases = {
     metadata_schemas: Array.isArray(databasesPayload.metadata_schemas) ? databasesPayload.metadata_schemas : [],
     user_schemas: Array.isArray(databasesPayload.user_schemas) ? databasesPayload.user_schemas : [],
@@ -3494,6 +3503,97 @@ function renderProductDetail() {
   buildPicker();
 
   paneEl.appendChild(dbSection);
+
+  // ── 멀티 datasource (P2): product → datasource 바인딩 + 연결테스트 ──────────────
+  // 백엔드 PATCH datasource 는 console.manage 권한이라 컨트롤도 그 권한으로 게이트(불일치 방지).
+  {
+    const canDs = can("console.manage");
+    const dsSection = document.createElement("div");
+    dsSection.className = "admin-detail-section";
+    const dsTitle = document.createElement("div");
+    dsTitle.className = "admin-detail-section-title";
+    dsTitle.textContent = "데이터 소스 (datasource)";
+    dsSection.appendChild(dsTitle);
+
+    const dsHint = document.createElement("div");
+    dsHint.className = "admin-detail-hint";
+    if (!adminState.datasourcesEnabled) {
+      dsHint.textContent = "멀티 datasource 비활성(AGENT_MULTI_DATASOURCE_ENABLED=0). 바인딩은 저장되나 flag 활성화 전까지는 기본 MySQL 로 동작합니다.";
+    } else {
+      dsHint.textContent = "이 제품의 대화가 분석할 MySQL datasource. (기본=단일 MySQL). datasource 의 RO 유저는 이 제품의 허용 스키마에만 GRANT SELECT 되어야 합니다.";
+    }
+    dsSection.appendChild(dsHint);
+
+    const dsRow = document.createElement("div");
+    dsRow.className = "admin-db-picker-row";
+    const dsSelect = document.createElement("select");
+    dsSelect.disabled = !canDs;
+    const optDefault = document.createElement("option");
+    optDefault.value = "";
+    optDefault.textContent = "(기본 단일 MySQL)";
+    dsSelect.appendChild(optDefault);
+    (adminState.datasources || []).forEach((ds) => {
+      const opt = document.createElement("option");
+      opt.value = ds.key;
+      opt.textContent = `${ds.key} — ${ds.engine || "mysql"} @ ${ds.host || "?"}:${ds.port || ""}`;
+      dsSelect.appendChild(opt);
+    });
+    dsSelect.value = product.datasource_key || "";
+
+    const dsResult = document.createElement("span");
+    dsResult.className = "admin-ds-test-result";
+
+    dsSelect.addEventListener("change", async () => {
+      const val = dsSelect.value || null;
+      dsResult.textContent = "";
+      dsResult.className = "admin-ds-test-result";
+      try {
+        await apiFetch(`/api/admin/products/${product.id}/datasource`, {
+          method: "PATCH",
+          body: JSON.stringify({ datasource_key: val }),
+        });
+        // 로컬 product 객체 갱신 (재로드 없이 일관)
+        const p = (adminState.products || []).find((x) => Number(x.id) === Number(product.id));
+        if (p) p.datasource_key = val;
+        showToast(val ? `datasource '${val}' 바인딩됨` : "기본 MySQL 로 환원됨");
+      } catch (error) {
+        dsSelect.value = product.datasource_key || "";
+        showToast(error.message || "datasource 바인딩 실패", true);
+      }
+    });
+
+    const testBtn = document.createElement("button");
+    testBtn.type = "button";
+    testBtn.className = "btn-secondary";
+    testBtn.textContent = "연결 테스트";
+    testBtn.disabled = !canDs;
+    testBtn.addEventListener("click", async () => {
+      const key = dsSelect.value;
+      if (!key) { showToast("테스트할 datasource 를 먼저 선택하세요.", true); return; }
+      testBtn.disabled = true;
+      dsResult.textContent = "테스트 중…";
+      dsResult.className = "admin-ds-test-result";
+      try {
+        const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(key)}/test`, { method: "POST" });
+        if (r && r.ok) {
+          dsResult.textContent = `✓ 연결 성공 (${r.elapsed_ms}ms)`;
+          dsResult.className = "admin-ds-test-result admin-ds-test-ok";
+        } else {
+          dsResult.textContent = `✗ 실패 (${(r && r.error) || "unknown"})`;
+          dsResult.className = "admin-ds-test-result admin-ds-test-fail";
+        }
+      } catch (error) {
+        dsResult.textContent = `✗ ${error.message || "테스트 실패"}`;
+        dsResult.className = "admin-ds-test-result admin-ds-test-fail";
+      } finally {
+        testBtn.disabled = !canDs;
+      }
+    });
+
+    dsRow.append(dsSelect, testBtn, dsResult);
+    dsSection.appendChild(dsRow);
+    paneEl.appendChild(dsSection);
+  }
 
   // Product-scope system prompt
   if (canManage) {

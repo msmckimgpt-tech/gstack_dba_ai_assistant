@@ -710,11 +710,12 @@ function renderProductDropupMenu() {
       pid,
       label: `${p.name} (${p.product_key})`,
       selected: mode === "pinned" && pid === currentPid,
+      datasourceKey: p.datasource_key || null,  // 멀티 datasource (P2): 분석 대상 표시
     }));
   });
 }
 
-function buildProductDropupItem({ mode, pid, label, selected }) {
+function buildProductDropupItem({ mode, pid, label, selected, datasourceKey }) {
   const item = document.createElement("button");
   item.type = "button";
   item.className = "product-dropup-item";
@@ -731,6 +732,15 @@ function buildProductDropupItem({ mode, pid, label, selected }) {
   labelEl.className = "product-dropup-item-label";
   labelEl.textContent = label;
   item.appendChild(labelEl);
+
+  // 멀티 datasource (P2): 이 제품이 별도 datasource 에 바인딩됐으면 작은 배지로 표시.
+  if (datasourceKey) {
+    const dsBadge = document.createElement("span");
+    dsBadge.className = "product-dropup-item-ds";
+    dsBadge.textContent = datasourceKey;
+    dsBadge.title = `데이터 소스: ${datasourceKey}`;
+    item.appendChild(dsBadge);
+  }
 
   const check = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   check.setAttribute("class", "product-dropup-item-check");

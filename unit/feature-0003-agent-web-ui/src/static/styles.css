@@ -1804,6 +1804,19 @@ a { color: inherit; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 멀티 datasource (P2): 제품 항목의 datasource 배지 */
+.product-dropup-item-ds {
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: var(--border-subtle, #eef2f7);
+  color: var(--text-2, #6b7280);
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .product-dropup-item-check {
   width: 14px;
   height: 14px;
@@ -2776,6 +2789,15 @@ a { color: inherit; }
   color: var(--muted, #6b7280);
   margin: 4px 0 6px;
 }
+
+/* 멀티 datasource (P2): 연결테스트 결과 표시 */
+.admin-ds-test-result {
+  font-size: 12px;
+  margin-left: 4px;
+  color: var(--text-2, #6b7280);
+}
+.admin-ds-test-ok { color: var(--success, #16a34a); }
+.admin-ds-test-fail { color: var(--danger, #dc2626); }
 
 .admin-pending-summary {
   font-size: 12px;

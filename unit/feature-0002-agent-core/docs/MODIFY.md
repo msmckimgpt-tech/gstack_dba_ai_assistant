@@ -809,3 +809,17 @@ source_of_truth: true
   - .env.example / .env.mysql.example (멀티 datasource 변수)
   - unit/feature-0002-agent-core/docs/{DESIGN-multi-datasource,FUNCTION,REVIEW,REPORT,TASK}.md, docs/STATUS.md
 - Rollback: flag 기본 OFF 라 배포 자체로 동작 무변경(shadow). 코드 환원 시 db.connect datasource 분기·agent_core resolver·web 엔드포인트·WebProducts.DatasourceKey 제거(컬럼은 비파괴 보존 가능).
+
+## CHG-20260610-MULTI-DATASOURCE-P2
+- Date: 2026-06-10
+- Related Requirement: TASK-0190 (REQ-20260610-0190, Major §12.3 — 멀티 datasource P2 Web UI)
+- Summary: P1 의 admin datasource API 를 관리 콘솔 UI 로 노출 + 연결테스트 엔드포인트 + 대화 datasource 라벨. `db.probe_datasource`(flag 무관·errno-only 비유출) + `POST /api/admin/datasources/{key}/test`(console.access, 등록 키만→SSRF 불가) + `_list_products` datasource_key 노출. admin.js datasource select·연결테스트(console.manage), app.js product 배지. outside-voice 보안 리뷰 PASS-WITH-NITS BLOCKER 0(REV-20260610-0190). make test 302 passed/회귀 0.
+- Files:
+  - unit/feature-0002-agent-core/src/modules/db.py (probe_datasource + __all__)
+  - unit/feature-0003-agent-web-ui/src/app.py (admin_test_datasource 엔드포인트 + _list_products datasource_key)
+  - unit/feature-0003-agent-web-ui/src/static/admin.js (loadAdminData datasources + renderProductDetail datasource UI + adminState)
+  - unit/feature-0003-agent-web-ui/src/static/app.js (buildProductDropupItem datasource 배지)
+  - unit/feature-0003-agent-web-ui/src/static/{admin.html,index.html} (캐시버스터), styles.css (ds-test·배지 클래스)
+  - unit/feature-0002-agent-core/tests/test_multi_datasource.py (신규 probe 2)
+  - unit/feature-0002-agent-core/docs/{FUNCTION,REVIEW,REPORT,TASK}.md, docs/STATUS.md
+- Rollback: UI 비파괴(추가만). 코드 환원 시 probe·test 엔드포인트·admin.js datasource 섹션·app.js 배지 제거. flag OFF 라 런타임 영향 0.

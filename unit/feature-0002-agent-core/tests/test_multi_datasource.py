@@ -135,6 +135,38 @@ def test_connect_datasource_pool_key_distinct():
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# 2b. db.probe_datasource: 관리자 연결테스트 (P2, flag 무관, password 비유출)
+# ──────────────────────────────────────────────────────────────────────────
+def test_probe_datasource_ok():
+    captured, fake = _capture_connect()
+    # flag OFF 라도 probe 는 연결(명시 관리자 테스트)
+    with mock.patch.object(db, "AGENT_MULTI_DATASOURCE_ENABLED", False), \
+         mock.patch.object(db.mysql.connector, "connect", side_effect=fake):
+        ok, ms, err = db.probe_datasource(DS)
+    assert ok is True
+    assert err == ""
+    assert ms >= 0
+    # probe 는 host/port/user/password 연결성만 — database(default_db) 미설정
+    assert captured["host"] == "ds-host" and captured["user"] == "ro_ds"
+    assert "database" not in captured
+
+
+def test_probe_datasource_failure_no_credential_leak():
+    class _Err(Exception):
+        errno = 1045  # access denied
+
+    def boom(**p):
+        raise _Err("Access denied for user 'ro_ds'@'1.2.3.4' (using password: YES)")
+
+    with mock.patch.object(db.mysql.connector, "connect", side_effect=boom):
+        ok, ms, err = db.probe_datasource(DS)
+    assert ok is False
+    # password/host/user 가 에러에 새지 않고 errno 만
+    assert err == "errno=1045"
+    assert "ro_ds" not in err and "password" not in err.lower()
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # 3. agent_core: product → datasource 해석 (security: authz 는 web, 여기선 매핑만)
 # ──────────────────────────────────────────────────────────────────────────
 class _FakeCursor:

@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0190 [SUBAGENT:p2-datasource-ui-security]
+- Date: 2026-06-10 (TASK-0190)
+- Cycle: 멀티 datasource P2 (multi-MySQL Web UI: 관리자 바인딩 UI + 연결테스트 + 대화 라벨). **Major §12.3**.
+- Panel: focused 보안 subagent — P2 신규 백엔드 표면(probe 엔드포인트·`_list_products` datasource_key 노출)만 적대적 검토.
+- Verdict: **PASS-WITH-NITS, BLOCKER 0 / MAJOR 0**. SSRF 구조적 차단(좌표를 request body 아닌 서버측 `config.DATASOURCES` 키 lookup 으로만 해석 — 사용자 host 주입 불가), authz 정상(probe=console.access, use-after-close 없음), 정보유출 없음(probe 실패 errno 만, host/user/pw 비유출).
+- MINOR(수용): ① `datasource_key`(키 이름)가 /api/session·/api/auth/me 로 비-admin 채팅 사용자에 노출 — 단 키 이름은 비밀 아님이고 **대화 datasource 배지 기능상 의도된 노출**(좌표/비밀번호 X). ② probe rate-limit 부재 — admin 한정·단발 진단·timeout 8s 라 실위협 낮음.
+- Resolution: 수정 불요(MINOR 는 by-design/저위험). make test 302 passed/회귀 0. [[feedback_outside_voice_for_rbac]] 정합.
+
 ## REV-20260610-0187 [SUBAGENT:p1-security-boundary]
 - Date: 2026-06-10 (TASK-0187)
 - Cycle: 멀티 datasource P1 구현 (multi-MySQL 레지스트리 + 연결 디스패치 + 보안경계). **Critical §12.3** — 데이터 접근 경계·자격증명·RBAC.
