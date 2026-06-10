@@ -627,3 +627,5 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 
 - REQ-20260610-0197 (TASK-0197, **Minor §12.3** — assistant 말풍선 타임스탬프 옆 소요시간 표시, frontend-only): assistant 응답 완료 시 각 대화 bubble 의 타임스탬프 옆에 응답 소요시간을 작게 표시한다.
   - AC-0336 (소요시간 렌더링): `renderMessages()` 의 meta 타임스탬프 블록에서 `role === "assistant"` + `message.meta?.duration_ms > 0` 일 때, 기존 `textContent` 단일 할당 대신 텍스트노드(`speaker · datetime`) + `<span class="message-meta-duration">` 구성으로 렌더한다. span 내 텍스트는 기존 `formatElapsed(ms)` 재사용("N분 M초" 또는 "M초" 형식). duration_ms 가 0이거나 없거나 user 메시지면 기존 `textContent` 방식 유지(하위 호환). `.message-meta-duration { font-size: 10px; opacity: 0.7; }` 스타일 추가. 데이터 소스: agent_core `mirror_meta = {"duration_ms": answer_duration_ms}`(기존 저장 필드) — 신규 데이터 수집/노출 경로 없음. 백엔드/RBAC/스키마/시크릿 무변경.
+
+- REQ-20260610-0197-TEST (TASK-0197 검증, **PB-0008**): `src/scenario.task0197-duration.json` — Windows-browser 검증 시나리오 파일. `bin/win-browser.py run --scenario` 로 실행. 로그인 후 `.message-meta-duration` span 존재 + durationText 확인 + 스크린샷 증거 수집.
