@@ -757,3 +757,16 @@ source_of_truth: true
 - Files:
   - unit/feature-0002-agent-core/docs/TASK.md (TASK-0174 verify/배포/검증 체크박스 완료 표기)
 - Rollback: 체크박스 [x]→[ ] 환원.
+
+## CHG-20260610-MULTI-DATASOURCE-DESIGN
+- Date: 2026-06-10
+- Related Requirement: TASK-0182 (REQ-20260610-0182, Critical §12.3 — design-only)
+- Summary: 멀티 datasource(MySQL·MSSQL) 데이터평면 **설계 문서만** 산출(구현·코드 mutation 0). 사용자 질문(단일 MySQL→여러 엔진 DB 가능?)의 타당성·범위를 AskUserQuestion 으로 규명(범위=멀티 datasource 동시, 엔진=MySQL·MSSQL) 후, "단일 MySQL" 가정이 박힌 3계층(드라이버/설정/방언)을 규명하고 datasource 레지스트리·드라이버 디스패치·Dialect 인터페이스·보안게이트 멀티방언·LLM grounding·insight per-datasource·RBAC/시크릿·P0~P6 롤아웃을 설계. ADR-CORE-0002(A 네이티브 dialect-adapter 채택) 기록. outside-voice 적대적 설계 리뷰(REV-20260610-0182, SUBAGENT, NEEDS-TWEAK, BLOCKER 3+MAJOR 4) 전 발견을 DESIGN 문서에 design-fold. 구현 이월(자체 다중 cycle + plan-eng-review + RBAC outside-voice).
+- Files:
+  - unit/feature-0002-agent-core/docs/DESIGN-multi-datasource.md (신규 — 설계 정본)
+  - unit/feature-0002-agent-core/docs/DECISIONS.md (ADR-CORE-0002 append)
+  - unit/feature-0002-agent-core/docs/REVIEW.md (REV-20260610-0182 append)
+  - unit/feature-0002-agent-core/docs/REPORT.md (2026-06-10 summary append)
+  - unit/feature-0002-agent-core/docs/TASK.md (TASK-0182 cycle + current status)
+  - docs/STATUS.md (TASK-0182 프로젝트 현황 entry)
+- Rollback: 위 문서 변경 환원(코드·런타임 영향 0 — 문서만).

@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0182 [SUBAGENT:design-adversarial]
+- Date: 2026-06-10 (TASK-0182)
+- Cycle: 멀티 datasource(MySQL·MSSQL) 데이터평면 설계 (`DESIGN-multi-datasource.md`, design-only)
+- Panel: skeptical 시니어 DB/보안 엔지니어 적대적 설계 리뷰(general-purpose subagent, 별 컨텍스트). 설계문서 + 근거코드(db.py/config.py/tools.py/sql_guard.py/insight.py/docker-compose.yml) 전수 검증.
+- Verdict: **NEEDS-TWEAK** — BLOCKER 3 + MAJOR 4 + MISSING 6. 중심 전제("보안 게이트 재작성 불필요, sqlglot dialect 주입만으로 멀티엔진 가드")가 코드 현실에서 거짓임을 규명.
+- Findings: **B-1** 진짜 테넌트 격리 게이트가 sql_guard 아닌 tools.py `_extract_sql_schema_refs` **정규식** — MSSQL 식별자(대괄호/3-part/ANSI 큰따옴표)에서 통째 우회(`agent_memory` 차단까지). **B-2** 차단 스키마 1차 방어가 실은 MySQL RO GRANT(에이전트 경로는 메타-스키마 의도적 허용) — MSSQL 등가 GRANT/DENY 미설계. **B-3** sqlglot tsql 견고성 미검증 + T-SQL 위험구문(xp_cmdshell/OPENROWSET/WAITFOR/SELECT INTO) 커버 0 + "AST shape 무변경" 거짓(SELECT INTO=부수효과). **M-1** execute_sql/_collect_cursor_result 가 mysql.connector 고유 API. **M-2** insight fingerprint/CSV 키 datasource 무차원→livelock 재발. **M-3** connect(datasource_id=None)=하위호환 이 `database` 문자열 라우팅과 충돌. **M-4** EXPLAIN 게이트 fail-OPEN→MSSQL 항상 통과.
+- Resolution (DESIGN-FOLD, design-only 이라 코드 mutation 0): 전 발견을 `DESIGN-multi-datasource.md` 에 직접 반영 — §2.3.1 보안 3축 신설, §3.4 보안게이트 멀티방언 전면 재작성(정규식→AST 교체·T-SQL denylist 매트릭스·shape dialect 분기·sqlglot pin), §4 MSSQL GRANT/DENY 부트스트랩 산출물화, §3.2 plane+datasource_id 명시 라우팅+커서 dialect화, §3.3 fail-closed 전환, §3.6 datasource_id 키 하드요구 승격, §5 P0(드라이버/Dockerfile) 신설, §9 리뷰 반영표+잔여 MISSING. BLOCKER 3 = 설계 수준 해소.
+- Risk: low (design-only, 구현 0). 구현 cycle 진입 시 §9 를 합격선 + 재리뷰(plan-eng-review + RBAC outside-voice) 게이트로 사용. [[feedback_outside_voice_for_rbac]] 정합.
+
 ## REV-20260610-0178 [SKIPPED:display-metadata-live-canary-verified]
 - Date: 2026-06-10 (TASK-0178)
 - Cycle: 단계 근거를 tool 인자(reason/work)로 전환 — TASK-0177 의 전달 메커니즘 수정. **Major §12.3**(모든 답변 영향 — 프롬프트/tool 스키마).
