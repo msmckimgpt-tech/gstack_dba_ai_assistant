@@ -296,40 +296,57 @@ guard 의 `forbidden_schemas`(execute_sql 은 `{agent_memory}` 만 주입) 는 �
 - **차단 스키마 정합**: Dialect.`system_schemas()` 가 누락하면 시스템 카탈로그 유출 → 엔진별 정합
   테스트 필수.
 
-### Open questions (plan-review 에서 확정)
-1. MSSQL 드라이버: `pyodbc`(ODBC Driver 18, 컨테이너에 MS 패키지 설치) vs `pymssql`(순수, 일부 기능 제약)?
+### Open questions
+**확정됨 (사용자 결정 2026-06-10, ADR-CORE-0003 → §5 롤아웃 재구성):**
+- ✅ **Q6/Q8 첫 증분 = multi-MySQL 먼저** — P1~P3 은 MySQL 전용 멀티-datasource(레지스트리·바인딩·RBAC·
+  insight). MSSQL 방언/보안 재작성은 별 cycle(P4~P7, RBAC outside-voice 재게이트). 플러밍과 MSSQL
+  Critical 재작성의 실패 모드가 달라 분리(= Codex-9 더 싼 경로 채택). 대안 B(동시)·C(별 서비스) 기각.
+- ✅ **Q7 보안경계 = 연결과 동시(security-first)** — datasource 접근 RBAC + datasource-스코프 allowlist +
+  per-datasource RO 자격증명이 **연결 디스패치와 같은 증분(P1)** 에 든다. flag 는 권한검사가 아니므로
+  (Codex-4) datasource_id 가 무검증 연결권한이 되는 창을 만들지 않는다. admin-only flag 우회안 기각.
+
+**미확정 (MSSQL 확장 cycle 진입 시):**
+1. MSSQL 드라이버: `pyodbc`(ODBC Driver 18, MS 패키지) vs `pymssql`(FreeTDS) — P4 진입 전.
 2. 시크릿 전략: `.env` named credential(MVP) → app-level 암호화/외부 스토어(목표) 의 경계는?
 3. SQLAlchemy Core 채택 여부 (connection/reflection 한정) vs 완전 hand-rolled?
-4. MSSQL 부하 게이트: 추정 실행계획 파싱 즉시 구현 vs "강제 LIMIT+timeout" fail-safe 우선?
+4. MSSQL 부하 게이트: 추정 실행계획 파싱 즉시 구현 vs "강제 TOP+timeout" fail-safe 우선?
 5. 대화 중 datasource 전환 허용 여부 (grounding 재빌드 비용·혼동 위험)?
-6. **(REV-0182-ENG, 사용자 보류) P1 시퀀싱**: MySQL-only 멀티-datasource 먼저(방언/보안 재작성 위험 0
-   으로 레지스트리·바인딩·RBAC 검증) → MSSQL 별 cycle vs MySQL+MSSQL 동시 P1? 실 구현 착수 시 결정.
-7. **(Codex-4 BLOCKER) 보안경계 시퀀싱**: datasource 접근권한 검증·credential scope·audit 를 **P1 연결
-   디스패치보다 먼저** 구현해야 하는가(현 P5 RBAC 는 P1~P4 동안 사용자 제공 datasource_id 를 서버측
-   권한검증 없이 연결권한으로 만든다 — flag/canary 는 권한검사가 아님)? → §10 Codex-4·§5 재배치.
-8. **(Codex-9) scope 정당화**: registry+dialect+insight fan-out+CRUD+RBAC+secret 을 한 번에 vs 더 싼
-   경로(datasource별 단일-engine agent 배포 / multi-MySQL 먼저 / MSSQL 을 별 restricted query service)?
-   실 MSSQL 수요·동시 datasource 수·대화중 전환 필요성 검증 후 확정.
 
-## 5. 롤아웃 (단계 — 단일 PR 불가)
+## 5. 롤아웃 (단계 — 단일 PR 불가, ADR-CORE-0003 으로 재구성)
 
-0. **P0 — 드라이버 결정 + 빌드 전제** (REV-20260610-0182 순서 모순 해소): pyodbc(`msodbcsql18`+
-   `unixODBC`, MS apt repo, **linux/amd64 전용·ARM 미지원**, 이미지 크기↑) vs pymssql(FreeTDS,
-   `DATETIMEOFFSET`/AAD 인증 제약) 결정 → Dockerfile 패키지 설치. **P1 의 MSSQL 연결 PoC 가 이 결정에
-   의존**하므로 P1 진입 전 선행. ARM 개발기/CI 영향([[project_gha_ci_shared_permission]])·테스트 컨테이너
-   라이선스(§7) 동반 검토.
-1. **P1 — 레지스트리 + 연결 디스패치**: `datasources` 테이블 + `connect(datasource_id,...)` engine
-   분기(MySQL 경로 무변경, MSSQL 연결 PoC) + 대화↔datasource 바인딩 + **기존 단일 datasource 를
-   `datasource_id=1` 로 백필하는 마이그레이션**. flag OFF 기본.
-2. **P2 — Dialect 어댑터**: `modules/dialects/` + tools.py·insight.py 하드코딩 SQL 치환. MySQL 회귀
-   0 변경 보장(동일 SQL 산출 골든 테스트) 후 MSSQL 구현.
-3. **P3 — SQL guard 멀티방언 + LLM grounding 주입**: assistant 가 MSSQL 대상 실제 작동.
-4. **P4 — insight_worker per-datasource** + 스코핑/스케줄.
-5. **P5 — RBAC datasource 접근권한 + 시크릿 전략** (outside-voice 게이트).
-6. **P6 — Web UI** (관리 CRUD + 선택기).
+> **재구성 (2026-06-10 사용자 결정)**: multi-MySQL 먼저(Q6/Q8) + 보안경계 연결과 동시(Q7). 이전 P0
+> (MSSQL 드라이버 선행)은 MSSQL 확장이 뒤로 빠지면서 P4 로 이동. P1~P3 은 **MySQL 전용**이라 방언/MSSQL
+> 보안 재작성 위험이 0 이다.
 
-각 단계는 flag 뒤 canary. P1·P2 는 "MySQL 동작 0 변경"이 합격선(현행 단일 datasource = datasource_id
-하나로 표현되는 특수 케이스).
+### Stage 1 — multi-MySQL (방언/MSSQL 보안 재작성 없음)
+1. **P1 — 레지스트리 + 연결 디스패치 + 보안경계 (security-first, 한 증분)**:
+   - `datasources` 테이블(engine 컬럼은 두되 P1 은 `mysql` 만) + `connect(datasource_id,...)` 의 **명시
+     plane(control|data)+datasource_id 라우팅**(M-3, 문자열 휴리스틱 폐기) + 대화↔datasource 바인딩 +
+     기존 단일 datasource `datasource_id=1` 백필 + **백필 실패 정책**(Codex-8).
+   - **보안경계 동시(Q7/Codex-4)**: datasource 접근 RBAC(역할→datasource) + **datasource-스코프
+     allowlist**(datasource A 스키마 ≠ B, `set_active_schema_allowlist` 를 datasource 차원으로) +
+     **per-datasource MySQL RO 자격증명**(스키마 화이트리스트 = `GRANT SELECT` 대상, db_datareader 류
+     광권한 금지) + audit. **flag 가 권한검사를 대체하지 않음** — datasource_id 는 항상 서버측 권한검증.
+   - 시크릿 MVP(`.env` named credential + 로그 마스킹). flag OFF 기본, 합격선 "기존 단일 MySQL 동작 0 변경".
+2. **P2 — multi-MySQL Web UI**: datasource CRUD(등록·연결테스트·enable/disable) + 대화 datasource 선택기.
+3. **P3 — insight_worker per-datasource (MySQL)**: fingerprint/KV/CSV **+ fact 스코프**(`schema_insight`/
+   `FACT_SCOPE_COMMON`/RAG/grounding 전부 datasource_id, Codex-3) + stagger 스케줄(PF2) + 연결실패 격리.
+
+> **--- Stage 2 게이트: RBAC outside-voice 재게이트 + §4 Q1~Q5 확정 후 진입 ---**
+
+### Stage 2 — MSSQL 확장 (Critical, 별 cycle + outside-voice)
+4. **P4 — MSSQL 드라이버 + 빌드 전제** (구 P0): pyodbc(`msodbcsql18`+`unixODBC`, linux/amd64·ARM 미지원,
+   이미지↑) vs pymssql(FreeTDS) 결정 → Dockerfile. ARM/CI([[project_gha_ci_shared_permission]])·테스트
+   컨테이너 라이선스(§7) 동반.
+5. **P5 — Dialect 어댑터(MSSQL) + 단일 canonical AST**: `modules/dialects/` + tools.py·insight.py SQL 을
+   Dialect 호출로 치환. MySQL 골든 회귀 0 변경 후 MSSQL. 게이트가 공유하는 단일 AST(A2/C1).
+6. **P6 — MSSQL 보안경계**: AST allowlist(무자격 fail-closed + catalog 차원, Codex-1) + MSSQL 전용 role
+   GRANT SELECT(Codex-2) + T-SQL denylist/shape(B-3) + 검증 AST 재직렬화 평가(Codex-5) + 부하게이트
+   fail-closed(M-4) + 세션 reset/poison discard(Codex-7) + confirm_heavy 비-LLM 승인(Codex-6).
+7. **P7 — MSSQL insight + UI 통합**.
+
+각 단계는 flag 뒤 canary. Stage 1(P1~P3)은 "MySQL 동작 0 변경"이 합격선. Stage 2 진입은 RBAC
+outside-voice 재게이트 필수([[feedback_outside_voice_for_rbac]]).
 
 ## 6. 핵심 위험 (why 자체 cycle + outside-voice)
 
@@ -423,9 +440,10 @@ M-2 심화), pool 세션상태 (Codex-7 ↔ M-1/A 심화). → 구현 cycle 의 
 앞으로(Codex-4)** **(b) P1 을 MySQL-only 로 축소할지(Codex-9, 사용자 보류)** — 둘 다 §4 open question.
 
 ### NOT in scope (이번 리뷰가 명시적으로 미룬 것)
-- P1 시퀀싱 확정 (사용자 보류 — 구현 착수 시): §4 Q6.
+- P1 시퀀싱·보안경계·scope (§4 Q6/Q7/Q8): **확정됨 — ADR-CORE-0003**(multi-MySQL 먼저 + security-first).
+  §5 Stage 1/2 로 재구성. 더 이상 미해결 아님.
 - 크로스엔진 페더레이션 / MySQL·MSSQL 외 엔진 / 제어평면 store 엔진 교체 (§1 비목표 유지).
-- 구현 코드: 본 cycle 은 설계만. 전 단계 P0~P6 은 자체 cycle.
+- 구현 코드: 본 cycle 은 설계만. Stage 1·2 단계는 자체 cycle.
 
 ### What already exists (재사용 — rebuild 금지)
 - `bytebase/dbhub` MCP (멀티엔진, 게이트 우회 → 주경로 제외), `sql_guard._collect_table_refs`(AST 수집
@@ -463,5 +481,7 @@ GRANT)는 **단일 lane 직렬**(데이터 격리는 분할 금지).
 | Outside Voice (1차) | Claude subagent | adversarial design | 1 | NEEDS-TWEAK→folded | BLOCKER 3 + MAJOR 4 (§9) |
 
 - **CROSS-MODEL:** 합의 — scope 축소/MySQL-first, insight 교차노출, pool 세션상태. Codex 가 보안경계 시퀀싱(Codex-4)·db_datareader 오류(Codex-2)를 추가 포착(Claude 리뷰·1차 미포착).
-- **UNRESOLVED:** P1 시퀀싱(Q6, 사용자 보류) + 보안경계 P1 전진(Q7) + scope 정당화(Q8) — 구현 착수 시 확정.
-- **VERDICT:** ENG CLEARED (design-only) — 전 발견 설계 반영 완료. 구현 cycle 진입 전 §4 Q6·Q7·Q8 확정 + RBAC outside-voice 재게이트 필수. 코드 mutation 0.
+- **UNRESOLVED:** ~~P1 시퀀싱·보안경계·scope~~ → **확정됨**(사용자 2026-06-10, ADR-CORE-0003): multi-MySQL
+  먼저 + 보안경계 연결과 동시. §5 Stage 1/2 재구성. 잔여: MSSQL 확장(Stage 2) 진입 시 §4 Q1~Q5.
+- **VERDICT:** ENG CLEARED (design-only) — 전 발견 설계 반영 완료 + 롤아웃 시퀀싱 확정(ADR-CORE-0003).
+  Stage 1(multi-MySQL) 구현 cycle 진입 가능, Stage 2(MSSQL) 진입 전 RBAC outside-voice 재게이트. 코드 mutation 0.

@@ -782,3 +782,16 @@ source_of_truth: true
   - unit/feature-0002-agent-core/docs/TASK.md (TASK-0183 cycle + current status)
   - docs/STATUS.md (TASK-0183 프로젝트 현황 entry)
 - Rollback: 위 문서 변경 환원(코드·런타임 영향 0 — 문서만). 단 §4 db_datareader 정정은 보안 정합성 수정이라 환원 비권장.
+
+## CHG-20260610-MULTI-DATASOURCE-DECISIONS
+- Date: 2026-06-10
+- Related Requirement: TASK-0185 (REQ-20260610-0185, design-only)
+- Summary: TASK-0183 plan-eng-review/Codex 가 남긴 롤아웃 시퀀싱 미해결 결정 3건(§4 Q6/Q7/Q8)을 사용자 결정으로 확정·기록. (Q6/Q8) multi-MySQL 먼저 — Stage 1(P1~P3) MySQL 전용, MSSQL 은 Stage 2(P4~P7, RBAC outside-voice 재게이트). (Q7) 보안경계 연결과 동시(security-first) — datasource RBAC+allowlist+RO 자격증명이 P1 에. ADR-CORE-0003 기록 + DESIGN §5 Stage 1/2 재구성. 코드 mutation 0.
+- Files:
+  - unit/feature-0002-agent-core/docs/DESIGN-multi-datasource.md (§4 Q6/Q7/Q8 resolved + §5 Stage 1/2 재구성 + §10 UNRESOLVED/VERDICT 갱신)
+  - unit/feature-0002-agent-core/docs/DECISIONS.md (ADR-CORE-0003 append)
+  - unit/feature-0002-agent-core/docs/REVIEW.md (REV-20260610-0185 append)
+  - unit/feature-0002-agent-core/docs/REPORT.md (2026-06-10 TASK-0185 summary append)
+  - unit/feature-0002-agent-core/docs/TASK.md (TASK-0185 cycle + current status)
+  - docs/STATUS.md (TASK-0185 프로젝트 현황 entry)
+- Rollback: 위 문서 변경 환원(코드·런타임 영향 0 — 문서만).

@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0185 [SKIPPED:decision-recording-design-only]
+- Date: 2026-06-10 (TASK-0185)
+- Cycle: 멀티 datasource 롤아웃 시퀀싱 결정 기록 (DESIGN §4 Q6/Q7/Q8 → ADR-CORE-0003, §5 재구성)
+- Reason: 사용자 결정(2026-06-10) 3건을 설계 문서에 못박는 design-only 변경. 코드/RBAC/스키마/시크릿/엔드포인트 mutation 0. 결정 자체는 직전 REV-20260610-0183(plan-eng-review + Codex cross-model)의 발견·권고로 이미 outside-voice 검토를 거쳤고, 본 cycle 은 그 결과를 사용자가 선택해 기록하는 것뿐. 신규 outside-voice 불필요 조건 충족.
+- Decision recorded: multi-MySQL 먼저(Q6/Q8, Stage 1) + 보안경계 연결과 동시(Q7) — ADR-CORE-0003. 구현 Stage 2(MSSQL) 진입 시 RBAC outside-voice 재게이트 명시.
+
 ## REV-20260610-0183 [CODEX:design-eng-review-crossmodel]
 - Date: 2026-06-10 (TASK-0183)
 - Cycle: 멀티 datasource 설계 2차 검토 — `/plan-eng-review`(엔지니어링 매니저) + Codex cross-model outside voice. design-only.
