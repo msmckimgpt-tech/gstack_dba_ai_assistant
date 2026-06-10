@@ -2547,3 +2547,13 @@ source_of_truth: true
   - unit/feature-0003-agent-web-ui/src/static/styles.css (`admin-usage-drill`·`admin-usage-hbar-row` + `profile-usage` 클래스)
   - unit/feature-0003-agent-web-ui/docs/TASK.md, FUNCTION.md, REVIEW.md, STATUS.md
 - Rollback: 본 cycle 커밋 revert — drill 패널→계정별 독립 차트 복원, 프로필 usage 탭/엔드포인트 제거, audits 탭/JS 복원.
+
+## CHG-20260610-0184-COSTCHART
+- Date: 2026-06-10
+- Related Requirement: TASK-0184 (A drill-down 누락 보강 — 사용자 지적 "계정별 비용 차트 누락")
+- Summary: A drill-down 전환 시 계정별 독립 차트(토큰+비용) 2종을 모두 제거하고 drill 패널에 **토큰만** 넣어 계정별 비용이 사라졌다(역할별은 토큰|비용 둘 다 유지). drill 패널 body 를 **[토큰 | 비용] 2열**(`usageDrillChart`/`usageDrillCostChart`, `.admin-usage-drill-charts` flex, 좁으면 wrap)로 재구성하고 `renderAccountDrill` 이 토큰(`total_tokens`/num)·비용(`cost_usd`/usd) 막대를 함께 렌더(빈 검색·접힘 시 둘 다 클리어). by_account 응답엔 이미 `cost_usd` 포함 — 백엔드 무변경. 캐시버스터 `?v=20260610-usage-drill2`(admin).
+- Files:
+  - unit/feature-0003-agent-web-ui/src/static/admin.html (drill body → 토큰|비용 2열 + 캐시버스터)
+  - unit/feature-0003-agent-web-ui/src/static/admin.js (`renderAccountDrill` 비용 차트 렌더 + 접힘/빈검색 클리어)
+  - unit/feature-0003-agent-web-ui/src/static/styles.css (`.admin-usage-drill-charts`/`-col`)
+- Rollback: drill body 를 단일 `usageDrillChart`(토큰만)로 환원.

@@ -3507,6 +3507,9 @@ a { color: inherit; }
 .admin-usage-drill-tools { display: flex; align-items: center; gap: 8px; }
 .admin-usage-drill-search { width: 180px; max-width: 46vw; }
 .admin-usage-drill-body { margin-top: 10px; min-height: 24px; }
+/* TASK-0184: drill 패널 토큰|비용 2열 (역할별 차트와 일관, 좁으면 wrap). */
+.admin-usage-drill-charts { display: flex; gap: 16px; flex-wrap: wrap; }
+.admin-usage-drill-col { flex: 1; min-width: 240px; }
 .admin-usage-drill-pager { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
 .admin-usage-drill-pager button { padding: 4px 12px; }
 .admin-usage-drill-pager button:disabled { opacity: .45; cursor: not-allowed; }

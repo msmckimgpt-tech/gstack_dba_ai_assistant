@@ -1800,3 +1800,8 @@ source_of_truth: true
 - Cycle: TASK-0184 (LLM 사용량 계정 drill-down + 프로필 사용 내역 차트 + 내 활동기록 제거)
 - Reason: 조회 UI 전용. (A) 계정 drill-down·(C) 활동기록 탭 제거는 순수 프론트(권한·엔드포인트·스키마 0). (B) 신규 `GET /api/profile/usage` 는 `_require_account`(로그인)만 요구하고 `owner_account_id`=본인으로 INNER JOIN 강제해 **권한 카탈로그(WebPermissions/PERMISSION_DEFINITIONS) 변경 0·권한 상승 0·추정 비용 비노출** — 본인 소유 대화 usage 자기조회(기존 `/api/profile/audits` self-service 패턴과 동일, audit 보다 노출 범위 좁음: 본인 토큰 지표만). 새 권한 도입·grant·역할 변경이 없어 RBAC 권한 모델 변경이 아님 → outside-voice 불필요 조건 충족. make test(컨테이너 pytest+ruff) exit=0 회귀 0, node --check/py_compile PASS.
 - Residual: Windows-browser(PB-0008) 시각 검증은 배포 후 수행(CHECK#13 WARN, TEST.md §3 Run 으로 기록 예정).
+
+## REV-20260610-0185 [SKIPPED:css-readonly-chart-addition]
+- Date: 2026-06-10
+- Cycle: TASK-0184 A drill-down 누락 보강 (계정별 비용 차트)
+- Reason: 사용자 지적("계정별 비용 차트 누락") 후속 — drill 패널에 비용 막대(`usageDrillCostChart`) 추가 + 2열 레이아웃. 순수 프론트(HTML/CSS/JS), 권한·엔드포인트·스키마 0(by_account 응답의 기존 `cost_usd` 를 추가 렌더). RBAC 권한 모델 변경 아님 → outside-voice 불필요. node --check PASS.

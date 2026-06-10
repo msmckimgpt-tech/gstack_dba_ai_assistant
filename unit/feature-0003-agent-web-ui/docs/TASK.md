@@ -3025,3 +3025,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **(C)** index.html audits 탭/패널 제거, app.js `loadProfileAudits`·renderProfile 권한 게이트·탭 핸들러 제거. 엔드포인트 `/api/profile/audits` 는 호출처 없이 잔존(UI 비노출, 백엔드 게이트 유지).
 - [x] make test(컨테이너 pytest+ruff) exit=0 / node --check(app.js·admin.js) / py_compile(app.py) PASS. outside-voice [SKIPPED:RBAC·스키마 무변경, 조회 UI 전용].
 - [x] verify-completion PASS → main ff-merge(0181301) → 재배포(web, healthz `git_commit=0181301`) → PB-0008 Windows-browser 시각 검증 **PASS**(drill-down · 프로필 차트 · 활동기록 비노출, TEST.md §4 2026-06-10)
+- [x] (후속 보강) 사용자 지적 "계정별 비용 차트 누락" — drill 패널을 [토큰 | 비용] 2열로 재구성(`usageDrillCostChart` 추가), 역할별 차트와 일관. 백엔드 무변경(by_account 의 `cost_usd` 재사용). CHG-20260610-0184-COSTCHART, REV-20260610-0185. 재배포 + PB-0008 재검증.

@@ -864,6 +864,7 @@ async function loadUsage() {
   const renderAccountDrill = () => {
     const st = adminState.usage;
     const chartEl = document.getElementById("usageDrillChart");
+    const costChartEl = document.getElementById("usageDrillCostChart");
     const toolsEl = document.getElementById("usageDrillTools");
     const pagerEl = document.getElementById("usageDrillPager");
     const hintEl = document.getElementById("usageDrillHint");
@@ -876,6 +877,7 @@ async function loadUsage() {
     };
     if (!st.drillRole) {  // 접힘
       chartEl.innerHTML = "";
+      if (costChartEl) costChartEl.innerHTML = "";
       if (toolsEl) toolsEl.classList.add("hidden");
       if (pagerEl) pagerEl.classList.add("hidden");
       if (hintEl) hintEl.textContent = "· 위 역할 막대를 클릭하면 해당 역할의 계정이 펼쳐집니다";
@@ -895,8 +897,13 @@ async function loadUsage() {
     }));
     if (hintEl) hintEl.textContent = `· ${st.drillRole} — ${filtered.length}개 계정${q ? " (검색됨)" : ""}`;
     if (toolsEl) toolsEl.classList.remove("hidden");
-    if (pageRows.length) renderStackedHBar(chartEl, pageRows, "total_tokens", num);
-    else chartEl.innerHTML = "<p class='admin-usage-empty'>검색 결과가 없습니다.</p>";
+    if (pageRows.length) {
+      renderStackedHBar(chartEl, pageRows, "total_tokens", num);
+      renderStackedHBar(costChartEl, pageRows, "cost_usd", usd);  // TASK-0184: 계정별 비용 차트(역할별과 일관)
+    } else {
+      chartEl.innerHTML = "<p class='admin-usage-empty'>검색 결과가 없습니다.</p>";
+      if (costChartEl) costChartEl.innerHTML = "";
+    }
     if (pagerEl) {
       pagerEl.classList.toggle("hidden", filtered.length <= pageSize);
       if (pageInfoEl) pageInfoEl.textContent = filtered.length ? `${start + 1}–${Math.min(start + pageSize, filtered.length)} / ${filtered.length}` : "0 / 0";
