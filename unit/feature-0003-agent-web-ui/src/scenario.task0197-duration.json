@@ -1,0 +1,62 @@
+{
+  "name": "TASK-0197 assistant 말풍선 소요시간 표시 검증",
+  "steps": [
+    {
+      "action": "screenshot",
+      "label": "01_login_page"
+    },
+    {
+      "action": "type",
+      "selector": "input[placeholder='사용자 ID'], input[type='text']",
+      "text": "bootstrap_admin"
+    },
+    {
+      "action": "type",
+      "selector": "input[placeholder='비밀번호'], input[type='password']",
+      "text": "ChangeThisBootstrapPass_2026!"
+    },
+    {
+      "action": "click",
+      "selector": "button[type='submit'], .btn-login, button"
+    },
+    {
+      "action": "wait_for",
+      "selector": "#messageLog, .conversation-list, #conversationList",
+      "timeout": 8000
+    },
+    {
+      "action": "screenshot",
+      "label": "02_after_login"
+    },
+    {
+      "action": "eval",
+      "script": "(function() { var items = document.querySelectorAll('.conversation-item, [data-conv-id]'); return { conversationCount: items.length, firstId: items.length > 0 ? (items[0].dataset.convId || items[0].getAttribute('data-conv-id')) : null }; })()",
+      "label": "conversation_list_check"
+    },
+    {
+      "action": "click",
+      "selector": ".conversation-item:first-child, [data-conv-id]:first-child",
+      "stop_on_fail": false
+    },
+    {
+      "action": "wait_for",
+      "selector": ".message-meta",
+      "timeout": 5000,
+      "stop_on_fail": false
+    },
+    {
+      "action": "screenshot",
+      "label": "03_conversation_messages"
+    },
+    {
+      "action": "eval",
+      "script": "(function() { var metas = document.querySelectorAll('.message-meta'); var found = []; metas.forEach(function(m) { var dur = m.querySelector('.message-meta-duration'); var isAssistant = !!(m.closest('.message.is-assistant') || m.closest('[class*=\"assistant\"]')); found.push({ snippet: m.textContent.trim().substring(0,80), hasDuration: !!dur, durationText: dur ? dur.textContent : null, isAssistant: isAssistant }); }); return { totalMeta: metas.length, withDuration: found.filter(function(f){return f.hasDuration;}).length, assistantMessages: found.filter(function(f){return f.isAssistant;}).length, samples: found.slice(0,5) }; })()",
+      "label": "duration_span_check"
+    },
+    {
+      "action": "screenshot",
+      "label": "04_duration_evidence",
+      "full_page": false
+    }
+  ]
+}
