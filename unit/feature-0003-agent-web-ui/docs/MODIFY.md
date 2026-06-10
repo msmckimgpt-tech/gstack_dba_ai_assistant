@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260610-0197
+- Date: 2026-06-10 (TASK-0197, **Minor §12.3** — 프런트 UI 소요시간 표시)
+- Scope: assistant 말풍선 타임스탬프 옆 소요시간 표시. `message.meta.duration_ms`(agent_core `mirror_meta` 저장값)가 있는 assistant 메시지에 한해 기존 `formatElapsed()` 재사용, `.message-meta-duration` span 추가.
+- 변경:
+  - `src/static/app.js` (`renderMessages`): durationMs > 0 일 때 speaker·datetime 텍스트노드 + `<span class="message-meta-duration">N분 M초</span>` 구성. 0이거나 user 메시지면 기존 `textContent` 방식 유지.
+  - `src/static/styles.css`: `.message-meta-duration { font-size: 10px; opacity: 0.7; }` 추가.
+  - `src/static/index.html`: 캐시버스터 `?v=20260610-response-duration` 갱신(styles.css·app.js).
+- 비변경: 백엔드(app.py)·API·DB 스키마·RBAC·시크릿 무변경.
+- 검증: node --check app.js PASS. 시각 검증 = Windows-browser(PB-0008) 배포 후.
+- Files: unit/feature-0003-agent-web-ui/src/static/{app.js,styles.css,index.html}, docs/{TASK,MODIFY,REVIEW}.md
+- Rollback: 본 cycle 커밋 revert — assistant 말풍선에서 소요시간 표시 사라짐.
+
 ## CHG-20260610-0196
 - Date: 2026-06-10 (TASK-0196, **Minor §12.3** — 백엔드 읽기/쓰기경로 라우팅)
 - Scope: AR-M5 cutover 잔존 라우팅 누락 web 3건 복구(대화 제목 변경·관리자 제품 삭제·검색 발췌). TASK-0189 와 동일 결함 class(삭제된 MySQL 테이블을 PG 게이트 없이 조회) 전 서비스 스윕의 web 산물.
