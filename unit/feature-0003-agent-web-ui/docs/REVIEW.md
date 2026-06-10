@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0196 [SUBAGENT:cutover-routing-gaps-adversarial]
+- Date: 2026-06-10
+- Cycle: TASK-0196 (AR-M5 cutover 잔존 라우팅 누락 일괄 복구 — web 3건 + agent-core convo_search), **Minor §12.3**
+- Panel: 적대적 backend + QA subagent. 대상: 4개 수정 함수(`rename_conversation_title`/`admin_delete_product`/`_collect_matched_excerpts`/`convo_search`) diff + agent_runtime_schema.sql.
+- Verdict: **SHIP** (MAJOR 0). 모든 공격 차원 반박:
+  - PG SQL 유효(ILIKE / `ESCAPE '!'` / `ROW_NUMBER() OVER (PARTITION BY … ORDER BY …)` / 중첩 derived table 별칭).
+  - 예약어/식별자: PG `kv.key`·`kv.value` 는 **비예약어** → unquoted 정상(스키마 column 명 일치). MySQL 분기는 backtick, PG 분기는 무backtick — 양쪽 정확.
+  - case-insensitive 패리티: 모든 PG search 술어가 `ILIKE`(convo_search 3·excerpts 2), case-sensitive `LIKE` 잔존 0.
+  - column 순서/row 언패킹: `_format_row`(conv_id,role,content,created_at,source) 3 PG SELECT 와 정확 일치, excerpts `(cid,content)` 2-col 일치.
+  - cursor/conn 수명: admin_delete PG 가드는 자체 `_pg_connect`+`with cursor`+`finally close`, MySQL conn 미접촉 → 후속 Web* autocommit 트랜잭션에 그대로 사용 가능(누수·이중close·closed-conn 사용 0). rename 은 게이트 헬퍼 위임(try/except→500).
+  - 잔존 ungated 삭제테이블 참조 0(전부 else MySQL legacy 분기), auth/RBAC 게이트 무변경, import(`_pg_connect`/`_runtime_backend_is_pg`/`os`) 존재.
+- Findings(MINOR, non-blocking, 모두 pre-existing·범위 외):
+  - convo_search 의 `like_pattern = f"%{pattern}%"` 가 LIKE 메타문자(`%`/`_`) 미이스케이프 — **pre-existing**(MySQL·PG 분기 동일 패리티). cutover-routing 범위 외, 추후 hardening 후보.
+  - `_collect_matched_excerpts` 의 two-table `msg_id` namespace(messages.id ↔ core_messages.id 독립 시퀀스)로 ROW_NUMBER 정렬이 chronological 최신이 아닐 수 있음 — MySQL legacy 와 동일 구조(parity-preserving), 발췌 스니펫 선택만 영향(매칭 정확성 무관). 수용.
+- Risk: low — 읽기/쓰기 라우팅, RBAC/스키마/파괴 0. make test exit=0(회귀 0).
+- Cross-ref: CHG-20260610-0196 / TASK-0196 / TASK-0189(동일 class 선행) / feature-0002 REV-20260610-0196(convo_search).
+
 ## REV-20260610-0189 [SUBAGENT:calendar-pg-routing-adversarial]
 - Date: 2026-06-10
 - Cycle: TASK-0189 (날짜기준표 캘린더 "대화 구간 이동" 복구 — AR-M5 cutover 라우팅 누락), **Minor §12.3**

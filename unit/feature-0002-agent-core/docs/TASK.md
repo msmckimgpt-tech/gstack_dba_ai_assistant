@@ -767,3 +767,11 @@ TASK-0015 (plan-review):
 - [x] 회귀 테스트 `tests/test_step_narration_params.py` 4(전 도구 주입·core 공유·think-first 순서·핸들러 추가인자 무해) + `test_tool_notes_prompt.py` 프롬프트 테스트 갱신. make test **282 passed/2 skipped**(회귀 0).
 - [x] **머지 전 라이브 probe 카나리아 PASS**: worktree 배포+row 갱신 후 2 ask → **5 step 전부 `reason_source='llm'`**, 근거 질문 맥락 직결, 누수 0, 답변 정확. (REV-20260610-0178)
 - [ ] verify-completion → 커밋 → push → main ff-merge → 머지판 재배포(GIT_COMMIT 정상 각인) → 최종 카나리아 재확인
+
+### TASK-0196 — convo_search 도구 AR-M5 cutover 라우팅 누락 복구 (2026-06-10)
+- [x] **Minor §12.3** (에이전트 도구 읽기경로 라우팅, RBAC·스키마·파괴 0) — 사용자 요청("mysql→PG 이관 미완으로 작동 안 하는 부분 검토")의 전 서비스 스윕 산물. web 3건은 feature-0003 TASK-0196. (CHG-20260610-0196)
+- [x] **결함**: `convo_search`(LOCAL agent tool — 다른 대화 기록을 메시지/요약/주제로 검색)가 `modules/file_ops.py` 에서 PG 경로 전무한 채 삭제된 MySQL `AgentMemoryMessages`/`AgentMemorySummary`/`AgentMemoryKv` 3개를 `try/finally`(except 없음)로 조회 → 에이전트가 도구 호출 시 첫 쿼리에서 **throw**(도구 기능 사망). 정적 스윕(file_ops 가 `_pg_connect`/`agent_runtime`/`AGENT_RUNTIME_READ_BACKEND` 전혀 import 안 함)으로 확정.
+- [x] **수정** ([src/modules/file_ops.py](../src/modules/file_ops.py)): `AGENT_RUNTIME_READ_BACKEND == "postgres"` 일 때 PG `agent_runtime.messages`/`summary`/`kv` 로 라우팅. ILIKE = MySQL utf8mb4_unicode_ci case-insensitive 패리티. PG `kv.key`/`value`(비예약어) unquoted, `include_current` 필터·`_format_row`(conv_id,role,content,created_at,source) 컬럼순서 동일. legacy MySQL else 보존.
+- [x] 회귀 테스트 `tests/test_convo_search_pg_routing.py`(PG 라우팅 + 전달된 MySQL conn 미사용 가드 + 3 소스 모두 검색 + current 대화 제외). make test(컨테이너 pytest+ruff) exit=0(0002+0003 전체 회귀 0).
+- [x] outside-voice 적대적 백엔드/QA 검토 SHIP(MAJOR 0) — REV-20260610-0196.
+- [ ] verify-completion → main ff-merge → agent-core 서비스(ask-worker/insight-worker/web) 재배포 → 라이브 에이전트 convo_search 호출 검증.

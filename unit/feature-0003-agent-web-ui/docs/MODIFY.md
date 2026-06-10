@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260610-0196
+- Date: 2026-06-10 (TASK-0196, **Minor §12.3** — 백엔드 읽기/쓰기경로 라우팅)
+- Scope: AR-M5 cutover 잔존 라우팅 누락 web 3건 복구(대화 제목 변경·관리자 제품 삭제·검색 발췌). TASK-0189 와 동일 결함 class(삭제된 MySQL 테이블을 PG 게이트 없이 조회) 전 서비스 스윕의 web 산물.
+- 배경: cutover 로 `AgentCoreConversations`/`AgentMemoryMessages`/`AgentCoreMessages` 등 MySQL 테이블 DROP. 전 코드 스윕(SQL 컨텍스트에서 삭제 테이블을 조회하면서 `AGENT_RUNTIME_READ_BACKEND`/`_pg_connect`/`agent_runtime.` 지표가 함수 내 전무한 함수 추출) + 정적·라이브 검증으로 결함 4건 확정(false positive 제거: KB 게이트 dual-path·caller 라우팅·docstring·information_schema).
+- 변경 ([src/app.py](../src/app.py)):
+  - `rename_conversation_title`(`PATCH /api/conversations/{id}/title`): raw `UPDATE AgentCoreConversations`(삭제 테이블→**라이브 500**, 재현 확인) → 이미 PG 라우팅된 게이트 헬퍼 `_conv_update_topic(conn, cid, title)`(PG `agent_runtime.core_conversations`) 호출로 교체 + try/except→500.
+  - `admin_delete_product`(`DELETE /api/admin/products/{id}`): 참조 가드 `SELECT COUNT(*) FROM AgentCoreConversations WHERE product_id`(→**라이브 500**, 재현 확인) 를 `_runtime_backend_is_pg()` 분기로 PG `agent_runtime.core_conversations` COUNT 라우팅(legacy MySQL else). cursor 는 분기별 자체 정리, 후속 Web* 삭제 autocommit 트랜잭션은 conn 그대로 사용(영향 0).
+  - `_collect_matched_excerpts`(검색 발췌): `AgentMemoryMessages UNION AgentCoreMessages`(except→{} 로 스니펫 **항상 빈칸**) → `_runtime_backend_is_pg()` 분기로 PG `agent_runtime.messages` UNION ALL `core_messages`(`ROW_NUMBER() OVER (PARTITION BY cid ORDER BY msg_id DESC)`, `ILIKE … ESCAPE '!'` — MySQL utf8mb4_unicode_ci case-insensitive 패리티) 라우팅. 후처리(line-based 발췌 클리핑)는 DB 무관(rows(cid, content) 동일). legacy MySQL else 보존. params 튜플 양 분기 공유.
+- 비변경: RBAC(엔드포인트 기존 게이트 `_account_can_access_conversation`/`_account_has_permission` 유지)·스키마·시크릿·프런트 무변경.
+- 검증: 신규 `tests/test_cutover_routing_gaps.py`(T1 excerpts·T2 _conv_update_topic PG 라우팅 + 삭제 테이블 미접촉 가드). make test exit=0. outside-voice REV-20260610-0196.
+- Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/tests/test_cutover_routing_gaps.py, docs/{TASK,MODIFY,REVIEW,FUNCTION}.md
+- Rollback: 본 cycle 커밋 revert — 3 면이 다시 삭제된 MySQL 테이블 조회(rename·제품삭제 500, 발췌 빈칸).
+- Cross-ref: convo_search(agent-core) 동일 cutover 복구는 feature-0002 CHG-20260610-0196.
+
 ## CHG-20260610-0189
 - Date: 2026-06-10 (TASK-0189, **Minor §12.3** — 백엔드 읽기경로 라우팅)
 - Scope: 날짜기준표 캘린더의 "대화 구간 이동"(날짜/시각 점프) 기능 복구. AR-M5 cutover 라우팅 누락 수정.

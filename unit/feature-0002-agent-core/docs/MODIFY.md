@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260610-0196
+- Date: 2026-06-10 (TASK-0196, **Minor §12.3** — 에이전트 도구 읽기경로 라우팅)
+- Scope: `convo_search`(LOCAL agent tool) AR-M5 cutover 라우팅 누락 복구. web 3건은 feature-0003 CHG-20260610-0196.
+- 배경: cutover 로 `AgentMemoryMessages`/`AgentMemorySummary`/`AgentMemoryKv` MySQL 테이블 DROP. `modules/file_ops.py` 의 `convo_search` 는 PG 경로 전무(파일이 `_pg_connect`/`agent_runtime`/`AGENT_RUNTIME_READ_BACKEND` 미import)한 채 3개 삭제 테이블을 `try/finally`(except 없음)로 조회 → 에이전트가 "다른 대화 검색" 도구 호출 시 첫 `cur.execute(FROM AgentMemoryMessages)`에서 throw(도구 사망). 전 서비스 스윕으로 확정된 4건 중 유일한 agent-core 면.
+- 변경 ([src/modules/file_ops.py](../src/modules/file_ops.py) `convo_search`):
+  - `os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres"` 분기 추가 → `from .db import _pg_connect` 로 PG 연결, 3개 쿼리를 PG `agent_runtime.messages`/`agent_runtime.summary`/`agent_runtime.kv` 로 실행. `ILIKE`(MySQL utf8mb4_unicode_ci case-insensitive 패리티), PG `kv.key`/`kv.value`(비예약어) unquoted, `'message'`/`'summary'`/`'topic'` source 라벨·`_format_row`(conv_id,role,content,created_at,source) 컬럼순서 동일, `include_current=False` 시 `conversation_id != %s` 제외 동일.
+  - legacy MySQL 경로는 else 로 보존(backtick `` `Key` ``/`` `Value` `` 등 원본 유지).
+- 비변경: 도구 RBAC/등록(LOCAL_TOOLS)·스키마·결과 shape 무변경. error 전파 동작 유지(except 미추가 — 도구 호출 에러는 에이전트 루프가 처리).
+- 검증: 신규 `tests/test_convo_search_pg_routing.py`(PG 라우팅 + MySQL conn 미사용 가드 + 3 소스 + current 제외). make test exit=0. outside-voice REV-20260610-0196 SHIP(MAJOR 0).
+- Files: unit/feature-0002-agent-core/src/modules/file_ops.py, unit/feature-0002-agent-core/tests/test_convo_search_pg_routing.py, docs/{TASK,MODIFY,REVIEW,FUNCTION}.md
+- Rollback: 본 변경 revert — convo_search 가 다시 삭제된 MySQL 테이블 조회(도구 throw).
+- Cross-ref: feature-0003 CHG-20260610-0196(web 3건) / TASK-0189(동일 class 선행).
+
 ## CHG-20260610-0178
 - Date: 2026-06-10 (TASK-0178, **Major §12.3** — agent-core; TASK-0177 의 전달 메커니즘 수정)
 - Scope: 단계 근거(work/reason)를 LLM 이 **tool 호출 인자**로 채우게 전환. content 동시 방출(0177)은 라이브에서 무력했음.

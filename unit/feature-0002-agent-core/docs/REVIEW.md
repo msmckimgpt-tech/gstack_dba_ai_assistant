@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0196 [SUBAGENT:cutover-routing-gaps-adversarial]
+- Date: 2026-06-10
+- Cycle: TASK-0196 (AR-M5 cutover 잔존 라우팅 누락 — agent-core convo_search), **Minor §12.3**
+- Panel: 적대적 backend + QA subagent (web 3건 + convo_search 통합 리뷰, feature-0003 REV-20260610-0196 과 동일 패널).
+- Verdict: **SHIP** (MAJOR 0). convo_search 관련 무반박 확인:
+  - PG `kv.key`/`kv.value` 비예약어 → unquoted 정상(스키마 일치). MySQL 분기 backtick / PG 분기 무backtick 각각 정확.
+  - 3 PG SELECT 의 컬럼순서가 `_format_row`(conv_id,role,content,created_at,source)와 정확 일치(summary: `'summary' AS role, summary AS content, updated_at AS created_at`; kv: `'topic' AS role, value AS content, updated_at AS created_at`).
+  - 모든 PG 술어 `ILIKE`(case-insensitive 패리티), `include_current` 필터 동일, `from .db import _pg_connect` 존재(modules 패키지 동일).
+- Findings(MINOR, pre-existing·범위 외): `like_pattern = f"%{pattern}%"` LIKE 메타문자(`%`/`_`) 미이스케이프 — MySQL·PG 분기 동일 패리티, cutover-routing 범위 외 추후 hardening 후보.
+- Risk: low — 읽기 라우팅, RBAC/스키마/파괴 0. make test exit=0.
+- Cross-ref: CHG-20260610-0196 / TASK-0196 / feature-0003 REV-20260610-0196.
+
 ## REV-20260610-0192 [SKIPPED:driver-infra-security-deferred-p6]
 - Date: 2026-06-10 (TASK-0192)
 - Cycle: 멀티 datasource Stage 2 P4 (MSSQL 드라이버 pymssql + 연결 디스패치 + 크로스엔진 결과 수집). **Major §12.3**.

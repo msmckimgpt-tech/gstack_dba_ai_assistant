@@ -4277,11 +4277,55 @@ def _collect_matched_excerpts(conn, conv_ids: list[str], q: str) -> dict[str, st
     escaped = _escape_like_for_search(q)
     pattern = f"%{escaped}%"
     placeholders = ",".join(["%s"] * len(conv_ids))
-    cur = conn.cursor()
     rows: list[Any] = []
-    try:
-        cur.execute(
-            f"""
+    params = (
+        *[str(c) for c in conv_ids],
+        pattern,
+        *[str(c) for c in conv_ids],
+        pattern,
+    )
+    # AR-M5 cutover: AgentMemoryMessages/AgentCoreMessages MySQL 테이블이 DROP 됨 →
+    # PG agent_runtime.messages/core_messages 로 라우팅(미라우팅 시 except→{} 로 검색
+    # 발췌 스니펫이 항상 빈칸). 후처리(발췌 클리핑)는 DB 무관 — rows(cid, content)만 동일.
+    # PG 는 case-insensitive 매칭을 위해 ILIKE 사용(MySQL utf8mb4_unicode_ci 패리티).
+    if _runtime_backend_is_pg():
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        f"""
+SELECT t.cid, t.content
+FROM (
+  SELECT cid, content,
+         ROW_NUMBER() OVER (PARTITION BY cid ORDER BY msg_id DESC) AS rn
+  FROM (
+    SELECT m.conversation_id AS cid, m.content AS content, m.id AS msg_id
+    FROM agent_runtime.messages m
+    WHERE m.conversation_id IN ({placeholders})
+      AND m.content ILIKE %s ESCAPE '!'
+    UNION ALL
+    SELECT cm.conversation_id AS cid, cm.content AS content, cm.id AS msg_id
+    FROM agent_runtime.core_messages cm
+    WHERE cm.conversation_id IN ({placeholders})
+      AND cm.content ILIKE %s ESCAPE '!'
+  ) AS u
+) AS t
+WHERE t.rn = 1
+                        """,
+                        params,
+                    )
+                    rows = pgcur.fetchall() or []
+            finally:
+                pg.close()
+        except Exception:
+            return {}
+    else:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                f"""
 SELECT t.cid, t.content
 FROM (
   SELECT cid, content,
@@ -4303,19 +4347,14 @@ FROM (
   ) AS u
 ) AS t
 WHERE t.rn = 1
-            """,
-            (
-                *[str(c) for c in conv_ids],
-                pattern,
-                *[str(c) for c in conv_ids],
-                pattern,
-            ),
-        )
-        rows = cur.fetchall() or []
-    except Exception:
-        return {}
-    finally:
-        cur.close()
+                """,
+                params,
+            )
+            rows = cur.fetchall() or []
+        except Exception:
+            return {}
+        finally:
+            cur.close()
     # REQ-20260519-0006 (TASK-0078): excerpt 를 line-based 로 변환. 매칭 위치가 속한
     # line 전체 (이전 \n 직후 ~ 다음 \n 직전) 를 반환해 사용자가 의미 있는 문장 단위로
     # 발췌를 보게 한다. 그 line 이 매우 길 경우 매칭 위치 ±60 char clip + "…".
@@ -11143,17 +11182,13 @@ async def rename_conversation_title(conversation_id: str, request: Request) -> J
     ):
         conn.close()
         return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
-    cur = conn.cursor()
-    cur.execute(
-        """
-UPDATE AgentCoreConversations
-SET topic = %s,
-    updated_at = CURRENT_TIMESTAMP
-WHERE conversation_id = %s
-        """,
-        (title, conversation_id),
-    )
-    cur.close()
+    # AR-M5 cutover: AgentCoreConversations MySQL 테이블이 DROP 됨. raw UPDATE 는 500 →
+    # 이미 PG 라우팅된 게이트 헬퍼 _conv_update_topic 재사용(PG agent_runtime.core_conversations).
+    try:
+        _conv_update_topic(conn, conversation_id, title)
+    except Exception:
+        conn.close()
+        return _json_error("제목 변경에 실패했습니다.", 500)
     conn.close()
     return JSONResponse({"ok": True, "conversation_id": conversation_id, "title": title})
 
@@ -12838,17 +12873,31 @@ def admin_delete_product(product_id: int, request: Request) -> JSONResponse:
     if not _account_has_permission(account, "product.manage"):
         conn.close()
         return _json_error("제품 관리 권한이 필요합니다.", 403)
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT COUNT(*) FROM AgentCoreConversations WHERE product_id = %s",
-        (int(product_id),),
-    )
-    in_use = int((cur.fetchone() or (0,))[0] or 0)
-    if in_use > 0:
+    # AR-M5 cutover: AgentCoreConversations MySQL 테이블 DROP → 참조 가드 COUNT 를 PG
+    # agent_runtime.core_conversations 로 라우팅(미라우팅 시 SELECT 가 500 으로 삭제 전면 불가).
+    if _runtime_backend_is_pg():
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT COUNT(*) FROM agent_runtime.core_conversations WHERE product_id = %s",
+                    (int(product_id),),
+                )
+                in_use = int((pgcur.fetchone() or (0,))[0] or 0)
+        finally:
+            pg.close()
+    else:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM AgentCoreConversations WHERE product_id = %s",
+            (int(product_id),),
+        )
+        in_use = int((cur.fetchone() or (0,))[0] or 0)
         cur.close()
+    if in_use > 0:
         conn.close()
         return _json_error("이 제품을 참조하는 대화가 있어 삭제할 수 없습니다. (대신 비활성화를 사용하세요)", 400)
-    cur.close()
     # TASK-0052 Phase 1B (Codex Claim 2): 명시적 트랜잭션으로 cascade 정합성 보장.
     # 신규: WebPermissions(IsDynamic=1, ProductId=<id>) + 그 권한을 참조하는 WebRolePermissions /
     # WebAccountPermissionOverrides 도 함께 정리. 부분 실패 시 product 도 그대로 유지 (rollback).

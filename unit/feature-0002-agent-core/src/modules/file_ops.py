@@ -139,66 +139,121 @@ def convo_search(
             "source": source,
         }
 
-    cur = conn.cursor()
-    try:
-        where = "Content LIKE %s"
-        params = [like_pattern]
-        if not include_current:
-            where += " AND ConversationId != %s"
-            params.append(conversation_id)
-        params.append(limit)
-        cur.execute(
-            f"""
+    # AR-M5 cutover: AgentMemoryMessages/AgentMemorySummary/AgentMemoryKv MySQL 테이블이
+    # DROP 됨 → AGENT_RUNTIME_READ_BACKEND=postgres 일 때 PG agent_runtime.messages/summary/kv
+    # 로 라우팅한다(미라우팅 시 convo_search 도구 호출이 삭제된 테이블 조회로 throw — 에이전트의
+    # "다른 대화 검색" 기능 사망). ILIKE = MySQL utf8mb4_unicode_ci case-insensitive 패리티.
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        from .db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                where = "content ILIKE %s"
+                params = [like_pattern]
+                if not include_current:
+                    where += " AND conversation_id != %s"
+                    params.append(conversation_id)
+                params.append(limit)
+                pgcur.execute(
+                    f"SELECT conversation_id, role, content, created_at, 'message' AS source "
+                    f"FROM agent_runtime.messages WHERE {where} ORDER BY created_at DESC LIMIT %s",
+                    tuple(params),
+                )
+                for row in pgcur.fetchall() or []:
+                    results.append(_format_row(row))
+
+                where = "summary ILIKE %s"
+                params = [like_pattern]
+                if not include_current:
+                    where += " AND conversation_id != %s"
+                    params.append(conversation_id)
+                params.append(limit)
+                pgcur.execute(
+                    f"SELECT conversation_id, 'summary' AS role, summary AS content, "
+                    f"updated_at AS created_at, 'summary' AS source "
+                    f"FROM agent_runtime.summary WHERE {where} ORDER BY updated_at DESC LIMIT %s",
+                    tuple(params),
+                )
+                for row in pgcur.fetchall() or []:
+                    results.append(_format_row(row))
+
+                where = "key = 'topic' AND value ILIKE %s"
+                params = [like_pattern]
+                if not include_current:
+                    where += " AND conversation_id != %s"
+                    params.append(conversation_id)
+                params.append(limit)
+                pgcur.execute(
+                    f"SELECT conversation_id, 'topic' AS role, value AS content, "
+                    f"updated_at AS created_at, 'topic' AS source "
+                    f"FROM agent_runtime.kv WHERE {where} ORDER BY updated_at DESC LIMIT %s",
+                    tuple(params),
+                )
+                for row in pgcur.fetchall() or []:
+                    results.append(_format_row(row))
+        finally:
+            pg.close()
+    else:
+        cur = conn.cursor()
+        try:
+            where = "Content LIKE %s"
+            params = [like_pattern]
+            if not include_current:
+                where += " AND ConversationId != %s"
+                params.append(conversation_id)
+            params.append(limit)
+            cur.execute(
+                f"""
 SELECT ConversationId, Role, Content, CreatedAt, 'message' AS source
 FROM AgentMemoryMessages
 WHERE {where}
 ORDER BY CreatedAt DESC
 LIMIT %s
-            """,
-            tuple(params),
-        )
-        for row in cur.fetchall() or []:
-            results.append(_format_row(row))
+                """,
+                tuple(params),
+            )
+            for row in cur.fetchall() or []:
+                results.append(_format_row(row))
 
-        where = "Summary LIKE %s"
-        params = [like_pattern]
-        if not include_current:
-            where += " AND ConversationId != %s"
-            params.append(conversation_id)
-        params.append(limit)
-        cur.execute(
-            f"""
+            where = "Summary LIKE %s"
+            params = [like_pattern]
+            if not include_current:
+                where += " AND ConversationId != %s"
+                params.append(conversation_id)
+            params.append(limit)
+            cur.execute(
+                f"""
 SELECT ConversationId, 'summary' AS Role, Summary AS Content, UpdatedAt AS CreatedAt, 'summary' AS source
 FROM AgentMemorySummary
 WHERE {where}
 ORDER BY UpdatedAt DESC
 LIMIT %s
-            """,
-            tuple(params),
-        )
-        for row in cur.fetchall() or []:
-            results.append(_format_row(row))
+                """,
+                tuple(params),
+            )
+            for row in cur.fetchall() or []:
+                results.append(_format_row(row))
 
-        where = "`Key` = 'topic' AND `Value` LIKE %s"
-        params = [like_pattern]
-        if not include_current:
-            where += " AND ConversationId != %s"
-            params.append(conversation_id)
-        params.append(limit)
-        cur.execute(
-            f"""
+            where = "`Key` = 'topic' AND `Value` LIKE %s"
+            params = [like_pattern]
+            if not include_current:
+                where += " AND ConversationId != %s"
+                params.append(conversation_id)
+            params.append(limit)
+            cur.execute(
+                f"""
 SELECT ConversationId, 'topic' AS Role, `Value` AS Content, UpdatedAt AS CreatedAt, 'topic' AS source
 FROM AgentMemoryKv
 WHERE {where}
 ORDER BY UpdatedAt DESC
 LIMIT %s
-            """,
-            tuple(params),
-        )
-        for row in cur.fetchall() or []:
-            results.append(_format_row(row))
-    finally:
-        cur.close()
+                """,
+                tuple(params),
+            )
+            for row in cur.fetchall() or []:
+                results.append(_format_row(row))
+        finally:
+            cur.close()
 
     results.sort(key=lambda r: r.get("created_at", ""), reverse=True)
     return results[:limit]

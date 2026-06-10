@@ -3049,3 +3049,13 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **후속 정밀화(CHG-0189 분 단위)**: 라이브 검증 중 anchor 가 초 단위 `<=`(`HH24:MI:SS <= ...:00`)라 클릭한 분의 메시지(초>0)가 제외돼 직전 메시지로 점프하는 결함 발견(원본 MySQL 결함 계승). `to_char(...,'YYYY-MM-DD HH24:MI') <= left(at,16)` 분 단위 비교로 교체 → 클릭한 분의 메시지에 정확 착지. 사용자 "정상적으로 작동" 요청 충족. 재배포·라이브 재검증.
 - [x] **근본원인 형제 인스턴스 스윕·수정(CHG-0189-SUGGESTIONS)**: 같은 결함 class(엔드포인트가 게이트 없이 삭제된 MySQL 테이블 직접 조회) 자동 스윕 결과 `/api/suggestions`(입력 추천) 1건 추가 발견 — 라이브 **HTTP 500**(`SELECT Content FROM AgentMemoryMessages …` try/except 없음). 동일 패턴으로 PG `agent_runtime.messages` 라우팅 + fail-soft(예외→빈 items) 수정. 회귀 테스트 T4. 사용자 "누락 원인 파악" 요청에 대한 근본원인(미이전 엔드포인트) 포괄 대응. 재배포·라이브 200 검증.
 - [ ] (잔존) Windows-browser(PB-0008) 시각 검증(분기선→캘린더→날짜/시각 클릭→해당 메시지로 스크롤·하이라이트) — CHECK#13 WARN, 사용자 확인용.
+
+### TASK-0196 — AR-M5 cutover 잔존 라우팅 누락 일괄 복구 (web 3건) (2026-06-10)
+- [x] **Minor §12.3** (백엔드 읽기/쓰기경로 라우팅, RBAC·스키마·파괴 0) — 사용자 요청("mysql→PG 이관 미완으로 작동 안 하는 부분 검토"). TASK-0189 와 동일 결함 class 를 전 서비스 프로그램적 스윕(삭제 확정 테이블을 게이트 없이 조회하는 함수 추출) + 정적·라이브 검증으로 4건 확정, web 3건을 본 TASK 에서 복구. (CHG-20260610-0196)
+- [x] **#1 대화 제목 변경** `PATCH /api/conversations/{id}/title` — `rename_conversation_title` 가 `UPDATE AgentCoreConversations` 직접 → 삭제된 테이블이라 **라이브 500**(재현 확인). 이미 PG 라우팅된 게이트 헬퍼 `_conv_update_topic`(PG `agent_runtime.core_conversations`) 재사용으로 교체 + try/except→500.
+- [x] **#2 관리자 제품 삭제** `DELETE /api/admin/products/{id}` — `admin_delete_product` 의 참조 가드 `SELECT COUNT(*) FROM AgentCoreConversations WHERE product_id` → **라이브 500**(재현 확인). `_runtime_backend_is_pg()` 분기로 PG `agent_runtime.core_conversations` COUNT 라우팅(legacy MySQL else). 후속 Web* 삭제 트랜잭션 영향 없음.
+- [x] **#3 검색 결과 발췌문** — `_collect_matched_excerpts` 가 `AgentMemoryMessages UNION AgentCoreMessages` → except→{} 로 검색 스니펫(본문 미리보기) **항상 빈칸**. PG `agent_runtime.messages` UNION `core_messages`(ROW_NUMBER, ILIKE ESCAPE — MySQL case-insensitive 패리티) 분기 추가. 후처리(발췌 클리핑)는 DB 무관.
+- [x] **오탐 확인**: `_load_schema_list`/`_load_relevant_table_insights`(AGENT_KB_READ_BACKEND=postgres 게이트, MySQL 죽은 폴백), `agent_core._list_conversations`(caller `_read_runtime_pg` 우선), docstring 언급·information_schema 진단.
+- [x] 회귀 테스트 `tests/test_cutover_routing_gaps.py`(T1 excerpts PG 라우팅+삭제 테이블 미접촉, T2 `_conv_update_topic`(rename 위임) PG UPDATE). make test(컨테이너 pytest+ruff) exit=0(0002+0003 전체 회귀 0).
+- [x] outside-voice 적대적 백엔드/QA 검토 — REV-20260610-0196.
+- [ ] verify-completion → main ff-merge → web 재배포(healthz `git_commit`) → 라이브 재검증(#1·#2 200, #3 발췌 비어있지 않음). (#4 convo_search 는 agent-core, feature-0002 TASK-0196 참조.)
