@@ -10759,6 +10759,45 @@ def history_anchor(
     if not conv_id or not when:
         conn.close()
         return _json_error("missing conversation_id or at", 400)
+    # AR-M5 cutover: 메시지 정본이 MySQL AgentMemoryMessages → PG agent_runtime.messages 로
+    # 이전되며 MySQL 테이블이 DROP 되었다. 캘린더 점프가 반환하는 message_id 는
+    # /api/history(_get_history) 가 DOM 에 부여한 id(`message-<id>`)와 동일 id-space 여야
+    # 매칭되므로, _get_history 와 동일하게 AGENT_RUNTIME_READ_BACKEND 로 분기한다.
+    # 비교는 history_dates 의 시각 라벨과 동일한 to_char(세션 tz) wall-clock 문자열로 수행 —
+    # timestamptz 직접 cast 의 tz 모호성을 피하고, 라벨과 정확히 같은 기준으로 매칭한다
+    # (원본 MySQL 의 wall-clock 비교 의미 보존).
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        row = None
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        "SELECT id, created_at FROM agent_runtime.messages "
+                        "WHERE conversation_id = %s "
+                        "AND to_char(created_at, 'YYYY-MM-DD HH24:MI:SS') <= %s "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        (conv_id, when),
+                    )
+                    row = pgcur.fetchone()
+                    if not row:
+                        pgcur.execute(
+                            "SELECT id, created_at FROM agent_runtime.messages "
+                            "WHERE conversation_id = %s "
+                            "ORDER BY created_at ASC LIMIT 1",
+                            (conv_id,),
+                        )
+                        row = pgcur.fetchone()
+            finally:
+                pg.close()
+        except Exception:
+            conn.close()
+            return _json_error("failed to locate anchor", 500)
+        conn.close()
+        if not row:
+            return _json_error("no messages", 404)
+        return JSONResponse({"message_id": int(row[0]), "created_at": str(row[1])})
     try:
         cur = conn.cursor()
         cur.execute(
@@ -10815,6 +10854,41 @@ def history_dates(
         return JSONResponse({"dates": {}, "first": None, "last": None})
     # TASK-0061 Phase 5 (REQ-20260515-0007 / AC-0088): 메시지 정본은 AgentMemoryMessages 이므로
     # 캘린더 source 를 그쪽으로 일치시킨다 (이전: AgentCoreMessages — 일부 경로에서 비어 있음).
+    # AR-M5 cutover: 메시지 정본이 PG agent_runtime.messages 로 이전되고 MySQL
+    # AgentMemoryMessages 테이블이 DROP 되었다. _get_history 와 동일하게
+    # AGENT_RUNTIME_READ_BACKEND 로 분기하지 않으면 삭제된 테이블을 조회해 캘린더가
+    # 항상 빈 dates 를 반환(=날짜 점프 기능 누락)한다. history_anchor 와 동일한
+    # to_char(세션 tz) 기준으로 날짜/시각 라벨을 만들어 점프 매칭과 일관성을 보장한다.
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        "SELECT to_char(created_at, 'YYYY-MM-DD') AS d,"
+                        " string_agg(to_char(created_at, 'HH24:MI'), ',' ORDER BY created_at)"
+                        " FROM agent_runtime.messages"
+                        " WHERE conversation_id = %s"
+                        " GROUP BY to_char(created_at, 'YYYY-MM-DD')"
+                        " ORDER BY d",
+                        (conv_id,),
+                    )
+                    rows = pgcur.fetchall() or []
+            finally:
+                pg.close()
+        except Exception:
+            conn.close()
+            return JSONResponse({"dates": {}, "first": None, "last": None})
+        conn.close()
+        dates_pg: dict[str, list[str]] = {}
+        for row in rows:
+            day_str = str(row[0])
+            times = [t.strip() for t in str(row[1]).split(",") if t.strip()]
+            dates_pg[day_str] = sorted(set(times))
+        first = str(rows[0][0]) if rows else None
+        last = str(rows[-1][0]) if rows else None
+        return JSONResponse({"dates": dates_pg, "first": first, "last": last})
     try:
         cur = conn.cursor()
         cur.execute(

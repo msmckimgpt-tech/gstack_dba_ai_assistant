@@ -3038,3 +3038,11 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] verify-completion → main ff-merge(76b64a2) → web 재배포(healthz `git_commit=76b64a2`, 3종 PASS) → 데이터 경로 확인(`/api/progress` step11 execute_sql `preview_table` 존재)
 - [x] **후속(CHG-0186-MDTABLE)**: `execute_sql` 만 `preview_table` 보유, `get_sample_rows`/`describe_table` 등은 markdown 표 **문자열**만 가져 여전히 raw 노출(사용자 스크린샷 케이스). `parseMarkdownTablePreview` 추가 + buildStepDetailEl 우선순위 ②로 배선 → 전 도구 표 렌더. node --check + 파서 자가 테스트 PASS. REV-20260610-0187.
 - [ ] (후속) verify-completion → main ff-merge → web 재배포 → PB-0008 Windows-browser 시각 검증(전 도구 표 렌더 · 리사이즈)
+
+### TASK-0189 — 날짜기준표 캘린더 "대화 구간 이동" 기능 복구 (AR-M5 cutover 라우팅 누락) (2026-06-10)
+- [x] **Minor §12.3** (백엔드 읽기경로 라우팅, RBAC·스키마·파괴 0) — 메시지 날짜 분기선 클릭 시 열리는 캘린더에서 날짜/시각을 골라 해당 대화 구간으로 점프하는 기능이 동작하지 않음(누락). (CHG-20260610-0189)
+- [x] **근본 원인**: AR-M5 cutover 로 메시지 정본이 MySQL `AgentMemoryMessages` → PG `agent_runtime.messages` 로 이전되며 MySQL 테이블이 DROP. 메시지 목록 경로(`_get_history`)·`_load_latest_assistant_message` 는 `AGENT_RUNTIME_READ_BACKEND` 로 PG 라우팅되도록 이전됐지만, **캘린더를 떠받치는 두 엔드포인트(`/api/history_dates`, `/api/history_anchor`)만 이전에서 누락**돼 삭제된 MySQL 테이블을 직접 조회 → `history_dates` 는 except 폴백으로 항상 빈 `dates`(=클릭 가능한 날짜 없음), `history_anchor` 는 500/미스. 프런트(app.js) 캘린더 로직은 정상이었음.
+- [x] **수정** ([src/app.py](../src/app.py)): 두 엔드포인트에 `_get_history` 와 동일한 `AGENT_RUNTIME_READ_BACKEND == "postgres"` 게이트로 PG `agent_runtime.messages` 조회 분기 추가(legacy MySQL 경로는 else 로 유지). `history_anchor` 가 반환하는 `message_id` 는 `_get_history` 가 DOM 에 부여한 PG id(`message-<id>`)와 동일 id-space 라 점프 타겟 매칭. 두 엔드포인트 모두 `to_char(created_at, …)`(세션 tz) wall-clock 기준으로 통일 → 시각 라벨과 점프 매칭이 상호 일관(원본 MySQL wall-clock 비교 의미 보존, timestamptz cast tz 모호성 회피).
+- [x] **회귀 테스트** `tests/test_history_calendar_pg_routing.py`(T1 history_dates PG 라우팅 + 삭제된 MySQL 테이블 미접촉 가드, T2 history_anchor PG id 반환, T3 legacy MySQL back-compat). make test(컨테이너 pytest+ruff) exit=0(feature-0002+0003 전체 회귀 0), ruff app.py clean.
+- [x] outside-voice 적대적 백엔드/QA 검토(cutover 영역 취약성) — REV-20260610-0189.
+- [ ] verify-completion → main ff-merge → web 재배포(healthz `git_commit`) → Windows-browser(PB-0008) 시각 검증(분기선→캘린더→날짜/시각 클릭→해당 메시지로 스크롤·하이라이트)

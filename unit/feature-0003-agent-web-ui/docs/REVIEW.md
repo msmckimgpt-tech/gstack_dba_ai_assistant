@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0189 [SUBAGENT:calendar-pg-routing-adversarial]
+- Date: 2026-06-10
+- Cycle: TASK-0189 (날짜기준표 캘린더 "대화 구간 이동" 복구 — AR-M5 cutover 라우팅 누락), **Minor §12.3**
+- Panel: 적대적 backend + QA subagent. 대상: `history_anchor`/`history_dates` PG 라우팅 분기 + app.js 캘린더 소비부 + agent_runtime_schema.sql. cutover 영역(메모리상 취약)이라 outside-voice 호출.
+- Verdict(패널): **FIX-FIRST** — MAJOR 2 제기. **반영(본 작성자 라이브 실측): 두 MAJOR 모두 본 배포에서 무력화 → SHIP.**
+- Findings & 처리:
+  - **[패널 MAJOR #1] tz 불일치** — `_pg_connect` 가 세션 TimeZone 미설정 → `to_char` 가 PG 서버 tz 로 렌더되는데, 프런트 분기선/셀 날짜키는 `new Date(message.created_at)`(브라우저 tz)로 계산 → 서버 tz≠브라우저 tz 면 클릭한 분기선 날짜가 캘린더 `dates` 에 없어 선택 불가. → **실측 무력화**: 라이브 PG `SHOW timezone` = **Asia/Seoul**(docker-compose `TZ=${TZ}`=Asia/Seoul 주입), 원시 `created_at` 도 `+09` 저장. `to_char(created_at,'YYYY-MM-DD')` 날짜키 == 브라우저(KST) `new Date()` 날짜키 → **skew 없음**. 또한 분기선/메시지 본문은 이미 cutover 후 동일 PG timestamptz→JS 경로로 정상 렌더 중(앱 전반이 TZ=Asia/Seoul 에 이미 결합). 본 수정은 그 기존 결합과 정합. **잔존(수용/follow-up)**: PG 세션 tz≠브라우저 tz 인 미래/타지역 배포에서는 skew 가능 — 단 이는 앱 전반의 기존 tz 결합 속성이지 본 fix 가 도입한 것 아님. 필요 시 서버계산 day_key 를 프런트로 내려 분기선도 그 키를 쓰도록 일원화(별도 cycle).
+  - **[패널 MAJOR #2] core-fallback id-space gap** — `_get_history` 는 `agent_runtime.messages` 에 assistant 가 없으면 `core_messages`(다른 id)로 폴백해 DOM 을 렌더하는데, 캘린더 2엔드포인트는 `agent_runtime.messages` 만 조회 → 그런 대화는 캘린더 빈/미스. → **실측 무력화**: 라이브 집계 91 대화 중 "core 에만 assistant 있고 agent_runtime.messages 엔 없는" 대화 = **0건**. 모든 대화 DOM 이 PG id 로 렌더 → 캘린더 id-space 완전 일치. 패널도 "순수 core 대화는 pre-cutover(history_dates 가 AgentMemoryMessages 만 조회)에도 캘린더 빈 = 신규 회귀 아님" 인정. **잔존(수용/follow-up)**: 향후 core-fallback 대화가 생기면 두 엔드포인트에도 동일 폴백 미러링(별도 cycle).
+  - **[패널 무반박] PG SQL 구문/의미(`to_char <=` lexicographic monotonic, `string_agg ... ORDER BY ... GROUP BY to_char` 유효·MySQL 등가), id-space(공통 경로), 리소스(conn 모든 경로 1회 close·pg finally close, 누수/이중 close 없음), auth/scope(분기 전 `_require_account`+`_resolve_conversation_for_account` 유지) — 결함 없음 확인.**
+- Risk: low — 읽기 전용 라우팅, RBAC/스키마/파괴 0. make test exit=0(회귀 0).
+- Cross-ref: CHG-20260610-0189 / TASK-0189 / `_get_history`(app.py) PG 분기 / agent_runtime_schema.sql `agent_runtime.messages`.
+
 ## REV-20260610-0188 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]
 - Date: 2026-06-10
 - Cycle: TASK-0188 (공유 대화 페이지 markdown 미적용 수정 + 수신자 가독성 디자인), **Minor §12.3**

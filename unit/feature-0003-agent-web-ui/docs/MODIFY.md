@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260610-0189
+- Date: 2026-06-10 (TASK-0189, **Minor §12.3** — 백엔드 읽기경로 라우팅)
+- Scope: 날짜기준표 캘린더의 "대화 구간 이동"(날짜/시각 점프) 기능 복구. AR-M5 cutover 라우팅 누락 수정.
+- 배경: 메시지 정본이 MySQL `AgentMemoryMessages` → PG `agent_runtime.messages` 로 cutover 되며 MySQL 테이블이 DROP(AR-M5). 메시지 목록(`_get_history`)·`_load_latest_assistant_message` 는 `AGENT_RUNTIME_READ_BACKEND` 게이트로 PG 라우팅 이전됐으나, 캘린더 backing 2개 엔드포인트(`/api/history_dates`·`/api/history_anchor`)는 이전에서 **누락**돼 삭제된 MySQL 테이블을 직접 조회 → `history_dates` 는 except 폴백으로 항상 `{"dates": {}}`(캘린더에 선택 가능한 날짜 없음 = 기능 누락), `history_anchor` 는 500. 프런트(app.js) 캘린더 로직(`openHistoryCalendarAt`/`renderHistoryCalendar`/`jumpToHistoryAnchor`)은 정상.
+- 변경 ([src/app.py](../src/app.py)):
+  - `history_anchor`: `AGENT_RUNTIME_READ_BACKEND == "postgres"` 일 때 PG `agent_runtime.messages` 에서 `id, created_at` 을 `to_char(created_at,'YYYY-MM-DD HH24:MI:SS') <= %s`(세션 tz wall-clock 문자열 비교, 원본 MySQL `CreatedAt <= when` 의미 보존) 기준 최신 1건 조회, 없으면 최초 1건 폴백. 반환 `message_id` 는 `_get_history` PG 분기가 DOM 에 부여한 PG id(`message-<id>`)와 동일 id-space → 점프 타겟 매칭. legacy MySQL 경로는 else 유지.
+  - `history_dates`: 동일 게이트로 `to_char(created_at,'YYYY-MM-DD')` 그룹 + `string_agg(to_char(created_at,'HH24:MI') ORDER BY created_at)` 로 날짜별 시각 라벨 조립(원본 `DATE(CreatedAt)` + `GROUP_CONCAT(DATE_FORMAT(...,'%H:%i'))` 등가). legacy MySQL 경로 else 유지. history_anchor 와 동일 `to_char` 기준이라 라벨·점프 매칭 상호 일관.
+  - 두 분기 모두 미사용 `_connect_memory()` conn 을 모든 return 경로(성공·무행·예외)에서 정확히 1회 close.
+- 비변경: RBAC(엔드포인트는 기존 `_require_account` + `_resolve_conversation_for_account` 유지)·스키마·시크릿·프런트 무변경. 파괴적 연산 0(읽기 전용).
+- 검증: 신규 `tests/test_history_calendar_pg_routing.py`(T1 PG 라우팅+삭제 테이블 미접촉 가드, T2 PG id 반환, T3 legacy back-compat). make test(컨테이너 pytest+ruff) exit=0. outside-voice 적대적 백엔드/QA 검토 REV-20260610-0189 — MAJOR 2건 제기됐으나 라이브 실측으로 무력화(① PG 세션 tz=Asia/Seoul=브라우저 KST → 날짜키 skew 없음, ② core-only 대화 0건 → core-fallback id-space gap 미발생).
+- Files:
+  - unit/feature-0003-agent-web-ui/src/app.py (`history_anchor`·`history_dates` PG 라우팅 분기)
+  - unit/feature-0003-agent-web-ui/tests/test_history_calendar_pg_routing.py (신규 회귀 테스트)
+  - unit/feature-0003-agent-web-ui/docs/TASK.md, MODIFY.md, REVIEW.md
+- Rollback: 본 cycle 커밋 revert — 두 엔드포인트가 다시 MySQL `AgentMemoryMessages` 만 조회(= 캘린더 점프 재차 무력화).
+
 ## CHG-20260610-0188
 - Date: 2026-06-10 (TASK-0188, **Minor §12.3** — frontend-static-only)
 - Scope: 공유 대화 페이지(`/share/{token}`)의 메시지 본문 markdown 미적용 수정 + 수신자 입장 가독성 디자인 보강.
