@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0180 [SKIPPED:css-layout-no-logic]
+- Date: 2026-06-10
+- Cycle: TASK-0180 (차트 카테고리별 행 레이아웃 + 일별 폭 채움 + 상세 표 여백), **Minor §12.3**
+- 사유: 순수 CSS/HTML 레이아웃 + SVG viewBox 치수(clientWidth) 변경 — 동작/데이터/RBAC/스키마/백엔드 무변경. 반응형(flex-wrap)로 좁은 화면 대응. node --check PASS. 시각 검증 Windows-browser(PB-0008).
+
 ## REV-20260610-0179 [SKIPPED:css-layout-no-logic]
 - Date: 2026-06-10
 - Cycle: TASK-0179 (차트 grid 다열 배치), **Minor §12.3**

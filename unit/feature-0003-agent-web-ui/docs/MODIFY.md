@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260610-0180
+- Date: 2026-06-10
+- TASK-Cycle: TASK-0180, **Minor §12.3** — 차트 카테고리별 행 레이아웃 + 일별 폭 채움 + 상세 표 여백
+- Summary: TASK-0179 의 auto-fill grid(카테고리 무시 몰아넣기)를 명시적 행 구조(4:1 trend / 역할별 토큰|비용 / 계정별 토큰|비용)로 교체 + 일별 차트가 넓은 카드를 폭 채우게(viewBox=clientWidth) + 상세 표 카드화로 여백 해소. 순수 레이아웃.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.admin-usage-charts`/`.admin-usage-span2`(grid) 제거 → `.admin-usage-trend-row`(flex)+`.admin-usage-trend-main`(flex 4, min 420)+`.admin-usage-trend-side`(flex 1, min 240); `.admin-usage-row > card` min 300; `.admin-usage-table-card .admin-usage-table { max-width:none; width:100% }`.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: 차트를 3행(trend 4:1 / 역할별 토큰·비용 / 계정별 토큰·비용)으로 재배치; details 상세 표를 카드(모델별 full + 역할별|계정별 2열)로. 캐시버스터 `?v=20260610-usage-rows`.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: renderStacked 의 viewBox W 를 `el.clientWidth`(폴백 760)로, H 200 고정, 막대 cap 46→64, SVG max-width 제거(카드 폭 채움).
+- Note: 권한/엔드포인트/스키마/백엔드 무변경 — 레이아웃/SVG 치수만. 데이터/툴팁/팔레트 동일. clientWidth 측정은 탭 활성 후 렌더 시점(폴백 760).
+- Review: REV-20260610-0180 [SKIPPED:css-layout-no-logic]. Windows-browser(PB-0008) 검증 배포 후.
+
 ## CHG-20260610-0179
 - Date: 2026-06-10
 - TASK-Cycle: TASK-0179, **Minor §12.3** — LLM 사용량 차트 넓은 화면 가로 여백 해소 (CSS grid)

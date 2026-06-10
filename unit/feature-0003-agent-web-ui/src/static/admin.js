@@ -765,9 +765,12 @@ async function loadUsage() {
     const cmap = colorMapFor(models);
     const totalsByDay = days.map((d) => Object.values(dayMap[d]).reduce((a, b) => a + b, 0));
     const maxT = Math.max(1, ...totalsByDay);
-    const W = 760, H = 196, pL = 60, pB = 26, pT = 10, pR = 12;  /* TASK-0178: 차트 높이 컴팩트 */
+    /* TASK-0180: viewBox 폭을 카드 실제 폭에 맞춰 일별 차트가 넓은 카드를 꽉 채우게 한다
+       (높이는 H 고정 → SVG width:100%/height:auto 시 정확히 H px). 측정 실패 시 760 폴백. */
+    const cw = Math.max(360, Math.round(el.clientWidth || 0) || 760);
+    const W = cw, H = 200, pL = 56, pB = 26, pT = 10, pR = 14;
     const plotW = W - pL - pR, plotH = H - pT - pB, n = days.length;
-    const step = plotW / n, bw = Math.max(2, Math.min(46, step * 0.72));
+    const step = plotW / n, bw = Math.max(2, Math.min(64, step * 0.66));
     let bars = "", valLabels = "";
     days.forEach((d, di) => {
       const x = pL + di * step + (step - bw) / 2;
@@ -792,7 +795,7 @@ async function loadUsage() {
       xl += `<text x='${x.toFixed(1)}' y='${H - 9}' text-anchor='middle' font-size='10' fill='var(--text-muted)'>${esc(shortLabel(days[di]))}</text>`;
     });
     const legend = models.map((m) => `<span style='display:inline-flex;align-items:center;gap:5px;margin:2px 14px 2px 0;font-size:12px;'><span style='width:11px;height:11px;border-radius:2px;background:${cmap[m]};display:inline-block;'></span>${esc(m)}</span>`).join("");
-    el.innerHTML = `<svg viewBox='0 0 ${W} ${H}' style='width:100%;max-width:1000px;height:auto;'>${axis}${bars}${valLabels}${xl}</svg><div style='margin-top:6px;'>${legend}</div>`;
+    el.innerHTML = `<svg viewBox='0 0 ${W} ${H}' style='width:100%;height:auto;display:block;'>${axis}${bars}${valLabels}${xl}</svg><div style='margin-top:6px;'>${legend}</div>`;
     bindTip(el);
   };
   // 모델별 비중 — 도넛 + hover 툴팁(토큰·비중·추정비용).

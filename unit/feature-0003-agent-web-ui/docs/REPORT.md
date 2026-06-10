@@ -10,6 +10,9 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-06-10 TASK-0180 — 차트 카테고리별 행 레이아웃 + 일별 폭 채움 + 상세 표 여백** (REQ-20260610-0180, REV-20260610-0180 [SKIPPED:css-layout], **Minor §12.3**). 사용자 피드백(몰아넣기 불쾌·상세 표 여백). 명시적 행 구조(4:1 trend / 역할별 토큰·비용 / 계정별 토큰·비용) + 일별 차트 viewBox=clientWidth 로 넓은 카드 폭 채움 + 상세 표 카드화. 순수 레이아웃, 백엔드 무변경. node --check PASS.
+## 1. Summary
+
 **2026-06-10 TASK-0179 — LLM 사용량 차트 넓은 화면 가로 여백 해소 (CSS grid)** (REQ-20260610-0179, REV-20260610-0179 [SKIPPED:css-layout], **Minor §12.3**). 넓은 모니터에서 차트가 좌측만 차지하던 것을 `.admin-usage-charts` grid 다열 배치로 채움(일별 2칸, 나머지 1칸씩, 좁으면 wrap). 순수 레이아웃, 백엔드 무변경. node --check PASS.
 ## 1. Summary
 
