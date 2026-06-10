@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0178 [SKIPPED:display-metadata-live-canary-verified]
+- Date: 2026-06-10 (TASK-0178)
+- Cycle: 단계 근거를 tool 인자(reason/work)로 전환 — TASK-0177 의 전달 메커니즘 수정. **Major §12.3**(모든 답변 영향 — 프롬프트/tool 스키마).
+- 사유: 변경 본질은 표시 메타데이터(work/reason) 의 **전달 경로**를 content(Bedrock strip) → tool 인자(안정)로 바꾼 것. 쿼리 실행/결과/answer/RBAC/스키마/회계 무변경, 핸들러는 named-get 이라 추가 인자 무해(테스트 단언). 개념적 위험(누수·과호출·순서)은 직전 cycle outside-voice(REV-20260610-0177)가 이미 적대적 검토했고, 그 리뷰가 명시 요구한 검증(M2: `reason_source='llm'` 라이브 실측)을 **머지 전 probe 카나리아로 충족**: 2 ask(다단계) 5 step 전부 `reason_source='llm'`·`work_source='llm'`, 근거가 질문 맥락 직결, 최종답변 JSON 누수 0, 답변 정확. 정적 재리뷰보다 강한 실증.
+- 잔존 관찰(0177 M3): narration 이 over-calling 유발하는지 — probe 5 step 은 정상 범위(search→describe→execute 자연 순서), 답변 정확. 운영 모니터 지속.
+- 게이트: make test 282 passed/2 skipped(신규 4, 회귀 0). Verdict: SAFE TO SHIP (라이브 카나리아 검증).
+
 ## REV-20260610-0177 [SUBAGENT: general-purpose 적대적 리뷰 — base SYSTEM_PROMPT tool_notes 변경, NEEDS-TWEAK→FIXED, BLOCKER 1 흡수]
 - Date: 2026-06-10 (TASK-0177)
 - 대상: base SYSTEM_PROMPT 에 tool_notes(work/reason) 방출 지시 추가. **Major §12.3** — 모든 사용자 답변에 영향(고-레버리지 프롬프트).

@@ -308,6 +308,53 @@ TOOL_DEFINITIONS_FULL: list[dict[str, Any]] = TOOL_DEFINITIONS + [
 ]
 
 
+# ── 단계 narration 파라미터 (TASK-0178) ──────────────────────────────
+# 실행 단계의 work(무엇을)/reason(왜)을 LLM 이 채우게 하는 표준 경로.
+# content 동시 방출(TASK-0177)은 Bedrock gateway 가 tool_use 턴의 text content 를
+# strip 해 무력했다(REV-20260610-0177 M2 라이브 확정). tool 호출 인자(arguments)는
+# SQL 처럼 안정적으로 전달되므로, 모든 도구 스키마에 optional `reason`/`work` 를
+# 주입해 모델이 호출 시 채우게 한다. agent_core 루프가 tool_args 에서 pop 해 step 에
+# 기록하고, 실제 도구 실행에는 전달하지 않는다(핸들러는 named-get 이라 무해하지만 명시 pop).
+# 미제공 시 _derive_step_reason/_derive_step_work fallback(TASK-0175)이 받는다.
+_STEP_NARRATION_PARAMS: dict[str, dict[str, str]] = {
+    "reason": {
+        "type": "string",
+        "description": (
+            "이 도구를 호출하는 이유를 사용자의 질문·목표에 비추어 구체적으로 (한국어, 1~2문장). "
+            "일반적 도구 설명이 아니라 '이번 질문에 왜 이 단계가 필요한지'. "
+            "예: '월별 매출을 집계하려면 주문일자·금액 컬럼명을 먼저 확정해야 하므로'. "
+            "모든 도구 호출에 채운다."
+        ),
+    },
+    "work": {
+        "type": "string",
+        "description": "이 단계가 하는 일을 한 줄로 (한국어). 예: '`db`.`orders` 의 컬럼 구조를 확인'.",
+    },
+}
+
+
+def _inject_step_narration_params(tool_defs: list[dict[str, Any]]) -> None:
+    """모든 tool 정의의 parameters.properties 앞쪽에 reason/work 를 주입(think-first).
+    TOOL_DEFINITIONS_FULL 은 TOOL_DEFINITIONS 의 dict 객체를 공유하므로 FULL 만
+    순회해도 전체 8개 고유 도구가 1회씩 갱신된다. required 에는 추가하지 않는다(optional)."""
+    for t in tool_defs:
+        params = (t.get("function") or {}).get("parameters")
+        if not isinstance(params, dict):
+            continue
+        props = params.get("properties")
+        if not isinstance(props, dict):
+            continue
+        merged: dict[str, Any] = {}
+        for key, schema in _STEP_NARRATION_PARAMS.items():
+            if key not in props:
+                merged[key] = dict(schema)
+        merged.update(props)
+        params["properties"] = merged
+
+
+_inject_step_narration_params(TOOL_DEFINITIONS_FULL)
+
+
 # ══════════════════════════════════════════════════════════════════
 #  도구 실행 함수
 # ══════════════════════════════════════════════════════════════════

@@ -752,3 +752,11 @@ TASK-0015 (plan-review):
 - [x] 회귀 테스트 `tests/test_tool_notes_prompt.py` 9종(프롬프트 지시 존재·파서 라운드트립[멀티/펜스/패딩/절단]·sanitizer 4). make test 컨테이너 **278 passed/2 skipped**(회귀 0). py_compile OK.
 - [x] outside-voice 적대적 리뷰 NEEDS-TWEAK→FIXED, BLOCKER 1 흡수 + MAJOR 3 반영/위임 (REV-20260610-0177).
 - [ ] verify-completion → 커밋 → push → main ff-merge → **재배포(ask-worker+web) + 라이브 `WebSystemPrompts` global row 새 상수로 갱신**(GLOBAL row 가 상수 대체) → **카나리아: `reason_source='llm'` 비율 실측(M2) + 최종답변 JSON 누수 0 + 근거 맥락성 확인**
+
+### TASK-0178 — 단계 근거를 LLM 이 생성: tool 인자(reason/work)로 전환 (2026-06-10)
+- [x] **Major §12.3** — TASK-0177(content tool_notes) 전달 메커니즘 수정. **라이브 확정**: 0177 배포 후 카나리아 전 step `reason_source=derived`, core_messages content=`{"tool_notes":[{"work":"","reason":""}]}` → **Bedrock gateway 가 tool_use 턴 text content strip**(REV-0177 M2 실현). (CHG-20260610-0178)
+- [x] tools.py: 전 도구 스키마에 optional `reason`/`work` 주입(`_inject_step_narration_params`, properties 맨 앞=think-first, required 제외). reason 설명=질문 맥락 구체 근거.
+- [x] agent_core: 루프에서 `tool_args.pop("work"/"reason")` 추출(실행/저장 전 제거) + 우선순위 arg→content→derived. SYSTEM_PROMPT 를 "tool 인자 reason/work 채워라"로 교체.
+- [x] 회귀 테스트 `tests/test_step_narration_params.py` 4(전 도구 주입·core 공유·think-first 순서·핸들러 추가인자 무해) + `test_tool_notes_prompt.py` 프롬프트 테스트 갱신. make test **282 passed/2 skipped**(회귀 0).
+- [x] **머지 전 라이브 probe 카나리아 PASS**: worktree 배포+row 갱신 후 2 ask → **5 step 전부 `reason_source='llm'`**, 근거 질문 맥락 직결, 누수 0, 답변 정확. (REV-20260610-0178)
+- [ ] verify-completion → 커밋 → push → main ff-merge → 머지판 재배포(GIT_COMMIT 정상 각인) → 최종 카나리아 재확인
