@@ -576,10 +576,10 @@ def _detect_pending_insight_repairs(
     if not db_conn or not mem_conn or not schema_names:
         return report
 
-    schema_keys = [f"schema_insight:{schema}" for schema in schema_names]
+    schema_keys = [ds_fact_key("schema_insight", schema) for schema in schema_names]
     schema_states = _load_insight_artifact_states(mem_conn, schema_keys)
     for schema in schema_names:
-        schema_key = f"schema_insight:{schema}"
+        schema_key = ds_fact_key("schema_insight", schema)
         if not _insight_artifact_complete(
             schema_states.get(schema_key, _empty_insight_artifact_state(schema_key))
         ):
@@ -611,7 +611,7 @@ ORDER BY TABLE_SCHEMA, TABLE_NAME
         table_name = str(row[1] or "").strip()
         if not schema_name or not table_name:
             continue
-        table_keys.append(f"table_insight:{schema_name}.{table_name}")
+        table_keys.append(ds_fact_key("table_insight", f"{schema_name}.{table_name}"))
 
     if not table_keys:
         return report
@@ -871,7 +871,7 @@ def _scan_instance_schema_insights(
     max_schemas = int(AGENT_SCHEMA_INSTANCE_SCAN_MAX_SCHEMAS or 0)
     if max_schemas > 0 and candidates:
         pick_limit = min(max_schemas, len(candidates))
-        offset_key = "schema_instance_scan_schema_offset"
+        offset_key = ds_scope_name("schema_instance_scan_schema_offset")
         try:
             offset = int(load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, offset_key) or 0)
         except Exception:
@@ -909,7 +909,7 @@ def _scan_instance_schema_insights(
     )
     if not force_scan:
         try:
-            last_scan = load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, "schema_instance_scan_at")
+            last_scan = load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, ds_scope_name("schema_instance_scan_at"))
             parsed = _parse_iso_time(str(last_scan)) if last_scan else None
             if parsed:
                 elapsed = (datetime.now(timezone.utc) - parsed).total_seconds()
@@ -938,7 +938,7 @@ def _scan_instance_schema_insights(
                 report["schemas_evaluated"] = int(report.get("schemas_evaluated", 0)) + 1
                 # 스키마 핑거프린트 계산 (테이블 목록 기반)
                 current_schema_fp = _compute_schema_fingerprint(db_conn, schema)
-                schema_fp_key = f"schema_fp:{schema}"
+                schema_fp_key = ds_fact_key("schema_fp", schema)
                 stored_schema_fp = stored_schema_fps.get(schema_fp_key, "")
                 schema_structure_changed = (current_schema_fp != stored_schema_fp)
 
@@ -975,8 +975,8 @@ ORDER BY TABLE_NAME
                 table_rows = cur.fetchall() or []
                 all_table_names = [str(r[0]).strip() for r in table_rows if r and r[0]]
                 all_table_names = [t for t in all_table_names if t]
-                schema_key = f"schema_insight:{schema}"
-                schema_refresh_key = f"schema_insight_refresh_at:{schema}"
+                schema_key = ds_fact_key("schema_insight", schema)
+                schema_refresh_key = ds_fact_key("schema_insight_refresh_at", schema)
                 schema_state = _load_insight_artifact_states(mem_conn, [schema_key]).get(
                     schema_key, _empty_insight_artifact_state(schema_key)
                 )
@@ -1119,7 +1119,7 @@ ORDER BY TABLE_NAME
                 else:
                     report["skipped_schemas"] = int(report.get("skipped_schemas", 0)) + 1
 
-                offset_key = f"schema_instance_scan_offset:{schema}"
+                offset_key = ds_scope_name(f"schema_instance_scan_offset:{schema}")
                 batch = max(1, int(AGENT_SCHEMA_INSTANCE_SCAN_TABLE_LIMIT))
                 if run_id == "init-memory":
                     batch = min(batch, 2)
@@ -1133,19 +1133,19 @@ ORDER BY TABLE_NAME
                 # 테이블 핑거프린트를 배치로 계산
                 current_table_fps = _compute_table_fingerprints_batch(db_conn, schema, all_table_names)
 
-                table_keys = [f"table_insight:{schema}.{name}" for name in all_table_names]
+                table_keys = [ds_fact_key("table_insight", f"{schema}.{name}") for name in all_table_names]
                 artifact_states = _load_insight_artifact_states(mem_conn, table_keys)
                 artifact_missing_tables: list[str] = []
                 changed_tables: list[str] = []
                 refresh_due_tables: list[str] = []
                 reason_map: dict[str, str] = {}
                 for tname in all_table_names:
-                    table_key = f"table_insight:{schema}.{tname}"
+                    table_key = ds_fact_key("table_insight", f"{schema}.{tname}")
                     state = artifact_states.get(table_key, _empty_insight_artifact_state(table_key))
-                    tfp_key_chk = f"table_fp:{schema}.{tname}"
+                    tfp_key_chk = ds_fact_key("table_fp", f"{schema}.{tname}")
                     has_stored_tfp = bool(stored_table_fps.get(tfp_key_chk, ""))
                     current_tfp = current_table_fps.get(tname, "")
-                    table_refresh_key = f"table_insight_refresh_at:{schema}.{tname}"
+                    table_refresh_key = ds_fact_key("table_insight_refresh_at", f"{schema}.{tname}")
                     table_refresh_due = _is_refresh_due(
                         table_refresh_map,
                         table_refresh_key,
@@ -1269,7 +1269,7 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                         continue
                     col_name_list = sorted(col_name_list)
                     cols_payload = sorted(cols_payload, key=lambda x: str(x.get("name", "")))
-                    table_key = f"table_insight:{schema}.{table}"
+                    table_key = ds_fact_key("table_insight", f"{schema}.{table}")
                     table_reason = reason_map.get(table, "artifact_missing")
                     table_refs = _build_insight_references(
                         schema,
@@ -1296,21 +1296,21 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                         if repaired:
                             artifact_states[table_key] = repaired_state
                             current_tfp = current_table_fps.get(table, "")
-                            tfp_key = f"table_fp:{schema}.{table}"
+                            tfp_key = ds_fact_key("table_fp", f"{schema}.{table}")
                             has_stored_tfp = bool(stored_table_fps.get(tfp_key, ""))
                             followup_reason = ""
                             if current_tfp != stored_table_fps.get(tfp_key, ""):
                                 followup_reason = "fingerprint_changed"
                             elif (not has_stored_tfp) and _is_refresh_due(
                                 table_refresh_map,
-                                f"table_insight_refresh_at:{schema}.{table}",
+                                ds_fact_key("table_insight_refresh_at", f"{schema}.{table}"),
                                 table_refresh_sec,
                             ):
                                 followup_reason = "refresh_due"
                             if followup_reason:
                                 table_reason = followup_reason
                             else:
-                                table_refresh_key = f"table_insight_refresh_at:{schema}.{table}"
+                                table_refresh_key = ds_fact_key("table_insight_refresh_at", f"{schema}.{table}")
                                 _mark_refresh_kv(mem_conn, table_refresh_map, table_refresh_key)
                                 if current_tfp:
                                     _save_fingerprint(mem_conn, tfp_key, current_tfp)
@@ -1324,7 +1324,7 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                         "columns": cols_payload[: max(1, int(AGENT_TABLE_INSIGHT_MAX_COLS))],
                     }
                     table_started = time.perf_counter()
-                    table_refresh_key = f"table_insight_refresh_at:{schema}.{table}"
+                    table_refresh_key = ds_fact_key("table_insight_refresh_at", f"{schema}.{table}")
                     table_error = ""
                     table_insight = None
                     try:
@@ -1405,7 +1405,7 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                     )
                     if table_complete:
                         _mark_refresh_kv(mem_conn, table_refresh_map, table_refresh_key)
-                        tfp_key = f"table_fp:{schema}.{table}"
+                        tfp_key = ds_fact_key("table_fp", f"{schema}.{table}")
                         current_tfp = current_table_fps.get(table, "")
                         if current_tfp:
                             _save_fingerprint(mem_conn, tfp_key, current_tfp)
@@ -1432,7 +1432,7 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
         cur.close()
     try:
         if report.get("scan_started"):
-            save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, "schema_instance_scan_at", utc_now_iso())
+            save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, ds_scope_name("schema_instance_scan_at"), utc_now_iso())
     except Exception:
         pass
     return report
@@ -1573,22 +1573,65 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             # skip 하고 loop 가 degraded backoff 로 PG 복구를 기다린다.
             status = "degraded_readback"
         else:
-            known = load_known_schemas(db_conn)
-            if known:
-                KNOWN_SCHEMAS.clear()
-                KNOWN_SCHEMAS.extend(known)
-            schema_count = len([s for s in (KNOWN_SCHEMAS or []) if s and not _is_system_schema(s)])
+            # 멀티 datasource (P3): 기본 단일 MySQL(ds=None) + 등록 datasource 들을 순회하며
+            # 각각 datasource-스코프 fact 키로 인사이트를 생성한다. flag OFF 면 ds_targets 가
+            # [(None, None)] 한 개라 기존 동작 0 변경(무접두 키). datasource 별 키는 ContextVar
+            # (set_active_datasource)로 ds_fact_key 에 주입 → write·read-back·grounding 3자 정합.
+            ds_targets = [(None, None)]
+            if AGENT_MULTI_DATASOURCE_ENABLED and DATASOURCES:
+                ds_targets += [(k, v) for k, v in DATASOURCES.items()]
+            schema_count = 0
             plan_start = time.perf_counter()
-            _bootstrap_schema_insights(db_conn, mem_conn, KNOWN_SCHEMAS, run_id=cycle_run_id)
-            scan_report = _scan_instance_schema_insights(
-                db_conn,
-                mem_conn,
-                KNOWN_SCHEMAS,
-                run_id=cycle_run_id,
-            )
+            for _ds_key, _ds_coords in ds_targets:
+                _ds_conn = None
+                try:
+                    set_active_datasource(_ds_key)
+                    if _ds_key is None:
+                        _ds_conn = db_conn  # 기본 DB 는 이미 연결됨
+                    else:
+                        # datasource 는 database=None(schema-prefixed, M-1 정합)
+                        _ds_conn = connect_with_retry(database=None, datasource=_ds_coords, autocommit=True)
+                    _known = load_known_schemas(_ds_conn)
+                    if _ds_key is None and _known:
+                        KNOWN_SCHEMAS.clear()
+                        KNOWN_SCHEMAS.extend(_known)
+                    _scan_schemas = (_known or KNOWN_SCHEMAS) if _ds_key is None else (_known or [])
+                    schema_count += len([s for s in (_scan_schemas or []) if s and not _is_system_schema(s)])
+                    _bootstrap_schema_insights(_ds_conn, mem_conn, _scan_schemas, run_id=cycle_run_id)
+                    _rep = _scan_instance_schema_insights(
+                        _ds_conn,
+                        mem_conn,
+                        _scan_schemas,
+                        run_id=cycle_run_id,
+                    )
+                    # REV-20260610-P3 MAJOR: 마지막 datasource 만 반영되던 telemetry 를 누적
+                    # (과거 livelock 을 잡은 관측성 보존). int 필드 합산 + bool OR.
+                    if isinstance(_rep, dict):
+                        for _k, _v in _rep.items():
+                            if isinstance(_v, bool):
+                                scan_report[_k] = bool(scan_report.get(_k)) or _v
+                            elif isinstance(_v, (int, float)):
+                                scan_report[_k] = (scan_report.get(_k) or 0) + _v
+                            else:
+                                scan_report[_k] = _v
+                    if _rep.get("scan_started"):
+                        scan_triggered = 1
+                except Exception as _ds_exc:
+                    # 연결실패 격리 (PF2/Codex): 한 datasource 실패가 다른 datasource·기본 DB
+                    # scan 을 막지 않는다. 기본 DB(ds=None) 실패는 바깥 except 로 전파(기존 동작).
+                    if _ds_key is None:
+                        raise
+                    logging.getLogger("insight").warning(
+                        "insight_datasource_scan_failed ds=%s err=%r — 다음 datasource 계속", _ds_key, _ds_exc,
+                    )
+                finally:
+                    set_active_datasource(None)
+                    if _ds_key is not None and _ds_conn is not None:
+                        try:
+                            _ds_conn.close()
+                        except Exception:
+                            pass
             _timing_breakdown_add(timing, "plan_ms", (time.perf_counter() - plan_start) * 1000.0)
-            if scan_report.get("scan_started"):
-                scan_triggered = 1
     except Exception as exc:
         status = "error"
         err_text = str(exc).strip()[:500]

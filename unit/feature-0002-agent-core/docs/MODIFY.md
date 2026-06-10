@@ -823,3 +823,16 @@ source_of_truth: true
   - unit/feature-0002-agent-core/tests/test_multi_datasource.py (신규 probe 2)
   - unit/feature-0002-agent-core/docs/{FUNCTION,REVIEW,REPORT,TASK}.md, docs/STATUS.md
 - Rollback: UI 비파괴(추가만). 코드 환원 시 probe·test 엔드포인트·admin.js datasource 섹션·app.js 배지 제거. flag OFF 라 런타임 영향 0.
+
+## CHG-20260610-MULTI-DATASOURCE-P3
+- Date: 2026-06-10
+- Related Requirement: TASK-0191 (REQ-20260610-0191, Major §12.3 — 멀티 datasource P3 insight per-datasource)
+- Summary: insight fact 키를 datasource 차원으로 분리(Codex-3 grounding 교차노출 차단) + worker datasource 순회. config 에 ContextVar+ds_fact_key/like/strip/scope_name 헬퍼(write·read-back·grounding 3자 정합 단일 소유 → livelock 방지). insight.py 키빌드 18곳 치환+순회(연결실패 격리·scan_report 누적). agent_core grounding ds 필터(not_like + set_active_datasource). outside-voice SHIP-ABLE(REV-20260610-0191), MAJOR(scan_report)·M2(MySQL fallback 가드) 흡수. flag OFF=무접두 동작 0 변경. make test 307 passed/회귀 0.
+- Files:
+  - unit/feature-0002-agent-core/src/modules/config.py (ds 키 헬퍼 + ContextVar + __all__)
+  - unit/feature-0002-agent-core/src/modules/insight.py (키빌드 ds_fact_key + run_insight_cycle datasource 순회 + 스캔KV ds_scope_name + scan_report 누적)
+  - unit/feature-0002-agent-core/src/modules/schema.py (키빌드 ds_fact_key 2곳)
+  - unit/feature-0002-agent-core/src/agent_core.py (_global_insight_rows_pg not_like + _load_schema_list/_load_relevant_table_insights ds 필터 + grounding set_active_datasource + M2 가드)
+  - unit/feature-0002-agent-core/tests/test_multi_datasource.py (신규 P3 4) + tests/test_db_query_ux.py (mock 시그니처 +not_like_pattern)
+  - unit/feature-0002-agent-core/docs/{FUNCTION,REVIEW,REPORT,TASK}.md, docs/STATUS.md
+- Rollback: flag OFF 라 런타임 영향 0(무접두 키=기존). **주의**: flag ON 운영 중 환원 시 ds-스코프 fact 키가 무접두 read-back 과 불일치 → 1회 재생성(livelock 아님).

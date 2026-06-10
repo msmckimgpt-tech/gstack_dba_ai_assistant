@@ -637,7 +637,7 @@ def _record_schema_insight_from_search(
     _publish_fact(
         conn,
         conversation_id,
-        f"schema_insight:{schema}",
+        ds_fact_key("schema_insight", schema),
         text,
         4,
         source_type="schema_insight",
@@ -664,7 +664,7 @@ def _record_table_usage_insight(
     if not schema:
         return
     sample_cols = [str(c) for c in (col_names or []) if str(c).strip()]
-    fact_key = f"table_insight:{schema}.{table}"
+    fact_key = ds_fact_key("table_insight", f"{schema}.{table}")
     existing = ""
     for global_cid in _global_fact_conversation_ids(include_shared=True):
         existing = _load_fact_text(

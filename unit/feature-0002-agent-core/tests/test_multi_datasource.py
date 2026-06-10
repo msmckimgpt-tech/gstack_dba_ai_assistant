@@ -245,3 +245,66 @@ def test_resolve_datasource_read_failure_failsafe():
          mock.patch.object(ac.cfg, "DATASOURCES", {"prod": DS}):
         # 읽기 실패해도 예외 전파 없이 기본 DB (fail-safe)
         assert ac._resolve_product_datasource(_Boom(), 5) is None
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 4. P3: insight fact 키 datasource 스코프 (Codex-3 교차노출 차단)
+# ──────────────────────────────────────────────────────────────────────────
+import re as _re
+
+
+def _sql_like_match(value: str, pattern: str) -> bool:
+    """SQL LIKE 시맨틱 모사 (% → .*, _ → .). 누출 검증용."""
+    rx = "^" + "".join(".*" if c == "%" else ("." if c == "_" else _re.escape(c)) for c in pattern) + "$"
+    return _re.match(rx, value) is not None
+
+
+def test_ds_fact_key_roundtrip_default_and_ds():
+    # 기본(None): 무접두
+    assert cfg.ds_fact_key("table_insight", "db.t", ds_key=None) == "table_insight:db.t"
+    assert cfg.ds_strip_prefix("table_insight", "table_insight:db.t", ds_key=None) == "db.t"
+    # datasource: ds 접두
+    k = cfg.ds_fact_key("table_insight", "db.t", ds_key="prod")
+    assert k == "table_insight:ds:prod:db.t"
+    assert cfg.ds_strip_prefix("table_insight", k, ds_key="prod") == "db.t"
+
+
+def test_ds_grounding_like_no_cross_datasource_leak():
+    """핵심 보안: grounding LIKE 패턴이 다른 datasource 의 fact 키를 절대 매치하지 않는다."""
+    default_key = "table_insight:dblog.users"
+    prod_key = "table_insight:ds:prod:appdb.orders"
+    bi_key = "table_insight:ds:bi:sales.daily"
+
+    # 기본 대화(ds=None): like=table_insight:%, not_like=table_insight:ds:%
+    like, nlike = cfg.ds_fact_like("table_insight", ds_key=None)
+    def visible(key):
+        return _sql_like_match(key, like) and not (nlike and _sql_like_match(key, nlike))
+    assert visible(default_key) is True       # 기본 키는 보임
+    assert visible(prod_key) is False         # prod datasource 키 비노출 (Codex-3)
+    assert visible(bi_key) is False           # bi datasource 키 비노출
+
+    # prod 대화(ds=prod): like=table_insight:ds:prod:%, not_like=None
+    like_p, nlike_p = cfg.ds_fact_like("table_insight", ds_key="prod")
+    assert nlike_p is None
+    def visible_p(key):
+        return _sql_like_match(key, like_p)
+    assert visible_p(prod_key) is True        # 자기 datasource 키만 보임
+    assert visible_p(default_key) is False    # 기본 키 비노출
+    assert visible_p(bi_key) is False         # 다른 datasource(bi) 키 비노출
+
+
+def test_ds_fact_like_contextvar_threads_default():
+    cfg.set_active_datasource(None)
+    try:
+        assert cfg.ds_fact_key("schema_fp", "sales") == "schema_fp:sales"
+        cfg.set_active_datasource("bi")
+        assert cfg.ds_fact_key("schema_fp", "sales") == "schema_fp:ds:bi:sales"
+        like, nlike = cfg.ds_fact_like("schema_insight")
+        assert like == "schema_insight:ds:bi:%" and nlike is None
+    finally:
+        cfg.set_active_datasource(None)
+
+
+def test_ds_scope_name_scan_cursor():
+    assert cfg.ds_scope_name("schema_instance_scan_at", ds_key=None) == "schema_instance_scan_at"
+    assert cfg.ds_scope_name("schema_instance_scan_at", ds_key="prod") == "schema_instance_scan_at:ds:prod"

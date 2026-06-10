@@ -112,7 +112,7 @@ def test_assemble_core_messages_under_budget_unchanged():
 def test_load_schema_list_uses_pg_when_backend_pg(monkeypatch):
     monkeypatch.setattr(agent_core, "_kb_read_is_pg", lambda: True)
 
-    def fake_rows(like, with_text, tokens=None, limit=None):
+    def fake_rows(like, with_text, tokens=None, limit=None, not_like_pattern=None):
         if like.startswith("table_insight"):
             return [("table_insight:dblog.a", None),
                     ("table_insight:dblog.b", None),

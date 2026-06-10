@@ -722,6 +722,7 @@ def _global_insight_rows_pg(
     with_text: bool,
     tokens: list[str] | None = None,
     limit: int | None = None,
+    not_like_pattern: str | None = None,
 ) -> list[tuple] | None:
     """PG `public.fact_entries` 에서 __global__/common scope insight fact 를 읽는다.
 
@@ -744,20 +745,26 @@ def _global_insight_rows_pg(
         conn = _pg_connect_ro()
         cur = conn.cursor()
         params: list[Any] = [cfg.GLOBAL_CONVERSATION_ID, cfg.FACT_SCOPE_COMMON, like_pattern]
+        # 멀티 datasource (P3, Codex-3): not_like_pattern 으로 datasource 키를 제외/한정.
+        # 기본 대화(ds=None)는 `table_insight:ds:%` 를 제외해 datasource 인사이트 비노출.
+        nlike_sql = ""
+        if not_like_pattern:
+            nlike_sql = " AND e.fact_key NOT LIKE %s"
+            params.append(not_like_pattern)
         if with_text:
             sql = (
                 "SELECT e.fact_key, LEFT(t.text_content, 200) "
                 "FROM public.fact_entries e "
                 "JOIN public.texts t ON t.text_hash = e.text_hash "
                 "WHERE e.conversation_id = %s AND e.scope_key = %s "
-                "  AND e.fact_key LIKE %s"
+                "  AND e.fact_key LIKE %s" + nlike_sql
             )
         else:
             sql = (
                 "SELECT e.fact_key, NULL "
                 "FROM public.fact_entries e "
                 "WHERE e.conversation_id = %s AND e.scope_key = %s "
-                "  AND e.fact_key LIKE %s"
+                "  AND e.fact_key LIKE %s" + nlike_sql
             )
         if tokens:
             ors: list[str] = []
@@ -804,23 +811,33 @@ def _load_schema_list(mem_conn, max_total: int = 2000) -> str:
     # ── PG 정본 경로 ──
     pg_used = False
     if _kb_read_is_pg():
-        table_rows = _global_insight_rows_pg("table_insight:%", with_text=False)
-        schema_rows = _global_insight_rows_pg("schema_insight:%", with_text=True)
+        # 멀티 datasource (P3, Codex-3): grounding 읽기를 현재 대화의 datasource 로 한정한다.
+        # ds_fact_like 가 ContextVar(set_active_datasource, 호출부에서 설정)를 읽어 datasource
+        # 키만(또는 기본은 datasource 키 제외) 매치 → datasource 간 인사이트 교차노출 차단.
+        t_like, t_nlike = cfg.ds_fact_like("table_insight")
+        s_like, s_nlike = cfg.ds_fact_like("schema_insight")
+        table_rows = _global_insight_rows_pg(t_like, with_text=False, not_like_pattern=t_nlike)
+        schema_rows = _global_insight_rows_pg(s_like, with_text=True, not_like_pattern=s_nlike)
         if table_rows is not None or schema_rows is not None:
             pg_used = True
             for fact_key, _ in (table_rows or []):
-                name = fact_key.replace("table_insight:", "")
+                name = cfg.ds_strip_prefix("table_insight", fact_key)
                 dot = name.find(".")
                 if dot > 0:
                     schema_counts[name[:dot]] = schema_counts.get(name[:dot], 0) + 1
             for fact_key, text_content in (schema_rows or []):
-                schema_name = str(fact_key).replace("schema_insight:", "")
+                schema_name = cfg.ds_strip_prefix("schema_insight", fact_key)
                 if schema_name == "agent_memory":
                     continue
                 schema_descs[schema_name] = _extract_schema_desc(str(text_content or ""))
 
     # ── 레거시 MySQL fallback (PG 미사용 시만) ──
     if not pg_used:
+        # M2(P3): datasource 대화는 un-scoped MySQL fallback 을 타지 않는다(레거시 MySQL 미러가
+        # 부활해도 datasource 간 인사이트 교차노출 방지 — Codex-3 심층방어). 대신 빈 grounding →
+        # search/describe 발견 경로. (현재 MySQL 정본은 cutover 로 DROP 되어 이 경로는 dead.)
+        if cfg.get_active_datasource():
+            return ""
         if not mem_conn:
             return ""
         cur = mem_conn.cursor()
@@ -890,17 +907,22 @@ def _load_relevant_table_insights(mem_conn, user_message: str, max_items: int = 
 
     # ── PG 정본 경로 ──
     if _kb_read_is_pg():
+        # 멀티 datasource (P3, Codex-3): 현재 대화의 datasource 로 한정.
+        t_like, t_nlike = cfg.ds_fact_like("table_insight")
         pg_rows = _global_insight_rows_pg(
-            "table_insight:%", with_text=True, tokens=token_list, limit=max_items
+            t_like, with_text=True, tokens=token_list, limit=max_items, not_like_pattern=t_nlike
         )
         if pg_rows is not None:
             lines = []
             for fact_key, text in pg_rows:
-                table_ref = str(fact_key).replace("table_insight:", "")
+                table_ref = cfg.ds_strip_prefix("table_insight", fact_key)
                 lines.append(f"- {table_ref}: {str(text or '').strip()}")
             return "\n".join(lines)
 
     # ── 레거시 MySQL fallback ──
+    # M2(P3): datasource 대화는 un-scoped MySQL fallback 금지 (Codex-3 심층방어, 위 _load_schema_list 참조).
+    if cfg.get_active_datasource():
+        return ""
     if not mem_conn:
         return ""
     cur = mem_conn.cursor()
@@ -2220,11 +2242,18 @@ def _run_agent_core(
             save_memory_kv(mem_conn, cid, "thread_goal", thread_goal)
 
     # ── 지식 주입 ──
+    # 멀티 datasource (P3, Codex-3): grounding 읽기를 이 대화의 datasource 로 한정.
+    # _ds(위에서 해석)를 ContextVar 로 설정 → _load_schema_list/_load_relevant_table_insights
+    # 의 ds_fact_like/ds_strip_prefix 가 datasource 키만 매치(기본은 ds 키 제외). 직후 해제로
+    # 스레드 재사용 시 stale 방지.
     knowledge_ctx = ""
     try:
+        cfg.set_active_datasource(_ds["key"] if _ds else None)
         knowledge_ctx = _build_knowledge_context(mem_conn, user_message, history)
     except Exception:
         pass
+    finally:
+        cfg.set_active_datasource(None)
 
     # ── LLM 메시지 구성 ──
     try:

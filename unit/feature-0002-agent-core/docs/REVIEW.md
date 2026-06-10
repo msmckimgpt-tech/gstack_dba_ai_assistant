@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0191 [SUBAGENT:p3-insight-livelock-security]
+- Date: 2026-06-10 (TASK-0191)
+- Cycle: 멀티 datasource P3 (insight_worker per-datasource: fact 키 datasource 스코프 + grounding 격리 + worker 순회). **Major §12.3** — livelock 민감.
+- Panel: 적대적 subagent — livelock(write↔read-back↔grounding 키 3자 정합) + 보안(Codex-3 datasource 교차노출) + flag-OFF 회귀 집중.
+- Verdict: **SHIP-ABLE, BLOCKER 0, MAJOR 1(흡수)**. **livelock PASS**: write 와 read-back 이 *동일 local 변수*(insight.py table_key)를 재사용 → ContextVar 타이밍과 무관하게 구조적 정합, fingerprint broad-prefix 로드 + exact-key 조회 안전. **보안 PASS**(PG 경로): grounding `set_active_datasource(_ds)` 가 유일 `_build_knowledge_context` 호출 직전·finally 해제, `ds:` 구분자 누출 없음(`table_insight:ds.users` 콜론-닷 비매치). **flag OFF PASS**: ds_targets=[(None,None)]·무접두·legacy 데이터 호환. **worker PASS**: ds=None 실패 raise·datasource 격리·_ds_conn close 가드·KNOWN_SCHEMAS 기본만 변이.
+- 흡수: **MAJOR** scan_report 가 마지막 datasource 만 반영(telemetry 과소보고, 과거 livelock 잡은 관측성 약화) → int 누적+bool OR 로 수정. **M2** MySQL grounding fallback un-scoped(현재 dead path 라 unreachable 이나 잠재 Codex-3 누출) → datasource 활성 시 fallback 차단 가드.
+- MINOR(이월): kb_retrieval.py `_load_existing_*` 무조건 MySQL 조회(no PG 분기)로 force_scan 매 tick — **기존 main 결함**(P3 무관, ds 수만큼 fingerprint 재계산 비용 증가) → TODO. 진짜 재생성 게이트(ds-스코프 fingerprint + PG artifact-complete)는 무한 재생성 막음.
+- Resolution: MAJOR/M2 흡수 후 make test 307 passed/회귀 0. 핵심 무누출 테스트(`test_ds_grounding_like_no_cross_datasource_leak`) 포함. [[project_insight_livelock_readback_mismatch]]·[[feedback_outside_voice_for_rbac]] 정합.
+
 ## REV-20260610-0190 [SUBAGENT:p2-datasource-ui-security]
 - Date: 2026-06-10 (TASK-0190)
 - Cycle: 멀티 datasource P2 (multi-MySQL Web UI: 관리자 바인딩 UI + 연결테스트 + 대화 라벨). **Major §12.3**.

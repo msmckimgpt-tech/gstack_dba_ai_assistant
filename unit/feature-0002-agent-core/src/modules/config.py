@@ -174,6 +174,12 @@ __all__ = [
     "AGENT_MULTI_DATASOURCE_ENABLED",
     "DATASOURCES",
     "datasource_public",
+    "set_active_datasource",
+    "get_active_datasource",
+    "ds_fact_key",
+    "ds_fact_like",
+    "ds_strip_prefix",
+    "ds_scope_name",
     "REPLICA_DB_ENABLED",
     "REPLICA_DB_HOST",
     "REPLICA_DB_PASSWORD",
@@ -324,6 +330,88 @@ DATASOURCES = _parse_datasources()
 def datasource_public(ds: dict) -> dict:
     """로깅·관리화면 노출용 — password 제거한 사본."""
     return {k: v for k, v in (ds or {}).items() if k != "password"}
+
+
+# ── 멀티 datasource: insight fact 키 스코프 (P3, DESIGN Codex-3) ────────────────
+# insight fact/fingerprint 키를 datasource 차원으로 분리해 datasource A 의 인사이트가
+# datasource B 대화에 grounding 으로 교차 노출되는 것을 막는다(Codex-3 메타데이터 격리).
+#
+# **3자 정합 (livelock 방지)**: write(insight 생성) · read-back(artifact 검증) · grounding(읽기)
+# 세 경로가 *반드시 동일 키 포맷*을 써야 한다. 과거 livelock 은 write↔read-back 키 불일치로
+# 매 tick 전부 missing 오판해 무한 재생성한 것이었다([[project_insight_livelock_readback_mismatch]]).
+# 그래서 키 생성·LIKE·strip 을 본 헬퍼 한 곳으로 통일한다.
+#
+# 키 포맷:
+#   - datasource 없음(기본 단일 MySQL, ds_key=None): `{source}:{suffix}` (무접두 — 역사 데이터 호환,
+#     flag OFF 시 동작 0 변경).
+#   - datasource(ds_key='prod'): `{source}:ds:prod:{suffix}`. `ds:` 는 스키마명에 들어갈 수 없는
+#     구분자라 무접두 키와 명확히 구분된다(LIKE 누출 방지).
+import contextvars as _contextvars
+
+_ACTIVE_DATASOURCE_KEY: "_contextvars.ContextVar[str | None]" = _contextvars.ContextVar(
+    "active_datasource_key", default=None
+)
+_DS_KEY_SENTINEL = object()
+
+
+def set_active_datasource(key) -> None:
+    """현재 컨텍스트(스레드/태스크)의 활성 datasource 키 설정. None=기본 단일 MySQL."""
+    _ACTIVE_DATASOURCE_KEY.set((str(key).strip().lower() or None) if key else None)
+
+
+def get_active_datasource():
+    return _ACTIVE_DATASOURCE_KEY.get()
+
+
+def ds_fact_key(source: str, suffix: str, *, ds_key=_DS_KEY_SENTINEL) -> str:
+    """datasource 로 스코프한 fact/fingerprint 키. ds_key 미지정 시 ContextVar 사용."""
+    if ds_key is _DS_KEY_SENTINEL:
+        ds_key = _ACTIVE_DATASOURCE_KEY.get()
+    if not ds_key:
+        return f"{source}:{suffix}"
+    return f"{source}:ds:{ds_key}:{suffix}"
+
+
+def ds_fact_like(source: str, *, ds_key=_DS_KEY_SENTINEL):
+    """grounding 읽기용 LIKE 패턴 + 제외 패턴. (like, not_like) 튜플 반환.
+
+    - ds_key=None(기본): `{source}:%` 매치하되 `{source}:ds:%`(datasource 키)는 **제외**
+      (기본 대화에 datasource 인사이트가 새지 않게). → (f"{source}:%", f"{source}:ds:%")
+    - ds_key='prod': `{source}:ds:prod:%` 만 매치. not_like=None.
+    """
+    if ds_key is _DS_KEY_SENTINEL:
+        ds_key = _ACTIVE_DATASOURCE_KEY.get()
+    if not ds_key:
+        return (f"{source}:%", f"{source}:ds:%")
+    return (f"{source}:ds:{ds_key}:%", None)
+
+
+def ds_scope_name(name: str, *, ds_key=_DS_KEY_SENTINEL) -> str:
+    """스캔 커서 등 KV 이름을 datasource 로 분리. ds 없으면 그대로(기존 호환)."""
+    if ds_key is _DS_KEY_SENTINEL:
+        ds_key = _ACTIVE_DATASOURCE_KEY.get()
+    return name if not ds_key else f"{name}:ds:{ds_key}"
+
+
+def ds_strip_prefix(source: str, fact_key: str, *, ds_key=_DS_KEY_SENTINEL) -> str:
+    """fact_key 에서 `{source}:` 또는 `{source}:ds:{ds_key}:` 접두를 제거해 suffix 만 반환."""
+    if ds_key is _DS_KEY_SENTINEL:
+        ds_key = _ACTIVE_DATASOURCE_KEY.get()
+    key = str(fact_key or "")
+    if ds_key:
+        pre = f"{source}:ds:{ds_key}:"
+        if key.startswith(pre):
+            return key[len(pre):]
+    pre = f"{source}:"
+    if key.startswith(pre):
+        # 무접두형이거나, ds 접두형인데 ds_key 가 안 맞는 경우 — 'ds:키:' 도 마저 벗긴다.
+        rest = key[len(pre):]
+        if rest.startswith("ds:"):
+            parts = rest.split(":", 2)
+            if len(parts) == 3:
+                return parts[2]
+        return rest
+    return key
 
 # ── KB Postgres pgvector (TASK-0015 §2.1.4, M0 cycle) ─────────────────
 # postgres 서비스가 docker-compose 에 추가되면 본 변수들이 활성화된다. M0 cycle
