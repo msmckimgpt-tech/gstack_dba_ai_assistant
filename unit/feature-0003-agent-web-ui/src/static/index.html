@@ -6,7 +6,7 @@
   <title>DQA — Database Query Assistant</title>
   <link rel="preconnect" href="https://fonts.bunny.net" />
   <link href="https://fonts.bunny.net/css?family=geist:300,400,500,600,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260610-profile-usage" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260610-step-panel-table" />
 </head>
 <body>
 
@@ -302,6 +302,7 @@
 
   <!-- 실행 단계 사이드 패널 (처리 중 / 완료 후 단계 조회) -->
   <aside class="step-side-panel hidden" id="stepSidePanel" aria-label="실행 단계">
+    <div class="step-side-panel-resizer" id="stepSidePanelResizer" role="separator" aria-orientation="vertical" aria-label="패널 너비 조절" title="드래그하여 너비 조절"></div>
     <div class="step-side-panel-header">
       <div class="step-side-panel-title-row">
         <span class="step-side-panel-title">실행 단계</span>
@@ -474,6 +475,6 @@
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260610-profile-usage"></script>
+  <script src="/static/app.js?v=20260610-step-panel-table"></script>
 </body>
 </html>

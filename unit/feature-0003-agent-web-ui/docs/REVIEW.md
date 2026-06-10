@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0186 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]
+- Date: 2026-06-10
+- Cycle: TASK-0186 (단계 사이드 패널 결과 표 렌더링 + 패널 리사이즈), **Minor §12.3**
+- 사유: web-ui 정적자산(app.js/styles.css/index.html)만 변경. 백엔드·RBAC·스키마·엔드포인트·시크릿 무변경. ① 표 렌더링은 step 데이터에 이미 있는 `result_summary.preview_table` 을 기존·검증된 `buildResultTable`(메시지 상세 SQL 패널에서 운영 중)로 재사용 — 신규 데이터 경로 0, raw 텍스트 폴백 보존. ② 리사이즈는 순수 클라이언트 너비 조절(localStorage), 서버 무관. XSS=`buildResultTable` 의 `textContent`. node --check PASS. 시각 검증=Windows-browser(PB-0008).
+
 ## REV-20260610-0181 [SKIPPED:read-agg-no-rbac-no-schema]
 - Date: 2026-06-10
 - Cycle: TASK-0181 (역할/계정 모델 stacked + 요청 수), **Minor §12.3**

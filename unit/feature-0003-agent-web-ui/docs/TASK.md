@@ -3026,3 +3026,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] make test(컨테이너 pytest+ruff) exit=0 / node --check(app.js·admin.js) / py_compile(app.py) PASS. outside-voice [SKIPPED:RBAC·스키마 무변경, 조회 UI 전용].
 - [x] verify-completion PASS → main ff-merge(0181301) → 재배포(web, healthz `git_commit=0181301`) → PB-0008 Windows-browser 시각 검증 **PASS**(drill-down · 프로필 차트 · 활동기록 비노출, TEST.md §4 2026-06-10)
 - [x] (후속 보강) 사용자 지적 "계정별 비용 차트 누락" — drill 패널을 [토큰 | 비용] 2열로 재구성(`usageDrillCostChart` 추가), 역할별 차트와 일관. 백엔드 무변경(by_account 의 `cost_usd` 재사용). CHG-20260610-0184-COSTCHART, REV-20260610-0185. 재배포 + PB-0008 재검증.
+
+### TASK-0186 — 단계 사이드 패널: 결과 표 렌더링 + 패널 리사이즈 (frontend-only) (2026-06-10)
+- [x] **Minor §12.3** — 사용자 지적: `단계 보기(N)` 사이드 패널 확장 시 결과가 표가 아닌 raw 마크다운 텍스트로 나옴 + 패널 크기 조절 불가. (CHG-20260610-0186)
+- [x] 표: `buildStepDetailEl` 결과 블록이 `result_summary.preview_table`(이미 step 데이터에 포함) 있으면 기존 `buildResultTable` 로 HTML 표 렌더, 없으면 `<pre>` 폴백. 백엔드 무변경.
+- [x] 리사이즈: 좌측 드래그 핸들(`#stepSidePanelResizer`) + `setupStepSidePanelResize`(너비=innerWidth−clientX, clamp[300,92vw], localStorage 영속, mouse+touch) + open 시 저장 너비 복원. styles.css min/max-width·핸들·is-resizing.
+- [x] node --check app.js PASS. RBAC/스키마/엔드포인트/백엔드 무변경. outside-voice [SKIPPED:frontend-only] (REV-20260610-0186).
+- [ ] verify-completion → main ff-merge → web 재배포 → PB-0008 Windows-browser 시각 검증(표 렌더 · 리사이즈 동작)

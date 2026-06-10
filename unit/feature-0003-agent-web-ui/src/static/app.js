@@ -2724,21 +2724,31 @@ function buildStepDetailEl(step, idx, { compact = false } = {}) {
       wrap.appendChild(sqlWrap);
     }
 
-    // 결과 미리보기 (result_summary.preview 는 markdown 테이블 문자열)
-    const preview = step.result_summary && step.result_summary.preview
-      ? step.result_summary.preview
-      : (typeof step.result_summary === "string" ? step.result_summary : null);
-    if (preview) {
+    // 결과 — 구조화된 preview_table(columns/rows)이 있으면 가시성 높은 HTML 표로,
+    // 없으면 preview(markdown 문자열)를 raw 텍스트로 폴백.
+    const rs = step.result_summary;
+    const pt = rs && typeof rs === "object" ? rs.preview_table : null;
+    const tableEl = pt && Array.isArray(pt.columns) && pt.columns.length
+      ? buildResultTable(pt)
+      : null;
+    const preview = rs && rs.preview
+      ? rs.preview
+      : (typeof rs === "string" ? rs : null);
+    if (tableEl || preview) {
       const resultWrap = document.createElement("div");
       resultWrap.className = "step-result-wrap";
       const label = document.createElement("span");
       label.className = "step-result-label";
       label.textContent = "결과";
       resultWrap.appendChild(label);
-      const pre = document.createElement("pre");
-      pre.className = "step-result-preview";
-      pre.textContent = preview;
-      resultWrap.appendChild(pre);
+      if (tableEl) {
+        resultWrap.appendChild(tableEl);
+      } else {
+        const pre = document.createElement("pre");
+        pre.className = "step-result-preview";
+        pre.textContent = preview;
+        resultWrap.appendChild(pre);
+      }
       wrap.appendChild(resultWrap);
     }
   }
@@ -2758,9 +2768,60 @@ function pendingStatusLabel(status) {
 }
 
 // ── Step 실행 단계 사이드 패널 ────────────────────────────────────────
+// ── Step 사이드 패널 너비 조절(리사이즈) ──────────────────────────────
+const STEP_PANEL_WIDTH_KEY = "web.stepSidePanel.width";
+const STEP_PANEL_MIN_W = 300;
+function _stepPanelMaxW() {
+  return Math.max(STEP_PANEL_MIN_W, Math.floor(window.innerWidth * 0.92));
+}
+function _applyStepSidePanelWidth(panel) {
+  let saved;
+  try { saved = parseInt(localStorage.getItem(STEP_PANEL_WIDTH_KEY) || "", 10); } catch (e) { saved = NaN; }
+  if (!Number.isFinite(saved)) return;
+  panel.style.width = Math.min(_stepPanelMaxW(), Math.max(STEP_PANEL_MIN_W, saved)) + "px";
+}
+function setupStepSidePanelResize() {
+  const panel = document.getElementById("stepSidePanel");
+  const handle = document.getElementById("stepSidePanelResizer");
+  if (!panel || !handle || handle.dataset.wired === "1") return;
+  handle.dataset.wired = "1";
+  let dragging = false;
+  const onMove = (clientX) => {
+    // 우측 고정 패널: 너비 = 뷰포트 우변 − 포인터X = innerWidth − clientX
+    const w = Math.min(_stepPanelMaxW(), Math.max(STEP_PANEL_MIN_W, window.innerWidth - clientX));
+    panel.style.width = w + "px";
+  };
+  const mouseMove = (e) => { if (dragging) { onMove(e.clientX); e.preventDefault(); } };
+  const touchMove = (e) => { if (dragging && e.touches[0]) { onMove(e.touches[0].clientX); e.preventDefault(); } };
+  const stop = () => {
+    if (!dragging) return;
+    dragging = false;
+    panel.classList.remove("is-resizing");
+    const w = parseInt(panel.style.width, 10);
+    if (Number.isFinite(w)) { try { localStorage.setItem(STEP_PANEL_WIDTH_KEY, String(w)); } catch (e) {} }
+    document.removeEventListener("mousemove", mouseMove);
+    document.removeEventListener("mouseup", stop);
+    document.removeEventListener("touchmove", touchMove);
+    document.removeEventListener("touchend", stop);
+  };
+  const start = (clientX, e) => {
+    dragging = true;
+    panel.classList.add("is-resizing");
+    document.addEventListener("mousemove", mouseMove);
+    document.addEventListener("mouseup", stop);
+    document.addEventListener("touchmove", touchMove, { passive: false });
+    document.addEventListener("touchend", stop);
+    if (e && e.cancelable) e.preventDefault();
+  };
+  handle.addEventListener("mousedown", (e) => start(e.clientX, e));
+  handle.addEventListener("touchstart", (e) => { if (e.touches[0]) start(e.touches[0].clientX, e); }, { passive: false });
+}
+
 function openStepSidePanel(pending, { convId = null } = {}) {
   const panel = document.getElementById("stepSidePanel");
   if (!panel) return;
+  setupStepSidePanelResize();
+  _applyStepSidePanelWidth(panel);
   state.stepSidePanelConvId = convId || (pending && pending.convId) || state.activeConversationId || null;
   _renderStepSidePanelBody(pending);
   panel.classList.remove("hidden");

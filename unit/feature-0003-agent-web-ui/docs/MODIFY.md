@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260610-0186
+- Date: 2026-06-10 (TASK-0186, **Minor §12.3** — frontend-only, web-ui 정적자산만)
+- Scope: 실행 단계 사이드 패널(`단계 보기(N)`) ① 결과를 raw 마크다운 텍스트 → HTML 표 렌더링 ② 패널 너비 드래그 리사이즈.
+- 배경: TASK-0173 이후 사이드 패널 결과가 `step.result_summary.preview`(markdown 문자열)를 `<pre>` 로 raw 출력 → 가독성 낮음. 단계 데이터엔 이미 구조화된 `preview_table`(columns/rows, `buildSqlStepPanel` 이 쓰는 것과 동일)이 포함돼 있어 백엔드 변경 없이 표로 렌더 가능.
+- 변경:
+  - [src/static/app.js](../src/static/app.js):
+    - `buildStepDetailEl` 결과 블록: `result_summary.preview_table.columns` 가 있으면 기존 `buildResultTable(pt)`(행번호·헤더·hover, `.result-table-wrap` overflow:auto·max-height) 로 표 렌더, 없으면 `preview` 문자열 `<pre>` 폴백(describe 등 비표형 결과 호환).
+    - 패널 리사이즈: `setupStepSidePanelResize()`(좌측 핸들 드래그 → 너비 = `innerWidth − clientX`, clamp [300, 92vw], localStorage `web.stepSidePanel.width` 영속, mouse+touch) + `_applyStepSidePanelWidth()` 를 `openStepSidePanel` 에서 호출(저장 너비 복원, 핸들 1회 배선 가드).
+  - [src/static/index.html](../src/static/index.html): 패널 첫 자식에 `#stepSidePanelResizer`(role=separator) 추가. 캐시버스터 `?v=20260610-step-panel-table`.
+  - [src/static/styles.css](../src/static/styles.css): `.step-side-panel` 에 min/max-width + `.is-resizing`(transition 제거·user-select 차단) + `.step-side-panel-resizer`(ew-resize 핸들, hover/드래그 시 primary 색 표시).
+- 비변경: 백엔드(app.py/agent_core)·RBAC·스키마·엔드포인트·시크릿 무변경. `preview_table` 은 이미 `/api/progress` step 데이터에 포함. XSS: `buildResultTable` 은 `textContent` 사용.
+- 게이트: node --check app.js PASS. outside-voice [SKIPPED:frontend-only] (REV-20260610-0186). 시각 검증=Windows-browser(PB-0008).
+
 ## CHG-20260610-0181
 - Date: 2026-06-10
 - TASK-Cycle: TASK-0181, **Minor §12.3** — 역할/계정 차트 모델별 stacked + 상세 표 요청(메시지) 수

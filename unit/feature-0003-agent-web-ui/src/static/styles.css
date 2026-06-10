@@ -2135,6 +2135,8 @@ a { color: inherit; }
   right: 0;
   z-index: 181;
   width: 340px;
+  min-width: 300px;
+  max-width: 92vw;
   height: 100vh;
   background: var(--surface);
   border-left: 1px solid var(--border);
@@ -2145,6 +2147,34 @@ a { color: inherit; }
 }
 .step-side-panel:not(.hidden) { transform: translateX(0); }
 .step-side-panel.hidden { display: flex !important; transform: translateX(100%); }
+/* 드래그 중에는 transition 제거(width 가 포인터를 부드럽게 따라오도록) */
+.step-side-panel.is-resizing { transition: none; user-select: none; }
+/* 좌측 가장자리 리사이즈 핸들 — 우측 고정 패널이라 왼쪽을 끌어 너비 조절 */
+.step-side-panel-resizer {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 1;
+  background: transparent;
+  touch-action: none;
+}
+.step-side-panel-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 3px;
+  width: 2px;
+  height: 100%;
+  background: transparent;
+  transition: background .15s ease;
+}
+.step-side-panel-resizer:hover::before,
+.step-side-panel.is-resizing .step-side-panel-resizer::before {
+  background: var(--primary, #2563eb);
+}
 
 .step-side-panel-header {
   display: flex;
