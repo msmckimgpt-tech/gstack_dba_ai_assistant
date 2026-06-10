@@ -836,3 +836,14 @@ source_of_truth: true
   - unit/feature-0002-agent-core/tests/test_multi_datasource.py (신규 P3 4) + tests/test_db_query_ux.py (mock 시그니처 +not_like_pattern)
   - unit/feature-0002-agent-core/docs/{FUNCTION,REVIEW,REPORT,TASK}.md, docs/STATUS.md
 - Rollback: flag OFF 라 런타임 영향 0(무접두 키=기존). **주의**: flag ON 운영 중 환원 시 ds-스코프 fact 키가 무접두 read-back 과 불일치 → 1회 재생성(livelock 아님).
+
+## CHG-20260610-MULTI-DATASOURCE-P4-MSSQL
+- Date: 2026-06-10
+- Related Requirement: TASK-0192 (REQ-20260610-0192, Major §12.3 — 멀티 datasource Stage 2 P4 MSSQL 드라이버)
+- Summary: engine='mssql' datasource 연결 인프라. pymssql 드라이버 + db.connect engine 디스패치 + 크로스엔진 결과 수집. 방언/보안은 P5/P6 이월. flag OFF shadow. make test 312 passed/회귀 0, pymssql-2.3.13 컨테이너 설치 확인.
+- Files:
+  - unit/feature-0002-agent-core/src/requirements.txt (pymssql>=2.2.0 + sqlglot <28 pin)
+  - unit/feature-0002-agent-core/src/modules/db.py (_pymssql import + _connect_mssql + connect() engine 디스패치 + _collect_cursor_result description + probe engine 분기)
+  - unit/feature-0002-agent-core/tests/test_multi_datasource.py (신규 P4 5)
+  - unit/feature-0002-agent-core/docs/{FUNCTION,REVIEW,REPORT,TASK}.md, docs/STATUS.md
+- Rollback: flag OFF 라 런타임 영향 0. 코드 환원 시 pymssql 의존성·engine 디스패치 제거. `_collect_cursor_result` description 전환은 mysql 등가라 환원 불요(회귀 0).

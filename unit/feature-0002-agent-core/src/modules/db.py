@@ -102,6 +102,44 @@ except Exception as _e:  # pragma: no cover — env without psycopg
     _psycopg = None  # type: ignore[assignment]
     _PSYCOPG_IMPORT_ERR = _e
 
+# 멀티 datasource Stage 2 (P4): MSSQL(pymssql) optional import. engine='mssql' datasource
+# 분석에만 쓰인다. 미설치 환경(기본)에서는 None — mssql datasource 연결 시 fail-loud.
+try:
+    import pymssql as _pymssql  # type: ignore[import-not-found]
+    _PYMSSQL_IMPORT_ERR: Exception | None = None
+except Exception as _e:  # pragma: no cover — env without pymssql
+    _pymssql = None  # type: ignore[assignment]
+    _PYMSSQL_IMPORT_ERR = _e
+
+
+def _connect_mssql(datasource: dict, database: str | None, autocommit: bool):
+    """MSSQL(SQL Server) datasource 연결 (Stage 2 P4, pymssql).
+
+    M-1 정합: database(default_db)를 암묵 기본 DB 로 적용하지 않는다 — caller(agent_core)가
+    명시한 database 만 사용(datasource 경로는 None). MSSQL 쿼리는 `[catalog].[schema].[table]`
+    3-part 로 fully-qualified (P6) 되므로 기본 DB 미선택이 안전(allowlist 가 유일 게이트).
+    포트 미설정 시 MSSQL 기본 1433.
+    """
+    if _pymssql is None:
+        raise RuntimeError(
+            f"pymssql 미설치 — mssql datasource 연결 불가. requirements.txt 의 pymssql 확인. "
+            f"original error: {_PYMSSQL_IMPORT_ERR!r}"
+        )
+    port = int(datasource.get("port") or 1433)
+    conn = _pymssql.connect(
+        server=datasource.get("host") or DB_HOST,
+        port=str(port),
+        user=datasource.get("user") or DB_USER,
+        password=datasource.get("password", ""),
+        database=(database or ""),  # M-1: default_db 미적용 (빈 문자열=로그인 기본 DB)
+        login_timeout=int(AGENT_TIMEOUT_SEC),
+        timeout=int(AGENT_TIMEOUT_SEC),
+        autocommit=bool(autocommit),
+        charset="UTF-8",
+    )
+    return conn
+
+
 def connect(database: str | None = None, autocommit: bool = True, datasource: dict | None = None):
     # ── 멀티 datasource (P1, DESIGN Stage 1): 명시 datasource 좌표 우선 ──────────
     # datasource(dict: host/port/user/password/default_db) 가 주어지고 flag 가 켜져 있으면
@@ -110,6 +148,9 @@ def connect(database: str | None = None, autocommit: bool = True, datasource: di
     # 바인딩된 datasource 를 해석해 넘긴다. flag OFF 또는 datasource=None 이면 아래 기존 라우팅이
     # 100% 그대로 — 기존 단일 MySQL 동작 0 변경(M-3: plane 은 호출측이 명시).
     if datasource and AGENT_MULTI_DATASOURCE_ENABLED:
+        # Stage 2 (P4): engine 디스패치 — mssql 은 pymssql, 그 외(mysql)는 mysql.connector.
+        if (datasource.get("engine") or "mysql").strip().lower() == "mssql":
+            return _connect_mssql(datasource, database, autocommit)
         host = datasource.get("host") or DB_HOST
         port = int(datasource.get("port") or DB_PORT)
         user = datasource.get("user") or DB_USER
@@ -250,19 +291,32 @@ def probe_datasource(datasource: dict, *, timeout: int | None = None) -> tuple[b
     password 유출 방지: 예외 전문(host/user 포함 가능)을 반환하지 않고 errno/예외타입만 반환한다.
     Returns: (ok, elapsed_ms, error_message).
     """
-    params = {
-        "host": datasource.get("host") or DB_HOST,
-        "port": int(datasource.get("port") or DB_PORT),
-        "user": datasource.get("user") or DB_USER,
-        "password": datasource.get("password", ""),
-        "connection_timeout": int(timeout or 8),
-        "charset": "utf8mb4",
-        "use_unicode": True,
-    }
+    engine = (datasource.get("engine") or "mysql").strip().lower()
     start = time.time()
     conn = None
     try:
-        conn = mysql.connector.connect(**params)
+        if engine == "mssql":
+            # Stage 2 (P4): MSSQL probe (pymssql, flag 무관 명시 테스트).
+            if _pymssql is None:
+                return False, 0.0, "pymssql_not_installed"
+            conn = _pymssql.connect(
+                server=datasource.get("host") or DB_HOST,
+                port=str(int(datasource.get("port") or 1433)),
+                user=datasource.get("user") or DB_USER,
+                password=datasource.get("password", ""),
+                login_timeout=int(timeout or 8),
+                timeout=int(timeout or 8),
+            )
+        else:
+            conn = mysql.connector.connect(
+                host=datasource.get("host") or DB_HOST,
+                port=int(datasource.get("port") or DB_PORT),
+                user=datasource.get("user") or DB_USER,
+                password=datasource.get("password", ""),
+                connection_timeout=int(timeout or 8),
+                charset="utf8mb4",
+                use_unicode=True,
+            )
         cur = conn.cursor()
         cur.execute("SELECT 1")
         cur.fetchall()
@@ -270,7 +324,7 @@ def probe_datasource(datasource: dict, *, timeout: int | None = None) -> tuple[b
         return True, (time.time() - start) * 1000.0, ""
     except Exception as exc:
         errno = getattr(exc, "errno", None)
-        # errno 만 노출 (1045=인증실패, 2003=연결불가, 1044/1049=DB/권한 등). host/pw 비유출.
+        # errno/예외타입만 노출 (host/user/pw 비유출).
         msg = f"errno={errno}" if errno else type(exc).__name__
         return False, (time.time() - start) * 1000.0, msg
     finally:
@@ -282,14 +336,19 @@ def probe_datasource(datasource: dict, *, timeout: int | None = None) -> tuple[b
 
 
 def _collect_cursor_result(cur) -> list[tuple[str, Any, Any]]:
+    # Stage 2 (P4): 크로스엔진 결과 수집. mysql.connector 전용 `cur.with_rows` 대신 DBAPI 표준
+    # `cur.description`(result set 있으면 not None)으로 판정 → mysql.connector·pymssql 공통.
+    # mysql.connector 도 SELECT 후 description 이 set 되고 비-row 문에서 None 이라 등가(회귀 0).
     result_sets = []
-    if getattr(cur, "with_rows", False):
+    has_rows = getattr(cur, "description", None) is not None
+    if has_rows:
         rows = cur.fetchall()
         columns = [d[0] for d in (cur.description or [])]
         result_sets.append(("rows", columns, rows))
     else:
-        if cur.rowcount is not None and cur.rowcount != -1:
-            result_sets.append(("rowcount", cur.rowcount, None))
+        rc = getattr(cur, "rowcount", None)
+        if rc is not None and rc != -1:
+            result_sets.append(("rowcount", rc, None))
     return result_sets
 
 

@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0192 [SKIPPED:driver-infra-security-deferred-p6]
+- Date: 2026-06-10 (TASK-0192)
+- Cycle: 멀티 datasource Stage 2 P4 (MSSQL 드라이버 pymssql + 연결 디스패치 + 크로스엔진 결과 수집). **Major §12.3**.
+- Reason: P4 는 **드라이버 인프라만** — 신규 authz/SQL 생성/권한 카탈로그 표면 0. MSSQL datasource 접근 인가는 기존 product.access(P1, REV-0187 검토필)가 그대로 담당. MSSQL **보안경계(T-SQL allowlist·GRANT·denylist)는 P6** 에서 구현·리뷰되고, Stage 2 전체 RBAC outside-voice 적대적 재게이트는 **P7**(ADR-CORE-0003). 본 cycle 의 유일 회귀 위험인 `_collect_cursor_result` 의 `with_rows`→`description` 전환(라이브 MySQL 경로)은 **make test MySQL 골든 회귀로 검증**(312 passed, mysql.connector 는 SELECT 후 description set·비-row None 이라 등가). pymssql-2.3.13 컨테이너 설치 확인. 드라이버는 flag OFF 라 shadow.
+- 잔여 보안 게이트: P6(MSSQL allowlist 무자격/catalog·전용 role GRANT·T-SQL denylist·AST 재직렬화·부하게이트), P7(Stage 2 종합 RBAC outside-voice).
+
 ## REV-20260610-0191 [SUBAGENT:p3-insight-livelock-security]
 - Date: 2026-06-10 (TASK-0191)
 - Cycle: 멀티 datasource P3 (insight_worker per-datasource: fact 키 datasource 스코프 + grounding 격리 + worker 순회). **Major §12.3** — livelock 민감.

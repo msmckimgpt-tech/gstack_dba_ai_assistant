@@ -24,4 +24,9 @@ openpyxl>=3.1.0
 python-multipart>=0.0.9
 # TASK-0094 Sprint 1 Phase 12 (D14 + R-F3 Critical): SQL allowlist guard.
 # sqlglot 의 AST parser — single SELECT/CTE only allowlist. denylist 는 보조.
-sqlglot>=23.0.0
+# 멀티 datasource Stage 2 (P6): T-SQL 파싱 + 보안 게이트가 버전 의존이므로 상한 pin.
+sqlglot>=23.0.0,<28.0.0
+# 멀티 datasource Stage 2 (P4): MSSQL(SQL Server) 드라이버. FreeTDS 기반 manylinux wheel
+# (ODBC/apt 불필요 — pyodbc 대비 빌드 단순). engine='mssql' datasource 분석 전용.
+# 한계(문서화): DATETIMEOFFSET/AAD 인증 제약 — Stage 2 범위 내 수용.
+pymssql>=2.2.0

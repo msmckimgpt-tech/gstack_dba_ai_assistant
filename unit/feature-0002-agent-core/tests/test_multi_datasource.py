@@ -308,3 +308,65 @@ def test_ds_fact_like_contextvar_threads_default():
 def test_ds_scope_name_scan_cursor():
     assert cfg.ds_scope_name("schema_instance_scan_at", ds_key=None) == "schema_instance_scan_at"
     assert cfg.ds_scope_name("schema_instance_scan_at", ds_key="prod") == "schema_instance_scan_at:ds:prod"
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 5. Stage 2 P4: MSSQL 드라이버 engine 디스패치 (pymssql)
+# ──────────────────────────────────────────────────────────────────────────
+MSSQL_DS = {"engine": "mssql", "host": "sql-host", "port": 1433, "user": "ro_sql", "password": "pw"}
+
+
+def test_connect_engine_dispatch_mssql_uses_pymssql():
+    captured = {}
+    fake_pymssql = mock.MagicMock()
+    fake_pymssql.connect.side_effect = lambda **k: captured.update(k) or mock.MagicMock()
+    with mock.patch.object(db, "AGENT_MULTI_DATASOURCE_ENABLED", True), \
+         mock.patch.object(db, "_pymssql", fake_pymssql):
+        db.connect(datasource=MSSQL_DS)
+    assert fake_pymssql.connect.called
+    assert captured["server"] == "sql-host"
+    assert captured["port"] == "1433"
+    assert captured["user"] == "ro_sql"
+    # M-1: default_db 미적용 → database 빈 문자열
+    assert captured.get("database", "") == ""
+
+
+def test_connect_engine_dispatch_mysql_unaffected():
+    """engine=mysql(또는 미지정) datasource 는 기존 mysql.connector 경로."""
+    captured, fake = _capture_connect()
+    with mock.patch.object(db, "AGENT_MULTI_DATASOURCE_ENABLED", True), \
+         mock.patch.object(db.mysql.connector, "connect", side_effect=fake):
+        db.connect(datasource=DS)  # DS 에 engine 키 없음 → mysql
+    assert captured["host"] == "ds-host"  # mysql.connector 경로
+
+
+def test_connect_mssql_not_installed_raises():
+    with mock.patch.object(db, "AGENT_MULTI_DATASOURCE_ENABLED", True), \
+         mock.patch.object(db, "_pymssql", None):
+        with pytest.raises(RuntimeError):
+            db.connect(datasource=MSSQL_DS)
+
+
+def test_probe_datasource_mssql_engine():
+    fake_pymssql = mock.MagicMock()
+    fake_pymssql.connect.return_value = mock.MagicMock()
+    with mock.patch.object(db, "_pymssql", fake_pymssql):
+        ok, ms, err = db.probe_datasource(MSSQL_DS)
+    assert ok is True and err == ""
+    assert fake_pymssql.connect.called
+
+
+def test_collect_cursor_result_cross_engine():
+    """description 기반 결과 수집 — mysql.connector·pymssql 공통."""
+    # result set 있음 (description set, with_rows 없음 = pymssql 스타일)
+    cur = mock.MagicMock(spec=["description", "fetchall", "rowcount"])
+    cur.description = [("a", None), ("b", None)]
+    cur.fetchall.return_value = [(1, 2), (3, 4)]
+    out = db._collect_cursor_result(cur)
+    assert out == [("rows", ["a", "b"], [(1, 2), (3, 4)])]
+    # result set 없음 (description None) → rowcount
+    cur2 = mock.MagicMock(spec=["description", "rowcount"])
+    cur2.description = None
+    cur2.rowcount = 5
+    out2 = db._collect_cursor_result(cur2)
+    assert out2 == [("rowcount", 5, None)]
