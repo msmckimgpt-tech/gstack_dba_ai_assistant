@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260610-0188
+- Date: 2026-06-10 (TASK-0188, **Minor §12.3** — frontend-static-only)
+- Scope: 공유 대화 페이지(`/share/{token}`)의 메시지 본문 markdown 미적용 수정 + 수신자 입장 가독성 디자인 보강.
+- 배경: 사용자 보고 — 공유 링크로 전달받은 대화가 markdown 미적용 raw 텍스트(`**`, `|`, `#`, 코드펜스 그대로)로 보임. 근본 원인: 메인 채팅 UI(`app.js markdownToHtml`)는 `vendor/marked.umd.js` + `vendor/purify.min.js`(marked.parse → DOMPurify.sanitize)로 렌더하는데, 공유뷰는 ① `share.html` 이 두 라이브러리를 미로드하고 ② `share.js renderMessage` 가 `content.textContent = msg.content` 로 평문 렌더 → markdown 구문이 문자 그대로 노출.
+- 변경:
+  - [src/static/share.html](../src/static/share.html): `share.js` 앞에 `vendor/marked.umd.js` + `vendor/purify.min.js` 로드. css/js 링크 캐시버스터 `?v=20260610-share-md`. 헤더에 브랜드 라벨(`.share-brand`) + "링크 복사" 버튼(`#shareCopyLinkBtn`).
+  - [src/static/share.js](../src/static/share.js): `renderMessage` 가 `renderMarkdownContent()` 호출 — 메인과 동일 marked+DOMPurify 파이프라인(라이브러리 부재 시 `.share-content-plain` 평문 폴백). ` ```sql ` 코드블록 "쿼리 보기" 토글 이식(`collapseSqlCodeBlocks`), 본문 외부 링크 `target=_blank rel="noopener noreferrer nofollow"`(`markExternalLinks`), 역할 배지(사용자/어시스턴트), `setupCopyLink`(clipboard API + textarea execCommand 폴백).
+  - [src/static/share.css](../src/static/share.css): `.share-message-content` 에서 `white-space:pre-wrap` 제거(렌더 HTML) → 폴백 클래스에만 보존. 렌더 markdown 요소 스타일(제목 h1~h4, ul/ol/li, blockquote, 인라인/블록 code, **GFM 표**, hr, img, a, strong/em) + 역할 배지 + 메시지 좌측 accent border + 반응형(≤600px) + 인쇄/PDF 스타일시트(actions/footer 숨김, SQL 토글 펼침, pre 줄바꿈) + `.share-brand`/`.share-copy-link-btn`/`.share-sql-toggle-*`.
+- 비변경: 백엔드(app.py)·공유 API(`/api/public/share/*`)·redaction·RBAC·DB 스키마·시크릿 무변경. 익명 페이지 XSS 표면은 메인 앱과 동일한 DOMPurify.sanitize 로 차단(데이터 노출 정책 무변경). node --check share.js PASS. 시각 검증 = Windows-browser(PB-0008) 배포 후.
+
 ## CHG-20260610-0186-MDTABLE
 - Date: 2026-06-10 (TASK-0186 후속, **Minor §12.3** — frontend-only)
 - Scope: CHG-20260610-0186 보강 — 표로 렌더되는 단계 결과 범위를 `execute_sql` 외 **전 도구**로 확장.

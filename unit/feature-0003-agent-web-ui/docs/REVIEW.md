@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0188 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]
+- Date: 2026-06-10
+- Cycle: TASK-0188 (공유 대화 페이지 markdown 미적용 수정 + 수신자 가독성 디자인), **Minor §12.3**
+- 사유: web-ui 정적자산(share.html/share.js/share.css)만 변경. 백엔드(app.py)·공유 API(`/api/public/share/*`)·redaction·RBAC·DB 스키마·엔드포인트·시크릿 무변경 — 데이터 경로/노출 정책 그대로.
+- XSS(익명 페이지 핵심 검토): 변경 전 `textContent`(XSS 0) → 변경 후 `innerHTML = DOMPurify.sanitize(marked.parse(...))`. **메인 인증 UI(`app.js markdownToHtml`)와 완전 동일한 파이프라인·동일 라이브러리(`vendor/marked.umd.js`+`vendor/purify.min.js`, 동일 config 없는 기본 sanitize)** 를 재사용. 렌더 대상 데이터는 동일 conversation 메시지(신규 데이터 소스 0) — 익명 viewer 가 받는 표현이 평문→HTML 로 바뀔 뿐, 인증 viewer 가 이미 받던 것과 동일. 본문 외부 링크는 `rel="noopener noreferrer nofollow"` + `target=_blank` 강제. 위험 델타 = 인증 UI 와 동치, 신규 표면 0.
+- 검증: node --check share.js PASS. 라이브러리 로드 순서(marked+purify → share.js) 확인. 라이브러리 부재 시 평문 폴백(degrade-safe). 시각 검증 = Windows-browser(PB-0008) 배포 후.
+
 ## REV-20260610-0187 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]
 - Date: 2026-06-10
 - Cycle: TASK-0186 후속 (markdown 표 파싱으로 전 도구 결과 표 렌더), **Minor §12.3**

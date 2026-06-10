@@ -14,9 +14,43 @@
     return;
   }
 
+  setupCopyLink();
+
   fetchShare(token)
     .then((data) => render(data, token))
     .catch((err) => showError(err && err.message ? err.message : "공유 데이터를 불러오지 못했습니다."));
+
+  // 수신자가 현재 공유 링크를 손쉽게 재전달할 수 있도록 "링크 복사" 버튼을 연결한다.
+  function setupCopyLink() {
+    const btn = document.getElementById("shareCopyLinkBtn");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      const url = window.location.href;
+      const original = btn.textContent;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(url);
+        } else {
+          const ta = document.createElement("textarea");
+          ta.value = url;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+        }
+        btn.textContent = "복사됨 ✓";
+        btn.classList.add("is-copied");
+      } catch (e) {
+        btn.textContent = "복사 실패";
+      }
+      window.setTimeout(() => {
+        btn.textContent = original;
+        btn.classList.remove("is-copied");
+      }, 1600);
+    });
+  }
 
   async function fetchShare(tok) {
     const res = await fetch(`/api/public/share/${encodeURIComponent(tok)}`, {
@@ -86,17 +120,23 @@
 
   function renderMessage(msg) {
     const row = document.createElement("article");
-    const roleClass = msg && msg.role === "user" ? "share-message-user" : "share-message-assistant";
-    row.className = `share-message ${roleClass}`;
+    const role = msg && msg.role === "user" ? "user" : "assistant";
+    row.className = `share-message share-message-${role}`;
 
     const meta = document.createElement("div");
     meta.className = "share-message-meta";
-    meta.textContent = `${roleLabel(msg.role)} · ${formatDateTime(msg.created_at)}`;
+    const badge = document.createElement("span");
+    badge.className = `share-role-badge share-role-${role}`;
+    badge.textContent = roleLabel(msg.role);
+    const time = document.createElement("span");
+    time.className = "share-message-time";
+    time.textContent = formatDateTime(msg.created_at);
+    meta.append(badge, time);
     row.appendChild(meta);
 
     const content = document.createElement("div");
     content.className = "share-message-content";
-    content.textContent = msg.content || "";
+    renderMarkdownContent(content, msg.content || "");
     row.appendChild(content);
 
     if (msg.role === "assistant" && msg.meta) {
@@ -105,6 +145,60 @@
     }
 
     return row;
+  }
+
+  // 메시지 본문을 markdown → HTML 로 렌더한다. 메인 UI(app.js markdownToHtml)와
+  // 동일 파이프라인(marked.parse → DOMPurify.sanitize)을 사용해 표·코드블록·리스트·
+  // 제목·강조·링크가 그대로 가시화되도록 한다. 라이브러리 부재 시 평문으로 폴백.
+  function renderMarkdownContent(target, text) {
+    const source = String(text || "").trim();
+    if (!source) {
+      target.textContent = "";
+      return;
+    }
+    if (window.marked && window.DOMPurify) {
+      target.innerHTML = window.DOMPurify.sanitize(window.marked.parse(source));
+      collapseSqlCodeBlocks(target);
+      markExternalLinks(target);
+    } else {
+      // 폴백: 라이브러리 로드 실패 시 줄바꿈 보존 평문 (share.css .share-content-plain).
+      target.classList.add("share-content-plain");
+      target.textContent = source;
+    }
+  }
+
+  // ```sql 코드 블록을 기본 숨김 + "쿼리 보기" 토글로 교체 (메인 UI 패턴 이식).
+  // 수신자에게 긴 SQL 원문이 답변 가독성을 해치지 않도록 한다.
+  function collapseSqlCodeBlocks(target) {
+    const codeEls = target.querySelectorAll("code.language-sql, code.language-SQL");
+    codeEls.forEach((codeEl) => {
+      const preEl = codeEl.parentElement;
+      if (!preEl || preEl.tagName !== "PRE") return;
+      const wrap = document.createElement("div");
+      wrap.className = "share-sql-toggle-wrap";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "share-sql-toggle-btn";
+      btn.textContent = "쿼리 보기";
+      btn.setAttribute("aria-expanded", "false");
+      preEl.hidden = true;
+      btn.addEventListener("click", () => {
+        const willShow = preEl.hidden;
+        preEl.hidden = !willShow;
+        btn.textContent = willShow ? "쿼리 닫기" : "쿼리 보기";
+        btn.setAttribute("aria-expanded", String(willShow));
+      });
+      preEl.parentNode.insertBefore(wrap, preEl);
+      wrap.append(btn, preEl);
+    });
+  }
+
+  // 본문 내 외부 링크는 새 탭 + noopener 로 — 익명 공유 페이지의 안전한 이동.
+  function markExternalLinks(target) {
+    target.querySelectorAll("a[href]").forEach((a) => {
+      a.setAttribute("target", "_blank");
+      a.setAttribute("rel", "noopener noreferrer nofollow");
+    });
   }
 
   function renderAssistantDetails(meta) {

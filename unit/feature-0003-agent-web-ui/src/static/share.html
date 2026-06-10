@@ -5,12 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content="noindex,nofollow" />
   <title>공유된 대화</title>
-  <link rel="stylesheet" href="/static/share.css" />
+  <link rel="stylesheet" href="/static/share.css?v=20260610-share-md" />
 </head>
 <body class="share-body">
   <div class="share-container">
     <header class="share-header">
       <div class="share-header-inner">
+        <span class="share-brand">공유된 대화</span>
         <h1 id="shareTopic" class="share-topic">대화 로딩 중...</h1>
         <div class="share-meta">
           <span id="shareOwner" class="share-meta-item"></span>
@@ -19,6 +20,7 @@
         </div>
       </div>
       <div class="share-actions">
+        <button type="button" id="shareCopyLinkBtn" class="share-copy-link-btn">링크 복사</button>
         <button type="button" id="shareForkBtn" class="share-fork-btn hidden">내 계정에서 fork</button>
         <a href="/" class="share-login-link hidden" id="shareLoginLink">로그인하고 fork</a>
       </div>
@@ -31,6 +33,8 @@
       <span id="shareViewCount" class="share-footer-stats"></span>
     </footer>
   </div>
-  <script src="/static/share.js"></script>
+  <script src="/static/vendor/marked.umd.js"></script>
+  <script src="/static/vendor/purify.min.js"></script>
+  <script src="/static/share.js?v=20260610-share-md"></script>
 </body>
 </html>

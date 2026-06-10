@@ -12,9 +12,12 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-10 (TASK-0184 계정 drill-down + 프로필 사용내역 차트 + 내 활동기록 제거; TASK-0181 역할/계정 모델 stacked + 요청 수; TASK-0180 카테고리별 행 레이아웃; TASK-0179 차트 grid; TASK-0178 여백 컴팩트화; TASK-0177 상세표 비용컬럼+디자인 정렬; TASK-0176 역할/계정별 비용 차트; TASK-0167 작은화면 잘림)
+- Last Updated: 2026-06-10 (TASK-0188 공유 대화 markdown 미적용 수정 + 수신자 가독성 디자인; TASK-0184 계정 drill-down + 프로필 사용내역 차트 + 내 활동기록 제거; TASK-0181 역할/계정 모델 stacked + 요청 수; TASK-0180 카테고리별 행 레이아웃; TASK-0179 차트 grid; TASK-0178 여백 컴팩트화; TASK-0177 상세표 비용컬럼+디자인 정렬; TASK-0176 역할/계정별 비용 차트; TASK-0167 작은화면 잘림)
 
 ## 2. Task Queue
+
+### TASK-0188 공유 대화 페이지 markdown 미적용 수정 + 수신자 가독성 디자인 (2026-06-10)
+- [x] **Minor §12.3** — 사용자 보고: 공유 링크로 전달받은 대화가 markdown 미적용 raw 텍스트로 보임(수신자 입장 가독성 저하). **근본 원인**: `share.html` 이 marked+purify 미로드 + `share.js` 가 `content.textContent` 평문 렌더(메인 채팅은 `markdownToHtml()` marked+DOMPurify). **수정(3파일, 백엔드/API/스키마/RBAC/시크릿 무변경)**: ① `share.html` marked+purify 로드(순서 share.js 앞) + 캐시버스터 `?v=20260610-share-md` + 브랜드 라벨 + 링크복사 버튼. ② `share.js` `renderMarkdownContent`(marked.parse→DOMPurify.sanitize, 라이브러리 부재 평문 폴백) + sql 코드블록 "쿼리 보기" 토글 + 외부링크 `target=_blank rel=noopener` + 역할 배지 + 링크복사. ③ `share.css` 렌더 markdown 요소 스타일(제목·리스트·인용·코드·GFM 표·hr·img·링크) + 역할 배지·좌측 accent border + 반응형 + 인쇄/PDF 스타일시트. **보안**: 익명 페이지 XSS 는 메인과 동일 DOMPurify.sanitize 차단, 데이터 redaction 무변경. node --check PASS. REV-20260610-0188 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]. Windows-browser(PB-0008) 검증 배포 후. 동시세션 0182~0186 선점→0188. worktree `ai/claude/share-md-render`.
 
 ### TASK-0181 LLM 사용량 역할/계정 차트 모델별 stacked + 상세 표 요청(메시지) 수 (2026-06-10)
 - [x] **Minor §12.3** — 사용자 요청. **A**: 역할별·계정별 [토큰|비용] 막대를 모델별 누적(stacked)으로 분해. 백엔드 by_account 에 `models:[{model,total_tokens,cost_usd}]` 보존 + `_aggregate_usage_by_role` 가 역할별 models 합산. 프론트 전역 `modelColor`(일별/도넛/stacked 색 일관) + `renderStackedHBar`. **B**: 요청 수=`count(distinct run_id)`(run=conversation 단위, NULL 제외) 를 totals/by_model/by_account/by_role 에 `requests` 추가. 요약 '요청' 카드 + 상세 표 '요청' 컬럼(호출=LLM 호출, 요청=사용자 메시지). 권한/스키마 신규 0. 캐시버스터 `?v=20260610-usage-stacked`. node --check/py_compile + make test 282 passed/5 skipped(회귀 0). REV-20260610-0181 [SKIPPED:read-agg]. 동시세션→0181. worktree `ai/claude/usage-model-stacked`.
