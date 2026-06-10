@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.24.1
+template_version: v3.25.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -502,6 +502,14 @@ confirm** 대상이다. 그러나 프로젝트가 `FUNCTION.md` 의 `## Pre-appr
 - 문서 상단 메타데이터의 `edit_policy`를 따른다.
 - **프로젝트 수준 rewrite 문서**(ARCHITECTURE.md, CONVENTIONS.md 등)는 동시에 하나의 AI만 수정할 수 있다. 구조 변경이 필요하면 프로젝트 수준 `DECISIONS.md`에 제안을 기록하고 사람이 반영한다.
 - **append-only 문서 동시 추가 시** 각 항목에 타임스탬프와 작업자 ID(AI 세션 또는 기능 ID)를 포함하여 자동 병합이 가능하도록 한다.
+- **동시 세션 TASK 식별자 충돌 — 감지 후 재번호 (v3.25.0)**: 순번 기반 식별자
+  (`TASK-XXXX`, `REQ-XXXX` 등)를 여러 세션이 병렬 할당하면 번호가 충돌할 수 있다. 새
+  식별자 할당 직전, 동일 번호가 이미 점유됐는지(다른 worktree/세션의 meta 문서 또는
+  `origin/main`) 확인하고, 충돌이면 **현재 점유된 최대 번호 + 1 로 1-step 재번호**한 뒤
+  그 사실을 작업 로그에 한 줄 기록한다. 이 재번호는 정상 운영 동작이며 마찰로 간주하지
+  않는다 — reservation registry / timestamp 식별자 전환은 `docs/DECISIONS.md` ADR-0022
+  에서 검토 후 보류(불필요한 인프라 복잡도). 고병렬 위임으로 충돌 빈도가 높으면 doc-only
+  편집도 worktree-first(§13.2.1)로 격리해 race 표면을 줄인다.
 - **Feature-bound REPORT.md 충돌 방지** (v3.11.0+): `unit/<feature-id>/meta/REPORT.md`
   는 해당 feature 의 단일 worktree mutator 에 의해서만 mutation 된다 (F2 정책의
   feature-scoped 확장). 다른 worktree 가 동일 path 의 read 는 허용. 충돌 발생
@@ -552,6 +560,14 @@ Lifecycle (state machine, manual parallel AI):
 Variant exploration / 장기 risky refactor / QA worktree 시나리오는 별도 ADR
 범위 (`docs/DECISIONS.md` ADR-0020 / ADR-0021).
 
+**고병렬 활성 세션 — doc-only 편집도 worktree-first 권장 (v3.25.0)**: 여러 Claude
+세션이 동시에 같은 소비자 `main` 을 전진시키는 환경에서는 단순 정책문서 수정조차 공유
+`main` 과 race 한다 (`git pull --ff-only` 실패, TASK 번호 충돌 §13.1, MEMORY.md index
+병렬 소실 등). 이 경우 doc-only 편집도 default-main 직접 작업 대신 worktree-first 로
+격리하기를 권장한다 — §18.8.1 의 docs-only 경량 *검증* dispatch 와 보완 관계이며, 검증이
+아닌 *격리* 측면을 담당한다. 단일 세션·저병렬 환경에서는 기존 default(§13.1 순차
+충돌방지)로 충분하다.
+
 `git worktree add` 호출 가능한 trigger 는 다음으로 제한한다:
 1. **사용자 명시 지시** — 세션 안에서 "worktree 만들어서 X 작업해라" 류 직접 지시.
 2. **`/_template:entry` arg-given dispatch** — entry persona 의 Phase 3.6 worktree
@@ -578,6 +594,9 @@ worktree 가 binding branch 의 본체 (F1 보존). 본 carve-out 의 범위:
 - 새 worktree 가 ai/* binding branch 인 경우 한정 (main / shared 보호)
 - cd 후 작업이 그 worktree path 안에 머무는 한 — 다른 worktree 진입은 여전히
   P1 금지
+- **디렉토리 이동은 `/cd` 로 (v2.1.170+)**: worktree path 로의 진입은 `/cd <path>`
+  명령으로 수행해 prompt cache 를 보존한다. worktree 다회 진입이 본 템플릿 표준
+  워크플로라, bash `cd` 로 이동하면 매번 prompt cache 가 깨져 재구축 비용이 누적된다.
 
 trigger #1 (사용자 명시 worktree 지시) 도 동일한 carve-out 자연 적용 — 사용자가
 명시 지시했으므로 cd 도 사용자 의도.
@@ -870,6 +889,12 @@ uncommitted 변경을 감지할 때, 해당 세션에 즉시 고유 worktree 진
 | 배포·커밋 직전 (중간 검토) | Phase 6.4 Step 0 | commit 직전 re-check — 작업 도중 외부 주입 차단 |
 
 두 시점 모두 동일한 서브 프로시저(탐지 → SendMessage → filesystem fallback → 표면화)를 실행한다.
+
+**SendMessage 권한 제약 (v2.1.166+)**: SendMessage 는 세션 간 *알림·조정* 전용이며 권한
+escalation 을 매개하지 않는다. 2.1.166+ 부터 타 세션이 보낸 SendMessage 는 user authority
+를 전달하지 않아, 수신자는 relayed permission request 를 거부하고 auto mode 에서도 차단된다.
+아래 알림 메커니즘은 이 제약 안에서 (승인 요청이 아닌 *상태 통지* 로만) 동작하도록 설계됐다 —
+멀티에이전트 위임 세션이 SendMessage 로 권한을 우회·escalate 하도록 설계하면 조용히 차단된다.
 
 **알림 메커니즘 (우선순위 순)**:
 1. **SendMessage (FleetView / multi-agent 환경)**: `<project_root>/worktrees/REGISTRY.md`
@@ -1328,6 +1353,13 @@ WSL 내 curl, wget, requests, pytest 등 HTTP 응답 검사만으로는 시각�
 **필수 확인 방법**: `/browse` 스킬(gstack headless-but-real-engine)로 변경된 페이지를 열고
 레이아웃·버튼·폼·모달 등 변경 영역을 스크린샷 또는 element 상태로 확인한다.
 `/browse` 스킬은 내부적으로 MCP 브라우저 도구를 사용하며, 이 경로만 시각적 확인으로 인정한다.
+
+**데이터 의존 UI 요소 (v3.25.0)**: DB 컬럼·API 응답 등 데이터에 의존해 렌더되는 UI 요소
+(예: 특정 레코드의 reason 텍스트)는 **대표 live data 가 실재·충전된 상태에서 user-facing
+outcome 렌더를 확인한다**. element 가 정상 동작해도 소스 데이터가 비면 화면은 공백이고,
+`/browse` 의 빈 상태 element 존재 점검이 이를 "정상" 으로 오판할 수 있다. 대표 데이터를
+1건 이상 생성·주입한 뒤 그 값이 실제 화면에 표시되는지까지 확인해야 완료로 인정한다 —
+빈 상태 element 점검만으로 UI feature 완료를 선언하지 않는다.
 
 Playwright를 사용해야 하는 경우, `/browse` 스킬의 MCP 경로를 통해 실행해야 한다.
 WSL bash에서 `playwright` CLI를 직접 실행하는 것은 렌더링 확인으로 인정되지 않는다.
@@ -2568,3 +2600,19 @@ claude auto-mode critique   # 커스텀 규칙의 모호·중복·오탐 위험 
 
 설정 변경 후 `claude auto-mode config` 로 effective 규칙을 검증한다. 거부 이력은 `/permissions`
 의 Recently denied 탭에 기록되며, 반복 거부는 보통 `autoMode.environment` 컨텍스트 부족 신호다.
+
+### §22.7 위임 세션 트러블슈팅 — `--safe-mode` customization 격리 진단 (v2.1.169+)
+
+본 템플릿은 PreCompact/Stop hook · AGENTS.md 정책 · `/_template:*` · `/_maintainer:*` skill ·
+`settings.json` 커스터마이징에 강하게 의존한다. 위임 세션이 예기치 않게 동작할 때 "이 오작동이
+내 customization 탓인가, Claude Code core 탓인가" 를 가르는 1차 진단 도구로 `--safe-mode`
+플래그(또는 `CLAUDE_CODE_SAFE_MODE` 환경변수, v2.1.169+)를 사용한다. 이 모드는 모든
+customization(hooks·settings·skills)을 비활성화한다:
+
+- core 동작에서도 문제가 재현되면 → Claude Code 자체 또는 외부 요인(환경·네트워크·소비자 코드).
+- safe-mode 에서 문제가 사라지면 → 본 템플릿의 hook/정책/skill customization 이 원인 → 해당
+  영역(어떤 hook·어떤 §·어떤 skill)을 좁혀 진단한다.
+
+진단 후에는 safe-mode 없이 정상 세션으로 복귀한다. safe-mode 는 **디버깅 격리 전용**이며 상시
+운영 모드가 아니다 — 거버넌스 hook(F0 gate, verify-completion, PreCompact TASK 보호 등)도 함께
+비활성화되므로, 이 모드에서는 mutation/commit/fan-out 을 수행하지 않는다(진단 관찰만).
