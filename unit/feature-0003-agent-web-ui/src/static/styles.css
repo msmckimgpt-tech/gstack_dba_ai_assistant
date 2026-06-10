@@ -2843,6 +2843,9 @@ a { color: inherit; }
 .admin-pane[data-admin-pane="dashboard"].is-active,
 .admin-pane[data-admin-pane="usage"].is-active {
   overflow-y: auto;
+  /* TASK-0198: 좌우 스크롤 차단 — 카드 min-width 누적/SVG 폭/표 넓이로 가로 넘침이 발생하던 회귀 차단.
+     내부 요소는 min-width:min(Npx,100%) + 표는 카드 내부 스크롤로 흡수(아래). */
+  overflow-x: hidden;
 }
 
 .admin-pane-head {
@@ -3461,14 +3464,17 @@ a { color: inherit; }
   gap: 12px;
   flex-wrap: wrap;
 }
-.admin-usage-row > .admin-usage-card { flex: 1; min-width: 300px; }
+/* TASK-0198: min-width 를 min(Npx,100%) 로 — 컨테이너가 Npx 보다 좁아도 카드가 넘치지 않게(가로 스크롤 차단). */
+.admin-usage-row > .admin-usage-card { flex: 1; min-width: min(300px, 100%); }
 /* TASK-0180: 카테고리별 행 구조. ① 시간별 토큰(flex 4) : 모델별 비중(flex 1) — 4:1.
    ② 역할별 [토큰|비용], ③ 계정별 [토큰|비용] 은 .admin-usage-row(1:1). 좁으면 wrap. */
 .admin-usage-trend-row { display: flex; gap: 12px; flex-wrap: wrap; }
-.admin-usage-trend-main { flex: 4; min-width: 420px; }
-.admin-usage-trend-side { flex: 1; min-width: 240px; }
+.admin-usage-trend-main { flex: 4; min-width: min(420px, 100%); }
+.admin-usage-trend-side { flex: 1; min-width: min(240px, 100%); }
 /* 상세 표 카드 — 표가 카드 폭을 채워(좌측 정렬 + 우측 빈 공간 제거) 여백 해소 */
 .admin-usage-table-card .admin-usage-table { max-width: none; width: 100%; }
+/* TASK-0198: 넓은 표(모델별 7컬럼 등)는 카드 내부에서 가로 스크롤로 흡수 — pane 전체 좌우 스크롤 차단. */
+.admin-usage-table-card { overflow-x: auto; }
 /* TASK-0178: 여백 컴팩트화 — 섹션/카드/요약 패딩·간격 축소 + 차트 높이 다운(admin.js). */
 .admin-usage-section { margin-top: 12px; }
 .admin-usage-section:first-of-type { margin-top: 8px; }
@@ -3495,8 +3501,16 @@ a { color: inherit; }
 .admin-usage-metric { padding: 11px 14px; }
 .admin-usage-metric span { letter-spacing: .04em; margin-bottom: 4px; }
 .admin-usage-metric strong { font-size: 19px; font-weight: 800; }
-/* usage 요약 그리드도 약간 촘촘하게 */
-.admin-pane[data-admin-pane="usage"] .summary-metrics { gap: 10px; margin-top: 0; }
+/* usage 요약 그리드도 약간 촘촘하게. TASK-0198: minmax 하한을 min(160px,100%) 로 — 좁은 폭에서
+   grid track 합이 컨테이너를 초과해 수 px 가로 넘침이 나던 것 차단(전체 모델 5~6 카드 시). */
+.admin-pane[data-admin-pane="usage"] .summary-metrics {
+  gap: 10px; margin-top: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+}
+/* TASK-0198: usage pane 직접 자식이 내부 콘텐츠(차트 SVG·표·칩) 때문에 grow 하며 pane 폭을
+   초과하지 않도록 min-width:0 보장(flex/grid 기본 min-content 넘침 차단). overflow-x:hidden 과 함께
+   잔여 수 px 넘침까지 제거. */
+.admin-pane[data-admin-pane="usage"] > * { min-width: 0; max-width: 100%; }
 /* 차트 막대 위 SVG 텍스트·축은 JS 에서 var(--…) 직접 치환 (클래스로 분리 불가) */
 .admin-usage-legend {
   margin-top: 8px;
@@ -3554,6 +3568,101 @@ a { color: inherit; }
   white-space: nowrap;
 }
 
+/* ── TASK-0198: 모델 필터 칩 바 + 모델별 요약 카드 ──────────────────────────
+   상단 대시보드가 종합만 보이던 문제 해소 — 모델을 선택(또는 전체)해 요약·차트·역할·계정을
+   그 모델 기준으로 좁혀 본다. 칩 토글은 재조회 없이 캐시 재렌더(admin.js loadUsage refetch:false). */
+.admin-usage-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  /* 칩이 많아도 가로 스크롤 대신 줄바꿈 — pane 좌우 스크롤 차단 정책과 정합. */
+  max-width: 100%;
+}
+.admin-usage-filter-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+.admin-usage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+  max-width: 100%;
+}
+.admin-usage-chip:hover { background: var(--bg); }
+.admin-usage-chip.is-active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--text);
+}
+.admin-usage-chip--all.is-active {
+  border-color: var(--text-2);
+  background: var(--bg);
+}
+.admin-usage-chip-dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: none; }
+.admin-usage-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.admin-usage-chip-tok { font-variant-numeric: tabular-nums; color: var(--text-muted); font-weight: 700; }
+.admin-usage-chip.is-active .admin-usage-chip-tok { color: var(--text-2); }
+
+/* 요약 스코프 라벨 (전체 모델 / 선택 N개 모델) */
+.admin-usage-summary-head { display: flex; align-items: center; gap: 8px; margin: 4px 0 6px; }
+.admin-usage-summary-scope {
+  font-size: 11px; font-weight: 700; letter-spacing: .04em;
+  color: var(--text-muted); text-transform: uppercase;
+}
+/* 모델별 분리 카드 그리드 */
+.admin-usage-mcards-head {
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--text-2); margin: 14px 0 8px;
+}
+.admin-usage-mcards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr));
+  gap: 10px;
+}
+.admin-usage-mcard {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--mcard-accent, var(--border));
+  border-radius: var(--r-md);
+  background: var(--surface);
+  padding: 11px 13px;
+  cursor: pointer;
+  transition: background .12s, box-shadow .12s, border-color .12s;
+  min-width: 0;
+}
+.admin-usage-mcard:hover { background: var(--bg); }
+.admin-usage-mcard.is-active { border-color: var(--mcard-accent, var(--primary)); box-shadow: 0 0 0 2px var(--primary-soft); }
+.admin-usage-mcard-head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text-2); margin-bottom: 8px; min-width: 0;
+}
+.admin-usage-mcard-alias { color: var(--text-muted); font-size: 11px; flex: none; }
+.admin-usage-mcard-name { font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-usage-mcard-tok {
+  font-size: 22px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums;
+  line-height: 1.1; margin-bottom: 8px;
+}
+.admin-usage-mcard-tok span { font-size: 11px; font-weight: 600; color: var(--text-muted); margin-left: 4px; }
+.admin-usage-mcard-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 12px; color: var(--text-muted); padding: 2px 0;
+}
+.admin-usage-mcard-row b { color: var(--text-2); font-variant-numeric: tabular-nums; font-weight: 700; }
+
 /* TASK-0184: 역할 stacked 막대 행 — 계정 drill-down 진입(클릭) 가능. */
 .admin-usage-hbar-row { margin: 6px 0; }
 .admin-usage-hbar-row--click { cursor: pointer; border-radius: var(--r-sm); padding: 4px 6px; margin: 2px -6px; transition: background .12s; }
@@ -3566,7 +3675,7 @@ a { color: inherit; }
 .admin-usage-drill-body { margin-top: 10px; min-height: 24px; }
 /* TASK-0184: drill 패널 토큰|비용 2열 (역할별 차트와 일관, 좁으면 wrap). */
 .admin-usage-drill-charts { display: flex; gap: 16px; flex-wrap: wrap; }
-.admin-usage-drill-col { flex: 1; min-width: 240px; }
+.admin-usage-drill-col { flex: 1; min-width: min(240px, 100%); }
 .admin-usage-drill-pager { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
 .admin-usage-drill-pager button { padding: 4px 12px; }
 .admin-usage-drill-pager button:disabled { opacity: .45; cursor: not-allowed; }

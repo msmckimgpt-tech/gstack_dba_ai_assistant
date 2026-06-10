@@ -2651,3 +2651,15 @@ source_of_truth: true
   - unit/feature-0003-agent-web-ui/src/static/admin.js (`renderAccountDrill` 비용 차트 렌더 + 접힘/빈검색 클리어)
   - unit/feature-0003-agent-web-ui/src/static/styles.css (`.admin-usage-drill-charts`/`-col`)
 - Rollback: drill body 를 단일 `usageDrillChart`(토큰만)로 환원.
+
+## CHG-20260610-0198
+- Date: 2026-06-10
+- Related Requirement: TASK-0198 (사용자 요청 — LLM 사용량 모델별 분리/선택 차트 + 좌우 스크롤 제거)
+- Summary: `관리 콘솔 > 감사 > LLM 사용량` 상단 대시보드가 종합만 보이고 모델별 분리/선택 불가 + 좌우 스크롤 불편 해소. **(A) 모델 필터·분리**: 상단 모델 칩 바(`#usageModelFilter`)로 전체/모델 다중 토글, 선택 모델 기준으로 요약·일별·도넛·역할·계정 차트/표를 클라이언트 재계산(`buildView`)으로 좁힘. `loadUsage` 가 응답을 days|gran 키로 캐시(`_lastRaw`)하고 칩 토글은 재조회 없이 재렌더(`refetch:false`). 모델 키=`COALESCE(resolved_model,model)`. 부분 선택 시 역할·계정 표의 요청·호출은 모델 횡단이라 `—`(토큰·비용은 기여분 재합산으로 정확). **(B) 모델별 요약 카드**: 합계 카드(스코프 라벨) + 모델별 분리 카드(토큰/요청/호출/비용, 클릭 시 단독 선택). **(C) 좌우 스크롤 제거**: usage pane `overflow-x:hidden`, flex `min-width:min(Npx,100%)`, 넓은 표는 카드 내부 `overflow-x:auto`. `color-mix`/`--accent` 미사용 → `--primary`/`--primary-soft` 토큰. 백엔드/API/스키마/RBAC/시크릿 무변경(읽기 전용 집계 표시만). 캐시버스터 `?v=20260610-usage-model-filter2`. PB-0008 Windows-browser 검증 시 전체 모델 상태에서 세로 스크롤바(15px) 등장으로 인한 잔여 6px 측정값을 추가 차단 — usage pane summary-metrics `minmax(min(160px,100%),1fr)` + pane 직접 자식 `min-width:0;max-width:100%`. `userCanScrollHorizontally:false` 확정(TEST.md §3).
+- Files:
+  - unit/feature-0003-agent-web-ui/src/static/admin.js (`loadUsage` 모델 필터 상태·`buildView`·`renderModelFilter`·모델별 요약 카드·view 기준 렌더·부분선택 `—` 처리)
+  - unit/feature-0003-agent-web-ui/src/static/admin.html (`#usageModelFilter` 컨테이너 + admin.js/styles.css 캐시버스터 `usage-model-filter2`)
+  - unit/feature-0003-agent-web-ui/src/static/styles.css (가로 스크롤 차단[overflow-x:hidden + min-width:min(Npx,100%) + pane 자식 min-width:0/max-width:100% + summary minmax min()] + `.admin-usage-filter`/`-chip`/`-mcard*` 스타일)
+  - unit/feature-0003-agent-web-ui/tests/win-browser-task0198-usage.scenario.json (PB-0008 검증 시나리오 신규)
+  - unit/feature-0003-agent-web-ui/docs/{TASK,FUNCTION,REVIEW,TEST}.md (명세·이력·검증 기록)
+- Rollback: 캐시버스터 환원 + `loadUsage` 를 직접 `data` 렌더로 되돌리고(`buildView`/필터 칩 제거), `#usageModelFilter` div 와 `.admin-usage-filter`/`-chip`/`-mcard*` CSS·`overflow-x`·`min-width` 변경 제거.

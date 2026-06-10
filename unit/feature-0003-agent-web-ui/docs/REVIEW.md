@@ -1863,3 +1863,10 @@ source_of_truth: true
 - Date: 2026-06-10
 - Cycle: TASK-0184 A drill-down 누락 보강 (계정별 비용 차트)
 - Reason: 사용자 지적("계정별 비용 차트 누락") 후속 — drill 패널에 비용 막대(`usageDrillCostChart`) 추가 + 2열 레이아웃. 순수 프론트(HTML/CSS/JS), 권한·엔드포인트·스키마 0(by_account 응답의 기존 `cost_usd` 를 추가 렌더). RBAC 권한 모델 변경 아님 → outside-voice 불필요. node --check PASS.
+
+## REV-20260610-0198 [SKIPPED:rbac-schema-unchanged-readonly-ui]
+- Date: 2026-06-10
+- Cycle: TASK-0198 (LLM 사용량 모델별 분리/선택 차트 + 모델별 요약 카드 + 좌우 스크롤 제거)
+- Trigger: UI/screen/layout/chart keyword 매칭(§18.8 → ux/design). 단 조회 UI 전용 + 권한·스키마·시크릿 무변경이라 전례(REV-20260610-0184/0185)와 동일하게 경량 SKIP.
+- Reason: 순수 프론트(admin.js·admin.html·styles.css). 기존 `GET /api/admin/usage`(권한 `console.usage.read`) 응답을 **그대로** 받아 클라이언트에서 모델 필터·재계산(`buildView`)만 수행 — 신규 엔드포인트·쿼리·권한·grant·역할·스키마·시크릿·환경변수 0. 모델 필터링은 백엔드가 이미 내려주는 `by_model`/`by_day_model`/`models[]` 의 부분집합 선택일 뿐이라 노출 데이터 범위 확대 없음(권한 보유자가 이미 보던 동일 데이터). 부분 선택 시 요청·호출 분해 불가 항목은 `—` 로 정직 표기(오집계 방지). 좌우 스크롤 제거는 `overflow-x`/`min-width` CSS. `color-mix`/`--accent` 미사용 → 프로젝트 토큰 통일(구버전 브라우저 회귀 회피). RBAC 권한 모델 변경 아님 → outside-voice 불필요. node --check PASS.
+- Residual: Windows-browser(PB-0008) 시각 검증은 배포 후 수행(CHECK#13 WARN, TEST.md §3 Run 으로 기록).

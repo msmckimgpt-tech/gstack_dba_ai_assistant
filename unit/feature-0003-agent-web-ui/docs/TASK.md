@@ -12,9 +12,12 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-10 (TASK-0188 공유 대화 markdown 미적용 수정 + 수신자 가독성 디자인; TASK-0184 계정 drill-down + 프로필 사용내역 차트 + 내 활동기록 제거; TASK-0181 역할/계정 모델 stacked + 요청 수; TASK-0180 카테고리별 행 레이아웃; TASK-0179 차트 grid; TASK-0178 여백 컴팩트화; TASK-0177 상세표 비용컬럼+디자인 정렬; TASK-0176 역할/계정별 비용 차트; TASK-0167 작은화면 잘림)
+- Last Updated: 2026-06-10 (TASK-0198 LLM 사용량 모델별 필터/선택 + 모델별 요약 카드 + 가로 스크롤 제거; TASK-0188 공유 대화 markdown 미적용 수정 + 수신자 가독성 디자인; TASK-0184 계정 drill-down + 프로필 사용내역 차트 + 내 활동기록 제거; TASK-0181 역할/계정 모델 stacked + 요청 수; TASK-0180 카테고리별 행 레이아웃; TASK-0179 차트 grid; TASK-0178 여백 컴팩트화; TASK-0177 상세표 비용컬럼+디자인 정렬; TASK-0176 역할/계정별 비용 차트; TASK-0167 작은화면 잘림)
 
 ## 2. Task Queue
+
+### TASK-0198 LLM 사용량 — 모델별 분리/선택 차트 + 모델별 요약 카드 + 좌우 스크롤 제거 (2026-06-10)
+- [x] **Minor §12.3** — 사용자 요청: `관리 콘솔 > 감사 > LLM 사용량` 상단 대시보드가 종합(aggregate)만 보이고 모델별 분리/선택이 불가 + 화면 좌우 스크롤 불편. **A 모델 필터·분리(프런트 전용)**: 상단에 모델 칩 바(`#usageModelFilter` — 전체/모델별 토글, 다중 선택)를 추가하고 선택 모델 기준으로 요약·일별 stacked·도넛·역할별·계정별 차트와 상세 표를 모두 좁힌다. 백엔드 `/api/admin/usage` 는 이미 `by_model`/`by_day_model`/역할·계정 `models[]` 를 내려주므로 **백엔드/API/스키마/RBAC/시크릿 무변경** — `loadUsage` 가 응답을 캐시(`_lastRaw`, days|gran 키)하고 `buildView(data, selectedModels)` 로 클라이언트 재계산(요약 totals=by_model 합, 역할·계정=선택 모델 기여분 재합산). 칩 토글은 재조회 없이 캐시 재렌더(`loadUsage({refetch:false})`). 모델 키는 전 차트 공통인 `COALESCE(resolved_model, model)`. 부분 선택 시 역할·계정 표의 요청(distinct run_id)·호출은 모델 횡단이라 분해 불가 → `—` 표시(토큰·비용은 정확 재계산). **B 모델별 요약 카드**: 종합 합계 카드(선택 스코프 라벨) + 모델별 분리 카드(모델당 토큰/요청/호출/추정 비용, 칩 색 accent, 클릭 시 그 모델 단독 선택 토글). **C 좌우 스크롤 제거**: usage pane `overflow-x:hidden`, flex 카드 `min-width:min(Npx,100%)`(420/300/240), 넓은 상세 표는 카드 내부 `overflow-x:auto` 로 흡수. `color-mix`/`--accent` 미사용(프로젝트 토큰 `--primary`/`--primary-soft` 로 통일 — 구버전 브라우저 회귀 회피). 프런트 3파일(admin.js·admin.html 캐시버스터·styles.css) + 시나리오. node --check PASS. 캐시버스터 `?v=20260610-usage-model-filter2`. REV-20260610-0198. **Windows-browser(PB-0008) 검증 완료** (TEST.md §3 2026-06-10 TASK-0198 Run: 칩 6·모델카드 4·선택 필터·`userCanScrollHorizontally:false` 확정, scenario ok). worktree `ai/claude/0003`.
 
 ### TASK-0197 assistant 말풍선 타임스탬프 옆 소요시간 표시 (2026-06-10)
 - [x] **Minor §12.3** — 사용자 요청: assistant 응답 완료 시 각 대화 bubble 의 타임스탬프 옆에 소요시간 표시. `message.meta.duration_ms`(agent_core 가 `_mirror_message` 에 mirror_meta 로 저장)가 있는 assistant 말풍선에 한해, 기존 `formatElapsed()` 재사용, `.message-meta-duration` span 추가. 백엔드/API/스키마/RBAC/시크릿 무변경 — 프런트 3파일(app.js·styles.css·index.html 캐시버스터) 만. node --check PASS. REV-20260610-0197 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]. worktree `ai/claude/response-duration-display`.

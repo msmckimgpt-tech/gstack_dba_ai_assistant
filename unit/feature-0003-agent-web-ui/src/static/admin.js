@@ -690,9 +690,14 @@ function getSystemPromptPending(args) {
 
 // TASK-0136 (#11): LLM 사용량 패널 — admin 전용(console.usage.read). /api/admin/usage 집계 표시.
 // TASK-0184: drill* = 역할 막대 클릭 시 펼치는 계정 drill-down 상태(byAccount 캐시·역할·페이지·검색).
-adminState.usage = { initialized: false, byAccount: [], drillRole: null, drillPage: 0, drillQuery: "", drillPageSize: 10, _renderDrill: null };
+// TASK-0198: selectedModels = 모델 필터(null → 전체, 배열 → 선택 모델 키만). _lastRaw/_lastKey =
+//   마지막 응답 캐시(days|gran). 모델 칩 토글은 재조회 없이 캐시로 재렌더(loadUsage({refetch:false})).
+adminState.usage = { initialized: false, byAccount: [], drillRole: null, drillPage: 0, drillQuery: "", drillPageSize: 10, _renderDrill: null, selectedModels: null, _lastRaw: null, _lastKey: null };
 
-async function loadUsage() {
+// TASK-0198: opts.refetch=false → days/gran 동일 캐시(_lastRaw)로 재렌더만(모델 칩 토글용).
+//   기간/단위 변경(컨트롤 change) 은 refetch=true(기본) — 새 모델 집합이 올 수 있으므로 선택 초기화.
+async function loadUsage(opts) {
+  const refetch = !(opts && opts.refetch === false);
   const sel = document.getElementById("usageDaysSel");
   const granSel = document.getElementById("usageGranSel");
   const days = sel ? sel.value : "30";
@@ -708,7 +713,7 @@ async function loadUsage() {
   const trendTitleEl = document.getElementById("usageTrendTitle");
   const GRAN_LABEL = { hour: "시간별", day: "일별", week: "주별", month: "월별" };
   if (trendTitleEl) trendTitleEl.textContent = GRAN_LABEL[gran] || "일별";
-  if (summaryEl) summaryEl.textContent = "로딩 중…";
+  if (summaryEl && refetch) summaryEl.textContent = "로딩 중…";
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const num = (v) => (Number(v) || 0).toLocaleString();
   const usd = (v) => "$" + (Number(v) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -936,19 +941,105 @@ async function loadUsage() {
     return `<table class='admin-usage-table'><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
   };
   const costFmt = (v) => (v && v > 0 ? usd(v) : "—");
+  // TASK-0198: by_model row → 차트/색맵에서 쓰는 모델 키(resolved_model 우선, 미상 폴백).
+  const modelKeyOf = (m) => ((m.resolved_model && m.resolved_model !== m.model) ? m.resolved_model : (m.model || "(미상)"));
+  // TASK-0198: 선택 모델 집합으로 응답을 필터링한 view 를 만든다(백엔드 무변경 — 클라이언트 재계산).
+  //   selectedModels=null → 전체. by_model/by_day_model/도넛은 모델 키로 직접 필터,
+  //   역할·계정은 models[] 를 추려 토큰/비용을 재합산(선택 모델 기여분만), totals 는 by_model 합으로 재계산.
+  const buildView = (data, selSet) => {
+    const all = (selSet == null);
+    const inSel = (k) => all || selSet.has(k);
+    const by_model = (data.by_model || []).filter((m) => inSel(modelKeyOf(m)));
+    const by_day_model = (data.by_day_model || []).filter((m) => inSel(m.model));
+    const reModels = (models) => (models || []).filter((m) => inSel(m.model));
+    const reEntity = (r) => {
+      const models = reModels(r.models);
+      const total_tokens = models.reduce((a, m) => a + (m.total_tokens || 0), 0);
+      const cost_usd = Math.round(models.reduce((a, m) => a + (m.cost_usd || 0), 0) * 10000) / 10000;
+      return { ...r, models, total_tokens, cost_usd };
+    };
+    // 역할·계정: 선택 모델 기여분만 남기고, 그 기여가 0 인 엔티티는 차트/표에서 제외.
+    const by_role = all ? (data.by_role || []) : (data.by_role || []).map(reEntity).filter((r) => r.total_tokens > 0 || r.cost_usd > 0);
+    const by_account = all ? (data.by_account || []) : (data.by_account || []).map(reEntity).filter((r) => r.total_tokens > 0 || r.cost_usd > 0);
+    // totals: 전체면 응답 totals 그대로, 부분 선택이면 by_model 합으로 재계산(prompt/completion/calls/requests/cost).
+    let totals;
+    if (all) {
+      totals = data.totals || {};
+    } else {
+      const sumK = (k) => by_model.reduce((a, m) => a + (m[k] || 0), 0);
+      totals = {
+        requests: sumK("requests"), calls: sumK("calls"),
+        total_tokens: sumK("total_tokens"), prompt_tokens: sumK("prompt_tokens"),
+        completion_tokens: sumK("completion_tokens"),
+        cost_usd: Math.round(sumK("cost_usd") * 10000) / 10000,
+      };
+    }
+    return { totals, by_model, by_day_model, by_role, by_account };
+  };
+  // TASK-0198: 모델 필터 칩 바 — 전체 모델 목록 + 선택 토글. days/gran 동일 캐시로 재렌더(재조회 X).
+  const renderModelFilter = (allModelKeys, t) => {
+    const barEl = document.getElementById("usageModelFilter");
+    if (!barEl) return;
+    const st = adminState.usage;
+    const sel = st.selectedModels;  // null=전체
+    const isAll = (sel == null);
+    const totalsTokens = t && t.total_tokens ? t.total_tokens : 0;
+    const chip = (key, active, tok) => {
+      const sw = `<span class='admin-usage-chip-dot' style='background:${mcol(key)};'></span>`;
+      const sub = (tok != null) ? `<span class='admin-usage-chip-tok'>${num(tok)}</span>` : "";
+      return `<button type='button' class='admin-usage-chip${active ? " is-active" : ""}' data-model-key='${esc(key)}'>${sw}<span class='admin-usage-chip-label'>${esc(key)}</span>${sub}</button>`;
+    };
+    const allChip = `<button type='button' class='admin-usage-chip admin-usage-chip--all${isAll ? " is-active" : ""}' data-model-key='__ALL__'>전체${totalsTokens ? ` <span class='admin-usage-chip-tok'>${num(totalsTokens)}</span>` : ""}</button>`;
+    const tokByKey = {};
+    (st._lastRaw && st._lastRaw.by_model || []).forEach((m) => { tokByKey[modelKeyOf(m)] = (tokByKey[modelKeyOf(m)] || 0) + (m.total_tokens || 0); });
+    const chips = allModelKeys.map((k) => chip(k, !isAll && sel.has(k), tokByKey[k])).join("");
+    barEl.innerHTML = `<span class='admin-usage-filter-label'>모델</span>${allChip}${chips}`;
+    barEl.querySelectorAll(".admin-usage-chip").forEach((b) => {
+      b.addEventListener("click", () => {
+        const key = b.getAttribute("data-model-key");
+        if (key === "__ALL__") { st.selectedModels = null; }
+        else {
+          const cur = (st.selectedModels == null) ? new Set() : new Set(st.selectedModels);
+          if (cur.has(key)) cur.delete(key); else cur.add(key);
+          st.selectedModels = (cur.size === 0 || cur.size === allModelKeys.length) ? null : cur;
+        }
+        st.drillRole = null;  // 모델 변경 시 계정 drill 접기(정합)
+        loadUsage({ refetch: false });  // 캐시 재렌더(재조회 X)
+      });
+    });
+  };
   try {
-    const data = await apiFetch(`/api/admin/usage?days=${encodeURIComponent(days)}&gran=${encodeURIComponent(gran)}`);
-    const t = data.totals || {};
-    // TASK-0181: 전역 모델 색맵 — 등장 모델 전체(도넛/일별/stacked 공유)로 1회 구축.
+    let data;
+    if (refetch) {
+      data = await apiFetch(`/api/admin/usage?days=${encodeURIComponent(days)}&gran=${encodeURIComponent(gran)}`);
+      const key = `${days}|${gran}`;
+      // 기간/단위가 바뀌면 모델 집합이 달라질 수 있으므로 선택을 초기화(전체).
+      if (adminState.usage._lastKey !== key) adminState.usage.selectedModels = null;
+      adminState.usage._lastRaw = data;
+      adminState.usage._lastKey = key;
+    } else {
+      data = adminState.usage._lastRaw;
+      if (!data) { return loadUsage({ refetch: true }); }  // 캐시 없으면 강제 조회
+    }
+    // TASK-0181: 전역 모델 색맵 — 등장 모델 전체(도넛/일별/stacked 공유)로 1회 구축(원본 기준 — 색 고정).
     const _ms = [];
-    (data.by_model || []).forEach((m) => { const k = (m.resolved_model && m.resolved_model !== m.model) ? m.resolved_model : (m.model || "(미상)"); if (!_ms.includes(k)) _ms.push(k); });
+    (data.by_model || []).forEach((m) => { const k = modelKeyOf(m); if (!_ms.includes(k)) _ms.push(k); });
     (data.by_day_model || []).forEach((m) => { if (m.model && !_ms.includes(m.model)) _ms.push(m.model); });
     (data.by_account || []).forEach((a) => (a.models || []).forEach((m) => { if (m.model && !_ms.includes(m.model)) _ms.push(m.model); }));
     modelColor = colorMapFor(_ms);
+    // TASK-0198: 선택 모델 칩 바(원본 모델 전체 기준) + 선택 적용된 view.
+    renderModelFilter(_ms, data.totals || {});
+    const view = buildView(data, adminState.usage.selectedModels);
+    const t = view.totals || {};
+    const selSet = adminState.usage.selectedModels;
+    const isPartial = (selSet != null);
     if (summaryEl) {
       // TASK-0177: dashboard 와 동일한 .metric-card / .summary-metrics 로 통일.
+      // TASK-0198: ① 합계 카드(선택 모델 기준) ② 모델별 분리 카드(모델당 토큰/호출/요청/비용).
       const card = (label, val) => `<article class='metric-card admin-usage-metric'><span>${label}</span><strong>${val}</strong></article>`;
-      summaryEl.innerHTML =
+      const scopeLabel = isPartial ? `선택 ${selSet.size}개 모델` : "전체 모델";
+      const totalsHtml =
+        `<div class='admin-usage-summary-head'><span class='admin-usage-summary-scope'>${esc(scopeLabel)}</span></div>` +
         `<div class='summary-metrics'>` +
         card("요청", num(t.requests)) +
         card("호출", num(t.calls)) +
@@ -957,22 +1048,51 @@ async function loadUsage() {
         card("Completion", num(t.completion_tokens)) +
         ((t.cost_usd && t.cost_usd > 0) ? card("추정 비용", usd(t.cost_usd)) : "") +
         `</div>`;
+      // 모델별 분리 카드 — 토큰 내림차순. 칩 색과 동일 accent. 클릭 시 그 모델만 단독 선택.
+      const mcards = (view.by_model || []).slice().sort((a, b) => (b.total_tokens || 0) - (a.total_tokens || 0)).map((m) => {
+        const k = modelKeyOf(m);
+        const alias = (m.model && m.model !== k) ? `<span class='admin-usage-mcard-alias'>${esc(m.model)} →</span> ` : "";
+        const cost = (m.cost_usd && m.cost_usd > 0) ? `<div class='admin-usage-mcard-row'><span>추정 비용</span><b>${usd(m.cost_usd)}</b></div>` : "";
+        const soloActive = isPartial && selSet.size === 1 && selSet.has(k);
+        return `<article class='admin-usage-mcard${soloActive ? " is-active" : ""}' data-model-solo='${esc(k)}' style='--mcard-accent:${mcol(k)};'>` +
+          `<div class='admin-usage-mcard-head'><span class='admin-usage-chip-dot' style='background:${mcol(k)};'></span>${alias}<span class='admin-usage-mcard-name'>${esc(k)}</span></div>` +
+          `<div class='admin-usage-mcard-tok'>${num(m.total_tokens)}<span>토큰</span></div>` +
+          `<div class='admin-usage-mcard-row'><span>요청</span><b>${num(m.requests)}</b></div>` +
+          `<div class='admin-usage-mcard-row'><span>호출</span><b>${num(m.calls)}</b></div>` +
+          cost +
+          `</article>`;
+      }).join("");
+      const mcardsWrap = mcards
+        ? `<div class='admin-usage-mcards'>${mcards}</div>`
+        : "<p class='admin-usage-empty'>선택한 모델의 사용 기록이 없습니다.</p>";
+      summaryEl.innerHTML = totalsHtml + `<div class='admin-usage-mcards-head'>모델별</div>` + mcardsWrap;
+      // 모델 카드 클릭 → 그 모델만 단독 선택(이미 단독이면 전체 복귀).
+      summaryEl.querySelectorAll("[data-model-solo]").forEach((c) => {
+        c.addEventListener("click", () => {
+          const k = c.getAttribute("data-model-solo");
+          const st = adminState.usage;
+          const soloNow = (st.selectedModels != null && st.selectedModels.size === 1 && st.selectedModels.has(k));
+          st.selectedModels = soloNow ? null : new Set([k]);
+          st.drillRole = null;
+          loadUsage({ refetch: false });
+        });
+      });
     }
-    // TASK-0164/0166: 일별 stacked / 모델별 도넛.
-    renderStacked(dayChartEl, data.by_day_model);
-    renderDonut(modelChartEl, data.by_model);
+    // TASK-0164/0166: 일별 stacked / 모델별 도넛 (선택 모델 view 기준).
+    renderStacked(dayChartEl, view.by_day_model);
+    renderDonut(modelChartEl, view.by_model);
     // TASK-0181: 역할별·계정별 [토큰|비용] 을 모델별 누적(stacked) 막대로 — 어떤 모델로 썼는지 색 분해.
-    const roleRows = (data.by_role || []).map((r) => ({
+    const roleRows = (view.by_role || []).map((r) => ({
       label: String(r.role == null ? "-" : r.role), total_tokens: r.total_tokens || 0, cost_usd: r.cost_usd || 0, models: r.models || [],
     }));
     // TASK-0184: 계정별 독립 차트 제거 → 역할 토큰/비용 막대 클릭 시 계정 drill-down 펼침.
     renderStackedHBar(roleChartEl, roleRows, "total_tokens", num, toggleAccountDrill);
     renderStackedHBar(roleCostChartEl, roleRows, "cost_usd", usd, toggleAccountDrill);
-    // 계정 drill 데이터 보관 후 현재 펼침 상태 재렌더(역할 차트 재생성과 정합 유지).
-    adminState.usage.byAccount = data.by_account || [];
+    // 계정 drill 데이터 보관 후 현재 펼침 상태 재렌더(선택 모델 view 의 by_account 와 정합 유지).
+    adminState.usage.byAccount = view.by_account || [];
     renderAccountDrill();
-    // 상세 표 — 모델별(별칭→해소 + prompt/completion + 추정비용) / 역할별 / 계정별.
-    if (modelEl) modelEl.innerHTML = tbl(data.by_model, [
+    // 상세 표 — 모델별(별칭→해소 + prompt/completion + 추정비용) / 역할별 / 계정별 (선택 모델 view 기준).
+    if (modelEl) modelEl.innerHTML = tbl(view.by_model, [
       { key: "resolved_model", label: "모델", fmt: (v, r) => {
         const alias = r.model == null ? "" : String(r.model);
         const resolved = v == null ? "" : String(v);
@@ -984,18 +1104,21 @@ async function loadUsage() {
       { key: "cost_usd", label: "추정 비용", fmt: costFmt, align: "right" },
     ]);
     // TASK-0176/0177/0181: 역할별·계정별 표에도 요청(메시지)·호출·추정 비용(차트와 일치).
-    if (roleEl) roleEl.innerHTML = tbl(data.by_role, [
+    // TASK-0198: 부분 모델 선택 시 요청(distinct run_id)·호출은 모델별 분해 불가(대화/호출은 모델 횡단)
+    //   → 전체값 노출은 오해 소지라 "—" 로 표시. 토큰·비용은 선택 모델 기여분으로 정확히 재계산됨.
+    const dim = () => "—";
+    if (roleEl) roleEl.innerHTML = tbl(view.by_role, [
       { key: "role", label: "역할" },
-      { key: "requests", label: "요청", fmt: num, align: "right" },
-      { key: "calls", label: "호출", fmt: num, align: "right" },
+      { key: "requests", label: "요청", fmt: isPartial ? dim : num, align: "right" },
+      { key: "calls", label: "호출", fmt: isPartial ? dim : num, align: "right" },
       { key: "total_tokens", label: "토큰", fmt: num, align: "right" },
       { key: "cost_usd", label: "추정 비용", fmt: costFmt, align: "right" },
     ]);
-    if (acctEl) acctEl.innerHTML = tbl(data.by_account, [
+    if (acctEl) acctEl.innerHTML = tbl(view.by_account, [
       { key: "account_id", label: "계정", fmt: (v, r) => (v == null ? "(시스템)" : (r.username ? `${r.username} (#${v})` : `#${v}`)) },
       { key: "role", label: "역할", fmt: (v) => (v == null ? "—" : v) },
-      { key: "requests", label: "요청", fmt: num, align: "right" },
-      { key: "calls", label: "호출", fmt: num, align: "right" },
+      { key: "requests", label: "요청", fmt: isPartial ? dim : num, align: "right" },
+      { key: "calls", label: "호출", fmt: isPartial ? dim : num, align: "right" },
       { key: "total_tokens", label: "토큰", fmt: num, align: "right" },
       { key: "cost_usd", label: "추정 비용", fmt: costFmt, align: "right" },
     ]);

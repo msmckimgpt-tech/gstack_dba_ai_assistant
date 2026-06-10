@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260610-datasource-p2" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260610-usage-model-filter2" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -349,6 +349,8 @@
         </header>
         <!-- TASK-0164/0166: 상용 사용량 대시보드(Anthropic Console / OpenAI Usage) 참조 차트. 의존성 0 (순수 SVG).
              TASK-0177: 디자인 정렬 — .metric-card 요약, 차트 surface 카드, 토큰 통일, 8px spacing. -->
+        <!-- TASK-0198: 모델 필터 칩 바 — 전체/모델별 토글. 선택 모델 기준으로 아래 요약·차트·역할·계정이 좁혀진다(재조회 없이 캐시 재렌더). -->
+        <div id="usageModelFilter" class="admin-usage-filter" role="group" aria-label="모델 필터"></div>
         <div id="usageSummary" class="admin-usage-section">로딩 중…</div>
         <!-- TASK-0180: 카테고리별 행 구조 — ① 시간별 토큰(4) : 모델별 비중(1),
              ② 역할별 [토큰 | 비용], ③ 계정별 [토큰 | 비용]. (몰아넣기 grid 폐기) -->
@@ -504,6 +506,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260610-datasource-p2"></script>
+  <script src="/static/admin.js?v=20260610-usage-model-filter2"></script>
 </body>
 </html>

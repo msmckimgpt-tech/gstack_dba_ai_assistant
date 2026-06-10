@@ -1,0 +1,29 @@
+{
+  "name": "TASK-0198 LLM 사용량 모델별 필터/선택 + 모델별 요약 카드 + 가로 스크롤 제거 (authed admin session)",
+  "base_url": "https://localhost:18080",
+  "shot_dir": "/tmp/win-browser-shots/task0198",
+  "steps": [
+    { "action": "goto", "url": "/admin", "wait_until": "domcontentloaded" },
+    { "action": "wait_for", "selector": "[data-admin-tab=usage]", "timeout_ms": 20000 },
+    { "action": "screenshot", "path": "01_admin_loaded.png" },
+    { "action": "click", "selector": "[data-admin-tab=usage]", "stop_on_fail": false },
+    { "action": "wait_for", "selector": "#usageModelFilter", "timeout_ms": 15000, "stop_on_fail": false },
+    { "action": "wait_for", "timeout_ms": 2500, "stop_on_fail": false },
+    { "action": "screenshot", "path": "02_usage_default_all.png", "stop_on_fail": false },
+    { "action": "eval", "script": "JSON.stringify({chips:(document.getElementById('usageModelFilter')||{}).childElementCount||0, mcards:document.querySelectorAll('.admin-usage-mcard').length, scope:(document.querySelector('.admin-usage-summary-scope')||{}).textContent||''})", "stop_on_fail": false },
+    { "action": "eval", "script": "(function(){var p=document.querySelector('.admin-pane[data-admin-pane=usage]'); if(!p) return 'no-pane'; return JSON.stringify({scrollW:p.scrollWidth, clientW:p.clientWidth, hasHScroll:p.scrollWidth>p.clientWidth+1});})()", "stop_on_fail": false },
+    { "action": "screenshot", "path": "03_summary_model_cards.png", "stop_on_fail": false },
+    { "action": "click", "selector": ".admin-usage-chip:not(.admin-usage-chip--all)", "stop_on_fail": false },
+    { "action": "wait_for", "timeout_ms": 1500, "stop_on_fail": false },
+    { "action": "screenshot", "path": "04_one_model_selected.png", "stop_on_fail": false },
+    { "action": "eval", "script": "JSON.stringify({scope:(document.querySelector('.admin-usage-summary-scope')||{}).textContent||'', activeChips:document.querySelectorAll('.admin-usage-chip.is-active:not(.admin-usage-chip--all)').length})", "stop_on_fail": false },
+    { "action": "click", "selector": ".admin-usage-chip--all", "stop_on_fail": false },
+    { "action": "wait_for", "timeout_ms": 1200, "stop_on_fail": false },
+    { "action": "screenshot", "path": "05_back_to_all.png", "stop_on_fail": false },
+    { "action": "click", "selector": ".admin-usage-mcard", "stop_on_fail": false },
+    { "action": "wait_for", "timeout_ms": 1500, "stop_on_fail": false },
+    { "action": "screenshot", "path": "06_mcard_solo_select.png", "stop_on_fail": false },
+    { "action": "eval", "script": "(function(){var p=document.querySelector('.admin-pane[data-admin-pane=usage]'); return JSON.stringify({hasHScroll:p.scrollWidth>p.clientWidth+1, scrollW:p.scrollWidth, clientW:p.clientWidth});})()", "stop_on_fail": false },
+    { "action": "screenshot", "path": "07_final.png", "stop_on_fail": false }
+  ]
+}

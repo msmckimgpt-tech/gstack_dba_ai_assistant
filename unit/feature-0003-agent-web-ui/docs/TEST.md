@@ -499,3 +499,17 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **Evidence:** `/tmp/win-browser-shots/task0197_zoomed.png` (2× 줌, 빨간 outline 하이라이트 — "Assistant · 2026. 06. 10. 오전 11:06 **38초**" 명확 확인)
   - **Pass/Fail: PASS**
   - **Notes:** `.message-meta-duration { font-size:10px; opacity:0.7 }` 스타일 적용, 캐시버스터 `?v=20260610-response-duration` 확인. CHECK#13(PB-0008 Windows-browser) **충족**.
+
+- 2026-06-10 (TASK-0198 LLM 사용량 모델별 분리/선택 + 모델별 요약 카드 + 좌우 스크롤 제거 — **PB-0008 Windows-browser 완료 게이트**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증.
+  - **Runner: AI** (bin/win-browser.py launch → run --scenario → eval → screenshot)
+  - **Bridge:** relay (무권한 userspace relay 자동 기동, endpoint: http://172.28.64.1:9223)
+  - **Scenario:** `unit/feature-0003-agent-web-ui/tests/win-browser-task0198-usage.scenario.json` (22 steps, 인증된 admin 세션 — `console.usage.read`)
+  - **배포:** 이 worktree 코드로 web 이미지 재빌드(`docker compose -p repo build web`, sha 갱신) + `up -d --no-deps --force-recreate web`. cert(`make web-tls-cert`) 생성 후 TLS 모드 기동(`--ssl-keyfile/--ssl-certfile`). 서빙 자산 캐시버스터 `?v=20260610-usage-model-filter2` 확인, healthz status:ok(mysql/pg ok).
+  - **검증 내용 (전 step ok:true, scenario ok:true):**
+    - **모델별 분리 (A):** 모델 필터 칩 6개(전체 + edge/gemma4:e2b/claude-haiku-4/claude-sonnet-4, 각 토큰 수·색 dot), scope "전체 모델", 모델별 분리 카드 **4개** 렌더 — `{"chips":6,"mcards":4,"scope":"전체 모델"}`.
+    - **모델 선택 (A):** 칩 클릭 → `{"scope":"선택 1개 모델","activeChips":1}` — 요약 합계 카드·모델별 카드·일별 stacked·도넛(100.0%)이 선택 모델(edge: 요청 27/호출 19,616/토큰 11,557,309) 기준으로 재계산. 전체 칩 복귀·모델 카드 클릭 solo 선택 모두 동작.
+    - **좌우 스크롤 제거 (C):** usage pane `overflowX:"hidden"`, `userCanScrollHorizontally:false` — 사용자가 가로로 스크롤 **불가** 확정. 세로 스크롤바(`vbarPx:15`)만 존재(콘텐츠 길이상 정상). `scrollW 972 vs clientW 966` 6px 차이는 세로바 폭으로 인한 것이며 overflow-x:hidden 으로 클리핑/스크롤 안 됨 — 위양성 아님.
+  - **Evidence:** `/tmp/win-browser-shots/task0198/03_summary_model_cards.png` (전체 모델 — 칩 바·합계 카드·모델별 4카드·일별/도넛 차트, 가로 스크롤바 부재), `04_one_model_selected.png` (edge 단독 선택 — 합계·카드·차트 모두 edge 기준 재계산, 도넛 100%).
+  - **Pass/Fail: PASS**
+  - **Notes:** 백엔드/API/스키마/RBAC/시크릿 무변경(기존 `/api/admin/usage` 응답 클라이언트 재계산). 모델 키 `COALESCE(resolved_model,model)`. 부분 선택 시 역할·계정 요청·호출은 모델 횡단 분해 불가라 `—` 표기(토큰·비용은 정확). CHECK#13(PB-0008 Windows-browser) **충족**.

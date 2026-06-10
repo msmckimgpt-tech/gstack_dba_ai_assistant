@@ -452,6 +452,18 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   (TASK-0179: 차트 6개를 `.admin-usage-charts` CSS grid `repeat(auto-fill, minmax(400px,1fr))` 로 배치 — 넓은 화면 다열 채움, 일별=span 2, 860px↓ 1열. 넓은 모니터 가로 여백 해소.)
   (TASK-0180: grid 몰아넣기를 명시적 행 구조로 교체 — 시간별 토큰(4):모델별 비중(1), 역할별[토큰|비용], 계정별[토큰|비용]. 일별 차트 viewBox=clientWidth 로 카드 폭 채움. 상세 표 카드화(max-width none)로 여백 해소.)
   (TASK-0181: 역할별·계정별 [토큰|비용] 막대를 모델별 누적(stacked)으로 분해 — by_account/by_role 에 `models[]`, 전역 `modelColor` 로 일별/도넛/stacked 색 일관, `renderStackedHBar`. 요청 수=`count(distinct run_id)`(사용자 메시지) 를 totals/by_model/by_account/by_role `requests` 로 추가, 요약 카드·상세 표 '요청' 컬럼(호출=LLM 호출과 구분).)
+- LLM 사용량 모델별 분리/선택 + 모델별 요약 카드 (TASK-0198): usage pane 상단에 모델 필터 칩 바
+  (`#usageModelFilter` — 전체/모델 다중 토글, `renderModelFilter`)를 두고, 선택 모델 기준으로 요약·일별
+  stacked·도넛·역할별·계정별 차트와 상세 표를 모두 좁힌다. **백엔드/API/스키마/RBAC 무변경** — `loadUsage`
+  가 `GET /api/admin/usage` 응답을 `_lastRaw`(days|gran 키)로 캐시하고 `buildView(data, selectedModels)`
+  로 클라이언트 재계산(요약 totals=선택 by_model 합, 역할·계정=선택 모델 기여분 `models[]` 재합산, 기여 0
+  엔티티 제외). 칩/카드 토글은 재조회 없이 캐시 재렌더(`loadUsage({refetch:false})`); 기간/단위 변경은
+  refetch+선택 초기화. 모델 키는 전 차트 공통 `COALESCE(resolved_model, model)`. 부분 선택 시 역할·계정
+  표의 요청(distinct run_id)·호출은 모델 횡단이라 분해 불가 → `—` 표기(토큰·비용은 정확). 요약은 합계 카드
+  (선택 스코프 라벨 `.admin-usage-summary-scope`) + 모델별 분리 카드(`.admin-usage-mcards`/`-mcard` — 모델당
+  토큰/요청/호출/추정 비용, 칩 색 accent, 클릭 시 단독 선택 토글). 좌우 스크롤은 usage pane `overflow-x:hidden`
+  + flex `min-width:min(Npx,100%)` + 넓은 표 카드 `overflow-x:auto` 로 차단. 색은 프로젝트 토큰(`--primary`
+  /`--primary-soft`) 사용(`color-mix`/`--accent` 미사용 — 구버전 브라우저 회귀 회피).
 - 관리 콘솔 레이아웃 스크롤 (TASK-0167): `.admin-shell`·`.admin-workspace` 는 `height:100vh;
   overflow:hidden` 이고 각 `.admin-pane` 이 자체 스크롤한다. 단순 세로 흐름 pane(dashboard·usage)은
   `overflow-y:auto` 를 직접 가지며(styles.css), list-detail pane(accounts/roles/products/audits)은
