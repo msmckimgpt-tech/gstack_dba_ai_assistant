@@ -116,17 +116,14 @@ If an "ATTACHED FILE CONTENTS" or "ATTACHED FILES" section is present and the us
 - JSON array column:
   SELECT jt.col, COUNT(*) cnt FROM `s`.`t` CROSS JOIN JSON_TABLE(json_col, '$[*]' COLUMNS(col INT PATH '$.key')) jt GROUP BY jt.col ORDER BY cnt DESC
 
-## STEP NARRATION — EXPLAIN EACH TOOL CALL (tool_notes)
-Whenever you call one or more tools in a turn, ALSO put a JSON object in that message's text content that narrates each call, so the user can see what you are doing and, above all, WHY:
-{"tool_notes":[{"work":"<무엇을 하는지>","reason":"<왜 — 사용자의 질문/목표에 비추어 구체적으로>"}]}
-Rules:
-- Exactly one entry per tool call: the i-th entry in `tool_notes` describes the i-th tool call of this turn, in the SAME ORDER (also when calling several tools at once).
-- Write both fields in concise Korean (한국어). `work` = the concrete action ("`db`.`orders` 의 컬럼 구조를 확인"). `reason` = why THIS step helps answer THIS user's specific request — refer to their actual goal, not a generic description of the tool ("월별 매출을 집계하려면 주문일자·금액 컬럼명을 먼저 확정해야 하므로", NOT "테이블 구조를 확인하기 위해").
-- Keep each short: `work` ≤ 1 line, `reason` ≤ 1–2 lines. Emit valid JSON — escape any double quotes inside the text, or prefer 작은따옴표(' ') / 「」 so the object always parses.
-- This JSON belongs ONLY in turns where you call tools. NEVER put tool_notes — or any JSON — in any turn without tool calls (final answers and clarifying questions are plain Korean Markdown).
+## STEP NARRATION — EXPLAIN EACH TOOL CALL (reason / work)
+Every tool has two extra parameters, `reason` and `work`, purely for narrating the step to the user (they do not change what the tool does):
+- `reason` — set this on EVERY tool call: why you are making THIS call, in the user's context. Refer to their actual goal, not a generic description of the tool. Korean, 1–2 sentences. Good: "월별 매출을 집계하려면 주문일자·금액 컬럼명을 먼저 확정해야 하므로". Bad: "테이블 구조를 확인하기 위해".
+- `work` — the concrete action in one Korean line: "`db`.`orders` 의 컬럼 구조를 확인".
+Always fill `reason` (and ideally `work`) as parameters of the tool call itself — do NOT write them as separate text. The user sees these as the rationale for each step.
 
 ## OUTPUT
-Once you have the data you need, stop calling tools and write the final answer in Korean Markdown. Lead with the answer, use tables for comparisons, format numbers with commas, and state any assumptions you made. Keep any clarifying question short and at the end. The final answer must contain NO tool_notes and NO JSON envelope — it is plain Korean Markdown prose for the user.
+Once you have the data you need, stop calling tools and write the final answer in Korean Markdown. Lead with the answer, use tables for comparisons, format numbers with commas, and state any assumptions you made. Keep any clarifying question short and at the end. The final answer is plain Korean Markdown prose for the user — no JSON.
 """
 
 
@@ -2351,9 +2348,19 @@ def _run_agent_core(
                 tool_args = json.loads(tc.function.arguments)
             except (json.JSONDecodeError, TypeError):
                 tool_args = {}
+            # TASK-0178: 단계 narration(work/why)을 tool 호출 인자에서 추출 + 제거.
+            # Bedrock gateway 가 tool_use 턴의 text content 를 strip 해 content 경로
+            # (tool_notes JSON, TASK-0177)는 무력했음 — 인자는 안정 전달되므로 이쪽을 우선.
+            # pop 으로 실제 도구 실행/args 저장 전에 제거(narration 은 실행에 무관).
+            arg_work = ""
+            arg_reason = ""
+            if isinstance(tool_args, dict):
+                arg_work = str(tool_args.pop("work", "") or "").strip()
+                arg_reason = str(tool_args.pop("reason", "") or "").strip()
             note = tool_notes[note_idx] if note_idx < len(tool_notes) else {}
-            work_text = str((note or {}).get("work") or "").strip()
-            reason_text = str((note or {}).get("reason") or "").strip()
+            # 우선순위: tool 인자(arg) → content tool_notes(다른 provider) → derived fallback.
+            work_text = arg_work or str((note or {}).get("work") or "").strip()
+            reason_text = arg_reason or str((note or {}).get("reason") or "").strip()
             work_source = "llm" if work_text else ""
             reason_source = "llm" if reason_text else ""
             if not work_text:

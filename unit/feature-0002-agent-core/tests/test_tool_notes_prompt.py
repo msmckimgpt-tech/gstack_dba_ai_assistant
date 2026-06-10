@@ -10,14 +10,14 @@ from __future__ import annotations
 import agent_core
 
 
-def test_system_prompt_instructs_tool_notes():
+def test_system_prompt_instructs_step_narration_params():
+    # TASK-0178: content tool_notes(Bedrock 가 tool_use 턴 content strip) → tool 인자
+    # reason/work 로 전환. 프롬프트는 인자로 채우라고 지시해야 한다.
     p = agent_core.SYSTEM_PROMPT
-    assert "tool_notes" in p, "SYSTEM_PROMPT 에 tool_notes 지시가 없음"
     assert "STEP NARRATION" in p
-    # work/reason 두 필드를 모두 요구해야 함
-    assert '"work"' in p and '"reason"' in p
-    # 최종 답변에 JSON 누수 금지 지시(누수 방지 가드)가 있어야 함
-    assert "NO JSON envelope" in p or "any JSON" in p
+    assert "reason" in p and "work" in p, "SYSTEM_PROMPT 에 reason/work 지시가 없음"
+    assert "parameter" in p.lower()  # '인자로 채워라' 지시
+    assert "no JSON" in p or "NO JSON" in p
 
 
 def test_parse_tool_notes_multi_order_preserved():

@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260610-0178
+- Date: 2026-06-10 (TASK-0178, **Major §12.3** — agent-core; TASK-0177 의 전달 메커니즘 수정)
+- Scope: 단계 근거(work/reason)를 LLM 이 **tool 호출 인자**로 채우게 전환. content 동시 방출(0177)은 라이브에서 무력했음.
+- 배경(라이브 확정): 0177 배포·global row 갱신 후 카나리아에서 **모든 step `reason_source=derived`**. core_messages 검사 결과 tool-call 턴 content 가 `{"tool_notes":[{"work":"","reason":""}]}`(파서 빈 결과) — **Bedrock gateway 가 tool_use 턴의 text content 를 strip**. outside-voice REV-20260610-0177 의 M2("코드는 맞는데 모델이 그 경로를 안 탄다", 이 repo 반복 실패모드) 실현.
+- 변경:
+  - [src/modules/tools.py](../src/modules/tools.py): 모든 도구 스키마(`TOOL_DEFINITIONS_FULL` 9개, 공유 core 4 포함)에 optional `reason`/`work` string 파라미터 주입(`_inject_step_narration_params`, properties **맨 앞**=think-first, required 에는 미추가). `reason` 설명에 "사용자 질문 맥락의 구체 근거(generic 금지)" 명시.
+  - [src/agent_core.py](../src/agent_core.py): 루프에서 `tool_args.pop("work"/"reason")` 로 추출 — **실제 도구 실행/args 저장 전에 제거**(narration 은 실행 무관, 핸들러는 named-get 이라 무해하나 명시 pop). 우선순위 `arg → content tool_notes(타 provider) → derived(0175)`. SYSTEM_PROMPT STEP NARRATION 을 "content 에 JSON 방출" → "tool 인자 reason/work 를 채워라"로 교체.
+- 안정성: tool 호출 인자(arguments)는 SQL 처럼 게이트웨이 무관하게 전달되므로 reason 이 안정 도달. 핸들러는 `args.get(특정키)` 라 추가 인자 무해(테스트 단언).
+- 비변경: 쿼리 실행/결과/RBAC/스키마/엔드포인트/회계 무변경. B1 sanitizer(0177)·derived fallback(0175) 유지(층상 안전망). reason 은 표시 메타데이터.
+- 게이트: make test(컨테이너) **282 passed / 2 skipped**(신규 `test_step_narration_params.py` 4 + `test_tool_notes_prompt.py` 프롬프트 테스트 갱신, 회귀 0). py_compile OK.
+- **라이브 카나리아 PASS(머지 전 probe, REV-20260610-0178)**: worktree 코드 배포 + global row 0178 프롬프트 갱신 후 2 ask(다단계) → **5 step 전부 `reason_source='llm'`·`work_source='llm'`**, 근거가 질문 맥락 직결("ResRace 컬럼을 포함한 아이템 마스터 테이블을 찾기 위해…", "캐릭터 정보가 담긴 dbgame.hero 테이블의 전체 행 수를 조회합니다") + 최종답변 JSON 누수 0 + 답변 정확. M2 게이트 충족.
+- 라이브 반영: GLOBAL `WebSystemPrompts` row 를 0178 프롬프트로 갱신(probe 시 이미 적용). 머지 후 재배포는 동일 코드.
+
 ## CHG-20260610-0177
 - Date: 2026-06-10 (TASK-0177, **Major §12.3** — agent-core, base SYSTEM_PROMPT 변경)
 - Scope: 실행 단계 근거를 **LLM 이 실제 맥락에 맞게 생성**하도록 SYSTEM_PROMPT 에 tool_notes 방출 지시 추가(TASK-0175 derived fallback 은 안전망으로 유지). 사용자 원의도("템플릿 근거가 아니라 실제 맥락 근거").
