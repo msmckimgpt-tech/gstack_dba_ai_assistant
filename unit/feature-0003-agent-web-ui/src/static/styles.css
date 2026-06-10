@@ -3405,6 +3405,19 @@ a { color: inherit; }
   flex-wrap: wrap;
 }
 .admin-usage-row > .admin-usage-card { flex: 1; min-width: 280px; }
+/* TASK-0179: 차트 grid — 넓은 화면 가로 채움(auto-fill), 좁으면 자동 wrap. 일별=2칸. */
+.admin-usage-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.admin-usage-charts > .admin-usage-card { min-width: 0; }
+.admin-usage-span2 { grid-column: span 2; }
+@media (max-width: 860px) {
+  .admin-usage-charts { grid-template-columns: 1fr; }
+  .admin-usage-span2 { grid-column: span 1; }
+}
 /* TASK-0178: 여백 컴팩트화 — 섹션/카드/요약 패딩·간격 축소 + 차트 높이 다운(admin.js). */
 .admin-usage-section { margin-top: 12px; }
 .admin-usage-section:first-of-type { margin-top: 8px; }

@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260610-0179
+- Date: 2026-06-10
+- TASK-Cycle: TASK-0179, **Minor §12.3** — LLM 사용량 차트 넓은 화면 가로 여백 해소 (CSS grid)
+- Summary: 넓은 모니터에서 차트가 좌측만 차지하고 우측 가로 여백이 크던 것을, 차트 6개를 CSS grid 다열 배치로 채움. 순수 레이아웃(CSS/HTML), 동작/데이터 무변경.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.admin-usage-charts`(grid auto-fill minmax(400px,1fr)) + `.admin-usage-span2`(grid-column span 2) + 860px↓ 1열 미디어쿼리.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: 차트 6개(일별/모델별/역할별/계정별/역할별비용/계정별비용)를 `.admin-usage-charts` grid 의 카드로 재배치, h3/h4 헤더를 각 카드 안으로. 일별 카드 `.admin-usage-span2`. 캐시버스터 `?v=20260610-usage-grid`.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: 일별 차트 SVG max-width 780→1000(grid cell span2 폭 채움).
+- Note: 권한/엔드포인트/스키마/백엔드 무변경 — 레이아웃만. 차트 데이터/툴팁/팔레트 동일.
+- Review: REV-20260610-0179 [SKIPPED:css-layout-no-logic]. Windows-browser(PB-0008) 검증 배포 후.
+
 ## CHG-20260610-0178
 - Date: 2026-06-10
 - TASK-Cycle: TASK-0178, **Minor §12.3** — LLM 사용량 화면 여백 컴팩트화

@@ -10,6 +10,9 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-06-10 TASK-0179 — LLM 사용량 차트 넓은 화면 가로 여백 해소 (CSS grid)** (REQ-20260610-0179, REV-20260610-0179 [SKIPPED:css-layout], **Minor §12.3**). 넓은 모니터에서 차트가 좌측만 차지하던 것을 `.admin-usage-charts` grid 다열 배치로 채움(일별 2칸, 나머지 1칸씩, 좁으면 wrap). 순수 레이아웃, 백엔드 무변경. node --check PASS.
+## 1. Summary
+
 **2026-06-10 TASK-0178 — LLM 사용량 화면 여백 컴팩트화** (REQ-20260610-0178, REV-20260610-0178 [SKIPPED:css-spacing], **Minor §12.3**). 사용자 보고(여백 과다). TASK-0177 디자인 정렬에서 카드·섹션·차트 패딩이 누적된 것을 축소 — `.admin-usage-card/section/metric` 패딩·margin 하향, 일별 차트 SVG 높이 252→196, HBar 막대 간격 축소. 순수 spacing(CSS/SVG), 백엔드/구조 무변경. node --check PASS.
 ## 1. Summary
 

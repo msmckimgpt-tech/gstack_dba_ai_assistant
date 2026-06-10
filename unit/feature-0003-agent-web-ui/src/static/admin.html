@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260610-usage-compact" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260610-usage-grid" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -350,36 +350,32 @@
         <!-- TASK-0164/0166: 상용 사용량 대시보드(Anthropic Console / OpenAI Usage) 참조 차트. 의존성 0 (순수 SVG).
              TASK-0177: 디자인 정렬 — .metric-card 요약, 차트 surface 카드, 토큰 통일, 8px spacing. -->
         <div id="usageSummary" class="admin-usage-section">로딩 중…</div>
-        <div class="admin-usage-section">
-          <h3 class="admin-usage-h3"><span id="usageTrendTitle">일별</span> 토큰 사용량 <span class="admin-usage-caption">· 모델별 누적, 막대 hover 시 상세</span></h3>
-          <div class="admin-usage-card"><div id="usageDayChart"></div></div>
-        </div>
-        <div class="admin-usage-section admin-usage-row">
+        <!-- TASK-0179: 넓은 화면 가로 여백 해소 — 차트를 CSS grid 다열 배치(auto-fill, 일별=2칸). -->
+        <div class="admin-usage-section admin-usage-charts">
+          <div class="admin-usage-card admin-usage-span2">
+            <h3 class="admin-usage-h3"><span id="usageTrendTitle">일별</span> 토큰 사용량 <span class="admin-usage-caption">· 모델별 누적, 막대 hover 시 상세</span></h3>
+            <div id="usageDayChart"></div>
+          </div>
           <div class="admin-usage-card">
             <h3 class="admin-usage-h3">모델별 비중</h3>
             <div id="usageModelChart"></div>
           </div>
           <div class="admin-usage-card">
-            <h3 class="admin-usage-h3">역할별</h3>
+            <h3 class="admin-usage-h3">역할별 <span class="admin-usage-caption">· 토큰</span></h3>
             <div id="usageRoleChart"></div>
           </div>
-        </div>
-        <div class="admin-usage-section">
-          <h3 class="admin-usage-h3">계정별</h3>
-          <div class="admin-usage-card"><div id="usageAccountChart"></div></div>
-        </div>
-        <!-- TASK-0176: 역할별·계정별 추정 비용 차트 (claude 등 과금 모델만 > $0). -->
-        <div class="admin-usage-section">
-          <h3 class="admin-usage-h3">추정 비용 <span class="admin-usage-caption">· claude 등 과금 모델 기준 추정, 로컬 LLM = $0</span></h3>
-          <div class="admin-usage-row">
-            <div class="admin-usage-card">
-              <h4 class="admin-usage-h4">역할별 비용</h4>
-              <div id="usageRoleCostChart"></div>
-            </div>
-            <div class="admin-usage-card">
-              <h4 class="admin-usage-h4">계정별 비용</h4>
-              <div id="usageAccountCostChart"></div>
-            </div>
+          <div class="admin-usage-card">
+            <h3 class="admin-usage-h3">계정별 <span class="admin-usage-caption">· 토큰</span></h3>
+            <div id="usageAccountChart"></div>
+          </div>
+          <!-- TASK-0176: 역할별·계정별 추정 비용 (claude 등 과금 모델만 > $0). -->
+          <div class="admin-usage-card">
+            <h3 class="admin-usage-h3">역할별 비용 <span class="admin-usage-caption">· 추정</span></h3>
+            <div id="usageRoleCostChart"></div>
+          </div>
+          <div class="admin-usage-card">
+            <h3 class="admin-usage-h3">계정별 비용 <span class="admin-usage-caption">· 추정</span></h3>
+            <div id="usageAccountCostChart"></div>
           </div>
         </div>
         <details class="admin-usage-details">
@@ -471,6 +467,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260610-usage-compact"></script>
+  <script src="/static/admin.js?v=20260610-usage-grid"></script>
 </body>
 </html>

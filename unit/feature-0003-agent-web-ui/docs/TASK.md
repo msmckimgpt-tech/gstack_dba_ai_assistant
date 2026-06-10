@@ -12,9 +12,12 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-10 (TASK-0178 여백 컴팩트화; TASK-0177 상세표 비용컬럼+디자인 정렬; TASK-0176 역할/계정별 비용 차트; TASK-0167 작은화면 잘림)
+- Last Updated: 2026-06-10 (TASK-0179 차트 grid 다열 배치; TASK-0178 여백 컴팩트화; TASK-0177 상세표 비용컬럼+디자인 정렬; TASK-0176 역할/계정별 비용 차트; TASK-0167 작은화면 잘림)
 
 ## 2. Task Queue
+
+### TASK-0179 LLM 사용량 차트 넓은 화면 가로 여백 해소 (CSS grid) (2026-06-10)
+- [x] **Minor §12.3** — 사용자 보고(넓은 모니터 가로 여백 과다). 차트 6개를 `.admin-usage-charts` grid(`auto-fill minmax(400px,1fr)`)로 다열 배치 — 넓은 화면 채움·좁으면 wrap(860px↓ 1열). 일별=`.admin-usage-span2`(2칸)+SVG max-width 1000. 도넛/역할별/계정별/비용2 각 1칸. h3/h4 카드 내부로. 권한/스키마/백엔드 무변경(순수 레이아웃). 캐시버스터 `?v=20260610-usage-grid`. node --check PASS. REV-20260610-0179 [SKIPPED:css-layout]. 동시세션→0179. worktree `ai/claude/usage-grid-layout`.
 
 ### TASK-0178 LLM 사용량 화면 여백 컴팩트화 (CSS/SVG) (2026-06-10)
 - [x] **Minor §12.3** — 사용자 보고(불필요한 여백 과다). TASK-0177 디자인 정렬에서 카드·섹션·차트 패딩이 누적된 것을 축소. styles.css: `.admin-usage-card` 16/18→12/14, `.admin-usage-section` mt 20→12, `.admin-usage-metric` 패딩 11/14·strong 19·span mb 4, usage `.summary-metrics` gap 10·mt 0, row gap 12. admin.js: 일별 차트 H 252→196(pT 10·pB 26), HBar margin 6. 권한/스키마/백엔드 무변경(순수 spacing). 캐시버스터 `?v=20260610-usage-compact`. node --check PASS. REV-20260610-0178 [SKIPPED:css-spacing]. 동시세션 다수→0178. worktree `ai/claude/usage-spacing-compact`.

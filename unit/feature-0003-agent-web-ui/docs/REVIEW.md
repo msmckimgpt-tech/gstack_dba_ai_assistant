@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0179 [SKIPPED:css-layout-no-logic]
+- Date: 2026-06-10
+- Cycle: TASK-0179 (차트 grid 다열 배치), **Minor §12.3**
+- 사유: 순수 CSS grid 레이아웃(차트 배치) — 동작/데이터/RBAC/스키마/백엔드 무변경. 반응형(auto-fill + 860px 미디어쿼리)로 넓은/좁은 화면 모두 대응. node --check PASS. 시각 검증 Windows-browser(PB-0008).
+
 ## REV-20260610-0178 [SKIPPED:css-spacing-no-logic]
 - Date: 2026-06-10
 - Cycle: TASK-0178 (LLM 사용량 화면 여백 컴팩트화), **Minor §12.3**

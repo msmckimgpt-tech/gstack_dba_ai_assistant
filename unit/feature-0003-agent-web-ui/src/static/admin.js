@@ -792,7 +792,7 @@ async function loadUsage() {
       xl += `<text x='${x.toFixed(1)}' y='${H - 9}' text-anchor='middle' font-size='10' fill='var(--text-muted)'>${esc(shortLabel(days[di]))}</text>`;
     });
     const legend = models.map((m) => `<span style='display:inline-flex;align-items:center;gap:5px;margin:2px 14px 2px 0;font-size:12px;'><span style='width:11px;height:11px;border-radius:2px;background:${cmap[m]};display:inline-block;'></span>${esc(m)}</span>`).join("");
-    el.innerHTML = `<svg viewBox='0 0 ${W} ${H}' style='width:100%;max-width:780px;height:auto;'>${axis}${bars}${valLabels}${xl}</svg><div style='margin-top:6px;'>${legend}</div>`;
+    el.innerHTML = `<svg viewBox='0 0 ${W} ${H}' style='width:100%;max-width:1000px;height:auto;'>${axis}${bars}${valLabels}${xl}</svg><div style='margin-top:6px;'>${legend}</div>`;
     bindTip(el);
   };
   // 모델별 비중 — 도넛 + hover 툴팁(토큰·비중·추정비용).
