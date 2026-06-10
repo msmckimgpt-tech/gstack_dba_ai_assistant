@@ -487,3 +487,15 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - 스크린샷 증빙: `repo/.gstack/qa-reports/screenshots/product-01-app-loaded.png`, `product-02-pinned-selected.png`, `product-03-auto-selected.png`, `product-04-auto-hydrated.png`.
   - 발견된 회귀: 기존 배포의 fast-path 가 신규 컬럼 마이그레이션을 우회하던 문제. `_runtime_tables_available` probe 에 신규 컬럼 검사 + errno 1054 분기를 추가해 자동 트리거되도록 수정 (CHG-20260430-0019, REV-20260430-0009).
   - 검증 미흡 영역(후속): LLM resolver 도입(R-02) 후 autoFocusChip / 운영 회귀(다중 탭 BroadcastChannel, mobile bottomsheet), R-03 row-level lock — 모두 BRIEFING-product-selector-v1.md §1 추적.
+
+- 2026-06-10 (TASK-0197 assistant 말풍선 타임스탬프 옆 소요시간 표시 — **PB-0008 Windows-browser 완료 게이트**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증.
+  - **Runner: AI** (bin/win-browser.py doctor → launch → eval → screenshot)
+  - **Bridge:** relay (무권한 userspace relay 자동 기동, endpoint: http://172.28.64.1:9223)
+  - **검증 내용:**
+    - DOM eval — `.message-meta-duration` span 존재 확인: `{"totalMeta":2,"withDuration":1,"assistantMessages":1}` — assistant 말풍선 1개에만 소요시간 표시, user 말풍선에는 미표시(정상).
+    - 소요시간 텍스트: `"38초"` (formatElapsed 형식 일치).
+    - fullText 확인: `"Assistant · 2026. 06. 10. 오전 11:06 38초"` — 타임스탬프 바로 옆에 붙어 표시.
+  - **Evidence:** `/tmp/win-browser-shots/task0197_zoomed.png` (2× 줌, 빨간 outline 하이라이트 — "Assistant · 2026. 06. 10. 오전 11:06 **38초**" 명확 확인)
+  - **Pass/Fail: PASS**
+  - **Notes:** `.message-meta-duration { font-size:10px; opacity:0.7 }` 스타일 적용, 캐시버스터 `?v=20260610-response-duration` 확인. CHECK#13(PB-0008 Windows-browser) **충족**.
