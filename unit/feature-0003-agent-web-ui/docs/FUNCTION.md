@@ -440,6 +440,7 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   `.admin-usage-table`(`align:'right'`→td.num 우측정렬·tabular-nums·hover), 툴팁은 `.admin-usage-tooltip`.
   색은 전부 :root 토큰(`--text*`/`--border*`/`--surface`/`--shadow-md`) 사용(임의 hex 금지); 차트 막대
   팔레트(`CHART_COLORS`/`SYS_COLOR`)만 카테고리 색으로 유지. 역할별·계정별 상세 표에 추정 비용 컬럼 포함(차트 일치).
+  (TASK-0178: 카드·섹션·요약·차트 높이 spacing 을 컴팩트 값으로 조정 — 토큰 체계 유지, 여백만 축소.)
 - 관리 콘솔 레이아웃 스크롤 (TASK-0167): `.admin-shell`·`.admin-workspace` 는 `height:100vh;
   overflow:hidden` 이고 각 `.admin-pane` 이 자체 스크롤한다. 단순 세로 흐름 pane(dashboard·usage)은
   `overflow-y:auto` 를 직접 가지며(styles.css), list-detail pane(accounts/roles/products/audits)은

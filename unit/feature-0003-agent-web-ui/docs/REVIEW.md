@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0178 [SKIPPED:css-spacing-no-logic]
+- Date: 2026-06-10
+- Cycle: TASK-0178 (LLM 사용량 화면 여백 컴팩트화), **Minor §12.3**
+- 사유: 순수 CSS/SVG spacing 축소(padding·margin·차트 높이) — 동작/데이터/구조/RBAC/스키마 무변경. 디자인 토큰 체계(TASK-0177) 유지하며 값만 컴팩트. node --check PASS. 시각 검증 Windows-browser(PB-0008).
+
 ## REV-20260610-0177 [SUBAGENT: gstack design-review 관점 디자인 리뷰 — usage pane, 반영]
 - Date: 2026-06-10
 - Cycle: TASK-0177 (LLM 사용량 상세 표 비용 컬럼 + 디자인 정렬), **Minor §12.3**

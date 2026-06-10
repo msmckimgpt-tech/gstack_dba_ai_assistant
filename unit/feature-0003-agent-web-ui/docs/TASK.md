@@ -12,9 +12,12 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-10 (TASK-0177 상세표 비용컬럼+디자인 정렬; TASK-0176 역할/계정별 비용 차트; TASK-0167 작은화면 잘림)
+- Last Updated: 2026-06-10 (TASK-0178 여백 컴팩트화; TASK-0177 상세표 비용컬럼+디자인 정렬; TASK-0176 역할/계정별 비용 차트; TASK-0167 작은화면 잘림)
 
 ## 2. Task Queue
+
+### TASK-0178 LLM 사용량 화면 여백 컴팩트화 (CSS/SVG) (2026-06-10)
+- [x] **Minor §12.3** — 사용자 보고(불필요한 여백 과다). TASK-0177 디자인 정렬에서 카드·섹션·차트 패딩이 누적된 것을 축소. styles.css: `.admin-usage-card` 16/18→12/14, `.admin-usage-section` mt 20→12, `.admin-usage-metric` 패딩 11/14·strong 19·span mb 4, usage `.summary-metrics` gap 10·mt 0, row gap 12. admin.js: 일별 차트 H 252→196(pT 10·pB 26), HBar margin 6. 권한/스키마/백엔드 무변경(순수 spacing). 캐시버스터 `?v=20260610-usage-compact`. node --check PASS. REV-20260610-0178 [SKIPPED:css-spacing]. 동시세션 다수→0178. worktree `ai/claude/usage-spacing-compact`.
 
 ### TASK-0177 LLM 사용량 상세 표 추정 비용 컬럼 + gstack 디자인 관점 정렬 (2026-06-10)
 - [x] **Minor §12.3** — 사용자 요청(차트·상세 표 비용 일치 + gstack 디자인 리뷰 자율 적용). **A**: 역할별·계정별 상세 표에 추정 비용 컬럼 추가(by_role/by_account 의 cost_usd=TASK-0176, 백엔드 무변경) + tbl 헬퍼 `align:'right'` → 숫자 컬럼 우측정렬·tabular-nums. **B(디자인)**: general-purpose subagent 의 gstack `/design-review` 적대적 리뷰 수령 후 적용 — 요약 `.metric-card`/`.summary-metrics` 통일, 임의 hex→디자인 토큰(`--text*`/`--border*`), 차트 `.admin-usage-card` surface 구획, 8px spacing 클래스(`.admin-usage-section/h3/h4`), h2→h3→h4 위계, `.admin-usage-table`(hover·우측정렬·토큰 border), 툴팁 `.admin-usage-tooltip`(토큰화). 차트 팔레트는 유지. styles.css(admin-usage-* 신규) + admin.html(클래스化) + admin.js(요약/표/툴팁/SVG fill 토큰). 캐시버스터 `?v=20260610-usage-design`. 권한/엔드포인트/스키마/백엔드 신규 0. node --check PASS. REV-20260610-0177 [SKIPPED:frontend-design] + design subagent 리뷰 반영(High3+Med4+Low). Windows-browser(PB-0008) 검증 배포 후. worktree `ai/claude/usage-cost-tables-design`. 동시세션 다수→0177.

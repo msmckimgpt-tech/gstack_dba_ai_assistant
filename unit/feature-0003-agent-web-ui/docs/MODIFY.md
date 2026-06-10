@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260610-0178
+- Date: 2026-06-10
+- TASK-Cycle: TASK-0178, **Minor §12.3** — LLM 사용량 화면 여백 컴팩트화
+- Summary: 사용자 보고(여백 과다). TASK-0177 디자인 카드·섹션·차트 패딩 누적분 축소. 순수 spacing(CSS/SVG), 동작/구조 무변경.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.admin-usage-card` padding 16/18→12/14; `.admin-usage-section` margin-top 20→12(first 14→8); `.admin-usage-h3/h4` margin 하향; `.admin-usage-metric` padding 11/14·strong 22→19·span margin-bottom 4; `.admin-usage-row` gap 16→12·min-width 280; usage `.summary-metrics` gap 10·margin-top 0.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: renderStacked SVG H 252→196·pL 64→60·pT 16→10·pB 34→26; renderHBar 막대 div margin 8px→6px.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: 캐시버스터 styles.css·admin.js `?v=20260610-usage-design`→`?v=20260610-usage-compact`.
+- Note: 권한/엔드포인트/스키마/시크릿/백엔드 무변경 — 시각 spacing 만. 차트 데이터/구조 동일.
+- Review: REV-20260610-0178 [SKIPPED:css-spacing-no-logic]. Windows-browser(PB-0008) 검증 배포 후.
+
 ## CHG-20260610-0177
 - Date: 2026-06-10
 - TASK-Cycle: TASK-0177, **Minor §12.3** — LLM 사용량 상세 표 추정 비용 컬럼 + gstack 디자인 관점 정렬

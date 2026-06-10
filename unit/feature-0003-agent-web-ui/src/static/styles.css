@@ -3397,21 +3397,22 @@ a { color: inherit; }
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  padding: 16px 18px;
+  padding: 12px 14px;
 }
 .admin-usage-row {
   display: flex;
-  gap: 16px;
+  gap: 12px;
   flex-wrap: wrap;
 }
-.admin-usage-row > .admin-usage-card { flex: 1; min-width: 300px; }
-.admin-usage-section { margin-top: 20px; }
-.admin-usage-section:first-of-type { margin-top: 14px; }
+.admin-usage-row > .admin-usage-card { flex: 1; min-width: 280px; }
+/* TASK-0178: 여백 컴팩트화 — 섹션/카드/요약 패딩·간격 축소 + 차트 높이 다운(admin.js). */
+.admin-usage-section { margin-top: 12px; }
+.admin-usage-section:first-of-type { margin-top: 8px; }
 .admin-usage-h3 {
   font-size: 14px;
   font-weight: 700;
   color: var(--text);
-  margin: 0 0 10px;
+  margin: 0 0 8px;
 }
 .admin-usage-h4 {
   font-size: 12px;
@@ -3419,16 +3420,19 @@ a { color: inherit; }
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-2);
-  margin: 0 0 8px;
+  margin: 0 0 6px;
 }
 .admin-usage-caption {
   font-weight: 400;
   font-size: .82em;
   color: var(--text-muted);
 }
-/* 요약 metric 카드 — dashboard .metric-card 재사용하되 큰 숫자(토큰)용 스케일 다운 */
-.admin-usage-metric strong { font-size: 22px; font-weight: 800; }
-.admin-usage-metric span { letter-spacing: .04em; }
+/* 요약 metric 카드 — dashboard .metric-card 재사용하되 usage 는 컴팩트(패딩·숫자 다운) */
+.admin-usage-metric { padding: 11px 14px; }
+.admin-usage-metric span { letter-spacing: .04em; margin-bottom: 4px; }
+.admin-usage-metric strong { font-size: 19px; font-weight: 800; }
+/* usage 요약 그리드도 약간 촘촘하게 */
+.admin-pane[data-admin-pane="usage"] .summary-metrics { gap: 10px; margin-top: 0; }
 /* 차트 막대 위 SVG 텍스트·축은 JS 에서 var(--…) 직접 치환 (클래스로 분리 불가) */
 .admin-usage-legend {
   margin-top: 8px;

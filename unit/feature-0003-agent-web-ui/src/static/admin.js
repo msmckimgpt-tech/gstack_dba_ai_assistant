@@ -765,7 +765,7 @@ async function loadUsage() {
     const cmap = colorMapFor(models);
     const totalsByDay = days.map((d) => Object.values(dayMap[d]).reduce((a, b) => a + b, 0));
     const maxT = Math.max(1, ...totalsByDay);
-    const W = 760, H = 252, pL = 64, pB = 34, pT = 16, pR = 12;
+    const W = 760, H = 196, pL = 60, pB = 26, pT = 10, pR = 12;  /* TASK-0178: 차트 높이 컴팩트 */
     const plotW = W - pL - pR, plotH = H - pT - pB, n = days.length;
     const step = plotW / n, bw = Math.max(2, Math.min(46, step * 0.72));
     let bars = "", valLabels = "";
@@ -825,7 +825,7 @@ async function loadUsage() {
     if (!data.length) { el.innerHTML = "<p style='color:var(--text-muted);'>데이터 없음</p>"; return; }
     const max = Math.max(...data.map((r) => r.value));
     const cmap = colorMapFor(data.map((r) => r.label));
-    el.innerHTML = data.map((r) => `<div style='margin:8px 0;' data-tip='${r.tip || (esc(r.label) + "<br><b>" + fmt(r.value) + "</b>")}'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;'><span>${esc(r.label)}</span><strong>${fmt(r.value)}</strong></div><div style='background:var(--border-subtle);border-radius:4px;height:14px;overflow:hidden;'><div style='width:${(r.value / max * 100).toFixed(1)}%;height:100%;background:${cmap[r.label]};border-radius:4px;'></div></div></div>`).join("");
+    el.innerHTML = data.map((r) => `<div style='margin:6px 0;' data-tip='${r.tip || (esc(r.label) + "<br><b>" + fmt(r.value) + "</b>")}'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;'><span>${esc(r.label)}</span><strong>${fmt(r.value)}</strong></div><div style='background:var(--border-subtle);border-radius:4px;height:14px;overflow:hidden;'><div style='width:${(r.value / max * 100).toFixed(1)}%;height:100%;background:${cmap[r.label]};border-radius:4px;'></div></div></div>`).join("");
     bindTip(el);
   };
   // TASK-0163: fmt 에 행 전체(r)도 전달 — "별칭 → 해소모델" 등 다중 필드 표시용.

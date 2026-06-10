@@ -10,6 +10,9 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-06-10 TASK-0178 — LLM 사용량 화면 여백 컴팩트화** (REQ-20260610-0178, REV-20260610-0178 [SKIPPED:css-spacing], **Minor §12.3**). 사용자 보고(여백 과다). TASK-0177 디자인 정렬에서 카드·섹션·차트 패딩이 누적된 것을 축소 — `.admin-usage-card/section/metric` 패딩·margin 하향, 일별 차트 SVG 높이 252→196, HBar 막대 간격 축소. 순수 spacing(CSS/SVG), 백엔드/구조 무변경. node --check PASS.
+## 1. Summary
+
 **2026-06-10 TASK-0177 — LLM 사용량 상세 표 추정 비용 컬럼 + gstack 디자인 관점 정렬** (REQ-20260610-0177, REV-20260610-0177 [SKIPPED:frontend-design], **Minor §12.3**). (A) 역할별·계정별 상세 표에 추정 비용 컬럼(차트와 일치) + 숫자 우측정렬·tabular-nums. (B) general-purpose subagent 의 gstack design-review 관점 적대적 리뷰를 받아 usage pane 디자인 정렬: 요약 `.metric-card` 통일, 임의 hex→디자인 토큰, 차트 surface 카드 구획, 8px spacing/타이포 위계 클래스, 표·툴팁 클래스化. styles.css(admin-usage-* 신규)+admin.html+admin.js, 백엔드 무변경. node --check PASS. 캐시버스터 bump. Windows-browser(PB-0008) 검증 배포 후.
 
 **2026-06-09 TASK-0176 — LLM 사용량 역할별·계정별 추정 비용 차트** (REQ-20260609-0176, REV-20260609-0176 [SKIPPED:frontend-viz], **Minor §12.3**). 사용자 요청(역할·계정별 추정 비용도 차트로). 백엔드 `admin_llm_usage` by_account 를 계정×모델 분해로 집계해 계정별 추정 비용(`cost_usd`) 산출 + `_aggregate_usage_by_role` 가 역할별 재합산. 프론트 `renderHBar` 에 valueFmt(usd) 추가 + 역할별/계정별 추정 비용 가로 막대 차트(의존성 0 SVG, hover usd, 비용 0 행 제외). 권한/엔드포인트/스키마 신규 0(기존 컬럼 + TASK-0166 단가 재사용). make test 269 passed/5 skipped. 비용은 claude 등 과금 모델 추정만(로컬=$0). 동시세션 0168~0175 선점→0176 재번호.
