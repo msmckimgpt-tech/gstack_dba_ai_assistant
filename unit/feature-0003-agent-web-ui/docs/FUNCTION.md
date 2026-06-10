@@ -464,6 +464,16 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   토큰/요청/호출/추정 비용, 칩 색 accent, 클릭 시 단독 선택 토글). 좌우 스크롤은 usage pane `overflow-x:hidden`
   + flex `min-width:min(Npx,100%)` + 넓은 표 카드 `overflow-x:auto` 로 차단. 색은 프로젝트 토큰(`--primary`
   /`--primary-soft`) 사용(`color-mix`/`--accent` 미사용 — 구버전 브라우저 회귀 회피).
+- LLM 사용량 "모델별" 카드 전환 애니메이션 + 비선택 dim/접힘 (TASK-0202): 모델별 분리 카드를 클릭(solo
+  선택)해도 비선택 카드가 즉시 사라지지 않게 한다. 카드는 항상 **전체 `data.by_model`** 로 렌더(필터된
+  `view.by_model` 아님 — 카드 수치는 각 모델 고유값이라 선택과 무관)하고, 부분 선택 시 선택=`is-active`·
+  비선택=`is-dimmed`, 컨테이너에 `is-filtering`. styles.css: `.admin-usage-mcard` 에 opacity/transform
+  트랜지션, `.is-filtering .is-dimmed`=흐림(opacity .4, 영역 hover 시), `.is-filtering:not(:hover)
+  .is-dimmed`=fade-out(opacity 0+scale .92+pointer-events none), `prefers-reduced-motion` 가드.
+  admin.js hover 생명주기: 영역 이탈 후 fade-out 종료(`transitionend opacity`)시 `display:none` 회수
+  (active 카드 제외), 재진입(mouseenter)시 reflow 기반 0→.4 fade-in 복구, 칩 바 필터링 등 마우스가
+  영역 밖인 채 재렌더되면 초기 transition 미발동이라 동기 `display:none` 회수(유령 카드 방지). 차트·표·
+  `buildView`·칩 바는 전부 `view.*` 유지(회귀 0) — 카드 렌더 소스와 표현만 변경. RBAC/스키마/API 무변경.
 - 관리 콘솔 레이아웃 스크롤 (TASK-0167): `.admin-shell`·`.admin-workspace` 는 `height:100vh;
   overflow:hidden` 이고 각 `.admin-pane` 이 자체 스크롤한다. 단순 세로 흐름 pane(dashboard·usage)은
   `overflow-y:auto` 를 직접 가지며(styles.css), list-detail pane(accounts/roles/products/audits)은

@@ -2663,3 +2663,14 @@ source_of_truth: true
   - unit/feature-0003-agent-web-ui/tests/win-browser-task0198-usage.scenario.json (PB-0008 검증 시나리오 신규)
   - unit/feature-0003-agent-web-ui/docs/{TASK,FUNCTION,REVIEW,TEST}.md (명세·이력·검증 기록)
 - Rollback: 캐시버스터 환원 + `loadUsage` 를 직접 `data` 렌더로 되돌리고(`buildView`/필터 칩 제거), `#usageModelFilter` div 와 `.admin-usage-filter`/`-chip`/`-mcard*` CSS·`overflow-x`·`min-width` 변경 제거.
+
+## CHG-20260610-0202
+- Date: 2026-06-10
+- Related Requirement: TASK-0202 (사용자 요청 — LLM 사용량 "모델별" 모델 전환 애니메이션 + 비선택 dim/이탈 시 사라짐)
+- Summary: `관리 콘솔 > 감사 > LLM 사용량` "모델별" 카드(`.admin-usage-mcards`)에서 모델 카드 클릭(solo 선택) 시 비선택 카드가 즉시 사라져 불편하던 것을 개선. (1) 카드를 필터된 `view.by_model` 대신 **전체 `data.by_model`** 로 항상 렌더(카드 수치는 각 모델 고유값이라 선택 무관) — 비선택 카드가 DOM 에서 제거되지 않음. 선택=`is-active`·비선택=`is-dimmed`, 컨테이너에 `is-filtering`(부분 선택 시만). (2) CSS: `.admin-usage-mcard` 에 opacity/transform 트랜지션, `.is-filtering .is-dimmed`=흐림(opacity .4, hover 시), `.is-filtering:not(:hover) .is-dimmed`=fade-out(opacity 0+scale .92+pointer-events none), `prefers-reduced-motion` 가드. (3) JS hover 생명주기: 영역 이탈 fade-out 종료(`transitionend opacity`)시 `display:none` 회수(active 카드 제외), 재진입 시 reflow 기반 0→.4 fade-in 복구, 칩 바 필터링 등 마우스 영역 밖 재렌더는 초기 transition 미발동이라 동기 `display:none` 회수(유령 카드 방지). 백엔드/API/스키마/RBAC/시크릿/`buildView`/차트·표(전부 `view.*` 유지) 무변경 — 카드 렌더 소스와 표현만 변경. 캐시버스터 `?v=20260610-usage-model-anim`.
+- Files:
+  - unit/feature-0003-agent-web-ui/src/static/admin.js (`loadUsage` 모델별 카드 렌더를 `data.by_model` 전체+active/dimmed, `is-filtering` 컨테이너, transitionend/mouseenter 생명주기 + 동기 회수)
+  - unit/feature-0003-agent-web-ui/src/static/styles.css (`.admin-usage-mcard` 트랜지션 + `.is-filtering`/`.is-dimmed` dim/접힘 규칙 + reduced-motion)
+  - unit/feature-0003-agent-web-ui/src/static/admin.html (캐시버스터 `usage-model-filter2` → `usage-model-anim`)
+  - unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md (명세·이력·검증 기록)
+- Rollback: 캐시버스터 환원 + 카드 렌더를 `view.by_model` 직접 렌더(soloActive 단일 강조)로 되돌리고 `is-filtering`/`is-dimmed`/transitionend·mouseenter 핸들러 제거, styles.css 의 `.is-filtering`/`.is-dimmed` 규칙·opacity/transform 트랜지션·reduced-motion 블록 제거.

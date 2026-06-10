@@ -1049,12 +1049,17 @@ async function loadUsage(opts) {
         ((t.cost_usd && t.cost_usd > 0) ? card("추정 비용", usd(t.cost_usd)) : "") +
         `</div>`;
       // 모델별 분리 카드 — 토큰 내림차순. 칩 색과 동일 accent. 클릭 시 그 모델만 단독 선택.
-      const mcards = (view.by_model || []).slice().sort((a, b) => (b.total_tokens || 0) - (a.total_tokens || 0)).map((m) => {
+      // TASK-0202: 카드는 항상 '전체 모델'을 렌더한다(선택해도 비선택 카드가 즉시 사라지지 않게).
+      //   선택 모델=is-active(강조), 비선택=is-dimmed(흐리게). 카드 수치는 각 모델 고유값(선택 무관)
+      //   이라 필터된 view 가 아닌 원본 data.by_model 을 쓴다.
+      const mcards = (data.by_model || []).slice().sort((a, b) => (b.total_tokens || 0) - (a.total_tokens || 0)).map((m) => {
         const k = modelKeyOf(m);
         const alias = (m.model && m.model !== k) ? `<span class='admin-usage-mcard-alias'>${esc(m.model)} →</span> ` : "";
         const cost = (m.cost_usd && m.cost_usd > 0) ? `<div class='admin-usage-mcard-row'><span>추정 비용</span><b>${usd(m.cost_usd)}</b></div>` : "";
-        const soloActive = isPartial && selSet.size === 1 && selSet.has(k);
-        return `<article class='admin-usage-mcard${soloActive ? " is-active" : ""}' data-model-solo='${esc(k)}' style='--mcard-accent:${mcol(k)};'>` +
+        const active = isPartial && selSet.has(k);
+        const dimmed = isPartial && !selSet.has(k);
+        const cls = "admin-usage-mcard" + (active ? " is-active" : "") + (dimmed ? " is-dimmed" : "");
+        return `<article class='${cls}' data-model-solo='${esc(k)}' style='--mcard-accent:${mcol(k)};'>` +
           `<div class='admin-usage-mcard-head'><span class='admin-usage-chip-dot' style='background:${mcol(k)};'></span>${alias}<span class='admin-usage-mcard-name'>${esc(k)}</span></div>` +
           `<div class='admin-usage-mcard-tok'>${num(m.total_tokens)}<span>토큰</span></div>` +
           `<div class='admin-usage-mcard-row'><span>요청</span><b>${num(m.requests)}</b></div>` +
@@ -1062,9 +1067,10 @@ async function loadUsage(opts) {
           cost +
           `</article>`;
       }).join("");
+      // is-filtering: 부분 선택 중일 때만 비선택 카드 dim/접힘 규칙(styles.css)을 활성화.
       const mcardsWrap = mcards
-        ? `<div class='admin-usage-mcards'>${mcards}</div>`
-        : "<p class='admin-usage-empty'>선택한 모델의 사용 기록이 없습니다.</p>";
+        ? `<div class='admin-usage-mcards${isPartial ? " is-filtering" : ""}'>${mcards}</div>`
+        : "<p class='admin-usage-empty'>모델 사용 기록이 없습니다.</p>";
       summaryEl.innerHTML = totalsHtml + `<div class='admin-usage-mcards-head'>모델별</div>` + mcardsWrap;
       // 모델 카드 클릭 → 그 모델만 단독 선택(이미 단독이면 전체 복귀).
       summaryEl.querySelectorAll("[data-model-solo]").forEach((c) => {
@@ -1077,6 +1083,34 @@ async function loadUsage(opts) {
           loadUsage({ refetch: false });
         });
       });
+      // TASK-0202: 부분 선택 중 비선택 카드는 styles.css 가 카드 영역 hover 시 흐리게(opacity .4) 유지하고,
+      //   마우스가 영역을 벗어나면(:not(:hover)) 부드럽게 fade-out 한다. fade 가 끝나면(transitionend)
+      //   레이아웃에서 회수(display:none)하고, 다시 영역에 들어오면 복구해 흐림 상태로 되살린다.
+      const mcardsEl = summaryEl.querySelector(".admin-usage-mcards.is-filtering");
+      if (mcardsEl) {
+        const dimmedCards = () => mcardsEl.querySelectorAll(".admin-usage-mcard.is-dimmed");
+        // 마우스가 영역을 벗어난 채 비선택 카드의 fade-out 이 끝나면 레이아웃에서 회수(display:none).
+        //   active 카드(is-dimmed 아님)는 대상에서 제외 → 선택 카드는 항상 남는다.
+        mcardsEl.addEventListener("transitionend", (ev) => {
+          if (ev.propertyName !== "opacity") return;
+          const card = ev.target && ev.target.closest ? ev.target.closest(".admin-usage-mcard.is-dimmed") : null;
+          if (card && !mcardsEl.matches(":hover")) card.style.display = "none";
+        });
+        // 영역 재진입 → 회수된 비선택 카드를 복구하되 opacity 0→.4 로 부드럽게 fade-in.
+        //   (display:none→"" 만으로는 트랜지션 기준점이 없어 pop-in 하므로 reflow 후 보간.)
+        mcardsEl.addEventListener("mouseenter", () => {
+          const cards = dimmedCards();
+          cards.forEach((c) => { c.style.display = ""; c.style.opacity = "0"; });
+          void mcardsEl.offsetWidth;  // 강제 reflow — 트랜지션 시작점 확보
+          cards.forEach((c) => { c.style.opacity = ""; });  // CSS(.is-filtering hover → .4)로 보간
+        });
+        // 재렌더 시점에 마우스가 카드 영역 밖이면(예: 칩 바로 필터링) 비선택 카드는 갓 삽입돼
+        //   초기값이 opacity:0 이라 트랜지션이 발동하지 않는다(→ transitionend 미발생 → 유령 카드 잔존).
+        //   이 경로는 fade 없이 바로 회수해 focused view 로 시작한다(이탈 시 fade-out 은 위 핸들러가 담당).
+        if (!mcardsEl.matches(":hover")) {
+          dimmedCards().forEach((c) => { c.style.display = "none"; });
+        }
+      }
     }
     // TASK-0164/0166: 일별 stacked / 모델별 도넛 (선택 모델 view 기준).
     renderStacked(dayChartEl, view.by_day_model);

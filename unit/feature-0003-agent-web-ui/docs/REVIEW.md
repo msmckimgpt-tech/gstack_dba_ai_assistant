@@ -1870,3 +1870,17 @@ source_of_truth: true
 - Trigger: UI/screen/layout/chart keyword 매칭(§18.8 → ux/design). 단 조회 UI 전용 + 권한·스키마·시크릿 무변경이라 전례(REV-20260610-0184/0185)와 동일하게 경량 SKIP.
 - Reason: 순수 프론트(admin.js·admin.html·styles.css). 기존 `GET /api/admin/usage`(권한 `console.usage.read`) 응답을 **그대로** 받아 클라이언트에서 모델 필터·재계산(`buildView`)만 수행 — 신규 엔드포인트·쿼리·권한·grant·역할·스키마·시크릿·환경변수 0. 모델 필터링은 백엔드가 이미 내려주는 `by_model`/`by_day_model`/`models[]` 의 부분집합 선택일 뿐이라 노출 데이터 범위 확대 없음(권한 보유자가 이미 보던 동일 데이터). 부분 선택 시 요청·호출 분해 불가 항목은 `—` 로 정직 표기(오집계 방지). 좌우 스크롤 제거는 `overflow-x`/`min-width` CSS. `color-mix`/`--accent` 미사용 → 프로젝트 토큰 통일(구버전 브라우저 회귀 회피). RBAC 권한 모델 변경 아님 → outside-voice 불필요. node --check PASS.
 - Residual: Windows-browser(PB-0008) 시각 검증은 배포 후 수행(CHECK#13 WARN, TEST.md §3 Run 으로 기록).
+
+## REV-20260610-0202 [SUBAGENT:frontend-adversarial]
+- Date: 2026-06-10
+- Cycle: TASK-0202 (LLM 사용량 "모델별" 카드 전환 애니메이션 + 비선택 dim/이탈 시 사라짐)
+- Trigger: UI/screen/layout/animation/interaction keyword(§18.8 → ux/design). 순수 프론트지만 hover/transitionend/display:none 상호작용 로직이라 경량 SKIP 대신 frontend subagent 적대적 리뷰 수행.
+- Panel: general-purpose subagent(frontend/UX 적대적). 변경 3파일(admin.js·styles.css·admin.html) 실독 후 transitionend 정확성·display 복구·grid reflow·전체복귀 리셋·reduced-motion·TASK-0198 회귀 점검.
+- Findings & 처리:
+  - **B1 (BLOCKER, 흡수)**: 칩 바 필터링 등 마우스가 카드 영역 밖인 채 재렌더되면 갓 삽입된 비선택 카드의 초기값이 `opacity:0`(transition 은 초기 상태엔 미발동) → `transitionend` 미발생 → `display:none` 회수 누락 → `opacity:0` 유령 카드가 grid 빈 칸 점유. → **재렌더 직후 `!matches(":hover")`면 dimmed 카드를 동기 `display:none`** 으로 회수하는 패스 추가.
+  - **M1 (MAJOR, 흡수)**: 회수된 카드 재진입 복구가 `display:""` 만이라 opacity 0→.4 보간 없이 pop-in. → mouseenter 에서 `display:""`+`opacity:0` 후 강제 reflow→인라인 opacity 해제로 부드러운 fade-in.
+  - **M2 (MAJOR, 의도 수용)**: `display:none` 회수 시 grid `auto-fill` 트랙 재계산으로 남은 선택 카드가 top-left 로 이동. → 사용자 요청("나머지 모델이 사라지도록")의 focused single-card 종착이 의도라 수용(빈 칸 잔존보다 깔끔). 문서화.
+  - **m3 (MINOR, 의도)**: hover 중 흐린 비선택 카드는 pointer-events 복구돼 클릭 가능 → 모델 간 "전환" 동선(흐림 보고 다른 모델 클릭)으로 의도된 동작.
+- TASK-0198 회귀: 칩 바·`buildView`·도넛/일별/역할/계정 차트·상세 표 전부 `view.*` 유지(미변경), 카드만 `data.by_model` 분리 — subagent "회귀 없음·클린 리셋" 확인.
+- Verdict: B1/M1 수정 반영 후 SHIP-able(BLOCKER 0). RBAC/스키마/엔드포인트/시크릿 0 — 권한 모델 변경 아님(outside-voice RBAC 게이트 불요).
+- Residual: Windows-browser(PB-0008) 시각 검증은 배포 후 수행(CHECK#13 WARN, TEST.md Run 으로 기록 예정).

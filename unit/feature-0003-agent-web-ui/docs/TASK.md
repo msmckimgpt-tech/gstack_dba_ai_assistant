@@ -3071,3 +3071,12 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 회귀 가드: `tests/test_cutover_routing_gaps.py` T1 에 `ORDER BY created_at DESC` 존재 + `msg_id` 정렬 부재 단언 추가. make test exit=0(0002+0003 전체 회귀 0), ruff clean.
 - [x] outside-voice [SKIPPED:minor-ordering-implements-REV-0196] (REV-20260610-0200).
 - [ ] verify-completion → main ff-merge → web 재배포 → 라이브 발췌 정렬 확인.
+
+### TASK-0202 — LLM 사용량 "모델별" 카드 전환 애니메이션 + 비선택 dim/접힘 (frontend-only) (2026-06-10)
+- [x] **Minor §12.3** (조회 UI 전용 — RBAC·스키마·엔드포인트·백엔드 0) — 사용자 요청: `관리 콘솔 > 감사 > LLM 사용량` "모델별"에서 모델 전환 시 선택 모델 외 카드가 즉시 사라져 불편. 모델 전환에 부드러운 애니메이션 + 비선택은 흐리게 유지하다 마우스가 영역을 벗어나면 부드럽게 사라지게. (CHG-20260610-0202)
+- [x] **근본 원인**: 모델별 카드(`.admin-usage-mcards`)를 **필터된 `view.by_model`** 로 렌더 → solo 선택 시 비선택 모델이 view 에서 빠져 카드가 DOM 에서 제거(즉시 사라짐). 상단 칩 바(`#usageModelFilter`)는 `_ms` 전체 기준이라 사라지지 않음(사용자가 "문제없다"고 한 부분).
+- [x] **수정** ([admin.js](../src/static/admin.js)): 카드를 항상 전체 `data.by_model` 로 렌더(수치는 각 모델 고유값, 선택 무관) + 선택=`is-active`·비선택=`is-dimmed`, 영역에 `is-filtering`. hover 시 비선택 흐리게(opacity .4), 영역 이탈(`:not(:hover)`)시 fade-out → `transitionend(opacity)`로 `display:none` 회수, 재진입(mouseenter)시 reflow fade-in 복구. 칩 바로 필터링(마우스 영역 밖)한 경로는 초기값 opacity:0 라 transition 미발동 → 재렌더 시 hover 아니면 **동기 `display:none`** 회수(REV B1).
+- [x] **수정** ([styles.css](../src/static/styles.css)): `.admin-usage-mcard` 에 opacity/transform 트랜지션 + `.is-filtering .is-dimmed{opacity:.4}` + `.is-filtering:not(:hover) .is-dimmed{opacity:0;transform:scale(.92);pointer-events:none}` + `prefers-reduced-motion` 가드.
+- [x] outside-voice frontend 적대적 리뷰(REV-20260610-0202) — **B1 BLOCKER(유령 카드)·M1(fade-in pop) 흡수**, M2(grid focused-view 점프)는 "선택 카드만 남기는" 의도로 수용.
+- [x] node --check admin.js PASS, styles.css 중괄호 균형. 기존 TASK-0198(칩 바·`buildView`·도넛/일별/역할/계정 차트·상세 표) 회귀 0(전부 `view.*` 유지, 카드만 분리).
+- [ ] verify-completion → **base=`ai/claude/0003`(TASK-0198 미병합)** → 0003 main 병합 후 본 브랜치 rebase → ff-merge → web 재배포 → PB-0008 Windows-browser 시각 검증(모델 전환 애니메이션·dim·영역 이탈 시 사라짐·재진입 복구)
