@@ -251,6 +251,7 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **(C 활동기록 제거)** bootstrap_admin 프로필 → 탭 = [프롬프트, 사용 내역, 보안 및 계정], '내 활동 기록' 탭 부재(`hasActivityTab=false`). PASS.
   - **(B 프로필 사용내역)** '사용 내역' 탭 → 요약(요청 24·호출 57·총 토큰 515,443) + 일별 모델별 누적 막대(06-09/06-10 claude-haiku-4) + 모델별 비중 도넛(claude-haiku-4 100%) 정상 렌더. 스크린샷 `/tmp/0184_profile_usage.png`. PASS.
   - **(A 계정 drill-down)** 관리 콘솔 > LLM 사용량 → 역할별 차트 막대(역할 = (시스템)·Admin) 클릭 → 그 역할의 계정만 펼치는 drill 패널 노출(계정 검색 input + 10/20/50 page size select). (시스템) 클릭 시 "계정별 · (시스템) — 1개 계정" + 계정 막대 1개(15,866,265 토큰) + 검색·페이저(계정 1개라 페이저 숨김) 정상. 계정별 독립 차트는 제거됨. 스크린샷 `/tmp/0184_admin_drill2.png`. PASS.
+  - **(A 후속 — 계정별 비용 차트 보강)** 사용자 지적 "계정별 비용 차트 누락" 수정 후 재배포(b4e52b5) 재검증: 역할 'Admin' 클릭 → drill 패널이 **[토큰 | 비용] 2열**(역할별 차트와 일관). 토큰열(bootstrap_admin #1 515,443 / admin #10 451,667) + **추정 비용열(bootstrap_admin $0.60 / admin $0.50)** 모두 노출. 스크린샷 `/tmp/0184_drill_cost.png`. PASS.
   - CHECK#13(PB-0008 Windows-browser) **충족**.
 - 2026-06-09 (TASK-0174 "전체 N행 미리보기" 링크 오정렬 수정 — **PB-0008 Windows-browser 완료 게이트(무회귀 smoke)**):
   - **Environment: Windows-browser** (실제 Windows Chrome/148 via `bin/win-browser.py` 무권한 relay, https://localhost:18080, self-signed ignore). WSL headless 가 아닌 실제 Windows 화면 검증.
