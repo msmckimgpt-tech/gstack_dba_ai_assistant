@@ -770,3 +770,15 @@ source_of_truth: true
   - unit/feature-0002-agent-core/docs/TASK.md (TASK-0182 cycle + current status)
   - docs/STATUS.md (TASK-0182 프로젝트 현황 entry)
 - Rollback: 위 문서 변경 환원(코드·런타임 영향 0 — 문서만).
+
+## CHG-20260610-MULTI-DATASOURCE-ENG-REVIEW
+- Date: 2026-06-10
+- Related Requirement: TASK-0183 (REQ-20260610-0183, Critical §12.3 — design-only)
+- Summary: TASK-0182 설계의 2차 검토(`/plan-eng-review` 엔지니어링 매니저 + **Codex cross-model outside voice**) + 발견 design-fold. Codex Verdict REJECT(BLOCKER 4+MAJOR 5). **보안결함 정정(Codex-2)**: §4 의 `db_datareader+DENY` 는 allowlist 와 양립 불가(DB 전체 읽기) → datasource 별 전용 role 에 허용 view/object 만 GRANT SELECT 로 본문 수정. AST 추출 무자격/catalog 보강(Codex-1), insight fact 스코프 교차노출(Codex-3), 보안경계 P1 전진(Codex-4), confirm_heavy/fetchall(Codex-6), AST 재직렬화(Codex-5), pool session reset(Codex-7), scope 정직성(Codex-8). §10 신설 + GSTACK REVIEW REPORT. 코드 mutation 0.
+- Files:
+  - unit/feature-0002-agent-core/docs/DESIGN-multi-datasource.md (§1·§3.2·§3.3·§3.4·§3.6·§4 정정 + §10 + GSTACK REVIEW REPORT)
+  - unit/feature-0002-agent-core/docs/REVIEW.md (REV-20260610-0183 append)
+  - unit/feature-0002-agent-core/docs/REPORT.md (2026-06-10 TASK-0183 summary append)
+  - unit/feature-0002-agent-core/docs/TASK.md (TASK-0183 cycle + current status)
+  - docs/STATUS.md (TASK-0183 프로젝트 현황 entry)
+- Rollback: 위 문서 변경 환원(코드·런타임 영향 0 — 문서만). 단 §4 db_datareader 정정은 보안 정합성 수정이라 환원 비권장.

@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0183 [CODEX:design-eng-review-crossmodel]
+- Date: 2026-06-10 (TASK-0183)
+- Cycle: 멀티 datasource 설계 2차 검토 — `/plan-eng-review`(엔지니어링 매니저) + Codex cross-model outside voice. design-only.
+- Panel: (a) Claude 엔지니어링 매니저 4섹션 리뷰(Architecture/Quality/Tests/Performance). (b) **Codex** (`codex exec`, model_reasoning_effort=high, read-only) cross-model — 1차(REV-0182 Claude subagent)·본 설계가 놓친 것 발굴.
+- Verdict: Codex **REJECT** (BLOCKER 4 + MAJOR 5) + Claude eng (Arch 3/Quality 2/Perf 3). design-only 이라 전 발견 설계 직접 반영.
+- Findings(신규, REV-0182 미포착): **Codex-1** AST 추출도 불완전(무자격 이름·view/synonym·ownership chaining → `datasource_id+catalog+schema+object`). **Codex-2** `db_datareader` 가 allowlist 와 양립불가(DB 전체 읽기) → 전용 role+허용 view 만 GRANT SELECT. **Codex-3** insight 격리가 fingerprint 키에만 — fact 스코프(`schema_insight`/`FACT_SCOPE_COMMON`) 교차노출. **Codex-4** rollout 이 보안경계 뒤늦음(P1~P4 datasource_id 무검증 연결권한). Codex-5 parser-differential(AST 재직렬화 실행). **Codex-6** confirm_heavy LLM 자기우회 + fetchall 무제한. Codex-7 MSSQL 세션상태 pool 누출. Codex-8 "제어평면 untouched" 거짓. Codex-9 scope 과대. Claude eng: 단일 canonical AST 공유(A2/C1)·pool cap(PF1)·insight stagger(PF2).
+- Resolution (DESIGN-FOLD): §4 db_datareader 정정(전용 role GRANT), §3.4 축1 무자격/catalog 보강 + 축3 AST 재직렬화, §3.6 fact 스코프, §3.3 confirm_heavy/fetchall, §3.2 session reset/poison discard, §1 scope 정직성, §4 Q6/Q7/Q8(시퀀싱·보안우선·scope) open question, §10 신설 + GSTACK REVIEW REPORT.
+- Cross-model 합의: scope 축소/MySQL-first(Codex-9↔Claude Step0), insight 교차노출(Codex-3↔M-2), pool 세션상태(Codex-7↔M-1). Codex 가 db_datareader 오류·보안경계 시퀀싱을 추가 포착.
+- Risk: low (design-only, 구현 0). 구현 cycle 진입 전 §4 Q6·Q7·Q8 확정 + RBAC outside-voice 재게이트. [[feedback_outside_voice_for_rbac]] 정합.
+
 ## REV-20260610-0182 [SUBAGENT:design-adversarial]
 - Date: 2026-06-10 (TASK-0182)
 - Cycle: 멀티 datasource(MySQL·MSSQL) 데이터평면 설계 (`DESIGN-multi-datasource.md`, design-only)

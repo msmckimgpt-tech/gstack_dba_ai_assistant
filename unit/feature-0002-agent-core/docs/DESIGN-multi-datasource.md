@@ -29,8 +29,12 @@ title: DESIGN — 멀티 datasource (MySQL · MSSQL) 데이터평면
 
 **비목표 (Out of scope)**:
 - 크로스엔진 페더레이션 (단일 쿼리가 MySQL·MSSQL 을 JOIN) — 별도 페더레이션 엔진 필요, 본 설계 제외.
-- 제어평면(대화·세션·권한·KB) 자체의 멀티엔진화 — 제어평면은 기존 store(agent_memory MySQL→PG,
-  KB pgvector) 유지. 본 설계는 **데이터평면(분석 대상)만** 멀티엔진화한다.
+- 제어평면 store **엔진** 자체의 멀티엔진화 — 제어평면 store(agent_memory MySQL→PG, KB pgvector)는
+  기존 엔진 유지. **단 "제어평면 untouched" 는 정확하지 않다 (Codex-8)**: 본 설계는 제어평면에 신규
+  **스키마/데이터**(datasources 레지스트리, 대화↔datasource 바인딩 컬럼, datasource 접근권한 RBAC,
+  시크릿 lifecycle)를 추가한다. 따라서 **마이그레이션 소유권·rollback·기존 대화 datasource_id 백필
+  실패 정책**이 설계 필수 항목이다(§10 Codex-8). 데이터평면만 멀티엔진화한다는 것은 *분석 SQL 실행 경로*
+  한정 — 제어평면 *변경 없음* 이 아니다.
 - MySQL·MSSQL 외 엔진(PostgreSQL as target, SQLite, Oracle 등) — Dialect 인터페이스가 확장
   가능하도록 설계하되 본 cycle 범위는 MySQL·MSSQL 2종.
 
@@ -132,7 +136,11 @@ sql_guard 는 그중 하나일 뿐이다:
   - `mssql` → `pyodbc.connect(...)` (ODBC Driver 18 for SQL Server) **또는** `pymssql.connect(...)`.
     드라이버 선택은 §4 open question. **이 결정이 P1 연결 PoC 의 전제이므로(Dockerfile 에 ODBC 패키지
     설치 여부가 빌드를 가른다) 롤아웃 P1 *진입 전*에 확정해야 함** (REV MISSING — 순서 모순 해소, §5).
-- 풀 키(`_pool_key`)에 `engine`+`datasource_id` 차원 추가. 풀 자체 로직(best-effort 폴백)은 무변경.
+- 풀 키(`_pool_key`)에 `engine`+`datasource_id` 차원 추가. **단 풀 계약이 MySQL 전용 (Codex-7 MAJOR)**:
+  `pool_reset_session`([db.py](../src/modules/db.py) L83)은 mysql.connector 개념이다. MSSQL 세션상태
+  (`SET SHOWPLAN_XML`·`LOCK_TIMEOUT`·database context 등)는 예외 경로에서 복구 안 되면 **pooled
+  connection 이 다음 대화로 상태를 누출**한다. → Dialect 에 `execute()` 만 추가하지 말고 **checkout/checkin
+  시 session reset + 예외 발생 connection 은 풀에 반환 않고 폐기(poison-connection discard) 계약**을 둔다.
 - **`execute_sql` + `_collect_cursor_result` 둘 다 dialect 화** (REV-20260610-0182 M-1): `multi=False`
   (L230)·`cur.with_rows`(L211)·`rowcount==-1`(L216) 는 **mysql.connector 전용**이다. pyodbc 커서엔
   `with_rows` 없음, `execute()` 에 `multi` 인자 없음(→ TypeError 폴백 L236 으로 빠지면 multi-statement
@@ -171,6 +179,13 @@ class Dialect(Protocol):
   **fail-closed(보수적 거부) 또는 강제 `TOP n` 주입 + 엔진별 timeout** 으로 정의한다. "강제 LIMIT"은
   MySQL `max_execution_time` 세션변수(L672 `_apply_query_cap`)에 의존하는데 MSSQL 은 `SET LOCK_TIMEOUT`/
   쿼리 hint 가 다르고, LLM SQL 에 `TOP` 주입은 **AST 재작성**을 의미(별도 설계) — 단순 문자열 cap 불가.
+- **부하 게이트 자체의 우회·무제한 메모리 (Codex-6 MAJOR, 멀티엔진 무관 기존 결함이나 본 설계에 동반 처리)**:
+  ① `confirm_heavy=true`([tools.py](../src/modules/tools.py) L721)는 사용자 승인이 아니라 **LLM tool
+  인자** — 모델이 스스로 게이트를 해제할 수 있다. 진짜 부하 차단이면 사용자/정책 승인이어야 하고 LLM
+  자기선언으로 풀려선 안 된다. ② 실행 후 `execute_sql` 이 `fetchall()`([db.py](../src/modules/db.py) L211)
+  로 **전체 결과를 메모리에 적재** 후 CSV 저장 → `TOP`/`LIMIT` 은 출력 행만 제한하고 집계·정렬의 전체
+  스캔/대용량 결과를 못 막는다. → row cap + streaming/`fetchmany` + 결과 바이트 상한 고려. 멀티엔진에서
+  더 악화(엔진별 메모리 특성)되므로 본 설계 범위에 포함.
 - 2 엔진뿐이므로 **hand-rolled 어댑터** 권장. SQLAlchemy Core 채택 여부는 §4 open question
   (reflection 편의 vs 대형 스키마 latency vs 의존성 증가) — 채택 시에도 보안 게이트는 네이티브 유지.
 
@@ -189,6 +204,15 @@ class Dialect(Protocol):
 `sql_guard._collect_table_refs` 재사용) + dialect 별 식별자 정규화(대괄호/큰따옴표 unquote,
 3-part `db.schema.table` 분해). 정규식 경로 폐기. 위 우회 케이스를 골든 테스트에 박제.
 
+**AST 만으로도 불충분 (Codex-1 BLOCKER)**: AST 는 명시된 이름만 본다. 다음은 AST 교체 후에도 남는 구멍:
+- **무자격 이름** `SELECT * FROM users` → 서버가 기본 catalog/schema 로 암묵 해석 → allowlist 가 못 봄.
+  → **무자격 table-ref 는 fail-closed 거부**(스키마 명시 강제) 또는 활성 datasource 의 default schema 로
+  정규화 후 검사.
+- **view/synonym 간접참조** — 허용 schema 의 view 가 금지 DB/schema/linked server 객체를 참조 →
+  표면 이름만 보면 통과. **GRANT(축2)가 진짜 방어선**(view 가 못 읽는 객체는 RO role 도 못 읽음).
+- 권한 식별자를 `datasource_id + schema` 가 아니라 **`datasource_id + catalog + schema + object`** 4-tuple
+  로 정의(MSSQL 은 catalog=DB 차원이 실재). cross-DB 참조를 catalog 차원에서 차단.
+
 **(축2) DB 계정 RO GRANT 의 MSSQL 등가 — §4 로 (B-2)**: 차단 스키마 1차 방어는 GRANT 다.
 guard 의 `forbidden_schemas`(execute_sql 은 `{agent_memory}` 만 주입) 는 에이전트 경로의
 메타-스키마 허용 정책상 실효가 제한적. MSSQL GRANT/DENY 매트릭스는 §4.
@@ -205,6 +229,12 @@ guard 의 `forbidden_schemas`(execute_sql 은 `{agent_memory}` 만 주입) 는 �
 - **sqlglot 버전 pin**: [requirements.txt](../../../requirements.txt) 의 `sqlglot>=23.0.0` 는 상한 없는
   floor — T-SQL 파싱 정확도가 버전마다 변동하고 보안 게이트이므로 **상·하한 pin**. 파싱 실패 시
   fail-closed(deny)는 유지(sql_guard L188).
+- **parser-differential — 원문 실행 구조 자체의 한계 (Codex-5 MAJOR)**: sqlglot 이 허용한 AST 와 SQL
+  Server 가 **실제 실행하는 원문 SQL** 의 의미가 항상 같다는 보장이 없다(compatibility level·session 설정·
+  신규 T-SQL 문법). 버전 pin+denylist 는 "알려진 구문"만 막는다. 더 견고한 자세: **검증된 AST 를 허용
+  노드만으로 재직렬화(generate)해 그 결과만 실행**(원문 SQL 직접 실행 폐기) — sqlglot 의 transpile/generate
+  로 정규화. 비용(LLM SQL 의도 보존·재직렬화 충실도)이 있어 P3 trade-off 로 평가하되, "원문 실행"은
+  지속 취약하다는 점을 명시. 구조화 query builder 는 LLM freeform SQL 자유도와 충돌해 본 제품엔 부적합.
 
 ### 3.5 LLM grounding 방언 주입 (assistant 가 실제 작동하려면 필수)
 - 스키마 grounding 프롬프트(TASK-0151 경로) + `execute_sql` 도구 설명([tools.py](../src/modules/tools.py)
@@ -223,6 +253,13 @@ guard 의 `forbidden_schemas`(execute_sql 은 `{agent_memory}` 만 주입) 는 �
   동형 livelock + 머신 점유. CSV 파일명도 과거 충돌 이력([[project_task0154_csv_collision]]). 따라서
   **모든 KV 키·CSV 파일명·`_insight_readback_degraded` 판정에 `datasource_id` prefix 필수**. P4
   합격선 = "동명 스키마 2 datasource 동시 인사이트 무충돌 + livelock 부재".
+- **fingerprint 키만으론 부족 — insight FACT 스코프까지 (Codex-3 BLOCKER)**: 실제 insight fact 는
+  여전히 `schema_insight:{schema}`(L1272)·`table_insight:{schema}.{table}`(L1347)·`FACT_SCOPE_COMMON`
+  으로 게시된다. fingerprint(재생성 판정)만 datasource 화하고 fact 스코프를 안 고치면, 두 datasource 의
+  동명 객체가 공용 fact/RAG 에서 충돌하거나 **다른 datasource 대화에 grounding 으로 교차 노출**된다(정확성
+  문제가 아니라 메타데이터 유출). → fact key·`FACT_SCOPE_COMMON`·RAG 게시·grounding 조회([[project_task0151_dbquery_ux_grounding]]
+  의 `_load_relevant_table_insights` 경로) 전부 `datasource_id` 로 스코프. 합격선에 "datasource A 대화가
+  datasource B 의 table_insight 를 grounding 으로 못 받음" 추가.
 - **연결 실패 격리**: datasource 순회 중 한 datasource down 이 워커 루프 전체를 막지 않도록 per-datasource
   try/except + degraded 마킹 (전체 중단 금지) — REV MISSING.
 
@@ -244,12 +281,15 @@ guard 의 `forbidden_schemas`(execute_sql 은 `{agent_memory}` 만 주입) 는 �
 - **datasource 단위 접근권한**: 어떤 사용자/역할이 어떤 datasource 를 조회 가능한가 (권한 catalog
   확장). 기존 RBAC([[project_profile_tabs_restructure_cycle]] 류)와 정합 필요.
 - **자격증명 저장·회전**: §3.1 시크릿 전략 확정 (env named vs app 암호화 vs 외부 스토어).
-- **최소권한 RO 강제 + MSSQL GRANT/DENY 매트릭스를 산출물로 명시 (B-2, 핵심)**: 차단 스키마의 1차
-  방어가 GRANT 이므로(§2.3.1 축2), datasource 별 MSSQL 최소권한 로그인 부트스트랩 스크립트를 **P1/P5
-  산출물**로 둔다 — `CREATE LOGIN` + DB 단위 `db_datareader` + 명시 `DENY`(시스템 카탈로그/`VIEW SERVER
-  STATE`) + `master/model/msdb/tempdb` 시스템 DB 접근 차단 + `xp_cmdshell` 비활성 + cross-DB ownership
-  chaining off. MySQL RO(`AGENT_DATA_DB_USER`) 패턴의 멀티엔진 일반화. RW 폴백은 멀티엔진에서 금지(MySQL
-  의 RW fallback 관용을 MSSQL 로 옮기지 않음).
+- **최소권한 RO 강제 + MSSQL GRANT 매트릭스를 산출물로 명시 (B-2, 핵심 — Codex-2 정정)**: 차단 스키마의
+  1차 방어가 GRANT 이므로(§2.3.1 축2), datasource 별 MSSQL 최소권한 로그인 부트스트랩 스크립트를 **P5(보안
+  먼저, §10 Codex-4)** 산출물로 둔다. **단 `db_datareader` 는 금지** — `db_datareader` 는 DB 내 모든
+  사용자 테이블/뷰 읽기를 부여해 애플리케이션 allowlist 우회 시 계정이 못 막는다(allowlist=DB계정 양면
+  방어 전제와 정면 충돌, Codex-2). 대신 **datasource 별 전용 role 에 `allowed_schemas`/허용 view·object
+  에만 `GRANT SELECT`**(deny-by-default, allowlist 와 GRANT 가 같은 객체집합을 가리키도록). `xp_cmdshell
+  off`·cross-DB ownership chaining off 같은 **서버 전역 설정은 datasource별 스크립트의 소유가 아니다** —
+  서버 사전조건(prerequisite)으로 분리하고 부트스트랩은 검증만. MySQL RO(`AGENT_DATA_DB_USER`)도 동일
+  원칙으로 일반화(스키마 화이트리스트 = GRANT 대상). RW 폴백은 멀티엔진에서 금지.
 - **엔진별 위험 표면**: MSSQL `xp_cmdshell`(RCE)·`OPENROWSET`/`OPENQUERY`(파일/원격)·linked server·
   `EXEC`/`sp_executesql`·`WAITFOR` — **SQL guard denylist(§3.4 축3) + RO GRANT/DENY(축2) 양면 차단**.
   한 축만으로는 불충분(guard 우회 가능성 B-3 + GRANT 만으로는 SELECT INTO 류 못 막음).
@@ -262,6 +302,14 @@ guard 의 `forbidden_schemas`(execute_sql 은 `{agent_memory}` 만 주입) 는 �
 3. SQLAlchemy Core 채택 여부 (connection/reflection 한정) vs 완전 hand-rolled?
 4. MSSQL 부하 게이트: 추정 실행계획 파싱 즉시 구현 vs "강제 LIMIT+timeout" fail-safe 우선?
 5. 대화 중 datasource 전환 허용 여부 (grounding 재빌드 비용·혼동 위험)?
+6. **(REV-0182-ENG, 사용자 보류) P1 시퀀싱**: MySQL-only 멀티-datasource 먼저(방언/보안 재작성 위험 0
+   으로 레지스트리·바인딩·RBAC 검증) → MSSQL 별 cycle vs MySQL+MSSQL 동시 P1? 실 구현 착수 시 결정.
+7. **(Codex-4 BLOCKER) 보안경계 시퀀싱**: datasource 접근권한 검증·credential scope·audit 를 **P1 연결
+   디스패치보다 먼저** 구현해야 하는가(현 P5 RBAC 는 P1~P4 동안 사용자 제공 datasource_id 를 서버측
+   권한검증 없이 연결권한으로 만든다 — flag/canary 는 권한검사가 아님)? → §10 Codex-4·§5 재배치.
+8. **(Codex-9) scope 정당화**: registry+dialect+insight fan-out+CRUD+RBAC+secret 을 한 번에 vs 더 싼
+   경로(datasource별 단일-engine agent 배포 / multi-MySQL 먼저 / MSSQL 을 별 restricted query service)?
+   실 MSSQL 수요·동시 datasource 수·대화중 전환 필요성 검증 후 확정.
 
 ## 5. 롤아웃 (단계 — 단일 PR 불가)
 
@@ -343,3 +391,77 @@ BLOCKER 를 설계 수준에서 해소했다(코드 mutation 0). 구현 cycle �
 > 강점(리뷰 확인): 데이터평면만 멀티엔진화하는 scope 절단·flag OFF 기본·"MySQL 동작 0 변경" 골든
 > 회귀 합격선·자체 cycle + RBAC outside-voice 게이트는 위험 등급에 정합. 단 "보안 게이트 재작성
 > 불필요" 중심 전제가 틀렸던 것을 §3.4 에서 철회·교정함.
+
+## 10. plan-eng-review 2차 반영 (REV-20260610-0182-ENG + Codex cross-model)
+
+`/plan-eng-review` (엔지니어링 매니저 렌즈) + **Codex cross-model outside voice** 2차 리뷰. 1차(REV-0182,
+Claude subagent)·본 설계가 놓친 것을 추가 발굴. design-only 이라 전 발견을 본 문서에 직접 반영.
+
+**Codex Verdict: REJECT** — BLOCKER 4 + MAJOR 5 (권한 경계 오모델링 + 보안경계 뒤늦은 구현).
+
+| ID | 발견 | 반영 |
+|---|---|---|
+| Codex-1 (BLOCKER) | AST 추출도 불완전 — 무자격 이름/view·synonym 간접참조/ownership chaining. 권한식별자 `datasource_id+catalog+schema+object` | §3.4 축1 (무자격 fail-closed + catalog 차원 + view 는 GRANT 가 방어) |
+| Codex-2 (BLOCKER) | `db_datareader+DENY` 가 allowlist 와 양립 불가(DB 전체 읽기) | §4 정정 (전용 role + 허용 view/object 만 `GRANT SELECT`, db_datareader 금지) |
+| Codex-3 (BLOCKER) | insight 격리가 fingerprint 키에만 — fact 스코프(`schema_insight`/`FACT_SCOPE_COMMON`)는 교차노출 | §3.6 (fact key·RAG·grounding 까지 datasource_id 스코프) |
+| Codex-4 (BLOCKER) | rollout 이 보안경계 뒤늦음 — P1~P4 동안 datasource_id 가 권한검증 없이 연결권한. flag≠권한검사 | §4 Q7·§5 (보안경계 P1 앞으로 재배치 — open question) |
+| Codex-5 (MAJOR) | sqlglot AST ≠ SQL Server 실행 의미(parser-differential) | §3.4 축3 (검증 AST 재직렬화 실행 — 원문 실행 폐기 평가) |
+| Codex-6 (MAJOR) | `confirm_heavy` 가 LLM tool 인자(모델 자기우회) + `fetchall()` 무제한 메모리 | §3.3 (사용자/정책 승인화 + row cap·streaming) |
+| Codex-7 (MAJOR) | MSSQL 세션상태 pooling 누출 | §3.2 (session reset + poison-connection 폐기 계약) |
+| Codex-8 (MAJOR) | "제어평면 untouched" 거짓 → 마이그레이션/rollback/백필 정책 누락 | §1 비목표 정정 (제어평면 스키마 추가 명시 + 백필 실패 정책) |
+| Codex-9 (MAJOR) | scope 과대 — 검증 전 registry+dialect+insight+CRUD+RBAC+secret 일괄 | §4 Q8 (더 싼 경로 — open question) |
+
+**엔지니어링 매니저(Claude) 발견 — 반영**:
+- **A2/C1 [보안 하드닝]** sql_guard shape 체크와 schema-ref 추출이 **각각** sqlglot 파싱하면 dialect 해석
+  차이로 우회 → **단일 canonical AST 를 두 게이트가 공유**, dialect 특이사항은 **Dialect 객체가 단일 소유**.
+  (Codex-1·5 와 정합 — 같은 AST 가 격리 근거)
+- **PF1 [pool]** N datasource × pool_size = 연결한도 소진 → per-datasource + total cap.
+- **PF2 [insight]** 매 tick N datasource 전수 스캔 = 부하 N배 → **stagger 스케줄링**(전수 매틱 금지).
+
+**Cross-model 합의(강신호)**: scope 축소·MySQL-first (Codex-9 ↔ Claude Step 0), insight 교차노출 (Codex-3 ↔
+M-2 심화), pool 세션상태 (Codex-7 ↔ M-1/A 심화). → 구현 cycle 의 가장 큰 두 결정은 **(a) 보안경계를 P1
+앞으로(Codex-4)** **(b) P1 을 MySQL-only 로 축소할지(Codex-9, 사용자 보류)** — 둘 다 §4 open question.
+
+### NOT in scope (이번 리뷰가 명시적으로 미룬 것)
+- P1 시퀀싱 확정 (사용자 보류 — 구현 착수 시): §4 Q6.
+- 크로스엔진 페더레이션 / MySQL·MSSQL 외 엔진 / 제어평면 store 엔진 교체 (§1 비목표 유지).
+- 구현 코드: 본 cycle 은 설계만. 전 단계 P0~P6 은 자체 cycle.
+
+### What already exists (재사용 — rebuild 금지)
+- `bytebase/dbhub` MCP (멀티엔진, 게이트 우회 → 주경로 제외), `sql_guard._collect_table_refs`(AST 수집
+  재사용), `_pool_key` 시그니처, `AGENT_DATA_DB_USER` RO 라우팅, `test_sql_trust_boundary.py`(보안경계
+  테스트 → dialect 매트릭스로 확장), TASK-0151 grounding 경로(방언 주입점), TASK-0172 EXPLAIN 게이트.
+
+### Failure modes (신규 코드경로별 — 1 현실적 실패 + 테스트/에러처리 유무)
+| 경로 | 실패 | 테스트 | 에러처리 | critical? |
+|---|---|---|---|---|
+| AST allowlist (무자격/view) | 무자격 이름이 금지객체 읽음 | 골든 우회 케이스 | fail-closed 거부 | **critical gap until P3** |
+| RO GRANT (db_datareader 오용) | 전체 테이블 노출 | RO 실연결 차단 테스트 | 전용 role GRANT | **critical gap until P5** |
+| insight fact 스코프 | datasource 교차 grounding | 2-ds 무교차 테스트 | datasource_id 스코프 | **critical gap until P4** |
+| pool 세션누출 | SHOWPLAN 상태 다음 대화 누출 | session-reset 테스트 | poison discard | high |
+| EXPLAIN fail-open | MSSQL 무거운 쿼리 무방어 | fail-closed 테스트 | 강제 TOP+timeout | high |
+
+### Worktree 병렬화
+P0(드라이버/빌드)·보안경계(Codex-4) 선행 후: **Lane A** dialects/(P2 어댑터) → **Lane B** insight.py(P4,
+dialects 의존) 순차; **Lane C** Web UI(P6, 독립). A·C 병렬 가능, B 는 A 뒤. 단 보안경계(allowlist AST·
+GRANT)는 **단일 lane 직렬**(데이터 격리는 분할 금지).
+
+### Implementation Tasks (구현 cycle 진입 시 — 본 cycle 은 설계만이라 미실행)
+- [ ] **T1 (P1)** 보안경계 선구현 — datasource 접근권한 RBAC + AST allowlist(무자격 거부) + 전용 role GRANT (Codex-1/2/4). Verify: `test_sql_trust_boundary.py` dialect 매트릭스 + RO 실연결 차단.
+- [ ] **T2 (P1)** datasource 레지스트리 + `connect(datasource_id)` 명시 plane 라우팅 + datasource_id=1 백필 (M-3, Codex-8).
+- [ ] **T3 (P2)** `modules/dialects/` 단일 Dialect 소유 + 단일 canonical AST 공유 (A2/C1).
+- [ ] **T4 (P3)** sql_guard dialect + T-SQL denylist + 검증 AST 재직렬화 평가 (B-3, Codex-5).
+- [ ] **T5 (P4)** insight per-datasource — fingerprint + **fact 스코프** + stagger (M-2, Codex-3, PF2).
+- [ ] **T6 (P3)** 부하 게이트 — confirm_heavy 비-LLM 승인화 + fetchall→streaming (Codex-6).
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | issues_open→folded | Arch 3 / Quality 2 / Perf 3, all folded to §10 |
+| Outside Voice | Codex (cross-model) | Independent 2nd opinion | 1 | REJECT→folded | BLOCKER 4 + MAJOR 5, all folded to §10 |
+| Outside Voice (1차) | Claude subagent | adversarial design | 1 | NEEDS-TWEAK→folded | BLOCKER 3 + MAJOR 4 (§9) |
+
+- **CROSS-MODEL:** 합의 — scope 축소/MySQL-first, insight 교차노출, pool 세션상태. Codex 가 보안경계 시퀀싱(Codex-4)·db_datareader 오류(Codex-2)를 추가 포착(Claude 리뷰·1차 미포착).
+- **UNRESOLVED:** P1 시퀀싱(Q6, 사용자 보류) + 보안경계 P1 전진(Q7) + scope 정당화(Q8) — 구현 착수 시 확정.
+- **VERDICT:** ENG CLEARED (design-only) — 전 발견 설계 반영 완료. 구현 cycle 진입 전 §4 Q6·Q7·Q8 확정 + RBAC outside-voice 재게이트 필수. 코드 mutation 0.
