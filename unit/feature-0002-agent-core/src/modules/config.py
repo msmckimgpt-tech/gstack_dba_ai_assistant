@@ -154,6 +154,7 @@ __all__ = [
     "AGENT_QUERY_GUARD_MODE",
     "AGENT_QUERY_EXPLAIN_ROWS_WARN",
     "AGENT_QUERY_MAX_EXECUTION_MS",
+    "AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM",
     "AGENT_TIMING_LOG",
     "AGENT_TOPIC_MODEL",
     "AGENT_TOP_N",
@@ -575,6 +576,13 @@ AGENT_QUERY_EXPLAIN_ROWS_WARN = int(
 # "무거운 쿼리는 감수" 정책상 정상 장기 쿼리를 끊지 않도록 generous/off 기본 — 폭주 차단용.
 AGENT_QUERY_MAX_EXECUTION_MS = int(
     (os.getenv("AGENT_QUERY_MAX_EXECUTION_MS", "0") or "0").strip()
+)
+# P6 (멀티 datasource Stage 2, Codex-6): confirm_heavy 는 LLM tool 인자라 모델이 무거운 쿼리
+# 게이트를 자기우회한다. false 로 두면 LLM 의 confirm_heavy 를 무시(비-LLM 승인만 인정) — 정책상
+# 모델 자기우회를 차단하려는 운영자용. 기본 true=현행(모델 판단 신뢰). 사용자/UI 승인 경로는 P7 이월.
+AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM = (
+    os.getenv("AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM", "true").strip().lower()
+    not in ("false", "0", "no")
 )
 AGENT_OPENAI_MAX_RETRIES = int(os.getenv("AGENT_OPENAI_MAX_RETRIES", "0"))
 AGENT_MEMORY_MAX_TURNS = int(os.getenv("AGENT_MEMORY_MAX_TURNS", "10"))

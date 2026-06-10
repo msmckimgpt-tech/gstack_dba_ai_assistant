@@ -48,7 +48,7 @@ _FORBIDDEN_SCHEMAS = {
     "sys",
 }
 
-# 금지 function names (case-insensitive).
+# 금지 function names (case-insensitive). MySQL(기본) 어휘.
 _FORBIDDEN_FUNCTIONS = {
     "sleep",
     "benchmark",
@@ -59,7 +59,18 @@ _FORBIDDEN_FUNCTIONS = {
     "uuid",  # information leak (uuid host id) — Sprint 1 conservative
 }
 
-# 보조 denylist regex (allowlist 가 못 잡는 edge — backup defense).
+# T-SQL(MSSQL) 금지 function/table-function names (P6, DESIGN §3.4 축3). FROM 절에 등장 가능한
+# OPENROWSET/OPENQUERY 류는 single-SELECT shape 를 통과하므로 AST Func 검출 + regex 양면 차단.
+_FORBIDDEN_FUNCTIONS_TSQL = {
+    "openrowset",     # 임의 파일/원격 데이터 읽기
+    "openquery",      # linked server 임의 쿼리
+    "opendatasource", # ad-hoc 원격 연결
+    "xp_cmdshell",    # OS 명령 실행(RCE)
+    "sp_executesql",  # 동적 SQL
+    "waitfor",        # WAITFOR DELAY — SLEEP 등가(DoS)
+}
+
+# 보조 denylist regex (allowlist 가 못 잡는 edge — backup defense). MySQL 어휘 (골든: 무변경).
 _DENYLIST_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bINTO\s+OUTFILE\b", re.IGNORECASE),
     re.compile(r"\bINTO\s+DUMPFILE\b", re.IGNORECASE),
@@ -78,6 +89,30 @@ _DENYLIST_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r":=\s*"),  # user variable assignment
     re.compile(r"--[ \t]*[^\n]*", re.MULTILINE),  # line comment (audit only — not block by default)
 )
+
+# T-SQL(MSSQL) 보조 denylist regex (P6, DESIGN §3.4 축3 매트릭스 박제). AST shape allowlist 가
+# single-SELECT 로 통과시키는 위험 구문(FROM 절 table-function·인라인 위험구문)을 텍스트로 보강 차단.
+# `--` 주석 audit-only 패턴은 _DENYLIST_PATTERNS 와 동일 문자열이어야 block 제외 필터가 동작한다.
+_DENYLIST_PATTERNS_TSQL: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bxp_cmdshell\b", re.IGNORECASE),       # RCE
+    re.compile(r"\bsp_executesql\b", re.IGNORECASE),     # 동적 SQL
+    re.compile(r"\bsp_oacreate\b", re.IGNORECASE),       # OLE automation
+    re.compile(r"\bOPENROWSET\b", re.IGNORECASE),        # 임의 파일/원격 읽기
+    re.compile(r"\bOPENQUERY\b", re.IGNORECASE),         # linked server
+    re.compile(r"\bOPENDATASOURCE\b", re.IGNORECASE),    # ad-hoc 원격
+    re.compile(r"\bWAITFOR\b", re.IGNORECASE),           # DELAY/TIME — DoS
+    re.compile(r"\bEXEC(UTE)?\b", re.IGNORECASE),        # 동적 실행/proc 호출
+    re.compile(r"\bINTO\s+", re.IGNORECASE),             # SELECT ... INTO newtbl (부수효과: 테이블 생성)
+    re.compile(r"@@", re.IGNORECASE),                    # @@VERSION 등 시스템변수 정보유출
+    re.compile(r"/\*\+\s*[^*]*\*/"),                     # optimizer hint 주석
+    re.compile(r"--[ \t]*[^\n]*", re.MULTILINE),         # line comment (audit only)
+)
+
+# dialect(sqlglot name) → (denylist patterns, 추가 금지 function set)
+_DIALECT_DENYLIST: "dict[str, tuple[tuple[re.Pattern[str], ...], set[str]]]" = {
+    "mysql": (_DENYLIST_PATTERNS, set()),
+    "tsql": (_DENYLIST_PATTERNS_TSQL, _FORBIDDEN_FUNCTIONS_TSQL),
+}
 
 
 class SqlGuardResult:
@@ -98,10 +133,11 @@ class SqlGuardResult:
         }
 
 
-def _check_secondary_denylist(sql: str) -> list[str]:
-    """보조 denylist regex — backup defense (allowlist 미흡 케이스 잡기)."""
+def _check_secondary_denylist(sql: str, dialect: str = "mysql") -> list[str]:
+    """보조 denylist regex — backup defense (allowlist 미흡 케이스 잡기). dialect 별 어휘 적용."""
+    patterns, _ = _DIALECT_DENYLIST.get(str(dialect or "mysql").lower(), (_DENYLIST_PATTERNS, set()))
     matched: list[str] = []
-    for pat in _DENYLIST_PATTERNS:
+    for pat in patterns:
         if pat.search(sql):
             matched.append(pat.pattern)
     return matched
@@ -121,17 +157,64 @@ def _check_multi_statement(sql: str) -> bool:
     return ";" in stripped
 
 
-def _collect_table_refs(node) -> list[tuple[str, str]]:
-    """AST 의 모든 Table 노드의 (db, name) 반환."""
+def _collect_table_refs(node) -> list[tuple[str, str, str]]:
+    """AST 의 모든 Table 노드의 (catalog, db, name) 반환 (P6: 3-part catalog 차원 포함).
+
+    sqlglot 이 dialect 로 파싱하면 식별자 인용(MSSQL `[..]`/ANSI `"..."`, MySQL 백틱)은
+    이미 벗겨진 plain 토큰으로 들어온다 → 대괄호/3-part/큰따옴표 우회(B-1) 가 닫힌다.
+    `catalog` 는 3-part `catalog.schema.table` 의 DB 차원(MSSQL cross-DB 차단용, MySQL 은 보통 빈값).
+    """
     if _exp is None:
         return []
-    out: list[tuple[str, str]] = []
+    out: list[tuple[str, str, str]] = []
     for table in node.find_all(_exp.Table):
-        db = str(table.args.get("db") or "").strip().lower()
-        name = str(table.args.get("this") or "").strip().lower()
+        # `.catalog`/`.db`/`.name` 은 인용(대괄호·백틱·ANSI 큰따옴표)을 벗긴 plain 텍스트를 준다.
+        # str(table.args.get("db")) 는 quoted=True 일 때 따옴표를 포함해(`"agent_memory"`) 금지스키마
+        # 비교가 빗나간다 → 반드시 unquoted accessor 사용(따옴표 우회 B-1 차단의 핵심).
+        catalog = (table.catalog or "").strip().lower()
+        db = (table.db or "").strip().lower()
+        name = (table.name or "").strip().lower()
         if name:
-            out.append((db, name))
+            out.append((catalog, db, name))
     return out
+
+
+def collect_schema_refs(
+    sql: str, *, dialect: str = "mysql"
+) -> "tuple[set[str], bool, set[str]]":
+    """freeform SQL 의 table-ref 를 AST 로 수집 → (schemas, has_unqualified, catalogs).
+
+    P6 축1: tools.py 의 정규식 `_extract_sql_schema_refs` 를 대체하는 단일 AST 추출점.
+    동일 dialect 로 파싱하므로 sql_guard shape 게이트와 **방언 해석 차이(differential parse)** 가 없다.
+
+    - schemas: 참조된 schema(db) 토큰 lowercase set (자격 있는 `schema.table` 의 schema).
+    - has_unqualified: schema 미지정(무자격) table 이 하나라도 있으면 True (caller 가 datasource
+      활성 시 fail-closed 거부 — Codex-1).
+    - catalogs: 3-part `catalog.schema.table` 의 catalog 토큰 set (MSSQL cross-DB 차단용).
+
+    파싱 실패 시 보수적으로 (set(), True, set()) — 무자격 취급해 datasource 경로에서 거부되게 한다
+    (단, execute_sql 은 validate_sql_for_sandbox 가 선행해 파싱 실패를 이미 deny).
+    """
+    if not SQLGLOT_AVAILABLE or _exp is None:
+        return (set(), True, set())
+    try:
+        parsed = sqlglot.parse(sql or "", dialect=str(dialect or "mysql").lower())
+    except Exception:
+        return (set(), True, set())
+    schemas: set[str] = set()
+    catalogs: set[str] = set()
+    has_unqualified = False
+    for stmt in parsed:
+        if stmt is None:
+            continue
+        for catalog, db, _name in _collect_table_refs(stmt):
+            if db:
+                schemas.add(db)
+            else:
+                has_unqualified = True
+            if catalog:
+                catalogs.add(catalog)
+    return (schemas, has_unqualified, catalogs)
 
 
 def _collect_function_names(node) -> list[str]:
@@ -149,7 +232,10 @@ def _collect_function_names(node) -> list[str]:
 
 
 def validate_sql_for_sandbox(
-    sql: str, *, forbidden_schemas: "set[str] | frozenset[str] | None" = None
+    sql: str,
+    *,
+    forbidden_schemas: "set[str] | frozenset[str] | None" = None,
+    dialect: str = "mysql",
 ) -> SqlGuardResult:
     """D14 + R-F3 — single SELECT (with optional CTE) only.
 
@@ -159,14 +245,20 @@ def validate_sql_for_sandbox(
     TASK-0128 (#2): forbidden_schemas 로 호출 컨텍스트별 금지 스키마를 주입한다. 기본값
     None 이면 sandbox 기본 집합(_FORBIDDEN_SCHEMAS = information_schema/mysql/sys/perf).
     agent 의 execute_sql 은 카탈로그 조회가 필요하므로 {agent_memory} 만 금지해 호출한다.
+
+    P6 (멀티 datasource Stage 2): dialect 인자로 `mysql`|`tsql` 분기. denylist 어휘·sqlglot
+    파서·금지함수가 dialect 별로 적용된다. **T-SQL `SELECT ... INTO newtbl`(부수효과: 테이블
+    생성)** 은 SELECT shape 로 보이므로 dialect 별 denylist(`INTO `) + AST into-arg 양면 차단.
+    파싱 실패는 fail-closed(deny) 유지.
     """
     raw = (sql or "").strip()
     forbid = forbidden_schemas if forbidden_schemas is not None else _FORBIDDEN_SCHEMAS
+    dialect = str(dialect or "mysql").lower()
     if not raw:
         return SqlGuardResult(False, error_reason="empty SQL")
 
-    # 보조 denylist 우선 검사 (defense in depth).
-    matched = _check_secondary_denylist(raw)
+    # 보조 denylist 우선 검사 (defense in depth) — dialect 별 어휘.
+    matched = _check_secondary_denylist(raw, dialect)
     # comment-only pattern 은 block 안 함 — 다만 log 에 표기.
     block_patterns = [p for p in matched if p not in (r"--[ \t]*[^\n]*",)]
     if block_patterns:
@@ -184,7 +276,7 @@ def validate_sql_for_sandbox(
         return SqlGuardResult(False, error_reason="sqlglot library not available")
 
     try:
-        parsed = sqlglot.parse(raw, dialect="mysql")
+        parsed = sqlglot.parse(raw, dialect=dialect)
     except Exception as exc:
         return SqlGuardResult(False, error_reason=f"sqlglot parse failed: {exc}")
 
@@ -205,31 +297,28 @@ def validate_sql_for_sandbox(
     if locks:
         return SqlGuardResult(False, error_reason=f"lock clause not allowed: {locks}", denied_patterns=["FOR UPDATE/LOCK"])
 
-    # into 검사.
+    # into 검사 (dialect 무관: MySQL `INTO @var/OUTFILE`, T-SQL `SELECT ... INTO newtbl` 둘 다
+    # sqlglot 이 select.args["into"] 로 노출 → 부수효과 SELECT 를 shape 단계에서 차단).
     if select_root.args.get("into"):
         return SqlGuardResult(False, error_reason="INTO clause not allowed", denied_patterns=["INTO"])
 
-    # table refs 의 schema 검사.
+    # table refs 의 schema/catalog 검사 (catalog = 3-part DB 차원, P6 cross-DB).
     table_refs = _collect_table_refs(root)
-    for db, name in table_refs:
-        if db and db in forbid:
-            return SqlGuardResult(
-                False,
-                error_reason=f"forbidden schema: {db}",
-                denied_patterns=[f"schema:{db}"],
-            )
-        # un-qualified table 이름이 forbidden schema 와 동일하면 (잠재 escape) 도 거부.
-        if name in forbid:
-            return SqlGuardResult(
-                False,
-                error_reason=f"forbidden table name: {name}",
-                denied_patterns=[f"table:{name}"],
-            )
+    for catalog, db, name in table_refs:
+        for part, label in ((catalog, "catalog"), (db, "schema"), (name, "table")):
+            if part and part in forbid:
+                return SqlGuardResult(
+                    False,
+                    error_reason=f"forbidden {label}: {part}",
+                    denied_patterns=[f"{label}:{part}"],
+                )
 
-    # function 검사.
+    # function 검사 — 기본 금지 + dialect 추가 금지.
+    _, extra_forbidden_fns = _DIALECT_DENYLIST.get(dialect, (_DENYLIST_PATTERNS, set()))
+    forbidden_fns = _FORBIDDEN_FUNCTIONS | set(extra_forbidden_fns)
     func_names = _collect_function_names(root)
     for fn in func_names:
-        if fn in _FORBIDDEN_FUNCTIONS:
+        if fn in forbidden_fns:
             return SqlGuardResult(
                 False,
                 error_reason=f"forbidden function: {fn}()",
@@ -239,7 +328,11 @@ def validate_sql_for_sandbox(
     # ast_summary — audit 의 normalized form.
     summary = {
         "statement_type": "SELECT_CTE" if isinstance(root, _exp.With) else "SELECT",
-        "table_refs": [f"{db + '.' if db else ''}{name}" for db, name in table_refs],
+        "dialect": dialect,
+        "table_refs": [
+            f"{catalog + '.' if catalog else ''}{db + '.' if db else ''}{name}"
+            for catalog, db, name in table_refs
+        ],
         "function_count": len(func_names),
         "has_cte": isinstance(root, _exp.With),
     }

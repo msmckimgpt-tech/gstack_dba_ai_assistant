@@ -115,9 +115,14 @@ except Exception as _e:  # pragma: no cover — env without pymssql
 def _connect_mssql(datasource: dict, database: str | None, autocommit: bool):
     """MSSQL(SQL Server) datasource 연결 (Stage 2 P4, pymssql).
 
-    M-1 정합: database(default_db)를 암묵 기본 DB 로 적용하지 않는다 — caller(agent_core)가
-    명시한 database 만 사용(datasource 경로는 None). MSSQL 쿼리는 `[catalog].[schema].[table]`
-    3-part 로 fully-qualified (P6) 되므로 기본 DB 미선택이 안전(allowlist 가 유일 게이트).
+    **DB 컨텍스트 고정 (P6, M-1 엔진별 정합)**: MSSQL 은 `database > schema > table` 3계층이라
+    schema 격리(allowlist=dbo/sales)는 **특정 DATABASE 안에서** 의미를 가진다. 따라서 연결은
+    datasource 의 `default_db` 로 고정하고(없으면 caller 명시값), 쿼리는 2-part `schema.table` 로
+    한다. MySQL 의 M-1("database=None — 미접두 쿼리가 default_db 를 우회조회")과 달리 MSSQL 에서는
+    **무자격 table-ref 를 P6 가 fail-closed 로 거부**(tools._freeform_sql_access_error)하고 3-part
+    catalog(DB) cross-DB 참조도 차단하므로, DB 고정이 오히려 안전하다. (로그인 GRANT 도 해당 DB 의
+    허용 스키마로 한정 — bin/datasource-mssql-ro-bootstrap.sql.) default_db 미설정 MSSQL datasource 는
+    로그인 기본 DB(보통 master)로 붙어 2-part 쿼리가 깨지므로 DS_<KEY>_DEFAULT_DB 설정이 사실상 필수.
     포트 미설정 시 MSSQL 기본 1433.
     """
     if _pymssql is None:
@@ -126,12 +131,13 @@ def _connect_mssql(datasource: dict, database: str | None, autocommit: bool):
             f"original error: {_PYMSSQL_IMPORT_ERR!r}"
         )
     port = int(datasource.get("port") or 1433)
+    db_name = database or datasource.get("default_db") or ""
     conn = _pymssql.connect(
         server=datasource.get("host") or DB_HOST,
         port=str(port),
         user=datasource.get("user") or DB_USER,
         password=datasource.get("password", ""),
-        database=(database or ""),  # M-1: default_db 미적용 (빈 문자열=로그인 기본 DB)
+        database=db_name,  # P6: MSSQL 은 default_db 로 DB 컨텍스트 고정(빈 문자열=로그인 기본 DB)
         login_timeout=int(AGENT_TIMEOUT_SEC),
         timeout=int(AGENT_TIMEOUT_SEC),
         autocommit=bool(autocommit),

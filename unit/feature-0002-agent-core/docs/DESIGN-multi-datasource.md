@@ -503,3 +503,96 @@ GRANT)는 **단일 lane 직렬**(데이터 격리는 분할 금지).
   먼저 + 보안경계 연결과 동시. §5 Stage 1/2 재구성. 잔여: MSSQL 확장(Stage 2) 진입 시 §4 Q1~Q5.
 - **VERDICT:** ENG CLEARED (design-only) — 전 발견 설계 반영 완료 + 롤아웃 시퀀싱 확정(ADR-CORE-0003).
   Stage 1(multi-MySQL) 구현 cycle 진입 가능, Stage 2(MSSQL) 진입 전 RBAC outside-voice 재게이트. 코드 mutation 0.
+
+## 11. P6 구현 보고 (MSSQL 보안경계 + 실 인스턴스 검증 — TASK-0201)
+
+Stage 2 P6 구현 완료. flag OFF shadow 유지(MSSQL datasource 미바인딩 시 동작 0 변경 — 활성 dialect
+기본 mysql 이라 모든 경로가 골든). 합격선 = "보안경계 dialect 매트릭스 reject 단언 + MySQL 골든 회귀 0".
+
+**구현 (§5 P6 정의 대조):**
+- **축1 — AST allowlist (Codex-1):** [tools.py](../src/modules/tools.py) `_extract_sql_schema_refs` 정규식 →
+  [sql_guard.py](../src/modules/sql_guard.py) `collect_schema_refs` (활성 dialect 파싱) 로 교체. `_collect_table_refs`
+  가 `.catalog/.db/.name`(unquoted) 접근자 사용 → 대괄호 `[s].[t]`·3-part `c.s.t`·ANSI `"s"."t"`·백틱 우회(B-1)
+  봉쇄. **무자격 table-ref 는 datasource 활성 시 fail-closed** + **catalog(DB) 차원 cross-DB 차단**(default_db
+  외 거부) — `_freeform_sql_access_error`. 레거시 단일 MySQL(active_ds None)은 무자격 허용(골든).
+- **축3 — sql_guard dialect 분기 (B-3):** `validate_sql_for_sandbox(..., dialect=)` + `sqlglot.parse(dialect=)`.
+  T-SQL denylist 매트릭스 박제(`xp_cmdshell`·`OPENROWSET`/`OPENQUERY`/`OPENDATASOURCE`·`WAITFOR`·`EXEC(UTE)`·
+  `sp_executesql`·`SELECT … INTO`·`@@`) + dialect 별 금지함수. `SELECT INTO` 는 denylist + AST `into`-arg 이중
+  차단. 파싱 실패 fail-closed 유지. sqlglot 상·하한 pin(P4, `>=23,<28`; 실측 27.29).
+- **m3 — dialect 시스템/메타데이터 스키마:** Dialect 객체가 단일 소유(A2/C1). MSSQL `system_schemas()`=
+  sys/INFORMATION_SCHEMA/guest/db_*(역할) 제외, **dbo 는 사용자 스키마로 유지**(기본 거처). `metadata_schemas()`
+  항상-허용은 sys/INFORMATION_SCHEMA 만(db_datareader 등 역할 스키마는 allowlist 통과 필요).
+- **M-4 — 부하게이트 fail-closed:** `Dialect.supports_load_estimate`(MSSQL=False). gate 모드 + EXPLAIN 미지원
+  엔진은 사전 차단(fail-open 뒤집음). MySQL 은 종전 fail-open 유지(골든).
+- **Codex-6 — confirm_heavy 비-LLM:** `AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM`(기본 true=현행). false 면 LLM 의
+  confirm_heavy 무시(모델 자기우회 차단). **사용자/UI 승인 라운드트립은 P7 이월** — 그 전 hardened 모드는 무거운
+  쿼리 차단.
+- **Codex-2 — MSSQL GRANT 모델:** [bin/datasource-mssql-ro-bootstrap.sql](../../../bin/datasource-mssql-ro-bootstrap.sql)
+  운영자 템플릿. **db_datareader 금지**, 전용 role 에 허용 스키마만 `GRANT SELECT`(deny-by-default, allowlist=
+  GRANT 대상). 0단계에서 서버 prerequisite(xp_cmdshell/cross-DB ownership chaining/Ad Hoc Distributed
+  Queries OFF) 검증 — 어긋나면 RAISERROR 실패.
+
+**평가/결정 (구현 대신 명시 판정):**
+- **Codex-5 — 검증 AST 재직렬화: 미채택(원문 실행 유지).** sqlglot generate 로 정규화 후 실행하면 LLM freeform
+  SQL 의 의도(엔진 고유 함수·힌트·문법)가 손실돼 본 제품의 분석 자유도와 충돌한다. 대신 dialect 파싱 + denylist
+  매트릭스 + 버전 pin + 파싱실패 fail-closed 로 "알려진 위험구문"을 차단한다. **잔존 위험 명시**: sqlglot 이 허용한
+  AST 와 SQL Server 실제 실행 의미가 compat level·session 설정·신규 문법에서 어긋날 수 있다 → MSSQL 활성은
+  flag + RO GRANT(축2, 최종 backstop) 전제. 재직렬화는 향후 위험도 상승 시 재평가.
+- **Codex-7 — 세션 reset/poison discard: 아키텍처로 해소.** MSSQL 은 [db.py](../src/modules/db.py) `_connect_mssql`
+  가 풀 없이 **매 연결 fresh**(pymssql direct) — 대화 간 세션상태 누출 경로 부재. MySQL 은 기존 pool
+  `pool_reset_session`(AGENT_DB_POOL_RESET_SESSION) 가 처리. 본 코드는 SHOWPLAN/LOCK_TIMEOUT 등 세션상태를
+  설정하지 않는다(부하게이트는 MSSQL 에서 fail-closed — SHOWPLAN 미사용). 추가 코드 불요.
+
+**테스트:** [test_mssql_security_boundary.py](../tests/test_mssql_security_boundary.py) — dialect 매트릭스(T-SQL 위험구문
+reject + MySQL 골든 allow/block + 백틱 agent_memory 봉쇄), B-1 우회 3종 박제(bracket/3-part/ANSI), 무자격·cross-DB
+정책, dialect 시스템스키마, M-4 fail-closed, Codex-6 플래그. 전체 스위트 회귀 0.
+
+### 11.1 실 MSSQL 인스턴스 검증 (사용자 요청 — assistant·insight 작동 확인)
+
+SQL Server 2022 실 인스턴스(사용자 Windows 호스트 `172.28.64.1:14330`, DB `dk_data_release` 123테이블)에 P6
+코드를 연결해 **engine/tool 계층 + 보안경계**를 실측. **최소권한 RO 로그인을 부트스트랩으로 생성**(GRANT SELECT
+on dbo, db_datareader 아님)해 사용. 결과:
+- **도구 전부 동작**: list_schemas(123테이블)·describe_schema·describe_table·get_sample_rows·search_tables·
+  get_table_indexes·execute_sql(GROUP BY/JOIN/COUNT) — 실데이터 정상 반환.
+- **보안경계 차단 실증**: xp_cmdshell·OPENROWSET·cross-DB(`GameLog_151.*`)·무자격·allowlist밖·write(INSERT) 전부
+  reject. **2축 방어 실증**: cross-DB 는 앱 catalog 체크 + DB GRANT 양쪽에서 차단(RO 가 타 DB 접근 시 SQL Server
+  `916 not able to access database`).
+- **서버 hardening 갭 발견**: 대상 서버는 `xp_cmdshell` 이 **ON**(부트스트랩 0단계 prereq 가 검출). 앱 denylist +
+  RO GRANT 로 agent 는 호출 불가하나, 운영자에게 서버측 OFF 권고. → 부트스트랩 usage 에 **`sqlcmd -b` 필수**
+  명시(prereq RAISERROR 가 `-b` 없이는 중단 못 하던 결함 보완).
+
+**실 인스턴스에서 드러난 P5 dialect 버그 4건 수정(P5 는 shadow 라 미실측)**:
+1. **`sys.dm_db_partition_stats` 권한**: 행수 집계 DMV 는 `VIEW DATABASE STATE` 권한 필요 → 최소권한 RO 에서
+   `(297) permission denied`. **`sys.partitions`(metadata-visibility)** 로 교체 — db_datareader 금지/스키마
+   GRANT-only RO 와 양립. (이 버그는 최소권한 RO 로만 드러남 — sa/db_datareader 면 가려짐.)
+2. **MSSQL 연결 DB 미고정**: `_connect_mssql` 이 `database=''` 라 로그인 기본 DB(master)로 붙어 `dbo.t`(2-part)가
+   "Invalid object name". → MSSQL 은 `default_db` 로 DB 컨텍스트 고정(M-1 엔진별 정합 — 무자격 fail-closed +
+   cross-DB 차단이 격리를 담당하므로 DB 고정이 안전). DS_<KEY>_DEFAULT_DB 사실상 필수.
+3. **`row_count` vs `rows`**: sys.partitions 컬럼은 `rows`.
+4. **`get_table_indexes`/`get_foreign_keys` dialect 미적용**: MySQL `information_schema.STATISTICS`/`KEY_COLUMN_USAGE`
+   하드코딩 → Dialect.`table_indexes()`/`foreign_keys_outgoing/incoming()` 추가(MySQL 골든 그대로, MSSQL `sys.*`).
+
+**§3.5 grounding 방언 주입(assistant 가 T-SQL 생성하도록)**: base SYSTEM_PROMPT 는 MySQL(백틱·LIMIT) 가정 →
+활성 엔진 mssql 이면 [agent_core.py](../src/agent_core.py) `_MSSQL_DIALECT_GUIDANCE`(TOP/대괄호/스키마 명시 강제/
+cross-DB 금지/T-SQL 함수) 를 system prompt 에 주입. (§3.5 는 원래 P7 였으나 assistant 의 실 작동에 필수라 P6 동반.)
+
+**라이브 서비스 검증(deploy 후)**: repo_dbnet 컨테이너가 `172.28.64.1:14330` 도달 가능(실측) → ask-worker/
+insight-worker 가 Windows 인스턴스에 붙을 수 있음. P6 배포 + winsql datasource 등록 + product 바인딩 후 web/API
+assistant + insight-worker 라이브 검증.
+
+### 11.2 Outside-voice 적대적 보안 재게이트 (REV-20260610-0201, MANDATORY)
+
+[[feedback_outside_voice_for_rbac]] 에 따라 보안경계 변경은 outside-voice 필수. 1차 **REJECT** — 실 인스턴스에서
+데이터 탈취 재현. 3 발견 모두 수정 후 2차 **SHIP**.
+- **B1 (BLOCKER) — 구조화 도구 2차 SQLi**: `_safe_ident` 가 `]` 미제거 → MSSQL `[schema].[table]` f-string 에서
+  `table] UNION SELECT ... FROM sys.sql_logins --` 로 인용 닫고 주입, AST 게이트(allowlist/cross-DB/무자격) 전부
+  우회(라이브 데이터+로그인명+cross-DB 탈취 실증). **수정**: `_safe_ident` 가 `[`·`]` 도 제거(단일 chokepoint) →
+  주입이 단일 식별자에 갇혀 무력(Invalid object name). 회귀테스트 2종 + 라이브 재검증.
+- **M1 (MAJOR) — `sys` 항상-허용 정보유출**: MSSQL `sys` 카탈로그 뷰는 metadata-visibility 라 GRANT 로 안 막힘
+  → 최소권한 RO 도 freeform 으로 `sys.sql_logins`(로그인 enumeration)·`sys.server_principals`·`sys.tables`(타스키마
+  인벤토리) 조회 가능(설계가 믿은 GRANT backstop 이 sys 엔 부재 — 라이브 실증). **수정**: `MSSQLDialect.metadata_schemas()`
+  에서 `sys` 제외(INFORMATION_SCHEMA 만). 구조화 도구는 내부 sys.* 사용하되 결과를 allowlist 필터(무회귀). 잔여:
+  INFORMATION_SCHEMA 스키마명 인벤토리는 기존 MySQL 동등 tradeoff(데이터/로그인 아님) — 향후 선택적 하드닝.
+- **M2 (MAJOR) — gate fail-closed 가 confirm_heavy 로 자기우회**: MSSQL 하드차단이 `not confirm_heavy` 조건 안에
+  있어 LLM 이 `confirm_heavy=true` 로 우회 + 메시지가 우회법 광고. **수정**: 하드차단을 confirm_heavy 조건 밖으로
+  이동(추정치 없는 맹목 confirm 은 무력) + 메시지에서 confirm_heavy 안내 제거. MySQL est-기반 게이트는 보존(골든).

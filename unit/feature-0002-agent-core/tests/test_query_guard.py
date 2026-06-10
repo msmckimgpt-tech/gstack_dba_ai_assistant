@@ -12,7 +12,8 @@ import modules.config as cfg
 import modules.sql_guard as sql_guard
 
 
-def _ok_guard(sql, forbidden_schemas=None):
+def _ok_guard(sql, forbidden_schemas=None, dialect="mysql"):
+    # P6: _tool_execute_sql 가 dialect= 를 전달하므로 스텁도 수용해야 한다.
     return types.SimpleNamespace(ok=True, error_reason="")
 
 

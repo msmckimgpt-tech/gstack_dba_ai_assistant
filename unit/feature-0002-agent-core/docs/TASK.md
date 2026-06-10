@@ -783,3 +783,18 @@ TASK-0015 (plan-review):
 - [x] 회귀 테스트 `tests/test_convo_search_pg_routing.py` 2 추가(메타문자→`%100!%!_x!!%`+ESCAPE 동반 / 빈 질의→`%`+ESCAPE 없음). make test exit=0(0002+0003 전체 회귀 0), ruff clean.
 - [x] outside-voice [SKIPPED:minor-escaping-implements-REV-0196] (REV-20260610-0200).
 - [ ] verify-completion → main ff-merge → agent-core 서비스 재배포 → 라이브 convo_search 메타문자 질의 검증.
+
+### TASK-0201 — 멀티 datasource Stage 2 P6: MSSQL 보안경계 + 실 인스턴스 검증 (2026-06-10)
+- [x] **Major §12.3** (멀티엔진 보안경계 — RBAC/데이터격리 면, outside-voice 필수). DESIGN-multi-datasource.md §3.4/§10/§11.
+- [x] **축1 AST allowlist** (Codex-1): `_extract_sql_schema_refs` 정규식 → `sql_guard.collect_schema_refs`(활성 dialect 파싱). `_collect_table_refs` 가 `.catalog/.db/.name`(unquoted) 사용 → 대괄호/3-part/ANSI/백틱 우회(B-1) 봉쇄. 무자격 fail-closed + catalog cross-DB 차단(`_freeform_sql_access_error`). 레거시 단일 MySQL 무자격 허용(골든).
+- [x] **축3 sql_guard dialect** (B-3): `validate_sql_for_sandbox(..., dialect=)` + sqlglot tsql 파싱. T-SQL denylist(xp_cmdshell/OPENROWSET/OPENQUERY/OPENDATASOURCE/WAITFOR/EXEC/sp_executesql/SELECT INTO/@@) + dialect 금지함수. into 이중차단(denylist+AST).
+- [x] **m3 dialect 시스템/메타데이터 스키마**: Dialect 단일소유(A2/C1). MSSQL sys/INFORMATION_SCHEMA/guest/db_* 제외(dbo 유지), 항상허용=sys/INFORMATION_SCHEMA.
+- [x] **M-4 부하게이트 fail-closed**: `Dialect.supports_load_estimate`(MSSQL=False) → gate 모드 사전차단. MySQL 골든(fail-open) 유지.
+- [x] **Codex-6 confirm_heavy 비-LLM**: `AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM`(기본 true=현행, false=모델 자기우회 차단). UI 승인 P7 이월.
+- [x] **Codex-2 GRANT 모델**: `bin/datasource-mssql-ro-bootstrap.sql` — db_datareader 금지, 전용 role 에 허용스키마만 GRANT SELECT, 0단계 서버 prereq(xp_cmdshell/cross-DB chaining/Ad Hoc Distributed Queries OFF) 검증. `sqlcmd -b` 필수.
+- [x] **Codex-5/7 결정**: AST 재직렬화 미채택(원문실행 유지+denylist+pin, 잔존위험 명시) / 세션reset 아키텍처 해소(MSSQL fresh connect, MySQL pool_reset_session).
+- [x] **§3.5 grounding 방언 주입**: 활성 엔진 mssql 이면 `_MSSQL_DIALECT_GUIDANCE`(TOP/대괄호/스키마명시/cross-DB금지/T-SQL함수) system prompt 주입.
+- [x] 회귀 테스트 `tests/test_mssql_security_boundary.py`(dialect 매트릭스·B-1 우회·정책·M-4·Codex-6). 전체 스위트 RC=0(0002+0003 회귀 0), ruff 통과.
+- [x] **실 MSSQL 검증**(사용자 Windows `172.28.64.1:14330`, dk_data_release): 최소권한 RO 생성 후 도구 전부 동작 + 보안경계 6/6 차단 + 2축 방어 실증(앱+DB GRANT). P5 dialect 버그 4건 수정(DMV 권한→sys.partitions / DB 고정 / row 컬럼 / index·FK dialect). 서버 xp_cmdshell ON 발견(앱·GRANT 로 무력화, 운영자 OFF 권고).
+- [x] **outside-voice 적대적 보안 재게이트(MANDATORY)** REV-20260610-0201: 1차 REJECT(실 인스턴스 데이터 탈취 재현) → B1(BLOCKER 구조화도구 `]` 2차 SQLi)·M1(MAJOR sys 항상허용 유출)·M2(MAJOR gate confirm_heavy 우회) 수정 → 2차 **SHIP**. 라이브 재검증 PASS, 회귀테스트 추가, 전체 스위트 RC=0.
+- [ ] 커밋 → main ff-merge → P6 배포(agent/ask-worker/insight-worker/web) → winsql datasource 등록+product 바인딩 → 라이브 assistant·insight-worker 검증.

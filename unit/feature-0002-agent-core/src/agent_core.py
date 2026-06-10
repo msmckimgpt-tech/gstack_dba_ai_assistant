@@ -127,6 +127,23 @@ Once you have the data you need, stop calling tools and write the final answer i
 """
 
 
+# P6/§3.5: 활성 datasource 가 MSSQL 일 때 system prompt 끝에 덧붙이는 T-SQL 방언 지침.
+# base SYSTEM_PROMPT 의 MySQL 가정(백틱·LIMIT·NOW())을 엔진별로 교정한다.
+_MSSQL_DIALECT_GUIDANCE = """
+
+## SQL DIALECT — THIS DATASOURCE IS MICROSOFT SQL SERVER (T-SQL), NOT MySQL
+The active datasource is **SQL Server**. Write **T-SQL**, not MySQL. Critical rules:
+- **Row limiting**: use `SELECT TOP n ...` — there is NO `LIMIT` clause in T-SQL.
+- **Identifier quoting**: use `[schema].[table]` brackets (or plain `schema.table`), NEVER MySQL backticks (`` ` ``).
+- **Always schema-qualify** every table as `schema.table` (e.g. `dbo.MyTable`). Unqualified table names are rejected by the security gate. Most user tables live in the `dbo` schema.
+- **Single database only**: do NOT reference other databases with 3-part names (`otherdb.dbo.t`) — cross-database queries are blocked.
+- **Functions**: use T-SQL forms — `GETDATE()` (not `NOW()`), `LEN()` (not `LENGTH()`), `ISNULL()`/`COALESCE()`, `TOP`/`OFFSET-FETCH` for paging, `+` or `CONCAT()` for string concat, `CAST/CONVERT` for types.
+- **Date**: use `CONVERT`/`FORMAT`/`DATEADD`/`DATEDIFF` (not MySQL `DATE_FORMAT`/`DATE_SUB`).
+- Quote string literals with single quotes. Prefix Unicode literals with `N'...'`.
+Discover exact table/column names with describe_table/search_tables before querying — SQL Server schemas and casing differ from MySQL.
+"""
+
+
 # TASK-0094 Sprint 2 (D13) — image inline 의 caller 책임 분리 정합.
 #
 # storage_minio.py 는 feature-0003-agent-web-ui 의 module 이라 cross-feature import
@@ -2274,6 +2291,16 @@ def _run_agent_core(
         )
     except Exception:
         system_content = SYSTEM_PROMPT
+    # ── P6/§3.5: 활성 datasource 엔진 방언 주입 ──────────────────────────────
+    # base SYSTEM_PROMPT 는 "MySQL analyst"(백틱·LIMIT)를 지시한다. 활성 datasource 가 MSSQL 이면
+    # LLM 이 MySQL 문법을 생성해 execute_sql 이 실패하므로, T-SQL 규칙을 명시 주입한다(보안경계가
+    # 무자격/cross-DB 를 거부하므로 스키마 명시도 강제 안내).
+    try:
+        _active_engine = cfg.get_active_datasource_engine()
+    except Exception:
+        _active_engine = "mysql"
+    if str(_active_engine).lower() == "mssql":
+        system_content += _MSSQL_DIALECT_GUIDANCE
     # Inject conversation context (origin_request + thread_goal)
     if prev_origin or thread_goal:
         ctx_parts: list[str] = []

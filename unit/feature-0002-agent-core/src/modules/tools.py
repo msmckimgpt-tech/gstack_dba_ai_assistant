@@ -59,9 +59,18 @@ def clear_active_schema_allowlist() -> None:
     set_active_schema_allowlist(None)
 
 
+def _excluded_schemas() -> "frozenset[str]":
+    """현재 활성 dialect 기준 '사용자 스키마 아님' 집합 (엔진 시스템 스키마 + 내부 스키마).
+
+    P6: dialect 가 시스템 스키마를 단일 소유(A2/C1). MySQL 은 골든(_METADATA_SCHEMAS 와 동일),
+    MSSQL 은 sys/INFORMATION_SCHEMA/guest/db_* 역할 스키마를 사용자 스키마 열거에서 제외한다.
+    """
+    return _dialects.active().system_schemas() | _INTERNAL_SCHEMAS
+
+
 def _is_user_schema(name: str) -> bool:
     lower = str(name or "").lower()
-    if lower in _SYSTEM_SCHEMAS:
+    if lower in _excluded_schemas():
         return False
     allow = _ACTIVE_SCHEMA_ALLOWLIST.get()
     if allow is not None and lower not in allow:
@@ -69,42 +78,57 @@ def _is_user_schema(name: str) -> bool:
     return True
 
 
-_TABLE_LIST_RE = None
-_INNER_REF_RE = None
-
-
 def _extract_sql_schema_refs(sql: str) -> set[str]:
-    """SQL 텍스트에서 `schema`.`table` 참조의 schema 토큰만 추출.
+    """freeform SQL 의 schema·catalog 네임스페이스 토큰을 **AST 기반**(P6)으로 추출.
 
-    TASK-0040: 두 단계로 동작한다.
-      1. `FROM` / `JOIN` 키워드 뒤의 **table list 구간** (다음 절 키워드
-         `ON` / `WHERE` / `GROUP BY` / `ORDER BY` / `HAVING` / `LIMIT` /
-         `UNION` / 다시 `JOIN` · `FROM` / `;` / `)` / 문장 끝 이전) 만 잘라낸다.
-      2. 그 구간 내부에서만 `schema.table` 패턴을 반복 추출한다.
+    이전 정규식 추출(TASK-0040)은 MSSQL 식별자에서 통째로 우회됐다(DESIGN B-1 실측):
+    `[master].[sys].[objects]`→0개, `master.dbo.sysobjects`→{master}(schema 오인),
+    `"agent_memory"."x"`→0개. 활성 dialect 로 sqlglot 파싱하면 인용(대괄호/ANSI 큰따옴표/백틱)이
+    벗겨진 plain 토큰으로 들어오고 3-part `catalog.schema.table` 이 분해돼 우회가 닫힌다.
 
-    이로써 `SELECT bb.BattleType, be.Star FROM dblog.t bb JOIN dblog.u be
-    ON be.AcntNo = bb.AcntNo WHERE bb.BattleType = ...` 같은 SQL 에서
-    SELECT / WHERE / ON 절의 `alias.column` 이 schema.table 로 오탐되지
-    않고, `FROM a.x, b.y` 형식의 comma join 은 그대로 수용된다.
+    반환: 참조된 schema(db) + catalog 토큰 lowercase set(blunt allowlist 대조·테스트용). 무자격
+    table·catalog cross-DB 등 datasource 정책은 _freeform_sql_access_error 가 별도 판정한다.
     """
-    import re as _re
-    global _TABLE_LIST_RE, _INNER_REF_RE
-    if _TABLE_LIST_RE is None:
-        _TABLE_LIST_RE = _re.compile(
-            r"\b(?:FROM|JOIN)\b(.*?)"
-            r"(?=\bON\b|\bWHERE\b|\bGROUP\s+BY\b|\bORDER\s+BY\b|\bHAVING\b"
-            r"|\bLIMIT\b|\bUNION\b|\bJOIN\b|\bFROM\b|;|\)|$)",
-            _re.IGNORECASE | _re.DOTALL,
-        )
-        _INNER_REF_RE = _re.compile(
-            r"`?([A-Za-z_][A-Za-z0-9_]*)`?\s*\.\s*`?([A-Za-z_][A-Za-z0-9_]*)`?",
-        )
-    refs: set[str] = set()
-    for m in _TABLE_LIST_RE.finditer(sql or ""):
-        chunk = m.group(1) or ""
-        for mm in _INNER_REF_RE.finditer(chunk):
-            refs.add(mm.group(1).lower())
-    return refs
+    from . import sql_guard
+    schemas, _has_unqualified, catalogs = sql_guard.collect_schema_refs(
+        sql, dialect=_dialects.active().sqlglot
+    )
+    return set(schemas) | set(catalogs)
+
+
+def _freeform_sql_access_error(sql: str) -> str | None:
+    """freeform LLM SQL 의 스키마 접근 정책 — AST 추출 + (datasource 활성 시) 무자격/cross-DB + allowlist.
+
+    P6 축1 (Codex-1): 활성 datasource(멀티 datasource 경로)에서는
+      - **무자격 table-ref 는 fail-closed 거부** — 서버 기본 스키마로 암묵 해석돼 allowlist 를
+        우회하는 구멍을 닫는다(스키마 명시 강제).
+      - **catalog(3-part DB 차원) cross-DB 차단** — datasource 의 default_db 외 DB 참조 거부.
+    레거시 단일 MySQL(active_ds None)에서는 기존 동작 유지(무자격 허용 — 연결 기본 DB + GRANT 가
+    backstop). 끝으로 schema 토큰을 Product allowlist 와 대조.
+    """
+    from . import sql_guard
+    import modules.config as _cfg
+    schemas, has_unqualified, catalogs = sql_guard.collect_schema_refs(
+        sql, dialect=_dialects.active().sqlglot
+    )
+    active_ds = _cfg.get_active_datasource()
+    if active_ds:
+        if has_unqualified:
+            return (
+                "오류: 멀티 datasource 모드에서는 모든 테이블을 schema 로 명시해야 합니다 "
+                "(무자격 테이블명은 보안상 거부됩니다 — 예: `myschema.mytable`)."
+            )
+        ds = (getattr(_cfg, "DATASOURCES", {}) or {}).get(active_ds) or {}
+        default_db = str(ds.get("default_db") or "").strip().lower()
+        cross = sorted(c for c in catalogs if c and c != default_db)
+        if cross:
+            return (
+                f"오류: 현재 datasource 범위 밖의 데이터베이스 참조가 차단되었습니다: {', '.join(cross)}. "
+                f"교차 데이터베이스 조회는 허용되지 않습니다."
+            )
+    # schema 토큰만 allowlist 대조(catalog 는 위에서 차원별 판정 — default_db 가 allowlist 에 없어
+    # 오탐되지 않도록 제외).
+    return _whitelist_violation(set(schemas))
 
 
 def _whitelist_violation(refs: set[str]) -> str | None:
@@ -117,19 +141,24 @@ def _whitelist_violation(refs: set[str]) -> str | None:
 
     `agent_memory` 는 whitelist 로 차단 유지 — 타 계정 대화/세션/권한 override 를
     LLM 이 직접 조회하는 경로를 막는다.
+
+    P6: 항상-허용 메타데이터 스키마는 활성 dialect 가 소유한다(MySQL=information_schema/mysql/
+    sys/perf, MSSQL=sys/INFORMATION_SCHEMA 만 — db_* 역할 스키마는 allowlist 통과 필요).
     """
     allow = _ACTIVE_SCHEMA_ALLOWLIST.get()
     if allow is None:
         return None
-    allowed = set(allow) | _METADATA_SCHEMAS
+    metadata = _dialects.active().metadata_schemas()
+    allowed = set(allow) | set(metadata)
     blocked = [r for r in refs if r and r not in allowed]
     if not blocked:
         return None
     allowed_str = ", ".join(sorted(allow)) or "(none)"
+    meta_str = "/".join(sorted(metadata)) or "(none)"
     return (
         f"오류: 접근이 허용되지 않은 스키마 참조: {', '.join(sorted(blocked))}. "
         f"현재 Product 에 허용된 스키마: {allowed_str}. "
-        f"메타데이터 스키마(information_schema/sys/mysql/performance_schema) 는 항상 접근 가능."
+        f"메타데이터 스키마({meta_str}) 는 항상 접근 가능."
     )
 
 
@@ -392,8 +421,22 @@ def _format_result_sets(result_sets: list, max_rows: int | None = None) -> str:
 
 
 def _safe_ident(name: str) -> str:
-    """SQL 식별자에서 위험 문자 제거."""
-    return name.replace("`", "").replace(";", "").replace("'", "").replace('"', "").strip()
+    """SQL 식별자에서 위험 문자 제거 (구조화 도구의 식별자 인용 신뢰경계).
+
+    구조화 도구(describe_*/sample/indexes/foreign_keys/search)는 schema/table 인자를 AST 게이트가
+    아닌 본 함수로만 정제한 뒤 dialect SQL 에 f-string 삽입한다. 따라서 **모든 dialect 의 인용 구분자**
+    를 제거해야 한다:
+      - MySQL 백틱 `` ` ``, ANSI/MSSQL 큰따옴표 `"`, 문자열 리터럴 `'`, 문장분리 `;`
+      - **MSSQL 대괄호 `[` `]`** (REV-0201 B1): MSSQL dialect 는 `[{schema}].[{table}]` 로 인용하는데
+        `]` 를 안 지우면 `tbl] UNION SELECT ... --` 로 인용을 닫고 2차 SQLi 가 가능했다(라이브 실증).
+        `]` 제거로 주입 토큰이 단일 식별자 안에 갇혀 무력화된다(존재하지 않는 객체명 → 에러).
+    """
+    return (
+        name.replace("`", "").replace(";", "")
+        .replace("'", "").replace('"', "")
+        .replace("[", "").replace("]", "")
+        .strip()
+    )
 
 
 def _tool_list_schemas(conn, _args: dict) -> str:
@@ -515,8 +558,10 @@ def _tool_search_tables(conn, args: dict) -> str:
             return err
 
     where_schema = f"AND t.TABLE_SCHEMA = '{schema_filter}'" if schema_filter else ""
-    # 시스템 스키마 제외 조건
-    sys_exclude = " AND ".join(f"t.TABLE_SCHEMA != '{s}'" for s in _SYSTEM_SCHEMAS)
+    # 시스템 스키마 제외 조건 (P6: dialect 별 시스템 스키마 — MSSQL 은 sys/guest/db_* 제외).
+    sys_exclude = " AND ".join(
+        f"t.TABLE_SCHEMA != '{s}'" for s in sorted(_excluded_schemas())
+    )
 
     sql = _dialects.active().search_tables(keyword, sys_exclude, where_schema)
     result_sets, _ = _raw_execute_sql(conn, sql)
@@ -661,15 +706,18 @@ def _tool_execute_sql(conn, args: dict) -> str:
     # LLM freeform 분석 SELECT 전용.)
     from .sql_guard import validate_sql_for_sandbox
     # agent 는 카탈로그(information_schema/sys 등) 조회가 필요하므로 내부 스키마(agent_memory)만 금지.
-    guard = validate_sql_for_sandbox(sql, forbidden_schemas=_INTERNAL_SCHEMAS)
+    # P6: 활성 dialect(mysql|tsql) 를 주입 — denylist 어휘·파서·금지함수가 엔진별로 적용된다.
+    guard = validate_sql_for_sandbox(
+        sql, forbidden_schemas=_INTERNAL_SCHEMAS, dialect=_dialects.active().sqlglot
+    )
     if not guard.ok:
         return (
             f"오류: 보안 정책상 차단된 SQL — {guard.error_reason}. "
             f"execute_sql 은 단일 SELECT/CTE 분석 쿼리만 허용됩니다 "
             f"(스키마 구조 탐색은 list_schemas/describe_table 등 전용 도구 사용)."
         )
-    # Product 단위 스키마 allowlist (교차 product 격리) — 기존 regex 추출 유지.
-    err = _whitelist_violation(_extract_sql_schema_refs(sql))
+    # Product 단위 스키마 allowlist (교차 product 격리) — P6: AST 추출 + 무자격/cross-DB 정책.
+    err = _freeform_sql_access_error(sql)
     if err:
         return err
     # TASK-0172: 무거운 쿼리 자가규제 — 실행 전 EXPLAIN 으로 예상 스캔 rows 추정해
@@ -683,8 +731,26 @@ def _tool_execute_sql(conn, args: dict) -> str:
     confirm_heavy = (_cv is True) or (
         isinstance(_cv, str) and _cv.strip().lower() in ("true", "1", "yes")
     )
+    # P6 Codex-6: confirm_heavy 는 LLM tool 인자라 모델이 자기우회한다. 정책이 비-LLM 승인을 요구하면
+    # (AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM=false) LLM 의 confirm 을 무시한다(사용자/정책 승인 경로는
+    # P7 UI 승인 라운드트립으로 이월 — 그 전엔 hardened 모드에서 무거운 쿼리가 차단됨). 기본 true=현행.
+    # config 가 bool 로 파싱하므로 bool 로 읽는다(`or` 폴백 금지 — False 가 truthy 로 되돌아감).
+    if not bool(getattr(_cfg, "AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM", True)):
+        confirm_heavy = False
     cost_note: str | None = None
+    # P6 M-4 + REV-0201 M2: EXPLAIN 미지원 엔진(MSSQL 등)은 사전 부하추정이 불가하다. gate 모드면
+    # **하드 차단**한다 — `confirm_heavy` 로 우회시키지 않는다(추정치 없이 "감수" 판단은 근거 없는
+    # 맹목 우회이고, LLM tool 인자라 모델이 자기우회한다, Codex-6). 따라서 이 검사는 confirm_heavy 와
+    # 무관하게 선행하고, 메시지도 우회법(confirm_heavy)을 안내하지 않는다. gate 는 opt-in(기본 off)이며
+    # 운영자가 최대보호를 택한 것 — 정상 쿼리를 원하면 gate off/warn 으로 둔다. 사용자 승인 경로는 P7.
+    if guard_mode == "gate" and not _dialects.active().supports_load_estimate:
+        return (
+            "⚠ 이 데이터소스 엔진은 사전 부하추정(EXPLAIN)을 지원하지 않아, 부하게이트(gate) 모드에서 "
+            "무거운 쿼리를 사전 차단합니다(fail-closed). WHERE 조건·기간·집계 범위를 좁히거나 TOP/행 "
+            "제한을 추가해 더 작은 쿼리로 다시 시도하세요."
+        )
     if guard_mode in ("warn", "gate") and not confirm_heavy:
+        # MySQL 등 추정 지원 엔진: 종전대로(추정 실패는 fail-open — 정상 작업 비차단).
         est = _estimate_explain_rows(conn, sql)
         warn_thr = int(getattr(_cfg, "AGENT_QUERY_EXPLAIN_ROWS_WARN", 1000000) or 1000000)
         if est is not None and est > warn_thr:
@@ -738,10 +804,14 @@ def _tool_explain_query(conn, args: dict) -> str:
     sql = str(args.get("sql", "")).strip()
     if not sql:
         return "오류: sql은 필수입니다."
-    err = _whitelist_violation(_extract_sql_schema_refs(sql))
+    # P6: AST 추출 + 무자격/cross-DB + allowlist (execute_sql 과 동일 신뢰경계).
+    err = _freeform_sql_access_error(sql)
     if err:
         return err
-    explain_sql = f"EXPLAIN {sql}"
+    # P6: dialect 별 EXPLAIN — MSSQL 은 EXPLAIN 구문이 없어 None → 안내 메시지(원문 미실행).
+    explain_sql = _dialects.active().explain(sql)
+    if not explain_sql:
+        return "이 데이터소스 엔진은 EXPLAIN 을 지원하지 않습니다 (실행 계획 미제공)."
     try:
         result_sets, _ = _raw_execute_sql(conn, explain_sql)
         return _format_result_sets(result_sets)
@@ -757,14 +827,7 @@ def _tool_get_table_indexes(conn, args: dict) -> str:
     err = _whitelist_violation({schema.lower()})
     if err:
         return err
-    sql = f"""
-        SELECT
-            INDEX_NAME, NON_UNIQUE, COLUMN_NAME, SEQ_IN_INDEX,
-            CARDINALITY, INDEX_TYPE, NULLABLE
-        FROM information_schema.STATISTICS
-        WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{table}'
-        ORDER BY INDEX_NAME, SEQ_IN_INDEX
-    """
+    sql = _dialects.active().table_indexes(schema, table)  # P6: dialect 별 인덱스 조회
     try:
         result_sets, _ = _raw_execute_sql(conn, sql)
         return _format_result_sets(result_sets)
@@ -781,27 +844,9 @@ def _tool_get_foreign_keys(conn, args: dict) -> str:
     if err:
         return err
 
-    # 이 테이블이 참조하는 외래키
-    outgoing_sql = f"""
-        SELECT
-            CONSTRAINT_NAME, COLUMN_NAME,
-            REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
-        FROM information_schema.KEY_COLUMN_USAGE
-        WHERE TABLE_SCHEMA = '{schema}'
-            AND TABLE_NAME = '{table}'
-            AND REFERENCED_TABLE_NAME IS NOT NULL
-        ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION
-    """
-    # 이 테이블을 참조하는 외래키
-    incoming_sql = f"""
-        SELECT
-            CONSTRAINT_NAME, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME,
-            REFERENCED_COLUMN_NAME
-        FROM information_schema.KEY_COLUMN_USAGE
-        WHERE REFERENCED_TABLE_SCHEMA = '{schema}'
-            AND REFERENCED_TABLE_NAME = '{table}'
-        ORDER BY TABLE_SCHEMA, TABLE_NAME
-    """
+    # P6: dialect 별 외래키 조회 (MySQL=information_schema, MSSQL=sys.foreign_keys)
+    outgoing_sql = _dialects.active().foreign_keys_outgoing(schema, table)  # 이 테이블이 참조하는 FK
+    incoming_sql = _dialects.active().foreign_keys_incoming(schema, table)  # 이 테이블을 참조하는 FK
     parts = [f"## `{schema}`.`{table}` 외래키\n"]
 
     try:

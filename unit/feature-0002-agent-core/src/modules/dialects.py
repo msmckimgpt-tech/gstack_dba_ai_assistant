@@ -20,6 +20,25 @@ from . import config as cfg
 class Dialect:
     name = "mysql"
     sqlglot = "mysql"
+    # 사전 부하추정(EXPLAIN rows) 지원 여부. False 엔진(MSSQL)은 gate 모드에서 fail-closed (M-4).
+    supports_load_estimate = True
+
+    # ── 보안: 시스템 스키마 소유권 (P6, DESIGN §3.4 m3 / §4 "차단 스키마 정합") ──
+    def system_schemas(self) -> frozenset:
+        """사용자 스키마 열거에서 **제외**할 엔진 시스템 스키마 (case-insensitive, lowercase).
+
+        `_is_user_schema`·`search_tables` 의 sys_exclude 가 사용. 누락 시 시스템 카탈로그가
+        사용자 스키마로 노출된다.
+        """
+        raise NotImplementedError
+
+    def metadata_schemas(self) -> frozenset:
+        """Product allowlist 와 무관하게 **항상 허용**하는 카탈로그 스키마 (lowercase).
+
+        에이전트가 구조 탐색에 필요한 카탈로그(`information_schema`/`sys` 등) 만. DB 계정 GRANT 가
+        2 차 방어. `system_schemas()` 의 부분집합이어야 한다(시스템이면서 카탈로그 조회용).
+        """
+        raise NotImplementedError
 
     # ── 식별자 인용 ──
     def quote_qualified(self, schema: str, table: str) -> str:
@@ -50,10 +69,29 @@ class Dialect:
     def explain(self, sql: str) -> str | None:
         raise NotImplementedError
 
+    # ── get_table_indexes / get_foreign_keys 전용 SQL (P6: 두 도구 dialect 화) ──
+    def table_indexes(self, schema: str, table: str) -> str:
+        raise NotImplementedError
+
+    def foreign_keys_outgoing(self, schema: str, table: str) -> str:
+        raise NotImplementedError
+
+    def foreign_keys_incoming(self, schema: str, table: str) -> str:
+        raise NotImplementedError
+
 
 class MySQLDialect(Dialect):
     name = "mysql"
     sqlglot = "mysql"
+
+    # 골든: tools.py `_METADATA_SCHEMAS` 와 동일 집합(시스템=메타데이터). MySQL 동작 0 변경.
+    _SYS = frozenset({"information_schema", "mysql", "performance_schema", "sys"})
+
+    def system_schemas(self) -> frozenset:
+        return self._SYS
+
+    def metadata_schemas(self) -> frozenset:
+        return self._SYS
 
     def quote_qualified(self, schema: str, table: str) -> str:
         return f"`{schema}`.`{table}`"
@@ -127,15 +165,77 @@ class MySQLDialect(Dialect):
     def explain(self, sql: str) -> str | None:
         return f"EXPLAIN {sql}"
 
+    def table_indexes(self, schema: str, table: str) -> str:
+        # 골든: _tool_get_table_indexes 의 기존 SQL 그대로.
+        return f"""
+        SELECT
+            INDEX_NAME, NON_UNIQUE, COLUMN_NAME, SEQ_IN_INDEX,
+            CARDINALITY, INDEX_TYPE, NULLABLE
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{table}'
+        ORDER BY INDEX_NAME, SEQ_IN_INDEX
+    """
+
+    def foreign_keys_outgoing(self, schema: str, table: str) -> str:
+        return f"""
+        SELECT
+            CONSTRAINT_NAME, COLUMN_NAME,
+            REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+        FROM information_schema.KEY_COLUMN_USAGE
+        WHERE TABLE_SCHEMA = '{schema}'
+            AND TABLE_NAME = '{table}'
+            AND REFERENCED_TABLE_NAME IS NOT NULL
+        ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION
+    """
+
+    def foreign_keys_incoming(self, schema: str, table: str) -> str:
+        return f"""
+        SELECT
+            CONSTRAINT_NAME, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME,
+            REFERENCED_COLUMN_NAME
+        FROM information_schema.KEY_COLUMN_USAGE
+        WHERE REFERENCED_TABLE_SCHEMA = '{schema}'
+            AND REFERENCED_TABLE_NAME = '{table}'
+        ORDER BY TABLE_SCHEMA, TABLE_NAME
+    """
+
 
 class MSSQLDialect(Dialect):
     """MSSQL(T-SQL). 동일 컬럼 순서로 tools.py 결과 파싱(row[i]) 호환.
 
     식별자 인용 `[schema].[table]`. INFORMATION_SCHEMA 는 SQL Server 도 제공하나 일부 컬럼
-    의미가 달라 컬럼 별칭/순서를 MySQL 산출과 동일하게 맞춘다. 행수 추정은 sys.dm_db_partition_stats.
+    의미가 달라 컬럼 별칭/순서를 MySQL 산출과 동일하게 맞춘다. 행수 추정은 **sys.partitions.rows**
+    (P6: 최소권한 RO 가 metadata-visibility 로 접근 — sys.dm_db_partition_stats DMV 는 VIEW DATABASE
+    STATE 권한이 필요해 db_datareader 금지/스키마 GRANT-only RO 에서 거부됨).
     """
     name = "mssql"
     sqlglot = "tsql"
+    # EXPLAIN 구문이 없어 사전 부하추정 불가 → gate 모드에서 fail-closed (M-4).
+    supports_load_estimate = False
+
+    # 사용자 스키마 열거에서 제외: sys/INFORMATION_SCHEMA(카탈로그) + guest + 고정 db_* 역할 스키마.
+    # **dbo 는 제외하지 않는다** — MSSQL 의 기본 사용자 스키마(대부분의 사용자 테이블 거처)라
+    # 제외하면 정상 테이블이 통째로 차단된다.
+    _SYS = frozenset({
+        "sys", "information_schema", "guest",
+        "db_owner", "db_accessadmin", "db_securityadmin", "db_ddladmin",
+        "db_backupoperator", "db_datareader", "db_datawriter",
+        "db_denydatareader", "db_denydatawriter",
+    })
+    # 항상 허용(LLM freeform execute_sql 의 카탈로그 조회)은 **INFORMATION_SCHEMA 만**.
+    # **`sys` 는 항상-허용에서 제외** (REV-0201 M1): MSSQL `sys` 카탈로그 뷰는 metadata-visibility 라
+    # GRANT 로 막히지 않아, 최소권한 RO 도 `sys.sql_logins`(로그인 enumeration)·`sys.server_principals`·
+    # `sys.database_principals`·`sys.tables`(allowlist 밖 스키마 인벤토리) 를 freeform 으로 읽을 수 있다
+    # (라이브 실증 — 설계가 믿은 "GRANT backstop" 이 sys 영역엔 부재). 구조 탐색은 list_schemas/
+    # describe_* 구조화 도구(내부적으로 sys.* 를 쓰되 결과를 allowlist 로 필터)가 담당하므로, freeform
+    # 의 sys.* 직접 조회는 차단해도 기능 손실이 없다. db_* 역할 스키마도 metadata 아님.
+    _META = frozenset({"information_schema"})
+
+    def system_schemas(self) -> frozenset:
+        return self._SYS
+
+    def metadata_schemas(self) -> frozenset:
+        return self._META
 
     def quote_qualified(self, schema: str, table: str) -> str:
         return f"[{schema}].[{table}]"
@@ -149,7 +249,7 @@ class MSSQLDialect(Dialect):
             COALESCE(SUM(CAST(p.rows AS BIGINT)), 0) AS approx_total_rows
         FROM sys.schemas s
         LEFT JOIN sys.tables t ON t.schema_id = s.schema_id
-        LEFT JOIN sys.dm_db_partition_stats p
+        LEFT JOIN sys.partitions p
             ON p.object_id = t.object_id AND p.index_id IN (0, 1)
         GROUP BY s.name
         ORDER BY s.name
@@ -169,7 +269,7 @@ class MSSQLDialect(Dialect):
             t.create_date AS CREATE_TIME
         FROM sys.tables t
         JOIN sys.schemas s ON s.schema_id = t.schema_id
-        LEFT JOIN sys.dm_db_partition_stats p
+        LEFT JOIN sys.partitions p
             ON p.object_id = t.object_id AND p.index_id IN (0, 1)
         LEFT JOIN sys.extended_properties ep
             ON ep.major_id = t.object_id AND ep.minor_id = 0 AND ep.name = 'MS_Description'
@@ -244,6 +344,69 @@ class MSSQLDialect(Dialect):
         # MSSQL 은 EXPLAIN 구문 없음. P6 의 부하게이트가 dialect 별로 처리(SHOWPLAN 또는 fail-closed).
         # P5 단계에서는 None → caller(부하게이트)가 best-effort skip (보수화는 P6).
         return None
+
+    def table_indexes(self, schema: str, table: str) -> str:
+        # 컬럼 순서/이름을 MySQL 산출과 동일하게(INDEX_NAME, NON_UNIQUE, COLUMN_NAME, SEQ_IN_INDEX,
+        # CARDINALITY, INDEX_TYPE, NULLABLE). CARDINALITY 직접 동치 없음 → NULL.
+        return f"""
+        SELECT
+            i.name AS INDEX_NAME,
+            CASE WHEN i.is_unique = 1 THEN 0 ELSE 1 END AS NON_UNIQUE,
+            col.name AS COLUMN_NAME,
+            ic.key_ordinal AS SEQ_IN_INDEX,
+            CAST(NULL AS BIGINT) AS CARDINALITY,
+            i.type_desc AS INDEX_TYPE,
+            CASE WHEN col.is_nullable = 1 THEN 'YES' ELSE 'NO' END AS NULLABLE
+        FROM sys.indexes i
+        JOIN sys.tables t ON t.object_id = i.object_id
+        JOIN sys.schemas s ON s.schema_id = t.schema_id
+        JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+        JOIN sys.columns col ON col.object_id = ic.object_id AND col.column_id = ic.column_id
+        WHERE s.name = '{schema}' AND t.name = '{table}' AND i.type > 0
+        ORDER BY i.name, ic.key_ordinal
+    """
+
+    def foreign_keys_outgoing(self, schema: str, table: str) -> str:
+        # 컬럼: CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+        return f"""
+        SELECT
+            fk.name AS CONSTRAINT_NAME,
+            pc.name AS COLUMN_NAME,
+            rs.name AS REFERENCED_TABLE_SCHEMA,
+            rt.name AS REFERENCED_TABLE_NAME,
+            rc.name AS REFERENCED_COLUMN_NAME
+        FROM sys.foreign_keys fk
+        JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+        JOIN sys.tables pt ON pt.object_id = fk.parent_object_id
+        JOIN sys.schemas ps ON ps.schema_id = pt.schema_id
+        JOIN sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
+        JOIN sys.tables rt ON rt.object_id = fk.referenced_object_id
+        JOIN sys.schemas rs ON rs.schema_id = rt.schema_id
+        JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
+        WHERE ps.name = '{schema}' AND pt.name = '{table}'
+        ORDER BY fk.name, fkc.constraint_column_id
+    """
+
+    def foreign_keys_incoming(self, schema: str, table: str) -> str:
+        # 컬럼: CONSTRAINT_NAME, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, REFERENCED_COLUMN_NAME
+        return f"""
+        SELECT
+            fk.name AS CONSTRAINT_NAME,
+            ps.name AS TABLE_SCHEMA,
+            pt.name AS TABLE_NAME,
+            pc.name AS COLUMN_NAME,
+            rc.name AS REFERENCED_COLUMN_NAME
+        FROM sys.foreign_keys fk
+        JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+        JOIN sys.tables pt ON pt.object_id = fk.parent_object_id
+        JOIN sys.schemas ps ON ps.schema_id = pt.schema_id
+        JOIN sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
+        JOIN sys.tables rt ON rt.object_id = fk.referenced_object_id
+        JOIN sys.schemas rs ON rs.schema_id = rt.schema_id
+        JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
+        WHERE rs.name = '{schema}' AND rt.name = '{table}'
+        ORDER BY ps.name, pt.name
+    """
 
 
 _MYSQL = MySQLDialect()
