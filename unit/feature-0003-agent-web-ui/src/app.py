@@ -10764,8 +10764,12 @@ def history_anchor(
     # /api/history(_get_history) 가 DOM 에 부여한 id(`message-<id>`)와 동일 id-space 여야
     # 매칭되므로, _get_history 와 동일하게 AGENT_RUNTIME_READ_BACKEND 로 분기한다.
     # 비교는 history_dates 의 시각 라벨과 동일한 to_char(세션 tz) wall-clock 문자열로 수행 —
-    # timestamptz 직접 cast 의 tz 모호성을 피하고, 라벨과 정확히 같은 기준으로 매칭한다
-    # (원본 MySQL 의 wall-clock 비교 의미 보존).
+    # timestamptz 직접 cast 의 tz 모호성을 피하고, 라벨과 정확히 같은 기준으로 매칭한다.
+    # **분(minute) 단위** 비교(`HH24:MI` vs `left(at,16)`)인 이유: 프런트가 보내는 at 은
+    # 캘린더 시각 라벨(분 정밀)에 ':00' 을 붙인 값(`YYYY-MM-DD HH:MM:00`)인데, 실제 메시지
+    # created_at 의 초는 0 이 아니다. 초 단위(`HH24:MI:SS <= ...:00`)로 비교하면 클릭한 분의
+    # 메시지(초>0)가 제외돼 직전 메시지로 점프하는 결함이 생긴다(원본 MySQL `CreatedAt <= when`
+    # 의 잠재 결함). 분 단위로 비교하면 클릭한 분의 (마지막) 메시지에 정확히 착지한다.
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         row = None
         try:
@@ -10776,7 +10780,7 @@ def history_anchor(
                     pgcur.execute(
                         "SELECT id, created_at FROM agent_runtime.messages "
                         "WHERE conversation_id = %s "
-                        "AND to_char(created_at, 'YYYY-MM-DD HH24:MI:SS') <= %s "
+                        "AND to_char(created_at, 'YYYY-MM-DD HH24:MI') <= left(%s, 16) "
                         "ORDER BY created_at DESC LIMIT 1",
                         (conv_id, when),
                     )

@@ -155,8 +155,10 @@ def test_history_anchor_returns_pg_id(monkeypatch):
 
     assert body["message_id"] == 4242
     assert mem.cursor_calls == 0, "PG 모드에서 삭제된 MySQL 테이블을 조회하면 안 됨"
-    # 점프 매칭은 history_dates 라벨과 동일한 to_char wall-clock 기준이어야 한다.
-    assert any("to_char(created_at" in s for s in pg.cursor_obj.executed)
+    # 점프 매칭은 history_dates 라벨과 동일한 to_char wall-clock 기준 + **분 단위**여야 한다
+    # (초 단위면 클릭한 분의 메시지가 직전으로 밀린다).
+    assert any("to_char(created_at, 'YYYY-MM-DD HH24:MI')" in s for s in pg.cursor_obj.executed)
+    assert all("HH24:MI:SS" not in s for s in pg.cursor_obj.executed), "초 단위 비교는 직전-메시지 결함"
 
 
 # ── T3: legacy(env != postgres) 는 기존 MySQL 경로 유지 (back-compat) ─────────

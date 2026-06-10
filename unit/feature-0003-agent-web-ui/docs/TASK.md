@@ -3045,4 +3045,6 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **수정** ([src/app.py](../src/app.py)): 두 엔드포인트에 `_get_history` 와 동일한 `AGENT_RUNTIME_READ_BACKEND == "postgres"` 게이트로 PG `agent_runtime.messages` 조회 분기 추가(legacy MySQL 경로는 else 로 유지). `history_anchor` 가 반환하는 `message_id` 는 `_get_history` 가 DOM 에 부여한 PG id(`message-<id>`)와 동일 id-space 라 점프 타겟 매칭. 두 엔드포인트 모두 `to_char(created_at, …)`(세션 tz) wall-clock 기준으로 통일 → 시각 라벨과 점프 매칭이 상호 일관(원본 MySQL wall-clock 비교 의미 보존, timestamptz cast tz 모호성 회피).
 - [x] **회귀 테스트** `tests/test_history_calendar_pg_routing.py`(T1 history_dates PG 라우팅 + 삭제된 MySQL 테이블 미접촉 가드, T2 history_anchor PG id 반환, T3 legacy MySQL back-compat). make test(컨테이너 pytest+ruff) exit=0(feature-0002+0003 전체 회귀 0), ruff app.py clean.
 - [x] outside-voice 적대적 백엔드/QA 검토(cutover 영역 취약성) — REV-20260610-0189.
-- [ ] verify-completion → main ff-merge → web 재배포(healthz `git_commit`) → Windows-browser(PB-0008) 시각 검증(분기선→캘린더→날짜/시각 클릭→해당 메시지로 스크롤·하이라이트)
+- [x] verify-completion PASS → main rebase(동시세션 TASK-0188 40f75ba 위)·ff-merge → web 재배포(healthz `git_commit` 확인) → **라이브 인증 API 검증**: `/api/history_dates` 실제 날짜/시각 반환(이전 빈 `{}`), `/api/history_anchor` 유효 PG id 반환.
+- [x] **후속 정밀화(CHG-0189 분 단위)**: 라이브 검증 중 anchor 가 초 단위 `<=`(`HH24:MI:SS <= ...:00`)라 클릭한 분의 메시지(초>0)가 제외돼 직전 메시지로 점프하는 결함 발견(원본 MySQL 결함 계승). `to_char(...,'YYYY-MM-DD HH24:MI') <= left(at,16)` 분 단위 비교로 교체 → 클릭한 분의 메시지에 정확 착지. 사용자 "정상적으로 작동" 요청 충족. 재배포·라이브 재검증.
+- [ ] (잔존) Windows-browser(PB-0008) 시각 검증(분기선→캘린더→날짜/시각 클릭→해당 메시지로 스크롤·하이라이트) — CHECK#13 WARN, 사용자 확인용.
