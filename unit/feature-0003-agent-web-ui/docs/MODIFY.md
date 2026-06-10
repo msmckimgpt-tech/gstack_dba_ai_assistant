@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260610-0200
+- Date: 2026-06-10 (TASK-0200, **Minor §12.3** — 읽기경로 정렬 교정)
+- Scope: REV-20260610-0196 이 지적한 MINOR 잔존(수용 항목) 실행 — `_collect_matched_excerpts` 발췌 선택 정렬. (#1 convo_search LIKE escaping 은 feature-0002 CHG-20260610-0200.)
+- 배경: conv 별 "가장 최근 매칭 1건" 을 `ROW_NUMBER() OVER (PARTITION BY cid ORDER BY msg_id DESC)` 로 골랐는데, UNION 양변 `agent_runtime.messages.id` / `core_messages.id` 가 독립 IDENTITY 시퀀스라 cross-table id 비교가 chronological 과 어긋날 수 있었다(어느 대화가 매칭되는지엔 무관, 어느 메시지 본문을 스니펫으로 보일지에만 영향).
+- 변경 ([src/app.py](../src/app.py) `_collect_matched_excerpts`): UNION 내부 subquery 가 `msg_id` 대신 두 table 공통 `created_at`(PG timestamptz / MySQL CreatedAt·created_at) 을 선택하고 `ROW_NUMBER() OVER (… ORDER BY created_at DESC)` 로 정렬. PG 분기 + MySQL legacy 분기 + docstring 모두 갱신.
+- 비변경: 매칭 집합·후처리(line-based 발췌 클리핑)·RBAC·스키마·응답 계약 무변경. ESCAPE/ILIKE 등 기존 로직 유지.
+- 검증: `tests/test_cutover_routing_gaps.py` T1 에 `ORDER BY created_at DESC` 존재 + `msg_id` 정렬 부재 단언. make test exit=0. outside-voice [SKIPPED:minor-ordering-implements-REV-0196] (REV-20260610-0200).
+- Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/tests/test_cutover_routing_gaps.py, docs/{TASK,MODIFY,REVIEW,FUNCTION}.md
+- Rollback: 정렬 키를 `msg_id DESC` 로 환원(기능 무관, 스니펫 선택만 이전 동작).
+
 ## CHG-20260610-0197
 - Date: 2026-06-10 (TASK-0197, **Minor §12.3** — 프런트 UI 소요시간 표시)
 - Scope: assistant 말풍선 타임스탬프 옆 소요시간 표시. `message.meta.duration_ms`(agent_core `mirror_meta` 저장값)가 있는 assistant 메시지에 한해 기존 `formatElapsed()` 재사용, `.message-meta-duration` span 추가.

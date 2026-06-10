@@ -88,6 +88,10 @@ def test_collect_matched_excerpts_routes_to_pg(monkeypatch):
     assert mem.cursor_calls == 0
     assert any("agent_runtime.messages" in s for s in pg.cursor_obj.executed)
     assert any("agent_runtime.core_messages" in s for s in pg.cursor_obj.executed)
+    # TASK-0200 MINOR: "가장 최근 매칭"은 두 table 공통 created_at 기준(독립 id 시퀀스
+    # 인 msg_id cross-table 비교가 시간순과 어긋날 수 있어 교정).
+    assert any("ORDER BY created_at DESC" in s for s in pg.cursor_obj.executed)
+    assert all("ORDER BY msg_id" not in s for s in pg.cursor_obj.executed)
 
 
 # ── T2: _conv_update_topic(rename 위임) PG 라우팅 ────────────────────────────

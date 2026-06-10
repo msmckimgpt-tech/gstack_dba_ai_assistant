@@ -125,7 +125,16 @@ def convo_search(
     include_current: bool = False,
 ) -> list[dict[str, Any]]:
     pattern = str(query or "").strip()
-    like_pattern = f"%{pattern}%" if pattern else "%"
+    # TASK-0200 MINOR hardening: LIKE/ILIKE 메타문자(`%`, `_`, escape `!`)를 이스케이프해
+    # "100%" / "table_name" 같은 질의가 와일드카드로 오작동하지 않도록 한다. 비어 있으면
+    # 전체 매칭(`%`)이라 이스케이프·ESCAPE 절 불필요(like_escape = ""). MySQL·PG 양 분기 공유.
+    if pattern:
+        _esc = pattern.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+        like_pattern = f"%{_esc}%"
+        like_escape = " ESCAPE '!'"
+    else:
+        like_pattern = "%"
+        like_escape = ""
     limit = max(1, int(limit or 50))
     results: list[dict[str, Any]] = []
 
@@ -148,7 +157,7 @@ def convo_search(
         pg = _pg_connect()
         try:
             with pg.cursor() as pgcur:
-                where = "content ILIKE %s"
+                where = f"content ILIKE %s{like_escape}"
                 params = [like_pattern]
                 if not include_current:
                     where += " AND conversation_id != %s"
@@ -162,7 +171,7 @@ def convo_search(
                 for row in pgcur.fetchall() or []:
                     results.append(_format_row(row))
 
-                where = "summary ILIKE %s"
+                where = f"summary ILIKE %s{like_escape}"
                 params = [like_pattern]
                 if not include_current:
                     where += " AND conversation_id != %s"
@@ -177,7 +186,7 @@ def convo_search(
                 for row in pgcur.fetchall() or []:
                     results.append(_format_row(row))
 
-                where = "key = 'topic' AND value ILIKE %s"
+                where = f"key = 'topic' AND value ILIKE %s{like_escape}"
                 params = [like_pattern]
                 if not include_current:
                     where += " AND conversation_id != %s"
@@ -196,7 +205,7 @@ def convo_search(
     else:
         cur = conn.cursor()
         try:
-            where = "Content LIKE %s"
+            where = f"Content LIKE %s{like_escape}"
             params = [like_pattern]
             if not include_current:
                 where += " AND ConversationId != %s"
@@ -215,7 +224,7 @@ LIMIT %s
             for row in cur.fetchall() or []:
                 results.append(_format_row(row))
 
-            where = "Summary LIKE %s"
+            where = f"Summary LIKE %s{like_escape}"
             params = [like_pattern]
             if not include_current:
                 where += " AND ConversationId != %s"
@@ -234,7 +243,7 @@ LIMIT %s
             for row in cur.fetchall() or []:
                 results.append(_format_row(row))
 
-            where = "`Key` = 'topic' AND `Value` LIKE %s"
+            where = f"`Key` = 'topic' AND `Value` LIKE %s{like_escape}"
             params = [like_pattern]
             if not include_current:
                 where += " AND ConversationId != %s"

@@ -4267,10 +4267,10 @@ def _collect_matched_excerpts(conn, conv_ids: list[str], q: str) -> dict[str, st
     `_list_conversations` search EXISTS subquery 는 두 table 모두 검사하나,
     TASK-0077 의 excerpt 는 AgentMemoryMessages 한정이라 core-only conv 의
     snippet 이 비어 있던 회귀 차단. UNION 내 ROW_NUMBER OVER (PARTITION BY cid
-    ORDER BY msg_id DESC) 로 conv 별 더 최근 매칭 1건 선택. msg_id 의 두 table
-    namespace 차이 — 더 큰 id 가 더 최근이라는 가정 (시간 monotonic 증가 — 본
-    프로젝트 schema 정합). ConversationId 의 collation mismatch 회피 위해
-    `COLLATE utf8mb4_unicode_ci` 통일.
+    ORDER BY created_at DESC) 로 conv 별 더 최근 매칭 1건 선택. (TASK-0200: 두
+    table 의 id 가 독립 IDENTITY 시퀀스라 cross-table msg_id 비교가 시간순과
+    어긋날 수 있어, 두 table 공통 created_at 기준으로 교정.) ConversationId 의
+    (MySQL) collation mismatch 회피 위해 `COLLATE utf8mb4_unicode_ci` 통일.
     """
     if not conv_ids or not q:
         return {}
@@ -4294,19 +4294,23 @@ def _collect_matched_excerpts(conn, conv_ids: list[str], q: str) -> dict[str, st
             pg = _pg_connect()
             try:
                 with pg.cursor() as pgcur:
+                    # TASK-0200 MINOR: conv 별 "가장 최근 매칭" 선택을 두 테이블 공통
+                    # created_at(timestamptz) 기준으로 정렬. 이전 msg_id 기준은
+                    # messages.id 와 core_messages.id 가 독립 IDENTITY 시퀀스라
+                    # cross-table 비교가 시간순과 어긋날 수 있었다(발췌 스니펫만 영향).
                     pgcur.execute(
                         f"""
 SELECT t.cid, t.content
 FROM (
   SELECT cid, content,
-         ROW_NUMBER() OVER (PARTITION BY cid ORDER BY msg_id DESC) AS rn
+         ROW_NUMBER() OVER (PARTITION BY cid ORDER BY created_at DESC) AS rn
   FROM (
-    SELECT m.conversation_id AS cid, m.content AS content, m.id AS msg_id
+    SELECT m.conversation_id AS cid, m.content AS content, m.created_at AS created_at
     FROM agent_runtime.messages m
     WHERE m.conversation_id IN ({placeholders})
       AND m.content ILIKE %s ESCAPE '!'
     UNION ALL
-    SELECT cm.conversation_id AS cid, cm.content AS content, cm.id AS msg_id
+    SELECT cm.conversation_id AS cid, cm.content AS content, cm.created_at AS created_at
     FROM agent_runtime.core_messages cm
     WHERE cm.conversation_id IN ({placeholders})
       AND cm.content ILIKE %s ESCAPE '!'
@@ -4329,18 +4333,18 @@ WHERE t.rn = 1
 SELECT t.cid, t.content
 FROM (
   SELECT cid, content,
-         ROW_NUMBER() OVER (PARTITION BY cid ORDER BY msg_id DESC) AS rn
+         ROW_NUMBER() OVER (PARTITION BY cid ORDER BY created_at DESC) AS rn
   FROM (
     SELECT m.ConversationId COLLATE utf8mb4_unicode_ci AS cid,
            m.Content AS content,
-           m.Id AS msg_id
+           m.CreatedAt AS created_at
     FROM AgentMemoryMessages m
     WHERE m.ConversationId IN ({placeholders})
       AND m.Content LIKE %s ESCAPE '!'
     UNION ALL
     SELECT cm.conversation_id COLLATE utf8mb4_unicode_ci AS cid,
            cm.content AS content,
-           cm.id AS msg_id
+           cm.created_at AS created_at
     FROM AgentCoreMessages cm
     WHERE cm.conversation_id IN ({placeholders})
       AND cm.content LIKE %s ESCAPE '!'

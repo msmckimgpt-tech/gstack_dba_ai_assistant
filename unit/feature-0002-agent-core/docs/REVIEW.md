@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0200 [SKIPPED:minor-escaping-implements-REV-0196]
+- Date: 2026-06-10
+- Cycle: TASK-0200 (convo_search LIKE 메타문자 이스케이프 하드닝), **Minor §12.3**
+- Reason: 직전 패널(REV-20260610-0196)이 명시적으로 지적한 MINOR 잔존("convo_search 의 `like_pattern` LIKE 메타문자 미이스케이프, _collect_matched_excerpts 와 parity gap")의 **실행**. 동일 검증된 패턴(escape char 먼저 치환 → `%`/`_` → `ESCAPE '!'`)을 적용했고 RBAC/스키마/결과 shape/case-insensitive(ILIKE) 무변경. 파라미터화는 유지되어 SQLi 표면과 무관(LIKE 와일드카드 의미만 정정). 회귀 테스트 2(메타문자 이스케이프·빈 질의 전체매칭). make test exit=0. escape 순서·ESCAPE 절은 표준이라 추가 패널 불필요.
+- Risk: very low — 검색 도구 LIKE 패턴 이스케이프.
+- Cross-ref: CHG-20260610-0200 / TASK-0200 / REV-20260610-0196(원 지적) / feature-0003 REV-20260610-0200(#2 정렬).
+
 ## REV-20260610-0196 [SUBAGENT:cutover-routing-gaps-adversarial]
 - Date: 2026-06-10
 - Cycle: TASK-0196 (AR-M5 cutover 잔존 라우팅 누락 — agent-core convo_search), **Minor §12.3**

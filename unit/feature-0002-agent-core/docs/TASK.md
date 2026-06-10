@@ -776,3 +776,10 @@ TASK-0015 (plan-review):
 - [x] 회귀 테스트 `tests/test_convo_search_pg_routing.py`(PG 라우팅 + 전달된 MySQL conn 미사용 가드 + 3 소스 모두 검색 + current 대화 제외). make test(컨테이너 pytest+ruff) exit=0(0002+0003 전체 회귀 0).
 - [x] outside-voice 적대적 백엔드/QA 검토 SHIP(MAJOR 0) — REV-20260610-0196.
 - [ ] verify-completion → main ff-merge → agent-core 서비스(ask-worker/insight-worker/web) 재배포 → 라이브 에이전트 convo_search 호출 검증.
+
+### TASK-0200 — convo_search LIKE 메타문자 이스케이프 하드닝 (2026-06-10)
+- [x] **Minor §12.3** (도구 읽기경로 하드닝, RBAC·스키마·계약 무변경) — REV-20260610-0196 이 지적한 MINOR 잔존의 실행. `convo_search` 가 `like_pattern = f"%{pattern}%"` 로 사용자 질의를 LIKE/ILIKE 패턴에 직접 끼워 `%`/`_` 가 와일드카드로 처리("100%"/"table_name" 등 오작동·과다매칭). `_collect_matched_excerpts` 와 동일하게 메타문자(`!`,`%`,`_`) 이스케이프(`!` 먼저 → `%`/`_`) + `ESCAPE '!'` 동반. 빈 질의는 전체 매칭(`%`, ESCAPE 없음) 유지. (CHG-20260610-0200) (#2 발췌 정렬은 web, feature-0003 TASK-0200.)
+- [x] PG 분기(content/summary/value ILIKE) + MySQL legacy 분기(Content/Summary/`Value` LIKE) 6절 모두 `{like_escape}` 적용. like_pattern·like_escape 양 분기 공유(단일 소유).
+- [x] 회귀 테스트 `tests/test_convo_search_pg_routing.py` 2 추가(메타문자→`%100!%!_x!!%`+ESCAPE 동반 / 빈 질의→`%`+ESCAPE 없음). make test exit=0(0002+0003 전체 회귀 0), ruff clean.
+- [x] outside-voice [SKIPPED:minor-escaping-implements-REV-0196] (REV-20260610-0200).
+- [ ] verify-completion → main ff-merge → agent-core 서비스 재배포 → 라이브 convo_search 메타문자 질의 검증.

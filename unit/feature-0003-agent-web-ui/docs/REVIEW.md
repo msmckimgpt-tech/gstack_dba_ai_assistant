@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0200 [SKIPPED:minor-ordering-implements-REV-0196]
+- Date: 2026-06-10
+- Cycle: TASK-0200 (cutover 복구 MINOR 하드닝 — `_collect_matched_excerpts` 발췌 정렬 교정), **Minor §12.3**
+- Reason: 본 변경은 직전 cycle 의 적대적 패널(REV-20260610-0196)이 명시적으로 지적한 MINOR 잔존 항목("two-table msg_id namespace 정렬 caveat")의 **실행**이다. 권고를 그대로 구현(독립 id 시퀀스 cross-table 비교 → 공통 `created_at` 기준 정렬)했고, 매칭 집합·RBAC·스키마·응답 계약 무변경(스니펫 선택 순서만 개선). 회귀 테스트 가드(`ORDER BY created_at DESC` 존재 + `msg_id` 정렬 부재) 추가, make test exit=0. SQL 유효성은 ROW_NUMBER OVER ORDER BY 표준이라 추가 패널 불필요 — REV-0196 의 SHIP 검토 범위 안. (#1 convo_search escaping 은 feature-0002 REV-20260610-0200.)
+- Risk: very low — 읽기 정렬 키 1개 변경.
+- Cross-ref: CHG-20260610-0200 / TASK-0200 / REV-20260610-0196(원 지적).
+
 ## REV-20260610-0197 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]
 - Date: 2026-06-10
 - Cycle: TASK-0197 (assistant 말풍선 타임스탬프 옆 소요시간 표시), **Minor §12.3**

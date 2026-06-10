@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260610-0200
+- Date: 2026-06-10 (TASK-0200, **Minor §12.3** — 도구 읽기경로 하드닝)
+- Scope: REV-20260610-0196 이 지적한 MINOR 잔존 실행 — `convo_search` LIKE/ILIKE 메타문자 이스케이프. (#2 발췌 정렬은 feature-0003 CHG-20260610-0200.)
+- 배경: `convo_search` 가 `like_pattern = f"%{pattern}%"` 로 사용자 질의를 LIKE 패턴에 직접 끼워 `%`/`_` 가 와일드카드로 처리 — "100%"/"table_name" 같은 질의가 과다매칭/오작동. `_collect_matched_excerpts` 는 `_escape_like_for_search`+`ESCAPE '!'` 로 이미 이스케이프했으나 convo_search 만 누락(parity gap).
+- 변경 ([src/modules/file_ops.py](../src/modules/file_ops.py) `convo_search`):
+  - `like_pattern` 구성 시 비어있지 않은 질의는 메타문자 이스케이프 — `pattern.replace("!","!!").replace("%","!%").replace("_","!_")`(escape char `!` 를 **먼저** 치환해 이중이스케이프 회피) + `like_escape = " ESCAPE '!'"`. 빈 질의는 `%`(전체 매칭)+`like_escape=""`.
+  - PG 분기(content/summary/value ILIKE) + MySQL legacy 분기(Content/Summary/`Value` LIKE) 6 LIKE 절 모두 `f"… %s{like_escape}"`. like_pattern·like_escape 는 분기 전 1회 계산해 공유.
+- 비변경: 도구 RBAC/등록·스키마·결과 shape·case-insensitive(ILIKE) 무변경. 파라미터화 유지(SQLi 표면 무관 — 와일드카드 의미 정정만).
+- 검증: `tests/test_convo_search_pg_routing.py` 2 추가(`"100%_x!"`→param `%100!%!_x!!%`+ESCAPE / 빈 질의→`%`+ESCAPE 없음). make test exit=0. outside-voice [SKIPPED:minor-escaping-implements-REV-0196] (REV-20260610-0200).
+- Files: unit/feature-0002-agent-core/src/modules/file_ops.py, unit/feature-0002-agent-core/tests/test_convo_search_pg_routing.py, docs/{TASK,MODIFY,REVIEW,FUNCTION}.md
+- Rollback: like_pattern 을 `f"%{pattern}%"` 로 환원 + 6절의 `{like_escape}` 제거.
+
 ## CHG-20260610-0196
 - Date: 2026-06-10 (TASK-0196, **Minor §12.3** — 에이전트 도구 읽기경로 라우팅)
 - Scope: `convo_search`(LOCAL agent tool) AR-M5 cutover 라우팅 누락 복구. web 3건은 feature-0003 CHG-20260610-0196.

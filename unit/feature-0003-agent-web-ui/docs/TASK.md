@@ -3062,3 +3062,9 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 회귀 테스트 `tests/test_cutover_routing_gaps.py`(T1 excerpts PG 라우팅+삭제 테이블 미접촉, T2 `_conv_update_topic`(rename 위임) PG UPDATE). make test(컨테이너 pytest+ruff) exit=0(0002+0003 전체 회귀 0).
 - [x] outside-voice 적대적 백엔드/QA 검토 — REV-20260610-0196.
 - [ ] verify-completion → main ff-merge → web 재배포(healthz `git_commit`) → 라이브 재검증(#1·#2 200, #3 발췌 비어있지 않음). (#4 convo_search 는 agent-core, feature-0002 TASK-0196 참조.)
+
+### TASK-0200 — cutover 복구 MINOR 하드닝: 검색 발췌 정렬 교정 (2026-06-10)
+- [x] **Minor §12.3** (읽기경로 정렬, RBAC·스키마·계약 무변경) — REV-20260610-0196 이 지적한 MINOR 잔존(수용 항목)의 실행. `_collect_matched_excerpts` 의 conv 별 "가장 최근 매칭" 선택이 `ORDER BY msg_id DESC` 였는데, `agent_runtime.messages.id` 와 `core_messages.id` 가 독립 IDENTITY 시퀀스라 cross-table 비교가 시간순과 어긋날 수 있었다(발췌 스니펫만 영향). 두 table 공통 `created_at` 기준 `ORDER BY created_at DESC` 로 교정(PG+MySQL legacy 양 분기 + docstring). (CHG-20260610-0200) (#1 convo_search escaping 은 agent-core, feature-0002 TASK-0200.)
+- [x] 회귀 가드: `tests/test_cutover_routing_gaps.py` T1 에 `ORDER BY created_at DESC` 존재 + `msg_id` 정렬 부재 단언 추가. make test exit=0(0002+0003 전체 회귀 0), ruff clean.
+- [x] outside-voice [SKIPPED:minor-ordering-implements-REV-0196] (REV-20260610-0200).
+- [ ] verify-completion → main ff-merge → web 재배포 → 라이브 발췌 정렬 확인.

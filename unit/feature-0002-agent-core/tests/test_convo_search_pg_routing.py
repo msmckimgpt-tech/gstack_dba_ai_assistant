@@ -21,6 +21,7 @@ class _FakePgCursor:
     def __init__(self, rows_by_table):
         self._rows_by_table = rows_by_table
         self.executed: list[str] = []
+        self.params: list = []
 
     def __enter__(self):
         return self
@@ -30,6 +31,7 @@ class _FakePgCursor:
 
     def execute(self, sql, params=None):
         self.executed.append(sql)
+        self.params.append(params)
         if "agent_runtime.messages" in sql:
             self._last = self._rows_by_table.get("messages", [])
         elif "agent_runtime.summary" in sql:
@@ -94,3 +96,29 @@ def test_convo_search_routes_to_pg(monkeypatch):
     assert "agent_runtime.kv" in joined
     # current 대화 제외(include_current=False default)
     assert all(r["conversation_id"] != "current-cid" for r in out)
+
+
+# ── TASK-0200 MINOR: LIKE/ILIKE 메타문자 이스케이프 ───────────────────────────
+def test_convo_search_escapes_like_metachars(monkeypatch):
+    monkeypatch.setenv("AGENT_RUNTIME_READ_BACKEND", "postgres")
+    pg = _FakePgConn({})  # 결과는 무관, 쿼리/파라미터만 검사
+    monkeypatch.setattr("modules.db._pg_connect", lambda: pg)
+
+    file_ops.convo_search(_FakeMemConn(), "current-cid", query="100%_x!", limit=5)
+
+    # 메타문자(%, _, !)가 ESCAPE '!' 기준으로 이스케이프돼 와일드카드로 새지 않는다.
+    like_params = [p[0] for p in pg.cursor_obj.params]  # 각 쿼리 첫 파라미터 = like_pattern
+    assert all(lp == "%100!%!_x!!%" for lp in like_params), like_params
+    assert all("ESCAPE '!'" in sql for sql in pg.cursor_obj.executed), "비어있지 않은 질의는 ESCAPE 동반"
+
+
+def test_convo_search_empty_query_matches_all_without_escape(monkeypatch):
+    monkeypatch.setenv("AGENT_RUNTIME_READ_BACKEND", "postgres")
+    pg = _FakePgConn({})
+    monkeypatch.setattr("modules.db._pg_connect", lambda: pg)
+
+    file_ops.convo_search(_FakeMemConn(), "current-cid", query="", limit=5)
+
+    like_params = [p[0] for p in pg.cursor_obj.params]
+    assert all(lp == "%" for lp in like_params), "빈 질의 = 전체 매칭(%)"
+    assert all("ESCAPE" not in sql for sql in pg.cursor_obj.executed), "빈 질의는 ESCAPE 절 없음"
