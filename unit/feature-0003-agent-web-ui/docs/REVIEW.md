@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0181 [SKIPPED:read-agg-no-rbac-no-schema]
+- Date: 2026-06-10
+- Cycle: TASK-0181 (역할/계정 모델 stacked + 요청 수), **Minor §12.3**
+- 사유: 기존 llm_usage 컬럼 read 집계 확장(distinct run_id, 계정×모델 fold 보존) + 프론트 stacked 시각화. 파라미터화된 기존 `win` 패턴, 신규 SQL 삽입 없음. RBAC/스키마/시크릿/엔드포인트 0, 권한 게이트(`console.usage.read` admin) 무변경. make test 282 passed/5 skipped(회귀 0). 시각 검증 Windows-browser(PB-0008).
+
 ## REV-20260610-0180 [SKIPPED:css-layout-no-logic]
 - Date: 2026-06-10
 - Cycle: TASK-0180 (차트 카테고리별 행 레이아웃 + 일별 폭 채움 + 상세 표 여백), **Minor §12.3**

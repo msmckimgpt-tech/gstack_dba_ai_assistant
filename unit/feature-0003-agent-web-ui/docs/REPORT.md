@@ -10,6 +10,9 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-06-10 TASK-0181 — 역할/계정 차트 모델별 stacked + 상세 표 요청(메시지) 수** (REQ-20260610-0181, REV-20260610-0181 [SKIPPED:read-agg], **Minor §12.3**). 역할별·계정별 [토큰|비용] 막대를 모델별 누적으로 분해(전역 modelColor 색 일관 + renderStackedHBar) + 작업 화면 요청 수(distinct run_id) 컬럼. 백엔드 by_account models[]·requests 집계 확장(RBAC/스키마 무변경). make test 282 passed/5 skipped.
+## 1. Summary
+
 **2026-06-10 TASK-0180 — 차트 카테고리별 행 레이아웃 + 일별 폭 채움 + 상세 표 여백** (REQ-20260610-0180, REV-20260610-0180 [SKIPPED:css-layout], **Minor §12.3**). 사용자 피드백(몰아넣기 불쾌·상세 표 여백). 명시적 행 구조(4:1 trend / 역할별 토큰·비용 / 계정별 토큰·비용) + 일별 차트 viewBox=clientWidth 로 넓은 카드 폭 채움 + 상세 표 카드화. 순수 레이아웃, 백엔드 무변경. node --check PASS.
 ## 1. Summary
 

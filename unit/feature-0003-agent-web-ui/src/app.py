@@ -13647,13 +13647,25 @@ def _aggregate_usage_by_role(by_account: list[dict]) -> list[dict]:
             key = "(시스템)"
         else:
             key = row.get("role") or "(역할 없음)"
-        b = buckets.setdefault(key, {"role": key, "calls": 0, "total_tokens": 0, "cost_usd": 0.0})
+        b = buckets.setdefault(key, {"role": key, "calls": 0, "requests": 0,
+                                     "total_tokens": 0, "cost_usd": 0.0, "_models": {}})
         b["calls"] += int(row.get("calls") or 0)
+        b["requests"] += int(row.get("requests") or 0)  # TASK-0181: 요청 수(distinct run_id) 합산
         b["total_tokens"] += int(row.get("total_tokens") or 0)
         b["cost_usd"] += float(row.get("cost_usd") or 0)  # TASK-0176: 역할별 추정 비용 합산
+        # TASK-0181: 역할별 모델 분해(stacked 막대용) — 계정의 models[] 를 역할로 합산.
+        for m in (row.get("models") or []):
+            mm = b["_models"].setdefault(m["model"], {"model": m["model"], "total_tokens": 0, "cost_usd": 0.0})
+            mm["total_tokens"] += int(m.get("total_tokens") or 0)
+            mm["cost_usd"] += float(m.get("cost_usd") or 0)
+    out = []
     for b in buckets.values():
         b["cost_usd"] = round(b["cost_usd"], 4)
-    return sorted(buckets.values(), key=lambda x: x["total_tokens"], reverse=True)
+        b["models"] = sorted(b.pop("_models").values(), key=lambda x: x["total_tokens"], reverse=True)
+        for m in b["models"]:
+            m["cost_usd"] = round(m["cost_usd"], 4)
+        out.append(b)
+    return sorted(out, key=lambda x: x["total_tokens"], reverse=True)
 
 
 @app.get("/api/admin/usage")
@@ -13698,19 +13710,22 @@ def admin_llm_usage(request: Request) -> JSONResponse:
         try:
             win = f"now() - interval '{days} days'"
             with pg.cursor() as cur:
+                # TASK-0181: requests = 작업 화면에서 보낸 요청 수(distinct run_id; NULL=insight 등 제외).
                 cur.execute(
                     f"SELECT COALESCE(count(*),0), COALESCE(sum(prompt_tokens),0), "
-                    f"COALESCE(sum(completion_tokens),0), COALESCE(sum(total_tokens),0) "
+                    f"COALESCE(sum(completion_tokens),0), COALESCE(sum(total_tokens),0), "
+                    f"COALESCE(count(distinct run_id),0) "
                     f"FROM agent_runtime.llm_usage WHERE created_at >= {win}"
                 )
-                t = cur.fetchone() or (0, 0, 0, 0)
+                t = cur.fetchone() or (0, 0, 0, 0, 0)
                 totals = {"calls": int(t[0]), "prompt_tokens": int(t[1]),
-                          "completion_tokens": int(t[2]), "total_tokens": int(t[3])}
+                          "completion_tokens": int(t[2]), "total_tokens": int(t[3]),
+                          "requests": int(t[4])}
                 # TASK-0163: resolved_model(실제 서빙 모델, LiteLLM 해소 결과) 기준으로
                 # 집계하되 요청 별칭(model)도 함께 노출 → claude 계열 식별 + 별칭 추적.
                 cur.execute(
                     f"SELECT COALESCE(resolved_model, model) AS m, model, count(*), sum(total_tokens), "
-                    f"sum(prompt_tokens), sum(completion_tokens) "
+                    f"sum(prompt_tokens), sum(completion_tokens), count(distinct run_id) "
                     f"FROM agent_runtime.llm_usage "
                     f"WHERE created_at >= {win} GROUP BY COALESCE(resolved_model, model), model "
                     f"ORDER BY 4 DESC NULLS LAST LIMIT 50"
@@ -13719,6 +13734,7 @@ def admin_llm_usage(request: Request) -> JSONResponse:
                 for r in (cur.fetchall() or []):
                     pt_m, ct_m = int(r[4] or 0), int(r[5] or 0)
                     by_model.append({"model": r[1], "resolved_model": r[0], "calls": int(r[2]),
+                                     "requests": int(r[6] or 0),
                                      "total_tokens": int(r[3] or 0), "prompt_tokens": pt_m,
                                      "completion_tokens": ct_m,
                                      "cost_usd": _estimate_llm_cost_usd(r[1], pt_m, ct_m)})
@@ -13736,13 +13752,30 @@ def admin_llm_usage(request: Request) -> JSONResponse:
                 for r in (cur.fetchall() or []):
                     aid = int(r[0]) if r[0] is not None else None
                     mk, calls_r, tok_r, pt_r, ct_r = r[1], int(r[2]), int(r[3] or 0), int(r[4] or 0), int(r[5] or 0)
-                    e = _acct_fold.setdefault(aid, {"account_id": aid, "calls": 0, "total_tokens": 0, "cost_usd": 0.0})
+                    e = _acct_fold.setdefault(aid, {"account_id": aid, "calls": 0, "total_tokens": 0, "cost_usd": 0.0, "_models": {}})
                     e["calls"] += calls_r
                     e["total_tokens"] += tok_r
-                    e["cost_usd"] += _estimate_llm_cost_usd(mk, pt_r, ct_r)
+                    mc = _estimate_llm_cost_usd(mk, pt_r, ct_r)
+                    e["cost_usd"] += mc
+                    # TASK-0181: 계정 × 모델 분해 보존(stacked 막대용).
+                    mm = e["_models"].setdefault(mk, {"model": mk, "total_tokens": 0, "cost_usd": 0.0})
+                    mm["total_tokens"] += tok_r
+                    mm["cost_usd"] += mc
+                # TASK-0181: 계정별 요청 수(distinct run_id; run 은 conversation=계정 단위, NULL 제외).
+                cur.execute(
+                    f"SELECT c.owner_account_id, count(distinct u.run_id) "
+                    f"FROM agent_runtime.llm_usage u "
+                    f"LEFT JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
+                    f"WHERE u.created_at >= {win} AND u.run_id IS NOT NULL GROUP BY 1"
+                )
+                _acct_req = {(int(r[0]) if r[0] is not None else None): int(r[1]) for r in (cur.fetchall() or [])}
                 by_account = sorted(_acct_fold.values(), key=lambda x: x["total_tokens"], reverse=True)[:100]
                 for a in by_account:
                     a["cost_usd"] = round(a["cost_usd"], 4)
+                    a["requests"] = _acct_req.get(a["account_id"], 0)
+                    a["models"] = sorted(a.pop("_models").values(), key=lambda x: x["total_tokens"], reverse=True)
+                    for m in a["models"]:
+                        m["cost_usd"] = round(m["cost_usd"], 4)
                 # TASK-0166: granularity bucket(시/일/주/월) 시계열 — 호출/토큰/prompt/completion.
                 cur.execute(
                     f"SELECT {bucket_expr} AS b, count(*), sum(total_tokens), "

@@ -12,9 +12,12 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-10 (TASK-0180 카테고리별 행 레이아웃; TASK-0179 차트 grid; TASK-0178 여백 컴팩트화; TASK-0177 상세표 비용컬럼+디자인 정렬; TASK-0176 역할/계정별 비용 차트; TASK-0167 작은화면 잘림)
+- Last Updated: 2026-06-10 (TASK-0181 역할/계정 모델 stacked + 요청 수; TASK-0180 카테고리별 행 레이아웃; TASK-0179 차트 grid; TASK-0178 여백 컴팩트화; TASK-0177 상세표 비용컬럼+디자인 정렬; TASK-0176 역할/계정별 비용 차트; TASK-0167 작은화면 잘림)
 
 ## 2. Task Queue
+
+### TASK-0181 LLM 사용량 역할/계정 차트 모델별 stacked + 상세 표 요청(메시지) 수 (2026-06-10)
+- [x] **Minor §12.3** — 사용자 요청. **A**: 역할별·계정별 [토큰|비용] 막대를 모델별 누적(stacked)으로 분해. 백엔드 by_account 에 `models:[{model,total_tokens,cost_usd}]` 보존 + `_aggregate_usage_by_role` 가 역할별 models 합산. 프론트 전역 `modelColor`(일별/도넛/stacked 색 일관) + `renderStackedHBar`. **B**: 요청 수=`count(distinct run_id)`(run=conversation 단위, NULL 제외) 를 totals/by_model/by_account/by_role 에 `requests` 추가. 요약 '요청' 카드 + 상세 표 '요청' 컬럼(호출=LLM 호출, 요청=사용자 메시지). 권한/스키마 신규 0. 캐시버스터 `?v=20260610-usage-stacked`. node --check/py_compile + make test 282 passed/5 skipped(회귀 0). REV-20260610-0181 [SKIPPED:read-agg]. 동시세션→0181. worktree `ai/claude/usage-model-stacked`.
 
 ### TASK-0180 LLM 사용량 차트 카테고리별 행 레이아웃 + 일별 폭 채움 + 상세 표 여백 (2026-06-10)
 - [x] **Minor §12.3** — 사용자 피드백(몰아넣기 불쾌 + 상세 표 여백). 명시적 행 구조: ① 시간별 토큰(flex4):모델별 비중(flex1)=4:1, ② 역할별[토큰|비용], ③ 계정별[토큰|비용](`.admin-usage-row` 1:1, wrap). grid(charts/span2) 폐기. 일별 차트 SVG viewBox W=`el.clientWidth`(폴백 760)·H 200 고정 → 넓은 카드 가로 채움(막대 cap 64). 상세 표 카드화(`.admin-usage-table-card`, max-width:none width:100%) + 모델별 full·역할별|계정별 2열. 권한/스키마/백엔드 무변경. 캐시버스터 `?v=20260610-usage-rows`. node --check PASS. REV-20260610-0180 [SKIPPED:css-layout]. 동시세션→0180. worktree `ai/claude/usage-row-layout`.

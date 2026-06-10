@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260610-0181
+- Date: 2026-06-10
+- TASK-Cycle: TASK-0181, **Minor §12.3** — 역할/계정 차트 모델별 stacked + 상세 표 요청(메시지) 수
+- Summary: (A) 역할별·계정별 [토큰|비용] 막대를 모델별 누적(stacked)으로 분해(모델 색 일관). (B) 작업 화면 요청 수(distinct run_id) 컬럼 추가. 기존 컬럼 read 집계 확장, RBAC/스키마 무변경.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/app.py`: `admin_llm_usage` — totals/by_model 에 `count(distinct run_id)`=requests; by_account fold 에 `models:[{model,total_tokens,cost_usd}]` 보존 + 계정별 requests 별도 쿼리(`count(distinct run_id) WHERE run_id NOT NULL`); `_aggregate_usage_by_role` 가 역할별 `models[]`·`requests` 합산.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: 전역 `modelColor`(등장 모델 전체로 1회 — 일별/도넛/stacked 색 일관) + `mcol()`; renderStacked/renderDonut 가 modelColor 사용; `renderStackedHBar`(역할/계정 토큰·비용 모델별 누적 막대) 신규 + 역할/계정 4 차트 교체; 요약 '요청' 카드; 상세 표(모델/역할/계정) '요청' 컬럼.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: 캐시버스터 `?v=20260610-usage-stacked`.
+- Note: 권한/엔드포인트/스키마/시크릿 신규 0 — read 집계 확장(distinct run_id, 모델 fold). 요청=사용자 메시지(run) 수, 호출=LLM 호출 수로 구분.
+- Review: REV-20260610-0181 [SKIPPED:read-agg-no-rbac-no-schema]. Windows-browser(PB-0008) 검증 배포 후.
+
 ## CHG-20260610-0180
 - Date: 2026-06-10
 - TASK-Cycle: TASK-0180, **Minor §12.3** — 차트 카테고리별 행 레이아웃 + 일별 폭 채움 + 상세 표 여백

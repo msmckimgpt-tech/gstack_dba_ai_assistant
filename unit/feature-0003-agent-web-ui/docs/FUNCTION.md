@@ -443,6 +443,7 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   (TASK-0178: 카드·섹션·요약·차트 높이 spacing 을 컴팩트 값으로 조정 — 토큰 체계 유지, 여백만 축소.)
   (TASK-0179: 차트 6개를 `.admin-usage-charts` CSS grid `repeat(auto-fill, minmax(400px,1fr))` 로 배치 — 넓은 화면 다열 채움, 일별=span 2, 860px↓ 1열. 넓은 모니터 가로 여백 해소.)
   (TASK-0180: grid 몰아넣기를 명시적 행 구조로 교체 — 시간별 토큰(4):모델별 비중(1), 역할별[토큰|비용], 계정별[토큰|비용]. 일별 차트 viewBox=clientWidth 로 카드 폭 채움. 상세 표 카드화(max-width none)로 여백 해소.)
+  (TASK-0181: 역할별·계정별 [토큰|비용] 막대를 모델별 누적(stacked)으로 분해 — by_account/by_role 에 `models[]`, 전역 `modelColor` 로 일별/도넛/stacked 색 일관, `renderStackedHBar`. 요청 수=`count(distinct run_id)`(사용자 메시지) 를 totals/by_model/by_account/by_role `requests` 로 추가, 요약 카드·상세 표 '요청' 컬럼(호출=LLM 호출과 구분).)
 - 관리 콘솔 레이아웃 스크롤 (TASK-0167): `.admin-shell`·`.admin-workspace` 는 `height:100vh;
   overflow:hidden` 이고 각 `.admin-pane` 이 자체 스크롤한다. 단순 세로 흐름 pane(dashboard·usage)은
   `overflow-y:auto` 를 직접 가지며(styles.css), list-detail pane(accounts/roles/products/audits)은

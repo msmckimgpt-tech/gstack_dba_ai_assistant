@@ -748,6 +748,10 @@ async function loadUsage() {
     });
     return m;
   };
+  // TASK-0181: 전역 모델 색맵 — 일별 stacked / 도넛 / 역할·계정 stacked 가 같은 모델은 같은 색.
+  // data 수신 후 by_model 등에서 등장 모델 전체로 1회 채운다.
+  let modelColor = {};
+  const mcol = (k) => modelColor[k] || SYS_COLOR;
   // bucket 라벨 축약 (YYYY- 제거: 'MM-DD', 'MM-DD HH:00'; 월별 'YYYY-MM' 유지).
   const shortLabel = (d) => { const s = String(d); return s.length > 7 ? s.slice(5) : s; };
   // 기간별 토큰 사용량 — 모델별 누적(stacked) 세로 막대 + 막대 총합 라벨 + hover 툴팁.
@@ -762,7 +766,6 @@ async function loadUsage() {
       if (!models.includes(r.model)) models.push(r.model);
     });
     const days = Object.keys(dayMap).sort();
-    const cmap = colorMapFor(models);
     const totalsByDay = days.map((d) => Object.values(dayMap[d]).reduce((a, b) => a + b, 0));
     const maxT = Math.max(1, ...totalsByDay);
     /* TASK-0180: viewBox 폭을 카드 실제 폭에 맞춰 일별 차트가 넓은 카드를 꽉 채우게 한다
@@ -780,7 +783,7 @@ async function loadUsage() {
         const v = dayMap[d][m] || 0; if (v <= 0) return;
         const h = (v / maxT) * plotH; y -= h;
         const pct = dayTot ? (v / dayTot * 100).toFixed(1) : "0";
-        bars += `<rect x='${x.toFixed(1)}' y='${y.toFixed(1)}' width='${bw.toFixed(1)}' height='${h.toFixed(1)}' fill='${cmap[m]}' rx='1' data-tip='${esc(d)} · ${esc(m)}<br><b>${num(v)}</b> 토큰 (${pct}%)'/>`;
+        bars += `<rect x='${x.toFixed(1)}' y='${y.toFixed(1)}' width='${bw.toFixed(1)}' height='${h.toFixed(1)}' fill='${mcol(m)}' rx='1' data-tip='${esc(d)} · ${esc(m)}<br><b>${num(v)}</b> 토큰 (${pct}%)'/>`;
       });
       if (bw >= 20 && (dayTot / maxT) > 0.05) {
         valLabels += `<text x='${(x + bw / 2).toFixed(1)}' y='${(y - 3).toFixed(1)}' text-anchor='middle' font-size='9' fill='var(--text-2)'>${num(dayTot)}</text>`;
@@ -794,7 +797,7 @@ async function loadUsage() {
       const x = pL + di * step + step / 2;
       xl += `<text x='${x.toFixed(1)}' y='${H - 9}' text-anchor='middle' font-size='10' fill='var(--text-muted)'>${esc(shortLabel(days[di]))}</text>`;
     });
-    const legend = models.map((m) => `<span style='display:inline-flex;align-items:center;gap:5px;margin:2px 14px 2px 0;font-size:12px;'><span style='width:11px;height:11px;border-radius:2px;background:${cmap[m]};display:inline-block;'></span>${esc(m)}</span>`).join("");
+    const legend = models.map((m) => `<span style='display:inline-flex;align-items:center;gap:5px;margin:2px 14px 2px 0;font-size:12px;'><span style='width:11px;height:11px;border-radius:2px;background:${mcol(m)};display:inline-block;'></span>${esc(m)}</span>`).join("");
     el.innerHTML = `<svg viewBox='0 0 ${W} ${H}' style='width:100%;height:auto;display:block;'>${axis}${bars}${valLabels}${xl}</svg><div style='margin-top:6px;'>${legend}</div>`;
     bindTip(el);
   };
@@ -807,16 +810,16 @@ async function loadUsage() {
     })).filter((r) => r.value > 0);
     if (!rows.length) { el.innerHTML = "<p style='color:var(--text-muted);'>데이터 없음</p>"; return; }
     const total = rows.reduce((a, b) => a + b.value, 0);
-    const cmap = colorMapFor(rows.map((r) => r.label));
+
     const R = 54, C = 2 * Math.PI * R, cx = 70, cy = 70;
     let off = 0, segs = "";
     rows.forEach((r) => {
       const len = (r.value / total) * C;
       const costTip = r.cost > 0 ? `<br>추정 ${usd(r.cost)}` : "";
-      segs += `<circle cx='${cx}' cy='${cy}' r='${R}' fill='none' stroke='${cmap[r.label]}' stroke-width='22' stroke-dasharray='${len.toFixed(2)} ${(C - len).toFixed(2)}' stroke-dashoffset='${(-off).toFixed(2)}' transform='rotate(-90 ${cx} ${cy})' data-tip='${esc(r.label)}<br><b>${num(r.value)}</b> 토큰 (${(r.value / total * 100).toFixed(1)}%)<br>${num(r.calls)} 호출${costTip}'/>`;
+      segs += `<circle cx='${cx}' cy='${cy}' r='${R}' fill='none' stroke='${mcol(r.label)}' stroke-width='22' stroke-dasharray='${len.toFixed(2)} ${(C - len).toFixed(2)}' stroke-dashoffset='${(-off).toFixed(2)}' transform='rotate(-90 ${cx} ${cy})' data-tip='${esc(r.label)}<br><b>${num(r.value)}</b> 토큰 (${(r.value / total * 100).toFixed(1)}%)<br>${num(r.calls)} 호출${costTip}'/>`;
       off += len;
     });
-    const legend = rows.map((r) => `<div style='display:flex;align-items:center;gap:6px;font-size:12px;margin:3px 0;'><span style='width:11px;height:11px;border-radius:2px;background:${cmap[r.label]};display:inline-block;flex:none;'></span><span style='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>${esc(r.label)}</span><strong>${(r.value / total * 100).toFixed(1)}%</strong></div>`).join("");
+    const legend = rows.map((r) => `<div style='display:flex;align-items:center;gap:6px;font-size:12px;margin:3px 0;'><span style='width:11px;height:11px;border-radius:2px;background:${mcol(r.label)};display:inline-block;flex:none;'></span><span style='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>${esc(r.label)}</span><strong>${(r.value / total * 100).toFixed(1)}%</strong></div>`).join("");
     el.innerHTML = `<div style='display:flex;align-items:center;gap:18px;flex-wrap:wrap;'><svg viewBox='0 0 140 140' style='width:130px;height:130px;flex:none;'>${segs}<text x='70' y='66' text-anchor='middle' font-size='11' fill='var(--text-muted)'>총 토큰</text><text x='70' y='83' text-anchor='middle' font-size='13' font-weight='700' fill='var(--text)'>${num(total)}</text></svg><div style='flex:1;min-width:150px;'>${legend}</div></div>`;
     bindTip(el);
   };
@@ -829,6 +832,22 @@ async function loadUsage() {
     const max = Math.max(...data.map((r) => r.value));
     const cmap = colorMapFor(data.map((r) => r.label));
     el.innerHTML = data.map((r) => `<div style='margin:6px 0;' data-tip='${r.tip || (esc(r.label) + "<br><b>" + fmt(r.value) + "</b>")}'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;'><span>${esc(r.label)}</span><strong>${fmt(r.value)}</strong></div><div style='background:var(--border-subtle);border-radius:4px;height:14px;overflow:hidden;'><div style='width:${(r.value / max * 100).toFixed(1)}%;height:100%;background:${cmap[r.label]};border-radius:4px;'></div></div></div>`).join("");
+    bindTip(el);
+  };
+  // TASK-0181: 모델별 누적(stacked) 가로 막대 — 역할별/계정별 토큰·비용을 어떤 모델로 썼는지 색 분해.
+  // rows = [{label, total_tokens, cost_usd, models:[{model, total_tokens, cost_usd}]}]. 모델 색 = 전역 modelColor.
+  const renderStackedHBar = (el, rows, valueKey, valFmt) => {
+    if (!el) return;
+    const fmt = valFmt || num;
+    const data = (rows || []).map((r) => ({ label: r.label, value: r[valueKey] || 0, models: r.models || [] })).filter((r) => r.value > 0);
+    if (!data.length) { el.innerHTML = "<p class='admin-usage-empty'>데이터 없음</p>"; return; }
+    const max = Math.max(...data.map((r) => r.value));
+    el.innerHTML = data.map((r) => {
+      const segs = (r.models || []).filter((m) => (m[valueKey] || 0) > 0).map((m) =>
+        `<div data-tip='${esc(r.label)} · ${esc(m.model)}<br><b>${fmt(m[valueKey])}</b>' style='width:${(m[valueKey] / max * 100).toFixed(2)}%;background:${mcol(m.model)};height:100%;'></div>`
+      ).join("");
+      return `<div style='margin:6px 0;'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;'><span>${esc(r.label)}</span><strong>${fmt(r.value)}</strong></div><div style='display:flex;background:var(--border-subtle);border-radius:4px;height:14px;overflow:hidden;'>${segs}</div></div>`;
+    }).join("");
     bindTip(el);
   };
   // TASK-0163: fmt 에 행 전체(r)도 전달 — "별칭 → 해소모델" 등 다중 필드 표시용.
@@ -845,11 +864,18 @@ async function loadUsage() {
   try {
     const data = await apiFetch(`/api/admin/usage?days=${encodeURIComponent(days)}&gran=${encodeURIComponent(gran)}`);
     const t = data.totals || {};
+    // TASK-0181: 전역 모델 색맵 — 등장 모델 전체(도넛/일별/stacked 공유)로 1회 구축.
+    const _ms = [];
+    (data.by_model || []).forEach((m) => { const k = (m.resolved_model && m.resolved_model !== m.model) ? m.resolved_model : (m.model || "(미상)"); if (!_ms.includes(k)) _ms.push(k); });
+    (data.by_day_model || []).forEach((m) => { if (m.model && !_ms.includes(m.model)) _ms.push(m.model); });
+    (data.by_account || []).forEach((a) => (a.models || []).forEach((m) => { if (m.model && !_ms.includes(m.model)) _ms.push(m.model); }));
+    modelColor = colorMapFor(_ms);
     if (summaryEl) {
       // TASK-0177: dashboard 와 동일한 .metric-card / .summary-metrics 로 통일.
       const card = (label, val) => `<article class='metric-card admin-usage-metric'><span>${label}</span><strong>${val}</strong></article>`;
       summaryEl.innerHTML =
         `<div class='summary-metrics'>` +
+        card("요청", num(t.requests)) +
         card("호출", num(t.calls)) +
         card("총 토큰", num(t.total_tokens)) +
         card("Prompt", num(t.prompt_tokens)) +
@@ -857,26 +883,20 @@ async function loadUsage() {
         ((t.cost_usd && t.cost_usd > 0) ? card("추정 비용", usd(t.cost_usd)) : "") +
         `</div>`;
     }
-    // TASK-0164/0166: 차트 렌더 (기간별 stacked / 모델별 도넛 / 역할별·계정별 가로막대).
+    // TASK-0164/0166: 일별 stacked / 모델별 도넛.
     renderStacked(dayChartEl, data.by_day_model);
     renderDonut(modelChartEl, data.by_model);
-    renderHBar(roleChartEl, (data.by_role || []).map((r) => ({
-      label: String(r.role == null ? "-" : r.role), value: r.total_tokens || 0,
-      tip: `${esc(String(r.role == null ? "-" : r.role))}<br><b>${num(r.total_tokens)}</b> 토큰<br>${num(r.calls)} 호출`,
-    })));
-    renderHBar(acctChartEl, (data.by_account || []).map((r) => ({
-      label: acctLabel(r), value: r.total_tokens || 0,
-      tip: `${esc(acctLabel(r))}${r.role ? " · " + esc(r.role) : ""}<br><b>${num(r.total_tokens)}</b> 토큰<br>${num(r.calls)} 호출`,
-    })));
-    // TASK-0176: 역할별·계정별 추정 비용 가로 막대 (claude 등 과금 모델만 > $0).
-    renderHBar(roleCostChartEl, (data.by_role || []).map((r) => ({
-      label: String(r.role == null ? "-" : r.role), value: r.cost_usd || 0,
-      tip: `${esc(String(r.role == null ? "-" : r.role))}<br><b>${usd(r.cost_usd)}</b> 추정 비용`,
-    })), usd);
-    renderHBar(acctCostChartEl, (data.by_account || []).map((r) => ({
-      label: acctLabel(r), value: r.cost_usd || 0,
-      tip: `${esc(acctLabel(r))}${r.role ? " · " + esc(r.role) : ""}<br><b>${usd(r.cost_usd)}</b> 추정 비용`,
-    })), usd);
+    // TASK-0181: 역할별·계정별 [토큰|비용] 을 모델별 누적(stacked) 막대로 — 어떤 모델로 썼는지 색 분해.
+    const roleRows = (data.by_role || []).map((r) => ({
+      label: String(r.role == null ? "-" : r.role), total_tokens: r.total_tokens || 0, cost_usd: r.cost_usd || 0, models: r.models || [],
+    }));
+    const acctRows = (data.by_account || []).map((r) => ({
+      label: acctLabel(r), total_tokens: r.total_tokens || 0, cost_usd: r.cost_usd || 0, models: r.models || [],
+    }));
+    renderStackedHBar(roleChartEl, roleRows, "total_tokens", num);
+    renderStackedHBar(roleCostChartEl, roleRows, "cost_usd", usd);
+    renderStackedHBar(acctChartEl, acctRows, "total_tokens", num);
+    renderStackedHBar(acctCostChartEl, acctRows, "cost_usd", usd);
     // 상세 표 — 모델별(별칭→해소 + prompt/completion + 추정비용) / 역할별 / 계정별.
     if (modelEl) modelEl.innerHTML = tbl(data.by_model, [
       { key: "resolved_model", label: "모델", fmt: (v, r) => {
@@ -884,13 +904,15 @@ async function loadUsage() {
         const resolved = v == null ? "" : String(v);
         return (!resolved || resolved === alias) ? (alias || "(미상)") : `${alias} → ${resolved}`;
       } },
-      { key: "calls", label: "호출", fmt: num, align: "right" }, { key: "total_tokens", label: "토큰", fmt: num, align: "right" },
+      { key: "requests", label: "요청", fmt: num, align: "right" }, { key: "calls", label: "호출", fmt: num, align: "right" },
+      { key: "total_tokens", label: "토큰", fmt: num, align: "right" },
       { key: "prompt_tokens", label: "prompt", fmt: num, align: "right" }, { key: "completion_tokens", label: "completion", fmt: num, align: "right" },
       { key: "cost_usd", label: "추정 비용", fmt: costFmt, align: "right" },
     ]);
-    // TASK-0176/0177: 역할별·계정별 표에도 추정 비용 컬럼(차트와 일치).
+    // TASK-0176/0177/0181: 역할별·계정별 표에도 요청(메시지)·호출·추정 비용(차트와 일치).
     if (roleEl) roleEl.innerHTML = tbl(data.by_role, [
       { key: "role", label: "역할" },
+      { key: "requests", label: "요청", fmt: num, align: "right" },
       { key: "calls", label: "호출", fmt: num, align: "right" },
       { key: "total_tokens", label: "토큰", fmt: num, align: "right" },
       { key: "cost_usd", label: "추정 비용", fmt: costFmt, align: "right" },
@@ -898,6 +920,7 @@ async function loadUsage() {
     if (acctEl) acctEl.innerHTML = tbl(data.by_account, [
       { key: "account_id", label: "계정", fmt: (v, r) => (v == null ? "(시스템)" : (r.username ? `${r.username} (#${v})` : `#${v}`)) },
       { key: "role", label: "역할", fmt: (v) => (v == null ? "—" : v) },
+      { key: "requests", label: "요청", fmt: num, align: "right" },
       { key: "calls", label: "호출", fmt: num, align: "right" },
       { key: "total_tokens", label: "토큰", fmt: num, align: "right" },
       { key: "cost_usd", label: "추정 비용", fmt: costFmt, align: "right" },
