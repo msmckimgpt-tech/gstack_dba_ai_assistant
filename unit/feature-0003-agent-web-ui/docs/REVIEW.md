@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0187 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]
+- Date: 2026-06-10
+- Cycle: TASK-0186 후속 (markdown 표 파싱으로 전 도구 결과 표 렌더), **Minor §12.3**
+- 사유: app.js 1파일 — 순수 클라이언트 markdown→표 파서(`parseMarkdownTablePreview`) + buildStepDetailEl 우선순위 1줄 확장. 백엔드/RBAC/스키마/엔드포인트 무변경, 데이터 경로 무변경(기존 `preview` 문자열 재해석). 파서는 표가 아니면 null 반환→기존 `<pre>` 폴백 보존(안전 degrade). node --check PASS + 파서 자가 테스트(get_sample_rows 형식 파싱·비표형 null·trailing 무시) PASS. XSS=`buildResultTable` textContent. 시각 검증=Windows-browser(PB-0008).
+
 ## REV-20260610-0186 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret]
 - Date: 2026-06-10
 - Cycle: TASK-0186 (단계 사이드 패널 결과 표 렌더링 + 패널 리사이즈), **Minor §12.3**

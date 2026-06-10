@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260610-0186-MDTABLE
+- Date: 2026-06-10 (TASK-0186 후속, **Minor §12.3** — frontend-only)
+- Scope: CHG-20260610-0186 보강 — 표로 렌더되는 단계 결과 범위를 `execute_sql` 외 **전 도구**로 확장.
+- 배경: 0186 은 `result_summary.preview_table`(구조화)이 있는 `execute_sql` 만 표로 렌더했는데, 라이브 `/api/progress` 확인 결과 `get_sample_rows`/`describe_table` 등은 `preview_table` 없이 markdown 표 **문자열**(`preview`)만 가짐 → 여전히 raw `<pre>` 노출(사용자 스크린샷이 바로 `get_sample_rows` raw md).
+- 변경 ([src/static/app.js](../src/static/app.js)):
+  - `parseMarkdownTablePreview(text)` 신규 — markdown 표 문자열(`| a | b |\n|---|---|\n| 1 | 2 |`)을 `{columns, rows}` 로 파싱(연속 `|` 라인 블록만, 2번째 줄 구분선 검증, 이후 "(N 행)"/"CSV 저장" 등 trailing 무시). 표 아니면 null.
+  - `buildStepDetailEl` 결과 우선순위: ① `preview_table` → `buildResultTable` ② `preview` markdown 파싱 → `buildResultTable` ③ raw `<pre>` 폴백(비표형 list_schemas 등). 캐시버스터 `?v=20260610-step-md-table`.
+- 비변경: 백엔드/RBAC/스키마/엔드포인트 무변경. XSS: 파싱값은 `buildResultTable` 의 `textContent`. node --check PASS. outside-voice [SKIPPED:frontend-only] (REV-20260610-0187).
+
 ## CHG-20260610-0186
 - Date: 2026-06-10 (TASK-0186, **Minor §12.3** — frontend-only, web-ui 정적자산만)
 - Scope: 실행 단계 사이드 패널(`단계 보기(N)`) ① 결과를 raw 마크다운 텍스트 → HTML 표 렌더링 ② 패널 너비 드래그 리사이즈.
