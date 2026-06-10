@@ -1899,6 +1899,35 @@ function appendRowNumCell(tr, tag, value) {
   return cell;
 }
 
+// markdown 표 문자열(| a | b |\n|---|---|\n| 1 | 2 |)을 {columns, rows} 로 파싱.
+// execute_sql 외 도구(get_sample_rows/describe_table 등)의 결과 preview 는 구조화
+// preview_table 없이 markdown 표 문자열만 있어, 이를 파싱해 buildResultTable 로 표 렌더.
+// 표가 아니면(헤더/구분선 패턴 불일치) null → 호출부가 raw <pre> 로 폴백.
+function parseMarkdownTablePreview(text) {
+  const raw = String(text || "");
+  if (!raw.includes("|")) return null;
+  const lines = raw.split("\n");
+  const tableLines = [];
+  for (const ln of lines) {
+    const t = ln.trim();
+    if (t.startsWith("|") && t.endsWith("|") && t.length > 1) {
+      tableLines.push(t);
+    } else if (tableLines.length) {
+      break; // 표 블록(연속된 | 라인) 종료 — 이후 "(N 행)"/"CSV 저장" 등은 무시
+    }
+  }
+  if (tableLines.length < 2) return null;
+  const splitRow = (ln) => ln.slice(1, -1).split("|").map((c) => c.trim());
+  const columns = splitRow(tableLines[0]);
+  if (!columns.length) return null;
+  // 2번째 줄이 구분선(---, :--:)이어야 표로 인정
+  const sepCells = splitRow(tableLines[1]);
+  const isSeparator = sepCells.length > 0 && sepCells.every((c) => /^:?-{1,}:?$/.test(c.replace(/\s/g, "")));
+  if (!isSeparator) return null;
+  const rows = tableLines.slice(2).map(splitRow);
+  return { columns, rows, truncated: false };
+}
+
 function buildResultTable(previewTable) {
   const { columns = [], rows = [], truncated = false } = previewTable;
   if (!columns.length) return null;
@@ -2724,16 +2753,20 @@ function buildStepDetailEl(step, idx, { compact = false } = {}) {
       wrap.appendChild(sqlWrap);
     }
 
-    // 결과 — 구조화된 preview_table(columns/rows)이 있으면 가시성 높은 HTML 표로,
-    // 없으면 preview(markdown 문자열)를 raw 텍스트로 폴백.
+    // 결과 — 표로 가시화. ① 구조화 preview_table(execute_sql) ② preview 의 markdown
+    // 표 파싱(get_sample_rows/describe_table 등) ③ 둘 다 아니면 raw 텍스트 폴백.
     const rs = step.result_summary;
     const pt = rs && typeof rs === "object" ? rs.preview_table : null;
-    const tableEl = pt && Array.isArray(pt.columns) && pt.columns.length
-      ? buildResultTable(pt)
-      : null;
     const preview = rs && rs.preview
       ? rs.preview
       : (typeof rs === "string" ? rs : null);
+    let tableEl = pt && Array.isArray(pt.columns) && pt.columns.length
+      ? buildResultTable(pt)
+      : null;
+    if (!tableEl && preview) {
+      const mdTable = parseMarkdownTablePreview(preview);
+      if (mdTable && mdTable.columns.length) tableEl = buildResultTable(mdTable);
+    }
     if (tableEl || preview) {
       const resultWrap = document.createElement("div");
       resultWrap.className = "step-result-wrap";

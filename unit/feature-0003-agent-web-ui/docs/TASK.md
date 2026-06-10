@@ -3032,4 +3032,6 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 표: `buildStepDetailEl` 결과 블록이 `result_summary.preview_table`(이미 step 데이터에 포함) 있으면 기존 `buildResultTable` 로 HTML 표 렌더, 없으면 `<pre>` 폴백. 백엔드 무변경.
 - [x] 리사이즈: 좌측 드래그 핸들(`#stepSidePanelResizer`) + `setupStepSidePanelResize`(너비=innerWidth−clientX, clamp[300,92vw], localStorage 영속, mouse+touch) + open 시 저장 너비 복원. styles.css min/max-width·핸들·is-resizing.
 - [x] node --check app.js PASS. RBAC/스키마/엔드포인트/백엔드 무변경. outside-voice [SKIPPED:frontend-only] (REV-20260610-0186).
-- [ ] verify-completion → main ff-merge → web 재배포 → PB-0008 Windows-browser 시각 검증(표 렌더 · 리사이즈 동작)
+- [x] verify-completion → main ff-merge(76b64a2) → web 재배포(healthz `git_commit=76b64a2`, 3종 PASS) → 데이터 경로 확인(`/api/progress` step11 execute_sql `preview_table` 존재)
+- [x] **후속(CHG-0186-MDTABLE)**: `execute_sql` 만 `preview_table` 보유, `get_sample_rows`/`describe_table` 등은 markdown 표 **문자열**만 가져 여전히 raw 노출(사용자 스크린샷 케이스). `parseMarkdownTablePreview` 추가 + buildStepDetailEl 우선순위 ②로 배선 → 전 도구 표 렌더. node --check + 파서 자가 테스트 PASS. REV-20260610-0187.
+- [ ] (후속) verify-completion → main ff-merge → web 재배포 → PB-0008 Windows-browser 시각 검증(전 도구 표 렌더 · 리사이즈)
