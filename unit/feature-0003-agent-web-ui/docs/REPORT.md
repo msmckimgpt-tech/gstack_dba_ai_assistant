@@ -10,6 +10,17 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-06-10 TASK-0197 — assistant 말풍선 타임스탬프 옆 소요시간 표시** (REQ-20260610-0197, REV-20260610-0197 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret], **Minor §12.3**). assistant 응답 완료 시 각 대화 bubble 의 타임스탬프 옆에 소요시간 표시. `message.meta.duration_ms`(agent_core mirror_meta 기존 저장 필드) > 0 인 assistant 메시지에 한해 `renderMessages()` 에서 기존 `formatElapsed()` 재사용 + `.message-meta-duration` span 추가. user 메시지·duration 없는 메시지는 기존 textContent 유지. styles.css `.message-meta-duration { font-size:10px; opacity:0.7 }`. 캐시버스터 bump. 백엔드/RBAC/스키마/시크릿 무변경. node --check PASS. worktree `ai/claude/response-duration-display`.
+
+### Git 동기화 결과
+- 커밋: 143f039 (ai/claude/response-duration-display)
+- verify-completion: PASS (9 of 9 checks)
+- Push: 완료 (origin ai/claude/response-duration-display)
+- main 병합: 해당없음 (PR 생성 대기 — §16.3 Step 6)
+- 충돌 해결: 없음
+
+## 1. Summary
+
 **2026-06-10 TASK-0188 — 공유 대화 페이지 markdown 미적용 수정 + 수신자 가독성 디자인** (REQ-20260610-0188, REV-20260610-0188 [SKIPPED:frontend-only-no-rbac-no-schema-no-secret], **Minor §12.3** — frontend-static-only). 사용자 보고: 공유 링크(`/share/{token}`) 로 전달받은 대화가 markdown 미적용 raw 텍스트(`**`, `|`, `#`, 코드펜스 그대로)로 보임. **근본 원인**: `share.html` 이 메인 UI 의 markdown 파이프라인 라이브러리(`vendor/marked.umd.js` + `vendor/purify.min.js`)를 미로드 + `share.js renderMessage` 가 `content.textContent = msg.content` 로 평문 렌더 — 메인 채팅은 `markdownToHtml()`(marked.parse → DOMPurify.sanitize)로 렌더하는데 공유뷰만 누락. **수정(3파일, 백엔드·API·스키마 무변경)**: ① `share.html` — marked+purify 로드(share.js 앞 순서) + css/js 캐시버스터 `?v=20260610-share-md` + 헤더 브랜드 라벨 + "링크 복사" 버튼. ② `share.js` — `renderMarkdownContent()` 신규(메인과 동일 marked+DOMPurify, 라이브러리 부재 시 평문 폴백) + sql 코드블록 "쿼리 보기" 토글 이식(`collapseSqlCodeBlocks`) + 외부 링크 `target=_blank rel=noopener`(`markExternalLinks`) + 역할 배지(사용자/어시스턴트) + 링크복사 핸들러(clipboard API + execCommand 폴백). ③ `share.css` — 렌더된 markdown 요소 전반 스타일(제목 h1~h4·리스트·인용·인라인/블록 코드·**GFM 표**(DB 질의 응답 핵심)·hr·img·링크) + 역할 배지/메시지 좌측 accent border + 반응형(≤600px) + **인쇄/PDF 스타일시트**(수신자 보고서 보관 — actions/footer 숨김, SQL 토글 펼침, pre 줄바꿈). **보안**: 익명 페이지 XSS 표면은 메인 앱과 동일한 DOMPurify.sanitize 로 차단 — 데이터 노출/redaction(backend) 무변경. node --check share.js PASS. 검증: Windows-browser(PB-0008) 배포 후. 동시세션 다수(0182~0186 선점)→0188 재번호. worktree `ai/claude/share-md-render`.
 ## 1. Summary
 
