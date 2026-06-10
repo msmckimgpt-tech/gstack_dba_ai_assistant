@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260609-usage-overflow" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260610-usage-design" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -330,7 +330,7 @@
             <div class="drawer-label">Usage</div>
             <h2>LLM 토큰 사용량</h2>
           </div>
-          <div class="admin-pane-actions" style="display:flex;gap:8px;">
+          <div class="admin-pane-actions" style="gap:8px;">
             <select id="usageDaysSel" class="btn-secondary">
               <option value="1">최근 1일</option>
               <option value="7">최근 7일</option>
@@ -347,41 +347,48 @@
             </select>
           </div>
         </header>
-        <div id="usageSummary" style="margin:12px 0;">로딩 중…</div>
-        <!-- TASK-0164/0166: 상용 사용량 대시보드(Anthropic Console / OpenAI Usage) 참조 차트. 의존성 0 (순수 SVG). -->
-        <h3 style="margin-top:22px;"><span id="usageTrendTitle">일별</span> 토큰 사용량 <span style="color:#888;font-weight:400;font-size:.85em;">(모델별 누적 · 막대 hover 시 상세)</span></h3>
-        <div id="usageDayChart"></div>
-        <div class="usage-chart-row" style="display:flex;gap:32px;flex-wrap:wrap;margin-top:8px;">
-          <div style="flex:1;min-width:300px;">
-            <h3 style="margin-top:18px;">모델별 비중</h3>
+        <!-- TASK-0164/0166: 상용 사용량 대시보드(Anthropic Console / OpenAI Usage) 참조 차트. 의존성 0 (순수 SVG).
+             TASK-0177: 디자인 정렬 — .metric-card 요약, 차트 surface 카드, 토큰 통일, 8px spacing. -->
+        <div id="usageSummary" class="admin-usage-section">로딩 중…</div>
+        <div class="admin-usage-section">
+          <h3 class="admin-usage-h3"><span id="usageTrendTitle">일별</span> 토큰 사용량 <span class="admin-usage-caption">· 모델별 누적, 막대 hover 시 상세</span></h3>
+          <div class="admin-usage-card"><div id="usageDayChart"></div></div>
+        </div>
+        <div class="admin-usage-section admin-usage-row">
+          <div class="admin-usage-card">
+            <h3 class="admin-usage-h3">모델별 비중</h3>
             <div id="usageModelChart"></div>
           </div>
-          <div style="flex:1;min-width:300px;">
-            <h3 style="margin-top:18px;">역할별</h3>
+          <div class="admin-usage-card">
+            <h3 class="admin-usage-h3">역할별</h3>
             <div id="usageRoleChart"></div>
           </div>
         </div>
-        <h3 style="margin-top:22px;">계정별</h3>
-        <div id="usageAccountChart"></div>
+        <div class="admin-usage-section">
+          <h3 class="admin-usage-h3">계정별</h3>
+          <div class="admin-usage-card"><div id="usageAccountChart"></div></div>
+        </div>
         <!-- TASK-0176: 역할별·계정별 추정 비용 차트 (claude 등 과금 모델만 > $0). -->
-        <h3 style="margin-top:22px;">추정 비용 <span style="color:#888;font-weight:400;font-size:.85em;">(역할별 · 계정별 — claude 등 과금 모델 기준 추정, 로컬 LLM=$0)</span></h3>
-        <div class="usage-chart-row" style="display:flex;gap:32px;flex-wrap:wrap;margin-top:8px;">
-          <div style="flex:1;min-width:300px;">
-            <h4 style="margin:6px 0;color:#555;">역할별 비용</h4>
-            <div id="usageRoleCostChart"></div>
-          </div>
-          <div style="flex:1;min-width:300px;">
-            <h4 style="margin:6px 0;color:#555;">계정별 비용</h4>
-            <div id="usageAccountCostChart"></div>
+        <div class="admin-usage-section">
+          <h3 class="admin-usage-h3">추정 비용 <span class="admin-usage-caption">· claude 등 과금 모델 기준 추정, 로컬 LLM = $0</span></h3>
+          <div class="admin-usage-row">
+            <div class="admin-usage-card">
+              <h4 class="admin-usage-h4">역할별 비용</h4>
+              <div id="usageRoleCostChart"></div>
+            </div>
+            <div class="admin-usage-card">
+              <h4 class="admin-usage-h4">계정별 비용</h4>
+              <div id="usageAccountCostChart"></div>
+            </div>
           </div>
         </div>
-        <details style="margin-top:26px;">
-          <summary style="cursor:pointer;color:#555;font-weight:600;">상세 표 (모델별 · 역할별 · 계정별)</summary>
-          <h3 style="margin-top:14px;">모델별</h3>
+        <details class="admin-usage-details">
+          <summary>상세 표 · 모델별 · 역할별 · 계정별</summary>
+          <h3 class="admin-usage-h3" style="margin-top:16px;">모델별</h3>
           <div id="usageByModel"></div>
-          <h3 style="margin-top:18px;">역할별</h3>
+          <h3 class="admin-usage-h3" style="margin-top:18px;">역할별</h3>
           <div id="usageByRole"></div>
-          <h3 style="margin-top:18px;">계정별</h3>
+          <h3 class="admin-usage-h3" style="margin-top:18px;">계정별</h3>
           <div id="usageByAccount"></div>
         </details>
       </section>
@@ -464,6 +471,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260609-usage-cost"></script>
+  <script src="/static/admin.js?v=20260610-usage-design"></script>
 </body>
 </html>

@@ -717,7 +717,7 @@ async function loadUsage() {
     if (!t) {
       t = document.createElement("div");
       t.id = "usageTooltip";
-      t.style.cssText = "position:fixed;z-index:9999;pointer-events:none;display:none;background:#1f2937;color:#fff;font-size:12px;line-height:1.55;padding:6px 9px;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.28);white-space:nowrap;";
+      t.className = "admin-usage-tooltip";  // TASK-0177: 인라인 cssText → 토큰 클래스
       document.body.appendChild(t);
     }
     return t;
@@ -754,7 +754,7 @@ async function loadUsage() {
   const renderStacked = (el, byDayModel) => {
     if (!el) return;
     const rows = byDayModel || [];
-    if (!rows.length) { el.innerHTML = "<p style='color:#888;'>데이터 없음</p>"; return; }
+    if (!rows.length) { el.innerHTML = "<p style='color:var(--text-muted);'>데이터 없음</p>"; return; }
     const dayMap = {}; const models = [];
     rows.forEach((r) => {
       dayMap[r.day] = dayMap[r.day] || {};
@@ -780,16 +780,16 @@ async function loadUsage() {
         bars += `<rect x='${x.toFixed(1)}' y='${y.toFixed(1)}' width='${bw.toFixed(1)}' height='${h.toFixed(1)}' fill='${cmap[m]}' rx='1' data-tip='${esc(d)} · ${esc(m)}<br><b>${num(v)}</b> 토큰 (${pct}%)'/>`;
       });
       if (bw >= 20 && (dayTot / maxT) > 0.05) {
-        valLabels += `<text x='${(x + bw / 2).toFixed(1)}' y='${(y - 3).toFixed(1)}' text-anchor='middle' font-size='9' fill='#666'>${num(dayTot)}</text>`;
+        valLabels += `<text x='${(x + bw / 2).toFixed(1)}' y='${(y - 3).toFixed(1)}' text-anchor='middle' font-size='9' fill='var(--text-2)'>${num(dayTot)}</text>`;
       }
     });
-    const axis = `<line x1='${pL}' y1='${pT + plotH}' x2='${W - pR}' y2='${pT + plotH}' stroke='#e5e7eb'/>`
-      + `<text x='${pL - 6}' y='${pT + 9}' text-anchor='end' font-size='10' fill='#999'>${num(maxT)}</text>`
-      + `<text x='${pL - 6}' y='${pT + plotH}' text-anchor='end' font-size='10' fill='#999'>0</text>`;
+    const axis = `<line x1='${pL}' y1='${pT + plotH}' x2='${W - pR}' y2='${pT + plotH}' stroke='var(--border)'/>`
+      + `<text x='${pL - 6}' y='${pT + 9}' text-anchor='end' font-size='10' fill='var(--text-muted)'>${num(maxT)}</text>`
+      + `<text x='${pL - 6}' y='${pT + plotH}' text-anchor='end' font-size='10' fill='var(--text-muted)'>0</text>`;
     let xl = "";
     [...new Set(n <= 1 ? [0] : [0, Math.floor(n / 3), Math.floor(2 * n / 3), n - 1])].forEach((di) => {
       const x = pL + di * step + step / 2;
-      xl += `<text x='${x.toFixed(1)}' y='${H - 9}' text-anchor='middle' font-size='10' fill='#999'>${esc(shortLabel(days[di]))}</text>`;
+      xl += `<text x='${x.toFixed(1)}' y='${H - 9}' text-anchor='middle' font-size='10' fill='var(--text-muted)'>${esc(shortLabel(days[di]))}</text>`;
     });
     const legend = models.map((m) => `<span style='display:inline-flex;align-items:center;gap:5px;margin:2px 14px 2px 0;font-size:12px;'><span style='width:11px;height:11px;border-radius:2px;background:${cmap[m]};display:inline-block;'></span>${esc(m)}</span>`).join("");
     el.innerHTML = `<svg viewBox='0 0 ${W} ${H}' style='width:100%;max-width:780px;height:auto;'>${axis}${bars}${valLabels}${xl}</svg><div style='margin-top:6px;'>${legend}</div>`;
@@ -802,7 +802,7 @@ async function loadUsage() {
       label: (r.resolved_model && r.resolved_model !== r.model) ? r.resolved_model : (r.model || "(미상)"),
       value: r.total_tokens || 0, calls: r.calls || 0, cost: r.cost_usd || 0,
     })).filter((r) => r.value > 0);
-    if (!rows.length) { el.innerHTML = "<p style='color:#888;'>데이터 없음</p>"; return; }
+    if (!rows.length) { el.innerHTML = "<p style='color:var(--text-muted);'>데이터 없음</p>"; return; }
     const total = rows.reduce((a, b) => a + b.value, 0);
     const cmap = colorMapFor(rows.map((r) => r.label));
     const R = 54, C = 2 * Math.PI * R, cx = 70, cy = 70;
@@ -814,7 +814,7 @@ async function loadUsage() {
       off += len;
     });
     const legend = rows.map((r) => `<div style='display:flex;align-items:center;gap:6px;font-size:12px;margin:3px 0;'><span style='width:11px;height:11px;border-radius:2px;background:${cmap[r.label]};display:inline-block;flex:none;'></span><span style='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>${esc(r.label)}</span><strong>${(r.value / total * 100).toFixed(1)}%</strong></div>`).join("");
-    el.innerHTML = `<div style='display:flex;align-items:center;gap:18px;flex-wrap:wrap;'><svg viewBox='0 0 140 140' style='width:130px;height:130px;flex:none;'>${segs}<text x='70' y='66' text-anchor='middle' font-size='11' fill='#888'>총 토큰</text><text x='70' y='83' text-anchor='middle' font-size='13' font-weight='700' fill='#333'>${num(total)}</text></svg><div style='flex:1;min-width:150px;'>${legend}</div></div>`;
+    el.innerHTML = `<div style='display:flex;align-items:center;gap:18px;flex-wrap:wrap;'><svg viewBox='0 0 140 140' style='width:130px;height:130px;flex:none;'>${segs}<text x='70' y='66' text-anchor='middle' font-size='11' fill='var(--text-muted)'>총 토큰</text><text x='70' y='83' text-anchor='middle' font-size='13' font-weight='700' fill='var(--text)'>${num(total)}</text></svg><div style='flex:1;min-width:150px;'>${legend}</div></div>`;
     bindTip(el);
   };
   // 가로 막대 (역할별/계정별). rows = [{label, value, tip}].
@@ -822,33 +822,36 @@ async function loadUsage() {
     if (!el) return;
     const fmt = valueFmt || num;
     const data = (rows || []).filter((r) => r.value > 0);
-    if (!data.length) { el.innerHTML = "<p style='color:#888;'>데이터 없음</p>"; return; }
+    if (!data.length) { el.innerHTML = "<p style='color:var(--text-muted);'>데이터 없음</p>"; return; }
     const max = Math.max(...data.map((r) => r.value));
     const cmap = colorMapFor(data.map((r) => r.label));
-    el.innerHTML = data.map((r) => `<div style='margin:8px 0;' data-tip='${r.tip || (esc(r.label) + "<br><b>" + fmt(r.value) + "</b>")}'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;'><span>${esc(r.label)}</span><strong>${fmt(r.value)}</strong></div><div style='background:#f1f5f9;border-radius:4px;height:14px;overflow:hidden;'><div style='width:${(r.value / max * 100).toFixed(1)}%;height:100%;background:${cmap[r.label]};border-radius:4px;'></div></div></div>`).join("");
+    el.innerHTML = data.map((r) => `<div style='margin:8px 0;' data-tip='${r.tip || (esc(r.label) + "<br><b>" + fmt(r.value) + "</b>")}'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;'><span>${esc(r.label)}</span><strong>${fmt(r.value)}</strong></div><div style='background:var(--border-subtle);border-radius:4px;height:14px;overflow:hidden;'><div style='width:${(r.value / max * 100).toFixed(1)}%;height:100%;background:${cmap[r.label]};border-radius:4px;'></div></div></div>`).join("");
     bindTip(el);
   };
   // TASK-0163: fmt 에 행 전체(r)도 전달 — "별칭 → 해소모델" 등 다중 필드 표시용.
+  // TASK-0177: 인라인 style → .admin-usage-table 클래스 + 숫자 컬럼 우측정렬(align:'right' → td/th.num).
   const tbl = (rows, cols) => {
-    if (!rows || !rows.length) return "<p style='color:#888;'>없음</p>";
-    const head = cols.map((c) => `<th style='text-align:left;padding:4px 12px;'>${esc(c.label)}</th>`).join("");
-    const body = rows.map((r) => "<tr>" + cols.map((c) => `<td style='padding:4px 12px;border-top:1px solid #eee;'>${esc(c.fmt ? c.fmt(r[c.key], r) : r[c.key])}</td>`).join("") + "</tr>").join("");
-    return `<table style='border-collapse:collapse;width:100%;max-width:620px;'><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    if (!rows || !rows.length) return "<p class='admin-usage-empty'>없음</p>";
+    const cls = (c) => (c.align === "right" ? " class='num'" : "");
+    const head = cols.map((c) => `<th${cls(c)}>${esc(c.label)}</th>`).join("");
+    const body = rows.map((r) => "<tr>" + cols.map((c) => `<td${cls(c)}>${esc(c.fmt ? c.fmt(r[c.key], r) : r[c.key])}</td>`).join("") + "</tr>").join("");
+    return `<table class='admin-usage-table'><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
   };
   const acctLabel = (r) => (r.account_id == null ? "(시스템)" : (r.username ? `${r.username} (#${r.account_id})` : `#${r.account_id}`));
+  const costFmt = (v) => (v && v > 0 ? usd(v) : "—");
   try {
     const data = await apiFetch(`/api/admin/usage?days=${encodeURIComponent(days)}&gran=${encodeURIComponent(gran)}`);
     const t = data.totals || {};
     if (summaryEl) {
-      const costCard = (t.cost_usd && t.cost_usd > 0)
-        ? `<div><div class='drawer-label'>추정 비용</div><strong>${usd(t.cost_usd)}</strong></div>` : "";
+      // TASK-0177: dashboard 와 동일한 .metric-card / .summary-metrics 로 통일.
+      const card = (label, val) => `<article class='metric-card admin-usage-metric'><span>${label}</span><strong>${val}</strong></article>`;
       summaryEl.innerHTML =
-        `<div style='display:flex;gap:24px;flex-wrap:wrap;'>` +
-        `<div><div class='drawer-label'>호출</div><strong>${num(t.calls)}</strong></div>` +
-        `<div><div class='drawer-label'>총 토큰</div><strong>${num(t.total_tokens)}</strong></div>` +
-        `<div><div class='drawer-label'>prompt</div><strong>${num(t.prompt_tokens)}</strong></div>` +
-        `<div><div class='drawer-label'>completion</div><strong>${num(t.completion_tokens)}</strong></div>` +
-        costCard +
+        `<div class='summary-metrics'>` +
+        card("호출", num(t.calls)) +
+        card("총 토큰", num(t.total_tokens)) +
+        card("Prompt", num(t.prompt_tokens)) +
+        card("Completion", num(t.completion_tokens)) +
+        ((t.cost_usd && t.cost_usd > 0) ? card("추정 비용", usd(t.cost_usd)) : "") +
         `</div>`;
     }
     // TASK-0164/0166: 차트 렌더 (기간별 stacked / 모델별 도넛 / 역할별·계정별 가로막대).
@@ -878,17 +881,23 @@ async function loadUsage() {
         const resolved = v == null ? "" : String(v);
         return (!resolved || resolved === alias) ? (alias || "(미상)") : `${alias} → ${resolved}`;
       } },
-      { key: "calls", label: "호출", fmt: num }, { key: "total_tokens", label: "토큰", fmt: num },
-      { key: "prompt_tokens", label: "prompt", fmt: num }, { key: "completion_tokens", label: "completion", fmt: num },
-      { key: "cost_usd", label: "추정 비용", fmt: (v) => (v && v > 0 ? usd(v) : "—") },
+      { key: "calls", label: "호출", fmt: num, align: "right" }, { key: "total_tokens", label: "토큰", fmt: num, align: "right" },
+      { key: "prompt_tokens", label: "prompt", fmt: num, align: "right" }, { key: "completion_tokens", label: "completion", fmt: num, align: "right" },
+      { key: "cost_usd", label: "추정 비용", fmt: costFmt, align: "right" },
     ]);
+    // TASK-0176/0177: 역할별·계정별 표에도 추정 비용 컬럼(차트와 일치).
     if (roleEl) roleEl.innerHTML = tbl(data.by_role, [
-      { key: "role", label: "역할" }, { key: "calls", label: "호출", fmt: num }, { key: "total_tokens", label: "토큰", fmt: num },
+      { key: "role", label: "역할" },
+      { key: "calls", label: "호출", fmt: num, align: "right" },
+      { key: "total_tokens", label: "토큰", fmt: num, align: "right" },
+      { key: "cost_usd", label: "추정 비용", fmt: costFmt, align: "right" },
     ]);
     if (acctEl) acctEl.innerHTML = tbl(data.by_account, [
       { key: "account_id", label: "계정", fmt: (v, r) => (v == null ? "(시스템)" : (r.username ? `${r.username} (#${v})` : `#${v}`)) },
       { key: "role", label: "역할", fmt: (v) => (v == null ? "—" : v) },
-      { key: "calls", label: "호출", fmt: num }, { key: "total_tokens", label: "토큰", fmt: num },
+      { key: "calls", label: "호출", fmt: num, align: "right" },
+      { key: "total_tokens", label: "토큰", fmt: num, align: "right" },
+      { key: "cost_usd", label: "추정 비용", fmt: costFmt, align: "right" },
     ]);
   } catch (e) {
     if (summaryEl) summaryEl.textContent = "조회 실패";

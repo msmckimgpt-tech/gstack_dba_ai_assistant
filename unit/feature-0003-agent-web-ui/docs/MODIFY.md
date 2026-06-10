@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260610-0177
+- Date: 2026-06-10
+- TASK-Cycle: TASK-0177, **Minor §12.3** — LLM 사용량 상세 표 추정 비용 컬럼 + gstack 디자인 관점 정렬
+- Summary: (A) 역할별·계정별 상세 표에 추정 비용 컬럼 + 숫자 우측정렬. (B) gstack design-review 관점 subagent 리뷰 후 usage pane 디자인 토큰 정렬(요약 metric-card, 임의 hex→토큰, 차트 surface 카드, spacing/타이포 위계, 표/툴팁 클래스化). 백엔드 무변경.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.admin-usage-*` 클래스군 신규(.metric-card 정의 다음) — card/row/section/h3/h4/caption/metric/legend/table(+td.num)/details/empty/tooltip. 기존 :root 토큰(`--surface`/`--border`/`--border-subtle`/`--text*`/`--r-lg`/`--r-sm`/`--shadow-md`) 재사용.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: usage pane 인라인 style 제거 + `.admin-usage-section/card/row/h3/h4/caption/details` 클래스 적용. 차트 각 블록을 surface 카드로 래핑(모델별|역할별, 역할별비용|계정별비용 2-col). 캐시버스터 styles.css·admin.js `?v=20260610-usage-design`.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: `loadUsage` — 요약을 `.metric-card`/`.summary-metrics`(card 헬퍼)로, tbl 을 `.admin-usage-table` + `align:'right'`(td/th.num), 역할별·계정별 표 cost_usd 컬럼(costFmt) 추가, 툴팁 cssText→`className='admin-usage-tooltip'`, SVG fill 임의 hex→`var(--text*)`/`var(--border*)`(sed 치환), 빈 상태 `.admin-usage-empty`.
+- Note: 권한/엔드포인트/스키마/시크릿/백엔드(app.py) 신규 0 — 순수 프론트(표 컬럼 + 디자인). cost_usd 데이터는 TASK-0176 백엔드 산물. 차트 막대 색 팔레트는 카테고리 구분용 의도라 유지.
+- Review: REV-20260610-0177 [SKIPPED:frontend-design-no-rbac-no-schema] + general-purpose subagent 의 gstack design-review 관점 리뷰 반영(High 3·Med 4·Low). Windows-browser(PB-0008) 검증 배포 후.
+
 ## CHG-20260609-0176
 - Date: 2026-06-09
 - TASK-Cycle: TASK-0176, **Minor §12.3** — LLM 사용량 역할별·계정별 추정 비용 차트

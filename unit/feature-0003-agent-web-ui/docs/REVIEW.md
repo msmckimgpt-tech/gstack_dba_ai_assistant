@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0177 [SUBAGENT: gstack design-review 관점 디자인 리뷰 — usage pane, 반영]
+- Date: 2026-06-10
+- Cycle: TASK-0177 (LLM 사용량 상세 표 비용 컬럼 + 디자인 정렬), **Minor §12.3**
+- Reviewer: general-purpose subagent (gstack `/design-review` designer's eye 관점 — usage pane 의 admin.html/admin.js/styles.css 직접 읽고 토큰·일관성·위계·AI slop 점검). 사용자 명시 요청("gstack 디자인 관점 리뷰 자율 진행·적용").
+- Verdict: 코드/차트 로직 건강, 문제는 전부 "표면 위생"(임의 hex·인라인 style·spacing 혼재). **리디자인 아닌 토큰 정렬**이 정답으로 판정.
+- 반영(High 3): H1 요약 raw flex → `.metric-card`/`.summary-metrics` 통일 / H2 임의 hex(#888/#999/#666/#333/#e5e7eb/#f1f5f9/#eee) → `--text*`/`--border*` 토큰(warm/cool gray 불일치 제거) / H3 22·18·14 혼재 margin → 8px 그리드 클래스.
+- 반영(Med 4): M1 차트 섹션 `.admin-usage-card` surface 구획 / M2 h2(18)→h3(14)→h4(12) 위계 / M4 상세 표 `.admin-usage-table`(우측정렬·tabular-nums·hover) / (M3 eyebrow 케이스는 이미 일관 — 변경 불요 확인).
+- 반영(Low): L1 툴팁 인라인 cssText(cool slate #1f2937, 그림자 .28) → `.admin-usage-tooltip`(`--text`·`--shadow-md`) / L4 빈 상태 `.admin-usage-empty` 클래스.
+- 보류(데이터 규모 의존): L3 도넛 중앙 큰 수 축약(현 규모 OK), L2 select 의 `.btn-secondary` 재사용(시각 정상). 차트 막대 색 팔레트는 카테고리 구분 의도라 유지(`--chart-*` 토큰 승격은 후속 선택).
+- 결론: 외부 의존성 0 유지, 기존 토큰 재사용. RBAC/스키마/백엔드 무변경 → 동작 위험면 없음. node --check PASS. 시각 검증 Windows-browser(PB-0008).
+
 ## REV-20260609-0176 [SKIPPED:frontend-viz-no-rbac-no-schema]
 - Date: 2026-06-09
 - Cycle: TASK-0176 (LLM 사용량 역할별·계정별 추정 비용 차트), **Minor §12.3**

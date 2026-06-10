@@ -434,6 +434,12 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   산출, `_aggregate_usage_by_role` 가 역할별 `cost_usd` 재합산 → `by_account[].cost_usd`·`by_role[].cost_usd`.
   admin.js `renderHBar(el, rows, valueFmt)` 의 valueFmt(usd)로 역할별/계정별 추정 비용 가로 막대
   (`#usageRoleCostChart`/`#usageAccountCostChart`, 비용 0 행 제외). 비용은 claude 등 과금 모델 추정만(로컬=$0).
+- LLM 사용량 디자인 토큰 정렬 (TASK-0177): usage pane 은 `admin-usage-*` 클래스(styles.css)로
+  통일 — 요약은 dashboard 와 동일 `.metric-card`/`.summary-metrics`, 차트 블록은 `.admin-usage-card`
+  surface 로 구획, 섹션/타이포는 `.admin-usage-section/h3/h4`(8px 그리드·h2→h3→h4 위계), 상세 표는
+  `.admin-usage-table`(`align:'right'`→td.num 우측정렬·tabular-nums·hover), 툴팁은 `.admin-usage-tooltip`.
+  색은 전부 :root 토큰(`--text*`/`--border*`/`--surface`/`--shadow-md`) 사용(임의 hex 금지); 차트 막대
+  팔레트(`CHART_COLORS`/`SYS_COLOR`)만 카테고리 색으로 유지. 역할별·계정별 상세 표에 추정 비용 컬럼 포함(차트 일치).
 - 관리 콘솔 레이아웃 스크롤 (TASK-0167): `.admin-shell`·`.admin-workspace` 는 `height:100vh;
   overflow:hidden` 이고 각 `.admin-pane` 이 자체 스크롤한다. 단순 세로 흐름 pane(dashboard·usage)은
   `overflow-y:auto` 를 직접 가지며(styles.css), list-detail pane(accounts/roles/products/audits)은

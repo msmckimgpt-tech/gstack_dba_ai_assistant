@@ -12,9 +12,12 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-09 (TASK-0176 역할별·계정별 추정 비용 차트; TASK-0167 작은화면 세로 잘림; TASK-0166 차트 고도화)
+- Last Updated: 2026-06-10 (TASK-0177 상세표 비용컬럼+디자인 정렬; TASK-0176 역할/계정별 비용 차트; TASK-0167 작은화면 잘림)
 
 ## 2. Task Queue
+
+### TASK-0177 LLM 사용량 상세 표 추정 비용 컬럼 + gstack 디자인 관점 정렬 (2026-06-10)
+- [x] **Minor §12.3** — 사용자 요청(차트·상세 표 비용 일치 + gstack 디자인 리뷰 자율 적용). **A**: 역할별·계정별 상세 표에 추정 비용 컬럼 추가(by_role/by_account 의 cost_usd=TASK-0176, 백엔드 무변경) + tbl 헬퍼 `align:'right'` → 숫자 컬럼 우측정렬·tabular-nums. **B(디자인)**: general-purpose subagent 의 gstack `/design-review` 적대적 리뷰 수령 후 적용 — 요약 `.metric-card`/`.summary-metrics` 통일, 임의 hex→디자인 토큰(`--text*`/`--border*`), 차트 `.admin-usage-card` surface 구획, 8px spacing 클래스(`.admin-usage-section/h3/h4`), h2→h3→h4 위계, `.admin-usage-table`(hover·우측정렬·토큰 border), 툴팁 `.admin-usage-tooltip`(토큰화). 차트 팔레트는 유지. styles.css(admin-usage-* 신규) + admin.html(클래스化) + admin.js(요약/표/툴팁/SVG fill 토큰). 캐시버스터 `?v=20260610-usage-design`. 권한/엔드포인트/스키마/백엔드 신규 0. node --check PASS. REV-20260610-0177 [SKIPPED:frontend-design] + design subagent 리뷰 반영(High3+Med4+Low). Windows-browser(PB-0008) 검증 배포 후. worktree `ai/claude/usage-cost-tables-design`. 동시세션 다수→0177.
 
 ### TASK-0176 LLM 사용량 역할별·계정별 추정 비용 차트 (2026-06-09)
 - [x] **Minor §12.3** — 사용자 요청. 토큰 가로 막대(역할별/계정별) 외에 **추정 비용** 가로 막대 추가. **백엔드**: `admin_llm_usage` by_account 를 `owner_account_id` 단일 GROUP BY → 계정 × `COALESCE(resolved_model,model)` 분해로 변경(비용은 모델별 단가라 모델 분해 필수) + Python 계정별 fold(`_estimate_llm_cost_usd` 모델별 합=`cost_usd`). `_aggregate_usage_by_role` 가 enrich 된 by_account 의 cost_usd 를 역할별 재합산 → `by_role[].cost_usd`. **프론트(의존성 0 SVG)**: `renderHBar(el, rows, valueFmt)` 에 valueFmt 인자 추가(usd) + 역할별/계정별 추정 비용 차트(`#usageRoleCostChart`/`#usageAccountCostChart`, 비용 0 행 제외, hover usd 툴팁). admin.html "추정 비용" 섹션(2열). 캐시버스터 `?v=20260609-usage-cost`. 권한/엔드포인트/스키마/시크릿 신규 0(기존 컬럼 read + TASK-0166 단가 상수 재사용). node --check/py_compile + make test 269 passed/5 skipped(회귀 0). REV-20260609-0176 [SKIPPED:frontend-viz]. 동시세션 0168~0175 선점→0176 재번호. worktree `ai/claude/usage-cost-by-role-account`.

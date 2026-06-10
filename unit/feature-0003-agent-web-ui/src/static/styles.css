@@ -3390,6 +3390,102 @@ a { color: inherit; }
   color: var(--text);
 }
 
+/* ── LLM 사용량 pane (usage) — TASK-0177 디자인 정렬: 인라인 style 추출 + 토큰 통일 ──
+   디자인 리뷰(gstack design-review 관점) 반영: 요약은 .metric-card 재사용, 임의 hex →
+   --text*/--border* 토큰, 8px spacing 그리드, 차트는 surface 카드로 구획. 의존성 0(CSS/SVG). */
+.admin-usage-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 16px 18px;
+}
+.admin-usage-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.admin-usage-row > .admin-usage-card { flex: 1; min-width: 300px; }
+.admin-usage-section { margin-top: 20px; }
+.admin-usage-section:first-of-type { margin-top: 14px; }
+.admin-usage-h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 10px;
+}
+.admin-usage-h4 {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-2);
+  margin: 0 0 8px;
+}
+.admin-usage-caption {
+  font-weight: 400;
+  font-size: .82em;
+  color: var(--text-muted);
+}
+/* 요약 metric 카드 — dashboard .metric-card 재사용하되 큰 숫자(토큰)용 스케일 다운 */
+.admin-usage-metric strong { font-size: 22px; font-weight: 800; }
+.admin-usage-metric span { letter-spacing: .04em; }
+/* 차트 막대 위 SVG 텍스트·축은 JS 에서 var(--…) 직접 치환 (클래스로 분리 불가) */
+.admin-usage-legend {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+.admin-usage-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.admin-usage-swatch { width: 11px; height: 11px; border-radius: 2px; display: inline-block; flex: none; }
+/* 상세 표 */
+.admin-usage-table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 640px;
+  font-size: 13px;
+}
+.admin-usage-table th {
+  text-align: left;
+  padding: 7px 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.admin-usage-table td {
+  padding: 7px 12px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-2);
+}
+.admin-usage-table th.num, .admin-usage-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.admin-usage-table tbody tr:hover { background: var(--bg); }
+.admin-usage-details { margin-top: 24px; }
+.admin-usage-details > summary {
+  cursor: pointer;
+  color: var(--text-2);
+  font-weight: 600;
+  font-size: 13px;
+  padding: 4px 0;
+}
+.admin-usage-empty { color: var(--text-muted); font-size: 13px; margin: 6px 0; }
+/* hover 툴팁 (admin.js 인라인 cssText 대체) */
+.admin-usage-tooltip {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  display: none;
+  background: var(--text);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 6px 9px;
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-md);
+  white-space: nowrap;
+}
+
 .admin-accounts { display: flex; flex-direction: column; gap: 12px; }
 
 .admin-account {
