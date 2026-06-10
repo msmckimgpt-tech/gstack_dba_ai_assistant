@@ -1136,56 +1136,114 @@ function renderProfile() {
 
   if (passwordErrorEl) passwordErrorEl.textContent = "";
   if (passwordChangeFormEl) passwordChangeFormEl.reset();
-
-  // TASK-0158: 내 활동 기록 탭은 audit.read 권한자만 노출.
-  const auditsTab = document.getElementById("profileAuditsTab");
-  if (auditsTab) {
-    const canAudit = can("audit.read.own") || can("audit.read.any");
-    auditsTab.classList.toggle("hidden", !canAudit);
-  }
+  // TASK-0184: 내 활동 기록 탭(TASK-0158)은 의도치 않은 노출이라 제거됨 — 게이트 불필요.
 }
 
-// TASK-0158: 내 활동 기록 — 본인 감사 이력 (GET /api/profile/audits; 백엔드가 scope=own 강제).
-// 이전엔 이 자기서비스 엔드포인트에 진입점이 없었다(프로필 탭은 TASK-0105 에서 제거됨).
-async function loadProfileAudits(reset = false) {
-  const listEl = document.getElementById("profileAuditList");
-  const moreBtn = document.getElementById("profileAuditMoreBtn");
-  if (!listEl) return;
-  if (reset) {
-    state.profileAuditCursor = "";
-    state.profileAuditItems = [];
-    listEl.innerHTML = `<div class="profile-audit-empty">불러오는 중…</div>`;
-  }
+// TASK-0184: 내 사용 내역 — 본인 LLM 사용량 (GET /api/profile/usage). 간소판: 토큰·모델·요청
+// (관리 콘솔 사용량 차트의 본인 범위 축약, 추정 비용·역할/계정 분해는 제외). 의존성 0(순수 SVG),
+// 툴팁은 SVG <title> 로 가볍게(관리 콘솔의 커스텀 hover 툴팁 대신).
+const PROFILE_USAGE_COLORS = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16"];
+const PROFILE_USAGE_SYS_COLOR = "#94a3b8";
+const _pUsageNum = (v) => (Number(v) || 0).toLocaleString();
+const _pUsageEsc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+function profileUsageColorMap(models) {
+  const m = {}; let i = 0;
+  models.forEach((k) => {
+    if (k === "edge" || k === "(미상)") m[k] = PROFILE_USAGE_SYS_COLOR;
+    else { m[k] = PROFILE_USAGE_COLORS[i % PROFILE_USAGE_COLORS.length]; i += 1; }
+  });
+  return m;
+}
+
+// 기간별 토큰 — 모델별 누적 세로 막대 (admin renderStacked 의 축약: 값 라벨·커스텀 툴팁 제거).
+function renderProfileUsageStacked(el, byDayModel, cmap) {
+  if (!el) return;
+  const rows = byDayModel || [];
+  if (!rows.length) { el.innerHTML = "<p class='profile-usage-empty'>데이터 없음</p>"; return; }
+  const dayMap = {}; const models = [];
+  rows.forEach((r) => {
+    dayMap[r.day] = dayMap[r.day] || {};
+    dayMap[r.day][r.model] = (dayMap[r.day][r.model] || 0) + (r.total_tokens || 0);
+    if (!models.includes(r.model)) models.push(r.model);
+  });
+  const days = Object.keys(dayMap).sort();
+  const totalsByDay = days.map((d) => Object.values(dayMap[d]).reduce((a, b) => a + b, 0));
+  const maxT = Math.max(1, ...totalsByDay);
+  const cw = Math.max(280, Math.round(el.clientWidth || 0) || 380);
+  const W = cw, H = 150, pL = 46, pB = 22, pT = 8, pR = 10;
+  const plotW = W - pL - pR, plotH = H - pT - pB, n = days.length;
+  const step = plotW / n, bw = Math.max(2, Math.min(40, step * 0.66));
+  let bars = "";
+  days.forEach((d, di) => {
+    const x = pL + di * step + (step - bw) / 2;
+    let y = pT + plotH;
+    models.forEach((m) => {
+      const v = dayMap[d][m] || 0; if (v <= 0) return;
+      const h = (v / maxT) * plotH; y -= h;
+      bars += `<rect x='${x.toFixed(1)}' y='${y.toFixed(1)}' width='${bw.toFixed(1)}' height='${h.toFixed(1)}' fill='${cmap[m] || PROFILE_USAGE_SYS_COLOR}' rx='1'><title>${_pUsageEsc(d)} · ${_pUsageEsc(m)}: ${_pUsageNum(v)} 토큰</title></rect>`;
+    });
+  });
+  const axis = `<line x1='${pL}' y1='${pT + plotH}' x2='${W - pR}' y2='${pT + plotH}' stroke='var(--border)'/>`
+    + `<text x='${pL - 6}' y='${pT + 9}' text-anchor='end' font-size='9' fill='var(--text-muted)'>${_pUsageNum(maxT)}</text>`
+    + `<text x='${pL - 6}' y='${pT + plotH}' text-anchor='end' font-size='9' fill='var(--text-muted)'>0</text>`;
+  const shortLabel = (s) => { s = String(s); return s.length > 7 ? s.slice(5) : s; };
+  let xl = "";
+  [...new Set(n <= 1 ? [0] : [0, Math.floor(n / 2), n - 1])].forEach((di) => {
+    const x = pL + di * step + step / 2;
+    xl += `<text x='${x.toFixed(1)}' y='${H - 7}' text-anchor='middle' font-size='9' fill='var(--text-muted)'>${_pUsageEsc(shortLabel(days[di]))}</text>`;
+  });
+  const legend = models.map((m) => `<span class='profile-usage-legend-item'><span class='profile-usage-swatch' style='background:${cmap[m] || PROFILE_USAGE_SYS_COLOR};'></span>${_pUsageEsc(m)}</span>`).join("");
+  el.innerHTML = `<svg viewBox='0 0 ${W} ${H}' style='width:100%;height:auto;display:block;'>${axis}${bars}${xl}</svg><div class='profile-usage-legend'>${legend}</div>`;
+}
+
+// 모델별 비중 — 도넛 (admin renderDonut 의 축약: 비용 제거).
+function renderProfileUsageDonut(el, byModel, cmap) {
+  if (!el) return;
+  const rows = (byModel || []).map((r) => ({
+    label: (r.resolved_model && r.resolved_model !== r.model) ? r.resolved_model : (r.model || "(미상)"),
+    value: r.total_tokens || 0,
+  })).filter((r) => r.value > 0);
+  if (!rows.length) { el.innerHTML = "<p class='profile-usage-empty'>데이터 없음</p>"; return; }
+  const total = rows.reduce((a, b) => a + b.value, 0);
+  const R = 46, C = 2 * Math.PI * R, cx = 60, cy = 60;
+  let off = 0, segs = "";
+  rows.forEach((r) => {
+    const len = (r.value / total) * C;
+    segs += `<circle cx='${cx}' cy='${cy}' r='${R}' fill='none' stroke='${cmap[r.label] || PROFILE_USAGE_SYS_COLOR}' stroke-width='18' stroke-dasharray='${len.toFixed(2)} ${(C - len).toFixed(2)}' stroke-dashoffset='${(-off).toFixed(2)}' transform='rotate(-90 ${cx} ${cy})'><title>${_pUsageEsc(r.label)}: ${_pUsageNum(r.value)} 토큰 (${(r.value / total * 100).toFixed(1)}%)</title></circle>`;
+    off += len;
+  });
+  const legend = rows.map((r) => `<div class='profile-usage-donut-row'><span class='profile-usage-swatch' style='background:${cmap[r.label] || PROFILE_USAGE_SYS_COLOR};'></span><span class='profile-usage-donut-label'>${_pUsageEsc(r.label)}</span><strong>${(r.value / total * 100).toFixed(1)}%</strong></div>`).join("");
+  el.innerHTML = `<div class='profile-usage-donut'><svg viewBox='0 0 120 120' style='width:110px;height:110px;flex:none;'>${segs}<text x='60' y='57' text-anchor='middle' font-size='10' fill='var(--text-muted)'>총 토큰</text><text x='60' y='72' text-anchor='middle' font-size='12' font-weight='700' fill='var(--text)'>${_pUsageNum(total)}</text></svg><div class='profile-usage-donut-legend'>${legend}</div></div>`;
+}
+
+async function loadProfileUsage() {
+  const summaryEl = document.getElementById("profileUsageSummary");
+  const dayEl = document.getElementById("profileUsageDayChart");
+  const modelEl = document.getElementById("profileUsageModelChart");
+  const daysSel = document.getElementById("profileUsageDays");
+  if (!summaryEl) return;
+  const days = daysSel ? daysSel.value : "30";
+  summaryEl.innerHTML = "<div class='profile-usage-empty'>불러오는 중…</div>";
+  if (dayEl) dayEl.innerHTML = "";
+  if (modelEl) modelEl.innerHTML = "";
   let data;
   try {
-    const params = new URLSearchParams();
-    if (state.profileAuditCursor) params.set("cursor", state.profileAuditCursor);
-    params.set("limit", "30");
-    data = await apiFetch(`/api/profile/audits?${params.toString()}`);
+    data = await apiFetch(`/api/profile/usage?days=${encodeURIComponent(days)}&gran=day`);
   } catch (err) {
-    if (reset) listEl.innerHTML = `<div class="profile-audit-empty">활동 기록을 불러오지 못했습니다.</div>`;
+    summaryEl.innerHTML = "<div class='profile-usage-empty'>사용 내역을 불러오지 못했습니다.</div>";
     return;
   }
-  const items = Array.isArray(data && data.items) ? data.items : [];
-  state.profileAuditItems = (state.profileAuditItems || []).concat(items);
-  state.profileAuditCursor = (data && data.next_cursor) || "";
-  if (!state.profileAuditItems.length) {
-    listEl.innerHTML = `<div class="profile-audit-empty">활동 기록이 없습니다.</div>`;
-    if (moreBtn) moreBtn.classList.add("hidden");
-    return;
-  }
-  listEl.innerHTML = "";
-  state.profileAuditItems.forEach((it) => {
-    const row = document.createElement("div");
-    row.className = "profile-audit-row";
-    const resource = [it.resource_type, it.resource_id].filter(Boolean).join(":");
-    row.innerHTML =
-      `<span class="profile-audit-time">${escapeHtml(formatDateTime(it.occurred_at))}</span>` +
-      `<code class="profile-audit-action">${escapeHtml(it.action_code || "")}</code>` +
-      (resource ? `<span class="profile-audit-resource">${escapeHtml(resource)}</span>` : "");
-    listEl.appendChild(row);
-  });
-  if (moreBtn) moreBtn.classList.toggle("hidden", !state.profileAuditCursor);
+  const t = data.totals || {};
+  const card = (label, val) => `<div class='profile-usage-metric'><span>${label}</span><strong>${val}</strong></div>`;
+  summaryEl.innerHTML = card("요청", _pUsageNum(t.requests)) + card("호출", _pUsageNum(t.calls)) + card("총 토큰", _pUsageNum(t.total_tokens));
+  // 모델 색맵 — 일별/도넛이 같은 모델은 같은 색 (키 = COALESCE(resolved,model) 로 일치).
+  const ms = [];
+  (data.by_model || []).forEach((m) => { const k = (m.resolved_model && m.resolved_model !== m.model) ? m.resolved_model : (m.model || "(미상)"); if (!ms.includes(k)) ms.push(k); });
+  (data.by_day_model || []).forEach((m) => { if (m.model && !ms.includes(m.model)) ms.push(m.model); });
+  const cmap = profileUsageColorMap(ms);
+  renderProfileUsageStacked(dayEl, data.by_day_model, cmap);
+  renderProfileUsageDonut(modelEl, data.by_model, cmap);
 }
 
 function openProfile(tab = "prompt") {
@@ -5707,14 +5765,14 @@ async function initialize() {
       switchProfileTab(btn.dataset.profileTab);
       if (btn.dataset.profileTab === "prompt") {
         initAccountPromptEditor().catch(() => {});
-      } else if (btn.dataset.profileTab === "audits") {
-        loadProfileAudits(true).catch(() => {}); // TASK-0158: 내 활동 기록 lazy 로드
+      } else if (btn.dataset.profileTab === "usage") {
+        loadProfileUsage().catch(() => {}); // TASK-0184: 내 사용 내역 lazy 로드
       }
     });
   });
-  const profileAuditMoreBtn = document.getElementById("profileAuditMoreBtn");
-  if (profileAuditMoreBtn) {
-    profileAuditMoreBtn.addEventListener("click", () => loadProfileAudits(false).catch(() => {}));
+  const profileUsageDaysSel = document.getElementById("profileUsageDays");
+  if (profileUsageDaysSel) {
+    profileUsageDaysSel.addEventListener("change", () => loadProfileUsage().catch(() => {}));
   }
 
   const savePromptBtn = document.getElementById("savePromptBtn");

@@ -6,7 +6,7 @@
   <title>DQA — Database Query Assistant</title>
   <link rel="preconnect" href="https://fonts.bunny.net" />
   <link href="https://fonts.bunny.net/css?family=geist:300,400,500,600,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260609-step-reason" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260610-profile-usage" />
 </head>
 <body>
 
@@ -335,18 +335,32 @@
 
     <div class="drawer-tabs">
       <button type="button" class="drawer-tab is-active" data-profile-tab="prompt">프롬프트</button>
+      <!-- TASK-0184: 내 사용 내역 (본인 LLM 사용량 간소 차트). 모든 로그인 사용자에 노출. -->
+      <button type="button" class="drawer-tab" data-profile-tab="usage">사용 내역</button>
       <button type="button" class="drawer-tab" data-profile-tab="security-and-account">보안 및 계정</button>
-      <!-- TASK-0158: 내 활동 기록 (GET /api/profile/audits). audit.read.own 권한자만 노출(JS 게이트). -->
-      <button type="button" class="drawer-tab hidden" data-profile-tab="audits" id="profileAuditsTab">내 활동 기록</button>
     </div>
 
-    <div class="drawer-pane hidden" data-profile-pane="audits">
-      <div class="profile-section">
-        <div class="profile-section-title">내 활동 기록</div>
-        <div class="profile-audit-list" id="profileAuditList" aria-live="polite"></div>
-        <button type="button" class="btn-secondary hidden" id="profileAuditMoreBtn">더 보기</button>
+    <!-- TASK-0184: 내 사용 내역 — 본인 LLM 토큰/모델/요청 (GET /api/profile/usage). 간소판(추정 비용 비노출).
+         TASK-0158 의 '내 활동 기록' 탭은 의도치 않은 노출이라 제거됨(엔드포인트는 호출처 없이 잔존). -->
+    <div class="drawer-pane hidden" data-profile-pane="usage">
+      <div class="profile-usage-head">
+        <div class="profile-section-title">내 사용 내역</div>
+        <select id="profileUsageDays" class="btn-secondary profile-usage-days">
+          <option value="7">최근 7일</option>
+          <option value="30" selected>최근 30일</option>
+          <option value="90">최근 90일</option>
+        </select>
       </div>
-    </div><!-- /audits -->
+      <div id="profileUsageSummary" class="profile-usage-summary"></div>
+      <div class="profile-usage-card">
+        <div class="profile-usage-h"><span id="profileUsageTrendTitle">일별</span> 토큰 사용량 <span class="profile-usage-caption">· 모델별 누적</span></div>
+        <div id="profileUsageDayChart" class="profile-usage-chart"></div>
+      </div>
+      <div class="profile-usage-card">
+        <div class="profile-usage-h">모델별 비중</div>
+        <div id="profileUsageModelChart" class="profile-usage-chart"></div>
+      </div>
+    </div><!-- /usage -->
 
     <div class="drawer-pane hidden" data-profile-pane="security-and-account">
 
@@ -460,6 +474,6 @@
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260609-step-reason"></script>
+  <script src="/static/app.js?v=20260610-profile-usage"></script>
 </body>
 </html>

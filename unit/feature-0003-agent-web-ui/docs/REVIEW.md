@@ -1794,3 +1794,9 @@ source_of_truth: true
 - Date: 2026-06-09
 - Cycle: TASK-0174 cycle closure (체크박스 + TEST.md Run 기록)
 - Reason: 문서 한정(TASK.md 체크박스 + TEST.md §4 검증 기록). 코드·RBAC·스키마·시크릿 0건. 실질 수정은 REV-20260609-0174(SUBAGENT 패널)에서 검토·배포됨. outside-voice 불필요 조건 충족.
+
+## REV-20260610-0184 [SKIPPED:rbac-schema-unchanged-readonly-ui]
+- Date: 2026-06-10
+- Cycle: TASK-0184 (LLM 사용량 계정 drill-down + 프로필 사용 내역 차트 + 내 활동기록 제거)
+- Reason: 조회 UI 전용. (A) 계정 drill-down·(C) 활동기록 탭 제거는 순수 프론트(권한·엔드포인트·스키마 0). (B) 신규 `GET /api/profile/usage` 는 `_require_account`(로그인)만 요구하고 `owner_account_id`=본인으로 INNER JOIN 강제해 **권한 카탈로그(WebPermissions/PERMISSION_DEFINITIONS) 변경 0·권한 상승 0·추정 비용 비노출** — 본인 소유 대화 usage 자기조회(기존 `/api/profile/audits` self-service 패턴과 동일, audit 보다 노출 범위 좁음: 본인 토큰 지표만). 새 권한 도입·grant·역할 변경이 없어 RBAC 권한 모델 변경이 아님 → outside-voice 불필요 조건 충족. make test(컨테이너 pytest+ruff) exit=0 회귀 0, node --check/py_compile PASS.
+- Residual: Windows-browser(PB-0008) 시각 검증은 배포 후 수행(CHECK#13 WARN, TEST.md §3 Run 으로 기록 예정).

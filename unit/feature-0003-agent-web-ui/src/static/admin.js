@@ -687,7 +687,8 @@ function getSystemPromptPending(args) {
 /* ── Tab navigation ──────────────────────────────────────────────────── */
 
 // TASK-0136 (#11): LLM 사용량 패널 — admin 전용(console.usage.read). /api/admin/usage 집계 표시.
-adminState.usage = { initialized: false };
+// TASK-0184: drill* = 역할 막대 클릭 시 펼치는 계정 drill-down 상태(byAccount 캐시·역할·페이지·검색).
+adminState.usage = { initialized: false, byAccount: [], drillRole: null, drillPage: 0, drillQuery: "", drillPageSize: 10, _renderDrill: null };
 
 async function loadUsage() {
   const sel = document.getElementById("usageDaysSel");
@@ -701,9 +702,7 @@ async function loadUsage() {
   const dayChartEl = document.getElementById("usageDayChart");
   const modelChartEl = document.getElementById("usageModelChart");
   const roleChartEl = document.getElementById("usageRoleChart");
-  const acctChartEl = document.getElementById("usageAccountChart");
   const roleCostChartEl = document.getElementById("usageRoleCostChart");
-  const acctCostChartEl = document.getElementById("usageAccountCostChart");
   const trendTitleEl = document.getElementById("usageTrendTitle");
   const GRAN_LABEL = { hour: "시간별", day: "일별", week: "주별", month: "월별" };
   if (trendTitleEl) trendTitleEl.textContent = GRAN_LABEL[gran] || "일별";
@@ -836,20 +835,88 @@ async function loadUsage() {
   };
   // TASK-0181: 모델별 누적(stacked) 가로 막대 — 역할별/계정별 토큰·비용을 어떤 모델로 썼는지 색 분해.
   // rows = [{label, total_tokens, cost_usd, models:[{model, total_tokens, cost_usd}]}]. 모델 색 = 전역 modelColor.
-  const renderStackedHBar = (el, rows, valueKey, valFmt) => {
+  const renderStackedHBar = (el, rows, valueKey, valFmt, onRowClick) => {
     if (!el) return;
     const fmt = valFmt || num;
     const data = (rows || []).map((r) => ({ label: r.label, value: r[valueKey] || 0, models: r.models || [] })).filter((r) => r.value > 0);
     if (!data.length) { el.innerHTML = "<p class='admin-usage-empty'>데이터 없음</p>"; return; }
     const max = Math.max(...data.map((r) => r.value));
+    const clickable = typeof onRowClick === "function";  // TASK-0184: 역할 막대 클릭 → 계정 drill-down.
     el.innerHTML = data.map((r) => {
       const segs = (r.models || []).filter((m) => (m[valueKey] || 0) > 0).map((m) =>
         `<div data-tip='${esc(r.label)} · ${esc(m.model)}<br><b>${fmt(m[valueKey])}</b>' style='width:${(m[valueKey] / max * 100).toFixed(2)}%;background:${mcol(m.model)};height:100%;'></div>`
       ).join("");
-      return `<div style='margin:6px 0;'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;'><span>${esc(r.label)}</span><strong>${fmt(r.value)}</strong></div><div style='display:flex;background:var(--border-subtle);border-radius:4px;height:14px;overflow:hidden;'>${segs}</div></div>`;
+      const cls = "admin-usage-hbar-row" + (clickable ? " admin-usage-hbar-row--click" : "");
+      return `<div class='${cls}' data-label='${esc(r.label)}'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;'><span>${esc(r.label)}</span><strong>${fmt(r.value)}</strong></div><div style='display:flex;background:var(--border-subtle);border-radius:4px;height:14px;overflow:hidden;'>${segs}</div></div>`;
     }).join("");
     bindTip(el);
+    if (clickable) {
+      el.querySelectorAll(".admin-usage-hbar-row--click").forEach((row, i) => {
+        row.addEventListener("click", () => onRowClick(data[i].label));
+      });
+    }
   };
+  // TASK-0184: 계정 drill-down — 역할 막대 클릭 시 그 역할의 계정을 검색·Top-N 페이징으로 펼친다.
+  // 역할 키 규칙은 백엔드 _aggregate_usage_by_role 와 동일(시스템/역할 없음/역할명). loadUsage 클로저
+  // 안에 둬 renderStackedHBar·num·mcol(모델 색) 을 재사용하고, 컨트롤 바인딩이 호출하도록 _renderDrill 노출.
+  const usageRoleKeyOf = (a) => (a.account_id == null ? "(시스템)" : (a.role || "(역할 없음)"));
+  const usageAcctLabelOf = (a) => (a.account_id == null ? "(시스템)" : (a.username ? `${a.username} (#${a.account_id})` : `#${a.account_id}`));
+  const renderAccountDrill = () => {
+    const st = adminState.usage;
+    const chartEl = document.getElementById("usageDrillChart");
+    const toolsEl = document.getElementById("usageDrillTools");
+    const pagerEl = document.getElementById("usageDrillPager");
+    const hintEl = document.getElementById("usageDrillHint");
+    const pageInfoEl = document.getElementById("usageDrillPageInfo");
+    if (!chartEl) return;
+    const markActive = () => {
+      document.querySelectorAll("#usageRoleChart .admin-usage-hbar-row, #usageRoleCostChart .admin-usage-hbar-row").forEach((r) => {
+        r.classList.toggle("admin-usage-hbar-row--active", r.getAttribute("data-label") === st.drillRole);
+      });
+    };
+    if (!st.drillRole) {  // 접힘
+      chartEl.innerHTML = "";
+      if (toolsEl) toolsEl.classList.add("hidden");
+      if (pagerEl) pagerEl.classList.add("hidden");
+      if (hintEl) hintEl.textContent = "· 위 역할 막대를 클릭하면 해당 역할의 계정이 펼쳐집니다";
+      markActive();
+      return;
+    }
+    const all = (st.byAccount || []).filter((a) => usageRoleKeyOf(a) === st.drillRole);
+    const q = (st.drillQuery || "").trim().toLowerCase();
+    const filtered = q ? all.filter((a) => usageAcctLabelOf(a).toLowerCase().includes(q)) : all;
+    const pageSize = st.drillPageSize || 10;
+    const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    if (st.drillPage >= pages) st.drillPage = pages - 1;
+    if (st.drillPage < 0) st.drillPage = 0;
+    const start = st.drillPage * pageSize;
+    const pageRows = filtered.slice(start, start + pageSize).map((a) => ({
+      label: usageAcctLabelOf(a), total_tokens: a.total_tokens || 0, cost_usd: a.cost_usd || 0, models: a.models || [],
+    }));
+    if (hintEl) hintEl.textContent = `· ${st.drillRole} — ${filtered.length}개 계정${q ? " (검색됨)" : ""}`;
+    if (toolsEl) toolsEl.classList.remove("hidden");
+    if (pageRows.length) renderStackedHBar(chartEl, pageRows, "total_tokens", num);
+    else chartEl.innerHTML = "<p class='admin-usage-empty'>검색 결과가 없습니다.</p>";
+    if (pagerEl) {
+      pagerEl.classList.toggle("hidden", filtered.length <= pageSize);
+      if (pageInfoEl) pageInfoEl.textContent = filtered.length ? `${start + 1}–${Math.min(start + pageSize, filtered.length)} / ${filtered.length}` : "0 / 0";
+      const prevB = document.getElementById("usageDrillPrev");
+      const nextB = document.getElementById("usageDrillNext");
+      if (prevB) prevB.disabled = st.drillPage <= 0;
+      if (nextB) nextB.disabled = st.drillPage >= pages - 1;
+    }
+    markActive();
+  };
+  const toggleAccountDrill = (role) => {
+    const st = adminState.usage;
+    if (st.drillRole === role) { st.drillRole = null; }  // 같은 역할 재클릭 → 접기
+    else {
+      st.drillRole = role; st.drillPage = 0; st.drillQuery = "";
+      const s = document.getElementById("usageDrillSearch"); if (s) s.value = "";
+    }
+    renderAccountDrill();
+  };
+  adminState.usage._renderDrill = renderAccountDrill;  // 컨트롤(검색·페이지)이 호출할 현재 클로저 핸들
   // TASK-0163: fmt 에 행 전체(r)도 전달 — "별칭 → 해소모델" 등 다중 필드 표시용.
   // TASK-0177: 인라인 style → .admin-usage-table 클래스 + 숫자 컬럼 우측정렬(align:'right' → td/th.num).
   const tbl = (rows, cols) => {
@@ -859,7 +926,6 @@ async function loadUsage() {
     const body = rows.map((r) => "<tr>" + cols.map((c) => `<td${cls(c)}>${esc(c.fmt ? c.fmt(r[c.key], r) : r[c.key])}</td>`).join("") + "</tr>").join("");
     return `<table class='admin-usage-table'><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
   };
-  const acctLabel = (r) => (r.account_id == null ? "(시스템)" : (r.username ? `${r.username} (#${r.account_id})` : `#${r.account_id}`));
   const costFmt = (v) => (v && v > 0 ? usd(v) : "—");
   try {
     const data = await apiFetch(`/api/admin/usage?days=${encodeURIComponent(days)}&gran=${encodeURIComponent(gran)}`);
@@ -890,13 +956,12 @@ async function loadUsage() {
     const roleRows = (data.by_role || []).map((r) => ({
       label: String(r.role == null ? "-" : r.role), total_tokens: r.total_tokens || 0, cost_usd: r.cost_usd || 0, models: r.models || [],
     }));
-    const acctRows = (data.by_account || []).map((r) => ({
-      label: acctLabel(r), total_tokens: r.total_tokens || 0, cost_usd: r.cost_usd || 0, models: r.models || [],
-    }));
-    renderStackedHBar(roleChartEl, roleRows, "total_tokens", num);
-    renderStackedHBar(roleCostChartEl, roleRows, "cost_usd", usd);
-    renderStackedHBar(acctChartEl, acctRows, "total_tokens", num);
-    renderStackedHBar(acctCostChartEl, acctRows, "cost_usd", usd);
+    // TASK-0184: 계정별 독립 차트 제거 → 역할 토큰/비용 막대 클릭 시 계정 drill-down 펼침.
+    renderStackedHBar(roleChartEl, roleRows, "total_tokens", num, toggleAccountDrill);
+    renderStackedHBar(roleCostChartEl, roleRows, "cost_usd", usd, toggleAccountDrill);
+    // 계정 drill 데이터 보관 후 현재 펼침 상태 재렌더(역할 차트 재생성과 정합 유지).
+    adminState.usage.byAccount = data.by_account || [];
+    renderAccountDrill();
     // 상세 표 — 모델별(별칭→해소 + prompt/completion + 추정비용) / 역할별 / 계정별.
     if (modelEl) modelEl.innerHTML = tbl(data.by_model, [
       { key: "resolved_model", label: "모델", fmt: (v, r) => {
@@ -3859,6 +3924,36 @@ async function initialize() {
   if (usageGranSel && !usageGranSel.dataset.bound) {
     usageGranSel.dataset.bound = "1";
     usageGranSel.addEventListener("change", () => loadUsage());
+  }
+  // TASK-0184: 계정 drill-down 컨트롤(검색·페이지 크기·이전/다음). loadUsage 클로저의 _renderDrill 호출.
+  const _drillRerender = () => { if (adminState.usage._renderDrill) adminState.usage._renderDrill(); };
+  const usageDrillSearch = $("usageDrillSearch");
+  if (usageDrillSearch && !usageDrillSearch.dataset.bound) {
+    usageDrillSearch.dataset.bound = "1";
+    usageDrillSearch.addEventListener("input", () => {
+      adminState.usage.drillQuery = usageDrillSearch.value || "";
+      adminState.usage.drillPage = 0;
+      _drillRerender();
+    });
+  }
+  const usageDrillPageSize = $("usageDrillPageSize");
+  if (usageDrillPageSize && !usageDrillPageSize.dataset.bound) {
+    usageDrillPageSize.dataset.bound = "1";
+    usageDrillPageSize.addEventListener("change", () => {
+      adminState.usage.drillPageSize = parseInt(usageDrillPageSize.value, 10) || 10;
+      adminState.usage.drillPage = 0;
+      _drillRerender();
+    });
+  }
+  const usageDrillPrev = $("usageDrillPrev");
+  if (usageDrillPrev && !usageDrillPrev.dataset.bound) {
+    usageDrillPrev.dataset.bound = "1";
+    usageDrillPrev.addEventListener("click", () => { adminState.usage.drillPage -= 1; _drillRerender(); });
+  }
+  const usageDrillNext = $("usageDrillNext");
+  if (usageDrillNext && !usageDrillNext.dataset.bound) {
+    usageDrillNext.dataset.bound = "1";
+    usageDrillNext.addEventListener("click", () => { adminState.usage.drillPage += 1; _drillRerender(); });
   }
   // TASK-0158: 대시보드 첨부 권한 drift 진단 카드 (console.access 권한자만, 진입 시 1회 로드).
   loadGrantHealth();

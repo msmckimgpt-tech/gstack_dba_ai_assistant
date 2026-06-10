@@ -13846,6 +13846,105 @@ def admin_llm_usage(request: Request) -> JSONResponse:
             pass
 
 
+@app.get("/api/profile/usage")
+def profile_llm_usage(request: Request) -> JSONResponse:
+    """TASK-0184: 본인 LLM 사용량 — 로그인 사용자 자신의 토큰/모델/요청 집계(간소판).
+
+    admin_llm_usage(console.usage.read, admin 전용) 의 본인-범위 축소판. owner_account_id =
+    로그인 계정으로 강제하고, 계정/역할 enrich·추정 비용은 제외한다(일반 사용자 화면에 단가
+    비노출). 별도 RBAC 권한 없이 로그인만 요구 — 본인 소유 대화의 usage 로만 한정되므로
+    권한 카탈로그 변경이 없다. 프로필 '사용 내역' 탭에서 사용.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        aid = int(account["id"])
+        try:
+            days = int(request.query_params.get("days", "30"))
+        except Exception:
+            days = 30
+        days = max(1, min(365, days))
+        gran = request.query_params.get("gran", "day").lower()
+        if gran not in _USAGE_GRAN:
+            gran = "day"
+        gran_cfg = _USAGE_GRAN[gran]
+        bucket_expr = f"to_char(date_trunc('{gran}', u.created_at), '{gran_cfg['fmt']}')"
+        bucket_limit = gran_cfg["limit"]
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+        except Exception:
+            logging.getLogger(__name__).warning("profile_usage: pg connect failed", exc_info=True)
+            return _json_error("usage 저장소(PG) 연결 실패", 503)
+        try:
+            win = f"now() - interval '{days} days'"
+            # 본인 소유 대화로 한정 (INNER JOIN: owner 매칭 안 되는 insight/시스템 호출은 제외).
+            base = (
+                "FROM agent_runtime.llm_usage u "
+                "JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
+                f"WHERE u.created_at >= {win} AND c.owner_account_id = %s"
+            )
+            with pg.cursor() as cur:
+                cur.execute(
+                    "SELECT COALESCE(count(*),0), COALESCE(sum(u.prompt_tokens),0), "
+                    "COALESCE(sum(u.completion_tokens),0), COALESCE(sum(u.total_tokens),0), "
+                    f"COALESCE(count(distinct u.run_id),0) {base}",
+                    (aid,),
+                )
+                t = cur.fetchone() or (0, 0, 0, 0, 0)
+                totals = {"calls": int(t[0]), "prompt_tokens": int(t[1]),
+                          "completion_tokens": int(t[2]), "total_tokens": int(t[3]),
+                          "requests": int(t[4])}
+                cur.execute(
+                    "SELECT COALESCE(u.resolved_model, u.model) AS m, u.model, count(*), "
+                    f"sum(u.total_tokens), count(distinct u.run_id) {base} "
+                    "GROUP BY COALESCE(u.resolved_model, u.model), u.model "
+                    "ORDER BY 4 DESC NULLS LAST LIMIT 50",
+                    (aid,),
+                )
+                by_model = [{"model": r[1], "resolved_model": r[0], "calls": int(r[2]),
+                             "total_tokens": int(r[3] or 0), "requests": int(r[4] or 0)}
+                            for r in (cur.fetchall() or [])]
+                cur.execute(
+                    f"SELECT {bucket_expr} AS b, count(*), sum(u.total_tokens) {base} "
+                    f"GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}",
+                    (aid,),
+                )
+                by_day = [{"day": r[0], "calls": int(r[1]), "total_tokens": int(r[2] or 0)}
+                          for r in (cur.fetchall() or [])]
+                cur.execute(
+                    f"SELECT {bucket_expr} AS b, COALESCE(u.resolved_model, u.model), sum(u.total_tokens) "
+                    f"{base} AND {bucket_expr} IN (SELECT {bucket_expr} {base} "
+                    f"GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}) GROUP BY 1, 2 ORDER BY 1",
+                    (aid, aid),
+                )
+                by_day_model = [{"day": r[0], "model": r[1], "total_tokens": int(r[2] or 0)}
+                                for r in (cur.fetchall() or [])]
+        finally:
+            try:
+                pg.close()
+            except Exception:
+                pass
+        return JSONResponse({
+            "window_days": days,
+            "granularity": gran,
+            "totals": totals,
+            "by_model": by_model,
+            "by_day": by_day,
+            "by_day_model": by_day_model,
+        })
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 @app.get("/api/admin/audits")
 def list_audit_events(request: Request) -> JSONResponse:
     """REQ-20260519-0001 (TASK-0073 Phase A4): audit event 조회 (filter + cursor).

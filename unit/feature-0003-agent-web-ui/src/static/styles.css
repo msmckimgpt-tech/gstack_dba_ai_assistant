@@ -3497,6 +3497,40 @@ a { color: inherit; }
   white-space: nowrap;
 }
 
+/* TASK-0184: 역할 stacked 막대 행 — 계정 drill-down 진입(클릭) 가능. */
+.admin-usage-hbar-row { margin: 6px 0; }
+.admin-usage-hbar-row--click { cursor: pointer; border-radius: var(--r-sm); padding: 4px 6px; margin: 2px -6px; transition: background .12s; }
+.admin-usage-hbar-row--click:hover { background: var(--bg); }
+.admin-usage-hbar-row--active { background: var(--border-subtle); }
+/* TASK-0184: 계정별 drill-down 패널 (역할 클릭 시 펼침 + 검색 + Top-N 페이징). */
+.admin-usage-drill-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.admin-usage-drill-tools { display: flex; align-items: center; gap: 8px; }
+.admin-usage-drill-search { width: 180px; max-width: 46vw; }
+.admin-usage-drill-body { margin-top: 10px; min-height: 24px; }
+.admin-usage-drill-pager { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.admin-usage-drill-pager button { padding: 4px 12px; }
+.admin-usage-drill-pager button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* TASK-0184: 프로필 '사용 내역' — 본인 LLM 사용량 간소 차트(추정 비용 비노출). */
+.profile-usage-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.profile-usage-days { padding: 4px 8px; }
+.profile-usage-summary { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.profile-usage-metric { flex: 1; min-width: 84px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 9px 12px; display: flex; flex-direction: column; gap: 3px; }
+.profile-usage-metric span { font-size: 11px; color: var(--text-muted); letter-spacing: .04em; }
+.profile-usage-metric strong { font-size: 17px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+.profile-usage-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 14px; margin-bottom: 12px; }
+.profile-usage-h { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+.profile-usage-caption { font-size: 11px; font-weight: 400; color: var(--text-muted); }
+.profile-usage-chart { min-height: 24px; }
+.profile-usage-empty { color: var(--text-muted); font-size: 13px; padding: 14px 0; text-align: center; }
+.profile-usage-legend { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.profile-usage-legend-item { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-2); }
+.profile-usage-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: none; }
+.profile-usage-donut { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.profile-usage-donut-legend { flex: 1; min-width: 140px; }
+.profile-usage-donut-row { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 3px 0; }
+.profile-usage-donut-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+
 .admin-accounts { display: flex; flex-direction: column; gap: 12px; }
 
 .admin-account {

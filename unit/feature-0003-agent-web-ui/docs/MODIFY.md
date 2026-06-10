@@ -2533,3 +2533,17 @@ source_of_truth: true
   - unit/feature-0003-agent-web-ui/docs/TASK.md (TASK-0174 체크박스 완료)
   - unit/feature-0003-agent-web-ui/docs/TEST.md (§4 Test Run History PB-0008 Run 추가)
 - Rollback: 체크박스 환원 + TEST.md §4 항목 제거.
+
+## CHG-20260610-0184
+- Date: 2026-06-10
+- Related Requirement: TASK-0184 (REQ-20260610-0184)
+- Summary: 관리 콘솔 LLM 사용량 3건. (A) 계정별 독립 차트를 **역할 drill-down**(역할 막대 클릭→그 역할 계정만 검색·Top-N 페이징, 기본 접힘)으로 대체 — 계정 수 증가 시 차트 과다 길이/탐색난 해소. (B) 프로필 **'사용 내역' 탭** 신설 — 신규 `GET /api/profile/usage`(본인 owner_account_id 한정, `_require_account` 로그인만, 추정 비용·역할 enrich 제외) + 미니 SVG 차트(모델별 stacked·donut). (C) 의도치 않게 노출된 프로필 **'내 활동 기록' 탭/패널/JS 제거**(`/api/profile/audits` 는 호출처 없이 잔존). RBAC 카탈로그·스키마·시크릿 무변경.
+- Files:
+  - unit/feature-0003-agent-web-ui/src/app.py (`profile_llm_usage` 신규 엔드포인트)
+  - unit/feature-0003-agent-web-ui/src/static/admin.html (계정별 독립 차트 → drill 패널 + 캐시버스터)
+  - unit/feature-0003-agent-web-ui/src/static/admin.js (`renderStackedHBar` onRowClick + `toggleAccountDrill`/`renderAccountDrill` + drill 컨트롤 바인딩 + 계정 독립 차트/`acctLabel` 제거)
+  - unit/feature-0003-agent-web-ui/src/static/index.html (audits 탭/패널 제거 + usage 탭/패널 + 캐시버스터)
+  - unit/feature-0003-agent-web-ui/src/static/app.js (`loadProfileAudits`/audit 게이트/핸들러 제거 + `loadProfileUsage`/미니차트 + usage 탭 핸들러)
+  - unit/feature-0003-agent-web-ui/src/static/styles.css (`admin-usage-drill`·`admin-usage-hbar-row` + `profile-usage` 클래스)
+  - unit/feature-0003-agent-web-ui/docs/TASK.md, FUNCTION.md, REVIEW.md, STATUS.md
+- Rollback: 본 cycle 커밋 revert — drill 패널→계정별 독립 차트 복원, 프로필 usage 탭/엔드포인트 제거, audits 탭/JS 복원.

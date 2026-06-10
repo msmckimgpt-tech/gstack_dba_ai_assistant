@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260610-usage-stacked" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260610-usage-drill" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -372,14 +372,27 @@
             <div id="usageRoleCostChart"></div>
           </div>
         </div>
-        <div class="admin-usage-section admin-usage-row">
-          <div class="admin-usage-card">
-            <h3 class="admin-usage-h3">계정별 <span class="admin-usage-caption">· 토큰</span></h3>
-            <div id="usageAccountChart"></div>
-          </div>
-          <div class="admin-usage-card">
-            <h3 class="admin-usage-h3">계정별 비용 <span class="admin-usage-caption">· 추정</span></h3>
-            <div id="usageAccountCostChart"></div>
+        <!-- TASK-0184: 계정별 차트는 기본 접힘 — 위 '역할별' 토큰/비용 막대를 클릭하면 그 역할의
+             계정들이 검색·Top-N 페이징으로 펼쳐진다(계정 수 증가 시 차트 과다 길이/탐색난 해소). -->
+        <div class="admin-usage-section">
+          <div class="admin-usage-card admin-usage-drill">
+            <div class="admin-usage-drill-head">
+              <h3 class="admin-usage-h3">계정별 <span class="admin-usage-caption" id="usageDrillHint">· 위 역할 막대를 클릭하면 해당 역할의 계정이 펼쳐집니다</span></h3>
+              <div class="admin-usage-drill-tools hidden" id="usageDrillTools">
+                <input type="search" id="usageDrillSearch" class="admin-search admin-usage-drill-search" placeholder="계정 검색…" autocomplete="off" />
+                <select id="usageDrillPageSize" class="btn-secondary">
+                  <option value="10" selected>10개씩</option>
+                  <option value="20">20개씩</option>
+                  <option value="50">50개씩</option>
+                </select>
+              </div>
+            </div>
+            <div id="usageDrillChart" class="admin-usage-drill-body"></div>
+            <div class="admin-usage-drill-pager hidden" id="usageDrillPager">
+              <button type="button" class="btn-secondary" id="usageDrillPrev">이전</button>
+              <span id="usageDrillPageInfo" class="admin-usage-caption"></span>
+              <button type="button" class="btn-secondary" id="usageDrillNext">다음</button>
+            </div>
           </div>
         </div>
         <!-- TASK-0180: 상세 표도 카드+가로 배치로 여백 해소 (모델별 full, 역할별|계정별 2열). -->
@@ -480,6 +493,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260610-usage-stacked"></script>
+  <script src="/static/admin.js?v=20260610-usage-drill"></script>
 </body>
 </html>

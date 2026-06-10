@@ -12,7 +12,7 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-10 (TASK-0181 역할/계정 모델 stacked + 요청 수; TASK-0180 카테고리별 행 레이아웃; TASK-0179 차트 grid; TASK-0178 여백 컴팩트화; TASK-0177 상세표 비용컬럼+디자인 정렬; TASK-0176 역할/계정별 비용 차트; TASK-0167 작은화면 잘림)
+- Last Updated: 2026-06-10 (TASK-0184 계정 drill-down + 프로필 사용내역 차트 + 내 활동기록 제거; TASK-0181 역할/계정 모델 stacked + 요청 수; TASK-0180 카테고리별 행 레이아웃; TASK-0179 차트 grid; TASK-0178 여백 컴팩트화; TASK-0177 상세표 비용컬럼+디자인 정렬; TASK-0176 역할/계정별 비용 차트; TASK-0167 작은화면 잘림)
 
 ## 2. Task Queue
 
@@ -3017,3 +3017,11 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] `loadCsvAsInlineTable` 값 기반 방어 가드 + `distinctiveValueTokens` 헬퍼 (CHG-20260609-PREVIEW-CSV-GUARD)
 - [x] §18.8 패널 JS 오탐 지적 반영 (previewTokens≥2 임계)
 - [x] verify-completion → main ff-merge(2b4da2a) → 재배포(web) → PB-0008 Windows-browser 무회귀 확인 (TEST.md §4 2026-06-09 TASK-0174 항목)
+
+### TASK-0184 — LLM 사용량 계정 drill-down + 프로필 사용 내역 차트 + 내 활동기록 제거 (2026-06-10)
+- [x] **Minor §12.3** (조회 UI 전용, RBAC·스키마 무변경) — 3건: (A) 관리 콘솔 LLM 사용량의 **계정별 차트가 계정 증가 시 과다 길이/탐색난** → 역할 drill-down(역할 막대 클릭 시 그 역할 계정만 검색·Top-N 페이징으로 펼침, 기본 접힘)으로 대체. (B) 프로필에 **'사용 내역' 탭**(본인 LLM 토큰/모델/요청 간소 차트) 신설. (C) 의도치 않게 노출된 **'내 활동 기록' 탭 제거**. (CHG-20260610-0184)
+- [x] **(A)** admin.html 계정별 독립 차트(usageAccountChart/CostChart) → drill 패널(계정 검색 input + page size select + 이전/다음). admin.js `renderStackedHBar` 에 `onRowClick` 추가(역할 토큰/비용 막대 클릭) + `toggleAccountDrill`/`renderAccountDrill`(loadUsage 클로저, byAccount 캐시·역할 키 매칭은 백엔드 `_aggregate_usage_by_role` 와 동일) + 컨트롤 바인딩. 역할별 차트는 불변(종류 적어 무관).
+- [x] **(B)** 신규 `GET /api/profile/usage`(app.py `profile_llm_usage`) — `admin_llm_usage`(console.usage.read, admin) 의 본인-범위 축소판(owner_account_id=로그인 계정 강제, INNER JOIN, 추정 비용·역할 enrich 제외). **별도 RBAC 권한 없이 로그인만**(본인 소유 대화 usage 한정 → 권한 카탈로그 무변경). index.html '사용 내역' 탭 + app.js `loadProfileUsage`/미니 SVG 차트(모델별 stacked 세로막대·donut, `<title>` 툴팁) + profile-usage 스타일.
+- [x] **(C)** index.html audits 탭/패널 제거, app.js `loadProfileAudits`·renderProfile 권한 게이트·탭 핸들러 제거. 엔드포인트 `/api/profile/audits` 는 호출처 없이 잔존(UI 비노출, 백엔드 게이트 유지).
+- [x] make test(컨테이너 pytest+ruff) exit=0 / node --check(app.js·admin.js) / py_compile(app.py) PASS. outside-voice [SKIPPED:RBAC·스키마 무변경, 조회 UI 전용].
+- [ ] verify-completion → main ff-merge → 재배포(web) → PB-0008 Windows-browser 시각 검증(drill-down · 프로필 차트 · 활동기록 비노출)
