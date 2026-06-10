@@ -3047,4 +3047,5 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] outside-voice 적대적 백엔드/QA 검토(cutover 영역 취약성) — REV-20260610-0189.
 - [x] verify-completion PASS → main rebase(동시세션 TASK-0188 40f75ba 위)·ff-merge → web 재배포(healthz `git_commit` 확인) → **라이브 인증 API 검증**: `/api/history_dates` 실제 날짜/시각 반환(이전 빈 `{}`), `/api/history_anchor` 유효 PG id 반환.
 - [x] **후속 정밀화(CHG-0189 분 단위)**: 라이브 검증 중 anchor 가 초 단위 `<=`(`HH24:MI:SS <= ...:00`)라 클릭한 분의 메시지(초>0)가 제외돼 직전 메시지로 점프하는 결함 발견(원본 MySQL 결함 계승). `to_char(...,'YYYY-MM-DD HH24:MI') <= left(at,16)` 분 단위 비교로 교체 → 클릭한 분의 메시지에 정확 착지. 사용자 "정상적으로 작동" 요청 충족. 재배포·라이브 재검증.
+- [x] **근본원인 형제 인스턴스 스윕·수정(CHG-0189-SUGGESTIONS)**: 같은 결함 class(엔드포인트가 게이트 없이 삭제된 MySQL 테이블 직접 조회) 자동 스윕 결과 `/api/suggestions`(입력 추천) 1건 추가 발견 — 라이브 **HTTP 500**(`SELECT Content FROM AgentMemoryMessages …` try/except 없음). 동일 패턴으로 PG `agent_runtime.messages` 라우팅 + fail-soft(예외→빈 items) 수정. 회귀 테스트 T4. 사용자 "누락 원인 파악" 요청에 대한 근본원인(미이전 엔드포인트) 포괄 대응. 재배포·라이브 200 검증.
 - [ ] (잔존) Windows-browser(PB-0008) 시각 검증(분기선→캘린더→날짜/시각 클릭→해당 메시지로 스크롤·하이라이트) — CHECK#13 WARN, 사용자 확인용.

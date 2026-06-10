@@ -180,3 +180,26 @@ def test_history_dates_legacy_mysql_path_when_backend_not_postgres(monkeypatch):
 
     assert body["dates"] == {"2026-05-18": ["09:05", "14:30"]}
     assert mem.cursor_calls >= 1, "legacy 경로는 MySQL cursor 를 사용해야 함"
+
+
+# ── T4: /api/suggestions 도 동일 cutover 결함 (입력 추천 500) — PG 라우팅 회귀 가드 ──
+def test_suggestions_routes_to_pg_and_skips_dropped_mysql_table(monkeypatch):
+    monkeypatch.setenv("AGENT_RUNTIME_READ_BACKEND", "postgres")
+    mem = _FakeMemConn()
+    monkeypatch.setattr(app, "_connect_memory", lambda: mem)
+    monkeypatch.setattr(app, "_require_account", lambda request, conn: ({"Id": 1}, None))
+    monkeypatch.setattr(app, "_account_has_permission", lambda account, perm: True)
+    monkeypatch.setattr(
+        app, "_list_conversations",
+        lambda limit=200, account=None, conn=None: [{"id": "c1"}, {"id": "c2"}],
+    )
+    pg = _FakePgConn(fetchall_rows=[("최근 사용자 질문입니다",), ("또 다른 사용자 질문",)])
+    monkeypatch.setattr("modules.db._pg_connect", lambda: pg)
+
+    resp = app.suggestions(_DummyRequest(), limit=5)
+    body = _body(resp)
+
+    assert body["items"] == ["최근 사용자 질문입니다", "또 다른 사용자 질문"]
+    # 회귀 가드: 삭제된 MySQL AgentMemoryMessages(_connect_memory cursor)를 조회하지 않았다.
+    assert mem.cursor_calls == 0, "PG 모드에서 삭제된 MySQL 테이블을 조회하면 500(추천 죽음)"
+    assert any("agent_runtime.messages" in s for s in pg.cursor_obj.executed)

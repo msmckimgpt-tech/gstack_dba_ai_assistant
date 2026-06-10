@@ -24,6 +24,16 @@ source_of_truth: true
   - unit/feature-0003-agent-web-ui/docs/TASK.md, MODIFY.md, REVIEW.md
 - Rollback: 본 cycle 커밋 revert — 두 엔드포인트가 다시 MySQL `AgentMemoryMessages` 만 조회(= 캘린더 점프 재차 무력화).
 
+## CHG-20260610-0189-SUGGESTIONS
+- Date: 2026-06-10 (TASK-0189 근본원인 형제 인스턴스, **Minor §12.3** — 백엔드 읽기경로 라우팅)
+- Scope: `/api/suggestions`(입력 추천: 최근 사용자 프롬프트 목록) — CHG-0189 와 동일 AR-M5 cutover 라우팅 누락으로 라이브 **HTTP 500**.
+- 배경: TASK-0189 root-cause("cutover 시 미이전 엔드포인트") 자동 스윕(게이트 없이 `AgentMemoryMessages`/`AgentCoreMessages` 직접 조회 + PG 헬퍼 미사용 라우트 함수 탐지)에서 발견. `suggestions` 는 `SELECT Content FROM AgentMemoryMessages WHERE Role='user' …` 을 try/except 없이 실행 → 삭제된 테이블 조회로 예외 전파 → 500(입력 추천 기능 전면 사망). 라이브 재현 확인(MySQL `AgentMemoryMessages` 부재 + `/api/suggestions` 500).
+- 변경 ([src/app.py](../src/app.py) `suggestions`): `AGENT_RUNTIME_READ_BACKEND == "postgres"` 일 때 PG `agent_runtime.messages` 에서 `SELECT content … WHERE role='user' AND conversation_id IN (…) ORDER BY created_at DESC LIMIT %s` 조회. legacy MySQL 경로는 else 보존. 추가로 조회 전체를 try/except 로 감싸 예외 시 빈 `rows`(=빈 items) fail-soft — 함수 기존 계약(`{"items": []}` 으로 degrade)과 정합.
+- 비변경: RBAC(`conversation.ask` 게이트 유지)·응답 계약·스키마 무변경.
+- 검증: 회귀 테스트 T4(`tests/test_history_calendar_pg_routing.py` — PG 라우팅 + 삭제 테이블 미접촉 가드). make test exit=0. 재배포 후 `/api/suggestions` 라이브 200.
+- Files: unit/feature-0003-agent-web-ui/src/app.py (`suggestions` PG 라우팅 + fail-soft), tests/test_history_calendar_pg_routing.py (T4)
+- Rollback: 본 변경 revert — `/api/suggestions` 가 다시 삭제된 MySQL 테이블 조회(500).
+
 ## CHG-20260610-0188
 - Date: 2026-06-10 (TASK-0188, **Minor §12.3** — frontend-static-only)
 - Scope: 공유 대화 페이지(`/share/{token}`)의 메시지 본문 markdown 미적용 수정 + 수신자 입장 가독성 디자인 보강.

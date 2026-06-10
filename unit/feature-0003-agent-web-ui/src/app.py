@@ -11543,20 +11543,43 @@ def suggestions(request: Request, limit: int = 40) -> JSONResponse:
         conn.close()
         return JSONResponse({"items": []})
     placeholders = ",".join(["%s"] * len(conv_ids))
-    cur = conn.cursor()
-    cur.execute(
-        f"""
+    # AR-M5 cutover: 메시지 정본이 MySQL AgentMemoryMessages → PG agent_runtime.messages 로
+    # 이전되며 MySQL 테이블이 DROP 되었다. _get_history 와 동일하게
+    # AGENT_RUNTIME_READ_BACKEND 로 분기하지 않으면 삭제된 테이블을 조회해 500 (입력
+    # 추천이 죽는다). 예외는 fail-soft 로 빈 items 처리(함수 기존 계약 유지).
+    rows: list = []
+    try:
+        if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        f"SELECT content FROM agent_runtime.messages "
+                        f"WHERE role = 'user' AND conversation_id IN ({placeholders}) "
+                        f"ORDER BY created_at DESC LIMIT %s",
+                        tuple(conv_ids) + (int(limit) * 3,),
+                    )
+                    rows = pgcur.fetchall() or []
+            finally:
+                pg.close()
+        else:
+            cur = conn.cursor()
+            cur.execute(
+                f"""
 SELECT Content
 FROM AgentMemoryMessages
 WHERE Role = 'user'
   AND ConversationId IN ({placeholders})
 ORDER BY CreatedAt DESC
 LIMIT %s
-        """,
-        tuple(conv_ids) + (int(limit) * 3,),
-    )
-    rows = cur.fetchall() or []
-    cur.close()
+                """,
+                tuple(conv_ids) + (int(limit) * 3,),
+            )
+            rows = cur.fetchall() or []
+            cur.close()
+    except Exception:
+        rows = []
     conn.close()
     items: list[str] = []
     seen = set()
