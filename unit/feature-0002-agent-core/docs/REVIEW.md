@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260610-0177 [SUBAGENT: general-purpose 적대적 리뷰 — base SYSTEM_PROMPT tool_notes 변경, NEEDS-TWEAK→FIXED, BLOCKER 1 흡수]
+- Date: 2026-06-10 (TASK-0177)
+- 대상: base SYSTEM_PROMPT 에 tool_notes(work/reason) 방출 지시 추가. **Major §12.3** — 모든 사용자 답변에 영향(고-레버리지 프롬프트).
+- 판정: NEEDS-TWEAK → FIXED. BLOCKER 1 + MAJOR 3 + MINOR 3 + NIT 2.
+- **BLOCKER B1 (흡수·수정)**: 최종 답변 경로(agent_core.py 2207-2231)에 tool_notes/JSON envelope 를 벗기는 코드가 0 — 프롬프트의 "최종답변 JSON 금지"는 통계적 억제일 뿐 fail-closed 아님. 모델이 최종답변에 envelope 흘리면 사용자에게 raw JSON 노출(이 repo 의 TASK-0154/0155 모델산출물 형식깨짐 전례와 동형). **수정**: `_strip_leaked_tool_notes` 결정적 sanitizer 신규 + 최종답변 경로 배선(산문만 남김, 통째 envelope→빈문자열→기존 재요청 루프). 단위테스트 4.
+- **MAJOR M1 (프롬프트 반영)**: `tool_calls[:3]` 절단(2270)과 위치-인덱스 매칭(2311)이 어긋나면 잘못된 reason 이 잘못된 step 에 귀속. 프롬프트에 "i번째 note ↔ i번째 tool call(병렬 호출 포함)" 명시. (args-기반 sanity-check 은 기존 동작 범위라 이월.)
+- **MAJOR M2 (카나리아 위임)**: Bedrock 의 OpenAI 호환 레이어가 tool_use 동반 턴의 text content 를 빈값으로 정규화하면 tool_notes 미수신 → 전부 derived → 변경 효과 0 인데 조용히 통과("코드는 맞는데 모델이 그 경로를 안 탄다" = 이 repo 반복 실패모드, RC1/livelock 동형). **배포 카나리아에서 `reason_source='llm'` 비율 실측 필수** — 낮으면 토큰만 쓰고 목표미달.
+- **MAJOR M3 (관찰 위임)**: narration 보상이 over-calling 유발 또는 reason 작문이 정확성 예산 잠식 위험(가설). 3-step 캡으로 부분 방어. 카나리아에서 step_count/환각 관찰.
+- **MINOR**: m1 한국어 값 따옴표 escape(깨지면 derived fallback=무해) → 프롬프트에 escape/작은따옴표 권고 추가. m2 "final answer"→"tool call 없는 모든 턴(반문 포함)"으로 명확화. m3 길이캡 단위 불일치(무해).
+- **NIT**: 토큰/지연 negligible(턴당 ~50-150토큰, 3-step 캡). 영/한 혼합 표준 패턴.
+- 게이트: make test 278 passed/2 skipped(신규 9, 회귀 0). Verdict: **SAFE TO SHIP (B1 수정 후)** — 단 M2 카나리아 실측이 효과 확인의 진짜 게이트.
+
 ## REV-20260609-0175 [SKIPPED:display-metadata-no-rbac-no-schema-no-behavior-change]
 - Date: 2026-06-09
 - Cycle: TASK-0175 (실행 단계 reason derived fallback), **Minor §12.3**

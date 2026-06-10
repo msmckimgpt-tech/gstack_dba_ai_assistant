@@ -743,3 +743,12 @@ TASK-0015 (plan-review):
 - [x] 루프 배선: work 파생 직후 reason 도 비면 파생 + `reason_source='derived'`. LLM 참값 비덮어쓰기 가드.
 - [x] 회귀 테스트 `tests/test_derive_step_reason.py` 4종(전 tool 비빔·집계vs조회·미지원 빈값·대소문자/None 방어). make test 컨테이너 **269 passed/2 skipped**(회귀 0). outside-voice [SKIPPED:display-metadata] (REV-20260609-0175).
 - [ ] verify-completion PASS → 커밋 → push → main ff-merge → **재배포(ask-worker+web — 실행모드=worker 라 agent 루프는 ask-worker 컨테이너)** → 라이브 ask 후 step reason 노출 확인
+
+### TASK-0177 — 실행 단계 근거를 LLM 이 실제 맥락으로 생성 (SYSTEM_PROMPT tool_notes 지시) (2026-06-10)
+- [x] **Major §12.3** — 사용자 원의도: derived 템플릿이 아니라 **LLM 이 질문 맥락에 맞춘 실제 근거**. 근본 공백(SYSTEM_PROMPT 가 tool_notes 미지시)을 메움. TASK-0175 derived 는 비순응 안전망으로 유지. (CHG-20260610-0177)
+- [x] `SYSTEM_PROMPT` 에 `## STEP NARRATION (tool_notes)` 섹션 — tool 호출 턴마다 content 에 `{"tool_notes":[{work,reason}]}` 방출(call 당 1 entry 동순서), reason 은 사용자 목표에 비춘 구체 근거. tool call 없는 턴엔 JSON 금지. OUTPUT 보강.
+- [x] **B1 sanitizer**(outside-voice BLOCKER): `_strip_leaked_tool_notes` + 최종답변 배선 — 누수된 envelope 결정적 제거(통째면 빈문자열→재요청 루프). 프롬프트 억제 + 백엔드 fail-closed 이중.
+- [x] 프롬프트 보강: M1 "i번째 note↔i번째 call(병렬 포함)", m1 따옴표 escape, m2 "tool call 없는 모든 턴".
+- [x] 회귀 테스트 `tests/test_tool_notes_prompt.py` 9종(프롬프트 지시 존재·파서 라운드트립[멀티/펜스/패딩/절단]·sanitizer 4). make test 컨테이너 **278 passed/2 skipped**(회귀 0). py_compile OK.
+- [x] outside-voice 적대적 리뷰 NEEDS-TWEAK→FIXED, BLOCKER 1 흡수 + MAJOR 3 반영/위임 (REV-20260610-0177).
+- [ ] verify-completion → 커밋 → push → main ff-merge → **재배포(ask-worker+web) + 라이브 `WebSystemPrompts` global row 새 상수로 갱신**(GLOBAL row 가 상수 대체) → **카나리아: `reason_source='llm'` 비율 실측(M2) + 최종답변 JSON 누수 0 + 근거 맥락성 확인**
