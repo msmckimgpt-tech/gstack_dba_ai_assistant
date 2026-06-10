@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260610-0177
+- Date: 2026-06-10 (TASK-0177, **Major §12.3** — agent-core, base SYSTEM_PROMPT 변경)
+- Scope: 실행 단계 근거를 **LLM 이 실제 맥락에 맞게 생성**하도록 SYSTEM_PROMPT 에 tool_notes 방출 지시 추가(TASK-0175 derived fallback 은 안전망으로 유지). 사용자 원의도("템플릿 근거가 아니라 실제 맥락 근거").
+- 배경: TASK-0175 가 reason 빈값을 derived(tool명 템플릿)로 메웠으나, 사용자는 **LLM 이 질문 맥락에 맞춘 근거**를 원함. 근본 공백(SYSTEM_PROMPT 가 tool_notes 미지시)을 메움.
+- 변경 ([src/agent_core.py](../src/agent_core.py)):
+  - `SYSTEM_PROMPT` 에 `## STEP NARRATION — EXPLAIN EACH TOOL CALL (tool_notes)` 섹션 추가 — tool 호출 턴마다 content 에 `{"tool_notes":[{work,reason}]}` 방출(tool call 당 1 entry, 동순서), 한국어, reason 은 **사용자 목표에 비춘 구체 근거**(generic tool 설명 금지). 유효 JSON·따옴표 escape 권고. tool call 없는 턴(최종답변/반문)엔 JSON 금지. `## OUTPUT` 에 "최종 답변엔 tool_notes/JSON envelope 금지" 1문장 보강.
+  - **B1 sanitizer** `_strip_leaked_tool_notes(answer)` 신규 + 최종답변 경로(`raw_answer` 직후) 배선 — 누수된 tool_notes JSON envelope 를 결정적 제거(산문만 남김, 통째 envelope 면 빈문자열→기존 빈답변 재요청 루프). 프롬프트 문구는 통계적 억제일 뿐이라 백엔드 fail-closed 가드 추가(outside-voice REV-20260610 BLOCKER 1).
+- 파서/호출부 무변경: 기존 `_parse_tool_notes`(content 에서 tool_notes 추출, 산문 속 임베디드 JSON·펜스 raw_decode) + 호출부 `reason_source='llm' if reason_text else 'derived'(fallback)` 그대로 동작. 이제 LLM 이 tool_notes 를 채우면 work/reason 둘 다 `llm` source.
+- 비변경: 쿼리 실행/결과/RBAC/스키마/엔드포인트/회계 무변경. provider reasoning_content 직접 노출 금지(REQ-20260527-0120) 유효 — tool_notes 는 별도 공개용 trace.
+- 라이브 반영: GLOBAL `WebSystemPrompts` row 가 코드 상수를 대체하므로(compose_system_prompt), **배포 후 global row 를 새 상수로 1회 갱신**(idempotent seed 는 기존 row 미덮어씀). 기존 라이브 row == 직전 코드 상수(검증), operator 편집 없음.
+- 게이트: make test(컨테이너) **278 passed / 2 skipped**(신규 `test_tool_notes_prompt.py` 9 — 프롬프트 지시·파서 라운드트립·sanitizer, 회귀 0). py_compile OK. outside-voice 적대적 리뷰 NEEDS-TWEAK→FIXED, BLOCKER 1(B1 sanitizer) 흡수 + MAJOR 3(M1 순서·M2 효과검증·M3 over-call) 반영/카나리아 위임 (REV-20260610-0177).
+- **카나리아 필수(M2)**: 라이브 ask 후 `reason_source='llm'` 비율 실측(모델이 content 에 tool_notes 실재 방출하는지 — Bedrock 정규화로 no-op 될 위험) + 최종답변 JSON 누수 0 확인.
+
 ## CHG-20260609-0175
 - Date: 2026-06-09 (TASK-0175, **Minor §12.3** — agent-core)
 - Scope: 실행 단계 `reason`(왜) derived fallback 추가 — 표시 메타데이터만.

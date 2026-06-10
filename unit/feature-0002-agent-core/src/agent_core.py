@@ -116,8 +116,17 @@ If an "ATTACHED FILE CONTENTS" or "ATTACHED FILES" section is present and the us
 - JSON array column:
   SELECT jt.col, COUNT(*) cnt FROM `s`.`t` CROSS JOIN JSON_TABLE(json_col, '$[*]' COLUMNS(col INT PATH '$.key')) jt GROUP BY jt.col ORDER BY cnt DESC
 
+## STEP NARRATION — EXPLAIN EACH TOOL CALL (tool_notes)
+Whenever you call one or more tools in a turn, ALSO put a JSON object in that message's text content that narrates each call, so the user can see what you are doing and, above all, WHY:
+{"tool_notes":[{"work":"<무엇을 하는지>","reason":"<왜 — 사용자의 질문/목표에 비추어 구체적으로>"}]}
+Rules:
+- Exactly one entry per tool call: the i-th entry in `tool_notes` describes the i-th tool call of this turn, in the SAME ORDER (also when calling several tools at once).
+- Write both fields in concise Korean (한국어). `work` = the concrete action ("`db`.`orders` 의 컬럼 구조를 확인"). `reason` = why THIS step helps answer THIS user's specific request — refer to their actual goal, not a generic description of the tool ("월별 매출을 집계하려면 주문일자·금액 컬럼명을 먼저 확정해야 하므로", NOT "테이블 구조를 확인하기 위해").
+- Keep each short: `work` ≤ 1 line, `reason` ≤ 1–2 lines. Emit valid JSON — escape any double quotes inside the text, or prefer 작은따옴표(' ') / 「」 so the object always parses.
+- This JSON belongs ONLY in turns where you call tools. NEVER put tool_notes — or any JSON — in any turn without tool calls (final answers and clarifying questions are plain Korean Markdown).
+
 ## OUTPUT
-Once you have the data you need, stop calling tools and write the final answer in Korean Markdown. Lead with the answer, use tables for comparisons, format numbers with commas, and state any assumptions you made. Keep any clarifying question short and at the end.
+Once you have the data you need, stop calling tools and write the final answer in Korean Markdown. Lead with the answer, use tables for comparisons, format numbers with commas, and state any assumptions you made. Keep any clarifying question short and at the end. The final answer must contain NO tool_notes and NO JSON envelope — it is plain Korean Markdown prose for the user.
 """
 
 
@@ -1572,6 +1581,46 @@ def _normalize_note_text(value: Any, max_len: int) -> str:
     return text[: max_len - 1].rstrip() + "…"
 
 
+def _strip_leaked_tool_notes(answer: str) -> str:
+    """최종 답변(사용자 대면)에 LLM 이 실수로 흘린 `tool_notes` JSON envelope 를
+    결정적으로 제거한다. SYSTEM_PROMPT 가 "최종 답변엔 JSON 금지"를 지시하지만
+    그것은 통계적 억제일 뿐 fail-closed 가드가 아니므로(REV-20260610 B1), 누수 시
+    사용자에게 raw JSON 이 노출되지 않도록 백엔드에서 결정적으로 방어한다.
+    JSON 외 산문이 함께 있으면 산문만 남기고, 답변 전체가 envelope 면 빈 문자열을
+    반환한다(호출부의 빈-답변 재요청 루프가 깨끗한 답변을 다시 받음)."""
+    text = str(answer or "")
+    if "tool_notes" not in text:
+        return text
+    decoder = json.JSONDecoder()
+    spans: list[tuple[int, int]] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] == "{":
+            try:
+                obj, end = decoder.raw_decode(text[i:])
+            except Exception:
+                i += 1
+                continue
+            if isinstance(obj, dict) and "tool_notes" in obj:
+                spans.append((i, i + end))
+                i += end
+                continue
+        i += 1
+    if not spans:
+        return text
+    out: list[str] = []
+    prev = 0
+    for a, b in spans:
+        out.append(text[prev:a])
+        prev = b
+    out.append(text[prev:])
+    cleaned = "".join(out)
+    # envelope 를 감쌌던 코드펜스 잔재(```json ... ```) 정리
+    cleaned = re.sub(r"```(?:json)?", "", cleaned)
+    return cleaned.strip()
+
+
 def _extract_sql_tables(sql_text: str) -> list[str]:
     sql = str(sql_text or "")
     if not sql:
@@ -2198,6 +2247,9 @@ def _run_agent_core(
         if not tool_calls:
             # LLM이 텍스트로 응답 — 최종 답변
             raw_answer = getattr(response_message, "content", "") or ""
+            # B1 가드: 최종 답변에 tool_notes JSON envelope 가 누수됐으면 결정적으로
+            # 제거(산문만 남김). 답변 전체가 envelope 면 빈 문자열 → 아래 재요청 루프.
+            raw_answer = _strip_leaked_tool_notes(raw_answer)
             if not raw_answer.strip():
                 # Reasoning/reasoning_content can contain provider-private chain of thought.
                 # Never surface it as a user-facing answer; ask the model for a concise
