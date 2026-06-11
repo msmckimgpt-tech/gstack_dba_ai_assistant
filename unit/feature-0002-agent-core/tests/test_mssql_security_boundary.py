@@ -245,6 +245,22 @@ def test_freeform_agent_memory_3part_blocked_db_level():
     _run_isolated(check)
 
 
+def test_freeform_none_allowlist_fail_closed_mssql():
+    """TASK-0206 fail-closed: active MSSQL datasource 에서 allowlist=None(미설정)도 빈 allowlist 로
+    취급 — 사용자 DB 3-part 차단(시스템 DB·2-part 만 허용). None 우회 cross-DB 차단."""
+    def check():
+        cfg.set_active_datasource("prod", engine="mssql")
+        tools.set_active_schema_allowlist(None)  # 미설정
+        # 사용자 DB 3-part 차단(데이터 종속 — 미바인딩=접근 0)
+        err = tools._freeform_sql_access_error("SELECT * FROM userdb.dbo.t")
+        assert err is not None and "userdb" in err
+        # 시스템 DB 는 여전히 허용(완결성)
+        assert tools._freeform_sql_access_error("SELECT * FROM master.dbo.spt_values") is None
+        # 2-part(catalog 없음 — pin 된 primary)는 허용
+        assert tools._freeform_sql_access_error("SELECT * FROM dbo.t") is None
+    _run_isolated(check)
+
+
 def test_dialect_system_databases_sets():
     """dialect.system_databases(): MySQL=메타DB / MSSQL=master/model/msdb/tempdb."""
     def check_mssql():

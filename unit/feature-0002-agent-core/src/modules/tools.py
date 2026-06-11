@@ -124,16 +124,18 @@ def _freeform_sql_access_error(sql: str) -> str | None:
                 "(다른 허용 DB)로 명시해야 합니다 (무자격 테이블명 거부)."
             )
         # 3-part catalog(DB) 를 **DB allowlist + 시스템 DB** 와 대조(2-part 는 pin 된 primary=allowlist 내).
+        # fail-closed: active datasource 에서 allow=None(미설정)도 빈 allowlist 로 취급 → 사용자 DB catalog 0,
+        # 시스템 DB 만 허용. (데이터 종속: 미바인딩=접근 0. 3-part cross-DB 가 None 을 우회하지 못하게 차단.)
         allow = _ACTIVE_SCHEMA_ALLOWLIST.get()
-        if allow is not None:
-            allowed_dbs = {str(a).strip().lower() for a in allow} | _dialects.active().system_databases()
-            blocked = sorted(c for c in catalogs if c and c not in allowed_dbs)
-            if blocked:
-                allowed_str = ", ".join(sorted(allow)) or "(없음)"
-                return (
-                    f"오류: 접근이 허용되지 않은 데이터베이스 참조: {', '.join(blocked)}. "
-                    f"이 제품에 허용된 DB: {allowed_str} (+ 시스템 DB)."
-                )
+        allow_set = {str(a).strip().lower() for a in allow} if allow else set()
+        allowed_dbs = allow_set | _dialects.active().system_databases()
+        blocked = sorted(c for c in catalogs if c and c not in allowed_dbs)
+        if blocked:
+            allowed_str = ", ".join(sorted(allow_set)) or "(없음)"
+            return (
+                f"오류: 접근이 허용되지 않은 데이터베이스 참조: {', '.join(blocked)}. "
+                f"이 제품에 허용된 DB: {allowed_str} (+ 시스템 DB)."
+            )
         # 스키마(db part)는 allowlist 대조 안 함(DB 단위). 단 시스템 스키마(sys/guest/db_*)는 차단 — M1 보존
         # (master.sys.sql_logins 등 freeform 직접 조회 차단; RO GRANT 가 사용자 스키마 경계).
         sysschemas = _dialects.active().system_schemas() - _dialects.active().metadata_schemas()
