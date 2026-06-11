@@ -10,6 +10,18 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-06-11 TASK-0223 — 제품별 insight-worker 분석 완료율 UI (관리 콘솔 > 제품)** (REQ-20260611-0223, REV-20260611-0223 [SUBAGENT:insight-coverage-matching-semantics], **Major §12.3**). 사용자 요청: `관리 콘솔 > 제품` 각 항목에 insight-worker 의 객체 분석 완료율(%)을 표시 — 비율 모수 = 제품 `접근 가능 데이터베이스`(WebProductDatabases) 의 객체, 분자 = PG 내 해당 DB/테이블 통찰값(rag_objects). **구현**: (db.py) `list_information_schema_tables` — datasource information_schema `(schema,table)` flag-무관 직결 열거(`connect()` flag-gated 경로 우회). (app.py) `_compute_product_insight_coverage` + `GET /api/admin/products/insight-coverage`(`console.access`, 90s TTL 캐시). **catalog-driven 매칭** — 라이브 카탈로그 (schema,table) ∩ rag_objects (conv=`__global__`, scope=`common`, object_type∈{schema,table}) **set 교집합 dedup**: MSSQL `schema_name=dbo` 차원·NULL/hash 이중기록을 모두 해소. datasource scope=엔드포인트 해시(`_dsr.scope_key`, .env 라벨 폴백)+기본 엔드포인트면 `datasource_key IS NULL` 폴백. 분모는 resolve된 datasource RO 좌표 직결(SSRF 가드+pinned IP, 5s timeout, per-datasource 실패 격리→measurable:false). MSSQL 비-default_db=미스캔 flag. (admin.js/styles.css) 제품 목록 배지(`분석 N%` 등급색) + 상세 `접근 가능 데이터베이스` 섹션 per-DB breakdown(테이블 analyzed/total·DB✓/✗·미스캔) + 새로고침. 캐시버스터 `?v=20260611-insight-coverage`. **권한/스키마/암호화/insight write 경로 변경 0**(read-only 통계). **검증**: outside-voice 적대적 설계리뷰 [SUBAGENT] NOT-SHIP 5건이 catalog-driven 구현으로 전부 해소 확인. make test pytest **444 passed/2 skipped** + ruff All checks passed(머지 후 `_log` F821·conversation_id 버그 2건 hotfix 포함) + node --check + py_compile. **라이브 실측**: product 1/7/8(MySQL)=100%(dbauth 9/9·dbgame 98/98·dblog 279/279 등), product 91(MSSQL `mssql_local` agent_ro 로그인실패)=graceful 측정불가. **PB-0008 Windows-browser 시각검증 PASS**(목록 3× 녹색 `분석 100%`+1× `분석 측정 불가`, 상세 `insight 분석 완료율 100%` `389/389 객체` per-DB breakdown). worktree `ai/claude/task0223-product-insight-coverage`(base c769612).
+
+### Git 동기화 결과
+- 커밋: 15f1fa7 (ai/claude/task0223-product-insight-coverage) → PR #161 머지 (main b46cbd4) + hotfix cde2610(_log→logging) + 0e37b8e(conversation_id `__global__`)
+- verify-completion: PASS (9 of 9 checks, CHECK#13 Windows-browser WARN→PB-0008 충족)
+- Push: 완료
+- main 병합: 완료 (PR #161 merge + hotfix 직접 push)
+- 배포: make dc-build SERVICE=web + up -d (healthz git_commit=0e37b8e 베이킹 확인)
+- 충돌 해결: 없음
+
+## 1. Summary
+
 **2026-06-11 TASK-0218 — 관리 콘솔 대시보드 CloudWatch 스타일 사람-친화 재구성** (REQ-20260611-0218, REV-20260611-0218 [CODEX+SUBAGENT:cloudwatch-dashboard-design], **Major §12.3**). TASK-0210 위젯 그리드를 AWS CloudWatch 류 운영 대시보드로. gstack `/design-review` 메서드론 + cross-model(Codex+subagent) 디자인 감사 강한 합의 반영: (위계) 9개 동일 비중 → 주 metric 크게(primary)+보조 작게, 카탈로그 활동-우선. (신선도) `days` 윈도우 audits/conversations/accounts 전파(거짓 컨트롤 정직화)+수동 새로고침+auto-refresh(off/30/60s)+마지막 갱신 시각. (추세) 전기간 대비 ▲▼% 델타 배지(의미별 색)+순수 SVG sparkline(lib 0). (fail-loud) overview/위젯 실패 배너+재시도. (drill-down) 위젯→관리 탭. (편집) native HTML5 drag+↑↓ 폴백. (접근성) 포커스 링·aria-live·aria-label·aria-pressed. (polish) Top-N 비율막대·radius --r-md·8px. 백엔드 `_dash_widget_*` window/primary/delta/spark/tab + helper 2. **권한/스키마/시크릿/신규 엔드포인트 0**(응답 shape 확장 + 비파괴 read). make test MAKE_EXIT=0(`test_dashboard_overview.py` 17, 회귀 0)+node/py_compile+내 코드 ruff 클린. 캐시버스터 `?v=20260611-dashboard-cloudwatch`. worktree `ai/claude/dashboard-cloudwatch-ux`(base 1c98a16). flag(내 코드 아님): app.py:14133 `_log` F821(TASK-0216 머지본 잠복).
 
 ## 1. Summary

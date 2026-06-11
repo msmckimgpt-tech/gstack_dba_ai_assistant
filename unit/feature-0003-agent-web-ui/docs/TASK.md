@@ -3226,4 +3226,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 백엔드: `_compute_product_insight_coverage` + `/api/admin/products/insight-coverage` + TTL 캐시 (+ db.py `list_information_schema_tables`)
 - [x] 프런트: 목록 배지 + 상세 breakdown + loader + CSS + 캐시버스터
 - [x] py_compile app.py+db.py PASS + node --check admin.js PASS
-- [ ] verify-completion → main rebase·ff-merge → web 재배포 → 라이브 실측 + PB-0008 Windows-browser 시각검증
+- [x] verify-completion PASS → PR #161 머지(main b46cbd4) + hotfix(cde2610 `_log`→logging, 0e37b8e conversation_id `__global__`) → web 재배포(healthz git_commit=0e37b8e) → 라이브 실측(MySQL 제품 1/7/8=100%, MSSQL graceful 측정불가) + PB-0008 Windows-browser 시각검증 PASS(목록 배지 3×100%+1×측정불가, 상세 389/389 breakdown)

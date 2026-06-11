@@ -578,3 +578,16 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **Evidence:** `/tmp/pb0008_product_detail.png`(제품 상세 — "+ 데이터베이스 선택" 버튼), `/tmp/pb0008_picker_open.png`(체크박스 드롭다운 오픈 — 항목 목록 표시).
   - **Pass/Fail: PASS**
   - **Notes:** 캐시버스터 `?v=20260611-db-picker-checkbox` 서빙 확인. 체크박스 연속 토글(추가버튼 없이 즉시 draft 반영) 구조. CHECK#13(PB-0008 Windows-browser) **충족**.
+
+- 2026-06-11 (TASK-0223 제품별 insight-worker 분석 완료율 UI — **PB-0008 Windows-browser 완료 게이트**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 userspace relay `bridge_mode: relay`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증.
+  - **Runner: AI** (doctor → launch → run --scenario `tests/win-browser-task0223.scenario.json` + 단발 click/eval/screenshot)
+  - **Bridge:** relay (endpoint: http://172.28.64.1:9223)
+  - **배포:** PR #161 → main `b46cbd4` 머지 + hotfix `cde2610`(_log→logging) + `0e37b8e`(conversation_id `__global__`) → `make dc-build SERVICE=web` + `docker compose up -d --no-build web`. healthz git_commit=`0e37b8e` 베이킹 확인.
+  - **검증 내용 (시나리오 step1~10 ok:true):**
+    - **제품 목록 배지:** 4개 제품 row 에 분석 완료율 배지 렌더 (eval 추출): 킹스레이드(KR)=`분석 100%`(cov-ok 녹색), 마이크로볼츠(MV)=`분석 100%`, 건즈 국내(GZ_KR)=`분석 100%`, DK온라인(DK)=`분석 측정 불가`(cov-muted — MSSQL `mssql_local` 연결실패 graceful).
+    - **제품 상세 breakdown:** 킹스레이드 클릭 → `접근 가능 데이터베이스` 섹션에 `insight 분석 완료율` 블록: 요약 `100%`, 진행바 `389 / 389 객체 (DB + 테이블)`, per-DB `dbauth=테이블 9/9 · DB✓`, `dbgame=테이블 98/98 · DB✓`, `dblog=테이블 279/279 · DB✓`.
+    - **라이브 API 실측:** `GET /api/admin/products/insight-coverage` — product 1/7/8(MySQL)=100% (analyzed=total), product 91(MSSQL)=measurable:false(graceful, 500 없음).
+  - **Evidence:** `/tmp/win-browser-shots/task0223/01_list_badges.png`(목록 — 3× 녹색 `분석 100%` + 1× `분석 측정 불가`). 상세 screenshot 은 relay CDP transient(font-load 후 timeout)로 미캡처되나 구조 검증은 eval 로 확정.
+  - **Pass/Fail: PASS**
+  - **Notes:** 캐시버스터 `?v=20260611-insight-coverage` 서빙. 분자=PG rag_objects(`__global__`/`common`) ∩ 라이브 카탈로그 set 교집합, datasource scope=엔드포인트 해시(+기본 엔드포인트 NULL 폴백). CHECK#13(PB-0008 Windows-browser) **충족**.

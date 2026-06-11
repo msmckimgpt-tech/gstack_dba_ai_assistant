@@ -1,0 +1,22 @@
+{
+  "name": "TASK-0223 제품별 insight-worker 분석 완료율 — 목록 배지 + 상세 breakdown (authed admin)",
+  "base_url": "https://localhost:18080",
+  "shot_dir": "/tmp/win-browser-shots/task0223",
+  "steps": [
+    { "action": "goto", "url": "/", "wait_until": "domcontentloaded" },
+    { "action": "eval", "script": "(async()=>{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'bootstrap_admin',password:'ChangeThisBootstrapPass_2026!'})});const j=await r.json();return JSON.stringify({ok:j.ok});})()" },
+    { "action": "goto", "url": "/admin", "wait_until": "domcontentloaded" },
+    { "action": "wait_for", "selector": "button[data-admin-tab=products]", "timeout_ms": 20000 },
+    { "action": "wait_for", "timeout_ms": 1500, "stop_on_fail": false },
+    { "action": "click", "selector": "button[data-admin-tab=products]" },
+    { "action": "wait_for", "timeout_ms": 2500, "stop_on_fail": false },
+    { "action": "assert_visible", "selector": ".admin-pane[data-admin-pane=products] #productList .admin-list-row", "stop_on_fail": false },
+    { "action": "wait_for", "selector": ".cov-badge.cov-ok, .cov-badge.cov-muted", "timeout_ms": 20000, "stop_on_fail": false },
+    { "action": "eval", "script": "(function(){var rows=document.querySelectorAll('#productList .admin-list-row');var out=[];rows.forEach(function(r){var n=(r.querySelector('.admin-account-name')||{}).textContent||'';var b=r.querySelector('.cov-badge');out.push({name:n.trim(),badge:b?b.textContent.trim():null});});return JSON.stringify(out);})()", "stop_on_fail": false },
+    { "action": "screenshot", "path": "01_list_badges.png", "full_page": false },
+    { "action": "click", "selector": "#productList .admin-list-row:first-child" },
+    { "action": "wait_for", "selector": "#productDetail .cov-detail", "timeout_ms": 15000, "stop_on_fail": false },
+    { "action": "wait_for", "timeout_ms": 1500, "stop_on_fail": false },
+    { "action": "eval", "script": "(function(){var d=document.querySelector('#productDetail .cov-detail');if(!d)return JSON.stringify({err:'no cov-detail'});var sum=(d.querySelectorAll('.cov-badge')[0]||{}).textContent||'';var bar=(d.querySelector('.cov-bar-label')||{}).textContent||'';var dbs=[].slice.call(d.querySelectorAll('.cov-db-row')).map(function(r){return ((r.querySelector('.cov-db-name')||{}).textContent||'').trim()+'='+((r.querySelector('.cov-db-stat')||{}).textContent||'').trim();});return JSON.stringify({summary:sum.trim(),bar:bar.trim(),dbs:dbs});})()", "stop_on_fail": false }
+  ]
+}
