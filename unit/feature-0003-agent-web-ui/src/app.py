@@ -3218,6 +3218,66 @@ def _ensure_web_datasources_schema(conn) -> None:
         cur.close()
 
 
+def _seed_main_mysql_datasource(conn) -> None:
+    """TASK-0206: 데이터 MySQL(.env AGENT_DATA_DB_*) 을 편집가능 데이터소스 `main_mysql` 로 1회 시드.
+
+    이제 제품 접근 데이터는 데이터소스에 종속된다. 기존엔 `WebProducts.DatasourceKey` NULL =
+    데이터 MySQL 암묵 접근이었으나, 이를 명시 데이터소스로 승격하고 NULL 바인딩 제품을 일괄
+    `main_mysql` 로 바인딩(기존 접근 보존; DESIGN §3.1·§5). 멱등 — KEK 미설정/자격부재/이미존재 시 skip.
+    """
+    try:
+        from modules import cred_crypto as _cc
+        from modules import datasources as _dsr
+    except Exception:
+        return
+    if not _cc.enc_available():
+        return  # KEK 미설정 — 암호화 불가, 시드 보류(운영자가 KEK 설정 후 재부팅 시 시드)
+    user = os.getenv("AGENT_DATA_DB_USER", "").strip()
+    password = os.getenv("AGENT_DATA_DB_PASSWORD", "")
+    if not user:
+        return  # 데이터 MySQL 자격 미구성 — 시드 대상 아님
+    key = "main_mysql"
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT 1 FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (key,))
+        exists = cur.fetchone() is not None
+        if not exists:
+            got = _dsr.ensure_dek(conn)
+            if got is None:
+                return
+            ver, dek = got
+            try:
+                pw_enc = _cc.encrypt_password(dek, password, key) if password else None
+            except Exception:
+                return
+            cur.execute(
+                "INSERT INTO WebDatasources (DatasourceKey,Engine,Host,Port,DbUser,PasswordEnc,DefaultDb,"
+                "EncryptionVersion,IsActive,UpdatedByAccountId) VALUES (%s,'mysql',%s,%s,%s,%s,NULL,%s,1,NULL)",
+                (key, DB_HOST, int(DB_PORT), user, pw_enc, int(ver)),
+            )
+            try:
+                logging.getLogger(__name__).info("[ds-seed] main_mysql 데이터소스 시드 완료 (host=%s)", DB_HOST)
+            except Exception:
+                pass
+        # 마이그레이션: NULL/빈 바인딩 제품 → main_mysql (기존 데이터 MySQL 암묵접근 보존)
+        try:
+            cur.execute(
+                "UPDATE WebProducts SET DatasourceKey=%s "
+                "WHERE DatasourceKey IS NULL OR DatasourceKey=''",
+                (key,),
+            )
+        except Exception:
+            pass
+    except Exception:
+        # 시드 실패는 부팅을 막지 않는다(레지스트리는 .env fallback 보유)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        cur.close()
+
+
 def _ensure_web_conversation_shares_schema(conn) -> None:
     """REQ-20260514-0001: WebConversationShares 테이블을 idempotent CREATE.
 
@@ -3836,6 +3896,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_dynamic_permissions_schema(conn)
     # TASK-0205: DB 기반 datasource 레지스트리 테이블 fast-path 보정.
     _ensure_web_datasources_schema(conn)
+    # TASK-0206: 데이터 MySQL 데이터소스 시드 + NULL 바인딩 마이그레이션 (fast-path).
+    _seed_main_mysql_datasource(conn)
     # REQ-20260514-0001: 공유 링크 테이블 fast-path 보정.
     _ensure_web_conversation_shares_schema(conn)
     # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column ALTER.
@@ -3997,6 +4059,8 @@ def _ensure_web_tables():
         _ensure_dynamic_permissions_schema(conn)
         # TASK-0205: DB 기반 datasource 레지스트리 테이블 (slow path).
         _ensure_web_datasources_schema(conn)
+        # TASK-0206: 데이터 MySQL 데이터소스 시드 + NULL 바인딩 마이그레이션 (slow path).
+        _seed_main_mysql_datasource(conn)
         # REQ-20260514-0001: 공유 링크 테이블 보장 (slow path).
         _ensure_web_conversation_shares_schema(conn)
         # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column (slow path).
@@ -9758,10 +9822,18 @@ async def admin_datasource_databases(key: str, request: Request) -> JSONResponse
     if not okssrf:
         return _json_error(f"호스트 차단(SSRF): {reason}", 400)
     try:
-        names = _db.list_server_databases({**ds, "host": _pin})  # MAJOR-2: pinned IP. errno-only 에러
+        # TASK-0206 §3.4: 시스템/사용자 DB 구분(`[{name, system}]`). UI 가 시스템 DB 는 고정칩으로.
+        classified = _db.list_server_databases_classified({**ds, "host": _pin})  # MAJOR-2: pinned IP
     except Exception:
         return _json_error("DB 목록 조회 실패(연결/권한 확인).", 502)
-    return JSONResponse({"key": str(key).strip().lower(), "engine": ds.get("engine"), "databases": names})
+    # 하위호환: 기존 `databases`(사용자 DB 이름 배열) 유지 + 신규 `databases_classified`.
+    user_names = [d["name"] for d in classified if not d.get("system")]
+    return JSONResponse({
+        "key": str(key).strip().lower(),
+        "engine": ds.get("engine"),
+        "databases": user_names,
+        "databases_classified": classified,
+    })
 
 
 @app.post("/api/fork_conversation")

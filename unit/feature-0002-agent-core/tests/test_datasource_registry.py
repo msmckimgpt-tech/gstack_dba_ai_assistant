@@ -118,19 +118,20 @@ def test_b1_effective_default_db_injected():
 
 
 def test_b1_guard_reads_effective_not_static(monkeypatch):
-    """tools cross-DB 가드가 effective default_db(override 반영)를 읽는다 — 정적 dict 아님."""
+    """TASK-0206 DB-단위: cross-DB 가드는 **product allowlist(DB명)** 를 catalog 허용집합으로 읽는다 —
+    정적 DATASOURCES 의 default_db 가 아니다. (B1 단일-DB pin 모드 폐기 — DB-allowlist 가 대체.)"""
     from modules import config as cfg
     from modules import tools
 
     def check():
-        cfg.set_active_datasource("winsql", engine="mssql", default_db="gamelog_151")  # product override
-        tools.set_active_schema_allowlist(["dbo"])
-        # 정적 DATASOURCES 의 default_db 와 다른 override → 가드는 override(gamelog_151)를 허용 catalog 로
+        cfg.set_active_datasource("winsql", engine="mssql", default_db="gamelog_151")
+        tools.set_active_schema_allowlist(["gamelog_151"])  # 제품 허용 DB(catalog)
+        # 정적 DATASOURCES 의 default_db 는 dk_data_release(allowlist 와 무관) — 가드는 allowlist 를 본다.
         monkeypatch.setattr(cfg, "DATASOURCES", {"winsql": {"key": "winsql", "default_db": "dk_data_release"}})
-        # gamelog_151.dbo.t 는 effective(gamelog_151)와 일치 → cross 아님(통과 단계)
+        # 허용 DB(gamelog_151) 의 3-part 는 통과
         err = tools._freeform_sql_access_error("SELECT * FROM gamelog_151.dbo.tbl")
-        assert err is None or "교차" not in err
-        # dk_data_release(정적값) 참조는 effective(gamelog_151)와 불일치 → cross-DB 차단
+        assert err is None, err
+        # 정적 default_db(dk_data_release)는 allowlist 밖 → 차단(가드가 정적값을 허용하지 않음을 증명)
         err2 = tools._freeform_sql_access_error("SELECT * FROM dk_data_release.dbo.tbl")
-        assert err2 is not None and "교차" in err2
+        assert err2 is not None and "dk_data_release" in err2
     contextvars.copy_context().run(check)

@@ -180,9 +180,9 @@ def test_extract_sql_schema_refs_ast_sees_real_schema():
 def test_freeform_unqualified_rejected_when_datasource_active():
     def check():
         cfg.set_active_datasource("prod", engine="mssql")
-        tools.set_active_schema_allowlist(["dbo"])
+        tools.set_active_schema_allowlist(["appdb"])
         err = tools._freeform_sql_access_error("SELECT * FROM users")  # 무자격
-        assert err is not None and "schema" in err
+        assert err is not None and "테이블" in err  # TASK-0206 DB-단위: 스키마/DB 명시 강제
     _run_isolated(check)
 
 
@@ -197,27 +197,67 @@ def test_freeform_unqualified_allowed_in_legacy_mysql():
 
 
 def test_freeform_cross_db_catalog_rejected():
+    """TASK-0206 DB-단위: allowlist 는 **DB명(catalog)**. 허용 DB(appdb) 의 3-part 는 통과,
+    미허용 DB(otherdb) 는 차단. 2-part(catalog 없음)는 pin 된 primary(appdb) 로 해석돼 통과."""
     def check():
         cfg.set_active_datasource("prod", engine="mssql")
-        tools.set_active_schema_allowlist(["dbo"])
-        with mock.patch.object(cfg, "DATASOURCES", {"prod": {"key": "prod", "engine": "mssql", "default_db": "appdb"}}):
-            err = tools._freeform_sql_access_error("SELECT * FROM otherdb.dbo.t")
-            assert err is not None and "otherdb" in err
-            # 자기 DB(appdb) 카탈로그는 통과(allowlist 의 dbo)
-            ok = tools._freeform_sql_access_error("SELECT * FROM appdb.dbo.t")
-            assert ok is None
+        tools.set_active_schema_allowlist(["appdb", "gamelog_151"])  # DB 이름 allowlist
+        # 미허용 DB 차단
+        err = tools._freeform_sql_access_error("SELECT * FROM otherdb.dbo.t")
+        assert err is not None and "otherdb" in err
+        # 허용 DB 의 3-part 는 cross-DB 통과
+        ok = tools._freeform_sql_access_error("SELECT * FROM gamelog_151.dbo.T_ItemLog")
+        assert ok is None
+        # primary(appdb) 의 3-part 도 통과
+        ok2 = tools._freeform_sql_access_error("SELECT * FROM appdb.dbo.t")
+        assert ok2 is None
+        # 2-part 는 pin 된 primary 로 해석(통과)
+        ok3 = tools._freeform_sql_access_error("SELECT * FROM dbo.t")
+        assert ok3 is None
     _run_isolated(check)
 
 
-def test_freeform_agent_memory_via_brackets_blocked_by_allowlist():
-    """대괄호로 인용해도 agent_memory 는 allowlist(+metadata) 밖이라 차단."""
+def test_freeform_system_db_catalog_allowed_but_sys_schema_blocked():
+    """TASK-0206 M1 보존: 시스템 DB(master)는 catalog 차원 허용(master.dbo.x 통과)하되,
+    sys 스키마(master.sys.sql_logins 로그인 enumeration)는 계속 차단."""
     def check():
         cfg.set_active_datasource("prod", engine="mssql")
-        tools.set_active_schema_allowlist(["dbo"])
-        with mock.patch.object(cfg, "DATASOURCES", {"prod": {"key": "prod", "default_db": "appdb"}}):
-            err = tools._freeform_sql_access_error("SELECT * FROM [agent_memory].[secrets]")
-            assert err is not None
+        tools.set_active_schema_allowlist(["appdb"])  # master 는 allowlist 에 없지만 system_databases()
+        # 시스템 DB catalog 는 허용(완결성)
+        ok = tools._freeform_sql_access_error("SELECT * FROM master.dbo.spt_values")
+        assert ok is None, ok
+        # 그러나 sys 스키마 직접 조회는 차단(M1: sql_logins 유출 표면)
+        err = tools._freeform_sql_access_error("SELECT name FROM master.sys.sql_logins")
+        assert err is not None and "시스템 스키마" in err
+        # 2-part sys 도 차단
+        err2 = tools._freeform_sql_access_error("SELECT * FROM sys.objects")
+        assert err2 is not None
     _run_isolated(check)
+
+
+def test_freeform_agent_memory_3part_blocked_db_level():
+    """DB-단위: agent_memory 카탈로그(3-part)는 allowlist+시스템DB 밖이라 차단(cross-DB 보호)."""
+    def check():
+        cfg.set_active_datasource("prod", engine="mssql")
+        tools.set_active_schema_allowlist(["appdb"])
+        err = tools._freeform_sql_access_error("SELECT * FROM [agent_memory].[dbo].[secrets]")
+        assert err is not None and "agent_memory" in err
+    _run_isolated(check)
+
+
+def test_dialect_system_databases_sets():
+    """dialect.system_databases(): MySQL=메타DB / MSSQL=master/model/msdb/tempdb."""
+    def check_mssql():
+        cfg.set_active_datasource("prod", engine="mssql")
+        from modules import dialects as _d
+        assert _d.active().system_databases() == frozenset({"master", "model", "msdb", "tempdb"})
+    def check_mysql():
+        cfg.set_active_datasource(None)
+        from modules import dialects as _d
+        assert "mysql" in _d.active().system_databases()
+        assert "information_schema" in _d.active().system_databases()
+    _run_isolated(check_mssql)
+    _run_isolated(check_mysql)
 
 
 # ──────────────────────────────────────────────────────────────────────────

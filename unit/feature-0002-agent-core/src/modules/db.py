@@ -386,6 +386,70 @@ def list_server_databases(datasource: dict, *, timeout: int | None = None) -> "l
                 pass
 
 
+def list_server_databases_classified(datasource: dict, *, timeout: int | None = None) -> "list[dict]":
+    """TASK-0206 §3.4: DB 목록을 시스템/사용자 구분해 반환(`[{name, system}]`).
+
+    DB-단위 접근 모델에서 UI 는 시스템 DB(MSSQL master/model/msdb/tempdb)를 고정칩(메타,
+    항상 접근)으로, 사용자 DB 를 다중선택 allowlist 로 렌더한다. MSSQL 만 시스템 DB 를 포함
+    (catalog 차원 — `sys`/`guest` 스키마는 dialect 가 차단). MySQL 은 DB==스키마라 시스템 스키마
+    (information_schema/mysql/...) 는 메타데이터 경계로 계속 숨김(기존 동작 유지).
+    예외는 그대로 raise(endpoint 가 일반화). SSRF 검사는 호출측 선행.
+    """
+    engine = (datasource.get("engine") or "mysql").strip().lower()
+    conn = None
+    try:
+        if engine == "mssql":
+            if _pymssql is None:
+                raise RuntimeError("pymssql_not_installed")
+            conn = _pymssql.connect(
+                server=datasource.get("host") or DB_HOST,
+                port=str(int(datasource.get("port") or 1433)),
+                user=datasource.get("user") or DB_USER,
+                password=datasource.get("password", ""),
+                login_timeout=int(timeout or 8), timeout=int(timeout or 8),
+            )
+            cur = conn.cursor()
+            # database_id 1-4 = master/tempdb/model/msdb (시스템). 그 외 = 사용자 DB.
+            cur.execute(
+                "SELECT name, CASE WHEN database_id <= 4 THEN 1 ELSE 0 END AS is_sys "
+                "FROM sys.databases ORDER BY is_sys DESC, name"
+            )
+            out = []
+            for r in (cur.fetchall() or []):
+                if not r or not r[0]:
+                    continue
+                # tempdb 은 휘발성 — allowlist 의미 없음, 숨김.
+                if str(r[0]).lower() == "tempdb":
+                    continue
+                out.append({"name": str(r[0]), "system": bool(int(r[1] or 0))})
+            cur.close()
+            return out
+        else:
+            conn = mysql.connector.connect(
+                host=datasource.get("host") or DB_HOST,
+                port=int(datasource.get("port") or DB_PORT),
+                user=datasource.get("user") or DB_USER,
+                password=datasource.get("password", ""),
+                connection_timeout=int(timeout or 8), charset="utf8mb4", use_unicode=True,
+            )
+            cur = conn.cursor()
+            cur.execute("SHOW DATABASES")
+            _sys = {"information_schema", "mysql", "performance_schema", "sys", "agent_memory"}
+            out = [
+                {"name": str(r[0]), "system": False}
+                for r in (cur.fetchall() or [])
+                if r and r[0] and str(r[0]).lower() not in _sys
+            ]
+            cur.close()
+            return out
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def _collect_cursor_result(cur) -> list[tuple[str, Any, Any]]:
     # Stage 2 (P4): 크로스엔진 결과 수집. mysql.connector 전용 `cur.with_rows` 대신 DBAPI 표준
     # `cur.description`(result set 있으면 not None)으로 판정 → mysql.connector·pymssql 공통.

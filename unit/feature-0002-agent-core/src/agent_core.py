@@ -135,8 +135,8 @@ _MSSQL_DIALECT_GUIDANCE = """
 The active datasource is **SQL Server**. Write **T-SQL**, not MySQL. Critical rules:
 - **Row limiting**: use `SELECT TOP n ...` — there is NO `LIMIT` clause in T-SQL.
 - **Identifier quoting**: use `[schema].[table]` brackets (or plain `schema.table`), NEVER MySQL backticks (`` ` ``).
-- **Always schema-qualify** every table as `schema.table` (e.g. `dbo.MyTable`). Unqualified table names are rejected by the security gate. Most user tables live in the `dbo` schema.
-- **Single database only**: do NOT reference other databases with 3-part names (`otherdb.dbo.t`) — cross-database queries are blocked.
+- **Qualify every table**: for the CURRENT database use 2-part `schema.table` (e.g. `dbo.MyTable`); for ANOTHER allowed database use 3-part `database.schema.table` (e.g. `GameLog_151.dbo.T_ItemLog`). Unqualified (table-only) names are rejected. Most user tables live in the `dbo` schema.
+- **Allowed databases**: you may query only the databases listed below (others are blocked). Use 3-part names to read across them.
 - **Functions**: use T-SQL forms — `GETDATE()` (not `NOW()`), `LEN()` (not `LENGTH()`), `ISNULL()`/`COALESCE()`, `TOP`/`OFFSET-FETCH` for paging, `+` or `CONCAT()` for string concat, `CAST/CONVERT` for types.
 - **Date**: use `CONVERT`/`FORMAT`/`DATEADD`/`DATEDIFF` (not MySQL `DATE_FORMAT`/`DATE_SUB`).
 - Quote string literals with single quotes. Prefix Unicode literals with `N'...'`.
@@ -2052,11 +2052,29 @@ def _resolve_product_datasource(mem_conn, product_id):
             f"product {product_id} 의 datasource 키 '{key}' 가 미등록이거나 복호 불가입니다 "
             f"(WebDatasources / DS_{key.upper()}_* / KEK 확인)."
         )
-    # 제품별 참조 DB override (§2.4, B1): 사본에 default_db 를 제품 선택값으로. effective default_db 는
-    # set_active_datasource 로 cross-DB 가드에 주입돼 가드·연결이 동일 DB 를 본다.
-    if product_db:
+    # TASK-0206 DB-단위: MSSQL primary(pin) DB 도출 — 명시 DatasourceDatabase 우선, 없으면 제품의 **첫
+    # 접근가능 DB**(WebProductDatabases, SortOrder)를 자동 pin(사용자 결정: 첫 선택 DB). 2-part 쿼리·구조화
+    # 도구가 이 DB 범위. 다른 허용 DB 는 freeform 3-part(cross-DB). MySQL 은 default_db 미적용(db-prefixed).
+    primary_db = product_db
+    if not primary_db and (ds.get("engine") or "mysql").strip().lower() == "mssql":
+        try:
+            cur = mem_conn.cursor()
+            try:
+                cur.execute(
+                    "SELECT SchemaName FROM WebProductDatabases WHERE ProductId=%s "
+                    "ORDER BY SortOrder, SchemaName LIMIT 1",
+                    (int(product_id),),
+                )
+                r = cur.fetchone()
+                if r and r[0]:
+                    primary_db = str(r[0]).strip()
+            finally:
+                cur.close()
+        except Exception:
+            primary_db = ""
+    if primary_db:
         ds = dict(ds)
-        ds["default_db"] = product_db
+        ds["default_db"] = primary_db
     return ds
 
 
@@ -2337,6 +2355,22 @@ def _run_agent_core(
         _active_engine = "mysql"
     if str(_active_engine).lower() == "mssql":
         system_content += _MSSQL_DIALECT_GUIDANCE
+        # TASK-0206: 허용 DB 목록 + 현재(primary) DB 를 동적 주입(DB-단위 — 3-part cross-DB 안내).
+        try:
+            import modules.tools as _tools
+            _allow = _tools._ACTIVE_SCHEMA_ALLOWLIST.get()
+            _allow_dbs = sorted(_allow) if _allow else []
+        except Exception:
+            _allow_dbs = []
+        _primary = (_ds.get("default_db") if _ds else None) or (_allow_dbs[0] if _allow_dbs else None)
+        if _allow_dbs:
+            system_content += (
+                f"\n- **Current (default) database**: `{_primary}` — use 2-part `schema.table` for it.\n"
+                f"- **Allowed databases** (use 3-part `db.schema.table` for the others): "
+                f"{', '.join('`' + d + '`' for d in _allow_dbs)}.\n"
+                f"- System databases (master/model/msdb/tempdb) are accessible but contain no business data; "
+                f"`sys`/`guest` schemas are blocked.\n"
+            )
     # Inject conversation context (origin_request + thread_goal)
     if prev_origin or thread_goal:
         ctx_parts: list[str] = []

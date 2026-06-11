@@ -3782,7 +3782,12 @@ function renderProductDetail() {
   toggles.appendChild(sortField);
   paneEl.appendChild(toggles);
 
-  // Database chip editor
+  // TASK-0206: 데이터 소스 → 접근 가능 데이터베이스 의 forward-hook(데이터소스 섹션이 위에 렌더되어
+  // 아래 접근-DB 섹션을 갱신). datasource-driven 으로 선택 datasource 의 DB 목록을 반영한다.
+  let _refreshAccessibleDbs = () => {};
+  let _selectedDatasourceKey = product.datasource_key || "";
+
+  // Database chip editor (datasource-driven, DB-단위)
   const dbSection = document.createElement("div");
   dbSection.className = "admin-detail-section";
   const dbTitle = document.createElement("div");
@@ -3791,7 +3796,7 @@ function renderProductDetail() {
   dbSection.appendChild(dbTitle);
   const dbHint = document.createElement("div");
   dbHint.className = "admin-detail-hint";
-  dbHint.textContent = "Agent가 접근 가능한 스키마. 메타데이터(information_schema 등)는 고정됩니다.";
+  dbHint.textContent = "선택한 데이터 소스에서 이 제품이 접근할 데이터베이스. 시스템 DB(메타데이터)는 고정됩니다.";
   dbSection.appendChild(dbHint);
 
   // pending 우선, 다음으로 fresh draft, 최후로 서버 값.
@@ -3805,17 +3810,23 @@ function renderProductDetail() {
   const chipWrap = document.createElement("div");
   chipWrap.className = "admin-chip-wrap";
 
-  // Metadata 4 종 locked chip 은 항상 prepend (REV-20260422-0006 정책 시각화).
+  // 시스템/메타데이터 locked chip 의 기본 소스(데이터 MySQL). datasource-driven 으로 교체됨(_refreshAccessibleDbs).
   const metadataPayload = (adminState.availableDatabases.metadata_schemas || []).slice();
-  const metadataNames = metadataPayload.length
-    ? metadataPayload
-    : METADATA_SCHEMAS.map((name) => ({ schema_name: name, present: true, always_accessible: true }));
+  const _defaultLocked = metadataPayload.length
+    ? metadataPayload.map((m) => ({ name: m.schema_name, present: m.present !== false }))
+    : METADATA_SCHEMAS.map((name) => ({ name, present: true }));
+  // 가변 소스 — datasource 선택에 따라 갱신.
+  let lockedChips = _defaultLocked.slice();              // 시스템 DB / 메타데이터(고정칩)
+  let availableUserDbs = (adminState.availableDatabases.user_schemas || []).slice();  // 사용자 DB(picker)
+  let dsCaseInsensitive = false;                          // MSSQL DB명 대소문자 보존(true=lower 비교만)
 
   const buildPicker = () => {
     pickerSelect.innerHTML = "";
     const used = new Set(draft.map((d) => String(d.schema_name).toLowerCase()));
-    const userSchemas = (adminState.availableDatabases.user_schemas || [])
+    const lockedLower = new Set(lockedChips.map((c) => String(c.name).toLowerCase()));
+    const userSchemas = (availableUserDbs || [])
       .filter((s) => !used.has(String(s).toLowerCase()))
+      .filter((s) => !lockedLower.has(String(s).toLowerCase()))
       .filter((s) => !METADATA_SCHEMAS.includes(String(s).toLowerCase()))
       .filter((s) => !INTERNAL_SCHEMAS.has(String(s).toLowerCase()));
     if (!userSchemas.length) {
@@ -3845,15 +3856,15 @@ function renderProductDetail() {
 
   const redrawChips = () => {
     chipWrap.innerHTML = "";
-    // 메타데이터 4 종 locked chip 강제 노출.
-    metadataNames.forEach((meta) => {
+    // 시스템 DB / 메타데이터 locked chip 강제 노출(고정 — 항상 접근, 편집 불가).
+    lockedChips.forEach((meta) => {
       const chip = document.createElement("span");
       chip.className = "admin-chip is-locked";
-      chip.title = meta.present
-        ? "메타데이터 (고정)"
-        : "메타데이터 (고정, 미감지)";
+      chip.title = meta.present === false
+        ? "시스템/메타데이터 (고정, 미감지)"
+        : "시스템/메타데이터 (고정)";
       const txt = document.createElement("span");
-      txt.textContent = meta.schema_name;
+      txt.textContent = meta.name;
       chip.appendChild(txt);
       const tag = document.createElement("small");
       tag.className = "admin-chip-locked-hint";
@@ -3903,18 +3914,21 @@ function renderProductDetail() {
   pickerAddBtn.textContent = "+ 추가";
   pickerAddBtn.disabled = !canManage;
   pickerAddBtn.addEventListener("click", () => {
-    const v = (pickerSelect.value || "").trim().toLowerCase();
-    if (!v) return;
+    // TASK-0206: MSSQL DB명은 대소문자 보존(GameLog_151). picker 값은 서버 목록 출처라 형식 신뢰.
+    const raw = (pickerSelect.value || "").trim();
+    if (!raw) return;
+    const v = raw.toLowerCase();
     if (METADATA_SCHEMAS.includes(v) || INTERNAL_SCHEMAS.has(v)) return;
-    if (!/^[a-z_][a-z0-9_]{0,63}$/.test(v)) {
+    // dsCaseInsensitive(MSSQL) 가 아니면 MySQL 스키마 규칙(소문자 식별자) 검증 유지.
+    if (!dsCaseInsensitive && !/^[a-z_][a-z0-9_]{0,63}$/.test(v)) {
       showToast("스키마 이름 형식이 올바르지 않습니다.", true);
       return;
     }
     if (draft.some((d) => String(d.schema_name).toLowerCase() === v)) {
-      showToast("이미 등록된 스키마입니다.", true);
+      showToast("이미 등록된 데이터베이스입니다.", true);
       return;
     }
-    draft.push({ schema_name: v, description: "", sort_order: (draft.length + 1) * 10 });
+    draft.push({ schema_name: dsCaseInsensitive ? raw : v, description: "", sort_order: (draft.length + 1) * 10 });
     setProductDatabasesPending(product.id, draft);
     redrawChips();
     buildPicker();
@@ -3925,9 +3939,45 @@ function renderProductDetail() {
   redrawChips();
   buildPicker();
 
-  paneEl.appendChild(dbSection);
+  // TASK-0206: 선택 datasource 의 DB 목록으로 접근가능 DB(고정 시스템칩 + 사용자 picker)을 갱신.
+  // 등록 datasource 면 /databases(classified) 사용; 미바인딩이면 데이터 MySQL 기본값으로 환원.
+  _refreshAccessibleDbs = async (key) => {
+    const ds = (adminState.datasources || []).find((d) => d.key === key);
+    if (!key || !ds) {
+      // 미바인딩(또는 미등록) → 데이터 MySQL 기본값.
+      lockedChips = _defaultLocked.slice();
+      availableUserDbs = (adminState.availableDatabases.user_schemas || []).slice();
+      dsCaseInsensitive = false;
+      redrawChips();
+      buildPicker();
+      return;
+    }
+    const isMssql = String(ds.engine || "mysql").toLowerCase() === "mssql";
+    dsCaseInsensitive = isMssql;
+    try {
+      const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(key)}/databases`);
+      const classified = (r && r.databases_classified) || null;
+      const userDbs = classified ? classified.filter((d) => !d.system).map((d) => d.name) : ((r && r.databases) || []);
+      if (isMssql) {
+        // MSSQL: 시스템 DB(master/model/msdb)를 고정칩으로(catalog 접근 — sys 스키마는 런타임 차단).
+        lockedChips = classified
+          ? classified.filter((d) => d.system).map((d) => ({ name: d.name, present: true }))
+          : [];
+      } else {
+        // MySQL: 메타데이터 4종(information_schema 등)을 고정칩으로 유지(DB==스키마, 시스템 스키마 경계).
+        lockedChips = _defaultLocked.slice();
+      }
+      availableUserDbs = userDbs;
+    } catch (e) {
+      lockedChips = isMssql ? [] : _defaultLocked.slice();
+      availableUserDbs = [];
+      showToast("데이터소스 DB 목록 조회 실패 — 연결/권한 확인.", true);
+    }
+    redrawChips();
+    buildPicker();
+  };
 
-  // ── 멀티 datasource (P2): product → datasource 바인딩 + 연결테스트 ──────────────
+  // ── 멀티 datasource (P2): product → datasource 바인딩 + 연결테스트 (TASK-0206: 접근가능DB 위로 이동) ──
   // 백엔드 PATCH datasource 는 console.manage 권한이라 컨트롤도 그 권한으로 게이트(불일치 방지).
   {
     const canDs = can("console.manage");
@@ -3943,7 +3993,7 @@ function renderProductDetail() {
     if (!adminState.datasourcesEnabled) {
       dsHint.textContent = "멀티 datasource 비활성(AGENT_MULTI_DATASOURCE_ENABLED=0). 바인딩은 저장되나 flag 활성화 전까지는 기본 MySQL 로 동작합니다.";
     } else {
-      dsHint.textContent = "이 제품의 대화가 분석할 MySQL datasource. (기본=단일 MySQL). datasource 의 RO 유저는 이 제품의 허용 스키마에만 GRANT SELECT 되어야 합니다.";
+      dsHint.textContent = "이 제품의 대화가 분석할 데이터 소스. 데이터는 데이터 소스에 종속됩니다 — 선택하면 아래 '접근 가능 데이터베이스' 목록이 갱신됩니다. RO 유저는 허용 DB 에만 GRANT SELECT 되어야 합니다.";
     }
     dsSection.appendChild(dsHint);
 
@@ -3966,58 +4016,8 @@ function renderProductDetail() {
     const dsResult = document.createElement("span");
     dsResult.className = "admin-ds-test-result";
 
-    // TASK-0205 §2.4 (Phase C): MSSQL 참조 DB — 선택 datasource 가 mssql 이면 제품별 DB select 표시.
-    const dbRow = document.createElement("div");
-    dbRow.className = "admin-db-picker-row";
-    dbRow.style.marginTop = "6px";
-    const dbLabel = document.createElement("span");
-    dbLabel.className = "admin-detail-hint";
-    dbLabel.textContent = "참조 DB:";
-    const dbSelect = document.createElement("select");
-    dbSelect.disabled = !canDs;
-    dbRow.append(dbLabel, dbSelect);
-
-    function selectedDsEngine() {
-      const ds = (adminState.datasources || []).find((d) => d.key === dsSelect.value);
-      return ds ? (ds.engine || "mysql") : "";
-    }
-    async function refreshDbSelect() {
-      const key = dsSelect.value;
-      const engine = selectedDsEngine();
-      // MSSQL 데이터소스에만 참조 DB 선택 노출(MySQL 은 schema=DB 라 허용스키마로 충분).
-      if (!key || engine !== "mssql") { dbRow.style.display = "none"; return; }
-      dbRow.style.display = "";
-      dbSelect.innerHTML = "";
-      const optDef = document.createElement("option");
-      optDef.value = ""; optDef.textContent = "(데이터소스 기본 DB)";
-      dbSelect.appendChild(optDef);
-      try {
-        const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(key)}/databases`);
-        (r && r.databases || []).forEach((name) => {
-          const o = document.createElement("option");
-          o.value = name; o.textContent = name; dbSelect.appendChild(o);
-        });
-        dbSelect.value = product.datasource_database || "";
-      } catch (e) {
-        const o = document.createElement("option");
-        o.value = ""; o.textContent = "(DB 목록 조회 실패)"; dbSelect.appendChild(o);
-      }
-    }
-    dbSelect.addEventListener("change", async () => {
-      try {
-        await apiFetch(`/api/admin/products/${product.id}/datasource`, {
-          method: "PATCH",
-          body: JSON.stringify({ datasource_key: dsSelect.value || null, datasource_database: dbSelect.value || null }),
-        });
-        product.datasource_database = dbSelect.value || null;
-        const p = (adminState.products || []).find((x) => Number(x.id) === Number(product.id));
-        if (p) p.datasource_database = dbSelect.value || null;
-        showToast(dbSelect.value ? `참조 DB '${dbSelect.value}' 설정됨` : "데이터소스 기본 DB 사용");
-      } catch (error) {
-        showToast(error.message || "참조 DB 설정 실패", true);
-      }
-    });
-
+    // TASK-0206: 별도 "참조 DB" 드롭다운 폐지 — DB 선택은 아래 '접근 가능 데이터베이스'(DB-단위 multi-select)
+    // 로 흡수. datasource 변경 시 접근가능DB 목록을 datasource-driven 으로 재구성한다.
     dsSelect.addEventListener("change", async () => {
       const val = dsSelect.value || null;
       dsResult.textContent = "";
@@ -4029,10 +4029,12 @@ function renderProductDetail() {
         });
         // 로컬 product 객체 갱신 (재로드 없이 일관). datasource 변경 시 참조 DB 초기화.
         product.datasource_database = null;
+        product.datasource_key = val;
         const p = (adminState.products || []).find((x) => Number(x.id) === Number(product.id));
         if (p) { p.datasource_key = val; p.datasource_database = null; }
+        _selectedDatasourceKey = val || "";
         showToast(val ? `datasource '${val}' 바인딩됨` : "기본 MySQL 로 환원됨");
-        refreshDbSelect();
+        _refreshAccessibleDbs(_selectedDatasourceKey);  // 접근가능DB 목록 datasource-driven 갱신
       } catch (error) {
         dsSelect.value = product.datasource_key || "";
         showToast(error.message || "datasource 바인딩 실패", true);
@@ -4069,9 +4071,11 @@ function renderProductDetail() {
 
     dsRow.append(dsSelect, testBtn, dsResult);
     dsSection.appendChild(dsRow);
-    dsSection.appendChild(dbRow);
+    // TASK-0206 UX: 데이터 소스 섹션을 '접근 가능 데이터베이스' 위로 배치(데이터→데이터소스 종속 흐름 시각화).
     paneEl.appendChild(dsSection);
-    refreshDbSelect();  // 초기 표시(선택 datasource 가 mssql 이면 참조 DB select 노출)
+    paneEl.appendChild(dbSection);
+    // 초기 로드: 제품에 바인딩된 datasource 의 DB 목록으로 접근가능DB 구성(미바인딩이면 데이터 MySQL 기본값).
+    _refreshAccessibleDbs(_selectedDatasourceKey);
   }
 
   // Product-scope system prompt
