@@ -4721,6 +4721,13 @@ function renderProductDetail() {
     dbTitleDs.textContent = label ? `데이터소스: ${label}` : "기본 단일 MySQL";
   };
 
+  // TASK-0228 (1:N): 접근DB 편집은 **편집 대상 datasource** 차원으로 분리한다. _editDsKey 는 현재
+  // 편집 중인 datasource 라벨(기본=primary). 단일 바인딩 제품은 _editDsKey=primary(또는 '') 1개.
+  // ※ TDZ 버그 수정(TASK-0234 재현): 아래 "편집 대상 데이터소스" select 블록(≥2)이 _editDsKey 를
+  //   읽으므로 **반드시 그 블록보다 먼저** 선언해야 한다. (이전엔 select 블록 뒤에 let 선언이라,
+  //   ≥2 바인딩 제품을 렌더하면 ReferenceError 로 패널이 통째 비던 잠복 버그.)
+  let _editDsKey = (product.datasource_key || "");  // 기본 편집 대상 = primary
+
   // TASK-0228 (1:N): 제품이 ≥2 datasource 에 바인딩됐으면 "편집 대상 데이터소스" 선택기를 보인다.
   // 각 datasource 의 접근DB 를 독립 편집한다(차원 격리). 단일 바인딩이면 선택기 비표시(종전 UX).
   let _switchEditDs = () => {};  // forward hook (redrawChips/buildPicker/_refreshAccessibleDbs 정의 후 채움)
@@ -4748,11 +4755,8 @@ function renderProductDetail() {
   // TASK-0223: 접근 가능 DB 기준 insight-worker 분석 완료율 (전체 % + DB별 breakdown).
   dbSection.appendChild(buildProductCoverageDetail(product));
 
-  // TASK-0228 (1:N): 접근DB 편집은 **편집 대상 datasource** 차원으로 분리한다. _editDsKey 는 현재
-  // 편집 중인 datasource 라벨(기본=primary). draft 는 그 datasource 의 DB 행만 담는다.
-  //  - product.databases 의 각 행은 datasource_key 를 가진다(P-B). null/'' 은 레거시 단일 차원.
-  //  - 단일 바인딩 제품은 _editDsKey=primary(또는 '') 1개라 종전과 동일하게 동작.
-  let _editDsKey = (product.datasource_key || "");  // 기본 편집 대상 = primary
+  // (_editDsKey 는 위 "편집 대상 select" 블록보다 먼저 선언됨 — TDZ 회피.)
+  // draft 는 그 datasource 의 DB 행만 담는다. product.databases 의 각 행은 datasource_key 를 가진다(P-B).
   // 편집 대상 datasource 의 서버 DB 행만 필터(datasource_key 매칭; 레거시 '' 행은 빈 키 편집 시 포함).
   const _serverDbsFor = (dsk) => {
     const want = String(dsk || "").trim().toLowerCase();
@@ -5125,22 +5129,20 @@ function renderProductDetail() {
       try {
         const r = await apiFetch(`/api/admin/products/${product.id}/datasources`);
         const binds = (r && r.datasources) || [];
-        product.datasources = binds.map((d) => ({
+        const nextDatasources = binds.map((d) => ({
           datasource_key: d.datasource_key, is_primary: d.is_primary, sort_order: d.sort_order,
         }));
         const prim = binds.find((d) => d.is_primary);
-        product.datasource_key = prim ? prim.datasource_key : null;
+        const nextPrimary = prim ? prim.datasource_key : null;
+        // adminState.products 정본을 갱신한 뒤 **제품 상세 전체를 재렌더**한다.
+        // (TASK-0234 재현 버그: 칩만 부분 갱신하면 "편집 대상 데이터소스" select·헤더 배지·
+        //  접근 가능 DB 목록이 초기 렌더 시점 클로저에 묶여 갱신 안 됨 — 바인딩 0↔1↔N 전환 시
+        //  select 가 아예 생성/제거돼야 하므로 부분 갱신으로는 일관성 보장 불가. 전체 재렌더가 정답.)
         const p = (adminState.products || []).find((x) => Number(x.id) === Number(product.id));
-        if (p) { p.datasources = product.datasources; p.datasource_key = product.datasource_key; }
-        _selectedDatasourceKey = product.datasource_key || "";
-        // 이슈②: 편집 대상이 제거된 datasource 를 가리키면 primary 로 되돌리고 헤더 배지 갱신.
-        const _editStillBound = (product.datasources || []).some(
-          (d) => String(d.datasource_key || "").toLowerCase() === String(_editDsKey || "").toLowerCase());
-        if (!_editStillBound) _editDsKey = _selectedDatasourceKey;
-        _renderDsChips();
-        dsSelect.value = "";
-        _updateDbSectionLabel(_editDsKey);
-        _refreshAccessibleDbs(_editDsKey);
+        if (p) { p.datasources = nextDatasources; p.datasource_key = nextPrimary; }
+        product.datasources = nextDatasources;
+        product.datasource_key = nextPrimary;
+        renderProductDetail();
       } catch (e) { showToast(e.message || "데이터소스 목록 갱신 실패", true); }
     };
     _renderDsChips();
@@ -5195,10 +5197,8 @@ function renderProductDetail() {
           product.datasources = val ? [{ datasource_key: val, is_primary: true, sort_order: 0 }] : [];
           const p = (adminState.products || []).find((x) => Number(x.id) === Number(product.id));
           if (p) { p.datasource_key = val; p.datasource_database = null; p.datasources = product.datasources; }
-          _selectedDatasourceKey = val || "";
-          _renderDsChips();
           showToast(val ? `datasource '${val}' 바인딩됨` : "기본 MySQL 로 환원됨");
-          _refreshAccessibleDbs(_selectedDatasourceKey);
+          renderProductDetail();  // 전체 재렌더(칩·배지·DB목록·select 일관 재구성)
         }
       } catch (error) {
         dsSelect.value = "";
