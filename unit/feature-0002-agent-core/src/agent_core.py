@@ -2116,6 +2116,119 @@ def _resolve_product_datasource(mem_conn, product_id):
     return ds
 
 
+def _product_datasource_keys(mem_conn, product_id) -> "list[str]":
+    """TASK-0228 (1:N): 제품에 바인딩된 datasource 키 목록(primary 우선). 단일 바인딩(레거시)은 1건.
+
+    join 테이블(WebProductDatasources) 우선, 부재/미이전 시 primary(WebProducts.DatasourceKey) 폴백.
+    소문자 정규화. 미바인딩 제품은 []."""
+    if not product_id or int(product_id) <= 0:
+        return []
+    keys: list[str] = []
+    try:
+        cur = mem_conn.cursor()
+        try:
+            try:
+                cur.execute(
+                    "SELECT LOWER(DatasourceKey) FROM WebProductDatasources WHERE ProductId=%s "
+                    "ORDER BY IsPrimary DESC, SortOrder ASC, DatasourceKey ASC",
+                    (int(product_id),),
+                )
+                keys = [str(r[0]).strip().lower() for r in (cur.fetchall() or []) if r and r[0]]
+            except Exception:
+                keys = []
+            if not keys:
+                cur.execute("SELECT DatasourceKey FROM WebProducts WHERE Id=%s LIMIT 1", (int(product_id),))
+                r = cur.fetchone()
+                if r and r[0] and str(r[0]).strip():
+                    keys = [str(r[0]).strip().lower()]
+        finally:
+            cur.close()
+    except Exception:
+        return []
+    # dedup(순서 보존)
+    seen: set[str] = set()
+    out: list[str] = []
+    for k in keys:
+        if k and k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
+
+def _datasource_allow_schemas(mem_conn, product_id, datasource_key) -> "list[str]":
+    """TASK-0228 (1:N): 특정 (product, datasource) 의 접근가능 스키마(DB) 목록 — datasource 차원 격리.
+
+    WebProductDatabases.DatasourceKey 차원으로만 조회한다. 원본 케이스 보존(case-sensitive collation).
+
+    **보안 (REV-0228 MAJOR-2 — fail-closed)**: 본 함수는 멀티 datasource(≥2 바인딩) 라우터의 datasource
+    별 allowlist 를 만든다. 차원 컬럼이 부재(미이전)하거나 조회가 실패하면 **차원 없는 전체 목록으로
+    폴백하지 않는다** — 그 폴백은 product 의 모든 DB(다른 datasource 것 포함)를 이 datasource 의
+    allowlist 로 broadcast 해 교차노출이 된다(REV-0228 발견). 대신 **[] 반환(fail-closed)** — 차원
+    컬럼은 `_ensure_web_product_datasources_schema` 가 join 테이블과 같은 마이그레이션에서 추가하므로,
+    ≥2 바인딩이 존재하면 컬럼도 정상 존재해야 한다. 부재면 마이그레이션 비정상 → 접근 0 이 안전."""
+    if not product_id or int(product_id) <= 0:
+        return []
+    dsk = (str(datasource_key).strip().lower() if datasource_key else "")
+    try:
+        cur = mem_conn.cursor()
+        try:
+            cur.execute(
+                "SELECT SchemaName FROM WebProductDatabases WHERE ProductId=%s AND LOWER(DatasourceKey)=%s "
+                "ORDER BY SortOrder, SchemaName",
+                (int(product_id), dsk),
+            )
+            return [str(r[0]).strip() for r in (cur.fetchall() or []) if r and r[0]]
+        finally:
+            cur.close()
+    except Exception as exc:
+        # 차원 컬럼 부재/조회 실패 → fail-closed(접근 0). 전체 목록 broadcast(교차노출) 금지.
+        logging.getLogger("agent_core").warning(
+            "datasource_allow_schemas_failclosed product_id=%s ds=%s err=%r — 접근 0(차원 컬럼 확인)",
+            product_id, dsk, exc,
+        )
+        return []
+
+
+def _resolve_product_datasources(mem_conn, product_id) -> "list[dict]":
+    """TASK-0228 (1:N): 제품에 바인딩된 **여러** datasource 를 해석한다 (primary 먼저).
+
+    각 dict 는 `_resolve_product_datasource` 와 동일 shape + 다음 런타임 메타:
+      - `_label`: 바인딩 키(소문자 라벨) — tool 의 `datasource` 인자가 이 라벨로 선택한다.
+      - `_allow_schemas`: 이 (product, datasource) 의 접근가능 스키마(DB) 목록 — **datasource 차원 격리**.
+      - `_is_primary`: 첫 바인딩 여부.
+
+    보안: 각 datasource 의 allowlist 는 그 datasource 의 WebProductDatabases 행만으로 구성된다
+    (datasource A 의 DB 가 B 컨텍스트로 새지 않음, Codex-3 격리 동형). 미등록/복호불가 키는 skip
+    (silent — 단일 키 경로의 fail-closed 와 달리, 여러 키 중 하나가 죽어도 나머지는 동작해야 함;
+    호출부가 빈 리스트면 단일 경로로 폴백). flag OFF 시 []."""
+    if not cfg.AGENT_MULTI_DATASOURCE_ENABLED:
+        return []
+    keys = _product_datasource_keys(mem_conn, product_id)
+    if len(keys) < 2:
+        return []  # 0~1 바인딩 = 기존 단일 경로(_resolve_product_datasource)가 처리
+    from modules import datasources as _datasources
+    out: list[dict] = []
+    for i, key in enumerate(keys):
+        ds = _datasources.resolve(mem_conn, key)
+        if not ds:
+            logging.getLogger("agent_core").warning(
+                "multi_ds_resolve_skip product_id=%s key=%s — 미등록/복호불가(이 키만 skip)", product_id, key,
+            )
+            continue
+        ds = dict(ds)
+        allow = _datasource_allow_schemas(mem_conn, product_id, key)
+        # MSSQL primary(pin) DB: 단일 경로와 동일 규칙(allowlist 멤버만 pin, 시스템 DB 제외).
+        if (ds.get("engine") or "mysql").strip().lower() == "mssql":
+            _hard = {"master", "model", "msdb", "tempdb", "agent_memory"}
+            _allow_clean = [d for d in allow if d.lower() not in _hard]
+            ds["default_db"] = _allow_clean[0] if _allow_clean else ""
+        ds["_label"] = key
+        ds["_allow_schemas"] = allow
+        ds["_is_primary"] = (i == 0)
+        out.append(ds)
+    return out if len(out) >= 2 else []
+
+
 # ══════════════════════════════════════════════════════════════════
 #  메인 에이전트 루프
 # ══════════════════════════════════════════════════════════════════
@@ -2289,28 +2402,63 @@ def _run_agent_core(
     # 멀티 datasource (P1): product 에 바인딩된 datasource 좌표 해석 (None=기본 단일 MySQL).
     # flag OFF / 미바인딩 시 None → connect_with_retry 가 기존 경로 그대로 (동작 0 변경).
     # 명시 바인딩 + 미등록 키 → fail-closed (REV-0187 M-2: 운영 DB 폴백 금지, run 중단).
+    # TASK-0228 (1:N): 제품이 ≥2 datasource 에 바인딩됐는지 먼저 본다. ≥2 면 멀티 datasource 라우터
+    # 경로(LLM 이 tool 마다 datasource 선택), 0~1 이면 기존 단일 경로(_resolve_product_datasource).
+    # REV-0228 MAJOR-3: 멀티 datasource 해석 실패를 조용히 [] 로 삼키면, ≥2 바인딩 제품이 단일
+    # 경로(primary)로 silent 강등되며 single-path allowlist(차원 무필터)가 넓어지는 fail-open 이 된다.
+    # bare except 금지 — 로그로 가시화한다(차원 격리 의도 보존). resolve 내부의 미등록 키는 이미
+    # 개별 skip 처리되므로 여기 도달하는 예외는 transient(연결 등)이며, [] 면 단일 경로가 받되 그
+    # 경로 자체가 fail-closed(_resolve_product_datasource).
+    _multi_ds_list: list[dict] = []
     try:
-        _ds = _resolve_product_datasource(mem_conn, product_id)
-    except DatasourceResolutionError as e:
-        cfg.CURRENT_RUN_ID = ""
-        result["error"] = f"데이터 소스 설정 오류: {e}"
-        if output_mode == "console":
-            console.print(Panel.fit(result["error"], title="오류"))
-        return result
-    _data_db = None if _ds else DB_CONNECT_DB  # ds 경로는 database=None(schema-prefixed 강제, M-1)
-    try:
-        db_conn = connect_with_retry(database=_data_db, autocommit=True, datasource=_ds)
-    except Exception as e:
-        # DB 연결 실패 시 연결 없이 진행 (도구에서 개별 처리)
-        db_conn = None
+        _multi_ds_list = _resolve_product_datasources(mem_conn, product_id)
+    except Exception as exc:
+        logging.getLogger("agent_core").warning(
+            "resolve_product_datasources_failed product_id=%s err=%r — 단일 경로 폴백", product_id, exc,
+        )
+        _multi_ds_list = []
+    _ds_router = None
+    _ds = None
+    if _multi_ds_list:
+        # 멀티 datasource: 라우터가 tool 별 연결·allowlist·engine 을 관리. primary 를 db_conn 기본값으로 연결.
+        import modules.tools as _tools_mod
+        def _connect_ds(ds_dict):
+            return connect_with_retry(database=None, autocommit=True, datasource=ds_dict)
+        _ds_router = _tools_mod._DatasourceRouter(_multi_ds_list, _connect_ds)
         try:
-            db_conn = connect_with_retry(database=None, autocommit=True, datasource=_ds)
-        except Exception:
+            db_conn = _ds_router.conn_for(_ds_router.resolve_label(None))  # primary lazy 연결
+        except Exception as e:
             cfg.CURRENT_RUN_ID = ""
-            result["error"] = f"DB 연결 실패: {e}"
+            result["error"] = f"DB 연결 실패(멀티 datasource primary): {e}"
             if output_mode == "console":
                 console.print(Panel.fit(result["error"], title="오류"))
             return result
+        # primary datasource 를 run-wide 기본 컨텍스트로(grounding·첫 tool 기본값).
+        _ds = _multi_ds_list[0]
+    else:
+        # 단일 datasource (또는 미바인딩/flag OFF): 기존 경로 — 동작 0 변경.
+        try:
+            _ds = _resolve_product_datasource(mem_conn, product_id)
+        except DatasourceResolutionError as e:
+            cfg.CURRENT_RUN_ID = ""
+            result["error"] = f"데이터 소스 설정 오류: {e}"
+            if output_mode == "console":
+                console.print(Panel.fit(result["error"], title="오류"))
+            return result
+        _data_db = None if _ds else DB_CONNECT_DB  # ds 경로는 database=None(schema-prefixed 강제, M-1)
+        try:
+            db_conn = connect_with_retry(database=_data_db, autocommit=True, datasource=_ds)
+        except Exception as e:
+            # DB 연결 실패 시 연결 없이 진행 (도구에서 개별 처리)
+            db_conn = None
+            try:
+                db_conn = connect_with_retry(database=None, autocommit=True, datasource=_ds)
+            except Exception:
+                cfg.CURRENT_RUN_ID = ""
+                result["error"] = f"DB 연결 실패: {e}"
+                if output_mode == "console":
+                    console.print(Panel.fit(result["error"], title="오류"))
+                return result
 
     # ── 대화 히스토리 로드 ──
     history = _load_conversation_messages(mem_conn, cid, max_messages=50)
@@ -2369,6 +2517,21 @@ def _run_agent_core(
         # TASK-0205 B1: effective default_db(제품별 override 반영) 를 cross-DB 가드에 주입.
         default_db=(_ds.get("default_db") if _ds else None),
     )
+    # TASK-0228 (1:N): 멀티 datasource 라우터 등록. tool 호출마다 datasource 선택 + 그 컨텍스트 활성화.
+    # 등록 token 은 finally 에서 reset(예외 안전). 라우터는 primary 를 기본 활성 컨텍스트로 둔다.
+    _ds_router_token = None
+    _run_tool_defs = TOOL_DEFINITIONS
+    if _ds_router is not None:
+        import modules.tools as _tools_reg
+        _ds_router_token = _tools_reg.set_active_ds_router(_ds_router)
+        _ds_router.activate(_ds_router.resolve_label(None))  # primary allowlist/engine 활성
+        # 각 도구에 datasource 선택 인자(enum=바인딩 라벨) 주입한 정의 사용.
+        try:
+            _run_tool_defs = _tools_reg.build_tool_definitions_for_datasources(
+                TOOL_DEFINITIONS, _ds_router.labels()
+            )
+        except Exception:
+            _run_tool_defs = TOOL_DEFINITIONS
     knowledge_ctx = ""
     try:
         knowledge_ctx = _build_knowledge_context(mem_conn, user_message, history)
@@ -2417,6 +2580,31 @@ def _run_agent_core(
                 f"- Only these databases are queryable. System databases (master/model/msdb/tempdb), the `sys`/"
                 f"`guest` schemas, and server-info functions (SERVERPROPERTY/SUSER_SNAME/…) are blocked.\n"
             )
+    # ── TASK-0228 (1:N): 멀티 datasource grounding ──────────────────────────────
+    # 제품이 ≥2 datasource 에 바인딩되면, LLM 이 각 datasource 의 라벨·엔진·접근가능 DB 를 알아야
+    # tool 호출 시 `datasource` 인자로 올바른 대상을 고른다. (사용자 요청: 제품 프롬프트/어시스턴트가
+    # 접근 가능한 데이터소스의 DB 를 인지해야 함.) 좌표/비밀번호는 노출하지 않는다(라벨·엔진·DB명만).
+    if _ds_router is not None:
+        try:
+            _ds_desc = _ds_router.describe()
+        except Exception:
+            _ds_desc = []
+        if _ds_desc:
+            _lines = ["\n\n## ACCESSIBLE DATASOURCES (multi-datasource)\n"]
+            _lines.append(
+                "이 제품은 여러 데이터소스에 연결돼 있다. 각 도구(execute_sql/describe_table/…) 호출 시 "
+                "`datasource` 인자에 아래 **라벨**을 넣어 대상을 고른다(미지정 시 기본=primary). 한 질문이 "
+                "여러 데이터소스를 참조하면 도구를 데이터소스별로 나눠 호출하라. 데이터소스 간 직접 JOIN 은 "
+                "불가하다(각각 조회 후 결과를 합쳐 분석).\n"
+            )
+            for d in _ds_desc:
+                _eng = str(d.get("engine") or "mysql")
+                _schemas = d.get("schemas") or []
+                _tag = " (기본/primary)" if d.get("is_primary") else ""
+                _dbs = ", ".join(f"`{s}`" for s in _schemas) if _schemas else "(접근 가능 DB 미설정)"
+                _lines.append(f"- **{d.get('label')}**{_tag} — 엔진 {_eng}, 접근 가능 DB: {_dbs}")
+            system_content += "\n".join(_lines) + "\n"
+
     # Inject conversation context (origin_request + thread_goal)
     if prev_origin or thread_goal:
         ctx_parts: list[str] = []
@@ -2471,7 +2659,8 @@ def _run_agent_core(
                 console.print("[yellow]즉시 답변 요청 감지 — 마무리 중...[/yellow]")
 
         # ── LLM 호출 ──
-        use_tools = None if finalize_now else TOOL_DEFINITIONS
+        # TASK-0228 (1:N): 멀티 datasource 면 각 도구에 `datasource` 선택 인자를 주입한 정의를 쓴다.
+        use_tools = None if finalize_now else _run_tool_defs
         try:
             response_message = _call_llm(
                 client, messages, model,
@@ -2764,11 +2953,25 @@ def _run_agent_core(
             pass
 
     # DB 연결 정리
-    try:
-        if db_conn:
-            db_conn.close()
-    except Exception:
-        pass
+    # TASK-0228 (1:N): 라우터가 활성이면 db_conn 은 라우터 소유(primary) 연결이므로, 라우터가 모든
+    # datasource 연결을 일괄 close 한다(중복 close 금지). 단일 datasource 면 종전대로 db_conn 만 close.
+    if _ds_router is not None:
+        try:
+            _ds_router.close_all()
+        except Exception:
+            pass
+        if _ds_router_token is not None:
+            try:
+                import modules.tools as _tools_cl
+                _tools_cl.reset_active_ds_router(_ds_router_token)
+            except Exception:
+                pass
+    else:
+        try:
+            if db_conn:
+                db_conn.close()
+        except Exception:
+            pass
     try:
         mem_conn.close()
     except Exception:

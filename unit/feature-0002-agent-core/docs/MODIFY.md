@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260611-0228
+- Date: 2026-06-11 (TASK-0228, **Critical §12.3** — 멀티 datasource 1:N: 제품 ↔ 여러 datasource 참조)
+- Scope: agent-core 측 — 제품이 여러 datasource 에 바인딩될 때, 런타임이 tool 호출마다 datasource 를 선택해 그 datasource 의 (연결·스키마 allowlist·dialect) 격리 컨텍스트로 조회. 단일 바인딩(0~1)·flag OFF 는 기존 단일 경로 byte-identical(동작 0 변경).
+- 배경: 기존 멀티 datasource(TASK-0185~0226)는 product↔datasource **1:1**(WebProducts.DatasourceKey 단일 컬럼). 사용자 요청 = 한 제품이 여러 datasource·DB 를 참조해 한 질문에서 교차 조회.
+- Files:
+  - unit/feature-0002-agent-core/src/agent_core.py (`_resolve_product_datasources`/`_product_datasource_keys`/`_datasource_allow_schemas`[fail-closed] + run-loop 라우터 등록·grounding·finally close_all/reset)
+  - unit/feature-0002-agent-core/src/modules/tools.py (`_DatasourceRouter` + `execute_tool` datasource 라우팅 + `set/get/reset_active_ds_router` + `build_tool_definitions_for_datasources`)
+  - unit/feature-0002-agent-core/src/modules/insight.py (`_discover_mssql_databases` datasource 차원 우선 + primary/join union 폴백)
+  - unit/feature-0002-agent-core/tests/test_product_multi_datasource.py (신규 15 — 라우터 격리·lockstep·fail-closed·enum·단일경로 무변경)
+- 보안: 격리 불변식 = 연결·allowlist·engine 을 단일 `label` 로 lockstep 활성화(불일치 창 없음) + tool 순차 실행 + 게이트는 항상 활성 datasource 의 것. `_datasource_allow_schemas` 차원 컬럼 부재 시 fail-closed([], 전체목록 broadcast 교차노출 차단). outside-voice REV-20260611-0228 BLOCKER 0, MAJOR-1/2/3 흡수.
+- Rollback: flag `AGENT_MULTI_DATASOURCE_ENABLED=0` 또는 제품 바인딩을 1개로 축소 시 기존 단일 경로로 즉시 복귀(코드 환원 불요). 코드 환원 시 위 4파일 revert.
+
 ## CHG-20260611-0226
 - Date: 2026-06-11 (TASK-0226, **Major §12.3** — MSSQL insight-worker per-DB 스캔 커버리지 + 권한 실패 가시화)
 - Scope: insight-worker 가 MSSQL datasource 의 제품 접근가능 DB(`WebProductDatabases`) 마다 재연결 스캔할 때, RO 로그인 GRANT 누락으로 일부 DB 가 조용히 누락되던 것을 telemetry+status 로 가시화 + 멀티 DB RO 부트스트랩 템플릿 제공. MySQL 단일 datasource 무변경.

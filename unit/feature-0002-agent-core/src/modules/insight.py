@@ -1542,31 +1542,51 @@ def _discover_mssql_databases(mem_conn, ds_key: str, ds_coords: dict | None) -> 
     dbs: list[str] = []
     seen: set[str] = set()
     # 1) 제품 등록 DB (이 datasource 를 쓰는 모든 제품의 SchemaName 합집합)
+    #    TASK-0228 (1:N): primary(WebProducts.DatasourceKey) + join 바인딩(WebProductDatasources) 양쪽.
+    #    또한 접근DB 가 datasource 차원으로 격리됐으면(WebProductDatabases.DatasourceKey) 이 datasource 의
+    #    행만 본다 — 다른 datasource 의 DB 가 이 datasource 스캔에 섞이는 것 차단. (컬럼 부재 시 폴백.)
     if mem_conn is not None and ds_key:
-        try:
-            cur = mem_conn.cursor()
+        dk = str(ds_key).strip().lower()
+        # 우선 datasource-차원 격리 쿼리(WebProductDatabases.DatasourceKey 매칭) 시도.
+        _queries = [
+            (
+                "SELECT DISTINCT pd.SchemaName FROM WebProductDatabases pd "
+                "WHERE LOWER(pd.DatasourceKey) = %s",
+                (dk,),
+            ),
+            # 폴백: 차원 컬럼 부재(미이전) → product 바인딩(primary + join)으로 매칭.
+            (
+                "SELECT DISTINCT pd.SchemaName FROM WebProductDatabases pd "
+                "JOIN WebProducts p ON p.Id = pd.ProductId "
+                "LEFT JOIN WebProductDatasources pds ON pds.ProductId = p.Id "
+                "WHERE LOWER(p.DatasourceKey) = %s OR LOWER(pds.DatasourceKey) = %s",
+                (dk, dk),
+            ),
+            # 최종 폴백: join 테이블도 부재(구 스키마) → primary 만.
+            (
+                "SELECT DISTINCT pd.SchemaName FROM WebProductDatabases pd "
+                "JOIN WebProducts p ON p.Id = pd.ProductId WHERE LOWER(p.DatasourceKey) = %s",
+                (dk,),
+            ),
+        ]
+        for _sql, _params in _queries:
             try:
-                cur.execute(
-                    """
-                    SELECT DISTINCT pd.SchemaName
-                    FROM WebProductDatabases pd
-                    JOIN WebProducts p ON p.Id = pd.ProductId
-                    WHERE LOWER(p.DatasourceKey) = %s
-                    """,
-                    (str(ds_key).strip().lower(),),
-                )
-                for row in cur.fetchall() or []:
-                    name = str((row or [None])[0] or "").strip()
-                    low = name.lower()
-                    if name and low not in seen:
-                        seen.add(low)
-                        dbs.append(name)
-            finally:
-                cur.close()
-        except Exception as exc:
-            logging.getLogger("insight").warning(
-                "mssql_db_discovery_failed ds=%s err=%r — default_db 폴백", ds_key, exc,
-            )
+                cur = mem_conn.cursor()
+                try:
+                    cur.execute(_sql, _params)
+                    rows = cur.fetchall() or []
+                finally:
+                    cur.close()
+            except Exception:
+                continue  # 컬럼/테이블 부재 → 다음 폴백 쿼리
+            for row in rows:
+                name = str((row or [None])[0] or "").strip()
+                low = name.lower()
+                if name and low not in seen:
+                    seen.add(low)
+                    dbs.append(name)
+            if dbs:
+                break  # 첫 성공 쿼리가 결과를 주면 종료(차원 격리 우선)
     # 2) default_db 폴백(제품 미등록 datasource 도 최소 1개는 스캔)
     default_db = str((ds_coords or {}).get("default_db") or "").strip()
     if default_db and default_db.lower() not in seen:
