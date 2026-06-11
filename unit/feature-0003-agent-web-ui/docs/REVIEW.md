@@ -8,7 +8,16 @@ source_of_truth: true
 
 # Review Log
 
-## REV-20260612-0236 [SKIPPED:verification-evidence-docs-test-only]
+## REV-20260612-0236 [SKIPPED:frontend-bugfix-no-backend-no-rbac]
+- Date: 2026-06-12
+- Cycle: TASK-0236 (datasource UI 바인딩 변경 후 미갱신 근본수정, **Minor §12.3**)
+- Reason: frontend-only 버그 수정. 부분 갱신→전체 재렌더 전환 + TDZ 선언 순서 수정. 신규 RBAC/스키마/엔드포인트/백엔드/시크릿 0건. 새 백엔드 표면 0. outside-voice panel 불필요 조건 충족.
+- 검증 방식(이번엔 실측): **Playwright 실 헤드리스 브라우저(chromium-headless-shell)로 라이브 admin 콘솔 구동** → 수정 전 add 후 productDetail blank(ReferenceError) 재현 → 수정 후 add(칩·편집대상 select·배지 갱신)·edit-target switch(배지·DB목록 전환 datasource 반영) 모두 PASS, 콘솔/page 에러 0. make test 컨테이너 회귀 0. 라이브 `/test` 백엔드 정상은 TASK-0234 에서 확인됨.
+- 교훈: TASK-0234/0233 의 frontend 변경을 실제 브라우저 검증 없이 배포해 사용자가 미흡함을 반복 보고. **JS 동작 버그는 WSL 헤드리스(Playwright)로 충분히 잡히므로 frontend 변경 시 실브라우저 재현/검증을 기본 게이트로 삼는다.** (PB-0008 Windows 검증은 시각 괴리 전용으로 별도 유지.)
+- Human Approval Needed: no.
+- Cross-ref: CHG-20260612-0236 / TASK-0236 / TASK-0234(직전) / TASK-0230(원 멀티 datasource cycle).
+
+## REV-20260612-0235v [SKIPPED:verification-evidence-docs-test-only]
 - Related TASK: feature-0003-agent-web-ui (TASK-0235 후속)
 - Reason: TASK-0235 코드(PR #172 머지·배포 완료)의 PB-0008 Windows-browser 시각검증 PASS 를 TEST.md 에 기록 + 재현 시나리오 자산 추가. 변경 = docs(TEST.md) + test scenario(json) only, src/백엔드/스키마/RBAC 0. 코드 리뷰 대상 변경 없음 — TASK-0235 본체는 REV-20260612-0235 [SUBAGENT] 에서 이미 적대적 동시성 리뷰 완료.
 - Timestamp: 2026-06-12T00:35:00Z

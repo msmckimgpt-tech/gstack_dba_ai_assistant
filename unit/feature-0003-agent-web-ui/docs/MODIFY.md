@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0236
+- Date: 2026-06-12 (TASK-0236, **Minor §12.3** — datasource UI 바인딩 변경 후 미갱신 근본수정, frontend-only)
+- Scope: TASK-0234 후속 사용자 보고 3건(연결테스트 무의미·DB 목록 datasource 단서 없음/미갱신·primary 미갱신). Playwright 실 헤드리스 브라우저로 재현 후 근본수정. 권한/스키마/엔드포인트/백엔드 0.
+- Files:
+  - unit/feature-0003-agent-web-ui/src/static/admin.js (① `_reloadProductDatasources`/첫-바인딩 PATCH 경로 → `renderProductDetail()` 전체 재렌더, ② `_editDsKey` 선언을 "편집 대상 select" 블록 앞으로 이동[TDZ 해소])
+  - unit/feature-0003-agent-web-ui/src/static/admin.html (캐시버스터 `?v=20260612-ds-detail-rerender`)
+- 근본 원인: (a) 제품 상세 datasource UI 가 단일 `renderProductDetail()` 시점 클로저 기반인데 바인딩 변경 후 칩만 부분 갱신 → 편집대상 select·배지·DB목록 stale. 바인딩 0↔1↔N 전환 시 select 생성/제거 불가. (b) `length>=2` 편집대상 select 블록이 `_editDsKey` 를 let 선언 전에 참조 → ≥2 바인딩 제품 렌더 시 ReferenceError(TDZ)로 패널 blank(잠복).
+- 검증: Playwright 실브라우저 재현→수정→재검증(add/switch 모두 PASS, 콘솔에러 0) + make test 회귀 0.
+- Rollback: 위 2파일 revert(frontend-only).
 ## CHG-20260612-0235v
 - Date: 2026-06-12 (TASK-0235 후속 — PB-0008 Windows-browser 시각검증 PASS 기록 + 시나리오 자산 추가)
 - Scope: TASK-0235(새 대화 첫 메시지 진행 단계 실시간 표시) 라이브 배포 후 실제 Windows 브라우저 검증 완료 기록. docs + test scenario only — 코드 0.
