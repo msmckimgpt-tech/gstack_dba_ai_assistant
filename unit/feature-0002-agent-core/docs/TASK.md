@@ -813,3 +813,16 @@ TASK-0015 (plan-review):
 - [x] **sweep 3차(라이브 cycle 추가 발견)**: ③ `schema.py` `load_known_schemas` 가 백틱 인용 `information_schema.SCHEMATA`(MSSQL `Incorrect syntax near '`'`) → `_dialects.active().list_schema_names()`(MySQL 골든 동치/MSSQL sys.schemas)로 교체. ④ datasource 순회가 dialect 시스템 스키마(MSSQL guest/db_*)를 못 걸러 RO-거부 노이즈 → `_dialects.active().system_schemas()` 로 datasource 경로 필터(MySQL 경로 미변경). 라이브: `load_known_schemas(winsql)` → 필터 후 `['dbo','dev50']`.
 - [ ] 커밋 → main ff-merge → insight-worker 재배포 → 라이브 winsql 인사이트 생성·publish 관측.
 - [ ] (P7 잔여·후속) UI engine 배지 + MINOR-1 CS-collation 대문자 통일.
+
+### TASK-0219 — datasource-aware rag_objects + 엔드포인트-해시 스코핑 (2026-06-11)
+- [x] **문제 1 (RAG 구조 불일치)**: ds-스코프 fact 키 `{source}:ds:{ds}:{suffix}` 가 도입됐으나 `utils._infer_rag_object_from_fact` 가 `ds:winsql:dbo` → schema `dswinsqldbo`(쓰레기)로 망가뜨려 **ds rag_objects 0건**(ds rag_documents 1753건 존재에도). rag_objects 에 datasource 컬럼·검색 ds-필터 부재.
+- [x] **문제 2 (스코프 키 불안정)**: 동시 TASK-0216/0218 로 `DatasourceKey` 가 admin rename 가능한 단순 라벨이 됨(`_generate_datasource_key`=엔진+호스트+포트 SHA-256). 라벨로 스코핑하면 rename 시 누적 insight 가 고아.
+- [x] **파서 수정**: `:ds:{key}:` 접두 분리 → schema/table 정규화(`dbo`/`T_ItemLog`) + datasource_key 추출 + object_key 에 ds 접두(`{hash}:dbo.t`)로 cross-ds 유일성(UNIQUE `(conv,scope,type,object_key)` 불변). 6-tuple 반환.
+- [x] **스키마**: `rag_objects.datasource_key VARCHAR(64)` 컬럼 + 필터 인덱스(alembic `0004_rag_objects_datasource`, ADD COLUMN, 무손실). 라이브 적용(0003→0004).
+- [x] **쓰기/검색**: `upsert_rag_object`(base/MySQL/PG/Dual) datasource_key 전달 + `_PG_UPSERT_RAG_OBJECT` 컬럼/DO UPDATE. `search_rag_objects` 가 `get_active_datasource()` 로 ds-필터(`ds_fact_like` 동형 심층방어).
+- [x] **엔드포인트-해시 스코핑**: `datasources.compute_scope_key/scope_key`(web `_generate_datasource_key` 동일 공식) — fact/RAG 스코핑 식별자를 라벨이 아닌 **engine+host+port 해시**로 고정. agent_core ask 경로 + insight 루프의 `set_active_datasource` 가 scope_key(해시) 사용 → 라벨 rename 에도 누적 지식 불변. 격리 모델 무변경(per-datasource, 엔드포인트=신원).
+- [x] **jsonb ON CONFLICT 버그 수정(잠재)**: `category_join_hints_json`(jsonb) 의 `NULLIF(EXCLUDED.., '')` 가 ''를 jsonb 캐스팅하려다 **모든 rag_object conflict-갱신 실패**("invalid input syntax for type json") → NULLIF 제거(COALESCE, 호출부 None 전달). varchar category_* 는 NULLIF 유지. S5 invariant 정정.
+- [x] **재키잉 스크립트**(`scripts/rekey_datasource_facts.py`): 옛 라벨(`main_mysql`/`winsql`/`mssql_local`) fact_entries/rag_documents 를 라이브 레지스트리 엔드포인트 해시로 재키잉(per-row `_fit_fact_key_storage` 절단 정합 + 병합) + rag_objects 재생성. 멱등·--dry-run·멀티-같은엔진 가드.
+- [x] **회귀테스트**: `test_infer_rag_object_datasource_scoped`(ds 분리) + `test_scope_key_is_endpoint_hash_and_label_agnostic`(엔드포인트 해시·라벨독립). 호스트 391 passed, 컨테이너 make test RC=0.
+- [x] **외부시각 적대적 리뷰(격리 경계)**: SHIP — 데이터 유출/격리 붕괴 BLOCKER 없음. 동일-엔드포인트·상이-경계 datasource 의 insight 병합은 비표준 구성·메타데이터 한정·4중 backstop(product 바인딩+allowlist+AST+RO-GRANT). Q4 멀티-같은엔진 재키잉 가드 반영.
+- [x] **배포·라이브검증**(main dc3f0b0): web/ask-worker/insight-worker/agent 재빌드 + 마이그 적용 + 재키잉/백필. 검증: ds rag_objects 342(mysql-ddae8975d793=179 / mssql-f82c51b3425f=163), schema 망가짐 0(`dbo` 깨끗), no-ds 객체 788 NULL 보존, 제품1/7/8→mysql해시·90/91→mssql해시 resolve, retrieval ds-필터(active=mssql)→mssql 객체만 165(유출0).
