@@ -1394,8 +1394,17 @@ function _dsRenderForm(ds) {
 
   const form = document.createElement("div");
   form.className = "admin-detail-section admin-ds-form";
+
+  // 신규 생성 시: 키는 서버에서 '엔진+호스트+포트' 해시로 자동 생성 → 입력 불필요.
+  if (!isEdit) {
+    const hint = document.createElement("div");
+    hint.className = "admin-detail-hint";
+    hint.textContent = "키는 엔진·호스트·포트 조합의 해시로 서버가 자동 생성합니다. 동일 엔드포인트를 다시 등록하면 같은 키가 반환됩니다.";
+    form.appendChild(hint);
+  }
+
   const fields = [
-    ["key", "키 (소문자 영숫자·_·-)", isEdit ? ds.key : "", isEdit],
+    ...(isEdit ? [["key", "키", ds.key, true]] : []),
     ["engine", "엔진 (mysql|mssql)", isEdit ? (ds.engine || "mysql") : "mysql", false],
     ["host", "호스트", isEdit ? (ds.host || "") : "", false],
     ["port", "포트", isEdit ? (ds.port || "") : "", false],
@@ -1429,8 +1438,7 @@ function _dsRenderForm(ds) {
       // TASK-0212: password·user 는 write-only(수정 시 GET 마스킹으로 pre-fill 불가) — 빈값이면 미전송(미변경).
       // 빈 user 를 보내면 서버가 DbUser 를 wipe 해 연결 테스트가 깨지던 회귀 방지.
       if (k === "password" || (isEdit && k === "user")) { if (v) body[k] = v; }
-      else if (k === "key") { if (!isEdit) body.key = v; }
-      else body[k] = v;
+      else if (k !== "key") body[k] = v;  // 신규: key 는 서버 자동 생성이므로 전송 안 함
     });
     saveBtn.disabled = true;
     try {
@@ -1440,10 +1448,9 @@ function _dsRenderForm(ds) {
         adminState._dsSelectedKey = ds.key;
       } else {
         const created = await apiFetch(`/api/admin/datasources`, { method: "POST", body: JSON.stringify(body) });
-        // 서버가 key 를 소문자 정규화(strip().lower())하므로, 생성 후 자동 선택은
-        // 응답의 canonical key(없으면 클라이언트 lower)를 사용해야 목록 매칭이 성립.
-        const canonicalKey = (created && created.key) || body.key.toLowerCase();
-        showToast(`데이터소스 '${canonicalKey}' 생성됨`);
+        // 서버가 엔진+호스트+포트 해시로 key 를 자동 생성해 응답 — 그 canonical key 로 자동 선택.
+        const canonicalKey = (created && created.key);
+        showToast(`데이터소스 '${canonicalKey}' 생성됨 (키 자동 생성)`);
         adminState._dsSelectedKey = canonicalKey;
       }
       await loadAdminData();

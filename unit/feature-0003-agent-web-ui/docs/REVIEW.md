@@ -1964,3 +1964,10 @@ source_of_truth: true
 - Reason: 프런트 UX 교체(select+버튼 → 체크박스 드롭다운) + 백엔드 MSSQL tempdb 폴백 보안 하향(업무 데이터 0, 무자격 참조 차단). RBAC 카탈로그·API 계약(엔드포인트/envelope)·WebDatasources 스키마 신규 0. tempdb 폴백은 보안 상향(빈 문자열=로그인 기본 DB 중 업무 DB 가능 → tempdb=업무 데이터 없음)이므로 적대적 보안 리뷰 불요. node --check admin.js PASS.
 - Risk: low — 프런트 UX + 백엔드 MSSQL 연결 폴백 DB 변경만. 업무 데이터·RBAC·암호화 영향 없음.
 - Cross-ref: CHG-20260611-0213 / TASK-0213.
+
+## REV-20260611-0216 [SKIPPED:auto-key-no-rbac-no-schema-no-secret]
+- Date: 2026-06-11
+- Cycle: TASK-0216 (데이터소스 키 자동 생성: 엔진+호스트+포트 해시), **Minor §12.3**
+- Reason: 키 생성 방식을 식별자 문자열에서 결정론적 해시로 교체한 것이 변경의 전부. RBAC(console.manage) 게이트 무변경, `WebDatasources` 스키마 무변경(컬럼 추가/삭제 없음, DatasourceKey 값만 달라짐), DEK/KEK 암호화 경로 무변경, 신규 엔드포인트 없음. 레거시 `main_mysql` 마이그레이션은 멱등 UPDATE/DELETE 2~3개이며 rollback 은 행 rename 역방향으로 가능. py_compile app.py PASS, node --check admin.js PASS.
+- Risk: low — 키 값 형식 변경만. 기존 `main_mysql` 키를 가진 운영 환경은 부팅 시 자동 마이그레이션(멱등). `.env` 출처 레거시 datasource 는 의도적 미변경.
+- Cross-ref: CHG-20260611-0216 / TASK-0216.

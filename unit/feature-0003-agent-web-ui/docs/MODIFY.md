@@ -2778,3 +2778,19 @@ source_of_truth: true
 - Date: 2026-06-11 (TASK-0213 docs cycle — verify-completion PASS 확인 후 docs 보완)
 - Scope: TASK-0213 문서 보완 (REVIEW.md REV 엔트리 추가, MODIFY.md 검증 상태 갱신).
 - Files: unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
+
+## CHG-20260611-0216
+- Date: 2026-06-11 (TASK-0216, **Minor §12.3** — 데이터소스 키 자동 생성: 엔진+호스트+포트 해시)
+- Scope: `관리 콘솔 > 데이터소스` 항목의 키를 식별자 문자열에서 `엔진+호스트+포트` SHA-256 해시(앞 12자 + 엔진 태그)로 변경. 기존 `main_mysql` 레거시 키 자동 마이그레이션 포함.
+- 배경: 식별자 문자열 키(`main_mysql` 등)는 엔드포인트 용도가 바뀔 때 기존 키가 그대로 남아 대응이 어려웠음. 해시 키는 동일 엔드포인트=항상 동일 키(멱등), 엔드포인트 변경 시 자동으로 다른 키가 발급되어 명확히 구분된다.
+- 변경:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - `_generate_datasource_key(engine, host, port)` 신규 함수: `{engine}:{host}:{port}` SHA-256 해시 앞 12자 + 엔진 태그 → `{engine}-{hash12}` 형식. `_ds_valid_key` 제약(소문자 영숫자·_·-, `ds` 시작 금지) 통과.
+    - `admin_create_datasource`: body `key` 수신 제거 → `_generate_datasource_key` 자동 생성. 409 에러 메시지 상세화("동일 엔드포인트가 이미 등록되어 있습니다"). 응답 `default_db` 미정의 버그 → `None` 명시.
+    - `_seed_main_mysql_datasource`: `key = "main_mysql"` → `key = _generate_datasource_key("mysql", DB_HOST, int(DB_PORT))`. 레거시 `main_mysql` 키 존재 시 해시 키로 rename + `WebProducts.DatasourceKey` 참조 일괄 UPDATE(운영 연속성 보장, 멱등).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`:
+    - `_dsRenderForm`: 신규 생성 시 key 입력 필드 제거, 자동 생성 안내 힌트 추가. 수정 시는 key readonly 표시 유지. body 전송 시 `key` 필드 제외(`k !== "key"` 가드). 생성 완료 토스트 "(키 자동 생성)" 메시지 추가.
+- 비변경: `_migrate_env_datasources_to_db`(`.env` 레거시 경로 — 의도적 유지), RBAC(console.manage), API 계약(수신 필드에서 `key` 제거만), WebDatasources 스키마, DEK/KEK 암호화 경로.
+- 검증: py_compile app.py PASS, node --check admin.js PASS.
+- Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/src/static/admin.js, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
+- Rollback: `_generate_datasource_key` 제거 + `admin_create_datasource` body key 수신 복원 + `_seed_main_mysql_datasource` `"main_mysql"` 복원 + `_dsRenderForm` key 입력 필드 복원.

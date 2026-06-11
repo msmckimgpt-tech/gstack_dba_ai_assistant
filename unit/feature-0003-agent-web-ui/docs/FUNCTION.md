@@ -687,3 +687,9 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 
 - REQ-20260611-0209 (TASK-0209, **Minor §12.3** — 관리 콘솔 LLM 사용량 드롭다운 순서 정렬, frontend-only): `관리 콘솔 > LLM 사용량` 헤더의 집계기준(`#usageGranSel`)과 집계범위(`#usageDaysSel`) 드롭다운 순서를 프로필 `사용 내역`(REQ-20260611-0208)과 동일하게 집계기준→집계범위 순으로 통일한다. 백엔드/RBAC/스키마/엔드포인트/JS/CSS 무변경. [SKIPPED:frontend-trivial-reorder] (REV-20260611-0209).
   - AC-0346 (드롭다운 순서): `.admin-pane-actions` 안에서 `#usageGranSel`(시간별/일별/주별/월별)이 `#usageDaysSel`(최근 N일)보다 **앞**에 위치한다(DOM 형제 순서). `admin.js` 의 id 기반 참조·change 핸들러·`/api/admin/usage` 호출은 순서와 무관하게 그대로 동작한다. 프로필 사용 내역 탭(AC-0345)과 좌→우 배치가 일치한다.
+
+- REQ-20260611-0216 (TASK-0216, **Minor §12.3** — 데이터소스 키 자동 생성: 엔진+호스트+포트 해시): `관리 콘솔 > 데이터소스` 키를 식별자 문자열 대신 `엔진:호스트:포트` SHA-256 해시(앞 12자 + 엔진 태그) 로 자동 생성한다. 동일 엔드포인트=항상 동일 키(멱등), 엔드포인트 변경 시 자동으로 다른 키. RBAC(console.manage)·WebDatasources 스키마·DEK/KEK 암호화 경로 무변경. [SKIPPED:auto-key-no-rbac-no-schema-no-secret] (REV-20260611-0216).
+  - AC-0347 (`_generate_datasource_key(engine, host, port)` 신규 — app.py): `{engine}:{host}:{port}` (소문자 strip) 의 SHA-256 hex digest 앞 12자 + 엔진 태그 최대 10자 → `{engine}-{hash12}` 반환. `_ds_valid_key` 제약(소문자 영숫자·_·-, `ds` 시작 금지, 길이 ≤64) 를 통과한다.
+  - AC-0348 (`admin_create_datasource` 변경 — app.py): POST body 의 `key` 수신 제거 → `_generate_datasource_key(engine, host, port)` 자동 생성. 409 충돌 시 "동일 엔드포인트가 이미 등록되어 있습니다" 메시지 추가. 응답 `default_db` 필드를 미정의 변수 참조에서 `None` 으로 수정(버그 수정 동반).
+  - AC-0349 (`_seed_main_mysql_datasource` 변경 — app.py): `key = "main_mysql"` 하드코딩 → `_generate_datasource_key("mysql", DB_HOST, int(DB_PORT))` 자동 생성. 레거시 `main_mysql` 키가 `WebDatasources` 에 존재하면: 해시 키 미존재 시 `UPDATE DatasourceKey`(rename) + `UPDATE WebProducts.DatasourceKey`(참조 일괄 업데이트), 해시 키 이미 존재 시 `WebProducts` 참조 업데이트 후 레거시 행 `DELETE`. 멱등(재실행 안전).
+  - AC-0350 (`_dsRenderForm` 변경 — admin.js): 신규 생성(`!isEdit`) 시 key 입력 필드 제거 → 자동 생성 안내 힌트(`admin-detail-hint`) 렌더. 수정(`isEdit`) 시 key readonly 필드 유지. body 직렬화 시 `k !== "key"` 가드로 key 필드 전송 제외. 생성 완료 토스트에 "(키 자동 생성)" 명시.
