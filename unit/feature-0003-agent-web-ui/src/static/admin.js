@@ -5013,7 +5013,15 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
           textarea.value = payload.prompt;
           const pid = resolveProductId();
           setSystemPromptPending({ scope, productId: pid, roleId, accountId, content: payload.prompt });
-          metaEl.textContent = "(자동 생성됨 — 검토 후 저장하세요)";
+          const m = payload.meta || {};
+          if (m.grounded) {
+            metaEl.textContent =
+              `(자동 생성됨 — 스키마 ${m.schema_insight_count || 0}개·테이블 ${m.table_insight_count || 0}개·` +
+              `대화주제 ${m.topic_count || 0}건 반영. 검토 후 저장하세요)`;
+          } else {
+            metaEl.textContent =
+              "(자동 생성됨 — DB 인사이트가 아직 수집되지 않아 스키마-비의존 형태입니다. 검토 후 저장하세요)";
+          }
         }
       } catch (error) {
         metaEl.textContent = `자동 생성 실패: ${error.message || error}`;

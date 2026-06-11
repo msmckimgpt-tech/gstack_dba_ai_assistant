@@ -165,16 +165,25 @@ def _warn_insight_readback_failed(stage: str, exc: Exception) -> None:
 
 def _build_insight_object_maps(
     keys: list[str],
-) -> tuple[dict[str, str], dict[tuple[str, str], str]]:
-    """fact_key → (schema rag-object, table rag-object) 매핑을 만든다 (backend 무관)."""
+) -> tuple[dict[str, str], dict[str, str]]:
+    """fact_key → (schema rag-object, table rag-object) 매핑을 만든다 (backend 무관).
+
+    TASK-0220: 키를 `object_key`(= `_infer_rag_object_from_fact` 가 datasource·database 접두까지
+    포함해 만든 유일 식별자)로 쓴다. 과거 `(schema_name, table_name)` 튜플 키는 MSSQL multi-DB 에서
+    여러 database 의 동일 `dbo.<table>` 가 충돌해 read-back 이 한 건만 인식 → 나머지 DB 가 매 사이클
+    `artifact_missing` 으로 재생성되는 livelock 을 유발했다. object_key 는 ds/database 까지 포함하므로
+    cross-DB 충돌이 없다. (MySQL 2계층은 object_key=`{schema}.{table}` 라 종전과 동치.)
+    """
     schema_object_map: dict[str, str] = {}
-    table_object_map: dict[tuple[str, str], str] = {}
+    table_object_map: dict[str, str] = {}
     for fact_key in keys:
-        object_type, _, schema_name, table_name, _, _ = _infer_rag_object_from_fact(fact_key, "")
-        if object_type == "schema" and schema_name:
-            schema_object_map[schema_name] = fact_key
-        elif object_type == "table" and schema_name and table_name:
-            table_object_map[(schema_name, table_name)] = fact_key
+        object_type, object_key, _, _, _, _ = _infer_rag_object_from_fact(fact_key, "")
+        if not object_key:
+            continue
+        if object_type == "schema":
+            schema_object_map[object_key] = fact_key
+        elif object_type == "table":
+            table_object_map[object_key] = fact_key
     return schema_object_map, table_object_map
 
 
@@ -220,14 +229,16 @@ def _apply_insight_doc_rows(states: dict[str, dict[str, Any]], rows: list) -> No
 def _apply_insight_schema_object_rows(
     states: dict[str, dict[str, Any]], rows: list, schema_object_map: dict[str, str]
 ) -> None:
-    """schema rag_objects 행 → state(has_rag_object/has_text). MySQL·PG 공용."""
-    seen_schema_objects: set[str] = set()
+    """schema rag_objects 행 → state(has_rag_object/has_text). MySQL·PG 공용.
+
+    TASK-0220: row[0]=object_key 로 매칭(schema_name 아님 — MSSQL multi-DB 충돌 방지)."""
+    seen_objects: set[str] = set()
     for row in rows:
-        schema_name = str(row[0] or "").strip()
-        if not schema_name or schema_name in seen_schema_objects:
+        object_key = str(row[0] or "").strip()
+        if not object_key or object_key in seen_objects:
             continue
-        seen_schema_objects.add(schema_name)
-        fact_key = schema_object_map.get(schema_name)
+        seen_objects.add(object_key)
+        fact_key = schema_object_map.get(object_key)
         if not fact_key:
             continue
         state = states.setdefault(fact_key, _empty_insight_artifact_state(fact_key))
@@ -239,22 +250,22 @@ def _apply_insight_schema_object_rows(
 
 
 def _apply_insight_table_object_rows(
-    states: dict[str, dict[str, Any]], rows: list, table_object_map: dict[tuple[str, str], str]
+    states: dict[str, dict[str, Any]], rows: list, table_object_map: dict[str, str]
 ) -> None:
-    """table rag_objects 행 → state(has_rag_object/has_text). MySQL·PG 공용."""
-    seen_table_objects: set[tuple[str, str]] = set()
+    """table rag_objects 행 → state(has_rag_object/has_text). MySQL·PG 공용.
+
+    TASK-0220: row[0]=object_key 로 매칭(schema/table 튜플 아님 — MSSQL multi-DB 충돌 방지)."""
+    seen_objects: set[str] = set()
     for row in rows:
-        schema_name = str(row[0] or "").strip()
-        table_name = str(row[1] or "").strip()
-        key_ref = (schema_name, table_name)
-        if not schema_name or not table_name or key_ref in seen_table_objects:
+        object_key = str(row[0] or "").strip()
+        if not object_key or object_key in seen_objects:
             continue
-        seen_table_objects.add(key_ref)
-        fact_key = table_object_map.get(key_ref)
+        seen_objects.add(object_key)
+        fact_key = table_object_map.get(object_key)
         if not fact_key:
             continue
         state = states.setdefault(fact_key, _empty_insight_artifact_state(fact_key))
-        object_text = str(row[2] or "").strip()
+        object_text = str(row[1] or "").strip()
         state["has_rag_object"] = True
         if object_text:
             state["has_text"] = True
@@ -340,6 +351,9 @@ ORDER BY d.fact_key, d.weight DESC, d.updated_at DESC, d.id DESC
 
         schema_object_map, table_object_map = _build_insight_object_maps(keys)
 
+        # TASK-0220: object_key 로 매칭(schema_name/table_name 튜플 아님). MSSQL multi-DB 에서
+        # 여러 database 의 동일 `dbo.<table>` 가 (schema,table) 로는 충돌하지만 object_key
+        # (`{ds}:{db}.{schema}.{table}`)는 유일 → read-back livelock 방지.
         if schema_object_map:
             cur = conn.cursor()
             try:
@@ -347,14 +361,14 @@ ORDER BY d.fact_key, d.weight DESC, d.updated_at DESC, d.id DESC
                 cur.execute(
                     f"""
 SELECT
-    o.schema_name,
+    o.object_key,
     COALESCE(t.text_content, '') AS object_text
 FROM public.rag_objects o
 LEFT JOIN public.texts t ON t.text_hash = o.text_hash
 WHERE o.conversation_id IN ({cid_placeholders})
   AND o.object_type = 'schema'
-  AND o.schema_name IN ({schema_placeholders}){scope_clause}
-ORDER BY o.schema_name, o.weight DESC, o.updated_at DESC, o.id DESC
+  AND o.object_key IN ({schema_placeholders}){scope_clause}
+ORDER BY o.object_key, o.weight DESC, o.updated_at DESC, o.id DESC
                     """,
                     [*conversation_ids, *schema_object_map.keys(), *scope_params],
                 )
@@ -365,26 +379,21 @@ ORDER BY o.schema_name, o.weight DESC, o.updated_at DESC, o.id DESC
 
         if table_object_map:
             cur = conn.cursor()
-            table_filters = []
-            table_params: list[str] = []
-            for schema_name, table_name in table_object_map.keys():
-                table_filters.append("(o.schema_name = %s AND o.table_name = %s)")
-                table_params.extend([schema_name, table_name])
             try:
+                table_placeholders = ",".join(["%s"] * len(table_object_map))
                 cur.execute(
                     f"""
 SELECT
-    o.schema_name,
-    o.table_name,
+    o.object_key,
     COALESCE(t.text_content, '') AS object_text
 FROM public.rag_objects o
 LEFT JOIN public.texts t ON t.text_hash = o.text_hash
 WHERE o.conversation_id IN ({cid_placeholders})
   AND o.object_type = 'table'
-  AND ({' OR '.join(table_filters)}){scope_clause}
-ORDER BY o.schema_name, o.table_name, o.weight DESC, o.updated_at DESC, o.id DESC
+  AND o.object_key IN ({table_placeholders}){scope_clause}
+ORDER BY o.object_key, o.weight DESC, o.updated_at DESC, o.id DESC
                     """,
-                    [*conversation_ids, *table_params, *scope_params],
+                    [*conversation_ids, *table_object_map.keys(), *scope_params],
                 )
                 table_rows = cur.fetchall() or []
             finally:
@@ -481,6 +490,8 @@ ORDER BY d.FactKey, d.Weight DESC, d.UpdatedAt DESC, d.Id DESC
 
     schema_object_map, table_object_map = _build_insight_object_maps(keys)
 
+    # TASK-0220: object_key 매칭(PG 경로와 동일). 본 MySQL 경로는 cutover 로 DROP 된 dead path 지만
+    # table_object_map.keys() 가 이제 object_key 문자열(튜플 아님)이라 언패킹/매칭을 정합 유지한다.
     if schema_object_map:
         cur = mem_conn.cursor()
         try:
@@ -488,14 +499,14 @@ ORDER BY d.FactKey, d.Weight DESC, d.UpdatedAt DESC, d.Id DESC
             cur.execute(
                 f"""
 SELECT
-    o.SchemaName,
+    o.ObjectKey,
     COALESCE(t.TextContent, '') AS ObjectText
 FROM AgentMemoryRagObjects o
 LEFT JOIN AgentMemoryTexts t ON t.TextHash = o.TextHash
 WHERE o.ConversationId IN ({cid_placeholders})
   AND o.ObjectType = 'schema'
-  AND o.SchemaName IN ({schema_placeholders}){scope_clause}
-ORDER BY o.SchemaName, o.Weight DESC, o.UpdatedAt DESC, o.Id DESC
+  AND o.ObjectKey IN ({schema_placeholders}){scope_clause}
+ORDER BY o.ObjectKey, o.Weight DESC, o.UpdatedAt DESC, o.Id DESC
                 """,
                 [*conversation_ids, *schema_object_map.keys(), *scope_params],
             )
@@ -509,26 +520,21 @@ ORDER BY o.SchemaName, o.Weight DESC, o.UpdatedAt DESC, o.Id DESC
 
     if table_object_map:
         cur = mem_conn.cursor()
-        table_filters = []
-        table_params: list[str] = []
-        for schema_name, table_name in table_object_map.keys():
-            table_filters.append("(o.SchemaName = %s AND o.TableName = %s)")
-            table_params.extend([schema_name, table_name])
         try:
+            table_placeholders = ",".join(["%s"] * len(table_object_map))
             cur.execute(
                 f"""
 SELECT
-    o.SchemaName,
-    o.TableName,
+    o.ObjectKey,
     COALESCE(t.TextContent, '') AS ObjectText
 FROM AgentMemoryRagObjects o
 LEFT JOIN AgentMemoryTexts t ON t.TextHash = o.TextHash
 WHERE o.ConversationId IN ({cid_placeholders})
   AND o.ObjectType = 'table'
-  AND ({' OR '.join(table_filters)}){scope_clause}
-ORDER BY o.SchemaName, o.TableName, o.Weight DESC, o.UpdatedAt DESC, o.Id DESC
+  AND o.ObjectKey IN ({table_placeholders}){scope_clause}
+ORDER BY o.ObjectKey, o.Weight DESC, o.UpdatedAt DESC, o.Id DESC
                 """,
-                [*conversation_ids, *table_params, *scope_params],
+                [*conversation_ids, *table_object_map.keys(), *scope_params],
             )
             rows = cur.fetchall() or []
         except Exception as exc:
@@ -579,10 +585,10 @@ def _detect_pending_insight_repairs(
     if not db_conn or not mem_conn or not schema_names:
         return report
 
-    schema_keys = [ds_fact_key("schema_insight", schema) for schema in schema_names]
+    schema_keys = [ds_fact_key("schema_insight", ds_object_suffix(schema)) for schema in schema_names]
     schema_states = _load_insight_artifact_states(mem_conn, schema_keys)
     for schema in schema_names:
-        schema_key = ds_fact_key("schema_insight", schema)
+        schema_key = ds_fact_key("schema_insight", ds_object_suffix(schema))
         if not _insight_artifact_complete(
             schema_states.get(schema_key, _empty_insight_artifact_state(schema_key))
         ):
@@ -614,7 +620,7 @@ ORDER BY TABLE_SCHEMA, TABLE_NAME
         table_name = str(row[1] or "").strip()
         if not schema_name or not table_name:
             continue
-        table_keys.append(ds_fact_key("table_insight", f"{schema_name}.{table_name}"))
+        table_keys.append(ds_fact_key("table_insight", ds_object_suffix(schema_name, table_name)))
 
     if not table_keys:
         return report
@@ -941,7 +947,7 @@ def _scan_instance_schema_insights(
                 report["schemas_evaluated"] = int(report.get("schemas_evaluated", 0)) + 1
                 # 스키마 핑거프린트 계산 (테이블 목록 기반)
                 current_schema_fp = _compute_schema_fingerprint(db_conn, schema)
-                schema_fp_key = ds_fact_key("schema_fp", schema)
+                schema_fp_key = ds_fact_key("schema_fp", ds_object_suffix(schema))
                 stored_schema_fp = stored_schema_fps.get(schema_fp_key, "")
                 schema_structure_changed = (current_schema_fp != stored_schema_fp)
 
@@ -978,8 +984,8 @@ ORDER BY TABLE_NAME
                 table_rows = cur.fetchall() or []
                 all_table_names = [str(r[0]).strip() for r in table_rows if r and r[0]]
                 all_table_names = [t for t in all_table_names if t]
-                schema_key = ds_fact_key("schema_insight", schema)
-                schema_refresh_key = ds_fact_key("schema_insight_refresh_at", schema)
+                schema_key = ds_fact_key("schema_insight", ds_object_suffix(schema))
+                schema_refresh_key = ds_fact_key("schema_insight_refresh_at", ds_object_suffix(schema))
                 schema_state = _load_insight_artifact_states(mem_conn, [schema_key]).get(
                     schema_key, _empty_insight_artifact_state(schema_key)
                 )
@@ -1136,19 +1142,19 @@ ORDER BY TABLE_NAME
                 # 테이블 핑거프린트를 배치로 계산
                 current_table_fps = _compute_table_fingerprints_batch(db_conn, schema, all_table_names)
 
-                table_keys = [ds_fact_key("table_insight", f"{schema}.{name}") for name in all_table_names]
+                table_keys = [ds_fact_key("table_insight", ds_object_suffix(schema, name)) for name in all_table_names]
                 artifact_states = _load_insight_artifact_states(mem_conn, table_keys)
                 artifact_missing_tables: list[str] = []
                 changed_tables: list[str] = []
                 refresh_due_tables: list[str] = []
                 reason_map: dict[str, str] = {}
                 for tname in all_table_names:
-                    table_key = ds_fact_key("table_insight", f"{schema}.{tname}")
+                    table_key = ds_fact_key("table_insight", ds_object_suffix(schema, tname))
                     state = artifact_states.get(table_key, _empty_insight_artifact_state(table_key))
-                    tfp_key_chk = ds_fact_key("table_fp", f"{schema}.{tname}")
+                    tfp_key_chk = ds_fact_key("table_fp", ds_object_suffix(schema, tname))
                     has_stored_tfp = bool(stored_table_fps.get(tfp_key_chk, ""))
                     current_tfp = current_table_fps.get(tname, "")
-                    table_refresh_key = ds_fact_key("table_insight_refresh_at", f"{schema}.{tname}")
+                    table_refresh_key = ds_fact_key("table_insight_refresh_at", ds_object_suffix(schema, tname))
                     table_refresh_due = _is_refresh_due(
                         table_refresh_map,
                         table_refresh_key,
@@ -1272,7 +1278,7 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                         continue
                     col_name_list = sorted(col_name_list)
                     cols_payload = sorted(cols_payload, key=lambda x: str(x.get("name", "")))
-                    table_key = ds_fact_key("table_insight", f"{schema}.{table}")
+                    table_key = ds_fact_key("table_insight", ds_object_suffix(schema, table))
                     table_reason = reason_map.get(table, "artifact_missing")
                     table_refs = _build_insight_references(
                         schema,
@@ -1299,21 +1305,21 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                         if repaired:
                             artifact_states[table_key] = repaired_state
                             current_tfp = current_table_fps.get(table, "")
-                            tfp_key = ds_fact_key("table_fp", f"{schema}.{table}")
+                            tfp_key = ds_fact_key("table_fp", ds_object_suffix(schema, table))
                             has_stored_tfp = bool(stored_table_fps.get(tfp_key, ""))
                             followup_reason = ""
                             if current_tfp != stored_table_fps.get(tfp_key, ""):
                                 followup_reason = "fingerprint_changed"
                             elif (not has_stored_tfp) and _is_refresh_due(
                                 table_refresh_map,
-                                ds_fact_key("table_insight_refresh_at", f"{schema}.{table}"),
+                                ds_fact_key("table_insight_refresh_at", ds_object_suffix(schema, table)),
                                 table_refresh_sec,
                             ):
                                 followup_reason = "refresh_due"
                             if followup_reason:
                                 table_reason = followup_reason
                             else:
-                                table_refresh_key = ds_fact_key("table_insight_refresh_at", f"{schema}.{table}")
+                                table_refresh_key = ds_fact_key("table_insight_refresh_at", ds_object_suffix(schema, table))
                                 _mark_refresh_kv(mem_conn, table_refresh_map, table_refresh_key)
                                 if current_tfp:
                                     _save_fingerprint(mem_conn, tfp_key, current_tfp)
@@ -1327,7 +1333,7 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                         "columns": cols_payload[: max(1, int(AGENT_TABLE_INSIGHT_MAX_COLS))],
                     }
                     table_started = time.perf_counter()
-                    table_refresh_key = ds_fact_key("table_insight_refresh_at", f"{schema}.{table}")
+                    table_refresh_key = ds_fact_key("table_insight_refresh_at", ds_object_suffix(schema, table))
                     table_error = ""
                     table_insight = None
                     try:
@@ -1408,7 +1414,7 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                     )
                     if table_complete:
                         _mark_refresh_kv(mem_conn, table_refresh_map, table_refresh_key)
-                        tfp_key = ds_fact_key("table_fp", f"{schema}.{table}")
+                        tfp_key = ds_fact_key("table_fp", ds_object_suffix(schema, table))
                         current_tfp = current_table_fps.get(table, "")
                         if current_tfp:
                             _save_fingerprint(mem_conn, tfp_key, current_tfp)
@@ -1524,6 +1530,51 @@ def _insight_readback_degraded() -> bool:
                 pass
 
 
+def _discover_mssql_databases(mem_conn, ds_key: str, ds_coords: dict | None) -> list[str]:
+    """TASK-0220: MSSQL datasource 가 스캔할 database(catalog) 목록을 발견한다.
+
+    발견 소스는 **제품 등록 DB 목록**(`WebProductDatabases.SchemaName` — MSSQL 에선 DB명, TASK-0206).
+    `sys.databases` 열거는 RO 로그인이 특정 DB 에만 GRANT 되어 권한거부/노이즈 + 비용 폭증이라 부적합.
+    이 datasource(라벨 또는 scope_key)에 바인딩된 제품들이 실제 접근하는 DB 합집합만 스캔 → 엔드포인트
+    매칭 대상과 1:1 정합. default_db 가 있으면 합집합에 포함(미등록이어도 기본 스캔).
+    반환은 소문자 정규화·중복제거된 DB명 목록(빈 목록이면 스캔 skip 신호).
+    """
+    dbs: list[str] = []
+    seen: set[str] = set()
+    # 1) 제품 등록 DB (이 datasource 를 쓰는 모든 제품의 SchemaName 합집합)
+    if mem_conn is not None and ds_key:
+        try:
+            cur = mem_conn.cursor()
+            try:
+                cur.execute(
+                    """
+                    SELECT DISTINCT pd.SchemaName
+                    FROM WebProductDatabases pd
+                    JOIN WebProducts p ON p.Id = pd.ProductId
+                    WHERE LOWER(p.DatasourceKey) = %s
+                    """,
+                    (str(ds_key).strip().lower(),),
+                )
+                for row in cur.fetchall() or []:
+                    name = str((row or [None])[0] or "").strip()
+                    low = name.lower()
+                    if name and low not in seen:
+                        seen.add(low)
+                        dbs.append(name)
+            finally:
+                cur.close()
+        except Exception as exc:
+            logging.getLogger("insight").warning(
+                "mssql_db_discovery_failed ds=%s err=%r — default_db 폴백", ds_key, exc,
+            )
+    # 2) default_db 폴백(제품 미등록 datasource 도 최소 1개는 스캔)
+    default_db = str((ds_coords or {}).get("default_db") or "").strip()
+    if default_db and default_db.lower() not in seen:
+        seen.add(default_db.lower())
+        dbs.append(default_db)
+    return dbs
+
+
 def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
     cycle_run_id = str(run_id or "").strip() or _new_insight_worker_run_id()
     started = time.perf_counter()
@@ -1594,77 +1645,95 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             schema_count = 0
             plan_start = time.perf_counter()
             for _ds_key, _ds_coords in ds_targets:
-                _ds_conn = None
-                try:
-                    # P7: datasource 의 engine 도 함께 set (없으면 dialects.active() 가 mysql 로
-                    # 오인). TASK-0205 B1: effective default_db 도 주입(cross-DB 가드 정합).
-                    # TASK-0219: 스코핑 식별자는 라벨(_ds_key)이 아닌 **엔드포인트 해시**(scope_key).
-                    # 라벨 rename 에도 누적 insight 가 고아되지 않게(write·read-back·grounding 정합).
-                    _ds_scope = None
-                    if _ds_key is not None and _ds_coords:
-                        _ds_scope = _ds_coords.get("scope_key") or _ds_key  # 해시 우선, 폴백 라벨(.env 레거시)
-                    set_active_datasource(
-                        _ds_scope,
-                        engine=(_ds_coords.get("engine") if _ds_coords else None),
-                        default_db=(_ds_coords.get("default_db") if _ds_coords else None),
-                    )
-                    if _ds_key is None:
-                        _ds_conn = db_conn  # 기본 DB 는 이미 연결됨
-                    else:
-                        # datasource 는 database=None(M-1; MSSQL 은 _connect_mssql 이 default_db 로 고정).
-                        # **db 모듈의 connect_with_retry 를 명시 사용** (REV-0203 P7 follow-up): insight 의
-                        # 전역 `connect_with_retry`(from .config import *)는 `modules.utils` 의 구버전이라
-                        # `datasource=` 인자가 없어 매 cycle TypeError → winsql 순회가 P3 이래 항상 실패했다.
-                        # datasource 지원 + 재시도 로직은 modules.db 의 것에만 있다.
-                        _ds_conn = _db.connect_with_retry(
-                            database=None, datasource=_ds_coords, autocommit=True
+                # TASK-0219: 스코핑 식별자는 라벨(_ds_key)이 아닌 **엔드포인트 해시**(scope_key).
+                _ds_scope = None
+                if _ds_key is not None and _ds_coords:
+                    _ds_scope = _ds_coords.get("scope_key") or _ds_key  # 해시 우선, 폴백 라벨(.env 레거시)
+                _ds_engine = (_ds_coords.get("engine") if _ds_coords else None)
+                _ds_default_db = (_ds_coords.get("default_db") if _ds_coords else None)
+
+                # TASK-0220: MSSQL 은 database.schema.table 3계층 → 제품 등록 DB(catalog) 마다 재연결해
+                # 각각 스캔한다(fact_key 에 database 포함, set_active_database). MySQL/기본 DB 는 종전대로
+                # database 차원 없이 1회 순회([None]). MSSQL 인데 발견 DB 가 없으면(미바인딩) 스캔 skip —
+                # tempdb 폴백 스캔으로 쓰레기 인사이트를 쌓지 않는다.
+                _is_mssql_ds = (
+                    _ds_key is not None and str(_ds_engine or "").strip().lower() == "mssql"
+                )
+                if _is_mssql_ds:
+                    _db_targets = _discover_mssql_databases(mem_conn, _ds_key, _ds_coords)
+                    if not _db_targets:
+                        logging.getLogger("insight").info(
+                            "mssql_datasource_no_databases ds=%s — 등록 DB/기본DB 없음, 스캔 skip", _ds_key,
                         )
-                    _known = load_known_schemas(_ds_conn)
-                    if _ds_key is not None:
-                        # P7(TASK-0203 sweep): datasource 의 dialect 시스템 스키마(MSSQL sys/guest/db_*)
-                        # 를 스캔 대상에서 제외한다. `_is_system_schema`(MySQL 정적 집합)는 guest/db_* 를
-                        # 못 걸러 RO-거부 노이즈를 낸다. MySQL(ds=None) 경로는 종전대로(미변경).
-                        _ds_sys = _dialects.active().system_schemas()
-                        _known = [s for s in (_known or []) if s and s.strip().lower() not in _ds_sys]
-                    if _ds_key is None and _known:
-                        KNOWN_SCHEMAS.clear()
-                        KNOWN_SCHEMAS.extend(_known)
-                    _scan_schemas = (_known or KNOWN_SCHEMAS) if _ds_key is None else (_known or [])
-                    schema_count += len([s for s in (_scan_schemas or []) if s and not _is_system_schema(s)])
-                    _bootstrap_schema_insights(_ds_conn, mem_conn, _scan_schemas, run_id=cycle_run_id)
-                    _rep = _scan_instance_schema_insights(
-                        _ds_conn,
-                        mem_conn,
-                        _scan_schemas,
-                        run_id=cycle_run_id,
-                    )
-                    # REV-20260610-P3 MAJOR: 마지막 datasource 만 반영되던 telemetry 를 누적
-                    # (과거 livelock 을 잡은 관측성 보존). int 필드 합산 + bool OR.
-                    if isinstance(_rep, dict):
-                        for _k, _v in _rep.items():
-                            if isinstance(_v, bool):
-                                scan_report[_k] = bool(scan_report.get(_k)) or _v
-                            elif isinstance(_v, (int, float)):
-                                scan_report[_k] = (scan_report.get(_k) or 0) + _v
-                            else:
-                                scan_report[_k] = _v
-                    if _rep.get("scan_started"):
-                        scan_triggered = 1
-                except Exception as _ds_exc:
-                    # 연결실패 격리 (PF2/Codex): 한 datasource 실패가 다른 datasource·기본 DB
-                    # scan 을 막지 않는다. 기본 DB(ds=None) 실패는 바깥 except 로 전파(기존 동작).
-                    if _ds_key is None:
-                        raise
-                    logging.getLogger("insight").warning(
-                        "insight_datasource_scan_failed ds=%s err=%r — 다음 datasource 계속", _ds_key, _ds_exc,
-                    )
-                finally:
-                    set_active_datasource(None)
-                    if _ds_key is not None and _ds_conn is not None:
-                        try:
-                            _ds_conn.close()
-                        except Exception:
-                            pass
+                        continue
+                else:
+                    _db_targets = [None]  # MySQL/기본 DB: database 차원 없음
+
+                for _db_name in _db_targets:
+                    _ds_conn = None
+                    try:
+                        # P7: datasource engine + TASK-0205 B1 effective default_db 주입.
+                        # TASK-0220: MSSQL 은 순회 중인 catalog 를 default_db/active_database 로 함께 set.
+                        set_active_datasource(
+                            _ds_scope,
+                            engine=_ds_engine,
+                            default_db=(_db_name if _db_name else _ds_default_db),
+                        )
+                        if _db_name:
+                            set_active_database(_db_name)  # fact_key suffix 에 database 포함
+                        if _ds_key is None:
+                            _ds_conn = db_conn  # 기본 DB 는 이미 연결됨
+                        else:
+                            # datasource 연결. MSSQL 은 순회 중 catalog(_db_name)로 명시 연결
+                            # (None 이면 _connect_mssql 이 default_db→tempdb 로 폴백 — MySQL 경로).
+                            # db 모듈의 connect_with_retry 명시 사용(datasource= 인자 지원, REV-0203 P7).
+                            _ds_conn = _db.connect_with_retry(
+                                database=_db_name, datasource=_ds_coords, autocommit=True
+                            )
+                        _known = load_known_schemas(_ds_conn)
+                        if _ds_key is not None:
+                            # P7(TASK-0203): dialect 시스템 스키마(MSSQL sys/guest/db_*) 제외.
+                            _ds_sys = _dialects.active().system_schemas()
+                            _known = [s for s in (_known or []) if s and s.strip().lower() not in _ds_sys]
+                        if _ds_key is None and _known:
+                            KNOWN_SCHEMAS.clear()
+                            KNOWN_SCHEMAS.extend(_known)
+                        _scan_schemas = (_known or KNOWN_SCHEMAS) if _ds_key is None else (_known or [])
+                        schema_count += len([s for s in (_scan_schemas or []) if s and not _is_system_schema(s)])
+                        _bootstrap_schema_insights(_ds_conn, mem_conn, _scan_schemas, run_id=cycle_run_id)
+                        _rep = _scan_instance_schema_insights(
+                            _ds_conn,
+                            mem_conn,
+                            _scan_schemas,
+                            run_id=cycle_run_id,
+                        )
+                        # REV-20260610-P3 MAJOR: datasource(+DB) 별 telemetry 누적(int 합산, bool OR).
+                        if isinstance(_rep, dict):
+                            for _k, _v in _rep.items():
+                                if isinstance(_v, bool):
+                                    scan_report[_k] = bool(scan_report.get(_k)) or _v
+                                elif isinstance(_v, (int, float)):
+                                    scan_report[_k] = (scan_report.get(_k) or 0) + _v
+                                else:
+                                    scan_report[_k] = _v
+                        if _rep.get("scan_started"):
+                            scan_triggered = 1
+                    except Exception as _ds_exc:
+                        # 연결실패 격리 (PF2/Codex): 한 datasource(+DB) 실패가 다른 순회·기본 DB
+                        # scan 을 막지 않는다. 기본 DB(ds=None) 실패는 바깥 except 로 전파(기존 동작).
+                        if _ds_key is None:
+                            raise
+                        logging.getLogger("insight").warning(
+                            "insight_datasource_scan_failed ds=%s db=%s err=%r — 다음 대상 계속",
+                            _ds_key, _db_name, _ds_exc,
+                        )
+                    finally:
+                        set_active_datasource(None)  # active_database 도 함께 리셋(set_active_datasource 내부)
+                        if _ds_key is not None and _ds_conn is not None:
+                            try:
+                                _ds_conn.close()
+                            except Exception:
+                                pass
             _timing_breakdown_add(timing, "plan_ms", (time.perf_counter() - plan_start) * 1000.0)
     except Exception as exc:
         status = "error"

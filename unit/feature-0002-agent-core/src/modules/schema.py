@@ -637,7 +637,8 @@ def _record_schema_insight_from_search(
     _publish_fact(
         conn,
         conversation_id,
-        ds_fact_key("schema_insight", schema),
+        # TASK-0220: MSSQL multi-DB 정합 — active database(catalog) 가 있으면 3계층 suffix.
+        ds_fact_key("schema_insight", ds_object_suffix(schema)),
         text,
         4,
         source_type="schema_insight",
@@ -664,7 +665,8 @@ def _record_table_usage_insight(
     if not schema:
         return
     sample_cols = [str(c) for c in (col_names or []) if str(c).strip()]
-    fact_key = ds_fact_key("table_insight", f"{schema}.{table}")
+    # TASK-0220: MSSQL multi-DB 정합 — active database(catalog) 가 있으면 3계층 suffix.
+    fact_key = ds_fact_key("table_insight", ds_object_suffix(schema, table))
     existing = ""
     for global_cid in _global_fact_conversation_ids(include_shared=True):
         existing = _load_fact_text(

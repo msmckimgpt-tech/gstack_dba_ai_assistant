@@ -14087,7 +14087,10 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
 
     try:
         cur = conn.cursor()
-        cur.execute("SELECT Id, ProductKey, Name, Description FROM WebProducts WHERE Id = %s", (product_id,))
+        cur.execute(
+            "SELECT Id, ProductKey, Name, Description, DatasourceKey FROM WebProducts WHERE Id = %s",
+            (product_id,),
+        )
         row = cur.fetchone()
     finally:
         conn.close()
@@ -14095,7 +14098,7 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
     if not row:
         return _json_error("제품을 찾을 수 없습니다.", 404)
 
-    prod_id, prod_key, prod_name, prod_desc = row
+    prod_id, prod_key, prod_name, prod_desc, prod_ds_key = row
 
     conn2 = _connect_memory()
     try:
@@ -14105,53 +14108,136 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
             (product_id,),
         )
         db_rows = cur2.fetchall()
+        # 제품 datasource 의 가능한 ds 식별자 집합 — fact_key 교차노출 차단용(아래 매칭에서 사용).
+        # 마이그레이션 진행 중 PG 에 라벨(winsql)·scope_key(mssql-해시) 혼재 → 둘 다 허용.
+        ds_keys_allowed: list[str] = []
+        if prod_ds_key:
+            ds_keys_allowed.append(str(prod_ds_key).strip().lower())
+            try:
+                cur2.execute(
+                    "SELECT Engine, Host, Port FROM WebDataSources WHERE DatasourceKey = %s",
+                    (prod_ds_key,),
+                )
+                ds_row = cur2.fetchone()
+                if ds_row:
+                    _eng, _host, _port = ds_row
+                    scope_key = _generate_datasource_key(_eng or "mysql", _host or "", int(_port or 0))
+                    if scope_key:
+                        ds_keys_allowed.append(scope_key.strip().lower())
+            except Exception:
+                pass
     finally:
         conn2.close()
 
     schema_names = [r[0] for r in db_rows]
 
-    # PG: schema_insight, table_insight, search_pref, insight 팩트
-    fact_lines: list[str] = []
-    # PG: 대화 topic 집계 (최신 50개)
-    topic_lines: list[str] = []
-    # PG: 대화 summary 샘플 (최신 5개)
-    summary_lines: list[str] = []
+    # PG 인사이트 수집.
+    #
+    # fact_key 형식 두 가지 (TASK-0218 datasource-스코프 마이그레이션 진행 중 혼재):
+    #   - 구형식:  `{source}:{schema[.table]}`              (예: `table_insight:dbgame.item`)
+    #   - 신형식:  `{source}:ds:{ds_key}:{schema[.table]}`  (예: `table_insight:ds:main_mysql:dbgame.item`)
+    # `_infer_rag_object_from_fact`(utils.py) 와 동형으로, ds 접두를 제거해 정규화한 뒤
+    # 제품이 실제 접근 가능한 스키마명으로 **정확히** 매칭한다. (과거 버그: `source_type` 컬럼은
+    # 전부 'schema_insight' 로 들어가 신뢰 불가하고, `scope_key` 는 전부 'common' 이라 ILIKE
+    # 매칭이 0건 → 인사이트가 통째로 누락된 채 LLM 이 테이블/컬럼을 날조했음.)
+    #
+    # source_type 은 fact_key 접두(`schema_insight:` / `table_insight:`)로 판별한다.
+    schema_insights: dict[str, str] = {}          # schema -> 스키마 수준 요약 (최고 weight 1건)
+    table_insights: dict[str, list[str]] = {}     # schema -> ["table: 설명", ...]
+    topic_lines: list[str] = []                   # 대화 topic (최신 50개)
+    summary_lines: list[str] = []                 # 대화 summary 샘플 (최신 5개)
     try:
         from modules.db import _pg_connect
         pg_conn = _pg_connect()
         pg_cur = pg_conn.cursor()
 
-        # 팩트: schema_insight/table_insight/search_pref/insight 타입
         if schema_names:
-            placeholders = ", ".join(["%s"] * len(schema_names))
+            # 정규화 키 = ds 접두 제거. `regexp_replace` 로 `{src}:ds:{key}:` → `{src}:`.
+            # 매칭은 정규화 키가 `{schema}` 또는 `{schema}.` 로 시작하는지로 판정 (substring ILIKE
+            # 가 아니라 boundary 매칭 — `dbgame` 가 `dbgamelog` 를 오탐하지 않게).
+            schema_lc = [s.lower() for s in schema_names if s]
+            # datasource 교차노출 차단: 제품에 datasource 가 지정돼 있으면 그 datasource 의 ds 세그먼트
+            # (라벨 또는 scope_key) 이거나 무접두(레거시 단일 MySQL) fact 만 매칭. 미지정 제품은 종전대로
+            # 전체 매칭(하위호환). fact_key 의 ds 세그먼트 = `:ds:{key}:` 의 key, 없으면 빈 문자열.
             pg_cur.execute(
-                f"""
-                SELECT fe.fact_key, t.text_content
-                FROM public.fact_entries fe
-                JOIN public.texts t ON fe.text_hash = t.text_hash
-                WHERE fe.source_type IN ('schema_insight', 'table_insight', 'search_pref', 'insight')
+                """
+                WITH norm AS (
+                    SELECT
+                        fe.fact_key,
+                        fe.weight,
+                        fe.updated_at,
+                        t.text_content,
+                        split_part(fe.fact_key, ':', 1) AS src_prefix,
+                        CASE
+                            WHEN fe.fact_key ~ '^(schema_insight|table_insight):ds:'
+                            THEN split_part(fe.fact_key, ':', 3)
+                            ELSE ''
+                        END AS ds_seg,
+                        regexp_replace(
+                            fe.fact_key,
+                            '^(schema_insight|table_insight):ds:[^:]+:',
+                            '\\1:'
+                        ) AS norm_key
+                    FROM public.fact_entries fe
+                    JOIN public.texts t ON fe.text_hash = t.text_hash
+                ),
+                parsed AS (
+                    SELECT
+                        src_prefix,
+                        weight,
+                        updated_at,
+                        text_content,
+                        ds_seg,
+                        -- norm_key = `{src}:{schema[.table]}` → 접두 제거 후 object 부분만
+                        regexp_replace(norm_key, '^(schema_insight|table_insight):', '') AS obj,
+                        norm_key
+                    FROM norm
+                    WHERE src_prefix IN ('schema_insight', 'table_insight')
+                )
+                SELECT
+                    src_prefix,
+                    obj,
+                    text_content,
+                    weight
+                FROM parsed
+                WHERE lower(split_part(obj, '.', 1)) = ANY(%s)
                   AND (
-                    {" OR ".join(["fe.scope_key ILIKE %s" for _ in schema_names])}
+                    %s = 0                       -- 제품 datasource 미지정 → 전체 매칭(하위호환)
+                    OR ds_seg = ''               -- 무접두 레거시(단일 MySQL) 허용
+                    OR lower(ds_seg) = ANY(%s)   -- 제품 datasource 의 ds 세그먼트만
                   )
-                ORDER BY fe.weight DESC, fe.updated_at DESC
-                LIMIT 80
+                ORDER BY weight DESC, updated_at DESC
                 """,
-                [f"%{s}%" for s in schema_names],
+                (schema_lc, len(ds_keys_allowed), ds_keys_allowed),
             )
-        else:
-            pg_cur.execute(
-                """
-                SELECT fe.fact_key, t.text_content
-                FROM public.fact_entries fe
-                JOIN public.texts t ON fe.text_hash = t.text_hash
-                WHERE fe.source_type IN ('schema_insight', 'table_insight', 'search_pref', 'insight')
-                ORDER BY fe.weight DESC, fe.updated_at DESC
-                LIMIT 80
-                """
-            )
-        for fkey, ftext in pg_cur.fetchall():
-            if ftext:
-                fact_lines.append(f"[{fkey}] {ftext[:400]}")
+            for src_prefix, obj, text_content, _weight in pg_cur.fetchall():
+                if not text_content:
+                    continue
+                # obj 의 계층 분해 — 제품 접근 단위(WebProductDatabases.SchemaName)는 항상 최상위 segment.
+                #   - MySQL(2계층): `{schema}.{table}`        → group=schema, table=table
+                #   - MSSQL(3계층): `{database}.{schema}.{table}` → group=database, table=`{schema}.{table}`
+                # group(obj_top)이 제품 접근 단위와 매칭된 값이므로 그대로 그룹 키로 쓴다.
+                parts = obj.split(".")
+                # 그룹 키는 소문자로 통일 — fact_key segment 는 소문자 저장이지만(MSSQL),
+                # MySQL schema 명은 대소문자 보존될 수 있어 렌더 lookup(sch.lower())과 정합되게 강제.
+                obj_top = parts[0].lower()
+                if len(parts) >= 3:
+                    table_label = ".".join(parts[1:])  # `dbo.QuestInfo` (스키마.테이블)
+                elif len(parts) == 2:
+                    table_label = parts[1]
+                else:
+                    table_label = obj
+                if src_prefix == "schema_insight":
+                    # 스키마/DB 수준: 최고 weight 1건만 (ORDER BY weight DESC → 첫 등장 보존)
+                    if obj_top not in schema_insights:
+                        schema_insights[obj_top] = text_content.strip()
+                elif src_prefix == "table_insight":
+                    # 테이블 수준: 접근 단위별로 묶어 누적 (단위당 상한은 아래 렌더에서 적용)
+                    table_insights.setdefault(obj_top, [])
+                    if len(table_insights[obj_top]) < 60:
+                        table_insights[obj_top].append(
+                            f"- `{table_label}`: {text_content.strip()[:300]}"
+                        )
 
         # topic 집계: 이 제품의 대화 제목 최신 50개
         pg_cur.execute(
@@ -14191,9 +14277,9 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
 
         pg_conn.close()
     except Exception as pg_exc:
-        _log.getLogger("app").warning("admin_generate_product_prompt PG error: %s", pg_exc)
+        logging.getLogger(__name__).warning("admin_generate_product_prompt PG error: %s", pg_exc)
 
-    # 프롬프트 구성
+    # 지식 블록 구성 — 스키마별로 schema_insight + table_insight 를 묶어 구조화.
     sections: list[str] = []
     sections.append(f"제품명: {prod_name}")
     if prod_desc:
@@ -14201,32 +14287,83 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
     if schema_names:
         sections.append("접근 가능 데이터베이스(스키마): " + ", ".join(schema_names))
 
-    if fact_lines:
-        sections.append("\n## DB 구조 및 인사이트\n" + "\n".join(fact_lines[:60]))
+    # 실제 인사이트 데이터 유무 — 지시문 분기 + 응답 메타에 사용.
+    total_tables = sum(len(v) for v in table_insights.values())
+    has_insights = bool(schema_insights or table_insights)
+
+    if has_insights:
+        db_sections: list[str] = []
+        for sch in schema_names:
+            # fact_key 의 DB/스키마 segment 는 소문자로 저장되므로(set_active_database 가 소문자화),
+            # 수집 dict 는 소문자 키. 표시는 제품 등록 원본 대소문자(sch), lookup 은 소문자로.
+            sch_lc = str(sch or "").strip().lower()
+            sch_block: list[str] = [f"### 스키마 `{sch}`"]
+            sch_summary = schema_insights.get(sch_lc)
+            if sch_summary:
+                sch_block.append(sch_summary)
+            tbls = table_insights.get(sch_lc, [])
+            if tbls:
+                sch_block.append(f"\n**주요 테이블 ({len(tbls)}개):**")
+                sch_block.extend(tbls)
+            if sch_summary or tbls:
+                db_sections.append("\n".join(sch_block))
+        if db_sections:
+            sections.append(
+                "\n## 데이터베이스 구조 (insight-worker 가 실제 스키마를 분석해 축적한 정본)\n\n"
+                + "\n\n".join(db_sections)
+            )
 
     if topic_lines:
         sections.append(
-            "\n## 사용자 대화 주제 패턴 (최근 요청 샘플)\n"
+            "\n## 사용자가 실제로 요청한 분석 주제 (최근 대화 기준)\n"
             + "\n".join(f"- {t}" for t in topic_lines[:40])
         )
 
     if summary_lines:
         sections.append(
-            "\n## 실제 사용 사례 요약\n"
+            "\n## 실제 분석 사례 요약 (과거 대화 결과)\n"
             + "\n\n---\n".join(summary_lines)
         )
 
     knowledge_block = "\n\n".join(sections)
+
+    # LLM 지시문 — 제공된 실제 인사이트에만 근거하도록 강하게 제약(테이블/컬럼명 날조 금지).
+    if has_insights:
+        grounding_rule = (
+            "절대 규칙:\n"
+            "1. 테이블명·컬럼명·스키마명은 아래 '데이터베이스 구조' 섹션에 명시된 것만 사용하세요. "
+            "거기 없는 테이블/컬럼을 추측하거나 예시로 지어내지 마세요.\n"
+            "2. '데이터베이스 구조'에 없는 정보가 필요하면, 어시스턴트가 런타임에 "
+            "`SHOW TABLES` / `DESCRIBE` / `information_schema` 조회로 확인하도록 지시하는 문장을 넣으세요 "
+            "(가짜 스키마를 적지 마세요).\n"
+            "3. '사용자가 실제로 요청한 분석 주제'를 반영해, 그 유형의 질문에 어떻게 대응할지 "
+            "구체적 가이드를 포함하세요.\n"
+            "4. 실제 컬럼명이 제공된 테이블은 그 컬럼을 인용해 분석 예시를 들어도 됩니다."
+        )
+    else:
+        # 인사이트가 비었을 때(insight-worker 미실행/마이그레이션 중) — 날조 방지가 더 중요.
+        grounding_rule = (
+            "주의: 이 제품의 데이터베이스 구조 인사이트가 아직 수집되지 않았습니다. "
+            "따라서 구체적인 테이블명·컬럼명을 지어내지 마세요. "
+            "대신 어시스턴트가 분석 전 반드시 `SHOW TABLES` / `DESCRIBE` / `information_schema` 로 "
+            "실제 스키마를 먼저 탐색하도록 지시하는, 스키마-비의존적인 시스템 프롬프트를 작성하세요."
+        )
 
     llm_model = _resolve_session_default_model()
     messages = [
         {
             "role": "user",
             "content": (
-                "다음 정보를 바탕으로 AI 어시스턴트의 시스템 프롬프트를 한국어로 작성해주세요.\n"
-                "시스템 프롬프트는 어시스턴트가 이 제품의 데이터를 분석할 때 따라야 할 지침, "
-                "주요 테이블·컬럼 설명, 자주 묻는 질문 유형, 주의사항을 포함해야 합니다.\n"
-                "실무에서 바로 사용할 수 있는 구체적이고 완성된 형태로 작성하세요.\n\n"
+                "당신은 사내 DB 분석 AI 어시스턴트의 '시스템 프롬프트'를 작성하는 전문가입니다.\n"
+                "아래 제품 정보를 바탕으로, 이 제품 전용 어시스턴트가 따라야 할 한국어 시스템 프롬프트를 작성하세요.\n\n"
+                "시스템 프롬프트에는 다음을 포함하세요:\n"
+                "- 어시스턴트의 역할과 분석 대상 (이 제품의 데이터베이스)\n"
+                "- 접근 가능한 각 스키마의 용도와 실제 주요 테이블 설명\n"
+                "- 사용자가 자주 요청하는 분석 유형과 대응 방법\n"
+                "- SQL 작성·결과 제시 시 주의사항\n\n"
+                f"{grounding_rule}\n\n"
+                "실무에서 바로 적용 가능한, 구체적이고 완성된 시스템 프롬프트를 작성하세요. "
+                "메타 설명 없이 시스템 프롬프트 본문만 출력하세요.\n\n"
                 f"=== 제품 정보 ===\n{knowledge_block}"
             ),
         }
@@ -14256,7 +14393,20 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
     except Exception as llm_exc:
         return _json_error(f"LLM 생성 실패: {llm_exc}", 502)
 
-    return JSONResponse({"prompt": generated.strip()})
+    # 응답 메타 — admin UI 가 "어떤 근거로 생성됐는지"를 표시할 수 있게 인사이트 충실도를 함께 반환.
+    return JSONResponse(
+        {
+            "prompt": generated.strip(),
+            "meta": {
+                "schema_count": len(schema_names),
+                "schema_insight_count": len(schema_insights),
+                "table_insight_count": total_tables,
+                "topic_count": len(topic_lines),
+                "summary_count": len(summary_lines),
+                "grounded": has_insights,
+            },
+        }
+    )
 
 
 @app.get("/api/admin/system-prompts")

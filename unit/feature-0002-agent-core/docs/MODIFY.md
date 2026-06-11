@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260611-0223
+- Date: 2026-06-11 (TASK-0223, **Major §12.3** — MSSQL database-aware 3계층 insight [feature-0003 주관, agent-core 교차변경])
+- Scope: MSSQL(database.schema.table 3계층) insight 파이프라인 — insight-worker 가 제품 등록 DB 별로 스캔하고 fact_key 에 database 를 포함, read-back/grounding 이 이를 정합 매칭. MySQL 2계층은 무변경(active_database 미설정 → 기존 동치).
+- 배경: insight-worker 가 MSSQL 을 `dbo` 단일 DB 만 스캔 + fact_key 에 database 누락 → 제품 등록 DB(`dk_data_release` 등)와 매칭 불가. fact_key 가 `dbo.<table>` 2계층이라 여러 database 의 동일 테이블 구분 불가.
+- 변경:
+  - `src/modules/config.py`: `_ACTIVE_DATABASE` ContextVar + `set_active_database`/`get_active_database` + `ds_object_suffix(schema, table=None)` 신규(active database 있으면 `{db}.{schema}[.{table}]`, 없으면 `{schema}[.{table}]`). `set_active_datasource` 가 전환 시 active_database None 리셋. `__all__` 등재. **`ds_fact_key` 시그니처 불변**(3자 정합 보존).
+  - `src/modules/insight.py`: datasource 순회 루프에 MSSQL multi-database inner-loop(`_discover_mssql_databases` — `WebProductDatabases` 제품 등록 DB 합집합 + default_db; DB별 `connect_with_retry(database=db)` 재연결 + `set_active_database`; 연결실패 격리). suffix 조립부 전수 `ds_object_suffix` 치환(table_insight/schema_insight/table_fp/schema_fp/table_insight_refresh_at/schema_insight_refresh_at). `_build_insight_object_maps` + read-back(PG/MySQL 경로 쿼리)을 `object_key` 키로 전환(`(schema,table)` 튜플 → cross-DB 충돌 livelock 제거).
+  - `src/modules/utils.py`: `_infer_rag_object_from_fact` 3계층(`database.schema.table`) 파싱 — schema_name/table_name 은 schema/table 단위 유지(grounding 정합), object_key 에 database 접두(cross-DB 유일성). 2계층 입력은 기존과 동치.
+  - `src/modules/schema.py`: bootstrap 2곳(`_record_schema_insight_from_search`/`_record_table_usage_insight`) `ds_object_suffix` 치환(스캐너와 키 정합).
+  - `src/agent_core.py`: `_insight_object_group` 신규 — grounding `_load_schema_list` 의 grouping 을 테이블명 제외 prefix(MySQL=schema, MSSQL=database.schema)로 정규화해 table_insight↔schema_insight desc 매칭. `rfind` 사용(2계층은 `find` 와 동일).
+  - `tests/test_mssql_three_tier_insight.py`: 신규 13 테스트(ds_object_suffix 2/3계층·시그니처 불변·datasource 전환 리셋·3계층 파싱·cross-DB object_key 유일·grouping 정합).
+- 비변경: RBAC·시크릿·PG/MySQL 스키마(rag_objects.object_key 기존 컬럼 재사용)·`ds_fact_key`/`ds_fact_like`/`ds_strip_prefix` 시그니처 무변경.
+- 검증: pytest 444 passed/2 skipped(회귀 0) + py_compile + 라이브(MSSQL 제품 60테이블 grounded·권한밖 DB 격리·ask-worker grounding database.schema grouping 정상).
+- Files: src/modules/{config,insight,utils,schema}.py, src/agent_core.py, tests/test_mssql_three_tier_insight.py
+- Rollback: ds_object_suffix 가 active_database 미설정 시 2계층(MySQL 동치)이라 MSSQL 미사용 환경 무영향. multi-DB 루프는 MSSQL engine 한정 분기(MySQL `[None]` 1회=종전).
+
 ## CHG-20260611-0208
 - Date: 2026-06-11 (TASK-0208, **Minor §12.3** — 답변 후처리 미리보기 링크 정확도)
 - Scope: `_collapse_large_tables` 의 표↔CSV 매칭(`_match_csv_for_table`) 컬럼수 폴백을 좁혀, LLM 이 손으로 쓴 비-결과 분석/요약 표에 "전체 N행 미리보기" 오링크가 붙지 않게 한다.

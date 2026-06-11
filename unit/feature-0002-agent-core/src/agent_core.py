@@ -816,6 +816,19 @@ def _kb_read_is_pg() -> bool:
     return str(getattr(cfg, "AGENT_KB_READ_BACKEND", "mysql") or "mysql").lower() == "postgres"
 
 
+def _insight_object_group(suffix: str) -> str:
+    """TASK-0220: table_insight suffix 에서 테이블명(마지막 segment)을 제외한 grouping 키 반환.
+
+    - MySQL 2계층 `{schema}.{table}` → `{schema}`
+    - MSSQL 3계층 `{database}.{schema}.{table}` → `{database}.{schema}`
+    점이 없으면(예외적) 빈 문자열. schema_insight suffix(`{schema}` / `{database}.{schema}`)와
+    동일 단위라 desc 매칭이 정합한다.
+    """
+    name = str(suffix or "").strip()
+    dot = name.rfind(".")
+    return name[:dot] if dot > 0 else ""
+
+
 def _load_schema_list(mem_conn, max_total: int = 2000) -> str:
     """스키마별 테이블 수와 인사이트 DB의 도메인 설명을 로드한다.
 
@@ -838,11 +851,16 @@ def _load_schema_list(mem_conn, max_total: int = 2000) -> str:
         if table_rows is not None or schema_rows is not None:
             pg_used = True
             for fact_key, _ in (table_rows or []):
+                # TASK-0220: suffix 는 MySQL `{schema}.{table}`(2계층) 또는 MSSQL
+                # `{database}.{schema}.{table}`(3계층). 테이블명(마지막 segment)을 제외한
+                # prefix 를 grounding 키로 쓴다 → MySQL=schema, MSSQL=database.schema.
                 name = cfg.ds_strip_prefix("table_insight", fact_key)
-                dot = name.find(".")
-                if dot > 0:
-                    schema_counts[name[:dot]] = schema_counts.get(name[:dot], 0) + 1
+                grp = _insight_object_group(name)
+                if grp:
+                    schema_counts[grp] = schema_counts.get(grp, 0) + 1
             for fact_key, text_content in (schema_rows or []):
+                # schema_insight suffix 는 MySQL `{schema}` 또는 MSSQL `{database}.{schema}`.
+                # table_insight 의 grouping 키(database.schema)와 동일 단위로 정규화해 desc 가 매칭되게 한다.
                 schema_name = cfg.ds_strip_prefix("schema_insight", fact_key)
                 if schema_name == "agent_memory":
                     continue
@@ -868,9 +886,9 @@ def _load_schema_list(mem_conn, max_total: int = 2000) -> str:
             )
             for (fact_key,) in cur.fetchall() or []:
                 name = fact_key.replace("table_insight:", "")
-                dot = name.find(".")
-                if dot > 0:
-                    schema_counts[name[:dot]] = schema_counts.get(name[:dot], 0) + 1
+                grp = _insight_object_group(name)
+                if grp:
+                    schema_counts[grp] = schema_counts.get(grp, 0) + 1
         except Exception:
             pass
         try:

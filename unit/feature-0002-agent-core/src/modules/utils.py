@@ -1072,17 +1072,35 @@ def _infer_rag_object_from_fact(
     object_type = ""
     object_key = ""
 
+    # TASK-0220: MSSQL multi-database 인사이트는 suffix 에 database(catalog)를 최상위로 포함한다
+    # (`{database}.{schema}.{table}` / `{database}.{schema}`). MySQL(schema==database)은 종전대로
+    # `{schema}.{table}` / `{schema}`. database 는 별도 변수로 보존하고 schema_name/table_name 은
+    # 항상 schema/table 단위로 채워 _build_insight_object_maps(schema/table 키 기반)의 의미를 유지한다.
+    database_name = ""
     if lowered.startswith("table_insight:") or lowered.startswith("table_pref:"):
         ref = key.split(":", 1)[1].strip()
-        if "." in ref:
-            left, right = ref.split(".", 1)
-            schema_name = _sanitize_ident_part(left)
-            table_name = _sanitize_ident_part(right)
-            if schema_name and table_name:
-                object_type = "table"
-                object_key = f"{schema_name}.{table_name}"
+        parts = ref.split(".")
+        if len(parts) >= 3:
+            # MSSQL 3계층: database.schema.table (테이블명에 점이 더 있으면 마지막만 table 로,
+            # 나머지는 schema 에 합쳐 안전하게 처리 — 실제로는 식별자에 점이 없음)
+            database_name = _sanitize_ident_part(parts[0])
+            schema_name = _sanitize_ident_part(parts[1])
+            table_name = _sanitize_ident_part(parts[2])
+        elif len(parts) == 2:
+            schema_name = _sanitize_ident_part(parts[0])
+            table_name = _sanitize_ident_part(parts[1])
+        if schema_name and table_name:
+            object_type = "table"
+            object_key = f"{schema_name}.{table_name}"
     elif lowered.startswith("schema_insight:") or lowered.startswith("schema_pref:"):
-        schema_name = _sanitize_ident_part(key.split(":", 1)[1].strip())
+        ref = key.split(":", 1)[1].strip()
+        parts = ref.split(".")
+        if len(parts) >= 2:
+            # MSSQL 2계층 스키마 키: database.schema
+            database_name = _sanitize_ident_part(parts[0])
+            schema_name = _sanitize_ident_part(parts[1])
+        else:
+            schema_name = _sanitize_ident_part(ref)
         if schema_name:
             object_type = "schema"
             object_key = schema_name
@@ -1109,6 +1127,10 @@ def _infer_rag_object_from_fact(
             if schema_name and table_name:
                 object_type = "table"
                 object_key = f"{schema_name}.{table_name}"
+    # TASK-0220: MSSQL multi-database 면 object_key 에 database 를 먼저 붙여 같은 datasource 내
+    # DB 간 유일성 보장(`dk_data_release.dbo.QuestInfo`). schema_name/table_name 은 schema/table 단위 유지.
+    if object_key and database_name:
+        object_key = f"{database_name}.{object_key}"
     # TASK-0219: datasource-스코프면 object_key 에 ds 접두를 붙여 datasource 간 유일성 보장
     # (unique 제약 (conv,scope,type,object_key) 변경 없이 cross-ds 충돌 차단). schema_name/table_name 은 정규화 유지.
     if object_key and datasource_key:
