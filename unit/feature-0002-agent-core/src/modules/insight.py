@@ -20,6 +20,8 @@ import hashlib, json, random, re, time, uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from . import dialects as _dialects  # P7: insight 컬럼 핑거프린트 dialect 분기(MSSQL)
+
 
 # ---------------------------------------------------------------------------
 # Fingerprint-based change detection
@@ -46,7 +48,7 @@ def _compute_table_fingerprint(db_conn, schema: str, table: str) -> str:
     cur = db_conn.cursor()
     try:
         cur.execute(
-            "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY "
+            f"SELECT {_dialects.active().fingerprint_column_projection()} "
             "FROM information_schema.COLUMNS "
             "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s "
             "ORDER BY ORDINAL_POSITION",
@@ -69,7 +71,7 @@ def _compute_table_fingerprints_batch(db_conn, schema: str, tables: list[str]) -
     try:
         placeholders = ",".join(["%s"] * len(tables))
         cur.execute(
-            f"SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY "
+            f"SELECT TABLE_NAME, {_dialects.active().fingerprint_column_projection()} "
             f"FROM information_schema.COLUMNS "
             f"WHERE TABLE_SCHEMA = %s AND TABLE_NAME IN ({placeholders}) "
             f"ORDER BY TABLE_NAME, ORDINAL_POSITION",
@@ -1585,7 +1587,12 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             for _ds_key, _ds_coords in ds_targets:
                 _ds_conn = None
                 try:
-                    set_active_datasource(_ds_key)
+                    # P7: datasource 의 engine 도 함께 set (없으면 dialects.active() 가 mysql 로
+                    # 오인해 MSSQL 에 MySQL SQL 을 던진다 — 컬럼 핑거프린트 projection 분기 정합).
+                    set_active_datasource(
+                        _ds_key,
+                        engine=(_ds_coords.get("engine") if _ds_coords else None),
+                    )
                     if _ds_key is None:
                         _ds_conn = db_conn  # 기본 DB 는 이미 연결됨
                     else:

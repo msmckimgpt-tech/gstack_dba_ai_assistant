@@ -40,6 +40,18 @@ class Dialect:
         """
         raise NotImplementedError
 
+    # ── insight 핑거프린트: 컬럼 메타데이터 projection (P7) ──
+    def fingerprint_column_projection(self) -> str:
+        """insight.py 의 컬럼 핑거프린트용 SELECT projection (information_schema.COLUMNS 기준).
+
+        FROM/WHERE(`information_schema.COLUMNS`·`TABLE_SCHEMA`·`ORDINAL_POSITION`)는 ANSI 표준이라
+        MySQL·MSSQL 공통 → insight.py 가 공유하고, **엔진 고유 컬럼만 본 projection 으로 분기**한다
+        (MySQL `COLUMN_TYPE`/`COLUMN_KEY` 는 SQL Server INFORMATION_SCHEMA 에 없어 `Invalid column name`).
+        반환 컬럼 수는 엔진 무관 5개(코드 대칭, 첫 컬럼=COLUMN_NAME). 핑거프린트는 datasource 별 스코프라
+        엔진 간 값 비교를 안 함 — 엔진 내 안정성·변경검출만 필요.
+        """
+        raise NotImplementedError
+
     # ── 식별자 인용 ──
     def quote_qualified(self, schema: str, table: str) -> str:
         raise NotImplementedError
@@ -92,6 +104,10 @@ class MySQLDialect(Dialect):
 
     def metadata_schemas(self) -> frozenset:
         return self._SYS
+
+    def fingerprint_column_projection(self) -> str:
+        # 골든: insight.py 의 기존 컬럼 목록 그대로(COLUMN_TYPE/COLUMN_KEY 포함).
+        return "COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY"
 
     def quote_qualified(self, schema: str, table: str) -> str:
         return f"`{schema}`.`{table}`"
@@ -236,6 +252,16 @@ class MSSQLDialect(Dialect):
 
     def metadata_schemas(self) -> frozenset:
         return self._META
+
+    def fingerprint_column_projection(self) -> str:
+        # MSSQL INFORMATION_SCHEMA.COLUMNS 에는 COLUMN_TYPE/COLUMN_KEY 가 없다 → DATA_TYPE +
+        # CHARACTER_MAXIMUM_LENGTH 로 타입 상세를 대체하고, KEY 자리는 상수(핑거프린트는 컬럼 추가/삭제/
+        # 타입변경 검출이 주목적이라 PK 표식 생략 무해). 컬럼 수 5개로 MySQL 과 대칭(insight 가 위치로 읽음).
+        return (
+            "COLUMN_NAME, DATA_TYPE, "
+            "CAST(ISNULL(CHARACTER_MAXIMUM_LENGTH, -1) AS NVARCHAR(20)) AS COLUMN_TYPE, "
+            "IS_NULLABLE, CAST('' AS NVARCHAR(1)) AS COLUMN_KEY"
+        )
 
     def quote_qualified(self, schema: str, table: str) -> str:
         return f"[{schema}].[{table}]"

@@ -446,3 +446,38 @@ def test_run_agent_finally_clears_datasource_on_exception():
             ac.run_agent("hi")
     assert cfg.get_active_datasource() is None
     assert cfg.get_active_datasource_engine() == "mysql"
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# P7: insight 컬럼 핑거프린트 dialect projection
+# ──────────────────────────────────────────────────────────────────────────
+def test_fingerprint_projection_mysql_golden():
+    """MySQL projection 은 기존 insight.py 컬럼 그대로(COLUMN_TYPE/COLUMN_KEY) — 골든."""
+    p = _dia.get("mysql").fingerprint_column_projection()
+    assert p == "COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY"
+
+
+def test_fingerprint_projection_mssql_no_mysql_only_columns():
+    """MSSQL projection 은 SQL Server 에 없는 COLUMN_TYPE/COLUMN_KEY 를 **소스 컬럼**으로 안 쓴다."""
+    import re as _re
+    p = _dia.get("mssql").fingerprint_column_projection()
+    up = p.upper()
+    assert "CHARACTER_MAXIMUM_LENGTH" in up        # 타입 상세 대체
+    assert up.startswith("COLUMN_NAME")
+    assert "DATA_TYPE" in up and "IS_NULLABLE" in up
+    assert "INFORMATION_SCHEMA.COLUMNS" not in up   # FROM 은 insight.py 가 소유
+    # COLUMN_TYPE/COLUMN_KEY 는 오직 별칭(`AS COLUMN_TYPE`)으로만 등장해야 — 소스 컬럼 참조면 SQL Server invalid.
+    for col in ("COLUMN_TYPE", "COLUMN_KEY"):
+        for m in _re.finditer(col, up):
+            assert up[:m.start()].rstrip().endswith("AS"), f"{col} 가 소스 컬럼으로 참조됨"
+
+
+def test_fingerprint_projection_active_switches_by_engine():
+    """active() projection 이 활성 엔진에 따라 분기."""
+    def check():
+        cfg.set_active_datasource(None)  # mysql
+        assert "COLUMN_TYPE" in _dia.active().fingerprint_column_projection()
+        cfg.set_active_datasource("ds", engine="mssql")
+        assert "CHARACTER_MAXIMUM_LENGTH" in _dia.active().fingerprint_column_projection()
+    import contextvars
+    contextvars.copy_context().run(check)

@@ -596,3 +596,32 @@ assistant + insight-worker 라이브 검증.
 - **M2 (MAJOR) — gate fail-closed 가 confirm_heavy 로 자기우회**: MSSQL 하드차단이 `not confirm_heavy` 조건 안에
   있어 LLM 이 `confirm_heavy=true` 로 우회 + 메시지가 우회법 광고. **수정**: 하드차단을 confirm_heavy 조건 밖으로
   이동(추정치 없는 맹목 confirm 은 무력) + 메시지에서 confirm_heavy 안내 제거. MySQL est-기반 게이트는 보존(골든).
+
+## 12. P7 구현 보고 (insight-worker MSSQL — TASK-0203)
+
+Stage 2 P7. insight-worker 가 MSSQL datasource 에서도 인사이트를 생성하도록 introspection 을 dialect-화.
+
+**구현 (핵심은 작았음 — insight.py 8개 introspection 중 2개만 MySQL 전용)**:
+- **컬럼 핑거프린트 dialect projection**: insight.py 의 `_compute_table_fingerprint`/`_compute_table_fingerprints_batch`
+  가 `COLUMN_TYPE`/`COLUMN_KEY`(SQL Server INFORMATION_SCHEMA 에 부재 → `Invalid column name`) 를 직접 SELECT 했다.
+  → `Dialect.fingerprint_column_projection()` 추가(MySQL=골든 그대로, MSSQL=`CHARACTER_MAXIMUM_LENGTH` 로 타입
+  상세 대체·KEY 자리 상수). FROM/WHERE(`information_schema.COLUMNS`·`TABLE_SCHEMA`·`ORDINAL_POSITION`)는 ANSI 표준이라
+  양 엔진 공통 → insight.py 가 유지(parameterized %s). 나머지 6개 사이트(TABLE_NAME/COLUMN_NAME/DATA_TYPE)는 ANSI
+  표준 컬럼만 써 MSSQL 에서 그대로 동작.
+- **engine-passing 버그 수정**: `run_insight_cycle` 의 datasource 순회가 `set_active_datasource(_ds_key)` 로 **engine 을
+  안 넘겨** `dialects.active()` 가 mysql 로 오인하던 것 → `engine=_ds_coords.get("engine")` 전달.
+
+**livelock 방지(과거 이력)**: write(핑거프린트 생성·저장)·read-back(저장값 비교) 둘 다 datasource 루프의 동일
+`set_active_datasource(engine=)` 컨텍스트 안에서 일어나 **동일 projection/engine** 보장 → mismatch·무한재생성 없음.
+라이브 단일≡배치 핑거프린트 해시 동일·결정성 STABLE 실증. fact-key 는 P3 의 `ds_fact_key` 로 이미 ds-스코프.
+
+**검증**: 실 SQL Server 2022(`dk_data_release`, CI collation) — 컬럼/스키마/배치 핑거프린트 전부 동작(이전 `COLUMN_TYPE`
+실패 해소). MySQL 골든 projection byte-identical. 회귀테스트 3종(`test_multi_datasource.py`). 전체 스위트 RC=0.
+
+**outside-voice 적대적 리뷰(REV-20260611-0202, livelock 중심)**: **SHIP**(BLOCKER 0·MAJOR 0). write·read-back
+동일 engine/projection 컨텍스트 + 결정성 + single≡batch 라이브 입증. MINOR 3(후속, 비차단): ① CS/binary collation
+서버에서 소문자 `information_schema` 실패 가능(현 대상 CI 무영향) — insight 공유쿼리도 대문자 통일 권고, ② dead code
+`_compute_table_fingerprint`(호출 0) 정리, ③ ds scan 실패가 cycle status=ok 라 관측 사각.
+
+**미구현(P7 잔여, 후속)**: ① UI engine 표시(admin datasource 옆 엔진 배지) — 기능 아닌 cosmetic, ② MINOR-1 CS-collation
+대문자 통일.

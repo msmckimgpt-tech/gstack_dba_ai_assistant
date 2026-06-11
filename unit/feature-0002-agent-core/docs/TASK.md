@@ -798,3 +798,14 @@ TASK-0015 (plan-review):
 - [x] **실 MSSQL 검증**(사용자 Windows `172.28.64.1:14330`, dk_data_release): 최소권한 RO 생성 후 도구 전부 동작 + 보안경계 6/6 차단 + 2축 방어 실증(앱+DB GRANT). P5 dialect 버그 4건 수정(DMV 권한→sys.partitions / DB 고정 / row 컬럼 / index·FK dialect). 서버 xp_cmdshell ON 발견(앱·GRANT 로 무력화, 운영자 OFF 권고).
 - [x] **outside-voice 적대적 보안 재게이트(MANDATORY)** REV-20260610-0201: 1차 REJECT(실 인스턴스 데이터 탈취 재현) → B1(BLOCKER 구조화도구 `]` 2차 SQLi)·M1(MAJOR sys 항상허용 유출)·M2(MAJOR gate confirm_heavy 우회) 수정 → 2차 **SHIP**. 라이브 재검증 PASS, 회귀테스트 추가, 전체 스위트 RC=0.
 - [ ] 커밋 → main ff-merge → P6 배포(agent/ask-worker/insight-worker/web) → winsql datasource 등록+product 바인딩 → 라이브 assistant·insight-worker 검증.
+
+### TASK-0203 — 멀티 datasource Stage 2 P7: insight-worker MSSQL dialect-화 (2026-06-11)
+- [x] **Major §12.3** (insight 엔진 분기 — 데이터격리 무변경, 핑거프린트 livelock 면 주의). DESIGN §12.
+- [x] **컬럼 핑거프린트 dialect projection**: `Dialect.fingerprint_column_projection()` (MySQL 골든 / MSSQL `CHARACTER_MAXIMUM_LENGTH`·KEY 상수 — SQL Server INFORMATION_SCHEMA 엔 COLUMN_TYPE/COLUMN_KEY 부재). insight.py 의 single/batch 컬럼 핑거프린트가 사용. FROM/WHERE 공통(ANSI) 유지·parameterized.
+- [x] **engine-passing 버그 수정**: `run_insight_cycle` 의 `set_active_datasource(_ds_key)` → `engine=_ds_coords.get("engine")` (dialects.active() mysql 오인 차단).
+- [x] **livelock 방지 확인**: write·read-back 동일 set_active_datasource(engine) 컨텍스트 → 동일 projection. 라이브 단일≡배치 해시 동일·결정성 STABLE.
+- [x] 회귀테스트 `test_multi_datasource.py` 3종(MySQL projection 골든 / MSSQL MySQL-only 컬럼 부재 / active 엔진 분기). 전체 스위트 RC=0, ruff clean.
+- [x] **실 MSSQL 검증**(dk_data_release CI): 컬럼/스키마/배치 핑거프린트 전부 동작(COLUMN_TYPE 실패 해소).
+- [x] outside-voice 적대적 리뷰 REV-20260611-0202 (livelock 중심) **SHIP**(BLOCKER0·MAJOR0). MINOR 3 후속.
+- [ ] 커밋 → main ff-merge → insight-worker 재배포 → 라이브 winsql 인사이트 생성 관측.
+- [ ] (P7 잔여·후속) UI engine 배지 + MINOR-1 CS-collation 대문자 통일.
