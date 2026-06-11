@@ -526,3 +526,15 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **Evidence:** `/tmp/win-browser-shots/task0204/01_usage_no_mcards.png`(칩 모델명만·카드 부재·요약+차트 정상), `02_chip_filter.png`(edge 필터). 결함 비교: `/tmp/win-browser-shots/task0202/02_solo_hover.png`.
   - **Pass/Fail: PASS**
   - **Notes:** hover 결합 잭 제거 확인 — 카드가 없어 마우스 이동 시 깜빡임/레이아웃 점프 없음. CHECK#13(PB-0008 Windows-browser) **충족**.
+
+- 2026-06-11 (TASK-0206 쿼리 문자열 항상 표시 + 실행결과셋 기본 숨김 토글 — **PB-0008 Windows-browser 완료 게이트**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 userspace relay `bridge_mode: relay`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증.
+  - **Runner: AI** (bin/win-browser.py launch → run --scenario → eval + screenshot)
+  - **Bridge:** relay (무권한 userspace relay 자동 기동, endpoint: http://172.28.64.1:9223)
+  - **배포:** `docker compose up -d web`(신규 이미지 sha 갱신) + 컨테이너 healthy 확인. 서빙 `app.js` — `collapseSqlCodeBlocksInContent`가 빈 함수(토글 로직 0), `buildSqlStepPanel`에서 결과셋 토글 래퍼 확인. healthz 200 OK.
+  - **검증 내용 (전 step ok:true):**
+    - **초기 DOM 상태:** `{"sqlBlockCount":1,"visibleSqlBlocks":1,"toggleWrapCount":1,"resultToggleWrapCount":1,"resultBodyCount":1,"resultBodyHiddenCount":1,"queryViewBtnCount":1,"queryViewBtnTexts":["결과 보기"]}` — SQL 블록 1개 **기본 표시**, 결과셋 1개 **기본 숨김**, 버튼 텍스트 "결과 보기"(구 "쿼리 보기" 아님).
+    - **"결과 보기" 클릭 후:** `{"resultBodyCount":1,"resultBodyHiddenCount":0,"btnTexts":["결과 닫기"]}` — 결과셋 **펼쳐짐**, 버튼 텍스트 "결과 닫기"로 토글.
+  - **Evidence:** `/tmp/win-browser-shots/step_01_20260611_123131.png`(SQL 블록 기본 표시·"결과 보기" 버튼), `/tmp/win-browser-shots/step_03_20260611_123146.png`(클릭 후 결과셋 펼쳐짐·"결과 닫기" 버튼).
+  - **Pass/Fail: PASS**
+  - **Notes:** 쿼리 문자열 항상 표시(숨김 로직 0), 결과셋 기본 숨김·클릭 토글 정상 동작. CHECK#13(PB-0008 Windows-browser) **충족**.
