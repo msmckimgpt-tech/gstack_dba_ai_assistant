@@ -1252,7 +1252,7 @@ a { color: inherit; }
 }
 .message-link:hover { background: var(--primary-soft); color: var(--primary); border-color: rgba(37,99,235,.2); }
 
-/* SQL 쿼리 토글 — "쿼리 보기" 버튼 + 기본 숨김 sql-block */
+/* SQL 쿼리 — 항상 표시 */
 .sql-toggle-wrap {
   display: flex;
   flex-direction: column;
@@ -1261,6 +1261,19 @@ a { color: inherit; }
 
 .sql-toggle-btn {
   align-self: flex-start;
+}
+
+/* SQL 결과셋 토글 — 기본 숨김, 클릭 시 펼침 */
+.sql-result-toggle-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sql-result-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 /* SQL 결과 액션 영역 (전체 데이터 보기 + CSV 링크) */

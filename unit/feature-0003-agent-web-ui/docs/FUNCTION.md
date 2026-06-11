@@ -664,3 +664,10 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 
 - REQ-20260611-0205 (TASK-0205, **Minor §12.3** — composer Shift+Enter 줄바꿈 지원, frontend-only): `promptInputEl` `keydown` 핸들러에서 `event.shiftKey` 가 true 이면 즉시 return 하여 브라우저 기본 줄바꿈 동작을 허용한다. `sendMode`("Enter 전송"/"Ctrl+Enter 전송") 설정과 무관하게 Shift+Enter 는 항상 줄바꿈. 백엔드/RBAC/스키마/시크릿 무변경. [SKIPPED:frontend-only-single-line] (REV-20260611-0205).
   - AC-0337 (Shift+Enter 줄바꿈): `if (event.shiftKey) return;` — Shift 키가 눌린 Enter 에 대해서는 `event.preventDefault()` / `sendPrompt()` 진입 없이 빠져나간다. `<textarea>` 의 기본 동작(줄바꿈 삽입)이 정상 수행된다. 기존 Enter(전송) / Ctrl+Enter(전송 or 줄바꿈) 경로 무변경.
+
+- REQ-20260611-0206 (TASK-0206, **Minor §12.3** — 쿼리 문자열 항상 표시 + 실행결과셋 기본 숨김 토글, frontend-only): 답변/사이드 패널 내 SQL 쿼리 문자열은 항상 표시하고, 실행결과셋(테이블/미리보기 데이터)을 `결과 보기` 버튼으로 기본 숨김·클릭 시 토글한다. 백엔드/RBAC/스키마/시크릿 무변경. [SKIPPED:frontend-rendering-toggle] (REV-20260611-0206).
+  - AC-0338 (쿼리 항상 표시 — 마크다운 응답): `collapseSqlCodeBlocksInContent()` 의 ` ```sql ``` ` 코드블록 숨김·토글 로직을 제거한다. 마크다운으로 렌더된 SQL 코드블록이 기본 표시된다.
+  - AC-0339 (결과셋 토글 — 완료 메시지 SQL 패널): `buildSqlStepPanel()` 에서 SQL `<pre>` 는 항상 표시. 결과 테이블(`buildResultTable`) + CSV 액션 영역을 `.sql-result-toggle-wrap` > `[버튼 "결과 보기"] + [div.sql-result-body hidden=true]` 구조로 감싼다. 버튼 클릭 시 `resultBody.hidden` 토글 + 버튼 텍스트 "결과 보기/닫기" 전환.
+  - AC-0340 (쿼리 항상 표시 — 구형 fallback): `renderMessageDetails()` 구형 경로(`steps` 없는 메시지)에서 `meta.sql` 을 기존 토글 없이 `<pre class="sql-block">` 으로 직접 표시한다.
+  - AC-0341 (결과셋 토글 — 사이드 패널): `buildStepDetailEl(non-compact)` 에서 결과셋(표/`<pre class="step-result-preview">`)을 `.sql-result-toggle-wrap` > `[버튼 "결과 보기"] + [div.step-result-wrap hidden=true]` 구조로 감싼다. 버튼 클릭 시 토글.
+  - AC-0342 (CSS): `.sql-result-toggle-wrap { display:flex; flex-direction:column; gap:6px }` + `.sql-result-body { display:flex; flex-direction:column; gap:6px }` styles.css 추가.
