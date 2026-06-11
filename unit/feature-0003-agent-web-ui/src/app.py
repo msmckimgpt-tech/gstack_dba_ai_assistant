@@ -15331,16 +15331,26 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
     return JSONResponse({"ok": True, "databases": cleaned})
 
 
-@app.post("/api/admin/products/{product_id}/prompt/generate")
-async def admin_generate_product_prompt(product_id: int, request: Request) -> JSONResponse:
+async def _collect_product_prompt_context(product_id: int, request: Request):
+    """TASK-0233: 제품 프롬프트 자동작성의 수집·조립 단계를 공유 헬퍼로 추출.
+
+    비스트리밍(POST /prompt/generate)과 스트리밍(GET /prompt/generate/stream) 양쪽이
+    동일한 ①MySQL 제품/스키마 조회 → ②PG 인사이트 수집 → ③knowledge_block 구성 →
+    ④messages/create_kwargs 조립을 공유한다(중복 제거).
+
+    반환: (error_response, context)
+      - 인증/권한/제품부재 실패 시 (JSONResponse, None) — 호출부가 그대로 return.
+      - 성공 시 (None, dict) — dict 키: openai_client, create_kwargs, llm_model, meta_base.
+        meta_base 는 truncated 를 제외한 meta 전부(LLM 호출 후 truncated 만 덧붙임).
+    """
     conn = _connect_memory()
     account, error = _require_account(request, conn)
     if error:
         conn.close()
-        return error
+        return error, None
     if not _account_has_permission(account, "product.manage"):
         conn.close()
-        return _json_error("제품 관리 권한이 필요합니다.", 403)
+        return _json_error("제품 관리 권한이 필요합니다.", 403), None
 
     try:
         cur = conn.cursor()
@@ -15353,7 +15363,7 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
         conn.close()
 
     if not row:
-        return _json_error("제품을 찾을 수 없습니다.", 404)
+        return _json_error("제품을 찾을 수 없습니다.", 404), None
 
     prod_id, prod_key, prod_name, prod_desc, prod_ds_key = row
 
@@ -15660,7 +15670,7 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
     from modules.llm import _get_llm_client
     openai_client = _get_llm_client(model=llm_model)
     if openai_client is None:
-        return _json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503)
+        return _json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503), None
 
     # TASK-0232: 자동작성은 "완성된 시스템 프롬프트 본문" 을 생성하므로 짧은 요약용
     # "summary" cap(Claude 7000 / 로컬 512) 으로는 본문이 중간에 잘렸다. 긴 본문 전용
@@ -15676,38 +15686,151 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
     if model_supports_temperature(llm_model):
         create_kwargs["temperature"] = 0.3
 
+    meta_base = {
+        "schema_count": len(schema_names),
+        "schema_insight_count": len(schema_insights),
+        "table_insight_count": total_tables,
+        "topic_count": len(topic_lines),
+        "summary_count": len(summary_lines),
+        "grounded": has_insights,
+    }
+    return None, {
+        "openai_client": openai_client,
+        "create_kwargs": create_kwargs,
+        "llm_model": llm_model,
+        "max_tokens": _mt,
+        "meta_base": meta_base,
+    }
+
+
+def _sse_pack(event: str, payload: dict) -> str:
+    """SSE 프레임 직렬화 — `event: <type>\\ndata: <json>\\n\\n`. 한국어 위해 ensure_ascii=False."""
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+@app.post("/api/admin/products/{product_id}/prompt/generate")
+async def admin_generate_product_prompt(product_id: int, request: Request) -> JSONResponse:
+    """비스트리밍 자동작성(기존 호환 경로). 실시간 진행률이 필요하면 GET .../stream 사용."""
+    error, ctx = await _collect_product_prompt_context(product_id, request)
+    if error:
+        return error
+
+    openai_client = ctx["openai_client"]
+    create_kwargs = ctx["create_kwargs"]
+
     try:
         resp = await asyncio.get_event_loop().run_in_executor(
             None, lambda: openai_client.chat.completions.create(**create_kwargs)
         )
         choice = resp.choices[0]
         generated = choice.message.content or ""
-        # TASK-0232: max_tokens 도달로 본문이 잘렸는지 명시 검출 — 조용한 잘림(사용자가
-        # 잘린 줄 모름) 방지. 잘렸으면 meta.truncated=True 로 admin UI 가 경고 표시.
+        # TASK-0232: max_tokens 도달로 본문이 잘렸는지 명시 검출 — 조용한 잘림 방지.
         finish_reason = getattr(choice, "finish_reason", None)
         truncated = finish_reason == "length"
         if truncated:
             logging.getLogger(__name__).warning(
                 "admin_generate_product_prompt truncated (finish_reason=length, model=%s, max_tokens=%s, product_id=%s)",
-                llm_model, _mt, product_id,
+                ctx["llm_model"], ctx["max_tokens"], product_id,
             )
     except Exception as llm_exc:
         return _json_error(f"LLM 생성 실패: {llm_exc}", 502)
 
-    # 응답 메타 — admin UI 가 "어떤 근거로 생성됐는지"를 표시할 수 있게 인사이트 충실도를 함께 반환.
     return JSONResponse(
         {
             "prompt": generated.strip(),
-            "meta": {
-                "schema_count": len(schema_names),
-                "schema_insight_count": len(schema_insights),
-                "table_insight_count": total_tables,
-                "topic_count": len(topic_lines),
-                "summary_count": len(summary_lines),
-                "grounded": has_insights,
-                "truncated": truncated,
-            },
+            "meta": {**ctx["meta_base"], "truncated": truncated},
         }
+    )
+
+
+@app.get("/api/admin/products/{product_id}/prompt/generate/stream")
+async def admin_generate_product_prompt_stream(product_id: int, request: Request):
+    """TASK-0233: 자동작성 LLM 토큰 스트리밍(SSE). textarea 에 본문이 실시간으로 차오르게 한다.
+
+    인증·수집은 generator 진입 **전**에 완료(export_audit_events_csv 패턴) — 실패 시 JSON
+    403/404/503 으로 나가고 SSE 진입 안 함. LLM stream(동기 generator)은 단일 uvicorn
+    이벤트 루프를 막지 않도록 **별 스레드 + asyncio.Queue 브릿지**로 소비한다.
+
+    SSE event: progress(stage/label) → token(text 증분, 다수) → done(prompt+meta) | error.
+    """
+    error, ctx = await _collect_product_prompt_context(product_id, request)
+    if error:
+        return error
+
+    openai_client = ctx["openai_client"]
+    create_kwargs = ctx["create_kwargs"]
+    meta_base = ctx["meta_base"]
+    llm_model = ctx["llm_model"]
+    _mt = ctx["max_tokens"]
+
+    async def event_stream():
+        loop = asyncio.get_event_loop()
+        q: asyncio.Queue = asyncio.Queue()
+        SENTINEL = object()
+
+        def produce():
+            # 별 스레드: 동기 LLM stream 을 iterate 하며 call_soon_threadsafe 로 큐 적재.
+            # loop 가 닫혔거나 client 가 끊긴 경우 call_soon_threadsafe 가 예외 → 무시(누수 방지).
+            def _emit(item):
+                try:
+                    loop.call_soon_threadsafe(q.put_nowait, item)
+                except Exception:
+                    pass
+            try:
+                stream = openai_client.chat.completions.create(**create_kwargs, stream=True)
+                for chunk in stream:
+                    if not getattr(chunk, "choices", None):
+                        continue
+                    ch = chunk.choices[0]
+                    delta = getattr(getattr(ch, "delta", None), "content", None)
+                    if delta:
+                        _emit(("token", delta))
+                    fr = getattr(ch, "finish_reason", None)
+                    if fr is not None:
+                        _emit(("finish", fr))
+            except Exception as e:  # noqa: BLE001 — 어떤 LLM 오류든 SSE error 로 전달
+                _emit(("error", str(e)))
+            finally:
+                _emit(("__end__", SENTINEL))
+
+        # 진행 단계 표면화(수집은 이미 끝났으므로 즉시 generating 으로). 사용자에게 "멈춤 아님" 신호.
+        yield _sse_pack("progress", {"stage": "generating", "label": "AI가 프롬프트 작성 중…"})
+
+        loop.run_in_executor(None, produce)
+
+        accumulated: list[str] = []
+        truncated = False
+        error_msg = None
+        while True:
+            kind, val = await q.get()
+            if kind == "token":
+                accumulated.append(val)
+                yield _sse_pack("token", {"text": val})
+            elif kind == "finish":
+                truncated = (val == "length")
+            elif kind == "error":
+                error_msg = val
+            elif val is SENTINEL:
+                break
+
+        if error_msg is not None:
+            yield _sse_pack("error", {"error": f"LLM 생성 실패: {error_msg}"})
+            return
+
+        if truncated:
+            logging.getLogger(__name__).warning(
+                "admin_generate_product_prompt_stream truncated (finish_reason=length, model=%s, max_tokens=%s, product_id=%s)",
+                llm_model, _mt, product_id,
+            )
+        yield _sse_pack("done", {
+            "prompt": "".join(accumulated).strip(),
+            "meta": {**meta_base, "truncated": truncated},
+        })
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
