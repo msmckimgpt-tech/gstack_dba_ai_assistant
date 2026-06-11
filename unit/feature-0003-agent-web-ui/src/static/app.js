@@ -1668,29 +1668,8 @@ function renderAccessNotice() {
 }
 
 function collapseSqlCodeBlocksInContent(target) {
-  // marked 렌더 결과의 ```sql 블록을 기본 숨김 + "쿼리 보기" 토글로 교체.
-  // 쿼리를 직접 노출하지 않고, 표 형식이 주된 답변 전달 수단이 되도록 함.
-  const codeEls = target.querySelectorAll("code.language-sql, code.language-SQL");
-  codeEls.forEach((codeEl) => {
-    const preEl = codeEl.parentElement;
-    if (!preEl || preEl.tagName !== "PRE") return;
-    const wrap = document.createElement("div");
-    wrap.className = "sql-toggle-wrap";
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "tool-btn sql-toggle-btn";
-    btn.textContent = "쿼리 보기";
-    btn.setAttribute("aria-expanded", "false");
-    preEl.hidden = true;
-    btn.addEventListener("click", () => {
-      const willShow = preEl.hidden;
-      preEl.hidden = !willShow;
-      btn.textContent = willShow ? "쿼리 닫기" : "쿼리 보기";
-      btn.setAttribute("aria-expanded", String(willShow));
-    });
-    preEl.parentNode.insertBefore(wrap, preEl);
-    wrap.append(btn, preEl);
-  });
+  // marked 렌더 결과의 ```sql 블록은 쿼리 문자열이므로 항상 표시.
+  // (결과셋은 buildSqlStepPanel/buildStepDetailEl 에서 별도 토글로 관리)
 }
 
 function renderMessageContent(target, content = "", role = "assistant") {
@@ -2127,7 +2106,18 @@ function buildSqlStepPanel(step) {
     panel.appendChild(reasonEl);
   }
 
-  // 결과 테이블을 쿼리보다 먼저 표시 — 표 형식이 주된 답변 전달 수단
+  // SQL 블록 — 쿼리 문자열은 항상 표시
+  if (step.sql) {
+    const sqlWrap = document.createElement("div");
+    sqlWrap.className = "sql-toggle-wrap";
+    const pre = document.createElement("pre");
+    pre.className = "sql-block";
+    pre.textContent = formatSqlForDisplay(step.sql);
+    sqlWrap.append(pre);
+    panel.appendChild(sqlWrap);
+  }
+
+  // 결과셋 — 기본 숨김, "결과 보기" 버튼 클릭 시 토글
   const rs = step.result_summary;
   let tableWrap = null;
   let firstCsvPath = "";
@@ -2138,64 +2128,67 @@ function buildSqlStepPanel(step) {
     if (pt && pt.columns?.length) {
       tableWrap = buildResultTable(pt);
       truncated = Boolean(pt.truncated);
-      if (tableWrap) panel.appendChild(tableWrap);
     }
     csvPaths = Array.isArray(rs.csv_paths) ? rs.csv_paths : [];
     if (csvPaths.length) firstCsvPath = csvPaths[0];
 
-    if (csvPaths.length || (tableWrap && truncated)) {
-      const actions = document.createElement("div");
-      actions.className = "sql-result-actions";
+    if (tableWrap || csvPaths.length) {
+      const resultToggleWrap = document.createElement("div");
+      resultToggleWrap.className = "sql-result-toggle-wrap";
 
-      if (tableWrap && truncated && firstCsvPath) {
-        const loadBtn = document.createElement("button");
-        loadBtn.type = "button";
-        loadBtn.className = "tool-btn";
-        loadBtn.textContent = "전체 데이터 보기";
-        loadBtn.title = "CSV에서 전체 행을 이 화면 표에 불러옵니다";
-        loadBtn.addEventListener("click", (evt) => {
-          evt.preventDefault();
-          loadFullCsvIntoTable(firstCsvPath, tableWrap, loadBtn);
+      const toggleBtn = document.createElement("button");
+      toggleBtn.type = "button";
+      toggleBtn.className = "tool-btn sql-toggle-btn";
+      toggleBtn.textContent = "결과 보기";
+      toggleBtn.setAttribute("aria-expanded", "false");
+
+      const resultBody = document.createElement("div");
+      resultBody.className = "sql-result-body";
+      resultBody.hidden = true;
+
+      if (tableWrap) resultBody.appendChild(tableWrap);
+
+      if (csvPaths.length || (tableWrap && truncated)) {
+        const actions = document.createElement("div");
+        actions.className = "sql-result-actions";
+
+        if (tableWrap && truncated && firstCsvPath) {
+          const loadBtn = document.createElement("button");
+          loadBtn.type = "button";
+          loadBtn.className = "tool-btn";
+          loadBtn.textContent = "전체 데이터 보기";
+          loadBtn.title = "CSV에서 전체 행을 이 화면 표에 불러옵니다";
+          loadBtn.addEventListener("click", (evt) => {
+            evt.preventDefault();
+            loadFullCsvIntoTable(firstCsvPath, tableWrap, loadBtn);
+          });
+          actions.appendChild(loadBtn);
+        }
+
+        csvPaths.forEach((path, i) => {
+          const link = document.createElement("a");
+          link.className = "message-link";
+          link.href = `/api/file?path=${encodeURIComponent(path)}&conversation_id=${encodeURIComponent(state.activeConversationId || "")}`;
+          link.target = "_blank";
+          link.rel = "noopener";
+          link.textContent = `CSV 다운로드${csvPaths.length > 1 ? ` ${i + 1}` : ""}`;
+          link.title = "새 탭에서 원본 CSV 파일을 연다";
+          actions.appendChild(link);
         });
-        actions.appendChild(loadBtn);
+
+        resultBody.appendChild(actions);
       }
 
-      csvPaths.forEach((path, i) => {
-        const link = document.createElement("a");
-        link.className = "message-link";
-        link.href = `/api/file?path=${encodeURIComponent(path)}&conversation_id=${encodeURIComponent(state.activeConversationId || "")}`;
-        link.target = "_blank";
-        link.rel = "noopener";
-        link.textContent = `CSV 다운로드${csvPaths.length > 1 ? ` ${i + 1}` : ""}`;
-        link.title = "새 탭에서 원본 CSV 파일을 연다";
-        actions.appendChild(link);
+      toggleBtn.addEventListener("click", () => {
+        const willShow = resultBody.hidden;
+        resultBody.hidden = !willShow;
+        toggleBtn.textContent = willShow ? "결과 닫기" : "결과 보기";
+        toggleBtn.setAttribute("aria-expanded", String(willShow));
       });
 
-      panel.appendChild(actions);
+      resultToggleWrap.append(toggleBtn, resultBody);
+      panel.appendChild(resultToggleWrap);
     }
-  }
-
-  // SQL 블록 — 기본 숨김, "쿼리 보기" 버튼 클릭 시 토글
-  if (step.sql) {
-    const sqlWrap = document.createElement("div");
-    sqlWrap.className = "sql-toggle-wrap";
-    const toggleBtn = document.createElement("button");
-    toggleBtn.type = "button";
-    toggleBtn.className = "tool-btn sql-toggle-btn";
-    toggleBtn.textContent = "쿼리 보기";
-    toggleBtn.setAttribute("aria-expanded", "false");
-    const pre = document.createElement("pre");
-    pre.className = "sql-block";
-    pre.hidden = true;
-    pre.textContent = formatSqlForDisplay(step.sql);
-    toggleBtn.addEventListener("click", () => {
-      const willShow = pre.hidden;
-      pre.hidden = !willShow;
-      toggleBtn.textContent = willShow ? "쿼리 닫기" : "쿼리 보기";
-      toggleBtn.setAttribute("aria-expanded", String(willShow));
-    });
-    sqlWrap.append(toggleBtn, pre);
-    panel.appendChild(sqlWrap);
   }
 
   return panel;
@@ -2374,26 +2367,14 @@ function renderMessageDetails(meta = {}) {
   if (steps.length) {
     buildStepBlocks(steps, body);
   } else {
-    // steps가 없는 구형 메시지 — 기존 필드로 폴백 (SQL도 토글로 표시)
+    // steps가 없는 구형 메시지 — 기존 필드로 폴백 (쿼리 문자열은 항상 표시)
     if (meta.sql) {
       const sqlWrap = document.createElement("div");
       sqlWrap.className = "sql-toggle-wrap";
-      const toggleBtn = document.createElement("button");
-      toggleBtn.type = "button";
-      toggleBtn.className = "tool-btn sql-toggle-btn";
-      toggleBtn.textContent = "쿼리 보기";
-      toggleBtn.setAttribute("aria-expanded", "false");
       const pre = document.createElement("pre");
       pre.className = "sql-block";
-      pre.hidden = true;
       pre.textContent = String(meta.sql);
-      toggleBtn.addEventListener("click", () => {
-        const willShow = pre.hidden;
-        pre.hidden = !willShow;
-        toggleBtn.textContent = willShow ? "쿼리 닫기" : "쿼리 보기";
-        toggleBtn.setAttribute("aria-expanded", String(willShow));
-      });
-      sqlWrap.append(toggleBtn, pre);
+      sqlWrap.append(pre);
       appendDetailBlock(body, "실행 SQL", sqlWrap);
     }
     if (Array.isArray(meta.csv_paths) && meta.csv_paths.length) {
@@ -2759,7 +2740,7 @@ function buildStepDetailEl(step, idx, { compact = false } = {}) {
   }
 
   if (!compact) {
-    // SQL 블록
+    // SQL 블록 — 쿼리 문자열은 항상 표시
     if (step.sql) {
       const sqlWrap = document.createElement("div");
       sqlWrap.className = "step-sql-wrap";
@@ -2772,8 +2753,7 @@ function buildStepDetailEl(step, idx, { compact = false } = {}) {
       wrap.appendChild(sqlWrap);
     }
 
-    // 결과 — 표로 가시화. ① 구조화 preview_table(execute_sql) ② preview 의 markdown
-    // 표 파싱(get_sample_rows/describe_table 등) ③ 둘 다 아니면 raw 텍스트 폴백.
+    // 결과셋 — 기본 숨김, "결과 보기" 버튼 클릭 시 토글.
     const rs = step.result_summary;
     const pt = rs && typeof rs === "object" ? rs.preview_table : null;
     const preview = rs && rs.preview
@@ -2787,21 +2767,37 @@ function buildStepDetailEl(step, idx, { compact = false } = {}) {
       if (mdTable && mdTable.columns.length) tableEl = buildResultTable(mdTable);
     }
     if (tableEl || preview) {
-      const resultWrap = document.createElement("div");
-      resultWrap.className = "step-result-wrap";
-      const label = document.createElement("span");
-      label.className = "step-result-label";
-      label.textContent = "결과";
-      resultWrap.appendChild(label);
+      const resultToggleWrap = document.createElement("div");
+      resultToggleWrap.className = "sql-result-toggle-wrap";
+
+      const toggleBtn = document.createElement("button");
+      toggleBtn.type = "button";
+      toggleBtn.className = "tool-btn sql-toggle-btn";
+      toggleBtn.textContent = "결과 보기";
+      toggleBtn.setAttribute("aria-expanded", "false");
+
+      const resultBody = document.createElement("div");
+      resultBody.className = "step-result-wrap";
+      resultBody.hidden = true;
+
       if (tableEl) {
-        resultWrap.appendChild(tableEl);
+        resultBody.appendChild(tableEl);
       } else {
         const pre = document.createElement("pre");
         pre.className = "step-result-preview";
         pre.textContent = preview;
-        resultWrap.appendChild(pre);
+        resultBody.appendChild(pre);
       }
-      wrap.appendChild(resultWrap);
+
+      toggleBtn.addEventListener("click", () => {
+        const willShow = resultBody.hidden;
+        resultBody.hidden = !willShow;
+        toggleBtn.textContent = willShow ? "결과 닫기" : "결과 보기";
+        toggleBtn.setAttribute("aria-expanded", String(willShow));
+      });
+
+      resultToggleWrap.append(toggleBtn, resultBody);
+      wrap.appendChild(resultToggleWrap);
     }
   }
 

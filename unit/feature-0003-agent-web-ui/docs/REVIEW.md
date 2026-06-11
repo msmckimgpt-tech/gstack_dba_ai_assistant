@@ -1897,3 +1897,10 @@ source_of_truth: true
 - Cycle: TASK-0205 (composer Shift+Enter 줄바꿈 지원)
 - Trigger: keydown/input keyword(§18.8 → ux). 단 본 cycle 은 **keydown 핸들러 1줄 early return** 으로 브라우저 기본 동작을 허용하는 것 — 신규 로직·상태·API 0. 전례(REV-0198/0204 readonly-ui)와 동일 경량 SKIP.
 - Reason: `if (event.shiftKey) return;` 1줄. 권한·엔드포인트·스키마·시크릿 무변경. 기존 Enter/Ctrl+Enter 전송 경로 미영향. 단순 기본 동작 허용 — outside-voice 불필요.
+
+## REV-20260611-0206 [SKIPPED:frontend-rendering-toggle]
+- Date: 2026-06-11
+- Cycle: TASK-0206 (쿼리 문자열 항상 표시 + 실행결과셋 기본 숨김 토글)
+- Trigger: UI/button/layout keyword(§18.8 → ux). 단 본 cycle 은 **표시 방향 교정** — 쿼리 문자열을 숨기던 토글을 제거하고 결과셋에 토글을 추가하는 렌더링 로직 재배치. 신규 엔드포인트·쿼리·권한·스키마·시크릿 0.
+- Reason: 순수 프론트엔드(app.js 4개 함수 + styles.css CSS 추가). 기존 데이터 흐름·API·RBAC 무변경. 사용자가 이미 볼 수 있던 데이터(쿼리/결과셋)의 표시 순서·기본 노출 여부만 변경. node --check PASS, py_compile PASS. outside-voice 불필요.
+- Residual: 배포 후 라이브 확인 필요(쿼리 항상 표시·결과 보기 토글 — CHECK#13 WARN).

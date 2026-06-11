@@ -2694,3 +2694,13 @@ source_of_truth: true
   - unit/feature-0003-agent-web-ui/src/static/app.js (promptInputEl keydown — Shift+Enter early return 1줄)
   - unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
 - Rollback: `if (event.shiftKey) return;` 1줄 제거.
+
+## CHG-20260611-0206
+- Date: 2026-06-11
+- Related Requirement: TASK-0206 (사용자 피드백 — 쿼리 문자열 항상 표시, 실행결과셋 기본 숨김 토글)
+- Summary: 답변 내 SQL 쿼리 문자열은 항상 표시하고, 실행결과셋(테이블/미리보기 데이터)을 `결과 보기` 버튼으로 기본 숨김·클릭 시 토글한다. ① `collapseSqlCodeBlocksInContent()` — ` ```sql ``` ` 코드블록 숨김 로직 제거(항상 표시). ② `buildSqlStepPanel()` — SQL `<pre>` 항상 표시, 결과 테이블+CSV 액션을 `sql-result-toggle-wrap`+`resultBody(hidden=true)`로 감싸고 `결과 보기/닫기` 토글. ③ `renderMessageDetails()` 구형 fallback — SQL 토글 제거(항상 표시). ④ `buildStepDetailEl()` 사이드 패널 — 결과셋(표/preview)을 `sql-result-toggle-wrap`+`resultBody(hidden=true)`로 감싸고 `결과 보기/닫기` 토글. ⑤ styles.css — `.sql-result-toggle-wrap`, `.sql-result-body` 규칙 추가. 백엔드·API·스키마·RBAC 0.
+- Files:
+  - unit/feature-0003-agent-web-ui/src/static/app.js (4개 함수 수정)
+  - unit/feature-0003-agent-web-ui/src/static/styles.css (토글 래퍼 CSS 추가)
+  - unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
+- Rollback: `collapseSqlCodeBlocksInContent` 원상복구 + `buildSqlStepPanel`·`buildStepDetailEl` 결과셋 토글 래퍼 제거 + styles.css `.sql-result-toggle-wrap`·`.sql-result-body` 제거.

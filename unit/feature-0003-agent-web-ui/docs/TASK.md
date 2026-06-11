@@ -3091,6 +3091,13 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [ ] verify-completion → main rebase·ff-merge → web 재배포 → PB-0008 Windows-browser 시각검증(모델별 카드 부재·칩 모델명만·칩 토글 정상)
 
 
+### TASK-0206 — 답변 내 쿼리 문자열 항상 표시 + 실행결과셋 기본 숨김 토글 (frontend-only) (2026-06-11)
+- [x] **Minor §12.3** (프론트엔드 렌더링 전용 — RBAC·스키마·엔드포인트·백엔드 0) — 사용자 피드백: `쿼리 보기` 토글이 실행결과셋이 아닌 쿼리 문자열을 가리는 것은 의도와 반대. 쿼리 문자열은 항상 출력하고, 쿼리 실행결과셋(테이블/미리보기 데이터)을 `결과 보기` 버튼으로 기본 숨김·클릭 시 토글. (CHG-20260611-0206)
+- [x] **수정** ([app.js](../src/static/app.js)): ① `collapseSqlCodeBlocksInContent()` — ` ```sql ``` ` 코드블록 숨김 로직 제거(항상 표시). ② `buildSqlStepPanel()` — SQL 블록 항상 표시, 결과 테이블+CSV 액션 영역을 `sql-result-toggle-wrap` + `resultBody(hidden=true)`로 감싸고 `결과 보기/닫기` 토글 적용. ③ `renderMessageDetails()` 구형 fallback — SQL 토글 제거(항상 표시). ④ `buildStepDetailEl()` 사이드 패널 — 결과셋(표/preview)을 `sql-result-toggle-wrap` + `resultBody(hidden=true)`로 감싸고 `결과 보기/닫기` 토글 적용.
+- [x] **수정** ([styles.css](../src/static/styles.css)): `.sql-result-toggle-wrap`, `.sql-result-body` 규칙 추가(flex column, gap 6px). 기존 `.sql-toggle-wrap`·`.sql-toggle-btn`·`.sql-result-actions` 유지.
+- [x] outside-voice [SKIPPED:frontend-only-rendering-toggle] (REV-20260611-0206) — 렌더링 표시 방향 교정, 권한·스키마·엔드포인트·백엔드 0.
+- [ ] node --check app.js PASS → verify-completion → main ff-merge → web 재배포 → 라이브 확인(쿼리 항상 표시·결과 보기 토글)
+
 ### TASK-0205 — composer 텍스트박스 Shift+Enter 줄바꿈 지원 (frontend-only) (2026-06-11)
 - [x] **Minor §12.3** (keydown 핸들러 1줄, RBAC·스키마·엔드포인트·백엔드 0) — 사용자 요청: 입력 텍스트박스에서 Shift+Enter 를 누르면 줄바꿈이 되도록. sendMode("Enter 전송"/"Ctrl+Enter 전송") 와 무관하게 Shift+Enter 는 항상 줄바꿈. (CHG-20260611-0205)
 - [x] **수정** ([app.js](../src/static/app.js)): `promptInputEl keydown` 핸들러에 `if (event.shiftKey) return;` 추가 — Shift+Enter 시 `event.preventDefault()`/`sendPrompt()` 진입 없이 브라우저 기본 줄바꿈 동작 유지.
