@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260611-0226 [SUBAGENT:mssql-perdb-coverage-security-adversarial] — CONCERN(BLOCK 흡수)
+- Related TASK: feature-0002-agent-core (TASK-0226)
+- Trigger: schema/migration/query + 보안경계(broaden DB read access) keyword matched → security + backend (§18.8)
+- Timestamp: 2026-06-11
+- Verdict: BLOCK 1건 발견 → 수정 후 CONCERN 잔여(전부 수용/문서화). 재심 PASS-able.
+- Panel: 적대적 outside-voice security/backend subagent. context bundle(changed_files + insight.py diff + 신규 SQL 전문요지 + TASK/acceptance) 주입(§18.11). MSSQL 권한 확대(db_datareader)·동적 SQL 인젝션·telemetry 오탐·스코프 drift 반증 시도.
+- **BLOCK B-1 (수정 완료)**: `bin/datasource-mssql-ro-bootstrap-multidb.sql` 3단계 검증 블록이 `SELECT '<name>'` 로 DB명을 **raw 문자열 연결** — DB명(SYSNAME)에 작은따옴표 가능(`[O'Brien]`)이라 구문 깨짐 + 2차 SQL injection 표면. 식별자엔 QUOTENAME 쓰면서 리터럴엔 안 쓴 비대칭 결함. **수정**: 리터럴 삽입을 `QUOTENAME(t.db_name, '''')`(작은따옴표 이스케이프)로 전환 + 검증 범위를 전체 ONLINE DB → `@target_dbs`(부트스트랩 대상) 한정(대상외 MISSING 노이즈 차단, C-1 스코프 정합 동시 해소). step2↔step3 사이 GO 제거(변수 스코프 유지).
+- **CONCERN(수용/반영)**: ① perm_suspect 에러번호(916/229/297) substring 오탐 → 정규식 단어경계 `\b(...)\b` 로 전환(텍스트 토큰은 substring 유지) + 테스트 5 추가(rowcount '2297' false-positive 차단 검증). ② @target_dbs ↔ WebProductDatabases drift(두 독립 진실원천) → SQL 헤더에 동기화 경고 명시(초과=최소권한 위반, 부족=degraded 영구화). ③ db_failed 가 일시 오류까지 포함해 degraded 노이즈 → trade-off 합당(degraded=부분성공 신호, acceptance 가 가시화 요구) 판단으로 수용, perm 분리 카운트는 follow-up. ④ @sys 필터가 distribution/SSISDB/snapshot 미커버 → 운영자 통제 입력이라 차단 아님, follow-up.
+- **PASS(반증 실패=안전)**: MySQL 회귀 0(db_failed 는 `_is_mssql_ds` 가드로 0 유지, db_targets 누적도 MSSQL 발견 분기 내 한정 → MySQL `[None]` 경로 미누적), degraded↔backoff 분리 정합(일반 degraded 는 run_insight_worker_loop backoff 미대상 — 정상 tick 유지가 설계 의도), 읽기 전용 유지(db_datawriter DROP hardening), 시스템 DB @sys+ONLINE 필터.
+- Artifact: (subagent 출력 본문 — 본 index 에 요지 적재; 4-section verdict 포함)
+- Human Approval Needed: no (사용자가 보안 trade-off 사전 승인 — db_datareader DB 단위 확대 명시 수락; Major §12.3 사전승인 범위)
+- Cross-ref: CHG-20260611-0226 / TASK-0226 / [[feedback_outside_voice_for_rbac]] 정합.
+
 ## REV-20260611-0223 [SUBAGENT:mssql-three-tier-adversarial]
 - Date: 2026-06-11
 - Cycle: TASK-0223 (MSSQL database-aware 3계층 insight — agent-core 교차변경), **Major §12.3**

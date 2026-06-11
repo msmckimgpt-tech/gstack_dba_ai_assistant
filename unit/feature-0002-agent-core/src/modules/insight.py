@@ -1596,6 +1596,11 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
         "skipped_schemas": 0,
         "skipped_tables": 0,
         "deferred_tables": 0,
+        # TASK-0226: MSSQL per-DB 순회 커버리지 — 발견된 (datasource, DB) 대상 수와
+        # 그 중 연결/스캔이 권한 등으로 실패해 누락된 수. 0 < db_failed 면 일부 등록 DB 가
+        # 탐색되지 못한 것(주로 RO 로그인이 해당 DB 에 GRANT 안 됨) → status='degraded'.
+        "db_targets": 0,
+        "db_failed": 0,
     }
     timing = _timing_breakdown_template(
         cycle_run_id, AGENT_INSIGHT_WORKER_CONVERSATION_ID, "__insight_worker__"
@@ -1666,6 +1671,8 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                             "mssql_datasource_no_databases ds=%s — 등록 DB/기본DB 없음, 스캔 skip", _ds_key,
                         )
                         continue
+                    # TASK-0226: 발견된 제품 접근가능 DB 수를 커버리지 telemetry 에 누적.
+                    scan_report["db_targets"] = int(scan_report.get("db_targets", 0) or 0) + len(_db_targets)
                 else:
                     _db_targets = [None]  # MySQL/기본 DB: database 차원 없음
 
@@ -1723,9 +1730,29 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                         # scan 을 막지 않는다. 기본 DB(ds=None) 실패는 바깥 except 로 전파(기존 동작).
                         if _ds_key is None:
                             raise
+                        # TASK-0226: per-DB 실패를 커버리지 telemetry 에 집계(가시화). 과거엔 warning
+                        # 로그만 남기고 조용히 다음 대상으로 넘어가, 등록 DB 중 RO 로그인 GRANT 누락
+                        # 으로 탐색 못 한 DB 가 운영자에게 안 보였다. _is_mssql_ds 일 때만 집계
+                        # (db_targets 도 MSSQL 에서만 누적 — MySQL 기본 DB 는 db 차원 없음).
+                        if _is_mssql_ds:
+                            scan_report["db_failed"] = int(scan_report.get("db_failed", 0) or 0) + 1
+                        # 권한 거부(login failed / cannot open database / SELECT denied)는 가장 흔한
+                        # 원인이라 메시지에 진단 힌트를 덧붙인다 — bin/datasource-mssql-ro-bootstrap.sql
+                        # 의 멀티 DB GRANT 미적용 신호. 텍스트 토큰은 substring 으로 충분하나, MSSQL
+                        # 에러번호(18456/916/229/297)는 짧은 숫자라 무관 메시지(행수 등)에 우연 매칭될 수
+                        # 있어 정규식 단어경계로 매칭한다(REV-20260611-0226 CONCERN — 가짜 힌트 방지).
+                        _err_s = str(_ds_exc).lower()
+                        _is_perm = (
+                            any(t in _err_s for t in
+                                ("login failed", "cannot open database", "permission", "denied"))
+                            or bool(re.search(r"\b(18456|916|229|297)\b", _err_s))
+                        )
                         logging.getLogger("insight").warning(
-                            "insight_datasource_scan_failed ds=%s db=%s err=%r — 다음 대상 계속",
-                            _ds_key, _db_name, _ds_exc,
+                            "insight_datasource_scan_failed ds=%s db=%s perm_suspect=%s err=%r — "
+                            "다음 대상 계속%s",
+                            _ds_key, _db_name, _is_perm, _ds_exc,
+                            (" (RO 로그인이 이 DB 에 USER/GRANT 됐는지 확인 — "
+                             "bin/datasource-mssql-ro-bootstrap.sql 을 DB 마다 실행)") if _is_perm else "",
                         )
                     finally:
                         set_active_datasource(None)  # active_database 도 함께 리셋(set_active_datasource 내부)
@@ -1752,6 +1779,16 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                     "insight_worker_last_duration_ms",
                     f"{duration_ms:.2f}",
                 )
+                # TASK-0226: MSSQL per-DB 순회 커버리지를 heartbeat KV 로 노출 — 운영자가
+                # "등록 DB 중 몇 개가 권한 등으로 탐색 실패했는지" 를 모니터링.
+                save_memory_kv(
+                    mem_conn, GLOBAL_CONVERSATION_ID, "insight_worker_last_db_targets",
+                    str(int(scan_report.get("db_targets", 0) or 0)),
+                )
+                save_memory_kv(
+                    mem_conn, GLOBAL_CONVERSATION_ID, "insight_worker_last_db_failed",
+                    str(int(scan_report.get("db_failed", 0) or 0)),
+                )
             except Exception:
                 pass
         if lock_acquired and mem_conn is not None:
@@ -1777,6 +1814,12 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
         + int(scan_report.get("tables_repaired", 0) or 0)
     )
     if status == "ok" and _pub_failed > 0 and _generated == 0:
+        status = "degraded"
+    # TASK-0226: 발견된 제품 접근가능 DB 중 하나라도 연결/스캔에 실패(주로 RO 로그인 GRANT
+    # 누락)하면 커버리지 불완전 → 'ok' 가 아니라 'degraded'. 운영자에게 일부 등록 DB 가
+    # 탐색되지 못했음을 알린다(가시화). 전부 성공이면 종전대로 ok.
+    _db_failed = int(scan_report.get("db_failed", 0) or 0)
+    if status == "ok" and _db_failed > 0:
         status = "degraded"
     timing["total_ms"] = round((time.perf_counter() - started) * 1000.0, 2)
     timing["updated_at"] = utc_now_iso()
@@ -1813,6 +1856,9 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             "skipped_schemas": int(scan_report.get("skipped_schemas", 0) or 0),
             "skipped_tables": int(scan_report.get("skipped_tables", 0) or 0),
             "publish_failed": int(scan_report.get("publish_failed", 0) or 0),
+            # TASK-0226: MSSQL per-DB 커버리지.
+            "db_targets": int(scan_report.get("db_targets", 0) or 0),
+            "db_failed": int(scan_report.get("db_failed", 0) or 0),
         }
     )
     should_log = status != "ok" or bool(scan_report.get("scan_started"))
