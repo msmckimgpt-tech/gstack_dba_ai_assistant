@@ -4148,7 +4148,8 @@ a { color: inherit; }
 .cov-db-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
 .cov-db-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 96px auto auto 24px;
+  /* [DB명 · 마이크로바 · 통계 · 상태칩 · (초기화) · 제거]. 초기화 컬럼은 insight.reset 권한자만 채워짐. */
+  grid-template-columns: minmax(0, 1fr) 96px auto auto auto 24px;
   align-items: center;
   gap: 10px;
   padding: 5px 8px;
@@ -4182,6 +4183,17 @@ a { color: inherit; }
 .cov-db-status-warn  { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
 .cov-db-status-low   { color: var(--danger);  background: color-mix(in srgb, var(--danger) 12%, transparent); }
 .cov-db-status-muted { color: var(--text-muted); background: var(--bg); }
+
+/* TASK-0230: per-DB insight 초기화 버튼 (파괴적 — 위험색). 통합 DB 리스트 행에 위치. */
+.cov-db-reset {
+  font-size: 11px; font-weight: 600;
+  padding: 2px 8px;
+  border: 1px solid var(--border-subtle); border-radius: 6px;
+  background: transparent; color: var(--danger); cursor: pointer;
+  white-space: nowrap;
+}
+.cov-db-reset:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
+.cov-db-reset:disabled { opacity: .5; cursor: default; }
 
 .cov-db-remove {
   width: 22px; height: 22px;

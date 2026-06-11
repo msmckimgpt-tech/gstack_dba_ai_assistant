@@ -8,14 +8,29 @@ source_of_truth: true
 
 # Modify Log
 
-## CHG-20260611-0231
-- Date: 2026-06-11 (TASK-0231, **Minor §12.3** — datasource multi-bind UI 접근성 보강, frontend-only)
+## CHG-20260611-0232
+- Date: 2026-06-11 (TASK-0232, **Minor §12.3** — datasource multi-bind UI 접근성 보강, frontend-only)
 - Scope: TASK-0230 의 제품 상세 datasource multi-bind UI 를 gstack `/design-review` 소스 접근성 감사로 검토 후 HIGH 3 + MEDIUM 4 흡수. 권한/스키마/엔드포인트/백엔드 0.
 - Files:
   - unit/feature-0003-agent-web-ui/src/static/admin.js (★/× 칩버튼 aria-label + disabled 중복요청 가드 + 두 select aria-label + 빈상태 CTA)
   - unit/feature-0003-agent-web-ui/src/static/styles.css (.admin-chip-action/.admin-chip-remove 24px 타깃 + :focus-visible + opacity)
   - unit/feature-0003-agent-web-ui/src/static/admin.html (캐시버스터 `?v=20260611-ds-multibind-a11y`)
 - Rollback: 위 3파일 revert(frontend-only, 동작 영향 0 — 접근성 속성·CSS 만).
+
+## CHG-20260611-0231
+- Date: 2026-06-11 (TASK-0231, **Critical §12.3** — insight 분석 초기화 (접근 가능 DB 단위 삭제); 동시세션 SSRF·UI-통합·멀티datasource cycle 이 TASK-0228/0229/0230 선점→§13.1 재번호)
+- Scope: 관리 콘솔 제품 상세 `접근 가능 데이터베이스 > insight 분석 완료율` per-DB 초기화 기능. 신규 RBAC 권한 + 엔드포인트 + 프런트. feature-0003(web-ui) 단독.
+- 배경: 사용자 요청 — insight 분석이 잘못됐을 때 되돌릴 수단이 없었다. DB 단위로 PG insight(fact/rag/fingerprint)를 삭제하면 insight-worker 가 다음 cycle 에 자동 재분석한다.
+- 변경:
+  - `src/app.py`: ① RBAC `insight.reset`(group console, admin 한정 — `PERMISSION_DEFINITIONS` + `_ensure_seed_roles` admin catchup). ② `_resolve_product_insight_scope`(완료율 계산과 공유하는 datasource scope 해석 헬퍼 추출 + scope alias 집합 반환 — `_compute_product_insight_coverage` 도 이를 호출하도록 리팩터). ③ `_like_escape`/`_insight_reset_ds_heads`/`_insight_reset_fact_key_patterns`/`_insight_reset_kv_key_patterns`(저장 키 체계 정합 LIKE 패턴 — scope alias + live_schemas 기반, ESCAPE '\\'). ④ `POST /api/admin/products/{pid}/insight-reset`(라이브 카탈로그 (schema,table) 교집합으로 rag_objects 삭제 + audit start-event fail-safe + 단일 PG tx 4종 DELETE + complete-event + 완료율 캐시 무효화).
+  - `src/static/admin.js`: `resetProductDbInsight`(dry-run 미리보기 → DB명 typed-confirm + 공유 제품 영향 경고 → 실삭제 → 완료율 새로고침) + TASK-0229 통합 DB 리스트(`redrawChips` 의 `cov-db-row`)에 per-DB "초기화" 버튼(`insight.reset` 권한자만).
+  - `src/static/styles.css`: `.cov-db-reset` 위험색 버튼 + `cov-db-row` grid 6컬럼.
+  - `src/static/admin.html`: 캐시버스터 `?v=20260611-db-coverage-insight-reset`.
+- 비변경: PG/웹 스키마·시크릿·암호화·insight write 경로 무변경(read + targeted delete only). 기존 완료율 엔드포인트 동작 보존(_resolve 헬퍼 추출은 동치 리팩터).
+- 검증: 신규 `tests/test_insight_reset.py` 14건 PASS + make test 505 passed/2 skipped(회귀 0) + ruff clean + py_compile + node --check + 라이브 PG 키패턴 매칭 실측. outside-voice 적대적 보안 리뷰 MAJOR 3(M1 MSSQL rag_objects 2-tier/M2 scope alias/M3 audit fail-safe) 흡수.
+- Files: src/app.py, src/static/{admin.js,admin.html,styles.css}, tests/test_insight_reset.py, docs/{FUNCTION,TASK,REPORT,MODIFY,REVIEW}.md, ../../docs/STATUS.md
+- Rollback: 신규 권한/엔드포인트/헬퍼는 additive. 프런트 버튼은 권한 게이트(미보유 시 미노출). 엔드포인트 미호출 시 기존 동작 무영향.
+- Cross-ref: TASK-0231 / REQ-20260611-0228 / REV-20260611-0231. (TASK-0223 insight-coverage 후속, TASK-0229 UI-통합·TASK-0230 멀티datasource 위로 rebase.)
 
 ## CHG-20260611-0230
 - Date: 2026-06-11 (TASK-0230, **Critical §12.3** — 멀티 datasource 1:N: 제품 ↔ 여러 datasource 참조)

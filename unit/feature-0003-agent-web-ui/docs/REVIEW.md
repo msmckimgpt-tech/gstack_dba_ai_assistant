@@ -8,14 +8,27 @@ source_of_truth: true
 
 # Review Log
 
-## REV-20260611-0231 [SKIPPED:frontend-a11y-no-backend-no-rbac]
+## REV-20260611-0232 [SKIPPED:frontend-a11y-no-backend-no-rbac]
 - Date: 2026-06-11
-- Cycle: TASK-0231 (datasource multi-bind UI 접근성 보강, **Minor §12.3**)
+- Cycle: TASK-0232 (datasource multi-bind UI 접근성 보강, **Minor §12.3**) — 동시세션 TASK-0231 insight-reset 선점→0232 재번호
 - 본 cycle 자체가 gstack `/design-review`(소스 디자인·접근성 outside-voice subagent) 감사의 **산물** — subagent 가 TASK-0230 UI 의 HIGH 3(aria-label·select 라벨·async disabled) + MEDIUM 4(24px 타깃·focus-visible·opacity·빈상태 CTA)를 발견, 본 cycle 이 전부 흡수. 즉 outside-voice 가 선행됨.
 - Reason: frontend-only 접근성 속성(aria-label)·CSS(터치타깃·focus-visible)·JS 가드(중복요청 disabled) 추가. RBAC/스키마/엔드포인트/백엔드/시크릿 0건. 새 기능 0(기존 동작에 접근성·중복방지 덧입힘). 추가 outside-voice panel 불필요 조건 충족(새 위험 표면 0).
 - 검증: node --check admin.js + CSS brace balance + make test 회귀 0 + 라이브 기능 회귀 16/16 PASS(별도).
 - Human Approval Needed: no.
-- Cross-ref: CHG-20260611-0231 / TASK-0231 / REV-20260611-0230(원 cycle).
+- Cross-ref: CHG-20260611-0232 / TASK-0232 / REV-20260611-0230(원 cycle).
+## REV-20260611-0231 [SUBAGENT:insight-reset-adversarial-security]
+- Date: 2026-06-11
+- Cycle: TASK-0230 (insight 분석 초기화 — 접근 가능 DB 단위 삭제), **Critical §12.3** (파괴적 데이터 삭제 + 신규 RBAC)
+- Panel: 적대적(outside-voice) 보안 subagent. 대상: app.py 신규 함수(`_resolve_product_insight_scope`/`_like_escape`/`_insight_reset_*_patterns`/엔드포인트 `admin_product_insight_reset`) + admin.js/styles.css. 라이브 PG(agent_kb) 데이터로 검증. 집중 9개: SQL인젝션·권한우회·IDOR·과삭제/과소삭제·트랜잭션·audit무결성·dry-run우회·DoS·에러노출.
+- Verdict: 반증 시도로 **MAJOR 3 발견 → 전부 흡수**:
+  - **MAJOR M1** MSSQL rag_objects 과소삭제 → 완료율 divergence: reset 이 `object_key LIKE '{scope}:{db}.%'`(3-tier)만 매칭해 2-tier 레거시(`{scope}:dbo.t`, catalog-less, 라이브 168행) 누락. 완료율 계산은 `(schema_name,table_name)` 컬럼으로 catalog 무시 매칭 → 삭제 후에도 완료율 0 안 됨(이 기능의 핵심 목표 위반). **수정**: reset 의 rag_objects 삭제를 완료율 분자와 **동일한 (schema_name, table_name) 교집합 + schema 노드**로 통일(라이브 카탈로그 조회). 2-tier/3-tier object_key 형식 무관 동일 행 집합.
+  - **MAJOR M2** 레거시 scope alias 미삭제 → fingerprint 잔존: 같은 DB 가 hash/.env label(`main_mysql`)/NULL 세대로 공존하는데 단일 scope 만 처리 → 다른 alias fingerprint 잔존 시 재분석 skip 위험. **수정**: `_resolve_product_insight_scope` 가 alias 집합(hash+label+NULL) 반환, 키 패턴이 전체 alias 삭제.
+  - **MAJOR M3** audit fail-safe 역행: 파괴적 삭제가 먼저 commit 되고 audit 은 후행 best-effort → audit 실패 시 삭제 흔적 소실. **수정**: audit.purge 패턴 답습 — `insight.reset.start` 이벤트를 삭제 **전에** commit(실패 시 삭제 중단), 삭제 후 `insight.reset.complete`.
+- 반증 실패(안전 확인): SQL 인젝션 0(`_like_escape` \\/%/_ 이스케이프 + `%s` 파라미터 바인딩 + ESCAPE '\\', placeholder/param 개수 일치, 라이브 underscore/prefix 오매칭 0). 권한 게이트 견고(insight.reset admin 한정, operator/sales 미부여). IDOR 차단(accessible-DB 멤버십 검증). 트랜잭션 단일 tx + rollback + psycopg3 .closed/.autocommit 정상.
+- 잔여(미수정·합의): N1 dry-run↔실삭제 TOCTOU(표시 오차만, 삭제는 LIKE 재평가) MINOR. N2 에러 메시지 일반화(generic 메시지로 수정함). N4 fake PG 커서가 SQL 미실행이라 통합 테스트는 라이브 의존(키 패턴 단위테스트 + 라이브 실측으로 보완).
+- 라이브 검증: account_db(MySQL) rag_objects 14·fact 7·kv 17 매칭, MSSQL 2-tier(168)/3-tier(205) 분포 확인, (schema,table) 교집합으로 양쪽 포괄 확인.
+- Risk: medium-high — 파괴적이나 권한·IDOR·인젝션·트랜잭션·audit fail-safe 전부 검증. 삭제만(재분석은 worker 자동). RBAC 카탈로그 1건 추가(admin 전용).
+- Cross-ref: CHG-20260611-0230 / TASK-0230 / REQ-20260611-0228.
 
 ## REV-20260611-0230 [SUBAGENT:product-multi-datasource-isolation-adversarial] — PASS(MAJOR 흡수)
 - Date: 2026-06-11
