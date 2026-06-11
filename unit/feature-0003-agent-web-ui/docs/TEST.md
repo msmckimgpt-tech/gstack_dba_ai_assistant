@@ -556,3 +556,15 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **Evidence:** `artifacts/ds-admin-ui-1-list.png`(목록+빈 상세), `artifacts/ds-admin-ui-2-detail.png`(선택 datasource 상세 — 연결좌표·출처·보안·연결 테스트), `artifacts/ds-admin-ui-3-form.png`(새 데이터소스 폼).
   - **Pass/Fail: PASS**
   - **Notes:** 데이터소스 pane 이 계정/역할/제품/설정 과 동일한 list-detail 외관으로 통일. 수정/삭제는 editable(DB 출처) datasource 의 상세 sticky 액션바에 노출(`.env` 출처는 정책상 읽기전용). CHECK#13(PB-0008 Windows-browser) **충족**.
+
+- 2026-06-11 (TASK-0213 접근 가능 DB picker — dropdown+checkbox 연속 토글 UI — **PB-0008 Windows-browser 완료 게이트**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 userspace relay `bridge_mode: relay`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증.
+  - **Runner: AI** (bin/win-browser.py doctor → launch → click → screenshot)
+  - **Bridge:** relay (endpoint: http://172.28.64.1:9223)
+  - **배포:** PR #151 → main `9d8d33e` 머지 → `docker compose build web` + `docker compose up -d --no-build web`. `grep -c db-picker-checkbox admin.html` = 2, `grep -c admin-db-picker-wrap admin.js` = 1 확인.
+  - **검증 내용 (전 step ok:true):**
+    - **제품 상세 화면:** 킹스레이드(KR) 클릭 → `접근 가능 데이터베이스` 섹션에 `+ 데이터베이스 선택` 버튼 렌더. 구 `<select>+추가` 버튼 없음 확인.
+    - **체크박스 드롭다운:** `+ 데이터베이스 선택` 클릭 → 드롭다운 패널 오픈, `BackupManager` / `DBFunctor` / `distribution` 등 체크박스 항목 목록 표시 확인. 시스템 DB(`master`/`model`/`msdb`) 는 고정칩으로 표시되고 드롭다운 목록에 미노출.
+  - **Evidence:** `/tmp/pb0008_product_detail.png`(제품 상세 — "+ 데이터베이스 선택" 버튼), `/tmp/pb0008_picker_open.png`(체크박스 드롭다운 오픈 — 항목 목록 표시).
+  - **Pass/Fail: PASS**
+  - **Notes:** 캐시버스터 `?v=20260611-db-picker-checkbox` 서빙 확인. 체크박스 연속 토글(추가버튼 없이 즉시 draft 반영) 구조. CHECK#13(PB-0008 Windows-browser) **충족**.
