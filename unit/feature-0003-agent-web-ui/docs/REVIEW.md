@@ -1985,3 +1985,10 @@ source_of_truth: true
 - Reason: 기존 AESGCM(AAD=DatasourceKey) 재사용 — 신규 암호화 표면 없음. 버그 수정: ① rename 시 재암호화 누락(InvalidTag) ② PATCH 시 키 불일치. RBAC 게이트·스키마·신규 엔드포인트 0. 재암호화 로직은 기존 `encrypt_password`/`decrypt_password` 함수 호출이므로 암호화 계층 변경 없음. 복호 실패 시 기존 암호문 유지(silent pass) — 연결 테스트로 가시화. py_compile PASS, node --check PASS.
 - Risk: low — 복호→재암호화 경로 추가이며 기존 DEK/KEK 체인 무변경. PATCH 키 변경 409 충돌은 동일 엔드포인트 중복 등록 차단이라 안전.
 - Cross-ref: CHG-20260611-0217 / TASK-0217 / TASK-0216.
+
+## REV-20260611-0218 [SKIPPED:bugfix-aad-fix2-no-new-surface]
+- Date: 2026-06-11
+- Cycle: TASK-0218 (데이터소스 키 명시적 rename 지원 + AAD 자가수복), **Minor §12.3**
+- Reason: 자가수복 로직과 명시 rename 모두 기존 DEK/AESGCM(`encrypt_password`/`decrypt_password`) 재사용 — 신규 암호화 표면 없음. RBAC 게이트(console.manage) 무변경, 스키마 무변경, 신규 엔드포인트 없음. 자가수복은 복호→재암호화만 추가이며 실패는 silent pass(수동 재입력으로 가시화). 명시 rename은 기존 key_changed 경로와 동일 로직. admin.js key 필드는 readonly → 편집 가능으로 UX 변경만. py_compile PASS, node --check PASS.
+- Risk: low — 자가수복은 서버 재시작 시 1회 실행 멱등. 명시 rename은 기존 키 변경 경로 재사용. admin.js 변경은 UX only.
+- Cross-ref: CHG-20260611-0218 / TASK-0218 / TASK-0217.

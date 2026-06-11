@@ -3316,6 +3316,39 @@ def _seed_main_mysql_datasource(conn) -> None:
                     (key, legacy_key),
                 )
                 cur.execute("DELETE FROM WebDatasources WHERE DatasourceKey=%s", (legacy_key,))
+        else:
+            # main_mysql 없음 → 해시 키가 이미 rename됐을 수 있음.
+            # PasswordEnc AAD 가 구 키 이름으로 암호화됐을 경우 복호 실패가 발생하므로 검증 후 재암호화.
+            cur.execute(
+                "SELECT PasswordEnc, EncryptionVersion FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1",
+                (key,),
+            )
+            hash_row = cur.fetchone()
+            if hash_row and hash_row[0]:
+                got = _dsr.ensure_dek(conn)
+                if got is not None:
+                    ver, dek = got
+                    try:
+                        _cc.decrypt_password(dek, hash_row[0], key)
+                        # 복호 성공 → AAD 정합, 재암호화 불필요.
+                    except Exception:
+                        # 복호 실패 → 구 AAD(main_mysql)로 재시도 후 새 키 AAD로 재암호화.
+                        try:
+                            plain = _cc.decrypt_password(dek, hash_row[0], legacy_key)
+                            new_pw_enc = _cc.encrypt_password(dek, plain, key)
+                            cur.execute(
+                                "UPDATE WebDatasources SET PasswordEnc=%s, EncryptionVersion=%s"
+                                " WHERE DatasourceKey=%s",
+                                (new_pw_enc, int(ver), key),
+                            )
+                            try:
+                                logging.getLogger(__name__).info(
+                                    "[ds-seed] %s PasswordEnc AAD 재정렬 완료 (main_mysql → %s)", key, key,
+                                )
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass  # 복호 실패 — 패스워드를 모르므로 수동 재입력 필요
 
         cur.execute(
             "SELECT Host, DbUser, IsActive, Engine, Port FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1",
@@ -10085,8 +10118,11 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
             if "insight_enabled" in data:
                 sets.append("InsightEnabled=%s"); params.append(1 if data.get("insight_enabled") else 0)
 
-            # 엔진+호스트+포트가 바뀌면 키(해시)도 재계산. 패스워드 AAD=DatasourceKey 이므로 함께 재암호화.
-            new_k = _generate_datasource_key(new_engine, new_host, int(new_port or 0))
+            # 키 결정: ① body.key(명시 rename) ② 엔진+호스트+포트 변경 시 해시 재계산 ③ 변화 없음.
+            # PasswordEnc AAD=DatasourceKey 이므로 키 변경 시 반드시 재암호화.
+            explicit_new_key = _ds_valid_key(data.get("key") or "") if data.get("key") else None
+            hash_new_k = _generate_datasource_key(new_engine, new_host, int(new_port or 0))
+            new_k = explicit_new_key if explicit_new_key and explicit_new_key != k else hash_new_k
             key_changed = (new_k != k)
 
             if data.get("password"):  # 비어있지 않을 때만 재암호화(write-only)
@@ -10101,7 +10137,7 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
             elif key_changed and cur_pw_enc:
                 # 키가 바뀌었고 패스워드 신규 입력이 없으면 기존 패스워드를 새 AAD 로 재암호화.
                 if not _cc.enc_available():
-                    return _json_error("암호화 키 미설정 — 호스트/포트 변경 시 패스워드 재암호화 불가.", 400)
+                    return _json_error("암호화 키 미설정 — 키/호스트/포트 변경 시 패스워드 재암호화 불가.", 400)
                 got = _dsr.ensure_dek(conn)
                 if got is None:
                     return _json_error("DEK 확인 실패.", 500)
@@ -10111,12 +10147,12 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
                     sets.append("PasswordEnc=%s"); params.append(_cc.encrypt_password(dek, plain, new_k))
                     sets.append("EncryptionVersion=%s"); params.append(int(ver))
                 except Exception:
-                    return _json_error("기존 패스워드 재암호화 실패 — 호스트/포트 변경 시 패스워드를 직접 입력해 주세요.", 500)
+                    return _json_error("기존 패스워드 재암호화 실패 — 키/호스트/포트 변경 시 패스워드를 직접 입력해 주세요.", 500)
 
             if key_changed:
                 cur.execute("SELECT 1 FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (new_k,))
                 if cur.fetchone():
-                    return _json_error(f"변경된 엔드포인트에 이미 동일 키가 존재합니다: {new_k}", 409)
+                    return _json_error(f"이미 존재하는 키: {new_k}", 409)
                 sets.append("DatasourceKey=%s"); params.append(new_k)
 
             if isinstance(actor, dict) and actor.get("id"):

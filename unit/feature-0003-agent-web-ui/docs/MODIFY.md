@@ -2821,3 +2821,18 @@ source_of_truth: true
 - 검증: py_compile app.py PASS, node --check admin.js PASS.
 - Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/src/static/admin.js, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
 - Rollback: app.py 두 함수 변경 전 상태 복원 + admin.js save 핸들러 `ds.key` 직접 참조 복원.
+
+## CHG-20260611-0218
+- Date: 2026-06-11
+- Task: TASK-0218 (데이터소스 키 명시적 rename 지원 + AAD 자가수복), **Minor §12.3**
+- 변경:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - `_seed_main_mysql_datasource`: `main_mysql` 행이 DB에 없을 때(이미 rename됨)의 `else` 브랜치 추가. 해시 키 행의 `PasswordEnc` 를 현재 키 AAD로 복호 시도 → 실패 시 구 AAD(`main_mysql`)로 복호 → 성공 시 현재 키 AAD로 재암호화하는 자가수복 로직. 복호 완전 실패 시 silent pass(수동 재입력 필요).
+    - `admin_update_datasource`: PATCH body `key` 필드 수신 추가 — `_ds_valid_key`로 검증 후 `explicit_new_key` 로 처리. `new_k` 결정 순서: ① 명시 키(`body.key`, 현재 키와 다를 때) ② 엔진+호스트+포트 해시 재계산. 기존 패스워드 재암호화·`DatasourceKey` 업데이트·`WebProducts.DatasourceKey` 참조 업데이트 경로 동일. 409 에러 메시지 간결화.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`:
+    - `_dsRenderForm`: 수정(`isEdit`) 시 key 필드 `readonly` → `false`(편집 가능), `is-readonly` CSS 클래스 제거. 라벨 "키" → "키 (변경 시 수정)".
+    - `_dsRenderForm` save 핸들러: `k === "key"` 분기 추가 — 수정 시 값이 원래 키와 다를 때만 `body.key = v` 로 전송, 신규 생성 시 미전송 유지.
+- 비변경: RBAC(console.manage), 신규 엔드포인트, WebDatasources 스키마, DEK/KEK 키 구조, 암호화 알고리즘(AESGCM).
+- 검증: py_compile app.py PASS, node --check admin.js PASS.
+- Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/src/static/admin.js, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
+- Rollback: app.py `else` 브랜치 제거 + `admin_update_datasource` `explicit_new_key` 로직 제거. admin.js key 필드 `readonly=true` 복원.
