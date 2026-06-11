@@ -3245,11 +3245,14 @@ def _ensure_web_datasources_schema(conn) -> None:
 
 
 def _seed_main_mysql_datasource(conn) -> None:
-    """TASK-0206: 데이터 MySQL(.env AGENT_DATA_DB_*) 을 편집가능 데이터소스 `main_mysql` 로 1회 시드.
+    """TASK-0206: 데이터 MySQL(.env AGENT_DATA_DB_*) 을 편집가능 데이터소스로 1회 시드.
 
     이제 제품 접근 데이터는 데이터소스에 종속된다. 기존엔 `WebProducts.DatasourceKey` NULL =
     데이터 MySQL 암묵 접근이었으나, 이를 명시 데이터소스로 승격하고 NULL 바인딩 제품을 일괄
-    `main_mysql` 로 바인딩(기존 접근 보존; DESIGN §3.1·§5). 멱등 — KEK 미설정/자격부재/이미존재 시 skip.
+    해시 키 datasource 로 바인딩(기존 접근 보존; DESIGN §3.1·§5). 멱등 — KEK 미설정/자격부재/이미존재 시 skip.
+
+    레거시 `main_mysql` 키 마이그레이션: 이미 `main_mysql` 로 등록된 항목이 있으면 해시 키로 rename 하고
+    `WebProducts.DatasourceKey` 참조도 일괄 업데이트한다(운영 연속성 보장).
     """
     try:
         from modules import cred_crypto as _cc
@@ -3262,9 +3265,39 @@ def _seed_main_mysql_datasource(conn) -> None:
     password = os.getenv("AGENT_DATA_DB_PASSWORD", "")
     if not user:
         return  # 데이터 MySQL 자격 미구성 — 시드 대상 아님
-    key = "main_mysql"
+    # 키를 엔진+호스트+포트 해시로 결정한다.
+    key = _generate_datasource_key("mysql", DB_HOST, int(DB_PORT))
+    legacy_key = "main_mysql"
     cur = conn.cursor()
     try:
+        # 레거시 `main_mysql` 키가 존재하면 해시 키로 rename (운영 연속성 보장).
+        cur.execute("SELECT 1 FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (legacy_key,))
+        if cur.fetchone():
+            cur.execute("SELECT 1 FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (key,))
+            if not cur.fetchone():
+                # 해시 키 미존재 → rename
+                cur.execute(
+                    "UPDATE WebDatasources SET DatasourceKey=%s WHERE DatasourceKey=%s",
+                    (key, legacy_key),
+                )
+                cur.execute(
+                    "UPDATE WebProducts SET DatasourceKey=%s WHERE DatasourceKey=%s",
+                    (key, legacy_key),
+                )
+                try:
+                    logging.getLogger(__name__).info(
+                        "[ds-seed] main_mysql → %s 키 마이그레이션 완료", key,
+                    )
+                except Exception:
+                    pass
+            else:
+                # 해시 키가 이미 존재(수동 생성 등) → 레거시 제품 바인딩만 업데이트
+                cur.execute(
+                    "UPDATE WebProducts SET DatasourceKey=%s WHERE DatasourceKey=%s",
+                    (key, legacy_key),
+                )
+                cur.execute("DELETE FROM WebDatasources WHERE DatasourceKey=%s", (legacy_key,))
+
         cur.execute(
             "SELECT Host, DbUser, IsActive, Engine, Port FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1",
             (key,),
@@ -3288,7 +3321,7 @@ def _seed_main_mysql_datasource(conn) -> None:
             )
             seeded_now = True
             try:
-                logging.getLogger(__name__).info("[ds-seed] main_mysql 데이터소스 시드 완료 (host=%s)", DB_HOST)
+                logging.getLogger(__name__).info("[ds-seed] 데이터소스 시드 완료 key=%s (host=%s)", key, DB_HOST)
             except Exception:
                 pass
         # re-gate MAJOR7: NULL/빈 바인딩 제품 → main_mysql 일괄 마이그레이션은 **main_mysql 이 실제 데이터
@@ -9863,6 +9896,20 @@ def _ds_valid_key(key: str) -> "str | None":
     return k
 
 
+def _generate_datasource_key(engine: str, host: str, port: int) -> str:
+    """엔진 + 호스트 + 포트 의 SHA-256 해시 앞 12자를 키로 반환.
+
+    형식: `{engine}-{hash12}` (예: mysql-3f2a1b9c7e41).
+    fact-key `:ds:` 구분자와 충돌 없고, `ds` 로 시작하지 않으며(기존 `_ds_valid_key` 제약 통과),
+    엔드포인트 좌표가 바뀌어도 목적지 변경을 즉시 키에 반영한다.
+    """
+    import hashlib as _hl
+    raw = f"{(engine or 'mysql').strip().lower()}:{(host or '').strip().lower()}:{int(port or 0)}"
+    digest = _hl.sha256(raw.encode()).hexdigest()[:12]
+    eng_tag = (engine or "mysql").strip().lower()[:10]  # 최대 10자로 잘라 가독성 보존
+    return f"{eng_tag}-{digest}"
+
+
 async def _ds_write_common(request, require_manage=True):
     """CRUD 공통: conn + actor + 권한 + body. 반환 (conn, actor, data, None) 또는 (None,None,None, error)."""
     try:
@@ -9909,9 +9956,6 @@ async def admin_create_datasource(request: Request) -> JSONResponse:
     try:
         if not _cc.enc_available():
             return _json_error("암호화 키(AGENT_DATASOURCE_KEK_V1) 미설정 — datasource 자격증명 저장 불가.", 400)
-        key = _ds_valid_key(data.get("key"))
-        if not key:
-            return _json_error("datasource 키 형식 오류(소문자 영숫자·_·-, `ds` 시작 금지).", 400)
         engine = str(data.get("engine") or "mysql").strip().lower()
         if engine not in ("mysql", "mssql"):
             return _json_error("engine 은 mysql|mssql.", 400)
@@ -9929,6 +9973,9 @@ async def admin_create_datasource(request: Request) -> JSONResponse:
         # 제품의 '접근 가능 데이터베이스'(allowlist)로 관리, MSSQL 연결은 그 중 첫 DB 자동(없으면 tempdb).
         if not host or not user:
             return _json_error("host·user 는 필수.", 400)
+        # 키를 엔진+호스트+포트 해시로 자동 생성한다. 동일 엔드포인트면 항상 동일 키 → 중복 등록 방지.
+        # 용도 변경 시(host/port 변경)는 새 키가 발급되어 이전 키와 명확히 구분된다.
+        key = _generate_datasource_key(engine, host, port)
         got = _dsr.ensure_dek(conn)
         if got is None:
             return _json_error("DEK 생성 실패(KEK 확인).", 500)
@@ -9938,7 +9985,7 @@ async def admin_create_datasource(request: Request) -> JSONResponse:
         try:
             cur.execute("SELECT 1 FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (key,))
             if cur.fetchone():
-                return _json_error(f"이미 존재하는 키: {key}", 409)
+                return _json_error(f"이미 존재하는 키: {key} (동일 엔드포인트가 이미 등록되어 있습니다)", 409)
             cur.execute(
                 "INSERT INTO WebDatasources (DatasourceKey,Engine,Host,Port,DbUser,PasswordEnc,DefaultDb,"
                 "EncryptionVersion,IsActive,UpdatedByAccountId) VALUES (%s,%s,%s,%s,%s,%s,NULL,%s,1,%s)",
@@ -9952,7 +9999,7 @@ async def admin_create_datasource(request: Request) -> JSONResponse:
                            change_json=_ds_audit_fields({**data, "key": key}))
         conn.commit()
         return JSONResponse({"key": key, "engine": engine, "host": host, "port": port,
-                             "default_db": default_db, "has_password": bool(pw_enc), "source": "db"})
+                             "default_db": None, "has_password": bool(pw_enc), "source": "db"})
     finally:
         conn.close()
 

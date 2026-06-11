@@ -3138,3 +3138,14 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] outside-voice [SKIPPED:frontend-picker-ui-no-rbac-schema-change] (REV-20260611-0213) — 프런트 UX 교체 + tempdb 폴백 보안 하향(업무 누출 차단). RBAC·API 계약·스키마 무변경.
 - [x] node --check admin.js PASS
 - [x] verify-completion PASS → PR ff-merge → docker build + up 배포 → PB-0008 Windows-browser 시각검증(체크박스 드롭다운 토글·즉시 반영)
+
+### TASK-0216 — 데이터소스 키 자동 생성: 엔진+호스트+포트 해시 (2026-06-11)
+- [x] **Minor §12.3** (백엔드 1파일 + 프런트 1파일, RBAC·스키마·외부 엔드포인트 신규 0) — 사용자 요청: `관리 콘솔 > 데이터소스` 의 각 항목 키를 식별자 문자열 대신 `엔진+호스트+포트` 해시로 구성(용도 변경 시 대응 용이). 기존 `main_mysql` 레거시 키 및 해당 식별자를 참조하는 항목도 마이그레이션 포함. (CHG-20260611-0216)
+- [x] **신규 함수 추가** ([app.py](../src/app.py) `_generate_datasource_key`): `엔진:호스트:포트` 의 SHA-256 해시 앞 12자 + 엔진 태그(`{engine}-{hash12}` 형식). 동일 엔드포인트 → 항상 동일 키(멱등), 엔드포인트 변경 → 자동으로 다른 키.
+- [x] **변경 (백엔드)** ([app.py](../src/app.py) `admin_create_datasource`): body 의 `key` 수신 제거 → `_generate_datasource_key(engine, host, port)` 자동 생성으로 교체. 409 에러 메시지에 "동일 엔드포인트가 이미 등록되어 있습니다" 추가. 응답 `default_db` 미정의 버그 → `None` 수정.
+- [x] **변경 (백엔드)** ([app.py](../src/app.py) `_seed_main_mysql_datasource`): `key = "main_mysql"` 하드코딩 → `_generate_datasource_key("mysql", DB_HOST, int(DB_PORT))` 자동 생성. 레거시 `main_mysql` 키가 DB에 존재하면 해시 키로 rename + `WebProducts.DatasourceKey` 참조 일괄 업데이트(운영 연속성 보장).
+- [x] **변경 (프런트)** ([admin.js](../src/static/admin.js) `_dsRenderForm`): 신규 생성 시 key 입력 필드 제거 → 자동 생성 안내 힌트 표시. 수정 시는 기존대로 키 readonly 표시. body 전송 시 `key` 필드 제외(서버 자동 생성). 생성 완료 토스트 "키 자동 생성" 메시지 추가.
+- [x] **미변경** (`_migrate_env_datasources_to_db`): `.env` 키 이름 그대로 사용하는 레거시 경로 — 의도적 유지.
+- [x] outside-voice [SKIPPED:auto-key-no-rbac-no-schema-no-secret] (REV-20260611-0216) — 키 생성 방식 변경(해시화)이며 RBAC·API 계약·WebDatasources 스키마·암호화 경로 무변경. 레거시 마이그레이션은 멱등 UPDATE 2개.
+- [x] py_compile app.py PASS, node --check admin.js PASS
+- [ ] verify-completion → main rebase·ff-merge → web 재배포 → PB-0008(관리 콘솔 > 데이터소스 신규 등록 + 키 자동 생성 확인)
