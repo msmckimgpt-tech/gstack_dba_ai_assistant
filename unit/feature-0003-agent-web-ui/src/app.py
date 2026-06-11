@@ -3328,44 +3328,77 @@ def _seed_main_mysql_datasource(conn) -> None:
 
 
 def _migrate_mssql_products_to_db_level(conn) -> None:
-    """TASK-0206 일회성 마이그레이션: TASK-0205-era MSSQL 제품의 `DatasourceDatabase`(단일 참조 DB)를
-    DB-단위 접근목록(`WebProductDatabases`)으로 이전.
+    """TASK-0206 일회성 마이그레이션: 구 MSSQL 제품을 DB-단위 접근목록(`WebProductDatabases`)으로 이전.
 
-    배경: 구 모델에서 MSSQL 제품의 WebProductDatabases 는 **스키마명**(dbo 등), 참조 DB 는 별도
-    `WebProducts.DatasourceDatabase` 컬럼에 있었다. DB-단위 모델에선 WebProductDatabases 가 **DB명**을
-    의미하므로, 구 schema-name 항목은 DB명으로 오해석돼 해당 제품이 접근 불가가 된다. 이를 막기 위해:
-      - `DatasourceDatabase` 가 설정된 제품(=구 MSSQL 제품)의 WebProductDatabases 를 **참조 DB 단일 항목으로 치환**
-        (구 schema-name 항목 제거 — DB 단위에선 한 DB 안 모든 스키마가 접근됨).
-      - 이전 후 `DatasourceDatabase=NULL` 로 비워 **멱등** 보장(NULL=대상 아님). 신규 UI 제품(DatasourceDatabase
-        애초에 NULL)은 무영향.
+    배경: 구 모델(TASK-0205, schema-allowlist)에서 MSSQL 제품의 WebProductDatabases 는 **스키마명**(dbo 등)이고,
+    실제 접근 DB 는 (a) `WebProducts.DatasourceDatabase`(per-product 참조 DB) 또는 (b) 그게 없으면 **데이터소스의
+    default_db**(연결 기본 DB)였다. DB-단위 모델에선 WebProductDatabases 가 **DB명(catalog)** 을 의미하므로 구
+    schema-name 항목은 DB명으로 오해석돼 제품이 접근 불가가 된다.
+
+    이전 규칙: MSSQL 제품의 **유효 DB**(= DatasourceDatabase 또는 데이터소스 default_db)가 현재 접근목록에
+    없으면(=구 schema-name 구성) 접근목록을 유효 DB 단일 항목으로 치환하고 DatasourceDatabase 를 비운다.
+    유효 DB 가 이미 접근목록에 있으면(=신규 UI 구성) 건드리지 않는다(멱등 + 운영자 구성 보존).
     """
+    try:
+        from modules import config as _cfg2
+        _env_ds = getattr(_cfg2, "DATASOURCES", {}) or {}
+    except Exception:
+        _env_ds = {}
     cur = conn.cursor()
     try:
+        # WebDatasources(엔진·default_db) 매핑.
+        db_ds: dict[str, tuple[str, str]] = {}
+        try:
+            cur.execute("SELECT DatasourceKey, Engine, DefaultDb FROM WebDatasources")
+            for r in (cur.fetchall() or []):
+                if r and r[0]:
+                    db_ds[str(r[0]).strip().lower()] = (
+                        (str(r[1]).strip().lower() if len(r) > 1 and r[1] else "mysql"),
+                        (str(r[2]).strip() if len(r) > 2 and r[2] else ""),
+                    )
+        except Exception:
+            db_ds = {}
         cur.execute(
-            "SELECT Id, DatasourceDatabase FROM WebProducts "
-            "WHERE DatasourceDatabase IS NOT NULL AND DatasourceDatabase <> ''"
+            "SELECT Id, DatasourceKey, DatasourceDatabase FROM WebProducts "
+            "WHERE DatasourceKey IS NOT NULL AND DatasourceKey <> ''"
         )
-        rows = cur.fetchall() or []
+        prows = cur.fetchall() or []
         migrated = 0
-        for r in rows:
+        for r in prows:
             pid = r[0]
-            dsdb = (str(r[1]).strip() if len(r) > 1 and r[1] else "")
-            if not pid or not dsdb:
+            dskey = (str(r[1]).strip().lower() if len(r) > 1 and r[1] else "")
+            pdb = (str(r[2]).strip() if len(r) > 2 and r[2] else "")
+            if not pid or not dskey:
                 continue
-            # 구 schema-name 접근목록 제거 후 참조 DB(catalog) 단일 항목으로 치환.
+            # 데이터소스 엔진 + default_db 해석 (WebDatasources 우선, .env 폴백).
+            engine, ds_default = db_ds.get(dskey, ("", ""))
+            if not engine:
+                _ed = _env_ds.get(dskey) or {}
+                engine = str(_ed.get("engine") or "mysql").strip().lower()
+                ds_default = str(_ed.get("default_db") or "").strip()
+            if engine != "mssql":
+                continue  # MySQL 제품은 schema==DB 라 무변경
+            effective_db = pdb or ds_default
+            if not effective_db:
+                continue  # 유효 DB 불명 — 운영자 수동 구성 필요
+            # 현재 접근목록 조회.
+            cur.execute("SELECT SchemaName FROM WebProductDatabases WHERE ProductId=%s", (int(pid),))
+            cur_names = {str(x[0]).strip().lower() for x in (cur.fetchall() or []) if x and x[0]}
+            if effective_db.lower() in cur_names:
+                continue  # 이미 DB-단위 구성(신규 UI) — 멱등, 보존
+            # 구 schema-name 구성 → 유효 DB 단일 항목으로 치환.
             cur.execute("DELETE FROM WebProductDatabases WHERE ProductId=%s", (int(pid),))
             cur.execute(
                 "INSERT INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder) "
                 "VALUES (%s, %s, %s, 10)",
-                (int(pid), dsdb, "TASK-0206 마이그레이션(참조 DB→접근 가능 DB)"),
+                (int(pid), effective_db, "TASK-0206 마이그레이션(참조 DB→접근 가능 DB)"),
             )
-            # 멱등 마커: 이전 완료 → DatasourceDatabase 비움(다음 부팅에 재실행 안 됨).
             cur.execute("UPDATE WebProducts SET DatasourceDatabase=NULL WHERE Id=%s", (int(pid),))
             migrated += 1
         if migrated:
             try:
                 logging.getLogger(__name__).info(
-                    "[ds-migrate] MSSQL 제품 %d개를 DB-단위 접근목록으로 이전(참조 DB→접근 DB)", migrated,
+                    "[ds-migrate] MSSQL 제품 %d개를 DB-단위 접근목록으로 이전(유효 DB→접근 DB)", migrated,
                 )
             except Exception:
                 pass
