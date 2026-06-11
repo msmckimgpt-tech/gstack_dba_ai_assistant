@@ -9977,7 +9977,8 @@ async def _ds_write_common(request, require_manage=True):
         conn.close()
         return None, None, None, _json_error("관리 콘솔 수정 권한(console.manage)이 필요합니다.", 403)
     try:
-        data = await request.json()
+        body_raw = await request.body()
+        data = (await request.json()) if body_raw else {}
     except Exception:
         conn.close()
         return None, None, None, _json_error("invalid json", 400)
