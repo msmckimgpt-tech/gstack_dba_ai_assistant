@@ -10631,11 +10631,16 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
             if "insight_enabled" in data:
                 sets.append("InsightEnabled=%s"); params.append(1 if data.get("insight_enabled") else 0)
 
-            # 키 결정: ① body.key(명시 rename) ② 엔진+호스트+포트 변경 시 해시 재계산 ③ 변화 없음.
-            # PasswordEnc AAD=DatasourceKey 이므로 키 변경 시 반드시 재암호화.
+            # 키 결정 (TASK-0234 근본수정): 라벨(DatasourceKey)은 **사용자가 명시적으로 rename 할 때만** 변경한다.
+            # 과거엔 키 미지정 편집 시 엔드포인트 해시로 재계산(`... else hash_new_k`)해, host/port 뿐 아니라
+            # insight 토글·password 등 **다른 필드만 바꿔도 친화 라벨이 매 편집마다 엔드포인트 해시로 되돌아가는**
+            # 회귀가 있었다(admin.js 는 라벨 변경 시에만 key 전송 → 일반 편집은 data.key 부재 → 해시 default 적용).
+            # 라벨은 이제 admin rename 가능한 단순 식별자이고(TASK-0216/0219), 엔드포인트 신원은 라벨이 아닌
+            # `compute_scope_key`(런타임 insight/RAG 스코핑)로 추적하므로 라벨을 엔드포인트에 종속시키면 안 된다.
+            # → explicit rename(body.key) 시에만 변경, 그 외(host/port 변경 포함) 현재 라벨(k) 유지.
+            # PasswordEnc AAD=DatasourceKey 이므로 키가 실제로 바뀔 때만(explicit rename) 재암호화.
             explicit_new_key = _ds_valid_key(data.get("key") or "") if data.get("key") else None
-            hash_new_k = _generate_datasource_key(new_engine, new_host, int(new_port or 0))
-            new_k = explicit_new_key if explicit_new_key and explicit_new_key != k else hash_new_k
+            new_k = explicit_new_key if (explicit_new_key and explicit_new_key != k) else k
             key_changed = (new_k != k)
 
             if data.get("password"):  # 비어있지 않을 때만 재암호화(write-only)
