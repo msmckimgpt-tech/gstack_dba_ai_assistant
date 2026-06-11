@@ -486,8 +486,8 @@ def _embed_query_vector(text: str) -> "Optional[list[float]]":
     if not model or not str(text or "").strip():
         return None
     try:
-        from .llm import _get_openai_client
-        client = _get_openai_client(model=model)
+        from .llm import _get_llm_client
+        client = _get_llm_client(model=model)
         if client is None:
             return None
         resp = client.embeddings.create(model=model, input=[text])

@@ -31,7 +31,7 @@ from rich.markdown import Markdown
 
 from modules import config as cfg
 from modules.config import (
-    OPENAI_MODEL, OPENAI_API_BASE,
+    OPENAI_MODEL,
     LLM_BASE_URL, LLM_API_KEY, LOCAL_LLM_API_KEY,
     DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_CONNECT_DB,
     MEMORY_DB, AGENT_TIMEOUT_SEC, AGENT_MAX_STEPS, AGENT_MAX_SHOW,

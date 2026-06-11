@@ -229,7 +229,6 @@ __all__ = [
     "LLM_BASE_URL",
     "LOCAL_LLM_API_BASE",
     "LOCAL_LLM_API_KEY",
-    "OPENAI_API_BASE",
     "OPENAI_MODEL",
     "OpenAI",
     "_inline_insight_on_ask_raw",
@@ -535,7 +534,8 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "claude-sonnet-4")
 # ── 로컬 LLM Gateway (구버전 호환 — Local LLM gateway 사용 시) ──
 LOCAL_LLM_API_BASE = os.getenv("LOCAL_LLM_API_BASE", "").strip() or None
 LOCAL_LLM_API_KEY = os.getenv("LOCAL_LLM_API_KEY", "").strip() or None
-OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "").strip() or None
+# TASK-0233: OPENAI_API_BASE 제거 — CHG-20260522-0006(OpenAI direct fallback 제거) 이후
+# 어디에서도 read 되지 않는 dead env. Bedrock 은 BEDROCK_GATEWAY_URL, 로컬은 LOCAL_LLM_API_BASE 사용.
 
 # ── AWS Bedrock gateway (feature-0007, LiteLLM proxy 경유) ──
 # 본 backend 는 BEDROCK_GATEWAY_URL / BEDROCK_GATEWAY_API_KEY 만 인지하며 AWS
@@ -556,7 +556,7 @@ def _select_llm_provider() -> tuple[str | None, str | None]:
     우선순위 (paired only):
     1. Bedrock gateway   — BEDROCK_GATEWAY_URL + BEDROCK_GATEWAY_API_KEY 둘 다.
     2. Local LLM gateway — LOCAL_LLM_API_BASE + LOCAL_LLM_API_KEY 둘 다.
-    3. 미설정            — (None, None). _get_openai_client() 가 None 반환.
+    3. 미설정            — (None, None). _get_llm_client() 가 None 반환.
 
     feature-0007 follow-up (CHG-20260522-0006): OpenAI direct fallback 제거.
     CHG-20260522-0010: OPENAI_API_KEY 변수 완전 제거.

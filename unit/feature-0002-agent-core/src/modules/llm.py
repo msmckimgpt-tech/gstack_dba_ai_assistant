@@ -24,6 +24,7 @@ __all__ = [
     "_compute_plan_timeout_sec",
     "_find_tool_name",
     "_generate_topic_from_request",
+    "_get_llm_client",
     "_get_openai_client",
     "_has_insight_objects",
     "_is_search_objects_step",
@@ -574,8 +575,10 @@ def _resolve_tier_endpoint(model: str | None) -> "tuple[str | None, str | None]"
     return (LLM_BASE_URL, LLM_API_KEY)
 
 
-def _get_openai_client(timeout_sec: int | None = None, model: str | None = None) -> OpenAI | None:
+def _get_llm_client(timeout_sec: int | None = None, model: str | None = None) -> OpenAI | None:
     # feature-0007: LLM 자격증명은 env 단일 소스. TASK-0129: model tier 로 endpoint 분기 + 캐시.
+    # TASK-0233: 함수명 _get_openai_client → _get_llm_client (실제 provider 는 Bedrock Claude;
+    # OpenAI 클래스는 OpenAI Chat Completions 규약 전송 클라이언트로만 사용). 구이름은 아래 alias 로 호환.
     if OpenAI is None:
         return None
     base_url, api_key = _resolve_tier_endpoint(model)
@@ -599,6 +602,11 @@ def _get_openai_client(timeout_sec: int | None = None, model: str | None = None)
         return client
     except Exception:
         return None
+
+
+# TASK-0233: deprecated alias — 구 호출처/외부 import (kb_retrieval, app.py) 및 앵커 불변식
+# 테스트 호환. 신규 코드는 _get_llm_client 사용. 다음 cycle 에 alias 제거 검토.
+_get_openai_client = _get_llm_client
 
 
 def _record_llm_usage(
@@ -669,7 +677,7 @@ def _openai_chat_completion_with_deadline(
 ):
     # TASK-0129 (#3): model 의 tier 에 맞는 client 로 재해석. caller 가 default client 를
     # 넘겨도 'edge'/'core' 는 local gateway, 'claude-*' 는 Bedrock 으로 보장 (라우팅 회귀 차단).
-    resolved = _get_openai_client(timeout_sec=timeout_sec, model=model)
+    resolved = _get_llm_client(timeout_sec=timeout_sec, model=model)
     if resolved is not None:
         client = resolved
     if client is None:
@@ -952,7 +960,7 @@ def llm_plan(
     knowledge: dict[str, Any] | None = None,
     timeout_sec: int | None = None,
 ) -> dict[str, Any] | None:
-    client = _get_openai_client(timeout_sec=timeout_sec)
+    client = _get_llm_client(timeout_sec=timeout_sec)
     if client is None:
         return None
 
@@ -1033,7 +1041,7 @@ def _is_search_objects_step(plan: dict[str, Any] | None) -> bool:
 
 def llm_validate_step(payload: dict[str, Any]) -> dict[str, Any] | None:
     _validation_model = AGENT_STEP_GRADE_MODEL or AGENT_SUMMARY_MODEL or OPENAI_MODEL
-    client = _get_openai_client(model=_validation_model)  # TASK-0135 (#3): 티어 라우팅
+    client = _get_llm_client(model=_validation_model)  # TASK-0135 (#3): 티어 라우팅
     if client is None:
         return None
 
@@ -1059,7 +1067,7 @@ def llm_validate_step(payload: dict[str, Any]) -> dict[str, Any] | None:
 
 def llm_update_summary(payload: dict[str, Any]) -> str | None:
     _summary_model = AGENT_SUMMARY_MODEL or OPENAI_MODEL
-    client = _get_openai_client(model=_summary_model)  # TASK-0135 (#3): 티어 라우팅
+    client = _get_llm_client(model=_summary_model)  # TASK-0135 (#3): 티어 라우팅
     if client is None:
         return None
 
@@ -1137,7 +1145,7 @@ def llm_classify_origin_shift(origin: str, current: str) -> str:
     """LLM을 사용하여 주제 전환 여부를 판별한다. 'shift', 'evolve', 또는 'continue' 반환."""
     _classify_timeout = 30
     _classify_model = AGENT_TASK_CLASSIFY_MODEL or AGENT_PLAN_MODEL or OPENAI_MODEL
-    client = _get_openai_client(timeout_sec=_classify_timeout, model=_classify_model)  # TASK-0135 (#3)
+    client = _get_llm_client(timeout_sec=_classify_timeout, model=_classify_model)  # TASK-0135 (#3)
     if client is None:
         return "continue"
     payload = {"origin": origin[:500], "current": current[:500]}
@@ -1184,7 +1192,7 @@ def llm_classify_origin_shift(origin: str, current: str) -> str:
 
 def llm_generate_topic(payload: dict[str, Any]) -> str | None:
     _topic_model = AGENT_TOPIC_MODEL or AGENT_SUMMARY_MODEL or OPENAI_MODEL
-    client = _get_openai_client(model=_topic_model)  # TASK-0135 (#3): 티어 라우팅
+    client = _get_llm_client(model=_topic_model)  # TASK-0135 (#3): 티어 라우팅
     if client is None:
         return None
 
@@ -1215,7 +1223,7 @@ def llm_generate_topic(payload: dict[str, Any]) -> str | None:
 
 def llm_fix_sql(payload: dict[str, Any]) -> str | None:
     _fix_model = AGENT_SQL_FIX_MODEL or OPENAI_MODEL
-    client = _get_openai_client(model=_fix_model)  # TASK-0135 (#3): 티어 라우팅
+    client = _get_llm_client(model=_fix_model)  # TASK-0135 (#3): 티어 라우팅
     if client is None:
         return None
 
@@ -1248,7 +1256,7 @@ def llm_schema_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
     # TASK-0135 (#3 fix): model 을 client 생성에 전달 — 직접 create 호출이 티어 라우터를
     # 우회해 edge 모델을 Bedrock 에 보내 400 폭증하던 버그(Task4 미커버 경로) 수정.
     _insight_model = AGENT_INSIGHT_MODEL or OPENAI_MODEL
-    client = _get_openai_client(timeout_sec=AGENT_INSIGHT_TIMEOUT_SEC, model=_insight_model)
+    client = _get_llm_client(timeout_sec=AGENT_INSIGHT_TIMEOUT_SEC, model=_insight_model)
     if client is None:
         return None
     try:
@@ -1285,7 +1293,7 @@ def llm_table_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
     # TASK-0135 (#3 fix): model 을 client 생성에 전달 — 직접 create 호출이 티어 라우터를
     # 우회해 edge 모델을 Bedrock 에 보내 400 폭증하던 버그(Task4 미커버 경로) 수정.
     _insight_model = AGENT_INSIGHT_MODEL or OPENAI_MODEL
-    client = _get_openai_client(timeout_sec=AGENT_INSIGHT_TIMEOUT_SEC, model=_insight_model)
+    client = _get_llm_client(timeout_sec=AGENT_INSIGHT_TIMEOUT_SEC, model=_insight_model)
     if client is None:
         return None
     try:

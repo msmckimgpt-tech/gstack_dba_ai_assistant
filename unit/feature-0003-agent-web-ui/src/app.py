@@ -15656,8 +15656,8 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
         }
     ]
 
-    from modules.llm import _get_openai_client
-    openai_client = _get_openai_client(model=llm_model)
+    from modules.llm import _get_llm_client
+    openai_client = _get_llm_client(model=llm_model)
     if openai_client is None:
         return _json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503)
 
