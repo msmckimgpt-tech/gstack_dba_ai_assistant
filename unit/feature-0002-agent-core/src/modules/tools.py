@@ -116,25 +116,36 @@ def _freeform_sql_access_error(sql: str) -> str | None:
 
     # ── TASK-0206 DB-단위 접근: MSSQL 은 catalog(DB) 가 접근 단위 ──────────────────
     if engine == "mssql" and active_ds:
-        # 연결은 제품 primary DB(default_db)로 pin → 2-part `schema.table` 은 그 DB(allowlist 내). 다른
-        # 허용 DB 는 3-part `db.schema.table`(cross-DB). 무자격(1-part)만 거부(스키마 명시 강제).
+        # 연결은 제품 primary DB(default_db)로 pin → 2-part `schema.table` 은 그 DB. 다른 허용 DB 는
+        # 3-part `db.schema.table`(cross-DB). 무자격(1-part)은 거부(스키마 명시 강제).
         if has_unqualified:
             return (
                 "오류: MSSQL 은 테이블을 최소 `스키마.테이블`(현재 DB) 또는 `데이터베이스.스키마.테이블`"
                 "(다른 허용 DB)로 명시해야 합니다 (무자격 테이블명 거부)."
             )
-        # 3-part catalog(DB) 를 **DB allowlist + 시스템 DB** 와 대조(2-part 는 pin 된 primary=allowlist 내).
-        # fail-closed: active datasource 에서 allow=None(미설정)도 빈 allowlist 로 취급 → 사용자 DB catalog 0,
-        # 시스템 DB 만 허용. (데이터 종속: 미바인딩=접근 0. 3-part cross-DB 가 None 을 우회하지 못하게 차단.)
         allow = _ACTIVE_SCHEMA_ALLOWLIST.get()
         allow_set = {str(a).strip().lower() for a in allow} if allow else set()
-        allowed_dbs = allow_set | _dialects.active().system_databases()
-        blocked = sorted(c for c in catalogs if c and c not in allowed_dbs)
+        # re-gate MAJOR6 (M1 보존): 시스템 DB(master/model/msdb/tempdb)는 freeform 조회 대상이 **아니다**.
+        # master.dbo.syslogins / sysdatabases, msdb.dbo.sysjobs 등 dbo 호환뷰가 sys 차단을 우회해 로그인·
+        # 작업 enumeration 을 유출하므로, catalog 허용집합에서 시스템 DB 를 제외(allow_set 만 — system_databases
+        # 미포함). 시스템 DB 는 UI 가시성(고정칩)일 뿐 데이터소스가 아니다.
+        # fail-closed: allow=None(미설정)도 빈 allowlist 로 취급(데이터 종속: 미바인딩=접근 0).
+        blocked = sorted(c for c in catalogs if c and c not in allow_set)
         if blocked:
             allowed_str = ", ".join(sorted(allow_set)) or "(없음)"
             return (
                 f"오류: 접근이 허용되지 않은 데이터베이스 참조: {', '.join(blocked)}. "
-                f"이 제품에 허용된 DB: {allowed_str} (+ 시스템 DB)."
+                f"이 제품에 허용된 DB: {allowed_str}."
+            )
+        # re-gate BLOCKER1: 2-part/스키마 참조는 pin 된 primary DB 로 암묵 해석된다. pin 이 allowlist 멤버가
+        # 아니면(또는 비었으면) 미허용 DB 가 2-part 로 새므로, 그런 참조가 있을 때 pin 의 allowlist 멤버십을 강제.
+        pinned = (_cfg.get_active_default_db() or "")
+        if schemas and not (pinned and pinned in allow_set):
+            allowed_str = ", ".join(sorted(allow_set)) or "(없음)"
+            return (
+                f"오류: 현재 연결 데이터베이스('{pinned or '미지정'}')가 이 제품의 접근 허용 목록에 없어 "
+                f"`스키마.테이블`(2-part) 참조를 거부합니다. 허용된 DB: {allowed_str} "
+                f"(다른 허용 DB 는 `데이터베이스.스키마.테이블` 3-part 로 조회)."
             )
         # 스키마(db part)는 allowlist 대조 안 함(DB 단위). 단 시스템 스키마(sys/guest/db_*)는 차단 — M1 보존
         # (master.sys.sql_logins 등 freeform 직접 조회 차단; RO GRANT 가 사용자 스키마 경계).
@@ -170,7 +181,14 @@ def _whitelist_violation(refs: set[str]) -> str | None:
 
     P6: 항상-허용 메타데이터 스키마는 활성 dialect 가 소유한다(MySQL=information_schema/mysql/
     sys/perf, MSSQL=sys/INFORMATION_SCHEMA 만 — db_* 역할 스키마는 allowlist 통과 필요).
+
+    re-gate BLOCKER4: 앱 내부 DB(`agent_memory`)는 allowlist 멤버십·allow=None 과 **무관하게 항상 차단**.
+    (관리자가 실수로 allowlist 에 넣어도, allow=None 레거시 경로라도 — RBAC/대화/PasswordHash 유출 방지.)
     """
+    internal = sorted({str(r).strip().lower() for r in refs
+                       if r and str(r).strip().lower() in _INTERNAL_SCHEMAS})
+    if internal:
+        return f"오류: 내부 데이터베이스 직접 조회가 차단되었습니다: {', '.join(internal)} (allowlist 무관 영구 차단)."
     allow = _ACTIVE_SCHEMA_ALLOWLIST.get()
     if allow is None:
         return None
@@ -197,6 +215,10 @@ def _struct_schema_access_error(schema: str) -> str | None:
       DB 의 객체는 freeform 3-part 로 탐색(구조화 도구는 primary DB 범위).
     """
     s = str(schema or "").strip().lower()
+    # re-gate BLOCKER4: 앱 내부 DB(agent_memory)는 구조화 도구에서도 allowlist 무관 영구 차단
+    # (get_sample_rows(schema_name="agent_memory", ...) → WebAccounts.PasswordHash 유출 경로 차단).
+    if s in _INTERNAL_SCHEMAS:
+        return f"오류: 내부 데이터베이스 직접 조회가 차단되었습니다: {s} (allowlist 무관 영구 차단)."
     if str(_dialects.active().name).lower() == "mssql" and _cfg_get_active_datasource():
         if s in _dialects.active().system_schemas():
             return f"오류: 시스템 스키마는 직접 접근할 수 없습니다: {s} (구조 탐색은 list_schemas 사용)."

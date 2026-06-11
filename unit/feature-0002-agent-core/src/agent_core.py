@@ -2052,29 +2052,38 @@ def _resolve_product_datasource(mem_conn, product_id):
             f"product {product_id} 의 datasource 키 '{key}' 가 미등록이거나 복호 불가입니다 "
             f"(WebDatasources / DS_{key.upper()}_* / KEK 확인)."
         )
-    # TASK-0206 DB-단위: MSSQL primary(pin) DB 도출 — 명시 DatasourceDatabase 우선, 없으면 제품의 **첫
-    # 접근가능 DB**(WebProductDatabases, SortOrder)를 자동 pin(사용자 결정: 첫 선택 DB). 2-part 쿼리·구조화
-    # 도구가 이 DB 범위. 다른 허용 DB 는 freeform 3-part(cross-DB). MySQL 은 default_db 미적용(db-prefixed).
-    primary_db = product_db
-    if not primary_db and (ds.get("engine") or "mysql").strip().lower() == "mssql":
+    # TASK-0206 DB-단위: MSSQL primary(pin) DB 도출. **보안 불변식(re-gate BLOCKER1)**: pin 되는 DB 는 반드시
+    # 제품 allowlist(WebProductDatabases) 멤버여야 한다 — 2-part `schema.table` 이 pin DB 로 암묵 해석되므로
+    # pin 이 allowlist 밖이면 미허용 DB 데이터가 2-part 로 샌다. 따라서:
+    #   - 명시 DatasourceDatabase 는 allowlist 에 있을 때만 채택(없으면 무시 — 레거시 값 우회 차단).
+    #   - 그 외엔 제품의 **첫 접근가능 DB**(SortOrder) 자동 pin(사용자 결정: 첫 선택 DB).
+    #   - allowlist 가 비면 pin 안 함(default_db 없음) → 빈 allowlist=접근 0 정합(2-part 도 가드가 차단).
+    if (ds.get("engine") or "mysql").strip().lower() == "mssql":
+        allow_dbs: list[str] = []
         try:
             cur = mem_conn.cursor()
             try:
                 cur.execute(
                     "SELECT SchemaName FROM WebProductDatabases WHERE ProductId=%s "
-                    "ORDER BY SortOrder, SchemaName LIMIT 1",
+                    "ORDER BY SortOrder, SchemaName",
                     (int(product_id),),
                 )
-                r = cur.fetchone()
-                if r and r[0]:
-                    primary_db = str(r[0]).strip()
+                allow_dbs = [str(r[0]).strip() for r in (cur.fetchall() or []) if r and r[0]]
             finally:
                 cur.close()
         except Exception:
-            primary_db = ""
-    if primary_db:
+            allow_dbs = []
+        allow_lower = {d.lower() for d in allow_dbs}
+        primary_db = ""
+        if product_db and product_db.lower() in allow_lower:
+            primary_db = product_db                       # 명시값이 allowlist 안일 때만
+        elif allow_dbs:
+            primary_db = allow_dbs[0]                      # 첫 접근가능 DB 자동 pin
         ds = dict(ds)
-        ds["default_db"] = primary_db
+        ds["default_db"] = primary_db                     # 빈 문자열이면 pin 없음(가드가 2-part 차단)
+    elif product_db:
+        ds = dict(ds)
+        ds["default_db"] = product_db
     return ds
 
 
@@ -2368,8 +2377,8 @@ def _run_agent_core(
                 f"\n- **Current (default) database**: `{_primary}` — use 2-part `schema.table` for it.\n"
                 f"- **Allowed databases** (use 3-part `db.schema.table` for the others): "
                 f"{', '.join('`' + d + '`' for d in _allow_dbs)}.\n"
-                f"- System databases (master/model/msdb/tempdb) are accessible but contain no business data; "
-                f"`sys`/`guest` schemas are blocked.\n"
+                f"- Only these databases are queryable. System databases (master/model/msdb/tempdb), the `sys`/"
+                f"`guest` schemas, and server-info functions (SERVERPROPERTY/SUSER_SNAME/…) are blocked.\n"
             )
     # Inject conversation context (origin_request + thread_goal)
     if prev_origin or thread_goal:

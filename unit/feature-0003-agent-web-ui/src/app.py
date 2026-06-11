@@ -3239,8 +3239,10 @@ def _seed_main_mysql_datasource(conn) -> None:
     key = "main_mysql"
     cur = conn.cursor()
     try:
-        cur.execute("SELECT 1 FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (key,))
-        exists = cur.fetchone() is not None
+        cur.execute("SELECT Host, DbUser, IsActive FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (key,))
+        row = cur.fetchone()
+        exists = row is not None
+        seeded_now = False
         if not exists:
             got = _dsr.ensure_dek(conn)
             if got is None:
@@ -3255,19 +3257,34 @@ def _seed_main_mysql_datasource(conn) -> None:
                 "EncryptionVersion,IsActive,UpdatedByAccountId) VALUES (%s,'mysql',%s,%s,%s,%s,NULL,%s,1,NULL)",
                 (key, DB_HOST, int(DB_PORT), user, pw_enc, int(ver)),
             )
+            seeded_now = True
             try:
                 logging.getLogger(__name__).info("[ds-seed] main_mysql 데이터소스 시드 완료 (host=%s)", DB_HOST)
             except Exception:
                 pass
-        # 마이그레이션: NULL/빈 바인딩 제품 → main_mysql (기존 데이터 MySQL 암묵접근 보존)
-        try:
-            cur.execute(
-                "UPDATE WebProducts SET DatasourceKey=%s "
-                "WHERE DatasourceKey IS NULL OR DatasourceKey=''",
-                (key,),
-            )
-        except Exception:
-            pass
+        # re-gate MAJOR7: NULL/빈 바인딩 제품 → main_mysql 일괄 마이그레이션은 **main_mysql 이 실제 데이터
+        # MySQL(.env 좌표)을 가리킬 때만** 수행. 운영자가 main_mysql 을 다른 호스트로 재설정했으면 일괄 바인딩이
+        # 의도치 않게 접근을 부여/박탈하므로 skip. (방금 시드한 경우는 좌표가 .env 와 일치하므로 항상 안전.)
+        migrate_ok = seeded_now
+        if exists and row is not None:
+            r_host = (str(row[0]).strip().lower() if row[0] else "")
+            r_user = (str(row[1]).strip() if len(row) > 1 and row[1] else "")
+            r_active = (int(row[2]) if len(row) > 2 and row[2] is not None else 1)
+            migrate_ok = (r_host == str(DB_HOST).strip().lower() and r_user == user and r_active == 1)
+            if not migrate_ok:
+                logging.getLogger(__name__).warning(
+                    "[ds-seed] main_mysql 이 데이터 MySQL(.env)과 불일치(host=%s user=%s active=%s) — "
+                    "NULL 제품 일괄 바인딩 skip(운영자 관리 데이터소스로 간주)", r_host, r_user, r_active,
+                )
+        if migrate_ok:
+            try:
+                cur.execute(
+                    "UPDATE WebProducts SET DatasourceKey=%s "
+                    "WHERE DatasourceKey IS NULL OR DatasourceKey=''",
+                    (key,),
+                )
+            except Exception:
+                pass
     except Exception:
         # 시드 실패는 부팅을 막지 않는다(레지스트리는 .env fallback 보유)
         try:
@@ -8097,8 +8114,14 @@ async def ask(request: Request) -> JSONResponse:
             except Exception:
                 role_id_for_run = None
         except Exception:
+            # re-gate BLOCKER5: product/allowlist 해석 중 예외 시 **fail-closed**. 과거엔 allowed=None 으로
+            # 폴백해 기본 MySQL 경로가 무제한(데이터 계정 GRANT 전체 DB) 접근으로 열렸다. None 대신 빈
+            # allowlist([])로 두어 qualified cross-DB 를 차단(auto 모드의 안전최소 패턴과 동일, line 위 참조).
+            logging.getLogger(__name__).error(
+                "ask: product/allowlist 해석 실패 — fail-closed(빈 allowlist) 적용", exc_info=True,
+            )
             product_id_for_run = None
-            allowed_schemas_for_run = None
+            allowed_schemas_for_run = []
             role_id_for_run = None
             product_mode_for_run = "pinned"
 
@@ -13535,6 +13558,13 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
             continue
         if not re.match(r"^[a-z_][a-z0-9_]{0,63}$", schema):
             return _json_error(f"invalid schema_name: {schema}", 400)
+        # re-gate BLOCKER4: 앱 내부 DB(agent_memory) 및 메타데이터 스키마는 allowlist 에 저장 불가
+        # (구조화 도구가 allowlist 멤버를 신뢰 → agent_memory.WebAccounts.PasswordHash 유출 경로 차단).
+        # 메타데이터는 항상-허용이라 allowlist 에 넣을 필요도 없다(중복 방지).
+        if schema in _DATABASES_AVAILABLE_INTERNAL:
+            return _json_error(f"내부 데이터베이스는 접근 목록에 추가할 수 없습니다: {schema}", 400)
+        if schema in _DATABASES_AVAILABLE_METADATA:
+            return _json_error(f"메타데이터 스키마는 항상 접근 가능하므로 추가할 수 없습니다: {schema}", 400)
         if schema in seen:
             continue
         seen.add(schema)

@@ -200,7 +200,7 @@ def test_freeform_cross_db_catalog_rejected():
     """TASK-0206 DB-단위: allowlist 는 **DB명(catalog)**. 허용 DB(appdb) 의 3-part 는 통과,
     미허용 DB(otherdb) 는 차단. 2-part(catalog 없음)는 pin 된 primary(appdb) 로 해석돼 통과."""
     def check():
-        cfg.set_active_datasource("prod", engine="mssql")
+        cfg.set_active_datasource("prod", engine="mssql", default_db="appdb")  # pin ∈ allowlist
         tools.set_active_schema_allowlist(["appdb", "gamelog_151"])  # DB 이름 allowlist
         # 미허용 DB 차단
         err = tools._freeform_sql_access_error("SELECT * FROM otherdb.dbo.t")
@@ -217,21 +217,68 @@ def test_freeform_cross_db_catalog_rejected():
     _run_isolated(check)
 
 
-def test_freeform_system_db_catalog_allowed_but_sys_schema_blocked():
-    """TASK-0206 M1 보존: 시스템 DB(master)는 catalog 차원 허용(master.dbo.x 통과)하되,
-    sys 스키마(master.sys.sql_logins 로그인 enumeration)는 계속 차단."""
+def test_freeform_system_db_not_queryable_m1():
+    """re-gate MAJOR6 M1 보존: 시스템 DB(master/model/msdb)는 freeform 조회 대상이 아니다 — dbo 호환뷰
+    (master.dbo.syslogins/sysdatabases, msdb.dbo.sysjobs)가 sys 차단을 우회해 로그인·작업 enumeration 하므로
+    catalog 자체를 차단. 시스템 함수(SERVERPROPERTY/SUSER_SNAME)도 denylist."""
     def check():
         cfg.set_active_datasource("prod", engine="mssql")
-        tools.set_active_schema_allowlist(["appdb"])  # master 는 allowlist 에 없지만 system_databases()
-        # 시스템 DB catalog 는 허용(완결성)
-        ok = tools._freeform_sql_access_error("SELECT * FROM master.dbo.spt_values")
-        assert ok is None, ok
-        # 그러나 sys 스키마 직접 조회는 차단(M1: sql_logins 유출 표면)
-        err = tools._freeform_sql_access_error("SELECT name FROM master.sys.sql_logins")
-        assert err is not None and "시스템 스키마" in err
-        # 2-part sys 도 차단
-        err2 = tools._freeform_sql_access_error("SELECT * FROM sys.objects")
-        assert err2 is not None
+        tools.set_active_schema_allowlist(["appdb"])
+        import modules.config as _c
+        _c._ACTIVE_DEFAULT_DB.set("appdb")
+        # 시스템 DB catalog 는 조회 불가(M1) — dbo 호환뷰 유출 차단
+        for sql in (
+            "SELECT * FROM master.dbo.spt_values",
+            "SELECT name FROM master.dbo.syslogins",
+            "SELECT name FROM master.dbo.sysdatabases",
+            "SELECT name FROM msdb.dbo.sysjobs",
+        ):
+            err = tools._freeform_sql_access_error(sql)
+            assert err is not None, f"시스템 DB 조회가 통과됨: {sql}"
+        # sys 스키마 직접 조회(2-part)도 차단
+        assert tools._freeform_sql_access_error("SELECT * FROM sys.objects") is not None
+        # 시스템 정보 함수는 sql_guard denylist 로 차단
+        for sql in ("SELECT SERVERPROPERTY('MachineName')", "SELECT SUSER_SNAME()", "SELECT SYSTEM_USER"):
+            r = validate_sql_for_sandbox(sql, forbidden_schemas=AGENT_FORBIDDEN, dialect="tsql")
+            assert not r.ok, f"시스템 정보 함수가 통과됨: {sql}"
+    _run_isolated(check)
+
+
+def test_freeform_3part_function_cross_db_blocked():
+    """re-gate BLOCKER2: 미허용 DB 의 scalar/TVF 함수호출(3-part)도 catalog 검사로 차단."""
+    def check():
+        cfg.set_active_datasource("prod", engine="mssql")
+        tools.set_active_schema_allowlist(["appdb"])
+        import modules.config as _c
+        _c._ACTIVE_DEFAULT_DB.set("appdb")
+        assert tools._freeform_sql_access_error("SELECT forbidden.dbo.fnLeak()") is not None
+        assert tools._freeform_sql_access_error("SELECT * FROM forbidden.dbo.fnTvf()") is not None
+        # 허용 DB 함수는 통과
+        assert tools._freeform_sql_access_error("SELECT appdb.dbo.fn()") is None
+    _run_isolated(check)
+
+
+def test_freeform_2part_blocked_when_pin_not_allowlisted():
+    """re-gate BLOCKER1: pin 된 primary DB 가 allowlist 밖이면 2-part 참조 거부(미허용 DB 2-part 유출 차단)."""
+    def check2():
+        cfg.set_active_datasource("prod", engine="mssql")
+        tools.set_active_schema_allowlist(["appdb"])
+        import modules.config as _c
+        _c._ACTIVE_DEFAULT_DB.set("secret_db")  # pin ∉ allowlist
+        err = tools._freeform_sql_access_error("SELECT * FROM dbo.Secrets")
+        assert err is not None and "허용 목록" in err
+    _run_isolated(check2)
+
+
+def test_struct_tool_agent_memory_hard_blocked():
+    """re-gate BLOCKER4: 구조화 도구·_whitelist_violation 은 agent_memory 를 allowlist 와 무관하게 영구 차단."""
+    def check():
+        cfg.set_active_datasource(None)  # mysql
+        tools.set_active_schema_allowlist(["agent_memory", "dblog"])  # admin 실수로 추가됨
+        assert tools._struct_schema_access_error("agent_memory") is not None
+        assert tools._whitelist_violation({"agent_memory"}) is not None
+        tools.set_active_schema_allowlist(None)  # 레거시 allow=None 경로
+        assert tools._whitelist_violation({"agent_memory"}) is not None
     _run_isolated(check)
 
 
@@ -247,17 +294,17 @@ def test_freeform_agent_memory_3part_blocked_db_level():
 
 def test_freeform_none_allowlist_fail_closed_mssql():
     """TASK-0206 fail-closed: active MSSQL datasource 에서 allowlist=None(미설정)도 빈 allowlist 로
-    취급 — 사용자 DB 3-part 차단(시스템 DB·2-part 만 허용). None 우회 cross-DB 차단."""
+    취급 — 사용자 DB 3-part·시스템 DB·2-part 모두 차단(데이터 종속: 미바인딩=접근 0)."""
     def check():
         cfg.set_active_datasource("prod", engine="mssql")
         tools.set_active_schema_allowlist(None)  # 미설정
-        # 사용자 DB 3-part 차단(데이터 종속 — 미바인딩=접근 0)
+        # 사용자 DB 3-part 차단
         err = tools._freeform_sql_access_error("SELECT * FROM userdb.dbo.t")
         assert err is not None and "userdb" in err
-        # 시스템 DB 는 여전히 허용(완결성)
-        assert tools._freeform_sql_access_error("SELECT * FROM master.dbo.spt_values") is None
-        # 2-part(catalog 없음 — pin 된 primary)는 허용
-        assert tools._freeform_sql_access_error("SELECT * FROM dbo.t") is None
+        # 시스템 DB 도 조회 불가(M1 — re-gate MAJOR6)
+        assert tools._freeform_sql_access_error("SELECT * FROM master.dbo.spt_values") is not None
+        # 2-part 도 차단(pin 없음/allowlist 비어 access 0 — re-gate BLOCKER1)
+        assert tools._freeform_sql_access_error("SELECT * FROM dbo.t") is not None
     _run_isolated(check)
 
 
@@ -332,11 +379,12 @@ def test_mysql_metadata_still_allows_sys_golden():
 # ──────────────────────────────────────────────────────────────────────────
 def test_load_gate_fail_closed_on_mssql_gate_mode():
     def check():
-        cfg.set_active_datasource("prod", engine="mssql")
-        tools.set_active_schema_allowlist(["dbo"])
+        # pin=appdb ∈ allowlist → 접근검사 통과 후 gate(EXPLAIN 미지원) fail-closed 도달.
+        cfg.set_active_datasource("prod", engine="mssql", default_db="appdb")
+        tools.set_active_schema_allowlist(["appdb"])
         with mock.patch.object(cfg, "AGENT_QUERY_GUARD_MODE", "gate"), \
              mock.patch.object(cfg, "DATASOURCES", {"prod": {"key": "prod", "default_db": "appdb"}}):
-            out = tools._tool_execute_sql(mock.MagicMock(), {"sql": "SELECT c FROM dbo.t"})
+            out = tools._tool_execute_sql(mock.MagicMock(), {"sql": "SELECT c FROM appdb.dbo.t"})
             assert "사전 차단" in out  # fail-closed 메시지
     _run_isolated(check)
 
@@ -345,12 +393,12 @@ def test_load_gate_mssql_confirm_heavy_does_not_override():
     """REV-0201 M2: MSSQL gate 하드차단은 confirm_heavy=true(TRUST_LLM=true 라도)로 우회 불가 —
     추정치 없는 맹목 confirm 은 근거 없는 자기우회라 무력화한다."""
     def check():
-        cfg.set_active_datasource("prod", engine="mssql")
-        tools.set_active_schema_allowlist(["dbo"])
+        cfg.set_active_datasource("prod", engine="mssql", default_db="appdb")
+        tools.set_active_schema_allowlist(["appdb"])
         with mock.patch.object(cfg, "AGENT_QUERY_GUARD_MODE", "gate"), \
              mock.patch.object(cfg, "AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM", True), \
              mock.patch.object(cfg, "DATASOURCES", {"prod": {"key": "prod", "default_db": "appdb"}}):
-            out = tools._tool_execute_sql(mock.MagicMock(), {"sql": "SELECT c FROM dbo.t", "confirm_heavy": "true"})
+            out = tools._tool_execute_sql(mock.MagicMock(), {"sql": "SELECT c FROM appdb.dbo.t", "confirm_heavy": "true"})
             assert "사전 차단" in out  # confirm_heavy 로도 우회 불가(하드 차단)
             assert "confirm_heavy" not in out  # 메시지가 우회법을 광고하지 않음
     _run_isolated(check)

@@ -69,6 +69,33 @@ master/model/msdb/tempdb)는 기본 포함.
 - D UI 재구성.
 - E 테스트 + outside-voice 재게이트(P6 경계 변경) + 배포 + 라이브 e2e.
 
+## 4.5 outside-voice 재게이트 결과(Codex, NOT SHIP → 수정 후 재검)
+
+초기 구현은 적대적 리뷰에서 **NOT SHIP**(BLOCKER 5 + MAJOR 2). 수정 반영:
+
+- **BLOCKER1 (pin ∉ allowlist 2-part 유출)**: `_resolve_product_datasource` 가 pin DB 를 **반드시 allowlist 멤버**로
+  강제(명시 DatasourceDatabase 도 allowlist 검증 후 채택, 아니면 첫 접근가능 DB). freeform 가드도 2-part 참조 시
+  `_ACTIVE_DEFAULT_DB ∈ allowlist` 를 재확인(이중).
+- **BLOCKER2 (3-part 함수 catalog 우회)**: `sql_guard.collect_schema_refs` 가 TVF-in-FROM(name='' but catalog) +
+  Dot-체인 함수(`db.schema.fn()`)의 catalog/schema 도 수집 → cross-DB 검사 대상에 합류.
+- **BLOCKER4 (agent_memory)**: `_whitelist_violation`·`_struct_schema_access_error` 가 `_INTERNAL_SCHEMAS` 를
+  **allowlist·allow=None 무관 영구 차단**. admin `PUT /products/{id}/databases` 도 internal/metadata 이름 거부.
+- **BLOCKER5 (조회오류 fail-open)**: product/allowlist 해석 예외 시 `allowed=[]`(빈 allowlist) fail-closed
+  (과거 `None` → 데이터계정 GRANT 전체 DB 무제한 접근).
+- **MAJOR6 (M1 미보존)**: **결정 변경** — 시스템 DB(master/model/msdb/tempdb)는 **freeform 조회 대상에서 제외**.
+  dbo 호환뷰(`master.dbo.syslogins`/`sysdatabases`, `msdb.dbo.sysjobs`)가 sys 차단을 우회해 로그인·작업
+  enumeration 을 유출하기 때문. "시스템 DB 포함"은 **UI 가시성(고정칩)** 의미로 한정(메타데이터처럼 보이되
+  데이터소스 아님). 시스템 정보 함수(SERVERPROPERTY/SUSER_SNAME/SYSTEM_USER/IS_SRVROLEMEMBER 등)도 denylist.
+- **MAJOR7 (시드 일괄바인딩)**: NULL→main_mysql 마이그레이션은 main_mysql 좌표가 .env 데이터 MySQL(host/user)과
+  **일치할 때만** 수행(운영자가 재설정했으면 skip).
+
+### BLOCKER3 — synonym/view/linked-server 간접참조는 GRANT 가 hard boundary (잔존·문서화)
+AST 는 synonym/view 의 실제 대상 DB 를 해석하지 못한다(`dbo.synonym_to_other` → 현재 DB 객체로만 보임).
+따라서 **앱-레이어 allowlist 는 soft boundary** 이고, 진짜 격리는 **datasource RO 로그인의 GRANT 범위**다.
+**배포 요구사항**: 한 datasource 의 RO 로그인은 그 datasource 를 쓰는 제품들이 접근해야 하는 DB 에만 GRANT 한다.
+서로 다른 격리 경계가 필요한 제품군은 **각각 별도 datasource(별도 RO 로그인)** 로 분리한다(동일 로그인에 여러
+제품 DB GRANT 를 몰면 synonym/view/함수로 제품간 교차참조가 가능). `bin/datasource-mssql-ro-bootstrap.sql` 참조.
+
 ## 5. 위험
 - **데이터 종속 전환 = 기존 NULL 바인딩 제품 접근 0** → 데이터 MySQL 시드 + 기존 제품 자동 바인딩(또는 운영자 안내) 필요.
   마이그레이션: 기존 NULL 바인딩 제품을 main_mysql 로 일괄 바인딩(기존 WebProductDatabases DB명 보존).

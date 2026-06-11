@@ -104,6 +104,14 @@ _DENYLIST_PATTERNS_TSQL: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bEXEC(UTE)?\b", re.IGNORECASE),        # 동적 실행/proc 호출
     re.compile(r"\bINTO\s+", re.IGNORECASE),             # SELECT ... INTO newtbl (부수효과: 테이블 생성)
     re.compile(r"@@", re.IGNORECASE),                    # @@VERSION 등 시스템변수 정보유출
+    # re-gate MAJOR6: 서버/로그인 정체성·역할 enumeration 시스템함수(테이블참조 없이 정보유출). sqlglot 이
+    # SUSER_SNAME 을 CurrentUser 노드로 정규화해 Func-name 검출을 빠져나가므로 텍스트 regex 로 박제.
+    re.compile(
+        r"\b(SERVERPROPERTY|SUSER_SNAME|SUSER_NAME|SUSER_ID|SUSER_SID|SYSTEM_USER|SESSION_USER"
+        r"|ORIGINAL_LOGIN|IS_SRVROLEMEMBER|IS_MEMBER|CONNECTIONPROPERTY|CONTEXT_INFO|HOST_NAME"
+        r"|HOST_ID|CURRENT_USER|FN_MY_PERMISSIONS|LOGINPROPERTY|SUSER_SNAME)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"/\*\+\s*[^*]*\*/"),                     # optimizer hint 주석
     re.compile(r"--[ \t]*[^\n]*", re.MULTILINE),         # line comment (audit only)
 )
@@ -174,8 +182,50 @@ def _collect_table_refs(node) -> list[tuple[str, str, str]]:
         catalog = (table.catalog or "").strip().lower()
         db = (table.db or "").strip().lower()
         name = (table.name or "").strip().lower()
-        if name:
+        # re-gate BLOCKER2: TVF-in-FROM(`forbidden.dbo.fnTvf()`)은 this=Anonymous 라 name='' 이지만
+        # catalog(forbidden)/db(dbo)가 채워진다 — name 비어도 catalog/db 가 있으면 수집해 cross-DB 검사 대상.
+        if name or catalog or db:
             out.append((catalog, db, name))
+    return out
+
+
+def _collect_qualified_func_refs(node) -> list[tuple[str, str]]:
+    """re-gate BLOCKER2: 3-part **함수호출**(`catalog.schema.fn()`)의 (catalog, schema) 추출.
+
+    `SELECT forbidden.dbo.fnLeak()` 은 sqlglot 에서 Table 노드가 아니라 Dot 체인
+    `Dot(Dot(Id(forbidden), Id(dbo)), Anonymous(fnLeak))` 로 파싱돼 `_collect_table_refs` 가 못 잡는다.
+    말단이 함수(Func/Anonymous)인 Dot 의 앞쪽 식별자 체인을 namespace 로 보고 catalog(DB)/schema 를 뽑아
+    cross-DB allowlist 검사 대상에 포함시킨다(미허용 DB 의 scalar/TVF 우회 차단).
+    """
+    if _exp is None:
+        return []
+    out: list[tuple[str, str]] = []
+
+    def _idents(n, acc):
+        if n is None:
+            return
+        if isinstance(n, _exp.Dot):
+            _idents(n.args.get("this"), acc)
+            e = n.args.get("expression")
+            if isinstance(e, _exp.Identifier):
+                acc.append((e.name or "").strip().lower())
+        elif isinstance(n, _exp.Identifier):
+            acc.append((n.name or "").strip().lower())
+        elif isinstance(n, _exp.Column):
+            for part in ("catalog", "db", "table"):
+                p = n.args.get(part)
+                if isinstance(p, _exp.Identifier):
+                    acc.append((p.name or "").strip().lower())
+
+    for dot in node.find_all(_exp.Dot):
+        expr = dot.args.get("expression")
+        if isinstance(expr, (_exp.Func, _exp.Anonymous)):
+            acc: list[str] = []
+            _idents(dot.args.get("this"), acc)
+            acc = [a for a in acc if a]
+            if len(acc) >= 2:
+                # 마지막 2개 = (catalog, schema) — 예: [forbidden, dbo] → catalog=forbidden, schema=dbo
+                out.append((acc[-2], acc[-1]))
     return out
 
 
@@ -207,13 +257,20 @@ def collect_schema_refs(
     for stmt in parsed:
         if stmt is None:
             continue
-        for catalog, db, _name in _collect_table_refs(stmt):
+        for catalog, db, name in _collect_table_refs(stmt):
             if db:
                 schemas.add(db)
-            else:
+            elif name:
+                # name 만 있는 무자격 테이블(스키마 미지정) — fail-closed 대상. catalog/db-only(TVF)은 제외.
                 has_unqualified = True
             if catalog:
                 catalogs.add(catalog)
+        # re-gate BLOCKER2: 3-part 함수호출의 catalog/schema 도 cross-DB 검사 대상에 합류.
+        for fcatalog, fschema in _collect_qualified_func_refs(stmt):
+            if fschema:
+                schemas.add(fschema)
+            if fcatalog:
+                catalogs.add(fcatalog)
     return (schemas, has_unqualified, catalogs)
 
 
