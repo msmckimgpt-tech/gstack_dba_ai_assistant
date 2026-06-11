@@ -15656,11 +15656,14 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
     if openai_client is None:
         return _json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503)
 
-    _mt = max_tokens_for_model(llm_model, "summary")
+    # TASK-0232: 자동작성은 "완성된 시스템 프롬프트 본문" 을 생성하므로 짧은 요약용
+    # "summary" cap(Claude 7000 / 로컬 512) 으로는 본문이 중간에 잘렸다. 긴 본문 전용
+    # "prompt_gen" cap(Claude 20000 / 로컬 3072) 을 사용한다.
+    _mt = max_tokens_for_model(llm_model, "prompt_gen")
     create_kwargs: dict = {
         "model": llm_model,
         "messages": messages,
-        "timeout": 55,
+        "timeout": 90,
     }
     if _mt is not None:
         create_kwargs["max_tokens"] = _mt
@@ -15671,7 +15674,17 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
         resp = await asyncio.get_event_loop().run_in_executor(
             None, lambda: openai_client.chat.completions.create(**create_kwargs)
         )
-        generated = resp.choices[0].message.content or ""
+        choice = resp.choices[0]
+        generated = choice.message.content or ""
+        # TASK-0232: max_tokens 도달로 본문이 잘렸는지 명시 검출 — 조용한 잘림(사용자가
+        # 잘린 줄 모름) 방지. 잘렸으면 meta.truncated=True 로 admin UI 가 경고 표시.
+        finish_reason = getattr(choice, "finish_reason", None)
+        truncated = finish_reason == "length"
+        if truncated:
+            logging.getLogger(__name__).warning(
+                "admin_generate_product_prompt truncated (finish_reason=length, model=%s, max_tokens=%s, product_id=%s)",
+                llm_model, _mt, product_id,
+            )
     except Exception as llm_exc:
         return _json_error(f"LLM 생성 실패: {llm_exc}", 502)
 
@@ -15686,6 +15699,7 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
                 "topic_count": len(topic_lines),
                 "summary_count": len(summary_lines),
                 "grounded": has_insights,
+                "truncated": truncated,
             },
         }
     )

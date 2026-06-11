@@ -158,6 +158,7 @@ _LOCAL_LLM_MAX_TOKENS: dict[str, int] = {
     "insight": 1024,   # 인사이트: JSON 출력, reasoning ~700 + content ~200
     "agent": 2048,     # 에이전트 루프: tool calls + 복잡한 응답
     "summary": 512,    # 요약/토픽: 짧은 출력
+    "prompt_gen": 3072,  # 제품 시스템 프롬프트 자동작성: 완성된 본문(스키마·테이블·가이드) — 4K 컨텍스트 내 최대 (TASK-0232)
     "sql_fix": 1024,   # SQL 수정: 중간 복잡도
     "validate": 512,   # 스텝 검증: 짧은 JSON
 }
@@ -172,6 +173,7 @@ _CLAUDE_MAX_TOKENS: dict[str, int] = {
     "insight": 18000,  # thinking(≤16000) + 인사이트 JSON 출력
     "agent": 20000,    # thinking(≤16000) + agent loop tool calls + 복잡한 응답
     "summary": 7000,   # thinking(≤5000, haiku) + 요약 출력
+    "prompt_gen": 20000,  # thinking + 완성된 제품 시스템 프롬프트 본문 — "summary"(7000) 로는 본문이 중간 잘림 (TASK-0232)
     "sql_fix": 18000,  # thinking + SQL 수정
     "validate": 7000,  # thinking + step validation
 }

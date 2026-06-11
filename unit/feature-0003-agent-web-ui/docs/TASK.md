@@ -3360,3 +3360,30 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] run 전환 시 Set clear (resetProgressTracking + applyProgressPayload)
 - [x] node --check PASS + 캐시버스터 bump
 - [ ] verify-completion → 머지 → web 재배포 → PB-0008 시각검증
+
+### TASK-0232 — 제품 프롬프트 "자동 작성" 결과 중간 잘림 해소 (2026-06-11)
+
+**Major §12.3** (외부 LLM 비용 영향 — 출력 토큰 cap 상향; feature-0002 model_catalog + feature-0003 app.py/admin.js/styles.css 교차). (CHG-20260611-0232) — 동시세션 insight-reset cycle 이 TASK-0231 선점→§13.1 재번호 0231→0232.
+
+#### 진단
+사용자 보고: `관리 콘솔 > 제품 > [각 제품] > 제품 프롬프트 > 자동작성` 으로 받은 텍스트가 글자 수 제한으로 중간에 잘린다.
+
+근본 원인: 저장 컬럼(`WebSystemPrompts.Content` = MEDIUMTEXT)·프론트 textarea(maxlength 없음) 둘 다 제약 아님. 진짜 원인은 `admin_generate_product_prompt`([app.py](../src/app.py) 14877)가 출력 토큰 상한을 `max_tokens_for_model(llm_model, "summary")` 로 잡은 것. `"summary"` 는 짧은 요약/토픽용 프로파일(Claude 7000 / 로컬 512)이라 "완성된 시스템 프롬프트 본문"을 담기엔 부족. 웹 기본 모델 `claude-haiku-4` 기준 7000 cap 에서 extended-thinking budget(≤5000)을 빼면 실본문 ~2000 토큰 → 중간 잘림. 게다가 `finish_reason` 미검사로 잘린 채 조용히 반환(사용자가 잘린 줄 모름).
+
+#### 수정
+- [model_catalog.py](../../feature-0002-agent-core/src/modules/model_catalog.py): 긴 본문 전용 `"prompt_gen"` cap 신설 — Claude 20000(thinking 차감 후 ≥4000 본문 여유) / 로컬 LLM 3072(4K 컨텍스트 내 최대). 비용 통제 위해 무제한 아닌 명시 cap 유지.
+- [app.py](../src/app.py): ① 자동작성 호출부 `"summary"`→`"prompt_gen"`, timeout 55→90s. ② `finish_reason == "length"` 잘림 검출 → `meta.truncated` 플래그 + warning 로그.
+- [admin.js](../src/static/admin.js) + [styles.css](../src/static/styles.css): `truncated` 시 "출력 길이 제한 도달, 잘렸을 수 있음 — 재생성 권장" 경고 표시(`.admin-meta-warn`, `--warning` 색).
+
+#### 완료 판정 기준
+- AC1: 인사이트가 풍부한 제품에서 자동작성 시 시스템 프롬프트 본문이 중간에 끊기지 않고 완결된다.
+- AC2: 출력이 그래도 cap 에 도달하면 admin UI 가 "잘렸을 수 있음" 경고를 표시(조용한 잘림 없음).
+- AC3: 토큰 cap 외 권한/스키마/엔드포인트 shape 변경 0.
+- AC4: 신규 테스트 PASS(prompt_gen cap 단조성 + truncated 검출) + node --check + PB-0008 시각검증.
+
+#### 작업 항목
+- [x] model_catalog.py prompt_gen cap 신설 (Claude 20000 / 로컬 3072)
+- [x] app.py 호출부 summary→prompt_gen + finish_reason 잘림 가드 + meta.truncated
+- [x] admin.js + styles.css truncated 경고 표시
+- [x] 신규 테스트 9 PASS + node --check admin.js PASS
+- [ ] verify-completion → 머지 → web 재배포 → PB-0008 시각검증

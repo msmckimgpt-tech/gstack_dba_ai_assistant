@@ -4071,6 +4071,11 @@ a { color: inherit; }
   font-weight: 600;
 }
 
+/* TASK-0232: 자동작성 결과가 출력 토큰 상한에 도달해 잘렸을 때의 경고색. */
+.admin-meta.admin-meta-warn {
+  color: var(--warning, #d97706);
+}
+
 /* ── TASK-0223: insight 분석 완료율 (목록 배지 + 상세 breakdown) ───────────── */
 .admin-meta.cov-line { margin-top: 2px; }
 .cov-badge {
