@@ -1443,9 +1443,11 @@ function _dsRenderForm(ds) {
     saveBtn.disabled = true;
     try {
       if (isEdit) {
-        await apiFetch(`/api/admin/datasources/${encodeURIComponent(ds.key)}`, { method: "PATCH", body: JSON.stringify(body) });
-        showToast(`데이터소스 '${ds.key}' 수정됨`);
-        adminState._dsSelectedKey = ds.key;
+        const updated = await apiFetch(`/api/admin/datasources/${encodeURIComponent(ds.key)}`, { method: "PATCH", body: JSON.stringify(body) });
+        // 호스트/포트 변경 시 키(해시)도 변경됨 — 응답의 key 로 선택 동기화.
+        const updatedKey = (updated && updated.key) || ds.key;
+        showToast(`데이터소스 '${updatedKey}' 수정됨`);
+        adminState._dsSelectedKey = updatedKey;
       } else {
         const created = await apiFetch(`/api/admin/datasources`, { method: "POST", body: JSON.stringify(body) });
         // 서버가 엔진+호스트+포트 해시로 key 를 자동 생성해 응답 — 그 canonical key 로 자동 선택.

@@ -3271,14 +3271,32 @@ def _seed_main_mysql_datasource(conn) -> None:
     cur = conn.cursor()
     try:
         # 레거시 `main_mysql` 키가 존재하면 해시 키로 rename (운영 연속성 보장).
-        cur.execute("SELECT 1 FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (legacy_key,))
-        if cur.fetchone():
+        cur.execute(
+            "SELECT PasswordEnc, EncryptionVersion FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1",
+            (legacy_key,),
+        )
+        legacy_row = cur.fetchone()
+        if legacy_row:
             cur.execute("SELECT 1 FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (key,))
             if not cur.fetchone():
-                # 해시 키 미존재 → rename
+                # 해시 키 미존재 → rename.
+                # PasswordEnc는 AAD=DatasourceKey로 암호화되어 있어 키 rename 시 재암호화 필요.
+                new_pw_enc = legacy_row[0]
+                new_enc_ver = legacy_row[1]
+                got = _dsr.ensure_dek(conn)
+                if got is not None:
+                    ver, dek = got
+                    try:
+                        old_plain = _cc.decrypt_password(dek, legacy_row[0], legacy_key) if legacy_row[0] else None
+                        if old_plain is not None:
+                            new_pw_enc = _cc.encrypt_password(dek, old_plain, key)
+                            new_enc_ver = int(ver)
+                    except Exception:
+                        pass  # 복호 실패 시 기존 암호문 유지(연결 테스트 실패로 드러남)
                 cur.execute(
-                    "UPDATE WebDatasources SET DatasourceKey=%s WHERE DatasourceKey=%s",
-                    (key, legacy_key),
+                    "UPDATE WebDatasources SET DatasourceKey=%s, PasswordEnc=%s, EncryptionVersion=%s"
+                    " WHERE DatasourceKey=%s",
+                    (key, new_pw_enc, new_enc_ver, legacy_key),
                 )
                 cur.execute(
                     "UPDATE WebProducts SET DatasourceKey=%s WHERE DatasourceKey=%s",
@@ -3286,7 +3304,7 @@ def _seed_main_mysql_datasource(conn) -> None:
                 )
                 try:
                     logging.getLogger(__name__).info(
-                        "[ds-seed] main_mysql → %s 키 마이그레이션 완료", key,
+                        "[ds-seed] main_mysql → %s 키 마이그레이션 완료 (패스워드 재암호화)", key,
                     )
                 except Exception:
                     pass
@@ -10018,19 +10036,29 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
             return _json_error("키 형식 오류.", 400)
         cur = conn.cursor()
         try:
-            cur.execute("SELECT Id FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (k,))
-            if not cur.fetchone():
+            cur.execute(
+                "SELECT Engine, Host, Port, PasswordEnc, EncryptionVersion FROM WebDatasources"
+                " WHERE DatasourceKey=%s LIMIT 1",
+                (k,),
+            )
+            existing = cur.fetchone()
+            if not existing:
                 return _json_error("datasource not found (DB 등록분만 수정 가능, .env 는 운영자 편집).", 404)
+            cur_engine, cur_host, cur_port, cur_pw_enc, cur_enc_ver = existing
+
             sets, params = [], []
+            new_engine = cur_engine
             if "engine" in data:
                 eng = str(data.get("engine") or "").strip().lower()
                 if eng not in ("mysql", "mssql"):
                     return _json_error("engine 은 mysql|mssql.", 400)
                 sets.append("Engine=%s"); params.append(eng)
+                new_engine = eng
             # TASK-0212: 수정 폼이 모든 필드를 항상 전송하므로(빈값 포함), **필수/구성 필드는 빈값일 때
             # 갱신하지 않고 기존값을 보존**한다(write-only-when-provided). 특히 GET 은 보안상 user 를
             # 마스킹(B3)해 폼이 pre-fill 못 하므로, 빈 user 를 그대로 쓰면 DbUser 가 wipe 돼 연결 테스트가
             # 실패한다(회귀). host/user 는 필수, default_db 는 구성값 — 빈값=유지(실수 wipe 방지).
+            new_host = cur_host
             if "host" in data:
                 host = str(data.get("host") or "").strip()
                 if host:  # 빈 host 무시(필수 — 기존 유지)
@@ -10038,9 +10066,13 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
                     if not okssrf:
                         return _json_error(f"호스트 차단(SSRF): {reason}", 400)
                     sets.append("Host=%s"); params.append(host)
+                    new_host = host
+            new_port = cur_port
             if "port" in data and str(data.get("port") or "").strip():
                 try:
-                    sets.append("Port=%s"); params.append(int(data.get("port")))
+                    p = int(data.get("port"))
+                    sets.append("Port=%s"); params.append(p)
+                    new_port = p
                 except Exception:
                     return _json_error("port 정수 오류.", 400)
             if "user" in data and str(data.get("user") or "").strip():
@@ -10051,6 +10083,11 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
             # TASK-0215: insight-worker 탐색 토글.
             if "insight_enabled" in data:
                 sets.append("InsightEnabled=%s"); params.append(1 if data.get("insight_enabled") else 0)
+
+            # 엔진+호스트+포트가 바뀌면 키(해시)도 재계산. 패스워드 AAD=DatasourceKey 이므로 함께 재암호화.
+            new_k = _generate_datasource_key(new_engine, new_host, int(new_port or 0))
+            key_changed = (new_k != k)
+
             if data.get("password"):  # 비어있지 않을 때만 재암호화(write-only)
                 if not _cc.enc_available():
                     return _json_error("암호화 키 미설정 — password 변경 불가.", 400)
@@ -10058,21 +10095,50 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
                 if got is None:
                     return _json_error("DEK 확인 실패.", 500)
                 ver, dek = got
-                sets.append("PasswordEnc=%s"); params.append(_cc.encrypt_password(dek, str(data.get("password")), k))
+                sets.append("PasswordEnc=%s"); params.append(_cc.encrypt_password(dek, str(data.get("password")), new_k))
                 sets.append("EncryptionVersion=%s"); params.append(int(ver))
+            elif key_changed and cur_pw_enc:
+                # 키가 바뀌었고 패스워드 신규 입력이 없으면 기존 패스워드를 새 AAD 로 재암호화.
+                if not _cc.enc_available():
+                    return _json_error("암호화 키 미설정 — 호스트/포트 변경 시 패스워드 재암호화 불가.", 400)
+                got = _dsr.ensure_dek(conn)
+                if got is None:
+                    return _json_error("DEK 확인 실패.", 500)
+                ver, dek = got
+                try:
+                    plain = _cc.decrypt_password(dek, cur_pw_enc, k)
+                    sets.append("PasswordEnc=%s"); params.append(_cc.encrypt_password(dek, plain, new_k))
+                    sets.append("EncryptionVersion=%s"); params.append(int(ver))
+                except Exception:
+                    return _json_error("기존 패스워드 재암호화 실패 — 호스트/포트 변경 시 패스워드를 직접 입력해 주세요.", 500)
+
+            if key_changed:
+                cur.execute("SELECT 1 FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (new_k,))
+                if cur.fetchone():
+                    return _json_error(f"변경된 엔드포인트에 이미 동일 키가 존재합니다: {new_k}", 409)
+                sets.append("DatasourceKey=%s"); params.append(new_k)
+
             if isinstance(actor, dict) and actor.get("id"):
                 sets.append("UpdatedByAccountId=%s"); params.append(int(actor.get("id")))
             if not sets:
                 return _json_error("변경할 필드 없음.", 400)
             params.append(k)
             cur.execute(f"UPDATE WebDatasources SET {', '.join(sets)} WHERE DatasourceKey=%s", tuple(params))
+
+            if key_changed:
+                cur.execute(
+                    "UPDATE WebProducts SET DatasourceKey=%s WHERE DatasourceKey=%s",
+                    (new_k, k),
+                )
         finally:
             cur.close()
+        effective_key = new_k if key_changed else k
         record_audit_event(conn, actor=_build_actor_from_request(request, actor, actor_type="account"),
-                           action="admin.datasource.update", resource_type="datasource", resource_id=k,
+                           action="admin.datasource.update", resource_type="datasource", resource_id=effective_key,
                            change_json=_ds_audit_fields(data))
         conn.commit()
-        return JSONResponse({"key": k, "updated": True, "password_changed": bool(data.get("password"))})
+        return JSONResponse({"key": effective_key, "updated": True, "password_changed": bool(data.get("password")),
+                             "key_changed": key_changed})
     finally:
         conn.close()
 
