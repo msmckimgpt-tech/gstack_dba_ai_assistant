@@ -8138,7 +8138,9 @@ async def ask(request: Request) -> JSONResponse:
                 #  - 제품 없음(default 도 없음) → allowed=[] (과거 None=무제한 → 데이터계정 GRANT 전체 누출).
                 #  - 제품이 datasource 미바인딩(DatasourceKey NULL) → allowed=[] (데이터는 데이터소스 종속).
                 # flag OFF(레거시 단일 MySQL)에서는 종전대로 None(제품 allowlist 미적용 경로 보존).
-                _multi_ds = str(os.getenv("AGENT_MULTI_DATASOURCE_ENABLED", "0")).strip() not in ("", "0", "false", "False")
+                # re-gate(6차) MAJOR: config 와 **동일 파서** 사용(1/true/yes). 과거 web 은 "0/false/False"
+                # 외 전부 활성으로 봐 FALSE/no/off 에서 agent-core(OFF)와 불일치→레거시 정상조회 과차단.
+                _multi_ds = str(os.getenv("AGENT_MULTI_DATASOURCE_ENABLED", "0")).strip().lower() in ("1", "true", "yes")
                 if product_id_for_run:
                     if _multi_ds and not _product_has_datasource(conn, int(product_id_for_run)):
                         allowed_schemas_for_run = []  # 미바인딩 = 접근 0

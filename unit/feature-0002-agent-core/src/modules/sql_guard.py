@@ -80,7 +80,15 @@ _FORBIDDEN_FUNCTIONS_TSQL = {
     "columnproperty", "schema_id", "schema_name", "current_schema", "type_id", "type_name", "typeproperty",
     "cert_id", "database_principal_id", "fulltextcatalogproperty", "indexproperty",
     "indexkey_property",
+    # re-gate(6차): 추가 정체성·권한·메타데이터 probe 함수.
+    "current_user", "user_id", "permissions", "sessionproperty", "session_context",
+    "fileproperty", "filegroupproperty", "index_col", "stats_date",
 }
+
+# re-gate(6차): niladic 정체성 함수(USER/SESSION_USER/SYSTEM_USER/CURRENT_USER)는 sqlglot 버전에 따라
+# 함수 노드가 아니라 **bare Column 식별자**로 파싱된다(v27: SESSION_USER/USER=Column). 무자격(table 없음)·
+# 무인용 식별자만 차단해 실제 컬럼(`[user]`/`t.user`)은 허용한다.
+_NILADIC_IDENTITY_FUNCS = frozenset({"user", "session_user", "system_user", "current_user"})
 
 # 보조 denylist regex (allowlist 가 못 잡는 edge — backup defense). MySQL 어휘 (골든: 무변경).
 _DENYLIST_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -364,6 +372,14 @@ def _has_forbidden_special_node(node) -> str | None:
         return "SYSTEM_USER/SUSER_SNAME"
     if hasattr(_exp, "SessionUser") and list(node.find_all(_exp.SessionUser)):
         return "SESSION_USER"
+    # bare Column 으로 파싱되는 niladic 정체성 함수(버전 의존). 무자격·무인용만 차단(실제 컬럼은 통과).
+    for col in node.find_all(_exp.Column):
+        if col.args.get("table"):
+            continue  # 자격 있는 컬럼(t.user) — 실제 컬럼
+        ident = col.this
+        if isinstance(ident, _exp.Identifier) and not getattr(ident, "quoted", False):
+            if (ident.name or "").lower() in _NILADIC_IDENTITY_FUNCS:
+                return f"niladic system function: {ident.name}"
     return None
 
 

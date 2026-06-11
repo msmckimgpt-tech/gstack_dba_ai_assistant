@@ -510,16 +510,31 @@ def test_regate5_ast_function_detection_comment_immune():
         "SELECT CURRENT_USER",
         "SELECT IS_ROLEMEMBER('db_owner')",
         "SELECT HAS_PERMS_BY_NAME(NULL, NULL, 'X')",
+        # re-gate(6차): niladic 정체성(버전 따라 bare Column) + 추가 권한/메타 probe.
+        "SELECT USER",
+        "SELECT SESSION_USER",
+        "SELECT SYSTEM_USER",
+        "SELECT CURRENT_USER",
+        "SELECT USER_ID('dbo')",
+        "SELECT PERMISSIONS()",
+        "SELECT SESSIONPROPERTY('ANSI_NULLS')",
+        "SELECT FILEPROPERTY('x', 'SpaceUsed')",
+        "SELECT INDEX_COL('dbo.t', 1, 1)",
+        "SELECT STATS_DATE(1, 1)",
+        "SELECT SESSION_CONTEXT(N'k')",
     ]
     for sql in blocked:
         r = validate_sql_for_sandbox(sql, forbidden_schemas=AGENT_FORBIDDEN, dialect="tsql")
         assert not r.ok, f"차단 누락: {sql}"
-    # 문자열 리터럴·정상 함수는 통과(과차단 회귀 방지)
+    # 문자열 리터럴·정상 함수·실제 컬럼은 통과(과차단 회귀 방지)
     allowed = [
         "SELECT 'OBJECT_ID' AS label FROM dbo.t",
         "SELECT * FROM dbo.t WHERE note = 'SERVERPROPERTY'",
         "SELECT GETDATE()",
         "SELECT COUNT(*) FROM dbo.orders",
+        "SELECT [user] FROM dbo.t",          # 인용된 실제 컬럼 user
+        "SELECT t.user FROM dbo.t AS t",     # 자격 있는 실제 컬럼 user
+        "SELECT user_name_col FROM dbo.t",   # niladic 과 다른 정상 컬럼명
     ]
     for sql in allowed:
         r = validate_sql_for_sandbox(sql, forbidden_schemas=AGENT_FORBIDDEN, dialect="tsql")
