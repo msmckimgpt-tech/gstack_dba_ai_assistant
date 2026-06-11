@@ -135,3 +135,30 @@ def test_b1_guard_reads_effective_not_static(monkeypatch):
         err2 = tools._freeform_sql_access_error("SELECT * FROM dk_data_release.dbo.tbl")
         assert err2 is not None and "dk_data_release" in err2
     contextvars.copy_context().run(check)
+
+
+def test_scope_key_is_endpoint_hash_and_label_agnostic():
+    """TASK-0219: scope_key(=fact/RAG 스코핑 식별자)는 엔드포인트(engine+host+port) 해시 —
+    DatasourceKey 라벨과 독립(라벨 rename 에도 불변). web `_generate_datasource_key` 와 동일 공식."""
+    import hashlib
+    from modules import datasources as dsr
+
+    # web app.py `_generate_datasource_key` 공식과 비트-동일해야 레지스트리 자동키와 정합.
+    def web_formula(engine, host, port):
+        raw = f"{engine.strip().lower()}:{host.strip().lower()}:{int(port)}"
+        return f"{engine.strip().lower()[:10]}-{hashlib.sha256(raw.encode()).hexdigest()[:12]}"
+
+    assert dsr.compute_scope_key("mysql", "mysql", 3306) == web_formula("mysql", "mysql", 3306)
+    assert dsr.compute_scope_key("mssql", "172.28.64.1", 14330) == web_formula("mssql", "172.28.64.1", 14330)
+
+    # 라벨이 달라도(=mysql_local vs main_mysql) 같은 엔드포인트면 같은 scope_key.
+    ds_a = {"key": "mysql_local", "engine": "mysql", "host": "mysql", "port": 3306}
+    ds_b = {"key": "main_mysql", "engine": "mysql", "host": "mysql", "port": 3306}
+    assert dsr.scope_key(ds_a) == dsr.scope_key(ds_b)
+    assert dsr.scope_key(ds_a) == dsr.compute_scope_key("mysql", "mysql", 3306)
+
+    # 미리 채운 scope_key 우선 + None(기본 단일 MySQL)
+    assert dsr.scope_key({"scope_key": "mssql-abc123", "key": "x"}) == "mssql-abc123"
+    assert dsr.scope_key(None) is None
+    # host 부재(.env 레거시 dict) → 라벨 폴백
+    assert dsr.scope_key({"key": "legacy"}) == "legacy"

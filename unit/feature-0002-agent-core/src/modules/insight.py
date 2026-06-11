@@ -170,7 +170,7 @@ def _build_insight_object_maps(
     schema_object_map: dict[str, str] = {}
     table_object_map: dict[tuple[str, str], str] = {}
     for fact_key in keys:
-        object_type, _, schema_name, table_name, _ = _infer_rag_object_from_fact(fact_key, "")
+        object_type, _, schema_name, table_name, _, _ = _infer_rag_object_from_fact(fact_key, "")
         if object_type == "schema" and schema_name:
             schema_object_map[schema_name] = fact_key
         elif object_type == "table" and schema_name and table_name:
@@ -1598,8 +1598,13 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                 try:
                     # P7: datasource 의 engine 도 함께 set (없으면 dialects.active() 가 mysql 로
                     # 오인). TASK-0205 B1: effective default_db 도 주입(cross-DB 가드 정합).
+                    # TASK-0219: 스코핑 식별자는 라벨(_ds_key)이 아닌 **엔드포인트 해시**(scope_key).
+                    # 라벨 rename 에도 누적 insight 가 고아되지 않게(write·read-back·grounding 정합).
+                    _ds_scope = None
+                    if _ds_key is not None and _ds_coords:
+                        _ds_scope = _ds_coords.get("scope_key") or _ds_key  # 해시 우선, 폴백 라벨(.env 레거시)
                     set_active_datasource(
-                        _ds_key,
+                        _ds_scope,
                         engine=(_ds_coords.get("engine") if _ds_coords else None),
                         default_db=(_ds_coords.get("default_db") if _ds_coords else None),
                     )

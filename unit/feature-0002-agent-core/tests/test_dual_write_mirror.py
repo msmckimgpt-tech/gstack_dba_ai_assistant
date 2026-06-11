@@ -478,3 +478,40 @@ def test_mirror_metrics_counter(monkeypatch):
     assert metrics["latency_ms_avg"] >= 0.0
     assert metrics["audit_calls_total"] == 3
     assert metrics["audit_failures_total"] == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 12 (TASK-0219): datasource-aware rag_object 파서 — `{source}:ds:{ds}:{suffix}`
+# 접두를 분리해 schema/table 정규화 + datasource_key 추출 + object_key ds-접두.
+# 과거 회귀: `table_insight:ds:winsql:dbo.X` → schema `dswinsqldbo`(쓰레기), ds 객체 0건.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_infer_rag_object_datasource_scoped():
+    """ds-스코프 fact 키가 깨끗한 schema/table + datasource_key + ds-접두 object_key 로 파싱."""
+    from modules import utils  # type: ignore
+
+    # MSSQL ds 테이블 인사이트
+    otype, okey, schema, table, col, ds = utils._infer_rag_object_from_fact(
+        "table_insight:ds:winsql:dbo.T_ItemLog", ""
+    )
+    assert otype == "table"
+    assert schema == "dbo", f"schema mangled: {schema!r}"  # 과거 'dswinsqldbo' 회귀 방지
+    assert table == "T_ItemLog"
+    assert ds == "winsql"
+    assert okey == "winsql:dbo.T_ItemLog"  # ds-접두로 cross-ds 유일성
+
+    # ds 스키마 인사이트
+    otype, okey, schema, table, col, ds = utils._infer_rag_object_from_fact(
+        "schema_insight:ds:winsql:dbo", ""
+    )
+    assert otype == "schema" and schema == "dbo" and ds == "winsql"
+    assert okey == "winsql:dbo"
+
+    # 무접두(기본 단일 MySQL) — datasource_key 빈 문자열, object_key 접두 없음
+    otype, okey, schema, table, col, ds = utils._infer_rag_object_from_fact(
+        "table_insight:dbgame.items", ""
+    )
+    assert otype == "table" and schema == "dbgame" and table == "items"
+    assert ds == ""
+    assert okey == "dbgame.items"

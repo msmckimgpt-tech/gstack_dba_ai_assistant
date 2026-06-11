@@ -143,6 +143,7 @@ class KbBackend(ABC):
         scope_key: str,
         object_type: str,
         object_key: str,
+        datasource_key: Optional[str] = None,
         schema_name: Optional[str] = None,
         table_name: Optional[str] = None,
         column_name: Optional[str] = None,
@@ -333,6 +334,7 @@ ON DUPLICATE KEY UPDATE
         scope_key,
         object_type,
         object_key,
+        datasource_key=None,
         schema_name=None,
         table_name=None,
         column_name=None,
@@ -459,14 +461,14 @@ RETURNING id, (xmax = 0) AS pg_inserted
 
 _PG_UPSERT_RAG_OBJECT = """
 INSERT INTO rag_objects (
-    conversation_id, scope_key, object_type, object_key,
+    conversation_id, scope_key, object_type, object_key, datasource_key,
     schema_name, table_name, column_name, text_hash, weight,
     source_type, source_run_id,
     category_domain, category_entity_type, category_metric_family,
     category_event_type, category_time_grain, category_join_hints_json,
     category_confidence
 ) VALUES (
-    %(conversation_id)s, %(scope_key)s, %(object_type)s, %(object_key)s,
+    %(conversation_id)s, %(scope_key)s, %(object_type)s, %(object_key)s, %(datasource_key)s,
     %(schema_name)s, %(table_name)s, %(column_name)s, %(text_hash)s, %(weight)s,
     %(source_type)s, %(source_run_id)s,
     %(category_domain)s, %(category_entity_type)s, %(category_metric_family)s,
@@ -474,6 +476,7 @@ INSERT INTO rag_objects (
     %(category_confidence)s
 )
 ON CONFLICT (conversation_id, scope_key, object_type, object_key) DO UPDATE SET
+    datasource_key           = COALESCE(EXCLUDED.datasource_key, rag_objects.datasource_key),
     schema_name              = COALESCE(EXCLUDED.schema_name, rag_objects.schema_name),
     table_name               = COALESCE(EXCLUDED.table_name, rag_objects.table_name),
     column_name              = COALESCE(EXCLUDED.column_name, rag_objects.column_name),
@@ -752,6 +755,7 @@ class PgKbBackend(KbBackend):
         scope_key,
         object_type,
         object_key,
+        datasource_key=None,
         schema_name=None,
         table_name=None,
         column_name=None,
@@ -775,6 +779,7 @@ class PgKbBackend(KbBackend):
                 "scope_key": scope_key,
                 "object_type": object_type,
                 "object_key": object_key,
+                "datasource_key": datasource_key,
                 "schema_name": schema_name,
                 "table_name": table_name,
                 "column_name": column_name,
@@ -891,6 +896,20 @@ class PgKbBackend(KbBackend):
             params["scopes"] = strict
         elif not include_null_blank:
             where.append("FALSE")  # strict 지정인데 비-blank 없음 → 매치 0 (방어)
+        # TASK-0219: datasource 스코프 — grounding 읽기를 현재 대화의 datasource 로 한정한다
+        # (_load_schema_list/_load_relevant_table_insights 의 ds_fact_like 와 동형 심층방어).
+        # active_ds=None(기본 단일 MySQL) → datasource_key NULL 객체만, ds 설정 시 → 그 ds 객체만.
+        # datasource 간 객체 교차노출 차단. 컬럼 부재(마이그 전) 시 except → 필터 생략(graceful).
+        try:
+            from .config import get_active_datasource
+            _active_ds = get_active_datasource()
+        except Exception:
+            _active_ds = None
+        if _active_ds:
+            where.append("o.datasource_key = %(ds_key)s")
+            params["ds_key"] = str(_active_ds).strip().lower()
+        else:
+            where.append("o.datasource_key IS NULL")
         sql = (
             "SELECT o.conversation_id, o.object_type, o.object_key, o.schema_name, o.table_name, "
             "o.column_name, COALESCE(t.text_content, '') AS summary, o.weight, o.source_type, "
@@ -1439,6 +1458,7 @@ class _DualWriteMirror:
         scope_key,
         object_type,
         object_key,
+        datasource_key=None,
         schema_name=None,
         table_name=None,
         column_name=None,
@@ -1460,6 +1480,7 @@ class _DualWriteMirror:
             scope_key=scope_key,
             object_type=object_type,
             object_key=object_key,
+            datasource_key=datasource_key,
             schema_name=schema_name,
             table_name=table_name,
             column_name=column_name,

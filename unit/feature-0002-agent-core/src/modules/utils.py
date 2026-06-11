@@ -1052,8 +1052,19 @@ def _chunk_text_for_rag(
 def _infer_rag_object_from_fact(
     fact_key: str,
     fact_text: str,
-) -> tuple[str, str, str, str, str]:
-    key = str(fact_key or "").strip()
+) -> tuple[str, str, str, str, str, str]:
+    # TASK-0219: datasource-스코프 fact 키 `{source}:ds:{ds_key}:{suffix}` 에서 ds_key 를 분리하고 접두를
+    # `{source}:{suffix}` 로 정규화해 schema/table 을 깨끗하게 파싱(과거: `ds:winsql:dbo`→`dswinsqldbo` 쓰레기).
+    # object_key 는 datasource 별 유일성 보존을 위해 ds 접두를 붙이되(`winsql:dbo.t`) schema_name/table_name 은
+    # 정규화 값(dbo/t). 반환 6번째 = datasource_key(없으면 "").
+    raw = str(fact_key or "").strip()
+    datasource_key = ""
+    _p = raw.split(":")
+    if len(_p) >= 4 and _p[1] == "ds":
+        datasource_key = _p[2].strip().lower()
+        key = _p[0] + ":" + ":".join(_p[3:])  # {source}:{suffix}
+    else:
+        key = raw
     lowered = key.lower()
     schema_name = ""
     table_name = ""
@@ -1098,7 +1109,11 @@ def _infer_rag_object_from_fact(
             if schema_name and table_name:
                 object_type = "table"
                 object_key = f"{schema_name}.{table_name}"
-    return object_type, object_key, schema_name, table_name, column_name
+    # TASK-0219: datasource-스코프면 object_key 에 ds 접두를 붙여 datasource 간 유일성 보장
+    # (unique 제약 (conv,scope,type,object_key) 변경 없이 cross-ds 충돌 차단). schema_name/table_name 은 정규화 유지.
+    if object_key and datasource_key:
+        object_key = f"{datasource_key}:{object_key}"
+    return object_type, object_key, schema_name, table_name, column_name, datasource_key
 
 
 def _normalize_category_value(value: Any, max_len: int = 128) -> str:
@@ -1211,7 +1226,7 @@ def _upsert_rag_memory_from_fact(
         source_run_id=src_run,
         source_sql=src_sql,
     )
-    object_type, object_key, schema_name, table_name, column_name = _infer_rag_object_from_fact(
+    object_type, object_key, schema_name, table_name, column_name, datasource_key = _infer_rag_object_from_fact(
         key, text_for_doc
     )
     if object_type and object_key:
@@ -1230,6 +1245,7 @@ def _upsert_rag_memory_from_fact(
             scope_key=scope,
             object_type=object_type,
             object_key=object_key,
+            datasource_key=datasource_key or None,
             schema_name=schema_name or None,
             table_name=table_name or None,
             column_name=column_name or None,

@@ -12,6 +12,7 @@ admin API)가 **mem_conn 을 주입**해 호출(per-resolve — 멀티프로세�
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 
 from . import config as cfg
@@ -22,6 +23,36 @@ _log = logging.getLogger("datasources")
 # DEK 캐시: KEK 로 unwrap 된 DEK(=키, password 아님)만 프로세스 메모리에. 평문 password 는 캐시 안 함.
 _DEK_CACHE: "dict[int, bytes]" = {}
 _CONFLICT_WARNED: "set[str]" = set()
+
+
+# ── datasource 스코프 키 (TASK-0219) ─────────────────────────────────────────
+# DatasourceKey(라벨) 는 이제 admin 이 자유 rename 가능한 **단순 식별자**라 insight/RAG
+# 스코핑의 안정 식별자 역할을 못 한다(rename 하면 누적 지식이 고아). 그래서 fact/RAG
+# 스코프 키는 **엔드포인트(engine+host+port) 해시**로 고정한다 — 라벨이 바뀌어도 같은
+# 목적지면 같은 스코프. web `_generate_datasource_key`(app.py) 와 **동일 공식**이어야
+# 레지스트리 키 자동생성값과 정합한다: `{engine}-{sha256("engine:host:port")[:12]}`.
+def compute_scope_key(engine: "str | None", host: "str | None", port: "int | None") -> str:
+    raw = f"{(engine or 'mysql').strip().lower()}:{(host or '').strip().lower()}:{int(port or 0)}"
+    digest = hashlib.sha256(raw.encode()).hexdigest()[:12]
+    eng_tag = (engine or "mysql").strip().lower()[:10]
+    return f"{eng_tag}-{digest}"
+
+
+def scope_key(ds: "dict | None") -> "str | None":
+    """ds dict → 안정 스코프 키(엔드포인트 해시). None=기본 단일 MySQL(스코프 없음).
+
+    `_row_to_ds` 가 미리 채운 `scope_key` 를 우선 사용하고(.env 레거시 dict 는 미보유),
+    없으면 engine/host/port 로 계산. host 부재 등 좌표 불충분 시 라벨 `key` 로 폴백(기존 호환).
+    """
+    if not ds:
+        return None
+    pre = ds.get("scope_key")
+    if pre:
+        return str(pre)
+    host = ds.get("host")
+    if host:
+        return compute_scope_key(ds.get("engine"), host, ds.get("port"))
+    return (str(ds.get("key")).strip().lower() or None) if ds.get("key") else None
 
 
 # ── DEK 관리 (WebDatasourceKeys) ─────────────────────────────────────────────
@@ -114,16 +145,21 @@ def _row_to_ds(mem_conn, row) -> "dict | None":
         except cred_crypto.CredCryptoError as exc:
             _log.warning("datasource_decrypt_failed key=%s err=%s — 이 키만 skip", key, exc)
             return None
+    engine = (str(row[1] or "mysql").strip().lower() or "mysql")
+    host = str(row[2] or "")
+    port = int(row[3] or cfg.DB_PORT)
     return {
         "key": key,
-        "engine": (str(row[1] or "mysql").strip().lower() or "mysql"),
-        "host": str(row[2] or ""),
-        "port": int(row[3] or cfg.DB_PORT),
+        "engine": engine,
+        "host": host,
+        "port": port,
         "user": str(row[4] or ""),
         "password": password,
         "default_db": (str(row[6]).strip() if row[6] else None),
         # TASK-0215: insight-worker 탐색 토글(컬럼 부재 구 스키마는 True 로 간주 — 기존 동작 보존).
         "insight_enabled": (bool(int(row[8])) if len(row) > 8 and row[8] is not None else True),
+        # TASK-0219: 라벨(key)과 분리된 안정 스코프 키(엔드포인트 해시). fact/RAG 스코핑 식별자.
+        "scope_key": compute_scope_key(engine, host, port),
         "_source": "db",
     }
 

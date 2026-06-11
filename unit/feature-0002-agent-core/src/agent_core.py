@@ -2342,8 +2342,11 @@ def _run_agent_core(
     # **본 set 은 grounding 직후 해제하지 않는다** — 이후 tool 루프(execute_sql/describe_*)도 같은
     # datasource·dialect 컨텍스트여야 하기 때문. 해제는 run_agent 의 finally(다른 request-scoped
     # ContextVar 와 동일 위치)에서 **예외 안전**하게 수행한다(P5 M1). 매 run 시작에서 다시 set 한다.
+    # TASK-0219: 스코핑 식별자는 DatasourceKey 라벨이 아닌 **엔드포인트 해시**(scope_key) —
+    # 라벨은 admin rename 가능한 단순 식별자라 안정 스코프 키 역할 불가. fact/RAG write·read 가
+    # 같은 해시를 쓰도록 resolve dict 의 scope_key 사용(폴백: 라벨 — .env 레거시 dict).
     cfg.set_active_datasource(
-        (_ds["key"] if _ds else None),
+        ((_ds.get("scope_key") or _ds.get("key")) if _ds else None),
         engine=(_ds.get("engine") if _ds else None),
         # TASK-0205 B1: effective default_db(제품별 override 반영) 를 cross-DB 가드에 주입.
         default_db=(_ds.get("default_db") if _ds else None),
