@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260611-0228
+- Date: 2026-06-11 (TASK-0228, **Major §12.3** — datasource SSRF 사설망 경계 env 토글 + 의도적 비활성화)
+- 사용자 보고: `관리 콘솔 > 데이터소스` 에서 새 데이터소스(host=`10.200.50.80`) 생성 시 "호스트 차단(SSRF): 사설/링크로컬 IP 차단(allowlist 필요): 10.200.50.80" 에러. **근본 원인**: `app._ssrf_check_host` 가 RFC1918 사설 IP 를 SSRF 방어로 차단(설계 의도, TASK-0205/0214). `10.200.50.80` 은 `10.0.0.0/8` 사설 대역이라 차단되며, 정당한 사내 host 는 `AGENT_DATASOURCE_HOST_ALLOWLIST` 에 등재해야 통과하는 구조. 코드 버그 아님 — 사내 운영 환경(대부분 사설망 IP)과 SSRF 방어 기본값의 불일치.
+- 사용자 결정: SSRF 방어 구성을 **복원 가능한 형태로 보존(태그)** 하고 **현재는 사설 경계를 의도적으로 비활성화**. (사내 사설망 전면 운영 맥락 — 매 host allowlist 등재 부담 회피.)
+- 변경:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - `_ssrf_private_guard_enabled()` 신규 — `AGENT_DATASOURCE_SSRF_GUARD_ENABLED` env 파싱(기본 `1`=활성, secure-by-default; `0`/`false`/`no`/`off`=비활성).
+    - `_ssrf_check_host()` — 사설/링크로컬/reserved/multicast 차단을 `private_guard` 분기 뒤로 이동. **메타데이터 IP 하드차단·DNS rebinding pin·빈 host 거부는 토글 무관 항상 유지**.
+    - `GET /api/admin/datasources` 응답에 `ssrf_private_guard_enabled` 필드 추가(UI 안내 정합).
+  - `static/admin.js`: `adminState.datasourcesSsrfPrivateGuard` + 안내 문구 분기(토글 OFF 시 "사설망 IP 허용, 메타데이터는 여전히 차단").
+  - `static/admin.html`: admin.js 캐시버스터 `?v=20260611-ssrf-private-guard-toggle`.
+  - `docs/DECISIONS.md` ADR-0030 (정본 + 복원 절차) / `docs/SECURITY.md` §11 (토글 정책 + 불변식) / `.env.secret.example` (토글 안내).
+  - 신규 테스트 `unit/feature-0003-agent-web-ui/tests/test_ssrf_private_guard_toggle.py` (22 case: 토글 ON/OFF, 메타데이터 항상 차단, allowlist 공존, 파싱).
+- 검증: py_compile + node --check PASS. 신규 22 PASS + datasource 회귀 29 PASS(회귀 0). 운영 `.env.secret` 에 `AGENT_DATASOURCE_SSRF_GUARD_ENABLED=0` 설정 + web 재배포는 배포 단계.
+- Cross-ref: TASK-0228 / REQ-20260611-0228 / ADR-0030 / SECURITY §11. (TASK-0205/0214 SSRF 가드 후속.)
+
 ## CHG-20260611-0223
 - Date: 2026-06-11 (TASK-0223, **Major §12.3** — 제품 프롬프트 자동작성 실데이터 정합 + MSSQL database-aware 3계층 인사이트 + ask-worker grounding 검증)
 - Scope: 자동 생성 프롬프트가 실제 DB 인사이트에 근거하도록 매칭 로직 재작성(MySQL) + MSSQL database.schema.table 3계층 인사이트 파이프라인 신설(insight-worker 스캔 → fact_key → 엔드포인트/grounding 매칭). feature-0002(agent-core) + feature-0003(web-ui) 교차 변경.
