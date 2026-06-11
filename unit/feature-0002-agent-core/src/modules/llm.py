@@ -577,7 +577,7 @@ def _resolve_tier_endpoint(model: str | None) -> "tuple[str | None, str | None]"
 
 def _get_llm_client(timeout_sec: int | None = None, model: str | None = None) -> OpenAI | None:
     # feature-0007: LLM 자격증명은 env 단일 소스. TASK-0129: model tier 로 endpoint 분기 + 캐시.
-    # TASK-0233: 함수명 _get_openai_client → _get_llm_client (실제 provider 는 Bedrock Claude;
+    # TASK-0237: 함수명 _get_openai_client → _get_llm_client (실제 provider 는 Bedrock Claude;
     # OpenAI 클래스는 OpenAI Chat Completions 규약 전송 클라이언트로만 사용). 구이름은 아래 alias 로 호환.
     if OpenAI is None:
         return None
@@ -604,7 +604,7 @@ def _get_llm_client(timeout_sec: int | None = None, model: str | None = None) ->
         return None
 
 
-# TASK-0233: deprecated alias — 구 호출처/외부 import (kb_retrieval, app.py) 및 앵커 불변식
+# TASK-0237: deprecated alias — 구 호출처/외부 import (kb_retrieval, app.py) 및 앵커 불변식
 # 테스트 호환. 신규 코드는 _get_llm_client 사용. 다음 cycle 에 alias 제거 검토.
 _get_openai_client = _get_llm_client
 

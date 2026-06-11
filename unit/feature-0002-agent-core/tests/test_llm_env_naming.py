@@ -1,4 +1,4 @@
-"""TASK-0233 — LLM env 명명 정리 backward-compat 회귀 테스트.
+"""TASK-0237 — LLM env 명명 정리 backward-compat 회귀 테스트.
 
 OPENAI_* env 명명(GPT 잔재)을 LLM_* 로 이전하되, 운영 .env 의 구이름
 (OPENAI_MODEL=auto 등)을 무중단 fallback 으로 읽어야 한다. 우선순위:
@@ -66,7 +66,7 @@ def test_max_retries_falls_back_to_old_name(monkeypatch):
 
 
 def test_openai_api_base_removed(monkeypatch):
-    """TASK-0233: dead env OPENAI_API_BASE 는 config 에서 제거됐다(더 이상 노출 안 함)."""
+    """TASK-0237: dead env OPENAI_API_BASE 는 config 에서 제거됐다(더 이상 노출 안 함)."""
     c = _reload_config()
     assert not hasattr(c, "OPENAI_API_BASE"), "OPENAI_API_BASE 가 아직 config 에 남아 있음"
     assert "OPENAI_API_BASE" not in getattr(c, "__all__", [])

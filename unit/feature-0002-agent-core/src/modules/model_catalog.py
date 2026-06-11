@@ -187,6 +187,6 @@ def max_tokens_for_model(model: str | None, task: str = "agent") -> int | None:
     if model and str(model).startswith("claude-"):
         return _CLAUDE_MAX_TOKENS.get(task, 8192)
     # 그 외 (알 수 없는 모델 — local/claude alias 어디에도 매칭 안 됨) 은 cap 미적용 (API default).
-    # TASK-0233: 구 주석 "OpenAI direct legacy" 정정 — 카탈로그에 GPT 모델 0개라 GPT 경로는 없으나,
+    # TASK-0237: 구 주석 "OpenAI direct legacy" 정정 — 카탈로그에 GPT 모델 0개라 GPT 경로는 없으나,
     # 잘못된/미등록 model 문자열 입력에 대한 fallback 으로 None(무제한) 유지 (동작 무변경).
     return None

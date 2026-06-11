@@ -5610,7 +5610,7 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
     autoBtn.type = "button";
     autoBtn.className = "btn-secondary";
     autoBtn.textContent = "자동 작성";
-    // TASK-0233: SSE 토큰 스트리밍 — textarea 에 본문이 실시간으로 차오른다.
+    // TASK-0237: SSE 토큰 스트리밍 — textarea 에 본문이 실시간으로 차오른다.
     autoBtn.addEventListener("click", async () => {
       // 재진입 방어 — 진행 중인 스트림이 있으면 중단.
       if (autoBtn._streamAbort) {

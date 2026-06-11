@@ -1,4 +1,4 @@
-"""TASK-0233 — 제품 프롬프트 자동작성 LLM 토큰 스트리밍(SSE) 로직 계약 테스트.
+"""TASK-0237 — 제품 프롬프트 자동작성 LLM 토큰 스트리밍(SSE) 로직 계약 테스트.
 
 admin_generate_product_prompt_stream 은 LLM 의 동기 stream(ChatCompletionChunk
 generator)을 별 스레드 + asyncio.Queue 로 브릿지해 SSE(progress/token/done/error)

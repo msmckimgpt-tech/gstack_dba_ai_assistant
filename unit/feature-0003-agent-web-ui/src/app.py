@@ -7748,7 +7748,7 @@ def _resolve_session_default_model() -> str:
     에 첨부 후 400 차단되던 회귀 차단. Local LLM gateway 가 실제로 가용한 경우
     (`_is_local_llm_available()` True) 에만 `auto` 가 catalog 에 포함되어 통과 —
     그 외 시점은 API_DEFAULT_MODEL fallback."""
-    # TASK-0233: 새 이름 LLM_MODEL 우선, 구이름 OPENAI_MODEL fallback(운영 .env 무중단).
+    # TASK-0237: 새 이름 LLM_MODEL 우선, 구이름 OPENAI_MODEL fallback(운영 .env 무중단).
     raw = (os.getenv("LLM_MODEL") or os.getenv("OPENAI_MODEL") or "").strip()
     if raw and is_allowed_api_model(raw):
         # 로컬 LLM 모델(auto/edge/core/code)은 웹 UI 기본값으로 노출하지 않음 —
@@ -15332,7 +15332,7 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
 
 
 async def _collect_product_prompt_context(product_id: int, request: Request):
-    """TASK-0233: 제품 프롬프트 자동작성의 수집·조립 단계를 공유 헬퍼로 추출.
+    """TASK-0237: 제품 프롬프트 자동작성의 수집·조립 단계를 공유 헬퍼로 추출.
 
     비스트리밍(POST /prompt/generate)과 스트리밍(GET /prompt/generate/stream) 양쪽이
     동일한 ①MySQL 제품/스키마 조회 → ②PG 인사이트 수집 → ③knowledge_block 구성 →
@@ -15745,7 +15745,7 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
 
 @app.get("/api/admin/products/{product_id}/prompt/generate/stream")
 async def admin_generate_product_prompt_stream(product_id: int, request: Request):
-    """TASK-0233: 자동작성 LLM 토큰 스트리밍(SSE). textarea 에 본문이 실시간으로 차오르게 한다.
+    """TASK-0237: 자동작성 LLM 토큰 스트리밍(SSE). textarea 에 본문이 실시간으로 차오르게 한다.
 
     인증·수집은 generator 진입 **전**에 완료(export_audit_events_csv 패턴) — 실패 시 JSON
     403/404/503 으로 나가고 SSE 진입 안 함. LLM stream(동기 generator)은 단일 uvicorn

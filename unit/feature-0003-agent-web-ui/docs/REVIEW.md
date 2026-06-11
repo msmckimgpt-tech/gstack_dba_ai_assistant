@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0237 [SKIPPED:backend-sse-streaming-self-review] — PASS
+- 패널 skip 사유: SSE 토큰 스트리밍 + LLM 명명 정리. 인증/인가/데이터 경계/스키마/시크릿 변경 0(신규 stream GET 은 기존 product.manage 게이트 재사용). 적대적 보안 subagent 비대상(§18.8) — 단 단일 이벤트 루프 블로킹·스레드 누수·buffering 위험이 있어 backend correctness self-review 수행. 동시세션 cycle 이 REV-0235/0236 선점→§13.1 재번호 0233→0237.
+- Date: 2026-06-12
+- Cycle: TASK-0237 (자동작성 LLM 토큰 스트리밍 SSE + OpenAI legacy 명명 정리, **Major §12.3**)
+- 검토 결과 (반증 시도):
+  - **이벤트 루프 블로킹(최우선 위험)**: docker-compose web 은 단일 uvicorn 워커(`--workers` 없음). async generator 안에서 동기 LLM stream 을 `for chunk in stream` 직접 iterate 하면 전 사용자 루프 정지(Codex C1, export_audit_csv 가 sync generator 쓴 이유). → **별 스레드 `produce()` + `loop.call_soon_threadsafe` + `asyncio.Queue` 브릿지**로 async generator 는 큐 `await get()` 만 — 블로킹 호출이 메인 루프 밖. PASS.
+  - **스레드 누수(client disconnect)**: client 가 스트림 중 끊으면 generator 가 중단되나 producer 스레드는 잔존 가능. → `call_soon_threadsafe` 가 loop closed 시 예외 → `_emit` 의 try/except 로 무시 + SDK timeout 90s 내 stream iteration 자연 종료. PASS(완전 즉시 취소는 아니나 90s bound).
+  - **인증 우회 불가**: 인증·권한(product.manage)·제품조회를 `_collect_product_prompt_context` 가 generator 진입 **전** 수행 → 실패 시 JSON 403/404/503(SSE 헤더 전송 전). 권한 없는 자가 stream 토큰 받는 경로 없음. PASS.
+  - **truncated 정합**: 마지막 chunk finish_reason=='length' → done.meta.truncated. 비스트리밍 POST 와 동일 의미(meta shape 동일 + truncated). PASS.
+  - **에러 채널**: stream 시작 후(HTTP 200) LLM 예외는 SSE `error` event 로만 전달(HTTP 상태 변경 불가) → 프론트가 error event 분기 처리. PASS.
+  - **rename 무중단**: `_get_llm_client` alias(`_get_openai_client`) + env fallback(LLM_MODEL or OPENAI_MODEL). 운영 .env `OPENAI_MODEL=auto` 무중단. PASS.
+- 잔여 리스크: **프록시/TLS buffering 시 토큰 batched 도착** → uvicorn 직접 종단(nginx 없음)이라 위험 낮으나 X-Accel-Buffering:no 헤더 + PB-0008 시각검증으로 최종 확인 필요. `call_openai_embeddings` rename 은 follow-up(범위 외).
+- 검증: 신규 test_prompt_generate_stream.py 6 + truncation 3 + (agent-core) env_naming 6 + 앵커 PASS. node --check. 통합테스트(app import)는 컨테이너 `make test` 영역.
+- Human Approval Needed: no — 사용자 승인 plan(PLAN-APPROVED) 범위 내. 보안 trade-off 신규 0.
+- Cross-ref: CHG-20260612-0237 / TASK-0237 / agent-core REV-20260612-0237 / plan groovy-hugging-clarke.
+
 ## REV-20260612-0236 [SKIPPED:frontend-bugfix-no-backend-no-rbac]
 - Date: 2026-06-12
 - Cycle: TASK-0236 (datasource UI 바인딩 변경 후 미갱신 근본수정, **Minor §12.3**)

@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0237
+- Date: 2026-06-12 (TASK-0237, **Major §12.3** — 자동작성 LLM 토큰 스트리밍 + OpenAI legacy 명명 정리; 동시세션 cycle 이 TASK-0231~0236 선점→§13.1 재번호 0233→0237)
+- 사용자 요청: 제품 프롬프트 "자동 작성"이 최대 90초 LLM 호출 동안 "생성 중…" spinner 뿐이라 진행을 알 수 없음 → 토큰 스트리밍으로 실시간 표시.
+- 변경 (feature-0003 측):
+  - `src/app.py`: ① `_collect_product_prompt_context` 헬퍼 추출 — 기존 `admin_generate_product_prompt`(POST)의 MySQL 제품/스키마 조회 + PG 인사이트 수집 + knowledge_block + create_kwargs 조립을 비스트리밍/스트리밍 공유(중복 제거). 인증·권한·제품부재 실패 시 `(JSONResponse, None)` 반환. ② 신규 `GET /api/admin/products/{id}/prompt/generate/stream` — 인증·수집을 generator 진입 전 완료(export_audit_events_csv 패턴), 별 스레드 `produce()`가 `chat.completions.create(stream=True)` 동기 iterate → `loop.call_soon_threadsafe` 로 `asyncio.Queue` 브릿지(단일 uvicorn 이벤트 루프 블로킹 차단). SSE event `progress`→`token`(증분)→`done`(prompt+meta)|`error`. `truncated` = 마지막 chunk finish_reason=='length'. `StreamingResponse(media_type="text/event-stream", X-Accel-Buffering:no, Cache-Control:no-cache)`. ③ 기존 POST 핸들러는 헬퍼 사용으로 재작성(동작 동일, 비스트리밍 안전망). ④ `_sse_pack`(ensure_ascii=False). ⑤ `_get_openai_client`→`_get_llm_client` import(CHG agent-core 0237 정합). ⑥ `_resolve_session_default_model` env 소스 `LLM_MODEL or OPENAI_MODEL`.
+  - `src/static/admin.js`: autoBtn 핸들러를 `apiFetch`(즉시 json) 우회 → `fetch + response.body.getReader() + TextDecoder + "\n\n" 프레임 파싱`. `token`→textarea append+글자수 카운터+자동 스크롤, `progress`→단계 라벨, `done`→최종 prompt 정합+`setSystemPromptPending`+`applyAutoGenMeta`(grounded/truncated 경고 — 기존 로직 헬퍼 추출), `error`→실패 메시지. `AbortController` 재진입 방어, `!resp.ok`(403/404/503 JSON) 분기.
+  - `src/static/admin.html`: 캐시버스터 `?v=20260612-ds-detail-rerender`→`?v=20260612-prompt-stream`(styles.css·admin.js).
+- 동반 변경 (feature-0002): `_get_openai_client`→`_get_llm_client` rename + alias, `OPENAI_API_BASE` 제거, env backward-compat. agent-core MODIFY.md CHG-20260612-0237 참조.
+- 비변경: RBAC 카탈로그·DB 스키마·암호화·기존 엔드포인트 shape(신규 stream GET 추가 외). 비스트리밍 POST 응답 동일.
+- 검증: 신규 `tests/test_prompt_generate_stream.py` 6(SSE 직렬화/파싱 라운드트립 + Queue 브릿지 누적/truncated/error) + 기존 truncation 3 PASS. node --check admin.js PASS. app.py AST 구문 OK. 시각 동작은 PB-0008(배포 후) 확인.
+- Files: src/app.py, src/static/{admin.js,admin.html}, tests/test_prompt_generate_stream.py(신규), docs/{FUNCTION,TASK,REVIEW,MODIFY}.md
+- Rollback: 신규 stream GET·헬퍼·프론트 SSE 제거 시 기존 POST 비스트리밍 경로로 복귀(안전). rename 은 alias 로 무중단.
+
 ## CHG-20260612-0236
 - Date: 2026-06-12 (TASK-0236, **Minor §12.3** — datasource UI 바인딩 변경 후 미갱신 근본수정, frontend-only)
 - Scope: TASK-0234 후속 사용자 보고 3건(연결테스트 무의미·DB 목록 datasource 단서 없음/미갱신·primary 미갱신). Playwright 실 헤드리스 브라우저로 재현 후 근본수정. 권한/스키마/엔드포인트/백엔드 0.
