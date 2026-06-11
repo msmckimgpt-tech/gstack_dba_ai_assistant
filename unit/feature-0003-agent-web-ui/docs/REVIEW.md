@@ -2034,3 +2034,10 @@ source_of_truth: true
 - 해소(구현이 catalog-driven 으로 선반영): 실제 구현은 리뷰가 권고한 형태와 일치 — ① 분자를 **라이브 카탈로그 (schema,table) ∩ rag (schema,table) 집합 교집합**(set dedup)으로 계산해 MSSQL dbo 차원·이중기록 모두 해소(SQL schema 필터 미사용), ② datasource 매칭에 `_dsr.scope_key`(해시, .env 라벨 폴백 포함) 사용 + 기본 엔드포인트일 때만 `datasource_key IS NULL` 합산(distinct 라 과대집계 0), ③ 분모를 resolve 된 datasource RO 좌표로 직결해 insight 와 GRANT 가시성 정합, ④ MSSQL 비-default_db=미스캔(analyzed 0+flag), ⑤ VIEW 양쪽 포함. 5건 모두 반영 확인.
 - Risk: low-medium — read-only 통계(쓰기·RBAC·스키마·암호화 0). 라이브 DB 조회는 90s TTL 캐시+per-datasource 실패 격리+SSRF 가드+5s timeout. 측정 불가는 graceful "측정 불가" 표시(500 없음).
 - Cross-ref: CHG-20260611-0223 / TASK-0223 / TASK-0206 / TASK-0219.
+
+## REV-20260611-0225 [SKIPPED:frontend-textarea-autogrow-no-backend]
+- Date: 2026-06-11
+- Cycle: TASK-0225 (textarea 우측 하단 핸들 더블클릭 시 내용 높이로 자동 확장), **Minor §12.3**
+- Reason: 순수 클라이언트 UX 추가. 신규 JS 1파일(document `dblclick` capture 위임) + html 3개 script 태그 추가뿐. 백엔드(app.py)·RBAC·스키마·암호화·신규 엔드포인트·기존 JS 로직 무변경. 핸들 영역(~18px) 좌표 판정으로 본문 더블클릭(단어선택) 미간섭. 위험 표면 없어 적대적 패널 불요(전례 REV-20260611-0209/0213 frontend-only SKIP 과 동일 등급). node --check PASS.
+- Risk: low — 클라이언트 height 스타일 변경만. 600px 상한으로 레이아웃 폭주 방지. 시각 동작은 PB-0008(배포 후)로 확인.
+- Cross-ref: CHG-20260611-0225 / TASK-0225.

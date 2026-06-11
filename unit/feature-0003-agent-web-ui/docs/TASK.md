@@ -3227,3 +3227,21 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 프런트: 목록 배지 + 상세 breakdown + loader + CSS + 캐시버스터
 - [x] py_compile app.py+db.py PASS + node --check admin.js PASS
 - [x] verify-completion PASS → PR #161 머지(main b46cbd4) + hotfix(cde2610 `_log`→logging, 0e37b8e conversation_id `__global__`) → web 재배포(healthz git_commit=0e37b8e) → 라이브 실측(MySQL 제품 1/7/8=100%, MSSQL graceful 측정불가) + PB-0008 Windows-browser 시각검증 PASS(목록 배지 3×100%+1×측정불가, 상세 389/389 breakdown)
+
+### TASK-0225 — textarea 우측 하단 핸들 더블클릭 시 내용 높이로 자동 확장 (Minor §12.3)
+
+긴 문자열을 담는 textarea 들의 크기 조절 마찰 해소. 우측 하단 native resize 핸들을 **더블클릭** 하면 입력된 텍스트의 수직 크기만큼 자동 확장한다. 본문 더블클릭(단어 선택)은 그대로 유지.
+
+- AC1: `resize: vertical|both` 인 textarea(예: `.field textarea`, `.admin-prompt-textarea`)의 우측 하단 핸들 영역(~18px) 더블클릭 시 내용 높이로 확장된다.
+- AC2: 본문 영역 더블클릭은 단어 선택 등 기존 동작을 그대로 유지(자동 확장 미발동).
+- AC3: index / admin / share 세 페이지 모두 적용(공통 위임 스크립트 1개 로드).
+- AC4: 동적 생성 textarea(admin.js `.admin-prompt-textarea`)도 document capture 위임으로 자동 커버.
+- AC5: 상한(600px)으로 무한 확장 방지. node --check PASS.
+
+**위험도 Minor 근거**: 비파괴 프런트 추가(신규 JS 1파일 + HTML 3파일 script 태그). RBAC·스키마·암호화·신규 엔드포인트·백엔드 변경 0. 순수 클라이언트 UX.
+
+#### 작업 항목
+- [x] 신규 `src/static/textarea-autogrow.js`: document `dblclick` capture 위임 — 핸들 영역 좌표 판정 + `scrollHeight` 기반 확장(border-box 보정 + 600px 상한).
+- [x] `index.html` / `admin.html` / `share.html` 에 `textarea-autogrow.js` script 태그 추가(캐시버스터 `?v=20260611-dblclick-autogrow`).
+- [x] node --check textarea-autogrow.js PASS.
+- [ ] verify-completion → main rebase·ff-merge → web 재배포 → PB-0008(핸들 더블클릭 자동 확장 시각검증)

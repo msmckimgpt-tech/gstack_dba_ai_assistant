@@ -2880,3 +2880,16 @@ source_of_truth: true
 - 검증: py_compile app.py+db.py PASS, node --check admin.js PASS, verify-completion(코드 게이트) + 라이브 실측 + PB-0008 Windows-browser.
 - Files: unit/feature-0002-agent-core/src/modules/db.py, unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html,styles.css}, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
 - Rollback: app.py 신규 헬퍼·엔드포인트·캐시 제거 + db.py `list_information_schema_tables`/`_MSSQL_SYSTEM_SCHEMAS` 제거 + admin.js/styles.css/admin.html coverage 추가분 복원.
+
+## CHG-20260611-0225
+- Date: 2026-06-11
+- Task: TASK-0225 (textarea 우측 하단 핸들 더블클릭 시 내용 높이로 자동 확장), **Minor §12.3** (비파괴 프런트 추가, 백엔드·RBAC·스키마·암호화·외부계약 변경 0)
+- 변경:
+  - 신규 `unit/feature-0003-agent-web-ui/src/static/textarea-autogrow.js`: document 레벨 `dblclick` capture 위임 핸들러. `resize: vertical|both` 인 textarea 에 한정, 더블클릭 좌표가 우측 하단 native resize 핸들 영역(`GRAB_PX=18`) 안일 때만 발동(본문 더블클릭=단어선택은 통과). `fitToContent`: `style.height="auto"` → `scrollHeight` 측정 → border-box 보정 후 적용, 상한 `MAX_PX=600`. capture phase 로 본문 선택 동작보다 먼저 핸들 영역 가로챔.
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`: `textarea-autogrow.js?v=20260611-dblclick-autogrow` script 태그 추가(app.js 다음).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: 동 script 태그 추가(admin.js 다음). 동적 생성 `.admin-prompt-textarea` 도 capture 위임으로 자동 커버.
+  - `unit/feature-0003-agent-web-ui/src/static/share.html`: 동 script 태그 추가(share.js 다음).
+- 비변경: 백엔드(app.py 무수정), RBAC, 스키마, 암호화, 신규 엔드포인트, 기존 JS 의 promptInput auto-grow(input 이벤트) 로직. share.js 의 클립보드용 숨김 textarea 는 대상 아님(resize 핸들 없음).
+- 검증: node --check textarea-autogrow.js PASS, verify-completion(코드 게이트), 배포 후 PB-0008 Windows-browser 시각검증 예정.
+- Files: unit/feature-0003-agent-web-ui/src/static/textarea-autogrow.js, unit/feature-0003-agent-web-ui/src/static/{index,admin,share}.html, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
+- Rollback: textarea-autogrow.js 삭제 + 3개 html 의 script 태그 1줄씩 제거.
