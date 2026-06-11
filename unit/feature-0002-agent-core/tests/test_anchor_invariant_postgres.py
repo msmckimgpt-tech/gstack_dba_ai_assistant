@@ -352,22 +352,33 @@ def test_anchor_invariant_scenarios(scenario, monkeypatch):
 
     elif sid == "S5_rag_objs_category_stale":
         # S5: RagObjects 의 category_* stale 시 보존 (NULL stay NULL / outdated value
-        # 유지) — SQL template 의 ON CONFLICT DO UPDATE 절이
-        # `COALESCE(NULLIF(EXCLUDED.category_*, ''), rag_objects.category_*)`
-        # 패턴인지 검증. 빈 string 이 들어와도 기존 값 유지.
+        # 유지) — SQL template 의 ON CONFLICT DO UPDATE 절이 빈값으로 기존 값을 덮어쓰지 않는지 검증.
+        #  - varchar category_*: `COALESCE(NULLIF(EXCLUDED.x, ''), rag_objects.x)` (빈 string → 기존 유지).
+        #  - category_join_hints_json(jsonb, TASK-0219): `NULLIF(.., '')` 는 ''를 jsonb 캐스팅하려다
+        #    ON CONFLICT 에서 항상 실패하므로 **NULLIF 없는 COALESCE** (호출부가 빈값을 None→NULL 전달 →
+        #    COALESCE 만으로 기존 유지). jsonb-safe.
         from modules.kb_backend import _PG_UPSERT_RAG_OBJECT
         sql_lower = _PG_UPSERT_RAG_OBJECT.lower()
-        category_cols = (
+        varchar_category_cols = (
             "category_domain", "category_entity_type", "category_metric_family",
-            "category_event_type", "category_time_grain", "category_join_hints_json",
+            "category_event_type", "category_time_grain",
         )
-        for col in category_cols:
-            # 각 컬럼이 COALESCE(NULLIF(EXCLUDED.<col>, '')...rag_objects.<col>) 형태
+        for col in varchar_category_cols:
+            # 각 varchar 컬럼이 COALESCE(NULLIF(EXCLUDED.<col>, '')...rag_objects.<col>) 형태
             assert col in sql_lower, f"category 컬럼 '{col}' 누락"
             assert f"coalesce(nullif(excluded.{col}" in sql_lower, (
                 f"S5 invariant 위반 — '{col}' 가 빈 string 으로 덮어쓰여질 수 있음 "
                 "(COALESCE(NULLIF(EXCLUDED.x, ''), rag_objects.x) 패턴 부재)"
             )
+        # jsonb 컬럼: NULLIF 없이 COALESCE(EXCLUDED.x, rag_objects.x) — 기존 값 보존 + jsonb-safe.
+        assert "category_join_hints_json" in sql_lower, "category_join_hints_json 누락"
+        assert "coalesce(excluded.category_join_hints_json, rag_objects.category_join_hints_json)" in sql_lower, (
+            "S5 invariant 위반 — category_join_hints_json(jsonb) 이 COALESCE(EXCLUDED.x, rag_objects.x) "
+            "패턴이 아님(NULLIF 는 ''→jsonb 캐스팅 실패를 유발하므로 제거됨)"
+        )
+        assert "nullif(excluded.category_join_hints_json" not in sql_lower, (
+            "category_join_hints_json(jsonb) 에 NULLIF 가 남아있음 — ON CONFLICT 시 ''→jsonb 캐스팅 실패"
+        )
 
     # S6 (agent_memory_facts matview multi-row priority) 분기는 TASK-0140 에서 제거 —
     # matview 폐기로 검증 대상 DDL 부재.
