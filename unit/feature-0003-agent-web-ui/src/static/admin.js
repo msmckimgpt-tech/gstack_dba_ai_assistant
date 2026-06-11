@@ -31,6 +31,14 @@ const adminState = {
   productLastClickIdx: -1,
   productDbDraft: new Map(),
   availableDatabases: { metadata_schemas: [], user_schemas: [] },
+  // TASK-0210: 대시보드 위젯 그리드 상태(서버 집계 + per-account 커스터마이즈).
+  overview: null,            // GET /api/admin/overview 응답 {catalog, widgets, window_days}
+  dashboardPrefs: null,      // {version, widgets:[{key,visible,order}]} (계정별 영속)
+  dashboardDefaults: null,   // 권한 기반 기본 prefs (기본값 복원용)
+  dashboardEditMode: false,
+  dashboardWindow: 7,        // 집계 기간(일)
+  dashboardLoaded: false,
+  dashboardLoading: false,
   pending: {
     accounts: new Map(),
     roles: new Map(),
@@ -1933,79 +1941,313 @@ async function loadGrantHealth() {
   }
 }
 
-/* ── Dashboard pane ──────────────────────────────────────────────────── */
+/* ── Dashboard pane (TASK-0210: 카테고리 위젯 그리드 + per-account 커스터마이즈) ──
+ *
+ * 기존 6개 metric 카드(클라 배열 계산)를 카테고리별 풍부한 위젯 그리드로 대체.
+ * 위젯 데이터는 GET /api/admin/overview 가 RBAC-스코프로 반환(보유 권한 위젯만);
+ * 표시/순서는 GET·PUT /api/admin/dashboard/preferences 로 계정별 영속.
+ *   server 위젯: accounts/roles/products/datasources/conversations/audits/usage
+ *   client 위젯: grant_health(별도 엔드포인트)·pending(미저장 변경 — 클라 상태)
+ */
 
+function _dashFmtValue(v, fmt) {
+  if (fmt === "usd") {
+    return "$" + Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  const n = Number(v);
+  if (v != null && !Number.isNaN(n)) return n.toLocaleString();
+  return String(v == null ? "—" : v);
+}
+
+// renderDashboard 는 탭 진입/새로고침/pending 변경 때마다 호출된다(기존 호출처 유지).
+// 최초 1회 overview+prefs 를 fetch 하고 이후엔 캐시로 즉시 재렌더(pending 위젯만 갱신).
 function renderDashboard() {
-  $("metricActive").textContent = String(
-    adminState.accounts.filter((a) => a.is_active && !a.deleted_at).length
-  );
-  $("metricInactive").textContent = String(
-    adminState.accounts.filter((a) => !a.is_active && !a.deleted_at).length
-  );
-  $("metricDeleted").textContent = String(
-    adminState.accounts.filter((a) => a.deleted_at).length
-  );
-  $("metricRoles").textContent = String(adminState.roles.length);
+  wireDashboardControls();
+  loadDashboardOverview(false);
+}
 
-  const now = Date.now();
-  const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
-  const recent = adminState.accounts.filter((a) => {
-    if (!a.last_login_at) return false;
-    const ts = new Date(a.last_login_at).getTime();
-    return !Number.isNaN(ts) && ts >= weekAgo;
-  }).length;
-  $("metricRecentLogins").textContent = String(recent);
-  $("metricPending").textContent = String(pendingChangeCount());
+function wireDashboardControls() {
+  if (adminState._dashboardWired) return;
+  adminState._dashboardWired = true;
+  const win = $("dashboardWindow");
+  if (win) {
+    win.value = String(adminState.dashboardWindow || 7);
+    win.addEventListener("change", () => {
+      const d = parseInt(win.value, 10);
+      adminState.dashboardWindow = Number.isNaN(d) ? 7 : d;
+      adminState.dashboardLoaded = false;
+      loadDashboardOverview(true);
+    });
+  }
+  const editBtn = $("dashboardEditToggle");
+  if (editBtn) {
+    editBtn.addEventListener("click", () => {
+      adminState.dashboardEditMode = !adminState.dashboardEditMode;
+      renderDashboardWidgets();
+    });
+  }
+  const saveBtn = $("dashboardSaveBtn");
+  if (saveBtn) saveBtn.addEventListener("click", saveDashboardPrefs);
+  const resetBtn = $("dashboardResetBtn");
+  if (resetBtn) resetBtn.addEventListener("click", resetDashboardPrefs);
+}
 
-  const listEl = $("dashboardPendingList");
-  listEl.innerHTML = "";
-  if (pendingChangeCount() === 0) return;
+async function loadDashboardOverview(force) {
+  if (adminState.dashboardLoading) return;
+  if (adminState.dashboardLoaded && !force) { renderDashboardWidgets(); return; }
+  adminState.dashboardLoading = true;
+  try {
+    const days = adminState.dashboardWindow || 7;
+    const [overview, prefsResp] = await Promise.all([
+      apiFetch(`/api/admin/overview?days=${encodeURIComponent(days)}`).catch((e) => ({ _error: e })),
+      apiFetch("/api/admin/dashboard/preferences").catch((e) => ({ _error: e })),
+    ]);
+    adminState.overview = overview && !overview._error ? overview : { catalog: [], widgets: {} };
+    if (prefsResp && !prefsResp._error && prefsResp.preferences) {
+      adminState.dashboardPrefs = prefsResp.preferences;
+      adminState.dashboardDefaults = prefsResp.defaults || null;
+    } else if (!adminState.dashboardPrefs) {
+      adminState.dashboardPrefs = { version: 1, widgets: [] };
+    }
+    adminState.dashboardLoaded = true;
+  } finally {
+    adminState.dashboardLoading = false;
+  }
+  renderDashboardWidgets();
+}
 
-  const heading = document.createElement("div");
-  heading.className = "admin-dashboard-pending-head";
-  heading.textContent = "미리보기";
-  listEl.appendChild(heading);
+// catalog(서버 권위 위젯 목록) + prefs(표시/순서)를 합쳐 최종 렌더 순서를 만든다.
+// catalog 에 없는(권한 없는) 위젯은 제외 → 권한 회수 시 자동 숨김.
+function _dashboardRenderOrder() {
+  const catalog = (adminState.overview && adminState.overview.catalog) || [];
+  const prefs = (adminState.dashboardPrefs && adminState.dashboardPrefs.widgets) || [];
+  const prefByKey = new Map(prefs.map((w) => [w.key, w]));
+  const items = catalog.map((c, idx) => {
+    const p = prefByKey.get(c.key);
+    return {
+      key: c.key,
+      title: c.title,
+      source: c.source,
+      visible: p ? p.visible !== false : true,
+      order: p && typeof p.order === "number" ? p.order : idx,
+      catalogIdx: idx,
+    };
+  });
+  items.sort((a, b) => (a.order - b.order) || (a.catalogIdx - b.catalogIdx));
+  return items;
+}
 
+function renderDashboardWidgets() {
+  const wrap = $("dashboardWidgets");
+  if (!wrap) return;
+  const editing = !!adminState.dashboardEditMode;
+  const editBar = $("dashboardEditBar");
+  if (editBar) editBar.hidden = !editing;
+  const editBtn = $("dashboardEditToggle");
+  if (editBtn) editBtn.textContent = editing ? "완료" : "편집";
+
+  const items = _dashboardRenderOrder();
+  wrap.classList.toggle("is-editing", editing);
+  wrap.innerHTML = "";
+
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "표시할 위젯이 없습니다.";
+    wrap.appendChild(empty);
+    return;
+  }
+  const shown = editing ? items : items.filter((it) => it.visible);
+  if (!shown.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "모든 위젯이 숨김 상태입니다. 우측 상단 “편집”에서 표시할 위젯을 선택하세요.";
+    wrap.appendChild(empty);
+    return;
+  }
+  shown.forEach((it, i) => wrap.appendChild(buildWidgetCard(it, i, shown.length)));
+  // client-rendered: grant_health 는 별도 엔드포인트로 채운다.
+  if ($("dashboardGrantHealth")) loadGrantHealth();
+}
+
+function buildWidgetCard(it, idx, total) {
+  const card = document.createElement("article");
+  card.className = "dashboard-widget";
+  card.dataset.widget = it.key;
+  if (adminState.dashboardEditMode && !it.visible) card.classList.add("widget-hidden");
+
+  const head = document.createElement("header");
+  head.className = "dashboard-widget-head";
+  const h3 = document.createElement("h3");
+  h3.textContent = it.title;
+  head.appendChild(h3);
+
+  if (adminState.dashboardEditMode) {
+    const ctrls = document.createElement("div");
+    ctrls.className = "dashboard-widget-edit";
+    const lbl = document.createElement("label");
+    lbl.className = "dashboard-widget-vis";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = it.visible;
+    cb.addEventListener("change", () => setWidgetVisible(it.key, cb.checked));
+    lbl.appendChild(cb);
+    lbl.appendChild(document.createTextNode(" 표시"));
+    ctrls.appendChild(lbl);
+    const up = document.createElement("button");
+    up.type = "button";
+    up.className = "dashboard-widget-move";
+    up.textContent = "↑";
+    up.title = "위로";
+    up.disabled = idx === 0;
+    up.addEventListener("click", () => moveWidget(it.key, -1));
+    const down = document.createElement("button");
+    down.type = "button";
+    down.className = "dashboard-widget-move";
+    down.textContent = "↓";
+    down.title = "아래로";
+    down.disabled = idx === total - 1;
+    down.addEventListener("click", () => moveWidget(it.key, 1));
+    ctrls.appendChild(up);
+    ctrls.appendChild(down);
+    head.appendChild(ctrls);
+  }
+  card.appendChild(head);
+
+  const body = document.createElement("div");
+  body.className = "dashboard-widget-body";
+  if (it.source === "client") {
+    if (it.key === "grant_health") {
+      const gh = document.createElement("div");
+      gh.id = "dashboardGrantHealth";
+      gh.className = "admin-grant-health";
+      body.appendChild(gh);
+    } else if (it.key === "pending") {
+      body.appendChild(buildPendingWidgetBody());
+    }
+  } else {
+    const data = adminState.overview && adminState.overview.widgets
+      ? adminState.overview.widgets[it.key]
+      : null;
+    body.appendChild(buildDataWidgetBody(data));
+  }
+  card.appendChild(body);
+  return card;
+}
+
+function buildDataWidgetBody(data) {
+  const frag = document.createDocumentFragment();
+  if (!data || data.error) {
+    const e = document.createElement("div");
+    e.className = "dashboard-widget-empty";
+    e.textContent = data && data.error ? "데이터를 불러오지 못했습니다." : "데이터 없음";
+    frag.appendChild(e);
+    return frag;
+  }
+  const metrics = data.metrics || [];
+  if (metrics.length) {
+    const mwrap = document.createElement("div");
+    mwrap.className = "dashboard-widget-metrics";
+    metrics.forEach((m) => {
+      const chip = document.createElement("div");
+      chip.className = "dashboard-metric" + (m.accent ? " accent-" + m.accent : "");
+      const val = document.createElement("strong");
+      val.textContent = _dashFmtValue(m.value, m.fmt);
+      const lab = document.createElement("span");
+      lab.textContent = m.label;
+      chip.appendChild(val);
+      chip.appendChild(lab);
+      mwrap.appendChild(chip);
+    });
+    frag.appendChild(mwrap);
+  }
+  (data.lists || []).forEach((lst) => {
+    if (!lst || !(lst.rows || []).length) return;
+    const lwrap = document.createElement("div");
+    lwrap.className = "dashboard-widget-list";
+    const t = document.createElement("div");
+    t.className = "dashboard-widget-list-title";
+    t.textContent = lst.title || "";
+    lwrap.appendChild(t);
+    lst.rows.forEach((row) => {
+      const r = document.createElement("div");
+      r.className = "dashboard-list-row";
+      const lab = document.createElement("span");
+      lab.className = "dashboard-list-label";
+      lab.textContent = String(row.label == null ? "" : row.label);
+      const val = document.createElement("span");
+      val.className = "dashboard-list-value";
+      val.textContent = _dashFmtValue(row.value, row.fmt);
+      r.appendChild(lab);
+      r.appendChild(val);
+      lwrap.appendChild(r);
+    });
+    frag.appendChild(lwrap);
+  });
+  if (!metrics.length && !(data.lists || []).some((l) => (l.rows || []).length)) {
+    const e = document.createElement("div");
+    e.className = "dashboard-widget-empty";
+    e.textContent = "데이터 없음";
+    frag.appendChild(e);
+  }
+  return frag;
+}
+
+// 미저장 변경(pending) 위젯 본문 — 기존 dashboard pending 미리보기 로직 보존.
+function buildPendingWidgetBody() {
+  const frag = document.createDocumentFragment();
+  const count = pendingChangeCount();
+  const metric = document.createElement("div");
+  metric.className = "dashboard-widget-metrics";
+  const chip = document.createElement("div");
+  chip.className = "dashboard-metric" + (count > 0 ? " accent-warn" : "");
+  const val = document.createElement("strong");
+  val.textContent = String(count);
+  const lab = document.createElement("span");
+  lab.textContent = "미저장 변경";
+  chip.appendChild(val);
+  chip.appendChild(lab);
+  metric.appendChild(chip);
+  frag.appendChild(metric);
+  if (count === 0) {
+    const e = document.createElement("div");
+    e.className = "dashboard-widget-empty";
+    e.textContent = "미저장 변경이 없습니다.";
+    frag.appendChild(e);
+    return frag;
+  }
+  const lwrap = document.createElement("div");
+  lwrap.className = "dashboard-widget-list";
+  const addRow = (text) => {
+    const row = document.createElement("div");
+    row.className = "dashboard-list-row";
+    const lab = document.createElement("span");
+    lab.className = "dashboard-list-label";
+    lab.textContent = text;
+    row.appendChild(lab);
+    lwrap.appendChild(row);
+  };
   adminState.pending.accounts.forEach((patch, id) => {
     const base = adminState.accounts.find((a) => Number(a.id) === id);
-    if (!base) return;
-    const row = document.createElement("div");
-    row.className = "admin-dashboard-pending-row";
-    row.textContent = `계정 · ${base.username} · ${describePatchKeys(patch)}`;
-    listEl.appendChild(row);
+    if (base) addRow(`계정 · ${base.username} · ${describePatchKeys(patch)}`);
   });
   adminState.pending.roles.forEach((patch, id) => {
     const base = adminState.roles.find((r) => Number(r.id) === id);
-    if (!base) return;
-    const row = document.createElement("div");
-    row.className = "admin-dashboard-pending-row";
-    row.textContent = `역할 · ${base.name} · ${describePatchKeys(patch)}`;
-    listEl.appendChild(row);
+    if (base) addRow(`역할 · ${base.name} · ${describePatchKeys(patch)}`);
   });
-  adminState.pending.newRoles.forEach((draft, tempId) => {
-    const row = document.createElement("div");
-    row.className = "admin-dashboard-pending-row";
-    row.textContent = `신규 역할 · ${draft.role_key || "(키 미입력)"} · ${draft.name || ""}`;
-    listEl.appendChild(row);
+  adminState.pending.newRoles.forEach((draft) => {
+    addRow(`신규 역할 · ${draft.role_key || "(키 미입력)"} · ${draft.name || ""}`);
   });
   adminState.pending.productMeta.forEach((patch, id) => {
     const base = adminState.products.find((p) => Number(p.id) === Number(id));
-    const row = document.createElement("div");
-    row.className = "admin-dashboard-pending-row";
-    row.textContent = `제품 정보 · ${base ? base.name : `#${id}`} · ${describePatchKeys(patch)}`;
-    listEl.appendChild(row);
+    addRow(`제품 정보 · ${base ? base.name : `#${id}`} · ${describePatchKeys(patch)}`);
   });
   adminState.pending.productDatabases.forEach((draft, id) => {
     const base = adminState.products.find((p) => Number(p.id) === Number(id));
-    const row = document.createElement("div");
-    row.className = "admin-dashboard-pending-row";
-    const count = Array.isArray(draft) ? draft.length : 0;
-    row.textContent = `제품 DB · ${base ? base.name : `#${id}`} · ${count} schema`;
-    listEl.appendChild(row);
+    const c = Array.isArray(draft) ? draft.length : 0;
+    addRow(`제품 DB · ${base ? base.name : `#${id}`} · ${c} schema`);
   });
-  adminState.pending.systemPrompts.forEach((entry, key) => {
-    const row = document.createElement("div");
-    row.className = "admin-dashboard-pending-row";
+  adminState.pending.systemPrompts.forEach((entry) => {
     const scopeLabel = { product: "제품", role: "역할", account: "계정" }[entry.scope] || entry.scope;
     const target = entry.productId
       ? (adminState.products.find((p) => Number(p.id) === Number(entry.productId))?.name || `#${entry.productId}`)
@@ -2015,9 +2257,75 @@ function renderDashboard() {
       ? (adminState.accounts.find((a) => Number(a.id) === Number(entry.accountId))?.username || `#${entry.accountId}`)
       : "(전역)";
     const action = entry.content ? `${entry.content.length}자` : "삭제";
-    row.textContent = `프롬프트 (${scopeLabel}) · ${target} · ${action}`;
-    listEl.appendChild(row);
+    addRow(`프롬프트 (${scopeLabel}) · ${target} · ${action}`);
   });
+  frag.appendChild(lwrap);
+  return frag;
+}
+
+/* ── Dashboard 편집/영속 ─────────────────────────────────────────────── */
+
+// 현재 렌더 순서를 prefs.widgets 로 물질화(편집이 일관되게 영속되도록).
+function _materializeDashboardPrefs() {
+  const items = _dashboardRenderOrder();
+  adminState.dashboardPrefs = adminState.dashboardPrefs || { version: 1, widgets: [] };
+  adminState.dashboardPrefs.widgets = items.map((it, i) => ({ key: it.key, visible: it.visible, order: i }));
+  return adminState.dashboardPrefs.widgets;
+}
+
+function setWidgetVisible(key, visible) {
+  const widgets = _materializeDashboardPrefs();
+  const w = widgets.find((x) => x.key === key);
+  if (w) w.visible = !!visible;
+  renderDashboardWidgets();
+}
+
+function moveWidget(key, dir) {
+  const widgets = _materializeDashboardPrefs();
+  const i = widgets.findIndex((x) => x.key === key);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= widgets.length) return;
+  const tmp = widgets[i];
+  widgets[i] = widgets[j];
+  widgets[j] = tmp;
+  widgets.forEach((w, k) => { w.order = k; });
+  renderDashboardWidgets();
+}
+
+async function saveDashboardPrefs() {
+  const widgets = _materializeDashboardPrefs();
+  const btn = $("dashboardSaveBtn");
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await apiFetch("/api/admin/dashboard/preferences", {
+      method: "PUT",
+      body: JSON.stringify({ version: 1, widgets }),
+    });
+    if (resp && resp.preferences) adminState.dashboardPrefs = resp.preferences;
+    adminState.dashboardEditMode = false;
+    renderDashboardWidgets();
+    showToast("대시보드 설정을 저장했습니다.");
+  } catch (e) {
+    showToast("저장 실패: " + (e.message || ""), true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function resetDashboardPrefs() {
+  const defaults = adminState.dashboardDefaults || { version: 1, widgets: [] };
+  adminState.dashboardPrefs = JSON.parse(JSON.stringify(defaults));
+  renderDashboardWidgets();
+  try {
+    const resp = await apiFetch("/api/admin/dashboard/preferences", {
+      method: "PUT",
+      body: JSON.stringify(adminState.dashboardPrefs),
+    });
+    if (resp && resp.preferences) adminState.dashboardPrefs = resp.preferences;
+    showToast("기본값으로 복원했습니다.");
+  } catch (e) {
+    showToast("복원 저장 실패: " + (e.message || ""), true);
+  }
 }
 
 function describePatchKeys(patch) {

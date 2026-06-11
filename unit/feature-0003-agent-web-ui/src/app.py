@@ -3076,7 +3076,8 @@ def _runtime_tables_available() -> bool:
             cur = conn.cursor()
             try:
                 for table_name in ("WebAccounts", "WebRoles", "WebAuthSessions",
-                                   "WebProducts", "WebProductDatabases", "WebSystemPrompts"):
+                                   "WebProducts", "WebProductDatabases", "WebSystemPrompts",
+                                   "WebDashboardPreferences"):
                     cur.execute(f"SELECT 1 FROM `{table_name}` LIMIT 1")
                     cur.fetchall()
                 for column_check in (
@@ -3114,6 +3115,7 @@ def _runtime_tables_available() -> bool:
                 "WebProducts",
                 "WebProductDatabases",
                 "WebSystemPrompts",
+                "WebDashboardPreferences",
             ):
                 cur.execute(f"SELECT 1 FROM `{table_name}` LIMIT 1")
                 cur.fetchall()
@@ -4374,6 +4376,20 @@ def _ensure_web_tables():
             )
         except Exception:
             pass
+        # TASK-0210 (Major §12.3): per-account 관리 콘솔 대시보드 커스터마이즈 영속.
+        # 각 관리자(AccountId)별 위젯 표시/순서/옵션을 JSON 본문으로 저장(self-service,
+        # 신규 RBAC 권한 없음). Content 는 WebSystemPrompts 와 동일하게 MEDIUMTEXT 에
+        # JSON 텍스트로 보관(부트스트랩 MySQL 버전 무관 호환). AccountId 1행/계정.
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebDashboardPreferences (
+                AccountId BIGINT NOT NULL PRIMARY KEY,
+                Content MEDIUMTEXT NOT NULL,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
         cur.close()
         _ensure_permission_catalog(conn)
         _ensure_seed_roles(conn)
@@ -14807,6 +14823,444 @@ def admin_llm_usage(request: Request) -> JSONResponse:
             "by_day": by_day,
             "by_day_model": by_day_model,
         })
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# TASK-0210 (Major §12.3) — 관리 콘솔 대시보드 보강
+#   대시보드를 6개 metric 카드(클라 계산)에서 카테고리별 풍부한 위젯 그리드로 확장.
+#   · GET /api/admin/overview                    — RBAC-스코프 카테고리 집계
+#   · GET/PUT /api/admin/dashboard/preferences   — per-account 위젯 표시/순서 영속
+# 설계 핵심: 각 위젯은 "표시 권한(permission)" 을 가지며, overview 는 actor 가 그
+# 권한을 보유한 위젯의 데이터만 만들어 반환한다 → 권한 경계 = 데이터 노출 경계
+# (operator 가 usage 권한이 없으면 토큰/비용 수치를 응답에서 아예 받지 못함).
+# preferences 는 본인 계정 한정 self-service 로 신규 RBAC 권한을 추가하지 않는다.
+# ════════════════════════════════════════════════════════════════════════════
+
+# 위젯 카탈로그: key, 표시 제목, 표시에 필요한 권한, 렌더 출처(server=overview 집계 /
+# client=프런트가 별도 소스로 렌더). 튜플 순서 = 기본 배치 순서.
+_DASHBOARD_WIDGETS: tuple[dict, ...] = (
+    {"key": "accounts",      "title": "계정",         "permission": "console.access",     "source": "server"},
+    {"key": "roles",         "title": "역할",         "permission": "console.access",     "source": "server"},
+    {"key": "products",      "title": "제품",         "permission": "console.access",     "source": "server"},
+    {"key": "datasources",   "title": "데이터소스",   "permission": "console.access",     "source": "server"},
+    {"key": "conversations", "title": "대화·활동",    "permission": "console.access",     "source": "server"},
+    {"key": "audits",        "title": "감사 활동",    "permission": "audit.read.any",     "source": "server"},
+    {"key": "usage",         "title": "LLM 사용량",   "permission": "console.usage.read", "source": "server"},
+    {"key": "grant_health",  "title": "첨부 DB 권한", "permission": "console.access",     "source": "client"},
+    {"key": "pending",       "title": "미저장 변경",  "permission": "console.access",     "source": "client"},
+)
+_DASHBOARD_WIDGET_KEYS: frozenset = frozenset(w["key"] for w in _DASHBOARD_WIDGETS)
+_DASHBOARD_PREF_VERSION = 1
+
+
+def _dashboard_default_prefs(actor: dict) -> dict:
+    """actor 가 권한을 보유한 위젯만 기본 표시(카탈로그 순서)."""
+    keys = [w["key"] for w in _DASHBOARD_WIDGETS if _account_has_permission(actor, w["permission"])]
+    return {
+        "version": _DASHBOARD_PREF_VERSION,
+        "widgets": [{"key": k, "visible": True, "order": i} for i, k in enumerate(keys)],
+    }
+
+
+def _sanitize_dashboard_prefs(raw: dict) -> dict:
+    """클라이언트 입력 prefs 를 알려진 위젯 키·boolean·int 로만 정규화.
+
+    미지 키/중복/과대 입력을 거부한다. 권한 검증은 하지 않는다 — overview 가 권한
+    없는 위젯 데이터를 애초에 반환하지 않으므로 prefs 에 그 키가 남아도 노출 위험이
+    없고, 권한이 회복되면 그때 표시되도록 보존하는 편이 사용자 친화적이다.
+    """
+    widgets: list[dict] = []
+    seen: set[str] = set()
+    items = raw.get("widgets") if isinstance(raw, dict) else None
+    if isinstance(items, list):
+        for it in items[:64]:  # 과대 입력 상한
+            if not isinstance(it, dict):
+                continue
+            key = str(it.get("key") or "")
+            if key not in _DASHBOARD_WIDGET_KEYS or key in seen:
+                continue
+            seen.add(key)
+            try:
+                order = int(it.get("order"))
+            except Exception:
+                order = len(widgets)
+            widgets.append({"key": key, "visible": bool(it.get("visible", True)), "order": order})
+    return {"version": _DASHBOARD_PREF_VERSION, "widgets": widgets}
+
+
+def _load_dashboard_pref_row(conn, account_id: int) -> dict | None:
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT Content FROM WebDashboardPreferences WHERE AccountId = %s", (int(account_id),))
+        row = cur.fetchone()
+    except Exception:
+        return None
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+    if not row or not row[0]:
+        return None
+    try:
+        parsed = json.loads(row[0])
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
+def _save_dashboard_pref_row(conn, account_id: int, content: dict) -> None:
+    payload = json.dumps(content, ensure_ascii=False)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO WebDashboardPreferences (AccountId, Content) VALUES (%s, %s) "
+            "ON DUPLICATE KEY UPDATE Content = VALUES(Content)",
+            (int(account_id), payload),
+        )
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+
+
+# ── 위젯별 집계 (각 함수는 예외를 던질 수 있으며 overview 호출부가 격리) ──────
+
+def _dash_widget_accounts(conn) -> dict:
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT "
+            " SUM(CASE WHEN IsActive=1 AND DeletedAt IS NULL THEN 1 ELSE 0 END), "
+            " SUM(CASE WHEN IsActive=0 AND DeletedAt IS NULL THEN 1 ELSE 0 END), "
+            " SUM(CASE WHEN DeletedAt IS NOT NULL THEN 1 ELSE 0 END), "
+            " SUM(CASE WHEN LastLoginAt >= (NOW() - INTERVAL 7 DAY) AND DeletedAt IS NULL THEN 1 ELSE 0 END), "
+            " COUNT(*) FROM WebAccounts"
+        )
+        r = cur.fetchone() or (0, 0, 0, 0, 0)
+        active, inactive, deleted, recent, total = (int(x or 0) for x in r)
+        cur.execute(
+            "SELECT COALESCE(rr.Name, '(역할 없음)'), COUNT(*) "
+            "FROM WebAccounts a LEFT JOIN WebRoles rr ON rr.Id = a.RoleId "
+            "WHERE a.DeletedAt IS NULL GROUP BY a.RoleId, rr.Name ORDER BY 2 DESC LIMIT 8"
+        )
+        by_role = [{"label": str(x[0]), "value": int(x[1])} for x in (cur.fetchall() or [])]
+    finally:
+        cur.close()
+    return {
+        "metrics": [
+            {"label": "활성", "value": active, "accent": "ok"},
+            {"label": "비활성", "value": inactive},
+            {"label": "삭제됨", "value": deleted, "accent": "muted"},
+            {"label": "최근 7일 로그인", "value": recent},
+            {"label": "전체", "value": total},
+        ],
+        "lists": ([{"title": "역할별 계정", "rows": by_role}] if by_role else []),
+    }
+
+
+def _dash_widget_roles(conn) -> dict:
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(*) FROM WebRoles")
+        role_count = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute(
+            "SELECT rr.Name, COUNT(rp.PermissionId) "
+            "FROM WebRoles rr LEFT JOIN WebRolePermissions rp ON rp.RoleId = rr.Id "
+            "GROUP BY rr.Id, rr.Name ORDER BY 2 DESC LIMIT 8"
+        )
+        by_perm = [{"label": str(x[0]), "value": int(x[1] or 0)} for x in (cur.fetchall() or [])]
+    finally:
+        cur.close()
+    return {
+        "metrics": [{"label": "역할 수", "value": role_count}],
+        "lists": ([{"title": "역할별 권한 수", "rows": by_perm}] if by_perm else []),
+    }
+
+
+def _dash_widget_products(conn) -> dict:
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT SUM(CASE WHEN IsActive=1 THEN 1 ELSE 0 END), "
+            " SUM(CASE WHEN IsActive=0 THEN 1 ELSE 0 END), "
+            " SUM(CASE WHEN DatasourceKey IS NOT NULL AND DatasourceKey <> '' THEN 1 ELSE 0 END), "
+            " COUNT(*) FROM WebProducts"
+        )
+        r = cur.fetchone() or (0, 0, 0, 0)
+        active, inactive, bound, total = (int(x or 0) for x in r)
+    finally:
+        cur.close()
+    return {
+        "metrics": [
+            {"label": "활성 제품", "value": active, "accent": "ok"},
+            {"label": "비활성", "value": inactive, "accent": "muted"},
+            {"label": "datasource 바인딩", "value": bound},
+            {"label": "전체", "value": total},
+        ],
+        "lists": [],
+    }
+
+
+def _dash_widget_datasources(conn) -> dict:
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT SUM(CASE WHEN IsActive=1 THEN 1 ELSE 0 END), COUNT(*) FROM WebDatasources")
+        r = cur.fetchone() or (0, 0)
+        active, total = int(r[0] or 0), int(r[1] or 0)
+        cur.execute("SELECT COALESCE(Engine,'mysql'), COUNT(*) FROM WebDatasources GROUP BY Engine ORDER BY 2 DESC LIMIT 8")
+        by_engine = [{"label": str(x[0]), "value": int(x[1])} for x in (cur.fetchall() or [])]
+    finally:
+        cur.close()
+    return {
+        "metrics": [
+            {"label": "활성 데이터소스", "value": active, "accent": "ok"},
+            {"label": "전체 등록", "value": total},
+        ],
+        "lists": ([{"title": "엔진별", "rows": by_engine}] if by_engine else []),
+    }
+
+
+def _dash_widget_audits(conn) -> dict:
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(*) FROM WebAuditEvents WHERE OccurredAt >= (NOW() - INTERVAL 1 DAY)")
+        last24 = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute("SELECT COUNT(*) FROM WebAuditEvents WHERE OccurredAt >= (NOW() - INTERVAL 7 DAY)")
+        last7 = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute(
+            "SELECT ActionCode, COUNT(*) FROM WebAuditEvents "
+            "WHERE OccurredAt >= (NOW() - INTERVAL 7 DAY) GROUP BY ActionCode ORDER BY 2 DESC LIMIT 8"
+        )
+        by_action = [{"label": str(x[0]), "value": int(x[1])} for x in (cur.fetchall() or [])]
+        cur.execute(
+            "SELECT COALESCE(a.Username, '(익명/시스템)'), COUNT(*) "
+            "FROM WebAuditEvents ev LEFT JOIN WebAccounts a ON a.Id = ev.ActorAccountId "
+            "WHERE ev.OccurredAt >= (NOW() - INTERVAL 7 DAY) "
+            "GROUP BY ev.ActorAccountId, a.Username ORDER BY 2 DESC LIMIT 8"
+        )
+        by_actor = [{"label": str(x[0]), "value": int(x[1])} for x in (cur.fetchall() or [])]
+    finally:
+        cur.close()
+    lists = []
+    if by_action:
+        lists.append({"title": "액션별 (7일)", "rows": by_action})
+    if by_actor:
+        lists.append({"title": "actor별 (7일)", "rows": by_actor})
+    return {
+        "metrics": [
+            {"label": "최근 24시간 이벤트", "value": last24},
+            {"label": "최근 7일 이벤트", "value": last7},
+        ],
+        "lists": lists,
+    }
+
+
+def _dash_widget_conversations(pg) -> dict:
+    with pg.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM agent_runtime.core_conversations")
+        total = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute("SELECT COUNT(*) FROM agent_runtime.core_conversations WHERE created_at >= now() - interval '1 day'")
+        d1 = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute("SELECT COUNT(*) FROM agent_runtime.core_conversations WHERE created_at >= now() - interval '7 days'")
+        d7 = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute("SELECT COUNT(DISTINCT owner_account_id) FROM agent_runtime.core_conversations WHERE owner_account_id IS NOT NULL")
+        owners = int((cur.fetchone() or (0,))[0] or 0)
+    return {
+        "metrics": [
+            {"label": "전체 대화", "value": total},
+            {"label": "최근 24시간", "value": d1, "accent": "ok"},
+            {"label": "최근 7일", "value": d7},
+            {"label": "활성 소유자", "value": owners},
+        ],
+        "lists": [],
+    }
+
+
+def _dash_widget_usage(pg, days: int) -> dict:
+    win = f"now() - interval '{int(days)} days'"  # days 는 호출부에서 int 로 clamp → 인젝션 불가
+    with pg.cursor() as cur:
+        cur.execute(
+            f"SELECT COALESCE(count(*),0), COALESCE(sum(total_tokens),0), "
+            f"COALESCE(count(distinct run_id),0) FROM agent_runtime.llm_usage WHERE created_at >= {win}"
+        )
+        t = cur.fetchone() or (0, 0, 0)
+        calls, tok, reqs = (int(x or 0) for x in t)
+        cur.execute(
+            f"SELECT COALESCE(resolved_model, model), sum(total_tokens), sum(prompt_tokens), sum(completion_tokens) "
+            f"FROM agent_runtime.llm_usage WHERE created_at >= {win} "
+            f"GROUP BY 1 ORDER BY 2 DESC NULLS LAST LIMIT 8"
+        )
+        rows = cur.fetchall() or []
+    by_model = []
+    cost = 0.0
+    for x in rows:
+        m = str(x[0] or "?")
+        cost += _estimate_llm_cost_usd(m, int(x[2] or 0), int(x[3] or 0))
+        by_model.append({"label": m, "value": int(x[1] or 0)})
+    return {
+        "metrics": [
+            {"label": f"토큰 ({int(days)}일)", "value": tok},
+            {"label": "요청", "value": reqs},
+            {"label": "호출", "value": calls},
+            {"label": "추정 비용", "value": round(cost, 2), "fmt": "usd"},
+        ],
+        "lists": ([{"title": "모델별 토큰", "rows": by_model}] if by_model else []),
+        "window_days": int(days),
+    }
+
+
+@app.get("/api/admin/overview")
+def admin_overview(request: Request) -> JSONResponse:
+    """TASK-0210: 관리 콘솔 대시보드 카테고리별 RBAC-스코프 집계.
+
+    actor 가 보유한 표시 권한의 위젯 데이터만 반환한다 — 권한 경계가 곧 데이터
+    노출 경계다(usage 권한 없는 operator 는 응답에 토큰/비용이 없음). 각 위젯은
+    독립 try/except 로 격리되어 한 위젯의 DB 실패가 전체 대시보드를 깨뜨리지 않는다.
+    `catalog` 는 actor 가 볼 수 있는 위젯 목록(client-rendered grant_health/pending 포함)을
+    카탈로그 순서로 반환해 프런트가 권한 기준 위젯 집합을 서버 권위로 받게 한다.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        actor, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(actor, "console.access"):
+            return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+        try:
+            days = int(request.query_params.get("days", "7"))
+        except Exception:
+            days = 7
+        days = max(1, min(365, days))
+
+        catalog = [
+            {"key": w["key"], "title": w["title"], "source": w["source"]}
+            for w in _DASHBOARD_WIDGETS
+            if _account_has_permission(actor, w["permission"])
+        ]
+        permitted = {c["key"] for c in catalog}
+        widgets: dict = {}
+        log = logging.getLogger(__name__)
+
+        def _isolate(key: str, fn):
+            if key not in permitted:
+                return
+            try:
+                widgets[key] = fn()
+            except Exception:
+                log.warning("admin_overview: widget %s failed", key, exc_info=True)
+                widgets[key] = {"error": True, "metrics": [], "lists": []}
+
+        # MySQL 위젯
+        _isolate("accounts", lambda: _dash_widget_accounts(conn))
+        _isolate("roles", lambda: _dash_widget_roles(conn))
+        _isolate("products", lambda: _dash_widget_products(conn))
+        _isolate("datasources", lambda: _dash_widget_datasources(conn))
+        _isolate("audits", lambda: _dash_widget_audits(conn))
+
+        # PG 위젯 (conversations + usage) — 단일 연결 재사용
+        if ("conversations" in permitted) or ("usage" in permitted):
+            pg = None
+            try:
+                from modules.db import _pg_connect
+                pg = _pg_connect()
+            except Exception:
+                log.warning("admin_overview: pg connect failed", exc_info=True)
+                pg = None
+            if pg is None:
+                for k in ("conversations", "usage"):
+                    if k in permitted:
+                        widgets[k] = {"error": True, "metrics": [], "lists": []}
+            else:
+                try:
+                    _isolate("conversations", lambda: _dash_widget_conversations(pg))
+                    _isolate("usage", lambda: _dash_widget_usage(pg, days))
+                finally:
+                    try:
+                        pg.close()
+                    except Exception:
+                        pass
+
+        return JSONResponse({"catalog": catalog, "widgets": widgets, "window_days": days})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@app.get("/api/admin/dashboard/preferences")
+def admin_get_dashboard_prefs(request: Request) -> JSONResponse:
+    """TASK-0210: 본인 계정의 대시보드 위젯 표시/순서 prefs (없으면 권한 기반 기본값).
+
+    별도 RBAC 권한 없이 console.access 만 요구 — 본인 대시보드 레이아웃은 self-service.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        actor, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(actor, "console.access"):
+            return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+        defaults = _dashboard_default_prefs(actor)
+        saved = _load_dashboard_pref_row(conn, int(actor["id"]))
+        if saved and isinstance(saved.get("widgets"), list) and saved["widgets"]:
+            return JSONResponse({
+                "preferences": _sanitize_dashboard_prefs(saved),
+                "defaults": defaults,
+                "customized": True,
+            })
+        return JSONResponse({"preferences": defaults, "defaults": defaults, "customized": False})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@app.put("/api/admin/dashboard/preferences")
+async def admin_put_dashboard_prefs(request: Request) -> JSONResponse:
+    """TASK-0210: 본인 계정 대시보드 prefs 저장(영속). 알려진 위젯 키로만 정규화."""
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        actor, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(actor, "console.access"):
+            return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+        prefs = _sanitize_dashboard_prefs(data if isinstance(data, dict) else {})
+        try:
+            _save_dashboard_pref_row(conn, int(actor["id"]), prefs)
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            # REV-20260611-0210 MINOR: raw 예외 텍스트(드라이버 메시지·테이블/컬럼명)를
+            # 클라이언트에 노출하지 않는다(선례 엔드포인트 정합) — 서버측에만 기록.
+            logging.getLogger(__name__).warning("admin_put_dashboard_prefs: save failed", exc_info=True)
+            return _json_error("대시보드 설정 저장에 실패했습니다.", 500)
+        return JSONResponse({"ok": True, "preferences": prefs})
     finally:
         try:
             conn.close()

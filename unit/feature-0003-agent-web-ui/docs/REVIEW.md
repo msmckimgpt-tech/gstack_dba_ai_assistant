@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260611-0210 [SUBAGENT:dashboard-overview-adversarial]
+- Date: 2026-06-11
+- Cycle: TASK-0210 (관리 콘솔 대시보드 보강 — 위젯 그리드 + per-account 커스터마이즈/영속), **Major §12.3**
+- Panel: 적대적(outside-voice) 보안 subagent. 대상: app.py 신규 블록(`_DASHBOARD_WIDGETS`/위젯 집계 7종/`GET /api/admin/overview`/`GET·PUT /api/admin/dashboard/preferences`/`WebDashboardPreferences` 부트스트랩) + admin.js 대시보드 렌더/편집/저장. 헬퍼(`_require_account`/`_account_has_permission`/`_estimate_llm_cost_usd`) 정합 포함.
+- Verdict: **SHIP-ABLE** (BLOCKER 0, MAJOR 0). 핵심 주장("권한 경계 = 데이터 노출 경계", "prefs 본인 한정", "days 인젝션 안전", "sanitize 견고")을 모두 반박 시도 후 실 exploit 도출 실패:
+  - 권한 경계 누수 없음: `catalog`(권한 필터)와 `permitted`/`_isolate`(위젯 데이터 생성)가 동일 predicate `_account_has_permission(actor, w["permission"])` 사용 → 미보유 위젯은 catalog·widgets 양쪽 부재. PG 연결도 `conversations|usage ∈ permitted` 일 때만 open → console.access-only operator 는 usage 테이블 미접근. operator 시드(console.usage.read 미부여, audit.read.own 만) 대조 확인.
+  - IDOR 불가: GET/PUT 모두 `actor["id"]`(세션 쿠키 해시 유래)만 사용, request body 의 account_id 미신뢰. `_sanitize_dashboard_prefs` 는 `widgets` 만 읽음.
+  - SQL 인젝션 없음: `days` 만 f-string 에 도달하나 `max(1,min(365,int()))` clamp + `int(days)` 재적용(기존 `admin_llm_usage` 동일 패턴). 나머지 위젯 SQL 정적, prefs JSON 은 `%s` 바인딩.
+  - 저장 본문 견고: 미지 키/비-dict/중복 거부, 유효 키 9개로 출력 ≤9 bound → `items[:64]` cap-vs-dedup 순서 무관. 임의/과대 JSON 누적 불가.
+  - 권한 회수 후 잔존 안전: 저장 prefs 의 권한-상실 키는 server catalog 부재로 미렌더(데이터 미반환), 권한 회복 시 부활(의도).
+  - 오류 격리: 위젯 except 가 `{"error":True, metrics:[], lists:[]}` (예외 텍스트·교차 데이터 무노출).
+- 흡수: MINOR(app.py PUT 실패 시 `_json_error(f"...{exc}")` raw 예외 텍스트 노출) → generic 메시지 + `logging.warning(exc_info=True)` 서버측 기록으로 수정(선례 정합). MINOR(order 임의 int) = 클라 정렬 전용·SQL 미도달 → 미수정(권고도 not required). NIT 2 = 설계 의도(audit 위젯은 own-only 사용자에 미노출이 scoped 변형보다 안전) 수용.
+- Risk: low-medium — 신규 데이터 노출 표면이나 권한 경계·인젝션·IDOR 전부 PASS, 권한 카탈로그/스키마(웹 외)/시크릿 무변경.
+- Cross-ref: CHG-20260611-0210 / TASK-0210 / STATUS.md 2026-06-11.
+
 ## REV-20260610-0200 [SKIPPED:minor-ordering-implements-REV-0196]
 - Date: 2026-06-10
 - Cycle: TASK-0200 (cutover 복구 MINOR 하드닝 — `_collect_matched_excerpts` 발췌 정렬 교정), **Minor §12.3**

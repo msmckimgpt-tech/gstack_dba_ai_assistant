@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260611-usage-dropdown-order" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260611-dashboard-widgets" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -84,42 +84,32 @@
       </header>
     <main class="admin-workspace">
       <!-- Dashboard pane -->
+      <!-- TASK-0210: 카테고리별 위젯 그리드 + per-account 커스터마이즈(표시/순서, WebDashboardPreferences 영속).
+           위젯 데이터는 GET /api/admin/overview 가 RBAC-스코프로 반환(보유 권한 위젯만). -->
       <section class="admin-pane is-active" data-admin-pane="dashboard">
         <header class="admin-pane-head">
           <div>
             <div class="drawer-label">Overview</div>
             <h2>운영 현황</h2>
           </div>
+          <div class="admin-pane-head-right dashboard-toolbar">
+            <select id="dashboardWindow" class="dashboard-window" title="집계 기간">
+              <option value="1">최근 1일</option>
+              <option value="7" selected>최근 7일</option>
+              <option value="30">최근 30일</option>
+              <option value="90">최근 90일</option>
+            </select>
+            <button type="button" id="dashboardEditToggle" class="btn-secondary">편집</button>
+          </div>
         </header>
-        <div class="summary-metrics">
-          <article class="metric-card">
-            <span>Active</span>
-            <strong id="metricActive">—</strong>
-          </article>
-          <article class="metric-card">
-            <span>Inactive</span>
-            <strong id="metricInactive">—</strong>
-          </article>
-          <article class="metric-card">
-            <span>Deleted</span>
-            <strong id="metricDeleted">—</strong>
-          </article>
-          <article class="metric-card">
-            <span>Roles</span>
-            <strong id="metricRoles">—</strong>
-          </article>
-          <article class="metric-card">
-            <span>최근 7일 로그인</span>
-            <strong id="metricRecentLogins">—</strong>
-          </article>
-          <article class="metric-card">
-            <span>Pending 변경</span>
-            <strong id="metricPending">0</strong>
-          </article>
+        <div class="dashboard-edit-bar" id="dashboardEditBar" hidden>
+          <span class="dashboard-edit-hint">위젯의 표시 여부와 순서를 바꾼 뒤 저장하세요. 설정은 이 계정에만 적용됩니다.</span>
+          <div class="dashboard-edit-actions">
+            <button type="button" id="dashboardResetBtn" class="btn-secondary">기본값 복원</button>
+            <button type="button" id="dashboardSaveBtn" class="btn-primary">저장</button>
+          </div>
         </div>
-        <!-- TASK-0158: 첨부 DB 권한 drift 진단 (GET /api/admin/health/attachment-grants). console.access 권한자만. -->
-        <div class="admin-grant-health" id="dashboardGrantHealth"></div>
-        <div class="admin-dashboard-pending" id="dashboardPendingList"></div>
+        <div class="dashboard-widgets" id="dashboardWidgets"></div>
       </section>
 
       <!-- Accounts pane -->
@@ -547,6 +537,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260611-usage-dropdown-order"></script>
+  <script src="/static/admin.js?v=20260611-dashboard-widgets"></script>
 </body>
 </html>

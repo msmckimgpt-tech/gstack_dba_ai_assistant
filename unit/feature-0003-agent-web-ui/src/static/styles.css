@@ -3606,6 +3606,75 @@ a { color: inherit; }
   color: var(--text);
 }
 
+/* ── TASK-0210: 대시보드 위젯 그리드 (카테고리별 위젯 + per-account 커스터마이즈) ──
+   위젯 데이터는 /api/admin/overview 가 RBAC-스코프로 반환; 표시/순서는 계정별 영속.
+   기존 디자인 토큰(--surface/--border/--text*/--r-*) + 8px spacing 그리드 재사용. */
+.dashboard-toolbar { display: flex; gap: 8px; align-items: center; }
+.dashboard-window {
+  height: 32px; padding: 0 8px; border: 1px solid var(--border);
+  border-radius: var(--r-md); background: var(--surface); color: var(--text); font-size: 13px;
+}
+.dashboard-edit-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap; margin-top: 12px; padding: 10px 14px;
+  background: var(--primary-soft); border: 1px solid var(--border); border-radius: var(--r-md);
+}
+.dashboard-edit-hint { font-size: 12.5px; color: var(--text-2); }
+.dashboard-edit-actions { display: flex; gap: 8px; }
+
+.dashboard-widgets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+  gap: 14px; margin-top: 14px; align-items: start;
+}
+.dashboard-widget {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0;
+}
+.dashboard-widgets.is-editing .dashboard-widget { border-style: dashed; }
+.dashboard-widget.widget-hidden { opacity: .5; }
+.dashboard-widget-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dashboard-widget-head h3 { margin: 0; font-size: 14px; font-weight: 700; color: var(--text); }
+.dashboard-widget-edit { display: flex; align-items: center; gap: 6px; }
+.dashboard-widget-vis {
+  display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--text-2); cursor: pointer;
+}
+.dashboard-widget-move {
+  width: 26px; height: 26px; padding: 0; line-height: 1; border: 1px solid var(--border);
+  border-radius: var(--r-md); background: var(--bg); color: var(--text-2); cursor: pointer; font-size: 13px;
+}
+.dashboard-widget-move:hover:not(:disabled) { background: var(--surface); border-color: #c4c4c9; }
+.dashboard-widget-move:disabled { opacity: .4; cursor: not-allowed; }
+
+.dashboard-widget-metrics {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(94px, 1fr)); gap: 8px;
+}
+.dashboard-metric {
+  padding: 9px 10px; border-radius: var(--r-md); background: var(--bg);
+  border: 1px solid var(--border-subtle, var(--border));
+}
+.dashboard-metric strong {
+  display: block; font-size: 20px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums;
+}
+.dashboard-metric span { display: block; font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.dashboard-metric.accent-ok strong { color: var(--success); }
+.dashboard-metric.accent-warn strong { color: var(--warning); }
+.dashboard-metric.accent-muted strong { color: var(--text-muted); }
+
+.dashboard-widget-list-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--text-muted); margin-bottom: 4px;
+}
+.dashboard-widget-list + .dashboard-widget-list { margin-top: 10px; }
+.dashboard-list-row {
+  display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+  padding: 3px 0; border-bottom: 1px solid var(--border-subtle, var(--border)); font-size: 12.5px;
+}
+.dashboard-list-row:last-child { border-bottom: none; }
+.dashboard-list-label { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-list-value { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.dashboard-widget-empty { font-size: 12.5px; color: var(--text-muted); padding: 4px 0; }
+
 /* ── LLM 사용량 pane (usage) — TASK-0177 디자인 정렬: 인라인 style 추출 + 토큰 통일 ──
    디자인 리뷰(gstack design-review 관점) 반영: 요약은 .metric-card 재사용, 임의 hex →
    --text*/--border* 토큰, 8px spacing 그리드, 차트는 surface 카드로 구획. 의존성 0(CSS/SVG). */

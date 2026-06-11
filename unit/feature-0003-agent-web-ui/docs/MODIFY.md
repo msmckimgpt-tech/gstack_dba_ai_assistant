@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260611-0210
+- Date: 2026-06-11 (TASK-0210, **Major §12.3** — 관리 콘솔 대시보드 보강)
+- Scope: 빈약한 관리 콘솔 대시보드("운영 현황")를 카테고리별 위젯 그리드 + per-account 커스터마이즈(표시/순서) + 서버 영속으로 재구성. RBAC-스코프 집계 엔드포인트 + 본인 한정 prefs self-service.
+- 배경: 기존 대시보드는 계정 metric 6개 + 권한 drift + pending 만 표시했고 전부 클라이언트 `adminState.accounts` 배열을 필터링해 계산(서버 집계 없음 → 계정/데이터 증가 시 비확장). 관리 콘솔 8개 카테고리 중 계정·역할만 일부 노출하고 제품/데이터소스/감사/사용량/대화는 통째 미노출.
+- 변경:
+  - `src/app.py` `_ensure_web_tables()`: `WebDashboardPreferences(AccountId BIGINT PK, Content MEDIUMTEXT, UpdatedAt, CreatedAt)` 멱등 CREATE 추가(MySQL, 웹테이블군 정합, alembic 무).
+  - `src/app.py` `_runtime_tables_available()`: 두 probe 블록(postgres-backend + 기본) table 목록에 `WebDashboardPreferences` 추가 — TASK-0047 패턴. 기존 DB 배포 시 fast-path(`_schedule_memory_runtime_bootstrap`)가 신규 테이블 부재(errno 1146)를 감지해 우회하고 `_ensure_web_tables()` 의 멱등 CREATE 를 1회 실행하게 한다(누락 시 신규 테이블이 영원히 안 생기는 함정 — 라이브 배포 중 포착·수정).
+  - `src/app.py` 신규 블록(`# TASK-0210` 배너): 위젯 카탈로그 `_DASHBOARD_WIDGETS`(key/title/permission/source) + `_dashboard_default_prefs`/`_sanitize_dashboard_prefs`/`_load_dashboard_pref_row`/`_save_dashboard_pref_row` + `_dash_widget_{accounts,roles,products,datasources,audits,conversations,usage}` 7종 + `GET /api/admin/overview`(RBAC-스코프, 위젯별 try/except 격리, PG 연결 permitted 시만 open, `days` clamp 후 interval) + `GET/PUT /api/admin/dashboard/preferences`(actor.id self-service, console.access 게이트).
+  - `src/static/admin.js`: `renderDashboard` 재작성(overview+prefs fetch → 위젯 그리드) + `loadDashboardOverview`/`_dashboardRenderOrder`/`renderDashboardWidgets`/`buildWidgetCard`/`buildDataWidgetBody`/`buildPendingWidgetBody` + 편집(`setWidgetVisible`/`moveWidget`)·영속(`saveDashboardPrefs`/`resetDashboardPrefs`)·`wireDashboardControls`. adminState 에 overview/dashboardPrefs/dashboardEditMode/dashboardWindow 등 추가.
+  - `src/static/admin.html`: 대시보드 pane 을 위젯 그리드(`#dashboardWidgets`) + 집계기간 select(`#dashboardWindow`) + 편집 toolbar/edit-bar 로 교체. 캐시버스터 `?v=20260611-dashboard-widgets`(styles.css·admin.js).
+  - `src/static/styles.css`: `.dashboard-toolbar/.dashboard-edit-bar/.dashboard-widgets/.dashboard-widget*/.dashboard-metric*/.dashboard-list-*` 추가(기존 디자인 토큰 재사용).
+  - `tests/test_dashboard_overview.py`: 신규 11 테스트(overview RBAC 스코프 operator/admin·403·client 위젯 catalog·sanitize·기본값·영속 round-trip).
+- 비변경: 권한(RBAC) 카탈로그·시크릿·웹 외 스키마(agent_runtime 등)·기존 엔드포인트 무변경. 기존 권한(console.access/console.usage.read/audit.read.any) 재사용 + prefs 는 self-service.
+- 검증: make test MAKE_EXIT=0 전체 PASS(신규 11, 회귀 0) + node --check admin.js + py_compile + ruff. outside-voice 적대적 보안리뷰 SHIP-ABLE BLOCKER/MAJOR 0(REV-20260611-0210), MINOR 1(PUT 예외 텍스트 노출) 흡수.
+- Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html,styles.css}, unit/feature-0003-agent-web-ui/tests/test_dashboard_overview.py, docs/{TASK,MODIFY,REVIEW,REPORT}.md, ../../docs/STATUS.md
+- Rollback: 신규 엔드포인트/테이블/위젯은 additive — 미사용 시 무영향. admin.js `renderDashboard` 및 admin.html 대시보드 pane 을 이전 metric-card 버전으로 환원하면 UI 원복(WebDashboardPreferences 테이블은 잔존해도 무해).
+
 ## CHG-20260610-0200
 - Date: 2026-06-10 (TASK-0200, **Minor §12.3** — 읽기경로 정렬 교정)
 - Scope: REV-20260610-0196 이 지적한 MINOR 잔존(수용 항목) 실행 — `_collect_matched_excerpts` 발췌 선택 정렬. (#1 convo_search LIKE escaping 은 feature-0002 CHG-20260610-0200.)
