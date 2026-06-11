@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.27.0
+template_version: v3.28.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -968,6 +968,72 @@ AGENTS.md §13.2.7 F0 위반 — 즉시 고유 worktree 에서 작업해 주세�
 **template base 예외**: `_template_maintainer/HISTORY.md` 가 존재하는 repo (template
 base 자체) 는 §13.2.4 carve-out 에 따라 본 §13.2.8 이 비적용. maintainer 의
 main checkout 직접 수정은 정상 워크플로.
+#### §13.2.9 배포 단계 격리 (Deploy-Stage Isolation, v3.28.0)
+
+**배경**: worktree-first 정책(§13.2)은 편집·빌드를 격리하지만, docker compose 기반
+deploy-backed 소비자는 `docker compose build` + `.env.secret` + `docker-compose.override`
+가 단일 공유 REPO checkout 에 묶인다. 고병렬 환경에서 다른 세션이 그 공유 checkout 을
+다른 브랜치로 점유하면 — (a) 잘못된 브랜치 코드로 이미지가 빌드되고, (b) 배포 중
+main 이 전진해 ff-merge 가 반복 실패하며, (c) override 수동 수술이 필요해져 AI 가
+push/merge 를 종착으로 오인하고 "완료" 를 조기선언한다.
+
+**정의 — 배포 단계**: 이 절에서 "배포 단계" 란 다음을 포함한다:
+- `docker compose build` / `docker compose up -d` / `docker-compose.override` 적용
+- 컨테이너 재시작 + 환경변수(`KEK`, `.env.secret`) 주입
+- healthz/서빙 assert 검증 (§16.3 deploy-backed 완료 기준 참조)
+
+**정책 (apply — deploy-backed 소비자에만)**:
+
+배포 단계 진입 직전, AI 는 다음 read-only 확인을 수행한다:
+
+```bash
+# 배포 직전 공유 REPO checkout 상태 확인
+cd <consumer_repo_root>
+DEPLOY_BRANCH=$(git -C repo branch --show-current 2>/dev/null || echo "unknown")
+DEPLOY_DIRTY=$(git -C repo status --porcelain | grep -v '^??' | wc -l)
+echo "shared REPO branch=$DEPLOY_BRANCH dirty=$DEPLOY_DIRTY"
+```
+
+판정:
+
+| 조건 | 조치 |
+|---|---|
+| `DEPLOY_BRANCH = main` AND `DEPLOY_DIRTY = 0` | 정상 경로 — 공유 트리에서 배포 진행 |
+| `DEPLOY_BRANCH ≠ main` OR `DEPLOY_DIRTY > 0` | 격리 경로 또는 단일 AI carve-out (아래 참조) |
+
+**격리 경로 — 공유 트리 무수정 override 배포**:
+
+공유 checkout 을 건드리지 않고, 본인 worktree 의 코드 기반 이미지를 배포한다:
+
+```bash
+# 1. 본인 worktree 에서 이미지 빌드 (공유 트리 미사용)
+cd <my_worktree_path>
+docker compose -f docker-compose.yml -f docker-compose.override.yml build
+
+# 2. image 이름을 격리 override 파일에 고정 후, env-secret + no-build 로 한 번에 up
+#    (공유 트리의 docker-compose.override.yml / .env.secret 미수정)
+cat > /tmp/docker-compose.isolation.yml << EOF
+services:
+  <service>:
+    image: <project>_<service>:latest   # step 1 에서 빌드된 이미지명으로 교체
+EOF
+docker compose   -f docker-compose.yml   -f /tmp/docker-compose.isolation.yml   --env-file <my_worktree_path>/.env.secret   up -d --no-build
+```
+
+공유 트리의 파일(`.env.secret`, `docker-compose.override.yml`)을 수정하지 않는다.
+수정 시 다른 세션의 배포 환경을 오염시킬 수 있다.
+
+**단일 AI / 공유 트리 단독 사용 carve-out**: `git worktree list` 결과가 1개 (main only)
+이고 dirty 가 본인 커밋 예정 변경이라면 — 공유 트리가 다른 세션에 점유되지 않은 상황.
+이 경우 격리 경로 대신 "커밋 후 main 에서 정상 배포" 경로로 진행한다.
+
+**완료 기준 — deploy-backed 소비자**: §16.3 의 `#### deploy-backed 소비자 완료 기준` 참조.
+push / PR merge 는 코드 완료이지 배포 완료가 아니다.
+
+**template base 예외**: template base 자체 (§13.2.4 carve-out) 는 docker 배포 대상이
+아니므로 본 §13.2.9 비적용.
+
+
 ### §13.3 계획-실행 분리 에이전트 (선택적 고급 패턴)
 
 프로젝트가 계획 에이전트와 실행 에이전트를 분리 운용하는 경우:
@@ -1092,6 +1158,7 @@ AI가 작업 완료를 선언할 때는 `TASK.md`의 Completion Checklist를 명
 - [ ] Git 커밋이 완료되었다 (§16.3)
 - [ ] Git 원격 동기화가 완료되었다 또는 동기화 불가 사유가 기록되었다 (§16.3)
 - [ ] (웹 UI 프로젝트만) 웹 UI 변경 시 `/browse` 스킬로 Windows 브라우저 렌더링 시각적 확인 완료 — WSL curl/wget/playwright 응답만으로 완료 보고 금지 (§16.6)
+- [ ] (deploy-backed 소비자만) 라이브 재배포 검증 완료 — cycle-finalize(PR 머지) 후 `docker compose up --build` + healthz PASS + KEK/secret 주입 확인 (§16.3 deploy-backed 소비자 완료 기준)
 ```
 
 ### §16.3 Git 동기화 절차 (verify-completion 기반)
@@ -1275,6 +1342,39 @@ worktree 환경에서는 main worktree stale 위험이 추가되며, 이에 대�
 **Normative source: §13.2.5 (Manual Parallel AI Worktree Isolation Addendum)** 에
 정의된다. ai/* PR 머지 후 main worktree 에서의 일회성 `git fetch && git pull
 --ff-only` 권유 및 fetch 실패 처리 (WARN + 계속) 룰은 그곳을 참조한다.
+
+#### deploy-backed 소비자 완료 기준 (v3.28.0)
+
+**적용 대상**: docker compose 기반 배포(`docker compose up`, `docker compose build`)
+가 완료 기준에 포함되는 소비자 프로젝트. CLI 전용·API 전용·데이터 파이프라인 프로젝트에는
+적용하지 않는다.
+
+**원칙**: push / PR merge 는 **코드 완료**이지 **배포 완료**가 아니다. deploy-backed
+소비자에서 "작업 완료" 선언은 다음 두 조건을 **이 순서대로** 충족한 이후에만 허용된다:
+
+1. **cycle-finalize 완료**: §16.3 Step 6 (PR 머지 + worktree cleanup) 가 완수됨.
+   → PR merge 후 main 에 feature code 가 반영된 상태.
+
+2. **라이브 재배포 검증 (Live Redeploy Verify)** — main 기반 이미지로 수행:
+   - `docker compose up -d --build` 또는 동등한 재빌드·재시작이 실제 수행됨
+   - healthz / 서빙 엔드포인트 assert (예: `curl -sf http://localhost:<port>/healthz`) 가 PASS
+   - 핵심 환경변수 (`KEK`, secret 등) 가 컨테이너에 정상 주입됨 확인
+     (예: `docker exec <container> env | grep KEK`)
+
+순서 중요: cycle-finalize 전 재배포 검증(격리 경로 배포 등)은 **staging validation** 으로,
+완료 조건 2 를 충족하지 않는다. feature code 가 main 에 merge 된 이후의 재빌드·healthz
+PASS 만이 최종 완료 기준이다.
+
+**금지 패턴**:
+- `git push` 또는 `gh pr create` 후 "배포 완료" 선언 — push 는 코드 업로드이지 배포가 아님
+- `gh pr merge` 후 "완료" 선언 — 머지는 코드 통합이지 컨테이너 재배포가 아님
+- healthz 없이 `docker compose up -d` 로그만 확인 후 "서비스 정상" 선언
+- KEK / secret 미주입 컨테이너를 "배포 완료" 처리
+
+**공유 REPO checkout 경합 대응**: 배포 전 공유 checkout 이 다른 세션에 의해 점유된
+경우 §13.2.9 의 격리 경로(override 배포)를 적용한다. 경합 중에 배포 단계를 진행하면
+잘못된 코드가 컨테이너에 올라갈 수 있다.
+
 
 ### §16.4 병합 충돌 해결 정책
 
