@@ -186,6 +186,27 @@ def _whitelist_violation(refs: set[str]) -> str | None:
     )
 
 
+def _struct_schema_access_error(schema: str) -> str | None:
+    """구조화 도구(describe_*/sample/indexes/foreign_keys/search)의 schema_name 접근검사 — DB-단위(TASK-0206).
+
+    - **MySQL**: schema_name = 데이터베이스 → DB allowlist 대조(`_whitelist_violation`, 현행).
+    - **MSSQL**: schema_name = pin 된 primary DB 안의 **스키마**(dbo 등) → DB allowlist(=DB명) 와 대조하면
+      dbo 가 차단된다. 따라서 allowlist 대조 대신 **시스템 스키마(sys/guest/db_*)만 차단**(M1 보존). 다른 허용
+      DB 의 객체는 freeform 3-part 로 탐색(구조화 도구는 primary DB 범위).
+    """
+    s = str(schema or "").strip().lower()
+    if str(_dialects.active().name).lower() == "mssql" and _cfg_get_active_datasource():
+        if s in _dialects.active().system_schemas():
+            return f"오류: 시스템 스키마는 직접 접근할 수 없습니다: {s} (구조 탐색은 list_schemas 사용)."
+        return None
+    return _whitelist_violation({s})
+
+
+def _cfg_get_active_datasource():
+    import modules.config as _cfg
+    return _cfg.get_active_datasource()
+
+
 # ══════════════════════════════════════════════════════════════════
 #  OpenAI function calling 도구 스키마
 # ══════════════════════════════════════════════════════════════════
@@ -484,7 +505,7 @@ def _tool_describe_schema(conn, args: dict) -> str:
     schema = _safe_ident(args.get("schema_name", ""))
     if not schema:
         return "오류: schema_name은 필수입니다."
-    err = _whitelist_violation({schema.lower()})
+    err = _struct_schema_access_error(schema)
     if err:
         return err
     sql = _dialects.active().describe_schema_tables(schema)
@@ -508,7 +529,7 @@ def _tool_describe_table(conn, args: dict) -> str:
     table = _safe_ident(args.get("table_name", ""))
     if not schema or not table:
         return "오류: schema_name과 table_name은 필수입니다."
-    err = _whitelist_violation({schema.lower()})
+    err = _struct_schema_access_error(schema)
     if err:
         return err
 
@@ -577,7 +598,7 @@ def _tool_search_tables(conn, args: dict) -> str:
     if not keyword:
         return "오류: keyword는 필수입니다."
     if schema_filter:
-        err = _whitelist_violation({schema_filter.lower()})
+        err = _struct_schema_access_error(schema_filter)
         if err:
             return err
 
@@ -629,7 +650,7 @@ def _tool_get_sample_rows(conn, args: dict) -> str:
     limit = min(max(1, int(args.get("limit", 5))), 20)
     if not schema or not table:
         return "오류: schema_name과 table_name은 필수입니다."
-    err = _whitelist_violation({schema.lower()})
+    err = _struct_schema_access_error(schema)
     if err:
         return err
     sql = _dialects.active().sample(schema, table, limit)
@@ -848,7 +869,7 @@ def _tool_get_table_indexes(conn, args: dict) -> str:
     table = _safe_ident(args.get("table_name", ""))
     if not schema or not table:
         return "오류: schema_name과 table_name은 필수입니다."
-    err = _whitelist_violation({schema.lower()})
+    err = _struct_schema_access_error(schema)
     if err:
         return err
     sql = _dialects.active().table_indexes(schema, table)  # P6: dialect 별 인덱스 조회
@@ -864,7 +885,7 @@ def _tool_get_foreign_keys(conn, args: dict) -> str:
     table = _safe_ident(args.get("table_name", ""))
     if not schema or not table:
         return "오류: schema_name과 table_name은 필수입니다."
-    err = _whitelist_violation({schema.lower()})
+    err = _struct_schema_access_error(schema)
     if err:
         return err
 
