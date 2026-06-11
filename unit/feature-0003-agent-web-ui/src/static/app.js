@@ -1232,14 +1232,20 @@ async function loadProfileUsage() {
   const dayEl = document.getElementById("profileUsageDayChart");
   const modelEl = document.getElementById("profileUsageModelChart");
   const daysSel = document.getElementById("profileUsageDays");
+  const granSel = document.getElementById("profileUsageGran");
   if (!summaryEl) return;
   const days = daysSel ? daysSel.value : "30";
+  // 집계 단위 (시간별/일별/월별) — 백엔드 _USAGE_GRAN 화이트리스트(hour/day/month)
+  const GRAN_LABEL = { hour: "시간별", day: "일별", month: "월별" };
+  const gran = (granSel && GRAN_LABEL[granSel.value]) ? granSel.value : "day";
+  const trendTitleEl = document.getElementById("profileUsageTrendTitle");
+  if (trendTitleEl) trendTitleEl.textContent = GRAN_LABEL[gran];
   summaryEl.innerHTML = "<div class='profile-usage-empty'>불러오는 중…</div>";
   if (dayEl) dayEl.innerHTML = "";
   if (modelEl) modelEl.innerHTML = "";
   let data;
   try {
-    data = await apiFetch(`/api/profile/usage?days=${encodeURIComponent(days)}&gran=day`);
+    data = await apiFetch(`/api/profile/usage?days=${encodeURIComponent(days)}&gran=${encodeURIComponent(gran)}`);
   } catch (err) {
     summaryEl.innerHTML = "<div class='profile-usage-empty'>사용 내역을 불러오지 못했습니다.</div>";
     return;
@@ -1259,6 +1265,8 @@ async function loadProfileUsage() {
 function openProfile(tab = "prompt") {
   renderProfile();
   switchProfileTab(tab);
+  setupProfileDrawerResize();          // 너비 조절 핸들 1회 배선
+  _applyProfileDrawerWidth(profileDrawerEl); // 저장된 너비 복원
   profileDrawerEl.classList.remove("hidden");
   profileBackdropEl.classList.remove("hidden");
 }
@@ -2847,6 +2855,59 @@ function setupStepSidePanelResize() {
     panel.classList.remove("is-resizing");
     const w = parseInt(panel.style.width, 10);
     if (Number.isFinite(w)) { try { localStorage.setItem(STEP_PANEL_WIDTH_KEY, String(w)); } catch (e) {} }
+    document.removeEventListener("mousemove", mouseMove);
+    document.removeEventListener("mouseup", stop);
+    document.removeEventListener("touchmove", touchMove);
+    document.removeEventListener("touchend", stop);
+  };
+  const start = (clientX, e) => {
+    dragging = true;
+    panel.classList.add("is-resizing");
+    document.addEventListener("mousemove", mouseMove);
+    document.addEventListener("mouseup", stop);
+    document.addEventListener("touchmove", touchMove, { passive: false });
+    document.addEventListener("touchend", stop);
+    if (e && e.cancelable) e.preventDefault();
+  };
+  handle.addEventListener("mousedown", (e) => start(e.clientX, e));
+  handle.addEventListener("touchstart", (e) => { if (e.touches[0]) start(e.touches[0].clientX, e); }, { passive: false });
+}
+
+// ── 프로필 사이드바(drawer) 너비 조절(리사이즈) ───────────────────────
+// 단계 보기 패널과 동일 패턴: 우측 고정 패널이라 왼쪽 가장자리를 끌어 너비 조절,
+// localStorage 로 너비 영속화. (#profileDrawer + #profileDrawerResizer)
+const PROFILE_DRAWER_WIDTH_KEY = "web.profileDrawer.width";
+const PROFILE_DRAWER_MIN_W = 320;
+function _profileDrawerMaxW() {
+  return Math.max(PROFILE_DRAWER_MIN_W, Math.floor(window.innerWidth * 0.92));
+}
+function _applyProfileDrawerWidth(panel) {
+  // 모바일(≤680px)에선 저장 너비를 적용하지 않고 미디어쿼리(.drawer width:min(100vw,380px))가 폭을 소유.
+  if (window.innerWidth <= 680) { panel.style.width = ""; return; }
+  let saved;
+  try { saved = parseInt(localStorage.getItem(PROFILE_DRAWER_WIDTH_KEY) || "", 10); } catch (e) { saved = NaN; }
+  if (!Number.isFinite(saved)) return;
+  panel.style.width = Math.min(_profileDrawerMaxW(), Math.max(PROFILE_DRAWER_MIN_W, saved)) + "px";
+}
+function setupProfileDrawerResize() {
+  const panel = document.getElementById("profileDrawer");
+  const handle = document.getElementById("profileDrawerResizer");
+  if (!panel || !handle || handle.dataset.wired === "1") return;
+  handle.dataset.wired = "1";
+  let dragging = false;
+  const onMove = (clientX) => {
+    // 우측 고정 패널: 너비 = 뷰포트 우변 − 포인터X = innerWidth − clientX
+    const w = Math.min(_profileDrawerMaxW(), Math.max(PROFILE_DRAWER_MIN_W, window.innerWidth - clientX));
+    panel.style.width = w + "px";
+  };
+  const mouseMove = (e) => { if (dragging) { onMove(e.clientX); e.preventDefault(); } };
+  const touchMove = (e) => { if (dragging && e.touches[0]) { onMove(e.touches[0].clientX); e.preventDefault(); } };
+  const stop = () => {
+    if (!dragging) return;
+    dragging = false;
+    panel.classList.remove("is-resizing");
+    const w = parseInt(panel.style.width, 10);
+    if (Number.isFinite(w)) { try { localStorage.setItem(PROFILE_DRAWER_WIDTH_KEY, String(w)); } catch (e) {} }
     document.removeEventListener("mousemove", mouseMove);
     document.removeEventListener("mouseup", stop);
     document.removeEventListener("touchmove", touchMove);
@@ -5882,6 +5943,10 @@ async function initialize() {
   const profileUsageDaysSel = document.getElementById("profileUsageDays");
   if (profileUsageDaysSel) {
     profileUsageDaysSel.addEventListener("change", () => loadProfileUsage().catch(() => {}));
+  }
+  const profileUsageGranSel = document.getElementById("profileUsageGran");
+  if (profileUsageGranSel) {
+    profileUsageGranSel.addEventListener("change", () => loadProfileUsage().catch(() => {}));
   }
 
   const savePromptBtn = document.getElementById("savePromptBtn");

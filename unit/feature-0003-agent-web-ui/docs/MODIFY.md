@@ -2717,3 +2717,16 @@ source_of_truth: true
 - 검증: node --check admin.js PASS. 패널([SUBAGENT:design-correctness]) SHIP-WITH-FIXES 5건 전부 수용. 빌드/배포 + Windows-browser(PB-0008) 시각검증은 배포 단계.
 - Files: unit/feature-0003-agent-web-ui/src/static/{admin.html,admin.js,styles.css}, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
 - Rollback: admin.html 데이터소스 section + admin.js `renderDatasourcesPane` 군 + styles.css 추가 블록을 TASK-0205 상태로 환원(기능 무관, 레이아웃만 평면 복귀).
+
+## CHG-20260611-0208
+- Date: 2026-06-11 (TASK-0208, **Minor §12.3** — 프로필 drawer 너비 조절 + 사용 내역 집계 단위)
+- Scope: 사용자 요청 2건 — ① 프로필 사이드바(`#profileDrawer`)를 `단계 보기` 패널처럼 너비 드래그 조절 + 영속. ② `사용 내역` 탭 집계 단위(시간별/일별/월별) 셀렉터. 프런트 전용 — 백엔드/API/스키마/RBAC/시크릿 무변경.
+- 배경: drawer 는 고정 폭 390px(모바일 380px) 이었고, 사용 내역 탭은 `gran=day` 하드코딩이라 시간/월 단위 조회 불가(백엔드 `/api/profile/usage` 는 TASK-0166 이후 `gran` hour/day/week/month 를 이미 지원했으나 프런트 컨트롤 부재).
+- 변경:
+  - `src/static/app.js`: (Task1) `PROFILE_DRAWER_WIDTH_KEY`/`PROFILE_DRAWER_MIN_W`/`_profileDrawerMaxW`/`_applyProfileDrawerWidth`/`setupProfileDrawerResize` 추가(단계 패널 `setupStepSidePanelResize` 미러). `openProfile` 가 setup+apply 호출. `_applyProfileDrawerWidth` 는 ≤680px 에서 inline 너비 미적용(미디어쿼리 소유). (Task2) `loadProfileUsage` 가 `#profileUsageGran` 값을 `GRAN_LABEL`(hour/day/month) 검증 후 `&gran=` 전달 + `#profileUsageTrendTitle` 동기화, `#profileUsageGran` change 리스너 추가.
+  - `src/static/index.html`: `#profileDrawer` 첫 자식으로 `#profileDrawerResizer` + 내부 스크롤 래퍼 `.drawer-scroll`(헤더/탭/패널 래핑). 사용 내역 헤더에 `.profile-usage-controls` + `#profileUsageGran` 셀렉터(시간별/일별/월별). 캐시버스터 `?v=20260610-response-duration` → `?v=20260611-profile-resize-gran`.
+  - `src/static/styles.css`: `.drawer` 에서 padding/gap/overflow-y 제거 + `overflow:hidden`(비스크롤 shell), 신규 `.drawer-scroll`(flex:1·min-height:0·overflow-y:auto·padding·gap) 으로 스크롤 이동. `.drawer.is-resizing`·`.drawer-resizer`(+`::before`·hover) 추가(단계 패널 리사이저 패턴). `.profile-usage-controls`(flex row).
+- 비변경: `/api/profile/usage` 엔드포인트·RBAC·집계 SQL·단계 보기 패널 코드·기타 drawer 탭 로직 무변경.
+- 검증: node --check app.js PASS, styles.css 중괄호 911/911, drawer aside div 30/30. 패널([SUBAGENT:design-correctness], REV-20260611-0208) SHIP-WITH-FIXES — MAJOR(스크롤 분리)+MINOR(모바일 가드) 수정 후. 빌드/배포 + Windows-browser(PB-0008) 시각검증은 배포 단계.
+- Files: unit/feature-0003-agent-web-ui/src/static/{app.js,index.html,styles.css}, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
+- Rollback: app.js 추가 함수군 + index.html 리사이저/`.drawer-scroll`/gran 셀렉터 + styles.css 추가/변경 블록 환원(기능 무관, drawer 고정폭·사용내역 일별 고정 복귀).
