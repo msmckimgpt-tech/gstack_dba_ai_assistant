@@ -176,9 +176,13 @@ __all__ = [
     "DATASOURCES",
     "datasource_public",
     "set_active_datasource",
+    "set_active_database",
+    "get_active_database",
     "get_active_datasource",
     "get_active_datasource_engine",
+    "get_active_default_db",
     "ds_fact_key",
+    "ds_object_suffix",
     "ds_fact_like",
     "ds_strip_prefix",
     "ds_scope_name",
@@ -362,6 +366,14 @@ _ACTIVE_DATASOURCE_ENGINE: "_contextvars.ContextVar[str]" = _contextvars.Context
 _ACTIVE_DEFAULT_DB: "_contextvars.ContextVar[str | None]" = _contextvars.ContextVar(
     "active_default_db", default=None
 )
+# TASK-0220: MSSQL multi-database 스캔용 active database(catalog). MSSQL 은 database.schema.table
+# 3계층이라 insight fact_key suffix 에 database 를 포함해야 datasource 내 여러 DB 가 구분된다
+# (`ds_object_suffix` 가 이 값을 읽어 3계층 suffix 생성). MySQL(schema==database)은 None 유지 → 2계층.
+# set_active_datasource 가 datasource 전환 시 None 으로 리셋(이전 DB 누출 차단), insight 의 DB 별
+# inner-loop 가 set_active_database 로 명시 설정한다.
+_ACTIVE_DATABASE: "_contextvars.ContextVar[str | None]" = _contextvars.ContextVar(
+    "active_database", default=None
+)
 
 
 def set_active_datasource(key, engine: str | None = None, default_db: str | None = None) -> None:
@@ -369,10 +381,27 @@ def set_active_datasource(key, engine: str | None = None, default_db: str | None
 
     engine(P5): 활성 datasource 엔진(mysql|mssql) — dialect 선택용. 미지정=mysql.
     default_db(TASK-0205 B1): cross-DB 가드 기준 catalog. 제품별 override 반영값. 미지정 시 None.
+
+    TASK-0220: datasource 전환 시 active database(catalog)도 리셋한다 — 이전 datasource/DB 의
+    값이 다음 순회로 누출되면 fact_key 가 잘못된 database 로 스코프된다.
     """
     _ACTIVE_DATASOURCE_KEY.set((str(key).strip().lower() or None) if key else None)
     _ACTIVE_DATASOURCE_ENGINE.set((str(engine).strip().lower() or "mysql") if engine else "mysql")
     _ACTIVE_DEFAULT_DB.set((str(default_db).strip().lower() or None) if default_db else None)
+    _ACTIVE_DATABASE.set(None)
+
+
+def set_active_database(database: str | None) -> None:
+    """TASK-0220: 현재 컨텍스트의 active database(catalog) 설정. MSSQL DB 별 inner-loop 가 호출.
+
+    None=미설정(MySQL 또는 단일 DB) → `ds_object_suffix` 가 2계층 suffix 반환.
+    """
+    _ACTIVE_DATABASE.set((str(database).strip().lower() or None) if database else None)
+
+
+def get_active_database():
+    """TASK-0220: active database(catalog). None=미설정(MySQL/단일 DB)."""
+    return _ACTIVE_DATABASE.get()
 
 
 def get_active_datasource_engine() -> str:
@@ -395,6 +424,24 @@ def ds_fact_key(source: str, suffix: str, *, ds_key=_DS_KEY_SENTINEL) -> str:
     if not ds_key:
         return f"{source}:{suffix}"
     return f"{source}:ds:{ds_key}:{suffix}"
+
+
+def ds_object_suffix(schema: str, table: str | None = None, *, database=_DS_KEY_SENTINEL) -> str:
+    """TASK-0220: fact_key 의 object suffix 를 생성한다. active database(catalog) 가 있으면(MSSQL
+    multi-DB) database 를 최상위로 포함해 3계층, 없으면(MySQL/단일 DB) 2계층.
+
+    - MySQL(database 미설정):  schema 만 → `{schema}`,        table 동반 → `{schema}.{table}`
+    - MSSQL(database 설정):    schema 만 → `{database}.{schema}`, table 동반 → `{database}.{schema}.{table}`
+
+    database 명시값을 주면 ContextVar 대신 그 값을 쓴다(테스트/명시 호출용). ds_fact_key 시그니처는
+    불변 유지 — 본 헬퍼가 suffix 만 만들고 ds_fact_key(source, suffix) 로 합성한다(write·read-back·
+    grounding 3자 정합 보존).
+    """
+    if database is _DS_KEY_SENTINEL:
+        database = _ACTIVE_DATABASE.get()
+    db = (str(database).strip().lower() or None) if database else None
+    head = f"{db}.{schema}" if db else f"{schema}"
+    return f"{head}.{table}" if table else head
 
 
 def ds_fact_like(source: str, *, ds_key=_DS_KEY_SENTINEL):

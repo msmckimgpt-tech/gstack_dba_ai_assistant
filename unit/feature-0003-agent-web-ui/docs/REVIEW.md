@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260611-0223 [SUBAGENT:mssql-three-tier-adversarial]
+- Date: 2026-06-11
+- Cycle: TASK-0223 (제품 프롬프트 자동작성 실데이터 정합 + MSSQL 3계층 인사이트), **Major §12.3**
+- Panel: 적대적(outside-voice) subagent. 대상 6파일(app.py 엔드포인트, config.py ds_object_suffix/ContextVar, utils.py 3계층 파싱, insight.py multi-DB 스캔+read-back, schema.py bootstrap, agent_core.py grounding grouping). 집중: 권한 경계·write/read 정합(livelock)·MySQL 회귀·3계층 파싱 엣지·스캔 비용.
+- Verdict: 반증 시도로 **4개 실결함 발견 → 전부 수정**:
+  - **MAJOR** MSSQL DB명 대소문자 불일치: `set_active_database` 가 소문자화한 fact_key segment vs 원본 대소문자 `WebProductDatabases.SchemaName` lookup → 인사이트 전량 폐기(기능 무력화). **수정**: 수집 dict 키·렌더 lookup 모두 소문자 통일(app.py).
+  - **MAJOR** read-back 맵 cross-DB 충돌 livelock: `_build_insight_object_maps` 가 `(schema,table)` 키 → 여러 database 의 동일 `dbo.<table>` 충돌 → 매 사이클 재생성. **수정**: `object_key`(`{ds}:{db}.{schema}.{table}` 유일) 키로 전환 + read-back 쿼리 `object_key IN` 매칭(PG+MySQL 경로).
+  - **MAJOR** bootstrap 2계층 누락: schema.py 2곳이 `ds_object_suffix` 미경유 2계층 키 → 스캐너 read-back 과 orphan. **수정**: 2곳 `ds_object_suffix` 치환.
+  - **MAJOR** 엔드포인트 datasource 필터 부재: 같은 이름 schema/DB 가 타 datasource 에 있으면 교차노출. **수정**: 제품 DatasourceKey→scope_key ds_seg 필터(무접두 레거시 허용).
+- 반증 실패(안전 확인): MySQL 2계층 byte-identical(active_database=None), `_infer_rag_object_from_fact` 2계층 무변경, ContextVar 누출 없음(set_active_datasource 가 database 리셋), `_discover_mssql_databases` 파라미터 바인딩(인젝션 없음)·권한밖 DB 연결실패 격리(RO GRANT 경계 강제), fingerprint/refresh 키 정합.
+- 잔여(미수정·합의): 스캔 비용 O(datasource×database)는 worker lock+사이클 sleep 으로 pile-up 없음(MINOR, budget 이월). 엔드포인트 LIMIT 제거는 인사이트 규모상 수용(MINOR).
+- 라이브 검증: MySQL 138테이블·MSSQL 60테이블 grounded, MSSQL 제품에 MySQL 테이블 누출 0, ask-worker grounding(database.schema grouping) 정상.
+- Risk: medium — 신규 데이터 경로(MSSQL multi-DB)이나 권한경계·livelock·교차노출·회귀 전부 검증. RBAC/스키마/시크릿 무변경.
+- Cross-ref: CHG-20260611-0223 / TASK-0223.
+
 ## REV-20260611-0218 [SUBAGENT:cloudwatch-dashboard-design] [CODEX:cross-model-design]
 - Date: 2026-06-11
 - Cycle: TASK-0218 (관리 콘솔 대시보드 CloudWatch 스타일 사람-친화 재구성), **Major §12.3**

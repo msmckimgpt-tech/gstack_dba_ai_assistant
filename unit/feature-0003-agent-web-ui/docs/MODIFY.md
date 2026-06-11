@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260611-0223
+- Date: 2026-06-11 (TASK-0223, **Major §12.3** — 제품 프롬프트 자동작성 실데이터 정합 + MSSQL database-aware 3계층 인사이트 + ask-worker grounding 검증)
+- Scope: 자동 생성 프롬프트가 실제 DB 인사이트에 근거하도록 매칭 로직 재작성(MySQL) + MSSQL database.schema.table 3계층 인사이트 파이프라인 신설(insight-worker 스캔 → fact_key → 엔드포인트/grounding 매칭). feature-0002(agent-core) + feature-0003(web-ui) 교차 변경.
+- 배경: ① 자동작성 프롬프트가 없는 테이블(`play_log` 등)을 날조 — `source_type` 컬럼이 전부 `schema_insight`(신뢰불가, 실 종류는 fact_key 접두) + `scope_key`가 전부 `common`(ILIKE 매칭 0건)이라 인사이트 통째 누락. ② MSSQL 3계층 미지원 — insight-worker가 `dbo` 단일 DB만 스캔 + fact_key에 database 누락 → 제품 등록 DB와 매칭 불가.
+- 변경:
+  - `src/app.py` `admin_generate_product_prompt`: fact_key 접두로 종류 판별 + `regexp_replace`로 ds 접두 정규화 후 제품 접근 스키마/DB명 정확 매칭(boundary, substring 아님). MSSQL 3계층 segment 분기 렌더. datasource 교차노출 차단(제품 `DatasourceKey`→`_generate_datasource_key` scope_key 필터 + 무접두 레거시 허용). LLM 지시문 강화(실 인사이트만·날조 금지). 응답 `meta`(schema_insight_count/table_insight_count/topic_count/grounded). **+ `_log` F821 hotfix**(`_log.getLogger`→`logging.getLogger(__name__)` — TASK-0216 머지본 잠복 NameError).
+  - `src/static/admin.js`: "자동 작성" 응답 meta 충실도 표시(grounded 시 스키마/테이블/주제 건수, 미수집 시 안내).
+- 비변경: RBAC 카탈로그·시크릿·웹 스키마 무변경. 기존 `product.manage` 권한 재사용. PG 읽기 전용.
+- 검증: pytest 444 passed/2 skipped(회귀 0) + py_compile + 라이브 end-to-end(MySQL 킹스레이드 138테이블·MSSQL 제품 60테이블 grounded·교차노출 0·ask-worker grounding 정상).
+- Files: src/app.py, src/static/admin.js, (agent-core) modules/{config,insight,utils,schema}.py, agent_core.py, tests/test_mssql_three_tier_insight.py, 양 feature docs
+- Rollback: 엔드포인트/헬퍼는 additive. ds_object_suffix가 active_database 미설정 시 2계층(MySQL 동치)이라 MSSQL 미사용 환경 무영향.
+
 ## CHG-20260611-0218
 - Date: 2026-06-11 (TASK-0218, **Major §12.3** — 관리 콘솔 대시보드 CloudWatch 스타일 재구성)
 - Scope: TASK-0210 위젯 그리드를 AWS CloudWatch 류 사람-친화 운영 대시보드로 재구성. gstack `/design-review` + cross-model(Codex+subagent) 디자인 감사(REV-20260611-0218) 반영.

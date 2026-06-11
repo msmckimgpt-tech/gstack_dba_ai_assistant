@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260611-0223 [SUBAGENT:mssql-three-tier-adversarial]
+- Date: 2026-06-11
+- Cycle: TASK-0223 (MSSQL database-aware 3계층 insight — agent-core 교차변경), **Major §12.3**
+- Panel: 적대적 subagent(feature-0003 REV-20260611-0223 와 동일 패널, agent-core 측 기록). config/insight/utils/schema/agent_core 변경에 대해 권한경계·write/read 정합(livelock)·MySQL 회귀·3계층 파싱·스캔비용 반증 시도.
+- Verdict: 4 MAJOR 발견 → 전부 수정(상세는 feature-0003 REV-20260611-0223). agent-core 관련 2건: ① read-back 맵 cross-DB 충돌 livelock(`_build_insight_object_maps` `(schema,table)`→`object_key` 키 + 쿼리 `object_key IN` 매칭), ② bootstrap 2계층 누락(schema.py 2곳 `ds_object_suffix` 치환). 반증 실패(안전): MySQL 2계층 byte-identical(`ds_object_suffix` active_database=None), `_infer_rag_object_from_fact` 2계층 무변경, ContextVar 누출 없음(set_active_datasource 가 database 리셋), `_discover_mssql_databases` 파라미터 바인딩+권한밖 격리, fingerprint/refresh 키 정합.
+- 검증: pytest 444 passed/2 skipped(신규 13). 라이브 MSSQL 제품 60테이블 grounded.
+- Risk: medium — MSSQL multi-DB 신규 경로이나 정합·경계·회귀 검증. RBAC/스키마/시크릿 무변경.
+- Cross-ref: CHG-20260611-0223 / TASK-0223 / (feature-0003) REV-20260611-0223.
+
 ## REV-20260611-0208 [SUBAGENT:preview-link-falsepositive-adversarial]
 - Date: 2026-06-11
 - Cycle: TASK-0208 ("전체 N행 미리보기" 오링크 — 비-결과 분석표 false-positive 봉쇄), **Minor §12.3**
