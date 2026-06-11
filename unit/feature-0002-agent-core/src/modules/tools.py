@@ -72,6 +72,11 @@ def _is_user_schema(name: str) -> bool:
     lower = str(name or "").lower()
     if lower in _excluded_schemas():
         return False
+    # re-gate MAJOR4(2차): MSSQL DB-단위 모드에서 allowlist 는 **DB명**이라 스키마명(dbo/sales)과 대조하면
+    # 정상 스키마가 전부 사라진다(list_schemas 과차단). MSSQL+active_ds 에서는 시스템 스키마만 제외하고
+    # pin 된 DB 안의 사용자 스키마를 모두 노출(접근 경계는 DB 단위 — pin 검증은 _struct_schema_access_error).
+    if str(_dialects.active().name).lower() == "mssql" and _cfg_get_active_datasource():
+        return True
     allow = _ACTIVE_SCHEMA_ALLOWLIST.get()
     if allow is not None and lower not in allow:
         return False
@@ -114,6 +119,19 @@ def _freeform_sql_access_error(sql: str) -> str | None:
     active_ds = _cfg.get_active_datasource()
     engine = str(_dialects.active().name).lower()
 
+    # ── re-gate(2차): 영구 차단 — agent_memory(앱 내부) + (MSSQL)시스템 DB. allowlist·pin 무관. ──────
+    # agent_memory.dbo.fnLeak()(함수참조), master.dbo.syslogins(시스템DB catalog) 등이 allowlist 에
+    # 들어가거나 함수형태로 우회하는 경로를 단일 chokepoint 로 차단. (schemas∪catalogs 전부 대조.)
+    hard_forbidden = set(_INTERNAL_SCHEMAS)
+    if engine == "mssql":
+        hard_forbidden |= _dialects.active().system_databases()
+    hard_hit = sorted((set(schemas) | set(catalogs)) & hard_forbidden)
+    if hard_hit:
+        return (
+            f"오류: 접근이 영구 차단된 데이터베이스 참조: {', '.join(hard_hit)} "
+            f"(앱 내부/시스템 DB — allowlist 무관 차단)."
+        )
+
     # ── TASK-0206 DB-단위 접근: MSSQL 은 catalog(DB) 가 접근 단위 ──────────────────
     if engine == "mssql" and active_ds:
         # 연결은 제품 primary DB(default_db)로 pin → 2-part `schema.table` 은 그 DB. 다른 허용 DB 는
@@ -123,12 +141,10 @@ def _freeform_sql_access_error(sql: str) -> str | None:
                 "오류: MSSQL 은 테이블을 최소 `스키마.테이블`(현재 DB) 또는 `데이터베이스.스키마.테이블`"
                 "(다른 허용 DB)로 명시해야 합니다 (무자격 테이블명 거부)."
             )
+        # 유효 allowlist = 저장 allowlist − 시스템 DB − 내부 DB (admin 이 master/agent_memory 를 넣어도 무효).
         allow = _ACTIVE_SCHEMA_ALLOWLIST.get()
-        allow_set = {str(a).strip().lower() for a in allow} if allow else set()
-        # re-gate MAJOR6 (M1 보존): 시스템 DB(master/model/msdb/tempdb)는 freeform 조회 대상이 **아니다**.
-        # master.dbo.syslogins / sysdatabases, msdb.dbo.sysjobs 등 dbo 호환뷰가 sys 차단을 우회해 로그인·
-        # 작업 enumeration 을 유출하므로, catalog 허용집합에서 시스템 DB 를 제외(allow_set 만 — system_databases
-        # 미포함). 시스템 DB 는 UI 가시성(고정칩)일 뿐 데이터소스가 아니다.
+        allow_set = ({str(a).strip().lower() for a in allow} if allow else set()) - hard_forbidden
+        # re-gate MAJOR6 (M1 보존): 시스템 DB 는 freeform 조회 대상이 아니다(allow_set 에서 이미 제거).
         # fail-closed: allow=None(미설정)도 빈 allowlist 로 취급(데이터 종속: 미바인딩=접근 0).
         blocked = sorted(c for c in catalogs if c and c not in allow_set)
         if blocked:
@@ -222,6 +238,19 @@ def _struct_schema_access_error(schema: str) -> str | None:
     if str(_dialects.active().name).lower() == "mssql" and _cfg_get_active_datasource():
         if s in _dialects.active().system_schemas():
             return f"오류: 시스템 스키마는 직접 접근할 수 없습니다: {s} (구조 탐색은 list_schemas 사용)."
+        # re-gate BLOCKER1(2차): 구조화 도구는 pin 된 primary DB 안에서 실행된다. pin 이 유효 allowlist 멤버가
+        # 아니면(또는 pin 미설정 → 로그인 기본 DB 로 연결) 미허용 DB 객체를 읽으므로 fail-closed 차단.
+        import modules.config as _cfg
+        allow = _ACTIVE_SCHEMA_ALLOWLIST.get()
+        hard = _INTERNAL_SCHEMAS | _dialects.active().system_databases()
+        allow_set = ({str(a).strip().lower() for a in allow} if allow else set()) - hard
+        pinned = (_cfg.get_active_default_db() or "")
+        if not (pinned and pinned in allow_set):
+            allowed_str = ", ".join(sorted(allow_set)) or "(없음)"
+            return (
+                f"오류: 현재 연결 데이터베이스('{pinned or '미지정'}')가 이 제품의 접근 허용 목록에 없어 "
+                f"구조화 도구 조회를 거부합니다. 허용된 DB: {allowed_str}."
+            )
         return None
     return _whitelist_violation({s})
 

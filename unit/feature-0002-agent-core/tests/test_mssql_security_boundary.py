@@ -308,6 +308,81 @@ def test_freeform_none_allowlist_fail_closed_mssql():
     _run_isolated(check)
 
 
+def test_regate2_4part_linked_server_blocked():
+    """re-gate(2차) BLOCKER2: 4-part(linked-server) 참조는 sql_guard 가 전면 거부(catalog 오인 우회 차단)."""
+    for sql in (
+        "SELECT * FROM appdb.forbidden.dbo.t",
+        "SELECT * FROM appdb.forbidden.dbo.fnTvf()",
+    ):
+        r = validate_sql_for_sandbox(sql, forbidden_schemas=AGENT_FORBIDDEN, dialect="tsql")
+        assert not r.ok, f"4-part 가 통과됨: {sql}"
+
+
+def test_regate2_system_db_in_allowlist_still_blocked():
+    """re-gate(2차) MAJOR6: admin 이 master 를 allowlist/pin 에 넣어도 시스템 DB 는 영구 차단(유효 allowlist 제거)."""
+    def check():
+        cfg.set_active_datasource("prod", engine="mssql", default_db="master")
+        tools.set_active_schema_allowlist(["master", "appdb"])
+        import modules.config as _c
+        _c._ACTIVE_DEFAULT_DB.set("master")
+        assert tools._freeform_sql_access_error("SELECT name FROM master.dbo.syslogins") is not None
+        # pin=master 는 유효 allowlist 에서 제거되므로 2-part 도 차단
+        assert tools._freeform_sql_access_error("SELECT * FROM dbo.syslogins") is not None
+        # 구조화 도구도 pin=master 거부
+        assert tools._struct_schema_access_error("dbo") is not None
+    _run_isolated(check)
+
+
+def test_regate2_agent_memory_function_blocked():
+    """re-gate(2차) BLOCKER4: agent_memory 함수참조(agent_memory.dbo.fnLeak())도 영구 차단."""
+    def check():
+        cfg.set_active_datasource("prod", engine="mssql", default_db="appdb")
+        tools.set_active_schema_allowlist(["agent_memory", "appdb"])
+        import modules.config as _c
+        _c._ACTIVE_DEFAULT_DB.set("appdb")
+        assert tools._freeform_sql_access_error("SELECT agent_memory.dbo.fnLeak()") is not None
+    _run_isolated(check)
+
+
+def test_regate2_struct_tool_pin_enforced():
+    """re-gate(2차) BLOCKER1: 구조화 도구는 pin 이 유효 allowlist 멤버가 아니면(또는 미설정) 거부."""
+    def check():
+        cfg.set_active_datasource("prod", engine="mssql")
+        tools.set_active_schema_allowlist(["appdb"])
+        import modules.config as _c
+        _c._ACTIVE_DEFAULT_DB.set(None)  # pin 미설정 → 로그인 기본 DB 로 샐 위험
+        assert tools._struct_schema_access_error("dbo") is not None
+        _c._ACTIVE_DEFAULT_DB.set("appdb")  # pin 유효 → 허용
+        assert tools._struct_schema_access_error("dbo") is None
+    _run_isolated(check)
+
+
+def test_regate2_list_schemas_not_overblocked_mssql():
+    """re-gate(2차) MAJOR4: MSSQL DB-단위에서 _is_user_schema 가 사용자 스키마(dbo/sales)를 DB-allowlist 와
+    대조해 과차단하지 않는다(시스템 스키마만 제외)."""
+    def check():
+        cfg.set_active_datasource("prod", engine="mssql", default_db="appdb")
+        tools.set_active_schema_allowlist(["appdb"])  # DB명 — 스키마명과 다름
+        assert tools._is_user_schema("dbo") is True
+        assert tools._is_user_schema("sales") is True
+        assert tools._is_user_schema("sys") is False
+        assert tools._is_user_schema("agent_memory") is False
+    _run_isolated(check)
+
+
+def test_regate2_system_info_functions_denylist():
+    """re-gate(2차) MAJOR2: 권한/역할 enumeration 시스템함수 denylist 확장."""
+    for sql in (
+        "SELECT IS_ROLEMEMBER('db_owner')",
+        "SELECT HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE')",
+        "SELECT FN_MY_PERMISSIONS(NULL, 'SERVER')",
+        "SELECT USER_NAME()",
+        "SELECT APP_NAME()",
+    ):
+        r = validate_sql_for_sandbox(sql, forbidden_schemas=AGENT_FORBIDDEN, dialect="tsql")
+        assert not r.ok, f"시스템 정보 함수가 통과됨: {sql}"
+
+
 def test_dialect_system_databases_sets():
     """dialect.system_databases(): MySQL=메타DB / MSSQL=master/model/msdb/tempdb."""
     def check_mssql():

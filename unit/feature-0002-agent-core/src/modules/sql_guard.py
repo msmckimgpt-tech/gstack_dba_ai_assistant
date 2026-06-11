@@ -108,8 +108,9 @@ _DENYLIST_PATTERNS_TSQL: tuple[re.Pattern[str], ...] = (
     # SUSER_SNAME 을 CurrentUser 노드로 정규화해 Func-name 검출을 빠져나가므로 텍스트 regex 로 박제.
     re.compile(
         r"\b(SERVERPROPERTY|SUSER_SNAME|SUSER_NAME|SUSER_ID|SUSER_SID|SYSTEM_USER|SESSION_USER"
-        r"|ORIGINAL_LOGIN|IS_SRVROLEMEMBER|IS_MEMBER|CONNECTIONPROPERTY|CONTEXT_INFO|HOST_NAME"
-        r"|HOST_ID|CURRENT_USER|FN_MY_PERMISSIONS|LOGINPROPERTY|SUSER_SNAME)\b",
+        r"|ORIGINAL_LOGIN|IS_SRVROLEMEMBER|IS_ROLEMEMBER|IS_MEMBER|HAS_PERMS_BY_NAME|FN_MY_PERMISSIONS"
+        r"|FN_BUILTIN_PERMISSIONS|CONNECTIONPROPERTY|CONTEXT_INFO|HOST_NAME|HOST_ID|CURRENT_USER"
+        r"|USER_NAME|APP_NAME|LOGINPROPERTY|PWDCOMPARE|PWDENCRYPT)\b",
         re.IGNORECASE,
     ),
     re.compile(r"/\*\+\s*[^*]*\*/"),                     # optimizer hint 주석
@@ -358,6 +359,20 @@ def validate_sql_for_sandbox(
     # sqlglot 이 select.args["into"] 로 노출 → 부수효과 SELECT 를 shape 단계에서 차단).
     if select_root.args.get("into"):
         return SqlGuardResult(False, error_reason="INTO clause not allowed", denied_patterns=["INTO"])
+
+    # re-gate BLOCKER2(2차): 4-part 참조(`server.database.schema.object`) 차단. sqlglot 은 4-part 를
+    # catalog/db/name 3슬롯으로 collapse 하며 실제 schema 를 잃어, 첫 토큰(linked-server 이름)이 catalog 로
+    # 오인돼 cross-DB 검사를 우회한다(`appdb.forbidden.dbo.t`→catalog=appdb). linked-server/4-part 는 전면 거부.
+    for _t in root.find_all(_exp.Table):
+        try:
+            if len(_t.parts) >= 4:
+                return SqlGuardResult(
+                    False,
+                    error_reason="4-part(linked-server) reference not allowed",
+                    denied_patterns=["4-part-ref"],
+                )
+        except Exception:
+            pass
 
     # table refs 의 schema/catalog 검사 (catalog = 3-part DB 차원, P6 cross-DB).
     table_refs = _collect_table_refs(root)

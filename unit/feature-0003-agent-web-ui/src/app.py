@@ -3239,7 +3239,10 @@ def _seed_main_mysql_datasource(conn) -> None:
     key = "main_mysql"
     cur = conn.cursor()
     try:
-        cur.execute("SELECT Host, DbUser, IsActive FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (key,))
+        cur.execute(
+            "SELECT Host, DbUser, IsActive, Engine, Port FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1",
+            (key,),
+        )
         row = cur.fetchone()
         exists = row is not None
         seeded_now = False
@@ -3270,11 +3273,22 @@ def _seed_main_mysql_datasource(conn) -> None:
             r_host = (str(row[0]).strip().lower() if row[0] else "")
             r_user = (str(row[1]).strip() if len(row) > 1 and row[1] else "")
             r_active = (int(row[2]) if len(row) > 2 and row[2] is not None else 1)
-            migrate_ok = (r_host == str(DB_HOST).strip().lower() and r_user == user and r_active == 1)
+            r_engine = (str(row[3]).strip().lower() if len(row) > 3 and row[3] else "mysql")
+            r_port = (int(row[4]) if len(row) > 4 and row[4] is not None else int(DB_PORT))
+            # re-gate MAJOR7(2차): host/user 뿐 아니라 engine='mysql'·port 도 일치해야 동일 데이터 MySQL 로 간주
+            # (동일 host/user 의 다른 포트·MSSQL datasource 에 NULL 제품 오바인딩 차단).
+            migrate_ok = (
+                r_host == str(DB_HOST).strip().lower()
+                and r_user == user
+                and r_active == 1
+                and r_engine == "mysql"
+                and r_port == int(DB_PORT)
+            )
             if not migrate_ok:
                 logging.getLogger(__name__).warning(
-                    "[ds-seed] main_mysql 이 데이터 MySQL(.env)과 불일치(host=%s user=%s active=%s) — "
-                    "NULL 제품 일괄 바인딩 skip(운영자 관리 데이터소스로 간주)", r_host, r_user, r_active,
+                    "[ds-seed] main_mysql 이 데이터 MySQL(.env)과 불일치(host=%s user=%s engine=%s port=%s active=%s) — "
+                    "NULL 제품 일괄 바인딩 skip(운영자 관리 데이터소스로 간주)",
+                    r_host, r_user, r_engine, r_port, r_active,
                 )
         if migrate_ok:
             try:
@@ -8114,16 +8128,18 @@ async def ask(request: Request) -> JSONResponse:
             except Exception:
                 role_id_for_run = None
         except Exception:
-            # re-gate BLOCKER5: product/allowlist 해석 중 예외 시 **fail-closed**. 과거엔 allowed=None 으로
-            # 폴백해 기본 MySQL 경로가 무제한(데이터 계정 GRANT 전체 DB) 접근으로 열렸다. None 대신 빈
-            # allowlist([])로 두어 qualified cross-DB 를 차단(auto 모드의 안전최소 패턴과 동일, line 위 참조).
+            # re-gate BLOCKER5(2차): product/allowlist 해석 중 예외 → **ask 전면 중단(fail-closed)**.
+            # 과거엔 allowed=None(또는 [])로 폴백했으나, product_id=None + datasource 비활성 상태에서는
+            # 무자격 쿼리(SELECT * FROM Secrets)가 데이터 계정 GRANT 의 기본 DB 로 그대로 실행됐다(차단 우회).
+            # 권한 컨텍스트를 신뢰할 수 없는 상태에서 어떤 쿼리도 돌리지 않는다 — 사용자에게 재시도 안내.
             logging.getLogger(__name__).error(
-                "ask: product/allowlist 해석 실패 — fail-closed(빈 allowlist) 적용", exc_info=True,
+                "ask: product/allowlist 해석 실패 — 권한 컨텍스트 불명, ask 중단(fail-closed)", exc_info=True,
             )
-            product_id_for_run = None
-            allowed_schemas_for_run = []
-            role_id_for_run = None
-            product_mode_for_run = "pinned"
+            try:
+                conn.close()  # 슬롯은 outer finally 가 해제, conn 은 per-return 정리 패턴 따름
+            except Exception:
+                pass
+            return _json_error("권한 컨텍스트를 확인할 수 없어 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.", 503)
 
         # feature-0007: api_key 인자 제거. agent_core 가 env 단일 소스로 자격증명
         # 결정 (LLM_API_KEY → BEDROCK_GATEWAY_API_KEY chain).
@@ -13464,6 +13480,8 @@ def admin_delete_product(product_id: int, request: Request) -> JSONResponse:
 
 _DATABASES_AVAILABLE_METADATA = ("information_schema", "mysql", "sys", "performance_schema")
 _DATABASES_AVAILABLE_INTERNAL = ("agent_memory",)
+# TASK-0206 re-gate: MSSQL 시스템 DB — allowlist 저장 금지(가드의 영구차단과 정합, pin 후보 차단).
+_DATABASES_AVAILABLE_SYSTEM_MSSQL = ("master", "model", "msdb", "tempdb")
 _DATABASES_AVAILABLE_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]{0,63}$")
 
 
@@ -13565,6 +13583,10 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
             return _json_error(f"내부 데이터베이스는 접근 목록에 추가할 수 없습니다: {schema}", 400)
         if schema in _DATABASES_AVAILABLE_METADATA:
             return _json_error(f"메타데이터 스키마는 항상 접근 가능하므로 추가할 수 없습니다: {schema}", 400)
+        # re-gate MAJOR6(2차): MSSQL 시스템 DB 는 allowlist 에 저장 불가(catalog 차원으로 들어가도 가드가
+        # 영구차단하지만, 저장 시점부터 거부해 pin 후보가 되는 것도 막는다 — dbo 호환뷰 enumeration 차단).
+        if schema in _DATABASES_AVAILABLE_SYSTEM_MSSQL:
+            return _json_error(f"시스템 데이터베이스는 접근 목록에 추가할 수 없습니다: {schema}", 400)
         if schema in seen:
             continue
         seen.add(schema)

@@ -2073,10 +2073,15 @@ def _resolve_product_datasource(mem_conn, product_id):
                 cur.close()
         except Exception:
             allow_dbs = []
+        # re-gate(2차): pin 후보에서 시스템 DB(master/model/msdb/tempdb)·내부 DB(agent_memory) 제외 —
+        # admin API 가 저장을 거부하지만, 레거시 값이 있어도 pin 이 시스템 DB 가 되지 않도록 이중 차단.
+        from modules import dialects as _dialects
+        _hard = _dialects.active().system_databases() | {"agent_memory"}
+        allow_dbs = [d for d in allow_dbs if d.lower() not in _hard]
         allow_lower = {d.lower() for d in allow_dbs}
         primary_db = ""
         if product_db and product_db.lower() in allow_lower:
-            primary_db = product_db                       # 명시값이 allowlist 안일 때만
+            primary_db = product_db                       # 명시값이 (정제된) allowlist 안일 때만
         elif allow_dbs:
             primary_db = allow_dbs[0]                      # 첫 접근가능 DB 자동 pin
         ds = dict(ds)
