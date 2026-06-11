@@ -3350,6 +3350,30 @@ def _seed_main_mysql_datasource(conn) -> None:
                         except Exception:
                             pass  # 복호 실패 — 패스워드를 모르므로 수동 재입력 필요
 
+        # TASK-0222: DatasourceKey 는 이제 admin rename 가능한 단순 라벨(TASK-0216/0219) — 해시 키 부재가
+        # "미시드"를 뜻하지 않는다. 운영자가 데이터 MySQL datasource 를 다른 라벨로 rename 했으면 해시 라벨은
+        # 없지만 **같은 엔드포인트(engine=mysql, host=DB_HOST, port=DB_PORT) 의 활성 datasource 가 이미 존재**한다.
+        # 이때 해시 라벨로 새로 INSERT 하면 같은 엔드포인트에 고아 중복 행이 매 부팅 재생성된다(운영자 rename 무력화).
+        # → 해시 라벨 부재 시 같은 엔드포인트의 기존 라벨을 canonical 로 채택해 시드를 멱등화(엔드포인트 기준).
+        cur.execute("SELECT 1 FROM WebDatasources WHERE DatasourceKey=%s AND IsActive=1 LIMIT 1", (key,))
+        if not cur.fetchone():
+            cur.execute(
+                "SELECT DatasourceKey FROM WebDatasources "
+                "WHERE Engine='mysql' AND LOWER(Host)=LOWER(%s) AND Port=%s AND IsActive=1 "
+                "ORDER BY Id LIMIT 1",
+                (DB_HOST, int(DB_PORT)),
+            )
+            _ep_row = cur.fetchone()
+            if _ep_row and _ep_row[0]:
+                key = str(_ep_row[0]).strip()
+                try:
+                    logging.getLogger(__name__).info(
+                        "[ds-seed] 동일 엔드포인트(%s:%s) 데이터소스 '%s' 존재 — 해시키 신규 시드 skip(라벨 보존, TASK-0222)",
+                        DB_HOST, DB_PORT, key,
+                    )
+                except Exception:
+                    pass
+
         cur.execute(
             "SELECT Host, DbUser, IsActive, Engine, Port FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1",
             (key,),
