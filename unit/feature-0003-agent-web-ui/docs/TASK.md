@@ -3120,3 +3120,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **outside-voice 적대적 리뷰 반영** (REV-20260611-0208, [SUBAGENT:design-correctness] SHIP-WITH-FIXES): **MAJOR 흡수** — drawer 가 패널 전체 스크롤(`overflow-y:auto`)이라 absolute 리사이저가 긴 탭에서 콘텐츠와 함께 스크롤돼 핸들이 시야 밖으로 밀리는 문제 → 단계 패널처럼 내부 스크롤 래퍼(`.drawer-scroll`)로 분리하고 핸들은 비스크롤 shell 에 고정. **MINOR 흡수** — 모바일(≤680px)에선 저장 너비 inline 적용을 건너뛰고 미디어쿼리가 폭 소유(`_applyProfileDrawerWidth` 가드). MINOR(초협소 뷰포트 min-width 오버플로)는 단계 패널 상속 동작이라 수용. `left:0`/XSS-safe(textContent+화이트리스트)/리스너 균형 등 비이슈 확인.
 - [x] node --check app.js PASS, styles.css 중괄호 균형(911/911), drawer aside div 균형(30/30). 캐시버스터 `?v=20260611-profile-resize-gran`. 기존 단계 보기 패널 코드 무수정(회귀 0).
 - [ ] verify-completion → main rebase·ff-merge → web 재배포(`make dc-build SERVICE=web`+`up -d --no-build web`) → PB-0008 Windows-browser 시각검증(drawer 드래그 리사이즈·너비 영속·집계 단위 전환·추세 제목 동기화)
+
+### TASK-0209 — 관리 콘솔 LLM 사용량 집계기준↔집계범위 드롭다운 순서 정렬 (frontend-only) (2026-06-11)
+- [x] **Minor §12.3** (admin.html DOM 재배치 1건, RBAC·스키마·엔드포인트·백엔드·JS·CSS 0) — 사용자 요청: 프로필 `사용 내역`(TASK-0208)의 집계기준→집계범위 드롭다운 순서에 맞추어, `관리 콘솔 > LLM 사용량`의 집계범위(`#usageDaysSel`)↔집계기준(`#usageGranSel`) 위치를 서로 바꿔 동일 순서(집계기준 먼저)로 통일. (CHG-20260611-0209)
+- [x] **수정** ([admin.html](../src/static/admin.html)): `.admin-pane-actions` 안에서 `#usageGranSel`(시간별/일별/주별/월별)을 `#usageDaysSel`(최근 N일) **앞**으로 이동. JS(`admin.js`)는 두 select 를 id 로 참조하므로 순서 무관 — 동작·회귀 0. 캐시버스터 `?v=20260611-ds-admin-ui` → `?v=20260611-usage-dropdown-order`.
+- [x] outside-voice [SKIPPED:frontend-trivial-reorder] (REV-20260611-0209) — DOM 형제 2개 순서 교체, 로직/권한/스키마/엔드포인트 0.
+- [x] admin.html select 태그 균형(4/4). 프로필 사용 내역(TASK-0208)과 순서 일치 확인.
+- [ ] verify-completion → main rebase·ff-merge → web 재배포 → PB-0008 Windows-browser 시각검증(집계기준 먼저, 프로필과 동일 순서)

@@ -1928,3 +1928,10 @@ source_of_truth: true
 - 비이슈 확인: `left:0`(border-box → 패딩박스 좌변=좌측 가장자리)·close/탭 비충돌·`is-resizing` 은 드래그 중에만 transition 제거(open 슬라이드 무영향)·`week` 미노출은 백엔드 재검증으로 안전.
 - Risk: low — 프런트 레이아웃/상호작용. 백엔드·데이터·권한 무영향. 잔여 시각검증은 PB-0008(배포 후).
 - Cross-ref: CHG-20260611-0208 / TASK-0208.
+
+## REV-20260611-0209 [SKIPPED:frontend-trivial-reorder]
+- Date: 2026-06-11
+- Cycle: TASK-0209 (관리 콘솔 LLM 사용량 집계기준↔집계범위 드롭다운 순서 정렬), **Minor §12.3** — admin.html DOM 재배치 1건.
+- Reason: `.admin-pane-actions` 내 형제 `<select>` 2개(`#usageGranSel`/`#usageDaysSel`)의 순서 교체뿐. JS 는 두 요소를 id 로 참조하므로 동작/이벤트/조회 로직 무변경, RBAC·스키마·엔드포인트·백엔드·CSS 무변경. 위험 표면이 없어 적대적 패널 불요(전례 REV-20260611-0204/0205 frontend-only SKIP 과 동일 등급). 시각 동등성은 PB-0008(배포 후)로 확인.
+- Risk: negligible — DOM 형제 순서.
+- Cross-ref: CHG-20260611-0209 / TASK-0209 / TASK-0208(프로필 순서 기준).
