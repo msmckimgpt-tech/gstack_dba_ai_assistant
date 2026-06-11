@@ -4085,14 +4085,17 @@ function buildCoverageBadge(productId) {
   }
   if (cov.total_objects === 0) {
     span.classList.add("cov-muted");
-    span.textContent = "분석 대상 없음";
-    span.title = cov.reason || "접근 가능 데이터베이스 없음";
+    const hasConnFail = (cov.per_db || []).some((d) => d.connected === false);
+    span.textContent = hasConnFail ? "분석 연결 불가" : "분석 대상 없음";
+    span.title = cov.reason || (hasConnFail ? "접근 가능 DB 연결 실패(권한/도달)" : "접근 가능 데이터베이스 없음");
     return span;
   }
   const pct = cov.pct;
   span.classList.add(`cov-${_coverageTone(pct)}`);
   span.textContent = `분석 ${pct}%`;
-  span.title = `${cov.analyzed_objects} / ${cov.total_objects} 객체 분석 완료`;
+  const failN = (cov.per_db || []).filter((d) => d.connected === false).length;
+  span.title = `${cov.analyzed_objects} / ${cov.total_objects} 객체 분석 완료`
+    + (failN ? ` · 연결 불가 DB ${failN}개` : "");
   return span;
 }
 
@@ -4119,7 +4122,7 @@ function buildProductCoverageDetail(product) {
     summaryChip.textContent = "측정 불가";
   } else if (cov.total_objects === 0) {
     summaryChip.classList.add("cov-muted");
-    summaryChip.textContent = "대상 없음";
+    summaryChip.textContent = (cov.per_db || []).some((d) => d.connected === false) ? "연결 불가" : "대상 없음";
   } else {
     summaryChip.classList.add(`cov-${_coverageTone(cov.pct)}`);
     summaryChip.textContent = `${cov.pct}%`;
@@ -4151,28 +4154,28 @@ function buildProductCoverageDetail(product) {
     wrap.appendChild(p);
     return wrap;
   }
-  if (cov.total_objects === 0) {
+  if (cov.total_objects > 0) {
+    // 전체 진행 바 + 객체 수
+    const overall = document.createElement("div");
+    overall.className = "cov-bar-row";
+    const bar = document.createElement("div");
+    bar.className = `cov-bar cov-${_coverageTone(cov.pct)}`;
+    const fill = document.createElement("div");
+    fill.className = "cov-bar-fill";
+    fill.style.width = `${Math.max(0, Math.min(100, cov.pct || 0))}%`;
+    bar.appendChild(fill);
+    const barLabel = document.createElement("span");
+    barLabel.className = "cov-bar-label";
+    barLabel.textContent = `${cov.analyzed_objects} / ${cov.total_objects} 객체 (DB + 테이블)`;
+    overall.append(bar, barLabel);
+    wrap.appendChild(overall);
+  } else {
+    // 측정 가능한 DB 0개(전부 연결 실패 등) — 진행바 생략, 사유만 표시(per-DB 목록은 아래 계속).
     const p = document.createElement("div");
-    p.className = "admin-detail-hint";
-    p.textContent = cov.reason || "접근 가능 데이터베이스가 없어 분석 대상이 없습니다.";
+    p.className = "admin-detail-hint cov-reason";
+    p.textContent = cov.reason || "접근 가능 데이터베이스에 연결할 수 없습니다(권한/도달 확인).";
     wrap.appendChild(p);
-    return wrap;
   }
-
-  // 전체 진행 바 + 객체 수
-  const overall = document.createElement("div");
-  overall.className = "cov-bar-row";
-  const bar = document.createElement("div");
-  bar.className = `cov-bar cov-${_coverageTone(cov.pct)}`;
-  const fill = document.createElement("div");
-  fill.className = "cov-bar-fill";
-  fill.style.width = `${Math.max(0, Math.min(100, cov.pct || 0))}%`;
-  bar.appendChild(fill);
-  const barLabel = document.createElement("span");
-  barLabel.className = "cov-bar-label";
-  barLabel.textContent = `${cov.analyzed_objects} / ${cov.total_objects} 객체 (DB + 테이블)`;
-  overall.append(bar, barLabel);
-  wrap.appendChild(overall);
 
   // per-DB breakdown
   const list = document.createElement("div");
@@ -4185,16 +4188,16 @@ function buildProductCoverageDetail(product) {
     nameEl.textContent = d.db;
     const statEl = document.createElement("span");
     statEl.className = "cov-db-stat";
-    if (d.scannable) {
+    if (d.connected) {
       const tt = d.tables_total || 0;
       const ta = d.tables_analyzed || 0;
       const tpct = tt > 0 ? Math.round((100 * ta) / tt) : (d.schema_analyzed ? 100 : 0);
       statEl.classList.add(`cov-${_coverageTone(tpct)}`);
       statEl.textContent = `테이블 ${ta}/${tt}${d.schema_analyzed ? " · DB✓" : " · DB✗"}`;
     } else {
-      statEl.classList.add("cov-muted");
-      statEl.textContent = `${d.tables_total || 0}개 테이블 · 미스캔`;
-      statEl.title = d.note || "";
+      statEl.classList.add("cov-low");
+      statEl.textContent = "연결 불가";
+      statEl.title = d.note || "연결 불가(권한/도달)";
     }
     rowEl.append(nameEl, statEl);
     list.appendChild(rowEl);
@@ -4204,7 +4207,7 @@ function buildProductCoverageDetail(product) {
   if (cov.engine === "mssql") {
     const note = document.createElement("div");
     note.className = "admin-detail-hint cov-engine-note";
-    note.textContent = "MSSQL: insight 워커는 데이터소스 기본 DB만 스캔합니다. 그 외 접근 DB는 미스캔으로 표시됩니다.";
+    note.textContent = "MSSQL: RO 로그인에 GRANT 되지 않았거나 도달 불가한 DB는 '연결 불가'로 표시되며 완료율 집계에서 제외됩니다. (insight 스코프는 데이터소스 엔드포인트 단위)";
     wrap.appendChild(note);
   }
   return wrap;

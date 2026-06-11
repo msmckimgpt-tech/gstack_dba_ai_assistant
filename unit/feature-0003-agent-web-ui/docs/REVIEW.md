@@ -2041,3 +2041,10 @@ source_of_truth: true
 - Reason: 순수 클라이언트 UX 추가. 신규 JS 1파일(document `dblclick` capture 위임) + html 3개 script 태그 추가뿐. 백엔드(app.py)·RBAC·스키마·암호화·신규 엔드포인트·기존 JS 로직 무변경. 핸들 영역(~18px) 좌표 판정으로 본문 더블클릭(단어선택) 미간섭. 위험 표면 없어 적대적 패널 불요(전례 REV-20260611-0209/0213 frontend-only SKIP 과 동일 등급). node --check PASS.
 - Risk: low — 클라이언트 height 스타일 변경만. 600px 상한으로 레이아웃 폭주 방지. 시각 동작은 PB-0008(배포 후)로 확인.
 - Cross-ref: CHG-20260611-0225 / TASK-0225.
+
+## REV-20260611-0226 [SKIPPED:mssql-perdb-bugfix-no-new-surface]
+- Date: 2026-06-11
+- Cycle: TASK-0226 (MSSQL 제품 분석 완료율 미표시(연결) 수정 — per-DB 연결 격리; 동시세션 TASK-0225 충돌로 재번호 §13.1), **Minor §12.3**
+- Reason: TASK-0223 read-only 통계의 버그수정. RO 로그인(`agent_ro`)이 일부 DB 에만 GRANT 된 환경에서 단일 try/except 가 한 DB 실패로 전체를 "측정 불가" 오염시키던 것을 **per-DB 연결 격리**로 수정. 신규 RBAC 권한·DB GRANT·스키마·암호화·엔드포인트 경로 0 — 엔드포인트 응답 shape 의 per_db 필드명 `scannable`→`connected`+`note` 확장만(프런트 동반 수정). datasource 연결은 기존 `list_information_schema_tables` 직결 재사용(SSRF 가드 선행 유지). 매칭 의미론(catalog-driven set 교집합) 무변경. 적대적 보안 리뷰 불요 — 권한 경계·자격증명 처리·쓰기 경로 변화 없음. py_compile/node --check PASS.
+- Risk: low — 비연결 DB 를 분모에서 제외(측정 가능 DB 기준)하는 정직 표기. MySQL 경로는 단일 try 유지(회귀 0). 본 수정은 권한을 부여하지 않으며(agent_ro GRANT 는 운영자 영역), 권한 없는 DB 를 "연결 불가"로 가시화만 한다.
+- Cross-ref: CHG-20260611-0226 / TASK-0226 / TASK-0223.
