@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260611-0231 [SKIPPED:frontend-a11y-no-backend-no-rbac]
+- Date: 2026-06-11
+- Cycle: TASK-0231 (datasource multi-bind UI 접근성 보강, **Minor §12.3**)
+- 본 cycle 자체가 gstack `/design-review`(소스 디자인·접근성 outside-voice subagent) 감사의 **산물** — subagent 가 TASK-0230 UI 의 HIGH 3(aria-label·select 라벨·async disabled) + MEDIUM 4(24px 타깃·focus-visible·opacity·빈상태 CTA)를 발견, 본 cycle 이 전부 흡수. 즉 outside-voice 가 선행됨.
+- Reason: frontend-only 접근성 속성(aria-label)·CSS(터치타깃·focus-visible)·JS 가드(중복요청 disabled) 추가. RBAC/스키마/엔드포인트/백엔드/시크릿 0건. 새 기능 0(기존 동작에 접근성·중복방지 덧입힘). 추가 outside-voice panel 불필요 조건 충족(새 위험 표면 0).
+- 검증: node --check admin.js + CSS brace balance + make test 회귀 0 + 라이브 기능 회귀 16/16 PASS(별도).
+- Human Approval Needed: no.
+- Cross-ref: CHG-20260611-0231 / TASK-0231 / REV-20260611-0230(원 cycle).
+
 ## REV-20260611-0230 [SUBAGENT:product-multi-datasource-isolation-adversarial] — PASS(MAJOR 흡수)
 - Date: 2026-06-11
 - Cycle: TASK-0230 (멀티 datasource 1:N — 제품 ↔ 여러 datasource, **Critical §12.3**, cross-feature)

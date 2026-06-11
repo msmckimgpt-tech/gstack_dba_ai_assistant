@@ -2676,7 +2676,13 @@ a { color: inherit; }
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
-  padding: 0 2px;
+  /* a11y M1: WCAG 2.5.8 최소 24px 터치 타깃(이전 padding:0 2px ≈ 12px). */
+  min-width: 24px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
 }
 
 .admin-chip.is-locked {
@@ -2701,11 +2707,26 @@ a { color: inherit; }
   cursor: pointer;
   font-size: 12px;
   line-height: 1;
-  padding: 0 2px;
-  opacity: 0.7;
+  /* a11y M1: 24px 최소 타깃. M3: resting opacity 제거(0.7 → 0.85)로 affordance 가시성 — */
+  /* hover-only 가시성은 키보드/터치 사용자에게 안 보임. */
+  min-width: 24px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  opacity: 0.85;
 }
 
 .admin-chip-action:hover {
+  opacity: 1;
+}
+
+/* a11y M2: 키보드 포커스 표시(이전엔 borderless 버튼이라 포커스 불가시). */
+.admin-chip-action:focus-visible,
+.admin-chip-remove:focus-visible {
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: 2px;
   opacity: 1;
 }
 

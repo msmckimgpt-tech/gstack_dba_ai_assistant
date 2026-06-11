@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260611-0231
+- Date: 2026-06-11 (TASK-0231, **Minor §12.3** — datasource multi-bind UI 접근성 보강, frontend-only)
+- Scope: TASK-0230 의 제품 상세 datasource multi-bind UI 를 gstack `/design-review` 소스 접근성 감사로 검토 후 HIGH 3 + MEDIUM 4 흡수. 권한/스키마/엔드포인트/백엔드 0.
+- Files:
+  - unit/feature-0003-agent-web-ui/src/static/admin.js (★/× 칩버튼 aria-label + disabled 중복요청 가드 + 두 select aria-label + 빈상태 CTA)
+  - unit/feature-0003-agent-web-ui/src/static/styles.css (.admin-chip-action/.admin-chip-remove 24px 타깃 + :focus-visible + opacity)
+  - unit/feature-0003-agent-web-ui/src/static/admin.html (캐시버스터 `?v=20260611-ds-multibind-a11y`)
+- Rollback: 위 3파일 revert(frontend-only, 동작 영향 0 — 접근성 속성·CSS 만).
+
 ## CHG-20260611-0230
 - Date: 2026-06-11 (TASK-0230, **Critical §12.3** — 멀티 datasource 1:N: 제품 ↔ 여러 datasource 참조)
 - Scope: feature-0003 측 — 관리 평면(join 테이블·admin 엔드포인트·접근DB 차원화·제품 프롬프트 다중 datasource 인지) + UI(제품 상세 datasource 칩 multi-bind·편집 대상 선택기, 대화화면 다중 배지). 단일 바인딩·flag OFF 동작 0 변경.

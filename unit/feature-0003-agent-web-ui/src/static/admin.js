@@ -4667,6 +4667,7 @@ function renderProductDetail() {
     editLbl.className = "admin-detail-hint";
     editLbl.textContent = "편집 대상 데이터소스: ";
     _editDsSelect = document.createElement("select");
+    _editDsSelect.setAttribute("aria-label", "편집 대상 데이터소스");  // a11y H2: 가시 라벨이 별도 span 이라 미연결
     (product.datasources || []).forEach((b) => {
       const opt = document.createElement("option");
       opt.value = b.datasource_key;
@@ -4953,7 +4954,8 @@ function renderProductDetail() {
       if (!binds.length) {
         const none = document.createElement("span");
         none.className = "admin-detail-hint";
-        none.textContent = "(바인딩된 데이터소스 없음 — 기본 단일 MySQL)";
+        // a11y M4: 수동적 status 대신 행동 유도(아래 드롭다운으로 바인딩).
+        none.textContent = "바인딩된 데이터소스 없음 — 기본 단일 MySQL. 아래에서 데이터소스를 선택해 바인딩하세요.";
         dsChips.appendChild(none);
         return;
       }
@@ -4965,11 +4967,16 @@ function renderProductDetail() {
         chip.appendChild(label);
         if (canDs) {
           // primary 가 아니면 "기본 지정" 버튼.
+          // TASK-0231 a11y: 아이콘 전용 버튼이므로 aria-label 로 대상 명시(★/× 만으로는 SR 불투명),
+          // 비동기 중 disabled 로 중복 POST/DELETE 차단(REV-0230 a11y H1/H3).
           if (!b.is_primary) {
             const star = document.createElement("button");
             star.type = "button"; star.className = "admin-chip-action"; star.textContent = "★";
             star.title = "기본(primary) 데이터소스로 지정";
+            star.setAttribute("aria-label", `'${b.datasource_key}' 를 기본 데이터소스로 지정`);
             star.addEventListener("click", async () => {
+              if (star.disabled) return;
+              star.disabled = true;
               try {
                 await apiFetch(`/api/admin/products/${product.id}/datasources`, {
                   method: "POST",
@@ -4977,20 +4984,23 @@ function renderProductDetail() {
                 });
                 await _reloadProductDatasources();
                 showToast(`'${b.datasource_key}' 를 기본 데이터소스로 지정`);
-              } catch (e) { showToast(e.message || "기본 지정 실패", true); }
+              } catch (e) { star.disabled = false; showToast(e.message || "기본 지정 실패", true); }
             });
             chip.appendChild(star);
           }
           const rm = document.createElement("button");
           rm.type = "button"; rm.className = "admin-chip-remove"; rm.textContent = "×";
           rm.title = "이 데이터소스 바인딩 제거";
+          rm.setAttribute("aria-label", `'${b.datasource_key}' 데이터소스 바인딩 제거`);
           rm.addEventListener("click", async () => {
+            if (rm.disabled) return;
             if (!confirm(`데이터소스 '${b.datasource_key}' 바인딩을 제거할까요?\n(이 데이터소스의 접근 가능 DB 설정도 함께 삭제됩니다.)`)) return;
+            rm.disabled = true;
             try {
               await apiFetch(`/api/admin/products/${product.id}/datasources/${encodeURIComponent(b.datasource_key)}`, { method: "DELETE" });
               await _reloadProductDatasources();
               showToast(`'${b.datasource_key}' 바인딩 제거됨`);
-            } catch (e) { showToast(e.message || "바인딩 제거 실패", true); }
+            } catch (e) { rm.disabled = false; showToast(e.message || "바인딩 제거 실패", true); }
           });
           chip.appendChild(rm);
         }
@@ -5021,6 +5031,7 @@ function renderProductDetail() {
     const dsRow = document.createElement("div");
     dsRow.className = "admin-db-picker-row";
     const dsSelect = document.createElement("select");
+    dsSelect.setAttribute("aria-label", "데이터소스 추가 또는 설정");  // a11y H2: 가시 라벨 없는 combobox
     dsSelect.disabled = !canDs;
     const optDefault = document.createElement("option");
     optDefault.value = "";
