@@ -1916,3 +1916,15 @@ source_of_truth: true
   - NICE: `.admin-field input.is-readonly` 배경 `var(--surface-2, …)` 인데 `--surface-2` 미정의 → no-op. → `var(--bg)` 로 교체.
   - NICE: `role=listbox` option 비활성 행 `aria-selected` 제거 대신 `"false"` 명시.
 - Risk: low — 프런트 레이아웃/상태. 백엔드·데이터·권한 무영향. 잔여 시각검증은 PB-0008(배포 후).
+
+## REV-20260611-0208 [SUBAGENT:design-correctness]
+- Date: 2026-06-11
+- Cycle: TASK-0208 (프로필 drawer 너비 조절 + 사용 내역 집계 단위), **Minor §12.3** — 프런트 3파일(app.js·index.html·styles.css), 백엔드/API/스키마/RBAC/시크릿 0.
+- Trigger: UI/sidebar/layout/screen keyword(§18.8 → ux/design) + 신규 drag 인터랙션(단순 SKIP 부적합) → design+correctness 패널 1인 적대적 실행.
+- 패널 결과: **SHIP-WITH-FIXES**. 단계 보기 패널 패턴의 충실한 복제(리스너 add/remove 균형·`dataset.wired` 중복배선 가드·touch+mouse·`gran` 화이트리스트 검증+`encodeURIComponent`·`textContent` 고정 dict=XSS-safe) 확인. 지적 수용:
+  - MAJOR: drawer 가 패널 전체 스크롤(`overflow-y:auto`+padding)이라 absolute `.drawer-resizer`(`height:100%`)가 콘텐츠와 함께 스크롤 → 긴 탭(사용 내역) 스크롤 시 핸들이 시야 밖. (단계 패널은 `.step-side-panel-body` 내부 스크롤이라 무해.) → `.drawer` 의 padding/gap/overflow 를 신규 `.drawer-scroll` 래퍼로 이동, 리사이저는 비스크롤 shell(`.drawer`, `overflow:hidden`)에 고정. index.html 헤더/탭/패널을 `.drawer-scroll` 로 래핑.
+  - MINOR: 데스크톱 저장 너비가 inline `style.width` 로 모바일 미디어쿼리(`min(100vw,380px)`)를 무력화. → `_applyProfileDrawerWidth` 가 ≤680px 에서 inline 미적용(`style.width=""`)하고 미디어쿼리가 폭 소유.
+  - MINOR(수용·미수정): 초협소(~<348px) 뷰포트에서 `PROFILE_DRAWER_MIN_W=320` 이 뷰포트 초과 가능 — 단계 패널 `MIN_W=300` 에서 그대로 상속된 동작이라 회귀 아님.
+- 비이슈 확인: `left:0`(border-box → 패딩박스 좌변=좌측 가장자리)·close/탭 비충돌·`is-resizing` 은 드래그 중에만 transition 제거(open 슬라이드 무영향)·`week` 미노출은 백엔드 재검증으로 안전.
+- Risk: low — 프런트 레이아웃/상호작용. 백엔드·데이터·권한 무영향. 잔여 시각검증은 PB-0008(배포 후).
+- Cross-ref: CHG-20260611-0208 / TASK-0208.

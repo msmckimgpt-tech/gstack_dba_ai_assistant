@@ -6,7 +6,7 @@
   <title>DQA — Database Query Assistant</title>
   <link rel="preconnect" href="https://fonts.bunny.net" />
   <link href="https://fonts.bunny.net/css?family=geist:300,400,500,600,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260610-response-duration" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260611-profile-resize-gran" />
 </head>
 <body>
 
@@ -321,6 +321,11 @@
   -->
   <div class="drawer-bg hidden" id="profileBackdrop"></div>
   <aside class="drawer hidden" id="profileDrawer">
+    <!-- 좌측 가장자리 너비 조절 핸들 (단계 보기 패널 #stepSidePanelResizer 과 동일 패턴) -->
+    <div class="drawer-resizer" id="profileDrawerResizer" role="separator" aria-orientation="vertical" aria-label="패널 너비 조절" title="드래그하여 너비 조절"></div>
+
+    <!-- 내부 스크롤 영역: 헤더/탭/패널. 리사이즈 핸들은 이 영역 밖(비스크롤 shell)에 둬 스크롤돼도 고정 -->
+    <div class="drawer-scroll">
 
     <!-- 헤더: 아바타 + 이름 + 닫기 -->
     <div class="drawer-header">
@@ -346,11 +351,19 @@
     <div class="drawer-pane hidden" data-profile-pane="usage">
       <div class="profile-usage-head">
         <div class="profile-section-title">내 사용 내역</div>
-        <select id="profileUsageDays" class="btn-secondary profile-usage-days">
-          <option value="7">최근 7일</option>
-          <option value="30" selected>최근 30일</option>
-          <option value="90">최근 90일</option>
-        </select>
+        <div class="profile-usage-controls">
+          <!-- 집계 단위 (시간별/일별/월별) — 백엔드 /api/profile/usage 의 gran 파라미터(hour/day/month) -->
+          <select id="profileUsageGran" class="btn-secondary profile-usage-days" aria-label="집계 단위">
+            <option value="hour">시간별</option>
+            <option value="day" selected>일별</option>
+            <option value="month">월별</option>
+          </select>
+          <select id="profileUsageDays" class="btn-secondary profile-usage-days" aria-label="기간">
+            <option value="7">최근 7일</option>
+            <option value="30" selected>최근 30일</option>
+            <option value="90">최근 90일</option>
+          </select>
+        </div>
       </div>
       <div id="profileUsageSummary" class="profile-usage-summary"></div>
       <div class="profile-usage-card">
@@ -416,6 +429,7 @@
       </div>
     </div><!-- /prompt -->
 
+    </div><!-- /drawer-scroll -->
 
   </aside>
 
@@ -475,6 +489,6 @@
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260610-response-duration"></script>
+  <script src="/static/app.js?v=20260611-profile-resize-gran"></script>
 </body>
 </html>
