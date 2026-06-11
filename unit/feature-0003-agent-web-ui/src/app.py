@@ -9962,21 +9962,26 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
                 if eng not in ("mysql", "mssql"):
                     return _json_error("engine 은 mysql|mssql.", 400)
                 sets.append("Engine=%s"); params.append(eng)
+            # TASK-0212: 수정 폼이 모든 필드를 항상 전송하므로(빈값 포함), **필수/구성 필드는 빈값일 때
+            # 갱신하지 않고 기존값을 보존**한다(write-only-when-provided). 특히 GET 은 보안상 user 를
+            # 마스킹(B3)해 폼이 pre-fill 못 하므로, 빈 user 를 그대로 쓰면 DbUser 가 wipe 돼 연결 테스트가
+            # 실패한다(회귀). host/user 는 필수, default_db 는 구성값 — 빈값=유지(실수 wipe 방지).
             if "host" in data:
                 host = str(data.get("host") or "").strip()
-                okssrf, reason, _ = _ssrf_check_host(host)
-                if not okssrf:
-                    return _json_error(f"호스트 차단(SSRF): {reason}", 400)
-                sets.append("Host=%s"); params.append(host)
-            if "port" in data:
+                if host:  # 빈 host 무시(필수 — 기존 유지)
+                    okssrf, reason, _ = _ssrf_check_host(host)
+                    if not okssrf:
+                        return _json_error(f"호스트 차단(SSRF): {reason}", 400)
+                    sets.append("Host=%s"); params.append(host)
+            if "port" in data and str(data.get("port") or "").strip():
                 try:
                     sets.append("Port=%s"); params.append(int(data.get("port")))
                 except Exception:
                     return _json_error("port 정수 오류.", 400)
-            if "user" in data:
-                sets.append("DbUser=%s"); params.append(str(data.get("user") or "").strip())
-            if "default_db" in data:
-                sets.append("DefaultDb=%s"); params.append((str(data.get("default_db")).strip() or None) if data.get("default_db") else None)
+            if "user" in data and str(data.get("user") or "").strip():
+                sets.append("DbUser=%s"); params.append(str(data.get("user")).strip())
+            if "default_db" in data and str(data.get("default_db") or "").strip():
+                sets.append("DefaultDb=%s"); params.append(str(data.get("default_db")).strip())
             if "is_active" in data:
                 sets.append("IsActive=%s"); params.append(1 if data.get("is_active") else 0)
             if data.get("password"):  # 비어있지 않을 때만 재암호화(write-only)

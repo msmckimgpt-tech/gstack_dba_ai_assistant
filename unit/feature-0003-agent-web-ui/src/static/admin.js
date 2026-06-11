@@ -1375,7 +1375,9 @@ function _dsRenderForm(ds) {
     ["engine", "엔진 (mysql|mssql)", isEdit ? (ds.engine || "mysql") : "mysql", false],
     ["host", "호스트", isEdit ? (ds.host || "") : "", false],
     ["port", "포트", isEdit ? (ds.port || "") : "", false],
-    ["user", "DB 유저 (RO 권장)", isEdit ? (ds.user || "") : "", false],
+    // TASK-0212: user 는 GET 에서 마스킹(보안)돼 수정 시 pre-fill 안 됨 → password 처럼 write-only.
+    // 빈값으로 두면 기존 유저 유지(서버도 빈 user 는 무시). 변경 시에만 입력.
+    ["user", isEdit ? "DB 유저 (변경 시에만 입력 · RO 권장)" : "DB 유저 (RO 권장)", "", false],
     ["password", isEdit ? "비밀번호 (변경 시에만 입력)" : "비밀번호", "", false],
     ["default_db", "기본 참조 DB (선택)", isEdit ? (ds.default_db || "") : "", false],
   ];
@@ -1399,7 +1401,9 @@ function _dsRenderForm(ds) {
     const body = {};
     Object.keys(inputs).forEach((k) => {
       const v = inputs[k].value.trim();
-      if (k === "password") { if (v) body.password = v; }       // write-only: 빈값이면 미전송(미변경)
+      // TASK-0212: password·user 는 write-only(수정 시 GET 마스킹으로 pre-fill 불가) — 빈값이면 미전송(미변경).
+      // 빈 user 를 보내면 서버가 DbUser 를 wipe 해 연결 테스트가 깨지던 회귀 방지.
+      if (k === "password" || (isEdit && k === "user")) { if (v) body[k] = v; }
       else if (k === "key") { if (!isEdit) body.key = v; }
       else body[k] = v;
     });
