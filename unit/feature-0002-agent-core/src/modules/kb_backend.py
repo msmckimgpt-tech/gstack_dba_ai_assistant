@@ -489,7 +489,10 @@ ON CONFLICT (conversation_id, scope_key, object_type, object_key) DO UPDATE SET
     category_metric_family   = COALESCE(NULLIF(EXCLUDED.category_metric_family, ''), rag_objects.category_metric_family),
     category_event_type      = COALESCE(NULLIF(EXCLUDED.category_event_type, ''), rag_objects.category_event_type),
     category_time_grain      = COALESCE(NULLIF(EXCLUDED.category_time_grain, ''), rag_objects.category_time_grain),
-    category_join_hints_json = COALESCE(NULLIF(EXCLUDED.category_join_hints_json, ''), rag_objects.category_join_hints_json),
+    -- TASK-0219: category_join_hints_json 은 jsonb — `NULLIF(.., '')` 는 ''를 jsonb 로 캐스팅하려다
+    -- ON CONFLICT 경로에서 항상 실패("invalid input syntax for type json")했다. 호출부가 빈값을
+    -- 이미 None(→NULL) 으로 전달하므로 NULLIF 불요 — COALESCE 만으로 정합(jsonb-safe).
+    category_join_hints_json = COALESCE(EXCLUDED.category_join_hints_json, rag_objects.category_join_hints_json),
     category_confidence      = COALESCE(EXCLUDED.category_confidence, rag_objects.category_confidence),
     updated_at               = now()
 RETURNING id, (xmax = 0) AS pg_inserted
