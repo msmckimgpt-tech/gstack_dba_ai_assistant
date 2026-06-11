@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260611-0218
+- Date: 2026-06-11 (TASK-0218, **Major §12.3** — 관리 콘솔 대시보드 CloudWatch 스타일 재구성)
+- Scope: TASK-0210 위젯 그리드를 AWS CloudWatch 류 사람-친화 운영 대시보드로 재구성. gstack `/design-review` + cross-model(Codex+subagent) 디자인 감사(REV-20260611-0218) 반영.
+- 변경:
+  - `src/app.py` `_dash_widget_*`: ① 시간 위젯에 `days` 윈도우 전파(accounts/audits/conversations — 거짓 컨트롤 정직화). ② 주 metric `primary` 플래그. ③ 시계열 위젯(audits/conversations/usage)에 전기간 대비 `delta_pct`+`delta_sentiment`(neutral/bad) + 일별 `spark` 배열. ④ 위젯에 `tab`(drill-down 대상). 신규 helper `_dash_pct_delta`/`_dash_fill_daily`(UTC gap-fill, ≤60점). `_DASHBOARD_WIDGETS` 카탈로그 활동-우선 재편(conversations/usage/audits 상단). usage 주 metric=추정비용.
+  - `src/static/admin.js`: toolbar(`dashboardRefreshBtn` 수동 새로고침 + `dashboardAutoRefresh` off/30/60s + `dashboardUpdated` 마지막 갱신) + `_setDashboardAutoRefresh`/`_updateDashboardMeta`. `buildDataWidgetBody` 주(크게+델타배지+sparkline)/보조(작게) 위계 + Top-N 비율막대(`--bar`). `_dashSparkline`(순수 SVG)·`_dashDeltaBadge`(의미별 색). fail-loud(`_buildDashboardErrorBanner` 전체 + 위젯 단위 재시도, `dashboardError` 상태). drill-down(`dashboard-widget-open`→`switchTab`). native HTML5 drag reorder(`reorderWidgetBefore`)+↑↓ 키보드 폴백. 접근성(card role/aria-label, move/vis/open aria-label, aria-pressed). adminState 필드 추가.
+  - `src/static/admin.html`: toolbar 재구성(마지막갱신·기간·auto-refresh·새로고침·편집), `#dashboardWidgets` aria-live, 캐시버스터 `?v=20260611-dashboard-cloudwatch`.
+  - `src/static/styles.css`: `.dashboard-primary*`/`.dashboard-secondary`/`.dashboard-delta`/`.dashboard-spark`/`.dashboard-list-row::after`(비율막대)/`.dashboard-error-banner`/`.dashboard-widget-error`/`.dashboard-widget-open`/drag 상태/`:focus-visible` 포커스 링. widget radius `--r-lg`→`--r-md`, 8px 그리드 정돈, 소형 라벨 `--text-muted`→`--text-2`(대비).
+  - `tests/test_dashboard_overview.py`: +6(델타·gap-fill·카탈로그 활동-우선·window 전파) = 17.
+- 비변경: RBAC 권한 카탈로그·시크릿·DB 스키마(웹·agent_runtime)·신규 엔드포인트 0. overview/preferences 응답 shape 확장(추가 필드)만. 추세/sparkline·window 는 비파괴 read(기존 컬럼/시계열).
+- 검증: make test MAKE_EXIT=0(신규 6 포함 전체 PASS, 회귀 0) + node --check + py_compile + (내 코드) ruff 클린. **잔존(내 코드 아님)**: app.py:14133 `_log` F821(동시세션 TASK-0216 머지본 잠복 버그) — flag only.
+- Files: unit/feature-0003-agent-web-ui/src/app.py, .../static/{admin.js,admin.html,styles.css}, .../tests/test_dashboard_overview.py, docs/{TASK,MODIFY,REVIEW,REPORT,FUNCTION,TEST}.md, ../../docs/STATUS.md
+- Rollback: 추가 필드/helper/toolbar 는 additive. admin.js 대시보드 함수군·styles `.dashboard-*` 를 TASK-0210 버전으로 환원하면 위젯 그리드 v1 로 복귀(백엔드 추가 필드는 무시되어도 무해).
+
 ## CHG-20260611-0216
 - Date: 2026-06-11 (TASK-0216, **Minor §12.3** — 제품 프롬프트 자동 작성 품질 강화)
 - Scope: `POST /api/admin/products/{product_id}/prompt/generate` 엔드포인트 신규 추가 — DB 구조 인사이트(fact_entries 4종) + 사용자 대화 주제 패턴(topic 최신 50개) + 실제 사용 사례 요약(summary 최신 5개)를 LLM 컨텍스트로 구성해 시스템 프롬프트 자동 생성. 관리 콘솔 제품 상세 화면에 "자동 작성" 버튼 추가.

@@ -242,3 +242,63 @@ def test_save_load_pref_roundtrip():
 
 def test_load_pref_absent_returns_none():
     assert app._load_dashboard_pref_row(_KVConn(), 7) is None
+
+
+# ── TASK-0218 (CloudWatch UX): 추세 델타 + sparkline 시계열 helper + 위계/window ──
+
+def test_pct_delta_basic():
+    assert app._dash_pct_delta(110, 100) == 10.0
+    assert app._dash_pct_delta(50, 100) == -50.0
+
+
+def test_pct_delta_zero_baseline_is_none():
+    # 직전 기간이 0 이면 변화율 기준선이 없다 → None(배지 미표시).
+    assert app._dash_pct_delta(5, 0) is None
+    assert app._dash_pct_delta(5, None) is None
+
+
+def test_fill_daily_gap_fills_and_orders():
+    # 결측 일자는 0 으로 채우고 오래된→최신 순서, 길이 = window(≤60).
+    from datetime import datetime, timezone, timedelta
+    today = datetime.now(timezone.utc).date()
+    rows = [(today.isoformat(), 5), ((today - timedelta(days=2)).isoformat(), 3)]
+    out = app._dash_fill_daily(rows, 3)
+    assert len(out) == 3
+    assert out[-1] == 5      # 오늘이 마지막
+    assert out[0] == 3       # 2일 전
+    assert out[1] == 0       # 결측일 = 0
+
+
+def test_fill_daily_caps_at_60():
+    assert len(app._dash_fill_daily([], 365)) == 60
+    assert app._dash_fill_daily([], 7) == [0, 0, 0, 0, 0, 0, 0]
+
+
+def test_catalog_default_order_is_activity_first():
+    # TASK-0218: 기본 위계 = 활동/비용/이상 우선(대화·사용량·감사 가 인벤토리보다 앞).
+    keys = [w["key"] for w in app._DASHBOARD_WIDGETS]
+    assert keys.index("conversations") < keys.index("accounts")
+    assert keys.index("usage") < keys.index("roles")
+    assert keys.index("audits") < keys.index("products")
+
+
+def test_overview_window_propagates_to_time_widgets(monkeypatch):
+    # days 가 audits/conversations 에도 전파되는지(거짓 컨트롤 정직화) — 호출 인자 검증.
+    captured = {}
+
+    def _fake_audits(conn, days=7):
+        captured["audits_days"] = days
+        return {"metrics": [], "lists": []}
+
+    def _fake_conv(pg, days=7):
+        captured["conv_days"] = days
+        return {"metrics": [], "lists": []}
+
+    admin = {"id": 1, "permissions": {"console.access": True, "console.usage.read": True, "audit.read.any": True}}
+    _patch_common(monkeypatch, admin)
+    monkeypatch.setattr(app, "_dash_widget_audits", _fake_audits)
+    monkeypatch.setattr(app, "_dash_widget_conversations", _fake_conv)
+
+    app.admin_overview(_FakeRequest(days=30))
+    assert captured.get("audits_days") == 30
+    assert captured.get("conv_days") == 30

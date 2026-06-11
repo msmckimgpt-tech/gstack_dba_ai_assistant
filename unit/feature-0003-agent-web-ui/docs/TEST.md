@@ -246,6 +246,11 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-06-11 (TASK-0218 관리 콘솔 대시보드 CloudWatch 스타일 재구성 **PB-0008 Windows-browser 완료 게이트**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증. 라이브 배포(healthz `git_commit=c990107`, mysql/pg ok) 후. 스크린샷 `/tmp/win-browser-shots/task0218/{01_cloudwatch_dashboard,02_edit_drag}.png`.
+  - **Runner: AI.** 시나리오: 영속 admin 세션 → `/admin` 대시보드 → 클린 로드 eval → 편집 모드 토글.
+  - **결과: PASS.** (a) **toolbar** = "마지막 갱신 HH:MM:SS" + 집계기간 + 자동 새로고침(off/30/60s) + ↻ 새로고침 + 편집. (b) **주/보조 위계**: 계정 활성=6 녹색 大 + 보조(비활성/삭제/최근7일/전체) 小. (c) **sparkline 3 + 델타 배지 2**(▲▼% 의미별 색); 라이브 overview conversations primary={최근7일 45, spark[7], ▲2150% neutral}. (d) **Top-N 인라인 비율막대**. (e) **drill "열기 →" 6**(위젯→탭). (f) **편집 모드**: "완료" + ☑표시 + ↑↓(첫 위젯 ↑ disabled) + native drag + 저장/복원, drill 숨김. (g) **클린 로드 정확**: editBarHidden=true·editControls=0·drill 6. (h) RBAC 스코프·인젝션 차단(TASK-0210) 유지.
+  - CHECK#13(PB-0008 Windows-browser) **충족**.
 - 2026-06-11 (TASK-0210 관리 콘솔 대시보드 보강 — 카테고리별 위젯 그리드 + per-account 커스터마이즈 **PB-0008 Windows-browser 완료 게이트**):
   - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay` @ http://172.28.64.1:9223, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증. 라이브 배포(healthz `git_commit=98f719d`, mysql/pg ok) 후 수행.
   - **Runner: AI.** 시나리오: 영속 admin 세션 → 관리 콘솔(`/admin`) → 대시보드("운영 현황") → 편집 모드 토글. 스크린샷 `/tmp/win-browser-shots/task0210/{01_dashboard,02_edit_mode}.png`.
