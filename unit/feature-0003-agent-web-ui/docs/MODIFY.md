@@ -2704,3 +2704,16 @@ source_of_truth: true
   - unit/feature-0003-agent-web-ui/src/static/styles.css (토글 래퍼 CSS 추가)
   - unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
 - Rollback: `collapseSqlCodeBlocksInContent` 원상복구 + `buildSqlStepPanel`·`buildStepDetailEl` 결과셋 토글 래퍼 제거 + styles.css `.sql-result-toggle-wrap`·`.sql-result-body` 제거.
+
+## CHG-20260611-0207
+- Date: 2026-06-11 (TASK-0207, **Minor §12.3** — 관리 콘솔 데이터소스 pane UI 표준화 + 수정/삭제 노출)
+- Scope: `관리 콘솔 > 데이터소스` pane 을 계정/역할/제품/설정 과 동일한 list-detail 5단 구조(DESIGN.md §2)로 재구성하고 수정/삭제 액션을 상세 패널에 명시 노출. 프런트 전용 — 백엔드/API/스키마/RBAC/시크릿 무변경.
+- 배경: 데이터소스 pane 만 표준 구조 미적용(`h3` + 평면 `admin-ds-list` + 미스타일 클래스 `admin-badge`/`admin-field`/`admin-row-actions`)이라 시각적으로 이질적. 수정(PATCH)/삭제(DELETE+force) 핸들러는 TASK-0205 에서 이미 구현됐으나 평면 행 우측 버튼에 묻혀 잘 안 보였음.
+- 변경:
+  - `src/static/admin.html`: 데이터소스 `<section data-admin-pane="datasources">` 를 `drawer-label`+`h2`+`admin-pane-head-right`(`#newDatasourceBtn`) 헤더 + `admin-list-detail`(좌 `admin-list-col`: `#datasourceSearch`/`#datasourceListCount`/`#datasourceList`, 우 `admin-detail-col` `#datasourceDetail`) 로 교체. 정적자산 캐시버스터 `?v=20260611-usage-no-mcards` → `?v=20260611-ds-admin-ui`.
+  - `src/static/admin.js`: `renderDatasourcesPane` 전면 재작성(`#datasourcesPane`/`admin-ds-list`/`dsFormHost`/`_dsShowForm` 폐기 → `_dsRenderList`/`_dsSyncListActive`/`_dsRenderDetail`/`_dsRenderDetailEmpty`/`_dsRenderForm`/`_dsKvRow`). 목록 클릭→상세, 검색 필터(`adminState._dsSearch`, dataset.bound idempotent), 선택 상태(`adminState._dsSelectedKey`), 생성 후 canonical(소문자) key 자동 선택. `refreshPendingUI` 에 `#tabCountDatasources` 카운트 배지 추가. RBAC 게이트(console.manage·ds.editable·encryption-ready) 전부 보존.
+  - `src/static/styles.css`: 미스타일 클래스 `admin-badge`(+`--muted`/`--warn`)·`admin-kv`(dl/dt/dd)·`admin-detail-title`·`admin-field`(+label·readonly)·`admin-row-actions` 표준 토큰 스타일 추가. (`admin-detail-head` 중복정의 제거 — 패널 리뷰 BLOCKER 수정, 기존 canonical 재사용.)
+- 비변경: `/api/admin/datasources` CRUD/test/databases 엔드포인트·envelope 암호화·SSRF allowlist·RBAC·제품별 datasource 바인딩 UI(buildProductDetail) 무변경.
+- 검증: node --check admin.js PASS. 패널([SUBAGENT:design-correctness]) SHIP-WITH-FIXES 5건 전부 수용. 빌드/배포 + Windows-browser(PB-0008) 시각검증은 배포 단계.
+- Files: unit/feature-0003-agent-web-ui/src/static/{admin.html,admin.js,styles.css}, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
+- Rollback: admin.html 데이터소스 section + admin.js `renderDatasourcesPane` 군 + styles.css 추가 블록을 TASK-0205 상태로 환원(기능 무관, 레이아웃만 평면 복귀).

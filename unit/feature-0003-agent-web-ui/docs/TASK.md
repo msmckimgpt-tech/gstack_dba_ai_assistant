@@ -3103,3 +3103,12 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **수정** ([app.js](../src/static/app.js)): `promptInputEl keydown` 핸들러에 `if (event.shiftKey) return;` 추가 — Shift+Enter 시 `event.preventDefault()`/`sendPrompt()` 진입 없이 브라우저 기본 줄바꿈 동작 유지.
 - [x] outside-voice [SKIPPED:frontend-only-single-line] (REV-20260611-0205)
 - [ ] verify-completion → main ff-merge → web 재배포 → 라이브 확인(Shift+Enter 줄바꿈, Enter/Ctrl+Enter 전송 무변경)
+
+### TASK-0207 — 관리 콘솔 '데이터소스' pane UI 표준화(list-detail) + 수정/삭제 UI 노출 (frontend-only) (2026-06-11)
+- [x] **Minor §12.3** (프런트 3파일, RBAC·스키마·엔드포인트·백엔드·시크릿 0) — 사용자 요청: `관리 콘솔 > 데이터소스` UI 를 다른 카테고리(계정·역할·제품·설정)처럼 예쁘게 구성 + 데이터소스 수정/삭제를 UI 내에서 가능하게. **근본 원인**: 데이터소스 pane 만 표준 5단 `admin-list-detail` 구조(DESIGN.md §2)를 안 따르고 `h3` + 평면 `admin-ds-list` 로 렌더 + 미스타일 클래스(`admin-badge`/`admin-field`/`admin-row-actions`)라 이질적. 수정/삭제 핸들러(PATCH/DELETE+force)는 TASK-0205 에서 이미 작동했으나 평면 행에 묻혀 잘 안 보임. (CHG-20260611-0207)
+- [x] **재구성** ([admin.html](../src/static/admin.html)): 데이터소스 `section` 을 설정(settings) pane 과 동일한 list-detail nav 구조로 — `drawer-label`+`h2`+`admin-pane-head-right`(+새 데이터소스) 헤더, 좌측 `admin-list-col`(검색 `#datasourceSearch`+카운트 `#datasourceListCount`+`#datasourceList`), 우측 `admin-detail-col`(`#datasourceDetail`). 캐시버스터 `?v=20260611-ds-admin-ui`.
+- [x] **재작성** ([admin.js](../src/static/admin.js) `renderDatasourcesPane` 등): 목록=클릭 가능 `admin-list-row--nav`(키·엔진뱃지·.env/비번없음 뱃지·host:port/db meta, 검색 필터, aria listbox/option). 상세=선택 datasource 의 연결좌표·출처·보안 kv + 상태안내 + 액션(연결 테스트 / 수정 / 삭제). 수정·삭제는 상세 패널 하단 sticky 액션바에 노출(`ds.editable && console.manage` 일 때만 — env 출처는 테스트만 + 읽기전용 사유 안내). 생성/편집 폼도 상세 컬럼에 인라인. `#tabCountDatasources` 카운트 배지 wiring(refreshPendingUI). RBAC 게이트(console.manage·ds.editable·encryption-ready) 전부 보존 — 백엔드 무변경.
+- [x] **CSS** ([styles.css](../src/static/styles.css)): 미스타일이던 `admin-badge`(+muted/warn)·`admin-kv`·`admin-detail-title`·`admin-field`·`admin-row-actions` 를 표준 토큰(`--primary`/`--primary-soft`/`--border`/`--danger` 등)으로 정렬. (기존 `admin-detail-head`·`admin-detail-actions`·`admin-list-row--nav` 재사용.)
+- [x] outside-voice [SUBAGENT:design-correctness] (REV-20260611-0207) — 패널 SHIP-WITH-FIXES: BLOCKER(`admin-detail-head` 중복정의로 타 pane 헤더 회귀) + 생성→키정규화(소문자) 자동선택 누락 + 읽기전용 안내가 sticky 액션바 아래 배치 + readonly tint no-op + aria-selected 누락 — 5건 전부 수용·수정.
+- [x] node --check admin.js PASS, `.admin-detail-head` 단일정의 회복 확인.
+- [ ] verify-completion → 빌드/배포(worktree→repo `-p repo` clean 이미지) → Windows-browser(PB-0008) 시각검증(목록·상세·수정/삭제·생성 폼) → main 병합

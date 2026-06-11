@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260611-usage-no-mcards" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260611-ds-admin-ui" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -266,14 +266,39 @@
         </div>
       </section>
 
-      <!-- TASK-0205: 데이터소스 관리 pane (자격증명 DB 암호화 저장 CRUD) -->
+      <!-- TASK-0205/0207: 데이터소스 관리 pane — 계정/역할/제품/설정 과 동일한 list-detail 5단 구조.
+           좌측: 등록 datasource 목록(검색·카운트). 우측: 선택 datasource 상세(좌표·출처·비번상태)
+           + 테스트/수정/삭제 액션 + 생성/편집 폼. -->
       <section class="admin-pane" data-admin-pane="datasources">
         <header class="admin-pane-head">
-          <h3>데이터소스 관리</h3>
-          <p class="admin-pane-sub">분석 대상 DB(MySQL·MSSQL)를 등록·수정·삭제합니다. 비밀번호는 DB 에 암호화 저장되며 다시 표시되지 않습니다(write-only).</p>
+          <div>
+            <div class="drawer-label">Datasources</div>
+            <h2>데이터소스 관리</h2>
+          </div>
+          <div class="admin-pane-head-right">
+            <button type="button" class="btn-primary" id="newDatasourceBtn">+ 새 데이터소스</button>
+          </div>
         </header>
-        <div class="admin-pane-body" id="datasourcesPane">
-          <div class="admin-detail-empty">불러오는 중…</div>
+        <div class="admin-list-detail">
+          <div class="admin-list-col">
+            <div class="admin-list-toolbar">
+              <input
+                type="search"
+                id="datasourceSearch"
+                class="admin-search"
+                placeholder="키 / 호스트 검색…"
+                autocomplete="off"
+              />
+            </div>
+            <div class="admin-list-head">
+              <span class="admin-list-section-label">등록된 데이터소스</span>
+              <span class="admin-list-count" id="datasourceListCount" aria-live="polite"></span>
+            </div>
+            <div class="admin-list" id="datasourceList" role="listbox" aria-label="데이터소스 목록"></div>
+          </div>
+          <div class="admin-detail-col" id="datasourceDetail">
+            <div class="admin-detail-empty">데이터소스를 선택하세요.</div>
+          </div>
         </div>
       </section>
 
@@ -522,6 +547,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260611-usage-no-mcards"></script>
+  <script src="/static/admin.js?v=20260611-ds-admin-ui"></script>
 </body>
 </html>
