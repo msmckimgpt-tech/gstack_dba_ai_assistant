@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.28.0
+template_version: v3.29.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -1974,6 +1974,51 @@ from this bundle. Do not search the repo independently — the bundle is your on
 ```
 
 ---
+
+### §18.12 AskUserQuestion 패턴 정책 (v3.29.0)
+
+**배경**: VSCode extension 호스트 UI 에서 AskUserQuestion `option.description` 필드에
+긴 한글 텍스트(ELI10 / Stakes / Recommendation / pros·cons 등)를 packing 하면 줄바꿈·
+마크다운·한국어 인코딩이 깨져 답변 자체가 차단된다 (확인됨: 2026-05-07, 2026-06-11).
+
+**정책 (모든 AI agent / SKILL에 적용)**:
+
+AskUserQuestion 호출 직전 결정 brief 본문을 **prose 로 먼저 출력** 한 뒤, 짧은 질문 +
+짧은 옵션 형식으로 호출한다:
+
+```
+[직전 prose 출력 — 사용자 화면에 표시됨]
+Issue / Recommendation / Trade-off 등 — 마크다운 자유 사용 가능
+
+[이어서 AskUserQuestion 호출]
+question: "<action-oriented 1문장, ≤80자>"
+options:
+  - label: "<1~5단어 chip>"
+    description: "<핵심 trade-off 1~2줄, ≤200자>"
+  - ...
+```
+
+**필드 제약**:
+
+| 필드 | 제약 |
+|---|---|
+| `question` | 1문장, action-oriented, ≤80자 |
+| option `label` | 1~5단어 (chip 표시) |
+| option `description` | 1~2줄, ≤200자 — 핵심 trade-off 한 줄 요약만 |
+
+**금지 패턴**:
+- `question` 필드 또는 `description` 필드에 ELI10 / Stakes / Recommendation /
+  Completeness / Net / pros·cons 등 결정 brief 전체 packing
+- `description`에 여러 단락 / 마크다운 헤딩 / 코드 블록 삽입
+- 한국어 긴 문장을 `description`에 넣어 인코딩 깨짐 유발
+
+**SKILL 작성 지침**: 본 정책이 `~/.claude/CLAUDE.md` 전역 정책과 동일 내용이다.
+SKILL 지문에서 "AskUserQuestion 으로 … 호출" 이라고 지시할 때 직전 prose 출력 단계를
+명시하거나 `(~/.claude/CLAUDE.md §AskUserQuestion 분리 패턴 준수)` 를 주석으로 달아
+AI 가 전역 정책 적용을 인지하도록 한다.
+
+---
+
 
 ## §19. Request-Form Protocol
 
