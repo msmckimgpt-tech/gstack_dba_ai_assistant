@@ -2770,6 +2770,11 @@ source_of_truth: true
   - `unit/feature-0002-agent-core/src/app.py`: `admin_create_datasource`/`admin_update_datasource` 에서 `default_db` 필드 갱신 제거(NULL 고정).
   - `unit/feature-0002-agent-core/tests/test_multi_datasource.py`: `test_connect_engine_dispatch_mssql_uses_pymssql` 기대값 `"" → "tempdb"` 수정.
 - 비변경: RBAC·API 계약·WebDatasources 스키마·`_refreshAccessibleDbs`·고정칩 렌더링 무변경.
-- 검증: node --check admin.js PASS. 빌드/배포 + PB-0008 시각검증은 배포 단계.
+- 검증: node --check admin.js PASS. verify-completion PASS. 빌드/배포 + PB-0008 시각검증은 배포 단계.
 - Files: unit/feature-0003-agent-web-ui/src/static/{admin.html,admin.js,styles.css}, unit/feature-0002-agent-core/src/modules/db.py, unit/feature-0002-agent-core/src/app.py, unit/feature-0002-agent-core/tests/test_multi_datasource.py, docs/{TASK,MODIFY,REVIEW}.md
 - Rollback: admin.js picker 교체 전 상태(select+추가버튼) + styles.css picker-wrap 블록 제거 + db.py `""` 복원 + app.py default_db 복원.
+
+## CHG-20260611-0213-docs
+- Date: 2026-06-11 (TASK-0213 docs cycle — verify-completion PASS 확인 후 docs 보완)
+- Scope: TASK-0213 문서 보완 (REVIEW.md REV 엔트리 추가, MODIFY.md 검증 상태 갱신).
+- Files: unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md

@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260611-0213 [SKIPPED:frontend-picker-ui-no-rbac-schema-change]
+- Date: 2026-06-11
+- Cycle: TASK-0213 (접근 가능 DB 선택 UI — dropdown+checkbox 멀티 토글), **Minor §12.3**
+- Reason: 순수 프론트엔드 UI 변경(admin.js picker 렌더 방식 교체 + styles.css + cache-buster). RBAC 로직 무변경, 스키마/마이그레이션 없음, 시크릿 처리 없음. db.py MSSQL tempdb fallback(neutral DB, 비즈니스 데이터 미노출) + app.py default_db 제거는 동일 cycle 에서 단일 패치로 처리됨. 보안 리뷰 패널 불필요.
+- Risk: very low — UI 렌더 레이어만 변경.
+- Cross-ref: CHG-20260611-0213 / TASK-0213.
+
 ## REV-20260611-0210 [SUBAGENT:dashboard-overview-adversarial]
 - Date: 2026-06-11
 - Cycle: TASK-0210 (관리 콘솔 대시보드 보강 — 위젯 그리드 + per-account 커스터마이즈/영속), **Major §12.3**

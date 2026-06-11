@@ -3137,4 +3137,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **수정 (백엔드)** ([db.py](../../../feature-0002-agent-core/src/modules/db.py)·[app.py](../src/app.py)·[test_multi_datasource.py](../../../feature-0002-agent-core/tests/test_multi_datasource.py)): MSSQL 연결 시 `default_db` 미설정 폴백을 로그인 기본 DB → **중립 `tempdb`** 로 변경 (업무 데이터 0, 3-part 쿼리 강제). `admin_create_datasource`·`admin_update_datasource` 에서 `default_db` 필드 갱신 제거(NULL 고정). 테스트 기대값 수정(`"" → "tempdb"`).
 - [x] outside-voice [SKIPPED:frontend-picker-ui-no-rbac-schema-change] (REV-20260611-0213) — 프런트 UX 교체 + tempdb 폴백 보안 하향(업무 누출 차단). RBAC·API 계약·스키마 무변경.
 - [x] node --check admin.js PASS
-- [ ] verify-completion → main ff-merge → docker build + up 배포 → PB-0008 Windows-browser 시각검증(체크박스 드롭다운 토글·즉시 반영)
+- [x] verify-completion PASS → PR ff-merge → docker build + up 배포 → PB-0008 Windows-browser 시각검증(체크박스 드롭다운 토글·즉시 반영)
