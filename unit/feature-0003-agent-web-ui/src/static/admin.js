@@ -1404,7 +1404,7 @@ function _dsRenderForm(ds) {
   }
 
   const fields = [
-    ...(isEdit ? [["key", "키", ds.key, true]] : []),
+    ...(isEdit ? [["key", "키 (변경 시 수정)", ds.key, false]] : []),
     ["engine", "엔진 (mysql|mssql)", isEdit ? (ds.engine || "mysql") : "mysql", false],
     ["host", "호스트", isEdit ? (ds.host || "") : "", false],
     ["port", "포트", isEdit ? (ds.port || "") : "", false],
@@ -1438,7 +1438,9 @@ function _dsRenderForm(ds) {
       // TASK-0212: password·user 는 write-only(수정 시 GET 마스킹으로 pre-fill 불가) — 빈값이면 미전송(미변경).
       // 빈 user 를 보내면 서버가 DbUser 를 wipe 해 연결 테스트가 깨지던 회귀 방지.
       if (k === "password" || (isEdit && k === "user")) { if (v) body[k] = v; }
-      else if (k !== "key") body[k] = v;  // 신규: key 는 서버 자동 생성이므로 전송 안 함
+      else if (isEdit && k === "key") { if (v && v !== ds.key) body.key = v; }  // 수정: key 변경 시에만 전송
+      else if (!isEdit && k === "key") { /* 신규: 서버 자동생성, 미전송 */ }
+      else body[k] = v;
     });
     saveBtn.disabled = true;
     try {
