@@ -39,6 +39,11 @@
           <span class="admin-tab-label">제품 (Products)</span>
           <span class="admin-tab-count" id="tabCountProducts">—</span>
         </button>
+        <!-- TASK-0205: 데이터소스 관리(자격증명 DB 암호화 저장 CRUD) -->
+        <button type="button" class="admin-tab" data-admin-tab="datasources" id="adminTabDatasources">
+          <span class="admin-tab-label">데이터소스</span>
+          <span class="admin-tab-count" id="tabCountDatasources">—</span>
+        </button>
 
         <!-- TASK-0073 Phase C: 감사 로그 tab -->
         <div class="admin-tab-group-divider"></div>
@@ -258,6 +263,17 @@
           <div class="admin-detail-col" id="roleDetail">
             <div class="admin-detail-empty">역할을 선택하세요.</div>
           </div>
+        </div>
+      </section>
+
+      <!-- TASK-0205: 데이터소스 관리 pane (자격증명 DB 암호화 저장 CRUD) -->
+      <section class="admin-pane" data-admin-pane="datasources">
+        <header class="admin-pane-head">
+          <h3>데이터소스 관리</h3>
+          <p class="admin-pane-sub">분석 대상 DB(MySQL·MSSQL)를 등록·수정·삭제합니다. 비밀번호는 DB 에 암호화 저장되며 다시 표시되지 않습니다(write-only).</p>
+        </header>
+        <div class="admin-pane-body" id="datasourcesPane">
+          <div class="admin-detail-empty">불러오는 중…</div>
         </div>
       </section>
 

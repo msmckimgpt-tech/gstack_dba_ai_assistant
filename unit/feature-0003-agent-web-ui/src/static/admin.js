@@ -1124,6 +1124,158 @@ function switchTab(tabName) {
     adminState.settings.initialized = true;
     mountSettingsSections();
   }
+  // TASK-0205: 데이터소스 관리 tab 진입 시 렌더.
+  if (tabName === "datasources") {
+    renderDatasourcesPane();
+  }
+}
+
+/* ── TASK-0205: 데이터소스 관리 pane (CRUD, 자격증명 DB 암호화 저장) ───────────── */
+function renderDatasourcesPane() {
+  const pane = $("datasourcesPane");
+  if (!pane) return;
+  const canManage = can("console.manage");
+  const encReady = Boolean(adminState.datasourcesEncryptionReady);
+  pane.innerHTML = "";
+
+  const note = document.createElement("div");
+  note.className = "admin-detail-hint";
+  if (!adminState.datasourcesEnabled) {
+    note.textContent = "멀티 datasource 비활성(AGENT_MULTI_DATASOURCE_ENABLED=0). 등록은 가능하나 flag 활성화 전까지 동작하지 않습니다.";
+  } else if (!encReady) {
+    note.textContent = "⚠ 암호화 키(AGENT_DATASOURCE_KEK_V1)가 .env.secret 에 미설정 — 새 데이터소스 생성/수정이 차단됩니다. 운영자가 KEK 를 설정하세요.";
+  } else {
+    note.textContent = "비밀번호는 envelope 암호화(KEK→DEK)되어 DB 에 저장되고 다시 표시되지 않습니다(write-only). 호스트는 사설망/메타데이터 IP 가 차단됩니다(SSRF).";
+  }
+  pane.appendChild(note);
+
+  // 목록
+  const list = document.createElement("div");
+  list.className = "admin-ds-list";
+  (adminState.datasources || []).forEach((ds) => {
+    const row = document.createElement("div");
+    row.className = "admin-list-row";
+    const label = document.createElement("div");
+    label.innerHTML = `<strong>${ds.key}</strong> <span class="admin-badge">${ds.engine || "mysql"}</span> ` +
+      `<span class="admin-detail-hint">${ds.host || "?"}:${ds.port || ""}${ds.default_db ? " / " + ds.default_db : ""}` +
+      `${ds.source === "env" ? " · .env(읽기전용)" : ""}${ds.has_password ? "" : " · ⚠비번없음"}</span>`;
+    row.appendChild(label);
+    const actions = document.createElement("div");
+    actions.className = "admin-row-actions";
+    const testBtn = document.createElement("button");
+    testBtn.className = "btn-secondary"; testBtn.textContent = "테스트";
+    testBtn.addEventListener("click", async () => {
+      testBtn.disabled = true; testBtn.textContent = "테스트 중…";
+      try {
+        const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(ds.key)}/test`, { method: "POST" });
+        showToast(r && r.ok ? `✓ 연결 성공 (${r.elapsed_ms}ms)` : `✗ 실패 (${(r && r.error) || "?"})`, !(r && r.ok));
+      } catch (e) { showToast(e.message || "테스트 실패", true); }
+      finally { testBtn.disabled = false; testBtn.textContent = "테스트"; }
+    });
+    actions.appendChild(testBtn);
+    if (ds.editable && canManage) {
+      const editBtn = document.createElement("button");
+      editBtn.className = "btn-secondary"; editBtn.textContent = "수정";
+      editBtn.addEventListener("click", () => _dsShowForm(ds));
+      const delBtn = document.createElement("button");
+      delBtn.className = "btn-secondary"; delBtn.textContent = "삭제";
+      delBtn.addEventListener("click", () => _dsDelete(ds.key));
+      actions.append(editBtn, delBtn);
+    }
+    row.appendChild(actions);
+    list.appendChild(row);
+  });
+  if (!(adminState.datasources || []).length) {
+    const empty = document.createElement("div");
+    empty.className = "admin-detail-empty"; empty.textContent = "등록된 데이터소스가 없습니다.";
+    list.appendChild(empty);
+  }
+  pane.appendChild(list);
+
+  if (canManage) {
+    const addBtn = document.createElement("button");
+    addBtn.className = "btn-primary"; addBtn.style.marginTop = "12px"; addBtn.textContent = "+ 새 데이터소스";
+    addBtn.disabled = !encReady;
+    addBtn.addEventListener("click", () => _dsShowForm(null));
+    pane.appendChild(addBtn);
+  }
+  const formHost = document.createElement("div");
+  formHost.id = "dsFormHost"; formHost.style.marginTop = "12px";
+  pane.appendChild(formHost);
+}
+
+function _dsShowForm(ds) {
+  const host = $("dsFormHost");
+  if (!host) return;
+  const isEdit = Boolean(ds);
+  host.innerHTML = "";
+  const card = document.createElement("div");
+  card.className = "admin-detail-section";
+  const fields = [
+    ["key", "키 (소문자 영숫자·_·-)", isEdit ? ds.key : "", isEdit],
+    ["engine", "엔진 (mysql|mssql)", isEdit ? (ds.engine || "mysql") : "mysql", false],
+    ["host", "호스트", isEdit ? (ds.host || "") : "", false],
+    ["port", "포트", isEdit ? (ds.port || "") : "", false],
+    ["user", "DB 유저 (RO 권장)", isEdit ? (ds.user || "") : "", false],
+    ["password", isEdit ? "비밀번호 (변경 시에만 입력)" : "비밀번호", "", false],
+    ["default_db", "기본 참조 DB (선택)", isEdit ? (ds.default_db || "") : "", false],
+  ];
+  const inputs = {};
+  fields.forEach(([k, label, val, ro]) => {
+    const wrap = document.createElement("label"); wrap.className = "admin-field";
+    wrap.textContent = label;
+    const inp = document.createElement("input");
+    inp.type = (k === "password") ? "password" : "text";
+    inp.value = val; inp.readOnly = ro; inp.autocomplete = "off";
+    wrap.appendChild(inp); card.appendChild(wrap); inputs[k] = inp;
+  });
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "btn-primary"; saveBtn.textContent = isEdit ? "저장" : "생성";
+  saveBtn.addEventListener("click", async () => {
+    const body = {};
+    Object.keys(inputs).forEach((k) => {
+      const v = inputs[k].value.trim();
+      if (k === "password") { if (v) body.password = v; }       // write-only: 빈값이면 미전송(미변경)
+      else if (k === "key") { if (!isEdit) body.key = v; }
+      else body[k] = v;
+    });
+    try {
+      if (isEdit) {
+        await apiFetch(`/api/admin/datasources/${encodeURIComponent(ds.key)}`, { method: "PATCH", body: JSON.stringify(body) });
+        showToast(`데이터소스 '${ds.key}' 수정됨`);
+      } else {
+        await apiFetch(`/api/admin/datasources`, { method: "POST", body: JSON.stringify(body) });
+        showToast(`데이터소스 '${body.key}' 생성됨`);
+      }
+      await loadAdminData();
+      renderDatasourcesPane();
+    } catch (e) { showToast(e.message || "저장 실패", true); }
+  });
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "btn-secondary"; cancelBtn.textContent = "취소";
+  cancelBtn.addEventListener("click", () => { host.innerHTML = ""; });
+  const btnRow = document.createElement("div"); btnRow.className = "admin-row-actions"; btnRow.style.marginTop = "8px";
+  btnRow.append(saveBtn, cancelBtn);
+  card.appendChild(btnRow);
+  host.appendChild(card);
+}
+
+async function _dsDelete(key) {
+  if (!confirm(`데이터소스 '${key}' 를 삭제할까요?`)) return;
+  try {
+    await apiFetch(`/api/admin/datasources/${encodeURIComponent(key)}`, { method: "DELETE" });
+    showToast(`'${key}' 삭제됨`);
+    await loadAdminData(); renderDatasourcesPane();
+  } catch (e) {
+    if (e.status === 409) {
+      if (confirm(`'${key}' 는 제품에 바인딩되어 있습니다. 강제 삭제(바인딩 해제)할까요?`)) {
+        try {
+          await apiFetch(`/api/admin/datasources/${encodeURIComponent(key)}?force=1`, { method: "DELETE" });
+          showToast(`'${key}' 강제 삭제됨`); await loadAdminData(); renderDatasourcesPane();
+        } catch (e2) { showToast(e2.message || "삭제 실패", true); }
+      }
+    } else { showToast(e.message || "삭제 실패", true); }
+  }
 }
 
 /* ── Settings pane (TASK-0096 v2: 계정/역할/제품 과 동일한 list-detail 패턴) ─
@@ -3056,7 +3208,14 @@ async function loadAdminData() {
   adminState.accounts = Array.isArray(accountsPayload.accounts) ? accountsPayload.accounts : [];
   adminState.products = Array.isArray(productsPayload.products) ? productsPayload.products : [];
   adminState.datasourcesEnabled = Boolean(datasourcesPayload && datasourcesPayload.enabled);
+  adminState.datasourcesEncryptionReady = Boolean(datasourcesPayload && datasourcesPayload.encryption_ready);
   adminState.datasources = Array.isArray(datasourcesPayload && datasourcesPayload.datasources) ? datasourcesPayload.datasources : [];
+  // TASK-0205: datasource GET 의 products(datasource_database 포함)를 product 객체에 병합(상세화면 참조 DB 표시용).
+  {
+    const dsProds = Array.isArray(datasourcesPayload && datasourcesPayload.products) ? datasourcesPayload.products : [];
+    const dbById = new Map(dsProds.map((p) => [Number(p.id), p.datasource_database || null]));
+    adminState.products.forEach((p) => { p.datasource_database = dbById.has(Number(p.id)) ? dbById.get(Number(p.id)) : (p.datasource_database || null); });
+  }
   adminState.availableDatabases = {
     metadata_schemas: Array.isArray(databasesPayload.metadata_schemas) ? databasesPayload.metadata_schemas : [],
     user_schemas: Array.isArray(databasesPayload.user_schemas) ? databasesPayload.user_schemas : [],
@@ -3639,6 +3798,58 @@ function renderProductDetail() {
     const dsResult = document.createElement("span");
     dsResult.className = "admin-ds-test-result";
 
+    // TASK-0205 §2.4 (Phase C): MSSQL 참조 DB — 선택 datasource 가 mssql 이면 제품별 DB select 표시.
+    const dbRow = document.createElement("div");
+    dbRow.className = "admin-db-picker-row";
+    dbRow.style.marginTop = "6px";
+    const dbLabel = document.createElement("span");
+    dbLabel.className = "admin-detail-hint";
+    dbLabel.textContent = "참조 DB:";
+    const dbSelect = document.createElement("select");
+    dbSelect.disabled = !canDs;
+    dbRow.append(dbLabel, dbSelect);
+
+    function selectedDsEngine() {
+      const ds = (adminState.datasources || []).find((d) => d.key === dsSelect.value);
+      return ds ? (ds.engine || "mysql") : "";
+    }
+    async function refreshDbSelect() {
+      const key = dsSelect.value;
+      const engine = selectedDsEngine();
+      // MSSQL 데이터소스에만 참조 DB 선택 노출(MySQL 은 schema=DB 라 허용스키마로 충분).
+      if (!key || engine !== "mssql") { dbRow.style.display = "none"; return; }
+      dbRow.style.display = "";
+      dbSelect.innerHTML = "";
+      const optDef = document.createElement("option");
+      optDef.value = ""; optDef.textContent = "(데이터소스 기본 DB)";
+      dbSelect.appendChild(optDef);
+      try {
+        const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(key)}/databases`);
+        (r && r.databases || []).forEach((name) => {
+          const o = document.createElement("option");
+          o.value = name; o.textContent = name; dbSelect.appendChild(o);
+        });
+        dbSelect.value = product.datasource_database || "";
+      } catch (e) {
+        const o = document.createElement("option");
+        o.value = ""; o.textContent = "(DB 목록 조회 실패)"; dbSelect.appendChild(o);
+      }
+    }
+    dbSelect.addEventListener("change", async () => {
+      try {
+        await apiFetch(`/api/admin/products/${product.id}/datasource`, {
+          method: "PATCH",
+          body: JSON.stringify({ datasource_key: dsSelect.value || null, datasource_database: dbSelect.value || null }),
+        });
+        product.datasource_database = dbSelect.value || null;
+        const p = (adminState.products || []).find((x) => Number(x.id) === Number(product.id));
+        if (p) p.datasource_database = dbSelect.value || null;
+        showToast(dbSelect.value ? `참조 DB '${dbSelect.value}' 설정됨` : "데이터소스 기본 DB 사용");
+      } catch (error) {
+        showToast(error.message || "참조 DB 설정 실패", true);
+      }
+    });
+
     dsSelect.addEventListener("change", async () => {
       const val = dsSelect.value || null;
       dsResult.textContent = "";
@@ -3646,12 +3857,14 @@ function renderProductDetail() {
       try {
         await apiFetch(`/api/admin/products/${product.id}/datasource`, {
           method: "PATCH",
-          body: JSON.stringify({ datasource_key: val }),
+          body: JSON.stringify({ datasource_key: val, datasource_database: null }),
         });
-        // 로컬 product 객체 갱신 (재로드 없이 일관)
+        // 로컬 product 객체 갱신 (재로드 없이 일관). datasource 변경 시 참조 DB 초기화.
+        product.datasource_database = null;
         const p = (adminState.products || []).find((x) => Number(x.id) === Number(product.id));
-        if (p) p.datasource_key = val;
+        if (p) { p.datasource_key = val; p.datasource_database = null; }
         showToast(val ? `datasource '${val}' 바인딩됨` : "기본 MySQL 로 환원됨");
+        refreshDbSelect();
       } catch (error) {
         dsSelect.value = product.datasource_key || "";
         showToast(error.message || "datasource 바인딩 실패", true);
@@ -3688,7 +3901,9 @@ function renderProductDetail() {
 
     dsRow.append(dsSelect, testBtn, dsResult);
     dsSection.appendChild(dsRow);
+    dsSection.appendChild(dbRow);
     paneEl.appendChild(dsSection);
+    refreshDbSelect();  // 초기 표시(선택 datasource 가 mssql 이면 참조 DB select 노출)
   }
 
   // Product-scope system prompt

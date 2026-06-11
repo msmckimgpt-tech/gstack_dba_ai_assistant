@@ -190,3 +190,12 @@ CREATE TABLE IF NOT EXISTS WebDatasources (
 - 그 외 §6 합격선(B1 effective-DB 단일화+GRANT검증, B2 audit 화이트리스트, B3 password 비노출 전경로,
   M1 chokepoint(tools.py 가드·insight 순회 포함), M2 per-resolve·평문무캐시·delete즉시무효화, M5 .env 격리,
   N1 충돌 fail-loud) 전부 충족 후 outside-voice 재게이트 → merge → 배포 → 라이브 검증.
+
+## 8. 구현 완료 (TASK-0205, A→D)
+- **A (토대)**: `cred_crypto.py`(envelope), `datasources.py`(레지스트리), `WebDatasources`/`WebDatasourceKeys`/
+  `WebProducts.DatasourceDatabase`, 소비처 전환, B1 effective default_db ContextVar. 보안 테스트 8 + 골든 RC=0.
+- **B (CRUD)**: API POST/PATCH/DELETE/{key}/databases + 제품 바인딩 datasource_database. B2 audit 화이트리스트,
+  B3 password 비노출(GET user/pw 제외·has_password), M3 SSRF 차단. admin UI 데이터소스 관리 탭(CRUD·테스트, write-only).
+- **C (제품별 DB)**: 제품 상세에 MSSQL 참조 DB select(`/databases` 채움). B1 로 가드·연결 단일 DB.
+- **D**: `.env` datasource 는 레거시 코exist(DB 우선). KEK 는 `.env.secret`(compose env_file 추가). 마이그레이션은
+  운영자가 CRUD UI 로 재등록(별도 마이그레이션 액션 불요 — coexist).
