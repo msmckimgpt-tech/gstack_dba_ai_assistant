@@ -784,15 +784,13 @@ ORDER BY `TABLE_NAME`, `ORDINAL_POSITION`
 
 
 def load_known_schemas(conn) -> list[str]:
+    # P7(TASK-0203 sweep): 백틱 인용 + information_schema.SCHEMATA 는 MySQL 전용(MSSQL 에서
+    # `Incorrect syntax near '`'`). 활성 dialect 의 schema 목록 SQL 사용(MySQL=골든 동치,
+    # MSSQL=sys.schemas). 함수-로컬 import 로 모듈 로드시 순환참조 회피.
+    from . import dialects as _dialects
     cur = conn.cursor()
     try:
-        cur.execute(
-            """
-SELECT `SCHEMA_NAME`
-FROM `information_schema`.`SCHEMATA`
-ORDER BY `SCHEMA_NAME`
-            """
-        )
+        cur.execute(_dialects.active().list_schema_names())
         rows = cur.fetchall() or []
         return [str(row[0]) for row in rows if row and row[0]]
     finally:

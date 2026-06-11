@@ -1606,6 +1606,12 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                             database=None, datasource=_ds_coords, autocommit=True
                         )
                     _known = load_known_schemas(_ds_conn)
+                    if _ds_key is not None:
+                        # P7(TASK-0203 sweep): datasource 의 dialect 시스템 스키마(MSSQL sys/guest/db_*)
+                        # 를 스캔 대상에서 제외한다. `_is_system_schema`(MySQL 정적 집합)는 guest/db_* 를
+                        # 못 걸러 RO-거부 노이즈를 낸다. MySQL(ds=None) 경로는 종전대로(미변경).
+                        _ds_sys = _dialects.active().system_schemas()
+                        _known = [s for s in (_known or []) if s and s.strip().lower() not in _ds_sys]
                     if _ds_key is None and _known:
                         KNOWN_SCHEMAS.clear()
                         KNOWN_SCHEMAS.extend(_known)

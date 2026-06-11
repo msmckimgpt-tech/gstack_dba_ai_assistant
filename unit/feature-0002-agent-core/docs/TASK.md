@@ -809,5 +809,6 @@ TASK-0015 (plan-review):
 - [x] outside-voice 적대적 리뷰 REV-20260611-0203 (livelock 중심) **SHIP**(BLOCKER0·MAJOR0). MINOR 3 후속.
 - [x] **라이브 cycle 검증 중 2 버그 발견·수정(P3 이래 잠복, 실 datasource 연결로만 노출)**: ① insight.py 의 `connect_with_retry` 가 `from .config import *` 로 **`modules.utils` 구버전**(datasource 인자 없음)에 바인딩 → winsql 순회가 매 cycle `TypeError` → **`modules.db` 의 datasource 지원판 명시 사용**(`_db.connect_with_retry`). ② per-datasource isolation 핸들러가 `logging.getLogger` 쓰는데 insight.py 가 **`logging` 미import**(config `__all__` 제외) → datasource 예외 시 핸들러가 NameError 로 재폭발(격리 실패) → `import logging` 추가. 둘 다 단일 MySQL 시절엔 미발현.
 - [x] 라이브 LLM 인사이트 생성 검증: winsql `dbo.Item` payload → `llm_table_insight`(edge/로컬 게이트웨이) 정상 dict 산출(domain/summary/key_columns, 5.8s).
+- [x] **sweep 3차(라이브 cycle 추가 발견)**: ③ `schema.py` `load_known_schemas` 가 백틱 인용 `information_schema.SCHEMATA`(MSSQL `Incorrect syntax near '`'`) → `_dialects.active().list_schema_names()`(MySQL 골든 동치/MSSQL sys.schemas)로 교체. ④ datasource 순회가 dialect 시스템 스키마(MSSQL guest/db_*)를 못 걸러 RO-거부 노이즈 → `_dialects.active().system_schemas()` 로 datasource 경로 필터(MySQL 경로 미변경). 라이브: `load_known_schemas(winsql)` → 필터 후 `['dbo','dev50']`.
 - [ ] 커밋 → main ff-merge → insight-worker 재배포 → 라이브 winsql 인사이트 생성·publish 관측.
 - [ ] (P7 잔여·후속) UI engine 배지 + MINOR-1 CS-collation 대문자 통일.
