@@ -4098,24 +4098,110 @@ a { color: inherit; }
 .cov-bar.cov-low  .cov-bar-fill { background: var(--danger); }
 .cov-bar-label { font-size: 11px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
 
-.cov-db-list { display: flex; flex-direction: column; gap: 4px; }
+/* 접근 가능 DB 컨테이너 — 시스템 묶음 칩 + 통합 리스트를 세로로 쌓는다. */
+.cov-db-wrap { display: flex; flex-direction: column; align-items: stretch; padding: 6px 0; }
+
+/* 통합 DB 리스트 — 한 행에 [DB명 · 진행 마이크로바 · 통계 · 상태칩 · 제거]. 완료율 per-DB 와 chip 융합. */
+.cov-db-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
 .cov-db-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px auto auto 24px;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
-  padding: 4px 8px;
-  border-radius: 6px;
+  padding: 5px 8px;
+  border-radius: 8px;
   background: var(--surface);
   border: 1px solid var(--border-subtle);
 }
-.cov-db-name { font-size: 12px; font-weight: 600; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cov-db-stat { font-size: 11px; font-weight: 700; white-space: nowrap; }
-.cov-db-stat.cov-ok    { color: var(--success); }
-.cov-db-stat.cov-warn  { color: var(--warning); }
-.cov-db-stat.cov-low   { color: var(--danger); }
-.cov-db-stat.cov-muted { color: var(--text-muted); }
+.cov-db-row:hover { border-color: var(--border); }
+.cov-db-row.is-offline { opacity: 0.72; }
+.cov-db-name { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 행 단위 마이크로바(그 DB 의 분석 진척) */
+.cov-microbar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+.cov-microbar-fill { display: block; height: 100%; border-radius: 999px; transition: width .35s ease; }
+.cov-microbar-fill.cov-ok    { background: var(--success); }
+.cov-microbar-fill.cov-warn  { background: var(--warning); }
+.cov-microbar-fill.cov-low   { background: var(--danger); }
+.cov-microbar-fill.cov-muted { background: var(--text-muted); }
+.cov-microbar.is-offline { background: transparent; border: 1px dashed var(--border); }
+.cov-microbar.is-pending { background: var(--border-subtle); opacity: 0.6; }
+
+.cov-db-stat { font-size: 11px; font-weight: 700; color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
+
+.cov-db-status { font-size: 11px; font-weight: 700; white-space: nowrap; padding: 1px 7px; border-radius: 999px; }
+.cov-db-status-ok    { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+.cov-db-status-warn  { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.cov-db-status-low   { color: var(--danger);  background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.cov-db-status-muted { color: var(--text-muted); background: var(--bg); }
+
+.cov-db-remove {
+  width: 22px; height: 22px;
+  border: none; background: transparent;
+  color: var(--text-muted); cursor: pointer;
+  font-size: 15px; line-height: 1; border-radius: 6px;
+}
+.cov-db-remove:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.cov-db-remove-spacer { width: 22px; height: 22px; }
+.cov-db-list-empty { font-size: 12px; color: var(--text-muted); padding: 8px; }
+
 .cov-engine-note { font-size: 11px; }
+
+/* 시스템/메타데이터 고정 DB 묶음 칩(단일) — 개별 이름은 hover/focus 툴팁 */
+.sysdb-chip {
+  position: relative;
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 2px;
+  padding: 4px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: default;
+}
+.sysdb-chip:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.sysdb-chip-label { font-weight: 600; }
+.sysdb-chip-tag {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.sysdb-chip-tip {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 120;
+  min-width: 200px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--text) 12%, transparent);
+  font-size: 11px;
+  color: var(--text-2);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .12s ease;
+}
+.sysdb-chip:hover .sysdb-chip-tip,
+.sysdb-chip:focus .sysdb-chip-tip,
+.sysdb-chip:focus-within .sysdb-chip-tip { opacity: 1; visibility: visible; }
+.sysdb-chip-tip-title { color: var(--text); font-weight: 700; margin-bottom: 4px; }
+.sysdb-chip-tip-list { margin: 0; padding: 0; list-style: none; }
+.sysdb-chip-tip-list li { padding: 1px 0; white-space: nowrap; }
 
 .admin-controls {
   display: grid;

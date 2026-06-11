@@ -2055,3 +2055,13 @@ source_of_truth: true
 - Reason: 순수 클라이언트 UI 상태 보존 버그수정. 폴링 재렌더(`_renderStepSidePanelBody`의 `body.innerHTML=""`)가 펼쳐둔 결과셋을 닫던 것을, 펼침 상태를 `state.stepResultExpanded`(Set)에 영속화 후 복원해 해소. 신규 RBAC·스키마·암호화·엔드포인트·백엔드(app.py) 0 — `app.js` state 필드 1 + 헬퍼 1 + 토글 배선 + run 전환 시 clear 뿐. 위험 표면 없어 적대적 패널 불요(전례 REV-20260611-0209/0213/0225 frontend-only SKIP 과 동일 등급). node --check PASS.
 - Risk: low — 클라이언트 펼침 상태 추적만. run 전환 시 Set clear 로 키 누수 방지. step 키는 기존 dedup 키(`step_index:created_at`) 재사용. 시각 동작은 PB-0008(배포 후)로 확인.
 - Cross-ref: CHG-20260611-0227 / TASK-0227.
+
+## REV-20260611-0228 [SKIPPED:frontend-ia-merge-no-backend]
+- Date: 2026-06-11
+- Cycle: TASK-0228 (관리 콘솔 제품 상세 `접근 가능 데이터베이스` UI 통합 — DB chip ↔ insight 완료율 1:1 중복 제거 + 시스템 DB 단일 묶음 칩), **Minor §12.3**
+- Design panel: gstack `/design-review` 메서드론(general-purpose design subagent) — 사용자 보고 2 IA 문제(중복 1:1 / 시스템 chip 산만)에 대한 통합 재설계 스펙 도출. 핵심 결정 "분석 대상(사용자 DB)=단일 리스트 행(진척+제거), 비-분석 대상(시스템 DB)=접근성 묶음 칩". 디자인 토큰 한정·접근성(hover만 금지) 제약 반영.
+- Reason: 순수 frontend IA 재구성. admin.js(렌더 함수 3종 재작성/신설) + styles.css(클래스 재구성) + admin.html(캐시버스터). **신규 RBAC 권한·DB 스키마·암호화·신규 엔드포인트·백엔드(app.py)·coverage 엔드포인트 응답 shape 변경 0** — 기존 per_db 데이터와 draft chip 배열을 클라이언트에서 `db ↔ schema_name`(소문자) 조인해 한 리스트로 표시할 뿐. 적대적 보안 패널 불요 — 권한 경계·자격증명·쓰기 경로 변화 없음(전례 REV-20260611-0225/0227 frontend-only SKIP 동일 등급).
+- 데이터 정합 검증: 백엔드 `_compute_product_insight_coverage` 의 `accessible = _list_product_databases(conn, pid)` 확인 → `per_db` 집합 = 사용자 등록 DB(draft) 와 동일, 시스템 DB(metadata_schemas)는 per_db 미포함 → 1:1 융합 + 시스템 분리가 데이터 모델과 정합. picker 추가 직후(per_db 미갱신) DB 는 `covRow=null`→"측정 대기" graceful.
+- 접근성: 시스템 묶음 칩에 `title`(네이티브) + `aria-label`(스크린리더) + `tabindex=0` + `:hover`/`:focus`/`:focus-within` 커스텀 툴팁 3중 병행 — 키보드·터치 사용자도 개별 DB 이름 확인 가능.
+- Risk: low — 시각 IA 변경만. 연결 불가 DB 는 행 opacity 다운+점선 마이크로바+"연결 불가" 상태칩으로 정직 표기(기존 색상 등급 로직 재사용). node --check admin.js PASS + CSS brace balance(1031/1031). 시각 동작은 PB-0008(배포 후)로 확인.
+- Cross-ref: CHG-20260611-0228 / TASK-0228 / TASK-0223 / TASK-0206.
