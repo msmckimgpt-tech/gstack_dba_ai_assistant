@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260611-0208 [SUBAGENT:preview-link-falsepositive-adversarial]
+- Date: 2026-06-11
+- Cycle: TASK-0208 ("전체 N행 미리보기" 오링크 — 비-결과 분석표 false-positive 봉쇄), **Minor §12.3**
+- Panel: 적대적 backend/QA subagent — fix 가 (a) 보고된 false-positive 해소 (b) 측정값-전용 폴백(TASK-0174) 회귀 여부 (c) 신규/잔존 false-pos/false-neg 벡터 (d) `used[]`·토큰추출 엣지 집중.
+- Verdict: **SHIP-WITH-NITS** (BLOCKER 0, MAJOR 0). 무반박 확인:
+  - false-positive 해소 확정: 분석표 19 토큰 vs leftover CSV 0 토큰 → overlap 0 → `not table_tokens` 게이트가 `None` 반환·링크 생략.
+  - 측정값-전용 폴백 회귀 0: %/소수 표와 rates CSV 모두 토큰 집합 공집합 → `not table_tokens` 분기 도달·컬럼수 폴백으로 링크 복구(TASK-0174 골든 유지).
+  - `used[]` 무영향(매치 시에만 set), 헤더행 제외 일관, readable-empty(`set()`)/unreadable(`None`) CSV 가드 정상(crash 0).
+- Findings(MINOR, 전부 수용/범위외):
+  - M1 진짜 결과표를 과격 재포맷해 overlap 0(라벨 토큰 잔존)이면 링크 recall 손실 → **수용**(degraded "없는 링크" < broken "클릭 422"), docstring 에 trade-off 명시.
+  - M2 `_distinctive_tokens` 토큰추출 맹점(①② 단독·통화·날짜 month/day 2자리 누락) — **pre-existing**, 본 fix 도입 아님. 휴리스틱 매처 장기 꼬리.
+  - M3 측정값-전용 표에 동일 컬럼수 CSV 2+ 시 폴백이 첫 미사용 선택(tie-break 없음) — **pre-existing**, shape-as-key 본질 한계.
+  - M4 다중표(진짜 결과+분석) used[] carry-over 테스트 부재 권고 → **본 cycle 반영**(`test_collapse_analysis_table_does_not_consume_genuine_csv_slot` 추가).
+- Risk: very low — 답변 후처리 링크 매칭 정확도. RBAC/스키마/파괴 0, 순수함수. frontend 값 가드 defense-in-depth 유지.
+- 검증: 수정 전 코드에서 신규 테스트 FAIL→수정 후 6/6 PASS, 인접 33 회귀 0.
+- Cross-ref: CHG-20260611-0208 / TASK-0208 / TASK-0174(폴백 도입) / feature-0003 app.js 값 가드(#118).
+
 ## REV-20260610-0200 [SKIPPED:minor-escaping-implements-REV-0196]
 - Date: 2026-06-10
 - Cycle: TASK-0200 (convo_search LIKE 메타문자 이스케이프 하드닝), **Minor §12.3**

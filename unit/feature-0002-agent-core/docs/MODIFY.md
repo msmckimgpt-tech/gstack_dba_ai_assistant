@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260611-0208
+- Date: 2026-06-11 (TASK-0208, **Minor §12.3** — 답변 후처리 미리보기 링크 정확도)
+- Scope: `_collapse_large_tables` 의 표↔CSV 매칭(`_match_csv_for_table`) 컬럼수 폴백을 좁혀, LLM 이 손으로 쓴 비-결과 분석/요약 표에 "전체 N행 미리보기" 오링크가 붙지 않게 한다.
+- 배경(재현·스크린샷): 답변에 SQL 분석용 쿼리 CSV(들)가 있고 본문엔 쿼리 결과가 아닌 "재정정된 이슈 우선순위" 분석표(5열)가 있을 때, 값 토큰 매칭(1순위)은 실패하지만 컬럼수 폴백(2순위)이 컬럼수만 우연히 같은 무관 CSV 를 붙였다. 클릭 시 frontend 값 가드([app.js](../../feature-0003-agent-web-ui/src/static/app.js) `loadCsvAsInlineTable`)가 preview↔CSV 토큰 불일치를 감지해 "결과 파일이 미리보기와 일치하지 않아 전체 데이터를 표시할 수 없습니다." 토스트로 거부 → 사용자에게 깨진 링크 노출.
+- 변경 ([src/agent_core.py](../src/agent_core.py) `_match_csv_for_table`):
+  - 1순위(값 토큰 overlap ≥1) 실패 후, `table_tokens` 가 **비어있지 않으면** 즉시 `None` 반환(폴백 미적용·링크 생략). 식별 토큰이 존재하는데 어느 CSV 와도 안 겹친다 = "이 표는 그 쿼리 결과가 아니다" 의 음성 증거.
+  - 컬럼수 폴백은 식별 토큰이 **아예 없는** 측정값(%·소수)-전용 표(`not table_tokens`)에만 한정(TASK-0174 `test_collapse_shape_fallback_for_measure_only_table` 회귀 보존).
+  - docstring 에 trade-off 명시: 진짜 결과표를 과격 재포맷해 overlap 0 으로 떨어지면 링크 recall 손실 — "없는 링크"(degraded)가 "깨진 링크"(클릭 422)보다 낫다는 판단.
+- 비변경: `_distinctive_tokens`/`_collapse_large_tables` 본체·threshold(5)·`used[]` 마킹·CSV 시그니처 무변경. frontend 값 가드는 defense-in-depth 로 유지(과거 저장된 오링크 graceful 처리). web/app.js 무수정 → 새 응답만 교정, 역사 메시지의 기존 오링크는 frontend 가드가 계속 처리.
+- 검증: `tests/test_collapse_table_csv_match.py` 2 추가(분석표 토큰有·overlap0→링크 생략 / 다중표 분석표가 진짜 결과표 CSV 슬롯 미소모). 수정 전 원본 코드에서 신규 테스트 FAIL(오링크 부착 확인)→수정 후 6/6 PASS. 인접 순수함수 33 테스트 회귀 0. outside-voice 적대 리뷰 REV-20260611-0208 SHIP-WITH-NITS(BLOCKER 0).
+- Files: unit/feature-0002-agent-core/src/agent_core.py, unit/feature-0002-agent-core/tests/test_collapse_table_csv_match.py, docs/{TASK,MODIFY,REVIEW}.md
+- Rollback: `_match_csv_for_table` 의 `if table_tokens: return None` 가드 제거(컬럼수 폴백이 토큰 유무 무관 적용 — 오링크 재발).
+- Cross-ref: TASK-0174(값 매칭+컬럼수 폴백 도입) / TASK-0155·0154(미리보기 링크 두 면) / feature-0003 app.js 값 가드(#118).
+
 ## CHG-20260610-0200
 - Date: 2026-06-10 (TASK-0200, **Minor §12.3** — 도구 읽기경로 하드닝)
 - Scope: REV-20260610-0196 이 지적한 MINOR 잔존 실행 — `convo_search` LIKE/ILIKE 메타문자 이스케이프. (#2 발췌 정렬은 feature-0003 CHG-20260610-0200.)
