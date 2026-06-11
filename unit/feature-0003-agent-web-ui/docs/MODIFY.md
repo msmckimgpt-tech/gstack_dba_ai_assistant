@@ -2674,3 +2674,14 @@ source_of_truth: true
   - unit/feature-0003-agent-web-ui/src/static/admin.html (캐시버스터 `usage-model-filter2` → `usage-model-anim`)
   - unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md (명세·이력·검증 기록)
 - Rollback: 캐시버스터 환원 + 카드 렌더를 `view.by_model` 직접 렌더(soloActive 단일 강조)로 되돌리고 `is-filtering`/`is-dimmed`/transitionend·mouseenter 핸들러 제거, styles.css 의 `.is-filtering`/`.is-dimmed` 규칙·opacity/transform 트랜지션·reduced-motion 블록 제거.
+
+## CHG-20260611-0204
+- Date: 2026-06-11
+- Related Requirement: TASK-0204 (사용자 피드백 — TASK-0202 모델 카드 hover 동작 불편/의도치 않음 → '모델별' 카드 제거 + 칩 토큰수 제거)
+- Summary: `관리 콘솔 > 감사 > LLM 사용량` 요약 영역의 '모델별' 분리 카드 그리드(`.admin-usage-mcards`, TASK-0198 도입·TASK-0202 애니메이션)를 **제거**한다. 사용자 라이브 사용에서 모델 카드 클릭 시 비선택 카드가 즉시 사라지고(빈 공간) hover 결합 dim/접힘이 re-render·마우스 이동과 충돌해 잭을 유발 → 상단 '모델' 칩 바 + '전체' 가 모델별 분리/선택을 이미 담당하므로 중복 섹션을 폐기. (1) admin.js `loadUsage`: mcards 빌드 + 카드 클릭/transitionend/mouseenter/동기회수 핸들러 제거 → `summaryEl.innerHTML = totalsHtml`(합계 카드만). (2) admin.js `renderModelFilter`: 칩 버튼 내 토큰수(`admin-usage-chip-tok`) 및 '전체' 토큰수 제거(모델명만), 미사용 `tokByKey`/`t` 파라미터 정리. (3) styles.css: `.admin-usage-mcards*` + `.admin-usage-chip-tok` 규칙 제거(dead). 모델 토큰량은 '모델별 비중' 도넛·일별 차트·상세 표에 유지. `buildView`/차트/표 무변경(회귀 0), 백엔드/API/스키마/RBAC 무변경. 캐시버스터 `?v=20260611-usage-no-mcards`.
+- Files:
+  - unit/feature-0003-agent-web-ui/src/static/admin.js (mcards 섹션·핸들러 제거, 칩 토큰수 제거, 미사용 정리)
+  - unit/feature-0003-agent-web-ui/src/static/styles.css (`.admin-usage-mcards*`·`.admin-usage-chip-tok` 제거)
+  - unit/feature-0003-agent-web-ui/src/static/admin.html (캐시버스터 → usage-no-mcards)
+  - unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
+- Rollback: TASK-0202 시점 admin.js/styles.css 환원(mcards 그리드+카드 클릭/hover 핸들러+`.admin-usage-mcard*`/`.admin-usage-chip-tok` CSS 복원) + 캐시버스터 환원.

@@ -3080,3 +3080,12 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] outside-voice frontend 적대적 리뷰(REV-20260610-0202) — **B1 BLOCKER(유령 카드)·M1(fade-in pop) 흡수**, M2(grid focused-view 점프)는 "선택 카드만 남기는" 의도로 수용.
 - [x] node --check admin.js PASS, styles.css 중괄호 균형. 기존 TASK-0198(칩 바·`buildView`·도넛/일별/역할/계정 차트·상세 표) 회귀 0(전부 `view.*` 유지, 카드만 분리).
 - [ ] verify-completion → **base=`ai/claude/0003`(TASK-0198 미병합)** → 0003 main 병합 후 본 브랜치 rebase → ff-merge → web 재배포 → PB-0008 Windows-browser 시각 검증(모델 전환 애니메이션·dim·영역 이탈 시 사라짐·재진입 복구)
+
+### TASK-0204 — LLM 사용량 '모델별' 카드 제거 + 모델 칩 토큰수 제거 (frontend-only) (2026-06-11)
+- [x] **Minor §12.3** (조회 UI 전용 — RBAC·스키마·엔드포인트·백엔드 0) — 사용자 피드백: TASK-0202 모델 카드 hover dim/접힘이 실사용 시 시각적으로 불편 + 의도치 않은 동작(클릭 즉시 비선택 카드 사라짐·빈 공간·레이아웃 점프). 사용자 제안대로 '모델별' 카드 그리드를 제거(상단 '모델' 칩 바 + '전체' 가 모델별 분리/선택을 이미 대신) + 칩에서 토큰 개수 제거(모델명만 깔끔). (CHG-20260611-0204)
+- [x] **근본 원인(0202 결함)**: 카드 클릭→요약 re-render→새 노드에 `:hover` 미부여→TASK-0202 의 "영역 밖이면 즉시 회수" 로직이 클릭 순간에도 발동→비선택 카드 dim 없이 즉시 `display:none`(원래 불편 그대로 재현). + grid `auto-fill` 빈 트랙→선택 카드 옆 휑한 공백. **라이브 win-browser 재현으로 확인**(02_solo_hover.png: edge 외 3카드 즉시 소실+빈공간).
+- [x] **수정** ([admin.js](../src/static/admin.js)): `loadUsage` 요약 렌더에서 `.admin-usage-mcards` 카드 그리드 빌드 + 카드 클릭/hover(transitionend·mouseenter·동기회수) 핸들러 **전부 제거** → `summaryEl.innerHTML = totalsHtml`(합계 카드만). `renderModelFilter` 칩에서 토큰수(`admin-usage-chip-tok`)·`전체` 토큰수 제거(모델명만), 미사용 `tokByKey`/`t` 파라미터 정리.
+- [x] **수정** ([styles.css](../src/static/styles.css)): `.admin-usage-mcards*`(TASK-0198 카드 + TASK-0202 dim/접힘/reduced-motion) + `.admin-usage-chip-tok` 규칙 제거(dead). 칩/도넛/차트/표·스코프 라벨·`.admin-usage-empty`(타 차트 사용) CSS 유지.
+- [x] node --check admin.js PASS, styles.css 중괄호 균형. 칩 바·`buildView`·도넛/일별/역할/계정 차트·상세 표(모델별 데이터 테이블 포함) 유지=회귀 0. 캐시버스터 `?v=20260611-usage-no-mcards`.
+- [x] outside-voice [SKIPPED:frontend-removal-readonly-ui] (REV-20260611-0204) — UI 제거·라벨 정리, 권한·스키마·엔드포인트·백엔드 0.
+- [ ] verify-completion → main rebase·ff-merge → web 재배포 → PB-0008 Windows-browser 시각검증(모델별 카드 부재·칩 모델명만·칩 토글 정상)

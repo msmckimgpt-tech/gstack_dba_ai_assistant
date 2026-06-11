@@ -977,22 +977,20 @@ async function loadUsage(opts) {
     return { totals, by_model, by_day_model, by_role, by_account };
   };
   // TASK-0198: 모델 필터 칩 바 — 전체 모델 목록 + 선택 토글. days/gran 동일 캐시로 재렌더(재조회 X).
-  const renderModelFilter = (allModelKeys, t) => {
+  const renderModelFilter = (allModelKeys) => {
     const barEl = document.getElementById("usageModelFilter");
     if (!barEl) return;
     const st = adminState.usage;
     const sel = st.selectedModels;  // null=전체
     const isAll = (sel == null);
-    const totalsTokens = t && t.total_tokens ? t.total_tokens : 0;
-    const chip = (key, active, tok) => {
+    // TASK-0204: 칩은 모델명만 — 버튼 내 토큰 개수(admin-usage-chip-tok) 제거(깔끔). 토큰량은
+    //   '모델별 비중' 도넛·일별 차트·상세 표에 이미 노출되므로 칩은 순수 필터 토글로 둔다.
+    const chip = (key, active) => {
       const sw = `<span class='admin-usage-chip-dot' style='background:${mcol(key)};'></span>`;
-      const sub = (tok != null) ? `<span class='admin-usage-chip-tok'>${num(tok)}</span>` : "";
-      return `<button type='button' class='admin-usage-chip${active ? " is-active" : ""}' data-model-key='${esc(key)}'>${sw}<span class='admin-usage-chip-label'>${esc(key)}</span>${sub}</button>`;
+      return `<button type='button' class='admin-usage-chip${active ? " is-active" : ""}' data-model-key='${esc(key)}'>${sw}<span class='admin-usage-chip-label'>${esc(key)}</span></button>`;
     };
-    const allChip = `<button type='button' class='admin-usage-chip admin-usage-chip--all${isAll ? " is-active" : ""}' data-model-key='__ALL__'>전체${totalsTokens ? ` <span class='admin-usage-chip-tok'>${num(totalsTokens)}</span>` : ""}</button>`;
-    const tokByKey = {};
-    (st._lastRaw && st._lastRaw.by_model || []).forEach((m) => { tokByKey[modelKeyOf(m)] = (tokByKey[modelKeyOf(m)] || 0) + (m.total_tokens || 0); });
-    const chips = allModelKeys.map((k) => chip(k, !isAll && sel.has(k), tokByKey[k])).join("");
+    const allChip = `<button type='button' class='admin-usage-chip admin-usage-chip--all${isAll ? " is-active" : ""}' data-model-key='__ALL__'>전체</button>`;
+    const chips = allModelKeys.map((k) => chip(k, !isAll && sel.has(k))).join("");
     barEl.innerHTML = `<span class='admin-usage-filter-label'>모델</span>${allChip}${chips}`;
     barEl.querySelectorAll(".admin-usage-chip").forEach((b) => {
       b.addEventListener("click", () => {
@@ -1028,7 +1026,7 @@ async function loadUsage(opts) {
     (data.by_account || []).forEach((a) => (a.models || []).forEach((m) => { if (m.model && !_ms.includes(m.model)) _ms.push(m.model); }));
     modelColor = colorMapFor(_ms);
     // TASK-0198: 선택 모델 칩 바(원본 모델 전체 기준) + 선택 적용된 view.
-    renderModelFilter(_ms, data.totals || {});
+    renderModelFilter(_ms);
     const view = buildView(data, adminState.usage.selectedModels);
     const t = view.totals || {};
     const selSet = adminState.usage.selectedModels;
@@ -1048,69 +1046,10 @@ async function loadUsage(opts) {
         card("Completion", num(t.completion_tokens)) +
         ((t.cost_usd && t.cost_usd > 0) ? card("추정 비용", usd(t.cost_usd)) : "") +
         `</div>`;
-      // 모델별 분리 카드 — 토큰 내림차순. 칩 색과 동일 accent. 클릭 시 그 모델만 단독 선택.
-      // TASK-0202: 카드는 항상 '전체 모델'을 렌더한다(선택해도 비선택 카드가 즉시 사라지지 않게).
-      //   선택 모델=is-active(강조), 비선택=is-dimmed(흐리게). 카드 수치는 각 모델 고유값(선택 무관)
-      //   이라 필터된 view 가 아닌 원본 data.by_model 을 쓴다.
-      const mcards = (data.by_model || []).slice().sort((a, b) => (b.total_tokens || 0) - (a.total_tokens || 0)).map((m) => {
-        const k = modelKeyOf(m);
-        const alias = (m.model && m.model !== k) ? `<span class='admin-usage-mcard-alias'>${esc(m.model)} →</span> ` : "";
-        const cost = (m.cost_usd && m.cost_usd > 0) ? `<div class='admin-usage-mcard-row'><span>추정 비용</span><b>${usd(m.cost_usd)}</b></div>` : "";
-        const active = isPartial && selSet.has(k);
-        const dimmed = isPartial && !selSet.has(k);
-        const cls = "admin-usage-mcard" + (active ? " is-active" : "") + (dimmed ? " is-dimmed" : "");
-        return `<article class='${cls}' data-model-solo='${esc(k)}' style='--mcard-accent:${mcol(k)};'>` +
-          `<div class='admin-usage-mcard-head'><span class='admin-usage-chip-dot' style='background:${mcol(k)};'></span>${alias}<span class='admin-usage-mcard-name'>${esc(k)}</span></div>` +
-          `<div class='admin-usage-mcard-tok'>${num(m.total_tokens)}<span>토큰</span></div>` +
-          `<div class='admin-usage-mcard-row'><span>요청</span><b>${num(m.requests)}</b></div>` +
-          `<div class='admin-usage-mcard-row'><span>호출</span><b>${num(m.calls)}</b></div>` +
-          cost +
-          `</article>`;
-      }).join("");
-      // is-filtering: 부분 선택 중일 때만 비선택 카드 dim/접힘 규칙(styles.css)을 활성화.
-      const mcardsWrap = mcards
-        ? `<div class='admin-usage-mcards${isPartial ? " is-filtering" : ""}'>${mcards}</div>`
-        : "<p class='admin-usage-empty'>모델 사용 기록이 없습니다.</p>";
-      summaryEl.innerHTML = totalsHtml + `<div class='admin-usage-mcards-head'>모델별</div>` + mcardsWrap;
-      // 모델 카드 클릭 → 그 모델만 단독 선택(이미 단독이면 전체 복귀).
-      summaryEl.querySelectorAll("[data-model-solo]").forEach((c) => {
-        c.addEventListener("click", () => {
-          const k = c.getAttribute("data-model-solo");
-          const st = adminState.usage;
-          const soloNow = (st.selectedModels != null && st.selectedModels.size === 1 && st.selectedModels.has(k));
-          st.selectedModels = soloNow ? null : new Set([k]);
-          st.drillRole = null;
-          loadUsage({ refetch: false });
-        });
-      });
-      // TASK-0202: 부분 선택 중 비선택 카드는 styles.css 가 카드 영역 hover 시 흐리게(opacity .4) 유지하고,
-      //   마우스가 영역을 벗어나면(:not(:hover)) 부드럽게 fade-out 한다. fade 가 끝나면(transitionend)
-      //   레이아웃에서 회수(display:none)하고, 다시 영역에 들어오면 복구해 흐림 상태로 되살린다.
-      const mcardsEl = summaryEl.querySelector(".admin-usage-mcards.is-filtering");
-      if (mcardsEl) {
-        const dimmedCards = () => mcardsEl.querySelectorAll(".admin-usage-mcard.is-dimmed");
-        // 마우스가 영역을 벗어난 채 비선택 카드의 fade-out 이 끝나면 레이아웃에서 회수(display:none).
-        //   active 카드(is-dimmed 아님)는 대상에서 제외 → 선택 카드는 항상 남는다.
-        mcardsEl.addEventListener("transitionend", (ev) => {
-          if (ev.propertyName !== "opacity") return;
-          const card = ev.target && ev.target.closest ? ev.target.closest(".admin-usage-mcard.is-dimmed") : null;
-          if (card && !mcardsEl.matches(":hover")) card.style.display = "none";
-        });
-        // 영역 재진입 → 회수된 비선택 카드를 복구하되 opacity 0→.4 로 부드럽게 fade-in.
-        //   (display:none→"" 만으로는 트랜지션 기준점이 없어 pop-in 하므로 reflow 후 보간.)
-        mcardsEl.addEventListener("mouseenter", () => {
-          const cards = dimmedCards();
-          cards.forEach((c) => { c.style.display = ""; c.style.opacity = "0"; });
-          void mcardsEl.offsetWidth;  // 강제 reflow — 트랜지션 시작점 확보
-          cards.forEach((c) => { c.style.opacity = ""; });  // CSS(.is-filtering hover → .4)로 보간
-        });
-        // 재렌더 시점에 마우스가 카드 영역 밖이면(예: 칩 바로 필터링) 비선택 카드는 갓 삽입돼
-        //   초기값이 opacity:0 이라 트랜지션이 발동하지 않는다(→ transitionend 미발생 → 유령 카드 잔존).
-        //   이 경로는 fade 없이 바로 회수해 focused view 로 시작한다(이탈 시 fade-out 은 위 핸들러가 담당).
-        if (!mcardsEl.matches(":hover")) {
-          dimmedCards().forEach((c) => { c.style.display = "none"; });
-        }
-      }
+      // TASK-0204: '모델별' 분리 카드 그리드 제거 — 상단 '모델' 칩 바 + '전체' 가 모델별 분리/선택을
+      //   이미 담당해 중복이고, hover 결합 dim/접힘(TASK-0202)이 re-render 와 충돌해 잭(즉시 사라짐·
+      //   빈 공간·레이아웃 점프)을 유발. 요약은 합계 카드(선택 스코프 기준)만 남긴다.
+      summaryEl.innerHTML = totalsHtml;
     }
     // TASK-0164/0166: 일별 stacked / 모델별 도넛 (선택 모델 view 기준).
     renderStacked(dayChartEl, view.by_day_model);

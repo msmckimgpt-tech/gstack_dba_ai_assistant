@@ -3615,8 +3615,6 @@ a { color: inherit; }
 }
 .admin-usage-chip-dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: none; }
 .admin-usage-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
-.admin-usage-chip-tok { font-variant-numeric: tabular-nums; color: var(--text-muted); font-weight: 700; }
-.admin-usage-chip.is-active .admin-usage-chip-tok { color: var(--text-2); }
 
 /* 요약 스코프 라벨 (전체 모델 / 선택 N개 모델) */
 .admin-usage-summary-head { display: flex; align-items: center; gap: 8px; margin: 4px 0 6px; }
@@ -3624,58 +3622,8 @@ a { color: inherit; }
   font-size: 11px; font-weight: 700; letter-spacing: .04em;
   color: var(--text-muted); text-transform: uppercase;
 }
-/* 모델별 분리 카드 그리드 */
-.admin-usage-mcards-head {
-  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
-  color: var(--text-2); margin: 14px 0 8px;
-}
-.admin-usage-mcards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr));
-  gap: 10px;
-}
-.admin-usage-mcard {
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--mcard-accent, var(--border));
-  border-radius: var(--r-md);
-  background: var(--surface);
-  padding: 11px 13px;
-  cursor: pointer;
-  /* TASK-0202: 모델 전환 시 강조/흐림/접힘이 부드럽게 보간되도록 opacity·transform 도 트랜지션. */
-  transition: background .15s ease, box-shadow .2s ease, border-color .2s ease,
-              opacity .28s ease, transform .28s ease;
-  min-width: 0;
-}
-.admin-usage-mcard:hover { background: var(--bg); }
-.admin-usage-mcard.is-active { border-color: var(--mcard-accent, var(--primary)); box-shadow: 0 0 0 2px var(--primary-soft); }
-/* TASK-0202: 부분 모델 선택 중 — 비선택 카드는 사라지지 않고 흐리게(영역 hover 시) 유지. */
-.admin-usage-mcards.is-filtering .admin-usage-mcard.is-dimmed { opacity: .4; }
-/* 마우스가 카드 영역을 벗어나면(:not(:hover)) 비선택 카드를 부드럽게 fade-out (JS 가 종료 후 display:none 회수). */
-.admin-usage-mcards.is-filtering:not(:hover) .admin-usage-mcard.is-dimmed {
-  opacity: 0;
-  transform: scale(.92);
-  pointer-events: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .admin-usage-mcard { transition: opacity .01s, background .15s ease, box-shadow .2s ease, border-color .2s ease; }
-  .admin-usage-mcards.is-filtering:not(:hover) .admin-usage-mcard.is-dimmed { transform: none; }
-}
-.admin-usage-mcard-head {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; color: var(--text-2); margin-bottom: 8px; min-width: 0;
-}
-.admin-usage-mcard-alias { color: var(--text-muted); font-size: 11px; flex: none; }
-.admin-usage-mcard-name { font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.admin-usage-mcard-tok {
-  font-size: 22px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums;
-  line-height: 1.1; margin-bottom: 8px;
-}
-.admin-usage-mcard-tok span { font-size: 11px; font-weight: 600; color: var(--text-muted); margin-left: 4px; }
-.admin-usage-mcard-row {
-  display: flex; justify-content: space-between; align-items: baseline;
-  font-size: 12px; color: var(--text-muted); padding: 2px 0;
-}
-.admin-usage-mcard-row b { color: var(--text-2); font-variant-numeric: tabular-nums; font-weight: 700; }
+/* TASK-0204: '모델별' 분리 카드 그리드(.admin-usage-mcards*) + TASK-0202 dim/접힘 규칙 제거 —
+   상단 '모델' 칩 바가 모델별 분리/선택을 대신하고, hover 결합 접힘이 잭을 유발해 섹션 자체를 폐기. */
 
 /* TASK-0184: 역할 stacked 막대 행 — 계정 drill-down 진입(클릭) 가능. */
 .admin-usage-hbar-row { margin: 6px 0; }

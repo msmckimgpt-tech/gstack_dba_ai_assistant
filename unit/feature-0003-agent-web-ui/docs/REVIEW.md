@@ -1884,3 +1884,10 @@ source_of_truth: true
 - TASK-0198 회귀: 칩 바·`buildView`·도넛/일별/역할/계정 차트·상세 표 전부 `view.*` 유지(미변경), 카드만 `data.by_model` 분리 — subagent "회귀 없음·클린 리셋" 확인.
 - Verdict: B1/M1 수정 반영 후 SHIP-able(BLOCKER 0). RBAC/스키마/엔드포인트/시크릿 0 — 권한 모델 변경 아님(outside-voice RBAC 게이트 불요).
 - Residual: Windows-browser(PB-0008) 시각 검증은 배포 후 수행(CHECK#13 WARN, TEST.md Run 으로 기록 예정).
+
+## REV-20260611-0204 [SKIPPED:frontend-removal-readonly-ui]
+- Date: 2026-06-11
+- Cycle: TASK-0204 (LLM 사용량 '모델별' 카드 제거 + 모델 칩 토큰수 제거)
+- Trigger: UI/screen/layout keyword(§18.8 → ux/design). 단 본 cycle 은 **기능 제거 + 라벨 단순화**(추가 로직 0)라 전례(REV-0184/0198/0202 류 readonly-ui)와 동일 경량 SKIP.
+- Reason: 순수 프론트(admin.js·styles.css·admin.html). 중복 UI(`.admin-usage-mcards`) 제거 + 칩 토큰수 제거 — 신규 엔드포인트·쿼리·권한·grant·역할·스키마·시크릿 0. 노출 데이터 범위 축소(토큰수는 도넛·차트·표에 잔존). 직전 TASK-0202 의 hover 결합 잭을 섹션 폐기로 근본 해소(라이브 win-browser 로 결함 재현 확인 후 결정). `buildView`/차트/표 무변경(회귀 0). RBAC 권한 모델 변경 아님 → outside-voice 불필요. node --check PASS.
+- Residual: Windows-browser(PB-0008) 시각검증은 배포 후 수행(모델별 카드 부재·칩 모델명만·칩 토글 정상 — CHECK#13).

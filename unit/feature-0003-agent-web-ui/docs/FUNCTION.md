@@ -474,6 +474,15 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   (active 카드 제외), 재진입(mouseenter)시 reflow 기반 0→.4 fade-in 복구, 칩 바 필터링 등 마우스가
   영역 밖인 채 재렌더되면 초기 transition 미발동이라 동기 `display:none` 회수(유령 카드 방지). 차트·표·
   `buildView`·칩 바는 전부 `view.*` 유지(회귀 0) — 카드 렌더 소스와 표현만 변경. RBAC/스키마/API 무변경.
+- LLM 사용량 '모델별' 카드 제거 + 칩 토큰수 제거 (TASK-0204): **TASK-0198/0202 의 '모델별' 분리 카드
+  그리드(`.admin-usage-mcards`)를 폐기**한다. 상단 '모델' 칩 바(`#usageModelFilter`) + '전체' 가 모델별
+  분리/선택을 이미 담당해 중복이고, TASK-0202 의 hover 결합 dim/접힘이 요약 re-render(새 노드에 `:hover`
+  미부여)와 충돌해 클릭 즉시 비선택 카드 소실·빈 공간·레이아웃 점프 잭을 유발(라이브 win-browser 재현 확인).
+  `loadUsage` 요약은 합계 카드(`summary-metrics`, 선택 스코프 라벨)만 렌더(`summaryEl.innerHTML = totalsHtml`),
+  mcards 빌드·카드 클릭/transitionend/mouseenter 핸들러 전부 제거. `renderModelFilter` 칩은 **모델명만**
+  (버튼 내 토큰수 `admin-usage-chip-tok` 및 '전체' 토큰수 제거 — 토큰량은 '모델별 비중' 도넛·일별 차트·
+  상세 표에 잔존). styles.css 의 `.admin-usage-mcards*`·`.admin-usage-chip-tok` 규칙 제거. 모델 필터링
+  (`buildView` 기준 도넛/일별/역할/계정 차트·표 좁힘)·상세 표 '모델별' 데이터 테이블은 유지(회귀 0).
 - 관리 콘솔 레이아웃 스크롤 (TASK-0167): `.admin-shell`·`.admin-workspace` 는 `height:100vh;
   overflow:hidden` 이고 각 `.admin-pane` 이 자체 스크롤한다. 단순 세로 흐름 pane(dashboard·usage)은
   `overflow-y:auto` 를 직접 가지며(styles.css), list-detail pane(accounts/roles/products/audits)은
