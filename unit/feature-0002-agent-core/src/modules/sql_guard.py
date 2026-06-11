@@ -68,6 +68,18 @@ _FORBIDDEN_FUNCTIONS_TSQL = {
     "xp_cmdshell",    # OS 명령 실행(RCE)
     "sp_executesql",  # 동적 SQL
     "waitfor",        # WAITFOR DELAY — SLEEP 등가(DoS)
+    # re-gate(5차): 서버/로그인 정체성·역할·권한 enumeration + DB/객체/스키마 메타데이터 probe 함수.
+    # AST 함수명 기반 차단(주석 난독화·문자열 리터럴 오판에 견고 — regex 대체).
+    "serverproperty", "suser_name", "suser_id", "suser_sid", "suser_sname", "original_login",
+    "is_srvrolemember", "is_rolemember", "is_member", "has_perms_by_name", "fn_my_permissions",
+    "fn_builtin_permissions", "connectionproperty", "context_info", "host_name", "host_id",
+    "user_name", "app_name", "loginproperty", "pwdcompare", "pwdencrypt",
+    "db_name", "db_id", "databasepropertyex", "databaseproperty", "has_dbaccess",
+    "file_name", "filegroup_name", "object_id", "object_name", "object_schema_name",
+    "object_definition", "objectproperty", "objectpropertyex", "col_name", "col_length",
+    "columnproperty", "schema_id", "schema_name", "current_schema", "type_id", "type_name", "typeproperty",
+    "cert_id", "database_principal_id", "fulltextcatalogproperty", "indexproperty",
+    "indexkey_property",
 }
 
 # 보조 denylist regex (allowlist 가 못 잡는 edge — backup defense). MySQL 어휘 (골든: 무변경).
@@ -103,23 +115,10 @@ _DENYLIST_PATTERNS_TSQL: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bWAITFOR\b", re.IGNORECASE),           # DELAY/TIME — DoS
     re.compile(r"\bEXEC(UTE)?\b", re.IGNORECASE),        # 동적 실행/proc 호출
     re.compile(r"\bINTO\s+", re.IGNORECASE),             # SELECT ... INTO newtbl (부수효과: 테이블 생성)
-    re.compile(r"\bNEXT\s+VALUE\s+FOR\b", re.IGNORECASE),  # re-gate(4차): sequence 증가(부수효과)+3-part 미수집 우회
     re.compile(r"@@", re.IGNORECASE),                    # @@VERSION 등 시스템변수 정보유출
-    # re-gate MAJOR6: 서버/로그인 정체성·역할 enumeration 시스템함수(테이블참조 없이 정보유출). sqlglot 이
-    # SUSER_SNAME 을 CurrentUser 노드로 정규화해 Func-name 검출을 빠져나가므로 텍스트 regex 로 박제.
-    re.compile(
-        r"\b(SERVERPROPERTY|SUSER_SNAME|SUSER_NAME|SUSER_ID|SUSER_SID|SYSTEM_USER|SESSION_USER"
-        r"|ORIGINAL_LOGIN|IS_SRVROLEMEMBER|IS_ROLEMEMBER|IS_MEMBER|HAS_PERMS_BY_NAME|FN_MY_PERMISSIONS"
-        r"|FN_BUILTIN_PERMISSIONS|CONNECTIONPROPERTY|CONTEXT_INFO|HOST_NAME|HOST_ID|CURRENT_USER"
-        r"|USER_NAME|APP_NAME|LOGINPROPERTY|PWDCOMPARE|PWDENCRYPT"
-        # re-gate(3차): DB enumeration/probing 함수도 차단 — id↔name 매핑·상태·접근권 probe.
-        r"|DB_NAME|DB_ID|DATABASEPROPERTYEX|DATABASEPROPERTY|HAS_DBACCESS|FILE_NAME|FILEGROUP_NAME"
-        # re-gate(4차): 객체/스키마/타입 메타데이터 probe(직접 catalog 참조 없이 시스템·미허용 DB 객체 탐색).
-        r"|OBJECT_ID|OBJECT_NAME|OBJECT_SCHEMA_NAME|OBJECT_DEFINITION|OBJECTPROPERTY|OBJECTPROPERTYEX"
-        r"|COL_NAME|COL_LENGTH|COLUMNPROPERTY|SCHEMA_ID|SCHEMA_NAME|TYPE_ID|TYPE_NAME|TYPEPROPERTY"
-        r"|CERT_ID|DATABASE_PRINCIPAL_ID|FULLTEXTCATALOGPROPERTY|INDEXPROPERTY|INDEXKEY_PROPERTY)\b",
-        re.IGNORECASE,
-    ),
+    # re-gate(5차): 시스템/메타데이터 함수(SERVERPROPERTY/OBJECT_ID/DB_NAME/...)·NEXT VALUE FOR 는 raw regex
+    # 가 문자열 리터럴(`'OBJECT_ID'`)·주석 난독화(`NEXT/**/VALUE FOR`)에서 과·미차단하므로 **AST 기반**
+    # (_FORBIDDEN_FUNCTIONS_TSQL + _has_forbidden_special_node)으로 이전했다. 여기 regex 목록엔 두지 않는다.
     re.compile(r"/\*\+\s*[^*]*\*/"),                     # optimizer hint 주석
     re.compile(r"--[ \t]*[^\n]*", re.MULTILINE),         # line comment (audit only)
 )
@@ -234,6 +233,10 @@ def _collect_qualified_func_refs(node) -> list[tuple[str, str]]:
             if len(acc) >= 2:
                 # 마지막 2개 = (catalog, schema) — 예: [forbidden, dbo] → catalog=forbidden, schema=dbo
                 out.append((acc[-2], acc[-1]))
+            elif len(acc) == 1:
+                # re-gate(5차) BLOCKER2: 1-part 함수 namespace — MySQL `db.fn()` 의 db(=schema, allowlist 대조
+                # 대상) / MSSQL `dbo.fn()` 의 schema. schema 슬롯으로 반환해 collect 가 schemas 에 합류시킨다.
+                out.append(("", acc[0]))
     return out
 
 
@@ -330,17 +333,38 @@ def collect_schema_refs(
 
 
 def _collect_function_names(node) -> list[str]:
-    """AST 의 모든 Func / Anonymous 의 이름 (소문자)."""
+    """AST 의 모든 Func / Anonymous 의 이름 (소문자).
+
+    Anonymous 함수는 sql_name() 이 'ANONYMOUS' 를 줘 실제 이름을 놓치므로 `.name` 을 쓴다. AST 기반이라
+    주석 난독화(`OBJECT_ID/**/(...)`)·문자열 리터럴(`'OBJECT_ID'`) 오판에 모두 견고하다(regex 대체).
+    """
     if _exp is None:
         return []
     out: list[str] = []
     for fn in node.find_all(_exp.Func):
-        try:
-            name = fn.sql_name() if hasattr(fn, "sql_name") else str(fn.this if hasattr(fn, "this") else fn.__class__.__name__)
-        except Exception:
-            name = ""
+        if isinstance(fn, _exp.Anonymous):
+            name = str(getattr(fn, "name", "") or "")
+        else:
+            try:
+                name = fn.sql_name()
+            except Exception:
+                name = type(fn).__name__
         out.append(str(name or "").lower())
     return out
+
+
+# re-gate(5차): SYSTEM_USER/SUSER_SNAME/CURRENT_USER → CurrentUser, SESSION_USER → SessionUser, NEXT VALUE FOR
+# → NextValueFor 로 정규화돼 함수명 검출을 빠져나간다. 해당 노드 타입을 직접 차단(주석 난독화에도 견고).
+def _has_forbidden_special_node(node) -> str | None:
+    if _exp is None:
+        return None
+    if list(node.find_all(_exp.NextValueFor)):
+        return "NEXT VALUE FOR"
+    if hasattr(_exp, "CurrentUser") and list(node.find_all(_exp.CurrentUser)):
+        return "SYSTEM_USER/SUSER_SNAME"
+    if hasattr(_exp, "SessionUser") and list(node.find_all(_exp.SessionUser)):
+        return "SESSION_USER"
+    return None
 
 
 def validate_sql_for_sandbox(
@@ -433,6 +457,15 @@ def validate_sql_for_sandbox(
             False,
             error_reason="4-part(linked-server) function reference not allowed",
             denied_patterns=["4-part-func"],
+        )
+    # re-gate(5차): AST 정규화로 함수명 검출을 빠져나가는 특수 노드(NEXT VALUE FOR / SYSTEM_USER / SUSER_SNAME
+    # / SESSION_USER / CURRENT_USER) — 주석 난독화에도 견고하게 노드 타입으로 차단.
+    special = _has_forbidden_special_node(root)
+    if special:
+        return SqlGuardResult(
+            False,
+            error_reason=f"forbidden construct: {special}",
+            denied_patterns=[f"node:{special}"],
         )
 
     # table refs 의 schema/catalog 검사 (catalog = 3-part DB 차원, P6 cross-DB).

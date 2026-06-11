@@ -2397,6 +2397,24 @@ def _product_allowed_schemas(conn, product_id: int) -> list[str]:
     return [str(r[0]) for r in rows if r and r[0]]
 
 
+def _product_has_datasource(conn, product_id: int) -> bool:
+    """TASK-0206 re-gate(5차): 제품에 datasource 가 바인딩(WebProducts.DatasourceKey 비-NULL)되어 있는지.
+
+    DB-단위 모델에서 데이터는 데이터소스에 종속된다 — 미바인딩 제품은 접근 0(allowed=[]). 조회 실패 시
+    보수적으로 False(미바인딩 취급, fail-closed)."""
+    if product_id <= 0:
+        return False
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT DatasourceKey FROM WebProducts WHERE Id = %s LIMIT 1", (int(product_id),))
+        r = cur.fetchone()
+        return bool(r and r[0] and str(r[0]).strip())
+    except Exception:
+        return False
+    finally:
+        cur.close()
+
+
 # ──────────────────────────────────────────────────────────────────
 #  TASK-0047 — Product 선호 / 대화 모드 헬퍼
 # ──────────────────────────────────────────────────────────────────
@@ -8116,10 +8134,20 @@ async def ask(request: Request) -> JSONResponse:
                             "(conversation_id=%s product_id=%s)",
                             conv_id, product_id_for_run, exc_info=True,
                         )
-                allowed_schemas_for_run = (
-                    _product_allowed_schemas(conn, int(product_id_for_run))
-                    if product_id_for_run else None
-                )
+                # re-gate(5차) BLOCKER5: "데이터소스 미바인딩/제품 없음 = 접근 0" (DB-단위 모델, flag ON).
+                #  - 제품 없음(default 도 없음) → allowed=[] (과거 None=무제한 → 데이터계정 GRANT 전체 누출).
+                #  - 제품이 datasource 미바인딩(DatasourceKey NULL) → allowed=[] (데이터는 데이터소스 종속).
+                # flag OFF(레거시 단일 MySQL)에서는 종전대로 None(제품 allowlist 미적용 경로 보존).
+                _multi_ds = str(os.getenv("AGENT_MULTI_DATASOURCE_ENABLED", "0")).strip() not in ("", "0", "false", "False")
+                if product_id_for_run:
+                    if _multi_ds and not _product_has_datasource(conn, int(product_id_for_run)):
+                        allowed_schemas_for_run = []  # 미바인딩 = 접근 0
+                    else:
+                        allowed_schemas_for_run = _product_allowed_schemas(conn, int(product_id_for_run))
+                elif _multi_ds:
+                    allowed_schemas_for_run = []  # 제품 없음 = 접근 0
+                else:
+                    allowed_schemas_for_run = None  # 레거시 단일 MySQL
             role_id_for_run: int | None = None
             try:
                 role_payload = _role_payload(account) or {}
@@ -13568,13 +13596,25 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
     _ds_engine = "mysql"
     _dskey = (str(_prow[1]).strip().lower() if len(_prow) > 1 and _prow[1] else "")
     if _dskey:
+        _found = False
         try:
             cur.execute("SELECT Engine FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (_dskey,))
             _er = cur.fetchone()
             if _er and _er[0]:
                 _ds_engine = str(_er[0]).strip().lower()
+                _found = True
         except Exception:
-            _ds_engine = "mysql"
+            _found = False
+        if not _found:
+            # re-gate(5차) MAJOR: WebDatasources 미존재 시 .env 레지스트리(config.DATASOURCES)도 확인 —
+            # .env 기반 MSSQL datasource 가 MySQL 로 오판돼 금지목록이 잘못 적용되던 것 차단.
+            try:
+                from modules import config as _cfg2
+                _envds = (getattr(_cfg2, "DATASOURCES", {}) or {}).get(_dskey)
+                if _envds and _envds.get("engine"):
+                    _ds_engine = str(_envds.get("engine")).strip().lower()
+            except Exception:
+                pass
     cur.close()
     _forbidden_meta = set(_DATABASES_AVAILABLE_METADATA) if _ds_engine == "mysql" else set()
     _forbidden_sys = set(_DATABASES_AVAILABLE_SYSTEM_MSSQL) if _ds_engine == "mssql" else set()

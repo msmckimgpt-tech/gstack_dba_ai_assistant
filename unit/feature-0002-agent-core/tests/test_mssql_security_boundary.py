@@ -493,6 +493,49 @@ def test_regate4_grounding_preserves_original_case():
     _run_isolated(check)
 
 
+def test_regate5_ast_function_detection_comment_immune():
+    """re-gate(5차): AST 기반 함수/특수노드 차단 — 주석 난독화에 견고하고 문자열 리터럴은 오차단 안 함."""
+    blocked = [
+        "SELECT NEXT VALUE FOR forbidden.dbo.seq",
+        "SELECT NEXT/**/ VALUE FOR forbidden.dbo.seq",
+        "SELECT NEXT/*x*/VALUE/*y*/FOR forbidden.dbo.seq",
+        "SELECT OBJECT_ID('master.sys.sql_logins')",
+        "SELECT OBJECT_ID/**/('x')",
+        "SELECT DB_NAME(1)",
+        "SELECT SERVERPROPERTY('MachineName')",
+        "SELECT SCHEMA_NAME(1)",
+        "SELECT SYSTEM_USER",
+        "SELECT SUSER_SNAME()",
+        "SELECT SESSION_USER",
+        "SELECT CURRENT_USER",
+        "SELECT IS_ROLEMEMBER('db_owner')",
+        "SELECT HAS_PERMS_BY_NAME(NULL, NULL, 'X')",
+    ]
+    for sql in blocked:
+        r = validate_sql_for_sandbox(sql, forbidden_schemas=AGENT_FORBIDDEN, dialect="tsql")
+        assert not r.ok, f"차단 누락: {sql}"
+    # 문자열 리터럴·정상 함수는 통과(과차단 회귀 방지)
+    allowed = [
+        "SELECT 'OBJECT_ID' AS label FROM dbo.t",
+        "SELECT * FROM dbo.t WHERE note = 'SERVERPROPERTY'",
+        "SELECT GETDATE()",
+        "SELECT COUNT(*) FROM dbo.orders",
+    ]
+    for sql in allowed:
+        r = validate_sql_for_sandbox(sql, forbidden_schemas=AGENT_FORBIDDEN, dialect="tsql")
+        assert r.ok, f"과차단 회귀: {sql} :: {r.error_reason}"
+
+
+def test_regate5_mysql_db_qualified_function_blocked():
+    """re-gate(5차) BLOCKER2: MySQL `db.fn()`(1-part namespace)의 db 가 allowlist 와 대조돼 차단."""
+    def check():
+        cfg.set_active_datasource("mysqlds", engine="mysql")
+        tools.set_active_schema_allowlist(["alloweddb"])
+        assert tools._freeform_sql_access_error("SELECT forbidden.fnLeak()") is not None
+        assert tools._freeform_sql_access_error("SELECT alloweddb.fnOK()") is None
+    _run_isolated(check)
+
+
 def test_dialect_system_databases_sets():
     """dialect.system_databases(): MySQL=메타DB / MSSQL=master/model/msdb/tempdb."""
     def check_mssql():
