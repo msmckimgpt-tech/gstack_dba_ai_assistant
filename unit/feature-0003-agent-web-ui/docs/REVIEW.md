@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260611-0230 [SUBAGENT:product-multi-datasource-isolation-adversarial] — PASS(MAJOR 흡수)
+- Date: 2026-06-11
+- Cycle: TASK-0230 (멀티 datasource 1:N — 제품 ↔ 여러 datasource, **Critical §12.3**, cross-feature)
+- 정본: agent-core REVIEW.md REV-20260611-0230(라우터·격리 분석 본문). 본 entry 는 feature-0003 측 변경(관리 엔드포인트·마이그레이션·UI·제품 프롬프트)에 대한 cross-ref + 흡수 요지.
+- Verdict: **BLOCKER 0** — cross-datasource 격리 HOLD. MAJOR 3건 흡수.
+- feature-0003 관련 흡수: **MAJOR-1** `_ensure_web_product_datasources_schema` 의 broad `try/except: pass` partial-migration silent → 컬럼 존재 선확인(information_schema) + 단계별 실패 loud 로깅(error) + 컬럼 부재 시 backfill/PK 이전 skip. **MAJOR-2** `_product_allowed_schemas_for_datasource`(admin 표시용) 는 폴백 유지(게이트 아님) — 런타임 게이트 입력 `_datasource_allow_schemas`(agent-core) 만 fail-closed.
+- 검증 SAFE: admin add/remove(console.access+console.manage), 미등록 키 거부(400, `_dsr.resolve`), DELETE datasource 가 join+접근DB 고아 정리 + primary 승격, `PUT databases` 가 요청 datasource_key 바인딩 검증(임의 키 접근DB 주입 차단), IDOR 없음(product 존재 확인 + ProductId 스코프). 신규 RBAC 권한 0(기존 console.* 재사용).
+- 검증: 신규 `test_product_multi_datasource_api.py` 7 + make test 컨테이너 회귀 0 + node --check.
+- Risk: medium-high(Critical 데이터 경계 신규 차원) → 격리·fail-closed·migration loud 로 완화. RBAC 카탈로그/시크릿 무변경.
+- Human Approval Needed: no (보안 trade-off 신규 0 — 격리 강화. 사용자 사전 confirm[전체 구현 + LLM tool 선택] 범위 내).
+- Cross-ref: CHG-20260611-0230 / TASK-0230 / ADR-CORE-0004 / agent-core REV-20260611-0230 / [[feedback_outside_voice_for_rbac]] 정합.
+
 ## REV-20260611-0223 [SUBAGENT:mssql-three-tier-adversarial]
 - Date: 2026-06-11
 - Cycle: TASK-0223 (제품 프롬프트 자동작성 실데이터 정합 + MSSQL 3계층 인사이트), **Major §12.3**

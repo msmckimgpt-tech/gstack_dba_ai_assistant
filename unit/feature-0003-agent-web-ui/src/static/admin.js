@@ -679,12 +679,18 @@ function setProductMetaPending(productId, patch) {
   refreshPendingUI();
 }
 
-function setProductDatabasesPending(productId, draft) {
+function setProductDatabasesPending(productId, draft, dsKey) {
   const id = Number(productId);
   if (!id) return;
+  // TASK-0228 (1:N): pending 키를 (productId, datasourceKey) 복합으로 — datasource 별 접근DB 를
+  // 독립 편집/저장. dsKey 미지정(레거시 단일)은 빈 문자열로 정규화(키 `id::`).
+  const dk = String(dsKey || "").trim().toLowerCase();
+  const pkey = `${id}::${dk}`;
   // Keep a snapshot copy so subsequent mutations don't sneak past pending tracking.
   const snapshot = (Array.isArray(draft) ? draft : []).map((d) => ({ ...d }));
-  adminState.pending.productDatabases.set(id, snapshot);
+  // 스냅샷에 datasource 차원을 부착(commit 시 PUT body 에 사용).
+  snapshot._dsKey = dk;
+  adminState.pending.productDatabases.set(pkey, snapshot);
   refreshPendingUI();
 }
 
@@ -2499,10 +2505,14 @@ function buildPendingWidgetBody() {
     const base = adminState.products.find((p) => Number(p.id) === Number(id));
     addRow(`제품 정보 · ${base ? base.name : `#${id}`} · ${describePatchKeys(patch)}`);
   });
-  adminState.pending.productDatabases.forEach((draft, id) => {
+  adminState.pending.productDatabases.forEach((draft, pkey) => {
+    // TASK-0228 (1:N): 복합 키 `productId::dsKey` 파싱(레거시 단일 id 키 호환).
+    const _ps = String(pkey).split("::");
+    const id = Number(_ps[0]);
+    const dk = (_ps.length > 1 ? _ps[1] : "");
     const base = adminState.products.find((p) => Number(p.id) === Number(id));
     const c = Array.isArray(draft) ? draft.length : 0;
-    addRow(`제품 DB · ${base ? base.name : `#${id}`} · ${c} schema`);
+    addRow(`제품 DB · ${base ? base.name : `#${id}`}${dk ? ` · [${dk}]` : ""} · ${c} schema`);
   });
   adminState.pending.systemPrompts.forEach((entry) => {
     const scopeLabel = { product: "제품", role: "역할", account: "계정" }[entry.scope] || entry.scope;
@@ -3843,14 +3853,22 @@ async function applyAllPending() {
     }
   }
 
-  // Product databases (full replace per product)
-  for (const [productId, draft] of productDbEntries) {
+  // Product databases (full replace per (product, datasource))
+  for (const [pkey, draft] of productDbEntries) {
+    // TASK-0228 (1:N): 복합 키 `productId::dsKey` 파싱. 레거시(단일 id) 키도 호환.
+    const _ps = String(pkey).split("::");
+    const productId = Number(_ps[0]);
+    const dsKey = (draft && draft._dsKey != null) ? String(draft._dsKey) : (_ps.length > 1 ? _ps[1] : "");
     try {
-      await apiFetch(`/api/admin/products/${Number(productId)}/databases`, {
+      const body = { databases: Array.isArray(draft) ? draft.map((d) => ({ ...d })) : [] };
+      // datasource 차원이 지정됐으면 함께 전송(백엔드가 그 datasource 행만 교체). 빈 문자열은 레거시 단일.
+      if (dsKey) body.datasource_key = dsKey;
+      await apiFetch(`/api/admin/products/${productId}/databases`, {
         method: "PUT",
-        body: JSON.stringify({ databases: Array.isArray(draft) ? draft : [] }),
+        body: JSON.stringify(body),
       });
-      adminState.pending.productDatabases.delete(productId);
+      adminState.pending.productDatabases.delete(pkey);
+      adminState.productDbDraft.delete(`${productId}::${dsKey}`);
       adminState.productDbDraft.delete(Number(productId));
       ok += 1;
     } catch (error) {
@@ -4638,16 +4656,58 @@ function renderProductDetail() {
   dbHint.textContent = "선택한 데이터 소스에서 이 제품이 접근할 데이터베이스. 시스템 DB(메타데이터)는 고정됩니다.";
   dbSection.appendChild(dbHint);
 
+  // TASK-0228 (1:N): 제품이 ≥2 datasource 에 바인딩됐으면 "편집 대상 데이터소스" 선택기를 보인다.
+  // 각 datasource 의 접근DB 를 독립 편집한다(차원 격리). 단일 바인딩이면 선택기 비표시(종전 UX).
+  let _switchEditDs = () => {};  // forward hook (redrawChips/buildPicker/_refreshAccessibleDbs 정의 후 채움)
+  let _editDsSelect = null;
+  if ((product.datasources || []).length >= 2) {
+    const editRow = document.createElement("div");
+    editRow.className = "admin-db-picker-row";
+    const editLbl = document.createElement("span");
+    editLbl.className = "admin-detail-hint";
+    editLbl.textContent = "편집 대상 데이터소스: ";
+    _editDsSelect = document.createElement("select");
+    (product.datasources || []).forEach((b) => {
+      const opt = document.createElement("option");
+      opt.value = b.datasource_key;
+      opt.textContent = b.datasource_key + (b.is_primary ? " (기본)" : "");
+      _editDsSelect.appendChild(opt);
+    });
+    _editDsSelect.value = _editDsKey || (product.datasources[0] || {}).datasource_key || "";
+    _editDsSelect.addEventListener("change", () => { _switchEditDs(_editDsSelect.value); });
+    editRow.append(editLbl, _editDsSelect);
+    dbSection.appendChild(editRow);
+  }
+
   // TASK-0223: 접근 가능 DB 기준 insight-worker 분석 완료율 (전체 % + DB별 breakdown).
   dbSection.appendChild(buildProductCoverageDetail(product));
 
-  // pending 우선, 다음으로 fresh draft, 최후로 서버 값.
-  const pendingDraft = adminState.pending.productDatabases.get(Number(product.id));
-  const baseDraft = pendingDraft
-    ? pendingDraft.map((d) => ({ ...d }))
-    : (adminState.productDbDraft.get(Number(product.id)) || (product.databases || []).map((d) => ({ ...d })));
-  const draft = baseDraft;
-  adminState.productDbDraft.set(Number(product.id), draft);
+  // TASK-0228 (1:N): 접근DB 편집은 **편집 대상 datasource** 차원으로 분리한다. _editDsKey 는 현재
+  // 편집 중인 datasource 라벨(기본=primary). draft 는 그 datasource 의 DB 행만 담는다.
+  //  - product.databases 의 각 행은 datasource_key 를 가진다(P-B). null/'' 은 레거시 단일 차원.
+  //  - 단일 바인딩 제품은 _editDsKey=primary(또는 '') 1개라 종전과 동일하게 동작.
+  let _editDsKey = (product.datasource_key || "");  // 기본 편집 대상 = primary
+  // 편집 대상 datasource 의 서버 DB 행만 필터(datasource_key 매칭; 레거시 '' 행은 빈 키 편집 시 포함).
+  const _serverDbsFor = (dsk) => {
+    const want = String(dsk || "").trim().toLowerCase();
+    return (product.databases || [])
+      .filter((d) => String(d.datasource_key || "").trim().toLowerCase() === want)
+      .map((d) => ({ ...d }));
+  };
+  // draft 는 letrec — 편집 대상 datasource 변경 시 재구성(재할당). pending 우선, 다음 fresh draft, 최후 서버.
+  const _draftKeyFor = (dsk) => `${Number(product.id)}::${String(dsk || "").trim().toLowerCase()}`;
+  const _loadDraft = (dsk) => {
+    const pend = adminState.pending.productDatabases.get(_draftKeyFor(dsk));
+    if (pend) return pend.map((d) => ({ ...d }));
+    const fresh = adminState.productDbDraft.get(_draftKeyFor(dsk));
+    if (fresh) return fresh;
+    return _serverDbsFor(dsk);
+  };
+  // draft 는 in-place 변경하는 안정 컨테이너(closure 가 참조 유지). datasource 전환 시 내용만 교체.
+  const draft = [];
+  const _swapDraftContents = (arr) => { draft.length = 0; (arr || []).forEach((d) => draft.push(d)); };
+  _swapDraftContents(_loadDraft(_editDsKey));
+  adminState.productDbDraft.set(_draftKeyFor(_editDsKey), draft);
 
   const chipWrap = document.createElement("div");
   chipWrap.className = "cov-db-wrap";
@@ -4699,7 +4759,7 @@ function renderProductDetail() {
           }
           if (!draft.some((d) => String(d.schema_name).toLowerCase() === v)) {
             draft.push({ schema_name: dsCaseInsensitive ? raw : v, description: "", sort_order: (draft.length + 1) * 10 });
-            setProductDatabasesPending(product.id, draft);
+            setProductDatabasesPending(product.id, draft, _editDsKey);
             redrawChips();
           }
         } else {
@@ -4707,7 +4767,7 @@ function renderProductDetail() {
           const idx = draft.findIndex((d) => String(d.schema_name).toLowerCase() === v);
           if (idx !== -1) {
             draft.splice(idx, 1);
-            setProductDatabasesPending(product.id, draft);
+            setProductDatabasesPending(product.id, draft, _editDsKey);
             redrawChips();
           }
         }
@@ -4763,7 +4823,7 @@ function renderProductDetail() {
         x.setAttribute("aria-label", `${entry.schema_name} 접근 제거`);
         x.addEventListener("click", () => {
           draft.splice(idx, 1);
-          setProductDatabasesPending(product.id, draft);
+          setProductDatabasesPending(product.id, draft, _editDsKey);
           redrawChips();
           buildPicker();
         });
@@ -4849,6 +4909,19 @@ function renderProductDetail() {
     buildPicker();
   };
 
+  // TASK-0228 (1:N): 편집 대상 datasource 전환 — 현재 draft 를 그 datasource 키로 저장 보존하고,
+  // 새 datasource 의 draft 를 로드 + 그 datasource 의 서버 DB 목록으로 picker 갱신.
+  _switchEditDs = (newKey) => {
+    const nk = String(newKey || "").trim().toLowerCase();
+    if (nk === String(_editDsKey || "").trim().toLowerCase()) return;
+    // 현재 편집 중 draft 를 현재 키 슬롯에 보존(미저장 변경 유지).
+    adminState.productDbDraft.set(_draftKeyFor(_editDsKey), draft.map((d) => ({ ...d })));
+    _editDsKey = nk;
+    _swapDraftContents(_loadDraft(nk));
+    adminState.productDbDraft.set(_draftKeyFor(nk), draft);
+    _refreshAccessibleDbs(nk);  // 새 datasource 의 DB picker + redraw
+  };
+
   // ── 멀티 datasource (P2): product → datasource 바인딩 + 연결테스트 (TASK-0206: 접근가능DB 위로 이동) ──
   // 백엔드 PATCH datasource 는 console.manage 권한이라 컨트롤도 그 권한으로 게이트(불일치 방지).
   {
@@ -4869,13 +4942,90 @@ function renderProductDetail() {
     }
     dsSection.appendChild(dsHint);
 
+    // ── TASK-0228 (1:N): 바인딩된 datasource 칩 목록(primary 표시 + 제거). 여러 데이터소스를 한
+    // 제품에 연결할 수 있다. 단일 바인딩이면 칩 1개(레거시와 동일 동작). ──────────────────────────
+    const dsChips = document.createElement("div");
+    dsChips.className = "admin-chip-wrap";
+    dsChips.style.marginBottom = "8px";
+    const _renderDsChips = () => {
+      dsChips.innerHTML = "";
+      const binds = (product.datasources || []);
+      if (!binds.length) {
+        const none = document.createElement("span");
+        none.className = "admin-detail-hint";
+        none.textContent = "(바인딩된 데이터소스 없음 — 기본 단일 MySQL)";
+        dsChips.appendChild(none);
+        return;
+      }
+      binds.forEach((b) => {
+        const chip = document.createElement("span");
+        chip.className = "admin-chip" + (b.is_primary ? " admin-chip--primary" : "");
+        const label = document.createElement("span");
+        label.textContent = b.datasource_key + (b.is_primary ? " (기본)" : "");
+        chip.appendChild(label);
+        if (canDs) {
+          // primary 가 아니면 "기본 지정" 버튼.
+          if (!b.is_primary) {
+            const star = document.createElement("button");
+            star.type = "button"; star.className = "admin-chip-action"; star.textContent = "★";
+            star.title = "기본(primary) 데이터소스로 지정";
+            star.addEventListener("click", async () => {
+              try {
+                await apiFetch(`/api/admin/products/${product.id}/datasources`, {
+                  method: "POST",
+                  body: JSON.stringify({ datasource_key: b.datasource_key, is_primary: true }),
+                });
+                await _reloadProductDatasources();
+                showToast(`'${b.datasource_key}' 를 기본 데이터소스로 지정`);
+              } catch (e) { showToast(e.message || "기본 지정 실패", true); }
+            });
+            chip.appendChild(star);
+          }
+          const rm = document.createElement("button");
+          rm.type = "button"; rm.className = "admin-chip-remove"; rm.textContent = "×";
+          rm.title = "이 데이터소스 바인딩 제거";
+          rm.addEventListener("click", async () => {
+            if (!confirm(`데이터소스 '${b.datasource_key}' 바인딩을 제거할까요?\n(이 데이터소스의 접근 가능 DB 설정도 함께 삭제됩니다.)`)) return;
+            try {
+              await apiFetch(`/api/admin/products/${product.id}/datasources/${encodeURIComponent(b.datasource_key)}`, { method: "DELETE" });
+              await _reloadProductDatasources();
+              showToast(`'${b.datasource_key}' 바인딩 제거됨`);
+            } catch (e) { showToast(e.message || "바인딩 제거 실패", true); }
+          });
+          chip.appendChild(rm);
+        }
+        dsChips.appendChild(chip);
+      });
+    };
+    // 바인딩 변경 후 product.datasources / datasource_key 를 서버에서 다시 읽어 칩·select 동기화.
+    const _reloadProductDatasources = async () => {
+      try {
+        const r = await apiFetch(`/api/admin/products/${product.id}/datasources`);
+        const binds = (r && r.datasources) || [];
+        product.datasources = binds.map((d) => ({
+          datasource_key: d.datasource_key, is_primary: d.is_primary, sort_order: d.sort_order,
+        }));
+        const prim = binds.find((d) => d.is_primary);
+        product.datasource_key = prim ? prim.datasource_key : null;
+        const p = (adminState.products || []).find((x) => Number(x.id) === Number(product.id));
+        if (p) { p.datasources = product.datasources; p.datasource_key = product.datasource_key; }
+        _selectedDatasourceKey = product.datasource_key || "";
+        _renderDsChips();
+        dsSelect.value = "";
+        _refreshAccessibleDbs(_selectedDatasourceKey);
+      } catch (e) { showToast(e.message || "데이터소스 목록 갱신 실패", true); }
+    };
+    _renderDsChips();
+    dsSection.appendChild(dsChips);
+
     const dsRow = document.createElement("div");
     dsRow.className = "admin-db-picker-row";
     const dsSelect = document.createElement("select");
     dsSelect.disabled = !canDs;
     const optDefault = document.createElement("option");
     optDefault.value = "";
-    optDefault.textContent = "(기본 단일 MySQL)";
+    optDefault.textContent = (product.datasources && product.datasources.length)
+      ? "(＋ 데이터소스 추가…)" : "(기본 단일 MySQL)";
     dsSelect.appendChild(optDefault);
     (adminState.datasources || []).forEach((ds) => {
       const opt = document.createElement("option");
@@ -4883,7 +5033,7 @@ function renderProductDetail() {
       opt.textContent = `${ds.key} — ${ds.engine || "mysql"} @ ${ds.host || "?"}:${ds.port || ""}`;
       dsSelect.appendChild(opt);
     });
-    dsSelect.value = product.datasource_key || "";
+    dsSelect.value = (product.datasources && product.datasources.length) ? "" : (product.datasource_key || "");
 
     const dsResult = document.createElement("span");
     dsResult.className = "admin-ds-test-result";
@@ -4894,21 +5044,35 @@ function renderProductDetail() {
       const val = dsSelect.value || null;
       dsResult.textContent = "";
       dsResult.className = "admin-ds-test-result";
+      const hadBindings = !!(product.datasources && product.datasources.length);
       try {
-        await apiFetch(`/api/admin/products/${product.id}/datasource`, {
-          method: "PATCH",
-          body: JSON.stringify({ datasource_key: val, datasource_database: null }),
-        });
-        // 로컬 product 객체 갱신 (재로드 없이 일관). datasource 변경 시 참조 DB 초기화.
-        product.datasource_database = null;
-        product.datasource_key = val;
-        const p = (adminState.products || []).find((x) => Number(x.id) === Number(product.id));
-        if (p) { p.datasource_key = val; p.datasource_database = null; }
-        _selectedDatasourceKey = val || "";
-        showToast(val ? `datasource '${val}' 바인딩됨` : "기본 MySQL 로 환원됨");
-        _refreshAccessibleDbs(_selectedDatasourceKey);  // 접근가능DB 목록 datasource-driven 갱신
+        if (hadBindings) {
+          // TASK-0228 (1:N): 기존 바인딩이 있으면 드롭다운 선택은 **추가**(POST). 빈 값은 무시.
+          if (!val) { dsSelect.value = ""; return; }
+          await apiFetch(`/api/admin/products/${product.id}/datasources`, {
+            method: "POST",
+            body: JSON.stringify({ datasource_key: val, is_primary: false }),
+          });
+          await _reloadProductDatasources();
+          showToast(`데이터소스 '${val}' 추가됨`);
+        } else {
+          // 첫 바인딩(또는 기본 환원): 기존 PATCH 경로(primary 설정 + join 동기화는 백엔드가 처리).
+          await apiFetch(`/api/admin/products/${product.id}/datasource`, {
+            method: "PATCH",
+            body: JSON.stringify({ datasource_key: val, datasource_database: null }),
+          });
+          product.datasource_database = null;
+          product.datasource_key = val;
+          product.datasources = val ? [{ datasource_key: val, is_primary: true, sort_order: 0 }] : [];
+          const p = (adminState.products || []).find((x) => Number(x.id) === Number(product.id));
+          if (p) { p.datasource_key = val; p.datasource_database = null; p.datasources = product.datasources; }
+          _selectedDatasourceKey = val || "";
+          _renderDsChips();
+          showToast(val ? `datasource '${val}' 바인딩됨` : "기본 MySQL 로 환원됨");
+          _refreshAccessibleDbs(_selectedDatasourceKey);
+        }
       } catch (error) {
-        dsSelect.value = product.datasource_key || "";
+        dsSelect.value = "";
         showToast(error.message || "datasource 바인딩 실패", true);
       }
     });

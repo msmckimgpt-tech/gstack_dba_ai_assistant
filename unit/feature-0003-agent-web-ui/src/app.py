@@ -2345,8 +2345,11 @@ ORDER BY IsDefault DESC, SortOrder ASC, Id ASC
     out: list[dict[str, Any]] = []
     for row in rows:
         _dsk = row.get("datasource_key")
+        _pid = int(row.get("id") or 0)
+        # TASK-0228 (1:N): 제품에 바인딩된 전체 datasource 목록(primary 포함). 단일 바인딩 제품은 1건.
+        _ds_list = _list_product_datasources(conn, _pid) if _pid else []
         out.append({
-            "id": int(row.get("id") or 0),
+            "id": _pid,
             "product_key": str(row.get("product_key") or ""),
             "name": str(row.get("name") or ""),
             "description": str(row.get("description") or ""),
@@ -2354,8 +2357,10 @@ ORDER BY IsDefault DESC, SortOrder ASC, Id ASC
             "is_default": bool(row.get("is_default")),
             "sort_order": int(row.get("sort_order") or 0),
             "default_role_access": bool(row.get("default_role_access", True)),
-            # 멀티 datasource (P2): product 가 바인딩된 datasource 키 (None=기본 단일 MySQL).
+            # 멀티 datasource (P2): primary datasource 키 (None=기본 단일 MySQL). 하위호환 단일 필드.
             "datasource_key": (str(_dsk).lower() if _dsk else None),
+            # TASK-0228 (1:N): 전체 바인딩 목록 [{datasource_key, is_primary, sort_order}].
+            "datasources": _ds_list,
             "created_at": str(row.get("created_at") or ""),
             "updated_at": str(row.get("updated_at") or ""),
         })
@@ -2364,22 +2369,38 @@ ORDER BY IsDefault DESC, SortOrder ASC, Id ASC
 
 def _list_product_databases(conn, product_id: int) -> list[dict[str, Any]]:
     cur = conn.cursor(dictionary=True)
-    cur.execute(
-        """
+    # TASK-0228 (1:N): DatasourceKey 차원 포함(미이전 스키마는 컬럼 부재 → 폴백). UI 가 datasource 별 그룹핑.
+    try:
+        cur.execute(
+            """
+SELECT SchemaName AS schema_name, Description AS description, SortOrder AS sort_order,
+       LOWER(DatasourceKey) AS datasource_key
+FROM WebProductDatabases
+WHERE ProductId = %s
+ORDER BY DatasourceKey ASC, SortOrder ASC, SchemaName ASC
+            """,
+            (int(product_id),),
+        )
+        rows = cur.fetchall() or []
+    except Exception:
+        cur.execute(
+            """
 SELECT SchemaName AS schema_name, Description AS description, SortOrder AS sort_order
 FROM WebProductDatabases
 WHERE ProductId = %s
 ORDER BY SortOrder ASC, SchemaName ASC
-        """,
-        (int(product_id),),
-    )
-    rows = cur.fetchall() or []
+            """,
+            (int(product_id),),
+        )
+        rows = cur.fetchall() or []
     cur.close()
     return [
         {
             "schema_name": str(r.get("schema_name") or ""),
             "description": str(r.get("description") or ""),
             "sort_order": int(r.get("sort_order") or 0),
+            # 미이전 행은 datasource_key 키 부재 → 빈 문자열(레거시 단일 차원).
+            "datasource_key": (str(r.get("datasource_key") or "") or None),
         }
         for r in rows
     ]
@@ -2402,16 +2423,93 @@ def _product_has_datasource(conn, product_id: int) -> bool:
     """TASK-0206 re-gate(5차): 제품에 datasource 가 바인딩(WebProducts.DatasourceKey 비-NULL)되어 있는지.
 
     DB-단위 모델에서 데이터는 데이터소스에 종속된다 — 미바인딩 제품은 접근 0(allowed=[]). 조회 실패 시
-    보수적으로 False(미바인딩 취급, fail-closed)."""
+    보수적으로 False(미바인딩 취급, fail-closed).
+
+    TASK-0228 (1:N): primary(WebProducts.DatasourceKey) 가 NULL 이어도 join 테이블(WebProductDatasources)에
+    바인딩이 있으면 True. 단일 바인딩(레거시) 제품은 종전과 동일하게 primary 만으로 True."""
     if product_id <= 0:
         return False
     cur = conn.cursor()
     try:
         cur.execute("SELECT DatasourceKey FROM WebProducts WHERE Id = %s LIMIT 1", (int(product_id),))
         r = cur.fetchone()
-        return bool(r and r[0] and str(r[0]).strip())
+        if r and r[0] and str(r[0]).strip():
+            return True
+        # 1:N: primary 미설정이어도 join 바인딩이 있으면 datasource 보유로 본다.
+        try:
+            cur.execute(
+                "SELECT 1 FROM WebProductDatasources WHERE ProductId = %s LIMIT 1", (int(product_id),)
+            )
+            return bool(cur.fetchone())
+        except Exception:
+            return False
     except Exception:
         return False
+    finally:
+        cur.close()
+
+
+def _list_product_datasources(conn, product_id: int) -> list[dict[str, Any]]:
+    """TASK-0228 (1:N): 제품에 바인딩된 datasource 키 목록(primary 우선). 미이전/테이블 부재 시
+    레거시 단일 바인딩(WebProducts.DatasourceKey)으로 폴백 — 단일 바인딩 제품은 항상 1건 반환.
+
+    반환: [{"datasource_key": str, "is_primary": bool, "sort_order": int}, ...]
+    """
+    if product_id <= 0:
+        return []
+    out: list[dict[str, Any]] = []
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute(
+                "SELECT LOWER(DatasourceKey), IsPrimary, SortOrder FROM WebProductDatasources "
+                "WHERE ProductId = %s ORDER BY IsPrimary DESC, SortOrder ASC, DatasourceKey ASC",
+                (int(product_id),),
+            )
+            for r in cur.fetchall() or []:
+                if r and r[0]:
+                    out.append({
+                        "datasource_key": str(r[0]).strip().lower(),
+                        "is_primary": bool(r[1]),
+                        "sort_order": int(r[2] or 0),
+                    })
+        except Exception:
+            out = []
+        if not out:
+            # 폴백: 레거시 단일 바인딩(join 미이전 또는 테이블 부재).
+            cur.execute("SELECT DatasourceKey FROM WebProducts WHERE Id = %s LIMIT 1", (int(product_id),))
+            r = cur.fetchone()
+            if r and r[0] and str(r[0]).strip():
+                out.append({"datasource_key": str(r[0]).strip().lower(), "is_primary": True, "sort_order": 0})
+    finally:
+        cur.close()
+    return out
+
+
+def _product_allowed_schemas_for_datasource(conn, product_id: int, datasource_key: str | None) -> list[str]:
+    """TASK-0228 (1:N): 특정 (product, datasource) 의 접근가능 스키마(DB) 목록 — datasource 차원 격리.
+
+    datasource_key=None/'' 은 레거시(단일 MySQL/미차원화) 행 — DatasourceKey='' 으로 저장된 backfill
+    이전 행 또는 미바인딩 제품. 매칭은 소문자 비교."""
+    if product_id <= 0:
+        return []
+    dsk = (str(datasource_key).strip().lower() if datasource_key else "")
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute(
+                "SELECT SchemaName FROM WebProductDatabases WHERE ProductId = %s AND LOWER(DatasourceKey) = %s "
+                "ORDER BY SortOrder, SchemaName",
+                (int(product_id), dsk),
+            )
+            return [str(r[0]) for r in (cur.fetchall() or []) if r and r[0]]
+        except Exception:
+            # DatasourceKey 컬럼 부재(미이전) → 차원 없는 레거시 조회로 폴백.
+            cur.execute(
+                "SELECT SchemaName FROM WebProductDatabases WHERE ProductId = %s ORDER BY SortOrder, SchemaName",
+                (int(product_id),),
+            )
+            return [str(r[0]) for r in (cur.fetchall() or []) if r and r[0]]
     finally:
         cur.close()
 
@@ -3241,6 +3339,115 @@ def _ensure_web_datasources_schema(conn) -> None:
             cur.execute("ALTER TABLE WebDatasources ADD COLUMN InsightEnabled TINYINT(1) NOT NULL DEFAULT 1")
         except Exception:
             pass
+    finally:
+        cur.close()
+
+
+def _ensure_web_product_datasources_schema(conn) -> None:
+    """TASK-0228 (멀티 datasource 1:N): 제품 ↔ 여러 datasource 바인딩 join 테이블 + 접근DB 의
+    datasource 차원화. 멱등 CREATE/ALTER + 레거시(`WebProducts.DatasourceKey` 단일 바인딩) 이전.
+
+    **하위호환 전략 (blast-radius 0)**: `WebProducts.DatasourceKey` 는 **primary datasource** 포인터로
+    그대로 유지된다(기존 `_resolve_product_datasource`·`_product_has_datasource`·insight `WHERE
+    p.DatasourceKey=` 경로 무수정 동작). `WebProductDatasources` 는 primary 를 포함한 **전체 바인딩**을
+    담는다(primary 는 IsPrimary=1). 둘은 동기화된다 — 단일 바인딩 제품은 기존과 100% 동일하게 동작하고,
+    1:N 은 join 테이블을 읽는 신규 경로만 사용한다.
+
+    **접근 DB 차원화**: `WebProductDatabases` 에 `DatasourceKey` 를 추가해 접근가능 DB 목록을
+    (product, datasource) 단위로 분리한다 — datasource A 의 스키마가 datasource B 컨텍스트로 새지
+    않도록(보안 경계). 레거시 행(DatasourceKey='')은 제품의 primary datasource 로 backfill 한다.
+    PK 를 `(ProductId, SchemaName)` → `(ProductId, DatasourceKey, SchemaName)` 로 이전해 같은 스키마명이
+    서로 다른 datasource 에 공존할 수 있게 한다(MSSQL DB명 충돌 대비).
+    """
+    cur = conn.cursor()
+    try:
+        # 1) 제품 ↔ datasource 다대다 바인딩 (primary 포함, IsPrimary=1).
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebProductDatasources (
+                ProductId BIGINT NOT NULL,
+                DatasourceKey VARCHAR(64) NOT NULL,
+                SortOrder INT NOT NULL DEFAULT 100,
+                IsPrimary TINYINT(1) NOT NULL DEFAULT 0,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (ProductId, DatasourceKey),
+                INDEX IX_WebProductDatasources_Ds (DatasourceKey)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+        # 2) 레거시 단일 바인딩(WebProducts.DatasourceKey)을 join 테이블로 1회 이전(primary 로 마킹).
+        #    멱등: INSERT IGNORE — 이미 있는 (product, ds) 는 skip.
+        try:
+            cur.execute(
+                """
+                INSERT IGNORE INTO WebProductDatasources (ProductId, DatasourceKey, SortOrder, IsPrimary)
+                SELECT Id, LOWER(DatasourceKey), 0, 1 FROM WebProducts
+                WHERE DatasourceKey IS NOT NULL AND TRIM(DatasourceKey) <> ''
+                """
+            )
+        except Exception:
+            pass
+        # 3) WebProductDatabases 에 DatasourceKey 차원 추가(접근DB 를 datasource 별로 격리).
+        #    REV-0228 MAJOR-1: 컬럼 존재를 먼저 확인해 멱등 보장 + 추가 실패를 가시화(silent pass 금지).
+        #    이 컬럼은 멀티 datasource 격리의 핵심 — 부재 시 런타임이 fail-closed(접근 0) 하므로
+        #    누출은 없으나, 운영자가 마이그레이션 비정상을 알 수 있어야 한다.
+        cur.execute(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() "
+            "AND TABLE_NAME='WebProductDatabases' AND COLUMN_NAME='DatasourceKey'"
+        )
+        _has_dsk_col = int((cur.fetchone() or [0])[0]) > 0
+        if not _has_dsk_col:
+            try:
+                cur.execute(
+                    "ALTER TABLE WebProductDatabases ADD COLUMN DatasourceKey VARCHAR(64) NOT NULL DEFAULT ''"
+                )
+                _has_dsk_col = True
+            except Exception as _alter_exc:
+                logging.getLogger(__name__).error(
+                    "[ds-1n] WebProductDatabases.DatasourceKey 컬럼 추가 실패 — 멀티 datasource 격리 "
+                    "비활성(런타임 fail-closed). 운영자 수동 ALTER 필요: %r", _alter_exc,
+                )
+        # 4) 레거시 접근DB 행(DatasourceKey='')을 제품의 primary datasource 키로 backfill.
+        #    제품이 datasource 미바인딩(NULL)이면 ''(레거시 단일 MySQL) 유지 — 그 행은 primary=None 매칭.
+        #    컬럼이 존재할 때만(REV-0228 MAJOR-1: 컬럼 추가 실패 시 backfill/PK 이전 모두 skip).
+        if _has_dsk_col:
+            try:
+                cur.execute(
+                    """
+                    UPDATE WebProductDatabases pd
+                    JOIN WebProducts p ON p.Id = pd.ProductId
+                    SET pd.DatasourceKey = LOWER(p.DatasourceKey)
+                    WHERE pd.DatasourceKey = ''
+                      AND p.DatasourceKey IS NOT NULL AND TRIM(p.DatasourceKey) <> ''
+                    """
+                )
+            except Exception as _bf_exc:
+                logging.getLogger(__name__).error(
+                    "[ds-1n] WebProductDatabases.DatasourceKey backfill 실패: %r", _bf_exc,
+                )
+            # 5) PK 이전: (ProductId, SchemaName) → (ProductId, DatasourceKey, SchemaName). 멱등 가드 —
+            #    information_schema 로 현재 PK 컬럼 수를 확인해 미이전 시에만 DROP/ADD(재실행 방지).
+            #    DROP+ADD 는 단일 ALTER 라 InnoDB 에서 atomic — 부분 적용 없음. 실패는 loud 로깅(silent 금지).
+            try:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) FROM information_schema.STATISTICS
+                    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'WebProductDatabases'
+                      AND INDEX_NAME = 'PRIMARY'
+                    """
+                )
+                _pk_cols = int((cur.fetchone() or [0])[0])
+                if _pk_cols < 3:
+                    cur.execute(
+                        "ALTER TABLE WebProductDatabases DROP PRIMARY KEY, "
+                        "ADD PRIMARY KEY (ProductId, DatasourceKey, SchemaName)"
+                    )
+            except Exception as _pk_exc:
+                logging.getLogger(__name__).error(
+                    "[ds-1n] WebProductDatabases PK 이전 실패 — 같은 스키마명이 다른 datasource 에 "
+                    "공존 불가(중복 PK). 운영자 확인 필요: %r", _pk_exc,
+                )
+        conn.commit()
     finally:
         cur.close()
 
@@ -4416,6 +4623,9 @@ def _ensure_web_tables():
         _migrate_mssql_products_to_db_level(conn)
         # TASK-0211: .env 분석 데이터소스(DS_*)를 DB 레지스트리로 이전 (slow path).
         _migrate_env_datasources_to_db(conn)
+        # TASK-0228 (멀티 datasource 1:N): 제품 ↔ 여러 datasource join 테이블 + 접근DB 차원화 (slow path).
+        # WebProducts/WebProductDatabases 가 위에서 보장된 뒤 실행돼야 한다(ALTER/INSERT 의존).
+        _ensure_web_product_datasources_schema(conn)
         # REQ-20260514-0001: 공유 링크 테이블 보장 (slow path).
         _ensure_web_conversation_shares_schema(conn)
         # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column (slow path).
@@ -9792,6 +10002,9 @@ async def admin_list_datasources(request: Request) -> JSONResponse:
                 ]
         finally:
             cur.close()
+        # TASK-0228 (1:N): 각 product 에 전체 datasource 바인딩 목록 부착(primary 포함, 단일 바인딩=1건).
+        for _p in products:
+            _p["datasources"] = _list_product_datasources(conn, int(_p["id"]))
         from modules import cred_crypto as _cc
         return JSONResponse({
             "enabled": bool(AGENT_MULTI_DATASOURCE_ENABLED),
@@ -9886,9 +10099,198 @@ async def admin_set_product_datasource(product_id: int, request: Request) -> JSO
             resource_id=str(product_id),
             change_json={"datasource_key": key, **({"datasource_database": product_db} if has_db_field else {})},
         )
+        # TASK-0228 (1:N): primary 바인딩을 join 테이블에도 동기화한다.
+        #  - key 가 None(환원): 이 제품의 모든 primary 마킹 해제(다른 바인딩이 있으면 정렬상 보조로 강등).
+        #  - key 설정: join 에 INSERT IGNORE + 그 키만 IsPrimary=1, 나머지는 0.
+        try:
+            cur2 = conn.cursor()
+            try:
+                cur2.execute("UPDATE WebProductDatasources SET IsPrimary=0 WHERE ProductId=%s", (int(product_id),))
+                if key is not None:
+                    cur2.execute(
+                        "INSERT IGNORE INTO WebProductDatasources (ProductId, DatasourceKey, SortOrder, IsPrimary) "
+                        "VALUES (%s, %s, 0, 1)", (int(product_id), key))
+                    cur2.execute(
+                        "UPDATE WebProductDatasources SET IsPrimary=1 WHERE ProductId=%s AND LOWER(DatasourceKey)=%s",
+                        (int(product_id), key))
+            finally:
+                cur2.close()
+        except Exception:
+            pass  # join 테이블 부재(미이전) — primary 컬럼만으로 동작(하위호환)
         conn.commit()
         return JSONResponse({"product_id": int(product_id), "datasource_key": key,
                              **({"datasource_database": product_db} if has_db_field else {})})
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/products/{product_id}/datasources")
+async def admin_list_product_datasources(product_id: int, request: Request) -> JSONResponse:
+    """TASK-0228 (1:N): 제품에 바인딩된 datasource 목록 + 각 datasource 의 접근가능 DB.
+
+    console.access. 단일 바인딩(레거시) 제품도 primary 1건으로 반환(하위호환).
+    """
+    if product_id <= 0:
+        return _json_error("invalid product_id", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(actor, "console.access"):
+        conn.close()
+        return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT Id FROM WebProducts WHERE Id=%s LIMIT 1", (int(product_id),))
+            if not cur.fetchone():
+                return _json_error("product not found", 404)
+        finally:
+            cur.close()
+        binds = _list_product_datasources(conn, int(product_id))
+        out = []
+        for b in binds:
+            dsk = b["datasource_key"]
+            out.append({
+                "datasource_key": dsk,
+                "is_primary": b["is_primary"],
+                "sort_order": b["sort_order"],
+                "databases": _product_allowed_schemas_for_datasource(conn, int(product_id), dsk),
+            })
+        return JSONResponse({"product_id": int(product_id), "datasources": out})
+    finally:
+        conn.close()
+
+
+@app.post("/api/admin/products/{product_id}/datasources")
+async def admin_add_product_datasource(product_id: int, request: Request) -> JSONResponse:
+    """TASK-0228 (1:N): 제품에 datasource 바인딩 추가. console.access + console.manage + audit.
+
+    body: { datasource_key: str, is_primary?: bool }. 미등록 키 거부(레지스트리 검증). 첫 바인딩이면
+    자동 primary. is_primary=true 면 기존 primary 해제 + WebProducts.DatasourceKey 포인터도 갱신
+    (resolve/insight 의 primary 경로 정합)."""
+    from modules import datasources as _dsr
+    if product_id <= 0:
+        return _json_error("invalid product_id", 400)
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    raw_key = (data.get("datasource_key") if isinstance(data, dict) else None)
+    key = (str(raw_key).strip().lower() if raw_key not in (None, "") else None)
+    if not key:
+        return _json_error("datasource_key 는 필수입니다.", 400)
+    want_primary = bool(data.get("is_primary")) if isinstance(data, dict) else False
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not (_account_has_permission(actor, "console.access") and _account_has_permission(actor, "console.manage")):
+        conn.close()
+        return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+    # 레지스트리 검증(미등록 키 거부 — 오타 silent 폴백 차단, PATCH 와 동일 게이트).
+    if _dsr.resolve(conn, key) is None:
+        conn.close()
+        return _json_error(f"미등록 datasource 라벨: {key} (WebDatasources / .env 확인)", 400)
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT Id FROM WebProducts WHERE Id=%s LIMIT 1", (int(product_id),))
+            if not cur.fetchone():
+                return _json_error("product not found", 404)
+            # 현재 바인딩 수 — 첫 바인딩이면 강제 primary.
+            cur.execute("SELECT COUNT(*) FROM WebProductDatasources WHERE ProductId=%s", (int(product_id),))
+            existing = int((cur.fetchone() or [0])[0])
+            make_primary = want_primary or existing == 0
+            if make_primary:
+                cur.execute("UPDATE WebProductDatasources SET IsPrimary=0 WHERE ProductId=%s", (int(product_id),))
+            cur.execute(
+                "INSERT IGNORE INTO WebProductDatasources (ProductId, DatasourceKey, SortOrder, IsPrimary) "
+                "VALUES (%s, %s, %s, %s)",
+                (int(product_id), key, (existing + 1) * 10, 1 if make_primary else 0))
+            # 이미 존재하던 바인딩이면 INSERT IGNORE no-op → primary 의도면 명시 갱신.
+            if make_primary:
+                cur.execute(
+                    "UPDATE WebProductDatasources SET IsPrimary=1 WHERE ProductId=%s AND LOWER(DatasourceKey)=%s",
+                    (int(product_id), key))
+                # primary 포인터(WebProducts.DatasourceKey)도 동기화 — resolve/insight primary 경로 정합.
+                cur.execute("UPDATE WebProducts SET DatasourceKey=%s WHERE Id=%s", (key, int(product_id)))
+        finally:
+            cur.close()
+        record_audit_event(
+            conn, actor=_build_actor_from_request(request, actor, actor_type="account"),
+            action="admin.product.datasource.add", resource_type="product", resource_id=str(product_id),
+            change_json={"datasource_key": key, "is_primary": bool(make_primary)})
+        conn.commit()
+        return JSONResponse({"product_id": int(product_id), "datasource_key": key, "is_primary": bool(make_primary)})
+    finally:
+        conn.close()
+
+
+@app.delete("/api/admin/products/{product_id}/datasources/{key}")
+async def admin_remove_product_datasource(product_id: int, key: str, request: Request) -> JSONResponse:
+    """TASK-0228 (1:N): 제품에서 datasource 바인딩 제거. console.access + console.manage + audit.
+
+    제거 대상이 primary 였으면 남은 바인딩 중 첫째(SortOrder)를 새 primary 로 승격 + WebProducts.DatasourceKey
+    포인터 갱신(없으면 NULL). 해당 datasource 의 접근DB(WebProductDatabases) 행도 함께 삭제(고아 차단)."""
+    if product_id <= 0:
+        return _json_error("invalid product_id", 400)
+    k = (str(key).strip().lower() if key else "")
+    if not k:
+        return _json_error("invalid datasource key", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not (_account_has_permission(actor, "console.access") and _account_has_permission(actor, "console.manage")):
+        conn.close()
+        return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+    try:
+        cur = conn.cursor()
+        new_primary: str | None = None
+        try:
+            cur.execute(
+                "SELECT IsPrimary FROM WebProductDatasources WHERE ProductId=%s AND LOWER(DatasourceKey)=%s LIMIT 1",
+                (int(product_id), k))
+            row = cur.fetchone()
+            if not row:
+                return _json_error("이 제품에 바인딩되지 않은 datasource 입니다.", 404)
+            was_primary = bool(row[0])
+            cur.execute("DELETE FROM WebProductDatasources WHERE ProductId=%s AND LOWER(DatasourceKey)=%s",
+                        (int(product_id), k))
+            # 해당 datasource 의 접근DB 행도 정리(고아 allowlist 차단 — 보안 경계).
+            cur.execute("DELETE FROM WebProductDatabases WHERE ProductId=%s AND LOWER(DatasourceKey)=%s",
+                        (int(product_id), k))
+            if was_primary:
+                cur.execute(
+                    "SELECT LOWER(DatasourceKey) FROM WebProductDatasources WHERE ProductId=%s "
+                    "ORDER BY SortOrder ASC, DatasourceKey ASC LIMIT 1", (int(product_id),))
+                nr = cur.fetchone()
+                new_primary = (str(nr[0]).strip().lower() if nr and nr[0] else None)
+                if new_primary:
+                    cur.execute("UPDATE WebProductDatasources SET IsPrimary=1 WHERE ProductId=%s AND LOWER(DatasourceKey)=%s",
+                                (int(product_id), new_primary))
+                cur.execute("UPDATE WebProducts SET DatasourceKey=%s WHERE Id=%s", (new_primary, int(product_id)))
+        finally:
+            cur.close()
+        record_audit_event(
+            conn, actor=_build_actor_from_request(request, actor, actor_type="account"),
+            action="admin.product.datasource.remove", resource_type="product", resource_id=str(product_id),
+            change_json={"datasource_key": k, "new_primary": new_primary})
+        conn.commit()
+        return JSONResponse({"product_id": int(product_id), "removed": k, "new_primary": new_primary})
     finally:
         conn.close()
 
@@ -10295,13 +10697,40 @@ async def admin_delete_datasource(key: str, request: Request) -> JSONResponse:
             cur.execute("SELECT Id FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (k,))
             if not cur.fetchone():
                 return _json_error("datasource not found.", 404)
+            # TASK-0228 (1:N): primary 포인터(WebProducts.DatasourceKey) + join 테이블 양쪽에서 바인딩 탐색.
             cur.execute("SELECT Id, ProductKey FROM WebProducts WHERE LOWER(DatasourceKey)=%s", (k,))
-            bound = [{"id": int(r[0]), "product_key": str(r[1] or "")} for r in (cur.fetchall() or [])]
+            bound_map = {int(r[0]): str(r[1] or "") for r in (cur.fetchall() or [])}
+            try:
+                cur.execute(
+                    "SELECT p.Id, p.ProductKey FROM WebProductDatasources pds "
+                    "JOIN WebProducts p ON p.Id = pds.ProductId WHERE LOWER(pds.DatasourceKey)=%s", (k,))
+                for r in (cur.fetchall() or []):
+                    bound_map[int(r[0])] = str(r[1] or "")
+            except Exception:
+                pass
+            bound = [{"id": pid, "product_key": pk} for pid, pk in sorted(bound_map.items())]
             if bound and not force:
                 return JSONResponse({"deleted": False, "reason": "bound_products",
                                      "bound_products": bound}, status_code=409)
             if bound and force:
+                # primary 포인터 해제 + join 바인딩 제거 + 그 datasource 의 접근DB 행 정리(고아 차단).
                 cur.execute("UPDATE WebProducts SET DatasourceKey=NULL WHERE LOWER(DatasourceKey)=%s", (k,))
+                try:
+                    cur.execute("DELETE FROM WebProductDatasources WHERE LOWER(DatasourceKey)=%s", (k,))
+                    cur.execute("DELETE FROM WebProductDatabases WHERE LOWER(DatasourceKey)=%s", (k,))
+                    # primary 가 비워진 제품은 남은 join 바인딩 중 첫째를 새 primary 로 승격.
+                    for pid in bound_map:
+                        cur.execute(
+                            "SELECT LOWER(DatasourceKey) FROM WebProductDatasources WHERE ProductId=%s "
+                            "ORDER BY SortOrder ASC, DatasourceKey ASC LIMIT 1", (int(pid),))
+                        nr = cur.fetchone()
+                        if nr and nr[0]:
+                            cur.execute("UPDATE WebProductDatasources SET IsPrimary=1 WHERE ProductId=%s AND LOWER(DatasourceKey)=%s",
+                                        (int(pid), str(nr[0]).strip().lower()))
+                            cur.execute("UPDATE WebProducts SET DatasourceKey=%s WHERE Id=%s",
+                                        (str(nr[0]).strip().lower(), int(pid)))
+                except Exception:
+                    pass
             cur.execute("DELETE FROM WebDatasources WHERE DatasourceKey=%s", (k,))
         finally:
             cur.close()
@@ -14299,10 +14728,28 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
         cur.close()
         conn.close()
         return _json_error("product not found", 404)
+    # TASK-0228 (1:N): body 에 datasource_key 가 있으면 그 datasource 의 접근DB 만 교체(차원 격리).
+    # 없으면 레거시 단일 경로 — 제품의 primary datasource 키를 사용(하위호환).
+    _req_dskey = (str(data.get("datasource_key") or "").strip().lower() if isinstance(data, dict) else "")
     # re-gate(4차) MAJOR: 금지 DB 목록을 datasource 엔진별로 적용(MySQL 제품에서 'master' 가 정상 사용자
     # DB 일 수 있고, MSSQL 제품에서 'mysql' 이 정상 DB 일 수 있다 — cross-engine 과차단 방지).
     _ds_engine = "mysql"
-    _dskey = (str(_prow[1]).strip().lower() if len(_prow) > 1 and _prow[1] else "")
+    _primary_dskey = (str(_prow[1]).strip().lower() if len(_prow) > 1 and _prow[1] else "")
+    # TASK-0228: 차원 키 = 요청 datasource_key(있으면) 우선, 없으면 primary. 엔진 판정도 이 키 기준.
+    _dskey = _req_dskey or _primary_dskey
+    # 1:N 검증: 요청 datasource_key 가 제품에 실제 바인딩돼 있어야 한다(임의 키로 접근DB 주입 차단).
+    if _req_dskey:
+        try:
+            cur.execute(
+                "SELECT 1 FROM WebProductDatasources WHERE ProductId=%s AND LOWER(DatasourceKey)=%s LIMIT 1",
+                (int(product_id), _req_dskey))
+            _bound_ok = bool(cur.fetchone())
+        except Exception:
+            _bound_ok = (_req_dskey == _primary_dskey)  # join 미이전 폴백: primary 와 일치할 때만
+        if not _bound_ok:
+            cur.close()
+            conn.close()
+            return _json_error(f"datasource '{_req_dskey}' 는 이 제품에 바인딩되지 않았습니다.", 400)
     if _dskey:
         _found = False
         try:
@@ -14362,23 +14809,45 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
             "sort_order": int(item.get("sort_order") or (i + 1) * 10),
         })
     # before-state 캡처 — 현재 schemas list.
+    # TASK-0228 (1:N): datasource_key 차원이 있으면 그 datasource 의 행만 교체(다른 datasource 의
+    # 접근DB 는 보존 — 차원 격리). 없으면 레거시 단일 경로(_dskey = primary).
     cur = conn.cursor()
-    cur.execute(
-        "SELECT SchemaName FROM WebProductDatabases WHERE ProductId = %s ORDER BY SortOrder ASC",
-        (int(product_id),),
-    )
-    before_schemas = [str(r[0]) for r in (cur.fetchall() or [])]
+    _has_ds_col = True
+    try:
+        cur.execute(
+            "SELECT SchemaName FROM WebProductDatabases WHERE ProductId = %s AND LOWER(DatasourceKey) = %s "
+            "ORDER BY SortOrder ASC",
+            (int(product_id), _dskey),
+        )
+        before_schemas = [str(r[0]) for r in (cur.fetchall() or [])]
+    except Exception:
+        # DatasourceKey 컬럼 부재(미이전) → 차원 없는 레거시 조회.
+        _has_ds_col = False
+        cur.execute(
+            "SELECT SchemaName FROM WebProductDatabases WHERE ProductId = %s ORDER BY SortOrder ASC",
+            (int(product_id),),
+        )
+        before_schemas = [str(r[0]) for r in (cur.fetchall() or [])]
     cur.close()
     cur = conn.cursor()
-    cur.execute("DELETE FROM WebProductDatabases WHERE ProductId = %s", (int(product_id),))
-    for item in cleaned:
-        cur.execute(
-            """
-INSERT INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder)
-VALUES (%s, %s, %s, %s)
-            """,
-            (int(product_id), item["schema_name"], item["description"], int(item["sort_order"])),
-        )
+    if _has_ds_col:
+        # 이 datasource 차원의 행만 삭제(다른 datasource 행 보존).
+        cur.execute("DELETE FROM WebProductDatabases WHERE ProductId = %s AND LOWER(DatasourceKey) = %s",
+                    (int(product_id), _dskey))
+        for item in cleaned:
+            cur.execute(
+                "INSERT INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder, DatasourceKey) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (int(product_id), item["schema_name"], item["description"], int(item["sort_order"]), _dskey),
+            )
+    else:
+        cur.execute("DELETE FROM WebProductDatabases WHERE ProductId = %s", (int(product_id),))
+        for item in cleaned:
+            cur.execute(
+                "INSERT INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder) "
+                "VALUES (%s, %s, %s, %s)",
+                (int(product_id), item["schema_name"], item["description"], int(item["sort_order"])),
+            )
     cur.close()
     # TASK-0073 Phase A5: same-tx audit hook (product databases update).
     try:
@@ -14439,15 +14908,20 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
             (product_id,),
         )
         db_rows = cur2.fetchall()
-        # 제품 datasource 의 가능한 ds 식별자 집합 — fact_key 교차노출 차단용(아래 매칭에서 사용).
-        # 마이그레이션 진행 중 PG 에 라벨(winsql)·scope_key(mssql-해시) 혼재 → 둘 다 허용.
+        # TASK-0228 (1:N): 제품에 바인딩된 **모든** datasource 의 ds 식별자 집합을 모은다 — fact_key
+        # 교차노출 차단(아래 매칭). 마이그레이션 진행 중 PG 에 라벨·scope_key 혼재 → 양쪽 다 허용.
+        # 단일 바인딩(레거시)이면 primary 1건만(_list_product_datasources 폴백).
+        _bound = _list_product_datasources(conn2, int(product_id))
+        _bound_keys = [b["datasource_key"] for b in _bound if b.get("datasource_key")]
+        if not _bound_keys and prod_ds_key:
+            _bound_keys = [str(prod_ds_key).strip().lower()]
         ds_keys_allowed: list[str] = []
-        if prod_ds_key:
-            ds_keys_allowed.append(str(prod_ds_key).strip().lower())
+        for _bk in _bound_keys:
+            ds_keys_allowed.append(str(_bk).strip().lower())
             try:
                 cur2.execute(
-                    "SELECT Engine, Host, Port FROM WebDataSources WHERE DatasourceKey = %s",
-                    (prod_ds_key,),
+                    "SELECT Engine, Host, Port FROM WebDatasources WHERE DatasourceKey = %s",
+                    (_bk,),
                 )
                 ds_row = cur2.fetchone()
                 if ds_row:
@@ -14457,6 +14931,9 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
                         ds_keys_allowed.append(scope_key.strip().lower())
             except Exception:
                 pass
+        # dedup(순서 보존)
+        _seen_dsk: set[str] = set()
+        ds_keys_allowed = [k for k in ds_keys_allowed if k and not (k in _seen_dsk or _seen_dsk.add(k))]
     finally:
         conn2.close()
 
@@ -14615,7 +15092,30 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
     sections.append(f"제품명: {prod_name}")
     if prod_desc:
         sections.append(f"제품 설명: {prod_desc}")
-    if schema_names:
+    # TASK-0228 (1:N): 여러 datasource 에 바인딩됐으면 datasource 별로 접근 가능 DB 를 그룹핑해
+    # 보여준다 — 생성될 시스템 프롬프트가 "어느 데이터소스에 어떤 DB 가 있는지" 인지하도록.
+    _conn_dsg = _connect_memory()
+    try:
+        _ds_groups: list[str] = []
+        if len(_bound_keys) >= 2:
+            for _bk in _bound_keys:
+                _dbs = _product_allowed_schemas_for_datasource(_conn_dsg, int(product_id), _bk)
+                if _dbs:
+                    _ds_groups.append(f"- 데이터소스 `{_bk}`: " + ", ".join(_dbs))
+                else:
+                    _ds_groups.append(f"- 데이터소스 `{_bk}`: (접근 가능 DB 미설정)")
+    except Exception:
+        _ds_groups = []
+    finally:
+        _conn_dsg.close()
+    if _ds_groups:
+        sections.append(
+            "이 제품은 **여러 데이터소스**에 연결돼 있습니다. 각 데이터소스의 접근 가능 데이터베이스:\n"
+            + "\n".join(_ds_groups)
+            + "\n어시스턴트는 질문에 따라 적절한 데이터소스를 선택해 조회하며, 한 질문이 여러 데이터소스를 "
+            "참조하면 각각 조회 후 결과를 합쳐 분석합니다. 데이터소스 간 직접 JOIN 은 불가합니다."
+        )
+    elif schema_names:
         sections.append("접근 가능 데이터베이스(스키마): " + ", ".join(schema_names))
 
     # 실제 인사이트 데이터 유무 — 지시문 분기 + 응답 메타에 사용.

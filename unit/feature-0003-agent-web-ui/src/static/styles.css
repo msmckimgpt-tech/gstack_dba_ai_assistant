@@ -2687,6 +2687,28 @@ a { color: inherit; }
   opacity: 0.85;
 }
 
+/* TASK-0228 (1:N): primary datasource 칩 강조 + "기본 지정"(★) 액션 버튼. */
+.admin-chip--primary {
+  background: rgba(37, 99, 235, .16);
+  border-color: rgba(37, 99, 235, .42);
+  font-weight: 600;
+}
+
+.admin-chip-action {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0.7;
+}
+
+.admin-chip-action:hover {
+  opacity: 1;
+}
+
 .admin-chip-locked-hint {
   font-size: 10px;
   letter-spacing: 0.02em;

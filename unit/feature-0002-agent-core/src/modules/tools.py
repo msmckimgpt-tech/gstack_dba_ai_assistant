@@ -74,6 +74,107 @@ def clear_active_schema_allowlist() -> None:
     set_active_schema_allowlist(None)
 
 
+# ── 멀티 datasource (1:N) 런타임 라우터 (TASK-0228) ──────────────────────────────
+# 제품이 ≥2 datasource 에 바인딩되면, LLM 이 tool 호출마다 `datasource` 인자로 대상을 고른다.
+# 라우터는 그 datasource 의 (연결, 엔진 dialect, 스키마 allowlist) 셋을 **동시에** 활성화해
+# 기존 보안 게이트(allowlist·dialect·cross-DB)가 선택된 datasource 기준으로 정확히 동작하게 한다.
+#
+# **격리 불변식**: tool 실행은 항상 한 datasource 컨텍스트 안에서만 일어난다 — datasource A 의
+# allowlist 로는 B 의 스키마를 못 보고, A 연결로는 B 데이터에 못 닿는다. 단일 바인딩(레거시) 제품은
+# 라우터를 거치지 않아 동작 0 변경.
+_ACTIVE_DS_ROUTER: contextvars.ContextVar["_DatasourceRouter | None"] = contextvars.ContextVar(
+    "agent_active_ds_router", default=None
+)
+
+
+class _DatasourceRouter:
+    """run-scoped: 라벨 → {ds dict, lazy connection} 매핑 + datasource 별 allowlist/engine 활성화.
+
+    agent_core 가 run 시작에 set_active_ds_router 로 등록하고, finally 에서 close_all + reset 한다.
+    연결은 **lazy**(처음 그 datasource 가 선택될 때 connect) — 안 쓰인 datasource 는 연결 안 함.
+    """
+
+    def __init__(self, datasources: "list[dict]", connect_fn):
+        # datasources: agent_core._resolve_product_datasources 산물(_label/_allow_schemas/_is_primary 포함).
+        self._by_label: dict[str, dict] = {}
+        self._order: list[str] = []
+        for ds in datasources:
+            label = str(ds.get("_label") or ds.get("key") or "").strip().lower()
+            if label and label not in self._by_label:
+                self._by_label[label] = ds
+                self._order.append(label)
+        self._connect_fn = connect_fn          # (datasource_dict) -> conn  (database=None 강제는 호출부)
+        self._conns: dict[str, Any] = {}        # label -> live conn (lazy)
+        self._default_label: str = self._order[0] if self._order else ""
+
+    def labels(self) -> "list[str]":
+        return list(self._order)
+
+    def describe(self) -> "list[dict]":
+        """grounding/프롬프트용 메타(좌표·비밀번호 비노출)."""
+        out = []
+        for label in self._order:
+            ds = self._by_label[label]
+            out.append({
+                "label": label,
+                "engine": str(ds.get("engine") or "mysql"),
+                "is_primary": bool(ds.get("_is_primary")),
+                "schemas": list(ds.get("_allow_schemas") or []),
+            })
+        return out
+
+    def resolve_label(self, requested: "str | None") -> str:
+        """요청 라벨 정규화 — 미지정/미바인딩이면 default(primary)."""
+        r = (str(requested).strip().lower() if requested else "")
+        return r if r in self._by_label else self._default_label
+
+    def conn_for(self, label: str):
+        """그 datasource 의 연결(lazy). database=None 강제(M-1: schema-prefixed only)."""
+        ds = self._by_label.get(label)
+        if ds is None:
+            return None
+        if label not in self._conns:
+            self._conns[label] = self._connect_fn(ds)
+        return self._conns[label]
+
+    def activate(self, label: str) -> None:
+        """선택된 datasource 의 allowlist·engine·default_db ContextVar 를 활성화(보안 게이트 기준)."""
+        import modules.config as _cfg
+        ds = self._by_label.get(label)
+        if ds is None:
+            return
+        set_active_schema_allowlist(ds.get("_allow_schemas") or [])
+        _cfg.set_active_datasource(
+            (ds.get("scope_key") or ds.get("key") or label),
+            engine=ds.get("engine"),
+            default_db=ds.get("default_db"),
+        )
+
+    def close_all(self) -> None:
+        for c in self._conns.values():
+            try:
+                c.close()
+            except Exception:
+                pass
+        self._conns.clear()
+
+
+def set_active_ds_router(router: "_DatasourceRouter | None"):
+    """run 시작 시 멀티 datasource 라우터 등록(반환 token 으로 reset). None=단일 datasource(라우터 없음)."""
+    return _ACTIVE_DS_ROUTER.set(router)
+
+
+def reset_active_ds_router(token) -> None:
+    try:
+        _ACTIVE_DS_ROUTER.reset(token)
+    except Exception:
+        _ACTIVE_DS_ROUTER.set(None)
+
+
+def get_active_ds_router() -> "_DatasourceRouter | None":
+    return _ACTIVE_DS_ROUTER.get()
+
+
 def _excluded_schemas() -> "frozenset[str]":
     """현재 활성 dialect 기준 '사용자 스키마 아님' 집합 (엔진 시스템 스키마 + 내부 스키마).
 
@@ -513,6 +614,38 @@ def _inject_step_narration_params(tool_defs: list[dict[str, Any]]) -> None:
 
 
 _inject_step_narration_params(TOOL_DEFINITIONS_FULL)
+
+
+def build_tool_definitions_for_datasources(base_defs: list[dict[str, Any]], labels: list[str]) -> list[dict[str, Any]]:
+    """TASK-0228 (1:N): 제품이 여러 datasource 에 바인딩됐을 때, 각 DB 도구에 `datasource` 선택 인자를
+    주입한 **깊은 복사본** tool 정의를 만든다(원본 전역 정의 불변 — 단일 datasource run 영향 0).
+
+    LLM 은 execute_sql/describe_table/... 호출 시 `datasource` 에 라벨을 넣어 대상을 고른다. 미지정 시
+    런타임 라우터가 primary 로 폴백한다. enum 으로 바인딩된 라벨만 허용(잘못된 값 사전 차단)."""
+    import copy
+    if not labels or len(labels) < 2:
+        return base_defs
+    defs = copy.deepcopy(base_defs)
+    ds_param = {
+        "type": "string",
+        "enum": list(labels),
+        "description": (
+            "조회 대상 데이터소스 라벨. 이 제품은 여러 데이터소스에 연결돼 있다 — "
+            f"가능: {', '.join(labels)}. 미지정 시 기본(primary) 데이터소스를 사용한다. "
+            "한 질문이 여러 데이터소스를 참조하면 도구를 데이터소스별로 나눠 호출하라."
+        ),
+    }
+    for t in defs:
+        params = (t.get("function") or {}).get("parameters")
+        if not isinstance(params, dict):
+            continue
+        props = params.get("properties")
+        if not isinstance(props, dict):
+            continue
+        if "datasource" not in props:
+            # datasource 를 맨 앞에 배치(모델이 먼저 고르도록), required 에는 미추가(optional).
+            params["properties"] = {"datasource": dict(ds_param), **props}
+    return defs
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1021,10 +1154,43 @@ _TOOL_HANDLERS = {
 
 
 def execute_tool(conn, tool_name: str, arguments: dict[str, Any]) -> str:
-    """도구를 실행하고 결과 문자열을 반환한다."""
+    """도구를 실행하고 결과 문자열을 반환한다.
+
+    TASK-0228 (1:N): 멀티 datasource 라우터가 활성이면, tool 인자 `datasource`(라벨)로 대상 datasource 를
+    선택해 **그 datasource 의 연결·allowlist·engine** 으로 실행한다. 인자 미지정이면 primary 로 폴백.
+    단일 바인딩(라우터 None)이면 종전과 동일하게 인자로 받은 conn 으로 실행(동작 0 변경).
+    """
     handler = _TOOL_HANDLERS.get(tool_name)
     if handler is None:
         return f"알 수 없는 도구: {tool_name}"
+    router = _ACTIVE_DS_ROUTER.get()
+    if router is not None:
+        # 라우터 활성 — datasource 선택 + 그 컨텍스트 활성화. 작업 후 primary 로 복원(다음 tool 기본값 안정).
+        import modules.config as _cfg
+        requested = ""
+        if isinstance(arguments, dict):
+            requested = str(arguments.pop("datasource", "") or "").strip()
+        label = router.resolve_label(requested)
+        # 사용자가 미바인딩 라벨을 명시했으면 명확히 거부(엉뚱한 datasource 로 silent 라우팅 차단).
+        if requested and requested.strip().lower() not in router.labels():
+            return (
+                f"오류: '{requested}' 는 이 제품에 바인딩된 데이터소스가 아닙니다. "
+                f"사용 가능: {', '.join(router.labels())}."
+            )
+        try:
+            ds_conn = router.conn_for(label)
+        except Exception as e:
+            return f"데이터소스 '{label}' 연결 실패: {e}"
+        if ds_conn is None:
+            return f"데이터소스 '{label}' 를 사용할 수 없습니다."
+        router.activate(label)
+        try:
+            return handler(ds_conn, arguments)
+        except Exception as e:
+            return f"도구 실행 오류 ({tool_name} @ {label}): {e}"
+        finally:
+            # 다음 tool 호출의 기본값이 흔들리지 않도록 primary 컨텍스트로 복원.
+            router.activate(router.resolve_label(None))
     try:
         return handler(conn, arguments)
     except Exception as e:

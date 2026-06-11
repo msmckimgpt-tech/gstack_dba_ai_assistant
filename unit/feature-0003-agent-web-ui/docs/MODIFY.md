@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260611-0230
+- Date: 2026-06-11 (TASK-0230, **Critical §12.3** — 멀티 datasource 1:N: 제품 ↔ 여러 datasource 참조)
+- Scope: feature-0003 측 — 관리 평면(join 테이블·admin 엔드포인트·접근DB 차원화·제품 프롬프트 다중 datasource 인지) + UI(제품 상세 datasource 칩 multi-bind·편집 대상 선택기, 대화화면 다중 배지). 단일 바인딩·flag OFF 동작 0 변경.
+- Files:
+  - unit/feature-0003-agent-web-ui/src/app.py (`_ensure_web_product_datasources_schema` join 테이블+차원 마이그레이션 + `_list_product_datasources`/`_product_allowed_schemas_for_datasource` helper + admin GET/POST/DELETE `/products/{id}/datasources` + `_list_products`·`GET /api/admin/datasources`·`PUT databases` datasource 차원 + DELETE datasource 고아 정리 + `admin_generate_product_prompt` 다중 datasource ds-키·접근DB 그룹)
+  - unit/feature-0003-agent-web-ui/src/static/admin.js (제품 상세 datasource 칩 multi-bind + 편집 대상 datasource 선택기 + 차원별 productDatabases pending 키)
+  - unit/feature-0003-agent-web-ui/src/static/app.js (대화화면 다중 datasource 배지)
+  - unit/feature-0003-agent-web-ui/src/static/styles.css (`.admin-chip--primary`/`.admin-chip-action`)
+  - unit/feature-0003-agent-web-ui/src/static/{admin,index}.html (캐시버스터 `?v=20260611-product-multi-ds`)
+  - unit/feature-0003-agent-web-ui/tests/test_product_multi_datasource_api.py (신규 7)
+- 보안: admin 엔드포인트 console.access(+manage), 미등록 키 거부(400), audit. PUT databases 가 요청 datasource_key 바인딩 검증(임의 키 접근DB 주입 차단). 마이그레이션 loud(REV-0230 MAJOR-1). 런타임 격리는 agent-core `_DatasourceRouter`(CHG-20260611-0230 agent-core) 가 담당.
+- Rollback: flag `AGENT_MULTI_DATASOURCE_ENABLED=0` 또는 제품 바인딩 1개 축소 시 기존 단일 경로 복귀. 코드 환원 시 위 파일 revert(join 테이블·차원 컬럼은 멱등 — 잔존해도 무해).
 ## CHG-20260611-0229
 - Date: 2026-06-11 (TASK-0229, **Minor §12.3** — 관리 콘솔 제품 상세 "접근 가능 데이터베이스" UI 통합; 동시세션 SSRF cycle TASK-0228 선점→§13.1 재번호)
 - Scope: frontend-only IA 재구성. 제품 상세의 (a) insight 분석 완료율 per-DB breakdown 리스트와 (b) 사용자 등록 DB chip 목록의 1:1 중복을 단일 통합 리스트로 융합 + (c) 시스템/메타데이터 고정 DB 다수 chip을 단일 묶음 칩(hover/focus 툴팁)으로 강등.

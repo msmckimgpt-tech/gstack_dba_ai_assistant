@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260611-0230 [SUBAGENT:product-multi-datasource-isolation-adversarial] — PASS(MAJOR 흡수)
+- Related TASK: feature-0002-agent-core + feature-0003-agent-web-ui (TASK-0230, **Critical §12.3** — 멀티 datasource 1:N)
+- Trigger: datasource 접근 경계(인가 결정) + schema allowlist + 다중 연결 라우팅 → security + backend (§18.8) + [[feedback_outside_voice_for_rbac]] 필수 게이트
+- Timestamp: 2026-06-11
+- Verdict: **BLOCKER 0** — 핵심 cross-datasource 격리 HOLD. MAJOR 3건 발견 → 전부 흡수. 재심 PASS-able.
+- Panel: 적대적 outside-voice senior DB-security subagent(별 컨텍스트). "datasource A 컨텍스트에서 B 의 스키마/데이터 도달 가능?" 반증 시도 — execute_tool activate→handler→restore 시퀀스의 연결↔allowlist 불일치 창, datasource 인자 누락/미바인딩/공백·대소문자 변형, 레거시 행(DatasourceKey='') 폴백 누출, admin authz/IDOR, migration 안전성, 연결 cleanup, 0/1 바인딩 회귀.
+- **격리 HOLD(반증 실패=안전)**: execute_tool 이 `label` 단일값으로 `conn_for(label)`+`activate(label)` lockstep → 연결/allowlist/engine 불일치 창 없음. tool 호출 루프는 in-thread 순차(동시 2 datasource 활성 불가). 게이트(`_freeform_sql_access_error`/`_whitelist_violation`)는 항상 활성 datasource 의 allowlist 기준 → B 의 DB 명을 grounding 으로 알아도 A 컨텍스트에서 쿼리하면 차단. `to_thread` context 복사 + ContextVar finally reset + `_ACTIVE_DS_ROUTER` 기본 None → 스레드 재사용 stale 없음. 미바인딩 라벨 명시 거부. 0/1 바인딩 byte-identical(라우터 None, enum 미주입, 원 resolve, 단일 close).
+- **MAJOR-1 (흡수)**: `_ensure_web_product_datasources_schema` 가 ALTER/backfill/PK-migration 을 broad `try/except: pass` 로 삼켜, 부분 적용(컬럼 부재 + join ≥2)이 silent. → 컬럼 존재 선확인(information_schema) + 단계별 실패 loud 로깅(error) + 컬럼 부재 시 backfill/PK 이전 skip. atomic DROP+ADD(InnoDB) 유지.
+- **MAJOR-2 (흡수, 최고 위험)**: `_datasource_allow_schemas`/`_product_allowed_schemas_for_datasource` 의 차원-컬럼-부재 폴백이 **차원 무필터 전체 DB 목록**을 반환 → ≥2 바인딩에서 모든 datasource 컨텍스트에 한 product 전체 DB broadcast = 교차노출(MAJOR-1 partial migration 과 결합 시 실제 leak). → `_datasource_allow_schemas`(런타임 게이트 입력)를 **fail-closed**([] 반환)로 전환 + 회귀 테스트(`test_datasource_allow_schemas_failclosed_on_missing_column`). app.py 의 동명 함수는 admin **표시용**(게이트 아님)이라 폴백 유지.
+- **MAJOR-3 (흡수)**: `_resolve_product_datasources` 예외를 bare `except: []` 로 삼켜 ≥2 제품이 단일경로(넓은 allowlist)로 silent 강등. → 로그 가시화(silent 금지) + 단일경로 자체가 fail-closed(`DatasourceResolutionError`) 라 안전망 유지.
+- **검증 SAFE(추가 확인)**: admin add/remove(console.access+console.manage), 미등록 키 거부(400), DELETE datasource 가 join+접근DB 고아 정리, PUT databases 가 요청 datasource_key 바인딩 검증, double-close 없음(router 활성 시 db_conn=primary, else 분기 skip).
+- Artifact: (subagent 출력 본문 — agentId a2a454451a8ea4b9b; 4-section verdict + file:line 인용)
+- Human Approval Needed: no (보안 trade-off 신규 0 — datasource 격리 강화 방향. Critical 작업이나 사용자 사전 confirm[전체 구현 + LLM tool 선택] 범위 내)
+- Cross-ref: CHG-20260611-0230 / TASK-0230 / ADR-CORE-0003 / [[feedback_outside_voice_for_rbac]] 정합.
+
 ## REV-20260611-0226 [SUBAGENT:mssql-perdb-coverage-security-adversarial] — CONCERN(BLOCK 흡수)
 - Related TASK: feature-0002-agent-core (TASK-0226)
 - Trigger: schema/migration/query + 보안경계(broaden DB read access) keyword matched → security + backend (§18.8)

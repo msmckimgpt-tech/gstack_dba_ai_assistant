@@ -717,11 +717,12 @@ function renderProductDropupMenu() {
       label: `${p.name} (${p.product_key})`,
       selected: mode === "pinned" && pid === currentPid,
       datasourceKey: p.datasource_key || null,  // 멀티 datasource (P2): 분석 대상 표시
+      datasources: Array.isArray(p.datasources) ? p.datasources : null,  // TASK-0228 (1:N)
     }));
   });
 }
 
-function buildProductDropupItem({ mode, pid, label, selected, datasourceKey }) {
+function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, datasources }) {
   const item = document.createElement("button");
   item.type = "button";
   item.className = "product-dropup-item";
@@ -739,8 +740,16 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey }) {
   labelEl.textContent = label;
   item.appendChild(labelEl);
 
-  // 멀티 datasource (P2): 이 제품이 별도 datasource 에 바인딩됐으면 작은 배지로 표시.
-  if (datasourceKey) {
+  // 멀티 datasource (P2/TASK-0228 1:N): 바인딩된 datasource 를 배지로 표시.
+  //  - 1개: 라벨 그대로. 2개 이상: "N개 데이터소스" + 전체 목록 tooltip.
+  const _dsBinds = Array.isArray(datasources) ? datasources : (datasourceKey ? [{ datasource_key: datasourceKey }] : []);
+  if (_dsBinds.length >= 2) {
+    const dsBadge = document.createElement("span");
+    dsBadge.className = "product-dropup-item-ds";
+    dsBadge.textContent = `${_dsBinds.length}개 데이터소스`;
+    dsBadge.title = "데이터 소스: " + _dsBinds.map((b) => b.datasource_key).join(", ");
+    item.appendChild(dsBadge);
+  } else if (datasourceKey) {
     const dsBadge = document.createElement("span");
     dsBadge.className = "product-dropup-item-ds";
     dsBadge.textContent = datasourceKey;
