@@ -4105,7 +4105,8 @@ function buildCoverageBadge(productId) {
   return span;
 }
 
-// 제품 상세 — 접근 가능 DB 섹션에 들어갈 분석 완료율 breakdown 블록.
+// 제품 상세 — 접근 가능 DB 섹션의 insight 분석 완료율 "요약 헤더"(제목 + 전체 % 배지
+// + 새로고침 + 전체 진행 바). per-DB 진척은 통합 DB 리스트(redrawChips)의 각 행으로 흡수됐다.
 function buildProductCoverageDetail(product) {
   const wrap = document.createElement("div");
   wrap.className = "cov-detail";
@@ -4161,7 +4162,7 @@ function buildProductCoverageDetail(product) {
     return wrap;
   }
   if (cov.total_objects > 0) {
-    // 전체 진행 바 + 객체 수
+    // 전체 진행 바 + 객체 수 (개별 DB 진척은 아래 통합 리스트의 각 행에서)
     const overall = document.createElement("div");
     overall.className = "cov-bar-row";
     const bar = document.createElement("div");
@@ -4176,39 +4177,12 @@ function buildProductCoverageDetail(product) {
     overall.append(bar, barLabel);
     wrap.appendChild(overall);
   } else {
-    // 측정 가능한 DB 0개(전부 연결 실패 등) — 진행바 생략, 사유만 표시(per-DB 목록은 아래 계속).
+    // 측정 가능한 DB 0개(전부 연결 실패 등) — 진행바 생략, 사유만 표시(개별 상태는 아래 리스트).
     const p = document.createElement("div");
     p.className = "admin-detail-hint cov-reason";
     p.textContent = cov.reason || "접근 가능 데이터베이스에 연결할 수 없습니다(권한/도달 확인).";
     wrap.appendChild(p);
   }
-
-  // per-DB breakdown
-  const list = document.createElement("div");
-  list.className = "cov-db-list";
-  (cov.per_db || []).forEach((d) => {
-    const rowEl = document.createElement("div");
-    rowEl.className = "cov-db-row";
-    const nameEl = document.createElement("span");
-    nameEl.className = "cov-db-name";
-    nameEl.textContent = d.db;
-    const statEl = document.createElement("span");
-    statEl.className = "cov-db-stat";
-    if (d.connected) {
-      const tt = d.tables_total || 0;
-      const ta = d.tables_analyzed || 0;
-      const tpct = tt > 0 ? Math.round((100 * ta) / tt) : (d.schema_analyzed ? 100 : 0);
-      statEl.classList.add(`cov-${_coverageTone(tpct)}`);
-      statEl.textContent = `테이블 ${ta}/${tt}${d.schema_analyzed ? " · DB✓" : " · DB✗"}`;
-    } else {
-      statEl.classList.add("cov-low");
-      statEl.textContent = "연결 불가";
-      statEl.title = d.note || "연결 불가(권한/도달)";
-    }
-    rowEl.append(nameEl, statEl);
-    list.appendChild(rowEl);
-  });
-  wrap.appendChild(list);
 
   if (cov.engine === "mssql") {
     const note = document.createElement("div");
@@ -4216,6 +4190,101 @@ function buildProductCoverageDetail(product) {
     note.textContent = "MSSQL: RO 로그인에 GRANT 되지 않았거나 도달 불가한 DB는 '연결 불가'로 표시되며 완료율 집계에서 제외됩니다. (insight 스코프는 데이터소스 엔드포인트 단위)";
     wrap.appendChild(note);
   }
+  return wrap;
+}
+
+// 통합 DB 리스트의 한 행에 붙일 "분석 진척" 요소(마이크로바 + 통계 + 상태칩)를 만든다.
+// covRow = 백엔드 per_db 항목(없으면 null=측정 대기). 사용자 등록 DB chip 과 1:1.
+function buildDbCoverageCells(covRow, measuring) {
+  const frag = document.createDocumentFragment();
+  const bar = document.createElement("span");
+  bar.className = "cov-microbar";
+  const fill = document.createElement("span");
+  fill.className = "cov-microbar-fill";
+  bar.appendChild(fill);
+  const stat = document.createElement("span");
+  stat.className = "cov-db-stat";
+  const status = document.createElement("span");
+  status.className = "cov-db-status";
+
+  if (!covRow) {
+    // per_db 에 아직 없음 — 측정 전/대기.
+    bar.classList.add("is-pending");
+    stat.textContent = "—";
+    status.classList.add("cov-db-status-muted");
+    status.textContent = measuring ? "측정 중" : "측정 대기";
+    frag.append(bar, stat, status);
+    return frag;
+  }
+  if (covRow.connected === false) {
+    // 연결 불가 — 점선 트랙, 통계 없음.
+    bar.classList.add("is-offline");
+    stat.textContent = "—";
+    status.classList.add("cov-db-status-low");
+    status.textContent = "연결 불가";
+    status.title = covRow.note || "연결 불가(RO 권한/도달 확인)";
+    frag.append(bar, stat, status);
+    return frag;
+  }
+  const tt = covRow.tables_total || 0;
+  const ta = covRow.tables_analyzed || 0;
+  const tpct = tt > 0 ? Math.round((100 * ta) / tt) : (covRow.schema_analyzed ? 100 : 0);
+  const tone = _coverageTone(tt === 0 && !covRow.schema_analyzed ? null : tpct);
+  fill.classList.add(`cov-${tone}`);
+  fill.style.width = `${Math.max(0, Math.min(100, tpct))}%`;
+  stat.textContent = `${ta}/${tt}`;
+  status.classList.add(`cov-db-status-${tone === "ok" ? "ok" : (tone === "muted" ? "muted" : "warn")}`);
+  if (tt === 0 && !covRow.schema_analyzed) {
+    status.textContent = "대상 없음";
+  } else {
+    status.textContent = covRow.schema_analyzed ? "DB✓" : "DB✗";
+  }
+  frag.append(bar, stat, status);
+  return frag;
+}
+
+// 시스템/메타데이터 고정 DB 묶음 칩(단일). 개별 DB 이름은 hover/focus 툴팁 + title + aria-label.
+// lockedChips = [{name, present}]. count 0 이면 null 반환(렌더 생략).
+function buildSystemDbChip(lockedChips) {
+  const chips = (lockedChips || []).filter((c) => c && c.name);
+  if (!chips.length) return null;
+  const names = chips.map((c) => c.name);
+  const wrap = document.createElement("div");
+  wrap.className = "sysdb-chip";
+  wrap.tabIndex = 0;
+  wrap.setAttribute("role", "group");
+
+  const label = document.createElement("span");
+  label.className = "sysdb-chip-label";
+  label.textContent = `시스템 DB ${chips.length}개`;
+  const tag = document.createElement("small");
+  tag.className = "sysdb-chip-tag";
+  tag.textContent = "고정";
+  wrap.append(label, tag);
+
+  // 네이티브 title (마우스 hover) + aria-label (스크린리더).
+  wrap.title = "고정 시스템 데이터베이스 (분석 대상 아님)\n" + names.join("\n");
+  wrap.setAttribute(
+    "aria-label",
+    `고정 시스템 데이터베이스 ${chips.length}개: ${names.join(", ")}. 분석 대상이 아닙니다.`,
+  );
+
+  // 커스텀 툴팁 카드 (hover + 키보드 focus 둘 다 노출 — 접근성).
+  const tip = document.createElement("div");
+  tip.className = "sysdb-chip-tip";
+  const tipTitle = document.createElement("div");
+  tipTitle.className = "sysdb-chip-tip-title";
+  tipTitle.textContent = "고정 시스템 DB · 분석 대상 아님";
+  tip.appendChild(tipTitle);
+  const ul = document.createElement("ul");
+  ul.className = "sysdb-chip-tip-list";
+  chips.forEach((c) => {
+    const li = document.createElement("li");
+    li.textContent = c.present === false ? `${c.name} (미감지)` : c.name;
+    ul.appendChild(li);
+  });
+  tip.appendChild(ul);
+  wrap.appendChild(tip);
   return wrap;
 }
 
@@ -4581,7 +4650,7 @@ function renderProductDetail() {
   adminState.productDbDraft.set(Number(product.id), draft);
 
   const chipWrap = document.createElement("div");
-  chipWrap.className = "admin-chip-wrap";
+  chipWrap.className = "cov-db-wrap";
 
   // 시스템/메타데이터 locked chip 의 기본 소스(데이터 MySQL). datasource-driven 으로 교체됨(_refreshAccessibleDbs).
   const metadataPayload = (adminState.availableDatabases.metadata_schemas || []).slice();
@@ -4653,50 +4722,67 @@ function renderProductDetail() {
 
   const redrawChips = () => {
     chipWrap.innerHTML = "";
-    // 시스템 DB / 메타데이터 locked chip 강제 노출(고정 — 항상 접근, 편집 불가).
-    lockedChips.forEach((meta) => {
-      const chip = document.createElement("span");
-      chip.className = "admin-chip is-locked";
-      chip.title = meta.present === false
-        ? "시스템/메타데이터 (고정, 미감지)"
-        : "시스템/메타데이터 (고정)";
-      const txt = document.createElement("span");
-      txt.textContent = meta.name;
-      chip.appendChild(txt);
-      const tag = document.createElement("small");
-      tag.className = "admin-chip-locked-hint";
-      tag.textContent = "고정";
-      chip.appendChild(tag);
-      chipWrap.appendChild(chip);
-    });
-    // 사용자 등록 schema chips.
+    // 시스템/메타데이터 고정 DB → 단일 묶음 칩(개별 이름은 hover/focus 툴팁). 분석 대상 아님.
+    const sysChip = buildSystemDbChip(lockedChips);
+    if (sysChip) chipWrap.appendChild(sysChip);
+
+    // 사용자 등록 DB → "분석 진척 + 제거"를 한 행에 담은 통합 리스트(완료율 per-DB 와 1:1).
+    const cov = adminState.productCoverage.get(Number(product.id));
+    const covByDb = new Map();
+    if (cov && Array.isArray(cov.per_db)) {
+      cov.per_db.forEach((d) => {
+        if (d && d.db) covByDb.set(String(d.db).toLowerCase(), d);
+      });
+    }
+    const measuring = !!adminState.productCoverageLoading;
+
+    const listEl = document.createElement("div");
+    listEl.className = "cov-db-list";
     draft.forEach((entry, idx) => {
-      const chip = document.createElement("span");
-      chip.className = "admin-chip";
-      const txt = document.createElement("span");
-      txt.textContent = entry.schema_name;
-      chip.appendChild(txt);
+      const rowEl = document.createElement("div");
+      rowEl.className = "cov-db-row";
+      const covRow = covByDb.get(String(entry.schema_name).toLowerCase()) || null;
+      if (covRow && covRow.connected === false) rowEl.classList.add("is-offline");
+
+      const nameEl = document.createElement("span");
+      nameEl.className = "cov-db-name";
+      nameEl.textContent = entry.schema_name;
+      nameEl.title = entry.schema_name;
+      rowEl.appendChild(nameEl);
+
+      // 진척 셀(마이크로바 + 통계 + 상태칩).
+      rowEl.appendChild(buildDbCoverageCells(covRow, measuring));
+
+      // 제거 버튼(편집 권한 시).
       if (canManage) {
         const x = document.createElement("button");
         x.type = "button";
-        x.className = "admin-chip-remove";
+        x.className = "cov-db-remove";
         x.textContent = "×";
+        x.title = "이 데이터베이스 접근 제거";
+        x.setAttribute("aria-label", `${entry.schema_name} 접근 제거`);
         x.addEventListener("click", () => {
           draft.splice(idx, 1);
           setProductDatabasesPending(product.id, draft);
           redrawChips();
           buildPicker();
         });
-        chip.appendChild(x);
+        rowEl.appendChild(x);
+      } else {
+        // 권한 없을 때 grid 정렬 유지용 placeholder.
+        const spacer = document.createElement("span");
+        spacer.className = "cov-db-remove-spacer";
+        rowEl.appendChild(spacer);
       }
-      chipWrap.appendChild(chip);
+      listEl.appendChild(rowEl);
     });
     if (!draft.length) {
       const empty = document.createElement("div");
-      empty.className = "admin-meta";
-      empty.textContent = "(스키마 없음)";
-      chipWrap.appendChild(empty);
+      empty.className = "cov-db-list-empty";
+      empty.textContent = "등록된 데이터베이스가 없습니다. 아래에서 추가하세요.";
+      listEl.appendChild(empty);
     }
+    chipWrap.appendChild(listEl);
   };
   dbSection.appendChild(chipWrap);
 

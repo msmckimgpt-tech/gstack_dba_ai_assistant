@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260611-0229
+- Date: 2026-06-11 (TASK-0229, **Minor §12.3** — 관리 콘솔 제품 상세 "접근 가능 데이터베이스" UI 통합; 동시세션 SSRF cycle TASK-0228 선점→§13.1 재번호)
+- Scope: frontend-only IA 재구성. 제품 상세의 (a) insight 분석 완료율 per-DB breakdown 리스트와 (b) 사용자 등록 DB chip 목록의 1:1 중복을 단일 통합 리스트로 융합 + (c) 시스템/메타데이터 고정 DB 다수 chip을 단일 묶음 칩(hover/focus 툴팁)으로 강등.
+- 배경: 사용자 보고 — per-DB 완료율 행과 DB chip이 같은 DB를 두 번 표시(분리 의미 없음) + 시스템 DB 4종(MySQL)/3종(MSSQL)이 각각 chip이라 산만. gstack `/design-review` 메서드론(design subagent)으로 통합 스펙 도출. 데이터 정합 확인: 백엔드 `per_db` 집합 = 사용자 등록 DB(`_list_product_databases`)와 동일, 시스템 DB는 별도 출처(`metadata_schemas`)라 per_db 미포함 → 융합/분리가 데이터 모델과 정합.
+- 변경:
+  - `src/static/admin.js`: ① `buildProductCoverageDetail` → 요약 헤더+전체 진행 바로 축소(per-DB breakdown 제거). ② `buildDbCoverageCells(covRow, measuring)` 신설(통합 리스트 행의 마이크로바+통계+상태칩). ③ `buildSystemDbChip(lockedChips)` 신설(단일 묶음 칩 + title/aria-label/tabindex + hover·focus·focus-within 툴팁). ④ `redrawChips` 재작성(시스템 칩 + `per_db ↔ schema_name` 소문자 조인한 `cov-db-row` grid 리스트 + 빈 상태). ⑤ chipWrap 클래스 `admin-chip-wrap`→`cov-db-wrap`.
+  - `src/static/styles.css`: `.cov-db-wrap`(flex column)/`.cov-db-list`/`.cov-db-row`(grid 5컬럼)/`.cov-microbar`+fill/`.cov-db-stat`/`.cov-db-status*`/`.cov-db-remove`(+spacer)/`.cov-db-list-empty`/`.sysdb-chip`+`-label`/`-tag`/`-tip`+`-title`/`-list` 신설·재구성. 기존 `.cov-db-list/.cov-db-row/.cov-db-name/.cov-db-stat` 정의 교체(단일 사용처). 디자인 토큰만 사용(신규 hex 0).
+  - `src/static/admin.html`: 캐시버스터 styles.css·admin.js `?v=20260611-mssql-coverage-perdb`→`?v=20260611-db-coverage-unified`.
+- 비변경: RBAC 카탈로그·DB 스키마·암호화·신규 엔드포인트·백엔드(app.py)·`/api/admin/products/insight-coverage` 응답 shape 무변경. 기존 per_db 데이터/draft chip 배열 그대로 사용.
+- 검증: node --check admin.js PASS + CSS brace balance(1031/1031) + verify-completion PASS. 시각 동작은 PB-0008(배포 후) 확인.
+- Files: src/static/admin.js, src/static/styles.css, src/static/admin.html, docs/{REPORT,REVIEW,TASK,MODIFY}.md
+- Rollback: frontend 3파일 revert + 캐시버스터 환원. 백엔드 무관.
+
 ## CHG-20260611-0228
 - Date: 2026-06-11 (TASK-0228, **Major §12.3** — datasource SSRF 사설망 경계 env 토글 + 의도적 비활성화)
 - 사용자 보고: `관리 콘솔 > 데이터소스` 에서 새 데이터소스(host=`10.200.50.80`) 생성 시 "호스트 차단(SSRF): 사설/링크로컬 IP 차단(allowlist 필요): 10.200.50.80" 에러. **근본 원인**: `app._ssrf_check_host` 가 RFC1918 사설 IP 를 SSRF 방어로 차단(설계 의도, TASK-0205/0214). `10.200.50.80` 은 `10.0.0.0/8` 사설 대역이라 차단되며, 정당한 사내 host 는 `AGENT_DATASOURCE_HOST_ALLOWLIST` 에 등재해야 통과하는 구조. 코드 버그 아님 — 사내 운영 환경(대부분 사설망 IP)과 SSRF 방어 기본값의 불일치.
