@@ -529,7 +529,10 @@ DB_CONNECT_DB = DB_NAME_EFFECTIVE or None
 DB_PROMPT_DEFAULT = DB_NAME_EFFECTIVE or "(미지정)"
 MEMORY_DB = os.getenv("AGENT_MEMORY_DB", "agent_memory")
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "claude-sonnet-4")
+# TASK-0233: env 명명 정리 — 새 이름 LLM_MODEL 우선, 구이름 OPENAI_MODEL 은 deprecated
+# fallback(운영 .env 의 OPENAI_MODEL=auto 무중단 호환). 심볼명 OPENAI_MODEL 은 사용처 보존
+# 위해 유지(env 소스만 신규 우선). 다음 cycle 에 OPENAI_MODEL env fallback 제거 검토.
+OPENAI_MODEL = os.getenv("LLM_MODEL") or os.getenv("OPENAI_MODEL") or "claude-sonnet-4"
 
 # ── 로컬 LLM Gateway (구버전 호환 — Local LLM gateway 사용 시) ──
 LOCAL_LLM_API_BASE = os.getenv("LOCAL_LLM_API_BASE", "").strip() or None
@@ -643,7 +646,10 @@ AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM = (
     os.getenv("AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM", "true").strip().lower()
     not in ("false", "0", "no")
 )
-AGENT_OPENAI_MAX_RETRIES = int(os.getenv("AGENT_OPENAI_MAX_RETRIES", "0"))
+# TASK-0233: 새 이름 AGENT_LLM_MAX_RETRIES 우선, 구이름 fallback(운영 .env 무중단).
+AGENT_OPENAI_MAX_RETRIES = int(
+    os.getenv("AGENT_LLM_MAX_RETRIES") or os.getenv("AGENT_OPENAI_MAX_RETRIES") or "0"
+)
 AGENT_MEMORY_MAX_TURNS = int(os.getenv("AGENT_MEMORY_MAX_TURNS", "10"))
 AGENT_CSV_PREVIEW_ROWS = int(os.getenv("AGENT_CSV_PREVIEW_ROWS", "20"))
 AGENT_CSV_ANALYZE_MAX_ROWS = int(os.getenv("AGENT_CSV_ANALYZE_MAX_ROWS", "200000"))

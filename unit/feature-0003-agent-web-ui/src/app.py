@@ -7748,7 +7748,8 @@ def _resolve_session_default_model() -> str:
     에 첨부 후 400 차단되던 회귀 차단. Local LLM gateway 가 실제로 가용한 경우
     (`_is_local_llm_available()` True) 에만 `auto` 가 catalog 에 포함되어 통과 —
     그 외 시점은 API_DEFAULT_MODEL fallback."""
-    raw = os.getenv("OPENAI_MODEL", "").strip()
+    # TASK-0233: 새 이름 LLM_MODEL 우선, 구이름 OPENAI_MODEL fallback(운영 .env 무중단).
+    raw = (os.getenv("LLM_MODEL") or os.getenv("OPENAI_MODEL") or "").strip()
     if raw and is_allowed_api_model(raw):
         # 로컬 LLM 모델(auto/edge/core/code)은 웹 UI 기본값으로 노출하지 않음 —
         # insight-worker 전용. 웹 세션은 항상 Bedrock Claude 계열 기본값 사용.
