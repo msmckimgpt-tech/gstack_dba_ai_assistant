@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0234
+- Date: 2026-06-12 (TASK-0234, **Minor §12.3** — datasource UI 사용성 버그 2건, frontend-only)
+- Scope: 멀티 datasource 1:N(TASK-0230) 배포 후 사용자 보고 2건. ① 연결 테스트 버튼이 바인딩 존재 시 무동작(드롭다운 add 모드 value=''), ② 선택 DB 가 어느 datasource 소속인지 불명. 권한/스키마/엔드포인트/백엔드 0.
+- Files:
+  - unit/feature-0003-agent-web-ui/src/static/admin.js (각 datasource 칩 per-chip ⟳ 연결테스트 + "접근 가능 데이터베이스" 헤더 datasource 배지 + 공용 버튼 안내 명확화 + reload 시 편집대상/배지 동기화)
+  - unit/feature-0003-agent-web-ui/src/static/styles.css (`.admin-chip-action--ok/--fail`, `.admin-db-ds-badge`)
+  - unit/feature-0003-agent-web-ui/src/static/admin.html (캐시버스터 `?v=20260612-ds-test-label`)
+- 배경: ① 공용 "연결 테스트" 가 `dsSelect.value` 를 읽는데 TASK-0230 에서 바인딩 ≥1 이면 드롭다운이 "추가" 모드(value='')라 항상 빈 값 → 바인딩 datasource 테스트 불가. 백엔드 `/test` 엔드포인트는 정상(라이브 3/3 ok). ② 멀티 바인딩 시 DB 목록이 어느 datasource 것인지 라벨 없음.
+- Rollback: 위 3파일 revert(frontend-only, 백엔드 영향 0).
+
 ## CHG-20260611-0233
 - Date: 2026-06-11 (TASK-0233, **Minor §12.3** — datasource multi-bind UI 접근성 보강, frontend-only)
 - Scope: TASK-0230 의 제품 상세 datasource multi-bind UI 를 gstack `/design-review` 소스 접근성 감사로 검토 후 HIGH 3 + MEDIUM 4 흡수. 권한/스키마/엔드포인트/백엔드 0.

@@ -2730,6 +2730,23 @@ a { color: inherit; }
   opacity: 1;
 }
 
+/* 이슈①(2026-06-12): 칩 per-datasource 연결 테스트(⟳) 결과 색. */
+.admin-chip-action--ok { color: var(--success, #16a34a); opacity: 1; }
+.admin-chip-action--fail { color: var(--danger, #dc2626); opacity: 1; }
+
+/* 이슈②(2026-06-12): "접근 가능 데이터베이스" 헤더의 편집 대상 datasource 배지. */
+.admin-db-ds-badge {
+  margin-left: 8px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, .1);
+  border: 1px solid rgba(37, 99, 235, .24);
+  color: var(--primary, #2563eb);
+  vertical-align: middle;
+}
+
 .admin-chip-locked-hint {
   font-size: 10px;
   letter-spacing: 0.02em;
