@@ -2007,3 +2007,15 @@ source_of_truth: true
 - Reason: 자가수복 로직과 명시 rename 모두 기존 DEK/AESGCM(`encrypt_password`/`decrypt_password`) 재사용 — 신규 암호화 표면 없음. RBAC 게이트(console.manage) 무변경, 스키마 무변경, 신규 엔드포인트 없음. 자가수복은 복호→재암호화만 추가이며 실패는 silent pass(수동 재입력으로 가시화). 명시 rename은 기존 key_changed 경로와 동일 로직. admin.js key 필드는 readonly → 편집 가능으로 UX 변경만. py_compile PASS, node --check PASS.
 - Risk: low — 자가수복은 서버 재시작 시 1회 실행 멱등. 명시 rename은 기존 키 변경 경로 재사용. admin.js 변경은 UX only.
 - Cross-ref: CHG-20260611-0218 / TASK-0218 / TASK-0217.
+
+## REV-20260611-0223 [SUBAGENT:insight-coverage-matching-semantics]
+- Date: 2026-06-11
+- Cycle: TASK-0223 (제품별 insight-worker 분석 완료율 UI), **Major §12.3**
+- Outside-voice: 적대적 설계 리뷰 subagent 1인 — "그럴듯하지만 틀린" 매칭 의미론 반증 임무. datasource 접근 모델 인접(memory: access-model 인접 작업 외부시각 필수)이라 구현 전 설계 검증 dispatch.
+- 판정: 리뷰는 prompt 에 기술한 **단순 설계**(분자를 SQL `schema_name IN (접근DB)` 필터로) 기준 **NOT-SHIP** + 5건 지적. 핵심 2건:
+  1. **[BLOCKER] NULL vs 해시 이중기록**: TASK-0206 이후 "기본 MySQL" 제품의 `DatasourceKey` 는 NULL 이 아니라 main_mysql 해시. insight 가 ds=None(NULL)+main_mysql(hash) 로 같은 테이블 2벌 기록.
+  2. **[BLOCKER] MSSQL schema_name 차원**: rag `schema_name`=SQL 스키마(`dbo`), 접근DB=catalog(database) → `schema_name IN (접근DB)` 항상 0 매칭.
+  - 그 외 [MAJOR] 분모 연결 유저(information_schema 권한필터)·.env 라벨 폴백, [MINOR] VIEW 양쪽 동일.
+- 해소(구현이 catalog-driven 으로 선반영): 실제 구현은 리뷰가 권고한 형태와 일치 — ① 분자를 **라이브 카탈로그 (schema,table) ∩ rag (schema,table) 집합 교집합**(set dedup)으로 계산해 MSSQL dbo 차원·이중기록 모두 해소(SQL schema 필터 미사용), ② datasource 매칭에 `_dsr.scope_key`(해시, .env 라벨 폴백 포함) 사용 + 기본 엔드포인트일 때만 `datasource_key IS NULL` 합산(distinct 라 과대집계 0), ③ 분모를 resolve 된 datasource RO 좌표로 직결해 insight 와 GRANT 가시성 정합, ④ MSSQL 비-default_db=미스캔(analyzed 0+flag), ⑤ VIEW 양쪽 포함. 5건 모두 반영 확인.
+- Risk: low-medium — read-only 통계(쓰기·RBAC·스키마·암호화 0). 라이브 DB 조회는 90s TTL 캐시+per-datasource 실패 격리+SSRF 가드+5s timeout. 측정 불가는 graceful "측정 불가" 표시(500 없음).
+- Cross-ref: CHG-20260611-0223 / TASK-0223 / TASK-0206 / TASK-0219.

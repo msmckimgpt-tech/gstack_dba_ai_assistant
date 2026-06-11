@@ -454,6 +454,105 @@ def list_server_databases_classified(datasource: dict, *, timeout: int | None = 
                 pass
 
 
+# MSSQL 시스템 스키마(분석 대상 아님) — insight-worker 의 dialect.system_schemas() 와 정합되게
+# information_schema 열거에서 제외(db_* 고정 역할 + sys/guest/INFORMATION_SCHEMA).
+_MSSQL_SYSTEM_SCHEMAS = frozenset({
+    "sys", "guest", "information_schema",
+    "db_owner", "db_accessadmin", "db_securityadmin", "db_ddladmin",
+    "db_backupoperator", "db_datareader", "db_datawriter",
+    "db_denydatareader", "db_denydatawriter",
+})
+
+
+def list_information_schema_tables(
+    datasource: dict,
+    *,
+    schemas: "list[str] | None" = None,
+    database: str | None = None,
+    timeout: int | None = None,
+    cap: int = 20000,
+) -> "list[tuple[str, str]]":
+    """datasource 의 information_schema 에서 (schema, table) 객체 목록을 **직결**로 열거.
+
+    TASK-0223: 제품별 insight 분석 완료율의 분모(전체 객체 모수) 산출용. flag(AGENT_MULTI_DATASOURCE_ENABLED)
+    **무관** 직결 — `list_server_databases_classified`/`probe_datasource` 와 동일 패턴(connect() 의 flag-gated
+    datasource 경로를 우회). SSRF 검사는 호출측(_ssrf_check_host) 선행.
+
+    - MySQL: 한 연결이 모든 DB 를 보므로 `schemas`(DB명들) 로 `TABLE_SCHEMA IN (...)` 필터. VIEW 포함
+      (insight-worker 의 무필터 열거와 정합). 시스템 스키마는 호출측이 accessible DB 만 넘기므로 자연 배제.
+    - MSSQL: DB==database 1개 컨텍스트라 `database`(1개) 로 연결해 그 DB 의 전체 user 스키마 table/view 열거.
+      `INFORMATION_SCHEMA.TABLES` 는 현재 DB 한정이고 시스템 스키마(sys/db_*/guest)는 `_MSSQL_SYSTEM_SCHEMAS`
+      로 제외(dialect.system_schemas() 정합).
+
+    반환: `[(schema_name, table_name), ...]` (cap 개 제한). 예외는 그대로 raise(호출측이 graceful 처리).
+    """
+    engine = (datasource.get("engine") or "mysql").strip().lower()
+    conn = None
+    try:
+        if engine == "mssql":
+            if _pymssql is None:
+                raise RuntimeError("pymssql_not_installed")
+            db_name = database or datasource.get("default_db") or "tempdb"
+            conn = _pymssql.connect(
+                server=datasource.get("host") or DB_HOST,
+                port=str(int(datasource.get("port") or 1433)),
+                user=datasource.get("user") or DB_USER,
+                password=datasource.get("password", ""),
+                database=db_name,
+                login_timeout=int(timeout or 8), timeout=int(timeout or 8),
+            )
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
+                "WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW') ORDER BY TABLE_SCHEMA, TABLE_NAME"
+            )
+            out: list[tuple[str, str]] = []
+            for r in (cur.fetchall() or []):
+                if not r or not r[0] or not r[1]:
+                    continue
+                if str(r[0]).strip().lower() in _MSSQL_SYSTEM_SCHEMAS:
+                    continue
+                out.append((str(r[0]), str(r[1])))
+                if len(out) >= cap:
+                    break
+            cur.close()
+            return out
+        else:
+            wanted = [str(s).strip() for s in (schemas or []) if s and str(s).strip()]
+            if not wanted:
+                return []
+            conn = mysql.connector.connect(
+                host=datasource.get("host") or DB_HOST,
+                port=int(datasource.get("port") or DB_PORT),
+                user=datasource.get("user") or DB_USER,
+                password=datasource.get("password", ""),
+                connection_timeout=int(timeout or 8), charset="utf8mb4", use_unicode=True,
+            )
+            cur = conn.cursor()
+            placeholders = ", ".join(["%s"] * len(wanted))
+            cur.execute(
+                "SELECT TABLE_SCHEMA, TABLE_NAME FROM information_schema.TABLES "
+                f"WHERE TABLE_SCHEMA IN ({placeholders}) "
+                "ORDER BY TABLE_SCHEMA, TABLE_NAME",
+                wanted,
+            )
+            out = []
+            for r in (cur.fetchall() or []):
+                if not r or not r[0] or not r[1]:
+                    continue
+                out.append((str(r[0]), str(r[1])))
+                if len(out) >= cap:
+                    break
+            cur.close()
+            return out
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def _collect_cursor_result(cur) -> list[tuple[str, Any, Any]]:
     # Stage 2 (P4): 크로스엔진 결과 수집. mysql.connector 전용 `cur.with_rows` 대신 DBAPI 표준
     # `cur.description`(result set 있으면 not None)으로 판정 → mysql.connector·pymssql 공통.

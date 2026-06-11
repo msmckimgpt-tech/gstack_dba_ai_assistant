@@ -3173,3 +3173,54 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] outside-voice [SKIPPED:bugfix-aad-fix2-no-new-surface] (REV-20260611-0218) — 자가수복·명시 rename 모두 기존 DEK/AESGCM 재사용, RBAC·스키마·엔드포인트 신규 0.
 - [x] py_compile app.py PASS, node --check admin.js PASS
 - [x] verify-completion PASS → PR #155 머지 → web 재배포 → 서버 기동 정상(`datasource_decrypt_failed` 미발생)
+
+### TASK-0223 — 제품별 insight-worker 분석 완료율 UI (관리 콘솔 > 제품) (2026-06-11)
+
+**Major §12.3** (백엔드 app.py 신규 엔드포인트 1 + 헬퍼 + 프런트 admin.js/admin.html — read-only 통계, RBAC·스키마 변경 0, 외부 영향 0). (CHG-20260611-0223)
+
+#### 2.1 Implementation Plan
+
+**요구**: `관리 콘솔 > 제품` 에서 각 제품별로 insight-worker 의 객체 분석 완료율(%)을 표시. 비율 모수 = 그 제품의 `접근 가능 데이터베이스`(WebProductDatabases) 에 선택된 DB; 분자 = PG 내 해당 DB/테이블에 대한 통찰값(rag_objects) 존재 개수.
+
+**핵심 데이터 흐름 (검증 완료)**:
+- 접근 가능 DB = `WebProductDatabases.SchemaName` (제품별). `_list_product_databases(conn, pid)`.
+- 제품→데이터소스 = `WebProducts.DatasourceKey`(라벨, NULL=레거시 기본 MySQL). `_list_products`.
+- rag_objects 의 datasource 스코핑 = **엔드포인트 해시** `compute_scope_key(engine,host,port)` (라벨 아님; insight.py:1605). 기본 MySQL(ds=None) 스캔 행은 `datasource_key IS NULL`.
+- insight 객체 행: `public.rag_objects` (conversation_id=`__insight_worker__`, scope_key=`common`), `object_type IN ('schema','table')`, `schema_name`/`table_name`.
+- 분모(전체 객체) = 라이브 카탈로그 `SELECT TABLE_SCHEMA, TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA IN (접근DB)` (ANSI, MySQL/MSSQL 공용). 객체 = {접근 DB 노드(schema)} ∪ {그 안의 table}.
+
+**dialect 처리**:
+- 기본/MySQL 데이터소스: 접근 DB == 스키마. `TABLE_SCHEMA IN (dbs)` 직접 매칭. rag 매칭 `schema_name IN (dbs)`.
+- MSSQL 데이터소스: 접근 DB == 데이터베이스명. insight-worker 는 datasource 의 **default_db 만** 스캔(insight.py:1614). 접근 DB 가 default_db 면 그 DB 에 연결(default_db 고정)해 전체 user 스키마의 table 열거 → rag (schema,table) 매칭. 접근 DB ≠ default_db 면 insight-worker 미스캔 → analyzed=0, UI 에 "워커 미스캔" flag 명시(truthful).
+
+**파일/심볼 변경**:
+1. [app.py](../src/app.py) 신규 헬퍼 `_compute_product_insight_coverage(conn, product, *, cache)`:
+   - scope_key 해석(datasource_key→`_dsr.resolve`→`scope_key`; NULL→NULL 매칭).
+   - 접근 DB 열거 → 라이브 table 카탈로그(분모) + rag_objects 매칭(분자).
+   - SSRF 가드(`_ssrf_check_host`) 데이터소스 host, 짧은 timeout(5s), per-datasource 실패 격리(→ `measurable:false`).
+   - 반환: `{product_id, pct, analyzed_objects, total_objects, per_db:[{db, schema_analyzed, tables_analyzed, tables_total, scannable, note}], measurable, reason}`.
+2. [app.py](../src/app.py) 신규 엔드포인트 `@app.get("/api/admin/products/insight-coverage")` → `admin_products_insight_coverage(request)`:
+   - 권한 `console.access` (제품 목록과 동일 gate).
+   - `?product_id=` 단건 또는 전체. **인메모리 TTL 캐시**(90s, key=product_id+scope+db-set) — 라이브 DB 반복 조회 차단.
+3. [admin.js](../src/static/admin.js):
+   - `loadAdminData` 후 `loadProductInsightCoverage()` async 호출 → `adminState.productCoverage` Map 채움 → `renderProductList` 재렌더.
+   - `renderProductList`: 각 row 에 coverage 미니바/배지("분석 N%") 추가.
+   - `renderProductDetail`: "접근 가능 데이터베이스" 섹션에 coverage 요약(전체 %) + per-DB breakdown + 새로고침 버튼.
+4. [admin.html](../src/static/admin.html): 정적 자산 캐시버스터 `?v=` bump.
+
+**완료 판정 기준 (acceptance criteria)**:
+- AC1: 제품 목록에서 각 제품 row 에 분석 완료율(%) 배지가 표시된다.
+- AC2: 제품 상세의 접근 가능 DB 섹션에 전체 % + DB별(테이블 analyzed/total, schema insight 유무) breakdown 이 표시된다.
+- AC3: 비율 = (rag_objects 통찰 보유 객체 수) / (접근 DB 의 라이브 카탈로그 객체 수). scope_key=엔드포인트 해시 매칭(또는 NULL).
+- AC4: 데이터소스 연결 실패/미바인딩 제품은 500 없이 "측정 불가"/"접근 0" 으로 graceful 표시.
+- AC5: MSSQL 데이터소스의 비-default_db 접근 DB 는 "워커 미스캔" 으로 명시(0% 오해 방지).
+- AC6: py_compile/node --check/make test PASS, PB-0008 Windows-browser 시각검증 PASS.
+
+**위험도 Major 근거**: 다중 파일(백엔드 신규 엔드포인트 + 프런트 목록/상세) + 라이브 DB 연결(분모) + PG 조회(분자) + 캐시. 단 RBAC·스키마·암호화·외부계약 변경 0(읽기 전용 통계). 접근모델 인접 → outside-voice 설계 리뷰 경유(매칭 의미론·dialect·SSRF/캐시 안전성).
+
+#### 작업 항목
+- [x] outside-voice 설계 리뷰 (REV-20260611-0223 [SUBAGENT]) — NOT-SHIP 5건이 catalog-driven 구현으로 전부 해소 확인
+- [x] 백엔드: `_compute_product_insight_coverage` + `/api/admin/products/insight-coverage` + TTL 캐시 (+ db.py `list_information_schema_tables`)
+- [x] 프런트: 목록 배지 + 상세 breakdown + loader + CSS + 캐시버스터
+- [x] py_compile app.py+db.py PASS + node --check admin.js PASS
+- [ ] verify-completion → main rebase·ff-merge → web 재배포 → 라이브 실측 + PB-0008 Windows-browser 시각검증

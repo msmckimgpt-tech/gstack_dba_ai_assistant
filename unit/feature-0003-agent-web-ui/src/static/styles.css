@@ -4049,6 +4049,74 @@ a { color: inherit; }
   font-weight: 600;
 }
 
+/* ── TASK-0223: insight 분석 완료율 (목록 배지 + 상세 breakdown) ───────────── */
+.admin-meta.cov-line { margin-top: 2px; }
+.cov-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.cov-badge.cov-ok    { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); border-color: color-mix(in srgb, var(--success) 30%, transparent); }
+.cov-badge.cov-warn  { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); border-color: color-mix(in srgb, var(--warning) 30%, transparent); }
+.cov-badge.cov-low   { color: var(--danger);  background: color-mix(in srgb, var(--danger) 12%, transparent);  border-color: color-mix(in srgb, var(--danger) 30%, transparent); }
+.cov-badge.cov-muted { color: var(--text-muted); background: var(--bg); border-color: var(--border); }
+
+.cov-detail {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cov-detail-head { display: flex; align-items: center; gap: 10px; }
+.cov-detail-title { font-size: 12px; font-weight: 700; color: var(--text-2); }
+.cov-detail-head .cov-refresh { margin-left: auto; }
+.cov-reason { color: var(--danger); }
+
+.cov-bar-row { display: flex; align-items: center; gap: 10px; }
+.cov-bar {
+  position: relative;
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+.cov-bar-fill { height: 100%; border-radius: 999px; transition: width .35s ease; }
+.cov-bar.cov-ok   .cov-bar-fill { background: var(--success); }
+.cov-bar.cov-warn .cov-bar-fill { background: var(--warning); }
+.cov-bar.cov-low  .cov-bar-fill { background: var(--danger); }
+.cov-bar-label { font-size: 11px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+
+.cov-db-list { display: flex; flex-direction: column; gap: 4px; }
+.cov-db-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+}
+.cov-db-name { font-size: 12px; font-weight: 600; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cov-db-stat { font-size: 11px; font-weight: 700; white-space: nowrap; }
+.cov-db-stat.cov-ok    { color: var(--success); }
+.cov-db-stat.cov-warn  { color: var(--warning); }
+.cov-db-stat.cov-low   { color: var(--danger); }
+.cov-db-stat.cov-muted { color: var(--text-muted); }
+.cov-engine-note { font-size: 11px; }
+
 .admin-controls {
   display: grid;
   grid-template-columns: 200px 1fr auto;
