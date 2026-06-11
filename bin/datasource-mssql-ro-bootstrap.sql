@@ -28,6 +28,15 @@
 --      만들어지는 위험). SSMS 는 SQLCMD 모드 + "오류 시 중단"을 켜고 실행.
 --   3) 허용 스키마가 여러 개면 4단계 GRANT 블록을 스키마마다 복제한다.
 --   4) 멱등: 재실행 안전(IF NOT EXISTS / 권한 재부여).
+--
+-- ⚠ 멀티-DB 주의 (TASK-0226):
+--   이 템플릿은 **단일 TARGET_DB** 에만 USER/GRANT 한다. 한 MSSQL datasource 가 여러 DB(catalog)를
+--   제품 접근가능 DB(WebProductDatabases)로 가지면, 그 DB 마다 본 템플릿을 TARGET_DB 를 바꿔
+--   반복 실행해야 한다 — 그러지 않으면 insight-worker 가 미부트스트랩 DB 연결에서 'Login failed'/
+--   'Cannot open database' 로 막혀 그 DB 를 조용히 건너뛴다(권한 이슈로 탐색 불가).
+--   접근가능 DB 전체를 한 번에 부트스트랩하려면(schema 격리 대신 DB 단위 db_datareader 허용)
+--   bin/datasource-mssql-ro-bootstrap-multidb.sql 을 사용한다. 두 템플릿은 동일 로그인에 대해
+--   상호 배타다(스키마 GRANT-only ↔ db_datareader).
 -- =====================================================================
 
 :setvar TARGET_DB        "appdb"          -- DS_<KEY>_DEFAULT_DB 와 동일

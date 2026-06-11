@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260611-0226
+- Date: 2026-06-11 (TASK-0226, **Major §12.3** — MSSQL insight-worker per-DB 스캔 커버리지 + 권한 실패 가시화)
+- Scope: insight-worker 가 MSSQL datasource 의 제품 접근가능 DB(`WebProductDatabases`) 마다 재연결 스캔할 때, RO 로그인 GRANT 누락으로 일부 DB 가 조용히 누락되던 것을 telemetry+status 로 가시화 + 멀티 DB RO 부트스트랩 템플릿 제공. MySQL 단일 datasource 무변경.
+- 배경: `_discover_mssql_databases` 는 datasource 바인딩 제품들의 접근가능 DB union 을 올바르게 발견하나, 각 DB `connect_with_retry(database=db)` 재연결 시 RO 로그인이 단일 DB 에만 USER/GRANT 돼 있으면(`bin/datasource-mssql-ro-bootstrap.sql` 은 단일 `TARGET_DB`) 'Login failed'(18456)/'Cannot open database'(916) 로 막혀 per-DB `except` 가 조용히 skip → 등록 DB 일부만 인사이트 생성·운영자 미가시.
+- 변경:
+  - `src/modules/insight.py`: `run_insight_cycle` 의 `scan_report` 에 `db_targets`(MSSQL 발견 DB 수)/`db_failed`(연결·스캔 실패 수) 카운터 신규. MSSQL `_db_targets` 발견 직후 `db_targets += len`. per-DB `except` 에서 `_is_mssql_ds` 면 `db_failed += 1` + 권한거부 패턴(login failed/cannot open database/permission/denied/18456/916/229/297) 감지 시 진단 힌트(`datasource-mssql-ro-bootstrap.sql` DB별 실행 안내) 로깅. `db_failed>0` 면 status='degraded'(publish_failed 와 동일 정책). heartbeat KV `insight_worker_last_db_targets`/`insight_worker_last_db_failed` + payload 에 노출.
+  - `bin/datasource-mssql-ro-bootstrap-multidb.sql`: 신규 — 한 공유 RO 로그인을 @target_dbs(제품 접근가능 DB) 전체에 커서 순회로 USER+db_datareader 멱등 부트스트랩. QUOTENAME 식별자 인젝션 차단, ONLINE+비-시스템 DB 만 대상, db_datawriter 제거 hardening, 0단계 서버 전역 prereq(xp_cmdshell/cross-db ownership/Ad Hoc) 검증. 기존 단일-DB 스키마 GRANT-only 템플릿과 상호 배타(보안 trade-off: DB 단위 db_datareader, 운영자 명시 승인).
+  - `bin/datasource-mssql-ro-bootstrap.sql`: 멀티-DB 주의 주석 + multidb 변형 cross-ref 추가.
+  - `tests/test_mssql_perdb_coverage.py`: 신규 8 테스트(발견 함수 union/default_db 폴백/빈목록/예외 graceful + status degrade 결정 로직 4).
+- 비변경: 발견 로직(`_discover_mssql_databases` — 이미 제품 접근가능 DB 기준)·런타임 allowlist(tools.py `_freeform_sql_access_error` 3-part catalog 대조 — 이미 제품 접근가능 DB 전체 허용)·RBAC·시크릿·PG/MySQL 스키마.
+- 검증: pytest 신규 8 + 회귀(three_tier/degraded_backoff/security_boundary/multi_datasource) 131 PASS, 회귀 0 + py_compile.
+- Files: src/modules/insight.py, bin/datasource-mssql-ro-bootstrap-multidb.sql(신규), bin/datasource-mssql-ro-bootstrap.sql, tests/test_mssql_perdb_coverage.py(신규)
+- Rollback: db_targets/db_failed 는 MSSQL engine 한정 누적(MySQL=0 → status 영향 없음). 멀티 DB 부트스트랩 SQL 은 운영자 수동 실행 템플릿이라 미실행 시 기존 동작 유지(단, 누락 DB 는 degraded 로 표시됨 — 이것이 본 cycle 의 의도된 가시화).
+
 ## CHG-20260611-0223
 - Date: 2026-06-11 (TASK-0223, **Major §12.3** — MSSQL database-aware 3계층 insight [feature-0003 주관, agent-core 교차변경])
 - Scope: MSSQL(database.schema.table 3계층) insight 파이프라인 — insight-worker 가 제품 등록 DB 별로 스캔하고 fact_key 에 database 를 포함, read-back/grounding 이 이를 정합 매칭. MySQL 2계층은 무변경(active_database 미설정 → 기존 동치).
