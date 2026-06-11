@@ -13632,7 +13632,7 @@ def _compute_product_insight_coverage(conn, product: dict) -> dict:
                 db_tables[db] = {"pairs": by_schema.get(str(db).strip().lower(), set()), "scannable": True}
     except Exception as exc:
         base["reason"] = "데이터소스 카탈로그 조회 실패(연결/권한)"
-        _log.getLogger("app").warning("insight_coverage catalog fail pid=%s err=%r", pid, exc)
+        logging.getLogger("app").warning("insight_coverage catalog fail pid=%s err=%r", pid, exc)
         return base
 
     # ── 분자: PG rag_objects 통찰 보유 객체 집합(scope 전체를 끌어와 라이브 카탈로그와 교집합) ──
@@ -13664,7 +13664,7 @@ def _compute_product_insight_coverage(conn, product: dict) -> dict:
         pg.close()
     except Exception as exc:
         base["reason"] = "PG 통찰 조회 실패"
-        _log.getLogger("app").warning("insight_coverage pg fail pid=%s err=%r", pid, exc)
+        logging.getLogger("app").warning("insight_coverage pg fail pid=%s err=%r", pid, exc)
         return base
 
     # ── 객체 집계: 각 accessible DB = 1 DB노드 + N table노드 ──
