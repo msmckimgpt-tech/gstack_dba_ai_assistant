@@ -3327,6 +3327,57 @@ def _seed_main_mysql_datasource(conn) -> None:
         cur.close()
 
 
+def _migrate_mssql_products_to_db_level(conn) -> None:
+    """TASK-0206 일회성 마이그레이션: TASK-0205-era MSSQL 제품의 `DatasourceDatabase`(단일 참조 DB)를
+    DB-단위 접근목록(`WebProductDatabases`)으로 이전.
+
+    배경: 구 모델에서 MSSQL 제품의 WebProductDatabases 는 **스키마명**(dbo 등), 참조 DB 는 별도
+    `WebProducts.DatasourceDatabase` 컬럼에 있었다. DB-단위 모델에선 WebProductDatabases 가 **DB명**을
+    의미하므로, 구 schema-name 항목은 DB명으로 오해석돼 해당 제품이 접근 불가가 된다. 이를 막기 위해:
+      - `DatasourceDatabase` 가 설정된 제품(=구 MSSQL 제품)의 WebProductDatabases 를 **참조 DB 단일 항목으로 치환**
+        (구 schema-name 항목 제거 — DB 단위에선 한 DB 안 모든 스키마가 접근됨).
+      - 이전 후 `DatasourceDatabase=NULL` 로 비워 **멱등** 보장(NULL=대상 아님). 신규 UI 제품(DatasourceDatabase
+        애초에 NULL)은 무영향.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT Id, DatasourceDatabase FROM WebProducts "
+            "WHERE DatasourceDatabase IS NOT NULL AND DatasourceDatabase <> ''"
+        )
+        rows = cur.fetchall() or []
+        migrated = 0
+        for r in rows:
+            pid = r[0]
+            dsdb = (str(r[1]).strip() if len(r) > 1 and r[1] else "")
+            if not pid or not dsdb:
+                continue
+            # 구 schema-name 접근목록 제거 후 참조 DB(catalog) 단일 항목으로 치환.
+            cur.execute("DELETE FROM WebProductDatabases WHERE ProductId=%s", (int(pid),))
+            cur.execute(
+                "INSERT INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder) "
+                "VALUES (%s, %s, %s, 10)",
+                (int(pid), dsdb, "TASK-0206 마이그레이션(참조 DB→접근 가능 DB)"),
+            )
+            # 멱등 마커: 이전 완료 → DatasourceDatabase 비움(다음 부팅에 재실행 안 됨).
+            cur.execute("UPDATE WebProducts SET DatasourceDatabase=NULL WHERE Id=%s", (int(pid),))
+            migrated += 1
+        if migrated:
+            try:
+                logging.getLogger(__name__).info(
+                    "[ds-migrate] MSSQL 제품 %d개를 DB-단위 접근목록으로 이전(참조 DB→접근 DB)", migrated,
+                )
+            except Exception:
+                pass
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        cur.close()
+
+
 def _ensure_web_conversation_shares_schema(conn) -> None:
     """REQ-20260514-0001: WebConversationShares 테이블을 idempotent CREATE.
 
@@ -3947,6 +3998,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_web_datasources_schema(conn)
     # TASK-0206: 데이터 MySQL 데이터소스 시드 + NULL 바인딩 마이그레이션 (fast-path).
     _seed_main_mysql_datasource(conn)
+    # TASK-0206: 구 MSSQL 제품(참조 DB)을 DB-단위 접근목록으로 일회성 이전 (fast-path).
+    _migrate_mssql_products_to_db_level(conn)
     # REQ-20260514-0001: 공유 링크 테이블 fast-path 보정.
     _ensure_web_conversation_shares_schema(conn)
     # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column ALTER.
@@ -4110,6 +4163,8 @@ def _ensure_web_tables():
         _ensure_web_datasources_schema(conn)
         # TASK-0206: 데이터 MySQL 데이터소스 시드 + NULL 바인딩 마이그레이션 (slow path).
         _seed_main_mysql_datasource(conn)
+        # TASK-0206: 구 MSSQL 제품(참조 DB)을 DB-단위 접근목록으로 일회성 이전 (slow path).
+        _migrate_mssql_products_to_db_level(conn)
         # REQ-20260514-0001: 공유 링크 테이블 보장 (slow path).
         _ensure_web_conversation_shares_schema(conn)
         # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column (slow path).
