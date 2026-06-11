@@ -3274,3 +3274,32 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 프런트 connected 렌더링 + 연결불가 표시 + MSSQL 안내 갱신 + 캐시버스터
 - [x] py_compile + node --check PASS
 - [ ] verify-completion → 머지 → web 재배포 → 라이브 실측 + PB-0008 시각검증
+
+### TASK-0227 — 실행 단계 사이드 패널 갱신 시 "결과 보기" 펼침 상태 유지 (frontend-only) (2026-06-11)
+
+**Minor §12.3** (app.js 1 + index.html 1, RBAC·스키마·신규 엔드포인트·백엔드·CSS 0). (CHG-20260611-0227)
+
+#### 진단
+사용자 보고: assistant 답변의 `실행 단계`를 사이드바에 펼쳐놓고 특정 단계의 `결과 보기`로 결과셋을 확인 중일 때, 실행 단계가 갱신(폴링으로 새 단계 추가)되면 보던 결과셋이 닫혀버린다.
+
+근본 원인: 폴링으로 새 단계가 도착할 때마다 `applyProgressPayload`가 `refreshStepSidePanel` → `_renderStepSidePanelBody`를 호출하는데, 이 함수가 `body.innerHTML = ""`로 패널 DOM 전체를 비우고 모든 단계를 재생성한다. 그런데 각 단계의 "결과 보기" 펼침 여부는 순전히 DOM 로컬 변수(`resultBody.hidden`, `buildStepDetailEl` 내부)로만 존재 → 재렌더 시 전부 기본값(닫힘)으로 리셋. 스크롤 위치는 이미 스냅샷/복원(`wasAtBottom`)하면서 펼침 상태는 보존하지 않던 비대칭.
+
+#### 수정
+- [app.js](../src/static/app.js):
+  - `state.stepResultExpanded`(Set) 신설 — 펼친 단계의 안정 키를 기억.
+  - `_stepResultKey(step, idx)` 헬퍼 — `progressSteps` dedup과 동일한 `step_index:created_at` 조합(둘 다 없으면 `idx` fallback)으로 같은 단계가 재렌더를 거쳐도 동일 키 유지.
+  - `buildStepDetailEl`의 결과 토글: 초기 `hidden`/버튼 라벨/`aria-expanded`를 `state.stepResultExpanded`에서 복원, 토글 클릭 시 Set에 add/delete.
+  - run 전환 시(`resetProgressTracking` + `applyProgressPayload`의 runId 변경 분기) Set `clear()` — 다른 run의 동일 step 키 혼동 방지.
+- [index.html](../src/static/index.html): 캐시버스터 `?v=20260611-step-result-persist`.
+
+#### 완료 판정 기준
+- AC1: 실행 단계 사이드 패널에서 한 단계의 "결과 보기"를 펼친 뒤 새 단계가 폴링으로 추가돼도 해당 결과셋이 계속 펼쳐진 상태로 유지된다.
+- AC2: 여러 단계를 동시에 펼쳐두면 각각 독립적으로 유지된다.
+- AC3: 다른 대화/run으로 전환하면 펼침 상태가 누적되지 않고 초기화된다.
+- AC4: node --check PASS, PB-0008 Windows-browser 시각검증.
+
+#### 작업 항목
+- [x] state.stepResultExpanded + _stepResultKey + 토글 복원/저장 배선
+- [x] run 전환 시 Set clear (resetProgressTracking + applyProgressPayload)
+- [x] node --check PASS + 캐시버스터 bump
+- [ ] verify-completion → 머지 → web 재배포 → PB-0008 시각검증

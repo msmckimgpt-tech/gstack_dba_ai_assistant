@@ -2906,3 +2906,19 @@ source_of_truth: true
 - 검증: py_compile app.py PASS, node --check admin.js PASS, make test + 라이브 실측 + PB-0008.
 - Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html}, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW,FUNCTION,TEST}.md
 - Rollback: app.py MSSQL 분기를 단일 try + scannable 게이트로 복원, admin.js connected→scannable 복원.
+
+## CHG-20260611-0227
+- Date: 2026-06-11
+- Task: TASK-0227 (실행 단계 사이드 패널 갱신 시 "결과 보기" 펼침 상태 유지), **Minor §12.3** (frontend-only, RBAC·스키마·엔드포인트·백엔드 0)
+- 진단: 실행 단계 사이드 패널(`#stepSidePanel`)에서 한 단계의 "결과 보기"를 펼쳐 결과셋을 보던 중, 폴링으로 새 단계가 추가되면 패널이 통째로 재렌더되며 펼쳐둔 결과셋이 닫힘. 근본 원인 = `_renderStepSidePanelBody`가 `body.innerHTML=""`로 전체를 비우고 재생성하는데, 펼침 여부가 DOM 로컬 변수(`resultBody.hidden`)로만 존재해 재렌더 시 기본값(닫힘)으로 리셋. (스크롤 위치는 이미 스냅샷/복원하던 비대칭.)
+- 변경:
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`:
+    - `state.stepResultExpanded`(Set) 신설 — 펼친 단계의 안정 키 영속화.
+    - `_stepResultKey(step, idx)` 헬퍼 — `progressSteps` dedup과 동일한 `step_index:created_at` 키(둘 다 없으면 `idx:` fallback).
+    - `buildStepDetailEl` 결과 토글: 초기 `hidden`/버튼 라벨/`aria-expanded`를 Set에서 복원, 토글 클릭 시 add/delete.
+    - `resetProgressTracking` + `applyProgressPayload`의 runId 변경 분기에서 `state.stepResultExpanded.clear()` — run 전환 시 다른 run의 동일 step 키 혼동 방지.
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`: 캐시버스터 `?v=20260611-step-result-persist`.
+- 비변경: 백엔드(app.py 무수정), RBAC, 스키마, 암호화, 엔드포인트, `buildSqlStepPanel`(완료된 채팅 메시지용 — run 완료 후 폴링 정지로 재렌더 안 됨, 본 버그 무관), progress strip 레거시 카드(`renderProgress`는 `buildStepDetailEl` 공용 → 동일 혜택).
+- 검증: node --check app.js PASS, verify-completion(코드 게이트), 배포 후 PB-0008 Windows-browser 시각검증 예정.
+- Files: unit/feature-0003-agent-web-ui/src/static/app.js, unit/feature-0003-agent-web-ui/src/static/index.html, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
+- Rollback: app.js의 `state.stepResultExpanded`·`_stepResultKey`·토글 복원/저장·clear 4개 변경 되돌림, index.html 캐시버스터 복원.
