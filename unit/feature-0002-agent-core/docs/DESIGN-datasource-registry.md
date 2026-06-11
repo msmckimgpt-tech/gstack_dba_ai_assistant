@@ -173,3 +173,20 @@ CREATE TABLE IF NOT EXISTS WebDatasources (
 - §2.4: effective default_db 를 가드·연결 **단일 소유** + 선택 DB 의 GRANT-범위 fail-closed 검증.
 - §2.5: 쓰기 응답 `has_password` 만 + 전 endpoint errno-only + audit 화이트리스트.
 - §3: SSRF allowlist/사설망 차단 강제.
+
+## 7. 최종 결정 (사용자 2026-06-11) — 구현 착수
+
+- **진행**: A→D 전체 연속 구현.
+- **SSRF**: 사설망(RFC1918)·링크로컬·메타데이터 IP(169.254.0.0/16) **차단 강제** + host allowlist(옵션 CIDR).
+- **키 관리 = envelope 암호화 (KEK/DEK)** — "마스터키도 DB 암호화 저장" 요청 충족:
+  - **KEK(루트 키)**: `.env.secret` 의 `AGENT_DATASOURCE_KEK_V<n>`(base64 32B). **DB 밖 유일 비밀**(암호학적 필연 —
+    루트 키가 DB 안에 있으면 DB 유출=전손). `.env`(전 service inherit) 아닌 분리 secret 파일.
+  - **DEK(작업 키)**: 랜덤 32B, **KEK 로 암호화(wrap)해 DB `WebDatasourceKeys` 저장**(KeyVersion, DekWrapped,
+    KekVersion). 즉 "마스터키(DEK)가 DB 에 암호화 저장"됨.
+  - **데이터소스 password**: 활성 DEK 로 AESGCM 암호화(AAD=DatasourceKey), `WebDatasources.PasswordEnc` 저장,
+    `EncryptionVersion`=DEK 버전.
+  - 복호: KEK(.env.secret) → DEK unwrap(DB) → password 복호. **DB 만 유출 시 KEK 없어 전부 복호 불가.**
+  - 로테이션: KEK 교체 = DEK 1행 재wrap(저렴). DEK 교체 = password 재암호화(버전 증가).
+- 그 외 §6 합격선(B1 effective-DB 단일화+GRANT검증, B2 audit 화이트리스트, B3 password 비노출 전경로,
+  M1 chokepoint(tools.py 가드·insight 순회 포함), M2 per-resolve·평문무캐시·delete즉시무효화, M5 .env 격리,
+  N1 충돌 fail-loud) 전부 충족 후 outside-voice 재게이트 → merge → 배포 → 라이브 검증.

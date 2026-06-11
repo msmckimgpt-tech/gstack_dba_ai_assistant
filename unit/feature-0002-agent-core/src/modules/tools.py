@@ -118,8 +118,14 @@ def _freeform_sql_access_error(sql: str) -> str | None:
                 "오류: 멀티 datasource 모드에서는 모든 테이블을 schema 로 명시해야 합니다 "
                 "(무자격 테이블명은 보안상 거부됩니다 — 예: `myschema.mytable`)."
             )
-        ds = (getattr(_cfg, "DATASOURCES", {}) or {}).get(active_ds) or {}
-        default_db = str(ds.get("default_db") or "").strip().lower()
+        # TASK-0205 B1: **effective default_db**(제품별 참조 DB override 반영, set_active_datasource 가
+        # 주입)를 읽는다. 정적 DATASOURCES[key].default_db 를 읽으면 override 시 가드 기준과 실제 연결
+        # DB 가 분리돼 cross-DB 격리가 깨진다(가드는 옛 DB, 연결은 새 DB). effective 미설정(레거시 .env
+        # 경로 등)이면 정적 dict 폴백(하위호환).
+        default_db = str(_cfg.get_active_default_db() or "").strip().lower()
+        if not default_db:
+            ds = (getattr(_cfg, "DATASOURCES", {}) or {}).get(active_ds) or {}
+            default_db = str(ds.get("default_db") or "").strip().lower()
         cross = sorted(c for c in catalogs if c and c != default_db)
         if cross:
             return (

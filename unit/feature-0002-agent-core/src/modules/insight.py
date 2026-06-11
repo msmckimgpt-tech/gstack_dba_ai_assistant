@@ -1581,18 +1581,23 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             # [(None, None)] 한 개라 기존 동작 0 변경(무접두 키). datasource 별 키는 ContextVar
             # (set_active_datasource)로 ds_fact_key 에 주입 → write·read-back·grounding 3자 정합.
             ds_targets = [(None, None)]
-            if AGENT_MULTI_DATASOURCE_ENABLED and DATASOURCES:
-                ds_targets += [(k, v) for k, v in DATASOURCES.items()]
+            if AGENT_MULTI_DATASOURCE_ENABLED:
+                # TASK-0205: DB 레지스트리(WebDatasources) + .env 병합. 정적 DATASOURCES 직접순회 폐기
+                # (DB CRUD 후 삭제분 미스캔·신규분 반영, M1). password 복호 포함.
+                from . import datasources as _datasources
+                for _k, _v in _datasources.all_datasources(mem_conn).items():
+                    ds_targets.append((_k, _v))
             schema_count = 0
             plan_start = time.perf_counter()
             for _ds_key, _ds_coords in ds_targets:
                 _ds_conn = None
                 try:
                     # P7: datasource 의 engine 도 함께 set (없으면 dialects.active() 가 mysql 로
-                    # 오인해 MSSQL 에 MySQL SQL 을 던진다 — 컬럼 핑거프린트 projection 분기 정합).
+                    # 오인). TASK-0205 B1: effective default_db 도 주입(cross-DB 가드 정합).
                     set_active_datasource(
                         _ds_key,
                         engine=(_ds_coords.get("engine") if _ds_coords else None),
+                        default_db=(_ds_coords.get("default_db") if _ds_coords else None),
                     )
                     if _ds_key is None:
                         _ds_conn = db_conn  # 기본 DB 는 이미 연결됨

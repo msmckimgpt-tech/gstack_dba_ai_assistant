@@ -3164,8 +3164,56 @@ def _ensure_dynamic_permissions_schema(conn) -> None:
             cur.execute("ALTER TABLE WebProducts ADD COLUMN DatasourceKey VARCHAR(64) NULL")
         except Exception:
             pass
+        # TASK-0205 §2.4: 제품별 MSSQL 참조 DB(같은 서버 데이터소스의 어느 DB 를 볼지). NULL=데이터소스 기본.
+        try:
+            cur.execute("ALTER TABLE WebProducts ADD COLUMN DatasourceDatabase VARCHAR(128) NULL")
+        except Exception:
+            pass
         # WebRoles.DefaultProductAccess (deprecated, 이전 설계 잔재) 의 ALTER 는 더 이상 추가하지 않는다.
         # 기존 deploy 에 컬럼이 이미 있다면 그대로 보존 (다음 cleanup cycle 의 DROP 대상).
+    finally:
+        cur.close()
+
+
+def _ensure_web_datasources_schema(conn) -> None:
+    """TASK-0205: DB 기반 datasource 레지스트리 테이블 (자격증명 암호화 저장). 멱등 CREATE.
+
+    - WebDatasourceKeys: envelope DEK(KEK 로 wrap 해 저장 — 마스터키의 DB 암호화 저장).
+    - WebDatasources: datasource 좌표 + 암호화 password. password 만 암호화(host/user 는 노출 경계 밖).
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebDatasourceKeys (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                KeyVersion INT NOT NULL UNIQUE,
+                DekWrapped TEXT NOT NULL,
+                KekVersion INT NOT NULL,
+                IsActive TINYINT(1) NOT NULL DEFAULT 1,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebDatasources (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                DatasourceKey VARCHAR(64) NOT NULL UNIQUE,
+                Engine VARCHAR(16) NOT NULL DEFAULT 'mysql',
+                Host VARCHAR(255) NOT NULL,
+                Port INT NOT NULL,
+                DbUser VARCHAR(128) NOT NULL,
+                PasswordEnc TEXT NULL,
+                DefaultDb VARCHAR(128) NULL,
+                EncryptionVersion INT NOT NULL DEFAULT 1,
+                IsActive TINYINT(1) NOT NULL DEFAULT 1,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UpdatedByAccountId BIGINT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
     finally:
         cur.close()
 
@@ -3786,6 +3834,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_seed_global_system_prompt(conn)
     # TASK-0052 Phase 1B: fast-path 재기동에서도 신규 dynamic permission 컬럼 + product 권한 backfill 실행.
     _ensure_dynamic_permissions_schema(conn)
+    # TASK-0205: DB 기반 datasource 레지스트리 테이블 fast-path 보정.
+    _ensure_web_datasources_schema(conn)
     # REQ-20260514-0001: 공유 링크 테이블 fast-path 보정.
     _ensure_web_conversation_shares_schema(conn)
     # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column ALTER.
@@ -3945,6 +3995,8 @@ def _ensure_web_tables():
         # TASK-0052 Phase 1B: WebPermissions 의 IsDynamic / ProductId 컬럼을 helper 로 보장 (slow path).
         # 같은 helper 가 _ensure_seed_catchup (fast path) 에서도 호출되어 기존 배포에 ALTER 적용.
         _ensure_dynamic_permissions_schema(conn)
+        # TASK-0205: DB 기반 datasource 레지스트리 테이블 (slow path).
+        _ensure_web_datasources_schema(conn)
         # REQ-20260514-0001: 공유 링크 테이블 보장 (slow path).
         _ensure_web_conversation_shares_schema(conn)
         # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column (slow path).
@@ -9238,7 +9290,8 @@ async def admin_list_datasources(request: Request) -> JSONResponse:
 
     좌표/비밀번호는 절대 반환하지 않는다 (datasource_public 마스킹). 관리 콘솔 접근 권한 필요.
     """
-    from modules.config import DATASOURCES, datasource_public, AGENT_MULTI_DATASOURCE_ENABLED
+    from modules.config import AGENT_MULTI_DATASOURCE_ENABLED, DATASOURCES
+    from modules import datasources as _dsr
     try:
         conn = _connect_memory()
     except Exception:
@@ -9251,24 +9304,43 @@ async def admin_list_datasources(request: Request) -> JSONResponse:
         conn.close()
         return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
     try:
-        # host/port/engine 만 노출 (user/password 제외) — 관리자가 매핑할 키 식별용.
-        datasources = [
-            {"key": v["key"], "engine": v["engine"], "host": datasource_public(v).get("host"),
-             "port": v["port"], "default_db": v.get("default_db")}
-            for v in DATASOURCES.values()
-        ]
+        # B3: host/port/engine/default_db 만 노출. **user/password 절대 비노출**(enumeration·누출 회피).
+        # has_password=bool 만(평문/복호값 echo 금지). source=db/env(DB 우선 override 가시화, N1).
+        merged = _dsr.all_datasources(conn)
+        datasources = []
+        for v in merged.values():
+            datasources.append({
+                "key": v["key"], "engine": v["engine"], "host": v.get("host"),
+                "port": v.get("port"), "default_db": v.get("default_db"),
+                "has_password": bool(v.get("password")),
+                "source": ("db" if v.get("_source") == "db" else "env"),
+                "editable": (v.get("_source") == "db"),  # .env datasource 는 UI 수정 불가(운영자 .env 편집)
+            })
+        datasources.sort(key=lambda d: d["key"])
         cur = conn.cursor()
         try:
-            cur.execute("SELECT Id, ProductKey, Name, DatasourceKey FROM WebProducts ORDER BY Id")
-            products = [
-                {"id": int(r[0]), "product_key": str(r[1] or ""), "name": str(r[2] or ""),
-                 "datasource_key": (str(r[3]).lower() if r[3] else None)}
-                for r in (cur.fetchall() or [])
-            ]
+            try:
+                cur.execute("SELECT Id, ProductKey, Name, DatasourceKey, DatasourceDatabase FROM WebProducts ORDER BY Id")
+                rows = cur.fetchall() or []
+                products = [
+                    {"id": int(r[0]), "product_key": str(r[1] or ""), "name": str(r[2] or ""),
+                     "datasource_key": (str(r[3]).lower() if r[3] else None),
+                     "datasource_database": (str(r[4]) if len(r) > 4 and r[4] else None)}
+                    for r in rows
+                ]
+            except Exception:
+                cur.execute("SELECT Id, ProductKey, Name, DatasourceKey FROM WebProducts ORDER BY Id")
+                products = [
+                    {"id": int(r[0]), "product_key": str(r[1] or ""), "name": str(r[2] or ""),
+                     "datasource_key": (str(r[3]).lower() if r[3] else None), "datasource_database": None}
+                    for r in (cur.fetchall() or [])
+                ]
         finally:
             cur.close()
+        from modules import cred_crypto as _cc
         return JSONResponse({
             "enabled": bool(AGENT_MULTI_DATASOURCE_ENABLED),
+            "encryption_ready": bool(_cc.enc_available()),  # KEK 설정 여부(미설정 시 UI 가 CRUD 비활성)
             "datasources": datasources,
             "products": products,
         })
@@ -9285,7 +9357,7 @@ async def admin_set_product_datasource(product_id: int, request: Request) -> JSO
     조용한 기본 폴백 방지). 좌표/비밀번호는 저장하지 않는다 (키만 — security-first, secret in env).
     관리 콘솔 수정 권한(console.access + console.manage) 필요.
     """
-    from modules.config import DATASOURCES
+    from modules import datasources as _dsr
     if product_id <= 0:
         return _json_error("invalid product_id", 400)
     try:
@@ -9294,8 +9366,10 @@ async def admin_set_product_datasource(product_id: int, request: Request) -> JSO
         return _json_error("invalid json", 400)
     raw_key = (data.get("datasource_key") if isinstance(data, dict) else None)
     key = (str(raw_key).strip().lower() if raw_key not in (None, "") else None)
-    if key is not None and key not in DATASOURCES:
-        return _json_error(f"미등록 datasource 키: {key} (.env AGENT_DATASOURCE_KEYS 확인)", 400)
+    # TASK-0205 §2.4: 제품별 참조 DB(MSSQL). datasource_database 키가 body 에 있을 때만 갱신.
+    has_db_field = isinstance(data, dict) and ("datasource_database" in data)
+    raw_db = (data.get("datasource_database") if isinstance(data, dict) else None)
+    product_db = (str(raw_db).strip() if raw_db not in (None, "") else None)
     try:
         conn = _connect_memory()
     except Exception:
@@ -9307,16 +9381,25 @@ async def admin_set_product_datasource(product_id: int, request: Request) -> JSO
     if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
         conn.close()
         return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+    # TASK-0205: 키 검증을 레지스트리(DB+env)로 — .env 뿐 아니라 DB 등록 datasource 도 허용.
+    if key is not None and _dsr.resolve(conn, key) is None:
+        conn.close()
+        return _json_error(f"미등록 datasource 키: {key} (WebDatasources / .env 확인)", 400)
     try:
         cur = conn.cursor()
         try:
             cur.execute("SELECT Id FROM WebProducts WHERE Id=%s LIMIT 1", (int(product_id),))
             if not cur.fetchone():
                 return _json_error("product not found", 404)
-            cur.execute(
-                "UPDATE WebProducts SET DatasourceKey=%s WHERE Id=%s",
-                (key, int(product_id)),
-            )
+            if has_db_field:
+                try:
+                    cur.execute("UPDATE WebProducts SET DatasourceKey=%s, DatasourceDatabase=%s WHERE Id=%s",
+                                (key, product_db, int(product_id)))
+                except Exception:
+                    # DatasourceDatabase 컬럼 부재(구 스키마) — 키만 갱신
+                    cur.execute("UPDATE WebProducts SET DatasourceKey=%s WHERE Id=%s", (key, int(product_id)))
+            else:
+                cur.execute("UPDATE WebProducts SET DatasourceKey=%s WHERE Id=%s", (key, int(product_id)))
         finally:
             cur.close()
         record_audit_event(
@@ -9325,10 +9408,11 @@ async def admin_set_product_datasource(product_id: int, request: Request) -> JSO
             action="admin.product.datasource.set",
             resource_type="product",
             resource_id=str(product_id),
-            change_json={"datasource_key": key},
+            change_json={"datasource_key": key, **({"datasource_database": product_db} if has_db_field else {})},
         )
         conn.commit()
-        return JSONResponse({"product_id": int(product_id), "datasource_key": key})
+        return JSONResponse({"product_id": int(product_id), "datasource_key": key,
+                             **({"datasource_database": product_db} if has_db_field else {})})
     finally:
         conn.close()
 
@@ -9340,24 +9424,318 @@ async def admin_test_datasource(key: str, request: Request) -> JSONResponse:
     flag 활성화 *전* 운영자가 자격증명·연결성을 검증. 관리 콘솔 접근 권한 필요. password/host
     는 응답에 비노출(errno 만). flag 무관(명시 테스트).
     """
-    from modules.config import DATASOURCES
+    from modules import datasources as _dsr
     from modules import db as _db
     try:
         conn = _connect_memory()
     except Exception:
         return _json_error("db connection failed", 500)
     actor, error = _require_account(request, conn)
-    conn.close()
     if error:
+        conn.close()
         return error
     if not _account_has_permission(actor, "console.access"):
+        conn.close()
         return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
-    ds = DATASOURCES.get(str(key).strip().lower())
+    try:
+        ds = _dsr.resolve(conn, str(key).strip().lower())
+    finally:
+        conn.close()
     if not ds:
-        return _json_error(f"미등록 datasource 키: {key}", 404)
-    ok, elapsed_ms, err = _db.probe_datasource(ds)
+        return _json_error(f"미등록(또는 복호 불가) datasource 키: {key}", 404)
+    okssrf, ssrf_reason = _ssrf_check_host(ds.get("host"))
+    if not okssrf:
+        return JSONResponse({"key": str(key).strip().lower(), "ok": False, "elapsed_ms": 0.0,
+                             "error": f"ssrf_blocked: {ssrf_reason}"})
+    ok, elapsed_ms, err = _db.probe_datasource(ds)  # probe 는 errno 만 반환(host/pw 비노출)
     return JSONResponse({"key": str(key).strip().lower(), "ok": bool(ok),
                          "elapsed_ms": round(elapsed_ms, 1), "error": err})
+
+
+# ── TASK-0205: datasource CRUD (자격증명 DB 암호화 저장) + SSRF 차단 ────────────────
+def _ssrf_check_host(host) -> "tuple[bool, str]":
+    """admin 입력 host 의 SSRF 안전성(M3): 사설망/링크로컬/메타데이터 IP 차단. (ok, reason).
+
+    `AGENT_DATASOURCE_HOST_ALLOWLIST`(콤마구분 host 또는 CIDR)에 명시된 사설 host 는 예외 허용
+    (Windows MSSQL 172.28.64.1 등 정당한 사설 대상). 메타데이터 IP(169.254.169.254)는 allowlist 무관 하드차단.
+    """
+    import ipaddress
+    import os as _os
+    import socket
+    h = str(host or "").strip()
+    if not h:
+        return False, "host 비어있음"
+    allow_raw = [a.strip() for a in _os.getenv("AGENT_DATASOURCE_HOST_ALLOWLIST", "").split(",") if a.strip()]
+    try:
+        infos = socket.getaddrinfo(h, None)
+    except Exception:
+        return False, "host 해석 실패"
+    ips = {si[4][0] for si in infos}
+    if not ips:
+        return False, "IP 해석 실패"
+    for ipstr in ips:
+        try:
+            ip = ipaddress.ip_address(ipstr)
+        except Exception:
+            return False, "IP 파싱 실패"
+        # 클라우드 메타데이터 IP 는 allowlist 무관 하드차단.
+        if ipstr == "169.254.169.254":
+            return False, "메타데이터 IP 차단"
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            allowed = False
+            for a in allow_raw:
+                try:
+                    if "/" in a:
+                        if ip in ipaddress.ip_network(a, strict=False):
+                            allowed = True
+                            break
+                    elif a == h or a == ipstr:
+                        allowed = True
+                        break
+                except Exception:
+                    continue
+            if not allowed:
+                return False, f"사설/링크로컬 IP 차단(allowlist 필요): {ipstr}"
+    return True, ""
+
+
+def _ds_valid_key(key: str) -> "str | None":
+    """datasource 키 정규화·검증. 부적합 시 None. 소문자 영숫자·_·- 만, `ds` 구분자 금지."""
+    import re as _re
+    k = str(key or "").strip().lower()
+    if not k or len(k) > 64:
+        return None
+    if not _re.match(r"^[a-z0-9_-]+$", k):
+        return None
+    if ":" in k or k.startswith("ds"):  # fact-key `:ds:` 구분자 충돌 회피(보수적)
+        return None
+    return k
+
+
+async def _ds_write_common(request, require_manage=True):
+    """CRUD 공통: conn + actor + 권한 + body. 반환 (conn, actor, data, None) 또는 (None,None,None, error)."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return None, None, None, _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return None, None, None, error
+    need = ["console.access"] + (["console.manage"] if require_manage else [])
+    if not all(_account_has_permission(actor, p) for p in need):
+        conn.close()
+        return None, None, None, _json_error("관리 콘솔 수정 권한(console.manage)이 필요합니다.", 403)
+    try:
+        data = await request.json()
+    except Exception:
+        conn.close()
+        return None, None, None, _json_error("invalid json", 400)
+    if not isinstance(data, dict):
+        conn.close()
+        return None, None, None, _json_error("invalid body", 400)
+    return conn, actor, data, None
+
+
+def _ds_audit_fields(data: dict) -> dict:
+    """B2: audit 화이트리스트 — **password 는 절대 포함 안 함**(평문 ChangeJson 누출 차단)."""
+    out = {}
+    for f in ("key", "engine", "host", "port", "user", "default_db", "is_active"):
+        if f in data:
+            out[f] = data[f]
+    out["password_set"] = bool(data.get("password"))  # 설정 여부만(값 아님)
+    return out
+
+
+@app.post("/api/admin/datasources")
+async def admin_create_datasource(request: Request) -> JSONResponse:
+    """datasource 생성 (자격증명 DB 암호화 저장, TASK-0205). console.manage. password 는 응답 비노출."""
+    from modules import cred_crypto as _cc
+    from modules import datasources as _dsr
+    conn, actor, data, error = await _ds_write_common(request)
+    if error:
+        return error
+    try:
+        if not _cc.enc_available():
+            return _json_error("암호화 키(AGENT_DATASOURCE_KEK_V1) 미설정 — datasource 자격증명 저장 불가.", 400)
+        key = _ds_valid_key(data.get("key"))
+        if not key:
+            return _json_error("datasource 키 형식 오류(소문자 영숫자·_·-, `ds` 시작 금지).", 400)
+        engine = str(data.get("engine") or "mysql").strip().lower()
+        if engine not in ("mysql", "mssql"):
+            return _json_error("engine 은 mysql|mssql.", 400)
+        host = str(data.get("host") or "").strip()
+        okssrf, reason = _ssrf_check_host(host)
+        if not okssrf:
+            return _json_error(f"호스트 차단(SSRF): {reason}", 400)
+        try:
+            port = int(data.get("port") or (1433 if engine == "mssql" else 3306))
+        except Exception:
+            return _json_error("port 정수 오류.", 400)
+        user = str(data.get("user") or "").strip()
+        password = str(data.get("password") or "")
+        default_db = (str(data.get("default_db")).strip() or None) if data.get("default_db") else None
+        if not host or not user:
+            return _json_error("host·user 는 필수.", 400)
+        got = _dsr.ensure_dek(conn)
+        if got is None:
+            return _json_error("DEK 생성 실패(KEK 확인).", 500)
+        ver, dek = got
+        pw_enc = _cc.encrypt_password(dek, password, key) if password else None
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT 1 FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (key,))
+            if cur.fetchone():
+                return _json_error(f"이미 존재하는 키: {key}", 409)
+            cur.execute(
+                "INSERT INTO WebDatasources (DatasourceKey,Engine,Host,Port,DbUser,PasswordEnc,DefaultDb,"
+                "EncryptionVersion,IsActive,UpdatedByAccountId) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,1,%s)",
+                (key, engine, host, port, user, pw_enc, default_db, int(ver),
+                 int(actor.get("id")) if isinstance(actor, dict) and actor.get("id") else None),
+            )
+        finally:
+            cur.close()
+        record_audit_event(conn, actor=_build_actor_from_request(request, actor, actor_type="account"),
+                           action="admin.datasource.create", resource_type="datasource", resource_id=key,
+                           change_json=_ds_audit_fields({**data, "key": key}))
+        conn.commit()
+        return JSONResponse({"key": key, "engine": engine, "host": host, "port": port,
+                             "default_db": default_db, "has_password": bool(pw_enc), "source": "db"})
+    finally:
+        conn.close()
+
+
+@app.patch("/api/admin/datasources/{key}")
+async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
+    """datasource 수정 (TASK-0205). password 미입력 시 미변경. console.manage. 응답 password 비노출."""
+    from modules import cred_crypto as _cc
+    from modules import datasources as _dsr
+    conn, actor, data, error = await _ds_write_common(request)
+    if error:
+        return error
+    try:
+        k = _ds_valid_key(key)
+        if not k:
+            return _json_error("키 형식 오류.", 400)
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT Id FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (k,))
+            if not cur.fetchone():
+                return _json_error("datasource not found (DB 등록분만 수정 가능, .env 는 운영자 편집).", 404)
+            sets, params = [], []
+            if "engine" in data:
+                eng = str(data.get("engine") or "").strip().lower()
+                if eng not in ("mysql", "mssql"):
+                    return _json_error("engine 은 mysql|mssql.", 400)
+                sets.append("Engine=%s"); params.append(eng)
+            if "host" in data:
+                host = str(data.get("host") or "").strip()
+                okssrf, reason = _ssrf_check_host(host)
+                if not okssrf:
+                    return _json_error(f"호스트 차단(SSRF): {reason}", 400)
+                sets.append("Host=%s"); params.append(host)
+            if "port" in data:
+                try:
+                    sets.append("Port=%s"); params.append(int(data.get("port")))
+                except Exception:
+                    return _json_error("port 정수 오류.", 400)
+            if "user" in data:
+                sets.append("DbUser=%s"); params.append(str(data.get("user") or "").strip())
+            if "default_db" in data:
+                sets.append("DefaultDb=%s"); params.append((str(data.get("default_db")).strip() or None) if data.get("default_db") else None)
+            if "is_active" in data:
+                sets.append("IsActive=%s"); params.append(1 if data.get("is_active") else 0)
+            if data.get("password"):  # 비어있지 않을 때만 재암호화(write-only)
+                if not _cc.enc_available():
+                    return _json_error("암호화 키 미설정 — password 변경 불가.", 400)
+                got = _dsr.ensure_dek(conn)
+                if got is None:
+                    return _json_error("DEK 확인 실패.", 500)
+                ver, dek = got
+                sets.append("PasswordEnc=%s"); params.append(_cc.encrypt_password(dek, str(data.get("password")), k))
+                sets.append("EncryptionVersion=%s"); params.append(int(ver))
+            if isinstance(actor, dict) and actor.get("id"):
+                sets.append("UpdatedByAccountId=%s"); params.append(int(actor.get("id")))
+            if not sets:
+                return _json_error("변경할 필드 없음.", 400)
+            params.append(k)
+            cur.execute(f"UPDATE WebDatasources SET {', '.join(sets)} WHERE DatasourceKey=%s", tuple(params))
+        finally:
+            cur.close()
+        record_audit_event(conn, actor=_build_actor_from_request(request, actor, actor_type="account"),
+                           action="admin.datasource.update", resource_type="datasource", resource_id=k,
+                           change_json=_ds_audit_fields(data))
+        conn.commit()
+        return JSONResponse({"key": k, "updated": True, "password_changed": bool(data.get("password"))})
+    finally:
+        conn.close()
+
+
+@app.delete("/api/admin/datasources/{key}")
+async def admin_delete_datasource(key: str, request: Request) -> JSONResponse:
+    """datasource 삭제 (TASK-0205). 바인딩된 product 있으면 거부(?force=1 로 강제). console.manage."""
+    conn, actor, _data, error = await _ds_write_common(request)
+    if error:
+        return error
+    try:
+        k = _ds_valid_key(key)
+        if not k:
+            return _json_error("키 형식 오류.", 400)
+        force = str(request.query_params.get("force", "")).strip().lower() in ("1", "true", "yes")
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT Id FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (k,))
+            if not cur.fetchone():
+                return _json_error("datasource not found.", 404)
+            cur.execute("SELECT Id, ProductKey FROM WebProducts WHERE LOWER(DatasourceKey)=%s", (k,))
+            bound = [{"id": int(r[0]), "product_key": str(r[1] or "")} for r in (cur.fetchall() or [])]
+            if bound and not force:
+                return JSONResponse({"deleted": False, "reason": "bound_products",
+                                     "bound_products": bound}, status_code=409)
+            if bound and force:
+                cur.execute("UPDATE WebProducts SET DatasourceKey=NULL WHERE LOWER(DatasourceKey)=%s", (k,))
+            cur.execute("DELETE FROM WebDatasources WHERE DatasourceKey=%s", (k,))
+        finally:
+            cur.close()
+        record_audit_event(conn, actor=_build_actor_from_request(request, actor, actor_type="account"),
+                           action="admin.datasource.delete", resource_type="datasource", resource_id=k,
+                           change_json={"force": force, "unbound_products": bound})
+        conn.commit()
+        return JSONResponse({"deleted": True, "key": k, "unbound_products": bound})
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/datasources/{key}/databases")
+async def admin_datasource_databases(key: str, request: Request) -> JSONResponse:
+    """datasource 서버의 DB 목록(제품별 참조 DB 선택용, TASK-0205 §2.4). console.manage. SSRF 차단."""
+    from modules import datasources as _dsr
+    from modules import db as _db
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not (_account_has_permission(actor, "console.access") and _account_has_permission(actor, "console.manage")):
+        conn.close()
+        return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+    try:
+        ds = _dsr.resolve(conn, str(key).strip().lower())
+    finally:
+        conn.close()
+    if not ds:
+        return _json_error("미등록(또는 복호 불가) datasource.", 404)
+    okssrf, reason = _ssrf_check_host(ds.get("host"))
+    if not okssrf:
+        return _json_error(f"호스트 차단(SSRF): {reason}", 400)
+    try:
+        names = _db.list_server_databases(ds)  # errno-only 에러
+    except Exception:
+        return _json_error("DB 목록 조회 실패(연결/권한 확인).", 502)
+    return JSONResponse({"key": str(key).strip().lower(), "engine": ds.get("engine"), "databases": names})
 
 
 @app.post("/api/fork_conversation")
@@ -13356,7 +13734,7 @@ _AUDIT_BUILDER_PRODUCT_FIELDS = (
     "product_key", "name", "description", "is_active", "is_default", "sort_order",
     "default_role_access", "system_prompt_summary",
 )
-_AUDIT_MASKED_FIELDS_PASSWORD = ("password_hash", "temporary_password", "raw_password")
+_AUDIT_MASKED_FIELDS_PASSWORD = ("password_hash", "temporary_password", "raw_password", "password")  # TASK-0205 B2
 _AUDIT_MASKED_FIELDS_TOKEN = ("session_token_hash", "session_token", "token")
 _AUDIT_MASKED_FIELDS_API_KEY = (
     "openai_api_key",

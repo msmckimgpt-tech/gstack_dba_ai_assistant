@@ -1995,14 +1995,26 @@ def _resolve_product_datasource(mem_conn, product_id):
         return None
     if not product_id or int(product_id) <= 0:
         return None
+    # TASK-0205: DatasourceKey + DatasourceDatabase(제품별 MSSQL 참조 DB override, §2.4) 동시 조회.
+    key = ""
+    product_db = ""
     try:
         cur = mem_conn.cursor()
         try:
-            cur.execute(
-                "SELECT DatasourceKey FROM WebProducts WHERE Id=%s LIMIT 1",
-                (int(product_id),),
-            )
-            row = cur.fetchone()
+            try:
+                cur.execute(
+                    "SELECT DatasourceKey, DatasourceDatabase FROM WebProducts WHERE Id=%s LIMIT 1",
+                    (int(product_id),),
+                )
+                row = cur.fetchone()
+                if row:
+                    key = (str(row[0]).strip().lower() if row[0] else "")
+                    product_db = (str(row[1]).strip() if len(row) > 1 and row[1] else "")
+            except Exception:
+                # DatasourceDatabase 컬럼 부재(구 스키마) 폴백
+                cur.execute("SELECT DatasourceKey FROM WebProducts WHERE Id=%s LIMIT 1", (int(product_id),))
+                row = cur.fetchone()
+                key = (str(row[0]).strip().lower() if row and row[0] else "")
         finally:
             cur.close()
     except Exception as exc:
@@ -2010,19 +2022,25 @@ def _resolve_product_datasource(mem_conn, product_id):
             "resolve_product_datasource_read_failed product_id=%s err=%r — 기본 DB", product_id, exc,
         )
         return None
-    key = (str(row[0]).strip().lower() if row and row[0] else "")
     if not key:
         return None  # 미바인딩 = 기본 DB (정상)
-    ds = cfg.DATASOURCES.get(key)
+    # TASK-0205: DB 레지스트리(WebDatasources) 우선 + .env 레거시 폴백. password 복호 포함.
+    from modules import datasources as _datasources
+    ds = _datasources.resolve(mem_conn, key)
     if not ds:
-        # 명시 바인딩 + 미등록 키 → fail-closed (운영 DB 로 silent 폴백 금지)
+        # 명시 바인딩 + 미등록(또는 복호 불가) 키 → fail-closed (운영 DB 로 silent 폴백 금지)
         logging.getLogger("agent_core").error(
             "datasource_key_not_registered product_id=%s key=%s — fail-closed(run 중단)", product_id, key,
         )
         raise DatasourceResolutionError(
-            f"product {product_id} 의 datasource 키 '{key}' 가 .env 에 미등록입니다 "
-            f"(AGENT_DATASOURCE_KEYS / DS_{key.upper()}_* 확인)."
+            f"product {product_id} 의 datasource 키 '{key}' 가 미등록이거나 복호 불가입니다 "
+            f"(WebDatasources / DS_{key.upper()}_* / KEK 확인)."
         )
+    # 제품별 참조 DB override (§2.4, B1): 사본에 default_db 를 제품 선택값으로. effective default_db 는
+    # set_active_datasource 로 cross-DB 가드에 주입돼 가드·연결이 동일 DB 를 본다.
+    if product_db:
+        ds = dict(ds)
+        ds["default_db"] = product_db
     return ds
 
 
@@ -2273,6 +2291,8 @@ def _run_agent_core(
     cfg.set_active_datasource(
         (_ds["key"] if _ds else None),
         engine=(_ds.get("engine") if _ds else None),
+        # TASK-0205 B1: effective default_db(제품별 override 반영) 를 cross-DB 가드에 주입.
+        default_db=(_ds.get("default_db") if _ds else None),
     )
     knowledge_ctx = ""
     try:

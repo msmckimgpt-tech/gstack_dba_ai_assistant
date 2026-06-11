@@ -9,6 +9,7 @@ __all__ = [
     "connect",
     "connect_with_retry",
     "execute_sql",
+    "list_server_databases",
     "probe_datasource",
     "records_to_columns_rows",
     "summarize_mcp_result",
@@ -333,6 +334,50 @@ def probe_datasource(datasource: dict, *, timeout: int | None = None) -> tuple[b
         # errno/예외타입만 노출 (host/user/pw 비유출).
         msg = f"errno={errno}" if errno else type(exc).__name__
         return False, (time.time() - start) * 1000.0, msg
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def list_server_databases(datasource: dict, *, timeout: int | None = None) -> "list[str]":
+    """datasource 서버의 DB 목록 (TASK-0205 §2.4 제품별 참조 DB 선택용). flag 무관 직결.
+
+    MSSQL=`sys.databases`(시스템 DB 1-4 제외), MySQL=`SHOW DATABASES`(시스템 스키마 제외).
+    예외는 그대로 raise(호출 endpoint 가 generic 메시지로 일반화 — host/pw 비유출). SSRF 검사는
+    호출측(_ssrf_check_host)이 선행한다.
+    """
+    engine = (datasource.get("engine") or "mysql").strip().lower()
+    conn = None
+    try:
+        if engine == "mssql":
+            if _pymssql is None:
+                raise RuntimeError("pymssql_not_installed")
+            conn = _pymssql.connect(
+                server=datasource.get("host") or DB_HOST,
+                port=str(int(datasource.get("port") or 1433)),
+                user=datasource.get("user") or DB_USER,
+                password=datasource.get("password", ""),
+                login_timeout=int(timeout or 8), timeout=int(timeout or 8),
+            )
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name")
+        else:
+            conn = mysql.connector.connect(
+                host=datasource.get("host") or DB_HOST,
+                port=int(datasource.get("port") or DB_PORT),
+                user=datasource.get("user") or DB_USER,
+                password=datasource.get("password", ""),
+                connection_timeout=int(timeout or 8), charset="utf8mb4", use_unicode=True,
+            )
+            cur = conn.cursor()
+            cur.execute("SHOW DATABASES")
+        _sys = {"information_schema", "mysql", "performance_schema", "sys", "agent_memory"}
+        out = [str(r[0]) for r in (cur.fetchall() or []) if r and r[0] and str(r[0]).lower() not in _sys]
+        cur.close()
+        return out
     finally:
         if conn is not None:
             try:
