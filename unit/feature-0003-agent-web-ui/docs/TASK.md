@@ -3096,7 +3096,7 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **수정** ([app.js](../src/static/app.js)): ① `collapseSqlCodeBlocksInContent()` — ` ```sql ``` ` 코드블록 숨김 로직 제거(항상 표시). ② `buildSqlStepPanel()` — SQL 블록 항상 표시, 결과 테이블+CSV 액션 영역을 `sql-result-toggle-wrap` + `resultBody(hidden=true)`로 감싸고 `결과 보기/닫기` 토글 적용. ③ `renderMessageDetails()` 구형 fallback — SQL 토글 제거(항상 표시). ④ `buildStepDetailEl()` 사이드 패널 — 결과셋(표/preview)을 `sql-result-toggle-wrap` + `resultBody(hidden=true)`로 감싸고 `결과 보기/닫기` 토글 적용.
 - [x] **수정** ([styles.css](../src/static/styles.css)): `.sql-result-toggle-wrap`, `.sql-result-body` 규칙 추가(flex column, gap 6px). 기존 `.sql-toggle-wrap`·`.sql-toggle-btn`·`.sql-result-actions` 유지.
 - [x] outside-voice [SKIPPED:frontend-only-rendering-toggle] (REV-20260611-0206) — 렌더링 표시 방향 교정, 권한·스키마·엔드포인트·백엔드 0.
-- [ ] node --check app.js PASS → verify-completion → main ff-merge → web 재배포 → 라이브 확인(쿼리 항상 표시·결과 보기 토글)
+- [x] node --check app.js PASS, verify-completion PASS, PR #142 ff-merge → main 반영. web 재배포 + 라이브 확인(쿼리 항상 표시·결과 보기 토글)은 배포 후 수행.
 
 ### TASK-0205 — composer 텍스트박스 Shift+Enter 줄바꿈 지원 (frontend-only) (2026-06-11)
 - [x] **Minor §12.3** (keydown 핸들러 1줄, RBAC·스키마·엔드포인트·백엔드 0) — 사용자 요청: 입력 텍스트박스에서 Shift+Enter 를 누르면 줄바꿈이 되도록. sendMode("Enter 전송"/"Ctrl+Enter 전송") 와 무관하게 Shift+Enter 는 항상 줄바꿈. (CHG-20260611-0205)
