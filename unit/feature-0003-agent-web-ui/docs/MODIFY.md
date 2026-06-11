@@ -2893,3 +2893,16 @@ source_of_truth: true
 - 검증: node --check textarea-autogrow.js PASS, verify-completion(코드 게이트), 배포 후 PB-0008 Windows-browser 시각검증 예정.
 - Files: unit/feature-0003-agent-web-ui/src/static/textarea-autogrow.js, unit/feature-0003-agent-web-ui/src/static/{index,admin,share}.html, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
 - Rollback: textarea-autogrow.js 삭제 + 3개 html 의 script 태그 1줄씩 제거.
+
+## CHG-20260611-0226
+- Date: 2026-06-11
+- Task: TASK-0226 (MSSQL 제품 분석 완료율 미표시(연결) 수정 — per-DB 연결 격리; 동시세션 TASK-0225 충돌로 재번호 §13.1), **Minor §12.3** (TASK-0223 후속 버그수정, RBAC·스키마·엔드포인트 0)
+- 진단: MSSQL 제품(`mssql_local`)이 "측정 불가" — RO 로그인 `agent_ro` 가 `dk_data_release` 만 GRANT(123 테이블, rag 123/123=100%), 나머지 4 DB 권한없음(18456). bug1=accessible DB 전체 단일 try/except → 한 DB 실패가 전체 오염. bug2=`scannable=default_db` 게이트(None)가 분석된 DB 마저 미스캔 처리.
+- 변경:
+  - `unit/feature-0003-agent-web-ui/src/app.py` `_compute_product_insight_coverage`: MSSQL 분기 **per-DB try/except 격리** — DB별 연결 실패는 `connected=False`+note, 나머지 정상 집계. `scannable`(default_db) → `connected` 대체. 비연결 DB 는 분모 제외. 전부 실패 시 reason. MySQL 경로는 단일 try 유지(회귀 0). `base["default_db"]` 추가(unused 제거).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: per-DB 렌더 `d.scannable`→`d.connected`, 비연결="연결 불가"(cov-low). 배지/요약 "연결 불가" vs "대상 없음" 구분(per_db.connected===false 검사). total=0 도 per-DB 목록 노출. MSSQL 안내 "RO GRANT 없는 DB=연결 불가, 집계 제외".
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: 캐시버스터 `?v=20260611-mssql-coverage-perdb`.
+- 비변경: RBAC, 스키마, 엔드포인트(`/api/admin/products/insight-coverage` 응답 shape 만 `scannable`→`connected`+`note` 확장), insight write, 매칭 의미론(catalog-driven 동일).
+- 검증: py_compile app.py PASS, node --check admin.js PASS, make test + 라이브 실측 + PB-0008.
+- Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html}, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW,FUNCTION,TEST}.md
+- Rollback: app.py MSSQL 분기를 단일 try + scannable 게이트로 복원, admin.js connected→scannable 복원.

@@ -13644,26 +13644,40 @@ def _compute_product_insight_coverage(conn, product: dict) -> dict:
     coords_pinned = {**coords, "host": pin}
 
     # ── 분모: 라이브 카탈로그 (schema, table) ──
+    # db_tables[db] = {"pairs": set[(schema,table)], "connected": bool, "note": str}
     db_tables: dict = {}
-    try:
-        if engine == "mssql":
-            # MSSQL: 접근DB=catalog(database). insight 는 datasource default_db 만 스캔 → 그 외 DB 는
-            # rag 에 객체 자체가 없으므로 analyzed=0 + "미스캔" flag(rag schema=dbo 차원 정합은 scannable DB 만).
-            for db in accessible:
-                scannable = bool(default_db) and (str(db).strip().lower() == str(default_db).strip().lower())
+    if engine == "mssql":
+        # MSSQL: 접근DB=catalog(database) 마다 별도 연결(DB 컨텍스트가 DB별로 다름).
+        # **per-DB 연결 격리** — RO 로그인(예: agent_ro)이 일부 DB 에만 GRANT 된 경우가 흔하다.
+        # 한 DB 연결 실패(SQL Server 18456 등)가 전체 제품을 "측정 불가"로 오염시키지 않도록,
+        # 실패 DB 는 connected=False + note 로만 표기하고 나머지 DB 는 정상 집계한다.
+        for db in accessible:
+            try:
                 pairs = set(_db.list_information_schema_tables(coords_pinned, database=db, timeout=5))
-                db_tables[db] = {"pairs": pairs, "scannable": scannable}
-        else:
+                db_tables[db] = {"pairs": pairs, "connected": True, "note": ""}
+            except Exception as exc:
+                db_tables[db] = {
+                    "pairs": set(), "connected": False,
+                    "note": "연결 불가(RO 권한/도달 — 데이터소스 자격증명·DB GRANT 확인)",
+                }
+                logging.getLogger("app").info(
+                    "insight_coverage mssql db conn fail pid=%s db=%s err=%r", pid, db, exc)
+    else:
+        # MySQL: DB==스키마, 한 연결이 모든 DB 를 본다. 연결 실패=서버 장애 → 전체 측정 불가(정합).
+        try:
             rows = _db.list_information_schema_tables(coords_pinned, schemas=accessible, timeout=5)
-            by_schema: dict = {}
-            for s, t in rows:
-                by_schema.setdefault(str(s).strip().lower(), set()).add((str(s), str(t)))
-            for db in accessible:
-                db_tables[db] = {"pairs": by_schema.get(str(db).strip().lower(), set()), "scannable": True}
-    except Exception as exc:
-        base["reason"] = "데이터소스 카탈로그 조회 실패(연결/권한)"
-        logging.getLogger("app").warning("insight_coverage catalog fail pid=%s err=%r", pid, exc)
-        return base
+        except Exception as exc:
+            base["reason"] = "데이터소스 카탈로그 조회 실패(연결/권한)"
+            logging.getLogger("app").warning("insight_coverage catalog fail pid=%s err=%r", pid, exc)
+            return base
+        by_schema: dict = {}
+        for s, t in rows:
+            by_schema.setdefault(str(s).strip().lower(), set()).add((str(s), str(t)))
+        for db in accessible:
+            db_tables[db] = {
+                "pairs": by_schema.get(str(db).strip().lower(), set()),
+                "connected": True, "note": "",
+            }
 
     # ── 분자: PG rag_objects 통찰 보유 객체 집합(scope 전체를 끌어와 라이브 카탈로그와 교집합) ──
     analyzed_tables = set()   # {(schema_lower, table_lower)}
@@ -13699,46 +13713,54 @@ def _compute_product_insight_coverage(conn, product: dict) -> dict:
         logging.getLogger("app").warning("insight_coverage pg fail pid=%s err=%r", pid, exc)
         return base
 
-    # ── 객체 집계: 각 accessible DB = 1 DB노드 + N table노드 ──
+    # ── 객체 집계: 각 accessible DB = 1 DB노드 + N table노드. 비연결(권한/도달 실패) DB 는
+    #    객체 열거 자체가 불가하므로 분모에서 제외하고 note 로만 표시(측정 가능한 DB 기준 정직 표기). ──
     total_obj = 0
     analyzed_obj = 0
+    connected_count = 0
     per_db = []
     for db in accessible:
-        info = db_tables.get(db) or {"pairs": set(), "scannable": True}
+        info = db_tables.get(db) or {"pairs": set(), "connected": False, "note": ""}
         pairs = info["pairs"]
-        scannable = info["scannable"]
+        if not info.get("connected"):
+            per_db.append({
+                "db": db, "connected": False, "schema_analyzed": False,
+                "tables_total": 0, "tables_analyzed": 0,
+                "note": info.get("note") or "연결 불가",
+            })
+            continue
+        connected_count += 1
         tables_total = len(pairs)
-        if scannable:
-            tables_analyzed = sum(
-                1 for (s, t) in pairs
-                if (s.strip().lower(), t.strip().lower()) in analyzed_tables
-            )
-            live_schemas = {s.strip().lower() for (s, _t) in pairs}
-            db_schema_analyzed = 1 if (
-                (live_schemas & analyzed_schemas) or (str(db).strip().lower() in analyzed_schemas)
-            ) else 0
-        else:
-            tables_analyzed = 0
-            db_schema_analyzed = 0
+        tables_analyzed = sum(
+            1 for (s, t) in pairs
+            if (s.strip().lower(), t.strip().lower()) in analyzed_tables
+        )
+        live_schemas = {s.strip().lower() for (s, _t) in pairs}
+        db_schema_analyzed = 1 if (
+            (live_schemas & analyzed_schemas) or (str(db).strip().lower() in analyzed_schemas)
+        ) else 0
         db_total = tables_total + 1   # +1 = DB(schema) 노드
         db_analyzed = tables_analyzed + db_schema_analyzed
         total_obj += db_total
         analyzed_obj += db_analyzed
         per_db.append({
-            "db": db,
+            "db": db, "connected": True,
             "schema_analyzed": bool(db_schema_analyzed),
             "tables_total": tables_total,
             "tables_analyzed": tables_analyzed,
-            "scannable": scannable,
-            "note": ("" if scannable else "insight 워커 미스캔(데이터소스 기본 DB 아님)"),
+            "note": "",
         })
 
     base["measurable"] = True
     base["engine"] = engine
+    base["default_db"] = default_db
     base["total_objects"] = total_obj
     base["analyzed_objects"] = analyzed_obj
     base["per_db"] = per_db
     base["pct"] = (round(100.0 * analyzed_obj / total_obj, 1) if total_obj > 0 else None)
+    # 측정 가능한 DB 가 하나도 없으면(전부 연결 실패) 사유를 남긴다(badge 가 "측정 불가" 로 표시).
+    if total_obj == 0 and accessible and connected_count == 0:
+        base["reason"] = "접근 가능 데이터베이스에 연결할 수 없습니다(RO 권한/도달 확인)."
     return base
 
 

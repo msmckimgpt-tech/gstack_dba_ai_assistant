@@ -3245,3 +3245,32 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] `index.html` / `admin.html` / `share.html` 에 `textarea-autogrow.js` script 태그 추가(캐시버스터 `?v=20260611-dblclick-autogrow`).
 - [x] node --check textarea-autogrow.js PASS.
 - [ ] verify-completion → main rebase·ff-merge → web 재배포 → PB-0008(핸들 더블클릭 자동 확장 시각검증)
+
+### TASK-0226 — MSSQL 제품 분석 완료율 미표시(연결) 수정: per-DB 연결 격리 (2026-06-11)
+
+> 동시세션 TASK 번호 충돌(§13.1): 본 작업은 처음 TASK-0225 로 시작했으나 다른 세션의 TASK-0225(textarea-autogrow, PR #162 main 선머지)와 충돌 → **TASK-0226 으로 재번호**(branch slug `task0225-…`는 cosmetic 유지). CHG/REV/AC 도 0226 으로 정합.
+
+**Minor §12.3** (TASK-0223 후속 버그수정, app.py 1 + admin.js 1, RBAC·스키마·신규 엔드포인트 0). (CHG-20260611-0226)
+
+#### 진단 (라이브)
+사용자 보고: MSSQL 제품(DK온라인, `mssql_local`)이 "측정 불가". 근본 원인:
+- 자격증명은 정상 — `probe_datasource`=True, `list_server_databases_classified` OK. RO 로그인 `agent_ro` 는 **`dk_data_release` 만 GRANT**(123 테이블, rag 와 123/123 overlap=100%), 나머지 4개 DB(`dk_server_info`/`GameLog_100/151`/`GameLogManager`)는 권한 없음(SQL Server 18456).
+- **bug1**: MSSQL 분모 열거가 accessible DB 전체를 **단일 try/except** 로 감싸 → 한 DB(권한없음) 연결 실패가 전체 제품을 measurable=False 로 오염.
+- **bug2**: `scannable = bool(default_db) and db==default_db` 게이트가 `default_db=None` 이라 연결·분석된 dk_data_release 마저 미스캔(analyzed 0) 처리.
+
+#### 수정
+- [app.py](../src/app.py) `_compute_product_insight_coverage`: MSSQL 분기를 **per-DB try/except 격리** 로 — DB별 연결 실패는 `connected=False`+note 로만 표기하고 나머지 DB 정상 집계. `scannable`(default_db 게이트) 폐기 → `connected`(연결 성공 여부)로 대체. 비연결 DB 는 객체 열거 불가라 분모에서 제외(측정 가능 DB 기준 정직 표기). 전부 실패 시 reason 설정.
+- [admin.js](../src/static/admin.js): per-DB 렌더 `scannable`→`connected`, 비연결 DB="연결 불가"(cov-low) 표시. 배지/요약 "연결 불가" vs "대상 없음" 구분. total=0 도 per-DB 목록 노출. MSSQL 안내 문구 갱신.
+- [admin.html](../src/static/admin.html): 캐시버스터 `?v=20260611-mssql-coverage-perdb`.
+
+#### 완료 판정 기준
+- AC1: MSSQL 제품이 "측정 불가" 대신 **완료율(%)을 표시**(dk_data_release 100% 반영).
+- AC2: 권한 없는 DB(`dk_server_info` 등)는 per-DB breakdown 에 "연결 불가"로 명시, 전체 % 집계에서 제외(다른 DB 오염 없음).
+- AC3: MySQL 경로 회귀 0(단일 연결 try 유지).
+- AC4: py_compile/node --check/make test PASS, 라이브 실측(product 91 = dk_data_release 123/123 + 4 연결불가) + PB-0008 시각검증.
+
+#### 작업 항목
+- [x] 백엔드 per-DB 연결 격리 + default_db 게이트 폐기 + connected/note
+- [x] 프런트 connected 렌더링 + 연결불가 표시 + MSSQL 안내 갱신 + 캐시버스터
+- [x] py_compile + node --check PASS
+- [ ] verify-completion → 머지 → web 재배포 → 라이브 실측 + PB-0008 시각검증
