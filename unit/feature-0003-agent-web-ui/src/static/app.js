@@ -139,6 +139,12 @@ const state = {
   lastCompletedRunSteps: null,  // null | { steps, runId, convId } — 완료된 run 의 단계 목록 (단계 보기 버튼용)
   messageAttachments: {},  // { messageId: attachment[] } — refreshWorkspace 이후에도 칩 유지용 persistent 맵
   stepSidePanelConvId: null,
+  // 실행 단계 사이드 패널의 "결과 보기" 펼침 상태를 step 단위로 영속화한다.
+  // 패널은 폴링으로 새 단계가 추가될 때마다 body.innerHTML 을 비우고 전부 재렌더하는데,
+  // 펼침 여부가 DOM 로컬 상태로만 있으면 재렌더 시 닫혀버린다(사용자가 결과셋을 보던 중
+  // 단계 갱신 → 결과 닫힘). 안정 키(_stepResultKey)로 펼친 step 을 기억해 재렌더 후 복원한다.
+  // Set<stepKey>. run 전환 시 resetProgressTracking 이 정리.
+  stepResultExpanded: new Set(),
   elapsedTimer: null,
   // TASK-0061 Phase 3 (REQ-20260515-0005): stale 감지 toast 가 같은 대화에서 반복 노출되지 않도록 1 회 가드.
   staleToastShownFor: new Set(),
@@ -2710,6 +2716,16 @@ function toolLabel(toolName) {
   return TOOL_LABEL_MAP[toolName] || toolName || "도구";
 }
 
+// step 의 "결과 보기" 펼침 상태 영속화용 안정 키.
+// progressSteps dedup 과 동일하게 step_index + created_at 조합을 쓴다(같은 step 이
+// 폴링 재렌더를 거쳐도 동일 키 → 펼침 상태 유지). 둘 다 없으면 idx fallback.
+function _stepResultKey(step, idx) {
+  const si = step && step.step_index != null ? step.step_index : "";
+  const ca = step && step.created_at ? step.created_at : "";
+  if (si === "" && ca === "") return `idx:${idx}`;
+  return `${si}:${ca}`;
+}
+
 // step 하나를 상세 표시 DOM 요소로 변환.
 // compact=true 이면 SQL/결과 미리보기 생략 (pending bubble 헤더용).
 function buildStepDetailEl(step, idx, { compact = false } = {}) {
@@ -2778,15 +2794,20 @@ function buildStepDetailEl(step, idx, { compact = false } = {}) {
       const resultToggleWrap = document.createElement("div");
       resultToggleWrap.className = "sql-result-toggle-wrap";
 
+      // 펼침 상태를 state.stepResultExpanded 에서 복원 — 폴링 재렌더로 패널이
+      // 다시 그려져도 사용자가 보던 결과셋이 닫히지 않게 한다.
+      const stepKey = _stepResultKey(step, idx);
+      const startExpanded = state.stepResultExpanded.has(stepKey);
+
       const toggleBtn = document.createElement("button");
       toggleBtn.type = "button";
       toggleBtn.className = "tool-btn sql-toggle-btn";
-      toggleBtn.textContent = "결과 보기";
-      toggleBtn.setAttribute("aria-expanded", "false");
+      toggleBtn.textContent = startExpanded ? "결과 닫기" : "결과 보기";
+      toggleBtn.setAttribute("aria-expanded", String(startExpanded));
 
       const resultBody = document.createElement("div");
       resultBody.className = "step-result-wrap";
-      resultBody.hidden = true;
+      resultBody.hidden = !startExpanded;
 
       if (tableEl) {
         resultBody.appendChild(tableEl);
@@ -2802,6 +2823,9 @@ function buildStepDetailEl(step, idx, { compact = false } = {}) {
         resultBody.hidden = !willShow;
         toggleBtn.textContent = willShow ? "결과 닫기" : "결과 보기";
         toggleBtn.setAttribute("aria-expanded", String(willShow));
+        // 펼침 상태 영속화(재렌더 후 복원용).
+        if (willShow) state.stepResultExpanded.add(stepKey);
+        else state.stepResultExpanded.delete(stepKey);
       });
 
       resultToggleWrap.append(toggleBtn, resultBody);
@@ -3590,6 +3614,8 @@ function resetProgressTracking(runId = "") {
   state.progressAfterStep = 0;
   state.progressErrorCount = 0;
   state.progressSteps = [];
+  // run 전환 시 이전 run 의 결과셋 펼침 상태를 정리(다른 run 의 동일 step_index 와 혼동 방지).
+  state.stepResultExpanded.clear();
 }
 
 function stopProgressPolling({ reset = false, abort = true } = {}) {
@@ -3631,6 +3657,8 @@ function applyProgressPayload(payload = {}) {
   if (!runId || runId !== state.progressRunId) {
     state.progressRunId = runId;
     state.progressSteps = incomingSteps.slice();
+    // run 이 바뀌면 이전 run 의 결과셋 펼침 상태도 정리(다른 run 의 동일 step 키 혼동 방지).
+    state.stepResultExpanded.clear();
   } else if (incomingSteps.length) {
     const seen = new Set(
       state.progressSteps.map((step) => `${step.step_index || 0}:${step.created_at || ""}`)

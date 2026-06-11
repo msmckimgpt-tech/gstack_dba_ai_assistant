@@ -2048,3 +2048,10 @@ source_of_truth: true
 - Reason: TASK-0223 read-only 통계의 버그수정. RO 로그인(`agent_ro`)이 일부 DB 에만 GRANT 된 환경에서 단일 try/except 가 한 DB 실패로 전체를 "측정 불가" 오염시키던 것을 **per-DB 연결 격리**로 수정. 신규 RBAC 권한·DB GRANT·스키마·암호화·엔드포인트 경로 0 — 엔드포인트 응답 shape 의 per_db 필드명 `scannable`→`connected`+`note` 확장만(프런트 동반 수정). datasource 연결은 기존 `list_information_schema_tables` 직결 재사용(SSRF 가드 선행 유지). 매칭 의미론(catalog-driven set 교집합) 무변경. 적대적 보안 리뷰 불요 — 권한 경계·자격증명 처리·쓰기 경로 변화 없음. py_compile/node --check PASS.
 - Risk: low — 비연결 DB 를 분모에서 제외(측정 가능 DB 기준)하는 정직 표기. MySQL 경로는 단일 try 유지(회귀 0). 본 수정은 권한을 부여하지 않으며(agent_ro GRANT 는 운영자 영역), 권한 없는 DB 를 "연결 불가"로 가시화만 한다.
 - Cross-ref: CHG-20260611-0226 / TASK-0226 / TASK-0223.
+
+## REV-20260611-0227 [SKIPPED:frontend-ui-state-persist-no-backend]
+- Date: 2026-06-11
+- Cycle: TASK-0227 (실행 단계 사이드 패널 갱신 시 "결과 보기" 펼침 상태 유지), **Minor §12.3**
+- Reason: 순수 클라이언트 UI 상태 보존 버그수정. 폴링 재렌더(`_renderStepSidePanelBody`의 `body.innerHTML=""`)가 펼쳐둔 결과셋을 닫던 것을, 펼침 상태를 `state.stepResultExpanded`(Set)에 영속화 후 복원해 해소. 신규 RBAC·스키마·암호화·엔드포인트·백엔드(app.py) 0 — `app.js` state 필드 1 + 헬퍼 1 + 토글 배선 + run 전환 시 clear 뿐. 위험 표면 없어 적대적 패널 불요(전례 REV-20260611-0209/0213/0225 frontend-only SKIP 과 동일 등급). node --check PASS.
+- Risk: low — 클라이언트 펼침 상태 추적만. run 전환 시 Set clear 로 키 누수 방지. step 키는 기존 dedup 키(`step_index:created_at`) 재사용. 시각 동작은 PB-0008(배포 후)로 확인.
+- Cross-ref: CHG-20260611-0227 / TASK-0227.
