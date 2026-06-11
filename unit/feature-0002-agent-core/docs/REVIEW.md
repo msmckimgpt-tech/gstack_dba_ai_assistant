@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260611-0232 [SKIPPED:backend-cap-adjust-no-security-surface] — PASS
+- 패널 skip 사유: max_tokens cap 표 task 키 추가 — 라우팅 로직·보안 경계 무변경. 적대적 패널 비대상(§18.8). 동시세션 insight-reset cycle 이 REV-0231 선점→§13.1 재번호 0231→0232. 아래는 backend correctness self-review.
+- Date: 2026-06-11
+- Cycle: TASK-0232 (제품 프롬프트 자동작성 잘림 해소 — agent-core 측 model_catalog cap 신설, **Major §12.3**)
+- 분류: max_tokens cap 표 task 키 추가. 라우팅 로직·보안 경계 무변경. backend correctness self-review.
+- 검토 결과: `"prompt_gen"` 신설은 `_CLAUDE_MAX_TOKENS`/`_LOCAL_LLM_MAX_TOKENS` dict 에 키 추가뿐 — `max_tokens_for_model` 의 tier 분기(local/claude/else) 로직 불변. 다른 task cap(insight/agent/summary/sql_fix/validate) 영향 0. Claude 20000 은 thinking budget(≤16000) 차감 후 ≥4000 본문 여유, 로컬 3072 ≤ 4K 컨텍스트. 무제한 아닌 명시 cap 으로 비용 폭주 차단(CHG-0004 정합).
+- 검증: 신규 `test_prompt_gen_max_tokens.py` 5 PASS + `test_call_llm_records_agent_task.py` 회귀 0.
+- Risk: low. Rollback: prompt_gen 키 삭제 시 default cap(8192) 폴백 — 동작 안전.
+- Cross-ref: CHG-20260611-0232 (agent-core) / feature-0003 REV-20260611-0232 / TASK-0232.
+
 ## REV-20260611-0230 [SUBAGENT:product-multi-datasource-isolation-adversarial] — PASS(MAJOR 흡수)
 - Related TASK: feature-0002-agent-core + feature-0003-agent-web-ui (TASK-0230, **Critical §12.3** — 멀티 datasource 1:N)
 - Trigger: datasource 접근 경계(인가 결정) + schema allowlist + 다중 연결 라우팅 → security + backend (§18.8) + [[feedback_outside_voice_for_rbac]] 필수 게이트

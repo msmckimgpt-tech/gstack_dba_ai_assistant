@@ -8,14 +8,26 @@ source_of_truth: true
 
 # Modify Log
 
-## CHG-20260611-0232
-- Date: 2026-06-11 (TASK-0232, **Minor §12.3** — datasource multi-bind UI 접근성 보강, frontend-only)
+## CHG-20260611-0233
+- Date: 2026-06-11 (TASK-0233, **Minor §12.3** — datasource multi-bind UI 접근성 보강, frontend-only)
 - Scope: TASK-0230 의 제품 상세 datasource multi-bind UI 를 gstack `/design-review` 소스 접근성 감사로 검토 후 HIGH 3 + MEDIUM 4 흡수. 권한/스키마/엔드포인트/백엔드 0.
 - Files:
   - unit/feature-0003-agent-web-ui/src/static/admin.js (★/× 칩버튼 aria-label + disabled 중복요청 가드 + 두 select aria-label + 빈상태 CTA)
   - unit/feature-0003-agent-web-ui/src/static/styles.css (.admin-chip-action/.admin-chip-remove 24px 타깃 + :focus-visible + opacity)
   - unit/feature-0003-agent-web-ui/src/static/admin.html (캐시버스터 `?v=20260611-ds-multibind-a11y`)
 - Rollback: 위 3파일 revert(frontend-only, 동작 영향 0 — 접근성 속성·CSS 만).
+- Date: 2026-06-11 (TASK-0233, **Major §12.3** — 외부 LLM 비용 영향: 제품 프롬프트 "자동 작성" 결과 중간 잘림 해소; 동시세션 insight-reset cycle 이 TASK-0231/CHG-0231 선점→§13.1 재번호 0231→0232)
+- 사용자 보고: `관리 콘솔 > 제품 > [각 제품] > 제품 프롬프트 > 자동작성` 텍스트가 글자 수 제한으로 중간 잘림.
+- 근본 원인: `admin_generate_product_prompt` 가 출력 토큰 상한을 `max_tokens_for_model(llm_model, "summary")` 로 잡음 — `"summary"` 는 짧은 요약/토픽용 cap(Claude 7000 / 로컬 512). 웹 기본 모델 `claude-haiku-4` 기준 thinking budget(≤5000) 차감 후 실본문 ~2000 토큰 → 본문 잘림. `finish_reason` 미검사로 잘린 채 조용히 반환. 저장 컬럼(MEDIUMTEXT)·프론트 textarea(maxlength 없음)는 제약 아님.
+- 변경 (feature-0003 측):
+  - `src/app.py`: ① `admin_generate_product_prompt` 의 `max_tokens_for_model(..., "summary")` → `"prompt_gen"`, `timeout` 55→90s. ② LLM 응답 `choices[0].finish_reason == "length"` 검출 → `meta.truncated` 플래그 + `logging.warning`(model·max_tokens·product_id).
+  - `src/static/admin.js`: 자동작성 핸들러가 `payload.meta.truncated` 시 metaEl 에 "출력 길이 제한 도달 — 잘렸을 수 있음, 재생성 권장" 경고 append + `.admin-meta-warn` 클래스.
+  - `src/static/styles.css`: `.admin-meta.admin-meta-warn { color: var(--warning, #d97706); }` 신설(기존 디자인 토큰).
+- 동반 변경 (feature-0002): `src/modules/model_catalog.py` 에 `"prompt_gen"` task cap 신설(Claude 20000 / 로컬 3072). agent-core MODIFY.md CHG-20260611-0233 참조.
+- 비변경: RBAC 카탈로그·DB 스키마(`WebSystemPrompts.Content` MEDIUMTEXT 유지)·암호화·신규 엔드포인트·응답 shape(meta 에 `truncated` 키 추가 외) 무변경.
+- 검증: agent-core 신규 5(prompt_gen cap 존재·summary 대비 단조성·thinking 차감 여유·로컬 4K 한도·tier 라우팅) + web-ui 신규 4(finish_reason 잘림 검출·meta.truncated 계약) = 9 PASS, model_catalog 기존 회귀 0, node --check admin.js PASS. 시각 동작은 PB-0008(배포 후) 확인.
+- Files: src/app.py, src/static/admin.js, src/static/styles.css, tests/test_prompt_generate_truncation.py(신규), docs/{FUNCTION,REVIEW,TASK,MODIFY}.md
+- Rollback: 위 3 src 파일 + model_catalog.py revert. cap 조정이라 데이터 마이그레이션 없음.
 
 ## CHG-20260611-0231
 - Date: 2026-06-11 (TASK-0231, **Critical §12.3** — insight 분석 초기화 (접근 가능 DB 단위 삭제); 동시세션 SSRF·UI-통합·멀티datasource cycle 이 TASK-0228/0229/0230 선점→§13.1 재번호)

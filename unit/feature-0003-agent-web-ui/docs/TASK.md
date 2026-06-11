@@ -12,12 +12,12 @@ source_of_truth: true
 - State: in_progress
 - Owner: AI
 - Priority: minor (TASK-0124 RBAC 권한 정합 + TASK-0125 UX 2차 보완 — ux-compact-redesign 병합)
-- Last Updated: 2026-06-11 (TASK-0232 datasource multi-bind UI 접근성 보강 — ★/× 칩 버튼 aria-label + 비동기 disabled 중복요청 차단 + 두 select aria-label + 24px 터치타깃 + focus-visible + 빈 상태 CTA [gstack /design-review 감사 H1~H3·M1~M4 흡수]; TASK-0230 멀티 datasource 1:N — 제품 ↔ 여러 datasource 참조: WebProductDatasources join 테이블 + admin add/remove/list 엔드포인트 + 접근DB datasource 차원화 + admin UI 칩 multi-bind/편집대상 선택기 + 제품 프롬프트 다중 datasource DB 인지 + 대화화면 다중 배지; TASK-0229 관리 콘솔 제품 상세 `접근 가능 데이터베이스` UI 통합 — DB chip↔insight 완료율 1:1 중복 제거 + 시스템 DB 단일 묶음 칩(hover/focus 툴팁); TASK-0228 datasource SSRF 사설망 경계 env 토글; TASK-0223 제품 프롬프트 자동작성 실데이터 정합 재작성 + MSSQL database-aware 3계층 인사이트 + ask-worker grounding 검증 + _log F821 hotfix; TASK-0218 관리 콘솔 대시보드 CloudWatch 스타일 재구성 — 주/보조 위계+추세 sparkline+새로고침/auto-refresh+fail-loud+drill-down+drag+접근성; TASK-0216 제품 프롬프트 자동 작성 품질 강화 — topic 집계/fact_entries 타입 확장/summary 샘플; TASK-0210 관리 콘솔 대시보드 보강 — 카테고리별 위젯 그리드 + per-account 커스터마이즈/영속; TASK-0198 LLM 사용량 모델별 필터/선택 + 모델별 요약 카드 + 가로 스크롤 제거; TASK-0188 공유 대화 markdown 미적용 수정 + 수신자 가독성 디자인; TASK-0184 계정 drill-down + 프로필 사용내역 차트 + 내 활동기록 제거; TASK-0181 역할/계정 모델 stacked + 요청 수; TASK-0180 카테고리별 행 레이아웃; TASK-0179 차트 grid; TASK-0178 여백 컴팩트화; TASK-0177 상세표 비용컬럼+디자인 정렬; TASK-0176 역할/계정별 비용 차트; TASK-0167 작은화면 잘림)
+- Last Updated: 2026-06-11 (TASK-0233 datasource multi-bind UI 접근성 보강 — ★/× 칩 버튼 aria-label + 비동기 disabled 중복요청 차단 + 두 select aria-label + 24px 터치타깃 + focus-visible + 빈 상태 CTA [gstack /design-review 감사 H1~H3·M1~M4 흡수]; TASK-0230 멀티 datasource 1:N — 제품 ↔ 여러 datasource 참조: WebProductDatasources join 테이블 + admin add/remove/list 엔드포인트 + 접근DB datasource 차원화 + admin UI 칩 multi-bind/편집대상 선택기 + 제품 프롬프트 다중 datasource DB 인지 + 대화화면 다중 배지; TASK-0229 관리 콘솔 제품 상세 `접근 가능 데이터베이스` UI 통합 — DB chip↔insight 완료율 1:1 중복 제거 + 시스템 DB 단일 묶음 칩(hover/focus 툴팁); TASK-0228 datasource SSRF 사설망 경계 env 토글; TASK-0223 제품 프롬프트 자동작성 실데이터 정합 재작성 + MSSQL database-aware 3계층 인사이트 + ask-worker grounding 검증 + _log F821 hotfix; TASK-0218 관리 콘솔 대시보드 CloudWatch 스타일 재구성 — 주/보조 위계+추세 sparkline+새로고침/auto-refresh+fail-loud+drill-down+drag+접근성; TASK-0216 제품 프롬프트 자동 작성 품질 강화 — topic 집계/fact_entries 타입 확장/summary 샘플; TASK-0210 관리 콘솔 대시보드 보강 — 카테고리별 위젯 그리드 + per-account 커스터마이즈/영속; TASK-0198 LLM 사용량 모델별 필터/선택 + 모델별 요약 카드 + 가로 스크롤 제거; TASK-0188 공유 대화 markdown 미적용 수정 + 수신자 가독성 디자인; TASK-0184 계정 drill-down + 프로필 사용내역 차트 + 내 활동기록 제거; TASK-0181 역할/계정 모델 stacked + 요청 수; TASK-0180 카테고리별 행 레이아웃; TASK-0179 차트 grid; TASK-0178 여백 컴팩트화; TASK-0177 상세표 비용컬럼+디자인 정렬; TASK-0176 역할/계정별 비용 차트; TASK-0167 작은화면 잘림)
 
 ## 2. Task Queue
 
-### TASK-0232 datasource multi-bind UI 접근성 보강 (gstack /design-review 감사) (2026-06-11)
-- [x] **Minor §12.3** — TASK-0230 으로 추가한 제품 상세 datasource multi-bind UI 를 gstack `/design-review`(소스 디자인·접근성 outside-voice subagent)로 감사 → 발견 HIGH 3 + MEDIUM 4 흡수. **수정(frontend-only, 3파일)**: ① (H1) 아이콘 전용 ★(기본지정)/×(제거) 칩 버튼에 `aria-label` 부여(글리프만으론 SR 불투명). ② (H2) "편집 대상 데이터소스" select + datasource 추가/설정 select 양쪽에 `aria-label`(가시 라벨 미연결 combobox). ③ (H3) ★/× 클릭 핸들러에 `disabled` 가드 — 비동기 POST/DELETE 중 중복 요청 차단(in-flight 재진입 방지, 실패 시 재활성). ④ (M1) `.admin-chip-action`/`.admin-chip-remove` 를 `min 24×24px` inline-flex 로(WCAG 2.5.8, 이전 padding:0 2px≈12px). ⑤ (M2) `:focus-visible` outline 추가(borderless 버튼 키보드 포커스 불가시 해소). ⑥ (M3) ★ resting opacity 0.7→0.85(hover-only 가시성은 키보드/터치 미노출). ⑦ (M4) 빈 바인딩 상태를 수동적 status→행동유도 CTA. 캐시버스터 `?v=20260611-ds-multibind-a11y`. **검증**: node --check admin.js PASS + CSS brace balance(1035/1035) + make test 컨테이너 회귀 0(frontend-only). **라이브 기능 회귀 16/16 PASS**(별도 검증: auth/datasources/add/list/remove/연결테스트/차원격리/insight heartbeat — 프로덕션 상태 원복 확인). REV-20260611-0232 [SKIPPED:frontend-a11y-no-backend-no-rbac]. 권한/스키마/엔드포인트/백엔드 0. worktree `ai/claude/ds-multibind-a11y`(base 997d9ec=TASK-0230 머지본). **잔여**: web 재배포 + PB-0008 Windows 시각·키보드 검증. P2(coverage UI 와 remove 버튼 시각 통일)·P4(대화 드롭업 배지 tooltip 키보드 미접근)는 동시세션 머지 코드(sibling) 영역이라 flag-only.
+### TASK-0233 datasource multi-bind UI 접근성 보강 (gstack /design-review 감사) (2026-06-11)
+- [x] **Minor §12.3** — TASK-0230 으로 추가한 제품 상세 datasource multi-bind UI 를 gstack `/design-review`(소스 디자인·접근성 outside-voice subagent)로 감사 → 발견 HIGH 3 + MEDIUM 4 흡수. **수정(frontend-only, 3파일)**: ① (H1) 아이콘 전용 ★(기본지정)/×(제거) 칩 버튼에 `aria-label` 부여(글리프만으론 SR 불투명). ② (H2) "편집 대상 데이터소스" select + datasource 추가/설정 select 양쪽에 `aria-label`(가시 라벨 미연결 combobox). ③ (H3) ★/× 클릭 핸들러에 `disabled` 가드 — 비동기 POST/DELETE 중 중복 요청 차단(in-flight 재진입 방지, 실패 시 재활성). ④ (M1) `.admin-chip-action`/`.admin-chip-remove` 를 `min 24×24px` inline-flex 로(WCAG 2.5.8, 이전 padding:0 2px≈12px). ⑤ (M2) `:focus-visible` outline 추가(borderless 버튼 키보드 포커스 불가시 해소). ⑥ (M3) ★ resting opacity 0.7→0.85(hover-only 가시성은 키보드/터치 미노출). ⑦ (M4) 빈 바인딩 상태를 수동적 status→행동유도 CTA. 캐시버스터 `?v=20260611-ds-multibind-a11y`. **검증**: node --check admin.js PASS + CSS brace balance(1035/1035) + make test 컨테이너 회귀 0(frontend-only). **라이브 기능 회귀 16/16 PASS**(별도 검증: auth/datasources/add/list/remove/연결테스트/차원격리/insight heartbeat — 프로덕션 상태 원복 확인). REV-20260611-0233 [SKIPPED:frontend-a11y-no-backend-no-rbac]. 권한/스키마/엔드포인트/백엔드 0. worktree `ai/claude/ds-multibind-a11y`(base 997d9ec=TASK-0230 머지본). **잔여**: web 재배포 + PB-0008 Windows 시각·키보드 검증. P2(coverage UI 와 remove 버튼 시각 통일)·P4(대화 드롭업 배지 tooltip 키보드 미접근)는 동시세션 머지 코드(sibling) 영역이라 flag-only.
 ### TASK-0231 insight 분석 초기화 (접근 가능 DB 단위 삭제) (2026-06-11)
 - [x] **Critical §12.3** — (동시세션 SSRF·UI-통합 cycle 이 TASK-0228/0229 선점 → §13.1 재번호 0228→0230) 사용자 요청: `관리 콘솔 > 제품 > 접근 가능 데이터베이스 > insight 분석 완료율`에서 분석 내용을 초기화하는 수단. 잘못 분석된 내용을 되돌릴 방법이 없던 gap 해소. 사용자 결정: **개별 DB 단위** 초기화 + **삭제만**(worker 자동 재분석).
 - **신규 RBAC `insight.reset`**(console 그룹, admin 한정 — audit.purge 동급 파괴적). `PERMISSION_DEFINITIONS` + admin seed catchup(operator/sales/pending 미부여).
@@ -3361,4 +3361,31 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] state.stepResultExpanded + _stepResultKey + 토글 복원/저장 배선
 - [x] run 전환 시 Set clear (resetProgressTracking + applyProgressPayload)
 - [x] node --check PASS + 캐시버스터 bump
+- [ ] verify-completion → 머지 → web 재배포 → PB-0008 시각검증
+
+### TASK-0232 — 제품 프롬프트 "자동 작성" 결과 중간 잘림 해소 (2026-06-11)
+
+**Major §12.3** (외부 LLM 비용 영향 — 출력 토큰 cap 상향; feature-0002 model_catalog + feature-0003 app.py/admin.js/styles.css 교차). (CHG-20260611-0232) — 동시세션 insight-reset cycle 이 TASK-0231 선점→§13.1 재번호 0231→0232.
+
+#### 진단
+사용자 보고: `관리 콘솔 > 제품 > [각 제품] > 제품 프롬프트 > 자동작성` 으로 받은 텍스트가 글자 수 제한으로 중간에 잘린다.
+
+근본 원인: 저장 컬럼(`WebSystemPrompts.Content` = MEDIUMTEXT)·프론트 textarea(maxlength 없음) 둘 다 제약 아님. 진짜 원인은 `admin_generate_product_prompt`([app.py](../src/app.py) 14877)가 출력 토큰 상한을 `max_tokens_for_model(llm_model, "summary")` 로 잡은 것. `"summary"` 는 짧은 요약/토픽용 프로파일(Claude 7000 / 로컬 512)이라 "완성된 시스템 프롬프트 본문"을 담기엔 부족. 웹 기본 모델 `claude-haiku-4` 기준 7000 cap 에서 extended-thinking budget(≤5000)을 빼면 실본문 ~2000 토큰 → 중간 잘림. 게다가 `finish_reason` 미검사로 잘린 채 조용히 반환(사용자가 잘린 줄 모름).
+
+#### 수정
+- [model_catalog.py](../../feature-0002-agent-core/src/modules/model_catalog.py): 긴 본문 전용 `"prompt_gen"` cap 신설 — Claude 20000(thinking 차감 후 ≥4000 본문 여유) / 로컬 LLM 3072(4K 컨텍스트 내 최대). 비용 통제 위해 무제한 아닌 명시 cap 유지.
+- [app.py](../src/app.py): ① 자동작성 호출부 `"summary"`→`"prompt_gen"`, timeout 55→90s. ② `finish_reason == "length"` 잘림 검출 → `meta.truncated` 플래그 + warning 로그.
+- [admin.js](../src/static/admin.js) + [styles.css](../src/static/styles.css): `truncated` 시 "출력 길이 제한 도달, 잘렸을 수 있음 — 재생성 권장" 경고 표시(`.admin-meta-warn`, `--warning` 색).
+
+#### 완료 판정 기준
+- AC1: 인사이트가 풍부한 제품에서 자동작성 시 시스템 프롬프트 본문이 중간에 끊기지 않고 완결된다.
+- AC2: 출력이 그래도 cap 에 도달하면 admin UI 가 "잘렸을 수 있음" 경고를 표시(조용한 잘림 없음).
+- AC3: 토큰 cap 외 권한/스키마/엔드포인트 shape 변경 0.
+- AC4: 신규 테스트 PASS(prompt_gen cap 단조성 + truncated 검출) + node --check + PB-0008 시각검증.
+
+#### 작업 항목
+- [x] model_catalog.py prompt_gen cap 신설 (Claude 20000 / 로컬 3072)
+- [x] app.py 호출부 summary→prompt_gen + finish_reason 잘림 가드 + meta.truncated
+- [x] admin.js + styles.css truncated 경고 표시
+- [x] 신규 테스트 9 PASS + node --check admin.js PASS
 - [ ] verify-completion → 머지 → web 재배포 → PB-0008 시각검증

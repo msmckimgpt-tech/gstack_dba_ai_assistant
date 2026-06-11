@@ -8,14 +8,30 @@ source_of_truth: true
 
 # Review Log
 
-## REV-20260611-0232 [SKIPPED:frontend-a11y-no-backend-no-rbac]
+## REV-20260611-0233 [SKIPPED:frontend-a11y-no-backend-no-rbac]
 - Date: 2026-06-11
-- Cycle: TASK-0232 (datasource multi-bind UI 접근성 보강, **Minor §12.3**) — 동시세션 TASK-0231 insight-reset 선점→0232 재번호
+- Cycle: TASK-0233 (datasource multi-bind UI 접근성 보강, **Minor §12.3**) — 동시세션 TASK-0231 insight-reset 선점→0232 재번호
 - 본 cycle 자체가 gstack `/design-review`(소스 디자인·접근성 outside-voice subagent) 감사의 **산물** — subagent 가 TASK-0230 UI 의 HIGH 3(aria-label·select 라벨·async disabled) + MEDIUM 4(24px 타깃·focus-visible·opacity·빈상태 CTA)를 발견, 본 cycle 이 전부 흡수. 즉 outside-voice 가 선행됨.
 - Reason: frontend-only 접근성 속성(aria-label)·CSS(터치타깃·focus-visible)·JS 가드(중복요청 disabled) 추가. RBAC/스키마/엔드포인트/백엔드/시크릿 0건. 새 기능 0(기존 동작에 접근성·중복방지 덧입힘). 추가 outside-voice panel 불필요 조건 충족(새 위험 표면 0).
 - 검증: node --check admin.js + CSS brace balance + make test 회귀 0 + 라이브 기능 회귀 16/16 PASS(별도).
 - Human Approval Needed: no.
-- Cross-ref: CHG-20260611-0232 / TASK-0232 / REV-20260611-0230(원 cycle).
+- Cross-ref: CHG-20260611-0233 / TASK-0233 / REV-20260611-0230(원 cycle).
+## REV-20260611-0232 [SKIPPED:backend-cap-adjust-no-security-surface] — PASS
+- 패널 skip 사유: 토큰 cap 조정 + 잘림 가시화로 인증/인가/데이터 경계/스키마/시크릿 변경 0. 적대적 보안 subagent 대상 아님(§18.8). 동시세션 insight-reset cycle 이 REV-0231 선점→§13.1 재번호 0231→0232. 아래는 backend correctness self-review.
+- Date: 2026-06-11
+- Cycle: TASK-0232 (제품 프롬프트 "자동 작성" 결과 중간 잘림 해소, **Major §12.3** — 외부 LLM 비용 영향)
+- 분류: 토큰 cap 조정 + 잘림 가시화. 적대적 보안 패널 비대상 — 인증/인가/데이터 경계/스키마/시크릿 변경 0. backend correctness 관점 self-review.
+- 검토 결과 (반증 시도):
+  - **비용 영향(사용자 confirm 범위)**: `max_tokens` 는 출력 **상한**일 뿐 청구는 실제 생성 토큰 기준 → cap 상향(7000→20000)이 곧 비용 증가 아님. 자동작성은 admin(`product.manage`) 수동 트리거라 호출 빈도 낮음. cap 은 무제한이 아닌 명시값 유지(CHG-0004 비용 폭주 차단 정합).
+  - **task 격리**: `"prompt_gen"` 사용처는 `admin_generate_product_prompt`(app.py) **단 1곳**. 기존 `"summary"` cap(7000) 무변경 → summary/classify/topic 등 3개 호출처(llm.py) 회귀 0.
+  - **응답 shape 호환**: `meta.truncated` 는 **신규 키 추가**(기존 키 6종 불변) → admin.js 외 소비자 호환 깨짐 없음. 미지원 클라이언트는 키 무시.
+  - **조용한 잘림 제거**: `finish_reason == "length"` 검출 → meta.truncated=True + warning 로그 + UI 경고. finish_reason 부재(None) 시 오탐 안 함(false).
+  - **로컬 LLM 4K 한도**: prompt_gen 3072 ≤ 4096(컨텍스트 윈도) → 입력 프롬프트 공간 잠식 안 함.
+- 검증: 신규 9 PASS(agent-core 5 cap 단조성·thinking 여유·tier 라우팅 + web-ui 4 truncated 검출/계약), model_catalog 기존 회귀 0, node --check admin.js PASS.
+- Risk: low — cap 조정 + UI 가시화. 데이터/권한/스키마 무변경. cap 환원 시 잘림 재발하나 동작 안전(fail-safe).
+- Human Approval Needed: no — 사용자 보고 이슈의 직접 수정, 보안 trade-off 신규 0.
+- Cross-ref: CHG-20260611-0232 / TASK-0232 / agent-core REV-20260611-0232.
+
 ## REV-20260611-0231 [SUBAGENT:insight-reset-adversarial-security]
 - Date: 2026-06-11
 - Cycle: TASK-0230 (insight 분석 초기화 — 접근 가능 DB 단위 삭제), **Critical §12.3** (파괴적 데이터 삭제 + 신규 RBAC)
