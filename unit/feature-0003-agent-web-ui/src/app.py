@@ -3350,25 +3350,55 @@ def _seed_main_mysql_datasource(conn) -> None:
                         except Exception:
                             pass  # 복호 실패 — 패스워드를 모르므로 수동 재입력 필요
 
-        # TASK-0222: DatasourceKey 는 이제 admin rename 가능한 단순 라벨(TASK-0216/0219) — 해시 키 부재가
-        # "미시드"를 뜻하지 않는다. 운영자가 데이터 MySQL datasource 를 다른 라벨로 rename 했으면 해시 라벨은
-        # 없지만 **같은 엔드포인트(engine=mysql, host=DB_HOST, port=DB_PORT) 의 활성 datasource 가 이미 존재**한다.
-        # 이때 해시 라벨로 새로 INSERT 하면 같은 엔드포인트에 고아 중복 행이 매 부팅 재생성된다(운영자 rename 무력화).
-        # → 해시 라벨 부재 시 같은 엔드포인트의 기존 라벨을 canonical 로 채택해 시드를 멱등화(엔드포인트 기준).
-        cur.execute("SELECT 1 FROM WebDatasources WHERE DatasourceKey=%s AND IsActive=1 LIMIT 1", (key,))
-        if not cur.fetchone():
+        # TASK-0222/0224: DatasourceKey 는 admin rename 가능한 단순 라벨(TASK-0216/0219) — 해시 키 부재가
+        # "미시드"를 뜻하지 않는다. 운영자가 데이터 MySQL datasource 를 다른 라벨(mysql_local)로 rename 하면
+        # 해시 라벨은 없지만 같은 엔드포인트(engine=mysql, host=DB_HOST, port=DB_PORT)의 활성 datasource 가
+        # 이미 존재한다. 이때 해시 라벨로 INSERT 하면 같은 엔드포인트에 고아 중복 행이 재생성된다(rename 무력화).
+        # 정책(엔드포인트=신원):
+        #   - 같은 엔드포인트의 **다른 라벨** datasource 가 존재하면 그것을 canonical 로 채택(중복 INSERT 방지).
+        #   - 추가로, 해시 라벨이 **시드 자동생성 고아**(UpdatedByAccountId IS NULL = 시드가 만든 것 + 제품 바인딩 0)
+        #     로 존재하면 **능동 정리**(self-heal, TASK-0224) — 동시세션의 구버전/스테일 배포가 재생성한 잔재를
+        #     fix 보유 web 부팅 시 제거. **운영자가 콘솔로 미리 세팅한 datasource(UpdatedByAccountId 有)는
+        #     제품 미연결이어도 절대 삭제하지 않는다**(시드 INSERT 는 UpdatedByAccountId=NULL, admin_create 는 actor.id).
+        #   - 해시 라벨에 제품이 바인딩됐거나(bound>0) 운영자 생성이면 보존(삭제·채택 안 함).
+        cur.execute(
+            "SELECT DatasourceKey FROM WebDatasources "
+            "WHERE Engine='mysql' AND LOWER(Host)=LOWER(%s) AND Port=%s AND IsActive=1 AND DatasourceKey<>%s "
+            "ORDER BY Id LIMIT 1",
+            (DB_HOST, int(DB_PORT), key),
+        )
+        _ep_row = cur.fetchone()
+        if _ep_row and _ep_row[0]:
+            _other_label = str(_ep_row[0]).strip()
             cur.execute(
-                "SELECT DatasourceKey FROM WebDatasources "
-                "WHERE Engine='mysql' AND LOWER(Host)=LOWER(%s) AND Port=%s AND IsActive=1 "
-                "ORDER BY Id LIMIT 1",
-                (DB_HOST, int(DB_PORT)),
+                "SELECT UpdatedByAccountId FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (key,)
             )
-            _ep_row = cur.fetchone()
-            if _ep_row and _ep_row[0]:
-                key = str(_ep_row[0]).strip()
+            _hr = cur.fetchone()
+            _hash_present = _hr is not None
+            _seed_created = _hash_present and (_hr[0] is None)  # 시드 자동생성(UpdatedByAccountId IS NULL)
+            _bound = 0
+            if _hash_present:
+                cur.execute("SELECT COUNT(*) FROM WebProducts WHERE DatasourceKey=%s", (key,))
+                _bc = cur.fetchone()
+                _bound = int(_bc[0]) if _bc and _bc[0] is not None else 0
+            # self-heal: **시드 자동생성 + 제품 0** 인 고아 해시키만 정리(운영자 생성/바인딩 datasource 절대 미삭제).
+            if _seed_created and _bound == 0:
+                cur.execute(
+                    "DELETE FROM WebDatasources WHERE DatasourceKey=%s AND UpdatedByAccountId IS NULL", (key,)
+                )
                 try:
                     logging.getLogger(__name__).info(
-                        "[ds-seed] 동일 엔드포인트(%s:%s) 데이터소스 '%s' 존재 — 해시키 신규 시드 skip(라벨 보존, TASK-0222)",
+                        "[ds-seed] 시드-고아 해시키 '%s' 정리(UpdatedByAccountId NULL·제품 0, 라벨 '%s' 존재) — self-heal TASK-0224",
+                        key, _other_label,
+                    )
+                except Exception:
+                    pass
+            # 라벨 채택(중복 INSERT 방지): 해시키가 제품 바인딩됐거나 운영자 생성이면 그대로 두고(보존), 그 외엔 라벨 채택.
+            if not (_hash_present and (_bound > 0 or not _seed_created)):
+                key = _other_label
+                try:
+                    logging.getLogger(__name__).info(
+                        "[ds-seed] 동일 엔드포인트(%s:%s) 데이터소스 '%s' 채택 — 해시키 신규 시드 skip(라벨 보존, TASK-0222)",
                         DB_HOST, DB_PORT, key,
                     )
                 except Exception:
