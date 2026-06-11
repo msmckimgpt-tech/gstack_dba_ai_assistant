@@ -3405,3 +3405,31 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] admin.js + styles.css truncated 경고 표시
 - [x] 신규 테스트 9 PASS + node --check admin.js PASS
 - [ ] verify-completion → 머지 → web 재배포 → PB-0008 시각검증
+
+### TASK-0237 — 제품 프롬프트 "자동 작성" LLM 토큰 스트리밍(SSE) + OpenAI legacy 명명 정리 (2026-06-12)
+
+**Major §12.3** (단일 이벤트 루프 블로킹 위험 + 운영 env 호환; feature-0002 llm/config/model_catalog + feature-0003 app.py/admin.js 교차). (CHG-20260612-0237) — 동시세션 cycle 이 TASK-0231~0236 선점→§13.1 재번호 0233→0237. PLAN-APPROVED(plan groovy-hugging-clarke).
+
+#### 배경
+자동작성(TASK-0232 에서 잘림 해소)이 최대 90초 LLM 호출 동안 "생성 중…" spinner 뿐이라 진행을 알 수 없음. 토큰 스트리밍으로 실시간 표시 + OpenAI legacy 명명 정리(SDK 유지)를 한 cycle 로 묶음(사용자 확정).
+
+#### 수정 (커밋 5분리)
+- 커밋1 (legacy): `_get_openai_client`→`_get_llm_client` rename + alias + 호출처 전부, `OPENAI_API_BASE` dead env 제거, model_catalog 죽은 분기 주석 정정, 앵커 tripwire 갱신.
+- 커밋2 (env): `LLM_MODEL`/`AGENT_LLM_MAX_RETRIES` 우선 + 구이름 fallback(운영 .env 무중단), `_resolve_session_default_model` 동반, .env.example.
+- 커밋3 (SSE 백엔드): `_collect_product_prompt_context` 헬퍼 + 신규 GET `.../stream`(별 스레드+asyncio.Queue 브릿지, SSE progress→token→done|error).
+- 커밋4 (SSE 프론트): autoBtn fetch+ReadableStream+TextDecoder 재작성, applyAutoGenMeta, AbortController, 캐시버스터.
+- 커밋5 (docs): 본 항목 + MODIFY/REVIEW/FUNCTION/STATUS.
+
+#### 완료 판정 기준
+- AC1: 인사이트가 풍부한 제품에서 자동작성 시 토큰이 textarea 에 실시간으로 차오른다(한꺼번에 X).
+- AC2: 단일 이벤트 루프 블로킹 없음(별 스레드+Queue 브릿지) — 스트림 중 타 요청 정상.
+- AC3: 인증/권한/스키마/엔드포인트 무변경(신규 stream GET + product.manage 게이트 재사용). rename·env 무중단(alias+fallback).
+- AC4: 신규 테스트 PASS(SSE 6 + env 6) + 기존 회귀 0 + node --check + PB-0008 시각검증.
+
+#### 작업 항목
+- [x] 커밋1 legacy 정리 (_get_llm_client + alias + dead env + 앵커)
+- [x] 커밋2 env backward-compat (LLM_MODEL/AGENT_LLM_MAX_RETRIES)
+- [x] 커밋3 SSE 백엔드 (헬퍼 추출 + stream GET + Queue 브릿지) + 단위 6 PASS
+- [x] 커밋4 SSE 프론트 (fetch+ReadableStream) + node --check
+- [x] env compat 테스트 6 PASS + agent-core 회귀 0
+- [ ] verify-completion → 머지 → web 재배포 → PB-0008 시각검증(토큰 실시간 흐름)

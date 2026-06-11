@@ -170,7 +170,7 @@ def _install_llm_tripwires(monkeypatch) -> list:
 
     if _llm is not None:
         # Low-level entry — 모든 chat completion 이 통과하는 함수.
-        for fn_name in ("_get_openai_client", "_openai_chat_completion_with_deadline"):
+        for fn_name in ("_get_llm_client", "_get_openai_client", "_openai_chat_completion_with_deadline"):
             if hasattr(_llm, fn_name):
                 monkeypatch.setattr(_llm, fn_name, _trip(f"modules.llm.{fn_name}"))
                 installed.append(f"modules.llm.{fn_name}")

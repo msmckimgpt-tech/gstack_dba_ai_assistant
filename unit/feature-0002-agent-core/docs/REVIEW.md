@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0237 [SKIPPED:llm-naming-cleanup-no-behavior-change] — PASS
+- 패널 skip 사유: `openai` SDK 전송 클라이언트의 명명 정리(rename + dead env 제거 + env backward-compat). 라우팅/자격증명/보안 경계·동작 무변경. 적대적 패널 비대상(§18.8). 동시세션 선점→§13.1 재번호 0233→0236.
+- Date: 2026-06-12
+- Cycle: TASK-0237 (OpenAI legacy 명명 정리 — agent-core 측, **Major §12.3** cross-feature)
+- 검토 결과: ① `_get_openai_client`→`_get_llm_client` 는 def rename + alias(`= _get_llm_client`)뿐 — `_resolve_tier_endpoint` 분기·캐시·`OpenAI(**kwargs)` 인스턴스화 로직 불변. 호출처 14곳(내부 7 + kb_retrieval + app + 테스트)이 신규명/alias 로 동일 객체 획득. ② env: 심볼명(`OPENAI_MODEL`/`AGENT_OPENAI_MAX_RETRIES`)은 16+2 사용처 보존, env **소스만** 새 이름 우선 → 사용처 코드 무변경. 운영 .env 구이름 fallback 으로 무중단. ③ `OPENAI_API_BASE` 는 read 0(dead) 확인 후 제거 — 부작용 없음. ④ model_catalog 죽은 분기는 `return None` 동작 보존(주석만 정정) — `max_tokens_for_model` 미등록 모델 fallback 유지.
+- 검증: test_llm_env_naming.py 6(우선순위/fallback/default/제거) + 앵커 불변식(신·구 tripwire) + agent-core 전체 회귀 0 + alias 정합.
+- Risk: low — 동작 무변경, alias·fallback 으로 무중단. Rollback: 파일 revert(alias 덕에 점진 가능).
+- Cross-ref: CHG-20260612-0237(agent-core) / feature-0003 REV-20260612-0237 / TASK-0237.
+
 ## REV-20260611-0232 [SKIPPED:backend-cap-adjust-no-security-surface] — PASS
 - 패널 skip 사유: max_tokens cap 표 task 키 추가 — 라우팅 로직·보안 경계 무변경. 적대적 패널 비대상(§18.8). 동시세션 insight-reset cycle 이 REV-0231 선점→§13.1 재번호 0231→0232. 아래는 backend correctness self-review.
 - Date: 2026-06-11

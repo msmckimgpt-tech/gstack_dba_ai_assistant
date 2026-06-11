@@ -5584,46 +5584,120 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
   metaEl.className = "admin-meta";
   section.appendChild(metaEl);
 
+  // TASK-0232/0233: 자동 생성 완료(done) 시 meta 충실도 + 잘림 경고를 metaEl 에 렌더.
+  // 비스트리밍/스트리밍 done 양쪽이 공유.
+  const applyAutoGenMeta = (m) => {
+    m = m || {};
+    if (m.grounded) {
+      metaEl.textContent =
+        `(자동 생성됨 — 스키마 ${m.schema_insight_count || 0}개·테이블 ${m.table_insight_count || 0}개·` +
+        `대화주제 ${m.topic_count || 0}건 반영. 검토 후 저장하세요)`;
+    } else {
+      metaEl.textContent =
+        "(자동 생성됨 — DB 인사이트가 아직 수집되지 않아 스키마-비의존 형태입니다. 검토 후 저장하세요)";
+    }
+    if (m.truncated) {
+      metaEl.textContent +=
+        " ⚠ 출력 길이 제한에 도달해 프롬프트가 중간에 잘렸을 수 있습니다. 내용을 확인하고 필요하면 다시 생성하세요.";
+      metaEl.classList.add("admin-meta-warn");
+    } else {
+      metaEl.classList.remove("admin-meta-warn");
+    }
+  };
+
   if (autoGenerateProductId) {
     const autoBtn = document.createElement("button");
     autoBtn.type = "button";
     autoBtn.className = "btn-secondary";
     autoBtn.textContent = "자동 작성";
+    // TASK-0237: SSE 토큰 스트리밍 — textarea 에 본문이 실시간으로 차오른다.
     autoBtn.addEventListener("click", async () => {
+      // 재진입 방어 — 진행 중인 스트림이 있으면 중단.
+      if (autoBtn._streamAbort) {
+        try { autoBtn._streamAbort.abort(); } catch (_) {}
+      }
+      const controller = new AbortController();
+      autoBtn._streamAbort = controller;
+
       autoBtn.disabled = true;
       autoBtn.textContent = "생성 중…";
-      try {
-        const payload = await apiFetch(
-          `/api/admin/products/${autoGenerateProductId}/prompt/generate`,
-          { method: "POST" },
-        );
-        if (payload && payload.prompt) {
-          textarea.value = payload.prompt;
-          const pid = resolveProductId();
-          setSystemPromptPending({ scope, productId: pid, roleId, accountId, content: payload.prompt });
-          const m = payload.meta || {};
-          if (m.grounded) {
-            metaEl.textContent =
-              `(자동 생성됨 — 스키마 ${m.schema_insight_count || 0}개·테이블 ${m.table_insight_count || 0}개·` +
-              `대화주제 ${m.topic_count || 0}건 반영. 검토 후 저장하세요)`;
-          } else {
-            metaEl.textContent =
-              "(자동 생성됨 — DB 인사이트가 아직 수집되지 않아 스키마-비의존 형태입니다. 검토 후 저장하세요)";
-          }
-          // TASK-0232: 출력 토큰 상한 도달로 본문이 잘렸으면 명시 경고 — 조용한 잘림 방지.
-          if (m.truncated) {
-            metaEl.textContent +=
-              " ⚠ 출력 길이 제한에 도달해 프롬프트가 중간에 잘렸을 수 있습니다. 내용을 확인하고 필요하면 다시 생성하세요.";
-            metaEl.classList.add("admin-meta-warn");
-          } else {
-            metaEl.classList.remove("admin-meta-warn");
-          }
-        }
-      } catch (error) {
-        metaEl.textContent = `자동 생성 실패: ${error.message || error}`;
-      } finally {
+      metaEl.classList.remove("admin-meta-warn");
+      metaEl.textContent = "준비 중…";
+      let streamedAny = false;
+
+      const finish = () => {
         autoBtn.disabled = false;
         autoBtn.textContent = "자동 작성";
+        autoBtn._streamAbort = null;
+      };
+
+      const handleFrame = (frame) => {
+        // SSE 프레임: "event: <type>" + "data: <json>" 라인.
+        let ev = null, dataStr = null;
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("event:")) ev = line.slice(6).trim();
+          else if (line.startsWith("data:")) dataStr = line.slice(5).trim();
+        }
+        if (!dataStr) return;
+        let data;
+        try { data = JSON.parse(dataStr); } catch (_) { return; }
+        if (ev === "progress") {
+          metaEl.textContent = data.label || "생성 중…";
+        } else if (ev === "token") {
+          if (!streamedAny) { textarea.value = ""; streamedAny = true; }
+          textarea.value += data.text || "";
+          textarea.scrollTop = textarea.scrollHeight;
+          metaEl.textContent = `생성 중… (${textarea.value.length}자)`;
+        } else if (ev === "done") {
+          textarea.value = (data.prompt != null ? data.prompt : textarea.value);
+          const pid = resolveProductId();
+          setSystemPromptPending({ scope, productId: pid, roleId, accountId, content: textarea.value });
+          applyAutoGenMeta(data.meta);
+        } else if (ev === "error") {
+          metaEl.classList.add("admin-meta-warn");
+          metaEl.textContent = `자동 생성 실패: ${data.error || "알 수 없는 오류"}`;
+        }
+      };
+
+      try {
+        const resp = await fetch(
+          `/api/admin/products/${autoGenerateProductId}/prompt/generate/stream`,
+          { method: "GET", credentials: "same-origin", signal: controller.signal },
+        );
+        if (!resp.ok) {
+          // 인증/권한/제품부재 등은 JSON 으로 도착(SSE 진입 전).
+          let msg = resp.statusText;
+          try { const j = await resp.json(); msg = j.error || msg; } catch (_) {}
+          metaEl.classList.add("admin-meta-warn");
+          metaEl.textContent = `자동 생성 실패: ${msg}`;
+          finish();
+          return;
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf("\n\n")) >= 0) {
+            const frame = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            if (frame.trim()) handleFrame(frame);
+          }
+        }
+        // 잔여 버퍼 처리(마지막 프레임이 \n\n 없이 끝난 경우).
+        if (buf.trim()) handleFrame(buf);
+      } catch (error) {
+        if (error && error.name === "AbortError") {
+          // 사용자/재진입 abort — 조용히 무시. 부분 본문은 textarea 에 남김.
+        } else {
+          metaEl.classList.add("admin-meta-warn");
+          metaEl.textContent = `자동 생성 중단됨(연결 오류): ${error.message || error}`;
+        }
+      } finally {
+        finish();
       }
     });
     section.appendChild(autoBtn);

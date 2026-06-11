@@ -229,7 +229,6 @@ __all__ = [
     "LLM_BASE_URL",
     "LOCAL_LLM_API_BASE",
     "LOCAL_LLM_API_KEY",
-    "OPENAI_API_BASE",
     "OPENAI_MODEL",
     "OpenAI",
     "_inline_insight_on_ask_raw",
@@ -530,12 +529,16 @@ DB_CONNECT_DB = DB_NAME_EFFECTIVE or None
 DB_PROMPT_DEFAULT = DB_NAME_EFFECTIVE or "(미지정)"
 MEMORY_DB = os.getenv("AGENT_MEMORY_DB", "agent_memory")
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "claude-sonnet-4")
+# TASK-0237: env 명명 정리 — 새 이름 LLM_MODEL 우선, 구이름 OPENAI_MODEL 은 deprecated
+# fallback(운영 .env 의 OPENAI_MODEL=auto 무중단 호환). 심볼명 OPENAI_MODEL 은 사용처 보존
+# 위해 유지(env 소스만 신규 우선). 다음 cycle 에 OPENAI_MODEL env fallback 제거 검토.
+OPENAI_MODEL = os.getenv("LLM_MODEL") or os.getenv("OPENAI_MODEL") or "claude-sonnet-4"
 
 # ── 로컬 LLM Gateway (구버전 호환 — Local LLM gateway 사용 시) ──
 LOCAL_LLM_API_BASE = os.getenv("LOCAL_LLM_API_BASE", "").strip() or None
 LOCAL_LLM_API_KEY = os.getenv("LOCAL_LLM_API_KEY", "").strip() or None
-OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "").strip() or None
+# TASK-0237: OPENAI_API_BASE 제거 — CHG-20260522-0006(OpenAI direct fallback 제거) 이후
+# 어디에서도 read 되지 않는 dead env. Bedrock 은 BEDROCK_GATEWAY_URL, 로컬은 LOCAL_LLM_API_BASE 사용.
 
 # ── AWS Bedrock gateway (feature-0007, LiteLLM proxy 경유) ──
 # 본 backend 는 BEDROCK_GATEWAY_URL / BEDROCK_GATEWAY_API_KEY 만 인지하며 AWS
@@ -556,7 +559,7 @@ def _select_llm_provider() -> tuple[str | None, str | None]:
     우선순위 (paired only):
     1. Bedrock gateway   — BEDROCK_GATEWAY_URL + BEDROCK_GATEWAY_API_KEY 둘 다.
     2. Local LLM gateway — LOCAL_LLM_API_BASE + LOCAL_LLM_API_KEY 둘 다.
-    3. 미설정            — (None, None). _get_openai_client() 가 None 반환.
+    3. 미설정            — (None, None). _get_llm_client() 가 None 반환.
 
     feature-0007 follow-up (CHG-20260522-0006): OpenAI direct fallback 제거.
     CHG-20260522-0010: OPENAI_API_KEY 변수 완전 제거.
@@ -643,7 +646,10 @@ AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM = (
     os.getenv("AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM", "true").strip().lower()
     not in ("false", "0", "no")
 )
-AGENT_OPENAI_MAX_RETRIES = int(os.getenv("AGENT_OPENAI_MAX_RETRIES", "0"))
+# TASK-0237: 새 이름 AGENT_LLM_MAX_RETRIES 우선, 구이름 fallback(운영 .env 무중단).
+AGENT_OPENAI_MAX_RETRIES = int(
+    os.getenv("AGENT_LLM_MAX_RETRIES") or os.getenv("AGENT_OPENAI_MAX_RETRIES") or "0"
+)
 AGENT_MEMORY_MAX_TURNS = int(os.getenv("AGENT_MEMORY_MAX_TURNS", "10"))
 AGENT_CSV_PREVIEW_ROWS = int(os.getenv("AGENT_CSV_PREVIEW_ROWS", "20"))
 AGENT_CSV_ANALYZE_MAX_ROWS = int(os.getenv("AGENT_CSV_ANALYZE_MAX_ROWS", "200000"))

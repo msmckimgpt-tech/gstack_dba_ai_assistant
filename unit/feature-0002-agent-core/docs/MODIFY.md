@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0237
+- Date: 2026-06-12 (TASK-0237, **Major §12.3** — OpenAI legacy 명명 정리; 동시세션 cycle 이 TASK-0231~0235 선점→§13.1 재번호 0233→0236)
+- Scope: agent-core 측 — 실제 LLM 이 Bedrock Claude 전용이고 `openai` SDK 는 전송 규약 클라이언트로만 쓰이므로 GPT 시절 명명 잔재 정리(SDK 유지, 동작 무변경).
+- 변경:
+  - `src/modules/llm.py`: `_get_openai_client` → `_get_llm_client` rename + 내부 호출처 전부 변경 + `__all__` 갱신. 구이름 `_get_openai_client = _get_llm_client` deprecated alias 유지(kb_retrieval·app.py 외부 import + 앵커 불변식 테스트 호환).
+  - `src/modules/config.py`: ① `OPENAI_MODEL` env 소스 `LLM_MODEL or OPENAI_MODEL or "claude-sonnet-4"`(새 이름 우선, 구이름 fallback — 심볼명 유지로 사용처 무변경). ② `AGENT_OPENAI_MAX_RETRIES` env 소스 `AGENT_LLM_MAX_RETRIES or AGENT_OPENAI_MAX_RETRIES or 0`. ③ dead env `OPENAI_API_BASE` 제거(정의 + `__all__`).
+  - `src/agent_core.py`: 미사용 `OPENAI_API_BASE` import 제거.
+  - `src/modules/kb_retrieval.py`: `_get_llm_client` 사용.
+  - `src/modules/model_catalog.py`: `max_tokens_for_model` 의 "OpenAI direct legacy" 죽은 분기 주석 정정(`return None` 동작 보존 — 미등록 모델 fallback).
+  - `tests/test_anchor_invariant_postgres.py`: LLM tripwire fn_name 튜플에 `_get_llm_client` 추가(신·구 둘 다).
+- 비변경: `_resolve_tier_endpoint` 라우팅·Bedrock/Local 자격증명·max_tokens cap 값·"OpenAI Chat Completions spec" 주석(정확한 규약 서술). 동작 무변경.
+- 검증: 신규 `tests/test_llm_env_naming.py` 6(LLM_MODEL 우선/OPENAI fallback/default/retries/OPENAI_API_BASE 제거) + 앵커 불변식 + agent-core 전체 회귀 0. py_compile + alias 정합(`_get_llm_client is _get_openai_client`).
+- Files: src/modules/{llm,config,kb_retrieval,model_catalog}.py, src/agent_core.py, tests/{test_anchor_invariant_postgres,test_llm_env_naming}.py, docs/{MODIFY,REVIEW}.md
+- Rollback: alias 유지로 호출처 무중단. env fallback 으로 운영 .env 무중단. 코드 환원 시 위 파일 revert.
+
 ## CHG-20260611-0232
 - Date: 2026-06-11 (TASK-0232, **Major §12.3** — 외부 LLM 비용 영향: 제품 프롬프트 "자동 작성" 결과 중간 잘림 해소; 동시세션 insight-reset cycle 이 TASK-0231 선점→§13.1 재번호 0231→0232)
 - Scope: agent-core 측 — `modules/model_catalog.py` 의 task 별 max_tokens cap 표에 긴 본문 전용 `"prompt_gen"` task 신설. feature-0003 의 `admin_generate_product_prompt`(제품 시스템 프롬프트 자동작성)가 이 cap 을 사용.
