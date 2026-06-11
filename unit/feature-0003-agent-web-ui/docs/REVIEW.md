@@ -8,17 +8,17 @@ source_of_truth: true
 
 # Review Log
 
-## REV-20260611-0228 [SUBAGENT:product-multi-datasource-isolation-adversarial] — PASS(MAJOR 흡수)
+## REV-20260611-0230 [SUBAGENT:product-multi-datasource-isolation-adversarial] — PASS(MAJOR 흡수)
 - Date: 2026-06-11
-- Cycle: TASK-0228 (멀티 datasource 1:N — 제품 ↔ 여러 datasource, **Critical §12.3**, cross-feature)
-- 정본: agent-core REVIEW.md REV-20260611-0228(라우터·격리 분석 본문). 본 entry 는 feature-0003 측 변경(관리 엔드포인트·마이그레이션·UI·제품 프롬프트)에 대한 cross-ref + 흡수 요지.
+- Cycle: TASK-0230 (멀티 datasource 1:N — 제품 ↔ 여러 datasource, **Critical §12.3**, cross-feature)
+- 정본: agent-core REVIEW.md REV-20260611-0230(라우터·격리 분석 본문). 본 entry 는 feature-0003 측 변경(관리 엔드포인트·마이그레이션·UI·제품 프롬프트)에 대한 cross-ref + 흡수 요지.
 - Verdict: **BLOCKER 0** — cross-datasource 격리 HOLD. MAJOR 3건 흡수.
 - feature-0003 관련 흡수: **MAJOR-1** `_ensure_web_product_datasources_schema` 의 broad `try/except: pass` partial-migration silent → 컬럼 존재 선확인(information_schema) + 단계별 실패 loud 로깅(error) + 컬럼 부재 시 backfill/PK 이전 skip. **MAJOR-2** `_product_allowed_schemas_for_datasource`(admin 표시용) 는 폴백 유지(게이트 아님) — 런타임 게이트 입력 `_datasource_allow_schemas`(agent-core) 만 fail-closed.
 - 검증 SAFE: admin add/remove(console.access+console.manage), 미등록 키 거부(400, `_dsr.resolve`), DELETE datasource 가 join+접근DB 고아 정리 + primary 승격, `PUT databases` 가 요청 datasource_key 바인딩 검증(임의 키 접근DB 주입 차단), IDOR 없음(product 존재 확인 + ProductId 스코프). 신규 RBAC 권한 0(기존 console.* 재사용).
 - 검증: 신규 `test_product_multi_datasource_api.py` 7 + make test 컨테이너 회귀 0 + node --check.
 - Risk: medium-high(Critical 데이터 경계 신규 차원) → 격리·fail-closed·migration loud 로 완화. RBAC 카탈로그/시크릿 무변경.
 - Human Approval Needed: no (보안 trade-off 신규 0 — 격리 강화. 사용자 사전 confirm[전체 구현 + LLM tool 선택] 범위 내).
-- Cross-ref: CHG-20260611-0228 / TASK-0228 / ADR-CORE-0004 / agent-core REV-20260611-0228 / [[feedback_outside_voice_for_rbac]] 정합.
+- Cross-ref: CHG-20260611-0230 / TASK-0230 / ADR-CORE-0004 / agent-core REV-20260611-0230 / [[feedback_outside_voice_for_rbac]] 정합.
 
 ## REV-20260611-0223 [SUBAGENT:mssql-three-tier-adversarial]
 - Date: 2026-06-11
@@ -2067,3 +2067,24 @@ source_of_truth: true
 - Reason: 순수 클라이언트 UI 상태 보존 버그수정. 폴링 재렌더(`_renderStepSidePanelBody`의 `body.innerHTML=""`)가 펼쳐둔 결과셋을 닫던 것을, 펼침 상태를 `state.stepResultExpanded`(Set)에 영속화 후 복원해 해소. 신규 RBAC·스키마·암호화·엔드포인트·백엔드(app.py) 0 — `app.js` state 필드 1 + 헬퍼 1 + 토글 배선 + run 전환 시 clear 뿐. 위험 표면 없어 적대적 패널 불요(전례 REV-20260611-0209/0213/0225 frontend-only SKIP 과 동일 등급). node --check PASS.
 - Risk: low — 클라이언트 펼침 상태 추적만. run 전환 시 Set clear 로 키 누수 방지. step 키는 기존 dedup 키(`step_index:created_at`) 재사용. 시각 동작은 PB-0008(배포 후)로 확인.
 - Cross-ref: CHG-20260611-0227 / TASK-0227.
+
+## REV-20260611-0228 [SUBAGENT:security] — BLOCK→흡수→PASS
+- Related TASK: feature-0003-agent-web-ui (TASK-0228)
+- Trigger: SSRF/보안경계 keyword matched — datasource host 가드 사설망 차단 비활성화 (§12.3 Major 보안 다운그레이드, 사용자 명시 승인)
+- Timestamp: 2026-06-11T00:00:00Z
+- Verdict: BLOCK (초기) → 발견 전건 흡수 후 PASS 재검증
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260611T000000Z-security.md
+- Critical issue (흡수됨): (A/B) 토글 OFF 시 IPv4-mapped IPv6 메타데이터 IP(`::ffff:169.254.169.254`/`::ffff:100.100.100.200`)가 `str(ip).endswith(...)` 정규화 빗나감으로 통과 → 메타데이터 SSRF. (C) 토글이 loopback/link-local 까지 함께 개방(승인 범위=RFC1918 초과).
+- Resolution: 메타데이터 차단을 `ip.ipv4_mapped` 언래핑 비교(토글 무관)로 강화 + 토글을 `is_private`(RFC1918)에만 적용하고 loopback/link-local/reserved/multicast 는 상시 차단. 단위테스트 22→31(IPv4-mapped 메타데이터·loopback·link-local 케이스 추가) + 통합 trace 11 케이스 ALL PASS. datasource 회귀 12/29 PASS(회귀 0).
+- Human Approval Needed: no (보안 다운그레이드 자체는 사용자 사전 승인 + 잔여 위험을 승인 범위로 정확히 한정)
+- Cross-ref: CHG-20260611-0228 / TASK-0228 / ADR-0030 / SECURITY §11.
+
+## REV-20260611-0229 [SKIPPED:frontend-ia-merge-no-backend]
+- Date: 2026-06-11
+- Cycle: TASK-0229 (관리 콘솔 제품 상세 `접근 가능 데이터베이스` UI 통합 — DB chip ↔ insight 완료율 1:1 중복 제거 + 시스템 DB 단일 묶음 칩; 동시세션 SSRF cycle TASK-0228 선점→§13.1 재번호), **Minor §12.3**
+- Design panel: gstack `/design-review` 메서드론(general-purpose design subagent) — 사용자 보고 2 IA 문제(중복 1:1 / 시스템 chip 산만)에 대한 통합 재설계 스펙 도출. 핵심 결정 "분석 대상(사용자 DB)=단일 리스트 행(진척+제거), 비-분석 대상(시스템 DB)=접근성 묶음 칩". 디자인 토큰 한정·접근성(hover만 금지) 제약 반영.
+- Reason: 순수 frontend IA 재구성. admin.js(렌더 함수 3종 재작성/신설) + styles.css(클래스 재구성) + admin.html(캐시버스터). **신규 RBAC 권한·DB 스키마·암호화·신규 엔드포인트·백엔드(app.py)·coverage 엔드포인트 응답 shape 변경 0** — 기존 per_db 데이터와 draft chip 배열을 클라이언트에서 `db ↔ schema_name`(소문자) 조인해 한 리스트로 표시할 뿐. 적대적 보안 패널 불요 — 권한 경계·자격증명·쓰기 경로 변화 없음(전례 REV-20260611-0225/0227 frontend-only SKIP 동일 등급).
+- 데이터 정합 검증: 백엔드 `_compute_product_insight_coverage` 의 `accessible = _list_product_databases(conn, pid)` 확인 → `per_db` 집합 = 사용자 등록 DB(draft) 와 동일, 시스템 DB(metadata_schemas)는 per_db 미포함 → 1:1 융합 + 시스템 분리가 데이터 모델과 정합. picker 추가 직후(per_db 미갱신) DB 는 `covRow=null`→"측정 대기" graceful.
+- 접근성: 시스템 묶음 칩에 `title`(네이티브) + `aria-label`(스크린리더) + `tabindex=0` + `:hover`/`:focus`/`:focus-within` 커스텀 툴팁 3중 병행 — 키보드·터치 사용자도 개별 DB 이름 확인 가능.
+- Risk: low — 시각 IA 변경만. 연결 불가 DB 는 행 opacity 다운+점선 마이크로바+"연결 불가" 상태칩으로 정직 표기(기존 색상 등급 로직 재사용). node --check admin.js PASS + CSS brace balance. 시각 동작은 PB-0008(배포 후)로 확인.
+- Cross-ref: CHG-20260611-0229 / TASK-0229 / TASK-0223 / TASK-0206.

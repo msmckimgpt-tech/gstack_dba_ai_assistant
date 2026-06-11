@@ -8,8 +8,8 @@ source_of_truth: true
 
 # Review Log
 
-## REV-20260611-0228 [SUBAGENT:product-multi-datasource-isolation-adversarial] — PASS(MAJOR 흡수)
-- Related TASK: feature-0002-agent-core + feature-0003-agent-web-ui (TASK-0228, **Critical §12.3** — 멀티 datasource 1:N)
+## REV-20260611-0230 [SUBAGENT:product-multi-datasource-isolation-adversarial] — PASS(MAJOR 흡수)
+- Related TASK: feature-0002-agent-core + feature-0003-agent-web-ui (TASK-0230, **Critical §12.3** — 멀티 datasource 1:N)
 - Trigger: datasource 접근 경계(인가 결정) + schema allowlist + 다중 연결 라우팅 → security + backend (§18.8) + [[feedback_outside_voice_for_rbac]] 필수 게이트
 - Timestamp: 2026-06-11
 - Verdict: **BLOCKER 0** — 핵심 cross-datasource 격리 HOLD. MAJOR 3건 발견 → 전부 흡수. 재심 PASS-able.
@@ -21,7 +21,7 @@ source_of_truth: true
 - **검증 SAFE(추가 확인)**: admin add/remove(console.access+console.manage), 미등록 키 거부(400), DELETE datasource 가 join+접근DB 고아 정리, PUT databases 가 요청 datasource_key 바인딩 검증, double-close 없음(router 활성 시 db_conn=primary, else 분기 skip).
 - Artifact: (subagent 출력 본문 — agentId a2a454451a8ea4b9b; 4-section verdict + file:line 인용)
 - Human Approval Needed: no (보안 trade-off 신규 0 — datasource 격리 강화 방향. Critical 작업이나 사용자 사전 confirm[전체 구현 + LLM tool 선택] 범위 내)
-- Cross-ref: CHG-20260611-0228 / TASK-0228 / ADR-CORE-0003 / [[feedback_outside_voice_for_rbac]] 정합.
+- Cross-ref: CHG-20260611-0230 / TASK-0230 / ADR-CORE-0003 / [[feedback_outside_voice_for_rbac]] 정합.
 
 ## REV-20260611-0226 [SUBAGENT:mssql-perdb-coverage-security-adversarial] — CONCERN(BLOCK 흡수)
 - Related TASK: feature-0002-agent-core (TASK-0226)

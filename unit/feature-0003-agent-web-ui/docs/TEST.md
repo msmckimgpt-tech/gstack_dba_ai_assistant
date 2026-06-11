@@ -246,6 +246,11 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-06-11 (TASK-0228 datasource SSRF 사설망 경계 env 토글 + 의도적 비활성화, **Major §12.3 보안 다운그레이드**):
+  - **Environment: CLI** (컨테이너/로컬 pytest — `_ssrf_check_host`/`_ssrf_private_guard_enabled` 단위 + 통합 trace).
+  - **Runner: AI.** 신규 `test_ssrf_private_guard_toggle.py` **31 PASS** (토글 ON/OFF·메타데이터 IPv4-mapped 차단·loopback/link-local 상시 차단·allowlist 공존·파싱·공인 IP 허용·빈 host 거부) + datasource 회귀(`test_datasource_registry.py`/`test_datasource_delete.py`) 회귀 0. 통합 trace 11 케이스(토글 OFF): RFC1918(10.200.50.80 등) 허용 + 메타데이터(bare/IPv4-mapped) 차단 + loopback/link-local 차단 ALL PASS. py_compile + node --check PASS.
+  - **outside-voice 적대적 보안 리뷰**: REV-20260611-0228 [SUBAGENT:security] BLOCK→흡수→PASS (Finding A/B IPv4-mapped 메타데이터 우회 + Finding C loopback/link-local 과개방 수정).
+  - **Environment: Windows-browser** — 배포(web 재기동, 토글=0) 후 PB-0008 으로 admin 콘솔 데이터소스 생성(host=`10.200.50.80`) 성공 + 안내 문구("사설망 IP 허용...") 확인 예정. (UI 변경 = 안내 텍스트 1줄 분기 — 백엔드 보안 로직이 핵심.)
 - 2026-06-11 (TASK-0218 관리 콘솔 대시보드 CloudWatch 스타일 재구성 **PB-0008 Windows-browser 완료 게이트**):
   - **Environment: Windows-browser** (실제 Windows Chrome/148 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증. 라이브 배포(healthz `git_commit=c990107`, mysql/pg ok) 후. 스크린샷 `/tmp/win-browser-shots/task0218/{01_cloudwatch_dashboard,02_edit_drag}.png`.
   - **Runner: AI.** 시나리오: 영속 admin 세션 → `/admin` 대시보드 → 클린 로드 eval → 편집 모드 토글.
@@ -591,3 +596,14 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **Evidence:** `/tmp/win-browser-shots/task0223/01_list_badges.png`(목록 — 3× 녹색 `분석 100%` + 1× `분석 측정 불가`). 상세 screenshot 은 relay CDP transient(font-load 후 timeout)로 미캡처되나 구조 검증은 eval 로 확정.
   - **Pass/Fail: PASS**
   - **Notes:** 캐시버스터 `?v=20260611-insight-coverage` 서빙. 분자=PG rag_objects(`__global__`/`common`) ∩ 라이브 카탈로그 set 교집합, datasource scope=엔드포인트 해시(+기본 엔드포인트 NULL 폴백). CHECK#13(PB-0008 Windows-browser) **충족**.
+
+- 2026-06-11 (TASK-0229 제품 상세 "접근 가능 데이터베이스" UI 통합 — **PB-0008 Windows-browser 부분 검증**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 userspace relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, self-signed ignore). WSL headless 아닌 실제 Windows 화면.
+  - **Runner: AI** (doctor → launch → goto `/admin` → screenshot)
+  - **배포:** PR #167 → main `77f2ef6` 머지 + `sudo docker compose build web` + `up -d --no-deps --no-build web`. healthz status=ok(mysql_ok/pg_ok). 라이브 정적 자산 반영 확인 — `admin.js?v=20260611-db-coverage-unified` 에 `buildSystemDbChip`/`buildDbCoverageCells`/`cov-db-wrap`(grep 5 매치), `styles.css` 에 `sysdb-chip`/`cov-microbar`(19 매치).
+  - **검증 내용:**
+    - **라우트 로드:** `https://112.185.196.20:18080/admin` → status 200, title `DQA — Database Query Assistant Admin`. 실제 Windows Chrome 렌더(스크린샷 `artifacts/task0229-admin-login.png`) — 로그인 카드 정상 표시.
+    - **제품 상세 시각검증(인증 후): 미수행** — admin 자격증명이 AI 에게 없어 로그인 후 `관리 콘솔 > 제품 > [항목] > 접근 가능 데이터베이스` 통합 리스트/시스템 묶음 칩의 실제 화면 확인은 불가. 코드·배포 반영은 라이브 정적 자산 grep + verify-completion(9/9)으로 확정.
+  - **Evidence:** `artifacts/task0229-admin-login.png`(admin 로그인 화면 — 실제 Windows Chrome).
+  - **Pass/Fail: PARTIAL** (로드·배포 반영 PASS / 인증 후 시각검증은 자격증명 필요 → 사용자 위임)
+  - **Notes:** 캐시버스터 `?v=20260611-db-coverage-unified` 서빙 확인. CHECK#13 은 v1 WARN-only(PR block 아님). **사용자 시각검증 권장**: admin 로그인 → 제품(예 킹스레이드) 선택 → `접근 가능 데이터베이스` 섹션에서 (1) per-DB 진척이 사용자 DB chip 과 한 리스트로 통합됐는지, (2) 시스템 DB 가 단일 `시스템 DB N개·고정` 칩으로 묶이고 hover/focus 시 개별 이름 툴팁이 뜨는지 확인.

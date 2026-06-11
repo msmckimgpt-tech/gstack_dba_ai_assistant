@@ -627,3 +627,41 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
   - **사람 확인 게이트(human-in-the-loop)**: AI 가 브라우저만 열고 사람이 확인. 사용자가 "AI 자동 구동 중심" 명시 → 폐기.
   - **WSLg headful chromium**: 표시는 되나 Linux chromium 이라 실제 Windows Chrome 렌더링과 다름 ("wsl 내부 아닌" 요구 위배) → 폐기.
   - **`*` allow-origins + 0.0.0.0 relay**: 가장 단순하나 무인증 CDP 를 LAN 전체 노출(CRITICAL) → 보안 패널 must-fix 로 폐기.
+
+## ADR-0030
+
+- Status: accepted (TASK-0228, 2026-06-11, **Major §12.3 보안 수준 저하 — 사용자 명시 승인**)
+- Context: datasource 생성·연결테스트는 `app._ssrf_check_host` 가 입력 host 를 DNS 해석한 뒤
+  사설망(RFC1918)·링크로컬·loopback·reserved·multicast·클라우드 메타데이터 IP 를 차단한다(SSRF/DNS
+  rebinding 방어, TASK-0205/0214). 사내 운영 환경은 **대부분 사설망 IP(예: `10.200.50.80`)로 DB
+  연결정보를 구성**하므로, 정당한 사내 datasource 생성이 "호스트 차단(SSRF): 사설/링크로컬 IP
+  차단(allowlist 필요)" 으로 막힌다. 매 host 를 `AGENT_DATASOURCE_HOST_ALLOWLIST` 에 등재하는 운영
+  부담을 줄이고자, 사용자가 **사설망 SSRF 경계 자체를 의도적으로 비활성화**하기로 결정.
+- Decision: **사설/링크로컬 SSRF 경계를 env 토글 `AGENT_DATASOURCE_SSRF_GUARD_ENABLED` 뒤로 분기.**
+  - **방어 구성은 코드에 그대로 보존**(`_ssrf_check_host` + allowlist 로직 삭제하지 않음). 코드 기본값
+    `=1`(활성, secure-by-default) — 미설정/알 수 없는 값이면 차단 동작 유지. 운영 `.env.secret` 에서
+    `=0` 으로만 비활성화한다(`0`/`false`/`no`/`off` 인식). 이 ADR 이 그 **복원 태그**다.
+  - **현재 상태**: 운영 `.env.secret` 에 `AGENT_DATASOURCE_SSRF_GUARD_ENABLED=0` 설정 → 사내 사설망
+    datasource 생성 허용.
+  - **불변식(토글과 무관하게 항상 유지)**: ① 클라우드 메타데이터 IP(`169.254.169.254`,
+    `100.100.100.200`, IPv6-mapped) 하드차단 ② DNS rebinding pin(검증된 IP 로 고정 연결) ③ 빈 host /
+    해석 실패 거부. 토글이 끄는 것은 사설/링크로컬/reserved/multicast 차단뿐 — 사내 DB 운영과 무관한
+    경계는 끄지 않아 잔존 위험을 최소화.
+  - **UI 정합**: `GET /api/admin/datasources` 응답에 `ssrf_private_guard_enabled` 추가, admin 콘솔의
+    datasource 안내 문구가 토글 OFF 시 "사설망 IP 허용(메타데이터는 여전히 차단)" 으로 분기.
+- 복원 절차 (SSRF 사설 경계 재활성화 요청 시):
+  1. 운영 `repo/.env.secret` 의 `AGENT_DATASOURCE_SSRF_GUARD_ENABLED=0` → `=1` (또는 줄 제거 = 기본 활성).
+  2. (선택) 정당한 사내 사설 host 는 `AGENT_DATASOURCE_HOST_ALLOWLIST` 에 콤마구분 host/CIDR 로 등재.
+  3. `sudo docker compose up -d --build web` (또는 `--no-build` 재시작)로 web 컨테이너 재기동.
+  4. 코드 변경 불필요 — 토글·allowlist 메커니즘이 이미 상주.
+- Consequences:
+  - 토글 OFF 동안 admin(`console.manage`) 이 임의 사설망 IP 를 datasource host 로 등록 가능 → 내부망
+    SSRF 표면 증가. 단 datasource 연결은 `console.manage` 보유 admin 만 가능하고, 연결 자격증명은
+    envelope 암호화 저장되며, 메타데이터 IP 는 여전히 하드차단된다.
+  - 신뢰 가능한 사내 네트워크 전제 — 외부 노출/멀티테넌트 환경에서는 재활성화 필요.
+- Alternatives 검토 후 폐기:
+  - **단일 IP allowlist 등재**(`AGENT_DATASOURCE_HOST_ALLOWLIST=10.200.50.80`): 최소권한이나 사내 host
+    추가마다 운영자 개입 필요 → 사내 사설망 전면 운영 맥락에서 반복 마찰 → 사용자가 경계 비활성화 선택.
+  - **CIDR allowlist**(`10.0.0.0/8` 등): 대역 전체 허용이라 토글 OFF 와 노출 표면 유사하나, 경계 ON
+    상태로 위장돼 정책 의도가 코드에 드러나지 않음 → 명시적 토글이 감사·복원에 유리.
+  - **SSRF 검증 코드 삭제**: 복원 불가 → 사용자 "태그로 기억하고 이후 복원" 요구 위배 → 폐기.

@@ -8,8 +8,8 @@ source_of_truth: true
 
 # Modify Log
 
-## CHG-20260611-0228
-- Date: 2026-06-11 (TASK-0228, **Critical §12.3** — 멀티 datasource 1:N: 제품 ↔ 여러 datasource 참조)
+## CHG-20260611-0230
+- Date: 2026-06-11 (TASK-0230, **Critical §12.3** — 멀티 datasource 1:N: 제품 ↔ 여러 datasource 참조)
 - Scope: feature-0003 측 — 관리 평면(join 테이블·admin 엔드포인트·접근DB 차원화·제품 프롬프트 다중 datasource 인지) + UI(제품 상세 datasource 칩 multi-bind·편집 대상 선택기, 대화화면 다중 배지). 단일 바인딩·flag OFF 동작 0 변경.
 - Files:
   - unit/feature-0003-agent-web-ui/src/app.py (`_ensure_web_product_datasources_schema` join 테이블+차원 마이그레이션 + `_list_product_datasources`/`_product_allowed_schemas_for_datasource` helper + admin GET/POST/DELETE `/products/{id}/datasources` + `_list_products`·`GET /api/admin/datasources`·`PUT databases` datasource 차원 + DELETE datasource 고아 정리 + `admin_generate_product_prompt` 다중 datasource ds-키·접근DB 그룹)
@@ -18,8 +18,36 @@ source_of_truth: true
   - unit/feature-0003-agent-web-ui/src/static/styles.css (`.admin-chip--primary`/`.admin-chip-action`)
   - unit/feature-0003-agent-web-ui/src/static/{admin,index}.html (캐시버스터 `?v=20260611-product-multi-ds`)
   - unit/feature-0003-agent-web-ui/tests/test_product_multi_datasource_api.py (신규 7)
-- 보안: admin 엔드포인트 console.access(+manage), 미등록 키 거부(400), audit. PUT databases 가 요청 datasource_key 바인딩 검증(임의 키 접근DB 주입 차단). 마이그레이션 loud(REV-0228 MAJOR-1). 런타임 격리는 agent-core `_DatasourceRouter`(CHG-20260611-0228 agent-core) 가 담당.
+- 보안: admin 엔드포인트 console.access(+manage), 미등록 키 거부(400), audit. PUT databases 가 요청 datasource_key 바인딩 검증(임의 키 접근DB 주입 차단). 마이그레이션 loud(REV-0230 MAJOR-1). 런타임 격리는 agent-core `_DatasourceRouter`(CHG-20260611-0230 agent-core) 가 담당.
 - Rollback: flag `AGENT_MULTI_DATASOURCE_ENABLED=0` 또는 제품 바인딩 1개 축소 시 기존 단일 경로 복귀. 코드 환원 시 위 파일 revert(join 테이블·차원 컬럼은 멱등 — 잔존해도 무해).
+## CHG-20260611-0229
+- Date: 2026-06-11 (TASK-0229, **Minor §12.3** — 관리 콘솔 제품 상세 "접근 가능 데이터베이스" UI 통합; 동시세션 SSRF cycle TASK-0228 선점→§13.1 재번호)
+- Scope: frontend-only IA 재구성. 제품 상세의 (a) insight 분석 완료율 per-DB breakdown 리스트와 (b) 사용자 등록 DB chip 목록의 1:1 중복을 단일 통합 리스트로 융합 + (c) 시스템/메타데이터 고정 DB 다수 chip을 단일 묶음 칩(hover/focus 툴팁)으로 강등.
+- 배경: 사용자 보고 — per-DB 완료율 행과 DB chip이 같은 DB를 두 번 표시(분리 의미 없음) + 시스템 DB 4종(MySQL)/3종(MSSQL)이 각각 chip이라 산만. gstack `/design-review` 메서드론(design subagent)으로 통합 스펙 도출. 데이터 정합 확인: 백엔드 `per_db` 집합 = 사용자 등록 DB(`_list_product_databases`)와 동일, 시스템 DB는 별도 출처(`metadata_schemas`)라 per_db 미포함 → 융합/분리가 데이터 모델과 정합.
+- 변경:
+  - `src/static/admin.js`: ① `buildProductCoverageDetail` → 요약 헤더+전체 진행 바로 축소(per-DB breakdown 제거). ② `buildDbCoverageCells(covRow, measuring)` 신설(통합 리스트 행의 마이크로바+통계+상태칩). ③ `buildSystemDbChip(lockedChips)` 신설(단일 묶음 칩 + title/aria-label/tabindex + hover·focus·focus-within 툴팁). ④ `redrawChips` 재작성(시스템 칩 + `per_db ↔ schema_name` 소문자 조인한 `cov-db-row` grid 리스트 + 빈 상태). ⑤ chipWrap 클래스 `admin-chip-wrap`→`cov-db-wrap`.
+  - `src/static/styles.css`: `.cov-db-wrap`(flex column)/`.cov-db-list`/`.cov-db-row`(grid 5컬럼)/`.cov-microbar`+fill/`.cov-db-stat`/`.cov-db-status*`/`.cov-db-remove`(+spacer)/`.cov-db-list-empty`/`.sysdb-chip`+`-label`/`-tag`/`-tip`+`-title`/`-list` 신설·재구성. 기존 `.cov-db-list/.cov-db-row/.cov-db-name/.cov-db-stat` 정의 교체(단일 사용처). 디자인 토큰만 사용(신규 hex 0).
+  - `src/static/admin.html`: 캐시버스터 styles.css·admin.js `?v=20260611-mssql-coverage-perdb`→`?v=20260611-db-coverage-unified`.
+- 비변경: RBAC 카탈로그·DB 스키마·암호화·신규 엔드포인트·백엔드(app.py)·`/api/admin/products/insight-coverage` 응답 shape 무변경. 기존 per_db 데이터/draft chip 배열 그대로 사용.
+- 검증: node --check admin.js PASS + CSS brace balance(1031/1031) + verify-completion PASS. 시각 동작은 PB-0008(배포 후) 확인.
+- Files: src/static/admin.js, src/static/styles.css, src/static/admin.html, docs/{REPORT,REVIEW,TASK,MODIFY}.md
+- Rollback: frontend 3파일 revert + 캐시버스터 환원. 백엔드 무관.
+
+## CHG-20260611-0228
+- Date: 2026-06-11 (TASK-0228, **Major §12.3** — datasource SSRF 사설망 경계 env 토글 + 의도적 비활성화)
+- 사용자 보고: `관리 콘솔 > 데이터소스` 에서 새 데이터소스(host=`10.200.50.80`) 생성 시 "호스트 차단(SSRF): 사설/링크로컬 IP 차단(allowlist 필요): 10.200.50.80" 에러. **근본 원인**: `app._ssrf_check_host` 가 RFC1918 사설 IP 를 SSRF 방어로 차단(설계 의도, TASK-0205/0214). `10.200.50.80` 은 `10.0.0.0/8` 사설 대역이라 차단되며, 정당한 사내 host 는 `AGENT_DATASOURCE_HOST_ALLOWLIST` 에 등재해야 통과하는 구조. 코드 버그 아님 — 사내 운영 환경(대부분 사설망 IP)과 SSRF 방어 기본값의 불일치.
+- 사용자 결정: SSRF 방어 구성을 **복원 가능한 형태로 보존(태그)** 하고 **현재는 사설 경계를 의도적으로 비활성화**. (사내 사설망 전면 운영 맥락 — 매 host allowlist 등재 부담 회피.)
+- 변경:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - `_ssrf_private_guard_enabled()` 신규 — `AGENT_DATASOURCE_SSRF_GUARD_ENABLED` env 파싱(기본 `1`=활성, secure-by-default; `0`/`false`/`no`/`off`=비활성).
+    - `_ssrf_check_host()` — 사설/링크로컬/reserved/multicast 차단을 `private_guard` 분기 뒤로 이동. **메타데이터 IP 하드차단·DNS rebinding pin·빈 host 거부는 토글 무관 항상 유지**.
+    - `GET /api/admin/datasources` 응답에 `ssrf_private_guard_enabled` 필드 추가(UI 안내 정합).
+  - `static/admin.js`: `adminState.datasourcesSsrfPrivateGuard` + 안내 문구 분기(토글 OFF 시 "사설망 IP 허용, 메타데이터는 여전히 차단").
+  - `static/admin.html`: admin.js 캐시버스터 `?v=20260611-ssrf-private-guard-toggle`.
+  - `docs/DECISIONS.md` ADR-0030 (정본 + 복원 절차) / `docs/SECURITY.md` §11 (토글 정책 + 불변식) / `.env.secret.example` (토글 안내).
+  - 신규 테스트 `unit/feature-0003-agent-web-ui/tests/test_ssrf_private_guard_toggle.py` (22 case: 토글 ON/OFF, 메타데이터 항상 차단, allowlist 공존, 파싱).
+- 검증: py_compile + node --check PASS. 신규 22 PASS + datasource 회귀 29 PASS(회귀 0). 운영 `.env.secret` 에 `AGENT_DATASOURCE_SSRF_GUARD_ENABLED=0` 설정 + web 재배포는 배포 단계.
+- Cross-ref: TASK-0228 / REQ-20260611-0228 / ADR-0030 / SECURITY §11. (TASK-0205/0214 SSRF 가드 후속.)
 
 ## CHG-20260611-0223
 - Date: 2026-06-11 (TASK-0223, **Major §12.3** — 제품 프롬프트 자동작성 실데이터 정합 + MSSQL database-aware 3계층 인사이트 + ask-worker grounding 검증)
