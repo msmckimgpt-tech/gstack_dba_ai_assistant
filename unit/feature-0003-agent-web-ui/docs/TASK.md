@@ -1557,7 +1557,29 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] TASK-0030 assistant 말풍선 고정 폭 + 결과셋 내부 스크롤 + 펼침 스크롤 앵커
 - [x] TASK-0031 관리 콘솔 내부 스크롤 정리 (페이지네이션·액션 버튼 상시 노출)
 
-## 2.1 Implementation Plan (TASK-0052)
+## 2.1 Implementation Plan (TASK-0228 — datasource SSRF 사설망 경계 토글)
+
+본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 **Major(보안 수준 저하)** 변경이다. 사용자가 AskUserQuestion 답변(2026-06-11)에서 "구축된 SSRF 방어 구성을 태그로 기억해두고 이후 요청 시 복원, 현재는 경계 의도적 비활성화" 를 명시 승인 → plan 승인으로 간주.
+
+<!-- PLAN-APPROVED by user on 2026-06-11 -->
+
+- **영향 파일·symbol**:
+  - `unit/feature-0003-agent-web-ui/src/app.py` — `_ssrf_private_guard_enabled()`(신규), `_ssrf_check_host()`(토글 분기 + IPv4-mapped 메타데이터 + loopback/link-local 상시 차단), `admin_list_datasources`(응답 필드).
+  - `static/admin.js`, `static/admin.html` — 안내 문구 분기 + 캐시버스터.
+  - `docs/DECISIONS.md`(ADR-0030), `docs/SECURITY.md`(§11), `.env.secret.example` — 정본 + 복원 절차.
+  - `tests/test_ssrf_private_guard_toggle.py`(신규).
+- **접근**: SSRF 방어 로직을 삭제하지 않고 env 토글(`AGENT_DATASOURCE_SSRF_GUARD_ENABLED`, 기본 활성) 뒤로 분기. 운영 `.env.secret` 에서만 `=0` 으로 비활성화 → 복원 가능. 메타데이터/loopback/link-local/DNS pin 은 토글 무관 유지.
+- **완료 판정 기준**: (AC1) host=10.200.50.80 데이터소스 생성 성공(토글 OFF). (AC2) 토글 OFF 여도 메타데이터 IP(IPv4-mapped 포함)·loopback·link-local 차단. (AC3) 토글 ON(기본) 시 기존 동작 보존. (AC4) 신규 테스트 + datasource 회귀 0. (AC5) 복원 절차가 ADR-0030 에 기록.
+- **위험도**: Major(§12.3 보안 다운그레이드) — 사용자 명시 승인 + outside-voice 적대적 보안 리뷰(REV-20260611-0228 BLOCK→흡수→PASS)로 잔여 위험을 승인 범위(RFC1918)로 한정.
+- **작업 항목**:
+  - [x] `_ssrf_private_guard_enabled` + `_ssrf_check_host` 토글 분기 + BLOCK-fix(IPv4-mapped 메타데이터 + loopback/link-local 상시 차단)
+  - [x] `GET /api/admin/datasources` 응답 필드 + admin.js/html 안내 분기 + 캐시버스터
+  - [x] ADR-0030 + SECURITY §11 + .env.secret.example + 자동 메모리
+  - [x] 신규 테스트 31 PASS + datasource 회귀 0 + py_compile + node --check
+  - [x] 적대적 security 패널(REV-20260611-0228 BLOCK→흡수→PASS)
+  - [ ] 운영 `.env.secret` 토글=0 설정 + verify-completion → 머지 → web 재배포 → PB-0008 시각검증
+
+## 2.1.archived Implementation Plan (TASK-0052)
 
 본 plan 은 AGENTS.md §7.1 Plan-Review-Execute + §12.3 Critical 등급 (인증/인가 구조 변경) 변경 계획이다. `/plan-eng-review` (Section 1~4) + Codex outside voice (gpt-5.5, reasoning=high) 통합 후 사용자 승인 (2026-05-06) 으로 진행. 4 phase 분할 → **본 turn 은 Phase 1A 만**.
 
@@ -1694,6 +1716,8 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - TASK-0034 복잡 QA 성능 테스트 — 현재 구성된 assistant(agent-core + web UI)의 복잡 질의 대응력을 측정해 이후 개선 포인트를 도출한다. Q1/Q2/Q3 검증 완료, **Q4/Q5 재수행 완료 (2026-04-22: Q4 7 턴 stopped-by-heuristic 1171s / Q5 5 턴 stopped-by-heuristic 251s, 전 턴 HTTP 200)** — TASK-0040/0041 선행 완료 후 블로커 해제. 현재 남은 일은 turn-by-turn 실제 답변과 truth query 대조 검증 + `TASK-0034-REPORT.md` / LEARNINGS 추가 정리.
 
 ## 3.1 Recently Done
+- TASK-0228 (2026-06-11 마감, REQ-20260611-0228, **Major §12.3** — 보안 다운그레이드, 사용자 명시 승인): datasource SSRF 사설망 경계 env 토글 + 의도적 비활성화. 사용자 보고(`관리 콘솔 > 데이터소스` 에서 host=`10.200.50.80` 생성 시 "호스트 차단(SSRF): 사설/링크로컬 IP 차단" 에러)의 근본 원인 = `_ssrf_check_host` 의 RFC1918 차단(설계 의도, TASK-0205/0214). 사용자 결정 = SSRF 방어 구성을 복원 가능한 형태로 보존(태그)하고 현재는 사설 경계 비활성화(사내 사설망 전면 운영). **산출**: ① `_ssrf_private_guard_enabled()` 신규(env `AGENT_DATASOURCE_SSRF_GUARD_ENABLED`, 기본 `1`=활성 secure-by-default). ② `_ssrf_check_host()` 토글 분기 — `private_guard` 비활성 시 RFC1918(`is_private`)만 완화. ③ `GET /api/admin/datasources` 에 `ssrf_private_guard_enabled` + admin.js 안내 분기. ④ ADR-0030 + SECURITY §11 + .env.secret.example(복원 절차/태그). ⑤ 신규 테스트 31 PASS. **outside-voice 적대적 보안 리뷰 BLOCK→흡수→PASS**(REV-20260611-0228): (A/B) 토글 OFF 시 IPv4-mapped IPv6 메타데이터 IP(`::ffff:169.254.169.254`)가 `str(ip).endswith` 정규화 빗나감으로 통과 → `ip.ipv4_mapped` 언래핑 비교로 수정. (C) 토글이 loopback/link-local 까지 개방 → `is_private` 에만 적용하고 loopback/link-local/reserved/multicast 상시 차단으로 수정. **불변식(토글 무관)**: 메타데이터 IP(IPv4-mapped 포함)·loopback/link-local·DNS rebinding pin·fail-closed 에러 경로. 검증: py_compile + node --check PASS, 신규 31 + datasource 회귀 0. 운영 `.env.secret` 토글=0 설정 + web 재배포는 배포 단계. worktree `ai/claude/ssrf-host-guard-toggle`(base e93b181).
+
 - TASK-0061 (2026-05-15 마감, REQ-20260515-0003~0010, **Major** §12.3 — Phase 6 Critical 분면 포함, 사용자 일괄 승인): GOAL.md 8 항목 합본 cycle. (Phase 1+2) 답변 버블 내부 실시간 step 진행 + 신규 대화 첫 요청 즉시 polling 연결 — `state.pendingBubble` + `renderPendingAssistantBubble` + elapsed timer + `applyProgressPayload` 동기화 + `sendPrompt` lazy-create 분기에서 cid 발급 즉시 `startProgressPolling`. (Phase 3) `_compute_display_status` + `WEB_PROGRESS_STALE_TIMEOUT_SECONDS=1200` + 일관 stale 반영 (/api/progress, ask_status, ask_result, list_conversations) + frontend `.conv-dot.is-stale-error` + toast. (Phase 4) `#messagePointRail` + scroll observer + click jump. (Phase 5) `/api/history_dates` AgentMemoryMessages 정본 + 캘린더 popover. (Phase 6 Critical) `WebAccounts.MustChangePassword` ALTER + `POST /api/admin/accounts/{id}/password-reset` (self-reset 거부) + 임시 비번 1회 표시 + 세션 revoke + 강제 변경 modal. (Phase 7) `currentPageAccounts()` helper 로 select-all 현재 페이지만 토글. (Phase 8) Ctrl/Shift 다중 선택 + `_delete_conversation_impl` helper 추출 + `POST /api/delete_conversations` partial success + ≥10 typed-confirm. 변경 파일: `app.py`, `app.js`, `admin.js`, `index.html`, `admin.html`, `styles.css`, `.env.example`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md`. cache-bust `v=20260515-task-0061`. 검증: python compile / node --check / make web / browser smoke (DOM 5 신규 element + login + bulk bar + 캘린더 popover + display_status + history_dates + delete_conversations + pending bubble + admin currentPageAccounts/select-all + reset btn) 모두 통과.
 
 - TASK-0050 (2026-05-06 마감): `make web` 이 docker compose v5.1.1 + buildx v0.31.1 의 provenance metadata file race 로 EXIT=1 종료되던 문제 우회. 환경 진단으로 `#15 exporting to image` 까지 정상 빌드 후 `#16 resolving provenance for metadata file` 직후 `open /tmp/.tmp-compose-build-metadataFile-<UUID>.json<NNNN>: no such file or directory` 메시지로 종료되는 패턴을 확인 (random suffix mismatch — compose 본체 회귀). `--provenance=false`, `BUILDX_NO_DEFAULT_ATTESTATIONS=1`, `COMPOSE_BAKE=true/false` 모두 효과 없음. Makefile 에 `dc-build SERVICE=...` reusable 가드 타깃을 추가하고 `web` 타깃을 `dc-build SERVICE=web` + `up -d --no-build web` 로 분리. 가드는 build 명령 로그를 임시파일에 캡처해 EXIT≠0 + 로그에 `compose-build-metadataFile` 문자열 포함 시에만 EXIT=0 으로 정규화 (다른 빌드 오류는 그대로 전파). 향후 compose 또는 buildx 가 fix 되면 가드는 자연스럽게 일반 build 경로로 흐름. 검증: `make web` EXIT=0, `[make] note: ...provenance metadata file race 우회...` 로그, `Container repo-web-1 Recreate/Recreated/Started`, `docker exec repo-web-1 grep -n PENDING_CONV_SENTINEL /app/web/static/app.js` 으로 새 코드 반영 확인. 학습 기록: `docs/LEARNINGS.md` LRN-20260506-0001 quirk.

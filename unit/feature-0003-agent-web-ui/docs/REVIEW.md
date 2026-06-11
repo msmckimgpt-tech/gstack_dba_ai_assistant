@@ -2055,3 +2055,14 @@ source_of_truth: true
 - Reason: 순수 클라이언트 UI 상태 보존 버그수정. 폴링 재렌더(`_renderStepSidePanelBody`의 `body.innerHTML=""`)가 펼쳐둔 결과셋을 닫던 것을, 펼침 상태를 `state.stepResultExpanded`(Set)에 영속화 후 복원해 해소. 신규 RBAC·스키마·암호화·엔드포인트·백엔드(app.py) 0 — `app.js` state 필드 1 + 헬퍼 1 + 토글 배선 + run 전환 시 clear 뿐. 위험 표면 없어 적대적 패널 불요(전례 REV-20260611-0209/0213/0225 frontend-only SKIP 과 동일 등급). node --check PASS.
 - Risk: low — 클라이언트 펼침 상태 추적만. run 전환 시 Set clear 로 키 누수 방지. step 키는 기존 dedup 키(`step_index:created_at`) 재사용. 시각 동작은 PB-0008(배포 후)로 확인.
 - Cross-ref: CHG-20260611-0227 / TASK-0227.
+
+## REV-20260611-0228 [SUBAGENT:security] — BLOCK→흡수→PASS
+- Related TASK: feature-0003-agent-web-ui (TASK-0228)
+- Trigger: SSRF/보안경계 keyword matched — datasource host 가드 사설망 차단 비활성화 (§12.3 Major 보안 다운그레이드, 사용자 명시 승인)
+- Timestamp: 2026-06-11T00:00:00Z
+- Verdict: BLOCK (초기) → 발견 전건 흡수 후 PASS 재검증
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260611T000000Z-security.md
+- Critical issue (흡수됨): (A/B) 토글 OFF 시 IPv4-mapped IPv6 메타데이터 IP(`::ffff:169.254.169.254`/`::ffff:100.100.100.200`)가 `str(ip).endswith(...)` 정규화 빗나감으로 통과 → 메타데이터 SSRF. (C) 토글이 loopback/link-local 까지 함께 개방(승인 범위=RFC1918 초과).
+- Resolution: 메타데이터 차단을 `ip.ipv4_mapped` 언래핑 비교(토글 무관)로 강화 + 토글을 `is_private`(RFC1918)에만 적용하고 loopback/link-local/reserved/multicast 는 상시 차단. 단위테스트 22→31(IPv4-mapped 메타데이터·loopback·link-local 케이스 추가) + 통합 trace 11 케이스 ALL PASS. datasource 회귀 12/29 PASS(회귀 0).
+- Human Approval Needed: no (보안 다운그레이드 자체는 사용자 사전 승인 + 잔여 위험을 승인 범위로 정확히 한정)
+- Cross-ref: CHG-20260611-0228 / TASK-0228 / ADR-0030 / SECURITY §11.

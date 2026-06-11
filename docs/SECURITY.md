@@ -298,3 +298,37 @@ Phase 2 AR-M0 cycle 에서 `agent_kb` DB 안에 `agent_runtime` schema 신설. �
 
 - ADR-0021 (`docs/DECISIONS.md`) — KB Postgres role 분리 결정 (agent_kb_rw/ro 원조 정의).
 - ADR-0026 (AR-M1 cycle 예정) — agent_runtime schema 분리 결정.
+
+## 11. Datasource SSRF host 가드 정책 (TASK-0205/0214/0219)
+
+datasource 생성·연결테스트는 admin 입력 host 를 `app._ssrf_check_host` 로 검증한다 (SSRF / DNS
+rebinding 방어). admin(`console.manage`) 이 입력한 host 가 DNS 해석 후 다음에 해당하면 차단한다:
+사설망(RFC1918)·링크로컬·loopback·reserved·multicast·클라우드 메타데이터 IP.
+
+### 11.1 토글 (`AGENT_DATASOURCE_SSRF_GUARD_ENABLED`, TASK-0228)
+
+- 사설/링크로컬 차단(SSRF 사설 경계)은 env 토글 뒤에 있다. **코드 기본값 = `1`(활성, secure-by-default)**.
+  운영 `.env.secret` 에서 `=0` 으로만 비활성화한다 (`0`/`false`/`no`/`off` 인식). 방어 로직은 코드에
+  상주하며 삭제하지 않는다 — 토글이 곧 복원 스위치다 (ADR-0030).
+- **현재 상태**: 사내 사설망(예: `10.200.50.80`) DB 운영 맥락에 맞춰 `=0`(비활성). 사내 datasource
+  생성 허용.
+
+### 11.2 토글과 무관한 불변식 (always-on)
+
+다음은 토글 OFF 여도 **항상 유지**된다 — 사내 DB 운영과 무관하고 끄면 순수 위험만 추가되므로:
+
+1. **클라우드 메타데이터 IP 하드차단**: `169.254.169.254`(AWS/GCP/Azure), `100.100.100.200`(Alibaba),
+   IPv6-mapped `::ffff:169.254.169.254`. allowlist·토글 무관 무조건 차단.
+2. **DNS rebinding pin**: 검증된 IP 로 고정 연결(host 명 재해석 금지) — TOCTOU rebind 차단 (REV-0205 MAJOR-2).
+3. 빈 host / DNS 해석 실패 거부.
+
+### 11.3 allowlist (토글 활성 시 사설 host 예외)
+
+토글 ON 상태에서 정당한 사설 대상은 `AGENT_DATASOURCE_HOST_ALLOWLIST`(콤마구분 host 또는 CIDR)로
+예외 허용한다 (예: Windows MSSQL `172.28.64.1`). 앱 인프라 host(`DB_HOST`·`REPLICA_DB_HOST`)는
+implicit 허용 (TASK-0214).
+
+### 11.4 복원 절차 (사설 경계 재활성화)
+
+ADR-0030 "복원 절차" 참조 — 요약: `repo/.env.secret` 의 토글을 `=1` 로 되돌리고(또는 줄 제거),
+필요 시 allowlist 등재 후 `sudo docker compose up -d --build web`. 코드 변경 불필요.

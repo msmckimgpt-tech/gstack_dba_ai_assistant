@@ -246,6 +246,11 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-06-11 (TASK-0228 datasource SSRF 사설망 경계 env 토글 + 의도적 비활성화, **Major §12.3 보안 다운그레이드**):
+  - **Environment: CLI** (컨테이너/로컬 pytest — `_ssrf_check_host`/`_ssrf_private_guard_enabled` 단위 + 통합 trace).
+  - **Runner: AI.** 신규 `test_ssrf_private_guard_toggle.py` **31 PASS** (토글 ON/OFF·메타데이터 IPv4-mapped 차단·loopback/link-local 상시 차단·allowlist 공존·파싱·공인 IP 허용·빈 host 거부) + datasource 회귀(`test_datasource_registry.py`/`test_datasource_delete.py`) 회귀 0. 통합 trace 11 케이스(토글 OFF): RFC1918(10.200.50.80 등) 허용 + 메타데이터(bare/IPv4-mapped) 차단 + loopback/link-local 차단 ALL PASS. py_compile + node --check PASS.
+  - **outside-voice 적대적 보안 리뷰**: REV-20260611-0228 [SUBAGENT:security] BLOCK→흡수→PASS (Finding A/B IPv4-mapped 메타데이터 우회 + Finding C loopback/link-local 과개방 수정).
+  - **Environment: Windows-browser** — 배포(web 재기동, 토글=0) 후 PB-0008 으로 admin 콘솔 데이터소스 생성(host=`10.200.50.80`) 성공 + 안내 문구("사설망 IP 허용...") 확인 예정. (UI 변경 = 안내 텍스트 1줄 분기 — 백엔드 보안 로직이 핵심.)
 - 2026-06-11 (TASK-0218 관리 콘솔 대시보드 CloudWatch 스타일 재구성 **PB-0008 Windows-browser 완료 게이트**):
   - **Environment: Windows-browser** (실제 Windows Chrome/148 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증. 라이브 배포(healthz `git_commit=c990107`, mysql/pg ok) 후. 스크린샷 `/tmp/win-browser-shots/task0218/{01_cloudwatch_dashboard,02_edit_drag}.png`.
   - **Runner: AI.** 시나리오: 영속 admin 세션 → `/admin` 대시보드 → 클린 로드 eval → 편집 모드 토글.
