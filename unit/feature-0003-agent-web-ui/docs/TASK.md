@@ -3130,3 +3130,11 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] outside-voice [SKIPPED:frontend-trivial-reorder] (REV-20260611-0209) — DOM 형제 2개 순서 교체, 로직/권한/스키마/엔드포인트 0.
 - [x] admin.html select 태그 균형(4/4). 프로필 사용 내역(TASK-0208)과 순서 일치 확인.
 - [ ] verify-completion → main rebase·ff-merge → web 재배포 → PB-0008 Windows-browser 시각검증(집계기준 먼저, 프로필과 동일 순서)
+
+### TASK-0213 — 접근 가능 데이터베이스 선택 UI 개선: 드롭다운 + 체크박스 연속 토글 (2026-06-11)
+- [x] **Minor §12.3** (프런트 2파일 + 백엔드 2파일, RBAC·스키마·엔드포인트 신규 0) — 사용자 요청: `관리 콘솔 > 제품` 의 접근 가능 데이터베이스 선택 시 드롭다운에서 하나씩 추가하는 방식이 불편 → 드롭다운 + 체크박스로 연속 토글 가능하게. (CHG-20260611-0213)
+- [x] **수정 (프런트)** ([admin.js](../src/static/admin.js)·[styles.css](../src/static/styles.css)·[admin.html](../src/static/admin.html)): `buildPicker()` 를 체크박스 드롭다운 패널 방식으로 교체 — `pickerSelect`+`pickerAddBtn` → `pickerDropBtn`(+ 데이터베이스 선택) + `pickerDropList`(체크박스 항목들). 항목 체크 시 즉시 draft 추가, 언체크 시 즉시 제거. 패널 바깥 클릭 시 자동 닫힘. CSS `.admin-db-picker-wrap/.admin-db-picker-btn/.admin-db-picker-list/.admin-db-picker-item/.admin-db-picker-empty` 신규. 캐시버스터 `?v=20260611-db-picker-checkbox`.
+- [x] **수정 (백엔드)** ([db.py](../../../feature-0002-agent-core/src/modules/db.py)·[app.py](../src/app.py)·[test_multi_datasource.py](../../../feature-0002-agent-core/tests/test_multi_datasource.py)): MSSQL 연결 시 `default_db` 미설정 폴백을 로그인 기본 DB → **중립 `tempdb`** 로 변경 (업무 데이터 0, 3-part 쿼리 강제). `admin_create_datasource`·`admin_update_datasource` 에서 `default_db` 필드 갱신 제거(NULL 고정). 테스트 기대값 수정(`"" → "tempdb"`).
+- [x] outside-voice [SKIPPED:frontend-picker-ui-no-rbac-schema-change] (REV-20260611-0213) — 프런트 UX 교체 + tempdb 폴백 보안 하향(업무 누출 차단). RBAC·API 계약·스키마 무변경.
+- [x] node --check admin.js PASS
+- [x] verify-completion PASS → PR ff-merge → docker build + up 배포 → PB-0008 Windows-browser 시각검증(체크박스 드롭다운 토글·즉시 반영)

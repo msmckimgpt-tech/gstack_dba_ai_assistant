@@ -2757,3 +2757,24 @@ source_of_truth: true
 - 검증: admin.html select 태그 균형(4/4). 빌드/배포 + Windows-browser(PB-0008) 시각검증은 배포 단계. outside-voice [SKIPPED:frontend-trivial-reorder] (REV-20260611-0209).
 - Files: unit/feature-0003-agent-web-ui/src/static/admin.html, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW,FUNCTION}.md
 - Rollback: 두 select 의 순서를 원위치(days→gran)로 환원.
+
+## CHG-20260611-0213
+- Date: 2026-06-11 (TASK-0213, **Minor §12.3** — 접근 가능 DB 선택 드롭다운+체크박스)
+- Scope: `관리 콘솔 > 제품 > 접근 가능 데이터베이스` picker UI 를 드롭다운+체크박스 연속 토글 방식으로 교체. RBAC·API 계약·스키마 신규 0.
+- 배경: 기존 `<select>` + `+ 추가` 버튼 패턴은 DB 여러 개를 등록할 때 드롭다운 선택 → 버튼 클릭을 반복해야 해 불편. 체크박스 드롭다운으로 연속 토글 가능하게 개선.
+- 변경:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: `buildPicker()` 체크박스 드롭다운 패널 방식으로 재작성, `pickerSelect`/`pickerAddBtn`/`pickerRow` → `pickerDropBtn`/`pickerDropList`/`pickerWrap`. 항목 체크 시 즉시 draft push+setProductDatabasesPending+redrawChips, 언체크 시 즉시 draft splice. 패널 외부 클릭 닫기. `_refreshAccessibleDbs` 내 `buildPicker()` 호출 유지.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.admin-db-picker-wrap/.admin-db-picker-btn/.admin-db-picker-list/.admin-db-picker-item/.admin-db-picker-empty` 신규.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: 캐시버스터 `?v=20260611-db-picker-checkbox`.
+  - `unit/feature-0002-agent-core/src/modules/db.py`: `_connect_mssql` 의 `db_name` 폴백 `""` → `"tempdb"` (중립 DB, 무자격 참조 누출 차단).
+  - `unit/feature-0002-agent-core/src/app.py`: `admin_create_datasource`/`admin_update_datasource` 에서 `default_db` 필드 갱신 제거(NULL 고정).
+  - `unit/feature-0002-agent-core/tests/test_multi_datasource.py`: `test_connect_engine_dispatch_mssql_uses_pymssql` 기대값 `"" → "tempdb"` 수정.
+- 비변경: RBAC·API 계약·WebDatasources 스키마·`_refreshAccessibleDbs`·고정칩 렌더링 무변경.
+- 검증: node --check admin.js PASS. verify-completion PASS. 빌드/배포 + PB-0008 시각검증은 배포 단계.
+- Files: unit/feature-0003-agent-web-ui/src/static/{admin.html,admin.js,styles.css}, unit/feature-0002-agent-core/src/modules/db.py, unit/feature-0002-agent-core/src/app.py, unit/feature-0002-agent-core/tests/test_multi_datasource.py, docs/{TASK,MODIFY,REVIEW}.md
+- Rollback: admin.js picker 교체 전 상태(select+추가버튼) + styles.css picker-wrap 블록 제거 + db.py `""` 복원 + app.py default_db 복원.
+
+## CHG-20260611-0213-docs
+- Date: 2026-06-11 (TASK-0213 docs cycle — verify-completion PASS 확인 후 docs 보완)
+- Scope: TASK-0213 문서 보완 (REVIEW.md REV 엔트리 추가, MODIFY.md 검증 상태 갱신).
+- Files: unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
