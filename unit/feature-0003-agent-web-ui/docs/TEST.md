@@ -513,3 +513,16 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **Evidence:** `/tmp/win-browser-shots/task0198/03_summary_model_cards.png` (전체 모델 — 칩 바·합계 카드·모델별 4카드·일별/도넛 차트, 가로 스크롤바 부재), `04_one_model_selected.png` (edge 단독 선택 — 합계·카드·차트 모두 edge 기준 재계산, 도넛 100%).
   - **Pass/Fail: PASS**
   - **Notes:** 백엔드/API/스키마/RBAC/시크릿 무변경(기존 `/api/admin/usage` 응답 클라이언트 재계산). 모델 키 `COALESCE(resolved_model,model)`. 부분 선택 시 역할·계정 요청·호출은 모델 횡단 분해 불가라 `—` 표기(토큰·비용은 정확). CHECK#13(PB-0008 Windows-browser) **충족**.
+
+- 2026-06-11 (TASK-0204 LLM 사용량 '모델별' 카드 제거 + 모델 칩 토큰수 제거 — **PB-0008 Windows-browser 완료 게이트**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증.
+  - **Runner: AI** (bin/win-browser.py launch → goto → click → eval → screenshot)
+  - **배포:** main `e51a836` 로 web 이미지 재빌드(`make dc-build SERVICE=web`) + `up -d --no-build web`. 베이킹 `admin-usage-mcards`=0, 서빙 캐시버스터 `?v=20260611-usage-no-mcards`, healthz `git_commit=e51a836`(mysql/pg ok).
+  - **결함 재현(수정 전, TASK-0202):** 모델 카드 클릭 시 비선택 3카드 즉시 소실 + 빈 공간 — `02_solo_hover.png`(선택 직후 visible:1/dimmed:3, 커서가 카드 위인데도 collapse). 근본원인=re-render 후 새 노드 `:hover` 미부여로 동기 회수 로직 오발동.
+  - **검증 내용(수정 후, 전 step ok:true):**
+    - 모델별 카드 부재: `{"mcards":0,"mcardsHead":0}` — 카드 그리드·"모델별" 헤더 완전 제거.
+    - 칩 모델명만: `{"chips":5,"chipTok":0,"firstChipText":"edge","allChipText":"전체"}` — 버튼 내 토큰수 0, 모델명/`전체`만.
+    - 칩 토글 정상: edge 칩 클릭 → `{"scope":"선택 1개 모델","activeChips":1,"mcards":0,"donutHasData":true}`(필터된 도넛/차트 재계산, 카드 재등장 없음), `전체` 복귀 → `{"scope":"전체 모델"}`.
+  - **Evidence:** `/tmp/win-browser-shots/task0204/01_usage_no_mcards.png`(칩 모델명만·카드 부재·요약+차트 정상), `02_chip_filter.png`(edge 필터). 결함 비교: `/tmp/win-browser-shots/task0202/02_solo_hover.png`.
+  - **Pass/Fail: PASS**
+  - **Notes:** hover 결합 잭 제거 확인 — 카드가 없어 마우스 이동 시 깜빡임/레이아웃 점프 없음. CHECK#13(PB-0008 Windows-browser) **충족**.
