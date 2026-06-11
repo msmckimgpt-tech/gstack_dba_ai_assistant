@@ -1950,3 +1950,10 @@ source_of_truth: true
 - Reason: `.admin-pane-actions` 내 형제 `<select>` 2개(`#usageGranSel`/`#usageDaysSel`)의 순서 교체뿐. JS 는 두 요소를 id 로 참조하므로 동작/이벤트/조회 로직 무변경, RBAC·스키마·엔드포인트·백엔드·CSS 무변경. 위험 표면이 없어 적대적 패널 불요(전례 REV-20260611-0204/0205 frontend-only SKIP 과 동일 등급). 시각 동등성은 PB-0008(배포 후)로 확인.
 - Risk: negligible — DOM 형제 순서.
 - Cross-ref: CHG-20260611-0209 / TASK-0209 / TASK-0208(프로필 순서 기준).
+
+## REV-20260611-0213 [SKIPPED:frontend-picker-ui-no-rbac-schema-change]
+- Date: 2026-06-11
+- Cycle: TASK-0213 (접근 가능 DB 선택 드롭다운+체크박스 UI 개선), **Minor §12.3**
+- Reason: 프런트 UX 교체(select+버튼 → 체크박스 드롭다운) + 백엔드 MSSQL tempdb 폴백 보안 하향(업무 데이터 0, 무자격 참조 차단). RBAC 카탈로그·API 계약(엔드포인트/envelope)·WebDatasources 스키마 신규 0. tempdb 폴백은 보안 상향(빈 문자열=로그인 기본 DB 중 업무 DB 가능 → tempdb=업무 데이터 없음)이므로 적대적 보안 리뷰 불요. node --check admin.js PASS.
+- Risk: low — 프런트 UX + 백엔드 MSSQL 연결 폴백 DB 변경만. 업무 데이터·RBAC·암호화 영향 없음.
+- Cross-ref: CHG-20260611-0213 / TASK-0213.
