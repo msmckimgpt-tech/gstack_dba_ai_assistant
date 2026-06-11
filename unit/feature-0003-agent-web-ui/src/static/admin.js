@@ -1281,7 +1281,7 @@ function _dsRenderDetail(ds) {
   const editable = Boolean(ds.editable) && canManage;
   detailEl.innerHTML = "";
 
-  // 헤더 (키 + 엔진 뱃지 + 출처)
+  // 헤더 (라벨 + 엔진 뱃지 + 출처)
   const head = document.createElement("div");
   head.className = "admin-detail-head";
   const h = document.createElement("h3");
@@ -1401,16 +1401,17 @@ function _dsRenderForm(ds) {
   const form = document.createElement("div");
   form.className = "admin-detail-section admin-ds-form";
 
-  // 신규 생성 시: 키는 서버에서 '엔진+호스트+포트' 해시로 자동 생성 → 입력 불필요.
+  // 신규 생성 시: 라벨은 서버에서 '엔진+호스트+포트' 해시로 자동 생성 → 입력 불필요(이후 수정 가능).
   if (!isEdit) {
     const hint = document.createElement("div");
     hint.className = "admin-detail-hint";
-    hint.textContent = "키는 엔진·호스트·포트 조합의 해시로 서버가 자동 생성합니다. 동일 엔드포인트를 다시 등록하면 같은 키가 반환됩니다.";
+    hint.textContent = "라벨은 엔진·호스트·포트 해시로 자동 생성되며, 이후 자유롭게 변경할 수 있는 표시용 이름입니다. "
+      + "데이터소스의 실제 신원은 라벨이 아닌 엔드포인트(호스트·포트)이며, 인사이트·데이터 정합도 엔드포인트 기준으로 유지됩니다.";
     form.appendChild(hint);
   }
 
   const fields = [
-    ...(isEdit ? [["key", "키 (변경 시 수정)", ds.key, false]] : []),
+    ...(isEdit ? [["key", "라벨 (표시용 · 변경 가능)", ds.key, false]] : []),
     ["engine", "엔진 (mysql|mssql)", isEdit ? (ds.engine || "mysql") : "mysql", false],
     ["host", "호스트", isEdit ? (ds.host || "") : "", false],
     ["port", "포트", isEdit ? (ds.port || "") : "", false],
@@ -1460,7 +1461,7 @@ function _dsRenderForm(ds) {
         const created = await apiFetch(`/api/admin/datasources`, { method: "POST", body: JSON.stringify(body) });
         // 서버가 엔진+호스트+포트 해시로 key 를 자동 생성해 응답 — 그 canonical key 로 자동 선택.
         const canonicalKey = (created && created.key);
-        showToast(`데이터소스 '${canonicalKey}' 생성됨 (키 자동 생성)`);
+        showToast(`데이터소스 '${canonicalKey}' 생성됨 (라벨 자동 생성)`);
         adminState._dsSelectedKey = canonicalKey;
       }
       await loadAdminData();

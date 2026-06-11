@@ -9786,7 +9786,7 @@ async def admin_set_product_datasource(product_id: int, request: Request) -> JSO
     _bound_ds = _dsr.resolve(conn, key) if key is not None else None
     if key is not None and _bound_ds is None:
         conn.close()
-        return _json_error(f"미등록 datasource 키: {key} (WebDatasources / .env 확인)", 400)
+        return _json_error(f"미등록 datasource 라벨: {key} (WebDatasources / .env 확인)", 400)
     # TASK-0205 MAJOR-1 (REV-0205 재게이트): 제품별 참조 DB override 의 **GRANT-범위 fail-closed 검증**.
     # admin 이 RO 로그인 접근 밖 DB 를 지정하면 product 바인딩만으로 권한 없는 DB 조회가 되는 것을 차단.
     # datasource 의 RO 로그인이 실제 접근 가능한 DB 목록(list_server_databases)에 속해야 허용(대소문자 무관).
@@ -9862,7 +9862,7 @@ async def admin_test_datasource(key: str, request: Request) -> JSONResponse:
     finally:
         conn.close()
     if not ds:
-        return _json_error(f"미등록(또는 복호 불가) datasource 키: {key}", 404)
+        return _json_error(f"미등록(또는 복호 불가) datasource 라벨: {key}", 404)
     okssrf, ssrf_reason, _pin = _ssrf_check_host(ds.get("host"))
     if not okssrf:
         return JSONResponse({"key": str(key).strip().lower(), "ok": False, "elapsed_ms": 0.0,
@@ -10068,7 +10068,7 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
     try:
         k = _ds_valid_key(key)
         if not k:
-            return _json_error("키 형식 오류.", 400)
+            return _json_error("라벨 형식 오류.", 400)
         cur = conn.cursor()
         try:
             cur.execute(
@@ -10190,7 +10190,7 @@ async def admin_delete_datasource(key: str, request: Request) -> JSONResponse:
     try:
         k = _ds_valid_key(key)
         if not k:
-            return _json_error("키 형식 오류.", 400)
+            return _json_error("라벨 형식 오류.", 400)
         force = str(request.query_params.get("force", "")).strip().lower() in ("1", "true", "yes")
         cur = conn.cursor()
         try:

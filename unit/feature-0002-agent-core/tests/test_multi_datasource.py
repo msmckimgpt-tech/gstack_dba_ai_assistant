@@ -295,6 +295,26 @@ def test_ds_grounding_like_no_cross_datasource_leak():
     assert visible_p(bi_key) is False         # 다른 datasource(bi) 키 비노출
 
 
+def test_ask_worker_grounding_scoped_by_endpoint_hash_not_label():
+    """TASK-0221: ask-worker grounding(_load_schema_list/_load_relevant_table_insights via
+    run_agent → set_active_datasource(scope_key))이 **라벨이 아닌 엔드포인트 해시**로 PG insight 를
+    스코프함을 검증 — DatasourceKey 라벨을 rename 해도 ask-worker 가 같은 PG insight 를 계속 활용."""
+    from modules import datasources as dsr
+
+    # 같은 엔드포인트, 다른 라벨 → 같은 scope_key(해시) → 같은 grounding 스코프
+    ds_a = {"key": "mssql_local", "engine": "mssql", "host": "h", "port": 1433}
+    ds_b = {"key": "renamed_later", "engine": "mssql", "host": "h", "port": 1433}
+    sk = dsr.scope_key(ds_a)
+    assert sk == dsr.scope_key(ds_b), "라벨 rename 시 scope_key(해시)가 바뀌면 ask-worker insight 고아"
+
+    # ask-worker 는 set_active_datasource(sk) 후 _load_schema_list 가 ds_fact_like(sk) 로 PG fact 매치.
+    like, nlike = cfg.ds_fact_like("table_insight", ds_key=sk)
+    assert like == f"table_insight:ds:{sk}:%" and nlike is None
+    assert _sql_like_match(f"table_insight:ds:{sk}:dbo.t", like)          # 자기 ds insight 활용
+    assert not _sql_like_match("table_insight:ds:other-endpoint:x.y", like)  # 타 ds 비노출
+    assert not _sql_like_match("table_insight:dblog.users", like)            # 기본(no-ds) 비노출
+
+
 def test_ds_fact_like_contextvar_threads_default():
     cfg.set_active_datasource(None)
     try:
