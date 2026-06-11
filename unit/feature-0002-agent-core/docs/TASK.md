@@ -806,6 +806,8 @@ TASK-0015 (plan-review):
 - [x] **livelock 방지 확인**: write·read-back 동일 set_active_datasource(engine) 컨텍스트 → 동일 projection. 라이브 단일≡배치 해시 동일·결정성 STABLE.
 - [x] 회귀테스트 `test_multi_datasource.py` 3종(MySQL projection 골든 / MSSQL MySQL-only 컬럼 부재 / active 엔진 분기). 전체 스위트 RC=0, ruff clean.
 - [x] **실 MSSQL 검증**(dk_data_release CI): 컬럼/스키마/배치 핑거프린트 전부 동작(COLUMN_TYPE 실패 해소).
-- [x] outside-voice 적대적 리뷰 REV-20260611-0202 (livelock 중심) **SHIP**(BLOCKER0·MAJOR0). MINOR 3 후속.
-- [ ] 커밋 → main ff-merge → insight-worker 재배포 → 라이브 winsql 인사이트 생성 관측.
+- [x] outside-voice 적대적 리뷰 REV-20260611-0203 (livelock 중심) **SHIP**(BLOCKER0·MAJOR0). MINOR 3 후속.
+- [x] **라이브 cycle 검증 중 2 버그 발견·수정(P3 이래 잠복, 실 datasource 연결로만 노출)**: ① insight.py 의 `connect_with_retry` 가 `from .config import *` 로 **`modules.utils` 구버전**(datasource 인자 없음)에 바인딩 → winsql 순회가 매 cycle `TypeError` → **`modules.db` 의 datasource 지원판 명시 사용**(`_db.connect_with_retry`). ② per-datasource isolation 핸들러가 `logging.getLogger` 쓰는데 insight.py 가 **`logging` 미import**(config `__all__` 제외) → datasource 예외 시 핸들러가 NameError 로 재폭발(격리 실패) → `import logging` 추가. 둘 다 단일 MySQL 시절엔 미발현.
+- [x] 라이브 LLM 인사이트 생성 검증: winsql `dbo.Item` payload → `llm_table_insight`(edge/로컬 게이트웨이) 정상 dict 산출(domain/summary/key_columns, 5.8s).
+- [ ] 커밋 → main ff-merge → insight-worker 재배포 → 라이브 winsql 인사이트 생성·publish 관측.
 - [ ] (P7 잔여·후속) UI engine 배지 + MINOR-1 CS-collation 대문자 통일.

@@ -16,11 +16,12 @@ __all__ = [
 
 """Schema/table insight scanning, bootstrap, background worker."""
 from .config import *
-import hashlib, json, random, re, time, uuid
+import hashlib, json, logging, random, re, time, uuid
 from datetime import datetime, timezone
 from typing import Any
 
 from . import dialects as _dialects  # P7: insight 컬럼 핑거프린트 dialect 분기(MSSQL)
+from . import db as _db              # P7 follow-up: datasource 지원 connect_with_retry 명시 사용
 
 
 # ---------------------------------------------------------------------------
@@ -1596,8 +1597,14 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                     if _ds_key is None:
                         _ds_conn = db_conn  # 기본 DB 는 이미 연결됨
                     else:
-                        # datasource 는 database=None(schema-prefixed, M-1 정합)
-                        _ds_conn = connect_with_retry(database=None, datasource=_ds_coords, autocommit=True)
+                        # datasource 는 database=None(M-1; MSSQL 은 _connect_mssql 이 default_db 로 고정).
+                        # **db 모듈의 connect_with_retry 를 명시 사용** (REV-0203 P7 follow-up): insight 의
+                        # 전역 `connect_with_retry`(from .config import *)는 `modules.utils` 의 구버전이라
+                        # `datasource=` 인자가 없어 매 cycle TypeError → winsql 순회가 P3 이래 항상 실패했다.
+                        # datasource 지원 + 재시도 로직은 modules.db 의 것에만 있다.
+                        _ds_conn = _db.connect_with_retry(
+                            database=None, datasource=_ds_coords, autocommit=True
+                        )
                     _known = load_known_schemas(_ds_conn)
                     if _ds_key is None and _known:
                         KNOWN_SCHEMAS.clear()
