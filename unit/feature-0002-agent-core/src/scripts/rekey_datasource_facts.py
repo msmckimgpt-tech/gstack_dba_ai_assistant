@@ -89,37 +89,50 @@ def _distinct_ds_keys_in_facts(pg) -> "set[str]":
 
 
 def _rekey_table(pg, table: str, old: str, new: str, dry: bool) -> int:
-    """{src}:ds:{old}:{suffix} → {src}:ds:{new}:{suffix}. 충돌(타깃 존재) 행은 건너뛰고 삭제(병합)."""
+    """{src}:ds:{old}:{suffix} → {src}:ds:{new}:{suffix} per-row.
+
+    해시 접두(18자)가 옛 라벨보다 길어 fact_key(varchar 128) 가 overflow 할 수 있으므로 insight
+    write 경로와 **동일한 `_fit_fact_key_storage`(>128 시 head:sha1[:12] 절단)** 를 적용해야 수렴한다.
+    타깃 키가 이미 존재(병합/재스캔)하면 old 행 삭제, 아니면 UPDATE.
+    """
+    from modules.utils import _fit_fact_key_storage  # type: ignore
     old_frag = f":ds:{old}:"
     new_frag = f":ds:{new}:"
     with pg.cursor() as cur:
         cur.execute(
-            f"SELECT count(*) FROM public.{table} WHERE fact_key LIKE %s", (f"%{old_frag}%",)
+            f"SELECT conversation_id, scope_key, fact_key FROM public.{table} WHERE fact_key LIKE %s",
+            (f"%{old_frag}%",),
         )
-        n = int(cur.fetchone()[0])
-        if n == 0 or dry:
-            return n
-        # 타깃 키가 이미 있는 행은 UPDATE 시 unique 충돌 → 먼저 그런 old 행 삭제(병합: 기존 new 보존).
-        cur.execute(
-            f"""
-            DELETE FROM public.{table} d
-            WHERE d.fact_key LIKE %s
-              AND EXISTS (
-                SELECT 1 FROM public.{table} t
-                WHERE t.conversation_id = d.conversation_id
-                  AND t.scope_key IS NOT DISTINCT FROM d.scope_key
-                  AND t.fact_key = replace(d.fact_key, %s, %s)
-              )
-            """,
-            (f"%{old_frag}%", old_frag, new_frag),
-        )
-        # 나머지 재키잉.
-        cur.execute(
-            f"UPDATE public.{table} SET fact_key = replace(fact_key, %s, %s) WHERE fact_key LIKE %s",
-            (old_frag, new_frag, f"%{old_frag}%"),
-        )
+        rows = cur.fetchall() or []
+    if not rows or dry:
+        return len(rows)
+    changed = 0
+    with pg.cursor() as cur:
+        for conv, scope, fk in rows:
+            new_fk = _fit_fact_key_storage(str(fk).replace(old_frag, new_frag), 128)
+            if new_fk == fk:
+                continue
+            cur.execute(
+                f"SELECT 1 FROM public.{table} WHERE conversation_id=%s "
+                f"AND scope_key IS NOT DISTINCT FROM %s AND fact_key=%s LIMIT 1",
+                (conv, scope, new_fk),
+            )
+            if cur.fetchone():
+                # 타깃 이미 존재(재스캔/병합) → old 행 삭제(중복 제거).
+                cur.execute(
+                    f"DELETE FROM public.{table} WHERE conversation_id=%s "
+                    f"AND scope_key IS NOT DISTINCT FROM %s AND fact_key=%s",
+                    (conv, scope, fk),
+                )
+            else:
+                cur.execute(
+                    f"UPDATE public.{table} SET fact_key=%s WHERE conversation_id=%s "
+                    f"AND scope_key IS NOT DISTINCT FROM %s AND fact_key=%s",
+                    (new_fk, conv, scope, fk),
+                )
+            changed += 1
         pg.commit()
-    return n
+    return changed
 
 
 def _regen_rag_objects(pg, scope_hashes: "set[str]", dry: bool) -> int:
