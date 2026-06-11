@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260611-ds-admin-ui" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260611-usage-dropdown-order" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -372,19 +372,19 @@
             <h2>LLM 토큰 사용량</h2>
           </div>
           <div class="admin-pane-actions" style="gap:8px;">
+            <!-- TASK-0166: 집계 단위 (시/일/주/월). TASK-0209: 프로필 사용 내역과 동일하게 집계기준→집계범위 순서로 배치(집계기준 먼저). -->
+            <select id="usageGranSel" class="btn-secondary">
+              <option value="hour">시간별</option>
+              <option value="day" selected>일별</option>
+              <option value="week">주별</option>
+              <option value="month">월별</option>
+            </select>
             <select id="usageDaysSel" class="btn-secondary">
               <option value="1">최근 1일</option>
               <option value="7">최근 7일</option>
               <option value="30" selected>최근 30일</option>
               <option value="90">최근 90일</option>
               <option value="365">최근 1년</option>
-            </select>
-            <!-- TASK-0166: 집계 단위 (시/일/주/월) -->
-            <select id="usageGranSel" class="btn-secondary">
-              <option value="hour">시간별</option>
-              <option value="day" selected>일별</option>
-              <option value="week">주별</option>
-              <option value="month">월별</option>
             </select>
           </div>
         </header>
@@ -547,6 +547,6 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260611-ds-admin-ui"></script>
+  <script src="/static/admin.js?v=20260611-usage-dropdown-order"></script>
 </body>
 </html>

@@ -2730,3 +2730,13 @@ source_of_truth: true
 - 검증: node --check app.js PASS, styles.css 중괄호 911/911, drawer aside div 30/30. 패널([SUBAGENT:design-correctness], REV-20260611-0208) SHIP-WITH-FIXES — MAJOR(스크롤 분리)+MINOR(모바일 가드) 수정 후. 빌드/배포 + Windows-browser(PB-0008) 시각검증은 배포 단계.
 - Files: unit/feature-0003-agent-web-ui/src/static/{app.js,index.html,styles.css}, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
 - Rollback: app.js 추가 함수군 + index.html 리사이저/`.drawer-scroll`/gran 셀렉터 + styles.css 추가/변경 블록 환원(기능 무관, drawer 고정폭·사용내역 일별 고정 복귀).
+
+## CHG-20260611-0209
+- Date: 2026-06-11 (TASK-0209, **Minor §12.3** — 관리 콘솔 LLM 사용량 드롭다운 순서 정렬)
+- Scope: `관리 콘솔 > LLM 사용량` 헤더의 집계범위/집계기준 드롭다운 순서를 프로필 `사용 내역`(TASK-0208)과 동일하게(집계기준 먼저) 정렬. 프런트 전용 — 백엔드/API/스키마/RBAC/시크릿/JS/CSS 무변경.
+- 배경: 프로필 사용 내역 탭은 집계기준(gran)→집계범위(days) 순인데, 관리 콘솔은 반대(days→gran)라 두 화면 일관성 결여. 사용자가 관리 콘솔을 프로필 순서에 맞춰달라 요청.
+- 변경 (`src/static/admin.html`): `.admin-pane-actions` 내 `#usageGranSel`(시/일/주/월) 을 `#usageDaysSel`(최근 N일) 앞으로 이동(형제 순서 교체). 캐시버스터 `?v=20260611-ds-admin-ui` → `?v=20260611-usage-dropdown-order`.
+- 비변경: `admin.js` 의 두 select id 참조·change 핸들러·`/api/admin/usage` 호출·집계 로직 무변경(순서 무관). RBAC/엔드포인트/스키마 무변경.
+- 검증: admin.html select 태그 균형(4/4). 빌드/배포 + Windows-browser(PB-0008) 시각검증은 배포 단계. outside-voice [SKIPPED:frontend-trivial-reorder] (REV-20260611-0209).
+- Files: unit/feature-0003-agent-web-ui/src/static/admin.html, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW,FUNCTION}.md
+- Rollback: 두 select 의 순서를 원위치(days→gran)로 환원.
