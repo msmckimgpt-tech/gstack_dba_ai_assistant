@@ -9787,6 +9787,10 @@ def _ssrf_check_host(host) -> "tuple[bool, str, str]":
     `AGENT_DATASOURCE_HOST_ALLOWLIST`(콤마구분 host 또는 CIDR)에 명시된 사설 host 는 예외 허용
     (Windows MSSQL 172.28.64.1 등 정당한 사설 대상). 메타데이터 IP(169.254.169.254)는 allowlist 무관 하드차단.
 
+    TASK-0214: **앱 자신의 데이터 MySQL(DB_HOST)·replica·내부 PG·memory DB 호스트는 항상 implicit 허용**.
+    이들은 앱 인프라('Database Query Assistant')라 SSRF 위험 대상이 아니다 — main_mysql(host=`mysql`=DB_HOST)이
+    도커 사설 IP 로 해석돼 연결 테스트·DB 목록 조회가 차단되던 회귀를 막는다. 외부 datasource 만 SSRF 게이트 대상.
+
     **DNS rebinding 방어(REV-0205 MAJOR-2)**: 모든 해석 IP 가 안전함을 확인하고 그 중 하나(`pinned_ip`)를
     반환한다. 호출측은 연결 시 host 명을 재해석하지 않고 **pinned_ip 로 고정 연결**해 TOCTOU rebind 를 차단한다.
     """
@@ -9797,6 +9801,11 @@ def _ssrf_check_host(host) -> "tuple[bool, str, str]":
     if not h:
         return False, "host 비어있음", ""
     allow_raw = [a.strip() for a in _os.getenv("AGENT_DATASOURCE_HOST_ALLOWLIST", "").split(",") if a.strip()]
+    # TASK-0214: 앱 인프라 데이터 MySQL(DB_HOST)·replica 는 implicit 허용 — 운영자 allowlist 미설정과 무관.
+    for _internal in (DB_HOST, _os.getenv("REPLICA_DB_HOST", "")):
+        _i = str(_internal or "").strip()
+        if _i and _i not in allow_raw:
+            allow_raw.append(_i)
     try:
         infos = socket.getaddrinfo(h, None)
     except Exception:
