@@ -3111,4 +3111,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **CSS** ([styles.css](../src/static/styles.css)): 미스타일이던 `admin-badge`(+muted/warn)·`admin-kv`·`admin-detail-title`·`admin-field`·`admin-row-actions` 를 표준 토큰(`--primary`/`--primary-soft`/`--border`/`--danger` 등)으로 정렬. (기존 `admin-detail-head`·`admin-detail-actions`·`admin-list-row--nav` 재사용.)
 - [x] outside-voice [SUBAGENT:design-correctness] (REV-20260611-0207) — 패널 SHIP-WITH-FIXES: BLOCKER(`admin-detail-head` 중복정의로 타 pane 헤더 회귀) + 생성→키정규화(소문자) 자동선택 누락 + 읽기전용 안내가 sticky 액션바 아래 배치 + readonly tint no-op + aria-selected 누락 — 5건 전부 수용·수정.
 - [x] node --check admin.js PASS, `.admin-detail-head` 단일정의 회복 확인.
-- [ ] verify-completion → 빌드/배포(worktree→repo `-p repo` clean 이미지) → Windows-browser(PB-0008) 시각검증(목록·상세·수정/삭제·생성 폼) → main 병합
+- [x] verify-completion PASS → PR #144 머지(main `20a826d`) → `make dc-build SERVICE=web`+`up -d --no-build web` 배포(healthz git_commit:20a826d) → Windows-browser(PB-0008) 시각검증 PASS(목록·상세·읽기전용 게이트·생성/편집 폼, artifacts/ds-admin-ui-*.png) (TEST.md §3 2026-06-11)

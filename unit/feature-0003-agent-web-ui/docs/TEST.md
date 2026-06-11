@@ -538,3 +538,16 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **Evidence:** `/tmp/win-browser-shots/step_01_20260611_123131.png`(SQL 블록 기본 표시·"결과 보기" 버튼), `/tmp/win-browser-shots/step_03_20260611_123146.png`(클릭 후 결과셋 펼쳐짐·"결과 닫기" 버튼).
   - **Pass/Fail: PASS**
   - **Notes:** 쿼리 문자열 항상 표시(숨김 로직 0), 결과셋 기본 숨김·클릭 토글 정상 동작. CHECK#13(PB-0008 Windows-browser) **충족**.
+
+- 2026-06-11 (TASK-0207 관리 콘솔 데이터소스 pane list-detail UI 표준화 + 수정/삭제 노출 — **PB-0008 Windows-browser 완료 게이트**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 userspace relay `bridge_mode: relay`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증.
+  - **Runner: AI** (bin/win-browser.py doctor → launch → click → eval → screenshot)
+  - **Bridge:** relay (endpoint: http://172.28.64.1:9223)
+  - **배포:** PR #144 → main `20a826d` 머지 → `make dc-build SERVICE=web` + `docker compose up -d --no-build web`. healthz `git_commit:20a826d` mysql_ok/pg_ok, 컨테이너 healthy. 서빙 `admin.js` 신규 코드(`_dsRenderDetail`×7·`admin-list-row--nav`·`datasourceList`) 베이킹 + 구 `admin-ds-list`/`datasourcesPane` 0건 확인. 캐시버스터 `?v=20260611-ds-admin-ui`.
+  - **검증 내용 (전 step ok:true):**
+    - **pane 구조:** `{"paneActive":true,"listExists":true,"detailExists":true,"rowCount":1,"count":"1","tabCount":"1","newBtn":true,"oldFlat":false}` — 다른 카테고리와 동일한 list-detail 5단 구조로 렌더, 구 평면 `.admin-ds-list` 제거 확인. 탭 배지·목록 카운트 wiring 동작.
+    - **상세(read view):** 행 클릭 → `{"title":"winsql","badges":["mssql",".env 읽기전용"],"kvPairs":6,"actionButtons":["연결 테스트"]}` — 연결 좌표·출처·보안 kv 6쌍 렌더. 본 datasource 는 `.env` 출처(읽기전용)이라 **수정/삭제 미노출(테스트만)** + 읽기전용 사유 안내(".env 출처 데이터소스입니다 — 콘솔에서 수정/삭제할 수 없습니다.") 표시 — RBAC/editable 게이트 정상.
+    - **생성/편집 폼:** "+ 새 데이터소스" 클릭 → `{"formTitle":"새 데이터소스","fieldCount":7,"fields":["키…","엔진…","호스트","포트","DB 유저…","비밀번호","기본 참조 DB…"],"buttons":["생성","취소"]}` — 7필드 폼 + 생성/취소 렌더(편집도 동일 폼 사용 → 수정 UI 동시 검증). 실 생성은 미수행(라이브 무변경).
+  - **Evidence:** `artifacts/ds-admin-ui-1-list.png`(목록+빈 상세), `artifacts/ds-admin-ui-2-detail.png`(선택 datasource 상세 — 연결좌표·출처·보안·연결 테스트), `artifacts/ds-admin-ui-3-form.png`(새 데이터소스 폼).
+  - **Pass/Fail: PASS**
+  - **Notes:** 데이터소스 pane 이 계정/역할/제품/설정 과 동일한 list-detail 외관으로 통일. 수정/삭제는 editable(DB 출처) datasource 의 상세 sticky 액션바에 노출(`.env` 출처는 정책상 읽기전용). CHECK#13(PB-0008 Windows-browser) **충족**.
