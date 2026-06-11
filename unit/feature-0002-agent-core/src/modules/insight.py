@@ -1586,6 +1586,10 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                 # (DB CRUD 후 삭제분 미스캔·신규분 반영, M1). password 복호 포함.
                 from . import datasources as _datasources
                 for _k, _v in _datasources.all_datasources(mem_conn).items():
+                    # TASK-0215: insight 탐색 비활성(InsightEnabled=0) 데이터소스는 순회에서 제외(운영자 토글).
+                    if _v and _v.get("insight_enabled") is False:
+                        logging.getLogger("insight").debug("insight_datasource_skipped(disabled) ds=%s", _k)
+                        continue
                     ds_targets.append((_k, _v))
             schema_count = 0
             plan_start = time.perf_counter()

@@ -1305,6 +1305,8 @@ function _dsRenderDetail(ds) {
   const dl2 = document.createElement("dl"); dl2.className = "admin-kv";
   _dsKvRow(dl2, "출처", ds.source === "env" ? ".env (읽기전용)" : "콘솔 등록 (DB 저장)");
   _dsKvRow(dl2, "비밀번호", ds.has_password ? "설정됨 (write-only)" : "⚠ 없음");
+  // TASK-0215: insight-worker 탐색 토글 상태.
+  _dsKvRow(dl2, "인사이트 탐색", ds.insight_enabled !== false ? "켜짐 (스키마·테이블 자동 탐색 중)" : "꺼짐 (탐색 안 함)");
   sec2.appendChild(dl2);
   detailEl.appendChild(sec2);
 
@@ -1336,6 +1338,27 @@ function _dsRenderDetail(ds) {
   actions.appendChild(testBtn);
 
   if (editable) {
+    // TASK-0215: insight-worker 탐색 on/off 토글(즉시 PATCH).
+    const _ie = ds.insight_enabled !== false;
+    const insightBtn = document.createElement("button");
+    insightBtn.className = "btn-secondary";
+    insightBtn.textContent = _ie ? "인사이트 탐색 끄기" : "인사이트 탐색 켜기";
+    insightBtn.title = _ie
+      ? "이 데이터소스를 insight-worker 가 자동 탐색 중 — 클릭 시 탐색 중단"
+      : "insight-worker 탐색 비활성 — 클릭 시 탐색 시작";
+    insightBtn.addEventListener("click", async () => {
+      insightBtn.disabled = true;
+      try {
+        await apiFetch(`/api/admin/datasources/${encodeURIComponent(ds.key)}`,
+          { method: "PATCH", body: JSON.stringify({ insight_enabled: !_ie }) });
+        showToast(`'${ds.key}' 인사이트 탐색 ${!_ie ? "활성화" : "비활성화"}됨`);
+        await loadAdminData();
+        const sel = (adminState.datasources || []).find((d) => d.key === ds.key);
+        if (sel) _dsRenderDetail(sel); else _dsRenderDetailEmpty();
+      } catch (e) { insightBtn.disabled = false; showToast(e.message || "토글 실패", true); }
+    });
+    actions.appendChild(insightBtn);
+
     const editBtn = document.createElement("button");
     editBtn.className = "btn-secondary"; editBtn.textContent = "수정";
     editBtn.addEventListener("click", () => _dsRenderForm(ds));

@@ -100,7 +100,7 @@ def ensure_dek(mem_conn) -> "tuple[int, bytes] | None":
 # ── 레지스트리 (DB + .env 병합) ───────────────────────────────────────────────
 def _row_to_ds(mem_conn, row) -> "dict | None":
     """WebDatasources row → datasource dict(password 복호 포함). 복호 실패 시 None(그 키만 skip)."""
-    # row: (DatasourceKey, Engine, Host, Port, DbUser, PasswordEnc, DefaultDb, EncryptionVersion)
+    # row: (DatasourceKey, Engine, Host, Port, DbUser, PasswordEnc, DefaultDb, EncryptionVersion[, InsightEnabled])
     key = str(row[0]).strip().lower()
     password = ""
     enc = row[5]
@@ -122,6 +122,8 @@ def _row_to_ds(mem_conn, row) -> "dict | None":
         "user": str(row[4] or ""),
         "password": password,
         "default_db": (str(row[6]).strip() if row[6] else None),
+        # TASK-0215: insight-worker 탐색 토글(컬럼 부재 구 스키마는 True 로 간주 — 기존 동작 보존).
+        "insight_enabled": (bool(int(row[8])) if len(row) > 8 and row[8] is not None else True),
         "_source": "db",
     }
 
@@ -130,7 +132,7 @@ def _db_datasource(mem_conn, key: str) -> "dict | None":
     cur = mem_conn.cursor()
     try:
         cur.execute(
-            "SELECT DatasourceKey, Engine, Host, Port, DbUser, PasswordEnc, DefaultDb, EncryptionVersion "
+            "SELECT DatasourceKey, Engine, Host, Port, DbUser, PasswordEnc, DefaultDb, EncryptionVersion, InsightEnabled "
             "FROM WebDatasources WHERE DatasourceKey=%s AND IsActive=1 LIMIT 1",
             (str(key).strip().lower(),),
         )
@@ -149,7 +151,7 @@ def _all_db_datasources(mem_conn) -> "dict[str, dict]":
     cur = mem_conn.cursor()
     try:
         cur.execute(
-            "SELECT DatasourceKey, Engine, Host, Port, DbUser, PasswordEnc, DefaultDb, EncryptionVersion "
+            "SELECT DatasourceKey, Engine, Host, Port, DbUser, PasswordEnc, DefaultDb, EncryptionVersion, InsightEnabled "
             "FROM WebDatasources WHERE IsActive=1"
         )
         rows = cur.fetchall() or []

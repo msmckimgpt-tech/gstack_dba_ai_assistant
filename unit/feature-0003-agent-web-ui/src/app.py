@@ -3228,12 +3228,18 @@ def _ensure_web_datasources_schema(conn) -> None:
                 DefaultDb VARCHAR(128) NULL,
                 EncryptionVersion INT NOT NULL DEFAULT 1,
                 IsActive TINYINT(1) NOT NULL DEFAULT 1,
+                InsightEnabled TINYINT(1) NOT NULL DEFAULT 1,
                 CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 UpdatedByAccountId BIGINT NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """
         )
+        # TASK-0215: insight-worker 가 이 데이터소스를 탐색할지 토글(기존 deploy idempotent ALTER, default 1=탐색).
+        try:
+            cur.execute("ALTER TABLE WebDatasources ADD COLUMN InsightEnabled TINYINT(1) NOT NULL DEFAULT 1")
+        except Exception:
+            pass
     finally:
         cur.close()
 
@@ -9623,6 +9629,8 @@ async def admin_list_datasources(request: Request) -> JSONResponse:
                 "has_password": bool(v.get("password")),
                 "source": ("db" if v.get("_source") == "db" else "env"),
                 "editable": (v.get("_source") == "db"),  # .env datasource 는 UI 수정 불가(운영자 .env 편집)
+                # TASK-0215: insight-worker 탐색 토글(.env 데이터소스는 컬럼 부재 → True 기본).
+                "insight_enabled": bool(v.get("insight_enabled", True)),
             })
         datasources.sort(key=lambda d: d["key"])
         cur = conn.cursor()
@@ -9993,6 +10001,9 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
             # TASK-0213: '기본 참조 DB'(default_db) 폐지 — PATCH 에서 갱신하지 않는다(데이터소스 레벨 기본 DB 미관리).
             if "is_active" in data:
                 sets.append("IsActive=%s"); params.append(1 if data.get("is_active") else 0)
+            # TASK-0215: insight-worker 탐색 토글.
+            if "insight_enabled" in data:
+                sets.append("InsightEnabled=%s"); params.append(1 if data.get("insight_enabled") else 0)
             if data.get("password"):  # 비어있지 않을 때만 재암호화(write-only)
                 if not _cc.enc_available():
                     return _json_error("암호화 키 미설정 — password 변경 불가.", 400)
