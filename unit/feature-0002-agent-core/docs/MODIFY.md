@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260611-0232
+- Date: 2026-06-11 (TASK-0232, **Major §12.3** — 외부 LLM 비용 영향: 제품 프롬프트 "자동 작성" 결과 중간 잘림 해소; 동시세션 insight-reset cycle 이 TASK-0231 선점→§13.1 재번호 0231→0232)
+- Scope: agent-core 측 — `modules/model_catalog.py` 의 task 별 max_tokens cap 표에 긴 본문 전용 `"prompt_gen"` task 신설. feature-0003 의 `admin_generate_product_prompt`(제품 시스템 프롬프트 자동작성)가 이 cap 을 사용.
+- 배경: 자동작성이 "완성된 시스템 프롬프트 본문"을 생성하면서 출력 상한을 짧은 요약용 `"summary"` cap(Claude 7000 / 로컬 512)으로 잡아 본문이 중간 잘림. 웹 기본 모델 `claude-haiku-4` 는 extended-thinking budget(≤5000)을 max_tokens 안에서 소비하므로 7000 cap 의 실본문 여유가 ~2000 토큰뿐.
+- 변경:
+  - `_CLAUDE_MAX_TOKENS["prompt_gen"] = 20000` (thinking 차감 후에도 ≥4000 본문 여유, 비용 폭주 차단 위해 명시 cap 유지 — CHG-0004 정합).
+  - `_LOCAL_LLM_MAX_TOKENS["prompt_gen"] = 3072` (4K 컨텍스트 윈도 내 최대 출력, summary 512 대비 상향).
+  - `max_tokens_for_model(model, task)` 라우팅 로직 무변경 — task 키만 추가(다른 task cap 영향 0).
+- 검증: 신규 `tests/test_prompt_gen_max_tokens.py` 5 PASS(prompt_gen 양 tier 존재·summary 대비 단조성·Claude thinking 차감 여유≥4000·로컬 4K 한도·tier 라우팅) + 기존 `test_call_llm_records_agent_task.py` 회귀 0.
+- Files: src/modules/model_catalog.py, tests/test_prompt_gen_max_tokens.py(신규), docs/{MODIFY}.md
+- Rollback: prompt_gen 두 항목 삭제 시 자동작성이 default cap(Claude startswith 분기의 8192)으로 폴백 — 잘림 재발하나 동작 안전.
+
 ## CHG-20260611-0230
 - Date: 2026-06-11 (TASK-0230, **Critical §12.3** — 멀티 datasource 1:N: 제품 ↔ 여러 datasource 참조)
 - Scope: agent-core 측 — 제품이 여러 datasource 에 바인딩될 때, 런타임이 tool 호출마다 datasource 를 선택해 그 datasource 의 (연결·스키마 allowlist·dialect) 격리 컨텍스트로 조회. 단일 바인딩(0~1)·flag OFF 는 기존 단일 경로 byte-identical(동작 0 변경).

@@ -5542,6 +5542,14 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
             metaEl.textContent =
               "(자동 생성됨 — DB 인사이트가 아직 수집되지 않아 스키마-비의존 형태입니다. 검토 후 저장하세요)";
           }
+          // TASK-0232: 출력 토큰 상한 도달로 본문이 잘렸으면 명시 경고 — 조용한 잘림 방지.
+          if (m.truncated) {
+            metaEl.textContent +=
+              " ⚠ 출력 길이 제한에 도달해 프롬프트가 중간에 잘렸을 수 있습니다. 내용을 확인하고 필요하면 다시 생성하세요.";
+            metaEl.classList.add("admin-meta-warn");
+          } else {
+            metaEl.classList.remove("admin-meta-warn");
+          }
         }
       } catch (error) {
         metaEl.textContent = `자동 생성 실패: ${error.message || error}`;
