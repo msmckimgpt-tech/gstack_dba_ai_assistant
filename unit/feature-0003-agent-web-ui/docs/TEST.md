@@ -246,6 +246,11 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-06-12 (TASK-0235 새 대화 첫 메시지 작업 단계 진행상황 실시간 표시, **Major §12.3**):
+  - **Environment: CLI** (`node --check` 정적 문법 검증 — frontend-only 변경, app.js).
+  - **Runner: AI.** `node --check unit/feature-0003-agent-web-ui/src/static/app.js` PASS. 변경: `sendPrompt` 의 lazy_create early-cid 발급 일반화(첨부 유무 무관) + `earlyCidActivated` 플래그 도입(ask 실패 시 non-lazy 복구 경로 분기). 동시성 7 실패모드 적대적 리뷰(REV-20260612-0235 [SUBAGENT:newconv-progress-adversarial-concurrency]) — 중복폴링/빈status조기종료/sentinel가드/첨부회귀/bubble race 안전 + CONCERN 2(고아대화·빈대화 명시cid) 흡수.
+  - **Environment: Windows-browser** — 배포(web 재빌드/재기동) 후 PB-0008 으로 검증 **예정**: (1) `#newConversationBtn`(또는 빈 입력 상태) 새 대화 → `#promptInput` 질문 입력 → `#sendBtn` 전송 → **처리 중 pending bubble 이 "시작 중…" 이 아니라 실제 단계(예: "SQL 실행 · …")를 실시간 표시** + `${N}단계 보기` 버튼 노출. (2) "N단계 보기" 클릭 → `#stepSidePanel` 사이드바 열림 + 각 단계 상세(tool/work/SQL/결과) 렌더. (3) 기존 대화 첫/후속 요청 회귀 0(단계 표시 정상 유지). 스크린샷 첨부 후 본 Run 을 PASS 로 갱신.
+
 - 2026-06-11 (TASK-0228 datasource SSRF 사설망 경계 env 토글 + 의도적 비활성화, **Major §12.3 보안 다운그레이드**):
   - **Environment: CLI** (컨테이너/로컬 pytest — `_ssrf_check_host`/`_ssrf_private_guard_enabled` 단위 + 통합 trace).
   - **Runner: AI.** 신규 `test_ssrf_private_guard_toggle.py` **31 PASS** (토글 ON/OFF·메타데이터 IPv4-mapped 차단·loopback/link-local 상시 차단·allowlist 공존·파싱·공인 IP 허용·빈 host 거부) + datasource 회귀(`test_datasource_registry.py`/`test_datasource_delete.py`) 회귀 0. 통합 trace 11 케이스(토글 OFF): RFC1918(10.200.50.80 등) 허용 + 메타데이터(bare/IPv4-mapped) 차단 + loopback/link-local 차단 ALL PASS. py_compile + node --check PASS.
