@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0234 [SKIPPED:frontend-bugfix-no-backend-no-rbac]
+- Date: 2026-06-12
+- Cycle: TASK-0234 (datasource UI 사용성 버그 2건 — 연결 테스트 무동작 + DB↔datasource 소속 불명, **Minor §12.3**)
+- Reason: frontend-only 버그 수정. ① 공용 연결 테스트 버튼이 빈 드롭다운 값을 읽던 것을 per-chip ⟳ 버튼(기존 `/api/admin/datasources/{key}/test` 엔드포인트 그대로 호출)으로 보완. ② 헤더에 편집 대상 datasource 표시 배지 추가. 신규 RBAC/스키마/엔드포인트/백엔드/시크릿 0건. 새 백엔드 표면 0 — 기존 엔드포인트의 frontend 호출 경로만 수정. outside-voice panel 불필요 조건 충족.
+- 검증: 백엔드 `/test` 정상 확인(라이브 mysql-local 7.3ms / mssql-qa-idc 129.8ms / mssql-f82c51b3425f 7.9ms 전부 ok) + node --check admin.js + CSS brace balance + make test 컨테이너 회귀 0.
+- Human Approval Needed: no.
+- Cross-ref: CHG-20260612-0234 / TASK-0234 / TASK-0230(원 멀티 datasource cycle).
+
 ## REV-20260611-0233 [SKIPPED:frontend-a11y-no-backend-no-rbac]
 - Date: 2026-06-11
 - Cycle: TASK-0233 (datasource multi-bind UI 접근성 보강, **Minor §12.3**) — 동시세션 TASK-0231 insight-reset 선점→0232 재번호

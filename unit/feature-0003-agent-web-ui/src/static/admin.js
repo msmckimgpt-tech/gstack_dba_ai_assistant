@@ -4705,11 +4705,21 @@ function renderProductDetail() {
   const dbTitle = document.createElement("div");
   dbTitle.className = "admin-detail-section-title";
   dbTitle.textContent = "접근 가능 데이터베이스";
+  // 이슈②(2026-06-12): 아래 DB 목록이 **어느 데이터소스** 것인지 헤더에 배지로 명시.
+  // 멀티 datasource(≥2) 면 편집 대상 datasource 가 바뀔 때마다 갱신된다(단일/미바인딩이면 기본 표기).
+  const dbTitleDs = document.createElement("span");
+  dbTitleDs.className = "admin-db-ds-badge";
+  dbTitle.appendChild(dbTitleDs);
   dbSection.appendChild(dbTitle);
   const dbHint = document.createElement("div");
   dbHint.className = "admin-detail-hint";
   dbHint.textContent = "선택한 데이터 소스에서 이 제품이 접근할 데이터베이스. 시스템 DB(메타데이터)는 고정됩니다.";
   dbSection.appendChild(dbHint);
+  // 현재 편집 대상 datasource 를 헤더 배지에 반영. dsk 빈 값=기본 단일 MySQL.
+  const _updateDbSectionLabel = (dsk) => {
+    const label = String(dsk || "").trim();
+    dbTitleDs.textContent = label ? `데이터소스: ${label}` : "기본 단일 MySQL";
+  };
 
   // TASK-0228 (1:N): 제품이 ≥2 datasource 에 바인딩됐으면 "편집 대상 데이터소스" 선택기를 보인다.
   // 각 datasource 의 접근DB 를 독립 편집한다(차원 격리). 단일 바인딩이면 선택기 비표시(종전 UX).
@@ -4988,8 +4998,10 @@ function renderProductDetail() {
     _editDsKey = nk;
     _swapDraftContents(_loadDraft(nk));
     adminState.productDbDraft.set(_draftKeyFor(nk), draft);
+    _updateDbSectionLabel(nk);   // 이슈②: 헤더 배지를 새 편집 대상 datasource 로 갱신
     _refreshAccessibleDbs(nk);  // 새 datasource 의 DB picker + redraw
   };
+  _updateDbSectionLabel(_editDsKey);  // 초기 헤더 배지(편집 대상 = primary)
 
   // ── 멀티 datasource (P2): product → datasource 바인딩 + 연결테스트 (TASK-0206: 접근가능DB 위로 이동) ──
   // 백엔드 PATCH datasource 는 console.manage 권한이라 컨트롤도 그 권한으로 게이트(불일치 방지).
@@ -5056,6 +5068,39 @@ function renderProductDetail() {
             });
             chip.appendChild(star);
           }
+          // 이슈①(2026-06-12): 바인딩이 있으면 아래 드롭다운(dsSelect)은 "추가" 모드라 value=''
+          // → 공용 "연결 테스트" 버튼이 대상 datasource 를 못 잡아 항상 "먼저 선택하세요" 였다.
+          // 각 칩에 **그 datasource 전용** 연결 테스트 버튼(⟳)을 둔다.
+          const test = document.createElement("button");
+          test.type = "button"; test.className = "admin-chip-action"; test.textContent = "⟳";
+          test.title = "이 데이터소스 연결 테스트";
+          test.setAttribute("aria-label", `'${b.datasource_key}' 데이터소스 연결 테스트`);
+          test.addEventListener("click", async () => {
+            if (test.disabled) return;
+            test.disabled = true;
+            const _prevTitle = test.title;
+            test.title = "테스트 중…"; test.textContent = "…";
+            try {
+              const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(b.datasource_key)}/test`, { method: "POST" });
+              if (r && r.ok) {
+                test.textContent = "✓"; test.classList.add("admin-chip-action--ok");
+                showToast(`'${b.datasource_key}' 연결 성공 (${r.elapsed_ms}ms)`);
+              } else {
+                test.textContent = "✗"; test.classList.add("admin-chip-action--fail");
+                showToast(`'${b.datasource_key}' 연결 실패: ${(r && r.error) || "unknown"}`, true);
+              }
+            } catch (e) {
+              test.textContent = "✗"; test.classList.add("admin-chip-action--fail");
+              showToast(`'${b.datasource_key}' 연결 테스트 오류: ${e.message || "실패"}`, true);
+            } finally {
+              test.disabled = false;
+              setTimeout(() => {  // 2초 후 기본 아이콘 복원(반복 테스트 가능)
+                test.textContent = "⟳"; test.title = _prevTitle;
+                test.classList.remove("admin-chip-action--ok", "admin-chip-action--fail");
+              }, 2000);
+            }
+          });
+          chip.appendChild(test);
           const rm = document.createElement("button");
           rm.type = "button"; rm.className = "admin-chip-remove"; rm.textContent = "×";
           rm.title = "이 데이터소스 바인딩 제거";
@@ -5088,9 +5133,14 @@ function renderProductDetail() {
         const p = (adminState.products || []).find((x) => Number(x.id) === Number(product.id));
         if (p) { p.datasources = product.datasources; p.datasource_key = product.datasource_key; }
         _selectedDatasourceKey = product.datasource_key || "";
+        // 이슈②: 편집 대상이 제거된 datasource 를 가리키면 primary 로 되돌리고 헤더 배지 갱신.
+        const _editStillBound = (product.datasources || []).some(
+          (d) => String(d.datasource_key || "").toLowerCase() === String(_editDsKey || "").toLowerCase());
+        if (!_editStillBound) _editDsKey = _selectedDatasourceKey;
         _renderDsChips();
         dsSelect.value = "";
-        _refreshAccessibleDbs(_selectedDatasourceKey);
+        _updateDbSectionLabel(_editDsKey);
+        _refreshAccessibleDbs(_editDsKey);
       } catch (e) { showToast(e.message || "데이터소스 목록 갱신 실패", true); }
     };
     _renderDsChips();
@@ -5163,7 +5213,14 @@ function renderProductDetail() {
     testBtn.disabled = !canDs;
     testBtn.addEventListener("click", async () => {
       const key = dsSelect.value;
-      if (!key) { showToast("테스트할 datasource 를 먼저 선택하세요.", true); return; }
+      if (!key) {
+        // 바인딩이 이미 있으면 드롭다운은 "추가" 모드(value='') — 기존 바인딩은 각 칩의 ⟳ 로 테스트.
+        const hasBinds = !!(product.datasources && product.datasources.length);
+        showToast(hasBinds
+          ? "기존 데이터소스는 위 칩의 ⟳(연결 테스트) 버튼을 사용하세요. 이 버튼은 추가할 새 데이터소스 선택 시 테스트합니다."
+          : "테스트할 datasource 를 먼저 선택하세요.", true);
+        return;
+      }
       testBtn.disabled = true;
       dsResult.textContent = "테스트 중…";
       dsResult.className = "admin-ds-test-result";
