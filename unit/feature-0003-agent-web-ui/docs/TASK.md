@@ -16,6 +16,33 @@ source_of_truth: true
 
 ## 2. Task Queue
 
+### TASK-0231 insight 분석 초기화 (접근 가능 DB 단위 삭제) (2026-06-11)
+- [x] **Critical §12.3** — (동시세션 SSRF·UI-통합 cycle 이 TASK-0228/0229 선점 → §13.1 재번호 0228→0230) 사용자 요청: `관리 콘솔 > 제품 > 접근 가능 데이터베이스 > insight 분석 완료율`에서 분석 내용을 초기화하는 수단. 잘못 분석된 내용을 되돌릴 방법이 없던 gap 해소. 사용자 결정: **개별 DB 단위** 초기화 + **삭제만**(worker 자동 재분석).
+- **신규 RBAC `insight.reset`**(console 그룹, admin 한정 — audit.purge 동급 파괴적). `PERMISSION_DEFINITIONS` + admin seed catchup(operator/sales/pending 미부여).
+- **공용 헬퍼 `_resolve_product_insight_scope`** — 완료율 계산(`_compute_product_insight_coverage`)과 초기화가 **동일 scope/allow_null/engine** 식별자를 쓰도록 datasource scope 해석 로직 분리 + scope alias 집합(hash/.env label/NULL) 반환(키 불일치로 인한 "지웠는데 완료율 그대로"/"엉뚱한 DB 삭제" 방지).
+- **신규 엔드포인트 `POST /api/admin/products/{pid}/insight-reset`** (body `{db, dry_run}`):
+  - 라이브 카탈로그 조회로 해당 DB 의 `(schema, table)` 쌍 + schema 집합 확보(reset 이 datasource RO 좌표 직결, SSRF 가드+pin).
+  - **rag_objects 삭제 = 완료율 분자와 동일한 `(schema_name, table_name)` 교집합 + schema 노드**(M1 흡수) — object_key LIKE 방식이 MSSQL 2-tier 레거시(catalog-less)를 놓쳐 완료율 divergence 를 유발하던 것을 해소. 2-tier/3-tier object_key 형식 무관하게 완료율 0 보장.
+  - fact_entries/rag_documents/kv 삭제 키 패턴(`_insight_reset_fact_key_patterns`/`_insight_reset_kv_key_patterns`/`_like_escape`): scope alias 전체(M2) + 라이브 schema(MSSQL 2-tier 레거시 catalog-less) 커버. LIKE ESCAPE '\\'(underscore DB명 오매칭 차단). **fingerprint(schema_fp/table_fp)+refresh_at 동반 삭제가 핵심** — 안 지우면 worker 가 "변경 없음" 오판해 재분석 skip.
+  - `dry_run=true`: 건수만(삭제 0). `false`: **audit start-event 먼저 commit(실패 시 삭제 중단, M3 흡수)** → 단일 PG tx DELETE + rollback 안전망 → complete-event + 완료율 캐시 무효화.
+  - 보안: `insight.reset` 권한 게이트(403), 요청 db 가 제품 WebProductDatabases 바인딩인지 검증(임의 DB 주입 400), db 누락 400, 카탈로그 조회 실패 시 502(대상 산정 불가 안전 중단).
+- **프런트(admin.js/html/css)**: TASK-0229 통합 DB 리스트(`redrawChips` 의 `cov-db-row` grid) 위로 rebase — per-DB 행에 "초기화" 버튼(`insight.reset` 권한자만) → `resetProductDbInsight`(dry-run 미리보기 → DB명 typed-confirm + 공유 제품 영향 경고 → 실제 삭제 → 완료율 새로고침). 위험색 버튼 CSS + grid 6컬럼. 캐시버스터 `?v=20260611-db-coverage-insight-reset`.
+
+#### 완료 판정 기준
+- AC1: insight.reset 권한자가 per-DB "초기화" 버튼으로 해당 DB insight(fact/rag/fingerprint)를 삭제 → 완료율 0% 반영(MSSQL 2-tier 레거시 포함).
+- AC2: 삭제 후 insight-worker 가 다음 cycle 에 fingerprint 부재 감지해 자동 재분석.
+- AC3: 권한 미보유 403, 제품 비바인딩 DB 주입 400(임의 삭제 차단), underscore DB명 오매칭/cross-scope 과삭제 0, 카탈로그 조회 실패 502.
+- AC4: 삭제 전 audit start-event 선행(fail-safe). dry-run + typed-confirm. make test 회귀 0 + 신규 테스트 PASS + py_compile + node --check + ruff. 라이브 dry-run/실삭제 검증 + PB-0008 시각검증.
+
+#### 작업 항목
+- [x] RBAC insight.reset 정의 + admin seed catchup
+- [x] _resolve_product_insight_scope 헬퍼 추출 (완료율 ↔ reset 정합 + scope alias)
+- [x] insight-reset 엔드포인트 (라이브 카탈로그 (schema,table) 교집합 + audit fail-safe + 단일 tx + 캐시 무효화)
+- [x] 프런트 per-DB 초기화 버튼 (TASK-0229 통합 리스트 위로 rebase) + dry-run + typed-confirm + 캐시버스터
+- [x] pytest 신규 14건 PASS + make test 505 passed/2 skipped(회귀 0) + ruff clean + py_compile + node --check
+- [x] outside-voice 적대적 보안 리뷰 — MAJOR 3(M1 MSSQL rag_objects/M2 scope alias/M3 audit fail-safe) 흡수
+- [ ] verify-completion → 머지 → web 재배포 → 라이브 dry-run/실삭제 검증 + PB-0008 시각검증
+
 ### TASK-0230 멀티 datasource 1:N — 제품 ↔ 여러 datasource 참조 (2026-06-11)
 - [x] **Critical §12.3** — (동시세션 TASK-0228 SSRF·0229 db-coverage 선점→0230 재번호) 사용자 요청: "assistant 가 답변하려면 여러 데이터소스·DB 에 접근해야 하나 단일 datasource 만 가능 → `관리 콘솔 > 제품 > [각 항목] > 데이터소스` 에서 여러 데이터소스도 참조하도록". 기존 멀티 datasource(TASK-0185~0226)는 product↔datasource **1:1**(`WebProducts.DatasourceKey` 단일 컬럼). **사용자 추가 요청**: 제품 프롬프트 자동작성이 접근 가능 모든 datasource 의 DB 를 인지. **사용자 결정(AskUserQuestion 2회)**: 범위=**전체 구현**, 런타임 노출=**LLM 이 tool 인자로 datasource 선택**. **구현(feature-0003 측, 6파일)**: ① `_ensure_web_product_datasources_schema` — `WebProductDatasources(ProductId, DatasourceKey, IsPrimary, SortOrder)` join 테이블 멱등 신설 + 레거시 `DatasourceKey`→join(primary) 이전 + `WebProductDatabases.DatasourceKey` 차원 컬럼 추가 + 레거시 행 backfill + PK `(ProductId,SchemaName)`→`(ProductId,DatasourceKey,SchemaName)` 멱등 이전(REV-0230 MAJOR-1: 컬럼 선확인 + 단계별 loud 로깅). ② admin 엔드포인트 `GET/POST/DELETE /api/admin/products/{id}/datasources`(console.access[+manage], 미등록 키 거부, audit, primary 동기화) + 기존 PATCH 는 primary 설정 wrapper 로 join 동기화. `GET /api/admin/datasources`·`_list_products` 응답에 `datasources[]` 추가. ③ `PUT /api/admin/products/{id}/databases` 가 `datasource_key` 차원 수용(그 datasource 행만 교체, 바인딩 검증) + DELETE datasource 가 join·접근DB 고아 정리. ④ 제품 프롬프트 자동작성(`admin_generate_product_prompt`)이 모든 바인딩 datasource 의 ds-키 집합으로 fact 매칭 + datasource 별 접근DB 그룹 표시(`WebDataSources` 오타도 정정). ⑤ admin.js — 제품 상세에 datasource 칩 multi-bind(추가/제거/기본지정) + 접근DB 편집의 "편집 대상 데이터소스" 선택기(차원별 draft·pending) + 대화화면(app.js) 다중 datasource 배지. styles.css `.admin-chip--primary`/`.admin-chip-action`. 캐시버스터 `?v=20260611-product-multi-ds`. **검증**: 신규 `test_product_multi_datasource_api.py` 7 + node --check(admin.js/app.js) + make test 컨테이너 회귀 0. **outside-voice 적대적 보안 리뷰 BLOCKER 0**(REV-20260611-0230, agent-core REVIEW 정본 — 격리 HOLD + MAJOR-1/2/3 흡수). flag `AGENT_MULTI_DATASOURCE_ENABLED` OFF + 단일 바인딩 = 동작 0 변경. cross-feature(agent-core 런타임 라우터 + 본 feature 관리/UI). worktree `ai/claude/product-multi-datasource`(base e93b181, main 머지 후 origin/main rebase·동시세션 0228/0229 충돌 해소). **잔여**: 라이브 배포(web+insight-worker+ask-worker 재빌드) + 멀티 바인딩 제품 PB-0008 Windows 시각검증.
 

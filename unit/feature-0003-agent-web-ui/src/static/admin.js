@@ -4306,6 +4306,60 @@ function buildSystemDbChip(lockedChips) {
   return wrap;
 }
 
+// TASK-0230: 접근 가능 DB 단위 insight 분석 초기화 (파괴적 — dry-run 미리보기 + typed-confirm).
+// 1) dry-run 으로 삭제 대상 건수 조회 → 2) DB 이름 typed-confirm → 3) 실제 삭제 → 완료율 새로고침.
+async function resetProductDbInsight(product, db) {
+  if (!can("insight.reset")) {
+    showToast("insight 분석 초기화 권한이 없습니다.", true);
+    return;
+  }
+  const pid = Number(product.id);
+  const url = `/api/admin/products/${encodeURIComponent(pid)}/insight-reset`;
+  // 1) dry-run 미리보기
+  let preview;
+  try {
+    preview = await apiFetch(url, {
+      method: "POST",
+      body: JSON.stringify({ db, dry_run: true }),
+    });
+  } catch (error) {
+    showToast(`삭제 대상 조회 실패: ${error.message || error}`, true);
+    return;
+  }
+  const td = (preview && preview.to_delete) || {};
+  const total = Number(td.total) || 0;
+  if (total === 0) {
+    showToast(`'${db}' 에 삭제할 insight 분석 데이터가 없습니다.`, false);
+    return;
+  }
+  // 2) typed-confirm (DB 이름 입력) — audit.purge 패턴 답습.
+  const detail = `fact ${td.fact_entries || 0} · rag문서 ${td.rag_documents || 0} · rag객체 ${td.rag_objects || 0} · 상태키 ${td.kv || 0}`;
+  const typed = window.prompt(
+    `'${db}' 의 insight 분석 ${total}건(${detail})을 삭제합니다.\n` +
+    `같은 데이터소스·DB를 공유하는 다른 제품의 완료율도 함께 0이 됩니다.\n` +
+    `삭제 후 insight-worker 가 다음 cycle 에 자동 재분석합니다.\n\n` +
+    `확인하려면 데이터베이스 이름(${db})을 그대로 입력하세요.`,
+  );
+  if (typed === null) return; // 취소
+  if (String(typed).trim() !== String(db)) {
+    showToast("입력이 일치하지 않아 취소했습니다.", true);
+    return;
+  }
+  // 3) 실제 삭제
+  try {
+    const res = await apiFetch(url, {
+      method: "POST",
+      body: JSON.stringify({ db, dry_run: false }),
+    });
+    const n = Number(res && res.total_deleted) || 0;
+    showToast(`'${db}' insight 분석 ${n}건 초기화 완료. 다음 cycle 에 자동 재분석됩니다.`, false);
+    // 완료율 즉시 새로고침 (캐시는 서버가 무효화함).
+    loadProductInsightCoverage({ refresh: true, productId: pid });
+  } catch (error) {
+    showToast(`초기화 실패: ${error.message || error}`, true);
+  }
+}
+
 function filteredProducts() {
   const q = (adminState.productSearch || "").toLowerCase().trim();
   if (!q) return adminState.products.slice();
@@ -4524,6 +4578,7 @@ function renderProductDetail() {
     return;
   }
   const canManage = can("product.manage");
+  const canReset = can("insight.reset");  // TASK-0230: insight 초기화 권한(admin 한정)
 
   // Header
   const header = document.createElement("div");
@@ -4812,6 +4867,19 @@ function renderProductDetail() {
 
       // 진척 셀(마이크로바 + 통계 + 상태칩).
       rowEl.appendChild(buildDbCoverageCells(covRow, measuring));
+
+      // TASK-0230: insight 초기화 버튼(insight.reset 권한자만 — 파괴적, dry-run + typed-confirm).
+      // 분석 데이터가 없으면 dry-run 이 "삭제할 것 없음"을 안내하므로 권한만으로 노출해도 무해.
+      if (canReset) {
+        const resetBtn = document.createElement("button");
+        resetBtn.type = "button";
+        resetBtn.className = "cov-db-reset";
+        resetBtn.textContent = "초기화";
+        resetBtn.title = `'${entry.schema_name}' 의 insight 분석을 삭제합니다(다음 cycle 에 자동 재분석).`;
+        resetBtn.disabled = measuring;
+        resetBtn.addEventListener("click", () => resetProductDbInsight(product, entry.schema_name));
+        rowEl.appendChild(resetBtn);
+      }
 
       // 제거 버튼(편집 권한 시).
       if (canManage) {

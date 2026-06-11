@@ -134,6 +134,16 @@ PERMISSION_DEFINITIONS = (
         "group": "console",
     },
     {
+        # TASK-0228: insight-worker 가 생성한 schema/table 분석(fact/rag/fingerprint)을
+        # 접근 가능 데이터베이스(DB) 단위로 초기화(삭제)한다. 잘못 분석된 내용을 되돌릴 수단.
+        # **파괴적** — audit.purge 와 동급으로 admin 한정 (admin seed = set(PERMISSION_CODES)
+        # 자동 부여, operator/sales/pending 미부여). dry-run 미리보기 + typed-confirm + self-audit.
+        "code": "insight.reset",
+        "label": "insight 분석 초기화",
+        "description": "접근 가능 데이터베이스 단위로 insight 분석 결과(fact/rag/fingerprint)를 삭제할 수 있다. 다음 worker cycle 에 자동 재분석된다. 시작/완료는 self-audit 으로 기록된다 (운영자 전용).",
+        "group": "console",
+    },
+    {
         "code": "account.read",
         "label": "계정 조회",
         "description": "계정 목록과 상세 정보를 조회할 수 있다.",
@@ -1901,6 +1911,8 @@ def _ensure_seed_roles(conn) -> None:
             # TASK-0161: admin 의 attachment.execute_sql_on.own/.any catchup 제거 (거짓 컨트롤).
             # TASK-0136 (#11): admin 의 LLM 사용량 조회 권한 catchup (운영자 전용 비용 가시성).
             "console.usage.read",
+            # TASK-0228: admin 의 insight 분석 초기화 권한 catchup (파괴적 — 운영자 전용).
+            "insight.reset",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -14054,28 +14066,22 @@ def _insight_cov_cache_put(key, val):
         _INSIGHT_COVERAGE_CACHE[key] = (_time.time(), val)
 
 
-def _compute_product_insight_coverage(conn, product: dict) -> dict:
-    """한 제품의 insight-worker 객체 분석 완료율 산출 (TASK-0223).
+def _resolve_product_insight_scope(conn, product: dict) -> dict:
+    """제품의 datasource scope 식별자를 해석한다 (TASK-0223 완료율 / TASK-0228 초기화 공용).
 
-    반환: {product_id, pct, analyzed_objects, total_objects, per_db[], measurable, reason, engine}.
-    measurable=False 는 측정 불가(데이터소스 해석/연결 실패 등) — UI 가 "측정 불가" 로 graceful 표시.
+    완료율 분자 조회와 초기화 삭제가 **동일한 scope/allow_null/engine** 을 쓰도록 단일 출처로 분리한다
+    (키 불일치로 인한 "지웠는데 완료율 그대로" / "엉뚱한 DB 삭제" 방지).
+
+    반환: {ok: bool, reason: str, scope: str|None, allow_null: bool, engine: str,
+           default_db: str|None, coords: dict|None}. ok=False 면 reason 만 의미 있음.
     """
-    pid = int(product.get("id") or 0)
-    label = product.get("datasource_key")  # 라벨(소문자) 또는 None
-    base = {
-        "product_id": pid, "pct": None, "analyzed_objects": 0, "total_objects": 0,
-        "per_db": [], "measurable": False, "reason": "", "engine": "mysql",
-    }
-    accessible = [d.get("schema_name") for d in _list_product_databases(conn, pid)]
-    accessible = [s for s in accessible if s]
-    if not accessible:
-        base["reason"] = "접근 가능 데이터베이스 없음(미바인딩)"
-        base["measurable"] = True  # 측정됨 — 객체 0
-        return base
-
     from modules import datasources as _dsr
-    from modules import db as _db
+    label = product.get("datasource_key")  # 라벨(소문자) 또는 None
     default_endpoint_scope = _dsr.compute_scope_key("mysql", DB_HOST, int(DB_PORT))
+    out = {
+        "ok": False, "reason": "", "scope": None, "allow_null": False,
+        "engine": "mysql", "default_db": None, "coords": None,
+    }
     coords = None
     engine = "mysql"
     scope = None
@@ -14086,8 +14092,8 @@ def _compute_product_insight_coverage(conn, product: dict) -> dict:
         except Exception:
             coords = None
         if not coords:
-            base["reason"] = "데이터소스 해석 불가(미등록/복호 실패)"
-            return base
+            out["reason"] = "데이터소스 해석 불가(미등록/복호 실패)"
+            return out
         engine = (coords.get("engine") or "mysql").strip().lower()
         scope = _dsr.scope_key(coords)  # 해시(또는 .env 레거시 라벨 폴백) — insight write 와 동일 식별자
         default_db = (str(coords.get("default_db") or "").strip() or None)
@@ -14104,11 +14110,67 @@ def _compute_product_insight_coverage(conn, product: dict) -> dict:
         except Exception:
             coords = None
         if not coords:
-            base["reason"] = "기본(미바인딩) 제품 — 데이터소스 좌표 없음"
-            return base
+            out["reason"] = "기본(미바인딩) 제품 — 데이터소스 좌표 없음"
+            return out
 
-    # scope == 기본 엔드포인트면 ds=None 스캔의 NULL 행도 같은 DB → 분자에 허용(set dedup 로 중복 무해).
-    allow_null = (scope == default_endpoint_scope)
+    # TASK-0230 (M2): 같은 엔드포인트가 시기별로 다른 scope 식별자로 기록될 수 있다(hash vs .env 레거시
+    # label vs NULL). 완료율은 단일 scope 만 보지만, **초기화(fingerprint 삭제)는 모든 alias 를 지워야**
+    # worker 가 다른 alias 의 잔존 fingerprint 로 재분석을 skip 하지 않는다. coords 의 host/port 로
+    # compute_scope_key(hash) 와 .env label(있으면) 을 둘 다 alias 후보로 모은다.
+    scope_aliases: list[str] = []
+    if scope:
+        scope_aliases.append(str(scope).strip().lower())
+    try:
+        _h = coords.get("host")
+        _p = int(coords.get("port") or 0)
+        if _h and _p:
+            _hash_alias = _dsr.compute_scope_key(engine, _h, _p)
+            if _hash_alias and _hash_alias.strip().lower() not in scope_aliases:
+                scope_aliases.append(_hash_alias.strip().lower())
+    except Exception:
+        pass
+    # .env 레거시 label (datasource 키 자체가 scope 로 쓰였던 경우 — 예: main_mysql)
+    if label and str(label).strip().lower() not in scope_aliases:
+        scope_aliases.append(str(label).strip().lower())
+
+    out.update({
+        "ok": True, "scope": scope,
+        # scope == 기본 엔드포인트면 ds=None 스캔의 NULL 행도 같은 DB → 허용(완료율 set dedup·초기화 OR NULL).
+        "allow_null": (scope == default_endpoint_scope),
+        "scope_aliases": scope_aliases,  # 초기화 전용 — 완료율은 단일 scope 사용
+        "engine": engine, "default_db": default_db, "coords": coords,
+    })
+    return out
+
+
+def _compute_product_insight_coverage(conn, product: dict) -> dict:
+    """한 제품의 insight-worker 객체 분석 완료율 산출 (TASK-0223).
+
+    반환: {product_id, pct, analyzed_objects, total_objects, per_db[], measurable, reason, engine}.
+    measurable=False 는 측정 불가(데이터소스 해석/연결 실패 등) — UI 가 "측정 불가" 로 graceful 표시.
+    """
+    pid = int(product.get("id") or 0)
+    base = {
+        "product_id": pid, "pct": None, "analyzed_objects": 0, "total_objects": 0,
+        "per_db": [], "measurable": False, "reason": "", "engine": "mysql",
+    }
+    accessible = [d.get("schema_name") for d in _list_product_databases(conn, pid)]
+    accessible = [s for s in accessible if s]
+    if not accessible:
+        base["reason"] = "접근 가능 데이터베이스 없음(미바인딩)"
+        base["measurable"] = True  # 측정됨 — 객체 0
+        return base
+
+    from modules import db as _db
+    resolved = _resolve_product_insight_scope(conn, product)
+    if not resolved["ok"]:
+        base["reason"] = resolved["reason"]
+        return base
+    coords = resolved["coords"]
+    engine = resolved["engine"]
+    scope = resolved["scope"]
+    default_db = resolved["default_db"]
+    allow_null = resolved["allow_null"]
 
     okssrf, _ssrf_reason, pin = _ssrf_check_host(coords.get("host"))
     if not okssrf:
@@ -14275,6 +14337,395 @@ def admin_products_insight_coverage(request: Request) -> JSONResponse:
     finally:
         conn.close()
     return JSONResponse({"coverage": out})
+
+
+# ── TASK-0228: insight 분석 초기화 (접근 가능 DB 단위 삭제) ──────────────────────────
+# insight-worker 가 만든 schema/table 분석을 **DB(접근 가능 데이터베이스) 단위**로 PG 에서 삭제한다.
+# 저장 키 체계(config.ds_fact_key / ds_object_suffix)와 정합:
+#   - ds=None(레거시 기본 MySQL):  fact_key = `{source}:{db}` 또는 `{source}:{db}.{table}`
+#   - ds=scope:                    fact_key = `{source}:ds:{scope}:{db}[.{table}]`
+#   - MSSQL(catalog=db):           suffix 가 `{db}.{schema}[.{table}]` (3계층) — `:{db}.` prefix 로 포괄
+# 삭제 대상: PG fact_entries(source_type schema_insight/table_insight) + rag_documents(동일 fact_key)
+#   + rag_objects(object_type schema/table, datasource_key=scope|NULL) + KV fingerprint/refresh_at/scan offset.
+# **fingerprint 까지 지워야** worker 가 다음 cycle 에 "변경 없음" 으로 오판하지 않고 재분석한다(핵심).
+def _like_escape(value: str) -> str:
+    r"""PG LIKE 패턴의 메타문자(\, %, _)를 ESCAPE '\' 기준으로 이스케이프한다 (인젝션/오매칭 차단)."""
+    s = str(value or "")
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _insight_reset_ds_heads(scope_aliases, allow_null: bool) -> list[str]:
+    """ds_fact_key 접두 목록. scope alias 마다 `ds:{alias}:`, allow_null 이면 무접두("")도 포함.
+
+    TASK-0230 (M2): 단일 scope 가 아니라 alias 집합(hash/.env label) 전체를 처리해야 fingerprint 가
+    어느 세대 키로 쓰였든 모두 삭제된다(잔존 fingerprint → 재분석 skip 방지).
+    """
+    heads: list[str] = []
+    for alias in (scope_aliases or []):
+        a = str(alias or "").strip().lower()
+        if a:
+            heads.append(f"ds:{_like_escape(a)}:")
+    if allow_null or not scope_aliases:
+        heads.append("")  # 무접두 (ds=None 레거시 기록)
+    # dedup, 순서 보존
+    seen: set[str] = set()
+    out: list[str] = []
+    for h in heads:
+        if h not in seen:
+            seen.add(h)
+            out.append(h)
+    return out
+
+
+def _insight_reset_fact_key_patterns(db, scope_aliases=None, allow_null: bool = False, live_schemas=None) -> list[str]:
+    """DB `{db}` 의 insight fact_key 를 매칭하는 LIKE 패턴 목록 (ESCAPE '\\').
+
+    저장 키 suffix(config.ds_object_suffix):
+      - MySQL(db==schema):       `{db}`,  `{db}.{table}`
+      - MSSQL 3-tier:            `{db}.{schema}`,  `{db}.{schema}.{table}`
+      - MSSQL 2-tier(레거시):     `{schema}`,  `{schema}.{table}`  (catalog 없음 — live_schemas 로 보강)
+    TASK-0230 (M1/M2): scope alias 전체 + 라이브 schema 목록(MSSQL 2-tier 레거시 catalog-less 키 포함)을
+    커버한다. live_schemas 가 None/빈 경우 db 자체만(MySQL·3-tier) 패턴 생성(하위호환).
+
+    하위호환: scope_aliases 가 문자열(단일 scope)로 들어오면 list 로 승격.
+    """
+    if isinstance(scope_aliases, str):
+        scope_aliases = [scope_aliases]
+    db_l = str(db or "").strip().lower()
+    eq = _like_escape(db_l)
+    pre = eq + "."
+    ds_heads = _insight_reset_ds_heads(scope_aliases, allow_null)
+    # db 자체 토큰(MySQL schema == db, MSSQL 3-tier catalog == db) + MSSQL 2-tier 레거시 schema 토큰.
+    tokens: list[tuple[str, bool]] = [(eq, True)]  # (escaped, include_exact)
+    for s in (live_schemas or []):
+        s_l = str(s or "").strip().lower()
+        if s_l and s_l != db_l:
+            tokens.append((_like_escape(s_l), True))
+    patterns: list[str] = []
+    for source in ("schema_insight", "table_insight"):
+        for head in ds_heads:
+            for tok, _exact in tokens:
+                patterns.append(f"{source}:{head}{tok}")       # 정확히 토큰 (schema 노드)
+                patterns.append(f"{source}:{head}{tok}.%")      # 토큰.<하위>
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for p in patterns:
+        if p not in seen:
+            seen.add(p)
+            uniq.append(p)
+    return uniq
+
+
+def _insight_reset_kv_key_patterns(db, scope_aliases=None, allow_null: bool = False, live_schemas=None) -> list[str]:
+    """DB `{db}` 의 insight KV(fingerprint/refresh_at/scan offset) 키 LIKE 패턴 목록.
+
+    저장 키(config.ds_scope_name / ds_fact_key):
+      - `{source}:{suffix}` 또는 `{source}:ds:{alias}:{suffix}` — schema_fp/table_fp/*_refresh_at (접두)
+      - `schema_instance_scan_offset:{schema}[:ds:{alias}]` (ds_scope_name 은 **접미** `:ds:{alias}`)
+    TASK-0230 (M1/M2): scope alias 전체 + 라이브 schema(MSSQL 2-tier 레거시) 커버.
+    """
+    if isinstance(scope_aliases, str):
+        scope_aliases = [scope_aliases]
+    db_l = str(db or "").strip().lower()
+    eq = _like_escape(db_l)
+    ds_heads = _insight_reset_ds_heads(scope_aliases, allow_null)
+    tokens: list[str] = [eq]
+    for s in (live_schemas or []):
+        s_l = str(s or "").strip().lower()
+        if s_l and s_l != db_l:
+            tokens.append(_like_escape(s_l))
+    patterns: list[str] = []
+    # ds_fact_key 형식 (접두): schema_fp / table_fp / schema_insight_refresh_at / table_insight_refresh_at
+    for source in ("schema_fp", "table_fp", "schema_insight_refresh_at", "table_insight_refresh_at"):
+        for head in ds_heads:
+            for tok in tokens:
+                patterns.append(f"{source}:{head}{tok}")
+                patterns.append(f"{source}:{head}{tok}.%")
+    # ds_scope_name 형식 (접미): schema_instance_scan_offset:{schema}[:ds:{alias}]
+    ds_suffixes: list[str] = []
+    for alias in (scope_aliases or []):
+        a = str(alias or "").strip().lower()
+        if a:
+            ds_suffixes.append(f":ds:{_like_escape(a)}")
+    if allow_null or not scope_aliases:
+        ds_suffixes.append("")  # 접미 없음 (ds=None)
+    for tail in ds_suffixes:
+        for tok in tokens:
+            patterns.append(f"schema_instance_scan_offset:{tok}{tail}")
+            patterns.append(f"schema_instance_scan_offset:{tok}.%{tail}")
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for p in patterns:
+        if p not in seen:
+            seen.add(p)
+            uniq.append(p)
+    return uniq
+
+
+@app.post("/api/admin/products/{pid:int}/insight-reset")
+async def admin_product_insight_reset(request: Request, pid: int) -> JSONResponse:
+    """제품의 접근 가능 데이터베이스 1개에 대한 insight 분석을 초기화(삭제)한다 (TASK-0228).
+
+    권한 `insight.reset` (admin 한정 — 파괴적). body `{db: str, dry_run: bool}`.
+    dry_run=true: 삭제 대상 건수만 반환(삭제 X). false: 단일 PG tx 로 fact/rag/KV 삭제 + self-audit.
+
+    **DB 단위 삭제 주의**: 같은 datasource·같은 DB 를 공유하는 다른 제품의 완료율도 함께 0이 된다
+    (insight 는 product 가 아니라 datasource-scope + DB 단위로 저장되므로). UI 가 이를 경고한다.
+    삭제 후 insight-worker 가 다음 cycle 에 fingerprint 부재를 감지해 자동 재분석한다.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    db_name = str(data.get("db") or "").strip()
+    dry_run = bool(data.get("dry_run"))
+    if not db_name:
+        return _json_error("db (접근 가능 데이터베이스명) 가 필요합니다.", 400)
+
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(account, "insight.reset"):
+            return _json_error("insight 분석 초기화 권한이 필요합니다.", 403)
+
+        product = next(
+            (p for p in _list_products(conn, include_inactive=True) if int(p["id"]) == pid),
+            None,
+        )
+        if not product:
+            return _json_error("제품을 찾을 수 없습니다.", 404)
+
+        # 요청 DB 가 실제로 이 제품의 접근 가능 DB 인지 검증 (임의 DB 주입 차단).
+        accessible = {
+            str(d.get("schema_name") or "").strip().lower()
+            for d in _list_product_databases(conn, pid)
+            if d.get("schema_name")
+        }
+        if db_name.strip().lower() not in accessible:
+            return _json_error("해당 제품의 접근 가능 데이터베이스가 아닙니다.", 400)
+
+        resolved = _resolve_product_insight_scope(conn, product)
+        if not resolved["ok"]:
+            return _json_error(f"데이터소스 스코프 해석 불가: {resolved['reason']}", 400)
+        scope = resolved["scope"]
+        allow_null = resolved["allow_null"]
+        scope_aliases = resolved.get("scope_aliases") or ([scope] if scope else [])
+        engine = resolved["engine"]
+        coords = resolved["coords"]
+
+        # ── 라이브 카탈로그 조회: 해당 DB 의 (schema, table) 쌍 + schema 집합 ──
+        # TASK-0230 (M1): rag_objects 삭제를 완료율 분자(_compute_product_insight_coverage)와 **동일한
+        # (schema_name, table_name) 교집합** 으로 통일한다. object_key LIKE 방식은 MSSQL 2-tier 레거시
+        # (catalog-less `{scope}:dbo.t`)를 놓쳐 "지웠는데 완료율 그대로" 를 유발했다(보안리뷰 M1).
+        # live schema 목록은 fact/KV 의 2-tier 레거시 키 패턴(catalog-less) 생성에도 쓴다.
+        from modules import db as _db
+        live_pairs: set = set()       # {(schema_lower, table_lower)}
+        live_schemas: set = set()     # {schema_lower}
+        okssrf, _ssrf_reason, pin = _ssrf_check_host((coords or {}).get("host"))
+        if not okssrf:
+            return _json_error("데이터소스 호스트 차단(SSRF)", 400)
+        coords_pinned = {**coords, "host": pin}
+        try:
+            if engine == "mssql":
+                rows = _db.list_information_schema_tables(coords_pinned, database=db_name, timeout=5)
+            else:
+                rows = _db.list_information_schema_tables(coords_pinned, schemas=[db_name], timeout=5)
+            for s, t in rows:
+                sl = str(s).strip().lower()
+                tl = str(t).strip().lower()
+                live_pairs.add((sl, tl))
+                live_schemas.add(sl)
+        except Exception as exc:
+            logging.getLogger("app").warning("insight_reset catalog fail pid=%s db=%s err=%r", pid, db_name, exc)
+            return _json_error("데이터소스 카탈로그 조회 실패(연결/권한) — 초기화 대상 산정 불가.", 502)
+        # MySQL 은 db==schema 라 live_schemas={db} 가 정상. MSSQL 은 dbo 등.
+
+        fact_patterns = _insight_reset_fact_key_patterns(db_name, scope_aliases, allow_null, live_schemas)
+        kv_patterns = _insight_reset_kv_key_patterns(db_name, scope_aliases, allow_null, live_schemas)
+
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+        except Exception as exc:
+            logging.getLogger("app").warning("insight_reset pg connect fail pid=%s err=%r", pid, exc)
+            return _json_error("PG 연결 실패 — insight 저장소에 접근할 수 없습니다.", 500)
+
+        fact_like_sql = " OR ".join(["fact_key LIKE %s ESCAPE '\\'"] * len(fact_patterns))
+        kv_like_sql = " OR ".join(["key LIKE %s ESCAPE '\\'"] * len(kv_patterns))
+        # rag_objects: 완료율 분자와 동일하게 (schema_name, table_name) 교집합 + schema 노드로 매칭.
+        #   table 노드: (lower(schema_name), lower(table_name)) ∈ live_pairs
+        #   schema 노드: lower(schema_name) ∈ live_schemas
+        # 2-tier/3-tier object_key 형식과 무관 — schema_name/table_name 컬럼만 본다(완료율과 동일 행 집합).
+        ro_ds_sql = "(datasource_key = %s" + (" OR datasource_key IS NULL" if allow_null else "") + ")"
+        pair_vals = sorted(live_pairs)
+        schema_vals = sorted(live_schemas)
+
+        def _count_or_delete_rag(pgc_, do_delete: bool) -> int:
+            """rag_objects 의 schema/table 노드를 (schema,table) 교집합으로 count 또는 delete."""
+            total = 0
+            verb = "DELETE FROM" if do_delete else "SELECT COUNT(*) FROM"
+            # table 노드 — (schema,table) IN (...). 빈 집합이면 skip.
+            if pair_vals:
+                tuple_ph = ",".join(["(%s,%s)"] * len(pair_vals))
+                flat: list = []
+                for s, t in pair_vals:
+                    flat.extend([s, t])
+                sql_t = (
+                    f"{verb} public.rag_objects "
+                    f"WHERE conversation_id = %s AND scope_key = %s AND object_type = 'table' "
+                    f"AND (lower(schema_name), lower(table_name)) IN ({tuple_ph}) AND {ro_ds_sql}"
+                )
+                pgc_.execute(sql_t, ["__global__", "common", *flat, scope])
+                total += (pgc_.rowcount if do_delete else int((pgc_.fetchone() or [0])[0])) or 0
+            # schema 노드 — lower(schema_name) IN (...).
+            if schema_vals:
+                sch_ph = ",".join(["%s"] * len(schema_vals))
+                sql_s = (
+                    f"{verb} public.rag_objects "
+                    f"WHERE conversation_id = %s AND scope_key = %s AND object_type = 'schema' "
+                    f"AND lower(schema_name) IN ({sch_ph}) AND {ro_ds_sql}"
+                )
+                pgc_.execute(sql_s, ["__global__", "common", *schema_vals, scope])
+                total += (pgc_.rowcount if do_delete else int((pgc_.fetchone() or [0])[0])) or 0
+            return total
+
+        try:
+            pgc = pg.cursor()
+            if dry_run:
+                pgc.execute(
+                    f"SELECT COUNT(*) FROM public.fact_entries "
+                    f"WHERE conversation_id = %s AND scope_key = %s "
+                    f"AND source_type IN ('schema_insight','table_insight') AND ({fact_like_sql})",
+                    ["__global__", "common", *fact_patterns],
+                )
+                fact_n = int((pgc.fetchone() or [0])[0])
+                pgc.execute(
+                    f"SELECT COUNT(*) FROM public.rag_documents "
+                    f"WHERE conversation_id = %s AND scope_key = %s "
+                    f"AND source_type IN ('schema_insight','table_insight') AND ({fact_like_sql})",
+                    ["__global__", "common", *fact_patterns],
+                )
+                doc_n = int((pgc.fetchone() or [0])[0])
+                ro_n = _count_or_delete_rag(pgc, do_delete=False)
+                pgc.execute(
+                    f"SELECT COUNT(*) FROM agent_runtime.kv "
+                    f"WHERE conversation_id = %s AND ({kv_like_sql})",
+                    ["__global__", *kv_patterns],
+                )
+                kv_n = int((pgc.fetchone() or [0])[0])
+                pg.close()
+                return JSONResponse({
+                    "dry_run": True, "db": db_name, "product_id": pid,
+                    "to_delete": {
+                        "fact_entries": fact_n, "rag_documents": doc_n,
+                        "rag_objects": ro_n, "kv": kv_n,
+                        "total": fact_n + doc_n + ro_n + kv_n,
+                    },
+                })
+
+            # ── 실제 삭제 ──
+            actor = _build_actor_from_request(request, account, actor_type="account")
+            started_at = datetime.now(timezone.utc)
+            # TASK-0230 (M3): audit.purge 패턴 답습 — 파괴적 삭제 **전에** start 이벤트를 먼저 commit 한다.
+            # audit write 가 실패하면 삭제를 진행하지 않는다(정합성 fail-safe; 삭제만 되고 흔적 없는 상황 차단).
+            try:
+                record_audit_event(
+                    conn, actor=actor, action="insight.reset.start",
+                    resource_type="product_database", resource_id=f"{pid}:{db_name}",
+                    change_json={
+                        "product_id": pid, "db": db_name, "scope": scope,
+                        "scope_aliases": scope_aliases, "allow_null": allow_null,
+                        "started_at": started_at.isoformat(),
+                    },
+                )
+                conn.commit()
+            except Exception as exc:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                pg.close()
+                logging.getLogger("app").warning("insight_reset start-audit fail pid=%s err=%r", pid, exc)
+                return _json_error(f"초기화 시작 audit 기록 실패 — 삭제를 진행하지 않았습니다: {exc}", 500)
+
+            deleted = {"fact_entries": 0, "rag_documents": 0, "rag_objects": 0, "kv": 0}
+            pg.autocommit = False
+            try:
+                pgc.execute(
+                    f"DELETE FROM public.fact_entries "
+                    f"WHERE conversation_id = %s AND scope_key = %s "
+                    f"AND source_type IN ('schema_insight','table_insight') AND ({fact_like_sql})",
+                    ["__global__", "common", *fact_patterns],
+                )
+                deleted["fact_entries"] = pgc.rowcount or 0
+                pgc.execute(
+                    f"DELETE FROM public.rag_documents "
+                    f"WHERE conversation_id = %s AND scope_key = %s "
+                    f"AND source_type IN ('schema_insight','table_insight') AND ({fact_like_sql})",
+                    ["__global__", "common", *fact_patterns],
+                )
+                deleted["rag_documents"] = pgc.rowcount or 0
+                deleted["rag_objects"] = _count_or_delete_rag(pgc, do_delete=True)
+                pgc.execute(
+                    f"DELETE FROM agent_runtime.kv "
+                    f"WHERE conversation_id = %s AND ({kv_like_sql})",
+                    ["__global__", *kv_patterns],
+                )
+                deleted["kv"] = pgc.rowcount or 0
+                pg.commit()
+            except Exception as exc:
+                try:
+                    pg.rollback()
+                except Exception:
+                    pass
+                pg.close()
+                logging.getLogger("app").warning("insight_reset delete fail pid=%s db=%s err=%r", pid, db_name, exc)
+                return _json_error("insight 초기화 삭제 실패 — 변경이 롤백되었습니다. 로그를 확인하세요.", 500)
+            pg.close()
+
+            total_deleted = sum(deleted.values())
+            completed_at = datetime.now(timezone.utc)
+            # complete self-audit (best-effort — 삭제는 이미 성공, start 이벤트로 추적 보장됨).
+            try:
+                record_audit_event(
+                    conn, actor=actor, action="insight.reset.complete",
+                    resource_type="product_database", resource_id=f"{pid}:{db_name}",
+                    change_json={
+                        "product_id": pid, "db": db_name, "scope": scope,
+                        "scope_aliases": scope_aliases, "allow_null": allow_null,
+                        "deleted": deleted, "total_deleted": total_deleted,
+                        "started_at": started_at.isoformat(), "completed_at": completed_at.isoformat(),
+                    },
+                )
+                conn.commit()
+            except Exception as exc:
+                logging.getLogger("app").warning("insight_reset complete-audit fail pid=%s err=%r", pid, exc)
+
+            # 완료율 캐시 무효화 (이 제품 + 같은 datasource 공유 제품들).
+            try:
+                with _INSIGHT_COVERAGE_CACHE_LOCK:
+                    _INSIGHT_COVERAGE_CACHE.clear()
+            except Exception:
+                pass
+
+            return JSONResponse({
+                "dry_run": False, "db": db_name, "product_id": pid,
+                "deleted": deleted, "total_deleted": total_deleted,
+                "note": "다음 insight-worker cycle 에 자동 재분석됩니다.",
+            })
+        finally:
+            try:
+                if not pg.closed:
+                    pg.close()
+            except Exception:
+                pass
+    finally:
+        conn.close()
 
 
 @app.post("/api/admin/products")
