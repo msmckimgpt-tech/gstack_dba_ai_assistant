@@ -9796,6 +9796,8 @@ async def admin_list_datasources(request: Request) -> JSONResponse:
         return JSONResponse({
             "enabled": bool(AGENT_MULTI_DATASOURCE_ENABLED),
             "encryption_ready": bool(_cc.enc_available()),  # KEK 설정 여부(미설정 시 UI 가 CRUD 비활성)
+            # TASK-0228: 사설/링크로컬 SSRF 경계 활성 여부 — UI 안내 문구 정합용(메타데이터 차단은 토글 무관 상시).
+            "ssrf_private_guard_enabled": bool(_ssrf_private_guard_enabled()),
             "datasources": datasources,
             "products": products,
         })
@@ -9928,6 +9930,27 @@ async def admin_test_datasource(key: str, request: Request) -> JSONResponse:
 
 
 # ── TASK-0205: datasource CRUD (자격증명 DB 암호화 저장) + SSRF 차단 ────────────────
+def _ssrf_private_guard_enabled() -> bool:
+    """사설/링크로컬 IP 차단(SSRF 경계)의 활성 여부. 기본 활성(secure-by-default).
+
+    TASK-0228: 사내 환경은 대부분 사설망 IP(예: `10.200.50.80`, RFC1918)로 DB 연결정보를
+    구성·운영한다. 이 경우 datasource 생성·연결테스트가 `_ssrf_check_host` 의 사설망 차단에
+    걸린다(설계상 SSRF 방어). 운영자가 `AGENT_DATASOURCE_SSRF_GUARD_ENABLED=0` 으로 **사설망
+    경계만 의도적으로 비활성화**할 수 있게 한다(`.env.secret` 1줄). 기본값(미설정/그 외 값)은
+    `1`=활성이라 코드 기본 동작은 secure-by-default 로 유지된다 — 즉 "방어 구성은 코드에 보존"
+    하고 운영 설정으로만 끈다(복원 시 env 값을 `1` 로 되돌리면 즉시 재활성).
+
+    **이 토글이 끄는 것은 RFC1918 사설망(`is_private`) 차단뿐**이다 (사용자 승인 범위 = 사내 사설망 DB).
+    다음은 토글과 무관하게 항상 유지된다 (REV-20260611-0228 Finding A/B/C): 클라우드 메타데이터 IP
+    하드차단(169.254.169.254·100.100.100.200, IPv4-mapped IPv6 형 포함), loopback(127.x/::1)·
+    link-local(169.254.x/fe80::)·reserved·multicast 차단, DNS rebinding pin. 끄면 순수 위험만
+    추가되는 경계라 토글 범위에서 제외한다.
+    """
+    import os as _os
+    raw = str(_os.getenv("AGENT_DATASOURCE_SSRF_GUARD_ENABLED", "1")).strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
 def _ssrf_check_host(host) -> "tuple[bool, str, str]":
     """admin 입력 host 의 SSRF 안전성(M3): 사설망/링크로컬/메타데이터 IP 차단. (ok, reason, pinned_ip).
 
@@ -9938,6 +9961,9 @@ def _ssrf_check_host(host) -> "tuple[bool, str, str]":
     이들은 앱 인프라('Database Query Assistant')라 SSRF 위험 대상이 아니다 — main_mysql(host=`mysql`=DB_HOST)이
     도커 사설 IP 로 해석돼 연결 테스트·DB 목록 조회가 차단되던 회귀를 막는다. 외부 datasource 만 SSRF 게이트 대상.
 
+    TASK-0228: `AGENT_DATASOURCE_SSRF_GUARD_ENABLED=0` 시 사설/링크로컬 차단을 전역 비활성화(사내
+    사설망 운영). 단 메타데이터 IP 하드차단·DNS pin 은 유지. 상세는 `_ssrf_private_guard_enabled` 참조.
+
     **DNS rebinding 방어(REV-0205 MAJOR-2)**: 모든 해석 IP 가 안전함을 확인하고 그 중 하나(`pinned_ip`)를
     반환한다. 호출측은 연결 시 host 명을 재해석하지 않고 **pinned_ip 로 고정 연결**해 TOCTOU rebind 를 차단한다.
     """
@@ -9947,6 +9973,7 @@ def _ssrf_check_host(host) -> "tuple[bool, str, str]":
     h = str(host or "").strip()
     if not h:
         return False, "host 비어있음", ""
+    private_guard = _ssrf_private_guard_enabled()
     allow_raw = [a.strip() for a in _os.getenv("AGENT_DATASOURCE_HOST_ALLOWLIST", "").split(",") if a.strip()]
     # TASK-0214: 앱 인프라 데이터 MySQL(DB_HOST)·replica 는 implicit 허용 — 운영자 allowlist 미설정과 무관.
     for _internal in (DB_HOST, _os.getenv("REPLICA_DB_HOST", "")):
@@ -9960,30 +9987,47 @@ def _ssrf_check_host(host) -> "tuple[bool, str, str]":
     ips = {si[4][0] for si in infos}
     if not ips:
         return False, "IP 해석 실패", ""
+    _METADATA_IPS = ("169.254.169.254", "100.100.100.200")
     pinned = None
     for ipstr in sorted(ips):
         try:
             ip = ipaddress.ip_address(ipstr)
         except Exception:
             return False, "IP 파싱 실패", ""
-        # 클라우드 메타데이터 IP 는 allowlist 무관 하드차단(IPv4/IPv6 매핑·Alibaba 포함).
-        if ipstr in ("169.254.169.254", "100.100.100.200") or str(ip).endswith("::ffff:169.254.169.254"):
+        # 클라우드 메타데이터 IP 는 allowlist·토글 무관 하드차단(AWS/GCP/Azure + Alibaba).
+        # REV-20260611-0228 BLOCK-fix: IPv4-mapped IPv6 형(`::ffff:169.254.169.254` 등)은
+        # str(ip) 가 `::ffff:a9fe:a9fe` 로 정규화돼 문자열 비교가 빗나간다 → `ipv4_mapped` 로
+        # 언래핑해 비교한다. 토글 OFF 여도 메타데이터는 반드시 차단(불변식).
+        _mapped = getattr(ip, "ipv4_mapped", None)
+        _eff = str(_mapped) if _mapped is not None else ipstr
+        if _eff in _METADATA_IPS or ipstr in _METADATA_IPS:
             return False, "메타데이터 IP 차단", ""
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+        # TASK-0228: private_guard 비활성 시 **RFC1918 사설망만** 허용한다(사용자 승인 범위).
+        # loopback/link-local/reserved/multicast 는 토글과 무관하게 항상 차단 — 사내 DB 운영과
+        # 무관하고 끄면 순수 위험만 추가되기 때문(REV-20260611-0228 Finding C). 단 127.x·
+        # 169.254.x 는 is_private 도 True 이므로, "토글 OFF 시 사설 허용" 은 loopback/link-local
+        # /reserved/multicast 가 아닌 순수 RFC1918 에만 적용된다.
+        _ip_for_class = _mapped if _mapped is not None else ip  # IPv4-mapped 분류 회피
+        _nonprivate_blocked = (_ip_for_class.is_loopback or _ip_for_class.is_link_local
+                               or _ip_for_class.is_reserved or _ip_for_class.is_multicast)
+        _guarded = _nonprivate_blocked or (private_guard and _ip_for_class.is_private)
+        if _guarded:
             allowed = False
             for a in allow_raw:
                 try:
                     if "/" in a:
-                        if ip in ipaddress.ip_network(a, strict=False):
+                        if _ip_for_class in ipaddress.ip_network(a, strict=False):
                             allowed = True
                             break
-                    elif a == h or a == ipstr:
+                    elif a == h or a == ipstr or a == str(_ip_for_class):
                         allowed = True
                         break
                 except Exception:
                     continue
             if not allowed:
-                return False, f"사설/링크로컬 IP 차단(allowlist 필요): {ipstr}", ""
+                _label = "사설/링크로컬 IP 차단(allowlist 필요)" if not _nonprivate_blocked \
+                    else "loopback/링크로컬/예약 IP 차단"
+                return False, f"{_label}: {ipstr}", ""
         if pinned is None:
             pinned = ipstr
     return True, "", (pinned or h)

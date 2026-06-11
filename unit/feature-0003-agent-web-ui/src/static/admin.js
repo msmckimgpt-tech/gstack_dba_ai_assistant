@@ -12,6 +12,7 @@ const adminState = {
   products: [],
   datasources: [],            // 멀티 datasource (P2): 등록 datasource 키 목록
   datasourcesEnabled: false,  // AGENT_MULTI_DATASOURCE_ENABLED flag
+  datasourcesSsrfPrivateGuard: true,  // TASK-0219: 사설/링크로컬 SSRF 경계 활성 여부(안내 문구 정합)
   tab: "dashboard",
   accountFilter: "all",
   accountSearch: "",
@@ -1326,6 +1327,9 @@ function _dsRenderDetail(ds) {
     note.textContent = "멀티 datasource 비활성(AGENT_MULTI_DATASOURCE_ENABLED=0). 등록은 가능하나 flag 활성화 전까지 동작하지 않습니다.";
   } else if (!adminState.datasourcesEncryptionReady) {
     note.textContent = "⚠ 암호화 키(AGENT_DATASOURCE_KEK_V1) 미설정 — 생성/수정이 차단됩니다. 운영자가 KEK 를 설정하세요.";
+  } else if (!adminState.datasourcesSsrfPrivateGuard) {
+    // TASK-0219: 사설망 경계 비활성(사내 사설망 운영). 메타데이터 IP 는 여전히 차단.
+    note.textContent = "사설망 IP 허용(SSRF 사설 경계 비활성, 사내망 운영). 클라우드 메타데이터 IP 는 여전히 차단됩니다.";
   } else {
     note.textContent = "호스트는 사설망/메타데이터 IP 가 차단됩니다(SSRF 방어).";
   }
@@ -3951,6 +3955,8 @@ async function loadAdminData() {
   adminState.products = Array.isArray(productsPayload.products) ? productsPayload.products : [];
   adminState.datasourcesEnabled = Boolean(datasourcesPayload && datasourcesPayload.enabled);
   adminState.datasourcesEncryptionReady = Boolean(datasourcesPayload && datasourcesPayload.encryption_ready);
+  // TASK-0219: 미전달(구버전 백엔드)이면 기본 활성으로 간주(secure-by-default 안내).
+  adminState.datasourcesSsrfPrivateGuard = !datasourcesPayload || datasourcesPayload.ssrf_private_guard_enabled !== false;
   adminState.datasources = Array.isArray(datasourcesPayload && datasourcesPayload.datasources) ? datasourcesPayload.datasources : [];
   // TASK-0205: datasource GET 의 products(datasource_database 포함)를 product 객체에 병합(상세화면 참조 DB 표시용).
   {

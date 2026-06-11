@@ -2056,12 +2056,23 @@ source_of_truth: true
 - Risk: low — 클라이언트 펼침 상태 추적만. run 전환 시 Set clear 로 키 누수 방지. step 키는 기존 dedup 키(`step_index:created_at`) 재사용. 시각 동작은 PB-0008(배포 후)로 확인.
 - Cross-ref: CHG-20260611-0227 / TASK-0227.
 
-## REV-20260611-0228 [SKIPPED:frontend-ia-merge-no-backend]
+## REV-20260611-0228 [SUBAGENT:security] — BLOCK→흡수→PASS
+- Related TASK: feature-0003-agent-web-ui (TASK-0228)
+- Trigger: SSRF/보안경계 keyword matched — datasource host 가드 사설망 차단 비활성화 (§12.3 Major 보안 다운그레이드, 사용자 명시 승인)
+- Timestamp: 2026-06-11T00:00:00Z
+- Verdict: BLOCK (초기) → 발견 전건 흡수 후 PASS 재검증
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260611T000000Z-security.md
+- Critical issue (흡수됨): (A/B) 토글 OFF 시 IPv4-mapped IPv6 메타데이터 IP(`::ffff:169.254.169.254`/`::ffff:100.100.100.200`)가 `str(ip).endswith(...)` 정규화 빗나감으로 통과 → 메타데이터 SSRF. (C) 토글이 loopback/link-local 까지 함께 개방(승인 범위=RFC1918 초과).
+- Resolution: 메타데이터 차단을 `ip.ipv4_mapped` 언래핑 비교(토글 무관)로 강화 + 토글을 `is_private`(RFC1918)에만 적용하고 loopback/link-local/reserved/multicast 는 상시 차단. 단위테스트 22→31(IPv4-mapped 메타데이터·loopback·link-local 케이스 추가) + 통합 trace 11 케이스 ALL PASS. datasource 회귀 12/29 PASS(회귀 0).
+- Human Approval Needed: no (보안 다운그레이드 자체는 사용자 사전 승인 + 잔여 위험을 승인 범위로 정확히 한정)
+- Cross-ref: CHG-20260611-0228 / TASK-0228 / ADR-0030 / SECURITY §11.
+
+## REV-20260611-0229 [SKIPPED:frontend-ia-merge-no-backend]
 - Date: 2026-06-11
-- Cycle: TASK-0228 (관리 콘솔 제품 상세 `접근 가능 데이터베이스` UI 통합 — DB chip ↔ insight 완료율 1:1 중복 제거 + 시스템 DB 단일 묶음 칩), **Minor §12.3**
+- Cycle: TASK-0229 (관리 콘솔 제품 상세 `접근 가능 데이터베이스` UI 통합 — DB chip ↔ insight 완료율 1:1 중복 제거 + 시스템 DB 단일 묶음 칩; 동시세션 SSRF cycle TASK-0228 선점→§13.1 재번호), **Minor §12.3**
 - Design panel: gstack `/design-review` 메서드론(general-purpose design subagent) — 사용자 보고 2 IA 문제(중복 1:1 / 시스템 chip 산만)에 대한 통합 재설계 스펙 도출. 핵심 결정 "분석 대상(사용자 DB)=단일 리스트 행(진척+제거), 비-분석 대상(시스템 DB)=접근성 묶음 칩". 디자인 토큰 한정·접근성(hover만 금지) 제약 반영.
 - Reason: 순수 frontend IA 재구성. admin.js(렌더 함수 3종 재작성/신설) + styles.css(클래스 재구성) + admin.html(캐시버스터). **신규 RBAC 권한·DB 스키마·암호화·신규 엔드포인트·백엔드(app.py)·coverage 엔드포인트 응답 shape 변경 0** — 기존 per_db 데이터와 draft chip 배열을 클라이언트에서 `db ↔ schema_name`(소문자) 조인해 한 리스트로 표시할 뿐. 적대적 보안 패널 불요 — 권한 경계·자격증명·쓰기 경로 변화 없음(전례 REV-20260611-0225/0227 frontend-only SKIP 동일 등급).
 - 데이터 정합 검증: 백엔드 `_compute_product_insight_coverage` 의 `accessible = _list_product_databases(conn, pid)` 확인 → `per_db` 집합 = 사용자 등록 DB(draft) 와 동일, 시스템 DB(metadata_schemas)는 per_db 미포함 → 1:1 융합 + 시스템 분리가 데이터 모델과 정합. picker 추가 직후(per_db 미갱신) DB 는 `covRow=null`→"측정 대기" graceful.
 - 접근성: 시스템 묶음 칩에 `title`(네이티브) + `aria-label`(스크린리더) + `tabindex=0` + `:hover`/`:focus`/`:focus-within` 커스텀 툴팁 3중 병행 — 키보드·터치 사용자도 개별 DB 이름 확인 가능.
-- Risk: low — 시각 IA 변경만. 연결 불가 DB 는 행 opacity 다운+점선 마이크로바+"연결 불가" 상태칩으로 정직 표기(기존 색상 등급 로직 재사용). node --check admin.js PASS + CSS brace balance(1031/1031). 시각 동작은 PB-0008(배포 후)로 확인.
-- Cross-ref: CHG-20260611-0228 / TASK-0228 / TASK-0223 / TASK-0206.
+- Risk: low — 시각 IA 변경만. 연결 불가 DB 는 행 opacity 다운+점선 마이크로바+"연결 불가" 상태칩으로 정직 표기(기존 색상 등급 로직 재사용). node --check admin.js PASS + CSS brace balance. 시각 동작은 PB-0008(배포 후)로 확인.
+- Cross-ref: CHG-20260611-0229 / TASK-0229 / TASK-0223 / TASK-0206.
