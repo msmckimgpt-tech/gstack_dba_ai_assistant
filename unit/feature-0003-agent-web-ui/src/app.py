@@ -15274,15 +15274,18 @@ def admin_llm_usage(request: Request) -> JSONResponse:
 
 # 위젯 카탈로그: key, 표시 제목, 표시에 필요한 권한, 렌더 출처(server=overview 집계 /
 # client=프런트가 별도 소스로 렌더). 튜플 순서 = 기본 배치 순서.
+# TASK-0218: 카탈로그 순서 = 기본 위계(CloudWatch 운영 위계). 활동/비용/이상 KPI(추세·
+# sparkline 보유)를 상단에, 변동 적은 인벤토리(제품/데이터소스/역할)를 하단에. 저장된
+# per-account prefs 가 있으면 그쪽 순서가 우선(이 순서는 기본값/신규 위젯 합류 기준).
 _DASHBOARD_WIDGETS: tuple[dict, ...] = (
+    {"key": "conversations", "title": "대화·활동",    "permission": "console.access",     "source": "server"},
+    {"key": "usage",         "title": "LLM 사용량",   "permission": "console.usage.read", "source": "server"},
+    {"key": "audits",        "title": "감사 활동",    "permission": "audit.read.any",     "source": "server"},
+    {"key": "grant_health",  "title": "첨부 DB 권한", "permission": "console.access",     "source": "client"},
     {"key": "accounts",      "title": "계정",         "permission": "console.access",     "source": "server"},
-    {"key": "roles",         "title": "역할",         "permission": "console.access",     "source": "server"},
     {"key": "products",      "title": "제품",         "permission": "console.access",     "source": "server"},
     {"key": "datasources",   "title": "데이터소스",   "permission": "console.access",     "source": "server"},
-    {"key": "conversations", "title": "대화·활동",    "permission": "console.access",     "source": "server"},
-    {"key": "audits",        "title": "감사 활동",    "permission": "audit.read.any",     "source": "server"},
-    {"key": "usage",         "title": "LLM 사용량",   "permission": "console.usage.read", "source": "server"},
-    {"key": "grant_health",  "title": "첨부 DB 권한", "permission": "console.access",     "source": "client"},
+    {"key": "roles",         "title": "역할",         "permission": "console.access",     "source": "server"},
     {"key": "pending",       "title": "미저장 변경",  "permission": "console.access",     "source": "client"},
 )
 _DASHBOARD_WIDGET_KEYS: frozenset = frozenset(w["key"] for w in _DASHBOARD_WIDGETS)
@@ -15363,7 +15366,42 @@ def _save_dashboard_pref_row(conn, account_id: int, content: dict) -> None:
 
 # ── 위젯별 집계 (각 함수는 예외를 던질 수 있으며 overview 호출부가 격리) ──────
 
-def _dash_widget_accounts(conn) -> dict:
+# ── CloudWatch 스타일 보조 (TASK-0218): 전기간 대비 델타 + 일별 sparkline 시계열 ──
+
+def _dash_pct_delta(current, prior):
+    """전기간(직전 동일 윈도우) 대비 변화율(%). prior 가 0/None 이면 None(기준선 없음)."""
+    try:
+        p = float(prior)
+        if p <= 0:
+            return None
+        return round((float(current) - p) / p * 100.0, 1)
+    except Exception:
+        return None
+
+
+def _dash_fill_daily(rows, days: int) -> list:
+    """[(day, count)] (day=date/datetime/str) → 윈도우 일자별 정수 배열(오래된→최신, 결측=0).
+
+    sparkline 용. 점 과밀 방지 위해 최대 60일. UTC 일자 기준 gap-fill(트렌드 근사이므로
+    DB tz 미세차는 허용). days<2 면 단일 점이라 프런트가 sparkline 을 생략한다.
+    """
+    span = max(1, min(int(days), 60))
+    counts: dict[str, int] = {}
+    for r in (rows or []):
+        d = r[0]
+        if d is None:
+            continue
+        key = d.isoformat()[:10] if hasattr(d, "isoformat") else str(d)[:10]
+        try:
+            counts[key] = int(r[1] or 0)
+        except Exception:
+            counts[key] = 0
+    today = datetime.now(timezone.utc).date()
+    return [counts.get((today - timedelta(days=i)).isoformat(), 0) for i in range(span - 1, -1, -1)]
+
+
+def _dash_widget_accounts(conn, days: int = 7) -> dict:
+    d = int(days)
     cur = conn.cursor()
     try:
         cur.execute(
@@ -15371,7 +15409,7 @@ def _dash_widget_accounts(conn) -> dict:
             " SUM(CASE WHEN IsActive=1 AND DeletedAt IS NULL THEN 1 ELSE 0 END), "
             " SUM(CASE WHEN IsActive=0 AND DeletedAt IS NULL THEN 1 ELSE 0 END), "
             " SUM(CASE WHEN DeletedAt IS NOT NULL THEN 1 ELSE 0 END), "
-            " SUM(CASE WHEN LastLoginAt >= (NOW() - INTERVAL 7 DAY) AND DeletedAt IS NULL THEN 1 ELSE 0 END), "
+            f" SUM(CASE WHEN LastLoginAt >= (NOW() - INTERVAL {d} DAY) AND DeletedAt IS NULL THEN 1 ELSE 0 END), "
             " COUNT(*) FROM WebAccounts"
         )
         r = cur.fetchone() or (0, 0, 0, 0, 0)
@@ -15385,11 +15423,12 @@ def _dash_widget_accounts(conn) -> dict:
     finally:
         cur.close()
     return {
+        "tab": "accounts",
         "metrics": [
-            {"label": "활성", "value": active, "accent": "ok"},
+            {"label": "활성 계정", "value": active, "primary": True, "accent": "ok"},
             {"label": "비활성", "value": inactive},
             {"label": "삭제됨", "value": deleted, "accent": "muted"},
-            {"label": "최근 7일 로그인", "value": recent},
+            {"label": f"최근 {d}일 로그인", "value": recent},
             {"label": "전체", "value": total},
         ],
         "lists": ([{"title": "역할별 계정", "rows": by_role}] if by_role else []),
@@ -15410,7 +15449,8 @@ def _dash_widget_roles(conn) -> dict:
     finally:
         cur.close()
     return {
-        "metrics": [{"label": "역할 수", "value": role_count}],
+        "tab": "roles",
+        "metrics": [{"label": "역할 수", "value": role_count, "primary": True}],
         "lists": ([{"title": "역할별 권한 수", "rows": by_perm}] if by_perm else []),
     }
 
@@ -15429,8 +15469,9 @@ def _dash_widget_products(conn) -> dict:
     finally:
         cur.close()
     return {
+        "tab": "products",
         "metrics": [
-            {"label": "활성 제품", "value": active, "accent": "ok"},
+            {"label": "활성 제품", "value": active, "primary": True, "accent": "ok"},
             {"label": "비활성", "value": inactive, "accent": "muted"},
             {"label": "datasource 바인딩", "value": bound},
             {"label": "전체", "value": total},
@@ -15450,64 +15491,98 @@ def _dash_widget_datasources(conn) -> dict:
     finally:
         cur.close()
     return {
+        "tab": "datasources",
         "metrics": [
-            {"label": "활성 데이터소스", "value": active, "accent": "ok"},
+            {"label": "활성 데이터소스", "value": active, "primary": True, "accent": "ok"},
             {"label": "전체 등록", "value": total},
         ],
         "lists": ([{"title": "엔진별", "rows": by_engine}] if by_engine else []),
     }
 
 
-def _dash_widget_audits(conn) -> dict:
+def _dash_widget_audits(conn, days: int = 7) -> dict:
+    d = int(days)
     cur = conn.cursor()
     try:
+        cur.execute(f"SELECT COUNT(*) FROM WebAuditEvents WHERE OccurredAt >= (NOW() - INTERVAL {d} DAY)")
+        cur_total = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute(
+            f"SELECT COUNT(*) FROM WebAuditEvents "
+            f"WHERE OccurredAt >= (NOW() - INTERVAL {2 * d} DAY) AND OccurredAt < (NOW() - INTERVAL {d} DAY)"
+        )
+        prior_total = int((cur.fetchone() or (0,))[0] or 0)
         cur.execute("SELECT COUNT(*) FROM WebAuditEvents WHERE OccurredAt >= (NOW() - INTERVAL 1 DAY)")
         last24 = int((cur.fetchone() or (0,))[0] or 0)
-        cur.execute("SELECT COUNT(*) FROM WebAuditEvents WHERE OccurredAt >= (NOW() - INTERVAL 7 DAY)")
-        last7 = int((cur.fetchone() or (0,))[0] or 0)
         cur.execute(
-            "SELECT ActionCode, COUNT(*) FROM WebAuditEvents "
-            "WHERE OccurredAt >= (NOW() - INTERVAL 7 DAY) GROUP BY ActionCode ORDER BY 2 DESC LIMIT 8"
+            f"SELECT DATE(OccurredAt), COUNT(*) FROM WebAuditEvents "
+            f"WHERE OccurredAt >= (NOW() - INTERVAL {d} DAY) GROUP BY DATE(OccurredAt) ORDER BY 1"
+        )
+        spark = _dash_fill_daily(cur.fetchall(), d)
+        cur.execute(
+            f"SELECT ActionCode, COUNT(*) FROM WebAuditEvents "
+            f"WHERE OccurredAt >= (NOW() - INTERVAL {d} DAY) GROUP BY ActionCode ORDER BY 2 DESC LIMIT 8"
         )
         by_action = [{"label": str(x[0]), "value": int(x[1])} for x in (cur.fetchall() or [])]
         cur.execute(
-            "SELECT COALESCE(a.Username, '(익명/시스템)'), COUNT(*) "
-            "FROM WebAuditEvents ev LEFT JOIN WebAccounts a ON a.Id = ev.ActorAccountId "
-            "WHERE ev.OccurredAt >= (NOW() - INTERVAL 7 DAY) "
-            "GROUP BY ev.ActorAccountId, a.Username ORDER BY 2 DESC LIMIT 8"
+            f"SELECT COALESCE(a.Username, '(익명/시스템)'), COUNT(*) "
+            f"FROM WebAuditEvents ev LEFT JOIN WebAccounts a ON a.Id = ev.ActorAccountId "
+            f"WHERE ev.OccurredAt >= (NOW() - INTERVAL {d} DAY) "
+            f"GROUP BY ev.ActorAccountId, a.Username ORDER BY 2 DESC LIMIT 8"
         )
         by_actor = [{"label": str(x[0]), "value": int(x[1])} for x in (cur.fetchall() or [])]
     finally:
         cur.close()
+    primary = {"label": f"최근 {d}일 이벤트", "value": cur_total, "primary": True, "spark": spark}
+    dp = _dash_pct_delta(cur_total, prior_total)
+    if dp is not None:
+        primary["delta_pct"] = dp
+        primary["delta_sentiment"] = "neutral"  # 감사량 증감은 정보성(좋/나쁨 단정 불가)
     lists = []
     if by_action:
-        lists.append({"title": "액션별 (7일)", "rows": by_action})
+        lists.append({"title": f"액션별 ({d}일)", "rows": by_action})
     if by_actor:
-        lists.append({"title": "actor별 (7일)", "rows": by_actor})
+        lists.append({"title": f"actor별 ({d}일)", "rows": by_actor})
     return {
-        "metrics": [
-            {"label": "최근 24시간 이벤트", "value": last24},
-            {"label": "최근 7일 이벤트", "value": last7},
-        ],
+        "tab": "audits",
+        "metrics": [primary, {"label": "최근 24시간", "value": last24}],
         "lists": lists,
     }
 
 
-def _dash_widget_conversations(pg) -> dict:
+def _dash_widget_conversations(pg, days: int = 7) -> dict:
+    d = int(days)
+    cur_win = f"now() - interval '{d} days'"
+    prior_lo = f"now() - interval '{2 * d} days'"
+    prior_hi = cur_win
     with pg.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM agent_runtime.core_conversations")
         total = int((cur.fetchone() or (0,))[0] or 0)
         cur.execute("SELECT COUNT(*) FROM agent_runtime.core_conversations WHERE created_at >= now() - interval '1 day'")
         d1 = int((cur.fetchone() or (0,))[0] or 0)
-        cur.execute("SELECT COUNT(*) FROM agent_runtime.core_conversations WHERE created_at >= now() - interval '7 days'")
-        d7 = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute(f"SELECT COUNT(*) FROM agent_runtime.core_conversations WHERE created_at >= {cur_win}")
+        cur_total = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute(
+            f"SELECT COUNT(*) FROM agent_runtime.core_conversations "
+            f"WHERE created_at >= {prior_lo} AND created_at < {prior_hi}"
+        )
+        prior_total = int((cur.fetchone() or (0,))[0] or 0)
         cur.execute("SELECT COUNT(DISTINCT owner_account_id) FROM agent_runtime.core_conversations WHERE owner_account_id IS NOT NULL")
         owners = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute(
+            f"SELECT date_trunc('day', created_at)::date, count(*) FROM agent_runtime.core_conversations "
+            f"WHERE created_at >= {cur_win} GROUP BY 1 ORDER BY 1"
+        )
+        spark = _dash_fill_daily(cur.fetchall(), d)
+    primary = {"label": f"최근 {d}일 대화", "value": cur_total, "primary": True, "spark": spark}
+    dp = _dash_pct_delta(cur_total, prior_total)
+    if dp is not None:
+        primary["delta_pct"] = dp
+        primary["delta_sentiment"] = "neutral"
     return {
         "metrics": [
-            {"label": "전체 대화", "value": total},
+            primary,
             {"label": "최근 24시간", "value": d1, "accent": "ok"},
-            {"label": "최근 7일", "value": d7},
+            {"label": "전체 대화", "value": total},
             {"label": "활성 소유자", "value": owners},
         ],
         "lists": [],
@@ -15515,35 +15590,56 @@ def _dash_widget_conversations(pg) -> dict:
 
 
 def _dash_widget_usage(pg, days: int) -> dict:
-    win = f"now() - interval '{int(days)} days'"  # days 는 호출부에서 int 로 clamp → 인젝션 불가
-    with pg.cursor() as cur:
-        cur.execute(
-            f"SELECT COALESCE(count(*),0), COALESCE(sum(total_tokens),0), "
-            f"COALESCE(count(distinct run_id),0) FROM agent_runtime.llm_usage WHERE created_at >= {win}"
-        )
-        t = cur.fetchone() or (0, 0, 0)
-        calls, tok, reqs = (int(x or 0) for x in t)
+    d = int(days)  # 호출부에서 [1,365] clamp → f-string 삽입 인젝션 불가
+    cur_win = f"now() - interval '{d} days'"
+    prior_lo = f"now() - interval '{2 * d} days'"
+
+    def _cost_tok_for(cur, where):
         cur.execute(
             f"SELECT COALESCE(resolved_model, model), sum(total_tokens), sum(prompt_tokens), sum(completion_tokens) "
-            f"FROM agent_runtime.llm_usage WHERE created_at >= {win} "
-            f"GROUP BY 1 ORDER BY 2 DESC NULLS LAST LIMIT 8"
+            f"FROM agent_runtime.llm_usage WHERE {where} GROUP BY 1 ORDER BY 2 DESC NULLS LAST LIMIT 50"
         )
         rows = cur.fetchall() or []
-    by_model = []
-    cost = 0.0
-    for x in rows:
-        m = str(x[0] or "?")
-        cost += _estimate_llm_cost_usd(m, int(x[2] or 0), int(x[3] or 0))
-        by_model.append({"label": m, "value": int(x[1] or 0)})
+        c = 0.0
+        tk = 0
+        models = []
+        for x in rows:
+            m = str(x[0] or "?")
+            mt = int(x[1] or 0)
+            c += _estimate_llm_cost_usd(m, int(x[2] or 0), int(x[3] or 0))
+            tk += mt
+            models.append({"label": m, "value": mt})
+        return round(c, 2), tk, models
+
+    with pg.cursor() as cur:
+        cur.execute(
+            f"SELECT COALESCE(count(*),0), COALESCE(count(distinct run_id),0) "
+            f"FROM agent_runtime.llm_usage WHERE created_at >= {cur_win}"
+        )
+        t = cur.fetchone() or (0, 0)
+        calls, reqs = int(t[0] or 0), int(t[1] or 0)
+        cost, tok, by_model = _cost_tok_for(cur, f"created_at >= {cur_win}")
+        prior_cost, _ptok, _pm = _cost_tok_for(cur, f"created_at >= {prior_lo} AND created_at < {cur_win}")
+        cur.execute(
+            f"SELECT date_trunc('day', created_at)::date, sum(total_tokens) FROM agent_runtime.llm_usage "
+            f"WHERE created_at >= {cur_win} GROUP BY 1 ORDER BY 1"
+        )
+        spark = _dash_fill_daily(cur.fetchall(), d)
+    primary = {"label": f"추정 비용 ({d}일)", "value": cost, "fmt": "usd", "primary": True, "spark": spark}
+    dp = _dash_pct_delta(cost, prior_cost)
+    if dp is not None:
+        primary["delta_pct"] = dp
+        primary["delta_sentiment"] = "bad"  # 비용 증가는 부정 신호
     return {
+        "tab": "usage",
         "metrics": [
-            {"label": f"토큰 ({int(days)}일)", "value": tok},
+            primary,
+            {"label": "토큰", "value": tok},
             {"label": "요청", "value": reqs},
             {"label": "호출", "value": calls},
-            {"label": "추정 비용", "value": round(cost, 2), "fmt": "usd"},
         ],
-        "lists": ([{"title": "모델별 토큰", "rows": by_model}] if by_model else []),
-        "window_days": int(days),
+        "lists": ([{"title": "모델별 토큰", "rows": by_model[:8]}] if by_model else []),
+        "window_days": d,
     }
 
 
@@ -15591,12 +15687,12 @@ def admin_overview(request: Request) -> JSONResponse:
                 log.warning("admin_overview: widget %s failed", key, exc_info=True)
                 widgets[key] = {"error": True, "metrics": [], "lists": []}
 
-        # MySQL 위젯
-        _isolate("accounts", lambda: _dash_widget_accounts(conn))
+        # MySQL 위젯 (시간 기반 위젯엔 days 윈도우 전파 — TASK-0218 거짓 컨트롤 정직화)
+        _isolate("accounts", lambda: _dash_widget_accounts(conn, days))
         _isolate("roles", lambda: _dash_widget_roles(conn))
         _isolate("products", lambda: _dash_widget_products(conn))
         _isolate("datasources", lambda: _dash_widget_datasources(conn))
-        _isolate("audits", lambda: _dash_widget_audits(conn))
+        _isolate("audits", lambda: _dash_widget_audits(conn, days))
 
         # PG 위젯 (conversations + usage) — 단일 연결 재사용
         if ("conversations" in permitted) or ("usage" in permitted):
@@ -15613,7 +15709,7 @@ def admin_overview(request: Request) -> JSONResponse:
                         widgets[k] = {"error": True, "metrics": [], "lists": []}
             else:
                 try:
-                    _isolate("conversations", lambda: _dash_widget_conversations(pg))
+                    _isolate("conversations", lambda: _dash_widget_conversations(pg, days))
                     _isolate("usage", lambda: _dash_widget_usage(pg, days))
                 finally:
                     try:

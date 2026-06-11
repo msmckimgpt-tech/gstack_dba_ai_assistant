@@ -39,6 +39,12 @@ const adminState = {
   dashboardWindow: 7,        // 집계 기간(일)
   dashboardLoaded: false,
   dashboardLoading: false,
+  // TASK-0218 (CloudWatch UX): 신선도/오류/auto-refresh/드래그 상태.
+  dashboardLastUpdated: null,
+  dashboardError: null,
+  dashboardAutoRefreshSec: 0,
+  _dashboardAutoTimer: null,
+  _dragKey: null,
   pending: {
     accounts: new Map(),
     roles: new Map(),
@@ -1999,6 +2005,50 @@ function _dashFmtValue(v, fmt) {
   return String(v == null ? "—" : v);
 }
 
+// TASK-0218: 전기간 대비 델타 배지(▲▼%). sentiment 로 색 의미 분기:
+//   neutral=증감 무관 회색, bad=증가가 부정(비용)→증가 적색/감소 녹색, good=반대.
+function _dashDeltaBadge(pct, sentiment) {
+  if (pct == null || Number.isNaN(Number(pct))) return null;
+  const n = Number(pct);
+  const up = n >= 0;
+  let tone = "neutral";
+  if (sentiment === "bad") tone = up ? "bad" : "good";
+  else if (sentiment === "good") tone = up ? "good" : "bad";
+  const span = document.createElement("span");
+  span.className = "dashboard-delta delta-" + tone;
+  span.textContent = (up ? "▲ " : "▼ ") + Math.abs(n) + "%";
+  span.setAttribute("title", `직전 동일 기간 대비 ${up ? "증가" : "감소"} ${Math.abs(n)}%`);
+  return span;
+}
+
+// TASK-0218: 순수 SVG sparkline(외부 라이브러리 0 — baked 정책). 시계열 ≥2 점일 때만.
+function _dashSparkline(values, sentiment) {
+  if (!Array.isArray(values) || values.length < 2) return null;
+  const w = 96, h = 26, pad = 2;
+  const max = Math.max.apply(null, values.concat([1]));
+  const min = Math.min.apply(null, values.concat([0]));
+  const range = max - min || 1;
+  const step = (w - pad * 2) / (values.length - 1);
+  const xy = (v, i) => [pad + i * step, h - pad - ((v - min) / range) * (h - pad * 2)];
+  const pts = values.map((v, i) => xy(v, i).map((c) => c.toFixed(1)).join(",")).join(" ");
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("class", "dashboard-spark" + (sentiment ? " spark-" + sentiment : ""));
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.setAttribute("aria-hidden", "true");
+  const poly = document.createElementNS(ns, "polyline");
+  poly.setAttribute("points", pts);
+  svg.appendChild(poly);
+  const [lx, ly] = xy(values[values.length - 1], values.length - 1);
+  const dot = document.createElementNS(ns, "circle");
+  dot.setAttribute("cx", lx.toFixed(1));
+  dot.setAttribute("cy", ly.toFixed(1));
+  dot.setAttribute("r", "2");
+  svg.appendChild(dot);
+  return svg;
+}
+
 // renderDashboard 는 탭 진입/새로고침/pending 변경 때마다 호출된다(기존 호출처 유지).
 // 최초 1회 overview+prefs 를 fetch 하고 이후엔 캐시로 즉시 재렌더(pending 위젯만 갱신).
 function renderDashboard() {
@@ -2019,10 +2069,26 @@ function wireDashboardControls() {
       loadDashboardOverview(true);
     });
   }
+  // TASK-0218: 수동 새로고침 — 운영 대시보드는 "지금 데이터"를 직접 갱신할 수 있어야 함.
+  const refreshBtn = $("dashboardRefreshBtn");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", () => { adminState.dashboardLoaded = false; loadDashboardOverview(true); });
+  }
+  // TASK-0218: auto-refresh 토글(off/30s/60s). 대시보드 탭일 때만 재조회.
+  const auto = $("dashboardAutoRefresh");
+  if (auto) {
+    auto.value = String(adminState.dashboardAutoRefreshSec || 0);
+    auto.addEventListener("change", () => {
+      const s = parseInt(auto.value, 10) || 0;
+      adminState.dashboardAutoRefreshSec = s;
+      _setDashboardAutoRefresh(s);
+    });
+  }
   const editBtn = $("dashboardEditToggle");
   if (editBtn) {
     editBtn.addEventListener("click", () => {
       adminState.dashboardEditMode = !adminState.dashboardEditMode;
+      if (editBtn) editBtn.setAttribute("aria-pressed", String(adminState.dashboardEditMode));
       renderDashboardWidgets();
     });
   }
@@ -2032,28 +2098,68 @@ function wireDashboardControls() {
   if (resetBtn) resetBtn.addEventListener("click", resetDashboardPrefs);
 }
 
+function _setDashboardAutoRefresh(seconds) {
+  if (adminState._dashboardAutoTimer) {
+    clearInterval(adminState._dashboardAutoTimer);
+    adminState._dashboardAutoTimer = null;
+  }
+  if (seconds && seconds > 0) {
+    adminState._dashboardAutoTimer = setInterval(() => {
+      if (adminState.tab === "dashboard" && !adminState.dashboardEditMode && !adminState.dashboardLoading) {
+        adminState.dashboardLoaded = false;
+        loadDashboardOverview(true);
+      }
+    }, seconds * 1000);
+  }
+}
+
+function _fmtClock(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 async function loadDashboardOverview(force) {
   if (adminState.dashboardLoading) return;
   if (adminState.dashboardLoaded && !force) { renderDashboardWidgets(); return; }
   adminState.dashboardLoading = true;
+  _updateDashboardMeta();  // "갱신 중…" 표시
   try {
     const days = adminState.dashboardWindow || 7;
     const [overview, prefsResp] = await Promise.all([
       apiFetch(`/api/admin/overview?days=${encodeURIComponent(days)}`).catch((e) => ({ _error: e })),
       apiFetch("/api/admin/dashboard/preferences").catch((e) => ({ _error: e })),
     ]);
-    adminState.overview = overview && !overview._error ? overview : { catalog: [], widgets: {} };
+    // TASK-0218 fail-loud: overview fetch 실패를 빈 카탈로그로 숨기지 않고 오류 상태로 보존.
+    if (overview && !overview._error) {
+      adminState.overview = overview;
+      adminState.dashboardError = null;
+      adminState.dashboardLastUpdated = new Date();
+    } else {
+      adminState.dashboardError = (overview && overview._error && overview._error.message) || "대시보드 데이터를 불러오지 못했습니다.";
+      if (!adminState.overview) adminState.overview = { catalog: [], widgets: {} };
+    }
     if (prefsResp && !prefsResp._error && prefsResp.preferences) {
       adminState.dashboardPrefs = prefsResp.preferences;
       adminState.dashboardDefaults = prefsResp.defaults || null;
     } else if (!adminState.dashboardPrefs) {
       adminState.dashboardPrefs = { version: 1, widgets: [] };
     }
-    adminState.dashboardLoaded = true;
+    adminState.dashboardLoaded = !adminState.dashboardError;
   } finally {
     adminState.dashboardLoading = false;
   }
   renderDashboardWidgets();
+}
+
+// toolbar 의 "마지막 갱신 HH:MM:SS" 라벨 갱신(데이터 신선도 — CloudWatch 패턴).
+function _updateDashboardMeta() {
+  const el = $("dashboardUpdated");
+  if (!el) return;
+  if (adminState.dashboardLoading) { el.textContent = "갱신 중…"; return; }
+  if (adminState.dashboardError) { el.textContent = "갱신 실패"; return; }
+  el.textContent = adminState.dashboardLastUpdated
+    ? "마지막 갱신 " + _fmtClock(adminState.dashboardLastUpdated)
+    : "";
 }
 
 // catalog(서버 권위 위젯 목록) + prefs(표시/순서)를 합쳐 최종 렌더 순서를 만든다.
@@ -2085,10 +2191,20 @@ function renderDashboardWidgets() {
   if (editBar) editBar.hidden = !editing;
   const editBtn = $("dashboardEditToggle");
   if (editBtn) editBtn.textContent = editing ? "완료" : "편집";
+  _updateDashboardMeta();
 
   const items = _dashboardRenderOrder();
   wrap.classList.toggle("is-editing", editing);
   wrap.innerHTML = "";
+
+  // TASK-0218 fail-loud: 전체 overview 실패 시 빈 화면 대신 오류 배너 + 재시도.
+  if (adminState.dashboardError && !items.length) {
+    wrap.appendChild(_buildDashboardErrorBanner());
+    return;
+  }
+  if (adminState.dashboardError) {
+    wrap.appendChild(_buildDashboardErrorBanner());
+  }
 
   if (!items.length) {
     const empty = document.createElement("div");
@@ -2098,7 +2214,7 @@ function renderDashboardWidgets() {
     return;
   }
   const shown = editing ? items : items.filter((it) => it.visible);
-  if (!shown.length) {
+  if (!shown.length && !editing) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.textContent = "모든 위젯이 숨김 상태입니다. 우측 상단 “편집”에서 표시할 위젯을 선택하세요.";
@@ -2110,11 +2226,30 @@ function renderDashboardWidgets() {
   if ($("dashboardGrantHealth")) loadGrantHealth();
 }
 
+function _buildDashboardErrorBanner() {
+  const b = document.createElement("div");
+  b.className = "dashboard-error-banner";
+  b.setAttribute("role", "alert");
+  const msg = document.createElement("span");
+  msg.textContent = "⚠ " + (adminState.dashboardError || "대시보드 데이터를 불러오지 못했습니다.");
+  b.appendChild(msg);
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.className = "btn-secondary";
+  retry.textContent = "다시 시도";
+  retry.addEventListener("click", () => { adminState.dashboardLoaded = false; loadDashboardOverview(true); });
+  b.appendChild(retry);
+  return b;
+}
+
 function buildWidgetCard(it, idx, total) {
+  const editing = !!adminState.dashboardEditMode;
   const card = document.createElement("article");
   card.className = "dashboard-widget";
   card.dataset.widget = it.key;
-  if (adminState.dashboardEditMode && !it.visible) card.classList.add("widget-hidden");
+  card.setAttribute("role", "group");
+  card.setAttribute("aria-label", it.title + " 위젯");
+  if (editing && !it.visible) card.classList.add("widget-hidden");
 
   const head = document.createElement("header");
   head.className = "dashboard-widget-head";
@@ -2122,7 +2257,36 @@ function buildWidgetCard(it, idx, total) {
   h3.textContent = it.title;
   head.appendChild(h3);
 
-  if (adminState.dashboardEditMode) {
+  // server 위젯의 data.tab → drill-down: 헤더 "열기 →" 링크가 해당 관리 탭으로 이동.
+  const wdata = (!editing && it.source !== "client" && adminState.overview && adminState.overview.widgets)
+    ? adminState.overview.widgets[it.key] : null;
+  if (wdata && wdata.tab && typeof switchTab === "function") {
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "dashboard-widget-open";
+    open.textContent = "열기 →";
+    open.setAttribute("aria-label", it.title + " 관리 화면 열기");
+    open.addEventListener("click", () => switchTab(wdata.tab));
+    head.appendChild(open);
+  }
+
+  if (editing) {
+    card.setAttribute("draggable", "true");
+    card.addEventListener("dragstart", (e) => {
+      adminState._dragKey = it.key;
+      card.classList.add("is-dragging");
+      try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", it.key); } catch (_) {}
+    });
+    card.addEventListener("dragend", () => { card.classList.remove("is-dragging"); adminState._dragKey = null; });
+    card.addEventListener("dragover", (e) => { e.preventDefault(); card.classList.add("drag-over"); });
+    card.addEventListener("dragleave", () => card.classList.remove("drag-over"));
+    card.addEventListener("drop", (e) => {
+      e.preventDefault();
+      card.classList.remove("drag-over");
+      const from = adminState._dragKey || (e.dataTransfer && e.dataTransfer.getData("text/plain"));
+      if (from && from !== it.key) reorderWidgetBefore(from, it.key);
+    });
+
     const ctrls = document.createElement("div");
     ctrls.className = "dashboard-widget-edit";
     const lbl = document.createElement("label");
@@ -2130,22 +2294,24 @@ function buildWidgetCard(it, idx, total) {
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = it.visible;
+    cb.setAttribute("aria-label", it.title + " 위젯 표시");
     cb.addEventListener("change", () => setWidgetVisible(it.key, cb.checked));
     lbl.appendChild(cb);
-    lbl.appendChild(document.createTextNode(" 표시"));
+    lbl.appendChild(document.createTextNode(it.visible ? " 표시" : " 숨김"));
     ctrls.appendChild(lbl);
+    // ↑↓ = 키보드/터치 접근성 폴백(drag 단독 의존 회피).
     const up = document.createElement("button");
     up.type = "button";
     up.className = "dashboard-widget-move";
     up.textContent = "↑";
-    up.title = "위로";
+    up.setAttribute("aria-label", it.title + " 위젯 위로 이동");
     up.disabled = idx === 0;
     up.addEventListener("click", () => moveWidget(it.key, -1));
     const down = document.createElement("button");
     down.type = "button";
     down.className = "dashboard-widget-move";
     down.textContent = "↓";
-    down.title = "아래로";
+    down.setAttribute("aria-label", it.title + " 위젯 아래로 이동");
     down.disabled = idx === total - 1;
     down.addEventListener("click", () => moveWidget(it.key, 1));
     ctrls.appendChild(up);
@@ -2177,30 +2343,70 @@ function buildWidgetCard(it, idx, total) {
 
 function buildDataWidgetBody(data) {
   const frag = document.createDocumentFragment();
+  // TASK-0218 fail-loud(위젯 단위): 실패 시 재시도 버튼 동반.
   if (!data || data.error) {
     const e = document.createElement("div");
-    e.className = "dashboard-widget-empty";
-    e.textContent = data && data.error ? "데이터를 불러오지 못했습니다." : "데이터 없음";
+    e.className = "dashboard-widget-error";
+    const m = document.createElement("span");
+    m.textContent = data && data.error ? "데이터를 불러오지 못했습니다." : "데이터 없음";
+    e.appendChild(m);
+    if (data && data.error) {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "dashboard-retry-btn";
+      retry.textContent = "다시 시도";
+      retry.addEventListener("click", () => { adminState.dashboardLoaded = false; loadDashboardOverview(true); });
+      e.appendChild(retry);
+    }
     frag.appendChild(e);
     return frag;
   }
-  const metrics = data.metrics || [];
+  const metrics = (data.metrics || []).slice();
+  const hasList = (data.lists || []).some((l) => (l.rows || []).length);
   if (metrics.length) {
-    const mwrap = document.createElement("div");
-    mwrap.className = "dashboard-widget-metrics";
-    metrics.forEach((m) => {
-      const chip = document.createElement("div");
-      chip.className = "dashboard-metric" + (m.accent ? " accent-" + m.accent : "");
-      const val = document.createElement("strong");
-      val.textContent = _dashFmtValue(m.value, m.fmt);
-      const lab = document.createElement("span");
-      lab.textContent = m.label;
-      chip.appendChild(val);
-      chip.appendChild(lab);
-      mwrap.appendChild(chip);
-    });
-    frag.appendChild(mwrap);
+    // 주 metric(primary 플래그, 없으면 첫째) 크게 + 델타 배지 + sparkline.
+    let pIdx = metrics.findIndex((m) => m.primary);
+    if (pIdx < 0) pIdx = 0;
+    const primary = metrics[pIdx];
+    const pwrap = document.createElement("div");
+    pwrap.className = "dashboard-primary";
+    const top = document.createElement("div");
+    top.className = "dashboard-primary-top";
+    const val = document.createElement("strong");
+    val.className = "dashboard-primary-val" + (primary.accent ? " accent-" + primary.accent : "");
+    val.textContent = _dashFmtValue(primary.value, primary.fmt);
+    top.appendChild(val);
+    const badge = _dashDeltaBadge(primary.delta_pct, primary.delta_sentiment);
+    if (badge) top.appendChild(badge);
+    pwrap.appendChild(top);
+    const plab = document.createElement("span");
+    plab.className = "dashboard-primary-label";
+    plab.textContent = primary.label;
+    pwrap.appendChild(plab);
+    const spark = _dashSparkline(primary.spark, primary.delta_sentiment);
+    if (spark) pwrap.appendChild(spark);
+    frag.appendChild(pwrap);
+
+    // 보조 metric 작게.
+    const secondary = metrics.filter((_, i) => i !== pIdx);
+    if (secondary.length) {
+      const swrap = document.createElement("div");
+      swrap.className = "dashboard-secondary";
+      secondary.forEach((m) => {
+        const chip = document.createElement("div");
+        chip.className = "dashboard-metric" + (m.accent ? " accent-" + m.accent : "");
+        const v = document.createElement("strong");
+        v.textContent = _dashFmtValue(m.value, m.fmt);
+        const l = document.createElement("span");
+        l.textContent = m.label;
+        chip.appendChild(v);
+        chip.appendChild(l);
+        swrap.appendChild(chip);
+      });
+      frag.appendChild(swrap);
+    }
   }
+  // Top-N 리스트 — 인라인 비율막대(--bar) 로 상대 비중 시각화.
   (data.lists || []).forEach((lst) => {
     if (!lst || !(lst.rows || []).length) return;
     const lwrap = document.createElement("div");
@@ -2209,9 +2415,12 @@ function buildDataWidgetBody(data) {
     t.className = "dashboard-widget-list-title";
     t.textContent = lst.title || "";
     lwrap.appendChild(t);
+    const maxV = Math.max.apply(null, lst.rows.map((r) => Number(r.value) || 0).concat([1]));
     lst.rows.forEach((row) => {
       const r = document.createElement("div");
       r.className = "dashboard-list-row";
+      const ratio = Math.max(0, Math.min(100, ((Number(row.value) || 0) / maxV) * 100));
+      r.style.setProperty("--bar", ratio.toFixed(1) + "%");
       const lab = document.createElement("span");
       lab.className = "dashboard-list-label";
       lab.textContent = String(row.label == null ? "" : row.label);
@@ -2224,7 +2433,7 @@ function buildDataWidgetBody(data) {
     });
     frag.appendChild(lwrap);
   });
-  if (!metrics.length && !(data.lists || []).some((l) => (l.rows || []).length)) {
+  if (!metrics.length && !hasList) {
     const e = document.createElement("div");
     e.className = "dashboard-widget-empty";
     e.textContent = "데이터 없음";
@@ -2328,6 +2537,19 @@ function moveWidget(key, dir) {
   const tmp = widgets[i];
   widgets[i] = widgets[j];
   widgets[j] = tmp;
+  widgets.forEach((w, k) => { w.order = k; });
+  renderDashboardWidgets();
+}
+
+// TASK-0218: drag-and-drop reorder — fromKey 를 beforeKey 앞으로 이동(네이티브 HTML5 DnD).
+function reorderWidgetBefore(fromKey, beforeKey) {
+  const widgets = _materializeDashboardPrefs();
+  const from = widgets.findIndex((x) => x.key === fromKey);
+  if (from < 0) return;
+  const [moved] = widgets.splice(from, 1);
+  let before = widgets.findIndex((x) => x.key === beforeKey);
+  if (before < 0) before = widgets.length;
+  widgets.splice(before, 0, moved);
   widgets.forEach((w, k) => { w.order = k; });
   renderDashboardWidgets();
 }

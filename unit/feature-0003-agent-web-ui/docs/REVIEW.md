@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260611-0218 [SUBAGENT:cloudwatch-dashboard-design] [CODEX:cross-model-design]
+- Date: 2026-06-11
+- Cycle: TASK-0218 (관리 콘솔 대시보드 CloudWatch 스타일 사람-친화 재구성), **Major §12.3**
+- Panel: gstack `/design-review` 메서드론 + **Design Outside Voices** 2(Codex cross-model `codex exec` 소스 디자인 감사 + Claude 디자인 서브에이전트). 분류=APP UI. 대상: admin.html 대시보드 pane + admin.js 대시보드 함수군 + styles.css `.dashboard-*` + app.py `_dash_widget_*`.
+- Verdict: 현 대시보드는 "구성 가능한 지표 모음"이나 CloudWatch 운영 대시보드의 **상태 판단·신선도·추세·원인 동선** 부족. **cross-model 강한 합의** Top 발견:
+  - [HIGH] 9개 동일 비중 위젯 → 위계 부재(핵심 KPI 강조·위젯 내 주/보조 metric 없음).
+  - [HIGH] 시간 컨트롤 거짓 — `days` 가 사실상 usage 만 적용(audits/conversations INTERVAL 하드코딩) + 새로고침·auto-refresh·"마지막 갱신" 없음(신선도 불명).
+  - [HIGH] 절대값만 — 전기간 대비 추세(▲▼%)·sparkline 없어 "이상한가" 판단 불가(SVG 자산 admin.js:815/837 재사용 가능, lib 0).
+  - [HIGH] fail-loud 부재 — API 실패가 "위젯 없음"으로 오인.
+  - [HIGH] 접근성 — 색만 인코딩, 포커스 링·aria-live·aria-label 누락, `--text-muted` 대비 AA 미달.
+  - [MED] drill-down 부재, ↑↓ reorder 투박(→HTML5 drag), AI slop(균일 카드·radius·8px 혼재).
+- 반영(TASK-0218 구현): window 전파(거짓 컨트롤 정직화) + 주/보조 metric 위계 + 전기간 델타 배지(의미별 색) + 순수 SVG sparkline + Top-N 비율막대 + 새로고침/auto-refresh/마지막갱신 + fail-loud(전체·위젯 재시도) + 접근성(포커스/aria-live/aria-label, --r-md·8px) + drill-down(위젯→탭) + native drag reorder(↑↓ 키보드 폴백 유지) + 카탈로그 활동-우선 재편. 추세/sparkline·window 전파만 백엔드 증설(비파괴 read, **스키마 변경 0**). MED drill 의 row-level 필터·"위젯 추가 라이브러리"는 이월(편집모드가 숨김 위젯을 노출하므로 add 기능 충족).
+- Risk: medium — 대시보드 표면 대폭 변경이나 RBAC/권한/스키마/시크릿 무변경, 신규 엔드포인트 0(기존 overview/preferences 응답 shape 확장만).
+- Cross-ref: CHG-20260611-0218 / TASK-0218 / STATUS.md 2026-06-11. 디자인 감사 산출은 본 cycle 의 outside-voice 게이트 충족.
+
 ## REV-20260611-0216 [SKIPPED:additive-endpoint-existing-perm-readonly-pg]
 - Date: 2026-06-11
 - Cycle: TASK-0216 (제품 프롬프트 자동 작성 품질 강화 — topic/fact_entries/summary), **Minor §12.3**
