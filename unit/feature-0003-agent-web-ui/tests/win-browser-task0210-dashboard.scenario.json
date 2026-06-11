@@ -1,0 +1,20 @@
+{
+  "name": "TASK-0210 관리 콘솔 대시보드 보강 — 카테고리별 위젯 그리드 + per-account 커스터마이즈 (authed admin session)",
+  "base_url": "https://localhost:18080",
+  "shot_dir": "/tmp/win-browser-shots/task0210",
+  "steps": [
+    { "action": "goto", "url": "/admin", "wait_until": "domcontentloaded" },
+    { "action": "wait_for", "selector": "#dashboardWidgets", "timeout_ms": 20000 },
+    { "action": "wait_for", "selector": ".dashboard-widget", "timeout_ms": 15000, "stop_on_fail": false },
+    { "action": "wait_for", "timeout_ms": 1500, "stop_on_fail": false },
+    { "action": "screenshot", "path": "01_dashboard.png", "full_page": true },
+    { "action": "eval", "script": "(function(){var cards=document.querySelectorAll('.dashboard-widget');return JSON.stringify({widgetCount:cards.length,titles:[].slice.call(cards).map(function(c){return (c.querySelector('h3')||{}).textContent;}),metricChips:document.querySelectorAll('.dashboard-metric').length,listRows:document.querySelectorAll('.dashboard-list-row').length});})()", "stop_on_fail": false },
+    { "action": "eval", "script": "(function(){var p=document.querySelector('.admin-pane[data-admin-pane=dashboard]');return JSON.stringify({hasHScroll:p.scrollWidth>p.clientWidth+1, scrollW:p.scrollWidth, clientW:p.clientWidth});})()", "stop_on_fail": false },
+    { "action": "click", "selector": "#dashboardEditToggle", "stop_on_fail": false },
+    { "action": "wait_for", "timeout_ms": 1000, "stop_on_fail": false },
+    { "action": "screenshot", "path": "02_edit_mode.png", "full_page": true },
+    { "action": "eval", "script": "(function(){return JSON.stringify({editBar:!document.getElementById('dashboardEditBar').hidden, visCheckboxes:document.querySelectorAll('.dashboard-widget-vis input[type=checkbox]').length, moveBtns:document.querySelectorAll('.dashboard-widget-move').length, toggleLabel:document.getElementById('dashboardEditToggle').textContent});})()", "stop_on_fail": false },
+    { "action": "click", "selector": "#dashboardEditToggle", "stop_on_fail": false },
+    { "action": "screenshot", "path": "03_back_to_view.png", "stop_on_fail": false }
+  ]
+}

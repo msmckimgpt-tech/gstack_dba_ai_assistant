@@ -246,6 +246,11 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-06-11 (TASK-0210 관리 콘솔 대시보드 보강 — 카테고리별 위젯 그리드 + per-account 커스터마이즈 **PB-0008 Windows-browser 완료 게이트**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay` @ http://172.28.64.1:9223, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증. 라이브 배포(healthz `git_commit=98f719d`, mysql/pg ok) 후 수행.
+  - **Runner: AI.** 시나리오: 영속 admin 세션 → 관리 콘솔(`/admin`) → 대시보드("운영 현황") → 편집 모드 토글. 스크린샷 `/tmp/win-browser-shots/task0210/{01_dashboard,02_edit_mode}.png`.
+  - **결과: PASS.** (a) **위젯 그리드 9개** 렌더: 계정·역할·제품·데이터소스·대화·활동·감사 활동·LLM 사용량·첨부 DB 권한·미저장 변경(2열 auto-fill). (b) **실데이터 집계**: 계정(활성 6/비활성 0/삭제 20/최근7일 3/전체 26 + 역할별 계정 Top-N), 역할(역할수 5 + 역할별 권한수 Admin 51/DBA 20/…), 제품(활성 4/바인딩 4), 데이터소스(활성 2 + 엔진별 mysql 1/mssql 1). metric chip 23·list row 27 렌더. (c) **가로 스크롤 없음**(`hScroll:false` — 레이아웃 정상). (d) **편집 모드**: "편집"→"완료" 토글, 편집 안내 바 + 기본값복원/저장, 위젯별 ☑표시 체크박스 9 + ↑↓ 이동 버튼 18(점선 테두리). (e) 집계기간 `최근 7일` dropdown. 라이브 API 검증(curl): overview 200 실데이터, prefs GET 기본(customized=false)→PUT(usage 숨김+미지키 `__evil__` **거부**)→GET(customized=true·usage=false 영속)→DB 행 영속, 검증 후 테스트 prefs 행 삭제(admin 기본값 복원).
+  - CHECK#13(PB-0008 Windows-browser) **충족**.
 - 2026-06-11 (TASK-0206 DB-단위 접근 모델 — 관리콘솔 제품상세 UI 재구성 **PB-0008 Windows-browser 완료 게이트**):
   - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay` @ http://172.28.64.1:9223, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증. 라이브 배포(healthz `git_commit=cf1962e`, mysql/pg ok) 후 수행.
   - **Runner: AI.** 시나리오: bootstrap_admin 영속 세션 → 관리 콘솔(`#openAdminBtn`) → 제품 → MSSQL_DK(제품 90, winsql/dk_data_release) 상세.
