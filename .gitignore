@@ -6,6 +6,7 @@
 .env.postgres
 .env.minio
 .env.llm
+.env.secret
 .env.local
 __pycache__/
 *.py[cod]

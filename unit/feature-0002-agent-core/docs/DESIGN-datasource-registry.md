@@ -199,3 +199,19 @@ CREATE TABLE IF NOT EXISTS WebDatasources (
 - **C (제품별 DB)**: 제품 상세에 MSSQL 참조 DB select(`/databases` 채움). B1 로 가드·연결 단일 DB.
 - **D**: `.env` datasource 는 레거시 코exist(DB 우선). KEK 는 `.env.secret`(compose env_file 추가). 마이그레이션은
   운영자가 CRUD UI 로 재등록(별도 마이그레이션 액션 불요 — coexist).
+
+## 9. 구현 outside-voice 재게이트 (REV-20260611-0205-impl) — REJECT → 수정
+
+설계 합격선(§6) 충족 여부를 코드로 재검. 핵심 crypto/registry/B1/B2/B3/M2/M4/M5/CRUD = **26/26 실측 PASS**.
+BLOCKER 1 + MAJOR 2 발견 → 수정:
+- **BLOCKER-1 (KEK compose 미배선 → 라이브 inert)**: `.env.secret` 를 agent-common env_file 에 추가
+  (`required:false` — 미설정 환경 무해). `.env.secret.example` 제공 + `.gitignore` 에 `.env.secret`. 마스터키를
+  `.env`(전 service inherit) 아닌 분리 파일에 — least-privilege(SECURITY §6.1) 정합. 라이브 `encryption_ready=true` 검증.
+- **MAJOR-1 (B1 GRANT-범위 검증 미구현)**: 제품별 참조 DB override 시 그 DB 가 datasource RO 로그인 접근 범위
+  (`list_server_databases`)에 속하는지 **fail-closed 검증** 추가(PATCH product datasource). RO 로그인이 못 보는 DB 는
+  product 바인딩으로도 지정 불가. (DB-side GRANT 가 최종 backstop, 앱 사전검증이 2차.)
+- **MAJOR-2 (SSRF DNS rebinding)**: `_ssrf_check_host` 가 검증된 IP(`pinned_ip`)를 반환하고, admin 연결
+  endpoint(test/databases/제품DB검증)가 **host 재해석 없이 pinned IP 로 고정 연결** → TOCTOU rebind 차단.
+  메타데이터 IP 하드차단에 Alibaba(100.100.100.200)·IPv4-mapped 추가. (런타임 에이전트 경로의 DB datasource 는
+  create-time SSRF 검증 + admin-only 생성이라 잔여 표면 제한 — 런타임 IP-pin 은 후속.)
+- MINOR(후속): N-1 `ds` 접두 과도차단 완화, `/databases` MSSQL GRANT-스코프 enumeration(MySQL 은 엔진 권한필터).

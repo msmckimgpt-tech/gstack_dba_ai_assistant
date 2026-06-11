@@ -9382,9 +9382,28 @@ async def admin_set_product_datasource(product_id: int, request: Request) -> JSO
         conn.close()
         return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
     # TASK-0205: 키 검증을 레지스트리(DB+env)로 — .env 뿐 아니라 DB 등록 datasource 도 허용.
-    if key is not None and _dsr.resolve(conn, key) is None:
+    _bound_ds = _dsr.resolve(conn, key) if key is not None else None
+    if key is not None and _bound_ds is None:
         conn.close()
         return _json_error(f"미등록 datasource 키: {key} (WebDatasources / .env 확인)", 400)
+    # TASK-0205 MAJOR-1 (REV-0205 재게이트): 제품별 참조 DB override 의 **GRANT-범위 fail-closed 검증**.
+    # admin 이 RO 로그인 접근 밖 DB 를 지정하면 product 바인딩만으로 권한 없는 DB 조회가 되는 것을 차단.
+    # datasource 의 RO 로그인이 실제 접근 가능한 DB 목록(list_server_databases)에 속해야 허용(대소문자 무관).
+    if has_db_field and product_db and _bound_ds is not None:
+        from modules import db as _db
+        okssrf, reason, _pin = _ssrf_check_host(_bound_ds.get("host"))
+        if not okssrf:
+            conn.close()
+            return _json_error(f"호스트 차단(SSRF): {reason}", 400)
+        try:
+            _accessible = {str(n).strip().lower() for n in _db.list_server_databases({**_bound_ds, "host": _pin})}
+        except Exception:
+            conn.close()
+            return _json_error("참조 DB 검증 실패(datasource 연결/권한 확인).", 502)
+        if product_db.strip().lower() not in _accessible:
+            conn.close()
+            return _json_error(
+                f"참조 DB '{product_db}' 는 datasource '{key}' 의 RO 로그인 접근 범위 밖입니다(거부).", 400)
     try:
         cur = conn.cursor()
         try:
@@ -9443,44 +9462,49 @@ async def admin_test_datasource(key: str, request: Request) -> JSONResponse:
         conn.close()
     if not ds:
         return _json_error(f"미등록(또는 복호 불가) datasource 키: {key}", 404)
-    okssrf, ssrf_reason = _ssrf_check_host(ds.get("host"))
+    okssrf, ssrf_reason, _pin = _ssrf_check_host(ds.get("host"))
     if not okssrf:
         return JSONResponse({"key": str(key).strip().lower(), "ok": False, "elapsed_ms": 0.0,
                              "error": f"ssrf_blocked: {ssrf_reason}"})
-    ok, elapsed_ms, err = _db.probe_datasource(ds)  # probe 는 errno 만 반환(host/pw 비노출)
+    # MAJOR-2: 검증된 IP 로 고정 연결(DNS rebinding 차단 — host 재해석 금지).
+    ok, elapsed_ms, err = _db.probe_datasource({**ds, "host": _pin})  # probe 는 errno 만 반환
     return JSONResponse({"key": str(key).strip().lower(), "ok": bool(ok),
                          "elapsed_ms": round(elapsed_ms, 1), "error": err})
 
 
 # ── TASK-0205: datasource CRUD (자격증명 DB 암호화 저장) + SSRF 차단 ────────────────
-def _ssrf_check_host(host) -> "tuple[bool, str]":
-    """admin 입력 host 의 SSRF 안전성(M3): 사설망/링크로컬/메타데이터 IP 차단. (ok, reason).
+def _ssrf_check_host(host) -> "tuple[bool, str, str]":
+    """admin 입력 host 의 SSRF 안전성(M3): 사설망/링크로컬/메타데이터 IP 차단. (ok, reason, pinned_ip).
 
     `AGENT_DATASOURCE_HOST_ALLOWLIST`(콤마구분 host 또는 CIDR)에 명시된 사설 host 는 예외 허용
     (Windows MSSQL 172.28.64.1 등 정당한 사설 대상). 메타데이터 IP(169.254.169.254)는 allowlist 무관 하드차단.
+
+    **DNS rebinding 방어(REV-0205 MAJOR-2)**: 모든 해석 IP 가 안전함을 확인하고 그 중 하나(`pinned_ip`)를
+    반환한다. 호출측은 연결 시 host 명을 재해석하지 않고 **pinned_ip 로 고정 연결**해 TOCTOU rebind 를 차단한다.
     """
     import ipaddress
     import os as _os
     import socket
     h = str(host or "").strip()
     if not h:
-        return False, "host 비어있음"
+        return False, "host 비어있음", ""
     allow_raw = [a.strip() for a in _os.getenv("AGENT_DATASOURCE_HOST_ALLOWLIST", "").split(",") if a.strip()]
     try:
         infos = socket.getaddrinfo(h, None)
     except Exception:
-        return False, "host 해석 실패"
+        return False, "host 해석 실패", ""
     ips = {si[4][0] for si in infos}
     if not ips:
-        return False, "IP 해석 실패"
-    for ipstr in ips:
+        return False, "IP 해석 실패", ""
+    pinned = None
+    for ipstr in sorted(ips):
         try:
             ip = ipaddress.ip_address(ipstr)
         except Exception:
-            return False, "IP 파싱 실패"
-        # 클라우드 메타데이터 IP 는 allowlist 무관 하드차단.
-        if ipstr == "169.254.169.254":
-            return False, "메타데이터 IP 차단"
+            return False, "IP 파싱 실패", ""
+        # 클라우드 메타데이터 IP 는 allowlist 무관 하드차단(IPv4/IPv6 매핑·Alibaba 포함).
+        if ipstr in ("169.254.169.254", "100.100.100.200") or str(ip).endswith("::ffff:169.254.169.254"):
+            return False, "메타데이터 IP 차단", ""
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
             allowed = False
             for a in allow_raw:
@@ -9495,8 +9519,10 @@ def _ssrf_check_host(host) -> "tuple[bool, str]":
                 except Exception:
                     continue
             if not allowed:
-                return False, f"사설/링크로컬 IP 차단(allowlist 필요): {ipstr}"
-    return True, ""
+                return False, f"사설/링크로컬 IP 차단(allowlist 필요): {ipstr}", ""
+        if pinned is None:
+            pinned = ipstr
+    return True, "", (pinned or h)
 
 
 def _ds_valid_key(key: str) -> "str | None":
@@ -9565,7 +9591,7 @@ async def admin_create_datasource(request: Request) -> JSONResponse:
         if engine not in ("mysql", "mssql"):
             return _json_error("engine 은 mysql|mssql.", 400)
         host = str(data.get("host") or "").strip()
-        okssrf, reason = _ssrf_check_host(host)
+        okssrf, reason, _ = _ssrf_check_host(host)
         if not okssrf:
             return _json_error(f"호스트 차단(SSRF): {reason}", 400)
         try:
@@ -9630,7 +9656,7 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
                 sets.append("Engine=%s"); params.append(eng)
             if "host" in data:
                 host = str(data.get("host") or "").strip()
-                okssrf, reason = _ssrf_check_host(host)
+                okssrf, reason, _ = _ssrf_check_host(host)
                 if not okssrf:
                     return _json_error(f"호스트 차단(SSRF): {reason}", 400)
                 sets.append("Host=%s"); params.append(host)
@@ -9728,11 +9754,11 @@ async def admin_datasource_databases(key: str, request: Request) -> JSONResponse
         conn.close()
     if not ds:
         return _json_error("미등록(또는 복호 불가) datasource.", 404)
-    okssrf, reason = _ssrf_check_host(ds.get("host"))
+    okssrf, reason, _pin = _ssrf_check_host(ds.get("host"))
     if not okssrf:
         return _json_error(f"호스트 차단(SSRF): {reason}", 400)
     try:
-        names = _db.list_server_databases(ds)  # errno-only 에러
+        names = _db.list_server_databases({**ds, "host": _pin})  # MAJOR-2: pinned IP. errno-only 에러
     except Exception:
         return _json_error("DB 목록 조회 실패(연결/권한 확인).", 502)
     return JSONResponse({"key": str(key).strip().lower(), "engine": ds.get("engine"), "databases": names})

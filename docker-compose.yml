@@ -31,6 +31,10 @@ x-agent-common: &agent-common
     - .env.postgres
     - .env.minio
     - .env.llm
+    # TASK-0205: datasource 자격증명 envelope 암호화 마스터 KEK (.env 분리 — least-privilege).
+    # optional(required:false) — 미설정 환경은 datasource DB저장만 비활성(.env datasource 는 동작).
+    - path: .env.secret
+      required: false
   environment:
     TZ: ${TZ}
     LANG: ${APP_LANG}
