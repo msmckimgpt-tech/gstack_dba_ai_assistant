@@ -30,6 +30,9 @@ const adminState = {
   roleLastClickIdx: -1,
   productLastClickIdx: -1,
   productDbDraft: new Map(),
+  // TASK-0223: 제품별 insight-worker 분석 완료율 (productId -> {pct, analyzed_objects, total_objects, per_db[], measurable, reason, engine}).
+  productCoverage: new Map(),
+  productCoverageLoading: false,
   availableDatabases: { metadata_schemas: [], user_schemas: [] },
   // TASK-0210: 대시보드 위젯 그리드 상태(서버 집계 + per-account 커스터마이즈).
   overview: null,            // GET /api/admin/overview 응답 {catalog, widgets, window_days}
@@ -4020,9 +4023,192 @@ async function loadAdminData() {
   renderRoleDetail();
   renderProductList();
   renderProductDetail();
+  // TASK-0223: 분석 완료율은 라이브 DB 조회라 page 렌더를 막지 않게 fire-and-forget 으로 뒤따라 채운다.
+  loadProductInsightCoverage();
 }
 
 /* ── Products pane ───────────────────────────────────────────────────── */
+
+// TASK-0223: 제품별 insight-worker 분석 완료율 로드 (목록/상세 배지·breakdown).
+async function loadProductInsightCoverage({ refresh = false, productId = null } = {}) {
+  if (!can("console.access")) return;
+  adminState.productCoverageLoading = true;
+  // 로딩 표시 즉시 반영 (배지가 "측정 중…" 으로 보이게)
+  renderProductList();
+  if (adminState.selectedProductId) renderProductDetail();
+  try {
+    const qs = [];
+    if (refresh) qs.push("refresh=1");
+    if (productId) qs.push(`product_id=${encodeURIComponent(productId)}`);
+    const url = "/api/admin/products/insight-coverage" + (qs.length ? `?${qs.join("&")}` : "");
+    const payload = await apiFetch(url).catch((error) => {
+      if (error.status === 403) return { coverage: {} };
+      throw error;
+    });
+    const cov = (payload && payload.coverage) || {};
+    Object.keys(cov).forEach((pid) => {
+      adminState.productCoverage.set(Number(pid), cov[pid]);
+    });
+  } catch (error) {
+    // 측정 실패는 치명적이지 않음 — 콘솔만 남기고 UI 는 "측정 불가" fallback.
+    console.warn("insight coverage 로드 실패:", error);
+  } finally {
+    adminState.productCoverageLoading = false;
+    renderProductList();
+    if (adminState.selectedProductId) renderProductDetail();
+  }
+}
+
+// 완료율 → 색상 등급 (시각 위계: 낮음=경고, 높음=정상).
+function _coverageTone(pct) {
+  if (pct === null || pct === undefined) return "muted";
+  if (pct >= 80) return "ok";
+  if (pct >= 40) return "warn";
+  return "low";
+}
+
+// 목록 row 용 컴팩트 배지 element 생성.
+function buildCoverageBadge(productId) {
+  const span = document.createElement("span");
+  span.className = "cov-badge";
+  const cov = adminState.productCoverage.get(Number(productId));
+  if (cov === undefined) {
+    span.classList.add("cov-muted");
+    span.textContent = adminState.productCoverageLoading ? "분석 측정 중…" : "분석 —";
+    return span;
+  }
+  if (!cov.measurable) {
+    span.classList.add("cov-muted");
+    span.textContent = "분석 측정 불가";
+    span.title = cov.reason || "";
+    return span;
+  }
+  if (cov.total_objects === 0) {
+    span.classList.add("cov-muted");
+    span.textContent = "분석 대상 없음";
+    span.title = cov.reason || "접근 가능 데이터베이스 없음";
+    return span;
+  }
+  const pct = cov.pct;
+  span.classList.add(`cov-${_coverageTone(pct)}`);
+  span.textContent = `분석 ${pct}%`;
+  span.title = `${cov.analyzed_objects} / ${cov.total_objects} 객체 분석 완료`;
+  return span;
+}
+
+// 제품 상세 — 접근 가능 DB 섹션에 들어갈 분석 완료율 breakdown 블록.
+function buildProductCoverageDetail(product) {
+  const wrap = document.createElement("div");
+  wrap.className = "cov-detail";
+
+  const head = document.createElement("div");
+  head.className = "cov-detail-head";
+  const title = document.createElement("span");
+  title.className = "cov-detail-title";
+  title.textContent = "insight 분석 완료율";
+  head.appendChild(title);
+
+  const cov = adminState.productCoverage.get(Number(product.id));
+  const summaryChip = document.createElement("span");
+  summaryChip.className = "cov-badge";
+  if (cov === undefined) {
+    summaryChip.classList.add("cov-muted");
+    summaryChip.textContent = adminState.productCoverageLoading ? "측정 중…" : "—";
+  } else if (!cov.measurable) {
+    summaryChip.classList.add("cov-muted");
+    summaryChip.textContent = "측정 불가";
+  } else if (cov.total_objects === 0) {
+    summaryChip.classList.add("cov-muted");
+    summaryChip.textContent = "대상 없음";
+  } else {
+    summaryChip.classList.add(`cov-${_coverageTone(cov.pct)}`);
+    summaryChip.textContent = `${cov.pct}%`;
+  }
+  head.appendChild(summaryChip);
+
+  const refreshBtn = document.createElement("button");
+  refreshBtn.type = "button";
+  refreshBtn.className = "tool-btn cov-refresh";
+  refreshBtn.textContent = "새로고침";
+  refreshBtn.disabled = !!adminState.productCoverageLoading;
+  refreshBtn.addEventListener("click", () => {
+    loadProductInsightCoverage({ refresh: true, productId: product.id });
+  });
+  head.appendChild(refreshBtn);
+  wrap.appendChild(head);
+
+  if (cov === undefined) {
+    const p = document.createElement("div");
+    p.className = "admin-detail-hint";
+    p.textContent = adminState.productCoverageLoading ? "분석 완료율 측정 중…" : "분석 완료율 정보가 아직 없습니다.";
+    wrap.appendChild(p);
+    return wrap;
+  }
+  if (!cov.measurable) {
+    const p = document.createElement("div");
+    p.className = "admin-detail-hint cov-reason";
+    p.textContent = `측정 불가: ${cov.reason || "데이터소스 연결/해석 실패"}`;
+    wrap.appendChild(p);
+    return wrap;
+  }
+  if (cov.total_objects === 0) {
+    const p = document.createElement("div");
+    p.className = "admin-detail-hint";
+    p.textContent = cov.reason || "접근 가능 데이터베이스가 없어 분석 대상이 없습니다.";
+    wrap.appendChild(p);
+    return wrap;
+  }
+
+  // 전체 진행 바 + 객체 수
+  const overall = document.createElement("div");
+  overall.className = "cov-bar-row";
+  const bar = document.createElement("div");
+  bar.className = `cov-bar cov-${_coverageTone(cov.pct)}`;
+  const fill = document.createElement("div");
+  fill.className = "cov-bar-fill";
+  fill.style.width = `${Math.max(0, Math.min(100, cov.pct || 0))}%`;
+  bar.appendChild(fill);
+  const barLabel = document.createElement("span");
+  barLabel.className = "cov-bar-label";
+  barLabel.textContent = `${cov.analyzed_objects} / ${cov.total_objects} 객체 (DB + 테이블)`;
+  overall.append(bar, barLabel);
+  wrap.appendChild(overall);
+
+  // per-DB breakdown
+  const list = document.createElement("div");
+  list.className = "cov-db-list";
+  (cov.per_db || []).forEach((d) => {
+    const rowEl = document.createElement("div");
+    rowEl.className = "cov-db-row";
+    const nameEl = document.createElement("span");
+    nameEl.className = "cov-db-name";
+    nameEl.textContent = d.db;
+    const statEl = document.createElement("span");
+    statEl.className = "cov-db-stat";
+    if (d.scannable) {
+      const tt = d.tables_total || 0;
+      const ta = d.tables_analyzed || 0;
+      const tpct = tt > 0 ? Math.round((100 * ta) / tt) : (d.schema_analyzed ? 100 : 0);
+      statEl.classList.add(`cov-${_coverageTone(tpct)}`);
+      statEl.textContent = `테이블 ${ta}/${tt}${d.schema_analyzed ? " · DB✓" : " · DB✗"}`;
+    } else {
+      statEl.classList.add("cov-muted");
+      statEl.textContent = `${d.tables_total || 0}개 테이블 · 미스캔`;
+      statEl.title = d.note || "";
+    }
+    rowEl.append(nameEl, statEl);
+    list.appendChild(rowEl);
+  });
+  wrap.appendChild(list);
+
+  if (cov.engine === "mssql") {
+    const note = document.createElement("div");
+    note.className = "admin-detail-hint cov-engine-note";
+    note.textContent = "MSSQL: insight 워커는 데이터소스 기본 DB만 스캔합니다. 그 외 접근 DB는 미스캔으로 표시됩니다.";
+    wrap.appendChild(note);
+  }
+  return wrap;
+}
 
 function filteredProducts() {
   const q = (adminState.productSearch || "").toLowerCase().trim();
@@ -4106,7 +4292,11 @@ function renderProductList() {
     if (p.is_default) badges.push("default");
     if (!p.is_active) badges.push("inactive");
     sub.textContent = [p.description || "—", ...badges].filter(Boolean).join(" · ");
-    meta.append(name, sub);
+    // TASK-0223: insight 분석 완료율 배지 (라이브 측정값이 비동기로 채워짐).
+    const covLine = document.createElement("div");
+    covLine.className = "admin-meta cov-line";
+    covLine.appendChild(buildCoverageBadge(p.id));
+    meta.append(name, sub, covLine);
     row.append(cb, meta);
     listEl.appendChild(row);
   });
@@ -4369,6 +4559,9 @@ function renderProductDetail() {
   dbHint.className = "admin-detail-hint";
   dbHint.textContent = "선택한 데이터 소스에서 이 제품이 접근할 데이터베이스. 시스템 DB(메타데이터)는 고정됩니다.";
   dbSection.appendChild(dbHint);
+
+  // TASK-0223: 접근 가능 DB 기준 insight-worker 분석 완료율 (전체 % + DB별 breakdown).
+  dbSection.appendChild(buildProductCoverageDetail(product));
 
   // pending 우선, 다음으로 fresh draft, 최후로 서버 값.
   const pendingDraft = adminState.pending.productDatabases.get(Number(product.id));

@@ -2862,3 +2862,21 @@ source_of_truth: true
 - 검증: py_compile app.py PASS, node --check admin.js PASS.
 - Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/src/static/admin.js, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
 - Rollback: app.py `else` 브랜치 제거 + `admin_update_datasource` `explicit_new_key` 로직 제거. admin.js key 필드 `readonly=true` 복원.
+
+## CHG-20260611-0223
+- Date: 2026-06-11
+- Task: TASK-0223 (제품별 insight-worker 분석 완료율 UI), **Major §12.3** (read-only 통계, RBAC·스키마·암호화·외부계약 변경 0)
+- 변경:
+  - `unit/feature-0002-agent-core/src/modules/db.py`:
+    - 신규 `list_information_schema_tables(datasource, *, schemas, database, timeout, cap)`: datasource 의 `information_schema.TABLES` 에서 `(schema, table)` 객체 목록을 **flag-무관 직결**로 열거(`list_server_databases_classified` 패턴 — `connect()` 의 flag-gated datasource 경로 우회). MySQL=`TABLE_SCHEMA IN (schemas)`(VIEW 포함, insight 정합), MSSQL=`database` 1개 컨텍스트 + `_MSSQL_SYSTEM_SCHEMAS` 제외. 신규 상수 `_MSSQL_SYSTEM_SCHEMAS`.
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - 신규 헬퍼 `_compute_product_insight_coverage(conn, product)`: 제품 accessible DB 기준 분석 완료율 산출. 분자=PG `rag_objects`(conv=`__insight_worker__`, scope=`common`, object_type∈{schema,table}) 의 통찰 보유 객체, **catalog-driven 매칭**(라이브 (schema,table) ∩ rag (schema,table), set dedup). datasource 스코핑=`_dsr.scope_key`(엔드포인트 해시); 기본 엔드포인트면 `datasource_key IS NULL`(ds=None 스캔)도 허용. 분모 연결은 resolve 된 datasource RO 좌표(SSRF 가드+pinned IP, timeout 5s, per-datasource 실패 격리). MSSQL 비-default_db 접근DB=미스캔(analyzed 0+flag).
+    - 신규 엔드포인트 `GET /api/admin/products/insight-coverage` (`admin_products_insight_coverage`): `console.access`. `?product_id=` 단건, `?refresh=1` 캐시 무시. 인메모리 TTL 캐시(90s) `_INSIGHT_COVERAGE_CACHE` + 헬퍼.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`:
+    - `adminState.productCoverage`(Map)+`productCoverageLoading`. `loadProductInsightCoverage()` (loadAdminData 후 fire-and-forget). `buildCoverageBadge`(목록 row 배지)+`buildProductCoverageDetail`(상세 전체%+per-DB breakdown+새로고침)+`_coverageTone`. `renderProductList` row 에 배지, `renderProductDetail` 접근 가능 DB 섹션에 breakdown 삽입.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.cov-badge`/`.cov-bar`/`.cov-db-row` 등 완료율 시각 스타일(등급별 색: ok≥80/warn≥40/low/muted).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: 캐시버스터 `?v=20260611-insight-coverage`.
+- 비변경: RBAC 카탈로그, WebProducts/WebProductDatabases/rag_objects 스키마, 암호화 경로, insight-worker write 경로. 기존 엔드포인트 계약.
+- 검증: py_compile app.py+db.py PASS, node --check admin.js PASS, verify-completion(코드 게이트) + 라이브 실측 + PB-0008 Windows-browser.
+- Files: unit/feature-0002-agent-core/src/modules/db.py, unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html,styles.css}, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
+- Rollback: app.py 신규 헬퍼·엔드포인트·캐시 제거 + db.py `list_information_schema_tables`/`_MSSQL_SYSTEM_SCHEMAS` 제거 + admin.js/styles.css/admin.html coverage 추가분 복원.

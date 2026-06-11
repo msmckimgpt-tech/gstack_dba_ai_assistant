@@ -13517,6 +13517,239 @@ def admin_list_products(request: Request) -> JSONResponse:
     return JSONResponse({"products": products})
 
 
+# ── TASK-0223: 제품별 insight-worker 분석 완료율 (관리 콘솔 > 제품) ─────────────────
+# 모수 = 제품 accessible DB(WebProductDatabases) 의 객체(각 DB 노드 + 그 안 table).
+# 분자 = PG rag_objects(통찰값) 보유 객체. **catalog-driven 매칭** — 라이브 카탈로그 (schema,table) ∩
+#   rag (schema,table) 집합 교집합으로 계산(set dedup). 이로써 (a) MSSQL 의 schema_name=dbo 차원이 접근DB
+#   (=catalog)과 달라도 라이브 dbo 테이블 ↔ rag dbo 테이블로 정확 매칭되고, (b) 기본 MySQL 이 ds=None(NULL)과
+#   main_mysql(hash)로 이중 기록돼도 distinct (schema,table) 로 붕괴해 과대집계가 없다.
+# datasource 스코핑은 엔드포인트 해시 scope_key(=insight write 와 동일 _dsr.scope_key); 분모 연결도 resolve 된
+# datasource RO 좌표로 직결해 insight 와 GRANT 가시성을 맞춘다(information_schema 권한필터 정합).
+_INSIGHT_COVERAGE_CACHE: dict = {}
+_INSIGHT_COVERAGE_CACHE_LOCK = threading.Lock()
+_INSIGHT_COVERAGE_TTL_SEC = 90.0
+
+
+def _insight_cov_cache_get(key):
+    import time as _time
+    with _INSIGHT_COVERAGE_CACHE_LOCK:
+        ent = _INSIGHT_COVERAGE_CACHE.get(key)
+        if not ent:
+            return None
+        ts, val = ent
+        if (_time.time() - ts) > _INSIGHT_COVERAGE_TTL_SEC:
+            _INSIGHT_COVERAGE_CACHE.pop(key, None)
+            return None
+        return val
+
+
+def _insight_cov_cache_put(key, val):
+    import time as _time
+    with _INSIGHT_COVERAGE_CACHE_LOCK:
+        if len(_INSIGHT_COVERAGE_CACHE) > 500:  # 단순 상한(누수 방지)
+            _INSIGHT_COVERAGE_CACHE.clear()
+        _INSIGHT_COVERAGE_CACHE[key] = (_time.time(), val)
+
+
+def _compute_product_insight_coverage(conn, product: dict) -> dict:
+    """한 제품의 insight-worker 객체 분석 완료율 산출 (TASK-0223).
+
+    반환: {product_id, pct, analyzed_objects, total_objects, per_db[], measurable, reason, engine}.
+    measurable=False 는 측정 불가(데이터소스 해석/연결 실패 등) — UI 가 "측정 불가" 로 graceful 표시.
+    """
+    pid = int(product.get("id") or 0)
+    label = product.get("datasource_key")  # 라벨(소문자) 또는 None
+    base = {
+        "product_id": pid, "pct": None, "analyzed_objects": 0, "total_objects": 0,
+        "per_db": [], "measurable": False, "reason": "", "engine": "mysql",
+    }
+    accessible = [d.get("schema_name") for d in _list_product_databases(conn, pid)]
+    accessible = [s for s in accessible if s]
+    if not accessible:
+        base["reason"] = "접근 가능 데이터베이스 없음(미바인딩)"
+        base["measurable"] = True  # 측정됨 — 객체 0
+        return base
+
+    from modules import datasources as _dsr
+    from modules import db as _db
+    default_endpoint_scope = _dsr.compute_scope_key("mysql", DB_HOST, int(DB_PORT))
+    coords = None
+    engine = "mysql"
+    scope = None
+    default_db = None
+    if label:
+        try:
+            coords = _dsr.resolve(conn, str(label).strip().lower())
+        except Exception:
+            coords = None
+        if not coords:
+            base["reason"] = "데이터소스 해석 불가(미등록/복호 실패)"
+            return base
+        engine = (coords.get("engine") or "mysql").strip().lower()
+        scope = _dsr.scope_key(coords)  # 해시(또는 .env 레거시 라벨 폴백) — insight write 와 동일 식별자
+        default_db = (str(coords.get("default_db") or "").strip() or None)
+    else:
+        # 라벨 NULL = 레거시 기본 MySQL. 같은 엔드포인트 등록 datasource 가 있으면 그 좌표 사용.
+        try:
+            for _k, _v in (_dsr.all_datasources(conn) or {}).items():
+                if _v and _dsr.scope_key(_v) == default_endpoint_scope:
+                    coords = _v
+                    engine = (coords.get("engine") or "mysql").strip().lower()
+                    scope = default_endpoint_scope
+                    default_db = (str(coords.get("default_db") or "").strip() or None)
+                    break
+        except Exception:
+            coords = None
+        if not coords:
+            base["reason"] = "기본(미바인딩) 제품 — 데이터소스 좌표 없음"
+            return base
+
+    # scope == 기본 엔드포인트면 ds=None 스캔의 NULL 행도 같은 DB → 분자에 허용(set dedup 로 중복 무해).
+    allow_null = (scope == default_endpoint_scope)
+
+    okssrf, _ssrf_reason, pin = _ssrf_check_host(coords.get("host"))
+    if not okssrf:
+        base["reason"] = "데이터소스 호스트 차단(SSRF)"
+        return base
+    coords_pinned = {**coords, "host": pin}
+
+    # ── 분모: 라이브 카탈로그 (schema, table) ──
+    db_tables: dict = {}
+    try:
+        if engine == "mssql":
+            # MSSQL: 접근DB=catalog(database). insight 는 datasource default_db 만 스캔 → 그 외 DB 는
+            # rag 에 객체 자체가 없으므로 analyzed=0 + "미스캔" flag(rag schema=dbo 차원 정합은 scannable DB 만).
+            for db in accessible:
+                scannable = bool(default_db) and (str(db).strip().lower() == str(default_db).strip().lower())
+                pairs = set(_db.list_information_schema_tables(coords_pinned, database=db, timeout=5))
+                db_tables[db] = {"pairs": pairs, "scannable": scannable}
+        else:
+            rows = _db.list_information_schema_tables(coords_pinned, schemas=accessible, timeout=5)
+            by_schema: dict = {}
+            for s, t in rows:
+                by_schema.setdefault(str(s).strip().lower(), set()).add((str(s), str(t)))
+            for db in accessible:
+                db_tables[db] = {"pairs": by_schema.get(str(db).strip().lower(), set()), "scannable": True}
+    except Exception as exc:
+        base["reason"] = "데이터소스 카탈로그 조회 실패(연결/권한)"
+        _log.getLogger("app").warning("insight_coverage catalog fail pid=%s err=%r", pid, exc)
+        return base
+
+    # ── 분자: PG rag_objects 통찰 보유 객체 집합(scope 전체를 끌어와 라이브 카탈로그와 교집합) ──
+    analyzed_tables = set()   # {(schema_lower, table_lower)}
+    analyzed_schemas = set()  # {schema_lower}
+    try:
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+        pgc = pg.cursor()
+        cond = "(datasource_key = %s" + (" OR datasource_key IS NULL" if allow_null else "") + ")"
+        pgc.execute(
+            f"""
+            SELECT object_type, schema_name, table_name
+            FROM public.rag_objects
+            WHERE conversation_id = %s AND scope_key = %s
+              AND object_type IN ('schema','table')
+              AND {cond}
+            """,
+            ["__insight_worker__", "common", scope],
+        )
+        for otype, sname, tname in (pgc.fetchall() or []):
+            s = str(sname or "").strip().lower()
+            if not s:
+                continue
+            if otype == "table" and tname:
+                analyzed_tables.add((s, str(tname).strip().lower()))
+            elif otype == "schema":
+                analyzed_schemas.add(s)
+        pg.close()
+    except Exception as exc:
+        base["reason"] = "PG 통찰 조회 실패"
+        _log.getLogger("app").warning("insight_coverage pg fail pid=%s err=%r", pid, exc)
+        return base
+
+    # ── 객체 집계: 각 accessible DB = 1 DB노드 + N table노드 ──
+    total_obj = 0
+    analyzed_obj = 0
+    per_db = []
+    for db in accessible:
+        info = db_tables.get(db) or {"pairs": set(), "scannable": True}
+        pairs = info["pairs"]
+        scannable = info["scannable"]
+        tables_total = len(pairs)
+        if scannable:
+            tables_analyzed = sum(
+                1 for (s, t) in pairs
+                if (s.strip().lower(), t.strip().lower()) in analyzed_tables
+            )
+            live_schemas = {s.strip().lower() for (s, _t) in pairs}
+            db_schema_analyzed = 1 if (
+                (live_schemas & analyzed_schemas) or (str(db).strip().lower() in analyzed_schemas)
+            ) else 0
+        else:
+            tables_analyzed = 0
+            db_schema_analyzed = 0
+        db_total = tables_total + 1   # +1 = DB(schema) 노드
+        db_analyzed = tables_analyzed + db_schema_analyzed
+        total_obj += db_total
+        analyzed_obj += db_analyzed
+        per_db.append({
+            "db": db,
+            "schema_analyzed": bool(db_schema_analyzed),
+            "tables_total": tables_total,
+            "tables_analyzed": tables_analyzed,
+            "scannable": scannable,
+            "note": ("" if scannable else "insight 워커 미스캔(데이터소스 기본 DB 아님)"),
+        })
+
+    base["measurable"] = True
+    base["engine"] = engine
+    base["total_objects"] = total_obj
+    base["analyzed_objects"] = analyzed_obj
+    base["per_db"] = per_db
+    base["pct"] = (round(100.0 * analyzed_obj / total_obj, 1) if total_obj > 0 else None)
+    return base
+
+
+@app.get("/api/admin/products/insight-coverage")
+def admin_products_insight_coverage(request: Request) -> JSONResponse:
+    """제품별 insight-worker 분석 완료율 (TASK-0223). console.access. ?product_id= 단건, ?refresh=1 캐시 무시."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(account, "console.access"):
+        conn.close()
+        return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    try:
+        raw_pid = request.query_params.get("product_id")
+        only_pid = None
+        if raw_pid not in (None, ""):
+            try:
+                only_pid = int(raw_pid)
+            except Exception:
+                return _json_error("invalid product_id", 400)
+        force = str(request.query_params.get("refresh") or "").strip() in ("1", "true", "yes")
+        products = _list_products(conn, include_inactive=True)
+        out: dict = {}
+        for p in products:
+            pid = int(p["id"])
+            if only_pid is not None and pid != only_pid:
+                continue
+            cache_key = (pid, p.get("datasource_key") or "")
+            cov = None if force else _insight_cov_cache_get(cache_key)
+            if cov is None:
+                cov = _compute_product_insight_coverage(conn, p)
+                _insight_cov_cache_put(cache_key, cov)
+            out[str(pid)] = cov
+    finally:
+        conn.close()
+    return JSONResponse({"coverage": out})
+
+
 @app.post("/api/admin/products")
 async def admin_create_product(request: Request) -> JSONResponse:
     try:
