@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0235v
+- Date: 2026-06-12 (TASK-0235 후속 — PB-0008 Windows-browser 시각검증 PASS 기록 + 시나리오 자산 추가)
+- Scope: TASK-0235(새 대화 첫 메시지 진행 단계 실시간 표시) 라이브 배포 후 실제 Windows 브라우저 검증 완료 기록. docs + test scenario only — 코드 0.
+- 변경:
+  - `docs/TEST.md`: §4 2026-06-12 TASK-0235 Run 의 Windows-browser Environment 를 "예정"→**PASS(23/23)** 로 갱신(증거 6 스크린샷 + 단계 실시간 전환·사이드바 동작 실측).
+  - `tests/win-browser-task0235-newconv-progress.scenario.json`: 신규 — 새 대화 첫 요청 → pending bubble step 실시간 표시 → "단계 보기" → `#stepSidePanel` 사이드바 검증 시나리오(재현 가능).
+- 비변경: app.js / index.html / 백엔드 / 스키마 0. TASK-0235 코드는 이미 PR #172 로 머지·배포됨.
+- 검증: PB-0008 시나리오 PASS, healthz 200. CHECK#13 충족.
+- Cross-ref: TASK-0235 / CHG-20260612-0234 / REV-20260612-0235v.
+
 ## CHG-20260612-0234
 - Date: 2026-06-12 (TASK-0235, **Major §12.3** — 새 대화 첫 메시지 작업 단계 진행상황 실시간 표시; 동시세션 insight-reset·prompt-autogen·ds-a11y·ds-label cycle 이 TASK-0231/0232/0233/0234 선점→§13.1 재번호 0232→0235)
 - Scope: 채팅 화면 새 대화(lazy_create) 첫 메시지의 진행 단계 폴링 시작 시점 수정. feature-0003(web-ui) **frontend-only** 단독.

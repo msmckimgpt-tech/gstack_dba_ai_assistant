@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0236 [SKIPPED:verification-evidence-docs-test-only]
+- Related TASK: feature-0003-agent-web-ui (TASK-0235 후속)
+- Reason: TASK-0235 코드(PR #172 머지·배포 완료)의 PB-0008 Windows-browser 시각검증 PASS 를 TEST.md 에 기록 + 재현 시나리오 자산 추가. 변경 = docs(TEST.md) + test scenario(json) only, src/백엔드/스키마/RBAC 0. 코드 리뷰 대상 변경 없음 — TASK-0235 본체는 REV-20260612-0235 [SUBAGENT] 에서 이미 적대적 동시성 리뷰 완료.
+- Timestamp: 2026-06-12T00:35:00Z
+- Cross-ref: REV-20260612-0235 (본체 리뷰) / TASK-0235 / CHG-20260612-0235v.
+
 ## REV-20260612-0235 [SUBAGENT:newconv-progress-adversarial-concurrency] — CONCERN
 - Related TASK: feature-0003-agent-web-ui (TASK-0235)
 - Trigger: UI/screen keyword matched (작업 단계 표시/사이드바) + 동시성 state 전환 (lazy-create send 경로)
