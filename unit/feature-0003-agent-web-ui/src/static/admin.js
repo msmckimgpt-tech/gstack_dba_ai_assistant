@@ -4436,8 +4436,8 @@ function renderProductDetail() {
       roleId: null,
       accountId: null,
       title: "제품 프롬프트",
-      hint: "이 제품에만 적용됩니다.",
       fixedProductId: Number(product.id),
+      autoGenerateProductId: Number(product.id),
     });
     paneEl.appendChild(promptSection);
   }
@@ -4702,7 +4702,7 @@ function buildAccountProductOverrideList(account, disabled, opts = {}) {
 
 /* ── System prompt editor (공용 — role / product / account scope) ────── */
 
-function buildSystemPromptEditor({ scope, productId = null, roleId = null, accountId = null, title, hint, fixedProductId = null }) {
+function buildSystemPromptEditor({ scope, productId = null, roleId = null, accountId = null, title, hint, fixedProductId = null, autoGenerateProductId = null }) {
   const section = document.createElement("div");
   section.className = "admin-detail-section";
   const sectionTitle = document.createElement("div");
@@ -4752,11 +4752,6 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
     section.appendChild(row);
   }
 
-  const noticeEl = document.createElement("div");
-  noticeEl.className = "admin-detail-hint";
-  noticeEl.textContent = "변경은 하단에서 일괄 저장됩니다.";
-  section.appendChild(noticeEl);
-
   const textarea = document.createElement("textarea");
   textarea.className = "admin-prompt-textarea";
   textarea.placeholder = "이 스코프에서 누적 적용할 시스템 프롬프트. 비워두고 적용하면 기존 프롬프트가 삭제됩니다.";
@@ -4766,6 +4761,35 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
   const metaEl = document.createElement("div");
   metaEl.className = "admin-meta";
   section.appendChild(metaEl);
+
+  if (autoGenerateProductId) {
+    const autoBtn = document.createElement("button");
+    autoBtn.type = "button";
+    autoBtn.className = "btn-secondary";
+    autoBtn.textContent = "자동 작성";
+    autoBtn.addEventListener("click", async () => {
+      autoBtn.disabled = true;
+      autoBtn.textContent = "생성 중…";
+      try {
+        const payload = await apiFetch(
+          `/api/admin/products/${autoGenerateProductId}/prompt/generate`,
+          { method: "POST" },
+        );
+        if (payload && payload.prompt) {
+          textarea.value = payload.prompt;
+          const pid = resolveProductId();
+          setSystemPromptPending({ scope, productId: pid, roleId, accountId, content: payload.prompt });
+          metaEl.textContent = "(자동 생성됨 — 검토 후 저장하세요)";
+        }
+      } catch (error) {
+        metaEl.textContent = `자동 생성 실패: ${error.message || error}`;
+      } finally {
+        autoBtn.disabled = false;
+        autoBtn.textContent = "자동 작성";
+      }
+    });
+    section.appendChild(autoBtn);
+  }
 
   const resolveProductId = () => {
     if (productSelect) {

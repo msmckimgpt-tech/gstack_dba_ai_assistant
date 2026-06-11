@@ -290,6 +290,9 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   - AC-0348: `GET /api/admin/dashboard/preferences` 는 `console.access` 보유 시 본인 계정(actor.id)의 `{preferences:{version,widgets:[{key,visible,order}]}, defaults, customized}` 를 반환한다. 저장된 prefs 가 없으면 권한 기반 기본값(`_dashboard_default_prefs` — actor 가 볼 수 있는 위젯만 visible, 카탈로그 순서)을 `customized:false` 로 반환. request body 의 account_id 는 신뢰하지 않으며 항상 세션 actor.id 만 사용(IDOR 불가).
   - AC-0349: `PUT /api/admin/dashboard/preferences` body `{version,widgets:[{key,visible,order}]}` 는 `console.access` 보유 시 `_sanitize_dashboard_prefs`(알려진 위젯 키만·중복 제거·`visible`→bool·`order`→int·입력 64개 상한)로 정규화 후 본인 계정 `WebDashboardPreferences` 행에 upsert 하고 `{ok:true, preferences}` 를 반환한다(신규 RBAC 권한 없는 self-service). 미지 위젯 키/비-dict 항목은 거부되어 임의 JSON 이 Content 에 누적되지 않는다. 저장 실패 시 generic 메시지 + 서버측 로깅(raw 예외 텍스트 비노출, REV-20260611-0210 MINOR 흡수).
 
+- REQ-20260611-0216 (TASK-0216, **Minor** §12.3 — 제품 프롬프트 자동 작성 품질 강화): 관리 콘솔 제품 상세 화면에서 "자동 작성" 버튼 클릭 시 DB 구조 인사이트(fact_entries 4종) + 사용자 대화 주제 패턴(topic 최신 50개) + 실제 사용 사례 요약(summary 최신 5개)를 LLM 컨텍스트로 구성해 한국어 시스템 프롬프트를 자동 생성한다. 기존 `product.manage` 권한 재사용 — RBAC/스키마/시크릿 무변경. AC-0350.
+  - AC-0350: `POST /api/admin/products/{product_id}/prompt/generate`(product.manage 권한 게이트)는 MySQL에서 제품명·설명·접근 스키마 목록을 조회하고, PG에서 `fact_entries`(source_type IN ('schema_insight','table_insight','search_pref','insight') + scope_key ILIKE 매칭, LIMIT 80) + `core_conversations.topic`(product_id 필터, 최신 50) + `summary.summary`(product_id join, 최신 5)를 조회한 뒤 knowledge_block을 구성해 `_resolve_session_default_model()` + `_get_openai_client(model=...)` + `max_tokens_for_model`/`model_supports_temperature`로 LLM 호출 후 `{"prompt": <생성된 프롬프트>}`를 반환한다. PG 오류는 경고 로그 후 graceful degradation(팩트/토픽/요약 미포함 상태로 LLM 호출). admin.js `buildSystemPromptEditor`의 `autoGenerateProductId` 파라미터로 버튼 활성화 — 클릭 시 disabled+로딩 텍스트 → 응답 후 textarea 반영 + metaEl 갱신 + setSystemPromptPending 호출.
+
 ## 3. In Scope
 - `src/app.py`
 - `src/static/*`

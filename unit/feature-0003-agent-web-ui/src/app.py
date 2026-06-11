@@ -49,6 +49,7 @@ from modules.model_catalog import (
     PUBLIC_API_MODEL_OPTIONS,
     is_allowed_api_model,
     is_local_llm_model,
+    max_tokens_for_model,
     model_supports_temperature,
     model_supports_vision,
 )
@@ -13897,6 +13898,191 @@ VALUES (%s, %s, %s, %s)
         return _json_error(f"audit write failed: {audit_exc}", 500)
     conn.close()
     return JSONResponse({"ok": True, "databases": cleaned})
+
+
+@app.post("/api/admin/products/{product_id}/prompt/generate")
+async def admin_generate_product_prompt(product_id: int, request: Request) -> JSONResponse:
+    conn = _connect_memory()
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(account, "product.manage"):
+        conn.close()
+        return _json_error("제품 관리 권한이 필요합니다.", 403)
+
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT Id, ProductKey, Name, Description FROM WebProducts WHERE Id = %s", (product_id,))
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        return _json_error("제품을 찾을 수 없습니다.", 404)
+
+    prod_id, prod_key, prod_name, prod_desc = row
+
+    conn2 = _connect_memory()
+    try:
+        cur2 = conn2.cursor()
+        cur2.execute(
+            "SELECT SchemaName FROM WebProductDatabases WHERE ProductId = %s",
+            (product_id,),
+        )
+        db_rows = cur2.fetchall()
+    finally:
+        conn2.close()
+
+    schema_names = [r[0] for r in db_rows]
+
+    # PG: schema_insight, table_insight, search_pref, insight 팩트
+    fact_lines: list[str] = []
+    # PG: 대화 topic 집계 (최신 50개)
+    topic_lines: list[str] = []
+    # PG: 대화 summary 샘플 (최신 5개)
+    summary_lines: list[str] = []
+    try:
+        from modules.db import _pg_connect
+        pg_conn = _pg_connect()
+        pg_cur = pg_conn.cursor()
+
+        # 팩트: schema_insight/table_insight/search_pref/insight 타입
+        if schema_names:
+            placeholders = ", ".join(["%s"] * len(schema_names))
+            pg_cur.execute(
+                f"""
+                SELECT fe.fact_key, t.text_content
+                FROM public.fact_entries fe
+                JOIN public.texts t ON fe.text_hash = t.text_hash
+                WHERE fe.source_type IN ('schema_insight', 'table_insight', 'search_pref', 'insight')
+                  AND (
+                    {" OR ".join(["fe.scope_key ILIKE %s" for _ in schema_names])}
+                  )
+                ORDER BY fe.weight DESC, fe.updated_at DESC
+                LIMIT 80
+                """,
+                [f"%{s}%" for s in schema_names],
+            )
+        else:
+            pg_cur.execute(
+                """
+                SELECT fe.fact_key, t.text_content
+                FROM public.fact_entries fe
+                JOIN public.texts t ON fe.text_hash = t.text_hash
+                WHERE fe.source_type IN ('schema_insight', 'table_insight', 'search_pref', 'insight')
+                ORDER BY fe.weight DESC, fe.updated_at DESC
+                LIMIT 80
+                """
+            )
+        for fkey, ftext in pg_cur.fetchall():
+            if ftext:
+                fact_lines.append(f"[{fkey}] {ftext[:400]}")
+
+        # topic 집계: 이 제품의 대화 제목 최신 50개
+        pg_cur.execute(
+            """
+            SELECT COALESCE(NULLIF(TRIM(c.topic), ''), NULLIF(TRIM(kv.value), '')) AS t
+            FROM agent_runtime.core_conversations c
+            LEFT JOIN agent_runtime.kv kv
+              ON kv.conversation_id = c.conversation_id AND kv.key = 'topic'
+            WHERE c.product_id = %s
+              AND COALESCE(NULLIF(TRIM(c.topic), ''), NULLIF(TRIM(kv.value), '')) IS NOT NULL
+            ORDER BY c.updated_at DESC
+            LIMIT 50
+            """,
+            (product_id,),
+        )
+        for (t,) in pg_cur.fetchall():
+            if t:
+                topic_lines.append(t)
+
+        # summary 샘플: 이 제품의 대화 요약 최신 5개
+        pg_cur.execute(
+            """
+            SELECT s.summary
+            FROM agent_runtime.summary s
+            JOIN agent_runtime.core_conversations c
+              ON c.conversation_id = s.conversation_id
+            WHERE c.product_id = %s
+              AND s.summary IS NOT NULL AND TRIM(s.summary) <> ''
+            ORDER BY s.updated_at DESC
+            LIMIT 5
+            """,
+            (product_id,),
+        )
+        for (sm,) in pg_cur.fetchall():
+            if sm:
+                summary_lines.append(sm[:600])
+
+        pg_conn.close()
+    except Exception as pg_exc:
+        _log.getLogger("app").warning("admin_generate_product_prompt PG error: %s", pg_exc)
+
+    # 프롬프트 구성
+    sections: list[str] = []
+    sections.append(f"제품명: {prod_name}")
+    if prod_desc:
+        sections.append(f"제품 설명: {prod_desc}")
+    if schema_names:
+        sections.append("접근 가능 데이터베이스(스키마): " + ", ".join(schema_names))
+
+    if fact_lines:
+        sections.append("\n## DB 구조 및 인사이트\n" + "\n".join(fact_lines[:60]))
+
+    if topic_lines:
+        sections.append(
+            "\n## 사용자 대화 주제 패턴 (최근 요청 샘플)\n"
+            + "\n".join(f"- {t}" for t in topic_lines[:40])
+        )
+
+    if summary_lines:
+        sections.append(
+            "\n## 실제 사용 사례 요약\n"
+            + "\n\n---\n".join(summary_lines)
+        )
+
+    knowledge_block = "\n\n".join(sections)
+
+    llm_model = _resolve_session_default_model()
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "다음 정보를 바탕으로 AI 어시스턴트의 시스템 프롬프트를 한국어로 작성해주세요.\n"
+                "시스템 프롬프트는 어시스턴트가 이 제품의 데이터를 분석할 때 따라야 할 지침, "
+                "주요 테이블·컬럼 설명, 자주 묻는 질문 유형, 주의사항을 포함해야 합니다.\n"
+                "실무에서 바로 사용할 수 있는 구체적이고 완성된 형태로 작성하세요.\n\n"
+                f"=== 제품 정보 ===\n{knowledge_block}"
+            ),
+        }
+    ]
+
+    from modules.llm import _get_openai_client
+    openai_client = _get_openai_client(model=llm_model)
+    if openai_client is None:
+        return _json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503)
+
+    _mt = max_tokens_for_model(llm_model, "summary")
+    create_kwargs: dict = {
+        "model": llm_model,
+        "messages": messages,
+        "timeout": 55,
+    }
+    if _mt is not None:
+        create_kwargs["max_tokens"] = _mt
+    if model_supports_temperature(llm_model):
+        create_kwargs["temperature"] = 0.3
+
+    try:
+        resp = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: openai_client.chat.completions.create(**create_kwargs)
+        )
+        generated = resp.choices[0].message.content or ""
+    except Exception as llm_exc:
+        return _json_error(f"LLM 생성 실패: {llm_exc}", 502)
+
+    return JSONResponse({"prompt": generated.strip()})
 
 
 @app.get("/api/admin/system-prompts")

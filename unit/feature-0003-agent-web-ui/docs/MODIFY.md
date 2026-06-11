@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260611-0216
+- Date: 2026-06-11 (TASK-0216, **Minor §12.3** — 제품 프롬프트 자동 작성 품질 강화)
+- Scope: `POST /api/admin/products/{product_id}/prompt/generate` 엔드포인트 신규 추가 — DB 구조 인사이트(fact_entries 4종) + 사용자 대화 주제 패턴(topic 최신 50개) + 실제 사용 사례 요약(summary 최신 5개)를 LLM 컨텍스트로 구성해 시스템 프롬프트 자동 생성. 관리 콘솔 제품 상세 화면에 "자동 작성" 버튼 추가.
+- 배경: 기존 자동 작성 엔드포인트 미존재 — 운영자가 제품 프롬프트를 수동 작성하던 구조. insight-worker가 축적한 팩트(schema_insight/table_insight/search_pref/insight)와 실제 사용자 대화 주제·요약을 활용하면 LLM이 더 정확하고 실무 적합한 프롬프트를 생성 가능.
+- 변경:
+  - `src/app.py`: `POST /api/admin/products/{product_id}/prompt/generate` 엔드포인트 추가. MySQL에서 제품/DB 스키마 조회, PG에서 fact_entries(4종) + core_conversations.topic(최신 50) + summary(최신 5) 조회 후 knowledge_block 구성 → LLM 호출(model/max_tokens/temperature 동적). 권한: `product.manage`.
+  - `src/static/admin.js`: `buildSystemPromptEditor`에 `autoGenerateProductId` 파라미터 + "자동 작성" 버튼 추가(생성 중 disabled). `renderProductDetail`에서 `autoGenerateProductId: Number(product.id)` 전달. 불필요 hint 문자열("이 제품에만 적용됩니다.") 제거.
+- 비변경: RBAC 카탈로그·스키마·시크릿 무변경. 기존 `product.manage` 권한 재사용. fact_entries/core_conversations/summary 읽기 전용(쓰기 없음).
+- 검증: py_compile PASS + curl 실제 LLM 호출 성공(킹스레이드 product_id=1, 한국어 시스템 프롬프트 정상 생성).
+- Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/src/static/admin.js, docs/{TASK,MODIFY,REVIEW}.md
+- Rollback: 신규 엔드포인트는 additive — 미사용 시 무영향. admin.js의 버튼 제거 및 엔드포인트 삭제로 원복.
+
 ## CHG-20260611-0210
 - Date: 2026-06-11 (TASK-0210, **Major §12.3** — 관리 콘솔 대시보드 보강)
 - Scope: 빈약한 관리 콘솔 대시보드("운영 현황")를 카테고리별 위젯 그리드 + per-account 커스터마이즈(표시/순서) + 서버 영속으로 재구성. RBAC-스코프 집계 엔드포인트 + 본인 한정 prefs self-service.
