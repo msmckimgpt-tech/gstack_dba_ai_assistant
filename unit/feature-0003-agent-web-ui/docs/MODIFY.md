@@ -9,6 +9,17 @@ source_of_truth: true
 # Modify Log
 
 ## CHG-20260612-0234
+- Date: 2026-06-12 (TASK-0235, **Major §12.3** — 새 대화 첫 메시지 작업 단계 진행상황 실시간 표시; 동시세션 insight-reset·prompt-autogen·ds-a11y·ds-label cycle 이 TASK-0231/0232/0233/0234 선점→§13.1 재번호 0232→0235)
+- Scope: 채팅 화면 새 대화(lazy_create) 첫 메시지의 진행 단계 폴링 시작 시점 수정. feature-0003(web-ui) **frontend-only** 단독.
+- 배경: 사용자 보고 — 새 대화 첫 요청 시 작업 단계가 안 보이고 "시작 중" 만 표시. 진단 결과 step/사이드바 UI(TASK-0061)는 이미 존재하고, **데이터 공급 비대칭**이 근본원인. 기존 대화는 send 직전 `startProgressPolling()` 시작하지만(app.js:5476) 새 대화는 cid 가 `/api/ask` 응답 전까지 없어 폴링을 못 켜고, ask 블로킹 완료 후(run 종료 시점)에야 폴링 시작 → 처리 내내 "시작 중…".
+- 변경:
+  - `src/static/app.js`: lazy_create 의 early-cid 발급 분기를 **첨부 유무 무관 일반화**(기존 staged 첨부 있을 때만 `/api/new_conversation` 선호출하던 TASK-0106 분기). cid 확정 직후 `state.activeConversationId` 전환 + optimistic conversation entry 선등재 + `startProgressPolling({reset:true})` 즉시 시작. `earlyCidActivated` 플래그로 ask 실패 시 non-lazy 복구 경로(진행 중 run 추적) 분기. early-cid 발급 실패 시 기존 `lazy_create=true` 단일 호출 경로로 graceful fallback. 후처리 블록은 `pendingSentinel===busyKey` 가드로 중복 폴링 자연 차단.
+  - `src/static/index.html`: 캐시버스터 `app.js?v=20260611-newconv-progress-steps`.
+- 비변경: 백엔드 app.py·PG/웹 스키마·RBAC·엔드포인트·시크릿 0. step/progress 표시·"N단계 보기"→사이드바 UI(`renderPendingAssistantBubble`/`openStepSidePanel`/`#stepSidePanel`) 코드 무변경 — 데이터만 흐르면 자동 동작. `/api/new_conversation`·`/api/progress`·`/api/ask` API 계약 무변경. 병렬 worktree 가 app.py 점유 중이라 의도적으로 app.py 미수정.
+- 검증: node --check app.js PASS + verify-completion PASS(9/9). 적대적 동시성 리뷰 REV-20260612-0235 CONCERN 2 흡수. **잔여**: web 재배포 + PB-0008 Windows-browser 시각검증.
+- Files: src/static/app.js, src/static/index.html, docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md, docs/reviews/20260612T000000Z-newconv-progress-concurrency.md, ../../docs/STATUS.md
+- Rollback: 단일 함수(`sendPrompt`) 내 분기 일반화 + 캐시버스터. 되돌리면 staged 첨부 전용 early-cid 로 복귀(기존 동작). additive 한 state 전환만 추가됨.
+- Cross-ref: TASK-0235 / REQ-20260611-0232 / REV-20260612-0235. (TASK-0061 실시간 step UI 후속 — 새 대화 경로 데이터 공급 보완.)
 - Date: 2026-06-12 (TASK-0234, **Minor §12.3** — datasource UI 사용성 버그 2건, frontend-only)
 - Scope: 멀티 datasource 1:N(TASK-0230) 배포 후 사용자 보고 2건. ① 연결 테스트 버튼이 바인딩 존재 시 무동작(드롭다운 add 모드 value=''), ② 선택 DB 가 어느 datasource 소속인지 불명. 권한/스키마/엔드포인트/백엔드 0.
 - Files:
