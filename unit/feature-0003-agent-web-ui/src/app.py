@@ -13643,6 +13643,8 @@ def _compute_product_insight_coverage(conn, product: dict) -> dict:
         pg = _pg_connect()
         pgc = pg.cursor()
         cond = "(datasource_key = %s" + (" OR datasource_key IS NULL" if allow_null else "") + ")"
+        # insight-worker 의 schema/table 통찰은 전역 fact 라 conversation_id=GLOBAL_CONVERSATION_ID(`__global__`)
+        # 로 저장된다(워커 런타임 conv `__insight_worker__` 가 아니라). scope_key='common' 은 rag scope.
         pgc.execute(
             f"""
             SELECT object_type, schema_name, table_name
@@ -13651,7 +13653,7 @@ def _compute_product_insight_coverage(conn, product: dict) -> dict:
               AND object_type IN ('schema','table')
               AND {cond}
             """,
-            ["__insight_worker__", "common", scope],
+            ["__global__", "common", scope],
         )
         for otype, sname, tname in (pgc.fetchall() or []):
             s = str(sname or "").strip().lower()
