@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260611-0216 [SKIPPED:additive-endpoint-existing-perm-readonly-pg]
+- Date: 2026-06-11
+- Cycle: TASK-0216 (제품 프롬프트 자동 작성 품질 강화 — topic/fact_entries/summary), **Minor §12.3**
+- Reason: additive 신규 엔드포인트, 기존 `product.manage` 권한 재사용(RBAC 신규 0), PG 데이터 읽기 전용(fact_entries/core_conversations/summary — 쓰기 없음), 스키마/마이그레이션 없음, 시크릿 처리 없음. `_connect_memory()`/`_pg_connect()` 기존 패턴 준수. SQL 인젝션 표면 없음(product_id는 FastAPI int 경로 파라미터, SQL 파라미터 바인딩 전용). LLM 호출은 서버측 완결(사용자 입력이 LLM 프롬프트에 직접 흐르지 않음 — DB에서 읽은 팩트만 포함).
+- Risk: very low — 읽기 전용 DB 조회 + additive LLM 생성 엔드포인트.
+- Cross-ref: CHG-20260611-0216 / TASK-0216.
+
 ## REV-20260611-0213 [SKIPPED:frontend-picker-ui-no-rbac-schema-change]
 - Date: 2026-06-11
 - Cycle: TASK-0213 (접근 가능 DB 선택 UI — dropdown+checkbox 멀티 토글), **Minor §12.3**
