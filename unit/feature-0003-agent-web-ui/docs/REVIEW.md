@@ -1891,3 +1891,9 @@ source_of_truth: true
 - Trigger: UI/screen/layout keyword(§18.8 → ux/design). 단 본 cycle 은 **기능 제거 + 라벨 단순화**(추가 로직 0)라 전례(REV-0184/0198/0202 류 readonly-ui)와 동일 경량 SKIP.
 - Reason: 순수 프론트(admin.js·styles.css·admin.html). 중복 UI(`.admin-usage-mcards`) 제거 + 칩 토큰수 제거 — 신규 엔드포인트·쿼리·권한·grant·역할·스키마·시크릿 0. 노출 데이터 범위 축소(토큰수는 도넛·차트·표에 잔존). 직전 TASK-0202 의 hover 결합 잭을 섹션 폐기로 근본 해소(라이브 win-browser 로 결함 재현 확인 후 결정). `buildView`/차트/표 무변경(회귀 0). RBAC 권한 모델 변경 아님 → outside-voice 불필요. node --check PASS.
 - Residual: Windows-browser(PB-0008) 시각검증은 배포 후 수행(모델별 카드 부재·칩 모델명만·칩 토글 정상 — CHECK#13).
+
+## REV-20260611-0205 [SKIPPED:frontend-only-single-line]
+- Date: 2026-06-11
+- Cycle: TASK-0205 (composer Shift+Enter 줄바꿈 지원)
+- Trigger: keydown/input keyword(§18.8 → ux). 단 본 cycle 은 **keydown 핸들러 1줄 early return** 으로 브라우저 기본 동작을 허용하는 것 — 신규 로직·상태·API 0. 전례(REV-0198/0204 readonly-ui)와 동일 경량 SKIP.
+- Reason: `if (event.shiftKey) return;` 1줄. 권한·엔드포인트·스키마·시크릿 무변경. 기존 Enter/Ctrl+Enter 전송 경로 미영향. 단순 기본 동작 허용 — outside-voice 불필요.

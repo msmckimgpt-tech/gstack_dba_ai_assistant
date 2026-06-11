@@ -3089,3 +3089,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] node --check admin.js PASS, styles.css 중괄호 균형. 칩 바·`buildView`·도넛/일별/역할/계정 차트·상세 표(모델별 데이터 테이블 포함) 유지=회귀 0. 캐시버스터 `?v=20260611-usage-no-mcards`.
 - [x] outside-voice [SKIPPED:frontend-removal-readonly-ui] (REV-20260611-0204) — UI 제거·라벨 정리, 권한·스키마·엔드포인트·백엔드 0.
 - [ ] verify-completion → main rebase·ff-merge → web 재배포 → PB-0008 Windows-browser 시각검증(모델별 카드 부재·칩 모델명만·칩 토글 정상)
+
+
+### TASK-0205 — composer 텍스트박스 Shift+Enter 줄바꿈 지원 (frontend-only) (2026-06-11)
+- [x] **Minor §12.3** (keydown 핸들러 1줄, RBAC·스키마·엔드포인트·백엔드 0) — 사용자 요청: 입력 텍스트박스에서 Shift+Enter 를 누르면 줄바꿈이 되도록. sendMode("Enter 전송"/"Ctrl+Enter 전송") 와 무관하게 Shift+Enter 는 항상 줄바꿈. (CHG-20260611-0205)
+- [x] **수정** ([app.js](../src/static/app.js)): `promptInputEl keydown` 핸들러에 `if (event.shiftKey) return;` 추가 — Shift+Enter 시 `event.preventDefault()`/`sendPrompt()` 진입 없이 브라우저 기본 줄바꿈 동작 유지.
+- [x] outside-voice [SKIPPED:frontend-only-single-line] (REV-20260611-0205)
+- [ ] verify-completion → main ff-merge → web 재배포 → 라이브 확인(Shift+Enter 줄바꿈, Enter/Ctrl+Enter 전송 무변경)

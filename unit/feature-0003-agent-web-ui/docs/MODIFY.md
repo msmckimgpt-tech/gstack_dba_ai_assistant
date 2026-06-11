@@ -2685,3 +2685,12 @@ source_of_truth: true
   - unit/feature-0003-agent-web-ui/src/static/admin.html (캐시버스터 → usage-no-mcards)
   - unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
 - Rollback: TASK-0202 시점 admin.js/styles.css 환원(mcards 그리드+카드 클릭/hover 핸들러+`.admin-usage-mcard*`/`.admin-usage-chip-tok` CSS 복원) + 캐시버스터 환원.
+
+## CHG-20260611-0205
+- Date: 2026-06-11
+- Related Requirement: TASK-0205 (사용자 요청 — 텍스트박스 Shift+Enter 줄바꿈 지원)
+- Summary: composer 입력 텍스트박스(`promptInputEl`)의 `keydown` 핸들러에서 `event.shiftKey` 가 true 이면 즉시 `return` 하여 브라우저 기본 줄바꿈 동작을 허용한다. `sendMode` 설정("Enter 전송"/"Ctrl+Enter 전송")과 무관하게 Shift+Enter 는 항상 줄바꿈. 기존 Enter/Ctrl+Enter 전송 경로 무변경. 백엔드·API·스키마·RBAC 0.
+- Files:
+  - unit/feature-0003-agent-web-ui/src/static/app.js (promptInputEl keydown — Shift+Enter early return 1줄)
+  - unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
+- Rollback: `if (event.shiftKey) return;` 1줄 제거.

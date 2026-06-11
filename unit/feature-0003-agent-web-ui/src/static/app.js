@@ -5960,6 +5960,7 @@ async function initialize() {
   try { _bindComposerActionsEvents(); } catch (_) { /* graceful */ }
   promptInputEl.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
+      if (event.shiftKey) return; // Shift+Enter는 항상 줄바꿈
       const isCtrl = event.ctrlKey || event.metaKey;
       const shouldSend = state.sendMode === "enter" ? !isCtrl : isCtrl;
       if (shouldSend) {
