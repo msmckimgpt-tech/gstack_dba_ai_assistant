@@ -3413,6 +3413,73 @@ def _migrate_mssql_products_to_db_level(conn) -> None:
         cur.close()
 
 
+def _migrate_env_datasources_to_db(conn) -> None:
+    """TASK-0211: `.env`(config.DATASOURCES, `DS_<KEY>_*`) 분석 데이터소스를 **DB 레지스트리**(WebDatasources,
+    암호화)로 이전. 이제 데이터소스는 **관리 콘솔(DB)에서 일원 관리**한다 — `.env` 는 앱 인프라('Database Query
+    Assistant' = 데이터 MySQL `AGENT_DATA_DB_*`(.env.mysql) / `agent_memory` / KEK(.env.secret))만 둔다.
+
+    멱등: 이미 DB 에 동일 키가 있으면 skip(운영자가 콘솔에서 편집한 값을 .env 가 덮어쓰지 않는다). KEK
+    미설정/불완전 좌표 시 skip. 이전 후 운영자가 `.env` 의 `DS_*` 를 제거하면 DB 사본이 단일 소스가 된다.
+    """
+    try:
+        from modules import cred_crypto as _cc
+        from modules import datasources as _dsr
+        from modules import config as _cfg2
+    except Exception:
+        return
+    if not _cc.enc_available():
+        return  # KEK 미설정 — 암호화 불가, 보류
+    env_ds = getattr(_cfg2, "DATASOURCES", {}) or {}
+    if not env_ds:
+        return
+    cur = conn.cursor()
+    try:
+        for key, ds in env_ds.items():
+            k = str(key).strip().lower()
+            if not k:
+                continue
+            cur.execute("SELECT 1 FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (k,))
+            if cur.fetchone():
+                continue  # 이미 DB 관리 — 멱등 skip(콘솔 편집값 보존)
+            engine = str(ds.get("engine") or "mysql").strip().lower()
+            host = str(ds.get("host") or "").strip()
+            try:
+                port = int(ds.get("port") or (1433 if engine == "mssql" else 3306))
+            except Exception:
+                port = 1433 if engine == "mssql" else 3306
+            duser = str(ds.get("user") or "").strip()
+            password = ds.get("password") or ""
+            default_db = (str(ds.get("default_db")).strip() or None) if ds.get("default_db") else None
+            if not host or not duser:
+                continue  # 불완전 좌표 — skip
+            got = _dsr.ensure_dek(conn)
+            if got is None:
+                continue
+            ver, dek = got
+            try:
+                pw_enc = _cc.encrypt_password(dek, password, k) if password else None
+            except Exception:
+                continue
+            cur.execute(
+                "INSERT INTO WebDatasources (DatasourceKey,Engine,Host,Port,DbUser,PasswordEnc,DefaultDb,"
+                "EncryptionVersion,IsActive,UpdatedByAccountId) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,1,NULL)",
+                (k, engine, host, port, duser, pw_enc, default_db, int(ver)),
+            )
+            try:
+                logging.getLogger(__name__).info(
+                    "[ds-migrate] .env 데이터소스 '%s'(%s @ %s:%s) → DB 레지스트리 이전(암호화)", k, engine, host, port,
+                )
+            except Exception:
+                pass
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        cur.close()
+
+
 def _ensure_web_conversation_shares_schema(conn) -> None:
     """REQ-20260514-0001: WebConversationShares 테이블을 idempotent CREATE.
 
@@ -4035,6 +4102,8 @@ def _ensure_seed_catchup(conn) -> None:
     _seed_main_mysql_datasource(conn)
     # TASK-0206: 구 MSSQL 제품(참조 DB)을 DB-단위 접근목록으로 일회성 이전 (fast-path).
     _migrate_mssql_products_to_db_level(conn)
+    # TASK-0211: .env 분석 데이터소스(DS_*)를 DB 레지스트리로 이전 (fast-path).
+    _migrate_env_datasources_to_db(conn)
     # REQ-20260514-0001: 공유 링크 테이블 fast-path 보정.
     _ensure_web_conversation_shares_schema(conn)
     # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column ALTER.
@@ -4200,6 +4269,8 @@ def _ensure_web_tables():
         _seed_main_mysql_datasource(conn)
         # TASK-0206: 구 MSSQL 제품(참조 DB)을 DB-단위 접근목록으로 일회성 이전 (slow path).
         _migrate_mssql_products_to_db_level(conn)
+        # TASK-0211: .env 분석 데이터소스(DS_*)를 DB 레지스트리로 이전 (slow path).
+        _migrate_env_datasources_to_db(conn)
         # REQ-20260514-0001: 공유 링크 테이블 보장 (slow path).
         _ensure_web_conversation_shares_schema(conn)
         # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column (slow path).
