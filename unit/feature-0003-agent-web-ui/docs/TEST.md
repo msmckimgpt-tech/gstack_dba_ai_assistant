@@ -596,3 +596,14 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **Evidence:** `/tmp/win-browser-shots/task0223/01_list_badges.png`(목록 — 3× 녹색 `분석 100%` + 1× `분석 측정 불가`). 상세 screenshot 은 relay CDP transient(font-load 후 timeout)로 미캡처되나 구조 검증은 eval 로 확정.
   - **Pass/Fail: PASS**
   - **Notes:** 캐시버스터 `?v=20260611-insight-coverage` 서빙. 분자=PG rag_objects(`__global__`/`common`) ∩ 라이브 카탈로그 set 교집합, datasource scope=엔드포인트 해시(+기본 엔드포인트 NULL 폴백). CHECK#13(PB-0008 Windows-browser) **충족**.
+
+- 2026-06-11 (TASK-0229 제품 상세 "접근 가능 데이터베이스" UI 통합 — **PB-0008 Windows-browser 부분 검증**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 userspace relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, self-signed ignore). WSL headless 아닌 실제 Windows 화면.
+  - **Runner: AI** (doctor → launch → goto `/admin` → screenshot)
+  - **배포:** PR #167 → main `77f2ef6` 머지 + `sudo docker compose build web` + `up -d --no-deps --no-build web`. healthz status=ok(mysql_ok/pg_ok). 라이브 정적 자산 반영 확인 — `admin.js?v=20260611-db-coverage-unified` 에 `buildSystemDbChip`/`buildDbCoverageCells`/`cov-db-wrap`(grep 5 매치), `styles.css` 에 `sysdb-chip`/`cov-microbar`(19 매치).
+  - **검증 내용:**
+    - **라우트 로드:** `https://112.185.196.20:18080/admin` → status 200, title `DQA — Database Query Assistant Admin`. 실제 Windows Chrome 렌더(스크린샷 `artifacts/task0229-admin-login.png`) — 로그인 카드 정상 표시.
+    - **제품 상세 시각검증(인증 후): 미수행** — admin 자격증명이 AI 에게 없어 로그인 후 `관리 콘솔 > 제품 > [항목] > 접근 가능 데이터베이스` 통합 리스트/시스템 묶음 칩의 실제 화면 확인은 불가. 코드·배포 반영은 라이브 정적 자산 grep + verify-completion(9/9)으로 확정.
+  - **Evidence:** `artifacts/task0229-admin-login.png`(admin 로그인 화면 — 실제 Windows Chrome).
+  - **Pass/Fail: PARTIAL** (로드·배포 반영 PASS / 인증 후 시각검증은 자격증명 필요 → 사용자 위임)
+  - **Notes:** 캐시버스터 `?v=20260611-db-coverage-unified` 서빙 확인. CHECK#13 은 v1 WARN-only(PR block 아님). **사용자 시각검증 권장**: admin 로그인 → 제품(예 킹스레이드) 선택 → `접근 가능 데이터베이스` 섹션에서 (1) per-DB 진척이 사용자 DB chip 과 한 리스트로 통합됐는지, (2) 시스템 DB 가 단일 `시스템 DB N개·고정` 칩으로 묶이고 hover/focus 시 개별 이름 툴팁이 뜨는지 확인.
