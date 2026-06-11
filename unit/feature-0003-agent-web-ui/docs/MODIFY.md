@@ -17,8 +17,28 @@ source_of_truth: true
 - 근본 원인: (a) 제품 상세 datasource UI 가 단일 `renderProductDetail()` 시점 클로저 기반인데 바인딩 변경 후 칩만 부분 갱신 → 편집대상 select·배지·DB목록 stale. 바인딩 0↔1↔N 전환 시 select 생성/제거 불가. (b) `length>=2` 편집대상 select 블록이 `_editDsKey` 를 let 선언 전에 참조 → ≥2 바인딩 제품 렌더 시 ReferenceError(TDZ)로 패널 blank(잠복).
 - 검증: Playwright 실브라우저 재현→수정→재검증(add/switch 모두 PASS, 콘솔에러 0) + make test 회귀 0.
 - Rollback: 위 2파일 revert(frontend-only).
+## CHG-20260612-0235v
+- Date: 2026-06-12 (TASK-0235 후속 — PB-0008 Windows-browser 시각검증 PASS 기록 + 시나리오 자산 추가)
+- Scope: TASK-0235(새 대화 첫 메시지 진행 단계 실시간 표시) 라이브 배포 후 실제 Windows 브라우저 검증 완료 기록. docs + test scenario only — 코드 0.
+- 변경:
+  - `docs/TEST.md`: §4 2026-06-12 TASK-0235 Run 의 Windows-browser Environment 를 "예정"→**PASS(23/23)** 로 갱신(증거 6 스크린샷 + 단계 실시간 전환·사이드바 동작 실측).
+  - `tests/win-browser-task0235-newconv-progress.scenario.json`: 신규 — 새 대화 첫 요청 → pending bubble step 실시간 표시 → "단계 보기" → `#stepSidePanel` 사이드바 검증 시나리오(재현 가능).
+- 비변경: app.js / index.html / 백엔드 / 스키마 0. TASK-0235 코드는 이미 PR #172 로 머지·배포됨.
+- 검증: PB-0008 시나리오 PASS, healthz 200. CHECK#13 충족.
+- Cross-ref: TASK-0235 / CHG-20260612-0234 / REV-20260612-0235v.
 
 ## CHG-20260612-0234
+- Date: 2026-06-12 (TASK-0235, **Major §12.3** — 새 대화 첫 메시지 작업 단계 진행상황 실시간 표시; 동시세션 insight-reset·prompt-autogen·ds-a11y·ds-label cycle 이 TASK-0231/0232/0233/0234 선점→§13.1 재번호 0232→0235)
+- Scope: 채팅 화면 새 대화(lazy_create) 첫 메시지의 진행 단계 폴링 시작 시점 수정. feature-0003(web-ui) **frontend-only** 단독.
+- 배경: 사용자 보고 — 새 대화 첫 요청 시 작업 단계가 안 보이고 "시작 중" 만 표시. 진단 결과 step/사이드바 UI(TASK-0061)는 이미 존재하고, **데이터 공급 비대칭**이 근본원인. 기존 대화는 send 직전 `startProgressPolling()` 시작하지만(app.js:5476) 새 대화는 cid 가 `/api/ask` 응답 전까지 없어 폴링을 못 켜고, ask 블로킹 완료 후(run 종료 시점)에야 폴링 시작 → 처리 내내 "시작 중…".
+- 변경:
+  - `src/static/app.js`: lazy_create 의 early-cid 발급 분기를 **첨부 유무 무관 일반화**(기존 staged 첨부 있을 때만 `/api/new_conversation` 선호출하던 TASK-0106 분기). cid 확정 직후 `state.activeConversationId` 전환 + optimistic conversation entry 선등재 + `startProgressPolling({reset:true})` 즉시 시작. `earlyCidActivated` 플래그로 ask 실패 시 non-lazy 복구 경로(진행 중 run 추적) 분기. early-cid 발급 실패 시 기존 `lazy_create=true` 단일 호출 경로로 graceful fallback. 후처리 블록은 `pendingSentinel===busyKey` 가드로 중복 폴링 자연 차단.
+  - `src/static/index.html`: 캐시버스터 `app.js?v=20260611-newconv-progress-steps`.
+- 비변경: 백엔드 app.py·PG/웹 스키마·RBAC·엔드포인트·시크릿 0. step/progress 표시·"N단계 보기"→사이드바 UI(`renderPendingAssistantBubble`/`openStepSidePanel`/`#stepSidePanel`) 코드 무변경 — 데이터만 흐르면 자동 동작. `/api/new_conversation`·`/api/progress`·`/api/ask` API 계약 무변경. 병렬 worktree 가 app.py 점유 중이라 의도적으로 app.py 미수정.
+- 검증: node --check app.js PASS + verify-completion PASS(9/9). 적대적 동시성 리뷰 REV-20260612-0235 CONCERN 2 흡수. **잔여**: web 재배포 + PB-0008 Windows-browser 시각검증.
+- Files: src/static/app.js, src/static/index.html, docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md, docs/reviews/20260612T000000Z-newconv-progress-concurrency.md, ../../docs/STATUS.md
+- Rollback: 단일 함수(`sendPrompt`) 내 분기 일반화 + 캐시버스터. 되돌리면 staged 첨부 전용 early-cid 로 복귀(기존 동작). additive 한 state 전환만 추가됨.
+- Cross-ref: TASK-0235 / REQ-20260611-0232 / REV-20260612-0235. (TASK-0061 실시간 step UI 후속 — 새 대화 경로 데이터 공급 보완.)
 - Date: 2026-06-12 (TASK-0234, **Minor §12.3** — datasource UI 사용성 버그 2건, frontend-only)
 - Scope: 멀티 datasource 1:N(TASK-0230) 배포 후 사용자 보고 2건. ① 연결 테스트 버튼이 바인딩 존재 시 무동작(드롭다운 add 모드 value=''), ② 선택 DB 가 어느 datasource 소속인지 불명. 권한/스키마/엔드포인트/백엔드 0.
 - Files:

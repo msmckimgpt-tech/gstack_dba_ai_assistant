@@ -1,0 +1,30 @@
+{
+  "name": "TASK-0235 새 대화 첫 메시지 진행 단계 실시간 표시 + 사이드바 (authed session)",
+  "base_url": "https://localhost:18080",
+  "shot_dir": "/tmp/win-browser-shots/task0235",
+  "steps": [
+    { "action": "goto", "url": "/", "wait_until": "domcontentloaded" },
+    { "action": "wait_for", "selector": "#promptInput", "timeout_ms": 20000 },
+    { "action": "screenshot", "path": "01_app_loaded.png" },
+    { "action": "eval", "script": "(function(){var s=window.state||{};return JSON.stringify({activeConvId:s.activeConversationId||null, pendingNew:!!s.pendingNewConversation});})()", "stop_on_fail": false },
+    { "action": "click", "selector": "#newConversationBtn", "stop_on_fail": false },
+    { "action": "wait_for", "timeout_ms": 800, "stop_on_fail": false },
+    { "action": "eval", "script": "(function(){var s=window.state||{};return JSON.stringify({activeConvId:s.activeConversationId||null, pendingNew:!!s.pendingNewConversation});})()", "stop_on_fail": false },
+    { "action": "fill", "selector": "#promptInput", "text": "데이터베이스에서 테이블 목록을 보여주고 각 테이블의 행 수를 알려줘", "stop_on_fail": false },
+    { "action": "screenshot", "path": "02_new_conv_prompt_filled.png", "stop_on_fail": false },
+    { "action": "click", "selector": "#sendBtn", "stop_on_fail": false },
+    { "action": "wait_for", "timeout_ms": 1500, "stop_on_fail": false },
+    { "action": "eval", "script": "(function(){var s=window.state||{};var pb=s.pendingBubble||null;return JSON.stringify({activeConvId:s.activeConversationId||null, hasPending:!!pb, pollRunId:s.progressRunId||'', pollSteps:(s.progressSteps||[]).length});})()", "stop_on_fail": false },
+    { "action": "screenshot", "path": "03_after_send_1.5s.png", "stop_on_fail": false },
+    { "action": "wait_for", "timeout_ms": 4000, "stop_on_fail": false },
+    { "action": "eval", "script": "(function(){var s=window.state||{};var pb=s.pendingBubble||{};var cur=document.querySelector('.pending-bubble-current-step');var vb=document.querySelector('.pending-bubble-view-btn');return JSON.stringify({pollSteps:(s.progressSteps||[]).length, pendingSteps:(pb.steps||[]).length, currentStepText:cur?cur.textContent.slice(0,40):null, viewBtnText:vb?vb.textContent:null, isStartingOnly:cur?(cur.textContent.indexOf('시작 중')>=0):null});})()", "stop_on_fail": false },
+    { "action": "screenshot", "path": "04_progress_steps_5.5s.png", "stop_on_fail": false },
+    { "action": "wait_for", "timeout_ms": 5000, "stop_on_fail": false },
+    { "action": "eval", "script": "(function(){var s=window.state||{};var pb=s.pendingBubble||{};var vb=document.querySelector('.pending-bubble-view-btn');return JSON.stringify({pollSteps:(s.progressSteps||[]).length, pendingSteps:(pb.steps||[]).length, viewBtnText:vb?vb.textContent:null, viewBtnExists:!!vb});})()", "stop_on_fail": false },
+    { "action": "screenshot", "path": "05_progress_steps_10.5s.png", "stop_on_fail": false },
+    { "action": "click", "selector": ".pending-bubble-view-btn", "stop_on_fail": false },
+    { "action": "wait_for", "timeout_ms": 1000, "stop_on_fail": false },
+    { "action": "eval", "script": "(function(){var p=document.getElementById('stepSidePanel');var open=p&&!p.classList.contains('hidden');var items=document.querySelectorAll('.step-side-panel-item').length;var badge=document.getElementById('stepSidePanelBadge');return JSON.stringify({sidePanelOpen:!!open, sidePanelItems:items, badge:badge?badge.textContent:null});})()", "stop_on_fail": false },
+    { "action": "screenshot", "path": "06_step_side_panel_open.png", "stop_on_fail": false }
+  ]
+}

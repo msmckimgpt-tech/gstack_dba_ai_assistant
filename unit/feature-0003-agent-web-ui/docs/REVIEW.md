@@ -17,6 +17,21 @@ source_of_truth: true
 - Human Approval Needed: no.
 - Cross-ref: CHG-20260612-0236 / TASK-0236 / TASK-0234(직전) / TASK-0230(원 멀티 datasource cycle).
 
+## REV-20260612-0235v [SKIPPED:verification-evidence-docs-test-only]
+- Related TASK: feature-0003-agent-web-ui (TASK-0235 후속)
+- Reason: TASK-0235 코드(PR #172 머지·배포 완료)의 PB-0008 Windows-browser 시각검증 PASS 를 TEST.md 에 기록 + 재현 시나리오 자산 추가. 변경 = docs(TEST.md) + test scenario(json) only, src/백엔드/스키마/RBAC 0. 코드 리뷰 대상 변경 없음 — TASK-0235 본체는 REV-20260612-0235 [SUBAGENT] 에서 이미 적대적 동시성 리뷰 완료.
+- Timestamp: 2026-06-12T00:35:00Z
+- Cross-ref: REV-20260612-0235 (본체 리뷰) / TASK-0235 / CHG-20260612-0235v.
+
+## REV-20260612-0235 [SUBAGENT:newconv-progress-adversarial-concurrency] — CONCERN
+- Related TASK: feature-0003-agent-web-ui (TASK-0235)
+- Trigger: UI/screen keyword matched (작업 단계 표시/사이드바) + 동시성 state 전환 (lazy-create send 경로)
+- Timestamp: 2026-06-12T00:00:00Z
+- Verdict: CONCERN
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260612T000000Z-newconv-progress-concurrency.md
+- Critical issue (if BLOCK/CONCERN): early-cid 발급 후 /api/ask 실패 시 빈 대화 고아화 가능 (CONCERN #3) → earlyCidActivated 플래그로 non-lazy 복구 경로 분기하여 흡수
+- Human Approval Needed: no
+- 요약: 적대적 동시성 리뷰 7 실패모드 중 5개(중복폴링/빈status조기종료/sentinel가드/첨부회귀/bubble race) 안전 확인. CONCERN 2건 흡수 — #3 고아 대화(earlyCidActivated 도입: ask 실패 시 진행 중 run 추적 경로로 전환, 빈 대화는 실 run 컨테이너가 됨), #2 빈 대화에 명시 cid /api/ask → run_agent 가 user_message 저장 책임(agent_core:1379/2273)이라 기존 staged-attachment 흐름과 동일 검증된 경로로 확인. (동시세션 insight-reset·prompt-autogen·ds-a11y·ds-label cycle 이 TASK-0231/0232/0233/0234 선점→§13.1 재번호 0232→0235.)
 ## REV-20260612-0234 [SKIPPED:frontend-bugfix-no-backend-no-rbac]
 - Date: 2026-06-12
 - Cycle: TASK-0234 (datasource UI 사용성 버그 2건 — 연결 테스트 무동작 + DB↔datasource 소속 불명, **Minor §12.3**)

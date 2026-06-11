@@ -5403,6 +5403,12 @@ async function sendPrompt() {
   // feature-0007: vault state 폐기. 모델 / 자격증명 모두 server-side 단일 source.
   // 요청 시작 시점의 대화 ID를 고정 — 전송 중 대화 전환이 일어나도 올바른 대화에 귀속
   const targetConvId = state.activeConversationId;
+  // TASK-0235: lazy-create 에서 early-cid 가 발급되어 활성 대화로 전환됐는지 추적.
+  // true 가 되면 이 send 는 사실상 "기존 대화" 와 동일 상태 (cid 확정 + 폴링 진행 중) 이므로,
+  // /api/ask 실패 시 lazy 전용 에러 경로가 아니라 non-lazy 복구 경로 (진행 중 run 추적) 를 탄다.
+  // 이로써 (a) worker 모드에서 ask 타임아웃 후에도 서버 run 이 살아있으면 결과를 회수하고,
+  // (b) 발급된 빈 대화가 고아로 누적되지 않는다 (대화는 실제 run 의 컨테이너가 됨).
+  let earlyCidActivated = false;
   // TASK-0082: lazy-create 시 busyKey 는 beginPendingConversation 이 부여한 unique sentinel
   // (state.pendingSentinel). 직접 send 진입 (pending 흐름 거치지 않음) fallback 으로 새 sentinel
   // 생성 후 state 에도 기록한다. 글로벌 단일 sentinel 시절의 컨텍스트 충돌 (첫 in-flight 이 두 번째
@@ -5475,7 +5481,10 @@ async function sendPrompt() {
   if (!isLazyCreate && targetConvId) {
     startProgressPolling({ reset: true });
   } else if (isLazyCreate) {
-    // UX-COMPACT: 새 대화 전송 즉시 progress 카드 표시 (cid 발급 전에도 "처리 중" 피드백)
+    // UX-COMPACT: 새 대화 전송 즉시 progress 카드 표시 (cid 발급 전에도 "처리 중" 피드백).
+    // TASK-0235: 실제 진행 단계 폴링은 아래 early-cid 발급 블록에서 cid 확정 직후 시작한다
+    // (cid 가 없으면 /api/progress 를 호출할 수 없으므로). early-cid 발급 실패 시에만 이 카드가
+    // 폴링 없이 유지되며, /api/ask 응답 후 후처리 블록의 startProgressPolling 으로 보완된다.
     renderProgress({ status: "processing", steps: [] });
   }
   // TASK-0048: lazy create 분기에서 사용자의 직전 product 의도(state.productMode/pinnedProductId)를
@@ -5523,43 +5532,77 @@ async function sendPrompt() {
       .map((it) => Number(it.id));
   })();
 
-  // TASK-0106 (REQ-20260522-0106): lazy-create 시 staged (status="staged", _localFile=File)
-  // 첨부가 있으면 본 send 직전에 cid 를 즉시 발급 + staged 일괄 업로드 → attachment_ids 갱신.
-  // 본 분기는 사용자가 "+ 새 대화" 클릭 후 첫 메시지에 첨부를 함께 보낼 때만 발동 — staged 가
-  // 없는 lazy-create 는 기존 askBody.lazy_create=true 단일 호출 유지 (TASK-0048 정신 보존).
+  // TASK-0106 (REQ-20260522-0106) + TASK-0235 (REQ-20260612-0235): lazy-create 시 본 send 직전에
+  // /api/new_conversation 으로 cid 를 **즉시 발급**한다. 두 동기 (둘 다 만족 가능):
+  //   (a) staged (status="staged", _localFile=File) 첨부 일괄 업로드 → attachment_ids 갱신 (TASK-0106).
+  //   (b) cid 가 생긴 직후 startProgressPolling 시작 → 새 대화 첫 메시지에서도 처리 단계가
+  //       실시간 표시 (TASK-0235). 기존엔 cid 가 /api/ask 응답까지 없어, run 이 끝날 때까지
+  //       pending bubble 이 "시작 중…" 만 표시되고 step / "N단계 보기" 사이드바가 동작하지 못했다.
+  // 기존 대화(non-lazy)는 5476 줄에서 이미 startProgressPolling 을 시작하므로 본 분기와 무관하다.
+  // early-cid 발급에 실패하면(네트워크 등) 기존 lazy_create=true 단일 호출 경로로 graceful fallback
+  // (TASK-0048 정신 보존) — 이 경우 step 실시간 표시만 누락되고 동작 자체는 유지된다.
   if (isLazyCreate) {
     const pendingKey = state.pendingSentinel ? String(state.pendingSentinel) : "";
     const pendingBucket = pendingKey ? state.composerAttachments.byConv[pendingKey] : null;
     const stagedCount = (pendingBucket?.items || []).filter(
       (it) => it.status === "staged" && it._localFile,
     ).length;
-    if (stagedCount > 0) {
-      try {
-        // /api/new_conversation 으로 cid 즉시 발급. product hint 는 askBody 와 동일 source.
-        const newConvBody = state.productMode === "pinned" && state.pinnedProductId
-          ? { mode: "pinned", product_id: Number(state.pinnedProductId) }
-          : { mode: "auto" };
-        const newConvResp = await apiFetch("/api/new_conversation", {
-          method: "POST",
-          body: JSON.stringify(newConvBody),
-        });
-        const earlyCid = String(newConvResp?.conversation_id || "");
-        if (earlyCid) {
-          // staged 일괄 업로드.
+    try {
+      // /api/new_conversation 으로 cid 즉시 발급. product hint 는 askBody 와 동일 source.
+      const newConvBody = state.productMode === "pinned" && state.pinnedProductId
+        ? { mode: "pinned", product_id: Number(state.pinnedProductId) }
+        : { mode: "auto" };
+      const newConvResp = await apiFetch("/api/new_conversation", {
+        method: "POST",
+        body: JSON.stringify(newConvBody),
+      });
+      const earlyCid = String(newConvResp?.conversation_id || "");
+      if (earlyCid) {
+        // staged 첨부가 있으면 일괄 업로드 (없으면 no-op, 빈 배열 반환).
+        if (stagedCount > 0) {
           const uploadedIds = await _flushStagedAttachmentsToCid(earlyCid, pendingKey);
-          // askBody 를 즉시-cid 모드로 전환.
-          askBody.conversation_id = earlyCid;
-          delete askBody.lazy_create;
-          delete askBody.product_mode;
-          delete askBody.product_id;
-          // 기존에 selected 였던 ready 첨부 (pending bucket 에 미리 olunmuştu — 일반 흐름엔 없음)
-          // 와 새로 업로드된 ids 를 union.
+          // 기존에 selected 였던 ready 첨부와 새로 업로드된 ids 를 union.
           const union = new Set(
             [...(askBody.attachment_ids || []), ...uploadedIds].map(Number).filter((n) => n > 0),
           );
           askBody.attachment_ids = Array.from(union);
         }
-      } catch (exc) {
+        // askBody 를 즉시-cid 모드로 전환 (lazy_create hint 제거 — 서버가 이 cid 를 그대로 사용).
+        askBody.conversation_id = earlyCid;
+        delete askBody.lazy_create;
+        delete askBody.product_mode;
+        delete askBody.product_id;
+        // TASK-0235: cid 가 확정됐으므로 send 전환 + polling 즉시 시작.
+        // 본 send 의 sentinel 이 여전히 활성일 때만 컨텍스트-광역 state 를 전환 (사용자가 전송 도중
+        // + 새 대화로 이동한 경우 두 번째 컨텍스트를 오염시키지 않도록 — 후처리 블록의 동일 가드와 정합).
+        if (state.pendingSentinel === busyKey) {
+          state.pendingNewConversation = false;
+          state.activeConversationId = earlyCid;
+          state.pendingSentinel = null;
+          // polling 첫 tick 의 _updateConversationStatusDot 가 DOM 에서 실패하지 않도록 최소
+          // conversation entry 선행 등재 (refreshWorkspace 가 실 데이터로 교체).
+          if (!state.conversations.find((c) => String(c.id) === earlyCid)) {
+            state.conversations.unshift({
+              id: earlyCid,
+              title: message.slice(0, 60) || "새 대화",
+              display_status: "processing",
+              created_at: new Date().toISOString(),
+              account_id: state.session?.account_id || null,
+              owner_account_id: state.user?.id || null,
+              owner_username: state.user?.username || null,
+            });
+            renderConversationList();
+          }
+          // 처리 단계 실시간 폴링 시작 — pending bubble 이 step 을 받아 "N단계 보기" 버튼/사이드바 활성화.
+          startProgressPolling({ reset: true });
+          // 이 send 는 이제 cid 확정 + 폴링 진행 중 — catch 시 non-lazy 복구 경로로 분기.
+          earlyCidActivated = true;
+        }
+      }
+    } catch (exc) {
+      // early-cid 발급/업로드 실패는 send 자체를 막지 않는다. staged 첨부가 있었으면 사용자에게
+      // 안내(첨부 누락 가능), 없으면 silent — askBody.lazy_create=true 단일 호출로 graceful fallback.
+      if (stagedCount > 0) {
         showToast(`첨부 업로드 준비에 실패했습니다: ${exc?.message || exc}`, true);
       }
     }
@@ -5638,7 +5681,10 @@ async function sendPrompt() {
   } catch (error) {
     // TASK-0048: pending 단계에서 ask 가 실패하면 cid 발급 여부가 client 에는 불확실 →
     // attach/resume 다이얼로그 대신 사용자에게 재시도/사이드바 새로고침을 안내한다.
-    if (isLazyCreate) {
+    // TASK-0235: 단, early-cid 가 발급되어 활성 전환된 경우 (earlyCidActivated) 는 cid 가 확정되어
+    // 사실상 기존 대화와 동일하므로 lazy 전용 에러 경로를 건너뛰고 아래 non-lazy 복구 경로
+    // (진행 중 run 추적 — 빈 대화 고아화 방지 + worker 모드 살아있는 run 회수) 를 탄다.
+    if (isLazyCreate && !earlyCidActivated) {
       // TASK-0081 + TASK-0082: closure busyKey 가 현재 활성 state.pendingSentinel 과 일치할 때만
       // 컨텍스트-광역 state cleanup. 본 catch 진입 도중 사용자가 + 새 대화 클릭으로 두 번째 컨텍스트
       // 이동한 경우, 두 번째 컨텍스트의 state.pendingNewConversation / state.pendingSentinel 을 강제로
@@ -5677,7 +5723,9 @@ async function sendPrompt() {
     } else {
       // TASK-0041: 기존 대화에서 /api/ask 가 타임아웃/네트워크 오류/게이트웨이 오류로 실패했을 때
       // 서버가 여전히 처리 중이면 사용자에게 기다리기/즉시답변/취소 선택지를 제시.
-      const askCid = targetConvId;
+      // TASK-0235: early-cid 활성화된 lazy 흐름도 이 경로를 공유 — 이 때 대상 cid 는 targetConvId(빈
+      // 값) 가 아니라 발급된 earlyCid(= 현재 state.activeConversationId) 다.
+      const askCid = earlyCidActivated ? state.activeConversationId : targetConvId;
       const status = askCid ? await fetchAskStatus(askCid) : null;
       if (status && status.is_processing) {
         const statusText = status.status || "processing";
