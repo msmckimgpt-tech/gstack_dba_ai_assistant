@@ -246,6 +246,11 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-06-11 (TASK-0206 DB-단위 접근 모델 — 관리콘솔 제품상세 UI 재구성 **PB-0008 Windows-browser 완료 게이트**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay` @ http://172.28.64.1:9223, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증. 라이브 배포(healthz `git_commit=cf1962e`, mysql/pg ok) 후 수행.
+  - **Runner: AI.** 시나리오: bootstrap_admin 영속 세션 → 관리 콘솔(`#openAdminBtn`) → 제품 → MSSQL_DK(제품 90, winsql/dk_data_release) 상세.
+  - **결과: PASS.** (a) **섹션 순서** = `데이터 소스 (datasource)` → `접근 가능 데이터베이스` → `제품 프롬프트` — 데이터소스 패널이 접근가능DB **위**로 이동(요청대로). (b) 데이터소스 dropdown `winsql — mssql @ 172.28.64.1:14330` + 연결테스트, **별도 '참조 DB' dropdown 폐지**(DB-단위 multi-select 로 흡수). (c) 접근가능DB = datasource-driven: 시스템 DB `master 고정·model 고정·msdb 고정`(고정칩) + 사용자 DB `dk_data_release ×`(제거가능) — 실 MSSQL 서버 DB 반영(tempdb 제외, 대소문자 보존). (d) hint 텍스트 = "데이터는 데이터 소스에 종속됩니다 — 선택하면 아래 접근 가능 데이터베이스 목록이 갱신됩니다". 스크린샷 `artifacts/task0206/03-product90-mssql.png`.
+  - CHECK#13(PB-0008 Windows-browser) **충족**.
 - 2026-06-10 (TASK-0184 LLM 사용량 계정 drill-down + 프로필 사용 내역 차트 + 내 활동기록 제거 — **PB-0008 Windows-browser 완료 게이트**):
   - **Environment: Windows-browser** (실제 Windows Chrome/148 via `bin/win-browser.py` 무권한 relay, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증. 라이브 배포 검증(healthz `git_commit=0181301`, mysql/pg ok, 베이킹·자산 서빙 PASS) 후 수행.
   - **(C 활동기록 제거)** bootstrap_admin 프로필 → 탭 = [프롬프트, 사용 내역, 보안 및 계정], '내 활동 기록' 탭 부재(`hasActivityTab=false`). PASS.
