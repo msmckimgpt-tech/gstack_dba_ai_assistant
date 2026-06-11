@@ -112,29 +112,47 @@ def _freeform_sql_access_error(sql: str) -> str | None:
         sql, dialect=_dialects.active().sqlglot
     )
     active_ds = _cfg.get_active_datasource()
-    if active_ds:
+    engine = str(_dialects.active().name).lower()
+
+    # ── TASK-0206 DB-단위 접근: MSSQL 은 catalog(DB) 가 접근 단위 ──────────────────
+    if engine == "mssql" and active_ds:
+        # 연결은 제품 primary DB(default_db)로 pin → 2-part `schema.table` 은 그 DB(allowlist 내). 다른
+        # 허용 DB 는 3-part `db.schema.table`(cross-DB). 무자격(1-part)만 거부(스키마 명시 강제).
         if has_unqualified:
             return (
-                "오류: 멀티 datasource 모드에서는 모든 테이블을 schema 로 명시해야 합니다 "
-                "(무자격 테이블명은 보안상 거부됩니다 — 예: `myschema.mytable`)."
+                "오류: MSSQL 은 테이블을 최소 `스키마.테이블`(현재 DB) 또는 `데이터베이스.스키마.테이블`"
+                "(다른 허용 DB)로 명시해야 합니다 (무자격 테이블명 거부)."
             )
-        # TASK-0205 B1: **effective default_db**(제품별 참조 DB override 반영, set_active_datasource 가
-        # 주입)를 읽는다. 정적 DATASOURCES[key].default_db 를 읽으면 override 시 가드 기준과 실제 연결
-        # DB 가 분리돼 cross-DB 격리가 깨진다(가드는 옛 DB, 연결은 새 DB). effective 미설정(레거시 .env
-        # 경로 등)이면 정적 dict 폴백(하위호환).
-        default_db = str(_cfg.get_active_default_db() or "").strip().lower()
-        if not default_db:
-            ds = (getattr(_cfg, "DATASOURCES", {}) or {}).get(active_ds) or {}
-            default_db = str(ds.get("default_db") or "").strip().lower()
-        cross = sorted(c for c in catalogs if c and c != default_db)
-        if cross:
+        # 3-part catalog(DB) 를 **DB allowlist + 시스템 DB** 와 대조(2-part 는 pin 된 primary=allowlist 내).
+        allow = _ACTIVE_SCHEMA_ALLOWLIST.get()
+        if allow is not None:
+            allowed_dbs = {str(a).strip().lower() for a in allow} | _dialects.active().system_databases()
+            blocked = sorted(c for c in catalogs if c and c not in allowed_dbs)
+            if blocked:
+                allowed_str = ", ".join(sorted(allow)) or "(없음)"
+                return (
+                    f"오류: 접근이 허용되지 않은 데이터베이스 참조: {', '.join(blocked)}. "
+                    f"이 제품에 허용된 DB: {allowed_str} (+ 시스템 DB)."
+                )
+        # 스키마(db part)는 allowlist 대조 안 함(DB 단위). 단 시스템 스키마(sys/guest/db_*)는 차단 — M1 보존
+        # (master.sys.sql_logins 등 freeform 직접 조회 차단; RO GRANT 가 사용자 스키마 경계).
+        sysschemas = _dialects.active().system_schemas() - _dialects.active().metadata_schemas()
+        blocked_sys = sorted(s for s in schemas if s and s in sysschemas)
+        if blocked_sys:
             return (
-                f"오류: 현재 datasource 범위 밖의 데이터베이스 참조가 차단되었습니다: {', '.join(cross)}. "
-                f"교차 데이터베이스 조회는 허용되지 않습니다."
+                f"오류: 시스템 스키마 직접 조회가 차단되었습니다: {', '.join(blocked_sys)} "
+                f"(구조 탐색은 list_schemas/describe_table 사용)."
             )
-    # schema 토큰만 allowlist 대조(catalog 는 위에서 차원별 판정 — default_db 가 allowlist 에 없어
-    # 오탐되지 않도록 제외).
-    return _whitelist_violation(set(schemas))
+        return None
+
+    # ── MySQL (또는 datasource 없음): DB-단위(schema==database) ──────────────────
+    if active_ds and has_unqualified:
+        return (
+            "오류: 멀티 datasource 모드에서는 모든 테이블을 데이터베이스로 명시해야 합니다 "
+            "(무자격 테이블명은 보안상 거부됩니다 — 예: `mydb.mytable`)."
+        )
+    # MySQL 은 db==schema → schemas + catalogs(3-part 희소) 토큰을 DB allowlist 와 대조.
+    return _whitelist_violation(set(schemas) | set(catalogs))
 
 
 def _whitelist_violation(refs: set[str]) -> str | None:

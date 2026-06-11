@@ -40,6 +40,15 @@ class Dialect:
         """
         raise NotImplementedError
 
+    def system_databases(self) -> frozenset:
+        """**DB 단위** 접근모델(TASK-0206)에서 시스템 데이터베이스(catalog) 집합 (lowercase).
+
+        DB allowlist 와 무관하게 항상 catalog 로 허용(완결성). MySQL=메타DB(=system_schemas, schema==database),
+        MSSQL=master/model/msdb/tempdb. **주의(M1 보존)**: 시스템 DB 가 catalog 로 허용돼도 `sys`/`guest`/`db_*`
+        **스키마**는 `system_schemas()` 로 계속 차단된다 → `master.sys.sql_logins` 는 여전히 거부.
+        """
+        raise NotImplementedError
+
     # ── insight 핑거프린트: 컬럼 메타데이터 projection (P7) ──
     def fingerprint_column_projection(self) -> str:
         """insight.py 의 컬럼 핑거프린트용 SELECT projection (information_schema.COLUMNS 기준).
@@ -103,6 +112,10 @@ class MySQLDialect(Dialect):
         return self._SYS
 
     def metadata_schemas(self) -> frozenset:
+        return self._SYS
+
+    def system_databases(self) -> frozenset:
+        # MySQL: schema==database → 시스템 DB = 시스템 스키마.
         return self._SYS
 
     def fingerprint_column_projection(self) -> str:
@@ -247,11 +260,18 @@ class MSSQLDialect(Dialect):
     # 의 sys.* 직접 조회는 차단해도 기능 손실이 없다. db_* 역할 스키마도 metadata 아님.
     _META = frozenset({"information_schema"})
 
+    # MSSQL 시스템 데이터베이스(catalog 차원). DB allowlist 무관 항상 catalog 허용(완결성). 단 그 안의
+    # `sys`/`guest`/`db_*` 스키마는 `_SYS`(system_schemas)로 계속 차단 → master.sys.sql_logins 거부(M1 보존).
+    _SYS_DB = frozenset({"master", "model", "msdb", "tempdb"})
+
     def system_schemas(self) -> frozenset:
         return self._SYS
 
     def metadata_schemas(self) -> frozenset:
         return self._META
+
+    def system_databases(self) -> frozenset:
+        return self._SYS_DB
 
     def fingerprint_column_projection(self) -> str:
         # MSSQL INFORMATION_SCHEMA.COLUMNS 에는 COLUMN_TYPE/COLUMN_KEY 가 없다 → DATA_TYPE +
