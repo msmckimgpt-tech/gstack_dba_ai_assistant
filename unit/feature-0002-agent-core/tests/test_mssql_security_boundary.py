@@ -383,6 +383,73 @@ def test_regate2_system_info_functions_denylist():
         assert not r.ok, f"시스템 정보 함수가 통과됨: {sql}"
 
 
+def test_regate3_2part_scalar_udf_pin_enforced():
+    """re-gate(3차) BLOCKER1: 무명세 scalar UDF(`SELECT dbo.fnLeak()` — schemas 비어 과거 우회)도 pin 검증."""
+    def check():
+        import modules.config as _c
+        cfg.set_active_datasource("prod", engine="mssql")
+        tools.set_active_schema_allowlist(["appdb"])
+        _c._ACTIVE_DEFAULT_DB.set("secret_db")  # pin ∉ allowlist
+        assert tools._freeform_sql_access_error("SELECT dbo.fnLeak()") is not None
+        _c._ACTIVE_DEFAULT_DB.set(None)         # pin 미설정
+        assert tools._freeform_sql_access_error("SELECT dbo.fnLeak()") is not None
+        _c._ACTIVE_DEFAULT_DB.set("appdb")      # pin 유효 → UDF 허용
+        assert tools._freeform_sql_access_error("SELECT dbo.fnLeak()") is None
+    _run_isolated(check)
+
+
+def test_regate3_4part_scalar_function_blocked():
+    """re-gate(3차) BLOCKER2: 4-part scalar 함수(`linked.appdb.dbo.fnLeak()`)도 전면 거부(catalog 오인 방지)."""
+    for sql in (
+        "SELECT linked.appdb.dbo.fnLeak()",
+        "SELECT [linked].[appdb].[dbo].[fnLeak]()",
+    ):
+        r = validate_sql_for_sandbox(sql, forbidden_schemas=AGENT_FORBIDDEN, dialect="tsql")
+        assert not r.ok, f"4-part scalar 함수가 통과됨: {sql}"
+
+
+def test_regate3_db_enumeration_functions_blocked():
+    """re-gate(3차) MAJOR: DB enumeration/probing 함수(DB_NAME/DB_ID/DATABASEPROPERTYEX/HAS_DBACCESS) 차단."""
+    for sql in (
+        "SELECT DB_NAME(1)",
+        "SELECT DB_ID('secret_db')",
+        "SELECT DATABASEPROPERTYEX('x', 'Status')",
+        "SELECT HAS_DBACCESS('x')",
+    ):
+        r = validate_sql_for_sandbox(sql, forbidden_schemas=AGENT_FORBIDDEN, dialect="tsql")
+        assert not r.ok, f"DB enum 함수가 통과됨: {sql}"
+
+
+def test_regate3_cte_not_flagged_unqualified():
+    """re-gate(3차) MAJOR: 정상 CTE(`WITH c AS(...) SELECT * FROM c`)가 무자격 테이블로 오판·차단되지 않는다."""
+    def check():
+        import modules.config as _c
+        cfg.set_active_datasource("prod", engine="mssql")
+        tools.set_active_schema_allowlist(["appdb"])
+        _c._ACTIVE_DEFAULT_DB.set("appdb")
+        sql = "WITH c AS (SELECT * FROM appdb.dbo.t) SELECT * FROM c"
+        r = validate_sql_for_sandbox(sql, forbidden_schemas=AGENT_FORBIDDEN, dialect="tsql")
+        assert r.ok, r.error_reason
+        assert tools._freeform_sql_access_error(sql) is None
+    _run_isolated(check)
+
+
+def test_regate3_struct_pin_gate_helper():
+    """re-gate(3차) BLOCKER3: _mssql_pin_gate — pin 무효/시스템DB pin 시 구조화 도구 거부."""
+    def check():
+        import modules.config as _c
+        cfg.set_active_datasource("prod", engine="mssql")
+        tools.set_active_schema_allowlist(["appdb"])
+        _c._ACTIVE_DEFAULT_DB.set(None)
+        assert tools._mssql_pin_gate() is not None
+        _c._ACTIVE_DEFAULT_DB.set("master")  # 시스템 DB — 유효 allowlist 에서 제거됨
+        tools.set_active_schema_allowlist(["master", "appdb"])
+        assert tools._mssql_pin_gate() is not None
+        _c._ACTIVE_DEFAULT_DB.set("appdb")
+        assert tools._mssql_pin_gate() is None
+    _run_isolated(check)
+
+
 def test_dialect_system_databases_sets():
     """dialect.system_databases(): MySQL=메타DB / MSSQL=master/model/msdb/tempdb."""
     def check_mssql():

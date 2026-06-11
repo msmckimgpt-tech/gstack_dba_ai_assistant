@@ -2073,10 +2073,11 @@ def _resolve_product_datasource(mem_conn, product_id):
                 cur.close()
         except Exception:
             allow_dbs = []
-        # re-gate(2차): pin 후보에서 시스템 DB(master/model/msdb/tempdb)·내부 DB(agent_memory) 제외 —
-        # admin API 가 저장을 거부하지만, 레거시 값이 있어도 pin 이 시스템 DB 가 되지 않도록 이중 차단.
-        from modules import dialects as _dialects
-        _hard = _dialects.active().system_databases() | {"agent_memory"}
+        # re-gate(2/3차): pin 후보에서 시스템 DB(master/model/msdb/tempdb)·내부 DB(agent_memory) 제외.
+        # **주의(3차 BLOCKER4)**: 이 시점엔 datasource dialect context 가 아직 미설정(set_active_datasource 는
+        # 이후 호출)이라 `_dialects.active()` 는 MySQL 을 반환한다 → MSSQL 시스템 DB 집합을 **하드코딩**해야
+        # master 등이 pin 후보에서 제대로 제거된다.
+        _hard = {"master", "model", "msdb", "tempdb", "agent_memory"}
         allow_dbs = [d for d in allow_dbs if d.lower() not in _hard]
         allow_lower = {d.lower() for d in allow_dbs}
         primary_db = ""

@@ -110,7 +110,9 @@ _DENYLIST_PATTERNS_TSQL: tuple[re.Pattern[str], ...] = (
         r"\b(SERVERPROPERTY|SUSER_SNAME|SUSER_NAME|SUSER_ID|SUSER_SID|SYSTEM_USER|SESSION_USER"
         r"|ORIGINAL_LOGIN|IS_SRVROLEMEMBER|IS_ROLEMEMBER|IS_MEMBER|HAS_PERMS_BY_NAME|FN_MY_PERMISSIONS"
         r"|FN_BUILTIN_PERMISSIONS|CONNECTIONPROPERTY|CONTEXT_INFO|HOST_NAME|HOST_ID|CURRENT_USER"
-        r"|USER_NAME|APP_NAME|LOGINPROPERTY|PWDCOMPARE|PWDENCRYPT)\b",
+        r"|USER_NAME|APP_NAME|LOGINPROPERTY|PWDCOMPARE|PWDENCRYPT"
+        # re-gate(3차): DB enumeration/probing 함수도 차단 — id↔name 매핑·상태·접근권 probe.
+        r"|DB_NAME|DB_ID|DATABASEPROPERTYEX|DATABASEPROPERTY|HAS_DBACCESS|FILE_NAME|FILEGROUP_NAME)\b",
         re.IGNORECASE,
     ),
     re.compile(r"/\*\+\s*[^*]*\*/"),                     # optimizer hint 주석
@@ -230,6 +232,43 @@ def _collect_qualified_func_refs(node) -> list[tuple[str, str]]:
     return out
 
 
+def _has_overqualified_function(node) -> bool:
+    """re-gate(3차) BLOCKER2: 4-part 함수호출(`server.db.schema.fn()`) 검출.
+
+    Dot-체인 함수의 namespace 식별자가 3개 이상이면 linked-server 4-part 다(`linked.appdb.dbo.fnLeak()`).
+    `_collect_qualified_func_refs` 는 뒤 2개(catalog.schema)만 취해 leading linked-server 를 버리므로,
+    여기서 별도 검출해 전면 거부한다(Table 4-part 거부와 대칭).
+    """
+    if _exp is None:
+        return False
+    for dot in node.find_all(_exp.Dot):
+        expr = dot.args.get("expression")
+        if isinstance(expr, (_exp.Func, _exp.Anonymous)):
+            acc: list[str] = []
+            _idents_chain(dot.args.get("this"), acc)
+            if len([a for a in acc if a]) >= 3:
+                return True
+    return False
+
+
+def _idents_chain(n, acc):
+    """Dot/Identifier/Column 체인의 식별자를 순서대로 수집(헬퍼 — _collect_qualified_func_refs 와 공유 로직)."""
+    if n is None or _exp is None:
+        return
+    if isinstance(n, _exp.Dot):
+        _idents_chain(n.args.get("this"), acc)
+        e = n.args.get("expression")
+        if isinstance(e, _exp.Identifier):
+            acc.append((e.name or "").strip().lower())
+    elif isinstance(n, _exp.Identifier):
+        acc.append((n.name or "").strip().lower())
+    elif isinstance(n, _exp.Column):
+        for part in ("catalog", "db", "table"):
+            p = n.args.get(part)
+            if isinstance(p, _exp.Identifier):
+                acc.append((p.name or "").strip().lower())
+
+
 def collect_schema_refs(
     sql: str, *, dialect: str = "mysql"
 ) -> "tuple[set[str], bool, set[str]]":
@@ -258,11 +297,21 @@ def collect_schema_refs(
     for stmt in parsed:
         if stmt is None:
             continue
+        # re-gate(3차) CTE 오판: CTE 명(WITH c AS ...)의 참조(`FROM c`)는 무자격 테이블이 아니다.
+        # CTE alias 를 모아 무자격 판정에서 제외(정상 CTE 가 has_unqualified 로 차단되던 회귀 차단).
+        cte_names = set()
+        for _cte in stmt.find_all(_exp.CTE):
+            try:
+                a = (_cte.alias or "").strip().lower()
+                if a:
+                    cte_names.add(a)
+            except Exception:
+                pass
         for catalog, db, name in _collect_table_refs(stmt):
             if db:
                 schemas.add(db)
-            elif name:
-                # name 만 있는 무자격 테이블(스키마 미지정) — fail-closed 대상. catalog/db-only(TVF)은 제외.
+            elif name and name not in cte_names:
+                # name 만 있는 무자격 테이블(스키마 미지정) — fail-closed 대상. CTE 참조·catalog/db-only(TVF)은 제외.
                 has_unqualified = True
             if catalog:
                 catalogs.add(catalog)
@@ -373,6 +422,13 @@ def validate_sql_for_sandbox(
                 )
         except Exception:
             pass
+    # 4-part 함수호출(linked-server.db.schema.fn())도 거부 — Table 노드로 안 잡히는 Dot 체인.
+    if _has_overqualified_function(root):
+        return SqlGuardResult(
+            False,
+            error_reason="4-part(linked-server) function reference not allowed",
+            denied_patterns=["4-part-func"],
+        )
 
     # table refs 의 schema/catalog 검사 (catalog = 3-part DB 차원, P6 cross-DB).
     table_refs = _collect_table_refs(root)

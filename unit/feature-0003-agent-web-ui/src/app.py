@@ -13571,25 +13571,27 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
     for i, item in enumerate(raw_items):
         if not isinstance(item, dict):
             continue
-        schema = str(item.get("schema_name") or "").strip().lower()
+        # re-gate(3차) MAJOR: MSSQL DB 명은 **대소문자·하이픈·공백·선두숫자** 를 보존(Game-Log/2026DB 등
+        # 정상 DB). 인젝션 차단을 위해 대괄호·따옴표·세미콜론·백틱·백슬래시·점·제어문자만 거부(브래킷
+        # 인용 escape 방지). 비교(금지·dedup)는 소문자로, 저장은 원본 케이스로.
+        schema = str(item.get("schema_name") or "").strip()
         if not schema:
             continue
-        if not re.match(r"^[a-z_][a-z0-9_]{0,63}$", schema):
+        if len(schema) > 128 or re.search(r"""[\[\]'"`;\\.\x00-\x1f]""", schema):
             return _json_error(f"invalid schema_name: {schema}", 400)
+        slow = schema.lower()
         # re-gate BLOCKER4: 앱 내부 DB(agent_memory) 및 메타데이터 스키마는 allowlist 에 저장 불가
         # (구조화 도구가 allowlist 멤버를 신뢰 → agent_memory.WebAccounts.PasswordHash 유출 경로 차단).
-        # 메타데이터는 항상-허용이라 allowlist 에 넣을 필요도 없다(중복 방지).
-        if schema in _DATABASES_AVAILABLE_INTERNAL:
+        if slow in _DATABASES_AVAILABLE_INTERNAL:
             return _json_error(f"내부 데이터베이스는 접근 목록에 추가할 수 없습니다: {schema}", 400)
-        if schema in _DATABASES_AVAILABLE_METADATA:
+        if slow in _DATABASES_AVAILABLE_METADATA:
             return _json_error(f"메타데이터 스키마는 항상 접근 가능하므로 추가할 수 없습니다: {schema}", 400)
-        # re-gate MAJOR6(2차): MSSQL 시스템 DB 는 allowlist 에 저장 불가(catalog 차원으로 들어가도 가드가
-        # 영구차단하지만, 저장 시점부터 거부해 pin 후보가 되는 것도 막는다 — dbo 호환뷰 enumeration 차단).
-        if schema in _DATABASES_AVAILABLE_SYSTEM_MSSQL:
+        # re-gate MAJOR6(2차): MSSQL 시스템 DB 는 allowlist 에 저장 불가(pin 후보 차단 — dbo 호환뷰 enumeration).
+        if slow in _DATABASES_AVAILABLE_SYSTEM_MSSQL:
             return _json_error(f"시스템 데이터베이스는 접근 목록에 추가할 수 없습니다: {schema}", 400)
-        if schema in seen:
+        if slow in seen:
             continue
-        seen.add(schema)
+        seen.add(slow)
         cleaned.append({
             "schema_name": schema,
             "description": str(item.get("description") or "").strip(),

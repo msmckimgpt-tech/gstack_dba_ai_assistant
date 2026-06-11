@@ -153,16 +153,12 @@ def _freeform_sql_access_error(sql: str) -> str | None:
                 f"오류: 접근이 허용되지 않은 데이터베이스 참조: {', '.join(blocked)}. "
                 f"이 제품에 허용된 DB: {allowed_str}."
             )
-        # re-gate BLOCKER1: 2-part/스키마 참조는 pin 된 primary DB 로 암묵 해석된다. pin 이 allowlist 멤버가
-        # 아니면(또는 비었으면) 미허용 DB 가 2-part 로 새므로, 그런 참조가 있을 때 pin 의 allowlist 멤버십을 강제.
-        pinned = (_cfg.get_active_default_db() or "")
-        if schemas and not (pinned and pinned in allow_set):
-            allowed_str = ", ".join(sorted(allow_set)) or "(없음)"
-            return (
-                f"오류: 현재 연결 데이터베이스('{pinned or '미지정'}')가 이 제품의 접근 허용 목록에 없어 "
-                f"`스키마.테이블`(2-part) 참조를 거부합니다. 허용된 DB: {allowed_str} "
-                f"(다른 허용 DB 는 `데이터베이스.스키마.테이블` 3-part 로 조회)."
-            )
+        # re-gate(3차) BLOCKER1: pin 검증을 **무조건** 수행한다. 연결은 pin 된 primary DB 로 붙으므로 2-part·
+        # 무명세 scalar UDF(`SELECT dbo.fnLeak()` — schemas 비어 과거 검사 우회)·바인딩 모든 쿼리가 pin DB 에서
+        # 실행된다. pin 이 유효 allowlist 멤버가 아니면(또는 비었으면) 어떤 쿼리도 미허용 DB 로 새므로 거부.
+        pin_err = _mssql_pin_gate()
+        if pin_err:
+            return pin_err
         # 스키마(db part)는 allowlist 대조 안 함(DB 단위). 단 시스템 스키마(sys/guest/db_*)는 차단 — M1 보존
         # (master.sys.sql_logins 등 freeform 직접 조회 차단; RO GRANT 가 사용자 스키마 경계).
         sysschemas = _dialects.active().system_schemas() - _dialects.active().metadata_schemas()
@@ -238,21 +234,33 @@ def _struct_schema_access_error(schema: str) -> str | None:
     if str(_dialects.active().name).lower() == "mssql" and _cfg_get_active_datasource():
         if s in _dialects.active().system_schemas():
             return f"오류: 시스템 스키마는 직접 접근할 수 없습니다: {s} (구조 탐색은 list_schemas 사용)."
-        # re-gate BLOCKER1(2차): 구조화 도구는 pin 된 primary DB 안에서 실행된다. pin 이 유효 allowlist 멤버가
+        # re-gate BLOCKER1: 구조화 도구는 pin 된 primary DB 안에서 실행된다 — pin 이 유효 allowlist 멤버가
         # 아니면(또는 pin 미설정 → 로그인 기본 DB 로 연결) 미허용 DB 객체를 읽으므로 fail-closed 차단.
-        import modules.config as _cfg
-        allow = _ACTIVE_SCHEMA_ALLOWLIST.get()
-        hard = _INTERNAL_SCHEMAS | _dialects.active().system_databases()
-        allow_set = ({str(a).strip().lower() for a in allow} if allow else set()) - hard
-        pinned = (_cfg.get_active_default_db() or "")
-        if not (pinned and pinned in allow_set):
-            allowed_str = ", ".join(sorted(allow_set)) or "(없음)"
-            return (
-                f"오류: 현재 연결 데이터베이스('{pinned or '미지정'}')가 이 제품의 접근 허용 목록에 없어 "
-                f"구조화 도구 조회를 거부합니다. 허용된 DB: {allowed_str}."
-            )
-        return None
+        return _mssql_pin_gate()
     return _whitelist_violation({s})
+
+
+def _mssql_pin_gate() -> str | None:
+    """MSSQL active datasource 에서 연결 pin(default_db)이 **유효 allowlist 멤버**인지 검증(fail-closed).
+
+    연결은 pin 된 DB 로 붙으므로(없으면 로그인 기본 DB), pin 이 유효 allowlist 밖이면 모든 쿼리·구조화
+    도구가 미허용 DB 에서 실행된다. 유효 allowlist = 저장 allowlist − 시스템 DB − 내부 DB. freeform·구조화
+    도구(스키마 인자 유무 무관)가 공통 호출하는 단일 chokepoint.
+    """
+    import modules.config as _cfg
+    if not (str(_dialects.active().name).lower() == "mssql" and _cfg.get_active_datasource()):
+        return None
+    allow = _ACTIVE_SCHEMA_ALLOWLIST.get()
+    hard = _INTERNAL_SCHEMAS | _dialects.active().system_databases()
+    allow_set = ({str(a).strip().lower() for a in allow} if allow else set()) - hard
+    pinned = (_cfg.get_active_default_db() or "")
+    if not (pinned and pinned in allow_set):
+        allowed_str = ", ".join(sorted(allow_set)) or "(없음)"
+        return (
+            f"오류: 현재 연결 데이터베이스('{pinned or '미지정'}')가 이 제품의 접근 허용 목록에 없어 "
+            f"조회를 거부합니다. 허용된 DB: {allowed_str}."
+        )
+    return None
 
 
 def _cfg_get_active_datasource():
@@ -538,6 +546,11 @@ def _safe_ident(name: str) -> str:
 
 
 def _tool_list_schemas(conn, _args: dict) -> str:
+    # re-gate(3차) BLOCKER3: schema 인자 없는 구조화 도구도 pin 검증 — pin 무효 시 로그인 기본 DB 의
+    # 스키마명을 열거하므로 fail-closed.
+    pin_err = _mssql_pin_gate()
+    if pin_err:
+        return pin_err
     sql = _dialects.active().list_schemas_with_counts()
     result_sets, _ = _raw_execute_sql(conn, sql)
     # 시스템 스키마 필터링
@@ -650,6 +663,10 @@ def _tool_search_tables(conn, args: dict) -> str:
     schema_filter = _safe_ident(args.get("schema_name", ""))
     if not keyword:
         return "오류: keyword는 필수입니다."
+    # re-gate(3차) BLOCKER3: schema_filter 없이도 pin 된 DB 전체 테이블명을 열거하므로 pin 검증(무조건).
+    pin_err = _mssql_pin_gate()
+    if pin_err:
+        return pin_err
     if schema_filter:
         err = _struct_schema_access_error(schema_filter)
         if err:
