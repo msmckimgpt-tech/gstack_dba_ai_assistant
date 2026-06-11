@@ -2794,3 +2794,18 @@ source_of_truth: true
 - 검증: py_compile app.py PASS, node --check admin.js PASS.
 - Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/src/static/admin.js, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
 - Rollback: `_generate_datasource_key` 제거 + `admin_create_datasource` body key 수신 복원 + `_seed_main_mysql_datasource` `"main_mysql"` 복원 + `_dsRenderForm` key 입력 필드 복원.
+
+## CHG-20260611-0217
+- Date: 2026-06-11 (TASK-0217, **Minor §12.3** — 데이터소스 해시 키 버그 수정 2건)
+- Scope: TASK-0216 후속 버그 2건 — ① `main_mysql` 마이그레이션 시 패스워드 AAD 재암호화 누락, ② PATCH 수정 시 키 재생성 미처리.
+- 배경: AESGCM 암호화에서 AAD=DatasourceKey를 사용하기 때문에, 키 이름이 바뀌면 동일 DEK로도 복호가 실패(InvalidTag)한다. TASK-0216에서 `main_mysql` → 해시 키로 rename할 때 PasswordEnc를 재암호화하지 않아 부팅 시마다 `datasource_decrypt_failed` 오류로 데이터소스가 전부 skip됐다.
+- 변경:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - `_seed_main_mysql_datasource`: rename 전 `PasswordEnc, EncryptionVersion` 조회 → DEK 로드 → 복호 → 새 키 AAD로 재암호화 → `UPDATE ... DatasourceKey=%s, PasswordEnc=%s, EncryptionVersion=%s` 원자적 처리. 복호 실패 시 기존 암호문 유지(silent pass).
+    - `admin_update_datasource`: 기존 `SELECT Id` → `SELECT Engine, Host, Port, PasswordEnc, EncryptionVersion`. 변경 후 새 해시 키 계산(`_generate_datasource_key`), 키 변경 시: ① 패스워드 입력 있으면 새 키 AAD로 암호화, ② 패스워드 입력 없으면 기존 패스워드를 복호 후 새 키 AAD로 재암호화(실패 시 500 + 직접 입력 안내). `DatasourceKey` 업데이트 + `WebProducts.DatasourceKey` 참조 업데이트. 응답에 `key_changed: bool` 추가.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`:
+    - `_dsRenderForm` save 핸들러: `await apiFetch(PATCH)` 응답의 `key`(`updated.key || ds.key`)로 `_dsSelectedKey` 동기화 → 키 변경 후에도 목록 선택 유지.
+- 비변경: RBAC(console.manage), 신규 엔드포인트, WebDatasources 스키마, DEK/KEK 키 구조. 암호화 알고리즘(AESGCM) 동일.
+- 검증: py_compile app.py PASS, node --check admin.js PASS.
+- Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/src/static/admin.js, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
+- Rollback: app.py 두 함수 변경 전 상태 복원 + admin.js save 핸들러 `ds.key` 직접 참조 복원.

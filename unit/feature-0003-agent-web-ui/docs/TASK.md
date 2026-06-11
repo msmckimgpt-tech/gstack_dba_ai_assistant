@@ -3149,3 +3149,12 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] outside-voice [SKIPPED:auto-key-no-rbac-no-schema-no-secret] (REV-20260611-0216) — 키 생성 방식 변경(해시화)이며 RBAC·API 계약·WebDatasources 스키마·암호화 경로 무변경. 레거시 마이그레이션은 멱등 UPDATE 2개.
 - [x] py_compile app.py PASS, node --check admin.js PASS
 - [ ] verify-completion → main rebase·ff-merge → web 재배포 → PB-0008(관리 콘솔 > 데이터소스 신규 등록 + 키 자동 생성 확인)
+
+### TASK-0217 — 데이터소스 해시 키 버그 수정 2건: 마이그레이션 패스워드 재암호화 + 수정 시 키 재생성 (2026-06-11)
+- [x] **Minor §12.3** (백엔드 1파일 + 프런트 1파일, RBAC·스키마·신규 엔드포인트 0) — TASK-0216 후속 버그 2건 수정. (CHG-20260611-0217)
+- [x] **버그 1 수정** ([app.py](../src/app.py) `_seed_main_mysql_datasource`): `main_mysql` → 해시 키 rename 시 `PasswordEnc`를 새 키 AAD로 재암호화하지 않아 `InvalidTag` 복호 실패로 데이터소스 전체가 skip되던 문제. 해결: rename 전 레거시 PasswordEnc+EncryptionVersion 조회 → DEK 로드 → 복호 → 새 키 AAD로 재암호화 → `UPDATE DatasourceKey, PasswordEnc, EncryptionVersion` 한 번에 처리.
+- [x] **버그 2 수정** ([app.py](../src/app.py) `admin_update_datasource`): 수정 폼에서 host/port 변경 시 키(해시)가 바뀌어야 하나 `DatasourceKey`가 그대로 유지되어 엔드포인트와 키가 불일치하던 문제. 해결: PATCH 처리 시 기존 engine/host/port 읽기 → 변경 후 새 해시 키 계산 → 키가 바뀌면 패스워드 AAD 재암호화 + `DatasourceKey` 업데이트 + `WebProducts.DatasourceKey` 참조 업데이트.
+- [x] **프런트 수정** ([admin.js](../src/static/admin.js) `_dsRenderForm` save 핸들러): PATCH 응답의 `key` 로 `_dsSelectedKey` 동기화(키 변경 시 목록 선택 미싱 방지).
+- [x] outside-voice [SKIPPED:bugfix-aad-reencrypt-no-new-surface] (REV-20260611-0217) — 암호화 경로 변경 없음(기존 DEK/AESGCM 재사용), RBAC·스키마·엔드포인트 신규 0. 재암호화 실패는 기존 패스워드 유지(연결 테스트 실패로 가시화).
+- [x] py_compile app.py PASS, node --check admin.js PASS
+- [ ] verify-completion → main rebase·ff-merge → web 재배포 → 컨테이너 로그 `datasource_decrypt_failed` 소거 확인

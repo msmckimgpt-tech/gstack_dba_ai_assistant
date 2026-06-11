@@ -1971,3 +1971,10 @@ source_of_truth: true
 - Reason: 키 생성 방식을 식별자 문자열에서 결정론적 해시로 교체한 것이 변경의 전부. RBAC(console.manage) 게이트 무변경, `WebDatasources` 스키마 무변경(컬럼 추가/삭제 없음, DatasourceKey 값만 달라짐), DEK/KEK 암호화 경로 무변경, 신규 엔드포인트 없음. 레거시 `main_mysql` 마이그레이션은 멱등 UPDATE/DELETE 2~3개이며 rollback 은 행 rename 역방향으로 가능. py_compile app.py PASS, node --check admin.js PASS.
 - Risk: low — 키 값 형식 변경만. 기존 `main_mysql` 키를 가진 운영 환경은 부팅 시 자동 마이그레이션(멱등). `.env` 출처 레거시 datasource 는 의도적 미변경.
 - Cross-ref: CHG-20260611-0216 / TASK-0216.
+
+## REV-20260611-0217 [SKIPPED:bugfix-aad-reencrypt-no-new-surface]
+- Date: 2026-06-11
+- Cycle: TASK-0217 (데이터소스 해시 키 버그 수정 2건), **Minor §12.3**
+- Reason: 기존 AESGCM(AAD=DatasourceKey) 재사용 — 신규 암호화 표면 없음. 버그 수정: ① rename 시 재암호화 누락(InvalidTag) ② PATCH 시 키 불일치. RBAC 게이트·스키마·신규 엔드포인트 0. 재암호화 로직은 기존 `encrypt_password`/`decrypt_password` 함수 호출이므로 암호화 계층 변경 없음. 복호 실패 시 기존 암호문 유지(silent pass) — 연결 테스트로 가시화. py_compile PASS, node --check PASS.
+- Risk: low — 복호→재암호화 경로 추가이며 기존 DEK/KEK 체인 무변경. PATCH 키 변경 409 충돌은 동일 엔드포인트 중복 등록 차단이라 안전.
+- Cross-ref: CHG-20260611-0217 / TASK-0217 / TASK-0216.
