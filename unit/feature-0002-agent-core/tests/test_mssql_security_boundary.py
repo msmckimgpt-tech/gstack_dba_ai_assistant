@@ -551,6 +551,41 @@ def test_regate5_mysql_db_qualified_function_blocked():
     _run_isolated(check)
 
 
+def test_regate7_security_crypto_functions_blocked():
+    """re-gate(7차) BLOCKER: SQL Server Security/암호화 함수(CERTPRIVATEKEY/CERTENCODED/DECRYPTBYKEY 등) 차단."""
+    for sql in (
+        "SELECT CERTPRIVATEKEY(1, N'pw')",
+        "SELECT CERTENCODED(1)",
+        "SELECT FULLTEXTSERVICEPROPERTY('VerifySignature')",
+        "SELECT ASSEMBLYPROPERTY('KnownAssembly', 'PublicKey')",
+        "SELECT DECRYPTBYKEY(0x01)",
+        "SELECT KEY_GUID('k')",
+        "SELECT ASYMKEY_ID('a')",
+    ):
+        r = validate_sql_for_sandbox(sql, forbidden_schemas=AGENT_FORBIDDEN, dialect="tsql")
+        assert not r.ok, f"보안 함수가 통과됨: {sql}"
+
+
+def test_regate7_udt_method_not_overblocked():
+    """re-gate(7차) MAJOR: UDT/CLR/spatial 인스턴스 메서드(`p.geom.STArea()`)를 3-part 함수로 오판·차단하지 않는다."""
+    def check():
+        cfg.set_active_datasource("prod", engine="mssql", default_db="appdb")
+        tools.set_active_schema_allowlist(["appdb"])
+        import modules.config as _c
+        _c._ACTIVE_DEFAULT_DB.set("appdb")
+        for sql in (
+            "SELECT p.SpatialLocation.STAsText() FROM appdb.dbo.Person AS p",
+            "SELECT p.geom.STArea() FROM appdb.dbo.Parcel AS p",
+            "SELECT HASHBYTES('SHA2_256', col) FROM appdb.dbo.t",
+        ):
+            r = validate_sql_for_sandbox(sql, forbidden_schemas=AGENT_FORBIDDEN, dialect="tsql")
+            assert r.ok, f"과차단(guard): {sql} :: {r.error_reason}"
+            assert tools._freeform_sql_access_error(sql) is None, f"과차단(access): {sql}"
+        # 단, 진짜 cross-DB 함수는 여전히 차단(alias 예외가 우회로 안 됨)
+        assert validate_sql_for_sandbox("SELECT linked.appdb.dbo.fnLeak()", forbidden_schemas=AGENT_FORBIDDEN, dialect="tsql").ok is False
+    _run_isolated(check)
+
+
 def test_dialect_system_databases_sets():
     """dialect.system_databases(): MySQL=메타DB / MSSQL=master/model/msdb/tempdb."""
     def check_mssql():

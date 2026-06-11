@@ -83,6 +83,22 @@ _FORBIDDEN_FUNCTIONS_TSQL = {
     # re-gate(6차): 추가 정체성·권한·메타데이터 probe 함수.
     "current_user", "user_id", "permissions", "sessionproperty", "session_context",
     "fileproperty", "filegroupproperty", "index_col", "stats_date",
+    # re-gate(7차): SQL Server Security Functions(암호화/키/인증서) + 메타데이터 함수 전 계열 보강.
+    # 수동 denylist 의 누락을 줄이기 위해 MS 문서 카테고리(Security/Metadata Functions)를 망라.
+    # (DB GRANT 가 hard backstop — RO 로그인은 CONTROL 권한 부재로 키/인증서 함수 자체가 실패하지만,
+    #  앱-레이어에서도 enumeration 표면을 줄인다.)
+    "certprivatekey", "certencoded", "certproperty", "cert_id",
+    "asymkey_id", "asymkeyproperty", "symkeyproperty",
+    "key_id", "key_guid", "key_name",
+    "decryptbykey", "decryptbykeyautoasymkey", "decryptbykeyautocert", "decryptbyasymkey",
+    "decryptbycert", "decryptbypassphrase",
+    "encryptbykey", "encryptbyasymkey", "encryptbycert", "encryptbypassphrase",
+    "signbyasymkey", "signbycert", "verifysignedbyasymkey", "verifysignedbycert",
+    "crypt_gen_random", "cryptographic_provider_properties",
+    "assemblyproperty", "fulltextserviceproperty", "applock_mode", "applock_test",
+    "file_id", "file_idex", "filegroup_id", "filegroup_name", "file_name",
+    "object_definition", "original_db_name", "parsename", "scope_identity",
+    "database_principal_id", "loginproperty", "suser_name",
 }
 
 # re-gate(6차): niladic 정체성 함수(USER/SESSION_USER/SYSTEM_USER/CURRENT_USER)는 sqlglot 버전에 따라
@@ -204,6 +220,35 @@ def _collect_table_refs(node) -> list[tuple[str, str, str]]:
     return out
 
 
+def _table_alias_names(node) -> set[str]:
+    """re-gate(7차): statement 의 테이블 alias·테이블명·CTE 명 집합(소문자).
+
+    UDT/CLR 인스턴스 메서드 호출(`p.geom.STArea()`)의 leading 식별자는 **테이블 alias**(p)이지 catalog 가
+    아니다. 함수 namespace 추출 시 leading 이 이 집합에 있으면 메서드 호출로 보고 catalog 검사에서 제외한다
+    (정상 spatial/XML/CLR 메서드 과차단 방지)."""
+    if _exp is None:
+        return set()
+    names: set[str] = set()
+    for t in node.find_all(_exp.Table):
+        try:
+            a = (t.alias or "").strip().lower()
+            if a:
+                names.add(a)
+            n = (t.name or "").strip().lower()
+            if n:
+                names.add(n)
+        except Exception:
+            pass
+    for c in node.find_all(_exp.CTE):
+        try:
+            a = (c.alias or "").strip().lower()
+            if a:
+                names.add(a)
+        except Exception:
+            pass
+    return names
+
+
 def _collect_qualified_func_refs(node) -> list[tuple[str, str]]:
     """re-gate BLOCKER2: 3-part **함수호출**(`catalog.schema.fn()`)의 (catalog, schema) 추출.
 
@@ -211,10 +256,13 @@ def _collect_qualified_func_refs(node) -> list[tuple[str, str]]:
     `Dot(Dot(Id(forbidden), Id(dbo)), Anonymous(fnLeak))` 로 파싱돼 `_collect_table_refs` 가 못 잡는다.
     말단이 함수(Func/Anonymous)인 Dot 의 앞쪽 식별자 체인을 namespace 로 보고 catalog(DB)/schema 를 뽑아
     cross-DB allowlist 검사 대상에 포함시킨다(미허용 DB 의 scalar/TVF 우회 차단).
+
+    re-gate(7차): leading 식별자가 테이블 alias/명/CTE 면 UDT 메서드 호출(`p.geom.STArea()`)이므로 제외.
     """
     if _exp is None:
         return []
     out: list[tuple[str, str]] = []
+    aliases = _table_alias_names(node)
 
     def _idents(n, acc):
         if n is None:
@@ -238,6 +286,8 @@ def _collect_qualified_func_refs(node) -> list[tuple[str, str]]:
             acc: list[str] = []
             _idents(dot.args.get("this"), acc)
             acc = [a for a in acc if a]
+            if acc and acc[0] in aliases:
+                continue  # 테이블 alias.column.method() — UDT 메서드 호출, catalog 아님
             if len(acc) >= 2:
                 # 마지막 2개 = (catalog, schema) — 예: [forbidden, dbo] → catalog=forbidden, schema=dbo
                 out.append((acc[-2], acc[-1]))
@@ -254,15 +304,21 @@ def _has_overqualified_function(node) -> bool:
     Dot-체인 함수의 namespace 식별자가 3개 이상이면 linked-server 4-part 다(`linked.appdb.dbo.fnLeak()`).
     `_collect_qualified_func_refs` 는 뒤 2개(catalog.schema)만 취해 leading linked-server 를 버리므로,
     여기서 별도 검출해 전면 거부한다(Table 4-part 거부와 대칭).
+
+    re-gate(7차): leading 이 테이블 alias/명/CTE 면 UDT 메서드 체인이므로 4-part 로 오판하지 않는다.
     """
     if _exp is None:
         return False
+    aliases = _table_alias_names(node)
     for dot in node.find_all(_exp.Dot):
         expr = dot.args.get("expression")
         if isinstance(expr, (_exp.Func, _exp.Anonymous)):
             acc: list[str] = []
             _idents_chain(dot.args.get("this"), acc)
-            if len([a for a in acc if a]) >= 3:
+            acc = [a for a in acc if a]
+            if acc and acc[0] in aliases:
+                continue  # UDT 메서드 호출 — 과차단 방지
+            if len(acc) >= 3:
                 return True
     return False
 
