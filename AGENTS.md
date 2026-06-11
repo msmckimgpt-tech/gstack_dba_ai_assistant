@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.25.0
+template_version: v3.26.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -402,6 +402,17 @@ risk 를 판단해서 자기 model/effort 를 바꿀 수는 없다** — frontma
 - **단순·반복 작업** (lint fix, 포맷, 오타): 기본 model + effort 낮춤으로 비용 절감.
 - subagent 단위 model 분기는 §18.8 참조 (per-invocation 지정은 프로그래매틱 가능).
 
+**`/fast` — fast mode 정책 (Opus 4.8/4.7/4.6 대상)**
+
+`/fast` 는 Opus 4.8 기준 2× 단가·2.5× 속도로 동작하는 throughput 모드이다.
+**기본값: 비활성 (사용 금지)**. AI 는 사용자가 명시적으로 fast mode 사용을 요청한 경우에만
+`/fast` 를 자율적으로 판단해 적용할 수 있다. 사용자 명시 없이 AI 가 먼저 fast mode 를
+제안하거나 자동 활성화하는 것은 금지한다.
+
+- **허용**: 사용자가 "fast mode 써줘", "/fast 켜줘" 등 명시 요청 시 AI 재량 적용.
+- **금지**: 작업 속도·비용 이유로 AI 가 사전 제안·자동 활성화.
+- 멀티 소비자 위임 등 throughput 개선이 필요한 경우에도 사용자 지시가 선행되어야 한다.
+
 **`/recap` — 세션 재진입 컨텍스트 복원 (v2.1.x, 2026-05)**
 
 `/recap` 은 세션 재진입 시 이전 작업 컨텍스트를 자동 요약·복원한다 (`/config` 에서
@@ -636,6 +647,19 @@ worktree 진입을 결정하지 않고 main worktree 컨텍스트를 강제 유�
 #### §13.2.3 Lifecycle
 
 - **Create (actor: trigger 받은 AI)** — §13.2.1 trigger 충족 시 AI 가 직접 실행:
+
+  **Step 0 — base 브랜치 선검증 (worktree 생성 전)**:
+  사용자 요청이 기존 기능·UI·코드를 참조하는 경우, worktree 를 만들기 전에 해당 기능이
+  base 브랜치(main)에 존재하는지 grep 으로 선검증한다.
+  ```bash
+  # 참조 기능이 main에 있는지 확인
+  git grep -l "<참조_식별자>" main
+  ```
+  grep 결과 0 hits 이면 `git worktree list` + 최근 미병합 브랜치 목록(`git branch -a --no-merged main`)을
+  확인해 관련 base 후보를 조기 제시하고 사용자에게 어느 브랜치를 base로 할지 확인한다.
+  main에 없는 기능을 main base worktree에서 작업하면 탐색 루프(다회 Explore/Read)와
+  base 재선택이 반복될 수 있어 이 step을 생략하지 않는다.
+
   ```bash
   git worktree add ../worktrees/<feature-id> -b ai/<agent-id>/<feature-id>
   ```
@@ -1368,6 +1392,13 @@ WSL bash에서 `playwright` CLI를 직접 실행하는 것은 렌더링 확인�
 - "curl 응답 200 OK — 완료" (렌더링 미확인)
 - WSL bash에서 `playwright test` 직접 실행 후 "테스트 통과 — 완료" (`/browse` MCP 경로 미사용)
 - 스크린샷 없이 "UI 정상 확인" 선언
+- "Ctrl+Shift+R 후 확인해 주세요" 등 사용자에게 새로고침·재확인을 위임하고 완료 선언 — 위임 자체는 검증이 아님
+- "검증 단계가 누락됐습니다" 인정 후 브라우저를 실행하지 않고 완료 처리 — 인정만으로 검증이 완료되지 않음
+
+**완료 선언 게이트**: UI-affecting 변경(HTML/CSS/JS 수정, 컴포넌트 추가·삭제, 레이아웃 변경 등)은
+`/browse` 스킬로 브라우저 렌더링을 직접 확인하고 그 evidence(스크린샷 또는 element 상태)를
+응답에 첨부하기 전까지 완료 선언 불가. 위 두 금지 패턴("위임" / "인정 후 미실행")은 이 게이트의
+명시적 위반으로 간주한다.
 
 **체크리스트 연동**: §16.2 Completion Checklist 의 `(웹 UI 프로젝트만)` 항목으로 자동 참조.
 해당 항목 미체크 상태로 완료 선언 시 §16.5 금지 패턴과 동일하게 처리.
