@@ -450,6 +450,49 @@ def test_regate3_struct_pin_gate_helper():
     _run_isolated(check)
 
 
+def test_regate4_next_value_for_blocked():
+    """re-gate(4차) BLOCKER: NEXT VALUE FOR(sequence 증가 부수효과 + 3-part 미수집 우회) 거부."""
+    for sql in ("SELECT NEXT VALUE FOR dbo.seq", "SELECT NEXT VALUE FOR forbidden.dbo.seq"):
+        r = validate_sql_for_sandbox(sql, forbidden_schemas=AGENT_FORBIDDEN, dialect="tsql")
+        assert not r.ok, f"NEXT VALUE FOR 가 통과됨: {sql}"
+
+
+def test_regate4_object_metadata_functions_blocked():
+    """re-gate(4차) MAJOR: 객체/스키마 메타데이터 probe 함수(OBJECT_ID/OBJECT_NAME/SCHEMA_NAME 등) 차단."""
+    for sql in (
+        "SELECT OBJECT_ID('master.sys.sql_logins')",
+        "SELECT OBJECT_NAME(1, 1)",
+        "SELECT OBJECT_SCHEMA_NAME(1, 1)",
+        "SELECT SCHEMA_NAME(1)",
+        "SELECT COL_NAME(1, 1)",
+    ):
+        r = validate_sql_for_sandbox(sql, forbidden_schemas=AGENT_FORBIDDEN, dialect="tsql")
+        assert not r.ok, f"메타데이터 probe 함수가 통과됨: {sql}"
+
+
+def test_regate4_empty_allowlist_blocks_unqualified_mysql():
+    """re-gate(4차) BLOCKER5: 빈 allowlist(auto/미바인딩)에서 무자격 MySQL 쿼리도 차단(접근 0 불변식).
+    allow=None(레거시 무제한)·정상 제품(비어있지 않음)의 golden 무자격 동작은 보존."""
+    def check():
+        cfg.set_active_datasource(None)  # mysql, datasource 비활성
+        tools.set_active_schema_allowlist([])  # 빈 allowlist
+        assert tools._freeform_sql_access_error("SELECT * FROM Secrets") is not None
+        tools.set_active_schema_allowlist(None)  # 레거시 무제한 → 무자격 허용(골든)
+        assert tools._freeform_sql_access_error("SELECT * FROM Secrets") is None
+        tools.set_active_schema_allowlist(["dblog"])  # 정상 제품 → 무자격 허용(연결 기본 DB, 골든)
+        assert tools._freeform_sql_access_error("SELECT * FROM orders") is None
+    _run_isolated(check)
+
+
+def test_regate4_grounding_preserves_original_case():
+    """re-gate(4차) MAJOR: 비교는 소문자, grounding 표시는 원본 케이스(case-sensitive collation 대응)."""
+    def check():
+        tools.set_active_schema_allowlist(["GameLog_151", "AppDB"])
+        assert tools._ACTIVE_SCHEMA_ALLOWLIST_DISPLAY.get() == ["GameLog_151", "AppDB"]
+        assert tools._ACTIVE_SCHEMA_ALLOWLIST.get() == {"gamelog_151", "appdb"}
+    _run_isolated(check)
+
+
 def test_dialect_system_databases_sets():
     """dialect.system_databases(): MySQL=메타DB / MSSQL=master/model/msdb/tempdb."""
     def check_mssql():

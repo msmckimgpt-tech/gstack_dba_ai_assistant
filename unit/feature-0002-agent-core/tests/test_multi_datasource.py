@@ -235,6 +235,8 @@ def test_resolve_datasource_null_binding_returns_none():
 
 
 def test_resolve_datasource_read_failure_failsafe():
+    """re-gate(4차) BLOCKER5: 바인딩 조회 실패는 fail-**closed** — 기본 DB(None) 폴백이 아니라
+    DatasourceResolutionError 를 raise 한다(데이터 계정 GRANT 전체 DB 로 fail-open 차단)."""
     ac = _agent_core()
 
     class _Boom:
@@ -243,8 +245,8 @@ def test_resolve_datasource_read_failure_failsafe():
 
     with mock.patch.object(ac.cfg, "AGENT_MULTI_DATASOURCE_ENABLED", True), \
          mock.patch.object(ac.cfg, "DATASOURCES", {"prod": DS}):
-        # 읽기 실패해도 예외 전파 없이 기본 DB (fail-safe)
-        assert ac._resolve_product_datasource(_Boom(), 5) is None
+        with pytest.raises(ac.DatasourceResolutionError):
+            ac._resolve_product_datasource(_Boom(), 5)
 
 
 # ──────────────────────────────────────────────────────────────────────────

@@ -41,6 +41,11 @@ _SYSTEM_SCHEMAS = _METADATA_SCHEMAS | _INTERNAL_SCHEMAS
 _ACTIVE_SCHEMA_ALLOWLIST: contextvars.ContextVar[set[str] | None] = contextvars.ContextVar(
     "agent_active_schema_allowlist", default=None
 )
+# re-gate(4차): 비교는 소문자(case-insensitive)지만, LLM grounding 에는 **원본 케이스** DB명을 보여줘야
+# case-sensitive collation 의 SQL Server 에서 3-part 쿼리가 깨지지 않는다(`GameLog_151` vs `gamelog_151`).
+_ACTIVE_SCHEMA_ALLOWLIST_DISPLAY: contextvars.ContextVar["list[str] | None"] = contextvars.ContextVar(
+    "agent_active_schema_allowlist_display", default=None
+)
 
 
 def set_active_schema_allowlist(schemas: list[str] | set[str] | None) -> None:
@@ -48,11 +53,21 @@ def set_active_schema_allowlist(schemas: list[str] | set[str] | None) -> None:
 
     None 을 넣으면 기존 동작(모든 user schema 접근 가능).
     빈 list/set 을 넣으면 **접근 가능 스키마가 없는 상태** (모든 조회/실행이 거부 — fail-closed).
+    비교용은 소문자 set, grounding 표시용은 원본 케이스 list 를 함께 보관한다.
     """
     if schemas is None:
         _ACTIVE_SCHEMA_ALLOWLIST.set(None)
+        _ACTIVE_SCHEMA_ALLOWLIST_DISPLAY.set(None)
     else:
         _ACTIVE_SCHEMA_ALLOWLIST.set({str(s).strip().lower() for s in schemas if str(s).strip()})
+        # 원본 케이스 보존(중복은 소문자 기준 제거, 순서 유지).
+        _seen, _disp = set(), []
+        for s in schemas:
+            t = str(s).strip()
+            if t and t.lower() not in _seen:
+                _seen.add(t.lower())
+                _disp.append(t)
+        _ACTIVE_SCHEMA_ALLOWLIST_DISPLAY.set(_disp)
 
 
 def clear_active_schema_allowlist() -> None:
@@ -175,6 +190,15 @@ def _freeform_sql_access_error(sql: str) -> str | None:
         return (
             "오류: 멀티 datasource 모드에서는 모든 테이블을 데이터베이스로 명시해야 합니다 "
             "(무자격 테이블명은 보안상 거부됩니다 — 예: `mydb.mytable`)."
+        )
+    # re-gate(4차) BLOCKER5: **빈 allowlist = 접근 0** 불변식. allow 가 None(레거시 무제한) 이 아니라
+    # 빈 set([]) 이면(auto 모드·미바인딩·해석실패 폴백) 무자격 테이블 조회도 거부한다. 과거엔 datasource
+    # 비활성(active_ds None) 경로에서 무자격 `SELECT * FROM Secrets` 가 데이터 계정 기본 DB 로 실행됐다.
+    allow = _ACTIVE_SCHEMA_ALLOWLIST.get()
+    if allow is not None and len(allow) == 0 and has_unqualified:
+        return (
+            "오류: 접근 가능한 데이터베이스가 없습니다(빈 접근목록). 무자격 테이블 조회를 거부합니다 "
+            "(제품을 선택하거나 접근 가능 데이터베이스를 구성하세요)."
         )
     # MySQL 은 db==schema → schemas + catalogs(3-part 희소) 토큰을 DB allowlist 와 대조.
     return _whitelist_violation(set(schemas) | set(catalogs))

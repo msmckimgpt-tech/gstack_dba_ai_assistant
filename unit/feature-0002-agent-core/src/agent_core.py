@@ -2034,10 +2034,15 @@ def _resolve_product_datasource(mem_conn, product_id):
         finally:
             cur.close()
     except Exception as exc:
-        logging.getLogger("agent_core").warning(
-            "resolve_product_datasource_read_failed product_id=%s err=%r — 기본 DB", product_id, exc,
+        # re-gate(4차) BLOCKER5: 바인딩 조회 실패를 "기본 DB 폴백(None)"으로 처리하면, datasource 바인딩이
+        # 있어야 할 제품이 데이터 계정 GRANT 전체에 접근 가능한 기본 MySQL 로 fail-open 된다. 조회 실패 =
+        # 권한 컨텍스트 불명 → **fail-closed**(run 중단). 호출부가 DatasourceResolutionError 를 사용자 에러로 처리.
+        logging.getLogger("agent_core").error(
+            "resolve_product_datasource_read_failed product_id=%s err=%r — fail-closed", product_id, exc,
         )
-        return None
+        raise DatasourceResolutionError(
+            f"product {product_id} 의 datasource 바인딩 조회에 실패했습니다 (권한 컨텍스트 불명 — run 중단)."
+        ) from exc
     if not key:
         return None  # 미바인딩 = 기본 DB (정상)
     # TASK-0205: DB 레지스트리(WebDatasources) 우선 + .env 레거시 폴백. password 복호 포함.
@@ -2371,10 +2376,15 @@ def _run_agent_core(
     if str(_active_engine).lower() == "mssql":
         system_content += _MSSQL_DIALECT_GUIDANCE
         # TASK-0206: 허용 DB 목록 + 현재(primary) DB 를 동적 주입(DB-단위 — 3-part cross-DB 안내).
+        # re-gate(4차): grounding 에는 **원본 케이스** DB명(display var)을 쓴다(case-sensitive collation 대응).
         try:
             import modules.tools as _tools
-            _allow = _tools._ACTIVE_SCHEMA_ALLOWLIST.get()
-            _allow_dbs = sorted(_allow) if _allow else []
+            _allow_disp = _tools._ACTIVE_SCHEMA_ALLOWLIST_DISPLAY.get()
+            if _allow_disp:
+                _allow_dbs = sorted(_allow_disp, key=str.lower)
+            else:
+                _allow = _tools._ACTIVE_SCHEMA_ALLOWLIST.get()
+                _allow_dbs = sorted(_allow) if _allow else []
         except Exception:
             _allow_dbs = []
         _primary = (_ds.get("default_db") if _ds else None) or (_allow_dbs[0] if _allow_dbs else None)

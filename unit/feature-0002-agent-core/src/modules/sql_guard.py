@@ -103,6 +103,7 @@ _DENYLIST_PATTERNS_TSQL: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bWAITFOR\b", re.IGNORECASE),           # DELAY/TIME — DoS
     re.compile(r"\bEXEC(UTE)?\b", re.IGNORECASE),        # 동적 실행/proc 호출
     re.compile(r"\bINTO\s+", re.IGNORECASE),             # SELECT ... INTO newtbl (부수효과: 테이블 생성)
+    re.compile(r"\bNEXT\s+VALUE\s+FOR\b", re.IGNORECASE),  # re-gate(4차): sequence 증가(부수효과)+3-part 미수집 우회
     re.compile(r"@@", re.IGNORECASE),                    # @@VERSION 등 시스템변수 정보유출
     # re-gate MAJOR6: 서버/로그인 정체성·역할 enumeration 시스템함수(테이블참조 없이 정보유출). sqlglot 이
     # SUSER_SNAME 을 CurrentUser 노드로 정규화해 Func-name 검출을 빠져나가므로 텍스트 regex 로 박제.
@@ -112,7 +113,11 @@ _DENYLIST_PATTERNS_TSQL: tuple[re.Pattern[str], ...] = (
         r"|FN_BUILTIN_PERMISSIONS|CONNECTIONPROPERTY|CONTEXT_INFO|HOST_NAME|HOST_ID|CURRENT_USER"
         r"|USER_NAME|APP_NAME|LOGINPROPERTY|PWDCOMPARE|PWDENCRYPT"
         # re-gate(3차): DB enumeration/probing 함수도 차단 — id↔name 매핑·상태·접근권 probe.
-        r"|DB_NAME|DB_ID|DATABASEPROPERTYEX|DATABASEPROPERTY|HAS_DBACCESS|FILE_NAME|FILEGROUP_NAME)\b",
+        r"|DB_NAME|DB_ID|DATABASEPROPERTYEX|DATABASEPROPERTY|HAS_DBACCESS|FILE_NAME|FILEGROUP_NAME"
+        # re-gate(4차): 객체/스키마/타입 메타데이터 probe(직접 catalog 참조 없이 시스템·미허용 DB 객체 탐색).
+        r"|OBJECT_ID|OBJECT_NAME|OBJECT_SCHEMA_NAME|OBJECT_DEFINITION|OBJECTPROPERTY|OBJECTPROPERTYEX"
+        r"|COL_NAME|COL_LENGTH|COLUMNPROPERTY|SCHEMA_ID|SCHEMA_NAME|TYPE_ID|TYPE_NAME|TYPEPROPERTY"
+        r"|CERT_ID|DATABASE_PRINCIPAL_ID|FULLTEXTCATALOGPROPERTY|INDEXPROPERTY|INDEXKEY_PROPERTY)\b",
         re.IGNORECASE,
     ),
     re.compile(r"/\*\+\s*[^*]*\*/"),                     # optimizer hint 주석

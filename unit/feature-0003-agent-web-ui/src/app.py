@@ -13557,12 +13557,27 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
         conn.close()
         return _json_error("제품 관리 권한이 필요합니다.", 403)
     cur = conn.cursor()
-    cur.execute("SELECT Id FROM WebProducts WHERE Id = %s", (int(product_id),))
-    if not cur.fetchone():
+    cur.execute("SELECT Id, DatasourceKey FROM WebProducts WHERE Id = %s", (int(product_id),))
+    _prow = cur.fetchone()
+    if not _prow:
         cur.close()
         conn.close()
         return _json_error("product not found", 404)
+    # re-gate(4차) MAJOR: 금지 DB 목록을 datasource 엔진별로 적용(MySQL 제품에서 'master' 가 정상 사용자
+    # DB 일 수 있고, MSSQL 제품에서 'mysql' 이 정상 DB 일 수 있다 — cross-engine 과차단 방지).
+    _ds_engine = "mysql"
+    _dskey = (str(_prow[1]).strip().lower() if len(_prow) > 1 and _prow[1] else "")
+    if _dskey:
+        try:
+            cur.execute("SELECT Engine FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (_dskey,))
+            _er = cur.fetchone()
+            if _er and _er[0]:
+                _ds_engine = str(_er[0]).strip().lower()
+        except Exception:
+            _ds_engine = "mysql"
     cur.close()
+    _forbidden_meta = set(_DATABASES_AVAILABLE_METADATA) if _ds_engine == "mysql" else set()
+    _forbidden_sys = set(_DATABASES_AVAILABLE_SYSTEM_MSSQL) if _ds_engine == "mssql" else set()
     raw_items = data.get("databases")
     if not isinstance(raw_items, list):
         return _json_error("databases must be a list", 400)
@@ -13582,12 +13597,13 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
         slow = schema.lower()
         # re-gate BLOCKER4: 앱 내부 DB(agent_memory) 및 메타데이터 스키마는 allowlist 에 저장 불가
         # (구조화 도구가 allowlist 멤버를 신뢰 → agent_memory.WebAccounts.PasswordHash 유출 경로 차단).
+        # 내부 DB(agent_memory)는 엔진 무관 항상 차단.
         if slow in _DATABASES_AVAILABLE_INTERNAL:
             return _json_error(f"내부 데이터베이스는 접근 목록에 추가할 수 없습니다: {schema}", 400)
-        if slow in _DATABASES_AVAILABLE_METADATA:
+        # 메타데이터/시스템 DB 는 해당 엔진에서만 차단(cross-engine 정상 DB 과차단 방지).
+        if slow in _forbidden_meta:
             return _json_error(f"메타데이터 스키마는 항상 접근 가능하므로 추가할 수 없습니다: {schema}", 400)
-        # re-gate MAJOR6(2차): MSSQL 시스템 DB 는 allowlist 에 저장 불가(pin 후보 차단 — dbo 호환뷰 enumeration).
-        if slow in _DATABASES_AVAILABLE_SYSTEM_MSSQL:
+        if slow in _forbidden_sys:
             return _json_error(f"시스템 데이터베이스는 접근 목록에 추가할 수 없습니다: {schema}", 400)
         if slow in seen:
             continue
