@@ -1904,3 +1904,15 @@ source_of_truth: true
 - Trigger: UI/button/layout keyword(§18.8 → ux). 단 본 cycle 은 **표시 방향 교정** — 쿼리 문자열을 숨기던 토글을 제거하고 결과셋에 토글을 추가하는 렌더링 로직 재배치. 신규 엔드포인트·쿼리·권한·스키마·시크릿 0.
 - Reason: 순수 프론트엔드(app.js 4개 함수 + styles.css CSS 추가). 기존 데이터 흐름·API·RBAC 무변경. 사용자가 이미 볼 수 있던 데이터(쿼리/결과셋)의 표시 순서·기본 노출 여부만 변경. node --check PASS, py_compile PASS. outside-voice 불필요.
 - Residual: 배포 후 라이브 확인 필요(쿼리 항상 표시·결과 보기 토글 — CHECK#13 WARN).
+
+## REV-20260611-0207 [SUBAGENT:design-correctness]
+- Date: 2026-06-11
+- Cycle: TASK-0207 (관리 콘솔 데이터소스 pane UI 표준화 + 수정/삭제 노출), **Minor §12.3** — 프런트 3파일(admin.html·admin.js·styles.css), 백엔드/API/스키마/RBAC/시크릿 0.
+- Trigger: UI/page/form/layout keyword(§18.8 → ux/design). frontend-only 이나 가시적 레이아웃 재구성 + 타 pane 공유 클래스(`admin-detail-head` 등) 접촉이라 SKIP 대신 design+correctness 패널 1인 실행.
+- 패널 결과: **SHIP-WITH-FIXES**. RBAC/보안 게이트(console.manage·ds.editable·env-readonly·encryption-ready) HEAD 대비 무손실 확인. 지적 5건 전부 수용·수정:
+  - BLOCKER: styles.css 에 `.admin-detail-head` 중복 정의 → 동일 specificity 후순위로 accounts/roles/products/audit 상세 헤더(divider+flex-start) 전역 회귀. → 중복 rule 제거, 기존 canonical(3168) 재사용.
+  - SHOULD-FIX: 생성 직후 `_dsSelectedKey = body.key`(raw) 인데 서버가 `strip().lower()` 정규화 → 목록 매칭 실패로 자동선택 누락. → POST 응답 canonical key(폴백 `body.key.toLowerCase()`) 사용.
+  - SHOULD-FIX: 읽기전용 사유 안내가 sticky 액션바(`admin-detail-actions`, bottom:-18px) 아래 append → sticky 깨짐. → 액션바 위(앞)로 이동.
+  - NICE: `.admin-field input.is-readonly` 배경 `var(--surface-2, …)` 인데 `--surface-2` 미정의 → no-op. → `var(--bg)` 로 교체.
+  - NICE: `role=listbox` option 비활성 행 `aria-selected` 제거 대신 `"false"` 명시.
+- Risk: low — 프런트 레이아웃/상태. 백엔드·데이터·권한 무영향. 잔여 시각검증은 PB-0008(배포 후).

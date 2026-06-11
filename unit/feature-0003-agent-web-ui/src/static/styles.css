@@ -3253,6 +3253,111 @@ a { color: inherit; }
   color: var(--danger);
 }
 
+/* ── TASK-0207: 데이터소스 상세 패널 (계정/제품 상세와 통일) ─────────────────
+ * .admin-badge / .admin-field / .admin-kv / .admin-detail-head / .admin-row-actions
+ * 는 이전엔 미스타일이라 데이터소스 pane 만 이질적이었음 — 표준 토큰으로 정렬. */
+.admin-row-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.admin-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+}
+
+.admin-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.7;
+  letter-spacing: .02em;
+  background: var(--primary-soft, rgba(37,99,235,.12));
+  color: var(--primary, #2563eb);
+  white-space: nowrap;
+}
+
+.admin-badge--muted {
+  background: var(--bg);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.admin-badge--warn {
+  background: var(--danger-soft, rgba(220,38,38,.1));
+  color: var(--danger, #dc2626);
+}
+
+/* key-value 정의 목록 (연결 좌표 / 출처·보안) */
+.admin-kv {
+  display: grid;
+  grid-template-columns: minmax(96px, max-content) 1fr;
+  gap: 4px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.admin-kv dt {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.admin-kv dd {
+  margin: 0;
+  color: var(--text);
+  word-break: break-word;
+}
+
+/* 생성/편집 폼 — label 위, input 아래 (계정/역할 폼 패턴) */
+.admin-ds-form {
+  gap: 12px;
+}
+
+.admin-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.admin-field-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.admin-field input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.admin-field input:focus {
+  outline: none;
+  border-color: var(--primary, #2563eb);
+  box-shadow: 0 0 0 3px var(--primary-soft, rgba(37,99,235,.15));
+}
+
+.admin-field input.is-readonly {
+  background: var(--bg);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
 /* ── Commit bar ─────────────────────────────────────────────── */
 .admin-commit-bar {
   display: flex;
