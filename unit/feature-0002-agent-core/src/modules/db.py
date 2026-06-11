@@ -132,13 +132,17 @@ def _connect_mssql(datasource: dict, database: str | None, autocommit: bool):
             f"original error: {_PYMSSQL_IMPORT_ERR!r}"
         )
     port = int(datasource.get("port") or 1433)
-    db_name = database or datasource.get("default_db") or ""
+    # TASK-0213: DB 컨텍스트는 caller 명시값 > 제품 auto-pin(default_db, 첫 접근가능 DB) 순. 둘 다 없으면
+    # (예: 접근가능 DB 미설정 제품) **로그인 기본 DB(보통 master, 업무·시스템 DB)로 붙지 않고 중립 `tempdb`**
+    # 로 고정한다(사용자 결정). tempdb 는 업무데이터가 없어 2-part 무자격 참조가 새지 않고, 업무 쿼리는
+    # 3-part `DB.스키마.테이블`(allowlist 검사) 로만 동작한다. '기본 참조 DB' 데이터소스 필드는 폐지(TASK-0213).
+    db_name = database or datasource.get("default_db") or "tempdb"
     conn = _pymssql.connect(
         server=datasource.get("host") or DB_HOST,
         port=str(port),
         user=datasource.get("user") or DB_USER,
         password=datasource.get("password", ""),
-        database=db_name,  # P6: MSSQL 은 default_db 로 DB 컨텍스트 고정(빈 문자열=로그인 기본 DB)
+        database=db_name,  # MSSQL DB 컨텍스트(auto-pin 또는 중립 tempdb 폴백)
         login_timeout=int(AGENT_TIMEOUT_SEC),
         timeout=int(AGENT_TIMEOUT_SEC),
         autocommit=bool(autocommit),

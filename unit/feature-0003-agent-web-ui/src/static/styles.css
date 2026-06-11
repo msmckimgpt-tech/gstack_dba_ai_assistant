@@ -2730,6 +2730,74 @@ a { color: inherit; }
   cursor: not-allowed;
 }
 
+/* 체크박스 드롭다운 DB picker */
+.admin-db-picker-wrap {
+  position: relative;
+  margin: 6px 0;
+}
+
+.admin-db-picker-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-subtle, rgba(0,0,0,.15));
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  color: var(--primary, #2563eb);
+}
+
+.admin-db-picker-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.admin-db-picker-btn:not(:disabled):hover {
+  background: var(--primary-soft, rgba(37,99,235,.06));
+}
+
+.admin-db-picker-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 200px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--border, rgba(0,0,0,.15));
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.1);
+  z-index: 120;
+  padding: 4px 0;
+}
+
+.admin-db-picker-list.hidden { display: none; }
+
+.admin-db-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+}
+
+.admin-db-picker-item:hover {
+  background: var(--primary-soft, rgba(37,99,235,.06));
+}
+
+.admin-db-picker-item input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--primary, #2563eb);
+  cursor: pointer;
+}
+
+.admin-db-picker-empty {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-muted, #888);
+}
+
 /* TASK-0053 Phase B/C — product subcatalog cards (Role/Account detail) */
 .admin-product-card-list {
   display: flex;

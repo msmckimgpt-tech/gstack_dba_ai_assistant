@@ -1224,7 +1224,7 @@ function _dsRenderList() {
     }
     const meta = document.createElement("span");
     meta.className = "admin-list-row-meta";
-    meta.textContent = `${ds.host || "?"}:${ds.port || ""}${ds.default_db ? " / " + ds.default_db : ""}`;
+    meta.textContent = `${ds.host || "?"}:${ds.port || ""}`;
     main.append(title, meta);
     row.appendChild(main);
     row.addEventListener("click", () => {
@@ -1294,7 +1294,8 @@ function _dsRenderDetail(ds) {
   _dsKvRow(dl1, "호스트", ds.host || "—");
   _dsKvRow(dl1, "포트", ds.port ? String(ds.port) : "—");
   _dsKvRow(dl1, "DB 유저", ds.user || "—");
-  _dsKvRow(dl1, "기본 참조 DB", ds.default_db || "(없음)");
+  // TASK-0213: '기본 참조 DB'(datasource default_db) 폐지 — MSSQL 은 제품 접근가능 DB 로 자동 연결(없으면
+  // 중립 tempdb). 데이터소스 레벨 기본 DB 개념 제거.
   sec1.appendChild(dl1);
   detailEl.appendChild(sec1);
 
@@ -1379,7 +1380,8 @@ function _dsRenderForm(ds) {
     // 빈값으로 두면 기존 유저 유지(서버도 빈 user 는 무시). 변경 시에만 입력.
     ["user", isEdit ? "DB 유저 (변경 시에만 입력 · RO 권장)" : "DB 유저 (RO 권장)", "", false],
     ["password", isEdit ? "비밀번호 (변경 시에만 입력)" : "비밀번호", "", false],
-    ["default_db", "기본 참조 DB (선택)", isEdit ? (ds.default_db || "") : "", false],
+    // TASK-0213: '기본 참조 DB'(default_db) 필드 폐지 — 접근 DB 는 제품의 '접근 가능 데이터베이스'(allowlist)로
+    // 관리하고, MSSQL 연결은 그 중 첫 DB 로 자동(없으면 중립 tempdb). 데이터소스에 기본 DB 를 두지 않는다.
   ];
   const inputs = {};
   fields.forEach(([k, label, val, ro]) => {
@@ -4132,38 +4134,62 @@ function renderProductDetail() {
   let availableUserDbs = (adminState.availableDatabases.user_schemas || []).slice();  // 사용자 DB(picker)
   let dsCaseInsensitive = false;                          // MSSQL DB명 대소문자 보존(true=lower 비교만)
 
+  // 체크박스 드롭다운 패널 빌더. 드롭다운은 버튼 클릭 시 열리며, 각 항목에 체크박스로
+  // 연속 토글 가능. 선택 즉시 draft 에 반영(추가 버튼 불필요).
   const buildPicker = () => {
-    pickerSelect.innerHTML = "";
-    const used = new Set(draft.map((d) => String(d.schema_name).toLowerCase()));
+    pickerDropList.innerHTML = "";
     const lockedLower = new Set(lockedChips.map((c) => String(c.name).toLowerCase()));
     const userSchemas = (availableUserDbs || [])
-      .filter((s) => !used.has(String(s).toLowerCase()))
       .filter((s) => !lockedLower.has(String(s).toLowerCase()))
       .filter((s) => !METADATA_SCHEMAS.includes(String(s).toLowerCase()))
       .filter((s) => !INTERNAL_SCHEMAS.has(String(s).toLowerCase()));
     if (!userSchemas.length) {
-      const opt = document.createElement("option");
-      opt.value = "";
-      opt.textContent = "(추가 가능한 DB 없음)";
-      opt.disabled = true;
-      opt.selected = true;
-      pickerSelect.appendChild(opt);
-      pickerAddBtn.disabled = true;
+      const empty = document.createElement("div");
+      empty.className = "admin-db-picker-empty";
+      empty.textContent = "(추가 가능한 DB 없음)";
+      pickerDropList.appendChild(empty);
+      pickerDropBtn.disabled = !canManage;
       return;
     }
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = "DB 선택…";
-    placeholder.disabled = true;
-    placeholder.selected = true;
-    pickerSelect.appendChild(placeholder);
     userSchemas.forEach((name) => {
-      const opt = document.createElement("option");
-      opt.value = name;
-      opt.textContent = name;
-      pickerSelect.appendChild(opt);
+      const item = document.createElement("label");
+      item.className = "admin-db-picker-item";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      const nameKey = String(name).toLowerCase();
+      cb.checked = draft.some((d) => String(d.schema_name).toLowerCase() === nameKey);
+      cb.disabled = !canManage;
+      cb.addEventListener("change", () => {
+        if (cb.checked) {
+          const raw = name;
+          const v = raw.toLowerCase();
+          if (METADATA_SCHEMAS.includes(v) || INTERNAL_SCHEMAS.has(v)) { cb.checked = false; return; }
+          if (!dsCaseInsensitive && !/^[a-z_][a-z0-9_]{0,63}$/.test(v)) {
+            showToast("스키마 이름 형식이 올바르지 않습니다.", true);
+            cb.checked = false;
+            return;
+          }
+          if (!draft.some((d) => String(d.schema_name).toLowerCase() === v)) {
+            draft.push({ schema_name: dsCaseInsensitive ? raw : v, description: "", sort_order: (draft.length + 1) * 10 });
+            setProductDatabasesPending(product.id, draft);
+            redrawChips();
+          }
+        } else {
+          const v = String(name).toLowerCase();
+          const idx = draft.findIndex((d) => String(d.schema_name).toLowerCase() === v);
+          if (idx !== -1) {
+            draft.splice(idx, 1);
+            setProductDatabasesPending(product.id, draft);
+            redrawChips();
+          }
+        }
+      });
+      const lbl = document.createElement("span");
+      lbl.textContent = name;
+      item.append(cb, lbl);
+      pickerDropList.appendChild(item);
     });
-    pickerAddBtn.disabled = !canManage;
+    pickerDropBtn.disabled = !canManage;
   };
 
   const redrawChips = () => {
@@ -4215,38 +4241,27 @@ function renderProductDetail() {
   };
   dbSection.appendChild(chipWrap);
 
-  const pickerRow = document.createElement("div");
-  pickerRow.className = "admin-db-picker-row";
-  const pickerSelect = document.createElement("select");
-  pickerSelect.className = "admin-db-picker";
-  pickerSelect.disabled = !canManage;
-  const pickerAddBtn = document.createElement("button");
-  pickerAddBtn.type = "button";
-  pickerAddBtn.className = "tool-btn";
-  pickerAddBtn.textContent = "+ 추가";
-  pickerAddBtn.disabled = !canManage;
-  pickerAddBtn.addEventListener("click", () => {
-    // TASK-0206: MSSQL DB명은 대소문자 보존(GameLog_151). picker 값은 서버 목록 출처라 형식 신뢰.
-    const raw = (pickerSelect.value || "").trim();
-    if (!raw) return;
-    const v = raw.toLowerCase();
-    if (METADATA_SCHEMAS.includes(v) || INTERNAL_SCHEMAS.has(v)) return;
-    // dsCaseInsensitive(MSSQL) 가 아니면 MySQL 스키마 규칙(소문자 식별자) 검증 유지.
-    if (!dsCaseInsensitive && !/^[a-z_][a-z0-9_]{0,63}$/.test(v)) {
-      showToast("스키마 이름 형식이 올바르지 않습니다.", true);
-      return;
-    }
-    if (draft.some((d) => String(d.schema_name).toLowerCase() === v)) {
-      showToast("이미 등록된 데이터베이스입니다.", true);
-      return;
-    }
-    draft.push({ schema_name: dsCaseInsensitive ? raw : v, description: "", sort_order: (draft.length + 1) * 10 });
-    setProductDatabasesPending(product.id, draft);
-    redrawChips();
-    buildPicker();
+  const pickerWrap = document.createElement("div");
+  pickerWrap.className = "admin-db-picker-wrap";
+  const pickerDropBtn = document.createElement("button");
+  pickerDropBtn.type = "button";
+  pickerDropBtn.className = "admin-db-picker-btn";
+  pickerDropBtn.textContent = "+ 데이터베이스 선택";
+  pickerDropBtn.disabled = !canManage;
+  const pickerDropList = document.createElement("div");
+  pickerDropList.className = "admin-db-picker-list hidden";
+  pickerDropBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    pickerDropList.classList.toggle("hidden");
   });
-  pickerRow.append(pickerSelect, pickerAddBtn);
-  dbSection.appendChild(pickerRow);
+  // 패널 바깥 클릭 시 닫기.
+  document.addEventListener("click", function _closePicker(e) {
+    if (!pickerWrap.contains(e.target)) {
+      pickerDropList.classList.add("hidden");
+    }
+  });
+  pickerWrap.append(pickerDropBtn, pickerDropList);
+  dbSection.appendChild(pickerWrap);
 
   redrawChips();
   buildPicker();

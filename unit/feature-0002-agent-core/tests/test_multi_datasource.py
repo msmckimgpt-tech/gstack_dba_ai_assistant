@@ -329,8 +329,9 @@ def test_connect_engine_dispatch_mssql_uses_pymssql():
     assert captured["server"] == "sql-host"
     assert captured["port"] == "1433"
     assert captured["user"] == "ro_sql"
-    # M-1: default_db 미적용 → database 빈 문자열
-    assert captured.get("database", "") == ""
+    # TASK-0213: default_db 미설정 MSSQL 은 로그인 기본 DB(master) 대신 **중립 tempdb** 로 연결한다
+    # ('기본 참조 DB' 폐지 — 업무 쿼리는 3-part, 무자격은 업무데이터 없는 tempdb 로 해석돼 누출 0).
+    assert captured.get("database", "") == "tempdb"
 
 
 def test_connect_engine_dispatch_mysql_unaffected():

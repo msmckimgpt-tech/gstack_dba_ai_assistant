@@ -9908,7 +9908,8 @@ async def admin_create_datasource(request: Request) -> JSONResponse:
             return _json_error("port 정수 오류.", 400)
         user = str(data.get("user") or "").strip()
         password = str(data.get("password") or "")
-        default_db = (str(data.get("default_db")).strip() or None) if data.get("default_db") else None
+        # TASK-0213: '기본 참조 DB'(default_db) 폐지 — 데이터소스에 기본 DB 를 두지 않는다(NULL). 접근 DB 는
+        # 제품의 '접근 가능 데이터베이스'(allowlist)로 관리, MSSQL 연결은 그 중 첫 DB 자동(없으면 tempdb).
         if not host or not user:
             return _json_error("host·user 는 필수.", 400)
         got = _dsr.ensure_dek(conn)
@@ -9923,8 +9924,8 @@ async def admin_create_datasource(request: Request) -> JSONResponse:
                 return _json_error(f"이미 존재하는 키: {key}", 409)
             cur.execute(
                 "INSERT INTO WebDatasources (DatasourceKey,Engine,Host,Port,DbUser,PasswordEnc,DefaultDb,"
-                "EncryptionVersion,IsActive,UpdatedByAccountId) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,1,%s)",
-                (key, engine, host, port, user, pw_enc, default_db, int(ver),
+                "EncryptionVersion,IsActive,UpdatedByAccountId) VALUES (%s,%s,%s,%s,%s,%s,NULL,%s,1,%s)",
+                (key, engine, host, port, user, pw_enc, int(ver),
                  int(actor.get("id")) if isinstance(actor, dict) and actor.get("id") else None),
             )
         finally:
@@ -9980,8 +9981,7 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
                     return _json_error("port 정수 오류.", 400)
             if "user" in data and str(data.get("user") or "").strip():
                 sets.append("DbUser=%s"); params.append(str(data.get("user")).strip())
-            if "default_db" in data and str(data.get("default_db") or "").strip():
-                sets.append("DefaultDb=%s"); params.append(str(data.get("default_db")).strip())
+            # TASK-0213: '기본 참조 DB'(default_db) 폐지 — PATCH 에서 갱신하지 않는다(데이터소스 레벨 기본 DB 미관리).
             if "is_active" in data:
                 sets.append("IsActive=%s"); params.append(1 if data.get("is_active") else 0)
             if data.get("password"):  # 비어있지 않을 때만 재암호화(write-only)
