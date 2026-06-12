@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0253
+- Date: 2026-06-12 (TASK-0253, **Minor §12.3** — 관리 콘솔 head-of-line blocking 2건 제거: A datasource ↻ 새로고침 / B 제품 분석 완료율)
+- Scope: agent-web-ui — TASK-0250 배포 후 PB-0008 중 사용자 발견. "느린 대상이 정상 대상을 뒤에서 대기시키는" head-of-line 2곳 제거(이벤트 루프 비블로킹 + 제품별 병렬·개별 즉시표시).
+- 변경:
+  - `src/app.py`:
+    - (A) `admin_test_datasource`: `_db.probe_datasource({**ds, "host": _pin})` 직접 호출 → **`await asyncio.to_thread(_db.probe_datasource, {**ds, "host": _pin})`**. async 핸들러가 동기 블로킹 probe(도달불가 시 connection_timeout 8s 점유)로 이벤트 루프를 막아 동시 /test 가 직렬화되던 것을 스레드풀 이관으로 해소(`/api/ask` `asyncio.to_thread(run_agent)` 기존 패턴). SSRF pinned IP(`_pin`)·DNS rebinding 차단 경로 무변경(인자 그대로 전달).
+    - (B) `admin_products_insight_coverage`: 단건(`?product_id=`) 요청 시 대상 제품 계산·캐시 put **이후 break** 추가 — 무관 제품 순회/계산 생략(프론트 제품별 병렬 단건 호출 패턴 정합). 응답 형태(`{coverage:{...}}`) 불변.
+  - `src/static/admin.js`:
+    - (A) datasource 추가 드롭다운 refresh 핸들러: 캐시 비운 뒤 `_rebuildDsAddList()` + 별도 `Promise.all(force:true)` **2벌 probe** → `_rebuildDsAddList(true)` 단일 경로(중복 제거, `_kickDsConn(dsk, status, forceProbe)` 로 force 전파). `_probeDatasourceConn` 의 in-flight dedup 을 force 무관 적용(↻ 연타 중복 방지, REV MINOR-2).
+    - (B) `productCoverageLoading`(전역 bool) → `productCoverageLoadingIds`(제품별 Set) + `_isProductCoverageLoading(pid)` 헬퍼. `loadProductInsightCoverage` 를 전체 1회 fetch → **제품별 `?product_id=N` 단건 병렬**(동시성 cap `_COV_FETCH_MAX=4` via 신규 `_runWithConcurrency`) + 각 제품 settle 즉시 그 배지만 렌더. 4개 표시 함수(`buildCoverageBadge`/`buildProductCoverageDetail` summaryChip·refreshBtn.disabled·hint·`redrawChips` measuring)가 제품별 로딩 참조.
+  - `src/static/admin.html`: 캐시버스터 `admin.js?v=20260612-task0253-headofline`.
+- 비변경: RBAC(console.access)·datasource CRUD·`/test` 응답 계약(errno 만, 자격증명 비유출)·완료율 계산 함수(`_compute_product_insight_coverage`)·conn_health 모니터·styles.css 무변경.
+- 검증: node --check(admin.js) + py_compile(app.py) + 신규 `test_datasource_test_nonblocking.py`(3)·`test_insight_coverage_endpoint.py`(5) **8 PASS** + make test 컨테이너 **전체 회귀 0** + ruff clean. outside-voice REV-20260612-0253 SHIP-WITH-FIXES→흡수. 잔여: 배포(web 만) + PB-0008.
+
 ## CHG-20260612-0249b
 - Date: 2026-06-12
 - Task: TASK-0249 PB-0008 Windows-browser 시각검증 evidence 후속 (코드 변경 0 — REV-20260612-0249 적대 리뷰 SHIP·main `12f5c5e` 머지 완료 이후).

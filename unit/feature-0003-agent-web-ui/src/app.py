@@ -10578,7 +10578,15 @@ async def admin_test_datasource(key: str, request: Request) -> JSONResponse:
         return JSONResponse({"key": str(key).strip().lower(), "ok": False, "elapsed_ms": 0.0,
                              "error": f"ssrf_blocked: {ssrf_reason}"})
     # MAJOR-2: 검증된 IP 로 고정 연결(DNS rebinding 차단 — host 재해석 금지).
-    ok, elapsed_ms, err = _db.probe_datasource({**ds, "host": _pin})  # probe 는 errno 만 반환
+    # TASK-0253: probe_datasource 는 도달 불가 datasource 에서 connection_timeout(기본 8s)까지
+    #  동기 점유한다. async 핸들러 안에서 직접 호출하면 그동안 **이벤트 루프 전체가 블로킹**되어
+    #  동시에 들어온 다른 datasource /test 요청(관리 콘솔 ↻ 일괄 새로고침 = N개 동시)이 직렬화돼
+    #  배지가 "확인 중…"에 수 초 묶인다. asyncio.to_thread 로 스레드풀에 넘겨 루프를 비우면
+    #  N개 probe 가 동시 진행 → 전체 소요가 sum→max(가장 느린 1개 ≤ timeout)로 떨어진다.
+    #  (프로젝트 기존 패턴: /api/ask 의 asyncio.to_thread(run_agent, …) 와 동일.)
+    ok, elapsed_ms, err = await asyncio.to_thread(
+        _db.probe_datasource, {**ds, "host": _pin}
+    )  # probe 는 errno 만 반환
     return JSONResponse({"key": str(key).strip().lower(), "ok": bool(ok),
                          "elapsed_ms": round(elapsed_ms, 1), "error": err})
 
@@ -14727,6 +14735,10 @@ def admin_products_insight_coverage(request: Request) -> JSONResponse:
                 return _json_error("invalid product_id", 400)
         force = str(request.query_params.get("refresh") or "").strip() in ("1", "true", "yes")
         products = _list_products(conn, include_inactive=True)
+        # TASK-0253: 프론트가 head-of-line 제거를 위해 제품마다 ?product_id= 단건을 **병렬** 호출한다.
+        #  본 핸들러는 일반 def 라 Starlette 스레드풀에서 자동 병렬 실행되므로, 단건 N개 동시 요청이
+        #  가장 느린 1건 시간 안에 끝난다(_compute_product_insight_coverage 는 라이브 DB 조회라 무겁다).
+        #  단건일 때 대상 제품만 계산하고 즉시 break — 무관 제품 순회/계산을 피한다.
         out: dict = {}
         for p in products:
             pid = int(p["id"])
@@ -14738,6 +14750,8 @@ def admin_products_insight_coverage(request: Request) -> JSONResponse:
                 cov = _compute_product_insight_coverage(conn, p)
                 _insight_cov_cache_put(cache_key, cov)
             out[str(pid)] = cov
+            if only_pid is not None:
+                break
     finally:
         conn.close()
     return JSONResponse({"coverage": out})
