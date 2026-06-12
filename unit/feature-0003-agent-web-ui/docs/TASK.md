@@ -3479,3 +3479,8 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] node --check admin.js PASS + CSS brace 균형 + 캐시버스터 bump
 - [x] outside-voice subagent 디자인/정합 리뷰 SHIP(REV-20260612-0244)
 - [ ] verify-completion → 머지 → web 재배포 → PB-0008 시각검증
+### TASK-0245 — 제품 상세 접근가능 DB 리스트 행 컬럼 폭 정합 (문자열 길이 무관 정렬) (frontend-only) (2026-06-12)
+- [x] **Minor §12.3** (CSS 1파일, RBAC·스키마·엔드포인트·백엔드·시크릿 0) — 사용자 보고: 관리 콘솔 제품 상세 `접근 가능 데이터베이스` 리스트에서 각 행(DB명·역할설명·진척바·통계·상태칩·초기화·제거)의 텍스트/UI 폭이 문자열 길이에 따라 들쭉날쭉. **근본 원인**: `.cov-db-row` 가 행 단위 grid 인데 통계(`37/37`↔`123/123`)·상태칩(`DB✓`↔`연결 불가`↔`대상 없음`)·초기화 컬럼이 `auto`(콘텐츠폭)라 행마다 트랙폭이 달라짐 → 남는 폭을 가져가는 name/role(`fr`) 컬럼이 행마다 어긋나 역할설명·진척바 시작 x 가 불일치. (CHG-20260612-0245)
+- [x] **수정** ([styles.css](../src/static/styles.css) `.cov-db-row`): `grid-template-columns` 의 통계·상태·초기화 `auto` 3컬럼을 고정폭(54px·76px·60px)으로 못박아 전 행 트랙 동일화. name `minmax(96px,0.9fr)`·role `minmax(0,1.7fr)` 비율 컬럼은 트랙이 동일해져 행 간 정렬 일치. 상태칩(`.cov-db-status`)·초기화(`.cov-db-reset`)에 `justify-self: start` 추가(고정폭 컬럼에서 pill/button 이 stretch 로 늘어나지 않고 자연폭 유지). 통계(`.cov-db-stat`)는 stretch+`text-align:right` 유지(N/N 우측 정렬). 캐시버스터 `?v=20260612-db-row-align`.
+- [x] outside-voice [SKIPPED:css-grid-alignment] (REV-20260612-0245) — 순수 CSS grid 트랙 고정(로직·상태·DOM·권한 0, 전례 TASK-0178/0179/0180 css-layout SKIP 과 동일 경량).
+- [ ] verify-completion → 머지 → web 재배포 → PB-0008 시각검증(전 행 역할설명·진척바·상태칩 시작 x 정렬 일치)

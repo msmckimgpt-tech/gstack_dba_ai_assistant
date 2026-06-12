@@ -4334,8 +4334,11 @@ a { color: inherit; }
 .cov-db-row {
   display: grid;
   /* TASK-0242: [DB명 · insight-worker 설명 · 마이크로바 · 통계 · 상태칩 · 초기화 · 제거].
-     설명/초기화 컬럼은 항상 자리 유지(reset-spacer)해 권한 유무와 무관히 행 정렬이 일관. */
-  grid-template-columns: minmax(56px, 0.8fr) minmax(0, 1.6fr) 96px auto auto auto 24px;
+     설명/초기화 컬럼은 항상 자리 유지(reset-spacer)해 권한 유무와 무관히 행 정렬이 일관.
+     TASK-0245: 통계("37/37"↔"123/123")·상태칩("DB✓"↔"연결 불가")·초기화 컬럼이 auto 라
+     행마다 콘텐츠 폭이 달라 → 남는 폭을 가져가는 name/role(fr) 컬럼이 행마다 어긋나
+     설명·진척바 시작 x 가 들쭉날쭉했다. 해당 컬럼을 고정폭으로 못박아 전 행 트랙 동일화. */
+  grid-template-columns: minmax(96px, 0.9fr) minmax(0, 1.7fr) 96px 54px 76px 60px 24px;
   align-items: center;
   gap: 10px;
   padding: 5px 8px;
@@ -4369,7 +4372,7 @@ a { color: inherit; }
 
 .cov-db-stat { font-size: 11px; font-weight: 700; color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
 
-.cov-db-status { font-size: 11px; font-weight: 700; white-space: nowrap; padding: 1px 7px; border-radius: 999px; }
+.cov-db-status { font-size: 11px; font-weight: 700; white-space: nowrap; padding: 1px 7px; border-radius: 999px; justify-self: start; }
 .cov-db-status-ok    { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
 .cov-db-status-warn  { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
 .cov-db-status-low   { color: var(--danger);  background: color-mix(in srgb, var(--danger) 12%, transparent); }
@@ -4382,6 +4385,7 @@ a { color: inherit; }
   border: 1px solid var(--border-subtle); border-radius: 6px;
   background: transparent; color: var(--danger); cursor: pointer;
   white-space: nowrap;
+  justify-self: start;
 }
 .cov-db-reset:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
 .cov-db-reset:disabled { opacity: .5; cursor: default; }

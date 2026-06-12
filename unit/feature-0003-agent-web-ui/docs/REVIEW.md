@@ -2271,3 +2271,10 @@ source_of_truth: true
 - 접근성: 시스템 묶음 칩에 `title`(네이티브) + `aria-label`(스크린리더) + `tabindex=0` + `:hover`/`:focus`/`:focus-within` 커스텀 툴팁 3중 병행 — 키보드·터치 사용자도 개별 DB 이름 확인 가능.
 - Risk: low — 시각 IA 변경만. 연결 불가 DB 는 행 opacity 다운+점선 마이크로바+"연결 불가" 상태칩으로 정직 표기(기존 색상 등급 로직 재사용). node --check admin.js PASS + CSS brace balance. 시각 동작은 PB-0008(배포 후)로 확인.
 - Cross-ref: CHG-20260611-0229 / TASK-0229 / TASK-0223 / TASK-0206.
+
+## REV-20260612-0245 [SKIPPED:css-grid-alignment]
+- Date: 2026-06-12
+- Cycle: TASK-0245 (제품 상세 접근가능 DB 리스트 행 컬럼 폭 정합), **Minor §12.3** — CSS 1파일(+admin.html 캐시버스터), 백엔드/API/스키마/RBAC/시크릿 0.
+- Trigger: layout/UI keyword(§18.8 → ux). 단 본 cycle 은 `.cov-db-row` grid 트랙 `auto`→고정폭 전환 + `justify-self:start` 2줄 — 신규 로직·상태·DOM·엔드포인트·권한 0. 전례(REV-0178 css-spacing / REV-0179·0180 css-layout)와 동일 경량 SKIP.
+- Reason: 행 단위 grid 의 가변(`auto`) 컬럼이 콘텐츠 길이에 따라 행마다 트랙폭을 달리해 fr 컬럼이 어긋나던 것을 고정폭으로 못박아 전 행 트랙 동일화. 데이터·권한·구조 무변경, 순수 시각 정렬. outside-voice 불필요.
+- Residual: 배포 후 PB-0008 Windows-browser 시각검증(행 간 역할설명·진척바·상태칩 시작 x 정렬 일치) — CHECK#13.
