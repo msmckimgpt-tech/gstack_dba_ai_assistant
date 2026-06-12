@@ -3170,3 +3170,16 @@ source_of_truth: true
 - 검증: node --check app.js PASS, verify-completion(코드 게이트), 배포 후 PB-0008 Windows-browser 시각검증 예정.
 - Files: unit/feature-0003-agent-web-ui/src/static/app.js, unit/feature-0003-agent-web-ui/src/static/index.html, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
 - Rollback: app.js의 `state.stepResultExpanded`·`_stepResultKey`·토글 복원/저장·clear 4개 변경 되돌림, index.html 캐시버스터 복원.
+
+## CHG-20260612-0245
+- Date: 2026-06-12 (TASK-0245, **Minor §12.3** — 제품 상세 접근가능 DB 리스트 행 컬럼 정합)
+- Scope: 관리 콘솔 제품 상세 `접근 가능 데이터베이스` 통합 리스트(`.cov-db-row`)의 컬럼 폭이 문자열 길이에 따라 들쭉날쭉하던 것을 고정폭 트랙으로 정렬. CSS 전용 — 백엔드/API/스키마/RBAC/시크릿 무변경.
+- 배경: `.cov-db-row` 가 행 단위 `display:grid` 인데 `grid-template-columns` 의 통계·상태칩·초기화 컬럼이 `auto` 라 행마다 콘텐츠 폭(`37/37`↔`123/123`, `DB✓`↔`연결 불가`)이 달라짐 → 남는 폭을 분배받는 name/role `fr` 컬럼이 행마다 어긋나 역할설명·진척바 시작 x 불일치(green-line 보고).
+- 변경 ([src/static/styles.css](../src/static/styles.css)):
+  - `.cov-db-row` `grid-template-columns`: `minmax(56px,0.8fr) minmax(0,1.6fr) 96px auto auto auto 24px` → `minmax(96px,0.9fr) minmax(0,1.7fr) 96px 54px 76px 60px 24px` (통계 54·상태 76·초기화 60 고정).
+  - `.cov-db-status` + `.cov-db-reset`: `justify-self: start` 추가 — 고정폭 컬럼에서 grid item stretch 로 pill/button 이 늘어나지 않고 자연폭 유지(좌측 정렬).
+  - admin.html 캐시버스터 `?v=20260612-ds-picker-status` → `?v=20260612-db-row-align`.
+- 비변경: `.cov-db-stat` 우측 정렬·마이크로바·셀 빌더(buildDbCoverageCells/buildDbRoleCell) JS·권한 게이트·데이터 무변경. 행 콘텐츠/구조 동일, 트랙 폭만 고정.
+- 검증: CSS brace 균형 OK. 배포 후 PB-0008 Windows-browser 시각검증(행 간 정렬 일치).
+- Files: unit/feature-0003-agent-web-ui/src/static/styles.css, unit/feature-0003-agent-web-ui/src/static/admin.html, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW,FUNCTION}.md
+- Rollback: `grid-template-columns` 를 이전 값으로 환원 + `justify-self` 2줄 제거(정렬만 이전 들쭉날쭉으로 복귀, 기능 무관).
