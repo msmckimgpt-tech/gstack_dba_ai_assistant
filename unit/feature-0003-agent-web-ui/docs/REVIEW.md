@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0240 [SKIPPED:frontend-no-backend-no-rbac] — PASS
+- 패널 skip 사유: datasource picker 클리핑 수정 + 추가 UI 체크박스화. **frontend only**(admin.js/styles.css/admin.html) — RBAC·스키마·시크릿·엔드포인트·백엔드 0. 적대적 보안 subagent 비대상(§18.8).
+- Date: 2026-06-12
+- Cycle: TASK-0240 (picker 클리핑 + 데이터소스 추가 체크박스 토글, **Minor §12.3**)
+- 검토 결과 (반증 시도):
+  - **① 클리핑 근본수정 검증**: overflow 제거만으로 충분했나, inline 전환이 맞나? → Playwright 로 3중 클립 조상(ds-acc-body / admin-detail-col[overflow-y:auto, 제거 불가] / admin-workspace) 확인. `.ds-acc-body` overflow 만 제거하면 패널 스크롤 컨테이너(admin-detail-col)에서 여전히 잘릴 수 있음 → absolute→inline 전환이 정답(클리핑 박스 자체를 없앰). 수정 후 clipped:false + hitInside:true 실측. PASS.
+  - **② 체크박스 토글 정합(최우선)**: select→체크박스로 바꿔도 스테이징 의미가 유지되나? → 체크=stageAdd, 해제=stageRemove, effective(desired) 바인딩이 체크 상태로 렌더. Playwright: 미체크 항목 체크 시 pending+1·행 2개·서버 불변, 같은 항목 해제 시 desired==baseline 복귀 pending 0·행 1개(토글 양방향). PASS.
+  - **②-b 이미 바인딩된 datasource 체크 해제 = 제거**: 목록이 등록 datasource 전체를 보이고 바인딩된 것을 체크 표시하므로, 체크 해제로 기존 바인딩도 제거 가능(⋯ 메뉴 "바인딩 제거"와 동일 경로 stageRemove). primary 제거 시 첫째 승격도 stageRemove 가 처리. 일관. PASS.
+  - **②-c 목록 재진입 동기화**: 토글 후 `_rebuildDsAddList` 가 effective 기준으로 체크 상태 다시 그림 + 버튼 재오픈 시에도 rebuild. accordion 로컬 재렌더(_afterBindChange)와 add-list 는 독립 컨테이너라 충돌 없음. PASS.
+  - **③ ⋯ 메뉴 회귀 없음**: inline 전환·add-row 교체가 기존 ⋯ 메뉴(TASK-0239 수정)를 건드리지 않나? → Playwright TEST D 로 ⋯ 클릭 시 메뉴 항목 hit-test 정상 재확인. PASS.
+- 잔여 리스크: 시각(드롭다운이 inline 으로 패널을 밀어내는 레이아웃·긴 목록 자체 스크롤)은 PB-0008 Windows-browser(배포 후). 기능/클리핑은 위에서 커버.
+
 ## REV-20260612-0239 [SKIPPED:frontend-no-backend-no-rbac] — PASS
 - 패널 skip 사유: datasource accordion 후속 버그/UX 수정. **frontend only**(admin.js/styles.css/admin.html) — RBAC·DB 스키마·시크릿·엔드포인트 shape·백엔드 0(기존 엔드포인트 재사용, desired-state 는 클라이언트 diff). 적대적 보안 subagent 비대상(§18.8).
 - Date: 2026-06-12

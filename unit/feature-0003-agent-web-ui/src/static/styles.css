@@ -2792,7 +2792,8 @@ a { color: inherit; }
   border-top: 1px dashed var(--border-subtle);
   /* 펼침 시 부드러운 등장(깜빡임 제거, TASK-0239). 행 재구축 대신 body 만 애니메이트. */
   animation: ds-acc-body-in .2s ease;
-  overflow: hidden;
+  /* overflow:hidden 금지(TASK-0240) — 내부 '+ 데이터베이스 추가' 드롭다운(.admin-db-picker-list,
+     position:absolute)이 body 경계에서 잘린다. 페이드 등장은 opacity 위주라 overflow 없이도 자연스럽다. */
 }
 @keyframes ds-acc-body-in {
   from { opacity: 0; transform: translateY(-4px); }
@@ -2832,13 +2833,15 @@ a { color: inherit; }
 .ds-acc-menu-item.danger { color: var(--danger); }
 .ds-acc-menu-item.danger:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
 /* ＋ 데이터소스 추가 */
-.ds-acc-add-row { margin-top: 8px; }
-.ds-acc-add-select {
+/* ＋ 데이터소스 추가 — DB picker(.admin-db-picker-*)와 동일한 inline 체크박스 토글 드롭다운(TASK-0240). */
+.ds-acc-add-row { margin-top: 8px; position: relative; }
+.ds-acc-add-btn {
   font-size: 12.5px; padding: 6px 10px;
   border: 1px dashed var(--border); border-radius: var(--r-sm);
   background: var(--bg); color: var(--text-2); cursor: pointer;
 }
-.ds-acc-add-select:hover { border-color: var(--primary); color: var(--text); }
+.ds-acc-add-btn:not(:disabled):hover { border-color: var(--primary); color: var(--text); }
+.ds-acc-add-btn:disabled { opacity: .5; cursor: not-allowed; }
 /* 펼친 datasource 의 DB 편집기 컨테이너 */
 .cov-db-editor { padding-top: 6px; }
 
@@ -2911,17 +2914,17 @@ a { color: inherit; }
 }
 
 .admin-db-picker-list {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  min-width: 200px;
+  /* TASK-0240: position:absolute 플로팅을 버리고 정상 흐름(inline)으로 — 패널 스크롤 컨테이너
+     (.admin-detail-col overflow-y:auto)·accordion body 가 absolute 드롭다운을 잘라내던 문제 원천 제거.
+     목록이 길면 자체 max-height + overflow-y:auto 로 흡수(이 박스는 클리핑 조상이 아님). */
+  margin-top: 4px;
+  width: 100%;
   max-height: 220px;
   overflow-y: auto;
   background: #fff;
   border: 1px solid var(--border, rgba(0,0,0,.15));
   border-radius: 8px;
-  box-shadow: 0 4px 14px rgba(0,0,0,.1);
-  z-index: 120;
+  box-shadow: 0 2px 8px rgba(0,0,0,.06);
   padding: 4px 0;
 }
 
