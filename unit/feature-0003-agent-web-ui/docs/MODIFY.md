@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0244
+- Date: 2026-06-12
+- Task: TASK-0244 (관리 콘솔 제품 "+ 데이터소스 추가" 드롭다운 폰트 정합 + 연결 상태 표면화), **Major §12.3** (frontend-only 다중 파일 + 네트워크 probe 추가; RBAC·스키마·백엔드 엔드포인트 0)
+- 진단 (사용자 요청 2건): 관리 콘솔 > 제품 > [항목] > 데이터소스 탭의 `+ 데이터소스 추가` 목록이 ① 각 항목 `${ds.key} — ${ds.engine} @ ${ds.host}:${ds.port}` 단일 raw `<span>`(무클래스)라 같은 화면 accordion 행(`.ds-acc-name` 굵은 이름 + `.ds-acc-engine` pill)·`+ 데이터베이스 추가` picker(`.admin-db-picker-name` 구조)와 폰트/정렬이 이질적, ② 연결 상태를 `⋯ > 연결 테스트`(일회성 토스트)로만 확인 가능하고 목록엔 표시가 없음.
+- 변경 (frontend-only):
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`:
+    - `adminState.datasourceConnStatus`(Map, key(lower)→{state,elapsed_ms,error}) 신설.
+    - `_paintDsConnBadge(el, entry)` — 주어진 `<span>` 에 연결 상태(확인 중/연결됨·ms/연결 실패) in-place 렌더(비동기 probe 완료 시 동일 노드 갱신).
+    - `_probeDatasourceConn(key, {force})` — `/api/admin/datasources/{key}/test` POST. 캐시 우선 + in-flight dedup(`_dsConnInflight`). **동시 probe 4개 cap 세마포어**(`_dsConnAcquire`/`_dsConnRelease`) — 도달불가 datasource 다수 시 8s(db.py connection_timeout)×N web 스레드 동시 점유 방지(REV nit 선반영).
+    - `_rebuildDsAddList` 재구성: 항목 = `[체크박스 · 이름(.admin-db-picker-name 재사용) · 엔진 pill(.admin-ds-picker-engine) · 좌표(.admin-ds-picker-coord) · 연결상태 배지(.admin-ds-conn)]`. 헤더(`.admin-ds-picker-head`)에 "데이터소스 · 연결 상태" 라벨 + `↻ 새로고침`(캐시 무효화 후 재probe, stopPropagation+preventDefault). 드롭다운 열림/재렌더 시 `_kickDsConn` 으로 캐시 hit→즉시 / miss→'확인 중' 후 probe. 토글 재렌더는 캐시 hit 라 재probe 폭주 없음.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.admin-ds-picker-head`/`-head-label`/`-refresh`(sticky 헤더), `.admin-ds-picker-engine`(= `.ds-acc-engine` 토큰 1:1 복제로 accordion 과 정합), `.admin-ds-picker-coord`(muted ellipsis), `.admin-ds-conn`(.is-ok/.is-fail/.is-checking — `●` 점 + 한글 라벨 병행해 색-단독 비의존, is-checking 펄스 + prefers-reduced-motion 존중).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: 캐시버스터 `?v=20260612-ds-picker-status`(styles.css·admin.js).
+- 비변경: 백엔드(app.py 무수정 — 기존 `/datasources/{key}/test` 재사용), RBAC(console.access·canDs 게이트 보존), 스키마, 암호화, 엔드포인트 shape, datasource 바인딩 스테이징 흐름(stageAdd/Remove/SetPrimary·applyAllPending 무관), accordion ⋯ 메뉴.
+- 검증: node --check admin.js PASS + CSS brace 균형(1103/1103) + outside-voice subagent 디자인/정합 적대적 리뷰 **SHIP**(BLOCKER 0; 시각정합 = `.admin-ds-picker-engine` ≡ `.ds-acc-engine` 토큰 동일·`.admin-db-picker-name` 재사용 확인, 동시성 nit 세마포어로 선반영, 색맹 대응 ●+라벨 확인) REV-20260612-0244. 배포 후 라이브 + PB-0008 Windows-browser 시각검증.
+- Files: unit/feature-0003-agent-web-ui/src/static/{admin.js,styles.css,admin.html}, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md
+- Rollback: admin.js 의 datasourceConnStatus/_paintDsConnBadge/_probeDatasourceConn/세마포어 + `_rebuildDsAddList` 구조 재구성 되돌림(단일 span 복원), styles.css 의 `.admin-ds-picker-*`/`.admin-ds-conn` 블록 제거, 캐시버스터 환원.
+
 ## CHG-20260612-0243
 - Date: 2026-06-12
 - Task: TASK-0243 (TASK-0242 후속 — MSSQL db-insights catalog 귀속 수정), **Minor §12.3** (단일 read 함수 격리 수정; RBAC·스키마·암호화·엔드포인트 shape 0)

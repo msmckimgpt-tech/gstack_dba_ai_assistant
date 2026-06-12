@@ -3451,3 +3451,31 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 커밋4 SSE 프론트 (fetch+ReadableStream) + node --check
 - [x] env compat 테스트 6 PASS + agent-core 회귀 0
 - [ ] verify-completion → 머지 → web 재배포 → PB-0008 시각검증(토큰 실시간 흐름)
+
+### TASK-0244 — 관리 콘솔 제품 "+ 데이터소스 추가" 드롭다운 폰트 정합 + 연결 상태 표면화 (2026-06-12)
+
+**Major §12.3** (frontend-only 다중 파일[admin.js+styles.css] + 네트워크 probe 추가; RBAC·스키마·백엔드 엔드포인트 0 — 기존 `/datasources/{key}/test` 재사용). (CHG-20260612-0244) — 동시세션 cycle 이 0234(ds-label-stable)·0243 까지 선점→§13.1 다음 번호 0244. REV-20260612-0244[SUBAGENT] SHIP.
+
+#### 배경 (사용자 요청 2건)
+관리 콘솔 > 제품 > [항목] > 데이터소스 탭의 `+ 데이터소스 추가` 버튼이 출력하는 목록이:
+1. **폰트/시각 이질**: 각 항목이 `key — engine @ host:port` 단일 raw 문자열(`<span>` 무클래스)이라 같은 화면의 accordion 행(굵은 이름 + engine pill + 배지)·`+ 데이터베이스 추가` picker(`.admin-db-picker-name` 구조)와 시각 문법이 어긋남.
+2. **연결 상태 부재**: 연결 여부를 `⋯ > 연결 테스트`(일회성 토스트)로만 확인 가능, 목록엔 표시 없음.
+
+#### 수정 (frontend-only, 단일 커밋)
+- `admin.js`: `_probeDatasourceConn`/`_paintDsConnBadge` 헬퍼 신설 — `/api/admin/datasources/{key}/test` POST probe → `adminState.datasourceConnStatus` Map 캐시(매 토글/재오픈 재probe 방지) + in-flight dedup + **동시 probe 4개 cap 세마포어**(unreachable 다수 시 8s×N web 스레드 점유 방지). `_rebuildDsAddList` 항목을 `[체크박스 · 이름(.admin-db-picker-name 재사용) · 엔진 pill · 좌표(muted) · 연결상태 배지]` 구조로 재구성 + 헤더 `↻ 새로고침`(캐시 무효화 후 재probe). 드롭다운 열림 시 lazy probe.
+- `styles.css`: `.admin-ds-picker-head`/`.admin-ds-picker-engine`(= `.ds-acc-engine` 토큰 1:1)/`.admin-ds-picker-coord`/`.admin-ds-conn`(.is-ok/.is-fail/.is-checking, ● 점 + 한글 라벨 병행 — 색-단독 비의존) 추가.
+- `admin.html`: 캐시버스터 `?v=20260612-ds-picker-status`.
+
+#### 완료 판정 기준
+- AC1: 드롭다운 목록 각 항목이 accordion 행/DB picker 와 동일 폰트·pill·정렬로 보인다(이질감 해소).
+- AC2: 각 데이터소스의 연결 상태가 배지로 표시된다(확인 중 → 연결됨·ms / 연결 실패[원인 tooltip]), ↻ 로 재확인 가능.
+- AC3: RBAC·스키마·백엔드 엔드포인트 무변경(test 엔드포인트 재사용, console.access·canDs 게이트 보존).
+- AC4: node --check admin.js PASS + verify-completion + PB-0008 Windows-browser 시각검증.
+
+#### 작업 항목
+- [x] adminState.datasourceConnStatus 캐시 + _probeDatasourceConn/_paintDsConnBadge + 동시성 cap 세마포어
+- [x] _rebuildDsAddList 정합 구조 재구성(이름+엔진pill+좌표+연결상태 배지) + 헤더 ↻ 새로고침
+- [x] styles.css picker 정합 스타일 + 연결상태 배지(색맹 대응 ● + 라벨)
+- [x] node --check admin.js PASS + CSS brace 균형 + 캐시버스터 bump
+- [x] outside-voice subagent 디자인/정합 리뷰 SHIP(REV-20260612-0244)
+- [ ] verify-completion → 머지 → web 재배포 → PB-0008 시각검증

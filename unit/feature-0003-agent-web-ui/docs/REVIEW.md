@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0244 [SUBAGENT:design+correctness] — SHIP
+- Related TASK: feature-0003-agent-web-ui (TASK-0244 — "+ 데이터소스 추가" 드롭다운 폰트 정합 + 연결 상태 표면화)
+- Trigger: UI/디자인 변경(§18.8 UI→design/ux) + 시각 정합·네트워크 probe 동작의 회귀/접근성 outside-voice 검토. 사용자 요청 = 폰트 이질감 해소 + 연결 상태 표면화.
+- Timestamp: 2026-06-12T00:00:00Z
+- Verdict: **SHIP** (BLOCKER 0, NIT 4 — 1건[동시성 cap] 선반영, 나머지 cosmetic/기존 부채). 5개 검토 항목 전부 CLEAN.
+- 검증 결과:
+  - **(1) 시각 정합 — CLEAN**: 신규 `.admin-ds-picker-engine`(styles.css 2997~3002) 이 accordion `.ds-acc-engine`(2774~2781)과 byte-identical 토큰(`font-size:11px; color:var(--text-2); background:var(--bg); border:1px solid var(--border-subtle); border-radius:var(--r-sm); padding:1px 6px`). 이름은 DB picker `.admin-db-picker-name`(2960) 직접 재사용. 항목 폰트 13px(`.admin-db-picker-item`)=accordion `.ds-acc-head` 13px. 연결 배지는 `.admin-db-picker-status` pill geometry 미러. 사용 CSS 변수 전부 정의됨(:root 9~46).
+  - **(2) 연결 상태 UX — CLEAN(+cap 반영)**: lazy probe(드롭다운 열림 시 probe) + 세션 캐시 + ↻ 강제 재probe 합리적. 엔드포인트 `/datasources/{key}/test`(app.py 10362)→`{ok,elapsed_ms,error}`, apiFetch 2xx/throw 양 경로 처리. **동시성 cap 부재 nit → 본 cycle 에서 4개 세마포어로 선반영**(unreachable 다수 + 8s connection_timeout 시 web 스레드 동시 점유 차단).
+  - **(3) 회귀 — CLEAN**: 체크박스 토글→`_rebuildDsAddList` 재호출 시 캐시 hit 경로(`state===ok|fail`)가 재probe 차단 확인. refresh 버튼 `<button type=button>`+stopPropagation+preventDefault → 체크 토글/`_closeDsAdd` 닫힘과 무충돌(addRow.contains true).
+  - **(4) 접근성/엣지 — CLEAN**: 빈 목록 early-return(헤더 추가 前)·canDs=false 시 picker 블록 미렌더. 상태 = `●` 점 + 한글 라벨 병행이라 색-단독 비의존(색맹 OK). is-fail tooltip 에 error 노출(admin-only, 신뢰경계 내).
+  - **(5) 코드 품질 — CLEAN**: 명명/변수 정합, 미사용 없음.
+- NIT: ① 동시성 cap(반영 완료). ② `_closeDsAdd` document 리스너 누수 = 0244 신규 아님(기존 picker 5272·⋯메뉴 5430 동일 패턴) — 별도 정리 가치. ③ is-checking 색맹 OK(점+텍스트). ④ refresh 충돌 없음(확인됨).
+- Human Approval Needed: no (frontend-only·기존 엔드포인트 재사용·신뢰경계 내·BLOCKER 0)
+- 검증: node --check admin.js PASS + CSS brace 균형 + 배포 후 PB-0008 Windows-browser 시각검증.
+- Cross-ref: CHG-20260612-0244 / TASK-0244.
+
 ## REV-20260612-0243 [SUBAGENT:correctness+side-effect] — SHIP
 - Related TASK: feature-0003-agent-web-ui (TASK-0243 — MSSQL db-insights catalog 귀속 수정)
 - Trigger: 사용자 명시 — "키 수정 시 다른 기능 side-effect 면밀 검증". by_db 그룹핑 키를 schema_name→object_key catalog 로 변경하는 것이 coverage/insight-reset/insight-worker write 등 다른 기능에 영향 주는지 적대적 검증.
