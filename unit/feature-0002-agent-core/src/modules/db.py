@@ -666,11 +666,15 @@ def list_information_schema_tables(
             )
             cur = conn.cursor()
             placeholders = ", ".join(["%s"] * len(wanted))
+            # TASK-0249: 대소문자 무시 매칭. Linux MySQL(lower_case_table_names=0)은 DB명이 대소문자
+            # 구분이라 등록 DB명(소문자 'dbcommon')이 실제 DB명('dbCommon')과 어긋나면 `TABLE_SCHEMA
+            # IN (...)`이 0행을 반환해 완료율이 0/0으로 잘못 표기됐다. `LOWER(TABLE_SCHEMA)`로 비교해
+            # 등록 케이스와 무관하게 매칭한다(반환값은 실제 케이스 유지 → 호출측이 소문자로 grouping).
             cur.execute(
                 "SELECT TABLE_SCHEMA, TABLE_NAME FROM information_schema.TABLES "
-                f"WHERE TABLE_SCHEMA IN ({placeholders}) "
+                f"WHERE LOWER(TABLE_SCHEMA) IN ({placeholders}) "
                 "ORDER BY TABLE_SCHEMA, TABLE_NAME",
-                wanted,
+                [w.lower() for w in wanted],
             )
             out = []
             for r in (cur.fetchall() or []):

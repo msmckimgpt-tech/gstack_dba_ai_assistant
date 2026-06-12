@@ -16,6 +16,17 @@ source_of_truth: true
 - 검증: node --check admin.js + make test 컨테이너 회귀 0. 잔여: 배포 후 PB-0008 admin 연결상태 시각검증(CHECK#13 WARN).
 - Cross-ref: feature-0002 REV-20260612-0250(코어 적대 리뷰) / CHG-20260612-0250(web) / TASK-0250.
 
+## REV-20260612-0249 [SUBAGENT:backend-correctness] — SHIP
+- Related TASK: feature-0003-agent-web-ui (TASK-0249 — 제품 insight 완료율 멀티 datasource(1:N) + 대소문자 매칭 수정)
+- Trigger: schema/query keyword matched (coverage 계산 SQL·멀티 datasource 격리) — §18.8 backend/qa dispatch. 적대적 correctness+보안 outside-voice.
+- Timestamp: 2026-06-12T00:00:00Z
+- Verdict: **SHIP** (BLOCKER 0, CONCERN 1 흡수). 핵심 버그 2개(① datasource_key 별 그룹핑으로 멀티 datasource 정상 집계, ② db.py `LOWER(TABLE_SCHEMA)` 대소문자 매칭) 올바르게 해결 — 단일 datasource 무회귀·datasource 격리(각 그룹 자기 coords/scope, cross-datasource 누수 없음)·SQL injection 무표면(LOWER 변경이 bound param 유지)·pg 연결 finally close 전부 PASS.
+- Critical issue (흡수): 동명 DB 가 서로 다른 datasource 그룹에 등록될 경우(멀티 datasource 정상 시나리오) `order` 중복 → 합산 이중 카운트로 pct 왜곡. 합산 루프에 `seen_dbs` 가드 추가로 흡수(app.py:14402) → 재테스트 599 passed 무회귀.
+- 잔여(저위험 후속, 회귀 아님): 혼합 engine top-level 표기(engines_seen[0]; per_db 는 정확), 한 그룹 PG 실패 시 전역 측정불가 정책(데이터 무결성 우선), `_analyzed_sets_for_scope` cursor 위생(connection close 로 회수 — 실 누수 없음).
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260612T000000Z-coverage-multi-ds-correctness.md
+- Human Approval Needed: no (Minor §12.3 — RBAC·스키마·암호화·엔드포인트 shape 0, read-only coverage 계산, BLOCKER 0)
+- Cross-ref: CHG-20260612-0249 / TASK-0249 / [[project_task0223_product_insight_coverage]].
+
 ## REV-20260612-0247 [SKIPPED:trivial-css-1line] — SHIP
 - Related TASK: feature-0003-agent-web-ui (TASK-0246 정련 CHG-0246b — 연결배지 `justify-self` end→start)
 - Trigger: CHG-0246 배포 후 PB-0008 측정에서 연결배지 left spread=25(우측 정렬). 사용자 컬럼 정렬 선호(행별 left spread=0)·sibling `.cov-db-row` 컨벤션 정합.
