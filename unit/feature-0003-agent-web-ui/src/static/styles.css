@@ -2743,7 +2743,8 @@ a { color: inherit; }
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--surface, #fff);
-  overflow: hidden;
+  /* overflow:hidden 금지 — 행 아래로 드롭되는 ⋯ 메뉴(position:absolute)가 잘려 클릭 불가해진다(TASK-0239). */
+  transition: border-color .18s ease, box-shadow .18s ease;
 }
 .ds-acc-row.is-active { border-color: var(--primary); box-shadow: inset 3px 0 0 0 var(--primary); }
 .ds-acc-head {
@@ -2758,7 +2759,14 @@ a { color: inherit; }
   text-align: left;
   font-size: 13px;
   color: var(--text);
+  /* 행 overflow 제거에 따라 둥근 모서리는 head 가 직접 — 좌측만(우측엔 ⋯ 메뉴 영역). */
+  border-radius: calc(var(--r-md) - 1px) 0 0 calc(var(--r-md) - 1px);
 }
+/* ⋯ 메뉴 없는(canDs=false) 행은 head 가 폭 전체 → 양쪽 둥글게. */
+.ds-acc-head:only-child { border-radius: calc(var(--r-md) - 1px); }
+/* active 행: 펼친 body 가 아래에 붙으므로 head 하단 모서리는 직각. */
+.ds-acc-row.is-active .ds-acc-head { border-radius: calc(var(--r-md) - 1px) 0 0 0; }
+.ds-acc-row.is-active .ds-acc-head:only-child { border-radius: calc(var(--r-md) - 1px) calc(var(--r-md) - 1px) 0 0; }
 .ds-acc-head:hover { background: var(--bg); }
 .ds-acc-head:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 .ds-acc-caret { color: var(--text-2); font-size: 11px; width: 12px; flex: none; }
@@ -2779,7 +2787,21 @@ a { color: inherit; }
   border-radius: var(--r-sm);
   padding: 1px 7px;
 }
-.ds-acc-body { padding: 0 12px 10px; border-top: 1px dashed var(--border-subtle); }
+.ds-acc-body {
+  padding: 0 12px 10px;
+  border-top: 1px dashed var(--border-subtle);
+  /* 펼침 시 부드러운 등장(깜빡임 제거, TASK-0239). 행 재구축 대신 body 만 애니메이트. */
+  animation: ds-acc-body-in .2s ease;
+  overflow: hidden;
+}
+@keyframes ds-acc-body-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ds-acc-body { animation: none; }
+  .ds-acc-row, .ds-acc-menu { transition: none; }
+}
 /* 행 ⋯ 액션 메뉴 */
 .ds-acc-menu-wrap { position: relative; flex: none; display: flex; align-items: center; padding-right: 6px; }
 .ds-acc-menu-btn {
