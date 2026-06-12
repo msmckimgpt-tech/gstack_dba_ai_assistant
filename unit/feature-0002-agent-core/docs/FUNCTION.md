@@ -60,6 +60,7 @@ source_of_truth: true
 
 ## 8. Edge Cases
 - DB 연결 실패: `connect_with_retry()` 로 재시도, 최종 실패 시 `result["error"]` 에 실패 사유 기록.
+- **불안정 datasource 연결 격리 (TASK-0247, CHG-20260612-0247)**: 원격 customer datasource(`datasource` 좌표 경로)의 연결 수립 timeout 은 쿼리 예산 `AGENT_TIMEOUT_SEC`(운영 300s)와 분리된 `AGENT_DB_CONNECT_TIMEOUT_SEC`(기본 10s)를 쓴다. 추가로 `connect_with_retry` 경계의 **per-datasource circuit breaker**(`scope_key`=엔진+host+port 기준)가, 한 datasource 가 연속 `AGENT_DB_BREAKER_FAIL_THRESHOLD`(기본 3) **요청** 동안 연결 수립에 실패하면 그 datasource 만 `AGENT_DB_BREAKER_COOLDOWN_SEC`(기본 30s) 동안 `DatasourceCircuitOpen` 으로 즉시 fail-fast 시킨다(실제 connect 미호출 → 직렬 ask-worker 즉시 해방). 쿨다운 후 단일 half-open trial 로 자동 복구. 이로써 한 연결의 불안정이 다른 정상 datasource 제품 질의를 지연시키지 않는다. control-plane(memory DB, `datasource=None`)은 미적용. flag `AGENT_DB_BREAKER_ENABLED=0` 로 비활성 가능.
 - MCP 비가용: `SYSTEM_PROMPT_MCP` 경로는 `modules/mcp_client.py` 에서 핸드셰이크 실패를 감지해 SQL 모드로 폴백.
 - Insight 워커 부재 / heartbeat stale: `_should_run_inline_insight_scan()` 이 감지해 질의 시점 인라인 스캔으로 품질을 유지 ([INSIGHTS.md §5.4](./INSIGHTS.md#54-인라인-fallback-워커-부재--장애)).
 - `tool_result` 가 4000 자 초과: `(truncated)` 로 절단하되, 전체 결과는 CSV 로 별도 저장되어 사용자 접근 가능.
