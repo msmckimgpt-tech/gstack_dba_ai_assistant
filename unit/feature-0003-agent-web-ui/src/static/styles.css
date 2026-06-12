@@ -603,6 +603,26 @@ a { color: inherit; }
   border: 1px solid var(--border);
 }
 
+/* TASK-0248: 참조 제품 삭제로 차단된 대화 — 목록 행 dim + "차단" 배지 */
+.conv-item.is-blocked { opacity: .72; }
+.conv-item.is-blocked .conv-item-title {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: rgba(220,38,38,.45);
+}
+.conv-item-blocked-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  line-height: 1.6;
+  white-space: nowrap;
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid rgba(220,38,38,.22);
+}
+
 .conv-item-title {
   font-size: 12.5px;
   font-weight: 500;

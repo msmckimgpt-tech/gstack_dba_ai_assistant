@@ -67,8 +67,19 @@ CREATE TABLE IF NOT EXISTS agent_runtime.core_conversations (
     owner_account_id  bigint,
     owner_assigned_at timestamptz,
     product_id        bigint,
-    product_mode      varchar(8)   NOT NULL DEFAULT 'pinned'
+    product_mode      varchar(8)   NOT NULL DEFAULT 'pinned',
+    -- TASK-0248: 참조 제품이 삭제되면 그 제품을 pinned 한 대화는 차단(blocked)으로
+    -- 전환된다 — 이력 열람은 가능하되 더 이상 진행(새 메시지)할 수 없다. blocked_at
+    -- 이 NULL 이 아니면 차단. 정본은 alembic 0005_core_conv_blocked.
+    blocked_at        timestamptz,
+    blocked_reason    varchar(256)
 );
+
+-- TASK-0248: 기존 테이블(이미 생성됨)에도 멱등 적용 — alembic 미적용 환경 self-heal.
+ALTER TABLE agent_runtime.core_conversations
+    ADD COLUMN IF NOT EXISTS blocked_at timestamptz;
+ALTER TABLE agent_runtime.core_conversations
+    ADD COLUMN IF NOT EXISTS blocked_reason varchar(256);
 
 CREATE INDEX IF NOT EXISTS ix_core_conv_owner
     ON agent_runtime.core_conversations (owner_account_id);

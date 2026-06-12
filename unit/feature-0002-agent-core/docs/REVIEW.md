@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0248 [SCHEMA-ONLY:additive-column, cross-feature] — SHIP
+- Date: 2026-06-12
+- Cycle: TASK-0248 (관리 콘솔 제품 삭제 시 참조 대화 차단(blocked) 전환 — 주 cycle 은 web feature-0003, 본 feature 영향은 **스키마/alembic 만**)
+- 검토: `agent_runtime.core_conversations` 에 `blocked_at timestamptz`/`blocked_reason varchar(256)` **additive** 추가(데이터 무손실 — 기존 행 NULL=미차단). alembic `0005_core_conv_blocked` down_revision=`0004_rag_objects_datasource` 체인 정상, ADD/DROP COLUMN IF EXISTS 멱등. agent-core 런타임 코드(insight/ask/agent_core) 무변경 — 차단 로직 전량 web `/api/ask`. 적대적 보안/정합 리뷰 본문은 feature-0003 REV-20260612-0248(2-agent) 참조(SHIP).
+- 검증: py_compile + make test 컨테이너 전체 회귀 0. Cross-ref: feature-0003 REV-20260612-0248 / CHG-20260612-0248 / TASK-0248.
+
 ## REV-20260612-0250 [SUBAGENT:conn-health-monitor-adversarial] — SHIP-WITH-FIXES(BLOCKER 2 + MAJOR 3 + MINOR 3 흡수)
 - Date: 2026-06-12
 - Cycle: TASK-0250 (연결 health 모니터 — background 사전판정 격리, **Major §12.3** 런타임+관리콘솔 연결 경로)

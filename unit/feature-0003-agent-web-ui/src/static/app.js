@@ -563,6 +563,8 @@ function canAskInConversation(conversation = currentConversation()) {
   if (!conversation) {
     return can("conversation.create");
   }
+  // TASK-0248: 참조 제품이 삭제되어 차단된 대화는 진행 불가 (이력 열람·공유는 가능).
+  if (conversation.blocked) return false;
   return isOwnConversation(conversation);
 }
 
@@ -1488,7 +1490,17 @@ function renderConversationList() {
     dateTip.className = "conv-item-date-tip";
     dateTip.textContent = formatDateTime(item.last_activity_at || item.created_at);
 
-    button.append(dot, titleEl, dateTip);
+    // TASK-0248: 참조 제품 삭제로 차단된 대화 — 목록에 "차단" 배지 + 행 dim.
+    if (item.blocked) {
+      button.classList.add("is-blocked");
+      const blockedBadge = document.createElement("span");
+      blockedBadge.className = "conv-item-blocked-badge";
+      blockedBadge.textContent = "차단";
+      blockedBadge.title = item.blocked_reason || "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다.";
+      button.append(dot, titleEl, blockedBadge, dateTip);
+    } else {
+      button.append(dot, titleEl, dateTip);
+    }
 
     // "···" menu trigger
     const menuTrigger = document.createElement("span");
@@ -1669,10 +1681,15 @@ function renderConversationHeader() {
     return;
   }
   conversationTitleEl.textContent = conversation.topic || "새 대화";
-  const subtitleParts = [
+  const subtitleParts = [];
+  // TASK-0248: 차단된 대화는 부제 맨 앞에 명시 (참조 제품 삭제로 진행 불가).
+  if (conversation.blocked) {
+    subtitleParts.push("🚫 차단됨 (참조 제품 삭제)");
+  }
+  subtitleParts.push(
     `최근 갱신 ${formatDateTime(conversation.last_activity_at || conversation.created_at)}`,
     `메시지 ${Number(conversation.message_count || 0)}`,
-  ];
+  );
   if (conversation.owner_username) {
     subtitleParts.push(`소유자 ${conversation.owner_username}`);
   }
@@ -3486,11 +3503,15 @@ const SEND_BTN_STOP_ICON =
 function renderComposer() {
   const busy = isCurrentConvBusy();
   const hasAsk = can("conversation.ask");
+  // TASK-0248: 활성 대화가 참조 제품 삭제로 차단되었는지.
+  const activeConv = currentConversation();
+  const isBlocked = Boolean(activeConv && activeConv.blocked);
   const disabled = !canAskInConversation() || busy;
   // TASK-0047: composer busy 상태 변화에 따라 product chip 도 disabled 동기화.
   renderProductChip();
   // 전송 버튼: 권한이 없어도 클릭이 통과하여 토스트로 안내되도록 native disabled 대신 aria-disabled 사용.
-  promptInputEl.disabled = busy;
+  // TASK-0248: 차단된 대화는 입력창도 비활성화 (진행 불가 — 이력 열람만).
+  promptInputEl.disabled = busy || isBlocked;
   if (busy) {
     // REQ-20260608-0157: 처리 중 → "중단" 버튼. native disabled 를 풀어 클릭이 통과하게 한다.
     const canCancel = canCancelConversation();
@@ -3524,14 +3545,17 @@ function renderComposer() {
       sendBtn.dataset.mode = "send";
     }
     sendBtn.setAttribute("aria-label", "전송");
-    if (hasAsk) {
+    if (hasAsk && !isBlocked) {
       sendBtn.removeAttribute("aria-disabled");
       sendBtn.classList.remove("is-access-blocked");
       sendBtn.title = "";
     } else {
       sendBtn.setAttribute("aria-disabled", "true");
       sendBtn.classList.add("is-access-blocked");
-      sendBtn.title = "'대화 요청 실행' 권한이 없습니다. 필요 권한: `conversation.ask`";
+      // TASK-0248: 차단 사유를 권한 부재 안내보다 우선 노출.
+      sendBtn.title = isBlocked
+        ? (activeConv.blocked_reason || "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다.")
+        : "'대화 요청 실행' 권한이 없습니다. 필요 권한: `conversation.ask`";
     }
     if (composerFinalizeBtn) composerFinalizeBtn.classList.add("hidden");
   }
@@ -3552,6 +3576,12 @@ function renderComposer() {
     composerTitleEl.textContent = "조회 전용 상태";
     composerHintEl.textContent =
       "현재 계정에는 대화 요청 실행 권한(`conversation.ask`)이 없습니다. 관리자에게 권한 부여를 요청하세요.";
+  } else if (isBlocked) {
+    // TASK-0248: 참조 제품 삭제로 차단된 대화 — 진행 불가, 이력 열람·공유는 가능.
+    composerTitleEl.textContent = "차단된 대화";
+    composerHintEl.textContent =
+      (activeConv.blocked_reason || "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다.") +
+      " 이력 열람·공유는 가능하며, 복제(사본 만들기)로 새 대화에서 이어갈 수 있습니다.";
   } else if (currentConversation() && !isOwnConversation(currentConversation())) {
     composerTitleEl.textContent = "읽기 전용 대화";
     composerHintEl.textContent = "타 계정 대화에는 요청을 이어서 보낼 수 없습니다. 새 대화를 생성하세요.";
@@ -5436,6 +5466,11 @@ async function sendPrompt() {
   const active = currentConversation();
   if (active && !isOwnConversation(active)) {
     showToast("타 계정 소유의 대화에는 요청을 보낼 수 없습니다. 새 대화를 생성하세요.", true);
+    return;
+  }
+  // TASK-0248: 참조 제품 삭제로 차단된 대화는 진행 불가. fork(복제) 로 새 대화에서 이어가도록 안내.
+  if (active && active.blocked) {
+    showToast(active.blocked_reason || "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다.", true);
     return;
   }
   if (state.composerAttachments.uploadingCount > 0) {

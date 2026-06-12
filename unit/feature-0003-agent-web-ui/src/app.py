@@ -4783,6 +4783,21 @@ def _ensure_web_tables():
                 )
             except Exception:
                 pass
+            # TASK-0248: 참조 제품 삭제 시 대화 차단. blocked_at 이 NULL 이 아니면 차단
+            # (이력 열람 가능, 진행 불가). PG 정본(agent_runtime.core_conversations)의
+            # MySQL 폴백 등가 — production 은 PG 라 보통 미경유하나 parity 유지.
+            try:
+                cur.execute(
+                    "ALTER TABLE AgentCoreConversations ADD COLUMN blocked_at DATETIME NULL"
+                )
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    "ALTER TABLE AgentCoreConversations ADD COLUMN blocked_reason VARCHAR(256) NULL"
+                )
+            except Exception:
+                pass
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS WebProducts (
@@ -5171,7 +5186,9 @@ SELECT
     COALESCE(NULLIF(TRIM(c.topic), ''), NULLIF(TRIM(kv_topic.value), ''), '새 대화') AS topic,
     c.created_at AS created_at,
     c.updated_at AS last_activity_at,
-    c.owner_account_id AS owner_account_id
+    c.owner_account_id AS owner_account_id,
+    c.blocked_at AS blocked_at,
+    c.blocked_reason AS blocked_reason
 FROM agent_runtime.core_conversations c
 LEFT JOIN agent_runtime.kv kv_topic
   ON kv_topic.conversation_id = c.conversation_id AND kv_topic.key = 'topic'
@@ -5252,7 +5269,7 @@ LEFT JOIN agent_runtime.kv kv_topic
 
         items: list[dict[str, Any]] = []
         for row in rows:
-            conv_id, topic, created_at, updated_at, oid = row
+            conv_id, topic, created_at, updated_at, oid, blocked_at, blocked_reason = row
             items.append({
                 "id": str(conv_id or ""),
                 "topic": _normalize_topic(topic, "새 대화"),
@@ -5260,6 +5277,11 @@ LEFT JOIN agent_runtime.kv kv_topic
                 "last_activity_at": str(updated_at or ""),
                 "owner_account_id": int(oid or 0) or None,
                 "owner_username": owner_map.get(int(oid or 0), "") if oid else "",
+                # TASK-0248: 참조 제품 삭제로 차단된 대화. blocked=True 면 프런트가 입력/전송을
+                # 비활성화하고 배지·안내를 표시한다(이력 열람·공유는 가능).
+                "blocked": blocked_at is not None,
+                "blocked_at": str(blocked_at or "") if blocked_at is not None else "",
+                "blocked_reason": str(blocked_reason or "") if blocked_at is not None else "",
             })
 
         # KV 상태/메타 (last_status / duration / run_id) — agent_runtime.kv 에서 읽기.
@@ -5425,6 +5447,8 @@ SELECT
     c.created_at AS created_at,
     c.updated_at AS last_activity_at,
     c.owner_account_id AS owner_account_id,
+    c.blocked_at AS blocked_at,
+    c.blocked_reason AS blocked_reason,
     owner.Username AS owner_username
 FROM AgentCoreConversations c
 LEFT JOIN AgentMemoryKv topic_kv
@@ -5527,6 +5551,10 @@ LEFT JOIN WebAccounts owner
                 "last_activity_at": str(item.get("last_activity_at") or item.get("created_at") or ""),
                 "owner_account_id": int(item.get("owner_account_id") or 0) or None,
                 "owner_username": str(item.get("owner_username") or ""),
+                # TASK-0248: 참조 제품 삭제 차단 상태 (PG 경로와 동일 계약).
+                "blocked": item.get("blocked_at") is not None,
+                "blocked_at": str(item.get("blocked_at") or "") if item.get("blocked_at") is not None else "",
+                "blocked_reason": str(item.get("blocked_reason") or "") if item.get("blocked_at") is not None else "",
             }
             for item in items
             if str(item.get("id") or "")
@@ -5680,6 +5708,122 @@ def _conversation_exists(
         row = cur.fetchone()
         cur.close()
         return bool(row)
+    finally:
+        if own_conn and conn is not None:
+            conn.close()
+
+
+# TASK-0248: 참조 제품 삭제 시 대화 차단(blocked) — 더 이상 진행(새 메시지)할 수 없으나
+# 이력 열람·공유(읽기 전용)는 가능. blocked_at 이 NULL 이 아니면 차단으로 간주.
+_BLOCKED_PRODUCT_DELETED_REASON = "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다."
+
+
+def _conversation_block_info(
+    conversation_id: str,
+    *,
+    conn=None,
+) -> tuple[bool, str]:
+    """대화의 차단 상태를 조회한다. Returns (is_blocked, blocked_reason).
+
+    backend-aware: production(PG) 은 agent_runtime.core_conversations, MySQL 폴백은
+    AgentCoreConversations. 조회 실패는 fail-open(미차단)으로 — 차단 판정은 ask 진행을
+    막는 게이트이므로, 인프라 오류로 정상 대화가 막히지 않게 한다(삭제 제품 대화는
+    별도 권한회수 가드가 fail-closed 로 보강).
+    """
+    if not conversation_id:
+        return (False, "")
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        "SELECT blocked_at, blocked_reason FROM agent_runtime.core_conversations "
+                        "WHERE conversation_id = %s LIMIT 1",
+                        (conversation_id,),
+                    )
+                    row = pgcur.fetchone()
+            finally:
+                pg.close()
+            if row and row[0] is not None:
+                return (True, str(row[1] or _BLOCKED_PRODUCT_DELETED_REASON))
+            return (False, "")
+        except Exception:
+            return (False, "")
+    own_conn = conn is None
+    if own_conn:
+        try:
+            conn = _connect_memory()
+        except Exception:
+            return (False, "")
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT blocked_at, blocked_reason FROM AgentCoreConversations "
+            "WHERE conversation_id = %s LIMIT 1",
+            (conversation_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        if row and row[0] is not None:
+            return (True, str(row[1] or _BLOCKED_PRODUCT_DELETED_REASON))
+        return (False, "")
+    except Exception:
+        return (False, "")
+    finally:
+        if own_conn and conn is not None:
+            conn.close()
+
+
+def _block_conversations_for_product(
+    product_id: int,
+    reason: str,
+    *,
+    conn=None,
+) -> int:
+    """제품 삭제 시 그 제품을 pinned 한 대화를 일괄 차단한다. Returns 차단된 행 수.
+
+    이미 차단된 대화(blocked_at IS NOT NULL)는 재차단하지 않는다(reason/시각 보존).
+    backend-aware. production(PG) 경로가 정본. 호출자가 차단 실패를 loud 하게 처리할
+    수 있도록 예외는 전파한다(삭제 핸들러가 catch + 경고 로깅).
+    """
+    if not product_id or int(product_id) <= 0:
+        return 0
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "UPDATE agent_runtime.core_conversations "
+                    "SET blocked_at = now(), blocked_reason = %s "
+                    "WHERE product_id = %s AND blocked_at IS NULL",
+                    (reason, int(product_id)),
+                )
+                affected = int(pgcur.rowcount or 0)
+            pg.commit()
+            return affected
+        finally:
+            pg.close()
+    own_conn = conn is None
+    if own_conn:
+        conn = _connect_memory()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE AgentCoreConversations "
+            "SET blocked_at = NOW(), blocked_reason = %s "
+            "WHERE product_id = %s AND blocked_at IS NULL",
+            (reason, int(product_id)),
+        )
+        affected = int(cur.rowcount or 0)
+        cur.close()
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        return affected
     finally:
         if own_conn and conn is not None:
             conn.close()
@@ -8564,6 +8708,12 @@ async def ask(request: Request) -> JSONResponse:
         if not _conversation_owned_by_account(conn, request_conversation_id, int(account["id"])):
             conn.close()
             return _json_error("타 계정 대화에는 요청을 이어서 보낼 수 없습니다.", 403)
+        # TASK-0248: 참조 제품이 삭제되어 차단(blocked)된 대화는 진행 불가. 이력 열람·공유는
+        # 가능하나 새 메시지 전송은 거부. slot 획득 전(조기 차단)이라 동시성 카운터 영향 없음.
+        _is_blocked, _block_reason = _conversation_block_info(request_conversation_id, conn=conn)
+        if _is_blocked:
+            conn.close()
+            return _json_error(_block_reason or _BLOCKED_PRODUCT_DELETED_REASON, 403)
         conv_id = request_conversation_id
     else:
         if not _account_has_permission(account, "conversation.create"):
@@ -15443,31 +15593,34 @@ def admin_delete_product(product_id: int, request: Request) -> JSONResponse:
     if not _account_has_permission(account, "product.manage"):
         conn.close()
         return _json_error("제품 관리 권한이 필요합니다.", 403)
-    # AR-M5 cutover: AgentCoreConversations MySQL 테이블 DROP → 참조 가드 COUNT 를 PG
-    # agent_runtime.core_conversations 로 라우팅(미라우팅 시 SELECT 가 500 으로 삭제 전면 불가).
+    # TASK-0248: 과거에는 참조 대화가 있으면 삭제를 거부(400)했으나, 이제는 삭제를 허용하고
+    # 그 제품을 pinned 한 대화를 차단(blocked)으로 전환한다(이력 열람·공유는 가능, 진행 불가).
+    # 아래 COUNT 는 새로 차단될(아직 미차단인 참조) 대화 수 — 응답/감사 메시지에만 사용하며
+    # 삭제를 막지 않는다.
+    # AR-M5 cutover: AgentCoreConversations MySQL 테이블 DROP → COUNT 를 PG
+    # agent_runtime.core_conversations 로 라우팅(미라우팅 시 SELECT 가 500).
     if _runtime_backend_is_pg():
         from modules.db import _pg_connect
         pg = _pg_connect()
         try:
             with pg.cursor() as pgcur:
                 pgcur.execute(
-                    "SELECT COUNT(*) FROM agent_runtime.core_conversations WHERE product_id = %s",
+                    "SELECT COUNT(*) FROM agent_runtime.core_conversations "
+                    "WHERE product_id = %s AND blocked_at IS NULL",
                     (int(product_id),),
                 )
-                in_use = int((pgcur.fetchone() or (0,))[0] or 0)
+                referencing_count = int((pgcur.fetchone() or (0,))[0] or 0)
         finally:
             pg.close()
     else:
         cur = conn.cursor()
         cur.execute(
-            "SELECT COUNT(*) FROM AgentCoreConversations WHERE product_id = %s",
+            "SELECT COUNT(*) FROM AgentCoreConversations "
+            "WHERE product_id = %s AND blocked_at IS NULL",
             (int(product_id),),
         )
-        in_use = int((cur.fetchone() or (0,))[0] or 0)
+        referencing_count = int((cur.fetchone() or (0,))[0] or 0)
         cur.close()
-    if in_use > 0:
-        conn.close()
-        return _json_error("이 제품을 참조하는 대화가 있어 삭제할 수 없습니다. (대신 비활성화를 사용하세요)", 400)
     # TASK-0052 Phase 1B (Codex Claim 2): 명시적 트랜잭션으로 cascade 정합성 보장.
     # 신규: WebPermissions(IsDynamic=1, ProductId=<id>) + 그 권한을 참조하는 WebRolePermissions /
     # WebAccountPermissionOverrides 도 함께 정리. 부분 실패 시 product 도 그대로 유지 (rollback).
@@ -15508,7 +15661,11 @@ def admin_delete_product(product_id: int, request: Request) -> JSONResponse:
             action="admin.product.delete",
             resource_type="product",
             resource_id=str(product_id),
-            change_json={"target_product_id": int(product_id), "cascade_dyn_permissions": len(dyn_perm_ids)},
+            change_json={
+                "target_product_id": int(product_id),
+                "cascade_dyn_permissions": len(dyn_perm_ids),
+                "referencing_conversations": int(referencing_count),
+            },
             target_account_id=None,
         )
         conn.commit()
@@ -15526,7 +15683,26 @@ def admin_delete_product(product_id: int, request: Request) -> JSONResponse:
         except Exception:
             pass
     conn.close()
-    return JSONResponse({"ok": True, "product_id": int(product_id)})
+    # TASK-0248: 제품 cascade 삭제가 commit 된 뒤, 그 제품을 pinned 한 대화를 차단으로 전환.
+    # 삭제 commit 이후 별도 스토어(PG core_conversations)에 수행 — cross-store 라 단일 tx
+    # 불가하므로 순서는 "삭제 먼저, 차단 나중". 차단이 실패해도 제품 권한(product.access.<key>)이
+    # 이미 cascade 삭제돼 기존 ask 가드(권한 회수 403)가 fail-closed 로 보강하므로 진행은 막힌다.
+    blocked_count = 0
+    try:
+        blocked_count = _block_conversations_for_product(
+            int(product_id), _BLOCKED_PRODUCT_DELETED_REASON
+        )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "admin_delete_product: 참조 대화 차단 실패 (product_id=%s) — 제품은 이미 삭제됨. "
+            "해당 대화는 권한 회수 가드로 fail-closed 된다.",
+            product_id, exc_info=True,
+        )
+    return JSONResponse({
+        "ok": True,
+        "product_id": int(product_id),
+        "blocked_conversations": int(blocked_count),
+    })
 
 
 _DATABASES_AVAILABLE_METADATA = ("information_schema", "mysql", "sys", "performance_schema")
