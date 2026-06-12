@@ -3014,8 +3014,9 @@ a { color: inherit; }
   font-size: 11px; color: var(--text-muted, #888);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* 연결상태 배지는 열의 오른쪽 끝으로 정렬(모든 행 우측 정렬 일치). */
-.admin-ds-picker-item .admin-ds-conn { justify-self: end; }
+/* 연결상태 배지는 고정폭 열에서 좌측 정렬(자연폭 유지 — 행별 left spread=0). sibling .cov-db-row(TASK-0245)
+   의 .cov-db-status/.cov-db-reset justify-self:start 와 동일 컨벤션으로 통일(사용자 컬럼 정렬 선호). */
+.admin-ds-picker-item .admin-ds-conn { justify-self: start; }
 /* 연결 상태 배지(연결됨/실패/확인 중) — DB picker 의 분석상태(.admin-db-picker-status)와 동일한 pill 형태,
    의미는 '연결성'이라 별도 클래스. 앞의 ● 점으로 상태를 한눈에. */
 .admin-ds-conn {
