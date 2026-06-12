@@ -649,3 +649,14 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **Evidence:** `/tmp/win-browser-shots/task0243/01_mssql_db_rows_role.png`(DK온라인 제품 상세 — 데이터소스 섹션·완료율 100%·210/210·MSSQL note), `/tmp/win-browser-shots/task0243/02_mssql_add_picker.png`(MSSQL 5행 한 줄 인라인 역할 `Game Data — …`/`Account/Auth — …`/`Global/Server — …`/`Game Logs — …` + 37/37·123/123·1/1·7/7 + picker 분석중[노랑]/분석됨[초록] 3-state + 시스템 DB 3개 고정칩).
   - **Pass/Fail: PASS** (MSSQL 등록 DB 5행 역할 한 줄 인라인 + picker 3-state[분석중/분석됨] 실제 Windows 화면 확인, MySQL by_db 키 byte-identical 무회귀).
   - **Notes:** side-effect 격리(사용자 요청) — coverage(완료율)·insight-reset 은 object_key 미사용(schema_name/table_name 컬럼)이라 무영향, 전체 make test 회귀 0, 적대적 subagent SHIP. CHECK#13(PB-0008 Windows-browser) **충족**.
+
+- 2026-06-12 (TASK-0245 제품 상세 접근가능 DB 리스트 행 컬럼 폭 정합 — **PB-0008 Windows-browser 완료 게이트**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 userspace relay `bridge_mode: relay`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면 검증.
+  - **Runner: AI** (bin/win-browser.py goto → click → eval(좌표 측정) → screenshot)
+  - **배포:** PR #189 → main `2bc2067` 머지 → `make dc-build SERVICE=web` + `docker compose up -d --no-build web`. healthz `git_commit:2bc2067`, 서빙 `styles.css` 에 신규 grid(`minmax(96px,0.9fr) … 96px 54px 76px 60px 24px`) 베이킹 확인. 캐시버스터 `?v=20260612-db-row-align`.
+  - **검증 내용 (객관 좌표 측정 — 제품 92 "출조낚시왕(FH)" / datasource mssql-qa-idc, cov-db-row 8행):**
+    - 각 행의 컬럼 시작 x(`getBoundingClientRect().left`) 측정 — **전 8행 spread=0px**: 역할설명(`.cov-db-role`) left=770, 진척바(`.cov-microbar`) left=816, 통계(`.cov-db-stat`) left=922, 상태칩(`.cov-db-status`) left=986, 초기화(`.cov-db-reset`) left=1072. 문자열 길이(FHDef↔fh_ods↔FHGame1, 역할 Gam…↔Acco…)와 무관하게 **모든 컬럼이 행 간 동일 좌표 정렬**.
+    - 수정 전: 통계·상태·초기화 `auto` 컬럼이 행마다 폭을 달리해 name/role(fr) 컬럼이 어긋나며 spread>0(들쭉날쭉). 수정 후 고정폭 트랙으로 spread=0.
+  - **Evidence:** `artifacts/db-row-align-after.png` (제품 상세 DB 리스트 8행 — DB명·역할·진척바·상태칩·초기화·× 전 컬럼 수직 정렬 일치).
+  - **Pass/Fail: PASS**
+  - **Notes:** 순수 CSS grid 트랙 고정(`.cov-db-row` auto→고정폭 + justify-self:start). 행 콘텐츠·셀 빌더·권한 무변경. CHECK#13(PB-0008 Windows-browser) **충족**.
