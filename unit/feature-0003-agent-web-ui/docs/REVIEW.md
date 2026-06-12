@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0252 [SKIPPED:doc-only] — SHIP
+- Date: 2026-06-12
+- Cycle: TASK-0252 (TASK-0251 PB-0008 Windows-browser 완료 게이트 기록 — **doc-only**)
+- Reason: 문서 전용 — 코드/정적자산/스키마/RBAC/엔드포인트 0. TASK-0251 라이브 배포본(main 9cee54a)의 PB-0008 Windows-browser 시각검증 PASS 결과를 TEST.md §4 에 기록하고 STATUS/TASK 잔여를 완료 갱신할 뿐. 실 시스템 mutation 0 이라 적대적 패널 불요(전례 doc-only SKIP 동일).
+- 실측 근거: 실제 Windows Chrome/148 via bin/win-browser.py(relay) 로 라이브 공유 URL 2종 검증 — 사용자 토큰 토글 0개·본문 SQL pre 5/5 펼침 / steps 토큰 navigator "쿼리 1/8"↔"8/8" ▶◀ click hit-test 전환·경계 disabled. 익명 API 응답에 csv_paths/preview 누출 0.
+- Cross-ref: CHG-20260612-0252 / TASK-0252 / TASK-0251 / REV-20260612-0251.
+
 ## REV-20260612-0251 [SUBAGENT:share-anonymous-exposure-adversarial] — NOT-SHIP → 흡수 → PASS
 - Date: 2026-06-12
 - Cycle: TASK-0251 (익명 공유뷰 SQL "쿼리 열고닫기" 토글 → "실행 쿼리 전환" navigator 교정 + 백엔드 steps 공급 + 익명 sanitize, **Major §12.3 — 익명 데이터 노출 경계**)
