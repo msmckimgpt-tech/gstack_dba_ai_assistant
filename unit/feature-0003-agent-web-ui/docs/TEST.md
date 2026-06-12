@@ -246,6 +246,10 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
 ## 4. Test Run History
+- 2026-06-12 (TASK-0246 "+ 데이터소스 추가" 드롭다운 항목 열 정렬 — 고정 열 폭 grid + 연결배지 좌측 정렬 정련, **Minor §12.3**):
+  - **Environment: CLI** (CSS brace 균형 — CSS-only). CSS brace 1105/1105. REV-20260612-0246 [SKIPPED:trivial-grid-align] + REV-20260612-0247 [SKIPPED:trivial-css-1line](정련).
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay` @ http://172.28.64.1:9223, https://localhost:18080, self-signed ignore). 라이브 배포(web 재빌드 + healthz `git_commit=9c2db34`, mysql_ok/pg_ok, 서빙 `?v=20260612-ds-picker-colalign2` + `.admin-ds-conn { justify-self: start`) 후. 스크린샷 `/tmp/pb0008-ds-picker-colalign-final.png`(+ 중간 `/tmp/pb0008-ds-picker-status.png`).
+  - **Runner: AI. 결과: PASS.** /admin > 제품 "킹스레이드(KR)" > "+ 데이터소스 추가" 드롭다운(datasource 5개) 항목별 컬럼 left 좌표를 win-browser eval 로 측정. **핵심 — 행별 left spread=0px**([[feedback_row_list_column_alignment]] 기준): name 5행 전부 x=677(spread 0), 엔진 pill 전부 x=874(spread 0), 좌표 전부 x=938(spread 0), 연결배지 전부 x=1070(spread 0). **수정 전(CHG-0246 측정)**: 엔진 x961/936/967·좌표 x1011/986/1018·배지 x1105/1080/1080 으로 들쭉날쭉 → grid 고정 열 폭(`auto minmax(0,1fr) 56px 124px 104px`) + 정련(연결배지 justify-self:end→start)으로 전 열 정렬. 긴 좌표(`kr-apne2-auth.masangs…`)는 ellipsis 흡수, 연결 상태(연결 실패/연결됨·ms) 정상 병행 표시. CHECK#13(PB-0008 Windows-browser) **충족**.
 - 2026-06-12 (TASK-0244 관리 콘솔 제품 "+ 데이터소스 추가" 드롭다운 폰트 정합 + 연결 상태 표면화, **Major §12.3**):
   - **Environment: CLI** (`node --check admin.js` 정적 문법 검증 + CSS brace 균형 — frontend-only).
   - **Runner: AI.** `node --check ...admin.js` PASS, CSS brace 1103/1103. outside-voice subagent 디자인/정합 적대적 리뷰 **SHIP**(REV-20260612-0244, BLOCKER 0; `.admin-ds-picker-engine` ≡ `.ds-acc-engine` 토큰 동일·`.admin-db-picker-name` 재사용 확인, 동시성 nit 4-cap 세마포어 선반영).
