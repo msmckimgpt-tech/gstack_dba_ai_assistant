@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0240
+- Date: 2026-06-12 (TASK-0240, **Minor §12.3** — datasource picker 클리핑 수정 + 데이터소스 추가 체크박스 토글 통일. frontend only)
+- 사용자 보고(연속 2건): ① "`+ 데이터베이스 추가` 버튼으로 나타나는 리스트가 패널 내부로 잘리는 이슈", ② "`+ 데이터소스 추가` 버튼 또한 `+ 데이터베이스 추가` 리스트와 같이 체크박스 토글 형식으로 구성".
+- 진단(① — Playwright clip 조상 재현):
+  - `.admin-db-picker-list` 는 `position:absolute; top:calc(100%+4px); max-height:220px`. 펼치면 드롭다운(top=492, bottom=712)이 **3중 overflow 조상**에 잘림 — (a) `.ds-acc-body{overflow:hidden}`(내가 TASK-0239 펼침 애니메이션 때 도입, 가장 가까운 조상, bottom=504 → 220px 중 12px만 노출), (b) `.admin-detail-col{overflow-y:auto}`(제품 상세 패널 스크롤 컨테이너 — 긴 폼 스크롤에 필요해 제거 불가, bottom=820), (c) `.admin-workspace{overflow:hidden}`. `position:absolute` 인 한 (b) 스크롤 컨테이너가 패널 하단을 넘는 드롭다운을 계속 자름.
+- 변경 (`src/static/styles.css`, `src/static/admin.js`, `src/static/admin.html` — frontend only):
+  - **① 클리핑 원천 제거(css)**: `.admin-db-picker-list` 를 `position:absolute` 플로팅 → **inline 정상 흐름**(`margin-top:4px; width:100%; max-height:220px; overflow-y:auto`)으로 전환. 목록 자신만 스크롤하고 어떤 overflow 조상도 자르지 못함(클리핑 박스가 아니게 됨). `.ds-acc-body` 의 `overflow:hidden` 제거(재발 금지 주석 — 펼침 페이드는 opacity 위주라 overflow 불필요).
+  - **② 데이터소스 추가 체크박스 토글(admin.js+css)**: accordion 하단 `<select class="ds-acc-add-select">`(단일 선택) → DB picker 와 동일한 inline 체크박스 토글 드롭다운(`.ds-acc-add-btn`(=`.admin-db-picker-btn` 재사용) + `.admin-db-picker-list`). `_rebuildDsAddList()` 가 등록 datasource 전체를 항목으로, **effective(desired) 바인딩이면 체크 상태**로 렌더. 체크 → `stageAddDatasource`+`_afterBindChange(key)`(새 datasource 펼침), 해제 → `stageRemoveDatasource`+`_afterBindChange`. 매 토글 후 `_rebuildDsAddList` 로 체크 상태 재동기화. 버튼 aria-haspopup/aria-expanded + 바깥 클릭 닫기. 즉시 API 아니라 desired 스테이징 유지(TASK-0239) → "모두 적용" 일괄. `.ds-acc-add-select` CSS → `.ds-acc-add-btn`(점선 버튼) + add-row `position:relative`.
+  - 캐시버스터 `?v=20260612-ds-bulk-apply`→`?v=20260612-ds-picker-inline`.
+- 비변경: RBAC·DB 스키마·암호화·**백엔드 0**(엔드포인트 그대로). 스테이징·diff-apply 로직(TASK-0239)도 그대로 — 데이터소스 추가의 진입 UI(select→체크박스)만 교체.
+- 검증: **Playwright 실 헤드리스 브라우저**(라이브 admin, pid=92) — clip 조상 재현(ds-acc-body·admin-detail-col·admin-workspace 3중 확인) → 수정 후 4-test(DB picker 무클리핑·hitInside / ds picker 체크박스 3항목·바인딩된 것 체크·무클리핑 / 체크 토글 시 pending+1·행 2개·서버 1개 불변 / ⋯ 메뉴 hit-test 정상) + 토글 양방향(체크 +1 → 같은 항목 해제 시 desired==baseline 복귀 pending 0·행 1개) PASS, 콘솔/pageerror 0. make test 회귀 0. node --check PASS. CSS 1076/1076 balanced.
+- Files: src/static/{admin.js,styles.css,admin.html}, docs/{TASK,MODIFY,REVIEW,FUNCTION}.md
+- Rollback: frontend only — revert 시 TASK-0239 absolute picker + select UI 복귀(단 클리핑 재발). 데이터/스키마 영향 없음.
+
 ## CHG-20260612-0239
 - Date: 2026-06-12 (TASK-0239, **Minor §12.3** — datasource accordion 후속 버그/UX 3건. frontend only)
 - 사용자 보고(TASK-0238 재설계 직후 실사용): ① "⋯ 버튼이 작동하지 않아 검증 필요", ② "데이터소스 추가 후 일괄 적용 형식에 포함 안 됨(추가 시 즉시 반영되는 이슈)", ③ "각 데이터소스 클릭 시 깜빡임 → 부드러운 애니메이션 적용".

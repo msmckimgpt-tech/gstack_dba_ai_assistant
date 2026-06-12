@@ -5308,35 +5308,71 @@ function renderProductDetail() {
 
     dbSection.appendChild(dsAccordion);
 
-    // ＋ 데이터소스 추가 (미바인딩 datasource 만 후보). 첫 바인딩은 PATCH, 이후는 POST.
+    // ＋ 데이터소스 추가 — TASK-0240: DB picker 와 동일한 inline 체크박스 토글 드롭다운으로 통일.
+    //  체크=추가 스테이징, 해제=제거 스테이징(이미 바인딩된 것도 체크 상태로 보여 토글 제거 가능).
+    //  즉시 API 가 아니라 desired 스테이징 → "모두 적용" 일괄(TASK-0239).
     if (canDs) {
       const addRow = document.createElement("div");
-      addRow.className = "ds-acc-add-row";
-      const addSel = document.createElement("select");
-      addSel.className = "ds-acc-add-select";
-      addSel.setAttribute("aria-label", "데이터소스 추가");
-      const opt0 = document.createElement("option");
-      opt0.value = ""; opt0.textContent = "＋ 데이터소스 추가…";
-      addSel.appendChild(opt0);
-      // 후보는 effective(desired) 바인딩 기준 — 이미 추가 대기 중인 것도 목록에서 제외.
-      const boundKeys = new Set(effectiveProductDatasources(product).map((d) => String(d.datasource_key).toLowerCase()));
-      (adminState.datasources || []).forEach((ds) => {
-        if (boundKeys.has(String(ds.key).toLowerCase())) return;  // 이미 바인딩(또는 추가 대기)됨 — 제외
-        const opt = document.createElement("option");
-        opt.value = ds.key;
-        opt.textContent = `${ds.key} — ${ds.engine || "mysql"} @ ${ds.host || "?"}:${ds.port || ""}`;
-        addSel.appendChild(opt);
+      addRow.className = "ds-acc-add-row admin-db-picker-wrap";
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.className = "ds-acc-add-btn admin-db-picker-btn";
+      addBtn.textContent = "+ 데이터소스 추가";
+      addBtn.setAttribute("aria-haspopup", "true");
+      addBtn.setAttribute("aria-expanded", "false");
+      const addList = document.createElement("div");
+      addList.className = "admin-db-picker-list hidden";
+      addList.setAttribute("role", "group");
+      addList.setAttribute("aria-label", "데이터소스 선택");
+
+      const _rebuildDsAddList = () => {
+        addList.innerHTML = "";
+        const boundKeys = new Set(effectiveProductDatasources(product).map((d) => String(d.datasource_key).toLowerCase()));
+        const all = (adminState.datasources || []);
+        if (!all.length) {
+          const empty = document.createElement("div");
+          empty.className = "admin-db-picker-empty";
+          empty.textContent = "(등록된 데이터소스 없음)";
+          addList.appendChild(empty);
+          return;
+        }
+        all.forEach((ds) => {
+          const dsk = String(ds.key).toLowerCase();
+          const item = document.createElement("label");
+          item.className = "admin-db-picker-item";
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.checked = boundKeys.has(dsk);
+          cb.addEventListener("change", () => {
+            if (cb.checked) {
+              stageAddDatasource(product, ds.key);
+              _afterBindChange(ds.key);   // 새로 켠 datasource 를 펼쳐 보여줌
+              showToast(`데이터소스 '${ds.key}' 추가(적용 대기)`);
+            } else {
+              stageRemoveDatasource(product, ds.key);
+              _afterBindChange();
+              showToast(`데이터소스 '${ds.key}' 제거(적용 대기)`);
+            }
+            _rebuildDsAddList();  // 체크 상태 재동기화
+          });
+          const lbl = document.createElement("span");
+          lbl.textContent = `${ds.key} — ${ds.engine || "mysql"} @ ${ds.host || "?"}:${ds.port || ""}`;
+          item.append(cb, lbl);
+          addList.appendChild(item);
+        });
+      };
+
+      addBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const willOpen = addList.classList.contains("hidden");
+        if (willOpen) _rebuildDsAddList();
+        addList.classList.toggle("hidden");
+        addBtn.setAttribute("aria-expanded", willOpen ? "true" : "false");
       });
-      // TASK-0239: 추가도 즉시 API 대신 desired 스테이징(일괄 적용). 추가한 datasource 를 펼쳐 보여줌.
-      addSel.addEventListener("change", () => {
-        const val = addSel.value || null;
-        addSel.value = "";  // select 는 항상 placeholder 로 복귀(첫 항목 잔류 방지)
-        if (!val) return;
-        stageAddDatasource(product, val);
-        _afterBindChange(val);
-        showToast(`데이터소스 '${val}' 추가(적용 대기)`);
+      document.addEventListener("click", function _closeDsAdd(ev) {
+        if (!addRow.contains(ev.target)) { addList.classList.add("hidden"); addBtn.setAttribute("aria-expanded", "false"); }
       });
-      addRow.appendChild(addSel);
+      addRow.append(addBtn, addList);
       dbSection.appendChild(addRow);
     }
 
