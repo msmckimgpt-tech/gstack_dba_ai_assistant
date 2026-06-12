@@ -3484,3 +3484,26 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **수정** ([styles.css](../src/static/styles.css) `.cov-db-row`): `grid-template-columns` 의 통계·상태·초기화 `auto` 3컬럼을 고정폭(54px·76px·60px)으로 못박아 전 행 트랙 동일화. name `minmax(96px,0.9fr)`·role `minmax(0,1.7fr)` 비율 컬럼은 트랙이 동일해져 행 간 정렬 일치. 상태칩(`.cov-db-status`)·초기화(`.cov-db-reset`)에 `justify-self: start` 추가(고정폭 컬럼에서 pill/button 이 stretch 로 늘어나지 않고 자연폭 유지). 통계(`.cov-db-stat`)는 stretch+`text-align:right` 유지(N/N 우측 정렬). 캐시버스터 `?v=20260612-db-row-align`.
 - [x] outside-voice [SKIPPED:css-grid-alignment] (REV-20260612-0245) — 순수 CSS grid 트랙 고정(로직·상태·DOM·권한 0, 전례 TASK-0178/0179/0180 css-layout SKIP 과 동일 경량).
 - [x] verify-completion PASS → PR #189 머지(main `2bc2067`) → web 재배포(healthz git_commit:2bc2067) → PB-0008 Windows-browser 시각검증 PASS(제품 92 cov-db-row 8행 전 컬럼 left spread=0px, artifacts/db-row-align-after.png) (TEST.md §3 2026-06-12)
+
+### TASK-0246 — "+ 데이터소스 추가" 드롭다운 항목 열 정렬(고정 열 폭 grid) (2026-06-12)
+
+**Minor §12.3** (CSS-only 단일 규칙 블록; admin.js·백엔드·RBAC 0). (CHG-20260612-0246) — TASK-0244 직후 follow-up. 동시세션 db-row-align 이 TASK-0245(별 요소 `.cov-db-row` 의 동종 정렬 수정) 선점→§13.1 재번호 0245→0246, AC→0460. REV-20260612-0246 [SKIPPED:trivial-grid-align].
+
+#### 배경
+사용자: "`+ 데이터소스 추가` 목록의 폭이 문자열 길이에 따라 일정하도록. 현재 들쭉날쭉." 라이브 측정: 항목 폭(542px)은 일정하나 **내부 열 미정렬** — 이름 `flex:1 1 auto` 라 엔진 pill·좌표·연결배지의 시작 x 가 행마다 어긋남(엔진 x961/936/967, 좌표 x1011/986/1018, 배지 x1105/1080/1080).
+
+#### 수정 (styles.css 단일 블록)
+- `.admin-db-picker-item.admin-ds-picker-item` `display:flex` → **`display:grid`** + `grid-template-columns: auto minmax(0,1fr) 56px 124px 104px`. 모든 행 동일 고정 트랙 → 이름만 가변 흡수, 나머지 열 세로 정렬(justify-self start/start/end). 긴 좌표/이름 ellipsis+title.
+- `admin.html` 캐시버스터 `?v=20260612-ds-picker-col-align`.
+
+#### 완료 판정 기준
+- AC1: 모든 행에서 엔진 pill·좌표·연결배지 좌/우 경계 세로 정렬(문자열 길이 무관).
+- AC2: 긴 값 ellipsis+title 흡수, 레이아웃 무파손.
+- AC3: admin.js·백엔드·RBAC·연결 probe·`.cov-db-row`(0245) 무변경.
+- AC4: CSS brace 균형 + PB-0008 시각검증.
+
+#### 작업 항목
+- [x] `.admin-ds-picker-item` grid 전환 + 고정 열 폭 + justify-self 정렬
+- [x] 캐시버스터 bump + CSS brace 균형(1105/1105)
+- [x] origin/main(14a296f) 위로 재적용 + TASK-0245→0246 재번호(동시세션 충돌)
+- [ ] verify-completion → 머지 → web 재배포 → PB-0008 시각검증(열 정렬)
