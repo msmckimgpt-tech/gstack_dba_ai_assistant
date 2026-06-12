@@ -8,6 +8,26 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0238
+- Date: 2026-06-12 (TASK-0238, **Minor §12.3** — datasource 패널 통합 accordion 재설계; 동시세션 cycle 이 TASK-0237 선점(자동작성 SSE)→본 cycle 은 0238)
+- 사용자 요청: "기능은 모두 정상 동작 확인. 단 디자인적으로 중복되는 분류가 많고 통일감이 없다 → gstack 스킬을 적극 사용해 보충." 멀티 datasource(TASK-0228~0236)를 여러 동시세션이 증분 수정하며 누적된 시각 부채.
+- 진단 (gstack `/design-review` + codex outside-voice 소스 감사):
+  - **중복 분류**: datasource 정보가 3곳 — ① "데이터 소스" 섹션 칩, ② "편집 대상 데이터소스" `<select>`, ③ "접근 가능 데이터베이스" 헤더 배지(dbTitleDs). 같은 데이터를 3 표현으로 반복.
+  - **통일감 부재**: 시각 패턴 3종 혼재 — 파란 pill(datasource 칩) / 점선 pill(시스템 DB 칩) / 둥근 사각 행(DB 항목). 칩 액션 아이콘 불일치(★기본/⟳테스트/×제거 가 칩마다). DB행은 텍스트버튼(초기화)+아이콘(×) 혼재. 헤더 배지는 제목에 공백 없이 붙고 대소문자 불일치. rgba 하드코딩(토큰 미사용).
+- 변경 (표현 계층 교체, 편집 로직 보존):
+  - `src/static/admin.js` (`renderProductDetail` datasource 영역 ~242줄 재작성):
+    - **제거**: 별도 "데이터 소스" 섹션, 편집대상 `<select>`(_editDsSelect), 헤더 배지(dbTitleDs/`_updateDbSectionLabel`/`_renderDsChips`/dsChips), 독립 "연결 테스트" 버튼.
+    - **신설**: 단일 섹션 "데이터 소스 & 접근 가능 데이터베이스" → `buildProductCoverageDetail` → datasource accordion(`.ds-acc`) → "＋ 데이터소스 추가" select. 각 datasource = `.ds-acc-row`(`▸/▾` caret + 이름 + 엔진 + "기본" 배지 + `⋯` 메뉴). 펼친(active) 행 아래로 `dbEditorWrap`(시스템칩 + DB리스트 + 추가 picker) 인라인 이동.
+    - `_buildDsMenu(b)`: 행별 `⋯` 메뉴 — 연결 테스트 / 기본으로 지정(primary 아닐 때) / 바인딩 제거. 흩어진 ★/⟳/× + 공용 연결테스트 버튼을 한 곳으로 통일.
+    - `_renderDsAccordion()`: 바인딩 배열로 행 재구축 + active 행 아래 dbEditorWrap 이동. `_switchEditDs(key)`: draft 보존 후 `_editDsKey` 전환 + `_renderDsAccordion` + `_refreshAccessibleDbs`. `_reloadProductDatasources()`: 바인딩 변경 후 adminState 정본 동기화 + `renderProductDetail()` 전체 재렌더(TASK-0236 교훈 유지).
+    - **보존 클로저**(회귀 최소화): draft/`_swapDraftContents`/`_loadDraft`/`_draftKeyFor`/redrawChips/buildPicker/`_refreshAccessibleDbs`/`_serverDbsFor`. `let _editDsKey` 는 accordion 사용 전 선언(TASK-0236 TDZ 수정 유지).
+  - `src/static/styles.css`: `.admin-db-ds-badge` 제거. `.ds-acc*`(`.ds-acc-row`/`.is-active`/`.ds-acc-head`/`.ds-acc-caret`/`.ds-acc-name`/`.ds-acc-engine`/`.ds-acc-primary`/`.ds-acc-body`/`.ds-acc-menu-wrap`/`.ds-acc-menu-btn`/`.ds-acc-menu`/`.ds-acc-menu-item`/`.ds-acc-add-row`/`.ds-acc-add-select`/`.cov-db-editor`) 신설 — 디자인 토큰(`--primary`/`--primary-soft`/`--border`/`--r-md`/`color-mix`)만 사용, 단일 시각 패턴(둥근 행).
+  - `src/static/admin.html`: 캐시버스터 `?v=20260612-prompt-stream`→`?v=20260612-ds-accordion`(styles.css·admin.js).
+- 비변경: RBAC 카탈로그·DB 스키마·암호화·엔드포인트 shape·백엔드 0(엔드포인트는 기존 datasources/datasource/test 재사용). 표현 계층만 교체.
+- 검증: **Playwright 실 헤드리스 브라우저**(라이브 admin) — 단일(pid=92)·멀티(추가 후 2행)·MSSQL 캡처 + 펼침/접힘/전환(active 이동 + DB목록 datasource 반영)/추가 동작 PASS, 콘솔/pageerror 0. make test(컨테이너 pytest) 회귀 0. node --check admin.js PASS.
+- Files: src/static/{admin.js,styles.css,admin.html}, docs/{TASK,MODIFY,REVIEW,FUNCTION}.md
+- Rollback: 표현 계층만 교체이므로 직전 커밋(8be6487) 으로 revert 시 기존 칩+select+배지 UI 복귀(편집 로직 동일). 데이터/스키마 영향 없음.
+
 ## CHG-20260612-0237
 - Date: 2026-06-12 (TASK-0237, **Major §12.3** — 자동작성 LLM 토큰 스트리밍 + OpenAI legacy 명명 정리; 동시세션 cycle 이 TASK-0231~0236 선점→§13.1 재번호 0233→0237)
 - 사용자 요청: 제품 프롬프트 "자동 작성"이 최대 90초 LLM 호출 동안 "생성 중…" spinner 뿐이라 진행을 알 수 없음 → 토큰 스트리밍으로 실시간 표시.
