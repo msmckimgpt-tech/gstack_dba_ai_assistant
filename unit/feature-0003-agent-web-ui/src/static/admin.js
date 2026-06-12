@@ -11,6 +11,9 @@ const adminState = {
   accounts: [],
   products: [],
   datasources: [],            // 멀티 datasource (P2): 등록 datasource 키 목록
+  // TASK-0244: '+ 데이터소스 추가' 드롭다운의 연결 상태 캐시 (key(lower) -> {state:'checking'|'ok'|'fail', elapsed_ms, error}).
+  //  드롭다운 열림 시 /test 로 lazy probe → 배지로 표면화. 세션 내 재사용(매 토글마다 재probe 방지), 헤더 ↻ 로 강제 갱신.
+  datasourceConnStatus: new Map(),
   datasourcesEnabled: false,  // AGENT_MULTI_DATASOURCE_ENABLED flag
   datasourcesSsrfPrivateGuard: true,  // TASK-0219: 사설/링크로컬 SSRF 경계 활성 여부(안내 문구 정합)
   tab: "dashboard",
@@ -790,6 +793,81 @@ function stageSetPrimaryDatasource(product, key) {
   if (!e.desired.some((d) => d.datasource_key === k)) return;
   e.desired.forEach((d) => { d.is_primary = (d.datasource_key === k); });
   _settleDatasourcePending(product.id);
+}
+
+// ── TASK-0244: datasource 연결 상태 probe + 배지 ────────────────────────────
+//  '+ 데이터소스 추가' 목록과 ⋯ 메뉴가 공유하는 단일 경로. 결과는 adminState.datasourceConnStatus
+//  에 캐시(매 토글/재오픈마다 재probe 방지). 동일 key 진행 중 호출은 in-flight 프라미스로 dedup.
+const _dsConnInflight = new Map();
+
+// 동시 probe cap(REV-0244 nit): 서버 probe 는 도달불가 시 최대 8s(db.py connection_timeout) 점유.
+//  datasource 가 많고 다수 unreachable 이면 web 스레드/연결이 동시에 묶일 수 있어, 클라이언트에서
+//  동시 probe 를 4개로 제한한다(나머지는 큐 대기 — 배지는 그동안 '확인 중'). 캐시 hit 는 이 게이트 무관.
+const _DS_CONN_MAX = 4;
+let _dsConnActive = 0;
+const _dsConnWaiters = [];
+function _dsConnAcquire() {
+  if (_dsConnActive < _DS_CONN_MAX) { _dsConnActive += 1; return Promise.resolve(); }
+  return new Promise((resolve) => { _dsConnWaiters.push(resolve); });
+}
+function _dsConnRelease() {
+  const next = _dsConnWaiters.shift();
+  if (next) { next(); return; }   // 활성 카운트는 유지(대기자가 슬롯 인계)
+  _dsConnActive = Math.max(0, _dsConnActive - 1);
+}
+
+// 주어진 <span> 에 캐시 entry 의 연결 상태를 그린다(노드 교체 없이 in-place — 비동기 probe 완료 시 같은 노드 갱신).
+function _paintDsConnBadge(el, entry) {
+  if (!el) return;
+  el.className = "admin-ds-conn";
+  if (!entry || entry.state === "checking") {
+    el.classList.add("is-checking");
+    el.textContent = "확인 중…";
+    el.title = "연결 상태 확인 중";
+    return;
+  }
+  if (entry.state === "ok") {
+    el.classList.add("is-ok");
+    el.textContent = (entry.elapsed_ms != null) ? `연결됨 · ${entry.elapsed_ms}ms` : "연결됨";
+    el.title = "연결 성공";
+    return;
+  }
+  el.classList.add("is-fail");
+  el.textContent = "연결 실패";
+  el.title = entry.error ? `연결 실패: ${entry.error}` : "연결 실패";
+}
+
+// datasource 연결 테스트(/test) — 캐시 우선. force=true 면 캐시 무시 재probe. 항상 결과 객체로 resolve.
+function _probeDatasourceConn(key, { force = false } = {}) {
+  const k = String(key || "").trim().toLowerCase();
+  if (!k) return Promise.resolve({ state: "fail", error: "키 없음" });
+  const cache = adminState.datasourceConnStatus;
+  if (!force) {
+    const prev = cache.get(k);
+    if (prev && (prev.state === "ok" || prev.state === "fail")) return Promise.resolve(prev);
+    if (_dsConnInflight.has(k)) return _dsConnInflight.get(k);
+  }
+  cache.set(k, { state: "checking" });
+  const p = (async () => {
+    await _dsConnAcquire();   // 동시 probe 4개 cap — 슬롯 확보까지 '확인 중' 유지.
+    try {
+      const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(k)}/test`, { method: "POST" });
+      const res = (r && r.ok)
+        ? { state: "ok", elapsed_ms: r.elapsed_ms }
+        : { state: "fail", error: (r && r.error) || "unknown" };
+      cache.set(k, res);
+      return res;
+    } catch (e) {
+      const res = { state: "fail", error: (e && e.message) || "테스트 실패" };
+      cache.set(k, res);
+      return res;
+    } finally {
+      _dsConnRelease();
+      _dsConnInflight.delete(k);
+    }
+  })();
+  _dsConnInflight.set(k, p);
+  return p;
 }
 
 function setSystemPromptPending(args) {
@@ -5451,6 +5529,18 @@ function renderProductDetail() {
       addList.setAttribute("role", "group");
       addList.setAttribute("aria-label", "데이터소스 선택");
 
+      // TASK-0244: 캐시에 결과가 있으면 그 상태로, 없으면 '확인 중' 으로 그린 뒤 lazy probe → 완료 시 같은 노드 갱신.
+      //  force=true 면 캐시 무시 재probe(↻ 새로고침). 토글로 재렌더돼도 캐시 hit 라 재probe 폭주 없음.
+      const _kickDsConn = (dsk, statusEl, force) => {
+        const cached = adminState.datasourceConnStatus.get(dsk);
+        if (!force && cached && (cached.state === "ok" || cached.state === "fail")) {
+          _paintDsConnBadge(statusEl, cached);
+          return;
+        }
+        _paintDsConnBadge(statusEl, { state: "checking" });
+        _probeDatasourceConn(dsk, { force }).then((res) => _paintDsConnBadge(statusEl, res));
+      };
+
       const _rebuildDsAddList = () => {
         addList.innerHTML = "";
         const boundKeys = new Set(effectiveProductDatasources(product).map((d) => String(d.datasource_key).toLowerCase()));
@@ -5462,10 +5552,30 @@ function renderProductDetail() {
           addList.appendChild(empty);
           return;
         }
+        // 헤더: 연결 상태 안내 + ↻ 전체 새로고침(캐시 무효화 후 재probe).
+        const header = document.createElement("div");
+        header.className = "admin-ds-picker-head";
+        const hLbl = document.createElement("span");
+        hLbl.className = "admin-ds-picker-head-label";
+        hLbl.textContent = "데이터소스 · 연결 상태";
+        const refreshBtn = document.createElement("button");
+        refreshBtn.type = "button";
+        refreshBtn.className = "admin-ds-picker-refresh";
+        refreshBtn.textContent = "↻ 새로고침";
+        refreshBtn.title = "모든 데이터소스 연결 상태를 다시 확인";
+        refreshBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          all.forEach((ds) => adminState.datasourceConnStatus.delete(String(ds.key).toLowerCase()));
+          _rebuildDsAddList();
+        });
+        header.append(hLbl, refreshBtn);
+        addList.appendChild(header);
+
         all.forEach((ds) => {
           const dsk = String(ds.key).toLowerCase();
           const item = document.createElement("label");
-          item.className = "admin-db-picker-item";
+          item.className = "admin-db-picker-item admin-ds-picker-item";
           const cb = document.createElement("input");
           cb.type = "checkbox";
           cb.checked = boundKeys.has(dsk);
@@ -5481,10 +5591,22 @@ function renderProductDetail() {
             }
             _rebuildDsAddList();  // 체크 상태 재동기화
           });
-          const lbl = document.createElement("span");
-          lbl.textContent = `${ds.key} — ${ds.engine || "mysql"} @ ${ds.host || "?"}:${ds.port || ""}`;
-          item.append(cb, lbl);
+          // 이름(.admin-db-picker-name = DB picker 와 동일 클래스로 폰트/정렬 정합), 엔진 pill, 좌표(muted), 연결 상태 배지.
+          const name = document.createElement("span");
+          name.className = "admin-db-picker-name";
+          name.textContent = ds.key;
+          name.title = ds.key;
+          const eng = document.createElement("span");
+          eng.className = "admin-ds-picker-engine";
+          eng.textContent = (ds.engine || "mysql");
+          const coord = document.createElement("span");
+          coord.className = "admin-ds-picker-coord";
+          coord.textContent = `${ds.host || "?"}:${ds.port || ""}`;
+          coord.title = `${ds.host || "?"}:${ds.port || ""}`;
+          const status = document.createElement("span");
+          item.append(cb, name, eng, coord, status);
           addList.appendChild(item);
+          _kickDsConn(dsk, status, false);   // 캐시 hit → 즉시, miss → '확인 중' 후 probe.
         });
       };
 

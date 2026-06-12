@@ -2974,6 +2974,53 @@ a { color: inherit; }
 @keyframes covPickerPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 @media (prefers-reduced-motion: reduce) { .admin-db-picker-status.is-running { animation: none; } }
 
+/* ── TASK-0244: '+ 데이터소스 추가' 드롭다운 항목 — 이름/엔진/좌표/연결상태를 accordion·DB picker 와 동일
+   시각 문법으로 정합(이전엔 'key — engine @ host:port' 단일 raw 문자열이라 다른 UI 와 폰트/정렬이 이질적). */
+.admin-ds-picker-head {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 12px;
+  background: #fff;
+  border-bottom: 1px solid var(--border-subtle, rgba(0,0,0,.10));
+}
+.admin-ds-picker-head-label {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase;
+  color: var(--text-muted, #888);
+}
+.admin-ds-picker-refresh {
+  font-size: 11px; padding: 1px 8px;
+  border: 1px solid var(--border-subtle, rgba(0,0,0,.15)); border-radius: 999px;
+  background: var(--bg); color: var(--text-2); cursor: pointer; white-space: nowrap;
+}
+.admin-ds-picker-refresh:hover { border-color: var(--primary); color: var(--text); }
+/* 항목 = [체크박스 · 이름(flex) · 엔진 pill · 좌표(muted) · 연결상태 배지]. */
+.admin-ds-picker-engine {
+  flex: 0 0 auto;
+  font-size: 11px; color: var(--text-2);
+  background: var(--bg); border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm); padding: 1px 6px;
+}
+.admin-ds-picker-coord {
+  flex: 0 1 auto; min-width: 0; max-width: 38%;
+  font-size: 11px; color: var(--text-muted, #888);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 연결 상태 배지(연결됨/실패/확인 중) — DB picker 의 분석상태(.admin-db-picker-status)와 동일한 pill 형태,
+   의미는 '연결성'이라 별도 클래스. 앞의 ● 점으로 상태를 한눈에. */
+.admin-ds-conn {
+  flex: 0 0 auto;
+  font-size: 10.5px; font-weight: 700; white-space: nowrap;
+  padding: 1px 8px; border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.admin-ds-conn::before {
+  content: ""; width: 6px; height: 6px; border-radius: 999px; background: currentColor; flex: 0 0 auto;
+}
+.admin-ds-conn.is-ok       { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+.admin-ds-conn.is-fail     { color: var(--danger, #dc2626); background: color-mix(in srgb, var(--danger, #dc2626) 12%, transparent); }
+.admin-ds-conn.is-checking { color: var(--text-muted); background: var(--bg); animation: covPickerPulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .admin-ds-conn.is-checking { animation: none; } }
+
 /* TASK-0053 Phase B/C — product subcatalog cards (Role/Account detail) */
 .admin-product-card-list {
   display: flex;
