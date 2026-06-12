@@ -52,6 +52,12 @@ tags: [mysql, db, storage]
 - feature-0001 의 primary 자산
 - KB 정본은 M5 cleanup 후 Postgres 로 이전 (ADR-0021/0025)
 
+### 2.4 멀티 데이터소스 시대 (2026-06)
+
+- 데이터 MySQL 이 이제 **명시 datasource `main_mysql`** 로 등록 — `AGENT_DATA_DB_*` 자격이 envelope 암호화 저장 ([[../concepts/datasource-registry]]). 기존 `.env` 데이터 MySQL 직참조 폐지.
+- 접근 단위가 schema → **DB/catalog** 로 일반화 ([[../concepts/db-level-access]]).
+- assistant 가 MySQL·MSSQL 을 dialect 분기로 동시 라우팅 ([[../concepts/multi-datasource]]).
+
 ## 3. 특징
 
 - AI 전용 replica 만 접근 (live game DB 미접근, design Premise 3)
@@ -66,13 +72,16 @@ tags: [mysql, db, storage]
 
 ## 5. 관련 entity
 
-- [[entities/postgres|postgres]]
+- [[postgres]] · [[mssql]]
 
 ## 6. 관련 concept
 
 - [[../concepts/audit-subsystem]]
 - [[../concepts/kb-postgres-pgvector]]
 - [[../concepts/sandbox-schema-isolation]]
+- [[../concepts/multi-datasource]]
+- [[../concepts/datasource-registry]]
+- [[../concepts/db-level-access]]
 
 ## 7. 외부 link
 

@@ -50,7 +50,9 @@ sources:
 
 ## 1. 개요
 
-본 프로젝트는 **기존 `mysql_ai` 운영 자산을 AI 위임 개발 (`ai_delegated_dev`) 템플릿 구조로 이관한 실행형 사본** 이다. 자연어 입력 → LLM tool-call loop → MySQL replica 에 대한 read-only DBA 작업 자동화를 7 개 feature unit + 단일 docker-compose 로 제공한다. 정책 정본 (`AGENTS.md`) + 도메인 정본 (`docs/`) + 기능 정본 (`unit/<id>/docs/`) 의 3-tier 문서 체계로 다중 AI 가 동시에 작업 가능.
+본 프로젝트는 **기존 `mysql_ai` 운영 자산을 AI 위임 개발 (`ai_delegated_dev`) 템플릿 구조로 이관한 실행형 사본** 이다. 자연어 입력 → LLM tool-call loop → **N 개 데이터소스 (MySQL·MSSQL)** 에 대한 read-only DBA 작업 자동화를 8 개 feature unit + 단일 docker-compose 로 제공한다. 정책 정본 (`AGENTS.md`) + 도메인 정본 (`docs/`) + 기능 정본 (`unit/<id>/docs/`) 의 3-tier 문서 체계로 다중 AI 가 동시에 작업 가능.
+
+> **2026-06 현재**: 초기 단일 MySQL replica → **멀티 데이터소스** (dialect 추상화 + envelope 암호화 registry + DB-단위 접근) 로 일반화. agent runtime + KB 는 Postgres 단독 정본 (2026-05-27 이관 완료). agent 실행은 ask-worker out-of-process 큐로 cutover.
 
 ## 2. 상세
 
@@ -59,12 +61,13 @@ sources:
 | Feature | 책임 | 카드 |
 |---|---|---|
 | feature-0001-platform-runtime | MySQL 8.0 / DAB 설정, SQL 유틸리티, replica 연결 정책, redo log 1 GiB | [[Features/feature-0001-platform-runtime\|카드]] |
-| feature-0002-agent-core | agent CLI / `agent_core.py` / modules / Postgres KB / insight worker | [[Features/feature-0002-agent-core\|카드]] |
-| feature-0003-agent-web-ui | FastAPI Web UI + 정적 자산 + audit subsystem + attachment + admin console | [[Features/feature-0003-agent-web-ui\|카드]] |
+| feature-0002-agent-core | agent core / 멀티 데이터소스(MySQL·MSSQL) / dialect / Postgres KB / insight worker | [[Features/feature-0002-agent-core\|카드]] |
+| feature-0003-agent-web-ui | FastAPI Web UI + 관리콘솔(데이터소스·대시보드·LLM사용량) + audit + 첨부 + ask-worker | [[Features/feature-0003-agent-web-ui\|카드]] |
 | feature-0004-browser-automation | Playwright 기반 browser 자동화 service | [[Features/feature-0004-browser-automation\|카드]] |
 | feature-0005-qa-mcp | MCP test + QA script | [[Features/feature-0005-qa-mcp\|카드]] |
 | feature-0006-lan-proxy-access | Caddy TLS + Windows LAN proxy + `X-Forwarded-For` trust 정책 | [[Features/feature-0006-lan-proxy-access\|카드]] |
 | feature-0007-bedrock-llm-provider | AWS Bedrock (Claude) gateway + per-user OpenAI key 폐기 | [[Features/feature-0007-bedrock-llm-provider\|카드]] |
+| feature-0008-windows-browser-testing | 실제 Windows 브라우저 AI 자동 검증 (PB-0008 · ADR-0029) | [[Features/feature-0008-windows-browser-testing\|카드]] |
 
 ### 2.2 핵심 결정 (ADR)
 
@@ -75,9 +78,12 @@ sources:
 - **ADR-0024** ([[Decisions/ADR-0024-postgres-database-isolation|mirror]]) — 단일 Postgres cluster + 별 database (`agent_kb` / `agent_drag`)
 - **ADR-0025** ([[Decisions/ADR-0025-m5-cleanup|mirror]]) — M5 cleanup 14-day window + Stage A/B/C boundary
 - **ADR-0026** ([[Decisions/ADR-0026-bedrock-llm-provider|mirror]]) — per-user OpenAI key → service-managed AWS Bedrock (Seoul region)
-- **ADR-0027** — agent_runtime Postgres schema 설계 + search_path 전역 변경 금지
-- **ADR-0028** — runtime 6 테이블 MySQL cleanup 14-day window + Stage A/B/C boundary (Phase 2 완료 2026-05-27)
+- **ADR-0027** ([[Decisions/ADR-0027-agent-runtime-pg-schema|mirror]]) — agent_runtime Postgres schema 설계 + search_path 전역 변경 금지 + AR-M4 read cutover
+- **ADR-0028** ([[Decisions/ADR-0028-runtime-mysql-cleanup|mirror]]) — runtime 6 테이블 MySQL cleanup 14-day window + Stage A/B/C (Phase 2 완료 2026-05-27)
+- **ADR-0029** ([[Decisions/ADR-0029-windows-browser-testing|mirror]]) — 실제 Windows 브라우저 AI 자동 검증 (PB-0008, feature-0008)
+- **ADR-0030** ([[Decisions/ADR-0030-ssrf-guard-toggle|mirror]]) — datasource SSRF 사설망 경계 env 토글 (Major 보안 저하, 사용자 승인)
 - **ADR-0022 / ADR-0023 / ADR-0025-pgvector** — TASK-0094 첨부 multi-cycle: MinIO storage + sandbox MySQL user 4종 + PGVector
+- **Unit-level 설계** — 멀티 데이터소스 (ADR-CORE-0002/03/04) · fork hybrid (ADR-WEB-0005) · ask-worker (ADR-WEB-0004) 는 unit `DECISIONS.md` 정본 ([[Decisions/_Index#21-unit-level-설계-결정-repo-adr-와-별개|MOC §2.1]]).
 
 [[Decisions/_Index|전체 Decisions MOC]] 참조.
 
@@ -85,23 +91,26 @@ sources:
 
 ```
 User → Caddy/web (TLS) → FastAPI (feature-0003)
-                              ├→ MySQL (agent_memory web* + replica data plane)
+                              ├→ MySQL agent_memory (web* RBAC/audit/auth)
                               ├→ MinIO (첨부 storage)
-                              └→ agent loop (feature-0002)
-                                    ├→ Bedrock gateway → Claude (feature-0007)
-                                    └→ Postgres agent_kb (KB + runtime state, pgvector)
+                              └→ /api/ask → ask_jobs 큐 → ask-worker
+                                    └→ agent loop (feature-0002)
+                                          ├→ Bedrock gateway → Claude (feature-0007)
+                                          ├→ Postgres agent_kb (KB + runtime, pgvector)
+                                          └→ 데이터소스 N (MySQL·MSSQL, registry+allowlist+dialect)
 ```
 
 > **2026-05-27**: agent runtime state (`agent*` 10 테이블) 가 MySQL → Postgres 이관 완료. MySQL `agent_memory` 에는 `web*` 18 테이블만 잔존.
+> **2026-06**: data plane 이 멀티 데이터소스 (MySQL·MSSQL) 로 일반화 + ask-worker 큐 cutover.
 
 자세한 그림과 trust boundary 는 [[Architecture/Data-Flow|Data Flow]] 참조.
 
-### 2.4 진행 중인 흐름
+### 2.4 진행 중인 흐름 / 최근 완료
 
-- **KB Postgres 이관 (Phase 1)** — M5 cleanup 완료 (2026-05-27). KB 5 정본 + View DROP. ADR-0021 / ADR-0025.
-- **agent runtime state Postgres 이관 (Phase 2)** — 완료 (2026-05-27). MySQL `agent*` 10 테이블 전체 DROP. Postgres `agent_runtime` 단일 정본. ADR-0027 / ADR-0028.
-- **다음: Phase 3** — `web*` 18 테이블 (RBAC / audit / auth) Postgres 이관. 미진행.
-- **TASK-0094 첨부 / sandbox / RAG multi-cycle** — Sprint 1 (MinIO + sandbox MySQL user + reconciliation worker) Ship, Sprint 2 vision ingest 진행. ADR-0022 / ADR-0023 / ADR-0025-pgvector mirror.
+- **멀티 데이터소스 (2026-06)** — Stage 1 P1 (multi-MySQL) + datasource registry 암호화 (TASK-0205) + DB-단위 접근 (TASK-0206) + datasource-aware insight (TASK-0219) 배포·라이브검증 완료. MSSQL 실연결 검증 (제품90). 다음 = Stage 2 MSSQL 전면 / P2 UI. [[concepts/multi-datasource]].
+- **관리 콘솔 성숙 (2026-06)** — 대시보드 위젯화·CloudWatch (TASK-0210/0218), LLM 사용량 대시보드 (TASK-0163~0202), 제품 insight 완료율·DB별 파악내용 (TASK-0223/0242).
+- **ask-worker out-of-process (2026-06)** — `ask_jobs` 큐 + ask-worker 서비스 cutover (TASK-0169). orphan-on-redeploy 제거. [[concepts/ask-worker-queue]].
+- **storage Postgres 단일화 (완료 2026-05-27)** — KB (Phase 1, ADR-0021/0025) + runtime (Phase 2, ADR-0027/0028) 이관 완료. 다음 Phase 3 = `web*` 18 테이블 (미진행).
 - **자동화 폐기 → 수동 PR 흐름** — ADR-0018 (`ai-*` 워크플로 폐기, 단순화).
 
 ## 3. 외부 source 합성
@@ -119,7 +128,7 @@ User → Caddy/web (TLS) → FastAPI (feature-0003)
 
 ### 3.2 합성된 결론
 
-> 합성: 본 프로젝트는 *기존 운영 자산의 구조 이관* 으로 시작 (ADR-0012~0014) → *Plan-Review-Execute + playbook 도입* (ADR-0016) → *GitHub 자동화 폐기 + 단순 PR 흐름* (ADR-0018) → *audit subsystem + KB Postgres 분리 + Bedrock 통합* (ADR-0019/0021/0026) → *첨부 multi-cycle* (ADR-0022/0023/0025) 의 4 단계로 진화했다. 정본 docs 의 ADR 표 그대로의 mirror.
+> 합성: 본 프로젝트는 *기존 운영 자산의 구조 이관* 으로 시작 (ADR-0012~0014) → *Plan-Review-Execute + playbook 도입* (ADR-0016) → *GitHub 자동화 폐기 + 단순 PR 흐름* (ADR-0018) → *audit subsystem + KB Postgres 분리 + Bedrock 통합* (ADR-0019/0021/0026) → *첨부 multi-cycle* (ADR-0022/0023/0025) → *storage Postgres 단일화* (ADR-0027/0028, 2026-05) → *멀티 데이터소스 (MySQL·MSSQL) + envelope 암호화 registry + DB-단위 접근* (ADR-CORE-*, 2026-06) → *관리 콘솔 성숙 + ask-worker out-of-process* 로 진화했다. 단일 MySQL DBA 도구에서 **다중 엔진 데이터소스 분석 플랫폼**으로 범위가 확장된 것이 2026-06 의 핵심 서사.
 
 ### 3.3 미해결 contradiction
 
@@ -129,14 +138,16 @@ User → Caddy/web (TLS) → FastAPI (feature-0003)
 
 - *통합 테스트 자동화 부재* — `repo/tests/integration/` 가 구조만 갖춤. ([[../docs/ARCHITECTURE|ARCHITECTURE §7]])
 - *Bedrock model deprecation drift* — `litellm_config.yaml` 의 versioned model ID 가 AWS rotation 에 끌려간다 (ADR-0026 Consequences).
-- *production-like baseline 부재* — KB Postgres p99 latency / `make ask` 회귀가 INCONCLUSIVE 인 상태로 cutover 진행 (ADR-0025).
-- *wiki layer 의 stale risk* — 정본 변경 시 mirror 가 자동 update 되지 않는다. v3.13.0 의 `check #12` 는 WARN-only, v3.14.0+ 에서 BLOCK 격상 예정 (`AGENTS.md §21.4`).
+- *MSSQL synonym/view = GRANT hard boundary* — DB-단위 allowlist 가 synonym/view 의 underlying object 까지 강제하지 못함 (accepted-risk, [[concepts/db-level-access]]).
+- *SSRF 사설망 경계 OFF* — 운영이 `AGENT_DATASOURCE_SSRF_GUARD_ENABLED=0` (사내 사설망 전제). 메타데이터 IP 는 하드차단 유지 ([[Decisions/ADR-0030-ssrf-guard-toggle]]).
+- *wiki layer 의 stale risk* — 정본 변경 시 mirror 가 자동 update 되지 않는다. v3.13.0 의 `check #12` 는 WARN-only. (본 갱신이 2026-05-28 → 2026-06-12 drift 를 해소.)
 
 ## 5. 다음 단계
 
-- M5-implementation cycle — `_DualWriteMirror` + 5 caller mirror call 코드 삭제 (ADR-0025).
-- per-user / per-role token quota — 배포 후 비용 가시화 시점 별 cycle (ADR-0026 후속 액션).
-- Sprint 4 D RAG — `agent_drag` namespace + PGVector compose service 추가 (ADR-0024 / ADR-0025-pgvector).
+- **멀티 데이터소스 Stage 2 / P2** — MSSQL 전면 (§9/§10 합격선) + datasource UI (P2). [[concepts/multi-datasource]].
+- **메인 loop tier 라우팅** — LLM 사용량 대시보드 follow-up: 메인 추론의 edge/auto tier 라우팅 부재 (현재 claude 만). [[Decisions/ADR-0026-bedrock-llm-provider]].
+- **Phase 3 web\* 이관** — `web*` 18 테이블 (RBAC/audit/auth) Postgres 이관 (미진행).
+- **Sprint 4 D RAG** — `agent_drag` namespace + PGVector compose service 추가 (ADR-0024 / ADR-0025-pgvector).
 
 ## 6. 관련 문서
 

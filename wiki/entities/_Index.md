@@ -19,7 +19,7 @@ ai_generated: true
 | 항목 | 값 |
 |---|---|
 | 분류 | `#wiki/index` |
-| 등록 entity | 9 |
+| 등록 entity | 10 |
 
 ## 목차
 
@@ -40,7 +40,7 @@ ai_generated: true
 | 분류 | 예시 |
 |---|---|
 | 인물 (Person) | Andrej Karpathy |
-| 도구 (Tool) | MySQL · Postgres · MinIO · LiteLLM · Playwright · Caddy · Obsidian |
+| 도구 (Tool) | MySQL · MSSQL · Postgres · MinIO · LiteLLM · Playwright · Caddy · Obsidian |
 | 조직 (Organization) | (없음) |
 | 프로토콜 (Protocol) | (없음) |
 
@@ -49,6 +49,7 @@ ai_generated: true
 | Entity | Type | Tags | Page |
 |---|---|---|---|
 | MySQL 8.0 | tool | `#mysql #db` | [[mysql]] |
+| Microsoft SQL Server (MSSQL) | tool | `#mssql #datasource` | [[mssql]] |
 | PostgreSQL 16 (pgvector) | tool | `#postgres #pgvector` | [[postgres]] |
 | AWS Bedrock | tool | `#aws #bedrock #llm` | [[aws-bedrock]] |
 | LiteLLM proxy | tool | `#litellm #gateway` | [[litellm]] |
