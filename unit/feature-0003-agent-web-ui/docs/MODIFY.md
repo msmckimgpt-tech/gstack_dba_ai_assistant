@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0249b
+- Date: 2026-06-12
+- Task: TASK-0249 PB-0008 Windows-browser 시각검증 evidence 후속 (코드 변경 0 — REV-20260612-0249 적대 리뷰 SHIP·main `12f5c5e` 머지 완료 이후).
+- 변경: `docs/TEST.md` §4 Windows-browser Run 기록 + `tests/win-browser-task0249-coverage.scenario.json`(시각검증 시나리오) 추가 + `docs/FUNCTION.md` AC-0462 PB-0008 완료 표기 + `docs/TASK.md`/`docs/REVIEW.md` 검증 결과 기록.
+- 검증 결과(PB-0008 Windows Chrome/148, 배포 main `12f5c5e`): 제품94 요약 100%(571/571), datasource accordion 별 dbgame(player) 99/99·dbcommon(common, 타 서버) 111/111·dbauth(auth, 타 서버) 10/10 각 마이크로바 100%·DB✓ 시각 실증 — 0/0 해소. 스크린샷 `/tmp/win-browser-shots/task0249/{10,11,12}*.png`.
+- 비변경: src 코드 0(evidence·docs only). REV-20260612-0251 [SKIPPED:visual-verify-followup] PASS.
+- Files: unit/feature-0003-agent-web-ui/docs/{TEST,FUNCTION,TASK,REVIEW}.md, unit/feature-0003-agent-web-ui/tests/win-browser-task0249-coverage.scenario.json
+
 ## CHG-20260612-0248
 - Date: 2026-06-12 (TASK-0248, **Major §12.3** — 관리 콘솔 제품 삭제 시 참조 대화 차단(blocked) 전환; 스키마는 feature-0002 CHG-20260612-0248)
 - Scope: agent-web-ui — 제품 삭제가 참조 대화를 거부(400)하던 가드 제거 → 삭제 허용 + 그 제품 pinned 대화를 **차단(blocked)** 으로 전환(이력 열람·공유는 가능, 새 메시지 진행 불가).

@@ -1,0 +1,26 @@
+{
+  "name": "TASK-0249 제품 insight 완료율 멀티 datasource — 제품94(KR_QA) 각 DB 0/0 아닌 실수치 + 마이크로바 (authed admin)",
+  "base_url": "https://localhost:18080",
+  "shot_dir": "/tmp/win-browser-shots/task0249",
+  "steps": [
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "eval", "script": "(async()=>{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'bootstrap_admin',password:'ChangeThisBootstrapPass_2026!'})});const j=await r.json();return JSON.stringify({login_ok:j.ok});})()", "stop_on_fail": false},
+    {"action": "goto", "url": "/admin", "wait_until": "domcontentloaded"},
+    {"action": "wait_for", "selector": "button[data-admin-tab=products]", "timeout_ms": 20000},
+    {"action": "wait_for", "timeout_ms": 1200, "stop_on_fail": false},
+    {"action": "click", "selector": "button[data-admin-tab=products]"},
+    {"action": "wait_for", "timeout_ms": 2000, "stop_on_fail": false},
+    {"action": "click", "selector": "#productSearch"},
+    {"action": "type", "selector": "#productSearch", "text": "킹스레이드", "stop_on_fail": false},
+    {"action": "wait_for", "timeout_ms": 1500, "stop_on_fail": false},
+    {"action": "click", "selector": "#productList .admin-list-row[data-product-id='94']", "stop_on_fail": false},
+    {"action": "wait_for", "selector": "#productDetail .ds-acc-row", "timeout_ms": 15000, "stop_on_fail": false},
+    {"action": "eval", "script": "(async()=>{var btn=document.querySelector('#productDetail .cov-refresh');if(btn)btn.click();await new Promise(r=>setTimeout(r,200));return JSON.stringify({refreshClicked:!!btn});})()", "stop_on_fail": false},
+    {"action": "wait_for", "timeout_ms": 9000, "stop_on_fail": false},
+    {"action": "eval", "script": "(function(){var heads=document.querySelectorAll('#productDetail .ds-acc-head');heads.forEach(function(h){if(!h.closest('.ds-acc-row').classList.contains('is-active'))h.click();});return JSON.stringify({headsClicked:heads.length});})()", "stop_on_fail": false},
+    {"action": "wait_for", "timeout_ms": 3500, "stop_on_fail": false},
+    {"action": "eval", "script": "(function(){var cov=null;try{cov=JSON.parse(JSON.stringify(window.__lastCov||{}));}catch(e){}var rows=document.querySelectorAll('#productDetail .cov-db-row');var out=[];var zeroZero=0,withBar=0,measured=0;rows.forEach(function(r){var n=r.querySelector('.cov-db-name');var stat=r.querySelector('.cov-db-stat');var bar=r.querySelector('.cov-microbar-fill');var status=r.querySelector('.cov-db-status');var statTxt=stat?stat.textContent.trim():'';if(/^0\\s*\\/\\s*0$/.test(statTxt))zeroZero++;if(bar)withBar++;if(/\\d+\\s*\\/\\s*\\d+/.test(statTxt)&&!/^0\\s*\\/\\s*0$/.test(statTxt))measured++;out.push({db:n?n.textContent.trim():null,stat:statTxt,bar:bar?bar.style.width:null,status:status?status.textContent.trim():null});});var sumChip=document.querySelector('#productDetail .cov-summary-chip,#productDetail .cov-refresh');var sumTxt='';var head=document.querySelector('#productDetail .cov-head, #productDetail [class*=cov-]');return JSON.stringify({covRowCount:out.length,zeroZeroCount:zeroZero,withMicrobar:withBar,measuredCount:measured,rows:out});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "01_product94_all_ds_expanded.png", "full_page": true},
+    {"action": "eval", "script": "(function(){var sc=document.querySelector('#productDetail');var t=sc?sc.innerText:'';var m=t.match(/insight 분석 완료율[^\\n]*\\n?[^\\n]*/);return JSON.stringify({summarySnippet:(m?m[0]:'').slice(0,120)});})()", "stop_on_fail": false}
+  ]
+}

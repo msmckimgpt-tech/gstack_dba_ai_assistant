@@ -26,6 +26,13 @@ source_of_truth: true
 - **프런트 M-2(admin.js 무관 변경 혼입 의혹) = 오탐 확정**: 리뷰어가 `git diff main`(=stale base ff59f8f)을 봄. origin/main(f2a390b)이 base 이후 PR #196(conn-health-monitor)로 전진했고, `git diff HEAD` 기준 본 cycle 실작업은 TASK-0248 9개 파일뿐(conn-health 혼입 0). **머지 전 origin/main 위로 rebase 완료**(admin.html 캐시버스터 충돌 1건 해결, app.py/admin.js 자동 병합으로 conn-health+TASK-0248 양립 — node --check/py_compile/make test 600 passed·2 skip·신규 7 PASS 재검증).
 - 검증: node --check(app.js·admin.js) + py_compile(app.py·alembic) + CSS brace 1108=1108 + make test 컨테이너 **전체 회귀 0**(600 passed/2 skip) + 신규 `test_product_delete_block_conv.py` **7 PASS**.
 - Cross-ref: feature-0002(스키마 blocked_at/blocked_reason + alembic 0005_core_conv_blocked) / CHG-20260612-0248 / TASK-0248.
+## REV-20260612-0251 [SKIPPED:visual-verify-followup] — PASS
+- Related TASK: feature-0003-agent-web-ui (TASK-0249 — PB-0008 Windows-browser 시각검증 evidence 후속)
+- Reason: 코드 변경 0(이미 REV-20260612-0249 에서 적대 리뷰 SHIP·머지 완료). 본 cycle 은 TEST.md §4 Run 기록 + win-browser 시나리오 파일 추가뿐 — 시각검증 evidence 영속화. 신규 로직/엔드포인트/권한 표면 0.
+- 검증 결과: PB-0008 Windows Chrome/148 PASS — 제품94 요약 100%(571/571), datasource accordion 별 dbgame 99/99·dbcommon 111/111·dbauth 10/10 마이크로바·DB✓ 시각 실증(0/0 해소). 스크린샷 `/tmp/win-browser-shots/task0249/{10,11,12}*.png`.
+- Timestamp: 2026-06-12T00:00:00Z
+- Human Approval Needed: no
+- Cross-ref: REV-20260612-0249 / TASK-0249 / TEST.md §4 2026-06-12.
 
 ## REV-20260612-0250 [SUBAGENT:conn-health-monitor-adversarial] — SHIP-WITH-FIXES (cross-feature, 코어=feature-0002)
 - Date: 2026-06-12
