@@ -8,6 +8,25 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0248 [SUBAGENT:security+correctness-adversarial, 2-agent] — SHIP-WITH-FIXES → 흡수 후 SHIP
+- Date: 2026-06-12
+- Cycle: TASK-0248 (관리 콘솔 제품 삭제 시 참조 대화 차단(blocked) 전환 — **Major §12.3**, 파괴적 삭제 + 접근 차단 + cross-store)
+- 패널: 적대적 outside-voice 2-agent 병렬 — (A) 백엔드 보안/정합성(SQL 바인딩·오차단·cross-store fail-closed·conn 누수·멱등·컬럼부재·split-brain), (B) 프런트 우회/요구사항 정합(canAsk/sendPrompt 우회·공유/이력/fork 충족).
+- **백엔드 VERDICT: SHIP-WITH-FIXES (BLOCKER 0)**. probe 판정:
+  - ① UPDATE/SELECT 파라미터 바인딩·순서 — **PASS**(PG/MySQL 양 경로 `(reason, product_id)` placeholder 순서 정확, 전부 parametrized, 인젝션 불가; `test_block_conversations_for_product_sql` 가 순서 고정).
+  - ② 타 제품/auto(NULL) 오차단 — **PASS**(`WHERE product_id = %s AND blocked_at IS NULL` — SQL 3-value logic 으로 NULL product_id 미매칭, 타 제품 불가침).
+  - ③ cross-store fail-closed 백스톱 진위 — **PASS(가설 반증)**. pinned 대화: 제품 cascade 삭제로 `WebProducts` 행 소멸 → `_account_has_product_access(<deleted_id>)` 가 행 없음 → False → `/api/ask` 403. 차단 UPDATE 실패와 무관하게 진행 차단. **허구 아님**(BLOCKER 회피).
+  - ④ ask 403 경로 conn 누수/이중 close — **PASS**(`_conversation_block_info(conn=conn)` 의 `own_conn=False` → 전달 conn 미close, PG 모드는 별도 `_pg_connect` 만 open/close; ask 가 1회 close 후 return — 이중 close/누수 없음).
+  - ⑤ 멱등성 — **PASS**(재차단 방지 `blocked_at IS NULL`, `product_id<=0/None` early-return, 삭제 제품 재삭제 무해).
+  - ⑥ PG 컬럼 런타임 부재 시 500 — **FAIL(MAJOR)**. `_conversation_block_info` 는 except fail-open 으로 안전하나, `_list_conversations_pg` 메인 SELECT(except 없이 finally 만)와 `admin_delete_product` COUNT 는 가드 없어 `UndefinedColumn` → 500. → **운영 절차로 흡수**(아래).
+  - ⑦ COUNT/block backend 판정 일치(split-brain) — **PASS**(`_runtime_backend_is_pg()` ≡ `os.environ AGENT_RUNTIME_READ_BACKEND == postgres`, 둘 다 동일 리터럴 조건 — 단일 요청 내 분기 불일치 없음).
+  - list row unpack 7컬럼 일치(PG positional / MySQL dict-access) **PASS**, blocked JSON PG/MySQL parity **PASS**.
+- **MAJOR-1/2 (probe ⑥) 흡수 결정 = 운영 절차(코드 무변경)**: 이 프로젝트는 **migrate-first 가 명시적 배포 계약**(TASK-0149/MIGRATIONS.md, web=DML-only role 이라 런타임 ALTER 불가). 과거 additive 컬럼(`resolved_model`, TASK-0163)도 동일하게 degrade 가드 없이 처리한 기존 패턴. degrade 가드 추가는 PG tx abort 처리 복잡도+회귀 위험 도입 → **배포 E 단계가 `make migrate`(alembic 0005) 를 web 재빌드 *전* hard precondition 으로 못 박고, 라이브 F 검증에서 `SELECT blocked_at` 컬럼 존재를 psql 로 실측 게이트**. MINOR(fail-open auto-모드 사각=`allowed_schemas=[]` 로 데이터 누출 0; PG commit-직전-예외 close 암묵 rollback)은 수용.
+- **프런트 VERDICT: SHIP (BLOCKER/MAJOR 0)**. 우회 송신 경로 전수 조사 — `/api/ask` 호출 진입점은 `sendPrompt()` 단 하나(sendBtn click·Enter keydown 모두 경유), 시작부 `active.blocked` 가드 + `promptInputEl.disabled = busy || isBlocked` + 백엔드 403 이중 차단 → 우회 불가(UX 결함조차 아님). 요구사항: **공유 가능 O**(share-create 에 blocked 제한 미추가), **이력 열람 O**(renderMessages blocked 미참조, CSS dim/line-through 가 `pointer-events` 미차단), **fork 가능 O**(canFork blocked 미참조, composer 안내문과 동작 일치). renderComposer 분기 우선순위 정상(!hasAsk > isBlocked > 타계정 > busy). MINOR(blocked+busy 동시 시 "중단버튼+차단안내" cosmetic 공존 — sendPrompt busy early-return 으로 우회 불가, run 종료 후 수렴) 수용.
+- **프런트 M-2(admin.js 무관 변경 혼입 의혹) = 오탐 확정**: 리뷰어가 `git diff main`(=stale base ff59f8f)을 봄. origin/main(f2a390b)이 base 이후 PR #196(conn-health-monitor)로 전진했고, `git diff HEAD` 기준 본 cycle 실작업은 TASK-0248 9개 파일뿐(conn-health 혼입 0). **머지 전 origin/main 위로 rebase 완료**(admin.html 캐시버스터 충돌 1건 해결, app.py/admin.js 자동 병합으로 conn-health+TASK-0248 양립 — node --check/py_compile/make test 600 passed·2 skip·신규 7 PASS 재검증).
+- 검증: node --check(app.js·admin.js) + py_compile(app.py·alembic) + CSS brace 1108=1108 + make test 컨테이너 **전체 회귀 0**(600 passed/2 skip) + 신규 `test_product_delete_block_conv.py` **7 PASS**.
+- Cross-ref: feature-0002(스키마 blocked_at/blocked_reason + alembic 0005_core_conv_blocked) / CHG-20260612-0248 / TASK-0248.
+
 ## REV-20260612-0250 [SUBAGENT:conn-health-monitor-adversarial] — SHIP-WITH-FIXES (cross-feature, 코어=feature-0002)
 - Date: 2026-06-12
 - Cycle: TASK-0250 (연결 health 모니터 — web/admin 측, **Major §12.3**)

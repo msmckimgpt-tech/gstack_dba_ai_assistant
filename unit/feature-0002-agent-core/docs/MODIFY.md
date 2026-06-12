@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0248
+- Date: 2026-06-12 (TASK-0248, **Major §12.3** — 관리 콘솔 제품 삭제 시 참조 대화 차단(blocked) 전환; 주 변경은 web feature-0003 CHG-20260612-0248. 본 항목은 **스키마/마이그레이션 영향만**)
+- Scope: agent-core — `agent_runtime.core_conversations` 에 차단 플래그 컬럼 2개 additive 추가(데이터 무손실 — 기존 행 blocked_at=NULL=미차단).
+- 변경:
+  - `src/scripts/agent_runtime_schema.sql`: `core_conversations` CREATE TABLE 에 `blocked_at timestamptz`/`blocked_reason varchar(256)` + 기존 테이블 self-heal 용 멱등 `ALTER ... ADD COLUMN IF NOT EXISTS`(alembic 미적용 환경).
+  - `alembic/versions/20260612_0005_core_conv_blocked.py`: **신규 마이그레이션**. revision=`0005_core_conv_blocked`, down_revision=`0004_rag_objects_datasource`. UPGRADE=`ADD COLUMN IF NOT EXISTS blocked_at timestamptz`/`blocked_reason varchar(256)`, DOWNGRADE=DROP COLUMN IF EXISTS. **web 컨테이너는 DML-only role 이라 런타임 ALTER 불가 → 본 마이그레이션(superuser offline SQL)이 PG 정본 적용 경로**.
+- 비변경: agent-core 런타임 코드(insight/ask/agent_core)·다른 스키마·index/trigger/FK 0. 차단 가드는 전부 web `/api/ask`(feature-0003)에서 enqueue 前 수행, PG upsert 는 blocked 컬럼 미참조.
+- 검증: py_compile(alembic 0005) + make test 컨테이너 전체 회귀 0. Cross-ref: feature-0003 CHG-20260612-0248 / REV-20260612-0248 / TASK-0248. 배포 시 `make migrate`(alembic 0005) 를 web 재빌드 *전* 적용.
+
 ## CHG-20260612-0250
 - Date: 2026-06-12 (TASK-0250, **Major §12.3** — 연결 health 모니터; 동시세션 0248·0249 선점→§13.1 재번호 0250)
 - Scope: agent-core — TASK-0247 in-process breaker 를 **background Connection Health Monitor** 로 진화. 한 datasource 불안정이 단일 직렬 ask-worker(및 관리 콘솔 probe)를 점유해 정상 datasource 요청을 막던 잔여 경로를 background 사전판정으로 차단.

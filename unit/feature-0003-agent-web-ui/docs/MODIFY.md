@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0248
+- Date: 2026-06-12 (TASK-0248, **Major §12.3** — 관리 콘솔 제품 삭제 시 참조 대화 차단(blocked) 전환; 스키마는 feature-0002 CHG-20260612-0248)
+- Scope: agent-web-ui — 제품 삭제가 참조 대화를 거부(400)하던 가드 제거 → 삭제 허용 + 그 제품 pinned 대화를 **차단(blocked)** 으로 전환(이력 열람·공유는 가능, 새 메시지 진행 불가).
+- 변경:
+  - `src/app.py`:
+    - 신규 상수 `_BLOCKED_PRODUCT_DELETED_REASON` + `_conversation_block_info(cid, *, conn=None)`(backend-aware 차단 상태 조회, 조회실패 fail-open — PG 모드는 `_pg_connect` 별도 open/close, 전달 conn 미close) + `_block_conversations_for_product(pid, reason, *, conn=None)`(`UPDATE agent_runtime.core_conversations SET blocked_at=now(), blocked_reason=%s WHERE product_id=%s AND blocked_at IS NULL` PG 정본 / MySQL 폴백, 재차단 방지, rowcount 반환).
+    - `admin_delete_product`: `in_use>0` 거부(400) **제거** → 미차단 참조 COUNT(`... AND blocked_at IS NULL`) 산출 → 기존 WebProducts cascade 삭제 commit → **commit 후** `_block_conversations_for_product` 호출(cross-store) → 응답 `{ok, product_id, blocked_conversations}` + audit change_json `referencing_conversations`.
+    - `ask`(기존대화 분기): 소유권 체크 직후 `_conversation_block_info` → blocked 면 403(slot 획득 前, conn.close 후 return).
+    - `_list_conversations_pg`(SELECT + item) 및 MySQL `_list_conversations` parity 에 `blocked`/`blocked_at`/`blocked_reason` 필드 추가(동일 계약).
+    - MySQL `_ensure_web_tables` 폴백: `AgentCoreConversations` 에 `blocked_at DATETIME`/`blocked_reason VARCHAR(256)` 멱등 ALTER(try/except).
+  - `src/static/app.js`: `canAskInConversation`(blocked→false) + `sendPrompt` 차단 가드(토스트) + `renderComposer`(isBlocked → 입력창 disabled·전송버튼 aria-disabled·"차단된 대화" 안내, busy/권한 분기 우선순위 정렬) + `renderConversationHeader`(부제 맨앞 "🚫 차단됨") + `renderConversationList`(`.is-blocked` 행 + "차단" 배지).
+  - `src/static/styles.css`: `.conv-item.is-blocked`(opacity .72 + 제목 line-through) + `.conv-item-blocked-badge`(danger 토큰 `--danger`/`--danger-soft`).
+  - `src/static/admin.js`: 삭제 confirm 문구("참조 대화는 '차단' 상태로 전환·되돌릴 수 없음") + 결과 토스트(`삭제됨 (대화 N개 차단)`).
+  - `src/static/index.html`·`admin.html`: 캐시버스터 `?v=20260612-task0248-blocked-conv`(styles.css·app.js·admin.js).
+- 비변경: RBAC 권한 카탈로그(product.manage·conversation.ask 재사용)·신규 엔드포인트 0·share-create 제한 0·fork 동작 0(접근불가 제품 auto 강등 정합 보존).
+- 검증: node --check(app.js·admin.js) + py_compile(app.py) + CSS brace 1108=1108 + make test 컨테이너 회귀 0(600 passed/2 skip) + 신규 7 PASS. outside-voice REV-20260612-0248 SHIP. 잔여: 배포(make migrate 先) + 라이브 + PB-0008.
+
 ## CHG-20260612-0250
 - Date: 2026-06-12 (TASK-0250, **Major §12.3** — 연결 health 모니터; web/admin 측. 코어는 feature-0002 CHG-20260612-0250)
 - Scope: agent-web-ui — 관리 콘솔 datasource 연결상태를 **백그라운드 모니터가 사전계산한 값으로 즉시 표시**(per-item lazy `/test` probe + 4-cap 세마포어 자동경로 폐기) + web 프로세스에 conn_health 모니터 기동.

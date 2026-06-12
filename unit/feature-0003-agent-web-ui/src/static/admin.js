@@ -5678,11 +5678,16 @@ function renderProductDetail() {
     deleteBtn.className = "btn-secondary danger";
     deleteBtn.textContent = "삭제";
     deleteBtn.addEventListener("click", async () => {
-      if (!window.confirm(`${product.name} 제품을 삭제할까요? (참조 대화가 있으면 실패합니다)`)) return;
+      // TASK-0248: 참조 대화가 있어도 삭제 가능 — 그 대화는 차단(진행 불가, 이력 열람·공유는 가능)으로 전환된다.
+      if (!window.confirm(
+        `${product.name} 제품을 삭제할까요?\n\n이 제품을 참조하는 대화가 있으면 더 이상 진행할 수 없는 ` +
+        `'차단' 상태로 전환됩니다 (이력 열람·공유는 가능). 이 작업은 되돌릴 수 없습니다.`
+      )) return;
       try {
-        await apiFetch(`/api/admin/products/${Number(product.id)}`, { method: "DELETE" });
+        const result = await apiFetch(`/api/admin/products/${Number(product.id)}`, { method: "DELETE" });
         adminState.selectedProductId = null;
-        showToast("삭제됨");
+        const blockedN = Number(result?.blocked_conversations || 0);
+        showToast(blockedN > 0 ? `삭제됨 (대화 ${blockedN}개 차단)` : "삭제됨");
         await loadAdminData();
       } catch (error) {
         showToast(error.message || "삭제 실패", true);
