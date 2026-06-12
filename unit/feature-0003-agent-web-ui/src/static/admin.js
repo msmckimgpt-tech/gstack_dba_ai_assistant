@@ -34,6 +34,10 @@ const adminState = {
   // TASK-0223: 제품별 insight-worker 분석 완료율 (productId -> {pct, analyzed_objects, total_objects, per_db[], measurable, reason, engine}).
   productCoverage: new Map(),
   productCoverageLoading: false,
+  // TASK-0242: 제품 datasource 별 DB insight 파악 내용 (key `${pid}::${dsKey}` -> {ok, by_db{<db>:{...}}, worker, scope, engine}).
+  //  coverage 가 '얼마나'면 이건 '무엇을(역할/도메인)' — 각 DB 행 한 줄 설명 + 추가 picker 상태 표시용.
+  productDbInsights: new Map(),
+  productDbInsightsLoading: new Set(),   // 로딩 중인 key(`${pid}::${dsKey}`) 집합
   availableDatabases: { metadata_schemas: [], user_schemas: [] },
   // TASK-0210: 대시보드 위젯 그리드 상태(서버 집계 + per-account 커스터마이즈).
   overview: null,            // GET /api/admin/overview 응답 {catalog, widgets, window_days}
@@ -4228,6 +4232,13 @@ async function loadAdminData() {
 // TASK-0223: 제품별 insight-worker 분석 완료율 로드 (목록/상세 배지·breakdown).
 async function loadProductInsightCoverage({ refresh = false, productId = null } = {}) {
   if (!can("console.access")) return;
+  // TASK-0242: 완료율 새로고침 시 DB insight 캐시도 무효화 → 재렌더(_ensureDbInsights)가 최신 파악내용 재조회.
+  if (refresh) {
+    const _pfx = productId ? `${Number(productId)}::` : null;
+    Array.from(adminState.productDbInsights.keys()).forEach((k) => {
+      if (!_pfx || String(k).startsWith(_pfx)) adminState.productDbInsights.delete(k);
+    });
+  }
   adminState.productCoverageLoading = true;
   // 로딩 표시 즉시 반영 (배지가 "측정 중…" 으로 보이게)
   renderProductList();
@@ -4252,6 +4263,36 @@ async function loadProductInsightCoverage({ refresh = false, productId = null } 
     adminState.productCoverageLoading = false;
     renderProductList();
     if (adminState.selectedProductId) renderProductDetail();
+  }
+}
+
+// TASK-0242: 제품의 한 datasource scope 에서 DB(schema)별 insight 파악 내용 로드.
+//  key = `${pid}::${dsKey}`(dsKey 미지정 = primary/legacy). 캐시 + 진행 중 중복요청 차단.
+function _dbInsightsKey(pid, dsKey) {
+  return `${Number(pid)}::${String(dsKey || "").trim().toLowerCase()}`;
+}
+async function loadProductDbInsights({ productId, datasourceKey = "", refresh = false, onDone = null } = {}) {
+  if (!can("console.access")) { if (onDone) onDone(); return; }
+  const key = _dbInsightsKey(productId, datasourceKey);
+  if (!refresh && adminState.productDbInsights.has(key)) { if (onDone) onDone(); return; }
+  if (adminState.productDbInsightsLoading.has(key)) return;  // 진행 중 — 중복요청 차단
+  adminState.productDbInsightsLoading.add(key);
+  try {
+    const dsk = String(datasourceKey || "").trim();
+    const url = `/api/admin/products/${encodeURIComponent(productId)}/db-insights`
+      + (dsk ? `?datasource=${encodeURIComponent(dsk)}` : "");
+    const payload = await apiFetch(url).catch((error) => {
+      if (error.status === 403 || error.status === 400) return { ok: false, by_db: {}, worker: {} };
+      throw error;
+    });
+    adminState.productDbInsights.set(key, payload || { ok: false, by_db: {}, worker: {} });
+  } catch (error) {
+    // 파악 내용 로드 실패는 비치명적 — 콘솔만 남기고 "역할 미파악" fallback.
+    console.warn("db insight 로드 실패:", error);
+    adminState.productDbInsights.set(key, { ok: false, by_db: {}, worker: {} });
+  } finally {
+    adminState.productDbInsightsLoading.delete(key);
+    if (onDone) onDone();
   }
 }
 
@@ -4430,6 +4471,58 @@ function buildDbCoverageCells(covRow, measuring) {
     status.textContent = covRow.schema_analyzed ? "DB✓" : "DB✗";
   }
   frag.append(bar, stat, status);
+  return frag;
+}
+
+// TASK-0242: 등록 DB 행의 "insight-worker 설명" 한 줄 셀. insRow = by_db[<db_lower>] (없으면 null).
+//  파악된 역할/도메인을 한 줄로(overflow ellipsis), 전문은 hover title(detail_text)로.
+function buildDbRoleCell(insRow, { loading = false } = {}) {
+  const el = document.createElement("span");
+  el.className = "cov-db-role";
+  if (insRow && insRow.description) {
+    el.textContent = insRow.description;
+    el.title = insRow.detail_text || insRow.description;
+  } else if (loading) {
+    el.classList.add("cov-db-role-muted");
+    el.textContent = "역할 파악 중…";
+  } else {
+    el.classList.add("cov-db-role-muted");
+    el.textContent = "역할 미파악";
+    el.title = "insight-worker 가 아직 이 DB 의 역할을 파악하지 않았습니다.";
+  }
+  return el;
+}
+
+// TASK-0242: 추가 picker 항목의 도메인 힌트 + 분석 상태(미분석/분석중/분석됨) 메타.
+//  분석됨 = rag_objects 보유(analyzed_objects>0). 분석중 = 보유 0 + insight-worker 활성(heartbeat fresh). 그 외 미분석.
+function buildPickerInsightMeta(insRow, worker) {
+  const frag = document.createDocumentFragment();
+  const analyzed = !!(insRow && (insRow.analyzed_objects || 0) > 0);
+  const alive = !!(worker && worker.alive);
+  const dom = insRow && insRow.domain;
+  if (dom) {
+    const d = document.createElement("span");
+    d.className = "admin-db-picker-domain";
+    d.textContent = dom;
+    d.title = (insRow && insRow.description) || dom;
+    frag.appendChild(d);
+  }
+  const st = document.createElement("span");
+  st.className = "admin-db-picker-status";
+  if (analyzed) {
+    st.classList.add("is-done");
+    st.textContent = "분석됨";
+    st.title = (insRow && insRow.description) || `분석 객체 ${insRow.analyzed_objects}개`;
+  } else if (alive) {
+    st.classList.add("is-running");
+    st.textContent = "분석중";
+    st.title = "insight-worker 가 활성 상태입니다. 추가하면 다음 cycle 에 분석됩니다.";
+  } else {
+    st.classList.add("is-none");
+    st.textContent = "미분석";
+    st.title = "아직 분석된 내용이 없습니다. 추가하면 insight-worker 가 분석합니다.";
+  }
+  frag.appendChild(st);
   return frag;
 }
 
@@ -4878,6 +4971,7 @@ function renderProductDetail() {
   const canDs = can("console.manage");
   let _refreshAccessibleDbs = () => {};
   let _renderDsAccordion = () => {};
+  let _ensureDbInsights = () => {};  // TASK-0242: 편집 대상 datasource 의 DB insight 지연로드 hook(정의 후 채움)
   // TASK-0239: 초기 펼침 대상 = effective(desired 우선) 바인딩의 primary(또는 첫째). 스테이징된
   //  추가/제거/기본지정이 있으면 그 상태를 반영해 패널 재진입 시에도 일관되게 펼친다.
   const _effInit = effectiveProductDatasources(product);
@@ -4943,6 +5037,10 @@ function renderProductDetail() {
   // 연속 토글 가능. 선택 즉시 draft 에 반영(추가 버튼 불필요).
   const buildPicker = () => {
     pickerDropList.innerHTML = "";
+    // TASK-0242: 추가 후보 DB 의 분석 상태/도메인 힌트(편집 대상 datasource 의 insight 캐시).
+    const _pkIns = adminState.productDbInsights.get(_dbInsightsKey(product.id, _editDsKey)) || null;
+    const _pkByDb = (_pkIns && _pkIns.by_db) || {};
+    const _pkWorker = (_pkIns && _pkIns.worker) || {};
     const lockedLower = new Set(lockedChips.map((c) => String(c.name).toLowerCase()));
     const userSchemas = (availableUserDbs || [])
       .filter((s) => !lockedLower.has(String(s).toLowerCase()))
@@ -4990,8 +5088,11 @@ function renderProductDetail() {
         }
       });
       const lbl = document.createElement("span");
+      lbl.className = "admin-db-picker-name";
       lbl.textContent = name;
       item.append(cb, lbl);
+      // TASK-0242: 도메인 힌트 + 분석 상태(미분석/분석중/분석됨).
+      item.appendChild(buildPickerInsightMeta(_pkByDb[String(name).toLowerCase()] || null, _pkWorker));
       pickerDropList.appendChild(item);
     });
     pickerDropBtn.disabled = !canManage;
@@ -5012,6 +5113,11 @@ function renderProductDetail() {
       });
     }
     const measuring = !!adminState.productCoverageLoading;
+    // TASK-0242: 편집 대상 datasource 의 DB insight 파악 내용(캐시) — 각 행에 한 줄 설명.
+    const insKey = _dbInsightsKey(product.id, _editDsKey);
+    const ins = adminState.productDbInsights.get(insKey) || null;
+    const insByDb = (ins && ins.by_db) || {};
+    const insLoading = adminState.productDbInsightsLoading.has(insKey) || !ins;
 
     const listEl = document.createElement("div");
     listEl.className = "cov-db-list";
@@ -5027,6 +5133,9 @@ function renderProductDetail() {
       nameEl.title = entry.schema_name;
       rowEl.appendChild(nameEl);
 
+      // TASK-0242: insight-worker 가 파악한 역할/도메인 한 줄(이름 다음, 진척 셀 앞).
+      rowEl.appendChild(buildDbRoleCell(insByDb[String(entry.schema_name).toLowerCase()] || null, { loading: insLoading }));
+
       // 진척 셀(마이크로바 + 통계 + 상태칩).
       rowEl.appendChild(buildDbCoverageCells(covRow, measuring));
 
@@ -5041,6 +5150,11 @@ function renderProductDetail() {
         resetBtn.disabled = measuring;
         resetBtn.addEventListener("click", () => resetProductDbInsight(product, entry.schema_name));
         rowEl.appendChild(resetBtn);
+      } else {
+        // 권한 없을 때도 grid 컬럼(초기화) 자리 유지 — 행 정렬 일관.
+        const rspacer = document.createElement("span");
+        rspacer.className = "cov-db-reset-spacer";
+        rowEl.appendChild(rspacer);
       }
 
       // 제거 버튼(편집 권한 시).
@@ -5106,6 +5220,16 @@ function renderProductDetail() {
   redrawChips();
   buildPicker();
 
+  // TASK-0242: 편집 대상(펼친) datasource 의 DB insight 지연로드 — 캐시에 없으면 fetch 후 재렌더(설명/상태 채움).
+  _ensureDbInsights = (opts = {}) => {
+    loadProductDbInsights({
+      productId: product.id,
+      datasourceKey: _editDsKey,
+      refresh: !!(opts && opts.refresh),
+      onDone: () => { redrawChips(); buildPicker(); },
+    });
+  };
+
   // TASK-0206: 선택 datasource 의 DB 목록으로 접근가능 DB(고정 시스템칩 + 사용자 picker)을 갱신.
   // 등록 datasource 면 /databases(classified) 사용; 미바인딩이면 데이터 MySQL 기본값으로 환원.
   _refreshAccessibleDbs = async (key) => {
@@ -5117,6 +5241,7 @@ function renderProductDetail() {
       dsCaseInsensitive = false;
       redrawChips();
       buildPicker();
+      _ensureDbInsights();   // TASK-0242: 기본(미바인딩) scope 의 DB 설명/상태 로드.
       return;
     }
     const isMssql = String(ds.engine || "mysql").toLowerCase() === "mssql";
@@ -5142,6 +5267,7 @@ function renderProductDetail() {
     }
     redrawChips();
     buildPicker();
+    _ensureDbInsights();   // TASK-0242: 이 datasource scope 의 DB 설명/상태 로드(완료 시 재렌더).
   };
 
   // TASK-0238: 편집 대상(펼친) datasource 전환 — 현재 draft 를 그 datasource 키로 저장 보존하고,

@@ -8,6 +8,30 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0242
+- Date: 2026-06-12
+- Task: TASK-0242 (관리 콘솔 > 제품 > 데이터소스 & 접근 가능 데이터베이스 — DB별 insight-worker 파악 내용 표면화 + 추가 picker 분석상태), **Major §12.3** (신규 read 엔드포인트 + 다중 파일; RBAC·스키마·암호화 0)
+- 배경: 각 DB 행은 완료율 마이크로바(TASK-0223/0229)만 보이고 insight-worker 가 파악한 *역할/도메인*(texts.text_content 의 "domain / summary / usage / key columns")은 UI 에 없었음. `+ 데이터베이스 추가` 드롭다운도 DB 이름만 나열. 사용자 요청: 각 DB 에서 파악된 내용을 같이 출력(역할 명시) + 완료율/분석상태를 목록에도 표시. 사용자 확정: 등록 DB 행은 **펼침 없이 한 줄 인라인**(DB명·설명·분석률·객체 N/N·동일), picker 는 **도메인 힌트 + 분석상태(미분석/분석중/분석됨)**.
+- 변경:
+  - `unit/feature-0003-agent-web-ui/src/app.py`:
+    - 신규 `_clean_insight_segment(text)` — insight text_content 에서 "X domain:" 선두 라벨 + "key columns:" 꼬리 제거하고 summary/usage 만 ' · ' 결합(한 줄 설명용).
+    - 신규 `_compose_db_insight_text(ent)` → (한 줄 description = 도메인 — 요약, 멀티라인 detail_text = schema 전문 + 테이블별 정제 본문[hover title용]). schema insight 없으면 table 도메인들로 합성.
+    - 신규 `_insight_worker_liveness(conn)` — heartbeat KV(`insight_worker_last_cycle_at`/`_last_status`)로 {alive,age_sec,status}. alive=status∈{ok,skip_locked} AND age≤max(30,STALE_SEC)(insight._is_*_heartbeat_fresh 정합). picker '분석중' 판정.
+    - 신규 `_compute_product_db_insights(conn, product, datasource_key=None)` — 편집 대상 datasource scope(coverage 와 동일 `_resolve_product_insight_scope`)로 `public.rag_objects ⋈ texts`(conversation_id='__global__', scope_key='common', object_type∈schema/table, datasource_key=scope[OR NULL if allow_null]) 조회 → DB(schema_name lower) 별 {db,domain,description,detail_text,analyzed_schema,analyzed_tables,analyzed_objects}.
+    - 신규 엔드포인트 `GET /api/admin/products/{product_id}/db-insights` — console.access 게이트, `?datasource=<key>` 멀티 datasource scope 선택(요청 datasource 가 제품 바인딩이 아니면 400 — `_list_product_datasources` 검증), 미존재 product 404. read-only.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`:
+    - state `productDbInsights`(Map `${pid}::${dsKey}`→payload) + `productDbInsightsLoading`(Set). 로더 `loadProductDbInsights({productId,datasourceKey,refresh,onDone})`(캐시+중복요청 차단) + `_dbInsightsKey`.
+    - `buildDbRoleCell(insRow,{loading})` — 등록 DB 행의 한 줄 설명(역할 미파악/파악 중 fallback, 전문 hover title). `redrawChips` 가 이름 다음·진척 셀 앞에 삽입 + reset-spacer(그리드 7컬럼 일관).
+    - `buildPickerInsightMeta(insRow,worker)` — picker 항목 도메인 힌트 + 분석상태 칩(분석됨=analyzed_objects>0 / 분석중=0+worker.alive / 미분석). `buildPicker` 가 각 항목에 부착.
+    - `_ensureDbInsights` 지연로드 hook — `_refreshAccessibleDbs`(양 분기)·`_switchEditDs`(via refresh) 에서 호출, 완료 시 redraw. `loadProductInsightCoverage(refresh)` 시 insight 캐시 무효화.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.cov-db-row` 그리드 6→7컬럼(설명 추가) + `.cov-db-role`/`-muted`/`.cov-db-reset-spacer` + `.admin-db-picker-name`/`-domain`/`-status`(is-done/is-running[pulse, prefers-reduced-motion 존중]/is-none). 기존 디자인 토큰만.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: 캐시버스터 `?v=20260612-db-insight-surface`(admin.js + styles.css).
+  - `unit/feature-0003-agent-web-ui/tests/test_db_insights.py`: 신규 14 테스트(세그먼트 정제 2 / 한 줄 합성 3 / worker liveness 3 / 집계 2 / 엔드포인트 4).
+- 비변경: RBAC 권한 카탈로그(console.access 재사용), 스키마(웹·agent_runtime·PG), 암호화, 기존 엔드포인트 shape, insight-worker/agent-core 런타임. 완료율(coverage) 응답·계산 무변경(별도 read 경로).
+- 검증: db_insights 14 PASS(올바른 PYTHONPATH) + make test 컨테이너 회귀 0(점매트릭스 100%) + ruff clean + node --check admin.js + CSS brace balance(1090/1090) + py_compile. REV-20260612-0242. 배포 후 PB-0008 Windows-browser 시각검증 예정.
+- Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/src/static/{admin.js,styles.css,admin.html}, unit/feature-0003-agent-web-ui/tests/test_db_insights.py, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW,FUNCTION}.md
+- Rollback: app.py 의 4 신규 함수 + 엔드포인트 제거, admin.js 의 state/로더/3 빌더/_ensureDbInsights/redrawChips·buildPicker 삽입 되돌림, styles.css 신규 클래스 + 그리드 복원, admin.html 캐시버스터 복원, test_db_insights.py 삭제.
+
 ## CHG-20260612-0240
 - Date: 2026-06-12 (TASK-0240, **Minor §12.3** — datasource picker 클리핑 수정 + 데이터소스 추가 체크박스 토글 통일. frontend only)
 - 사용자 보고(연속 2건): ① "`+ 데이터베이스 추가` 버튼으로 나타나는 리스트가 패널 내부로 잘리는 이슈", ② "`+ 데이터소스 추가` 버튼 또한 `+ 데이터베이스 추가` 리스트와 같이 체크박스 토글 형식으로 구성".

@@ -2956,6 +2956,24 @@ a { color: inherit; }
   color: var(--text-muted, #888);
 }
 
+/* TASK-0242: 추가 picker 항목 — [체크박스 · DB명(flex) · 도메인힌트 · 분석상태칩]. */
+.admin-db-picker-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-db-picker-domain {
+  flex: 0 1 auto; min-width: 0; max-width: 42%;
+  font-size: 11px; color: var(--text-muted, #888);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.admin-db-picker-status {
+  flex: 0 0 auto;
+  font-size: 10.5px; font-weight: 700; white-space: nowrap;
+  padding: 1px 7px; border-radius: 999px;
+}
+.admin-db-picker-status.is-done    { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+.admin-db-picker-status.is-running { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, transparent); animation: covPickerPulse 1.6s ease-in-out infinite; }
+.admin-db-picker-status.is-none    { color: var(--text-muted); background: var(--bg); }
+@keyframes covPickerPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+@media (prefers-reduced-motion: reduce) { .admin-db-picker-status.is-running { animation: none; } }
+
 /* TASK-0053 Phase B/C — product subcatalog cards (Role/Account detail) */
 .admin-product-card-list {
   display: flex;
@@ -4268,8 +4286,9 @@ a { color: inherit; }
 .cov-db-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
 .cov-db-row {
   display: grid;
-  /* [DB명 · 마이크로바 · 통계 · 상태칩 · (초기화) · 제거]. 초기화 컬럼은 insight.reset 권한자만 채워짐. */
-  grid-template-columns: minmax(0, 1fr) 96px auto auto auto 24px;
+  /* TASK-0242: [DB명 · insight-worker 설명 · 마이크로바 · 통계 · 상태칩 · 초기화 · 제거].
+     설명/초기화 컬럼은 항상 자리 유지(reset-spacer)해 권한 유무와 무관히 행 정렬이 일관. */
+  grid-template-columns: minmax(56px, 0.8fr) minmax(0, 1.6fr) 96px auto auto auto 24px;
   align-items: center;
   gap: 10px;
   padding: 5px 8px;
@@ -4280,6 +4299,11 @@ a { color: inherit; }
 .cov-db-row:hover { border-color: var(--border); }
 .cov-db-row.is-offline { opacity: 0.72; }
 .cov-db-name { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* TASK-0242: insight-worker 가 파악한 DB 역할/도메인 한 줄(전문은 hover title). overflow ellipsis 로 1행 고정. */
+.cov-db-role { font-size: 11.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.cov-db-role-muted { color: var(--text-muted); font-style: italic; }
+.cov-db-reset-spacer { display: inline-block; }
 
 /* 행 단위 마이크로바(그 DB 의 분석 진척) */
 .cov-microbar {
