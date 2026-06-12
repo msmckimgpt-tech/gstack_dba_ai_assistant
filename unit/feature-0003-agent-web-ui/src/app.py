@@ -713,6 +713,29 @@ def _reconcile_orphaned_runs_on_startup() -> None:
     ).start()
 
 
+@app.on_event("startup")
+def _start_conn_health_monitor() -> None:
+    """conn-health-monitor: 백그라운드 TCP liveness probe 로 per-datasource 연결 상태를
+    미리 유지한다. 관리 콘솔 연결상태(즉시 표시) + inprocess agent 연결 게이트 양쪽에 쓰인다."""
+    import logging
+    log = logging.getLogger(__name__)
+    try:
+        from modules import conn_health
+        from modules import datasources as _dsr
+        conn_health.start_monitor(_dsr.health_probe_provider())
+    except Exception as exc:
+        log.warning("conn_health 모니터 시작 실패(무시하고 진행): %s", exc)
+
+
+@app.on_event("shutdown")
+def _stop_conn_health_monitor() -> None:
+    try:
+        from modules import conn_health
+        conn_health.stop_monitor()
+    except Exception:
+        pass
+
+
 @app.on_event("shutdown")
 def _finalize_inflight_runs_on_shutdown() -> None:
     """TASK-0164: SIGTERM(재배포/docker stop) 시 이 프로세스가 실행 중이던 in-flight
@@ -10034,8 +10057,17 @@ async def admin_list_datasources(request: Request) -> JSONResponse:
         # B3: host/port/engine/default_db 만 노출. **user/password 절대 비노출**(enumeration·누출 회피).
         # has_password=bool 만(평문/복호값 echo 금지). source=db/env(DB 우선 override 가시화, N1).
         merged = _dsr.all_datasources(conn)
+        # conn-health-monitor: 백그라운드 모니터가 미리 계산한 per-datasource 연결 상태를
+        # 첨부 → admin.js 가 per-item /test lazy probe(세마포어 대기) 없이 즉시 표시.
+        try:
+            from modules import conn_health as _ch
+            _health = _ch.snapshot()
+        except Exception:
+            _health = {}
         datasources = []
         for v in merged.values():
+            _sk = _dsr.scope_key(v)
+            _h = _health.get(_sk) if _sk else None
             datasources.append({
                 "key": v["key"], "engine": v["engine"], "host": v.get("host"),
                 "port": v.get("port"), "default_db": v.get("default_db"),
@@ -10044,6 +10076,12 @@ async def admin_list_datasources(request: Request) -> JSONResponse:
                 "editable": (v.get("_source") == "db"),  # .env datasource 는 UI 수정 불가(운영자 .env 편집)
                 # TASK-0215: insight-worker 탐색 토글(.env 데이터소스는 컬럼 부재 → True 기본).
                 "insight_enabled": bool(v.get("insight_enabled", True)),
+                # conn-health: 사전 계산된 연결 상태(좌표 비노출 — status/elapsed/checked_at 만).
+                "conn_status": ({
+                    "status": _h.get("status"),
+                    "elapsed_ms": _h.get("last_elapsed_ms"),
+                    "checked_at": _h.get("checked_at"),
+                } if _h else {"status": "unknown", "elapsed_ms": None, "checked_at": None}),
             })
         datasources.sort(key=lambda d: d["key"])
         cur = conn.cursor()

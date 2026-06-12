@@ -4226,6 +4226,21 @@ async function loadAdminData() {
   // TASK-0219: 미전달(구버전 백엔드)이면 기본 활성으로 간주(secure-by-default 안내).
   adminState.datasourcesSsrfPrivateGuard = !datasourcesPayload || datasourcesPayload.ssrf_private_guard_enabled !== false;
   adminState.datasources = Array.isArray(datasourcesPayload && datasourcesPayload.datasources) ? datasourcesPayload.datasources : [];
+  // conn-health-monitor: 백엔드가 첨부한 사전계산 연결상태를 캐시에 반영 → 배지가 즉시 표시
+  //  (per-item /test lazy probe + 세마포어 대기 폐기). status: healthy→ok / unstable→fail / unknown→checking.
+  adminState.datasources.forEach((ds) => {
+    const k = String(ds && ds.key || "").trim().toLowerCase();
+    const cs = ds && ds.conn_status;
+    if (!k || !cs || !cs.status) return;
+    if (cs.status === "healthy") {
+      adminState.datasourceConnStatus.set(k, { state: "ok", elapsed_ms: cs.elapsed_ms });
+    } else if (cs.status === "unstable") {
+      adminState.datasourceConnStatus.set(k, { state: "fail", error: "연결 불안정" });
+    } else {
+      // unknown — 아직 probe 전. 기존 캐시가 있으면 유지, 없으면 미설정(배지=확인 중).
+      if (!adminState.datasourceConnStatus.has(k)) adminState.datasourceConnStatus.delete(k);
+    }
+  });
   // TASK-0205: datasource GET 의 products(datasource_database 포함)를 product 객체에 병합(상세화면 참조 DB 표시용).
   {
     const dsProds = Array.isArray(datasourcesPayload && datasourcesPayload.products) ? datasourcesPayload.products : [];
@@ -5529,14 +5544,19 @@ function renderProductDetail() {
       addList.setAttribute("role", "group");
       addList.setAttribute("aria-label", "데이터소스 선택");
 
-      // TASK-0244: 캐시에 결과가 있으면 그 상태로, 없으면 '확인 중' 으로 그린 뒤 lazy probe → 완료 시 같은 노드 갱신.
-      //  force=true 면 캐시 무시 재probe(↻ 새로고침). 토글로 재렌더돼도 캐시 hit 라 재probe 폭주 없음.
+      // conn-health-monitor: 연결상태는 백엔드 백그라운드 모니터가 **미리 계산**한 값을
+      //  datasources 목록 로드 시 캐시에 반영해 둔다(loadAdminData). 따라서 토글/재렌더마다
+      //  per-item /test lazy probe(세마포어 대기)를 하지 않고 **캐시를 즉시 표시**한다 — 한
+      //  datasource 가 불안정해도 다른 정상 datasource 배지가 그 뒤에서 대기하지 않는다.
+      //  force=true(↻ 새로고침)일 때만 즉시 명시 /test 재probe(on-demand, 사용자 행동).
       const _kickDsConn = (dsk, statusEl, force) => {
         const cached = adminState.datasourceConnStatus.get(dsk);
         if (!force && cached && (cached.state === "ok" || cached.state === "fail")) {
-          _paintDsConnBadge(statusEl, cached);
+          _paintDsConnBadge(statusEl, cached);  // 사전계산 상태 즉시 표시(정상 경로 — probe 없음).
           return;
         }
+        // 캐시 miss(=unknown: 모니터 미가동/콜드 edge) 또는 force(↻) → lazy /test 폴백.
+        //  정상 경로(모니터 populated)에선 도달 안 함 → 세마포어 대기 자동 폭주 없음.
         _paintDsConnBadge(statusEl, { state: "checking" });
         _probeDatasourceConn(dsk, { force }).then((res) => _paintDsConnBadge(statusEl, res));
       };
@@ -5562,12 +5582,17 @@ function renderProductDetail() {
         refreshBtn.type = "button";
         refreshBtn.className = "admin-ds-picker-refresh";
         refreshBtn.textContent = "↻ 새로고침";
-        refreshBtn.title = "모든 데이터소스 연결 상태를 다시 확인";
+        refreshBtn.title = "모든 데이터소스 연결 상태를 즉시 다시 확인";
         refreshBtn.addEventListener("click", (e) => {
           e.stopPropagation();
           e.preventDefault();
+          // 명시 새로고침(on-demand) — 캐시 비우고 '확인 중' 표시 후 각 datasource 즉시 /test
+          //  재probe(force). 자동 토글 경로와 달리 사용자 명시 행동이라 즉시 probe 허용.
           all.forEach((ds) => adminState.datasourceConnStatus.delete(String(ds.key).toLowerCase()));
           _rebuildDsAddList();
+          Promise.all(all.map((ds) => _probeDatasourceConn(String(ds.key).toLowerCase(), { force: true })))
+            .then(() => _rebuildDsAddList())
+            .catch(() => _rebuildDsAddList());
         });
         header.append(hLbl, refreshBtn);
         addList.appendChild(header);

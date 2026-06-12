@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0250 [SUBAGENT:conn-health-monitor-adversarial] — SHIP-WITH-FIXES(BLOCKER 2 + MAJOR 3 + MINOR 3 흡수)
+- Date: 2026-06-12
+- Cycle: TASK-0250 (연결 health 모니터 — background 사전판정 격리, **Major §12.3** 런타임+관리콘솔 연결 경로)
+- 패널: outside-voice 적대적 동시성/보안(SSRF) 리뷰 subagent **2-pass**(1차 NOT-SHIP → 발견 전량 흡수 → 2차 재게이트 SHIP-WITH-FIXES). 런타임 가용성+SSRF 표면 변경이라 [[feedback_outside_voice_for_rbac]] 정합으로 외부 시각 필수.
+- 1차 발견(NOT-SHIP) 및 흡수:
+  - **B1 (BLOCKER) TCP 성공 ≠ DB 연결 가능**: TCP-only probe 가 max_connections 소진·DB 재시작(TCP 는 열림)을 healthy 오판 → worker 재점유로 설계 목적 무력화. → **2단 probe**: TCP 선검사(100ms fast-fail) + 실제 DB connect+SELECT 1(`probe_datasource`, 적응형 1s→10s). 회귀 `test_monitor_tcp_open_db_down_marks_unstable`.
+  - **B2 (BLOCKER) 1회 blip 전면 차단**: foreground 1회 실패 즉시 unstable. → 복구를 background 실제 DB probe(2s→×2→60s)가 담당 → false-positive 창 bounded(~2s), foreground half-open trial 제거(thundering-herd 함정 원천 차단).
+  - **M1 dead breaker config + 미문서 신규 env**: → `AGENT_DB_BREAKER_*` 3 제거 + `.env.example` 에 `AGENT_CONN_*` 9 문서화.
+  - **M2 pool 기아→stale→gate 무력화**: → TCP fast-fail(죽은 서버 10s 점유 안 함) + `_loop` next_due 정렬 + unstable backoff + `should_fast_fail` stale 강등을 `monitor_running()=False` 한정.
+  - **M3 SSRF rebinding + 상시 SYN**: → probe 직전 `_is_blocked_target`(getaddrinfo 재해석 후 메타데이터/loopback/link-local/multicast/reserved fail-closed, 사설 RFC1918 운영허용). 잔여: 사설 rebinding 은 runtime agent connect 와 동일 노출(accepted-parity).
+  - **m1 admin unknown 고착** → lazy `/test` 폴백. **m2 `_STATE` 누수** → `_prune_state`. **m3 stop in-flight** → daemon worker+queue.
+- 2차 재게이트 잔여(흡수): `_refresh_targets` provider 예외 로그 errno/타입만(자격증명 verbatim 차단).
+- 검증: 신규 `test_conn_health.py` 21 PASS(TCP+DB 2단·B1 회귀·SSRF 차단 4종·gate[monitor-aware]·backoff·foreground 피드백·prune·snapshot 비노출·db 통합 fast-fail/feedback/control-plane) + make test 컨테이너 회귀 0 + ruff clean.
+- Risk: medium(런타임 모든 제품 질의 + 관리콘솔 통과 경로 + background daemon + 외부 SYN). 완화 — control-plane 미적용·flag `AGENT_CONN_HEALTH_ENABLED=0` 즉시 비활성·비밀번호 `_targets` 격리·SSRF fail-closed·daemon 종료 비차단. Rollback: env 0 또는 revert.
+- Cross-ref: CHG-20260612-0250 / TASK-0250 / STATUS TASK-0250 / feature-0003 REV-20260612-0250. [[feedback_outside_voice_for_rbac]] 정합.
+
 ## REV-20260612-0247 [SUBAGENT:ds-connect-isolation-breaker-adversarial] — SHIP-WITH-FIXES(BLOCKER 2 + MAJOR 2 + MINOR 흡수)
 - Date: 2026-06-12
 - Cycle: TASK-0247 (데이터플레인 연결 격리 — bounded connect timeout + per-datasource circuit breaker, **Major §12.3** 런타임 데이터플레인 경로)

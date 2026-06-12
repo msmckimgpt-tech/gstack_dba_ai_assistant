@@ -5,11 +5,17 @@ __all__ = [
     "AGENT_CONVO_SEARCH_AUTO",
     "AGENT_CONVO_SEARCH_LIMIT",
     "AGENT_CSV_ANALYZE_MAX_BYTES",
+    "AGENT_CONN_HEALTH_ENABLED",
+    "AGENT_CONN_HEALTH_TICK_SEC",
+    "AGENT_CONN_HEALTHY_RECHECK_SEC",
+    "AGENT_CONN_PROBE_TIMEOUT_MS_BASE",
+    "AGENT_CONN_PROBE_TIMEOUT_MS_MAX",
+    "AGENT_CONN_PROBE_WORKERS",
+    "AGENT_CONN_STALE_GRACE_SEC",
+    "AGENT_CONN_UNSTABLE_RECHECK_MAX_SEC",
+    "AGENT_CONN_UNSTABLE_RECHECK_SEC",
     "AGENT_CSV_ANALYZE_MAX_ROWS",
     "AGENT_CSV_PREVIEW_ROWS",
-    "AGENT_DB_BREAKER_COOLDOWN_SEC",
-    "AGENT_DB_BREAKER_ENABLED",
-    "AGENT_DB_BREAKER_FAIL_THRESHOLD",
     "AGENT_DB_CONNECT_BACKOFF_SEC",
     "AGENT_DB_CONNECT_RETRIES",
     "AGENT_DB_CONNECT_TIMEOUT_SEC",
@@ -766,15 +772,29 @@ AGENT_DB_CONNECT_BACKOFF_SEC = float(os.getenv("AGENT_DB_CONNECT_BACKOFF_SEC", "
 #   DB, datasource=None)은 AGENT_TIMEOUT_SEC 유지(동작 0 변경). 0/미설정이면 비활성
 #   (= AGENT_TIMEOUT_SEC 폴백, 기존 동작).
 AGENT_DB_CONNECT_TIMEOUT_SEC = int(os.getenv("AGENT_DB_CONNECT_TIMEOUT_SEC", "10"))
-# 해결 2: per-datasource circuit breaker (scope_key=엔진+host+port 해시 기준).
-#   한 datasource 가 연속 FAIL_THRESHOLD 회 연결 실패하면 그 datasource 만 breaker open
-#   → COOLDOWN_SEC 동안 즉시 fail-fast(블로킹·재시도 0) → worker 즉시 해방. half-open
-#   트라이얼 1회 성공 시 자동 close. **datasource 별 격리** — X 불안정이 Y 에 무영향.
-#   ENABLED=0 이면 breaker 전체 비활성(기존 동작). 연결성 에러(_should_retry_db_error)만
-#   카운트 — 인증 오류 등 fast-fail 에러는 starvation 을 일으키지 않으므로 제외.
-AGENT_DB_BREAKER_ENABLED = os.getenv("AGENT_DB_BREAKER_ENABLED", "1").strip().lower() in ("1", "true", "yes")
-AGENT_DB_BREAKER_FAIL_THRESHOLD = max(1, int(os.getenv("AGENT_DB_BREAKER_FAIL_THRESHOLD", "3") or "3"))
-AGENT_DB_BREAKER_COOLDOWN_SEC = max(1, int(os.getenv("AGENT_DB_BREAKER_COOLDOWN_SEC", "30") or "30"))
+# ── 연결 health 모니터 (conn-health-monitor) — modules/conn_health.py ──────────
+# 백그라운드 probe(TCP 선검사 + 실제 DB connect+SELECT 1)로 per-datasource 연결 상태를
+# 미리 유지. agent/admin 은 미리 계산된 상태를 즉시 읽어, 한 datasource 불안정이 다른
+# 정상 datasource 요청을 막지 않는다. TCP 선검사 timeout=BASE(100ms, 죽은 서버 fast-fail),
+# 실제 DB probe timeout=적응형 1s→×2→MAX(10s). ENABLED=0 이면 모니터 미시작 + gate
+# 비활성(기존 동작 0 변경). (구 TASK-0247 in-process breaker 는 본 모니터로 흡수·대체됨.)
+AGENT_CONN_HEALTH_ENABLED = os.getenv("AGENT_CONN_HEALTH_ENABLED", "1").strip().lower() in ("1", "true", "yes")
+AGENT_CONN_PROBE_TIMEOUT_MS_BASE = max(10, int(os.getenv("AGENT_CONN_PROBE_TIMEOUT_MS_BASE", "100") or "100"))
+AGENT_CONN_PROBE_TIMEOUT_MS_MAX = max(
+    AGENT_CONN_PROBE_TIMEOUT_MS_BASE, int(os.getenv("AGENT_CONN_PROBE_TIMEOUT_MS_MAX", "10000") or "10000")
+)
+# healthy 재확인 주기(초) / unstable 재probe 간격(초, base→×2→MAX backoff).
+AGENT_CONN_HEALTHY_RECHECK_SEC = max(1, int(os.getenv("AGENT_CONN_HEALTHY_RECHECK_SEC", "30") or "30"))
+AGENT_CONN_UNSTABLE_RECHECK_SEC = max(1, int(os.getenv("AGENT_CONN_UNSTABLE_RECHECK_SEC", "2") or "2"))
+AGENT_CONN_UNSTABLE_RECHECK_MAX_SEC = max(
+    AGENT_CONN_UNSTABLE_RECHECK_SEC, int(os.getenv("AGENT_CONN_UNSTABLE_RECHECK_MAX_SEC", "60") or "60")
+)
+# 동시 probe worker 수(bulkhead — 다수 unstable 이 모니터를 직렬로 묶지 않게).
+AGENT_CONN_PROBE_WORKERS = max(1, min(16, int(os.getenv("AGENT_CONN_PROBE_WORKERS", "4") or "4")))
+# 모니터 scheduler tick(초).
+AGENT_CONN_HEALTH_TICK_SEC = max(1, int(os.getenv("AGENT_CONN_HEALTH_TICK_SEC", "1") or "1"))
+# 모니터 정지 추정 grace(초) — 모니터 미가동 + status 가 이보다 오래 stale 하면 unknown 강등(영구 차단 방지).
+AGENT_CONN_STALE_GRACE_SEC = max(5, int(os.getenv("AGENT_CONN_STALE_GRACE_SEC", "60") or "60"))
 # ── MySQL 커넥션 풀 (TASK-0144, opt-in / 기본 OFF / 폴백 안전) ──────────────
 # 기본 비활성(False) → db.connect() 가 기존 connect-per-request 경로 그대로 사용
 # (동작 0 변경). True(canary 로만) 일 때만 (host,user,database) 시그니처별 풀에서

@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0250
+- Date: 2026-06-12 (TASK-0250, **Major §12.3** — 연결 health 모니터; 동시세션 0248·0249 선점→§13.1 재번호 0250)
+- Scope: agent-core — TASK-0247 in-process breaker 를 **background Connection Health Monitor** 로 진화. 한 datasource 불안정이 단일 직렬 ask-worker(및 관리 콘솔 probe)를 점유해 정상 datasource 요청을 막던 잔여 경로를 background 사전판정으로 차단.
+- 변경:
+  - `src/modules/conn_health.py` **신규** — `_STATE`(scope_key→status, 좌표/비번 없음)+`_LOCK`; `_tcp_probe`(raw socket); `_is_blocked_target`(SSRF 상시차단: 메타데이터/loopback/link-local fail-closed); `_apply_result`/`_prune_state`; `should_fast_fail`(gate, monitor_running 가드); `record_foreground_result`(피드백); `register`/`status_for`/`snapshot`/`_reset_state`; `_Monitor`(daemon scheduler + daemon worker pool + queue, `_refresh_targets`/`_worker`/`_probe_target` **2단 probe**=TCP 선검사+실제 DB connect+SELECT 1); `start_monitor`/`stop_monitor`/`monitor_running`. 비밀번호는 `_Monitor._targets`에만 보유(상태/snapshot/로그 비노출).
+  - `src/modules/config.py`: 신규 `AGENT_CONN_*` 9 env(HEALTH_ENABLED/PROBE_TIMEOUT_MS_BASE/_MAX/HEALTHY_RECHECK_SEC/UNSTABLE_RECHECK_SEC/_MAX_SEC/PROBE_WORKERS/HEALTH_TICK_SEC/STALE_GRACE_SEC). **dead `AGENT_DB_BREAKER_*` 3 제거**(TASK-0247 breaker 흡수).
+  - `src/modules/db.py`: `connect_with_retry` 가 `conn_health.should_fast_fail` gate + `record_foreground_result` 피드백(`_record_health` 격리)으로 전환. 구 breaker 내부(`_breaker_admit`/`_BREAKER_STATE`/`_breaker_safe`/`_breaker_trial_timeout` 등) 제거, `_breaker_key`/`_is_connect_breaker_failure`/`_dataplane_connect_timeout`/`DatasourceCircuitOpen` 유지.
+  - `src/modules/datasources.py`: `health_probe_provider`(memory 연결로 전체 ds dict[비번 포함] 반환, db lazy import). 구 `list_for_health_probe`(좌표만) 폐기.
+  - `src/modules/ask.py`/`src/modules/insight.py`: worker 루프 시작 전 `conn_health.start_monitor`(insight 는 daemon, ask 는 종료 시 stop).
+- 비변경: control-plane(memory DB, `datasource=None`) 게이트 미적용(동작 0 변경). 풀(TASK-0144)·replica·RBAC·스키마 무변경. probe_datasource 는 connect_with_retry 미경유(모니터 자기 gate 회피).
+- 검증: 신규 `test_conn_health.py` 21 PASS(2단 probe·B1 회귀·SSRF 차단·gate·backoff·prune·비노출·db 통합) + make test 컨테이너 회귀 0 + ruff clean. outside-voice 2-pass 적대 리뷰(REV-20260612-0250) NOT-SHIP→SHIP-WITH-FIXES. 구 `test_db_circuit_breaker.py` 제거(breaker 흡수).
+
 ## CHG-20260612-0247
 - Date: 2026-06-12 (TASK-0247, **Major §12.3** — 데이터플레인 연결 격리; 동시세션 `task0244-ds-picker-status` 가 TASK-0244 선점→§13.1 재번호 0244→0247 (동시세션이 0244·0245·0246 선점))
 - Scope: agent-core — 한 datasource 의 연결 불안정이 단일 직렬 ask-worker 를 점유해 정상 datasource 제품 응답까지 지연시키던 직렬 starvation 을 연결별로 격리(bounded connect timeout + per-datasource circuit breaker).

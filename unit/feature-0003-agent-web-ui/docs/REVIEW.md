@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0250 [SUBAGENT:conn-health-monitor-adversarial] — SHIP-WITH-FIXES (cross-feature, 코어=feature-0002)
+- Date: 2026-06-12
+- Cycle: TASK-0250 (연결 health 모니터 — web/admin 측, **Major §12.3**)
+- 패널: 본 cycle 의 적대적 outside-voice 2-pass 리뷰는 코어(feature-0002 conn_health.py + gate)에서 수행(REV-20260612-0250). web 측 변경은 그 모니터의 표면 — admin 표시(사전계산 conn_status)와 web 프로세스 모니터 기동.
+- web 측 검토: ① `conn_status` 응답이 **좌표/비밀번호 비노출**(snapshot 화이트리스트 status/elapsed_ms/checked_at 만) — IDOR/누출 0(console.access 신뢰경계 내). ② admin.js 자동 토글 경로의 per-item lazy probe 폐기로 세마포어 head-of-line 대기 제거(m1: unknown 콜드 edge 만 lazy 폴백). ③ startup/shutdown 훅이 모니터 생명주기 idempotent 관리(start 이중 가드). 신규 RBAC 0, 엔드포인트 shape: `admin_list_datasources` 에 `conn_status` 필드 추가뿐.
+- 검증: node --check admin.js + make test 컨테이너 회귀 0. 잔여: 배포 후 PB-0008 admin 연결상태 시각검증(CHECK#13 WARN).
+- Cross-ref: feature-0002 REV-20260612-0250(코어 적대 리뷰) / CHG-20260612-0250(web) / TASK-0250.
+
 ## REV-20260612-0247 [SKIPPED:trivial-css-1line] — SHIP
 - Related TASK: feature-0003-agent-web-ui (TASK-0246 정련 CHG-0246b — 연결배지 `justify-self` end→start)
 - Trigger: CHG-0246 배포 후 PB-0008 측정에서 연결배지 left spread=25(우측 정렬). 사용자 컬럼 정렬 선호(행별 left spread=0)·sibling `.cov-db-row` 컨벤션 정합.

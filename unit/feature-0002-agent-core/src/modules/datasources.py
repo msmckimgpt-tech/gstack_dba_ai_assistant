@@ -235,3 +235,27 @@ def all_datasources(mem_conn) -> "dict[str, dict]":
                 _warn_conflict(k)
             merged[k] = ds  # DB 우선
     return merged
+
+
+def health_probe_provider():
+    """conn_health.start_monitor 용 callback factory. 매 호출(30s)마다 memory 연결을 열어
+    등록 datasource 의 **전체 dict**(좌표+복호 비밀번호 포함 — 모니터의 실제 DB probe 가
+    연결+SELECT 1 검증에 필요)를 반환하고 닫는다(db lazy import — 순환 회피). 비밀번호는
+    모니터 내부 _targets 에만 보유되고 상태/snapshot/로그엔 비노출(conn_health 계약). 연결/
+    테이블 부재 시 [] (graceful)."""
+    def _provider():
+        from . import db as _db
+        from .config import MEMORY_DB
+        conn = None
+        try:
+            conn = _db.connect_with_retry(database=MEMORY_DB, autocommit=True, attempts=1)
+            return [dict(ds) for ds in (all_datasources(conn) or {}).values() if ds]
+        except Exception:
+            return []
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    return _provider
