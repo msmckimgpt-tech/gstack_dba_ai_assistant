@@ -18,6 +18,20 @@ source_of_truth: true
 - 비변경: RBAC(console.access)·datasource CRUD·스키마·`/test` 엔드포인트·기존 배지 painter 무변경(데이터 출처만 사전계산으로).
 - 검증: node --check + make test 컨테이너 회귀 0. outside-voice REV-20260612-0250(코어 feature-0002). 잔여: 배포 후 PB-0008 admin 연결상태 시각검증.
 
+## CHG-20260612-0249
+- Date: 2026-06-12
+- Task: TASK-0249 (제품 insight 완료율 멀티 datasource(1:N) + 대소문자 매칭 수정), **Minor §12.3** (web-ui app.py + agent-core db.py 교차 — db.py 변경은 CHG-20260612-0249 로 feature-0002 MODIFY.md 교차 기록). 동시세션 `task0248-product-delete-blocked-conv` 가 TASK-0248 선점 → §13.1 재번호 후 0249.
+- 진단: 사용자 보고 — `관리 콘솔 > 제품 > 킹스레이드(KR_QA, id 94) > 데이터 소스 & 접근 가능 데이터베이스` 에서 DB객체 분석은 진행되는데 **테이블 분석 현황 0/0**. KR_QA 는 7개 접근 DB 가 각각 다른 datasource(다른 서버)에 바인딩된 진성 1:N 제품. **Bug A**: `_compute_product_insight_coverage` 가 제품 primary datasource 하나(auth)만 해석해 7 DB 전부를 단일 auth 서버에 질의 → 타 서버 DB 0 테이블. **Bug B**: Linux MySQL `lower_case_table_names=0` 라 등록명 `dbcommon`(소문자)↔실제 `dbCommon` 어긋나 `TABLE_SCHEMA IN (...)` 0행(db.py LOWER() 로 별도 해소). 두 결함 모두 있어야 정확히 0/0.
+- 변경 (`unit/feature-0003-agent-web-ui/src/app.py`, `_compute_product_insight_coverage` 전면 리팩터):
+  - 접근 DB rows 를 effective datasource_key(`row.datasource_key or product["datasource_key"]`) 별 **그룹핑**. 그룹마다 `_resolve_product_insight_scope(conn, {"id":pid, "datasource_key":dskey})` 로 scope/coords/engine/allow_null 해석 → SSRF 체크 → 그룹 좌표로 라이브 카탈로그 질의(MySQL=그룹 schemas 일괄, MSSQL=DB별 연결) → 그룹 scope 로 rag_objects 분자 조회.
+  - PG 통찰 연결은 그룹 간 **1회 재사용**(내부 헬퍼 `_analyzed_sets_for_scope(scope, allow_null)` 가 scope 만 바꿔 조회), `finally` 에서 close.
+  - 원래 노출 순서(`order`) 보존해 합산 → 프런트 per_db 1:1 매칭 유지. 응답 키 계약(per_db: db/connected/schema_analyzed/tables_total/tables_analyzed/note + top: pct/analyzed_objects/total_objects/measurable/reason/engine/default_db) **불변**.
+  - `measurable = connected_count > 0`. 한 datasource 만 해석/연결 실패 → 그 DB 만 `connected:False`+note(부분 측정), 전부 실패 → `measurable:False`(reason: 미해석이면 "데이터소스를 해석할 수 없습니다", 도달실패면 "연결할 수 없습니다").
+- 비변경: `_resolve_product_insight_scope`(reset/db-insights 공유 헬퍼) — 의도적 무변경. RBAC·스키마·암호화·엔드포인트 shape·insight-worker 런타임 0. db-insights/insight-reset 계산 경로 무영향.
+- 검증: 신규 `tests/test_insight_coverage.py` 5 테스트(C1~C5) + make test 컨테이너 **전체 599 passed/2 skipped 회귀 0** + ruff clean + py_compile. 라이브 시뮬레이션 기대: 제품94 ≈ 42.6%(243/571), 제품1 = 100%(무회귀).
+- Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/tests/test_insight_coverage.py, unit/feature-0002-agent-core/src/modules/db.py, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md, docs/STATUS.md
+- Rollback: `_compute_product_insight_coverage` 를 단일 datasource(primary 해석) 버전으로 환원 + db.py `LOWER(TABLE_SCHEMA)` → `TABLE_SCHEMA` 환원(단 0/0 버그 재발).
+
 ## CHG-20260612-0246b
 - Date: 2026-06-12
 - Task: TASK-0246 정련 (연결상태 배지 정렬 컨벤션 통일), **Minor §12.3** (CSS 1줄 + 캐시버스터)

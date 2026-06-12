@@ -20,6 +20,18 @@ source_of_truth: true
 - 비변경: control-plane(memory DB, `datasource=None`) 게이트 미적용(동작 0 변경). 풀(TASK-0144)·replica·RBAC·스키마 무변경. probe_datasource 는 connect_with_retry 미경유(모니터 자기 gate 회피).
 - 검증: 신규 `test_conn_health.py` 21 PASS(2단 probe·B1 회귀·SSRF 차단·gate·backoff·prune·비노출·db 통합) + make test 컨테이너 회귀 0 + ruff clean. outside-voice 2-pass 적대 리뷰(REV-20260612-0250) NOT-SHIP→SHIP-WITH-FIXES. 구 `test_db_circuit_breaker.py` 제거(breaker 흡수).
 
+## CHG-20260612-0249
+- Date: 2026-06-12 (TASK-0249, **Minor §12.3** — 제품 insight 완료율 대소문자 매칭; 주 변경은 feature-0003-agent-web-ui app.py, 본 항목은 db.py 단일 변경 교차 기록. 동시세션 `task0248-product-delete-blocked-conv` 가 TASK-0248 선점→§13.1 재번호 후 0249)
+- Scope: agent-core — `information_schema.TABLES` 조회 시 DB명(TABLE_SCHEMA) 대소문자 무시 매칭.
+- 진단: Linux MySQL `@@lower_case_table_names=0` 환경에서 DB명이 대소문자 구분이라, 등록명(소문자 `dbcommon`)이 실제 DB명(`dbCommon`)과 어긋나면 `WHERE TABLE_SCHEMA IN ('dbcommon')` 이 0행을 반환 → 제품 insight 완료율이 0/0 으로 잘못 표기됐다(TASK-0249 Bug B).
+- 변경 (`src/modules/db.py`, `list_information_schema_tables` MySQL 분기):
+  - `WHERE TABLE_SCHEMA IN ({placeholders})` → **`WHERE LOWER(TABLE_SCHEMA) IN ({placeholders})`**, 바인딩 파라미터 `wanted` → `[w.lower() for w in wanted]`.
+  - 반환값은 실제 케이스 유지(SELECT 컬럼 무변경) → 호출측(app.py coverage)이 소문자로 grouping. 근거 주석에 TASK-0249 명시.
+- 비변경: MSSQL 분기·결과 수집·풀·breaker(TASK-0247)·RBAC·스키마 0. 반환 row shape 불변이라 다른 호출처(insight-reset rag_objects 교집합 등) 무영향 — 매칭만 케이스-무관해지는 무해한 개선.
+- 검증: make test 컨테이너 **전체 599 passed/2 skipped 회귀 0** + ruff clean + py_compile. (coverage 회귀 테스트는 web-ui `test_insight_coverage.py` C3 가 mixed-case 경로 커버.)
+- Files: unit/feature-0002-agent-core/src/modules/db.py, unit/feature-0002-agent-core/docs/MODIFY.md
+- Rollback: `LOWER(TABLE_SCHEMA)` → `TABLE_SCHEMA`, 파라미터 소문자화 환원(단 0/0 버그 재발).
+
 ## CHG-20260612-0247
 - Date: 2026-06-12 (TASK-0247, **Major §12.3** — 데이터플레인 연결 격리; 동시세션 `task0244-ds-picker-status` 가 TASK-0244 선점→§13.1 재번호 0244→0247 (동시세션이 0244·0245·0246 선점))
 - Scope: agent-core — 한 datasource 의 연결 불안정이 단일 직렬 ask-worker 를 점유해 정상 datasource 제품 응답까지 지연시키던 직렬 starvation 을 연결별로 격리(bounded connect timeout + per-datasource circuit breaker).
