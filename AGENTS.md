@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.29.0
+template_version: v3.29.1
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -442,6 +442,31 @@ plan limit 을 빠르게 소진하는 환경에서, 어느 차원이 비용을 �
 
 **`/context` 와 차원 구분**: `/context`(§11.1 보조)는 **context window**(단일 세션 토큰 점유)를,
 `/usage` 는 **plan rate-limit**(요금제 한도 소진)을 본다 — 측정 대상이 다르므로 혼동하지 않는다.
+
+**`/context all` + skill `defaultEnabled: false` — 컨텍스트 예산 가시성·회수 (v2.1.x, 2026-06)**
+
+`/context all` 은 현재 세션의 context window 점유를 **skill·provider 별 토큰 비용으로 분해**해
+표시한다 (`/context` 의 요약보다 세분화 — 어느 skill manifest 가 window 를 끄는지 수치 확인).
+skill manifest 의 `defaultEnabled: false` 설정은 해당 skill 을 **opt-in 로딩**으로 전환해, 특정
+작업 타입에서만 on-demand 로 올린다 — heavy skill 세트(`/browse`·`/codex`·`/design-review` 등)를
+상시 로딩하지 않아 비핵심 skill 의 manifest 점유를 줄인다.
+
+**사용 권장 시점:**
+- heavy-skill 장기 위임 세션(다수 skill + subagent fan-out)에서 context rollover **전** 예산 점검 —
+  `/context all` 로 driver skill 식별 후 비핵심 skill 을 `defaultEnabled: false` 로 opt-out.
+- rollover 가 빈발하는 세션의 manifest bloat 진단.
+
+```
+/context all
+```
+
+- **한계 — rollover 직접 차단 아님**: `/context all` 가시성 + `defaultEnabled: false` opt-out 은
+  skill-manifest 점유를 줄이는 **보조책**이다. rollover 의 직접 원인이 실작업량(대량 Read/Edit/Bash)
+  이면 manifest opt-out 만으로는 막지 못한다 — 예산 *여유 확보*용으로 활용하고, 근본 회수는 §11.1
+  의 문서 기반 재개(작업 분할·세션 경계)와 병행한다.
+- **`/usage` 와 차원 구분**: `/context all` 은 **context window**(단일 세션 토큰) 점유의 skill 별
+  분해, `/usage` 는 **plan rate-limit**(요금제 한도)의 skill·subagent·MCP 별 분해다 — 측정 대상이
+  다르다.
 
 # Part E — 안전 및 협업
 
@@ -1476,7 +1501,26 @@ WSL 내 curl, wget, requests, pytest 등 HTTP 응답 검사만으로는 시각�
 
 **필수 확인 방법**: `/browse` 스킬(gstack headless-but-real-engine)로 변경된 페이지를 열고
 레이아웃·버튼·폼·모달 등 변경 영역을 스크린샷 또는 element 상태로 확인한다.
-`/browse` 스킬은 내부적으로 MCP 브라우저 도구를 사용하며, 이 경로만 시각적 확인으로 인정한다.
+`/browse` 스킬은 내부적으로 MCP 브라우저 도구를 사용하며, 기본 정본 경로로 인정한다.
+
+**headless `/browse` 도달불가 환경 — host-side real-browser 동등 인정 (v3.29.1)**:
+`/browse` (gstack headless MCP) 가 타깃에 **도달할 수 없는** 환경 — 관리콘솔 HTTPS 로그인
+게이트, WSL2 네트워킹 한계, 인증 토큰 주입 불가 등 — 에서는, 프로젝트가 운용하는 **host-side
+real-browser 검증**(예: WSL 밖 Windows 브라우저로 실 화면을 띄워 확인)을 `/browse` 와 **동등한
+시각적 확인 경로**로 인정한다. 단 동등 인정의 전제는 다음을 모두 만족할 때다:
+- **스크린샷 evidence 필수** — real-browser 로 확인했다는 선언만으로는 불충분. 변경 영역이
+  렌더된 실제 화면 스크린샷(또는 element 상태 캡처)을 응답에 첨부한다. (`/browse` 와 동일 기준)
+- **anti-"curl=완료" 가드 유지** — host-side 경로를 인정해도 WSL curl/wget/requests/playwright-CLI
+  의 HTTP 응답 검사만으로 완료를 선언하는 것은 여전히 금지(아래 금지 패턴). real-browser 인정은
+  "실제 렌더 화면 + 스크린샷" 을 갖춘 경우에 한하며, 검증 강제력을 약화시키지 않는다.
+- **도달불가의 실재성** — 단순 편의가 아니라 `/browse` 가 구조적으로 도달 못하는 환경(로그인
+  게이트·네트워킹)일 때만 적용. `/browse` 로 도달 가능한데 host-side 로 우회하는 것은 비인정.
+
+**gstack 검증 스킬 호출 위치 (wrapper-layout 소비자)**: `/browse`·`/design-review`·`/qa` 등
+gstack 검증 스킬은 git-root(cwd) 를 전제로 동작한다. 소비자가 wrapper-layout(cwd ≠ git-root,
+git repository 는 `repo/` 내부)인 경우, 이들 스킬은 **git-root(`repo/`) 기준 cwd 에서 호출**한다
+(§13.2 의 `repo/` 격리 관례 및 prompt.md 운영 경로 관례와 정합). wrapper cwd 에서 직접 호출하면
+스킬이 git repo·바이너리 경로를 못 찾아 reconciliation 에 소모된다.
 
 **데이터 의존 UI 요소 (v3.25.0)**: DB 컬럼·API 응답 등 데이터에 의존해 렌더되는 UI 요소
 (예: 특정 레코드의 reason 텍스트)는 **대표 live data 가 실재·충전된 상태에서 user-facing
@@ -1496,9 +1540,15 @@ WSL bash에서 `playwright` CLI를 직접 실행하는 것은 렌더링 확인�
 - "검증 단계가 누락됐습니다" 인정 후 브라우저를 실행하지 않고 완료 처리 — 인정만으로 검증이 완료되지 않음
 
 **완료 선언 게이트**: UI-affecting 변경(HTML/CSS/JS 수정, 컴포넌트 추가·삭제, 레이아웃 변경 등)은
-`/browse` 스킬로 브라우저 렌더링을 직접 확인하고 그 evidence(스크린샷 또는 element 상태)를
-응답에 첨부하기 전까지 완료 선언 불가. 위 두 금지 패턴("위임" / "인정 후 미실행")은 이 게이트의
-명시적 위반으로 간주한다.
+`/browse` 스킬(또는 위 동등 인정 host-side real-browser 경로)로 브라우저 렌더링을 직접 확인하고
+그 evidence(스크린샷 또는 element 상태)를 응답에 첨부하기 전까지 완료 선언 불가. 위 두 금지
+패턴("위임" / "인정 후 미실행")은 이 게이트의 명시적 위반으로 간주한다.
+
+**인터랙션 결과 검증**: 변경이 상호작용 동작(버튼 클릭 결과, 드롭다운 선택·추가 흐름, 폼 제출 등)에
+영향을 주면, rendering(정적 렌더) 확인에 더해 **변경된 인터랙션을 실제로 실행하고 그 결과를
+evidence 로 첨부**한다 — 버튼이 보이는 것과 눌렀을 때 동작하는 것은 다르다. 정적 렌더만 확인하고
+완료 선언하면 인터랙션 결함(예: 연결 테스트 버튼 무동작, 드롭다운 추가 시 항목 리셋)이 게이트
+후에도 사용자에게 노출된다.
 
 **체크리스트 연동**: §16.2 Completion Checklist 의 `(웹 UI 프로젝트만)` 항목으로 자동 참조.
 해당 항목 미체크 상태로 완료 선언 시 §16.5 금지 패턴과 동일하게 처리.
