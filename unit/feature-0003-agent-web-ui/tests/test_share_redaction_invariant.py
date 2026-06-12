@@ -128,11 +128,117 @@ def test_current_policy_token_no_auto_redact():
     assert 3 not in by_id
 
 
+def test_attachment_redact_strips_steps_sql_and_results():
+    """share-query-navigator: share.js 가 meta.steps 의 execute_sql 단계(sql + result_summary)를
+    렌더하므로, attachment_derived 메시지 redact 시 steps 도 제거돼 raw 첨부 파생 쿼리/결과가
+    익명 공유뷰에 새지 않아야 한다 (보안 정합).
+    """
+    A, _DB = _imports()
+    meta = {
+        "attachment_derived": True,
+        "final_sql": "SELECT * FROM secret.t",
+        "result_rows": [{"col": "민감값"}],
+        "steps": [
+            {
+                "tool": "execute_sql",
+                "sql": "SELECT secret_col FROM attached.csv_table",
+                "result_summary": {"preview_table": {"columns": ["secret_col"], "rows": [["민감"]]}},
+            }
+        ],
+    }
+    content, was_redacted, meta_clean = A._share_redact_message_content("원본 첨부 분석 본문", meta)
+    assert was_redacted is True
+    assert content == A.SHARE_POLICY_REDACT_TEXT
+    # 민감 키 전부 제거.
+    assert "steps" not in meta_clean, "attachment_derived redact 후 meta.steps 잔존 (쿼리/결과 누출)"
+    assert "final_sql" not in meta_clean
+    assert "result_rows" not in meta_clean
+    # categorical 플래그는 유지.
+    assert meta_clean["attachment_derived"] is True
+    assert meta_clean["redacted_by_share_policy"] is True
+
+
+def test_non_attachment_message_preserves_steps():
+    """attachment_derived 가 아닌 정상 메시지는 meta.steps(쿼리 navigator 데이터)를 보존한다."""
+    A, _DB = _imports()
+    meta = {
+        "steps": [
+            {"tool": "execute_sql", "sql": "SELECT 1", "result_summary": {"preview_table": {"columns": ["x"], "rows": [["1"]]}}},
+            {"tool": "execute_sql", "sql": "SELECT 2", "result_summary": {"preview_table": {"columns": ["y"], "rows": [["2"]]}}},
+        ],
+    }
+    content, was_redacted, meta_out = A._share_redact_message_content("정상 답변", meta)
+    assert was_redacted is False
+    assert content == "정상 답변"
+    # 정상 메시지의 steps 는 그대로 — share.js navigator 가 쿼리 전환에 사용.
+    assert meta_out is meta
+    assert len(meta_out["steps"]) == 2
+
+
+def test_share_sanitize_step_strips_server_paths_and_raw_payload():
+    """share-query-navigator(보안): share 익명 노출용 step sanitize 가 csv_paths(서버 경로)·
+    preview(결과 전문)·args(원본 tool 인자)·error(원본 오류)를 제거하고, share.js 가 실제 렌더하는
+    {tool, sql, reason, result_summary.preview_table} 만 통과시키는지 단언.
+
+    agent_runtime.steps.result_summary_json 은 라이브에서 {preview, csv_paths, preview_table} 를
+    담고 csv_paths 에 /shared/... 서버 경로가 들어간다. 익명 공유 API 페이로드로 새면 안 된다.
+    """
+    A, _DB = _imports()
+    raw_step = {
+        "tool": "execute_sql",
+        "sql": "SELECT * FROM sales.orders",
+        "reason": "주문 조회",
+        "intent": "조회",
+        "work": "쿼리 실행",
+        "args": {"database": "sales", "raw": "민감 tool 인자"},
+        "error": "원본 오류 본문 (raw payload 단편 포함 가능)",
+        "result_summary": {
+            "preview_table": {"columns": ["id"], "rows": [["1"]], "truncated": False},
+            "csv_paths": ["/shared/out/run-123/result_0.csv"],
+            "preview": "원본 결과 전문 텍스트 (100자 잘림 전)...",
+        },
+    }
+    clean = A._share_sanitize_step(raw_step)
+    # 통과돼야 할 것
+    assert clean["tool"] == "execute_sql"
+    assert clean["sql"] == "SELECT * FROM sales.orders"
+    assert clean["reason"] == "주문 조회"
+    assert clean["result_summary"]["preview_table"]["columns"] == ["id"]
+    # 제거돼야 할 것 (익명 노출 차단)
+    assert "args" not in clean, "step.args(원본 tool 인자) 누출"
+    assert "error" not in clean, "step.error(원본 오류 본문) 누출"
+    assert "csv_paths" not in clean["result_summary"], "result_summary.csv_paths(서버 경로) 누출"
+    assert "preview" not in clean["result_summary"], "result_summary.preview(결과 전문) 누출"
+    # 직렬화 후 서버 경로 문자열이 전혀 없어야 함
+    import json as _json
+    blob = _json.dumps(clean, ensure_ascii=False)
+    assert "/shared/" not in blob, "직렬화 결과에 /shared/ 서버 경로 잔존"
+    assert "원본 결과 전문" not in blob and "민감 tool 인자" not in blob, "raw payload 잔존"
+
+
+def test_share_sanitize_step_handles_malformed():
+    """sanitize 가 비정상 입력(비-dict result_summary, None, 빈 dict)에 안전한지."""
+    A, _DB = _imports()
+    assert A._share_sanitize_step(None) == {}
+    assert A._share_sanitize_step("not a dict") == {}
+    # result_summary 가 dict 아님 → 통째 제거
+    clean = A._share_sanitize_step({"tool": "execute_sql", "sql": "SELECT 1", "result_summary": "raw string"})
+    assert "result_summary" not in clean
+    assert clean["sql"] == "SELECT 1"
+    # preview_table 없는 result_summary → result_summary 자체 제거
+    clean2 = A._share_sanitize_step({"tool": "execute_sql", "sql": "SELECT 1", "result_summary": {"csv_paths": ["/shared/x.csv"]}})
+    assert "result_summary" not in clean2
+
+
 def main() -> int:
     tests = [
         test_stale_token_redacts_attachment_and_filters_internal,
         test_null_policy_token_redacts,
         test_current_policy_token_no_auto_redact,
+        test_attachment_redact_strips_steps_sql_and_results,
+        test_non_attachment_message_preserves_steps,
+        test_share_sanitize_step_strips_server_paths_and_raw_payload,
+        test_share_sanitize_step_handles_malformed,
     ]
     passed = 0
     for t in tests:

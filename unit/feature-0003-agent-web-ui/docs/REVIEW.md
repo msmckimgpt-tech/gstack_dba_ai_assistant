@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0251 [SUBAGENT:share-anonymous-exposure-adversarial] — NOT-SHIP → 흡수 → PASS
+- Date: 2026-06-12
+- Cycle: TASK-0251 (익명 공유뷰 SQL "쿼리 열고닫기" 토글 → "실행 쿼리 전환" navigator 교정 + 백엔드 steps 공급 + 익명 sanitize, **Major §12.3 — 익명 데이터 노출 경계**)
+- Trigger: §18.8 — `/share/{token}` 은 **anonymous(비로그인) 접근** public-exposure 면 + 본 cycle 이 share API 에 step별 sql/result 공급을 신설(노출면 확대). REV-20260609-0001 의 "public-exposure 면 redaction 불변식 자동 가드" 권고 정합.
+- 패널: outside-voice 적대적 보안 리뷰(general-purpose subagent) — redaction 우회 / XSS / version gate / null 안전 / 회귀 5축 적대 검토.
+- Verdict: 초기 **NOT-SHIP**(BLOCKER 1) → 핵심 발견 흡수 후 **PASS**.
+- BLOCKER (흡수됨): share API 에 steps 를 조립해 넣으면 각 step 의 `result_summary.csv_paths`(서버 `/shared/` 파일 경로)·`preview`(결과 전문)·step `args`(원본 tool 인자)·`error`(원본 오류 본문)가 **익명 JSON 페이로드로 누출**(화면 렌더가 아닌 `curl` API 응답에서). 라이브 PG 확인: `agent_runtime.steps.result_summary_json` 614건 중 540건이 `csv_paths`(`/shared/...`)·`preview` 보유.
+- Resolution: `_share_sanitize_step` 신설 — 각 step 을 화이트리스트 `{tool,sql,reason,intent,work,result_summary.preview_table}` 로 재구성(그 외 키 제거). `_share_attach_sanitized_steps` 가 조립 후 sanitize 를 강제하고, attachment_derived 메시지는 steps 자체를 제거(redact + 재조립 skip 이중 차단). **라이브 end-to-end 검증**: worktree app.py 를 컨테이너에 임시 적용 후 `_share_load_messages('20260527044221-bc2639bf', v=CURRENT)` 호출 → 응답 JSON 에 `csv_paths` 키 0·bare `preview` 키 0·step 경유 `/shared/out` 0(직렬화 grep). 신규 단위테스트 2건(`test_share_sanitize_step_strips_server_paths_and_raw_payload` 가 csv_paths/preview/args/error 제거 + `/shared/` 문자열 부재 단언, `_handles_malformed` 가 비-dict/누락 result_summary 안전).
+- MAJOR (정합 확인): version gate(`redact_active`) 와 steps 재조립의 상호작용 — steps 재조립은 `role=='assistant' and not was_redacted` 일 때만 수행하므로 attachment_derived(redact 대상)는 steps 가 붙지 않음. 현 v2 토큰(redact_active=False)에서도 attachment 메시지는 본문이 write 시점에 이미 redact 저장 + steps 미조립이라 정합.
+- MINOR (오탐 기각): "`formatSqlForDisplay` 가 `` sentinel 누락 → `LIMIT 100` 숫자 오치환" 주장은 **false positive** — diff 의 비가시 제어문자(``)를 리뷰어가 못 본 것. `cat -A` 로 `^A${i}^A` 마스킹·`/^A(\d+)^A/g` 복원 정상 확인 + Playwright 라이브에서 `LIMIT 10` 정상 표시.
+- XSS / null 안전 / 폴백 회귀: PASS(buildPreviewTable/buildSqlStepPanel 전부 `textContent` 사용 — 익명 페이지에 신뢰불가 DB 컬럼명/셀값 HTML 미해석; 본문은 DOMPurify 유지; steps 없는 구형 메시지 final_sql/result_rows 폴백 보존).
+- Human Approval Needed: no (노출 축소 방향 + 익명 경계 sanitize 가 base 대비 강화).
+- 잔존(범위 밖, flag-only): 답변 **본문 텍스트**에 LLM 이 `/shared/` 경로를 직접 쓴 경우는 base 부터의 본문 표시 동작(step 경유 아님) — 별도 본문 redaction 정책. 본 cycle 은 step 경유 누출만 책임.
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260612T010000Z-share-anonymous-exposure.md
+- Cross-ref: CHG-20260612-0251 / TASK-0251 / REV-20260609-0001(public-exposure 가드 권고) / TASK-0094(share redaction 정책).
+
 ## REV-20260612-0248 [SUBAGENT:security+correctness-adversarial, 2-agent] — SHIP-WITH-FIXES → 흡수 후 SHIP
 - Date: 2026-06-12
 - Cycle: TASK-0248 (관리 콘솔 제품 삭제 시 참조 대화 차단(blocked) 전환 — **Major §12.3**, 파괴적 삭제 + 접근 차단 + cross-store)

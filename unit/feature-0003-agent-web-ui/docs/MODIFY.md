@@ -3248,3 +3248,20 @@ source_of_truth: true
 - 검증: CSS brace 균형 OK. 배포 후 PB-0008 Windows-browser 시각검증(행 간 정렬 일치).
 - Files: unit/feature-0003-agent-web-ui/src/static/styles.css, unit/feature-0003-agent-web-ui/src/static/admin.html, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW,FUNCTION}.md
 - Rollback: `grid-template-columns` 를 이전 값으로 환원 + `justify-self` 2줄 제거(정렬만 이전 들쭉날쭉으로 복귀, 기능 무관).
+
+## CHG-20260612-0251
+- Date: 2026-06-12 (TASK-0251, **Major §12.3 — 익명 공유뷰 데이터 노출 경계**) — 공유 페이지 SQL "쿼리 열고닫기" 토글을 의도된 "실행 쿼리 전환" navigator 로 교정 + 누락된 백엔드 steps 공급 + 익명 sanitize.
+- Scope: `/share/{token}` 익명 공유 페이지의 SQL/결과 표시. ① share.js 가 본문 ```sql``` 블록을 "쿼리 보기/닫기" 열고닫기 토글로 감싸던 것(사용자가 본 그 버튼) 제거 → 본문 SQL 항상 펼침. ② 답변의 execute_sql 단계를 메인 UI 와 동일한 ◀▶ navigator(결과셋별 쿼리 전환)로 렌더. ③ 그 navigator 데이터(meta.steps)를 share API 가 공급하지 않던 것을 동적 조립로 보강. ④ 익명 노출이므로 step sanitize.
+- 배경/진단(라이브):
+  - share.js 의 `collapseSqlCodeBlocks` 가 markdown ```sql``` 블록을 토글로 감쌌다. 사용자 토큰(conv 20260612055236, msg id=554)은 meta=`{run_id,duration_ms}`뿐 + 본문에 ```sql``` 블록 → 정확히 이 토글이 노출됨.
+  - 메인 UI(app.js)는 `meta.steps`(execute_sql 단계)를 `buildSqlNavigator` 로 전환하나, **share API(`_share_load_messages`→`_conv_load_messages_raw`)는 저장 `meta_json` 만 읽어 steps 가 없다**(라이브 PG: 저장 message meta 에 steps/result_summary 0건 — steps 는 일반 로드 경로가 `agent_runtime.steps` 에서 동적 조립). 즉 navigator 데이터 공급원이 share 경로에 부재.
+- 변경:
+  - [src/static/share.js](../src/static/share.js): `collapseSqlCodeBlocks` 제거(본문 SQL 항상 펼침). `renderAssistantDetails` 가 meta.steps 의 execute_sql 단계 렌더(1개=`buildSqlStepPanel`, 2+=`buildSqlNavigator` ◀▶ 전환 + "쿼리 N/M" + "대상: schema.table" + ←→Home End 키보드). 메인 UI helper 이식: `buildSqlStepPanel`/`buildSqlNavigator`/`buildPreviewTable`/`formatSqlForDisplay`(`` sentinel 포함)/`extractFirstTableRef` + `SQL_FORMAT_KEYWORDS` 상수. steps 없는 구형 메시지는 기존 `final_sql`/`result_rows` 폴백 유지.
+  - [src/static/share.css](../src/static/share.css): `.share-sql-toggle-*` 제거, `.share-sql-navigator`/`.share-sql-group`/`.share-step-reason`/`.share-result-table-wrap` 신규(@media print 는 비활성 패널 모두 펼침).
+  - [src/static/share.html](../src/static/share.html): 캐시버스터 `?v=20260610-share-md` → `?v=20260612-share-sql-nav`(share.js·share.css).
+  - [src/app.py](../src/app.py): **(핵심)** `_share_attach_sanitized_steps` 신설 — `_share_load_messages` 가 assistant 메시지(redact 안 된)에 `_load_steps_for_message`(agent_runtime.steps)로 steps 동적 조립 → navigator 라이브 동작. **(보안)** `_share_sanitize_step` — 익명 노출용 화이트리스트 `{tool,sql,reason,intent,work,result_summary.preview_table}` 로 재구성(csv_paths[서버 `/shared/` 경로]·preview[결과 전문]·args·error 제거). `_SHARE_REDACTED_META_KEYS` 에 `steps` 추가(attachment_derived 메시지 redact + steps 재조립 skip 이중 차단).
+- 보안(REV-20260612-0251, outside-voice 적대): BLOCKER(steps 경유 csv_paths/preview/args/error 익명 누출)→`_share_sanitize_step` 흡수(라이브 검증: step 직렬화에 csv_paths 0·preview 0·`/shared/out` 0). MINOR(sentinel 누락 주장)→오탐 기각(`cat -A` + 라이브 `LIMIT 10` 정상). XSS=textContent 일관 PASS. version gate=steps 재조립이 redact 안 된 assistant 메시지만 + attachment 항상 steps 제거로 정합.
+- 비변경: RBAC 권한·DB 스키마·암호화·신규 엔드포인트 0(읽기 경로 steps 조립+sanitize). 메인 UI(app.js) 무변경.
+- 검증: 신규/보강 4 테스트(steps redact·정상 steps 보존·sanitize 가 csv_paths/preview/args/error 제거·malformed 안전) + make test 컨테이너 **599 PASS(회귀 0, skip 2)** + ruff clean + node --check share.js + CSS brace 균형 + py_compile. Playwright 실 헤드리스 chromium 2종(mock + 라이브 sanitized 대화 20260527044221 id=128 8 execute_sql) ALL PASS.
+- Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/src/static/{share.js,share.css,share.html}, unit/feature-0003-agent-web-ui/tests/test_share_redaction_invariant.py, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md, unit/feature-0003-agent-web-ui/docs/reviews/20260612T010000Z-share-anonymous-exposure.md, docs/STATUS.md
+- Rollback: share.js 의 `renderAssistantDetails` 를 final_sql/result_rows 단일 표시 + `collapseSqlCodeBlocks` 토글로 환원, app.py 의 `_share_attach_sanitized_steps` 호출/`_share_sanitize_step`/`steps` redact 키 제거(공유 페이지가 다시 본문 토글 + 단일 SQL 로 복귀).

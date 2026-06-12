@@ -11205,18 +11205,86 @@ def _meta_has_attachment_derived(meta_obj) -> bool:
     return False
 
 
+# share view 에서 attachment_derived 메시지 redact 시 제거할 meta 키.
+# share.js 가 final_sql / result_rows 폴백뿐 아니라 meta.steps 의 execute_sql 단계별
+# sql + result_summary 도 렌더하므로(쿼리 전환 navigator), steps 역시 redact 대상에 포함해
+# raw attachment payload 파생 쿼리/결과가 익명 공유 뷰에 새지 않도록 한다.
+_SHARE_REDACTED_META_KEYS = ("final_sql", "sql", "result_rows", "result_text", "steps")
+
+# share view 의 익명(비로그인) 노출 경계: step 을 직렬화할 때 화이트리스트로 재구성한다.
+# 메인 UI(인증 사용자)는 csv_paths(서버 파일 경로) / preview(결과 전문) 를 받아도 되지만,
+# 공유 페이지는 익명이므로 이들 raw payload·서버 경로를 제거하고 share.js 가 실제로 렌더하는
+# 필드(쿼리 전환 navigator + 결과 미리보기 표)만 남긴다.
+_SHARE_STEP_ALLOWED_KEYS = ("tool", "sql", "reason", "intent", "work", "result_summary")
+_SHARE_RESULT_SUMMARY_ALLOWED_KEYS = ("preview_table",)
+
+
+def _share_sanitize_step(step: Any) -> dict[str, Any]:
+    """단일 step 을 share 익명 노출용 화이트리스트로 재구성.
+
+    - step: {tool, sql, reason, intent, work, result_summary} 만 통과.
+    - result_summary: {preview_table} 만 통과 — csv_paths(서버 경로)·preview(결과 전문)·
+      기타 키 제거. preview_table 자체는 columns/rows/truncated 의 표 데이터로 share.js 가
+      이미 표로 렌더하는 (공유 의도된) 결과 미리보기다.
+    - step 의 args(원본 tool 인자)·error(원본 오류 본문)·csv_paths 등은 통과 목록에 없어 제거.
+    """
+    if not isinstance(step, dict):
+        return {}
+    clean: dict[str, Any] = {k: step[k] for k in _SHARE_STEP_ALLOWED_KEYS if k in step}
+    rs = clean.get("result_summary")
+    if isinstance(rs, dict):
+        rs_clean = {k: rs[k] for k in _SHARE_RESULT_SUMMARY_ALLOWED_KEYS if k in rs}
+        if rs_clean:
+            clean["result_summary"] = rs_clean
+        else:
+            clean.pop("result_summary", None)
+    elif "result_summary" in clean:
+        # dict 아닌 result_summary 는 통째 제거 (예측 못한 형태의 raw payload 누출 차단).
+        clean.pop("result_summary", None)
+    return clean
+
+
+def _share_attach_sanitized_steps(conn, conversation_id: str, created_at, meta_obj: Any) -> Any:
+    """assistant 메시지 meta 에 share 익명 노출용으로 sanitize 한 steps 를 주입 후 meta 반환.
+
+    share API 는 저장 meta_json(보통 {run_id, duration_ms})만 읽어 steps 가 비어 있다.
+    실행 단계(쿼리/결과)는 일반 대화 로드 경로처럼 agent_runtime.steps 에서 동적 조립해야
+    "결과셋에 따라 실행된 쿼리 전환" navigator 가 공유 페이지에서도 동작한다. 단, 익명 노출이므로
+    각 step 을 _share_sanitize_step 으로 화이트리스트 통과시킨다 (csv_paths/preview/args/error 제거).
+
+    meta_obj 가 None 이면 steps 가 실제로 조립될 때만 새 dict 를 만들어 반환(없으면 None 유지).
+    """
+    try:
+        raw_steps = _load_steps_for_message(conn, conversation_id, created_at, meta_obj if isinstance(meta_obj, dict) else None)
+    except Exception:
+        # steps 조립 실패는 공유 뷰 렌더를 막지 않는다 — 본문/폴백만 표시.
+        logging.getLogger(__name__).warning(
+            "_share_attach_sanitized_steps: steps 조립 실패 (conversation_id=%s)",
+            conversation_id, exc_info=True,
+        )
+        return meta_obj
+    sanitized = [_share_sanitize_step(s) for s in (raw_steps or []) if isinstance(s, dict)]
+    sanitized = [s for s in sanitized if s]
+    if not sanitized:
+        return meta_obj
+    if not isinstance(meta_obj, dict):
+        meta_obj = {}
+    meta_obj["steps"] = sanitized
+    return meta_obj
+
+
 def _share_redact_message_content(content: str, meta_obj) -> tuple[str, bool, dict | None]:
     """attachment_derived 메시지 본문을 redact. 반환: (redacted_content, was_redacted, meta_obj_clean).
 
     raw attachment payload (CSV sample / vision 분석 결과 / PDF excerpt) 가 share view
     에 노출되지 않도록 본문을 가림. meta 의 sensitive 필드도 함께 redact (final_sql /
-    result_rows 등은 D12 정합으로 별도 categorical 메타만 유지).
+    result_rows / steps 등은 D12 정합으로 별도 categorical 메타만 유지).
     """
     if not _meta_has_attachment_derived(meta_obj):
         return content, False, meta_obj
     meta_clean = None
     if isinstance(meta_obj, dict):
-        meta_clean = {k: v for k, v in meta_obj.items() if k not in ("final_sql", "sql", "result_rows", "result_text")}
+        meta_clean = {k: v for k, v in meta_obj.items() if k not in _SHARE_REDACTED_META_KEYS}
         meta_clean["attachment_derived"] = True
         meta_clean["redacted_by_share_policy"] = True
     return SHARE_POLICY_REDACT_TEXT, True, meta_clean
@@ -11258,8 +11326,14 @@ def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | No
             except Exception:
                 meta_obj = None
         # D9 + R-F7: attachment_derived 메시지 redact (token PolicyVersion 무관, 현 정책 v2 부터 활성).
+        was_redacted = False
         if redact_active:
-            content, _was_redacted, meta_obj = _share_redact_message_content(content, meta_obj)
+            content, was_redacted, meta_obj = _share_redact_message_content(content, meta_obj)
+        # 실행된 쿼리 전환 navigator 데이터: assistant 메시지에 한해 agent_runtime.steps 에서
+        # sanitize 한 steps 를 동적 조립한다. redact 된 attachment_derived 메시지는 제외(steps 까지
+        # 가려야 하므로 — _share_redact_message_content 가 이미 steps 키를 제거했고 재조립도 안 함).
+        if role == "assistant" and not was_redacted:
+            meta_obj = _share_attach_sanitized_steps(conn, conversation_id, created_at, meta_obj)
         visible.append(
             {
                 "id": int(msg_id or 0),

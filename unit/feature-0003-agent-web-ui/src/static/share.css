@@ -241,27 +241,118 @@
 .share-message-content thead th { background: #f3f4f6; font-weight: 600; }
 .share-message-content tbody tr:nth-child(even) { background: #fafafa; }
 
-/* ```sql 코드 블록 접기 토글 */
-.share-sql-toggle-wrap { margin: 0 0 0.75em 0; }
-.share-sql-toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 12px;
-  font-size: 0.78rem;
-  border-radius: 6px;
-  border: 1px solid var(--share-border-strong);
-  background: var(--share-surface);
-  color: var(--share-text);
-  cursor: pointer;
-}
-.share-sql-toggle-btn:hover { background: #f1f5f9; }
-.share-sql-toggle-wrap pre { margin-top: 8px; }
-
 .share-message-details {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px dashed var(--share-border);
+}
+
+/* ── 실행된 쿼리 단계(단일) ───────────────────────────────────── */
+.share-sql-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 각 단계의 수행 근거 — 쿼리 위에 secondary 라인으로 노출 */
+.share-step-reason {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 0.8rem;
+  color: var(--share-text-muted);
+}
+.share-step-reason-label {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--share-text);
+  font-size: 0.72rem;
+}
+.share-step-reason-text { word-break: break-word; }
+
+/* ── 실행된 쿼리 전환 navigator (결과셋별 SQL ◀ ▶) ─────────────── */
+.share-sql-navigator {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--share-border);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--share-bg);
+  outline: none;
+  min-width: 0;
+}
+.share-sql-navigator:focus-visible {
+  border-color: var(--share-primary);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.share-sql-nav-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.share-sql-nav-btn {
+  appearance: none;
+  border: 1px solid var(--share-border-strong);
+  background: var(--share-surface);
+  color: var(--share-text);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.share-sql-nav-btn:hover:not(:disabled) {
+  background: #eff6ff;
+  border-color: rgba(37, 99, 235, 0.25);
+  color: var(--share-primary);
+}
+.share-sql-nav-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.share-sql-nav-indicator {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--share-text);
+  min-width: 64px;
+  text-align: center;
+}
+
+.share-sql-nav-context {
+  font-size: 11px;
+  color: var(--share-text-muted);
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.share-sql-nav-panels { display: block; }
+
+.share-sql-nav-panel { display: none; min-width: 0; }
+.share-sql-nav-panel.is-active { display: flex; }
+
+/* 결과 미리보기 표 — preview_table(columns/rows[][]) read-only 렌더 */
+.share-result-table-wrap {
+  overflow-x: auto;
+  margin-top: 4px;
+}
+.share-result-table-meta {
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: var(--share-text-muted);
 }
 
 .share-sql {
@@ -384,8 +475,14 @@
     box-shadow: none;
     border-color: #d1d5db;
   }
-  .share-sql-toggle-btn { display: none; }
-  .share-sql-toggle-wrap pre[hidden] { display: block !important; }
+  /* 인쇄 시 navigator 의 비활성 쿼리 패널도 모두 펼쳐, 보관 보고서에 전 쿼리·결과가 남도록 한다. */
+  .share-sql-nav-btn { display: none; }
+  .share-sql-nav-panel { display: flex !important; }
+  .share-sql-nav-panel:not(:last-child) {
+    border-bottom: 1px dashed #d1d5db;
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+  }
   .share-message-content pre,
   .share-sql { white-space: pre-wrap; word-break: break-word; }
 }
