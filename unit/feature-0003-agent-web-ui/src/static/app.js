@@ -4413,6 +4413,10 @@ async function cancelCurrentRun() {
   // 진행 추적 + pending 말풍선 + 경과 타이머 정리.
   stopProgressPolling({ reset: true });
   stopElapsedTimer();
+  // TASK-0241: clearPendingBubble 은 state.pendingBubble 만 null 로 하고 DOM `#pendingAssistantBubble`
+  // 은 다음 renderMessages 까지 남는다. 취소 후 폴링을 멈추므로 자동 재렌더 트리거가 없어 "처리 중"
+  // 말풍선이 잔류한다 → 여기서 즉시 renderMessages 로 제거(사용자 메시지는 유지).
+  renderMessages();
   // 대화 목록 상태 dot 를 즉시 '취소됨' 으로 (서버 반영 전 optimistic).
   if (cid) _updateConversationStatusDot(cid, "canceled");
   renderComposer();  // busy=false → 입력창 enable + 전송 버튼 복귀.
