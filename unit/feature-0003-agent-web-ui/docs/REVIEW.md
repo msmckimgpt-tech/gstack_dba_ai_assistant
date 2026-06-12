@@ -8,6 +8,26 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0253 [SUBAGENT:concurrency+SSRF-adversarial] — SHIP-WITH-FIXES → 흡수 후 SHIP
+- Date: 2026-06-12
+- Cycle: TASK-0253 (관리 콘솔 head-of-line blocking 2건 제거 — **Minor §12.3**, A datasource ↻ 새로고침 / B 제품 분석 완료율)
+- 패널: 적대적 outside-voice — 동시성/이벤트 루프·프론트 경쟁상태·force dedup·SSRF 회귀·백엔드 break·테스트 품질.
+- **VERDICT: SHIP-WITH-FIXES (BLOCKER 0)**. 반박된(비결함) 우려:
+  - SSRF 회귀 없음 — `to_thread(_db.probe_datasource, {**ds, "host": _pin})` 의 `_pin` 은 `_ssrf_check_host` 가 반환한 검증된 pinned IP, to_thread 는 인자 그대로 전달(host 재해석 X) → DNS rebinding 차단 유지.
+  - 커넥션/소켓 누수 없음 — `probe_datasource`·`_compute_product_insight_coverage` 모두 `finally` close. 스레드/병렬이 lifecycle 무변경.
+  - 백엔드 break 안전 — `out[pid]=cov` + `_insight_cov_cache_put` **이후** break → 캐시 put 안 건너뜀, 응답 형태 동일.
+  - 프론트 로딩 영구 stuck 없음 — `_loadOne` 의 `finally` 가 모든 경로(403 catch 포함)에서 `productCoverageLoadingIds.delete(pid)`.
+  - A force 전파/세마포어 release 정상 — refresh→캐시 delete→`_rebuildDsAddList(true)`→각 `_kickDsConn(force:true)`; release 는 `_probeDatasourceConn` finally 에서 항상.
+- **흡수한 FIX**:
+  - **MAJOR-2** (N-fan-out 이 공용 anyio 스레드풀[기본 40] 고갈 → 한 레이어 위 head-of-line 재발 우려): 프론트 `loadProductInsightCoverage` 에 동시성 cap `_COV_FETCH_MAX=4` + `_runWithConcurrency` 도입(datasource probe `_DS_CONN_MAX=4` 와 동형). 작은 풀은 사실상 전부 동시, 큰 풀은 백엔드 보호.
+  - **MINOR-2** (force 경로가 in-flight dedup 우회 → ↻ 연타·force 렌더 중첩 시 같은 key 2벌 probe): `_probeDatasourceConn` 의 in-flight dedup 가드를 `if(!force)` 밖으로 빼 force 무관 적용("force=캐시 무시"이지 "진행 중 probe 무시"가 아님).
+  - **MINOR-3** (테스트 fake 시그니처가 실제 `probe_datasource(ds, *, timeout=None)` 의 keyword-only 와 불일치): fake 3곳을 `lambda ds, *, timeout=None:`/`def _slow_probe(ds, *, timeout=None)` 로 정합 → 시그니처 회귀 포착.
+  - **MAJOR-1** (신규 테스트가 agent 이미지 밖에서 `import app` 실패 → 미실행): `make test`(agent 이미지 + PYTHONPATH) green 으로 게이트 충족(전체 회귀 0). 본 worktree 는 .env 심링크로 로컬 import 도 가능해 8 PASS 별도 확인.
+- 수용(MINOR/nit): async 핸들러에 `_connect_memory`/`_dsr.resolve`(메모리 DB 동기) 잔존 — 메모리 DB 정상 시 수 ms, probe 구간 블로킹만 본 cycle 스코프(주석 정정); fan-out 중 제품 삭제 시 stale Map 항목(렌더 안 됨, 무해); T3 timing 테스트 마진 ~2.5x(flaky 낮음).
+- 검증: node --check(admin.js) + py_compile(app.py) + 신규 8 PASS + make test 컨테이너 **전체 회귀 0** + ruff clean.
+- 확장 방향: 제품 수십~수백 시 background 사전계산 worker(TASK-0250 conn_health 패턴) + Redis 외부 캐시(현 `_insight_cov_cache` 는 프로세스 로컬 TTL — 다중 인스턴스 미공유) → 진입 시 단일 조회 즉시표시. REPORT 참조.
+- Cross-ref: CHG-20260612-0253 / TASK-0253. (선행 head-of-line 제거: REV-20260612-0250 datasource 연결 도메인.)
+
 ## REV-20260612-0252 [SKIPPED:doc-only] — SHIP
 - Date: 2026-06-12
 - Cycle: TASK-0252 (TASK-0251 PB-0008 Windows-browser 완료 게이트 기록 — **doc-only**)

@@ -36,7 +36,11 @@ const adminState = {
   productDbDraft: new Map(),
   // TASK-0223: 제품별 insight-worker 분석 완료율 (productId -> {pct, analyzed_objects, total_objects, per_db[], measurable, reason, engine}).
   productCoverage: new Map(),
-  productCoverageLoading: false,
+  // TASK-0253: 완료율 로딩 상태를 **제품별**로 추적(productId 집합). 이전엔 전역 bool 하나라
+  //  모든 제품을 한 번에 fetch → 가장 느린 제품이 끝나야 빠른 제품 배지도 갱신되는 head-of-line
+  //  이 있었다. 이제 제품마다 단건 API 를 병렬 호출하고, 각 제품이 끝나는 즉시 그 제품 배지만
+  //  settle 한다. _isProductCoverageLoading(pid) 로 조회.
+  productCoverageLoadingIds: new Set(),
   // TASK-0242: 제품 datasource 별 DB insight 파악 내용 (key `${pid}::${dsKey}` -> {ok, by_db{<db>:{...}}, worker, scope, engine}).
   //  coverage 가 '얼마나'면 이건 '무엇을(역할/도메인)' — 각 DB 행 한 줄 설명 + 추가 picker 상태 표시용.
   productDbInsights: new Map(),
@@ -845,8 +849,12 @@ function _probeDatasourceConn(key, { force = false } = {}) {
   if (!force) {
     const prev = cache.get(k);
     if (prev && (prev.state === "ok" || prev.state === "fail")) return Promise.resolve(prev);
-    if (_dsConnInflight.has(k)) return _dsConnInflight.get(k);
   }
+  // TASK-0253 (REV MINOR-2): in-flight dedup 은 force 와 무관하게 적용한다. force 는 "캐시 무시
+  //  재probe" 의미이지 "이미 도는 probe 를 무시하고 또 띄워라"가 아니다. 이전엔 force 경로가 이
+  //  가드를 건너뛰어, ↻ 연타나 force 렌더 중첩 시 같은 key 가 2벌 이상 probe 돼 4-cap 세마포어를
+  //  중복 점유했다(이번에 고친 중복의 변형). 진행 중이면 그 Promise 에 합류한다.
+  if (_dsConnInflight.has(k)) return _dsConnInflight.get(k);
   cache.set(k, { state: "checking" });
   const p = (async () => {
     await _dsConnAcquire();   // 동시 probe 4개 cap — 슬롯 확보까지 '확인 중' 유지.
@@ -4322,7 +4330,36 @@ async function loadAdminData() {
 
 /* ── Products pane ───────────────────────────────────────────────────── */
 
+// TASK-0253: 특정 제품의 완료율이 로딩 중인지. 배지/상세가 "측정 중…" 표시 여부 판정에 쓴다.
+function _isProductCoverageLoading(productId) {
+  return adminState.productCoverageLoadingIds.has(Number(productId));
+}
+
+// TASK-0253 (REV MAJOR-2): 완료율 단건 fetch 동시성 cap. 제품별 병렬 fan-out 이 head-of-line 을
+//  없애지만, 제품 수가 많으면 N개 동시 요청이 백엔드 공용 스레드풀(anyio 기본 40)을 한꺼번에
+//  점유해 한 레이어 위에서 다시 직렬화될 수 있다. datasource probe 의 _DS_CONN_MAX(4)와 동형으로
+//  클라이언트에서 동시 요청 수를 제한한다(초과분은 큐 대기 — 그동안 배지는 '측정 중'). 작은 풀
+//  규모에선 사실상 전부 동시, 큰 규모에선 백엔드 보호.
+const _COV_FETCH_MAX = 4;
+// items 를 limit 동시성으로 worker(item) 실행. 각 item 의 결과/예외는 worker 내부에서 처리한다고 가정.
+async function _runWithConcurrency(items, limit, worker) {
+  const queue = items.slice();
+  const runners = new Array(Math.min(limit, queue.length)).fill(0).map(async () => {
+    while (queue.length) {
+      const item = queue.shift();
+      await worker(item);
+    }
+  });
+  await Promise.all(runners);
+}
+
 // TASK-0223: 제품별 insight-worker 분석 완료율 로드 (목록/상세 배지·breakdown).
+// TASK-0253: head-of-line 제거 — 전체를 한 번에 받는 대신 **제품마다 단건 API 를 병렬 호출**하고,
+//  각 제품이 끝나는 즉시 그 제품 배지만 갱신한다. productId 지정 시 단건만, 미지정 시 전 제품 fan-out.
+//  백엔드 admin_products_insight_coverage 는 일반 def 핸들러라 Starlette 스레드풀에서 자동 병렬 처리되어
+//  단건 N개 동시 요청이 가장 느린 1건 시간 안에 끝난다(직렬 합산 아님). 동시성은 _COV_FETCH_MAX 로 cap.
+//  ※ 대규모(제품 수십~수백) 확장 방향은 feature-0003 REPORT.md(TASK-0253) 참조 — background 사전계산
+//    worker + Redis 공유 캐시.
 async function loadProductInsightCoverage({ refresh = false, productId = null } = {}) {
   if (!can("console.access")) return;
   // TASK-0242: 완료율 새로고침 시 DB insight 캐시도 무효화 → 재렌더(_ensureDbInsights)가 최신 파악내용 재조회.
@@ -4332,31 +4369,47 @@ async function loadProductInsightCoverage({ refresh = false, productId = null } 
       if (!_pfx || String(k).startsWith(_pfx)) adminState.productDbInsights.delete(k);
     });
   }
-  adminState.productCoverageLoading = true;
-  // 로딩 표시 즉시 반영 (배지가 "측정 중…" 으로 보이게)
+
+  // 로드 대상 제품 id 목록 결정: 단건 지정이면 그 하나, 아니면 현재 알고 있는 전 제품.
+  let targetIds;
+  if (productId != null) {
+    targetIds = [Number(productId)];
+  } else {
+    targetIds = (adminState.products || []).map((p) => Number(p.id));
+  }
+  if (!targetIds.length) return;
+
+  // 각 제품을 '측정 중'으로 마킹 후 즉시 1회 렌더(빠른 제품이 먼저 채워질 무대를 깐다).
+  targetIds.forEach((pid) => adminState.productCoverageLoadingIds.add(pid));
   renderProductList();
   if (adminState.selectedProductId) renderProductDetail();
-  try {
-    const qs = [];
-    if (refresh) qs.push("refresh=1");
-    if (productId) qs.push(`product_id=${encodeURIComponent(productId)}`);
-    const url = "/api/admin/products/insight-coverage" + (qs.length ? `?${qs.join("&")}` : "");
-    const payload = await apiFetch(url).catch((error) => {
-      if (error.status === 403) return { coverage: {} };
-      throw error;
-    });
-    const cov = (payload && payload.coverage) || {};
-    Object.keys(cov).forEach((pid) => {
-      adminState.productCoverage.set(Number(pid), cov[pid]);
-    });
-  } catch (error) {
-    // 측정 실패는 치명적이지 않음 — 콘솔만 남기고 UI 는 "측정 불가" fallback.
-    console.warn("insight coverage 로드 실패:", error);
-  } finally {
-    adminState.productCoverageLoading = false;
-    renderProductList();
-    if (adminState.selectedProductId) renderProductDetail();
-  }
+
+  // 한 제품의 완료율을 단건 API 로 가져와 settle. 끝나는 즉시 그 제품만 갱신(head-of-line 없음).
+  const _loadOne = async (pid) => {
+    try {
+      const qs = ["product_id=" + encodeURIComponent(pid)];
+      if (refresh) qs.push("refresh=1");
+      const url = "/api/admin/products/insight-coverage?" + qs.join("&");
+      const payload = await apiFetch(url).catch((error) => {
+        if (error.status === 403) return { coverage: {} };
+        throw error;
+      });
+      const cov = (payload && payload.coverage) || {};
+      // 단건이라도 응답은 { coverage: { "<pid>": {...} } } 형태 — 받은 키를 그대로 반영.
+      Object.keys(cov).forEach((k) => adminState.productCoverage.set(Number(k), cov[k]));
+    } catch (error) {
+      // 측정 실패는 치명적이지 않음 — 콘솔만 남기고 UI 는 "측정 불가" fallback.
+      console.warn(`insight coverage 로드 실패 (product ${pid}):`, error);
+    } finally {
+      adminState.productCoverageLoadingIds.delete(pid);
+      // 끝난 제품만 즉시 반영 — 목록 배지 + (선택 중이면) 상세.
+      renderProductList();
+      if (Number(adminState.selectedProductId) === Number(pid)) renderProductDetail();
+    }
+  };
+
+  // 동시성 cap 하 병렬 발사 — 각 제품이 끝나는 즉시 그 배지만 settle(head-of-line 없음). 일부 실패해도 전체는 진행.
+  await _runWithConcurrency(targetIds, _COV_FETCH_MAX, _loadOne);
 }
 
 // TASK-0242: 제품의 한 datasource scope 에서 DB(schema)별 insight 파악 내용 로드.
@@ -4404,7 +4457,7 @@ function buildCoverageBadge(productId) {
   const cov = adminState.productCoverage.get(Number(productId));
   if (cov === undefined) {
     span.classList.add("cov-muted");
-    span.textContent = adminState.productCoverageLoading ? "분석 측정 중…" : "분석 —";
+    span.textContent = _isProductCoverageLoading(productId) ? "분석 측정 중…" : "분석 —";
     return span;
   }
   if (!cov.measurable) {
@@ -4447,7 +4500,7 @@ function buildProductCoverageDetail(product) {
   summaryChip.className = "cov-badge";
   if (cov === undefined) {
     summaryChip.classList.add("cov-muted");
-    summaryChip.textContent = adminState.productCoverageLoading ? "측정 중…" : "—";
+    summaryChip.textContent = _isProductCoverageLoading(product.id) ? "측정 중…" : "—";
   } else if (!cov.measurable) {
     summaryChip.classList.add("cov-muted");
     summaryChip.textContent = "측정 불가";
@@ -4464,7 +4517,7 @@ function buildProductCoverageDetail(product) {
   refreshBtn.type = "button";
   refreshBtn.className = "tool-btn cov-refresh";
   refreshBtn.textContent = "새로고침";
-  refreshBtn.disabled = !!adminState.productCoverageLoading;
+  refreshBtn.disabled = _isProductCoverageLoading(product.id);
   refreshBtn.addEventListener("click", () => {
     loadProductInsightCoverage({ refresh: true, productId: product.id });
   });
@@ -4474,7 +4527,7 @@ function buildProductCoverageDetail(product) {
   if (cov === undefined) {
     const p = document.createElement("div");
     p.className = "admin-detail-hint";
-    p.textContent = adminState.productCoverageLoading ? "분석 완료율 측정 중…" : "분석 완료율 정보가 아직 없습니다.";
+    p.textContent = _isProductCoverageLoading(product.id) ? "분석 완료율 측정 중…" : "분석 완료율 정보가 아직 없습니다.";
     wrap.appendChild(p);
     return wrap;
   }
@@ -5205,7 +5258,7 @@ function renderProductDetail() {
         if (d && d.db) covByDb.set(String(d.db).toLowerCase(), d);
       });
     }
-    const measuring = !!adminState.productCoverageLoading;
+    const measuring = _isProductCoverageLoading(product.id);
     // TASK-0242: 편집 대상 datasource 의 DB insight 파악 내용(캐시) — 각 행에 한 줄 설명.
     const insKey = _dbInsightsKey(product.id, _editDsKey);
     const ins = adminState.productDbInsights.get(insKey) || null;
@@ -5561,7 +5614,7 @@ function renderProductDetail() {
         _probeDatasourceConn(dsk, { force }).then((res) => _paintDsConnBadge(statusEl, res));
       };
 
-      const _rebuildDsAddList = () => {
+      const _rebuildDsAddList = (forceProbe = false) => {
         addList.innerHTML = "";
         const boundKeys = new Set(effectiveProductDatasources(product).map((d) => String(d.datasource_key).toLowerCase()));
         const all = (adminState.datasources || []);
@@ -5588,11 +5641,13 @@ function renderProductDetail() {
           e.preventDefault();
           // 명시 새로고침(on-demand) — 캐시 비우고 '확인 중' 표시 후 각 datasource 즉시 /test
           //  재probe(force). 자동 토글 경로와 달리 사용자 명시 행동이라 즉시 probe 허용.
+          // TASK-0253: 이전엔 캐시 비운 뒤 (a) _rebuildDsAddList() 가 _kickDsConn(force:false)
+          //  로 cache-miss probe 를 걸고 (b) 별도 Promise.all(force:true) 로 같은 key 를 또
+          //  probe 해 datasource 당 **2벌**이 동시에 떠 4-cap 세마포어를 2배로 점유, ↻ 후
+          //  배지가 수 초간 "확인 중…"에 묶였다. rebuild 에 forceProbe 를 넘겨 각 항목을
+          //  _kickDsConn(force:true) **한 번만** probe 하도록 단일화한다(중복 제거 + force 의미 보존).
           all.forEach((ds) => adminState.datasourceConnStatus.delete(String(ds.key).toLowerCase()));
-          _rebuildDsAddList();
-          Promise.all(all.map((ds) => _probeDatasourceConn(String(ds.key).toLowerCase(), { force: true })))
-            .then(() => _rebuildDsAddList())
-            .catch(() => _rebuildDsAddList());
+          _rebuildDsAddList(true);
         });
         header.append(hLbl, refreshBtn);
         addList.appendChild(header);
@@ -5631,7 +5686,8 @@ function renderProductDetail() {
           const status = document.createElement("span");
           item.append(cb, name, eng, coord, status);
           addList.appendChild(item);
-          _kickDsConn(dsk, status, false);   // 캐시 hit → 즉시, miss → '확인 중' 후 probe.
+          // forceProbe=true(↻ 명시 새로고침)면 캐시 무시 재probe, 평소엔 캐시 hit→즉시 / miss→'확인 중' 후 probe.
+          _kickDsConn(dsk, status, forceProbe);
         });
       };
 
