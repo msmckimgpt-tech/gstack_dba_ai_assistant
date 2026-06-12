@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0238 [SKIPPED:frontend-redesign-no-backend-no-rbac] — PASS
+- 패널 skip 사유: datasource 패널 통합 accordion **재설계(표현 계층)**. RBAC 카탈로그·DB 스키마·시크릿·엔드포인트 shape·백엔드 로직 변경 0(기존 datasources/datasource/test 엔드포인트 재사용). 적대적 보안 subagent 비대상(§18.8). 디자인 통일성/접근성 감사는 gstack `/design-review` + codex outside-voice 가 이미 수행 → 그 지적을 흡수한 재설계 자체가 리뷰 산출물.
+- Date: 2026-06-12
+- Cycle: TASK-0238 (datasource 패널 통합 accordion 재설계, **Minor §12.3**)
+- 검토 결과 (반증 시도):
+  - **회귀 위험(최우선)**: 편집 로직(draft/_refreshAccessibleDbs/redrawChips/buildPicker)을 그대로 두고 표현 계층(섹션 구조·칩→행)만 교체했나? → draft 클로저 4종 + _serverDbsFor + buildPicker 그대로 보존, dbEditorWrap(시스템칩+DB리스트+picker) 컨테이너 자체를 active 행 아래로 **이동**(재생성 아님)했음을 소스로 확인. _editDsKey TDZ 수정(TASK-0236) 유지. PASS.
+  - **첫 바인딩 vs 추가 바인딩 분기**: "＋ 데이터소스 추가" 가 미바인딩 제품엔 PATCH `/datasource`(첫 바인딩), 기존 바인딩 제품엔 POST `/datasources`(추가) 로 갈리나? → `hadBindings` 분기로 처리 확인. PASS.
+  - **active 전환 시 DB 목록 정합**: 행 전환(_switchEditDs)이 _editDsKey 갱신 후 _refreshAccessibleDbs(key) 를 호출해 펼친 datasource 의 접근DB 만 보이나? → Playwright 멀티 바인딩 전환에서 DB 목록이 datasource 별로 바뀜 확인. PASS.
+  - **바인딩 제거/기본지정 후 정본 동기화**: ⋯ 메뉴 액션이 adminState.products + product 로컬을 갱신하고 renderProductDetail() 전체 재렌더하나(TASK-0236 부분갱신 버그 재발 방지)? → `_reloadProductDatasources` 가 GET 재조회→adminState 동기화→renderProductDetail() 호출 확인. PASS.
+  - **접근성**: caret head 가 button + aria-expanded, ⋯ 메뉴 aria-haspopup/role=menu/menuitem + aria-label, 추가 select aria-label 유지. PASS.
+- 잔여 리스크: 시각 레이아웃 최종 확인은 PB-0008 Windows-browser(배포 후) — WSL 헤드리스는 동작 검증, 실 픽셀 괴리는 Windows 화면 필요. 기능/구조 회귀는 위에서 커버.
+
 ## REV-20260612-0237 [SKIPPED:backend-sse-streaming-self-review] — PASS
 - 패널 skip 사유: SSE 토큰 스트리밍 + LLM 명명 정리. 인증/인가/데이터 경계/스키마/시크릿 변경 0(신규 stream GET 은 기존 product.manage 게이트 재사용). 적대적 보안 subagent 비대상(§18.8) — 단 단일 이벤트 루프 블로킹·스레드 누수·buffering 위험이 있어 backend correctness self-review 수행. 동시세션 cycle 이 REV-0235/0236 선점→§13.1 재번호 0233→0237.
 - Date: 2026-06-12

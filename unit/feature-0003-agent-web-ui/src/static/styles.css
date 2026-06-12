@@ -2734,18 +2734,91 @@ a { color: inherit; }
 .admin-chip-action--ok { color: var(--success, #16a34a); opacity: 1; }
 .admin-chip-action--fail { color: var(--danger, #dc2626); opacity: 1; }
 
-/* 이슈②(2026-06-12): "접근 가능 데이터베이스" 헤더의 편집 대상 datasource 배지. */
-.admin-db-ds-badge {
-  margin-left: 8px;
-  padding: 1px 8px;
-  font-size: 11px;
-  font-weight: 500;
-  border-radius: 999px;
-  background: rgba(37, 99, 235, .1);
-  border: 1px solid rgba(37, 99, 235, .24);
-  color: var(--primary, #2563eb);
-  vertical-align: middle;
+/* ── TASK-0238: datasource accordion (통합 재설계). datasource = 펼침 행 + 행별 ⋯ 메뉴.
+   디자인 토큰 일관 적용(이전 하드코딩 rgba 제거), 단일 시각 패턴(둥근 행). ───────────────── */
+.ds-acc { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.ds-acc-row {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface, #fff);
+  overflow: hidden;
 }
+.ds-acc-row.is-active { border-color: var(--primary); box-shadow: inset 3px 0 0 0 var(--primary); }
+.ds-acc-head {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text);
+}
+.ds-acc-head:hover { background: var(--bg); }
+.ds-acc-head:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.ds-acc-caret { color: var(--text-2); font-size: 11px; width: 12px; flex: none; }
+.ds-acc-name { font-weight: 600; }
+.ds-acc-engine {
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm);
+  padding: 1px 6px;
+}
+.ds-acc-primary {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
+  background: var(--primary-soft);
+  border-radius: var(--r-sm);
+  padding: 1px 7px;
+}
+.ds-acc-body { padding: 0 12px 10px; border-top: 1px dashed var(--border-subtle); }
+/* 행 ⋯ 액션 메뉴 */
+.ds-acc-menu-wrap { position: relative; flex: none; display: flex; align-items: center; padding-right: 6px; }
+.ds-acc-menu-btn {
+  min-width: 28px; min-height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: none; cursor: pointer;
+  color: var(--text-2); font-size: 16px; border-radius: var(--r-sm);
+}
+.ds-acc-menu-btn:hover { background: var(--bg); color: var(--text); }
+.ds-acc-menu-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.ds-acc-menu {
+  position: absolute; top: 100%; right: 6px; z-index: 20;
+  min-width: 140px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md, 0 4px 16px rgba(0,0,0,.12));
+  padding: 4px;
+  display: flex; flex-direction: column;
+}
+.ds-acc-menu.hidden { display: none; }
+.ds-acc-menu-item {
+  text-align: left; padding: 7px 10px; font-size: 12.5px;
+  border: none; background: none; cursor: pointer; border-radius: var(--r-sm);
+  color: var(--text);
+}
+.ds-acc-menu-item:hover { background: var(--bg); }
+.ds-acc-menu-item.danger { color: var(--danger); }
+.ds-acc-menu-item.danger:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+/* ＋ 데이터소스 추가 */
+.ds-acc-add-row { margin-top: 8px; }
+.ds-acc-add-select {
+  font-size: 12.5px; padding: 6px 10px;
+  border: 1px dashed var(--border); border-radius: var(--r-sm);
+  background: var(--bg); color: var(--text-2); cursor: pointer;
+}
+.ds-acc-add-select:hover { border-color: var(--primary); color: var(--text); }
+/* 펼친 datasource 의 DB 편집기 컨테이너 */
+.cov-db-editor { padding-top: 6px; }
 
 .admin-chip-locked-hint {
   font-size: 10px;

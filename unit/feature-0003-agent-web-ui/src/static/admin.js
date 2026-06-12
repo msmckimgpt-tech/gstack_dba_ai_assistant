@@ -4694,70 +4694,41 @@ function renderProductDetail() {
   toggles.appendChild(sortField);
   paneEl.appendChild(toggles);
 
-  // TASK-0206: 데이터 소스 → 접근 가능 데이터베이스 의 forward-hook(데이터소스 섹션이 위에 렌더되어
-  // 아래 접근-DB 섹션을 갱신). datasource-driven 으로 선택 datasource 의 DB 목록을 반영한다.
+  // ══════════════════════════════════════════════════════════════════════════
+  // TASK-0238 데이터 소스 & 접근 가능 데이터베이스 — 통합 accordion 재설계.
+  //   (이전: "데이터 소스" 섹션 칩 + "접근 가능 데이터베이스" 섹션 헤더배지 + 편집대상 select
+  //    = datasource 정보 3중 중복 + pill/점선pill/둥근행 3가지 모양. /design-review 지적.)
+  //   재설계: 단일 섹션 안에 datasource = 펼침 accordion 행(= 선택기 = 상태표시). 펼치면 그
+  //   datasource 의 접근 DB 편집기가 인라인. datasource 정보 1곳, 액션은 행별 ⋯ 메뉴로 통일.
+  // 편집 로직(draft/_refreshAccessibleDbs/redrawChips/buildPicker/_switchEditDs)은 보존하고
+  // **표현 계층만** accordion 으로 교체한다(동작 회귀 최소화).
+  // ══════════════════════════════════════════════════════════════════════════
+  const canDs = can("console.manage");
   let _refreshAccessibleDbs = () => {};
+  let _renderDsAccordion = () => {};
   let _selectedDatasourceKey = product.datasource_key || "";
 
-  // Database chip editor (datasource-driven, DB-단위)
   const dbSection = document.createElement("div");
   dbSection.className = "admin-detail-section";
   const dbTitle = document.createElement("div");
   dbTitle.className = "admin-detail-section-title";
-  dbTitle.textContent = "접근 가능 데이터베이스";
-  // 이슈②(2026-06-12): 아래 DB 목록이 **어느 데이터소스** 것인지 헤더에 배지로 명시.
-  // 멀티 datasource(≥2) 면 편집 대상 datasource 가 바뀔 때마다 갱신된다(단일/미바인딩이면 기본 표기).
-  const dbTitleDs = document.createElement("span");
-  dbTitleDs.className = "admin-db-ds-badge";
-  dbTitle.appendChild(dbTitleDs);
+  dbTitle.textContent = "데이터 소스 & 접근 가능 데이터베이스";
   dbSection.appendChild(dbTitle);
   const dbHint = document.createElement("div");
   dbHint.className = "admin-detail-hint";
-  dbHint.textContent = "선택한 데이터 소스에서 이 제품이 접근할 데이터베이스. 시스템 DB(메타데이터)는 고정됩니다.";
-  dbSection.appendChild(dbHint);
-  // 현재 편집 대상 datasource 를 헤더 배지에 반영. dsk 빈 값=기본 단일 MySQL.
-  const _updateDbSectionLabel = (dsk) => {
-    const label = String(dsk || "").trim();
-    dbTitleDs.textContent = label ? `데이터소스: ${label}` : "기본 단일 MySQL";
-  };
-
-  // TASK-0228 (1:N): 접근DB 편집은 **편집 대상 datasource** 차원으로 분리한다. _editDsKey 는 현재
-  // 편집 중인 datasource 라벨(기본=primary). 단일 바인딩 제품은 _editDsKey=primary(또는 '') 1개.
-  // ※ TDZ 버그 수정(TASK-0234 재현): 아래 "편집 대상 데이터소스" select 블록(≥2)이 _editDsKey 를
-  //   읽으므로 **반드시 그 블록보다 먼저** 선언해야 한다. (이전엔 select 블록 뒤에 let 선언이라,
-  //   ≥2 바인딩 제품을 렌더하면 ReferenceError 로 패널이 통째 비던 잠복 버그.)
-  let _editDsKey = (product.datasource_key || "");  // 기본 편집 대상 = primary
-
-  // TASK-0228 (1:N): 제품이 ≥2 datasource 에 바인딩됐으면 "편집 대상 데이터소스" 선택기를 보인다.
-  // 각 datasource 의 접근DB 를 독립 편집한다(차원 격리). 단일 바인딩이면 선택기 비표시(종전 UX).
-  let _switchEditDs = () => {};  // forward hook (redrawChips/buildPicker/_refreshAccessibleDbs 정의 후 채움)
-  let _editDsSelect = null;
-  if ((product.datasources || []).length >= 2) {
-    const editRow = document.createElement("div");
-    editRow.className = "admin-db-picker-row";
-    const editLbl = document.createElement("span");
-    editLbl.className = "admin-detail-hint";
-    editLbl.textContent = "편집 대상 데이터소스: ";
-    _editDsSelect = document.createElement("select");
-    _editDsSelect.setAttribute("aria-label", "편집 대상 데이터소스");  // a11y H2: 가시 라벨이 별도 span 이라 미연결
-    (product.datasources || []).forEach((b) => {
-      const opt = document.createElement("option");
-      opt.value = b.datasource_key;
-      opt.textContent = b.datasource_key + (b.is_primary ? " (기본)" : "");
-      _editDsSelect.appendChild(opt);
-    });
-    _editDsSelect.value = _editDsKey || (product.datasources[0] || {}).datasource_key || "";
-    _editDsSelect.addEventListener("change", () => { _switchEditDs(_editDsSelect.value); });
-    editRow.append(editLbl, _editDsSelect);
-    dbSection.appendChild(editRow);
+  if (!adminState.datasourcesEnabled) {
+    dbHint.textContent = "멀티 datasource 비활성(AGENT_MULTI_DATASOURCE_ENABLED=0). 바인딩은 저장되나 flag 활성화 전까지는 기본 MySQL 로 동작합니다.";
+  } else {
+    dbHint.textContent = "이 제품이 분석할 데이터소스와 각 데이터소스의 접근 가능 데이터베이스. 데이터소스를 클릭하면 펼쳐서 DB 를 편집합니다.";
   }
+  dbSection.appendChild(dbHint);
 
-  // TASK-0223: 접근 가능 DB 기준 insight-worker 분석 완료율 (전체 % + DB별 breakdown).
+  // TASK-0223: 제품 전체 insight 분석 완료율(전 datasource 합산) — 섹션 상단 1개.
   dbSection.appendChild(buildProductCoverageDetail(product));
 
-  // (_editDsKey 는 위 "편집 대상 select" 블록보다 먼저 선언됨 — TDZ 회피.)
-  // draft 는 그 datasource 의 DB 행만 담는다. product.databases 의 각 행은 datasource_key 를 가진다(P-B).
-  // 편집 대상 datasource 의 서버 DB 행만 필터(datasource_key 매칭; 레거시 '' 행은 빈 키 편집 시 포함).
+  // 편집 중(펼친) datasource. 기본 = primary. 단일/미바인딩이면 primary(또는 '').
+  let _editDsKey = (product.datasource_key || "");
+  let _switchEditDs = () => {};  // forward hook (정의 후 채움)
   const _serverDbsFor = (dsk) => {
     const want = String(dsk || "").trim().toLowerCase();
     return (product.databases || [])
@@ -4927,14 +4898,19 @@ function renderProductDetail() {
     }
     chipWrap.appendChild(listEl);
   };
-  dbSection.appendChild(chipWrap);
+
+  // 접근 DB 편집기(시스템칩 + 사용자 DB 리스트 + 추가 picker)를 담는 컨테이너.
+  // accordion 의 "펼친 datasource 행" 아래로 이 컨테이너를 옮겨 단다(_renderDsAccordion).
+  const dbEditorWrap = document.createElement("div");
+  dbEditorWrap.className = "cov-db-editor";
+  dbEditorWrap.appendChild(chipWrap);
 
   const pickerWrap = document.createElement("div");
   pickerWrap.className = "admin-db-picker-wrap";
   const pickerDropBtn = document.createElement("button");
   pickerDropBtn.type = "button";
   pickerDropBtn.className = "admin-db-picker-btn";
-  pickerDropBtn.textContent = "+ 데이터베이스 선택";
+  pickerDropBtn.textContent = "+ 데이터베이스 추가";
   pickerDropBtn.disabled = !canManage;
   const pickerDropList = document.createElement("div");
   pickerDropList.className = "admin-db-picker-list hidden";
@@ -4949,7 +4925,7 @@ function renderProductDetail() {
     }
   });
   pickerWrap.append(pickerDropBtn, pickerDropList);
-  dbSection.appendChild(pickerWrap);
+  dbEditorWrap.appendChild(pickerWrap);
 
   redrawChips();
   buildPicker();
@@ -4992,139 +4968,27 @@ function renderProductDetail() {
     buildPicker();
   };
 
-  // TASK-0228 (1:N): 편집 대상 datasource 전환 — 현재 draft 를 그 datasource 키로 저장 보존하고,
-  // 새 datasource 의 draft 를 로드 + 그 datasource 의 서버 DB 목록으로 picker 갱신.
+  // TASK-0238: 편집 대상(펼친) datasource 전환 — 현재 draft 를 그 datasource 키로 저장 보존하고,
+  // 새 datasource 의 draft 로드 + 서버 DB 목록 갱신 + accordion 재렌더(active 행 표시·편집기 이동).
   _switchEditDs = (newKey) => {
     const nk = String(newKey || "").trim().toLowerCase();
     if (nk === String(_editDsKey || "").trim().toLowerCase()) return;
-    // 현재 편집 중 draft 를 현재 키 슬롯에 보존(미저장 변경 유지).
     adminState.productDbDraft.set(_draftKeyFor(_editDsKey), draft.map((d) => ({ ...d })));
     _editDsKey = nk;
     _swapDraftContents(_loadDraft(nk));
     adminState.productDbDraft.set(_draftKeyFor(nk), draft);
-    _updateDbSectionLabel(nk);   // 이슈②: 헤더 배지를 새 편집 대상 datasource 로 갱신
-    _refreshAccessibleDbs(nk);  // 새 datasource 의 DB picker + redraw
+    _renderDsAccordion();        // active 행 강조 + dbEditorWrap 을 새 행 아래로 이동
+    _refreshAccessibleDbs(nk);   // 새 datasource 의 DB picker + redraw
   };
-  _updateDbSectionLabel(_editDsKey);  // 초기 헤더 배지(편집 대상 = primary)
 
-  // ── 멀티 datasource (P2): product → datasource 바인딩 + 연결테스트 (TASK-0206: 접근가능DB 위로 이동) ──
-  // 백엔드 PATCH datasource 는 console.manage 권한이라 컨트롤도 그 권한으로 게이트(불일치 방지).
+  // ── TASK-0238: datasource accordion (선택기 = 상태표시 = 바인딩관리 통합) ──────────────
+  //  각 datasource = 펼침 가능한 행. 펼친 행(=_editDsKey) 아래로 dbEditorWrap 을 옮겨 단다.
+  //  행 우측 ⋯ 메뉴 = 연결 테스트 / 기본 지정 / 바인딩 제거(액션 통일). primary 는 "기본" 배지.
   {
-    const canDs = can("console.manage");
-    const dsSection = document.createElement("div");
-    dsSection.className = "admin-detail-section";
-    const dsTitle = document.createElement("div");
-    dsTitle.className = "admin-detail-section-title";
-    dsTitle.textContent = "데이터 소스 (datasource)";
-    dsSection.appendChild(dsTitle);
+    const dsAccordion = document.createElement("div");
+    dsAccordion.className = "ds-acc";
 
-    const dsHint = document.createElement("div");
-    dsHint.className = "admin-detail-hint";
-    if (!adminState.datasourcesEnabled) {
-      dsHint.textContent = "멀티 datasource 비활성(AGENT_MULTI_DATASOURCE_ENABLED=0). 바인딩은 저장되나 flag 활성화 전까지는 기본 MySQL 로 동작합니다.";
-    } else {
-      dsHint.textContent = "이 제품의 대화가 분석할 데이터 소스. 데이터는 데이터 소스에 종속됩니다 — 선택하면 아래 '접근 가능 데이터베이스' 목록이 갱신됩니다. RO 유저는 허용 DB 에만 GRANT SELECT 되어야 합니다.";
-    }
-    dsSection.appendChild(dsHint);
-
-    // ── TASK-0228 (1:N): 바인딩된 datasource 칩 목록(primary 표시 + 제거). 여러 데이터소스를 한
-    // 제품에 연결할 수 있다. 단일 바인딩이면 칩 1개(레거시와 동일 동작). ──────────────────────────
-    const dsChips = document.createElement("div");
-    dsChips.className = "admin-chip-wrap";
-    dsChips.style.marginBottom = "8px";
-    const _renderDsChips = () => {
-      dsChips.innerHTML = "";
-      const binds = (product.datasources || []);
-      if (!binds.length) {
-        const none = document.createElement("span");
-        none.className = "admin-detail-hint";
-        // a11y M4: 수동적 status 대신 행동 유도(아래 드롭다운으로 바인딩).
-        none.textContent = "바인딩된 데이터소스 없음 — 기본 단일 MySQL. 아래에서 데이터소스를 선택해 바인딩하세요.";
-        dsChips.appendChild(none);
-        return;
-      }
-      binds.forEach((b) => {
-        const chip = document.createElement("span");
-        chip.className = "admin-chip" + (b.is_primary ? " admin-chip--primary" : "");
-        const label = document.createElement("span");
-        label.textContent = b.datasource_key + (b.is_primary ? " (기본)" : "");
-        chip.appendChild(label);
-        if (canDs) {
-          // primary 가 아니면 "기본 지정" 버튼.
-          // TASK-0231 a11y: 아이콘 전용 버튼이므로 aria-label 로 대상 명시(★/× 만으로는 SR 불투명),
-          // 비동기 중 disabled 로 중복 POST/DELETE 차단(REV-0230 a11y H1/H3).
-          if (!b.is_primary) {
-            const star = document.createElement("button");
-            star.type = "button"; star.className = "admin-chip-action"; star.textContent = "★";
-            star.title = "기본(primary) 데이터소스로 지정";
-            star.setAttribute("aria-label", `'${b.datasource_key}' 를 기본 데이터소스로 지정`);
-            star.addEventListener("click", async () => {
-              if (star.disabled) return;
-              star.disabled = true;
-              try {
-                await apiFetch(`/api/admin/products/${product.id}/datasources`, {
-                  method: "POST",
-                  body: JSON.stringify({ datasource_key: b.datasource_key, is_primary: true }),
-                });
-                await _reloadProductDatasources();
-                showToast(`'${b.datasource_key}' 를 기본 데이터소스로 지정`);
-              } catch (e) { star.disabled = false; showToast(e.message || "기본 지정 실패", true); }
-            });
-            chip.appendChild(star);
-          }
-          // 이슈①(2026-06-12): 바인딩이 있으면 아래 드롭다운(dsSelect)은 "추가" 모드라 value=''
-          // → 공용 "연결 테스트" 버튼이 대상 datasource 를 못 잡아 항상 "먼저 선택하세요" 였다.
-          // 각 칩에 **그 datasource 전용** 연결 테스트 버튼(⟳)을 둔다.
-          const test = document.createElement("button");
-          test.type = "button"; test.className = "admin-chip-action"; test.textContent = "⟳";
-          test.title = "이 데이터소스 연결 테스트";
-          test.setAttribute("aria-label", `'${b.datasource_key}' 데이터소스 연결 테스트`);
-          test.addEventListener("click", async () => {
-            if (test.disabled) return;
-            test.disabled = true;
-            const _prevTitle = test.title;
-            test.title = "테스트 중…"; test.textContent = "…";
-            try {
-              const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(b.datasource_key)}/test`, { method: "POST" });
-              if (r && r.ok) {
-                test.textContent = "✓"; test.classList.add("admin-chip-action--ok");
-                showToast(`'${b.datasource_key}' 연결 성공 (${r.elapsed_ms}ms)`);
-              } else {
-                test.textContent = "✗"; test.classList.add("admin-chip-action--fail");
-                showToast(`'${b.datasource_key}' 연결 실패: ${(r && r.error) || "unknown"}`, true);
-              }
-            } catch (e) {
-              test.textContent = "✗"; test.classList.add("admin-chip-action--fail");
-              showToast(`'${b.datasource_key}' 연결 테스트 오류: ${e.message || "실패"}`, true);
-            } finally {
-              test.disabled = false;
-              setTimeout(() => {  // 2초 후 기본 아이콘 복원(반복 테스트 가능)
-                test.textContent = "⟳"; test.title = _prevTitle;
-                test.classList.remove("admin-chip-action--ok", "admin-chip-action--fail");
-              }, 2000);
-            }
-          });
-          chip.appendChild(test);
-          const rm = document.createElement("button");
-          rm.type = "button"; rm.className = "admin-chip-remove"; rm.textContent = "×";
-          rm.title = "이 데이터소스 바인딩 제거";
-          rm.setAttribute("aria-label", `'${b.datasource_key}' 데이터소스 바인딩 제거`);
-          rm.addEventListener("click", async () => {
-            if (rm.disabled) return;
-            if (!confirm(`데이터소스 '${b.datasource_key}' 바인딩을 제거할까요?\n(이 데이터소스의 접근 가능 DB 설정도 함께 삭제됩니다.)`)) return;
-            rm.disabled = true;
-            try {
-              await apiFetch(`/api/admin/products/${product.id}/datasources/${encodeURIComponent(b.datasource_key)}`, { method: "DELETE" });
-              await _reloadProductDatasources();
-              showToast(`'${b.datasource_key}' 바인딩 제거됨`);
-            } catch (e) { rm.disabled = false; showToast(e.message || "바인딩 제거 실패", true); }
-          });
-          chip.appendChild(rm);
-        }
-        dsChips.appendChild(chip);
-      });
-    };
-    // 바인딩 변경 후 product.datasources / datasource_key 를 서버에서 다시 읽어 칩·select 동기화.
+    // 바인딩 변경(추가/제거/기본지정) 후 정본 동기화 + 패널 전체 재렌더(TASK-0236 교훈).
     const _reloadProductDatasources = async () => {
       try {
         const r = await apiFetch(`/api/admin/products/${product.id}/datasources`);
@@ -5133,120 +4997,179 @@ function renderProductDetail() {
           datasource_key: d.datasource_key, is_primary: d.is_primary, sort_order: d.sort_order,
         }));
         const prim = binds.find((d) => d.is_primary);
-        const nextPrimary = prim ? prim.datasource_key : null;
-        // adminState.products 정본을 갱신한 뒤 **제품 상세 전체를 재렌더**한다.
-        // (TASK-0234 재현 버그: 칩만 부분 갱신하면 "편집 대상 데이터소스" select·헤더 배지·
-        //  접근 가능 DB 목록이 초기 렌더 시점 클로저에 묶여 갱신 안 됨 — 바인딩 0↔1↔N 전환 시
-        //  select 가 아예 생성/제거돼야 하므로 부분 갱신으로는 일관성 보장 불가. 전체 재렌더가 정답.)
         const p = (adminState.products || []).find((x) => Number(x.id) === Number(product.id));
-        if (p) { p.datasources = nextDatasources; p.datasource_key = nextPrimary; }
+        if (p) { p.datasources = nextDatasources; p.datasource_key = prim ? prim.datasource_key : null; }
         product.datasources = nextDatasources;
-        product.datasource_key = nextPrimary;
+        product.datasource_key = prim ? prim.datasource_key : null;
         renderProductDetail();
       } catch (e) { showToast(e.message || "데이터소스 목록 갱신 실패", true); }
     };
-    _renderDsChips();
-    dsSection.appendChild(dsChips);
 
-    const dsRow = document.createElement("div");
-    dsRow.className = "admin-db-picker-row";
-    const dsSelect = document.createElement("select");
-    dsSelect.setAttribute("aria-label", "데이터소스 추가 또는 설정");  // a11y H2: 가시 라벨 없는 combobox
-    dsSelect.disabled = !canDs;
-    const optDefault = document.createElement("option");
-    optDefault.value = "";
-    optDefault.textContent = (product.datasources && product.datasources.length)
-      ? "(＋ 데이터소스 추가…)" : "(기본 단일 MySQL)";
-    dsSelect.appendChild(optDefault);
-    (adminState.datasources || []).forEach((ds) => {
-      const opt = document.createElement("option");
-      opt.value = ds.key;
-      opt.textContent = `${ds.key} — ${ds.engine || "mysql"} @ ${ds.host || "?"}:${ds.port || ""}`;
-      dsSelect.appendChild(opt);
-    });
-    dsSelect.value = (product.datasources && product.datasources.length) ? "" : (product.datasource_key || "");
-
-    const dsResult = document.createElement("span");
-    dsResult.className = "admin-ds-test-result";
-
-    // TASK-0206: 별도 "참조 DB" 드롭다운 폐지 — DB 선택은 아래 '접근 가능 데이터베이스'(DB-단위 multi-select)
-    // 로 흡수. datasource 변경 시 접근가능DB 목록을 datasource-driven 으로 재구성한다.
-    dsSelect.addEventListener("change", async () => {
-      const val = dsSelect.value || null;
-      dsResult.textContent = "";
-      dsResult.className = "admin-ds-test-result";
-      const hadBindings = !!(product.datasources && product.datasources.length);
-      try {
-        if (hadBindings) {
-          // TASK-0228 (1:N): 기존 바인딩이 있으면 드롭다운 선택은 **추가**(POST). 빈 값은 무시.
-          if (!val) { dsSelect.value = ""; return; }
-          await apiFetch(`/api/admin/products/${product.id}/datasources`, {
-            method: "POST",
-            body: JSON.stringify({ datasource_key: val, is_primary: false }),
-          });
-          await _reloadProductDatasources();
-          showToast(`데이터소스 '${val}' 추가됨`);
-        } else {
-          // 첫 바인딩(또는 기본 환원): 기존 PATCH 경로(primary 설정 + join 동기화는 백엔드가 처리).
-          await apiFetch(`/api/admin/products/${product.id}/datasource`, {
-            method: "PATCH",
-            body: JSON.stringify({ datasource_key: val, datasource_database: null }),
-          });
-          product.datasource_database = null;
-          product.datasource_key = val;
-          product.datasources = val ? [{ datasource_key: val, is_primary: true, sort_order: 0 }] : [];
-          const p = (adminState.products || []).find((x) => Number(x.id) === Number(product.id));
-          if (p) { p.datasource_key = val; p.datasource_database = null; p.datasources = product.datasources; }
-          showToast(val ? `datasource '${val}' 바인딩됨` : "기본 MySQL 로 환원됨");
-          renderProductDetail();  // 전체 재렌더(칩·배지·DB목록·select 일관 재구성)
-        }
-      } catch (error) {
-        dsSelect.value = "";
-        showToast(error.message || "datasource 바인딩 실패", true);
+    // 행 우측 ⋯ 액션 메뉴(연결 테스트 / 기본 지정 / 제거). 한 datasource 의 모든 동작을 한 곳에.
+    const _buildDsMenu = (b) => {
+      const wrap = document.createElement("div");
+      wrap.className = "ds-acc-menu-wrap";
+      const btn = document.createElement("button");
+      btn.type = "button"; btn.className = "ds-acc-menu-btn"; btn.textContent = "⋯";
+      btn.title = "데이터소스 동작"; btn.setAttribute("aria-haspopup", "true");
+      btn.setAttribute("aria-label", `'${b.datasource_key}' 데이터소스 동작 메뉴`);
+      const menu = document.createElement("div");
+      menu.className = "ds-acc-menu hidden"; menu.setAttribute("role", "menu");
+      const addItem = (label, danger, fn) => {
+        const it = document.createElement("button");
+        it.type = "button"; it.className = "ds-acc-menu-item" + (danger ? " danger" : "");
+        it.textContent = label; it.setAttribute("role", "menuitem");
+        it.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          menu.classList.add("hidden");
+          await fn();
+        });
+        menu.appendChild(it);
+      };
+      // 연결 테스트
+      addItem("연결 테스트", false, async () => {
+        showToast(`'${b.datasource_key}' 연결 테스트 중…`);
+        try {
+          const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(b.datasource_key)}/test`, { method: "POST" });
+          if (r && r.ok) showToast(`'${b.datasource_key}' 연결 성공 (${r.elapsed_ms}ms)`);
+          else showToast(`'${b.datasource_key}' 연결 실패: ${(r && r.error) || "unknown"}`, true);
+        } catch (e) { showToast(`'${b.datasource_key}' 연결 테스트 오류: ${e.message || "실패"}`, true); }
+      });
+      // 기본 지정(primary 아닐 때만)
+      if (!b.is_primary) {
+        addItem("기본으로 지정", false, async () => {
+          try {
+            await apiFetch(`/api/admin/products/${product.id}/datasources`, {
+              method: "POST", body: JSON.stringify({ datasource_key: b.datasource_key, is_primary: true }),
+            });
+            await _reloadProductDatasources();
+            showToast(`'${b.datasource_key}' 를 기본 데이터소스로 지정`);
+          } catch (e) { showToast(e.message || "기본 지정 실패", true); }
+        });
       }
-    });
+      // 바인딩 제거
+      addItem("바인딩 제거", true, async () => {
+        if (!confirm(`데이터소스 '${b.datasource_key}' 바인딩을 제거할까요?\n(이 데이터소스의 접근 가능 DB 설정도 함께 삭제됩니다.)`)) return;
+        try {
+          await apiFetch(`/api/admin/products/${product.id}/datasources/${encodeURIComponent(b.datasource_key)}`, { method: "DELETE" });
+          await _reloadProductDatasources();
+          showToast(`'${b.datasource_key}' 바인딩 제거됨`);
+        } catch (e) { showToast(e.message || "바인딩 제거 실패", true); }
+      });
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        document.querySelectorAll(".ds-acc-menu").forEach((m) => { if (m !== menu) m.classList.add("hidden"); });
+        menu.classList.toggle("hidden");
+      });
+      document.addEventListener("click", function _closeMenu(e) { if (!wrap.contains(e.target)) menu.classList.add("hidden"); });
+      wrap.append(btn, menu);
+      return wrap;
+    };
 
-    const testBtn = document.createElement("button");
-    testBtn.type = "button";
-    testBtn.className = "btn-secondary";
-    testBtn.textContent = "연결 테스트";
-    testBtn.disabled = !canDs;
-    testBtn.addEventListener("click", async () => {
-      const key = dsSelect.value;
-      if (!key) {
-        // 바인딩이 이미 있으면 드롭다운은 "추가" 모드(value='') — 기존 바인딩은 각 칩의 ⟳ 로 테스트.
-        const hasBinds = !!(product.datasources && product.datasources.length);
-        showToast(hasBinds
-          ? "기존 데이터소스는 위 칩의 ⟳(연결 테스트) 버튼을 사용하세요. 이 버튼은 추가할 새 데이터소스 선택 시 테스트합니다."
-          : "테스트할 datasource 를 먼저 선택하세요.", true);
+    // accordion 전체 재렌더: datasource 행들 + 펼친 행 아래 dbEditorWrap 이동.
+    _renderDsAccordion = () => {
+      dsAccordion.innerHTML = "";
+      const binds = (product.datasources || []);
+      const dsMeta = new Map((adminState.datasources || []).map((d) => [d.key, d]));
+      if (!binds.length) {
+        const none = document.createElement("div");
+        none.className = "admin-detail-hint";
+        none.textContent = "바인딩된 데이터소스 없음 — 기본 단일 MySQL. 아래에서 데이터소스를 선택해 추가하세요.";
+        dsAccordion.appendChild(none);
+        // 미바인딩: 기본 MySQL 의 접근DB 편집기를 그대로 보인다.
+        dsAccordion.appendChild(dbEditorWrap);
         return;
       }
-      testBtn.disabled = true;
-      dsResult.textContent = "테스트 중…";
-      dsResult.className = "admin-ds-test-result";
-      try {
-        const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(key)}/test`, { method: "POST" });
-        if (r && r.ok) {
-          dsResult.textContent = `✓ 연결 성공 (${r.elapsed_ms}ms)`;
-          dsResult.className = "admin-ds-test-result admin-ds-test-ok";
-        } else {
-          dsResult.textContent = `✗ 실패 (${(r && r.error) || "unknown"})`;
-          dsResult.className = "admin-ds-test-result admin-ds-test-fail";
-        }
-      } catch (error) {
-        dsResult.textContent = `✗ ${error.message || "테스트 실패"}`;
-        dsResult.className = "admin-ds-test-result admin-ds-test-fail";
-      } finally {
-        testBtn.disabled = !canDs;
-      }
-    });
+      const activeKey = String(_editDsKey || "").trim().toLowerCase();
+      binds.forEach((b) => {
+        const isActive = String(b.datasource_key || "").trim().toLowerCase() === activeKey;
+        const meta = dsMeta.get(b.datasource_key) || {};
+        const row = document.createElement("div");
+        row.className = "ds-acc-row" + (isActive ? " is-active" : "");
 
-    dsRow.append(dsSelect, testBtn, dsResult);
-    dsSection.appendChild(dsRow);
-    // TASK-0206 UX: 데이터 소스 섹션을 '접근 가능 데이터베이스' 위로 배치(데이터→데이터소스 종속 흐름 시각화).
-    paneEl.appendChild(dsSection);
+        const head = document.createElement("button");
+        head.type = "button";
+        head.className = "ds-acc-head";
+        head.setAttribute("aria-expanded", isActive ? "true" : "false");
+        head.addEventListener("click", () => { _switchEditDs(b.datasource_key); });
+
+        const caret = document.createElement("span");
+        caret.className = "ds-acc-caret"; caret.textContent = isActive ? "▾" : "▸";
+        head.appendChild(caret);
+
+        const name = document.createElement("span");
+        name.className = "ds-acc-name"; name.textContent = b.datasource_key;
+        head.appendChild(name);
+
+        // 메타: 엔진 + primary 배지(상태 = pill, 액션 아님).
+        const eng = document.createElement("span");
+        eng.className = "ds-acc-engine"; eng.textContent = (meta.engine || "mysql");
+        head.appendChild(eng);
+        if (b.is_primary) {
+          const pb = document.createElement("span");
+          pb.className = "ds-acc-primary"; pb.textContent = "기본";
+          head.appendChild(pb);
+        }
+        row.appendChild(head);
+
+        if (canDs) row.appendChild(_buildDsMenu(b));
+
+        dsAccordion.appendChild(row);
+        // 펼친 행 바로 아래에 DB 편집기 삽입.
+        if (isActive) {
+          const body = document.createElement("div");
+          body.className = "ds-acc-body";
+          body.appendChild(dbEditorWrap);
+          dsAccordion.appendChild(body);
+        }
+      });
+    };
+
+    dbSection.appendChild(dsAccordion);
+
+    // ＋ 데이터소스 추가 (미바인딩 datasource 만 후보). 첫 바인딩은 PATCH, 이후는 POST.
+    if (canDs) {
+      const addRow = document.createElement("div");
+      addRow.className = "ds-acc-add-row";
+      const addSel = document.createElement("select");
+      addSel.className = "ds-acc-add-select";
+      addSel.setAttribute("aria-label", "데이터소스 추가");
+      const opt0 = document.createElement("option");
+      opt0.value = ""; opt0.textContent = "＋ 데이터소스 추가…";
+      addSel.appendChild(opt0);
+      const boundKeys = new Set((product.datasources || []).map((d) => String(d.datasource_key).toLowerCase()));
+      (adminState.datasources || []).forEach((ds) => {
+        if (boundKeys.has(String(ds.key).toLowerCase())) return;  // 이미 바인딩됨 — 제외
+        const opt = document.createElement("option");
+        opt.value = ds.key;
+        opt.textContent = `${ds.key} — ${ds.engine || "mysql"} @ ${ds.host || "?"}:${ds.port || ""}`;
+        addSel.appendChild(opt);
+      });
+      addSel.addEventListener("change", async () => {
+        const val = addSel.value || null;
+        if (!val) return;
+        const hadBindings = !!(product.datasources && product.datasources.length);
+        try {
+          if (hadBindings) {
+            await apiFetch(`/api/admin/products/${product.id}/datasources`, {
+              method: "POST", body: JSON.stringify({ datasource_key: val, is_primary: false }),
+            });
+          } else {
+            await apiFetch(`/api/admin/products/${product.id}/datasource`, {
+              method: "PATCH", body: JSON.stringify({ datasource_key: val, datasource_database: null }),
+            });
+          }
+          await _reloadProductDatasources();
+          showToast(`데이터소스 '${val}' 추가됨`);
+        } catch (error) { addSel.value = ""; showToast(error.message || "데이터소스 추가 실패", true); }
+      });
+      addRow.appendChild(addSel);
+      dbSection.appendChild(addRow);
+    }
+
     paneEl.appendChild(dbSection);
-    // 초기 로드: 제품에 바인딩된 datasource 의 DB 목록으로 접근가능DB 구성(미바인딩이면 데이터 MySQL 기본값).
+    _renderDsAccordion();
+    // 초기 로드: 펼친(primary) datasource 의 DB 목록으로 접근가능DB 구성.
     _refreshAccessibleDbs(_selectedDatasourceKey);
   }
 
