@@ -33,7 +33,9 @@ sources:
 
 ## 1. 개요
 
-자연어 요청을 받아 **LLM tool-call loop** (SQL 작성·실행·메모리·지식·복구) 를 수행하는 핵심 에이전트 feature. MySQL `agent_memory` + Postgres `agent_kb` (pgvector) duo-storage 위에서 step loop 가 작동하며, insight worker 가 백그라운드로 schema/table 인사이트를 캐시한다.
+자연어 요청을 받아 **LLM tool-call loop** (SQL 작성·실행·메모리·지식·복구) 를 수행하는 핵심 에이전트 feature. Postgres `agent_kb` (pgvector, runtime + KB 단독 정본) 위에서 step loop 가 작동하며, insight worker 가 백그라운드로 schema/table 인사이트를 캐시한다.
+
+> **2026-06 멀티 데이터소스 시대**: 단일 MySQL replica → **N 개 데이터소스 (MySQL·MSSQL)** 동시 분석으로 일반화. dialect 추상화 + datasource registry (envelope 암호화) + DB-단위 접근 + datasource-aware insight 가 배포·라이브검증 완료. §2.5 참조.
 
 ## 2. 상세
 
@@ -69,6 +71,20 @@ sources:
 - `agent_kb_rw` — SELECT/INSERT/UPDATE/DELETE on 4 tables + VIEW SELECT (M2+ 사용)
 - `agent_kb_ro` — SELECT only (read-only audit / debug)
 - Application-level: `kb.read.own` / `kb.read.any` / `kb.mutate.any` / `kb.export` (별 cycle)
+
+### 2.5 멀티 데이터소스 (2026-06, TASK-0187/0205/0206/0219)
+
+| 영역 | 메커니즘 | concept |
+|---|---|---|
+| dialect 추상화 | `modules/dialects/` — `Dialect` ABC + `MySQLDialect`/`MSSQLDialect` | [[../concepts/multi-datasource]] |
+| 연결 라우팅 | `db.connect(datasource_key, database)` + `_DatasourceRouter` (호출 단위 lock) | [[../concepts/multi-datasource]] |
+| 자격증명 저장 | `WebDatasources` + KEK/DEK envelope (`cred_crypto.py`), resolve 시 복호 | [[../concepts/datasource-registry]] |
+| 접근 경계 | DB-단위 allowlist (`WebProductDatabases.SchemaName`=catalog), 시스템 DB 가시성만 | [[../concepts/db-level-access]] |
+| insight 격리 | `rag_objects.datasource_key` + endpoint-hash `compute_scope_key` (라벨 rename 불변) | [[../concepts/datasource-aware-rag]] |
+| 보안 게이트 | 3축 (AST allowlist · RO GRANT · sql_guard denylist), fail-closed | [[../concepts/multi-datasource]] |
+
+- 시드 데이터 MySQL = `main_mysql` datasource. shadow flag `AGENT_MULTI_DATASOURCE_ENABLED`.
+- EXPLAIN pre-gate + `MAX_EXECUTION_TIME` (DESIGN-self-interrupt → self-interrupt-lite, TASK-0172): `AGENT_QUERY_GUARD_MODE` (off/warn/gate) + `confirm_heavy` override.
 
 ## 3. 특징
 
@@ -114,15 +130,22 @@ bash bin/kb-cleanup-mysql.sh --dry-run
 - [[../../unit/feature-0002-agent-core/docs/TASK|TASK.md]]
 - [[../../unit/feature-0002-agent-core/docs/AGENT_CORE_INTERNALS|AGENT_CORE_INTERNALS.md]]
 - [[../../unit/feature-0002-agent-core/docs/INSIGHTS|INSIGHTS.md]]
+- [[../../unit/feature-0002-agent-core/docs/DESIGN-multi-datasource|DESIGN-multi-datasource.md]]
+- [[../../unit/feature-0002-agent-core/docs/DESIGN-datasource-registry|DESIGN-datasource-registry.md]]
+- [[../../unit/feature-0002-agent-core/docs/DESIGN-db-level-access|DESIGN-db-level-access.md]]
+- [[../../unit/feature-0002-agent-core/docs/DECISIONS|DECISIONS.md]] (ADR-CORE-*)
 - [[../../docs/KB_PG_DIALECT_NOTES|KB_PG_DIALECT_NOTES]]
 
 ## 7. 관련 노트
 
 - [[../Architecture/Data-Flow]] — agent loop ↔ Bedrock gateway / Postgres 흐름
+- [[../concepts/multi-datasource]] · [[../concepts/datasource-registry]] · [[../concepts/db-level-access]] · [[../concepts/datasource-aware-rag]] · [[../concepts/insight-worker]]
 - [[../Decisions/ADR-0019-web-audit-events]] — audit dispatcher
 - [[../Decisions/ADR-0021-kb-postgres-rbac]] — KB 2-layer RBAC
 - [[../Decisions/ADR-0024-postgres-database-isolation]] — `agent_kb` / `agent_drag` namespace
 - [[../Decisions/ADR-0025-m5-cleanup]] — MySQL KB drop 시점
+- [[../Decisions/ADR-0027-agent-runtime-pg-schema]] · [[../Decisions/ADR-0028-runtime-mysql-cleanup]] — runtime PG 이관
+- [[../Decisions/ADR-0030-ssrf-guard-toggle]] — datasource 보안 경계 토글
 
 ## 8. 둘러보기
 

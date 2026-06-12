@@ -19,7 +19,7 @@ ai_generated: true
 | 항목 | 값 |
 |---|---|
 | 분류 | `#wiki/index` |
-| 등록 concept | 6 |
+| 등록 concept | 12 |
 
 ## 목차
 
@@ -54,6 +54,12 @@ source 들에서 추출된 *반복 등장 개념* 의 page 누적 영역. `entit
 | LLM Wiki 3-layer | framework | `#wiki #karpathy` | [[llm-wiki-3-layer]] |
 | namu-style 사람 facing 형식 | pattern | `#namu #format` | [[namu-style-format]] |
 | Sandbox Schema Isolation | pattern | `#sandbox #mysql` | [[sandbox-schema-isolation]] |
+| Multi-datasource (MySQL·MSSQL) | pattern | `#datasource #mssql` | [[multi-datasource]] |
+| Datasource Registry (envelope 암호화) | pattern | `#datasource #encryption` | [[datasource-registry]] |
+| DB-단위 접근 모델 | pattern | `#rbac #datasource` | [[db-level-access]] |
+| Datasource-aware RAG (endpoint-hash scope) | pattern | `#rag #datasource` | [[datasource-aware-rag]] |
+| Insight Worker (통찰 + 완료율) | pattern | `#insight #worker` | [[insight-worker]] |
+| Ask-worker 큐 (out-of-process) | pattern | `#worker #queue` | [[ask-worker-queue]] |
 
 ## 4. Skeleton
 

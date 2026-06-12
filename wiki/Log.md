@@ -35,6 +35,30 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 
 <!-- AI: 새 entry 는 위 "## Entries" 헤딩 직후, 다음 줄에 prepend (최신순) -->
 
+[2026-06-12T05:04:26Z] update | hot_cache | hot.md | 2026-06-12 멀티 데이터소스 시대 세션 컨텍스트로 재작성 (drift 해소)
+[2026-06-12T05:04:26Z] update | article | overview.md | 멀티 데이터소스 서사 합성 — 8 feature / ADR-0027~0030 / 진행흐름·한계·다음단계 재정렬
+[2026-06-12T05:04:26Z] update | index | Index.md | 도메인=멀티 데이터소스 분석 플랫폼 / 8 feature / ADR-0001~0030 + unit ADR
+[2026-06-12T05:04:26Z] update | article | Architecture/Overview.md | 8 feature 맵 + 멀티 데이터소스·storage 단일화 특징
+[2026-06-12T05:04:26Z] update | article | Architecture/Data-Flow.md | 멀티 데이터소스 data plane + ask-worker 큐 mermaid·trust boundary §2.5
+[2026-06-12T05:04:26Z] update | article | Architecture/Module-Map.md | feature-0002 핵심 모듈(dialects/cred_crypto/runtime_backend) + feature 0001~0008
+[2026-06-12T05:04:26Z] update | feature_card | Features/feature-0003-agent-web-ui.md | 관리콘솔(데이터소스CRUD·대시보드·LLM사용량·insight완료율)·ask-worker·취소재요청 §2.5
+[2026-06-12T05:04:26Z] update | feature_card | Features/feature-0002-agent-core.md | 멀티 데이터소스 §2.5 (dialect·registry·DB접근·insight·EXPLAIN gate)
+[2026-06-12T05:04:26Z] update | index | Features/_Index.md | feature-0008 추가 (7→8 active) + 0002/0003 한줄 갱신
+[2026-06-12T05:04:26Z] create | article | entities/mssql.md | MSSQL entity — dialect·3-part·DB접근·envelope 자격
+[2026-06-12T05:04:26Z] update | index | entities/_Index.md | MSSQL 등록 (9→10) + Tool 분류 갱신
+[2026-06-12T05:04:26Z] update | article | entities/mysql.md | 멀티 데이터소스 시대(main_mysql datasource·DB-단위 접근) §2.4
+[2026-06-12T05:04:26Z] create | article | concepts/ask-worker-queue.md | out-of-process ask 큐 (ask_jobs·SKIP LOCKED·TASK-0169 cutover)
+[2026-06-12T05:04:26Z] create | article | concepts/insight-worker.md | schema 통찰 + 분석 완료율(0223) + DB별 파악내용(0242) + __global__ sentinel
+[2026-06-12T05:04:26Z] create | article | concepts/datasource-aware-rag.md | ds-aware rag_objects + endpoint-hash scope(compute_scope_key) (TASK-0219)
+[2026-06-12T05:04:26Z] create | article | concepts/db-level-access.md | DB-단위 접근 (catalog allowlist·시스템DB 가시성만) (TASK-0206)
+[2026-06-12T05:04:26Z] create | article | concepts/datasource-registry.md | envelope 암호화 KEK/DEK + WebDatasources CRUD (TASK-0205)
+[2026-06-12T05:04:26Z] create | article | concepts/multi-datasource.md | MySQL·MSSQL dialect adapter + 3축 보안 게이트 + 1:N 제품
+[2026-06-12T05:04:26Z] update | index | concepts/_Index.md | 신규 concept 6종 등록 (6→12)
+[2026-06-12T05:04:26Z] create | adr_mirror | Decisions/ADR-0030-ssrf-guard-toggle.md | datasource SSRF 사설망 경계 env 토글
+[2026-06-12T05:04:26Z] create | adr_mirror | Decisions/ADR-0029-windows-browser-testing.md | 실제 Windows 브라우저 AI 자동 검증 (PB-0008)
+[2026-06-12T05:04:26Z] create | adr_mirror | Decisions/ADR-0028-runtime-mysql-cleanup.md | runtime 6 테이블 MySQL cleanup Stage A/B/C
+[2026-06-12T05:04:26Z] create | adr_mirror | Decisions/ADR-0027-agent-runtime-pg-schema.md | agent_runtime PG schema + AR-M4 read cutover
+[2026-06-12T05:04:26Z] update | index | Decisions/_Index.md | ADR-0027~0030 mirror 등록 + unit-level ADR-CORE/WEB 표 (§2.1)
 [2026-05-28T15:50:00Z] update | hot_cache | hot.md | T1~T5 전체 활성화 완료 — PgBouncer md5/pg_hba 정합 수정 + replica streaming 확인
 [2026-05-28T00:00:00Z] update | article | concepts/kb-postgres-pgvector.md | T1~T5 성능 최적화 로드맵 완수 반영 — DISTINCT ON/ANY/MV/JSONB/PgBouncer/replica/advisory-lock/LISTEN-NOTIFY
 [2026-05-28T00:00:00Z] update | article | Architecture/Data-Flow.md | pgbouncer sidecar + postgres-replica 다이어그램 추가 (T3-8, T5-14)

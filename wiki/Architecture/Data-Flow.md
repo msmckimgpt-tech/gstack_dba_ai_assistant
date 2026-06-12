@@ -46,6 +46,8 @@ sources:
 사용자 요청 → Caddy (TLS termination) → web (FastAPI) → agent loop (LLM tool-call) → MySQL replica + Postgres (KB + runtime) + MinIO storage 의 데이터 흐름을 정본 doc 의 §4 (기능 맵) + feature FUNCTION.md 의 *Main Flow* 섹션 mirror 로 시각화한다.
 
 > **2026-05-27 아키텍처 변경**: `agent_memory` DB 의 `agent*` 10 테이블 (runtime state) 이 Postgres `agent_runtime` schema 로 완전 이관. MySQL `agent_memory` 에는 `web*` 18 테이블만 잔존.
+>
+> **2026-06 멀티 데이터소스**: data plane 이 단일 MySQL replica → **N 개 데이터소스 (MySQL·MSSQL)** 로 일반화 (§2.5). 자격증명은 envelope 암호화 저장, 접근은 DB-단위 allowlist. agent 실행은 **ask-worker out-of-process 큐**로 cutover.
 
 ## 2. 상세
 
@@ -66,22 +68,29 @@ flowchart LR
     minio[(MinIO<br/>agent-attachments)]
     browser[browser service<br/>Playwright]
     mcp[mcp service]
+    askq[ask_jobs 큐<br/>agent_runtime]
+    askw[ask-worker 서비스]
+    ds[(데이터소스 N<br/>MySQL · MSSQL<br/>RO, dialect router)]
 
     user -->|HTTPS| caddy
     caddy -->|X-Forwarded-For client_ip| web
     web -->|RBAC + audit + web*| mysql
     web -->|첨부 read/write| minio
-    web -->|/api/ask| agent
+    web -->|/api/ask enqueue| askq
+    askq -->|SKIP LOCKED claim| askw
+    askw -->|agent loop| agent
     agent -->|OpenAI SDK| bedrock
     bedrock -->|InvokeModel| claude
     agent -->|write path agent_kb_rw| pgb
     pgb -->|pool → primary| pg
     agent -->|read-only agent_kb_ro| pgr
     pg -.->|streaming replication| pgr
-    agent -->|tool: execute_sql| mysql
+    agent -->|tool: execute_sql<br/>registry+allowlist+dialect| ds
     web -->|browser-up| browser
     agent -.->|MCP optional| mcp
 ```
+
+> `web` 의 in-process 실행 (`AGENT_ASK_EXECUTION_MODE=inprocess`) 도 롤백 옵션으로 잔존하나, 운영은 ask-worker 큐 (`=worker`) 가 라이브.
 
 ### 2.2 신뢰 경계 (trust boundary)
 
@@ -91,7 +100,8 @@ flowchart LR
 | Caddy → web | web 의 `_get_client_ip()` 가 `X-Forwarded-For` last hop 만 신뢰 | feature-0003 AC-0205~0207 |
 | web → agent | `/api/ask` RBAC (`conversation.ask` / `console.manage` / `audit.*`) | ADR-0019 + feature-0003 audit hook |
 | agent → Bedrock | `BEDROCK_GATEWAY_API_KEY` token 만 web/agent 가 인지, AWS credential 은 bedrock-gateway 컨테이너 env 만 | ADR-0026 + `.env.bedrock` 분리 |
-| agent → MySQL replica | `REPLICA_DB_*` env 의 read-only user — agent 가 데이터 plane 쓰기 안 함 | feature-0001 §14 |
+| agent → 데이터소스 (MySQL·MSSQL) | datasource registry 좌표(envelope 복호) + RO user, DB-단위 allowlist + 3축 SQL guard, fail-closed | [[../concepts/db-level-access]] · [[../concepts/datasource-registry]] |
+| datasource host | SSRF: 메타데이터 IP 하드차단 + DNS rebinding pin (사설망 경계는 env 토글) | [[../Decisions/ADR-0030-ssrf-guard-toggle]] |
 | sandbox schema | `attachment_writer` / `_reader` / `_maintainer` / `_cleanup` 4 user 분리 | ADR-0023 |
 
 ### 2.3 audit 흐름 (ADR-0019)
@@ -132,6 +142,18 @@ AR-M1 schema → AR-M2 dual-write → AR-M3 backfill
 `web*` 18 테이블 (RBAC catalog + audit + auth) — Phase 3 이관 대상.
 
 자세히는 [[../Features/feature-0002-agent-core|feature-0002 카드]] + [[../Decisions/ADR-0021-kb-postgres-rbac|ADR-0021 mirror]] + [[../Decisions/ADR-0025-m5-cleanup|ADR-0025 mirror]].
+
+### 2.5 멀티 데이터소스 data plane + ask-worker (2026-06)
+
+| 흐름 | 동작 |
+|---|---|
+| datasource resolve | `cfg.get_datasource(key)` → `WebDatasources` (envelope 복호) 우선, `.env` `DS_<KEY>_*` fallback. resolve 시마다 복호 (평문 캐시 없음). |
+| 호출 라우팅 | LLM 이 tool 로 datasource 선택 → `_DatasourceRouter` 가 호출 단위로 connection/allowlist/dialect 잠금 (`engine+datasource_key` pool key). |
+| 접근 검증 | DB-단위 allowlist + 3축 보안 게이트 (AST allowlist · RO GRANT · sql_guard denylist). 시스템 DB = 가시성만. |
+| insight 격리 | insight-worker 가 datasource scope (`engine+host+port` 해시) 로 `rag_objects` 격리 캐시 → 완료율/DB별 파악내용 표면화. |
+| ask 실행 | `/api/ask` → `ask_jobs` enqueue → ask-worker `SKIP LOCKED` claim → agent loop. web 재배포가 in-flight run 죽이지 않음. |
+
+흐름 상세: [[../concepts/multi-datasource]] · [[../concepts/db-level-access]] · [[../concepts/insight-worker]] · [[../concepts/ask-worker-queue]].
 
 ## 3. 관련 문서
 

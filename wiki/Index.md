@@ -53,26 +53,26 @@ sources:
 
 ### 2.1 도메인
 
-MySQL DBA AI Assistant — 자연어 → SQL 추론 + 도구 실행 (`execute_sql`, `describe_table`, `search_tables`, `get_sample_rows`) 을 핵심 loop 로 갖는 사내 DBA 자동화 도구. AWS Bedrock (Claude) 단일 service-managed LLM provider, MySQL 8.0 + Postgres 16 + pgvector 듀얼 storage, FastAPI Web UI + Playwright 자동화 + MCP gateway 의 7-feature compose.
+DBA AI Assistant — 자연어 → SQL 추론 + 도구 실행 (`execute_sql`, `describe_table`, `search_tables`, `get_sample_rows`) 을 핵심 loop 로 갖는 사내 DBA 자동화 도구. **멀티 데이터소스 (MySQL·MSSQL)** read-only 분석을 dialect 추상화 + envelope 암호화 registry + DB-단위 접근으로 제공. AWS Bedrock (Claude) 단일 service-managed LLM provider, Postgres 16 + pgvector (KB + runtime 단독 정본) + MySQL 8.0 (`web*` control plane), FastAPI Web UI + ask-worker 큐 + Playwright 자동화 + MCP gateway 의 8-feature compose.
 
 ### 2.2 핵심 영역 입구
 
 - [[Architecture/Overview|시스템 개요]] — 정책·기능·shared·artifacts 4-layer 책임 분리
-- [[Architecture/Data-Flow|데이터 흐름]] — 사용자 → web → agent loop → MySQL/Postgres/MinIO
+- [[Architecture/Data-Flow|데이터 흐름]] — 사용자 → web → ask-worker → agent loop → 데이터소스 N / Postgres / MinIO
 - [[Architecture/Module-Map|모듈 맵]] — 디렉토리 ↔ 책임 매핑
 
 ### 2.3 Feature 카드
 
-- [[Features/_Index|Features MOC]] — 7 feature 의 카드 (feature-0001 ~ feature-0007)
+- [[Features/_Index|Features MOC]] — 8 feature 의 카드 (feature-0001 ~ feature-0008)
 
 ### 2.4 Decisions (ADR mirror)
 
-- [[Decisions/_Index|Decisions MOC]] — ADR-0001 ~ ADR-0026 mirror
+- [[Decisions/_Index|Decisions MOC]] — ADR-0001 ~ ADR-0030 mirror + unit-level ADR-CORE-* / ADR-WEB-*
 
 ### 2.5 Concepts / Entities / Sources / Syntheses
 
-- [[concepts/_Index|Concepts]] — RAG · KB Postgres · 3-layer · audit · sandbox 등
-- [[entities/_Index|Entities]] — MySQL · Postgres · AWS Bedrock · MinIO · LiteLLM · Playwright · Caddy
+- [[concepts/_Index|Concepts]] — RAG · KB Postgres · 멀티 데이터소스 · datasource registry · DB-단위 접근 · insight worker · ask-worker 등
+- [[entities/_Index|Entities]] — MySQL · MSSQL · Postgres · AWS Bedrock · MinIO · LiteLLM · Playwright · Caddy
 - [[sources/_Index|Sources]] — 외부 source summary
 - [[syntheses/_Index|Syntheses]] — `/wiki-query` 답변 누적
 

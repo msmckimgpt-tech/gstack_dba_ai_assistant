@@ -22,7 +22,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/index` |
 | 정본 | [[../../docs/DECISIONS\|docs/DECISIONS.md]] |
-| ADR 수 | 27 entries (ADR-0001 ~ ADR-0026, ADR-0025 가 정본 안 두 entry 로 존재) |
+| ADR 수 | 31 entries (ADR-0001 ~ ADR-0030, ADR-0025 가 정본 안 두 entry 로 존재) |
 | Wiki layer | mirror (입구점) |
 
 ## 목차
@@ -73,8 +73,27 @@ AI 가 ADR 작성 시 본 MOC 에 1줄 entry add + `Decisions/<adr-id>-<slug>.md
 | ADR-0025 (M5) | MySQL KB 5 정본 deprecation timing | accepted | [[ADR-0025-m5-cleanup]] |
 | ADR-0025 (PGVector) | Sprint 4 attachment RAG vector store | accepted | [[ADR-0025-pgvector-attachment-rag]] |
 | ADR-0026 | Bedrock LLM provider (API Vault 폐기) | accepted | [[ADR-0026-bedrock-llm-provider]] |
+| ADR-0027 | agent_runtime Postgres schema + AR-M4 read cutover | accepted | [[ADR-0027-agent-runtime-pg-schema]] |
+| ADR-0028 | runtime 6 테이블 MySQL cleanup (Stage A/B/C) | accepted | [[ADR-0028-runtime-mysql-cleanup]] |
+| ADR-0029 | 실제 Windows 브라우저 AI 자동 검증 (PB-0008) | accepted | [[ADR-0029-windows-browser-testing]] |
+| ADR-0030 | datasource SSRF 사설망 경계 env 토글 | accepted | [[ADR-0030-ssrf-guard-toggle]] |
 
 > **주의 (정본 collision)**: `docs/DECISIONS.md` 안에 `## ADR-0025` 가 두 entry 로 존재 (M5 cleanup 2026-05-22 + PGVector attachment RAG 2026-05-21). wiki mirror 는 두 page 로 분리해 양쪽 정본 참조 보존.
+
+### 2.1 Unit-level 설계 결정 (repo ADR 와 별개)
+
+멀티 데이터소스·자격증명 암호화·DB단위 접근·fork·ask-worker 등 일부 대형 설계 결정은 repo-level `docs/DECISIONS.md` 의 ADR-NNNN 가 아닌 **unit-level DECISIONS.md** 의 `ADR-CORE-*` / `ADR-WEB-*` 로 누적된다. 정본은 각 unit doc — 본 MOC 은 입구만 제공.
+
+| Unit ADR | 제목 | 정본 |
+|---|---|---|
+| ADR-CORE-0002 | 멀티 데이터소스 design-first (dialect adapter) | `unit/feature-0002-agent-core/docs/DECISIONS.md` |
+| ADR-CORE-0003 | 멀티 데이터소스 rollout sequencing (Stage 1 MySQL → 2 MSSQL, security-first) | `unit/feature-0002-agent-core/docs/DECISIONS.md` |
+| ADR-CORE-0004 | 멀티 데이터소스 1:N (제품 ↔ N datasource, `WebProductDatasources` join) | `unit/feature-0002-agent-core/docs/DECISIONS.md` |
+| ADR-WEB-0004 | ask 실행: SIGTERM finalizer(A, 구현) + ask-worker(B, 설계) | `unit/feature-0003-agent-web-ui/docs/DECISIONS.md` |
+| ADR-WEB-0005 | fork: hybrid deep-copy (pure lineage 반려, F1~F6) | `unit/feature-0003-agent-web-ui/docs/DECISIONS.md` |
+| ADR-WEB-0002 | `attachment.execute_sql_on.*` 거짓 RBAC 제거 (3축 방어로 대체) | `unit/feature-0003-agent-web-ui/docs/DECISIONS.md` |
+
+> 관련 concept mirror: [[../concepts/multi-datasource]] · [[../concepts/datasource-registry]] · [[../concepts/db-level-access]] · [[../concepts/ask-worker-queue]].
 
 ## 3. Status legend
 

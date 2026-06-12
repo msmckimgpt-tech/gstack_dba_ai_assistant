@@ -61,7 +61,17 @@ sources:
 
 ### 2.2 Feature 디렉토리 인덱스
 
-- [[../Features/_Index|Features MOC]] — feature-0001 ~ feature-0007
+- [[../Features/_Index|Features MOC]] — feature-0001 ~ feature-0008
+
+#### 2.2.1 feature-0002 핵심 모듈 (멀티 데이터소스, 2026-06)
+
+| 모듈 | 책임 | concept |
+|---|---|---|
+| `modules/dialects/` | `Dialect` ABC + `MySQLDialect`/`MSSQLDialect` (SQL 방언 분기) | [[../concepts/multi-datasource]] |
+| `cred_crypto.py` | KEK/DEK envelope 암호화 (`WebDatasources` password) | [[../concepts/datasource-registry]] |
+| `runtime_backend.py` | `PgRuntimeBackend` — agent_runtime PG read/write (dual-write 코드 제거됨) | [[../Decisions/ADR-0027-agent-runtime-pg-schema]] |
+| `_DatasourceRouter` | 호출 단위 connection/allowlist/dialect 잠금 | [[../concepts/multi-datasource]] |
+| `sql_guard` / `_extract_sql_schema_refs` | 3축 보안 게이트 AST allowlist + denylist | [[../concepts/db-level-access]] |
 
 ### 2.3 docs/ 정본 인덱스
 

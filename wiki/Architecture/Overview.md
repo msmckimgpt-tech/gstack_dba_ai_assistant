@@ -25,7 +25,7 @@ sources:
 | 분류 | `#wiki/article` |
 | 정본 | [[../../docs/ARCHITECTURE\|docs/ARCHITECTURE.md]] |
 | Wiki layer | mirror (graph 입구) |
-| Feature 수 | 7 (feature-0001 ~ feature-0007) |
+| Feature 수 | 8 (feature-0001 ~ feature-0008) |
 
 ## 목차
 
@@ -78,6 +78,7 @@ unit/feature-NNNN-<purpose>/
 | [[../Features/feature-0005-qa-mcp\|feature-0005-qa-mcp]] | MCP / QA scripts |
 | [[../Features/feature-0006-lan-proxy-access\|feature-0006-lan-proxy-access]] | Caddy TLS + Windows LAN proxy |
 | [[../Features/feature-0007-bedrock-llm-provider\|feature-0007-bedrock-llm-provider]] | AWS Bedrock (Claude) gateway |
+| [[../Features/feature-0008-windows-browser-testing\|feature-0008-windows-browser-testing]] | 실제 Windows 브라우저 AI 자동 검증 (PB-0008) |
 
 ### 2.4 기능 간 의존성 (정본 §6)
 
@@ -97,6 +98,8 @@ unit/feature-NNNN-<purpose>/
 - **source of truth 원칙** (정본 §5): 동일 사실을 여러 문서에 중복 확정하지 않는다. FUNCTION/TASK/REPORT/MODIFY/REVIEW/DECISIONS/STATUS 의 각 책임이 분리됨.
 - **runtime artifacts 외부화**: 로그·세션·MySQL data 가 `../../artifacts/` 로 분리되어 git 추적 대상 아님.
 - **AI 위임 친화**: AI 가 작업 시 `AGENTS.md` 우선 read + 각 feature 의 `docs/` 자동 참조.
+- **멀티 데이터소스 (2026-06)**: data plane 이 단일 MySQL → N 개 데이터소스 (MySQL·MSSQL) 로 일반화. dialect 추상화 + envelope 암호화 registry + DB-단위 접근. 상세 [[Data-Flow]] §2.5 · [[../concepts/multi-datasource]].
+- **storage 단일화 (2026-05-27)**: agent runtime + KB 모두 Postgres 단독 (`agent_kb`/`agent_runtime`). MySQL 은 `web*` 18 테이블만 (Phase 3 대상). [[../Decisions/ADR-0027-agent-runtime-pg-schema]] · [[../Decisions/ADR-0028-runtime-mysql-cleanup]].
 
 ## 4. 관련 문서
 
