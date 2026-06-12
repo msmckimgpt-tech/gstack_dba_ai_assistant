@@ -14488,8 +14488,35 @@ def _insight_worker_liveness(conn) -> dict:
     return out
 
 
+def _db_catalog_from_object_key(object_key: str, engine: str, object_type: str):
+    """rag_objects.object_key 에서 DB(catalog) 키를 추출 (TASK-0243 — MSSQL 차원 수정).
+
+    object_key = `{ds_prefix}:{path}` (ds_prefix = datasource_key 라벨/해시 — `_ds_valid_key` 가 ':' 를
+    금지하므로 첫 ':' 로 안전 분리, 접두값 자체는 버린다). **MSSQL 은 schema_name 컬럼이 SQL 스키마(dbo)**
+    라 등록 DB(catalog, 예: GameLog_100)와 차원이 달라 schema_name 으로 by_db 를 묶으면 매칭이 빗나가
+    'dbo' 한 바구니로 뭉친다. catalog 는 object_key path 에 인코딩돼 있으므로 거기서 파싱한다.
+      - MySQL(db==schema): path = `{db}`(schema) | `{db}.{table}`(table) → catalog = 첫 segment.
+      - MSSQL: path = `{catalog}.{sqlschema}`(schema, per-DB scan) | `{catalog}.{sqlschema}.{table}`(table)
+        | `{sqlschema}`(bare default_db schema) | `{sqlschema}.{table}`(bare default_db table)
+        → 충분한 segment 면 첫 segment 가 catalog, 부족(=bare default_db)하면 None(등록 catalog 미귀속).
+    반환: catalog(str) 또는 None(귀속 불가 — 호출부에서 MSSQL 은 skip, MySQL 은 schema_name 폴백).
+    """
+    ok = str(object_key or "")
+    path = ok.split(":", 1)[1] if ":" in ok else ok
+    path = path.strip()
+    if not path:
+        return None
+    segs = path.split(".")
+    if str(engine or "").lower() == "mssql":
+        # table = catalog.sqlschema.table(3) / schema = catalog.sqlschema(2). 그 미만이면 bare(catalog 없음).
+        need = 3 if object_type == "table" else 2
+        return segs[0] if len(segs) >= need and segs[0] else None
+    # MySQL: db == catalog == 첫 segment (schema=`db`, table=`db.table`).
+    return segs[0] if segs and segs[0] else None
+
+
 def _compute_product_db_insights(conn, product: dict, datasource_key=None) -> dict:
-    """제품의 한 datasource scope 에서 insight-worker 가 DB(schema)별로 파악한 내용을 모은다 (TASK-0242).
+    """제품의 한 datasource scope 에서 insight-worker 가 DB(catalog)별로 파악한 내용을 모은다 (TASK-0242).
 
     반환: {ok, reason, scope, engine, datasource_key, worker{alive,age_sec,status}, by_db{<db_lower>:{...}}}.
     by_db[<db_lower>] = {db, domain, description, detail_text, analyzed_schema, analyzed_tables, analyzed_objects}.
@@ -14507,8 +14534,9 @@ def _compute_product_db_insights(conn, product: dict, datasource_key=None) -> di
         return out
     scope = resolved["scope"]
     allow_null = resolved["allow_null"]
+    engine = (resolved.get("engine") or "mysql").strip().lower()
     out["scope"] = scope
-    out["engine"] = resolved["engine"]
+    out["engine"] = engine
     out["datasource_key"] = chosen or None
 
     # REV-20260612-0242 MINOR: PG 연결을 try/finally 로 닫아 예외 경로 누수 차단(기존 coverage 패턴 개선).
@@ -14523,7 +14551,7 @@ def _compute_product_db_insights(conn, product: dict, datasource_key=None) -> di
         pgc.execute(
             f"""
             SELECT o.object_type, o.schema_name, o.table_name,
-                   o.category_domain, COALESCE(t.text_content, '')
+                   o.category_domain, COALESCE(t.text_content, ''), o.object_key
             FROM public.rag_objects o
             LEFT JOIN public.texts t ON t.text_hash = o.text_hash
             WHERE o.conversation_id = %s AND o.scope_key = %s
@@ -14546,10 +14574,22 @@ def _compute_product_db_insights(conn, product: dict, datasource_key=None) -> di
             except Exception:
                 pass
 
-    # DB(schema_name lower) 단위 집계.
+    # DB(catalog) 단위 집계. TASK-0243: 키를 schema_name 이 아니라 object_key 에서 파싱한 catalog 로 —
+    #  MSSQL 은 schema_name=dbo(SQL스키마)라 등록 DB(catalog)와 차원이 달라 schema_name 으로 묶으면
+    #  전부 'dbo' 한 바구니가 되어 등록 DB 행/picker 매칭이 빗나간다. MySQL 은 catalog==schema_name(무변경).
     by: dict = {}
-    for otype, sname, tname, cat_domain, text in rows:
-        db = str(sname or "").strip()
+    for otype, sname, tname, cat_domain, text, okey in rows:
+        # 그룹핑 키 결정: MSSQL 만 object_key 의 catalog 파싱(schema_name=dbo 차원 문제), MySQL/기타는
+        # schema_name 직접 사용 — db==schema==catalog 라 TASK-0242 와 byte-identical(무회귀 보장, object_key
+        # 파싱을 MySQL 에 적용해 생길 수 있는 이론적 엣지[DB명 내 '.']까지 원천 차단).
+        if engine == "mssql":
+            cat = _db_catalog_from_object_key(okey, engine, otype)
+            if cat is None:
+                # bare(default_db, catalog 미인코딩) MSSQL 통찰 — 등록 catalog 에 귀속 불가 → 표시 대상 아님.
+                continue
+        else:
+            cat = str(sname or "").strip()
+        db = str(cat).strip()
         dbl = db.lower()
         if not dbl:
             continue

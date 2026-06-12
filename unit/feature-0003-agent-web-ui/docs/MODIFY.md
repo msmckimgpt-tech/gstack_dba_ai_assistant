@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0243
+- Date: 2026-06-12
+- Task: TASK-0243 (TASK-0242 후속 — MSSQL db-insights catalog 귀속 수정), **Minor §12.3** (단일 read 함수 격리 수정; RBAC·스키마·암호화·엔드포인트 shape 0)
+- 진단: TASK-0242 의 `_compute_product_db_insights` 가 by_db 를 `rag_objects.schema_name` 으로 묶었는데, **MSSQL 은 schema_name 이 SQL 스키마(`dbo`)** 라 등록 DB(catalog, 예: `GameLog_100`)와 차원이 다르다. 결과로 MSSQL 의 모든 통찰이 `dbo`/`dev50` 한두 바구니로 뭉쳐, 프런트가 `insByDb[등록DB명]` 로 조회할 때 전부 빗나가 **MSSQL 등록 DB 행이 모두 "역할 미파악"** 으로 떴다(라이브 제품91 by_db=['dbo','dev50'] vs 등록 DB=GameLog_100/dk_data_release/… 무교집합). MySQL 은 db==schema 라 우연히 정상 동작했음.
+- 변경 (`unit/feature-0003-agent-web-ui/src/app.py`, 단일 함수):
+  - 신규 `_db_catalog_from_object_key(object_key, engine, object_type)` — `rag_objects.object_key`(`{scope}:{path}`)에서 catalog 파싱. MySQL: path 첫 segment(=db). MSSQL: schema=`{catalog}.{sqlschema}`(2)·table=`{catalog}.{sqlschema}.{table}`(3) → 첫 segment, bare(default_db, segment 부족)→None.
+  - `_compute_product_db_insights`: ① SELECT 에 `o.object_key` 추가, ② 로컬 `engine` 변수화, ③ 그룹핑 키를 schema_name → 파싱한 catalog 로 변경. MSSQL 의 catalog 미귀속(bare default_db) 행은 skip, MySQL 은 catalog==schema_name 이라 **결과 byte-identical**(폴백도 schema_name).
+  - SELECT 외 다른 코드 무수정. `_compute_product_insight_coverage`(완료율)·`admin_product_insight_reset`(초기화)는 object_key 미사용(schema_name/table_name 컬럼만) — **무영향**(코드 주석 + 전체 회귀로 확인).
+  - `unit/feature-0003-agent-web-ui/tests/test_db_insights.py`: 기존 행 6-tuple(object_key) 보강 + `_db_catalog_from_object_key` 파서 2 + MSSQL catalog 귀속 1 테스트 추가(14→17).
+- 비변경: RBAC·스키마·암호화·엔드포인트 shape·coverage/insight-reset 계산·insight-worker write 경로(feature-0002) 0. MySQL by_db 키 집합 불변(라이브 대조).
+- 검증: db_insights 17 PASS + make test 컨테이너 **전체 회귀 0**(coverage·reset 등 전 스위트 통과) + ruff clean + py_compile. **side-effect 격리 분석**: `_db_catalog_from_object_key`/`_compute_product_db_insights` 각 호출처 1곳, 다른 object_key 사용처는 MinIO 첨부·coverage(schema_name 전용)로 무관. 적대적 subagent 리뷰(REV-20260612-0243). 배포 후 라이브 MSSQL by_db=catalog 매칭 + PB-0008.
+- Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/tests/test_db_insights.py, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW,FUNCTION,TEST}.md
+- Rollback: `_db_catalog_from_object_key` 제거 + 그룹핑 키 schema_name 환원 + SELECT object_key 제거.
+
 ## CHG-20260612-0242
 - Date: 2026-06-12
 - Task: TASK-0242 (관리 콘솔 > 제품 > 데이터소스 & 접근 가능 데이터베이스 — DB별 insight-worker 파악 내용 표면화 + 추가 picker 분석상태), **Major §12.3** (신규 read 엔드포인트 + 다중 파일; RBAC·스키마·암호화 0)
