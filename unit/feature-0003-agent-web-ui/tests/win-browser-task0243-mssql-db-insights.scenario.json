@@ -1,0 +1,24 @@
+{
+  "name": "TASK-0243 MSSQL 제품(DK온라인) DB별 insight 역할 한 줄 인라인 — catalog 귀속 수정 검증 (authed admin)",
+  "base_url": "https://localhost:18080",
+  "shot_dir": "/tmp/win-browser-shots/task0243",
+  "steps": [
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "eval", "script": "(async()=>{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'bootstrap_admin',password:'ChangeThisBootstrapPass_2026!'})});const j=await r.json();return JSON.stringify({login_ok:j.ok});})()", "stop_on_fail": false},
+    {"action": "goto", "url": "/admin", "wait_until": "domcontentloaded"},
+    {"action": "wait_for", "selector": "button[data-admin-tab=products]", "timeout_ms": 20000},
+    {"action": "wait_for", "timeout_ms": 1200, "stop_on_fail": false},
+    {"action": "click", "selector": "button[data-admin-tab=products]"},
+    {"action": "wait_for", "timeout_ms": 2500, "stop_on_fail": false},
+    {"action": "eval", "script": "(function(){var rows=document.querySelectorAll('#productList .admin-list-row');var hit=null;rows.forEach(function(r){if(!hit && /DK온라인|DK\\)/.test(r.textContent)) hit=r;});if(hit){hit.click();return JSON.stringify({clicked:hit.textContent.trim().slice(0,30)});}return JSON.stringify({clicked:null,rowCount:rows.length});})()", "stop_on_fail": false},
+    {"action": "wait_for", "selector": "#productDetail .cov-db-row", "timeout_ms": 15000, "stop_on_fail": false},
+    {"action": "wait_for", "selector": "#productDetail .cov-db-role:not(.cov-db-role-muted)", "timeout_ms": 15000, "stop_on_fail": false},
+    {"action": "wait_for", "timeout_ms": 1500, "stop_on_fail": false},
+    {"action": "eval", "script": "(function(){var rows=document.querySelectorAll('#productDetail .cov-db-row');var out=[];rows.forEach(function(r){var n=r.querySelector('.cov-db-name');var role=r.querySelector('.cov-db-role');out.push({db:n?n.textContent.trim():null, role:role?role.textContent.trim().slice(0,80):null, roleMuted:role?role.classList.contains('cov-db-role-muted'):null});});var populated=out.filter(function(x){return x.role && !x.roleMuted;}).length;return JSON.stringify({engine:'mssql', rowCount:out.length, populatedRoleCount:populated, rows:out.slice(0,6)});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "01_mssql_db_rows_role.png", "full_page": false},
+    {"action": "click", "selector": "#productDetail .admin-db-picker-btn", "stop_on_fail": false},
+    {"action": "wait_for", "timeout_ms": 1200, "stop_on_fail": false},
+    {"action": "eval", "script": "(function(){var items=document.querySelectorAll('#productDetail .admin-db-picker-list .admin-db-picker-item');var out=[];items.forEach(function(it){var nm=it.querySelector('.admin-db-picker-name');var st=it.querySelector('.admin-db-picker-status');var dm=it.querySelector('.admin-db-picker-domain');out.push({name:nm?nm.textContent.trim():null, status:st?st.textContent.trim():null, domain:dm?dm.textContent.trim().slice(0,30):null});});var states={};out.forEach(function(x){states[x.status]=(states[x.status]||0)+1;});return JSON.stringify({itemCount:out.length, stateCounts:states, items:out.slice(0,8)});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "02_mssql_add_picker.png", "full_page": false}
+  ]
+}
