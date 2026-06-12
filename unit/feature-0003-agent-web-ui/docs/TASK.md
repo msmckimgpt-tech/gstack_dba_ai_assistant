@@ -3479,3 +3479,26 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] node --check admin.js PASS + CSS brace 균형 + 캐시버스터 bump
 - [x] outside-voice subagent 디자인/정합 리뷰 SHIP(REV-20260612-0244)
 - [ ] verify-completion → 머지 → web 재배포 → PB-0008 시각검증
+
+### TASK-0245 — "+ 데이터소스 추가" 드롭다운 항목 열 정렬(고정 열 폭 grid) (2026-06-12)
+
+**Minor §12.3** (CSS-only 단일 규칙 블록; admin.js·백엔드·RBAC 0). (CHG-20260612-0245) — TASK-0244 직후 follow-up. REV-20260612-0245 [SKIPPED:trivial-grid-align] — PB-0008 가 실질 게이트.
+
+#### 배경
+사용자: "`+ 데이터소스 추가` 목록의 폭이 문자열 길이에 따라 일정하도록. 현재 들쭉날쭉." 라이브 측정 결과 항목 폭(542px)은 일정하나 **내부 열 미정렬** — 이름이 `flex:1 1 auto` 라 행마다 이름/좌표/배지 길이에 따라 엔진 pill·좌표·연결배지의 시작 x 가 달라짐(엔진 x961/936/967, 좌표 x1011/986/1018, 배지 x1105/1080/1080).
+
+#### 수정 (styles.css 단일 블록)
+- `.admin-db-picker-item.admin-ds-picker-item` 를 `display:flex` → **`display:grid`** + `grid-template-columns: auto minmax(0,1fr) 56px 124px 104px`(체크박스·이름가변·엔진·좌표·상태). 모든 행이 동일 고정 트랙을 공유해 이름만 가변 흡수, 나머지 열 세로 정렬.
+- `.admin-ds-picker-engine` `justify-self:start`+ellipsis, `.admin-ds-picker-coord` `justify-self:start`+ellipsis, `.admin-ds-conn` `justify-self:end`(배지 우측 정렬 일치).
+- `admin.html` 캐시버스터 `?v=20260612-ds-picker-col-align`.
+
+#### 완료 판정 기준
+- AC1: 드롭다운 모든 행에서 엔진 pill·좌표·연결배지의 좌/우 경계가 세로 정렬(문자열 길이 무관).
+- AC2: 긴 좌표/이름은 ellipsis+title 흡수, 레이아웃 깨짐 없음.
+- AC3: admin.js·백엔드·RBAC·연결 probe 동작 무변경(0244 보존).
+- AC4: CSS brace 균형 + PB-0008 Windows-browser 시각검증(열 정렬).
+
+#### 작업 항목
+- [x] `.admin-ds-picker-item` grid 전환 + 고정 열 폭 + justify-self 정렬
+- [x] 캐시버스터 bump + CSS brace 균형(1105/1105)
+- [ ] verify-completion → 머지 → web 재배포 → PB-0008 시각검증(열 정렬)

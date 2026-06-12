@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0245
+- Date: 2026-06-12
+- Task: TASK-0245 ("+ 데이터소스 추가" 드롭다운 항목 열 정렬 — 고정 열 폭 grid), **Minor §12.3** (CSS-only 단일 블록; admin.js·백엔드·RBAC·스키마 0)
+- 진단: 사용자 — "목록 폭이 문자열 길이에 따라 일정하도록(현재 들쭉날쭉)". 라이브 DOM 측정(win-browser): 항목 폭(542px)·우측 정렬 끝(1174px)은 일정하나, `.admin-ds-picker-item` 이 `display:flex` + 이름 `flex:1 1 auto` 라 행마다 이름·좌표·배지 텍스트 길이에 따라 엔진 pill(x961/936/967)·좌표(x1011/986/1018)·연결배지(x1105/1080/1080) 의 시작 x 가 어긋나 열이 세로로 정렬되지 않음(raggedness).
+- 변경 (`unit/feature-0003-agent-web-ui/src/static/styles.css`, 단일 블록):
+  - `.admin-db-picker-item.admin-ds-picker-item`(복합 셀렉터 — DB picker `.admin-db-picker-item` 단독 행은 미영향): `display:flex` → **`display:grid`** + `grid-template-columns: auto minmax(0,1fr) 56px 124px 104px` + `align-items:center; gap:8px`. 고정 트랙이라 모든 행이 동일 열 geometry 를 공유 → 이름(`1fr`)만 가변 흡수하고 엔진/좌표/상태 열은 정렬.
+  - `.admin-ds-picker-engine`: flex 잔여 제거 → `justify-self:start` + `max-width:100%`+ellipsis. `.admin-ds-picker-coord`: `justify-self:start` + ellipsis(기존 `max-width:38%`·flex 제거). `.admin-ds-conn`(ds-picker 내): `justify-self:end`(배지 우측 정렬 일치).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: 캐시버스터 `?v=20260612-ds-picker-col-align`(styles.css·admin.js).
+- 열 폭 근거(라이브 측정): 콘텐츠폭 = 엔진 42~43px(→56), 좌표 최장 `10.31.21.71:11433` 87px(→124, FQDN 초과 시 ellipsis+title), 상태 최장 `연결됨 · 8.9ms` 94px(→104, justify-self:end). 이름 잔여 ≈186px(콘텐츠영역 518 − 고정 332). datasource 키 초과 시 ellipsis.
+- 비변경: admin.js(probe/캐시/세마포어/구조 0), 백엔드 app.py, RBAC, 스키마, 엔드포인트, DB picker(`.admin-db-picker-item` 단독), accordion. CSS 한 블록(±20줄).
+- 검증: CSS brace 균형(1105/1105) + node --check admin.js(무변경 — 캐시버스터만) + REV-20260612-0245 [SKIPPED:trivial-grid-align](단일 규칙 cosmetic, PB-0008 가 실질 게이트). 배포 후 PB-0008 Windows-browser 열 정렬 시각검증.
+- Files: unit/feature-0003-agent-web-ui/src/static/{styles.css,admin.html}, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
+- Rollback: `.admin-ds-picker-item` 를 `display:flex` 로 환원 + engine/coord/conn 의 justify-self 제거(flex 속성 복원), 캐시버스터 환원.
+
 ## CHG-20260612-0244
 - Date: 2026-06-12
 - Task: TASK-0244 (관리 콘솔 제품 "+ 데이터소스 추가" 드롭다운 폰트 정합 + 연결 상태 표면화), **Major §12.3** (frontend-only 다중 파일 + 네트워크 probe 추가; RBAC·스키마·백엔드 엔드포인트 0)

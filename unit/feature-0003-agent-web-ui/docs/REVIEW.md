@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0245 [SKIPPED:trivial-grid-align] — SHIP
+- Related TASK: feature-0003-agent-web-ui (TASK-0245 — "+ 데이터소스 추가" 드롭다운 항목 열 정렬)
+- Trigger: TASK-0244 직후 CSS-only follow-up(단일 규칙 블록 — flex→grid 고정 열 폭). 적대적 outside-voice 보다 PB-0008 실측 시각검증이 실질 게이트인 cosmetic 변경.
+- Timestamp: 2026-06-12T00:00:00Z
+- Verdict: **SHIP** (BLOCKER 0). 변경 = `.admin-ds-picker-item` `display:flex`→`display:grid` + 고정 트랙 + justify-self. admin.js·백엔드·RBAC·스키마·probe 동작·DB picker·accordion 무변경(셀렉터 격리: 복합 `.admin-db-picker-item.admin-ds-picker-item` — DB picker 단독 행 미영향).
+- SKIPPED 근거(§18.4): ① 코드/엔드포인트/권한/데이터 노출 면 0(순수 CSS 레이아웃), ② 변경 표면 = 단일 규칙 블록(±20줄), ③ 열 폭은 라이브 DOM 측정(엔진 43/좌표 87/상태 94px)에 근거해 산정, ④ 레이아웃 정확성은 적대적 텍스트 리뷰가 아니라 실 픽셀(PB-0008 Windows-browser)이 결정적.
+- 셀프 점검: 고정 트랙 합(체크박스 auto + 4 gap×8 + 56+124+104 = 332) < 콘텐츠영역(≈518) → 이름 `1fr` ≈186px 확보(잘림 시 ellipsis). 측정 콘텐츠 전부 트랙 내 수용. justify-self(start/start/end)로 좌/우 경계 정렬.
+- Human Approval Needed: no (cosmetic CSS·신뢰경계 무관·BLOCKER 0)
+- 검증: CSS brace 균형(1105/1105). 배포 후 PB-0008 Windows-browser 열 정렬 시각검증(실질 게이트).
+- Cross-ref: CHG-20260612-0245 / TASK-0245 / FUNCTION REQ-20260612-0245(AC-0459) / REV-20260612-0244.
+
 ## REV-20260612-0244 [SUBAGENT:design+correctness] — SHIP
 - Related TASK: feature-0003-agent-web-ui (TASK-0244 — "+ 데이터소스 추가" 드롭다운 폰트 정합 + 연결 상태 표면화)
 - Trigger: UI/디자인 변경(§18.8 UI→design/ux) + 시각 정합·네트워크 probe 동작의 회귀/접근성 outside-voice 검토. 사용자 요청 = 폰트 이질감 해소 + 연결 상태 표면화.
