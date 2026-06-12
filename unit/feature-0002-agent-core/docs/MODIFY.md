@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0247
+- Date: 2026-06-12 (TASK-0247, **Major §12.3** — 데이터플레인 연결 격리; 동시세션 `task0244-ds-picker-status` 가 TASK-0244 선점→§13.1 재번호 0244→0247 (동시세션이 0244·0245·0246 선점))
+- Scope: agent-core — 한 datasource 의 연결 불안정이 단일 직렬 ask-worker 를 점유해 정상 datasource 제품 응답까지 지연시키던 직렬 starvation 을 연결별로 격리(bounded connect timeout + per-datasource circuit breaker).
+- 변경:
+  - `src/modules/config.py`: 신규 env — `AGENT_DB_CONNECT_TIMEOUT_SEC`(기본 10, 연결 수립 상한을 쿼리 예산과 분리), `AGENT_DB_BREAKER_ENABLED`(기본 1), `AGENT_DB_BREAKER_FAIL_THRESHOLD`(기본 3), `AGENT_DB_BREAKER_COOLDOWN_SEC`(기본 30). `__all__` 갱신.
+  - `src/modules/db.py`: ① `_dataplane_connect_timeout()` — data-plane 연결 timeout(MySQL `connection_timeout`·MSSQL `login_timeout`)을 `AGENT_TIMEOUT_SEC`(쿼리 예산)에서 분리. MSSQL 쿼리 `timeout` 은 유지. ② per-datasource circuit breaker — `DatasourceCircuitOpen`, `_BREAKER_STATE`+`_BREAKER_LOCK`, `_breaker_key`(scope_key), `_is_connect_breaker_failure`(connect-stage 분류·deadlock/인증 제외), `_breaker_admit`(요청당 게이트 + 단일 half-open trial `half_open_at` 토큰 + stale 회수), `_breaker_record_success/failure`(요청당 1회), `_breaker_safe`(부기 예외 격리), `_breaker_trial_timeout`, `_reset_breaker_state`(테스트). ③ `connect_with_retry` 가 breaker 의 단일 경계 — admit(루프 전) + record(요청당 1회). `connect()` data-plane 분기는 bounded timeout 만 적용. ④ `_should_retry_db_error` 가 `DatasourceCircuitOpen` 을 비-재시도로 분류. `__all__` 에 `DatasourceCircuitOpen` 추가.
+  - `tests/test_db_circuit_breaker.py`: 신규 22 테스트(8스레드 동시성 단일 trial 포함).
+  - `.env.example`: 신규 4 env 문서화.
+- 비변경: control-plane(memory DB, `datasource=None`) 연결 경로 — breaker 미적용, 동작 0 변경. 풀(TASK-0144)·replica 라우팅·probe_datasource·tools 라우터/allowlist·RBAC·스키마 무변경.
+- 검증: 신규 22 PASS + make test 컨테이너 전체 회귀 0 + ruff clean + py_compile. outside-voice 2-pass 적대 리뷰(REV-20260612-0247) NOT-SHIP→SHIP-WITH-FIXES.
+
 ## CHG-20260612-0237
 - Date: 2026-06-12 (TASK-0237, **Major §12.3** — OpenAI legacy 명명 정리; 동시세션 cycle 이 TASK-0231~0235 선점→§13.1 재번호 0233→0236)
 - Scope: agent-core 측 — 실제 LLM 이 Bedrock Claude 전용이고 `openai` SDK 는 전송 규약 클라이언트로만 쓰이므로 GPT 시절 명명 잔재 정리(SDK 유지, 동작 무변경).

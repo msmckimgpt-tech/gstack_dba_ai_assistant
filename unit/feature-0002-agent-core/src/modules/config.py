@@ -7,8 +7,12 @@ __all__ = [
     "AGENT_CSV_ANALYZE_MAX_BYTES",
     "AGENT_CSV_ANALYZE_MAX_ROWS",
     "AGENT_CSV_PREVIEW_ROWS",
+    "AGENT_DB_BREAKER_COOLDOWN_SEC",
+    "AGENT_DB_BREAKER_ENABLED",
+    "AGENT_DB_BREAKER_FAIL_THRESHOLD",
     "AGENT_DB_CONNECT_BACKOFF_SEC",
     "AGENT_DB_CONNECT_RETRIES",
+    "AGENT_DB_CONNECT_TIMEOUT_SEC",
     "AGENT_DB_POOL_ENABLED",
     "AGENT_DB_POOL_MAX_OVERFLOW",
     "AGENT_DB_POOL_RESET_SESSION",
@@ -751,6 +755,26 @@ AGENT_SIMILAR_RETRY_LIMIT = int(os.getenv("AGENT_SIMILAR_RETRY_LIMIT", "2"))
 AGENT_SIMILAR_RETRY_THRESHOLD = float(os.getenv("AGENT_SIMILAR_RETRY_THRESHOLD", "0.85"))
 AGENT_DB_CONNECT_RETRIES = int(os.getenv("AGENT_DB_CONNECT_RETRIES", "3"))
 AGENT_DB_CONNECT_BACKOFF_SEC = float(os.getenv("AGENT_DB_CONNECT_BACKOFF_SEC", "0.5"))
+# ── 데이터플레인 연결 격리 (TASK: ds-connect-isolation) ────────────────────────
+# 문제: 데이터플레인 연결의 connection_timeout/login_timeout 이 쿼리 예산
+# AGENT_TIMEOUT_SEC(운영 300s)를 그대로 재사용해, 불안정/다운 datasource 연결 1회
+# 시도가 최대 300s 블록 + connect_with_retry ×3 → ~900s. 단일 ask-worker 가 job 을
+# 직렬 처리하므로 그 한 건이 worker 를 점유 → **정상 datasource 제품 job 까지 지연**.
+#
+# 해결 1: 연결 timeout 을 쿼리 예산에서 분리. **연결 수립(TCP/로그인)** 전용 짧은 상한.
+#   data-plane(원격 customer datasource) connect 에만 적용 — 로컬 control-plane(memory
+#   DB, datasource=None)은 AGENT_TIMEOUT_SEC 유지(동작 0 변경). 0/미설정이면 비활성
+#   (= AGENT_TIMEOUT_SEC 폴백, 기존 동작).
+AGENT_DB_CONNECT_TIMEOUT_SEC = int(os.getenv("AGENT_DB_CONNECT_TIMEOUT_SEC", "10"))
+# 해결 2: per-datasource circuit breaker (scope_key=엔진+host+port 해시 기준).
+#   한 datasource 가 연속 FAIL_THRESHOLD 회 연결 실패하면 그 datasource 만 breaker open
+#   → COOLDOWN_SEC 동안 즉시 fail-fast(블로킹·재시도 0) → worker 즉시 해방. half-open
+#   트라이얼 1회 성공 시 자동 close. **datasource 별 격리** — X 불안정이 Y 에 무영향.
+#   ENABLED=0 이면 breaker 전체 비활성(기존 동작). 연결성 에러(_should_retry_db_error)만
+#   카운트 — 인증 오류 등 fast-fail 에러는 starvation 을 일으키지 않으므로 제외.
+AGENT_DB_BREAKER_ENABLED = os.getenv("AGENT_DB_BREAKER_ENABLED", "1").strip().lower() in ("1", "true", "yes")
+AGENT_DB_BREAKER_FAIL_THRESHOLD = max(1, int(os.getenv("AGENT_DB_BREAKER_FAIL_THRESHOLD", "3") or "3"))
+AGENT_DB_BREAKER_COOLDOWN_SEC = max(1, int(os.getenv("AGENT_DB_BREAKER_COOLDOWN_SEC", "30") or "30"))
 # ── MySQL 커넥션 풀 (TASK-0144, opt-in / 기본 OFF / 폴백 안전) ──────────────
 # 기본 비활성(False) → db.connect() 가 기존 connect-per-request 경로 그대로 사용
 # (동작 0 변경). True(canary 로만) 일 때만 (host,user,database) 시그니처별 풀에서

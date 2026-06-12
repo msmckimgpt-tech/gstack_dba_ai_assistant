@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0247 [SUBAGENT:ds-connect-isolation-breaker-adversarial] — SHIP-WITH-FIXES(BLOCKER 2 + MAJOR 2 + MINOR 흡수)
+- Date: 2026-06-12
+- Cycle: TASK-0247 (데이터플레인 연결 격리 — bounded connect timeout + per-datasource circuit breaker, **Major §12.3** 런타임 데이터플레인 경로)
+- 패널: outside-voice 적대적 동시성/보안 리뷰 subagent **2-pass**(1차 NOT-SHIP → 발견 전량 흡수 → 2차 재게이트 SHIP-WITH-FIXES). 런타임 가용성 변경(연결 차단 판정)이라 [[feedback_outside_voice_for_rbac]] 정합으로 외부 시각 필수.
+- 1차 발견(NOT-SHIP) 및 흡수:
+  - **B1 (BLOCKER) half-open thundering herd**: `half_open` 플래그가 write-only 라 가드 역할 부재 → 쿨다운 만료 순간 web 다중스레드가 동시에 trial 통과해 죽은 DS 에 connect 폭주. → `half_open_at`(타임스탬프) 토큰을 `_BREAKER_LOCK` 안에서 검사·세팅해 **정확히 1개** trial 만 통과(나머지 fast-fail). 8스레드 동시성 테스트로 connect 호출 정확히 1회 검증.
+  - **B2 (BLOCKER) stuck-open leak**: trial 보유 스레드 사망 시 토큰 영구 잔존 → 건강 DS 영구 차단. → `_breaker_trial_timeout`(connect_timeout×(retries+1)+5) 경과 시 stale 토큰 회수.
+  - **M1 (MAJOR) retry 증폭**: `connect_with_retry` 의 내부 retry(×3)가 1요청에 breaker 를 즉시 threshold 까지 밀어 false-open. → breaker 게이트/기록을 **connect_with_retry 경계로 이동, 요청당 1회**. THRESHOLD=실패한 요청 수.
+  - **M4 (MAJOR) 분류 오염**: `_should_retry_db_error` 재사용이 1205(deadlock) 등 쿼리시점 에러까지 카운트. → `_is_connect_breaker_failure`(connect-stage 만: 2002/2003/2005/2006/2013+connect 메시지; deadlock·인증 제외).
+  - **m1/m2 (MINOR)**: 부기 예외 누수 → `_breaker_safe` 격리. 로그 `err=%r` 노출 → errno/타입만(`err=%s`). m3(MSSQL login_timeout 의 DNS/TCP 한계) 주석 문서화.
+- 2차 재게이트 잔여(흡수): half-open trial 이 비-카운트 에러(인증 1045)로 끝나면 토큰 점유로 건강 DS 가 ≤trial_timeout 동안 fast-fail → `_breaker_record_failure` 가 비-연결 실패 시 `half_open_at` 즉시 해제(다음 요청=새 trial). 회귀 테스트 추가.
+- 검증: 신규 `test_db_circuit_breaker.py` 22 PASS(timeout 분리·M1 요청당1회·8스레드 단일 trial 동시성·deadlock/인증 미카운트·stale 회수·per-key 격리·half-open 복구/재개방/토큰해제·control-plane 미적용·부기예외 비삼킴·no-retry·bounded timeout) + make test 컨테이너 전체 회귀 0 + ruff clean.
+- Risk: medium(런타임 모든 제품 질의 통과 경로). 완화 — control-plane(memory DB) 미적용·flag `AGENT_DB_BREAKER_ENABLED` 로 즉시 비활성 가능·breaker open 은 connect-stage 실패만·bounded timeout 으로 in-flight 손상 상한. Rollback: `AGENT_DB_BREAKER_ENABLED=0`(런타임) 또는 파일 revert.
+- Cross-ref: CHG-20260612-0247 / TASK-0247 / STATUS TASK-0247. [[feedback_outside_voice_for_rbac]] 정합.
+
 ## REV-20260612-0237 [SKIPPED:llm-naming-cleanup-no-behavior-change] — PASS
 - 패널 skip 사유: `openai` SDK 전송 클라이언트의 명명 정리(rename + dead env 제거 + env backward-compat). 라우팅/자격증명/보안 경계·동작 무변경. 적대적 패널 비대상(§18.8). 동시세션 선점→§13.1 재번호 0233→0236.
 - Date: 2026-06-12

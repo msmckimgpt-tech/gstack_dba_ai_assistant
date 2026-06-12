@@ -1,4 +1,5 @@
 __all__ = [
+    "DatasourceCircuitOpen",
     "_collect_cursor_result",
     "_pg_available",
     "_pg_connect",
@@ -48,6 +49,211 @@ from mysql.connector.errors import PoolError  # 풀 소진 시그널 (TASK-0144)
 _db_logger = logging.getLogger("agent_core.db")
 _POOL_REGISTRY: dict[str, "mysql.connector.pooling.MySQLConnectionPool"] = {}
 _POOL_LOCK = threading.Lock()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 데이터플레인 연결 격리 (TASK: ds-connect-isolation)
+#
+# 문제: data-plane(원격 customer datasource) 연결의 connection_timeout/login_timeout 이
+#   쿼리 예산 AGENT_TIMEOUT_SEC(운영 300s)를 재사용 → 불안정/다운 datasource 연결 1회
+#   시도가 최대 300s 블록 + connect_with_retry ×3 → ~900s. 단일 ask-worker 가 job 을
+#   직렬 처리하므로 그 한 건이 worker 를 점유 → 정상 datasource 제품 job 까지 지연.
+#
+# 격리 2단:
+#   1) bounded connect timeout — _dataplane_connect_timeout() (AGENT_DB_CONNECT_TIMEOUT_SEC).
+#      연결 수립 상한을 쿼리 예산에서 분리(기본 10s). control-plane(datasource=None)은 미적용.
+#      (한계: pymssql/mysql.connector 의 connect timeout 은 로그인/핸드셰이크 phase 상한이라
+#       DNS·TCP SYN 블랙홀 단계는 OS 소켓 timeout 에 좌우 — bounded 가 약한 면이 있으나
+#       대부분의 unreachable/refused 는 빠르게 raise 되어 breaker 가 후속을 차단한다.)
+#   2) per-datasource circuit breaker — scope_key(엔진+host+port) 기준 in-memory 상태.
+#      연속 연결성 실패 ≥ FAIL_THRESHOLD **요청** 이면 그 datasource 만 open → COOLDOWN_SEC
+#      동안 즉시 fail-fast(DatasourceCircuitOpen, 블로킹·재시도 0) → worker 즉시 해방.
+#      쿨다운 경과 후 **정확히 1개** half-open trial 만 통과(나머지는 계속 fast-fail) → 성공
+#      close / 실패 re-open. datasource 별 독립 — X 불안정이 Y 에 무영향.
+#
+# 경계 설계 (REV-20260612 적대 리뷰 B1/M1 흡수):
+#   - breaker 게이트(admit)와 실패 기록(record)은 **connect_with_retry 경계에서 요청당 1회**
+#     수행한다(connect() 안이 아님). 내부 retry(AGENT_DB_CONNECT_RETRIES)가 1요청을 즉시
+#     threshold 까지 밀어 올리는 false-open 증폭을 차단 — THRESHOLD 는 '실패한 요청 수'.
+#   - half-open 은 half_open_at(타임스탬프) 토큰으로 **단일 trial** 을 보장(쓰기 전용 boolean
+#     플래그가 thundering herd 를 못 막던 결함 수정). trial 보유 스레드가 죽어 토큰이 남으면
+#     trial_timeout 경과 후 stale 로 간주해 새 trial 을 허용(stuck-open 방지).
+#
+# 프로세스별 in-memory 설계 근거: 직렬 starvation 의 병목은 단일 ask-worker 프로세스다.
+#   그 프로세스 안의 in-memory breaker 가 직렬 점유를 직접 끊는다(공유 PG 상태 불요 — KISS).
+#   web 프로세스(inprocess ask / insight 경로)도 자기 breaker 를 독립 보유한다(thread-safe).
+# ─────────────────────────────────────────────────────────────────────────────
+class DatasourceCircuitOpen(Exception):
+    """datasource breaker open — 연결 시도 없이 즉시 fail-fast(격리).
+
+    connect_with_retry 는 admit 단계에서 raise 하므로 재시도하지 않는다. tool 경로
+    (execute_tool)는 per-datasource 에러 문자열로 surface 한다. 좌표/비밀번호 비노출."""
+
+    def __init__(self, scope_key: str, retry_after: float):
+        self.scope_key = scope_key
+        self.retry_after = max(0.0, float(retry_after))
+        super().__init__(
+            f"데이터소스 연결이 일시적으로 불안정하여 차단되었습니다 "
+            f"(약 {int(self.retry_after) + 1}초 후 자동 재시도)."
+        )
+
+
+# scope_key -> {"fails": int, "opened_at": float|None, "half_open_at": float|None}
+_BREAKER_STATE: dict[str, dict[str, Any]] = {}
+_BREAKER_LOCK = threading.Lock()
+
+
+def _dataplane_connect_timeout() -> int:
+    """data-plane 연결 수립 상한(초). AGENT_DB_CONNECT_TIMEOUT_SEC>0 이면 그 값, 아니면
+    AGENT_TIMEOUT_SEC 폴백(기존 동작). 쿼리 timeout(AGENT_TIMEOUT_SEC)과 분리된 값."""
+    t = int(AGENT_DB_CONNECT_TIMEOUT_SEC or 0)
+    return t if t > 0 else int(AGENT_TIMEOUT_SEC)
+
+
+def _breaker_trial_timeout() -> float:
+    """half-open trial 보유 토큰의 stale 판정 상한(초). 한 trial = connect_with_retry 1콜
+    (최대 retries 회 시도 + backoff). 그보다 길게 잡아 정상 trial 을 stale 로 오인하지 않되,
+    trial 스레드 사망 시 토큰을 회수해 stuck-open 을 막는다."""
+    per_attempt = max(1, _dataplane_connect_timeout())
+    retries = max(1, int(AGENT_DB_CONNECT_RETRIES))
+    return float(per_attempt * (retries + 1) + 5)
+
+
+def _breaker_key(datasource: "dict | None") -> "str | None":
+    """breaker 키 = datasource scope_key(엔진+host+port 안정 해시). None=control-plane(미적용).
+
+    엔드포인트(host:port) 단위 — 연결 *수립* 실패는 그 서버 공통 신호이므로 user/db 를 키에서
+    제외한다(같은 서버의 정상 계정/DB 가 host-down 시 함께 차단되는 건 의도된 동작). 인증 실패
+    (계정별)는 _is_connect_breaker_failure 가 제외하므로 한 계정의 잘못된 비밀번호가 같은 서버
+    다른 계정의 breaker 를 열지 않는다."""
+    if not datasource:
+        return None
+    try:
+        from . import datasources as _ds
+        k = _ds.scope_key(datasource)
+        if k:
+            return str(k)
+    except Exception:
+        pass
+    # 폴백: 좌표 직접 직렬화(datasources import 실패 등). host 부재면 격리 불가 → None.
+    host = datasource.get("host")
+    if not host:
+        return None
+    engine = (datasource.get("engine") or "mysql").strip().lower()
+    try:
+        port = int(datasource.get("port") or 0)
+    except Exception:
+        port = 0
+    return f"{engine}:{str(host).strip().lower()}:{port}"
+
+
+def _is_connect_breaker_failure(err: Exception) -> bool:
+    """breaker 카운트 대상 = **연결 수립** 실패만(쿼리시점 에러 제외) — REV M4 흡수.
+
+    connect() 는 연결/로그인만 수행하므로 그 예외는 본질적으로 connect-stage 이지만, 분류를
+    명시해 미래 결합 결함을 막는다. DatasourceCircuitOpen(이미 open 신호)과 1205(deadlock —
+    쿼리시점 락, 연결과 무관)은 카운트하지 않는다. errno 또는 connect 단계 메시지로 판정."""
+    if isinstance(err, DatasourceCircuitOpen):
+        return False
+    code = getattr(err, "errno", None)
+    if code == 1205:  # deadlock — 쿼리시점, 연결 수립과 무관
+        return False
+    if code in (2002, 2003, 2005, 2006, 2013):  # socket/can't-connect/unknown-host/gone/lost
+        return True
+    msg = str(err).lower()
+    for pat in (
+        "can't connect", "unable to connect", "connection refused", "connection failed",
+        "timed out", "timeout", "name or service not known", "no route to host",
+        "login timeout", "host is unreachable",
+    ):
+        if pat in msg:
+            return True
+    return False
+
+
+def _breaker_admit(key: "str | None") -> None:
+    """연결 시도 직전 게이트(요청당 1회). open + 쿨다운 내면 DatasourceCircuitOpen 즉시 raise.
+
+    쿨다운 경과 시 **정확히 1개** half-open trial 만 통과시키고(half_open_at 토큰), 나머지
+    동시 요청은 계속 fast-fail(thundering herd 차단). trial 토큰이 trial_timeout 보다 오래
+    남아있으면(보유 스레드 사망 추정) stale 로 회수해 새 trial 허용."""
+    if not AGENT_DB_BREAKER_ENABLED or not key:
+        return
+    now = time.time()
+    with _BREAKER_LOCK:
+        st = _BREAKER_STATE.get(key)
+        if not st or st.get("opened_at") is None:
+            return  # closed 또는 counting(미open) → 통과
+        remaining = AGENT_DB_BREAKER_COOLDOWN_SEC - (now - float(st["opened_at"]))
+        if remaining > 0:
+            raise DatasourceCircuitOpen(key, remaining)
+        # 쿨다운 경과 → half-open. 단일 trial 보장.
+        hoa = st.get("half_open_at")
+        if hoa is not None and (now - float(hoa)) < _breaker_trial_timeout():
+            # 이미 trial 진행 중 → 추가 요청은 계속 fast-fail.
+            raise DatasourceCircuitOpen(key, _breaker_trial_timeout() - (now - float(hoa)))
+        st["half_open_at"] = now  # 이 요청을 유일 trial 로 승인
+
+
+def _breaker_record_success(key: "str | None") -> None:
+    """연결 성공 → breaker close(상태 제거). 첫 성공이 곧 복구(counting/half-open 모두)."""
+    if not AGENT_DB_BREAKER_ENABLED or not key:
+        return
+    with _BREAKER_LOCK:
+        if _BREAKER_STATE.pop(key, None) is not None:
+            _db_logger.info("db_breaker_close scope=%s", key)
+
+
+def _breaker_record_failure(key: "str | None", exc: Exception) -> None:
+    """연결 수립 실패만 카운트(_is_connect_breaker_failure). 요청당 1회 호출(connect_with_retry
+    경계). threshold 도달 또는 half-open trial 실패 시 open/re-open."""
+    if not AGENT_DB_BREAKER_ENABLED or not key:
+        return
+    if not _is_connect_breaker_failure(exc):
+        # 인증(1045)/문법/deadlock(1205) 등 비-연결 실패는 starvation 원인 아님 → 카운트 제외.
+        # 단, 이 실패가 **half-open trial** 에서 났다면 trial 토큰을 해제한다(REV 잔여 흡수):
+        # 안 그러면 건강한 datasource 가 (예: 일시적 인증 오류 1회로) trial_timeout 동안 모든
+        # 요청을 fast-fail 로 막아 가용성을 떨군다. 토큰만 풀고 cooldown/open 은 유지 →
+        # 다음 요청이 즉시 새 trial 을 받는다(비-연결 실패는 fast-fail 이라 starvation 무관).
+        if AGENT_DB_BREAKER_ENABLED and key:
+            with _BREAKER_LOCK:
+                st = _BREAKER_STATE.get(key)
+                if st and st.get("half_open_at") is not None:
+                    st["half_open_at"] = None
+        return
+    now = time.time()
+    errtag = getattr(exc, "errno", None) or type(exc).__name__  # 좌표/비번 비노출(errno/타입만)
+    with _BREAKER_LOCK:
+        st = _BREAKER_STATE.setdefault(key, {"fails": 0, "opened_at": None, "half_open_at": None})
+        if st.get("opened_at") is not None:
+            # open 상태(또는 half-open trial 실패) → 즉시 re-open(쿨다운 리셋, trial 토큰 해제).
+            st["opened_at"] = now
+            st["half_open_at"] = None
+            _db_logger.warning("db_breaker_reopen scope=%s err=%s", key, errtag)
+            return
+        st["fails"] = int(st.get("fails", 0)) + 1
+        if st["fails"] >= AGENT_DB_BREAKER_FAIL_THRESHOLD:
+            st["opened_at"] = now
+            st["half_open_at"] = None
+            _db_logger.warning(
+                "db_breaker_open scope=%s failed_requests=%d cooldown=%ds err=%s",
+                key, st["fails"], AGENT_DB_BREAKER_COOLDOWN_SEC, errtag,
+            )
+
+
+def _breaker_safe(fn, *args) -> None:
+    """breaker 부기(record_success/failure)를 호출 — 그 내부 예외가 connect 결과/원본 예외를
+    절대 삼키지 않게 격리(m1). admit 은 raise 가 목적이므로 이 래퍼를 쓰지 않는다."""
+    try:
+        fn(*args)
+    except Exception as _e:  # pragma: no cover — 방어
+        _db_logger.warning("db_breaker_bookkeeping_failed err=%r", _e)
+
+
+def _reset_breaker_state() -> None:
+    """테스트 전용 — breaker 상태 초기화."""
+    with _BREAKER_LOCK:
+        _BREAKER_STATE.clear()
 
 
 def _pool_key(params: dict[str, Any]) -> str:
@@ -143,7 +349,10 @@ def _connect_mssql(datasource: dict, database: str | None, autocommit: bool):
         user=datasource.get("user") or DB_USER,
         password=datasource.get("password", ""),
         database=db_name,  # MSSQL DB 컨텍스트(auto-pin 또는 중립 tempdb 폴백)
-        login_timeout=int(AGENT_TIMEOUT_SEC),
+        # ds-connect-isolation: 연결 수립(login_timeout)은 짧은 상한으로 분리해 불안정
+        # datasource 가 worker 를 점유하지 못하게 한다. 쿼리 실행(timeout)은 정상 장기 쿼리를
+        # 위해 쿼리 예산(AGENT_TIMEOUT_SEC) 유지.
+        login_timeout=_dataplane_connect_timeout(),
         timeout=int(AGENT_TIMEOUT_SEC),
         autocommit=bool(autocommit),
         charset="UTF-8",
@@ -159,6 +368,9 @@ def connect(database: str | None = None, autocommit: bool = True, datasource: di
     # 바인딩된 datasource 를 해석해 넘긴다. flag OFF 또는 datasource=None 이면 아래 기존 라우팅이
     # 100% 그대로 — 기존 단일 MySQL 동작 0 변경(M-3: plane 은 호출측이 명시).
     if datasource and AGENT_MULTI_DATASOURCE_ENABLED:
+        # ds-connect-isolation: data-plane 연결 수립 timeout 을 쿼리 예산과 분리(bounded).
+        # breaker 게이트/기록은 connect_with_retry 경계에서 요청당 1회 수행한다(여기 connect()
+        # 안이 아님 — 내부 retry 가 1요청을 threshold 까지 밀어올리는 false-open 증폭 차단).
         # Stage 2 (P4): engine 디스패치 — mssql 은 pymssql, 그 외(mysql)는 mysql.connector.
         if (datasource.get("engine") or "mysql").strip().lower() == "mssql":
             return _connect_mssql(datasource, database, autocommit)
@@ -170,13 +382,14 @@ def connect(database: str | None = None, autocommit: bool = True, datasource: di
         # 않는다. 적용하면 미접두 쿼리(`SELECT * FROM t`)가 schema-ref 0개로 allowlist 를 우회해
         # default_db 를 조회하게 된다. database 는 caller 가 명시한 값만 사용(agent_core 는 datasource
         # 경로에서 None 전달) → schema-prefixed 쿼리만 가능 → allowlist 가 유일 게이트.
+        # connection_timeout: 쿼리 예산(AGENT_TIMEOUT_SEC)과 분리된 연결 수립 상한(ds-connect-isolation).
         params = {
             "host": host,
             "port": port,
             "user": user,
             "password": password,
             "autocommit": autocommit,
-            "connection_timeout": AGENT_TIMEOUT_SEC,
+            "connection_timeout": _dataplane_connect_timeout(),
             "charset": "utf8mb4",
             "use_unicode": True,
         }
@@ -260,6 +473,9 @@ def _pooled_connect(params: dict[str, Any]):
 
 
 def _should_retry_db_error(err: Exception) -> bool:
+    # ds-connect-isolation: breaker open 은 의도된 즉시 fail-fast → 재시도 금지(블로킹 회피).
+    if isinstance(err, DatasourceCircuitOpen):
+        return False
     code = getattr(err, "errno", None)
     if code in (2003, 2006, 2013, 1205):
         return True
@@ -273,12 +489,21 @@ def connect_with_retry(
     database: str | None = None, autocommit: bool = True, attempts: int | None = None,
     datasource: dict | None = None,
 ):
+    # ds-connect-isolation: per-datasource breaker 의 **단일 경계**. 모든 런타임 datasource
+    # 연결이 이 함수를 경유하므로(라우터 conn_for·agent_core·insight) 게이트(admit)와 실패
+    # 기록(record)을 여기서 **요청당 1회** 수행한다 — 내부 retry 가 1요청을 즉시 threshold
+    # 까지 밀어올리는 false-open 증폭을 차단. key=None(control-plane)이면 breaker 미적용.
     attempts = attempts if attempts is not None else AGENT_DB_CONNECT_RETRIES
     attempts = max(1, int(attempts))
+    _bkey = _breaker_key(datasource)
+    # breaker open → 시도 없이 즉시 fail-fast(쿨다운 중) 또는 단일 half-open trial 승인.
+    _breaker_admit(_bkey)  # may raise DatasourceCircuitOpen (재시도 안 함)
     last_exc = None
     for attempt in range(1, attempts + 1):
         try:
-            return connect(database=database, autocommit=autocommit, datasource=datasource)
+            conn = connect(database=database, autocommit=autocommit, datasource=datasource)
+            _breaker_safe(_breaker_record_success, _bkey)  # 성공 → close(부기 예외 격리)
+            return conn
         except Exception as exc:
             last_exc = exc
             if not _should_retry_db_error(exc):
@@ -286,6 +511,8 @@ def connect_with_retry(
             if attempt < attempts:
                 time.sleep(AGENT_DB_CONNECT_BACKOFF_SEC * attempt)
                 continue
+    # 모든 시도 소진(또는 비-재시도 에러로 break) → breaker 에 1회 실패 기록(요청당 1회).
+    _breaker_safe(_breaker_record_failure, _bkey, last_exc)
     if last_exc:
         raise last_exc
     raise RuntimeError("DB 연결 실패")
