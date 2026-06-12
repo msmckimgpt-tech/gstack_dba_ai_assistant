@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0247 [SKIPPED:trivial-css-1line] — SHIP
+- Related TASK: feature-0003-agent-web-ui (TASK-0246 정련 CHG-0246b — 연결배지 `justify-self` end→start)
+- Trigger: CHG-0246 배포 후 PB-0008 측정에서 연결배지 left spread=25(우측 정렬). 사용자 컬럼 정렬 선호(행별 left spread=0)·sibling `.cov-db-row` 컨벤션 정합.
+- Verdict: **SHIP** (BLOCKER 0). CSS 1줄(`justify-self: end`→`start`) + 캐시버스터. 로직/구조/권한/데이터 0.
+- SKIPPED 근거: cosmetic 정렬 1줄, 실질 게이트 = PB-0008 재측정(전 열 left spread=0).
+- Human Approval Needed: no
+- Cross-ref: CHG-20260612-0246b / REV-20260612-0246 / [[feedback_row_list_column_alignment]].
+
 ## REV-20260612-0246 [SKIPPED:trivial-grid-align] — SHIP
 - Related TASK: feature-0003-agent-web-ui (TASK-0246 — "+ 데이터소스 추가" 드롭다운 항목 열 정렬). 동시세션 db-row-align 이 TASK-0245 선점 → §13.1 재번호 0245→0246.
 - Trigger: TASK-0244 직후 CSS-only follow-up(단일 규칙 블록 — flex→grid 고정 열 폭). 적대적 outside-voice 보다 PB-0008 실측 시각검증이 실질 게이트인 cosmetic 변경.

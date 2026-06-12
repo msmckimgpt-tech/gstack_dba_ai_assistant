@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0246b
+- Date: 2026-06-12
+- Task: TASK-0246 정련 (연결상태 배지 정렬 컨벤션 통일), **Minor §12.3** (CSS 1줄 + 캐시버스터)
+- 진단: CHG-20260612-0246 배포 후 PB-0008 측정 — name/engine/coord 행별 left spread=0(정렬 완료), 단 연결배지가 `justify-self:end`(우측 정렬)라 배지 left spread=25px(폭 차이). 사용자 컬럼 정렬 선호([[feedback_row_list_column_alignment]] — "행별 left spread=0px") + sibling `.cov-db-row`(TASK-0245)가 status/reset 를 `justify-self:start` 로 통일한 것과 정합 위해 배지도 좌측 정렬로 맞춤.
+- 변경 (`styles.css` 1줄): `.admin-ds-picker-item .admin-ds-conn` `justify-self: end` → **`justify-self: start`**(고정폭 104px 열에서 배지 자연폭 좌측 정렬 → 배지 left 도 행별 동일). `admin.html` 캐시버스터 `?v=20260612-ds-picker-colalign2`.
+- 비변경: 그 외 grid 트랙·열 폭·probe·백엔드·RBAC 전부 CHG-0246 그대로.
+- 검증: CSS brace 균형(1105/1105) + 배포 후 PB-0008 재측정(전 열 left spread=0). REV-20260612-0246 [SKIPPED:trivial-grid-align] 연장.
+- Files: unit/feature-0003-agent-web-ui/src/static/{styles.css,admin.html}, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
+- Rollback: `justify-self: start` → `end` 환원.
+
 ## CHG-20260612-0246
 - Date: 2026-06-12
 - Task: TASK-0246 ("+ 데이터소스 추가" 드롭다운 항목 열 정렬 — 고정 열 폭 grid), **Minor §12.3** (CSS-only 단일 블록; admin.js·백엔드·RBAC·스키마 0). 동시세션 db-row-align cycle 이 TASK-0245·CHG/REV/REQ-0245·AC-0385 선점(PR #189/#191 main 14a296f) → §13.1 재번호 0245→0246, AC→0460.

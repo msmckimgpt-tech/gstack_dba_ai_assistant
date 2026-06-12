@@ -3506,4 +3506,6 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] `.admin-ds-picker-item` grid 전환 + 고정 열 폭 + justify-self 정렬
 - [x] 캐시버스터 bump + CSS brace 균형(1105/1105)
 - [x] origin/main(14a296f) 위로 재적용 + TASK-0245→0246 재번호(동시세션 충돌)
-- [ ] verify-completion → 머지 → web 재배포 → PB-0008 시각검증(열 정렬)
+- [x] PR #192 머지(main 6756522)·배포 후 PB-0008 측정: name/engine/coord left spread=0
+- [x] 정련(CHG-0246b): 연결배지 justify-self end→start(left spread=0 통일, sibling .cov-db-row 컨벤션)
+- [ ] v2 배포 → PB-0008 재측정(전 열 left spread=0) → 마감
