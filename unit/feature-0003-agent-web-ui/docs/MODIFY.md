@@ -3273,3 +3273,11 @@ source_of_truth: true
 - 검증: 신규/보강 4 테스트(steps redact·정상 steps 보존·sanitize 가 csv_paths/preview/args/error 제거·malformed 안전) + make test 컨테이너 **599 PASS(회귀 0, skip 2)** + ruff clean + node --check share.js + CSS brace 균형 + py_compile. Playwright 실 헤드리스 chromium 2종(mock + 라이브 sanitized 대화 20260527044221 id=128 8 execute_sql) ALL PASS.
 - Files: unit/feature-0003-agent-web-ui/src/app.py, unit/feature-0003-agent-web-ui/src/static/{share.js,share.css,share.html}, unit/feature-0003-agent-web-ui/tests/test_share_redaction_invariant.py, unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW}.md, unit/feature-0003-agent-web-ui/docs/reviews/20260612T010000Z-share-anonymous-exposure.md, docs/STATUS.md
 - Rollback: share.js 의 `renderAssistantDetails` 를 final_sql/result_rows 단일 표시 + `collapseSqlCodeBlocks` 토글로 환원, app.py 의 `_share_attach_sanitized_steps` 호출/`_share_sanitize_step`/`steps` redact 키 제거(공유 페이지가 다시 본문 토글 + 단일 SQL 로 복귀).
+
+## CHG-20260612-0252
+- Date: 2026-06-12 (TASK-0252, **doc-only** — TASK-0251 PB-0008 Windows-browser 완료 게이트 기록)
+- Scope: 문서 전용 — 코드/정적자산/스키마/RBAC 0. TASK-0251(공유 페이지 SQL navigator) 의 라이브 배포 후 PB-0008 Windows-browser 시각검증 PASS 결과를 TEST.md §4 에 기록하고 STATUS.md/TASK.md 의 잔여 항목을 완료로 갱신.
+- 변경: TEST.md §4(TASK-0251 Windows-browser Run — 사용자 토큰 토글 0·본문 SQL 펼침 / steps 토큰 navigator "쿼리 1/8"↔"8/8" ▶◀ click hit-test 전환 / 익명 API csv_paths·preview 누출 0), STATUS.md(TASK-0251 잔여→완료), TASK.md(AC5 체크).
+- 검증: doc-only — 코드 변경 없음(make test 무관). PB-0008 실측은 TASK-0251 배포본(main 9cee54a) 대상.
+- Files: docs/STATUS.md, unit/feature-0003-agent-web-ui/docs/{TASK,TEST,MODIFY,REVIEW}.md
+- Rollback: 문서 기록 제거(실제 시스템 영향 0).

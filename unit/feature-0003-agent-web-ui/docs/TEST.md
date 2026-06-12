@@ -674,3 +674,14 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **Evidence:** `artifacts/db-row-align-after.png` (제품 상세 DB 리스트 8행 — DB명·역할·진척바·상태칩·초기화·× 전 컬럼 수직 정렬 일치).
   - **Pass/Fail: PASS**
   - **Notes:** 순수 CSS grid 트랙 고정(`.cov-db-row` auto→고정폭 + justify-self:start). 행 콘텐츠·셀 빌더·권한 무변경. CHECK#13(PB-0008 Windows-browser) **충족**.
+
+- 2026-06-12 (TASK-0251 공유 페이지 SQL "쿼리 열고닫기" 토글 → "실행 쿼리 전환" navigator 교정 — **PB-0008 Windows-browser 완료 게이트, 익명 공유뷰**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 userspace relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, 라이브 공유 URL `https://112.185.196.20:18080/share/{token}`, self-signed ignore). WSL headless 아닌 실제 Windows 화면. **익명(비로그인) 접근** — 쿠키 임포트 불요.
+  - **Runner: AI** (bin/win-browser.py launch/goto → eval(DOM 검사·nav-btn click hit-test) → screenshot)
+  - **배포:** PR #202 → main `9cee54a` 머지 → `docker compose build web` + `up -d --no-deps web`. 서빙 `/app/web/app.py` 에 `_share_sanitize_step`/`_share_attach_sanitized_steps` 베이킹 확인(grep 6), 서빙 `share.html` 캐시버스터 `?v=20260612-share-sql-nav` 확인. healthz 200(mysql_ok/pg_ok).
+  - **검증 내용 (라이브 2개 공유 토큰):**
+    - **① 사용자 보고 토큰** (`tDuTZ…`, 대화 20260612055236, steps 없음 + 본문 ```sql``` 보유): `.share-sql-toggle-btn` **0개**(열고닫기 토글 완전 부재), 본문 "쿼리 보기/닫기/열기" 라벨 **없음**, `.share-message-content pre` **5개 전부 펼쳐 가시**(visiblePre=5/5). → 사용자가 보고한 "쿼리 열기" 버튼 제거 + 본문 SQL 항상 표시 확인.
+    - **② 실행단계 보유 토큰** (`xGXRt…`, 대화 20260527044221, 8 execute_sql): `.share-sql-navigator` **1개**, 인디케이터 **"쿼리 1/8"**, nav-btn 2개(◀▶). **▶ click hit-test**: "쿼리 1/8"→"2/8" 전환(activeIdx 0→1) + 활성 패널 결과 테이블 가시. 끝까지 ▶ → "쿼리 8/8" + ▶ disabled, ◀ 복귀 → "쿼리 1/8" + ◀ disabled. 8개 패널 SQL 실측: `SHOW TABLES … '%login%'`×3 / `'%event%'`×3 / `SELECT COUNT(*) … atten…`×2 — **결과셋별 실행 쿼리 전환 동작 확인**. 토글 0·라벨 없음.
+  - **익명 노출 경계(라이브 API 직접):** 응답 직렬화에 `result_summary.csv_paths`(서버 `/shared/` 경로) **0**, bare `preview` 키 **0**, step 키 = `{intent,reason,result_summary,sql,tool,work}`, result_summary 키 = `{preview_table}`만 — `_share_sanitize_step` 화이트리스트 라이브 적용 확인.
+  - **Pass/Fail: PASS**
+  - **Notes:** 사용자 의도("쿼리 열고닫기"가 아닌 "결과셋에 따라 실행 쿼리 전환") 정확 구현 — steps 없는 대화는 본문 SQL 펼침, steps 있는 대화는 navigator 전환. 익명 노출 sanitize 라이브 검증(csv_paths/preview/args/error 0). CHECK#13(PB-0008 Windows-browser) **충족**.
