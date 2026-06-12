@@ -1,0 +1,26 @@
+{
+  "name": "TASK-0242 제품 데이터소스 — DB별 insight 파악 내용 한 줄 인라인 + 추가 picker 분석상태 (authed admin)",
+  "base_url": "https://localhost:18080",
+  "shot_dir": "/tmp/win-browser-shots/task0242",
+  "steps": [
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "eval", "script": "(async()=>{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'bootstrap_admin',password:'ChangeThisBootstrapPass_2026!'})});const j=await r.json();return JSON.stringify({login_ok:j.ok});})()", "stop_on_fail": false},
+    {"action": "goto", "url": "/admin", "wait_until": "domcontentloaded"},
+    {"action": "wait_for", "selector": "button[data-admin-tab=products]", "timeout_ms": 20000},
+    {"action": "wait_for", "timeout_ms": 1200, "stop_on_fail": false},
+    {"action": "click", "selector": "button[data-admin-tab=products]"},
+    {"action": "wait_for", "timeout_ms": 2500, "stop_on_fail": false},
+    {"action": "assert_visible", "selector": ".admin-pane[data-admin-pane=products] #productList .admin-list-row", "stop_on_fail": false},
+    {"action": "click", "selector": "#productList .admin-list-row:first-child"},
+    {"action": "wait_for", "selector": "#productDetail .cov-db-row", "timeout_ms": 15000, "stop_on_fail": false},
+    {"action": "wait_for", "selector": "#productDetail .cov-db-role:not(.cov-db-role-muted)", "timeout_ms": 15000, "stop_on_fail": false},
+    {"action": "wait_for", "timeout_ms": 1500, "stop_on_fail": false},
+    {"action": "eval", "script": "(function(){var rows=document.querySelectorAll('#productDetail .cov-db-row');var out=[];rows.forEach(function(r){var n=r.querySelector('.cov-db-name');var role=r.querySelector('.cov-db-role');var stat=r.querySelector('.cov-db-stat');out.push({db:n?n.textContent.trim():null, role:role?role.textContent.trim().slice(0,90):null, roleMuted:role?role.classList.contains('cov-db-role-muted'):null, stat:stat?stat.textContent.trim():null});});var populated=out.filter(function(x){return x.role && !x.roleMuted;}).length;return JSON.stringify({rowCount:out.length, populatedRoleCount:populated, rows:out.slice(0,6)});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "01_db_rows_role_inline.png", "full_page": false},
+    {"action": "click", "selector": "#productDetail .admin-db-picker-btn", "stop_on_fail": false},
+    {"action": "wait_for", "timeout_ms": 1200, "stop_on_fail": false},
+    {"action": "eval", "script": "(function(){var items=document.querySelectorAll('#productDetail .admin-db-picker-list .admin-db-picker-item');var out=[];items.forEach(function(it){var nm=it.querySelector('.admin-db-picker-name');var st=it.querySelector('.admin-db-picker-status');var dm=it.querySelector('.admin-db-picker-domain');out.push({name:nm?nm.textContent.trim():null, status:st?st.textContent.trim():null, statusClass:st?st.className.replace('admin-db-picker-status','').trim():null, domain:dm?dm.textContent.trim().slice(0,40):null});});var states={};out.forEach(function(x){states[x.status]=(states[x.status]||0)+1;});return JSON.stringify({itemCount:out.length, stateCounts:states, items:out.slice(0,8)});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "02_add_picker_status.png", "full_page": false},
+    {"action": "eval", "script": "(function(){return JSON.stringify({consoleNote:'pageerror count via runner ok flags'});})()", "stop_on_fail": false}
+  ]
+}
