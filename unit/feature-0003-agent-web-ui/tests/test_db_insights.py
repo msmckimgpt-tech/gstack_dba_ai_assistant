@@ -180,26 +180,75 @@ def _patch_resolve_ok(monkeypatch, *, scope="main_mysql", allow_null=True, engin
     )
 
 
+# ── DK1: object_key → catalog 파서 (TASK-0243) ──────────────────────────────────
+def test_db_catalog_from_object_key_mysql():
+    f = app._db_catalog_from_object_key
+    # MySQL: db==catalog==첫 segment (schema=`db`, table=`db.table`).
+    assert f("mysql-abc:account_db", "mysql", "schema") == "account_db"
+    assert f("mysql-abc:account_db.t_196", "mysql", "table") == "account_db"
+
+
+def test_db_catalog_from_object_key_mssql():
+    f = app._db_catalog_from_object_key
+    # MSSQL: catalog 는 object_key 에 인코딩 — schema=`catalog.dbo`(2), table=`catalog.dbo.tbl`(3).
+    assert f("mssql-x:gamelog_100.dbo", "mssql", "schema") == "gamelog_100"
+    assert f("mssql-x:dk_data_release.dbo", "mssql", "schema") == "dk_data_release"
+    assert f("mssql-x:gamelog_100.dbo.Item", "mssql", "table") == "gamelog_100"
+    # bare(default_db, catalog 미인코딩) → None (등록 catalog 귀속 불가).
+    assert f("mssql-x:dbo", "mssql", "schema") is None
+    assert f("mssql-x:dbo.A1016D80", "mssql", "table") is None
+    # 빈/비정상.
+    assert f("", "mysql", "schema") is None
+
+
 def test_compute_groups_by_db_and_counts(monkeypatch):
     monkeypatch.setattr(app, "_insight_worker_liveness", lambda conn: {"alive": False, "age_sec": None, "status": ""})
     _patch_resolve_ok(monkeypatch)
+    # MySQL object_key = `{scope}:{db}`(schema) / `{scope}:{db}.{table}`(table) → catalog==db==schema_name.
     rows = [
-        ("schema", "orders", None, "전자상거래", "orders domain: 전자상거래 / 주문 원장"),
-        ("table", "orders", "order_items", "주문상세", "order_items domain: 주문상세 / 라인"),
-        ("table", "orders", "shipments", "배송", "shipments domain: 배송 / 출고"),
-        ("schema", "users", None, "고객", "users domain: 고객 / 회원"),
+        ("schema", "orders", None, "전자상거래", "orders domain: 전자상거래 / 주문 원장", "main_mysql:orders"),
+        ("table", "orders", "order_items", "주문상세", "order_items domain: 주문상세 / 라인", "main_mysql:orders.order_items"),
+        ("table", "orders", "shipments", "배송", "shipments domain: 배송 / 출고", "main_mysql:orders.shipments"),
+        ("schema", "users", None, "고객", "users domain: 고객 / 회원", "main_mysql:users"),
     ]
     monkeypatch.setattr("modules.db._pg_connect", lambda: _RowsPgConn(rows))
     out = app._compute_product_db_insights(_BenignConn(), {"id": 1, "datasource_key": "main_mysql"})
     assert out["ok"] is True
     by = out["by_db"]
-    assert set(by.keys()) == {"orders", "users"}
+    assert set(by.keys()) == {"orders", "users"}  # MySQL: catalog==schema_name (무회귀)
     assert by["orders"]["analyzed_schema"] is True
     assert by["orders"]["analyzed_tables"] == 2
     assert by["orders"]["analyzed_objects"] == 3  # schema + 2 tables
     assert by["orders"]["domain"] == "전자상거래"
     assert by["orders"]["description"]
     assert by["users"]["analyzed_objects"] == 1
+
+
+def test_compute_mssql_catalog_attribution(monkeypatch):
+    """TASK-0243: MSSQL 은 schema_name=dbo 라도 object_key 의 catalog 로 묶여 등록 DB(catalog)와 매칭."""
+    monkeypatch.setattr(app, "_insight_worker_liveness", lambda conn: {"alive": False, "age_sec": None, "status": ""})
+    _patch_resolve_ok(monkeypatch, scope="mssql-x", allow_null=False, engine="mssql")
+    rows = [
+        # catalog-qualified: schema_name=dbo 지만 object_key 에 catalog.
+        ("schema", "dbo", None, "Game Data", "dbo domain: Game Data / GameLog_100 플레이어 행동", "mssql-x:gamelog_100.dbo"),
+        ("table", "dbo", "Item", "Game Data", "dbo.Item domain: Game Data / 아이템", "mssql-x:gamelog_100.dbo.Item"),
+        ("schema", "dbo", None, "Logs", "dbo domain: Logs / 릴리즈 로그", "mssql-x:dk_data_release.dbo"),
+        # bare(default_db scan, catalog 미인코딩) → skip.
+        ("schema", "dbo", None, "Misc", "dbo domain: Misc / 기타", "mssql-x:dbo"),
+        ("table", "dbo", "A1016D80", "Misc", "dbo.A1016D80 domain: Misc / 해시테이블", "mssql-x:dbo.A1016D80"),
+    ]
+    monkeypatch.setattr("modules.db._pg_connect", lambda: _RowsPgConn(rows))
+    out = app._compute_product_db_insights(_BenignConn(), {"id": 91, "datasource_key": "mssql_local"})
+    assert out["ok"] is True
+    by = out["by_db"]
+    # catalog 키로 묶임 — 'dbo' 바구니 아님(핵심 회귀 방지).
+    assert set(by.keys()) == {"gamelog_100", "dk_data_release"}
+    assert "dbo" not in by
+    assert by["gamelog_100"]["analyzed_schema"] is True
+    assert by["gamelog_100"]["analyzed_tables"] == 1   # Item (catalog-qualified) 귀속
+    assert by["gamelog_100"]["domain"] == "Game Data"
+    assert by["gamelog_100"]["description"]
+    assert by["dk_data_release"]["analyzed_objects"] == 1  # schema only
 
 
 def test_compute_resolve_fail_returns_not_ok(monkeypatch):

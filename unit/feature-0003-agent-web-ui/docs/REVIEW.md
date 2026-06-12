@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0243 [SUBAGENT:correctness+side-effect] — SHIP
+- Related TASK: feature-0003-agent-web-ui (TASK-0243 — MSSQL db-insights catalog 귀속 수정)
+- Trigger: 사용자 명시 — "키 수정 시 다른 기능 side-effect 면밀 검증". by_db 그룹핑 키를 schema_name→object_key catalog 로 변경하는 것이 coverage/insight-reset/insight-worker write 등 다른 기능에 영향 주는지 적대적 검증.
+- Timestamp: 2026-06-12T00:00:00Z
+- Verdict: **SHIP** (BLOCKER/MAJOR/MINOR 0, NIT 2 — docstring 문구·스타일). 5개 검토 항목 전부 CLEAN.
+- 검증 결과:
+  - **(1) 파서 엣지 — CLEAN**: 식별자에 점(.) 불가(`_sanitize_ident_part` 가 `[0-9A-Za-z_]` 만 허용 후 dot-join) → catalog/schema/table segment 에 literal dot 없음. 접두에 ':' 불가(`_ds_valid_key` 가 ':' 금지, 키=`{engine}-{hash12}`) → `split(':',1)` 항상 안전. object_key varchar(255) 절단은 fact_key 의 `:{digest}` 를 끝에 붙이므로 front catalog 보존. column 객체는 SQL `object_type IN (schema,table)` 로 사전 제외.
+  - **(2) MySQL 무회귀 — CLEAN**: MySQL 은 `database_name` 미설정(set_active_database 는 MSSQL 분기 전용) → object_key path=`{schema}`|`{schema}.{table}`, segs[0]==schema_name 항상. 게다가 본 구현은 MySQL 을 schema_name 직접 사용 분기로 처리 → by_db 키 **byte-identical**.
+  - **(3) side-effect 격리 — CLEAN**: `_db_catalog_from_object_key` 호출처 1곳(db-insights). `_compute_product_insight_coverage` 는 object_type/schema_name/table_name 만 SELECT(object_key 미사용). `admin_product_insight_reset` 는 (schema_name,table_name) 튜플 매칭(object_key 미사용, 코드 주석 일치). 다른 object_key 사용처는 MinIO 첨부(무관). insight-worker write 경로(feature-0002) 무수정 — git diff: app.py+test+docs 3 파일만.
+  - **(4) 프런트 정합 — CLEAN**: WebProductDatabases.SchemaName("GameLog_100") → worker `ds_object_suffix` 가 `.lower()` → object_key catalog `gamelog_100` → 백엔드 by_db 키 `db.lower()` → 프런트 `insByDb[entry.schema_name.toLowerCase()]` — 3-way 동일 소스 소문자화, 불일치 없음.
+  - **(5) over-skip — CLEAN(accepted-risk note)**: 현 worker 는 MSSQL 통찰을 항상 catalog-qualified(set_active_database 항상 호출, default_db 포함) → 등록 catalog 누락 없음. 유일한 over-skip = legacy pre-TASK-0220 bare 데이터인데, 본 수정이 **오히려 개선**(기존엔 잘못된 'dbo' 바구니로 붕괴, 이제 정확히 skip) — 신규/악화 아님.
+- NIT(반영): docstring `{scope}:` → `{ds_prefix}:` 정정(접두는 datasource_key 라벨/해시, 파서가 버림). NIT2(engine.lower vs object_type 정확매칭)=worker 가 항상 소문자 리터럴 기록이라 무위험, 미수정.
+- Human Approval Needed: no (단일 함수 격리·write 경로 무관·전체 회귀 0)
+- 검증: db_insights 17 PASS(파서 2 + MSSQL 귀속 1 신규) + make test 컨테이너 전체 회귀 0 + ruff clean + py_compile. 배포 후 라이브 대조(MySQL 키 불변·MSSQL catalog 매칭) + PB-0008 MSSQL.
+- Cross-ref: CHG-20260612-0243 / TASK-0243 / FUNCTION REQ-20260612-0243(AC-0456) / TASK-0242(REV-20260612-0242).
+
 ## REV-20260612-0242 [SUBAGENT:security] — SHIP-WITH-FIXES→흡수→SHIP
 - Related TASK: feature-0003-agent-web-ui (TASK-0242 — 관리 콘솔 제품 데이터소스 DB별 insight 파악 내용 표면화 + 추가 picker 분석상태)
 - Trigger: 신규 read 엔드포인트(API/endpoint) + PG 데이터 노출 surface — 적대적 보안/정합 outside-voice(§18.8). RBAC/스키마 무변경(console.access 재사용)이나 데이터 노출 면이라 subagent 검토.
