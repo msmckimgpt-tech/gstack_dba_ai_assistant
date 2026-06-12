@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0250
+- Date: 2026-06-12 (TASK-0250, **Major §12.3** — 연결 health 모니터; web/admin 측. 코어는 feature-0002 CHG-20260612-0250)
+- Scope: agent-web-ui — 관리 콘솔 datasource 연결상태를 **백그라운드 모니터가 사전계산한 값으로 즉시 표시**(per-item lazy `/test` probe + 4-cap 세마포어 자동경로 폐기) + web 프로세스에 conn_health 모니터 기동.
+- 변경:
+  - `src/app.py`: `@app.on_event("startup")` `_start_conn_health_monitor`(`conn_health.start_monitor(datasources.health_probe_provider())`) + `@app.on_event("shutdown")` `_stop_conn_health_monitor`. `admin_list_datasources` 가 각 datasource 에 `conn_status`(=`conn_health.snapshot()` 조회, **좌표 비노출** status/elapsed_ms/checked_at 만) 첨부.
+  - `src/static/admin.js`: datasources 목록 로드 시 `conn_status`→`datasourceConnStatus` 캐시 반영. `_kickDsConn` 가 캐시 hit(=모니터 populated) 즉시 표시, miss(unknown 콜드 edge)/force(↻)만 lazy `/test` 폴백 → 자동 토글 경로 세마포어 대기 폭주 제거. ↻ 새로고침은 명시 force probe.
+  - `src/static/admin.html`: 캐시버스터 `?v=20260612-conn-health-status`.
+- 비변경: RBAC(console.access)·datasource CRUD·스키마·`/test` 엔드포인트·기존 배지 painter 무변경(데이터 출처만 사전계산으로).
+- 검증: node --check + make test 컨테이너 회귀 0. outside-voice REV-20260612-0250(코어 feature-0002). 잔여: 배포 후 PB-0008 admin 연결상태 시각검증.
+
 ## CHG-20260612-0246b
 - Date: 2026-06-12
 - Task: TASK-0246 정련 (연결상태 배지 정렬 컨벤션 통일), **Minor §12.3** (CSS 1줄 + 캐시버스터)

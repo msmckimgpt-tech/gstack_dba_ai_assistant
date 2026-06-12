@@ -380,6 +380,7 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 - 세션 디렉토리 부재
 - 허용 호스트/오리진 설정 문제
 - TLS 미사용 환경
+- **datasource 연결상태 표시 (TASK-0250, CHG-20260612-0250)**: 관리 콘솔 datasource 연결상태는 web 프로세스의 `conn_health` 백그라운드 모니터(startup 훅 기동)가 사전계산한 값을 `admin_list_datasources` 응답의 `conn_status`(좌표 비노출)로 받아 **즉시 표시**한다. admin.js 는 캐시 hit(모니터 populated)이면 probe 없이 표시하고, unknown(모니터 첫 probe 전 콜드 edge) 또는 ↻ 수동 새로고침일 때만 `/test` lazy probe 로 폴백한다. 이로써 한 datasource 연결 불안정이 정상 datasource 배지를 세마포어 뒤에서 대기시키던 head-of-line 이 제거된다. 코어 모니터·gate 는 feature-0002 `modules/conn_health.py`.
 
 ## 9. Error Handling
 - 앱 기동 실패 시 컨테이너 로그로 확인한다.

@@ -1899,6 +1899,14 @@ def run_insight_worker_loop() -> None:
     jitter_sec = max(0, int(AGENT_INSIGHT_WORKER_JITTER_SEC))
     if jitter_sec > 0:
         time.sleep(random.uniform(0, float(jitter_sec)))
+    # conn-health-monitor: insight 스캔 연결도 health 게이트 수혜 — 불안정 datasource 를
+    # 백그라운드로 미리 판정(daemon thread, 프로세스 종료 시 정리).
+    try:
+        from . import conn_health
+        from . import datasources as _ds
+        conn_health.start_monitor(_ds.health_probe_provider())
+    except Exception as exc:
+        logging.getLogger("insight").warning("insight-worker: conn_health 모니터 시작 실패(무시): %s", exc)
     while True:
         result = run_insight_cycle()
         status = str((result or {}).get("status", "")).strip()
