@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0239 [SKIPPED:frontend-no-backend-no-rbac] — PASS
+- 패널 skip 사유: datasource accordion 후속 버그/UX 수정. **frontend only**(admin.js/styles.css/admin.html) — RBAC·DB 스키마·시크릿·엔드포인트 shape·백엔드 0(기존 엔드포인트 재사용, desired-state 는 클라이언트 diff). 적대적 보안 subagent 비대상(§18.8).
+- Date: 2026-06-12
+- Cycle: TASK-0239 (⋯ 메뉴 클릭불가 + 추가 즉시반영 + 클릭 깜빡임, **Minor §12.3**)
+- 검토 결과 (반증 시도):
+  - **① 메뉴 클리핑 근본수정 검증**: overflow 제거가 정말 원인이었나? → Playwright `elementFromPoint(메뉴중앙)` 가 수정 전 `.cov-db-editor`(클리핑돼 메뉴 안 그려짐) → 수정 후 `.ds-acc-menu-item`("연결 테스트") 로 바뀜을 실측. 토글 JS 는 원래 정상이었고 CSS 클리핑이 유일 원인. PASS.
+  - **② 일괄 적용 정합(최우선 위험)**: desired-state diff 가 서버를 올바른 최종 상태로 수렴시키나? baseline 은 진입 시 1회 스냅샷, desired 만 변형, apply 시 제거→추가→primary 순. → 추가 스테이징 시 서버 바인딩 불변(Playwright list endpoint 직접 확인) → "모두 적용" 후에만 서버 2개. 제거도 동일(스테이징 불변→적용 후 1개). primary 재지정: 0개→첫 추가는 PATCH(자동 primary), 그 외 명시 POST is_primary. PASS.
+  - **②-b 제거+DB 고아 방지**: 제거된 datasource 의 접근DB draft 가 PUT 되면 서버가 방금 삭제한 행을 되살리거나 미존재 바인딩 PUT 오류. → `_removedDsByProduct` Set 으로 해당 pkey 의 productDb PUT skip(pending 만 정리) 확인. PASS.
+  - **②-c dirty/취소/GC/재진입**: desired==baseline 이면 `_settleDatasourcePending` 가 엔트리 삭제(dirty 0). cancelAllPending·삭제제품 GC·재진입 펼침대상(effective primary) 모두 desired 반영. 부분 실패 시 loadAdminData 가 서버 정본 재동기화. PASS.
+  - **③ 깜빡임 제거 부작용 없나**: 전체 렌더 대신 로컬 accordion 재렌더로 바꿔 다른 패널(프롬프트/삭제)이 stale 되지 않나? → 바인딩 변경은 datasource 영역에만 영향, 그 영역만 재렌더가 정합. redrawChips 동기 선호출 후 비동기 _refreshAccessibleDbs 가 picker/시스템칩 정교화(순서 보존). prefers-reduced-motion 존중. PASS.
+- 잔여 리스크: 시각(펼침 애니메이션 부드러움·메뉴 드롭 위치)은 PB-0008 Windows-browser(배포 후) — WSL 헤드리스는 hit-test/동작 검증. 기능/상태 정합은 위에서 커버. 다중 datasource(3개+) 복합 배치(동시 추가+제거+primary 변경)는 diff 로직상 지원하나 Playwright 는 단일 추가/제거만 실측 — 복합은 단위 로직(_dsBindEqual/diff) 정확성에 의존.
+
 ## REV-20260612-0238 [SKIPPED:frontend-redesign-no-backend-no-rbac] — PASS
 - 패널 skip 사유: datasource 패널 통합 accordion **재설계(표현 계층)**. RBAC 카탈로그·DB 스키마·시크릿·엔드포인트 shape·백엔드 로직 변경 0(기존 datasources/datasource/test 엔드포인트 재사용). 적대적 보안 subagent 비대상(§18.8). 디자인 통일성/접근성 감사는 gstack `/design-review` + codex outside-voice 가 이미 수행 → 그 지적을 흡수한 재설계 자체가 리뷰 산출물.
 - Date: 2026-06-12

@@ -55,6 +55,7 @@ const adminState = {
     newRoles: new Map(),
     productMeta: new Map(),       // productId -> {name?, description?, is_active?, is_default?, sort_order?}
     productDatabases: new Map(),  // productId -> draft array (user schemas only; metadata 4종 자동 bypass)
+    productDatasources: new Map(),// TASK-0239: productId -> {baseline:[{key,is_primary}], desired:[{key,is_primary}]} (바인딩 추가/제거/기본지정 일괄 적용)
     systemPrompts: new Map(),     // key "scope:productId:roleId:accountId" -> {scope, productId, roleId, accountId, content}
   },
   nextTempRoleId: 1,
@@ -666,8 +667,34 @@ function pendingChangeCount() {
     adminState.pending.newRoles.size +
     adminState.pending.productMeta.size +
     adminState.pending.productDatabases.size +
+    datasourceDirtyProductCount() +
     adminState.pending.systemPrompts.size
   );
+}
+
+// TASK-0239: datasource 바인딩 desired ≠ baseline 인 제품 수(일괄 적용 dirty 카운트).
+//  추가/제거/기본지정이 모두 desired 에 스테이징되고, baseline 과 같아지면 자동으로 dirty 아님.
+function _dsBindNorm(list) {
+  // 비교용 정규화: 키 소문자 + primary 플래그, 키 정렬.
+  return (list || [])
+    .map((d) => ({ key: String(d.datasource_key || d.key || "").trim().toLowerCase(), is_primary: !!d.is_primary }))
+    .filter((d) => d.key)
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+function _dsBindEqual(a, b) {
+  const na = _dsBindNorm(a), nb = _dsBindNorm(b);
+  if (na.length !== nb.length) return false;
+  for (let i = 0; i < na.length; i += 1) {
+    if (na[i].key !== nb[i].key || na[i].is_primary !== nb[i].is_primary) return false;
+  }
+  return true;
+}
+function datasourceDirtyProductCount() {
+  let n = 0;
+  adminState.pending.productDatasources.forEach((e) => {
+    if (e && !_dsBindEqual(e.baseline, e.desired)) n += 1;
+  });
+  return n;
 }
 
 function setProductMetaPending(productId, patch) {
@@ -692,6 +719,73 @@ function setProductDatabasesPending(productId, draft, dsKey) {
   snapshot._dsKey = dk;
   adminState.pending.productDatabases.set(pkey, snapshot);
   refreshPendingUI();
+}
+
+// TASK-0239: datasource 바인딩 desired-state 헬퍼 — 추가/제거/기본지정을 즉시 API 대신 pending 에 스테이징.
+//  baseline 은 최초 진입 시 서버 정본 1회 스냅샷. 이후 desired 만 변형. "모두 적용" 시 diff 로 최소 호출.
+function _ensureDatasourcePending(productId, serverBindings) {
+  const id = Number(productId);
+  if (!id) return null;
+  let e = adminState.pending.productDatasources.get(id);
+  if (!e) {
+    const snap = (serverBindings || []).map((d) => ({
+      datasource_key: String(d.datasource_key || d.key || "").trim().toLowerCase(),
+      is_primary: !!d.is_primary,
+    })).filter((d) => d.datasource_key);
+    e = { baseline: snap.map((d) => ({ ...d })), desired: snap.map((d) => ({ ...d })) };
+    adminState.pending.productDatasources.set(id, e);
+  }
+  return e;
+}
+// desired 가 baseline 과 같아지면 엔트리 제거(dirty 해소). UI 갱신.
+function _settleDatasourcePending(productId) {
+  const id = Number(productId);
+  const e = adminState.pending.productDatasources.get(id);
+  if (e && _dsBindEqual(e.baseline, e.desired)) {
+    adminState.pending.productDatasources.delete(id);
+  }
+  refreshPendingUI();
+}
+// 현재 표시할 바인딩(desired 가 있으면 그것, 없으면 서버 정본). accordion 렌더가 이걸 본다.
+function effectiveProductDatasources(product) {
+  const e = adminState.pending.productDatasources.get(Number(product.id));
+  if (e) {
+    return e.desired.map((d) => ({ datasource_key: d.datasource_key, is_primary: !!d.is_primary }));
+  }
+  return (product.datasources || []).map((d) => ({
+    datasource_key: d.datasource_key, is_primary: !!d.is_primary,
+  }));
+}
+// 추가: desired 에 키 append(이미 있으면 no-op). 첫 바인딩이면 자동 primary.
+function stageAddDatasource(product, key) {
+  const e = _ensureDatasourcePending(product.id, product.datasources);
+  if (!e) return;
+  const k = String(key || "").trim().toLowerCase();
+  if (!k || e.desired.some((d) => d.datasource_key === k)) return;
+  const firstBind = e.desired.length === 0;
+  e.desired.push({ datasource_key: k, is_primary: firstBind });
+  _settleDatasourcePending(product.id);
+}
+// 제거: desired 에서 키 제외. 제거 대상이 primary 였으면 남은 첫째를 primary 승격.
+function stageRemoveDatasource(product, key) {
+  const e = _ensureDatasourcePending(product.id, product.datasources);
+  if (!e) return;
+  const k = String(key || "").trim().toLowerCase();
+  const wasPrimary = e.desired.some((d) => d.datasource_key === k && d.is_primary);
+  e.desired = e.desired.filter((d) => d.datasource_key !== k);
+  if (wasPrimary && e.desired.length && !e.desired.some((d) => d.is_primary)) {
+    e.desired[0].is_primary = true;
+  }
+  _settleDatasourcePending(product.id);
+}
+// 기본 지정: 키를 primary 로, 나머지 해제.
+function stageSetPrimaryDatasource(product, key) {
+  const e = _ensureDatasourcePending(product.id, product.datasources);
+  if (!e) return;
+  const k = String(key || "").trim().toLowerCase();
+  if (!e.desired.some((d) => d.datasource_key === k)) return;
+  e.desired.forEach((d) => { d.is_primary = (d.datasource_key === k); });
+  _settleDatasourcePending(product.id);
 }
 
 function setSystemPromptPending(args) {
@@ -3729,6 +3823,8 @@ function refreshPendingUI() {
   if (adminState.pending.newRoles.size) detail.push(`신규 역할 ${adminState.pending.newRoles.size}`);
   if (adminState.pending.productMeta.size) detail.push(`제품 정보 ${adminState.pending.productMeta.size}`);
   if (adminState.pending.productDatabases.size) detail.push(`제품 DB ${adminState.pending.productDatabases.size}`);
+  const dsDirty = datasourceDirtyProductCount();
+  if (dsDirty) detail.push(`데이터소스 바인딩 ${dsDirty}`);
   if (adminState.pending.systemPrompts.size) detail.push(`프롬프트 ${adminState.pending.systemPrompts.size}`);
   $("commitBarDetail").textContent = detail.length ? `(${detail.join(" · ")})` : "";
 
@@ -3745,6 +3841,9 @@ async function applyAllPending() {
   const productMetaEntries = Array.from(adminState.pending.productMeta.entries());
   const productDbEntries = Array.from(adminState.pending.productDatabases.entries());
   const systemPromptEntries = Array.from(adminState.pending.systemPrompts.entries());
+  // TASK-0239: datasource 바인딩 — desired≠baseline 인 제품만(실제 변경).
+  const datasourceEntries = Array.from(adminState.pending.productDatasources.entries())
+    .filter(([, e]) => e && !_dsBindEqual(e.baseline, e.desired));
 
   if (
     !accountEntries.length
@@ -3752,6 +3851,7 @@ async function applyAllPending() {
     && !newRoleEntries.length
     && !productMetaEntries.length
     && !productDbEntries.length
+    && !datasourceEntries.length
     && !systemPromptEntries.length
   ) return;
 
@@ -3853,12 +3953,79 @@ async function applyAllPending() {
     }
   }
 
+  // TASK-0239: datasource 바인딩 변경(추가/제거/기본지정)을 baseline↔desired diff 로 일괄 적용.
+  //  순서: ① 제거(제거 시 서버가 그 datasource 의 접근DB 도 삭제) → ② 추가 → ③ primary 재지정.
+  //  제품 DB(productDatabases) 적용보다 **먼저** 수행해야 추가된 바인딩에 DB 를 PUT 할 수 있고,
+  //  제거된 바인딩의 DB draft 는 아래에서 skip 한다(서버가 이미 삭제 — 재생성 방지).
+  const _removedDsByProduct = new Map();  // productId -> Set(removed lower keys)
+  for (const [productId, e] of datasourceEntries) {
+    const pid = Number(productId);
+    const baseKeys = new Set(_dsBindNorm(e.baseline).map((d) => d.key));
+    const desiredKeys = new Set(_dsBindNorm(e.desired).map((d) => d.key));
+    const toRemove = [...baseKeys].filter((k) => !desiredKeys.has(k));
+    const toAdd = [...desiredKeys].filter((k) => !baseKeys.has(k));
+    const desiredPrimary = (_dsBindNorm(e.desired).find((d) => d.is_primary) || {}).key || null;
+    const removedSet = new Set();
+    let pidFailed = false;
+    try {
+      // ① 제거
+      for (const k of toRemove) {
+        await apiFetch(`/api/admin/products/${pid}/datasources/${encodeURIComponent(k)}`, { method: "DELETE" });
+        removedSet.add(k);
+      }
+      // ② 추가 (첫 바인딩이면 백엔드가 자동 primary; primary 의도는 ③에서 확정)
+      const hadAnyAfterRemove = [...baseKeys].some((k) => !removedSet.has(k));
+      let firstAdd = !hadAnyAfterRemove;
+      for (const k of toAdd) {
+        if (firstAdd) {
+          // 바인딩이 0개였다면 첫 추가는 PATCH(레거시 단일 경로와 정합 — WebProducts.DatasourceKey 포인터도 세팅).
+          await apiFetch(`/api/admin/products/${pid}/datasource`, {
+            method: "PATCH", body: JSON.stringify({ datasource_key: k, datasource_database: null }),
+          });
+          firstAdd = false;
+        } else {
+          await apiFetch(`/api/admin/products/${pid}/datasources`, {
+            method: "POST", body: JSON.stringify({ datasource_key: k, is_primary: false }),
+          });
+        }
+      }
+      // ③ primary 재지정 — desired primary 가 이미 primary 가 아니면 명시 지정.
+      if (desiredPrimary) {
+        const basePrimary = (_dsBindNorm(e.baseline).find((d) => d.is_primary) || {}).key || null;
+        const addedPrimary = toAdd.includes(desiredPrimary) && !hadAnyAfterRemove && desiredPrimary === toAdd[0];
+        if (desiredPrimary !== basePrimary || removedSet.size) {
+          // 추가 직후 자동 primary 였던 첫 케이스가 아니면(또는 제거로 primary 가 바뀌었으면) 명시 지정.
+          if (!addedPrimary) {
+            await apiFetch(`/api/admin/products/${pid}/datasources`, {
+              method: "POST", body: JSON.stringify({ datasource_key: desiredPrimary, is_primary: true }),
+            });
+          }
+        }
+      }
+      adminState.pending.productDatasources.delete(pid);
+      ok += 1;
+    } catch (error) {
+      pidFailed = true;
+      failures.push({ kind: "product_datasource", id: pid, error });
+    }
+    if (removedSet.size) _removedDsByProduct.set(pid, removedSet);
+    if (pidFailed) { /* 부분 실패 — loadAdminData 가 서버 정본으로 재동기화 */ }
+  }
+
   // Product databases (full replace per (product, datasource))
   for (const [pkey, draft] of productDbEntries) {
     // TASK-0228 (1:N): 복합 키 `productId::dsKey` 파싱. 레거시(단일 id) 키도 호환.
     const _ps = String(pkey).split("::");
     const productId = Number(_ps[0]);
     const dsKey = (draft && draft._dsKey != null) ? String(draft._dsKey) : (_ps.length > 1 ? _ps[1] : "");
+    // TASK-0239: 방금 제거된 datasource 의 접근DB draft 는 skip — 서버가 바인딩과 함께 삭제했으므로
+    //  재PUT 하면 고아 행을 되살린다(혹은 미존재 바인딩 PUT 으로 오류). pending 만 정리.
+    const _rm = _removedDsByProduct.get(productId);
+    if (_rm && dsKey && _rm.has(String(dsKey).trim().toLowerCase())) {
+      adminState.pending.productDatabases.delete(pkey);
+      adminState.productDbDraft.delete(`${productId}::${String(dsKey).trim().toLowerCase()}`);
+      continue;
+    }
     try {
       const body = { databases: Array.isArray(draft) ? draft.map((d) => ({ ...d })) : [] };
       // datasource 차원이 지정됐으면 함께 전송(백엔드가 그 datasource 행만 교체). 빈 문자열은 레거시 단일.
@@ -3920,6 +4087,7 @@ function cancelAllPending() {
   adminState.pending.newRoles.clear();
   adminState.pending.productMeta.clear();
   adminState.pending.productDatabases.clear();
+  adminState.pending.productDatasources.clear();
   adminState.pending.systemPrompts.clear();
   adminState.productDbDraft.clear();
   if (adminState.selectedRoleId && String(adminState.selectedRoleId).startsWith("new:")) {
@@ -4003,6 +4171,10 @@ async function loadAdminData() {
   });
   Array.from(adminState.pending.productDatabases.keys()).forEach((id) => {
     if (!productIds.has(Number(id))) adminState.pending.productDatabases.delete(id);
+  });
+  // TASK-0239: 삭제된 제품의 datasource 바인딩 pending GC.
+  Array.from(adminState.pending.productDatasources.keys()).forEach((id) => {
+    if (!productIds.has(Number(id))) adminState.pending.productDatasources.delete(id);
   });
   // GC system prompt pending entries that point to deleted product/role/account.
   const roleIdSet = new Set(adminState.roles.map((r) => Number(r.id)));
@@ -4706,7 +4878,11 @@ function renderProductDetail() {
   const canDs = can("console.manage");
   let _refreshAccessibleDbs = () => {};
   let _renderDsAccordion = () => {};
-  let _selectedDatasourceKey = product.datasource_key || "";
+  // TASK-0239: 초기 펼침 대상 = effective(desired 우선) 바인딩의 primary(또는 첫째). 스테이징된
+  //  추가/제거/기본지정이 있으면 그 상태를 반영해 패널 재진입 시에도 일관되게 펼친다.
+  const _effInit = effectiveProductDatasources(product);
+  const _effPrimaryKey = ((_effInit.find((d) => d.is_primary) || _effInit[0] || {}).datasource_key) || product.datasource_key || "";
+  let _selectedDatasourceKey = _effPrimaryKey;
 
   const dbSection = document.createElement("div");
   dbSection.className = "admin-detail-section";
@@ -4726,8 +4902,8 @@ function renderProductDetail() {
   // TASK-0223: 제품 전체 insight 분석 완료율(전 datasource 합산) — 섹션 상단 1개.
   dbSection.appendChild(buildProductCoverageDetail(product));
 
-  // 편집 중(펼친) datasource. 기본 = primary. 단일/미바인딩이면 primary(또는 '').
-  let _editDsKey = (product.datasource_key || "");
+  // 편집 중(펼친) datasource. 기본 = effective primary. 단일/미바인딩이면 primary(또는 '').
+  let _editDsKey = _effPrimaryKey;
   let _switchEditDs = () => {};  // forward hook (정의 후 채움)
   const _serverDbsFor = (dsk) => {
     const want = String(dsk || "").trim().toLowerCase();
@@ -4977,8 +5153,11 @@ function renderProductDetail() {
     _editDsKey = nk;
     _swapDraftContents(_loadDraft(nk));
     adminState.productDbDraft.set(_draftKeyFor(nk), draft);
+    // TASK-0239: draft 를 즉시 다시 그려 전환 시 구 datasource 의 DB 가 남아 깜빡이는 현상 제거.
+    //  (lockedChips/picker 정교화는 아래 비동기 _refreshAccessibleDbs 가 이어서 처리.)
+    redrawChips();
     _renderDsAccordion();        // active 행 강조 + dbEditorWrap 을 새 행 아래로 이동
-    _refreshAccessibleDbs(nk);   // 새 datasource 의 DB picker + redraw
+    _refreshAccessibleDbs(nk);   // 새 datasource 의 DB picker + 시스템칩 갱신
   };
 
   // ── TASK-0238: datasource accordion (선택기 = 상태표시 = 바인딩관리 통합) ──────────────
@@ -4988,21 +5167,28 @@ function renderProductDetail() {
     const dsAccordion = document.createElement("div");
     dsAccordion.className = "ds-acc";
 
-    // 바인딩 변경(추가/제거/기본지정) 후 정본 동기화 + 패널 전체 재렌더(TASK-0236 교훈).
-    const _reloadProductDatasources = async () => {
-      try {
-        const r = await apiFetch(`/api/admin/products/${product.id}/datasources`);
-        const binds = (r && r.datasources) || [];
-        const nextDatasources = binds.map((d) => ({
-          datasource_key: d.datasource_key, is_primary: d.is_primary, sort_order: d.sort_order,
-        }));
-        const prim = binds.find((d) => d.is_primary);
-        const p = (adminState.products || []).find((x) => Number(x.id) === Number(product.id));
-        if (p) { p.datasources = nextDatasources; p.datasource_key = prim ? prim.datasource_key : null; }
-        product.datasources = nextDatasources;
-        product.datasource_key = prim ? prim.datasource_key : null;
-        renderProductDetail();
-      } catch (e) { showToast(e.message || "데이터소스 목록 갱신 실패", true); }
+    // TASK-0239: 바인딩 변경(추가/제거/기본지정)은 즉시 API 가 아니라 pending(desired) 에 스테이징.
+    //  "모두 적용" 으로 일괄 저장된다(다른 콘솔 편집과 동일 흐름). 여기선 로컬 재렌더만 — 전체
+    //  renderProductDetail() 대신 accordion 만 다시 그려 깜빡임 없이 즉시 시각 반영.
+    //  편집 대상(_editDsKey)이 제거됐으면 desired 의 primary(또는 첫째)로 전환한다.
+    const _afterBindChange = (preferKey) => {
+      const eff = effectiveProductDatasources(product);
+      const keys = eff.map((d) => String(d.datasource_key).toLowerCase());
+      const cur = String(_editDsKey || "").trim().toLowerCase();
+      if (!keys.includes(cur)) {
+        const prim = eff.find((d) => d.is_primary) || eff[0] || null;
+        const next = prim ? String(prim.datasource_key).toLowerCase() : "";
+        _editDsKey = next;
+        _swapDraftContents(_loadDraft(next));
+        adminState.productDbDraft.set(_draftKeyFor(next), draft);
+        redrawChips();
+        _renderDsAccordion();
+        _refreshAccessibleDbs(next);
+      } else if (preferKey && String(preferKey).toLowerCase() !== cur) {
+        _switchEditDs(preferKey);  // 새로 추가한 것을 펼쳐 보여줌
+      } else {
+        _renderDsAccordion();  // primary 배지 등 갱신
+      }
     };
 
     // 행 우측 ⋯ 액션 메뉴(연결 테스트 / 기본 지정 / 제거). 한 datasource 의 모든 동작을 한 곳에.
@@ -5035,26 +5221,20 @@ function renderProductDetail() {
           else showToast(`'${b.datasource_key}' 연결 실패: ${(r && r.error) || "unknown"}`, true);
         } catch (e) { showToast(`'${b.datasource_key}' 연결 테스트 오류: ${e.message || "실패"}`, true); }
       });
-      // 기본 지정(primary 아닐 때만)
+      // 기본 지정(primary 아닐 때만) — 즉시 API 대신 desired 스테이징(일괄 적용).
       if (!b.is_primary) {
-        addItem("기본으로 지정", false, async () => {
-          try {
-            await apiFetch(`/api/admin/products/${product.id}/datasources`, {
-              method: "POST", body: JSON.stringify({ datasource_key: b.datasource_key, is_primary: true }),
-            });
-            await _reloadProductDatasources();
-            showToast(`'${b.datasource_key}' 를 기본 데이터소스로 지정`);
-          } catch (e) { showToast(e.message || "기본 지정 실패", true); }
+        addItem("기본으로 지정", false, () => {
+          stageSetPrimaryDatasource(product, b.datasource_key);
+          _afterBindChange();
+          showToast(`'${b.datasource_key}' 를 기본 데이터소스로 지정(적용 대기)`);
         });
       }
-      // 바인딩 제거
-      addItem("바인딩 제거", true, async () => {
-        if (!confirm(`데이터소스 '${b.datasource_key}' 바인딩을 제거할까요?\n(이 데이터소스의 접근 가능 DB 설정도 함께 삭제됩니다.)`)) return;
-        try {
-          await apiFetch(`/api/admin/products/${product.id}/datasources/${encodeURIComponent(b.datasource_key)}`, { method: "DELETE" });
-          await _reloadProductDatasources();
-          showToast(`'${b.datasource_key}' 바인딩 제거됨`);
-        } catch (e) { showToast(e.message || "바인딩 제거 실패", true); }
+      // 바인딩 제거 — desired 에서 제외(일괄 적용 시 DELETE). 접근DB 도 적용 시 함께 정리.
+      addItem("바인딩 제거", true, () => {
+        if (!confirm(`데이터소스 '${b.datasource_key}' 바인딩을 제거할까요?\n("모두 적용" 시 이 데이터소스의 접근 가능 DB 설정도 함께 삭제됩니다.)`)) return;
+        stageRemoveDatasource(product, b.datasource_key);
+        _afterBindChange();
+        showToast(`'${b.datasource_key}' 바인딩 제거(적용 대기)`);
       });
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -5067,9 +5247,10 @@ function renderProductDetail() {
     };
 
     // accordion 전체 재렌더: datasource 행들 + 펼친 행 아래 dbEditorWrap 이동.
+    //  TASK-0239: 서버 정본이 아니라 effective(=desired 우선) 바인딩으로 그려 스테이징 변경을 즉시 반영.
     _renderDsAccordion = () => {
       dsAccordion.innerHTML = "";
-      const binds = (product.datasources || []);
+      const binds = effectiveProductDatasources(product);
       const dsMeta = new Map((adminState.datasources || []).map((d) => [d.key, d]));
       if (!binds.length) {
         const none = document.createElement("div");
@@ -5137,31 +5318,23 @@ function renderProductDetail() {
       const opt0 = document.createElement("option");
       opt0.value = ""; opt0.textContent = "＋ 데이터소스 추가…";
       addSel.appendChild(opt0);
-      const boundKeys = new Set((product.datasources || []).map((d) => String(d.datasource_key).toLowerCase()));
+      // 후보는 effective(desired) 바인딩 기준 — 이미 추가 대기 중인 것도 목록에서 제외.
+      const boundKeys = new Set(effectiveProductDatasources(product).map((d) => String(d.datasource_key).toLowerCase()));
       (adminState.datasources || []).forEach((ds) => {
-        if (boundKeys.has(String(ds.key).toLowerCase())) return;  // 이미 바인딩됨 — 제외
+        if (boundKeys.has(String(ds.key).toLowerCase())) return;  // 이미 바인딩(또는 추가 대기)됨 — 제외
         const opt = document.createElement("option");
         opt.value = ds.key;
         opt.textContent = `${ds.key} — ${ds.engine || "mysql"} @ ${ds.host || "?"}:${ds.port || ""}`;
         addSel.appendChild(opt);
       });
-      addSel.addEventListener("change", async () => {
+      // TASK-0239: 추가도 즉시 API 대신 desired 스테이징(일괄 적용). 추가한 datasource 를 펼쳐 보여줌.
+      addSel.addEventListener("change", () => {
         const val = addSel.value || null;
+        addSel.value = "";  // select 는 항상 placeholder 로 복귀(첫 항목 잔류 방지)
         if (!val) return;
-        const hadBindings = !!(product.datasources && product.datasources.length);
-        try {
-          if (hadBindings) {
-            await apiFetch(`/api/admin/products/${product.id}/datasources`, {
-              method: "POST", body: JSON.stringify({ datasource_key: val, is_primary: false }),
-            });
-          } else {
-            await apiFetch(`/api/admin/products/${product.id}/datasource`, {
-              method: "PATCH", body: JSON.stringify({ datasource_key: val, datasource_database: null }),
-            });
-          }
-          await _reloadProductDatasources();
-          showToast(`데이터소스 '${val}' 추가됨`);
-        } catch (error) { addSel.value = ""; showToast(error.message || "데이터소스 추가 실패", true); }
+        stageAddDatasource(product, val);
+        _afterBindChange(val);
+        showToast(`데이터소스 '${val}' 추가(적용 대기)`);
       });
       addRow.appendChild(addSel);
       dbSection.appendChild(addRow);

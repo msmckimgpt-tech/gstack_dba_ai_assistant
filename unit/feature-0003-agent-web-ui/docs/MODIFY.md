@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260612-0239
+- Date: 2026-06-12 (TASK-0239, **Minor §12.3** — datasource accordion 후속 버그/UX 3건. frontend only)
+- 사용자 보고(TASK-0238 재설계 직후 실사용): ① "⋯ 버튼이 작동하지 않아 검증 필요", ② "데이터소스 추가 후 일괄 적용 형식에 포함 안 됨(추가 시 즉시 반영되는 이슈)", ③ "각 데이터소스 클릭 시 깜빡임 → 부드러운 애니메이션 적용".
+- 진단:
+  - **①(기능 버그, Playwright hit-test 재현)**: `.ds-acc-menu-btn` 클릭 시 JS 는 `.ds-acc-menu` 의 `hidden` 을 정상 토글(`display:flex`)하나, TASK-0238 에서 행에 준 `.ds-acc-row{overflow:hidden}` 이 행 경계 밖(`top:100%`)으로 드롭되는 `position:absolute` 메뉴를 **클리핑** → 메뉴가 화면에 안 그려지고 `document.elementFromPoint(메뉴중앙)` 이 메뉴 항목이 아닌 뒤의 `.cov-db-editor` 를 맞힘(클릭 불가).
+  - **②(일관성)**: 콘솔의 다른 모든 편집(productMeta/productDatabases/systemPrompts)은 `adminState.pending` 에 스테이징 후 footer "모두 적용" 으로 일괄 저장. datasource 바인딩만 즉시 API(`POST/PATCH/DELETE /datasources`) → 일괄 흐름 밖 anomaly.
+  - **③(UX)**: 행 전환(`_switchEditDs`)·바인딩 변경이 전체 `renderProductDetail()` 재렌더 + 비동기 `_refreshAccessibleDbs`(칩 비웠다 다시 채움)를 유발 → 깜빡임.
+- 변경 (`src/static/admin.js`, `src/static/styles.css`, `src/static/admin.html` — frontend only):
+  - **① CSS**: `.ds-acc-row` 의 `overflow:hidden` 제거(재발 금지 주석) + `transition`(active 강조 부드럽게). 둥근 모서리는 `.ds-acc-head` 가 직접 — 좌측만, `:only-child`(메뉴 없는 행)는 양쪽, `.is-active`(펼친 행)는 하단 직각 분기.
+  - **② 일괄 적용 스테이징(admin.js)**: 신규 `pending.productDatasources` Map(productId → {baseline:[{datasource_key,is_primary}], desired:[…]}). 헬퍼 `_ensureDatasourcePending`/`_settleDatasourcePending`/`effectiveProductDatasources`/`stageAddDatasource`/`stageRemoveDatasource`/`stageSetPrimaryDatasource` + 비교 `_dsBindNorm`/`_dsBindEqual`/`datasourceDirtyProductCount`. ⋯ 메뉴(기본지정/제거)·추가 select 가 즉시 API 대신 stage* 호출 + 로컬 `_afterBindChange`(accordion 만 재렌더). `pendingChangeCount`·`refreshPendingUI`(detail "데이터소스 바인딩 N")·`cancelAllPending`·삭제제품 GC 에 편입. `applyAllPending` 에 diff-apply 루프 추가 — baseline↔desired diff 로 제거(DELETE)→추가(0개면 PATCH, 이후 POST)→primary 재지정(POST is_primary) 순, **제품 DB PUT 보다 먼저** 수행(추가 바인딩에 DB PUT 가능) + 제거된 datasource 의 접근DB draft 는 PUT skip(서버가 바인딩과 함께 삭제 — 고아 방지).
+  - **③ 깜빡임(admin.js+css)**: `_switchEditDs`·`_afterBindChange` 가 전체 렌더 대신 accordion 로컬 재렌더 + `redrawChips()` 동기 선호출(구 datasource DB 잔상 제거 후 비동기 정교화). `.ds-acc-body` 에 `@keyframes ds-acc-body-in`(opacity+translateY) 펼침 애니메이션, `@media (prefers-reduced-motion:reduce)` 로 비활성화.
+  - 캐시버스터 `?v=20260612-ds-accordion`→`?v=20260612-ds-bulk-apply`.
+- 비변경: RBAC·DB 스키마·암호화·**백엔드 0**(엔드포인트 add/remove/set/test/databases 그대로 재사용). desired-state 는 클라이언트 조립 후 기존 엔드포인트로 diff 호출.
+- 검증: **Playwright 실 헤드리스 브라우저**(라이브 admin, pid=92) 4-test + 제거 일괄적용 — ⋯ 클릭 시 "연결 테스트" hit-test PASS, 추가 시 pending+1·행2개·**서버 1개 불변**, 전환 직후 동기 DB리스트 렌더(무 flash), "모두 적용" 후 서버 2개·pending 0, 제거 스테이징 시 서버 불변→적용 후 제거. 콘솔/pageerror 0. make test(컨테이너 pytest+ruff) 회귀 0. node --check PASS. CSS 1075/1075 balanced.
+- Files: src/static/{admin.js,styles.css,admin.html}, docs/{TASK,MODIFY,REVIEW,FUNCTION}.md
+- Rollback: frontend only — 직전 커밋으로 revert 시 TASK-0238 즉시-API accordion 복귀(단 ⋯ 메뉴 클릭불가 재발). 데이터/스키마 영향 없음.
+
 ## CHG-20260612-0238
 - Date: 2026-06-12 (TASK-0238, **Minor §12.3** — datasource 패널 통합 accordion 재설계; 동시세션 cycle 이 TASK-0237 선점(자동작성 SSE)→본 cycle 은 0238)
 - 사용자 요청: "기능은 모두 정상 동작 확인. 단 디자인적으로 중복되는 분류가 많고 통일감이 없다 → gstack 스킬을 적극 사용해 보충." 멀티 datasource(TASK-0228~0236)를 여러 동시세션이 증분 수정하며 누적된 시각 부채.
