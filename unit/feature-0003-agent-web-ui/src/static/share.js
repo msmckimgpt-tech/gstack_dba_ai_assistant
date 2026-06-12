@@ -6,6 +6,34 @@
 (function () {
   "use strict";
 
+  // 메인 UI(app.js)와 동일한 SQL 가독성 줄바꿈 키워드 — formatSqlForDisplay 가 사용.
+  const SQL_FORMAT_KEYWORDS = [
+    "LEFT OUTER JOIN",
+    "RIGHT OUTER JOIN",
+    "FULL OUTER JOIN",
+    "LEFT JOIN",
+    "RIGHT JOIN",
+    "INNER JOIN",
+    "OUTER JOIN",
+    "FULL JOIN",
+    "CROSS JOIN",
+    "UNION ALL",
+    "GROUP BY",
+    "ORDER BY",
+    "INSERT INTO",
+    "DELETE FROM",
+    "SELECT",
+    "FROM",
+    "WHERE",
+    "HAVING",
+    "LIMIT",
+    "OFFSET",
+    "UNION",
+    "UPDATE",
+    "SET",
+    "VALUES",
+  ];
+
   const path = window.location.pathname.split("/").filter(Boolean);
   const token = path.length > 0 ? decodeURIComponent(path[path.length - 1]) : "";
 
@@ -150,6 +178,10 @@
   // 메시지 본문을 markdown → HTML 로 렌더한다. 메인 UI(app.js markdownToHtml)와
   // 동일 파이프라인(marked.parse → DOMPurify.sanitize)을 사용해 표·코드블록·리스트·
   // 제목·강조·링크가 그대로 가시화되도록 한다. 라이브러리 부재 시 평문으로 폴백.
+  //
+  // 본문 내 ```sql 코드블록은 메인 UI 와 동일하게 항상 펼쳐 표시한다.
+  // (이전의 "쿼리 보기/닫기" 열고닫기 토글은 의도된 기능이 아니었음 — 실행된
+  //  쿼리 사이의 전환은 renderAssistantDetails 의 SQL navigator 가 담당한다.)
   function renderMarkdownContent(target, text) {
     const source = String(text || "").trim();
     if (!source) {
@@ -158,39 +190,12 @@
     }
     if (window.marked && window.DOMPurify) {
       target.innerHTML = window.DOMPurify.sanitize(window.marked.parse(source));
-      collapseSqlCodeBlocks(target);
       markExternalLinks(target);
     } else {
       // 폴백: 라이브러리 로드 실패 시 줄바꿈 보존 평문 (share.css .share-content-plain).
       target.classList.add("share-content-plain");
       target.textContent = source;
     }
-  }
-
-  // ```sql 코드 블록을 기본 숨김 + "쿼리 보기" 토글로 교체 (메인 UI 패턴 이식).
-  // 수신자에게 긴 SQL 원문이 답변 가독성을 해치지 않도록 한다.
-  function collapseSqlCodeBlocks(target) {
-    const codeEls = target.querySelectorAll("code.language-sql, code.language-SQL");
-    codeEls.forEach((codeEl) => {
-      const preEl = codeEl.parentElement;
-      if (!preEl || preEl.tagName !== "PRE") return;
-      const wrap = document.createElement("div");
-      wrap.className = "share-sql-toggle-wrap";
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "share-sql-toggle-btn";
-      btn.textContent = "쿼리 보기";
-      btn.setAttribute("aria-expanded", "false");
-      preEl.hidden = true;
-      btn.addEventListener("click", () => {
-        const willShow = preEl.hidden;
-        preEl.hidden = !willShow;
-        btn.textContent = willShow ? "쿼리 닫기" : "쿼리 보기";
-        btn.setAttribute("aria-expanded", String(willShow));
-      });
-      preEl.parentNode.insertBefore(wrap, preEl);
-      wrap.append(btn, preEl);
-    });
   }
 
   // 본문 내 외부 링크는 새 탭 + noopener 로 — 익명 공유 페이지의 안전한 이동.
@@ -205,6 +210,24 @@
     if (!meta || typeof meta !== "object") return null;
     const container = document.createElement("div");
     container.className = "share-message-details";
+
+    // 1순위: meta.steps 의 execute_sql 단계 — 메인 UI 와 동일하게 "실행된 쿼리"
+    // 단위로 묶어 표시한다. 한 답변에 여러 쿼리가 실행됐다면 결과셋에 따라 쿼리를
+    // 전환하는 navigator(◀ ▶)로 보여준다 (열고닫기 토글이 아님 — 사용자 의도).
+    const steps = Array.isArray(meta.steps) ? meta.steps : [];
+    const sqlSteps = steps.filter(
+      (s) => s && String(s.tool || "") === "execute_sql" && s.sql,
+    );
+    if (sqlSteps.length > 0) {
+      if (sqlSteps.length === 1) {
+        container.appendChild(buildSqlStepPanel(sqlSteps[0]));
+      } else {
+        container.appendChild(buildSqlNavigator(sqlSteps));
+      }
+      return container;
+    }
+
+    // 폴백: steps 가 없는 구형 메시지 — 기존 final_sql / result_rows 단일 필드.
     let hasAny = false;
 
     const finalSql = meta.final_sql || meta.sql || "";
@@ -232,6 +255,235 @@
     }
 
     return hasAny ? container : null;
+  }
+
+  // 단일 execute_sql 단계를 SQL 블록 + (있으면) 결과 미리보기 표로 렌더.
+  // 메인 UI(app.js buildSqlStepPanel)의 share 전용 read-only 이식판이다.
+  function buildSqlStepPanel(step) {
+    const panel = document.createElement("div");
+    panel.className = "share-sql-group";
+
+    // 근거 — 메인 UI 와 일관되게 쿼리 위에 수행 이유를 명시(있을 때만).
+    const reason = String((step && step.reason) || "").trim();
+    if (reason) {
+      const reasonEl = document.createElement("div");
+      reasonEl.className = "share-step-reason";
+      const reasonLabel = document.createElement("span");
+      reasonLabel.className = "share-step-reason-label";
+      reasonLabel.textContent = "근거";
+      const reasonText = document.createElement("span");
+      reasonText.className = "share-step-reason-text";
+      reasonText.textContent = reason;
+      reasonEl.append(reasonLabel, reasonText);
+      panel.appendChild(reasonEl);
+    }
+
+    // SQL 문 — 항상 펼쳐 표시.
+    if (step.sql) {
+      const pre = document.createElement("pre");
+      pre.className = "share-sql";
+      pre.textContent = formatSqlForDisplay(step.sql);
+      panel.appendChild(pre);
+    }
+
+    // 결과 미리보기 표 — result_summary.preview_table 가 있을 때만.
+    const rs = step.result_summary;
+    if (rs && typeof rs === "object") {
+      const pt = rs.preview_table;
+      if (pt && Array.isArray(pt.columns) && pt.columns.length) {
+        const table = buildPreviewTable(pt);
+        if (table) panel.appendChild(table);
+      }
+    }
+
+    return panel;
+  }
+
+  // 여러 execute_sql 단계를 ◀ ▶ 로 전환하는 navigator. 결과셋(쿼리)별 패널을
+  // 모두 만들어 두고 활성 인덱스만 노출한다 (메인 UI buildSqlNavigator 이식).
+  function buildSqlNavigator(sqlSteps) {
+    const root = document.createElement("div");
+    root.className = "share-sql-navigator";
+    root.setAttribute("tabindex", "0");
+    root.setAttribute("role", "group");
+    root.setAttribute("aria-label", "SQL 쿼리 결과 탐색");
+
+    const header = document.createElement("div");
+    header.className = "share-sql-nav-header";
+
+    const prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.className = "share-sql-nav-btn";
+    prevBtn.innerHTML = "&#9664;";
+    prevBtn.setAttribute("aria-label", "이전 쿼리");
+    prevBtn.title = "이전 쿼리 (←)";
+
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.className = "share-sql-nav-btn";
+    nextBtn.innerHTML = "&#9654;";
+    nextBtn.setAttribute("aria-label", "다음 쿼리");
+    nextBtn.title = "다음 쿼리 (→)";
+
+    const indicator = document.createElement("span");
+    indicator.className = "share-sql-nav-indicator";
+    indicator.setAttribute("aria-live", "polite");
+
+    const context = document.createElement("span");
+    context.className = "share-sql-nav-context";
+
+    header.append(prevBtn, indicator, nextBtn, context);
+    root.appendChild(header);
+
+    const panels = document.createElement("div");
+    panels.className = "share-sql-nav-panels";
+    root.appendChild(panels);
+
+    const panelEls = sqlSteps.map((step) => {
+      const p = buildSqlStepPanel(step);
+      p.className += " share-sql-nav-panel";
+      panels.appendChild(p);
+      return p;
+    });
+
+    let activeIdx = 0;
+    function update() {
+      panelEls.forEach((el, i) => {
+        el.classList.toggle("is-active", i === activeIdx);
+      });
+      indicator.textContent = `쿼리 ${activeIdx + 1}/${sqlSteps.length}`;
+      const step = sqlSteps[activeIdx] || {};
+      const ref = extractFirstTableRef(step.sql);
+      context.textContent = ref ? `대상: ${ref}` : "";
+      prevBtn.disabled = activeIdx <= 0;
+      nextBtn.disabled = activeIdx >= sqlSteps.length - 1;
+    }
+    function go(delta) {
+      const next = Math.min(Math.max(activeIdx + delta, 0), sqlSteps.length - 1);
+      if (next !== activeIdx) {
+        activeIdx = next;
+        update();
+      }
+    }
+    function goTo(idx) {
+      const next = Math.min(Math.max(idx, 0), sqlSteps.length - 1);
+      if (next !== activeIdx) {
+        activeIdx = next;
+        update();
+      }
+    }
+
+    prevBtn.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      go(-1);
+      root.focus();
+    });
+    nextBtn.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      go(1);
+      root.focus();
+    });
+    root.addEventListener("keydown", (evt) => {
+      const target = evt.target;
+      if (target && target !== root && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+        return;
+      }
+      if (evt.key === "ArrowLeft") {
+        evt.preventDefault();
+        go(-1);
+      } else if (evt.key === "ArrowRight") {
+        evt.preventDefault();
+        go(1);
+      } else if (evt.key === "Home") {
+        evt.preventDefault();
+        goTo(0);
+      } else if (evt.key === "End") {
+        evt.preventDefault();
+        goTo(sqlSteps.length - 1);
+      }
+    });
+
+    update();
+    return root;
+  }
+
+  // result_summary.preview_table({columns, rows[][], truncated}) → read-only 표.
+  // 메인 UI buildResultTable 과 동일한 컬럼/행 모델(배열의 배열)을 받는다.
+  function buildPreviewTable(previewTable) {
+    const columns = Array.isArray(previewTable.columns) ? previewTable.columns : [];
+    const rows = Array.isArray(previewTable.rows) ? previewTable.rows : [];
+    const truncated = Boolean(previewTable.truncated);
+    if (!columns.length) return null;
+
+    const wrap = document.createElement("div");
+    wrap.className = "share-result-table-wrap";
+
+    const table = document.createElement("table");
+    table.className = "share-result-table";
+
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    columns.forEach((col) => {
+      const th = document.createElement("th");
+      th.textContent = String(col);
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    rows.forEach((row) => {
+      const tr = document.createElement("tr");
+      columns.forEach((_, ci) => {
+        const td = document.createElement("td");
+        const val = Array.isArray(row) ? row[ci] : undefined;
+        td.textContent = val == null ? "" : String(val);
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+
+    const meta = document.createElement("div");
+    meta.className = "share-result-table-meta";
+    const shown = rows.length;
+    meta.textContent = truncated
+      ? `${shown}행 표시 중 (더 있음) · ${columns.length}열`
+      : `${shown}행 · ${columns.length}열`;
+    wrap.appendChild(meta);
+
+    return wrap;
+  }
+
+  // 한 줄 SQL 을 주요 키워드 앞에서 줄바꿈해 가독성을 높인다(메인 UI 이식).
+  // 문자열/식별자 리터럴 내부는 보존한다.
+  function formatSqlForDisplay(raw) {
+    const src = String(raw || "").trim();
+    if (!src) return "";
+    if (/\n/.test(src)) return src;
+
+    const literals = [];
+    const literalRe = /('([^'\\]|\\.|'')*'|"([^"\\]|\\.|"")*"|`[^`]*`)/g;
+    const masked = src.replace(literalRe, (m) => {
+      literals.push(m);
+      return `${literals.length - 1}`;
+    });
+
+    const keywordAlt = SQL_FORMAT_KEYWORDS.map((k) => k.replace(/ /g, "\\s+")).join("|");
+    const pattern = new RegExp(`\\s+(?=\\b(?:${keywordAlt})\\b)`, "gi");
+    let formatted = masked.replace(pattern, "\n");
+
+    formatted = formatted.replace(/(\d+)/g, (_, i) => literals[Number(i)]);
+    return formatted;
+  }
+
+  // 첫 테이블 참조(schema.table)를 추출해 navigator context 라벨에 쓴다.
+  function extractFirstTableRef(sql) {
+    const match = String(sql || "").match(
+      /(?:FROM|JOIN|UPDATE|INTO)\s+`?([A-Za-z0-9_]+)`?\.`?([A-Za-z0-9_]+)`?/i,
+    );
+    return match ? `${match[1]}.${match[2]}` : "";
   }
 
   function renderResultTable(rows) {
