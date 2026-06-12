@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260612-0242 [SUBAGENT:security] — SHIP-WITH-FIXES→흡수→SHIP
+- Related TASK: feature-0003-agent-web-ui (TASK-0242 — 관리 콘솔 제품 데이터소스 DB별 insight 파악 내용 표면화 + 추가 picker 분석상태)
+- Trigger: 신규 read 엔드포인트(API/endpoint) + PG 데이터 노출 surface — 적대적 보안/정합 outside-voice(§18.8). RBAC/스키마 무변경(console.access 재사용)이나 데이터 노출 면이라 subagent 검토.
+- Timestamp: 2026-06-12T00:00:00Z
+- Verdict: SHIP-WITH-FIXES (BLOCKER/MAJOR 0) → MINOR 2건 흡수 후 SHIP
+- 점검 영역: SQL injection / scope confusion·cross-datasource·cross-product leak / IDOR / crash / resource.
+  - **SQL injection — 없음**: 보간되는 `cond` 는 고정 리터럴(`o.datasource_key IS NULL` 분기는 `allow_null` bool 게이트), scope/conversation/scope_key 전부 bound `%s`. allow_null 은 server-computed(`scope==default_endpoint_scope`). 기존 coverage 쿼리와 동일.
+  - **scope confusion / 누수 — 없음**: `?datasource=` 는 사용 전 `_list_product_datasources` 로 제품 바인딩 검증(미바인딩 400), 둘 다 lowercase 비교. 미지정 시 product primary 폴백(공격자값 X). `allow_null` 은 default endpoint 일 때만 NULL 행 포함 — 동일 물리 엔드포인트. cross-product 동일 scope 노출은 데이터모델 본질(엔드포인트 해시)로 기존 coverage 와 동일, 신규 누수 아님.
+  - **IDOR — 없음**: product_id 미존재 404. console.access admin 은 이미 전 제품/coverage 가시. db-insights 는 더 상세(도메인/text_content)하나 바인딩 datasource 한정·기존 신뢰경계 내. 프런트는 textContent/title 만(innerHTML X) → stored-XSS 없음.
+  - **crash — 없음**: datetime/load_memory_kv 모듈 스코프, fromisoformat try/except 안전 기본값, 파서 `str(x or "")`/`.get` 방어, PG 실패는 `{ok:False}` graceful + 프런트 "역할 미파악" fallback.
+- MINOR(흡수): (1) `_compute_product_db_insights` PG 연결이 성공 경로에서만 close → 예외 시 누수(기존 coverage 패턴 답습). → **try/finally 로 모든 경로 close** 개선(기존 패턴보다 나아짐). (2) 결과셋 무제한(text_content 전량 메모리 적재). → **ORDER BY object_type,schema,table + LIMIT 5000** 방어적 절단(schema 우선 보존). NIT(scope=None while ok=True)은 fail-closed(빈 by_db) — cosmetic, 미수정.
+- Human Approval Needed: no (신규 read·console.access 재사용·신뢰경계 내, MINOR 전건 흡수)
+- 검증: 신규 14 테스트 PASS + make test 컨테이너 회귀 0 + ruff clean + node --check + py_compile. 배포 후 PB-0008 Windows-browser 시각검증.
+- Cross-ref: CHG-20260612-0242 / TASK-0242 / FUNCTION REQ-20260612-0242(AC-0453~0455).
+
 ## REV-20260612-0240 [SKIPPED:frontend-no-backend-no-rbac] — PASS
 - 패널 skip 사유: datasource picker 클리핑 수정 + 추가 UI 체크박스화. **frontend only**(admin.js/styles.css/admin.html) — RBAC·스키마·시크릿·엔드포인트·백엔드 0. 적대적 보안 subagent 비대상(§18.8).
 - Date: 2026-06-12

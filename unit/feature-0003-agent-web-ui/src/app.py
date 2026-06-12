@@ -14405,6 +14405,221 @@ def admin_products_insight_coverage(request: Request) -> JSONResponse:
     return JSONResponse({"coverage": out})
 
 
+# ── TASK-0242: 제품 datasource 별 DB insight 파악 내용 (관리 콘솔 > 제품 > 데이터소스) ──────
+# coverage(_compute_product_insight_coverage)가 '얼마나(완료율)'를 본다면, 아래는 '무엇을(역할/도메인)'을
+# rag_objects ⋈ texts 에서 DB(schema_name) 단위로 끌어와 각 DB 행에 한 줄 설명 + 추가 picker 상태로 표시한다.
+# read-only — 스키마/권한/암호화 무변경. scope 식별은 coverage 와 동일 _resolve_product_insight_scope.
+def _clean_insight_segment(text: str) -> str:
+    """insight text_content('schema domain: X / summary / usage / key columns: ...')에서 사람용 본문만 추출.
+    '... domain: ...' 선두 라벨과 'key columns: ...' 꼬리를 떼어 summary/usage 만 ' · ' 로 잇는다."""
+    segs = [s.strip() for s in str(text or "").split(" / ") if s.strip()]
+    body = []
+    for s in segs:
+        low = s.lower()
+        if low.startswith("key columns"):
+            continue
+        if " domain:" in low or low.startswith("domain:"):
+            continue
+        body.append(s)
+    return " · ".join(body)
+
+
+def _compose_db_insight_text(ent: dict) -> tuple:
+    """by_db 누적 항목(ent) → (한 줄 description, 멀티라인 detail_text[hover title용]).
+
+    description = 도메인 + (schema summary | table 도메인 요약). detail_text = schema 전문 + 테이블별 정제 본문.
+    """
+    domain = ent.get("domain")
+    summary = _clean_insight_segment(ent.get("schema_text") or "")
+    if not summary and ent.get("tables"):
+        # schema insight 없으면 table 도메인들로 합성.
+        tdoms = []
+        for t in ent["tables"]:
+            d = t.get("domain")
+            if d and d not in tdoms:
+                tdoms.append(d)
+        if tdoms:
+            summary = "주요 테이블 도메인: " + ", ".join(tdoms[:4])
+    parts = []
+    if domain:
+        parts.append(str(domain))
+    if summary:
+        parts.append(summary)
+    description = " — ".join(parts) if parts else None
+
+    lines = []
+    if ent.get("schema_text"):
+        lines.append("· " + str(ent["schema_text"]))
+    for t in ent.get("tables", [])[:12]:
+        tname = t.get("table") or ""
+        tdesc = _clean_insight_segment(t.get("text") or "") or (t.get("domain") or "")
+        lines.append(f"· {tname}: {tdesc}" if tdesc else f"· {tname}")
+    detail_text = "\n".join(lines) if lines else None
+    return description, detail_text
+
+
+def _insight_worker_liveness(conn) -> dict:
+    """insight-worker 생존 신호 (heartbeat KV) — db-insights 의 '분석중' 상태 판정용.
+
+    반환: {"alive": bool, "age_sec": int|None, "status": str}.
+    alive = last_status ∈ {ok, skip_locked} AND age ≤ max(30, STALE_SEC) (insight._is_*_heartbeat_fresh 와 정합).
+    """
+    from modules.config import GLOBAL_CONVERSATION_ID
+    try:
+        from modules.config import AGENT_INSIGHT_WORKER_STALE_SEC as _stale
+    except Exception:
+        _stale = 15
+    out = {"alive": False, "age_sec": None, "status": ""}
+    try:
+        raw = load_memory_kv(conn, GLOBAL_CONVERSATION_ID, "insight_worker_last_cycle_at")
+        status = (load_memory_kv(conn, GLOBAL_CONVERSATION_ID, "insight_worker_last_status") or "").strip().lower()
+        out["status"] = status
+        if raw:
+            ts = str(raw).strip().replace("Z", "+00:00")
+            dt = datetime.fromisoformat(ts)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            age = max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
+            out["age_sec"] = age
+            if status in {"ok", "skip_locked"} and age <= max(30, int(_stale)):
+                out["alive"] = True
+    except Exception:
+        pass
+    return out
+
+
+def _compute_product_db_insights(conn, product: dict, datasource_key=None) -> dict:
+    """제품의 한 datasource scope 에서 insight-worker 가 DB(schema)별로 파악한 내용을 모은다 (TASK-0242).
+
+    반환: {ok, reason, scope, engine, datasource_key, worker{alive,age_sec,status}, by_db{<db_lower>:{...}}}.
+    by_db[<db_lower>] = {db, domain, description, detail_text, analyzed_schema, analyzed_tables, analyzed_objects}.
+    """
+    pid = int(product.get("id") or 0)
+    out = {
+        "ok": False, "reason": "", "scope": None, "engine": "mysql",
+        "datasource_key": None, "worker": _insight_worker_liveness(conn), "by_db": {},
+    }
+    # 편집 대상(펼친) datasource 로 scope 해석 (멀티 datasource). 미지정=primary/legacy.
+    chosen = (str(datasource_key).strip().lower() if datasource_key else "") or (product.get("datasource_key") or None)
+    resolved = _resolve_product_insight_scope(conn, {"id": pid, "datasource_key": chosen})
+    if not resolved["ok"]:
+        out["reason"] = resolved["reason"]
+        return out
+    scope = resolved["scope"]
+    allow_null = resolved["allow_null"]
+    out["scope"] = scope
+    out["engine"] = resolved["engine"]
+    out["datasource_key"] = chosen or None
+
+    # REV-20260612-0242 MINOR: PG 연결을 try/finally 로 닫아 예외 경로 누수 차단(기존 coverage 패턴 개선).
+    #  방어적 LIMIT — 한 datasource scope 의 schema+table 통찰은 현실적으로 수백 단위. ORDER BY 로 결정적 절단
+    #  (schema 가 table 보다 먼저 와 DB 노드 통찰이 우선 보존).
+    pg = None
+    try:
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+        pgc = pg.cursor()
+        cond = "(o.datasource_key = %s" + (" OR o.datasource_key IS NULL" if allow_null else "") + ")"
+        pgc.execute(
+            f"""
+            SELECT o.object_type, o.schema_name, o.table_name,
+                   o.category_domain, COALESCE(t.text_content, '')
+            FROM public.rag_objects o
+            LEFT JOIN public.texts t ON t.text_hash = o.text_hash
+            WHERE o.conversation_id = %s AND o.scope_key = %s
+              AND o.object_type IN ('schema','table')
+              AND {cond}
+            ORDER BY o.object_type, o.schema_name, o.table_name
+            LIMIT 5000
+            """,
+            ["__global__", "common", scope],
+        )
+        rows = pgc.fetchall() or []
+    except Exception as exc:
+        out["reason"] = "PG 통찰 조회 실패"
+        logging.getLogger("app").warning("db_insights pg fail pid=%s err=%r", pid, exc)
+        return out
+    finally:
+        if pg is not None:
+            try:
+                pg.close()
+            except Exception:
+                pass
+
+    # DB(schema_name lower) 단위 집계.
+    by: dict = {}
+    for otype, sname, tname, cat_domain, text in rows:
+        db = str(sname or "").strip()
+        dbl = db.lower()
+        if not dbl:
+            continue
+        ent = by.setdefault(dbl, {
+            "db": db, "domain": None, "schema_text": None,
+            "tables": [], "analyzed_schema": False, "analyzed_tables": 0,
+        })
+        dom = (str(cat_domain).strip() if cat_domain else "") or None
+        txt = str(text or "").strip()
+        if otype == "schema":
+            ent["analyzed_schema"] = True
+            if dom and not ent["domain"]:
+                ent["domain"] = dom
+            if txt:
+                ent["schema_text"] = txt
+        elif otype == "table" and tname:
+            ent["analyzed_tables"] += 1
+            ent["tables"].append({"table": str(tname).strip(), "domain": dom, "text": txt})
+            if dom and not ent["domain"]:
+                ent["domain"] = dom
+
+    by_db: dict = {}
+    for dbl, ent in by.items():
+        desc, detail = _compose_db_insight_text(ent)
+        by_db[dbl] = {
+            "db": ent["db"],
+            "domain": ent["domain"],
+            "description": desc,
+            "detail_text": detail,
+            "analyzed_schema": ent["analyzed_schema"],
+            "analyzed_tables": ent["analyzed_tables"],
+            "analyzed_objects": ent["analyzed_tables"] + (1 if ent["analyzed_schema"] else 0),
+        }
+    out["ok"] = True
+    out["by_db"] = by_db
+    return out
+
+
+@app.get("/api/admin/products/{product_id}/db-insights")
+def admin_product_db_insights(product_id: int, request: Request) -> JSONResponse:
+    """제품의 datasource 별 DB insight 파악 내용 (TASK-0242). console.access.
+    ?datasource=<key> 로 멀티 datasource 의 특정 바인딩 scope 선택(미지정=primary/legacy)."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    account, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(account, "console.access"):
+        conn.close()
+        return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    try:
+        products = _list_products(conn, include_inactive=True)
+        product = next((p for p in products if int(p["id"]) == int(product_id)), None)
+        if not product:
+            return _json_error("제품을 찾을 수 없습니다.", 404)
+        req_ds = (request.query_params.get("datasource") or "").strip().lower()
+        if req_ds:
+            # 요청 datasource 가 제품에 바인딩됐는지 검증(임의 scope 조회 차단).
+            bound = {b["datasource_key"] for b in _list_product_datasources(conn, int(product_id))}
+            if req_ds not in bound:
+                return _json_error("해당 제품에 바인딩되지 않은 데이터소스입니다.", 400)
+        result = _compute_product_db_insights(conn, product, req_ds or None)
+    finally:
+        conn.close()
+    return JSONResponse(result)
+
+
 # ── TASK-0228: insight 분석 초기화 (접근 가능 DB 단위 삭제) ──────────────────────────
 # insight-worker 가 만든 schema/table 분석을 **DB(접근 가능 데이터베이스) 단위**로 PG 에서 삭제한다.
 # 저장 키 체계(config.ds_fact_key / ds_object_suffix)와 정합:
