@@ -235,9 +235,24 @@ def set_run_status(
     run_id: str = "",
     duration_ms: float | None = None,
     error: str | None = None,
+    only_if_current_run: bool = False,
 ) -> None:
     if not conversation_id:
         return
+    # TASK-0241: supersede 가드 — 취소→즉시 재요청 흐름에서, 뒤늦게 종료하는
+    # old(superseded) run 이 새 run 이 인계한 상태(last_status_run_id)를 덮어쓰지 못하게 한다.
+    # only_if_current_run=True 면 저장된 last_status_run_id 가 *다른* run 을 가리킬 때 write 를
+    # 통째로 건너뛴다. (_clear_cancel_request 의 run_id-gating 과 동형 — read-then-write 는
+    # 비원자적이나, orphan 의 terminal write 는 새 run claim 보다 수 초 뒤라 실질 race 가 없다.)
+    # claim/heartbeat/enqueue 선기록 등 takeover 가 정당한 write 는 only_if_current_run=False(기본)
+    # 로 기존 무조건 semantics 를 유지한다.
+    if only_if_current_run and str(run_id or "").strip():
+        try:
+            cur_rid = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
+        except Exception:
+            cur_rid = ""
+        if cur_rid and cur_rid != str(run_id).strip():
+            return
     # TASK-0169 (M4): run_id 를 status 보다 먼저 기록한다. set_run_status 는 멀티-tx
     # (save_memory_kv 마다 독립 PG tx) 라, status 를 먼저 쓰면 reader 가 terminal status
     # 를 직전 run 의 run_id 로 잘못 귀속해 읽는 torn-read 창이 생긴다. run_id→status

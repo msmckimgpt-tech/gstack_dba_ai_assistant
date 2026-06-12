@@ -22,6 +22,18 @@ source_of_truth: true
 - Files: src/static/{admin.js,styles.css,admin.html}, docs/{TASK,MODIFY,REVIEW,FUNCTION}.md
 - Rollback: frontend only — revert 시 TASK-0239 absolute picker + select UI 복귀(단 클리핑 재발). 데이터/스키마 영향 없음.
 
+## CHG-20260612-0241
+- Date: 2026-06-12 (TASK-0241, **Major §12.3** — 요청 취소 즉시 처리 + 취소 직후 재요청. cross-cutting feature-0002+0003)
+- 사용자 보고: "assistant 요청 후 취소했을 때, 취소 메시지 후 곧바로 취소처리 + 채팅창 즉시 사용·재요청 가능하게(현재는 취소 후 응답 대기). 구조 변경 부작용도 모두 고려."
+- 진단: 백엔드 취소(`/api/cancel` cancel 플래그 + agent 루프 폴링)는 정상. 진짜 결함 = 프런트 `sendPrompt` 가 `/api/ask`(worker mode 동기응답 long-poll attach)를 `await` 하고 `state.busyConversations.delete` 를 그 `finally` 에서만 → run 종료 시점까지 입력창 잠김. 또 즉시-재요청 허용 시 같은 conversation 의 old(취소)/new run 동시성 부작용 노출.
+- 변경:
+  - **app.js**: `cancelCurrentRun` optimistic — busy/입력창 즉시 해제 + pending 말풍선·진행폴링·경과타이머 정리 + in-flight `/api/ask` fetch abort(`state.askAbortControllers` Map) + 포커스 + `/api/cancel` 백그라운드 발사. `state.userCanceledKeys` Set 으로 sendPrompt catch 가 사용자취소를 식별해 에러 토스트/타임아웃 복구 다이얼로그 억제. lazy-create sentinel↔earlyCid 키 이중성은 `cancelKeys`(양쪽 키 취소) + `askKey`(effective 키 정렬) + 발사 직전 취소 재확인(`throw AbortError`)으로 처리.
+  - **app.py**: `/api/cancel` 이 pending/running 무관 즉시 `set_run_status("canceled", only_if_current_run=True)` → orphan `/api/ask` attach 가 슬롯 즉시 반납. `_dispatch_ask_run_worker` attach 루프에 `request.is_disconnected()` + job-aware(`_get_ask_job_status(job_id)`) 종료 → 웹 슬롯 누수 차단(`request` 를 `_dispatch_ask_run`→worker 배선). **enqueue 선기록을 `set_run_status("processing", run_id="enqpre-<uuid>")`(sentinel)로** — KV `last_status_run_id` 가 직전(취소) run 으로 남아 orphan terminal write 가 가드를 우회·새 요청 processing 을 클로버하던 BLOCKER 차단.
+  - **agent_core.py + memory.py**: `set_run_status(only_if_current_run=True)` supersede 가드(저장된 last_status_run_id 가 다른 run 이면 write skip). agent 루프 terminal write(canceled/done/error) 3곳 적용. claim/sentinel takeover 는 default(무조건) 유지.
+- 정합: sentinel(enqueue) + only_if_current_run(terminal/cancel) + 무조건 takeover(claim, agent_core:2472) 3중. 나열 가능한 모든 인터리빙에서 새 run processing 보존·취소전용 canceled 오삭제 없음(2차 적대 리뷰 확인). orphan 은 현 LLM step(동기, 인터럽트 불가) 종료 후 답변 기록 없이 종료.
+- 검증: 신규 `unit/feature-0002-agent-core/tests/test_set_run_status_supersede.py` 5건 PASS + 전체 pytest 회귀0(F/E 0, 2 skip) + ruff All checks passed + node --check + py_compile.
+- follow-up(별 cycle, LOW): never-claimed pending job + sentinel KV 잔존(pending-job TTL reaper 부재 — 본 변경 이전 class, 악화 아님; 20분 후 stale_error·max_wait 슬롯반납 완화).
+
 ## CHG-20260612-0239
 - Date: 2026-06-12 (TASK-0239, **Minor §12.3** — datasource accordion 후속 버그/UX 3건. frontend only)
 - 사용자 보고(TASK-0238 재설계 직후 실사용): ① "⋯ 버튼이 작동하지 않아 검증 필요", ② "데이터소스 추가 후 일괄 적용 형식에 포함 안 됨(추가 시 즉시 반영되는 이슈)", ③ "각 데이터소스 클릭 시 깜빡임 → 부드러운 애니메이션 적용".

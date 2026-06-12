@@ -89,6 +89,14 @@ const state = {
   nextBeforeId: null,
   // 대화별 요청 진행 여부 — 전역 busy 대신 대화 ID Set으로 관리하여 병렬 대화 허용
   busyConversations: new Set(),
+  // TASK-0241: in-flight /api/ask fetch 의 AbortController 를 busyKey 별로 보관. 사용자가
+  // "중단" 을 누르면 cancelCurrentRun 이 해당 fetch 를 즉시 abort → sendPrompt 의 await 가
+  // 곧바로 풀려 finally 가 busy/composer 를 정리하고 입력창이 즉시 재사용 가능해진다.
+  askAbortControllers: new Map(),
+  // TASK-0241: 사용자가 명시적으로 취소한 busyKey 집합. sendPrompt 의 catch 가 abort 예외를
+  // "사용자 취소" 로 식별해 에러 토스트/타임아웃 복구 다이얼로그를 건너뛰게 한다. 각 send 시작
+  // 시 자기 busyKey 의 stale flag 를 먼저 지우고, finally 에서 정리한다.
+  userCanceledKeys: new Set(),
   localLlmEnabled: false,
   // feature-0007: apiVaultOptions 의미 단순화. /api/api-vault/options 응답은
   // 모델 카탈로그 (default_model + models) 만 보유. 사용자 키 / passphrase 미보관.
@@ -4377,16 +4385,53 @@ function openConversationItemMenu(cid, triggerEl) {
 }
 
 async function cancelCurrentRun() {
-  if (!state.activeConversationId) return;
-  if (!canCancelConversation()) {
+  // TASK-0241: 취소 즉시 처리 — 서버 응답을 기다리지 않고 곧바로 UI 를 풀어 채팅창 재사용/재요청을
+  // 가능하게 한다. 취소 대상 키 후보: 활성 대화 cid + (cid 발급 전) pending sentinel. lazy-create 의
+  // sentinel→earlyCid 전환 윈도에서 sendPrompt 의 abort controller / 취소 flag 가 어느 키로 등록됐든
+  // 놓치지 않도록 양쪽 키를 모두 취소 처리한다(MEDIUM-1).
+  const cancelKeys = [];
+  if (state.activeConversationId) cancelKeys.push(String(state.activeConversationId));
+  if (state.pendingSentinel) cancelKeys.push(String(state.pendingSentinel));
+  if (!cancelKeys.length) return;
+  const cid = state.activeConversationId;  // 서버 /api/cancel 은 cid 가 있을 때만 호출 가능.
+  // 권한 검사는 cid 가 있을 때만(서버 취소 대상이 있을 때). pending 단계(서버 run 미생성)는
+  // 로컬 UI 만 푸는 것이라 권한과 무관.
+  if (cid && !canCancelConversation()) {
     showPermissionDeniedToast("conversation.cancel");
     return;
   }
-  await apiFetch("/api/cancel", {
-    method: "POST",
-    body: JSON.stringify({ conversation_id: state.activeConversationId }),
+  // ── 1) 즉시(optimistic) UI 해제 — 응답 대기 없이 곧바로 입력창/재요청 가능 ──
+  cancelKeys.forEach((k) => {
+    state.userCanceledKeys.add(k);             // sendPrompt 의 catch/발사-전 재확인이 '사용자 취소' 로 식별.
+    state.busyConversations.delete(k);
+    // in-flight /api/ask fetch 를 중단 → sendPrompt 의 await 가 즉시 풀려 finally 가 busy/composer 정리.
+    const ctrl = state.askAbortControllers.get(k);
+    if (ctrl) {
+      try { ctrl.abort(); } catch (_e) { /* no-op */ }
+    }
   });
-  showToast("취소 요청을 전달했습니다.");
+  // 진행 추적 + pending 말풍선 + 경과 타이머 정리.
+  stopProgressPolling({ reset: true });
+  stopElapsedTimer();
+  // 대화 목록 상태 dot 를 즉시 '취소됨' 으로 (서버 반영 전 optimistic).
+  if (cid) _updateConversationStatusDot(cid, "canceled");
+  renderComposer();  // busy=false → 입력창 enable + 전송 버튼 복귀.
+  if (promptInputEl) {
+    promptInputEl.disabled = false;
+    promptInputEl.focus();
+  }
+  showToast("요청을 취소했습니다.");
+  // ── 2) 서버 취소는 백그라운드로 발사(응답 대기 안 함) ──
+  // 서버는 cancel 플래그 설정 + KV 즉시 canceled(only_if_current_run) 로 곧바로 취소처리하고,
+  // running run 은 다음 체크포인트에서 답변 없이 종료한다(TASK-0241 백엔드).
+  if (cid) {
+    apiFetch("/api/cancel", {
+      method: "POST",
+      body: JSON.stringify({ conversation_id: cid }),
+    }).catch((error) => {
+      showToast(error.message || "취소 요청 전송에 실패했습니다.", true);
+    });
+  }
 }
 
 async function finalizeCurrentRun() {
@@ -5423,6 +5468,9 @@ async function sendPrompt() {
     busyKey = targetConvId;
   }
   state.busyConversations.add(busyKey);
+  // TASK-0241: 이 send 의 busyKey 에 남아있을 수 있는 stale 취소 flag 를 먼저 정리(같은 cid 재사용 시
+  // 직전 취소 flag 가 새 send 의 정상 에러를 '사용자 취소' 로 오인하지 않도록).
+  state.userCanceledKeys.delete(busyKey);
 
   // TASK-0085: lazy-create 진입 시 사이드바에 즉시 optimistic entry 등재. 사용자가 응답 도착 전
   // 다른 대화로 전환해도 새 대화 entry 가 사이드바에 지속 표시 — "잠시 사라지는" UX 회귀 차단.
@@ -5607,10 +5655,24 @@ async function sendPrompt() {
       }
     }
   }
+  // TASK-0241: in-flight /api/ask 를 사용자가 "중단" 으로 즉시 끊을 수 있도록 AbortController 를
+  // effective 키(askKey)에 등록. early-cid 활성 시 현재 컨텍스트 키가 sentinel→earlyCid 로 바뀌므로
+  // cancelCurrentRun 이 보는 키(activeConversationId)와 일치시킨다(MEDIUM-1).
+  const askKey = (earlyCidActivated && state.activeConversationId)
+    ? String(state.activeConversationId)
+    : busyKey;
+  const askAbort = new AbortController();
+  state.askAbortControllers.set(askKey, askAbort);
   try {
+    // 발사 직전 취소 재확인(MEDIUM-2): pending/early-cid 윈도에서 사용자가 이미 "중단" 했다면
+    // /api/ask 를 발사하지 않는다(서버에 orphan run 을 만들지 않음).
+    if (state.userCanceledKeys.has(askKey) || state.userCanceledKeys.has(busyKey)) {
+      throw new DOMException("user canceled before dispatch", "AbortError");
+    }
     const payload = await apiFetch("/api/ask", {
       method: "POST",
       body: JSON.stringify(askBody),
+      signal: askAbort.signal,
     });
     promptInputEl.value = "";
     promptInputEl.style.height = "auto";
@@ -5679,12 +5741,22 @@ async function sendPrompt() {
       _syncConversationAttachmentsToBucket(newCid || state.activeConversationId).catch(() => {});
     }
   } catch (error) {
+    // TASK-0241: 사용자가 "중단" 으로 이 send 를 취소한 경우 — abort 로 await 가 풀린 것이므로
+    // 에러 토스트/타임아웃 복구 다이얼로그를 띄우지 않는다(UI 는 cancelCurrentRun 이 optimistic 으로
+    // 이미 정리). lazy-create 였다면 사이드바의 optimistic pending entry 만 마저 정리한다.
+    if (state.userCanceledKeys.has(askKey) || state.userCanceledKeys.has(busyKey)) {
+      if (isLazyCreate) {
+        try {
+          state.pendingConversationEntries.delete(busyKey);
+          renderConversationList();
+        } catch (_e) { /* no-op */ }
+      }
     // TASK-0048: pending 단계에서 ask 가 실패하면 cid 발급 여부가 client 에는 불확실 →
     // attach/resume 다이얼로그 대신 사용자에게 재시도/사이드바 새로고침을 안내한다.
     // TASK-0235: 단, early-cid 가 발급되어 활성 전환된 경우 (earlyCidActivated) 는 cid 가 확정되어
     // 사실상 기존 대화와 동일하므로 lazy 전용 에러 경로를 건너뛰고 아래 non-lazy 복구 경로
     // (진행 중 run 추적 — 빈 대화 고아화 방지 + worker 모드 살아있는 run 회수) 를 탄다.
-    if (isLazyCreate && !earlyCidActivated) {
+    } else if (isLazyCreate && !earlyCidActivated) {
       // TASK-0081 + TASK-0082: closure busyKey 가 현재 활성 state.pendingSentinel 과 일치할 때만
       // 컨텍스트-광역 state cleanup. 본 catch 진입 도중 사용자가 + 새 대화 클릭으로 두 번째 컨텍스트
       // 이동한 경우, 두 번째 컨텍스트의 state.pendingNewConversation / state.pendingSentinel 을 강제로
@@ -5766,6 +5838,12 @@ async function sendPrompt() {
     }
   } finally {
     state.busyConversations.delete(busyKey);
+    // TASK-0241: 이 send 의 abort controller + 취소 flag 정리(수명 종료). early-cid 전환으로 키가
+    // 두 값(sentinel/earlyCid)일 수 있으므로 양쪽 모두 정리한다.
+    state.askAbortControllers.delete(askKey);
+    state.askAbortControllers.delete(busyKey);
+    state.userCanceledKeys.delete(askKey);
+    state.userCanceledKeys.delete(busyKey);
     renderComposer();
   }
 }

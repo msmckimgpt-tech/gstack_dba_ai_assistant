@@ -2925,7 +2925,10 @@ def _run_agent_core(
         else:
             try:
                 if _writes_allowed(mem_conn, cid):
-                    set_run_status(mem_conn, cid, "canceled", run_id=run_id, duration_ms=duration_ms, error="")
+                    # TASK-0241: 취소된 run 은 종종 superseded(사용자가 취소 후 같은 대화에
+                    # 즉시 재요청 → 새 run 이 last_status_run_id 인계) 다. only_if_current_run 으로
+                    # 새 run 의 (NEW, processing) 상태를 (OLD, canceled) 로 클로버하지 않게 가드한다.
+                    set_run_status(mem_conn, cid, "canceled", run_id=run_id, duration_ms=duration_ms, error="", only_if_current_run=True)
             except Exception:
                 pass
     elif pending_delete:
@@ -2938,12 +2941,14 @@ def _run_agent_core(
         _save_message(mem_conn, cid, "assistant", content=error_text)
         _mirror_message(mem_conn, cid, "assistant", error_text, run_id, meta={"internal": False})
         try:
-            set_run_status(mem_conn, cid, "error", run_id=run_id, duration_ms=duration_ms, error=result["error"])
+            # TASK-0241: terminal write 는 모두 supersede 가드 — lease-fencing 으로 박탈된
+            # (superseded) run 이 현재 run 의 상태를 덮어쓰지 못하게 한다(canceled 와 대칭).
+            set_run_status(mem_conn, cid, "error", run_id=run_id, duration_ms=duration_ms, error=result["error"], only_if_current_run=True)
         except Exception:
             pass
     else:
         try:
-            set_run_status(mem_conn, cid, "done", run_id=run_id, duration_ms=duration_ms, error="")
+            set_run_status(mem_conn, cid, "done", run_id=run_id, duration_ms=duration_ms, error="", only_if_current_run=True)
         except Exception:
             pass
     if not pending_delete and not canceled_by_user:

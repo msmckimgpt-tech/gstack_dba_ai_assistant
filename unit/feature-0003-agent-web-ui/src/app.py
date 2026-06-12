@@ -8294,7 +8294,7 @@ def _ask_worker_ready(conn) -> bool:
         return False
 
 
-async def _dispatch_ask_run(*, conn, account, conv_id, run_kwargs, inproc_fn):
+async def _dispatch_ask_run(*, conn, account, conv_id, run_kwargs, inproc_fn, request=None):
     """agent 실행을 mode 에 따라 분기. 두 경로 모두 동일 shape 의 agent_result dict 반환.
 
     - inprocess(기본): 현행 asyncio.to_thread(run_agent, …). 동작 무변경.
@@ -8304,10 +8304,11 @@ async def _dispatch_ask_run(*, conn, account, conv_id, run_kwargs, inproc_fn):
     if not _is_worker_mode():
         return await asyncio.to_thread(inproc_fn, **run_kwargs)
     return await _dispatch_ask_run_worker(conn=conn, account=account,
-                                          conv_id=conv_id, run_kwargs=run_kwargs)
+                                          conv_id=conv_id, run_kwargs=run_kwargs,
+                                          request=request)
 
 
-async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs) -> dict[str, Any]:
+async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, request=None) -> dict[str, Any]:
     from modules.db import _pg_connect
     from modules import ask_jobs as _aj
     from modules.config import AGENT_ASK_WORKER_STALE_SEC
@@ -8343,8 +8344,15 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs) -> dic
         try:
             # enqueue~claim 갭에도 프런트가 '처리중' 을 보도록 last_status 선기록(현행 race
             # 가드와 동등). worker 가 claim 시 run_id 와 함께 다시 processing 기록.
+            # TASK-0241: 선기록의 last_status_run_id 를 직전 run(취소된 run 포함)이 아닌 *새 sentinel*
+            # 으로 박는다. run_id 없이 쓰면 KV 의 run_id 가 직전(취소된) run 으로 남아, orphan 의
+            # terminal canceled write 가 set_run_status(only_if_current_run) 가드를 우회해 이 새 요청의
+            # processing 을 canceled 로 클로버한다(BLOCKER). sentinel(≠직전 run_id, 비어있지 않음)이면
+            # 가드가 정확히 skip 한다. worker 가 claim 후 실제 run_id 로 (R_new, processing) 를 무조건
+            # 덮어쓴다(agent_core 2472) — sentinel 은 갭 동안만 존재하는 가교다.
             try:
-                set_run_status(conn, conv_id, "processing")
+                _enq_sentinel = "enqpre-" + uuid.uuid4().hex
+                set_run_status(conn, conv_id, "processing", run_id=_enq_sentinel)
             except Exception:
                 pass
             return _aj.enqueue_ask_job(
@@ -8373,6 +8381,15 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs) -> dic
     loop = asyncio.get_event_loop()
     deadline = loop.time() + max_wait
     while loop.time() < deadline:
+        # TASK-0241: 클라이언트가 "중단" 으로 이 /api/ask fetch 를 abort 하면 attach 를 즉시 끝내
+        # per-account 웹 슬롯(_acquire_request_slot)을 곧바로 반납한다 → 취소 직후 재요청이 슬롯에
+        # 막히지 않는다. is_disconnected 미지원/예외 환경은 best-effort(아래 job/KV terminal 이 backstop).
+        if request is not None:
+            try:
+                if await request.is_disconnected():
+                    break
+            except Exception:
+                pass
         try:
             snap = await asyncio.to_thread(_build_ask_status_snapshot, conn, conv_id)
         except Exception:
@@ -8380,9 +8397,42 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs) -> dic
         if snap and (str(snap.get("raw_status") or "") in _ASK_TERMINAL_STATUSES
                      or snap.get("is_stale")):
             break
+        # TASK-0241: KV last_status 외에 *이 job 자체* 의 terminal 도 종료 조건으로 둔다. 사용자가
+        # 취소 후 같은 대화에 즉시 재요청하면 KV last_status 는 새 run 이 인계(processing)하고
+        # orphan 의 canceled write 는 supersede 가드로 건너뛰어져, 이 attach 가 자기 job 의 종료를
+        # 영영 못 보고 max_wait 까지 슬롯을 점유할 수 있다. job_id 로 직접 terminal 을 확인해 attach
+        # 수명을 자기 job 수명에 정확히 묶는다(슬롯 누수 차단).
+        try:
+            _job_status = await asyncio.to_thread(_get_ask_job_status, job_id)
+        except Exception:
+            _job_status = None
+        if _job_status in _ASK_TERMINAL_STATUSES:
+            break
         await asyncio.sleep(0.5)
 
     return await asyncio.to_thread(_build_worker_agent_result, job_id, conv_id)
+
+
+def _get_ask_job_status(job_id: int) -> str | None:
+    """worker job 의 현재 status 만 조회(attach 종료 판정용 — TASK-0241). 실패 시 None.
+
+    KV last_status 가 새 run 에 인계돼도 attach 가 자기 job 의 terminal 을 직접 보게 한다.
+    """
+    from modules.db import _pg_connect
+    from modules import ask_jobs as _aj
+    pg = None
+    try:
+        pg = _pg_connect()
+        job = _aj.get_ask_job(pg, job_id)
+        return str(job.get("status")) if job else None
+    except Exception:
+        return None
+    finally:
+        if pg is not None:
+            try:
+                pg.close()
+            except Exception:
+                pass
 
 
 def _build_worker_agent_result(job_id: int, conv_id: str) -> dict[str, Any]:
@@ -8871,6 +8921,7 @@ async def ask(request: Request) -> JSONResponse:
             conn=conn,
             account=account,
             conv_id=conv_id,
+            request=request,  # TASK-0241: attach 루프의 client-disconnect 감지용(웹 슬롯 즉시 반납).
             inproc_fn=_run_agent_core,
             run_kwargs=dict(
                 user_message=message,
@@ -12682,14 +12733,23 @@ async def cancel_request(request: Request) -> JSONResponse:
                 from modules import ask_jobs as _aj
                 _pgc = _pg_connect()
                 try:
-                    _canceled = _aj.cancel_pending_jobs(_pgc, conversation_id)
+                    _aj.cancel_pending_jobs(_pgc, conversation_id)
                 finally:
                     _pgc.close()
-                if _canceled:
-                    # pending job 을 취소했으면 KV 도 즉시 canceled 로 정리(프런트 '처리중' 해제).
-                    set_run_status(conn, conversation_id, "canceled", run_id=run_id)
             except Exception:
                 pass  # 큐 취소 실패는 KV 플래그 폴링 경로가 backstop
+        # TASK-0241: pending/running 무관하게 KV last_status 를 즉시 canceled 로 기록한다
+        # (사용자 체감 '곧바로 취소처리'). running run 은 agent 루프가 다음 체크포인트에서
+        # 답변 없이 종료하지만, 이 즉시 기록으로 (a) 원래 /api/ask 의 attach long-poll 이
+        # terminal(canceled)을 보고 per-account 슬롯을 즉시 반납 → 취소 직후 재요청 가능,
+        # (b) 다른 탭/상태 dot 도 즉시 '취소됨' 을 본다. only_if_current_run=True 로, 사용자가
+        # 취소 후 같은 대화에 이미 재요청해 새 run 이 last_status_run_id 를 인계한 상태라면 이
+        # write 를 건너뛰어 새 run 의 processing 을 클로버하지 않는다(취소 시점엔 run_id 가
+        # 현재 run 이라 정상 기록). agent 루프의 terminal write 도 동일 가드를 쓴다(TASK-0241).
+        try:
+            set_run_status(conn, conversation_id, "canceled", run_id=run_id, only_if_current_run=True)
+        except Exception:
+            pass
     except Exception:
         conn.close()
         return _json_error("cancel failed", 500)

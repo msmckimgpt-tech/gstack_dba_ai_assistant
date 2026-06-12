@@ -20,6 +20,20 @@ source_of_truth: true
   - **③ ⋯ 메뉴 회귀 없음**: inline 전환·add-row 교체가 기존 ⋯ 메뉴(TASK-0239 수정)를 건드리지 않나? → Playwright TEST D 로 ⋯ 클릭 시 메뉴 항목 hit-test 정상 재확인. PASS.
 - 잔여 리스크: 시각(드롭다운이 inline 으로 패널을 밀어내는 레이아웃·긴 목록 자체 스크롤)은 PB-0008 Windows-browser(배포 후). 기능/클리핑은 위에서 커버.
 
+## REV-20260612-0241 [SUBAGENT:concurrency-adversarial] — SHIP (2-pass)
+- Date: 2026-06-12
+- Cycle: TASK-0241 (요청 취소 즉시 처리 + 취소 직후 재요청, **Major §12.3**, cross-cutting feature-0002+0003)
+- 패널: 분산/동시성 정확성 특화 적대적 subagent 2-pass (run 수명주기·동시성 변경 — feedback 메모리 "concurrency-critical = outside-voice 필수" 적용).
+- **1차 — NOT-SHIP (BLOCKER 2 · HIGH 2 · MEDIUM 2)**:
+  - BLOCKER-1/2: enqueue 선기록이 run_id 없이 processing 을 써 KV `last_status_run_id` 가 직전(취소) run 으로 남음 → orphan terminal canceled write 가 supersede 가드를 우회해 새 요청 processing 을 클로버(새 요청이 조기 canceled 반환).
+  - HIGH-1: 프런트 abort 가 서버 웹 슬롯을 안 풀어 빠른 취소→재요청 반복 시 6한도 429.
+  - HIGH-2: 재요청 attach 가 orphan canceled 를 자기 terminal 로 오인 조기반환.
+  - MEDIUM-1: early-cid sentinel↔cid 키 불일치로 중단이 in-flight fetch 를 못 끊음.
+  - MEDIUM-2: pending(cid 발급 전) 윈도 취소가 발사 직전 send 를 못 막아 orphan run.
+- **흡수 수정**: enqueue 선기록 sentinel run_id(BLOCKER-1/2+HIGH-2 동시 해소 — orphan 의 per-attempt run_id fencing 을 깨지 않으면서 가드가 정확히 skip) / attach `request.is_disconnected()` + job-aware 종료(HIGH-1) / 프런트 `cancelKeys`+`askKey`+발사전 재확인(MEDIUM-1/2).
+- **2차 재검증 — SHIP**: BLOCKER 2·HIGH 2·MEDIUM 2 모두 닫힘 확인. sentinel+only_if_current_run+무조건 takeover 3중 정합, 나열 가능한 모든 인터리빙에서 새 run 보존·취소전용 canceled 오삭제 없음. is_disconnected 는 본문 소진 후 Starlette 표준 비차단 패턴(false-positive 없음). 프런트 askKey TDZ/스코프/flag 순서 안전. 신규 회귀 없음.
+- **잔존(별 cycle, LOW)**: never-claimed pending job + sentinel KV 잔존 = pending-job TTL reaper 부재(본 변경 이전 class, 악화 아님 — sentinel 화가 오히려 run 귀속 모호성 제거). SHIP 차단 사유 아님.
+
 ## REV-20260612-0239 [SKIPPED:frontend-no-backend-no-rbac] — PASS
 - 패널 skip 사유: datasource accordion 후속 버그/UX 수정. **frontend only**(admin.js/styles.css/admin.html) — RBAC·DB 스키마·시크릿·엔드포인트 shape·백엔드 0(기존 엔드포인트 재사용, desired-state 는 클라이언트 diff). 적대적 보안 subagent 비대상(§18.8).
 - Date: 2026-06-12
