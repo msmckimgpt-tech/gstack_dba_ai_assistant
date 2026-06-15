@@ -3599,4 +3599,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - 원인: enhanceDiffBlocks 가 `.diff-line`(display:block) span 사이에 `"\n"` 텍스트 노드를 삽입 → `<pre>` 컨텍스트에서 블록 줄바꿈 + 리터럴 줄바꿈이 겹쳐 줄마다 빈 줄.
 - [x] app.js/share.js: span 사이 `"\n"` 텍스트 노드 삽입 제거(block span 이 줄 구분 담당) + 미사용 `i` 파라미터 정리
 - [x] 캐시버스터 bump(app.js/share.js → `?v=20260615-task0256b-spacing`, 미변경 CSS 는 유지), node --check PASS
-- [ ] web 재배포 + PB-0008 Windows-browser 재검증(단일 줄 간격)
+- [x] web 재배포(main 1cd19de) + PB-0008 Windows-browser 재검증 PASS — 8줄 diff gap=lineHeight(20px) 단일 줄 간격 실측(2026-06-15, TEST.md §4)
