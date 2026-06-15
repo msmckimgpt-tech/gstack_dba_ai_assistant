@@ -2729,3 +2729,18 @@ source_of_truth: true
 - Verification: 신규 test_conversation_archive.py 7 PASS + 기존 block_conv 테스트 SQL 갱신 + make test 회귀 0 + 라이브 라운드트립(목록숨김·PG 기록·ask 403·admin 조회).
 - Residual: 머지 → make migrate(alembic 0007 superuser, migrate-first) → web 재배포 + PB-0008.
 - Cross-ref: CHG-20260615-0273 / TASK-0273 / TASK-0248(blocked 선례).
+
+## REV-20260615-0282 [SUBAGENT:ship]
+- Date: 2026-06-15 (REV-0277·0281 이 profile-icon·archives 계열에 선점되어 §13.1 재번호 0282)
+- Cycle: TASK-0278 (관리 콘솔 데이터소스 목록 행별 네트워크 상태 배지), **Minor §12.3** — frontend-only, 기존 인프라 재사용.
+- Trigger: 디자인/UI 변경 + grid 공유 클래스(`.admin-list-row--nav` 를 `#datasourceList`·`#settingsList` 동시 사용) 회귀 표면 → 적대적 코드리뷰(general-purpose outside voice). RBAC/보안 변경 없음([[feedback_outside_voice_for_rbac]] 강제 대상 아님)이나 회귀 위험 검토 위해 호출.
+- Verdict: **SHIP** (BLOCKER 0, MAJOR 0).
+  - grid 스코프 회귀 0: `#datasourceList .admin-list-row.admin-list-row--nav`(특이성 1,0,3,0) > base `.admin-list-row.admin-list-row--nav`(0,0,2,0). `#settingsList`·audit·archive nav 행은 `#datasourceList` 조상 미매칭 → 1fr 유지. settingsList 무영향.
+  - leading 배치: `row.appendChild(dot)` → `appendChild(main)` 순서로 도트 col1(auto 9px)·main col2(1fr). 행 맨 앞 확정.
+  - async 안전: 검색 재렌더(`innerHTML=""`) 후 늦은 probe resolve 는 `dot.isConnected` 가드로 stale 노드 갱신 차단. cache-hit fast path 가 `_dsConnAcquire` 前 return → 사전계산 N개는 세마포어 슬롯 미점유(probe storm 0).
+  - 캐시우선: loadAdminData 가 conn_status(healthy→ok / unstable→fail / insight circuit_open→fail) 사전 반영, unknown 은 delete(=miss). 동기 즉시 색칠, hit 시 force=false 가 네트워크 호출 없이 즉시 resolve(중복 probe 0).
+  - 독립성: `_paintDsConnDot` 은 picker `_paintDsConnBadge`(텍스트 배지)와 분리 — picker 동작 무영향.
+  - MINOR(비차단, 흡수): grid item 의 무효 `flex` 선언 제거 + base 도트 `color` 명시(currentColor 점+halo 일관)로 정리 완료.
+- Verification: node --check admin.js + CSS brace(1215=1215) 균형.
+- Residual: 머지 → web 재배포(정적자산) → PB-0008 Windows-browser(도트 색·leading 정렬·aria-label).
+- Cross-ref: CHG-20260615-0282 / TASK-0278 / REQ-20260615-0280 / REQ-20260612-0244(연결배지 인프라 선례).

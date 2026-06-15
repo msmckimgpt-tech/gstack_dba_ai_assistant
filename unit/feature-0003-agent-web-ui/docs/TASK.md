@@ -8,7 +8,23 @@ source_of_truth: true
 
 # Task
 
-## 0. TASK-0277 (current cycle) — 관리 콘솔 "보관 대화" 탭 UI 정합 다듬기 (TASK-0276 list-detail 위 후속)
+## 0. TASK-0278 (current cycle) — 관리 콘솔 데이터소스 목록 행별 네트워크 상태 배지 (leading 도트)
+- 요청: `관리 콘솔 > 데이터소스` 의 각 목록 앞에 네트워크 상태를 배지 아이콘으로 표시.
+- 등급: **Minor §12.3** (frontend-only — RBAC/스키마/엔드포인트/백엔드/데이터 0. 기존 `GET /api/admin/datasources` `conn_status` + `POST .../{key}/test` 재사용).
+- 진단: 데이터소스 목록 행(`_dsRenderList`, `.admin-list-row--nav`)은 이름·엔진·`.env`·비번없음 배지만 있고 연결 상태 표면이 없었다. picker(REQ-0244)·상세 패널엔 연결/insight 상태가 있으나 목록 자체엔 부재. 백엔드는 이미 목록 응답에 `conn_status` 를 사전계산해 첨부(`loadAdminData` 가 `datasourceConnStatus` 캐시에 반영) → 추가 백엔드 0. (§13.1: #250 이 TASK-0277 선점 → TASK-0278 재번호)
+- 구현(frontend-only):
+  - [x] `admin.js` `_dsRenderList()`: 각 행 leading 에 `.ds-conn-dot` span 을 main **앞** 첫 자식으로 추가. 캐시 hit→동기 즉시 색칠, miss→is-checking 후 `_probeDatasourceConn`(force=false, 4-cap 세마포어/in-flight dedup) lazy probe → `dot.isConnected` 가드로 detach 노드 갱신 skip.
+  - [x] `admin.js` 신규 헬퍼 `_paintDsConnDot(el, entry)`: 상태(ok/fail/checking)→클래스 + `title`/`role=img`/`aria-label`("네트워크 상태: …") 색맹 대응. picker 텍스트 배지 `_paintDsConnBadge` 와 독립.
+  - [x] `styles.css`: `.ds-conn-dot`(9px 원형, currentColor 점+halo, is-ok=success/is-fail=danger/is-checking=muted+covPickerPulse, prefers-reduced-motion 정지) + `#datasourceList .admin-list-row--nav { grid-template-columns: auto 1fr }`(컨테이너 스코프 — `#settingsList` 등 타 nav 1fr 유지).
+  - [x] 캐시버스터 `admin.html` styles.css·admin.js `?v=20260615-task0278-ds-conn-badge`.
+- 검증:
+  - [x] node --check admin.js + CSS brace 균형.
+  - [x] 적대적 코드리뷰(general-purpose outside voice, REV-0282) **SHIP** — grid 스코프 회귀 0(ID 특이성 1,0,3,0 > base 0,0,2,0, `#settingsList` 미매칭)·leading 배치·async detach 가드·캐시우선·중복 probe 0 전부 확인. cosmetic MINOR 2 흡수.
+  - [ ] (잔여) 머지 → web 재배포 → PB-0008 Windows-browser(도트 색 ok/fail/checking·행별 leading 정렬·title/aria-label 실측).
+- 비변경: 백엔드·`/api/admin/datasources` 응답 계약·RBAC(`console.access`/`console.manage`)·picker/상세 패널 연결배지 0.
+- 배포: web 재빌드(정적자산). migrate 불필(스키마 무변경).
+
+## 0x. TASK-0277 (직전 cycle, 머지됨 #250) — 관리 콘솔 "보관 대화" 탭 UI 정합 다듬기 (TASK-0276 list-detail 위 후속)
 - 요청: 보관 대화 탭 UI 정합 2건(frontend-only — 백엔드/RBAC/엔드포인트 무변경).
   - [문제1] header↔filter 사이 `<p class="admin-pane-note">` 안내가 다른 탭(계정·역할·제품·감사 로그)에 없는 큰 여백을 만들어 밀도 불일치 → 다른 탭과 동일 밀도로 처리.
   - [문제2] `#archiveList` 의 각 `.admin-archive-row` 가 topic·소유자·보관자 문자열 길이에 따라 줄바꿈되어 구성이 뒤틀림 → 2줄 고정 + ellipsis 절단(감사 로그 row 견고함 기준).
