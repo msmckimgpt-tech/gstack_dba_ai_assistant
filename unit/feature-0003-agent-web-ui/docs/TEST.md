@@ -245,6 +245,14 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0041: 고정 UI 라벨(button/label/option/h1-3 등; conv-list/messages 제외)에 한글 "상품" 잔존 0
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
+### TASK-0276 관리 콘솔 "보관 대화" 탭 UI 정합화 (REQ-20260615-0276, AC-0503, Minor §12.3)
+- TEST-0053: 빈 목록 → `#archiveList` 에 `.admin-list-empty`("보관된 대화가 없습니다.").
+- TEST-0054: 항목 N개 → `.admin-list-row.admin-archive-row` N개(audits 동형 클래스) + `#archiveListCount` "N건" + row 에 topic·보관 시각·소유자·보관 수행자 표시.
+- TEST-0055: row 클릭 → `adminState.archives.selectedId` 설정 + `#archiveDetail` 에 `.admin-archive-detail`(dl 메타) 렌더 + 선택 row `is-selected`.
+- TEST-0056: 미존재 selectedId → `#archiveDetail` `.admin-detail-empty`.
+- TEST-0057: topic 에 `<img onerror>` 주입 → 목록·상세 양쪽 `_archiveEsc` escape(`img` 노드 0, `&lt;img` 텍스트).
+- TEST-0058: truncated=true → `#archiveListScope` 에 "좁혀" 안내.
+
 ### TASK-0275 assistant 첨부 수정 → 새 버전 materialize + 버전 관리 (REQ-20260615-0275, AC-0493~0496, Critical §12.3)
 - TEST-0046: `_parse_attachment_edit_blocks` — 정상 ```attachment-edit``` 블록(헤더 JSON + 내용)을 파싱하고, 헤더 깨짐/source_id 누락/0/블록 부재는 graceful 빈 리스트.
 - TEST-0047: `_materialize_assistant_attachment_edits` — 정상 텍스트 첨부 → 새 버전 INSERT(VersionNumber+1, CreatedByRole='assistant', RootAttachmentId=root) + MinIO put + 직전 버전 supersede.
@@ -260,6 +268,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0045: node --check app.js 통과 (구문 무결).
 
 ## 4. Test Run History
+- 2026-06-15 (TASK-0276 관리 콘솔 "보관 대화" 탭 UI 정합화, **Minor §12.3** frontend-only):
+  - **Environment: CLI** (정적 + jsdom). node --check admin.js PASS + CSS brace(1206=1206). **jsdom 13 PASS**(빈 목록 empty·row 2개 audits 동형 클래스·count·row 클릭→selectedId+상세 렌더+is-selected·미존재 선택 empty·topic XSS escape 목록/상세·truncated scope 안내) + make test 컨테이너 **전체 회귀 0**(백엔드 무변경). 정적자산 web 임시 적용 후 admin.js 새 함수 14건·admin.html list-detail 마크업 12건 서빙 확인. REV-20260615-0277 [SKIPPED:frontend-ui-consistency-no-backend].
+  - **(잔여) PB-0008 Windows-browser**: web 재배포 후 보관 대화 탭 진입 → list-detail 렌더 + row 클릭 시 우측 상세 패널 → 결과 추가 예정. (배포 전 CHECK#13 WARN.)
 - 2026-06-15 (TASK-0275 assistant 첨부 수정→새 버전 materialize + 버전 관리, **Critical §12.3**):
   - **Environment: CLI** (컨테이너 make test). 신규 `test_attachment_versioning.py` **11 PASS**(파서2·materialize 가드6·직렬화1·파일명1·목록필터1) + make test 컨테이너 **전체 회귀 0** + ruff clean + py_compile + node --check app.js + CSS brace(1194=1194). 테스트 sys.modules 오염(가짜 web 모듈) → `monkeypatch.setitem` 자동 원복으로 해소(share_redaction 등 web.app import 테스트와 공존 확인).
   - **Environment: live-roundtrip** (임시 web 적용 + 라이브 MySQL ALTER + MinIO). materialize(source 272 text → 새 버전 273 v2 role=assistant root=272)·MinIO 바이트 70B sha256 일치·원본 272 SupersededAt 마킹·목록(SupersededAt IS NULL)에 273만 노출·`/versions` 체인 [272 v1 superseded, 273 v2 active]. **보안 가드 라이브 확인**: cross-account(999)/cross-conversation 거부(로그 mismatch), traversal `../../../etc/passwd.exe` → OriginalFilename `.._.._.._etc_passwd.sql`(확장자 .sql 고정)·object_key `../` 없음, 같은 (root,version) 2차 INSERT IntegrityError 거부(UNIQUE). 검증 데이터 정리(273 제거·272 원복).

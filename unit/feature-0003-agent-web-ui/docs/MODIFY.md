@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0277
+- Date: 2026-06-15 (TASK-0276, **Minor §12.3** — 관리 콘솔 "보관 대화" 탭 UI 정합화; 동시세션 profile-icon 이 CHG-0276 선점 → §13.1 재번호 0276→0277)
+- Scope: agent-web-ui frontend 전용(admin.html + admin.js + styles.css). 백엔드·RBAC·엔드포인트·스키마·데이터 0.
+- 변경:
+  - (admin.html) archives pane 을 단일 `#archivesContent` table 에서 다른 탭 동형 **list-detail 2단**으로 교체: `admin-archive-filter`(검색 input + 적용/초기화) + `admin-list-detail`(좌 `#archiveList`+`#archiveListCount`/`#archiveListScope`, 우 `#archiveDetail`). 헤더 인라인 검색 제거(필터 행 이동), 새로고침 유지.
+  - (admin.js) `adminState.archives` 상태 + `renderArchiveList`/`renderArchiveDetail`(audits 동형) + `loadArchivedConversations` 목록·상세 분리 렌더·선택 유지 + 검색 적용/초기화 바인딩. 기존 `renderArchivedConversations`(table) 대체. `_archiveEsc/_archiveFmtDt/_archiveOwnerLabel/_archiveByLabel` 헬퍼.
+  - (styles.css) `.admin-archives-table` 류 제거 → `.admin-archive-filter/.admin-archive-row(-*)/.admin-archive-detail(-fields)` 추가(`.admin-audit-*` 동형).
+  - 캐시버스터 admin.html admin.js·styles.css `?v=20260615-task0276-archives-ui`.
+- 검증: node --check admin.js + CSS brace(1206=1206) + jsdom 13 PASS(list-detail 정합·row 클릭 상세·is-selected·XSS escape·truncated) + make test 회귀 0(백엔드 무변경).
+- Files: src/static/{admin.html,admin.js,styles.css}, docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md, docs/STATUS.md(repo)
+- Rollback: archives pane 을 table 렌더로 환원 + `.admin-archive-*` CSS 제거 + 캐시버스터 환원. 백엔드 무영향.
+- Deploy: web 재빌드(정적자산). migrate 불필. ask/worker 무변경.
+
 ## CHG-20260615-0276
 - Date: 2026-06-15 (TASK-20260615T172210-profile-icon-consistency, **Major §12.3** — 제품 프로필 아이콘 정합화 + 대화 드롭업 레이아웃·너비 + 명칭 표기 순서, frontend-only)
 - Scope: agent-web-ui (프론트 전용) — `src/static/{admin.js, app.js, styles.css, index.html, admin.html}` + 신규 `tests/verify_profile_icon_consistency.mjs`(jsdom 격리 검증). RBAC/인증/스키마/엔드포인트 계약/데이터/시크릿/백엔드(app.py) 0.

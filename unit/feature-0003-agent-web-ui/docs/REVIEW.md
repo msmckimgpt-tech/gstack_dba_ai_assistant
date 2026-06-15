@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0278 [SKIPPED:frontend-ui-consistency-no-backend]
+- Date: 2026-06-15
+- Cycle: TASK-0276 (관리 콘솔 "보관 대화" 탭 UI 정합화), **Minor §12.3** — frontend-only(admin.html + admin.js + styles.css). RBAC/인증/스키마/엔드포인트 계약/데이터/시크릿/백엔드 0.
+- Skip 사유: 기존 운영 탭(감사 로그 `admin-audit-row`/`admin-audit-detail`/`admin-audit-filter`)의 **검증된 list-detail 패턴을 verbatim 동형 이식**한 것. 신규 데이터 노출·인가 경로·인터랙션 모델 0 — `GET /api/admin/conversations/archived`(기존 권한 게이트·응답 계약) 를 그대로 소비하고 표현만 table→list-detail 로 재배치. §18.8.1 + Minor + 정책 doc 변경 0 → 적대 패널 skip 허용.
+- 자체 점검: ① 모든 사용자/LLM 유래 문자열(topic/username/conversation_id)이 `_archiveEsc` 로 escape — 목록·상세 양쪽 jsdom 으로 XSS 미주입 단언(태그 → `&lt;`, `img` 노드 0). ② row 클릭 → selectedId + 상세 렌더 + is-selected, 미선택 → empty, 재조회 시 선택 유지/해제 정합(jsdom 13 PASS). ③ 응답 필드 그대로 사용(부재 필드 message_count 조건부 생략 — undefined 노출 없음). ④ 검색 input/버튼 `dataset.bound` idempotent 바인딩(중복 핸들러 없음). ⑤ truncated → scope 안내로 표면화(상위 일부만 표시 silent 누락 방지). node --check admin.js PASS + CSS brace 1206=1206.
+- Residual: verify-completion --pre-commit + web 재배포(deploy_scope: included) 후 PB-0008 Windows-browser(보관 대화 탭 진입 → list-detail 렌더 + row 클릭 상세) → TEST.md §4 기록.
+- Cross-ref: CHG-20260615-0277 / TASK-0276 / FUNCTION REQ-20260615-0276(AC-0503) / REV-20260615-0274(동일 list-detail 정합 선례).
+
 ## REV-20260615-0276 [SUBAGENT:attachment-version-security]
 - Date: 2026-06-15
 - Cycle: TASK-0275 (assistant 첨부 수정→새 버전 materialize + 버전 관리), **Critical §12.3** — LLM 자동 데이터 변형·저장 신규 표면 + MinIO 쓰기 + 스키마 변경. (REV 번호: 동시세션이 REV-20260615-0275[첨부패널 resize evidence] 선점 → 본 보안 리뷰 0276.)
