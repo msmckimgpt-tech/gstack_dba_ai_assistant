@@ -3336,6 +3336,57 @@ function setupProfileDrawerResize() {
   handle.addEventListener("touchstart", (e) => { if (e.touches[0]) start(e.touches[0].clientX, e); }, { passive: false });
 }
 
+// ── 첨부 파일 사이드 패널 너비 조절(리사이즈) ─────────────────────────
+// 단계 보기 패널과 동일 패턴: 우측 고정 패널이라 왼쪽 가장자리를 끌어 너비 조절,
+// localStorage 로 너비 영속화. (#attachSidePanel + #attachSidePanelResizer)
+const ATTACH_PANEL_WIDTH_KEY = "web.attachSidePanel.width";
+const ATTACH_PANEL_MIN_W = 240;
+function _attachPanelMaxW() {
+  return Math.max(ATTACH_PANEL_MIN_W, Math.floor(window.innerWidth * 0.92));
+}
+function _applyAttachSidePanelWidth(panel) {
+  let saved;
+  try { saved = parseInt(localStorage.getItem(ATTACH_PANEL_WIDTH_KEY) || "", 10); } catch (e) { saved = NaN; }
+  if (!Number.isFinite(saved)) return;
+  panel.style.width = Math.min(_attachPanelMaxW(), Math.max(ATTACH_PANEL_MIN_W, saved)) + "px";
+}
+function setupAttachSidePanelResize() {
+  const panel = document.getElementById("attachSidePanel");
+  const handle = document.getElementById("attachSidePanelResizer");
+  if (!panel || !handle || handle.dataset.wired === "1") return;
+  handle.dataset.wired = "1";
+  let dragging = false;
+  const onMove = (clientX) => {
+    // 우측 고정 패널: 너비 = 뷰포트 우변 − 포인터X = innerWidth − clientX
+    const w = Math.min(_attachPanelMaxW(), Math.max(ATTACH_PANEL_MIN_W, window.innerWidth - clientX));
+    panel.style.width = w + "px";
+  };
+  const mouseMove = (e) => { if (dragging) { onMove(e.clientX); e.preventDefault(); } };
+  const touchMove = (e) => { if (dragging && e.touches[0]) { onMove(e.touches[0].clientX); e.preventDefault(); } };
+  const stop = () => {
+    if (!dragging) return;
+    dragging = false;
+    panel.classList.remove("is-resizing");
+    const w = parseInt(panel.style.width, 10);
+    if (Number.isFinite(w)) { try { localStorage.setItem(ATTACH_PANEL_WIDTH_KEY, String(w)); } catch (e) {} }
+    document.removeEventListener("mousemove", mouseMove);
+    document.removeEventListener("mouseup", stop);
+    document.removeEventListener("touchmove", touchMove);
+    document.removeEventListener("touchend", stop);
+  };
+  const start = (clientX, e) => {
+    dragging = true;
+    panel.classList.add("is-resizing");
+    document.addEventListener("mousemove", mouseMove);
+    document.addEventListener("mouseup", stop);
+    document.addEventListener("touchmove", touchMove, { passive: false });
+    document.addEventListener("touchend", stop);
+    if (e && e.cancelable) e.preventDefault();
+  };
+  handle.addEventListener("mousedown", (e) => start(e.clientX, e));
+  handle.addEventListener("touchstart", (e) => { if (e.touches[0]) start(e.touches[0].clientX, e); }, { passive: false });
+}
+
 function openStepSidePanel(pending, { convId = null } = {}) {
   const panel = document.getElementById("stepSidePanel");
   if (!panel) return;
@@ -5770,7 +5821,11 @@ function _bindComposerActionsEvents() {
       ev.stopPropagation();
       _closeComposerActionsMenus();
       const panel = document.getElementById("attachSidePanel");
-      if (panel) panel.classList.remove("hidden");
+      if (panel) {
+        setupAttachSidePanelResize();
+        _applyAttachSidePanelWidth(panel);
+        panel.classList.remove("hidden");
+      }
       const cid = state.activeConversationId;
       if (cid) _loadConversationAttachmentList(cid);
     });

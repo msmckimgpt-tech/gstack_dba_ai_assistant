@@ -6,7 +6,7 @@
   <title>DQA — Database Query Assistant</title>
   <link rel="preconnect" href="https://fonts.bunny.net" />
   <link href="https://fonts.bunny.net/css?family=geist:300,400,500,600,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260615-task0273-archive" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260615-attach-panel-resize" />
 </head>
 <body>
 
@@ -285,6 +285,7 @@
 
   <!-- UX-COMPACT: 첨부 파일 사이드 패널 -->
   <aside class="attach-side-panel hidden" id="attachSidePanel" aria-label="첨부 파일">
+    <div class="attach-side-panel-resizer" id="attachSidePanelResizer" role="separator" aria-orientation="vertical" aria-label="패널 너비 조절" title="드래그하여 너비 조절"></div>
     <div class="attach-side-panel-header">
       <span class="attach-side-panel-title">첨부 파일</span>
       <button type="button" class="attach-side-panel-close" id="attachSidePanelClose" aria-label="패널 닫기">×</button>
@@ -495,7 +496,7 @@
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260615-task0273-archive"></script>
+  <script src="/static/app.js?v=20260615-attach-panel-resize"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
 </body>
 </html>

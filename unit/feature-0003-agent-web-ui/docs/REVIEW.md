@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0274 [SKIPPED:ui-pattern-clone]
+- Date: 2026-06-15
+- Cycle: TASK-0274 (첨부파일 목록 사이드 패널 `#attachSidePanel` 너비 조절 가능화), **Minor §12.3** — frontend-only(index.html + styles.css + app.js). RBAC/인증/스키마/엔드포인트 계약/데이터/시크릿/백엔드 0.
+- Trigger: §18.8 dispatch 키워드 매칭(UI/사이드바/레이아웃 → ux,design) 이나, 변경 실질은 **이미 운영 중인 `#stepSidePanel`(`setupStepSidePanelResize`)·`#profileDrawer`(`setupProfileDrawerResize`) 의 resize 패턴을 verbatim 복제**한 것이다. 신규 UX 결정·인터랙션 모델·권한 경계·데이터 노출 0 → 적대적 패널 불요(§18.8.1 + Minor + 정책 doc 변경 0 → panel skip 허용).
+- 자체 점검: ① 핸들 마크업/CSS/JS 가 step-side-panel 의 검증된 구현과 selector·상수만 다른 동형 — 우측 고정 패널 동일 기하(`width=innerWidth−clientX`)·동일 clamp 구조. ② min-width 240px(첨부 pill 가독 하한)·max-width 92vw(step/profile 와 동일)·초기 280px 유지 → 레이아웃 회귀 표면 없음. ③ `dataset.wired` 가드로 핸들러 중복 배선 차단(패널 재오픈 시). ④ localStorage 키 `web.attachSidePanel.width` 는 기존 `web.stepSidePanel.width`·`web.profileDrawer.width` 와 분리 → 상호 간섭 0. ⑤ 패널 open 단일 경로(`composerActionsListItem` 클릭)에서만 wiring → 누락 진입점 없음(grep 확인). node --check app.js PASS.
+- Residual: verify-completion --pre-commit + web 재배포(deploy_scope: included) 후 PB-0008 Windows-browser 시각검증(좌측 핸들 hit-test·드래그 너비 변경·새로고침 후 복원) → TEST.md §4 기록.
+- Cross-ref: CHG-20260615-0274 / TASK-0274 / FUNCTION REQ-20260615-0274(AC-0492).
+
 ## REV-20260615-0272 [SKIPPED:panel]
 - Date: 2026-06-15
 - Cycle: TASK-0272 (대화 화면 프로필 첫 진입 시 "프롬프트 > 제품 범위" 비어있는 버그; 동시세션이 TASK-0271/AC-0470 선점→§13.1 재번호 0271→0272·AC-0470→0487), **Minor §12.3** — 프론트엔드 단일 파일(app.js) 버그 수정 + 캐시버스터. RBAC/인증/스키마/엔드포인트 계약/데이터/시크릿 0.

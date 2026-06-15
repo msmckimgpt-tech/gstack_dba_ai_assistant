@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0274
+- Date: 2026-06-15 (TASK-0274, **Minor §12.3** — 첨부파일 목록 사이드 패널 너비 조절(리사이즈) 가능화)
+- Scope: agent-web-ui (프론트 전용) — 사용자 요청(`작업 화면 > '+' > 첨부파일 목록` 사이드바 resize). `#attachSidePanel` 만 고정 280px 였고, 동일 우측 고정 패널인 `#stepSidePanel`·`#profileDrawer` 는 이미 좌측 드래그 핸들 + localStorage 너비 영속화 resize 를 운영 중 → 검증된 패턴 verbatim 이식.
+- 변경:
+  - `src/static/index.html`: `#attachSidePanel` 첫 자식으로 `<div class="attach-side-panel-resizer" id="attachSidePanelResizer" role="separator" aria-orientation="vertical" aria-label="패널 너비 조절" title="드래그하여 너비 조절">` 추가(step-side-panel 마크업 동형). 캐시버스터 styles.css·app.js `?v=20260615-attach-panel-resize`.
+  - `src/static/styles.css`: `.attach-side-panel` 에 `min-width:240px`·`max-width:92vw` 추가(기존 `width:280px` 는 초기값으로 유지). `.attach-side-panel.is-resizing`(transition:none + user-select:none) + `.attach-side-panel-resizer`(position:absolute·left:-3px·width:8px·cursor:ew-resize·touch-action:none) + `::before` 가이드라인(hover/dragging 시 `var(--primary,#2563eb)`) — step-side-panel-resizer 와 동형.
+  - `src/static/app.js`: `ATTACH_PANEL_WIDTH_KEY="web.attachSidePanel.width"`·`ATTACH_PANEL_MIN_W=240`·`_attachPanelMaxW()`(92vw)·`_applyAttachSidePanelWidth(panel)`(저장 너비 clamp 복원)·`setupAttachSidePanelResize()`(mousedown/touchstart 드래그, `width=innerWidth−clientX` clamp, dragstop 시 localStorage 저장, `dataset.wired` idempotent) 추가. 패널 open 경로(`composerActionsListItem` 클릭 핸들러)에서 표시 전 `setupAttachSidePanelResize()` + `_applyAttachSidePanelWidth(panel)` 호출.
+- 비변경: 백엔드·RBAC·엔드포인트·스키마·첨부 업로드/목록 로직·다른 패널 0. 첨부 패널 초기 너비(280px)·열림/닫힘 애니메이션·목록 렌더 무변경.
+- 검증: node --check app.js PASS. 잔여 = verify-completion --pre-commit → 배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증(핸들 드래그 너비 변경 + 새로고침 후 복원).
+
 ## CHG-20260615-0271
 - Date: 2026-06-15 (TASK-0271, **docs-only** — TASK-0269/0270 PB-0008 Windows-browser 시각검증 evidence 기록)
 - Scope: agent-web-ui 문서만 — `docs/TEST.md` §4 Run 2건(TASK-0269·0270) 추가 + `docs/TASK.md` 두 항목 "잔여 PB-0008" → "완료(PASS)". src 코드 0.
