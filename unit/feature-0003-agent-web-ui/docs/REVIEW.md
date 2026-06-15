@@ -2632,3 +2632,18 @@ source_of_truth: true
 - Verification: 신규 test_avatar_icon_upload.py 8 PASS + make test 회귀 0 + Playwright(Identicon) + 라이브 라운드트립(업로드 200/SVG 거부/삭제/nosniff 헤더).
 - Residual: 정식 web 재빌드 + PB-0008(아바타/아이콘 업로드·Identicon 표시).
 - Cross-ref: CHG-20260615-0268 / TASK-0268.
+
+## REV-20260615-0273 [SUBAGENT:archive-security]
+- Date: 2026-06-15
+- Cycle: TASK-0273 (대화 삭제→soft-archive + admin 조회 + 맥락 참조), **Critical §12.3** — 파괴적 삭제 동작 의미 변경 + 신규 admin 데이터 접근 표면 + 스키마 마이그레이션.
+- Trigger: §18.8 — 파괴적 동작 변경(hard-delete→archive)·신규 인가 표면(타 계정 보관 대화 메타)·진행 차단 우회 가능성 → 적대적 보안/정합 리뷰(general-purpose outside voice). [[feedback_outside_voice_for_rbac]] 정합.
+- Verdict: **SHIP** (BLOCKER 0).
+  - 데이터 보존(의도적): _delete_conversation_impl 가 hard-delete 대신 archive(UPDATE) — 데이터·MinIO 첨부 보존. admin only 접근. "삭제" 라벨 vs 실제 보관 괴리·GDPR 은 사용자 명시 결정(제품 정책).
+  - 목록 숨김(전 경로): archived_at IS NULL 이 _list_conversations_pg(PG)·_list_conversations(MySQL) 둘 다 + has_any/self + 검색/날짜 + 파생(suggestions/_repair_current). 누출 0.
+  - 진행 차단: _conversation_block_info 가 blocked_at OR archived_at → /api/ask 403(slot 전). fork 사본은 신규 cid(archived NULL) 라 진행 가능·source 는 차단 — 우회 없음.
+  - admin 인가: conversation.archive.read.any 게이트, 메타만(본문 0), q bound param(SQLi 0). operator/sales 미부여(admin only).
+  - 권한 catchup: catalog + admin seed + admin catchup INSERT IGNORE(기존 admin 재기동 자동 grant — 라이브 확인). 멱등 스키마 3중(additive).
+  - MINOR(비차단): ① _list_conversations_pg 가 except 없는 try/finally — migrate 전 배포 시 컬럼 부재로 /api/conversations 500(단, TASK-0248 선례 동형 + migrate-first 정책 + 라이브 컬럼 적용 완료). ② admin 계정목록/usage/overview count 쿼리가 archived 필터 미적용 — admin/self 권한 뷰의 metric 드리프트(cross-user 누출 없음). follow-up.
+- Verification: 신규 test_conversation_archive.py 7 PASS + 기존 block_conv 테스트 SQL 갱신 + make test 회귀 0 + 라이브 라운드트립(목록숨김·PG 기록·ask 403·admin 조회).
+- Residual: 머지 → make migrate(alembic 0007 superuser, migrate-first) → web 재배포 + PB-0008.
+- Cross-ref: CHG-20260615-0273 / TASK-0273 / TASK-0248(blocked 선례).

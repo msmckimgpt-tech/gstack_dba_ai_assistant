@@ -171,6 +171,7 @@ const PERMISSION_DEPENDENCIES = {
   "conversation.file.read.any": "conversation.list.any",
   "conversation.rename.any": "conversation.list.any",
   "conversation.delete.any": "conversation.list.any",
+  "conversation.archive.read.any": "conversation.list.any",
   "conversation.cancel.any": "conversation.list.any",
   "conversation.finalize.any": "conversation.list.any",
   "conversation.duplicate.any": "conversation.list.any",
@@ -1690,6 +1691,49 @@ function switchTab(tabName) {
   if (tabName === "datasources") {
     renderDatasourcesPane();
   }
+  // TASK-0273: 보관 대화 tab 첫 진입 시 로드.
+  if (tabName === "archives" && !adminState.archivesInitialized) {
+    adminState.archivesInitialized = true;
+    loadArchivedConversations();
+  }
+}
+
+// TASK-0273: 보관 대화 목록 로드 + 렌더(conversation.archive.read.any).
+async function loadArchivedConversations() {
+  const el = document.getElementById("archivesContent");
+  if (!el) return;
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const q = (document.getElementById("archiveSearch") || {}).value || "";
+  el.textContent = "로딩 중…";
+  try {
+    const data = await apiFetch(`/api/admin/conversations/archived?q=${encodeURIComponent(q.trim())}`);
+    renderArchivedConversations(data || {});
+  } catch (err) {
+    el.innerHTML = `<p class="admin-archives-error">${esc((err && err.message) || "보관 대화 조회 실패")}</p>`;
+  }
+}
+
+function renderArchivedConversations(data) {
+  const el = document.getElementById("archivesContent");
+  if (!el) return;
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const items = (data && data.items) || [];
+  const fmtDt = (s) => { if (!s) return "—"; try { const d = new Date(s); return isNaN(d.getTime()) ? esc(s) : d.toLocaleString(); } catch (_) { return esc(s); } };
+  if (!items.length) {
+    el.innerHTML = "<p class='admin-archives-empty'>보관된 대화가 없습니다.</p>";
+    return;
+  }
+  const rows = items.map((it) => `<tr>`
+    + `<td class='admin-archives-topic'>${esc(it.topic || "(제목 없음)")}</td>`
+    + `<td>${esc(it.owner_username || (it.owner_account_id == null ? "(시스템)" : "#" + it.owner_account_id))}</td>`
+    + `<td>${fmtDt(it.archived_at)}</td>`
+    + `<td>${esc(it.archived_by_username || (it.archived_by_account_id == null ? "—" : "#" + it.archived_by_account_id))}</td>`
+    + `<td class='admin-archives-id'>${esc(it.conversation_id)}</td>`
+    + `</tr>`).join("");
+  el.innerHTML = `<div class='admin-archives-tablewrap'><table class='admin-usage-table admin-archives-table'>`
+    + `<thead><tr><th>제목</th><th>소유자</th><th>보관 시각</th><th>보관자</th><th>대화 ID</th></tr></thead>`
+    + `<tbody>${rows}</tbody></table></div>`
+    + (data.truncated ? `<p class='admin-archives-note'>상위 ${items.length}건만 표시합니다. 검색으로 좁혀 보세요.</p>` : `<p class='admin-archives-note'>${items.length}건</p>`);
 }
 
 /* ── TASK-0205/0207: 데이터소스 관리 pane (CRUD, 자격증명 DB 암호화 저장) ─────────────
@@ -6703,6 +6747,21 @@ async function initialize() {
   const usageTab = $("adminTabUsage");
   if (usageTab) {
     usageTab.style.display = adminState.me?.permissions?.["console.usage.read"] ? "" : "none";
+  }
+  // TASK-0273: 보관 대화 tab 가시성 게이트 (conversation.archive.read.any) + 컨트롤 바인딩.
+  const archivesTab = $("adminTabArchives");
+  if (archivesTab) {
+    archivesTab.style.display = adminState.me?.permissions?.["conversation.archive.read.any"] ? "" : "none";
+  }
+  const archiveRefreshBtn = $("archiveRefreshBtn");
+  if (archiveRefreshBtn && !archiveRefreshBtn.dataset.bound) {
+    archiveRefreshBtn.dataset.bound = "1";
+    archiveRefreshBtn.addEventListener("click", () => loadArchivedConversations());
+  }
+  const archiveSearch = $("archiveSearch");
+  if (archiveSearch && !archiveSearch.dataset.bound) {
+    archiveSearch.dataset.bound = "1";
+    archiveSearch.addEventListener("keydown", (e) => { if (e.key === "Enter") loadArchivedConversations(); });
   }
   const usageDaysSel = $("usageDaysSel");
   if (usageDaysSel && !usageDaysSel.dataset.bound) {

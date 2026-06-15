@@ -47,7 +47,8 @@ class _Cursor:
             assert "blocked_at is null" in s, "재차단 방지 가드(blocked_at IS NULL) 필요"
             self.rowcount = int(self._store.get("block_rowcount", self._store.get("referencing", 0)))
             self._store["block_update_params"] = params
-        elif "select blocked_at, blocked_reason from agentcoreconversations" in s:
+        elif "select blocked_at, blocked_reason, archived_at from agentcoreconversations" in s:
+            # TASK-0273: _conversation_block_info SQL 이 archived_at 컬럼을 추가로 SELECT.
             self._rows = list(self._store.get("block_info_rows", []))
 
     def fetchone(self):
@@ -145,7 +146,7 @@ def test_delete_product_requires_permission(monkeypatch):
 # ── B1: _conversation_block_info ──────────────────────────────────────────────
 def test_block_info_reads_flag(monkeypatch):
     monkeypatch.delenv("AGENT_RUNTIME_READ_BACKEND", raising=False)
-    store = {"block_info_rows": [("2026-06-12T00:00:00", "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다.")]}
+    store = {"block_info_rows": [("2026-06-12T00:00:00", "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다.", None)]}
     conn = _Conn(store)
     monkeypatch.setattr(app, "_connect_memory", lambda: conn)
     is_blocked, reason = app._conversation_block_info("conv-1", conn=conn)
@@ -155,7 +156,7 @@ def test_block_info_reads_flag(monkeypatch):
 
 def test_block_info_not_blocked(monkeypatch):
     monkeypatch.delenv("AGENT_RUNTIME_READ_BACKEND", raising=False)
-    store = {"block_info_rows": [(None, None)]}
+    store = {"block_info_rows": [(None, None, None)]}
     conn = _Conn(store)
     monkeypatch.setattr(app, "_connect_memory", lambda: conn)
     is_blocked, reason = app._conversation_block_info("conv-1", conn=conn)

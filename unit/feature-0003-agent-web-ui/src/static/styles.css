@@ -6349,3 +6349,18 @@ a { color: inherit; }
 .admin-avatar-change:hover { color: var(--primary, #2563eb); }
 .admin-avatar-remove { color: var(--danger, #dc2626); }
 
+/* ─── TASK-0273: 보관 대화 admin pane ─────────────────────────────────────── */
+.admin-pane-note { font-size: 12px; color: var(--text-muted, #6b7280); margin: 0 0 12px; line-height: 1.5; }
+.admin-archives-content { overflow-x: auto; }
+.admin-archives-tablewrap { overflow-x: auto; }
+.admin-archives-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.admin-archives-table th, .admin-archives-table td {
+  text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border-subtle, #eef2f7); vertical-align: top;
+}
+.admin-archives-table th { color: var(--text-muted, #6b7280); font-weight: 600; }
+.admin-archives-table tbody tr:hover { background: var(--bg, #f9fafb); }
+.admin-archives-topic { max-width: 320px; }
+.admin-archives-id { font-family: var(--mono, monospace); font-size: 11px; color: var(--text-muted, #6b7280); }
+.admin-archives-empty, .admin-archives-note { font-size: 12px; color: var(--text-muted, #6b7280); margin: 8px 0 0; }
+.admin-archives-error { font-size: 13px; color: var(--danger, #dc2626); }
+
