@@ -4911,6 +4911,48 @@ a { color: inherit; }
   min-height: 42px;
 }
 
+/* ── 권한 점진적 세분화 (progressive disclosure) ───────────────────────────
+   PERMISSION_DEPENDENCIES 기반 row 단위 hidden 토글. group/section 정렬(§10.6)은
+   불변 — 본 스타일은 종속 row 의 미세 위계 + "더 보기" 토글 + orphan 경고칩만 담당.
+   reveal 은 즉시 토글(레이아웃 뒤틀림 방지 — 애니메이션 없음). */
+
+/* 종속(자식) 권한 row: 매우 옅은 좌측 accent 로 "상위 권한에 딸린" 위계를 표시. */
+.permission-toggle-card.permission-row-dependent {
+  border-left: 2px solid var(--primary-soft, rgba(37, 99, 235, .22));
+}
+
+/* "세부 권한 N개 더 보기 / 접기" 토글 — grid-list 하단 full-width, 좌측 정렬. */
+.permission-group-more {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin-top: 2px;
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
+  cursor: pointer;
+}
+.permission-group-more:hover { text-decoration: underline; }
+.permission-group-more:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+
+/* orphan 경고칩 — 부여돼 있으나 선행 권한이 OFF 인 권한(비파괴 정책상 숨기지 않고 표면화). */
+.permission-orphan-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--color-danger, #b4231f);
+  background: rgba(220, 38, 38, .08);
+  border: 1px solid rgba(220, 38, 38, .2);
+}
+
 /* =====================================================================
    RESPONSIVE
    ===================================================================== */
