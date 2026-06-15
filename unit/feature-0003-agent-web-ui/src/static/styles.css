@@ -1801,6 +1801,11 @@ a { color: inherit; }
 .composer-product-chip[data-mode="pinned"] .composer-product-chip-dot {
   background: var(--primary);
 }
+/* TASK-0262: 선택 제품 chip dot 도 datasource 네트워크 상태색으로(모드색 override). 드롭업 conn 규칙과 동형 —
+   specificity (0,3,0) 동일이라 mode 규칙보다 소스 뒤에 두어 override. healthy 초록/unstable 빨강/unknown 중립. */
+.composer-product-chip .composer-product-chip-dot--conn.is-ok { background: var(--success, #16a34a); }
+.composer-product-chip .composer-product-chip-dot--conn.is-fail { background: var(--danger, #dc2626); }
+.composer-product-chip .composer-product-chip-dot--conn.is-unknown { background: var(--text-muted); }
 .composer-product-chip-label {
   white-space: nowrap;
   overflow: hidden;

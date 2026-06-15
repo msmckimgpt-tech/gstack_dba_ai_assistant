@@ -8,7 +8,15 @@ source_of_truth: true
 
 # Task
 
-## 0. TASK-0261 (current cycle) — 대화 화면 제품 드롭업 datasource 네트워크 상태 배지
+## 0. TASK-0262 (current cycle) — 선택 제품 chip dot 도 네트워크 상태색 (TASK-0261 후속)
+- 사용자 보고: 드롭업 **목록** 항목 dot 은 상태색 정상이나, **선택된 제품(composer chip 트리거)** 은 상태 무관 **파란색**(pinned 모드색). "선택 제품도 색상을 상태값과 동일하게."
+- 원인: TASK-0261 은 `buildProductDropupItem`(드롭업 목록 항목)에만 conn 색 적용. `renderProductChip`(트리거 chip)은 `dataset.mode` 만 설정 → `#productChipDot` 이 모드색(`[data-mode=pinned]`=`--primary` 파랑)만 표시.
+- [x] **프론트 전용 수정** (`app.js renderProductChip`): pinned 제품의 `conn_status_overall`(TASK-0261 백엔드가 이미 `state.products` 에 첨부, 추가 변경 0)을 chip dot 에 `.composer-product-chip-dot--conn` + `connStatusMeta` 클래스(is-ok/is-fail/is-unknown) 적용. dot 은 aria-hidden 이라 상태를 chip `aria-label` 에 병기. 매 렌더 conn 클래스 reset(auto/미바인딩 전이 시 모드색 복귀).
+- [x] **CSS** (`styles.css`): `.composer-product-chip .composer-product-chip-dot--conn.{is-ok,is-fail,is-unknown}` 색 규칙 — 드롭업 conn 규칙과 동형(specificity 0,3,0, 모드색 규칙보다 소스 뒤 → override). 캐시버스터 `?v=20260615-task0262-chip-conn-color`(index.html styles.css·app.js).
+- [x] 검증: `node --check`(app.js) PASS + CSS brace 1131=1131 + `make test` 회귀 0(frontend-only)·ruff clean.
+- [ ] 배포(web) + PB-0008 Windows-browser 시각검증(선택 제품 chip dot 색=상태값).
+
+## 0b. TASK-0261 (직전 cycle) — 대화 화면 제품 드롭업 datasource 네트워크 상태 배지
 - 목표: 대화 화면 제품 선택 드롭업의 각 제품 dot 이 지금까지 **모드색(auto 회색/pinned 파랑)만** 표시 → datasource 연결(네트워크) 상태(healthy/unstable/unknown)를 색으로 반영. (사용자: "현재는 회색, 파란색만 표시 중".)
 - 등급: **Minor §12.3** (비파괴 추가 — 좌표/비밀번호 비노출, status/elapsed/checked_at 만).
 - 데이터 소스: conn-health-monitor(TASK-0250)가 백그라운드로 미리 계산한 per-datasource 상태(`conn_health.snapshot()`). admin_list_datasources 와 동일 — 추가 probe 없음.

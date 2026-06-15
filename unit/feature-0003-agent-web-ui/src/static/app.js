@@ -725,7 +725,25 @@ function renderProductChip() {
     : (pinned ? pinned.product_key : "Product");
   const labelEl = document.getElementById("productChipLabel");
   if (labelEl) labelEl.textContent = compactLabel;
-  chipEl.setAttribute("aria-label", `이 대화의 제품 선택, 현재 ${fullLabel}`);
+  // TASK-0262: 선택(pinned) 제품의 chip dot 도 드롭업 항목과 동일하게 datasource 네트워크 상태색으로 칠한다.
+  //  과거엔 모드색(pinned=파랑)만 적용돼 선택 제품이 상태 무관하게 파랑이었음(목록은 conn 색 정상).
+  //  auto 모드 또는 conn 미첨부(바인딩 없는 기본 MySQL 제품)는 모드색 유지(클래스 제거). dot 은 aria-hidden
+  //  이라 상태는 chip aria-label 에 함께 노출(스크린리더 정합).
+  const dotEl = document.getElementById("productChipDot");
+  let connSuffix = "";
+  if (dotEl) {
+    dotEl.classList.remove("composer-product-chip-dot--conn", "is-ok", "is-fail", "is-unknown");
+    const connOverall = (mode === "pinned" && pinned) ? (pinned.conn_status_overall || null) : null;
+    if (connOverall) {
+      const meta = connStatusMeta(connOverall);
+      dotEl.classList.add("composer-product-chip-dot--conn", meta.cls);
+      dotEl.title = `데이터소스 연결: ${meta.label}`;
+      connSuffix = ` · 데이터소스 ${meta.label}`;
+    } else {
+      dotEl.removeAttribute("title");
+    }
+  }
+  chipEl.setAttribute("aria-label", `이 대화의 제품 선택, 현재 ${fullLabel}${connSuffix}`);
   // 진행 중 ask 가 있으면 chip disabled (race 가드 + 사용자 안내).
   const busy = isCurrentConvBusy();
   chipEl.disabled = busy;

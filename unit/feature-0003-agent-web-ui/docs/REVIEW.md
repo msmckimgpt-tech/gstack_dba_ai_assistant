@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0262 [SKIPPED:frontend-color-readonly-no-rbac]
+- Date: 2026-06-15
+- Cycle: TASK-0262 (선택 제품 chip dot 네트워크 상태색 — TASK-0261 후속, frontend-only).
+- Skip 사유: 순수 클라이언트 렌더(색) 보완 — 백엔드/RBAC/엔드포인트/스키마/시크릿 0. 데이터 소스(`conn_status_overall`)·conn 색 의미론·specificity override 패턴은 선행 **REV-20260615-0261 [SKIPPED:readonly-enrich]** 에서 이미 검토됨(본 cycle 은 동일 패턴을 드롭업 목록→트리거 chip 으로 확장 적용). 노출면 무변(읽기전용 enrich, 좌표/비번 비노출). outside-voice 불요 조건 충족.
+- 검증: node --check + CSS brace 1131=1131 + make test 회귀 0 + ruff clean. 배포 후 PB-0008(CHECK#13).
+- Cross-ref: CHG-20260615-0262 / TASK-0262 / REV-20260615-0261 / FUNCTION AC-0477.
+
 ## REV-20260615-0259 [SKIPPED:pb0008-evidence-docs-only]
 - Date: 2026-06-15
 - Cycle: TASK-0259 (TASK-0257/0258 PB-0008 Windows-browser 시각검증 evidence 기록 — docs-only: TEST.md §4 Run + TASK.md PB-0008 완료 표기. src 코드 0).

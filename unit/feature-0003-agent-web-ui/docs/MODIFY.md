@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0262
+- Date: 2026-06-15 (TASK-0262, **Minor §12.3** — TASK-0261 후속 frontend-only: 선택 제품 chip dot 도 네트워크 상태색)
+- Scope: agent-web-ui (프론트 전용) — `static/app.js`(`renderProductChip`), `static/styles.css`(chip dot conn 색 규칙 3개), `static/index.html`(캐시버스터). 백엔드 무변경(`conn_status_overall` 은 TASK-0261 이 이미 `/api/session`·`/api/auth/me` product 에 첨부).
+- 변경:
+  - `renderProductChip`: pinned 제품의 `conn_status_overall` → `#productChipDot` 에 `.composer-product-chip-dot--conn` + `connStatusMeta(status)` 클래스(is-ok/is-fail/is-unknown). dot 은 `aria-hidden` 이므로 상태 라벨을 chip `aria-label` 에 ` · 데이터소스 {라벨}` 로 병기 + dot `title`. 매 렌더 conn 클래스 reset(auto/미바인딩 전이 시 모드색 복귀, stale 클래스 누적 방지).
+  - `styles.css`: `.composer-product-chip .composer-product-chip-dot--conn.{is-ok=success 초록,is-fail=danger 빨강,is-unknown=text-muted}`. 드롭업 conn 규칙과 동형 — specificity (0,3,0) 동일이라 모드색 규칙(`[data-mode=pinned] .dot`)보다 **소스 뒤**에 두어 override.
+- 비변경: 백엔드/RBAC/엔드포인트/스키마/conn_health 0. 드롭업 목록 항목(`buildProductDropupItem`) 동작 0(TASK-0261 그대로). 순수 트리거 chip 색만 보완.
+- 검증: `node --check`(app.js) PASS + CSS brace 1131=1131 + `make test` 회귀 0 + ruff clean. REV-20260615-0262 [SKIPPED:frontend-color-readonly-no-rbac]. **잔여**: 배포(web) + PB-0008.
+
 ## CHG-20260615-0259
 - Date: 2026-06-15 (TASK-0259, **docs-only** — TASK-0257/0258 PB-0008 Windows-browser 시각검증 evidence 기록)
 - Scope: agent-web-ui 문서만 — `docs/TEST.md` §4 Run 추가 + `docs/TASK.md` 0257/0258 항목의 "잔여 PB-0008" → "완료(PASS)" 갱신. src 코드 0.
