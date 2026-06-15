@@ -8,6 +8,7 @@
 
 검증 대상:
   T1  정상 — to_thread 경유라도 probe 결과(ok/elapsed_ms/error)가 그대로 응답에 실린다.
+  T1b conn-tristate: 응답에 3단계 status 분류(빠른성공=healthy / 느린성공=unstable / 실패=down).
   T2  실패 — probe 실패 시 ok=False + errno 전달(자격증명 비유출 계약 유지).
   T3  비블로킹 핵심 — 느린(블로킹) probe 를 N개 **동시** 호출해도 이벤트 루프가 막히지 않아
        전체 소요가 직렬 합산이 아닌 ~1건 수준(가장 느린 1개)이다.
@@ -88,6 +89,18 @@ def test_probe_ok_passthrough(monkeypatch):
     assert b["ok"] is True
     assert b["elapsed_ms"] == 12.3
     assert b["error"] == ""
+    assert b["status"] == "healthy"  # conn-tristate: 12.3ms < SLOW(1000) → 정상
+
+
+# ── T1b: conn-tristate — 느린 성공은 unstable(불안정) ───────────────────────────
+def test_probe_slow_marks_unstable(monkeypatch):
+    """연결은 성공(1745ms)했지만 SLOW(1000ms) 이상이면 status=unstable(빨강 '연결 불안정')."""
+    _install(monkeypatch, probe=lambda ds, *, timeout=None: (True, 1745.0, ""))
+    resp = asyncio.run(app.admin_test_datasource("mysql-slow", _FakeRequest()))
+    b = _body(resp)
+    assert b["ok"] is True
+    assert b["elapsed_ms"] == 1745.0
+    assert b["status"] == "unstable"
 
 
 # ── T2: 실패 결과 + errno 전달(자격증명 비유출) ─────────────────────────────────
@@ -97,6 +110,7 @@ def test_probe_failure_errno(monkeypatch):
     b = _body(resp)
     assert b["ok"] is False
     assert b["error"] == "errno=2003"
+    assert b["status"] == "down"  # conn-tristate: 단발 테스트 실패 = 끊김
     # 응답 본문에 자격증명/좌표 키가 새지 않는다(errno 만 노출 계약).
     assert "password" not in b and "host" not in b and "user" not in b
 

@@ -42,9 +42,10 @@ from .config import *  # noqa: F401,F403 — AGENT_CONN_* 등
 
 _log = logging.getLogger("agent_core.conn_health")
 
-HEALTHY = "healthy"
-UNSTABLE = "unstable"
-UNKNOWN = "unknown"
+HEALTHY = "healthy"    # 연결 성공 + 빠름(elapsed < SLOW) — 초록("연결 정상")
+UNSTABLE = "unstable"  # 연결은 되지만 느림(elapsed >= SLOW) 또는 1회성 blip — 빨강("연결 불안정")
+DOWN = "down"          # 연결 자체가 연속 실패(도달 불가) — 회색("연결 끊김")
+UNKNOWN = "unknown"    # probe 전 — 중립("상태 확인 중")
 
 # scope_key -> entry(좌표/비번 없음): {status, fails, last_elapsed_ms, last_error, checked_at,
 #                                     next_due, source, host, port, engine, label}
@@ -57,15 +58,42 @@ def _now() -> float:
 
 
 def _tcp_timeout_sec() -> float:
-    """TCP 선검사 timeout(초). 빠른 도달성 판정용 고정값(기본 100ms)."""
-    return max(0.02, float(AGENT_CONN_PROBE_TIMEOUT_MS_BASE) / 1000.0)
+    """TCP 선검사 timeout(초). conn-tristate: 구 100ms(BASE)는 다른 리전 datasource 의 핸드셰이크
+    RTT 를 못 견뎌 **연결 가능한 느린 서버까지 죽은 것으로 오판**했다. AGENT_CONN_TCP_TIMEOUT_MS
+    (기본 2000ms)로 현실화 — 진짜 죽은 서버(ECONNREFUSED)는 timeout 무관 즉답이라 fast-fail 은 유지,
+    원거리 RTT/SYN-drop 만 더 기다려준다."""
+    return max(0.02, float(AGENT_CONN_TCP_TIMEOUT_MS) / 1000.0)
+
+
+def classify(ok: bool, elapsed_ms: "float | None", fails: int) -> str:
+    """연결 probe 결과 → 3단계 상태 단일 분류(백그라운드 probe·foreground 피드백·/test 공용).
+
+    - ok=True  + elapsed < SLOW  → HEALTHY (연결 정상, 초록)
+    - ok=True  + elapsed >= SLOW → UNSTABLE(연결 불안정 — 느림, 빨강)
+    - ok=False + fails >= DOWN_AFTER_FAILS → DOWN (연결 끊김 — 반복 실패, 회색)
+    - ok=False + fails <  DOWN_AFTER_FAILS → UNSTABLE(연결 불안정 — 1회성 blip, 빨강)
+
+    elapsed_ms=None(예: foreground 성공은 elapsed 미측정)이면 느림 판정 불가 → 성공은 HEALTHY 로
+    둔다(background probe 가 elapsed 를 측정해 느림을 권위적으로 확정)."""
+    if ok:
+        if elapsed_ms is not None and float(elapsed_ms) >= float(AGENT_CONN_SLOW_MS):
+            return UNSTABLE
+        return HEALTHY
+    if int(fails) >= max(1, int(AGENT_CONN_DOWN_AFTER_FAILS)):
+        return DOWN
+    return UNSTABLE
 
 
 def _driver_timeout_sec(fails: int) -> int:
     """실제 DB probe(연결+SELECT 1) timeout(초, 정수). 드라이버 connect_timeout 은 정수초.
-    base 1s → 실패마다 ×2 → max(AGENT_CONN_PROBE_TIMEOUT_MS_MAX/1000, 기본 10s)."""
+    base → 실패마다 ×2 → cap(AGENT_CONN_PROBE_TIMEOUT_MS_MAX/1000, 기본 10s).
+
+    conn-tristate: base 를 구 1s 고정에서 **느림 임계(SLOW)의 3배**(올림)로 키운다. 구 1s 는
+    SLOW(1000ms)를 초과하는 연결(예: 다른 리전 1745ms)을 첫 probe 에서 timeout 시켜 unstable(느림)
+    대신 blip 실패로 떨어뜨렸다. base ≥ SLOW×3 이면 '느린 성공'을 첫 probe 부터 안정적으로 측정한다."""
     cap = max(1, int(AGENT_CONN_PROBE_TIMEOUT_MS_MAX / 1000))
-    t = 1 * (2 ** max(0, int(fails)))
+    base = max(1, (int(AGENT_CONN_SLOW_MS) * 3 + 999) // 1000)
+    t = base * (2 ** max(0, int(fails)))
     return int(min(cap, t))
 
 
@@ -171,22 +199,25 @@ def _apply_result(key: str, ds: "dict | None", ok: bool, elapsed_ms: float,
         e["last_elapsed_ms"] = round(float(elapsed_ms), 1) if elapsed_ms is not None else None
         e["source"] = source
         if ok:
+            # 연결 성공 → fails 리셋. elapsed 가 SLOW 이상이면 healthy 가 아니라 unstable(느림).
             was = e["status"]
-            e["status"] = HEALTHY
             e["fails"] = 0
             e["last_error"] = ""
+            e["status"] = classify(True, e["last_elapsed_ms"], 0)
+            # 성공(느려도 연결됨)은 healthy 주기로 재확인 — 느림은 실패가 아니므로 backoff 안 함.
             e["next_due"] = now + max(1, int(AGENT_CONN_HEALTHY_RECHECK_SEC))
-            if was == UNSTABLE:
+            if was in (UNSTABLE, DOWN) and e["status"] == HEALTHY:
                 _log.info("conn_health recovered scope=%s via=%s", key, source)
         else:
+            # 연결 실패 → fails 누적. 임계 이상이면 down(끊김 확정), 미만이면 unstable(1회 blip).
             e["fails"] = int(e["fails"]) + 1
             e["last_error"] = str(err or "")[:80]
             was = e["status"]
-            e["status"] = UNSTABLE
+            e["status"] = classify(False, None, e["fails"])
             e["next_due"] = now + _unstable_recheck_sec(e["fails"])
-            if was != UNSTABLE:
-                _log.warning("conn_health unstable scope=%s fails=%d via=%s err=%s",
-                             key, e["fails"], source, e["last_error"])
+            if was != e["status"] and e["status"] in (UNSTABLE, DOWN):
+                _log.warning("conn_health %s scope=%s fails=%d via=%s err=%s",
+                             e["status"], key, e["fails"], source, e["last_error"])
 
 
 def _prune_state(keep_keys: "set[str]") -> None:
@@ -220,14 +251,17 @@ def _tcp_probe(host: str, port: int, timeout: float) -> "tuple[bool, float, str]
 
 # ── public: foreground gate + feedback ───────────────────────────────────────
 def should_fast_fail(scope_key: "str | None") -> bool:
-    """실제 연결 직전 게이트. status=unstable 이면 True(즉시 fast-fail)."""
+    """실제 연결 직전 게이트. conn-tristate(사용자 결정 Q2 "연결되면 허용"): **status=down 일 때만**
+    True(즉시 fast-fail). unstable(연결은 되지만 느림/1회 blip)은 차단하지 않고 실제 연결을 시도하게
+    둔다 — 다른 리전 등 느린(하지만 살아있는) datasource 를 작업 화면에서 그대로 사용 가능. 완전히
+    도달 불가(down, 연속 실패 확정)일 때만 worker 점유를 막는다."""
     if not AGENT_CONN_HEALTH_ENABLED or not scope_key:
         return False
     with _LOCK:
         e = _STATE.get(scope_key)
-        if not e or e["status"] != UNSTABLE:
+        if not e or e["status"] != DOWN:
             return False
-        # 모니터가 돌면 복구는 background 담당 → unstable 신뢰. 모니터 정지 추정 시(stale)만
+        # 모니터가 돌면 복구는 background 담당 → down 신뢰. 모니터 정지 추정 시(stale)만
         # unknown 강등해 1회 시도 허용(영구 차단 방지 — pool 기아가 아닌 모니터 사망 한정).
         if not monitor_running():
             stale_grace = max(float(AGENT_CONN_HEALTHY_RECHECK_SEC) * 2.0,

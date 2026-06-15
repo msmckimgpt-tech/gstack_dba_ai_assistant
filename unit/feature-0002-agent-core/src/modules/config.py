@@ -5,13 +5,16 @@ __all__ = [
     "AGENT_CONVO_SEARCH_AUTO",
     "AGENT_CONVO_SEARCH_LIMIT",
     "AGENT_CSV_ANALYZE_MAX_BYTES",
+    "AGENT_CONN_DOWN_AFTER_FAILS",
     "AGENT_CONN_HEALTH_ENABLED",
     "AGENT_CONN_HEALTH_TICK_SEC",
     "AGENT_CONN_HEALTHY_RECHECK_SEC",
     "AGENT_CONN_PROBE_TIMEOUT_MS_BASE",
     "AGENT_CONN_PROBE_TIMEOUT_MS_MAX",
     "AGENT_CONN_PROBE_WORKERS",
+    "AGENT_CONN_SLOW_MS",
     "AGENT_CONN_STALE_GRACE_SEC",
+    "AGENT_CONN_TCP_TIMEOUT_MS",
     "AGENT_CONN_UNSTABLE_RECHECK_MAX_SEC",
     "AGENT_CONN_UNSTABLE_RECHECK_SEC",
     "AGENT_CSV_ANALYZE_MAX_ROWS",
@@ -805,6 +808,21 @@ AGENT_CONN_PROBE_WORKERS = max(1, min(16, int(os.getenv("AGENT_CONN_PROBE_WORKER
 AGENT_CONN_HEALTH_TICK_SEC = max(1, int(os.getenv("AGENT_CONN_HEALTH_TICK_SEC", "1") or "1"))
 # 모니터 정지 추정 grace(초) — 모니터 미가동 + status 가 이보다 오래 stale 하면 unknown 강등(영구 차단 방지).
 AGENT_CONN_STALE_GRACE_SEC = max(5, int(os.getenv("AGENT_CONN_STALE_GRACE_SEC", "60") or "60"))
+# ── 연결 상태 3단계 분류(conn-tristate) — healthy(초록)/unstable(빨강)/down(회색) ──
+# TCP 선검사 timeout(ms) — 다른 리전 datasource 의 핸드셰이크 RTT 가 구 100ms(BASE)를 넘겨
+# **연결 가능한 느린 서버까지 죽은 것으로 오판**하던 문제를 완화한다. 기본 2000ms 로 현실화
+# (ECONNREFUSED 같은 진짜 죽은 서버는 timeout 무관 즉답이라 fast-fail 유지, SYN-drop 방화벽/
+# 원거리 RTT 만 더 기다려준다). 미설정 시 구 BASE 와 2000 중 큰 값으로 폴백(하위호환 안전).
+AGENT_CONN_TCP_TIMEOUT_MS = max(
+    AGENT_CONN_PROBE_TIMEOUT_MS_BASE,
+    int(os.getenv("AGENT_CONN_TCP_TIMEOUT_MS", "2000") or "2000"),
+)
+# 느림 임계(ms) — 연결은 성공했지만 elapsed_ms 가 이 값 이상이면 healthy 가 아니라 unstable(빨강,
+# "연결 불안정")로 분류. 다른 리전 등 느린(하지만 살아있는) datasource 를 정상(초록)과 구분한다.
+AGENT_CONN_SLOW_MS = max(1, int(os.getenv("AGENT_CONN_SLOW_MS", "1000") or "1000"))
+# 끊김 판정 임계 — 연속 연결 실패가 이 횟수 이상이면 unstable(빨강) 이 아니라 down(회색, "연결 끊김").
+# 1회성 blip 은 unstable 로 두고(간헐 불안정), 반복 실패해야 끊김으로 확정(flapping 방지).
+AGENT_CONN_DOWN_AFTER_FAILS = max(1, int(os.getenv("AGENT_CONN_DOWN_AFTER_FAILS", "2") or "2"))
 # ── MySQL 커넥션 풀 (TASK-0144, opt-in / 기본 OFF / 폴백 안전) ──────────────
 # 기본 비활성(False) → db.connect() 가 기존 connect-per-request 경로 그대로 사용
 # (동작 0 변경). True(canary 로만) 일 때만 (host,user,database) 시그니처별 풀에서

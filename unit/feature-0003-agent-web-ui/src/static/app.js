@@ -889,12 +889,14 @@ function renderProductDropupMenu() {
   });
 }
 
-// TASK-0261: datasource 연결(네트워크) 상태 → 배지 클래스/라벨.
-//  healthy=연결됨(초록), unstable=불안정(빨강), unknown=확인중(중립). conn_health(TASK-0250) 소스.
+// TASK-0261 / conn-tristate: datasource 연결(네트워크) 상태 → 배지 클래스/라벨.
+//  healthy=연결 정상(초록), unstable=연결 불안정(빨강 — 느림/간헐), down=연결 끊김(회색 — 도달 불가),
+//  unknown=확인중(중립). conn_health(TASK-0250) 소스. 3단계는 사용자 요청(회색/빨강/초록 구분).
 function connStatusMeta(status) {
   switch (status) {
-    case "healthy": return { cls: "is-ok", label: "연결됨" };
-    case "unstable": return { cls: "is-fail", label: "연결 불안정" };
+    case "healthy": return { cls: "is-ok", label: "연결 정상" };
+    case "unstable": return { cls: "is-unstable", label: "연결 불안정" };
+    case "down": return { cls: "is-down", label: "연결 끊김" };
     default: return { cls: "is-unknown", label: "상태 확인 중" };
   }
 }

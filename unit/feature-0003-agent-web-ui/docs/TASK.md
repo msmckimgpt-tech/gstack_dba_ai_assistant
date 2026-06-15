@@ -3893,3 +3893,17 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
   - [x] (라이브 backfill 발견) conversation FK 가 orphan 첨부 126/272 이전 차단(05-27 cutover 로 대화 소실, MySQL 원래 no-FK) → alembic 0009 로 conversation FK 제거(conversation_id 컬럼+인덱스 JOIN 유지, 서브테이블 attachment FK 유지). 신규 test E3/E4 + make test 회귀 0. CHG/REV-20260615-0288
 - [ ] PB-0008 Windows-browser 시각검증(업로드·목록·버전 체인·삭제가 read=postgres 에서 동작) → merge
 - [ ] (decommission 후속 cycle) MySQL 쓰기 제거 + 멱등 ALTER 헬퍼 정리 + write-내부 read PG 전환 + id sequence/identity 부착
+
+### TASK-0282 — datasource 연결 상태 3단계(정상/불안정/끊김) 분류 + 느린(타 리전) 연결 완화 (Major §12.3, 2026-06-16)
+- 사용자 보고: `관리 콘솔 > 데이터소스` mysql-mv-qa-* 가 다른 리전이라 느림(연결 테스트 1745ms). 연결은 되는데 네트워크 배지·`작업 화면` 채팅창 제품목록에서 "연결 불안정". 완화 + 회색(끊김)/빨강(불안정)/초록(정상) 3단계 구분 요청.
+- 사용자 결정(AskUserQuestion): (Q1) 느린-연결=🔴불안정(빨강), 끊김(회색)과 구분, 정상(초록)은 빠른 연결만. (Q2) 작업화면은 연결되면 허용(fast-fail 은 down 일 때만 — 느려도 사용 가능).
+- 근본원인: conn_health.py TCP 선검사 timeout 100ms 고정(`AGENT_CONN_PROBE_TIMEOUT_MS_BASE`)이 다른 리전 핸드셰이크 RTT 를 못 견뎌, 연결 가능한 느린 서버를 1단 TCP 에서 unstable 로 오판(2단 DB probe 까지 못 감). 상태도 2단계뿐(healthy/unstable+unknown) — 끊김/불안정 미분리.
+- [x] config.py: `AGENT_CONN_TCP_TIMEOUT_MS`(2000)·`AGENT_CONN_SLOW_MS`(1000)·`AGENT_CONN_DOWN_AFTER_FAILS`(2) + __all__
+- [x] conn_health.py: `DOWN` 상태 + `classify()` 단일분류 + `_tcp_timeout_sec`(새 env) + `_driver_timeout_sec` base=SLOW×3 + `_apply_result`(SLOW/연속실패 분기) + `should_fast_fail`(down 한정)
+- [x] db.py: foreground connect 소요(ms) 측정 → `_record_health(elapsed_ms=…)` 전달(느린 연결 foreground 도 unstable 일관 — 배지 flapping 방지, 적대리뷰 흡수)
+- [x] app.py: `_attach_product_conn_status` _RANK down(최악집계) + `/test` 응답 status 분류
+- [x] admin.js: conn_status→state(unstable/down 분리) + `_paintDsConnBadge`/`_paintDsConnDot` 3색 + `_probeDatasourceConn` status 사용
+- [x] app.js `connStatusMeta`(down) + styles.css 4셀렉터 `is-unstable`(빨강)/`is-down`(회색) + 캐시버스터 `?v=20260616-conn-tristate`
+- [x] 테스트: test_conn_health 재작성(27) + test_product_conn_status(down 최악 2) + test_datasource_test_nonblocking(/test status 2) + make test 컨테이너 전체 회귀 0 + ruff + node --check + CSS brace(1221)
+- [x] outside-voice 적대 리뷰 SHIP-WITH-FIXES (REV-20260616-0290) — foreground elapsed flapping + rebase 흡수
+- [ ] origin/main rebase(base 4030640 < PR#261 TASK-0277 DatasourceId — silent-revert 방지) → 머지 → web+ask-worker+insight-worker 재배포 → PB-0008 Windows-browser 시각검증(3색 배지·느린연결=빨강·작업화면 사용가능) → 마감
