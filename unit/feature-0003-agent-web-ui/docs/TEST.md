@@ -757,3 +757,14 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
     - **gutter+복사(사용자 유형 SQL diff 렌더)**: `hasGutter=true`, context 줄 data-gutter `"1 1"`, `copyHasMarker=false`, 복사 = `["SELECT","    AID","  , UserID"]`(마커·번호 없는 순수 코드, 들여쓰기 보존). 스크린샷 `/tmp/task0256/pb0008d_nocache_gutter.png`.
   - **Pass/Fail: PASS** — no-cache 가 0256c(줄번호/복사클린)를 사용자에게 전달함을 end-to-end 실증.
   - **Notes:** 기 캐시된 사용자는 1회 하드리프레시(Ctrl+Shift+R)로 no-cache index.html 진입 후 자동 최신. CHECK#13 충족.
+
+- 2026-06-15 (TASK-0274 첨부파일 목록 사이드 패널 너비 조절 — **PB-0008 Windows-browser PASS**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 userspace relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면. 배포: main `bb06ddf`(PR #241 squash) → `sudo docker compose build web && up -d --no-deps web`(repo-web-1 Up healthy, /healthz mysql_ok·pg_ok true). 서빙 자산 `app.js/styles.css?v=20260615-attach-panel-resize`(resizer 코드 4 hit).
+  - **Steps/Result:**
+    - **진입 + 핸들 hit-test**: 작업 화면에서 `+`(#composerActionsBtn) 클릭 → "첨부파일 목록"(#composerActionsListItem) 클릭 → `#attachSidePanel` 표시(panelHidden=false, 초기 width=280px, 우측 고정 left=969). `#attachSidePanelResizer` 실재 + `cursor:ew-resize`, rect{x:967,w:8,h:840}. **`document.elementFromPoint(resizer center)` = `attachSidePanelResizer`** → 핸들이 다른 요소에 가려지지 않음(CSS 클리핑/겹침 0).
+    - **드래그 너비 변경**: 핸들에 mousedown → document mousemove(좌측 −180px) → 패널 width **280 → 458px** 실시간 변경(`width=innerWidth−clientX` 정확), 드래그 중 `.is-resizing` 적용 → mouseup 후 해제. **`localStorage["web.attachSidePanel.width"]="458"` 저장 확인**.
+    - **새로고침 후 복원**: page reload → `+` > 첨부파일 목록 재클릭 → 패널 표시 + **width 458px 복원**(storedWidth 458 → inline `width:458px`). 영속화 end-to-end PASS.
+    - **clamp 경계**: 핸들 우측 끝 드래그 → width **240px 에서 정지**(min-width 240). 핸들 좌측 끝 드래그 → **1149px(=92vw, innerWidth 1249) 에서 정지**(max-width 92vw). CSS `min-width:240px`/`max-width:1149.08px` 실측 일치.
+    - **시각 evidence**: 스크린샷 `artifacts/pb0008-task0274/attach-panel-resized-458.png` — 우측 "첨부 파일" 패널이 확장 너비로 메인/대화목록과 레이아웃 충돌 없이 렌더. 콘솔 throw 0.
+  - **Pass/Fail: PASS** — 핸들 hit-test·드래그 너비 변경·localStorage 저장·새로고침 복원·min/max clamp 전부 실제 Windows 브라우저 실측 통과. (기존 `#stepSidePanel`/`#profileDrawer` 검증 패턴과 동일 동작.)
+  - **Notes:** 기 캐시된 사용자는 1회 하드리프레시(Ctrl+Shift+R)로 no-cache index.html 진입 후 자동 최신. CHECK#13(PB-0008 Windows-browser) **충족**.

@@ -18,7 +18,7 @@ source_of_truth: true
   - [x] `app.js`: `setupAttachSidePanelResize()` + `_applyAttachSidePanelWidth()` 추가(키 `web.attachSidePanel.width`, min 240px, max 92vw, mouse+touch). 패널 open 경로(`composerActionsListItem` 클릭)에서 `setupAttachSidePanelResize()` + `_applyAttachSidePanelWidth()` 호출 후 표시.
   - [x] 캐시버스터: `index.html` styles.css·app.js `?v=20260615-attach-panel-resize`. [[project_static_asset_cache_busting]]
   - [x] node --check app.js PASS.
-- [ ] (잔여) verify-completion --pre-commit PASS → commit/push/main 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증(첨부 패널 좌측 핸들 드래그로 너비 변경 + 새로고침 후 너비 복원).
+- [x] 완료: verify-completion --pre-commit PASS → PR #241 squash 머지(main `bb06ddf`) → web 재배포(`sudo docker compose build web && up -d --no-deps web`, repo-web-1 Up healthy) → **PB-0008 Windows-browser 시각검증 PASS**(핸들 hit-test=attachSidePanelResizer·드래그 280→458px·localStorage 저장·새로고침 후 458px 복원·min240/max92vw clamp 실측). evidence: TEST.md §4 2026-06-15 TASK-0274 Run + `artifacts/pb0008-task0274/attach-panel-resized-458.png`.
 
 ## 0aa. TASK-0272 (current cycle, 동시세션이 TASK-0271/AC-0470 선점→§13.1 rebase 후 재번호 0271→0272·AC-0470→0487) — 대화 화면 프로필 첫 진입 시 "프롬프트 > 제품 범위" 목록 비어있는 버그 수정
 - 증상: 대화 화면에서 프로필 드로어를 처음 열면(새로고침 후) `프롬프트` 탭의 **제품 범위**(`#promptProductSelect`) 셀렉트가 비어 있음. 다른 탭을 눌렀다가 `프롬프트` 탭을 다시 클릭해야 채워짐.
