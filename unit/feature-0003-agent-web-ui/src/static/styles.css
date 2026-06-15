@@ -4916,6 +4916,17 @@ a { color: inherit; }
    불변 — 본 스타일은 종속 row 의 미세 위계 + "더 보기" 토글 + orphan 경고칩만 담당.
    reveal 은 즉시 토글(레이아웃 뒤틀림 방지 — 애니메이션 없음). */
 
+/* [hidden] 강제 (TASK-0258 핫픽스) — `.permission-toggle-card{display:flex}` /
+   `.permission-section{display:flex}` 등 author display 규칙이 UA 의 `[hidden]{display:none}`
+   를 동일 specificity·후순위로 override 해, JS 가 `el.hidden=true` 를 줘도 row 가 계속
+   렌더되던 문제(PB-0008 실브라우저 검출 — jsdom 은 CSS 캐스케이드 없어 미검출).
+   disclosure 의 모든 숨김 대상(section/group/row)을 확실히 display:none 으로 강제한다. */
+.permission-section[hidden],
+.permission-group[hidden],
+.permission-grid [data-perm-code][hidden] {
+  display: none !important;
+}
+
 /* 종속(자식) 권한 row: 매우 옅은 좌측 accent 로 "상위 권한에 딸린" 위계를 표시. */
 .permission-toggle-card.permission-row-dependent {
   border-left: 2px solid var(--primary-soft, rgba(37, 99, 235, .22));

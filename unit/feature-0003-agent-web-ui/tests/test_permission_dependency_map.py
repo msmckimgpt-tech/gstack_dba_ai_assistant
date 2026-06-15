@@ -30,6 +30,7 @@ from pathlib import Path
 import app
 
 ADMIN_JS = Path(__file__).resolve().parents[1] / "src" / "static" / "admin.js"
+STYLES_CSS = Path(__file__).resolve().parents[1] / "src" / "static" / "styles.css"
 VALID_CODES = set(app.PERMISSION_CODES)
 
 
@@ -245,3 +246,21 @@ def test_v6_override_gate_allow_reveals_children():
     vis2 = compute_visibility_override({"console.access": "allow", "account.read": "allow"}, all_codes)
     assert vis2["account.read"], "console.access 허용 시 account.read 노출"
     assert vis2["account.update"], "account.read 허용 시 account.update 노출"
+
+
+# ── C: CSS 계약 — [hidden] 강제 display:none (TASK-0258 핫픽스 회귀 가드) ──────────
+def test_c1_hidden_rows_force_display_none():
+    """`.permission-toggle-card{display:flex}` 등 author display 규칙이 UA `[hidden]{display:none}`
+    를 override 해 JS 의 `el.hidden=true` 가 무력화되던 버그(PB-0008 실브라우저 검출, jsdom 미검출)의
+    회귀 가드. styles.css 가 disclosure 숨김 대상에 display:none !important 를 강제하는지 검증한다."""
+    css = STYLES_CSS.read_text(encoding="utf-8")
+    # `[data-perm-code][hidden]` 셀렉터 + 같은 규칙 블록에 display:none !important 가 있어야 한다.
+    m = re.search(
+        r"\[data-perm-code\]\[hidden\][^{]*\{[^}]*display\s*:\s*none\s*!important",
+        css,
+        re.DOTALL,
+    )
+    assert m, "styles.css 에 `[data-perm-code][hidden] { display: none !important }` 규칙 부재 — hidden row 가 실브라우저에서 안 숨겨짐(TASK-0258 회귀)"
+    # section/group 도 동일 강제 규칙에 포함돼야 한다.
+    assert ".permission-group[hidden]" in css, ".permission-group[hidden] 강제 규칙 부재"
+    assert ".permission-section[hidden]" in css, ".permission-section[hidden] 강제 규칙 부재"

@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0258
+- Date: 2026-06-15 (TASK-0258, **Minor §12.3** — TASK-0257 핫픽스: disclosure hidden row 가 실브라우저에서 안 숨겨지던 `[hidden]` CSS override 버그)
+- Scope: agent-web-ui (프론트 전용) — within-group 행 게이팅이 실브라우저에서 무력(PB-0008 검출). `.permission-toggle-card{display:flex}` 가 UA `[hidden]{display:none}` 를 동일 specificity·후순위로 override → `el.hidden=true` 가 무력화(computed display:flex). jsdom 은 CSS 캐스케이드 없어 미검출.
+- 변경:
+  - `src/static/styles.css`: 신규 규칙 — `.permission-section[hidden], .permission-group[hidden], .permission-grid [data-perm-code][hidden] { display: none !important; }`. disclosure 의 section/group/row 모든 숨김 대상에 display:none 강제(기존 `.search-modal-overlay[hidden]{display:none}` 선례와 동형).
+  - `src/static/admin.html`: 캐시버스터 `styles.css?v=20260615-perm-disclosure-hidefix` + `admin.js?v=...-hidefix`.
+  - `tests/test_permission_dependency_map.py`: 신규 `test_c1_hidden_rows_force_display_none` — styles.css 에 `[data-perm-code][hidden]` display:none !important + group/section 규칙 존재 정적 검증(회귀 가드).
+- 비변경: JS 로직·PERMISSION_DEPENDENCIES·저장 경로·RBAC·엔드포인트·스키마 0. 동작 방향 strictly safer(hidden 인 행을 *실제로* 숨김 — 권한을 드러내지 않음).
+- 검증: `test_c1` 포함 **11 PASS** + make test 컨테이너 회귀 0(exit=0) + CSS brace(1125=1125) + 실브라우저 수정 CSS 주입 후 computed display 재확인(account.read=flex, 나머지 6개=none). **잔여**: 배포(web 만) + 최종 PB-0008.
+
 ## CHG-20260615-0257
 - Date: 2026-06-15 (TASK-0257, **Major §12.3** 권한 편집 surface — 관리 콘솔 계정·역할 권한 편집기 점진적 세분화(progressive disclosure))
 - Scope: agent-web-ui (프론트 전용) — `관리 콘솔 > 계정, 역할 > [각 항목]` 권한 grid 가 카테고리별 전 권한을 평면 노출해 핵심 게이트가 묻히던 것을, 종속성 기반 row 단위 disclosure 로 점진 세분화. 백엔드 RBAC enforce·권한 code·persistence·엔드포인트·스키마 **무변경**(편집기 표시 UX 전용).

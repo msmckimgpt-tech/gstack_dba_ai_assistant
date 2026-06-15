@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0258 [SKIPPED:css-display-hotfix-strictly-safer]
+- Date: 2026-06-15
+- Cycle: TASK-0258 (TASK-0257 핫픽스 — disclosure hidden row 가 실브라우저에서 안 숨겨지던 `[hidden]` CSS override 버그. frontend-only `src/static/styles.css` 1규칙 + 캐시버스터 + 회귀 가드 테스트).
+- Skip 사유: 적대 리뷰 생략 정당화 — 변경은 `[hidden]` 속성을 받은 요소를 **확실히 `display:none` 으로 숨기는** 단일 CSS 규칙뿐(`.permission-section/group[hidden]` + `[data-perm-code][hidden] { display:none !important }`). 동작 방향이 **strictly safer**(권한을 더 *숨기는* 쪽 — 의도된 disclosure 대로 hidden 인 행이 실제로 사라짐. 권한을 *드러내거나* 부여 권한을 숨기는 방향이 아님). RBAC enforce·권한 code·persistence·JS 로직·저장 경로 0 변경. TASK-0257 의 비파괴 안전속성(부여 권한은 forceVisible 이라 애초에 `[hidden]` 안 붙음 → 본 규칙의 영향 밖)은 그대로 유지.
+- 검출/검증: 버그는 TASK-0257 의 **PB-0008 실브라우저 검증**이 잡았다(eval `.hidden===true` 인데 computed `display:flex` — jsdom CSS 캐스케이드 부재로 미검출). 수정은 ① 실브라우저 CSS 주입 후 computed display 재확인(account.read=flex, 나머지 6개=none) ② 신규 정적 회귀 가드 `test_c1_hidden_rows_force_display_none` ③ make test 전체 회귀 0 으로 검증. 최종 배포 후 PB-0008 재확인.
+- Cross-ref: CHG-20260615-0258 / TASK-0258 / REV-20260615-0257(원 기능) / [[feedback_visual_verify_on_design_change]].
+
 ## REV-20260615-0257 [SUBAGENT:rbac-adversarial] — SHIP-WITH-FIXES → 흡수 후 SHIP
 - Date: 2026-06-15
 - Cycle: TASK-0257 (관리 콘솔 계정·역할 권한 편집기 점진적 세분화 — **Major §12.3** 권한 편집 surface, frontend-only `src/static/{admin.js,styles.css}`)
