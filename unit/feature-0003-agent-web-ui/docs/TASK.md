@@ -8,7 +8,23 @@ source_of_truth: true
 
 # Task
 
-## 0. TASK-0260 (current cycle) — 결과셋 ◀▶ 전환 시 확장 높이 보존(스크롤 점프 제거)
+## 0. TASK-0261 (current cycle) — 대화 화면 제품 드롭업 datasource 네트워크 상태 배지
+- 목표: 대화 화면 제품 선택 드롭업의 각 제품 dot 이 지금까지 **모드색(auto 회색/pinned 파랑)만** 표시 → datasource 연결(네트워크) 상태(healthy/unstable/unknown)를 색으로 반영. (사용자: "현재는 회색, 파란색만 표시 중".)
+- 등급: **Minor §12.3** (비파괴 추가 — 좌표/비밀번호 비노출, status/elapsed/checked_at 만).
+- 데이터 소스: conn-health-monitor(TASK-0250)가 백그라운드로 미리 계산한 per-datasource 상태(`conn_health.snapshot()`). admin_list_datasources 와 동일 — 추가 probe 없음.
+- 구현:
+  - [x] 백엔드 `_attach_product_conn_status(conn, products)`(app.py): 각 product 의 `datasources[]` 항목에 `conn_status`{status,elapsed_ms,checked_at} 첨부 + product 레벨 `conn_status_overall`(바인딩 최악 상태: unstable>unknown>healthy). `datasources.resolve(key)→scope_key` 로 snapshot 매핑(admin 의 all_datasources→scope_key 와 동일 키). conn_health 미가용/resolve 실패 graceful(unknown). 바인딩 없는 기본 단일 MySQL 제품은 overall=None.
+  - [x] `/api/session`(get_session)·`/api/auth/me`(auth_me) 두 대화 부트스트랩 호출 직후 enrich(다른 _list_products 호출처[admin]는 무영향).
+  - [x] frontend `buildProductDropupItem`(app.js): `connStatusOverall` 받아 dot 에 `.product-dropup-item-dot--conn`+`.is-ok/.is-fail/.is-unknown` + title/aria-label. `connStatusMeta(status)` 헬퍼. datasource 배지 tooltip 에 각 datasource 상태 라벨 병기.
+  - [x] CSS(styles.css): conn 상태 dot 색(specificity 0,3,0 > 모드 0,2,0 override) — is-ok=success(초록)/is-fail=danger(빨강)/is-unknown=중립.
+  - [x] 캐시버스터 bump: index.html styles.css·app.js → `?v=20260615-task0261-conn-badge`.
+  - [x] node --check app.js PASS + CSS brace(1128=1128) + py_compile app.py PASS.
+  - [x] 신규 `test_product_conn_status.py` 8 PASS(C1 단일 healthy / C2 멀티 최악 unstable / C3 unknown 우선순위 / C4 바인딩없음 None / C5 좌표 비노출 / C6·C6b graceful / C7 빈목록) + make test 컨테이너 **전체 회귀 0**(PYTEST_EXIT=0) + ruff clean.
+  - [x] Playwright headless chromium 격리: healthy=초록/unstable=빨강/unknown=중립/바인딩없음=모드색 파랑 유지 — CSS override 실증.
+- 비변경: 백엔드 RBAC·스키마·엔드포인트 shape(응답 필드 추가만)·conn_health 모니터 0. admin 경로 _list_products 무영향.
+- [ ] (잔여) 배포(web 재빌드) + PB-0008 Windows-browser 시각검증(드롭업 dot 색이 연결 상태 반영; 라이브 mysql-kr-an2-*=unstable[빨강], mysql-local/mssql-*=healthy[초록]) — CHECK#13 WARN-only.
+
+## 0b. TASK-0260 (직전 cycle, 머지됨) — 결과셋 ◀▶ 전환 시 확장 높이 보존(스크롤 점프 제거)
 - 목표: assistant 답변 안에서 결과셋을 ◀▶ 버튼으로 전환할 때, 결과셋마다 높이가 달라 panels 컨테이너가 줄었다 늘었다 하며 아래 콘텐츠/스크롤이 jump 한다. 지금까지 본 **최대 패널 높이를 floor 로 보존**해 점프 제거.
 - 등급: **Minor §12.3** (frontend-only, 비파괴 — 표시 UX 전용).
 - 근본 원인: `.sql-nav-panels` 가 min-height 없이 display 토글만 함 → 활성 패널 높이로 컨테이너가 매번 재조정. `.result-table-wrap` 의 `max-height: min(60vh,460px)` 때문에 결과셋별 높이 편차가 큼.
