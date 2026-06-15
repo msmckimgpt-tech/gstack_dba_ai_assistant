@@ -327,3 +327,33 @@ def test_e2_schema_invariants():
     # derived.message_id 는 FK 아님(PG messages id-space 불일치)
     assert "fk_core_att_derived_att" in up           # attachment FK 는 존재
     assert "REFERENCES agent_runtime.messages" not in up  # message_id FK 부재
+
+
+# ── E3/E4: 0009 conversation FK 제거(라이브 backfill orphan 대응) ─────────────
+_MIG09_TEXT = (
+    _REPO / "unit" / "feature-0002-agent-core" / "alembic" / "versions"
+    / "20260615_0009_core_attachments_drop_conv_fk.py"
+).read_text(encoding="utf-8")
+_BOOT_TEXT = (
+    _REPO / "unit" / "feature-0002-agent-core" / "src" / "scripts" / "agent_runtime_schema.sql"
+).read_text(encoding="utf-8")
+
+
+def test_e3_drop_conv_fk_migration():
+    # 0009 가 core_attachments / sandbox_schemas 의 conversation FK 를 제거(orphan 첨부 이전 허용)
+    assert 'revision: str = "0009_core_attachments_drop_conv_fk"' in _MIG09_TEXT
+    assert 'down_revision: Union[str, None] = "0008_core_attachments"' in _MIG09_TEXT
+    up = _MIG09_TEXT.split('UPGRADE_SQL = r"""', 1)[1].split('"""', 1)[0]
+    assert "DROP CONSTRAINT IF EXISTS fk_core_attachments_conv" in up
+    assert "DROP CONSTRAINT IF EXISTS fk_core_att_sandbox_conv" in up
+
+
+def test_e4_bootstrap_drops_conv_fk_keeps_subtable_fk():
+    # fresh deploy(bootstrap) 도 conversation FK 미설정 — orphan 정합
+    assert "CONSTRAINT fk_core_attachments_conv" not in _BOOT_TEXT
+    assert "CONSTRAINT fk_core_att_sandbox_conv" not in _BOOT_TEXT
+    # 단, 서브테이블 attachment_id FK(id 보존으로 안정)는 유지
+    assert "fk_core_att_derived_att" in _BOOT_TEXT
+    assert "fk_core_att_provider_att" in _BOOT_TEXT
+    # conversation_id 컬럼·인덱스는 유지(JOIN)
+    assert "ix_core_attachments_conv" in _BOOT_TEXT

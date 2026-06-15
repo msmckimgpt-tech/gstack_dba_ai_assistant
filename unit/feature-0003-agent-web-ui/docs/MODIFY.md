@@ -3729,3 +3729,11 @@ source_of_truth: true
   - (backfill) `attachment_backfill.py` 4테이블 멱등 + `--verify`(count·SUM·missing-id) → read flip 게이트.
 - Verification: 신규 test 14 PASS + make test 회귀 0 + ruff + py_compile. outside-voice 2인(REV-0286). 라이브 라운드트립은 배포 단계.
 - Deploy: **migrate-first 필수**(web=DML-only role) — make migrate(alembic 0008 superuser) 선행 → web+ask-worker 재빌드(agent_core 변경). insight-worker 무변경. 플래그 단계 전환(dual-write ON → backfill → verify diff=0 → read flip).
+
+## CHG-20260615-0288
+- Date: 2026-06-15 (TASK-0279 라이브 rollout 후속, **Critical §12.3** — 데이터 이전 무결성 핫픽스)
+- Scope: alembic `0009_core_attachments_drop_conv_fk`(down=0008) + agent_runtime_schema.sql §6d + test E3/E4. DDL 제약 제거(데이터·컬럼·인덱스 불변).
+- 발견: 라이브 backfill 에서 272 첨부 중 **126행 FK 위반**(`fk_core_attachments_conv`) — 그 대화가 PG core_conversations 에 없음(05-27 cutover 시기, MySQL AgentCoreConversations 드롭으로 복구 불가 orphan). MySQL WebConversationAttachments 는 원래 conversation FK 가 없어 orphan 정상 존재.
+- 변경: 0008 의 conversation FK(core_attachments·sandbox_schemas → core_conversations)를 제거 → faithful 이전(272 전량) + `--verify` diff=0 게이트 통과 가능. conversation_id 컬럼·`ix_core_attachments_conv` 인덱스 유지(JOIN 불변). 서브테이블 attachment_id FK(derived/provider, id 보존으로 안정)는 유지. downgrade 는 NOT VALID 재추가(orphan 허용).
+- Verification: test E3(0009 DROP) + E4(bootstrap no conv FK, 서브 FK 유지) 추가 + make test 회귀 0. 라이브: 0009 적용 후 re-backfill 272 전량 + verify diff=0(예정).
+- Deploy: migrate-first(alembic 0009 superuser) → re-backfill → verify → read flip.

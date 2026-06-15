@@ -930,3 +930,4 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - AC-0516 (타입 정합 라운드트립): PG read 가 MySQL connector 와 byte-정합한 dict 를 반환한다 — jsonb→`::text`(JSON 문자열), timestamptz→`AT TIME ZONE 'UTC'`(naive UTC datetime). 라이브 PG 라운드트립(업로드→PG 기록→목록→버전체인→materialize→삭제→admin→backfill 정합)으로 최종 확인(fake-cursor 단위로는 미검출 — interval/jsonb/datetime 선례).
 - AC-0517 (quota 무결성): read=postgres 기간에도 size-cap 누적은 `max(MySQL 권위, PG)` 로 enforce — dual-write fail-soft 누락분이 cap 을 과소계상해 우회되지 않는다(REV-0287 MAJOR-1).
 - AC-0518 (멱등 backfill·검증 게이트): `attachment_backfill` 은 ON CONFLICT (id) DO NOTHING 으로 dual-write 행 미덮어쓰기·재실행 안전, orphan 은 per-row skip+로그, `--verify` 가 count·SUM(size_bytes)·missing-id diff 0 을 read flip 게이트로 보장한다.
+- AC-0519 (orphan 첨부 faithful 이전): conversation 이 PG 에서 소실된 orphan 첨부(MySQL no-FK 유산)도 손실 없이 이전한다 — core_attachments 는 conversation FK 를 두지 않고(alembic 0009) conversation_id 컬럼+인덱스로만 JOIN, 신규 업로드의 대화 존재는 앱이 보장. backfill --verify 가 272 전량 diff=0 을 read flip 게이트로 확인.
