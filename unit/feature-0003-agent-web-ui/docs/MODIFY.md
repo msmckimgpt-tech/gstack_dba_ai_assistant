@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0276
+- Date: 2026-06-15 (TASK-20260615T172210-profile-icon-consistency, **Major §12.3** — 제품 프로필 아이콘 정합화 + 대화 드롭업 레이아웃·너비 + 명칭 표기 순서, frontend-only)
+- Scope: agent-web-ui (프론트 전용) — `src/static/{admin.js, app.js, styles.css, index.html, admin.html}` + 신규 `tests/verify_profile_icon_consistency.mjs`(jsdom 격리 검증). RBAC/인증/스키마/엔드포인트 계약/데이터/시크릿/백엔드(app.py) 0.
+- 변경:
+  - admin.js: app.js 의 `_identiconHash`/`identiconSvg`/`applyAvatar` byte-identical 이식(작업화면 프로필과 동일 폴백). `renderProductDetail` 헤더 아이콘을 `applyAvatar(avatar,{url:product.icon_url, seed:product_key})` 로 교체 — icon_url 미설정 시 이니셜 텍스트 대신 결정론적 Identicon SVG. 아이콘 변경/제거 편집 컨트롤 보존.
+  - app.js `buildProductDropupItem`: 항목 자식 순서를 [① dot(네트워크 상태 배지) → ② 프로필 아이콘 → ③ 명칭 → ④ datasource] 로 재배열. pinned 제품은 아이콘 항상 표시(설정 이미지 또는 Identicon 폴백; 과거엔 icon_url 설정 시에만 + dot 앞). auto 항목은 dot 만.
+  - styles.css: `.product-dropup-menu` min 220→300 / max 280→`min(420px,92vw)`(명칭 잘림 해소). `.product-dropup-item-icon` 16→18px·`border-radius:50%` + `> svg` 규칙. `.admin-avatar.has-avatar-img`(padding 0·transparent) + `.admin-avatar .avatar-img,.admin-avatar > svg`(100%·object-fit cover·`border-radius:50%`·overflow hidden) — edit 컨트롤은 avatar 밖(bottom:-22px)이라 컨테이너 overflow visible 유지, 이미지·SVG 만 원형 클립.
+  - 명칭 조합 `${name} (${product_key})` → `(${product_key}) ${name}` 7곳: app.js(promptSelect / chip fullLabel / dropup label / promptProductSelect), admin.js(제품 목록행 / 상세 헤더 / role-product select).
+  - 캐시버스터 통일 `?v=20260615-profile-icon-consistency`(index/admin html 의 app.js·admin.js·styles.css).
+- 비변경: 백엔드 직렬화(app.py `_list_products` 는 name·product_key 분리 반환 — 조합은 프론트 전담, 변경 없음), RBAC/스키마/엔드포인트/conn_status/icon 업로드 경로 0.
+- 검증: node --check app.js·admin.js PASS + CSS brace 균형(1198) + jsdom 23/23 PASS + make test 컨테이너 전체 회귀 0(ruff clean, 2 skip).
+- Cross-ref: REV-20260615-0277 / TASK-20260615T172210-profile-icon-consistency / TASK-0268(아이콘 인프라 base). (REV 0276→0277: 동시세션 TASK-0275 보안리뷰가 REV-0276 선점 → §13.1 재번호.)
+
 ## CHG-20260615-0275
 - Date: 2026-06-15 (TASK-0275, **Critical §12.3** — assistant 첨부 수정→새 버전 materialize + 버전 관리; 동시세션 첨부패널 resize 선점 0274 → §13.1 재번호 0274→0275)
 - Scope: app.py(materialize 파서/헬퍼 + ask 훅 + /versions 엔드포인트 + 버전 직렬화 + 멱등 스키마) + 정적자산(app.js/styles.css/index.html). MySQL 스키마 컬럼 ADD(첨부 테이블 — PG/alembic 무관, migrate 불필).

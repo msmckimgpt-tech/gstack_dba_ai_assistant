@@ -8,7 +8,20 @@ source_of_truth: true
 
 # Task
 
-## 0. TASK-0275 (current cycle, 동시세션이 TASK-0274[첨부 패널 resize]/AC-0492 선점→§13.1 재번호 0274→0275) — assistant 첨부 수정 → 새 버전 materialize + 대화 진행에 따른 버전 관리
+## 0z. TASK-20260615T172210-profile-icon-consistency (current cycle, timestamp ID — 동시세션 TASK-0274/0275 등 활성으로 §13.1 순번충돌 회피) — 제품 프로필 아이콘 정합화 + 대화 드롭업 항목 레이아웃·너비 + 제품 명칭 표기 순서
+- 요청(사용자): (1) `관리 콘솔 > 제품 > [각 항목]` 의 제품 프로필 아이콘 UI 를 `작업 화면 > 프로필` 과 정합하게 구성. (2) 대화 화면 요청 텍스트박스의 제품 선택 목록/선택 항목에 [네트워크 상태 배지·프로필 아이콘·제품 명칭·데이터 소스] 가 적절히 위치하도록 + 목록 너비가 좁아 명칭이 잘리는 이슈 해소(너비 확대). (3) 제품 명칭 표기를 `제품 명칭 (제품 약어)` → `(제품 약어) 제품 명칭` 으로 변경.
+- 등급: **Major §12.3** (frontend-only 다파일 외부 표시 정합화 — RBAC/스키마/엔드포인트/백엔드 0). 비파괴 UI.
+- 진단: 작업화면 프로필(`app.js` applyAvatar/identiconSvg)은 이미지 미설정 시 **결정론적 Identicon SVG** 로 폴백하나, 관리 콘솔 제품 아이콘(`admin.js` renderProductDetail)·대화 드롭업 아이콘은 **이니셜 텍스트** 또는 **아예 미표시**라 정합하지 않았음. 드롭업 항목 순서는 [아이콘(설정 시만)→dot→명칭→ds] 였고 메뉴 max-width 280px 로 `(약어) 명칭` 길이 시 잘림.
+- 구현(frontend-only, 5 src):
+  - [x] `admin.js`: app.js 의 `_identiconHash`/`identiconSvg`/`applyAvatar` **byte-identical 이식**. 제품 상세 헤더 아이콘을 `applyAvatar(avatar, {url: icon_url, seed: product_key})` 로 교체 — 미설정 시 이니셜 대신 Identicon 폴백(작업화면 프로필과 정합). 아이콘 편집(변경/제거) 컨트롤 보존.
+  - [x] `app.js` `buildProductDropupItem`: 항목 자식 순서를 **① 상태 배지(dot) → ② 프로필 아이콘 → ③ 명칭 → ④ 데이터소스** 로 재배열(사용자 요청 순서). pinned 제품은 아이콘 **항상 표시**(설정 이미지 or Identicon 폴백, 과거엔 icon_url 설정 시에만). auto 항목은 아이콘 없이 dot 만.
+  - [x] `styles.css`: 드롭업 메뉴 너비 `min 220→300 / max 280→min(420px,92vw)` 확대(명칭 잘림 해소). `.product-dropup-item-icon` 16→18px·원형 + `> svg` 규칙(Identicon). `.admin-avatar.has-avatar-img`/`.avatar-img`/`> svg` 원형 클립(edit 컨트롤은 컨테이너 밖이라 overflow visible 유지, 이미지·SVG 만 50% 클립).
+  - [x] 제품 명칭 조합 `${name} (${product_key})` → `(${product_key}) ${name}` **7곳**: app.js(promptSelect / chip fullLabel / dropup label / promptProductSelect), admin.js(목록행 / 상세헤더 / role-product select).
+  - [x] 캐시버스터 통일: index.html app.js+styles.css·admin.html admin.js+styles.css `?v=20260615-profile-icon-consistency`. [[project_static_asset_cache_busting]]
+- [x] 검증: node --check app.js·admin.js PASS + CSS brace 균형(1198=1198) + **jsdom 격리 23/23 PASS**(`tests/verify_profile_icon_consistency.mjs` — identicon app↔admin byte-identical·결정론·드롭업 순서·Identicon 폴백·명칭 7곳) + **make test 컨테이너 전체 회귀 0**(pytest PASS, 2 skip, ruff clean, MAKE_EXIT=0).
+- [ ] (잔여) origin/main rebase(TASK-0275 위) + REV 0276→0277·AC 0493~0498→0497~0502 재번호 → PR 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증(관리 콘솔 제품 Identicon·대화 드롭업 항목 순서·너비·명칭 표기).
+
+## 0. TASK-0275 (직전 cycle, 동시세션이 TASK-0274[첨부 패널 resize]/AC-0492 선점→§13.1 재번호 0274→0275) — assistant 첨부 수정 → 새 버전 materialize + 대화 진행에 따른 버전 관리
 - 요청(Task⑥): assistant 가 전달받은 첨부파일을 수정해 사용자에게 제공 + 대화 진행에 따른 버전 관리.
 - 등급: **Critical §12.3** (LLM 자동 데이터 변형·저장 표면 신규 + MinIO 쓰기 + 스키마 변경). PLAN-APPROVED(사용자 2개 설계 결정 확정).
 - 사용자 결정(AskUserQuestion): 수정 범위=**텍스트 계열 MVP**(csv/text, 바이너리 제외), 확정 방식=**assistant 자동 materialize**(사용자 클릭 불요).
