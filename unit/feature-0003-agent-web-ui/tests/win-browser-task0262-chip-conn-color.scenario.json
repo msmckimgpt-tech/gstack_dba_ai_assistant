@@ -1,0 +1,17 @@
+{
+  "name": "TASK-0262 선택 제품 chip dot 네트워크 상태색 — unstable=빨강/healthy=초록 (authed)",
+  "base_url": "https://localhost:18080",
+  "shot_dir": "/tmp/win-browser-shots/task0262",
+  "steps": [
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "eval", "script": "(async()=>{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'bootstrap_admin',password:'ChangeThisBootstrapPass_2026!'})});const j=await r.json();return JSON.stringify({login_ok:j.ok});})()", "stop_on_fail": false},
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "wait_for", "selector": "#productChip", "timeout_ms": 20000},
+    {"action": "wait_for", "timeout_ms": 2500, "stop_on_fail": false},
+    {"action": "eval", "script": "(async()=>{var c=document.getElementById('productChip');c.click();await new Promise(r=>setTimeout(r,400));var it=document.querySelector(\"#productDropupMenu .product-dropup-item[data-pid='94']\");var clicked=false;if(it){it.click();clicked=true;}await new Promise(r=>setTimeout(r,400));var dot=document.getElementById('productChipDot');var cs=dot?getComputedStyle(dot).backgroundColor:null;return JSON.stringify({pinned:94,name:'킹스레이드-국내QA(unstable)',clicked:clicked,dotClass:dot?dot.className:null,dotBg:cs,chipAria:document.getElementById('productChip').getAttribute('aria-label')});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "01_chip_unstable_p94.png", "full_page": false},
+    {"action": "eval", "script": "(async()=>{var c=document.getElementById('productChip');c.click();await new Promise(r=>setTimeout(r,400));var it=document.querySelector(\"#productDropupMenu .product-dropup-item[data-pid='95']\");var clicked=false;if(it){it.click();clicked=true;}await new Promise(r=>setTimeout(r,400));var dot=document.getElementById('productChipDot');var cs=dot?getComputedStyle(dot).backgroundColor:null;return JSON.stringify({pinned:95,name:'건즈국내QA(healthy)',clicked:clicked,dotClass:dot?dot.className:null,dotBg:cs,chipAria:document.getElementById('productChip').getAttribute('aria-label')});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "02_chip_healthy_p95.png", "full_page": false},
+    {"action": "eval", "script": "(async()=>{var c=document.getElementById('productChip');c.click();await new Promise(r=>setTimeout(r,400));var it=document.querySelector(\"#productDropupMenu .product-dropup-item[data-mode='auto']\");if(it)it.click();await new Promise(r=>setTimeout(r,400));var dot=document.getElementById('productChipDot');var cs=dot?getComputedStyle(dot).backgroundColor:null;return JSON.stringify({mode:'auto',dotClass:dot?dot.className:null,dotBg:cs});})()", "stop_on_fail": false}
+  ]
+}

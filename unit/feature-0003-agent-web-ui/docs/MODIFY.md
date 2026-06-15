@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0262b
+- Date: 2026-06-15 (TASK-0262b PB-0008 Windows-browser 시각검증 evidence 후속 — 코드 변경 0, docs+scenario. CHG-20260615-0262 main `eb7be30` 머지·web 재배포 이후).
+- 변경: `docs/TEST.md` §4 `Environment: Windows-browser` Run 기록(chip dot 색 실측) + `docs/TASK.md` PB-0008 체크박스 [x] + `docs/REVIEW.md` REV-20260615-0262b [SKIPPED] + `tests/win-browser-task0262-chip-conn-color.scenario.json`(재현 시나리오).
+- 검증 결과(PB-0008 실제 Windows Chrome/148, main `eb7be30`): 선택 제품 94(unstable)=빨강 rgb(220,38,38)/`is-fail`, 95(healthy)=초록 rgb(22,163,74)/`is-ok`, auto=중립 회색(conn 클래스 reset). aria-label 상태 병기. 콘솔 0.
+- 비변경: src 코드 0(evidence·docs·scenario only). REV-20260615-0263 [SKIPPED:pb0008-evidence-docs-only].
+
 ## CHG-20260615-0262
 - Date: 2026-06-15 (TASK-0262, **Minor §12.3** — TASK-0261 후속 frontend-only: 선택 제품 chip dot 도 네트워크 상태색)
 - Scope: agent-web-ui (프론트 전용) — `static/app.js`(`renderProductChip`), `static/styles.css`(chip dot conn 색 규칙 3개), `static/index.html`(캐시버스터). 백엔드 무변경(`conn_status_overall` 은 TASK-0261 이 이미 `/api/session`·`/api/auth/me` product 에 첨부).
