@@ -3752,3 +3752,12 @@ source_of_truth: true
 - Files: src/app.py, tests/test_datasource_rename_binding_stable.py, docs/{TASK,MODIFY,REVIEW}.md
 - Rollback: 코드 롤백만으로 회귀(추가 컬럼·인덱스는 무해 잔존, backfill 멱등). cascade/probe/dual-write 제거 시 기존 동작.
 - Deploy: web 재빌드(스키마 마이그레이션은 web 부팅 `_ensure_web_tables`→probe False→실행). ask-worker/insight-worker 코드 무변경(필요 시 무해).
+
+## CHG-20260615-0289
+- Date: 2026-06-16 (TASK-20260615T183409-ds-list-multiselect PB-0008 evidence, **docs-only**) — 코드 변경 0.
+- Scope: 데이터소스 목록 다중 선택(CHG-0286, main 3605443) 의 라이브 배포 + PB-0008 Windows-browser 시각검증 PASS 기록.
+- 변경: docs/TEST.md(§3 PB-0008 PASS Run 추가 — 14행 div+체크박스+연결도트·grid 13px 9px 251px·전체선택 indeterminate 13/14·bulkBar buttons), docs/TASK.md(잔여 [x] 마감), docs/REVIEW.md(REV-0289 [SKIPPED:pb0008-evidence-docs-only]).
+- 검증: 라이브 main 3605443 배포(healthz git_commit 일치) + win-browser eval 계측 + screenshot `artifacts/pb0008-ds-multiselect/`.
+- Files: docs/{TEST,TASK,REVIEW,MODIFY}.md
+- Rollback: 해당 evidence 문단 제거(무해, 코드 무관).
+- Deploy: 없음(docs-only — 재배포 불필요).
