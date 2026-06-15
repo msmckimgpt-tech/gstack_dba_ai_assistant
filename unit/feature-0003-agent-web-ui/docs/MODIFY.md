@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0255b
+- Date: 2026-06-15 (TASK-0255b PB-0008 Windows-browser 시각검증 evidence 후속 — 코드 변경 0, docs+scenario. CHG-20260615-0255 main `a410986` 머지·재배포 이후).
+- 변경: `docs/TEST.md` §4 에 `Environment: Windows-browser` Run 기록(엔드포인트 insight_health + UI "인사이트 스캔 상태" 행 구분 실증) + `docs/TASK.md`(양 feature) PB-0008 체크박스 [x] + `docs/REVIEW.md` REV-20260615-0255c [SKIPPED] + `tests/win-browser-task0255-insight-health.scenario.json`(재현 시나리오).
+- 검증 결과(PB-0008 실제 Windows Chrome/148, 배포 main `a410986`): `mysql-kr-an2-auth` insight_health=unstable/circuit_open(fail 11) → UI "⚠ 연결 불안정 (미커버)"; `mysql-gz-qa-kr` healthy/ok → "정상 (분석됨)". 운영자 구분 인지 충족. 콘솔 0. 자격증명 미노출.
+- 비변경: src 코드 0(evidence·docs·scenario only). REV-20260615-0255c [SKIPPED:pb0008-evidence-docs-only].
+
 ## CHG-20260615-0255
 - Date: 2026-06-15 (TASK-0255 cross-feature — 주 변경은 agent-core CHG-20260615-0255. 본 항목은 **web 표면화만**)
 - Scope: agent-web-ui — `app.py`(신규 `_read_insight_datasource_health` + `admin_list_datasources` 에 `insight_health` 첨부, RO·graceful), `static/admin.js`(`datasourceInsightHealth` 맵 + 배지 enrich + `_dsInsightHealthLabel` + 상세 "인사이트 스캔 상태" 행), `static/admin.html`(admin.js ?v= 캐시버스터).

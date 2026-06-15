@@ -1,0 +1,22 @@
+{
+  "name": "TASK-0255 datasource 상세 '인사이트 스캔 상태' 행 — 연결 불안정 vs 정상 구분 (authed admin)",
+  "base_url": "https://localhost:18080",
+  "shot_dir": "/tmp/win-browser-shots/task0255",
+  "steps": [
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "eval", "script": "(async()=>{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'bootstrap_admin',password:'ChangeThisBootstrapPass_2026!'})});const j=await r.json();return JSON.stringify({login_ok:j.ok});})()", "stop_on_fail": false},
+    {"action": "goto", "url": "/admin", "wait_until": "domcontentloaded"},
+    {"action": "wait_for", "selector": "button[data-admin-tab=datasources]", "timeout_ms": 20000},
+    {"action": "click", "selector": "button[data-admin-tab=datasources]"},
+    {"action": "wait_for", "selector": "#datasourceList .admin-list-row--nav", "timeout_ms": 15000, "stop_on_fail": false},
+    {"action": "wait_for", "timeout_ms": 1500, "stop_on_fail": false},
+    {"action": "click", "selector": "#datasourceList .admin-list-row--nav[data-ds-key='mysql-kr-an2-auth']", "stop_on_fail": false},
+    {"action": "wait_for", "timeout_ms": 1500, "stop_on_fail": false},
+    {"action": "eval", "script": "(function(){var dl=document.querySelectorAll('#datasourceDetail .admin-kv dt');var out={};dl.forEach(function(dt){out[dt.textContent.trim()]=(dt.nextElementSibling?dt.nextElementSibling.textContent.trim():null);});return JSON.stringify({selected:'mysql-kr-an2-auth',insightScanStatus:out['인사이트 스캔 상태']||null,allRows:out});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "01_unstable_ds_auth_detail.png", "full_page": true},
+    {"action": "click", "selector": "#datasourceList .admin-list-row--nav[data-ds-key='mysql-gz-qa-kr']", "stop_on_fail": false},
+    {"action": "wait_for", "timeout_ms": 1500, "stop_on_fail": false},
+    {"action": "eval", "script": "(function(){var dl=document.querySelectorAll('#datasourceDetail .admin-kv dt');var out={};dl.forEach(function(dt){out[dt.textContent.trim()]=(dt.nextElementSibling?dt.nextElementSibling.textContent.trim():null);});return JSON.stringify({selected:'mysql-gz-qa-kr',insightScanStatus:out['인사이트 스캔 상태']||null});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "02_healthy_ds_gzqa_detail.png", "full_page": true}
+  ]
+}
