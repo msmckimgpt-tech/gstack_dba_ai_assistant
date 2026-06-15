@@ -3383,3 +3383,12 @@ source_of_truth: true
 - Files: src/app.py, src/static/{app.js,styles.css,index.html}, tests/test_product_conn_status.py, docs/{TASK,MODIFY,REPORT,REVIEW,FUNCTION}.md, docs/STATUS.md(repo)
 - Rollback: `_attach_product_conn_status` 호출 2곳 + 함수 제거(products 응답에서 conn_status/conn_status_overall 사라짐) + app.js connStatusMeta/dot conn 클래스 + styles.css conn dot 규칙 + 캐시버스터 환원(dot 가 모드색으로 복귀).
 - Deploy: web 재빌드(app.py + 정적자산 베이킹). ask/insight-worker 무변경.
+
+## CHG-20260615-0256b
+- Date: 2026-06-15 (TASK-0256b, frontend-only 버그수정)
+- Scope: 웹 UI 정적자산 — diff 렌더 줄 간격 수정. 백엔드/API/스키마/RBAC/CSS 0.
+- 변경: `enhanceDiffBlocks`(app.js/share.js)가 display:block 인 `.diff-line` span 사이에 `"\n"` 텍스트 노드를 넣어 `<pre>` 에서 이중 줄바꿈(줄마다 빈 줄) 발생 → `"\n"` 삽입 제거(block span 이 줄 구분). 변경 자산 캐시버스터만 bump.
+- 검증: node --check app.js/share.js PASS. 렌더(단일 줄 간격)는 PB-0008(배포 후).
+- Files: src/static/{app.js,share.js,index.html,share.html}, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
+- Rollback: `"\n"` 삽입 복원(이중 줄바꿈 회귀).
+- Deploy: web 재빌드(정적자산). ask-worker 무관(프롬프트 무변경).

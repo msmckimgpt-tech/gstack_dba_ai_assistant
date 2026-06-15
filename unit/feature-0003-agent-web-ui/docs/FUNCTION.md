@@ -854,3 +854,6 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 
 ## (TASK-0256) markdown ```diff 블록 렌더
 assistant 답변/공유 뷰의 markdown 렌더 파이프라인(marked.parse→DOMPurify.sanitize)에 enhanceDiffBlocks 단계를 추가해 ```diff 코드블록을 라인별 +/- 색(diff-add/diff-del/diff-hunk/diff-meta)으로 표시한다. textContent 기반 재구성이라 XSS 무첨가, DOMPurify 가 최종 정화.
+
+## (TASK-0256b) diff 블록 줄 간격
+`enhanceDiffBlocks` 의 `.diff-line` 은 display:block 이라 span 자체가 한 줄을 차지한다. span 사이에 `"\n"` 텍스트 노드를 넣지 않는다(넣으면 `<pre>` 에서 이중 줄바꿈). 빈 줄은 공백 1개 span 으로 높이 유지.
