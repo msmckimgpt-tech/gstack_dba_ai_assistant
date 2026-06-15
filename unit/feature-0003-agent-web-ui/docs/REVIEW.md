@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0254 [SUBAGENT:frontend-adversarial] — SHIP-WITH-FIXES → 흡수 후 SHIP
+- Date: 2026-06-15
+- Cycle: TASK-0254 (제품 프롬프트 '자동 작성' SSE 스트리밍 중 스크롤 stick-to-bottom — **Minor §12.3**, 프론트 전용 `src/static/admin.js`)
+- 패널: 적대적 outside-voice(general-purpose subagent) — stick-to-bottom 로직을 반증 시도(첫토큰/8px 임계/측정 순서/done 재할당/비-오버플로/수동관찰 무회귀).
+- **VERDICT: SHIP-WITH-FIXES (NOT-SHIP 0)**. 반박된(비결함) 우려:
+  - 첫 토큰 정확 — `value=""` 가 atBottom 측정 전 실행 → scrollHeight≈clientHeight·scrollTop=0 → atBottom=true → 첫 토큰 정상 추종, off-by-one(한 줄 위 stranded) 없음. 비-오버플로→오버플로 전환도 매 프레임 clamp 로 atBottom 유지.
+  - 8px 임계 적정 — line-height ≈17.4px(12px×1.45) → 의도적 1줄 스크롤업은 미포착(되끌려가지 않음), 분수픽셀(≤1~2px)은 흡수. 트레이드오프 수용.
+  - 비-오버플로/수동관찰 무회귀 — 내용이 다 보이면 `scrollHeight==clientHeight`·scrollTop=0 → atBottom 항상 true → 기존 무조건 추종과 동일. `textarea-autogrow.js` 는 더블클릭에만 발화해 스트리밍 비간섭.
+- **흡수한 FIX**:
+  - **LOW(real)** — `done` 분기의 strip 길이차 점프: 서버 `done.prompt = "".join(accumulated).strip()`(app.py:16519 grep 확인)인데 스트리밍 중엔 un-stripped 토큰을 append → done 재할당 시 내용이 짧아져(흔히 선/후행 개행 trim) `!atBottom` 분기에서 `prevTop` 이 새 max 초과 → 약간 하단 점프. **흡수**: 동일하면 재할당 생략(스크롤 리셋 회피) + `maxTop=max(0, scrollHeight-clientHeight)` 로 명시 clamp(`atBottom ? maxTop : min(prevTop, maxTop)`).
+- 수용(INFO/nit): 스트리밍 중 `metaEl` 글자수(un-stripped)와 최종 저장값(stripped) 경계 불일치는 cosmetic(최종 저장은 post-done stripped value 라 영속 정확) — 무조치.
+- 검증: `node --check`(admin.js) PASS + 서버 `.strip()` 사실 확인(app.py:16519) + make test 컨테이너 **회귀 0 PASS**(진행 100%·skip 2·fail/error 0·make exit=0)+ruff clean + verify-completion 9 checks PASS. **잔여**: 배포(web) + PB-0008 Windows-browser 시각검증(스트리밍 중 위로 스크롤 유지 / 최하단 추종).
+- Cross-ref: CHG-20260615-0254 / TASK-0254 / AC-0429 (REQ-20260612-0237 TASK-0237 SSE 스트리밍 후속).
+
 ## REV-20260612-0253 [SUBAGENT:concurrency+SSRF-adversarial] — SHIP-WITH-FIXES → 흡수 후 SHIP
 - Date: 2026-06-12
 - Cycle: TASK-0253 (관리 콘솔 head-of-line blocking 2건 제거 — **Minor §12.3**, A datasource ↻ 새로고침 / B 제품 분석 완료율)

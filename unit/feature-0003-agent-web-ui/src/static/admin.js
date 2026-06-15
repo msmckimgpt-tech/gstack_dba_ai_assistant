@@ -6111,11 +6111,28 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
           metaEl.textContent = data.label || "생성 중…";
         } else if (ev === "token") {
           if (!streamedAny) { textarea.value = ""; streamedAny = true; }
+          // TASK-0254: stick-to-bottom — 갱신을 append 하기 *전에* 사용자가
+          // 최하단 근처에 있는지 판정한다. 위로 스크롤해 상단을 읽는 중이면
+          // 갱신을 따라 내려가지 않고 현재 위치를 유지한다. 최하단에 있을 때만
+          // 새 토큰을 따라 자동 스크롤한다. (임계 8px = 분수 픽셀/clamp 오차 흡수)
+          const atBottom =
+            textarea.scrollHeight - textarea.scrollTop - textarea.clientHeight <= 8;
           textarea.value += data.text || "";
-          textarea.scrollTop = textarea.scrollHeight;
+          if (atBottom) textarea.scrollTop = textarea.scrollHeight;
           metaEl.textContent = `생성 중… (${textarea.value.length}자)`;
         } else if (ev === "done") {
-          textarea.value = (data.prompt != null ? data.prompt : textarea.value);
+          // TASK-0254: 최종 본문 재할당 시에도 스크롤 위치를 보존한다.
+          // 서버 done.prompt 는 .strip() 된 본문이라 스트리밍 중 append 한
+          // un-stripped 누적과 길이가 다를 수 있다(흔히 선/후행 개행 trim). 동일하면
+          // 재할당을 생략해 스크롤 리셋 자체를 피하고, 다를 때만 재할당 후 새
+          // 높이에 맞춰 clamp 한다(최하단이었으면 새 최하단, 아니면 읽던 위치 유지).
+          const atBottom =
+            textarea.scrollHeight - textarea.scrollTop - textarea.clientHeight <= 8;
+          const prevTop = textarea.scrollTop;
+          const finalText = (data.prompt != null ? data.prompt : textarea.value);
+          if (textarea.value !== finalText) textarea.value = finalText;
+          const maxTop = Math.max(0, textarea.scrollHeight - textarea.clientHeight);
+          textarea.scrollTop = atBottom ? maxTop : Math.min(prevTop, maxTop);
           const pid = resolveProductId();
           setSystemPromptPending({ scope, productId: pid, roleId, accountId, content: textarea.value });
           applyAutoGenMeta(data.meta);

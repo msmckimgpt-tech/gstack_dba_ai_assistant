@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0254
+- Date: 2026-06-15 (TASK-0254, **Minor §12.3** — 관리 콘솔 제품 프롬프트 '자동 작성' SSE 스트리밍 중 스크롤 stick-to-bottom 도입)
+- Scope: agent-web-ui (프론트 전용) — `관리 콘솔 > 제품 > [항목] > 제품 프롬프트` 의 '자동 작성'(TASK-0237 SSE 토큰 스트리밍)이 매 토큰 갱신마다 무조건 textarea 를 최하단으로 강제 이동시켜, 사용자가 작성 중 상단 텍스트를 읽으려 위로 스크롤해도 다음 토큰에서 즉시 최하단으로 끌려가던 이슈.
+- 변경:
+  - `src/static/admin.js` (autoBtn 클릭 핸들러 `handleFrame`):
+    - `ev === "token"` 분기: append **직전** `atBottom = scrollHeight - scrollTop - clientHeight <= 8` 판정 → 텍스트 append 후 `atBottom` 일 때만 `scrollTop = scrollHeight`. 무조건 `textarea.scrollTop = textarea.scrollHeight` 제거. 위로 스크롤한 상태면 위치 유지, 최하단에 있으면 갱신을 따라 내려감. (임계 8px = 분수 픽셀/브라우저 clamp 오차 흡수). 첫 토큰은 `textarea.value=""` 직후라 빈 상태 → atBottom=true → 정상적으로 따라감.
+    - `ev === "done"` 분기: 최종 `textarea.value` 재할당이 스크롤을 상단으로 되돌리는 부수효과 보정 — 재할당 전 `atBottom`/`prevTop` 포착 후 재할당 직후 `scrollTop = atBottom ? scrollHeight : prevTop` 로 사용자 위치 보존.
+  - `src/static/admin.html`: 캐시버스터 `admin.js?v=20260615-task0254-prompt-stream-scroll`.
+- 비변경: SSE 백엔드 계약(`/api/admin/products/{id}/prompt/generate/stream`)·토큰 프레임 파싱·재진입 abort·RBAC·`done` 의 pending 저장(`setSystemPromptPending`)·meta 표시(`applyAutoGenMeta`)·styles.css 무변경. 순수 클라이언트 렌더 동작만 조정.
+- 검증: `node --check admin.js` PASS + 서버 `.strip()` 사실 확인(app.py:16519) + make test 컨테이너 **회귀 0 PASS**(전 진행 100%·skip 2·fail/error 0, make exit=0) + ruff clean. **잔여**: 배포(web 만 — `deploy_scope: included`) + PB-0008 Windows-browser 시각검증(스트리밍 중 위로 스크롤 유지 / 최하단일 때만 따라감).
+
 ## CHG-20260612-0253
 - Date: 2026-06-12 (TASK-0253, **Minor §12.3** — 관리 콘솔 head-of-line blocking 2건 제거: A datasource ↻ 새로고침 / B 제품 분석 완료율)
 - Scope: agent-web-ui — TASK-0250 배포 후 PB-0008 중 사용자 발견. "느린 대상이 정상 대상을 뒤에서 대기시키는" head-of-line 2곳 제거(이벤트 루프 비블로킹 + 제품별 병렬·개별 즉시표시).
