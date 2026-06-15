@@ -386,7 +386,21 @@
     });
 
     let activeIdx = 0;
+    // 결과셋마다 높이가 달라 ◀▶ 전환 시 panels 컨테이너가 줄었다 늘었다 하며
+    // 아래 콘텐츠가 점프한다. 지금까지 본 최대 패널 높이를 floor 로 박아
+    // 짧은 결과셋으로 전환해도 컨테이너가 줄지 않게 한다(확장 높이 보존).
+    let maxPanelHeight = 0;
+    function preserveHeight() {
+      const h = panels.scrollHeight;
+      if (h > maxPanelHeight) {
+        maxPanelHeight = h;
+        panels.style.minHeight = maxPanelHeight + "px";
+      }
+    }
     function update() {
+      // 전환 직전, 현재 보이는(나가는) 패널 높이를 먼저 기록한다.
+      // 초기 update() 는 아직 DOM 에 붙기 전이라 scrollHeight=0 → floor 무변(무해).
+      preserveHeight();
       panelEls.forEach((el, i) => {
         el.classList.toggle("is-active", i === activeIdx);
       });
@@ -396,6 +410,8 @@
       context.textContent = ref ? `대상: ${ref}` : "";
       prevBtn.disabled = activeIdx <= 0;
       nextBtn.disabled = activeIdx >= sqlSteps.length - 1;
+      // 들어오는 패널이 더 크면 floor 를 키운다(축소만 방지, 확장은 허용).
+      preserveHeight();
     }
     function go(delta) {
       const next = Math.min(Math.max(activeIdx + delta, 0), sqlSteps.length - 1);

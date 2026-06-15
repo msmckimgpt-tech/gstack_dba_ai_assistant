@@ -3365,3 +3365,12 @@ source_of_truth: true
 - Files: src/static/{app.js,share.js,styles.css,share.css,index.html,share.html}, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
 - Rollback: enhanceDiffBlocks 호출 제거(원래 marked.parse 직접 sanitize) + CSS/캐시버스터 환원.
 - Deploy: web 재빌드(정적자산 베이킹).
+
+## CHG-20260615-0260
+- Date: 2026-06-15 (TASK-0260)
+- Scope: 웹 UI 정적자산 — 답변 SQL navigator(◀▶ 결과셋 전환) 확장 높이 보존. 백엔드/API/스키마/RBAC/CSS 0.
+- 변경: `buildSqlNavigator`(app.js + share.js parity)에 navigator 인스턴스별 `maxPanelHeight` 추적 + `preserveHeight()`(panels.scrollHeight 가 더 크면 `panels.style.minHeight` floor 갱신) 추가. `update()` 가 전환 전(나가는 패널)·후(들어오는 패널) 2회 측정 → 본 적 있는 최대 높이를 바닥으로 박아 작은 결과셋으로 전환해도 panels 컨테이너 축소 안 됨(아래 콘텐츠/스크롤 점프 제거). 축소만 방지·확장 허용. min-height 는 JS inline 동적 설정(CSS 파일 무변경). index.html/share.html 캐시버스터 bump.
+- 검증: node --check app.js/share.js PASS + Playwright headless chromium 격리 검증(큰 1000px→작은 2행 전환 panels.h 불변·점프 0px; 수정 전 대조 960px 점프 재현). 실 동작은 PB-0008(배포 후).
+- Files: src/static/{app.js,share.js,index.html,share.html}, docs/{TASK,MODIFY,REPORT}.md, docs/STATUS.md(repo)
+- Rollback: `preserveHeight()`/`maxPanelHeight` 제거 + `update()` 의 preserveHeight 2호출 제거 + 캐시버스터 환원(navigator 가 다시 활성 패널 높이로 컨테이너 재조정 = 점프 복귀).
+- Deploy: web 재빌드(정적자산 베이킹).

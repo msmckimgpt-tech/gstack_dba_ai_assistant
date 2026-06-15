@@ -2460,3 +2460,12 @@ source_of_truth: true
   - MINOR(보정 완료): 내용 정확히 "---" 인 삭제 라인 meta 오색 → +++/--- 는 후행 공백 시에만 meta 로 한정(app.js/share.js).
 - Residual: PB-0008 Windows-browser 시각검증(배포 후) — diff +초록/-빨강 라인 구분.
 - Cross-ref: CHG-20260615-0256 / TASK-0256 / feature-0002 REV-20260615-0256.
+
+## REV-20260615-0260 [SKIPPED:frontend-ui-no-backend-no-rbac]
+- Date: 2026-06-15
+- Cycle: TASK-0260 (답변 결과셋 ◀▶ 전환 시 확장 높이 보존 — 스크롤 점프 제거), **Minor §12.3** — frontend-only 2 src(app.js+share.js) + 캐시버스터 2(index.html/share.html), 백엔드/API/스키마/RBAC/시크릿/CSS 0.
+- Trigger: layout/UI keyword(§18.8 → ux). 단 본 cycle 은 navigator 의 panels 컨테이너에 동적 min-height floor 를 박는 표시 UX 만 — 신규 로직 분기 1개(축소 방지), 신규 상태·DOM 구조·엔드포인트·권한·데이터 노출 0. 전례(REV-0227 frontend-ui-state-persist / REV-0245 css-grid)와 동일 경량 SKIP.
+- Reason: display 토글식 navigator 가 활성 패널 높이로 컨테이너를 매 전환 재조정해 작은 결과셋으로 갈 때 컨테이너 급축소 → 아래 콘텐츠 점프. 본 적 있는 최대 높이를 floor 로 박아 축소만 방지(확장은 허용). 결과 데이터·sanitize 경계·share 노출 표면 무변경(이미 렌더된 패널의 표시 높이만 보존, 새 데이터 로드/노출 없음) → 보안/정합 outside-voice 불필요.
+- Verification: node --check app.js/share.js PASS + Playwright headless chromium 격리(큰 1000px→작은 2행 panels.h 불변·점프 0px / 수정 전 대조 960px 점프) — [[feedback_frontend_real_browser_gate]].
+- Residual: 배포 후 PB-0008 Windows-browser 시각검증(다중 결과셋 답변 ◀▶ 전환 시 스크롤 점프 없음) — CHECK#13.
+- Cross-ref: CHG-20260615-0260 / TASK-0260.
