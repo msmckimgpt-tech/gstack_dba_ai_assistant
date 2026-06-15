@@ -3645,3 +3645,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] CSS(styles.css/share.css): `.diff-line::before` gutter(줄번호+마커, user-select:none) + `--diff-gutter-ch` 폭(2w+3, var fallback 7)
 - [x] node 로직 검증(줄번호·마커제거·hunk seed) + node --check, 캐시버스터 bump(app.js/share.js/styles.css/share.css)
 - [x] make test + verify-completion PASS + web 재배포(main f0279c3) + PB-0008 PASS — 줄번호 gutter 표시 + getSelection 복사 시 마커·번호 제외 순수 코드 실측(2026-06-15, TEST.md §4)
+
+### TASK-0256d — 캐시버스터 무력화 수정: HTML 엔트리포인트 no-cache (2026-06-15)
+- 사용자 보고: 줄번호·복사 형식(0256c)이 적용 안 됨 — 라이브 자산엔 새 코드 baked + PB-0008 통과했으나 브라우저가 옛 app.js 캐시(diff 색은 적용·gutter 없음 = 옛 enhanceDiffBlocks 실행).
+- 근본원인: index/admin/share.html 이 FileResponse(ETag/Last-Modified만, Cache-Control 부재) → 브라우저 휴리스틱 캐싱이 옛 HTML 재사용 → 옛 `?v=` 참조 → 캐시버스터 무력화.
+- [x] 3 HTML route 에 `Cache-Control: no-cache`(_HTML_NO_CACHE) — 매 로드 조건부 재검증(변경 시 200, 동일 시 304)
+- [x] test_html_no_cache(FileResponse monkeypatch 로 3 route no-cache + 올바른 파일 검증) + make test PASS
+- [ ] web 재배포 + 라이브 헤더(curl -I) 검증 + 사용자 1회 하드리프레시 안내

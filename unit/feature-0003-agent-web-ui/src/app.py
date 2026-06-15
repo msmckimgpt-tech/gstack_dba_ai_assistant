@@ -7951,14 +7951,22 @@ def _assign_default_signup_role(conn, role_id: int) -> None:
     cur.close()
 
 
+# HTML 엔트리포인트는 항상 재검증한다(no-cache). 정적 자산(app.js/styles.css 등)은
+# `?v=` 캐시버스터로 영구 캐시해도 되지만, 그 버전을 참조하는 HTML 자체가 브라우저에
+# 휴리스틱 캐시되면 옛 `?v=` 를 계속 참조해 캐시버스터가 무력화된다(TASK-0256d). FileResponse
+# 는 ETag/Last-Modified 만 달고 Cache-Control 이 없어 휴리스틱 freshness 가 적용되므로,
+# no-cache 로 매 로드 시 조건부 재검증(변경 시 200, 동일 시 304)하도록 강제한다.
+_HTML_NO_CACHE = {"Cache-Control": "no-cache"}
+
+
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "index.html", headers=_HTML_NO_CACHE)
 
 
 @app.get("/admin")
 def admin_index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "admin.html")
+    return FileResponse(STATIC_DIR / "admin.html", headers=_HTML_NO_CACHE)
 
 
 # REQ-20260514-0001: 공유 링크 페이지 (anonymous accessible). 실제 token 검증은
@@ -7967,7 +7975,7 @@ def admin_index() -> FileResponse:
 # anonymous-allowed 페이지 경로.
 @app.get("/share/{token}")
 def share_page(token: str) -> FileResponse:
-    return FileResponse(STATIC_DIR / "share.html")
+    return FileResponse(STATIC_DIR / "share.html", headers=_HTML_NO_CACHE)
 
 
 def _resolve_session_default_model() -> str:

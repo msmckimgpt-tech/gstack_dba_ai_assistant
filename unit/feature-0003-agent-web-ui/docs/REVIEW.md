@@ -2573,3 +2573,11 @@ source_of_truth: true
   - MINOR(non-defect, 미수정): degenerate `@@ -0,0 @@` "0" 표시 / 빈 줄 복사 시 공백 1개(pre-existing).
 - Residual: PB-0008 Windows-browser(줄번호 표시 + getSelection 복사 시 코드만) — CHECK#13.
 - Cross-ref: CHG-20260615-0256c / TASK-0256c / REV-20260615-0256.
+
+## REV-20260615-0269 [SKIPPED:cache-header-infra]
+- Date: 2026-06-15
+- Cycle: TASK-0256d (HTML 엔트리포인트 no-cache), **Minor §12.3** — app.py 3 route 에 응답 헤더 1종 + 테스트. RBAC/스키마/엔드포인트 계약/데이터/시크릿 0.
+- Trigger: 백엔드(app.py) 변경이나 표준 HTTP 캐시 시맨틱(no-cache)뿐 — 권한 경계·인증·데이터 노출·쿼리 변화 0. 적대적 보안 패널 불요.
+- Reason: FileResponse 에 `Cache-Control: no-cache` 추가는 브라우저 재검증 강제(보안 약화 아님 — 오히려 stale UI 방지). share.html(익명)도 민감 데이터 없는 정적 HTML 이라 무영향. 캐시버스터 전달 신뢰성 회복이 목적. test_html_no_cache + make test PASS.
+- Residual: web 재배포 후 라이브 헤더(curl -I) 검증 + 사용자 하드리프레시 1회.
+- Cross-ref: CHG-20260615-0256d / TASK-0256d / TASK-0256c(이 수정이 적용되게 하는 전제).

@@ -3477,3 +3477,12 @@ source_of_truth: true
 - Files: src/static/{app.js,share.js,styles.css,share.css,index.html,share.html}, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
 - Rollback: enhanceDiffBlocks/CSS 를 TASK-0256b 시점으로 환원(줄번호·gutter 제거, 마커 포함 코드 표시).
 - Deploy: web 재빌드(정적자산). ask-worker 무관(프롬프트 무변경).
+
+## CHG-20260615-0256d
+- Date: 2026-06-15 (TASK-0256d)
+- Scope: web app.py — HTML 엔트리포인트 캐시 헤더. RBAC/스키마/엔드포인트 계약/데이터 0.
+- 변경: index()/admin_index()/share_page() 의 FileResponse 에 `headers={"Cache-Control":"no-cache"}`(_HTML_NO_CACHE) 추가. 정적 자산 `?v=` 캐시버스터가 항상 적용되도록 HTML 을 매 로드 조건부 재검증.
+- 검증: test_html_no_cache(3-route, FileResponse 가로채) + make test PASS.
+- Files: src/app.py, tests/test_html_no_cache.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
+- Rollback: headers 인자 제거(휴리스틱 캐싱 복귀).
+- Deploy: web 재빌드.
