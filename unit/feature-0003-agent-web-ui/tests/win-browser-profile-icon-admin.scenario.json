@@ -1,0 +1,16 @@
+{
+  "name": "TASK-profile-icon-consistency — 관리 콘솔 제품 아이콘 Identicon + 명칭 순서 (authed)",
+  "base_url": "https://localhost:18080",
+  "shot_dir": "/root/download/docker/mysql_ai_delegated_dev/artifacts/pb0008-profile-icon",
+  "steps": [
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "eval", "script": "(async()=>{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'bootstrap_admin',password:'ChangeThisBootstrapPass_2026!'})});const j=await r.json();return JSON.stringify({login_ok:j.ok});})()", "stop_on_fail": false},
+    {"action": "goto", "url": "/admin", "wait_until": "domcontentloaded"},
+    {"action": "wait_for", "selector": "[data-admin-tab=\"products\"]", "timeout_ms": 20000},
+    {"action": "wait_for", "timeout_ms": 1500, "stop_on_fail": false},
+    {"action": "eval", "script": "(async()=>{var tab=document.querySelector('[data-admin-tab=\"products\"]');if(tab)tab.click();await new Promise(r=>setTimeout(r,2000));var rows=[...document.querySelectorAll('#productList .admin-list-row')];var firstName=document.querySelector('#productList .admin-account-name');return JSON.stringify({tabClicked:!!tab,productRowCount:rows.length,firstProductName:firstName?firstName.textContent:null,firstNameStartsWithParen:firstName?firstName.textContent.trim().startsWith('('):null});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "10_admin_product_list.png", "full_page": false},
+    {"action": "eval", "script": "(async()=>{var row=document.querySelector('#productList .admin-list-row');if(row)row.click();await new Promise(r=>setTimeout(r,1500));var av=document.querySelector('#productDetail .admin-avatar');var hasImg=av?!!av.querySelector('.avatar-img, img'):false;var hasSvg=av?!!av.querySelector('svg'):false;var nameEl=document.querySelector('#productDetail .admin-account-name');var avText=av?av.textContent.trim():'';return JSON.stringify({avatarPresent:!!av,avatarKind:(hasImg?'img':(hasSvg?'identicon':(avText?'initials-text':'empty'))),avatarTextLen:avText.length,detailName:nameEl?nameEl.textContent:null,detailNameStartsWithParen:nameEl?nameEl.textContent.trim().startsWith('('):null});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "11_admin_product_detail_icon.png", "full_page": false}
+  ]
+}

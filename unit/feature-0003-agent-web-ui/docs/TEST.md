@@ -268,6 +268,20 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0045: node --check app.js 통과 (구문 무결).
 
 ## 4. Test Run History
+- 2026-06-15 (TASK-20260615T172210-profile-icon-consistency 제품 프로필 아이콘 정합화 + 대화 드롭업 레이아웃·너비 + 명칭 표기 순서 — **PB-0008 Windows-browser 완료 게이트, 인증 후 시각검증 PASS**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 userspace relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면.
+  - **Runner: AI** (launch → `/api/auth/login`(bootstrap_admin) → 대화 드롭업 eval 구조검증 + 관리 콘솔 `/admin` 제품 탭 eval + screenshot)
+  - **Scenario:** `unit/feature-0003-agent-web-ui/tests/win-browser-profile-icon.scenario.json` (대화 드롭업) + `win-browser-profile-icon-admin.scenario.json` (관리 콘솔) + 직접 eval 보강.
+  - **배포:** main `bb1a991`(PR #246 squash) → `sudo docker compose build web && up -d --no-deps web`(repo-web-1 Up healthy, HTTPS /healthz 200). 서빙 자산 `?v=20260615-profile-icon-consistency` — admin.js `identiconSvg`/`applyAvatar` 2 hit, app.js 명칭 `(약어) 명칭` 4 hit, styles.css `product-dropup-item-icon` 18px·`max-width: min(420px, 92vw)`.
+  - **검증 내용 (인증 후 실제 화면):**
+    - **① 대화 드롭업 항목 순서 — PASS:** 8개 pinned 제품 **전부** 항목 자식 순서 `[product-dropup-item-dot → product-dropup-item-icon → product-dropup-item-label → product-dropup-item-ds → check]` (eval `firstChildOrder` 단언). 사용자 요청 [네트워크 상태 배지 → 프로필 아이콘 → 명칭 → 데이터소스] 와 정확 일치.
+    - **② 프로필 아이콘 Identicon — PASS:** 8개 제품 모두 `iconKind:"identicon"`(이미지 미설정 → 결정론적 Identicon SVG 폴백). auto 항목은 아이콘 없이 dot 만. **작업화면 프로필(applyAvatar/identiconSvg)과 동일 규칙** — 같은 제품(KR) 이 관리 콘솔·대화 드롭업에서 **동일 파란 십자가 Identicon** 렌더(스크린샷 교차 확인).
+    - **③ 명칭 표기 `(약어) 명칭` — PASS:** 드롭업 `(KR) 킹스레이드 - 로컬`·`(KR_QA) 킹스레이드 - 국내 QA`·`(MV)...`·`(GZ_KR)...`·`(DK)...`·`(FH)...`, 관리 콘솔 제품 목록·상세 `(KR) 킹스레이드 - 로컬` — 전부 `labelStartsWithParen:true`/`detailStartsParen:true`.
+    - **④ 드롭업 메뉴 너비 — PASS:** `menuMaxWidth:"420px"`, 렌더 너비 358px, 첫 항목 `firstLabelTruncated:false`(명칭 안 잘림). 이전 280px 잘림 해소.
+    - **⑤ 관리 콘솔 제품 상세 아이콘 — PASS:** `(KR) 킹스레이드` 상세 헤더 `avatarKind:"identicon"`(이니셜 텍스트 아님) + 아이콘 변경 컨트롤 보존.
+  - **Evidence:** `artifacts/pb0008-profile-icon/35_dropup_large.png`(대화 드롭업 확대 — dot+Identicon+`(약어) 명칭`+datasource 4요소 순서, KR_QA unstable 빨강 dot), `20_admin_detail_identicon.png`(관리 콘솔 제품 상세 — `(KR) 킹스레이드` Identicon + `(약어) 명칭` 목록 8개), `01_dropup_layout.png`/`33_dropup_open.png`(드롭업 열린 전체 화면).
+  - **Pass/Fail: PASS** (① 항목 순서 + ② Identicon 정합 + ③ 명칭 순서 + ④ 너비 + ⑤ 관리 콘솔 아이콘 전부 실제 Windows 화면 확인). CHECK#13(PB-0008 Windows-browser) **충족**.
+
 - 2026-06-15 (TASK-0276 관리 콘솔 "보관 대화" 탭 UI 정합화, **Minor §12.3** frontend-only):
   - **Environment: CLI** (정적 + jsdom). node --check admin.js PASS + CSS brace(1206=1206). **jsdom 13 PASS**(빈 목록 empty·row 2개 audits 동형 클래스·count·row 클릭→selectedId+상세 렌더+is-selected·미존재 선택 empty·topic XSS escape 목록/상세·truncated scope 안내) + make test 컨테이너 **전체 회귀 0**(백엔드 무변경). 정적자산 web 임시 적용 후 admin.js 새 함수 14건·admin.html list-detail 마크업 12건 서빙 확인. REV-20260615-0277 [SKIPPED:frontend-ui-consistency-no-backend].
   - **(잔여) PB-0008 Windows-browser**: web 재배포 후 보관 대화 탭 진입 → list-detail 렌더 + row 클릭 시 우측 상세 패널 → 결과 추가 예정. (배포 전 CHECK#13 WARN.)
