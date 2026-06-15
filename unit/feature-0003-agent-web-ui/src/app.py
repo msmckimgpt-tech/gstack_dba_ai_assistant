@@ -288,6 +288,14 @@ PERMISSION_DEFINITIONS = (
         "group": "conversation_any",
     },
     {
+        # TASK-0273: "삭제" 가 soft-archive(보관)로 전환됨에 따라, 보관된 대화를 오용 방지
+        # 목적으로 조회하는 전용 권한(감사). 일반 대화 읽기(conversation.read.any)와 분리.
+        "code": "conversation.archive.read.any",
+        "label": "보관 대화 조회",
+        "description": "모든 계정의 보관된(삭제 처리된) 대화를 오용 방지 목적으로 조회할 수 있다.",
+        "group": "conversation_any",
+    },
+    {
         "code": "conversation.cancel.own",
         "label": "내 대화 중단",
         "description": "자신의 처리 중 대화를 중단할 수 있다.",
@@ -1958,6 +1966,8 @@ def _ensure_seed_roles(conn) -> None:
             "console.usage.read",
             # TASK-0228: admin 의 insight 분석 초기화 권한 catchup (파괴적 — 운영자 전용).
             "insight.reset",
+            # TASK-0273: admin 의 보관 대화 조회 권한 catchup (오용 방지 감사 — 운영자 전용).
+            "conversation.archive.read.any",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -4917,6 +4927,20 @@ def _ensure_web_tables():
                 )
             except Exception:
                 pass
+            # TASK-0273: "삭제"→soft-archive. archived_at 이 NULL 이 아니면 보관(목록 숨김+진행
+            # 차단, 데이터 보존). PG 정본(alembic 0007)의 MySQL 폴백 parity.
+            try:
+                cur.execute(
+                    "ALTER TABLE AgentCoreConversations ADD COLUMN archived_at DATETIME NULL"
+                )
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    "ALTER TABLE AgentCoreConversations ADD COLUMN archived_by_account_id BIGINT NULL"
+                )
+            except Exception:
+                pass
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS WebProducts (
@@ -5315,6 +5339,10 @@ LEFT JOIN agent_runtime.kv kv_topic
         where_clauses: list[str] = []
         params: list[Any] = []
 
+        # TASK-0273: 보관(archived) 대화는 일반 대화 목록에서 항상 숨긴다(소유자·admin 브라우징
+        # 공통). 보관 대화는 전용 admin 엔드포인트(/api/admin/conversations/archived)로만 조회.
+        where_clauses.append("c.archived_at IS NULL")
+
         if has_any:
             if owner_id is not None:
                 where_clauses.append("c.owner_account_id = %s")
@@ -5579,6 +5607,9 @@ LEFT JOIN WebAccounts owner
         where_clauses: list[str] = []
         params: list[Any] = []
 
+        # TASK-0273: 보관(archived) 대화는 일반 목록에서 항상 숨긴다(PG 경로와 동일).
+        where_clauses.append("c.archived_at IS NULL")
+
         # REQ-20260518-0010 sub-spec 1 (SQL composition order):
         # Owner filter ALWAYS first. For .own-only callers, ALWAYS overwrite
         # owner_id to self (explicit overwrite, not 'ignore'). For .any callers,
@@ -5835,6 +5866,8 @@ def _conversation_exists(
 # TASK-0248: 참조 제품 삭제 시 대화 차단(blocked) — 더 이상 진행(새 메시지)할 수 없으나
 # 이력 열람·공유(읽기 전용)는 가능. blocked_at 이 NULL 이 아니면 차단으로 간주.
 _BLOCKED_PRODUCT_DELETED_REASON = "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다."
+# TASK-0273: 보관(archived)된 대화도 진행 차단(동결) — 사용자 결정. 보관은 목록 숨김 + 진행 차단.
+_ARCHIVED_CONVERSATION_REASON = "이 대화는 보관되어 더 이상 진행할 수 없습니다."
 
 
 def _conversation_block_info(
@@ -5848,6 +5881,9 @@ def _conversation_block_info(
     AgentCoreConversations. 조회 실패는 fail-open(미차단)으로 — 차단 판정은 ask 진행을
     막는 게이트이므로, 인프라 오류로 정상 대화가 막히지 않게 한다(삭제 제품 대화는
     별도 권한회수 가드가 fail-closed 로 보강).
+
+    TASK-0273: blocked_at(제품 삭제) **또는** archived_at(보관) 둘 중 하나라도 set 이면 차단.
+    보관은 목록 숨김에 더해 진행도 동결(사용자 결정).
     """
     if not conversation_id:
         return (False, "")
@@ -5858,7 +5894,7 @@ def _conversation_block_info(
             try:
                 with pg.cursor() as pgcur:
                     pgcur.execute(
-                        "SELECT blocked_at, blocked_reason FROM agent_runtime.core_conversations "
+                        "SELECT blocked_at, blocked_reason, archived_at FROM agent_runtime.core_conversations "
                         "WHERE conversation_id = %s LIMIT 1",
                         (conversation_id,),
                     )
@@ -5867,6 +5903,8 @@ def _conversation_block_info(
                 pg.close()
             if row and row[0] is not None:
                 return (True, str(row[1] or _BLOCKED_PRODUCT_DELETED_REASON))
+            if row and len(row) > 2 and row[2] is not None:
+                return (True, _ARCHIVED_CONVERSATION_REASON)
             return (False, "")
         except Exception:
             return (False, "")
@@ -5879,7 +5917,7 @@ def _conversation_block_info(
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT blocked_at, blocked_reason FROM AgentCoreConversations "
+            "SELECT blocked_at, blocked_reason, archived_at FROM AgentCoreConversations "
             "WHERE conversation_id = %s LIMIT 1",
             (conversation_id,),
         )
@@ -5887,6 +5925,8 @@ def _conversation_block_info(
         cur.close()
         if row and row[0] is not None:
             return (True, str(row[1] or _BLOCKED_PRODUCT_DELETED_REASON))
+        if row and len(row) > 2 and row[2] is not None:
+            return (True, _ARCHIVED_CONVERSATION_REASON)
         return (False, "")
     except Exception:
         return (False, "")
@@ -13226,6 +13266,53 @@ def history_dates(
 
 # TASK-0061 Phase 8 (REQ-20260515-0010 / AC-0103): 단건/일괄 공용 helper. 결과는
 # {"status": "deleted"|"deleted_pending"|"failed", "reason": "..." (failed 시)}.
+def _archive_conversation(conn, conversation_id: str, account_id: int) -> bool:
+    """TASK-0273: 대화를 soft-archive(보관)로 전환 — hard-delete 대신 archived_at 마킹.
+
+    데이터·첨부는 **보존**한다(오용 방지 admin 조회·맥락 참조 fork 위해). backend-aware:
+    PG 정본(agent_runtime.core_conversations) + MySQL 폴백(AgentCoreConversations).
+    이미 보관된 대화는 시각·수행자 보존(archived_at IS NULL 일 때만 set). 반환 성공 여부.
+    """
+    ok = False
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        "UPDATE agent_runtime.core_conversations "
+                        "SET archived_at = now(), archived_by_account_id = %s "
+                        "WHERE conversation_id = %s AND archived_at IS NULL",
+                        (int(account_id) if account_id else None, conversation_id),
+                    )
+                pg.commit()
+                ok = True
+            finally:
+                pg.close()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "_archive_conversation: PG archive failed (conversation_id=%s)",
+                conversation_id, exc_info=True,
+            )
+            ok = False
+    # MySQL 폴백 parity(production 은 PG 라 보통 미경유, 비-PG 환경 대비).
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE AgentCoreConversations "
+            "SET archived_at = NOW(), archived_by_account_id = %s "
+            "WHERE conversation_id = %s AND archived_at IS NULL",
+            (int(account_id) if account_id else None, conversation_id),
+        )
+        conn.commit()
+        ok = ok or True
+    except Exception:
+        # PG 가 정본이면 MySQL 폴백 실패는 무해(테이블 부재 등).
+        pass
+    return ok
+
+
 def _delete_conversation_impl(
     conn,
     account: dict[str, Any],
@@ -13234,6 +13321,13 @@ def _delete_conversation_impl(
     force: bool = False,
     confirm_text: str = "",
 ) -> dict[str, Any]:
+    """TASK-0273: "삭제" 를 soft-archive(보관)로 전환. 데이터·첨부 hard-delete 안 함.
+
+    보관 = (1) 소유자 목록 숨김(_list_conversations archived_at IS NULL) + (2) 진행 차단
+    (_conversation_block_info) + (3) 데이터 보존(admin 조회·fork 참조 가능). 진행 중 대화는
+    force+confirm 시 run 취소 후 보관(첨부는 보존 — cascade soft-delete 안 함).
+    반환 status: 'archived' | 'archived_pending' | 'failed'(기존 호환 위해 'deleted*' 도 매핑).
+    """
     conversation_id = str(conversation_id or "").strip()
     if not conversation_id:
         return {"status": "failed", "reason": "empty_conversation_id"}
@@ -13247,40 +13341,25 @@ def _delete_conversation_impl(
         return {"status": "failed", "reason": "forbidden"}
     try:
         cleanup_pending_delete_conversations(conn)
+        acct_id = int(account.get("id") or 0)
         if is_processing_conversation(conn, conversation_id):
             if not force:
                 return {"status": "failed", "reason": "processing"}
-            if confirm_text != "삭제":
+            if confirm_text not in ("삭제", "보관"):
                 return {"status": "failed", "reason": "confirm_text_mismatch"}
+            # 진행 중 run 은 취소하되, 데이터는 hard-delete 하지 않고 보관으로 동결.
             run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
             mark_cancel_requested(conn, conversation_id, run_id=run_id)
-            mark_delete_requested(conn, conversation_id, run_id=run_id)
-            # TASK-0108: 처리 중 삭제도 첨부 conv_soft cascade 마킹.
-            try:
-                from web.modules import attachment_reconciliation as _ar
-                _ar.cascade_conv_soft(conn, conversation_id)
-            except Exception:
-                # best-effort: 첨부 cascade 마킹 실패는 삭제를 막지 않으나 orphan 위험을 가시화.
-                logging.getLogger(__name__).warning(
-                    "_delete_conversation_impl: attachment cascade (pending) failed "
-                    "(conversation_id=%s)",
-                    conversation_id, exc_info=True,
-                )
+            _archive_conversation(conn, conversation_id, acct_id)
             _clear_accounts_current_conversation(conn, conversation_id)
-            return {"status": "deleted_pending"}
-        # TASK-0108: conversation 삭제 전 첨부 conv_soft cascade 마킹.
-        try:
-            from web.modules import attachment_reconciliation as _ar
-            _ar.cascade_conv_soft(conn, conversation_id)
-        except Exception:
-            # best-effort: 첨부 cascade 마킹 실패는 삭제를 막지 않으나 orphan 위험을 가시화.
-            logging.getLogger(__name__).warning(
-                "_delete_conversation_impl: attachment cascade failed (conversation_id=%s)",
-                conversation_id, exc_info=True,
-            )
-        delete_conversation_records(conn, conversation_id)
+            return {"status": "archived_pending"}
+        # TASK-0273: 정상 대화 → 보관(UPDATE archived_at). 첨부 cascade soft-delete 안 함
+        # (admin 조회·fork 참조 위해 데이터 보존). hard-delete(delete_conversation_records) 폐기.
+        ok = _archive_conversation(conn, conversation_id, acct_id)
+        if not ok:
+            return {"status": "failed", "reason": "db_error"}
         _clear_accounts_current_conversation(conn, conversation_id)
-        return {"status": "deleted"}
+        return {"status": "archived"}
     except Exception:
         return {"status": "failed", "reason": "db_error"}
 
@@ -13316,13 +13395,13 @@ async def delete_conversation(request: Request) -> JSONResponse:
             return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
         if reason == "processing":
             conn.close()
-            return _json_error("처리 중 대화입니다. 강제 삭제하려면 확인 입력이 필요합니다.", 409)
+            return _json_error("처리 중 대화입니다. 강제 보관하려면 확인 입력이 필요합니다.", 409)
         if reason == "confirm_text_mismatch":
             conn.close()
-            return _json_error("확인 입력이 올바르지 않습니다. 삭제를 입력해주세요.", 400)
+            return _json_error("확인 입력이 올바르지 않습니다. 보관을 입력해주세요.", 400)
         conn.close()
-        return _json_error("failed to delete conversation", 500)
-    # TASK-0048 후속 fix: 대화 삭제 후 자동으로 빈 새 대화를 만들지 않는다 (lazy 정책).
+        return _json_error("failed to archive conversation", 500)
+    # TASK-0048 후속 fix: 대화 보관 후 자동으로 빈 새 대화를 만들지 않는다 (lazy 정책).
     current_after = _repair_current_conversation(
         conn,
         account,
@@ -13330,9 +13409,11 @@ async def delete_conversation(request: Request) -> JSONResponse:
         create_if_missing=False,
     )
     conn.close()
-    if result["status"] == "deleted_pending":
-        return JSONResponse({"deleted_pending": conversation_id, "current": current_after})
-    return JSONResponse({"deleted": conversation_id, "current": current_after})
+    # TASK-0273: 응답 키는 기존 프론트 호환을 위해 deleted/deleted_pending 유지(보관도 "목록에서
+    # 사라짐" 으로 동일 UX). archived 플래그도 함께 노출.
+    if result["status"] in ("archived_pending", "deleted_pending"):
+        return JSONResponse({"deleted_pending": conversation_id, "archived_pending": conversation_id, "current": current_after})
+    return JSONResponse({"deleted": conversation_id, "archived": conversation_id, "current": current_after})
 
 
 # TASK-0061 Phase 8 (REQ-20260515-0010 / AC-0103~AC-0107): 다중 대화 일괄 삭제 — partial success.
@@ -13368,9 +13449,10 @@ async def delete_conversations(request: Request) -> JSONResponse:
         result = _delete_conversation_impl(
             conn, account, cid, force=force, confirm_text=confirm_text
         )
-        if result["status"] == "deleted":
+        # TASK-0273: 보관(archived/archived_pending)도 기존 deleted 버킷에 매핑(프론트 호환).
+        if result["status"] in ("archived", "deleted"):
             deleted.append(cid)
-        elif result["status"] == "deleted_pending":
+        elif result["status"] in ("archived_pending", "deleted_pending"):
             deleted_pending.append(cid)
         else:
             failed.append({"conversation_id": cid, "reason": result.get("reason", "unknown")})
@@ -18332,6 +18414,141 @@ def _enrich_usage_conv_owner_meta(conn, items: list[dict]) -> None:
         mm = meta.get(e.get("owner_account_id")) if e.get("owner_account_id") is not None else None
         e["owner_username"] = (mm or {}).get("username")
         e["owner_role"] = (mm or {}).get("role")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# TASK-0273 — 보관(archived) 대화 admin 조회 (오용 방지 감사)
+#   "삭제" 가 soft-archive 로 전환됨에 따라, 보관된 대화를 admin 이 조회하는 read-only
+#   엔드포인트. 신규 권한 conversation.archive.read.any 게이트(메타만 — 제목/소유자/일시/
+#   보관자). 메시지 본문은 미포함(목록). 검색(q)·페이지(limit) 지원.
+# ════════════════════════════════════════════════════════════════════════════
+
+_ARCHIVED_CONV_LIMIT = 500
+
+
+@app.get("/api/admin/conversations/archived")
+def admin_archived_conversations(request: Request) -> JSONResponse:
+    """보관된 대화 목록(admin 감사). 권한: conversation.archive.read.any.
+
+    PG 정본(agent_runtime.core_conversations, archived_at IS NOT NULL) + MySQL 계정 메타 enrich.
+    메타만 반환(제목/소유자/보관시각/보관자) — 메시지 본문 미포함. q 검색·limit(≤500) 지원.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(account, "conversation.archive.read.any"):
+            return _json_error("보관 대화 조회 권한이 필요합니다 (conversation.archive.read.any).", 403)
+        q = (request.query_params.get("q") or "").strip()
+        try:
+            limit = int(request.query_params.get("limit", str(_ARCHIVED_CONV_LIMIT)))
+        except Exception:
+            limit = _ARCHIVED_CONV_LIMIT
+        limit = max(1, min(_ARCHIVED_CONV_LIMIT, limit))
+
+        items: list[dict[str, Any]] = []
+        if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+            try:
+                from modules.db import _pg_connect
+                pg = _pg_connect()
+            except Exception:
+                logging.getLogger(__name__).warning("admin_archived: pg connect failed", exc_info=True)
+                return _json_error("대화 저장소(PG) 연결 실패", 503)
+            try:
+                where = ["c.archived_at IS NOT NULL"]
+                params: list[Any] = []
+                if q:
+                    where.append("(c.topic ILIKE %s OR c.conversation_id ILIKE %s)")
+                    params.extend([f"%{q}%", f"%{q}%"])
+                sql = (
+                    "SELECT c.conversation_id, COALESCE(NULLIF(TRIM(c.topic),''),'(제목 없음)'), "
+                    "c.owner_account_id, c.created_at, c.updated_at, c.archived_at, "
+                    "c.archived_by_account_id, c.product_id "
+                    "FROM agent_runtime.core_conversations c "
+                    f"WHERE {' AND '.join(where)} "
+                    "ORDER BY c.archived_at DESC LIMIT %s"
+                )
+                params.append(limit)
+                with pg.cursor() as pgcur:
+                    pgcur.execute(sql, tuple(params))
+                    for r in (pgcur.fetchall() or []):
+                        items.append({
+                            "conversation_id": str(r[0]),
+                            "topic": str(r[1] or ""),
+                            "owner_account_id": (int(r[2]) if r[2] is not None else None),
+                            "created_at": (r[3].isoformat() if r[3] else None),
+                            "updated_at": (r[4].isoformat() if r[4] else None),
+                            "archived_at": (r[5].isoformat() if r[5] else None),
+                            "archived_by_account_id": (int(r[6]) if r[6] is not None else None),
+                            "product_id": (int(r[7]) if r[7] is not None else None),
+                        })
+            finally:
+                try:
+                    pg.close()
+                except Exception:
+                    pass
+        else:
+            # MySQL 폴백.
+            try:
+                cur = conn.cursor(dictionary=True)
+                try:
+                    where = ["c.archived_at IS NOT NULL"]
+                    params2: list[Any] = []
+                    if q:
+                        where.append("(c.topic LIKE %s OR c.conversation_id LIKE %s)")
+                        params2.extend([f"%{q}%", f"%{q}%"])
+                    cur.execute(
+                        "SELECT c.conversation_id, c.topic, c.owner_account_id, c.created_at, "
+                        "c.updated_at, c.archived_at, c.archived_by_account_id, c.product_id "
+                        "FROM AgentCoreConversations c "
+                        f"WHERE {' AND '.join(where)} ORDER BY c.archived_at DESC LIMIT %s",
+                        tuple(params2) + (limit,),
+                    )
+                    for m in (cur.fetchall() or []):
+                        items.append({
+                            "conversation_id": str(m.get("conversation_id") or ""),
+                            "topic": str(m.get("topic") or "(제목 없음)"),
+                            "owner_account_id": (int(m["owner_account_id"]) if m.get("owner_account_id") is not None else None),
+                            "created_at": str(m.get("created_at") or ""),
+                            "updated_at": str(m.get("updated_at") or ""),
+                            "archived_at": str(m.get("archived_at") or ""),
+                            "archived_by_account_id": (int(m["archived_by_account_id"]) if m.get("archived_by_account_id") is not None else None),
+                            "product_id": (int(m["product_id"]) if m.get("product_id") is not None else None),
+                        })
+                finally:
+                    cur.close()
+            except Exception:
+                logging.getLogger(__name__).warning("admin_archived: MySQL query failed", exc_info=True)
+                return _json_error("대화 저장소 조회 실패", 503)
+
+        # 계정 메타(소유자/보관자 사용자명) enrich (MySQL).
+        acct_ids = sorted({i for e in items for i in (e.get("owner_account_id"), e.get("archived_by_account_id")) if i is not None})
+        meta: dict[int, str] = {}
+        if acct_ids:
+            try:
+                ph = ",".join(["%s"] * len(acct_ids))
+                mcur = conn.cursor(dictionary=True)
+                try:
+                    mcur.execute(f"SELECT Id, Username FROM WebAccounts WHERE Id IN ({ph})", tuple(acct_ids))
+                    for m in (mcur.fetchall() or []):
+                        meta[int(m["Id"])] = str(m.get("Username") or "")
+                finally:
+                    mcur.close()
+            except Exception:
+                logging.getLogger(__name__).warning("admin_archived: owner meta enrich failed", exc_info=True)
+        for e in items:
+            e["owner_username"] = meta.get(e.get("owner_account_id")) if e.get("owner_account_id") is not None else None
+            e["archived_by_username"] = meta.get(e.get("archived_by_account_id")) if e.get("archived_by_account_id") is not None else None
+        return JSONResponse({"items": items, "count": len(items), "truncated": len(items) >= limit})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # ════════════════════════════════════════════════════════════════════════════

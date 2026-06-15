@@ -3765,8 +3765,8 @@ function renderConversationBulkBar() {
   const deleteBtn = document.createElement("button");
   deleteBtn.type = "button";
   deleteBtn.className = "tool-btn danger";
-  deleteBtn.textContent = "삭제";
-  deleteBtn.addEventListener("click", () => bulkDeleteConversations().catch((err) => showToast(err.message || "삭제 실패", true)));
+  deleteBtn.textContent = "보관";
+  deleteBtn.addEventListener("click", () => bulkDeleteConversations().catch((err) => showToast(err.message || "보관 실패", true)));
   bar.appendChild(deleteBtn);
   const clearBtn = document.createElement("button");
   clearBtn.type = "button";
@@ -3786,12 +3786,12 @@ async function bulkDeleteConversations() {
   if (!ids.length) return;
   const CONFIRM_TYPED_THRESHOLD = 10;
   if (ids.length >= CONFIRM_TYPED_THRESHOLD) {
-    const typed = window.prompt(`${ids.length}개 대화를 삭제하려면 정확한 숫자 ${ids.length}을(를) 입력하세요.`, "");
+    const typed = window.prompt(`${ids.length}개 대화를 보관하려면 정확한 숫자 ${ids.length}을(를) 입력하세요.`, "");
     if (String(typed || "").trim() !== String(ids.length)) {
-      showToast("입력값이 일치하지 않아 삭제를 취소했습니다.", true);
+      showToast("입력값이 일치하지 않아 보관을 취소했습니다.", true);
       return;
     }
-  } else if (!window.confirm(`${ids.length}개 대화를 삭제할까요?`)) {
+  } else if (!window.confirm(`${ids.length}개 대화를 보관할까요? (목록에서 사라지며 더 이상 진행할 수 없습니다)`)) {
     return;
   }
   let force = false;
@@ -3801,13 +3801,13 @@ async function bulkDeleteConversations() {
     state.conversationSelected.has(String(c.id)) && String(c.status || "").toLowerCase() === "processing"
   );
   if (hasProcessing) {
-    if (!window.confirm("처리 중 대화가 포함되어 있습니다. 강제 삭제할까요?")) {
+    if (!window.confirm("처리 중 대화가 포함되어 있습니다. 강제 보관할까요?")) {
       return;
     }
-    const text = window.prompt("강제 삭제 확인 — '삭제' 를 입력해 주세요.", "");
-    if (text !== "삭제") return;
+    const text = window.prompt("강제 보관 확인 — '보관' 을 입력해 주세요.", "");
+    if (text !== "보관") return;
     force = true;
-    confirmText = "삭제";
+    confirmText = "보관";
   }
   let payload;
   try {
@@ -4603,7 +4603,9 @@ async function deleteConversation(targetCid = "") {
     showPermissionDeniedToast("conversation.delete", conversation);
     return;
   }
-  if (!window.confirm("선택한 대화를 삭제하시겠습니까?")) {
+  // TASK-0273: "삭제" 는 hard-delete 가 아니라 보관(archive) — 목록에서 사라지고 진행 차단,
+  // 데이터는 보존(admin 감사·맥락 참조). 사용자 문구를 "보관" 으로 명확히.
+  if (!window.confirm("선택한 대화를 보관하시겠습니까? (목록에서 사라지며 더 이상 진행할 수 없습니다)")) {
     return;
   }
   try {
@@ -4611,21 +4613,21 @@ async function deleteConversation(targetCid = "") {
       method: "POST",
       body: JSON.stringify({ conversation_id: cid }),
     });
-    showToast("대화를 삭제했습니다.");
+    showToast("대화를 보관했습니다.");
     await refreshWorkspace(payload.current || "");
   } catch (error) {
     if (error.status === 409) {
-      const text = window.prompt("처리 중 대화입니다. 강제 삭제하려면 '삭제'를 입력하세요.", "");
-      if (text !== "삭제") return;
+      const text = window.prompt("처리 중 대화입니다. 강제 보관하려면 '보관'을 입력하세요.", "");
+      if (text !== "보관") return;
       const payload = await apiFetch("/api/delete_conversation", {
         method: "POST",
         body: JSON.stringify({
           conversation_id: cid,
           force: true,
-          confirm_text: "삭제",
+          confirm_text: "보관",
         }),
       });
-      showToast("처리 중 대화를 삭제 대기 상태로 전환했습니다.");
+      showToast("처리 중 대화를 보관했습니다.");
       await refreshWorkspace(payload.current || "");
       return;
     }
@@ -4713,7 +4715,7 @@ function openConversationItemMenu(cid, triggerEl) {
   }));
   menu.appendChild(makeItem("공유 관리", "conversation.read", () => openShareManager(cid)));
   menu.appendChild(makeItem("제목 변경", "conversation.rename", () => renameCurrentConversation(cid)));
-  menu.appendChild(makeItem("삭제", "conversation.delete", () => deleteConversation(cid), { danger: true }));
+  menu.appendChild(makeItem("보관", "conversation.delete", () => deleteConversation(cid), { danger: true }));
 
   document.body.appendChild(menu);
 

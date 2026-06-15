@@ -72,7 +72,11 @@ CREATE TABLE IF NOT EXISTS agent_runtime.core_conversations (
     -- 전환된다 — 이력 열람은 가능하되 더 이상 진행(새 메시지)할 수 없다. blocked_at
     -- 이 NULL 이 아니면 차단. 정본은 alembic 0005_core_conv_blocked.
     blocked_at        timestamptz,
-    blocked_reason    varchar(256)
+    blocked_reason    varchar(256),
+    -- TASK-0273: "삭제" 를 soft-archive 로 전환 — archived_at 이 NULL 이 아니면 보관
+    -- (소유자 목록 숨김 + 진행 차단, 데이터 보존). 정본은 alembic 0007_core_conv_archived.
+    archived_at            timestamptz,
+    archived_by_account_id bigint
 );
 
 -- TASK-0248: 기존 테이블(이미 생성됨)에도 멱등 적용 — alembic 미적용 환경 self-heal.
@@ -80,9 +84,17 @@ ALTER TABLE agent_runtime.core_conversations
     ADD COLUMN IF NOT EXISTS blocked_at timestamptz;
 ALTER TABLE agent_runtime.core_conversations
     ADD COLUMN IF NOT EXISTS blocked_reason varchar(256);
+-- TASK-0273: archived 컬럼 멱등 ALTER (alembic 미적용 환경 self-heal).
+ALTER TABLE agent_runtime.core_conversations
+    ADD COLUMN IF NOT EXISTS archived_at timestamptz;
+ALTER TABLE agent_runtime.core_conversations
+    ADD COLUMN IF NOT EXISTS archived_by_account_id bigint;
 
 CREATE INDEX IF NOT EXISTS ix_core_conv_owner
     ON agent_runtime.core_conversations (owner_account_id);
+
+CREATE INDEX IF NOT EXISTS ix_core_conv_archived
+    ON agent_runtime.core_conversations (archived_at);
 
 CREATE INDEX IF NOT EXISTS ix_core_conv_product
     ON agent_runtime.core_conversations (product_id);

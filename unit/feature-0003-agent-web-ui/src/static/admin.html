@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260615-task0268-avatar" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260615-task0273-archive" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -56,6 +56,11 @@
         <!-- TASK-0136: LLM 사용량 tab (admin 전용 — console.usage.read 없으면 숨김) -->
         <button type="button" class="admin-tab" data-admin-tab="usage" id="adminTabUsage" style="display:none">
           <span class="admin-tab-label">LLM 사용량</span>
+        </button>
+
+        <!-- TASK-0273: 보관 대화 tab (conversation.archive.read.any 없으면 숨김) -->
+        <button type="button" class="admin-tab" data-admin-tab="archives" id="adminTabArchives" style="display:none">
+          <span class="admin-tab-label">보관 대화</span>
         </button>
 
         <!-- TASK-0095: 설정 tab — 전역 시스템 프롬프트 + 차후 운영 항목 확장 -->
@@ -467,6 +472,22 @@
         </details>
       </section>
 
+      <!-- TASK-0273: 보관 대화 pane (conversation.archive.read.any) — 오용 방지 감사 조회 -->
+      <section class="admin-pane" data-admin-pane="archives">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">Archives</div>
+            <h2>보관된 대화</h2>
+          </div>
+          <div class="admin-pane-actions">
+            <input type="text" id="archiveSearch" placeholder="제목·ID 검색" autocomplete="off" />
+            <button type="button" id="archiveRefreshBtn" class="btn-secondary">새로고침</button>
+          </div>
+        </header>
+        <p class="admin-pane-note">사용자가 "삭제"한 대화는 hard-delete 되지 않고 보관됩니다. 데이터·첨부는 보존되어 오용 방지 감사·맥락 참조에 사용됩니다. 소유 계정에서는 목록에 보이지 않으며 새 메시지 진행이 차단됩니다.</p>
+        <div id="archivesContent" class="admin-archives-content">로딩 중…</div>
+      </section>
+
       <!-- TASK-0096 v2: 설정 pane — 계정/역할/제품 과 동일한 list-detail 5단 구조.
            새 항목은 list row <button data-settings-tab="X"> + detail panel <article data-settings-panel="X"> 한 쌍 추가로 확장.
            panel 마운트는 admin.js 의 SETTINGS_PANEL_MOUNTERS 맵에 (key, mount fn) 등록. -->
@@ -545,7 +566,7 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260615-task0270-inherit-gate"></script>
+  <script src="/static/admin.js?v=20260615-task0273-archive"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
 </body>
 </html>

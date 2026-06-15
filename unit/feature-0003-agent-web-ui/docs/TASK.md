@@ -17,7 +17,27 @@ source_of_truth: true
 - [x] node --check app.js PASS.
 - [ ] (잔여) verify-completion --pre-commit PASS → commit/push/main 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증(프로필 첫 진입 시 제품 범위 채워짐).
 
-## 0. TASK-0268 (current cycle, 동시세션 TASK-0267[perm-tree] 선점으로 0267→0268 재번호) — 사용자 프로필 / 제품 아이콘 이미지 + Identicon 기본
+## 0a. TASK-0273 (current cycle, 동시세션 TASK-0272[prompt-scope] 선점으로 0272→0273 재번호) — 대화 삭제 → soft-archive(보관) + admin 조회 + 맥락 참조
+- 목표: 대화 "삭제" 를 hard-delete → 해당 계정에서 안 보이는 **보관(archive)** 으로 전환. (1) 보관 대화를 대화 맥락에 참조(fork) 가능 + (2) 오용 방지 admin 조회 가능.
+- 등급: **Critical §12.3** (파괴적 삭제 동작 의미 변경 + 신규 admin 데이터 접근 표면 + 스키마 마이그레이션). PLAN-APPROVED(사용자 3개 설계 결정 확정).
+- 사용자 결정(AskUserQuestion): 보관 동작=**진행 차단(동결)**, admin 조회 권한=**신규 보관전용**(conversation.archive.read.any), 맥락 참조=**fork 게이트 완화(최소)**.
+- 구현:
+  - [x] 스키마(3중 멱등, TASK-0248 동형): `core_conversations.archived_at`/`archived_by_account_id` — alembic `0007_core_conv_archived`(down=0006) + `agent_runtime_schema.sql`(CREATE+ALTER+index) + app.py MySQL 폴백 ALTER.
+  - [x] 삭제→archive: `_delete_conversation_impl` 가 `delete_conversation_records`(hard-delete) 대신 `_archive_conversation`(UPDATE archived_at, archived_at IS NULL 가드) 호출 → status `archived`/`archived_pending`. 데이터·MinIO 첨부 **보존**(cascade soft-delete 안 함). 응답 키는 기존 deleted/deleted_pending 유지(프론트 호환).
+  - [x] 목록 숨김: `_list_conversations_pg`(PG)·`_list_conversations`(MySQL) 둘 다 `archived_at IS NULL` (소유자·admin 브라우징 공통, 검색/날짜 경로 포함).
+  - [x] 진행 차단: `_conversation_block_info` 가 blocked_at **또는** archived_at set 이면 차단(보관 사유). /api/ask 가 이 게이트로 보관 대화 진행 403.
+  - [x] 신규 권한 `conversation.archive.read.any`(catalog + admin seed 자동 + admin catchup 명시 목록 추가) + `GET /api/admin/conversations/archived`(권한 게이트, 메타만, q 검색 bound param, PG/MySQL).
+  - [x] admin 콘솔 "보관 대화" 탭(권한 없으면 숨김) + loadArchivedConversations/렌더 + 새로고침/검색.
+  - [x] fork 게이트 완화: 접근/fork 경로에 archived 필터 없음(보관 대화 참조·복제 가능, 사본은 정상 대화). 삭제 UI 라벨 "보관" 으로(메뉴/confirm/toast/bulk).
+- 검증:
+  - [x] py_compile + node --check app.js/admin.js + CSS brace.
+  - [x] 신규 `test_conversation_archive.py` **7 PASS**(archive UPDATE 가드·hard-delete 미호출·forbidden·block_info archived·목록 필터 정적·admin 권한 403·권한 catalog) + 기존 `test_product_delete_block_conv.py` block_info SQL 3-tuple 갱신 + make test 컨테이너 **전체 회귀 0**(ALL=0) + ruff clean.
+  - [x] **라이브 라운드트립**(임시 web 적용 + PG superuser ALTER): 대화 archive→목록에서 사라짐·PG archived_at/by 기록·/api/ask 403(진행 차단)·admin 보관 조회 count=2(권한 catchup 후). **라이브 검증이 2개 실 버그 포착·수정**: ① PG 컬럼 미적용(web DML-only) ② admin 권한 catchup 누락(신규 권한이 admin 역할에 자동 grant 안 됨).
+  - [x] **outside-voice 적대적 보안 리뷰 SHIP**(REV-20260615-0273, BLOCKER 0 — 데이터 보존 의도적·목록 숨김 전 경로·진행 차단·admin only·멱등 스키마 PASS; MINOR[deploy-order robustness·count 드리프트] 비차단).
+- 배포: **migrate-first 필수**(web=DML-only role → alembic 0007 superuser 선행 적용 후 web 재빌드). `deploy_scope: included`.
+- [ ] (잔여) 머지 → `make migrate`(alembic 0007) → web 재배포 → PB-0008(보관·admin 조회·진행 차단 시각검증).
+
+## 0z. TASK-0268 (직전 cycle, 머지됨) — 사용자 프로필 / 제품 아이콘 이미지 + Identicon 기본
 - 목표: 사용자 프로필 이미지·제품별 아이콘 이미지를 설정 가능하게. 기본(미설정) 프로필 이미지는 Identicon. (사용자 결정: Gravatar 미사용[email 컬럼 없음·외부의존 0], Identicon=프론트 생성.)
 - 등급: **Major §12.3** (신규 스키마 컬럼 + 이미지 업로드/서빙 엔드포인트 표면).
 - 구현(백엔드 app.py):

@@ -3545,3 +3545,18 @@ source_of_truth: true
 - Files: src/static/app.js, src/static/index.html, docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md
 - Rollback: lazy 디스패치를 탭 클릭 리스너로 되돌리고 `switchProfileTab` 내부 디스패치 제거(= 회귀), 캐시버스터 환원.
 - Deploy: web 재빌드(정적자산). app.py/worker 무변경.
+
+## CHG-20260615-0273
+- Date: 2026-06-15 (TASK-0273, **Critical §12.3** — 대화 삭제→soft-archive; 동시세션 prompt-scope 선점 0272 → §13.1 재번호 0272→0273)
+- Scope: app.py(삭제 동작 변경 + 신규 엔드포인트 + 권한 + 진행차단) + alembic 0007 + agent_runtime_schema.sql + 정적자산. 스키마 마이그레이션(컬럼 ADD, 데이터 무손실).
+- 변경:
+  - (스키마 3중 멱등) `core_conversations.archived_at`/`archived_by_account_id` — alembic `0007_core_conv_archived`(down=0006_datasource_health) + agent_runtime_schema.sql(CREATE+ALTER+index) + app.py MySQL 폴백 ALTER. blocked(0005) 3중 패턴 동형.
+  - (삭제→archive) `_archive_conversation`(UPDATE archived_at=NOW(), archived_by, WHERE archived_at IS NULL 가드, PG+MySQL). `_delete_conversation_impl` 가 hard-delete(`delete_conversation_records`) 대신 호출 → status `archived`/`archived_pending`(첨부 cascade soft-delete 제거 — 데이터 보존). 응답 키 deleted/deleted_pending 유지(프론트 호환).
+  - (목록 숨김) `_list_conversations_pg`·`_list_conversations` 둘 다 WHERE `archived_at IS NULL`.
+  - (진행 차단) `_conversation_block_info` SELECT 에 archived_at 추가 → blocked_at OR archived_at 이면 차단(보관 사유). /api/ask 게이트 재사용.
+  - (권한+admin) PERMISSION_DEFINITIONS 에 `conversation.archive.read.any` + admin seed 자동 + `_ensure_seed_roles` admin catchup 목록 추가. `GET /api/admin/conversations/archived`(권한 게이트, 메타만, q bound param, PG/MySQL + 계정 enrich). admin.html "보관 대화" 탭 + admin.js loadArchivedConversations/렌더 + 게이트/검색/새로고침. styles.css .admin-archives-*.
+  - (fork+UI) 접근/fork 경로 archived 필터 없음(보관 참조·복제 가능). app.js 삭제 UI 라벨 "보관". 캐시버스터 ?v=20260615-task0273-archive.
+- 검증: 신규 test_conversation_archive.py 7 PASS + 기존 test_product_delete_block_conv block_info SQL 3-tuple 갱신 + make test 컨테이너 전체 회귀 0(ALL=0) + ruff + py_compile + node --check + CSS brace + 라이브 라운드트립(archive→목록숨김·PG 기록·ask 403·admin 조회 count=2) + outside-voice 보안 리뷰 SHIP(REV-0273). 라이브가 2버그(PG 컬럼·admin catchup) 포착 수정.
+- Files: src/app.py, unit/feature-0002-agent-core/{alembic/versions/20260615_0007_core_conv_archived.py, src/scripts/agent_runtime_schema.sql}, src/static/{app.js,admin.js,admin.html,styles.css,index.html}, tests/test_conversation_archive.py, tests/test_product_delete_block_conv.py, docs/{TASK,MODIFY,REPORT,REVIEW,FUNCTION}.md, docs/STATUS.md(repo)
+- Rollback: `_delete_conversation_impl` 를 delete_conversation_records 환원(=hard-delete 복귀), archive 헬퍼/admin 엔드포인트/권한/탭/목록필터/block_info archived 분기 제거 + 캐시버스터 환원. archived 컬럼·권한 잔존(무해) / alembic 0007 downgrade 로 DROP.
+- Deploy: **migrate-first 필수** — web=DML-only role. PR 머지 후 make migrate(alembic 0007) 선행 → web 재빌드. ask/insight-worker 무변경.
