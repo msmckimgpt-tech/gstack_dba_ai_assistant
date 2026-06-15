@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0255b [SUBAGENT:5-lens adversarial, cross-feature(TASK-0255)] — SHIP_WITH_FIXES
+- Date: 2026-06-15
+- Cycle: TASK-0255 (cross-feature — 주 리뷰는 agent-core REV-20260615-0255). web 영향분(`_read_insight_datasource_health` + `admin_list_datasources` insight_health 첨부 + admin.js 배지) 검토. (id 접미 `b`: 동일 날짜 TASK-0254 evidence 가 `REV-20260615-0255` 선점 — 충돌 회피.)
+- L3(credential-leak) lens 전수: web 응답·admin.js 에 자격증명/민감정보 노출 없음(host 는 기존 conn_status/datasource 목록과 동형 노출, errno-tag 80자). `console.access` 권한 게이트 유지. RO 연결·graceful(테이블 부재 시 {} — 목록 무영향). BLOCKER 0. 상세는 agent-core REV-20260615-0255.
+- 잔여: PB-0008 Windows-browser 시각검증(배포 후, CHECK#13) — admin.js "인사이트 스캔 상태" 행.
+
 ## REV-20260615-0255 [SKIPPED:pb0008-evidence-docs-only]
 - Date: 2026-06-15
 - Cycle: TASK-0254 PB-0008 Windows-browser 시각검증 evidence 기록 (docs-only — TEST.md §4 Run + TASK 체크박스 + 스크린샷; src 코드 0).

@@ -239,6 +239,32 @@ CREATE INDEX IF NOT EXISTS ix_llm_usage_conv ON agent_runtime.llm_usage (convers
 CREATE INDEX IF NOT EXISTS ix_llm_usage_model ON agent_runtime.llm_usage (model);
 
 -- ============================================================================
+-- 6c. datasource_health — datasource 연결 health 정본 (TASK-0255 R2)
+--     insight-worker 가 매 cycle datasource 별 연결 상태(conn_health 권위 status + scan_outcome)를 upsert.
+--     관리콘솔이 "연결 불안정으로 미커버"를 "권한 실패"와 구분해 표면화. PK=scope_key(엔드포인트 해시).
+--     자격증명 비영속(host/port/engine/status/fails/errno-tag 만). alembic 0006 과 동형 — fresh deploy 정합.
+--     §7 의 GRANT ... ON ALL TABLES 가 본 테이블을 자동 커버(부트스트랩 스냅샷).
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS agent_runtime.datasource_health (
+    scope_key          VARCHAR(64) PRIMARY KEY,
+    datasource_label   VARCHAR(255),
+    engine             VARCHAR(16)  NOT NULL,
+    host               VARCHAR(255),
+    port               INTEGER,
+    status             VARCHAR(16)  NOT NULL,
+    last_scan_outcome  VARCHAR(24),
+    fail_count         INTEGER      NOT NULL DEFAULT 0,
+    last_error_tag     VARCHAR(80),
+    last_checked_at    TIMESTAMPTZ,
+    last_scan_at       TIMESTAMPTZ,
+    last_transition_at TIMESTAMPTZ,
+    run_id             VARCHAR(64),
+    updated_at         TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_datasource_health_status  ON agent_runtime.datasource_health (status);
+CREATE INDEX IF NOT EXISTS ix_datasource_health_updated ON agent_runtime.datasource_health (updated_at DESC);
+
+-- ============================================================================
 -- 7. Role grants (post-table creation)
 --    DEFAULT PRIVILEGES 가 이미 설정됐으므로 bootstrapped role 에는 자동 적용됨.
 --    하지만 명시적 grant 로 이중 보장.

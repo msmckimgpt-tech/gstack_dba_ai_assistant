@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0255
+- Date: 2026-06-15 (TASK-0255, **Major §12.3** — 공유 연결 인프라 db.py + 신규 PG 테이블. insight 연결 탄력성 R1/R2/R3)
+- Scope: agent-core — `config.py`(신규 knob), `db.py`(control-plane bounded timeout), `insight.py`(R1 로그 edge-trigger + R2 PG 영속), `alembic/versions/20260615_0006_datasource_health.py`(신규), `agent_runtime_schema.sql`(§6c) + cross-feature web(feature-0003 app.py/admin.js/admin.html — 별도 CHG).
+- 변경:
+  - **R3**: `AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC`(기본 10) + `_controlplane_connect_timeout()`. db.py control-plane(datasource=None) MySQL params 의 `connection_timeout` 및 `_pg_connect`/`_pg_connect_ro` 의 `connect_timeout` 을 AGENT_TIMEOUT_SEC(300s)→bounded 10s. **breaker 미적용**(timeout 만 — MEMORY_DB fast-fail=전체 마비 차단). data-plane(_dataplane_connect_timeout) 불변.
+  - **R1**: `_LAST_DS_SCAN_STATUS`(모듈 dict, 단일 insight-worker 프로세스) + `_ds_scan_status_changed()`. run_insight_cycle except 블록을 edge-trigger(상태 전이 시 WARNING, 지속 DEBUG)로 — 매-cycle 도배 제거. `DatasourceCircuitOpen` 을 `_is_perm` 보다 먼저 분기. 예외 로그 `err=%r,_ds_exc`→`%s,str()[:160]`(자격증명 비노출). registry 동기 prune(stale key 누수 차단).
+  - **R2**: 신규 `agent_runtime.datasource_health`(scope_key PK, status/last_scan_outcome/fail_count/last_error_tag/host/port — **자격증명 비영속**). `_persist_datasource_health`(soft telemetry — PG 미가용/실패해도 cycle 무영향, registry prune) + `_record_ds_health`(conn_health.status_for 권위 status). alembic `0006`(down=`0005_core_conv_blocked`) + 부트스트랩 §6c + **명시 GRANT**(baseline GRANT 미포함·superuser 적용 trap — agent_kb_rw INSERT/agent_kb_ro SELECT).
+- 위험/회귀: db.py control-plane 변경은 datasource=None 전 경로 영향(로컬·신뢰 호스트라 안전, 회귀 가드 테스트). R2 는 soft telemetry(격리). breaker 불변식 보존.
+- 검증: `make test` GREEN(19 신규 + 회귀). adversarial 5-lens SHIP_WITH_FIXES → REV-20260615-0255.
+
 ## CHG-20260612-0248
 - Date: 2026-06-12 (TASK-0248, **Major §12.3** — 관리 콘솔 제품 삭제 시 참조 대화 차단(blocked) 전환; 주 변경은 web feature-0003 CHG-20260612-0248. 본 항목은 **스키마/마이그레이션 영향만**)
 - Scope: agent-core — `agent_runtime.core_conversations` 에 차단 플래그 컬럼 2개 additive 추가(데이터 무손실 — 기존 행 blocked_at=NULL=미차단).

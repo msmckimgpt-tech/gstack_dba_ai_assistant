@@ -19,6 +19,7 @@ __all__ = [
     "AGENT_DB_CONNECT_BACKOFF_SEC",
     "AGENT_DB_CONNECT_RETRIES",
     "AGENT_DB_CONNECT_TIMEOUT_SEC",
+    "AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC",
     "AGENT_DB_POOL_ENABLED",
     "AGENT_DB_POOL_MAX_OVERFLOW",
     "AGENT_DB_POOL_RESET_SESSION",
@@ -772,6 +773,15 @@ AGENT_DB_CONNECT_BACKOFF_SEC = float(os.getenv("AGENT_DB_CONNECT_BACKOFF_SEC", "
 #   DB, datasource=None)은 AGENT_TIMEOUT_SEC 유지(동작 0 변경). 0/미설정이면 비활성
 #   (= AGENT_TIMEOUT_SEC 폴백, 기존 동작).
 AGENT_DB_CONNECT_TIMEOUT_SEC = int(os.getenv("AGENT_DB_CONNECT_TIMEOUT_SEC", "10"))
+# ── control-plane 연결 격리 (TASK-0255) ───────────────────────────────────────
+# 문제: control-plane(datasource=None: MEMORY_DB/DB_CONNECT_DB/replica/data-RO) MySQL 연결은
+# connection_timeout=AGENT_TIMEOUT_SEC(운영 300s)를 그대로 써, control-plane 이 불안정하면 insight
+# cycle 의 첫 connect(mem_conn/db_conn)가 최대 300s×retry 블록 후 status=error → degraded_backoff.
+# data-plane(AGENT_DB_CONNECT_TIMEOUT_SEC) 와 달리 bounded 가 없던 잔존 경로.
+# 해결: 연결 *수립* 상한을 쿼리 예산과 분리(기본 10s). control-plane 은 로컬·신뢰 호스트라 안전.
+#   **breaker 는 적용하지 않는다**(MEMORY_DB fast-fail=전체 마비) — timeout 만 bounded.
+#   0/미설정이면 코드 폴백 10s(AGENT_TIMEOUT_SEC 300s 회귀 방지 — data-plane 폴백과 다름).
+AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC = int(os.getenv("AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC", "10"))
 # ── 연결 health 모니터 (conn-health-monitor) — modules/conn_health.py ──────────
 # 백그라운드 probe(TCP 선검사 + 실제 DB connect+SELECT 1)로 per-datasource 연결 상태를
 # 미리 유지. agent/admin 은 미리 계산된 상태를 즉시 읽어, 한 datasource 불안정이 다른

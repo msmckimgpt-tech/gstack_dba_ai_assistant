@@ -1595,6 +1595,141 @@ def _discover_mssql_databases(mem_conn, ds_key: str, ds_coords: dict | None) -> 
     return dbs
 
 
+# ── TASK-0255: insight scan_failed 로그 edge-trigger 상태 캐시 ─────────────────
+# 매 8s cycle 마다 불안정 datasource 전부를 WARNING 으로 재기록하던 도배(2일 ~20만 줄) 제거.
+# 단일 insight-worker 프로세스가 cycle 을 직렬로 도므로(다른 worker 는 run_insight_cycle 미호출)
+# 모듈-레벨 dict 로 충분(프로세스 간 공유 캐시 불요). key=(scope_key, db_name) → 직전 분류 상태.
+_LAST_DS_SCAN_STATUS: dict[tuple, str] = {}
+
+
+def _ds_scan_status_changed(scope_key, db_name, curr: str) -> bool:
+    """TASK-0255 R1: (scope_key, db_name) 의 직전 cycle 분류 상태 대비 변경 여부.
+    변경이면 True(→WARNING), 동일이면 False(→DEBUG). **부수효과로 최신 상태를 기록**한다.
+    단일 insight-worker 프로세스가 cycle 을 직렬로 도므로 모듈-레벨 dict 로 충분(공유 캐시 불요)."""
+    key = (scope_key, db_name)
+    prev = _LAST_DS_SCAN_STATUS.get(key)
+    _LAST_DS_SCAN_STATUS[key] = curr
+    return prev != curr
+
+# ── TASK-0255 R2: datasource 연결 health PG 영속 (agent_runtime.datasource_health) ──
+# 관리콘솔이 "연결 불안정으로 미커버"(status=unstable/circuit_open)를 "권한 실패"(perm_failed)와
+# 구분해 표면화할 수 있게, datasource 별 연결 상태를 PG 정본에 upsert 한다. 자격증명 비영속.
+_DS_HEALTH_UPSERT_SQL = """
+INSERT INTO agent_runtime.datasource_health
+  (scope_key, datasource_label, engine, host, port, status, last_scan_outcome,
+   fail_count, last_error_tag, last_checked_at, last_scan_at, last_transition_at, run_id, updated_at)
+VALUES (%(scope_key)s, %(label)s, %(engine)s, %(host)s, %(port)s, %(status)s, %(scan_outcome)s,
+        %(fail_count)s, %(last_error_tag)s,
+        CASE WHEN %(last_checked_at)s IS NULL THEN NULL ELSE to_timestamp(%(last_checked_at)s) END,
+        now(), now(), %(run_id)s, now())
+ON CONFLICT (scope_key) DO UPDATE SET
+  datasource_label   = COALESCE(EXCLUDED.datasource_label, agent_runtime.datasource_health.datasource_label),
+  engine             = EXCLUDED.engine,
+  host               = COALESCE(EXCLUDED.host, agent_runtime.datasource_health.host),
+  port               = COALESCE(EXCLUDED.port, agent_runtime.datasource_health.port),
+  status             = EXCLUDED.status,
+  last_scan_outcome  = EXCLUDED.last_scan_outcome,
+  fail_count         = EXCLUDED.fail_count,
+  last_error_tag     = EXCLUDED.last_error_tag,
+  last_checked_at    = COALESCE(EXCLUDED.last_checked_at, agent_runtime.datasource_health.last_checked_at),
+  last_scan_at       = EXCLUDED.last_scan_at,
+  last_transition_at = CASE WHEN EXCLUDED.status <> agent_runtime.datasource_health.status
+                            THEN now() ELSE agent_runtime.datasource_health.last_transition_at END,
+  run_id             = EXCLUDED.run_id,
+  updated_at         = now();
+"""
+
+# scan_outcome 심각도(높을수록 우선 기록) — 한 datasource 의 여러 DB 결과를 datasource-레벨로 집계.
+_DS_SCAN_OUTCOME_PREC = {"ok": 0, "perm_failed": 1, "skipped_no_db": 1, "other_failed": 2, "circuit_open": 3}
+
+
+def _record_ds_health(rows: dict, scope_key, ds_coords, scan_outcome: str) -> None:
+    """TASK-0255 R2: datasource 연결 health 행을 cycle-local dict 에 누적(PG 영속용). **절대 raise 안 함**
+    (insight cycle 을 깨뜨리면 안 되는 soft telemetry). conn_health 의 권위 status(healthy/unstable/unknown)를
+    우선 사용하고 이번 cycle 의 scan_outcome 을 병기. 자격증명 비포함(host/port/engine/status/fails/errno-tag)."""
+    try:
+        if not scope_key:
+            return
+        try:
+            from . import conn_health as _ch
+            _st = _ch.status_for(ds_coords) or {}
+        except Exception:
+            _st = {}
+        prev = rows.get(scope_key)
+        if prev is not None:
+            # 이미 더(또는 동급) 심각한 outcome 이 기록됐으면 그걸 유지(health status 만 최신화).
+            if _DS_SCAN_OUTCOME_PREC.get(prev.get("scan_outcome"), 0) >= _DS_SCAN_OUTCOME_PREC.get(scan_outcome, 0):
+                scan_outcome = prev.get("scan_outcome")
+        _coords = ds_coords or {}
+        rows[scope_key] = {
+            "scope_key": scope_key,
+            "label": (_st.get("label") or _coords.get("key")),
+            "engine": (_st.get("engine") or _coords.get("engine") or "mysql"),
+            "host": (_st.get("host") or _coords.get("host")),
+            "port": (_st.get("port") or _coords.get("port")),
+            "status": (_st.get("status") or "unknown"),
+            "scan_outcome": scan_outcome,
+            "fail_count": int(_st.get("fails") or 0),
+            "last_error_tag": (str(_st.get("last_error") or "")[:80] or None),
+            "last_checked_at": (_st.get("checked_at") or None),  # epoch float (None → SQL NULL)
+        }
+    except Exception:  # pragma: no cover — soft telemetry 는 어떤 경우에도 cycle 을 막지 않는다
+        pass
+
+
+def _persist_datasource_health(rows: dict, run_id: str) -> None:
+    """TASK-0255 R2: datasource 연결 health 를 PG(agent_runtime.datasource_health)에 upsert + registry 동기 prune.
+    soft telemetry — PG 미가용(M0/flag OFF)·연결 실패는 cycle 에 영향 주지 않는다(WARNING 1줄 후 return).
+    bounded connect timeout(TASK-0255 _controlplane_connect_timeout, _pg_connect 적용)으로 PG 불안정도 블록 안 됨.
+    **자격증명 비영속**: user/password 는 rows 에 애초에 없고(_record_ds_health), 저장 컬럼도 host/port/engine/
+    status/fails/errno-tag 만."""
+    try:
+        if not _pg_available():
+            return  # M0 standalone / AGENT_KB_PG_* 미설정 — graceful skip(테스트는 insight._pg_available patch)
+    except Exception:
+        return
+    conn = None
+    try:
+        conn = _pg_connect(autocommit=True)  # bounded connect timeout(R3) + 자격증명은 conninfo 내부에만
+        cur = conn.cursor()
+        try:
+            for r in rows.values():
+                cur.execute(_DS_HEALTH_UPSERT_SQL, {
+                    "scope_key": r["scope_key"],
+                    "label": r.get("label"),
+                    "engine": r.get("engine") or "mysql",
+                    "host": r.get("host"),
+                    "port": int(r["port"]) if r.get("port") else None,
+                    "status": r.get("status") or "unknown",
+                    "scan_outcome": r.get("scan_outcome"),
+                    "fail_count": int(r.get("fail_count") or 0),
+                    "last_error_tag": r.get("last_error_tag"),
+                    "last_checked_at": (float(r["last_checked_at"]) if r.get("last_checked_at") else None),
+                    "run_id": run_id,
+                })
+            # registry 동기 prune — 현재 datasource set 에 없는 행 제거(삭제·rename 된 datasource 잔류 방지).
+            keep = list(rows.keys())
+            if keep:
+                cur.execute(
+                    "DELETE FROM agent_runtime.datasource_health WHERE scope_key <> ALL(%(keep)s)",
+                    {"keep": keep},
+                )
+            else:
+                cur.execute("DELETE FROM agent_runtime.datasource_health")
+        finally:
+            cur.close()
+    except Exception as exc:
+        logging.getLogger("insight").warning(
+            "datasource_health_persist_failed err=%s — soft telemetry, cycle 계속", type(exc).__name__,
+        )
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
     cycle_run_id = str(run_id or "").strip() or _new_insight_worker_run_id()
     started = time.perf_counter()
@@ -1668,6 +1803,8 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                         continue
                     ds_targets.append((_k, _v))
             schema_count = 0
+            ds_health_rows: dict[str, dict] = {}  # TASK-0255 R2: scope_key → 연결 health 행(PG 영속)
+            _seen_scan_keys: set = set()  # TASK-0255 M-1: 이번 cycle 관측한 (scope_key, db_name) — stale prune 용
             plan_start = time.perf_counter()
             for _ds_key, _ds_coords in ds_targets:
                 # TASK-0219: 스코핑 식별자는 라벨(_ds_key)이 아닌 **엔드포인트 해시**(scope_key).
@@ -1690,6 +1827,8 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                         logging.getLogger("insight").info(
                             "mssql_datasource_no_databases ds=%s — 등록 DB/기본DB 없음, 스캔 skip", _ds_key,
                         )
+                        # TASK-0255 R2: 미바인딩 MSSQL 도 연결 health 는 기록(관리콘솔 가시화).
+                        _record_ds_health(ds_health_rows, _ds_scope, _ds_coords, "skipped_no_db")
                         continue
                     # TASK-0226: 발견된 제품 접근가능 DB 수를 커버리지 telemetry 에 누적.
                     scan_report["db_targets"] = int(scan_report.get("db_targets", 0) or 0) + len(_db_targets)
@@ -1756,24 +1895,55 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                         # (db_targets 도 MSSQL 에서만 누적 — MySQL 기본 DB 는 db 차원 없음).
                         if _is_mssql_ds:
                             scan_report["db_failed"] = int(scan_report.get("db_failed", 0) or 0) + 1
-                        # 권한 거부(login failed / cannot open database / SELECT denied)는 가장 흔한
-                        # 원인이라 메시지에 진단 힌트를 덧붙인다 — bin/datasource-mssql-ro-bootstrap.sql
-                        # 의 멀티 DB GRANT 미적용 신호. 텍스트 토큰은 substring 으로 충분하나, MSSQL
-                        # 에러번호(18456/916/229/297)는 짧은 숫자라 무관 메시지(행수 등)에 우연 매칭될 수
-                        # 있어 정규식 단어경계로 매칭한다(REV-20260611-0226 CONCERN — 가짜 힌트 방지).
-                        _err_s = str(_ds_exc).lower()
-                        _is_perm = (
-                            any(t in _err_s for t in
-                                ("login failed", "cannot open database", "permission", "denied"))
-                            or bool(re.search(r"\b(18456|916|229|297)\b", _err_s))
-                        )
-                        logging.getLogger("insight").warning(
-                            "insight_datasource_scan_failed ds=%s db=%s perm_suspect=%s err=%r — "
+                        # TASK-0255: 실패 분류 — circuit_open 을 _is_perm 판정보다 **먼저** 판정한다.
+                        # DatasourceCircuitOpen 의 한국어 메시지가 _is_perm 토큰과 우연 겹치지 않게(결합 차단).
+                        if isinstance(_ds_exc, _db.DatasourceCircuitOpen):
+                            _curr = "circuit_open"
+                            _is_perm = False
+                        else:
+                            # 권한 거부(login failed / cannot open database / SELECT denied)는 가장 흔한 원인이라
+                            # 진단 힌트를 덧붙인다 — bin/datasource-mssql-ro-bootstrap.sql 의 멀티 DB GRANT 미적용
+                            # 신호. MSSQL 에러번호(18456/916/229/297)는 짧은 숫자라 무관 메시지(행수 등)에 우연
+                            # 매칭될 수 있어 정규식 단어경계로 매칭한다(REV-20260611-0226 — 가짜 힌트 방지).
+                            _err_s = str(_ds_exc).lower()
+                            _is_perm = (
+                                any(t in _err_s for t in
+                                    ("login failed", "cannot open database", "permission", "denied"))
+                                or bool(re.search(r"\b(18456|916|229|297)\b", _err_s))
+                            )
+                            _curr = "perm_failed" if _is_perm else "other_failed"
+                        # TASK-0255 R2: datasource 연결 health 행 누적(PG 영속 — 관리콘솔 가시화).
+                        _record_ds_health(ds_health_rows, _ds_scope, _ds_coords, _curr)
+                        # TASK-0255 R1: edge-trigger — 상태 전이(직전 cycle 대비) 시에만 WARNING, 지속은 DEBUG.
+                        # 매 8s cycle 마다 불안정 DS 전부를 WARNING 으로 재기록하던 도배(2일 ~20만 줄) 제거.
+                        _hint = (" (RO 로그인이 이 DB 에 USER/GRANT 됐는지 확인 — "
+                                 "bin/datasource-mssql-ro-bootstrap.sql 을 DB 마다 실행)") if _is_perm else ""
+                        _log = logging.getLogger("insight")
+                        _seen_scan_keys.add((_ds_scope, _db_name))  # M-1: stale prune 용 이번 cycle 관측 키
+                        _changed = _ds_scan_status_changed(_ds_scope, _db_name, _curr)
+                        # M-2(자격증명 비노출): raw driver 예외를 %r 로 찍으면 args 에 DSN/계정이 섞일 수 있어
+                        # str()[:160] 으로 절단(conn_health last_error 80자 정책과 동형). 진단은 perm_suspect+status 로.
+                        (_log.warning if _changed else _log.debug)(
+                            "insight_datasource_scan_failed ds=%s db=%s status=%s perm_suspect=%s err=%s — "
                             "다음 대상 계속%s",
-                            _ds_key, _db_name, _is_perm, _ds_exc,
-                            (" (RO 로그인이 이 DB 에 USER/GRANT 됐는지 확인 — "
-                             "bin/datasource-mssql-ro-bootstrap.sql 을 DB 마다 실행)") if _is_perm else "",
+                            _ds_key, _db_name, _curr, _is_perm, str(_ds_exc)[:160], _hint,
                         )
+                    else:
+                        # TASK-0255: 예외 없이 스캔 완료 — R1 상태 캐시 healthy 갱신(직전 실패면 INFO recovered),
+                        # R2 health 행 ok 기록. **try 밖(else)이라 여기서 난 예외는 미스캔으로 오분류 안 됨**.
+                        # MINOR(FP-6 방어): else 문장은 모두 비-raise 이지만 R1/R2 격리를 명문화하려 try 로 감싼다.
+                        if _ds_key is not None and _ds_scope:
+                            try:
+                                _skey_ok = (_ds_scope, _db_name)
+                                _seen_scan_keys.add(_skey_ok)  # M-1: stale prune 용 관측 키
+                                if _LAST_DS_SCAN_STATUS.get(_skey_ok) not in (None, "healthy"):
+                                    logging.getLogger("insight").info(
+                                        "insight_datasource_scan_recovered ds=%s db=%s", _ds_key, _db_name,
+                                    )
+                                _LAST_DS_SCAN_STATUS[_skey_ok] = "healthy"
+                                _record_ds_health(ds_health_rows, _ds_scope, _ds_coords, "ok")
+                            except Exception:  # pragma: no cover — soft telemetry, cycle 절대 안 깨뜨림
+                                pass
                     finally:
                         set_active_datasource(None)  # active_database 도 함께 리셋(set_active_datasource 내부)
                         if _ds_key is not None and _ds_conn is not None:
@@ -1782,6 +1952,12 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                             except Exception:
                                 pass
             _timing_breakdown_add(timing, "plan_ms", (time.perf_counter() - plan_start) * 1000.0)
+            # TASK-0255 R2: datasource 연결 health 를 PG 정본에 영속(soft telemetry — 실패해도 cycle 계속).
+            _persist_datasource_health(ds_health_rows, cycle_run_id)
+            # TASK-0255 M-1: in-memory edge-trigger 캐시도 registry 동기 prune(PG prune 과 동형). 이번 cycle 에
+            # 관측 안 된 (scope_key, db_name) = 삭제·rename·비활성된 datasource/DB → stale key 제거(메모리 누수 차단).
+            for _k in [_k for _k in _LAST_DS_SCAN_STATUS if _k not in _seen_scan_keys]:
+                _LAST_DS_SCAN_STATUS.pop(_k, None)
     except Exception as exc:
         status = "error"
         err_text = str(exc).strip()[:500]

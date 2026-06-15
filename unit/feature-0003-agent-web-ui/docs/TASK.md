@@ -8,6 +8,10 @@ source_of_truth: true
 
 # Task
 
+## 0. TASK-0255 (cross-feature, current cycle) — insight datasource health 관리콘솔 표면화
+- [x] web `admin_list_datasources` 에 `insight_health` 첨부(`_read_insight_datasource_health`, RO·graceful·console.access) + admin.js `datasourceInsightHealth`/배지 enrich/`_dsInsightHealthLabel`/상세 "인사이트 스캔 상태" 행 — **연결 불안정 vs 권한 실패 구분**. 주 변경=agent-core R2(REV-20260615-0255). 자격증명 비노출.
+- [ ] 배포 후 PB-0008 Windows-browser 시각검증("인사이트 스캔 상태" 행, CHECK#13).
+
 ## 1. Current Status
 - State: in_progress
 - Owner: AI

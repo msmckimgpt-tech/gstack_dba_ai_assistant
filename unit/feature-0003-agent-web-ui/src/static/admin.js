@@ -14,6 +14,9 @@ const adminState = {
   // TASK-0244: '+ 데이터소스 추가' 드롭다운의 연결 상태 캐시 (key(lower) -> {state:'checking'|'ok'|'fail', elapsed_ms, error}).
   //  드롭다운 열림 시 /test 로 lazy probe → 배지로 표면화. 세션 내 재사용(매 토글마다 재probe 방지), 헤더 ↻ 로 강제 갱신.
   datasourceConnStatus: new Map(),
+  // TASK-0255 R2: insight-worker 가 PG 에 영속한 datasource 스캔 health (key(lower) -> insight_health dict).
+  //   web live conn_status 와 별개 — "연결 불안정 미커버" vs "권한 실패" 를 구분 표시.
+  datasourceInsightHealth: new Map(),
   datasourcesEnabled: false,  // AGENT_MULTI_DATASOURCE_ENABLED flag
   datasourcesSsrfPrivateGuard: true,  // TASK-0219: 사설/링크로컬 SSRF 경계 활성 여부(안내 문구 정합)
   tab: "dashboard",
@@ -1468,6 +1471,20 @@ function _dsKvRow(dl, k, v) {
   dl.append(dt, dd);
 }
 
+// TASK-0255 R2: insight-worker 가 PG 에 영속한 datasource 스캔 health 를 사람-친화 한글 라벨로.
+//   "연결 불안정"(circuit_open/unstable) ↔ "권한 필요"(perm_failed) 를 명시 구분 — 운영자 진단.
+function _dsInsightHealthLabel(ih) {
+  if (!ih) return "— (insight 미기록)";
+  const o = ih.scan_outcome;
+  const st = ih.status;
+  if (o === "circuit_open" || st === "unstable") return "⚠ 연결 불안정 (미커버 — 자동 재시도 대기)";
+  if (o === "perm_failed") return "⚠ 권한 필요 (연결됨, RO GRANT 누락)";
+  if (o === "other_failed") return "⚠ 스캔 실패 (기타 오류)";
+  if (o === "skipped_no_db") return "등록 DB 없음 (스캔 대상 없음)";
+  if (o === "ok") return "정상 (분석됨)";
+  return st ? `연결 ${st}` : "—";
+}
+
 function _dsRenderDetail(ds) {
   const detailEl = $("datasourceDetail");
   if (!detailEl || !ds) return;
@@ -1507,6 +1524,12 @@ function _dsRenderDetail(ds) {
   _dsKvRow(dl2, "비밀번호", ds.has_password ? "설정됨 (write-only)" : "⚠ 없음");
   // TASK-0215: insight-worker 탐색 토글 상태.
   _dsKvRow(dl2, "인사이트 탐색", ds.insight_enabled !== false ? "켜짐 (스키마·테이블 자동 탐색 중)" : "꺼짐 (탐색 안 함)");
+  // TASK-0255 R2: insight-worker 가 PG 에 영속한 마지막 스캔 health — 미커버 사유를 "연결 불안정" vs "권한 실패"
+  // 로 구분 표시(운영자 진단). insight 미기록(신규 datasource·PG 미가용)이면 "—".
+  if (ds.insight_enabled !== false) {
+    const _ih = adminState.datasourceInsightHealth.get(String(ds.key || "").trim().toLowerCase());
+    _dsKvRow(dl2, "인사이트 스캔 상태", _dsInsightHealthLabel(_ih));
+  }
   sec2.appendChild(dl2);
   detailEl.appendChild(sec2);
 
@@ -4239,11 +4262,18 @@ async function loadAdminData() {
   adminState.datasources.forEach((ds) => {
     const k = String(ds && ds.key || "").trim().toLowerCase();
     const cs = ds && ds.conn_status;
-    if (!k || !cs || !cs.status) return;
+    const ih = ds && ds.insight_health;  // TASK-0255 R2: insight 스캔 관점(PG 정본)
+    if (!k) return;
+    if (ih) adminState.datasourceInsightHealth.set(k, ih);
+    else adminState.datasourceInsightHealth.delete(k);
+    if (!cs || !cs.status) return;
     if (cs.status === "healthy") {
       adminState.datasourceConnStatus.set(k, { state: "ok", elapsed_ms: cs.elapsed_ms });
     } else if (cs.status === "unstable") {
       adminState.datasourceConnStatus.set(k, { state: "fail", error: "연결 불안정" });
+    } else if (ih && ih.scan_outcome === "circuit_open") {
+      // web live 모니터는 unknown 이나 insight 가 최근 circuit-open 관측 — 연결 불안정으로 표시.
+      adminState.datasourceConnStatus.set(k, { state: "fail", error: "연결 불안정(insight)" });
     } else {
       // unknown — 아직 probe 전. 기존 캐시가 있으면 유지, 없으면 미설정(배지=확인 중).
       if (!adminState.datasourceConnStatus.has(k)) adminState.datasourceConnStatus.delete(k);

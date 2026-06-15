@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0255 [SUBAGENT:5-lens adversarial — db.py blast-radius / GRANT trap / credential-leak / soft-telemetry / regression] — SHIP_WITH_FIXES
+- Date: 2026-06-15
+- Cycle: TASK-0255 (insight 연결 탄력성 R1 로그 edge-trigger / R2 PG datasource_health / R3 control-plane bounded timeout)
+- 패널: 5개 distinct-lens 적대 리뷰어(각자 REFUTE 시도) + adjudicator 코드대조 종합 (Workflow `task0255-adversarial-review`).
+- Verdict: **SHIP_WITH_FIXES**. 제출된 BLOCKER 5건은 전수 코드대조 결과 **환각(없는 코드/오독 라인 인용)** 으로 전부 기각(실 차단 결함 0건). 정당 MAJOR 2건 + MINOR 반영:
+  - **M-2 (필수·자격증명 불변식)**: except 로그 `err=%r, _ds_exc`(raw driver 예외 — args 에 DSN/계정 가능) → `err=%s, str(_ds_exc)[:160]`. 수정 완료.
+  - **M-1 (메모리 누수)**: `_LAST_DS_SCAN_STATUS` 가 삭제·rename datasource 의 stale key 무한 누적 → 매 cycle registry 동기 prune(PG prune 동형) 추가. 수정 완료.
+  - **MINOR**: success `else` 블록 try/except 감싸 R2/R1 격리 명문화, `_pg` upsert `last_checked_at = COALESCE(...)` 보존, web `_read_insight_datasource_health` 조회실패 debug 로그. 반영.
+- 기각 근거(요약): control-plane breaker 미적용 불변식은 `should_fast_fail`/`status_for`(scope_key None→무동작)로 코드 확인; prune 은 실패 datasource 도 `_record_ds_health` 로 keep 에 포함되어 정상 행 미삭제; alembic 0006 체인 0001→…→0006 무결; psycopg `connect_timeout` 은 TCP 핸드셰이크 전용(쿼리 실행 무관). 상세는 워크플로 산출.
+- 자격증명 노출면 전수: PG 행·upsert params·web 응답·admin.js clean(L3 검증), 로그 1곳(M-2)만 수정 필요했고 반영.
+
 ## REV-20260612-0248 [SCHEMA-ONLY:additive-column, cross-feature] — SHIP
 - Date: 2026-06-12
 - Cycle: TASK-0248 (관리 콘솔 제품 삭제 시 참조 대화 차단(blocked) 전환 — 주 cycle 은 web feature-0003, 본 feature 영향은 **스키마/alembic 만**)

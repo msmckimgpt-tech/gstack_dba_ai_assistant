@@ -94,6 +94,16 @@ def _dataplane_connect_timeout() -> int:
     return t if t > 0 else int(AGENT_TIMEOUT_SEC)
 
 
+def _controlplane_connect_timeout() -> int:
+    """control-plane(datasource=None: MEMORY_DB/DB_CONNECT_DB/replica/data-RO) + KB Postgres
+    연결 *수립* 상한(초). TASK-0255: 과거 connection_timeout=AGENT_TIMEOUT_SEC(운영 300s)라
+    control-plane 불안정이 cycle 을 최대 300s×retry 블록했다. 로컬·신뢰 호스트이므로 bounded(기본 10s).
+    **data-plane 과 달리 0/미설정 폴백은 10s** (AGENT_TIMEOUT_SEC 300s 회귀 방지). 쿼리 timeout 과 분리.
+    control-plane breaker 는 적용하지 않는다(timeout 만) — MEMORY_DB fast-fail=전체 마비 방지."""
+    t = int(AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC or 0)
+    return t if t > 0 else 10
+
+
 def _breaker_key(datasource: "dict | None") -> "str | None":
     """datasource scope_key(엔진+host+port 안정 해시). None=control-plane(미적용).
 
@@ -317,7 +327,10 @@ def connect(database: str | None = None, autocommit: bool = True, datasource: di
         "user": user,
         "password": password,
         "autocommit": autocommit,
-        "connection_timeout": AGENT_TIMEOUT_SEC,
+        # TASK-0255: control-plane(datasource=None) 연결 수립 상한을 쿼리 예산(AGENT_TIMEOUT_SEC=300s)에서
+        # 분리(bounded, 기본 10s). 과거 300s 라 control-plane 불안정이 cycle 을 최대 300s×retry 블록했다.
+        # 쿼리 실행 timeout 은 별개(연결 후 SQL 은 server 측·driver 별 제어). breaker 는 미적용(여기는 datasource=None).
+        "connection_timeout": _controlplane_connect_timeout(),
         "charset": "utf8mb4",
         "use_unicode": True,
     }
@@ -825,7 +838,8 @@ def _pg_connect(database: str | None = None, autocommit: bool = True):
         f"user={AGENT_KB_PG_USER}",
         f"password={AGENT_KB_PG_PASSWORD}",
         f"sslmode={AGENT_KB_PG_SSLMODE}",
-        f"connect_timeout={AGENT_TIMEOUT_SEC}",
+        # TASK-0255: PG 도 control-plane — 연결 수립 상한을 bounded(기본 10s)로. 과거 300s.
+        f"connect_timeout={_controlplane_connect_timeout()}",
         "application_name=agent_core_kb",
     ]
     conninfo = " ".join(conninfo_parts)
@@ -873,7 +887,8 @@ def _pg_connect_ro(database: str | None = None, autocommit: bool = True):
         f"user={ro_user}",
         f"password={ro_pw}",
         f"sslmode={AGENT_KB_PG_SSLMODE}",
-        f"connect_timeout={AGENT_TIMEOUT_SEC}",
+        # TASK-0255: PG read path 도 control-plane — bounded connect timeout(기본 10s). 과거 300s.
+        f"connect_timeout={_controlplane_connect_timeout()}",
         "application_name=agent_core_kb_ro",
     ]
     conninfo = " ".join(conninfo_parts)

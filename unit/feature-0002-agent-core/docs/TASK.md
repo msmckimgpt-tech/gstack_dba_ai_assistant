@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Task
 
+## 0. TASK-0255 (current cycle) — insight 연결 탄력성 (R1 로그 edge-trigger / R2 PG datasource_health / R3 control-plane bounded timeout)
+- [x] **조사**: 급성 병목(연결대기 starvation)은 TASK-0247/0250 으로 이미 해소 — 라이브 실측 cycle ~2.6s(불안정 DS 7개+에도 fast-fail). 잔존 3건 발견.
+- [x] **R1**: scan_failed 로그 edge-trigger(`_LAST_DS_SCAN_STATUS` + `_ds_scan_status_changed`, registry 동기 prune) — 상태 전이 시에만 WARNING(매-cycle 도배 ~20만 줄/2일 제거). `DatasourceCircuitOpen` 을 `_is_perm` 보다 먼저 분기.
+- [x] **R2**: `agent_runtime.datasource_health` PG 영속(alembic `0006` + 부트스트랩 §6c + **명시 GRANT**) + `_persist_datasource_health`(soft, registry prune) + web `admin_list_datasources` `insight_health` 첨부 + admin.js "인사이트 스캔 상태" 행 → **연결불안정 vs 권한실패 구분**. 자격증명 비영속.
+- [x] **R3**: control-plane bounded connect timeout(`AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC`=10, `_controlplane_connect_timeout` — MySQL control-plane(db.py) + KB PG(_pg_connect/_ro)). breaker 미적용(timeout 만). R3a cold-window 미채택.
+- [x] 테스트 19개(`test_task0255_*`) + `make test` GREEN(ruff pass); **5-lens adversarial review SHIP_WITH_FIXES** — BLOCKER 5건 환각 기각, M-2(자격증명 로그)·M-1(메모리 prune)·MINOR 반영.
+- [ ] main 머지 → agent+web 재배포 + PG 마이그 `0006` → 런타임(로그 도배 멈춤·datasource_health 행·자격증명 미저장)·PB-0008 시각검증.
+
 ## 1. Current Status
 - State: **TASK-0250 (연결 health 모니터 — background 사전판정으로 불안정 datasource 격리 완성) 구현 완료, 리뷰·배포 진행** — 신규 `modules/conn_health.py` 가 2단 probe(TCP 선검사+실제 DB connect+SELECT 1)로 per-datasource 연결 상태를 미리 유지, agent(`connect_with_retry` gate)·관리콘솔(사전계산 conn_status)이 즉시 읽어 한 datasource 불안정이 정상 datasource 요청을 막지 않음. 구 TASK-0247 in-process breaker 흡수·대체 (cycle: TASK-0250)
 - State(이전): **TASK-0247 (데이터플레인 연결 격리 — bounded connect timeout + in-process breaker) 완료** [TASK-0250 으로 진화·대체]

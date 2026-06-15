@@ -247,3 +247,33 @@ source_of_truth: false
 **pytest**: 82/82 PASS (전체 suite, pre-existing 2 failure: test_kb_backfill.py).
 
 **다음 cycle**: AR-M3 — runtime_backfill.py ETL + bin/runtime-backfill.sh.
+
+## TASK-0255 완료 기록 (insight 연결 탄력성 R1/R2/R3, 2026-06-15)
+
+**배경**: insight-worker 가 특정 DB 연결 불안정 시 병목을 일으키는지 조사 → 급성 병목(연결대기 starvation)은
+TASK-0247 bounded timeout + TASK-0250 conn_health 로 이미 해소(라이브 실측: 불안정 DS 7개+에도 cycle ~2.6s,
+fast-fail 정상). 단 잔존 3건 발견·수정:
+
+- **R1 (로그 edge-trigger)** `src/modules/insight.py`: scan_failed WARNING 이 매 8s cycle 마다 불안정 DS 전부를
+  재기록해 2일 ~198,775줄 도배. `_LAST_DS_SCAN_STATUS`(모듈 dict, 단일 insight-worker 프로세스 가정) +
+  `_ds_scan_status_changed()` 로 **상태 전이 시에만 WARNING, 지속은 DEBUG**. `DatasourceCircuitOpen` 을 `_is_perm`
+  보다 먼저 분기(오판 차단). registry 동기 prune(M-1)로 stale key 누수 차단. conn_health.py 무수정(이미 edge-triggered).
+- **R2 (PG 커버리지 telemetry)** 신규 `agent_runtime.datasource_health`(alembic `0006` + 부트스트랩 §6c + **명시 GRANT**
+  — baseline GRANT 미포함·superuser 적용 trap): insight-worker 가 매 cycle datasource 별 연결 health(conn_health 권위
+  status + scan_outcome: circuit_open/perm_failed/...)를 upsert + registry prune. web `admin_list_datasources` 에
+  `insight_health` 첨부(`_read_insight_datasource_health`, RO·graceful) + admin.js "인사이트 스캔 상태" 행 →
+  관리자가 **"연결 불안정 미커버" vs "권한 실패"** 구분. 자격증명 비영속(host/port/engine/status/fails/errno-tag 만).
+- **R3 (control-plane bounded connect timeout)** `config.py`/`db.py`: control-plane(datasource=None) MySQL 연결 +
+  KB Postgres 연결의 connection_timeout 이 AGENT_TIMEOUT_SEC(운영 300s)라 control-plane 불안정 시 cycle 최대
+  300s×retry 블록 → `AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC`(기본 10s) + `_controlplane_connect_timeout()`.
+  **breaker 는 미적용**(timeout 만 — MEMORY_DB fast-fail=전체 마비 차단, MEMORY.md TASK-0247 불변식). R3a cold-window
+  는 미채택(self-healing·false-positive 위험).
+
+**테스트**: `tests/test_task0255_{controlplane_timeout,insight_edge_log,datasource_health}.py` 19개 + 회귀 — `make test` GREEN(ruff pass).
+
+**adversarial review**(5-lens 적대 워크플로): SHIP_WITH_FIXES. 제출된 BLOCKER 5건은 전수 코드대조로 환각(없는 코드 인용)
+기각, 실 결함 0건. 채택 2건 수정: **M-2** 예외 로그 `err=%r,_ds_exc`→`%s,str()[:160]`(자격증명 노출 차단),
+**M-1** `_LAST_DS_SCAN_STATUS` registry 동기 prune(메모리 누수). MINOR(else try 감싸기·COALESCE last_checked_at·
+app.py 조회실패 debug 로그) 반영.
+
+**배포 함정**: agent 이미지(insight-worker·ask-worker 공유)+web 각 dc-build, PG 마이그 0006 은 superuser 명시 GRANT 포함.
