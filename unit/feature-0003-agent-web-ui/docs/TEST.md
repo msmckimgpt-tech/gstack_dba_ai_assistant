@@ -849,3 +849,11 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **계측 결과(win-browser eval)**: `관리 콘솔 > 데이터소스` **14행 전부 leading `.ds-conn-dot`**(withDot=14). **행별 도트 `getBoundingClientRect().left=270` 단일값**(컬럼 정렬 완벽). 행 `grid-template-columns: 9px 274px`(auto 도트 컬럼 + 1fr main). 색: `is-ok`=`rgb(22,163,74)` 초록(`--success`) / `is-fail`=`rgb(220,38,38)` 빨강(`--danger`). `title`/`aria-label` 실측("네트워크 상태: 연결됨 · 152.1ms" / "네트워크 상태: 연결 실패: 연결 불안정"). **`#settingsList` 무회귀**: 설정 탭 `grid-template-columns: 308px` 단일(도트 컬럼 없음, `hasDotInSettings=false`) — `#datasourceList` 스코프 grid 가 타 nav 목록 무영향 실증.
   - **시각 evidence**: 스크린샷 `artifacts/pb0008-task0278/ds-conn-badge.png`.
   - **Pass/Fail: PASS** — leading 도트 정렬(left=270 단일)·색 구분(초록/빨강)·접근성(title/aria-label)·grid 스코프(9px 274px)·`#settingsList` 무회귀(308px 단일) 전부 실제 Windows 브라우저 실측 통과. CHECK#13(PB-0008 Windows-browser) **충족**.
+- 2026-06-15 (TASK-20260615T183409-ds-list-multiselect 데이터소스 목록 다중 선택 — 정적 검증 PASS / **PB-0008 배포 후 잔여**; PR#251 leading 도트를 행에 통합·행 구조 button→div 로 #251 의 button-row PB-0008 측정 supersede):
+  - **Environment: 정적(node + subagent 코드리뷰)** — 변경은 frontend 정적자산(admin.js/admin.html)뿐, 백엔드 엔드포인트(PATCH/DELETE) 재사용이라 Python(make test) 영향 0.
+  - **Steps/Result:**
+    - **node --check admin.js**: SYNTAX OK (전 편집 후 재확인).
+    - **런타임 계약**: `assertBulkBarContract("datasources")` 가 init 루프에서 호출되며 admin.html 의 `#datasourcesBulkBar`(role=toolbar/aria-live/`.admin-list-col` 직속)·ID 정합으로 충족(코드 대조).
+    - **적대적 subagent 코드리뷰(general-purpose outside voice)**: 10개 검증항목(partial-fail 분할·재동기화·prune·contract·select-all/indeterminate·shift-range string-key·button→div 회귀·체크박스 stopPropagation·XSS·hoisting·env 제외) 전부 confirmed-correct → **SHIP(BLOCKER 0/MAJOR 0)**. REV-20260615-0286.
+  - **Pass/Fail: PASS(정적)** — 구조/계약/로직 검증 완료.
+  - **Notes:** **잔여 — PB-0008 Windows-browser**: 배포 후 데이터소스 탭에서 행 체크박스·전체선택(indeterminate)·shift-click 범위·일괄 인사이트 토글·일괄 삭제(env 제외·409 제외 리포트) + leading 도트(통합) 실측 필요. CHECK#13 은 그때 충족.

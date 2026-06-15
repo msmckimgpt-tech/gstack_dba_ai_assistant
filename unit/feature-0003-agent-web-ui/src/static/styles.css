@@ -3181,9 +3181,12 @@ a { color: inherit; }
 .ds-conn-dot.is-fail     { color: var(--danger, #dc2626); }
 .ds-conn-dot.is-checking { color: var(--text-muted); animation: covPickerPulse 1.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .ds-conn-dot.is-checking { animation: none; } }
-/* 데이터소스 목록만 leading 도트 컬럼(auto)을 추가 — #settingsList 등 다른 nav 목록은 1fr 유지. */
-#datasourceList .admin-list-row.admin-list-row--nav {
-  grid-template-columns: auto 1fr;
+/* TASK-0281(ds-list-multiselect): 데이터소스 목록 행 = [체크박스 auto · 네트워크 도트 auto · main 1fr].
+ *  다중 선택 도입으로 행이 .admin-list-row--nav(단일선택) → .admin-list-row(체크박스 div)로 바뀌어
+ *  PR#251 의 --nav 스코프 grid(auto 1fr)가 미매칭됨 → 체크박스 컬럼을 더한 3열 grid 로 대체.
+ *  #datasourceList 스코프라 #settingsList 등 다른 nav 목록(1fr)은 무영향. */
+#datasourceList .admin-list-row {
+  grid-template-columns: auto auto 1fr;
 }
 
 /* TASK-0053 Phase B/C — product subcatalog cards (Role/Account detail) */

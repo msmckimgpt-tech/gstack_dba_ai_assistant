@@ -2779,3 +2779,17 @@ source_of_truth: true
 - Cycle: TASK-0278 PB-0008 evidence 기록 (docs-only).
 - Skip 사유: 코드 변경 0(순수 evidence/docs). 핵심 변경은 REV-20260615-0282 [SUBAGENT:ship] 에서 이미 적대적 리뷰(SHIP). 본 후속은 라이브 실 Windows 브라우저 PB-0008 PASS 실측 기록.
 - Cross-ref: CHG-20260615-0285 / TASK-0278 / REV-20260615-0282(코드 cycle).
+## REV-20260615-0286 [SUBAGENT:ds-multiselect-review]
+- Date: 2026-06-15
+- Cycle: TASK-20260615T183409-ds-list-multiselect (관리 콘솔 데이터소스 목록 다중 선택 구조), **Major §12.3** — 신규 일괄 파괴적 삭제(bulk delete) + 일괄 mutation(insight 토글) + 목록 행 구조(button→div) 변경.
+- Trigger: §18.8 — 파괴적 일괄 동작 신설 + 공유 bulk 계약 프레임워크 확장 + 즉시-적용(async) vs pending 모델 차이 → 적대적 코드리뷰(general-purpose outside voice, "refute ship-readiness" 프롬프트). [[feedback_visual_verify_on_design_change]] 정합(UI 변경).
+- Verdict: **SHIP** (BLOCKER 0 / MAJOR 0). 리뷰어가 10개 검증항목을 코드 대조로 전부 confirmed-correct 판정:
+  - partial-fail 분할/토스트 카운트 정확(off-by-one·mislabel 없음), 완료 후 loadAdminData+재렌더 재동기화 + 삭제 key prune 동작.
+  - `assertBulkBarContract("datasources")` 충족(ID 정합: `datasourcesBulkBar`/`datasourceSelectAll`/`datasourcesCrossPageBanner`, role=toolbar+aria-live, `.admin-list-col` 직속, head-right 라벨 누출 0).
+  - select-all=필터 기준+indeterminate 정확, shift-range string-key 일관(`renderCrossPageBanner` 양측 `String(id)` 비교 → 타입 불일치 없음).
+  - button→div 전환이 단일 상세 click·`_dsSyncListActive`·`newDatasourceBtn` 무파손, 체크박스 `stopPropagation` 로 상세 누출 0.
+  - env 비-editable datasource 는 `_dsBulkTargetable` 게이트에서 API 호출 전 제외(insight·delete 양쪽), 바인딩 409 는 force 안 함 → "제외". XSS(textContent/createElement) 0, 함수 hoisting/TDZ 0.
+- MINOR/NIT(비차단, 제품 패턴 기인 비회귀, 수정 불요): ① confirm count 가 env 포함 전체 size(제품도 동일) ② async bulk in-flight 중 버튼 비활성화 없음(더블클릭 시 2회 발화→404/409=제외, 데이터 무해) ③ insight 토글 후 선택 미해제(즉시-CRUD 모델에 타당) ④ cross-page "현재 페이지만 보기" no-op(페이징 없음, 제품 동일) ⑤ role=row aria-selected 미설정(제품 동일).
+- Verification: node --check admin.js PASS + 런타임 contract assert + diff 적대 리뷰. 백엔드 무변경(엔드포인트 재사용)이라 Python 테스트 영향 0.
+- Residual: web 재빌드 + PB-0008 Windows-browser(체크박스·전체선택·shift-range·일괄 삭제·insight 토글 실측).
+- Cross-ref: CHG-20260615-0286 / REQ-20260615-0281 / TASK-20260615T183409-ds-list-multiselect.

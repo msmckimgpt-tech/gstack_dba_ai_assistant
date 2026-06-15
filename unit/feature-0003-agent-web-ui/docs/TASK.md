@@ -3827,3 +3827,17 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 3 HTML route 에 `Cache-Control: no-cache`(_HTML_NO_CACHE) — 매 로드 조건부 재검증(변경 시 200, 동일 시 304)
 - [x] test_html_no_cache(FileResponse monkeypatch 로 3 route no-cache + 올바른 파일 검증) + make test PASS
 - [x] web 재배포(main 1c184f8) + 라이브 헤더 검증(3 route no-cache, curl) + 브라우저 새 app.js 로드+gutter 실증(win-browser) — TEST.md §4. 사용자 1회 하드리프레시 안내
+
+### TASK-20260615T183409-ds-list-multiselect — 관리 콘솔 데이터소스 목록 다중 선택 구조 (2026-06-15)
+- 목표: `관리 콘솔 > 데이터소스` 목록을 계정·역할·제품과 동일한 다중 선택 구조(행 체크박스 + 전체선택 + 일괄 작업 툴바 + cross-page 배너 + shift-click)로 통일. REQ-20260615-0281 / AC-0512~0514. **Major §12.3**(일괄 파괴적 삭제 포함). 동시세션 PR#251(ds-conn-badge) 선점 → §13.1 rebase·재번호(0280→0281, 0509→0512, REV/CHG-0282→0286).
+- 위험/범위: frontend-only(admin.js + admin.html + styles.css grid override 1줄). RBAC(console.manage 재사용)·스키마·엔드포인트(PATCH/DELETE 재사용)·백엔드 무변경. PR#251 leading 네트워크 도트와 행 통합(children=체크박스+도트+main). 동시세션 번호 경합 → timestamp TASK id.
+- [x] adminState `datasourceSelected`/`datasourceLastClickIdx` + bulk 어휘(datasources/insight_on/off)
+- [x] `_dsRenderList` 재작성(div+체크박스+shift-range) + `_dsFiltered` + stale prune
+- [x] `updateDatasourceSelectAllCheckbox`/`renderDatasourceBulkBar`/`renderDatasourceCrossPageBanner`/`_dsBulkTargetable`
+- [x] `_runDatasourceBulkAsync`(async partial-fail) + `bulkDatasourceSetInsight` + `bulkDatasourceDelete`
+- [x] initialize: select-all 리스너 + Esc 분기 + `assertBulkBarContract` 루프에 datasources 추가
+- [x] admin.html: 전체선택 label + cross-page 배너 + role=grid + datasourcesBulkBar(role=toolbar) + 캐시버스터
+- [x] styles.css: `#datasourceList .admin-list-row` grid `auto auto 1fr`(체크박스·도트·main, PR#251 --nav override 대체)
+- [x] node --check admin.js PASS + 적대적 subagent 코드리뷰 SHIP(BLOCKER 0/MAJOR 0, REV-20260615-0286)
+- [x] rebase origin/main + PR#251 충돌 해소(_dsRenderList 도트 통합·docs 재번호) + PR #254
+- [ ] 머지 → web 재배포 → PB-0008 Windows-browser 시각검증 → 마감
