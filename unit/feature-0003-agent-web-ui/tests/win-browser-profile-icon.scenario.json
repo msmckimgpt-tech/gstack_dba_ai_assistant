@@ -1,0 +1,27 @@
+{
+  "name": "TASK-profile-icon-consistency — 제품 프로필 아이콘 정합화 + 드롭업 레이아웃·너비 + 명칭 순서 (authed)",
+  "base_url": "https://localhost:18080",
+  "shot_dir": "/root/download/docker/mysql_ai_delegated_dev/artifacts/pb0008-profile-icon",
+  "steps": [
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "eval", "script": "(async()=>{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'bootstrap_admin',password:'ChangeThisBootstrapPass_2026!'})});const j=await r.json();return JSON.stringify({login_ok:j.ok});})()", "stop_on_fail": false},
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "wait_for", "selector": "#productChip", "timeout_ms": 20000},
+    {"action": "wait_for", "timeout_ms": 2500, "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{var c=document.getElementById('productChip');c.click();await new Promise(r=>setTimeout(r,500));var menu=document.getElementById('productDropupMenu');var items=[...menu.querySelectorAll('.product-dropup-item[data-mode=\"pinned\"]')];var first=items[0];var kids=first?[...first.children].map(k=>(k.getAttribute('class')||k.tagName).split(' ')[0]):[];var iconEl=first?first.querySelector('.product-dropup-item-icon'):null;var hasSvg=iconEl?!!iconEl.querySelector('svg'):false;var hasImg=iconEl?!!iconEl.querySelector('img'):false;var label=first?first.querySelector('.product-dropup-item-label').textContent:null;var menuW=menu?getComputedStyle(menu).maxWidth:null;var menuRect=menu?menu.getBoundingClientRect().width:null;var labelEl=first?first.querySelector('.product-dropup-item-label'):null;var truncated=labelEl?(labelEl.scrollWidth>labelEl.clientWidth+1):null;return JSON.stringify({pinnedCount:items.length,firstChildOrder:kids,iconHasSvgOrImg:(hasSvg||hasImg),iconKind:(hasImg?'img':(hasSvg?'identicon':'none')),firstLabel:label,labelStartsWithParen:label?label.trim().startsWith('('):null,menuMaxWidth:menuW,menuRenderedWidth:menuRect,firstLabelTruncated:truncated});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "01_dropup_layout.png", "full_page": false},
+
+    {"action": "eval", "script": "(async()=>{var menu=document.getElementById('productDropupMenu');var items=[...menu.querySelectorAll('.product-dropup-item[data-mode=\"pinned\"]')];var report=items.slice(0,6).map(function(it){var kids=[...it.children].map(k=>(k.getAttribute('class')||k.tagName).split(' ')[0]);var ic=it.querySelector('.product-dropup-item-icon');return {pid:it.getAttribute('data-pid'),label:it.querySelector('.product-dropup-item-label').textContent,order:kids,icon:(ic?(ic.querySelector('img')?'img':(ic.querySelector('svg')?'identicon':'empty')):'none'),hasDs:!!it.querySelector('.product-dropup-item-ds')};});return JSON.stringify(report);})()", "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{var c=document.getElementById('productChip');try{c.click();}catch(e){}await new Promise(r=>setTimeout(r,300));return JSON.stringify({closedMenu:true});})()", "stop_on_fail": false},
+
+    {"action": "goto", "url": "/admin.html", "wait_until": "domcontentloaded"},
+    {"action": "wait_for", "timeout_ms": 2500, "stop_on_fail": false},
+    {"action": "eval", "script": "(async()=>{var tab=document.querySelector('[data-tab=\"products\"]')||document.querySelector('button[data-admin-tab=\"products\"]');if(tab)tab.click();await new Promise(r=>setTimeout(r,1500));var rows=[...document.querySelectorAll('#productList .admin-list-row, #productList [class*=row]')];var firstName=document.querySelector('#productList .admin-account-name');return JSON.stringify({tabClicked:!!tab,productRowCount:rows.length,firstProductName:firstName?firstName.textContent:null,firstNameStartsWithParen:firstName?firstName.textContent.trim().startsWith('('):null});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "02_admin_product_list.png", "full_page": false},
+
+    {"action": "eval", "script": "(async()=>{var row=document.querySelector('#productList .admin-list-row, #productList [class*=row]');if(row)row.click();await new Promise(r=>setTimeout(r,1200));var av=document.querySelector('#productDetail .admin-avatar');var hasImg=av?!!av.querySelector('.avatar-img, img'):false;var hasSvg=av?!!av.querySelector('svg'):false;var nameEl=document.querySelector('#productDetail .admin-account-name');return JSON.stringify({avatarPresent:!!av,avatarKind:(hasImg?'img':(hasSvg?'identicon':'initials-text')),avatarText:av?av.textContent.trim().slice(0,20):null,detailName:nameEl?nameEl.textContent:null,detailNameStartsWithParen:nameEl?nameEl.textContent.trim().startsWith('('):null});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "03_admin_product_detail_icon.png", "full_page": false}
+  ]
+}

@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0278
+- Date: 2026-06-15 (TASK-20260615T172210-profile-icon-consistency 후속, **docs-only** — PB-0008 Windows-browser 시각검증 evidence 기록)
+- Scope: agent-web-ui 문서/테스트만 — `docs/TEST.md` §4 Run 1건 추가 + `docs/TASK.md` 잔여 PB-0008 항목 "완료" 표기 + `tests/win-browser-profile-icon{,-admin}.scenario.json` 보존. src 코드 0.
+- 변경: TEST.md §4 — 배포(main `bb1a991` PR #246 squash, web 재배포) 후 실 Chrome/148 relay 로 ① 대화 드롭업 8제품 항목 순서 [dot→icon→label→ds] ② 전 제품 Identicon(작업화면 프로필 정합) ③ 명칭 `(약어) 명칭`(드롭업·관리목록·상세) ④ 메뉴 너비 max 420px 미잘림 ⑤ 관리 콘솔 제품 상세 Identicon 시각검증 PASS. 스크린샷 `artifacts/pb0008-profile-icon/35_dropup_large.png`·`20_admin_detail_identicon.png`.
+- 비변경: 코드·CSS 0(순수 evidence). 핵심 변경은 CHG-20260615-0276(PR #246 머지)에서 이미 반영.
+- 검증: PB-0008 Windows-browser PASS(위 5항목 실측). CHECK#13 충족.
+- Cross-ref: REV-20260615-0279 / TASK-20260615T172210-profile-icon-consistency / CHG-20260615-0276.
+
 ## CHG-20260615-0277
 - Date: 2026-06-15 (TASK-0276, **Minor §12.3** — 관리 콘솔 "보관 대화" 탭 UI 정합화; 동시세션 profile-icon 이 CHG-0276 선점 → §13.1 재번호 0276→0277)
 - Scope: agent-web-ui frontend 전용(admin.html + admin.js + styles.css). 백엔드·RBAC·엔드포인트·스키마·데이터 0.

@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0279 [SKIPPED:pb0008-evidence-docs-only]
+- Date: 2026-06-15
+- Cycle: TASK-20260615T172210-profile-icon-consistency 후속 (PB-0008 Windows-browser 시각검증 evidence 기록 — docs-only: TEST.md §4 Run 1건 + TASK.md 완료 표기 + scenario 파일 보존. src 코드 0).
+- Skip 사유: 코드 변경 0(순수 evidence/docs). 핵심 변경은 REV-20260615-0277 [SKIPPED:frontend-ui-consistency-no-backend-no-rbac] 에서 이미 리뷰(identicon 이식·드롭업 순서·명칭 순서). 본 후속은 라이브 실 브라우저 실증 기록.
+- 실증: PB-0008(실 Chrome/148 relay, 배포 main `bb1a991` PR #246 web 재배포) — 대화 드롭업 항목 순서 [dot→icon→label→ds] 8제품·전 제품 Identicon·명칭 `(약어) 명칭`·메뉴 너비 max 420px 미잘림·관리 콘솔 제품 상세 Identicon 전부 실측 PASS. CHECK#13 충족.
+- Cross-ref: CHG-20260615-0278 / TEST.md §4 (2026-06-15 profile-icon Run) / REV-20260615-0277 / artifacts/pb0008-profile-icon/.
+
 ## REV-20260615-0278 [SKIPPED:frontend-ui-consistency-no-backend]
 - Date: 2026-06-15
 - Cycle: TASK-0276 (관리 콘솔 "보관 대화" 탭 UI 정합화), **Minor §12.3** — frontend-only(admin.html + admin.js + styles.css). RBAC/인증/스키마/엔드포인트 계약/데이터/시크릿/백엔드 0.

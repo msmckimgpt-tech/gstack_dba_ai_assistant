@@ -36,7 +36,7 @@ source_of_truth: true
   - [x] 제품 명칭 조합 `${name} (${product_key})` → `(${product_key}) ${name}` **7곳**: app.js(promptSelect / chip fullLabel / dropup label / promptProductSelect), admin.js(목록행 / 상세헤더 / role-product select).
   - [x] 캐시버스터 통일: index.html app.js+styles.css·admin.html admin.js+styles.css `?v=20260615-profile-icon-consistency`. [[project_static_asset_cache_busting]]
 - [x] 검증: node --check app.js·admin.js PASS + CSS brace 균형(1198=1198) + **jsdom 격리 23/23 PASS**(`tests/verify_profile_icon_consistency.mjs` — identicon app↔admin byte-identical·결정론·드롭업 순서·Identicon 폴백·명칭 7곳) + **make test 컨테이너 전체 회귀 0**(pytest PASS, 2 skip, ruff clean, MAKE_EXIT=0).
-- [ ] (잔여) origin/main rebase(TASK-0275 위) + REV 0276→0277·AC 0493~0498→0497~0502 재번호 → PR 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증(관리 콘솔 제품 Identicon·대화 드롭업 항목 순서·너비·명칭 표기).
+- [x] **완료**: origin/main rebase(TASK-0275 위) + REV 0276→0277·AC 0493~0498→0497~0502 재번호 → PR #246 squash 머지(main `bb1a991`) → web 재배포(`sudo docker compose build web && up -d --no-deps web`, repo-web-1 Up healthy, HTTPS /healthz 200, 캐시버스터 서빙 확인) → **PB-0008 Windows-browser 시각검증 PASS**(실 Chrome/148 relay): ① 드롭업 8제품 항목 순서 [dot→icon→label→ds] ② 전 제품 Identicon(작업화면 프로필 정합, KR 동일 십자가 교차확인) ③ 명칭 `(약어) 명칭`(드롭업·관리목록·상세) ④ 메뉴 너비 max 420px 명칭 미잘림 ⑤ 관리 콘솔 제품 상세 Identicon. evidence: TEST.md §4 2026-06-15 profile-icon Run + `artifacts/pb0008-profile-icon/35_dropup_large.png`·`20_admin_detail_identicon.png`. (REV-0277 은 동시세션 TASK-0276 이 0278 로 재번호해 충돌 자연 해소.)
 
 ## 0b. TASK-0275 (직전 cycle, 머지됨) — assistant 첨부 수정 → 새 버전 materialize + 대화 진행에 따른 버전 관리
 - 요청(Task⑥): assistant 가 전달받은 첨부파일을 수정해 사용자에게 제공 + 대화 진행에 따른 버전 관리.
