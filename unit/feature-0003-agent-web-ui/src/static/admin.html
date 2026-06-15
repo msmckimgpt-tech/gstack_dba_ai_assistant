@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260615-profile-icon-consistency" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260615-task0276-archives-ui" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -473,6 +473,8 @@
       </section>
 
       <!-- TASK-0273: 보관 대화 pane (conversation.archive.read.any) — 오용 방지 감사 조회 -->
+      <!-- TASK-0276: 보관 대화 pane — audits/계정/역할/제품 과 동일한 list-detail 2단 구조로 정합화.
+           좌측 #archiveList = 클릭 가능한 .admin-list-row 목록(count/scope head + 검색), 우측 #archiveDetail = 선택 대화 상세(read-only 메타). -->
       <section class="admin-pane" data-admin-pane="archives">
         <header class="admin-pane-head">
           <div>
@@ -480,12 +482,29 @@
             <h2>보관된 대화</h2>
           </div>
           <div class="admin-pane-actions">
-            <input type="text" id="archiveSearch" placeholder="제목·ID 검색" autocomplete="off" />
             <button type="button" id="archiveRefreshBtn" class="btn-secondary">새로고침</button>
           </div>
         </header>
         <p class="admin-pane-note">사용자가 "삭제"한 대화는 hard-delete 되지 않고 보관됩니다. 데이터·첨부는 보존되어 오용 방지 감사·맥락 참조에 사용됩니다. 소유 계정에서는 목록에 보이지 않으며 새 메시지 진행이 차단됩니다.</p>
-        <div id="archivesContent" class="admin-archives-content">로딩 중…</div>
+        <div class="admin-archive-filter" id="archiveFilterRow">
+          <label>검색
+            <input type="text" id="archiveSearch" placeholder="제목 · 대화 ID" autocomplete="off" />
+          </label>
+          <button type="button" id="archiveSearchBtn" class="btn-primary">적용</button>
+          <button type="button" id="archiveSearchClearBtn" class="btn-secondary">초기화</button>
+        </div>
+        <div class="admin-list-detail">
+          <div class="admin-list-col">
+            <div class="admin-list-head">
+              <span class="admin-list-count" id="archiveListCount" aria-live="polite"></span>
+              <span class="admin-list-scope" id="archiveListScope" aria-live="polite"></span>
+            </div>
+            <div class="admin-list" id="archiveList" role="grid" aria-label="보관된 대화 목록"></div>
+          </div>
+          <div class="admin-detail-col" id="archiveDetail">
+            <div class="admin-detail-empty">보관된 대화를 선택하세요.</div>
+          </div>
+        </div>
       </section>
 
       <!-- TASK-0096 v2: 설정 pane — 계정/역할/제품 과 동일한 list-detail 5단 구조.
@@ -566,7 +585,7 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260615-profile-icon-consistency"></script>
+  <script src="/static/admin.js?v=20260615-task0276-archives-ui"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
 </body>
 </html>

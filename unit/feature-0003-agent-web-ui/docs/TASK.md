@@ -8,7 +8,24 @@ source_of_truth: true
 
 # Task
 
-## 0z. TASK-20260615T172210-profile-icon-consistency (current cycle, timestamp ID — 동시세션 TASK-0274/0275 등 활성으로 §13.1 순번충돌 회피) — 제품 프로필 아이콘 정합화 + 대화 드롭업 항목 레이아웃·너비 + 제품 명칭 표기 순서
+## 0. TASK-0276 (current cycle) — 관리 콘솔 "보관 대화" 탭 UI 정합화 (audits/계정/역할/제품 동형 list-detail)
+- 요청: `관리 콘솔 > 보관 대화` 를 다른 탭(계정·역할·제품·감사 로그)과 정합하게 구성.
+- 등급: **Minor §12.3** (frontend-only — RBAC/스키마/엔드포인트/백엔드/데이터 0. 기존 `GET /api/admin/conversations/archived` 응답 그대로 사용).
+- 진단: 기존 보관 대화 pane 은 단일 `<div id="archivesContent">` 에 `admin-usage-table` 로 렌더 → 다른 탭의 검증된 **list-detail 2단 구조**(좌측 `admin-list` row 목록 + count/scope head, 우측 `admin-detail-col` 선택 상세)와 구조·시각 이질. 감사 로그(`admin-audit-row`/`admin-audit-detail`/`admin-audit-filter`) 패턴이 가장 근접한 read-only 목록 탭이라 verbatim 동형 이식.
+- 구현(frontend-only):
+  - [x] `admin.html`: archives pane 을 `admin-archive-filter`(검색 input + 적용/초기화 버튼) + `admin-list-detail`(좌측 `#archiveList` + `#archiveListCount`/`#archiveListScope`, 우측 `#archiveDetail`)로 교체. 헤더 actions 의 인라인 검색 input 제거(필터 행으로 이동), 새로고침 버튼 유지.
+  - [x] `admin.js`: `adminState.archives = {items, selectedId, q, truncated, loading}` + `renderArchiveList`(row 클릭 → selectedId + 상세 렌더 + is-selected) + `renderArchiveDetail`(dl 메타: 대화 ID/소유자/보관 시각/보관 수행자/생성 시각 + 안내). `loadArchivedConversations` 가 목록·상세 분리 렌더 + 선택 유지. 검색 적용/초기화 버튼 바인딩 추가. 기존 table 렌더(`renderArchivedConversations`) 대체.
+  - [x] `styles.css`: 기존 `.admin-archives-table` 류 제거 → `.admin-archive-filter/.admin-archive-row/.admin-archive-row-*/.admin-archive-detail/.admin-archive-detail-fields` 추가(각각 `.admin-audit-*` 동형 — 동일 padding/색/grid).
+  - [x] 캐시버스터 `admin.html` admin.js·styles.css `?v=20260615-task0276-archives-ui`.
+- 검증:
+  - [x] node --check admin.js + CSS brace(1206=1206).
+  - [x] **jsdom 13 PASS**(빈 목록 empty·row 2개 audits 동형 클래스·count·row 클릭→selectedId+상세 렌더+is-selected·미존재 선택 empty·topic XSS escape 목록/상세·truncated scope 안내) + make test 컨테이너 **전체 회귀 0**(백엔드 무변경).
+  - [x] 라이브: 정적자산 web 적용 후 admin.js 새 함수 14건·admin.html list-detail 마크업 12건 서빙 확인.
+- 비변경: 백엔드·`/api/admin/conversations/archived` 응답 계약·RBAC(`conversation.archive.read.any` 게이트 그대로)·탭 가시성 로직 0.
+- 배포: web 재빌드(정적자산). migrate 불필.
+- [ ] (잔여) 머지 → web 재배포 → PB-0008 Windows-browser(보관 대화 탭 list-detail 렌더·row 클릭 상세).
+
+## 0a. TASK-20260615T172210-profile-icon-consistency (직전 cycle, 머지됨 #246) — 제품 프로필 아이콘 정합화 + 대화 드롭업 항목 레이아웃·너비 + 제품 명칭 표기 순서
 - 요청(사용자): (1) `관리 콘솔 > 제품 > [각 항목]` 의 제품 프로필 아이콘 UI 를 `작업 화면 > 프로필` 과 정합하게 구성. (2) 대화 화면 요청 텍스트박스의 제품 선택 목록/선택 항목에 [네트워크 상태 배지·프로필 아이콘·제품 명칭·데이터 소스] 가 적절히 위치하도록 + 목록 너비가 좁아 명칭이 잘리는 이슈 해소(너비 확대). (3) 제품 명칭 표기를 `제품 명칭 (제품 약어)` → `(제품 약어) 제품 명칭` 으로 변경.
 - 등급: **Major §12.3** (frontend-only 다파일 외부 표시 정합화 — RBAC/스키마/엔드포인트/백엔드 0). 비파괴 UI.
 - 진단: 작업화면 프로필(`app.js` applyAvatar/identiconSvg)은 이미지 미설정 시 **결정론적 Identicon SVG** 로 폴백하나, 관리 콘솔 제품 아이콘(`admin.js` renderProductDetail)·대화 드롭업 아이콘은 **이니셜 텍스트** 또는 **아예 미표시**라 정합하지 않았음. 드롭업 항목 순서는 [아이콘(설정 시만)→dot→명칭→ds] 였고 메뉴 max-width 280px 로 `(약어) 명칭` 길이 시 잘림.
@@ -21,7 +38,7 @@ source_of_truth: true
 - [x] 검증: node --check app.js·admin.js PASS + CSS brace 균형(1198=1198) + **jsdom 격리 23/23 PASS**(`tests/verify_profile_icon_consistency.mjs` — identicon app↔admin byte-identical·결정론·드롭업 순서·Identicon 폴백·명칭 7곳) + **make test 컨테이너 전체 회귀 0**(pytest PASS, 2 skip, ruff clean, MAKE_EXIT=0).
 - [ ] (잔여) origin/main rebase(TASK-0275 위) + REV 0276→0277·AC 0493~0498→0497~0502 재번호 → PR 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증(관리 콘솔 제품 Identicon·대화 드롭업 항목 순서·너비·명칭 표기).
 
-## 0. TASK-0275 (직전 cycle, 동시세션이 TASK-0274[첨부 패널 resize]/AC-0492 선점→§13.1 재번호 0274→0275) — assistant 첨부 수정 → 새 버전 materialize + 대화 진행에 따른 버전 관리
+## 0b. TASK-0275 (직전 cycle, 머지됨) — assistant 첨부 수정 → 새 버전 materialize + 대화 진행에 따른 버전 관리
 - 요청(Task⑥): assistant 가 전달받은 첨부파일을 수정해 사용자에게 제공 + 대화 진행에 따른 버전 관리.
 - 등급: **Critical §12.3** (LLM 자동 데이터 변형·저장 표면 신규 + MinIO 쓰기 + 스키마 변경). PLAN-APPROVED(사용자 2개 설계 결정 확정).
 - 사용자 결정(AskUserQuestion): 수정 범위=**텍스트 계열 MVP**(csv/text, 바이너리 제외), 확정 방식=**assistant 자동 materialize**(사용자 클릭 불요).

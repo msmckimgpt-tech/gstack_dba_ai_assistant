@@ -1755,41 +1755,112 @@ function switchTab(tabName) {
 }
 
 // TASK-0273: 보관 대화 목록 로드 + 렌더(conversation.archive.read.any).
-async function loadArchivedConversations() {
-  const el = document.getElementById("archivesContent");
-  if (!el) return;
-  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const q = (document.getElementById("archiveSearch") || {}).value || "";
-  el.textContent = "로딩 중…";
-  try {
-    const data = await apiFetch(`/api/admin/conversations/archived?q=${encodeURIComponent(q.trim())}`);
-    renderArchivedConversations(data || {});
-  } catch (err) {
-    el.innerHTML = `<p class="admin-archives-error">${esc((err && err.message) || "보관 대화 조회 실패")}</p>`;
-  }
+// TASK-0276: 보관 대화 상태 — audits 동형(items/selectedId/q/truncated). list-detail 2단 렌더.
+adminState.archives = { items: [], selectedId: null, q: "", truncated: false, loading: false };
+
+function _archiveEsc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+function _archiveFmtDt(s) {
+  if (!s) return "—";
+  try { const d = new Date(s); return isNaN(d.getTime()) ? _archiveEsc(s) : d.toLocaleString(); } catch (_) { return _archiveEsc(s); }
+}
+function _archiveOwnerLabel(it) {
+  return it.owner_username || (it.owner_account_id == null ? "(시스템)" : "#" + it.owner_account_id);
+}
+function _archiveByLabel(it) {
+  return it.archived_by_username || (it.archived_by_account_id == null ? "—" : "#" + it.archived_by_account_id);
 }
 
-function renderArchivedConversations(data) {
-  const el = document.getElementById("archivesContent");
-  if (!el) return;
-  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const items = (data && data.items) || [];
-  const fmtDt = (s) => { if (!s) return "—"; try { const d = new Date(s); return isNaN(d.getTime()) ? esc(s) : d.toLocaleString(); } catch (_) { return esc(s); } };
+async function loadArchivedConversations() {
+  const listEl = document.getElementById("archiveList");
+  if (!listEl) return;
+  const q = (document.getElementById("archiveSearch") || {}).value || "";
+  adminState.archives.q = q.trim();
+  adminState.archives.loading = true;
+  listEl.innerHTML = '<div class="admin-list-empty">로딩 중…</div>';
+  try {
+    const data = await apiFetch(`/api/admin/conversations/archived?q=${encodeURIComponent(adminState.archives.q)}`);
+    adminState.archives.items = (data && data.items) || [];
+    adminState.archives.truncated = Boolean(data && data.truncated);
+    // 선택 유지: 현재 선택이 새 목록에 없으면 해제.
+    if (adminState.archives.selectedId
+        && !adminState.archives.items.some((it) => String(it.conversation_id) === String(adminState.archives.selectedId))) {
+      adminState.archives.selectedId = null;
+    }
+  } catch (err) {
+    adminState.archives.items = [];
+    adminState.archives.truncated = false;
+    listEl.innerHTML = `<div class="admin-list-empty">${_archiveEsc((err && err.message) || "보관 대화 조회 실패")}</div>`;
+    const countEl = document.getElementById("archiveListCount");
+    if (countEl) countEl.textContent = "";
+    return;
+  } finally {
+    adminState.archives.loading = false;
+  }
+  renderArchiveList();
+  renderArchiveDetail(adminState.archives.selectedId);
+}
+
+function renderArchiveList() {
+  const listEl = document.getElementById("archiveList");
+  const countEl = document.getElementById("archiveListCount");
+  const scopeEl = document.getElementById("archiveListScope");
+  if (!listEl) return;
+  const items = adminState.archives.items;
+  if (countEl) countEl.textContent = `${items.length}건`;
+  if (scopeEl) scopeEl.textContent = adminState.archives.truncated ? "(상위 일부 — 검색으로 좁혀 보세요)" : (adminState.archives.q ? `(검색: ${_archiveEsc(adminState.archives.q)})` : "");
+
   if (!items.length) {
-    el.innerHTML = "<p class='admin-archives-empty'>보관된 대화가 없습니다.</p>";
+    listEl.innerHTML = '<div class="admin-list-empty">보관된 대화가 없습니다.</div>';
     return;
   }
-  const rows = items.map((it) => `<tr>`
-    + `<td class='admin-archives-topic'>${esc(it.topic || "(제목 없음)")}</td>`
-    + `<td>${esc(it.owner_username || (it.owner_account_id == null ? "(시스템)" : "#" + it.owner_account_id))}</td>`
-    + `<td>${fmtDt(it.archived_at)}</td>`
-    + `<td>${esc(it.archived_by_username || (it.archived_by_account_id == null ? "—" : "#" + it.archived_by_account_id))}</td>`
-    + `<td class='admin-archives-id'>${esc(it.conversation_id)}</td>`
-    + `</tr>`).join("");
-  el.innerHTML = `<div class='admin-archives-tablewrap'><table class='admin-usage-table admin-archives-table'>`
-    + `<thead><tr><th>제목</th><th>소유자</th><th>보관 시각</th><th>보관자</th><th>대화 ID</th></tr></thead>`
-    + `<tbody>${rows}</tbody></table></div>`
-    + (data.truncated ? `<p class='admin-archives-note'>상위 ${items.length}건만 표시합니다. 검색으로 좁혀 보세요.</p>` : `<p class='admin-archives-note'>${items.length}건</p>`);
+  const rows = items.map((it) => {
+    const isSel = String(it.conversation_id) === String(adminState.archives.selectedId);
+    const klass = "admin-list-row admin-archive-row" + (isSel ? " is-selected" : "");
+    return `
+      <div class="${klass}" role="row" data-archive-id="${_archiveEsc(it.conversation_id)}">
+        <div class="admin-archive-row-line">
+          <span class="admin-archive-row-topic">${_archiveEsc(it.topic || "(제목 없음)")}</span>
+          <span class="admin-archive-row-ts">${_archiveEsc(_archiveFmtDt(it.archived_at))}</span>
+        </div>
+        <div class="admin-archive-row-line muted">
+          <span class="admin-archive-row-owner">소유자 ${_archiveEsc(_archiveOwnerLabel(it))}</span>
+          <span class="admin-archive-row-by">보관 ${_archiveEsc(_archiveByLabel(it))}</span>
+        </div>
+      </div>`;
+  }).join("");
+  listEl.innerHTML = rows;
+  listEl.querySelectorAll(".admin-archive-row").forEach((rowEl) => {
+    rowEl.addEventListener("click", () => {
+      adminState.archives.selectedId = rowEl.dataset.archiveId;
+      renderArchiveList();
+      renderArchiveDetail(adminState.archives.selectedId);
+    });
+  });
+}
+
+function renderArchiveDetail(id) {
+  const el = document.getElementById("archiveDetail");
+  if (!el) return;
+  const item = adminState.archives.items.find((it) => String(it.conversation_id) === String(id));
+  if (!item) {
+    el.innerHTML = '<div class="admin-detail-empty">보관된 대화를 선택하세요.</div>';
+    return;
+  }
+  el.innerHTML = `
+    <div class="admin-archive-detail">
+      <h3>${_archiveEsc(item.topic || "(제목 없음)")}</h3>
+      <dl class="admin-archive-detail-fields">
+        <dt>대화 ID</dt><dd><code>${_archiveEsc(item.conversation_id)}</code></dd>
+        <dt>소유자</dt><dd>${_archiveEsc(_archiveOwnerLabel(item))}</dd>
+        <dt>보관 시각</dt><dd>${_archiveEsc(_archiveFmtDt(item.archived_at))}</dd>
+        <dt>보관 수행자</dt><dd>${_archiveEsc(_archiveByLabel(item))}</dd>
+        ${item.created_at ? `<dt>생성 시각</dt><dd>${_archiveEsc(_archiveFmtDt(item.created_at))}</dd>` : ""}
+        ${item.message_count != null ? `<dt>메시지 수</dt><dd>${_archiveEsc(item.message_count)}</dd>` : ""}
+      </dl>
+      <p class="admin-archive-detail-note">보관된 대화는 소유 계정 목록에서 숨겨지고 새 메시지 진행이 차단됩니다. 데이터·첨부는 보존되어 오용 방지 감사·맥락 참조(fork)에 사용됩니다. 본문은 본 화면에서 표시하지 않습니다(메타데이터 전용).</p>
+    </div>`;
 }
 
 /* ── TASK-0205/0207: 데이터소스 관리 pane (CRUD, 자격증명 DB 암호화 저장) ─────────────
@@ -6812,6 +6883,21 @@ async function initialize() {
   if (archiveSearch && !archiveSearch.dataset.bound) {
     archiveSearch.dataset.bound = "1";
     archiveSearch.addEventListener("keydown", (e) => { if (e.key === "Enter") loadArchivedConversations(); });
+  }
+  // TASK-0276: audits 동형 — 검색 적용/초기화 버튼.
+  const archiveSearchBtn = $("archiveSearchBtn");
+  if (archiveSearchBtn && !archiveSearchBtn.dataset.bound) {
+    archiveSearchBtn.dataset.bound = "1";
+    archiveSearchBtn.addEventListener("click", () => loadArchivedConversations());
+  }
+  const archiveSearchClearBtn = $("archiveSearchClearBtn");
+  if (archiveSearchClearBtn && !archiveSearchClearBtn.dataset.bound) {
+    archiveSearchClearBtn.dataset.bound = "1";
+    archiveSearchClearBtn.addEventListener("click", () => {
+      const se = $("archiveSearch");
+      if (se) se.value = "";
+      loadArchivedConversations();
+    });
   }
   const usageDaysSel = $("usageDaysSel");
   if (usageDaysSel && !usageDaysSel.dataset.bound) {
