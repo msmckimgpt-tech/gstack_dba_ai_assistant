@@ -8,7 +8,19 @@ source_of_truth: true
 
 # Task
 
-## 0. TASK-0272 (current cycle, 동시세션이 TASK-0271/AC-0470 선점→§13.1 rebase 후 재번호 0271→0272·AC-0470→0487) — 대화 화면 프로필 첫 진입 시 "프롬프트 > 제품 범위" 목록 비어있는 버그 수정
+## 0. TASK-0274 (current cycle) — 첨부파일 목록 사이드 패널(#attachSidePanel) 너비 조절(리사이즈) 가능화
+- 요청: `작업 화면 > '+' > 첨부파일 목록` 으로 나타나는 사이드바 UI 의 크기 조절(resize) 가능화.
+- 등급: **Minor §12.3** (비파괴 프론트엔드 UI 추가 — 기존 step-side-panel/profileDrawer 의 검증된 resize 패턴 verbatim 이식. RBAC/스키마/엔드포인트/데이터 0).
+- 근거: `#stepSidePanel`(`setupStepSidePanelResize`)·`#profileDrawer`(`setupProfileDrawerResize`)는 이미 좌측 가장자리 드래그 핸들 + localStorage 너비 영속화 패턴을 운영 중. `#attachSidePanel` 만 고정 `width:280px` 로 resize 미구현이었음 → 동일 패턴 이식.
+- 구현:
+  - [x] `index.html`: `#attachSidePanel` 에 `<div class="attach-side-panel-resizer" id="attachSidePanelResizer" role="separator" …>` 핸들 추가(step-side-panel 마크업 동형).
+  - [x] `styles.css`: `.attach-side-panel` 에 `min-width:240px`/`max-width:92vw` + `.is-resizing`(transition 제거·user-select 차단) + `.attach-side-panel-resizer`(좌측 가장자리 ew-resize 핸들 + hover/dragging 시 `--primary` 가이드라인) 스타일 추가.
+  - [x] `app.js`: `setupAttachSidePanelResize()` + `_applyAttachSidePanelWidth()` 추가(키 `web.attachSidePanel.width`, min 240px, max 92vw, mouse+touch). 패널 open 경로(`composerActionsListItem` 클릭)에서 `setupAttachSidePanelResize()` + `_applyAttachSidePanelWidth()` 호출 후 표시.
+  - [x] 캐시버스터: `index.html` styles.css·app.js `?v=20260615-attach-panel-resize`. [[project_static_asset_cache_busting]]
+  - [x] node --check app.js PASS.
+- [ ] (잔여) verify-completion --pre-commit PASS → commit/push/main 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증(첨부 패널 좌측 핸들 드래그로 너비 변경 + 새로고침 후 너비 복원).
+
+## 0aa. TASK-0272 (current cycle, 동시세션이 TASK-0271/AC-0470 선점→§13.1 rebase 후 재번호 0271→0272·AC-0470→0487) — 대화 화면 프로필 첫 진입 시 "프롬프트 > 제품 범위" 목록 비어있는 버그 수정
 - 증상: 대화 화면에서 프로필 드로어를 처음 열면(새로고침 후) `프롬프트` 탭의 **제품 범위**(`#promptProductSelect`) 셀렉트가 비어 있음. 다른 탭을 눌렀다가 `프롬프트` 탭을 다시 클릭해야 채워짐.
 - 등급: **Minor §12.3** (비파괴 프론트엔드 단일 파일 버그 수정, RBAC/스키마/엔드포인트/데이터 0).
 - 근본원인: lazy 콘텐츠 적재(`initAccountPromptEditor()`)가 탭 **클릭 리스너**(`initialize()` 내)에만 배선됨. `openProfile("prompt")`→`switchProfileTab("prompt")`(첫 진입 시 prompt 가 기본 활성 탭, 클릭 이벤트 없음) 경로에는 디스패치가 없어 셀렉트가 미적재 상태로 노출. `state.products` 는 부트스트랩(`initializeWorkspace`→`/api/session`)에서 이미 적재되어 데이터 문제 아님.
