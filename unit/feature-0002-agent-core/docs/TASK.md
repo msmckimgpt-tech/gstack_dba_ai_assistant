@@ -14,7 +14,7 @@ source_of_truth: true
 - [x] **R2**: `agent_runtime.datasource_health` PG 영속(alembic `0006` + 부트스트랩 §6c + **명시 GRANT**) + `_persist_datasource_health`(soft, registry prune) + web `admin_list_datasources` `insight_health` 첨부 + admin.js "인사이트 스캔 상태" 행 → **연결불안정 vs 권한실패 구분**. 자격증명 비영속.
 - [x] **R3**: control-plane bounded connect timeout(`AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC`=10, `_controlplane_connect_timeout` — MySQL control-plane(db.py) + KB PG(_pg_connect/_ro)). breaker 미적용(timeout 만). R3a cold-window 미채택.
 - [x] 테스트 19개(`test_task0255_*`) + `make test` GREEN(ruff pass); **5-lens adversarial review SHIP_WITH_FIXES** — BLOCKER 5건 환각 기각, M-2(자격증명 로그)·M-1(메모리 prune)·MINOR 반영.
-- [ ] main 머지 → agent+web 재배포 + PG 마이그 `0006` → 런타임(로그 도배 멈춤·datasource_health 행·자격증명 미저장)·PB-0008 시각검증.
+- [x] main 머지(PR #208, `a410986`) → agent/insight-worker/ask-worker/web 재배포 + PG 마이그 `0006`(superuser GRANT) → **런타임 검증 PASS**: 로그 도배 멈춤(24초 7→7), datasource_health 8행(불안정7 `circuit_open`/정상1 `ok`), 자격증명 컬럼 0, `_controlplane_connect_timeout()=10` baked, heartbeat status=ok ~2.67s. **PB-0008 PASS**(불안정/정상 "인사이트 스캔 상태" 구분 실증, feature-0003 TEST.md §4).
 
 ## 1. Current Status
 - State: **TASK-0250 (연결 health 모니터 — background 사전판정으로 불안정 datasource 격리 완성) 구현 완료, 리뷰·배포 진행** — 신규 `modules/conn_health.py` 가 2단 probe(TCP 선검사+실제 DB connect+SELECT 1)로 per-datasource 연결 상태를 미리 유지, agent(`connect_with_retry` gate)·관리콘솔(사전계산 conn_status)이 즉시 읽어 한 datasource 불안정이 정상 datasource 요청을 막지 않음. 구 TASK-0247 in-process breaker 흡수·대체 (cycle: TASK-0250)
