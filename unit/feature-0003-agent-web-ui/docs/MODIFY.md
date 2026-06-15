@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0286
+- Date: 2026-06-15 (TASK-20260615T182907-product-list-row-icon-layout-fix, **Minor §12.3** — 제품 관리 목록 행 UI 뒤틀림 핫픽스, frontend-only. 동시세션 TASK-0277/0277b/0278 이 CHG-0281~0285 선점 → §13.1 재번호 0280→0286)
+- Scope: agent-web-ui (프론트 전용) — `src/static/admin.js` `renderProductList` 1곳 + `tests/verify_product_icon_chip_list.mjs`([3] 회귀 검증 추가) + `docs/{TASK,TEST}.md`. RBAC/스키마/엔드포인트/백엔드 0.
+- 원인: 직전 CHG-20260615-0279(PR #249)가 제품 목록 행에 아이콘을 추가하면서 `row.append(cb, avatar, meta)` 로 avatar 를 row 최상위 2번째 칸에 배치 → `.admin-list-row` 3열 grid(`auto 1fr auto`)에서 avatar 가 `1fr` 칸 점유·meta 가 `auto` 칸으로 밀려 행 정렬·텍스트 위치 뒤틀림.
+- 수정: avatar 를 row 최상위가 아니라 `meta`(`admin-list-main`) 첫 줄 `titleRow`(신규 `admin-list-row-title` flex 컨테이너) 안에 name 과 함께 묶음 — 계정 목록 행(`title.append(avatar, name, ...)` + `row.append(cb, main, chips)`)과 동형. `row.append(cb, meta)` 2자식 복원 → grid `auto 1fr auto` 정상. sub·cov 줄은 meta 세로 stack 유지.
+- 비변경: 아이콘 렌더 로직(applyAvatar)·CSS·chip·드롭업·상세·명칭 0. row click·shift-range·cov 배지·checkbox 무변경.
+- 검증: node --check admin.js + jsdom 19/19 PASS([3] avatar∈titleRow·row 2자식·grid 정합 회귀 5건) + make test 컨테이너 회귀 0.
+- Cross-ref: REV-20260615-0286 / TASK-20260615T182907-product-list-row-icon-layout-fix / CHG-20260615-0279(원인 cycle).
+
 ## CHG-20260615-0285
 - Date: 2026-06-15 (TASK-0278, **docs-only** — 데이터소스 목록 네트워크 상태 배지 PB-0008 Windows-browser 시각검증 evidence 기록; §13.1 origin max CHG-0284 → 0285)
 - Scope: docs 전용(TASK.md 잔여 체크박스 + TEST.md §4 PB-0008 Run). 코드/정적자산 0.

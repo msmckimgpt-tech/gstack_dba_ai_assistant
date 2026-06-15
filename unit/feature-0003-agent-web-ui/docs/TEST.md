@@ -285,6 +285,24 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - 2026-06-15 (TASK-0277 보관 대화 탭 UI 정합 다듬기 — 안내 밀도 정합 + row 2줄 고정·ellipsis):
   - **Environment: CLI** (정적 + jsdom). node --check admin.js PASS + CSS brace 균형(1207=1207) + **jsdom 25 PASS**(`tests/verify_archive_tab_ui.mjs` — admin-pane-note 0건·styles.css 규칙 제거·header↔filter `<p>` 없음·빈 상태 안내 carry(static+JS)·긴/짧은 row 2줄 고정·1줄 topic+ts/2줄 owner+by·flex-wrap 제거·topic/owner/by nowrap+ellipsis+overflow+min-width:0) + make test 컨테이너 **전체 회귀 0**(백엔드 무변경, MAKE_EXIT=0, ruff clean). REV-20260615-0281 [SKIPPED:frontend-ui-consistency-no-backend].
   - **Residual: Windows-browser** — 배포(deploy_scope: included) 후 PB-0008(보관 대화 탭 진입 → 짧은/긴 topic·긴 username 혼재 시 2줄 고정·미줄바꿈·ellipsis + 안내 우측 표면화) 기록 예정.
+
+- 2026-06-15 (TASK-20260615T182907-product-list-row-icon-layout-fix 제품 관리 목록 행 UI 뒤틀림 핫픽스 — **PB-0008 Windows-browser 재검증 PASS**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, https://localhost:18080, self-signed ignore).
+  - **배포:** 핫픽스 머지본 → web 재배포. 서빙 자산 admin.js 재빌드(`?v=20260615-product-icon-chip-list` 유지).
+  - **검증 내용:** 제품 관리 목록 8행이 `.admin-list-row` 3열 grid(`auto 1fr auto`)로 정렬 복원 — avatar(원형 Identicon)·`(약어) 명칭`·sub·분석률 배지가 행마다 어긋남 없이 정합. row 높이 균일, 텍스트 위치 정상(뒤틀림 해소). 수정 전 대비(42_admin_list_icons.png) 행 정렬 어긋남이 사라짐.
+  - **Evidence:** `artifacts/pb0008-profile-icon/50_admin_list_fixed.png`.
+  - **Pass/Fail: PASS** (목록 행 정렬·아이콘·텍스트 위치 정상). CHECK#13 충족.
+
+- 2026-06-15 (TASK-20260615T180923-product-icon-chip-list 제품 프로필 아이콘을 대화창 chip + 제품 관리 목록 행에 표시 — **PB-0008 Windows-browser 완료 게이트, 인증 후 시각검증 PASS**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 userspace relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면.
+  - **Runner: AI** (launch → `/api/auth/login`(bootstrap_admin) → 대화창 chip 제품 선택 eval + 관리 콘솔 `/admin` 제품 탭 목록 행 eval + screenshot)
+  - **배포:** main `aea4d15`(PR #249 squash) → `sudo docker compose build web && up -d --no-deps web`(repo-web-1 Up healthy, HTTPS /healthz 200). 서빙 자산 `?v=20260615-product-icon-chip-list` — app.js `productChipIcon` 1 hit, admin.js `applyAvatar(avatar, { url: p.icon_url` 1 hit.
+  - **검증 내용 (인증 후 실제 화면):**
+    - **① 대화창 chip 아이콘 — PASS:** pinned 제품(GZ_QA_KR) 선택 시 chip 에 `#productChipIcon` 표시(`chipIconHidden:false`, `chipIconKind:"identicon"`). 확대 캡처(41_chip_zoom.png): [🔴 빨강 dot(unstable) → 원형 Identicon(주황 대칭) → `GZ_QA_KR` → 펼침 화살표] 순서. dot conn 색·compact label 무회귀.
+    - **② 제품 관리 목록 행 아이콘 — PASS(아이콘 표시), 행 레이아웃 뒤틀림은 후속 핫픽스(182907):** 8개 행 **전부** `avatarKind:"identicon"` — `(KR) 킹스레이드`(파란 십자가)·`(KR_QA)`·`(MV)`(분홍)·`(GZ_KR)`·`(DK)`(빨강 체크)·`(FH)`(노랑)·`(GZ_QA_KR)`(주황) 각 고유 Identicon + `(약어) 명칭` + 분석률 배지. (단 이 Run 은 행 grid 뒤틀림을 놓침 — 사용자 보고 후 TASK-...-182907 로 수정·재검증.)
+    - **③ 정합 — PASS:** 같은 제품(KR)이 대화창 chip·드롭업·관리 상세·관리 목록 행에서 **동일 파란 십자가 Identicon**, GZ_QA_KR 이 chip·목록 행에서 **동일 주황 Identicon**(동일 `identiconSvg(product_key)` 규칙 교차 확인).
+  - **Evidence:** `artifacts/pb0008-profile-icon/41_chip_zoom.png`(대화창 chip 확대 — dot+Identicon+product_key), `42_admin_list_icons.png`(제품 관리 목록 8행 전부 Identicon + `(약어) 명칭` + 분석률), `40_chip_pinned_icon.png`(chip 전체 화면).
+  - **Pass/Fail: PASS(아이콘·정합), 행 레이아웃은 후속 핫픽스 PASS** (① chip 아이콘 + ② 목록 행 아이콘 + ③ 제품별 동일 Identicon 정합 실제 Windows 화면 확인). CHECK#13(PB-0008 Windows-browser) **충족**. (auto 모드 chip 아이콘 hidden 은 jsdom 14/14 의 (c) 케이스로 검증 — 라이브 auto 전환은 기존 드롭업 동작이라 본 cycle 범위 밖.)
 - 2026-06-15 (TASK-20260615T172210-profile-icon-consistency 제품 프로필 아이콘 정합화 + 대화 드롭업 레이아웃·너비 + 명칭 표기 순서 — **PB-0008 Windows-browser 완료 게이트, 인증 후 시각검증 PASS**):
   - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 userspace relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면.
   - **Runner: AI** (launch → `/api/auth/login`(bootstrap_admin) → 대화 드롭업 eval 구조검증 + 관리 콘솔 `/admin` 제품 탭 eval + screenshot)

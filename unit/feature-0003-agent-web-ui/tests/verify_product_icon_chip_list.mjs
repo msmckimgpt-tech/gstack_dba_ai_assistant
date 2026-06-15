@@ -126,5 +126,16 @@ ok("(행) icon_url 설정 → <img>", !!avB.querySelector("img"));
 const evalSvg = new Function(`${appHash}\n${appSvg}\nreturn identiconSvg;`)();
 ok("동일 product_key → 동일 Identicon(정합)", evalSvg("KR_QA", 100) === evalSvg("KR_QA", 100));
 
+// ── 테스트 3: 목록 행 레이아웃 뒤틀림 수정 (avatar 를 meta>title 안으로, row 는 [cb, meta] 2자식) ──
+console.log("\n[3] 제품 목록 행 레이아웃 뒤틀림 수정 (3열 grid 정합)");
+const renderList = extractFn(adminSrc, "renderProductList");
+ok("renderProductList 정의 존재", !!renderList);
+// avatar 가 row 최상위가 아니라 titleRow(admin-list-row-title) 안에 들어가야 한다(grid 깨짐 방지).
+ok("avatar 를 titleRow.append(avatar, name) 로 묶음", /titleRow\.append\(avatar, name\)/.test(renderList));
+ok("titleRow 클래스 = admin-list-row-title (계정 행 동형)", /titleRow\.className = "admin-list-row-title"/.test(renderList));
+ok("meta 첫 줄이 titleRow (meta.append(titleRow, sub, covLine))", /meta\.append\(titleRow, sub, covLine\)/.test(renderList));
+// row 는 [cb, meta] 2자식 — grid `auto 1fr auto` 정상 (avatar 별도 칸 금지)
+ok("row 는 [cb, meta] 2자식 (avatar 별도 칸 아님)", /row\.append\(cb, meta\)/.test(renderList) && !/row\.append\(cb, avatar, meta\)/.test(renderList));
+
 console.log(`\n=== ${passed} PASS / ${failed} FAIL ===`);
 process.exit(failed ? 1 : 0);
