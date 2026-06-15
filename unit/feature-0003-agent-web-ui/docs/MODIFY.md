@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0284
+- Date: 2026-06-15 (TASK-0277b 후속, **docs-only** — PB-0008 재검증 PASS evidence 기록)
+- Scope: agent-web-ui 문서만(TEST.md §4 + TASK.md 완료 표기). src 코드 0.
+- 변경: TEST.md §4 의 "재검증 결과 기록 예정" placeholder → 실 결과로 교체. 배포본 main `d6123d3`(#252) 서빙 `?v=...task0277b-archive-row-ellipsis` 에서 실 Chrome/148 relay 로 보관 대화 탭 computed 실측: `rowAlignItems:stretch`·`paneNotePresent:false`·2줄 고정(rowH 56→56)·line0W 308(row 폭 갇힘)·topic clientW 164<scrollW 2586 clipped:true·owner/by clipped:true(ellipsis 발동). [문제1·2] 실 브라우저 PASS. TASK.md 0277b 잔여 체크박스 완료 표기. evidence `artifacts/pb0008-task0277/{01_archive_long_ellipsis,02_archive_clean_density}.png`.
+- 비변경: 코드·CSS 0(순수 evidence). 핵심 변경은 CHG-0281(TASK-0277)·CHG-0283(TASK-0277b)에서 이미 반영·머지.
+- 검증: PB-0008 Windows-browser PASS(위 실측). CHECK#13 충족(직전 cycle 에서 기록됨).
+- Files: docs/{TEST,TASK,MODIFY,REVIEW}.md
+- Cross-ref: REV-20260615-0284 / TASK-0277b / CHG-20260615-0283.
+
 ## CHG-20260615-0283
 - Date: 2026-06-15 (TASK-0277b, **Minor §12.3** — TASK-0277 후속 핫픽스: 보관 대화 row ellipsis 실작동 수정; PR #250 후 PB-0008 실 브라우저 실측에서 발견)
 - Scope: agent-web-ui frontend 전용(styles.css 1 규칙 + admin.html 캐시버스터 + jsdom 테스트 계약 1건). 백엔드·RBAC·엔드포인트 0.

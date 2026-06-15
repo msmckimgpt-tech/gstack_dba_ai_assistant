@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0284 [SKIPPED:pb0008-evidence-docs-only]
+- Date: 2026-06-15
+- Cycle: TASK-0277b 후속 (PB-0008 재검증 PASS evidence 기록 — docs-only: TEST.md §4 placeholder 교체 + TASK.md 완료 표기). src 코드 0.
+- Skip 사유: 코드 변경 0(순수 evidence/docs). 핵심 변경은 REV-20260615-0283 [SKIPPED:frontend-ui-consistency-no-backend](align-items:stretch)에서 이미 리뷰. 본 후속은 라이브 실 브라우저 실증 기록.
+- 실증: PB-0008(실 Chrome/148 relay, 배포 main `d6123d3` #252 web 재배포) — 보관 대화 탭에서 긴 문자열 주입 후 `rowAlignItems:stretch`·`paneNotePresent:false`·2줄 고정(rowH 56)·line0W 308(row 폭 갇힘)·topic/owner/by `clipped:true`(nowrap+ellipsis 발동) 전부 실측 PASS. [문제1] 밀도 정합 + [문제2] 2줄 고정·`…` 절단 모두 확정. CHECK#13 충족.
+- Cross-ref: CHG-20260615-0284 / TASK-0277b / REV-20260615-0283 / artifacts/pb0008-task0277/.
+
 ## REV-20260615-0283 [SKIPPED:frontend-ui-consistency-no-backend]
 - Date: 2026-06-15
 - Cycle: TASK-0277b (TASK-0277 후속 핫픽스 — 보관 대화 row ellipsis 실작동 수정), **Minor §12.3** — frontend-only(styles.css 1 규칙 + 캐시버스터 + jsdom 계약). RBAC/스키마/엔드포인트/백엔드 0.
