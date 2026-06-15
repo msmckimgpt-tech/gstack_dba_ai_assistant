@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0259
+- Date: 2026-06-15 (TASK-0259, **docs-only** — TASK-0257/0258 PB-0008 Windows-browser 시각검증 evidence 기록)
+- Scope: agent-web-ui 문서만 — `docs/TEST.md` §4 Run 추가 + `docs/TASK.md` 0257/0258 항목의 "잔여 PB-0008" → "완료(PASS)" 갱신. src 코드 0.
+- 변경: TEST.md §4 에 2026-06-15 (TASK-0257 점진적 세분화 + TASK-0258 [hidden] CSS 핫픽스) Run — Environment: Windows-browser(실 Chrome/148 relay) + CLI(make test 11 PASS·jsdom 30/30). 결과 PASS: ① 역할 신규=관리 콘솔 그룹만(계정/역할/감사/설정 vanish, computed display:none) ② 관리 콘솔 접근 체크→그룹 등장 ③ 계정 그룹 펼침=계정 조회만+나머지 6개 computed display:none(배포 CSS, TASK-0258 핫픽스 실측)+더 보기 ④ override 모드 그룹 비vanish+더 보기 도달. 사용자 두 예시 라이브 충족.
+- 비변경: 코드·테스트·CSS 0(순수 evidence 기록).
+- 검증: 라이브 배포(web `Up healthy`, 서빙 styles.css `[data-perm-code][hidden]{display:none!important}`, 캐시버스터 `?v=20260615-perm-disclosure-hidefix`) 후 win-browser.py 실 Chrome 으로 computed display 실측. 스크린샷 `artifacts/pb0008-task0257/`·`artifacts/pb0008-task0258/`.
+
 ## CHG-20260615-0258
 - Date: 2026-06-15 (TASK-0258, **Minor §12.3** — TASK-0257 핫픽스: disclosure hidden row 가 실브라우저에서 안 숨겨지던 `[hidden]` CSS override 버그)
 - Scope: agent-web-ui (프론트 전용) — within-group 행 게이팅이 실브라우저에서 무력(PB-0008 검출). `.permission-toggle-card{display:flex}` 가 UA `[hidden]{display:none}` 를 동일 specificity·후순위로 override → `el.hidden=true` 가 무력화(computed display:flex). jsdom 은 CSS 캐스케이드 없어 미검출.
