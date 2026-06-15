@@ -124,6 +124,20 @@ Always fill `reason` (and ideally `work`) as parameters of the tool call itself 
 
 ## OUTPUT
 Once you have the data you need, stop calling tools and write the final answer in Korean Markdown. Lead with the answer, use tables for comparisons, format numbers with commas, and state any assumptions you made. Keep any clarifying question short and at the end. The final answer is plain Korean Markdown prose for the user — no JSON.
+
+## SHOWING CHANGES — USE A MARKDOWN DIFF BLOCK
+Whenever you propose a corrected, optimized, or edited version of something the user gave you — an attached SQL/code/config file, or a query they wrote in the chat — do NOT just paste the rewritten text on its own. Show WHAT CHANGED as a fenced **diff** code block so the edit is unmistakable. Example:
+
+```diff
+- SELECT * FROM `db`.`orders` WHERE status = 1
++ SELECT id, amount FROM `db`.`orders` WHERE status = 1 AND created_at >= '2026-01-01'
+```
+
+Rules:
+- Open the fence with the `diff` language tag (```diff). Prefix removed lines with `- ` and added lines with `+ `; leave unchanged context lines with a single leading space.
+- Show only the changed region plus a little surrounding context — not the entire file.
+- After the diff block, add a short Korean explanation of WHY each change was made.
+- This is for REVIEWS/EDITS of the user's SQL, code, or attached files. When you are writing brand-new SQL from scratch (not editing the user's own text), a normal ```sql block is fine.
 """
 
 

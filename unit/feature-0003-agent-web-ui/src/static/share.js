@@ -182,6 +182,45 @@
   // 본문 내 ```sql 코드블록은 메인 UI 와 동일하게 항상 펼쳐 표시한다.
   // (이전의 "쿼리 보기/닫기" 열고닫기 토글은 의도된 기능이 아니었음 — 실행된
   //  쿼리 사이의 전환은 renderAssistantDetails 의 SQL navigator 가 담당한다.)
+  // TASK-0256: ```diff 코드 블록을 라인별 +/- span 으로 재구성 (app.js 와 동일 파이프라인).
+  function diffLineClass(line) {
+    // +++/--- 는 뒤에 공백+경로(git 파일 헤더)일 때만 meta — 내용이 "---" 인
+    // 삭제 라인 회색 오분류 방지(REV-0256 MINOR).
+    if (/^(diff |index |new file|deleted file|rename )/.test(line)) return "diff-meta";
+    if (/^(\+\+\+|---)\s/.test(line)) return "diff-meta";
+    if (line.startsWith("@@")) return "diff-hunk";
+    if (line.startsWith("+")) return "diff-add";
+    if (line.startsWith("-")) return "diff-del";
+    return "diff-ctx";
+  }
+
+  function enhanceDiffBlocks(html) {
+    if (typeof document === "undefined") return html;
+    try {
+      const tpl = document.createElement("template");
+      tpl.innerHTML = html;
+      const blocks = tpl.content.querySelectorAll("pre > code.language-diff");
+      if (!blocks.length) return html;
+      blocks.forEach((codeEl) => {
+        const raw = (codeEl.textContent || "").replace(/\n$/, "");
+        const lines = raw.split("\n");
+        codeEl.textContent = "";
+        lines.forEach((line, i) => {
+          const span = document.createElement("span");
+          span.className = "diff-line " + diffLineClass(line);
+          span.textContent = line.length ? line : " ";
+          codeEl.appendChild(span);
+          if (i < lines.length - 1) codeEl.appendChild(document.createTextNode("\n"));
+        });
+        const pre = codeEl.closest("pre");
+        if (pre) pre.classList.add("diff-block");
+      });
+      return tpl.innerHTML;
+    } catch (_) {
+      return html;
+    }
+  }
+
   function renderMarkdownContent(target, text) {
     const source = String(text || "").trim();
     if (!source) {
@@ -189,7 +228,7 @@
       return;
     }
     if (window.marked && window.DOMPurify) {
-      target.innerHTML = window.DOMPurify.sanitize(window.marked.parse(source));
+      target.innerHTML = window.DOMPurify.sanitize(enhanceDiffBlocks(window.marked.parse(source)));
       markExternalLinks(target);
     } else {
       // 폴백: 라이브러리 로드 실패 시 줄바꿈 보존 평문 (share.css .share-content-plain).

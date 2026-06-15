@@ -1022,3 +1022,12 @@ source_of_truth: true
   - unit/feature-0002-agent-core/tests/test_multi_datasource.py (신규 P5 6)
   - unit/feature-0002-agent-core/docs/{FUNCTION,REVIEW,REPORT,TASK}.md, docs/STATUS.md
 - Rollback: MySQL 골든이라 환원 시 dialect → inline SQL 복귀(기능 동일). flag OFF shadow.
+
+## CHG-20260615-0256
+- Date: 2026-06-15 (TASK-0256)
+- Scope: agent-core SYSTEM_PROMPT — 답변 포맷 지침 1개 섹션 추가. RBAC/스키마/엔드포인트/시크릿 0.
+- 변경: agent_core.py SYSTEM_PROMPT 의 OUTPUT 섹션 뒤 "SHOWING CHANGES — USE A MARKDOWN DIFF BLOCK" 추가 — 첨부/쿼리 리뷰·편집 시 변경을 ```diff 블록(+/- 라인)으로 제시, 신규 SQL 작성은 ```sql 유지. compose_system_prompt 의 base 합성에 반영(상수=seed/fallback, 라이브 truth=WebSystemPrompts global row).
+- 검증: test_compose_system_prompt 4 passed(```diff·DIFF BLOCK·OUTPUT 이후 순서).
+- Files: src/agent_core.py, tests/test_compose_system_prompt.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
+- Rollback: SYSTEM_PROMPT 섹션 제거 + 라이브 global row 백업 복원(기능 동일, diff 미지시).
+- Deploy: ask-worker 재빌드 + 라이브 WebSystemPrompts global row 갱신(백업 보관).

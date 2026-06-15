@@ -903,3 +903,11 @@ source_of_truth: true
 - Date: 2026-06-09
 - Cycle: TASK-0174 cycle closure (체크박스 완료 표기)
 - Reason: 문서 한정 변경(TASK.md 체크박스 [ ]→[x]). 코드·RBAC·스키마·엔드포인트·시크릿 0건. 실질 수정은 이미 REV-20260609-0173(SUBAGENT 패널)에서 검토·배포됨. outside-voice 불필요 조건 충족.
+
+## REV-20260615-0256 [SUBAGENT:ship]
+- Date: 2026-06-15
+- Cycle: TASK-0256 (SYSTEM_PROMPT diff 출력 지침), **Major §12.3** (라이브 global system prompt = 전 답변 영향).
+- Trigger: 출력 포맷 변경 + 웹 렌더 동반 → outside-voice(general-purpose) 적대적 리뷰.
+- Verdict: **SHIP** — 프롬프트 ```diff 예시 문자열 안전(py_compile PASS), OUTPUT 의 no-JSON/한국어 마크다운 규칙·ATTACHED FILES 섹션과 무충돌. diff 블록은 리뷰/편집 한정(신규 SQL=```sql)으로 과다사용 방지. test_compose_system_prompt 4 passed.
+- Residual: 라이브 WebSystemPrompts global row 갱신(백업)·ask-worker 재배포 후 검증.
+- Cross-ref: CHG-20260615-0256 / TASK-0256 / feature-0003 REV-20260615-0256.

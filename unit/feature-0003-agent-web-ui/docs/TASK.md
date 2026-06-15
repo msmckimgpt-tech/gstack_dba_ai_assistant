@@ -3540,3 +3540,12 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] PR #192 머지(main 6756522)·배포 후 PB-0008 측정: name/engine/coord left spread=0
 - [x] 정련(CHG-0246b): 연결배지 justify-self end→start(left spread=0 통일, sibling .cov-db-row 컨벤션)
 - [ ] v2 배포 → PB-0008 재측정(전 열 left spread=0) → 마감
+
+### TASK-0256 — assistant 답변 diff 블록: 웹 UI ```diff 렌더 (2026-06-15)
+- 목표: 답변 내 ```diff 코드블록을 라인별 +/- 색으로 구분 렌더 (메인 채팅 + 공유 뷰).
+- [x] app.js markdownToHtml: enhanceDiffBlocks(parse→enhance→sanitize) — language-diff 블록을 라인별 span 재구성 (textContent 기반, XSS 무첨가)
+- [x] share.js renderMarkdownContent 동일 파이프라인 parity
+- [x] styles.css/share.css .diff-block/.diff-add/.diff-del/.diff-hunk/.diff-meta (다크 코드배경 팔레트)
+- [x] 캐시버스터 bump: index.html(styles/app), share.html(share.css/share.js) → ?v=20260615-task0256-diff
+- [x] node --check app.js/share.js PASS
+- [ ] web 재배포 후 PB-0008 Windows-browser 시각검증 (diff 색 구분)

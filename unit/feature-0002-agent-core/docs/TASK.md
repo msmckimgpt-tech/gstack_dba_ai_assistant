@@ -841,3 +841,10 @@ TASK-0015 (plan-review):
 - [x] **회귀테스트**: `test_infer_rag_object_datasource_scoped`(ds 분리) + `test_scope_key_is_endpoint_hash_and_label_agnostic`(엔드포인트 해시·라벨독립). 호스트 391 passed, 컨테이너 make test RC=0.
 - [x] **외부시각 적대적 리뷰(격리 경계)**: SHIP — 데이터 유출/격리 붕괴 BLOCKER 없음. 동일-엔드포인트·상이-경계 datasource 의 insight 병합은 비표준 구성·메타데이터 한정·4중 backstop(product 바인딩+allowlist+AST+RO-GRANT). Q4 멀티-같은엔진 재키잉 가드 반영.
 - [x] **배포·라이브검증**(main dc3f0b0): web/ask-worker/insight-worker/agent 재빌드 + 마이그 적용 + 재키잉/백필. 검증: ds rag_objects 342(mysql-ddae8975d793=179 / mssql-f82c51b3425f=163), schema 망가짐 0(`dbo` 깨끗), no-ds 객체 788 NULL 보존, 제품1/7/8→mysql해시·90/91→mssql해시 resolve, retrieval ds-필터(active=mssql)→mssql 객체만 165(유출0).
+
+### TASK-0256 — assistant 답변 diff 블록: SYSTEM_PROMPT diff 출력 지침 (2026-06-15)
+- 목표: 첨부파일/사용자 쿼리 리뷰·편집 응답에서 변경(수정 SQL·편집본)을 markdown ```diff 블록으로 제시하도록 base SYSTEM_PROMPT 가 지시.
+- [x] SYSTEM_PROMPT OUTPUT 섹션 뒤 "## SHOWING CHANGES — USE A MARKDOWN DIFF BLOCK" 추가 (리뷰/편집 한정, 신규 SQL 작성은 ```sql 유지)
+- [x] test_compose_system_prompt: SYSTEM_PROMPT 가 ```diff·DIFF BLOCK 포함 + OUTPUT 이후 위치 검증 (4 passed)
+- [ ] 라이브 WebSystemPrompts global row 갱신(백업) — base 는 DB row 가 truth, 상수는 seed/fallback
+- [ ] ask-worker 재배포 후 라이브 검증

@@ -1121,3 +1121,34 @@ System Prompt 를 Product → Role → Account 3 계층으로 조립하도록 �
 - `.env`에 추가한 `WEB_BOOTSTRAP_ADMIN_USERNAME`, `WEB_BOOTSTRAP_ADMIN_PASSWORD`는 현재 개발 부트스트랩용 값이다. 실제 운영 전에는 반드시 교체해야 한다.
 - **TASK-0051 후속: 컨테이너 재빌드 + UX smoke** — `make web` 재빌드 후 `/admin` 진입해 (i) 메타 4 종 chip 회색 + × 없음 / (ii) DB picker 옵션 채워짐(메타·`agent_memory` 제외) / (iii) 제품 detail 의 name·desc·active·default·sort 입력 변경 시 footer 카운트 증가 / (iv) `+ 추가` / chip × / textarea 변경이 footer 단일 commit 으로 수렴 / (v) 시스템 프롬프트 textarea 변경이 productSelect 전환 후에도 보존 / (vi) `취소` 클릭 시 모든 신규 buckets clear 를 확인.
 - **C5 (TASK-0052) 본체 cycle 완료 (2026-05-06)** — 운영자 검토 필요: D2-A 호환성 backfill 로 모든 6 role 이 KR 제품에 default-grant. 본 cycle 의 보안 효과 (G1-G8 가드) 가 실효를 발휘하려면 운영자가 권한 회수가 필요한 (role × product) 조합에 admin 콘솔 deny override 를 적용해야 함. 참고: [BRIEFING-c5-permission-product-access.md](./BRIEFING-c5-permission-product-access.md). `/plan-eng-review` (Section 1~4) + Codex outside voice (gpt-5.5, reasoning=high) 통합. 핵심 결정: D1-B (권한 코드 + 기존 override 재사용 — 단 RBAC engine DB-driven 마이그레이션을 C5 본체로 흡수) / D2-A (호환성 우선 backfill, **NOT secure-by-default** — 마이그레이션 report 후 운영자 검토) / D3-A (Product CRUD 자동 연동 + 명시적 트랜잭션) / D4 변경 (Codex Claim 6 수용: end-user `/api/session` filter + admin `/api/admin/products` 전체 유지). Codex 가 9 finding 을 catch — 그 중 5 개가 plan 골격을 흔드는 critical (정적 catalog 가정 / autocommit 기본 / 기존 conv `product_id_for_run` 가드 누락 / 추가 endpoint 4 곳 가드 / info 노출). 30 test case (smoke + DOM + negative HTTP) 정의. 다음 cycle 진입 시 TASK-0052 발급 + briefing 의 §3-§5 를 TASK.md §2.1 로 채택. **Phase 1A (RBAC engine 마이그레이션) 은 product 권한 도입 없이 단독 deploy 가능** — 분리 commit 권장.
+
+## TASK-0256 — assistant 답변 diff 블록 (2026-06-15)
+
+### 변경
+- 프롬프트(feature-0002): `agent_core.SYSTEM_PROMPT` OUTPUT 섹션 뒤 "SHOWING CHANGES — USE A MARKDOWN DIFF BLOCK" — 첨부/쿼리 리뷰·편집 시 변경을 ```diff 블록으로 제시.
+- 렌더(feature-0003): `enhanceDiffBlocks`(app.js/share.js) — marked.parse→enhance→DOMPurify.sanitize. `language-diff` 블록을 라인별 `<span class="diff-line ...">` 재구성. styles.css/share.css 팔레트. 캐시버스터 bump.
+
+### 라이브 배포 절차 (deploy_scope: included)
+1. web + ask-worker 재빌드/재기동:
+   `sudo docker compose build web ask-worker && sudo docker compose up -d --no-deps web ask-worker`
+2. 라이브 WebSystemPrompts global row 갱신 (멱등·백업). 컨테이너 내 1회 실행:
+   ```
+   sudo docker compose exec -T web python - <<'PY'
+   import app, agent_core
+   M = "## SHOWING CHANGES — USE A MARKDOWN DIFF BLOCK"
+   sec = agent_core.SYSTEM_PROMPT[agent_core.SYSTEM_PROMPT.find(M):].rstrip()
+   c = app._open_memory_connection()
+   row = app._load_system_prompt(c, scope="global")
+   old = row["content"] if row else ""
+   open("/tmp/task0256_global_prompt_backup.txt","w").write(old)
+   if row and M in old:
+       print("ALREADY-APPLIED")
+   elif row:
+       app._upsert_system_prompt(c, scope="global", content=old.rstrip()+"\n\n"+sec+"\n"); c.commit(); print("APPENDED")
+   else:
+       app._upsert_system_prompt(c, scope="global", content=agent_core.SYSTEM_PROMPT); c.commit(); print("SEEDED-FULL")
+   PY
+   ```
+   - 백업: 컨테이너 `/tmp/task0256_global_prompt_backup.txt` (롤백 시 동일 헬퍼로 복원).
+   - 멱등: 마커 존재 시 무변경. 기존 admin 커스터마이즈 보존(append-only).
+3. PB-0008 Windows-browser 시각검증: 첨부 SQL 리뷰 요청 → 답변의 ```diff 블록이 +초록/-빨강 라인으로 구분되는지 (메인 채팅 + 공유 뷰).

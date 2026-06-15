@@ -1045,6 +1045,28 @@ a { color: inherit; }
   background: rgba(255,255,255,.18);
 }
 
+/* TASK-0256: ```diff 코드 블록 — 답변 내 변경 제안을 라인별 +/- 색으로 구분.
+   .message-content pre 의 다크 배경(#1a1b26) 위에서 읽히는 팔레트 사용. */
+.message-content pre.diff-block { padding: 10px 0; }
+.message-content pre.diff-block code {
+  display: block;
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+.message-content pre.diff-block .diff-line {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 0 14px;
+  border-left: 2px solid transparent;
+}
+.message-content pre.diff-block .diff-ctx  { color: #c0caf5; }
+.message-content pre.diff-block .diff-add  { background: rgba(158,206,106,.14); color: #9ece6a; border-left-color: #9ece6a; }
+.message-content pre.diff-block .diff-del  { background: rgba(247,118,142,.14); color: #f7768e; border-left-color: #f7768e; }
+.message-content pre.diff-block .diff-hunk { color: #7aa2f7; }
+.message-content pre.diff-block .diff-meta { color: #737aa2; }
+
 .message-content h1, .message-content h2, .message-content h3 {
   margin: 14px 0 6px;
   font-size: 15px;

@@ -2412,3 +2412,14 @@ source_of_truth: true
 - Trigger: layout/UI keyword(§18.8 → ux). 단 본 cycle 은 `.cov-db-row` grid 트랙 `auto`→고정폭 전환 + `justify-self:start` 2줄 — 신규 로직·상태·DOM·엔드포인트·권한 0. 전례(REV-0178 css-spacing / REV-0179·0180 css-layout)와 동일 경량 SKIP.
 - Reason: 행 단위 grid 의 가변(`auto`) 컬럼이 콘텐츠 길이에 따라 행마다 트랙폭을 달리해 fr 컬럼이 어긋나던 것을 고정폭으로 못박아 전 행 트랙 동일화. 데이터·권한·구조 무변경, 순수 시각 정렬. outside-voice 불필요.
 - Residual: 배포 후 PB-0008 Windows-browser 시각검증(행 간 역할설명·진척바·상태칩 시작 x 정렬 일치) — CHECK#13.
+
+## REV-20260615-0256 [SUBAGENT:ship]
+- Date: 2026-06-15
+- Cycle: TASK-0256 (assistant 답변 diff 블록 — 프롬프트 + 웹 UI 렌더), **Major §12.3** (라이브 전역 프롬프트 = 전 답변 영향 + UI 렌더 + 배포).
+- Trigger: §18.8 — UI/render(ux/design) + 프롬프트 출력 포맷. enhanceDiffBlocks 가 marked 렌더 HTML 을 DOMPurify 전 후처리 → XSS 표면 → 적대적 보안/정합 리뷰(general-purpose outside voice).
+- Verdict: **SHIP** (BLOCKER/MAJOR 0).
+  - 보안/XSS: parse→enhance→sanitize 순서. textContent 양방향 round-trip 안전(이중이스케이프·엔티티디코딩 XSS 없음). marked 가 코드 본문·fence info 이스케이프(실측) → `pre>code.language-diff` 셀렉터 속성주입 불가. span+class DOMPurify 기본 allowlist 통과(실측), DOMPurify 최종 실행.
+  - 정합: diffLineClass 가 +++/---/@@/blank/context 정상 분류. 일반 코드블록·표·```sql 무회귀(language-diff 없으면 원본 early-return). 프롬프트 ```diff 예시 안전(py_compile), no-JSON/한국어 규칙·ATTACHED FILES 무충돌.
+  - MINOR(보정 완료): 내용 정확히 "---" 인 삭제 라인 meta 오색 → +++/--- 는 후행 공백 시에만 meta 로 한정(app.js/share.js).
+- Residual: PB-0008 Windows-browser 시각검증(배포 후) — diff +초록/-빨강 라인 구분.
+- Cross-ref: CHG-20260615-0256 / TASK-0256 / feature-0002 REV-20260615-0256.
