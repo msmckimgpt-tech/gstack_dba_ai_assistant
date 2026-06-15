@@ -73,6 +73,13 @@ def cascade_conv_soft(conn, conversation_id: str) -> int:
             conn.commit()
         except Exception:
             pass
+        # TASK-0277: dual-write — conv_soft 로 마킹된 첨부들을 PG 로 미러(flag-gated, fail-soft).
+        if count:
+            try:
+                from web.modules import attachment_pg_mirror as _apm
+                _apm.mirror_conversation_attachments(conn, conversation_id)
+            except Exception:
+                pass
         if count:
             LOG.info("cascade_conv_soft: conv=%s marked %d attachments", conversation_id, count)
         return count
@@ -213,6 +220,12 @@ def _process_row(conn, row: dict, conn_factory) -> bool:
             cur.close()
         try:
             conn.commit()
+        except Exception:
+            pass
+        # TASK-0277: dual-write — hard-delete(UploadStatus='deleted') 상태를 PG 로 미러(flag-gated, fail-soft).
+        try:
+            from web.modules import attachment_pg_mirror as _apm
+            _apm.mirror_attachments(conn, [att_id])
         except Exception:
             pass
         LOG.debug("attachment_recon: processed id=%d key=%s", att_id, object_key)

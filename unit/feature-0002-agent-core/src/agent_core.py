@@ -352,30 +352,55 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int], accou
     # 가 os.environ 으로 전달되며 동시 요청 간 race 가 나도 교차테넌트 유출을 막는 안전망이다.
     if not attachment_ids or mem_conn is None or not account_id:
         return ""
-    try:
-        cur = mem_conn.cursor()
-    except Exception:
-        return ""
-    try:
-        placeholders = ", ".join(["%s"] * len(attachment_ids))
-        cur.execute(
-            f"""
-            SELECT Id, ConversationId, OriginalFilename, Kind, MimeType,
-                   SizeBytes, SizeBucket, UploadStatus, MetaJson
-            FROM WebConversationAttachments
-            WHERE Id IN ({placeholders}) AND AccountId = %s AND DeletedAt IS NULL AND DeletePending = 0
-            ORDER BY Id ASC
-            """,
-            tuple(int(i) for i in attachment_ids) + (int(account_id),),
-        )
-        rows = cur.fetchall() or []
-    except Exception:
-        return ""
-    finally:
+    # TASK-0277: read cutover — AGENT_RUNTIME_ATTACHMENTS_READ_BACKEND=postgres 면 PG agent_runtime
+    # 에서 읽는다(IDOR AccountId 가드 동형). 행은 positional tuple, 컬럼 순서·MetaJson::text 로 MySQL 정합.
+    # PG read 실패는 MySQL(mem_conn) 폴백(가용성 — dual-write 로 MySQL 도 정본 유지).
+    rows = None
+    if os.environ.get("AGENT_RUNTIME_ATTACHMENTS_READ_BACKEND", "mysql").strip().lower() == "postgres":
         try:
-            cur.close()
+            from modules.db import _pg_connect
+            _pg = _pg_connect()
+            try:
+                _ph = ", ".join(["%s"] * len(attachment_ids))
+                with _pg.cursor() as _pc:
+                    _pc.execute(
+                        f"SELECT id, conversation_id, original_filename, kind, mime_type, "
+                        f"size_bytes, size_bucket, upload_status, meta_json::text "
+                        f"FROM agent_runtime.core_attachments "
+                        f"WHERE id IN ({_ph}) AND account_id = %s "
+                        f"AND deleted_at IS NULL AND delete_pending = 0 ORDER BY id ASC",
+                        tuple(int(i) for i in attachment_ids) + (int(account_id),),
+                    )
+                    rows = _pc.fetchall() or []
+            finally:
+                _pg.close()
         except Exception:
-            pass
+            rows = None
+    if rows is None:
+        try:
+            cur = mem_conn.cursor()
+        except Exception:
+            return ""
+        try:
+            placeholders = ", ".join(["%s"] * len(attachment_ids))
+            cur.execute(
+                f"""
+                SELECT Id, ConversationId, OriginalFilename, Kind, MimeType,
+                       SizeBytes, SizeBucket, UploadStatus, MetaJson
+                FROM WebConversationAttachments
+                WHERE Id IN ({placeholders}) AND AccountId = %s AND DeletedAt IS NULL AND DeletePending = 0
+                ORDER BY Id ASC
+                """,
+                tuple(int(i) for i in attachment_ids) + (int(account_id),),
+            )
+            rows = cur.fetchall() or []
+        except Exception:
+            return ""
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
     if not rows:
         return ""
 

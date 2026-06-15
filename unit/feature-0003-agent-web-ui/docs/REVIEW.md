@@ -21,6 +21,23 @@ source_of_truth: true
 - Residual: web 재배포(deploy_scope: included) 후 PB-0008 Windows-browser 재검증(목록 행 정렬·아이콘·텍스트 위치 정상) → TEST.md §4.
 - Cross-ref: CHG-20260615-0286 / TASK-20260615T182907-product-list-row-icon-layout-fix / CHG-20260615-0279(원인).
 
+## REV-20260615-0287 [SUBAGENT:attachment-pg-cutover]
+- Date: 2026-06-15
+- Cycle: TASK-0279 (첨부 메타 MySQL agent_memory → PG agent_runtime 통합 cutover), **Critical §12.3** — 파괴 위험 데이터 이전 + 신규 스키마 + cross-store cutover + 인가 표면(첨부 read 가드).
+- Trigger: §18.8 — 데이터 마이그레이션 무결성 + 다수 read 경로의 IDOR/scope 가드 PG 이식 → 적대적 outside-voice 2인(데이터 이전 / 인가 표면, general-purpose). [[feedback_outside_voice_for_rbac]] 정합.
+- Verdict: **SHIP-WITH-FIXES → 흡수 → SHIP** (BLOCKER 0).
+  - **데이터 이전 리뷰**: probe 1(타입 정합)·2(ID 보존)·3(version-chain UNIQUE)·5(commit 순서)·6(backfill orphan/FK)·dual-write 9경로 전수 매핑 전부 **코드 file:line 으로 안전 반박**. JSON=str(mysql.connector) ↔ `::text`, DATETIME naive UTC ↔ `AT TIME ZONE 'UTC'` 정합 확인. id 보존(plain bigint PK)·NULLS DISTINCT UNIQUE 동형·commit 후 동기 미러 확인.
+  - **인가 표면 리뷰**: probe 1~6(IDOR account_id / conversation-scope 게이트 선행 / 버전체인 root 유래 / fail-open 미발생 / sandbox allowlist fail-closed / GRANT) 전부 **homomorphic — MySQL 원본과 file:line parity**. 타 계정 attachment_id 주입 시 PG 분기도 zero-row. **SHIP**.
+- 흡수한 fix(REV findings):
+  - **MAJOR-1**(read flip 후 dual-write fail-soft 누락분이 size-cap 누적을 과소계상 → quota 우회): `_check_attachment_size_caps` 를 MySQL(권위) 계산 후 read_pg 면 `max(MySQL, PG)` 보수 enforce 로 교정(미러 누락 시에도 cap 우회 불가). 회귀 테스트 `test_b2_size_caps_max_of_mysql_and_pg`.
+  - **MINOR-1**(derived 미러 FK orphan): `mirror_derived_messages` 가 부모 첨부를 먼저 `mirror_attachments` 후 derived upsert.
+  - **MINOR-2**(sandbox UPDATE-only writer): 모듈 docstring 정정(INSERT writer 0, UPDATE-only DroppedAt 은 PG read 미소비 → accepted staleness, decommission 정리).
+- Accept(비차단·근거): RW-role read(`agent_kb_rw`)는 RO replica lag 으로 인한 staleness 악화 회피 위해 의도적(cutover 정합 > least-privilege). 부속 verify 의 SUM 미검증은 id 보존+DO NOTHING 이라 안전. bootstrap GRANT 위임(§7 ALL TABLES)은 §6d 가 §7 앞이라 스냅샷 커버.
+- **MAJOR-1 운영 게이트(load-bearing)**: read flip 은 **`attachment_backfill --verify` diff=0 확인 후**에만. 본 cycle 은 MySQL 쓰기 유지(롤백 안전망) → 읽기 flip 되돌리면 전량 복구. MySQL 폐기(decommission cycle)는 verify diff=0 연속 확인 + 주기 backfill 수렴 확보가 전제.
+- Verification: 신규 `test_attachment_pg_cutover.py` 14 PASS + make test 컨테이너 전체 회귀 0 + ruff clean + py_compile. 라이브 PG 라운드트립은 migrate-first 배포 단계 게이트.
+- Residual: migrate-first(alembic 0008 superuser) → web+ask-worker 재배포 → dual-write ON → backfill → verify diff=0 → read flip → 라이브 검증 → PB-0008.
+- Cross-ref: TASK-0279 / 0006_datasource_health(GRANT 함정 선례) / 0007_core_conv_archived(migrate-first 선례) / [[project_cutover_readpath_routing_gaps]].
+
 ## REV-20260615-0284 [SKIPPED:pb0008-evidence-docs-only]
 - Date: 2026-06-15
 - Cycle: TASK-0277b 후속 (PB-0008 재검증 PASS evidence 기록 — docs-only: TEST.md §4 placeholder 교체 + TASK.md 완료 표기). src 코드 0.

@@ -3717,3 +3717,15 @@ source_of_truth: true
 - Files: src/static/admin.js, src/static/admin.html, src/static/styles.css, docs/{FUNCTION,MODIFY,REVIEW,TASK,TEST}.md
 - Rollback: `_dsRenderList` 를 `<button role=option>` 단일선택 + section-label HTML 로 환원, 신규 함수/상태/리스너/contract 항목 + styles.css grid override 제거(PR#251 --nav override 복원), 캐시버스터 환원. (전면 frontend-only 라 backend 무영향.)
 - Deploy: web 재빌드(정적자산 baked). app.py/ask-worker/insight-worker 무변경 → web 단일 서비스 재배포.
+## CHG-20260615-0287
+- Date: 2026-06-15 (TASK-0279, **Critical §12.3** — 첨부 메타 MySQL→PG agent_runtime 통합 cutover; 동시세션 0277·0278 선점 → 0279 재번호, origin/main 6커밋 rebase)
+- Scope: alembic 0008 + agent_runtime_schema.sql(§6d) + 신규 modules/attachment_pg_mirror.py + scripts/attachment_backfill.py + app.py(dual-write 미러 9 + read 게이트 7) + agent_core.py(context read 게이트) + attachment_reconciliation.py(미러 2) + 신규 test. cross-store 데이터 마이그레이션(신규 PG 테이블, 데이터 무손실 추가).
+- 변경:
+  - (스키마) alembic `0008_core_attachments`(down=0007_core_conv_archived): PG `agent_runtime.core_attachments`(+sandbox_schemas/derived_messages/provider_files). **id=plain bigint PK**(GENERATED ALWAYS 금지 — MySQL Id 권위 보존). `UNIQUE(root_attachment_id, version_number)` NULLS DISTINCT 동형. derived.message_id=비-FK(PG messages IDENTITY 재발급으로 id-space 불일치). 4테이블 **명시 GRANT**(superuser 적용 trap). bootstrap §6d 정합(GRANT §7 ALL TABLES 위임).
+  - (모듈) `attachment_pg_mirror`: 플래그 `AGENT_RUNTIME_ATTACHMENTS_DUAL_WRITE`/`_READ_BACKEND`(전역 READ_BACKEND 재사용 금지 — 이미 postgres). 타입 정합: read 가 jsonb→`::text`(mysql.connector JSON=str 정합), timestamptz→`AT TIME ZONE 'UTC'`(naive UTC); write 는 역방향 `::timestamptz`/`::jsonb`. read 헬퍼는 MySQL-shape(PascalCase alias) dict 반환.
+  - (dual-write) MySQL write commit 직후 동기·fail-soft 미러 9 지점. mirror_attachments(id 재조회 upsert ON CONFLICT id DO UPDATE, created_at 보존) / mirror_derived_messages(부모 첨부 선미러 후 derived) / mirror_conversation_attachments.
+  - (read cutover) 사용자·LLM 대면 read PG 게이트(권한체크는 PG 분기 前 선행, account_id/conversation_id WHERE 동형). write-트랜잭션 내부 read(버전 MAX·sandbox enum·fork source)는 MySQL 유지(decommission 전환). PG 실패 시 MySQL 폴백.
+  - (size-cap) REV MAJOR-1 흡수: `_check_attachment_size_caps` = MySQL(권위) 후 read_pg 면 `max(MySQL, PG)`(미러 누락분 과소계상→cap 우회 방지).
+  - (backfill) `attachment_backfill.py` 4테이블 멱등 + `--verify`(count·SUM·missing-id) → read flip 게이트.
+- Verification: 신규 test 14 PASS + make test 회귀 0 + ruff + py_compile. outside-voice 2인(REV-0286). 라이브 라운드트립은 배포 단계.
+- Deploy: **migrate-first 필수**(web=DML-only role) — make migrate(alembic 0008 superuser) 선행 → web+ask-worker 재빌드(agent_core 변경). insight-worker 무변경. 플래그 단계 전환(dual-write ON → backfill → verify diff=0 → read flip).

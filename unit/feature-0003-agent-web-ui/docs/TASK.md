@@ -3841,3 +3841,15 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] node --check admin.js PASS + 적대적 subagent 코드리뷰 SHIP(BLOCKER 0/MAJOR 0, REV-20260615-0286)
 - [x] rebase origin/main + PR#251 충돌 해소(_dsRenderList 도트 통합·docs 재번호) + PR #254
 - [ ] 머지 → web 재배포 → PB-0008 Windows-browser 시각검증 → 마감
+### TASK-0279 — 첨부 메타데이터 MySQL agent_memory → PG agent_runtime 통합 cutover (Critical §12.3, 2026-06-15)
+- 사용자 결정(AskUserQuestion): 이번 cycle 은 읽기 전환까지 — MySQL 쓰기는 롤백 안전망 유지, MySQL 폐기는 후속 decommission cycle. (동시세션 0277·0278 선점 → 0279 재번호)
+- [x] M1 스키마: alembic `0008_core_attachments`(4 PG 테이블, id 보존 bigint PK, version-chain UNIQUE, FK, 명시 GRANT) + `agent_runtime_schema.sql` §6d bootstrap
+- [x] 신규 `web.modules.attachment_pg_mirror`(독립 플래그·write 미러·MySQL-shape read 헬퍼; jsonb=::text / timestamptz=AT TIME ZONE UTC 타입 정합)
+- [x] M2 dual-write 미러 9 지점(upload/ingest/materialize+supersede/soft-delete/fork/vision-derived/recon-hard-delete/recon-cascade/ingest-degraded) commit 직후 fail-soft
+- [x] M3 read cutover 게이트(load_row/list/versions/text_inline/vision_images/sandbox-allowlist + agent_core context) IDOR account_id 가드 동형 + MySQL 폴백
+- [x] M4 `scripts/attachment_backfill.py`(4테이블 ON CONFLICT DO NOTHING 멱등 + orphan skip + `--verify` count/SUM/id-diff 게이트)
+- [x] M5 신규 `test_attachment_pg_cutover.py` 14 PASS + make test 컨테이너 전체 회귀 0 + ruff + py_compile
+- [x] outside-voice 적대 리뷰 2인(데이터 이전 SHIP-WITH-FIXES→흡수 / 인가 표면 SHIP) — REV-20260615-0287. MAJOR-1(size-cap quota max 보수계산)·MINOR-1(derived 부모 선미러)·MINOR-2(docstring) 흡수
+- [ ] 라이브 rollout: migrate-first(alembic 0008 superuser) → web+ask-worker 재배포 → dual-write ON → backfill → `--verify` diff=0 게이트 → read flip → 라이브 라운드트립
+- [ ] PB-0008 Windows-browser 시각검증(업로드·목록·버전 체인·삭제가 read=postgres 에서 동작) → merge
+- [ ] (decommission 후속 cycle) MySQL 쓰기 제거 + 멱등 ALTER 헬퍼 정리 + write-내부 read PG 전환 + id sequence/identity 부착
