@@ -3486,3 +3486,17 @@ source_of_truth: true
 - Files: src/app.py, tests/test_html_no_cache.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
 - Rollback: headers 인자 제거(휴리스틱 캐싱 복귀).
 - Deploy: web 재빌드.
+
+## CHG-20260615-0268
+- Date: 2026-06-15 (TASK-0268 — 동시세션 TASK-0267[perm-tree] 선점으로 0267→0268 재번호)
+- Scope: 프로필 아바타 / 제품 아이콘 이미지 업로드·서빙·삭제 + Identicon 기본. app.py(스키마 ALTER + 엔드포인트 6 + 헬퍼) + 정적자산. RBAC 카탈로그/시크릿 0(product.manage 재사용).
+- 변경:
+  - (스키마) WebAccounts.AvatarObjectKey + WebProducts.IconObjectKey 멱등 ALTER — `_ensure_web_tables`(slow) + `_ensure_avatar_icon_schema`(fast-path `_ensure_seed_catchup`) 양쪽. 계정 SELECT chokepoint + `_list_products` SELECT 에 컬럼 추가.
+  - (직렬화) `_serialize_account`→`avatar_url`, `_list_products`→`icon_url`. `_avatar_url_for`/`_product_icon_url_for`(object key sha256[:12] 캐시버스터, 미설정 None).
+  - (엔드포인트) `PUT/DELETE /api/auth/me/avatar`(self-service 로그인만, owner=self 강제) + `GET /api/avatars/{id}`(로그인). `PUT/DELETE /api/admin/products/{id}/icon`(product.manage) + `GET /api/products/{id}/icon`. 이전 object best-effort 삭제(DB commit 후).
+  - (검증) `_sniff_image`(매직바이트 png/jpg/webp만, 클라 MIME 불신, SVG/GIF 거부) + `_store_image_upload`(크기 cap 2MB/5MB, MinIO prefix `avatars/<id>/`·`product-icons/<id>/`, uuid+ext 파일명 미사용) + `_serve_image_object`(content-type 역추론 + `X-Content-Type-Options: nosniff` + `Content-Disposition: inline`).
+  - (프론트) app.js `identiconSvg(seed)`(해시 5x5 대칭 SVG·외부의존0·결정론적) + `applyAvatar(el,{url,seed,initials})`(이미지 or Identicon, onerror 폴백). renderAccountState/renderProfile 아바타 + 드로어 업로드/제거 UI(index.html). buildProductDropupItem 아이콘 이미지(설정 시). admin.js renderProductDetail 제품 아이콘 이미지·업로드/제거(product.manage). styles.css 아바타/아이콘/Identicon. index.html·admin.html 캐시버스터 `?v=20260615-task0268-avatar`.
+- 검증: 신규 test_avatar_icon_upload.py 8 PASS + make test 컨테이너 전체 회귀 0(PYTEST_EXIT=0) + ruff + node --check app.js/admin.js + CSS brace(1175=1175) + py_compile + Playwright(Identicon 결정론·구분) + 라이브 라운드트립(PNG 업로드→서빙 200 image/png·nosniff, SVG 거부, 삭제→null) + outside-voice 보안 리뷰 SHIP(REV-0268).
+- Files: src/app.py, src/static/{app.js,admin.js,styles.css,index.html,admin.html}, tests/test_avatar_icon_upload.py, docs/{TASK,MODIFY,REPORT,REVIEW,FUNCTION}.md, docs/STATUS.md(repo)
+- Rollback: 6 엔드포인트 + 헬퍼(_sniff_image/_store_image_upload/_serve_image_object/_avatar_url_for/_product_icon_url_for/_ensure_avatar_icon_schema) 제거, SELECT/직렬화 avatar_url/icon_url 제거, ALTER 는 컬럼 잔존(무해). 프론트 identicon/applyAvatar/업로드 UI 제거 + 캐시버스터 환원. 컬럼 DROP 은 별도 cleanup.
+- Deploy: web 재빌드(app.py + 정적자산). ask/insight-worker 무변경.

@@ -6317,3 +6317,35 @@ a { color: inherit; }
 .usage-conv-content { overflow-y: auto; }
 .usage-conv-note { font-size: 13px; color: var(--text-muted, #6b7280); line-height: 1.5; margin: 0; }
 
+/* ─── TASK-0268: 프로필 아바타 / 제품 아이콘 이미지 + Identicon ─────────────── */
+/* 아바타/아이콘 컨테이너에 이미지·SVG 가 들어가면 둥글게 클립하고 꽉 채운다. */
+.profile-avatar.has-avatar-img, .profile-avatar-lg.has-avatar-img { overflow: hidden; padding: 0; }
+.profile-avatar .avatar-img, .profile-avatar-lg .avatar-img,
+.profile-avatar > svg, .profile-avatar-lg > svg { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 프로필 드로어 아바타 편집(변경 ✎ 버튼 + 제거) */
+.profile-avatar-edit { position: relative; display: inline-block; }
+.profile-avatar-change {
+  position: absolute; right: -4px; bottom: -4px; width: 22px; height: 22px; border-radius: 50%;
+  border: 1px solid var(--border, #e5e7eb); background: var(--surface-1, #fff); color: var(--text-2, #6b7280);
+  cursor: pointer; font-size: 11px; line-height: 1; display: grid; place-items: center; padding: 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,.15);
+}
+.profile-avatar-change:hover { background: var(--bg, #f3f4f6); color: var(--primary, #2563eb); }
+.profile-avatar-remove {
+  appearance: none; border: none; background: transparent; color: var(--danger, #dc2626);
+  font-size: 11px; cursor: pointer; padding: 2px 0; text-decoration: underline; margin-top: 2px;
+}
+/* 제품 드롭업 아이콘(작은 이미지) */
+.product-dropup-item-icon { width: 16px; height: 16px; border-radius: 4px; overflow: hidden; flex-shrink: 0; display: inline-flex; }
+.product-dropup-item-icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* admin 제품 아바타 이미지 + 아이콘 편집 */
+.admin-avatar { position: relative; overflow: visible; }
+.admin-avatar .admin-avatar-img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: inherit; }
+.admin-avatar-edit { position: absolute; left: 0; right: 0; bottom: -22px; display: flex; gap: 6px; justify-content: center; }
+.admin-avatar-change, .admin-avatar-remove {
+  appearance: none; border: 1px solid var(--border, #e5e7eb); background: var(--surface-1, #fff);
+  border-radius: var(--r-sm, 4px); font-size: 10px; padding: 1px 6px; cursor: pointer; color: var(--text-2, #6b7280);
+}
+.admin-avatar-change:hover { color: var(--primary, #2563eb); }
+.admin-avatar-remove { color: var(--danger, #dc2626); }
+

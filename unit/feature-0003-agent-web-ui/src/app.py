@@ -1290,10 +1290,31 @@ def _serialize_account(
         "must_change_password": bool(account.get("must_change_password")),
         # UI gate 전용 최소 플래그 — permissions 전체 노출 없이 관리 콘솔 접근 여부만 전달.
         "console_access": _account_has_permission(account, "console.access"),
+        # TASK-0268: 아바타 이미지 URL. 설정 시 /api/avatars/<id>(같은 출처 bytes 서빙) +
+        # object key 해시 캐시버스터. NULL=미설정 → 프론트가 Identicon 렌더.
+        "avatar_url": _avatar_url_for(int(account.get("id") or 0), account.get("avatar_object_key")),
     }
     if include_permissions:
         payload["permissions"] = _account_permissions(account)
     return payload
+
+
+def _avatar_url_for(account_id: int, object_key: "str | None") -> "str | None":
+    """아바타 이미지 API URL(같은 출처 bytes 서빙) + 캐시버스터. 미설정 시 None(프론트 Identicon)."""
+    if not object_key or account_id <= 0:
+        return None
+    import hashlib as _hl
+    v = _hl.sha256(str(object_key).encode("utf-8")).hexdigest()[:12]
+    return f"/api/avatars/{account_id}?v={v}"
+
+
+def _product_icon_url_for(product_id: int, object_key: "str | None") -> "str | None":
+    """제품 아이콘 이미지 API URL + 캐시버스터. 미설정 시 None(프론트 Identicon/기본)."""
+    if not object_key or product_id <= 0:
+        return None
+    import hashlib as _hl
+    v = _hl.sha256(str(object_key).encode("utf-8")).hexdigest()[:12]
+    return f"/api/products/{product_id}/icon?v={v}"
 
 
 def _account_conv_file(account_id: int) -> str:
@@ -1378,6 +1399,7 @@ SELECT
     a.DeletedAt AS deleted_at,
     a.DeletedByAccountId AS deleted_by_account_id,
     COALESCE(a.MustChangePassword, 0) AS must_change_password,
+    a.AvatarObjectKey AS avatar_object_key,
     r.RoleKey AS role_key,
     r.Name AS role_name,
     r.Description AS role_description,
@@ -2369,6 +2391,7 @@ def _list_products(conn, *, include_inactive: bool = False) -> list[dict[str, An
 SELECT Id AS id, ProductKey AS product_key, Name AS name, Description AS description,
        IsActive AS is_active, IsDefault AS is_default, SortOrder AS sort_order,
        DefaultRoleAccess AS default_role_access, DatasourceKey AS datasource_key,
+       IconObjectKey AS icon_object_key,
        CreatedAt AS created_at, UpdatedAt AS updated_at
 FROM WebProducts
 {where}
@@ -2396,6 +2419,8 @@ ORDER BY IsDefault DESC, SortOrder ASC, Id ASC
             "datasource_key": (str(_dsk).lower() if _dsk else None),
             # TASK-0228 (1:N): 전체 바인딩 목록 [{datasource_key, is_primary, sort_order}].
             "datasources": _ds_list,
+            # TASK-0268: 제품 아이콘 이미지 URL(설정 시) — 미설정 시 None → 프론트 Identicon/기본.
+            "icon_url": _product_icon_url_for(_pid, row.get("icon_object_key")),
             "created_at": str(row.get("created_at") or ""),
             "updated_at": str(row.get("updated_at") or ""),
         })
@@ -3384,6 +3409,11 @@ def _ensure_dynamic_permissions_schema(conn) -> None:
         # TASK-0205 §2.4: 제품별 MSSQL 참조 DB(같은 서버 데이터소스의 어느 DB 를 볼지). NULL=데이터소스 기본.
         try:
             cur.execute("ALTER TABLE WebProducts ADD COLUMN DatasourceDatabase VARCHAR(128) NULL")
+        except Exception:
+            pass
+        # TASK-0268: 제품 아이콘 이미지 — MinIO object key (NULL=미설정 → 프론트 Identicon 폴백).
+        try:
+            cur.execute("ALTER TABLE WebProducts ADD COLUMN IconObjectKey VARCHAR(512) NULL")
         except Exception:
             pass
         # WebRoles.DefaultProductAccess (deprecated, 이전 설계 잔재) 의 ALTER 는 더 이상 추가하지 않는다.
@@ -4525,6 +4555,25 @@ def _ensure_must_change_password_schema(conn) -> None:
         cur.close()
 
 
+def _ensure_avatar_icon_schema(conn) -> None:
+    """TASK-0268: fast-path 재기동에서도 WebAccounts.AvatarObjectKey / WebProducts.IconObjectKey
+    컬럼이 존재하도록 idempotent ALTER. _ensure_web_tables 와 동일 SQL — 운영 재기동은 slow path
+    (_ensure_web_tables) 를 안 타고 _ensure_seed_catchup 만 타므로, 계정 SELECT(a.AvatarObjectKey)·
+    제품 SELECT(IconObjectKey) 가 'Unknown column' 으로 깨지지 않게 양쪽 경로에 ALTER 를 둔다."""
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute("ALTER TABLE WebAccounts ADD COLUMN AvatarObjectKey VARCHAR(512) NULL")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE WebProducts ADD COLUMN IconObjectKey VARCHAR(512) NULL")
+        except Exception:
+            pass
+    finally:
+        cur.close()
+
+
 def _ensure_seed_catchup(conn) -> None:
     """기존 배포에 신규 seed role/prompt 가 있으면 상태를 맞춘다.
 
@@ -4566,6 +4615,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_web_conversation_attachment_provider_files_schema(conn)
     # TASK-0061 Phase 6: 기존 배포에 MustChangePassword 컬럼 backfill.
     _ensure_must_change_password_schema(conn)
+    # TASK-0268: 아바타/아이콘 object key 컬럼 fast-path 보정(slow path _ensure_web_tables 미경유 재기동 대비).
+    _ensure_avatar_icon_schema(conn)
     # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 fast-path 보정.
     _ensure_web_audit_events_schema(conn)
     # REQ-20260520-0001 (TASK-0086): WebAccountActivity DROP 완료. migration helper 는
@@ -4695,6 +4746,11 @@ def _ensure_web_tables():
             cur.execute(
                 "ALTER TABLE WebAccounts ADD COLUMN MustChangePassword TINYINT(1) NOT NULL DEFAULT 0"
             )
+        except Exception:
+            pass
+        # TASK-0268: 프로필 아바타 이미지 — MinIO object key (NULL=미설정 → 프론트 Identicon 폴백).
+        try:
+            cur.execute("ALTER TABLE WebAccounts ADD COLUMN AvatarObjectKey VARCHAR(512) NULL")
         except Exception:
             pass
         cur.execute(
@@ -11905,6 +11961,291 @@ def public_share_fork(token: str, request: Request) -> JSONResponse:
 @app.post("/api/clear_memory")
 def clear_memory(request: Request) -> JSONResponse:
     return _json_error("전체 정리 기능은 제거되었습니다.", 410)
+
+
+# ============================================================================
+# TASK-0268 — 프로필 아바타 / 제품 아이콘 이미지 (업로드·서빙·삭제)
+#   사용자 아바타: self-service (PATCH 권한 무관, 본인 한정). 제품 아이콘: product.manage.
+#   저장: MinIO (첨부 버킷 재사용, prefix `avatars/<id>/` · `product-icons/<id>/`).
+#   서빙: 같은 출처 bytes 스트리밍(/api/avatars/<id>, /api/products/<id>/icon) — 자주
+#   로드되므로 presigned URL churn 대신 app 직접 서빙(메타 URL 에 object key 해시 캐시버스터).
+#   미설정 시 컬럼 NULL → 프론트가 Identicon 렌더(외부 의존 0, 사용자 결정).
+# ============================================================================
+
+# 작은 이미지만 — svg(스크립트 가능)·gif 제외. 클라이언트 MIME 불신 + 매직바이트 검증.
+_IMAGE_UPLOAD_ALLOWED = {
+    "image/png": ("png", b"\x89PNG\r\n\x1a\n"),
+    "image/jpeg": ("jpg", b"\xff\xd8\xff"),
+    "image/webp": ("webp", None),  # RIFF....WEBP — 별도 검사
+}
+_AVATAR_MAX_BYTES = 2 * 1024 * 1024   # 2MB
+_ICON_MAX_BYTES = 5 * 1024 * 1024     # 5MB
+
+
+def _sniff_image(body: bytes, mime_type: str) -> "tuple[str, str] | None":
+    """매직바이트로 이미지 종류 판별(클라이언트 MIME 불신). 반환 (ext, content_type) 또는 None.
+
+    png/jpeg/webp 만 허용. svg(XSS)·gif 등은 거부. mime_type 은 힌트일 뿐, 실제 바이트로 결정.
+    """
+    if not body or len(body) < 12:
+        return None
+    if body[:8] == b"\x89PNG\r\n\x1a\n":
+        return ("png", "image/png")
+    if body[:3] == b"\xff\xd8\xff":
+        return ("jpg", "image/jpeg")
+    if body[:4] == b"RIFF" and body[8:12] == b"WEBP":
+        return ("webp", "image/webp")
+    return None
+
+
+def _store_image_upload(body: bytes, *, prefix: str, owner_id: int, max_bytes: int,
+                        mime_hint: str) -> "tuple[str, str] | tuple[None, str]":
+    """이미지 bytes 검증 + MinIO 저장. 반환 (object_key, content_type) 또는 (None, error_msg).
+
+    prefix='avatars'|'product-icons'. object key = `<prefix>/<owner_id>/<uuid>.<ext>`.
+    """
+    if not body:
+        return (None, "빈 파일입니다.")
+    if len(body) > max_bytes:
+        return (None, f"이미지가 너무 큽니다(최대 {max_bytes // (1024 * 1024)}MB).")
+    sniffed = _sniff_image(body, mime_hint)
+    if not sniffed:
+        return (None, "지원하지 않는 이미지 형식입니다(PNG·JPG·WEBP만 허용).")
+    ext, content_type = sniffed
+    try:
+        from web.modules import storage_minio
+        import uuid as _uuid
+        object_key = f"{prefix}/{int(owner_id)}/{_uuid.uuid4().hex}.{ext}"
+        storage_minio.put_object_bytes(
+            object_key, body, content_type=content_type,
+            metadata={"kind": prefix, "owner_id": str(owner_id)},
+        )
+        return (object_key, content_type)
+    except Exception as exc:
+        logging.getLogger(__name__).warning("image upload store failed", exc_info=True)
+        return (None, f"이미지 저장 실패: {exc}")
+
+
+def _serve_image_object(object_key: "str | None", *, fallback_404: str = "이미지 없음"):
+    """MinIO object_key 의 이미지 bytes 를 같은 출처로 서빙(StreamingResponse 대신 Response).
+
+    캐시: 1일(immutable — URL 에 object key 해시 캐시버스터 동반). 미설정/실패 404.
+    """
+    if not object_key:
+        return _json_error(fallback_404, 404)
+    try:
+        from web.modules import storage_minio
+        data = storage_minio.get_object_bytes(str(object_key))
+    except Exception:
+        return _json_error(fallback_404, 404)
+    # content type 은 확장자에서 역추론(저장 시 검증된 png/jpg/webp 만).
+    ext = str(object_key).rsplit(".", 1)[-1].lower()
+    ctype = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}.get(ext, "application/octet-stream")
+    from starlette.responses import Response as _Resp
+    # TASK-0268 보안: nosniff(MIME 스니핑 XSS 방어심층) + inline disposition. content-type 은
+    # 저장 시 매직바이트로 검증된 image/* 만 — 브라우저가 HTML 로 스니핑하지 못하게 못박는다.
+    return _Resp(content=data, media_type=ctype, headers={
+        "Cache-Control": "private, max-age=86400",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Disposition": "inline",
+    })
+
+
+@app.put("/api/auth/me/avatar")
+async def upload_my_avatar(request: Request, file: UploadFile = File(...)) -> JSONResponse:
+    """본인 프로필 아바타 업로드(self-service — 별도 RBAC 없음, 로그인만). 이전 아바타는 교체."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        aid = int(account.get("id") or 0)
+        if aid <= 0:
+            return _json_error("계정 식별 실패", 403)
+        body = await file.read()
+        object_key, info = _store_image_upload(
+            body, prefix="avatars", owner_id=aid, max_bytes=_AVATAR_MAX_BYTES,
+            mime_hint=(file.content_type or ""),
+        )
+        if not object_key:
+            return _json_error(info, 400)
+        # 이전 아바타 object key 회수(best-effort 삭제).
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT AvatarObjectKey FROM WebAccounts WHERE Id = %s", (aid,))
+            row = cur.fetchone()
+            old_key = row[0] if row else None
+            cur.execute("UPDATE WebAccounts SET AvatarObjectKey = %s WHERE Id = %s", (object_key, aid))
+            conn.commit()
+        finally:
+            cur.close()
+        if old_key and old_key != object_key:
+            try:
+                from web.modules import storage_minio
+                storage_minio.delete_object(str(old_key))
+            except Exception:
+                pass
+        return JSONResponse({"ok": True, "avatar_url": _avatar_url_for(aid, object_key)})
+    finally:
+        conn.close()
+
+
+@app.delete("/api/auth/me/avatar")
+def delete_my_avatar(request: Request) -> JSONResponse:
+    """본인 아바타 제거 → Identicon 폴백."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        aid = int(account.get("id") or 0)
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT AvatarObjectKey FROM WebAccounts WHERE Id = %s", (aid,))
+            row = cur.fetchone()
+            old_key = row[0] if row else None
+            cur.execute("UPDATE WebAccounts SET AvatarObjectKey = NULL WHERE Id = %s", (aid,))
+            conn.commit()
+        finally:
+            cur.close()
+        if old_key:
+            try:
+                from web.modules import storage_minio
+                storage_minio.delete_object(str(old_key))
+            except Exception:
+                pass
+        return JSONResponse({"ok": True, "avatar_url": None})
+    finally:
+        conn.close()
+
+
+@app.get("/api/avatars/{account_id}")
+def serve_avatar(account_id: int, request: Request) -> Any:
+    """계정 아바타 이미지 bytes 서빙(로그인 필요 — 같은 출처). 미설정/없음 404 → 프론트 Identicon."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT AvatarObjectKey FROM WebAccounts WHERE Id = %s", (int(account_id),))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        return _serve_image_object(row[0] if row else None, fallback_404="아바타 없음")
+    finally:
+        conn.close()
+
+
+@app.put("/api/admin/products/{product_id}/icon")
+async def upload_product_icon(product_id: int, request: Request, file: UploadFile = File(...)) -> JSONResponse:
+    """제품 아이콘 업로드(product.manage). 이전 아이콘 교체."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(account, "product.manage"):
+            return _json_error("제품 관리 권한이 필요합니다 (product.manage).", 403)
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT IconObjectKey FROM WebProducts WHERE Id = %s", (int(product_id),))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        if row is None:
+            return _json_error("제품을 찾을 수 없습니다.", 404)
+        old_key = row[0]
+        body = await file.read()
+        object_key, info = _store_image_upload(
+            body, prefix="product-icons", owner_id=int(product_id), max_bytes=_ICON_MAX_BYTES,
+            mime_hint=(file.content_type or ""),
+        )
+        if not object_key:
+            return _json_error(info, 400)
+        cur = conn.cursor()
+        try:
+            cur.execute("UPDATE WebProducts SET IconObjectKey = %s WHERE Id = %s", (object_key, int(product_id)))
+            conn.commit()
+        finally:
+            cur.close()
+        if old_key and old_key != object_key:
+            try:
+                from web.modules import storage_minio
+                storage_minio.delete_object(str(old_key))
+            except Exception:
+                pass
+        return JSONResponse({"ok": True, "icon_url": _product_icon_url_for(int(product_id), object_key)})
+    finally:
+        conn.close()
+
+
+@app.delete("/api/admin/products/{product_id}/icon")
+def delete_product_icon(product_id: int, request: Request) -> JSONResponse:
+    """제품 아이콘 제거(product.manage) → 기본/Identicon 폴백."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(account, "product.manage"):
+            return _json_error("제품 관리 권한이 필요합니다 (product.manage).", 403)
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT IconObjectKey FROM WebProducts WHERE Id = %s", (int(product_id),))
+            row = cur.fetchone()
+            old_key = row[0] if row else None
+            cur.execute("UPDATE WebProducts SET IconObjectKey = NULL WHERE Id = %s", (int(product_id),))
+            conn.commit()
+        finally:
+            cur.close()
+        if old_key:
+            try:
+                from web.modules import storage_minio
+                storage_minio.delete_object(str(old_key))
+            except Exception:
+                pass
+        return JSONResponse({"ok": True, "icon_url": None})
+    finally:
+        conn.close()
+
+
+@app.get("/api/products/{product_id}/icon")
+def serve_product_icon(product_id: int, request: Request) -> Any:
+    """제품 아이콘 bytes 서빙(로그인 필요). 미설정/없음 404 → 프론트 Identicon/기본."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT IconObjectKey FROM WebProducts WHERE Id = %s", (int(product_id),))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        return _serve_image_object(row[0] if row else None, fallback_404="아이콘 없음")
+    finally:
+        conn.close()
 
 
 # ============================================================================
