@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0265 [SKIPPED:pb0008-evidence-docs-only]
+- Date: 2026-06-15
+- Cycle: TASK-0265 (TASK-0264 PB-0008 Windows-browser 시각검증 evidence 기록 — docs-only: TEST.md §4 Run + TASK.md PB-0008 완료 표기. src 코드 0).
+- Skip 사유: 코드 변경 0(순수 evidence/docs). 핵심 코드 변경은 선행 REV-20260615-0264 [SUBAGENT:rbac-adversarial] SHIP-WITH-FIXES 에서 이미 적대 리뷰 완료. 본 후속은 라이브 실증 기록일 뿐.
+- 실증: PB-0008(실 Chrome/148 relay, 배포 main `d35299e` web Up healthy) — ① 역할(checkbox) account.delete 부여+게이트OFF → computed `display:none`(권한 행 0 노출, "더 보기 7개·1개 부여됨") ② 계정(override) account.delete=거부 → override-grid 행 computed `display:none`(unscope 수정 실증). 사용자 두 편집기 요구 충족. CHECK#13 충족.
+- Cross-ref: CHG-20260615-0265 / TEST.md §4 (2026-06-15 TASK-0264 Run) / REV-20260615-0264.
+
 ## REV-20260615-0264 [SUBAGENT:rbac-adversarial] — SHIP-WITH-FIXES → 흡수 후 SHIP
 - Date: 2026-06-15
 - Cycle: TASK-0264 (권한 disclosure 추가 단순화 — forceVisible 제거, 게이트 미충족 시 부여 세부 권한도 숨김. frontend-only `src/static/{admin.js,styles.css}`)
