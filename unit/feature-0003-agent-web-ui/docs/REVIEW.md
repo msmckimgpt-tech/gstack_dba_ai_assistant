@@ -2760,3 +2760,9 @@ source_of_truth: true
 - Verification: node --check admin.js + CSS brace(1215=1215) 균형.
 - Residual: 머지 → web 재배포(정적자산) → PB-0008 Windows-browser(도트 색·leading 정렬·aria-label).
 - Cross-ref: CHG-20260615-0282 / TASK-0278 / REQ-20260615-0280 / REQ-20260612-0244(연결배지 인프라 선례).
+
+## REV-20260615-0285 [SKIPPED:pb0008-evidence-docs-only]
+- Date: 2026-06-15
+- Cycle: TASK-0278 PB-0008 evidence 기록 (docs-only).
+- Skip 사유: 코드 변경 0(순수 evidence/docs). 핵심 변경은 REV-20260615-0282 [SUBAGENT:ship] 에서 이미 적대적 리뷰(SHIP). 본 후속은 라이브 실 Windows 브라우저 PB-0008 PASS 실측 기록.
+- Cross-ref: CHG-20260615-0285 / TASK-0278 / REV-20260615-0282(코드 cycle).

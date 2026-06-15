@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0285
+- Date: 2026-06-15 (TASK-0278, **docs-only** — 데이터소스 목록 네트워크 상태 배지 PB-0008 Windows-browser 시각검증 evidence 기록; §13.1 origin max CHG-0284 → 0285)
+- Scope: docs 전용(TASK.md 잔여 체크박스 + TEST.md §4 PB-0008 Run). 코드/정적자산 0.
+- 변경: PB-0008 Windows-browser **PASS** 기록 — `관리 콘솔 > 데이터소스` 14행 전부 leading `.ds-conn-dot`·left=270 단일정렬·is-ok 초록(22,163,74)/is-fail 빨강(220,38,38)·title/aria-label·grid `9px 274px`·`#settingsList` 무회귀(308px). 배포 main `73d65b8`(#251). evidence `artifacts/pb0008-task0278/ds-conn-badge.png`.
+- 검증: PB-0008 실측(win-browser eval + screenshot). 코드 무변경(회귀 0).
+- Files: docs/{TASK,TEST,MODIFY,REVIEW}.md
+- Cross-ref: REV-20260615-0285 / TASK-0278 / CHG-20260615-0282(코드 cycle).
+
 ## CHG-20260615-0284
 - Date: 2026-06-15 (TASK-0277b 후속, **docs-only** — PB-0008 재검증 PASS evidence 기록)
 - Scope: agent-web-ui 문서만(TEST.md §4 + TASK.md 완료 표기). src 코드 0.
