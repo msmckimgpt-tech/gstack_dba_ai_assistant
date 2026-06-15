@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0265
+- Date: 2026-06-15 (TASK-0265, **docs-only** — TASK-0264 PB-0008 Windows-browser 시각검증 evidence 기록)
+- Scope: agent-web-ui 문서만 — `docs/TEST.md` §4 Run 추가 + `docs/TASK.md` TASK-0264 "잔여 PB-0008" → "완료(PASS)". src 코드 0.
+- 변경: TEST.md §4 에 2026-06-15 (TASK-0264 disclosure 추가 단순화) Run — Environment Windows-browser(실 Chrome/148) + CLI(make test 11 PASS·jsdom 17/17). 결과 PASS: ① 역할(checkbox) account.delete 부여+게이트OFF → computed display:none(권한 행 0 노출)+"더 보기 7개·1개 부여됨" ② 계정(override) account.delete=거부+게이트inherit → override-grid 행 computed display:none(unscope 수정 실증). 사용자 요구 두 편집기 충족.
+- 비변경: 코드·테스트·CSS 0(순수 evidence).
+- 검증: 라이브 배포(main `d35299e`, web Up healthy, 서빙 unscoped `[data-perm-code][hidden]` + `.has-granted`) 후 win-browser.py 실 Chrome computed display 실측. 스크린샷 `artifacts/pb0008-task0264/`.
+
 ## CHG-20260615-0264
 - Date: 2026-06-15 (TASK-0264, **Minor §12.3** — 권한 disclosure 추가 단순화: 게이트 미충족 시 부여 세부 권한도 숨김, forceVisible 제거)
 - Scope: agent-web-ui (프론트 전용) — 사용자 보고("더 보기 클릭 전 항목 노출, 최대한 숨김"). TASK-0257 의 비파괴 forceVisible 이 게이트 OFF·부분부여 역할서 부여 항목을 노출하던 것을 제거. 백엔드/RBAC/스키마 0.
