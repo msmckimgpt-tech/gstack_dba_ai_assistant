@@ -52,23 +52,11 @@ DEPS = _parse_dependencies()
 
 
 # ── 가시성 알고리즘 포팅 (admin.js _applyPermissionDisclosure, checkbox mode) ─────
+# TASK-0264: forceVisible 제거 — 게이트 체인이 충족돼야만 노출(부여 여부 무관). 부여된 권한의
+# 도달성은 _refreshGroupDisclosure 의 그룹 비숨김 + "더 보기 · N개 부여됨" (DOM 계층, 본 포팅 범위 밖).
 def compute_visibility(checked: set[str], all_codes: set[str]) -> dict[str, bool]:
-    def is_explicit(c: str) -> bool:
-        return c in checked
-
     def gate_satisfied(c: str) -> bool:
         return c in checked
-
-    force: set[str] = set()
-    for c in all_codes:
-        if not is_explicit(c):
-            continue
-        cur: str | None = c
-        seen: set[str] = set()
-        while cur and cur not in seen:
-            force.add(cur)
-            seen.add(cur)
-            cur = DEPS.get(cur)
 
     cache: dict[str, bool] = {}
 
@@ -78,8 +66,6 @@ def compute_visibility(checked: set[str], all_codes: set[str]) -> dict[str, bool
         cache[c] = False  # 사이클 방어
         parent = DEPS.get(c)
         if parent is None:
-            v = True
-        elif c in force:
             v = True
         elif parent not in all_codes:
             v = True
@@ -91,24 +77,10 @@ def compute_visibility(checked: set[str], all_codes: set[str]) -> dict[str, bool
     return {c: visible(c) for c in all_codes}
 
 
-# ── 가시성 (override mode: gate=허용, explicit=허용·거부) ──────────────────────────
+# ── 가시성 (override mode: gate=허용) — TASK-0264 forceVisible 제거 ─────────────────
 def compute_visibility_override(state: dict[str, str], all_codes: set[str]) -> dict[str, bool]:
-    def is_explicit(c: str) -> bool:
-        return state.get(c, "inherit") in ("allow", "deny")
-
     def gate_satisfied(c: str) -> bool:
         return state.get(c, "inherit") == "allow"
-
-    force: set[str] = set()
-    for c in all_codes:
-        if not is_explicit(c):
-            continue
-        cur: str | None = c
-        seen: set[str] = set()
-        while cur and cur not in seen:
-            force.add(cur)
-            seen.add(cur)
-            cur = DEPS.get(cur)
 
     cache: dict[str, bool] = {}
 
@@ -118,8 +90,6 @@ def compute_visibility_override(state: dict[str, str], all_codes: set[str]) -> d
         cache[c] = False
         parent = DEPS.get(c)
         if parent is None:
-            v = True
-        elif c in force:
             v = True
         elif parent not in all_codes:
             v = True
@@ -166,24 +136,26 @@ def test_m4_own_to_any_dependency():
             assert DEPS.get(code) == own, f"{code} 의 부모가 {own} 아님 (실제 {DEPS.get(code)})"
 
 
-# ── V: 가시성 불변식 ────────────────────────────────────────────────────────────
-def test_v1_non_destructive_checked_always_visible():
+# ── V: 가시성 불변식 (TASK-0264 — 게이트 체인 충족 시에만 노출, 부여 무관) ──────────
+def test_v1_visible_iff_gate_chain_satisfied():
     all_codes = set(VALID_CODES)
-    # 모든 단일 체크 — 부여된 권한은 항상 visible
+    # 자기 전 조상 체인을 모두 체크하면 노출(게이트 충족).
     for code in all_codes:
-        vis = compute_visibility({code}, all_codes)
-        assert vis[code], f"단일 체크된 {code} 가 숨겨짐 — 비파괴 위반"
-    # 대표 조합 몇 개
-    for combo in (
-        {"account.delete", "role.permission.manage"},
-        {"audit.purge"},
-        {"conversation.read.any"},
-        {"system_prompt.global.write"},
-        all_codes,  # 전부 체크
-    ):
-        vis = compute_visibility(combo, all_codes)
-        for code in combo:
-            assert vis[code], f"체크된 {code} 가 숨겨짐(조합 {sorted(combo)[:3]}…) — 비파괴 위반"
+        chain: set[str] = set()
+        cur: str | None = DEPS.get(code)
+        while cur is not None:
+            chain.add(cur)
+            cur = DEPS.get(cur)
+        vis = compute_visibility(chain, all_codes)  # code 자신은 체크 안 해도, 조상 체인만 충족하면 노출
+        assert vis[code], f"게이트 체인 충족인데 {code} 가 숨겨짐"
+    # 루트(부모 없음)는 항상 노출.
+    roots = [c for c in all_codes if DEPS.get(c) is None]
+    vis0 = compute_visibility(set(), all_codes)
+    for code in roots:
+        assert vis0[code], f"루트 {code} 가 빈 상태에서 숨겨짐"
+    # 게이트 미충족이면 *체크된* 세부 권한도 숨김(forceVisible 제거 — 도달성은 DOM 그룹/더보기 계층 담당).
+    vis1 = compute_visibility({"account.delete"}, all_codes)
+    assert not vis1["account.delete"], "게이트(account.read·console.access) OFF 인데 체크된 account.delete 가 노출됨 — 단순화 위반"
 
 
 def test_v2_master_gate_off_collapses_manage_section():
@@ -214,53 +186,71 @@ def test_v3_intermediate_gate_account_read():
     assert vis["role.read"], "console.access ON 이면 role.read 노출"
 
 
-def test_v4_orphan_chain_force_visible():
+def test_v4_granted_detail_collapsed_when_gate_off():
     all_codes = set(VALID_CODES)
-    # account.delete 만 부여 — 조상 체인 전부 강제 노출, 형제는 숨김
+    # account.delete 만 부여(게이트 OFF) — 부여됐어도 게이트 미충족이라 숨김(TASK-0264 핵심).
     vis = compute_visibility({"account.delete"}, all_codes)
-    assert vis["account.delete"], "부여된 account.delete 가 숨겨짐"
-    assert vis["account.read"], "조상 account.read 가 숨겨짐(orphan 체인 노출 실패)"
-    assert vis["console.access"], "조상 console.access 가 숨겨짐"
-    assert not vis["account.update"], "형제 account.update 는 게이트 OFF 라 숨겨져야 함"
+    assert not vis["account.delete"], "게이트 OFF 인데 부여된 account.delete 가 노출됨 — 단순화 위반"
+    assert not vis["account.read"], "게이트(console.access) OFF 라 account.read 도 숨김"
+    assert vis["console.access"], "console.access(루트)는 항상 노출"
+    assert not vis["account.update"], "형제 account.update 도 게이트 OFF 라 숨김"
+    # 게이트 체인을 충족하면 도달(노출).
+    vis2 = compute_visibility({"console.access", "account.read", "account.delete"}, all_codes)
+    assert vis2["account.delete"], "게이트 체인 충족 시 account.delete 노출"
+    assert vis2["account.read"] and vis2["console.access"], "충족된 게이트들도 노출"
 
 
-# ── V(override): 계정 override 모드 가시성 불변식 ─────────────────────────────────
-def test_v5_override_non_destructive_explicit_always_visible():
+# ── V(override): 계정 override 모드 가시성 불변식 (TASK-0264) ──────────────────────
+def test_v5_override_root_visible_detail_gate_off_hidden():
     all_codes = set(VALID_CODES)
-    # 단일 허용 / 단일 거부 — 명시 설정된 override 는 항상 visible(비파괴)
-    for code in all_codes:
-        for verb in ("allow", "deny"):
-            vis = compute_visibility_override({code: verb}, all_codes)
-            assert vis[code], f"override {verb} 인 {code} 가 숨겨짐 — 비파괴 위반"
+    roots = [c for c in all_codes if DEPS.get(c) is None]
+    # 루트(부모 없음)는 빈 상태에서도 노출.
+    vis0 = compute_visibility_override({}, all_codes)
+    for code in roots:
+        assert vis0[code], f"override 루트 {code} 가 숨겨짐"
+    # 게이트 미충족이면 명시 허용·거부한 세부 권한도 숨김(forceVisible 제거).
+    for verb in ("allow", "deny"):
+        vis = compute_visibility_override({"account.delete": verb}, all_codes)
+        assert not vis["account.delete"], f"게이트 OFF 인데 override {verb} account.delete 노출됨"
 
 
 def test_v6_override_gate_allow_reveals_children():
     all_codes = set(VALID_CODES)
-    # 게이트 inherit(기본) — inherit 자식 접힘, 명시 거부 자식은 노출(비파괴)
+    # 게이트 inherit/거부(기본) — 세부 자식 접힘(허용 아님).
     vis = compute_visibility_override({"account.delete": "deny"}, all_codes)
-    assert vis["account.delete"], "거부 override account.delete 가 숨겨짐"
-    assert vis["account.read"], "조상 account.read 가 숨겨짐"
-    assert vis["console.access"], "조상 console.access 가 숨겨짐"
-    assert not vis["account.update"], "inherit 인 account.update 는 접혀야 함"
-    # 게이트 허용 → 그 자식(base)이 노출. account.read 허용 → account.update 노출 대상
+    assert not vis["account.delete"], "게이트 미충족(inherit)인데 deny account.delete 노출됨"
+    assert not vis["account.read"], "게이트(console.access) 미허용이라 account.read 도 접힘"
+    assert vis["console.access"], "console.access(루트)는 노출"
+    # 게이트 허용 체인 → 자식 노출. console.access·account.read 허용 → account.update 노출.
     vis2 = compute_visibility_override({"console.access": "allow", "account.read": "allow"}, all_codes)
     assert vis2["account.read"], "console.access 허용 시 account.read 노출"
     assert vis2["account.update"], "account.read 허용 시 account.update 노출"
+    # 게이트 거부는 자식을 열지 않음(허용만).
+    vis3 = compute_visibility_override({"console.access": "allow", "account.read": "deny"}, all_codes)
+    assert not vis3["account.update"], "account.read=거부 면 account.update 안 열림"
 
 
-# ── C: CSS 계약 — [hidden] 강제 display:none (TASK-0258 핫픽스 회귀 가드) ──────────
+# ── C: CSS 계약 — [hidden] 강제 display:none (TASK-0258/0264 핫픽스 회귀 가드) ──────
 def test_c1_hidden_rows_force_display_none():
-    """`.permission-toggle-card{display:flex}` 등 author display 규칙이 UA `[hidden]{display:none}`
-    를 override 해 JS 의 `el.hidden=true` 가 무력화되던 버그(PB-0008 실브라우저 검출, jsdom 미검출)의
-    회귀 가드. styles.css 가 disclosure 숨김 대상에 display:none !important 를 강제하는지 검증한다."""
+    """`.permission-toggle-card{display:flex}` / `.override-field`(.field{display:flex}) 등 author display
+    규칙이 UA `[hidden]{display:none}` 를 override 해 JS 의 `el.hidden=true` 가 무력화되던 버그(PB-0008
+    실브라우저 검출, jsdom 미검출)의 회귀 가드. styles.css 가 disclosure 숨김 대상에 display:none !important
+    를 강제하는지 + 셀렉터가 컨테이너(.permission-grid/.override-grid) 무관(unscoped)인지 검증한다."""
     css = STYLES_CSS.read_text(encoding="utf-8")
     # `[data-perm-code][hidden]` 셀렉터 + 같은 규칙 블록에 display:none !important 가 있어야 한다.
     m = re.search(
-        r"\[data-perm-code\]\[hidden\][^{]*\{[^}]*display\s*:\s*none\s*!important",
+        r"([^{}]*\[data-perm-code\]\[hidden\][^{]*)\{([^}]*display\s*:\s*none\s*!important[^}]*)\}",
         css,
         re.DOTALL,
     )
     assert m, "styles.css 에 `[data-perm-code][hidden] { display: none !important }` 규칙 부재 — hidden row 가 실브라우저에서 안 숨겨짐(TASK-0258 회귀)"
+    # 셀렉터 목록 중 `[data-perm-code][hidden]` 가 컨테이너 prefix 없이(unscoped) 존재해야 한다 —
+    # `.permission-grid` 한정이면 계정 override 편집기(.override-grid)를 놓침(TASK-0264 회귀).
+    selectors = [s.strip() for s in m.group(1).split(",")]
+    assert "[data-perm-code][hidden]" in selectors, (
+        f"`[data-perm-code][hidden]` 가 컨테이너 무관 셀렉터로 존재하지 않음(스코프됨: {selectors}) — "
+        "override-grid 행이 실브라우저에서 안 숨겨짐(TASK-0264 회귀)"
+    )
     # section/group 도 동일 강제 규칙에 포함돼야 한다.
     assert ".permission-group[hidden]" in css, ".permission-group[hidden] 강제 규칙 부재"
     assert ".permission-section[hidden]" in css, ".permission-section[hidden] 강제 규칙 부재"

@@ -4926,14 +4926,16 @@ a { color: inherit; }
    불변 — 본 스타일은 종속 row 의 미세 위계 + "더 보기" 토글 + orphan 경고칩만 담당.
    reveal 은 즉시 토글(레이아웃 뒤틀림 방지 — 애니메이션 없음). */
 
-/* [hidden] 강제 (TASK-0258 핫픽스) — `.permission-toggle-card{display:flex}` /
-   `.permission-section{display:flex}` 등 author display 규칙이 UA 의 `[hidden]{display:none}`
-   를 동일 specificity·후순위로 override 해, JS 가 `el.hidden=true` 를 줘도 row 가 계속
-   렌더되던 문제(PB-0008 실브라우저 검출 — jsdom 은 CSS 캐스케이드 없어 미검출).
+/* [hidden] 강제 (TASK-0258 핫픽스 + TASK-0264 override-grid 커버) — `.permission-toggle-card{display:flex}` /
+   `.override-field`(.field{display:flex}) / `.permission-section{display:flex}` 등 author display 규칙이
+   UA 의 `[hidden]{display:none}` 를 동일 specificity·후순위로 override 해, JS 가 `el.hidden=true` 를 줘도
+   row 가 계속 렌더되던 문제(PB-0008 실브라우저 검출 — jsdom 은 CSS 캐스케이드 없어 미검출).
+   `[data-perm-code]` 는 권한 row wrapper 에만 부여되므로 컨테이너 무관하게(.permission-grid / .override-grid
+   양쪽) 강제한다 — TASK-0258 의 `.permission-grid` 한정이 계정 override 편집기(.override-grid)를 놓쳤던 갭 수정.
    disclosure 의 모든 숨김 대상(section/group/row)을 확실히 display:none 으로 강제한다. */
 .permission-section[hidden],
 .permission-group[hidden],
-.permission-grid [data-perm-code][hidden] {
+[data-perm-code][hidden] {
   display: none !important;
 }
 
@@ -4957,6 +4959,8 @@ a { color: inherit; }
 }
 .permission-group-more:hover { text-decoration: underline; }
 .permission-group-more:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+/* "더 보기" 뒤에 부여된 권한이 접혀 있음을 표면화(도달성 단서, TASK-0264). */
+.permission-group-more.has-granted { color: var(--color-danger, #b4231f); font-weight: 700; }
 
 /* orphan 경고칩 — 부여돼 있으나 선행 권한이 OFF 인 권한(비파괴 정책상 숨기지 않고 표면화). */
 .permission-orphan-warn {
