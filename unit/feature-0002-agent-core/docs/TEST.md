@@ -82,3 +82,9 @@ source_of_truth: true
   - 보관 압축 검증
     - 샘플 디렉토리 `artifacts/shared/logs/2026-04-01/` 생성 후 `append_log_line('archive_probe', ...)`
     - 결과: `artifacts/shared/logs/archive/2026-04-01.tar.gz` 생성, 원본 `2026-04-01/` 디렉토리 제거
+
+## TASK-0256e — 첨부 줄번호 → diff 헌크 헤더 라이브 검증 (2026-06-15)
+- **배포 baked 확인**: ask-worker 컨테이너에서 `agent_core._number_file_lines('SELECT\n  AID\n  , UserID')` → `'1→SELECT\n2→  AID\n3→  , UserID'`, 지침("LINE NUMBERS & DIFFS")·헌크 포맷 grep=1.
+- **라이브 LLM probe (배포 스택, claude-haiku-4 via Bedrock 게이트웨이)**: SYSTEM_PROMPT + 줄번호 첨부(7줄 SQL, 4번째 줄에 합쳐진 컬럼) + LINE NUMBERS 지침 → "4번째 줄 분리 개선안 diff" 요청. **모델 출력**: ```diff 블록 + **`@@ -4,2 +4,4 @@`**(실제 4번째 줄 기준 헌크), `→` prefix 코드 미포함(순수 SQL). 즉 모델이 첨부 파일 실제 줄번호를 추적해 헌크 헤더 작성.
+- **폐루프**: 웹 buildDiffRows 가 `@@ -4` 파싱 → gutter old/new=4,5,6 표시(TASK-0256c node 검증). 줄번호 주입 → 모델 @@ → gutter 실제 줄번호 end-to-end.
+- **Pass/Fail: PASS**. Residual: 실 첨부 업로드 UI e2e 는 사용자 워크플로에서 확인(deterministic+LLM probe 로 충분 검증).

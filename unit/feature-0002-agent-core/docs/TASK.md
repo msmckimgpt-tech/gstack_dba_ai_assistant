@@ -855,4 +855,4 @@ TASK-0015 (plan-review):
 - [x] `_number_file_lines(content)`: 각 줄 `<N>→` prefix(우측정렬, prompt 사본만, 원본 무변경 — SQL추출 경로 무영향)
 - [x] 본문 주입에 적용 + "LINE NUMBERS & DIFFS" instruction(실제 줄번호로 `@@ -N,M +N,M @@` 작성, prefix 코드 미포함)
 - [x] test_attachment_line_numbers(5) + 렌더 폐루프 node 확인(`@@ -49` → gutter 49/50/51) + py_compile
-- [ ] ask-worker 재배포 + 배포 프롬프트 줄번호 주입 확인 + (가능 시) 라이브 첨부 리뷰 e2e
+- [x] ask-worker 재배포(main 63f4a5a) + baked 확인 + **라이브 LLM probe PASS**: 줄번호 첨부 → 모델 `@@ -4,2 +4,4 @@`(실제 줄번호) 헌크 출력·prefix 코드 미포함(TEST.md)
