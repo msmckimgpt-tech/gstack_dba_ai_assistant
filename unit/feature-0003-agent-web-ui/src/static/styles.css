@@ -1842,7 +1842,11 @@ a { color: inherit; }
 /* TASK-0262: 선택 제품 chip dot 도 datasource 네트워크 상태색으로(모드색 override). 드롭업 conn 규칙과 동형 —
    specificity (0,3,0) 동일이라 mode 규칙보다 소스 뒤에 두어 override. healthy 초록/unstable 빨강/unknown 중립. */
 .composer-product-chip .composer-product-chip-dot--conn.is-ok { background: var(--success, #16a34a); }
-.composer-product-chip .composer-product-chip-dot--conn.is-fail { background: var(--danger, #dc2626); }
+/* conn-tristate: is-unstable(빨강 "연결 불안정"·느림/간헐) / is-down(회색 "연결 끊김"·도달 불가).
+   is-fail 은 레거시 호환(빨강 유지). is-unknown=옅은 회색(확인중). */
+.composer-product-chip .composer-product-chip-dot--conn.is-fail,
+.composer-product-chip .composer-product-chip-dot--conn.is-unstable { background: var(--danger, #dc2626); }
+.composer-product-chip .composer-product-chip-dot--conn.is-down { background: #6b7280; }
 .composer-product-chip .composer-product-chip-dot--conn.is-unknown { background: var(--text-muted); }
 /* product-icon-chip: 선택 제품 프로필 아이콘(이미지 or Identicon SVG) — dot 과 label 사이. 원형 클립. */
 .composer-product-chip-icon {
@@ -1918,7 +1922,10 @@ a { color: inherit; }
 /* TASK-0261: datasource 연결(네트워크) 상태 dot — 모드색(auto/pinned)보다 우선해 상태색으로 칠한다.
    selector specificity 0,3,0 > 모드 규칙 0,2,0. healthy=초록 / unstable=빨강 / unknown=중립. */
 .product-dropup-item .product-dropup-item-dot--conn.is-ok { background: var(--success, #16a34a); }
-.product-dropup-item .product-dropup-item-dot--conn.is-fail { background: var(--danger, #dc2626); }
+/* conn-tristate: is-unstable(빨강 "연결 불안정") / is-down(회색 "연결 끊김"). is-fail 레거시 빨강. */
+.product-dropup-item .product-dropup-item-dot--conn.is-fail,
+.product-dropup-item .product-dropup-item-dot--conn.is-unstable { background: var(--danger, #dc2626); }
+.product-dropup-item .product-dropup-item-dot--conn.is-down { background: #6b7280; }
 .product-dropup-item .product-dropup-item-dot--conn.is-unknown { background: var(--text-muted); }
 .product-dropup-item-label {
   flex: 1;
@@ -3164,7 +3171,10 @@ a { color: inherit; }
   content: ""; width: 6px; height: 6px; border-radius: 999px; background: currentColor; flex: 0 0 auto;
 }
 .admin-ds-conn.is-ok       { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
-.admin-ds-conn.is-fail     { color: var(--danger, #dc2626); background: color-mix(in srgb, var(--danger, #dc2626) 12%, transparent); }
+/* conn-tristate: is-unstable(빨강 "연결 불안정") / is-down(회색 "연결 끊김"). is-fail 레거시 빨강. */
+.admin-ds-conn.is-fail,
+.admin-ds-conn.is-unstable { color: var(--danger, #dc2626); background: color-mix(in srgb, var(--danger, #dc2626) 12%, transparent); }
+.admin-ds-conn.is-down     { color: #6b7280; background: color-mix(in srgb, #6b7280 14%, transparent); }
 .admin-ds-conn.is-checking { color: var(--text-muted); background: var(--bg); animation: covPickerPulse 1.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .admin-ds-conn.is-checking { animation: none; } }
 
@@ -3178,7 +3188,10 @@ a { color: inherit; }
   box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 20%, transparent);
 }
 .ds-conn-dot.is-ok       { color: var(--success); }
-.ds-conn-dot.is-fail     { color: var(--danger, #dc2626); }
+/* conn-tristate: is-unstable(빨강 "연결 불안정") / is-down(회색 "연결 끊김"). is-fail 레거시 빨강. */
+.ds-conn-dot.is-fail,
+.ds-conn-dot.is-unstable { color: var(--danger, #dc2626); }
+.ds-conn-dot.is-down     { color: #6b7280; }
 .ds-conn-dot.is-checking { color: var(--text-muted); animation: covPickerPulse 1.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .ds-conn-dot.is-checking { animation: none; } }
 /* TASK-0281(ds-list-multiselect): 데이터소스 목록 행 = [체크박스 auto · 네트워크 도트 auto · main 1fr].

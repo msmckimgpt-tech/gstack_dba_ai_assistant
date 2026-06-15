@@ -3761,3 +3761,12 @@ source_of_truth: true
 - Files: docs/{TEST,TASK,REVIEW,MODIFY}.md
 - Rollback: 해당 evidence 문단 제거(무해, 코드 무관).
 - Deploy: 없음(docs-only — 재배포 불필요).
+
+## CHG-20260616-0290
+- Date: 2026-06-16 (TASK-0282, **Major §12.3** — datasource 연결 상태 3단계 분류 + 느린 타-리전 연결 완화). (동시세션 CHG-20260615-0289 선점 → 0290 재번호)
+- Scope: feature-0002-agent-core(config.py env 3종, conn_health.py 분류/게이트, db.py foreground elapsed) + feature-0003-agent-web-ui(app.py _RANK/​test status, admin.js·app.js·styles.css 3색 배지 + 캐시버스터). RBAC·스키마·엔드포인트 shape(필드 추가만)·SSRF 가드 무변경.
+- 사용자 보고/결정: mysql-mv-qa-* 가 다른 리전이라 느림(1745ms) — 연결은 되는데 네트워크 배지·작업화면 제품목록이 "연결 불안정". (Q1) 느린-연결=빨강(불안정). (Q2) 작업화면은 연결되면 허용(fast-fail 은 down 만).
+- 근본원인: conn_health TCP 선검사 timeout 100ms(`AGENT_CONN_PROBE_TIMEOUT_MS_BASE`) 고정이 다른 리전 RTT(>100ms)를 못 견뎌 연결 가능한 느린 서버를 1단 TCP 에서 unstable 로 오판(2단 DB probe 미도달). 상태도 2단계(healthy/unstable+unknown)뿐 — 끊김/불안정 미분리.
+- 변경: 상태 `DOWN` 추가 → 3+1단계(healthy 초록/unstable 빨강/down 회색/unknown 확인중). `classify()` 단일 분류(성공+빠름=healthy, 성공+≥SLOW=unstable, 1회실패=blip unstable, 연속 DOWN_AFTER_FAILS=down). TCP timeout=`AGENT_CONN_TCP_TIMEOUT_MS`(2000) / 느림=`AGENT_CONN_SLOW_MS`(1000) / 끊김=`AGENT_CONN_DOWN_AFTER_FAILS`(2). `_driver_timeout_sec` base=SLOW×3(느린성공 첫 probe 보장). `should_fast_fail`=down 한정(unstable 시도 허용). db.py foreground connect 소요 측정 피드백(flapping 방지). `/test` 응답에 status. `_attach_product_conn_status` _RANK down 최악집계. 프론트 3색(is-ok/is-unstable/is-down, 레거시 is-fail 빨강 별칭 유지).
+- Verification: test_conn_health 재작성 27(classify·느린성공→unstable·연속→down·gate down한정·monitor slow) + test_product_conn_status(down 최악) + test_datasource_test_nonblocking(/test status) + make test 컨테이너 전체 회귀 0 + ruff + node --check + CSS brace(1221). 적대 리뷰 REV-20260616-0290 SHIP-WITH-FIXES(흡수: foreground elapsed·rebase).
+- Deploy: web + ask-worker + insight-worker 3 이미지 재빌드(conn_health 공유) → PB-0008. 캐시버스터 `?v=20260616-conn-tristate`.

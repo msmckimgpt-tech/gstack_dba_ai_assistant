@@ -2834,3 +2834,16 @@ source_of_truth: true
 - Cycle: TASK-20260615T183409-ds-list-multiselect PB-0008 evidence 기록 (docs-only).
 - Skip 사유: 코드 변경 0(순수 evidence/docs). 핵심 코드 변경은 REV-20260615-0286 [SUBAGENT:ds-multiselect-review] 에서 이미 적대적 리뷰(SHIP, BLOCKER 0). 본 후속은 라이브 main 3605443 배포 후 실 Windows 브라우저 PB-0008 PASS 실측 기록(14행 div+체크박스+연결도트·grid 13px 9px 251px·전체선택 indeterminate·bulkBar buttons).
 - Cross-ref: CHG-20260615-0289 / TASK-20260615T183409-ds-list-multiselect / REV-20260615-0286(코드 cycle).
+
+## REV-20260616-0290 [SUBAGENT:conn-tristate]
+- Date: 2026-06-16 (동시세션 REV-20260615-0289 선점 → 0290 재번호)
+- Cycle: TASK-0282 (datasource 연결 상태 3단계 분류 + 느린 타-리전 연결 완화), **Major §12.3** — conn_health 분류/게이트 로직 + fast-fail 완화(unstable 시도 허용) + 표시 3색.
+- Trigger: §18.8 + [[feedback_outside_voice_for_rbac]] 정합(연결 게이트·worker 점유 경계 변경) — 적대적 코드리뷰(general-purpose outside voice, "refute ship-readiness").
+- Verdict: **SHIP-WITH-FIXES** (BLOCKER 0). 보안(SSRF `_ssrf_check_host`/`_is_blocked_target` 불변·비번/좌표 snapshot·/test·classify 비노출)·분류경계(classify `==SLOW`/`==DOWN_AFTER_FAILS` `>=`, elapsed None=healthy)·상태전이(blip→unstable→down→복구·stale 강등)·프론트정합(state↔CSS 1:1, 레거시 is-fail 별칭) 전부 코드 file:line 대조 confirmed-correct.
+- 흡수(must-fix):
+  - **(MAJOR/process)** worktree base 4030640 이 origin/main(PR#261 TASK-0277 DatasourceId surrogate) 이전 → 그냥 머지하면 app.py TASK-0277 작업 silent revert. **origin/main(fe173d7) 위로 rebase + make test 재실행**. → **흡수 완료**(rebase 시 app.py 자동병합 양립 확인, docs 충돌만 재번호).
+  - **(MINOR)** foreground connect 성공이 elapsed 미측정(0.0)→HEALTHY 로 background UNSTABLE 을 덮어 느린 DS 배지 flapping(≤`AGENT_CONN_HEALTHY_RECHECK_SEC` 30s). → db.py `connect_with_retry` 가 connect 소요(ms) 측정해 `_record_health(elapsed_ms=…)`→`record_foreground_result` 전달 → foreground 도 SLOW 임계로 unstable 일관 분류. **흡수 완료**.
+- Should-note(비차단): ① down DS worker 점유 window 가 1-fail→연속 2-fail 로 약간 넓어짐(background 2-3s 내 DOWN 도달까지 bounded; per-attempt 10s×3 retry 한계 불변 — TASK-0247/0250 의 15분 starvation 재발 아님; Q2 의 명시 수용 비용, ask-worker 가 monitor 기동 전제). ② 레거시 cache `state:"fail"` 가 배포 직후 1회 회색(down) 렌더 — self-heal(다음 loadAdminData snapshot).
+- Verification: test_conn_health 재작성 27 + product_conn down 최악 + /test status + make test 컨테이너 전체 회귀 0 + ruff + node --check + CSS brace(1221).
+- Residual: web+ask-worker+insight-worker 재배포 → PB-0008 Windows-browser(3색 배지·느린연결=빨강·끊김=회색·작업화면 사용가능 실측).
+- Cross-ref: CHG-20260616-0290 / TASK-0282.

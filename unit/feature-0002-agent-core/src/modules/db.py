@@ -402,7 +402,9 @@ def connect_with_retry(
             from . import conn_health as _ch
         except Exception:
             _ch = None
-        # health unstable → 시도 없이 즉시 fail-fast(worker 무점유). 복구는 background 모니터.
+        # conn-tristate: health down(연속 실패=도달 불가 확정) → 시도 없이 즉시 fail-fast(worker
+        #  무점유). unstable(느림/1회 blip)은 차단 안 함 — 느린(살아있는) datasource 는 시도 허용.
+        #  복구는 background 모니터.
         if _ch is not None and _ch.should_fast_fail(_bkey):
             raise DatasourceCircuitOpen(_bkey, float(AGENT_CONN_UNSTABLE_RECHECK_SEC))
     else:
@@ -410,9 +412,13 @@ def connect_with_retry(
     last_exc = None
     for attempt in range(1, attempts + 1):
         try:
+            _t0 = time.time()
             conn = connect(database=database, autocommit=autocommit, datasource=datasource)
             if _ch is not None:
-                _record_health(_ch, datasource, ok=True)  # 성공 → healthy 피드백(예외 격리)
+                # conn-tristate: 실제 연결 소요(ms)를 측정해 피드백 → 느린(타 리전) 연결도 foreground
+                #  에서 unstable 로 일관 분류(elapsed 미전달 시 healthy 로 background unstable 을 덮어
+                #  배지가 깜빡이던 flapping 방지). background probe 와 동일 SLOW 임계로 판정.
+                _record_health(_ch, datasource, ok=True, elapsed_ms=(time.time() - _t0) * 1000.0)
             return conn
         except Exception as exc:
             last_exc = exc
@@ -429,13 +435,17 @@ def connect_with_retry(
     raise RuntimeError("DB 연결 실패")
 
 
-def _record_health(ch, datasource, ok: bool, err: "Exception | None" = None) -> None:
-    """conn_health 피드백 — 그 내부 예외가 connect 결과/원본 예외를 절대 삼키지 않게 격리."""
+def _record_health(ch, datasource, ok: bool, err: "Exception | None" = None,
+                   elapsed_ms: "float | None" = None) -> None:
+    """conn_health 피드백 — 그 내부 예외가 connect 결과/원본 예외를 절대 삼키지 않게 격리.
+
+    elapsed_ms(연결 성공 시 측정한 실제 소요)를 함께 넘기면 conn_health 가 SLOW 임계로 느림(unstable)
+    을 foreground 에서도 판정한다(미전달 시 healthy — background probe 가 느림 권위 판정)."""
     try:
         errtag = ""
         if err is not None:
             errtag = str(getattr(err, "errno", None) or type(err).__name__)
-        ch.record_foreground_result(datasource, ok=ok, err=errtag)
+        ch.record_foreground_result(datasource, ok=ok, elapsed_ms=elapsed_ms, err=errtag)
     except Exception as _e:  # pragma: no cover — 방어
         _db_logger.warning("conn_health_feedback_failed err=%r", _e)
 

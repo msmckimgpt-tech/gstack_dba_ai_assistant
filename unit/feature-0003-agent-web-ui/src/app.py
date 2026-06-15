@@ -2446,8 +2446,9 @@ def _attach_product_conn_status(conn, products: list[dict[str, Any]]) -> None:
 
     각 product 의 `datasources[]` 항목마다 `conn_status`({status, elapsed_ms, checked_at})를
     붙이고, product 레벨 `conn_status_overall` 에 바인딩들의 **최악 상태**를 집계한다
-    (하나라도 unstable→unstable, 모두 healthy→healthy, 그 외 unknown). 좌표/비밀번호는
-    노출하지 않는다(status/elapsed/checked_at 만 — datasource_public 마스킹과 동일).
+    (conn-tristate 심각도: down > unstable > unknown > healthy — 하나라도 down→down,
+    하나라도 unstable→unstable, 모두 healthy→healthy). 좌표/비밀번호는 노출하지 않는다
+    (status/elapsed/checked_at 만 — datasource_public 마스킹과 동일).
 
     conn_health 미가용·datasource 미해석 등은 graceful — status=unknown 으로 둔다.
     바인딩이 없는 기본 단일 MySQL 제품은 status 무첨부(드롭업 dot 가 모드색 유지).
@@ -2486,7 +2487,7 @@ def _attach_product_conn_status(conn, products: list[dict[str, Any]]) -> None:
             "checked_at": h.get("checked_at"),
         }
 
-    _RANK = {"unstable": 3, "unknown": 2, "healthy": 1}
+    _RANK = {"down": 4, "unstable": 3, "unknown": 2, "healthy": 1}
     for p in products:
         binds = p.get("datasources") if isinstance(p.get("datasources"), list) else []
         worst = None  # (rank, status)
@@ -11371,8 +11372,17 @@ async def admin_test_datasource(key: str, request: Request) -> JSONResponse:
     ok, elapsed_ms, err = await asyncio.to_thread(
         _db.probe_datasource, {**ds, "host": _pin}
     )  # probe 는 errno 만 반환
+    # conn-tristate: 3단계 분류(healthy 정상 / unstable 불안정-느림 / down 끊김)를 응답에 첨부.
+    #  즉석 단발 테스트라 fails 이력이 없으므로 실패는 즉시 down(관리자 명시 테스트의 1회 도달
+    #  실패 = 끊김), 성공+느림(elapsed≥SLOW)은 unstable. background snapshot 의 누적 fails 분류와
+    #  의미가 일치하도록 conn_health.classify 를 공용으로 재사용한다.
+    try:
+        from modules import conn_health as _ch
+        _status = _ch.classify(bool(ok), elapsed_ms, fails=10 ** 6)
+    except Exception:
+        _status = "healthy" if ok else "down"
     return JSONResponse({"key": str(key).strip().lower(), "ok": bool(ok),
-                         "elapsed_ms": round(elapsed_ms, 1), "error": err})
+                         "elapsed_ms": round(elapsed_ms, 1), "error": err, "status": _status})
 
 
 # ── TASK-0205: datasource CRUD (자격증명 DB 암호화 저장) + SSRF 차단 ────────────────

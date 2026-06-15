@@ -1109,24 +1109,33 @@ function _dsConnRelease() {
 }
 
 // 주어진 <span> 에 캐시 entry 의 연결 상태를 그린다(노드 교체 없이 in-place — 비동기 probe 완료 시 같은 노드 갱신).
+//  conn-tristate 3단계: ok(초록 "연결 정상") / unstable(빨강 "연결 불안정" — 느림·간헐) /
+//  down(회색 "연결 끊김" — 도달 불가) + checking(확인 중). (레거시 "fail" 은 down 으로 폴백.)
 function _paintDsConnBadge(el, entry) {
   if (!el) return;
   el.className = "admin-ds-conn";
-  if (!entry || entry.state === "checking") {
+  const st = entry && entry.state;
+  if (!entry || st === "checking") {
     el.classList.add("is-checking");
     el.textContent = "확인 중…";
     el.title = "연결 상태 확인 중";
     return;
   }
-  if (entry.state === "ok") {
+  if (st === "ok") {
     el.classList.add("is-ok");
-    el.textContent = (entry.elapsed_ms != null) ? `연결됨 · ${entry.elapsed_ms}ms` : "연결됨";
-    el.title = "연결 성공";
+    el.textContent = (entry.elapsed_ms != null) ? `연결 정상 · ${entry.elapsed_ms}ms` : "연결 정상";
+    el.title = "연결 정상";
     return;
   }
-  el.classList.add("is-fail");
-  el.textContent = "연결 실패";
-  el.title = entry.error ? `연결 실패: ${entry.error}` : "연결 실패";
+  if (st === "unstable") {
+    el.classList.add("is-unstable");
+    el.textContent = (entry.elapsed_ms != null) ? `연결 불안정 · ${entry.elapsed_ms}ms` : "연결 불안정";
+    el.title = entry.error ? `연결 불안정: ${entry.error}` : "연결 불안정 (느리거나 간헐적)";
+    return;
+  }
+  el.classList.add("is-down");
+  el.textContent = "연결 끊김";
+  el.title = entry.error ? `연결 끊김: ${entry.error}` : "연결 끊김 (도달 불가)";
 }
 
 // 데이터소스 목록 행 leading 의 네트워크 상태 도트(텍스트 없는 아이콘 배지) — 색상=상태,
@@ -1139,10 +1148,13 @@ function _paintDsConnDot(el, entry) {
   let label;
   if (st === "ok") {
     el.classList.add("is-ok");
-    label = (entry.elapsed_ms != null) ? `연결됨 · ${entry.elapsed_ms}ms` : "연결됨";
-  } else if (st === "fail") {
-    el.classList.add("is-fail");
-    label = entry.error ? `연결 실패: ${entry.error}` : "연결 실패";
+    label = (entry.elapsed_ms != null) ? `연결 정상 · ${entry.elapsed_ms}ms` : "연결 정상";
+  } else if (st === "unstable") {
+    el.classList.add("is-unstable");
+    label = (entry.elapsed_ms != null) ? `연결 불안정 · ${entry.elapsed_ms}ms` : "연결 불안정";
+  } else if (st === "down" || st === "fail") {
+    el.classList.add("is-down");
+    label = entry.error ? `연결 끊김: ${entry.error}` : "연결 끊김";
   } else {
     el.classList.add("is-checking");
     label = "연결 상태 확인 중";
@@ -1159,7 +1171,8 @@ function _probeDatasourceConn(key, { force = false } = {}) {
   const cache = adminState.datasourceConnStatus;
   if (!force) {
     const prev = cache.get(k);
-    if (prev && (prev.state === "ok" || prev.state === "fail")) return Promise.resolve(prev);
+    // 확정된 상태(ok/unstable/down — checking 아닌 것)면 재사용.
+    if (prev && prev.state && prev.state !== "checking") return Promise.resolve(prev);
   }
   // TASK-0253 (REV MINOR-2): in-flight dedup 은 force 와 무관하게 적용한다. force 는 "캐시 무시
   //  재probe" 의미이지 "이미 도는 probe 를 무시하고 또 띄워라"가 아니다. 이전엔 force 경로가 이
@@ -1171,13 +1184,19 @@ function _probeDatasourceConn(key, { force = false } = {}) {
     await _dsConnAcquire();   // 동시 probe 4개 cap — 슬롯 확보까지 '확인 중' 유지.
     try {
       const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(k)}/test`, { method: "POST" });
-      const res = (r && r.ok)
-        ? { state: "ok", elapsed_ms: r.elapsed_ms }
-        : { state: "fail", error: (r && r.error) || "unknown" };
+      // conn-tristate: 백엔드가 3단계 status(healthy/unstable/down)를 분류해 반환. 구버전(status
+      //  필드 부재)은 ok→healthy / !ok→down 폴백. status→배지 state 매핑.
+      const _st = (r && r.status) || (r && r.ok ? "healthy" : "down");
+      const _stateMap = { healthy: "ok", unstable: "unstable", down: "down" };
+      const res = {
+        state: _stateMap[_st] || (r && r.ok ? "ok" : "down"),
+        elapsed_ms: (r && r.elapsed_ms != null) ? r.elapsed_ms : undefined,
+        error: (r && r.error) || undefined,
+      };
       cache.set(k, res);
       return res;
     } catch (e) {
-      const res = { state: "fail", error: (e && e.message) || "테스트 실패" };
+      const res = { state: "down", error: (e && e.message) || "테스트 실패" };
       cache.set(k, res);
       return res;
     } finally {
@@ -4988,7 +5007,8 @@ async function loadAdminData() {
   adminState.datasourcesSsrfPrivateGuard = !datasourcesPayload || datasourcesPayload.ssrf_private_guard_enabled !== false;
   adminState.datasources = Array.isArray(datasourcesPayload && datasourcesPayload.datasources) ? datasourcesPayload.datasources : [];
   // conn-health-monitor: 백엔드가 첨부한 사전계산 연결상태를 캐시에 반영 → 배지가 즉시 표시
-  //  (per-item /test lazy probe + 세마포어 대기 폐기). status: healthy→ok / unstable→fail / unknown→checking.
+  //  (per-item /test lazy probe + 세마포어 대기 폐기). conn-tristate 3단계 매핑:
+  //  healthy→ok(초록) / unstable→unstable(빨강, 느림/간헐) / down→down(회색, 끊김) / unknown→확인중.
   adminState.datasources.forEach((ds) => {
     const k = String(ds && ds.key || "").trim().toLowerCase();
     const cs = ds && ds.conn_status;
@@ -5000,10 +5020,12 @@ async function loadAdminData() {
     if (cs.status === "healthy") {
       adminState.datasourceConnStatus.set(k, { state: "ok", elapsed_ms: cs.elapsed_ms });
     } else if (cs.status === "unstable") {
-      adminState.datasourceConnStatus.set(k, { state: "fail", error: "연결 불안정" });
+      adminState.datasourceConnStatus.set(k, { state: "unstable", elapsed_ms: cs.elapsed_ms, error: "연결 불안정" });
+    } else if (cs.status === "down") {
+      adminState.datasourceConnStatus.set(k, { state: "down", error: "연결 끊김" });
     } else if (ih && ih.scan_outcome === "circuit_open") {
       // web live 모니터는 unknown 이나 insight 가 최근 circuit-open 관측 — 연결 불안정으로 표시.
-      adminState.datasourceConnStatus.set(k, { state: "fail", error: "연결 불안정(insight)" });
+      adminState.datasourceConnStatus.set(k, { state: "unstable", error: "연결 불안정(insight)" });
     } else {
       // unknown — 아직 probe 전. 기존 캐시가 있으면 유지, 없으면 미설정(배지=확인 중).
       if (!adminState.datasourceConnStatus.has(k)) adminState.datasourceConnStatus.delete(k);

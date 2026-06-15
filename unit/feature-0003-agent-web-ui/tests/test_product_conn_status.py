@@ -8,6 +8,7 @@ per-binding `conn_status` + product 레벨 `conn_status_overall`(최악 상태)�
 검증 대상(`make test` agent 이미지, DB/네트워크 없이 monkeypatch):
   C1  단일 healthy 바인딩 → overall=healthy, 각 바인딩에 conn_status 첨부.
   C2  멀티 바인딩 최악상태 집계 — 하나라도 unstable → overall=unstable.
+  C2c conn-tristate: down 이 최악(down > unstable > unknown > healthy) — 하나라도 down → overall=down.
   C3  unknown(미모니터) 섞임 — unstable > unknown > healthy 우선순위.
   C4  바인딩 없는 제품(기본 단일 MySQL) → overall=None(드롭업 모드색 유지).
   C5  좌표/비밀번호 비노출 — conn_status 에 status/elapsed_ms/checked_at 만.
@@ -150,6 +151,31 @@ def test_c6b_graceful_resolve_failure(monkeypatch):
     products = _make_products()
     app._attach_product_conn_status(None, products)  # 예외 없어야 함
     assert products[0]["conn_status_overall"] == "unknown"
+
+
+def test_c2c_down_is_worst(monkeypatch):
+    # conn-tristate: down(끊김)이 최악 — healthy + down → overall=down.
+    _install_fakes(monkeypatch, health={
+        "sk_healthy": {"status": "healthy", "last_elapsed_ms": 5, "checked_at": 1.0},
+        "sk_unstable": {"status": "down", "last_elapsed_ms": None, "checked_at": 2.0},
+    })
+    products = _make_products()
+    app._attach_product_conn_status(None, products)
+    p2 = products[1]
+    assert p2["conn_status_overall"] == "down"
+    statuses = {b["datasource_key"]: b["conn_status"]["status"] for b in p2["datasources"]}
+    assert statuses == {"ds_healthy": "healthy", "ds_unstable": "down"}
+
+
+def test_c2d_down_over_unstable(monkeypatch):
+    # down 과 unstable 공존 → down(더 심각). 심각도 순위 down > unstable.
+    _install_fakes(monkeypatch, health={
+        "sk_healthy": {"status": "unstable", "last_elapsed_ms": 1745, "checked_at": 1.0},
+        "sk_unstable": {"status": "down", "last_elapsed_ms": None, "checked_at": 2.0},
+    })
+    products = _make_products()
+    app._attach_product_conn_status(None, products)
+    assert products[1]["conn_status_overall"] == "down"
 
 
 def test_c7_empty_products_noop(monkeypatch):
