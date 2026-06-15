@@ -3879,7 +3879,7 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] styles.css: `#datasourceList .admin-list-row` grid `auto auto 1fr`(체크박스·도트·main, PR#251 --nav override 대체)
 - [x] node --check admin.js PASS + 적대적 subagent 코드리뷰 SHIP(BLOCKER 0/MAJOR 0, REV-20260615-0286)
 - [x] rebase origin/main + PR#251 충돌 해소(_dsRenderList 도트 통합·docs 재번호) + PR #254
-- [ ] 머지 → web 재배포 → PB-0008 Windows-browser 시각검증 → 마감
+- [x] 머지(PR #254, main 3605443) → web 재배포(repo-web-1 healthy, healthz git_commit=3605443) → **PB-0008 Windows-browser PASS**(CHG/REV-0289 evidence): 14행 [체크박스·연결도트·main] grid `13px 9px 251px`, 전체선택 indeterminate(13/14), bulkBar [인사이트 켜기·끄기·삭제·선택해제] — 마감
 ### TASK-0279 — 첨부 메타데이터 MySQL agent_memory → PG agent_runtime 통합 cutover (Critical §12.3, 2026-06-15)
 - 사용자 결정(AskUserQuestion): 이번 cycle 은 읽기 전환까지 — MySQL 쓰기는 롤백 안전망 유지, MySQL 폐기는 후속 decommission cycle. (동시세션 0277·0278 선점 → 0279 재번호)
 - [x] M1 스키마: alembic `0008_core_attachments`(4 PG 테이블, id 보존 bigint PK, version-chain UNIQUE, FK, 명시 GRANT) + `agent_runtime_schema.sql` §6d bootstrap

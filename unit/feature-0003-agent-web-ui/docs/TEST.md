@@ -856,10 +856,21 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
     - **런타임 계약**: `assertBulkBarContract("datasources")` 가 init 루프에서 호출되며 admin.html 의 `#datasourcesBulkBar`(role=toolbar/aria-live/`.admin-list-col` 직속)·ID 정합으로 충족(코드 대조).
     - **적대적 subagent 코드리뷰(general-purpose outside voice)**: 10개 검증항목(partial-fail 분할·재동기화·prune·contract·select-all/indeterminate·shift-range string-key·button→div 회귀·체크박스 stopPropagation·XSS·hoisting·env 제외) 전부 confirmed-correct → **SHIP(BLOCKER 0/MAJOR 0)**. REV-20260615-0286.
   - **Pass/Fail: PASS(정적)** — 구조/계약/로직 검증 완료.
-  - **Notes:** **잔여 — PB-0008 Windows-browser**: 배포 후 데이터소스 탭에서 행 체크박스·전체선택(indeterminate)·shift-click 범위·일괄 인사이트 토글·일괄 삭제(env 제외·409 제외 리포트) + leading 도트(통합) 실측 필요. CHECK#13 은 그때 충족.
+  - **Notes:** **잔여 — PB-0008 Windows-browser**: 배포 후 데이터소스 탭에서 행 체크박스·전체선택(indeterminate)·shift-click 범위·일괄 인사이트 토글·일괄 삭제(env 제외·409 제외 리포트) + leading 도트(통합) 실측 필요. CHECK#13 은 그때 충족. → **아래 항목에서 충족(PASS).**
 - **TASK-0277 (데이터소스 라벨/키 분리, Critical §12.3) — 백엔드 전용 회귀 검증.**
   - **Environment: 컨테이너 make test (agent 이미지, --no-deps) + unit(monkeypatch, DB 무)**. UI 표면(HTML/CSS/JS) 변경 **없음** — `app.py` 백엔드 로직(스키마 마이그레이션·rename cascade·바인딩 write·런타임 probe)만 변경.
   - **결과**: 신규 `test_datasource_rename_binding_stable.py` R1~R4 PASS(R1 3 테이블 cascade+고아 사전제거·R2 Id 구동 WHERE·R3 비-rename 무 cascade·R4 DatasourceId 컬럼 부재 시 key-only 완전 cascade) + 기존 `test_datasource_edit_label_stable.py` S1~S3 PASS + `make test` 컨테이너 **전체 회귀 0** + ruff clean + py_compile OK.
   - **외부음성 2-pass(RBAC 적대적)**: 1차 NOT-SHIP(BLOCKER1 probe 미등록+cascade 하드의존 / BLOCKER2 autocommit 비원자 / BLOCKER3 PK 충돌 + MINOR) → 흡수 → 2차 SHIP-WITH-FIXES.
   - **PB-0008 (Windows-browser): N/A — 사유 명시.** 본 변경은 사용자가 보는 UI surface(렌더·레이아웃·상호작용·라벨 표시 문자열·DOM·CSS)를 변경하지 않는다. 효과는 "라벨 rename 후 제품 바인딩·접근DB 유지"라는 **데이터/동작 정합**이며, 시각이 아닌 라이브 기능 라운드트립(rename→GET 재조회로 제품 바인딩 키 갱신·접근 유지)으로 검증한다(배포 후 잔여). CHECK#13 WARN(비차단)은 본 사유로 갈음.
   - **Pass/Fail: PASS** (단위·컨테이너 회귀 + 외부음성 2-pass). 라이브 기능 검증은 배포 후 수행(잔여).
+
+- 2026-06-16 (TASK-20260615T183409-ds-list-multiselect 데이터소스 목록 다중 선택 — **PB-0008 Windows-browser PASS**; CHG/REV-20260615-0289 evidence):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). 배포: main `3605443`(PR #254 squash) → `make dc-build SERVICE=web` + `docker compose up -d --no-build web`(repo-web-1 healthy). 서빙 `admin.js/styles.css?v=20260615-ds-multiselect` + healthz `git_commit=3605443`(mysql_ok·pg_ok true). 로드 admin.js `?v=20260615-ds-multiselect`(신규 `_runDatasourceBulkAsync` 등 hit).
+  - **계측 결과(win-browser eval)**:
+    - **구조**: `#datasourceList` **14행 전부** `<div role=row>`(rowsAreDiv=true) + `.admin-list-row-cb` 체크박스(rowsHaveCheckbox=true) + `.ds-conn-dot`(rowsHaveConnDot=true, PR#251 통합 보존). `#datasourceSelectAll`·`#datasourcesBulkBar`(role=toolbar, 초기 empty)·`#datasourcesCrossPageBanner` 실재. listRole=`grid`. **행 grid `grid-template-columns: 13px 9px 251px`**(체크박스·도트·main 3열) — base `auto 1fr auto` 가 아닌 `#datasourceList .admin-list-row` override 적용 확인.
+    - **체크박스→bulkBar**: 1개 체크 시 bulkBar `childElementCount>0`, role=toolbar, 라벨 "1개 선택됨", 버튼=[인사이트 탐색 켜기·인사이트 탐색 끄기·삭제·선택 해제](console.manage 게이트 통과).
+    - **전체선택**: `#datasourceSelectAll` 클릭 → 14행 전부 체크(checkedCount=14), selectAllChecked=true·indeterminate=false, 라벨 "14개 선택됨".
+    - **indeterminate**: 전체선택 상태에서 1개 해제 → checked=13, selectAllChecked=false·**selectAllIndeterminate=true**(부분 선택 반영).
+  - **시각 evidence**: 스크린샷 `artifacts/pb0008-ds-multiselect/ds-multiselect-partial-select.png`(1249×840) — 좌측 데이터소스 목록 [전체선택(indeterminate) · 14] + 13행 체크 + 각 행 [체크박스·연결도트(초록/빨강)·이름·엔진 pill·좌표], 하단 bulk 툴바 "13개 선택됨 · 인사이트 켜기/끄기/삭제/선택 해제". 계정·역할·제품 pane 과 동일 다중선택 구조.
+  - **Pass/Fail: PASS** — 행 체크박스(div role=row)·전체선택(indeterminate)·일괄 툴바(buttons·count)·leading 도트(#251 통합)·3열 grid(13px 9px 251px) 전부 실제 Windows 브라우저 실측 통과. CHECK#13(PB-0008 Windows-browser) **충족**.
+  - **Notes:** shift-click 범위·실제 일괄 삭제/insight 토글(파괴적·상태변경)은 라이브 데이터 보호 위해 실행 미수행(구조·게이트·핸들러는 적대적 코드리뷰 REV-0286 에서 confirmed). 기 캐시 사용자는 1회 하드리프레시.

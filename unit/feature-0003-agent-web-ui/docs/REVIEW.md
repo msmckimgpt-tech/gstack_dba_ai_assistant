@@ -2828,3 +2828,9 @@ source_of_truth: true
 - Verification: 신규 test_datasource_rename_binding_stable.py 4(R1 3테이블 cascade+pre-clean·R2 Id구동·R3 비-rename 무cascade·R4 컬럼부재 key-only 완전동작) + 기존 test_datasource_edit_label_stable 3 PASS + make test 컨테이너 회귀 0 + ruff clean.
 - Residual: 머지 → web 재배포(스키마 마이그레이션은 web 부팅 _ensure_web_tables 에서; ask-worker/insight-worker 코드 무변경) → 라이브 검증(라벨 rename→제품 바인딩·접근DB 유지).
 - Cross-ref: CHG-20260615-0277 / TASK-0277.
+
+## REV-20260615-0289 [SKIPPED:pb0008-evidence-docs-only]
+- Date: 2026-06-16
+- Cycle: TASK-20260615T183409-ds-list-multiselect PB-0008 evidence 기록 (docs-only).
+- Skip 사유: 코드 변경 0(순수 evidence/docs). 핵심 코드 변경은 REV-20260615-0286 [SUBAGENT:ds-multiselect-review] 에서 이미 적대적 리뷰(SHIP, BLOCKER 0). 본 후속은 라이브 main 3605443 배포 후 실 Windows 브라우저 PB-0008 PASS 실측 기록(14행 div+체크박스+연결도트·grid 13px 9px 251px·전체선택 indeterminate·bulkBar buttons).
+- Cross-ref: CHG-20260615-0289 / TASK-20260615T183409-ds-list-multiselect / REV-20260615-0286(코드 cycle).
