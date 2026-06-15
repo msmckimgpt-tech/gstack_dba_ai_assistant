@@ -1031,3 +1031,12 @@ source_of_truth: true
 - Files: src/agent_core.py, tests/test_compose_system_prompt.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
 - Rollback: SYSTEM_PROMPT 섹션 제거 + 라이브 global row 백업 복원(기능 동일, diff 미지시).
 - Deploy: ask-worker 재빌드 + 라이브 WebSystemPrompts global row 갱신(백업 보관).
+
+## CHG-20260615-0256e
+- Date: 2026-06-15 (TASK-0256e)
+- Scope: agent-core 첨부 컨텍스트 주입 — 줄번호 + diff 헌크 지시. RBAC/스키마/엔드포인트/SQL추출 0.
+- 변경: agent_core.py 신규 `_number_file_lines`(첨부 텍스트 각 줄 `<N>→` 줄번호 prefix, prompt 사본만) + `_build_attachment_context_section` 본문 주입에 적용 + "LINE NUMBERS & DIFFS" instruction(실제 줄번호로 unified-diff 헌크 헤더 작성·prefix 코드 미포함). 웹 렌더러(buildDiffRows)는 이미 `@@` 파싱 → 무변경.
+- 검증: test_attachment_line_numbers 5 passed + 렌더 폐루프 node(`@@ -49` → 49/50/51) + py_compile. make test.
+- Files: src/agent_core.py, tests/test_attachment_line_numbers.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
+- Rollback: `_number_file_lines` 호출/instruction 제거(raw 주입 복귀, 줄번호 1부터).
+- Deploy: ask-worker 재빌드(agent_core baked). web/live-row 무관(SYSTEM_PROMPT·렌더 무변경).

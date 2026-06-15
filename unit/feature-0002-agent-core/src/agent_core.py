@@ -319,6 +319,22 @@ def _load_attachment_inline_images() -> list[dict[str, Any]]:
     return result
 
 
+def _number_file_lines(content: str) -> str:
+    """첨부 텍스트 본문의 각 줄에 1-기반 줄번호 prefix(`<N>→`)를 붙인다(모델 참조용).
+
+    TASK-0256e: 모델이 첨부 파일의 실제 줄을 인용하고, diff 를 보일 때 실제 줄번호로
+    unified-diff 헌크 헤더(`@@ -N,M +N,M @@`)를 작성할 수 있게 한다(웹 UI 가 그 헤더로
+    gutter 줄번호를 표시). 줄번호 없이 주입하면 모델이 줄을 추정하지 못해 항상 1부터
+    매겨졌다. 우측 정렬로 자릿수를 맞춘다. 본 prefix 는 prompt 주입 사본에만 적용하며
+    원본 content(SQL 추출 등 다른 경로)는 건드리지 않는다.
+    """
+    src = content.splitlines()
+    if not src:
+        return content
+    width = len(str(len(src)))
+    return "\n".join(f"{i:>{width}}→{line}" for i, line in enumerate(src, 1))
+
+
 def _build_attachment_context_section(mem_conn, attachment_ids: list[int], account_id: int | None = None) -> str:
     """TASK-0094 Sprint 1 Phase 11 + TASK-0107 Phase B — selected attachment metadata
     + sandbox schema/table 명 + 각 table 의 column schema + head 5 sample rows
@@ -452,8 +468,9 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int], accou
                                    "go", "rb", "php", "c", "cpp", "h", "md"} else ""
             ctx_label = "★ 이번 요청 신규 첨부" if is_new else "◆ 이전 세션 첨부"
             lines.append(f"### {fname} (attachment_id={att_id}) [{ctx_label}]")
+            # TASK-0256e: 각 줄에 `<N>→` 줄번호 prefix(모델이 실제 줄을 인용/diff 헌크 작성).
             lines.append(f"```{lang}")
-            lines.append(content)
+            lines.append(_number_file_lines(content))
             lines.append("```")
         lines.append("")
         lines.append(
@@ -466,6 +483,17 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int], accou
             "Files marked '★ 이번 요청 신규 첨부' were just attached in this message. "
             "Files marked '◆ 이전 세션 첨부' are from earlier in this conversation and remain available. "
             "Do NOT ask the user to paste the file contents — they are already provided above."
+        )
+        lines.append("")
+        lines.append(
+            "**LINE NUMBERS & DIFFS**: Each line in the file contents above is prefixed with its 1-based "
+            "line number as `<N>→` (e.g. `50→  , YEAR(...)`). These prefixes are reference metadata, NOT part "
+            "of the file. Use the REAL line numbers when you cite specific lines AND when you show an edit: "
+            "when you present a change as a ```diff block, start each changed region with a unified-diff hunk "
+            "header that uses the file's actual line numbers — `@@ -<oldStart>,<oldCount> +<newStart>,<newCount> @@` "
+            "— and include 1–2 unchanged context lines around the change so the numbers anchor to the source. "
+            "NEVER include the `<N>→` prefix inside the diff; the +, -, and context lines must contain only the "
+            "real code."
         )
 
     # 각 sandbox table 의 column schema + head 5 sample rows.
