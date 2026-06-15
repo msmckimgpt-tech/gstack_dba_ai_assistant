@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0255 [SKIPPED:pb0008-evidence-docs-only]
+- Date: 2026-06-15
+- Cycle: TASK-0254 PB-0008 Windows-browser 시각검증 evidence 기록 (docs-only — TEST.md §4 Run + TASK 체크박스 + 스크린샷; src 코드 0).
+- Skip 사유: 코드 변경 0(순수 evidence/docs). 본 cycle 의 핵심 코드 변경은 선행 REV-20260615-0254 [SUBAGENT:frontend-adversarial] SHIP 에서 이미 적대 리뷰 완료. 본 후속은 그 결과를 라이브에서 실증한 기록일 뿐.
+- 실증 결과: PB-0008 (배포 main `f8845cc`) — HOLD 8샘플 top=60 고정 / FOLLOW 73샘플 dist=0 → 두 요구사항(위로 스크롤 유지 / 최하단 추종) 라이브 PASS. CHECK#13 충족.
+- Cross-ref: CHG-20260615-0254b / TASK-0254 / TEST.md §4 (2026-06-15 Run).
+
 ## REV-20260615-0254 [SUBAGENT:frontend-adversarial] — SHIP-WITH-FIXES → 흡수 후 SHIP
 - Date: 2026-06-15
 - Cycle: TASK-0254 (제품 프롬프트 '자동 작성' SSE 스트리밍 중 스크롤 stick-to-bottom — **Minor §12.3**, 프론트 전용 `src/static/admin.js`)

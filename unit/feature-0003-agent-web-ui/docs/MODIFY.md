@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0254b
+- Date: 2026-06-15 (TASK-0254 PB-0008 Windows-browser 시각검증 evidence 후속 — 코드 변경 0, docs-only. CHG-20260615-0254 main `f8845cc` 머지·web 재배포 이후).
+- 변경: `docs/TEST.md` §4 에 `Environment: Windows-browser` Run 기록(자동 eval 계측 HOLD/FOLLOW 결과) + `docs/TASK.md` TASK-0254 에 PB-0008 PASS 체크박스 + `docs/REVIEW.md` REV-20260615-0254b [SKIPPED] + 스크린샷 `artifacts/pb0008-task0254/{01_prompt_pane_after,02_prompt_textarea_top}.png`.
+- 검증 결과(PB-0008 실제 Windows Chrome/148, 배포 main `f8845cc`): 제품1(KR) 제품 프롬프트 '자동 작성' SSE 스트리밍 중 ① **HOLD**(위로 scrollTop=60) 후 토큰 8샘플 **전부 top=60 고정**(오버플로 748→852 증가) = 위로 스크롤 위치 유지, ② **FOLLOW**(하단 이동) 후 토큰 73샘플 **전부 dist=0** = 최하단 추종. 사용자 원요구("작성 현황 텍스트 상단 보기") 충족. 콘솔 에러 0.
+- 비변경: src 코드 0(evidence·docs only). REV-20260615-0255 [SKIPPED:pb0008-evidence-docs-only].
+- Files: unit/feature-0003-agent-web-ui/docs/{TEST,TASK,REVIEW,MODIFY}.md, artifacts/pb0008-task0254/*.png
+
 ## CHG-20260615-0254
 - Date: 2026-06-15 (TASK-0254, **Minor §12.3** — 관리 콘솔 제품 프롬프트 '자동 작성' SSE 스트리밍 중 스크롤 stick-to-bottom 도입)
 - Scope: agent-web-ui (프론트 전용) — `관리 콘솔 > 제품 > [항목] > 제품 프롬프트` 의 '자동 작성'(TASK-0237 SSE 토큰 스트리밍)이 매 토큰 갱신마다 무조건 textarea 를 최하단으로 강제 이동시켜, 사용자가 작성 중 상단 텍스트를 읽으려 위로 스크롤해도 다음 토큰에서 즉시 최하단으로 끌려가던 이슈.
