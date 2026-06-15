@@ -517,13 +517,56 @@ function formatDateTime(value = "") {
   });
 }
 
+function diffLineClass(line) {
+  // 파일 헤더/메타를 먼저 분류해 +/- 본문과 구분. 단 +++/--- 는 뒤에 공백+경로가
+  // 올 때만(git 파일 헤더) meta 로 본다 — 내용이 정확히 "---"/"+++" 인 삭제/추가
+  // 라인을 회색으로 오분류하지 않도록(REV-0256 MINOR).
+  if (/^(diff |index |new file|deleted file|rename )/.test(line)) return "diff-meta";
+  if (/^(\+\+\+|---)\s/.test(line)) return "diff-meta";
+  if (line.startsWith("@@")) return "diff-hunk";
+  if (line.startsWith("+")) return "diff-add";
+  if (line.startsWith("-")) return "diff-del";
+  return "diff-ctx";
+}
+
+function enhanceDiffBlocks(html) {
+  // marked 가 만든 ```diff 코드 블록(<pre><code class="language-diff">)을 라인별
+  // span 으로 재구성해 +/- 줄을 색으로 구분한다. textContent 기반 재작성이라
+  // 새 HTML 주입이 없고(XSS 무첨가), 이후 DOMPurify 가 한 번 더 정화한다.
+  if (typeof document === "undefined") return html;
+  try {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    const blocks = tpl.content.querySelectorAll("pre > code.language-diff");
+    if (!blocks.length) return html;
+    blocks.forEach((codeEl) => {
+      const raw = (codeEl.textContent || "").replace(/\n$/, "");
+      const lines = raw.split("\n");
+      codeEl.textContent = "";
+      lines.forEach((line, i) => {
+        const span = document.createElement("span");
+        span.className = "diff-line " + diffLineClass(line);
+        // 빈 줄도 한 줄 높이를 유지하도록 공백 1개로 대체.
+        span.textContent = line.length ? line : " ";
+        codeEl.appendChild(span);
+        if (i < lines.length - 1) codeEl.appendChild(document.createTextNode("\n"));
+      });
+      const pre = codeEl.closest("pre");
+      if (pre) pre.classList.add("diff-block");
+    });
+    return tpl.innerHTML;
+  } catch (_) {
+    return html;
+  }
+}
+
 function markdownToHtml(text = "") {
   const source = String(text || "").trim();
   if (!source) {
     return "";
   }
   if (window.marked && window.DOMPurify) {
-    const rendered = window.marked.parse(source);
+    const rendered = enhanceDiffBlocks(window.marked.parse(source));
     return window.DOMPurify.sanitize(rendered);
   }
   return `<pre>${escapeHtml(source)}</pre>`;

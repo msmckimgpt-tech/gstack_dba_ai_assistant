@@ -103,6 +103,18 @@ class ComposeSystemPromptTest(unittest.TestCase):
         self.assertIn("### 전 Product 공통\ncommon account preference", prompt)
         self.assertNotIn("product-specific account preference", prompt)
 
+    def test_system_prompt_instructs_diff_block_for_reviews(self):
+        # TASK-0256: 첨부파일/쿼리 리뷰 시 변경 제안을 markdown diff 블록으로 제시하도록
+        # base SYSTEM_PROMPT 가 지시해야 한다 (라이브 global row 의 seed/fallback).
+        prompt = agent_core.SYSTEM_PROMPT
+        self.assertIn("```diff", prompt)
+        self.assertIn("DIFF BLOCK", prompt.upper())
+        # 리뷰/편집 맥락에서의 지시임이 드러나야 한다 (신규 SQL 작성과 구분).
+        self.assertRegex(prompt, r"(?i)review|edit")
+        # diff 가이드는 OUTPUT 섹션 이후에 위치 (최종 답변 포맷 지침의 일부).
+        self.assertIn("## OUTPUT", prompt)
+        self.assertLess(prompt.index("## OUTPUT"), prompt.index("```diff"))
+
 
 if __name__ == "__main__":
     unittest.main()

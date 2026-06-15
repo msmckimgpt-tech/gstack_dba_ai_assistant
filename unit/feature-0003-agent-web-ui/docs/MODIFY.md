@@ -3319,3 +3319,12 @@ source_of_truth: true
 - 검증: doc-only — 코드 변경 없음(make test 무관). PB-0008 실측은 TASK-0251 배포본(main 9cee54a) 대상.
 - Files: docs/STATUS.md, unit/feature-0003-agent-web-ui/docs/{TASK,TEST,MODIFY,REVIEW}.md
 - Rollback: 문서 기록 제거(실제 시스템 영향 0).
+
+## CHG-20260615-0256
+- Date: 2026-06-15 (TASK-0256)
+- Scope: 웹 UI 정적자산 — markdown ```diff 블록 렌더 + CSS. 백엔드/API/스키마/RBAC 0.
+- 변경: app.js enhanceDiffBlocks(marked.parse→enhance→DOMPurify.sanitize) 신설 — <pre><code class="language-diff"> 를 라인별 <span class="diff-line ..."> 로 재구성(textContent 양방향, 새 HTML 주입 없음). share.js 동일 parity. styles.css/share.css diff 팔레트(다크 코드배경 #1a1b26/#1e293b 정합). index.html/share.html 캐시버스터 bump.
+- 검증: node --check app.js/share.js PASS. 렌더 동작은 PB-0008(배포 후).
+- Files: src/static/{app.js,share.js,styles.css,share.css,index.html,share.html}, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
+- Rollback: enhanceDiffBlocks 호출 제거(원래 marked.parse 직접 sanitize) + CSS/캐시버스터 환원.
+- Deploy: web 재빌드(정적자산 베이킹).
