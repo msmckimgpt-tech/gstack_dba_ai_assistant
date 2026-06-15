@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0255
+- Date: 2026-06-15 (TASK-0255 cross-feature — 주 변경은 agent-core CHG-20260615-0255. 본 항목은 **web 표면화만**)
+- Scope: agent-web-ui — `app.py`(신규 `_read_insight_datasource_health` + `admin_list_datasources` 에 `insight_health` 첨부, RO·graceful), `static/admin.js`(`datasourceInsightHealth` 맵 + 배지 enrich + `_dsInsightHealthLabel` + 상세 "인사이트 스캔 상태" 행), `static/admin.html`(admin.js ?v= 캐시버스터).
+- 목적: insight-worker 가 PG 에 영속한 datasource 연결 health(agent-core R2)를 관리콘솔에 표면화 — 운영자가 **"연결 불안정 미커버"(circuit_open/unstable) vs "권한 실패"(perm_failed)** 를 구분. 권한 게이트 `console.access` 유지, 자격증명/민감정보 비노출.
+- 검증: `make test` GREEN. PB-0008 Windows-browser 시각검증(배포 후) — CHECK#13.
+
 ## CHG-20260615-0254b
 - Date: 2026-06-15 (TASK-0254 PB-0008 Windows-browser 시각검증 evidence 후속 — 코드 변경 0, docs-only. CHG-20260615-0254 main `f8845cc` 머지·web 재배포 이후).
 - 변경: `docs/TEST.md` §4 에 `Environment: Windows-browser` Run 기록(자동 eval 계측 HOLD/FOLLOW 결과) + `docs/TASK.md` TASK-0254 에 PB-0008 PASS 체크박스 + `docs/REVIEW.md` REV-20260615-0254b [SKIPPED] + 스크린샷 `artifacts/pb0008-task0254/{01_prompt_pane_after,02_prompt_textarea_top}.png`.

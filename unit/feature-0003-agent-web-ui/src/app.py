@@ -10184,6 +10184,54 @@ def _fork_conversation_impl(
     )
 
 
+def _read_insight_datasource_health() -> dict:
+    """TASK-0255 R2: insight-worker 가 PG(agent_runtime.datasource_health)에 영속한 datasource 연결 health 를
+    scope_key→dict 로 읽는다. 관리콘솔이 web 의 live conn_health(conn_status)와 **별개로** insight 스캔 관점의
+    상태 — "연결 불안정으로 미커버"(status=unstable / scan_outcome=circuit_open) vs "권한 실패"(perm_failed) —
+    를 구분 표시하기 위함. graceful: PG 미가용/테이블 부재(fresh deploy 마이그 전)/조회 실패는 {} 반환(목록 무영향).
+    RO 연결(least-privilege). 자격증명 비포함(테이블에 애초 비영속)."""
+    try:
+        from modules.db import _pg_available, _pg_connect_ro
+    except Exception:
+        return {}
+    if not _pg_available():
+        return {}
+    out: dict = {}
+    conn = None
+    try:
+        conn = _pg_connect_ro()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT scope_key, status, last_scan_outcome, fail_count, last_error_tag, "
+                "last_checked_at, last_scan_at, last_transition_at "
+                "FROM agent_runtime.datasource_health"
+            )
+            for r in (cur.fetchall() or []):
+                out[str(r[0])] = {
+                    "status": r[1],
+                    "scan_outcome": r[2],
+                    "fail_count": int(r[3] or 0),
+                    "last_error_tag": r[4],
+                    "last_checked_at": (r[5].isoformat() if r[5] else None),
+                    "last_scan_at": (r[6].isoformat() if r[6] else None),
+                    "last_transition_at": (r[7].isoformat() if r[7] else None),
+                }
+        finally:
+            cur.close()
+    except Exception as exc:
+        # 테이블 부재(마이그 전)/권한/PG down — soft, datasource 목록은 그대로. 진단용 debug 1줄(자격증명 비포함).
+        logging.getLogger(__name__).debug("insight_datasource_health_query_failed: %s", type(exc).__name__)
+        return {}
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return out
+
+
 @app.get("/api/admin/datasources")
 async def admin_list_datasources(request: Request) -> JSONResponse:
     """등록된 datasource 키 목록 + product 바인딩 현황 (멀티 datasource P1, DESIGN Stage 1).
@@ -10214,6 +10262,8 @@ async def admin_list_datasources(request: Request) -> JSONResponse:
             _health = _ch.snapshot()
         except Exception:
             _health = {}
+        # TASK-0255 R2: insight-worker 가 PG 에 영속한 스캔 관점 health(연결 불안정 vs 권한 실패 구분).
+        _insight_health = _read_insight_datasource_health()
         datasources = []
         for v in merged.values():
             _sk = _dsr.scope_key(v)
@@ -10232,6 +10282,8 @@ async def admin_list_datasources(request: Request) -> JSONResponse:
                     "elapsed_ms": _h.get("last_elapsed_ms"),
                     "checked_at": _h.get("checked_at"),
                 } if _h else {"status": "unknown", "elapsed_ms": None, "checked_at": None}),
+                # TASK-0255 R2: insight-worker 스캔 관점(PG 정본) — 미커버 사유 구분(연결 불안정/권한). None=insight 미기록.
+                "insight_health": (_insight_health.get(_sk) if _sk else None),
             })
         datasources.sort(key=lambda d: d["key"])
         cur = conn.cursor()
