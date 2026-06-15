@@ -8,7 +8,17 @@ source_of_truth: true
 
 # Task
 
-## 0. TASK-0262 (직전 cycle, 머지됨) — 선택 제품 chip dot 도 네트워크 상태색 (TASK-0261 후속)
+## 0. TASK-0266 (current cycle, 동시세션 TASK-0264/0265 선점으로 0265→0266 재번호) — TASK-0263 핫픽스: usage/conversations 의 interval 파라미터 PG 문법 오류
+- 증상: TASK-0263 배포 후 `GET /api/admin/usage/conversations` 가 **HTTP 500**(`psycopg.errors.SyntaxError: syntax error at or near "$1"`). 단위 테스트(fake cursor)는 SQL 미실행이라 통과시켰고 **라이브 엔드포인트 검증에서 포착**.
+- 등급: **Minor §12.3** (핫픽스, 1줄 SQL 문법 수정).
+- 원인: `_query_usage_conversations` 의 `win = "now() - interval %s"` — PG 는 `interval` 키워드 뒤 파라미터 placeholder(`interval $1`)를 불허(문자열 리터럴 문법만). admin_llm_usage 는 `interval '{days} days'`(int 보간)라 무관했으나, 파라미터화하려다 문법 위반.
+- [x] **수정**(app.py 1줄): `now() - interval %s` → `now() - %s::interval`(캐스트 문법은 파라미터 허용, days 바인드 유지). 다른 win 패턴(int 보간)은 무변경.
+- [x] **회귀 가드**(test): `test_q2b_interval_cast_not_bare_param` — 생성 SQL 에 `%s::interval` 존재 + bare `interval %s` 부재 정적 검증(fake cursor 가 못 잡던 클래스). test_usage_conversations.py **12 PASS**(기존 11 + 가드 1).
+- [x] **라이브 검증**(worktree app.py 임시 적용): admin 전체 34건 200·좌표/본문 누출 0, 일자 차원 필터(2026-06-15) 1건·차트 by_day 정합, profile 200.
+- 교훈: SQL 빌더 변경은 fake cursor 단위테스트로 불충분 — **라이브 엔드포인트(실 PG) 검증을 게이트화**([[feedback_frontend_real_browser_gate]] 의 백엔드 판). 회귀 가드는 SQL 문자열 정적 검증으로 보완.
+- [ ] (잔여) 정식 배포(web 재빌드 — 현재 임시 복사본 실행 중) + PB-0008.
+
+## 0z. TASK-0262 (직전 cycle, 머지됨) — 선택 제품 chip dot 도 네트워크 상태색 (TASK-0261 후속)
 - 사용자 보고: 드롭업 **목록** 항목 dot 은 상태색 정상이나, **선택된 제품(composer chip 트리거)** 은 상태 무관 **파란색**(pinned 모드색). "선택 제품도 색상을 상태값과 동일하게."
 - 원인: TASK-0261 은 `buildProductDropupItem`(드롭업 목록 항목)에만 conn 색 적용. `renderProductChip`(트리거 chip)은 `dataset.mode` 만 설정 → `#productChipDot` 이 모드색(`[data-mode=pinned]`=`--primary` 파랑)만 표시.
 - [x] **프론트 전용 수정** (`app.js renderProductChip`): pinned 제품의 `conn_status_overall`(TASK-0261 백엔드가 이미 `state.products` 에 첨부, 추가 변경 0)을 chip dot 에 `.composer-product-chip-dot--conn` + `connStatusMeta` 클래스(is-ok/is-fail/is-unknown) 적용. dot 은 aria-hidden 이라 상태를 chip `aria-label` 에 병기. 매 렌더 conn 클래스 reset(auto/미바인딩 전이 시 모드색 복귀).
