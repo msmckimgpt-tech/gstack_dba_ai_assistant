@@ -20,7 +20,7 @@ source_of_truth: true
 - 검증:
   - [x] node --check admin.js + CSS brace 균형.
   - [x] 적대적 코드리뷰(general-purpose outside voice, REV-0282) **SHIP** — grid 스코프 회귀 0(ID 특이성 1,0,3,0 > base 0,0,2,0, `#settingsList` 미매칭)·leading 배치·async detach 가드·캐시우선·중복 probe 0 전부 확인. cosmetic MINOR 2 흡수.
-  - [ ] (잔여) 머지 → web 재배포 → PB-0008 Windows-browser(도트 색 ok/fail/checking·행별 leading 정렬·title/aria-label 실측).
+  - [x] 머지(#251 main 73d65b8) → web 재배포(dc-build SERVICE=web + up -d) → **PB-0008 Windows-browser PASS** — 14행 전부 leading 도트·left=270 단일정렬·is-ok 초록(22,163,74)/is-fail 빨강(220,38,38)·title/aria-label·grid 9px 274px·#settingsList 무회귀(308px). TEST.md §4, evidence artifacts/pb0008-task0278/.
 - 비변경: 백엔드·`/api/admin/datasources` 응답 계약·RBAC(`console.access`/`console.manage`)·picker/상세 패널 연결배지 0.
 - 배포: web 재빌드(정적자산). migrate 불필(스키마 무변경).
 
