@@ -770,7 +770,7 @@ function renderProductOptions(selectEl, { includeAuto, selected }) {
     if (p && p.is_active === false) return;
     const opt = document.createElement("option");
     opt.value = String(p.id);
-    opt.textContent = `${p.name} (${p.product_key})`;
+    opt.textContent = `(${p.product_key}) ${p.name}`;
     selectEl.appendChild(opt);
   });
   const target = selected != null ? String(selected) : previous;
@@ -790,7 +790,7 @@ function renderProductChip() {
   const pinned = products.find((p) => Number(p.id) === Number(state.pinnedProductId));
   const fullLabel = mode === "auto"
     ? "Product · 제품"
-    : (pinned ? `${pinned.name} (${pinned.product_key})` : "Product · 제품");
+    : (pinned ? `(${pinned.product_key}) ${pinned.name}` : "Product · 제품");
   const compactLabel = mode === "auto"
     ? "Product"
     : (pinned ? pinned.product_key : "Product");
@@ -858,7 +858,7 @@ function renderProductDropupMenu() {
     menu.appendChild(buildProductDropupItem({
       mode: "pinned",
       pid,
-      label: `${p.name} (${p.product_key})`,
+      label: `(${p.product_key}) ${p.name}`,
       selected: mode === "pinned" && pid === currentPid,
       datasourceKey: p.datasource_key || null,  // 멀티 datasource (P2): 분석 대상 표시
       datasources: Array.isArray(p.datasources) ? p.datasources : null,  // TASK-0228 (1:N)
@@ -888,17 +888,10 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
   if (pid != null) item.dataset.pid = String(pid);
   if (selected) item.classList.add("is-selected");
 
-  // TASK-0268: 제품 아이콘 — 설정 시 작은 이미지(상태 dot 앞). 미설정/auto 는 dot 만(TASK-0261 상태색 유지).
-  if (mode === "pinned" && iconUrl) {
-    const ic = document.createElement("span");
-    ic.className = "product-dropup-item-icon";
-    const img = document.createElement("img");
-    img.alt = ""; img.loading = "lazy"; img.src = iconUrl;
-    img.onerror = () => { ic.remove(); };
-    ic.appendChild(img);
-    item.appendChild(ic);
-  }
+  // profile-icon 정합: 사용자 요청 항목 순서 — ① 네트워크 상태 배지(dot) → ② 프로필 아이콘 →
+  //   ③ 제품 명칭 → ④ 데이터소스. (과거엔 아이콘이 dot 앞이었고, 아이콘은 icon_url 설정 시에만 노출됐음.)
 
+  // ① 네트워크 상태 배지(dot)
   const dot = document.createElement("span");
   dot.className = "product-dropup-item-dot";
   // TASK-0261: datasource 바인딩이 있으면 dot 색을 네트워크 상태(최악)로 칠한다.
@@ -911,12 +904,29 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
   }
   item.appendChild(dot);
 
+  // ② 프로필 아이콘 — pinned 제품은 항상 표시(설정 이미지 또는 Identicon 폴백, 작업화면 프로필과 정합).
+  //    auto 항목은 제품이 아니므로 아이콘 없이 dot 만.
+  if (mode === "pinned") {
+    const ic = document.createElement("span");
+    ic.className = "product-dropup-item-icon";
+    if (iconUrl) {
+      const img = document.createElement("img");
+      img.alt = ""; img.loading = "lazy"; img.src = iconUrl;
+      img.onerror = () => { ic.innerHTML = identiconSvg(productKey || "", 100); };  // 로드 실패 → Identicon 폴백
+      ic.appendChild(img);
+    } else {
+      ic.innerHTML = identiconSvg(productKey || "", 100);  // 미설정 → Identicon
+    }
+    item.appendChild(ic);
+  }
+
+  // ③ 제품 명칭
   const labelEl = document.createElement("span");
   labelEl.className = "product-dropup-item-label";
   labelEl.textContent = label;
   item.appendChild(labelEl);
 
-  // 멀티 datasource (P2/TASK-0228 1:N): 바인딩된 datasource 를 배지로 표시.
+  // ④ 데이터소스 — 멀티 datasource (P2/TASK-0228 1:N): 바인딩된 datasource 를 배지로 표시.
   //  - 1개: 라벨 그대로. 2개 이상: "N개 데이터소스" + 전체 목록 tooltip.
   //  TASK-0261: tooltip 에 각 datasource 의 연결 상태도 함께 표기.
   const _dsBinds = Array.isArray(datasources) ? datasources : (datasourceKey ? [{ datasource_key: datasourceKey }] : []);
@@ -1127,7 +1137,7 @@ async function initAccountPromptEditor() {
     products.forEach((p) => {
       const opt = document.createElement("option");
       opt.value = String(p.id);
-      opt.textContent = `${p.name} (${p.product_key})`;
+      opt.textContent = `(${p.product_key}) ${p.name}`;
       if (state.default_product_id && Number(state.default_product_id) === Number(p.id)) {
         opt.selected = true;
       }

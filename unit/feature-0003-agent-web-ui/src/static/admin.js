@@ -338,6 +338,62 @@ function formatDateTime(value = "") {
   });
 }
 
+// TASK-20260615T-profile-icon: Identicon — seed(문자열) 해시 기반 결정론적 5x5 대칭 SVG(외부 의존 0).
+//   app.js 의 동명 헬퍼(_identiconHash/identiconSvg/applyAvatar)와 byte-identical — 작업화면 프로필과
+//   관리 콘솔 제품 아이콘의 시각 정합을 위해 이식. 같은 seed → 항상 같은 패턴/색.
+function _identiconHash(seed) {
+  let h = 5381;
+  const s = String(seed || "");
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h >>> 0;
+}
+function identiconSvg(seed, size) {
+  const h = _identiconHash(seed);
+  const hue = h % 360;
+  const fg = `hsl(${hue},58%,52%)`;
+  const bg = "#eef2f7";
+  const cells = [];
+  // 5열 중 좌측 3열만 결정 후 대칭 → 5x5 대칭 패턴.
+  let bits = h;
+  for (let col = 0; col < 3; col++) {
+    for (let row = 0; row < 5; row++) {
+      const on = (bits & 1) === 1; bits = bits >>> 1;
+      if (on) {
+        cells.push([col, row]);
+        if (col < 2) cells.push([4 - col, row]);  // 대칭
+      }
+    }
+  }
+  const sz = size || 100;
+  const cell = sz / 5;
+  const rects = cells.map(([c, r]) =>
+    `<rect x='${(c * cell).toFixed(2)}' y='${(r * cell).toFixed(2)}' width='${cell.toFixed(2)}' height='${cell.toFixed(2)}' fill='${fg}'/>`
+  ).join("");
+  return `<svg viewBox='0 0 ${sz} ${sz}' width='100%' height='100%' xmlns='http://www.w3.org/2000/svg' style='display:block;'><rect width='${sz}' height='${sz}' fill='${bg}'/>${rects}</svg>`;
+}
+// applyAvatar: el 에 이미지(url 있으면 <img>) 또는 Identicon(seed 해시) 렌더. app.js 와 동형.
+//   url=설정된 이미지 API path. seed=fallback identicon 시드(username/product_key). initials=이미지 로드 실패 시 폴백.
+function applyAvatar(el, { url, seed, initials }) {
+  if (!el) return;
+  el.textContent = "";
+  el.classList.add("has-avatar-img");
+  if (url) {
+    const img = document.createElement("img");
+    img.className = "avatar-img";
+    img.alt = "";
+    img.loading = "lazy";
+    img.src = url;
+    img.onerror = () => {
+      // 이미지 로드 실패 → Identicon 폴백.
+      el.removeChild(img);
+      el.innerHTML = identiconSvg(seed || initials || "", 100);
+    };
+    el.appendChild(img);
+  } else {
+    el.innerHTML = identiconSvg(seed || initials || "", 100);
+  }
+}
+
 function can(permission) {
   return Boolean(adminState.me?.permissions?.[permission]);
 }
@@ -5275,7 +5331,7 @@ function renderProductList() {
     meta.className = "admin-list-main";
     const name = document.createElement("div");
     name.className = "admin-account-name";
-    name.textContent = `${p.name} (${p.product_key})`;
+    name.textContent = `(${p.product_key}) ${p.name}`;
     const sub = document.createElement("div");
     sub.className = "admin-meta";
     const badges = [];
@@ -5427,15 +5483,9 @@ function renderProductDetail() {
   idBlock.className = "admin-detail-identity";
   const avatar = document.createElement("div");
   avatar.className = "admin-avatar";
-  // TASK-0268: 제품 아이콘 이미지(설정 시) 또는 product_key 이니셜.
-  if (product.icon_url) {
-    const img = document.createElement("img");
-    img.className = "admin-avatar-img"; img.alt = ""; img.src = product.icon_url;
-    img.onerror = () => { avatar.textContent = (product.product_key || "P").slice(0, 2).toUpperCase(); };
-    avatar.appendChild(img);
-  } else {
-    avatar.textContent = (product.product_key || "P").slice(0, 2).toUpperCase();
-  }
+  // TASK-0268 + profile-icon 정합: 제품 아이콘 이미지(설정 시) 또는 Identicon(product_key 시드).
+  //   작업화면 프로필(applyAvatar/identiconSvg)과 동일 폴백 — 이니셜 텍스트가 아니라 결정론적 Identicon.
+  applyAvatar(avatar, { url: product.icon_url, seed: product.product_key || product.name || "", initials: (product.product_key || "P").slice(0, 2).toUpperCase() });
   // TASK-0268: product.manage 면 아이콘 변경/제거 컨트롤.
   if (canManage) {
     const iconEdit = document.createElement("div");
@@ -5477,7 +5527,7 @@ function renderProductDetail() {
   const idText = document.createElement("div");
   const nameEl = document.createElement("div");
   nameEl.className = "admin-account-name";
-  nameEl.textContent = `${product.name} (${product.product_key})`;
+  nameEl.textContent = `(${product.product_key}) ${product.name}`;
   const metaEl = document.createElement("div");
   metaEl.className = "admin-meta";
   metaEl.innerHTML = `
@@ -6507,7 +6557,7 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
     products.forEach((p) => {
       const opt = document.createElement("option");
       opt.value = String(p.id);
-      opt.textContent = `${p.name} (${p.product_key})`;
+      opt.textContent = `(${p.product_key}) ${p.name}`;
       if (Number(p.id) === Number(currentProductId)) opt.selected = true;
       productSelect.appendChild(opt);
     });

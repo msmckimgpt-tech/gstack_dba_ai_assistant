@@ -23,6 +23,21 @@ source_of_truth: true
 - Residual: 머지 → web 재배포(migrate 불필) + PB-0008. MinIO 고아 객체(INSERT 실패 시)는 reconciliation worker 정리(무해, 정상 업로드 경로와 동형).
 - Cross-ref: CHG-20260615-0275 / TASK-0275 / FUNCTION REQ-20260615-0275(AC-0493~0496).
 
+## REV-20260615-0277 [SKIPPED:frontend-ui-consistency-no-backend-no-rbac]
+- Date: 2026-06-15 (REV 번호: 동시세션 TASK-0275 보안 리뷰가 REV-20260615-0276 선점 → §13.1 감지-후-재번호 0276→0277)
+- Cycle: TASK-20260615T172210-profile-icon-consistency (제품 프로필 아이콘 정합화 + 대화 드롭업 레이아웃·너비 + 명칭 표기 순서), **Major §12.3** — frontend-only(`src/static/{admin.js,app.js,styles.css,index.html,admin.html}`). RBAC/인증/스키마/엔드포인트 계약/데이터/시크릿/백엔드(app.py) 0.
+- Trigger: §18.8 dispatch 키워드 매칭(UI/화면/아이콘/레이아웃/목록 → ux,design). 그러나 변경 실질은 **이미 운영 중인 작업화면 프로필 헬퍼(app.js `applyAvatar`/`identiconSvg`, TASK-0268)를 관리 콘솔·대화 드롭업에 byte-identical 이식**하여 시각을 *정합* 시킨 것 + 표시 순서·문자열 순서 재배열이다. 신규 데이터 노출·권한 경계·인터랙션 모델·백엔드 계약 0 → §18.8.1 경량 경로(적대 패널 불요, Minor/Major frontend-only + 정책 doc 변경 0 → panel skip 허용). docs-only 정책 변경 아님(코드 변경)이므로 cross-ref 무결성 점검 의무 비해당.
+- 자체 점검(안전 속성):
+  - ① **정합 근거**: admin.js 의 `_identiconHash`/`identiconSvg` 가 app.js 와 byte-identical(jsdom 테스트가 문자열 동등 + 동일 seed→동일 SVG 산출로 강제). 같은 제품(product_key 시드)은 작업화면·관리 콘솔·대화 드롭업에서 **동일 Identicon** 렌더 → 시각 정합 달성.
+  - ② **회귀 표면**: icon_url 설정 제품은 기존과 동일하게 `<img>` 표시(applyAvatar 의 url 분기 + onerror Identicon 폴백). 미설정 제품만 이니셜 텍스트→Identicon 으로 바뀜(개선, 데이터/동작 무관). 아이콘 업로드/제거 편집 컨트롤(product.manage) 경로·핸들러 무변경.
+  - ③ **드롭업 레이아웃**: 자식 순서 dot→icon→label→ds 는 사용자 명시 요청(네트워크 상태 배지·프로필 아이콘·명칭·데이터소스) 순서 그대로. auto 항목은 mode!=="pinned" 라 아이콘 미생성(제품 아님 — 정상). datasource 배지·check svg·click 핸들러(setActiveProduct) 무변경 → 선택 동작 회귀 0(jsdom 으로 순서·폴백·img 분기 검증).
+  - ④ **너비**: 메뉴 max-width `min(420px,92vw)` 로 좁은 뷰포트는 92vw clamp(오버플로 방지), 명칭은 `.product-dropup-item-label` 의 ellipsis 유지(확대로 잘림 빈도 감소, 초장문은 여전히 안전 말줄임). chip 라벨(compact=product_key)은 무변경.
+  - ⑤ **명칭 순서**: 7곳 전부 `(${product_key}) ${name}` 로 일괄(grep 으로 잔존 `명칭 (약어)` 0건 확인). 백엔드는 name/product_key 분리 반환이라 프론트 단일 책임 — 직렬화 계약 무변경.
+  - ⑥ **XSS/주입**: identiconSvg 는 해시 정수→고정 포맷 SVG(사용자 입력 미보간), label 은 `textContent`(HTML 미해석). 신규 주입 표면 0.
+- 검증: node --check(app.js·admin.js) PASS + CSS brace 균형(1198=1198) + jsdom `tests/verify_profile_icon_consistency.mjs` **23/23 PASS** + make test 컨테이너 전체 회귀 0(ruff clean, 2 skip, MAKE_EXIT=0).
+- Residual: verify-completion --pre-commit + web 재배포(deploy_scope: included) 후 PB-0008 Windows-browser 시각검증(관리 콘솔 제품 Identicon·대화 드롭업 항목 순서·메뉴 너비·명칭 표기) → TEST.md §4 기록.
+- Cross-ref: CHG-20260615-0276 / TASK-20260615T172210-profile-icon-consistency / TASK-0268(아이콘 인프라).
+
 ## REV-20260615-0275 [SKIPPED:pb0008-evidence-docs-only]
 - Date: 2026-06-15
 - Cycle: TASK-0274 후속 (첨부 패널 resize PB-0008 Windows-browser 시각검증 evidence 기록 — docs-only: TEST.md §4 Run 1건 + TASK.md 완료 표기. src 코드 0).

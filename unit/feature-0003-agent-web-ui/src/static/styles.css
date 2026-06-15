@@ -1857,8 +1857,10 @@ a { color: inherit; }
   left: 0;
   bottom: calc(100% + 6px);
   z-index: 50;
-  min-width: 220px;
-  max-width: 280px;
+  /* profile-icon 정합: 항목이 상태배지+아이콘+명칭+데이터소스 4요소라 명칭 잘림을 막기 위해 너비 확대.
+     min 220→300, max 280→420. 좁은 뷰포트는 max(420, 92vw 미만)로 clamp. */
+  min-width: 300px;
+  max-width: min(420px, 92vw);
   background: var(--surface-1, #ffffff);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -6379,12 +6381,19 @@ a { color: inherit; }
   appearance: none; border: none; background: transparent; color: var(--danger, #dc2626);
   font-size: 11px; cursor: pointer; padding: 2px 0; text-decoration: underline; margin-top: 2px;
 }
-/* 제품 드롭업 아이콘(작은 이미지) */
-.product-dropup-item-icon { width: 16px; height: 16px; border-radius: 4px; overflow: hidden; flex-shrink: 0; display: inline-flex; }
-.product-dropup-item-icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 제품 드롭업 아이콘(작은 이미지 또는 Identicon SVG) — profile-icon 정합: 미설정 시 Identicon 폴백 */
+.product-dropup-item-icon { width: 18px; height: 18px; border-radius: 50%; overflow: hidden; flex-shrink: 0; display: inline-flex; }
+.product-dropup-item-icon img, .product-dropup-item-icon > svg { width: 100%; height: 100%; object-fit: cover; display: block; }
 /* admin 제품 아바타 이미지 + 아이콘 편집 */
 .admin-avatar { position: relative; overflow: visible; }
 .admin-avatar .admin-avatar-img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: inherit; }
+/* profile-icon 정합: 작업화면 프로필과 동일하게 applyAvatar()가 넣는 .avatar-img / Identicon SVG 를
+   원형(border-radius:50%)으로 채운다. edit 컨트롤은 avatar 밖(bottom:-22px)이라 컨테이너 overflow 는
+   visible 유지하고, 이미지·SVG 만 원형 클립(자체 border-radius + overflow). */
+.admin-avatar.has-avatar-img { padding: 0; background: transparent; }
+.admin-avatar .avatar-img, .admin-avatar > svg {
+  width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 50%; overflow: hidden;
+}
 .admin-avatar-edit { position: absolute; left: 0; right: 0; bottom: -22px; display: flex; gap: 6px; justify-content: center; }
 .admin-avatar-change, .admin-avatar-remove {
   appearance: none; border: 1px solid var(--border, #e5e7eb); background: var(--surface-1, #fff);
