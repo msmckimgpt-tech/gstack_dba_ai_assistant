@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0257 [SUBAGENT:rbac-adversarial] — SHIP-WITH-FIXES → 흡수 후 SHIP
+- Date: 2026-06-15
+- Cycle: TASK-0257 (관리 콘솔 계정·역할 권한 편집기 점진적 세분화 — **Major §12.3** 권한 편집 surface, frontend-only `src/static/{admin.js,styles.css}`)
+- 패널: 적대적 outside-voice(general-purpose subagent) — 8개 결함 카테고리를 명시 증명/반증 시도. RBAC plan 외부시각 정책([[feedback_outside_voice_for_rbac]]) 정합(단, 권한 *모델* 변경 아님 — 편집기 표시 UX 전용이라 enforce/code/persistence 무변경).
+- **VERDICT: SHIP-WITH-FIXES**. 반박된(비결함, refuted) 우려:
+  - **#1 부여 권한이 숨겨질 수 있는가** — 200k checkbox + 200k override **랜덤 fuzz 0건**. `forceVisible` 가 명시 설정(on/허용/거부) 권한 + 모든 조상을 표시 마킹 → 어떤 상태에서도 부여 권한 hidden=false. 최악도 "더 보기"로 도달.
+  - **#2 저장 누락(data loss)** — 저장 closure 가 `permWrap.querySelectorAll("input:checked")` / `select[data-override-code]` 를 wrapper 전체에 `:not([hidden])` 필터 없이 질의. HTML `hidden` 속성은 querySelectorAll/`:checked`/select.value 에 영향 없고 전역 `[hidden]{display:none}` 도 없음 → hidden-but-checked 권한 정상 저장. **REFUTED**(가장 중요한 검증, clean).
+  - **#5 무한루프/perf/버튼 중복** — `let more = querySelector(...)` 재사용으로 버튼 1개 유지(50회 recompute 후 1개), 리스너 `if(!more)` 내부만 부착, isVisible 캐시 사이클 가드, O(n) — REFUTED.
+  - **#6 제품 그룹** — product 루트(product.manage·system_prompt.manage.role.any)는 부모 없음→항상 visible→그룹 hiddenCount≠rows.length→그룹 미숨김, 카운트는 `[data-perm-code]`만 세어 임베드 제품 카드 무영향 — REFUTED.
+  - **#7 맵 정합** — 31 deps 전부 실제 code, 무순환·루트 종료, 마스터게이트/own→any 정확 — REFUTED. **#8 §10.6 정렬** — section/group 순서 불변(intra-group hidden 토글만) — REFUTED.
+- 흡수한 결함:
+  - **[MAJOR] override 모드 그룹 도달불가 trap** — override 모드 기본(전부 inherit)에서 account/role/audit/settings 그룹이 통째 hidden 되며 "더 보기" 탈출구도 그 안에 묶여 사라져, 관리자가 inherit 자식 row(예: account.update=deny)에 도달 불가. 게이트(select)를 allow 로 바꾸면 *실효 권한*이 바뀌는 destructive side-effect. **흡수**: `_refreshGroupDisclosure` 에 mode 분기 — 그룹/섹션 통째 vanish 는 checkbox(역할) 모드만(마스터게이트 체크박스가 항상 보이는 복원 레버). override 모드는 그룹/섹션 **비숨김**(§295 "전체 표시" 정합) + row 만 접고 "더 보기" 항상 도달. 신규 override 가시성 테스트 V5/V6 + jsdom S6 추가.
+  - **[MINOR] dead branch** — `_refreshGroupDisclosure` 의 `if(more.parentElement!==list) ... else if(list) ...` 양쪽 모두 appendChild → 단일 `if(list) list.appendChild(more)` 로 정리. **흡수**.
+  - **[MINOR] override 모드 orphan 칩 부재 / §10.6 "전체 표시" 약화** — override 게이트 inherit 의 role-grant 모호성 때문에 칩을 checkbox 모드 한정 유지(accepted: inherit 게이트에 오탐 칩 회피). §10.6 약화는 MAJOR 흡수(override 그룹 비숨김)로 해소 + §10.6 에 disclosure 계층 명문화.
+- 후속 검증: jsdom 실 DOM 30/30(저장경로 안전·override no-vanish·더보기 도달 포함) + make test 회귀 0 + PB-0008 Windows(배포 후).
+
 ## REV-20260615-0255c [SKIPPED:pb0008-evidence-docs-only]
 - Date: 2026-06-15
 - Cycle: TASK-0255b (PB-0008 Windows-browser 시각검증 evidence 기록 — docs-only: TEST.md §4 Run + 양 feature TASK.md PB-0008 체크박스; src 코드 0).

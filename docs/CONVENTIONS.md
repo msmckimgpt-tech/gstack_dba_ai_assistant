@@ -302,6 +302,28 @@ TEMP_CLEANUP_ON_SUCCESS="1"
 - `product.access.<key>` (dynamic, IsDynamic=1) 는 백엔드에서 `group="product"` 로 들어오므로 두 화면 모두 자동으로 product 섹션에 합류한다.
 - `system_prompt.*` 코드는 백엔드 정의가 `group="product"` 이고, 작업 화면 FE 의 `permissionGroupOf()` 는 prefix-only 추론이므로 `system_prompt.` 접두사를 명시적으로 `product` 로 매핑한다 (app.js).
 
+#### 점진적 세분화 (progressive disclosure) — 표시 단계 계층 (TASK-0257)
+
+§10.6 의 section/group **정렬·구조는 불변**이며, 그 위에 권한 row 단위의 표시 단계
+계층을 둔다. 관리 콘솔 권한 grid (`admin.js` `renderPermissionGrid`) 는
+`PERMISSION_DEPENDENCIES` (child → 선행 parent) 에 따라 선행 권한이 충족돼야
+(체크 / override=허용) 해당 종속 권한 row 를 노출한다. 규칙:
+
+- **마스터 게이트**: `console.access` (관리 콘솔 접근) 가 관리 권한 section 의 마스터
+  게이트. `account.read` / `role.read` / `audit.read.own` / `system_prompt.global.read`
+  의 부모 = `console.access` → 미체크 시 계정·역할·감사·시스템설정 그룹이 접힌다.
+- **운영 권한**: 마스터 게이트 없음. `.any` (전체) 권한은 대응 `.own` (내) 권한을
+  선행으로 둔다.
+- **비파괴 (BLOCKING)**: 이미 부여된(체크 / override 허용·거부) 권한과 그 조상은 게이트
+  상태와 무관하게 **항상 표시**한다. disclosure 는 row 를 *접을(collapse)* 뿐 *제거
+  (strip)* 하지 않으며, 저장 경로는 hidden row 의 상태도 그대로 읽는다 (권한이 조용히
+  사라지지 않는다). 각 그룹의 접힌 row 는 "세부 권한 N개 더 보기" 로 항상 in-place 노출
+  가능해야 한다.
+- **그룹/섹션 vanish 는 checkbox(역할) 모드 한정**: 마스터 게이트 OFF 시 종속 그룹이
+  통째 사라지는 동작은 역할 편집기(체크박스)만 적용한다 — 마스터 게이트 체크박스가 항상
+  보이는 복원 레버이기 때문. 계정 override 편집기(select)는 위 "관리자가 배치 가능한
+  권한 전체를 보여주는 grid" 보장을 지키기 위해 **그룹/섹션을 숨기지 않고** row 만 접는다.
+
 #### 검증
 
 화면 정렬이 본 §10.6 와 어긋나면 그 PR 은 사람 리뷰가 반려한다.

@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0257
+- Date: 2026-06-15 (TASK-0257, **Major §12.3** 권한 편집 surface — 관리 콘솔 계정·역할 권한 편집기 점진적 세분화(progressive disclosure))
+- Scope: agent-web-ui (프론트 전용) — `관리 콘솔 > 계정, 역할 > [각 항목]` 권한 grid 가 카테고리별 전 권한을 평면 노출해 핵심 게이트가 묻히던 것을, 종속성 기반 row 단위 disclosure 로 점진 세분화. 백엔드 RBAC enforce·권한 code·persistence·엔드포인트·스키마 **무변경**(편집기 표시 UX 전용).
+- 변경:
+  - `src/static/admin.js`:
+    - 신규 `PERMISSION_DEPENDENCIES`(child→선행 parent, 31엔트리) — 관리 권한 마스터 게이트 `console.access`(account.read/role.read/audit.read.own/system_prompt.global.read 부모=console.access); 그룹 base 가 세부 게이트; 운영 권한 `.any`→`.own`.
+    - 신규 `_applyPermissionDisclosure`/`_refreshGroupDisclosure`/`_setPermOrphanWarn`/`_permLabel` — 매 변경/초기에 row 가시성 재계산. `forceVisible`(명시 설정 권한+조상)로 비파괴(부여 권한 미숨김), `gateSatisfied`(checkbox=체크 / override=허용)로 자식 노출, "세부 권한 N개 더 보기" 강제 노출 토글 + orphan 경고칩(checkbox 모드).
+    - `renderPermissionGrid`: 각 row wrapper 에 `data-perm-code` 부여 + change/bulk 핸들러에 `recompute()` 배선 + 말미 초기 `recompute()`. mode 분기(적대 리뷰 흡수): 그룹/섹션 통째 vanish 는 checkbox(역할) 모드만, override(계정) 모드는 그룹 비숨김+row 만 접음(§10.6 "전체 표시" 정합, "더 보기" 항상 도달).
+  - `src/static/styles.css`: `.permission-group-more`(더 보기 토글) / `.permission-orphan-warn`(경고칩) / `.permission-toggle-card.permission-row-dependent`(종속 row 미세 좌측 accent). reveal 즉시 토글(애니메이션 없음 — 레이아웃 뒤틀림 방지).
+  - `src/static/admin.html`: 캐시버스터 `styles.css?v=20260615-perm-disclosure` + `admin.js?v=20260615-perm-disclosure`.
+  - `docs/CONVENTIONS.md` §10.6: progressive disclosure 표시 단계 계층 명문화(마스터 게이트·비파괴 BLOCKING·그룹 vanish=checkbox 한정).
+- 비변경: 저장 경로(`querySelectorAll("input:checked")` / `select[data-override-code]`)는 hidden row 도 그대로 읽어 권한 누락 0; product 그룹 임베드 카드·dynamic product.access.* 처리·§10.6 section/group 정렬 무변경.
+- 검증: 신규 `tests/test_permission_dependency_map.py` **10 PASS**(맵 정합 M1~M4 + 가시성 불변식 V1~V6) + make test 컨테이너 **전체 회귀 0**(make exit=0) + ruff clean + `node --check`(admin.js) + CSS brace(1113=1113) + **jsdom 실 DOM 30/30**. **잔여**: 배포(web 만 — `deploy_scope: included`) + PB-0008 Windows-browser 시각검증.
+
 ## CHG-20260615-0255b
 - Date: 2026-06-15 (TASK-0255b PB-0008 Windows-browser 시각검증 evidence 후속 — 코드 변경 0, docs+scenario. CHG-20260615-0255 main `a410986` 머지·재배포 이후).
 - 변경: `docs/TEST.md` §4 에 `Environment: Windows-browser` Run 기록(엔드포인트 insight_health + UI "인사이트 스캔 상태" 행 구분 실증) + `docs/TASK.md`(양 feature) PB-0008 체크박스 [x] + `docs/REVIEW.md` REV-20260615-0255c [SKIPPED] + `tests/win-browser-task0255-insight-health.scenario.json`(재현 시나리오).

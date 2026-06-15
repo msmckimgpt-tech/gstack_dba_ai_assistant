@@ -113,6 +113,56 @@ const ADMIN_PERMISSION_SECTIONS = [
   { id: "misc", title: "기타", description: null, groups: ["misc"] },
 ];
 
+// 권한 점진적 세분화 (progressive disclosure) — 종속성 선언 맵 (childCode -> 선행 parentCode).
+// renderPermissionGrid 가 각 권한 row 를 "선행 권한이 충족돼야(체크 / override=허용) 표시" 하도록 접는다.
+// 비파괴 원칙: 이미 명시 설정된(체크 / override=허용·거부) row 와 그 조상은 게이트 상태와 무관하게 항상 표시 →
+//   부여된 권한이 조용히 숨겨지지 않는다. 각 그룹의 숨은 row 는 "세부 권한 N개 더 보기" 로 강제 노출 가능.
+//
+// 구조 (CONVENTIONS.md §10.6 의 group/section 정렬은 그대로 — 본 맵은 group 내부의 표시 단계만 정의):
+//  · 관리 권한 section: `console.access`(관리 콘솔 접근) 가 마스터 게이트.
+//      account.read / role.read / audit.read.own / system_prompt.global.read 의 부모 = console.access →
+//      console.access 가 꺼지면 계정·역할·감사·시스템설정 그룹 전체가 접혀 "관리 콘솔" 그룹만 남는다.
+//      각 그룹 base 권한(account.read 등) 이 다시 그 그룹의 세부 권한을 연다.
+//  · 운영 권한 section: 마스터 게이트 없음. `.any`(전체) 권한은 대응 `.own`(내) 권한을 선행으로 둔다
+//      (any ⊇ own 의 참 종속). 제품·첨부는 평면.
+// 백엔드 PERMISSION_DEFINITIONS(app.py) 의 code 와 1:1 정합 필수 — 회귀 테스트
+//   test_permission_dependency_map.py 가 모든 key/value 가 실제 권한 code 인지 검증한다.
+const PERMISSION_DEPENDENCIES = {
+  // ── 관리 권한 (마스터 게이트 = console.access) ──
+  "console.manage": "console.access",
+  "console.usage.read": "console.access",
+  "insight.reset": "console.access",
+  "account.read": "console.access",
+  "account.update": "account.read",
+  "account.delete": "account.read",
+  "account.activate": "account.read",
+  "account.deactivate": "account.read",
+  "account.role.assign": "account.read",
+  "account.permission.override.manage": "account.read",
+  "role.read": "console.access",
+  "role.create": "role.read",
+  "role.update": "role.read",
+  "role.delete": "role.read",
+  "role.permission.manage": "role.read",
+  "audit.read.own": "console.access",
+  "audit.read.any": "audit.read.own",
+  "audit.export": "audit.read.own",
+  "audit.purge": "audit.read.own",
+  "system_prompt.global.read": "console.access",
+  "system_prompt.global.write": "system_prompt.global.read",
+  // ── 운영 권한 (그룹 내부 own → any) ──
+  "conversation.list.any": "conversation.list.own",
+  "conversation.read.any": "conversation.read.own",
+  "conversation.file.read.any": "conversation.file.read.own",
+  "conversation.rename.any": "conversation.rename.own",
+  "conversation.delete.any": "conversation.delete.own",
+  "conversation.cancel.any": "conversation.cancel.own",
+  "conversation.finalize.any": "conversation.finalize.own",
+  "conversation.duplicate.any": "conversation.duplicate.own",
+  "conversation.attachment.upload.any": "conversation.attachment.upload.own",
+  "conversation.attachment.read.any": "conversation.attachment.read.own",
+};
+
 /* ── Bulk action contract — CONVENTIONS.md §10 + DESIGN.md §4~§9 ───── */
 
 // DESIGN.md §5 / §10.4 — 카테고리별 단위 어휘
@@ -375,6 +425,142 @@ function _updateOverrideGroupSummary(section) {
   badge.textContent = parts.join(" · ");
 }
 
+/* ── 권한 점진적 세분화 (progressive disclosure) ─────────────────────────
+   각 권한 row 를 PERMISSION_DEPENDENCIES 의 선행 권한 충족 여부에 따라 접고 편다.
+   §10.6 의 group/section 정렬·DOM 구조는 그대로 두고 row 단위 hidden 토글로만 동작 →
+   레이아웃 뒤틀림 없음. 비파괴: 명시 설정된 권한·그 조상은 항상 표시. */
+
+function _permLabel(code) {
+  const def = (adminState.permissions || []).find((p) => p && p.code === code);
+  return (def && def.label) || code;
+}
+
+// orphan 경고칩(부여돼 있으나 선행 권한이 꺼진 권한). checkbox mode 전용.
+function _setPermOrphanWarn(wrapper, gateCode) {
+  let warn = wrapper.querySelector(".permission-orphan-warn");
+  if (!gateCode) { if (warn) warn.remove(); return; }
+  const msg = `상위 권한 "${_permLabel(gateCode)}" 미설정`;
+  if (!warn) {
+    warn = document.createElement("span");
+    warn.className = "permission-orphan-warn";
+    (wrapper.querySelector(".permission-text") || wrapper).appendChild(warn);
+  }
+  warn.textContent = `⚠ ${msg}`;
+  warn.title = `${msg} — 이 권한은 부여돼 있으나 선행 권한이 꺼져 있습니다. 의도한 설정인지 확인하세요.`;
+}
+
+// 그룹/섹션 가시성 + "세부 권한 N개 더 보기 / 접기" 토글 갱신.
+// mode 분기 (적대 리뷰 REV MAJOR 흡수): 그룹/섹션 통째 숨김(vanish)은 **checkbox(역할) 모드만**.
+//   checkbox 모드는 마스터 게이트 console.access 체크박스가 항상 보이는 복원 레버라 trap 없음.
+//   override(계정) 모드는 게이트가 그 자신도 접힐 수 있는 select 라 그룹을 숨기면 "더 보기" 탈출구까지
+//   같이 사라져 도달 불가 → override 모드는 그룹/섹션을 숨기지 않고(§10.6 "전체 표시" 정합) 행만 접는다.
+function _refreshGroupDisclosure(containerEl, showAll, recompute, mode) {
+  const collapseGroups = mode === "checkbox";
+  containerEl.querySelectorAll("details.permission-group").forEach((groupEl) => {
+    const rows = Array.from(groupEl.querySelectorAll("[data-perm-code]"));
+    if (!rows.length) return; // 권한 row 없는 그룹(예: 제품 카드 only)은 건드리지 않음
+    const groupKey = groupEl.dataset.permGroup;
+    const hiddenCount = rows.filter((r) => r.hidden).length;
+    // checkbox 모드: 보이는 권한 row 0 이면 details 자체를 감춘다 → 마스터 게이트 OFF 시 계정·역할 등 묶음이 사라짐.
+    // override 모드: 절대 숨기지 않음(아래 "더 보기"로 항상 도달 가능).
+    groupEl.hidden = collapseGroups && hiddenCount === rows.length;
+    const isShowAll = showAll.has(groupKey);
+    const list = groupEl.querySelector(".permission-grid-list");
+    let more = groupEl.querySelector(".permission-group-more");
+    if (hiddenCount === 0 && !isShowAll) {
+      if (more) more.remove();
+      return;
+    }
+    if (!more) {
+      more = document.createElement("button");
+      more.type = "button";
+      more.className = "permission-group-more";
+      more.addEventListener("click", (evt) => {
+        evt.preventDefault();
+        if (showAll.has(groupKey)) showAll.delete(groupKey);
+        else showAll.add(groupKey);
+        recompute();
+      });
+    }
+    if (list) list.appendChild(more); // 항상 list 마지막으로
+    more.textContent = isShowAll ? "세부 권한 접기" : `세부 권한 ${hiddenCount}개 더 보기`;
+    more.setAttribute("aria-expanded", isShowAll ? "true" : "false");
+  });
+  if (!collapseGroups) return; // override 모드는 섹션도 숨기지 않음
+  // 섹션: 보이는 그룹이 하나도 없으면 섹션 자체를 감춘다(방어적 — 실제로는 console/conversation 그룹이 항상 남음).
+  containerEl.querySelectorAll("section.permission-section").forEach((secEl) => {
+    const groups = Array.from(secEl.querySelectorAll("details.permission-group"));
+    if (groups.length) secEl.hidden = !groups.some((g) => !g.hidden);
+  });
+}
+
+// containerEl 전체 grid 에 disclosure 를 1회 적용(초기 + 매 변경 시 호출).
+function _applyPermissionDisclosure(containerEl, mode, showAll) {
+  const wrappers = Array.from(containerEl.querySelectorAll("[data-perm-code]"));
+  if (!wrappers.length) return;
+  const state = new Map();
+  const byCode = new Map();
+  wrappers.forEach((w) => {
+    const code = w.dataset.permCode;
+    byCode.set(code, w);
+    if (mode === "checkbox") {
+      const cb = w.querySelector("input[type='checkbox']");
+      state.set(code, cb && cb.checked ? "on" : "off");
+    } else {
+      const sel = w.querySelector("select[data-override-code]");
+      state.set(code, sel ? sel.value : "inherit");
+    }
+  });
+  // explicit = 관리자가 명시 설정(checkbox 체크 / override 허용·거부). keep-visible 의 기준.
+  const isExplicit = (code) => {
+    const s = state.get(code);
+    return mode === "checkbox" ? s === "on" : (s === "allow" || s === "deny");
+  };
+  // gateSatisfied = 자식을 여는 양성 부여(checkbox 체크 / override 허용).
+  const gateSatisfied = (code) => {
+    const s = state.get(code);
+    return mode === "checkbox" ? s === "on" : s === "allow";
+  };
+  // 비파괴: 명시 설정된 권한 + 그 모든 조상을 강제 표시.
+  const forceVisible = new Set();
+  byCode.forEach((_w, code) => {
+    if (!isExplicit(code)) return;
+    let cur = code;
+    const guard = new Set();
+    while (cur && !guard.has(cur)) {
+      forceVisible.add(cur);
+      guard.add(cur);
+      cur = PERMISSION_DEPENDENCIES[cur];
+    }
+  });
+  const visCache = new Map();
+  const isVisible = (code) => {
+    if (visCache.has(code)) return visCache.get(code);
+    visCache.set(code, false); // 사이클 방어(트리라 미발생이나 안전)
+    const parent = PERMISSION_DEPENDENCIES[code];
+    let v;
+    if (!parent) v = true;                     // 루트 — 항상 표시
+    else if (forceVisible.has(code)) v = true;  // 명시 설정 self / 명시 설정 자손 보유
+    else if (!byCode.has(parent)) v = true;     // 부모가 grid 에 없음(방어) — 표시
+    else v = gateSatisfied(parent) && isVisible(parent);
+    visCache.set(code, v);
+    return v;
+  };
+  byCode.forEach((w, code) => {
+    const groupEl = w.closest("details.permission-group");
+    const groupKey = groupEl ? groupEl.dataset.permGroup : null;
+    const forceShow = Boolean(groupKey && showAll.has(groupKey));
+    const vis = forceShow || isVisible(code);
+    w.hidden = !vis;
+    const parent = PERMISSION_DEPENDENCIES[code];
+    w.classList.toggle("permission-row-dependent", Boolean(parent));
+    const orphan = mode === "checkbox" && vis && parent && byCode.has(parent)
+      && isExplicit(code) && !gateSatisfied(parent);
+    _setPermOrphanWarn(w, orphan ? parent : null);
+  });
+  _refreshGroupDisclosure(containerEl, showAll, () => _applyPermissionDisclosure(containerEl, mode, showAll), mode);
+}
+
 function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overrides, onChange, opts = {}) {
   // TASK-0053 Phase B: opts.excludeDynamic=true 면 dynamic product.access.<key> 권한들을 grid 에서 제외.
   // 그 권한들은 호출처가 별도 buildProductSubcatalog... 함수로 product 카드 형식으로 렌더한다.
@@ -382,6 +568,9 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
   const { excludeDynamic = false } = opts;
   containerEl.innerHTML = "";
   const selected = new Set(selectedCodes || []);
+  // 점진적 세분화: 그룹별 "세부 권한 더 보기" 강제표시 set + 재계산 클로저. 매 변경 핸들러가 호출.
+  const showAll = new Set();
+  const recompute = () => _applyPermissionDisclosure(containerEl, mode, showAll);
   sectionedGroupedPermissions({ excludeDynamic }).forEach(({ section: sec, groups }) => {
     const sectionEl = document.createElement("section");
     sectionEl.className = "permission-section";
@@ -431,6 +620,7 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
         evt.preventDefault();
         section.querySelectorAll("input[type='checkbox']").forEach((cb) => { cb.checked = true; });
         _updateCheckboxGroupSummary(section);
+        recompute();
         if (onChange) onChange();
       });
       const noneBtn = document.createElement("button");
@@ -442,6 +632,7 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
         evt.preventDefault();
         section.querySelectorAll("input[type='checkbox']").forEach((cb) => { cb.checked = false; });
         _updateCheckboxGroupSummary(section);
+        recompute();
         if (onChange) onChange();
       });
       bulk.append(allBtn, noneBtn);
@@ -456,6 +647,7 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
           evt.preventDefault();
           section.querySelectorAll("select[data-override-code]").forEach((s) => { s.value = val; });
           _updateOverrideGroupSummary(section);
+          recompute();
           if (onChange) onChange();
         });
         return btn;
@@ -475,6 +667,7 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
       if (mode === "checkbox") {
         const label = document.createElement("label");
         label.className = "permission-toggle permission-toggle-card";
+        label.dataset.permCode = permission.code;
         const input = document.createElement("input");
         input.type = "checkbox";
         input.value = permission.code;
@@ -482,6 +675,7 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
         input.disabled = disabled;
         input.addEventListener("change", () => {
           _updateCheckboxGroupSummary(section);
+          recompute();
           if (onChange) onChange();
         });
         const textWrap = document.createElement("span");
@@ -496,6 +690,7 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
       } else {
         const field = document.createElement("label");
         field.className = "field override-field";
+        field.dataset.permCode = permission.code;
         const titleEl = document.createElement("span");
         titleEl.textContent = permission.label;
         const select = document.createElement("select");
@@ -514,6 +709,7 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
         });
         select.addEventListener("change", () => {
           _updateOverrideGroupSummary(section);
+          recompute();
           if (onChange) onChange();
         });
         const hint = document.createElement("small");
@@ -540,6 +736,8 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
     }
   });
   });
+  // 초기 진입 시 disclosure 1회 적용 — 게이트 OFF 인 세부 권한은 접고, 부여된 권한 체인은 펼친다.
+  recompute();
 }
 
 /* ── Merged state helpers (server data + pending overlay) ────────────── */
