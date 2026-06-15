@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0269
+- Date: 2026-06-15 (TASK-0269, **Minor §12.3** — 운영 권한 대화 그룹 own/any 분리 + "목록 조회" 게이트 카테고리 트리)
+- Scope: agent-web-ui — 사용자 요청(역할 트리 후속). 대화를 `내 대화 권한`/`전체 대화 권한` 2그룹으로 분리, `.any→.own` 1:1 종속을 "생성·조회 기반 > 동작" 카테고리로 교체. 권한 code·enforce 불변(group=UI 분류 메타).
+- 변경:
+  - `src/app.py`: `PERMISSION_DEFINITIONS` conversation 권한 `group` 코드 기반 분리 — `.any` → `"conversation_any"`(10), 나머지(create/ask/list.own/*.own/share.create) → `"conversation_own"`(13). code/label/description 불변.
+  - `src/static/admin.js`: `PERMISSION_GROUP_ORDER`(conversation→conversation_own,conversation_any), `PERMISSION_GROUP_LABELS`(내 대화 권한/전체 대화 권한), `ADMIN_PERMISSION_SECTIONS` operate=[conversation_own,conversation_any,product,attachment], `PERMISSION_DEPENDENCIES` 재정의(create/list.own/list.any 루트; 내 동작→list.own·전체 동작→list.any).
+  - `src/static/app.js`: 동일 group order/labels/`WORK_SCREEN_PERMISSION_SECTIONS` + `permissionGroupOf`(conversation.* → .any?conversation_any:conversation_own).
+  - `src/static/admin.html`·`index.html`: 캐시버스터 `admin.js`·`app.js`?v=20260615-task0269-conv-split.
+  - `tests/test_permission_dependency_map.py`: M4(own→any → list 게이트), V2(운영 루트 create/list.own/list.any), T2(그룹 분리+게이트 중첩) 갱신.
+- 비변경: 권한 code·enforce(`_account_has_permission` 등 code 기반)·저장 경로·disclosure 가시성/도달성 로직·트리 렌더·RBAC·엔드포인트·스키마(GroupName VARCHAR(32) 무절단, ON DUPLICATE KEY UPDATE 멱등→마이그 불요).
+- 검증: perm test **15 PASS** + make test 컨테이너 회귀 0(백엔드 RBAC 무회귀) + node --check(admin.js·app.js) + jsdom 20/20. outside-voice [SUBAGENT:rbac-adversarial] **SHIP**(REV-20260615-0269). **잔여**: 배포 + PB-0008.
+
 ## CHG-20260615-0268
 - Date: 2026-06-15 (TASK-0268, **docs-only** — TASK-0267 트리 UI PB-0008 Windows-browser 시각검증 evidence 기록)
 - Scope: agent-web-ui 문서만 — `docs/TEST.md` §4 Run 추가 + `docs/TASK.md` TASK-0267 "잔여 PB-0008" → "완료(PASS)". src 코드 0.
