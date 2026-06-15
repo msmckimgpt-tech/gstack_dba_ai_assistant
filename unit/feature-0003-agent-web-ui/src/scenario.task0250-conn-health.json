@@ -1,0 +1,133 @@
+{
+  "name": "TASK-0250 관리 콘솔 datasource 연결상태 배지 사전계산 즉시표시 검증",
+  "shot_dir": "/root/download/docker/mysql_ai_delegated_dev/repo/artifacts/shared/win-browser-shots-0250",
+  "steps": [
+    {
+      "action": "screenshot",
+      "label": "01_login_page"
+    },
+    {
+      "action": "type",
+      "selector": "#loginUsername, input[placeholder='사용자 ID']",
+      "text": "bootstrap_admin",
+      "stop_on_fail": false
+    },
+    {
+      "action": "type",
+      "selector": "#loginPassword, input[type='password']",
+      "text": "ChangeThisBootstrapPass_2026!",
+      "stop_on_fail": false
+    },
+    {
+      "action": "click",
+      "selector": "#loginForm button[type='submit'], #loginForm button, button[type='submit']",
+      "stop_on_fail": false
+    },
+    {
+      "action": "wait_for",
+      "selector": "#messageLog, .conversation-list, #conversationList, #composer",
+      "timeout": 10000,
+      "stop_on_fail": false
+    },
+    {
+      "action": "screenshot",
+      "label": "02_after_login"
+    },
+    {
+      "action": "goto",
+      "url": "https://localhost:18080/admin",
+      "label": "goto_admin"
+    },
+    {
+      "action": "wait_for",
+      "selector": "#adminTabs, [data-admin-tab='products']",
+      "timeout": 10000
+    },
+    {
+      "action": "screenshot",
+      "label": "03_admin_console"
+    },
+    {
+      "action": "click",
+      "selector": "[data-admin-tab='products']",
+      "label": "open_products_tab"
+    },
+    {
+      "action": "wait_for",
+      "selector": "#productList .admin-list-row, #productList",
+      "timeout": 8000
+    },
+    {
+      "action": "screenshot",
+      "label": "04_products_pane"
+    },
+    {
+      "action": "eval",
+      "script": "(function(){var rows=document.querySelectorAll('#productList .admin-list-row');return {productRowCount:rows.length, firstProductId: rows.length? rows[0].dataset.productId : null};})()",
+      "label": "product_list_check"
+    },
+    {
+      "action": "click",
+      "selector": "#productList .admin-list-row:first-child",
+      "label": "select_first_product",
+      "stop_on_fail": false
+    },
+    {
+      "action": "wait_for",
+      "selector": "#productDetail .ds-acc-row, #productDetail .ds-acc-add-btn, #productDetail",
+      "timeout": 8000,
+      "stop_on_fail": false
+    },
+    {
+      "action": "screenshot",
+      "label": "05_product_detail"
+    },
+    {
+      "action": "click",
+      "selector": ".ds-acc-add-btn",
+      "label": "open_add_datasource_dropdown",
+      "stop_on_fail": false
+    },
+    {
+      "action": "wait_for",
+      "selector": ".admin-db-picker-list:not(.hidden) .admin-ds-picker-item, .admin-db-picker-list .admin-ds-picker-item",
+      "timeout": 6000,
+      "stop_on_fail": false
+    },
+    {
+      "action": "screenshot",
+      "label": "06_ds_add_dropdown_badges"
+    },
+    {
+      "action": "eval",
+      "script": "(function(){var items=document.querySelectorAll('.admin-db-picker-list .admin-ds-picker-item');var out=[];items.forEach(function(it){var name=it.querySelector('.admin-db-picker-name');var conn=it.querySelector('.admin-ds-conn');out.push({name:name?name.textContent.trim():null, badgeText:conn?conn.textContent.trim():null, badgeClass:conn?conn.className:null, badgeTitle:conn?conn.title:null});});var checking=out.filter(function(o){return o.badgeText&&o.badgeText.indexOf('확인 중')>=0;}).length;var settled=out.filter(function(o){return o.badgeText&&(o.badgeText.indexOf('연결됨')>=0||o.badgeText.indexOf('연결 실패')>=0);}).length;return {total:out.length, immediatelySettled:settled, stillChecking:checking, items:out};})()",
+      "label": "badge_immediate_state_check"
+    },
+    {
+      "action": "eval",
+      "script": "(function(){var ver=document.querySelector('script[src*=\"admin.js\"]');return {adminJsSrc: ver?ver.getAttribute('src'):null};})()",
+      "label": "cachebuster_check"
+    },
+    {
+      "action": "click",
+      "selector": ".admin-ds-picker-refresh",
+      "label": "click_force_refresh",
+      "stop_on_fail": false
+    },
+    {
+      "action": "wait_for",
+      "selector": ".admin-db-picker-list .admin-ds-picker-item .admin-ds-conn",
+      "timeout": 6000,
+      "stop_on_fail": false
+    },
+    {
+      "action": "screenshot",
+      "label": "07_after_force_refresh"
+    },
+    {
+      "action": "eval",
+      "script": "(function(){var items=document.querySelectorAll('.admin-db-picker-list .admin-ds-picker-item');var out=[];items.forEach(function(it){var name=it.querySelector('.admin-db-picker-name');var conn=it.querySelector('.admin-ds-conn');out.push({name:name?name.textContent.trim():null, badgeText:conn?conn.textContent.trim():null});});return {total:out.length, items:out};})()",
+      "label": "badge_after_refresh_check"
+    }
+  ]
+}
