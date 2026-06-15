@@ -1810,7 +1810,7 @@ a { color: inherit; }
   cursor: pointer;
   transition: border-color .12s ease, background .12s ease, color .12s ease;
   user-select: none;
-  max-width: 180px;
+  max-width: 200px;
 }
 .composer-product-chip:hover {
   border-color: var(--primary);
@@ -1844,6 +1844,19 @@ a { color: inherit; }
 .composer-product-chip .composer-product-chip-dot--conn.is-ok { background: var(--success, #16a34a); }
 .composer-product-chip .composer-product-chip-dot--conn.is-fail { background: var(--danger, #dc2626); }
 .composer-product-chip .composer-product-chip-dot--conn.is-unknown { background: var(--text-muted); }
+/* product-icon-chip: 선택 제품 프로필 아이콘(이미지 or Identicon SVG) — dot 과 label 사이. 원형 클립. */
+.composer-product-chip-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: inline-flex;
+}
+.composer-product-chip-icon.hidden { display: none; }
+.composer-product-chip-icon img, .composer-product-chip-icon > svg {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
 .composer-product-chip-label {
   white-space: nowrap;
   overflow: hidden;

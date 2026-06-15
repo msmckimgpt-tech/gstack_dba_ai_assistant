@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0279
+- Date: 2026-06-15 (TASK-20260615T180923-product-icon-chip-list, **Minor §12.3** — 제품 프로필 아이콘을 대화창 chip + 제품 관리 목록 행에도 표시, frontend-only)
+- Scope: agent-web-ui (프론트 전용) — `src/static/{index.html, app.js, admin.js, styles.css}` + 신규 `tests/verify_product_icon_chip_list.mjs`. RBAC/스키마/엔드포인트/백엔드(app.py) 0.
+- 변경:
+  - index.html: chip 에 `#productChipIcon`(`.composer-product-chip-icon hidden`) span 추가(dot↔label 사이).
+  - app.js `renderProductChip`: pinned 제품이면 chip 아이콘 표시(설정 이미지 or Identicon[product_key 시드] 폴백, onerror Identicon), auto 모드면 `.hidden` + innerHTML 비움. 기존 dot conn 색·label compact·busy 로직 무변경.
+  - admin.js `renderProductList`: 각 행에 `applyAvatar(avatar,{url:p.icon_url, seed:product_key})` 아이콘(`admin-avatar admin-avatar-sm`, checkbox 다음·meta 앞) — 계정 목록 행과 동형, 직전 cycle 이식 헬퍼 재사용.
+  - styles.css: `.composer-product-chip-icon`(16px·`border-radius:50%`·overflow hidden + `.hidden{display:none}` + img/`>svg` 100% 규칙) 신설. `.composer-product-chip` max-width 180→200. 행 아이콘은 직전 cycle `.admin-avatar .avatar-img,.admin-avatar > svg`(원형 클립) 규칙 그대로 적용.
+  - 캐시버스터 통일 `?v=20260615-product-icon-chip-list`(index/admin html 의 app.js·admin.js·styles.css).
+- 비변경: 백엔드/RBAC/스키마/엔드포인트 0(icon_url 은 기존 `_list_products`·session 직렬화 필드 그대로 소비).
+- 검증: node --check + CSS brace(1211) + jsdom 14/14 PASS + make test 컨테이너 회귀 0.
+- Cross-ref: REV-20260615-0280 / TASK-20260615T180923-product-icon-chip-list / TASK profile-icon-consistency(직전 정합화).
+
 ## CHG-20260615-0278
 - Date: 2026-06-15 (TASK-20260615T172210-profile-icon-consistency 후속, **docs-only** — PB-0008 Windows-browser 시각검증 evidence 기록)
 - Scope: agent-web-ui 문서/테스트만 — `docs/TEST.md` §4 Run 1건 추가 + `docs/TASK.md` 잔여 PB-0008 항목 "완료" 표기 + `tests/win-browser-profile-icon{,-admin}.scenario.json` 보존. src 코드 0.

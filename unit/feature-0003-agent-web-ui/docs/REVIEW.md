@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0280 [SKIPPED:frontend-ui-consistency-no-backend-no-rbac]
+- Date: 2026-06-15
+- Cycle: TASK-20260615T180923-product-icon-chip-list (제품 프로필 아이콘을 대화창 chip + 제품 관리 목록 행에 표시), **Minor §12.3** — frontend-only(`src/static/{index.html,app.js,admin.js,styles.css}`). RBAC/인증/스키마/엔드포인트/데이터/시크릿/백엔드 0.
+- Trigger: §18.8 dispatch 키워드 매칭(UI/아이콘/chip/목록 → ux,design). 변경 실질은 **직전 cycle(profile-icon-consistency)의 `applyAvatar`/`identiconSvg` 헬퍼·CSS 를 chip·목록 행에 추가 적용**한 것 — 신규 데이터 노출·권한 경계·인터랙션 모델 0 → §18.8.1 경량 경로(적대 패널 불요, Minor frontend-only + 정책 doc 변경 0 → panel skip).
+- 자체 점검:
+  - ① **정합**: chip·목록 행·드롭업·관리 상세가 모두 동일 `identiconSvg(product_key)` → 동일 제품 동일 패턴/색(jsdom 으로 동일 product_key 동일 SVG 단언).
+  - ② **chip 회귀**: pinned 만 아이콘 표시·auto 는 hidden+비움(jsdom 3-case). dot conn 색·label compact·aria-label·busy disable 로직 무변경(추가만). icon_url 설정 시 `<img>`+onerror Identicon 폴백.
+  - ③ **목록 행 회귀**: checkbox→avatar→meta 순서 추가만, row click(selectedProductId)·shift-range·cov 배지 무변경. `admin-avatar admin-avatar-sm` 는 계정 목록 행 검증된 클래스 재사용.
+  - ④ **레이아웃**: chip max-width 180→200(아이콘 16px+gap 흡수, label ellipsis 유지). 행 아이콘 26px 원형 클립(직전 cycle `.admin-avatar > svg` 규칙).
+  - ⑤ **XSS**: identiconSvg 는 해시 정수→고정 SVG(입력 미보간), 이미지 src 는 서버 발급 icon_url. 신규 주입 표면 0.
+- 검증: node --check(app.js·admin.js) + CSS brace(1211=1211) + jsdom `tests/verify_product_icon_chip_list.mjs` **14/14 PASS** + make test 컨테이너 회귀 0.
+- Residual: verify-completion + web 재배포(deploy_scope: included) 후 PB-0008 Windows-browser(chip 아이콘·목록 행 아이콘) → TEST.md §4.
+- Cross-ref: CHG-20260615-0279 / TASK-20260615T180923-product-icon-chip-list / REV profile-icon-consistency(직전).
+
 ## REV-20260615-0279 [SKIPPED:pb0008-evidence-docs-only]
 - Date: 2026-06-15
 - Cycle: TASK-20260615T172210-profile-icon-consistency 후속 (PB-0008 Windows-browser 시각검증 evidence 기록 — docs-only: TEST.md §4 Run 1건 + TASK.md 완료 표기 + scenario 파일 보존. src 코드 0).
