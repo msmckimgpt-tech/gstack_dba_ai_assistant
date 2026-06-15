@@ -2545,3 +2545,16 @@ source_of_truth: true
 - Verification: test_usage_conversations.py 12 PASS + 라이브(admin 34건 200·누출 0·일자필터 정합·profile 200).
 - Residual: 정식 web 재빌드(임시 복사본 → 정식 이미지) + PB-0008.
 - Cross-ref: CHG-20260615-0266 / TASK-0266 / TASK-0263(REV-0263 보안리뷰).
+
+## REV-20260615-0267 [SUBAGENT:ship]
+- Date: 2026-06-15
+- Cycle: TASK-0256c (diff 블록 줄번호 old|new + 복사 시 마커·번호 제외), **Minor §12.3** — 정적자산(JS 2 + CSS 2) + 캐시버스터. 백엔드/API/스키마/RBAC/시크릿 0.
+- Trigger: UI 렌더 + 신규 DOM 속성(data-gutter)·복사 메커니즘 → outside-voice(general-purpose) 적대적 리뷰.
+- Verdict: **SHIP** (BLOCKER/MAJOR 0).
+  - 복사 클린: 줄번호+마커는 data-gutter→`.diff-line::before content`(의사요소=선택/복사 비포함, 스펙상 Chrome/FF/Safari) + user-select:none/pointer-events:none 이중. 코드는 마커 제거 후 textContent 만 → 블록 복사 시 순수 코드. stripDiffMarker(마커 1 + 공백 1)가 프롬프트 "+ "/"- " 규약의 들여쓰기 보존. block span 다중줄 복사 시 개행 유지(0256b).
+  - XSS: data-gutter/style 에 content 유래 바이트 0(줄번호=정수 카운터, mark=리터럴, --diff-gutter-ch=정수). 코드 textContent + DOMPurify 3.3.3 default 가 마지막 실행(data-* ALLOW 기본 true·style 기본 allow → 보존). style strip 시 var fallback 7 graceful(≥100줄만 약간 좁음).
+  - 줄번호: hunk seed/removed-only/added-only/context/no-hunk(1-based)/meta/literal `---`/blank 전부 정확, off-by-one 0.
+  - 레이아웃: `.diff-line` padding-left == `::before` width(동일 calc), 줄바꿈 hanging-indent + gutter top:0/bottom:0. 비-diff 코드/표/0256b 단일줄간격 무회귀(early-return·스코프).
+  - MINOR(non-defect, 미수정): degenerate `@@ -0,0 @@` "0" 표시 / 빈 줄 복사 시 공백 1개(pre-existing).
+- Residual: PB-0008 Windows-browser(줄번호 표시 + getSelection 복사 시 코드만) — CHECK#13.
+- Cross-ref: CHG-20260615-0256c / TASK-0256c / REV-20260615-0256.

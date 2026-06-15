@@ -529,32 +529,91 @@ function diffLineClass(line) {
   return "diff-ctx";
 }
 
+// @@ -a,b +c,d @@ 헌크 헤더에서 old/new 시작 줄번호 추출. 없으면 null.
+function parseDiffHunkHeader(line) {
+  const m = /^@@\s*-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s*@@/.exec(line);
+  return m ? { oldStart: parseInt(m[1], 10), newStart: parseInt(m[2], 10) } : null;
+}
+
+// 맨 앞 마커(+/-/공백) 1글자 + 뒤따르는 공백 1개를 제거 — 우리 프롬프트의 "+ "/"- "
+// 규약. 떼어낸 마커는 gutter(::before)로만 표시하므로 복사 시 순수 코드만 남는다.
+function stripDiffMarker(line) {
+  let s = line;
+  if (s[0] === "+" || s[0] === "-" || s[0] === " ") s = s.slice(1);
+  if (s[0] === " ") s = s.slice(1);
+  return s;
+}
+
+// 한 diff 블록의 각 줄을 {cls, mark, code, oldNo, newNo} 로 분해.
+// oldNo/newNo 는 GitHub 식 양쪽 줄번호(헌크 헤더가 있으면 그 값, 없으면 1부터):
+// -줄은 old 만, +줄은 new 만, context 줄은 양쪽 모두 증가.
+function buildDiffRows(lines) {
+  let oldNo = 1;
+  let newNo = 1;
+  return lines.map((line) => {
+    const cls = diffLineClass(line);
+    if (cls === "diff-hunk") {
+      const h = parseDiffHunkHeader(line);
+      if (h) { oldNo = h.oldStart; newNo = h.newStart; }
+      return { cls, mark: "", code: line, oldNo: "", newNo: "" };
+    }
+    if (cls === "diff-meta") {
+      return { cls, mark: "", code: line, oldNo: "", newNo: "" };
+    }
+    if (cls === "diff-add") {
+      return { cls, mark: "+", code: stripDiffMarker(line), oldNo: "", newNo: newNo++ };
+    }
+    if (cls === "diff-del") {
+      return { cls, mark: "-", code: stripDiffMarker(line), oldNo: oldNo++, newNo: "" };
+    }
+    return { cls, mark: " ", code: stripDiffMarker(line), oldNo: oldNo++, newNo: newNo++ };
+  });
+}
+
 function enhanceDiffBlocks(html) {
-  // marked 가 만든 ```diff 코드 블록(<pre><code class="language-diff">)을 라인별
-  // span 으로 재구성해 +/- 줄을 색으로 구분한다. textContent 기반 재작성이라
-  // 새 HTML 주입이 없고(XSS 무첨가), 이후 DOMPurify 가 한 번 더 정화한다.
+  // marked 가 만든 ```diff 코드 블록(<pre><code class="language-diff">)을 라인별 span 으로
+  // 재구성한다. 줄번호 + +/- 마커는 data-gutter 속성에만 담아 CSS ::before content 로
+  // 렌더 → 의사요소라 선택/복사에 포함되지 않는다(복사 시 순수 코드만 잡힘). 코드 텍스트는
+  // 마커를 떼어 textContent 로만 넣어 XSS 무첨가(이후 DOMPurify 가 한 번 더 정화).
   if (typeof document === "undefined") return html;
   try {
     const tpl = document.createElement("template");
     tpl.innerHTML = html;
     const blocks = tpl.content.querySelectorAll("pre > code.language-diff");
     if (!blocks.length) return html;
+    const NB = "\u00a0"; // NBSP — gutter 정렬용(복사 비포함은 ::before 가 담당)
     blocks.forEach((codeEl) => {
       const raw = (codeEl.textContent || "").replace(/\n$/, "");
-      const lines = raw.split("\n");
+      const rows = buildDiffRows(raw.split("\n"));
+      // 줄번호 자릿수(양쪽 열 정렬용).
+      let maxNo = 1;
+      rows.forEach((r) => {
+        if (r.oldNo) maxNo = Math.max(maxNo, r.oldNo);
+        if (r.newNo) maxNo = Math.max(maxNo, r.newNo);
+      });
+      const w = String(maxNo).length;
+      const padNo = (v) => {
+        const s = v === "" || v == null ? "" : String(v);
+        return NB.repeat(Math.max(0, w - s.length)) + s;
+      };
       codeEl.textContent = "";
-      lines.forEach((line) => {
+      rows.forEach((r) => {
         const span = document.createElement("span");
-        span.className = "diff-line " + diffLineClass(line);
-        // 빈 줄도 한 줄 높이를 유지하도록 공백 1개로 대체.
-        span.textContent = line.length ? line : " ";
+        span.className = "diff-line " + r.cls;
+        span.setAttribute(
+          "data-gutter",
+          padNo(r.oldNo) + NB + padNo(r.newNo) + NB + (r.mark || NB)
+        );
+        // 빈 줄도 한 줄 높이 유지(공백 1개). block span 이라 줄 사이 "\n" 불필요(TASK-0256b).
+        span.textContent = r.code.length ? r.code : " ";
         codeEl.appendChild(span);
-        // .diff-line 은 display:block 이라 span 자체가 한 줄을 차지한다. 여기에 "\n"
-        // 텍스트 노드를 더하면 <pre> 컨텍스트에서 리터럴 줄바꿈이 겹쳐 줄마다 빈 줄이
-        // 생긴다(이중 줄바꿈, TASK-0256b) → 삽입하지 않는다.
       });
       const pre = codeEl.closest("pre");
-      if (pre) pre.classList.add("diff-block");
+      if (pre) {
+        pre.classList.add("diff-block");
+        // gutter 폭을 줄번호 자릿수에 맞춤. DOMPurify 가 style 을 떼어내도 CSS var 기본값 폴백.
+        pre.style.setProperty("--diff-gutter-ch", String(2 * w + 3));
+      }
     });
     return tpl.innerHTML;
   } catch (_) {

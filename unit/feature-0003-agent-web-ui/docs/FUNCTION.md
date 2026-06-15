@@ -864,3 +864,6 @@ assistant 답변/공유 뷰의 markdown 렌더 파이프라인(marked.parse→DO
 
 ## (TASK-0256b) diff 블록 줄 간격
 `enhanceDiffBlocks` 의 `.diff-line` 은 display:block 이라 span 자체가 한 줄을 차지한다. span 사이에 `"\n"` 텍스트 노드를 넣지 않는다(넣으면 `<pre>` 에서 이중 줄바꿈). 빈 줄은 공백 1개 span 으로 높이 유지.
+
+## (TASK-0256c) diff 블록 줄번호 + 복사 클린
+diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-` 마커를 표시하되, 이들은 `.diff-line::before`(data-gutter 속성)로만 렌더한다 — 의사요소라 선택/복사에 포함되지 않는다. 코드 텍스트는 맨 앞 마커를 떼어(stripDiffMarker) textContent 로만 넣으므로 블록 복사 시 순수 코드(번호·마커 없음)만 잡힌다. 줄번호는 `parseDiffHunkHeader`(@@) seed 또는 1부터, gutter 폭은 `--diff-gutter-ch`.
