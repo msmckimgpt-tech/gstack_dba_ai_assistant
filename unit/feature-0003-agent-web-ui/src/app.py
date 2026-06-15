@@ -17620,14 +17620,17 @@ def admin_llm_usage(request: Request) -> JSONResponse:
                           for r in (cur.fetchall() or [])]
                 # TASK-0164/0166: bucket × 모델 분해 (stacked bar). 최근 bucket_limit 버킷만
                 # (서브쿼리로 by_day 와 동일 버킷 집합 보장 → 차트 정합).
+                # TASK-0263: prompt/completion 합도 가져와 모델별 추정 비용(cost_usd) 산출 → hover 표시.
                 cur.execute(
-                    f"SELECT {bucket_expr} AS b, COALESCE(resolved_model, model), sum(total_tokens) "
+                    f"SELECT {bucket_expr} AS b, COALESCE(resolved_model, model), sum(total_tokens), "
+                    f"sum(prompt_tokens), sum(completion_tokens) "
                     f"FROM agent_runtime.llm_usage WHERE created_at >= {win} "
                     f"AND {bucket_expr} IN (SELECT {bucket_expr} FROM agent_runtime.llm_usage "
                     f"WHERE created_at >= {win} GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}) "
                     f"GROUP BY 1, 2 ORDER BY 1"
                 )
-                by_day_model = [{"day": r[0], "model": r[1], "total_tokens": int(r[2] or 0)}
+                by_day_model = [{"day": r[0], "model": r[1], "total_tokens": int(r[2] or 0),
+                                 "cost_usd": _estimate_llm_cost_usd(r[1], int(r[3] or 0), int(r[4] or 0))}
                                 for r in (cur.fetchall() or [])]
         finally:
             try:
@@ -17677,6 +17680,307 @@ def admin_llm_usage(request: Request) -> JSONResponse:
             conn.close()
         except Exception:
             pass
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# TASK-0263 (Major §12.3) — LLM 사용량 차트 클릭 → 집계 기여 대화목록 (drill-to-conversations)
+#   사용량 차트의 한 집계(모델/역할/계정/일자 차원)를 클릭하면, 그 집계에 기여한
+#   대화 목록을 모달로 보여준다. admin(/api/admin/usage/conversations)·본인
+#   (/api/profile/usage/conversations) 두 면. llm_usage ⋈ core_conversations
+#   (conversation_id NOT NULL — insight/시스템 비대화 사용 제외)로 대화별 기간내
+#   usage(호출/토큰/비용) 를 집계해 반환. 차원 필터는 admin_llm_usage 의 집계 SQL 과
+#   동일 규칙(모델=COALESCE(resolved_model,model), 역할=account_id 역매핑, 일자=
+#   date_trunc bucket)으로 재현해 "차트 수치 ↔ 대화목록" 정합을 보장한다.
+# ════════════════════════════════════════════════════════════════════════════
+
+_USAGE_CONV_LIMIT = 200  # 모달 대화목록 상한(과대 응답 방지). 초과분은 truncated 플래그.
+
+
+def _usage_bucket_match_sql(gran: str) -> "tuple[str, str]":
+    """day 필터용 bucket 표현식 + 화이트리스트 검증된 to_char 포맷.
+
+    admin_llm_usage 의 _USAGE_GRAN[gran]['fmt'] 와 동일 — 클릭한 일자 라벨(차트의 by_day[].day)이
+    그 포맷 문자열이므로, 동일 to_char(date_trunc(...)) 로 매칭하면 차트 막대 ↔ 대화 정합.
+    반환: (bucket_expr, fmt). gran 미허용 시 day 폴백.
+    """
+    g = gran if gran in _USAGE_GRAN else "day"
+    fmt = _USAGE_GRAN[g]["fmt"]
+    return (f"to_char(date_trunc('{g}', u.created_at), '{fmt}')", fmt)
+
+
+def _query_usage_conversations(pg, *, days: int, model: "str | None", account_ids: "list[int] | None",
+                               day_label: "str | None", gran: str, owner_account_id: "int | None",
+                               owner_is_null_ok: bool) -> "tuple[list[dict], bool]":
+    """llm_usage ⋈ core_conversations 로 차원 필터된 대화 목록 + 대화별 기간내 usage 집계.
+
+    필터(모두 AND, None=무시):
+      - model: COALESCE(u.resolved_model, u.model) = model (차트 by_model 규칙과 동일)
+      - account_ids: c.owner_account_id IN (...) — 역할 클릭은 그 역할 계정 집합을 호출측이 산출해 전달.
+      - day_label: to_char(date_trunc(gran, u.created_at), fmt) = day_label (by_day 규칙과 동일)
+      - owner_account_id: 본인 범위 강제(profile) — c.owner_account_id = owner_account_id.
+    owner_is_null_ok=False 면 owner NULL(시스템) 대화 제외(profile·계정 클릭). True 면 "(시스템)" 역할
+    클릭처럼 owner NULL 도 포함(account_ids 가 [None] 신호일 때 호출측이 별도 처리).
+
+    반환: (items[{conversation_id, topic, owner_account_id, created_at, updated_at, blocked_at,
+                  calls, total_tokens, prompt_tokens, completion_tokens, cost_usd, models[]}], truncated)
+    conversation_id NOT NULL 강제(INNER JOIN) — insight/시스템 비대화 usage 제외.
+    """
+    win = "now() - interval %s"
+    where = ["u.conversation_id IS NOT NULL", "u.created_at >= " + win]
+    params: list = [f"{int(days)} days"]
+    if model:
+        where.append("COALESCE(u.resolved_model, u.model) = %s")
+        params.append(model)
+    if account_ids is not None:
+        # 빈 집합이면 결과 0 (역할에 계정이 없음).
+        if not account_ids:
+            return ([], False)
+        ph = ",".join(["%s"] * len(account_ids))
+        where.append(f"c.owner_account_id IN ({ph})")
+        params.extend([int(a) for a in account_ids])
+    if owner_account_id is not None:
+        where.append("c.owner_account_id = %s")
+        params.append(int(owner_account_id))
+    elif not owner_is_null_ok:
+        where.append("c.owner_account_id IS NOT NULL")
+    if day_label:
+        bucket_expr, _fmt = _usage_bucket_match_sql(gran)
+        where.append(f"{bucket_expr} = %s")
+        params.append(day_label)
+    where_sql = " AND ".join(where)
+    # 대화별 × 모델 분해(모델 stacked·비용용) → Python fold. LIMIT 은 대화 수 기준(+1 로 truncated 감지).
+    sql = (
+        "SELECT u.conversation_id, c.topic, c.owner_account_id, c.created_at, c.updated_at, "
+        "c.blocked_at, COALESCE(u.resolved_model, u.model) AS m, count(*) AS calls, "
+        "sum(u.total_tokens) AS tok, sum(u.prompt_tokens) AS pt, sum(u.completion_tokens) AS ct, "
+        "max(u.created_at) AS last_used "
+        "FROM agent_runtime.llm_usage u "
+        "JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
+        f"WHERE {where_sql} "
+        "GROUP BY u.conversation_id, c.topic, c.owner_account_id, c.created_at, c.updated_at, c.blocked_at, "
+        "COALESCE(u.resolved_model, u.model)"
+    )
+    fold: dict = {}
+    with pg.cursor() as cur:
+        cur.execute(sql, tuple(params))
+        for r in (cur.fetchall() or []):
+            cid = r[0]
+            e = fold.get(cid)
+            if e is None:
+                e = {
+                    "conversation_id": cid, "topic": (r[1] or ""),
+                    "owner_account_id": (int(r[2]) if r[2] is not None else None),
+                    "created_at": (r[3].isoformat() if r[3] else None),
+                    "updated_at": (r[4].isoformat() if r[4] else None),
+                    "blocked": bool(r[5] is not None),
+                    "calls": 0, "total_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                    "cost_usd": 0.0, "_models": {}, "_last_used": r[11],
+                }
+                fold[cid] = e
+            mk, calls_r = r[6], int(r[7] or 0)
+            tok_r, pt_r, ct_r = int(r[8] or 0), int(r[9] or 0), int(r[10] or 0)
+            e["calls"] += calls_r
+            e["total_tokens"] += tok_r
+            e["prompt_tokens"] += pt_r
+            e["completion_tokens"] += ct_r
+            mc = _estimate_llm_cost_usd(mk, pt_r, ct_r)
+            e["cost_usd"] += mc
+            mm = e["_models"].setdefault(mk, {"model": mk, "total_tokens": 0, "cost_usd": 0.0})
+            mm["total_tokens"] += tok_r
+            mm["cost_usd"] += mc
+            if r[11] and (e["_last_used"] is None or r[11] > e["_last_used"]):
+                e["_last_used"] = r[11]
+    items = list(fold.values())
+    # 기간내 사용량(토큰) 큰 순 → 같은 집계에 가장 많이 기여한 대화 먼저.
+    items.sort(key=lambda x: x["total_tokens"], reverse=True)
+    truncated = len(items) > _USAGE_CONV_LIMIT
+    items = items[:_USAGE_CONV_LIMIT]
+    for e in items:
+        e["cost_usd"] = round(e["cost_usd"], 4)
+        e["models"] = sorted(e.pop("_models").values(), key=lambda x: x["total_tokens"], reverse=True)
+        for m in e["models"]:
+            m["cost_usd"] = round(m["cost_usd"], 4)
+        e["last_used_at"] = (e.pop("_last_used").isoformat() if e.get("_last_used") else None)
+    return (items, truncated)
+
+
+def _usage_account_ids_for_role(conn, role_key: str) -> "list[int] | None":
+    """역할 클릭(by_role 의 role 키) → 그 역할에 속한 account_id 집합(MySQL).
+
+    by_role 규칙(_aggregate_usage_by_role)과 동일:
+      "(시스템)"   → None (owner NULL 대화 = 비대화 usage. 대화목록에선 빈 집합 — 시스템 호출엔 대화 없음)
+      "(역할 없음)" → RoleId NULL(또는 역할 매핑 실패) 계정들
+      그 외        → WebRoles.Name == role_key 인 계정들
+    반환: account_id 리스트(빈 리스트 가능) 또는 None(시스템 — 대화 없음).
+    """
+    if role_key == "(시스템)":
+        return None
+    cur = conn.cursor()
+    try:
+        if role_key == "(역할 없음)":
+            cur.execute("SELECT a.Id FROM WebAccounts a LEFT JOIN WebRoles r ON r.Id = a.RoleId WHERE r.Name IS NULL")
+        else:
+            cur.execute("SELECT a.Id FROM WebAccounts a JOIN WebRoles r ON r.Id = a.RoleId WHERE r.Name = %s", (role_key,))
+        return [int(row[0]) for row in (cur.fetchall() or [])]
+    finally:
+        cur.close()
+
+
+def _parse_usage_conv_params(request: Request) -> dict:
+    """공통 query 파싱: days(1~365), gran, model, account_id, role, day(라벨)."""
+    try:
+        days = int(request.query_params.get("days", "30"))
+    except Exception:
+        days = 30
+    days = max(1, min(365, days))
+    gran = request.query_params.get("gran", "day").lower()
+    if gran not in _USAGE_GRAN:
+        gran = "day"
+    model = (request.query_params.get("model") or "").strip() or None
+    role = (request.query_params.get("role") or "").strip() or None
+    day_label = (request.query_params.get("day") or "").strip() or None
+    acct_raw = (request.query_params.get("account_id") or "").strip()
+    account_id = None
+    if acct_raw:
+        try:
+            account_id = int(acct_raw)
+        except Exception:
+            account_id = None
+    return {"days": days, "gran": gran, "model": model, "role": role,
+            "day_label": day_label, "account_id": account_id}
+
+
+@app.get("/api/admin/usage/conversations")
+def admin_usage_conversations(request: Request) -> JSONResponse:
+    """TASK-0263: 사용량 차트 클릭 → 집계 기여 대화목록(admin 콘솔 모달).
+
+    권한: console.usage.read(사용량 조회) + conversation.list.any(타 계정 대화목록 열람).
+    둘 다 필요 — 사용량은 admin 인데 대화목록 열람 권한이 없는 운영자에게 타 계정 대화
+    제목을 노출하지 않기 위함(기존 RBAC 재사용, 신규 권한 0). 대화 메타(제목/일시/소유자/
+    기간내 usage)만 반환 — 메시지 본문 미포함.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(account, "console.usage.read"):
+            return _json_error("LLM 사용량 조회 권한이 필요합니다 (운영자 전용).", 403)
+        if not _account_has_permission(account, "conversation.list.any"):
+            return _json_error("전체 대화목록 열람 권한이 필요합니다 (conversation.list.any).", 403)
+        p = _parse_usage_conv_params(request)
+        # 역할 클릭 → 계정 집합 역매핑(MySQL). 모델/일자 클릭은 account 필터 없음.
+        account_ids = None
+        if p["account_id"] is not None:
+            account_ids = [p["account_id"]]
+        elif p["role"] is not None:
+            account_ids = _usage_account_ids_for_role(conn, p["role"])
+            if account_ids is None:
+                # "(시스템)" 역할 — owner 없는 비대화 usage. 대화목록 비어있음.
+                return JSONResponse({"items": [], "truncated": False, "filter": p, "scope": "admin"})
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+        except Exception:
+            logging.getLogger(__name__).warning("admin_usage_conversations: pg connect failed", exc_info=True)
+            return _json_error("usage 저장소(PG) 연결 실패", 503)
+        try:
+            items, truncated = _query_usage_conversations(
+                pg, days=p["days"], model=p["model"], account_ids=account_ids,
+                day_label=p["day_label"], gran=p["gran"], owner_account_id=None,
+                owner_is_null_ok=False,
+            )
+        finally:
+            try:
+                pg.close()
+            except Exception:
+                pass
+        # 계정 메타(사용자명/역할) enrich — 모달 표시용(cross-DB, MySQL).
+        _enrich_usage_conv_owner_meta(conn, items)
+        return JSONResponse({"items": items, "truncated": truncated, "filter": p, "scope": "admin"})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@app.get("/api/profile/usage/conversations")
+def profile_usage_conversations(request: Request) -> JSONResponse:
+    """TASK-0263: 본인 사용량 차트 클릭 → 본인 대화목록(작업 화면 프로필 모달).
+
+    로그인만 필요(profile_llm_usage 와 동일 — 본인 소유 대화로 범위 강제, 신규 RBAC 0).
+    owner_account_id = 로그인 계정으로 INNER 필터 → 타인 대화 노출 불가.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        aid = int(account.get("id") or 0)
+        if aid <= 0:
+            return _json_error("계정 식별 실패", 403)
+        p = _parse_usage_conv_params(request)
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+        except Exception:
+            logging.getLogger(__name__).warning("profile_usage_conversations: pg connect failed", exc_info=True)
+            return _json_error("usage 저장소(PG) 연결 실패", 503)
+        try:
+            # 본인 범위 강제 — role/account_id 파라미터 무시(권한 상승 차단), model/day 만 적용.
+            items, truncated = _query_usage_conversations(
+                pg, days=p["days"], model=p["model"], account_ids=None,
+                day_label=p["day_label"], gran=p["gran"], owner_account_id=aid,
+                owner_is_null_ok=False,
+            )
+        finally:
+            try:
+                pg.close()
+            except Exception:
+                pass
+        return JSONResponse({"items": items, "truncated": truncated,
+                             "filter": {"days": p["days"], "gran": p["gran"], "model": p["model"], "day_label": p["day_label"]},
+                             "scope": "self"})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _enrich_usage_conv_owner_meta(conn, items: list[dict]) -> None:
+    """대화 owner_account_id → 사용자명/역할 enrich(MySQL, 모달 표시용). in-place."""
+    ids = sorted({e["owner_account_id"] for e in items if e.get("owner_account_id") is not None})
+    if not ids:
+        return
+    meta: dict[int, dict] = {}
+    try:
+        ph = ",".join(["%s"] * len(ids))
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                f"SELECT a.Id AS id, a.Username AS username, r.Name AS role "
+                f"FROM WebAccounts a LEFT JOIN WebRoles r ON r.Id = a.RoleId WHERE a.Id IN ({ph})",
+                tuple(ids),
+            )
+            for m in (cur.fetchall() or []):
+                meta[int(m["id"])] = {"username": m.get("username"), "role": m.get("role")}
+        finally:
+            cur.close()
+    except Exception:
+        logging.getLogger(__name__).warning("usage_conversations: owner meta enrich failed", exc_info=True)
+        return
+    for e in items:
+        mm = meta.get(e.get("owner_account_id")) if e.get("owner_account_id") is not None else None
+        e["owner_username"] = (mm or {}).get("username")
+        e["owner_role"] = (mm or {}).get("role")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -18267,15 +18571,17 @@ def profile_llm_usage(request: Request) -> JSONResponse:
                 totals = {"calls": int(t[0]), "prompt_tokens": int(t[1]),
                           "completion_tokens": int(t[2]), "total_tokens": int(t[3]),
                           "requests": int(t[4])}
+                # TASK-0263: prompt/completion 합도 가져와 모델별 추정 비용(hover 표시). 본인 범위라 owner enrich 불요.
                 cur.execute(
                     "SELECT COALESCE(u.resolved_model, u.model) AS m, u.model, count(*), "
-                    f"sum(u.total_tokens), count(distinct u.run_id) {base} "
+                    f"sum(u.total_tokens), count(distinct u.run_id), sum(u.prompt_tokens), sum(u.completion_tokens) {base} "
                     "GROUP BY COALESCE(u.resolved_model, u.model), u.model "
                     "ORDER BY 4 DESC NULLS LAST LIMIT 50",
                     (aid,),
                 )
                 by_model = [{"model": r[1], "resolved_model": r[0], "calls": int(r[2]),
-                             "total_tokens": int(r[3] or 0), "requests": int(r[4] or 0)}
+                             "total_tokens": int(r[3] or 0), "requests": int(r[4] or 0),
+                             "cost_usd": _estimate_llm_cost_usd(r[1], int(r[5] or 0), int(r[6] or 0))}
                             for r in (cur.fetchall() or [])]
                 cur.execute(
                     f"SELECT {bucket_expr} AS b, count(*), sum(u.total_tokens) {base} "
@@ -18285,13 +18591,17 @@ def profile_llm_usage(request: Request) -> JSONResponse:
                 by_day = [{"day": r[0], "calls": int(r[1]), "total_tokens": int(r[2] or 0)}
                           for r in (cur.fetchall() or [])]
                 cur.execute(
-                    f"SELECT {bucket_expr} AS b, COALESCE(u.resolved_model, u.model), sum(u.total_tokens) "
+                    f"SELECT {bucket_expr} AS b, COALESCE(u.resolved_model, u.model), sum(u.total_tokens), "
+                    f"sum(u.prompt_tokens), sum(u.completion_tokens) "
                     f"{base} AND {bucket_expr} IN (SELECT {bucket_expr} {base} "
                     f"GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}) GROUP BY 1, 2 ORDER BY 1",
                     (aid, aid),
                 )
-                by_day_model = [{"day": r[0], "model": r[1], "total_tokens": int(r[2] or 0)}
+                by_day_model = [{"day": r[0], "model": r[1], "total_tokens": int(r[2] or 0),
+                                 "cost_usd": _estimate_llm_cost_usd(r[1], int(r[3] or 0), int(r[4] or 0))}
                                 for r in (cur.fetchall() or [])]
+                # TASK-0263: 본인 총 추정 비용(모델별 합).
+                totals["cost_usd"] = round(sum(m.get("cost_usd", 0) for m in by_model), 4)
         finally:
             try:
                 pg.close()

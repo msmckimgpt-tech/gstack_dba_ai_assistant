@@ -1267,7 +1267,101 @@ function renderProfile() {
 const PROFILE_USAGE_COLORS = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16"];
 const PROFILE_USAGE_SYS_COLOR = "#94a3b8";
 const _pUsageNum = (v) => (Number(v) || 0).toLocaleString();
+const _pUsageUsd = (v) => "$" + (Number(v) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const _pUsageEsc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+// TASK-0263: 프로필 사용량 차트 클릭 → 본인 기여 대화목록 모달.
+//   차트 요소에 data-usage-model/data-usage-day 후크가 있으면 위임 클릭으로 모달을 연다.
+//   현재 days/gran 은 프로필 사용량 select 에서 읽는다(loadProfileUsage 와 동일 소스).
+function bindProfileUsageDrill(root) {
+  if (!root || root._pDrillBound) return;
+  root._pDrillBound = true;
+  root.addEventListener("click", (e) => {
+    const el2 = e.target.closest ? e.target.closest("[data-usage-model],[data-usage-day]") : null;
+    if (!el2) return;
+    const model = el2.getAttribute("data-usage-model") || null;
+    const day = el2.getAttribute("data-usage-day") || null;
+    const parts = [];
+    if (model) parts.push(model);
+    if (day) parts.push(day);
+    openProfileUsageConversations({ model, day, title: parts.join(" · ") || "사용량" });
+  });
+}
+
+async function openProfileUsageConversations(opts) {
+  const o = opts || {};
+  const daysSel = document.getElementById("profileUsageDays");
+  const granSel = document.getElementById("profileUsageGran");
+  const days = daysSel ? daysSel.value : "30";
+  const gran = (granSel && granSel.value) ? granSel.value : "day";
+  const params = new URLSearchParams();
+  params.set("days", String(days));
+  params.set("gran", String(gran));
+  if (o.model) params.set("model", o.model);
+  if (o.day) params.set("day", o.day);
+  showProfileUsageConvModal({ loading: true, title: o.title || "대화 목록" });
+  try {
+    const data = await apiFetch(`/api/profile/usage/conversations?${params.toString()}`);
+    showProfileUsageConvModal({ data, title: o.title || "대화 목록" });
+  } catch (err) {
+    showProfileUsageConvModal({ error: (err && err.message) || "대화목록 조회 실패", title: o.title || "대화 목록" });
+  }
+}
+
+// 본인 사용량 기여 대화 모달. admin 판(admin.js showUsageConvModal)의 self 전용 축약 —
+// 소유자 컬럼 없음, 대화 클릭 시 같은 탭에서 deep-link 로 이동(작업 화면 내부이므로).
+function showProfileUsageConvModal(st) {
+  const num = (v) => (Number(v) || 0).toLocaleString();
+  const fmtDt = (s) => { if (!s) return "—"; try { const d = new Date(s); return isNaN(d.getTime()) ? _pUsageEsc(s) : d.toLocaleString(); } catch (_) { return _pUsageEsc(s); } };
+  const prev = document.getElementById("profileUsageConvOverlay");
+  if (prev) prev.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "profileUsageConvOverlay";
+  overlay.className = "usage-conv-overlay";
+  const title = _pUsageEsc(st.title || "대화 목록");
+  let body;
+  if (st.loading) {
+    body = "<p class='usage-conv-note'>대화목록을 불러오는 중…</p>";
+  } else if (st.error) {
+    body = `<p class='usage-conv-note usage-conv-error'>${_pUsageEsc(st.error)}</p>`;
+  } else {
+    const items = (st.data && st.data.items) || [];
+    const truncated = !!(st.data && st.data.truncated);
+    if (!items.length) {
+      body = "<p class='usage-conv-note'>이 집계에 해당하는 대화가 없습니다.</p>";
+    } else {
+      const rows = items.map((it) => {
+        const topic = _pUsageEsc(it.topic || "(제목 없음)");
+        const blocked = it.blocked ? " <span class='usage-conv-badge'>차단</span>" : "";
+        return `<tr>`
+          + `<td class='usage-conv-topic'><a href='/?conversation=${encodeURIComponent(it.conversation_id)}' title='${topic}'>${topic}</a>${blocked}</td>`
+          + `<td class='num'>${num(it.calls)}</td>`
+          + `<td class='num'>${num(it.total_tokens)}</td>`
+          + `<td class='num'>${it.cost_usd > 0 ? _pUsageUsd(it.cost_usd) : "—"}</td>`
+          + `<td class='usage-conv-when'>${fmtDt(it.last_used_at || it.updated_at)}</td>`
+          + `</tr>`;
+      }).join("");
+      body = `<div class='usage-conv-tablewrap'><table class='usage-conv-table'>`
+        + `<thead><tr><th>대화</th><th class='num'>호출</th><th class='num'>토큰</th><th class='num'>추정 비용</th><th>최근 사용</th></tr></thead>`
+        + `<tbody>${rows}</tbody></table></div>`
+        + (truncated ? `<p class='usage-conv-note usage-conv-trunc'>상위 ${num(items.length)}건만 표시합니다(기간내 토큰 큰 순).</p>` : "")
+        + `<p class='usage-conv-note usage-conv-hint'>대화 제목을 클릭하면 해당 대화로 이동합니다.</p>`;
+    }
+  }
+  overlay.innerHTML =
+    '<div class="usage-conv-dialog" role="dialog" aria-modal="true" aria-label="' + title + ' 대화 목록">'
+    + '  <div class="usage-conv-head"><h3>' + title + ' · 대화 목록</h3>'
+    + '    <button type="button" class="usage-conv-close" id="profileUsageConvClose" aria-label="닫기">×</button></div>'
+    + '  <div class="usage-conv-content">' + body + '</div>'
+    + '</div>';
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
+  const cb = document.getElementById("profileUsageConvClose");
+  if (cb) cb.addEventListener("click", close);
+  const onEsc = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onEsc); } };
+  document.addEventListener("keydown", onEsc);
+}
 
 function profileUsageColorMap(models) {
   const m = {}; let i = 0;
@@ -1278,15 +1372,18 @@ function profileUsageColorMap(models) {
   return m;
 }
 
-// 기간별 토큰 — 모델별 누적 세로 막대 (admin renderStacked 의 축약: 값 라벨·커스텀 툴팁 제거).
+// 기간별 토큰 — 모델별 누적 세로 막대 (admin renderStacked 의 축약).
+// TASK-0263: <title> 에 추정 비용 병기 + 막대 클릭 → 그 일자·모델 기여(본인) 대화 모달.
 function renderProfileUsageStacked(el, byDayModel, cmap) {
   if (!el) return;
   const rows = byDayModel || [];
   if (!rows.length) { el.innerHTML = "<p class='profile-usage-empty'>데이터 없음</p>"; return; }
-  const dayMap = {}; const models = [];
+  const dayMap = {}; const costMap = {}; const models = [];
   rows.forEach((r) => {
     dayMap[r.day] = dayMap[r.day] || {};
     dayMap[r.day][r.model] = (dayMap[r.day][r.model] || 0) + (r.total_tokens || 0);
+    costMap[r.day] = costMap[r.day] || {};
+    costMap[r.day][r.model] = (costMap[r.day][r.model] || 0) + (r.cost_usd || 0);
     if (!models.includes(r.model)) models.push(r.model);
   });
   const days = Object.keys(dayMap).sort();
@@ -1303,7 +1400,9 @@ function renderProfileUsageStacked(el, byDayModel, cmap) {
     models.forEach((m) => {
       const v = dayMap[d][m] || 0; if (v <= 0) return;
       const h = (v / maxT) * plotH; y -= h;
-      bars += `<rect x='${x.toFixed(1)}' y='${y.toFixed(1)}' width='${bw.toFixed(1)}' height='${h.toFixed(1)}' fill='${cmap[m] || PROFILE_USAGE_SYS_COLOR}' rx='1'><title>${_pUsageEsc(d)} · ${_pUsageEsc(m)}: ${_pUsageNum(v)} 토큰</title></rect>`;
+      const cst = costMap[d][m] || 0;
+      const costT = cst > 0 ? ` · 추정 ${_pUsageUsd(cst)}` : "";
+      bars += `<rect class='profile-usage-clickable' x='${x.toFixed(1)}' y='${y.toFixed(1)}' width='${bw.toFixed(1)}' height='${h.toFixed(1)}' fill='${cmap[m] || PROFILE_USAGE_SYS_COLOR}' rx='1' data-usage-day='${_pUsageEsc(d)}' data-usage-model='${_pUsageEsc(m)}'><title>${_pUsageEsc(d)} · ${_pUsageEsc(m)}: ${_pUsageNum(v)} 토큰${costT} (클릭: 대화 보기)</title></rect>`;
     });
   });
   const axis = `<line x1='${pL}' y1='${pT + plotH}' x2='${W - pR}' y2='${pT + plotH}' stroke='var(--border)'/>`
@@ -1317,14 +1416,16 @@ function renderProfileUsageStacked(el, byDayModel, cmap) {
   });
   const legend = models.map((m) => `<span class='profile-usage-legend-item'><span class='profile-usage-swatch' style='background:${cmap[m] || PROFILE_USAGE_SYS_COLOR};'></span>${_pUsageEsc(m)}</span>`).join("");
   el.innerHTML = `<svg viewBox='0 0 ${W} ${H}' style='width:100%;height:auto;display:block;'>${axis}${bars}${xl}</svg><div class='profile-usage-legend'>${legend}</div>`;
+  bindProfileUsageDrill(el);
 }
 
-// 모델별 비중 — 도넛 (admin renderDonut 의 축약: 비용 제거).
+// 모델별 비중 — 도넛.
+// TASK-0263: <title> 에 추정 비용 병기 + 세그먼트/범례 클릭 → 그 모델 기여(본인) 대화 모달.
 function renderProfileUsageDonut(el, byModel, cmap) {
   if (!el) return;
   const rows = (byModel || []).map((r) => ({
     label: (r.resolved_model && r.resolved_model !== r.model) ? r.resolved_model : (r.model || "(미상)"),
-    value: r.total_tokens || 0,
+    value: r.total_tokens || 0, cost: r.cost_usd || 0,
   })).filter((r) => r.value > 0);
   if (!rows.length) { el.innerHTML = "<p class='profile-usage-empty'>데이터 없음</p>"; return; }
   const total = rows.reduce((a, b) => a + b.value, 0);
@@ -1332,11 +1433,13 @@ function renderProfileUsageDonut(el, byModel, cmap) {
   let off = 0, segs = "";
   rows.forEach((r) => {
     const len = (r.value / total) * C;
-    segs += `<circle cx='${cx}' cy='${cy}' r='${R}' fill='none' stroke='${cmap[r.label] || PROFILE_USAGE_SYS_COLOR}' stroke-width='18' stroke-dasharray='${len.toFixed(2)} ${(C - len).toFixed(2)}' stroke-dashoffset='${(-off).toFixed(2)}' transform='rotate(-90 ${cx} ${cy})'><title>${_pUsageEsc(r.label)}: ${_pUsageNum(r.value)} 토큰 (${(r.value / total * 100).toFixed(1)}%)</title></circle>`;
+    const costT = r.cost > 0 ? ` · 추정 ${_pUsageUsd(r.cost)}` : "";
+    segs += `<circle class='profile-usage-clickable' cx='${cx}' cy='${cy}' r='${R}' fill='none' stroke='${cmap[r.label] || PROFILE_USAGE_SYS_COLOR}' stroke-width='18' stroke-dasharray='${len.toFixed(2)} ${(C - len).toFixed(2)}' stroke-dashoffset='${(-off).toFixed(2)}' transform='rotate(-90 ${cx} ${cy})' data-usage-model='${_pUsageEsc(r.label)}'><title>${_pUsageEsc(r.label)}: ${_pUsageNum(r.value)} 토큰${costT} (${(r.value / total * 100).toFixed(1)}%, 클릭: 대화 보기)</title></circle>`;
     off += len;
   });
-  const legend = rows.map((r) => `<div class='profile-usage-donut-row'><span class='profile-usage-swatch' style='background:${cmap[r.label] || PROFILE_USAGE_SYS_COLOR};'></span><span class='profile-usage-donut-label'>${_pUsageEsc(r.label)}</span><strong>${(r.value / total * 100).toFixed(1)}%</strong></div>`).join("");
+  const legend = rows.map((r) => `<div class='profile-usage-donut-row profile-usage-clickable' data-usage-model='${_pUsageEsc(r.label)}' title='클릭: 이 모델 기여 대화 보기'><span class='profile-usage-swatch' style='background:${cmap[r.label] || PROFILE_USAGE_SYS_COLOR};'></span><span class='profile-usage-donut-label'>${_pUsageEsc(r.label)}</span><strong>${(r.value / total * 100).toFixed(1)}%</strong></div>`).join("");
   el.innerHTML = `<div class='profile-usage-donut'><svg viewBox='0 0 120 120' style='width:110px;height:110px;flex:none;'>${segs}<text x='60' y='57' text-anchor='middle' font-size='10' fill='var(--text-muted)'>총 토큰</text><text x='60' y='72' text-anchor='middle' font-size='12' font-weight='700' fill='var(--text)'>${_pUsageNum(total)}</text></svg><div class='profile-usage-donut-legend'>${legend}</div></div>`;
+  bindProfileUsageDrill(el);
 }
 
 async function loadProfileUsage() {
@@ -1364,7 +1467,9 @@ async function loadProfileUsage() {
   }
   const t = data.totals || {};
   const card = (label, val) => `<div class='profile-usage-metric'><span>${label}</span><strong>${val}</strong></div>`;
-  summaryEl.innerHTML = card("요청", _pUsageNum(t.requests)) + card("호출", _pUsageNum(t.calls)) + card("총 토큰", _pUsageNum(t.total_tokens));
+  // TASK-0263: 본인 추정 비용 카드 추가(단가 미상 로컬은 $0.00).
+  const costCard = (t.cost_usd != null) ? card("추정 비용", _pUsageUsd(t.cost_usd)) : "";
+  summaryEl.innerHTML = card("요청", _pUsageNum(t.requests)) + card("호출", _pUsageNum(t.calls)) + card("총 토큰", _pUsageNum(t.total_tokens)) + costCard;
   // 모델 색맵 — 일별/도넛이 같은 모델은 같은 색 (키 = COALESCE(resolved,model) 로 일치).
   const ms = [];
   (data.by_model || []).forEach((m) => { const k = (m.resolved_model && m.resolved_model !== m.model) ? m.resolved_model : (m.model || "(미상)"); if (!ms.includes(k)) ms.push(k); });
@@ -6178,7 +6283,21 @@ async function initializeWorkspace() {
   renderAccountState();
   renderAccessNotice();
   await loadVaultOptions();
-  await refreshWorkspace(state.session.conversation_id || "");
+  // TASK-0263: 사용량 모달에서 deep-link(/?conversation=<id>)로 진입 시 그 대화를 선호 활성화.
+  //   본인 소유가 아니거나 존재하지 않으면 loadConversations 가 자연히 서버 current 로 폴백한다.
+  let _preferCid = state.session.conversation_id || "";
+  try {
+    const _qp = new URLSearchParams(window.location.search);
+    const _deep = (_qp.get("conversation") || "").trim();
+    if (_deep) {
+      _preferCid = _deep;
+      // URL 정리(새로고침·공유 시 깔끔) — history state 만 교체(재탐색 없음).
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    }
+  } catch (_) { /* URL 파싱 실패 무시 */ }
+  await refreshWorkspace(_preferCid);
   // TASK-0041: 세션 복구 — 페이지 로드 시 현재 대화가 서버에서 진행 중이면
   // 자동으로 결과 long-poll 에 attach 하여 사용자의 이전 요청을 이어받는다.
   const resumeCid = state.activeConversationId;

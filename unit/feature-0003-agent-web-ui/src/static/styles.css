@@ -6216,3 +6216,54 @@ a { color: inherit; }
   gap: 10px;
 }
 
+/* ─── TASK-0262: LLM 사용량 차트 클릭 → 대화목록 모달 ─────────────────────── */
+/* 차트 요소 클릭 가능 표시(커서·hover 강조). admin·profile 공통. */
+.admin-usage-clickable, .profile-usage-clickable { cursor: pointer; }
+.admin-usage-clickable:hover, .profile-usage-clickable:hover { opacity: 0.85; }
+.profile-usage-donut-row.profile-usage-clickable:hover { background: var(--bg, #f3f4f6); border-radius: var(--r-sm, 4px); }
+
+/* admin 판: 기존 .admin-modal-overlay/.admin-modal 위에 넓은 대화목록 모달 + head/close. */
+.admin-modal.usage-conv-modal { max-width: 720px; }
+.usage-conv-modal .admin-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.usage-conv-modal .admin-modal-close,
+.usage-conv-dialog .usage-conv-close {
+  appearance: none; border: none; background: transparent; cursor: pointer;
+  font-size: 22px; line-height: 1; color: var(--text-muted, #6b7280); padding: 2px 6px; border-radius: var(--r-sm, 4px);
+}
+.usage-conv-modal .admin-modal-close:hover,
+.usage-conv-dialog .usage-conv-close:hover { background: var(--bg, #f3f4f6); color: var(--text, #111827); }
+.usage-conv-body { max-height: 60vh; overflow-y: auto; }
+.usage-conv-tablewrap { overflow-x: auto; }
+.usage-conv-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.usage-conv-table th, .usage-conv-table td {
+  text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border-subtle, #eef2f7); vertical-align: top;
+}
+.usage-conv-table th { color: var(--text-muted, #6b7280); font-weight: 600; position: sticky; top: 0; background: var(--surface-1, #fff); }
+.usage-conv-table th.num, .usage-conv-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.usage-conv-table tbody tr:hover { background: var(--bg, #f9fafb); }
+.usage-conv-topic { max-width: 280px; }
+.usage-conv-topic a { color: var(--primary, #2563eb); text-decoration: none; }
+.usage-conv-topic a:hover { text-decoration: underline; }
+.usage-conv-owner { color: var(--text-2, #6b7280); white-space: nowrap; }
+.usage-conv-when { color: var(--text-muted, #6b7280); white-space: nowrap; }
+.usage-conv-badge {
+  display: inline-block; font-size: 10px; padding: 0 5px; border-radius: 8px;
+  background: var(--danger-soft, #fee2e2); color: var(--danger, #dc2626); vertical-align: middle;
+}
+.usage-conv-error { color: var(--danger, #dc2626); }
+.usage-conv-trunc, .usage-conv-hint { margin-top: 8px; }
+
+/* profile 판: 작업 화면(app.js) 독립 모달(admin-modal 클래스 미공유). */
+.usage-conv-overlay {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 1200;
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.usage-conv-dialog {
+  background: var(--surface-1, #fff); border-radius: 10px; padding: 18px; width: 100%; max-width: 640px;
+  display: flex; flex-direction: column; gap: 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25); max-height: 80vh;
+}
+.usage-conv-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.usage-conv-head h3 { margin: 0; font-size: 15px; }
+.usage-conv-content { overflow-y: auto; }
+.usage-conv-note { font-size: 13px; color: var(--text-muted, #6b7280); line-height: 1.5; margin: 0; }
+

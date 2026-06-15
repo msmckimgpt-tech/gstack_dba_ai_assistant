@@ -2500,3 +2500,18 @@ source_of_truth: true
 - Reason: 근본원인 명확(display:block + 리터럴 `"\n"` = <pre> 이중 줄바꿈). XSS 표면 무변경(textContent 경로 동일, DOMPurify 최종 정화). 적대적 패널 불요.
 - Residual: PB-0008 Windows-browser 재검증(단일 줄 간격) — CHECK#13.
 - Cross-ref: CHG-20260615-0256b / TASK-0256b / REV-20260615-0256.
+
+## REV-20260615-0263 [SUBAGENT:security-adversarial]
+- Date: 2026-06-15
+- Cycle: TASK-0263 (LLM 사용량 차트 hover 비용 + 클릭→집계 기여 대화목록 모달; 동시세션 TASK-0262 chip-conn-color 선점으로 재번호), **Major §12.3** — 신규 read 엔드포인트 2개 + admin 이 타 사용자 대화 메타(제목/소유자/일시/usage)를 조회하는 인가 표면.
+- Trigger: §18.8 — API/endpoint + 인가 경계(타 계정 데이터 노출) → 적대적 보안 리뷰(general-purpose outside voice). [[feedback_outside_voice_for_rbac]] 정합(인가 표면 변경=외부시각 필수).
+- Verdict: **SHIP** (BLOCKER 0, MAJOR 0).
+  - SQLi: `_query_usage_conversations` 의 model/account_ids/day_label/owner/days 전부 bound param(%s, int 강제). gran→to_char fmt 는 `_USAGE_GRAN` 화이트리스트만 SQL 삽입. 문자열 보간 사용자 입력 0.
+  - 권한: admin 엔드포인트는 console.usage.read **AND** conversation.list.any 순차 게이트(한쪽만으론 403). profile 은 owner_account_id=self(인증 계정 a.Id) 강제 + query 의 role/account_id 무시 → 일반 사용자 권한 상승 경로 없음.
+  - 데이터 노출: 반환 메타 한정(좌표/비번/메시지 본문/csv_paths/preview 0). owner enrich 는 admin 만, profile 미적용.
+  - NULL 처리: INNER JOIN + `conversation_id IS NOT NULL` 로 insight/시스템 비대화 usage 제외. owner NULL 대화는 `owner_is_null_ok=False` 가드(model/day 클릭 시 `owner_account_id IS NOT NULL`). "(시스템)" 역할 클릭은 query 전 빈 목록 단락.
+  - 차트 정합: day=to_char(date_trunc(gran,...)) 포맷·model=COALESCE(resolved,model) 가 admin_llm_usage 집계와 동일 키.
+  - MINOR(비차단): 대형 역할의 wide IN 절(admin 신뢰 경로, 파라미터화). in-query 예외 503 wrap 은 optional cleanup.
+- Verification: 신규 test_usage_conversations.py 11 PASS + make test 컨테이너 회귀 0 + ruff + node --check + CSS brace + Playwright 격리.
+- Residual: 배포 후 라이브 엔드포인트 검증(차원 필터 대화목록) + PB-0008(차트 hover 비용·클릭 모달·deep-link) — CHECK#13.
+- Cross-ref: CHG-20260615-0263 / TASK-0263.

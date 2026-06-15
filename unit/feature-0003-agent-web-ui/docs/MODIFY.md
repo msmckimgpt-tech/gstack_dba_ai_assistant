@@ -3407,3 +3407,16 @@ source_of_truth: true
 - Files: src/static/{app.js,share.js,index.html,share.html}, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
 - Rollback: `"\n"` 삽입 복원(이중 줄바꿈 회귀).
 - Deploy: web 재빌드(정적자산). ask-worker 무관(프롬프트 무변경).
+
+## CHG-20260615-0263
+- Date: 2026-06-15 (TASK-0263 — 동시세션 TASK-0262[chip-conn-color] 선점으로 재번호)
+- Scope: LLM 사용량 차트 hover 비용 + 클릭→집계 기여 대화목록 모달. app.py(신규 read 엔드포인트 2 + 헬퍼) + 정적자산. RBAC 카탈로그/스키마/기존 엔드포인트 shape 0.
+- 변경:
+  - (백엔드 app.py) 신규 `GET /api/admin/usage/conversations`(console.usage.read AND conversation.list.any) + `GET /api/profile/usage/conversations`(로그인·owner=self 강제). `_query_usage_conversations`(llm_usage ⋈ core_conversations INNER + conversation_id NOT NULL, 차원 필터 model/account_ids/day/owner 파라미터 바운드, gran 화이트리스트 to_char, 대화별 fold + models[] + cost, LIMIT 200+truncated, 좌표/비번/본문 비노출). `_usage_account_ids_for_role`(시스템→None·역할없음·역할명 역매핑), `_parse_usage_conv_params`, `_enrich_usage_conv_owner_meta`(admin 만). admin_llm_usage by_day_model 에 cost_usd(prompt/completion 합 추가). profile_llm_usage by_model/by_day_model/totals 에 cost_usd 추가.
+  - (admin.js) renderStacked(일별)·renderStackedHBar(역할/계정) tooltip 모델별 비용 병기 + 차트 요소 data-usage-model/day 후크 + bindUsageDrill(위임 클릭)·openUsageConversations(fetch)·showUsageConvModal(모달, deep-link /?conversation=). 계정 drill 행 클릭→대화 모달.
+  - (app.js) renderProfileUsageStacked/Donut <title> 비용 병기 + 클릭 후크 + bindProfileUsageDrill·openProfileUsageConversations·showProfileUsageConvModal(본인 전용) + 추정비용 카드 + initializeWorkspace 가 ?conversation= deep-link 선호 활성화(URL replaceState 정리).
+  - (styles.css) usage-conv 모달(admin 넓은 .usage-conv-modal/head/close + profile 독립 .usage-conv-overlay/dialog) + .admin-usage-clickable/.profile-usage-clickable 커서. index.html/admin.html 캐시버스터 ?v=20260615-task0263-usage-drill.
+- 검증: 신규 test_usage_conversations.py 11 PASS + make test 컨테이너 전체 회귀 0(PYTEST_EXIT=0) + ruff clean + node --check app.js/admin.js + CSS brace + py_compile + Playwright 격리(막대 클릭→차원 추출). outside-voice 적대적 보안 리뷰 SHIP(REV-20260615-0263, BLOCKER/MAJOR 0).
+- Files: src/app.py, src/static/{admin.js,app.js,styles.css,index.html,admin.html}, tests/test_usage_conversations.py, docs/{TASK,MODIFY,REPORT,REVIEW,FUNCTION}.md, docs/STATUS.md(repo)
+- Rollback: 두 엔드포인트 + 헬퍼 제거(app.py), admin.js/app.js 의 bindUsageDrill/openUsageConversations/show*Modal + 차트 data-usage 후크 + hover 비용 추가분 + initializeWorkspace deep-link 분기 제거, styles.css usage-conv 규칙 제거, 캐시버스터 환원. by_day_model/by_model cost_usd 추가는 무해(프론트 미사용 시 무시).
+- Deploy: web 재빌드(app.py + 정적자산). ask/insight-worker 무변경.

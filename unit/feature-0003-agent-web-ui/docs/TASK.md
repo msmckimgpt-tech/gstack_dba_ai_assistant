@@ -8,7 +8,7 @@ source_of_truth: true
 
 # Task
 
-## 0. TASK-0262 (current cycle) — 선택 제품 chip dot 도 네트워크 상태색 (TASK-0261 후속)
+## 0. TASK-0262 (직전 cycle, 머지됨) — 선택 제품 chip dot 도 네트워크 상태색 (TASK-0261 후속)
 - 사용자 보고: 드롭업 **목록** 항목 dot 은 상태색 정상이나, **선택된 제품(composer chip 트리거)** 은 상태 무관 **파란색**(pinned 모드색). "선택 제품도 색상을 상태값과 동일하게."
 - 원인: TASK-0261 은 `buildProductDropupItem`(드롭업 목록 항목)에만 conn 색 적용. `renderProductChip`(트리거 chip)은 `dataset.mode` 만 설정 → `#productChipDot` 이 모드색(`[data-mode=pinned]`=`--primary` 파랑)만 표시.
 - [x] **프론트 전용 수정** (`app.js renderProductChip`): pinned 제품의 `conn_status_overall`(TASK-0261 백엔드가 이미 `state.products` 에 첨부, 추가 변경 0)을 chip dot 에 `.composer-product-chip-dot--conn` + `connStatusMeta` 클래스(is-ok/is-fail/is-unknown) 적용. dot 은 aria-hidden 이라 상태를 chip `aria-label` 에 병기. 매 렌더 conn 클래스 reset(auto/미바인딩 전이 시 모드색 복귀).
@@ -16,7 +16,27 @@ source_of_truth: true
 - [x] 검증: `node --check`(app.js) PASS + CSS brace 1131=1131 + `make test` 회귀 0(frontend-only)·ruff clean.
 - [x] 배포(web, main `eb7be30`) + PB-0008 Windows-browser 시각검증 **PASS**(TASK-0262b) — 선택 제품 94(unstable)=빨강 rgb(220,38,38)/is-fail, 95(healthy)=초록 rgb(22,163,74)/is-ok, auto=회색(conn 클래스 reset). aria-label 상태 병기. TEST.md §4 2026-06-15 Run.
 
-## 0b. TASK-0261 (직전 cycle) — 대화 화면 제품 드롭업 datasource 네트워크 상태 배지
+## 0a. TASK-0263 (current cycle) — LLM 사용량 차트 hover 비용 + 클릭→집계 기여 대화목록 모달
+- 목표: 사용량 차트에서 (a) hover 시 모델별 비용 표시, (b) 차트 요소 클릭 시 그 집계(모델/역할/계정/일자)에 기여한 대화목록을 모달로 표시. 적용 면: 작업 화면 프로필(본인) + 관리 콘솔 LLM 사용량(admin).
+- 등급: **Major §12.3** (신규 read 엔드포인트 2개 + admin 이 타 사용자 대화 메타 조회하는 인가 표면).
+- 사용자 결정(AskUserQuestion): 대화목록 표시=**모달/드로어 패널**, admin 접근 범위=**기존 권한 재사용**(신규 RBAC 0).
+- 구현(백엔드, app.py):
+  - [x] `GET /api/admin/usage/conversations`(console.usage.read + conversation.list.any AND 게이트) + `GET /api/profile/usage/conversations`(로그인, owner=self 강제).
+  - [x] `_query_usage_conversations`: llm_usage ⋈ core_conversations(INNER + conversation_id NOT NULL — insight/시스템 비대화 제외) 차원 필터(model=COALESCE(resolved,model) / account_ids / day=to_char(date_trunc(gran)) / owner) → 대화별 호출·토큰·비용·models[] fold. 차원 SQL 은 admin_llm_usage 집계와 동일 규칙(차트↔목록 정합). 좌표/비번/본문 비노출, _USAGE_CONV_LIMIT=200 + truncated.
+  - [x] `_usage_account_ids_for_role`(역할→계정 집합 역매핑: 시스템→None, 역할없음/역할명), `_parse_usage_conv_params`, `_enrich_usage_conv_owner_meta`(admin 만 owner 사용자명/역할).
+  - [x] by_day_model·by_model 에 cost_usd 추가(admin·profile 둘 다 hover 비용용), profile totals.cost_usd 추가.
+- 구현(프론트):
+  - [x] admin.js: renderStacked(일별)·renderStackedHBar(역할/계정) tooltip 에 모델별 비용 병기. 차트 요소에 data-usage-model/day 후크 + `bindUsageDrill`(위임 클릭)·`openUsageConversations`(fetch)·`showUsageConvModal`(모달 렌더, deep-link `/?conversation=`). 계정 drill-down 행 클릭→대화 모달.
+  - [x] app.js(프로필): renderProfileUsageStacked/Donut `<title>`에 비용 병기 + 클릭 후크 + `bindProfileUsageDrill`·`openProfileUsageConversations`·`showProfileUsageConvModal`. 추정 비용 카드 추가. `initializeWorkspace` 가 `?conversation=` deep-link 선호 활성화(URL 정리).
+  - [x] styles.css: usage-conv 모달(admin 넓은 판 + profile 독립 판) + clickable 커서. 캐시버스터 `?v=20260615-task0263-usage-drill`(index/admin html).
+- 검증:
+  - [x] node --check app.js/admin.js + py_compile + CSS brace(1156=1156).
+  - [x] 신규 `test_usage_conversations.py` **11 PASS**(fold·INNER JOIN·차원 필터 WHERE/params·좌표 비노출·빈 account 단락·admin AND 게이트 403×2·시스템역할 빈목록·profile 권한상승 차단·역할→계정 역매핑) + make test 컨테이너 **전체 회귀 0**(PYTEST_EXIT=0) + ruff clean.
+  - [x] Playwright 격리(차트 막대 클릭→model/day 차원 추출→모달 opener 호출).
+  - [x] **outside-voice 적대적 보안 리뷰 SHIP**(REV-20260615-0262, BLOCKER/MAJOR 0 — 파라미터화 SQL+화이트리스트 gran/fmt·AND-게이트·profile self-scope·메타only·NULL 가드·차트정합 전부 통과).
+- [ ] (잔여) 배포(web 재빌드) + 라이브 엔드포인트 검증 + PB-0008 Windows 시각검증(차트 hover 비용·클릭 모달·대화 deep-link) — CHECK#13 WARN-only.
+
+## 0b. TASK-0261 (직전 cycle, 머지됨) — 대화 화면 제품 드롭업 datasource 네트워크 상태 배지
 - 목표: 대화 화면 제품 선택 드롭업의 각 제품 dot 이 지금까지 **모드색(auto 회색/pinned 파랑)만** 표시 → datasource 연결(네트워크) 상태(healthy/unstable/unknown)를 색으로 반영. (사용자: "현재는 회색, 파란색만 표시 중".)
 - 등급: **Minor §12.3** (비파괴 추가 — 좌표/비밀번호 비노출, status/elapsed/checked_at 만).
 - 데이터 소스: conn-health-monitor(TASK-0250)가 백그라운드로 미리 계산한 per-datasource 상태(`conn_health.snapshot()`). admin_list_datasources 와 동일 — 추가 probe 없음.

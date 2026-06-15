@@ -1169,15 +1169,57 @@ async function loadUsage(opts) {
   const mcol = (k) => modelColor[k] || SYS_COLOR;
   // bucket 라벨 축약 (YYYY- 제거: 'MM-DD', 'MM-DD HH:00'; 월별 'YYYY-MM' 유지).
   const shortLabel = (d) => { const s = String(d); return s.length > 7 ? s.slice(5) : s; };
+
+  // ── TASK-0263: 사용량 차트 클릭 → 집계 기여 대화목록 모달 ──────────────────
+  // bindUsageDrill: 차트 컨테이너에 위임 클릭 — data-usage-model/data-usage-day 후크를 가진
+  // 요소 클릭 시 그 차원(현 days/gran context)으로 admin 대화 모달을 연다.
+  const bindUsageDrill = (root) => {
+    if (!root || root._drillBound) return;
+    root._drillBound = true;
+    root.addEventListener("click", (e) => {
+      const el2 = e.target.closest ? e.target.closest("[data-usage-model],[data-usage-day]") : null;
+      if (!el2) return;
+      const model = el2.getAttribute("data-usage-model") || null;
+      const day = el2.getAttribute("data-usage-day") || null;
+      const parts = [];
+      if (model) parts.push(model);
+      if (day) parts.push(day);
+      openUsageConversations({ scope: "admin", model, day, title: parts.join(" · ") || "사용량" });
+    });
+  };
+
+  // openUsageConversations: 차원 필터로 대화목록 엔드포인트 호출 → 모달 렌더.
+  //   scope=admin → /api/admin/usage/conversations, scope=self → /api/profile/usage/conversations.
+  const openUsageConversations = async (opts) => {
+    const o = opts || {};
+    const scope = o.scope === "self" ? "self" : "admin";
+    const base = scope === "self" ? "/api/profile/usage/conversations" : "/api/admin/usage/conversations";
+    const params = new URLSearchParams();
+    params.set("days", String(days));
+    params.set("gran", String(gran));
+    if (o.model) params.set("model", o.model);
+    if (o.day) params.set("day", o.day);
+    if (o.account_id != null) params.set("account_id", String(o.account_id));
+    if (o.role) params.set("role", o.role);
+    showUsageConvModal({ loading: true, title: o.title || "대화 목록" });
+    try {
+      const data = await apiFetch(`${base}?${params.toString()}`);
+      showUsageConvModal({ data, title: o.title || "대화 목록", scope });
+    } catch (err) {
+      showUsageConvModal({ error: (err && err.message) || "대화목록 조회 실패", title: o.title || "대화 목록" });
+    }
+  };
   // 기간별 토큰 사용량 — 모델별 누적(stacked) 세로 막대 + 막대 총합 라벨 + hover 툴팁.
   const renderStacked = (el, byDayModel) => {
     if (!el) return;
     const rows = byDayModel || [];
     if (!rows.length) { el.innerHTML = "<p style='color:var(--text-muted);'>데이터 없음</p>"; return; }
-    const dayMap = {}; const models = [];
+    const dayMap = {}; const costMap = {}; const models = [];  // TASK-0263: costMap = day→model→cost
     rows.forEach((r) => {
       dayMap[r.day] = dayMap[r.day] || {};
       dayMap[r.day][r.model] = (dayMap[r.day][r.model] || 0) + (r.total_tokens || 0);
+      costMap[r.day] = costMap[r.day] || {};
+      costMap[r.day][r.model] = (costMap[r.day][r.model] || 0) + (r.cost_usd || 0);
       if (!models.includes(r.model)) models.push(r.model);
     });
     const days = Object.keys(dayMap).sort();
@@ -1198,7 +1240,10 @@ async function loadUsage(opts) {
         const v = dayMap[d][m] || 0; if (v <= 0) return;
         const h = (v / maxT) * plotH; y -= h;
         const pct = dayTot ? (v / dayTot * 100).toFixed(1) : "0";
-        bars += `<rect x='${x.toFixed(1)}' y='${y.toFixed(1)}' width='${bw.toFixed(1)}' height='${h.toFixed(1)}' fill='${mcol(m)}' rx='1' data-tip='${esc(d)} · ${esc(m)}<br><b>${num(v)}</b> 토큰 (${pct}%)'/>`;
+        // TASK-0263: hover 에 모델별 비용 + 클릭 시 그 일자·모델 기여 대화 모달(data-usage-* 후크).
+        const cst = costMap[d][m] || 0;
+        const costTip = cst > 0 ? `<br>추정 ${usd(cst)}` : "";
+        bars += `<rect class='admin-usage-clickable' x='${x.toFixed(1)}' y='${y.toFixed(1)}' width='${bw.toFixed(1)}' height='${h.toFixed(1)}' fill='${mcol(m)}' rx='1' data-tip='${esc(d)} · ${esc(m)}<br><b>${num(v)}</b> 토큰 (${pct}%)${costTip}<br><span style="opacity:.8">클릭: 대화 보기</span>' data-usage-day='${esc(d)}' data-usage-model='${esc(m)}'/>`;
       });
       if (bw >= 20 && (dayTot / maxT) > 0.05) {
         valLabels += `<text x='${(x + bw / 2).toFixed(1)}' y='${(y - 3).toFixed(1)}' text-anchor='middle' font-size='9' fill='var(--text-2)'>${num(dayTot)}</text>`;
@@ -1215,6 +1260,7 @@ async function loadUsage(opts) {
     const legend = models.map((m) => `<span style='display:inline-flex;align-items:center;gap:5px;margin:2px 14px 2px 0;font-size:12px;'><span style='width:11px;height:11px;border-radius:2px;background:${mcol(m)};display:inline-block;'></span>${esc(m)}</span>`).join("");
     el.innerHTML = `<svg viewBox='0 0 ${W} ${H}' style='width:100%;height:auto;display:block;'>${axis}${bars}${valLabels}${xl}</svg><div style='margin-top:6px;'>${legend}</div>`;
     bindTip(el);
+    bindUsageDrill(el);  // TASK-0263: 막대 클릭 → 그 일자·모델 기여 대화 모달.
   };
   // 모델별 비중 — 도넛 + hover 툴팁(토큰·비중·추정비용).
   const renderDonut = (el, byModel) => {
@@ -1231,12 +1277,14 @@ async function loadUsage(opts) {
     rows.forEach((r) => {
       const len = (r.value / total) * C;
       const costTip = r.cost > 0 ? `<br>추정 ${usd(r.cost)}` : "";
-      segs += `<circle cx='${cx}' cy='${cy}' r='${R}' fill='none' stroke='${mcol(r.label)}' stroke-width='22' stroke-dasharray='${len.toFixed(2)} ${(C - len).toFixed(2)}' stroke-dashoffset='${(-off).toFixed(2)}' transform='rotate(-90 ${cx} ${cy})' data-tip='${esc(r.label)}<br><b>${num(r.value)}</b> 토큰 (${(r.value / total * 100).toFixed(1)}%)<br>${num(r.calls)} 호출${costTip}'/>`;
+      // TASK-0263: 도넛 세그먼트 클릭 → 그 모델 기여 대화 모달(data-usage-model). 라벨=COALESCE(resolved,model)=백엔드 필터 키.
+      segs += `<circle class='admin-usage-clickable' cx='${cx}' cy='${cy}' r='${R}' fill='none' stroke='${mcol(r.label)}' stroke-width='22' stroke-dasharray='${len.toFixed(2)} ${(C - len).toFixed(2)}' stroke-dashoffset='${(-off).toFixed(2)}' transform='rotate(-90 ${cx} ${cy})' data-tip='${esc(r.label)}<br><b>${num(r.value)}</b> 토큰 (${(r.value / total * 100).toFixed(1)}%)<br>${num(r.calls)} 호출${costTip}<br><span style="opacity:.8">클릭: 대화 보기</span>' data-usage-model='${esc(r.label)}'/>`;
       off += len;
     });
-    const legend = rows.map((r) => `<div style='display:flex;align-items:center;gap:6px;font-size:12px;margin:3px 0;'><span style='width:11px;height:11px;border-radius:2px;background:${mcol(r.label)};display:inline-block;flex:none;'></span><span style='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>${esc(r.label)}</span><strong>${(r.value / total * 100).toFixed(1)}%</strong></div>`).join("");
+    const legend = rows.map((r) => `<div class='admin-usage-clickable' data-usage-model='${esc(r.label)}' style='display:flex;align-items:center;gap:6px;font-size:12px;margin:3px 0;'><span style='width:11px;height:11px;border-radius:2px;background:${mcol(r.label)};display:inline-block;flex:none;'></span><span style='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>${esc(r.label)}</span><strong>${(r.value / total * 100).toFixed(1)}%</strong></div>`).join("");
     el.innerHTML = `<div style='display:flex;align-items:center;gap:18px;flex-wrap:wrap;'><svg viewBox='0 0 140 140' style='width:130px;height:130px;flex:none;'>${segs}<text x='70' y='66' text-anchor='middle' font-size='11' fill='var(--text-muted)'>총 토큰</text><text x='70' y='83' text-anchor='middle' font-size='13' font-weight='700' fill='var(--text)'>${num(total)}</text></svg><div style='flex:1;min-width:150px;'>${legend}</div></div>`;
     bindTip(el);
+    bindUsageDrill(el);  // TASK-0263
   };
   // 가로 막대 (역할별/계정별). rows = [{label, value, tip}].
   const renderHBar = (el, rows, valueFmt) => {
@@ -1259,9 +1307,11 @@ async function loadUsage(opts) {
     const max = Math.max(...data.map((r) => r.value));
     const clickable = typeof onRowClick === "function";  // TASK-0184: 역할 막대 클릭 → 계정 drill-down.
     el.innerHTML = data.map((r) => {
-      const segs = (r.models || []).filter((m) => (m[valueKey] || 0) > 0).map((m) =>
-        `<div data-tip='${esc(r.label)} · ${esc(m.model)}<br><b>${fmt(m[valueKey])}</b>' style='width:${(m[valueKey] / max * 100).toFixed(2)}%;background:${mcol(m.model)};height:100%;'></div>`
-      ).join("");
+      const segs = (r.models || []).filter((m) => (m[valueKey] || 0) > 0).map((m) => {
+        // TASK-0263: 토큰 차트 hover 에도 모델별 추정 비용 병기(valueKey 가 cost_usd 면 이미 비용이라 중복 생략).
+        const extraCost = (valueKey !== "cost_usd" && (m.cost_usd || 0) > 0) ? `<br>추정 ${usd(m.cost_usd)}` : "";
+        return `<div data-tip='${esc(r.label)} · ${esc(m.model)}<br><b>${fmt(m[valueKey])}</b>${extraCost}' style='width:${(m[valueKey] / max * 100).toFixed(2)}%;background:${mcol(m.model)};height:100%;'></div>`;
+      }).join("");
       const cls = "admin-usage-hbar-row" + (clickable ? " admin-usage-hbar-row--click" : "");
       return `<div class='${cls}' data-label='${esc(r.label)}'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;'><span>${esc(r.label)}</span><strong>${fmt(r.value)}</strong></div><div style='display:flex;background:var(--border-subtle);border-radius:4px;height:14px;overflow:hidden;'>${segs}</div></div>`;
     }).join("");
@@ -1310,12 +1360,19 @@ async function loadUsage(opts) {
     const start = st.drillPage * pageSize;
     const pageRows = filtered.slice(start, start + pageSize).map((a) => ({
       label: usageAcctLabelOf(a), total_tokens: a.total_tokens || 0, cost_usd: a.cost_usd || 0, models: a.models || [],
+      _account_id: a.account_id,  // TASK-0263: 클릭 시 대화 모달 필터용(라벨에서 파싱하지 않고 직접 보존)
     }));
-    if (hintEl) hintEl.textContent = `· ${st.drillRole} — ${filtered.length}개 계정${q ? " (검색됨)" : ""}`;
+    if (hintEl) hintEl.textContent = `· ${st.drillRole} — ${filtered.length}개 계정${q ? " (검색됨)" : ""} · 계정 클릭 시 대화 보기`;
     if (toolsEl) toolsEl.classList.remove("hidden");
+    // TASK-0263: 계정 막대 클릭 → 그 계정의 기여 대화 모달(현재 모델 필터 context 동반).
+    const onAcctClick = (label) => {
+      const row = pageRows.find((r) => r.label === label);
+      if (!row || row._account_id == null) return;
+      openUsageConversations({ scope: "admin", account_id: row._account_id, title: label });
+    };
     if (pageRows.length) {
-      renderStackedHBar(chartEl, pageRows, "total_tokens", num);
-      renderStackedHBar(costChartEl, pageRows, "cost_usd", usd);  // TASK-0184: 계정별 비용 차트(역할별과 일관)
+      renderStackedHBar(chartEl, pageRows, "total_tokens", num, onAcctClick);
+      renderStackedHBar(costChartEl, pageRows, "cost_usd", usd, onAcctClick);  // TASK-0184: 계정별 비용 차트(역할별과 일관)
     } else {
       chartEl.innerHTML = "<p class='admin-usage-empty'>검색 결과가 없습니다.</p>";
       if (costChartEl) costChartEl.innerHTML = "";
@@ -1507,6 +1564,75 @@ async function loadUsage(opts) {
   } catch (e) {
     if (summaryEl) summaryEl.textContent = "조회 실패";
   }
+}
+
+// TASK-0263: 사용량 차트 클릭 → 집계 기여 대화목록 모달. admin/profile 공용 렌더(scope 로 분기).
+//   각 대화 행은 메인 UI deep-link(/?conversation=<id>)로 이동(새 탭). 대화 제목/일시/소유자/
+//   기간내 usage(호출·토큰·추정비용)만 표시 — 메시지 본문 미포함.
+function showUsageConvModal(state) {
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const num = (v) => (Number(v) || 0).toLocaleString();
+  const usd = (v) => "$" + (Number(v) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtDt = (s) => {
+    if (!s) return "—";
+    try { const d = new Date(s); return isNaN(d.getTime()) ? esc(s) : d.toLocaleString(); } catch (_) { return esc(s); }
+  };
+  // 기존 모달 제거(중복 방지).
+  const prev = document.getElementById("usageConvModalOverlay");
+  if (prev) prev.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "usageConvModalOverlay";
+  overlay.className = "admin-modal-overlay";
+  const title = esc(state.title || "대화 목록");
+  let bodyHtml;
+  if (state.loading) {
+    bodyHtml = "<p class='admin-modal-note'>대화목록을 불러오는 중…</p>";
+  } else if (state.error) {
+    bodyHtml = `<p class='admin-modal-note usage-conv-error'>${esc(state.error)}</p>`;
+  } else {
+    const items = (state.data && state.data.items) || [];
+    const truncated = !!(state.data && state.data.truncated);
+    const isAdmin = (state.scope === "admin");
+    if (!items.length) {
+      bodyHtml = "<p class='admin-modal-note'>이 집계에 해당하는 대화가 없습니다. (insight·시스템 호출은 대화에 귀속되지 않습니다.)</p>";
+    } else {
+      const rows = items.map((it) => {
+        const cid = esc(it.conversation_id);
+        const topic = esc(it.topic || "(제목 없음)");
+        const owner = isAdmin
+          ? `<td class='usage-conv-owner'>${esc(it.owner_username || ("#" + (it.owner_account_id == null ? "?" : it.owner_account_id)))}${it.owner_role ? " · " + esc(it.owner_role) : ""}</td>`
+          : "";
+        const blocked = it.blocked ? " <span class='usage-conv-badge'>차단</span>" : "";
+        return `<tr>`
+          + `<td class='usage-conv-topic'><a href='/?conversation=${encodeURIComponent(it.conversation_id)}' target='_blank' rel='noopener' title='${topic}'>${topic}</a>${blocked}</td>`
+          + owner
+          + `<td class='num'>${num(it.calls)}</td>`
+          + `<td class='num'>${num(it.total_tokens)}</td>`
+          + `<td class='num'>${it.cost_usd > 0 ? usd(it.cost_usd) : "—"}</td>`
+          + `<td class='usage-conv-when'>${fmtDt(it.last_used_at || it.updated_at)}</td>`
+          + `</tr>`;
+      }).join("");
+      const ownerHead = isAdmin ? "<th>소유자</th>" : "";
+      bodyHtml = `<div class='usage-conv-tablewrap'><table class='admin-usage-table usage-conv-table'>`
+        + `<thead><tr><th>대화</th>${ownerHead}<th class='num'>호출</th><th class='num'>토큰</th><th class='num'>추정 비용</th><th>최근 사용</th></tr></thead>`
+        + `<tbody>${rows}</tbody></table></div>`
+        + (truncated ? `<p class='admin-modal-note usage-conv-trunc'>상위 ${num(items.length)}건만 표시합니다(기간내 토큰 큰 순). 기간을 좁혀 보세요.</p>` : "")
+        + `<p class='admin-modal-note usage-conv-hint'>대화 제목을 클릭하면 새 탭에서 해당 대화로 이동합니다.</p>`;
+    }
+  }
+  overlay.innerHTML =
+    '<div class="admin-modal usage-conv-modal" role="dialog" aria-modal="true" aria-label="' + title + ' 대화 목록">'
+    + '  <div class="admin-modal-head"><h3>' + title + ' · 대화 목록</h3>'
+    + '    <button type="button" class="admin-modal-close" id="usageConvModalClose" aria-label="닫기">×</button></div>'
+    + '  <div class="usage-conv-body">' + bodyHtml + '</div>'
+    + '</div>';
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
+  const closeBtn = document.getElementById("usageConvModalClose");
+  if (closeBtn) closeBtn.addEventListener("click", close);
+  const onEsc = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onEsc); } };
+  document.addEventListener("keydown", onEsc);
 }
 
 function switchTab(tabName) {
