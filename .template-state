@@ -1,9 +1,9 @@
 # .template-state — managed by bin/template-upgrade.sh. Do not edit by hand.
 state_schema_version=1
-declared_version=v3.31.1
-detected_version=v3.31.1
-applied_migrations=v3.25.0-to-v3.26.0,v3.26.0-to-v3.27.0,v3.27.0-to-v3.28.0,v3.28.0-to-v3.29.0,v3.29.0-to-v3.29.1,v3.29.1-to-v3.30.0,v3.30.0-to-v3.31.0,v3.31.0-to-v3.31.1
+declared_version=v3.32.0
+detected_version=v3.32.0
+applied_migrations=v3.25.0-to-v3.26.0,v3.26.0-to-v3.27.0,v3.27.0-to-v3.28.0,v3.28.0-to-v3.29.0,v3.29.0-to-v3.29.1,v3.29.1-to-v3.30.0,v3.30.0-to-v3.31.0,v3.31.0-to-v3.31.1,v3.31.1-to-v3.32.0
 strategy=preserve
-last_synced_at=2026-06-15T07:43:30Z
+last_synced_at=2026-06-15T15:49:12Z
 bootstrap=false
-last_synced_template_commit=5216342
+last_synced_template_commit=b9c2095

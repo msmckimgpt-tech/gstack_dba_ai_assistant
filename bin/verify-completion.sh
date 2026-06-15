@@ -650,7 +650,9 @@ check_9_review_entry() {
   local unique_paths
   unique_paths=$(printf '%s\n' "${review_paths[@]}" | sort -u)
 
-  local entry_pattern='^\+## REV-[0-9]{8}-[0-9]{4} \[(SUBAGENT|AGENT-TEAM|SKIPPED|CODEX):'
+  # REV id: legacy date+serial (REV-YYYYMMDD-NNNN) OR timestamp+branch
+  # (REV-YYYYMMDDTHHMMSS-<branch>, ADR-0025/v3.32.0) — both accepted (additive).
+  local entry_pattern='^\+## REV-([0-9]{8}-[0-9]{4}|[0-9]{8}T[0-9]{6}-[A-Za-z0-9._-]+) \[(SUBAGENT|AGENT-TEAM|SKIPPED|CODEX):'
   local found=0
   local rmd
   while IFS= read -r rmd; do
