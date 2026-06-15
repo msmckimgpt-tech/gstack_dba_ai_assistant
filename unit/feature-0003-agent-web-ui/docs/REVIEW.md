@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0275 [SKIPPED:pb0008-evidence-docs-only]
+- Date: 2026-06-15
+- Cycle: TASK-0274 후속 (첨부 패널 resize PB-0008 Windows-browser 시각검증 evidence 기록 — docs-only: TEST.md §4 Run 1건 + TASK.md 완료 표기. src 코드 0).
+- Skip 사유: 코드 변경 0(순수 evidence/docs). 핵심 변경은 REV-20260615-0274 [SKIPPED:ui-pattern-clone] 에서 이미 리뷰(step-side-panel resize 패턴 verbatim 이식). 본 후속은 라이브 실증 기록.
+- 실증: PB-0008(실 Chrome/148 relay, 배포 main `bb06ddf` web 재배포) — 핸들 hit-test(elementFromPoint=attachSidePanelResizer)·드래그 280→458px·localStorage 저장·새로고침 후 458px 복원·min240/max92vw(1149) clamp 전부 실측 PASS. CHECK#13 충족.
+- Cross-ref: CHG-20260615-0275 / TEST.md §4 (2026-06-15 TASK-0274 Run) / REV-20260615-0274 / artifacts/pb0008-task0274/.
+
 ## REV-20260615-0274 [SKIPPED:ui-pattern-clone]
 - Date: 2026-06-15
 - Cycle: TASK-0274 (첨부파일 목록 사이드 패널 `#attachSidePanel` 너비 조절 가능화), **Minor §12.3** — frontend-only(index.html + styles.css + app.js). RBAC/인증/스키마/엔드포인트 계약/데이터/시크릿/백엔드 0.

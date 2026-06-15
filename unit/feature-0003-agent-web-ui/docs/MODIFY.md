@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0275
+- Date: 2026-06-15 (TASK-0274 후속, **docs-only** — 첨부 패널 resize PB-0008 Windows-browser 시각검증 evidence 기록)
+- Scope: agent-web-ui 문서만 — `docs/TEST.md` §4 Run 1건(TASK-0274) 추가 + `docs/TASK.md` 잔여 PB-0008 항목 "완료(PASS)" 표기. src 코드 0.
+- 변경: TEST.md §4 — 배포(main `bb06ddf` web 재배포) 후 실 Chrome/148 relay 로 ① `+` > 첨부파일 목록 → 패널 표시 + resizer hit-test(elementFromPoint=attachSidePanelResizer, 가림 0) ② 핸들 드래그 280→458px + `.is-resizing` ③ localStorage `web.attachSidePanel.width`=458 저장 ④ 새로고침 후 458px 복원 ⑤ min240/max92vw(1149) clamp 실측. 스크린샷 `artifacts/pb0008-task0274/attach-panel-resized-458.png`.
+- 비변경: 코드·테스트·CSS 0(순수 evidence). 핵심 변경은 CHG-20260615-0274(PR #241 머지)에서 이미 반영.
+- 검증: PB-0008 Windows-browser PASS(위 5항목 실측). CHECK#13 충족.
+
 ## CHG-20260615-0274
 - Date: 2026-06-15 (TASK-0274, **Minor §12.3** — 첨부파일 목록 사이드 패널 너비 조절(리사이즈) 가능화)
 - Scope: agent-web-ui (프론트 전용) — 사용자 요청(`작업 화면 > '+' > 첨부파일 목록` 사이드바 resize). `#attachSidePanel` 만 고정 280px 였고, 동일 우측 고정 패널인 `#stepSidePanel`·`#profileDrawer` 는 이미 좌측 드래그 핸들 + localStorage 너비 영속화 resize 를 운영 중 → 검증된 패턴 verbatim 이식.
