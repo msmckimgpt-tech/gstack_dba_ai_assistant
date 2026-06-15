@@ -81,7 +81,7 @@ require_git_repo() {
 
 validate_feature_id() {
   local fid="$1"
-  if [[ ! "$fid" =~ ^(feature|META)-[0-9]+(-[a-zA-Z0-9-]+)?$ ]]; then
+  if [[ ! "$fid" =~ ^(feature|META)-([0-9]+|[0-9]{8}T[0-9]{6})(-[a-zA-Z0-9-]+)?$ ]]; then
     die "invalid feature-id: $fid (expected: feature-NNNN-name or META-NNNN-name)"
   fi
 }

@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.30.0
+template_version: v3.31.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -174,6 +174,8 @@ PR #12 가 본 repo (template base) 에 소비자 cleanup checklist 를 잘못 �
 
 | 식별자 | 용도 | 형식 |
 |--------|------|------|
+| `feature-<id>-<name>` | 기능 단위 (worktree/branch/디렉토리) | timestamp 권장 / 순번 |
+| `TASK-<id>[-<name>]` | Task Queue 항목 | timestamp 권장 / 순번 |
 | `REQ-XXXX` | 요구사항 | 순번 |
 | `AC-XXXX` | 수용 기준 | 순번 |
 | `CHG-YYYYMMDD-XXXX` | 변경 | 날짜+순번 |
@@ -181,6 +183,17 @@ PR #12 가 본 repo (template base) 에 소비자 cleanup checklist 를 잘못 �
 | `ADR-XXXX` | 결정 | 순번 |
 | `TEST-XXXX` | 테스트 | 순번 |
 | `LRN-YYYYMMDD-XXXX` | 학습 | 날짜+순번 |
+
+**`feature-<id>` / `TASK-<id>` 형식 — timestamp 권장 (v3.31.0+, ADR-0023)**: 동시 세션이
+같은 순번을 병렬 할당하면 worktree 획득·main 머지 시 충돌하므로 (§13.1), 신규 식별자는
+**timestamp 형식 `<prefix>-<YYYYMMDDTHHMMSS>-<name>`** (예: `feature-20260615T142058-auth`,
+`TASK-20260615T142058-login-form`) 을 권장한다. timestamp(초 해상도) 와 작업 이름(`<name>`)
+조합이 세션 간 분기를 만들어 순번 점유-경합을 사실상 제거한다. **`<name>` 은 생략하지 말 것** —
+극히 드물게 두 세션이 같은 초에 식별자를 생성하면 timestamp 만으로는 동일해질 수 있고, 이때
+서로 다른 `<name>` 이 구분자가 된다 (그래도 동일하면 §13.1 의 점유 감지 규약이 backstop). 검증
+regex 는 형태(자릿수+`T` 구분자)만 보는 shape check 이며 달력 유효성(월 13, 시 25 등)은 강제하지
+않는다. 기존 순번 형식 (`feature-0001-auth`, `TASK-0001`) 도 그대로 유효하며 (additive), 순번
+사용 시 §13.1 의 감지-후-재번호 규약이 적용된다.
 
 문서 간에는 가능한 범위에서 `REQ → CHG → TEST → FILE` 추적이 가능해야 한다.
 
@@ -538,6 +551,13 @@ confirm** 대상이다. 그러나 프로젝트가 `FUNCTION.md` 의 `## Pre-appr
 - 문서 상단 메타데이터의 `edit_policy`를 따른다.
 - **프로젝트 수준 rewrite 문서**(ARCHITECTURE.md, CONVENTIONS.md 등)는 동시에 하나의 AI만 수정할 수 있다. 구조 변경이 필요하면 프로젝트 수준 `DECISIONS.md`에 제안을 기록하고 사람이 반영한다.
 - **append-only 문서 동시 추가 시** 각 항목에 타임스탬프와 작업자 ID(AI 세션 또는 기능 ID)를 포함하여 자동 병합이 가능하도록 한다.
+- **동시 세션 식별자 충돌 — timestamp 형식으로 회피 (v3.31.0, ADR-0023)**: 순번 기반
+  식별자 (`feature-NNNN-name`, `TASK-NNNN`, `REQ-XXXX` 등)를 여러 세션이 병렬 할당하면
+  worktree 획득·`origin/main` 머지 시 번호가 충돌할 수 있다. **신규 `feature-<id>` / `TASK-<id>`
+  식별자는 timestamp 형식 `<prefix>-<YYYYMMDDTHHMMSS>-<name>`** (예: `feature-20260615T142058-auth`)
+  으로 할당한다 (§6 참조) — timestamp + `<name>` 조합이 세션 간 분기를 만들어 점유 확인·재번호가
+  사실상 불필요하다. 작업 시작 시각을 그대로 쓰면 되고, `date +%Y%m%dT%H%M%S` 로 생성한다. `<name>` 을
+  반드시 포함하면 같은 초 생성 시에도 이름으로 구분되며, 그래도 동일하면 아래 점유-감지 규약이 backstop.
 - **동시 세션 TASK 식별자 충돌 — 감지 후 재번호 (v3.25.0)**: 순번 기반 식별자
   (`TASK-XXXX`, `REQ-XXXX` 등)를 여러 세션이 병렬 할당하면 번호가 충돌할 수 있다. 새
   식별자 할당 직전, 동일 번호가 이미 점유됐는지(다른 worktree/세션의 meta 문서 또는
