@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0268
+- Date: 2026-06-15 (TASK-0268, **docs-only** — TASK-0267 트리 UI PB-0008 Windows-browser 시각검증 evidence 기록)
+- Scope: agent-web-ui 문서만 — `docs/TEST.md` §4 Run 추가 + `docs/TASK.md` TASK-0267 "잔여 PB-0008" → "완료(PASS)". src 코드 0.
+- 변경: TEST.md §4 에 2026-06-15 (TASK-0267 트리 UI) Run — CLI(15 PASS·jsdom 14/14) + Windows-browser. 결과 PASS: ① `.permission-grid-list` computed flex column(2열 grid 아님, 뒤틀림 해소) ② 자식 row depth 1·margin-left 24px 들여쓰기(트리) ③ 운영 권한 "더 보기 · 1개 부여됨" computed color rgb(180,35,31) 빨강 가시. 사용자 두 보고 충족.
+- 비변경: 코드·테스트·CSS 0(순수 evidence).
+- 검증: 라이브 배포(main `f6ccb7b`, web Up healthy, 서빙 단일열 CSS + `_orderItemsAsTree`) 후 win-browser.py 실 Chrome computed style 실측. 스크린샷 `artifacts/pb0008-task0267/`.
+
 ## CHG-20260615-0267
 - Date: 2026-06-15 (TASK-0267, **Minor §12.3** — 권한 grid 트리 UI 재구성: 2열 grid 뒤틀림 해소 + "더 보기 부여됨" 빨강 가시성)
 - Scope: agent-web-ui (프론트 전용) — 사용자 보고(운영 권한 테스트 중 ① 빨강 미가시 ② 항목 숨김 뒤틀림 → tree UI 요청). 2열 grid 가 행 숨김 시 가로 reflow 로 뒤틀리고 "더 보기" 빨강 badge 가 묻히던 것을, 단일 열 트리로 전환. 백엔드/RBAC/저장 0.
