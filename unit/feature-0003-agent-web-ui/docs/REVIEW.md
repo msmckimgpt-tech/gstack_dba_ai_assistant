@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0264 [SUBAGENT:rbac-adversarial] — SHIP-WITH-FIXES → 흡수 후 SHIP
+- Date: 2026-06-15
+- Cycle: TASK-0264 (권한 disclosure 추가 단순화 — forceVisible 제거, 게이트 미충족 시 부여 세부 권한도 숨김. frontend-only `src/static/{admin.js,styles.css}`)
+- 패널: 적대적 outside-voice(general-purpose subagent) — #1 우선순위 "부여된 권한이 도달 불가/저장 누락될 수 있는가" 를 6 카테고리로 증명/반증.
+- **VERDICT: SHIP-WITH-FIXES**. 안전 카테고리 전부 **refuted**:
+  - **부여 도달불가** — refuted: `grantedCount>0` 면 그룹 vanish 안 함(`hiddenCount===rows.length && grantedCount===0` 만 vanish) → "더 보기 · N개 부여됨" 항상 존재, 그룹 헤더 `N/M 선택` 카운트도 부여 노출. override 모드는 그룹/섹션 vanish 자체가 없음. console.access 루트·product 임베드 카드 모두 안전. 부여-vanish-no더보기 경로 없음.
+  - **섹션 숨김 trap** — refuted: `secEl.hidden = !groups.some(g=>!g.hidden)` 이라 grant 로 살아남은 그룹(`g.hidden===false`)이 있으면 섹션 유지.
+  - **저장 누락(가장 중요)** — refuted: 저장 closure 가 `:checked`/`select[data-override-code]` 를 `:not([hidden])` 필터 없이 질의, `hidden` 속성/닫힌 `<details>` 는 querySelectorAll·`:checked`·select.value 에 무영향, disabled 는 `*.permission.manage` 권한에만 결속 → hidden-but-granted 항상 저장(누락 0).
+  - **리스너 중복/recompute** — refuted: `isExplicit` 단일 호출처서 항상 전달, "더 보기" 버튼 `if(!more)` 내부서만 바인딩(중복 없음).
+  - **게이트 시맨틱** — refuted: `isVisible` 전 조상 체인 요구, 사이클 가드, override 게이트 `=== "allow"` 만(deny 는 자식 안 엶, V6 검증).
+- 흡수한 결함:
+  - **[MINOR] 계정 override 편집기 `[hidden]` 미적용** — override 컨테이너 = `.override-grid`(≠`.permission-grid`), 행 = `.field.override-field`(`.field{display:flex}` 가 UA `[hidden]{display:none}` override) → TASK-0258 의 `.permission-grid [data-perm-code][hidden]` 강제 규칙이 override 행을 놓침(=TASK-0258 갭, 이 cycle 이 granted 행까지 확대 노출). **흡수**: CSS 셀렉터를 컨테이너 무관 `[data-perm-code][hidden]` 로 unscope(`[data-perm-code]` 는 권한 row 에만 부여 → 안전). test_c1 도 "unscoped 셀렉터 존재" 검증으로 강화. (안전 영향 없음 — 안 숨겨지는 건 *더* 노출되는 방향이라 도달불가 아님. 사용자 단순화 목표가 override 모드서 미충족되던 부분만 해소.)
+- 후속 검증: jsdom 17/17(부여 게이트OFF 숨김·그룹 유지·부여됨 배지·더보기 도달·저장누락0·override) + make test 회귀 0 + PB-0008(배포 후, 계정 override 행 computed display:none 포함).
+
 ## REV-20260615-0263 [SKIPPED:pb0008-evidence-docs-only]
 - Date: 2026-06-15
 - Cycle: TASK-0262 PB-0008 evidence (verify-completion check#9 REV id 4자리 규칙 — `-0262b` 접미는 FAIL 이라 0263 채번; TASK-0259 가 0257/0258 evidence cycle 였던 패턴과 동일). docs+scenario, src 0.

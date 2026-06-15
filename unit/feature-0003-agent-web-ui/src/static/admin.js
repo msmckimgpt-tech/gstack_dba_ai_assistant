@@ -430,40 +430,24 @@ function _updateOverrideGroupSummary(section) {
    §10.6 의 group/section 정렬·DOM 구조는 그대로 두고 row 단위 hidden 토글로만 동작 →
    레이아웃 뒤틀림 없음. 비파괴: 명시 설정된 권한·그 조상은 항상 표시. */
 
-function _permLabel(code) {
-  const def = (adminState.permissions || []).find((p) => p && p.code === code);
-  return (def && def.label) || code;
-}
-
-// orphan 경고칩(부여돼 있으나 선행 권한이 꺼진 권한). checkbox mode 전용.
-function _setPermOrphanWarn(wrapper, gateCode) {
-  let warn = wrapper.querySelector(".permission-orphan-warn");
-  if (!gateCode) { if (warn) warn.remove(); return; }
-  const msg = `상위 권한 "${_permLabel(gateCode)}" 미설정`;
-  if (!warn) {
-    warn = document.createElement("span");
-    warn.className = "permission-orphan-warn";
-    (wrapper.querySelector(".permission-text") || wrapper).appendChild(warn);
-  }
-  warn.textContent = `⚠ ${msg}`;
-  warn.title = `${msg} — 이 권한은 부여돼 있으나 선행 권한이 꺼져 있습니다. 의도한 설정인지 확인하세요.`;
-}
-
 // 그룹/섹션 가시성 + "세부 권한 N개 더 보기 / 접기" 토글 갱신.
 // mode 분기 (적대 리뷰 REV MAJOR 흡수): 그룹/섹션 통째 숨김(vanish)은 **checkbox(역할) 모드만**.
 //   checkbox 모드는 마스터 게이트 console.access 체크박스가 항상 보이는 복원 레버라 trap 없음.
 //   override(계정) 모드는 게이트가 그 자신도 접힐 수 있는 select 라 그룹을 숨기면 "더 보기" 탈출구까지
 //   같이 사라져 도달 불가 → override 모드는 그룹/섹션을 숨기지 않고(§10.6 "전체 표시" 정합) 행만 접는다.
-function _refreshGroupDisclosure(containerEl, showAll, recompute, mode) {
+function _refreshGroupDisclosure(containerEl, showAll, recompute, mode, isExplicit) {
   const collapseGroups = mode === "checkbox";
   containerEl.querySelectorAll("details.permission-group").forEach((groupEl) => {
     const rows = Array.from(groupEl.querySelectorAll("[data-perm-code]"));
     if (!rows.length) return; // 권한 row 없는 그룹(예: 제품 카드 only)은 건드리지 않음
     const groupKey = groupEl.dataset.permGroup;
     const hiddenCount = rows.filter((r) => r.hidden).length;
+    const grantedCount = rows.filter((r) => isExplicit(r.dataset.permCode)).length;
     // checkbox 모드: 보이는 권한 row 0 이면 details 자체를 감춘다 → 마스터 게이트 OFF 시 계정·역할 등 묶음이 사라짐.
+    // 단, 부여된 권한이 하나라도 있으면 그룹을 유지한다 → 부여된 권한이 영구히 가려지지 않고
+    //   "더 보기 · N개 부여됨" 으로 도달 가능(TASK-0264 — forceVisible 제거 후 도달성 보장).
     // override 모드: 절대 숨기지 않음(아래 "더 보기"로 항상 도달 가능).
-    groupEl.hidden = collapseGroups && hiddenCount === rows.length;
+    groupEl.hidden = collapseGroups && hiddenCount === rows.length && grantedCount === 0;
     const isShowAll = showAll.has(groupKey);
     const list = groupEl.querySelector(".permission-grid-list");
     let more = groupEl.querySelector(".permission-group-more");
@@ -471,6 +455,8 @@ function _refreshGroupDisclosure(containerEl, showAll, recompute, mode) {
       if (more) more.remove();
       return;
     }
+    // 숨겨진 row 중 부여된 개수 — "더 보기" 뒤에 부여된 권한이 있음을 표면화(도달성 단서).
+    const hiddenGranted = rows.filter((r) => r.hidden && isExplicit(r.dataset.permCode)).length;
     if (!more) {
       more = document.createElement("button");
       more.type = "button";
@@ -483,7 +469,10 @@ function _refreshGroupDisclosure(containerEl, showAll, recompute, mode) {
       });
     }
     if (list) list.appendChild(more); // 항상 list 마지막으로
-    more.textContent = isShowAll ? "세부 권한 접기" : `세부 권한 ${hiddenCount}개 더 보기`;
+    more.textContent = isShowAll
+      ? "세부 권한 접기"
+      : `세부 권한 ${hiddenCount}개 더 보기${hiddenGranted ? ` · ${hiddenGranted}개 부여됨` : ""}`;
+    more.classList.toggle("has-granted", !isShowAll && hiddenGranted > 0);
     more.setAttribute("aria-expanded", isShowAll ? "true" : "false");
   });
   if (!collapseGroups) return; // override 모드는 섹션도 숨기지 않음
@@ -511,7 +500,7 @@ function _applyPermissionDisclosure(containerEl, mode, showAll) {
       state.set(code, sel ? sel.value : "inherit");
     }
   });
-  // explicit = 관리자가 명시 설정(checkbox 체크 / override 허용·거부). keep-visible 의 기준.
+  // explicit = 관리자가 명시 설정(checkbox 체크 / override 허용·거부). 그룹 도달성·"부여됨" 배지에 사용.
   const isExplicit = (code) => {
     const s = state.get(code);
     return mode === "checkbox" ? s === "on" : (s === "allow" || s === "deny");
@@ -521,27 +510,18 @@ function _applyPermissionDisclosure(containerEl, mode, showAll) {
     const s = state.get(code);
     return mode === "checkbox" ? s === "on" : s === "allow";
   };
-  // 비파괴: 명시 설정된 권한 + 그 모든 조상을 강제 표시.
-  const forceVisible = new Set();
-  byCode.forEach((_w, code) => {
-    if (!isExplicit(code)) return;
-    let cur = code;
-    const guard = new Set();
-    while (cur && !guard.has(cur)) {
-      forceVisible.add(cur);
-      guard.add(cur);
-      cur = PERMISSION_DEPENDENCIES[cur];
-    }
-  });
+  // 가시성(TASK-0264 — "최대한 단순화"): 게이트 체인이 충족(=선행 권한이 모두 양성)돼야만 노출한다.
+  //   부여 여부와 무관 — 게이트 OFF 면 부여된 세부 권한도 "더 보기" 뒤로 숨긴다(이전 forceVisible 제거).
+  //   부여된 권한이 영구히 가려지지 않도록, _refreshGroupDisclosure 가 부여 항목이 있는 그룹을 비숨김 유지하고
+  //   "더 보기 · N개 부여됨" 으로 도달성을 보장한다. 저장 경로는 hidden row 의 상태도 그대로 읽어 누락 0.
   const visCache = new Map();
   const isVisible = (code) => {
     if (visCache.has(code)) return visCache.get(code);
     visCache.set(code, false); // 사이클 방어(트리라 미발생이나 안전)
     const parent = PERMISSION_DEPENDENCIES[code];
     let v;
-    if (!parent) v = true;                     // 루트 — 항상 표시
-    else if (forceVisible.has(code)) v = true;  // 명시 설정 self / 명시 설정 자손 보유
-    else if (!byCode.has(parent)) v = true;     // 부모가 grid 에 없음(방어) — 표시
+    if (!parent) v = true;                   // 루트(그룹 base) — 항상 표시
+    else if (!byCode.has(parent)) v = true;   // 부모가 grid 에 없음(방어) — 표시
     else v = gateSatisfied(parent) && isVisible(parent);
     visCache.set(code, v);
     return v;
@@ -550,15 +530,10 @@ function _applyPermissionDisclosure(containerEl, mode, showAll) {
     const groupEl = w.closest("details.permission-group");
     const groupKey = groupEl ? groupEl.dataset.permGroup : null;
     const forceShow = Boolean(groupKey && showAll.has(groupKey));
-    const vis = forceShow || isVisible(code);
-    w.hidden = !vis;
-    const parent = PERMISSION_DEPENDENCIES[code];
-    w.classList.toggle("permission-row-dependent", Boolean(parent));
-    const orphan = mode === "checkbox" && vis && parent && byCode.has(parent)
-      && isExplicit(code) && !gateSatisfied(parent);
-    _setPermOrphanWarn(w, orphan ? parent : null);
+    w.hidden = !(forceShow || isVisible(code));
+    w.classList.toggle("permission-row-dependent", Boolean(PERMISSION_DEPENDENCIES[code]));
   });
-  _refreshGroupDisclosure(containerEl, showAll, () => _applyPermissionDisclosure(containerEl, mode, showAll), mode);
+  _refreshGroupDisclosure(containerEl, showAll, () => _applyPermissionDisclosure(containerEl, mode, showAll), mode, isExplicit);
 }
 
 function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overrides, onChange, opts = {}) {

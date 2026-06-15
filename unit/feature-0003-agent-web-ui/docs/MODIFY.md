@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0264
+- Date: 2026-06-15 (TASK-0264, **Minor §12.3** — 권한 disclosure 추가 단순화: 게이트 미충족 시 부여 세부 권한도 숨김, forceVisible 제거)
+- Scope: agent-web-ui (프론트 전용) — 사용자 보고("더 보기 클릭 전 항목 노출, 최대한 숨김"). TASK-0257 의 비파괴 forceVisible 이 게이트 OFF·부분부여 역할서 부여 항목을 노출하던 것을 제거. 백엔드/RBAC/스키마 0.
+- 변경:
+  - `src/static/admin.js`:
+    - `_applyPermissionDisclosure`: `forceVisible`(부여 권한+조상 강제표시) **제거** → `isVisible` 은 게이트 체인 충족 시에만 true(부여 무관). orphan 칩 호출 제거.
+    - `_refreshGroupDisclosure(.., isExplicit)`: 부여 항목 있는 그룹은 checkbox 모드서도 vanish 안 함(`hiddenCount===rows.length && grantedCount===0` 만 vanish) + "더 보기 ${n}개 더 보기 · ${hiddenGranted}개 부여됨"(`has-granted` 클래스) → 부여 권한 도달성·표면화 보존.
+    - `_setPermOrphanWarn`/`_permLabel` 함수 제거(부여+게이트OFF 행이 이제 숨겨져 무의미).
+  - `src/static/styles.css`: `.permission-group-more.has-granted`(부여됨 강조) 추가. `[hidden]` 강제 규칙 셀렉터를 `.permission-grid [data-perm-code][hidden]` → **컨테이너 무관 `[data-perm-code][hidden]`** 로 unscope(계정 override 편집기 `.override-grid` 행 커버 — TASK-0258 갭 수정, 적대 리뷰 MINOR 흡수).
+  - `src/static/admin.html`: 캐시버스터 `?v=20260615-perm-collapse-granted`(styles.css + admin.js).
+  - `tests/test_permission_dependency_map.py`: 가시성 포팅서 force 제거, V1/V4/V5/V6 를 새 동작(게이트 OFF 부여 항목 숨김 + 게이트 충족 시 도달)으로 재작성, C1 을 unscoped 셀렉터 검증으로 강화.
+- 비변경: PERMISSION_DEPENDENCIES·게이트 reveal·마스터 게이트·own→any·저장 경로(hidden row 도 `:checked`/select 그대로 읽어 누락 0)·RBAC·엔드포인트·스키마.
+- 검증: perm test **11 PASS** + make test 컨테이너 회귀 0(exit=0) + node --check + CSS brace(1130=1130) + jsdom 17/17. **잔여**: 배포(web 만) + PB-0008.
+
 ## CHG-20260615-0262b
 - Date: 2026-06-15 (TASK-0262b PB-0008 Windows-browser 시각검증 evidence 후속 — 코드 변경 0, docs+scenario. CHG-20260615-0262 main `eb7be30` 머지·web 재배포 이후).
 - 변경: `docs/TEST.md` §4 `Environment: Windows-browser` Run 기록(chip dot 색 실측) + `docs/TASK.md` PB-0008 체크박스 [x] + `docs/REVIEW.md` REV-20260615-0262b [SKIPPED] + `tests/win-browser-task0262-chip-conn-color.scenario.json`(재현 시나리오).
