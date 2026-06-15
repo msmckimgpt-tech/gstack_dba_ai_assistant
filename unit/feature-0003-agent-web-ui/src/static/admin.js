@@ -1126,6 +1126,29 @@ function _paintDsConnBadge(el, entry) {
   el.title = entry.error ? `연결 실패: ${entry.error}` : "연결 실패";
 }
 
+// 데이터소스 목록 행 leading 의 네트워크 상태 도트(텍스트 없는 아이콘 배지) — 색상=상태,
+//  title/aria-label=접근성(색맹 대비). _paintDsConnBadge 의 텍스트 라벨 변형(가변폭)과 달리
+//  고정폭 도트라 행 leading 컬럼 정렬이 안정적이다.
+function _paintDsConnDot(el, entry) {
+  if (!el) return;
+  el.className = "ds-conn-dot";
+  const st = entry && entry.state;
+  let label;
+  if (st === "ok") {
+    el.classList.add("is-ok");
+    label = (entry.elapsed_ms != null) ? `연결됨 · ${entry.elapsed_ms}ms` : "연결됨";
+  } else if (st === "fail") {
+    el.classList.add("is-fail");
+    label = entry.error ? `연결 실패: ${entry.error}` : "연결 실패";
+  } else {
+    el.classList.add("is-checking");
+    label = "연결 상태 확인 중";
+  }
+  el.title = label;
+  el.setAttribute("role", "img");
+  el.setAttribute("aria-label", `네트워크 상태: ${label}`);
+}
+
 // datasource 연결 테스트(/test) — 캐시 우선. force=true 면 캐시 무시 재probe. 항상 결과 객체로 resolve.
 function _probeDatasourceConn(key, { force = false } = {}) {
   const k = String(key || "").trim().toLowerCase();
@@ -1954,7 +1977,17 @@ function _dsRenderList() {
     meta.className = "admin-list-row-meta";
     meta.textContent = `${ds.host || "?"}:${ds.port || ""}`;
     main.append(title, meta);
+
+    // 행 leading 에 네트워크(연결) 상태 도트. loadAdminData 가 백엔드 사전계산 conn_status 를
+    //  캐시에 넣어두므로 대부분 probe 없이 즉시 표시; unknown(캐시 miss)만 기존 4-cap lazy probe
+    //  재사용(in-flight dedup). 재렌더로 노드가 떨어져 나가면(isConnected=false) 갱신 skip.
+    const dsk = String(ds.key || "").trim().toLowerCase();
+    const dot = document.createElement("span");
+    _paintDsConnDot(dot, adminState.datasourceConnStatus.get(dsk));
+    row.appendChild(dot);
     row.appendChild(main);
+    _probeDatasourceConn(dsk).then((res) => { if (dot.isConnected) _paintDsConnDot(dot, res); });
+
     row.addEventListener("click", () => {
       adminState._dsSelectedKey = ds.key;
       _dsSyncListActive();

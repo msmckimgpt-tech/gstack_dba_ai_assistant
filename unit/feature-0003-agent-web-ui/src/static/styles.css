@@ -3168,6 +3168,24 @@ a { color: inherit; }
 .admin-ds-conn.is-checking { color: var(--text-muted); background: var(--bg); animation: covPickerPulse 1.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .admin-ds-conn.is-checking { animation: none; } }
 
+/* TASK-0277: 데이터소스 목록 행 leading 의 네트워크 상태 도트(아이콘 배지).
+ *  고정폭이라 행 간 leading 컬럼이 일정하게 정렬된다. 색맹 대비는 title/aria-label(JS). */
+.ds-conn-dot {
+  width: 9px; height: 9px; align-self: center;
+  border-radius: 999px;
+  color: var(--text-muted);              /* 상태 클래스가 color 만 바꾸면 점·halo 동시 적용 */
+  background: currentColor;
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 20%, transparent);
+}
+.ds-conn-dot.is-ok       { color: var(--success); }
+.ds-conn-dot.is-fail     { color: var(--danger, #dc2626); }
+.ds-conn-dot.is-checking { color: var(--text-muted); animation: covPickerPulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .ds-conn-dot.is-checking { animation: none; } }
+/* 데이터소스 목록만 leading 도트 컬럼(auto)을 추가 — #settingsList 등 다른 nav 목록은 1fr 유지. */
+#datasourceList .admin-list-row.admin-list-row--nav {
+  grid-template-columns: auto 1fr;
+}
+
 /* TASK-0053 Phase B/C — product subcatalog cards (Role/Account detail) */
 .admin-product-card-list {
   display: flex;

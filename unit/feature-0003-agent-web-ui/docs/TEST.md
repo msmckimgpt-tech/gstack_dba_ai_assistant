@@ -817,3 +817,7 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
     - **시각 evidence**: 스크린샷 `artifacts/pb0008-task0274/attach-panel-resized-458.png` — 우측 "첨부 파일" 패널이 확장 너비로 메인/대화목록과 레이아웃 충돌 없이 렌더. 콘솔 throw 0.
   - **Pass/Fail: PASS** — 핸들 hit-test·드래그 너비 변경·localStorage 저장·새로고침 복원·min/max clamp 전부 실제 Windows 브라우저 실측 통과. (기존 `#stepSidePanel`/`#profileDrawer` 검증 패턴과 동일 동작.)
   - **Notes:** 기 캐시된 사용자는 1회 하드리프레시(Ctrl+Shift+R)로 no-cache index.html 진입 후 자동 최신. CHECK#13(PB-0008 Windows-browser) **충족**.
+
+- 2026-06-15 (TASK-0278 데이터소스 목록 행별 네트워크 상태 배지 — 정적 검증 PASS / PB-0008 PENDING):
+  - **정적 검증**: `node --check admin.js` PASS, CSS 중괄호 균형. 적대적 코드리뷰(REV-0282, general-purpose outside voice) **SHIP** — grid 스코프 회귀 0(`#datasourceList` ID 특이성 > base, `#settingsList` 미매칭)·leading 배치·async detach 가드(`isConnected`)·캐시우선·중복 probe 0.
+  - **(PENDING) Environment: Windows-browser** — 머지 + web 재배포(정적자산 `?v=20260615-task0278-ds-conn-badge`) 후 PB-0008: `관리 콘솔 > 데이터소스` 각 행 leading 에 `.ds-conn-dot` 표시(연결됨=초록 `--success` / 실패=빨강 `--danger` / 확인중=muted 펄스), 행별 도트 `getBoundingClientRect().left` 동일(컬럼 정렬), `title`/`aria-label`("네트워크 상태: …") 텍스트 실측. `#settingsList` 등 타 목록 레이아웃 무회귀 확인. evidence 스크린샷 `artifacts/pb0008-task0277/`.

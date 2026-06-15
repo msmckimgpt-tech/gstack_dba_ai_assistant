@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0282
+- Date: 2026-06-15 (TASK-0278, **Minor** — 관리 콘솔 데이터소스 목록 행별 네트워크 상태 배지, frontend-only; §13.1 #249·#250 동시세션이 CHG-0279~0281·TASK-0277 선점 → CHG-0282/TASK-0278 재번호)
+- Scope: 정적자산만(admin.js + styles.css + admin.html). 백엔드/스키마/RBAC/엔드포인트 0.
+- 변경:
+  - (admin.js `_dsRenderList`) 각 행 leading 에 `.ds-conn-dot` 추가 — 캐시(`datasourceConnStatus`) hit 동기 즉시, miss(unknown)만 `_probeDatasourceConn`(force=false·4-cap 세마포어·in-flight dedup) lazy probe + `dot.isConnected` 가드(검색 재렌더 detach 보호).
+  - (admin.js 신규) `_paintDsConnDot(el, entry)` — ok/fail/checking→클래스 + `title`/`role=img`/`aria-label`(색맹 대응). picker `_paintDsConnBadge`(텍스트 배지)와 독립.
+  - (styles.css) `.ds-conn-dot`(currentColor 점+halo·상태 색·covPickerPulse·prefers-reduced-motion 정지) + `#datasourceList .admin-list-row--nav { grid-template-columns: auto 1fr }`(컨테이너 스코프, `#settingsList` 등 1fr 유지).
+  - (admin.html) 캐시버스터 `?v=20260615-task0278-ds-conn-badge`(styles.css + admin.js — #249/#250 변경과 합본 서빙).
+- 검증: node --check admin.js + CSS brace 균형 + 적대적 코드리뷰(REV-0282) SHIP. (잔여 PB-0008 배포후)
+- Files: unit/feature-0003-agent-web-ui/src/static/{admin.js,styles.css,admin.html}, docs/{TASK,MODIFY,REVIEW,TEST,FUNCTION}.md
+- Rollback: `.ds-conn-dot` 블록 + grid 스코프 규칙 + `_paintDsConnDot` + `_dsRenderList` 도트 삽입 + 캐시버스터 환원(전부 additive, 백엔드 무영향).
+- Deploy: web 재빌드(정적자산)만. migrate 불필. ask/insight-worker 무변경.
+
 ## CHG-20260615-0281
 - Date: 2026-06-15 (TASK-0277, **Minor §12.3** — 관리 콘솔 "보관 대화" 탭 UI 정합 다듬기; TASK-0276 list-detail 위 후속. 동시세션이 CHG-0279/0280 선점 → §13.1 재번호 0281)
 - Scope: agent-web-ui frontend 전용(admin.html + admin.js + styles.css) + 신규 jsdom 테스트. 백엔드·RBAC·엔드포인트·스키마·데이터 0.
