@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0271 [SKIPPED:pb0008-evidence-docs-only]
+- Date: 2026-06-15
+- Cycle: TASK-0271 (TASK-0269/0270 PB-0008 Windows-browser 시각검증 evidence 기록 — docs-only: TEST.md §4 Run 2건 + TASK.md 완료 표기. src 코드 0).
+- Skip 사유: 코드 변경 0(순수 evidence/docs). 핵심 변경은 REV-20260615-0269 [SUBAGENT:rbac-adversarial] SHIP / REV-20260615-0270 [SKIPPED:ui-disclosure-gate] 에서 이미 리뷰. 본 후속은 라이브 실증 기록.
+- 실증: PB-0008(실 Chrome/148 relay) — ① TASK-0270(배포 `8953dc1`): 계정 override 전부 상속 + 역할 baseline 주입 → 상속(허용) 게이트가 자식 펼침(account.read/update/conv.ask=flex), 상속(거부)는 접힘(read.any=none). ② TASK-0269(배포 `73755e9`): 운영 권한 내 대화/전체 대화 2그룹 분리·목록 조회 게이트 트리. 사용자 요구 라이브 충족. CHECK#13 충족.
+- Cross-ref: CHG-20260615-0271 / TEST.md §4 (2026-06-15 TASK-0269·0270 Run) / REV-20260615-0269·0270.
+
 ## REV-20260615-0270 [SKIPPED:ui-disclosure-gate-no-enforcement]
 - Date: 2026-06-15
 - Cycle: TASK-0270 (계정 override 편집기 게이트 = 허용/상속(허용) 펼침 — frontend-only `src/static/admin.js`)

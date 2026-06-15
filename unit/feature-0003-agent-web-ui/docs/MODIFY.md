@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0271
+- Date: 2026-06-15 (TASK-0271, **docs-only** — TASK-0269/0270 PB-0008 Windows-browser 시각검증 evidence 기록)
+- Scope: agent-web-ui 문서만 — `docs/TEST.md` §4 Run 2건(TASK-0269·0270) 추가 + `docs/TASK.md` 두 항목 "잔여 PB-0008" → "완료(PASS)". src 코드 0.
+- 변경: TEST.md §4 — ① TASK-0270 계정 override 상속(허용) 게이트(실 Chrome computed display: account.read/update/conv.ask=flex 상속허용, read.any=none 상속거부) ② TASK-0269 운영 권한 2그룹 분리·목록 조회 게이트 트리(내 대화 목록 조회 체크→내 동작 flex, 전체 동작 none). 둘 다 PASS.
+- 비변경: 코드·테스트·CSS 0(순수 evidence).
+- 검증: 라이브 배포(0270 main `8953dc1`, 0269 main `73755e9`, web Up healthy) 후 win-browser.py 실 Chrome computed display 실측. 스크린샷 `artifacts/pb0008-task0269/`·`artifacts/pb0008-task0270/`.
+
 ## CHG-20260615-0270
 - Date: 2026-06-15 (TASK-0270, **Minor §12.3** — 계정 override 편집기 게이트 = 허용/상속(허용) 펼침)
 - Scope: agent-web-ui (프론트 전용) — 사용자 요청(역할 트리 후속). 계정 override 편집기 disclosure 게이트가 '허용' 외에 '상속(허용)'(상속 + 역할 부여)에도 자식을 펼치도록. 트리/2그룹은 renderPermissionGrid 공유로 이미 적용됨.
