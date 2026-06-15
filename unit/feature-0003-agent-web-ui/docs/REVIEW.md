@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0263 [SKIPPED:pb0008-evidence-docs-only]
+- Date: 2026-06-15
+- Cycle: TASK-0262 PB-0008 evidence (verify-completion check#9 REV id 4자리 규칙 — `-0262b` 접미는 FAIL 이라 0263 채번; TASK-0259 가 0257/0258 evidence cycle 였던 패턴과 동일). docs+scenario, src 0.
+- Skip 사유: 코드 변경 0(순수 evidence/docs/scenario). 핵심 코드 변경은 선행 REV-20260615-0262 [SKIPPED:frontend-color-readonly-no-rbac] 에서 검토 완료. 본 후속은 라이브 실증 기록.
+- 실증: PB-0008(main `eb7be30`) — 선택 제품 chip dot 이 datasource 상태색(94 unstable=빨강, 95 healthy=초록) 으로 표시, auto 전이 시 conn 클래스 reset(회색). CHECK#13 충족.
+- Cross-ref: TEST.md §4 (2026-06-15 TASK-0262 Run) / TASK-0262 / REV-20260615-0262.
+
 ## REV-20260615-0262 [SKIPPED:frontend-color-readonly-no-rbac]
 - Date: 2026-06-15
 - Cycle: TASK-0262 (선택 제품 chip dot 네트워크 상태색 — TASK-0261 후속, frontend-only).
