@@ -3633,3 +3633,12 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] app.js/share.js: span 사이 `"\n"` 텍스트 노드 삽입 제거(block span 이 줄 구분 담당) + 미사용 `i` 파라미터 정리
 - [x] 캐시버스터 bump(app.js/share.js → `?v=20260615-task0256b-spacing`, 미변경 CSS 는 유지), node --check PASS
 - [x] web 재배포(main 1cd19de) + PB-0008 Windows-browser 재검증 PASS — 8줄 diff gap=lineHeight(20px) 단일 줄 간격 실측(2026-06-15, TEST.md §4)
+
+### TASK-0256c — diff 블록 줄 번호(old|new) + 복사 시 마커·번호 제외 (2026-06-15)
+- 사용자 요청: ① diff 각 줄에 줄 번호 표시, ② 블록 복사 시 `+`/`-` 마커·줄번호 제외하고 순수 코드만.
+- 결정(AskUserQuestion): 줄 번호 스타일 = 양쪽(old | new) GitHub 식.
+- 메커니즘: 줄번호+마커는 `data-gutter` 속성 → CSS `::before content`(의사요소=복사 비포함, user-select:none 이중). 코드는 맨 앞 마커 제거 후 textContent → 복사 시 순수 코드.
+- [x] enhanceDiffBlocks 재작성(app.js/share.js): buildDiffRows(분류+마커분리+old/new 번호), parseDiffHunkHeader(@@ seed), stripDiffMarker
+- [x] CSS(styles.css/share.css): `.diff-line::before` gutter(줄번호+마커, user-select:none) + `--diff-gutter-ch` 폭(2w+3, var fallback 7)
+- [x] node 로직 검증(줄번호·마커제거·hunk seed) + node --check, 캐시버스터 bump(app.js/share.js/styles.css/share.css)
+- [ ] make test + verify-completion + web 재배포 + PB-0008(줄번호 표시 + 복사 시 코드만 실측)

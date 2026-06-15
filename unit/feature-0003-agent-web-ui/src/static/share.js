@@ -194,26 +194,83 @@
     return "diff-ctx";
   }
 
+  // @@ -a,b +c,d @@ 헌크 헤더에서 old/new 시작 줄번호 추출. 없으면 null.
+  function parseDiffHunkHeader(line) {
+    const m = /^@@\s*-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s*@@/.exec(line);
+    return m ? { oldStart: parseInt(m[1], 10), newStart: parseInt(m[2], 10) } : null;
+  }
+
+  // 맨 앞 마커(+/-/공백) 1글자 + 뒤따르는 공백 1개 제거 — 복사 시 순수 코드만 남김.
+  function stripDiffMarker(line) {
+    let s = line;
+    if (s[0] === "+" || s[0] === "-" || s[0] === " ") s = s.slice(1);
+    if (s[0] === " ") s = s.slice(1);
+    return s;
+  }
+
+  // 각 줄을 {cls, mark, code, oldNo, newNo} 로 분해 — GitHub 식 양쪽 줄번호.
+  function buildDiffRows(lines) {
+    let oldNo = 1;
+    let newNo = 1;
+    return lines.map((line) => {
+      const cls = diffLineClass(line);
+      if (cls === "diff-hunk") {
+        const h = parseDiffHunkHeader(line);
+        if (h) { oldNo = h.oldStart; newNo = h.newStart; }
+        return { cls, mark: "", code: line, oldNo: "", newNo: "" };
+      }
+      if (cls === "diff-meta") {
+        return { cls, mark: "", code: line, oldNo: "", newNo: "" };
+      }
+      if (cls === "diff-add") {
+        return { cls, mark: "+", code: stripDiffMarker(line), oldNo: "", newNo: newNo++ };
+      }
+      if (cls === "diff-del") {
+        return { cls, mark: "-", code: stripDiffMarker(line), oldNo: oldNo++, newNo: "" };
+      }
+      return { cls, mark: " ", code: stripDiffMarker(line), oldNo: oldNo++, newNo: newNo++ };
+    });
+  }
+
   function enhanceDiffBlocks(html) {
+    // 줄번호 + +/- 마커는 data-gutter → CSS ::before content 로만 렌더(의사요소라 복사 비포함).
+    // 코드는 마커 제거 후 textContent 로만 넣어 복사 시 순수 코드만 잡힘(XSS 무첨가, DOMPurify 최종).
     if (typeof document === "undefined") return html;
     try {
       const tpl = document.createElement("template");
       tpl.innerHTML = html;
       const blocks = tpl.content.querySelectorAll("pre > code.language-diff");
       if (!blocks.length) return html;
+      const NB = "\u00a0"; // NBSP — gutter 정렬용
       blocks.forEach((codeEl) => {
         const raw = (codeEl.textContent || "").replace(/\n$/, "");
-        const lines = raw.split("\n");
+        const rows = buildDiffRows(raw.split("\n"));
+        let maxNo = 1;
+        rows.forEach((r) => {
+          if (r.oldNo) maxNo = Math.max(maxNo, r.oldNo);
+          if (r.newNo) maxNo = Math.max(maxNo, r.newNo);
+        });
+        const w = String(maxNo).length;
+        const padNo = (v) => {
+          const s = v === "" || v == null ? "" : String(v);
+          return NB.repeat(Math.max(0, w - s.length)) + s;
+        };
         codeEl.textContent = "";
-        lines.forEach((line) => {
+        rows.forEach((r) => {
           const span = document.createElement("span");
-          span.className = "diff-line " + diffLineClass(line);
-          span.textContent = line.length ? line : " ";
+          span.className = "diff-line " + r.cls;
+          span.setAttribute(
+            "data-gutter",
+            padNo(r.oldNo) + NB + padNo(r.newNo) + NB + (r.mark || NB)
+          );
+          span.textContent = r.code.length ? r.code : " ";
           codeEl.appendChild(span);
-          // .diff-line display:block — "\n" 텍스트 노드는 <pre> 에서 이중 줄바꿈 유발(TASK-0256b), 미삽입.
         });
         const pre = codeEl.closest("pre");
-        if (pre) pre.classList.add("diff-block");
+        if (pre) {
+          pre.classList.add("diff-block");
+          pre.style.setProperty("--diff-gutter-ch", String(2 * w + 3));
+        }
       });
       return tpl.innerHTML;
     } catch (_) {

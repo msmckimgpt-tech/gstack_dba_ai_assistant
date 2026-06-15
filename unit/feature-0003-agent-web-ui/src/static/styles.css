@@ -1056,14 +1056,38 @@ a { color: inherit; }
 }
 .message-content pre.diff-block .diff-line {
   display: block;
+  position: relative;
   white-space: pre-wrap;
   word-break: break-word;
-  padding: 0 14px;
+  /* 왼쪽에 gutter(줄번호 + 마커) 공간 확보 — ::before 가 그 자리에 그려진다. */
+  padding: 0 14px 0 calc(var(--diff-gutter-ch, 7) * 1ch + 1.6em);
   border-left: 2px solid transparent;
+}
+/* TASK-0256c: 줄번호(old/new) + +/- 마커 gutter. data-gutter 속성을 ::before content 로만
+   렌더하므로 선택/복사에 포함되지 않는다(복사 시 순수 코드만). user-select:none 은 이중 안전장치. */
+.message-content pre.diff-block .diff-line::before {
+  content: attr(data-gutter);
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(var(--diff-gutter-ch, 7) * 1ch + 1.6em);
+  padding: 0 0.7em;
+  box-sizing: border-box;
+  white-space: pre;
+  text-align: right;
+  color: #565f89;
+  background: rgba(0, 0, 0, 0.18);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
 }
 .message-content pre.diff-block .diff-ctx  { color: #c0caf5; }
 .message-content pre.diff-block .diff-add  { background: rgba(158,206,106,.14); color: #9ece6a; border-left-color: #9ece6a; }
 .message-content pre.diff-block .diff-del  { background: rgba(247,118,142,.14); color: #f7768e; border-left-color: #f7768e; }
+.message-content pre.diff-block .diff-add::before { color: #9ece6a; }
+.message-content pre.diff-block .diff-del::before { color: #f7768e; }
 .message-content pre.diff-block .diff-hunk { color: #7aa2f7; }
 .message-content pre.diff-block .diff-meta { color: #737aa2; }
 

@@ -3450,3 +3450,12 @@ source_of_truth: true
 - Files: src/app.py, tests/test_usage_conversations.py, docs/{TASK,MODIFY,REPORT,REVIEW}.md, docs/STATUS.md(repo)
 - Rollback: `%s::interval` → `interval %s` 환원(= 버그 복귀). 권장 안 함.
 - Deploy: web 재빌드(app.py). ask/insight-worker 무변경.
+
+## CHG-20260615-0256c
+- Date: 2026-06-15 (TASK-0256c)
+- Scope: 웹 UI 정적자산 — diff 줄번호 gutter + 복사 클린. 백엔드/API/스키마/RBAC 0.
+- 변경: `enhanceDiffBlocks`(app.js/share.js) — 각 줄을 buildDiffRows 로 분해, 맨 앞 `+`/`-` 마커를 코드에서 분리(stripDiffMarker)하고 old/new 줄번호 계산(parseDiffHunkHeader `@@` seed, 없으면 1부터). 줄번호+마커는 `data-gutter` 속성 → CSS `::before content` 로만 렌더(의사요소=선택/복사 비포함 + user-select:none). 코드는 마커 제거 후 textContent. styles.css/share.css `.diff-line::before` gutter + `--diff-gutter-ch`(2w+3, DOMPurify 가 inline style 제거해도 var fallback 7 로 graceful). 캐시버스터 bump.
+- 검증: node 로직(줄번호/마커제거/hunk seed) + node --check PASS. 렌더·복사는 PB-0008(배포 후).
+- Files: src/static/{app.js,share.js,styles.css,share.css,index.html,share.html}, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
+- Rollback: enhanceDiffBlocks/CSS 를 TASK-0256b 시점으로 환원(줄번호·gutter 제거, 마커 포함 코드 표시).
+- Deploy: web 재빌드(정적자산). ask-worker 무관(프롬프트 무변경).
