@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0281
+- Date: 2026-06-15 (TASK-0277, **Minor §12.3** — 관리 콘솔 "보관 대화" 탭 UI 정합 다듬기; TASK-0276 list-detail 위 후속. 동시세션이 CHG-0279/0280 선점 → §13.1 재번호 0281)
+- Scope: agent-web-ui frontend 전용(admin.html + admin.js + styles.css) + 신규 jsdom 테스트. 백엔드·RBAC·엔드포인트·스키마·데이터 0.
+- 변경:
+  - (admin.html) [문제1] archives pane header↔filter 사이의 `<p class="admin-pane-note">`(3문장 안내) 제거 → 다른 운영 탭과 동일 밀도. 안내는 우측 `#archiveDetail` 빈 상태(`admin-detail-empty`)에 `admin-archive-detail-note` 로 이동(정보 보존). 캐시버스터 admin.js·styles.css `?v=20260615-task0276-archives-ui` → `?v=20260615-task0277-archives-ui-align`.
+  - (admin.js) `renderArchiveDetail` 의 빈 분기 innerHTML 을 동일하게 `admin-detail-empty` + `admin-archive-detail-note` 안내 carry 하도록 갱신(미선택 시에도 안내 노출, static HTML 과 정합).
+  - (styles.css) [문제2] `.admin-archive-row-line` 의 `flex-wrap: wrap` 제거 + `align-items:baseline`/`min-width:0` 추가. `.admin-archive-row-topic` 에 `min-width:0` 보강. `.admin-archive-row-owner`/`.admin-archive-row-by` 에 `white-space:nowrap`+`text-overflow:ellipsis`+`overflow:hidden`+`min-width:0`+`flex:0 1 auto` 추가(긴 문자열 줄바꿈 대신 절단). `.admin-archive-row-ts` 에 `flex:0 0 auto`+`white-space:nowrap`(시각 비절단·우측 정렬 유지). [문제1] 사용처 0건이 된 `.admin-pane-note` 규칙 제거.
+  - (tests) 신규 `tests/verify_archive_tab_ui.mjs` — jsdom 으로 안내 이동(밀도 정합)·row 2줄 고정 구조·CSS anti-wrap 계약 검증(25 PASS).
+- 검증: node --check admin.js + CSS brace 균형 + jsdom 25 PASS + make test 컨테이너 전체 회귀 0(백엔드 무변경). 시각 = PB-0008(배포 후).
+- Files: src/static/{admin.html,admin.js,styles.css}, tests/verify_archive_tab_ui.mjs, docs/{TASK,MODIFY,FUNCTION,REVIEW,REPORT,TEST}.md
+- Cross-ref: REV-20260615-0281 / TASK-0277 / FUNCTION REQ-20260615-0279(AC-0507~0508) / CHG-20260615-0277(TASK-0276 list-detail 선행).
+
 ## CHG-20260615-0279
 - Date: 2026-06-15 (TASK-20260615T180923-product-icon-chip-list, **Minor §12.3** — 제품 프로필 아이콘을 대화창 chip + 제품 관리 목록 행에도 표시, frontend-only)
 - Scope: agent-web-ui (프론트 전용) — `src/static/{index.html, app.js, admin.js, styles.css}` + 신규 `tests/verify_product_icon_chip_list.mjs`. RBAC/스키마/엔드포인트/백엔드(app.py) 0.

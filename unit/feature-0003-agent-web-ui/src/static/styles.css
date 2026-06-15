@@ -6416,7 +6416,8 @@ a { color: inherit; }
 .admin-avatar-remove { color: var(--danger, #dc2626); }
 
 /* ─── TASK-0273/0276: 보관 대화 admin pane (audits 동형 list-detail) ────────── */
-.admin-pane-note { font-size: 12px; color: var(--text-muted, #6b7280); margin: 0 0 12px; line-height: 1.5; }
+/* TASK-0277: .admin-pane-note 는 보관 대화 pane 단일 사용처였고, 안내를 우측 상세 빈 상태로
+   이동(밀도 정합)하면서 사용처 0건이 되어 규칙 제거. 상세 안내는 .admin-archive-detail-note 사용. */
 /* 필터 행 — admin-audit-filter 와 동형 */
 .admin-archive-filter {
   display: flex;
@@ -6457,11 +6458,15 @@ a { color: inherit; }
 }
 .admin-archive-row:hover { background: var(--primary-soft); }
 .admin-archive-row.is-selected { background: var(--primary-soft); border-left: 3px solid var(--primary); }
+/* TASK-0277: 문자열 길이와 무관하게 2줄 고정(1줄=topic+시각, 2줄=소유자+보관자).
+   flex-wrap 제거 + 전 span 에 nowrap/ellipsis/min-width:0 으로 줄바꿈 대신 절단(…).
+   감사 로그 row 와 동일한 견고함 기준. */
 .admin-archive-row-line {
   display: flex;
   gap: 8px;
   font-size: 13px;
-  flex-wrap: wrap;
+  align-items: baseline;
+  min-width: 0;
 }
 .admin-archive-row-line.muted {
   font-size: 12px;
@@ -6469,18 +6474,34 @@ a { color: inherit; }
 }
 .admin-archive-row-topic {
   flex: 1 1 auto;
+  min-width: 0;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .admin-archive-row-ts {
+  flex: 0 0 auto;
   margin-left: auto;
   color: var(--text-muted);
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-.admin-archive-row-owner { flex: 0 1 auto; }
-.admin-archive-row-by { margin-left: auto; }
+.admin-archive-row-owner {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-archive-row-by {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* 상세 — admin-audit-detail 과 동형 */
 .admin-archive-detail {
   padding: 12px;
