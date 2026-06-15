@@ -8,7 +8,15 @@ source_of_truth: true
 
 # Task
 
-## 0. TASK-0278 (current cycle) — 관리 콘솔 데이터소스 목록 행별 네트워크 상태 배지 (leading 도트)
+## 0zz. TASK-20260615T182907-product-list-row-icon-layout-fix (current cycle) — 제품 관리 목록 행 UI 뒤틀림 핫픽스 (TASK-...-product-icon-chip-list 후속)
+- 보고(사용자): 제품 관리 목록의 UI 가 뒤틀림. (직전 cycle PR #249 가 목록 행에 아이콘 추가하면서 발생.)
+- 등급: **Minor §12.3** (frontend-only 단일 파일 레이아웃 버그 수정, admin.js. RBAC/스키마/엔드포인트/백엔드 0).
+- 진단: `.admin-list-row` 는 `display:grid; grid-template-columns: auto 1fr auto`(3열). PR #249 가 `row.append(cb, avatar, meta)` 로 avatar 를 **row 최상위 2번째 칸**에 넣어, avatar 가 `1fr` 칸을 차지하고 meta 가 `auto` 칸으로 밀려 행 정렬이 깨졌다(원래는 `[cb, meta]` 2자식 = `auto 1fr`). 계정 목록 행은 avatar 를 `main>title` 안에 중첩해 `[cb, main, chips]` 3자식이라 정상이었는데, 제품 행은 그 패턴을 안 따랐다.
+- [x] 수정(admin.js `renderProductList`): avatar 를 row 최상위가 아니라 **meta(`admin-list-main`) 첫 줄 `titleRow`(`admin-list-row-title`, flex) 안에 name 과 함께** 묶음(계정 목록 행과 동형). `row.append(cb, meta)` 2자식 복원 → grid `auto 1fr auto` 정상.
+- [x] 검증: node --check admin.js + **jsdom 19/19 PASS**([3] 행 레이아웃 회귀 5건 추가) + make test 회귀 0.
+- [ ] (잔여) PR 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 재검증(목록 행 정렬 정상).
+
+## 0. TASK-0278 (직전 cycle, 머지됨 #251) — 관리 콘솔 데이터소스 목록 행별 네트워크 상태 배지 (leading 도트)
 - 요청: `관리 콘솔 > 데이터소스` 의 각 목록 앞에 네트워크 상태를 배지 아이콘으로 표시.
 - 등급: **Minor §12.3** (frontend-only — RBAC/스키마/엔드포인트/백엔드/데이터 0. 기존 `GET /api/admin/datasources` `conn_status` + `POST .../{key}/test` 재사용).
 - 진단: 데이터소스 목록 행(`_dsRenderList`, `.admin-list-row--nav`)은 이름·엔진·`.env`·비번없음 배지만 있고 연결 상태 표면이 없었다. picker(REQ-0244)·상세 패널엔 연결/insight 상태가 있으나 목록 자체엔 부재. 백엔드는 이미 목록 응답에 `conn_status` 를 사전계산해 첨부(`loadAdminData` 가 `datasourceConnStatus` 캐시에 반영) → 추가 백엔드 0. (§13.1: #250 이 TASK-0277 선점 → TASK-0278 재번호)
@@ -56,7 +64,8 @@ source_of_truth: true
   - [x] `styles.css`: `.composer-product-chip-icon`(16px 원형 클립 + `.hidden` + img/svg 규칙) 신설, chip `max-width` 180→200(아이콘 추가분). 행 아이콘은 직전 cycle `.admin-avatar .avatar-img,.admin-avatar > svg` 원형 클립 규칙 재사용.
   - [x] 캐시버스터 통일 `?v=20260615-product-icon-chip-list`(index/admin html 의 app.js·admin.js·styles.css).
 - [x] 검증: node --check app.js·admin.js PASS + CSS brace 균형(1211=1211) + **jsdom 격리 14/14 PASS**(`tests/verify_product_icon_chip_list.mjs` — chip pinned Identicon/img·auto hidden·행 아이콘·동일 product_key 동일 Identicon 정합).
-- [x] main 병합(#249, aea4d15). 잔여: web 재배포(deploy_scope: included) + PB-0008 Windows-browser(chip 아이콘·목록 행 아이콘).
+- [x] **완료**: make test 회귀 0 → PR #249 squash 머지(main `aea4d15`) → web 재배포(repo-web-1 healthy, 캐시버스터 서빙 확인) → PB-0008 Windows-browser PASS(chip Identicon·목록 행 8개 Identicon·제품별 동일 아이콘 정합). evidence: TEST.md §4 + `artifacts/pb0008-profile-icon/41_chip_zoom.png`·`42_admin_list_icons.png`.
+- [!] **후속 핫픽스**(위 TASK-20260615T182907): 사용자 보고로 **제품 관리 목록 행 UI 뒤틀림** 발견 — 행 아이콘을 `row` 최상위 칸에 넣어 `.admin-list-row` 3열 grid(`auto 1fr auto`)가 깨짐. 해당 핫픽스 cycle 에서 수정.
 
 ## 0a. TASK-0276 (직전 cycle, 머지됨 #247) — 관리 콘솔 "보관 대화" 탭 UI 정합화 (audits/계정/역할/제품 동형 list-detail)
 - 요청: `관리 콘솔 > 보관 대화` 를 다른 탭(계정·역할·제품·감사 로그)과 정합하게 구성.

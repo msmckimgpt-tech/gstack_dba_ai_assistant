@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0286 [SKIPPED:frontend-layout-bugfix-no-backend-no-rbac]
+- Date: 2026-06-15 (REV 번호: 동시세션 TASK-0277/0277b/0278 이 REV-0281~0285 선점 → §13.1 재번호 0281→0286)
+- Cycle: TASK-20260615T182907-product-list-row-icon-layout-fix (제품 관리 목록 행 UI 뒤틀림 핫픽스), **Minor §12.3** — frontend-only(`src/static/admin.js` 1곳). RBAC/인증/스키마/엔드포인트/데이터/시크릿/백엔드 0.
+- Trigger: §18.8 dispatch 키워드(UI/레이아웃 → ux,design). 변경 실질은 단일 파일 grid 레이아웃 버그 수정(avatar 위치 1곳) — 신규 데이터·권한·인터랙션 0 → §18.8.1 경량 경로(적대 패널 불요, Minor frontend-only + 정책 doc 0 → skip).
+- 자체 점검:
+  - ① **근본 원인 정확성**: `.admin-list-row { grid-template-columns: auto 1fr auto }` 3열. 원래 제품 행 `[cb, meta]` 2자식(auto 1fr) 정상 → PR #249 가 `[cb, avatar, meta]` 3자식으로 avatar 가 1fr·meta 가 auto 칸 점유 = 뒤틀림. 수정은 avatar 를 meta>titleRow 안으로 이동해 다시 2자식 → grid 복원. jsdom [3] 으로 `row.append(cb, meta)` 단언·`row.append(cb, avatar, meta)` 부재 단언.
+  - ② **계정 행 동형성**: 계정 목록 행이 이미 `title.append(avatar, name, ...)` + `main.append(title, meta)` + `row.append(cb, main, chips)` 검증된 패턴. 제품 행도 동일 `admin-list-row-title`(flex, 기존 CSS) 재사용 → 새 CSS 0.
+  - ③ **회귀**: 아이콘 렌더(applyAvatar)·Identicon 정합·row click(selectedProductId)·shift-range·cov 배지·checkbox·명칭 `(약어) 명칭` 무변경(DOM 위치만 재배치). chip·드롭업·상세 무관.
+  - ④ **텍스트 잘림**: `.admin-list-row-title` min-width:0 + name 의 ellipsis 컨텍스트 → 긴 명칭 안전.
+- 검증: node --check admin.js + jsdom `tests/verify_product_icon_chip_list.mjs` **19/19 PASS**(기존 14 + [3] 행 레이아웃 5) + make test 컨테이너 회귀 0.
+- Residual: web 재배포(deploy_scope: included) 후 PB-0008 Windows-browser 재검증(목록 행 정렬·아이콘·텍스트 위치 정상) → TEST.md §4.
+- Cross-ref: CHG-20260615-0286 / TASK-20260615T182907-product-list-row-icon-layout-fix / CHG-20260615-0279(원인).
+
 ## REV-20260615-0284 [SKIPPED:pb0008-evidence-docs-only]
 - Date: 2026-06-15
 - Cycle: TASK-0277b 후속 (PB-0008 재검증 PASS evidence 기록 — docs-only: TEST.md §4 placeholder 교체 + TASK.md 완료 표기). src 코드 0.

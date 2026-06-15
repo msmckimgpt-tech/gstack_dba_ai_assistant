@@ -5434,15 +5434,20 @@ function renderProductList() {
       renderProductList();
       renderProductDetail();
     });
-    // product-icon-chip: 제품 프로필 아이콘(이미지 or Identicon) — 목록 행에도 표시(상세·대화 chip 과 정합).
+    const meta = document.createElement("div");
+    meta.className = "admin-list-main";
+    // product-icon-chip 뒤틀림 수정: avatar 를 row 최상위(3열 grid 깨짐)가 아니라 meta 첫 줄에
+    //   name 과 함께 가로 flex(admin-list-row-title)로 묶는다 — 계정 목록 행과 동형. row 는
+    //   다시 [cb, meta] 2자식이라 grid `auto 1fr auto` 정상.
+    const titleRow = document.createElement("div");
+    titleRow.className = "admin-list-row-title";
     const avatar = document.createElement("span");
     avatar.className = "admin-avatar admin-avatar-sm";
     applyAvatar(avatar, { url: p.icon_url, seed: p.product_key || p.name || "", initials: (p.product_key || "P").slice(0, 2).toUpperCase() });
-    const meta = document.createElement("div");
-    meta.className = "admin-list-main";
     const name = document.createElement("div");
     name.className = "admin-account-name";
     name.textContent = `(${p.product_key}) ${p.name}`;
+    titleRow.append(avatar, name);
     const sub = document.createElement("div");
     sub.className = "admin-meta";
     const badges = [];
@@ -5453,8 +5458,8 @@ function renderProductList() {
     const covLine = document.createElement("div");
     covLine.className = "admin-meta cov-line";
     covLine.appendChild(buildCoverageBadge(p.id));
-    meta.append(name, sub, covLine);
-    row.append(cb, avatar, meta);
+    meta.append(titleRow, sub, covLine);
+    row.append(cb, meta);
     listEl.appendChild(row);
   });
   updateProductSelectAllCheckbox();
