@@ -124,3 +124,5 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 [2026-05-26T06:52:40Z] update | index | Glossary/_Index.md | 24 inline term 표 (template + project-specific)
 [2026-05-26T06:52:40Z] lint-fix | index | sources/_Index.md | 깨진 wikilink 예시 placeholder text 로 전환 (lint broken PASS)
 [2026-05-26T06:52:40Z] lint-fix | index | syntheses/_Index.md | 깨진 wikilink 예시 placeholder text 로 전환 (lint broken PASS)
+
+## [2026-06-15] feature | TASK-0256 assistant 답변 markdown diff 블록(리뷰 시 변경 제시) + 웹 UI diff 색 렌더 (PR#209, main 2befd37)

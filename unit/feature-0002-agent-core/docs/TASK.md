@@ -846,5 +846,5 @@ TASK-0015 (plan-review):
 - 목표: 첨부파일/사용자 쿼리 리뷰·편집 응답에서 변경(수정 SQL·편집본)을 markdown ```diff 블록으로 제시하도록 base SYSTEM_PROMPT 가 지시.
 - [x] SYSTEM_PROMPT OUTPUT 섹션 뒤 "## SHOWING CHANGES — USE A MARKDOWN DIFF BLOCK" 추가 (리뷰/편집 한정, 신규 SQL 작성은 ```sql 유지)
 - [x] test_compose_system_prompt: SYSTEM_PROMPT 가 ```diff·DIFF BLOCK 포함 + OUTPUT 이후 위치 검증 (4 passed)
-- [ ] 라이브 WebSystemPrompts global row 갱신(백업) — base 는 DB row 가 truth, 상수는 seed/fallback
-- [ ] ask-worker 재배포 후 라이브 검증
+- [x] 라이브 WebSystemPrompts global row 갱신 — 적용완료(5799→6837자, 마커 검증 True, 컨테이너 백업 /tmp/task0256_global_prompt_backup.txt)
+- [x] ask-worker 재배포(main 2befd37) + SYSTEM_PROMPT diff 지침 baked 검증
