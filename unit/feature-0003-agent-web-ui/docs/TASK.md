@@ -8,7 +8,25 @@ source_of_truth: true
 
 # Task
 
-## 0. TASK-0274 (current cycle) — 첨부파일 목록 사이드 패널(#attachSidePanel) 너비 조절(리사이즈) 가능화
+## 0. TASK-0275 (current cycle, 동시세션이 TASK-0274[첨부 패널 resize]/AC-0492 선점→§13.1 재번호 0274→0275) — assistant 첨부 수정 → 새 버전 materialize + 대화 진행에 따른 버전 관리
+- 요청(Task⑥): assistant 가 전달받은 첨부파일을 수정해 사용자에게 제공 + 대화 진행에 따른 버전 관리.
+- 등급: **Critical §12.3** (LLM 자동 데이터 변형·저장 표면 신규 + MinIO 쓰기 + 스키마 변경). PLAN-APPROVED(사용자 2개 설계 결정 확정).
+- 사용자 결정(AskUserQuestion): 수정 범위=**텍스트 계열 MVP**(csv/text, 바이너리 제외), 확정 방식=**assistant 자동 materialize**(사용자 클릭 불요).
+- 구현:
+  - [x] 스키마(MySQL 전용 — 첨부는 PG/alembic 무관): `WebConversationAttachments` 에 `RootAttachmentId`/`VersionNumber`/`CreatedByRole`/`SupersededAt` + UNIQUE `UQ_WCA_VersionChain(RootAttachmentId,VersionNumber)`. 멱등 ALTER `_ensure_attachment_version_schema` 를 fast-path(`_ensure_seed_catchup`)·slow-path(`_ensure_web_tables`) 양쪽 호출(avatar 선례 동형 — fast-path 미보정 시 'Unknown column' 회귀 방지).
+  - [x] materialize: `_parse_attachment_edit_blocks`(답변 내 ```attachment-edit``` fenced block 파싱) + `_materialize_assistant_attachment_edits`(가드 적용 후 새 버전 생성). ask 흐름에서 render_output 확정 후 호출 → 응답 `edited_attachments`.
+  - [x] 신뢰 경계 가드: ① 텍스트 계열 kind(csv/text)만 — 바이너리 거부. ② source 첨부 같은 conversation+account scope(IDOR 차단). ③ size cap(per_file/conv/account) 재사용. ④ turn 당 개수 cap(5)+내용 size cap(1MB). ⑤ 새 파일명 source 확장자 강제(.exe 등 차단)+safe_filename(traversal 차단).
+  - [x] 버전 체인: root=source 의 root(없으면 source), VersionNumber+1, CreatedByRole='assistant'. MinIO put 선행→INSERT→직전버전 supersede(VersionNumber< 기반 self-heal). 목록(`list_conversation_attachments`)은 최신만(`SupersededAt IS NULL`). `GET /api/attachments/{id}/versions`(체인 전체, read.{own,any} 권한, pending signed_url 미발급).
+  - [x] 프론트(app.js/styles.css): 첨부 pill 버전 배지(`v2 · AI 수정`) + `edited_attachments` 토스트. 캐시버스터 `?v=20260615-task0275-attachment-version`.
+- 검증:
+  - [x] py_compile + node --check app.js + CSS brace.
+  - [x] 신규 `test_attachment_versioning.py` **11 PASS**(파서 2·materialize 가드 6·직렬화 1·파일명 1·목록필터 1) + make test 컨테이너 **전체 회귀 0** + ruff clean. (테스트 sys.modules 오염 → monkeypatch.setitem 자동원복으로 해소.)
+  - [x] **라이브 라운드트립**(임시 web 적용 + MySQL ALTER): materialize→새버전(v2, role=assistant)·MinIO 바이트(sha256 일치)·부모 supersede·목록 최신만·`/versions` 체인 2개. IDOR 가드 2종(cross-account/conv) 라이브 거부 확인. V3 traversal/.exe 라이브 차단(`.._.._.._etc_passwd.sql`·object_key `../` 없음). V6 UNIQUE 충돌 IntegrityError 거부.
+  - [x] **outside-voice 적대적 보안 리뷰**(REV-20260615-0276): 외부 침투형(IDOR·traversal·kind우회·권한상승·DoS cap·SQLi·/versions 권한) BLOCKER 0. 데이터 정합 BLOCKER1(원자성)+MAJOR2(UNIQUE race·audit 부재)+MINOR1(확장자) **전부 수정 후 SHIP**: put-before-insert+self-heal supersede, UNIQUE 인덱스, `attachment.version.create` audit, 확장자 고정.
+- 배포: web 재빌드(app.py+정적자산). **migrate 불필**(첨부는 MySQL DML-only 테이블 — 멱등 ALTER 가 재기동 시 자동 적용, alembic/PG 무관). `deploy_scope: included`.
+- [ ] (잔여) 머지 → web 재배포 → PB-0008(첨부 버전 배지·AI 수정본·`/versions` 시각검증).
+
+## 0a. TASK-0274 (직전 cycle, 머지됨) — 첨부파일 목록 사이드 패널(#attachSidePanel) 너비 조절(리사이즈) 가능화
 - 요청: `작업 화면 > '+' > 첨부파일 목록` 으로 나타나는 사이드바 UI 의 크기 조절(resize) 가능화.
 - 등급: **Minor §12.3** (비파괴 프론트엔드 UI 추가 — 기존 step-side-panel/profileDrawer 의 검증된 resize 패턴 verbatim 이식. RBAC/스키마/엔드포인트/데이터 0).
 - 근거: `#stepSidePanel`(`setupStepSidePanelResize`)·`#profileDrawer`(`setupProfileDrawerResize`)는 이미 좌측 가장자리 드래그 핸들 + localStorage 너비 영속화 패턴을 운영 중. `#attachSidePanel` 만 고정 `width:280px` 로 resize 미구현이었음 → 동일 패턴 이식.
@@ -20,7 +38,7 @@ source_of_truth: true
   - [x] node --check app.js PASS.
 - [x] 완료: verify-completion --pre-commit PASS → PR #241 squash 머지(main `bb06ddf`) → web 재배포(`sudo docker compose build web && up -d --no-deps web`, repo-web-1 Up healthy) → **PB-0008 Windows-browser 시각검증 PASS**(핸들 hit-test=attachSidePanelResizer·드래그 280→458px·localStorage 저장·새로고침 후 458px 복원·min240/max92vw clamp 실측). evidence: TEST.md §4 2026-06-15 TASK-0274 Run + `artifacts/pb0008-task0274/attach-panel-resized-458.png`.
 
-## 0aa. TASK-0272 (current cycle, 동시세션이 TASK-0271/AC-0470 선점→§13.1 rebase 후 재번호 0271→0272·AC-0470→0487) — 대화 화면 프로필 첫 진입 시 "프롬프트 > 제품 범위" 목록 비어있는 버그 수정
+## 0b. TASK-0272 (직전 cycle, 머지됨) — 대화 화면 프로필 첫 진입 시 "프롬프트 > 제품 범위" 목록 비어있는 버그 수정
 - 증상: 대화 화면에서 프로필 드로어를 처음 열면(새로고침 후) `프롬프트` 탭의 **제품 범위**(`#promptProductSelect`) 셀렉트가 비어 있음. 다른 탭을 눌렀다가 `프롬프트` 탭을 다시 클릭해야 채워짐.
 - 등급: **Minor §12.3** (비파괴 프론트엔드 단일 파일 버그 수정, RBAC/스키마/엔드포인트/데이터 0).
 - 근본원인: lazy 콘텐츠 적재(`initAccountPromptEditor()`)가 탭 **클릭 리스너**(`initialize()` 내)에만 배선됨. `openProfile("prompt")`→`switchProfileTab("prompt")`(첫 진입 시 prompt 가 기본 활성 탭, 클릭 이벤트 없음) 경로에는 디스패치가 없어 셀렉트가 미적재 상태로 노출. `state.products` 는 부트스트랩(`initializeWorkspace`→`/api/session`)에서 이미 적재되어 데이터 문제 아님.

@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0276 [SUBAGENT:attachment-version-security]
+- Date: 2026-06-15
+- Cycle: TASK-0275 (assistant 첨부 수정→새 버전 materialize + 버전 관리), **Critical §12.3** — LLM 자동 데이터 변형·저장 신규 표면 + MinIO 쓰기 + 스키마 변경. (REV 번호: 동시세션이 REV-20260615-0275[첨부패널 resize evidence] 선점 → 본 보안 리뷰 0276.)
+- Trigger: §18.8 — 신뢰 불가 입력(LLM 출력)이 사용자 데이터를 자동 생성·저장하는 표면 + 신규 인가 경로(/versions) + IDOR 가능성 → 적대적 보안/정합 리뷰(general-purpose outside voice). [[feedback_outside_voice_for_rbac]] 정합.
+- Verdict: **SHIP** (외부 침투형 BLOCKER 0; 데이터 정합 BLOCKER1+MAJOR2+MINOR1 **수정 후 흡수**).
+  - 외부 침투형 PASS(7): IDOR(conv+account scope 이중 가드), path traversal(safe_filename `[^A-Za-z0-9._\-]`→`_` + uuid prefix), kind 우회(source kind 기준 + 확장자 source 고정), 권한 상승(account_id 일치 강제), DoS(count cap 5 슬라이스+per-block 1MB+누적 SUM 재조회), SQLi(전 bound param), /versions 권한(_account_can_access_attachment + pending signed_url 차단).
+  - 수정한 데이터 정합 결함:
+    - BLOCKER(V8) autocommit 비원자 INSERT/put/supersede → **put-before-insert 재배치**(orphan DB row 제거) + supersede WHERE `VersionNumber<new` self-heal.
+    - MAJOR(V6) 비유니크 인덱스 + lock 없는 MAX+1 race → **UNIQUE `UQ_WCA_VersionChain`**(동시 INSERT IntegrityError 거부).
+    - MAJOR(V10) materialize audit 부재 → **`attachment.version.create` audit** 추가(D12 categorical).
+    - MINOR(V3) `.exe` 등 확장자 다운로드 노출 → **source 확장자 강제 고정**.
+- Verification: 신규 test_attachment_versioning.py 11 PASS + make test 회귀 0 + 라이브 라운드트립(materialize·MinIO sha256·supersede·목록필터·/versions·IDOR 2종 라이브거부·traversal/.exe 라이브차단 `.._.._.._etc_passwd.sql`·UNIQUE IntegrityError).
+- Residual: 머지 → web 재배포(migrate 불필) + PB-0008. MinIO 고아 객체(INSERT 실패 시)는 reconciliation worker 정리(무해, 정상 업로드 경로와 동형).
+- Cross-ref: CHG-20260615-0275 / TASK-0275 / FUNCTION REQ-20260615-0275(AC-0493~0496).
+
 ## REV-20260615-0275 [SKIPPED:pb0008-evidence-docs-only]
 - Date: 2026-06-15
 - Cycle: TASK-0274 후속 (첨부 패널 resize PB-0008 Windows-browser 시각검증 evidence 기록 — docs-only: TEST.md §4 Run 1건 + TASK.md 완료 표기. src 코드 0).

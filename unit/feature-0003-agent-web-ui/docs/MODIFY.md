@@ -9,6 +9,19 @@ source_of_truth: true
 # Modify Log
 
 ## CHG-20260615-0275
+- Date: 2026-06-15 (TASK-0275, **Critical §12.3** — assistant 첨부 수정→새 버전 materialize + 버전 관리; 동시세션 첨부패널 resize 선점 0274 → §13.1 재번호 0274→0275)
+- Scope: app.py(materialize 파서/헬퍼 + ask 훅 + /versions 엔드포인트 + 버전 직렬화 + 멱등 스키마) + 정적자산(app.js/styles.css/index.html). MySQL 스키마 컬럼 ADD(첨부 테이블 — PG/alembic 무관, migrate 불필).
+- 변경:
+  - (스키마 MySQL 전용) `WebConversationAttachments` 에 `RootAttachmentId`/`VersionNumber`/`CreatedByRole`/`SupersededAt` + UNIQUE `UQ_WCA_VersionChain`. `_ensure_attachment_version_schema` 멱등 ALTER — fast-path(`_ensure_seed_catchup`)+slow-path(`_ensure_web_tables`) 양쪽. CREATE TABLE 정의에도 반영.
+  - (materialize) `_parse_attachment_edit_blocks`(```attachment-edit``` fenced block 파싱, graceful) + `_materialize_assistant_attachment_edits`(5가드: 텍스트kind·conv/account scope·size cap·count/size cap·확장자고정+safe_filename). MinIO put 선행→INSERT→supersede(VersionNumber< self-heal)→`attachment.version.create` audit. ask 흐름 render_output 확정 후 호출 → 응답 `edited_attachments`.
+  - (조회/목록) `GET /api/attachments/{id}/versions`(체인 전체, read.{own,any}, pending signed_url 미발급). `list_conversation_attachments` WHERE `SupersededAt IS NULL`(최신만). `_serialize_attachment_for_api` 버전 필드 5개.
+  - (프론트) app.js `_buildPill` 버전 배지(`v{n} · AI 수정`) + `_syncConversationAttachmentsToBucket` version 메타 보존 + `edited_attachments` 토스트. styles.css `.pill-version`(.ai-edited 강조). index.html 캐시버스터 `?v=20260615-task0275-attachment-version`.
+- 검증: 신규 test_attachment_versioning.py 11 PASS(파서2·가드6·직렬화1·파일명1·목록필터1) + make test 컨테이너 전체 회귀 0 + ruff + py_compile + node --check + CSS brace(1194=1194) + 라이브 라운드트립(materialize→v2·MinIO sha256·supersede·목록필터·/versions·IDOR 2종·traversal/.exe 차단·UNIQUE 충돌 거부) + outside-voice 보안 리뷰 SHIP(REV-0275, 데이터정합 BLOCKER1+MAJOR2+MINOR1 수정).
+- Files: src/app.py, src/static/{app.js,styles.css,index.html}, tests/test_attachment_versioning.py, docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md, docs/STATUS.md(repo)
+- Rollback: materialize 파서/헬퍼·ask 훅·/versions 엔드포인트·버전 직렬화·목록 SupersededAt 필터·프론트 배지/토스트 제거 + 캐시버스터 환원. 버전 컬럼·UNIQUE 잔존(무해, 기존 첨부 동작 동일). MinIO 고아 객체는 reconciliation worker 정리.
+- Deploy: web 재빌드(app.py+정적자산). **migrate 불필**(첨부 MySQL DML-only — 멱등 ALTER 재기동 자동 적용). ask/insight-worker 무변경.
+
+## CHG-20260615-0274b
 - Date: 2026-06-15 (TASK-0274 후속, **docs-only** — 첨부 패널 resize PB-0008 Windows-browser 시각검증 evidence 기록)
 - Scope: agent-web-ui 문서만 — `docs/TEST.md` §4 Run 1건(TASK-0274) 추가 + `docs/TASK.md` 잔여 PB-0008 항목 "완료(PASS)" 표기. src 코드 0.
 - 변경: TEST.md §4 — 배포(main `bb06ddf` web 재배포) 후 실 Chrome/148 relay 로 ① `+` > 첨부파일 목록 → 패널 표시 + resizer hit-test(elementFromPoint=attachSidePanelResizer, 가림 0) ② 핸들 드래그 280→458px + `.is-resizing` ③ localStorage `web.attachSidePanel.width`=458 저장 ④ 새로고침 후 458px 복원 ⑤ min240/max92vw(1149) clamp 실측. 스크린샷 `artifacts/pb0008-task0274/attach-panel-resized-458.png`.

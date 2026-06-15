@@ -245,12 +245,26 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0041: 고정 UI 라벨(button/label/option/h1-3 등; conv-list/messages 제외)에 한글 "상품" 잔존 0
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
+### TASK-0275 assistant 첨부 수정 → 새 버전 materialize + 버전 관리 (REQ-20260615-0275, AC-0493~0496, Critical §12.3)
+- TEST-0046: `_parse_attachment_edit_blocks` — 정상 ```attachment-edit``` 블록(헤더 JSON + 내용)을 파싱하고, 헤더 깨짐/source_id 누락/0/블록 부재는 graceful 빈 리스트.
+- TEST-0047: `_materialize_assistant_attachment_edits` — 정상 텍스트 첨부 → 새 버전 INSERT(VersionNumber+1, CreatedByRole='assistant', RootAttachmentId=root) + MinIO put + 직전 버전 supersede.
+- TEST-0048: materialize 가드 — 바이너리 kind(pdf) source 거부(가드1), cross-conversation source 거부(가드2), cross-account source 거부(가드2), 내용 size cap 초과 거부(가드4), turn 당 개수 cap 초과분 무시(가드4).
+- TEST-0049: `_serialize_attachment_for_api` — version_number/root_attachment_id(NULL root → 자기 Id)/created_by_role/is_assistant_generated/superseded 직렬화.
+- TEST-0050: `_next_version_filename` — 확장자 보존 버전 접미(report.csv→report_v2.csv), 무확장자/빈입력 fallback.
+- TEST-0051: `list_conversation_attachments` SQL 에 `SupersededAt IS NULL` 필터 존재(최신 버전만 노출, 정적 소스 검사).
+- TEST-0052: 라이브 — materialize→MinIO 바이트(sha256 일치)·부모 supersede·목록 최신만·`/versions` 체인 2개·IDOR 2종 거부·traversal/.exe 차단·UNIQUE 충돌 IntegrityError.
+
 ### TASK-0272 프로필 첫 진입 제품 범위 적재 (REQ-20260615-0272, AC-0487, Minor §12.3)
 - TEST-0043: `switchProfileTab("prompt")` 가 호출되면(탭 클릭 이벤트 없이도) `#promptProductSelect` 가 `state.products` 의 활성 제품으로 채워진다 — `openProfile("prompt")`(드로어 첫 오픈) 경로에서도 적재된다.
 - TEST-0044: `initialize()` 의 탭 클릭 리스너는 `switchProfileTab(tab)` 만 호출하고 lazy 디스패치(`initAccountPromptEditor`/`loadProfileUsage`)를 직접 중복 보유하지 않는다 (단일 진입점 = `switchProfileTab`).
 - TEST-0045: node --check app.js 통과 (구문 무결).
 
 ## 4. Test Run History
+- 2026-06-15 (TASK-0275 assistant 첨부 수정→새 버전 materialize + 버전 관리, **Critical §12.3**):
+  - **Environment: CLI** (컨테이너 make test). 신규 `test_attachment_versioning.py` **11 PASS**(파서2·materialize 가드6·직렬화1·파일명1·목록필터1) + make test 컨테이너 **전체 회귀 0** + ruff clean + py_compile + node --check app.js + CSS brace(1194=1194). 테스트 sys.modules 오염(가짜 web 모듈) → `monkeypatch.setitem` 자동 원복으로 해소(share_redaction 등 web.app import 테스트와 공존 확인).
+  - **Environment: live-roundtrip** (임시 web 적용 + 라이브 MySQL ALTER + MinIO). materialize(source 272 text → 새 버전 273 v2 role=assistant root=272)·MinIO 바이트 70B sha256 일치·원본 272 SupersededAt 마킹·목록(SupersededAt IS NULL)에 273만 노출·`/versions` 체인 [272 v1 superseded, 273 v2 active]. **보안 가드 라이브 확인**: cross-account(999)/cross-conversation 거부(로그 mismatch), traversal `../../../etc/passwd.exe` → OriginalFilename `.._.._.._etc_passwd.sql`(확장자 .sql 고정)·object_key `../` 없음, 같은 (root,version) 2차 INSERT IntegrityError 거부(UNIQUE). 검증 데이터 정리(273 제거·272 원복).
+  - **outside-voice 보안 리뷰** REV-20260615-0276 [SUBAGENT]: 외부 침투형 BLOCKER 0, 데이터 정합 BLOCKER1(원자성)+MAJOR2(UNIQUE race·audit)+MINOR1(확장자) 수정 흡수 → SHIP.
+  - **(잔여) PB-0008 Windows-browser**: web 재배포 후 첨부 버전 배지(`v{n} · AI 수정`)·`edited_attachments` 토스트·`/versions` 시각검증 → 결과 추가 예정. (배포 전 CHECK#13 WARN.)
 - 2026-06-15 (TASK-0272 대화 화면 프로필 첫 진입 시 "프롬프트 > 제품 범위" 비어있는 버그, **Minor §12.3** frontend-only):
   - **Environment: CLI** (정적 검증): `node --check app.js` PASS. 코드 정합 — `switchProfileTab(tab)` 에 탭별 lazy 디스패치(prompt→`initAccountPromptEditor()` / usage→`loadProfileUsage()`) 추가, `initialize()` 탭 클릭 리스너의 중복 디스패치 제거(단일 진입점화). index.html app.js 캐시버스터 `?v=20260615-task0272-prompt-scope`. REV-20260615-0272 [SKIPPED:panel].
   - **(잔여) PB-0008 Windows-browser**: web 재배포(deploy_scope: included) 후 프로필 드로어 첫 진입(새로고침 후)에서 제품 범위 셀렉트가 즉시 채워짐을 실제 Windows 화면에서 실측 → 결과를 본 항목에 추가 예정. (배포 전이라 본 commit 의 CHECK#13 은 WARN — 배포 후 충족 기록.)

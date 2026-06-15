@@ -5095,6 +5095,10 @@ async function _syncConversationAttachmentsToBucket(convId) {
           selected: true,
           signed_url: a.signed_url || null,
           source: "session",
+          // TASK-0274: 버전 메타(assistant 수정본 배지용).
+          version_number: Number(a.version_number || 1),
+          is_assistant_generated: !!a.is_assistant_generated,
+          root_attachment_id: Number(a.root_attachment_id || aid),
         });
         existingIds.add(aid);
       }
@@ -5153,6 +5157,20 @@ function _renderAttachmentPills() {
     sizeEl.className = "pill-size";
     sizeEl.textContent = `${sizeKb} KB`;
 
+    pill.append(nameEl, sizeEl);
+
+    // TASK-0274: assistant 수정본 / 버전 배지. version>1 또는 assistant 생성 시 표시.
+    const versionNum = Number(it.version_number || 1);
+    if (it.is_assistant_generated || versionNum > 1) {
+      const verBadge = document.createElement("span");
+      verBadge.className = "pill-version" + (it.is_assistant_generated ? " ai-edited" : "");
+      verBadge.textContent = it.is_assistant_generated ? `v${versionNum} · AI 수정` : `v${versionNum}`;
+      verBadge.title = it.is_assistant_generated
+        ? "assistant 가 수정한 버전입니다. 버전 기록은 첨부 메뉴에서 확인하세요."
+        : `버전 ${versionNum}`;
+      pill.appendChild(verBadge);
+    }
+
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "pill-remove";
@@ -5163,7 +5181,7 @@ function _renderAttachmentPills() {
       _removeAttachmentPill(String(it.id));
     });
 
-    pill.append(nameEl, sizeEl, removeBtn);
+    pill.appendChild(removeBtn);
     return pill;
   };
 
@@ -6136,6 +6154,13 @@ async function sendPrompt() {
     }
     _renderAttachmentPills();
     showToast(payload.error ? payload.error : "응답을 갱신했습니다.");
+    // TASK-0274: assistant 가 첨부를 수정해 새 버전을 생성했으면 사용자에게 안내.
+    if (Array.isArray(payload.edited_attachments) && payload.edited_attachments.length) {
+      const names = payload.edited_attachments
+        .map((a) => `${a.original_filename || "파일"} (v${a.version_number || 2})`)
+        .join(", ");
+      showToast(`assistant 가 첨부를 수정했습니다: ${names}`);
+    }
     const newCid = String(payload.conversation_id || targetConvId || "");
     if (isLazyCreate && newCid) {
       // TASK-0082: 본 send 의 closure busyKey 가 현재 활성 state.pendingSentinel 과 일치할 때만 두
