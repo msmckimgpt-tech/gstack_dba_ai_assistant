@@ -851,6 +851,8 @@ function renderProductDropupMenu() {
       datasourceKey: p.datasource_key || null,  // 멀티 datasource (P2): 분석 대상 표시
       datasources: Array.isArray(p.datasources) ? p.datasources : null,  // TASK-0228 (1:N)
       connStatusOverall: p.conn_status_overall || null,  // TASK-0261: 네트워크 상태(최악) 집계
+      iconUrl: p.icon_url || null,  // TASK-0268: 제품 아이콘(설정 시)
+      productKey: p.product_key || "",
     }));
   });
 }
@@ -865,7 +867,7 @@ function connStatusMeta(status) {
   }
 }
 
-function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, datasources, connStatusOverall }) {
+function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, datasources, connStatusOverall, iconUrl, productKey }) {
   const item = document.createElement("button");
   item.type = "button";
   item.className = "product-dropup-item";
@@ -873,6 +875,17 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
   item.dataset.mode = mode;
   if (pid != null) item.dataset.pid = String(pid);
   if (selected) item.classList.add("is-selected");
+
+  // TASK-0268: 제품 아이콘 — 설정 시 작은 이미지(상태 dot 앞). 미설정/auto 는 dot 만(TASK-0261 상태색 유지).
+  if (mode === "pinned" && iconUrl) {
+    const ic = document.createElement("span");
+    ic.className = "product-dropup-item-icon";
+    const img = document.createElement("img");
+    img.alt = ""; img.loading = "lazy"; img.src = iconUrl;
+    img.onerror = () => { ic.remove(); };
+    ic.appendChild(img);
+    item.appendChild(ic);
+  }
 
   const dot = document.createElement("span");
   dot.className = "product-dropup-item-dot";
@@ -1284,6 +1297,61 @@ function buildPermissionPills(containerEl) {
   }
 }
 
+// TASK-0268: Identicon — seed(문자열) 해시 기반 결정론적 5x5 대칭 SVG(외부 의존 0).
+//   같은 seed → 항상 같은 패턴/색. 기본(미설정) 프로필·제품 이미지로 사용.
+function _identiconHash(seed) {
+  let h = 5381;
+  const s = String(seed || "");
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h >>> 0;
+}
+function identiconSvg(seed, size) {
+  const h = _identiconHash(seed);
+  const hue = h % 360;
+  const fg = `hsl(${hue},58%,52%)`;
+  const bg = "#eef2f7";
+  const cells = [];
+  // 5열 중 좌측 3열만 결정 후 대칭 → 5x5 대칭 패턴.
+  let bits = h;
+  for (let col = 0; col < 3; col++) {
+    for (let row = 0; row < 5; row++) {
+      const on = (bits & 1) === 1; bits = bits >>> 1;
+      if (on) {
+        cells.push([col, row]);
+        if (col < 2) cells.push([4 - col, row]);  // 대칭
+      }
+    }
+  }
+  const sz = size || 100;
+  const cell = sz / 5;
+  const rects = cells.map(([c, r]) =>
+    `<rect x='${(c * cell).toFixed(2)}' y='${(r * cell).toFixed(2)}' width='${cell.toFixed(2)}' height='${cell.toFixed(2)}' fill='${fg}'/>`
+  ).join("");
+  return `<svg viewBox='0 0 ${sz} ${sz}' width='100%' height='100%' xmlns='http://www.w3.org/2000/svg' style='display:block;'><rect width='${sz}' height='${sz}' fill='${bg}'/>${rects}</svg>`;
+}
+// applyAvatar: el 에 이미지(url 있으면 <img>) 또는 Identicon(seed 해시) 렌더.
+//   url=설정된 이미지 API path. seed=fallback identicon 시드(username/product_key). initials=텍스트 폴백(이미지 로드 실패 시).
+function applyAvatar(el, { url, seed, initials }) {
+  if (!el) return;
+  el.textContent = "";
+  el.classList.add("has-avatar-img");
+  if (url) {
+    const img = document.createElement("img");
+    img.className = "avatar-img";
+    img.alt = "";
+    img.loading = "lazy";
+    img.src = url;
+    img.onerror = () => {
+      // 이미지 로드 실패 → Identicon 폴백.
+      el.removeChild(img);
+      el.innerHTML = identiconSvg(seed || initials || "", 100);
+    };
+    el.appendChild(img);
+  } else {
+    el.innerHTML = identiconSvg(seed || initials || "", 100);
+  }
+}
+
 function renderAccountState() {
   if (!state.user) {
     if (profileAvatarEl) profileAvatarEl.textContent = "—";
@@ -1293,7 +1361,8 @@ function renderAccountState() {
     return;
   }
   const initials = state.user.username.slice(0, 2).toUpperCase();
-  if (profileAvatarEl) profileAvatarEl.textContent = initials;
+  // TASK-0268: 아바타 이미지(설정 시) 또는 Identicon(username 시드).
+  if (profileAvatarEl) applyAvatar(profileAvatarEl, { url: state.user.avatar_url, seed: state.user.username, initials });
   if (profileNameEl) profileNameEl.textContent = state.user.username;
   if (profileRoleEl) profileRoleEl.textContent = roleLabel();
   openAdminBtn.classList.toggle("hidden", !canOpenAdminConsole());
@@ -1303,11 +1372,15 @@ function renderProfile() {
   if (!state.user) return;
   const initials = state.user.username.slice(0, 2).toUpperCase();
 
-  if (profileAvatarLgEl) profileAvatarLgEl.textContent = initials;
+  // TASK-0268: 드로어 큰 아바타 — 이미지 또는 Identicon.
+  if (profileAvatarLgEl) applyAvatar(profileAvatarLgEl, { url: state.user.avatar_url, seed: state.user.username, initials });
   if (profileSummaryNameEl) profileSummaryNameEl.textContent = state.user.username;
   if (profileSummaryMetaEl) {
     profileSummaryMetaEl.textContent = roleLabel();
   }
+  // TASK-0268: 아바타 설정 시에만 "사진 제거" 노출.
+  const _avatarRemoveBtn = document.getElementById("profileAvatarRemoveBtn");
+  if (_avatarRemoveBtn) _avatarRemoveBtn.classList.toggle("hidden", !state.user.avatar_url);
 
   // TASK-0098: "권한 현황" 패널 (buildPermissionPills + profileStateNote) 제거 — 운영자 전용 정보 분류.
 
@@ -6411,6 +6484,45 @@ async function initialize() {
   openProfileBtn.addEventListener("click", () => openProfile("prompt"));
   closeProfileBtn.addEventListener("click", closeProfile);
   profileBackdropEl.addEventListener("click", closeProfile);
+
+  // TASK-0268: 프로필 아바타 업로드/제거.
+  const _avatarChangeBtn = document.getElementById("profileAvatarChangeBtn");
+  const _avatarInput = document.getElementById("profileAvatarInput");
+  const _avatarRemoveBtn = document.getElementById("profileAvatarRemoveBtn");
+  if (_avatarChangeBtn && _avatarInput) {
+    _avatarChangeBtn.addEventListener("click", () => _avatarInput.click());
+    _avatarInput.addEventListener("change", async () => {
+      const f = _avatarInput.files && _avatarInput.files[0];
+      if (!f) return;
+      if (f.size > 2 * 1024 * 1024) { showToast("이미지가 너무 큽니다(최대 2MB).", true); _avatarInput.value = ""; return; }
+      const fd = new FormData();
+      fd.append("file", f);
+      try {
+        const r = await apiFetch("/api/auth/me/avatar", { method: "PUT", body: fd });
+        if (state.user) state.user.avatar_url = r.avatar_url || null;
+        renderAccountState();
+        renderProfile();
+        showToast("프로필 사진을 변경했어요.");
+      } catch (err) {
+        showToast(err.message || "프로필 사진 변경 실패", true);
+      } finally {
+        _avatarInput.value = "";
+      }
+    });
+  }
+  if (_avatarRemoveBtn) {
+    _avatarRemoveBtn.addEventListener("click", async () => {
+      try {
+        await apiFetch("/api/auth/me/avatar", { method: "DELETE" });
+        if (state.user) state.user.avatar_url = null;
+        renderAccountState();
+        renderProfile();
+        showToast("프로필 사진을 제거했어요.");
+      } catch (err) {
+        showToast(err.message || "프로필 사진 제거 실패", true);
+      }
+    });
+  }
 
   // 프로필 탭 전환
   document.querySelectorAll("[data-profile-tab]").forEach((btn) => {

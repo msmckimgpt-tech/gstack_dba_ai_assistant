@@ -5358,7 +5358,53 @@ function renderProductDetail() {
   idBlock.className = "admin-detail-identity";
   const avatar = document.createElement("div");
   avatar.className = "admin-avatar";
-  avatar.textContent = (product.product_key || "P").slice(0, 2).toUpperCase();
+  // TASK-0268: 제품 아이콘 이미지(설정 시) 또는 product_key 이니셜.
+  if (product.icon_url) {
+    const img = document.createElement("img");
+    img.className = "admin-avatar-img"; img.alt = ""; img.src = product.icon_url;
+    img.onerror = () => { avatar.textContent = (product.product_key || "P").slice(0, 2).toUpperCase(); };
+    avatar.appendChild(img);
+  } else {
+    avatar.textContent = (product.product_key || "P").slice(0, 2).toUpperCase();
+  }
+  // TASK-0268: product.manage 면 아이콘 변경/제거 컨트롤.
+  if (canManage) {
+    const iconEdit = document.createElement("div");
+    iconEdit.className = "admin-avatar-edit";
+    const fileInput = document.createElement("input");
+    fileInput.type = "file"; fileInput.accept = "image/png,image/jpeg,image/webp"; fileInput.hidden = true;
+    const changeBtn = document.createElement("button");
+    changeBtn.type = "button"; changeBtn.className = "admin-avatar-change"; changeBtn.textContent = "아이콘";
+    changeBtn.title = "제품 아이콘 변경"; changeBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", async () => {
+      const f = fileInput.files && fileInput.files[0];
+      if (!f) return;
+      if (f.size > 5 * 1024 * 1024) { showToast("이미지가 너무 큽니다(최대 5MB).", true); fileInput.value = ""; return; }
+      const fd = new FormData(); fd.append("file", f);
+      try {
+        const r = await apiFetch(`/api/admin/products/${Number(product.id)}/icon`, { method: "PUT", body: fd });
+        product.icon_url = r.icon_url || null;
+        renderProductDetail();
+        showToast("제품 아이콘을 변경했어요.");
+      } catch (err) { showToast(err.message || "아이콘 변경 실패", true); }
+      finally { fileInput.value = ""; }
+    });
+    iconEdit.append(changeBtn, fileInput);
+    if (product.icon_url) {
+      const rmBtn = document.createElement("button");
+      rmBtn.type = "button"; rmBtn.className = "admin-avatar-remove"; rmBtn.textContent = "제거";
+      rmBtn.addEventListener("click", async () => {
+        try {
+          await apiFetch(`/api/admin/products/${Number(product.id)}/icon`, { method: "DELETE" });
+          product.icon_url = null;
+          renderProductDetail();
+          showToast("제품 아이콘을 제거했어요.");
+        } catch (err) { showToast(err.message || "아이콘 제거 실패", true); }
+      });
+      iconEdit.append(rmBtn);
+    }
+    avatar.appendChild(iconEdit);
+  }
   const idText = document.createElement("div");
   const nameEl = document.createElement("div");
   nameEl.className = "admin-account-name";

@@ -8,7 +8,28 @@ source_of_truth: true
 
 # Task
 
-## 0. TASK-0266 (current cycle, 동시세션 TASK-0264/0265 선점으로 0265→0266 재번호) — TASK-0263 핫픽스: usage/conversations 의 interval 파라미터 PG 문법 오류
+## 0. TASK-0268 (current cycle, 동시세션 TASK-0267[perm-tree] 선점으로 0267→0268 재번호) — 사용자 프로필 / 제품 아이콘 이미지 + Identicon 기본
+- 목표: 사용자 프로필 이미지·제품별 아이콘 이미지를 설정 가능하게. 기본(미설정) 프로필 이미지는 Identicon. (사용자 결정: Gravatar 미사용[email 컬럼 없음·외부의존 0], Identicon=프론트 생성.)
+- 등급: **Major §12.3** (신규 스키마 컬럼 + 이미지 업로드/서빙 엔드포인트 표면).
+- 구현(백엔드 app.py):
+  - [x] WebAccounts.AvatarObjectKey + WebProducts.IconObjectKey 멱등 ALTER — slow path(`_ensure_web_tables`) **및** fast-path(`_ensure_seed_catchup`→신규 `_ensure_avatar_icon_schema`) 양쪽(운영 재기동은 fast-path 만 타 'Unknown column' 회귀 방지 — 라이브 검증서 포착·수정).
+  - [x] `_serialize_account`→`avatar_url`, `_list_products`→`icon_url`(object key 해시 캐시버스터). 계정 SELECT chokepoint 에 `AvatarObjectKey` 추가.
+  - [x] `PUT/DELETE /api/auth/me/avatar`(본인 self-service, 로그인만) + `GET /api/avatars/{id}`(로그인). `PUT/DELETE /api/admin/products/{id}/icon`(product.manage) + `GET /api/products/{id}/icon`. MinIO prefix `avatars/<id>/`·`product-icons/<id>/`(uuid+ext, 파일명 미사용→traversal 0).
+  - [x] 이미지 검증 `_sniff_image`(매직바이트 png/jpg/webp만, 클라 MIME 불신, SVG/GIF 거부=XSS 차단) + 크기 cap(아바타 2MB/아이콘 5MB). 서빙 `_serve_image_object`(content-type 역추론 + `X-Content-Type-Options: nosniff` + `Content-Disposition: inline`).
+- 구현(프론트):
+  - [x] app.js `identiconSvg(seed)`(해시 기반 5x5 대칭 SVG, 외부의존 0·결정론적) + `applyAvatar(el,{url,seed,initials})`(이미지 or Identicon, onerror 폴백). 사이드바·드로어 아바타 적용 + 드로어 업로드/제거 UI.
+  - [x] 제품 드롭업(`buildProductDropupItem`)에 아이콘 이미지(설정 시) + admin 제품 상세 아바타 이미지·아이콘 업로드/제거(product.manage). styles.css 아바타/아이콘 + Identicon 스타일.
+  - [x] 캐시버스터 `?v=20260615-task0268-avatar`(index.html·admin.html).
+- 검증:
+  - [x] node --check app.js/admin.js + py_compile + CSS brace(1175=1175).
+  - [x] 신규 `test_avatar_icon_upload.py` **8 PASS**(매직바이트 판별·SVG/GIF/거짓MIME 거부·빈/초과/미지원 거부·정상 PNG object key·URL 헬퍼·캐시버스터·서빙 content-type·아이콘 권한 403) + make test 컨테이너 **전체 회귀 0**(PYTEST_EXIT=0) + ruff clean.
+  - [x] Playwright 격리(Identicon 결정론적·seed별 구분·SVG 렌더).
+  - [x] **라이브 라운드트립**(임시 web 적용): 스키마 ALTER 적용 확인·avatar_url 직렬화, PNG 업로드→avatar_url→서빙 200(image/png)·nosniff 헤더, SVG 업로드 거부, 삭제→null. 라이브 검증이 fast-path 스키마 누락 버그 포착.
+  - [x] **outside-voice 적대적 보안 리뷰 SHIP**(BLOCKER 0; MAJOR[nosniff] 흡수, SVG차단·MIME불신·traversal 0·본인강제·권한게이트·멱등스키마 PASS).
+- 비변경: 기존 RBAC 카탈로그(product.manage 재사용, 신규 권한 0)·기존 엔드포인트·메시지 경로 0. email/Gravatar 미도입.
+- [ ] (잔여) 배포(web 재빌드) + PB-0008 Windows 시각검증(아바타/아이콘 업로드·Identicon 표시).
+
+## 0z. TASK-0266 (직전, 머지됨) — TASK-0263 핫픽스: usage/conversations 의 interval 파라미터 PG 문법 오류
 - 증상: TASK-0263 배포 후 `GET /api/admin/usage/conversations` 가 **HTTP 500**(`psycopg.errors.SyntaxError: syntax error at or near "$1"`). 단위 테스트(fake cursor)는 SQL 미실행이라 통과시켰고 **라이브 엔드포인트 검증에서 포착**.
 - 등급: **Minor §12.3** (핫픽스, 1줄 SQL 문법 수정).
 - 원인: `_query_usage_conversations` 의 `win = "now() - interval %s"` — PG 는 `interval` 키워드 뒤 파라미터 placeholder(`interval $1`)를 불허(문자열 리터럴 문법만). admin_llm_usage 는 `interval '{days} days'`(int 보간)라 무관했으나, 파라미터화하려다 문법 위반.

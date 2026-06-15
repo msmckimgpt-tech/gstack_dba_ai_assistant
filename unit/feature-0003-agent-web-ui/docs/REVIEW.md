@@ -2581,3 +2581,18 @@ source_of_truth: true
 - Reason: FileResponse 에 `Cache-Control: no-cache` 추가는 브라우저 재검증 강제(보안 약화 아님 — 오히려 stale UI 방지). share.html(익명)도 민감 데이터 없는 정적 HTML 이라 무영향. 캐시버스터 전달 신뢰성 회복이 목적. test_html_no_cache + make test PASS.
 - Residual: web 재배포 후 라이브 헤더(curl -I) 검증 + 사용자 하드리프레시 1회.
 - Cross-ref: CHG-20260615-0256d / TASK-0256d / TASK-0256c(이 수정이 적용되게 하는 전제).
+
+## REV-20260615-0268 [SUBAGENT:image-upload-security]
+- Date: 2026-06-15
+- Cycle: TASK-0268 (프로필 아바타 / 제품 아이콘 이미지 업로드·서빙; 동시세션 TASK-0267[perm-tree] 선점으로 0267→0268 재번호), **Major §12.3** — 신규 파일 업로드/서빙 엔드포인트 6 + 스키마 컬럼 2.
+- Trigger: §18.8 — 파일 업로드(XSS/MIME/traversal) + 인가(IDOR) + 새 엔드포인트 → 적대적 보안 리뷰(general-purpose outside voice). [[feedback_outside_voice_for_rbac]] 정합.
+- Verdict: **SHIP** (BLOCKER 0).
+  - 업로드 공격면: `_sniff_image` 가 클라 MIME 무시·매직바이트로만 png/jpg/webp 판정 → SVG/HTML/GIF 거부(XSS 차단). 서빙 content-type 은 검증된 ext 기반 image/* 만 + `nosniff`+`inline`(흡수) → MIME 스니핑 XSS 닫힘. 프론트는 `<img>` 로만 로드(스크립트 실행 경로 없음).
+  - 인가: avatar upload 는 path 에 account_id 없이 owner=self(인증 id) 강제. product icon 은 product.manage 게이트(upload/delete). serve 는 로그인 필요(아바타/아이콘=조직 내 공개 표시물, 의도된 동작).
+  - 경로주입: object key = `<리터럴 prefix>/<int id>/<uuid4>.<검증 ext>` — 파일명 미사용 → traversal 0.
+  - 스키마: `_ensure_avatar_icon_schema` 멱등 + fast/slow path 양쪽('Unknown column' 회귀 방지).
+  - 정합: 교체 시 DB commit 후 old object best-effort delete(orphan 무해), 캐시버스터(object key 해시)로 stale 0.
+  - 흡수: MAJOR(nosniff/Content-Disposition 부재) → `_serve_image_object` 헤더 2개 추가(라이브 실측 확인). MINOR(무제한 read·webp chunk·orphan·공개아이콘)는 비차단 기록.
+- Verification: 신규 test_avatar_icon_upload.py 8 PASS + make test 회귀 0 + Playwright(Identicon) + 라이브 라운드트립(업로드 200/SVG 거부/삭제/nosniff 헤더).
+- Residual: 정식 web 재빌드 + PB-0008(아바타/아이콘 업로드·Identicon 표시).
+- Cross-ref: CHG-20260615-0268 / TASK-0268.

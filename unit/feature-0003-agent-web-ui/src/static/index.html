@@ -6,7 +6,7 @@
   <title>DQA — Database Query Assistant</title>
   <link rel="preconnect" href="https://fonts.bunny.net" />
   <link href="https://fonts.bunny.net/css?family=geist:300,400,500,600,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260615-task0256c-gutter" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260615-task0268-avatar" />
 </head>
 <body>
 
@@ -330,10 +330,16 @@
     <!-- 헤더: 아바타 + 이름 + 닫기 -->
     <div class="drawer-header">
       <div class="profile-header-identity">
-        <div class="profile-avatar-lg" id="profileAvatarLg">—</div>
+        <!-- TASK-0268: 아바타(이미지 또는 Identicon) + 변경/제거 -->
+        <div class="profile-avatar-edit">
+          <div class="profile-avatar-lg" id="profileAvatarLg">—</div>
+          <button type="button" class="profile-avatar-change" id="profileAvatarChangeBtn" title="프로필 사진 변경" aria-label="프로필 사진 변경">✎</button>
+          <input type="file" id="profileAvatarInput" accept="image/png,image/jpeg,image/webp" hidden />
+        </div>
         <div>
           <div class="profile-summary-name" id="profileSummaryName">—</div>
           <div class="profile-summary-meta" id="profileSummaryMeta">—</div>
+          <button type="button" class="profile-avatar-remove hidden" id="profileAvatarRemoveBtn">사진 제거</button>
         </div>
       </div>
       <button type="button" class="tool-btn" id="closeProfileBtn">닫기</button>
@@ -489,7 +495,7 @@
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260615-task0256c-gutter"></script>
+  <script src="/static/app.js?v=20260615-task0268-avatar"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
 </body>
 </html>
