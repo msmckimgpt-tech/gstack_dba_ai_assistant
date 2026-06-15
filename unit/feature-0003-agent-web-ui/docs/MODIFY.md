@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0283
+- Date: 2026-06-15 (TASK-0277b, **Minor §12.3** — TASK-0277 후속 핫픽스: 보관 대화 row ellipsis 실작동 수정; PR #250 후 PB-0008 실 브라우저 실측에서 발견)
+- Scope: agent-web-ui frontend 전용(styles.css 1 규칙 + admin.html 캐시버스터 + jsdom 테스트 계약 1건). 백엔드·RBAC·엔드포인트 0.
+- 근본 원인: `.admin-archive-row` 는 `.admin-list-row`(grid) + `.admin-archive-row`(flex column) 두 클래스를 함께 가지는데, `.admin-list-row` 의 `align-items: center` 가 flex 컬럼에 상속돼 각 줄(`.admin-archive-row-line`)이 row 폭(330px)으로 **stretch 되지 않고 콘텐츠 폭(2858px)으로 팽창** → 자식 span 이 shrink 안 돼 `text-overflow: ellipsis` 가 발동하지 못함(줄바꿈은 막혔으나 절단 미작동, 하드 클립). TASK-0277 jsdom 은 CSS 규칙 존재만 검사해 미검출.
+- 변경:
+  - (styles.css) `.admin-archive-row` 에 `align-items: stretch` 추가 — 줄을 row 폭에 맞춰 span 이 shrink→ellipsis 절단. PB-0008 실측: line 2858→308px, topic clientW 164·scrollW 2714 → clipped:true, rowH 56 유지(2줄 고정).
+  - (admin.html) 캐시버스터 `?v=20260615-task0277-archives-ui-align` → `?v=20260615-task0277b-archive-row-ellipsis`.
+  - (tests) `verify_archive_tab_ui.mjs` 에 `.admin-archive-row { align-items: stretch }` CSS 계약 단언 추가(26 PASS).
+- 검증: node --check + CSS brace(1210=1210) + jsdom 26 PASS + make test 회귀 0 + **PB-0008 실 브라우저 재검증**(clipped:true·2줄 고정·밀도 정합).
+- Files: src/static/{styles.css,admin.html}, tests/verify_archive_tab_ui.mjs, docs/{TASK,MODIFY,REVIEW,REPORT,TEST}.md
+- Cross-ref: REV-20260615-0283 / TASK-0277b / CHG-20260615-0281(TASK-0277 본 변경) / FUNCTION AC-0508.
+
 ## CHG-20260615-0282
 - Date: 2026-06-15 (TASK-0278, **Minor** — 관리 콘솔 데이터소스 목록 행별 네트워크 상태 배지, frontend-only; §13.1 #249·#250 동시세션이 CHG-0279~0281·TASK-0277 선점 → CHG-0282/TASK-0278 재번호)
 - Scope: 정적자산만(admin.js + styles.css + admin.html). 백엔드/스키마/RBAC/엔드포인트 0.

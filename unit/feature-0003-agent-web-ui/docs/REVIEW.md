@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0283 [SKIPPED:frontend-ui-consistency-no-backend]
+- Date: 2026-06-15
+- Cycle: TASK-0277b (TASK-0277 후속 핫픽스 — 보관 대화 row ellipsis 실작동 수정), **Minor §12.3** — frontend-only(styles.css 1 규칙 + 캐시버스터 + jsdom 계약). RBAC/스키마/엔드포인트/백엔드 0.
+- Skip 사유: 순수 CSS 1줄(`align-items: stretch`) + 테스트 계약. 데이터·인가·엔드포인트 무관. §18.8.1 Minor frontend-only → 적대 패널 불요.
+- 발견 경위 (PB-0008 의 가치): TASK-0277 의 jsdom 은 CSS 규칙(`white-space:nowrap`/`text-overflow:ellipsis`/`min-width:0`) 존재만 검사해 25 PASS 했으나, **실 브라우저 PB-0008 에서 ellipsis 가 실제로 발동하지 않음**을 적발. 원인은 jsdom 이 계산하지 못하는 cascade/layout: `.admin-archive-row` 가 `.admin-list-row`(grid, `align-items:center`)와 함께 선언돼 flex 컬럼 줄이 row 폭으로 stretch 되지 않고 콘텐츠 폭으로 팽창 → span shrink 불가 → ellipsis 미작동(줄바꿈만 차단된 상태). headless/jsdom 이 실 브라우저 시각검증을 대체할 수 없음을 재확인.
+- 자체 점검: ① 라이브 실험(eval) 로 `align-items:stretch` 적용 시 line 2858→308px, topic clientW 164·scrollW 2714 → clipped:true, rowH 56(2줄) 유지 사전 확인 후 코드 반영. ② 회귀: stretch 는 줄을 row 폭에 맞출 뿐 다른 탭/grid 레이아웃과 무관(`.admin-archive-row` 한정 규칙). ③ jsdom 계약 단언 추가(align-items:stretch). node --check + CSS brace(1210=1210) + jsdom 26 PASS + make test 회귀 0.
+- Residual: 머지 → web 재배포(deploy_scope: included) → PB-0008 재검증(clipped:true·2줄 고정·밀도) → TEST.md §4.
+- Cross-ref: CHG-20260615-0283 / TASK-0277b / REV-20260615-0281(TASK-0277 본 변경) / FUNCTION AC-0508.
+
 ## REV-20260615-0281 [SKIPPED:frontend-ui-consistency-no-backend]
 - Date: 2026-06-15
 - Cycle: TASK-0277 (관리 콘솔 "보관 대화" 탭 UI 정합 다듬기 — TASK-0276 list-detail 위 후속), **Minor §12.3** — frontend-only(admin.html + admin.js + styles.css). RBAC/인증/스키마/엔드포인트 계약/데이터/시크릿/백엔드 0.

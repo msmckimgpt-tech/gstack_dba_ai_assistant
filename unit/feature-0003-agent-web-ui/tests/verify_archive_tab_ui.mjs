@@ -157,6 +157,12 @@ const lineBlock = cssBlock(css, ".admin-archive-row-line {");
 ok(".admin-archive-row-line 에서 flex-wrap 제거(줄바꿈 차단)", !!lineBlock && !/flex-wrap/.test(lineBlock));
 ok(".admin-archive-row-line min-width:0(컨테이너 shrink 허용)", !!lineBlock && /min-width:\s*0/.test(lineBlock));
 
+// TASK-0277b: .admin-archive-row 는 align-items:stretch 여야 줄(line)이 row 폭으로 stretch 되어
+// span 이 shrink→ellipsis 절단된다. .admin-list-row(grid) 의 align-items:center 상속을 override.
+// (jsdom 은 상속/레이아웃 미계산 — 규칙 텍스트로 계약만 보증, 실제 절단 확인은 PB-0008.)
+const rowBlock = cssBlock(css, ".admin-archive-row {");
+ok(".admin-archive-row : align-items:stretch(line 이 row 폭으로 stretch — ellipsis 전제)", !!rowBlock && /align-items:\s*stretch/.test(rowBlock));
+
 for (const sel of [".admin-archive-row-topic {", ".admin-archive-row-owner {", ".admin-archive-row-by {"]) {
   const b = cssBlock(css, sel);
   const name = sel.replace(" {", "");

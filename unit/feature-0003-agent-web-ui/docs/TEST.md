@@ -275,6 +275,13 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0045: node --check app.js 통과 (구문 무결).
 
 ## 4. Test Run History
+- 2026-06-15 (TASK-0277b 후속 핫픽스 — 보관 대화 row ellipsis 실작동 수정):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면.
+  - **Runner: AI** (launch → /admin(세션 인증됨) → 보관 대화 탭 클릭 → computed layout 실측).
+  - **PB-0008 적발 (TASK-0277 배포본 main `61e0151`, `?v=...task0277-archives-ui-align`)**: [문제1] `paneNotePresent:false`·header↔filter gap 16px(밀도 정합 PASS). [문제2] **줄바꿈 차단은 PASS**(긴 문자열 주입 시 rowH 56px 고정) **이나 ellipsis 미작동**(line getBoundingClientRect 2858px, topic scrollW===clientW===2714 → clipped:false). 원인 진단: `.admin-archive-row` computed `align-items:center`(`.admin-list-row` grid 상속) → 줄이 row 폭으로 stretch 안 됨.
+  - **수정 라이브 실험 검증**: `r.style.alignItems='stretch'` 적용 시 line 2858→308px, topic clientW 164·scrollW 2714 → **clipped:true(ellipsis 작동)**, rowH 56 유지(2줄 고정). → `styles.css` 에 반영.
+  - **재배포 후 PB-0008 재검증 (main `<0277b 머지>`, `?v=...task0277b-archive-row-ellipsis`)**: <재검증 결과 기록 예정>.
+  - **Environment: CLI** (정적 + jsdom). node --check + CSS brace(1210=1210) + **jsdom 26 PASS**(0277 25건 + `.admin-archive-row align-items:stretch` 계약 1건) + make test 컨테이너 **전체 회귀 0**(MAKE_EXIT=0). REV-20260615-0283 [SKIPPED:frontend-ui-consistency-no-backend].
 - 2026-06-15 (TASK-0277 보관 대화 탭 UI 정합 다듬기 — 안내 밀도 정합 + row 2줄 고정·ellipsis):
   - **Environment: CLI** (정적 + jsdom). node --check admin.js PASS + CSS brace 균형(1207=1207) + **jsdom 25 PASS**(`tests/verify_archive_tab_ui.mjs` — admin-pane-note 0건·styles.css 규칙 제거·header↔filter `<p>` 없음·빈 상태 안내 carry(static+JS)·긴/짧은 row 2줄 고정·1줄 topic+ts/2줄 owner+by·flex-wrap 제거·topic/owner/by nowrap+ellipsis+overflow+min-width:0) + make test 컨테이너 **전체 회귀 0**(백엔드 무변경, MAKE_EXIT=0, ruff clean). REV-20260615-0281 [SKIPPED:frontend-ui-consistency-no-backend].
   - **Residual: Windows-browser** — 배포(deploy_scope: included) 후 PB-0008(보관 대화 탭 진입 → 짧은/긴 topic·긴 username 혼재 시 2줄 고정·미줄바꿈·ellipsis + 안내 우측 표면화) 기록 예정.
