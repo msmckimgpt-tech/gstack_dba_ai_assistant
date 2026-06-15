@@ -3641,4 +3641,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] enhanceDiffBlocks 재작성(app.js/share.js): buildDiffRows(분류+마커분리+old/new 번호), parseDiffHunkHeader(@@ seed), stripDiffMarker
 - [x] CSS(styles.css/share.css): `.diff-line::before` gutter(줄번호+마커, user-select:none) + `--diff-gutter-ch` 폭(2w+3, var fallback 7)
 - [x] node 로직 검증(줄번호·마커제거·hunk seed) + node --check, 캐시버스터 bump(app.js/share.js/styles.css/share.css)
-- [ ] make test + verify-completion + web 재배포 + PB-0008(줄번호 표시 + 복사 시 코드만 실측)
+- [x] make test + verify-completion PASS + web 재배포(main f0279c3) + PB-0008 PASS — 줄번호 gutter 표시 + getSelection 복사 시 마커·번호 제외 순수 코드 실측(2026-06-15, TEST.md §4)

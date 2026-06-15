@@ -720,3 +720,11 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **Steps/Result:** 배포 자산(app.js?v=20260615-task0256b-spacing) 의 `markdownToHtml` 로 8줄 diff(2 del + 6 add, EXIT HANDLER 예시) 렌더 → `.diff-line` 8개, lineHeight=20px, **줄 간 top 간격(gap)=[20,20,20,20,20,20,20] = lineHeight 와 동일 = 단일 줄 간격**. 수정 전 이중 줄바꿈(블록 span + 리터럴 `"\n"` ≈ 40px)이 해소됨. 스크린샷 `/tmp/task0256/pb0008b_diff_spacing_fixed.png` 육안: 8줄 빈 줄 없이 연속, +초록/-빨강 색 유지.
   - **Pass/Fail: PASS**
   - **Notes:** `enhanceDiffBlocks` 의 block span 사이 `"\n"` 텍스트 노드 제거 효과 실측(gap==lineHeight). CHECK#13(PB-0008 Windows-browser) **충족**.
+
+- 2026-06-15 (TASK-0256c diff 블록 줄번호(old|new) + 복사 시 마커·번호 제외 — **PB-0008 Windows-browser PASS**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148 via `bin/win-browser.py` 무권한 relay, https://localhost:18080). WSL headless 아닌 실제 Windows 화면.
+  - **Steps/Result:** 배포 자산(app.js?v=20260615-task0256c-gutter) 의 `markdownToHtml` 로 8줄 diff(2 del + 6 add, EXIT HANDLER 예시) 렌더.
+    - **줄번호 gutter**: `.diff-line` data-gutter = `["1   -","2   -"," 1 +"," 2 +",...]`(del=old번호+빨강 / add=new번호+초록), `getComputedStyle(line,'::before').content` 에 숫자 포함(번호 가시). 스크린샷 `/tmp/task0256/pb0008c_diff_gutter.png` 육안: 각 줄 좌측 old/new 번호 + 색마커 + 구분선.
+    - **복사 클린(getSelection 실측)**: `range.selectNodeContents(pre.diff-block)` → `getSelection().toString()` = 8줄, **마커로 시작하는 줄 0(copyHasMarker=false)**, 첫 줄 `"DECLARE v_Result INT DEFAULT 0;"`(마커·번호 없음), 코드 포함. 즉 블록 복사 시 줄번호·+/- 제외된 순수 코드만 잡힘.
+  - **Pass/Fail: PASS**
+  - **Notes:** 줄번호+마커는 `::before content`(의사요소=선택/복사 비포함) + user-select:none. CHECK#13 충족.
