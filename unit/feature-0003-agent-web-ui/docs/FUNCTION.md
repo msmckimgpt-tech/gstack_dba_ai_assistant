@@ -868,3 +868,6 @@ assistant 답변/공유 뷰의 markdown 렌더 파이프라인(marked.parse→DO
 
 ## (TASK-0256c) diff 블록 줄번호 + 복사 클린
 diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-` 마커를 표시하되, 이들은 `.diff-line::before`(data-gutter 속성)로만 렌더한다 — 의사요소라 선택/복사에 포함되지 않는다. 코드 텍스트는 맨 앞 마커를 떼어(stripDiffMarker) textContent 로만 넣으므로 블록 복사 시 순수 코드(번호·마커 없음)만 잡힌다. 줄번호는 `parseDiffHunkHeader`(@@) seed 또는 1부터, gutter 폭은 `--diff-gutter-ch`.
+
+## (TASK-0256d) HTML 엔트리포인트 no-cache
+`/`(index.html), `/admin`(admin.html), `/share/{token}`(share.html) 은 `Cache-Control: no-cache` 로 서빙해 브라우저가 매 로드 시 조건부 재검증한다(ETag → 변경 시 200, 동일 시 304). 정적 자산(app.js 등)의 `?v=` 캐시버스터가 신뢰성 있게 사용자에게 전달되도록 하는 전제 — HTML 의 휴리스틱 캐싱이 옛 `?v=` 를 고정하는 것을 방지.
