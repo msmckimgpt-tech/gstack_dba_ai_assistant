@@ -3532,3 +3532,16 @@ source_of_truth: true
 - Files: src/app.py, src/static/{app.js,admin.js,styles.css,index.html,admin.html}, tests/test_avatar_icon_upload.py, docs/{TASK,MODIFY,REPORT,REVIEW,FUNCTION}.md, docs/STATUS.md(repo)
 - Rollback: 6 엔드포인트 + 헬퍼(_sniff_image/_store_image_upload/_serve_image_object/_avatar_url_for/_product_icon_url_for/_ensure_avatar_icon_schema) 제거, SELECT/직렬화 avatar_url/icon_url 제거, ALTER 는 컬럼 잔존(무해). 프론트 identicon/applyAvatar/업로드 UI 제거 + 캐시버스터 환원. 컬럼 DROP 은 별도 cleanup.
 - Deploy: web 재빌드(app.py + 정적자산). ask/insight-worker 무변경.
+
+## CHG-20260615-0272
+- Date: 2026-06-15 (TASK-0272; 동시세션이 TASK-0271/CHG-20260615-0271 선점→§13.1 재번호 0271→0272)
+- Scope: 대화 화면 프로필 드로어 첫 진입 시 `프롬프트 > 제품 범위`(`#promptProductSelect`) 비어있는 버그 수정. 프론트엔드 단일 파일(app.js) + 캐시버스터. RBAC/스키마/엔드포인트/데이터 0.
+- 변경:
+  - (app.js) `switchProfileTab(tab)` 내부에 탭별 lazy 콘텐츠 디스패치 추가 — prompt→`initAccountPromptEditor()`, usage→`loadProfileUsage()`. `openProfile()`(기본 활성 탭) 와 탭 클릭 양쪽 경로가 `switchProfileTab` 을 거치므로 단일 진입점으로 일원화.
+  - (app.js) `initialize()` 의 탭 클릭 리스너에서 중복 lazy 디스패치 제거 — `switchProfileTab` 호출만 유지.
+  - (index.html) app.js 캐시버스터 `?v=20260615-task0269-conv-split` → `?v=20260615-task0272-prompt-scope`.
+- 근본원인: lazy 디스패치가 탭 '클릭' 이벤트에만 배선돼 있어, 첫 진입(prompt 가 기본 활성 탭, 클릭 없음) 시 셀렉트가 미적재. `state.products` 는 부트스트랩에서 적재 완료라 데이터 문제 아님.
+- 검증: node --check app.js + verify-completion --pre-commit + PB-0008 Windows-browser(프로필 첫 진입 제품 범위 채워짐).
+- Files: src/static/app.js, src/static/index.html, docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md
+- Rollback: lazy 디스패치를 탭 클릭 리스너로 되돌리고 `switchProfileTab` 내부 디스패치 제거(= 회귀), 캐시버스터 환원.
+- Deploy: web 재빌드(정적자산). app.py/worker 무변경.
