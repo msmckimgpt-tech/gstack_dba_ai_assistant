@@ -796,6 +796,26 @@ function renderProductChip() {
     : (pinned ? pinned.product_key : "Product");
   const labelEl = document.getElementById("productChipLabel");
   if (labelEl) labelEl.textContent = compactLabel;
+  // product-icon-chip: 선택(pinned) 제품의 프로필 아이콘을 chip 에도 표시(드롭업·관리 콘솔과 정합).
+  //  설정 이미지 or Identicon(product_key 시드) 폴백. auto 모드는 아이콘 숨김(dot 만).
+  const chipIconEl = document.getElementById("productChipIcon");
+  if (chipIconEl) {
+    if (mode === "pinned" && pinned) {
+      chipIconEl.classList.remove("hidden");
+      if (pinned.icon_url) {
+        chipIconEl.innerHTML = "";
+        const img = document.createElement("img");
+        img.alt = ""; img.loading = "lazy"; img.src = pinned.icon_url;
+        img.onerror = () => { chipIconEl.innerHTML = identiconSvg(pinned.product_key || "", 100); };
+        chipIconEl.appendChild(img);
+      } else {
+        chipIconEl.innerHTML = identiconSvg(pinned.product_key || "", 100);
+      }
+    } else {
+      chipIconEl.classList.add("hidden");
+      chipIconEl.innerHTML = "";
+    }
+  }
   // TASK-0262: 선택(pinned) 제품의 chip dot 도 드롭업 항목과 동일하게 datasource 네트워크 상태색으로 칠한다.
   //  과거엔 모드색(pinned=파랑)만 적용돼 선택 제품이 상태 무관하게 파랑이었음(목록은 conn 색 정상).
   //  auto 모드 또는 conn 미첨부(바인딩 없는 기본 MySQL 제품)는 모드색 유지(클래스 제거). dot 은 aria-hidden

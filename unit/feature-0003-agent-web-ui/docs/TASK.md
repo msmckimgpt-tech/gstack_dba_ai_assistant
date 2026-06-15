@@ -8,7 +8,19 @@ source_of_truth: true
 
 # Task
 
-## 0. TASK-0276 (current cycle) — 관리 콘솔 "보관 대화" 탭 UI 정합화 (audits/계정/역할/제품 동형 list-detail)
+## 0z. TASK-20260615T180923-product-icon-chip-list (current cycle, timestamp ID — §13.1 순번충돌 회피) — 제품 프로필 아이콘을 대화창 chip + 제품 관리 목록 행에도 표시
+- 요청(사용자, profile-icon-consistency 후속): 제품 프로필 아이콘(Identicon)을 (1) 대화창(채팅창) 제품 chip 과 (2) 제품 관리 탭 목록 행의 **뱃지 아이콘으로도** 표현. 직전 cycle 은 드롭업·관리 상세에만 적용했음.
+- 등급: **Minor §12.3** (frontend-only 비파괴 UI 추가 — 직전 cycle 의 `applyAvatar`/`identiconSvg` 헬퍼·CSS 재사용. RBAC/스키마/엔드포인트/백엔드 0).
+- 구현(frontend-only, 4 src):
+  - [x] `index.html`: chip 에 `<span class="composer-product-chip-icon hidden" id="productChipIcon">` 추가(dot 과 label 사이).
+  - [x] `app.js` `renderProductChip`: pinned 제품이면 아이콘 표시(설정 이미지 or Identicon[product_key 시드] 폴백), auto 모드면 hidden + 내용 비움. dot·label·conn 색 로직 무변경.
+  - [x] `admin.js` `renderProductList`: 각 행에 `applyAvatar(avatar, {url:icon_url, seed:product_key})` 아이콘(`admin-avatar admin-avatar-sm`) 추가 — checkbox 다음, meta 앞. 계정 목록 행과 동형.
+  - [x] `styles.css`: `.composer-product-chip-icon`(16px 원형 클립 + `.hidden` + img/svg 규칙) 신설, chip `max-width` 180→200(아이콘 추가분). 행 아이콘은 직전 cycle `.admin-avatar .avatar-img,.admin-avatar > svg` 원형 클립 규칙 재사용.
+  - [x] 캐시버스터 통일 `?v=20260615-product-icon-chip-list`(index/admin html 의 app.js·admin.js·styles.css).
+- [x] 검증: node --check app.js·admin.js PASS + CSS brace 균형(1211=1211) + **jsdom 격리 14/14 PASS**(`tests/verify_product_icon_chip_list.mjs` — chip pinned Identicon/img·auto hidden·행 아이콘·동일 product_key 동일 Identicon 정합).
+- [ ] (잔여) make test 회귀 0 → verify-completion → PR 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증(chip 아이콘·목록 행 아이콘).
+
+## 0. TASK-0276 (직전 cycle, 머지됨 #247) — 관리 콘솔 "보관 대화" 탭 UI 정합화 (audits/계정/역할/제품 동형 list-detail)
 - 요청: `관리 콘솔 > 보관 대화` 를 다른 탭(계정·역할·제품·감사 로그)과 정합하게 구성.
 - 등급: **Minor §12.3** (frontend-only — RBAC/스키마/엔드포인트/백엔드/데이터 0. 기존 `GET /api/admin/conversations/archived` 응답 그대로 사용).
 - 진단: 기존 보관 대화 pane 은 단일 `<div id="archivesContent">` 에 `admin-usage-table` 로 렌더 → 다른 탭의 검증된 **list-detail 2단 구조**(좌측 `admin-list` row 목록 + count/scope head, 우측 `admin-detail-col` 선택 상세)와 구조·시각 이질. 감사 로그(`admin-audit-row`/`admin-audit-detail`/`admin-audit-filter`) 패턴이 가장 근접한 read-only 목록 탭이라 verbatim 동형 이식.

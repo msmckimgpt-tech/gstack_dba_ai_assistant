@@ -5398,6 +5398,10 @@ function renderProductList() {
       renderProductList();
       renderProductDetail();
     });
+    // product-icon-chip: 제품 프로필 아이콘(이미지 or Identicon) — 목록 행에도 표시(상세·대화 chip 과 정합).
+    const avatar = document.createElement("span");
+    avatar.className = "admin-avatar admin-avatar-sm";
+    applyAvatar(avatar, { url: p.icon_url, seed: p.product_key || p.name || "", initials: (p.product_key || "P").slice(0, 2).toUpperCase() });
     const meta = document.createElement("div");
     meta.className = "admin-list-main";
     const name = document.createElement("div");
@@ -5414,7 +5418,7 @@ function renderProductList() {
     covLine.className = "admin-meta cov-line";
     covLine.appendChild(buildCoverageBadge(p.id));
     meta.append(name, sub, covLine);
-    row.append(cb, meta);
+    row.append(cb, avatar, meta);
     listEl.appendChild(row);
   });
   updateProductSelectAllCheckbox();
