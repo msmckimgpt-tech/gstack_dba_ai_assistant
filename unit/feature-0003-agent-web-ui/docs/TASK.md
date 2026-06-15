@@ -38,7 +38,13 @@ source_of_truth: true
   - [x] node --check admin.js + CSS brace 균형 + jsdom 25 PASS(`tests/verify_archive_tab_ui.mjs` — 안내 이동·밀도·row 2줄 고정·CSS anti-wrap 계약) + make test 컨테이너 **전체 회귀 0**(백엔드 무변경).
 - 비변경: 백엔드·`/api/admin/conversations/archived` 응답 계약·RBAC·탭 가시성·row 템플릿 로직·escape 0.
 - 배포: web 재빌드(정적자산). migrate 불필.
-- [ ] (잔여) 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser(짧은/긴 topic·긴 username 혼재 시 2줄 고정·미줄바꿈·ellipsis + 안내 우측 표면화).
+- [x] (TASK-0277 본 변경) PR #250 머지(main `61e0151`) → web 재배포 → PB-0008. **PB-0008 에서 [문제2] ellipsis 미작동 적발** → 0277b 핫픽스로 후속.
+- **TASK-0277b (후속 핫픽스, CHG/REV-0283)** — 보관 대화 row ellipsis 실작동 수정:
+  - 발견: PR #250 배포 후 PB-0008 실 브라우저 실측 — 줄바꿈은 막혔으나(rowH 56 고정) ellipsis 가 발동 안 함(line 이 콘텐츠 폭 2858px 로 팽창, span clipped:false).
+  - 원인: `.admin-archive-row` 가 `.admin-list-row`(grid, `align-items:center`)와 함께 선언 → flex 컬럼 줄이 row 폭으로 stretch 안 됨 → span shrink 불가. jsdom 은 cascade/layout 미계산이라 미검출.
+  - [x] `styles.css`: `.admin-archive-row` 에 `align-items: stretch` 추가(line→row 폭 stretch → span ellipsis 절단). 라이브 실험 사전확인: line 2858→308px, topic clipped:true, rowH 56 유지.
+  - [x] 캐시버스터 `?v=20260615-task0277b-archive-row-ellipsis`. jsdom 계약 단언 추가(26 PASS). node --check + CSS brace(1210) + make test 회귀 0.
+  - [ ] (잔여) 머지 → web 재배포(deploy_scope: included) → PB-0008 재검증(clipped:true·2줄 고정·밀도 정합).
 
 ## 0y. TASK-20260615T180923-product-icon-chip-list (직전 cycle, 머지됨 #249) — 제품 프로필 아이콘을 대화창 chip + 제품 관리 목록 행에도 표시
 - 요청(사용자, profile-icon-consistency 후속): 제품 프로필 아이콘(Identicon)을 (1) 대화창(채팅창) 제품 chip 과 (2) 제품 관리 탭 목록 행의 **뱃지 아이콘으로도** 표현. 직전 cycle 은 드롭업·관리 상세에만 적용했음.

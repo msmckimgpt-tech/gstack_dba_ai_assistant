@@ -6473,6 +6473,10 @@ a { color: inherit; }
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* TASK-0277b: .admin-list-row(grid) 의 align-items:center 가 상속돼 flex 컬럼의 줄(line)이
+     row 폭으로 stretch 되지 않아 line 이 콘텐츠 폭으로 팽창 → 자식 span 이 shrink 안 돼 ellipsis 미작동.
+     stretch 로 각 줄을 row 폭에 맞춰 span 이 절단(…)되게 한다. PB-0008 실 브라우저 실측 발견. */
+  align-items: stretch;
 }
 .admin-archive-row:hover { background: var(--primary-soft); }
 .admin-archive-row.is-selected { background: var(--primary-soft); border-left: 3px solid var(--primary); }
