@@ -3585,3 +3585,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] node --check app.js/share.js PASS
 - [x] web 재배포(main 2befd37) + 새 app.js(enhanceDiffBlocks)·캐시버스터(?v=20260615-task0256-diff) 서빙 검증
 - [x] PB-0008 Windows-browser 시각검증 PASS — diff +초록(rgb(158,206,106))/-빨강(rgb(247,118,142)) 색 구분 실측(2026-06-15, TEST.md §4)
+
+### TASK-0256b — diff 블록 라인 이중 줄바꿈 수정 (2026-06-15)
+- 사용자 보고: 답변 diff 블록의 각 줄마다 빈 줄이 추가됨(이중 줄바꿈).
+- 원인: enhanceDiffBlocks 가 `.diff-line`(display:block) span 사이에 `"\n"` 텍스트 노드를 삽입 → `<pre>` 컨텍스트에서 블록 줄바꿈 + 리터럴 줄바꿈이 겹쳐 줄마다 빈 줄.
+- [x] app.js/share.js: span 사이 `"\n"` 텍스트 노드 삽입 제거(block span 이 줄 구분 담당) + 미사용 `i` 파라미터 정리
+- [x] 캐시버스터 bump(app.js/share.js → `?v=20260615-task0256b-spacing`, 미변경 CSS 는 유지), node --check PASS
+- [ ] web 재배포 + PB-0008 Windows-browser 재검증(단일 줄 간격)

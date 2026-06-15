@@ -2478,3 +2478,11 @@ source_of_truth: true
 - Verification: 신규 test_product_conn_status.py 8 PASS(scope_key 매핑·최악상태 집계·좌표 비노출·graceful) + make test 컨테이너 전체 회귀 0 + ruff clean + node --check + CSS brace + Playwright 격리(상태별 dot 색 + 바인딩없음 모드색 유지) + 라이브 conn_health snapshot 실측(an2-*=unstable, local/mssql=healthy 다양).
 - Residual: 배포 후 PB-0008 Windows-browser 시각검증(드롭업 dot 색이 연결 상태 반영) — CHECK#13.
 - Cross-ref: CHG-20260615-0261 / TASK-0261 / TASK-0250(conn_health 모니터 소스).
+
+## REV-20260615-0262 [SKIPPED:frontend-rendering-fix]
+- Date: 2026-06-15
+- Cycle: TASK-0256b (diff 블록 줄 이중 줄바꿈 수정), **Minor §12.3** — 정적자산 2파일(JS) + 변경 자산 캐시버스터. 백엔드/API/스키마/RBAC/CSS/시크릿 0.
+- Trigger: UI 렌더 버그. enhanceDiffBlocks 에서 block span 사이 `"\n"` 제거 — 신규 로직·상태·DOM 구조·엔드포인트·권한 0(텍스트 노드 1종 미삽입 + 미사용 파라미터 정리). 전례(REV-20260612-0236 frontend-bugfix) 동일 경량 SKIP.
+- Reason: 근본원인 명확(display:block + 리터럴 `"\n"` = <pre> 이중 줄바꿈). XSS 표면 무변경(textContent 경로 동일, DOMPurify 최종 정화). 적대적 패널 불요.
+- Residual: PB-0008 Windows-browser 재검증(단일 줄 간격) — CHECK#13.
+- Cross-ref: CHG-20260615-0256b / TASK-0256b / REV-20260615-0256.

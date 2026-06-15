@@ -543,13 +543,15 @@ function enhanceDiffBlocks(html) {
       const raw = (codeEl.textContent || "").replace(/\n$/, "");
       const lines = raw.split("\n");
       codeEl.textContent = "";
-      lines.forEach((line, i) => {
+      lines.forEach((line) => {
         const span = document.createElement("span");
         span.className = "diff-line " + diffLineClass(line);
         // 빈 줄도 한 줄 높이를 유지하도록 공백 1개로 대체.
         span.textContent = line.length ? line : " ";
         codeEl.appendChild(span);
-        if (i < lines.length - 1) codeEl.appendChild(document.createTextNode("\n"));
+        // .diff-line 은 display:block 이라 span 자체가 한 줄을 차지한다. 여기에 "\n"
+        // 텍스트 노드를 더하면 <pre> 컨텍스트에서 리터럴 줄바꿈이 겹쳐 줄마다 빈 줄이
+        // 생긴다(이중 줄바꿈, TASK-0256b) → 삽입하지 않는다.
       });
       const pre = codeEl.closest("pre");
       if (pre) pre.classList.add("diff-block");

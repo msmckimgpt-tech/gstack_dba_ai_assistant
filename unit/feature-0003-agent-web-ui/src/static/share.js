@@ -205,12 +205,12 @@
         const raw = (codeEl.textContent || "").replace(/\n$/, "");
         const lines = raw.split("\n");
         codeEl.textContent = "";
-        lines.forEach((line, i) => {
+        lines.forEach((line) => {
           const span = document.createElement("span");
           span.className = "diff-line " + diffLineClass(line);
           span.textContent = line.length ? line : " ";
           codeEl.appendChild(span);
-          if (i < lines.length - 1) codeEl.appendChild(document.createTextNode("\n"));
+          // .diff-line display:block — "\n" 텍스트 노드는 <pre> 에서 이중 줄바꿈 유발(TASK-0256b), 미삽입.
         });
         const pre = codeEl.closest("pre");
         if (pre) pre.classList.add("diff-block");
