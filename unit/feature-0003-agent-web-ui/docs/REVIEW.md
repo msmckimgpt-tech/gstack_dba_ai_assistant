@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0259 [SKIPPED:pb0008-evidence-docs-only]
+- Date: 2026-06-15
+- Cycle: TASK-0259 (TASK-0257/0258 PB-0008 Windows-browser 시각검증 evidence 기록 — docs-only: TEST.md §4 Run + TASK.md PB-0008 완료 표기. src 코드 0).
+- Skip 사유: 코드 변경 0(순수 evidence/docs). 핵심 코드 변경은 선행 REV-20260615-0257 [SUBAGENT:rbac-adversarial] SHIP-WITH-FIXES / REV-20260615-0258 [SKIPPED:css-display-hotfix] 에서 이미 리뷰 완료. 본 후속은 라이브 실증 기록일 뿐.
+- 실증: PB-0008(실 Chrome/148 relay, 배포 web `Up healthy`) — 계정 그룹 펼침 시 계정 조회만 visible·나머지 6개 computed `display:none`(visible=1) + 역할 그룹 vanish/등장 + override 그룹 비vanish. 사용자 두 예시 라이브 충족. CHECK#13 충족. 자격증명 미노출.
+- Cross-ref: CHG-20260615-0259 / TEST.md §4 (2026-06-15 TASK-0257/0258 Run) / REV-20260615-0257·0258.
+
 ## REV-20260615-0258 [SKIPPED:css-display-hotfix-strictly-safer]
 - Date: 2026-06-15
 - Cycle: TASK-0258 (TASK-0257 핫픽스 — disclosure hidden row 가 실브라우저에서 안 숨겨지던 `[hidden]` CSS override 버그. frontend-only `src/static/styles.css` 1규칙 + 캐시버스터 + 회귀 가드 테스트).
