@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.29.1
+template_version: v3.30.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -2842,3 +2842,130 @@ customization(hooks·settings·skills)을 비활성화한다:
 진단 후에는 safe-mode 없이 정상 세션으로 복귀한다. safe-mode 는 **디버깅 격리 전용**이며 상시
 운영 모드가 아니다 — 거버넌스 hook(F0 gate, verify-completion, PreCompact TASK 보호 등)도 함께
 비활성화되므로, 이 모드에서는 mutation/commit/fan-out 을 수행하지 않는다(진단 관찰만).
+
+### §22.8 `fallbackModel` — 모델 과부하·미가용 시 폴백 체인 (v2.1.166+)
+
+멀티 소비자 환경에서 장기 자율 위임을 동시 다발로 수행하면, primary 모델이 일시적으로
+**과부하(overloaded)·미가용(unavailable)·non-retryable 5xx** 응답을 반환해 세션이 실패할
+수 있다. `fallbackModel` 은 이때 지정한 폴백 모델을 **순서대로** 시도해 세션을 지속시킨다.
+
+> ⚠️ **적용 범위 — 모델 *가용성* 한정, quota/rate-limit 은 비대상.**
+> fallbackModel 은 과부하/미가용/non-retryable 5xx 에만 발동한다. 다음에는 **발동하지
+> 않는다** — 인증 오류, billing/요금제 오류, **rate-limit(429)**, request-size 오류, 전송
+> 오류(이들은 일반 retry 로직을 탄다). 즉 "usage limit 소진"(plan quota 도달) 같은 요금제
+> 한도는 fallbackModel 이 복구하지 못한다. 그 실패 모드는 §22.9(SessionEnd flush) + cross-worker
+> 인계 + `/usage` 모니터링(§11.3)의 영역이다. 두 메커니즘을 혼동하지 않는다.
+
+**`.claude/settings.json` 등록 예 (primary=Opus 4.8 → Sonnet 4.6 → Haiku 4.5):**
+
+```json
+{
+  "fallbackModel": ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
+}
+```
+
+- 값은 **폴백 목록만** 담는다(현재 primary 는 제외). 별칭(`sonnet`·`haiku`)·`"default"`(기본 모델로 전개)도 허용.
+- **순서대로** 시도하며 전환 시 notice 를 표시한다. 중복 제거 후 **최대 3개**까지(초과분 무시).
+- 전환은 **현재 턴 한정** — 다음 메시지는 다시 primary 부터 시도한다.
+- 도달 불가 모델(예: 은퇴 모델)은 건너뛰고 다음 항목으로 진행.
+- CLI 플래그 `--fallback-model sonnet,haiku` 가 설정값보다 우선.
+- **subagent 에는 자동 적용되지 않는다** — subagent 는 자체 model 설정을 따른다(§22.3.2 의
+  subagent 비재개성과 별개 사안 — 대규모 fan-out 에서 폴백이 필요하면 subagent model 을 별도 지정).
+- **실 폴백 depth 는 `availableModels` 와의 교집합**: `enforceAvailableModels` 가 켜지고 allowlist 에
+  체인 항목 일부가 빠지면, 문서상 3-deep 체인이 실제로는 1~2-deep 로 **조용히 축소**된다(아래 read
+  시점 drop). 설정한 체인 = 실효 체인이 아닐 수 있음을 전제로 둔다.
+
+**`availableModels` / `enforceAvailableModels` — 모델 allowlist (cost·consistency 제어, v2.1.175+):**
+
+폴백 체인이 의도치 않은 모델로 확대되지 않도록 선택 가능 모델을 allowlist 로 제한한다.
+
+> ⚠️ **보안 경계가 아니다.** 이는 비용·일관성(어느 tier 를 쓰는가) 제어이지 capability/권한
+> 경계가 아니다 — 로컬 `settings.json` 을 편집할 수 있는 주체는 이 목록도 편집할 수 있다. 실효
+> 강제가 필요하면 상위 scope(managed/policy settings)로 배포해야 한다.
+
+```json
+{
+  "availableModels": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+  "enforceAvailableModels": true
+}
+```
+
+- `availableModels`: 선택 가능 모델 allowlist. `/model`·`--model`·`ANTHROPIC_MODEL`·subagent
+  `model`·**fallbackModel 체인**에 모두 적용. 체인 중 allowlist 밖 항목은 read 시점에 **drop 되어
+  시도되지 않는다**.
+- `enforceAvailableModels: true`(v2.1.175+): allowlist 를 Default 옵션까지 확장(tier 기본이
+  allowlist 밖이면 첫 허용 항목으로 resolve). `availableModels: []` 이면 enforcement 미발동.
+- managed/policy settings 의 값은 하위 scope 를 **대체**(merge 아님) — 조직 차원 강제의 유일한 실효 lever.
+
+모델 id 는 본 환경 정본을 사용한다 — Opus 4.8 `claude-opus-4-8`, Sonnet 4.6 `claude-sonnet-4-6`,
+Haiku 4.5 `claude-haiku-4-5-20251001`(별칭 `opus`/`sonnet`/`haiku` 는 최신 tier 로 resolve).
+자세한 설정 의미는 Claude Code `model-config` 문서를 따른다.
+
+### §22.9 `SessionEnd` lifecycle hook — 종료 시 결정적 finalize + worktree 정리 (v2.1.169+)
+
+Claude Code v2.1.169+ 의 **`SessionEnd`** hook(changelog 의 "post-session" hook 의 실제 event
+이름)은 세션이 종료된 **후·workspace(worktree) 삭제 직전**에 스크립트를 실행한다. 장기 위임
+세션이 quota 소진·사용자 종료·rollover 등으로 끝날 때 in-progress 상태를 **결정적으로** 보존하고
+잔재를 회수하는 종료 게이트로 쓴다. §22.1 PreCompact(압축 직전)와 bookend 이며 `SessionStart`
+(세션 시작)와 짝을 이룬다.
+
+**`.claude/settings.json` 등록 예:**
+
+```json
+{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "matcher": "clear|logout|prompt_input_exit|other",
+        "hooks": [
+          { "type": "command", "command": "bash repo/bin/hooks/session-end.sh" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+- `matcher` 는 종료 사유로 필터(`clear`·`resume`·`logout`·`prompt_input_exit`·`bypass_permissions_disabled`·`other`). 생략 시 전체.
+- **exit code 는 무시된다 — hook 은 종료를 차단할 수 없다**(PreCompact 의 *차단형*과 다른 점). 관찰·기록·정리 전용.
+- stdin JSON 으로 `session_id`·`transcript_path`·`cwd`·`reason`·`hook_event_name` 수신. `additionalContext` 문자열을 반환해 로깅 가능.
+
+**용도 1 — 결정적 인계 flush (§11.1·§22.3.2 보완):**
+장기 위임 세션이 끝날 때 TASK.md/REPORT.md 최종 상태와 cross-worker 인계 노트(worktree/branch/
+base SHA/verify 명령/적용 메모리/re-cycle 계획)를 종료 시점에 자동 flush 한다. §22.3.2 가 다루는
+"subagent/세션 비재개성" 의 보완책 — 문서 누적(§11.1)을 후속 작업자가 의존할 수 있도록 종료 시점에
+deterministic 하게 확정한다. quota 소진으로 수동 인계가 강제되던 마찰(§22.8 의 비대상 실패 모드)을
+이 hook 이 자동화로 완화한다.
+
+**용도 2 — worktree 잔재 cleanup (§22.5 F0/F1 존중):**
+in-flight 임시 산출물(예: `scenario.*.json`, `*.worktree-tmp` 등 프로젝트가 정한 비밀-아닌 잔재
+패턴)이 누적되는 것을 종료 시 회수한다. 단 §22.5 의 F0/F1 isolation 정책을 존중한다 — cleanup 은
+**자신의 worktree/세션 잔재에 한정**하고 consumer main checkout(`./repo`)의 추적 파일이나 타
+worktree 를 건드리지 않는다.
+
+> ⚠️ **두 가지 안전 제약 (작성자 책임):**
+> - **secret 파일을 열거·출력하지 않는다.** `.env*`·`*.secret*` 등 비밀-보유 파일은 이 hook 에서
+>   `find`/`cat`/`echo` 대상에 넣지 않는다 — 파일명만으로도 비밀 존재가 노출되고, SessionEnd 출력은
+>   transcript 에 남아 teardown 후에도 영속한다. 비밀 잔재 정리가 꼭 필요하면 명시 경로만 처리하고
+>   출력은 `>/dev/null` 로 버린다.
+> - **삭제 스코프는 script 가 직접 보장한다.** SessionEnd 는 exit code 를 무시하므로 harness 도
+>   non-zero exit 도 잘못된 `rm` 으로부터 main checkout 을 보호하지 못한다(§22.5 F0). `rm`/`-delete`
+>   전에 대상 경로가 **본 세션 worktree 내부인지 단언**한 뒤에만 삭제한다.
+
+```bash
+#!/usr/bin/env bash
+# session-end.sh — 종료 시 인계 노트 flush + 본 세션 worktree 잔재 정리 (예시)
+payload=$(cat)   # stdin JSON: session_id / transcript_path / cwd / reason
+wt=$(printf '%s' "$payload" | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+# 1) TASK/REPORT 최종 상태가 미flush 면 인계 노트 append (프로젝트별 구현)
+# 2) 삭제 전 대상이 본 세션 worktree(격리 경로) 내부인지 단언 후, 비밀-아닌 임시 잔재만 정리
+case "$wt" in
+  */worktrees/*|*/.ai/*) find "$wt" -maxdepth 2 -name 'scenario.*.json' -delete 2>/dev/null ;;
+  *) : ;;  # main checkout 등 격리 밖 경로면 아무것도 삭제하지 않음 (F0 보호)
+esac
+exit 0   # exit code 는 어차피 무시됨 — 차단 불가
+```
+
+> 참고: `SessionEnd` 는 종료를 막지 못하므로, "압축/종료를 *차단*해 컨텍스트를 지키는" 용도는
+> 여전히 §22.1 PreCompact(`{"decision":"block"}`+exit 2)가 담당한다. SessionEnd 는 "막을 수
+> 없는 종료를 *깔끔하게 마무리*" 하는 보완재다.
