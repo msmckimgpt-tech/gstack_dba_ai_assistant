@@ -17725,7 +17725,9 @@ def _query_usage_conversations(pg, *, days: int, model: "str | None", account_id
                   calls, total_tokens, prompt_tokens, completion_tokens, cost_usd, models[]}], truncated)
     conversation_id NOT NULL 강제(INNER JOIN) — insight/시스템 비대화 usage 제외.
     """
-    win = "now() - interval %s"
+    # PG 는 `interval $1`(파라미터) 문법을 불허 → `%s::interval` 캐스트로 days 를 바인드한다
+    # (admin_llm_usage 는 int 보간 `interval '{days} days'`; 여기선 캐스트로 파라미터화 유지).
+    win = "now() - %s::interval"
     where = ["u.conversation_id IS NOT NULL", "u.created_at >= " + win]
     params: list = [f"{int(days)} days"]
     if model:

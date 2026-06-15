@@ -3441,3 +3441,12 @@ source_of_truth: true
 - Files: src/app.py, src/static/{admin.js,app.js,styles.css,index.html,admin.html}, tests/test_usage_conversations.py, docs/{TASK,MODIFY,REPORT,REVIEW,FUNCTION}.md, docs/STATUS.md(repo)
 - Rollback: 두 엔드포인트 + 헬퍼 제거(app.py), admin.js/app.js 의 bindUsageDrill/openUsageConversations/show*Modal + 차트 data-usage 후크 + hover 비용 추가분 + initializeWorkspace deep-link 분기 제거, styles.css usage-conv 규칙 제거, 캐시버스터 환원. by_day_model/by_model cost_usd 추가는 무해(프론트 미사용 시 무시).
 - Deploy: web 재빌드(app.py + 정적자산). ask/insight-worker 무변경.
+
+## CHG-20260615-0266
+- Date: 2026-06-15 (TASK-0266 — TASK-0263 핫픽스; 동시세션 TASK-0264/0265 선점으로 0265→0266 재번호)
+- Scope: app.py 1줄 SQL 문법 수정 + 회귀 가드 테스트. 백엔드/스키마/RBAC/정적자산 0(엔드포인트 동작만 정상화).
+- 변경: `_query_usage_conversations` 의 `win = "now() - interval %s"` → `"now() - %s::interval"`. PG 는 `interval $1`(파라미터) 문법 불허(리터럴만) → 라이브 500(`syntax error at or near "$1"`). 캐스트(`%s::interval`)는 파라미터 허용 → days 바인드 유지하며 정상. 회귀 가드 `test_q2b_interval_cast_not_bare_param`(SQL 정적 검증) 추가.
+- 검증: test_usage_conversations.py 12 PASS(기존 11 + 가드) + py_compile + **라이브 검증**(worktree app.py 임시 web 적용: admin 34건 HTTP 200·좌표/본문 누출 0, 일자 차원 필터 1건·차트 by_day 정합, profile 200).
+- Files: src/app.py, tests/test_usage_conversations.py, docs/{TASK,MODIFY,REPORT,REVIEW}.md, docs/STATUS.md(repo)
+- Rollback: `%s::interval` → `interval %s` 환원(= 버그 복귀). 권장 안 함.
+- Deploy: web 재빌드(app.py). ask/insight-worker 무변경.

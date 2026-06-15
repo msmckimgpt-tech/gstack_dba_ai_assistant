@@ -2536,3 +2536,12 @@ source_of_truth: true
 - Verification: 신규 test_usage_conversations.py 11 PASS + make test 컨테이너 회귀 0 + ruff + node --check + CSS brace + Playwright 격리.
 - Residual: 배포 후 라이브 엔드포인트 검증(차원 필터 대화목록) + PB-0008(차트 hover 비용·클릭 모달·deep-link) — CHECK#13.
 - Cross-ref: CHG-20260615-0263 / TASK-0263.
+
+## REV-20260615-0266 [SKIPPED:sql-syntax-hotfix]
+- Date: 2026-06-15
+- Cycle: TASK-0266 (TASK-0263 핫픽스 — usage/conversations interval 파라미터 PG 문법; 동시세션 TASK-0264/0265 선점으로 0265→0266 재번호), **Minor §12.3** — app.py 1줄 SQL 문법 수정 + 회귀 가드. 백엔드 로직/인가/노출 표면 0(엔드포인트 동작만 정상화).
+- Trigger: 라이브 500 버그 수정. 인가/데이터 노출 경계는 TASK-0263 의 REV-20260615-0263 [SUBAGENT:security-adversarial] 가 이미 검토(SHIP) — 본 핫픽스는 `interval %s`→`%s::interval` 문법 교정만, WHERE 조건·바인드·노출 화이트리스트 무변경. 적대 패널 재실행 불요.
+- Reason: PG 가 `interval $1` 불허 → 캐스트 문법으로 동일 의미 보존(days 바인드 유지). fake cursor 단위테스트가 못 잡던 클래스라 SQL 정적 검증 가드(`test_q2b`) 추가 + 라이브 PG 실증.
+- Verification: test_usage_conversations.py 12 PASS + 라이브(admin 34건 200·누출 0·일자필터 정합·profile 200).
+- Residual: 정식 web 재빌드(임시 복사본 → 정식 이미지) + PB-0008.
+- Cross-ref: CHG-20260615-0266 / TASK-0266 / TASK-0263(REV-0263 보안리뷰).

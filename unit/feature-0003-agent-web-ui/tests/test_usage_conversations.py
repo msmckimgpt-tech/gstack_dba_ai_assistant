@@ -121,6 +121,18 @@ def test_q2_model_filter():
     assert "7 days" in params  # days 바인드
 
 
+def test_q2b_interval_cast_not_bare_param():
+    """TASK-0265 회귀 가드: PG 는 `interval $1`(파라미터) 문법 불허 → `%s::interval` 캐스트 사용.
+    bare `interval %s` 면 라이브 PG 에서 'syntax error at or near $1' 500 (단위 테스트 fake cursor
+    는 SQL 미실행이라 못 잡던 클래스 — SQL 문자열을 정적 검증)."""
+    sink = []
+    app._query_usage_conversations(_FakePG([], sink), days=30, model=None, account_ids=None,
+                                   day_label=None, gran="day", owner_account_id=None, owner_is_null_ok=False)
+    sql, _ = sink[0]
+    assert "%s::interval" in sql, "days 는 interval 캐스트로 바인드돼야 함(PG 문법)"
+    assert "interval %s" not in sql, "bare 'interval %s' 는 PG 문법 위반(라이브 500)"
+
+
 def test_q2_account_and_day_filter():
     sink = []
     app._query_usage_conversations(_FakePG([], sink), days=30, model=None,
