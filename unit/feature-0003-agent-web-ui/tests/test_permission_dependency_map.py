@@ -77,10 +77,16 @@ def compute_visibility(checked: set[str], all_codes: set[str]) -> dict[str, bool
     return {c: visible(c) for c in all_codes}
 
 
-# ── 가시성 (override mode: gate=허용) — TASK-0264 forceVisible 제거 ─────────────────
-def compute_visibility_override(state: dict[str, str], all_codes: set[str]) -> dict[str, bool]:
+# ── 가시성 (override mode) — TASK-0264 forceVisible 제거 + TASK-0270 상속(허용) 게이트 ──
+#   gate_satisfied = "허용" 또는 ("상속"이면서 역할이 그 권한을 부여 = inherited 에 포함 → 상속(허용)).
+def compute_visibility_override(
+    state: dict[str, str], all_codes: set[str], inherited: set[str] | None = None
+) -> dict[str, bool]:
+    inh = inherited or set()
+
     def gate_satisfied(c: str) -> bool:
-        return state.get(c, "inherit") == "allow"
+        s = state.get(c, "inherit")
+        return s == "allow" or (s == "inherit" and c in inh)
 
     cache: dict[str, bool] = {}
 
@@ -235,6 +241,28 @@ def test_v6_override_gate_allow_reveals_children():
     # 게이트 거부는 자식을 열지 않음(허용만).
     vis3 = compute_visibility_override({"console.access": "allow", "account.read": "deny"}, all_codes)
     assert not vis3["account.update"], "account.read=거부 면 account.update 안 열림"
+
+
+def test_v7_override_inherit_allow_gate_reveals_children():
+    # TASK-0270: 계정 override 게이트는 "허용" 뿐 아니라 "상속(허용)"(상속 + 역할이 부여)에도 펼친다.
+    all_codes = set(VALID_CODES)
+    # console.access·account.read 가 override "상속"이고 역할이 둘 다 부여(inherited) → account.update 노출.
+    inherited = {"console.access", "account.read"}
+    vis = compute_visibility_override({}, all_codes, inherited)  # 모든 값 기본 "상속"
+    assert vis["account.read"], "console.access 상속(허용) 시 account.read 노출"
+    assert vis["account.update"], "account.read 상속(허용) 시 account.update 노출"
+    # 역할이 부여 안 함(inherited 비어있음) → 상속(거부) → 안 펼침.
+    vis_none = compute_visibility_override({}, all_codes, set())
+    assert not vis_none["account.read"], "역할 미부여 상속(거부)면 account.read 안 노출"
+    assert not vis_none["account.update"], "역할 미부여면 account.update 안 노출"
+    # 명시 "거부"는 역할이 부여(inherited)해도 게이트 OFF — 거부가 상속을 이긴다.
+    vis_deny = compute_visibility_override({"account.read": "deny"}, all_codes, {"console.access", "account.read"})
+    assert not vis_deny["account.update"], "account.read=거부면 역할이 부여해도 account.update 안 열림"
+    # "허용"은 inherited 무관하게 펼침.
+    vis_allow = compute_visibility_override(
+        {"console.access": "allow", "account.read": "allow"}, all_codes, set()
+    )
+    assert vis_allow["account.update"], "허용 게이트는 inherited 무관 펼침"
 
 
 # ── C: CSS 계약 — [hidden] 강제 display:none (TASK-0258/0264 핫픽스 회귀 가드) ──────

@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0270 [SKIPPED:ui-disclosure-gate-no-enforcement]
+- Date: 2026-06-15
+- Cycle: TASK-0270 (계정 override 편집기 게이트 = 허용/상속(허용) 펼침 — frontend-only `src/static/admin.js`)
+- Skip 사유: 변경은 override(계정) 편집기의 **disclosure 게이트 충족 판정**(자식 row 를 *시각적으로* 펼칠지)만 — `gateSatisfied` 에 "상속(허용)"(상속 + 역할 부여) 분기 추가. enforcement(권한 체크는 code 기반)·override **저장 경로**(select 값 그대로 읽음)·권한 의미·역할(checkbox) 모드는 byte-identical. 적대적 RBAC 리뷰 불필요(노출 affordance만, 권한 결정/저장 무변경).
+- 자체 점검: ① 상속 baseline 정확성 — 계정 역할 `permission_codes`(frontend) = `_load_role_permission_codes`(WebRolePermissions, 자동부여 audit.read.own 도 seed 영속) = 백엔드 계정 effective `_apply_permission_overrides` 의 base 와 **동일 출처** → 정확한 상속 집합. ② "거부" 우선 — 명시 거부는 역할 부여해도 게이트 OFF(jsdom 검증). ③ "허용"은 inherited 무관 펼침. ④ 역할(checkbox) 모드 gateSatisfied 무변경(체크). ⑤ inheritedGrants 미전달 시 빈 Set 기본 → 역할 편집기 동작 불변.
+- 검증: perm test 16 PASS(신규 V7) + make test 회귀 0 + node --check + jsdom 8/8(상속허용 펼침·상속거부 숨김·거부 우선·허용 무관·운영 list.own 상속허용). PB-0008(배포 후).
+- Cross-ref: CHG-20260615-0270 / TASK-0270.
+
 ## REV-20260615-0269 [SUBAGENT:rbac-adversarial] — SHIP
 - Date: 2026-06-15
 - Cycle: TASK-0269 (운영 권한 대화 그룹 own/any 분리 + "목록 조회" 게이트 — RBAC 카탈로그 group 필드 변경. app.py + admin.js + app.js)

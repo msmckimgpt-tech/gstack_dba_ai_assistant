@@ -308,15 +308,19 @@ TEMP_CLEANUP_ON_SUCCESS="1"
 §10.6 의 section/group **정렬·구조는 불변**이며, 그 위에 권한 row 단위의 표시 단계
 계층을 둔다. 관리 콘솔 권한 grid (`admin.js` `renderPermissionGrid`) 는
 `PERMISSION_DEPENDENCIES` (child → 선행 parent) 에 따라 선행 권한이 충족돼야
-(체크 / override=허용) 해당 종속 권한 row 를 노출한다. 규칙:
+(역할 체크박스 = 체크 / 계정 override = "허용" 또는 "상속(허용)") 해당 종속 권한 row 를 노출한다. 규칙:
 
 - **마스터 게이트**: `console.access` (관리 콘솔 접근) 가 관리 권한 section 의 마스터
   게이트. `account.read` / `role.read` / `audit.read.own` / `system_prompt.global.read`
   의 부모 = `console.access` → 미체크 시 계정·역할·감사·시스템설정 그룹이 접힌다.
-- **운영 권한**: 마스터 게이트 없음. `.any` (전체) 권한은 대응 `.own` (내) 권한을
-  선행으로 둔다.
+- **운영 권한 (TASK-0269)**: 대화는 `conversation_own`(내 대화 권한) / `conversation_any`
+  (전체 대화 권한) 2 그룹으로 분리. 각 그룹의 "목록 조회"(`list.own`/`list.any`)가 게이트 —
+  create/list.own/list.any 루트, 동작 권한은 같은 그룹의 list 를 선행으로 둔다.
+- **계정 override 게이트 = 허용/상속(허용) (TASK-0270)**: override 모드 게이트는 값이
+  "허용"이거나 "상속"이면서 계정 역할이 그 권한을 부여(상속(허용))할 때 충족된다. "거부"는
+  역할 부여와 무관하게 게이트 OFF(거부 우선). 상속(허용) 판정 baseline = 역할 `permission_codes`.
 - **게이트 체인 가시성 + 부여 도달성 (BLOCKING, TASK-0264 개정)**: row 는 선행 게이트
-  체인이 모두 충족(checkbox: 각 조상 체크 / override: 각 조상 허용)돼야만 노출한다 —
+  체인이 모두 충족(checkbox: 각 조상 체크 / override: 각 조상 허용·상속(허용))돼야만 노출한다 —
   **부여 여부와 무관**(게이트 OFF 면 부여된 세부 권한도 "더 보기" 뒤로 접힘. 이전
   `forceVisible`=부여 항목 항상 표시 규칙은 "최대한 단순화" 사용자 요구로 제거).
   disclosure 는 row 를 *접을(collapse)* 뿐 *제거(strip)* 하지 않으며, 저장 경로는 hidden

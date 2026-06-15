@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0270
+- Date: 2026-06-15 (TASK-0270, **Minor §12.3** — 계정 override 편집기 게이트 = 허용/상속(허용) 펼침)
+- Scope: agent-web-ui (프론트 전용) — 사용자 요청(역할 트리 후속). 계정 override 편집기 disclosure 게이트가 '허용' 외에 '상속(허용)'(상속 + 역할 부여)에도 자식을 펼치도록. 트리/2그룹은 renderPermissionGrid 공유로 이미 적용됨.
+- 변경:
+  - `src/static/admin.js`:
+    - `_applyPermissionDisclosure(containerEl, mode, showAll, inheritedGrants)` — override `gateSatisfied = value==="allow" || (value==="inherit" && inheritedGrants.has(code))`. checkbox 모드 gateSatisfied(체크) 무변경. recompute 클로저에 inheritedGrants 전파.
+    - `renderPermissionGrid` opts 에 `inheritedGrants`(기본 빈 Set) 수용 + recompute 에 전파.
+    - 계정 override 호출부: `adminState.roles` 에서 계정 역할 조회 → `role.permission_codes`(상속 baseline)로 `inheritedGrants` Set 구성해 opts 전달.
+  - `src/static/admin.html`: 캐시버스터 `admin.js?v=20260615-task0270-inherit-gate`.
+  - `tests/test_permission_dependency_map.py`: `compute_visibility_override` 에 `inherited` 파라미터 추가(상속(허용) 게이트) + 신규 `test_v7_override_inherit_allow_gate_reveals_children`.
+- 비변경: 역할(checkbox) 모드·enforcement(권한 체크 code 기반)·override 저장 경로(select 값 그대로)·disclosure 가시성/도달성/트리·RBAC·엔드포인트·스키마. 상속 baseline = role.permission_codes 는 백엔드 계정 effective 와 동일 출처(정확).
+- 검증: perm test **16 PASS**(신규 V7) + make test 컨테이너 회귀 0(exit=0) + node --check + jsdom 8/8. **잔여**: 배포 + PB-0008.
+
 ## CHG-20260615-0269
 - Date: 2026-06-15 (TASK-0269, **Minor §12.3** — 운영 권한 대화 그룹 own/any 분리 + "목록 조회" 게이트 카테고리 트리)
 - Scope: agent-web-ui — 사용자 요청(역할 트리 후속). 대화를 `내 대화 권한`/`전체 대화 권한` 2그룹으로 분리, `.any→.own` 1:1 종속을 "생성·조회 기반 > 동작" 카테고리로 교체. 권한 code·enforce 불변(group=UI 분류 메타).

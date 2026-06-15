@@ -499,7 +499,10 @@ function _refreshGroupDisclosure(containerEl, showAll, recompute, mode, isExplic
 }
 
 // containerEl 전체 grid 에 disclosure 를 1회 적용(초기 + 매 변경 시 호출).
-function _applyPermissionDisclosure(containerEl, mode, showAll) {
+// inheritedGrants(TASK-0270): override(계정) 모드에서 "상속(허용)" 판정용 — 계정 역할이 부여한 권한 code Set.
+//   상속 값은 역할이 부여하면 effective 허용 → 게이트로 동작(자식 펼침).
+function _applyPermissionDisclosure(containerEl, mode, showAll, inheritedGrants) {
+  const inherited = inheritedGrants || new Set();
   const wrappers = Array.from(containerEl.querySelectorAll("[data-perm-code]"));
   if (!wrappers.length) return;
   const state = new Map();
@@ -520,10 +523,12 @@ function _applyPermissionDisclosure(containerEl, mode, showAll) {
     const s = state.get(code);
     return mode === "checkbox" ? s === "on" : (s === "allow" || s === "deny");
   };
-  // gateSatisfied = 자식을 여는 양성 부여(checkbox 체크 / override 허용).
+  // gateSatisfied = 자식을 여는 effective 허용.
+  //   checkbox(역할): 체크. override(계정, TASK-0270): "허용" 또는 "상속"이면서 역할이 그 권한을 부여(상속(허용)).
   const gateSatisfied = (code) => {
     const s = state.get(code);
-    return mode === "checkbox" ? s === "on" : s === "allow";
+    if (mode === "checkbox") return s === "on";
+    return s === "allow" || (s === "inherit" && inherited.has(code));
   };
   // 가시성(TASK-0264 — "최대한 단순화"): 게이트 체인이 충족(=선행 권한이 모두 양성)돼야만 노출한다.
   //   부여 여부와 무관 — 게이트 OFF 면 부여된 세부 권한도 "더 보기" 뒤로 숨긴다(이전 forceVisible 제거).
@@ -547,7 +552,7 @@ function _applyPermissionDisclosure(containerEl, mode, showAll) {
     const forceShow = Boolean(groupKey && showAll.has(groupKey));
     w.hidden = !(forceShow || isVisible(code));
   });
-  _refreshGroupDisclosure(containerEl, showAll, () => _applyPermissionDisclosure(containerEl, mode, showAll), mode, isExplicit);
+  _refreshGroupDisclosure(containerEl, showAll, () => _applyPermissionDisclosure(containerEl, mode, showAll, inherited), mode, isExplicit);
 }
 
 // 그룹 내 권한을 PERMISSION_DEPENDENCIES 트리 순서(부모 먼저, 자식 들여쓰기)로 정렬한다 (TASK-0267).
@@ -584,12 +589,13 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
   // TASK-0053 Phase B: opts.excludeDynamic=true 면 dynamic product.access.<key> 권한들을 grid 에서 제외.
   // 그 권한들은 호출처가 별도 buildProductSubcatalog... 함수로 product 카드 형식으로 렌더한다.
   // CONVENTIONS.md §10.6 — group <details> 들은 ADMIN_PERMISSION_SECTIONS 의 2단 section (관리/운영/기타) 으로 묶어 렌더.
-  const { excludeDynamic = false } = opts;
+  // inheritedGrants(TASK-0270): override(계정) 모드에서 "상속(허용)" 게이트 판정용 — 역할이 부여한 code Set.
+  const { excludeDynamic = false, inheritedGrants = new Set() } = opts;
   containerEl.innerHTML = "";
   const selected = new Set(selectedCodes || []);
   // 점진적 세분화: 그룹별 "세부 권한 더 보기" 강제표시 set + 재계산 클로저. 매 변경 핸들러가 호출.
   const showAll = new Set();
-  const recompute = () => _applyPermissionDisclosure(containerEl, mode, showAll);
+  const recompute = () => _applyPermissionDisclosure(containerEl, mode, showAll, inheritedGrants);
   sectionedGroupedPermissions({ excludeDynamic }).forEach(({ section: sec, groups }) => {
     const sectionEl = document.createElement("section");
     sectionEl.className = "permission-section";
@@ -3599,6 +3605,10 @@ function renderAccountDetail() {
   overrideSection.appendChild(overrideTitle);
   const overrideWrap = document.createElement("div");
   overrideWrap.className = "override-grid";
+  // TASK-0270: "상속(허용)" 게이트 판정용 — 계정 역할이 부여한 권한 code Set(상속 baseline).
+  //   override 값이 "상속"이고 역할이 그 권한을 부여하면 effective 허용 → 게이트로 동작(자식 펼침).
+  const _ovRole = adminState.roles.find((r) => Number(r.id) === Number(merged.role_id));
+  const _inheritedGrants = new Set((_ovRole && _ovRole.permission_codes) || []);
   renderPermissionGrid(
     overrideWrap,
     [],
@@ -3620,7 +3630,7 @@ function renderAccountDetail() {
       setAccountPending(adminState.selectedAccountId, { permission_overrides: overrides });
       renderAccountList();
     },
-    { excludeDynamic: true }
+    { excludeDynamic: true, inheritedGrants: _inheritedGrants }
   );
   overrideSection.appendChild(overrideWrap);
   paneEl.appendChild(overrideSection);
