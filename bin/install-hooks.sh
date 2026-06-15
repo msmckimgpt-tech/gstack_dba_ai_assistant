@@ -66,10 +66,10 @@ msg=$(git log -1 --format=%s 2>/dev/null)
 #   - "Task-Cycle: TASK-0040" in trailers
 #   - "feat(feature-0003-name): ..."
 feature_id=""
-if [[ "$msg" =~ \(feature-([0-9]+|[0-9]{8}T[0-9]{6})-[a-zA-Z0-9-]+\) ]]; then
-  feature_id=$(printf '%s' "$msg" | grep -oE 'feature-([0-9]+|[0-9]{8}T[0-9]{6})-[a-zA-Z0-9-]+' | head -1)
-elif [[ "$msg" =~ \(META-([0-9]+|[0-9]{8}T[0-9]{6})-[a-zA-Z0-9-]+\) ]]; then
-  feature_id=$(printf '%s' "$msg" | grep -oE 'META-([0-9]+|[0-9]{8}T[0-9]{6})-[a-zA-Z0-9-]+' | head -1)
+if [[ "$msg" =~ \(feature-[0-9]+-[a-zA-Z0-9-]+\) ]]; then
+  feature_id=$(printf '%s' "$msg" | grep -oE 'feature-[0-9]+-[a-zA-Z0-9-]+' | head -1)
+elif [[ "$msg" =~ \(META-[0-9]+-[a-zA-Z0-9-]+\) ]]; then
+  feature_id=$(printf '%s' "$msg" | grep -oE 'META-[0-9]+-[a-zA-Z0-9-]+' | head -1)
 fi
 
 # Fallback: parse Task-Cycle trailer
@@ -86,7 +86,7 @@ fi
 # Validate feature_id matches expected pattern. Unknown values (e.g., MIGRATION,
 # Task-ID standalone) mean this commit does not belong to an operational feature
 # cycle — skip silently rather than erroring.
-if [[ ! "$feature_id" =~ ^(feature|META)-([0-9]+|[0-9]{8}T[0-9]{6})(-[a-zA-Z0-9-]+)?$ ]]; then
+if [[ ! "$feature_id" =~ ^(feature|META)-[0-9]+(-[a-zA-Z0-9-]+)?$ ]]; then
   exit 0
 fi
 
