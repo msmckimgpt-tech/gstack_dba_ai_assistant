@@ -4079,9 +4079,17 @@ def _ensure_web_conversation_attachments_schema(conn) -> None:
                 DeletePending TINYINT NOT NULL DEFAULT 0,
                 DeleteReason VARCHAR(16) NULL,
                 MetaJson JSON NULL,
+                RootAttachmentId BIGINT NULL,
+                VersionNumber INT NOT NULL DEFAULT 1,
+                CreatedByRole VARCHAR(16) NOT NULL DEFAULT 'user',
+                SupersededAt DATETIME(6) NULL,
                 INDEX IX_WCA_Conversation (ConversationId, DeletedAt),
                 INDEX IX_WCA_Account (AccountId, CreatedAt),
-                INDEX IX_WCA_Status (UploadStatus, DeletePending)
+                INDEX IX_WCA_Status (UploadStatus, DeletePending),
+                -- TASK-0274: 버전 체인 내 (root, version) 유일성 강제(동시 materialize race 방지).
+                -- RootAttachmentId NULL(=원본, 버전체인 미생성)은 MySQL UNIQUE 에서 중복 허용되어
+                -- 기존 단일 첨부(NULL,1 다수)와 충돌하지 않는다.
+                UNIQUE KEY UQ_WCA_VersionChain (RootAttachmentId, VersionNumber)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """
         )
@@ -4584,6 +4592,38 @@ def _ensure_avatar_icon_schema(conn) -> None:
         cur.close()
 
 
+def _ensure_attachment_version_schema(conn) -> None:
+    """TASK-0274: WebConversationAttachments 의 버전 관리 컬럼 idempotent ALTER.
+
+    assistant 가 전달받은 첨부를 수정해 새 버전으로 materialize 하는 기능(Task⑥)의
+    스키마 토대. 첨부는 MySQL(agent_memory) 전용 테이블이라 PG/alembic 무관 — avatar
+    선례(_ensure_avatar_icon_schema)와 동형으로 fast-path(_ensure_seed_catchup)·
+    slow-path(_ensure_web_tables) 양쪽에서 호출해 'Unknown column' 회귀를 막는다.
+
+    컬럼:
+      - RootAttachmentId  : 버전 체인 루트(원본) 첨부 Id. NULL = 자기 자신이 루트.
+      - VersionNumber     : 1부터 증가. 같은 RootAttachmentId 내 단조 증가.
+      - CreatedByRole      : 'user'(사용자 업로드) | 'assistant'(LLM materialize).
+      - SupersededAt       : 이 버전이 더 새로운 버전으로 대체된 시각. NULL = 최신.
+    """
+    cur = conn.cursor()
+    try:
+        for ddl in (
+            "ALTER TABLE WebConversationAttachments ADD COLUMN RootAttachmentId BIGINT NULL",
+            "ALTER TABLE WebConversationAttachments ADD COLUMN VersionNumber INT NOT NULL DEFAULT 1",
+            "ALTER TABLE WebConversationAttachments ADD COLUMN CreatedByRole VARCHAR(16) NOT NULL DEFAULT 'user'",
+            "ALTER TABLE WebConversationAttachments ADD COLUMN SupersededAt DATETIME(6) NULL",
+            # 버전 체인 (root, version) 유일성. NULL root(원본)는 중복 허용 — 기존 데이터 무충돌.
+            "ALTER TABLE WebConversationAttachments ADD UNIQUE KEY UQ_WCA_VersionChain (RootAttachmentId, VersionNumber)",
+        ):
+            try:
+                cur.execute(ddl)
+            except Exception:
+                pass
+    finally:
+        cur.close()
+
+
 def _ensure_seed_catchup(conn) -> None:
     """기존 배포에 신규 seed role/prompt 가 있으면 상태를 맞춘다.
 
@@ -4627,6 +4667,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_must_change_password_schema(conn)
     # TASK-0268: 아바타/아이콘 object key 컬럼 fast-path 보정(slow path _ensure_web_tables 미경유 재기동 대비).
     _ensure_avatar_icon_schema(conn)
+    # TASK-0274: 첨부 버전 관리 컬럼(RootAttachmentId/VersionNumber/CreatedByRole/SupersededAt) fast-path 보정.
+    _ensure_attachment_version_schema(conn)
     # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 fast-path 보정.
     _ensure_web_audit_events_schema(conn)
     # REQ-20260520-0001 (TASK-0086): WebAccountActivity DROP 완료. migration helper 는
@@ -4800,6 +4842,8 @@ def _ensure_web_tables():
         _ensure_web_conversation_attachments_sandbox_schemas_schema(conn)
         _ensure_web_attachment_derived_messages_schema(conn)
         _ensure_web_conversation_attachment_provider_files_schema(conn)
+        # TASK-0274: 첨부 버전 관리 컬럼 보장 (slow path — 기존 배포 첨부 테이블에 컬럼 backfill).
+        _ensure_attachment_version_schema(conn)
         # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 보장 (slow path).
         _ensure_web_audit_events_schema(conn)
         # REQ-20260520-0001 (TASK-0086): migration helper 는 rollback window 동안 보존 (slow path).
@@ -6299,7 +6343,8 @@ def _load_attachment_row(conn, attachment_id: int) -> dict[str, Any] | None:
                 Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
                 FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
                 UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
-                DeletePending, DeleteReason, MetaJson
+                DeletePending, DeleteReason, MetaJson,
+                RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
             FROM WebConversationAttachments
             WHERE Id = %s
             LIMIT 1
@@ -6348,6 +6393,14 @@ def _serialize_attachment_for_api(row: dict[str, Any] | None, *, include_signed_
         "delete_pending": bool(row.get("DeletePending") or 0),
         "delete_reason": str(row.get("DeleteReason") or "") or None,
     }
+    # TASK-0274: 버전 관리 필드. RootAttachmentId NULL = 이 row 자체가 루트(원본).
+    _att_id = int(row.get("Id") or 0)
+    _root_id = row.get("RootAttachmentId")
+    payload["version_number"] = int(row.get("VersionNumber") or 1)
+    payload["root_attachment_id"] = int(_root_id) if _root_id else _att_id
+    payload["created_by_role"] = str(row.get("CreatedByRole") or "user")
+    payload["is_assistant_generated"] = (str(row.get("CreatedByRole") or "user") == "assistant")
+    payload["superseded"] = bool(row.get("SupersededAt"))
     meta = row.get("MetaJson")
     if isinstance(meta, dict):
         # degraded_reason (D17 partial_indexed) 만 표면화.
@@ -6382,6 +6435,289 @@ def _serialize_attachment_for_api(row: dict[str, Any] | None, *, include_signed_
     if include_signed_url and signed_url:
         payload["signed_url"] = signed_url
     return payload
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# TASK-0274: assistant 첨부 수정 → 새 버전 materialize (Task⑥)
+# ──────────────────────────────────────────────────────────────────────────
+# assistant 가 전달받은 (텍스트 계열) 첨부를 수정해 사용자에게 돌려줄 때, 응답 본문에
+# 아래 fenced block 을 출력하면 백엔드가 파싱해 **원본 첨부의 새 버전**으로 자동
+# materialize 한다(사용자 결정: assistant 자동 materialize).
+#
+#   ```attachment-edit
+#   {"source_attachment_id": 123, "filename": "report_v2.csv"}
+#   <수정된 파일 전체 내용>
+#   ```
+#
+# 신뢰 경계 가드(자동 materialize 는 LLM 이 임의 바이트를 저장하는 표면이므로 강하게 제약):
+#   1. 텍스트 계열 kind(csv/text)만 — xlsx/pdf/image 등 바이너리는 거부(LLM 이 안전히 생성 불가).
+#   2. source 첨부는 **같은 conversation + 같은 소유 account** 여야 함(IDOR/cross-conv 차단).
+#   3. per-file / per-conv / per-account size cap 재사용(_check_attachment_size_caps).
+#   4. turn 당 materialize 개수 cap(_ASSISTANT_EDIT_COUNT_CAP) + 내용 size cap.
+#   5. 새 버전은 같은 RootAttachmentId 체인에 VersionNumber+1, CreatedByRole='assistant'.
+#      직전 최신 버전을 SupersededAt=NOW() 로 마킹(목록엔 최신만 노출).
+_ASSISTANT_EDIT_COUNT_CAP = 5          # turn 당 최대 materialize 첨부 수
+_ASSISTANT_EDIT_SIZE_CAP_BYTES = 1024 * 1024   # 단일 materialize 내용 1MB (텍스트 계열)
+_ATTACHMENT_EDIT_BLOCK_RE = re.compile(
+    r"```attachment-edit[ \t]*\n(.*?)\n```",
+    re.DOTALL,
+)
+
+
+def _parse_attachment_edit_blocks(answer: str) -> list[dict[str, Any]]:
+    """assistant 답변에서 ```attachment-edit``` 블록을 파싱.
+
+    각 블록의 첫 줄은 JSON 헤더({source_attachment_id, filename?}), 나머지는 파일 내용.
+    Returns: [{"source_attachment_id": int, "filename": str|None, "content": str}, ...]
+    파싱 불가/형식 오류 블록은 조용히 skip(LLM 출력 잡음에 견고).
+    """
+    text = answer or ""
+    if "attachment-edit" not in text:
+        return []
+    out: list[dict[str, Any]] = []
+    for m in _ATTACHMENT_EDIT_BLOCK_RE.finditer(text):
+        body = m.group(1)
+        if "\n" in body:
+            header_line, content = body.split("\n", 1)
+        else:
+            header_line, content = body, ""
+        try:
+            header = json.loads(header_line.strip())
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(header, dict):
+            continue
+        try:
+            src_id = int(header.get("source_attachment_id") or 0)
+        except (ValueError, TypeError):
+            continue
+        if src_id <= 0:
+            continue
+        fname = header.get("filename")
+        out.append({
+            "source_attachment_id": src_id,
+            "filename": str(fname).strip() if fname else None,
+            "content": content,
+        })
+    return out
+
+
+def _next_version_filename(original: str, version_number: int) -> str:
+    """원본 파일명에서 버전 접미사를 붙인 기본 파일명 생성(LLM 이 filename 미지정 시).
+    `report.csv` + v2 → `report_v2.csv`."""
+    name = (original or "edited.txt").strip() or "edited.txt"
+    if "." in name:
+        stem, ext = name.rsplit(".", 1)
+        return f"{stem}_v{version_number}.{ext}"
+    return f"{name}_v{version_number}"
+
+
+def _materialize_assistant_attachment_edits(
+    conn,
+    *,
+    account: dict[str, Any],
+    conversation_id: str,
+    answer: str,
+    message_id: int | None = None,
+    request: "Request | None" = None,
+) -> list[dict[str, Any]]:
+    """assistant 답변의 attachment-edit 블록을 새 첨부 버전으로 materialize.
+
+    Returns: 생성된 새 버전들의 직렬화 dict 리스트(0개면 빈 리스트). 모든 실패는
+    fail-open(로깅만) — materialize 실패가 사용자 답변을 막지 않는다.
+    """
+    blocks = _parse_attachment_edit_blocks(answer)
+    if not blocks:
+        return []
+    try:
+        from web.modules import storage_minio
+    except Exception:
+        return []
+
+    account_id = int(account.get("id") or 0)
+    created: list[dict[str, Any]] = []
+    import uuid as _uuid
+
+    for block in blocks[:_ASSISTANT_EDIT_COUNT_CAP]:
+        src_id = int(block["source_attachment_id"])
+        content = str(block.get("content") or "")
+        body_bytes = content.encode("utf-8")
+
+        # 가드 4: 내용 size cap(텍스트 계열).
+        if not body_bytes:
+            continue
+        if len(body_bytes) > _ASSISTANT_EDIT_SIZE_CAP_BYTES:
+            logging.getLogger(__name__).warning(
+                "attachment-edit: content too large (src=%s, %d bytes) — skip",
+                src_id, len(body_bytes),
+            )
+            continue
+
+        # source 첨부 로드 + 가드 2: 같은 conversation + 같은 account scope.
+        src = _load_attachment_row(conn, src_id)
+        if not src:
+            continue
+        if str(src.get("ConversationId") or "") != str(conversation_id):
+            logging.getLogger(__name__).warning(
+                "attachment-edit: source conv mismatch (src=%s) — skip", src_id)
+            continue
+        if int(src.get("AccountId") or 0) != account_id:
+            logging.getLogger(__name__).warning(
+                "attachment-edit: source account mismatch (src=%s) — skip", src_id)
+            continue
+        if src.get("DeletedAt") or src.get("DeletePending"):
+            continue
+
+        # 가드 1: 텍스트 계열 kind 만(csv/text). 바이너리(xlsx/pdf/image)는 거부.
+        src_kind = str(src.get("Kind") or "")
+        if src_kind not in ("text", "csv"):
+            logging.getLogger(__name__).warning(
+                "attachment-edit: non-text kind '%s' (src=%s) — skip", src_kind, src_id)
+            continue
+
+        # 가드 3: size cap(per_file/conv/account) 재사용.
+        ok, _reason = _check_attachment_size_caps(
+            conn, account_id=account_id, conversation_id=conversation_id,
+            new_size_bytes=len(body_bytes),
+        )
+        if not ok:
+            logging.getLogger(__name__).warning(
+                "attachment-edit: size cap exceeded (src=%s) — skip", src_id)
+            continue
+
+        # 버전 체인: root = source 의 root(없으면 source 자신). 체인 내 최대 VersionNumber+1.
+        root_id = int(src.get("RootAttachmentId") or 0) or src_id
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                SELECT COALESCE(MAX(VersionNumber), 1)
+                FROM WebConversationAttachments
+                WHERE RootAttachmentId = %s OR Id = %s
+                """,
+                (root_id, root_id),
+            )
+            row = cur.fetchone()
+            next_version = int((row[0] if row else 1) or 1) + 1
+        finally:
+            cur.close()
+
+        # MINOR(보안리뷰 V3): 새 파일명은 source 확장자를 강제 보존 — LLM 이 filename 에
+        # `.exe` 등을 줘도 다운로드 Content-Disposition 에 실행파일류 확장자가 실리지 않게.
+        src_filename = str(src.get("OriginalFilename") or "")
+        src_ext = src_filename.rsplit(".", 1)[1].lower() if "." in src_filename else ""
+        raw_filename = block.get("filename") or _next_version_filename(src_filename, next_version)
+        # base name 만 취하고(디렉토리 구분자 제거) source 확장자로 정규화.
+        base_name = str(raw_filename).replace("/", "_").replace("\\", "_").strip()
+        if src_ext:
+            stem = base_name.rsplit(".", 1)[0] if "." in base_name else base_name
+            filename = f"{stem}.{src_ext}"
+        else:
+            filename = base_name or _next_version_filename(src_filename, next_version)
+        # kind 는 source kind 를 그대로 따른다(텍스트 계열만 여기 도달 — 가드 1).
+        new_kind = src_kind
+        mime_type = "text/csv" if new_kind == "csv" else "text/plain; charset=utf-8"
+        sha256_hex = hashlib.sha256(body_bytes).hexdigest()
+        attachment_uuid = str(_uuid.uuid4())
+        object_key = storage_minio.make_object_key(conversation_id, attachment_uuid, filename)
+
+        # 보안리뷰 V8(원자성): MinIO put 을 INSERT **전에** 수행 — put 성공 후에만 DB row 를
+        # 만든다. 이로써 "DB row 있는데 MinIO 객체 없음" orphan(다운로드 404)을 제거. put 만
+        # 성공하고 INSERT 실패하면 MinIO 고아 객체만 남는데, 이는 정상 업로드 경로와 동일 특성
+        # 이라 reconciliation worker 가 정리(무해).
+        try:
+            storage_minio.put_object_bytes(
+                object_key, body_bytes, content_type=mime_type,
+                metadata={
+                    "conversation-id": conversation_id,
+                    "uploader-account-id": str(account_id),
+                    "assistant-edit-of": str(src_id),
+                },
+            )
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "attachment-edit: MinIO put failed (src=%s) — skip", src_id)
+            continue
+
+        # INSERT 새 버전 row. 보안리뷰 V6(race): IX_WCA_VersionChain 가 UNIQUE 이므로 동시
+        # ask 가 같은 (root, version) 을 INSERT 하면 한쪽이 IntegrityError 로 실패 → skip(데이터
+        # 오염 방지). 실패해도 위 MinIO 객체만 고아로 남아 무해.
+        new_id = 0
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                INSERT INTO WebConversationAttachments (
+                    ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                    UploadStatus, MetaJson, RootAttachmentId, VersionNumber, CreatedByRole
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'uploaded', %s, %s, %s, 'assistant')
+                """,
+                (
+                    conversation_id, account_id, object_key, filename,
+                    _hmac_filename(filename), mime_type, len(body_bytes),
+                    _size_bucket(len(body_bytes)), sha256_hex, new_kind,
+                    json.dumps({"assistant_edit_of": src_id, "message_id": int(message_id or 0)}),
+                    root_id, next_version,
+                ),
+            )
+            new_id = int(cur.lastrowid or 0)
+        except Exception:
+            # version 충돌(UNIQUE) 또는 기타 INSERT 실패 — skip.
+            logging.getLogger(__name__).warning(
+                "attachment-edit: INSERT failed (src=%s, root=%s, v=%s) — skip",
+                src_id, root_id, next_version)
+        finally:
+            cur.close()
+        if not new_id:
+            continue
+
+        # 직전 최신 버전을 superseded 마킹 — 새 버전만 목록 노출. 보안리뷰 V8: WHERE 를
+        # `VersionNumber < new_version` 기준으로 둬, 직전 supersede 가 일부 실패해 비-superseded
+        # 구버전이 남아 있어도 다음 materialize 가 자가 정정(더 옛 버전 전부 끔).
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                UPDATE WebConversationAttachments
+                SET SupersededAt = UTC_TIMESTAMP(6)
+                WHERE (RootAttachmentId = %s OR Id = %s)
+                  AND VersionNumber < %s AND SupersededAt IS NULL AND DeletedAt IS NULL
+                """,
+                (root_id, root_id, next_version),
+            )
+        finally:
+            cur.close()
+        try:
+            conn.commit()
+        except Exception:
+            pass
+
+        # 보안리뷰 V10(추적성): assistant 자동 materialize 를 audit. D12 정합 — raw filename/
+        # bytes 미노출(categorical 메타만). fail-open: audit 실패는 materialize 를 막지 않음.
+        new_row = _load_attachment_row(conn, new_id)
+        try:
+            _audit_ctx = _serialize_attachment_for_audit(new_row)
+            _audit_ctx.update({
+                "assistant_edit_of": src_id,
+                "version_number": next_version,
+                "root_attachment_id": root_id,
+                "created_by_role": "assistant",
+            })
+            _audit_user_action(
+                conn, request, account,
+                action="attachment.version.create",
+                resource_type="attachment",
+                resource_id=str(new_id),
+                request_ctx=_audit_ctx,
+            ) if request is not None else None
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "attachment-edit: version audit dispatch failed (new=%s)", new_id, exc_info=True)
+
+        if new_row:
+            created.append(_serialize_attachment_for_api(new_row))
+    return created
 
 
 def _extract_intent_from_content(content: str) -> str:
@@ -9399,6 +9735,29 @@ async def ask(request: Request) -> JSONResponse:
                     render_csv_paths = latest_csv_paths
                 if latest_meta.get("rationale"):
                     render_rationale = latest_meta.get("rationale", render_rationale)
+
+        # TASK-0274 (Task⑥): assistant 가 답변 본문에 ```attachment-edit``` 블록을 넣었으면
+        # 텍스트 계열 첨부의 새 버전으로 자동 materialize(사용자 결정). fail-open — 실패해도
+        # 사용자 답변은 그대로 반환. 생성된 버전은 응답 edited_attachments 로 표면화.
+        materialized_attachments: list[dict[str, Any]] = []
+        if conversation_id and render_output and not agent_result.get("error"):
+            try:
+                _edit_msg_id = int((latest_message or {}).get("id") or 0) if conversation_id else 0
+                materialized_attachments = _materialize_assistant_attachment_edits(
+                    conn,
+                    account=account,
+                    conversation_id=conversation_id,
+                    answer=str(render_output),
+                    message_id=_edit_msg_id,
+                    request=request,
+                )
+            except Exception:
+                # best-effort: materialize 실패는 사용자 응답을 막지 않는다.
+                logging.getLogger(__name__).warning(
+                    "ask: assistant attachment-edit materialize failed (conversation_id=%s)",
+                    conversation_id, exc_info=True,
+                )
+
         result = {
             "output": render_output,
             "executed_sql": render_sql,
@@ -9409,6 +9768,8 @@ async def ask(request: Request) -> JSONResponse:
             "error": agent_result.get("error", ""),
             "duration_ms": round((time.time() - start_ts) * 1000, 2),
         }
+        if materialized_attachments:
+            result["edited_attachments"] = materialized_attachments
         conn.close()
         return JSONResponse(result)
     finally:
@@ -12671,15 +13032,19 @@ def list_conversation_attachments(cid: str, request: Request) -> JSONResponse:
 
         cur = conn.cursor(dictionary=True)
         try:
+            # TASK-0274: 버전 체인의 최신 버전만 목록에 노출(SupersededAt IS NULL).
+            # 구버전은 /api/attachments/{id}/versions 로 조회. 기존 단일 첨부는
+            # SupersededAt NULL + VersionNumber=1 이라 동작 동일(하위호환).
             cur.execute(
                 """
                 SELECT
                     Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
                     FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
                     UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
-                    DeletePending, DeleteReason, MetaJson
+                    DeletePending, DeleteReason, MetaJson,
+                    RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
                 FROM WebConversationAttachments
-                WHERE ConversationId = %s AND DeletedAt IS NULL
+                WHERE ConversationId = %s AND DeletedAt IS NULL AND SupersededAt IS NULL
                 ORDER BY Id ASC
                 """,
                 (cid,),
@@ -12742,6 +13107,75 @@ def get_attachment_metadata(attachment_id: int, request: Request) -> JSONRespons
             payload["bytes_access_denied"] = True
             payload["bytes_access_denied_reason"] = "승인 대기 계정은 첨부 본문을 다운로드할 수 없습니다."
         return JSONResponse(payload)
+    finally:
+        conn.close()
+
+
+@app.get("/api/attachments/{attachment_id}/versions")
+def get_attachment_versions(attachment_id: int, request: Request) -> JSONResponse:
+    """TASK-0274: 첨부의 버전 체인 전체(구버전 포함) 조회.
+
+    attachment_id 는 체인 내 어느 버전이든 가능 — 그 root 를 찾아 전체 체인을 반환한다.
+    권한은 기준 첨부의 read.{own,any} 재사용(버전은 같은 conversation·account 귀속).
+    각 버전에 signed_url(사내망 다운로드, pending 제외) 동봉. 응답은 VersionNumber ASC.
+    """
+    try:
+        from web.modules import storage_minio
+    except Exception as exc:
+        return _json_error(f"storage 모듈 import 실패: {exc}", 500)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        base = _load_attachment_row(conn, attachment_id)
+        if not _account_can_access_attachment(
+            conn, account, base,
+            "conversation.attachment.read.own",
+            "conversation.attachment.read.any",
+        ):
+            return _json_error("첨부를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+
+        root_id = int(base.get("RootAttachmentId") or 0) or int(base.get("Id") or 0)
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+                SELECT
+                    Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                    UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
+                    DeletePending, DeleteReason, MetaJson,
+                    RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
+                FROM WebConversationAttachments
+                WHERE (RootAttachmentId = %s OR Id = %s) AND DeletedAt IS NULL
+                ORDER BY VersionNumber ASC, Id ASC
+                """,
+                (root_id, root_id),
+            )
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+
+        is_pending = _account_is_pending(account)
+        versions: list[dict[str, Any]] = []
+        for row in rows:
+            d = dict(row)
+            signed_url = None
+            if not is_pending:
+                try:
+                    signed_url = storage_minio.generate_presigned_get(
+                        str(d.get("ObjectKey") or ""),
+                        response_filename=str(d.get("OriginalFilename") or ""),
+                    )
+                except (storage_minio.StorageConfigError, storage_minio.StorageOperationError):
+                    signed_url = None
+            versions.append(_serialize_attachment_for_api(
+                d, include_signed_url=bool(signed_url), signed_url=signed_url))
+        return JSONResponse({"root_attachment_id": root_id, "versions": versions})
     finally:
         conn.close()
 

@@ -1494,6 +1494,20 @@ a { color: inherit; }
   font-size: 11px;
   color: var(--muted);
 }
+/* TASK-0274: 첨부 버전 배지. assistant 수정본은 강조색. */
+.composer-attachment-pill .pill-version {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--surface-2, #eef);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.composer-attachment-pill .pill-version.ai-edited {
+  background: #e8f0ff;
+  color: #2563eb;
+}
 .composer-attachment-pill .pill-toggle {
   border: none;
   background: transparent;
