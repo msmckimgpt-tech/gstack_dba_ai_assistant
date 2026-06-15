@@ -2402,6 +2402,69 @@ ORDER BY IsDefault DESC, SortOrder ASC, Id ASC
     return out
 
 
+def _attach_product_conn_status(conn, products: list[dict[str, Any]]) -> None:
+    """TASK-0261: 대화 화면 제품 목록에 datasource 연결(네트워크) 상태를 첨부한다(in-place).
+
+    conn-health-monitor(TASK-0250)가 백그라운드로 미리 계산한 per-datasource 상태를
+    재사용해 추가 probe 없이 즉시 표시한다. admin_list_datasources 와 동일 소스
+    (`conn_health.snapshot()` × `datasources.scope_key`).
+
+    각 product 의 `datasources[]` 항목마다 `conn_status`({status, elapsed_ms, checked_at})를
+    붙이고, product 레벨 `conn_status_overall` 에 바인딩들의 **최악 상태**를 집계한다
+    (하나라도 unstable→unstable, 모두 healthy→healthy, 그 외 unknown). 좌표/비밀번호는
+    노출하지 않는다(status/elapsed/checked_at 만 — datasource_public 마스킹과 동일).
+
+    conn_health 미가용·datasource 미해석 등은 graceful — status=unknown 으로 둔다.
+    바인딩이 없는 기본 단일 MySQL 제품은 status 무첨부(드롭업 dot 가 모드색 유지).
+    """
+    if not products:
+        return
+    try:
+        from modules import conn_health as _ch
+        _health = _ch.snapshot()
+    except Exception:
+        _health = {}
+    try:
+        from modules import datasources as _dsr
+    except Exception:
+        _dsr = None
+    # datasource_key(소문자) → scope_key 캐시(제품 간 동일 키 재해석 방지).
+    _sk_cache: dict[str, "str | None"] = {}
+
+    def _status_for_key(dskey: "str | None") -> "dict[str, Any]":
+        if not dskey or _dsr is None:
+            return {"status": "unknown", "elapsed_ms": None, "checked_at": None}
+        k = str(dskey).strip().lower()
+        if k not in _sk_cache:
+            try:
+                _ds = _dsr.resolve(conn, k)
+                _sk_cache[k] = _dsr.scope_key(_ds) if _ds else None
+            except Exception:
+                _sk_cache[k] = None
+        sk = _sk_cache[k]
+        h = _health.get(sk) if sk else None
+        if not h:
+            return {"status": "unknown", "elapsed_ms": None, "checked_at": None}
+        return {
+            "status": h.get("status") or "unknown",
+            "elapsed_ms": h.get("last_elapsed_ms"),
+            "checked_at": h.get("checked_at"),
+        }
+
+    _RANK = {"unstable": 3, "unknown": 2, "healthy": 1}
+    for p in products:
+        binds = p.get("datasources") if isinstance(p.get("datasources"), list) else []
+        worst = None  # (rank, status)
+        for b in binds:
+            st = _status_for_key(b.get("datasource_key"))
+            b["conn_status"] = st
+            r = _RANK.get(st["status"], 2)
+            if worst is None or r > worst[0]:
+                worst = (r, st["status"])
+        # 바인딩 없는 제품(기본 단일 MySQL)은 overall 무첨부 → 프론트가 모드색 유지.
+        p["conn_status_overall"] = (worst[1] if worst else None)
+
+
 def _list_product_databases(conn, product_id: int) -> list[dict[str, Any]]:
     cur = conn.cursor(dictionary=True)
     # TASK-0228 (1:N): DatasourceKey 차원 포함(미이전 스키마는 컬럼 부재 → 폴백). UI 가 datasource 별 그룹핑.
@@ -8021,6 +8084,11 @@ def get_session(request: Request) -> JSONResponse:
     except Exception:
         products = []
         default_pid = 0
+    # TASK-0261: 제품 목록에 datasource 연결(네트워크) 상태 첨부 — 드롭업 배지 색.
+    try:
+        _attach_product_conn_status(conn, products)
+    except Exception:
+        pass
     # TASK-0047: 사용자 ProductPref 복원 + 현재 대화의 product_mode/product_id 동봉.
     product_pref = _load_account_product_pref(conn, int(account.get("id") or 0), products)
     conversation_product = _load_conversation_product(conn, conversation_id) if conversation_id else None
@@ -13641,6 +13709,11 @@ def auth_me(request: Request) -> JSONResponse:
     except Exception:
         products = []
         default_pid = 0
+    # TASK-0261: 제품 목록에 datasource 연결(네트워크) 상태 첨부 — 드롭업 배지 색.
+    try:
+        _attach_product_conn_status(conn, products)
+    except Exception:
+        pass
     conn.close()
     return JSONResponse({
         "ok": True,

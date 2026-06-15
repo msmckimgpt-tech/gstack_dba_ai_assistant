@@ -2469,3 +2469,12 @@ source_of_truth: true
 - Verification: node --check app.js/share.js PASS + Playwright headless chromium 격리(큰 1000px→작은 2행 panels.h 불변·점프 0px / 수정 전 대조 960px 점프) — [[feedback_frontend_real_browser_gate]].
 - Residual: 배포 후 PB-0008 Windows-browser 시각검증(다중 결과셋 답변 ◀▶ 전환 시 스크롤 점프 없음) — CHECK#13.
 - Cross-ref: CHG-20260615-0260 / TASK-0260.
+
+## REV-20260615-0261 [SKIPPED:readonly-enrich-no-rbac-no-schema]
+- Date: 2026-06-15
+- Cycle: TASK-0261 (대화 화면 제품 드롭업 datasource 네트워크 상태 배지), **Minor §12.3** — app.py read-only enrich + 정적자산(app.js/styles.css/index.html), 신규 테스트. RBAC/스키마/엔드포인트 shape/시크릿/conn_health 모니터 0.
+- Trigger: §18.8 — UI/표시(ux) + datasource/연결 상태(backend read). 단 본 cycle 은 기존 conn_health 모니터(TASK-0250, 이미 outside-voice 게이트 통과)의 사전계산 snapshot 을 **읽어 표면화**만 — 신규 probe·연결·권한·데이터 노출 경계 변경 0.
+- Reason: enrich 가 노출하는 것은 status/elapsed_ms/checked_at 뿐(좌표/비밀번호 비노출 — datasource_public 마스킹과 동일 계약, admin_list_datasources 의 conn_status 와 byte-동형). 매핑은 `datasources.resolve→scope_key`(admin all_datasources→scope_key 와 동일 키). graceful(conn_health/resolve 실패→unknown, 예외 비전파). 신규 인가 표면·SQL·외부영향 0 → 적대적 보안 outside-voice 불필요(REV-0190 datasource probe read-agg / REV-0255 insight health 표면화 선례와 동형 경량 SKIP).
+- Verification: 신규 test_product_conn_status.py 8 PASS(scope_key 매핑·최악상태 집계·좌표 비노출·graceful) + make test 컨테이너 전체 회귀 0 + ruff clean + node --check + CSS brace + Playwright 격리(상태별 dot 색 + 바인딩없음 모드색 유지) + 라이브 conn_health snapshot 실측(an2-*=unstable, local/mssql=healthy 다양).
+- Residual: 배포 후 PB-0008 Windows-browser 시각검증(드롭업 dot 색이 연결 상태 반영) — CHECK#13.
+- Cross-ref: CHG-20260615-0261 / TASK-0261 / TASK-0250(conn_health 모니터 소스).

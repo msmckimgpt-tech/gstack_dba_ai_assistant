@@ -771,11 +771,22 @@ function renderProductDropupMenu() {
       selected: mode === "pinned" && pid === currentPid,
       datasourceKey: p.datasource_key || null,  // 멀티 datasource (P2): 분석 대상 표시
       datasources: Array.isArray(p.datasources) ? p.datasources : null,  // TASK-0228 (1:N)
+      connStatusOverall: p.conn_status_overall || null,  // TASK-0261: 네트워크 상태(최악) 집계
     }));
   });
 }
 
-function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, datasources }) {
+// TASK-0261: datasource 연결(네트워크) 상태 → 배지 클래스/라벨.
+//  healthy=연결됨(초록), unstable=불안정(빨강), unknown=확인중(중립). conn_health(TASK-0250) 소스.
+function connStatusMeta(status) {
+  switch (status) {
+    case "healthy": return { cls: "is-ok", label: "연결됨" };
+    case "unstable": return { cls: "is-fail", label: "연결 불안정" };
+    default: return { cls: "is-unknown", label: "상태 확인 중" };
+  }
+}
+
+function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, datasources, connStatusOverall }) {
   const item = document.createElement("button");
   item.type = "button";
   item.className = "product-dropup-item";
@@ -786,6 +797,14 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
 
   const dot = document.createElement("span");
   dot.className = "product-dropup-item-dot";
+  // TASK-0261: datasource 바인딩이 있으면 dot 색을 네트워크 상태(최악)로 칠한다.
+  //  바인딩 없는 기본 단일 MySQL 제품은 status 무첨부 → 기존 모드색(auto 회색/pinned 파랑) 유지.
+  if (connStatusOverall) {
+    const meta = connStatusMeta(connStatusOverall);
+    dot.classList.add("product-dropup-item-dot--conn", meta.cls);
+    dot.title = `데이터소스 연결: ${meta.label}`;
+    dot.setAttribute("aria-label", `데이터소스 연결 상태: ${meta.label}`);
+  }
   item.appendChild(dot);
 
   const labelEl = document.createElement("span");
@@ -795,18 +814,23 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
 
   // 멀티 datasource (P2/TASK-0228 1:N): 바인딩된 datasource 를 배지로 표시.
   //  - 1개: 라벨 그대로. 2개 이상: "N개 데이터소스" + 전체 목록 tooltip.
+  //  TASK-0261: tooltip 에 각 datasource 의 연결 상태도 함께 표기.
   const _dsBinds = Array.isArray(datasources) ? datasources : (datasourceKey ? [{ datasource_key: datasourceKey }] : []);
+  const _dsTip = (b) => {
+    const s = b && b.conn_status && b.conn_status.status;
+    return s ? `${b.datasource_key} (${connStatusMeta(s).label})` : (b ? b.datasource_key : "");
+  };
   if (_dsBinds.length >= 2) {
     const dsBadge = document.createElement("span");
     dsBadge.className = "product-dropup-item-ds";
     dsBadge.textContent = `${_dsBinds.length}개 데이터소스`;
-    dsBadge.title = "데이터 소스: " + _dsBinds.map((b) => b.datasource_key).join(", ");
+    dsBadge.title = "데이터 소스: " + _dsBinds.map(_dsTip).join(", ");
     item.appendChild(dsBadge);
   } else if (datasourceKey) {
     const dsBadge = document.createElement("span");
     dsBadge.className = "product-dropup-item-ds";
     dsBadge.textContent = datasourceKey;
-    dsBadge.title = `데이터 소스: ${datasourceKey}`;
+    dsBadge.title = `데이터 소스: ${_dsTip(_dsBinds[0]) || datasourceKey}`;
     item.appendChild(dsBadge);
   }
 

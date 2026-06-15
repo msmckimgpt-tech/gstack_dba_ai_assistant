@@ -3374,3 +3374,12 @@ source_of_truth: true
 - Files: src/static/{app.js,share.js,index.html,share.html}, docs/{TASK,MODIFY,REPORT}.md, docs/STATUS.md(repo)
 - Rollback: `preserveHeight()`/`maxPanelHeight` 제거 + `update()` 의 preserveHeight 2호출 제거 + 캐시버스터 환원(navigator 가 다시 활성 패널 높이로 컨테이너 재조정 = 점프 복귀).
 - Deploy: web 재빌드(정적자산 베이킹).
+
+## CHG-20260615-0261
+- Date: 2026-06-15 (TASK-0261)
+- Scope: 대화 화면 제품 드롭업 datasource 네트워크 상태 배지. app.py(read-only enrich) + 정적자산. RBAC/스키마/엔드포인트 shape 0.
+- 변경: 신규 `_attach_product_conn_status(conn, products)`(app.py) — conn_health `snapshot()`(TASK-0250 모니터, 추가 probe 없음)을 `datasources.resolve(key)→scope_key` 로 매핑(admin all_datasources→scope_key 와 동일 키)해 각 product 의 datasources[] 에 `conn_status`{status,elapsed_ms,checked_at} + product 레벨 `conn_status_overall`(최악: unstable>unknown>healthy) 첨부. 좌표/비번 비노출, graceful(unknown), 바인딩없음 None. `get_session`(/api/session)·`auth_me`(/api/auth/me) 두 호출 직후 enrich(admin 경로 _list_products 무영향). frontend `buildProductDropupItem`(app.js) 가 `connStatusOverall`→dot `.product-dropup-item-dot--conn`+`.is-ok/.is-fail/.is-unknown`+title/aria-label, `connStatusMeta` 헬퍼, datasource 배지 tooltip 에 상태 라벨 병기. styles.css conn dot 색(specificity 0,3,0 override). index.html 캐시버스터 bump(styles.css·app.js).
+- 검증: 신규 test_product_conn_status.py 8 PASS + make test 컨테이너 전체 회귀 0(PYTEST_EXIT=0) + ruff clean + node --check app.js + CSS brace(1128=1128) + py_compile + Playwright 격리(healthy=초록/unstable=빨강/unknown=중립/바인딩없음=파랑) + 라이브 conn_health 실측. 실 동작은 PB-0008(배포 후).
+- Files: src/app.py, src/static/{app.js,styles.css,index.html}, tests/test_product_conn_status.py, docs/{TASK,MODIFY,REPORT,REVIEW,FUNCTION}.md, docs/STATUS.md(repo)
+- Rollback: `_attach_product_conn_status` 호출 2곳 + 함수 제거(products 응답에서 conn_status/conn_status_overall 사라짐) + app.js connStatusMeta/dot conn 클래스 + styles.css conn dot 규칙 + 캐시버스터 환원(dot 가 모드색으로 복귀).
+- Deploy: web 재빌드(app.py + 정적자산 베이킹). ask/insight-worker 무변경.
