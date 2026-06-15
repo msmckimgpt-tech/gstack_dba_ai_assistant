@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0268 [SKIPPED:pb0008-evidence-docs-only]
+- Date: 2026-06-15
+- Cycle: TASK-0268 (TASK-0267 트리 UI PB-0008 Windows-browser 시각검증 evidence 기록 — docs-only: TEST.md §4 Run + TASK.md PB-0008 완료 표기. src 코드 0).
+- Skip 사유: 코드 변경 0(순수 evidence/docs). 핵심 변경은 선행 REV-20260615-0267 [SKIPPED:ui-tree-layout] 에서 리뷰. 본 후속은 라이브 실증 기록.
+- 실증: PB-0008(실 Chrome/148 relay, 배포 main `f6ccb7b` web Up healthy) — ① `.permission-grid-list` computed flex column(grid-template-columns none) ② 자식 depth1·margin-left 24px 들여쓰기 ③ 운영 권한 "더 보기 · 1개 부여됨" rgb(180,35,31) 빨강 가시. 사용자 두 보고(빨강 미가시·뒤틀림) 충족. CHECK#13 충족.
+- Cross-ref: CHG-20260615-0268 / TEST.md §4 (2026-06-15 TASK-0267 Run) / REV-20260615-0267.
+
 ## REV-20260615-0267 [SKIPPED:ui-tree-layout-no-logic-change]
 - Date: 2026-06-15
 - Cycle: TASK-0267 (권한 grid 트리 UI 재구성 — 2열 grid→단일 열 트리 + 자식 들여쓰기. frontend-only `src/static/{admin.js,styles.css}`)
