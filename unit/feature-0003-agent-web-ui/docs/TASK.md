@@ -55,6 +55,45 @@ source_of_truth: true
   - [x] **완료**: PR #252 머지(main `d6123d3`) → web 재배포 → **PB-0008 재검증 PASS**(main `d6123d3`, `?v=...task0277b`): `rowAlignItems:stretch`·`paneNotePresent:false`·2줄 고정(rowH 56)·line0W 308·topic/owner/by `clipped:true`(ellipsis 발동). evidence `artifacts/pb0008-task0277/{01_archive_long_ellipsis,02_archive_clean_density}.png`. TEST.md §4 기록(CHG/REV-0284 docs-only). **TASK-0277 전체(문제1·2) 완료.**
 
 ## 0y. TASK-20260615T180923-product-icon-chip-list (직전 cycle, 머지됨 #249) — 제품 프로필 아이콘을 대화창 chip + 제품 관리 목록 행에도 표시
+## 0. TASK-0277-ds-id-fk-migration (current cycle) — 데이터소스 라벨/키 분리: 제품↔데이터소스 바인딩을 stable Id surrogate 로 이전
+- 요청(사용자, 2026-06-15): `관리 콘솔 > 데이터소스` 라벨 수정 시, 그 데이터소스를 연결한 제품에서 변경이 갱신되지 않음. "내부적으로 해시값으로 매칭되는 줄 알았는데, 라벨을 키값으로 쓰지 않아야 하는 구조와 상이." → 라벨을 키로 쓰지 않는 구조로 수정.
+- 등급: **Critical §12.3** (제품↔데이터소스 바인딩 = 데이터 접근 경계[TASK-0206 미바인딩=접근 0]. 접근제어 3개 테이블 스키마 변경 + 마이그레이션 + RBAC 인접). 사용자 승인 경로: Option A(cascade)/B(분리) 제시 → B 선택 → B1(DisplayLabel)/B2(순수 Id) 제시 → **B2 선택**.
+<!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-15 (AskUserQuestion: "B2 순수 Id 재배선" 명시 선택) -->
+- 근본원인: `DatasourceKey`(생성 시 엔드포인트 해시 자동생성, 이후 admin rename 가능)가 모든 제품 바인딩 테이블의 FK 문자열로 직접 사용됨. rename 핸들러(`admin_update_datasource` `key_changed` 블록, app.py)는 `WebProducts.DatasourceKey` 만 cascade 하고 **`WebProductDatasources`·`WebProductDatabases` 는 누락** → 멀티 datasource 도입(TASK-0228/0230) 후 바인딩 본체가 join 테이블로 이동했는데 cascade 미확장 → orphan. 대조: 삭제 경로는 3 테이블 모두 정리하나 rename 은 1개만.
+
+### §2.1 Implementation Plan (B2 — Id surrogate 를 canonical 식별 anchor 로)
+- **설계 핵심**: `WebDatasources.Id`(BIGINT AUTO_INCREMENT, 기존 PK·불변)를 제품 바인딩의 canonical 식별자로 도입. rename(라벨=`DatasourceKey`)은 자유 변경 + 바인딩은 Id anchor 라 불변. `DatasourceKey` 는 WebDatasources 의 renameable 라벨 + PasswordEnc AAD 로 잔존(re-encrypt 기존 로직 유지). insight/RAG 는 이미 `compute_scope_key`(엔드포인트 해시) 스코핑 — 무영향.
+- **마이그레이션(추가형·PK 무변경·역방향 안전)** — `_ensure_web_product_datasources_schema` (app.py) 확장:
+  - `WebProducts` ADD `DatasourceId BIGINT NULL` + backfill(`JOIN WebDatasources d ON d.DatasourceKey=LOWER(WebProducts.DatasourceKey) SET DatasourceId=d.Id`) + INDEX.
+  - `WebProductDatasources` ADD `DatasourceId BIGINT NULL` + backfill + 단일컬럼 INDEX `IX_WebProductDatasources_DsId (DatasourceId)`. 기존 PK `(ProductId, DatasourceKey)` 유지(dual-write 로 키 잔존).
+  - `WebProductDatabases` ADD `DatasourceId BIGINT NULL` + backfill + 단일컬럼 INDEX `IX_WebProductDatabases_DsId`. 기존 PK 유지.
+  - 멱등 가드(information_schema COLUMN 존재 확인) + 실패 loud 로깅(`_ensure_web_product_datasources_schema` 패턴 재사용).
+  - **★ `_runtime_tables_available` probe 에 3 테이블 `DatasourceId` 컬럼 검증 추가(TASK-0047 함정)** — 미등록 시 기존 배포가 fast-path 로 마이그레이션을 영구 skip → 컬럼 미생성 → cascade 무력. 1054 시 full 마이그레이션 트리거.
+- **외부음성(RBAC 적대적) 1차 NOT-SHIP → 흡수**: BLOCKER1(probe 미등록+cascade 하드의존)·BLOCKER2(autocommit 비원자)·BLOCKER3(PK 충돌) + MINOR(DELETE force DatasourceId·테스트 column-absent). 수정: probe 등록 + cascade 컬럼부재 시 key-only 완전동작 + 명시 트랜잭션(rollback) + new_k 고아 사전제거 + DELETE force Id 동기화 + R4 회귀테스트.
+- **rename 핸들러(app.py `admin_update_datasource`)**: 버그성 부분 cascade 제거 → **Id 구동 완전 cascade**(`WHERE DatasourceId=(SELECT Id FROM WebDatasources WHERE DatasourceKey=new_k)` 로 3 테이블 SET DatasourceKey=new_k). Id anchor 라 stale 키여도 robust·완전. password re-encrypt(AAD) 기존 로직 유지.
+- **바인딩 write(dual-write Id+Key)**: `admin_add_product_datasource`·`admin_remove_product_datasource`·`PATCH .../datasource`(primary 설정)·db-insights write — key→Id resolve 후 `DatasourceId` 동시 기록. INSERT/UPDATE 에 DatasourceId 추가.
+- **단일 포인터 read(Id-JOIN 우선+키 폴백, 선택)**: `_list_product_datasources`·`_product_datasource_keys`(agent_core) 등은 cascade 가 키 신선도를 보장하므로 무변경으로도 정합 — Id-JOIN 재배선은 방어적 강화로만(회귀 위험 낮은 단일 read 우선).
+- **무변경 확인**: insight `_ds_scan_databases`(scope_key 해시 스코핑), `_datasources.resolve`(키 기반 — cascade 가 신선도 보장), 다운스트림 allowlist/registry(resolved 키 문자열 소비).
+- **이월(차기 cycle, 문서화)**: 바인딩 테이블 `DatasourceKey` 컬럼 drop + 멀티라우터(`_resolve_product_datasources`/`_datasource_allow_schemas`) Id 전면 threading + PK 를 `(ProductId, DatasourceId[, SchemaName])` 로 이전 — 멀티이미지(web/ask-worker/insight-worker) 배포 안전 확인 후.
+- **Acceptance Criteria**:
+  - AC-1: 라벨 rename 후 그 데이터소스를 바인딩한 제품의 (a) 바인딩 목록·(b) primary·(c) 접근가능 DB 가 모두 유지(orphan 0). 회귀테스트로 검증.
+  - AC-2: rename 후 제품 데이터 접근(allowed schemas) 불변 — `_product_has_datasource`·`_datasource_allow_schemas` 가 새 라벨로 동일 결과.
+  - AC-3: 신규 바인딩 add/remove/set-primary 시 `DatasourceId` 정확히 기록 + 기존 키 경로 무회귀.
+  - AC-4: 기존 데이터(backfill) — 모든 기존 바인딩 행의 DatasourceId 가 매칭 WebDatasources.Id 로 채워짐(NULL 0, 단 미등록 키 제외).
+  - AC-5: make test 컨테이너 회귀 0 + outside-voice(RBAC) SHIP + PB-0008 Windows 시각검증(라벨 변경 후 제품 상세 갱신).
+- 위험·롤백: 추가형 컬럼(PK 무변경)이라 코드 롤백만으로 회귀 — 컬럼은 무해 잔존. cascade 는 명시 트랜잭션 내 atomic(rollback).
+- 영향 파일: `unit/feature-0003-agent-web-ui/src/app.py`(스키마·probe·rename·바인딩 write), 신규 테스트 `tests/test_datasource_rename_binding_stable.py`, docs(TASK/MODIFY/REVIEW/FUNCTION). 배포: web 재빌드(스키마는 부팅 `_ensure_web_tables`). agent_core/insight 무변경(read 는 cascade 신선도 보장 — 이월).
+- 완료 체크리스트:
+  - [x] 스키마: 3 테이블 `DatasourceId` 멱등 ADD + backfill + 인덱스
+  - [x] `_runtime_tables_available` probe 에 DatasourceId 등록(TASK-0047 함정 회피)
+  - [x] rename Id 구동 완전 cascade(3 테이블) + new_k 고아 사전제거 + 명시 트랜잭션
+  - [x] 바인딩 write dual-write(add/remove/set-primary/databases) + DELETE-force Id 동기화 + seed cascade 보강
+  - [x] 회귀테스트 R1~R4 + make test 컨테이너 회귀 0 + ruff clean
+  - [x] 외부음성 2-pass(RBAC 적대적) NOT-SHIP→SHIP-WITH-FIXES (BLOCKER 4 흡수)
+  - [ ] web 재배포 + 라이브 검증(라벨 rename→제품 바인딩·접근DB 유지)
+  - [ ] (이월) 바인딩 테이블 DatasourceKey 컬럼 drop + read Id-JOIN 전면화 + PK 이전
+
+## 0z. TASK-20260615T180923-product-icon-chip-list (current cycle, timestamp ID — §13.1 순번충돌 회피) — 제품 프로필 아이콘을 대화창 chip + 제품 관리 목록 행에도 표시
 - 요청(사용자, profile-icon-consistency 후속): 제품 프로필 아이콘(Identicon)을 (1) 대화창(채팅창) 제품 chip 과 (2) 제품 관리 탭 목록 행의 **뱃지 아이콘으로도** 표현. 직전 cycle 은 드롭업·관리 상세에만 적용했음.
 - 등급: **Minor §12.3** (frontend-only 비파괴 UI 추가 — 직전 cycle 의 `applyAvatar`/`identiconSvg` 헬퍼·CSS 재사용. RBAC/스키마/엔드포인트/백엔드 0).
 - 구현(frontend-only, 4 src):

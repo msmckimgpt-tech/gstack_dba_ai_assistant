@@ -3315,6 +3315,10 @@ def _runtime_tables_available() -> bool:
                 for column_check in (
                     "SELECT `ProductPrefMode` FROM `WebAccounts` LIMIT 1",
                     "SELECT `ProductPrefPinnedId` FROM `WebAccounts` LIMIT 1",
+                    # TASK-0277: 제품 바인딩 stable surrogate(DatasourceId) 컬럼 — 누락 시 1054 → full 마이그레이션.
+                    "SELECT `DatasourceId` FROM `WebProducts` LIMIT 1",
+                    "SELECT `DatasourceId` FROM `WebProductDatasources` LIMIT 1",
+                    "SELECT `DatasourceId` FROM `WebProductDatabases` LIMIT 1",
                 ):
                     cur.execute(column_check)
                     cur.fetchall()
@@ -3358,6 +3362,10 @@ def _runtime_tables_available() -> bool:
                 "SELECT `product_mode` FROM `AgentCoreConversations` LIMIT 1",
                 "SELECT `ProductPrefMode` FROM `WebAccounts` LIMIT 1",
                 "SELECT `ProductPrefPinnedId` FROM `WebAccounts` LIMIT 1",
+                # TASK-0277: 제품 바인딩 stable surrogate(DatasourceId) 컬럼 — 누락 시 1054 → full 마이그레이션 트리거.
+                "SELECT `DatasourceId` FROM `WebProducts` LIMIT 1",
+                "SELECT `DatasourceId` FROM `WebProductDatasources` LIMIT 1",
+                "SELECT `DatasourceId` FROM `WebProductDatabases` LIMIT 1",
             ):
                 cur.execute(column_check)
                 cur.fetchall()
@@ -3585,6 +3593,46 @@ def _ensure_web_product_datasources_schema(conn) -> None:
                     "[ds-1n] WebProductDatabases PK 이전 실패 — 같은 스키마명이 다른 datasource 에 "
                     "공존 불가(중복 PK). 운영자 확인 필요: %r", _pk_exc,
                 )
+        # 6) TASK-0277 (라벨/키 분리): 제품 바인딩의 canonical 식별자를 renameable 라벨(DatasourceKey)에서
+        #    **stable surrogate `WebDatasources.Id`** 로 이전한다. 라벨 rename 시에도 Id 는 불변이라 바인딩이
+        #    고아되지 않는다(근본수정). 추가형(PK 무변경) — `DatasourceId` 컬럼을 3 테이블에 멱등 추가 + 현재
+        #    DatasourceKey 로 1회 backfill + 인덱스. 기존 키 컬럼은 denormalized 라벨 캐시로 잔존(rename 시
+        #    Id 구동 cascade 로 신선도 유지 — admin_update_datasource). 컬럼 drop·PK 이전은 멀티이미지 배포
+        #    안전 확인 후 차기 cycle (TASK.md 이월).
+        _dsid_targets = [
+            # (table, key_col_expr_for_join, extra_where)
+            ("WebProducts", "LOWER(t.DatasourceKey)", "t.DatasourceKey IS NOT NULL AND TRIM(t.DatasourceKey) <> ''"),
+            ("WebProductDatasources", "LOWER(t.DatasourceKey)", "t.DatasourceKey IS NOT NULL AND TRIM(t.DatasourceKey) <> ''"),
+            ("WebProductDatabases", "LOWER(t.DatasourceKey)", "t.DatasourceKey IS NOT NULL AND TRIM(t.DatasourceKey) <> ''"),
+        ]
+        for _tbl, _keyexpr, _extra in _dsid_targets:
+            try:
+                cur.execute(
+                    "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() "
+                    "AND TABLE_NAME=%s AND COLUMN_NAME='DatasourceId'",
+                    (_tbl,),
+                )
+                _has_id = int((cur.fetchone() or [0])[0]) > 0
+                if not _has_id:
+                    cur.execute(f"ALTER TABLE {_tbl} ADD COLUMN DatasourceId BIGINT NULL")
+                # backfill: 현재 라벨로 매칭되는 WebDatasources.Id 를 1회 채운다(이미 채워진 행은 건드리지 않음).
+                cur.execute(
+                    f"UPDATE {_tbl} t JOIN WebDatasources d ON LOWER(d.DatasourceKey) = {_keyexpr} "
+                    f"SET t.DatasourceId = d.Id WHERE t.DatasourceId IS NULL AND ({_extra})"
+                )
+                # 인덱스(멱등 — 존재 확인 후 생성). 조회/cascade 가 Id 로 매칭.
+                cur.execute(
+                    "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() "
+                    "AND TABLE_NAME=%s AND INDEX_NAME=%s",
+                    (_tbl, f"IX_{_tbl}_DsId"),
+                )
+                if int((cur.fetchone() or [0])[0]) == 0:
+                    cur.execute(f"CREATE INDEX IX_{_tbl}_DsId ON {_tbl} (DatasourceId)")
+            except Exception as _dsid_exc:
+                logging.getLogger(__name__).error(
+                    "[ds-id] %s.DatasourceId 추가/backfill/인덱스 실패 — 라벨 rename 안정성 저하 가능 "
+                    "(런타임은 키 캐시 cascade 로 폴백). 운영자 확인 필요: %r", _tbl, _dsid_exc,
+                )
         conn.commit()
     finally:
         cur.close()
@@ -3648,6 +3696,12 @@ def _seed_main_mysql_datasource(conn) -> None:
                     "UPDATE WebProducts SET DatasourceKey=%s WHERE DatasourceKey=%s",
                     (key, legacy_key),
                 )
+                # TASK-0277: 바인딩 join/접근DB 의 레거시 main_mysql 키도 cascade(완전 cascade — 고아 방지).
+                for _bt in ("WebProductDatasources", "WebProductDatabases"):
+                    try:
+                        cur.execute(f"UPDATE {_bt} SET DatasourceKey=%s WHERE LOWER(DatasourceKey)=%s", (key, legacy_key))
+                    except Exception:
+                        pass
                 try:
                     logging.getLogger(__name__).info(
                         "[ds-seed] main_mysql → %s 키 마이그레이션 완료 (패스워드 재암호화)", key,
@@ -3660,6 +3714,12 @@ def _seed_main_mysql_datasource(conn) -> None:
                     "UPDATE WebProducts SET DatasourceKey=%s WHERE DatasourceKey=%s",
                     (key, legacy_key),
                 )
+                # TASK-0277: 바인딩 join/접근DB 의 레거시 키도 cascade(완전 cascade — 고아 방지).
+                for _bt in ("WebProductDatasources", "WebProductDatabases"):
+                    try:
+                        cur.execute(f"UPDATE {_bt} SET DatasourceKey=%s WHERE LOWER(DatasourceKey)=%s", (key, legacy_key))
+                    except Exception:
+                        pass
                 cur.execute("DELETE FROM WebDatasources WHERE DatasourceKey=%s", (legacy_key,))
         else:
             # main_mysql 없음 → 해시 키가 이미 rename됐을 수 있음.
@@ -11010,6 +11070,12 @@ async def admin_set_product_datasource(product_id: int, request: Request) -> JSO
             cur.execute("SELECT Id FROM WebProducts WHERE Id=%s LIMIT 1", (int(product_id),))
             if not cur.fetchone():
                 return _json_error("product not found", 404)
+            # TASK-0277: 라벨 → stable surrogate Id(dual-write anchor). key=None(기본 단일 MySQL 환원)이면 None.
+            _ds_id = None
+            if key is not None:
+                cur.execute("SELECT Id FROM WebDatasources WHERE LOWER(DatasourceKey)=%s LIMIT 1", (key,))
+                _idr = cur.fetchone()
+                _ds_id = int(_idr[0]) if _idr and _idr[0] is not None else None
             if has_db_field:
                 try:
                     cur.execute("UPDATE WebProducts SET DatasourceKey=%s, DatasourceDatabase=%s WHERE Id=%s",
@@ -11019,6 +11085,11 @@ async def admin_set_product_datasource(product_id: int, request: Request) -> JSO
                     cur.execute("UPDATE WebProducts SET DatasourceKey=%s WHERE Id=%s", (key, int(product_id)))
             else:
                 cur.execute("UPDATE WebProducts SET DatasourceKey=%s WHERE Id=%s", (key, int(product_id)))
+            # TASK-0277 dual-write: DatasourceId anchor 동기화(없으면 NULL). 컬럼 부재 graceful.
+            try:
+                cur.execute("UPDATE WebProducts SET DatasourceId=%s WHERE Id=%s", (_ds_id, int(product_id)))
+            except Exception:
+                pass
         finally:
             cur.close()
         record_audit_event(
@@ -11043,6 +11114,14 @@ async def admin_set_product_datasource(product_id: int, request: Request) -> JSO
                     cur2.execute(
                         "UPDATE WebProductDatasources SET IsPrimary=1 WHERE ProductId=%s AND LOWER(DatasourceKey)=%s",
                         (int(product_id), key))
+                    # TASK-0277 dual-write: 이 바인딩 행의 DatasourceId anchor. 컬럼 부재 graceful.
+                    if _ds_id is not None:
+                        try:
+                            cur2.execute(
+                                "UPDATE WebProductDatasources SET DatasourceId=%s WHERE ProductId=%s AND LOWER(DatasourceKey)=%s",
+                                (_ds_id, int(product_id), key))
+                        except Exception:
+                            pass
             finally:
                 cur2.close()
         except Exception:
@@ -11139,6 +11218,11 @@ async def admin_add_product_datasource(product_id: int, request: Request) -> JSO
             # 현재 바인딩 수 — 첫 바인딩이면 강제 primary.
             cur.execute("SELECT COUNT(*) FROM WebProductDatasources WHERE ProductId=%s", (int(product_id),))
             existing = int((cur.fetchone() or [0])[0])
+            # TASK-0277: 라벨 → stable surrogate Id 해석(dual-write anchor). 위 _dsr.resolve 검증을 통과한 키라
+            # 보통 WebDatasources 에 존재(.env 전용 키면 Id 없음 → None, 키 캐시로만 동작).
+            cur.execute("SELECT Id FROM WebDatasources WHERE LOWER(DatasourceKey)=%s LIMIT 1", (key,))
+            _idr = cur.fetchone()
+            _ds_id = int(_idr[0]) if _idr and _idr[0] is not None else None
             make_primary = want_primary or existing == 0
             if make_primary:
                 cur.execute("UPDATE WebProductDatasources SET IsPrimary=0 WHERE ProductId=%s", (int(product_id),))
@@ -11146,13 +11230,25 @@ async def admin_add_product_datasource(product_id: int, request: Request) -> JSO
                 "INSERT IGNORE INTO WebProductDatasources (ProductId, DatasourceKey, SortOrder, IsPrimary) "
                 "VALUES (%s, %s, %s, %s)",
                 (int(product_id), key, (existing + 1) * 10, 1 if make_primary else 0))
+            # TASK-0277 dual-write: DatasourceId(신규/기존 행 모두) — 라벨 rename 에도 불변인 anchor. 컬럼 부재 graceful.
+            if _ds_id is not None:
+                try:
+                    cur.execute("UPDATE WebProductDatasources SET DatasourceId=%s WHERE ProductId=%s AND LOWER(DatasourceKey)=%s",
+                                (_ds_id, int(product_id), key))
+                except Exception:
+                    pass
             # 이미 존재하던 바인딩이면 INSERT IGNORE no-op → primary 의도면 명시 갱신.
             if make_primary:
                 cur.execute(
                     "UPDATE WebProductDatasources SET IsPrimary=1 WHERE ProductId=%s AND LOWER(DatasourceKey)=%s",
                     (int(product_id), key))
-                # primary 포인터(WebProducts.DatasourceKey)도 동기화 — resolve/insight primary 경로 정합.
+                # primary 포인터(WebProducts.DatasourceKey + DatasourceId)도 동기화 — resolve/insight primary 경로 정합.
                 cur.execute("UPDATE WebProducts SET DatasourceKey=%s WHERE Id=%s", (key, int(product_id)))
+                if _ds_id is not None:
+                    try:
+                        cur.execute("UPDATE WebProducts SET DatasourceId=%s WHERE Id=%s", (_ds_id, int(product_id)))
+                    except Exception:
+                        pass
         finally:
             cur.close()
         record_audit_event(
@@ -11213,6 +11309,16 @@ async def admin_remove_product_datasource(product_id: int, key: str, request: Re
                     cur.execute("UPDATE WebProductDatasources SET IsPrimary=1 WHERE ProductId=%s AND LOWER(DatasourceKey)=%s",
                                 (int(product_id), new_primary))
                 cur.execute("UPDATE WebProducts SET DatasourceKey=%s WHERE Id=%s", (new_primary, int(product_id)))
+                # TASK-0277: primary 포인터의 DatasourceId 도 동기화(승격 키의 Id; 없으면 NULL). 컬럼 부재 graceful.
+                try:
+                    _np_id = None
+                    if new_primary:
+                        cur.execute("SELECT Id FROM WebDatasources WHERE LOWER(DatasourceKey)=%s LIMIT 1", (new_primary,))
+                        _npr = cur.fetchone()
+                        _np_id = int(_npr[0]) if _npr and _npr[0] is not None else None
+                    cur.execute("UPDATE WebProducts SET DatasourceId=%s WHERE Id=%s", (_np_id, int(product_id)))
+                except Exception:
+                    pass
         finally:
             cur.close()
         record_audit_event(
@@ -11503,7 +11609,10 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
     conn, actor, data, error = await _ds_write_common(request)
     if error:
         return error
+    # TASK-0277 (REV BLOCKER2): _connect_memory 는 autocommit=True 라 다단계 rename+cascade 가 비원자적이었다.
+    # 명시 트랜잭션으로 묶어 부분 적용(라벨만 바뀌고 일부 바인딩 cascade 누락)을 방지 — 실패 시 전체 rollback.
     try:
+        conn.autocommit = False
         k = _ds_valid_key(key)
         if not k:
             return _json_error("라벨 형식 오류.", 400)
@@ -11607,10 +11716,33 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
             cur.execute(f"UPDATE WebDatasources SET {', '.join(sets)} WHERE DatasourceKey=%s", tuple(params))
 
             if key_changed:
-                cur.execute(
-                    "UPDATE WebProducts SET DatasourceKey=%s WHERE DatasourceKey=%s",
-                    (new_k, k),
-                )
+                # TASK-0277 (라벨/키 분리 근본수정): 제품 바인딩은 stable surrogate `WebDatasources.Id` 로 anchor
+                # 되므로 라벨이 바뀌어도 고아되지 않는다. 바인딩 테이블의 denormalized 라벨 캐시(DatasourceKey
+                # — 기존 PK·읽기 경로 호환)는 신선도 유지를 위해 **완전 cascade** 한다 — 과거 버그처럼 WebProducts
+                # 만 갱신하고 WebProductDatasources/WebProductDatabases 를 누락하지 않는다.
+                #  - **컬럼 부재(마이그레이션 지연) 시에도 키 기준으로 cascade** → 일부 테이블 누락 없음(REV BLOCKER1).
+                #    DatasourceId 가 있으면 추가로 Id 기준 매칭(stale 키 캐시 행도 포착).
+                #  - new_k 는 위 409 가드로 미존재 datasource → 바인딩 테이블에 new_k 행이 있으면 고아(이전 삭제
+                #    잔재). PK(ProductId,DatasourceKey[,SchemaName]) 충돌 방지 위해 cascade 전 제거(REV BLOCKER3).
+                #  - 실패는 swallow 하지 않고 상위 트랜잭션 rollback 으로 전파(부분 적용 방지 — fail-loud, REV BLOCKER2).
+                cur.execute("SELECT Id FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (new_k,))
+                _dsrow = cur.fetchone()
+                _ds_id = int(_dsrow[0]) if _dsrow and _dsrow[0] is not None else None
+                for _tbl in ("WebProductDatasources", "WebProductDatabases"):
+                    cur.execute(f"DELETE FROM {_tbl} WHERE LOWER(DatasourceKey)=%s", (new_k,))
+                for _tbl in ("WebProducts", "WebProductDatasources", "WebProductDatabases"):
+                    cur.execute(
+                        "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() "
+                        "AND TABLE_NAME=%s AND COLUMN_NAME='DatasourceId'", (_tbl,))
+                    _has_id = int((cur.fetchone() or [0])[0]) > 0
+                    if _has_id and _ds_id is not None:
+                        cur.execute(
+                            f"UPDATE {_tbl} SET DatasourceKey=%s WHERE DatasourceId=%s OR LOWER(DatasourceKey)=%s",
+                            (new_k, _ds_id, k))
+                    else:
+                        cur.execute(
+                            f"UPDATE {_tbl} SET DatasourceKey=%s WHERE LOWER(DatasourceKey)=%s",
+                            (new_k, k))
         finally:
             cur.close()
         effective_key = new_k if key_changed else k
@@ -11620,6 +11752,12 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
         conn.commit()
         return JSONResponse({"key": effective_key, "updated": True, "password_changed": bool(data.get("password")),
                              "key_changed": key_changed})
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         conn.close()
 
@@ -11638,8 +11776,10 @@ async def admin_delete_datasource(key: str, request: Request) -> JSONResponse:
         cur = conn.cursor()
         try:
             cur.execute("SELECT Id FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (k,))
-            if not cur.fetchone():
+            _del_row = cur.fetchone()
+            if not _del_row:
                 return _json_error("datasource not found.", 404)
+            _del_id = int(_del_row[0]) if _del_row and _del_row[0] is not None else None  # TASK-0277 dangling anchor 해제용
             # TASK-0228 (1:N): primary 포인터(WebProducts.DatasourceKey) + join 테이블 양쪽에서 바인딩 탐색.
             cur.execute("SELECT Id, ProductKey FROM WebProducts WHERE LOWER(DatasourceKey)=%s", (k,))
             bound_map = {int(r[0]): str(r[1] or "") for r in (cur.fetchall() or [])}
@@ -11658,6 +11798,12 @@ async def admin_delete_datasource(key: str, request: Request) -> JSONResponse:
             if bound and force:
                 # primary 포인터 해제 + join 바인딩 제거 + 그 datasource 의 접근DB 행 정리(고아 차단).
                 cur.execute("UPDATE WebProducts SET DatasourceKey=NULL WHERE LOWER(DatasourceKey)=%s", (k,))
+                # TASK-0277: 삭제 datasource 를 가리키던 DatasourceId 도 해제(dangling anchor 차단). 컬럼 부재 graceful.
+                if _del_id is not None:
+                    try:
+                        cur.execute("UPDATE WebProducts SET DatasourceId=NULL WHERE DatasourceId=%s", (_del_id,))
+                    except Exception:
+                        pass
                 try:
                     cur.execute("DELETE FROM WebProductDatasources WHERE LOWER(DatasourceKey)=%s", (k,))
                     cur.execute("DELETE FROM WebProductDatabases WHERE LOWER(DatasourceKey)=%s", (k,))
@@ -11668,10 +11814,18 @@ async def admin_delete_datasource(key: str, request: Request) -> JSONResponse:
                             "ORDER BY SortOrder ASC, DatasourceKey ASC LIMIT 1", (int(pid),))
                         nr = cur.fetchone()
                         if nr and nr[0]:
+                            _np = str(nr[0]).strip().lower()
                             cur.execute("UPDATE WebProductDatasources SET IsPrimary=1 WHERE ProductId=%s AND LOWER(DatasourceKey)=%s",
-                                        (int(pid), str(nr[0]).strip().lower()))
-                            cur.execute("UPDATE WebProducts SET DatasourceKey=%s WHERE Id=%s",
-                                        (str(nr[0]).strip().lower(), int(pid)))
+                                        (int(pid), _np))
+                            cur.execute("UPDATE WebProducts SET DatasourceKey=%s WHERE Id=%s", (_np, int(pid)))
+                            # TASK-0277: 승격된 primary 의 DatasourceId 도 동기화. 컬럼 부재 graceful.
+                            try:
+                                cur.execute("SELECT Id FROM WebDatasources WHERE LOWER(DatasourceKey)=%s LIMIT 1", (_np,))
+                                _npr = cur.fetchone()
+                                cur.execute("UPDATE WebProducts SET DatasourceId=%s WHERE Id=%s",
+                                            (int(_npr[0]) if _npr and _npr[0] is not None else None, int(pid)))
+                            except Exception:
+                                pass
                 except Exception:
                     pass
             cur.execute("DELETE FROM WebDatasources WHERE DatasourceKey=%s", (k,))
@@ -17023,6 +17177,7 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
     # re-gate(4차) MAJOR: 금지 DB 목록을 datasource 엔진별로 적용(MySQL 제품에서 'master' 가 정상 사용자
     # DB 일 수 있고, MSSQL 제품에서 'mysql' 이 정상 DB 일 수 있다 — cross-engine 과차단 방지).
     _ds_engine = "mysql"
+    _ds_id = None  # TASK-0277: 이 차원 datasource 의 stable surrogate Id(dual-write anchor)
     _primary_dskey = (str(_prow[1]).strip().lower() if len(_prow) > 1 and _prow[1] else "")
     # TASK-0228: 차원 키 = 요청 datasource_key(있으면) 우선, 없으면 primary. 엔진 판정도 이 키 기준.
     _dskey = _req_dskey or _primary_dskey
@@ -17042,11 +17197,13 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
     if _dskey:
         _found = False
         try:
-            cur.execute("SELECT Engine FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (_dskey,))
+            cur.execute("SELECT Engine, Id FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (_dskey,))
             _er = cur.fetchone()
             if _er and _er[0]:
                 _ds_engine = str(_er[0]).strip().lower()
                 _found = True
+            if _er and len(_er) > 1 and _er[1] is not None:
+                _ds_id = int(_er[1])  # TASK-0277 dual-write anchor
         except Exception:
             _found = False
         if not _found:
@@ -17120,15 +17277,31 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
     cur.close()
     cur = conn.cursor()
     if _has_ds_col:
+        # TASK-0277: DatasourceId 컬럼 존재 시 dual-write(stable surrogate anchor 동시 기록). 부재(미이전) 시 키만.
+        try:
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() "
+                "AND TABLE_NAME='WebProductDatabases' AND COLUMN_NAME='DatasourceId'"
+            )
+            _has_dsid_col = int((cur.fetchone() or [0])[0]) > 0
+        except Exception:
+            _has_dsid_col = False
         # 이 datasource 차원의 행만 삭제(다른 datasource 행 보존).
         cur.execute("DELETE FROM WebProductDatabases WHERE ProductId = %s AND LOWER(DatasourceKey) = %s",
                     (int(product_id), _dskey))
         for item in cleaned:
-            cur.execute(
-                "INSERT INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder, DatasourceKey) "
-                "VALUES (%s, %s, %s, %s, %s)",
-                (int(product_id), item["schema_name"], item["description"], int(item["sort_order"]), _dskey),
-            )
+            if _has_dsid_col:
+                cur.execute(
+                    "INSERT INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder, DatasourceKey, DatasourceId) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    (int(product_id), item["schema_name"], item["description"], int(item["sort_order"]), _dskey, _ds_id),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder, DatasourceKey) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (int(product_id), item["schema_name"], item["description"], int(item["sort_order"]), _dskey),
+                )
     else:
         cur.execute("DELETE FROM WebProductDatabases WHERE ProductId = %s", (int(product_id),))
         for item in cleaned:
