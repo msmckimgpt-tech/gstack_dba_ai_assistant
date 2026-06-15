@@ -127,13 +127,19 @@ def test_m3_master_gate_console_access():
     assert "console.access" not in DEPS, "console.access 는 루트여야 함(키가 되면 안 됨)"
 
 
-def test_m4_own_to_any_dependency():
-    any_codes = [c for c in VALID_CODES if c.startswith("conversation.") and c.endswith(".any")]
-    assert any_codes, "conversation .any 권한이 카탈로그에 없음"
-    for code in any_codes:
-        own = code[: -len(".any")] + ".own"
-        if own in VALID_CODES:  # own 짝이 있는 경우만 종속 강제
-            assert DEPS.get(code) == own, f"{code} 의 부모가 {own} 아님 (실제 {DEPS.get(code)})"
+def test_m4_conversation_list_gate():
+    # TASK-0269: 대화 own/any 그룹 분리 + "목록 조회" 게이트.
+    #   전체 대화(.any) 동작 권한은 conversation.list.any 를, 내 대화 동작 권한은 conversation.list.own 을 부모로 둔다.
+    #   create / list.own / list.any 는 루트(부모 없음).
+    for root in ("conversation.create", "conversation.list.own", "conversation.list.any"):
+        assert DEPS.get(root) is None, f"{root} 는 루트(부모 없음)여야 함 (실제 {DEPS.get(root)})"
+    for code in VALID_CODES:
+        if not code.startswith("conversation."):
+            continue
+        if code in ("conversation.create", "conversation.list.own", "conversation.list.any"):
+            continue
+        gate = "conversation.list.any" if code.endswith(".any") else "conversation.list.own"
+        assert DEPS.get(code) == gate, f"{code} 의 게이트가 {gate} 아님 (실제 {DEPS.get(code)})"
 
 
 # ── V: 가시성 불변식 (TASK-0264 — 게이트 체인 충족 시에만 노출, 부여 무관) ──────────
@@ -171,11 +177,12 @@ def test_v2_master_gate_off_collapses_manage_section():
         "system_prompt.global.read", "system_prompt.global.write",
     ):
         assert not vis[code], f"게이트 OFF 인데 {code} 가 보임"
-    # 운영 권한 루트(.own / create 등)는 게이트 없이 visible
-    for code in ("conversation.create", "conversation.list.own", "conversation.read.own", "product.manage"):
+    # 운영 권한 루트(TASK-0269: create / list.own / list.any / product.manage)는 게이트 없이 visible
+    for code in ("conversation.create", "conversation.list.own", "conversation.list.any", "product.manage"):
         assert vis[code], f"운영 루트 {code} 가 숨겨짐"
-    # 운영 .any 는 .own 게이트 OFF 라 hidden
-    assert not vis["conversation.read.any"], "read.own OFF 인데 read.any 가 보임"
+    # 동작 권한은 "목록 조회" 게이트 OFF 라 hidden (read.own→list.own, read.any→list.any)
+    assert not vis["conversation.read.own"], "list.own OFF 인데 read.own 가 보임"
+    assert not vis["conversation.read.any"], "list.any OFF 인데 read.any 가 보임"
 
 
 def test_v3_intermediate_gate_account_read():
@@ -314,19 +321,28 @@ def test_t1_tree_order_parent_before_child_and_depth():
                 assert depth[code] == 0, f"{group}: 루트 {code} depth 가 0 아님(부모={parent})"
 
 
-def test_t2_conversation_own_any_nesting():
-    # 대화 그룹에서 .any 는 대응 .own 바로 아래(depth 1)로 중첩된다.
-    conv = [c for c in app.PERMISSION_CODES if _group_of(c) == "conversation"]
-    order = _order_items_as_tree(conv)
-    depth = {c: d for c, d in order}
-    pos = {c: i for i, (c, _) in enumerate(order)}
-    for code in conv:
-        if code.endswith(".any"):
-            own = code[: -len(".any")] + ".own"
-            if own in set(conv):
-                assert depth[code] == 1, f"{code} 가 depth 1(자식) 아님"
-                assert depth[own] == 0, f"{own} 가 depth 0(루트) 아님"
-                assert pos[own] < pos[code], f"{own} 가 {code} 뒤"
+def test_t2_conversation_groups_split_and_list_gate_nesting():
+    # TASK-0269: 대화 권한이 conversation_own / conversation_any 두 그룹으로 분리되고,
+    #   각 그룹에서 "목록 조회"(list)가 depth 0 게이트, 동작 권한은 depth 1 로 그 아래 중첩된다.
+    own_codes = [c for c in app.PERMISSION_CODES if _group_of(c) == "conversation_own"]
+    any_codes = [c for c in app.PERMISSION_CODES if _group_of(c) == "conversation_any"]
+    assert own_codes, "conversation_own 그룹이 비었음(분리 실패)"
+    assert any_codes, "conversation_any 그룹이 비었음(분리 실패)"
+    # 분리 정합: .any 는 conversation_any, 나머지는 conversation_own
+    for c in own_codes:
+        assert not c.endswith(".any"), f"{c} 가 conversation_own 인데 .any 임"
+    for c in any_codes:
+        assert c.endswith(".any"), f"{c} 가 conversation_any 인데 .any 아님"
+    # 각 그룹 트리: list 가 depth 0, 동작 권한이 depth 1
+    for group_codes, gate in ((own_codes, "conversation.list.own"), (any_codes, "conversation.list.any")):
+        order = _order_items_as_tree(group_codes)
+        depth = {c: d for c, d in order}
+        pos = {c: i for i, (c, _) in enumerate(order)}
+        assert depth[gate] == 0, f"{gate} 가 depth 0(게이트 루트) 아님"
+        for code in group_codes:
+            if DEPS.get(code) == gate:
+                assert depth[code] == 1, f"{code} 가 depth 1(게이트 자식) 아님"
+                assert pos[gate] < pos[code], f"게이트 {gate} 가 {code} 뒤"
 
 
 def test_t3_account_read_is_group_root_depth0():

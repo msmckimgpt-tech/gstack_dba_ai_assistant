@@ -88,12 +88,14 @@ function systemPromptPendingKey({ scope, productId = null, roleId = null, accoun
 // TASK-0073 Phase C: audit group 추가 — backend PERMISSION_DEFINITIONS 의 group="audit" 와 key 정합.
 // TASK-0095: settings group 추가 — 전역 시스템 프롬프트 (system_prompt.global.read/write).
 // TASK-0094 Sprint 1 Phase 12: attachment group 추가 (8 group).
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "attachment", "audit", "settings", "misc"];
+// TASK-0269: 대화 그룹을 own/any 로 분리 — conversation → conversation_own(내 대화 권한) + conversation_any(전체 대화 권한).
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation_own", "conversation_any", "product", "attachment", "audit", "settings", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
   role: "역할",
-  conversation: "대화",
+  conversation_own: "내 대화 권한",
+  conversation_any: "전체 대화 권한",
   product: "제품",
   attachment: "첨부",
   audit: "감사",
@@ -109,7 +111,7 @@ const ADMIN_PERMISSION_SECTIONS = [
   // TASK-0095: settings 그룹은 시스템 운영 (전역 시스템 프롬프트 등) — manage 와 함께.
   { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 메타권한 · 감사 · 시스템 설정", groups: ["console", "account", "role", "audit", "settings"] },
   // TASK-0094 Sprint 1 Phase 12: attachment 그룹은 운영 권한 묶음에 포함.
-  { id: "operate", title: "운영 권한", description: "대화 · 제품 접근 · 첨부", groups: ["conversation", "product", "attachment"] },
+  { id: "operate", title: "운영 권한", description: "내 대화 · 전체 대화 · 제품 접근 · 첨부", groups: ["conversation_own", "conversation_any", "product", "attachment"] },
   { id: "misc", title: "기타", description: null, groups: ["misc"] },
 ];
 
@@ -150,17 +152,30 @@ const PERMISSION_DEPENDENCIES = {
   "audit.purge": "audit.read.own",
   "system_prompt.global.read": "console.access",
   "system_prompt.global.write": "system_prompt.global.read",
-  // ── 운영 권한 (그룹 내부 own → any) ──
-  "conversation.list.any": "conversation.list.own",
-  "conversation.read.any": "conversation.read.own",
-  "conversation.file.read.any": "conversation.file.read.own",
-  "conversation.rename.any": "conversation.rename.own",
-  "conversation.delete.any": "conversation.delete.own",
-  "conversation.cancel.any": "conversation.cancel.own",
-  "conversation.finalize.any": "conversation.finalize.own",
-  "conversation.duplicate.any": "conversation.duplicate.own",
-  "conversation.attachment.upload.any": "conversation.attachment.upload.own",
-  "conversation.attachment.read.any": "conversation.attachment.read.own",
+  // ── 운영 권한 (TASK-0269 — own/any 그룹 분리 + "목록 조회" 게이트) ──
+  //   내 대화 권한(conversation_own): "내 대화 목록 조회"(list.own) 가 게이트 → 동작 권한 노출.
+  //     "대화 생성"(create)·"내 대화 목록 조회"(list.own) 는 루트(기반, 항상 표시).
+  "conversation.read.own": "conversation.list.own",
+  "conversation.ask": "conversation.list.own",
+  "conversation.file.read.own": "conversation.list.own",
+  "conversation.rename.own": "conversation.list.own",
+  "conversation.delete.own": "conversation.list.own",
+  "conversation.cancel.own": "conversation.list.own",
+  "conversation.finalize.own": "conversation.list.own",
+  "conversation.duplicate.own": "conversation.list.own",
+  "conversation.share.create": "conversation.list.own",
+  "conversation.attachment.upload.own": "conversation.list.own",
+  "conversation.attachment.read.own": "conversation.list.own",
+  //   전체 대화 권한(conversation_any): "전체 대화 목록 조회"(list.any) 가 게이트(루트).
+  "conversation.read.any": "conversation.list.any",
+  "conversation.file.read.any": "conversation.list.any",
+  "conversation.rename.any": "conversation.list.any",
+  "conversation.delete.any": "conversation.list.any",
+  "conversation.cancel.any": "conversation.list.any",
+  "conversation.finalize.any": "conversation.list.any",
+  "conversation.duplicate.any": "conversation.list.any",
+  "conversation.attachment.upload.any": "conversation.list.any",
+  "conversation.attachment.read.any": "conversation.list.any",
 };
 
 /* ── Bulk action contract — CONVENTIONS.md §10 + DESIGN.md §4~§9 ───── */

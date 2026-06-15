@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0269 [SUBAGENT:rbac-adversarial] — SHIP
+- Date: 2026-06-15
+- Cycle: TASK-0269 (운영 권한 대화 그룹 own/any 분리 + "목록 조회" 게이트 — RBAC 카탈로그 group 필드 변경. app.py + admin.js + app.js)
+- 패널: 적대적 outside-voice(general-purpose subagent) — RBAC 카탈로그 group 분리가 enforcement/기능을 깨지 않는지 5 카테고리 검증.
+- **VERDICT: SHIP** (BLOCKER/MAJOR/MINOR 0). 전부 refuted:
+  - **enforcement 불변** — `_require_permission`→`_account_has_permission`→`_account_permissions` 전부 **code 키 기반**, group 무관. conversation 권한 code 불변 → 접근 결정 byte-identical. group 읽기는 catalog 영속/응답 passthrough뿐(접근 결정 미사용).
+  - **group 소비자** — `/api/admin/permissions`(메타 passthrough), admin.js `groupedPermissions`(`permission.group` 버킷, `||"misc"`/order-99 fallback), app.js `permissionGroupOf`(코드 추론) 전부 새 문자열 graceful. `group=="conversation"` 하드코딩 0(repo grep). bare `"conversation"` 리터럴은 audit resource_type·URL query param(권한 group 아님).
+  - **work screen 정합** — `permissionGroupOf` 23개 conversation code 검증 0 mismatch(share.create→conversation_own 포함), WORK_SCREEN 섹션·라벨·order 에 두 신규 그룹 존재, misc 낙오 0.
+  - **dependency 건전성** — 루트 3(create/list.own/list.any) + 자식 20, 전 자식 same-group 게이트로 무순환·cross-group stray 0. share.create→list.own·ask→list.own 정확.
+  - **attachment 그룹** — conversation.attachment.* 가 own/any 로 이동(접두 정합), 빈 "attachment" 그룹은 `groupedPermissions` 가 항목 있는 그룹만 Map 생성하므로 무영향(기존과 동일).
+  - 추가: `WebPermissions.GroupName VARCHAR(32)` 신값 16자 무절단, `_ensure_permission_catalog` `ON DUPLICATE KEY UPDATE GroupName=VALUES()` 부팅 시 멱등 갱신(마이그 불요), 정적 권한 group 은 Python tuple 출처(DB 무관 정확).
+- 검증: perm test 15 PASS(M4 list 게이트/V2 운영 루트/T2 그룹 분리+게이트 중첩 갱신) + make test 컨테이너 회귀 0(백엔드 RBAC 무회귀) + jsdom 20/20 + PB-0008(배포 후).
+
 ## REV-20260615-0268 [SKIPPED:pb0008-evidence-docs-only]
 - Date: 2026-06-15
 - Cycle: TASK-0268 (TASK-0267 트리 UI PB-0008 Windows-browser 시각검증 evidence 기록 — docs-only: TEST.md §4 Run + TASK.md PB-0008 완료 표기. src 코드 0).

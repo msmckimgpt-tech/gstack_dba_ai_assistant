@@ -231,12 +231,14 @@ state.sendMode = localStorage.getItem(SEND_MODE_LS_KEY) === "enter" ? "enter" : 
 
 // TASK-0073 Phase C: audit group 추가 — backend PERMISSION_DEFINITIONS 의 group="audit" 정합.
 // TASK-0095: settings group 추가 — 전역 시스템 프롬프트 권한 그룹.
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation", "product", "attachment", "audit", "settings", "misc"];
+// TASK-0269: 대화 그룹을 own/any 로 분리 — conversation → conversation_own(내 대화 권한) + conversation_any(전체 대화 권한).
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation_own", "conversation_any", "product", "attachment", "audit", "settings", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
   role: "역할",
-  conversation: "대화",
+  conversation_own: "내 대화 권한",
+  conversation_any: "전체 대화 권한",
   product: "제품",
   attachment: "첨부",
   audit: "감사",
@@ -250,7 +252,7 @@ const PERMISSION_GROUP_LABELS = {
 // 표시되도록 group="audit" 을 manage section 에 추가. admin 콘솔 진입을 권유.
 const WORK_SCREEN_PERMISSION_SECTIONS = [
   // TASK-0094 Sprint 1 Phase 12: attachment group 추가 — 첨부 sandbox SQL 권한이 운영 권한 묶음에 표시.
-  { id: "operate", title: "운영 권한", description: "대화 · 제품 접근 · 첨부", groups: ["conversation", "product", "attachment"] },
+  { id: "operate", title: "운영 권한", description: "내 대화 · 전체 대화 · 제품 접근 · 첨부", groups: ["conversation_own", "conversation_any", "product", "attachment"] },
   // TASK-0095: settings 그룹은 작업 화면의 관리 권한 section 에 placeholder.
   { id: "manage", title: "관리 권한", description: "관리 콘솔 / 계정 / 역할 / 감사 / 시스템 설정", groups: ["console", "account", "role", "audit", "settings"] },
   { id: "misc", title: "기타", description: null, groups: ["misc"] },
@@ -263,6 +265,8 @@ function permissionGroupOf(code = "") {
   const codeStr = String(code || "");
   if (codeStr.startsWith("system_prompt.global.")) return "settings";
   if (codeStr.startsWith("system_prompt.")) return "product";
+  // TASK-0269: 대화 권한은 own/any 로 분리 — `.any` 는 전체 대화 권한, 나머지(create/ask/list.own/...own/share)는 내 대화 권한.
+  if (codeStr.startsWith("conversation.")) return codeStr.endsWith(".any") ? "conversation_any" : "conversation_own";
   const head = codeStr.split(".", 1)[0] || "misc";
   return PERMISSION_GROUP_LABELS[head] ? head : "misc";
 }
