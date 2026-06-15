@@ -4875,10 +4875,35 @@ a { color: inherit; }
   color: var(--text-muted);
 }
 
+/* 권한 트리 (TASK-0267) — 단일 열 + 자식 들여쓰기. 2열 grid 가 자식 숨김 시 가로 reflow 로
+   기존 항목을 뒤틀던 문제 해소(상위 권한 아래로 자식이 tree 형태로 나열, 부모는 제자리 유지). */
 .permission-grid-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* 자식 권한 들여쓰기 + 좌측 가이드(부모-자식 위계). depth 0 = 그룹 내 루트(부모가 같은 그룹에 없음). */
+.permission-grid-list > [data-perm-depth="1"] { margin-left: 24px; }
+.permission-grid-list > [data-perm-depth="2"] { margin-left: 48px; }
+.permission-toggle-card[data-perm-depth="1"],
+.permission-toggle-card[data-perm-depth="2"],
+.override-field[data-perm-depth="1"],
+.override-field[data-perm-depth="2"] {
+  position: relative;
+  border-left: 2px solid var(--primary-soft, rgba(37, 99, 235, .28));
+}
+/* 들여쓰기 gutter ↔ 카드 좌측을 잇는 가로 tick (├/└ 형태). 체크박스 높이쯤(top)에서 연결. */
+.permission-grid-list > .permission-toggle-card[data-perm-depth="1"]::before,
+.permission-grid-list > .permission-toggle-card[data-perm-depth="2"]::before,
+.permission-grid-list > .override-field[data-perm-depth="1"]::before,
+.permission-grid-list > .override-field[data-perm-depth="2"]::before {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 18px;
+  width: 12px;
+  height: 2px;
+  background: var(--primary-soft, rgba(37, 99, 235, .28));
 }
 
 .permission-toggle-card {
@@ -4963,15 +4988,12 @@ a { color: inherit; }
   display: none !important;
 }
 
-/* 종속(자식) 권한 row: 매우 옅은 좌측 accent 로 "상위 권한에 딸린" 위계를 표시. */
-.permission-toggle-card.permission-row-dependent {
-  border-left: 2px solid var(--primary-soft, rgba(37, 99, 235, .22));
-}
+/* (TASK-0267) 종속 위계는 트리 들여쓰기(`[data-perm-depth]`)로 표현 — 구 `.permission-row-dependent`
+   좌측 accent 는 depth 0 인 cross-group 루트(예: account.read)에도 붙어 혼동을 줘 제거. */
 
-/* "세부 권한 N개 더 보기 / 접기" 토글 — grid-list 하단 full-width, 좌측 정렬. */
+/* "세부 권한 N개 더 보기 / 접기" 토글 — 트리(단일 열) 하단, 좌측 정렬(전체 폭 stretch 방지). */
 .permission-group-more {
-  grid-column: 1 / -1;
-  justify-self: start;
+  align-self: flex-start;
   margin-top: 2px;
   padding: 4px 2px;
   border: 0;

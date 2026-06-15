@@ -531,9 +531,38 @@ function _applyPermissionDisclosure(containerEl, mode, showAll) {
     const groupKey = groupEl ? groupEl.dataset.permGroup : null;
     const forceShow = Boolean(groupKey && showAll.has(groupKey));
     w.hidden = !(forceShow || isVisible(code));
-    w.classList.toggle("permission-row-dependent", Boolean(PERMISSION_DEPENDENCIES[code]));
   });
   _refreshGroupDisclosure(containerEl, showAll, () => _applyPermissionDisclosure(containerEl, mode, showAll), mode, isExplicit);
+}
+
+// 그룹 내 권한을 PERMISSION_DEPENDENCIES 트리 순서(부모 먼저, 자식 들여쓰기)로 정렬한다 (TASK-0267).
+// 반환: [{ permission, depth }] — depth 0 = 그룹 내 루트(부모가 같은 그룹에 없음), depth N = 자식 단계.
+// 트리(단일 열) 렌더 → 자식 숨김 시 부모는 제자리 유지, 가로 reflow(2열 grid 뒤틀림) 없음.
+function _orderItemsAsTree(items) {
+  const inGroup = new Set(items.map((p) => p.code));
+  const childrenOf = new Map(); // parentCode -> [child permission] (카탈로그 순서)
+  const roots = [];
+  items.forEach((p) => {
+    const parent = PERMISSION_DEPENDENCIES[p.code];
+    if (parent && inGroup.has(parent)) {
+      if (!childrenOf.has(parent)) childrenOf.set(parent, []);
+      childrenOf.get(parent).push(p);
+    } else {
+      roots.push(p); // 부모 없음 / 부모가 다른 그룹(예: account.read 의 부모 console.access) → 그룹 내 루트
+    }
+  });
+  const out = [];
+  const seen = new Set();
+  const visit = (p, depth) => {
+    if (seen.has(p.code)) return; // 사이클 방어(트리라 미발생)
+    seen.add(p.code);
+    out.push({ permission: p, depth });
+    (childrenOf.get(p.code) || []).forEach((ch) => visit(ch, depth + 1));
+  };
+  roots.forEach((r) => visit(r, 0));
+  // 안전망: 어떤 이유로 누락된 항목은 depth 0 으로 말미에 추가(렌더 누락 0 보장).
+  items.forEach((p) => { if (!seen.has(p.code)) { seen.add(p.code); out.push({ permission: p, depth: 0 }); } });
+  return out;
 }
 
 function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overrides, onChange, opts = {}) {
@@ -638,11 +667,12 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
     const list = document.createElement("div");
     list.className = "permission-grid-list";
 
-    items.forEach((permission) => {
+    _orderItemsAsTree(items).forEach(({ permission, depth }) => {
       if (mode === "checkbox") {
         const label = document.createElement("label");
         label.className = "permission-toggle permission-toggle-card";
         label.dataset.permCode = permission.code;
+        label.dataset.permDepth = String(depth);
         const input = document.createElement("input");
         input.type = "checkbox";
         input.value = permission.code;
@@ -666,6 +696,7 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
         const field = document.createElement("label");
         field.className = "field override-field";
         field.dataset.permCode = permission.code;
+        field.dataset.permDepth = String(depth);
         const titleEl = document.createElement("span");
         titleEl.textContent = permission.label;
         const select = document.createElement("select");

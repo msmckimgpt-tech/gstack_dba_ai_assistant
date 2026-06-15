@@ -327,6 +327,10 @@ TEMP_CLEANUP_ON_SUCCESS="1"
   통째 사라지는 동작은 역할 편집기(체크박스)만 적용한다 — 마스터 게이트 체크박스가 항상
   보이는 복원 레버이기 때문. 계정 override 편집기(select)는 위 "관리자가 배치 가능한
   권한 전체를 보여주는 grid" 보장을 지키기 위해 **그룹/섹션을 숨기지 않고** row 만 접는다.
+- **트리 레이아웃 (TASK-0267)**: 그룹 내 권한은 트리 순서(부모 먼저, 자식 들여쓰기,
+  `admin.js` `_orderItemsAsTree` + `data-perm-depth`)로 **단일 열**(`.permission-grid-list`
+  = flex column) 렌더한다. 2열 grid 는 자식 row 숨김 시 가로 reflow 로 기존 항목을
+  뒤틀므로 금지 — 단일 열이라 자식이 접혀도 부모는 제자리에 남는다.
 
 #### 검증
 
