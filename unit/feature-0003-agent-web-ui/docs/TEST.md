@@ -700,3 +700,10 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **익명 노출 경계(라이브 API 직접):** 응답 직렬화에 `result_summary.csv_paths`(서버 `/shared/` 경로) **0**, bare `preview` 키 **0**, step 키 = `{intent,reason,result_summary,sql,tool,work}`, result_summary 키 = `{preview_table}`만 — `_share_sanitize_step` 화이트리스트 라이브 적용 확인.
   - **Pass/Fail: PASS**
   - **Notes:** 사용자 의도("쿼리 열고닫기"가 아닌 "결과셋에 따라 실행 쿼리 전환") 정확 구현 — steps 없는 대화는 본문 SQL 펼침, steps 있는 대화는 navigator 전환. 익명 노출 sanitize 라이브 검증(csv_paths/preview/args/error 0). CHECK#13(PB-0008 Windows-browser) **충족**.
+
+- 2026-06-15 (TASK-0256 assistant 답변 markdown ```diff 블록 — **PB-0008 Windows-browser 완료 게이트, 렌더 시각검증 PASS**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 userspace relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면.
+  - **Runner: AI** (win-browser.py launch → eval(배포 markdownToHtml 로 샘플 diff 주입·DOM 검사·getComputedStyle) → screenshot)
+  - **Steps/Result:** 배포 자산(app.js?v=20260615-task0256-diff) 의 전역 `markdownToHtml`/`enhanceDiffBlocks` 에 샘플 리뷰 답변(```diff: `- SELECT *` 삭제 / `+ 필요컬럼 + 삭제행제외` 추가)을 `.message-content` 로 주입 → `pre.diff-block`=1, `.diff-add`=1(getComputedStyle color `rgb(158,206,106)` 초록), `.diff-del`=1(`rgb(247,118,142)` 빨강), 좌측 보더 색 구분. 스크린샷 `/tmp/task0256/pb0008_diff_render.png` 육안: 삭제라인 빨강·추가라인 초록 명확.
+  - **Pass/Fail: PASS**
+  - **Notes:** 렌더(시각) 검증 — 라이브 배포 자산의 실제 파이프라인(marked.parse→enhanceDiffBlocks→DOMPurify.sanitize) 결과를 실제 Windows 화면에서 확인. CSS 팔레트(.message-content pre 다크 #1a1b26 위) 정확 적용. 프롬프트측(assistant diff 생성)은 ask-worker SYSTEM_PROMPT baked + 라이브 WebSystemPrompts global row 갱신으로 보장(별도 LLM e2e 미수행). CHECK#13(PB-0008 Windows-browser) **충족**.

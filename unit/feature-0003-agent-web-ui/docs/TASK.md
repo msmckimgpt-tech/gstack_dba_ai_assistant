@@ -3584,4 +3584,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 캐시버스터 bump: index.html(styles/app), share.html(share.css/share.js) → ?v=20260615-task0256-diff
 - [x] node --check app.js/share.js PASS
 - [x] web 재배포(main 2befd37) + 새 app.js(enhanceDiffBlocks)·캐시버스터(?v=20260615-task0256-diff) 서빙 검증
-- [ ] (잔여) PB-0008 Windows-browser 시각검증 — diff +초록/-빨강 색 구분 (CHECK#13 WARN-only)
+- [x] PB-0008 Windows-browser 시각검증 PASS — diff +초록(rgb(158,206,106))/-빨강(rgb(247,118,142)) 색 구분 실측(2026-06-15, TEST.md §4)
