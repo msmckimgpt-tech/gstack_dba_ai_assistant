@@ -277,6 +277,109 @@ CREATE INDEX IF NOT EXISTS ix_datasource_health_status  ON agent_runtime.datasou
 CREATE INDEX IF NOT EXISTS ix_datasource_health_updated ON agent_runtime.datasource_health (updated_at DESC);
 
 -- ============================================================================
+-- 6d. core_attachments (+ 부속 3) — 첨부 메타 MySQL→PG 통합 (TASK-0277)
+--     MySQL agent_memory 의 첨부 4 테이블 등가. 정본은 alembic 0008_core_attachments.
+--     id 는 MySQL Id 보존(GENERATED ALWAYS 금지) — dual-write 기간 MySQL 이 ID 권위자,
+--     RootAttachmentId/AttachmentId/프론트 URL 이 기존 Id 참조하므로 신규발급 시 무결성 붕괴.
+--     아래 §7 의 GRANT ... ON ALL TABLES 가 본 테이블들을 자동 커버(부트스트랩 스냅샷).
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS agent_runtime.core_attachments (
+    id                          bigint        PRIMARY KEY,
+    conversation_id             varchar(128)  NOT NULL,
+    account_id                  bigint        NOT NULL,
+    object_key                  varchar(512)  NOT NULL,
+    original_filename           varchar(255)  NOT NULL,
+    filename_hmac               char(64)      NOT NULL,
+    mime_type                   varchar(128)  NOT NULL,
+    size_bytes                  bigint        NOT NULL,
+    size_bucket                 varchar(16)   NOT NULL,
+    sha256                      char(64)      NOT NULL,
+    kind                        varchar(16)   NOT NULL,
+    upload_status               varchar(24)   NOT NULL DEFAULT 'uploaded',
+    attachment_derived_messages jsonb,
+    created_at                  timestamptz   NOT NULL DEFAULT now(),
+    deleted_at                  timestamptz,
+    delete_pending              smallint      NOT NULL DEFAULT 0,
+    delete_reason               varchar(16),
+    meta_json                   jsonb,
+    root_attachment_id          bigint,
+    version_number              int           NOT NULL DEFAULT 1,
+    created_by_role             varchar(16)   NOT NULL DEFAULT 'user',
+    superseded_at               timestamptz,
+    CONSTRAINT fk_core_attachments_conv
+        FOREIGN KEY (conversation_id)
+        REFERENCES agent_runtime.core_conversations (conversation_id)
+        ON DELETE CASCADE,
+    CONSTRAINT uq_core_attachments_version_chain
+        UNIQUE (root_attachment_id, version_number)
+);
+CREATE INDEX IF NOT EXISTS ix_core_attachments_conv
+    ON agent_runtime.core_attachments (conversation_id, deleted_at);
+CREATE INDEX IF NOT EXISTS ix_core_attachments_account
+    ON agent_runtime.core_attachments (account_id, created_at);
+CREATE INDEX IF NOT EXISTS ix_core_attachments_status
+    ON agent_runtime.core_attachments (upload_status, delete_pending);
+CREATE INDEX IF NOT EXISTS ix_core_attachments_root
+    ON agent_runtime.core_attachments (root_attachment_id);
+
+CREATE TABLE IF NOT EXISTS agent_runtime.core_attachment_sandbox_schemas (
+    id              bigint        PRIMARY KEY,
+    conversation_id varchar(128)  NOT NULL,
+    schema_name     varchar(64)   NOT NULL,
+    created_at      timestamptz   NOT NULL DEFAULT now(),
+    dropped_at      timestamptz,
+    delete_pending  smallint      NOT NULL DEFAULT 0,
+    CONSTRAINT uq_core_att_sandbox_conv   UNIQUE (conversation_id),
+    CONSTRAINT uq_core_att_sandbox_schema UNIQUE (schema_name),
+    CONSTRAINT fk_core_att_sandbox_conv
+        FOREIGN KEY (conversation_id)
+        REFERENCES agent_runtime.core_conversations (conversation_id)
+        ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS ix_core_att_sandbox_pending
+    ON agent_runtime.core_attachment_sandbox_schemas (delete_pending, dropped_at);
+
+CREATE TABLE IF NOT EXISTS agent_runtime.core_attachment_derived_messages (
+    id              bigint        PRIMARY KEY,
+    attachment_id   bigint        NOT NULL,
+    message_id      bigint        NOT NULL,   -- 비-FK: PG messages.id 와 id-space 불일치(cutover 재발급)
+    derivation_type varchar(24)   NOT NULL,
+    created_at      timestamptz   NOT NULL DEFAULT now(),
+    CONSTRAINT fk_core_att_derived_att
+        FOREIGN KEY (attachment_id)
+        REFERENCES agent_runtime.core_attachments (id)
+        ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS ix_core_att_derived_att
+    ON agent_runtime.core_attachment_derived_messages (attachment_id);
+CREATE INDEX IF NOT EXISTS ix_core_att_derived_msg
+    ON agent_runtime.core_attachment_derived_messages (message_id);
+CREATE INDEX IF NOT EXISTS ix_core_att_derived_type
+    ON agent_runtime.core_attachment_derived_messages (derivation_type, created_at);
+
+CREATE TABLE IF NOT EXISTS agent_runtime.core_attachment_provider_files (
+    id                     bigint        PRIMARY KEY,
+    attachment_id          bigint        NOT NULL,
+    provider               varchar(32)   NOT NULL,
+    provider_file_id       varchar(255)  NOT NULL,
+    uploaded_at            timestamptz   NOT NULL DEFAULT now(),
+    deleted_at             timestamptz,
+    last_delete_attempt_at timestamptz,
+    delete_attempt_count   int           NOT NULL DEFAULT 0,
+    last_error             varchar(512),
+    CONSTRAINT fk_core_att_provider_att
+        FOREIGN KEY (attachment_id)
+        REFERENCES agent_runtime.core_attachments (id)
+        ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS ix_core_att_provider_att
+    ON agent_runtime.core_attachment_provider_files (attachment_id);
+CREATE INDEX IF NOT EXISTS ix_core_att_provider_pf
+    ON agent_runtime.core_attachment_provider_files (provider, provider_file_id);
+CREATE INDEX IF NOT EXISTS ix_core_att_provider_pending
+    ON agent_runtime.core_attachment_provider_files (deleted_at, last_delete_attempt_at);
+
+-- ============================================================================
 -- 7. Role grants (post-table creation)
 --    DEFAULT PRIVILEGES 가 이미 설정됐으므로 bootstrapped role 에는 자동 적용됨.
 --    하지만 명시적 grant 로 이중 보장.

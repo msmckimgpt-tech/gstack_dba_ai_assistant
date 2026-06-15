@@ -6299,6 +6299,7 @@ def _check_attachment_size_caps(
     if n > per_file:
         return False, f"단일 첨부 파일 크기 한도 ({per_file // 1_048_576}MB) 를 초과했습니다."
 
+    # 누적 용량은 MySQL(write-authoritative)에서 항상 계산한다 — quota enforcement 는 정본 기준.
     cur = conn.cursor()
     try:
         cur.execute(
@@ -6311,8 +6312,6 @@ def _check_attachment_size_caps(
         )
         row = cur.fetchone()
         conv_used = int((row[0] if row else 0) or 0)
-        if conv_used + n > per_conv:
-            return False, f"대화당 첨부 총 용량 한도 ({per_conv // 1_048_576}MB) 를 초과했습니다."
 
         cur.execute(
             """
@@ -6324,10 +6323,26 @@ def _check_attachment_size_caps(
         )
         row = cur.fetchone()
         account_used = int((row[0] if row else 0) or 0)
-        if account_used + n > per_account:
-            return False, f"계정당 첨부 총 용량 한도 ({per_account // 1_073_741_824}GB) 를 초과했습니다."
     finally:
         cur.close()
+
+    # TASK-0277 (REV-20260615-0279 MAJOR-1): read cutover 기간 quota 무결성 — read_pg 면 PG 도 조회해
+    # max() 를 취한다. dual-write fail-soft 로 PG 가 미러를 일시 누락하면 PG 합이 과소계상되어 cap 이
+    # 우회될 수 있으므로, 정본(MySQL)과 PG 중 큰 값으로 보수적으로 enforce 한다(정합 시 동일값). PG read
+    # 실패는 무시(MySQL 값 유지 — quota 는 MySQL 권위라 안전). 후속 decommission 에서 PG-only 전환.
+    try:
+        from web.modules import attachment_pg_mirror as _apm
+        if _apm.read_pg_enabled():
+            conv_used = max(conv_used, int(_apm.pg_sum_size_bytes(conversation_id=conversation_id)))
+            account_used = max(account_used, int(_apm.pg_sum_size_bytes(account_id=account_id)))
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_check_attachment_size_caps: PG cap read failed (MySQL 권위값 유지)", exc_info=True)
+
+    if conv_used + n > per_conv:
+        return False, f"대화당 첨부 총 용량 한도 ({per_conv // 1_048_576}MB) 를 초과했습니다."
+    if account_used + n > per_account:
+        return False, f"계정당 첨부 총 용량 한도 ({per_account // 1_073_741_824}GB) 를 초과했습니다."
     return True, ""
 
 
@@ -6335,6 +6350,15 @@ def _load_attachment_row(conn, attachment_id: int) -> dict[str, Any] | None:
     """attachment 단일 row dict 로 반환. 없으면 None."""
     if not attachment_id:
         return None
+    # TASK-0277: read cutover — ATTACHMENTS_READ_BACKEND=postgres 면 PG 에서 읽는다.
+    # PG read 실패(연결 등)는 MySQL 로 폴백(가용성 — dual-write 로 MySQL 도 정본 유지).
+    try:
+        from web.modules import attachment_pg_mirror as _apm
+        if _apm.read_pg_enabled():
+            return _apm.pg_load_attachment_row(int(attachment_id))
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_load_attachment_row: PG read failed → MySQL fallback (id=%s)", attachment_id, exc_info=True)
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute(
@@ -6690,6 +6714,21 @@ def _materialize_assistant_attachment_edits(
             cur.close()
         try:
             conn.commit()
+        except Exception:
+            pass
+
+        # TASK-0277: dual-write — 새 버전 + supersede 된 직전 버전(체인 전체)을 PG 로 미러(flag-gated, fail-soft).
+        try:
+            from web.modules import attachment_pg_mirror as _apm
+            if _apm.dual_write_enabled():
+                _chcur = conn.cursor()
+                _chcur.execute(
+                    "SELECT Id FROM WebConversationAttachments WHERE RootAttachmentId = %s OR Id = %s",
+                    (root_id, root_id),
+                )
+                _chain_ids = [int(r[0]) for r in (_chcur.fetchall() or []) if r and r[0] is not None]
+                _chcur.close()
+                _apm.mirror_attachments(conn, list({*_chain_ids, int(new_id)}))
         except Exception:
             pass
 
@@ -8646,32 +8685,43 @@ def _prepare_vision_inline_images(
         return (None, 0, [])
 
     # image kind 첨부 선별 (count cap 적용)
+    # TASK-0277: read cutover — PG 우선(IDOR AccountId 가드 동형), 실패 시 MySQL 폴백.
+    rows = None
     try:
-        cur = conn.cursor(dictionary=True)
-        try:
-            placeholders = ", ".join(["%s"] * len(attachment_ids))
-            # TASK-0132 (#8 IDOR): AccountId 스코프 — 이전엔 Id IN(...) 만이라 타 계정 첨부
-            # ID 를 주입하면 그 이미지 bytes 가 본인 대화에 inject 됐다. 인증 account 로 한정.
-            params = tuple(int(i) for i in attachment_ids) + (int(account_id), int(_VISION_IMAGE_COUNT_CAP))
-            cur.execute(
-                f"""
-                SELECT Id, ObjectKey, MimeType, OriginalFilename, SizeBytes, SizeBucket
-                FROM WebConversationAttachments
-                WHERE Id IN ({placeholders})
-                  AND AccountId = %s
-                  AND Kind = 'image'
-                  AND DeletedAt IS NULL
-                  AND DeletePending = 0
-                ORDER BY Id ASC
-                LIMIT %s
-                """,
-                params,
-            )
-            rows = cur.fetchall() or []
-        finally:
-            cur.close()
+        from web.modules import attachment_pg_mirror as _apm
+        if _apm.read_pg_enabled():
+            rows = _apm.pg_select_vision_images(int(account_id), attachment_ids, int(_VISION_IMAGE_COUNT_CAP))
     except Exception:
-        return (None, 0, [])
+        rows = None
+        logging.getLogger(__name__).warning(
+            "_prepare_vision_inline_images: PG read failed → MySQL fallback", exc_info=True)
+    if rows is None:
+        try:
+            cur = conn.cursor(dictionary=True)
+            try:
+                placeholders = ", ".join(["%s"] * len(attachment_ids))
+                # TASK-0132 (#8 IDOR): AccountId 스코프 — 이전엔 Id IN(...) 만이라 타 계정 첨부
+                # ID 를 주입하면 그 이미지 bytes 가 본인 대화에 inject 됐다. 인증 account 로 한정.
+                params = tuple(int(i) for i in attachment_ids) + (int(account_id), int(_VISION_IMAGE_COUNT_CAP))
+                cur.execute(
+                    f"""
+                    SELECT Id, ObjectKey, MimeType, OriginalFilename, SizeBytes, SizeBucket
+                    FROM WebConversationAttachments
+                    WHERE Id IN ({placeholders})
+                      AND AccountId = %s
+                      AND Kind = 'image'
+                      AND DeletedAt IS NULL
+                      AND DeletePending = 0
+                    ORDER BY Id ASC
+                    LIMIT %s
+                    """,
+                    params,
+                )
+                rows = cur.fetchall() or []
+            finally:
+                cur.close()
+        except Exception:
+            return (None, 0, [])
 
     if not rows:
         return (None, 0, [])
@@ -8763,24 +8813,35 @@ def _prepare_text_inline_attachments(
     except (ImportError, Exception):
         return None
 
+    # TASK-0277: read cutover — PG 우선(IDOR AccountId 가드 동형), 실패 시 MySQL 폴백.
+    rows = None
     try:
-        cur = conn.cursor(dictionary=True)
-        placeholders = ", ".join(["%s"] * len(attachment_ids))
-        cur.execute(
-            f"SELECT Id, OriginalFilename, ObjectKey, Kind, SizeBytes, AccountId "
-            f"FROM WebConversationAttachments "
-            f"WHERE Id IN ({placeholders}) AND AccountId = %s AND Kind = 'text' "
-            f"AND UploadStatus = 'uploaded' AND DeletedAt IS NULL AND DeletePending = 0 "
-            # count cap 초과 시 가장 최근(=방금 첨부한) 파일을 보존하도록 DESC. 이전엔 ASC 라
-            # 한 대화에 cap(20) 초과 첨부 시 방금 올린 파일이 조용히 누락됐다(사용자 불만).
-            f"ORDER BY Id DESC LIMIT %s",
-            # TASK-0132 (#8 IDOR): AccountId 스코프 — 타 계정 text 첨부 내용 inject 차단.
-            tuple(int(i) for i in attachment_ids) + (int(account_id), _TEXT_INLINE_COUNT_CAP),
-        )
-        rows = cur.fetchall() or []
-        cur.close()
+        from web.modules import attachment_pg_mirror as _apm
+        if _apm.read_pg_enabled():
+            rows = _apm.pg_select_text_inline(int(account_id), attachment_ids, _TEXT_INLINE_COUNT_CAP)
     except Exception:
-        return None
+        rows = None
+        logging.getLogger(__name__).warning(
+            "_prepare_text_inline_attachments: PG read failed → MySQL fallback", exc_info=True)
+    if rows is None:
+        try:
+            cur = conn.cursor(dictionary=True)
+            placeholders = ", ".join(["%s"] * len(attachment_ids))
+            cur.execute(
+                f"SELECT Id, OriginalFilename, ObjectKey, Kind, SizeBytes, AccountId "
+                f"FROM WebConversationAttachments "
+                f"WHERE Id IN ({placeholders}) AND AccountId = %s AND Kind = 'text' "
+                f"AND UploadStatus = 'uploaded' AND DeletedAt IS NULL AND DeletePending = 0 "
+                # count cap 초과 시 가장 최근(=방금 첨부한) 파일을 보존하도록 DESC. 이전엔 ASC 라
+                # 한 대화에 cap(20) 초과 첨부 시 방금 올린 파일이 조용히 누락됐다(사용자 불만).
+                f"ORDER BY Id DESC LIMIT %s",
+                # TASK-0132 (#8 IDOR): AccountId 스코프 — 타 계정 text 첨부 내용 inject 차단.
+                tuple(int(i) for i in attachment_ids) + (int(account_id), _TEXT_INLINE_COUNT_CAP),
+            )
+            rows = cur.fetchall() or []
+            cur.close()
+        except Exception:
+            return None
 
     if not rows:
         return None
@@ -9528,18 +9589,33 @@ async def ask(request: Request) -> JSONResponse:
         # allowed_schemas_for_run 이 None (whitelist 미적용) 이면 아무 작업 없음.
         if attachment_ids_clean and allowed_schemas_for_run is not None:
             try:
-                _sb_placeholders = ", ".join(["%s"] * len(attachment_ids_clean))
-                _sb_cur = conn.cursor()
-                _sb_cur.execute(
-                    f"SELECT MetaJson FROM WebConversationAttachments "
-                    f"WHERE Id IN ({_sb_placeholders}) AND AccountId = %s AND UploadStatus = 'ingested' "
-                    f"AND Kind IN ('csv','xlsx') AND DeletedAt IS NULL",
-                    # TASK-0132 (#8 IDOR): 타 계정 ingested 첨부의 sandbox 스키마를 allowlist 에
-                    # 추가하지 못하도록 AccountId 한정 (sandbox 교차테넌트 접근 차단).
-                    tuple(attachment_ids_clean) + (int(account["id"]),),
-                )
-                _sb_rows = _sb_cur.fetchall() or []
-                _sb_cur.close()
+                # TASK-0277: read cutover — PG 우선(IDOR AccountId 가드 동형, fail-closed: 누락 시
+                # 해당 sandbox 미허용=쿼리 거부로 안전). 실패 시 MySQL 폴백. 행 shape 는 (MetaJson,) 유지.
+                _sb_rows = None
+                try:
+                    from web.modules import attachment_pg_mirror as _apm
+                    if _apm.read_pg_enabled():
+                        _sb_rows = [
+                            (_m,) for _m in _apm.pg_select_ingested_meta(
+                                int(account["id"]), attachment_ids_clean)
+                        ]
+                except Exception:
+                    _sb_rows = None
+                    logging.getLogger(__name__).warning(
+                        "ask: sandbox allowlist PG read failed → MySQL fallback", exc_info=True)
+                if _sb_rows is None:
+                    _sb_placeholders = ", ".join(["%s"] * len(attachment_ids_clean))
+                    _sb_cur = conn.cursor()
+                    _sb_cur.execute(
+                        f"SELECT MetaJson FROM WebConversationAttachments "
+                        f"WHERE Id IN ({_sb_placeholders}) AND AccountId = %s AND UploadStatus = 'ingested' "
+                        f"AND Kind IN ('csv','xlsx') AND DeletedAt IS NULL",
+                        # TASK-0132 (#8 IDOR): 타 계정 ingested 첨부의 sandbox 스키마를 allowlist 에
+                        # 추가하지 못하도록 AccountId 한정 (sandbox 교차테넌트 접근 차단).
+                        tuple(attachment_ids_clean) + (int(account["id"]),),
+                    )
+                    _sb_rows = _sb_cur.fetchall() or []
+                    _sb_cur.close()
                 _sandbox_schemas: list[str] = []
                 for _sbr in _sb_rows:
                     try:
@@ -9678,6 +9754,7 @@ async def ask(request: Request) -> JSONResponse:
                     _msg_id = int(_latest_msg.get("id") or 0)
                     if _msg_id > 0 and vision_audit_attachments:
                         _cur_d = conn.cursor()
+                        _derived_ids: list[int] = []
                         try:
                             for _att in vision_audit_attachments:
                                 _att_id = int(_att.get("attachment_id") or 0)
@@ -9691,7 +9768,17 @@ async def ask(request: Request) -> JSONResponse:
                                     """,
                                     (_att_id, _msg_id),
                                 )
+                                try:
+                                    _derived_ids.append(int(_cur_d.lastrowid or 0))
+                                except Exception:
+                                    pass
                             conn.commit()
+                            # TASK-0277: dual-write — vision 파생 join 행을 PG 로 미러(flag-gated, fail-soft).
+                            try:
+                                from web.modules import attachment_pg_mirror as _apm
+                                _apm.mirror_derived_messages(conn, [i for i in _derived_ids if i])
+                            except Exception:
+                                pass
                         finally:
                             _cur_d.close()
                 except Exception:
@@ -10471,6 +10558,12 @@ def _copy_conversation_attachments(
                     )
                 raise
             copied += 1
+            # TASK-0277: dual-write — fork 으로 복사된 새 첨부 행을 PG 로 미러(flag-gated, fail-soft).
+            try:
+                from web.modules import attachment_pg_mirror as _apm
+                _apm.mirror_attachments(conn, [new_att_id])
+            except Exception:
+                pass
             if is_sandbox_kind and new_att_id:
                 reingest.append((new_att_id, new_key, kind))
         except Exception:
@@ -12797,6 +12890,13 @@ async def upload_conversation_attachment(
         except Exception:
             pass
 
+        # TASK-0277: dual-write — 업로드 직후 MySQL 상태를 PG core_attachments 로 미러(flag-gated, fail-soft).
+        try:
+            from web.modules import attachment_pg_mirror as _apm
+            _apm.mirror_attachments(conn, [attachment_id])
+        except Exception:
+            pass
+
         # audit dispatch — D12 raw filename / bytes 절대 제외.
         attachment_row = _load_attachment_row(conn, attachment_id)
         try:
@@ -12888,6 +12988,12 @@ def _ingest_attachment_background(
             )
             _cur.close()
             _conn.commit()
+            # TASK-0277: dual-write — import 실패 degraded status 도 PG 로 미러(close 前).
+            try:
+                from web.modules import attachment_pg_mirror as _apm
+                _apm.mirror_attachments(_conn, [attachment_id])
+            except Exception:
+                pass
             _conn.close()
         except Exception:
             pass
@@ -12983,6 +13089,12 @@ def _ingest_attachment_background(
         )
         cur.close()
         conn.commit()
+        # TASK-0277: dual-write — ingest 후 status='ingested' + MetaJson 변경을 PG 로 미러.
+        try:
+            from web.modules import attachment_pg_mirror as _apm
+            _apm.mirror_attachments(conn, [attachment_id])
+        except Exception:
+            pass
     except Exception as exc:
         _mark_ingest_failed(attachment_id, f"meta update failed: {exc}")
     finally:
@@ -13004,6 +13116,12 @@ def _mark_ingest_failed(attachment_id: int, reason: str) -> None:
         )
         cur.close()
         conn.commit()
+        # TASK-0277: dual-write — ingest 실패 status='failed' 도 PG 로 미러(close 前).
+        try:
+            from web.modules import attachment_pg_mirror as _apm
+            _apm.mirror_attachments(conn, [attachment_id])
+        except Exception:
+            pass
         conn.close()
     except Exception:
         pass
@@ -13030,28 +13148,40 @@ def list_conversation_attachments(cid: str, request: Request) -> JSONResponse:
         ):
             return _json_error("이 대화의 첨부를 조회할 권한이 없습니다.", 403)
 
-        cur = conn.cursor(dictionary=True)
+        # TASK-0277: read cutover — PG 우선(권한은 위 _account_can_access_conversation 로 이미 게이트),
+        # PG read 실패 시 MySQL 폴백. PG helper 의 WHERE 는 MySQL 판과 동형(최신·미삭제).
+        rows = None
         try:
-            # TASK-0274: 버전 체인의 최신 버전만 목록에 노출(SupersededAt IS NULL).
-            # 구버전은 /api/attachments/{id}/versions 로 조회. 기존 단일 첨부는
-            # SupersededAt NULL + VersionNumber=1 이라 동작 동일(하위호환).
-            cur.execute(
-                """
-                SELECT
-                    Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
-                    FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
-                    UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
-                    DeletePending, DeleteReason, MetaJson,
-                    RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
-                FROM WebConversationAttachments
-                WHERE ConversationId = %s AND DeletedAt IS NULL AND SupersededAt IS NULL
-                ORDER BY Id ASC
-                """,
-                (cid,),
-            )
-            rows = cur.fetchall() or []
-        finally:
-            cur.close()
+            from web.modules import attachment_pg_mirror as _apm
+            if _apm.read_pg_enabled():
+                rows = _apm.pg_list_conversation_attachments(cid)
+        except Exception:
+            rows = None
+            logging.getLogger(__name__).warning(
+                "list_conversation_attachments: PG read failed → MySQL fallback (cid=%s)", cid, exc_info=True)
+        if rows is None:
+            cur = conn.cursor(dictionary=True)
+            try:
+                # TASK-0274: 버전 체인의 최신 버전만 목록에 노출(SupersededAt IS NULL).
+                # 구버전은 /api/attachments/{id}/versions 로 조회. 기존 단일 첨부는
+                # SupersededAt NULL + VersionNumber=1 이라 동작 동일(하위호환).
+                cur.execute(
+                    """
+                    SELECT
+                        Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                        FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                        UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
+                        DeletePending, DeleteReason, MetaJson,
+                        RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
+                    FROM WebConversationAttachments
+                    WHERE ConversationId = %s AND DeletedAt IS NULL AND SupersededAt IS NULL
+                    ORDER BY Id ASC
+                    """,
+                    (cid,),
+                )
+                rows = cur.fetchall() or []
+            finally:
+                cur.close()
 
         results = [_serialize_attachment_for_api(dict(row)) for row in rows]
         return JSONResponse({"attachments": results})
@@ -13140,25 +13270,37 @@ def get_attachment_versions(attachment_id: int, request: Request) -> JSONRespons
             return _json_error("첨부를 찾을 수 없거나 접근 권한이 없습니다.", 404)
 
         root_id = int(base.get("RootAttachmentId") or 0) or int(base.get("Id") or 0)
-        cur = conn.cursor(dictionary=True)
+        # TASK-0277: read cutover — PG 우선(권한은 위 _account_can_access_attachment 로 이미 게이트),
+        # PG read 실패 시 MySQL 폴백.
+        rows = None
         try:
-            cur.execute(
-                """
-                SELECT
-                    Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
-                    FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
-                    UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
-                    DeletePending, DeleteReason, MetaJson,
-                    RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
-                FROM WebConversationAttachments
-                WHERE (RootAttachmentId = %s OR Id = %s) AND DeletedAt IS NULL
-                ORDER BY VersionNumber ASC, Id ASC
-                """,
-                (root_id, root_id),
-            )
-            rows = cur.fetchall() or []
-        finally:
-            cur.close()
+            from web.modules import attachment_pg_mirror as _apm
+            if _apm.read_pg_enabled():
+                rows = _apm.pg_get_attachment_versions(root_id)
+        except Exception:
+            rows = None
+            logging.getLogger(__name__).warning(
+                "get_attachment_versions: PG read failed → MySQL fallback (root=%s)", root_id, exc_info=True)
+        if rows is None:
+            cur = conn.cursor(dictionary=True)
+            try:
+                cur.execute(
+                    """
+                    SELECT
+                        Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                        FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                        UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
+                        DeletePending, DeleteReason, MetaJson,
+                        RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
+                    FROM WebConversationAttachments
+                    WHERE (RootAttachmentId = %s OR Id = %s) AND DeletedAt IS NULL
+                    ORDER BY VersionNumber ASC, Id ASC
+                    """,
+                    (root_id, root_id),
+                )
+                rows = cur.fetchall() or []
+            finally:
+                cur.close()
 
         is_pending = _account_is_pending(account)
         versions: list[dict[str, Any]] = []
@@ -13238,6 +13380,13 @@ def delete_attachment(attachment_id: int, request: Request) -> JSONResponse:
 
         try:
             conn.commit()
+        except Exception:
+            pass
+
+        # TASK-0277: dual-write — soft-delete(DeletePending/DeletedAt) 상태를 PG 로 미러(flag-gated, fail-soft).
+        try:
+            from web.modules import attachment_pg_mirror as _apm
+            _apm.mirror_attachments(conn, [int(attachment_id)])
         except Exception:
             pass
 
