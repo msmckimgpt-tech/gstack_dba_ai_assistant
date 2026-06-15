@@ -245,7 +245,15 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0041: 고정 UI 라벨(button/label/option/h1-3 등; conv-list/messages 제외)에 한글 "상품" 잔존 0
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
+### TASK-0272 프로필 첫 진입 제품 범위 적재 (REQ-20260615-0272, AC-0487, Minor §12.3)
+- TEST-0043: `switchProfileTab("prompt")` 가 호출되면(탭 클릭 이벤트 없이도) `#promptProductSelect` 가 `state.products` 의 활성 제품으로 채워진다 — `openProfile("prompt")`(드로어 첫 오픈) 경로에서도 적재된다.
+- TEST-0044: `initialize()` 의 탭 클릭 리스너는 `switchProfileTab(tab)` 만 호출하고 lazy 디스패치(`initAccountPromptEditor`/`loadProfileUsage`)를 직접 중복 보유하지 않는다 (단일 진입점 = `switchProfileTab`).
+- TEST-0045: node --check app.js 통과 (구문 무결).
+
 ## 4. Test Run History
+- 2026-06-15 (TASK-0272 대화 화면 프로필 첫 진입 시 "프롬프트 > 제품 범위" 비어있는 버그, **Minor §12.3** frontend-only):
+  - **Environment: CLI** (정적 검증): `node --check app.js` PASS. 코드 정합 — `switchProfileTab(tab)` 에 탭별 lazy 디스패치(prompt→`initAccountPromptEditor()` / usage→`loadProfileUsage()`) 추가, `initialize()` 탭 클릭 리스너의 중복 디스패치 제거(단일 진입점화). index.html app.js 캐시버스터 `?v=20260615-task0272-prompt-scope`. REV-20260615-0272 [SKIPPED:panel].
+  - **(잔여) PB-0008 Windows-browser**: web 재배포(deploy_scope: included) 후 프로필 드로어 첫 진입(새로고침 후)에서 제품 범위 셀렉트가 즉시 채워짐을 실제 Windows 화면에서 실측 → 결과를 본 항목에 추가 예정. (배포 전이라 본 commit 의 CHECK#13 은 WARN — 배포 후 충족 기록.)
 - 2026-06-15 (TASK-0270 계정 override 게이트 = 허용/상속(허용) 펼침, **Minor §12.3** frontend-only):
   - **Environment: CLI** (컨테이너 make test). perm test **16 PASS**(신규 V7: 상속(허용)→펼침·상속(거부)→숨김·명시 거부 우선·허용 무관 펼침) + make test 컨테이너 회귀 0(exit=0) + node --check + **jsdom 8/8**(상속허용·상속거부·거부우선·허용·운영 list.own 상속허용). REV-20260615-0270 [SKIPPED:ui-disclosure-gate-no-enforcement].
   - **Environment: Windows-browser** (실제 Windows Chrome/148 via `bin/win-browser.py` relay `bridge_mode: relay`, https://localhost:18080, self-signed ignore). 라이브 배포(main `8953dc1`, web Up healthy, 서빙 admin.js `inheritedGrants`, 캐시버스터 `?v=20260615-task0270-inherit-gate`) 후 카탈로그 주입 + computed display 실측. 스크린샷 `artifacts/pb0008-task0270/step_04(override 상속허용 게이트).png`.

@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0272 [SKIPPED:panel]
+- Date: 2026-06-15
+- Cycle: TASK-0272 (대화 화면 프로필 첫 진입 시 "프롬프트 > 제품 범위" 비어있는 버그; 동시세션이 TASK-0271/AC-0470 선점→§13.1 재번호 0271→0272·AC-0470→0487), **Minor §12.3** — 프론트엔드 단일 파일(app.js) 버그 수정 + 캐시버스터. RBAC/인증/스키마/엔드포인트 계약/데이터/시크릿 0.
+- Trigger: §18.8 dispatch 키워드 매칭(UI/화면/form) 이나, 변경 실질은 lazy-load 디스패치를 탭 클릭 리스너 → `switchProfileTab()` 내부로 이전한 frontend-only 1-file 수정이다. 권한 경계·데이터 노출·쿼리 변화·외부 계약 0 → 적대적 보안/RBAC 패널 불요(§6.3 Minor + 1 file + 정책 doc 변경 0 → panel skip 허용).
+- Reason: 근본원인이 "기본 활성 탭은 클릭 이벤트가 없어 lazy 적재가 누락"이라는 이벤트 배선 위치 문제로 명확. `switchProfileTab` 단일 진입점화는 기존 두 호출 경로(openProfile, 탭 클릭)를 모두 커버하며 중복 디스패치를 제거해 회귀 표면을 오히려 줄인다. `state.products` 적재 시점(부트스트랩)이 프로필 오픈보다 선행함을 코드로 확인(데이터 race 아님). node --check PASS.
+- Residual: verify-completion --pre-commit + web 재배포(deploy_scope: included) 후 PB-0008 Windows-browser 시각검증(프로필 첫 진입 시 제품 범위 채워짐) → TEST.md §4 기록.
+- Cross-ref: CHG-20260615-0272 / TASK-0272 / FUNCTION REQ-20260615-0272(AC-0487).
+
 ## REV-20260615-0271 [SKIPPED:pb0008-evidence-docs-only]
 - Date: 2026-06-15
 - Cycle: TASK-0271 (TASK-0269/0270 PB-0008 Windows-browser 시각검증 evidence 기록 — docs-only: TEST.md §4 Run 2건 + TASK.md 완료 표기. src 코드 0).

@@ -734,6 +734,14 @@ function switchProfileTab(tab) {
   document.querySelectorAll("[data-profile-pane]").forEach((pane) => {
     pane.classList.toggle("hidden", pane.dataset.profilePane !== tab);
   });
+  // 해당 탭의 lazy 콘텐츠 적재. openProfile()(기본 활성 탭) 와 탭 클릭 양쪽 경로가
+  // switchProfileTab 을 거치므로 여기서 단일 디스패치한다 — 과거엔 탭 '클릭' 리스너에만
+  // 있어 첫 진입(기본 prompt 탭) 시 promptProductSelect(제품 범위) 가 비어 있었다.
+  if (tab === "prompt") {
+    initAccountPromptEditor().catch(() => {});
+  } else if (tab === "usage") {
+    loadProfileUsage().catch(() => {}); // TASK-0184: 내 사용 내역 lazy 로드
+  }
 }
 
 
@@ -6530,14 +6538,8 @@ async function initialize() {
 
   // 프로필 탭 전환
   document.querySelectorAll("[data-profile-tab]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      switchProfileTab(btn.dataset.profileTab);
-      if (btn.dataset.profileTab === "prompt") {
-        initAccountPromptEditor().catch(() => {});
-      } else if (btn.dataset.profileTab === "usage") {
-        loadProfileUsage().catch(() => {}); // TASK-0184: 내 사용 내역 lazy 로드
-      }
-    });
+    // lazy 콘텐츠 적재는 switchProfileTab() 내부에서 단일 디스패치 (prompt/usage).
+    btn.addEventListener("click", () => switchProfileTab(btn.dataset.profileTab));
   });
   const profileUsageDaysSel = document.getElementById("profileUsageDays");
   if (profileUsageDaysSel) {
