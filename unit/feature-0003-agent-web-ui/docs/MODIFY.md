@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260615-0267
+- Date: 2026-06-15 (TASK-0267, **Minor §12.3** — 권한 grid 트리 UI 재구성: 2열 grid 뒤틀림 해소 + "더 보기 부여됨" 빨강 가시성)
+- Scope: agent-web-ui (프론트 전용) — 사용자 보고(운영 권한 테스트 중 ① 빨강 미가시 ② 항목 숨김 뒤틀림 → tree UI 요청). 2열 grid 가 행 숨김 시 가로 reflow 로 뒤틀리고 "더 보기" 빨강 badge 가 묻히던 것을, 단일 열 트리로 전환. 백엔드/RBAC/저장 0.
+- 변경:
+  - `src/static/admin.js`: 신규 `_orderItemsAsTree(items)` — 그룹 내 권한을 `PERMISSION_DEPENDENCIES` 트리 DFS(부모 먼저, 자식 들여쓰기)로 정렬, `[{permission, depth}]` 반환(루트=부모 없음/타 그룹 → depth 0, 자식 depth+1, 누락 안전망). 렌더 루프가 이를 순회 + row wrapper(label/field)에 `data-perm-depth`. 구 `permission-row-dependent` 토글 제거.
+  - `src/static/styles.css`: `.permission-grid-list` **2열 grid → 단일 열 flex column**. `[data-perm-depth="1"|"2"]` 들여쓰기 + 좌측 가이드 border + 가로 tick 연결선(트리 위계). `.permission-group-more` grid-column→`align-self:flex-start`. `.permission-toggle-card.permission-row-dependent` accent 규칙 제거(depth 기반 대체).
+  - `src/static/admin.html`: 캐시버스터 `?v=20260615-perm-tree-ui`(styles.css + admin.js).
+  - `tests/test_permission_dependency_map.py`: 신규 `_order_items_as_tree` 포팅 + T1~T4(트리 정렬 부모-자식 순서·depth 정합, own→any 중첩, account.read 루트 depth0, grid-list 단일열 CSS 계약).
+- 비변경: disclosure 가시성(`_applyPermissionDisclosure`)·게이트·도달성(그룹 유지/"부여됨" 배지)·저장 경로(순서 무관)·`has-granted` 빨강 CSS·제품 카드 임베드·RBAC·엔드포인트·스키마.
+- 검증: perm test **15 PASS** + make test 컨테이너 회귀 0(exit=0) + node --check + CSS brace(1167=1167) + jsdom 실 DOM 14/14. **잔여**: 배포(web 만) + PB-0008.
+
 ## CHG-20260615-0265
 - Date: 2026-06-15 (TASK-0265, **docs-only** — TASK-0264 PB-0008 Windows-browser 시각검증 evidence 기록)
 - Scope: agent-web-ui 문서만 — `docs/TEST.md` §4 Run 추가 + `docs/TASK.md` TASK-0264 "잔여 PB-0008" → "완료(PASS)". src 코드 0.

@@ -254,3 +254,97 @@ def test_c1_hidden_rows_force_display_none():
     # section/group 도 동일 강제 규칙에 포함돼야 한다.
     assert ".permission-group[hidden]" in css, ".permission-group[hidden] 강제 규칙 부재"
     assert ".permission-section[hidden]" in css, ".permission-section[hidden] 강제 규칙 부재"
+
+
+# ── T: 트리 정렬 (TASK-0267 — _orderItemsAsTree 포팅) ──────────────────────────────
+def _order_items_as_tree(group_codes: list[str]) -> list[tuple[str, int]]:
+    """admin.js _orderItemsAsTree 포팅 — 그룹 내 코드를 (code, depth) 트리 DFS 순서로."""
+    in_group = set(group_codes)
+    children: dict[str, list[str]] = {}
+    roots: list[str] = []
+    for code in group_codes:  # 카탈로그 순서 유지
+        parent = DEPS.get(code)
+        if parent and parent in in_group:
+            children.setdefault(parent, []).append(code)
+        else:
+            roots.append(code)  # 부모 없음 / 부모가 다른 그룹 → 그룹 내 루트(depth 0)
+    out: list[tuple[str, int]] = []
+    seen: set[str] = set()
+
+    def visit(code: str, depth: int) -> None:
+        if code in seen:
+            return
+        seen.add(code)
+        out.append((code, depth))
+        for ch in children.get(code, []):
+            visit(ch, depth + 1)
+
+    for r in roots:
+        visit(r, 0)
+    for code in group_codes:  # 누락 안전망
+        if code not in seen:
+            seen.add(code)
+            out.append((code, 0))
+    return out
+
+
+def _group_of(code: str) -> str:
+    return app.PERMISSION_DEFINITION_MAP[code]["group"]
+
+
+def test_t1_tree_order_parent_before_child_and_depth():
+    # 정적 권한을 그룹별로 카탈로그 순서대로 모은다(렌더 입력과 동일).
+    groups: dict[str, list[str]] = {}
+    for code in app.PERMISSION_CODES:
+        groups.setdefault(_group_of(code), []).append(code)
+    for group, codes in groups.items():
+        order = _order_items_as_tree(codes)
+        assert len(order) == len(codes), f"{group}: 트리 정렬이 항목을 누락/중복 ({len(order)} vs {len(codes)})"
+        assert {c for c, _ in order} == set(codes), f"{group}: 트리 정렬 코드 집합 불일치"
+        pos = {c: i for i, (c, _) in enumerate(order)}
+        depth = {c: d for c, d in order}
+        for code in codes:
+            parent = DEPS.get(code)
+            if parent and parent in set(codes):
+                # 그룹 내 부모는 자식보다 앞 + depth = 부모+1
+                assert pos[parent] < pos[code], f"{group}: 부모 {parent} 가 자식 {code} 뒤"
+                assert depth[code] == depth[parent] + 1, f"{group}: {code} depth 가 부모+1 아님"
+            else:
+                # 그룹 내 루트(부모 없음 / 부모 다른 그룹)는 depth 0
+                assert depth[code] == 0, f"{group}: 루트 {code} depth 가 0 아님(부모={parent})"
+
+
+def test_t2_conversation_own_any_nesting():
+    # 대화 그룹에서 .any 는 대응 .own 바로 아래(depth 1)로 중첩된다.
+    conv = [c for c in app.PERMISSION_CODES if _group_of(c) == "conversation"]
+    order = _order_items_as_tree(conv)
+    depth = {c: d for c, d in order}
+    pos = {c: i for i, (c, _) in enumerate(order)}
+    for code in conv:
+        if code.endswith(".any"):
+            own = code[: -len(".any")] + ".own"
+            if own in set(conv):
+                assert depth[code] == 1, f"{code} 가 depth 1(자식) 아님"
+                assert depth[own] == 0, f"{own} 가 depth 0(루트) 아님"
+                assert pos[own] < pos[code], f"{own} 가 {code} 뒤"
+
+
+def test_t3_account_read_is_group_root_depth0():
+    # account.read 는 부모(console.access)가 다른 그룹(console)이라 account 그룹 내 루트(depth 0).
+    acct = [c for c in app.PERMISSION_CODES if _group_of(c) == "account"]
+    depth = {c: d for c, d in _order_items_as_tree(acct)}
+    assert depth["account.read"] == 0, "account.read 는 그룹 내 루트(depth 0)여야 함"
+    assert depth["account.update"] == 1, "account.update 는 account.read 의 자식(depth 1)"
+
+
+def test_t4_grid_list_is_single_column_not_grid():
+    """트리 레이아웃: .permission-grid-list 는 단일 열(flex column) — 2열 grid(자식 숨김 시 가로 reflow
+    뒤틀림)가 아니어야 한다 + depth 들여쓰기 규칙 존재."""
+    css = STYLES_CSS.read_text(encoding="utf-8")
+    # 줄 시작 앵커 — `.permission-group .permission-grid-list`(padding 규칙) 가 아닌 standalone 규칙.
+    m = re.search(r"(?m)^\.permission-grid-list\s*\{([^}]*)\}", css)
+    assert m, ".permission-grid-list standalone 규칙 부재"
+    body = m.group(1)
+    assert "flex" in body and "column" in body, ".permission-grid-list 가 flex column(단일 열) 아님 — 뒤틀림 회귀"
+    assert "grid-template-columns" not in body, ".permission-grid-list 가 여전히 2열 grid(뒤틀림 원인)"
+    assert '[data-perm-depth="1"]' in css, "depth 1 들여쓰기 규칙 부재 — 트리 위계 미표현"

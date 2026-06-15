@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0267 [SKIPPED:ui-tree-layout-no-logic-change]
+- Date: 2026-06-15
+- Cycle: TASK-0267 (권한 grid 트리 UI 재구성 — 2열 grid→단일 열 트리 + 자식 들여쓰기. frontend-only `src/static/{admin.js,styles.css}`)
+- Skip 사유: disclosure 가시성·게이트·도달성(그룹 유지/배지)·저장 경로·`has-granted` 빨강 CSS·RBAC enforce·권한 code·엔드포인트·스키마 **무변경**. 변경은 **렌더 순서(`_orderItemsAsTree` 트리 DFS)+레이아웃(grid→flex column 들여쓰기)** 뿐 — 권한 의미·저장에 영향 0. 적대적 RBAC 리뷰 불필요(가시성/저장 로직 byte-identical).
+- 주요 안전 포인트 자체 점검: ① **렌더 누락 0** — `_orderItemsAsTree` 누락 안전망 + jsdom 실측(account 7/7·conversation 23/23 전부 렌더). ② **저장 무영향** — 저장 closure 는 `querySelectorAll("input:checked")`/`select` 로 순서 무관. ③ **제품 카드 임베드 무영향** — product 그룹 두 정적 권한 모두 루트(depth 0, 카탈로그 순서 보존), 임베드 카드는 renderPermissionGrid 후 append 라 reorder 무관. ④ **숨김 동작 무변경** — `_applyPermissionDisclosure` 로직 동일(트리는 시각 순서·들여쓰기만).
+- 검증: perm test 15 PASS(신규 T1~T4 트리 정렬/depth/단일열 CSS 계약) + make test 회귀 0 + jsdom 14/14(순서·depth·누락0·숨김 시 부모 DOM 앞 유지). 빨강 badge 는 본 cycle 전 라이브 실측으로 정상 확인(checkbox/override 둘 다 rgb(180,35,31)) — 본 cycle 은 2열 뒤틀림 제거로 가시성 회복. 최종 PB-0008(배포 후) 로 단일 열·들여쓰기·운영 권한 빨강 가시성 시각검증.
+- Cross-ref: CHG-20260615-0267 / TASK-0267 / [[feedback_visual_verify_on_design_change]].
+
 ## REV-20260615-0265 [SKIPPED:pb0008-evidence-docs-only]
 - Date: 2026-06-15
 - Cycle: TASK-0265 (TASK-0264 PB-0008 Windows-browser 시각검증 evidence 기록 — docs-only: TEST.md §4 Run + TASK.md PB-0008 완료 표기. src 코드 0).
