@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.31.1
+template_version: v3.32.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -174,26 +174,32 @@ PR #12 가 본 repo (template base) 에 소비자 cleanup checklist 를 잘못 �
 
 | 식별자 | 용도 | 형식 |
 |--------|------|------|
-| `TASK-<id>[-<name>]` | Task Queue 항목 | timestamp 권장 / 순번 |
+| `TASK-<id>` | Task Queue 항목 | timestamp+branch 권장 / 순번 fallback |
 | `REQ-XXXX` | 요구사항 | 순번 |
 | `AC-XXXX` | 수용 기준 | 순번 |
-| `CHG-YYYYMMDD-XXXX` | 변경 | 날짜+순번 |
-| `REV-YYYYMMDD-XXXX` | 리뷰 | 날짜+순번 |
+| `CHG-<id>` | 변경 | timestamp+branch 권장 / 날짜+순번 fallback |
+| `REV-<id>` | 리뷰 | timestamp+branch 권장 / 날짜+순번 fallback |
 | `ADR-XXXX` | 결정 | 순번 |
 | `TEST-XXXX` | 테스트 | 순번 |
-| `LRN-YYYYMMDD-XXXX` | 학습 | 날짜+순번 |
+| `LRN-<id>` | 학습 | timestamp+branch 권장 / 날짜+순번 fallback |
 
 `feature-id` (기능 단위 폴더/worktree/branch) 는 §4 의 안정적 순번 형식 `feature-NNNN-<name>`
 (예: `feature-0001-auth`) 을 유지한다 — 기능은 수명이 길고 추적 참조가 많아 안정적 식별자가 적합.
 
-**`TASK-<id>` 형식 — timestamp 권장 (v3.31.0+, ADR-0023)**: `TASK.md` Task Queue 항목 ID 는
-여러 세션이 같은 순번(`TASK-0001`, `TASK-0002` …)을 병렬 할당하면 main 머지 시 충돌하므로
-(§13.1), 신규 항목은 **timestamp 형식 `TASK-<YYYYMMDDTHHMMSS>-<name>`** (예:
-`TASK-20260615T142058-login-form`) 을 권장한다. timestamp(초 해상도) 와 작업 이름(`<name>`)
-조합이 세션 간 분기를 만들어 순번 점유-경합을 제거한다. `<name>` 을 함께 쓰면 같은 초 생성
-시에도 이름으로 구분된다. TASK ID 는 `TASK.md` 안의 자유 텍스트 항목이라 스크립트 검증 대상이
-아니며(형식 강제 없음), 기존 순번 형식 (`TASK-0001`) 도 그대로 유효하다 (additive) — 순번 사용
-시 §13.1 의 감지-후-재번호 규약이 적용된다.
+**병렬 할당 식별자 — timestamp+branch 권장 (v3.32.0+, ADR-0025)**: 여러 세션이 같은
+순번을 병렬 할당하면 `origin/main` 머지 시 충돌하므로(§13.1), **대량 병렬 생성되는 식별자 —
+`TASK-`(Task Queue) · `CHG-`(변경 로그) · `REV-`(리뷰) · `LRN-`(학습)** 의 신규 항목은
+**timestamp+branch 형식 `<PREFIX>-<YYYYMMDDTHHMMSS>-<branch>`** (예:
+`TASK-20260615T185057-ai-claude-login`) 을 기본으로 한다. timestamp(초 해상도) 와 worktree
+branch 명 조합이 세션 간 자연 분기를 만들어 순번 점유-경합을 제거한다. `<branch>` 는 현 worktree
+branch 명을 쓰되 `[A-Za-z0-9._-]` 외 문자는 `-` 로 치환한다 (REV 자동생성기가 동일 규칙을 적용해
+check #9 와 정합). 같은 초·같은 branch 충돌 시 §13.1 점유-감지 규약이 backstop 이다. 기존 순번/날짜+순번 형식 (`TASK-0001`,
+`REV-20260615-0001`) 도 그대로 유효하다 (additive) — 순번 사용 시 §13.1 의 감지-후-재번호
+규약이 적용된다. `TASK-`/`CHG-`/`LRN-` 은 자유 텍스트 항목이라 스크립트 형식 강제가 없고,
+`REV-` 만 `bin/run-review-panel.sh`·`bin/review-md-append-from-subagent-output.sh` 가 자동
+생성한다 (v3.32.0+ timestamp+branch 산출, `bin/verify-completion.sh` check #9 는 두 형식 모두
+인식). **`feature-id`/`META-id` (수명 길고 추적 참조 많음) 와 순번 spec 앵커
+`REQ-`/`AC-`/`ADR-`/`TEST-` 는 안정적 순번 형식을 유지한다** (ADR-0024).
 
 문서 간에는 가능한 범위에서 `REQ → CHG → TEST → FILE` 추적이 가능해야 한다.
 
@@ -551,14 +557,19 @@ confirm** 대상이다. 그러나 프로젝트가 `FUNCTION.md` 의 `## Pre-appr
 - 문서 상단 메타데이터의 `edit_policy`를 따른다.
 - **프로젝트 수준 rewrite 문서**(ARCHITECTURE.md, CONVENTIONS.md 등)는 동시에 하나의 AI만 수정할 수 있다. 구조 변경이 필요하면 프로젝트 수준 `DECISIONS.md`에 제안을 기록하고 사람이 반영한다.
 - **append-only 문서 동시 추가 시** 각 항목에 타임스탬프와 작업자 ID(AI 세션 또는 기능 ID)를 포함하여 자동 병합이 가능하도록 한다.
-- **동시 세션 TASK 항목 충돌 — timestamp 형식으로 회피 (v3.31.0, ADR-0023)**: `TASK.md`
-  Task Queue 항목 ID 를 여러 세션이 순번(`TASK-0001`, `TASK-0002` …)으로 병렬 할당하면
-  `origin/main` 머지 시 같은 번호가 충돌한다 (관찰된 주요 마찰 지점). **신규 TASK 항목은
-  timestamp 형식 `TASK-<YYYYMMDDTHHMMSS>-<name>`** (예: `TASK-20260615T142058-login-form`)
-  으로 할당한다 (§6 참조) — timestamp + `<name>` 조합이 세션 간 분기를 만들어 점유 확인·재번호가
-  불필요하다. `date +%Y%m%dT%H%M%S` 로 생성하고 `<name>` 을 함께 쓰면 같은 초 생성 시에도
-  이름으로 구분된다. TASK ID 는 `TASK.md` 안의 자유 텍스트라 스크립트 검증 대상이 아니다 —
-  feature-id(`feature-NNNN`, §4)·REQ 등 순번 식별자는 아래 감지-후-재번호 규약을 그대로 따른다.
+- **동시 세션 병렬 할당 식별자 충돌 — timestamp+branch 형식으로 회피 (v3.32.0, ADR-0025)**:
+  대량 병렬 생성되는 식별자(`TASK-` Task Queue · `CHG-` 변경 로그 · `REV-` 리뷰 · `LRN-` 학습)
+  의 ID 를 여러 세션이 순번(`TASK-0001`, `TASK-0002` …)으로 병렬 할당하면 `origin/main` 머지 시
+  같은 번호가 충돌한다 (관찰된 주요 마찰 지점). **신규 항목은 timestamp+branch 형식
+  `<PREFIX>-<YYYYMMDDTHHMMSS>-<branch>`** (예: `TASK-20260615T185057-ai-claude-login`) 으로
+  할당한다 (§6 참조) — timestamp(초) + worktree branch 명 조합이 세션 간 자연 분기를 만들어 점유
+  확인·재번호가 불필요하다. `<branch>` 는 `[A-Za-z0-9._-]` 외 문자를 `-` 로 치환해 얻고 (REV
+  자동생성기가 동일 규칙 적용 — check #9 정합), 같은 초·같은 branch 충돌 시 아래 감지-후-재번호
+  규약이 backstop 이다.
+  `TASK-`/`CHG-`/`LRN-` 은 자유 텍스트라 스크립트 검증 대상이 아니고, `REV-` 는 review-panel
+  스크립트(`bin/run-review-panel.sh`·`bin/review-md-append-from-subagent-output.sh`)가 자동
+  생성한다 (v3.32.0+ timestamp+branch). feature-id(`feature-NNNN`, §4)·`REQ-`/`AC-`/`ADR-`/
+  `TEST-` 등 순번 spec 앵커는 아래 감지-후-재번호 규약을 그대로 따른다.
 - **동시 세션 TASK 식별자 충돌 — 감지 후 재번호 (v3.25.0)**: 순번 기반 식별자
   (`TASK-XXXX`, `REQ-XXXX` 등)를 여러 세션이 병렬 할당하면 번호가 충돌할 수 있다. 새
   식별자 할당 직전, 동일 번호가 이미 점유됐는지(다른 worktree/세션의 meta 문서 또는
@@ -1862,6 +1873,11 @@ Agent({
 의미적으로 분리된다.
 
 #### 신규 REV entry — Subagent index (1-line index format)
+
+> **REV id 형식 (v3.32.0+, ADR-0025)**: 아래 예시의 `REV-YYYYMMDD-NNN` 은 날짜+순번 표기이나,
+> §6 에 따라 review-panel 스크립트는 v3.32.0 부터 timestamp+branch
+> `REV-<YYYYMMDDTHHMMSS>-<branch>` 를 생성한다. `bin/verify-completion.sh` check #9 는 두 형식을
+> 모두 인식한다 (additive). 스키마의 나머지 필드는 형식과 무관하게 동일하다.
 
 ```
 ## REV-YYYYMMDD-NNN [SUBAGENT:<agent-name>] — <verdict>
