@@ -44,7 +44,7 @@ source_of_truth: true
   - 원인: `.admin-archive-row` 가 `.admin-list-row`(grid, `align-items:center`)와 함께 선언 → flex 컬럼 줄이 row 폭으로 stretch 안 됨 → span shrink 불가. jsdom 은 cascade/layout 미계산이라 미검출.
   - [x] `styles.css`: `.admin-archive-row` 에 `align-items: stretch` 추가(line→row 폭 stretch → span ellipsis 절단). 라이브 실험 사전확인: line 2858→308px, topic clipped:true, rowH 56 유지.
   - [x] 캐시버스터 `?v=20260615-task0277b-archive-row-ellipsis`. jsdom 계약 단언 추가(26 PASS). node --check + CSS brace(1210) + make test 회귀 0.
-  - [ ] (잔여) 머지 → web 재배포(deploy_scope: included) → PB-0008 재검증(clipped:true·2줄 고정·밀도 정합).
+  - [x] **완료**: PR #252 머지(main `d6123d3`) → web 재배포 → **PB-0008 재검증 PASS**(main `d6123d3`, `?v=...task0277b`): `rowAlignItems:stretch`·`paneNotePresent:false`·2줄 고정(rowH 56)·line0W 308·topic/owner/by `clipped:true`(ellipsis 발동). evidence `artifacts/pb0008-task0277/{01_archive_long_ellipsis,02_archive_clean_density}.png`. TEST.md §4 기록(CHG/REV-0284 docs-only). **TASK-0277 전체(문제1·2) 완료.**
 
 ## 0y. TASK-20260615T180923-product-icon-chip-list (직전 cycle, 머지됨 #249) — 제품 프로필 아이콘을 대화창 chip + 제품 관리 목록 행에도 표시
 - 요청(사용자, profile-icon-consistency 후속): 제품 프로필 아이콘(Identicon)을 (1) 대화창(채팅창) 제품 chip 과 (2) 제품 관리 탭 목록 행의 **뱃지 아이콘으로도** 표현. 직전 cycle 은 드롭업·관리 상세에만 적용했음.
