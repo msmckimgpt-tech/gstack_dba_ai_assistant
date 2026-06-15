@@ -306,10 +306,8 @@ CREATE TABLE IF NOT EXISTS agent_runtime.core_attachments (
     version_number              int           NOT NULL DEFAULT 1,
     created_by_role             varchar(16)   NOT NULL DEFAULT 'user',
     superseded_at               timestamptz,
-    CONSTRAINT fk_core_attachments_conv
-        FOREIGN KEY (conversation_id)
-        REFERENCES agent_runtime.core_conversations (conversation_id)
-        ON DELETE CASCADE,
+    -- conversation FK 의도적 미설정(alembic 0009): MySQL 원본은 conversation FK 가 없어 대화 삭제된
+    -- orphan 첨부가 정상 존재 → strict FK 면 faithful 이전 불가. conversation_id 컬럼+인덱스로 JOIN 유지.
     CONSTRAINT uq_core_attachments_version_chain
         UNIQUE (root_attachment_id, version_number)
 );
@@ -330,11 +328,8 @@ CREATE TABLE IF NOT EXISTS agent_runtime.core_attachment_sandbox_schemas (
     dropped_at      timestamptz,
     delete_pending  smallint      NOT NULL DEFAULT 0,
     CONSTRAINT uq_core_att_sandbox_conv   UNIQUE (conversation_id),
-    CONSTRAINT uq_core_att_sandbox_schema UNIQUE (schema_name),
-    CONSTRAINT fk_core_att_sandbox_conv
-        FOREIGN KEY (conversation_id)
-        REFERENCES agent_runtime.core_conversations (conversation_id)
-        ON DELETE CASCADE
+    CONSTRAINT uq_core_att_sandbox_schema UNIQUE (schema_name)
+    -- conversation FK 의도적 미설정(alembic 0009, core_attachments 와 동일 사유 — orphan 허용)
 );
 CREATE INDEX IF NOT EXISTS ix_core_att_sandbox_pending
     ON agent_runtime.core_attachment_sandbox_schemas (delete_pending, dropped_at);

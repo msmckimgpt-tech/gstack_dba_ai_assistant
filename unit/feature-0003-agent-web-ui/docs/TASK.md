@@ -3851,5 +3851,6 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] M5 신규 `test_attachment_pg_cutover.py` 14 PASS + make test 컨테이너 전체 회귀 0 + ruff + py_compile
 - [x] outside-voice 적대 리뷰 2인(데이터 이전 SHIP-WITH-FIXES→흡수 / 인가 표면 SHIP) — REV-20260615-0287. MAJOR-1(size-cap quota max 보수계산)·MINOR-1(derived 부모 선미러)·MINOR-2(docstring) 흡수
 - [ ] 라이브 rollout: migrate-first(alembic 0008 superuser) → web+ask-worker 재배포 → dual-write ON → backfill → `--verify` diff=0 게이트 → read flip → 라이브 라운드트립
+  - [x] (라이브 backfill 발견) conversation FK 가 orphan 첨부 126/272 이전 차단(05-27 cutover 로 대화 소실, MySQL 원래 no-FK) → alembic 0009 로 conversation FK 제거(conversation_id 컬럼+인덱스 JOIN 유지, 서브테이블 attachment FK 유지). 신규 test E3/E4 + make test 회귀 0. CHG/REV-20260615-0288
 - [ ] PB-0008 Windows-browser 시각검증(업로드·목록·버전 체인·삭제가 read=postgres 에서 동작) → merge
 - [ ] (decommission 후속 cycle) MySQL 쓰기 제거 + 멱등 ALTER 헬퍼 정리 + write-내부 read PG 전환 + id sequence/identity 부착

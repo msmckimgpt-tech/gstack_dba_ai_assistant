@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0288 [SKIPPED:migration-fk-orphan-hotfix]
+- Date: 2026-06-15 (TASK-0279 라이브 rollout 후속, **Critical §12.3** — 데이터 이전 무결성)
+- Cycle: alembic 0009 conversation FK 제거 — 라이브 backfill 이 orphan 126행을 FK 차단해 발견. 원 cutover 는 REV-20260615-0287 에서 outside-voice 2인 검토 완료(데이터 이전 SHIP-WITH-FIXES / 인가 SHIP).
+- Skip 사유: §18.8.1 경량 — DDL 제약 *제거*만(데이터·컬럼·인덱스·인가 표면 불변, RBAC 0). orphan(probe-6)은 원 리뷰가 "verify 가 잡는다"로 예측한 시나리오가 라이브에서 실현된 것 — 설계대로 per-row skip+verify 가 검출, 해소는 MySQL no-FK 현실과 정합(첨부 read 가드·타입 정합 무변경).
+- 자체 점검: ① 데이터 무손실(제약만 DROP). ② conversation_id 컬럼+인덱스 유지 → JOIN/조회 불변. ③ 서브테이블 attachment FK(id 보존 안정) 유지 — derived 1행 정상 적재 확인. ④ 신규 업로드 대화 존재는 앱이 보장(살아있는 대화에만 업로드). ⑤ 인가/타입/quota 경로 0 변경.
+- Verification: test E3/E4 추가 + make test 회귀 0. 라이브 0009 적용 후 re-backfill 272 전량 + verify diff=0(rollout 게이트).
+- Cross-ref: CHG-20260615-0288 / REV-20260615-0287(원 cutover) / TASK-0279.
+
 ## REV-20260615-0286 [SKIPPED:frontend-layout-bugfix-no-backend-no-rbac]
 - Date: 2026-06-15 (REV 번호: 동시세션 TASK-0277/0277b/0278 이 REV-0281~0285 선점 → §13.1 재번호 0281→0286)
 - Cycle: TASK-20260615T182907-product-list-row-icon-layout-fix (제품 관리 목록 행 UI 뒤틀림 핫픽스), **Minor §12.3** — frontend-only(`src/static/admin.js` 1곳). RBAC/인증/스키마/엔드포인트/데이터/시크릿/백엔드 0.
