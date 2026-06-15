@@ -245,6 +245,13 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0041: 고정 UI 라벨(button/label/option/h1-3 등; conv-list/messages 제외)에 한글 "상품" 잔존 0
 - TEST-0042: `_runtime_tables_available` probe 가 신규 컬럼(`product_mode`, `ProductPrefMode`, `ProductPrefPinnedId`) 부재 시 errno 1054 로 False 반환해 마이그레이션을 자동 트리거한다
 
+### TASK-0277 보관 대화 탭 UI 정합 다듬기 (REQ-20260615-0279, AC-0507~0508, Minor §12.3)
+- TEST-0059: [문제1] admin.html 에 `class="admin-pane-note"` 사용 0건 + styles.css 에 `.admin-pane-note {` 규칙 0건(제거 확인).
+- TEST-0060: [문제1] 보관 대화 pane header↔filter(`admin-archive-filter`) 사이 영역에 `<p>` 안내 문단 없음(다른 탭과 동일 밀도).
+- TEST-0061: [문제1] `#archiveDetail` 빈 상태(static HTML) + `renderArchiveDetail` 빈 분기(JS) 양쪽이 `admin-archive-detail-note` 안내("보관됩니다" 포함) carry.
+- TEST-0062: [문제2] `renderArchiveList` 로 긴/짧은 문자열 혼재 2 row 렌더 → 각 row 가 정확히 2개의 `.admin-archive-row-line`(1줄=topic+ts, 2줄=owner+by) — 문자열 길이 무관 고정.
+- TEST-0063: [문제2] CSS 계약 — `.admin-archive-row-line` 에 `flex-wrap` 부재 + `min-width:0`; topic/owner/by 각 span 에 `white-space:nowrap`+`text-overflow:ellipsis`+`overflow:hidden`+`min-width:0`(줄바꿈 대신 절단 보증).
+
 ### TASK-0276 관리 콘솔 "보관 대화" 탭 UI 정합화 (REQ-20260615-0276, AC-0503, Minor §12.3)
 - TEST-0053: 빈 목록 → `#archiveList` 에 `.admin-list-empty`("보관된 대화가 없습니다.").
 - TEST-0054: 항목 N개 → `.admin-list-row.admin-archive-row` N개(audits 동형 클래스) + `#archiveListCount` "N건" + row 에 topic·보관 시각·소유자·보관 수행자 표시.
@@ -268,6 +275,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0045: node --check app.js 통과 (구문 무결).
 
 ## 4. Test Run History
+- 2026-06-15 (TASK-0277 보관 대화 탭 UI 정합 다듬기 — 안내 밀도 정합 + row 2줄 고정·ellipsis):
+  - **Environment: CLI** (정적 + jsdom). node --check admin.js PASS + CSS brace 균형(1207=1207) + **jsdom 25 PASS**(`tests/verify_archive_tab_ui.mjs` — admin-pane-note 0건·styles.css 규칙 제거·header↔filter `<p>` 없음·빈 상태 안내 carry(static+JS)·긴/짧은 row 2줄 고정·1줄 topic+ts/2줄 owner+by·flex-wrap 제거·topic/owner/by nowrap+ellipsis+overflow+min-width:0) + make test 컨테이너 **전체 회귀 0**(백엔드 무변경, MAKE_EXIT=0, ruff clean). REV-20260615-0281 [SKIPPED:frontend-ui-consistency-no-backend].
+  - **Residual: Windows-browser** — 배포(deploy_scope: included) 후 PB-0008(보관 대화 탭 진입 → 짧은/긴 topic·긴 username 혼재 시 2줄 고정·미줄바꿈·ellipsis + 안내 우측 표면화) 기록 예정.
 - 2026-06-15 (TASK-20260615T172210-profile-icon-consistency 제품 프로필 아이콘 정합화 + 대화 드롭업 레이아웃·너비 + 명칭 표기 순서 — **PB-0008 Windows-browser 완료 게이트, 인증 후 시각검증 PASS**):
   - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 userspace relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면.
   - **Runner: AI** (launch → `/api/auth/login`(bootstrap_admin) → 대화 드롭업 eval 구조검증 + 관리 콘솔 `/admin` 제품 탭 eval + screenshot)

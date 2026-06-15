@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260615-product-icon-chip-list" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260615-task0277-archives-ui-align" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -485,7 +485,8 @@
             <button type="button" id="archiveRefreshBtn" class="btn-secondary">새로고침</button>
           </div>
         </header>
-        <p class="admin-pane-note">사용자가 "삭제"한 대화는 hard-delete 되지 않고 보관됩니다. 데이터·첨부는 보존되어 오용 방지 감사·맥락 참조에 사용됩니다. 소유 계정에서는 목록에 보이지 않으며 새 메시지 진행이 차단됩니다.</p>
+        <!-- TASK-0277: 안내 문단은 다른 탭(계정·역할·제품·감사 로그) 과의 시각 밀도 정합을 위해
+             header↔filter 사이에서 제거하고, 우측 상세 pane 의 빈 상태(아래 #archiveDetail)로 이동. -->
         <div class="admin-archive-filter" id="archiveFilterRow">
           <label>검색
             <input type="text" id="archiveSearch" placeholder="제목 · 대화 ID" autocomplete="off" />
@@ -502,7 +503,9 @@
             <div class="admin-list" id="archiveList" role="grid" aria-label="보관된 대화 목록"></div>
           </div>
           <div class="admin-detail-col" id="archiveDetail">
-            <div class="admin-detail-empty">보관된 대화를 선택하세요.</div>
+            <div class="admin-detail-empty">보관된 대화를 선택하세요.
+              <p class="admin-archive-detail-note">사용자가 "삭제"한 대화는 hard-delete 되지 않고 보관됩니다. 데이터·첨부는 보존되어 오용 방지 감사·맥락 참조에 사용됩니다. 소유 계정 목록에서는 숨겨지고 새 메시지 진행이 차단됩니다.</p>
+            </div>
           </div>
         </div>
       </section>
@@ -585,7 +588,7 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260615-product-icon-chip-list"></script>
+  <script src="/static/admin.js?v=20260615-task0277-archives-ui-align"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
 </body>
 </html>

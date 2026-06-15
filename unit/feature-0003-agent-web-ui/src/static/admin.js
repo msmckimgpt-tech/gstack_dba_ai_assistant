@@ -1845,7 +1845,10 @@ function renderArchiveDetail(id) {
   if (!el) return;
   const item = adminState.archives.items.find((it) => String(it.conversation_id) === String(id));
   if (!item) {
-    el.innerHTML = '<div class="admin-detail-empty">보관된 대화를 선택하세요.</div>';
+    // TASK-0277: header↔filter 사이 안내(admin-pane-note) 제거 대신, 빈 상태에 안내를 둬 정보 보존 + 밀도 정합.
+    el.innerHTML = '<div class="admin-detail-empty">보관된 대화를 선택하세요.'
+      + '<p class="admin-archive-detail-note">사용자가 "삭제"한 대화는 hard-delete 되지 않고 보관됩니다. 데이터·첨부는 보존되어 오용 방지 감사·맥락 참조에 사용됩니다. 소유 계정 목록에서는 숨겨지고 새 메시지 진행이 차단됩니다.</p>'
+      + '</div>';
     return;
   }
   el.innerHTML = `

@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260615-0281 [SKIPPED:frontend-ui-consistency-no-backend]
+- Date: 2026-06-15
+- Cycle: TASK-0277 (관리 콘솔 "보관 대화" 탭 UI 정합 다듬기 — TASK-0276 list-detail 위 후속), **Minor §12.3** — frontend-only(admin.html + admin.js + styles.css). RBAC/인증/스키마/엔드포인트 계약/데이터/시크릿/백엔드 0.
+- Skip 사유: 순수 표현 계층 다듬기. (1) 단일 사용처의 안내 문단(`admin-pane-note`)을 같은 pane 의 우측 빈 상태로 옮겨 다른 운영 탭과 밀도 정합(정보 소실 0). (2) 좌측 row 의 줄바꿈을 CSS(`flex-wrap` 제거 + span nowrap/ellipsis/min-width:0)로 절단 처리. 신규 데이터 노출·인가 경로·엔드포인트·인터랙션 모델 0 — `GET /api/admin/conversations/archived`(기존 권한 게이트·응답 계약) 그대로. §18.8.1 + Minor + 정책 doc 변경 0 → 적대 패널 skip 허용.
+- 자체 점검: ① 안내 이동 후 사용자/LLM 유래 문자열 노출 경로 무변경(빈 상태 안내는 정적 상수 문구만, 데이터 미주입). ② row 템플릿(`renderArchiveList`)·이스케이프(`_archiveEsc`)·클릭 핸들러·상세 렌더 로직 byte-identical — 변경은 CSS layout + 빈 분기 안내 carry 뿐. ③ `.admin-pane-note` 제거 전 전 static 파일 grep 으로 사용처 0 확인(admin.html 단일 → 제거 대상이 그 사용처). ④ ellipsis 동작 전제 `min-width:0` 을 topic/owner/by 전 span 에 부여(flex item 기본 min-width:auto 가 절단을 막는 함정 회피). ⑤ 시각(`-ts`)은 `flex:0 0 auto`+nowrap 으로 비절단·우측 정렬 보존. node --check admin.js PASS + CSS brace 균형 + jsdom 25 PASS + make test 회귀 0.
+- Residual: verify-completion --pre-commit + web 재배포(deploy_scope: included) 후 PB-0008 Windows-browser(보관 대화 탭 — 짧은/긴 topic·긴 username 혼재 시 2줄 고정·미줄바꿈·ellipsis + 안내 우측 표면화) → TEST.md §4 기록.
+- Cross-ref: CHG-20260615-0281 / TASK-0277 / FUNCTION REQ-20260615-0279(AC-0507~0508) / REV-20260615-0278(TASK-0276 list-detail 선행).
+
 ## REV-20260615-0280 [SKIPPED:frontend-ui-consistency-no-backend-no-rbac]
 - Date: 2026-06-15
 - Cycle: TASK-20260615T180923-product-icon-chip-list (제품 프로필 아이콘을 대화창 chip + 제품 관리 목록 행에 표시), **Minor §12.3** — frontend-only(`src/static/{index.html,app.js,admin.js,styles.css}`). RBAC/인증/스키마/엔드포인트/데이터/시크릿/백엔드 0.

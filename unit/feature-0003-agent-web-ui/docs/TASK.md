@@ -8,7 +8,23 @@ source_of_truth: true
 
 # Task
 
-## 0z. TASK-20260615T180923-product-icon-chip-list (current cycle, timestamp ID — §13.1 순번충돌 회피) — 제품 프로필 아이콘을 대화창 chip + 제품 관리 목록 행에도 표시
+## 0. TASK-0277 (current cycle) — 관리 콘솔 "보관 대화" 탭 UI 정합 다듬기 (TASK-0276 list-detail 위 후속)
+- 요청: 보관 대화 탭 UI 정합 2건(frontend-only — 백엔드/RBAC/엔드포인트 무변경).
+  - [문제1] header↔filter 사이 `<p class="admin-pane-note">` 안내가 다른 탭(계정·역할·제품·감사 로그)에 없는 큰 여백을 만들어 밀도 불일치 → 다른 탭과 동일 밀도로 처리.
+  - [문제2] `#archiveList` 의 각 `.admin-archive-row` 가 topic·소유자·보관자 문자열 길이에 따라 줄바꿈되어 구성이 뒤틀림 → 2줄 고정 + ellipsis 절단(감사 로그 row 견고함 기준).
+- 등급: **Minor §12.3** (frontend-only — RBAC/스키마/엔드포인트/백엔드/데이터 0).
+- 진단: [문제1] `admin-pane-note` 는 admin.html 전체에서 보관 대화 pane 에만 단 1회 존재(다른 탭은 header→filter 직결) — 밀도 불일치의 유일 원인. 우측 상세 pane 은 이미 `admin-archive-detail-note`(선택 시) 로 동일 설명을 보유. [문제2] `.admin-archive-row-line { flex-wrap: wrap }` + owner/by span 에 nowrap/ellipsis/`min-width:0` 부재가 근본 원인(topic 은 ellipsis 있으나 `min-width:0` 없음).
+- 구현(frontend-only):
+  - [x] `admin.html`: [문제1] pane-note `<p>` 제거 + `#archiveDetail` 빈 상태(`admin-detail-empty`)에 `admin-archive-detail-note` 안내 carry. 캐시버스터 admin.js·styles.css `?v=20260615-task0277-archives-ui-align`.
+  - [x] `admin.js`: [문제1] `renderArchiveDetail` 빈 분기도 동일 안내 carry(static 정합).
+  - [x] `styles.css`: [문제2] `.admin-archive-row-line` flex-wrap 제거 + align-items:baseline/min-width:0; topic min-width:0; owner/by nowrap+ellipsis+overflow:hidden+min-width:0+flex:0 1 auto; ts flex:0 0 auto+nowrap. [문제1] 사용처 0건 `.admin-pane-note` 규칙 제거.
+- 검증:
+  - [x] node --check admin.js + CSS brace 균형 + jsdom 25 PASS(`tests/verify_archive_tab_ui.mjs` — 안내 이동·밀도·row 2줄 고정·CSS anti-wrap 계약) + make test 컨테이너 **전체 회귀 0**(백엔드 무변경).
+- 비변경: 백엔드·`/api/admin/conversations/archived` 응답 계약·RBAC·탭 가시성·row 템플릿 로직·escape 0.
+- 배포: web 재빌드(정적자산). migrate 불필.
+- [ ] (잔여) 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser(짧은/긴 topic·긴 username 혼재 시 2줄 고정·미줄바꿈·ellipsis + 안내 우측 표면화).
+
+## 0y. TASK-20260615T180923-product-icon-chip-list (직전 cycle, 머지됨 #249) — 제품 프로필 아이콘을 대화창 chip + 제품 관리 목록 행에도 표시
 - 요청(사용자, profile-icon-consistency 후속): 제품 프로필 아이콘(Identicon)을 (1) 대화창(채팅창) 제품 chip 과 (2) 제품 관리 탭 목록 행의 **뱃지 아이콘으로도** 표현. 직전 cycle 은 드롭업·관리 상세에만 적용했음.
 - 등급: **Minor §12.3** (frontend-only 비파괴 UI 추가 — 직전 cycle 의 `applyAvatar`/`identiconSvg` 헬퍼·CSS 재사용. RBAC/스키마/엔드포인트/백엔드 0).
 - 구현(frontend-only, 4 src):
@@ -18,9 +34,9 @@ source_of_truth: true
   - [x] `styles.css`: `.composer-product-chip-icon`(16px 원형 클립 + `.hidden` + img/svg 규칙) 신설, chip `max-width` 180→200(아이콘 추가분). 행 아이콘은 직전 cycle `.admin-avatar .avatar-img,.admin-avatar > svg` 원형 클립 규칙 재사용.
   - [x] 캐시버스터 통일 `?v=20260615-product-icon-chip-list`(index/admin html 의 app.js·admin.js·styles.css).
 - [x] 검증: node --check app.js·admin.js PASS + CSS brace 균형(1211=1211) + **jsdom 격리 14/14 PASS**(`tests/verify_product_icon_chip_list.mjs` — chip pinned Identicon/img·auto hidden·행 아이콘·동일 product_key 동일 Identicon 정합).
-- [ ] (잔여) make test 회귀 0 → verify-completion → PR 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증(chip 아이콘·목록 행 아이콘).
+- [x] main 병합(#249, aea4d15). 잔여: web 재배포(deploy_scope: included) + PB-0008 Windows-browser(chip 아이콘·목록 행 아이콘).
 
-## 0. TASK-0276 (직전 cycle, 머지됨 #247) — 관리 콘솔 "보관 대화" 탭 UI 정합화 (audits/계정/역할/제품 동형 list-detail)
+## 0a. TASK-0276 (직전 cycle, 머지됨 #247) — 관리 콘솔 "보관 대화" 탭 UI 정합화 (audits/계정/역할/제품 동형 list-detail)
 - 요청: `관리 콘솔 > 보관 대화` 를 다른 탭(계정·역할·제품·감사 로그)과 정합하게 구성.
 - 등급: **Minor §12.3** (frontend-only — RBAC/스키마/엔드포인트/백엔드/데이터 0. 기존 `GET /api/admin/conversations/archived` 응답 그대로 사용).
 - 진단: 기존 보관 대화 pane 은 단일 `<div id="archivesContent">` 에 `admin-usage-table` 로 렌더 → 다른 탭의 검증된 **list-detail 2단 구조**(좌측 `admin-list` row 목록 + count/scope head, 우측 `admin-detail-col` 선택 상세)와 구조·시각 이질. 감사 로그(`admin-audit-row`/`admin-audit-detail`/`admin-audit-filter`) 패턴이 가장 근접한 read-only 목록 탭이라 verbatim 동형 이식.
