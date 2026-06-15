@@ -332,7 +332,7 @@ def test_e2_schema_invariants():
 # ── E3/E4: 0009 conversation FK 제거(라이브 backfill orphan 대응) ─────────────
 _MIG09_TEXT = (
     _REPO / "unit" / "feature-0002-agent-core" / "alembic" / "versions"
-    / "20260615_0009_core_attachments_drop_conv_fk.py"
+    / "20260615_0009_drop_attach_conv_fk.py"
 ).read_text(encoding="utf-8")
 _BOOT_TEXT = (
     _REPO / "unit" / "feature-0002-agent-core" / "src" / "scripts" / "agent_runtime_schema.sql"
@@ -341,7 +341,7 @@ _BOOT_TEXT = (
 
 def test_e3_drop_conv_fk_migration():
     # 0009 가 core_attachments / sandbox_schemas 의 conversation FK 를 제거(orphan 첨부 이전 허용)
-    assert 'revision: str = "0009_core_attachments_drop_conv_fk"' in _MIG09_TEXT
+    assert 'revision: str = "0009_drop_attach_conv_fk"' in _MIG09_TEXT
     assert 'down_revision: Union[str, None] = "0008_core_attachments"' in _MIG09_TEXT
     up = _MIG09_TEXT.split('UPGRADE_SQL = r"""', 1)[1].split('"""', 1)[0]
     assert "DROP CONSTRAINT IF EXISTS fk_core_attachments_conv" in up
