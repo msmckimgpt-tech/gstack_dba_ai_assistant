@@ -8,7 +8,20 @@ source_of_truth: true
 
 # Task
 
-## 0. TASK-0255 (cross-feature, current cycle) — insight datasource health 관리콘솔 표면화
+## 0. TASK-0260 (current cycle) — 결과셋 ◀▶ 전환 시 확장 높이 보존(스크롤 점프 제거)
+- 목표: assistant 답변 안에서 결과셋을 ◀▶ 버튼으로 전환할 때, 결과셋마다 높이가 달라 panels 컨테이너가 줄었다 늘었다 하며 아래 콘텐츠/스크롤이 jump 한다. 지금까지 본 **최대 패널 높이를 floor 로 보존**해 점프 제거.
+- 등급: **Minor §12.3** (frontend-only, 비파괴 — 표시 UX 전용).
+- 근본 원인: `.sql-nav-panels` 가 min-height 없이 display 토글만 함 → 활성 패널 높이로 컨테이너가 매번 재조정. `.result-table-wrap` 의 `max-height: min(60vh,460px)` 때문에 결과셋별 높이 편차가 큼.
+- 수정 (frontend-only, 4파일):
+  - [x] `app.js` `buildSqlNavigator`: `maxPanelHeight` 추적 + `preserveHeight()`(panels.scrollHeight floor) — `update()` 전환 전·후 2회 측정(나가는/들어오는 패널 모두 반영, 축소만 방지·확장 허용).
+  - [x] `share.js` `buildSqlNavigator`: 동일 로직 parity(공유 뷰도 동일 navigator).
+  - [x] 캐시버스터 bump: index.html(app.js)·share.html(share.js) → `?v=20260615-task0260-sqlnav-height`.
+  - [x] `node --check` app.js/share.js PASS.
+  - [x] Playwright headless chromium 격리 검증: 큰(1000px)→작은(2행) 전환 시 panels.h 불변(minHeight floor)·아래콘텐츠 점프 **0px**. 수정 전 대조 = **960px 점프** 재현.
+- 비변경: CSS(styles.css/share.css) 0 — min-height 는 JS inline 으로 동적 설정. 백엔드/스키마/RBAC/엔드포인트 0.
+- [ ] (잔여) 배포(web 만 — frontend) + PB-0008 Windows-browser 시각검증(다중 결과셋 대화에서 ◀▶ 전환 시 스크롤 점프 없음, CHECK#13 WARN-only).
+
+## 0b. TASK-0255 (cross-feature, current cycle) — insight datasource health 관리콘솔 표면화
 - [x] web `admin_list_datasources` 에 `insight_health` 첨부(`_read_insight_datasource_health`, RO·graceful·console.access) + admin.js `datasourceInsightHealth`/배지 enrich/`_dsInsightHealthLabel`/상세 "인사이트 스캔 상태" 행 — **연결 불안정 vs 권한 실패 구분**. 주 변경=agent-core R2(REV-20260615-0255). 자격증명 비노출.
 - [x] 배포 후 PB-0008 Windows-browser 시각검증("인사이트 스캔 상태" 행, CHECK#13) — **PASS**(불안정=⚠연결 불안정 / 정상=분석됨 구분 실증, main `a410986`). TEST.md §4 2026-06-15 Run.
 
