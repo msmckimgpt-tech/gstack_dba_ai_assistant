@@ -3737,3 +3737,18 @@ source_of_truth: true
 - 변경: 0008 의 conversation FK(core_attachments·sandbox_schemas → core_conversations)를 제거 → faithful 이전(272 전량) + `--verify` diff=0 게이트 통과 가능. conversation_id 컬럼·`ix_core_attachments_conv` 인덱스 유지(JOIN 불변). 서브테이블 attachment_id FK(derived/provider, id 보존으로 안정)는 유지. downgrade 는 NOT VALID 재추가(orphan 허용).
 - Verification: test E3(0009 DROP) + E4(bootstrap no conv FK, 서브 FK 유지) 추가 + make test 회귀 0. 라이브: 0009 적용 후 re-backfill 272 전량 + verify diff=0(예정).
 - Deploy: migrate-first(alembic 0009 superuser) → re-backfill → verify → read flip.
+## CHG-20260615-0277
+- Date: 2026-06-15 (TASK-0277, **Critical §12.3** — 데이터소스 라벨/키 분리: 제품 바인딩을 stable surrogate Id 로 이전. 사용자 보고: 라벨 rename 시 연결 제품 미갱신)
+- Scope: app.py(스키마 마이그레이션 + rename cascade + 바인딩 write dual-write + 런타임 probe). 추가형 스키마(컬럼 ADD, PK 무변경, 데이터 무손실).
+- 변경:
+  - (근본원인) rename(`admin_update_datasource` key_changed) cascade 가 `WebProducts.DatasourceKey` 만 갱신 → `WebProductDatasources`(1:N join)·`WebProductDatabases`(접근DB 차원) 누락 → 라벨 rename 시 제품 바인딩·접근DB 고아(미바인딩=접근 0). 삭제 경로는 3 테이블 정리(대조 증거).
+  - (스키마) `_ensure_web_product_datasources_schema` step 6 — 3 테이블에 `DatasourceId BIGINT NULL` 멱등 ADD + 현재 라벨로 backfill(JOIN WebDatasources) + 단일컬럼 인덱스. 기존 PK(DatasourceKey 포함) 유지.
+  - (probe) `_runtime_tables_available` 양 branch 에 3 테이블 `DatasourceId` 컬럼 검증 추가 — 미등록 시 기존 배포가 fast-path 로 마이그레이션 영구 skip(TASK-0047 함정) 방지(1054→full 마이그레이션).
+  - (rename) Id 구동 완전 cascade(3 테이블, `WHERE DatasourceId=%s OR LOWER(DatasourceKey)=%s`; 컬럼 부재 시 key-only) + new_k 고아 사전제거(PK 충돌 방지) + 명시 트랜잭션(autocommit off + rollback, 부분적용 방지).
+  - (바인딩 write) `admin_add/remove/set_product_datasource`·`admin_update_product_databases` dual-write `DatasourceId`(key→Id resolve, guarded). DELETE-force 경로 dangling Id 해제 + 승격 primary Id 동기화.
+  - (seed) `_seed_main_mysql_datasource` legacy main_mysql→해시 rename cascade 를 3 테이블로 보강.
+  - read 무변경(cascade 가 denormalized 키 신선도 보장). 컬럼 drop·read Id-JOIN 전면화·PK 이전은 차기 cycle 이월.
+- 검증: 신규 test_datasource_rename_binding_stable.py 4(R1~R4) + 기존 test_datasource_edit_label_stable 3 PASS + make test 컨테이너 전체 회귀 0 + ruff clean + py_compile + 외부음성 2-pass(RBAC 적대적) NOT-SHIP→SHIP-WITH-FIXES(BLOCKER 4건 흡수).
+- Files: src/app.py, tests/test_datasource_rename_binding_stable.py, docs/{TASK,MODIFY,REVIEW}.md
+- Rollback: 코드 롤백만으로 회귀(추가 컬럼·인덱스는 무해 잔존, backfill 멱등). cascade/probe/dual-write 제거 시 기존 동작.
+- Deploy: web 재빌드(스키마 마이그레이션은 web 부팅 `_ensure_web_tables`→probe False→실행). ask-worker/insight-worker 코드 무변경(필요 시 무해).

@@ -2818,3 +2818,13 @@ source_of_truth: true
 - Verification: node --check admin.js PASS + 런타임 contract assert + diff 적대 리뷰. 백엔드 무변경(엔드포인트 재사용)이라 Python 테스트 영향 0.
 - Residual: web 재빌드 + PB-0008 Windows-browser(체크박스·전체선택·shift-range·일괄 삭제·insight 토글 실측).
 - Cross-ref: CHG-20260615-0286 / REQ-20260615-0281 / TASK-20260615T183409-ds-list-multiselect.
+## REV-20260615-0277 [SUBAGENT:rbac-adversarial]
+- Change: 데이터소스 라벨/키 분리 — 제품↔데이터소스 바인딩의 canonical 식별자를 renameable 라벨(`DatasourceKey`)에서 stable surrogate `WebDatasources.Id` 로 이전. 라벨 rename 시 바인딩이 고아되던 근본결함 수정(사용자 보고). (TASK-0277, **Critical** §12.3, PLAN-APPROVED.)
+- 근본원인: rename(`admin_update_datasource` key_changed) cascade 가 `WebProducts.DatasourceKey` 만 갱신, 멀티 datasource(TASK-0228/0230) join 바인딩 본체(`WebProductDatasources`)·접근DB 차원(`WebProductDatabases`) 누락 → 미바인딩=접근 0(데이터 접근 상실). 대조: 삭제 경로는 3 테이블 모두 정리.
+- 대안 평가: A(키 유지+cascade 완성) / B1(DisplayLabel+키 불변) / **B2(Id surrogate 재배선, 사용자 선택)**. B2 채택.
+- 구현: ① 3 테이블 `DatasourceId BIGINT NULL` 멱등 추가 + 현재 키 backfill + 단일컬럼 인덱스(`_ensure_web_product_datasources_schema`). ② rename → Id 구동 완전 cascade(3 테이블) + new_k 고아 사전제거(PK 충돌 방지) + 명시 트랜잭션(rollback). ③ 바인딩 write(add/remove/set-primary/databases) dual-write Id+Key. ④ `_runtime_tables_available` probe 에 DatasourceId 등록(기존 배포 마이그레이션 트리거, TASK-0047). ⑤ seed main_mysql→해시 rename cascade 보강. read 는 cascade 가 키 신선도 보장(무변경), 컬럼 drop·read Id-JOIN 전면화는 이월.
+- 외부음성 2-pass(RBAC 적대적): 1차 **NOT-SHIP**(BLOCKER1 probe 미등록+cascade 하드의존[TASK-0047 함정] / BLOCKER2 autocommit 비원자 / BLOCKER3 PK 충돌 / MINOR DELETE-force Id·테스트). 전부 흡수 수정 → 2차 **SHIP-WITH-FIXES**(4 BLOCKER 해소 확인, 신규 BLOCKER 0).
+  - Accepted-risk(비차단): MAJOR-1(cascade OR-clause 이론적 PK 충돌) — dual-write/backfill 이 (key,DatasourceId) 일관성 유지 + DatasourceKey UNIQUE 라 같은 (제품,스키마)에 같은 Id distinct 행 2개 생성 불가 → 실질 도달 불가, 게다가 이제 fail-loud(rollback). MINOR-1(ensure_dek 내부 commit) — 첫 datasource write 전 호출이라 DEK 영속만, rename 원자성 무영향. MINOR-2(seed 충돌 swallow) — 기존 패턴·seed-time·동일 일관성 논거로 도달 난망.
+- Verification: 신규 test_datasource_rename_binding_stable.py 4(R1 3테이블 cascade+pre-clean·R2 Id구동·R3 비-rename 무cascade·R4 컬럼부재 key-only 완전동작) + 기존 test_datasource_edit_label_stable 3 PASS + make test 컨테이너 회귀 0 + ruff clean.
+- Residual: 머지 → web 재배포(스키마 마이그레이션은 web 부팅 _ensure_web_tables 에서; ask-worker/insight-worker 코드 무변경) → 라이브 검증(라벨 rename→제품 바인딩·접근DB 유지).
+- Cross-ref: CHG-20260615-0277 / TASK-0277.

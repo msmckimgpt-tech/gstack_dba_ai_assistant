@@ -857,3 +857,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
     - **적대적 subagent 코드리뷰(general-purpose outside voice)**: 10개 검증항목(partial-fail 분할·재동기화·prune·contract·select-all/indeterminate·shift-range string-key·button→div 회귀·체크박스 stopPropagation·XSS·hoisting·env 제외) 전부 confirmed-correct → **SHIP(BLOCKER 0/MAJOR 0)**. REV-20260615-0286.
   - **Pass/Fail: PASS(정적)** — 구조/계약/로직 검증 완료.
   - **Notes:** **잔여 — PB-0008 Windows-browser**: 배포 후 데이터소스 탭에서 행 체크박스·전체선택(indeterminate)·shift-click 범위·일괄 인사이트 토글·일괄 삭제(env 제외·409 제외 리포트) + leading 도트(통합) 실측 필요. CHECK#13 은 그때 충족.
+- **TASK-0277 (데이터소스 라벨/키 분리, Critical §12.3) — 백엔드 전용 회귀 검증.**
+  - **Environment: 컨테이너 make test (agent 이미지, --no-deps) + unit(monkeypatch, DB 무)**. UI 표면(HTML/CSS/JS) 변경 **없음** — `app.py` 백엔드 로직(스키마 마이그레이션·rename cascade·바인딩 write·런타임 probe)만 변경.
+  - **결과**: 신규 `test_datasource_rename_binding_stable.py` R1~R4 PASS(R1 3 테이블 cascade+고아 사전제거·R2 Id 구동 WHERE·R3 비-rename 무 cascade·R4 DatasourceId 컬럼 부재 시 key-only 완전 cascade) + 기존 `test_datasource_edit_label_stable.py` S1~S3 PASS + `make test` 컨테이너 **전체 회귀 0** + ruff clean + py_compile OK.
+  - **외부음성 2-pass(RBAC 적대적)**: 1차 NOT-SHIP(BLOCKER1 probe 미등록+cascade 하드의존 / BLOCKER2 autocommit 비원자 / BLOCKER3 PK 충돌 + MINOR) → 흡수 → 2차 SHIP-WITH-FIXES.
+  - **PB-0008 (Windows-browser): N/A — 사유 명시.** 본 변경은 사용자가 보는 UI surface(렌더·레이아웃·상호작용·라벨 표시 문자열·DOM·CSS)를 변경하지 않는다. 효과는 "라벨 rename 후 제품 바인딩·접근DB 유지"라는 **데이터/동작 정합**이며, 시각이 아닌 라이브 기능 라운드트립(rename→GET 재조회로 제품 바인딩 키 갱신·접근 유지)으로 검증한다(배포 후 잔여). CHECK#13 WARN(비차단)은 본 사유로 갈음.
+  - **Pass/Fail: PASS** (단위·컨테이너 회귀 + 외부음성 2-pass). 라이브 기능 검증은 배포 후 수행(잔여).
