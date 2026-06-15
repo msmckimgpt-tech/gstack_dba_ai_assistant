@@ -3691,3 +3691,20 @@ source_of_truth: true
 - Files: src/app.py, unit/feature-0002-agent-core/{alembic/versions/20260615_0007_core_conv_archived.py, src/scripts/agent_runtime_schema.sql}, src/static/{app.js,admin.js,admin.html,styles.css,index.html}, tests/test_conversation_archive.py, tests/test_product_delete_block_conv.py, docs/{TASK,MODIFY,REPORT,REVIEW,FUNCTION}.md, docs/STATUS.md(repo)
 - Rollback: `_delete_conversation_impl` 를 delete_conversation_records 환원(=hard-delete 복귀), archive 헬퍼/admin 엔드포인트/권한/탭/목록필터/block_info archived 분기 제거 + 캐시버스터 환원. archived 컬럼·권한 잔존(무해) / alembic 0007 downgrade 로 DROP.
 - Deploy: **migrate-first 필수** — web=DML-only role. PR 머지 후 make migrate(alembic 0007) 선행 → web 재빌드. ask/insight-worker 무변경.
+
+## CHG-20260615-0286
+- Date: 2026-06-15 (TASK-20260615T183409-ds-list-multiselect, **Major §12.3** — 관리 콘솔 데이터소스 목록 다중 선택 구조; 동시세션 PR#251[ds-list-conn-badge] 이 TASK-0278·REQ-0280·AC-0509·CHG/REV-0282 선점 → §13.1 rebase 후 재번호 REQ-0281·AC-0512~0514·CHG/REV-0286. TASK id 는 timestamp 형식이라 무충돌)
+- Scope: frontend 정적자산 3파일(admin.js + admin.html + styles.css). 백엔드/RBAC/스키마/엔드포인트/데이터 0.
+- 변경:
+  - (admin.js adminState) `datasourceSelected: new Set()`(문자열 key)·`datasourceLastClickIdx: -1` 추가 — 제품 `productSelected`/`productLastClickIdx` 동형. 단일 상세 선택 `_dsSelectedKey` 와 동거.
+  - (admin.js bulk 어휘) `BULK_ENTITY_UNIT.datasources="개"` + `BULK_ACTION_LABEL.insight_on/insight_off` 추가.
+  - (admin.js `_dsRenderList` 재작성) 행을 `<button.admin-list-row--nav role=option>`(단일선택 listbox)에서 `<div.admin-list-row role=row>` + `.admin-list-row-cb` 체크박스로 전환(제품 행 동형). 체크박스 click(`stopPropagation`+shift-range)·change(Set 토글) 배선, 행 click=상세. 행 children=`체크박스 + 네트워크 도트(PR#251 _paintDsConnDot, leading 통합) + main`. 신규 `_dsFiltered`(select-all/bulk/shift-range 공용 필터)·stale key prune(reload·삭제 후 선택 정리)·말미에서 update/bulk/cross-page 렌더 호출.
+  - (admin.js 신규 함수) `updateDatasourceSelectAllCheckbox`·`renderDatasourceBulkBar`(console.manage 게이트, [인사이트 켜기·끄기·삭제danger]+[선택해제])·`renderDatasourceCrossPageBanner`(공용 `renderCrossPageBanner` entity="datasources")·`_dsBulkTargetable`(editable=비-env)·`_runDatasourceBulkAsync`(async partial-fail: applied/excluded/failed → 토스트 + loadAdminData·재렌더)·`bulkDatasourceSetInsight`(PATCH insight_enabled)·`bulkDatasourceDelete`(DELETE, 409=제외).
+  - (admin.js initialize) `#datasourceSelectAll` change 리스너(현재 필터 add/delete)·Esc 핸들러 datasources 분기·`assertBulkBarContract` 루프에 "datasources" 추가.
+  - (admin.html datasources pane) `.admin-list-head` 의 section-label 를 `#datasourceSelectAll` 전체선택 label 로 교체 + `#datasourcesCrossPageBanner`(role=status) + 목록 `role=grid aria-multiselectable` + `#datasourcesBulkBar`(role=toolbar aria-live, `.admin-list-col` 직속) 추가. 캐시버스터 styles.css/admin.js `?v=20260615-ds-multiselect`.
+  - (styles.css) `#datasourceList .admin-list-row { grid-template-columns: auto auto 1fr }`(체크박스·도트·main) 추가 — PR#251 의 `#datasourceList .admin-list-row.admin-list-row--nav { auto 1fr }` override 는 `--nav` 제거로 미매칭되므로 그 자리를 대체(`--nav` 제거 + 체크박스 컬럼 추가). `.ds-conn-dot`(PR#251)·`.admin-list-row-cb`·`.admin-bulk-*`·`.admin-list-select-all` 은 재사용.
+- 근본원인: 데이터소스 pane 만 계정·역할·제품의 표준 bulk 계약(체크박스+전체선택+툴바)에서 누락 — 단일선택 nav 로 잔존. CSS 는 grid override 1줄만 신규(체크박스 컬럼 추가), 나머지(`.admin-list-row-cb`·`.admin-bulk-actions`·`.admin-list-select-all`·`.admin-bulk-cross-page`·`.ds-conn-dot`)는 재사용. 제품(pending-commit) vs 데이터소스(즉시 CRUD) 모델 차이는 async runner 로 흡수.
+- 검증: node --check admin.js PASS + 런타임 `assertBulkBarContract("datasources")` + 적대적 subagent 코드리뷰 SHIP(BLOCKER 0/MAJOR 0; 10개 검증항목 전부 confirmed-correct, MINOR·NIT 는 제품 패턴 기인 비회귀). PB-0008 Windows-browser 는 배포 후(잔여).
+- Files: src/static/admin.js, src/static/admin.html, src/static/styles.css, docs/{FUNCTION,MODIFY,REVIEW,TASK,TEST}.md
+- Rollback: `_dsRenderList` 를 `<button role=option>` 단일선택 + section-label HTML 로 환원, 신규 함수/상태/리스너/contract 항목 + styles.css grid override 제거(PR#251 --nav override 복원), 캐시버스터 환원. (전면 frontend-only 라 backend 무영향.)
+- Deploy: web 재빌드(정적자산 baked). app.py/ask-worker/insight-worker 무변경 → web 단일 서비스 재배포.

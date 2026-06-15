@@ -32,10 +32,13 @@ const adminState = {
   selectedProductId: null,
   // DESIGN.md §4 / §12 Phase A — Products multi-select (단일 selectedProductId 와 동거)
   productSelected: new Set(),
+  // TASK-0278 — Datasources multi-select (단일 _dsSelectedKey 와 동거). key 는 문자열.
+  datasourceSelected: new Set(),
   // DESIGN.md §9 — shift-click range 의 anchor index (visible 범위 내)
   accountLastClickIdx: -1,
   roleLastClickIdx: -1,
   productLastClickIdx: -1,
+  datasourceLastClickIdx: -1,
   productDbDraft: new Map(),
   // TASK-0223: 제품별 insight-worker 분석 완료율 (productId -> {pct, analyzed_objects, total_objects, per_db[], measurable, reason, engine}).
   productCoverage: new Map(),
@@ -182,8 +185,8 @@ const PERMISSION_DEPENDENCIES = {
 /* ── Bulk action contract — CONVENTIONS.md §10 + DESIGN.md §4~§9 ───── */
 
 // DESIGN.md §5 / §10.4 — 카테고리별 단위 어휘
-const BULK_ENTITY_UNIT = { accounts: "명", roles: "개", products: "개" };
-const BULK_ACTION_LABEL = { activate: "활성화", deactivate: "비활성화", delete: "삭제" };
+const BULK_ENTITY_UNIT = { accounts: "명", roles: "개", products: "개", datasources: "개" };
+const BULK_ACTION_LABEL = { activate: "활성화", deactivate: "비활성화", delete: "삭제", insight_on: "인사이트 탐색 켜기", insight_off: "인사이트 탐색 끄기" };
 // DESIGN.md §7 — 위험 액션 typed-confirm 임계치
 const CONFIRM_TYPED_THRESHOLD = 10;
 
@@ -1927,16 +1930,27 @@ function renderDatasourcesPane() {
   else { adminState._dsSelectedKey = null; _dsRenderDetailEmpty(); }
 }
 
+// TASK-0278 — 검색 필터를 적용한 visible datasource 목록(select-all / bulk / shift-range 공용).
+function _dsFiltered() {
+  const dsList = adminState.datasources || [];
+  const q = (adminState._dsSearch || "").trim().toLowerCase();
+  return q
+    ? dsList.filter((ds) => (ds.key || "").toLowerCase().includes(q) || (ds.host || "").toLowerCase().includes(q))
+    : dsList.slice();
+}
+
 function _dsRenderList() {
   const listEl = $("datasourceList");
   const countEl = $("datasourceListCount");
   if (!listEl) return;
   const dsList = adminState.datasources || [];
   const q = (adminState._dsSearch || "").trim().toLowerCase();
-  const filtered = q
-    ? dsList.filter((ds) => (ds.key || "").toLowerCase().includes(q) || (ds.host || "").toLowerCase().includes(q))
-    : dsList.slice();
+  const filtered = _dsFiltered();
   if (countEl) countEl.textContent = q ? `${filtered.length}/${dsList.length}` : `${dsList.length}`;
+
+  // 데이터 reload / 삭제로 사라진 key 는 선택에서 prune (renderProductList 의 stale 제거와 동형).
+  const liveKeys = new Set(dsList.map((d) => d.key));
+  Array.from(adminState.datasourceSelected).forEach((k) => { if (!liveKeys.has(k)) adminState.datasourceSelected.delete(k); });
 
   listEl.innerHTML = "";
   if (!filtered.length) {
@@ -1944,17 +1958,47 @@ function _dsRenderList() {
     empty.className = "admin-detail-empty";
     empty.textContent = dsList.length ? "검색 결과 없음" : "등록된 데이터소스가 없습니다.";
     listEl.appendChild(empty);
+    updateDatasourceSelectAllCheckbox();
+    renderDatasourceBulkBar();
+    renderDatasourceCrossPageBanner();
     return;
   }
-  filtered.forEach((ds) => {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "admin-list-row admin-list-row--nav";
-    row.setAttribute("role", "option");
+  // DESIGN.md §9 — shift-click range 를 위한 visible key 시퀀스.
+  const visibleDsKeys = filtered.map((ds) => ds.key);
+  filtered.forEach((ds, visibleIdx) => {
+    // 계정/역할/제품 목록과 동일하게 <div role=row> + 행 체크박스(다중 선택). 단일 상세 선택은 _dsSelectedKey 유지.
+    const row = document.createElement("div");
+    row.className = "admin-list-row";
     row.dataset.dsKey = ds.key;
+    row.dataset.idx = String(visibleIdx);
+    row.setAttribute("role", "row");
     const isSel = ds.key === adminState._dsSelectedKey;
     if (isSel) row.classList.add("is-active");
-    row.setAttribute("aria-selected", isSel ? "true" : "false");
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "admin-list-row-cb";
+    cb.checked = adminState.datasourceSelected.has(ds.key);
+    cb.setAttribute("aria-label", `데이터소스 ${ds.key} 선택`);
+    cb.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (ev.shiftKey && adminState.datasourceLastClickIdx >= 0) {
+        const addMode = !cb.checked;
+        applyShiftRangeSelect({
+          selected: adminState.datasourceSelected,
+          visibleIds: visibleDsKeys,
+          fromIdx: adminState.datasourceLastClickIdx,
+          toIdx: visibleIdx,
+          addMode,
+        });
+      }
+    });
+    cb.addEventListener("change", () => {
+      if (cb.checked) adminState.datasourceSelected.add(ds.key);
+      else adminState.datasourceSelected.delete(ds.key);
+      adminState.datasourceLastClickIdx = visibleIdx;
+      _dsRenderList();
+    });
 
     const main = document.createElement("span");
     main.className = "admin-list-row-main";
@@ -1977,24 +2021,24 @@ function _dsRenderList() {
     meta.className = "admin-list-row-meta";
     meta.textContent = `${ds.host || "?"}:${ds.port || ""}`;
     main.append(title, meta);
-
-    // 행 leading 에 네트워크(연결) 상태 도트. loadAdminData 가 백엔드 사전계산 conn_status 를
-    //  캐시에 넣어두므로 대부분 probe 없이 즉시 표시; unknown(캐시 miss)만 기존 4-cap lazy probe
-    //  재사용(in-flight dedup). 재렌더로 노드가 떨어져 나가면(isConnected=false) 갱신 skip.
+    // 행 leading: 체크박스(다중선택) + 네트워크 상태 도트(#251 통합). loadAdminData 가 백엔드
+    //  사전계산 conn_status 를 캐시에 넣어두므로 대부분 probe 없이 즉시 표시; unknown(캐시 miss)만
+    //  기존 4-cap lazy probe 재사용(in-flight dedup). 재렌더로 노드가 떨어지면(isConnected=false) skip.
     const dsk = String(ds.key || "").trim().toLowerCase();
     const dot = document.createElement("span");
     _paintDsConnDot(dot, adminState.datasourceConnStatus.get(dsk));
-    row.appendChild(dot);
-    row.appendChild(main);
+    row.append(cb, dot, main);
     _probeDatasourceConn(dsk).then((res) => { if (dot.isConnected) _paintDsConnDot(dot, res); });
-
     row.addEventListener("click", () => {
       adminState._dsSelectedKey = ds.key;
-      _dsSyncListActive();
+      _dsRenderList();
       _dsRenderDetail(ds);
     });
     listEl.appendChild(row);
   });
+  updateDatasourceSelectAllCheckbox();
+  renderDatasourceBulkBar();
+  renderDatasourceCrossPageBanner();
 }
 
 function _dsSyncListActive() {
@@ -2004,6 +2048,130 @@ function _dsSyncListActive() {
     const on = r.dataset.dsKey === adminState._dsSelectedKey;
     r.classList.toggle("is-active", on);
     r.setAttribute("aria-selected", on ? "true" : "false");
+  });
+}
+
+/* ── TASK-0278: 데이터소스 목록 다중 선택 (계정/역할/제품과 동일 bulk 계약) ─────────
+ * CONVENTIONS.md §10 + DESIGN.md §4~§12. 단일 상세 선택(_dsSelectedKey)과 동거.
+ * 핵심 차이: 제품 bulk 는 pending-commit, 데이터소스는 즉시 CRUD(삭제·insight PATCH)이므로
+ * 동기 runBulkActionWithPartialFail 대신 async runner(_runDatasourceBulkAsync)로 처리한다. */
+
+// 일괄 작업 대상 가능 여부 — 편집 가능(비-env) datasource 만. console.manage 게이트는 bulk bar 노출에서 적용.
+function _dsBulkTargetable(key) {
+  const ds = (adminState.datasources || []).find((d) => d.key === key);
+  return Boolean(ds && ds.editable);
+}
+
+// DESIGN.md §11 — Datasources select-all (indeterminate 반영, 현재 필터 기준)
+function updateDatasourceSelectAllCheckbox() {
+  const all = _dsFiltered();
+  const selAll = $("datasourceSelectAll");
+  if (!selAll) return;
+  if (!all.length) { selAll.checked = false; selAll.indeterminate = false; return; }
+  const selected = all.filter((d) => adminState.datasourceSelected.has(d.key)).length;
+  if (selected === 0) { selAll.checked = false; selAll.indeterminate = false; }
+  else if (selected === all.length) { selAll.checked = true; selAll.indeterminate = false; }
+  else { selAll.checked = false; selAll.indeterminate = true; }
+}
+
+// DESIGN.md §5 — Datasources bulk toolbar (즉시 적용)
+function renderDatasourceBulkBar() {
+  const bar = $("datasourcesBulkBar");
+  if (!bar) return;
+  bar.innerHTML = "";
+  const count = adminState.datasourceSelected.size;
+  if (!count) return;
+
+  const label = document.createElement("span");
+  label.className = "admin-bulk-label";
+  label.textContent = `${count}${entityUnit("datasources")} 선택됨`;
+  bar.appendChild(label);
+
+  const makeBtn = (text, handler, danger = false, kbdHint = null) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = danger ? "tool-btn danger" : "tool-btn";
+    btn.textContent = text;
+    if (kbdHint) {
+      const hint = document.createElement("span");
+      hint.className = "kbd-hint";
+      hint.textContent = kbdHint;
+      btn.appendChild(hint);
+    }
+    btn.addEventListener("click", handler);
+    return btn;
+  };
+
+  // console.manage 1 개로 모든 datasource mutation 을 통제(상세 패널 액션과 동일 게이트).
+  if (can("console.manage")) {
+    bar.appendChild(makeBtn("인사이트 탐색 켜기", () => bulkDatasourceSetInsight(true)));
+    bar.appendChild(makeBtn("인사이트 탐색 끄기", () => bulkDatasourceSetInsight(false)));
+    bar.appendChild(makeBtn("삭제", () => bulkDatasourceDelete(), true));
+  }
+  bar.appendChild(makeBtn("선택 해제", () => {
+    adminState.datasourceSelected.clear();
+    adminState.datasourceLastClickIdx = -1;
+    _dsRenderList();
+  }, false, "Esc"));
+}
+
+// DESIGN.md §6 — Datasources cross-page banner (현재 페이징 없음, 향후 대비 placeholder)
+function renderDatasourceCrossPageBanner() {
+  const items = _dsFiltered();
+  renderCrossPageBanner({
+    entity: "datasources",
+    selected: adminState.datasourceSelected,
+    visibleIds: items.map((d) => d.key),
+    totalCount: (adminState.datasources || []).length,
+    onClearAll: () => { adminState.datasourceSelected.clear(); _dsRenderList(); },
+    onShowCurrentOnly: () => { /* no-op — 페이징 없음 */ },
+  });
+}
+
+// DESIGN.md §8 — RBAC/상태 partial-failure 처리(async 변형). keys 를 [applied, excluded, failed] 로 분할.
+//   excluded = 대상 불가(비-env editable 아님), failed = API throw(예: 바인딩 409). 양쪽 모두 "제외" 로 합산.
+async function _runDatasourceBulkAsync({ action, keys, applyKey }) {
+  const applied = [];
+  const excluded = [];
+  const failed = [];
+  for (const key of Array.from(keys)) {
+    if (!_dsBulkTargetable(key)) { excluded.push(key); continue; }
+    try { await applyKey(key); applied.push(key); }
+    catch (_err) { failed.push(key); }
+  }
+  const unit = entityUnit("datasources");
+  const verb = actionLabel(action);
+  const skipped = excluded.length + failed.length;
+  const baseMsg = `${applied.length}${unit} ${verb} 완료`;
+  if (skipped === 0) showToast(baseMsg);
+  else showToast(`${baseMsg} (${skipped}${unit} 제외)`, false);
+  // 즉시 적용 후 서버 상태 재동기화 + 재렌더(삭제된 key 는 _dsRenderList 가 prune).
+  await loadAdminData();
+  renderDatasourcesPane();
+  return { applied, excluded, failed };
+}
+
+// 일괄 인사이트 탐색 on/off — 편집 가능 datasource 만 대상(env 제외). 즉시 PATCH.
+function bulkDatasourceSetInsight(enabled) {
+  const action = enabled ? "insight_on" : "insight_off";
+  const count = adminState.datasourceSelected.size;
+  if (!confirmBulkAction({ entity: "datasources", action, count, danger: false })) return;
+  _runDatasourceBulkAsync({
+    action,
+    keys: adminState.datasourceSelected,
+    applyKey: (key) => apiFetch(`/api/admin/datasources/${encodeURIComponent(key)}`,
+      { method: "PATCH", body: JSON.stringify({ insight_enabled: enabled }) }),
+  });
+}
+
+// 일괄 삭제 — 편집 가능 datasource 만. 제품 바인딩(409) 은 강제삭제하지 않고 "제외" 처리(개별 삭제에서 force 가능).
+function bulkDatasourceDelete() {
+  const count = adminState.datasourceSelected.size;
+  if (!confirmBulkAction({ entity: "datasources", action: "delete", count, danger: true })) return;
+  _runDatasourceBulkAsync({
+    action: "delete",
+    keys: adminState.datasourceSelected,
+    applyKey: (key) => apiFetch(`/api/admin/datasources/${encodeURIComponent(key)}`, { method: "DELETE" }),
   });
 }
 
@@ -7084,6 +7252,20 @@ async function initialize() {
     });
   }
 
+  // TASK-0278 — Datasources select-all (현재 필터 기준)
+  const datasourceSelectAllEl = $("datasourceSelectAll");
+  if (datasourceSelectAllEl) {
+    datasourceSelectAllEl.addEventListener("change", (ev) => {
+      const visible = _dsFiltered();
+      if (ev.target.checked) {
+        visible.forEach((d) => adminState.datasourceSelected.add(d.key));
+      } else {
+        visible.forEach((d) => adminState.datasourceSelected.delete(d.key));
+      }
+      _dsRenderList();
+    });
+  }
+
   // DESIGN.md §9 — Esc 글로벌 핸들러: 현재 active pane 의 선택 해제
   document.addEventListener("keydown", (ev) => {
     if (ev.key !== "Escape") return;
@@ -7105,6 +7287,11 @@ async function initialize() {
       adminState.productSelected.clear();
       adminState.productLastClickIdx = -1;
       renderProductList();
+      cleared = true;
+    } else if (adminState.tab === "datasources" && adminState.datasourceSelected.size > 0) {
+      adminState.datasourceSelected.clear();
+      adminState.datasourceLastClickIdx = -1;
+      _dsRenderList();
       cleared = true;
     }
     if (cleared) ev.preventDefault();
@@ -7136,7 +7323,7 @@ async function initialize() {
   await loadAdminData();
 
   // DESIGN.md §4 — runtime contract assertion (drift 재발 차단, best-effort)
-  ["accounts", "roles", "products"].forEach((entity) => {
+  ["accounts", "roles", "products", "datasources"].forEach((entity) => {
     try { assertBulkBarContract(entity); }
     catch (err) { console.error(err); }
   });
