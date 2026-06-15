@@ -848,3 +848,11 @@ TASK-0015 (plan-review):
 - [x] test_compose_system_prompt: SYSTEM_PROMPT 가 ```diff·DIFF BLOCK 포함 + OUTPUT 이후 위치 검증 (4 passed)
 - [x] 라이브 WebSystemPrompts global row 갱신 — 적용완료(5799→6837자, 마커 검증 True, 컨테이너 백업 /tmp/task0256_global_prompt_backup.txt)
 - [x] ask-worker 재배포(main 2befd37) + SYSTEM_PROMPT diff 지침 baked 검증
+
+### TASK-0256e — 첨부파일 diff 줄번호 추적 (실제 파일 줄번호 기반 헌크 헤더) (2026-06-15)
+- 사용자 보고: 첨부 파일 리뷰 diff 의 줄번호가 항상 1부터(또는 없이) — 실제 파일 줄 미추적.
+- 근본원인: `_build_attachment_context_section` 이 첨부 본문을 줄번호 없이 raw 주입 → 모델이 실제 줄 모름 → `@@` 헌크 헤더 못 만듦 → 렌더러(buildDiffRows)는 헌크 없으면 1부터.
+- [x] `_number_file_lines(content)`: 각 줄 `<N>→` prefix(우측정렬, prompt 사본만, 원본 무변경 — SQL추출 경로 무영향)
+- [x] 본문 주입에 적용 + "LINE NUMBERS & DIFFS" instruction(실제 줄번호로 `@@ -N,M +N,M @@` 작성, prefix 코드 미포함)
+- [x] test_attachment_line_numbers(5) + 렌더 폐루프 node 확인(`@@ -49` → gutter 49/50/51) + py_compile
+- [ ] ask-worker 재배포 + 배포 프롬프트 줄번호 주입 확인 + (가능 시) 라이브 첨부 리뷰 e2e

@@ -911,3 +911,16 @@ source_of_truth: true
 - Verdict: **SHIP** — 프롬프트 ```diff 예시 문자열 안전(py_compile PASS), OUTPUT 의 no-JSON/한국어 마크다운 규칙·ATTACHED FILES 섹션과 무충돌. diff 블록은 리뷰/편집 한정(신규 SQL=```sql)으로 과다사용 방지. test_compose_system_prompt 4 passed.
 - Residual: 라이브 WebSystemPrompts global row 갱신(백업)·ask-worker 재배포 후 검증.
 - Cross-ref: CHG-20260615-0256 / TASK-0256 / feature-0003 REV-20260615-0256.
+
+## REV-20260615-0270 [SUBAGENT:ship]
+- Date: 2026-06-15
+- Cycle: TASK-0256e (첨부파일 diff 줄번호 추적 — 줄번호 주입 + 헌크 헤더 지시), **Minor §12.3** — agent-core 프롬프트 주입 1함수 + 지침 + 테스트. RBAC/스키마/엔드포인트/SQL추출/sandbox 0.
+- Trigger: LLM 프롬프트(첨부 컨텍스트) 변경 → outside-voice(general-purpose) 적대적 리뷰.
+- Verdict: **SHIP** (BLOCKER/MAJOR 0).
+  - `_number_file_lines` edge-case 안전(splitlines 트레일링개행/\r\n/빈/단일/내부공백, 1-based off-by-one 0, 우측정렬 폭, 코드 본문 보존, U+2192 UTF-8 컴파일).
+  - 부작용 0: 줄번호는 prompt 주입 사본에만(`_number_file_lines(content)` 호출부), 원본 content 는 length 측정 외 미사용. SQL추출(`_extract_sql_tables`=LLM tool sql)·sandbox(CSV/XLSX 별 분기)·image 무영향. 펜스 무결성 neutral-to-positive(`3→```` 는 column0 아님).
+  - 계약 일치: 지침의 헌크 포맷 `@@ -<oldStart>,<oldCount> +<newStart>,<newCount> @@` 이 웹 렌더러 파서 regex(app.js)와 정확 일치 → gutter 가 실제 줄번호 seed. per-attachment 블록(`if text_content_entries`)에만 존재 → 채팅 붙여넣기 쿼리 과다-헌크 위험 차단 + "prefix 코드 미포함" 명시.
+  - 토큰: 줄당 width+1자, 64KB/20파일 cap 내 marginal.
+  - **MINOR #1 의도적 미적용**: SYSTEM_PROMPT `SHOWING CHANGES` 예시에 헌크 헤더 추가 제안 — 그러나 그 지침은 첨부+채팅붙여넣기 둘 다 적용되며 **채팅 붙여넣기는 실제 줄번호가 없어 헌크 헤더가 부적절(없는 번호 날조 유발)**. 줄번호가 있는 첨부에만 per-request instruction 으로 헌크 지시하는 현 설계가 정확 → 예시 미변경(live-row 동기화도 회피). MINOR #2(트레일링 개행 collapse) harmless.
+- Residual: ask-worker 재배포 후 배포 프롬프트 줄번호 주입 확인 + (가능 시) 라이브 첨부 리뷰 e2e.
+- Cross-ref: CHG-20260615-0256e / TASK-0256e / TASK-0256c(렌더 gutter) / feature-0003 REV-20260615-0267.

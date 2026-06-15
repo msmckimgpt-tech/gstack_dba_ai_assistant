@@ -421,3 +421,6 @@ source_of_truth: true
 
 ## (TASK-0256) 답변 포맷 — diff 블록
 첨부파일/쿼리 리뷰·편집 응답에서 변경 제안은 markdown ```diff 블록(+/- 라인)으로 제시한다(SYSTEM_PROMPT OUTPUT 지침). 신규 SQL 작성은 ```sql 유지. 라이브 적용은 WebSystemPrompts global row(상수는 seed/fallback).
+
+## (TASK-0256e) 첨부 파일 줄번호 주입 + diff 헌크 헤더
+첨부 텍스트/코드 파일 본문은 `_number_file_lines` 로 각 줄에 1-기반 `<N>→` 줄번호 prefix 를 붙여 모델에 주입한다(원본 무변경 — SQL 추출 등 다른 경로 무영향). "LINE NUMBERS & DIFFS" instruction 이 모델에게 prefix 는 참조용이며, diff 를 보일 때 실제 줄번호로 unified-diff 헌크 헤더(`@@ -N,M +N,M @@`)를 작성하고 prefix 는 코드에 넣지 말라고 지시한다. 웹 UI(buildDiffRows)가 그 헌크에서 gutter 줄번호를 표시 → 첨부 파일 실제 줄번호 추적(TASK-0256c 렌더와 결합).
