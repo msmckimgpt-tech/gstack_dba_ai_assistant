@@ -3672,4 +3672,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - 근본원인: index/admin/share.html 이 FileResponse(ETag/Last-Modified만, Cache-Control 부재) → 브라우저 휴리스틱 캐싱이 옛 HTML 재사용 → 옛 `?v=` 참조 → 캐시버스터 무력화.
 - [x] 3 HTML route 에 `Cache-Control: no-cache`(_HTML_NO_CACHE) — 매 로드 조건부 재검증(변경 시 200, 동일 시 304)
 - [x] test_html_no_cache(FileResponse monkeypatch 로 3 route no-cache + 올바른 파일 검증) + make test PASS
-- [ ] web 재배포 + 라이브 헤더(curl -I) 검증 + 사용자 1회 하드리프레시 안내
+- [x] web 재배포(main 1c184f8) + 라이브 헤더 검증(3 route no-cache, curl) + 브라우저 새 app.js 로드+gutter 실증(win-browser) — TEST.md §4. 사용자 1회 하드리프레시 안내

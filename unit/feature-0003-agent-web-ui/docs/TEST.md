@@ -732,3 +732,12 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
     - **복사 클린(getSelection 실측)**: `range.selectNodeContents(pre.diff-block)` → `getSelection().toString()` = 8줄, **마커로 시작하는 줄 0(copyHasMarker=false)**, 첫 줄 `"DECLARE v_Result INT DEFAULT 0;"`(마커·번호 없음), 코드 포함. 즉 블록 복사 시 줄번호·+/- 제외된 순수 코드만 잡힘.
   - **Pass/Fail: PASS**
   - **Notes:** 줄번호+마커는 `::before content`(의사요소=선택/복사 비포함) + user-select:none. CHECK#13 충족.
+
+- 2026-06-15 (TASK-0256d HTML 엔트리포인트 no-cache — 캐시버스터 전달 검증 PASS):
+  - **Environment: 라이브 curl + Windows-browser** (https://localhost:18080, web main 1c184f8).
+  - **Steps/Result:**
+    - **헤더(curl GET)**: `/` → `cache-control: no-cache` + ETag, `/admin` → no-cache, `/share/{token}` → no-cache. 서빙 index.html 이 최신 `app.js?v=20260615-task0256c-gutter` 참조. 정적 `/static/app.js?v=...` 은 no-cache 아님(ETag 캐시 가능 — 의도).
+    - **브라우저 로드(win-browser eval)**: `typeof window.buildDiffRows="function"`·`stripDiffMarker="function"`, loadedScript=`app.js?v=20260615-task0256c-gutter` → 옛 캐시 깨고 새 자산 로드 확인.
+    - **gutter+복사(사용자 유형 SQL diff 렌더)**: `hasGutter=true`, context 줄 data-gutter `"1 1"`, `copyHasMarker=false`, 복사 = `["SELECT","    AID","  , UserID"]`(마커·번호 없는 순수 코드, 들여쓰기 보존). 스크린샷 `/tmp/task0256/pb0008d_nocache_gutter.png`.
+  - **Pass/Fail: PASS** — no-cache 가 0256c(줄번호/복사클린)를 사용자에게 전달함을 end-to-end 실증.
+  - **Notes:** 기 캐시된 사용자는 1회 하드리프레시(Ctrl+Shift+R)로 no-cache index.html 진입 후 자동 최신. CHECK#13 충족.
