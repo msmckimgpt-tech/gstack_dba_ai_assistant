@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260616-0300 (TASK-0290 evidence — 라이브 검증 기록, docs-only)
+- Date: 2026-06-16 (TASK-0290 evidence, 코드 무변경)
+- Scope: TEST.md 에 TASK-0290 배포·라이브 검증 결과 기록.
+- 변경: 배포(web+ask-worker+insight-worker 재빌드 + up -d 콜드 스타트 재현) 후 HTTP `/api/admin/datasources` conn_status 실측 — mysql-mv-qa-* unstable(1744~1793ms, 콜드 스타트에도 빨강 유지)·mysql-kr-an2-* down(5s timeout errno=2003 진짜 도달불가)·gz-qa-kr healthy. 구 2000ms 의 콜드 down 오판 제거 실증.
+- Files: docs/TEST.md
+- Deploy: 없음(검증 기록만).
+
 ## CHG-20260616-0299 (TASK-0290 — conn-tristate TCP 선검사 timeout 상향)
 - Date: 2026-06-16 (TASK-0290, Minor §12.3 — 연결 상태 분류 정확도)
 - Scope: conn_health TCP 선검사 timeout 기본값 2000→5000ms. RBAC/스키마/엔드포인트/SQL추출 0.

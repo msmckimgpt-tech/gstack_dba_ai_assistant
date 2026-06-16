@@ -88,3 +88,15 @@ source_of_truth: true
 - **라이브 LLM probe (배포 스택, claude-haiku-4 via Bedrock 게이트웨이)**: SYSTEM_PROMPT + 줄번호 첨부(7줄 SQL, 4번째 줄에 합쳐진 컬럼) + LINE NUMBERS 지침 → "4번째 줄 분리 개선안 diff" 요청. **모델 출력**: ```diff 블록 + **`@@ -4,2 +4,4 @@`**(실제 4번째 줄 기준 헌크), `→` prefix 코드 미포함(순수 SQL). 즉 모델이 첨부 파일 실제 줄번호를 추적해 헌크 헤더 작성.
 - **폐루프**: 웹 buildDiffRows 가 `@@ -4` 파싱 → gutter old/new=4,5,6 표시(TASK-0256c node 검증). 줄번호 주입 → 모델 @@ → gutter 실제 줄번호 end-to-end.
 - **Pass/Fail: PASS**. Residual: 실 첨부 업로드 UI e2e 는 사용자 워크플로에서 확인(deterministic+LLM probe 로 충분 검증).
+
+## TASK-0290 — conn-tristate TCP 선검사 timeout 2000→5000ms 라이브 검증 (2026-06-16)
+- Environment: 라이브 배포 스택(repo-web-1), config baked `AGENT_CONN_TCP_TIMEOUT_MS=5000`(`docker exec` 확인).
+- 배포: web+ask-worker+insight-worker 3 이미지 재빌드 + `docker compose up -d`(컨테이너 교체 = **콜드 스타트 재현**, 사용자 보고 시나리오).
+- **진단(수정 전, 구 2000ms)**: web 재시작 콜드 스타트(07:47Z) thundering herd 로 mysql-mv-qa-*·kr-an2-* 다수가 `via=probe-tcp err=timeout`→fails=2→**down(회색)** 오판. 직접 TCP probe 는 mv-qa 193~195ms 100% 성공(15회 0 fail) → 모니터만 down 고착. kr-an2 elapsed 2003~2237ms(2000ms 임계 초과).
+- **검증(수정 후, 5000ms) — 콜드 스타트 직후 HTTP `/api/admin/datasources` conn_status**:
+  - `mysql-mv-qa-auth/game/tool`: **unstable**(1744~1793ms) — 콜드 스타트 thundering herd 에도 **처음부터 unstable(빨강, "연결 불안정") 확정**. 구 2000ms 의 일시 down 오판 제거. ✓ (사용자 보고 증상 해결)
+  - `mysql-kr-an2-*`(7개): **down**(elapsed 5003~5007ms = TCP 5s timeout, DB `errno=2003` 도달불가) — 진짜 죽음이라 down(회색, "연결 끊김") **정확 유지**. ✓
+  - `mysql-gz-qa-kr`: healthy(147ms) — 빠른 연결 초록 정확. ✓
+- **Pass/Fail: PASS**. mv-qa 빨강(불안정, ~1750ms) + kr-an2 회색(끊김, 진짜 도달불가) + gz 초록. 콜드 스타트 down 오판 제거 실증.
+- 게이트: verify-completion 9/9 PASS, make test EXIT=0(회귀 0), ruff PASS.
+- Residual(PB-0008): 관리 콘솔 도트 색상은 백엔드 conn_status 가 결정 — unstable→admin.js `_paintDsConnDot` `is-unstable`(빨강) 매핑(코드 기검증). 백엔드 conn_status=unstable 확정으로 도트 빨강 보장. UI 코드 변경 0(config 만)이라 Windows-browser 시각검증은 informational(CHECK#13 WARN-only).
