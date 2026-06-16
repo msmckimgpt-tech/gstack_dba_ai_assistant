@@ -9,6 +9,13 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260616-0300 (TASK-0291 — 계정 탭 배지 활성 계정만 집계)
+- Date: 2026-06-16
+- Scope: frontend-only. `src/static/admin.js` 1곳 + `src/static/admin.html` 캐시버스터.
+- 변경: `refreshPendingUI()` 의 `#tabCountAccounts` 집계를 `adminState.accounts.length`(전체) → `adminState.accounts.filter((a) => a.is_active && !a.deleted_at).length`(활성만). 활성 정의는 `filteredAccounts()` 의 `'active'` 분기(`is_active && !deleted_at`)와 동일. 비활성·삭제는 목록 필터에서 확인 가능하므로 배지에서 제외.
+- 비변경: 백엔드/RBAC/스키마/엔드포인트 0. `#accountListCount`(이미 filter-aware) 비변경. 역할/제품/데이터소스 탭 배지 비변경(요청 범위 = 계정 한정).
+- 검증: node --check PASS. 백엔드 무변경(make test 회귀 자명 0). PB-0008 Windows-browser 실측은 web 재배포 후.
+
 ## CHG-20260616-0298 (TASK-0287 후속 docs-only — PB-0008 evidence)
 - Date: 2026-06-16
 - Scope: docs 전용(STATUS/REPORT/TASK/MODIFY/REVIEW). 코드 0.

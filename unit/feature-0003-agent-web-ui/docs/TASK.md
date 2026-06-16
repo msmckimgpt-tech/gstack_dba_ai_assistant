@@ -8,7 +8,15 @@ source_of_truth: true
 
 # Task
 
-## TASK-0287 (current cycle) — 말풍선 첨부 칩 다운로드 실패 수정 (REQ-20260616-0287, AC-0531, Minor §12.3, frontend-only)
+## TASK-0291 (current cycle) — 관리 콘솔 계정 탭 배지 개수 활성 계정만 집계 (REQ-0282, AC-0538, Minor §12.3, frontend-only)
+- 보고(사용자): `관리 콘솔 > 계정` 항목에 표시되는 개수를 활성화된 계정 대상으로만 집계하도록 수정. 비활성·삭제된 대상은 해당 목록 내부(필터)에서 이미 확인 가능하므로, 배지에는 실제 중요한 정보(활성 계정 수)만 노출.
+- 진단: 사이드바 계정 탭 배지 `#tabCountAccounts`(admin.js `refreshPendingUI`)가 `adminState.accounts.length`(전체 = 활성 + 비활성 + 삭제)를 그대로 표시. 반면 목록 내부 카운트 `#accountListCount`(`renderAccountList`)는 `filteredAccounts()` 기반이라 이미 filter-aware(활성/비활성/삭제 필터 선택 시 해당 수 반영) — 사용자가 말한 "목록 내부에서 확인 가능"이 이것.
+- 수정(frontend-only, admin.js 1곳): `refreshPendingUI` 의 `tabCountAccounts` 집계를 `adminState.accounts.filter((a) => a.is_active && !a.deleted_at).length`(활성 정의 = `filteredAccounts()` 의 `'active'` 분기와 동일: `is_active && !deleted_at`)로 변경. 캐시버스터 `admin.html ?v=20260616-task0291-account-active-count`.
+- 비변경: 백엔드/RBAC/스키마/엔드포인트 0. `#accountListCount`(filter-aware) 비변경. 역할/제품/데이터소스 탭 배지 비변경(요청 범위 = 계정 한정).
+- [x] node --check PASS, 백엔드 무변경(make test 회귀 자명 0).
+- [ ] 머지 → web 재배포 → PB-0008 Windows-browser 실측(계정 탭 배지 = 활성 필터 적용 시 목록 수와 일치, 전체 수보다 작거나 같음). CHG/REV-20260616-0300.
+
+## TASK-0287 — 말풍선 첨부 칩 다운로드 실패 수정 (REQ-20260616-0287, AC-0531, Minor §12.3, frontend-only)
 - 보고(사용자): 첨부파일 목록에서 다운로드는 되지만, 말풍선 안에서 제공되는 첨부파일(칩)은 다운로드 실패.
 - 진단: 목록 다운로드는 `_downloadAttachmentById`(raw fetch + blob, TASK-0284)인데, 말풍선 칩(`_buildMessageAttachChip`, TASK-0285)은 여전히 `<a href download>` **navigation** 방식. TASK-0284 가 octet-stream 프록시(`/api/attachments/{id}/download`)에서 navigation 다운로드 실패 때문에 목록을 fetch+blob 으로 전환했으나, 말풍선 칩에는 그 전환이 적용되지 않았다.
 - 수정(frontend-only): `_buildMessageAttachChip` 의 click 핸들러를 `att.id` 가 있으면 `_downloadAttachmentById(att.id, attName)`(목록과 동일 fetch+blob) 호출로 통일. signed_url 만 있는 드문 폴백은 기존 navigation 유지. 캐시버스터 `?v=20260616-task0287-bubble-chip-dl`.
