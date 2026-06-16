@@ -7,7 +7,7 @@
 #   2. main worktree 식별 + git fetch + git pull --ff-only (main 항상 최신화)
 #   3. 자기 worktree working tree clean 검증
 #   4. cwd 이동 (자기 worktree 내부일 때만 — 자기 working dir remove 불가)
-#   5. worktree remove + local branch delete
+#   5. worktree remove + local branch delete + 원격 브랜치 best-effort 정리
 #   6. §13.2.4 채택 consumer REGISTRY entry 이동 (옵션 — 부재 시 silent skip)
 #
 # 자동 진행 정책 (AGENTS.md §16.3 Step 6, v3.9.0+):
@@ -15,7 +15,8 @@
 #   에서는 사람 명시 요청 없이 자동 진행. abnormal 경로 (PR not mergeable, dirty
 #   working tree, non-fast-forward pull, branch -d unmerged) 는 자동 중단 +
 #   사용자 결정 (silent -D / silent merge/rebase 금지). 외부 영향 행동:
-#   gh pr merge / git pull / git worktree remove / git branch -d.
+#   gh pr merge / git pull / git worktree remove / git branch -d /
+#   git push origin --delete (원격 브랜치 정리, best-effort).
 #
 # Usage:
 #   bash bin/cycle-finalize.sh --pr <PR-NUMBER>
@@ -130,8 +131,13 @@ case "$PR_STATE" in
     if [ "$PR_MERGEABLE" != "MERGEABLE" ]; then
       die "PR #$PR_NUMBER not MERGEABLE (state=$PR_STATE, mergeable=$PR_MERGEABLE). Resolve conflicts first."
     fi
-    log_step "Step 1a: gh pr merge --$MERGE_STRATEGY --delete-branch"
-    run_or_dryrun "gh pr merge $PR_NUMBER --$MERGE_STRATEGY --delete-branch"
+    # --delete-branch 미사용 (worktree-first 호환): gh 는 --delete-branch 시 기본
+    # 브랜치로 로컬 체크아웃 전환 + 로컬/원격 브랜치 삭제를 시도하는데, 머지 대상
+    # 브랜치가 worktree 에 checkout 된 상태(§13.2 worktree-first)면 전환/삭제가
+    # 거부돼 매 cycle 실패한다. 로컬 브랜치는 Step 5b(git branch -d), 원격 브랜치는
+    # Step 5c(best-effort push --delete)가 분리 처리한다.
+    log_step "Step 1a: gh pr merge --$MERGE_STRATEGY (no --delete-branch — worktree-first 호환)"
+    run_or_dryrun "gh pr merge $PR_NUMBER --$MERGE_STRATEGY"
     ;;
   CLOSED)
     die "PR #$PR_NUMBER is CLOSED (not merged). Cycle-finalize aborted."
@@ -226,6 +232,37 @@ if [ "$KEEP_BRANCH" -eq 0 ]; then
   fi
 else
   log_info "Step 5b (branch delete): skip (--keep-branch)"
+fi
+
+# ── Step 5c: 원격 브랜치 정리 (best-effort — --delete-branch decouple) ─────
+# Step 1a 에서 --delete-branch 를 제거(worktree-first 호환)했으므로 원격 브랜치는
+# 여기서 best-effort 로 정리한다. 파괴적 원격 op 라 가드를 좁힌다:
+#   (a) KEEP_BRANCH=0,
+#   (b) PR head ref == 방금 finalize 한 로컬 브랜치(SELF_BRANCH) — PR 재타깃/오인자
+#       시 무관 원격 브랜치 오삭제 방지 (Step 5b 와 동일 대상만 삭제),
+#   (c) leading-dash ref 거부 — git 옵션 오해석 방지,
+#   (d) main/master backstop.
+# 삭제 결과는 3분기로 관측: 성공 / 이미 없음(정상) / 실재 실패(네트워크·auth, WARN).
+# 어느 경우도 cycle 을 중단하지 않는다 (로컬 정리는 Step 5b 가 이미 완료).
+if [ "$KEEP_BRANCH" -eq 0 ] \
+   && [ -n "$PR_HEAD_REF" ] \
+   && [ "$PR_HEAD_REF" = "$SELF_BRANCH" ] \
+   && [ "${PR_HEAD_REF#-}" = "$PR_HEAD_REF" ] \
+   && [ "$PR_HEAD_REF" != "main" ] && [ "$PR_HEAD_REF" != "master" ]; then
+  log_step "Step 5c: git push origin --delete $PR_HEAD_REF (원격 브랜치 정리, best-effort)"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf "[dry-run] git -C %s push origin --delete %s\n" "$MAIN_REAL" "$PR_HEAD_REF" >&2
+  else
+    if push_err="$(git -C "$MAIN_REAL" push origin --delete "$PR_HEAD_REF" 2>&1)"; then
+      log_info "원격 브랜치 '$PR_HEAD_REF' 삭제 완료."
+    elif printf '%s' "$push_err" | grep -qiE 'remote ref does not exist|does not exist'; then
+      log_info "원격 브랜치 '$PR_HEAD_REF' 이미 없음 (GitHub auto-delete 등) — 정상."
+    else
+      log_warn "원격 브랜치 '$PR_HEAD_REF' 삭제 실패 (네트워크/auth?): $push_err. 무시하고 계속 — 다른 cleanup step 은 완료."
+    fi
+  fi
+else
+  log_info "Step 5c (원격 브랜치 정리): skip (--keep-branch / head ref 미상 / SELF_BRANCH 불일치 / main)"
 fi
 
 # ── Step 6: REGISTRY entry 이동 (옵션) ───────────────────────────────────
