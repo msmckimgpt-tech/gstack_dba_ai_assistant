@@ -16,7 +16,7 @@ source_of_truth: true
 - [x] 수정(styles.css): dead `.admin-avatar-edit`/`.admin-avatar-change`/`.admin-avatar-remove` 규칙 제거(사용처 0건 — admin.js 5798/5802/5820 한정이었음). 프로필 클래스 재사용이라 신규 CSS 0.
 - [x] cache-buster: index.html(styles.css) + admin.html(styles.css·admin.js) `?v=20260616-product-icon-edit`.
 - [x] 검증: node --check admin.js PASS.
-- [ ] (잔여) verify-completion → PR 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증(제품 상세 아이콘 우하단 ✎ 오버레이·텍스트 침범 0·유저 프로필과 시각 동형).
+- [x] verify-completion PASS → PR #265 머지(main 245446f) → web 재배포(deploy_scope: included, repo-web-1 healthy, 서빙 `admin.js/styles.css?v=20260616-product-icon-edit`·`profile-avatar-change` baked) → **PB-0008 Windows-browser PASS**(제품 상세 아이콘 우하단 ✎ 원형 오버레이 `.profile-avatar-change`[computed: position absolute·right:-4px·bottom:-4px·22×22·border-radius:50%·visibility visible·opacity 1]·구 텍스트 pill `.admin-avatar-change/edit` 부재(oldPillPresent=false)·텍스트 침범 0·유저 프로필 동일 클래스 재사용으로 시각 동형; CHG/REV-20260616-0292 evidence). evidence `artifacts/pb0008-task0283/product-icon-edit-overlay.png`.
 
 ## 0zz. TASK-20260615T182907-product-list-row-icon-layout-fix (current cycle) — 제품 관리 목록 행 UI 뒤틀림 핫픽스 (TASK-...-product-icon-chip-list 후속)
 - 보고(사용자): 제품 관리 목록의 UI 가 뒤틀림. (직전 cycle PR #249 가 목록 행에 아이콘 추가하면서 발생.)
