@@ -2881,3 +2881,21 @@ source_of_truth: true
 - Verification: test_conn_health 재작성 27 + product_conn down 최악 + /test status + make test 컨테이너 전체 회귀 0 + ruff + node --check + CSS brace(1221).
 - Residual: web+ask-worker+insight-worker 재배포 → PB-0008 Windows-browser(3색 배지·느린연결=빨강·끊김=회색·작업화면 사용가능 실측).
 - Cross-ref: CHG-20260616-0290 / TASK-0282.
+
+## REV-20260616-0291 [SUBAGENT:attachment-access]
+- Date: 2026-06-16
+- Cycle: TASK-0284 (첨부 3개 이슈: cross-account LLM 주입 / 외부 머신 다운로드 / 파일명 지칭), **Critical §12.3** — 첨부 LLM 주입 인가 스코프 변경(AccountId → ConversationId) + 신규 프록시 다운로드 라우트.
+- Trigger: §18.8 + [[feedback_outside_voice_for_rbac]] — 인가 경계(RBAC/IDOR) 변경. 적대적 코드리뷰(general-purpose outside voice, "refute ship-readiness").
+- Verdict: **SHIP-WITH-FIXES** (BLOCKER 0, MAJOR 0, MINOR 1).
+- 핵심 가설 반증(confirmed-correct, 코드 file:line 대조):
+  - **H1 cross-account LLM 주입 → REFUTED**: `/api/ask` 가 주입 전 conv_id 를 **owner-only** 게이트(`_conversation_owned_by_account` app.py:9338/6128, `_account_can_access_conversation`(any) 아님) → 비-owner 는 타 대화 ask 불가(403). 모든 주입 쿼리가 ConversationId 스코프 + conv_id 는 owned conv 에 바인딩. 타 대화 attachment_ids 주입은 ConversationId 불일치로 0행. conv_id 흐름 `ask → _dispatch_ask_run → _run_agent_core(conversation_id=) → compose_system_prompt → _build_attachment_context_section` + worker 경로(modules/ask.py)도 동일 게이트 conv_id 상속. 미게이트 호출자 0.
+  - **H2 account 폴백 fail-open → REFUTED**: 둘 다 없으면 fail-closed(`_attach_scope_clause`→None→pg_select []; agent_core 가드 `not account_id and not _scope_by_conv`→"").
+  - **H3 다운로드 IDOR → REFUTED**: `download_attachment` 가 `get_attachment_metadata` 와 구조 동형(_account_can_access_attachment own/any, row=None→404, pending→403 으로 metadata(200+null)보다 더 엄격).
+  - **H4 inline/XSS → REFUTED**: octet-stream + `Content-Disposition: attachment` + nosniff 로 inline 렌더 차단(text/html 첨부 포함).
+  - **H5 SQLi → REFUTED**: scope 컬럼명은 고정 리터럴(if 분기, 사용자 입력 아님), 값은 전부 %s 바인딩.
+  - **H6 PG/MySQL parity → REFUTED**: MySQL 폴백은 `rows is None`(예외)만, PG 0행(`[]`)은 폴백 안 탐. 양 백엔드 스코프 동일.
+- 흡수(must-fix MINOR-1): `download_attachment` ascii_fallback(app.py)이 CR/LF 제어문자 미제거 → Content-Disposition 헤더 인젝션 표면(OriginalFilename 은 업로드 시 `.strip()` 만 → CRLF 잔존 가능). **현 uvicorn+h11 런타임은 CRLF 헤더값 거부→500 이라 비악용**이나 ASGI 서버 교체 대비 방어적으로 `c.isprintable()` 필터로 모든 비출력 제어문자 제거. filename*(RFC5987)은 percent-encoding 이라 원래 안전. **흡수 완료**.
+- Should-note(비차단): fork 는 첨부를 새 ConversationId + fork-owner AccountId 로 복사(app.py:10537~)하므로 기존 AccountId 스코프도 매칭됐을 것 — 진짜 깨진 케이스는 account-context drift 이며, ConversationId 스코프가 올바른 통일(보안 경계는 owner-gated 유지).
+- Verification: test_attachment_idor.py(IDOR 5 + 신규 conversation 스코프·account 폴백·파일명 우선 4) + test_task0284_attachment_access.py 9 + make test 컨테이너 전체 회귀 0(pytest 0 fail/2 skip, ruff clean).
+- Residual: 머지 → 배포(web + ask-worker 재빌드) → 라이브 검증(cross-account 주입·외부 다운로드·파일명 답변) → PB-0008.
+- Cross-ref: CHG-20260616-0291 / TASK-0284 / feature-0002 REV-20260616-0291.

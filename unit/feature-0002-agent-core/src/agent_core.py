@@ -335,7 +335,12 @@ def _number_file_lines(content: str) -> str:
     return "\n".join(f"{i:>{width}}→{line}" for i, line in enumerate(src, 1))
 
 
-def _build_attachment_context_section(mem_conn, attachment_ids: list[int], account_id: int | None = None) -> str:
+def _build_attachment_context_section(
+    mem_conn,
+    attachment_ids: list[int],
+    account_id: int | None = None,
+    conversation_id: str | None = None,
+) -> str:
     """TASK-0094 Sprint 1 Phase 11 + TASK-0107 Phase B — selected attachment metadata
     + sandbox schema/table 명 + 각 table 의 column schema + head 5 sample rows
     를 prompt 에 주입한다.
@@ -347,10 +352,17 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int], accou
 
     D16 정합: attachment_ids 가 빈 list 면 본 section 미주입 (minimum exposure).
     """
-    # TASK-0132 (#8 IDOR/env-race): account_id 필수 — AccountId 스코프로 타 계정 첨부
-    # 메타(파일명/sandbox 스키마명) 가 prompt 에 유출되는 것을 차단. 이 스코프는 ATTACHMENT_IDS
-    # 가 os.environ 으로 전달되며 동시 요청 간 race 가 나도 교차테넌트 유출을 막는 안전망이다.
-    if not attachment_ids or mem_conn is None or not account_id:
+    # TASK-0284 (Critical §12.3): 첨부 LLM 컨텍스트 주입 스코프를 AccountId → ConversationId 로
+    # 통일한다. 목록 조회(list_conversation_attachments)·다운로드(get_attachment_metadata)는 이미
+    # ConversationId + 대화 접근권 게이트(_account_can_access_conversation own/any) 기반인데, 주입만
+    # AccountId(요청자 본인) 였다 → fork·이어받기 등 cross-account 시 목록엔 보이나 주입이 0행이 되는
+    # 불일치(사용자 보고). caller(app.py ask)가 conv 소유/접근권을 이미 게이트하므로, 본 함수는
+    # "이 대화에 속한 첨부"로 스코프한다(타 대화 첨부 id 주입은 ConversationId 불일치로 여전히 차단 —
+    # IDOR 안전망 유지). conversation_id 미전달(legacy 경로)은 AccountId 스코프로 폴백.
+    # TASK-0132 (#8 IDOR/env-race): 스코프 자체는 ATTACHMENT_IDS 가 os.environ 으로 전달되며 동시
+    # 요청 간 race 가 나도 교차테넌트 유출을 막는 안전망이라는 성격은 그대로 유지된다.
+    _scope_by_conv = bool(conversation_id)
+    if not attachment_ids or mem_conn is None or (not account_id and not _scope_by_conv):
         return ""
     # TASK-0277: read cutover — AGENT_RUNTIME_ATTACHMENTS_READ_BACKEND=postgres 면 PG agent_runtime
     # 에서 읽는다(IDOR AccountId 가드 동형). 행은 positional tuple, 컬럼 순서·MetaJson::text 로 MySQL 정합.
@@ -362,14 +374,19 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int], accou
             _pg = _pg_connect()
             try:
                 _ph = ", ".join(["%s"] * len(attachment_ids))
+                # TASK-0284: conversation_id 우선 스코프(대화 접근권은 caller 가 게이트), 없으면 account_id 폴백.
+                if _scope_by_conv:
+                    _scope_sql, _scope_val = "conversation_id = %s", str(conversation_id)
+                else:
+                    _scope_sql, _scope_val = "account_id = %s", int(account_id or 0)
                 with _pg.cursor() as _pc:
                     _pc.execute(
                         f"SELECT id, conversation_id, original_filename, kind, mime_type, "
                         f"size_bytes, size_bucket, upload_status, meta_json::text "
                         f"FROM agent_runtime.core_attachments "
-                        f"WHERE id IN ({_ph}) AND account_id = %s "
+                        f"WHERE id IN ({_ph}) AND {_scope_sql} "
                         f"AND deleted_at IS NULL AND delete_pending = 0 ORDER BY id ASC",
-                        tuple(int(i) for i in attachment_ids) + (int(account_id),),
+                        tuple(int(i) for i in attachment_ids) + (_scope_val,),
                     )
                     rows = _pc.fetchall() or []
             finally:
@@ -383,15 +400,20 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int], accou
             return ""
         try:
             placeholders = ", ".join(["%s"] * len(attachment_ids))
+            # TASK-0284: conversation_id 우선 스코프(대화 접근권은 caller 가 게이트), 없으면 account_id 폴백.
+            if _scope_by_conv:
+                _scope_sql, _scope_val = "ConversationId = %s", str(conversation_id)
+            else:
+                _scope_sql, _scope_val = "AccountId = %s", int(account_id or 0)
             cur.execute(
                 f"""
                 SELECT Id, ConversationId, OriginalFilename, Kind, MimeType,
                        SizeBytes, SizeBucket, UploadStatus, MetaJson
                 FROM WebConversationAttachments
-                WHERE Id IN ({placeholders}) AND AccountId = %s AND DeletedAt IS NULL AND DeletePending = 0
+                WHERE Id IN ({placeholders}) AND {_scope_sql} AND DeletedAt IS NULL AND DeletePending = 0
                 ORDER BY Id ASC
                 """,
-                tuple(int(i) for i in attachment_ids) + (int(account_id),),
+                tuple(int(i) for i in attachment_ids) + (_scope_val,),
             )
             rows = cur.fetchall() or []
         except Exception:
@@ -414,6 +436,14 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int], accou
     lines = ["", "## ATTACHED FILES (User-selected)"]
     if new_ids_set:
         lines.append("<!-- ★ = 이번 요청에 새로 첨부 | ◆ = 이전 세션에서 첨부 (LLM 컨텍스트 유지) -->")
+    # TASK-0284: 첨부 지칭 규칙 — LLM 이 답변에서 첨부를 일련번호(attachment_id)가 아닌 파일명으로
+    # 언급하도록 강제. attachment_id 는 내부 식별자라 사용자에게 혼란을 준다(사용자 보고).
+    lines.append(
+        "**REFER TO ATTACHMENTS BY FILENAME**: When you mention, cite, or discuss any attached file "
+        "in your answer, always refer to it by its filename (the quoted name shown below, e.g. "
+        '`"sales.csv"`). NEVER refer to a file by its `attachment_id` number — that is an internal '
+        "identifier and confuses the user. If multiple files share a name, add a short distinguishing detail."
+    )
     sandbox_table_specs: list[tuple[str, str, str]] = []  # (schema, table, source_label)
     text_content_entries: list[tuple[int, str, str, bool]] = []  # (attachment_id, filename, content, is_new)
     for row in rows:
@@ -440,7 +470,8 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int], accou
             rows_inserted = int(meta_obj.get("rows_inserted") or 0)
             if sandbox_schema and sandbox_table:
                 meta_text += f" rows={rows_inserted} sandbox=`{sandbox_schema}`.`{sandbox_table}`"
-                sandbox_table_specs.append((sandbox_schema, sandbox_table, f"attachment_id={attachment_id} (csv)"))
+                # TASK-0284: 파일명 우선 — 사용자/LLM 이 첨부를 일련번호가 아닌 파일명으로 지칭하도록.
+                sandbox_table_specs.append((sandbox_schema, sandbox_table, f'file "{filename}" (csv, attachment_id={attachment_id})'))
         elif kind == "xlsx":
             sheets = meta_obj.get("sheets") or []
             if isinstance(sheets, list) and sandbox_schema:
@@ -454,7 +485,8 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int], accou
                     if sh_table:
                         sheet_summaries.append(f"sheet=`{sh_name}` table=`{sandbox_schema}`.`{sh_table}` rows={sh_rows}")
                         sandbox_table_specs.append(
-                            (sandbox_schema, sh_table, f"attachment_id={attachment_id} sheet={sh_name}")
+                            # TASK-0284: 파일명 우선 (sheet 명 병기).
+                            (sandbox_schema, sh_table, f'file "{filename}" sheet={sh_name} (xlsx, attachment_id={attachment_id})')
                         )
                 if sheet_summaries:
                     meta_text += " " + "; ".join(sheet_summaries)
@@ -476,8 +508,10 @@ def _build_attachment_context_section(mem_conn, attachment_ids: list[int], accou
 
         # 신규 vs 세션 라벨 (NEW_ATTACHMENT_IDS 기반).
         source_label = " ★신규" if attachment_id in new_ids_set else " ◆세션"
+        # TASK-0284: 파일명을 맨 앞에 따옴표로 노출 — LLM 이 첨부를 attachment_id(일련번호)가 아닌
+        # 파일명으로 지칭하게 한다(사용자 혼란 방지). attachment_id 는 보조 참조로 괄호 안에 둔다.
         lines.append(
-            f"- attachment_id={attachment_id} kind={kind} file={filename} size={size_bucket} status={upload_status}{source_label}{meta_text}"
+            f'- file "{filename}" (attachment_id={attachment_id}) kind={kind} size={size_bucket} status={upload_status}{source_label}{meta_text}'
         )
 
     # text kind 파일 내용 주입 (TASK-0124).
@@ -600,6 +634,7 @@ def compose_system_prompt(
     role_id: int | None = None,
     account_id: int | None = None,
     product_mode: str = "pinned",
+    conversation_id: str | None = None,
 ) -> str:
     """Product → Role → Account 순으로 custom 시스템 프롬프트를 base 뒤에 append 한다.
 
@@ -764,7 +799,7 @@ def compose_system_prompt(
         if attachment_ids_raw:
             attachment_ids = [int(x) for x in attachment_ids_raw.split(",") if x.strip().lstrip("-").isdigit() and int(x) > 0]
             if attachment_ids:
-                section = _build_attachment_context_section(mem_conn, attachment_ids, account_id)
+                section = _build_attachment_context_section(mem_conn, attachment_ids, account_id, conversation_id)
                 if section:
                     parts.append(section)
     except Exception:
@@ -2613,6 +2648,7 @@ def _run_agent_core(
             role_id=role_id,
             account_id=account_id,
             product_mode=product_mode,
+            conversation_id=conversation_id,
         )
     except Exception:
         system_content = SYSTEM_PROMPT

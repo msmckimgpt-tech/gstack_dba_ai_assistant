@@ -424,3 +424,6 @@ source_of_truth: true
 
 ## (TASK-0256e) 첨부 파일 줄번호 주입 + diff 헌크 헤더
 첨부 텍스트/코드 파일 본문은 `_number_file_lines` 로 각 줄에 1-기반 `<N>→` 줄번호 prefix 를 붙여 모델에 주입한다(원본 무변경 — SQL 추출 등 다른 경로 무영향). "LINE NUMBERS & DIFFS" instruction 이 모델에게 prefix 는 참조용이며, diff 를 보일 때 실제 줄번호로 unified-diff 헌크 헤더(`@@ -N,M +N,M @@`)를 작성하고 prefix 는 코드에 넣지 말라고 지시한다. 웹 UI(buildDiffRows)가 그 헌크에서 gutter 줄번호를 표시 → 첨부 파일 실제 줄번호 추적(TASK-0256c 렌더와 결합).
+
+## (TASK-0284) 첨부 컨텍스트 주입 = 대화 단위 스코프 + 파일명 지칭
+`_build_attachment_context_section(mem_conn, attachment_ids, account_id=None, conversation_id=None)` 은 conversation_id 가 주어지면 그 대화(ConversationId/conversation_id) 스코프로 첨부를 조회한다 — 대화 접근권은 caller(app.py `/api/ask` 의 owner 게이트)가 보장하므로, 같은 대화를 fork/이어받아 소유 계정이 달라져도 첨부가 LLM 에 주입된다. conversation_id 미전달이면 AccountId 폴백, 둘 다 없으면 fail-closed("" 반환). `compose_system_prompt`·`_run_agent_core` 가 conversation_id 를 전파한다. 첨부 표현은 파일명을 맨 앞 따옴표로 노출(`- file "name" (attachment_id=..)`)하고 "REFER TO ATTACHMENTS BY FILENAME" 지침으로 모델이 일련번호 대신 파일명으로 지칭하게 한다.

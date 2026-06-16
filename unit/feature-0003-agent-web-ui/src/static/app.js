@@ -2938,7 +2938,9 @@ function renderMessages() {
           chip.title = "클릭하여 다운로드";
           chip.addEventListener("click", () => {
             const a = document.createElement("a");
-            a.href = att.signed_url;
+            // TASK-0284: 외부 머신 다운로드 — presigned(MinIO 내부 호스트) 대신 web 프록시 경로.
+            // 쿠키(same-origin) 인증이라 직접 네비게이션도 인증된다.
+            a.href = att.id ? `/api/attachments/${encodeURIComponent(att.id)}/download` : att.signed_url;
             a.download = att.name || "파일";
             a.rel = "noopener";
             document.body.appendChild(a);
@@ -5626,19 +5628,22 @@ async function _loadConversationAttachmentList(convId) {
       dlBtn.addEventListener("click", async () => {
         dlBtn.disabled = true;
         try {
-          const detail = await apiFetch(`/api/attachments/${encodeURIComponent(a.id)}`);
-          const url = detail?.signed_url;
-          if (url) {
-            const link = document.createElement("a");
-            link.href = url;
-            link.download = a.original_filename || "download";
-            link.target = "_blank";
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-          } else {
-            showToast("다운로드 URL을 가져올 수 없습니다.", true);
+          // TASK-0284: web 프록시 다운로드(외부 머신도 동작 — MinIO presigned 내부 호스트 회피).
+          // apiFetch 는 octet-stream 을 text 로 망가뜨리므로 raw fetch + blob 을 쓴다(same-origin 쿠키 인증).
+          const resp = await fetch(`/api/attachments/${encodeURIComponent(a.id)}/download`, { credentials: "same-origin" });
+          if (!resp.ok) {
+            showToast(resp.status === 403 ? "이 첨부를 다운로드할 권한이 없습니다." : "다운로드할 수 없습니다.", true);
+            return;
           }
+          const blob = await resp.blob();
+          const objUrl = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = objUrl;
+          link.download = a.original_filename || "download";
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
         } catch (e) {
           showToast("다운로드 중 오류가 발생했습니다.", true);
         } finally {

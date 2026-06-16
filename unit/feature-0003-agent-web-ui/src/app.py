@@ -8751,7 +8751,7 @@ def _prepare_vision_inline_images(
     try:
         from web.modules import attachment_pg_mirror as _apm
         if _apm.read_pg_enabled():
-            rows = _apm.pg_select_vision_images(int(account_id), attachment_ids, int(_VISION_IMAGE_COUNT_CAP))
+            rows = _apm.pg_select_vision_images(conversation_id, int(account_id), attachment_ids, int(_VISION_IMAGE_COUNT_CAP))
     except Exception:
         rows = None
         logging.getLogger(__name__).warning(
@@ -8761,15 +8761,20 @@ def _prepare_vision_inline_images(
             cur = conn.cursor(dictionary=True)
             try:
                 placeholders = ", ".join(["%s"] * len(attachment_ids))
-                # TASK-0132 (#8 IDOR): AccountId 스코프 — 이전엔 Id IN(...) 만이라 타 계정 첨부
-                # ID 를 주입하면 그 이미지 bytes 가 본인 대화에 inject 됐다. 인증 account 로 한정.
-                params = tuple(int(i) for i in attachment_ids) + (int(account_id), int(_VISION_IMAGE_COUNT_CAP))
+                # TASK-0284: ConversationId 스코프(대화 접근권은 ask 핸들러가 게이트), 미전달 시 AccountId 폴백.
+                # 타 대화 첨부 id 주입은 ConversationId 불일치로 차단(IDOR 안전망 유지) — TASK-0132 의
+                # "타 계정 첨부 inject 차단" 의도를 대화 단위로 일반화한다.
+                if conversation_id:
+                    _sc_col, _sc_val = "ConversationId", str(conversation_id)
+                else:
+                    _sc_col, _sc_val = "AccountId", int(account_id)
+                params = tuple(int(i) for i in attachment_ids) + (_sc_val, int(_VISION_IMAGE_COUNT_CAP))
                 cur.execute(
                     f"""
                     SELECT Id, ObjectKey, MimeType, OriginalFilename, SizeBytes, SizeBucket
                     FROM WebConversationAttachments
                     WHERE Id IN ({placeholders})
-                      AND AccountId = %s
+                      AND {_sc_col} = %s
                       AND Kind = 'image'
                       AND DeletedAt IS NULL
                       AND DeletePending = 0
@@ -8879,7 +8884,7 @@ def _prepare_text_inline_attachments(
     try:
         from web.modules import attachment_pg_mirror as _apm
         if _apm.read_pg_enabled():
-            rows = _apm.pg_select_text_inline(int(account_id), attachment_ids, _TEXT_INLINE_COUNT_CAP)
+            rows = _apm.pg_select_text_inline(conversation_id, int(account_id), attachment_ids, _TEXT_INLINE_COUNT_CAP)
     except Exception:
         rows = None
         logging.getLogger(__name__).warning(
@@ -8888,16 +8893,21 @@ def _prepare_text_inline_attachments(
         try:
             cur = conn.cursor(dictionary=True)
             placeholders = ", ".join(["%s"] * len(attachment_ids))
+            # TASK-0284: ConversationId 스코프(대화 접근권은 ask 핸들러가 게이트), 미전달 시 AccountId 폴백.
+            if conversation_id:
+                _sc_col, _sc_val = "ConversationId", str(conversation_id)
+            else:
+                _sc_col, _sc_val = "AccountId", int(account_id)
             cur.execute(
                 f"SELECT Id, OriginalFilename, ObjectKey, Kind, SizeBytes, AccountId "
                 f"FROM WebConversationAttachments "
-                f"WHERE Id IN ({placeholders}) AND AccountId = %s AND Kind = 'text' "
+                f"WHERE Id IN ({placeholders}) AND {_sc_col} = %s AND Kind = 'text' "
                 f"AND UploadStatus = 'uploaded' AND DeletedAt IS NULL AND DeletePending = 0 "
                 # count cap 초과 시 가장 최근(=방금 첨부한) 파일을 보존하도록 DESC. 이전엔 ASC 라
                 # 한 대화에 cap(20) 초과 첨부 시 방금 올린 파일이 조용히 누락됐다(사용자 불만).
                 f"ORDER BY Id DESC LIMIT %s",
-                # TASK-0132 (#8 IDOR): AccountId 스코프 — 타 계정 text 첨부 내용 inject 차단.
-                tuple(int(i) for i in attachment_ids) + (int(account_id), _TEXT_INLINE_COUNT_CAP),
+                # TASK-0284: 타 대화 text 첨부 inject 차단(ConversationId), TASK-0132 의 계정 단위 가드를 대화 단위로 일반화.
+                tuple(int(i) for i in attachment_ids) + (_sc_val, _TEXT_INLINE_COUNT_CAP),
             )
             rows = cur.fetchall() or []
             cur.close()
@@ -8915,10 +8925,12 @@ def _prepare_text_inline_attachments(
         size_bytes = int(row.get("SizeBytes") or 0)
         if not object_key:
             continue
-        # owner 검증 — AccountId 일치 필요 (D16 정합)
-        row_account_id = int(row.get("AccountId") or 0)
-        if row_account_id != account_id:
-            continue
+        # TASK-0284: account 폴백 경로에서만 AccountId 재검증(D16). conversation 스코프(기본)는 SQL
+        # WHERE ConversationId 가 이미 보장하므로, 같은 대화에 타 계정이 올린 첨부도 정상 주입한다.
+        if not conversation_id:
+            row_account_id = int(row.get("AccountId") or 0)
+            if row_account_id != account_id:
+                continue
         # size cap — 큰 파일은 skip (prompt overflow 방지)
         if size_bytes > _TEXT_INLINE_SIZE_CAP_BYTES:
             # 용량 초과 파일은 잘려서 주입 (앞 64KB 만)
@@ -9604,12 +9616,17 @@ async def ask(request: Request) -> JSONResponse:
         if attachment_ids_clean:
             try:
                 _placeholders = ", ".join(["%s"] * len(attachment_ids_clean))
+                # TASK-0284: ConversationId 스코프(대화에 속한 csv/xlsx 만 ingest), 미결정 시 AccountId 폴백.
+                if conv_id:
+                    _pi_col, _pi_val = "ConversationId", str(conv_id)
+                else:
+                    _pi_col, _pi_val = "AccountId", int(account["id"])
                 _pending_cur = conn.cursor(dictionary=True)
                 _pending_cur.execute(
                     f"SELECT Id, ConversationId, ObjectKey, Kind FROM WebConversationAttachments "
-                    f"WHERE Id IN ({_placeholders}) AND AccountId = %s AND UploadStatus IN ('uploaded','failed') "
+                    f"WHERE Id IN ({_placeholders}) AND {_pi_col} = %s AND UploadStatus IN ('uploaded','failed') "
                     f"AND Kind IN ('csv','xlsx') AND DeletedAt IS NULL AND DeletePending = 0 LIMIT 10",
-                    tuple(attachment_ids_clean) + (int(account["id"]),),  # TASK-0132 (#8 IDOR)
+                    tuple(attachment_ids_clean) + (_pi_val,),
                 )
                 _pending_rows = _pending_cur.fetchall() or []
                 _pending_cur.close()
@@ -9658,7 +9675,7 @@ async def ask(request: Request) -> JSONResponse:
                     if _apm.read_pg_enabled():
                         _sb_rows = [
                             (_m,) for _m in _apm.pg_select_ingested_meta(
-                                int(account["id"]), attachment_ids_clean)
+                                conv_id, int(account["id"]), attachment_ids_clean)
                         ]
                 except Exception:
                     _sb_rows = None
@@ -9666,14 +9683,19 @@ async def ask(request: Request) -> JSONResponse:
                         "ask: sandbox allowlist PG read failed → MySQL fallback", exc_info=True)
                 if _sb_rows is None:
                     _sb_placeholders = ", ".join(["%s"] * len(attachment_ids_clean))
+                    # TASK-0284: ConversationId 스코프(대화 접근권은 ask 가 게이트), 미결정 시 AccountId 폴백.
+                    if conv_id:
+                        _sb_col, _sb_val = "ConversationId", str(conv_id)
+                    else:
+                        _sb_col, _sb_val = "AccountId", int(account["id"])
                     _sb_cur = conn.cursor()
                     _sb_cur.execute(
                         f"SELECT MetaJson FROM WebConversationAttachments "
-                        f"WHERE Id IN ({_sb_placeholders}) AND AccountId = %s AND UploadStatus = 'ingested' "
+                        f"WHERE Id IN ({_sb_placeholders}) AND {_sb_col} = %s AND UploadStatus = 'ingested' "
                         f"AND Kind IN ('csv','xlsx') AND DeletedAt IS NULL",
-                        # TASK-0132 (#8 IDOR): 타 계정 ingested 첨부의 sandbox 스키마를 allowlist 에
-                        # 추가하지 못하도록 AccountId 한정 (sandbox 교차테넌트 접근 차단).
-                        tuple(attachment_ids_clean) + (int(account["id"]),),
+                        # TASK-0284: 타 대화 ingested 첨부의 sandbox 스키마를 allowlist 에 추가하지 못하도록
+                        # ConversationId 한정 (sandbox 교차-대화 접근 차단 — TASK-0132 의 계정 가드를 대화 단위로 일반화).
+                        tuple(attachment_ids_clean) + (_sb_val,),
                     )
                     _sb_rows = _sb_cur.fetchall() or []
                     _sb_cur.close()
@@ -13401,6 +13423,77 @@ def get_attachment_metadata(attachment_id: int, request: Request) -> JSONRespons
             payload["bytes_access_denied"] = True
             payload["bytes_access_denied_reason"] = "승인 대기 계정은 첨부 본문을 다운로드할 수 없습니다."
         return JSONResponse(payload)
+    finally:
+        conn.close()
+
+
+@app.get("/api/attachments/{attachment_id}/download")
+def download_attachment(attachment_id: int, request: Request):
+    """TASK-0284: 첨부 본문을 web FastAPI 가 직접 프록시 스트리밍한다.
+
+    배경: presigned(signed) URL 은 MinIO 내부 endpoint(`minio:9000`) 호스트가 박혀 외부 머신
+    브라우저가 열 수 없었다(사용자 보고: 외부에서 다운로드 불가). ADR-0022 설계 의도("MinIO 는
+    compose 내부망만 노출, 외부는 web 을 통해 다운로드")를 본 라우트가 구현한다 — 같은 출처(앱
+    도메인)로 본문을 내려주므로 앱에 접근 가능한 외부 머신이면 다운로드된다.
+
+    권한은 get_attachment_metadata 와 동형(`_account_can_access_attachment` own/any), 승인 대기
+    계정은 본문 차단(D21). 보안: 원본 mime 대신 octet-stream + `Content-Disposition: attachment`
+    + nosniff 로 inline 렌더/XSS 를 차단한다(이미지 서빙 12710 의 nosniff 선례 동형)."""
+    try:
+        from web.modules import storage_minio
+    except Exception as exc:
+        return _json_error(f"storage 모듈 import 실패: {exc}", 500)
+
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        row = _load_attachment_row(conn, attachment_id)
+        if not _account_can_access_attachment(
+            conn,
+            account,
+            row,
+            "conversation.attachment.read.own",
+            "conversation.attachment.read.any",
+        ):
+            return _json_error("첨부를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        if _account_is_pending(account):
+            return _json_error("승인 대기 계정은 첨부 본문을 다운로드할 수 없습니다.", 403)
+        object_key = str((row or {}).get("ObjectKey") or "")
+        if not object_key:
+            return _json_error("첨부 본문을 찾을 수 없습니다.", 404)
+        try:
+            data = storage_minio.get_object_bytes(object_key)
+        except (storage_minio.StorageConfigError, storage_minio.StorageOperationError):
+            return _json_error("첨부 본문을 가져올 수 없습니다.", 502)
+
+        from starlette.responses import Response as _Resp
+        from urllib.parse import quote as _quote
+        filename = str((row or {}).get("OriginalFilename") or "download")
+        # Content-Disposition: ASCII fallback + RFC5987 비-ASCII(UTF-8) filename*.
+        # REV-20260616-0291 MINOR 흡수: 따옴표 + 모든 비출력 제어문자(CR/LF 포함)를 제거해 헤더
+        # 인젝션을 차단(OriginalFilename 은 업로드 시 .strip() 만 거쳐 CRLF 가 남을 수 있음).
+        # filename*(아래)는 percent-encoding 이라 이미 안전하나, ascii_fallback 도 방어적으로 정제한다.
+        ascii_fallback = filename.encode("ascii", "ignore").decode("ascii").replace('"', "")
+        ascii_fallback = "".join(c for c in ascii_fallback if c.isprintable()).strip() or "download"
+        disposition = (
+            f'attachment; filename="{ascii_fallback}"; '
+            f"filename*=UTF-8''{_quote(filename, safe='')}"
+        )
+        return _Resp(
+            content=data,
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": disposition,
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "private, no-store",
+            },
+        )
     finally:
         conn.close()
 
