@@ -276,7 +276,7 @@ def test_endpoint_requires_console_access(monkeypatch):
 
 
 def test_endpoint_product_not_found(monkeypatch):
-    acct = {"id": 1, "permissions": {"console.access": True}}
+    acct = {"id": 1, "permissions": {"console.access": True, "product.read": True}}  # TASK-0288: db-insights = product.read|manage
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (acct, None))
     _patch_products(monkeypatch, [])
@@ -285,7 +285,7 @@ def test_endpoint_product_not_found(monkeypatch):
 
 
 def test_endpoint_unbound_datasource_rejected(monkeypatch):
-    acct = {"id": 1, "permissions": {"console.access": True}}
+    acct = {"id": 1, "permissions": {"console.access": True, "product.read": True}}  # TASK-0288: db-insights = product.read|manage
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (acct, None))
     _patch_products(monkeypatch, [{"id": 1, "datasource_key": "main_mysql"}])
@@ -298,7 +298,7 @@ def test_endpoint_unbound_datasource_rejected(monkeypatch):
 
 
 def test_endpoint_ok_shape(monkeypatch):
-    acct = {"id": 1, "permissions": {"console.access": True}}
+    acct = {"id": 1, "permissions": {"console.access": True, "product.read": True}}  # TASK-0288: db-insights = product.read|manage
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (acct, None))
     _patch_products(monkeypatch, [{"id": 1, "datasource_key": "main_mysql"}])

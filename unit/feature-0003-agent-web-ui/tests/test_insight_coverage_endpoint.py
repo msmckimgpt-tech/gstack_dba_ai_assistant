@@ -61,7 +61,8 @@ def _body(resp):
 
 def _install(monkeypatch, products, *, computed_log=None):
     """엔드포인트 의존성 monkeypatch. computed_log 가 주어지면 계산된 pid 를 기록(호출 추적)."""
-    acct = {"id": 1, "permissions": {"console.access": True}}
+    # TASK-0288: 제품 구성 조회(insight-coverage)는 product.read|manage 게이트.
+    acct = {"id": 1, "permissions": {"console.access": True, "product.read": True}}
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (acct, None))
     monkeypatch.setattr(app, "_list_products", lambda conn, include_inactive=False: list(products))

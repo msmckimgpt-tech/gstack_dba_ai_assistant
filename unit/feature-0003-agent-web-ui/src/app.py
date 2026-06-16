@@ -379,6 +379,17 @@ PERMISSION_DEFINITIONS = (
     #   + (3) sql_guard AST 가드. 이 권한 제거 후에도 위 3중 방어선은 그대로 유효(런타임
     #   동작 무변경 — 교차계정 경로는 이미 계정-스코프 allowlist 가 차단). 기존 DB
     #   WebRolePermissions 행은 _cleanup_deprecated_role_permissions 가 멱등 정리한다.
+    # TASK-0288: 제품 권한을 read/manage 2단으로 분리(사용자 결정 2026-06-16).
+    # `product.read` = 관리 콘솔에서 제품 구성(목록·접근DB·바인딩) **조회**.
+    # `product.manage` = 제품 구성 **수정**(생성/삭제/스키마/프롬프트). manage ⊇ read (superset).
+    # 작업 화면에서 제품으로 요청을 보내는 권한은 별개 축 — 동적 `product.access.<key>`
+    # (group='product_access'). 두 축은 enforcement·권한 편집기 그룹 모두 분리한다.
+    {
+        "code": "product.read",
+        "label": "제품 조회",
+        "description": "관리 콘솔에서 제품(Product) 구성(목록·접근 DB·데이터소스 바인딩 현황)을 조회할 수 있다.",
+        "group": "product",
+    },
     {
         "code": "product.manage",
         "label": "제품 관리",
@@ -390,6 +401,24 @@ PERMISSION_DEFINITIONS = (
         "label": "역할/계정 시스템 프롬프트 관리",
         "description": "모든 역할 또는 다른 계정의 시스템 프롬프트를 수정할 수 있다. 본인 계정의 프롬프트는 이 권한 없이도 수정 가능하다.",
         "group": "product",
+    },
+    # TASK-0288 (REQ-20260616-0288, Critical §12.3): 데이터소스 전용 권한 2건.
+    # 기존엔 datasource 조회/관리가 console.access / console.manage 만으로 게이팅돼,
+    # 콘솔 진입권만 있으면 datasource 목록(좌표·바인딩 현황)이 무조건 노출되고 탭도
+    # 숨길 수 없었다(전용 권한 부재). read/manage 2단 분리 — `.read` 는 목록·구성 조회,
+    # `.manage` 는 생성/수정/삭제/연결테스트. admin auto-grant(set(PERMISSION_CODES)) +
+    # _ensure_seed_roles catchup(아래)으로 기존 배포 admin 역할 backfill.
+    {
+        "code": "datasource.read",
+        "label": "데이터소스 조회",
+        "description": "등록된 데이터소스 목록과 구성(엔진/호스트/바인딩 현황, 비밀번호 제외)을 조회할 수 있다.",
+        "group": "datasource",
+    },
+    {
+        "code": "datasource.manage",
+        "label": "데이터소스 관리",
+        "description": "데이터소스를 생성/수정/삭제하고 연결 테스트를 수행할 수 있다(자격증명 암호화 저장).",
+        "group": "datasource",
     },
     # TASK-0073 Phase A3 (REQ-20260519-0001, Critical §12.3): audit 권한 4건.
     # `.own` 은 모든 role (dba 포함) auto-grant — 본인 actor/target audit row 조회.
@@ -450,7 +479,8 @@ def _resolve_permission_catalog(conn=None) -> tuple[list[dict[str, Any]], set[st
     union 해서 반환한다. conn 이 None 이면 기존 정적 결과만 (테스트/bootstrap-time 안전망).
 
     동적 row 는 product CRUD 가 관리하는 `product.access.<product_key>` 형태이며
-    GroupName='product', IsDynamic=1, ProductId=<WebProducts.Id>.
+    GroupName='product_access'(TASK-0288: 작업 화면 제품 사용 — 관리 콘솔 제품 관리 'product'와 분리),
+    IsDynamic=1, ProductId=<WebProducts.Id>.
     """
     static_defs = list(PERMISSION_DEFINITIONS)
     static_codes = set(PERMISSION_CODES)
@@ -1179,6 +1209,13 @@ def _account_permissions(account: dict[str, Any] | None) -> dict[str, bool]:
 def _account_has_permission(account: dict[str, Any] | None, permission: str) -> bool:
     permissions = _account_permissions(account)
     return bool(permissions.get(permission))
+
+
+def _account_has_any_permission(account: dict[str, Any] | None, *permissions: str) -> bool:
+    """주어진 권한 중 하나라도 보유하면 True. read/manage superset 게이팅에 사용
+    (TASK-0288: GET 조회는 `.read` 또는 `.manage` 보유 시 허용 — manage ⊇ read)."""
+    perms = _account_permissions(account)
+    return any(bool(perms.get(code)) for code in permissions)
 
 
 def _account_has_product_access(
@@ -1968,6 +2005,12 @@ def _ensure_seed_roles(conn) -> None:
             "insight.reset",
             # TASK-0273: admin 의 보관 대화 조회 권한 catchup (오용 방지 감사 — 운영자 전용).
             "conversation.archive.read.any",
+            # TASK-0288: admin 의 데이터소스 read/manage + 제품 read catchup. **필수** —
+            # 미보정 시 신규 게이트 적용 후 기존 admin 역할이 datasource 관리권/제품 조회권을
+            # 잃는다(lockout). product.manage 는 기존 catchup 에 이미 포함됨.
+            "datasource.read",
+            "datasource.manage",
+            "product.read",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -2265,12 +2308,21 @@ def _ensure_product_access_permissions(conn) -> int:
 
     동작:
     1. 모든 WebProducts row 에 대해 `product.access.<key>` 권한이 WebPermissions 에 없으면 INSERT.
-       IsDynamic=1, ProductId=<product_id>, GroupName='product'.
+       IsDynamic=1, ProductId=<product_id>, GroupName='product_access' (TASK-0288).
     2. D2-A backfill: 신규 추가된 권한을 모든 WebRoles row 에 INSERT IGNORE WebRolePermissions.
        기존 운영 호환성 유지 (briefing §4 Phase 1B 단계).
     Returns: backfill 로 인해 추가된 (permission row + role-permission row) 합계 — 운영 transparency 용 카운트.
     """
     added_total = 0
+    # TASK-0288: 기존 배포의 동적 제품 접근 권한을 'product'(제품 관리) → 'product_access'(제품 사용)
+    # 그룹으로 멱등 이전. enforce 무관(group=UI 메타) — 권한 편집기에서 작업 화면 사용 vs 관리 콘솔
+    # 구성 권한을 분리 표시하기 위함. IsDynamic=1 로 정적 product.read/manage 와 구분.
+    _mig_cur = conn.cursor()
+    _mig_cur.execute(
+        "UPDATE WebPermissions SET GroupName = 'product_access' "
+        "WHERE IsDynamic = 1 AND Code LIKE 'product.access.%' AND GroupName <> 'product_access'"
+    )
+    _mig_cur.close()
     cur = conn.cursor(dictionary=True)
     # TASK-0053: product 자체가 DefaultRoleAccess 정책의 주체. 1=모든 role 자동 grant, 0=명시 grant 만.
     cur.execute("SELECT Id, ProductKey, Name, DefaultRoleAccess FROM WebProducts ORDER BY Id")
@@ -2297,7 +2349,9 @@ VALUES (%s, %s, %s, %s, %s, %s)
                 code,
                 f"제품 접근 — {product_name}",
                 f"이 계정은 {product_key} 제품에 접근할 수 있습니다 (대화 생성·pin·system prompt 읽기).",
-                "product",
+                # TASK-0288: 작업 화면 제품 사용 권한은 별도 그룹(product_access)으로 분리.
+                # 관리 콘솔 제품 구성 권한(product.read/manage, group='product')과 구분.
+                "product_access",
                 1,
                 product_id,
             ),
@@ -11184,6 +11238,11 @@ async def admin_list_datasources(request: Request) -> JSONResponse:
     if not _account_has_permission(actor, "console.access"):
         conn.close()
         return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    # TASK-0288: 데이터소스 조회 전용 권한 게이트 (read 또는 manage). 기존엔 console.access 만
+    # 검사해 콘솔 진입권만 있으면 datasource 목록(좌표·바인딩 현황)이 무조건 노출됐다.
+    if not _account_has_any_permission(actor, "datasource.read", "datasource.manage"):
+        conn.close()
+        return _json_error("데이터소스 조회 권한이 필요합니다.", 403)
     try:
         # B3: host/port/engine/default_db 만 노출. **user/password 절대 비노출**(enumeration·누출 회피).
         # has_password=bool 만(평문/복호값 echo 금지). source=db/env(DB 우선 override 가시화, N1).
@@ -11399,6 +11458,10 @@ async def admin_list_product_datasources(product_id: int, request: Request) -> J
     if not _account_has_permission(actor, "console.access"):
         conn.close()
         return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    # TASK-0288: 제품 구성 조회 권한(read|manage).
+    if not _account_has_any_permission(actor, "product.read", "product.manage"):
+        conn.close()
+        return _json_error("제품 조회 권한이 필요합니다.", 403)
     try:
         cur = conn.cursor()
         try:
@@ -11598,6 +11661,10 @@ async def admin_test_datasource(key: str, request: Request) -> JSONResponse:
     if not _account_has_permission(actor, "console.access"):
         conn.close()
         return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    # TASK-0288: 연결 테스트는 datasource 관리 동작(자격증명 검증·서버 probe) — manage 권한.
+    if not _account_has_permission(actor, "datasource.manage"):
+        conn.close()
+        return _json_error("데이터소스 관리 권한이 필요합니다.", 403)
     try:
         ds = _dsr.resolve(conn, str(key).strip().lower())
     finally:
@@ -11772,10 +11839,12 @@ async def _ds_write_common(request, require_manage=True):
     if error:
         conn.close()
         return None, None, None, error
-    need = ["console.access"] + (["console.manage"] if require_manage else [])
+    # TASK-0288: datasource CRUD 는 datasource.manage 전용 권한. 기존 console.access+console.manage
+    # 게이트에 datasource.manage 를 추가(require_manage 경로). 미보유 시 403.
+    need = ["console.access"] + (["console.manage", "datasource.manage"] if require_manage else [])
     if not all(_account_has_permission(actor, p) for p in need):
         conn.close()
-        return None, None, None, _json_error("관리 콘솔 수정 권한(console.manage)이 필요합니다.", 403)
+        return None, None, None, _json_error("데이터소스 관리 권한(datasource.manage)이 필요합니다.", 403)
     try:
         body_raw = await request.body()
         data = (await request.json()) if body_raw else {}
@@ -12098,7 +12167,7 @@ async def admin_delete_datasource(key: str, request: Request) -> JSONResponse:
 
 @app.get("/api/admin/datasources/{key}/databases")
 async def admin_datasource_databases(key: str, request: Request) -> JSONResponse:
-    """datasource 서버의 DB 목록(제품별 참조 DB 선택용, TASK-0205 §2.4). console.manage. SSRF 차단."""
+    """datasource 서버의 DB 목록(제품별 참조 DB 선택용, TASK-0205 §2.4). datasource.read. SSRF 차단."""
     from modules import datasources as _dsr
     from modules import db as _db
     try:
@@ -12109,9 +12178,11 @@ async def admin_datasource_databases(key: str, request: Request) -> JSONResponse
     if error:
         conn.close()
         return error
-    if not (_account_has_permission(actor, "console.access") and _account_has_permission(actor, "console.manage")):
+    # TASK-0288: datasource 의 DB 목록 조회 — datasource.read(또는 manage). 기존 console.manage 대체.
+    if not (_account_has_permission(actor, "console.access")
+            and _account_has_any_permission(actor, "datasource.read", "datasource.manage")):
         conn.close()
-        return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+        return _json_error("데이터소스 조회 권한이 필요합니다.", 403)
     try:
         ds = _dsr.resolve(conn, str(key).strip().lower())
     finally:
@@ -16019,6 +16090,12 @@ def admin_list_products(request: Request) -> JSONResponse:
     if not _account_has_permission(account, "console.access"):
         conn.close()
         return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    # TASK-0288: 관리 콘솔 제품 구성 **조회** 권한 게이트(read 또는 manage). 기존엔 console.access 만
+    # 검사해 제품 관리 권한 없이도 제품 목록·접근 DB·시스템 프롬프트 구성이 노출됐다(③ 결함).
+    # 작업 화면 제품 사용(product.access.<key>)과는 별개 축 — 여기선 관리 콘솔 구성 조회만 게이팅.
+    if not _account_has_any_permission(account, "product.read", "product.manage"):
+        conn.close()
+        return _json_error("제품 조회 권한이 필요합니다.", 403)
     products = _list_products(conn, include_inactive=True)
     for p in products:
         p["databases"] = _list_product_databases(conn, int(p["id"]))
@@ -16383,6 +16460,10 @@ def admin_products_insight_coverage(request: Request) -> JSONResponse:
     if not _account_has_permission(account, "console.access"):
         conn.close()
         return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    # TASK-0288: 제품 구성 조회 권한(read|manage) — coverage 배지는 제품 탭 표면.
+    if not _account_has_any_permission(account, "product.read", "product.manage"):
+        conn.close()
+        return _json_error("제품 조회 권한이 필요합니다.", 403)
     try:
         raw_pid = request.query_params.get("product_id")
         only_pid = None
@@ -16653,6 +16734,10 @@ def admin_product_db_insights(product_id: int, request: Request) -> JSONResponse
     if not _account_has_permission(account, "console.access"):
         conn.close()
         return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+    # TASK-0288: 제품 구성 조회 권한(read|manage).
+    if not _account_has_any_permission(account, "product.read", "product.manage"):
+        conn.close()
+        return _json_error("제품 조회 권한이 필요합니다.", 403)
     try:
         products = _list_products(conn, include_inactive=True)
         product = next((p for p in products if int(p["id"]) == int(product_id)), None)
@@ -17134,7 +17219,7 @@ VALUES (%s, %s, %s, %s, %s, %s)
                 permission_code,
                 f"제품 접근 — {name}",
                 f"이 계정은 {product_key} 제품에 접근할 수 있습니다 (대화 생성·pin·system prompt 읽기).",
-                "product",
+                "product_access",  # TASK-0288: 작업 화면 제품 사용 권한 그룹.
                 1,
                 new_id,
             ),

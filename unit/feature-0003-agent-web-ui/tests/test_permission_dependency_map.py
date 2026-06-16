@@ -175,16 +175,21 @@ def test_v2_master_gate_off_collapses_manage_section():
     vis = compute_visibility(set(), all_codes)
     assert vis["console.access"], "console.access(루트)는 항상 visible"
     # 관리 권한 비루트 권한은 전부 hidden
+    # TASK-0288: datasource.read/manage·product.read/manage·system_prompt.manage.role.any 추가 —
+    #   데이터소스/제품 관리 그룹이 관리 권한 section 으로 이동, console.access 마스터 게이트 하위로 종속.
     for code in (
         "console.manage", "console.usage.read", "insight.reset",
         "account.read", "account.update", "account.delete",
         "role.read", "role.create", "role.permission.manage",
+        "datasource.read", "datasource.manage",
+        "product.read", "product.manage", "system_prompt.manage.role.any",
         "audit.read.own", "audit.read.any", "audit.purge",
         "system_prompt.global.read", "system_prompt.global.write",
     ):
         assert not vis[code], f"게이트 OFF 인데 {code} 가 보임"
-    # 운영 권한 루트(TASK-0269: create / list.own / list.any / product.manage)는 게이트 없이 visible
-    for code in ("conversation.create", "conversation.list.own", "conversation.list.any", "product.manage"):
+    # 운영 권한 루트(TASK-0269: create / list.own / list.any)는 게이트 없이 visible.
+    # TASK-0288: product.manage 는 운영 루트가 아님 — 제품 관리(product.read 게이트, console.access 하위)로 이동.
+    for code in ("conversation.create", "conversation.list.own", "conversation.list.any"):
         assert vis[code], f"운영 루트 {code} 가 숨겨짐"
     # 동작 권한은 "목록 조회" 게이트 OFF 라 hidden (read.own→list.own, read.any→list.any)
     assert not vis["conversation.read.own"], "list.own OFF 인데 read.own 가 보임"

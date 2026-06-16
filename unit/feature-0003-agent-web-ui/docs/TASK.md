@@ -3972,3 +3972,15 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 테스트: test_task0284_attachment_access.py 9(scope clause·pg_select 3 conversation 스코프·account 폴백·다운로드 라우트 등록/보안계약) + make test 컨테이너 전체 회귀 0 + py_compile + node --check
 - [ ] outside-voice 적대 보안 리뷰(RBAC/IDOR) 흡수(REV-20260616-0291)
 - [ ] 머지 → 배포(web + ask-worker 재빌드 — agent_core 변경) → 라이브 검증(cross-account 주입·외부 다운로드·파일명 답변) → PB-0008
+
+### TASK-0288 — 권한 회수 미반영 RBAC 결함 4종 수정 + '제품' 권한 2축 분리 (Critical §12.3, 2026-06-16)
+- 사용자 보고: 특정 계정에게 권한을 회수해도 여전히 UI·정보 접근 가능 — ① 관리 콘솔 탭(계정·역할·제품·데이터소스·설정)이 권한과 무관하게 모두 노출 ② 감사 로그가 다른 계정 것도 보임 ③ 제품 관리 권한 없이 제품 조회 가능 ④ 데이터소스는 전용 권한 자체가 부재해 항상 노출(치명).
+- 사용자 추가 결정(2026-06-16, AskUserQuestion): (a) 데이터소스 권한 read/manage 2단 분리. (b) '제품' 권한을 작업 화면 사용(product.access.*) ↔ 관리 콘솔 구성(product.read/manage) 2축 분리 + read/manage 쪼개기.
+- 라이브 재현(테스트 계정 id=29, console.access+audit.read.own 보유): `GET /api/admin/products`→200(8건, ③ 결함), `/api/admin/datasources`→200(148건, ④ 결함), `/accounts`·`/roles`·`/system-prompts`→403(정상). 감사로그 scope=own·본인 target row만·facet=self만(② 백엔드 정상 — "다른 계정 로그"는 테스트 계정이 audit.read.any[admin/dba 자동부여] 실보유 시).
+- [x] 백엔드 카탈로그: `datasource.read`/`datasource.manage`(group='datasource') + `product.read`(group='product') 신설. 동적 `product.access.*` group 'product'→'product_access' 신규등록+멱등 마이그레이션 UPDATE.
+- [x] 백엔드 게이팅: datasource GET=`_account_has_any_permission(read,manage)` + databases GET=read|manage + test=manage + `_ds_write_common` need 에 datasource.manage. product GET(list/insight-coverage/db-insights/datasources)=read|manage.
+- [x] 백엔드 catchup: admin 역할에 datasource.read/manage·product.read backfill(lockout 방지, TASK-0047 류).
+- [x] 프론트 admin.js: `applyAdminTabVisibility()` 전 탭 게이팅(ADMIN_TAB_PERMISSIONS) + 그룹 라벨/구분선 숨김 + 활성탭 fallback. 권한 편집기 그룹 재배선(datasource·product 관리권 section, product_access 운영권 section) + 종속성 + 동적카드 product_access 재타겟. datasource 탭 관리버튼 datasource.manage 게이트. 캐시버스터 `?v=20260616-task0288-rbac-gating`.
+- [x] 테스트: jsdom `verify_admin_tab_gating.mjs` 34 PASS + make test 컨테이너 전체 회귀 0(영향 테스트 4개 신규 계약 갱신: test_datasource_delete·test_db_insights·test_insight_coverage·test_permission_dependency_map) + node --check + py ast.parse.
+- [x] outside-voice 적대 보안 리뷰 SHIP(REV-20260616-0299) — bypass·lockout·superset·group 마이그레이션 enforce-무관·override 회수·IDOR 7항목 코드대조 안전. MINOR 2(datasource 탭 버튼 게이트 정합[흡수]·product-datasource 바인딩 console.manage 유지[accepted])+NIT 1(docstring[흡수]).
+- [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → 라이브 재검증(테스트계정 products/datasources 403 전환·탭 숨김) → PB-0008 Windows-browser 시각검증 → 마감.
