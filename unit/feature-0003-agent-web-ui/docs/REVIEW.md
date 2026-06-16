@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260616T100304-ai-claude-conv-entry-defaults [SKIPPED:frontend-ui-entry-defaults-no-backend-no-rbac]
+- Date: 2026-06-16 (TASK-20260616T100304-conv-entry-defaults — 작업 화면 첫 진입 기본값: 타 계정 대화 접힘 + 빈 대화 화면)
+- Skip 사유: frontend-only(`src/static/app.js` + `index.html` 캐시버스터 + 신규 jsdom-less 회귀 테스트). 백엔드/RBAC/스키마/엔드포인트/SQL 무변경 — 적대적 보안/데이터 리뷰 패널 트리거(§18.8) 비해당. 변경은 ① localStorage seed 1회 + ② 클라이언트 자동선택 게이트로, 서버 권한 경계(대화 접근권은 `/api/conversations`·`/api/history`·`/api/use_conversation` 의 기존 게이트 불변)에 영향 0.
+- 자체 검토:
+  - **요구1 (타 계정 대화 접힘)**: `_seedOthersCollapsedOnce()` 는 seed 플래그(`mad.othersCollapsedSeed.v1`) 부재 시에만 1회 `__others__` 를 접힘 set 에 추가·영속한다. date 그룹 토글과 독립이고, 사용자가 펼치면 `collapsedDateGroups` 에서 제거되어 영속되므로 다음 진입에 재접힘을 강제하지 않는다(선호 존중). 접힘은 표시 전용 — 타 계정 대화 노출 권한 자체는 불변(접혀도 RBAC 경계 동일).
+  - **요구2 (빈 대화 화면)**: `loadConversations` 의 신규 `allowCurrentFallback` 는 **initializeWorkspace 의 fresh 진입에서만 false**. 다른 모든 호출자(createConversation/delete/refresh 등)는 default `true` 라 무회귀. 회귀 위험 2건 명시 차단 — (a) deep-link `?conversation=`(TASK-0263)은 `allowCurrentFallback=true` 유지, (b) 진행 중 요청 resume(TASK-0041)은 서버 current 가 `is_processing` 이면 그 대화를 `_preferCid` 로 선택(preferredExists 경로) + `_resumeStatus` 공유로 status 중복 fetch 회피. pendingNewConversation 가드 보존.
+  - 검증: node --check PASS + `tests/verify_conv_entry_defaults.mjs` 20/20 PASS(seed fresh/respect·date 그룹 보존, 빈 진입/폴백/resume-select/preferred-미존재/pending-guard, init 배선 4종). 시각 정본은 PB-0008 Windows-browser.
+
 ## REV-20260616-0301 [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-16 (TASK-0291 후속 docs-only — PB-0008 시각검증 evidence)
 - Skip 사유: docs 전용(TEST/STATUS/REPORT/MODIFY/REVIEW). 코드/RBAC 무변경 — 본체 검토는 REV-20260616-0300 [SKIPPED:frontend-only-display-count].

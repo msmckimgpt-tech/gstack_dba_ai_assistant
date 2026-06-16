@@ -216,6 +216,9 @@ function _newPendingSentinel() {
 const PRODUCT_PREF_LS_KEY = "mad.productPref.v1";
 const COLLAPSED_GROUPS_LS_KEY = "mad.collapsedGroups.v1";
 const SEND_MODE_LS_KEY = "mad.sendMode.v1";
+// 대화목록 "타 계정 대화" 그룹의 접힘 키 + "처음 진입 시 접힘" 1회 seed 플래그.
+const OTHERS_GROUP_KEY = "__others__";
+const OTHERS_COLLAPSED_SEED_LS_KEY = "mad.othersCollapsedSeed.v1";
 
 // Restore collapsed groups from localStorage
 try {
@@ -225,6 +228,22 @@ try {
     if (Array.isArray(_cgArr)) state.collapsedDateGroups = new Set(_cgArr);
   }
 } catch (_) {}
+
+// 처음 진입 시 "타 계정 대화" 그룹은 접힌 상태로 시작한다(1회 seed). 이후 사용자가
+// 펼치면 그 선호가 collapsedDateGroups(localStorage)에 영속되어 그대로 존중된다.
+// (seed 플래그가 없을 때만 1회 __others__ 를 접힘 set 에 추가 — date 그룹 토글과 독립.)
+function _seedOthersCollapsedOnce() {
+  try {
+    if (localStorage.getItem(OTHERS_COLLAPSED_SEED_LS_KEY)) return false;
+    state.collapsedDateGroups.add(OTHERS_GROUP_KEY);
+    localStorage.setItem(OTHERS_COLLAPSED_SEED_LS_KEY, "1");
+    localStorage.setItem(COLLAPSED_GROUPS_LS_KEY, JSON.stringify(Array.from(state.collapsedDateGroups)));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+_seedOthersCollapsedOnce();
 
 // Restore send mode from localStorage
 state.sendMode = localStorage.getItem(SEND_MODE_LS_KEY) === "enter" ? "enter" : "ctrl+enter";
@@ -1984,7 +2003,7 @@ function renderConversationList() {
 
   // --- 타 계정 대화: owner별 그룹화, 최신 activity 순 정렬 ---
   if (others.length) {
-    const othersKey = "__others__";
+    const othersKey = OTHERS_GROUP_KEY;
     const othersCollapsed = state.collapsedDateGroups.has(othersKey);
     const othersHeader = document.createElement("div");
     othersHeader.className = `conv-group-title conv-group-collapsible${othersCollapsed ? " is-collapsed" : ""}`;
@@ -4507,7 +4526,7 @@ async function loadHistory({ append = false } = {}) {
   renderComposer();
 }
 
-async function loadConversations(preferredConversationId = "") {
+async function loadConversations(preferredConversationId = "", { allowCurrentFallback = true } = {}) {
   const payload = await apiFetch("/api/conversations");
   state.conversations = Array.isArray(payload.items) ? payload.items : [];
   // TASK-0059: pending 모드 race 가드. "새 대화" 버튼을 누른 직후 (state.activeConversationId="")
@@ -4515,15 +4534,23 @@ async function loadConversations(preferredConversationId = "") {
   // 복귀해 신규 의도가 깨지던 회귀를 차단. pending 모드일 때는 사이드바 리스트만 갱신하고 active 는 보존.
   if (!state.pendingNewConversation) {
     const preferredExists = state.conversations.some((item) => item.id === preferredConversationId);
-    state.activeConversationId = preferredExists ? preferredConversationId : (payload.current || "");
+    if (preferredExists) {
+      state.activeConversationId = preferredConversationId;
+    } else if (allowCurrentFallback) {
+      // 일반 refresh 경로 — 서버의 직전 활성 대화(payload.current)로 폴백해 컨텍스트 유지.
+      state.activeConversationId = payload.current || "";
+    } else {
+      // 처음 진입(initializeWorkspace) — 직전 대화를 자동 선택하지 않고 빈 화면으로 시작.
+      state.activeConversationId = "";
+    }
   }
   renderConversationList();
   renderConversationHeader();
   renderComposer();
 }
 
-async function refreshWorkspace(preferredConversationId = "") {
-  await loadConversations(preferredConversationId);
+async function refreshWorkspace(preferredConversationId = "", opts = {}) {
+  await loadConversations(preferredConversationId, opts);
   renderConversationHeader();
   renderAccessNotice();
   await loadHistory();
@@ -6790,26 +6817,43 @@ async function initializeWorkspace() {
   renderAccountState();
   renderAccessNotice();
   await loadVaultOptions();
-  // TASK-0263: 사용량 모달에서 deep-link(/?conversation=<id>)로 진입 시 그 대화를 선호 활성화.
-  //   본인 소유가 아니거나 존재하지 않으면 loadConversations 가 자연히 서버 current 로 폴백한다.
-  let _preferCid = state.session.conversation_id || "";
+  // 처음 진입 시 대화 화면은 비어있는 상태로 시작한다 — 서버의 직전 활성 대화
+  // (session.conversation_id)를 자동 선택하지 않는다(allowCurrentFallback=false).
+  // 빈 화면 기본값보다 우선하는 예외 두 가지:
+  //   (1) deep-link(/?conversation=<id>, TASK-0263) — 명시 네비게이션이므로 그 대화를 활성화.
+  //   (2) 진행 중 요청 이어받기(TASK-0041) — 직전 대화가 서버에서 처리 중이면 그 대화를 활성화.
+  const _serverCid = state.session.conversation_id || "";
+  let _preferCid = "";
+  let _allowCurrentFallback = false;
+  let _resumeStatus = null;
   try {
     const _qp = new URLSearchParams(window.location.search);
     const _deep = (_qp.get("conversation") || "").trim();
     if (_deep) {
       _preferCid = _deep;
+      // 명시 deep-link — 미존재/비소유 시 기존 서버 current 폴백 동작 보존(TASK-0263).
+      _allowCurrentFallback = true;
       // URL 정리(새로고침·공유 시 깔끔) — history state 만 교체(재탐색 없음).
       if (window.history && window.history.replaceState) {
         window.history.replaceState({}, "", window.location.pathname);
       }
     }
   } catch (_) { /* URL 파싱 실패 무시 */ }
-  await refreshWorkspace(_preferCid);
+  // 진행 중 요청이 있으면 빈 화면 대신 그 대화를 선택해 이어받는다(아래 resume 블록과 status 공유).
+  if (!_preferCid && _serverCid) {
+    try {
+      _resumeStatus = await fetchAskStatus(_serverCid);
+      if (_resumeStatus && _resumeStatus.is_processing) _preferCid = _serverCid;
+    } catch (_) { _resumeStatus = null; }
+  }
+  await refreshWorkspace(_preferCid, { allowCurrentFallback: _allowCurrentFallback });
   // TASK-0041: 세션 복구 — 페이지 로드 시 현재 대화가 서버에서 진행 중이면
   // 자동으로 결과 long-poll 에 attach 하여 사용자의 이전 요청을 이어받는다.
   const resumeCid = state.activeConversationId;
   if (resumeCid) {
-    const status = await fetchAskStatus(resumeCid);
+    const status = (_resumeStatus && resumeCid === _serverCid)
+      ? _resumeStatus
+      : await fetchAskStatus(resumeCid);
     if (status && status.is_processing) {
       state.busyConversations.add(resumeCid);
       // 새로고침 후 pending bubble 복원 — polling 이 steps 를 채우면 갱신됨.
