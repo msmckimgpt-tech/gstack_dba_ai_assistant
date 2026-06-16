@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260616T024150-ai-claude-sidebar-resize-pb0008 [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-16 (TASK-20260616T022652-ai-claude-sidebar-resize 후속 docs-only — PB-0008 evidence 기록)
+- Skip 사유: docs 전용(TASK/TEST/REPORT/MODIFY/REVIEW). 코드/정적자산/백엔드/RBAC 무변경 — 리뷰 패널 트리거 비해당. 본체 변경의 적대 검토는 직전 cycle REV-20260616T022652-ai-claude-sidebar-resize 가 담당.
+- 기록 요지: 사이드바 너비 드래그 조절 PB-0008 Windows-browser **PASS**(실 Chrome/148, 배포본 6f1242b). 드래그 시 사이드바 폭 실제 reflow·clamp(180/624)·새로고침 복원·더블클릭 reset 전부 computed 실측 — jsdom 이 검출 못하는 실 레이아웃 변화까지 확인.
+
 ## REV-20260616T022652-ai-claude-sidebar-resize [SKIPPED:frontend-ui-resize-no-backend-no-rbac]
 - Date: 2026-06-16 (TASK-20260616T022652-ai-claude-sidebar-resize — 대화창 좌측 사이드바 너비 드래그 조절)
 - Skip 사유: frontend-only UI 인터랙션 추가(`src/static/{index.html,styles.css,app.js}`). 백엔드/RBAC/스키마/엔드포인트/데이터 경계 무변경 — 적대적 보안/데이터 리뷰 패널 트리거(§18.8) 비해당. 이미 본 repo 에 검증된 우측 패널 resizer 3종(`#stepSidePanelResizer` 등)과 byte 동형 패턴이라 신규 위험 표면 0.
