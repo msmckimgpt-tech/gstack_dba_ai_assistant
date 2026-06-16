@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260616-0301 [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-16 (TASK-0291 후속 docs-only — PB-0008 시각검증 evidence)
+- Skip 사유: docs 전용(TEST/STATUS/REPORT/MODIFY/REVIEW). 코드/RBAC 무변경 — 본체 검토는 REV-20260616-0300 [SKIPPED:frontend-only-display-count].
+- 기록 요지: TASK-0291 PB-0008 **PASS**(배포본 main 9bdb9f8). win-browser eval 실측 — 계정 탭 배지 `#tabCountAccounts`=7 이 활성 필터 목록 카운트 `#accountListCount`=7명과 일치, 전체 28명(=7활성+1비활성+20삭제)과 분리. 배지가 `adminState.accounts.length`(28) 아닌 활성만(`is_active && !deleted_at`) 집계 확인.
+
 ## REV-20260616-0300 [SKIPPED:frontend-only-display-count]
 - Date: 2026-06-16 (TASK-0291 — 계정 탭 배지 활성 계정만 집계)
 - Skip 사유: frontend-only 표시 로직(admin.js 집계식 1곳 + 캐시버스터). 백엔드/RBAC/스키마/엔드포인트/데이터 흐름 무변경 — 외부 시각(보안/데이터) 리뷰 트리거 부재.

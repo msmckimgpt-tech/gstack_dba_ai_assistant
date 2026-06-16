@@ -9,6 +9,12 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260616-0301 (TASK-0291 후속 docs-only — PB-0008 evidence)
+- Date: 2026-06-16
+- Scope: docs 전용(TEST/STATUS/REPORT/MODIFY/REVIEW). 코드 0.
+- 변경: TASK-0291 "잔여: 머지→배포→PB-0008" 을 **완료(PR #287 머지 main 9bdb9f8·web 재배포·PB-0008 PASS)** 로 갱신. win-browser 실측 기록(계정 탭 배지 #tabCountAccounts=7 = 활성 필터 목록 7명 일치, 전체 28명과 분리).
+- 검증: PB-0008 실측(win-browser eval + 스크린샷 `artifacts/pb0008-task0291/account-tab-active-count.png`). 코드 무변경.
+
 ## CHG-20260616-0300 (TASK-0291 — 계정 탭 배지 활성 계정만 집계)
 - Date: 2026-06-16
 - Scope: frontend-only. `src/static/admin.js` 1곳 + `src/static/admin.html` 캐시버스터.

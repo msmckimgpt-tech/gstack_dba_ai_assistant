@@ -14,7 +14,7 @@ source_of_truth: true
 - 수정(frontend-only, admin.js 1곳): `refreshPendingUI` 의 `tabCountAccounts` 집계를 `adminState.accounts.filter((a) => a.is_active && !a.deleted_at).length`(활성 정의 = `filteredAccounts()` 의 `'active'` 분기와 동일: `is_active && !deleted_at`)로 변경. 캐시버스터 `admin.html ?v=20260616-task0291-account-active-count`.
 - 비변경: 백엔드/RBAC/스키마/엔드포인트 0. `#accountListCount`(filter-aware) 비변경. 역할/제품/데이터소스 탭 배지 비변경(요청 범위 = 계정 한정).
 - [x] node --check PASS, 백엔드 무변경(make test 회귀 자명 0).
-- [ ] 머지 → web 재배포 → PB-0008 Windows-browser 실측(계정 탭 배지 = 활성 필터 적용 시 목록 수와 일치, 전체 수보다 작거나 같음). CHG/REV-20260616-0300.
+- [x] 머지(PR #287 squash → main 9bdb9f8) → web 재배포(서빙 `?v=20260616-task0291-account-active-count`·`activeAccountCount` baked) → **PB-0008 Windows-browser PASS**(win-browser 실측: 계정 탭 배지 `#tabCountAccounts`=7 = 활성 필터 목록 `#accountListCount`=7명 일치, 전체 28명[7활성+1비활성+20삭제]과 분리). evidence `artifacts/pb0008-task0291/account-tab-active-count.png`. CHG/REV-20260616-0300, evidence CHG/REV-20260616-0301.
 
 ## TASK-0287 — 말풍선 첨부 칩 다운로드 실패 수정 (REQ-20260616-0287, AC-0531, Minor §12.3, frontend-only)
 - 보고(사용자): 첨부파일 목록에서 다운로드는 되지만, 말풍선 안에서 제공되는 첨부파일(칩)은 다운로드 실패.
