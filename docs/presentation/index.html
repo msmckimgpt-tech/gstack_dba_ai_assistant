@@ -298,12 +298,16 @@ kbd{font-family:var(--mono);font-size:10.5px;background:var(--bg);border:1px sol
 /* 클릭 시 상세 설명이 열리는 항목 */
 [data-explain]{cursor:pointer}
 @media(hover:hover){[data-explain]:hover{outline:1.5px solid #cdd9f5;outline-offset:3px;border-radius:9px}}
+/* Ctrl 키를 누르면 클릭 가능한(상세 설명) 항목을 가볍게 강조 — 발표 중 찾기 쉽게 */
+body.find-explain [data-explain]{outline:1.5px solid var(--primary);outline-offset:3px;border-radius:9px;
+  box-shadow:0 0 0 4px rgba(37,99,235,.10);transition:box-shadow .14s ease,outline-color .14s ease}
 .explain-hint{position:fixed;bottom:11px;left:50%;transform:translateX(-50%);z-index:55;font-size:11.5px;color:var(--text-muted);
   background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:5px 13px;box-shadow:var(--shadow-sm);pointer-events:none;opacity:.9;transition:opacity .4s}
 /* 상세 설명 = 우측 말풍선 (배경 딤/흐림 없음, 본문 구분용 부드러운 그림자만) */
-.pop{position:fixed;inset:0;z-index:85;background:transparent;display:none}
+/* pointer-events:none → 말풍선이 열려 있어도 본문의 다른 항목 클릭이 그대로 전달돼 팝업이 교체됨 */
+.pop{position:fixed;inset:0;z-index:85;background:transparent;display:none;pointer-events:none}
 .pop.open{display:block}
-.pop-card{position:absolute;right:22px;top:50%;transform:translateY(-50%);width:min(380px,86vw);max-height:84vh;overflow:auto;
+.pop-card{pointer-events:auto;position:absolute;right:22px;top:50%;transform:translateY(-50%);width:min(380px,86vw);max-height:84vh;overflow:auto;
   background:var(--surface);border:1px solid var(--border);border-radius:16px;
   box-shadow:0 10px 44px rgba(20,20,18,.16),0 2px 10px rgba(20,20,18,.08);
   padding:20px 22px;animation:bubblein .26s cubic-bezier(.22,.61,.36,1) both}
@@ -749,7 +753,7 @@ kbd{font-family:var(--mono);font-size:10.5px;background:var(--bg);border:1px sol
 
 </div>
 
-<div class="explain-hint" id="explainHint">💡 항목을 클릭하면 자세한 설명이 열립니다</div>
+<div class="explain-hint" id="explainHint">💡 항목을 클릭하면 자세한 설명 · <b>Ctrl</b> 키를 누르면 클릭 가능한 항목이 강조됩니다</div>
 <div class="fragind" id="fragind"><span class="fdots" id="fragDots"></span><span class="ftxt" id="fragTxt"></span></div>
 <div class="pop" id="pop"><div class="pop-card" id="popCard">
   <button class="pop-close" id="popClose" aria-label="닫기">×</button>
@@ -773,7 +777,6 @@ kbd{font-family:var(--mono);font-size:10.5px;background:var(--bg);border:1px sol
   function openPop(key){var e=EXPLAIN[key];if(!e)return;popTitle.textContent=e[0];popBody.innerHTML=e[1];pop.classList.add('open');}
   function closePop(){pop.classList.remove('open');}
   document.getElementById('popClose').addEventListener('click',function(ev){ev.stopPropagation();closePop();});
-  pop.addEventListener('click',function(ev){if(ev.target===pop)closePop();});
 
   function frags(s){return Array.prototype.slice.call(s.querySelectorAll('.frag'));}
 
@@ -858,9 +861,16 @@ kbd{font-family:var(--mono);font-size:10.5px;background:var(--bg);border:1px sol
     else if(e.key==='Home'){go(0);}
     else if(e.key==='End'){go(slides.length-1,{allFrags:true});}
   });
+
+  // Ctrl(또는 ⌘) 키를 누르고 있는 동안 클릭 가능한 항목을 강조 — 발표 중 상호작용 지점을 쉽게 찾기 위함
+  function setFind(on){document.body.classList.toggle('find-explain',!!on);}
+  document.addEventListener('keydown',function(e){if(e.key==='Control'||e.key==='Meta'||e.ctrlKey||e.metaKey)setFind(true);});
+  document.addEventListener('keyup',function(e){if(!e.ctrlKey&&!e.metaKey)setFind(false);});
+  window.addEventListener('blur',function(){setFind(false);}); // alt-tab 등으로 포커스가 빠지면 강조 해제
   deck.addEventListener('click',function(e){
     var ex=e.target.closest&&e.target.closest('[data-explain]');
-    if(ex){openPop(ex.getAttribute('data-explain'));return;}
+    if(ex){openPop(ex.getAttribute('data-explain'));return;}   // 항목 클릭 → 팝업 열기/교체 (열린 상태에서도 동작)
+    if(pop.classList.contains('open')){closePop();return;}     // 팝업 열린 채 빈 곳 클릭 → 닫기만 (실수로 페이지 안 넘어가게)
     if(e.clientX < window.innerWidth*0.16) prev(); else next();
   });
 
