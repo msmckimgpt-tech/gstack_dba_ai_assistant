@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.32.0
+template_version: v3.33.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -1307,9 +1307,12 @@ PR 머지 + cleanup 은 본 Step 의 자동화 대상이다 — cycle 종료 시
 
 > **자동 진행 정책 (v3.9.0+)**: cycle 종료 시점 (verify-completion PASS + PR
 > 생성 완료) 에서 다음 normal 경로는 사람 명시 요청 없이 진행한다:
-> - PR 상태가 MERGEABLE + mergeStateStatus CLEAN → `gh pr merge --<strategy> --delete-branch`
+> - PR 상태가 MERGEABLE + mergeStateStatus CLEAN → `gh pr merge --<strategy>`
+>   (`--delete-branch` 미사용 — worktree-first 에서 gh 의 머지-후 로컬 체크아웃 전환이
+>   거부돼 매 cycle 실패. 로컬 브랜치는 아래 `branch -d`, 원격 브랜치는 best-effort
+>   `git push origin --delete` 가 분리 처리)
 > - 머지 직후 main worktree `git fetch + pull --ff-only origin main`
-> - 자기 worktree clean + worktree remove + local branch -d
+> - 자기 worktree clean + worktree remove + local branch -d + 원격 브랜치 best-effort 정리
 >
 > 다음 abnormal 경로는 자동 중단 + 사용자 결정 (AGENTS.md §16.3 Step 4 의
 > 충돌/blocked 처리 동일):
@@ -1532,8 +1535,31 @@ CLI 전용·API 전용·데이터 파이프라인 프로젝트에는 적용하�
 WSL 내 curl, wget, requests, pytest 등 HTTP 응답 검사만으로는 시각적 완료 조건을 충족하지 않는다.
 
 **필수 확인 방법**: `/browse` 스킬(gstack headless-but-real-engine)로 변경된 페이지를 열고
-레이아웃·버튼·폼·모달 등 변경 영역을 스크린샷 또는 element 상태로 확인한다.
+레이아웃·버튼·폼·모달 등 변경 영역을 시각 캡처(스크린샷/element-screenshot)와 element
+상태로 확인한다 (아래 *evidence 의 변경-클래스 분기* 참조).
 `/browse` 스킬은 내부적으로 MCP 브라우저 도구를 사용하며, 기본 정본 경로로 인정한다.
+
+**검증 evidence 의 변경-클래스 분기 (MUST)**: "스크린샷 또는 element 상태" 의 OR 는
+변경 클래스에 따라 갈린다. **존재·동작·데이터 표출** 검증(요소가 있는지, 클릭이
+동작하는지, 데이터가 렌더되는지)은 element 상태(DOM-eval: 클래스/속성 존재, hit-test,
+복사 텍스트 실측 등)로 충분하다. 그러나 **레이아웃·정렬·간격·줄바꿈·overflow·겹침 등
+"픽셀로만 드러나는" 변경**은 element 상태로 검증할 수 없다 — DOM-eval 은 요소의 존재·
+동작은 확인하지만 렌더된 픽셀의 정렬·간격·줄바꿈은 보지 못한다. 이 클래스는 변경 영역이
+**판독 가능하게 담긴 시각 캡처(스크린샷/element-screenshot/clip)** 를 필수로 하며 element
+상태로 대체할 수 없다.
+
+**캡처 도구 한계 시 — escalate, 다운그레이드 금지 (MUST)**: 전체화면 스크린샷이 변경
+영역을 판독불가 크기로만 담으면 검증은 **미완**이다. element-screenshot·clip·뷰포트 축소·
+DOM 복제 확대 등으로 판독 가능한 캡처를 확보한다. 확보에 실패하면 "라이브 eval 로 충분"
+으로 마무리하지 말고 **시각검증 미충족(WARN/미완)으로 명시**한다 — "핵심 검증은 eval 로
+완료" 식 자기-충족 선언으로 픽셀-클래스 변경의 PASS 를 선언하지 않는다.
+
+**기본 추정 — UI-affecting 변경은 픽셀-클래스로 간주 (MUST)**: 변경이 렌더 결과에
+영향을 줄 수 있으면(UI-affecting) 기본값은 "픽셀-클래스"이며 판독 가능한 시각 캡처를
+요구한다. element 상태만으로 충분하다고 판단하려면 **그 변경이 렌더된 기하(위치·정렬·
+간격·줄바꿈)에 영향을 주지 않는 이유를 명시**해야 한다 — 분류의 입증 책임은 "element
+상태로 충분" 쪽에 있다 (값 표시 텍스트 변경, 순수 핸들러 연결 등 기하 무관 변경이 예외).
+이 기본 추정은 "behavioral 이라 eval 로 충분" 식 회피로 픽셀 회귀가 재발하는 것을 막는다.
 
 **headless `/browse` 도달불가 환경 — host-side real-browser 동등 인정 (v3.29.1)**:
 `/browse` (gstack headless MCP) 가 타깃에 **도달할 수 없는** 환경 — 관리콘솔 HTTPS 로그인
@@ -1541,7 +1567,9 @@ WSL 내 curl, wget, requests, pytest 등 HTTP 응답 검사만으로는 시각�
 real-browser 검증**(예: WSL 밖 Windows 브라우저로 실 화면을 띄워 확인)을 `/browse` 와 **동등한
 시각적 확인 경로**로 인정한다. 단 동등 인정의 전제는 다음을 모두 만족할 때다:
 - **스크린샷 evidence 필수** — real-browser 로 확인했다는 선언만으로는 불충분. 변경 영역이
-  렌더된 실제 화면 스크린샷(또는 element 상태 캡처)을 응답에 첨부한다. (`/browse` 와 동일 기준)
+  렌더된 실제 화면 스크린샷을 응답에 첨부한다 (`/browse` 와 동일 기준). 픽셀-클래스 변경
+  (레이아웃·정렬·간격·overflow)은 위 *evidence 의 변경-클래스 분기* 에 따라 element 상태
+  캡처로 대체할 수 없다.
 - **anti-"curl=완료" 가드 유지** — host-side 경로를 인정해도 WSL curl/wget/requests/playwright-CLI
   의 HTTP 응답 검사만으로 완료를 선언하는 것은 여전히 금지(아래 금지 패턴). real-browser 인정은
   "실제 렌더 화면 + 스크린샷" 을 갖춘 경우에 한하며, 검증 강제력을 약화시키지 않는다.
@@ -1570,11 +1598,15 @@ WSL bash에서 `playwright` CLI를 직접 실행하는 것은 렌더링 확인�
 - 스크린샷 없이 "UI 정상 확인" 선언
 - "Ctrl+Shift+R 후 확인해 주세요" 등 사용자에게 새로고침·재확인을 위임하고 완료 선언 — 위임 자체는 검증이 아님
 - "검증 단계가 누락됐습니다" 인정 후 브라우저를 실행하지 않고 완료 처리 — 인정만으로 검증이 완료되지 않음
+- "라이브 eval(element 상태)로 충분" — 캡처가 변경 영역을 판독 가능하게 담지 못하자
+  레이아웃·정렬 등 픽셀-클래스 변경을 element 상태로 PASS 선언 (위 *evidence 의 변경-클래스
+  분기* 위반; 캡처 escalate 또는 시각검증 미완 보고가 정답)
 
 **완료 선언 게이트**: UI-affecting 변경(HTML/CSS/JS 수정, 컴포넌트 추가·삭제, 레이아웃 변경 등)은
 `/browse` 스킬(또는 위 동등 인정 host-side real-browser 경로)로 브라우저 렌더링을 직접 확인하고
-그 evidence(스크린샷 또는 element 상태)를 응답에 첨부하기 전까지 완료 선언 불가. 위 두 금지
-패턴("위임" / "인정 후 미실행")은 이 게이트의 명시적 위반으로 간주한다.
+그 evidence(존재·동작은 element 상태, 픽셀-클래스 변경은 시각 캡처 — 위 *evidence 의 변경-
+클래스 분기*)를 응답에 첨부하기 전까지 완료 선언 불가. 위 세 금지 패턴("위임" / "인정 후
+미실행" / "eval 로 충분 자기-충족")은 이 게이트의 명시적 위반으로 간주한다.
 
 **인터랙션 결과 검증**: 변경이 상호작용 동작(버튼 클릭 결과, 드롭다운 선택·추가 흐름, 폼 제출 등)에
 영향을 주면, rendering(정적 렌더) 확인에 더해 **변경된 인터랙션을 실제로 실행하고 그 결과를
@@ -2627,6 +2659,16 @@ fan-out 해 결정적으로 오케스트레이션한다. 대규모 위임 작업
 표면화됐다. 본 § 는 그 경감 정책이다. (subagent **panel** 의 dispatch·context bundle
 정본은 §18.8 / §18.11. 본 § 는 *dynamic workflow* 실행 신뢰성에 한정.)
 
+**Dynamic workflow 트리거 경로 (v2.1.160+)**: dynamic workflow 는 자동으로 켜지지
+않는다. 트리거 키워드는 `ultracode` 다 — 2.1.160 에서 `workflow` → `ultracode` 로
+리네임됐고, 이제 `workflow` 라는 단어 자체는 실행을 트리거하지 않는다 (자기 말로
+워크플로를 요청하면 여전히 동작). 키워드는 `/config` 의 "Workflow keyword trigger"
+설정으로 조정한다. `/effort ultracode` 는 **xhigh 강제 + dynamic workflow 자동 판단**
+을 결합한 별개 effort 레벨로, xhigh 미지원 모델에서는 노출되지 않는다 (2.1.160 이전의
+"dynamic workflows 설정 탓" 오진은 수정됨). Critical·대규모 위임 세션의 최신 진입
+경로이며, §11.3 의 `/effort xhigh` 권장과 함께 고려한다 (Critical 등급은 `/model opus`
++ `/effort ultracode` 도 후보).
+
 #### §22.3.1 StructuredOutput 신뢰성 — 복잡 schema fan-out 의 대량 실패 위험
 
 `agent(prompt, {schema})` 는 subagent 에게 `StructuredOutput` tool 호출을 강제한다.
@@ -2666,6 +2708,17 @@ Subagent(및 workflow 가 spawn 한 agent)는 **부모 세션에 종속된 비�
 quota 만료·세션 종료·context rollover 로 중단되면 **그 subagent 는 이어서 재개되지
 않는다**. "기존 subagent 들을 이어서 진행" 같은 지시는 subagent 를 독립 영속
 프로세스로 오인한 것이며, 실제로는 새 실행이 필요하다.
+
+**중첩 subagent (v2.1.172+)**: subagent 는 v2.1.172 부터 자기 자신의 subagent 를
+**최대 5단계까지** 스폰할 수 있다 (agent→agent 중첩 트리; workflow→agent 1단계만
+다루던 위 모델의 확장). 중첩이 깊어질수록 위 비재개성·토큰 비용·blast radius 가
+**복리로** 커진다 — 중단 시 한 노드가 아니라 그 하위 트리 전체가 비재개로 날아가고,
+깊이마다 fan-out 폭이 곱해진다. 따라서 중첩 깊이는 의식적으로 제한하고(필요한 만큼만),
+깊은 트리를 띄우기 전 §11.1 누적 산출물 기준의 재개 가능성을 먼저 확보한다. 또한
+v2.1.154 가 고친 "background subagent 의 worktree-isolation 우회" 가 중첩에서
+재현되지 않도록, 파일을 동시 변경하는 중첩 subagent 는 **전 레벨에서
+worktree-isolation 을 재확인**한다 (한 레벨만 isolation 을 설정해도 그 자식이 부모
+worktree 를 공유하면 충돌).
 
 **재개 전략 (중단 후):**
 
