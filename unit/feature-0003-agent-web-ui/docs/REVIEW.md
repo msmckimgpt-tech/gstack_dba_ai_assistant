@@ -2975,7 +2975,7 @@ source_of_truth: true
 - Verification: jsdom verify_admin_tab_gating.mjs 34 PASS + make test 컨테이너 전체 회귀 0(영향 테스트 4개 신규 계약 갱신) + node --check + py ast.parse.
 - Residual: 머지 → 배포(web 재빌드) → 라이브 재검증(테스트계정 products/datasources 403 전환·탭 숨김) → PB-0008 Windows-browser.
 - Cross-ref: CHG-20260616-0299 / TASK-0288.
-## REV-20260616-0301 [SUBAGENT:runtime-transparency]
+## REV-20260616-0302 [SUBAGENT:runtime-transparency]
 - Date: 2026-06-16
 - Cycle: TASK-0289 (대화 수행시간 정직 표시 + 내부 동작 투명화 + 즉각 반응 + 큐 병목 완화), **Major §12.3** — 채팅 요청 경로의 수행시간 측정·step 기록·worker 큐 폴링 변경(인증/데이터 비파괴, 사용자-대면 동작 변경).
 - Trigger: §18.8(backend + performance + UX dimension) — 채팅 lifecycle·ask-worker run-status/cancel 인접(TASK-0241 clobber trap)·타이밍 산수. 적대적 코드리뷰(general-purpose outside voice, "refute correctness").
@@ -2992,4 +2992,4 @@ source_of_truth: true
 - Should-note(비차단): claim→agent_entry_perf 사이 미세 구간(run_id set + heartbeat 스레드 기동) 미집계 — sub-ms under-count, 결함 아님.
 - Verification: test_duration_breakdown.py 3(산수 결정 고정) + test_ask_jobs.py created_at 2 + verify_runtime_transparency.mjs 16(jsdom 포맷·정적계약) + feature-0002 전체 pytest 회귀 0(2 skip) + py_compile + node --check app.js.
 - Residual: 머지 → web + ask-worker 재빌드(agent_core baked) → 라이브(total 표시·activity 타임라인·큐 단축) → PB-0008 Windows-browser(수행시간 안 줄어듦·내부 동작 step·breakdown). SSE 토큰 스트리밍(P3b)은 후속 cycle(사용자 결정).
-- Cross-ref: CHG-20260616-0301 / TASK-0289 / feature-0002 REV-20260616-0301.
+- Cross-ref: CHG-20260616-0302 / TASK-0289 / feature-0002 REV-20260616-0302.
