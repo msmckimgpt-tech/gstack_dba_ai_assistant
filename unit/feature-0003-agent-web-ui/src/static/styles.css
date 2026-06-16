@@ -2901,11 +2901,17 @@ a { color: inherit; }
   padding-right: 8px;
 }
 
+/* TASK-0292: 화면 높이가 작을 때 탭이 사이드바를 넘치면 하단 탭(설정 등)이 잘려
+   클릭 불가하던 문제 — 작업 화면 .conv-list 와 동일한 flex-child 스크롤 idiom 적용.
+   min-height:0 이 없으면 flex 항목 기본 min-height:auto 가 콘텐츠 높이 미만 축소를
+   막아, .admin-sidebar(overflow:hidden) 가 넘친 탭을 스크롤 없이 잘라낸다. */
 .admin-tabs {
   display: flex;
   flex-direction: column;
   gap: 2px;
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .admin-tab {
@@ -2952,6 +2958,8 @@ a { color: inherit; }
   padding: 8px 6px;
   border-top: 1px solid var(--border-subtle);
   margin-top: 8px;
+  /* TASK-0292: 탭이 스크롤될 때 풋(pending 요약)이 squeeze 되지 않고 하단에 고정. */
+  flex-shrink: 0;
 }
 
 .admin-tab-group-label {
