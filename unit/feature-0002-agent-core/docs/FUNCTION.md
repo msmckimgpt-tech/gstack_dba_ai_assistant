@@ -427,3 +427,10 @@ source_of_truth: true
 
 ## (TASK-0284) 첨부 컨텍스트 주입 = 대화 단위 스코프 + 파일명 지칭
 `_build_attachment_context_section(mem_conn, attachment_ids, account_id=None, conversation_id=None)` 은 conversation_id 가 주어지면 그 대화(ConversationId/conversation_id) 스코프로 첨부를 조회한다 — 대화 접근권은 caller(app.py `/api/ask` 의 owner 게이트)가 보장하므로, 같은 대화를 fork/이어받아 소유 계정이 달라져도 첨부가 LLM 에 주입된다. conversation_id 미전달이면 AccountId 폴백, 둘 다 없으면 fail-closed("" 반환). `compose_system_prompt`·`_run_agent_core` 가 conversation_id 를 전파한다. 첨부 표현은 파일명을 맨 앞 따옴표로 노출(`- file "name" (attachment_id=..)`)하고 "REFER TO ATTACHMENTS BY FILENAME" 지침으로 모델이 일련번호 대신 파일명으로 지칭하게 한다.
+
+## (TASK-0289) 수행시간 end-to-end 집계 + 내부 동작(activity) step + 큐 대기 단축
+표시 수행시간이 LLM 루프(`run_start`)만 집계해 큐 대기·초기화가 빠지고 실측 45초가 화면엔 25초로 줄어 보이던 불일치를 정직화한다.
+- **수행시간 분해**: `_compute_duration_breakdown(queued_ms, agent_entry_perf, run_start, now_perf=None)` → `{queued_ms, init_ms, inference_ms, total_ms}`. `_run_agent_core` 진입 즉시 `agent_entry_perf=perf_counter()`(초기화 포함), `run_start`(추론 시작) 사이가 `init_ms`, 추론 루프가 `inference_ms`, worker seed `queued_ms_seed`(큐 대기) 합이 `total_ms`. 표시·KV `last_duration_ms`·message meta `duration_ms` = **total**(라이브 경과 타이머와 일치해 완료 후 숫자가 줄지 않음). meta 에 `duration_breakdown` 동봉(투명 노출).
+- **큐 대기 seed**: worker(`modules/ask.py`)가 `ask_jobs.claim_ask_job` 이 RETURNING 한 `created_at`(enqueue 시각)과 claim 시각(`time.time()`)을 비교해 `queued_ms` 산출 → `run_agent(..., queued_ms_seed=)`. in-process 경로는 None(=0).
+- **내부 동작 투명화(activity step)**: `_run_agent_core` 의 nested `_emit_activity(label, detail="")` 가 비-tool 단계(맥락 로드/분석 준비/추론 라운드/결과 정리)를 `action='activity'`, `tool=''` step 으로 `save_memory_step` 한다. tool step 과 단조 증가 `emit_index`(step_index 공유)로 시간순 정합 — progress API `after_step` 증분 폴링·정렬 자연 호환. activity step 은 in-memory `steps`(rationale/csv 도출용)에는 넣지 않아 기존 헬퍼에 무영향. `_writes_allowed` 미충족(공유/읽기전용)·예외는 조용히 skip(투명화 보조가 본 추론을 깨지 않게).
+- **큐 대기 단축(P4)**: `AGENT_ASK_WORKER_IDLE_POLL_SEC`(float, 기본 0.5)로 단일 직렬 worker 의 유휴 claim 폴링을 sub-second 화(기존 tick 1~2s) — 새 job 발견 지연=사용자 큐 대기. `tick_sec`(reconnect backoff)·sweep 타이밍 불변.

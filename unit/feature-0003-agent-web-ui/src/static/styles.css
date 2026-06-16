@@ -903,6 +903,20 @@ a { color: inherit; }
   opacity: 0.7;
 }
 
+/* TASK-0289: 수행시간이 구간 분해 tooltip 을 가질 때 hover 가능함을 점선 밑줄로 암시. */
+.message-meta-duration.has-breakdown {
+  cursor: help;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+/* TASK-0289: 수행시간 구간 분해(대기/준비/추론) 인라인 보조 텍스트 — muted. */
+.message-meta-breakdown {
+  font-size: 10px;
+  opacity: 0.55;
+  margin-left: 4px;
+}
+
 .message-bubble {
   padding: 11px 15px;
   border-radius: 14px;
@@ -5438,6 +5452,30 @@ a { color: inherit; }
   font-weight: 600;
   color: var(--text-1, #111827);
   line-height: 1.4;
+}
+
+/* TASK-0289: 비-tool 내부 동작(activity) step — DB 동작(tool) step 보다 시각적으로 보조.
+   muted 색 + 좌측 점선 accent 로 "내부 동작 타임라인"임을 구분(투명하되 주가 아님). */
+.step-detail-activity {
+  padding-left: 8px;
+  border-left: 2px dotted var(--border, #d1d5db);
+  opacity: 0.85;
+}
+.step-detail-activity .step-title {
+  font-weight: 500;
+  color: var(--text-muted, #6b7280);
+}
+.step-activity-badge {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 1px 7px;
+  margin-bottom: 2px;
+  border-radius: 20px;
+  background: var(--surface, #f3f4f6);
+  color: var(--text-muted, #6b7280);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .3px;
 }
 /* step-reason: 각 실행 단계의 수행 근거를 제목 아래 secondary 라인으로 노출.
    굵은 step-title(=무엇을) 아래에 "근거"(=왜) 를 명시해 작업의 합리성을 보임. */

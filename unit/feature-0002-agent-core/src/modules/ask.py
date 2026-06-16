@@ -32,6 +32,7 @@ from typing import Any, Optional
 from .config import (
     AGENT_ASK_WORKER_ENABLED,
     AGENT_ASK_WORKER_TICK_SEC,
+    AGENT_ASK_WORKER_IDLE_POLL_SEC,
     AGENT_ASK_WORKER_HEARTBEAT_SEC,
     AGENT_ASK_WORKER_STALE_SEC,
     AGENT_ASK_WORKER_SWEEP_EVERY_SEC,
@@ -246,10 +247,24 @@ def _execute_job(conn, job: dict[str, Any]) -> None:
     )
     hb_thread.start()
 
+    # TASK-0289: 큐 대기시간(enqueue→claim) 산출 — 표시 수행시간을 진짜 end-to-end 로
+    # 집계하기 위한 seed. created_at(PG now(), UTC) 과 claim 시각(time.time(), UTC epoch)을
+    # 비교 — 동일 호스트라 clock skew 무시 가능. 실패 시 0(=큐 대기 미집계, 안전 폴백).
+    queued_ms = 0.0
+    _created_at = job.get("created_at")
+    if _created_at is not None:
+        try:
+            _ts = _created_at.timestamp() if hasattr(_created_at, "timestamp") else None
+            if _ts is not None:
+                queued_ms = max(0.0, (time.time() - _ts) * 1000.0)
+        except Exception:
+            queued_ms = 0.0
+
     result: Optional[dict[str, Any]] = None
     raised = False
     try:
         kwargs = _payload_to_kwargs(payload, account_id, run_id)
+        kwargs["queued_ms_seed"] = queued_ms
         result = run_agent(**kwargs)
     except Exception as exc:
         raised = True
@@ -329,6 +344,10 @@ def run_ask_worker_loop() -> None:
     worker_id = _worker_id()
     _install_signal_handlers()
     tick_sec = max(1, int(AGENT_ASK_WORKER_TICK_SEC))
+    # TASK-0289: 유휴(claim 대기) 폴링 주기를 reconnect backoff(tick_sec)와 분리. 단일 직렬
+    # worker 가 idle 상태일 때 새 job 을 발견하는 지연이 곧 사용자 큐 대기시간 → sub-second 화
+    # (기본 0.5s)로 최대 ~2s 였던 큐 대기를 ~0.5s 로 단축. sweep/reconnect 타이밍은 불변.
+    idle_poll_sec = max(0.1, float(AGENT_ASK_WORKER_IDLE_POLL_SEC))
     sweep_every = max(5, int(AGENT_ASK_WORKER_SWEEP_EVERY_SEC))
     jitter_sec = max(0, int(AGENT_ASK_WORKER_JITTER_SEC))
     if jitter_sec > 0:
@@ -398,8 +417,8 @@ def run_ask_worker_loop() -> None:
             continue
 
         if job is None:
-            # pending 없음 — tick 만큼 쉬되 shutdown 즉시 반응.
-            _SHUTDOWN.wait(tick_sec)
+            # pending 없음 — idle_poll 만큼 쉬되 shutdown 즉시 반응(TASK-0289: 큐 대기 단축).
+            _SHUTDOWN.wait(idle_poll_sec)
             continue
 
         log.info("ask-worker: claim job=%s conv=%s attempts=%s",

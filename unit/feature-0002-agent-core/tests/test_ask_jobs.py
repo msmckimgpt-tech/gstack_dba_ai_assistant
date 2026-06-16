@@ -63,8 +63,9 @@ def test_claim_sql_is_single_statement_skip_locked():
 
 
 def test_claim_parses_json_payload_row():
+    # TASK-0289: RETURNING 에 j.created_at 추가 → 8-tuple. claim 은 created_at 도 노출한다.
     payload = {"user_message": "hi", "model": "edge"}
-    row = (7, "conv-1", None, 42, json.dumps(payload), 3, 1)
+    row = (7, "conv-1", None, 42, json.dumps(payload), 3, 1, "2026-06-16T00:00:00+00:00")
     conn = FakeConn(one_results=[row])
     job = aj.claim_ask_job(conn, "w1")
     assert job["id"] == 7
@@ -73,16 +74,27 @@ def test_claim_parses_json_payload_row():
     assert job["payload"] == payload  # str→dict 파싱
     assert job["lease_epoch"] == 3
     assert job["attempts"] == 1
+    assert job["created_at"] == "2026-06-16T00:00:00+00:00"
+    # claim SQL 이 created_at 을 RETURNING 하는지 회귀 고정(큐 대기 산출 근거).
+    assert "J.CREATED_AT" in conn.last_sql().upper()
 
 
 def test_claim_accepts_dict_payload_row():
     # psycopg3 jsonb 는 dict 로 올 수 있음 — 그 경로도 처리.
     payload = {"user_message": "x"}
-    row = (1, "c", "run-1", 9, payload, 0, 1)
+    row = (1, "c", "run-1", 9, payload, 0, 1, None)
     conn = FakeConn(one_results=[row])
     job = aj.claim_ask_job(conn, "w1")
     assert job["payload"] == payload
     assert job["run_id"] == "run-1"
+
+
+def test_claim_created_at_backward_compat_short_row():
+    # 구 7-tuple(created_at 미포함) 도 IndexError 없이 None 으로 처리(길이 가드).
+    row = (2, "c2", "run-2", 5, {"user_message": "y"}, 1, 1)
+    conn = FakeConn(one_results=[row])
+    job = aj.claim_ask_job(conn, "w1")
+    assert job["created_at"] is None
 
 
 # ── enqueue: 단일문 slot enforce (MAJOR 5) ────────────────────────────────

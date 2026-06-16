@@ -2980,7 +2980,21 @@ function renderMessages() {
       const durEl = document.createElement("span");
       durEl.className = "message-meta-duration";
       durEl.textContent = formatElapsed(durationMs);
-      meta.appendChild(durEl);
+      // TASK-0289: 표시값은 진짜 end-to-end(total). 구간 분해(대기/준비/추론)를 노출해
+      // "왜 N초 걸렸는지"가 투명하게 보이도록 한다 — tooltip + 인라인 보조 텍스트.
+      const bd = message.meta?.duration_breakdown;
+      const bdText = formatDurationBreakdown(bd);
+      if (bdText) {
+        durEl.classList.add("has-breakdown");
+        durEl.title = bdText;
+        meta.appendChild(durEl);
+        const bdEl = document.createElement("span");
+        bdEl.className = "message-meta-breakdown";
+        bdEl.textContent = `(${bdText})`;
+        meta.appendChild(bdEl);
+      } else {
+        meta.appendChild(durEl);
+      }
     } else {
       meta.textContent = `${speaker} · ${formatDateTime(message.created_at)}`;
     }
@@ -3206,6 +3220,17 @@ function _stepResultKey(step, idx) {
 function buildStepDetailEl(step, idx, { compact = false } = {}) {
   const wrap = document.createElement("div");
   wrap.className = "step-detail";
+
+  // TASK-0289: 비-tool 내부 동작(action='activity')은 보조 타임라인으로 구분 렌더 —
+  // DB 동작(tool) step 은 주, 내부 동작은 muted. "단계별 DB동작 외" 동작이 보이게 한다.
+  const isActivity = step && step.action === "activity";
+  if (isActivity) {
+    wrap.classList.add("step-detail-activity");
+    const abadge = document.createElement("span");
+    abadge.className = "step-activity-badge";
+    abadge.textContent = "내부 동작";
+    wrap.appendChild(abadge);
+  }
 
   // tool badge — step 사이드 패널에서는 itemHeader에 이미 표시되므로 생략.
   // progress-strip 같은 다른 호출처에서는 유지됨(compact mode).
@@ -3605,6 +3630,25 @@ function formatElapsed(ms) {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return m > 0 ? `${m}분 ${s}초` : `${s}초`;
+}
+
+// TASK-0289: 수행시간 구간 분해를 사람이 읽는 짧은 문자열로. 250ms 미만 구간은 노이즈라
+// 생략. "대기 2.0초 · 준비 4.3초 · 추론 39초" 형태 — 헤드라인 total 이 어디서 왔는지 투명화.
+function formatDurationBreakdown(bd) {
+  if (!bd || typeof bd !== "object") return "";
+  const fmt = (ms) => {
+    const s = Math.max(0, Number(ms || 0) / 1000);
+    if (s >= 60) return formatElapsed(ms);
+    return s >= 10 ? `${Math.round(s)}초` : `${s.toFixed(1)}초`;
+  };
+  const parts = [];
+  const seg = (ms, label) => {
+    if (Number(ms || 0) >= 250) parts.push(`${label} ${fmt(ms)}`);
+  };
+  seg(bd.queued_ms, "대기");
+  seg(bd.init_ms, "준비");
+  seg(bd.inference_ms, "추론");
+  return parts.join(" · ");
 }
 
 function startElapsedTimer() {
@@ -4342,9 +4386,10 @@ async function pollProgress(seq = state.progressPollSeq) {
       return;
     }
     shouldSchedule = true;
-    nextDelay = Array.isArray(payload.steps) && payload.steps.length
-      ? PROGRESS_POLL_ACTIVE_MS
-      : PROGRESS_POLL_IDLE_MS;
+    // TASK-0289: 이 분기는 status==processing 일 때만 도달(done 은 위에서 early-return).
+    // 처리 중에는 step 유무와 무관하게 항상 ACTIVE 주기로 폴링해 첫 내부 동작(activity)이
+    // 빠르게 표면화되도록 한다 — 기존엔 step 이 생기기 전까지 IDLE(3s)이라 즉각 반응이 늦었다.
+    nextDelay = PROGRESS_POLL_ACTIVE_MS;
   } catch (_error) {
     if (seq !== state.progressPollSeq) {
       return;

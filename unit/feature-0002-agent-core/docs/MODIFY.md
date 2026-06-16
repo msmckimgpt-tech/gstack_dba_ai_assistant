@@ -1073,3 +1073,16 @@ source_of_truth: true
 - Files: src/agent_core.py, tests/test_attachment_idor.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
 - Rollback: 스코프를 AccountId 로 되돌림 + 포맷 복원.
 - Deploy: ask-worker 재빌드(agent_core baked). web 도 동일 변경 포함(feature-0003 app.py 호출부).
+
+## CHG-20260616-0301
+- TASK-0289 — 수행시간 end-to-end 집계 + 내부 동작(activity) step + 큐 대기 단축 (agent-core 면, Major §12.3).
+- 근본원인: 표시 `duration_ms` 가 `run_start`(초기화 이후) 기준 → LLM 루프만 집계. step 은 tool 만. worker 유휴 폴링 tick 1~2s.
+- 변경:
+  - (P1) `_compute_duration_breakdown(queued_ms, agent_entry_perf, run_start, now_perf)` → `{queued/init/inference/total}`. `_run_agent_core` 진입 `agent_entry_perf=perf_counter()` + `run_agent`/`_run_agent_core` 에 `queued_ms_seed` 파라미터. 표시·KV·meta `duration_ms`=total, meta `duration_breakdown` 동봉.
+  - (P1) worker(modules/ask.py)가 `ask_jobs.claim_ask_job` created_at(RETURNING `j.created_at` 추가 + dict len-guard)로 큐 대기 산출 → `queued_ms_seed`.
+  - (P2) `_emit_activity` nested helper(맥락 로드/분석 준비/추론 라운드/결과 정리) `action='activity'`·`tool=''` `save_memory_step` + `emit_index` 통합 step_index(tool step 도 emit_index 사용, `_writes_allowed`/예외 안전).
+  - (P4) config `AGENT_ASK_WORKER_IDLE_POLL_SEC`(float, 0.5) — modules/ask.py 유휴 claim 폴링 `_SHUTDOWN.wait(idle_poll_sec)`. tick_sec(reconnect backoff)·sweep 불변.
+- Verification: test_duration_breakdown.py 3 + test_ask_jobs.py created_at 2 + feature-0002 전체 회귀 0(2 skip) + py_compile. 적대 코드리뷰 REV-20260616-0301 SHIP(BLOCKER 0).
+- Files: src/agent_core.py, src/modules/{ask,ask_jobs,config}.py, tests/{test_duration_breakdown.py,test_ask_jobs.py}, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
+- Rollback: 표시값 inference-only 복원 / activity step 미emit / IDLE_POLL 제거(tick 복귀).
+- Deploy: ask-worker 재빌드(agent_core baked). web 도 동일 import(in-process 폴백 경로).

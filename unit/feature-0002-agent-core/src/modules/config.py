@@ -71,6 +71,7 @@ __all__ = [
     "AGENT_ASK_EXECUTION_MODE",
     "AGENT_ASK_WORKER_ENABLED",
     "AGENT_ASK_WORKER_TICK_SEC",
+    "AGENT_ASK_WORKER_IDLE_POLL_SEC",
     "AGENT_ASK_WORKER_HEARTBEAT_SEC",
     "AGENT_ASK_WORKER_STALE_SEC",
     "AGENT_ASK_WORKER_SWEEP_EVERY_SEC",
@@ -1007,9 +1008,16 @@ AGENT_ASK_EXECUTION_MODE = (
 )
 _ask_worker_enabled_raw = os.getenv("AGENT_ASK_WORKER_ENABLED", "1").strip() or "1"
 AGENT_ASK_WORKER_ENABLED = _ask_worker_enabled_raw.lower() in ("1", "true", "yes")
-# claim 폴링 주기(sec) — pending job 이 없으면 이 간격으로 재시도.
+# claim 폴링/reconnect backoff 주기(sec). TASK-0289 이후 유휴 claim 폴링은 아래
+# IDLE_POLL_SEC 로 분리됐고, 본 값은 reconnect backoff 등에만 사용.
 AGENT_ASK_WORKER_TICK_SEC = int(
     (os.getenv("AGENT_ASK_WORKER_TICK_SEC", "2") or "2").strip()
+)
+# TASK-0289: 유휴(claim 대기) 폴링 주기(sec, float). 단일 직렬 worker 가 새 job 을
+# 발견하는 지연 = 사용자 큐 대기시간. sub-second(기본 0.5)로 두어 최대 큐 대기를 단축.
+# tick_sec(reconnect backoff)와 분리해 sweep/재연결 타이밍에 영향 없음.
+AGENT_ASK_WORKER_IDLE_POLL_SEC = float(
+    (os.getenv("AGENT_ASK_WORKER_IDLE_POLL_SEC", "0.5") or "0.5").strip()
 )
 # job heartbeat 주기(sec) — 실행 중 별도 스레드가 이 간격으로 ask_jobs.heartbeat_at 갱신.
 # step 이 아니라 시간 기반이라 긴 LLM step 중에도 갱신돼 false-positive requeue 를 막는다.

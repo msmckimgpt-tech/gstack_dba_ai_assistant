@@ -2975,3 +2975,21 @@ source_of_truth: true
 - Verification: jsdom verify_admin_tab_gating.mjs 34 PASS + make test 컨테이너 전체 회귀 0(영향 테스트 4개 신규 계약 갱신) + node --check + py ast.parse.
 - Residual: 머지 → 배포(web 재빌드) → 라이브 재검증(테스트계정 products/datasources 403 전환·탭 숨김) → PB-0008 Windows-browser.
 - Cross-ref: CHG-20260616-0299 / TASK-0288.
+## REV-20260616-0301 [SUBAGENT:runtime-transparency]
+- Date: 2026-06-16
+- Cycle: TASK-0289 (대화 수행시간 정직 표시 + 내부 동작 투명화 + 즉각 반응 + 큐 병목 완화), **Major §12.3** — 채팅 요청 경로의 수행시간 측정·step 기록·worker 큐 폴링 변경(인증/데이터 비파괴, 사용자-대면 동작 변경).
+- Trigger: §18.8(backend + performance + UX dimension) — 채팅 lifecycle·ask-worker run-status/cancel 인접(TASK-0241 clobber trap)·타이밍 산수. 적대적 코드리뷰(general-purpose outside voice, "refute correctness").
+- Verdict: **SHIP** (BLOCKER 0, MAJOR 0, MINOR 0). 8개 위험가설 전부 코드 file:line 대조 confirmed-correct + 회귀 0.
+- 핵심 가설 반증(confirmed-correct):
+  - **emit_index 정합 → OK**: 단일 스레드 `_run_agent_core` 에서 activity·tool 둘 다 사용 전 `+=1` → 단조·충돌불가. progress `after_step`(StepIndex>%s)·프론트 `Math.max(stepCount, maxIdx)`·`_load_step_count_for_run` COUNT(*) 전부 contiguous index 와 정합. `step_intent = step_count==1`(tool 전용 카운터) 불변. emit 저장 실패(DB gap) 시에도 프론트 Math.max 라 폴링 무영향(robustness 보너스). attachment_edit step(`max(step_index)+1`)도 자동 적응.
+  - **TASK-0241 clobber → OK**: 모든 terminal `set_run_status(only_if_current_run=True)`·run_id 게이팅·superseded 가드 불변. `duration_ms`=total 로 값만 교체(동일 전달). canceled-path "결과 정리 중" activity skip 정확.
+  - **queued_ms wall-clock → OK**: `ask_jobs.created_at` = timestamptz → psycopg tz-aware → `.timestamp()` POSIX epoch(tz-naive skew 없음). `time.time()-created_at.timestamp()` 초→×1000 ms, `max(0.0,…)` 음수 클램프. total = queued(ms) + (now_perf−agent_entry_perf)×1000 = disjoint 2구간 합(큐 대기 vs in-process) — sound.
+  - **_emit_activity 안전 → OK**: cid/run_id/mem_conn 전부 def·첫 호출 전 할당, DB-connect 실패는 그 전 early-return(unbound 참조 0). try/except: pass 로 PG write 실패가 run 을 못 깸. `_writes_allowed` 게이트(tool step 과 동일).
+  - **claim RETURNING → OK**: 프로덕션 소비자 1곳(ask.py)이 dict `.get("created_at")` 만(positional 0), `row[7] if len(row)>7 else None` 가드. 테스트 8-tuple/dict/7-tuple 호환 전부 green.
+  - **breakdown 직렬화 → OK**: `dict[str,float]` JSON-safe, 기존 `duration_ms` 와 동일 `mirror_meta→save_memory_message(json.dumps)` 경로. 구 메시지(breakdown 부재)는 `formatDurationBreakdown` 가 "" 반환→plain duration 폴백.
+  - **activity step 헬퍼 오염 → OK**: in-memory `steps` 리스트에 미append → `_step_csv_paths`/`_summarize_step_rationale`/`_collapse_large_tables` 미노출. share 경로 `_share_sanitize_step` whitelist 통과하나 SQL/사용자 payload 없는 서버상수 라벨뿐 + share.js 가 `tool==="execute_sql"` SQL 패널만 → inert(누출 0).
+  - **성능 → OK**: `_emit_activity`당 PG conn open/close(기존 tool step 과 동일 패턴), run 당 ~6-8개·bounded(unbounded 성장 0). idle_poll 0.5s = idle claim SELECT 4× 빈도(단일 worker 무시 가능).
+- Should-note(비차단): claim→agent_entry_perf 사이 미세 구간(run_id set + heartbeat 스레드 기동) 미집계 — sub-ms under-count, 결함 아님.
+- Verification: test_duration_breakdown.py 3(산수 결정 고정) + test_ask_jobs.py created_at 2 + verify_runtime_transparency.mjs 16(jsdom 포맷·정적계약) + feature-0002 전체 pytest 회귀 0(2 skip) + py_compile + node --check app.js.
+- Residual: 머지 → web + ask-worker 재빌드(agent_core baked) → 라이브(total 표시·activity 타임라인·큐 단축) → PB-0008 Windows-browser(수행시간 안 줄어듦·내부 동작 step·breakdown). SSE 토큰 스트리밍(P3b)은 후속 cycle(사용자 결정).
+- Cross-ref: CHG-20260616-0301 / TASK-0289 / feature-0002 REV-20260616-0301.

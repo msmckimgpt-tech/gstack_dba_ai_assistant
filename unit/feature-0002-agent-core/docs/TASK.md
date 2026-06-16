@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Task
 
+## TASK-0289 (current cycle) — 수행시간 end-to-end 집계 + 내부 동작(activity) step + 큐 대기 단축 (feature-0003 TASK-0289 의 agent-core 면, Major §12.3)
+- 사용자 보고(feature-0003 TASK-0289): 실측 45초인데 화면엔 25초 표시(내부 동작 집계 숨겨짐) + 내부 동작(단계별 DB동작 외) 미표현. agent-core 가 수행시간 측정·step 기록의 근원.
+- 근본원인: 표시 `duration_ms` 가 `run_start`(모든 초기화 이후) 기준 → LLM 루프만 집계. step 은 tool 호출만 기록(activity 없음). worker 큐 유휴 폴링 tick 1~2s.
+- [x] (P1) `_compute_duration_breakdown(queued_ms, agent_entry_perf, run_start, now_perf)` → `{queued/init/inference/total}`. `_run_agent_core` 진입 `agent_entry_perf` + `queued_ms_seed` 파라미터(run_agent→_run_agent_core 전파). 표시·KV·meta `duration_ms`=total, meta `duration_breakdown` 동봉.
+- [x] (P1) worker(`modules/ask.py`)가 `ask_jobs.claim_ask_job` created_at(RETURNING 추가, len-guard)로 큐 대기 산출 → `queued_ms_seed`.
+- [x] (P2) `_emit_activity` nested helper(맥락 로드/분석 준비/추론 라운드/결과 정리) `action='activity'`·`tool=''` step + `emit_index` 통합 step_index(tool step 도 emit_index 사용). `_writes_allowed`/예외 안전 skip.
+- [x] (P4) `AGENT_ASK_WORKER_IDLE_POLL_SEC`(float, 0.5) 유휴 claim 폴링 분리 — `tick_sec`(reconnect) 불변.
+- [x] 테스트: test_duration_breakdown.py 3 + test_ask_jobs.py created_at 2 + feature-0002 전체 회귀 0(2 skip) + py_compile.
+- [ ] outside-voice 적대 코드리뷰 흡수(REV-20260616-0301) → ask-worker 재빌드(agent_core baked) — feature-0003 TASK-0289 와 함께 마감.
+
 ## 0. TASK-0255 (current cycle) — insight 연결 탄력성 (R1 로그 edge-trigger / R2 PG datasource_health / R3 control-plane bounded timeout)
 - [x] **조사**: 급성 병목(연결대기 starvation)은 TASK-0247/0250 으로 이미 해소 — 라이브 실측 cycle ~2.6s(불안정 DS 7개+에도 fast-fail). 잔존 3건 발견.
 - [x] **R1**: scan_failed 로그 edge-trigger(`_LAST_DS_SCAN_STATUS` + `_ds_scan_status_changed`, registry 동기 prune) — 상태 전이 시에만 WARNING(매-cycle 도배 ~20만 줄/2일 제거). `DatasourceCircuitOpen` 을 `_is_perm` 보다 먼저 분기.
