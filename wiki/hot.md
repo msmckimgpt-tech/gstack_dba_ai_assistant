@@ -13,7 +13,7 @@ last_updated: 2026-06-16
 - 공격적 질문 대응은 발표자 전용 `docs/presentation/OBJECTION-HANDLING.md` 로 분리(덱에는 미노출 — 청중 불편 방지).
 
 ## Recent Changes
-- 덱 개정: 작업화면·관리콘솔·아키텍처 mock + 질문/정리 일꾼 작동 슬라이드 + 보안(방어+잔여위험). 전문용어 평이화·한국어 word-break(keep-all)·세로 스크롤 제거(크기 축소). browse 1366×768 scroll=0 검증.
+- 덱 정합/표현 보완: mock UI 를 실제 라벨로(새 대화·관리 콘솔·데이터소스·감사 로그·LLM 사용량·설정·brand "Database Query Assistant")+"예시 화면" 표기(거짓 인지 방지)·과장 표현 절제·창 높이 맞춤 scale-to-fit(overflow:hidden, 짧은 창에서도 scroll=0)·**모든 항목 클릭 시 상세 설명 팝업**(data-explain 46키, 클릭=팝업/빈영역=이동).
 - wiki overview/feature-0002·0003/datasource-registry 2026-06-16 동작 정합화 유지.
 
 ## Active Threads
