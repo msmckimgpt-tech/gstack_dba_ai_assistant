@@ -38,7 +38,7 @@ def _isolate(monkeypatch):
     monkeypatch.setattr(ch, "AGENT_CONN_HEALTH_ENABLED", True)
     monkeypatch.setattr(ch, "AGENT_CONN_PROBE_TIMEOUT_MS_BASE", 100)
     monkeypatch.setattr(ch, "AGENT_CONN_PROBE_TIMEOUT_MS_MAX", 10000)
-    monkeypatch.setattr(ch, "AGENT_CONN_TCP_TIMEOUT_MS", 2000)       # conn-tristate: TCP 선검사 현실화
+    monkeypatch.setattr(ch, "AGENT_CONN_TCP_TIMEOUT_MS", 5000)       # conn-tristate: TCP 선검사(콜드/원거리 RTT 흡수, TASK-0290)
     monkeypatch.setattr(ch, "AGENT_CONN_SLOW_MS", 1000)             # conn-tristate: 느림 임계
     monkeypatch.setattr(ch, "AGENT_CONN_DOWN_AFTER_FAILS", 2)       # conn-tristate: 끊김 판정 임계
     monkeypatch.setattr(ch, "AGENT_CONN_HEALTHY_RECHECK_SEC", 30)
@@ -52,8 +52,8 @@ def _isolate(monkeypatch):
 
 # ── 1. 적응형 timeout ────────────────────────────────────────────────────────
 def test_tcp_timeout_uses_env():
-    # conn-tristate: TCP 선검사 timeout 은 구 100ms(BASE)가 아니라 AGENT_CONN_TCP_TIMEOUT_MS(현실화).
-    assert ch._tcp_timeout_sec() == pytest.approx(2.0)  # 2000ms
+    # conn-tristate: TCP 선검사 timeout 은 구 100ms(BASE)가 아니라 AGENT_CONN_TCP_TIMEOUT_MS(현실화, 기본 5000ms).
+    assert ch._tcp_timeout_sec() == pytest.approx(5.0)  # 5000ms (TASK-0290: 콜드/원거리 RTT spike 흡수)
 
 
 def test_driver_timeout_adaptive():

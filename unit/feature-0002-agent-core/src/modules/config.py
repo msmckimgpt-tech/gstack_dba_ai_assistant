@@ -810,12 +810,18 @@ AGENT_CONN_HEALTH_TICK_SEC = max(1, int(os.getenv("AGENT_CONN_HEALTH_TICK_SEC", 
 AGENT_CONN_STALE_GRACE_SEC = max(5, int(os.getenv("AGENT_CONN_STALE_GRACE_SEC", "60") or "60"))
 # ── 연결 상태 3단계 분류(conn-tristate) — healthy(초록)/unstable(빨강)/down(회색) ──
 # TCP 선검사 timeout(ms) — 다른 리전 datasource 의 핸드셰이크 RTT 가 구 100ms(BASE)를 넘겨
-# **연결 가능한 느린 서버까지 죽은 것으로 오판**하던 문제를 완화한다. 기본 2000ms 로 현실화
-# (ECONNREFUSED 같은 진짜 죽은 서버는 timeout 무관 즉답이라 fast-fail 유지, SYN-drop 방화벽/
-# 원거리 RTT 만 더 기다려준다). 미설정 시 구 BASE 와 2000 중 큰 값으로 폴백(하위호환 안전).
+# **연결 가능한 느린 서버까지 죽은 것으로 오판**하던 문제를 완화한다. 기본 5000ms.
+# 근거(TASK-0290 라이브 실측): 구 2000ms 는 web 재시작 콜드 스타트 시 다수 타-리전 datasource
+# 를 워커 4개로 동시 probe(thundering herd)하면 첫 TCP 핸드셰이크 spike 가 2000ms 를 살짝 넘겨
+# (실측 mysql-kr-an2-* 2003~2237ms) 2회 연속 실패→down(회색) 으로 오판했다. 5000ms 면 콜드/원거리
+# RTT spike 를 흡수해 연결 가능한 느린 서버(예: mysql-mv-qa-* TCP 195ms+DB 1749ms)를 unstable
+# (빨강, 느림)로 유지한다. ECONNREFUSED/도달불가 같은 진짜 죽은 서버는 timeout 무관(즉답) 또는
+# 5s 로도 timeout 되어 down(회색) 으로 정확히 분류된다(실측 kr-an2 errno=2003 은 5s 도 timeout).
+# 30s 는 진짜 죽은 서버를 워커 4개가 점유해 모니터 라운드를 지연시키는 성능 이슈가 있어 5s 채택.
+# 미설정 시 구 BASE 와 5000 중 큰 값으로 폴백(하위호환 안전).
 AGENT_CONN_TCP_TIMEOUT_MS = max(
     AGENT_CONN_PROBE_TIMEOUT_MS_BASE,
-    int(os.getenv("AGENT_CONN_TCP_TIMEOUT_MS", "2000") or "2000"),
+    int(os.getenv("AGENT_CONN_TCP_TIMEOUT_MS", "5000") or "5000"),
 )
 # 느림 임계(ms) — 연결은 성공했지만 elapsed_ms 가 이 값 이상이면 healthy 가 아니라 unstable(빨강,
 # "연결 불안정")로 분류. 다른 리전 등 느린(하지만 살아있는) datasource 를 정상(초록)과 구분한다.

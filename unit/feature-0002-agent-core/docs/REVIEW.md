@@ -934,3 +934,17 @@ source_of_truth: true
 - Verification: test_attachment_idor.py +4(conversation 스코프·account 폴백·파일명 우선) + make test 전체 회귀 0.
 - Residual: ask-worker 재빌드(agent_core baked) — feature-0003 TASK-0284 와 함께 마감.
 - Cross-ref: CHG-20260616-0291 / TASK-0284 / feature-0003 REV-20260616-0291(full).
+
+## REV-20260616-0299 [SKIPPED:minor-config-timeout-no-security] — conn-tristate TCP timeout 2000→5000ms
+- Date: 2026-06-16
+- Cycle: TASK-0290 (CHG-20260616-0299), Minor §12.3 — 단일 config 파라미터(timeout 상향, 안전 방향).
+- Trigger: 사용자 보고 — "관리 콘솔 > 데이터소스 의 mysql-mv-qa-* 버튼이 연결 안 됨처럼 보이나 실제론 ~1700ms 느린 연결이므로 빨강(불안정)이어야 한다" → 라이브 진단.
+- 진단 근거(라이브 실측, repo-web-1, docker exec probe 재현):
+  - 백엔드 classify 양호: mysql-mv-qa-* 3개 모두 TCP 193~195ms + DB 1749~1766ms → `classify`=**unstable**(빨강) 정확. HTTP `/api/admin/datasources` conn_status 도 현재 unstable. 즉 사용자가 본 회색은 web 재시작(07:47Z) 콜드 스타트 직후 thundering herd 의 일시 TCP timeout→down 오판이었고 이후 복구됨.
+  - mysql-kr-an2-* 7개: 모니터 로그 `via=probe-tcp err=timeout` → fails=2 → down. HTTP conn_status elapsed=2003~2237ms(2000ms 임계 초과). 5s timeout 으로 직접 probe 해도 여전히 TCP timeout + DB errno=2003(MySQL 도달 불가) → **진짜 죽음, down 정확**(수정 대상 아님, 30s 로도 무의미).
+- 결정: TCP 선검사 timeout 2000→5000ms. 콜드/원거리 RTT spike 흡수가 목적. 죽은 서버는 timeout 무관 즉답(ECONNREFUSED) 또는 5s timeout→down 으로 분류 정확도 보존.
+- 대안 검토: 30s(사용자 1안) — 죽은 서버 7개가 워커 4개를 30s 점유 → 모니터 라운드 지연(다른 datasource status 갱신 밀림) + should_fast_fail down 판정 지연. 성능 이슈로 기각, 5s 채택(사용자 "성능 이슈면 5초" 정합).
+- 리스크: 죽은 서버 down 확정이 2s→5s 지연(허용 — 모니터는 background daemon, 요청 경로 아님; down 은 backoff recheck 라 매 라운드 전수 probe 아님). flapping 무변(DOWN_AFTER_FAILS=2 유지). DB probe base(SLOW×3=3s)는 mv-qa 1749ms 충분 흡수 + DB 1회 fail 은 unstable(빨강)이라 회색 안 됨 → TCP timeout 만 상향으로 충분.
+- Panel: SKIPPED — 보안/RBAC/스키마/인가경계 무관 단일 timeout 파라미터(안전 방향 상향). [[feedback_outside_voice_for_rbac]] 비해당.
+- Residual: 배포 후 콜드 스타트 재현 검증(mv-qa unstable 유지, kr-an2 down).
+- Cross-ref: CHG-20260616-0299 / TASK-0290 / TASK-0282(conn-tristate 도입 main 2e5778a).

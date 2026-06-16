@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260616-0299 (TASK-0290 — conn-tristate TCP 선검사 timeout 상향)
+- Date: 2026-06-16 (TASK-0290, Minor §12.3 — 연결 상태 분류 정확도)
+- Scope: conn_health TCP 선검사 timeout 기본값 2000→5000ms. RBAC/스키마/엔드포인트/SQL추출 0.
+- 근본(라이브 실측 repo-web-1): web 재시작 콜드 스타트 시 14개 datasource(10개 타-리전)를 워커 4개로 동시 probe(thundering herd) → 첫 TCP 핸드셰이크 spike 가 2000ms 를 살짝 초과(mysql-kr-an2-* 실측 2003~2237ms) → 2회 연속 실패 → down(회색) 오판. mysql-mv-qa-*(TCP 195ms+DB 1749ms, 본래 unstable=빨강)도 콜드 시 일시 down → 사용자가 "버튼이 연결 안 됨처럼" 인지.
+- 변경: config.py `AGENT_CONN_TCP_TIMEOUT_MS` 기본 2000→5000(주석에 실측 근거 기록). 5s 면 콜드/원거리 RTT spike 흡수 → 연결 가능한 느린 서버를 unstable(빨강, "연결 불안정") 유지. 진짜 죽은 서버(errno=2003, 5s 도 timeout)는 down(회색) 정확 유지. 30s 는 죽은 서버가 워커 4개를 점유해 모니터 라운드를 지연시키는 성능 이슈 → 5s 채택(사용자 결정 "30초가 성능 이슈면 5초로").
+- 검증: 라이브 probe 재현(docker exec) — mv-qa TCP 5s 통과+DB 1749ms→unstable, kr-an2 5s 도 timeout(errno=2003)→down. 배포 후 콜드 스타트 모니터 분류 확인(TEST.md).
+- Files: src/modules/config.py, tests/test_conn_health.py(fixture·기본값 검증 2000→5000 정합), docs/{TASK,MODIFY,REVIEW,TEST}.md
+- Rollback: AGENT_CONN_TCP_TIMEOUT_MS 기본 2000 복귀 (또는 .env `AGENT_CONN_TCP_TIMEOUT_MS=2000` override).
+- Deploy: web + ask-worker + insight-worker 재빌드(config.py = agent-core 3 이미지 공유 baked). config 는 .env 우선이라 즉시 검증 시 .env override 후 재시작도 가능.
+
 ## CHG-20260616-0295 (TASK-0286 — SYSTEM_PROMPT attachment-edit 파일화 안내)
 - Date: 2026-06-16 (TASK-0286, **Major §12.3** — feature-0003 주관, agent_core 는 SYSTEM_PROMPT 만 변경)
 - 변경: `src/agent_core.py` SYSTEM_PROMPT 에 "DELIVERING THE EDITED FILE — ATTACH IT, NEVER PASTE THE WHOLE BODY" 섹션 추가 — assistant 가 첨부 파일 수정본을 전달할 때 ⓐ 변경점은 ```diff```, ⓑ 전체 수정본은 ```attachment-edit```(헤더 JSON + 본문, 사용자 미노출·첨부 새 버전 저장), ⓒ 전체 본문을 일반 코드블록으로 붙이지 말 것을 지시. 기존 "SHOWING CHANGES — diff" 섹션과 공존.
