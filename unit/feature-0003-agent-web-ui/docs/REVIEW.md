@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260616-0297 [SKIPPED:frontend-only-download-method]
+- Date: 2026-06-16 (TASK-0287 — 말풍선 첨부 칩 다운로드 실패 수정)
+- Skip 사유: frontend-only 1곳(`_buildMessageAttachChip` 의 다운로드 방식을 navigation→fetch+blob 으로 통일). 백엔드/RBAC/스키마/엔드포인트 무변경 — 적대적 보안/데이터 리뷰 패널 트리거(§18.8) 비해당. `_downloadAttachmentById`(목록에서 검증·작동) 재사용이라 신규 위험 표면 0.
+- 자체 검토: 다운로드 권한은 `download_attachment` 엔드포인트의 `_account_can_access_attachment`(own/any) + pending 차단으로 불변(프론트는 호출 방식만 변경). signed_url 폴백 경로 보존. node --check PASS. 시각·실 다운로드 검증은 PB-0008.
+
 ## REV-20260616-0296 [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-16 (TASK-0286 후속 docs-only — PB-0008 시각검증 + 라이브 프롬프트 갱신 evidence)
 - Skip 사유: docs 전용(STATUS/REPORT/TASK/MODIFY/REVIEW). 코드/정적자산/RBAC 무변경 — 본체 적대 보안 검토는 REV-20260616-0295 [SUBAGENT:attach-edit-strip-security] SHIP-WITH-FIXES 담당.

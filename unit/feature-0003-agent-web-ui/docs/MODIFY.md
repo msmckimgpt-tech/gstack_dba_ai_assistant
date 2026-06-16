@@ -6,7 +6,16 @@ edit_policy: append-only
 source_of_truth: true
 ---
 
+
 # Modify Log
+
+## CHG-20260616-0297 (TASK-0287 — 말풍선 첨부 칩 다운로드 실패 수정)
+- Date: 2026-06-16
+- Scope: feature-0003-agent-web-ui frontend-only(app.js 1곳 + index.html 캐시버스터). 백엔드/RBAC 무변경.
+- 변경: `src/static/app.js` `_buildMessageAttachChip` 의 다운로드 핸들러를 `<a href download>` navigation → `_downloadAttachmentById(att.id, attName)`(목록과 동일 raw fetch + blob, 프록시 `/api/attachments/{id}/download`)로 통일. signed_url 만 있는 폴백은 navigation 유지. 캐시버스터 `?v=20260616-task0287-bubble-chip-dl`.
+- 근본원인: TASK-0284 가 octet-stream 프록시 다운로드를 navigation→fetch+blob 으로 전환했으나 말풍선 칩(TASK-0285 `_buildMessageAttachChip`)은 navigation 으로 남아 있어 다운로드 실패.
+- 검증: node --check PASS. 백엔드 무변경(make test 회귀 자명 0). 실 다운로드는 PB-0008.
+- Files: src/static/app.js, src/static/index.html, docs/{TASK,FUNCTION,REPORT,REVIEW,MODIFY}.md
 
 ## CHG-20260616-0296 (TASK-0286 후속 docs-only — PB-0008 + 라이브 프롬프트 evidence)
 - Date: 2026-06-16

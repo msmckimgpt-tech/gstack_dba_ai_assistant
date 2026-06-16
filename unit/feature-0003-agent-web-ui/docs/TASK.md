@@ -8,7 +8,15 @@ source_of_truth: true
 
 # Task
 
-## TASK-0286 (current cycle) — 첨부 수정본 전달: 전체 본문 노출 제거 + 변경점만(diff) + 파일 명시 전달 (REQ-20260616-0286, AC-0528~0530, Major §12.3)
+## TASK-0287 (current cycle) — 말풍선 첨부 칩 다운로드 실패 수정 (REQ-20260616-0287, AC-0531, Minor §12.3, frontend-only)
+- 보고(사용자): 첨부파일 목록에서 다운로드는 되지만, 말풍선 안에서 제공되는 첨부파일(칩)은 다운로드 실패.
+- 진단: 목록 다운로드는 `_downloadAttachmentById`(raw fetch + blob, TASK-0284)인데, 말풍선 칩(`_buildMessageAttachChip`, TASK-0285)은 여전히 `<a href download>` **navigation** 방식. TASK-0284 가 octet-stream 프록시(`/api/attachments/{id}/download`)에서 navigation 다운로드 실패 때문에 목록을 fetch+blob 으로 전환했으나, 말풍선 칩에는 그 전환이 적용되지 않았다.
+- 수정(frontend-only): `_buildMessageAttachChip` 의 click 핸들러를 `att.id` 가 있으면 `_downloadAttachmentById(att.id, attName)`(목록과 동일 fetch+blob) 호출로 통일. signed_url 만 있는 드문 폴백은 기존 navigation 유지. 캐시버스터 `?v=20260616-task0287-bubble-chip-dl`.
+- 비변경: 백엔드/RBAC/스키마/엔드포인트/`_downloadAttachmentById` 자체 0.
+- [x] node --check PASS, 백엔드 무변경(make test 회귀 자명 0).
+- [ ] (잔여) 머지 → web 재배포 → PB-0008(말풍선 칩 클릭 다운로드 성공).
+
+## TASK-0286 — 첨부 수정본 전달: 전체 본문 노출 제거 + 변경점만(diff) + 파일 명시 전달 (REQ-20260616-0286, AC-0528~0530, Major §12.3)
 - 보고(사용자): assistant 가 파일(첨부)을 전달하지 않고 첨부 본문 전체를 채팅에 텍스트로 출력. ① 본문 전달이 필수면 변경점만 전달, ② 수정된 파일을 명시적으로 전달하도록.
 - 등급: **Major §12.3** — LLM 동작(시스템 프롬프트) + 백엔드 답변/메시지 content 변조 + 프론트. RBAC 무변경.
 - 진단: attachment-edit(파일화) 인프라(TASK-0275)는 있으나 ⓐ 시스템 프롬프트에 사용법이 없어 assistant 가 전체 본문을 그냥 출력, ⓑ materialize 후에도 블록이 답변에 남아 노출, ⓒ 프론트도 미처리.
