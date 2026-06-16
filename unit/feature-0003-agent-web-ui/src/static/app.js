@@ -2871,13 +2871,22 @@ function _buildMessageAttachChip(att) {
     chip.classList.add("has-download");
     chip.title = "클릭하여 다운로드";
     chip.addEventListener("click", () => {
-      const a = document.createElement("a");
-      a.href = att.id ? `/api/attachments/${encodeURIComponent(att.id)}/download` : att.signed_url;
-      a.download = attName;
-      a.rel = "noopener";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      // ★ TASK-0287: 목록 다운로드(_downloadAttachmentById)와 동일한 fetch+blob 방식으로 통일.
+      // 기존 <a href download> navigation 은 octet-stream 프록시(/api/attachments/{id}/download,
+      // TASK-0284)에서 다운로드가 실패했다 — 목록은 TASK-0284 에서 fetch+blob 으로 전환했으나
+      // 말풍선 칩(TASK-0285)은 navigation 으로 남아 있었다. id 가 있으면 프록시 fetch, 없고
+      // signed_url 만 있으면(드문 폴백) 기존 navigation 유지.
+      if (att.id) {
+        _downloadAttachmentById(att.id, attName, null);
+      } else if (att.signed_url) {
+        const a = document.createElement("a");
+        a.href = att.signed_url;
+        a.download = attName;
+        a.rel = "noopener";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
     });
   }
   const nameEl = document.createElement("span");
