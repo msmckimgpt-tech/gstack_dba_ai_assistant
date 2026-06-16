@@ -32,7 +32,7 @@ source_of_truth: true
   - AC-0540: 첫 진입 시 어떤 대화도 자동 선택되지 않아 대화 화면이 "대화를 선택하세요" 빈 상태로 표시된다. 단 `?conversation=<id>` deep-link 와 진행 중 요청이 있는 직전 대화는 예외로 활성화된다.
 - 위험도: Major(비파괴 UI 동작 변경, rollback=캐시버스터 환원). 인증/인가/데이터 무관.
 - [x] node --check PASS + `verify_conv_entry_defaults.mjs` 20/20 PASS.
-- [ ] 잔여: 머지 → web 재배포 → PB-0008 Windows-browser 시각검증.
+- [x] PR #293 squash 머지(main b5f2434) → web 재배포(`?v=20260616-conv-entry-defaults`, healthz b5f2434) → **PB-0008 Windows-browser PASS**(요구1 타 계정 대화 접힘·요구2 빈 대화 화면, clean-room 재현 + 선호 존중). evidence `artifacts/pb0008-conv-entry-defaults/entry-others-collapsed-empty-chat.png`. CHG/REV-20260616T163634-ai-claude-conv-entry-defaults-pb0008.
 
 ## TASK-0291 (이전 cycle) — 관리 콘솔 계정 탭 배지 개수 활성 계정만 집계 (REQ-0282, AC-0538, Minor §12.3, frontend-only)
 - 보고(사용자): `관리 콘솔 > 계정` 항목에 표시되는 개수를 활성화된 계정 대상으로만 집계하도록 수정. 비활성·삭제된 대상은 해당 목록 내부(필터)에서 이미 확인 가능하므로, 배지에는 실제 중요한 정보(활성 계정 수)만 노출.
