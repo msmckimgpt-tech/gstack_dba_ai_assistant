@@ -9,6 +9,13 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260616T163634-ai-claude-conv-entry-defaults-pb0008 (TASK-20260616T100304-conv-entry-defaults 후속 docs-only — PB-0008 evidence)
+- Date: 2026-06-16
+- Scope: docs 전용(TEST/REPORT/TASK/MODIFY/REVIEW + STATUS) + evidence 이미지. 코드/정적자산 0.
+- 변경: TASK-20260616T100304-conv-entry-defaults 의 "잔여: 머지→배포→PB-0008" 을 **완료(PR #293 머지 main b5f2434·web 재배포·PB-0008 PASS)** 로 갱신. TEST.md §4 에 Windows-browser Run 기록(요구1 타 계정 대화 접힘·요구2 빈 대화 화면·clean-room 재현·선호 존중). evidence `artifacts/pb0008-conv-entry-defaults/entry-others-collapsed-empty-chat.png` 추가.
+- 검증: PB-0008 실측(win-browser eval — computed/state/localStorage). 코드 무변경.
+- Files: unit/feature-0003-agent-web-ui/docs/{TEST,REPORT,TASK,MODIFY,REVIEW}.md, docs/STATUS.md
+
 ## CHG-20260616T100304-conv-entry-defaults (TASK-20260616T100304-conv-entry-defaults — 작업 화면 첫 진입 기본값: 타 계정 대화 접힘 + 빈 대화 화면)
 - Date: 2026-06-16
 - Scope: feature-0003-agent-web-ui frontend-only(`src/static/app.js` + `index.html` 캐시버스터) + 신규 `tests/verify_conv_entry_defaults.mjs`. 백엔드/RBAC/스키마/엔드포인트 무변경.

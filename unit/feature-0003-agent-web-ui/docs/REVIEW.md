@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260616T163634-ai-claude-conv-entry-defaults-pb0008 [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-16 (TASK-20260616T100304-conv-entry-defaults 후속 docs-only — PB-0008 시각검증 evidence)
+- Skip 사유: docs 전용(TEST/REPORT/TASK/MODIFY/REVIEW + STATUS). 코드/정적자산/RBAC 무변경 — 본체 검토는 REV-20260616T100304-ai-claude-conv-entry-defaults [SKIPPED:frontend-ui-entry-defaults-no-backend-no-rbac] 담당.
+- 기록 요지: TASK-20260616T100304-conv-entry-defaults PB-0008 Windows-browser **PASS**(실 Chrome/148, 배포본 main `b5f2434`, healthz git_commit 일치). win-browser eval computed/state/localStorage 실측 — **요구2**: bootstrap_admin 로그인·대화 104개·서버 직전 대화 존재(`state.session.conversation_id` set)인데도 첫 진입 `state.activeConversationId=""`·`#conversationTitle="대화를 선택하세요"`(직전 대화 자동선택 차단). **요구1**: 타 계정 대화 50건·첫 진입 시 "타 계정 대화" 그룹 `is-collapsed`·`aria-expanded="false"`·`.conv-owner-header` 0개 렌더·`mad.othersCollapsedSeed.v1="1"`·`collapsedGroups=["__others__"]`. **clean-room**: `localStorage.clear()`→reload 시 seed 재발화 + 빈 화면 동시 재현. **선호 존중**: 헤더 click 펼침(owner 5개·set 에서 제거) → reload 후 펼침 유지(재접힘 강제 없음). evidence `artifacts/pb0008-conv-entry-defaults/entry-others-collapsed-empty-chat.png`.
+
 ## REV-20260616T100304-ai-claude-conv-entry-defaults [SKIPPED:frontend-ui-entry-defaults-no-backend-no-rbac]
 - Date: 2026-06-16 (TASK-20260616T100304-conv-entry-defaults — 작업 화면 첫 진입 기본값: 타 계정 대화 접힘 + 빈 대화 화면)
 - Skip 사유: frontend-only(`src/static/app.js` + `index.html` 캐시버스터 + 신규 jsdom-less 회귀 테스트). 백엔드/RBAC/스키마/엔드포인트/SQL 무변경 — 적대적 보안/데이터 리뷰 패널 트리거(§18.8) 비해당. 변경은 ① localStorage seed 1회 + ② 클라이언트 자동선택 게이트로, 서버 권한 경계(대화 접근권은 `/api/conversations`·`/api/history`·`/api/use_conversation` 의 기존 게이트 불변)에 영향 0.
