@@ -13,7 +13,8 @@ last_updated: 2026-06-16
 - 공격적 질문 대응은 발표자 전용 `docs/presentation/OBJECTION-HANDLING.md` 로 분리(덱에는 미노출 — 청중 불편 방지).
 
 ## Recent Changes
-- 덱 정합/표현 보완: mock UI 를 실제 라벨로(새 대화·관리 콘솔·데이터소스·감사 로그·LLM 사용량·설정·brand "Database Query Assistant")+"예시 화면" 표기(거짓 인지 방지)·과장 표현 절제·창 높이 맞춤 scale-to-fit(overflow:hidden, 짧은 창에서도 scroll=0)·**모든 항목 클릭 시 상세 설명 팝업**(data-explain 46키, 클릭=팝업/빈영역=이동).
+- 덱 상호작용 발견성: **Ctrl 키 누르면 클릭 가능 항목 옅게 강조**(`body.find-explain` outline+glow, keyup/blur 해제) + **팝업 열린 채 다른 항목 클릭 시 교체**(`.pop{pointer-events:none}`/`.pop-card{auto}` 오버레이 통과, 빈 곳 클릭=팝업만 닫힘·페이지 유지).
+- 덱 정합/표현 보완: mock UI 실제 라벨·"예시 화면" 표기·과장 절제·scale-to-fit(scroll=0)·모든 항목 클릭 상세 팝업(data-explain)·우측 말풍선(딤 없음).
 - wiki overview/feature-0002·0003/datasource-registry 2026-06-16 동작 정합화 유지.
 
 ## Active Threads
