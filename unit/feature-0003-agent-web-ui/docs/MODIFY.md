@@ -9,6 +9,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260616T100304-conv-entry-defaults (TASK-20260616T100304-conv-entry-defaults — 작업 화면 첫 진입 기본값: 타 계정 대화 접힘 + 빈 대화 화면)
+- Date: 2026-06-16
+- Scope: feature-0003-agent-web-ui frontend-only(`src/static/app.js` + `index.html` 캐시버스터) + 신규 `tests/verify_conv_entry_defaults.mjs`. 백엔드/RBAC/스키마/엔드포인트 무변경.
+- 변경:
+  - (요구1) `src/static/app.js`: 상수 `OTHERS_GROUP_KEY="__others__"` + `OTHERS_COLLAPSED_SEED_LS_KEY="mad.othersCollapsedSeed.v1"` 신설. `_seedOthersCollapsedOnce()` — seed 플래그가 없을 때만 1회 `__others__` 를 `collapsedDateGroups` 에 추가하고 `collapsedDateGroups`(localStorage `mad.collapsedGroups.v1`) + seed 플래그를 영속(모듈 로드 시 1회 호출). `renderConversationList` 의 `othersKey` 를 상수로 통일.
+  - (요구2) `loadConversations(preferredConversationId, { allowCurrentFallback = true })` — preferred 미존재 시 `allowCurrentFallback` 가 false 면 `payload.current` 폴백 없이 active="" (빈 화면). `refreshWorkspace(_, opts)` 가 옵션 전달. `initializeWorkspace`: `_preferCid` 기본 ""/`_allowCurrentFallback=false`(빈 진입), deep-link 시 `allowCurrentFallback=true`(TASK-0263 보존), 직전 대화가 처리 중이면 그 대화를 선택해 resume(TASK-0041, `_resumeStatus` 재사용으로 중복 fetch 회피).
+  - `index.html`: app.js 캐시버스터 → `?v=20260616-conv-entry-defaults`.
+- 근본원인: ① 첫 진입 시 `collapsedDateGroups` 가 비어 "타 계정 대화" 가 펼침 기본. ② bootstrap 이 서버 직전 대화를 무조건 자동선택(`_preferCid=session.conversation_id` + `payload.current` 폴백).
+- 검증: node --check PASS + `verify_conv_entry_defaults.mjs` 20/20 PASS. 백엔드 무변경(make test 회귀 자명 0). 실 화면은 PB-0008.
+- Files: src/static/app.js, src/static/index.html, tests/verify_conv_entry_defaults.mjs, docs/{TASK,FUNCTION,REPORT,REVIEW,MODIFY}.md, ../../docs/STATUS.md
+
 ## CHG-20260616-0301 (TASK-0291 후속 docs-only — PB-0008 evidence)
 - Date: 2026-06-16
 - Scope: docs 전용(TEST/STATUS/REPORT/MODIFY/REVIEW). 코드 0.

@@ -8,7 +8,24 @@ source_of_truth: true
 
 # Task
 
-## TASK-0291 (current cycle) — 관리 콘솔 계정 탭 배지 개수 활성 계정만 집계 (REQ-0282, AC-0538, Minor §12.3, frontend-only)
+## TASK-20260616T100304-conv-entry-defaults (current cycle) — 작업 화면 첫 진입 기본값: 타 계정 대화 접힘 + 빈 대화 화면 (REQ-20260616-0289, AC-0539/0540, Major §12.3, frontend-only)
+- 보고(사용자): ① 작업 화면을 처음 진입 시 타 계정 대화는 접혀있도록 구성, ② 대화 화면 또한 비어있는 상태여야 함.
+- 등급: **Major §12.3** — bootstrap 진입 동작 변경(2개 동작). RBAC/스키마/엔드포인트/백엔드 무변경 → frontend-only.
+
+### §2.1 Implementation Plan (PLAN)
+- 영향 파일: `src/static/app.js`(로직), `src/static/index.html`(캐시버스터), 신규 `tests/verify_conv_entry_defaults.mjs`.
+- 변경 symbol:
+  - (요구1) 신규 `_seedOthersCollapsedOnce()` + 상수 `OTHERS_GROUP_KEY`/`OTHERS_COLLAPSED_SEED_LS_KEY`; `renderConversationList` 의 `othersKey` 를 상수로 통일.
+  - (요구2) `loadConversations(preferredConversationId, {allowCurrentFallback=true})` 폴백 게이트; `refreshWorkspace(_, opts)` 전달; `initializeWorkspace` 의 `_preferCid` 기본값 ""/`_allowCurrentFallback=false` + deep-link/resume 예외.
+- 접근: ① seed 플래그가 없을 때만 1회 `__others__` 를 `collapsedDateGroups`(localStorage)에 추가·영속 → 첫 진입 접힘, 이후 사용자 토글 존중. ② 첫 진입은 `allowCurrentFallback:false` 로 `payload.current` 자동선택 차단(빈 화면); deep-link(TASK-0263) 와 진행중 resume(TASK-0041)만 예외로 대화 활성화.
+- 완료 기준(AC):
+  - AC-0539: localStorage seed 플래그 부재(첫 진입) 시 "타 계정 대화" 그룹이 접힌 채 렌더된다. 사용자가 펼치면 그 선호가 영속되어 다음 진입에도 유지된다(재접힘 강제 없음).
+  - AC-0540: 첫 진입 시 어떤 대화도 자동 선택되지 않아 대화 화면이 "대화를 선택하세요" 빈 상태로 표시된다. 단 `?conversation=<id>` deep-link 와 진행 중 요청이 있는 직전 대화는 예외로 활성화된다.
+- 위험도: Major(비파괴 UI 동작 변경, rollback=캐시버스터 환원). 인증/인가/데이터 무관.
+- [x] node --check PASS + `verify_conv_entry_defaults.mjs` 20/20 PASS.
+- [ ] 잔여: 머지 → web 재배포 → PB-0008 Windows-browser 시각검증.
+
+## TASK-0291 (이전 cycle) — 관리 콘솔 계정 탭 배지 개수 활성 계정만 집계 (REQ-0282, AC-0538, Minor §12.3, frontend-only)
 - 보고(사용자): `관리 콘솔 > 계정` 항목에 표시되는 개수를 활성화된 계정 대상으로만 집계하도록 수정. 비활성·삭제된 대상은 해당 목록 내부(필터)에서 이미 확인 가능하므로, 배지에는 실제 중요한 정보(활성 계정 수)만 노출.
 - 진단: 사이드바 계정 탭 배지 `#tabCountAccounts`(admin.js `refreshPendingUI`)가 `adminState.accounts.length`(전체 = 활성 + 비활성 + 삭제)를 그대로 표시. 반면 목록 내부 카운트 `#accountListCount`(`renderAccountList`)는 `filteredAccounts()` 기반이라 이미 filter-aware(활성/비활성/삭제 필터 선택 시 해당 수 반영) — 사용자가 말한 "목록 내부에서 확인 가능"이 이것.
 - 수정(frontend-only, admin.js 1곳): `refreshPendingUI` 의 `tabCountAccounts` 집계를 `adminState.accounts.filter((a) => a.is_active && !a.deleted_at).length`(활성 정의 = `filteredAccounts()` 의 `'active'` 분기와 동일: `is_active && !deleted_at`)로 변경. 캐시버스터 `admin.html ?v=20260616-task0291-account-active-count`.
