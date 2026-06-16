@@ -3933,3 +3933,12 @@ source_of_truth: true
 - Files: feature-0003 src/static/styles.css, src/static/admin.html, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
 - Rollback: `.admin-tabs` 의 `min-height:0; overflow-y:auto;` + `.admin-sidebar-foot` 의 `flex-shrink:0` 제거(짧은 화면 클리핑 재발). 캐시버스터 복원.
 - Deploy: web 재빌드 1 이미지(styles.css/admin.html baked). 캐시버스터 `?v=20260616-task0292-admin-sidebar-vscroll`. deploy_scope: included.
+
+## CHG-20260616-0304
+- Date: 2026-06-16 (TASK-0292 후속 docs-only — PB-0008 evidence + 배포 기록).
+- Scope: docs only (TASK/STATUS/MODIFY/REVIEW/TEST). 코드·자산 무변경 (TASK-0292 CHG-0303 에서 이미 머지·배포됨).
+- 내용: TASK-0292(관리 콘솔 사이드바 수직 스크롤) PR #289(main be3a775) 머지 + web 재배포 + PB-0008 Windows-browser PASS 결과를 정본화. TEST.md §3 에 Windows-browser Run 추가(CHECK#13 충족).
+- Verification: PB-0008 실측 — computed `.admin-tabs{overflow-y:auto; min-height:0px}`·`.admin-sidebar-foot{flex-shrink:0}`; 짧은 viewport(240px) tabsScrollH=572 > clientH=134(scrollable), scrollTop=438 도달, 하단 '설정' 탭 settingsReachable=true, foot 하단 고정. evidence `artifacts/pb0008-task0292/admin-sidebar-vscroll-short-vp.png`.
+- Files: unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW,TEST}.md, docs/STATUS.md.
+- Rollback: 해당없음(docs only).
+- Deploy: 해당없음(코드 무변경).

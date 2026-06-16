@@ -916,3 +916,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **시각 evidence**: `artifacts/pb0008-task0291/account-tab-active-count.png`(1249×840) — 좌측 사이드바 계정 배지 **7**, 본문 "계정 관리" 목록 "전체" 필터에서 **28명** 동시 표시(배지 ≠ 전체, 배지 = 활성). 역할(5)·제품(8)·데이터소스(14) 탭 배지는 비변경(요청 범위=계정 한정).
   - **Pass/Fail: PASS** — 계정 탭 배지가 활성 계정 수(7)만 집계하고 전체(28)와 분리됨을 실제 Windows 브라우저 실측 통과. CHECK#13(PB-0008 Windows-browser) **충족**.
   - **Notes:** 기 캐시 사용자는 1회 하드리프레시(index/admin.html no-cache 진입 후 자동 최신).
+
+- 2026-06-16 (TASK-0292 관리 콘솔 좌측 사이드패널 수직 스크롤 — **PB-0008 Windows-browser PASS**; CHG/REV-20260616-0304 evidence):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면. 배포: main `be3a775`(PR #289 squash) → `docker compose build web` + `up -d --no-deps web`(repo-web-1 Up healthy, /healthz mysql_ok·pg_ok true). 서빙 admin.html `styles.css?v=20260616-task0292-admin-sidebar-vscroll` + 컨테이너 baked styles.css `.admin-tabs{min-height:0;overflow-y:auto}`·`.admin-sidebar-foot{flex-shrink:0}`.
+  - **측정(win-browser eval, /admin 로그인 세션)**: computed style — `.admin-tabs` `overflow-y=auto`·`min-height=0px`, `.admin-sidebar-foot` `flex-shrink=0`. 짧은 viewport 시뮬(`.admin-shell` height=240px): `.admin-tabs` clientHeight=134·scrollHeight=572 → **scrollable=true**, scrollTop=scrollHeight 설정 시 438 도달(canScroll), 하단 `[data-admin-tab=settings]`('설정') **settingsReachable=true**, foot bottom = aside bottom(footPinned=true).
+  - **시각 evidence**: `artifacts/pb0008-task0292/admin-sidebar-vscroll-short-vp.png` — 짧은 사이드바에 수직 스크롤바 노출 + 하단 스크롤 상태에서 "시스템 > 설정" 탭·"변경 없음" 풋 표시(브랜드 상단 고정).
+  - **Pass/Fail: PASS** — 화면 높이가 작아도 좌측 사이드패널 탭 전체(특히 하단 '설정')가 수직 스크롤로 도달·조작 가능함을 실제 Windows 브라우저 실측 통과. 사용자 보고 이슈 해소. CHECK#13(PB-0008 Windows-browser) **충족**.

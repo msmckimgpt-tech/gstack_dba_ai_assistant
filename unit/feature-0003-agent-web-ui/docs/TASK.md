@@ -14,7 +14,7 @@ source_of_truth: true
 - 수정(frontend-only, styles.css 2곳): `.admin-tabs` 에 `min-height:0; overflow-y:auto;` 추가(작업 화면 `.conv-list` 패턴 정합) + `.admin-sidebar-foot` 에 `flex-shrink:0`(탭 스크롤 시 pending 요약 풋 하단 고정). 브랜드는 공유 `.sidebar-brand`(flex-shrink:0)로 이미 상단 고정. 캐시버스터 admin.html `?v=20260616-task0292-admin-sidebar-vscroll`.
 - 비변경: HTML 구조/JS/백엔드/RBAC/스키마 0. 사이드바 미노출 모바일(≤680, `.admin-sidebar{display:none}`) 무영향.
 - [x] CSS brace 균형(1243=1243) + node 무관(JS 무변경) + verify-completion PASS.
-- [ ] 머지 → web 재배포(deploy_scope: included, 서빙 `?v=task0292`) → PB-0008 Windows-browser 시각검증(짧은 viewport: `.admin-tabs` scrollHeight>clientHeight·`overflow-y` computed auto·하단 '설정' 탭 스크롤 도달 가능) → 마감.
+- [x] 머지(PR #289 → main be3a775) → web 재배포(deploy_scope: included, `docker compose build web` + `up -d --no-deps web`, repo-web-1 healthy, 서빙 `admin.html ?v=20260616-task0292-admin-sidebar-vscroll`·baked styles.css `.admin-tabs{min-height:0;overflow-y:auto}`) → **PB-0008 Windows-browser PASS**(win-browser eval 실측: computed `overflowY=auto`·`minHeight=0px`·foot `flexShrink=0`; 짧은 viewport(240px) tabsScrollH=572>clientH=134 **scrollable**·scrollTop=438 도달·하단 '설정' 탭 `settingsReachable=true`·foot 하단 고정. evidence `artifacts/pb0008-task0292/admin-sidebar-vscroll-short-vp.png`). CHG/REV-20260616-0304 evidence.
 
 
 ## TASK-20260616T100304-conv-entry-defaults — 작업 화면 첫 진입 기본값: 타 계정 대화 접힘 + 빈 대화 화면 (REQ-20260616-0289, AC-0539/0540, Major §12.3, frontend-only)

@@ -3015,3 +3015,10 @@ source_of_truth: true
 - 비변경 단언: HTML 구조 0, JS 0, 백엔드 0. 모바일(≤680 `.admin-sidebar{display:none}`) 무영향. 다른 페이지(index/share)는 admin 사이드바 미렌더라 무영향.
 - Verification: CSS brace 균형 검사 + 정적 검증 → 머지 → web 재배포 → PB-0008 Windows-browser(짧은 viewport: `.admin-tabs` overflow-y computed=auto·scrollHeight>clientHeight·하단 '설정' 탭 스크롤 도달).
 - Cross-ref: CHG-20260616-0303 / TASK-0292 / AC-0541.
+
+## REV-20260616-0304 [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-16
+- Cycle: TASK-0292 후속 docs-only (PB-0008 evidence + 배포 기록), **Minor §12.3**.
+- Skip 근거: 코드·자산 변경 0 (TASK-0292 본 변경은 CHG-0303/REV-0303 에서 이미 적대 평가 SKIP·머지·배포). 본 cycle 은 PB-0008 PASS 결과와 배포 사실을 정본 문서에 기록하는 docs-only. 신규 보안/회귀 표면 없음.
+- 검증 요약: PB-0008 Windows-browser PASS — computed `overflowY=auto`·`minHeight=0px`·foot `flexShrink=0`; 짧은 viewport(240px)에서 `.admin-tabs` scrollHeight 572 > clientHeight 134 → scrollable, 하단 '설정' 탭 스크롤 도달(settingsReachable=true), foot/brand 고정.
+- Cross-ref: CHG-20260616-0304 / TASK-0292 / AC-0541.
