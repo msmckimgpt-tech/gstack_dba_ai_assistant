@@ -108,9 +108,13 @@ User → Caddy/web (TLS) → FastAPI (feature-0003)
 ### 2.4 진행 중인 흐름 / 최근 완료
 
 - **멀티 데이터소스 (2026-06)** — Stage 1 P1 (multi-MySQL) + datasource registry 암호화 (TASK-0205) + DB-단위 접근 (TASK-0206) + datasource-aware insight (TASK-0219) 배포·라이브검증 완료. MSSQL 실연결 검증 (제품90). 다음 = Stage 2 MSSQL 전면 / P2 UI. [[concepts/multi-datasource]].
-- **관리 콘솔 성숙 (2026-06)** — 대시보드 위젯화·CloudWatch (TASK-0210/0218), LLM 사용량 대시보드 (TASK-0163~0202), 제품 insight 완료율·DB별 파악내용 (TASK-0223/0242).
-- **ask-worker out-of-process (2026-06)** — `ask_jobs` 큐 + ask-worker 서비스 cutover (TASK-0169). orphan-on-redeploy 제거. [[concepts/ask-worker-queue]].
-- **storage Postgres 단일화 (완료 2026-05-27)** — KB (Phase 1, ADR-0021/0025) + runtime (Phase 2, ADR-0027/0028) 이관 완료. 다음 Phase 3 = `web*` 18 테이블 (미진행).
+- **데이터소스 연결 격리 + 연결상태 3색 (2026-06)** — per-datasource **circuit breaker** (TASK-0247, `AGENT_DB_CONNECT_TIMEOUT_SEC` 10s 로 단일 직렬 ask-worker starvation 차단) + insight-worker 연결 회복력 (TASK-0255) + `conn_health` 모니터의 **3-state 분류 (정상 #16a34a / 불안정 #dc2626 / 끊김 #6b7280)** 가 작업화면·관리콘솔 양면에 노출 (TASK-0250/0261/0282). 느린 타-리전 datasource 도 작업화면 사용 가능 (`should_fast_fail` = down 한정). [[concepts/datasource-registry]].
+- **데이터소스 라벨/키 분리 → Id surrogate (TASK-0277)** — `DatasourceKey` (rename 가능 라벨) 바인딩이 rename 시 고아되던 결함을 stable `WebDatasources.Id` surrogate FK 로 근본수정 (3 테이블 DatasourceId backfill + Id-구동 cascade rename). [[concepts/datasource-registry]].
+- **첨부 메타 MySQL → PG cutover (TASK-0279)** — 첨부 4 테이블을 MySQL `agent_memory` → PG `core_attachments` (+부속) 로 cutover (읽기 전환·MySQL 쓰기 롤백안전망). id 권위 = MySQL, dual-write fail-soft, backfill `--verify` diff=0 게이트.
+- **관리 콘솔 성숙 (2026-06)** — 대시보드 위젯화·CloudWatch (TASK-0210/0218), LLM 사용량 대시보드 (TASK-0163~0202), 제품 insight 완료율·DB별 파악내용 (TASK-0223/0242/0243), 권한 편집기 점진적 공개 + 단일열 tree (TASK-0257~0270), 보관 대화 탭 정합 (TASK-0277), 제품 아이콘 편집 오버레이 (TASK-0283).
+- **답변 diff 블록 (TASK-0256)** — assistant 가 첨부/쿼리 리뷰·편집 시 변경을 markdown ```diff 블록으로 제시 + 웹 UI 가 라인별 +/- 색 렌더 (`enhanceDiffBlocks`). 프롬프트 자동작성 SSE 스트리밍 (TASK-0233/0254, stick-to-bottom).
+- **ask-worker out-of-process (2026-06)** — `ask_jobs` 큐 + ask-worker 서비스 cutover (TASK-0169). orphan-on-redeploy 제거 + 요청 즉시 취소/재요청 (TASK-0241). [[concepts/ask-worker-queue]].
+- **storage Postgres 단일화 (완료 2026-05-27)** — KB (Phase 1, ADR-0021/0025) + runtime (Phase 2, ADR-0027/0028) 이관 완료. 첨부 메타 (TASK-0279) 까지 PG 로 이동. 잔여 = `web*` RBAC/audit/auth 테이블.
 - **자동화 폐기 → 수동 PR 흐름** — ADR-0018 (`ai-*` 워크플로 폐기, 단순화).
 
 ## 3. 외부 source 합성
@@ -140,7 +144,8 @@ User → Caddy/web (TLS) → FastAPI (feature-0003)
 - *Bedrock model deprecation drift* — `litellm_config.yaml` 의 versioned model ID 가 AWS rotation 에 끌려간다 (ADR-0026 Consequences).
 - *MSSQL synonym/view = GRANT hard boundary* — DB-단위 allowlist 가 synonym/view 의 underlying object 까지 강제하지 못함 (accepted-risk, [[concepts/db-level-access]]).
 - *SSRF 사설망 경계 OFF* — 운영이 `AGENT_DATASOURCE_SSRF_GUARD_ENABLED=0` (사내 사설망 전제). 메타데이터 IP 는 하드차단 유지 ([[Decisions/ADR-0030-ssrf-guard-toggle]]).
-- *wiki layer 의 stale risk* — 정본 변경 시 mirror 가 자동 update 되지 않는다. v3.13.0 의 `check #12` 는 WARN-only. (본 갱신이 2026-05-28 → 2026-06-12 drift 를 해소.)
+- *wiki layer 의 stale risk* — 정본 변경 시 mirror 가 자동 update 되지 않는다. v3.13.0 의 `check #12` 는 WARN-only. (본 갱신이 2026-05-28 → **2026-06-16** drift 를 해소 — 연결상태 3색·datasource Id surrogate·첨부 PG cutover·답변 diff 블록 반영.)
+- *보안 hardening 잔여* — 로그인 rate limiting·MFA·공유 링크 만료·LLM 비용 quota 미구현 (잠재 위험 + 대안은 [[../docs/SECURITY|SECURITY.md]] + `docs/presentation/SCENARIO.md` §보안 참조).
 
 ## 5. 다음 단계
 

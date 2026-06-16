@@ -85,6 +85,7 @@ sources:
 
 - 시드 데이터 MySQL = `main_mysql` datasource. shadow flag `AGENT_MULTI_DATASOURCE_ENABLED`.
 - EXPLAIN pre-gate + `MAX_EXECUTION_TIME` (DESIGN-self-interrupt → self-interrupt-lite, TASK-0172): `AGENT_QUERY_GUARD_MODE` (off/warn/gate) + `confirm_heavy` override.
+- **연결 격리 + 3색 상태 (TASK-0247/0255/0282)**: per-datasource **circuit breaker** (scope_key=엔진+host+port, half-open 락내 토큰) + bounded `AGENT_DB_CONNECT_TIMEOUT_SEC`(10s, 쿼리예산 분리) 로 불안정 datasource 1개가 단일 직렬 ask-worker 를 점유하는 starvation 차단. `modules/conn_health.py` 가 2-stage probe (TCP→DB `SELECT 1`) 로 **정상/불안정/끊김** 분류 → web 작업화면·관리콘솔 노출. control-plane(memory DB) 은 breaker 미적용 (마비 방지).
 
 ## 3. 특징
 
