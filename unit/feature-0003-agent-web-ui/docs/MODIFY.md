@@ -9,6 +9,13 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260616-0298 (TASK-0287 후속 docs-only — PB-0008 evidence)
+- Date: 2026-06-16
+- Scope: docs 전용(STATUS/REPORT/TASK/MODIFY/REVIEW). 코드 0.
+- 변경: TASK-0287 "잔여: 머지→배포→PB-0008" 을 **완료(PR #281 머지 main c5b4823·web 재배포·PB-0008 PASS)** 로 갱신. PB-0008 win-browser 실측(chipUsesFetch=true·credentials=same-origin) 기록.
+- 검증: PB-0008 실측(win-browser eval fetch monkeypatch). 코드 무변경.
+- Files: docs/STATUS.md, unit/feature-0003-agent-web-ui/docs/{TASK,REPORT,MODIFY,REVIEW}.md
+
 ## CHG-20260616-0297 (TASK-0287 — 말풍선 첨부 칩 다운로드 실패 수정)
 - Date: 2026-06-16
 - Scope: feature-0003-agent-web-ui frontend-only(app.js 1곳 + index.html 캐시버스터). 백엔드/RBAC 무변경.
