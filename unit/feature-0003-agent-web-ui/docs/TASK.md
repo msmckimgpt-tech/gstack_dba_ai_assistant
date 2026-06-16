@@ -25,8 +25,10 @@ source_of_truth: true
 - [x] (P4, feature-0002) `AGENT_ASK_WORKER_IDLE_POLL_SEC`(0.5) 유휴 claim 폴링 sub-second
 - [x] (P1/P2/P3a, feature-0003) app.js `formatDurationBreakdown`+인라인/tooltip, activity step 구분 렌더, 처리중 ACTIVE 폴링; styles.css `.message-meta-breakdown`/`.step-detail-activity`/`.step-activity-badge`/`.has-breakdown`
 - [x] 테스트: test_duration_breakdown.py 3 + test_ask_jobs.py created_at 2 + verify_runtime_transparency.mjs 16 + feature-0002 전체 회귀 0(2 skip) + py_compile + node --check
-- [ ] outside-voice 적대 코드리뷰(타이밍/run-status clobber/emit_index) 흡수(REV-20260616-0301)
-- [ ] 머지 → 배포(web + ask-worker 재빌드 — agent_core baked) → 라이브 검증(total 표시·activity 타임라인·큐 단축) → PB-0008 Windows-browser 시각검증
+- [x] outside-voice 적대 코드리뷰(타이밍/run-status clobber/emit_index) 흡수(REV-20260616-0302) — 8개 위험가설 전부 코드대조 confirmed-correct, **SHIP(BLOCKER 0)**.
+- [x] 머지(PR #288 → main 4178cf7) → 배포(web + ask-worker 재빌드, repo-web-1·repo-ask-worker-1 Up) → 배포 검증(서빙 `?v=20260616-task0289-runtime-transparency` + ask-worker baked `_compute_duration_breakdown`/`IDLE_POLL=0.5`) → **PB-0008 Windows-browser PASS**.
+- [x] **PB-0008 render-injection PASS**(실 Chrome/148, win-browser computed 실측): `formatDurationBreakdown`="대기 2.1초 · 준비 4.3초 · 추론 39초"(null→""·250ms미만 생략→"추론 25초"); activity step `.step-detail-activity` border `dotted 2px`+"내부 동작" 배지+muted 제목 rgb(128,125,114); tool(execute_sql) activity 클래스 false·배지 0·"SQL 실행"(DB동작=주); breakdown `underline dotted`·cursor:help·opacity 0.55. evidence `artifacts/pb0008-task0289/runtime-transparency-evidence.png`. (실 45초 대화 e2e=LLM 의존이라 render-injection 으로 computed 실증 — 실사용 시 자연 재현.) CHG/REV-20260616-0302.
+- 후속(P3b): SSE 토큰 스트리밍은 별도 cycle(사용자 결정).
 
 ## TASK-0287 — 말풍선 첨부 칩 다운로드 실패 수정 (REQ-20260616-0287, AC-0531, Minor §12.3, frontend-only)
 - 보고(사용자): 첨부파일 목록에서 다운로드는 되지만, 말풍선 안에서 제공되는 첨부파일(칩)은 다운로드 실패.

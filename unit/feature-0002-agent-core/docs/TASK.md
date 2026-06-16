@@ -16,7 +16,8 @@ source_of_truth: true
 - [x] (P2) `_emit_activity` nested helper(맥락 로드/분석 준비/추론 라운드/결과 정리) `action='activity'`·`tool=''` step + `emit_index` 통합 step_index(tool step 도 emit_index 사용). `_writes_allowed`/예외 안전 skip.
 - [x] (P4) `AGENT_ASK_WORKER_IDLE_POLL_SEC`(float, 0.5) 유휴 claim 폴링 분리 — `tick_sec`(reconnect) 불변.
 - [x] 테스트: test_duration_breakdown.py 3 + test_ask_jobs.py created_at 2 + feature-0002 전체 회귀 0(2 skip) + py_compile.
-- [ ] outside-voice 적대 코드리뷰 흡수(REV-20260616-0301) → ask-worker 재빌드(agent_core baked) — feature-0003 TASK-0289 와 함께 마감.
+- [x] outside-voice 적대 코드리뷰 흡수(REV-20260616-0302) — **SHIP(BLOCKER 0)**: emit_index 정합·TASK-0241 clobber 불변·queued_ms tz-safe(timestamptz)·_emit_activity 안전·activity 헬퍼 격리 전부 confirmed.
+- [x] 머지(PR #288 → main 4178cf7) → ask-worker 재빌드(agent_core baked, repo-ask-worker-1 Up + `_compute_duration_breakdown`/`IDLE_POLL=0.5` 실측) → feature-0003 TASK-0289 PB-0008 PASS 와 함께 마감. CHG/REV-20260616-0302.
 
 ## 0. TASK-0255 (current cycle) — insight 연결 탄력성 (R1 로그 edge-trigger / R2 PG datasource_health / R3 control-plane bounded timeout)
 - [x] **조사**: 급성 병목(연결대기 starvation)은 TASK-0247/0250 으로 이미 해소 — 라이브 실측 cycle ~2.6s(불안정 DS 7개+에도 fast-fail). 잔존 3건 발견.

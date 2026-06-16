@@ -955,11 +955,11 @@ source_of_truth: true
 - 결과: 배포 후 콜드 스타트 conn_status 실측 PASS — mv-qa unstable(빨강) 유지 + kr-an2 down(진짜 도달불가) 정확 + gz healthy. 구 2000ms down 오판 제거.
 - Panel: SKIPPED — 검증 결과 기록만, 코드/보안/RBAC 무관.
 - Cross-ref: CHG-20260616-0300 / REV-20260616-0299(본 변경 self-review) / TASK-0290.
-## REV-20260616-0301 [SUBAGENT:runtime-transparency]
+## REV-20260616-0302 [SUBAGENT:runtime-transparency]
 - Date: 2026-06-16
 - Cycle: TASK-0289 (수행시간 end-to-end 집계 + 내부 동작 activity step + 큐 대기 단축) — agent-core 면. **Major §12.3**.
 - Trigger: §18.8(backend + performance) — 채팅 lifecycle·ask-worker run-status/cancel 인접(TASK-0241 clobber)·타이밍 산수. 적대적 코드리뷰(general-purpose outside voice).
-- Verdict: **SHIP** (BLOCKER 0). full 본문은 feature-0003 REV-20260616-0301. agent-core 관련 confirmed-correct 요약:
+- Verdict: **SHIP** (BLOCKER 0). full 본문은 feature-0003 REV-20260616-0302. agent-core 관련 confirmed-correct 요약:
   - `_compute_duration_breakdown` 산수 정합(total = queued + init + inference, 음수/None 클램프), 표시·KV `last_duration_ms`·meta `duration_ms` = total.
   - `emit_index` 통합 step_index 단조·충돌불가(activity·tool 단일 스레드 +=1), tool 예산 `step_count` 분리 불변.
   - `_emit_activity` 클로저(cid/run_id/mem_conn 할당 후 정의·호출) + try/except + `_writes_allowed` 게이트 — 본 추론 안전.
@@ -968,4 +968,4 @@ source_of_truth: true
   - `AGENT_ASK_WORKER_IDLE_POLL_SEC`(0.5) — tick_sec(reconnect) 불변, 단일 worker idle 폴링 4× 무시 가능.
 - Verification: test_duration_breakdown.py 3 + test_ask_jobs.py created_at 2 + feature-0002 전체 pytest 회귀 0(2 skip) + py_compile.
 - Residual: ask-worker 재빌드(agent_core baked) — feature-0003 TASK-0289 와 함께 마감.
-- Cross-ref: CHG-20260616-0301 / TASK-0289 / feature-0003 REV-20260616-0301(full).
+- Cross-ref: CHG-20260616-0302 / TASK-0289 / feature-0003 REV-20260616-0302(full).

@@ -3895,12 +3895,12 @@ source_of_truth: true
 - Rollback: 신규 권한 게이트 제거 시 결함 재발(권한 없이 노출). 동적권한 group 마이그레이션은 enforce 무관(UI 메타) — 롤백 불필요. catchup 제거 시 기존 admin lockout 위험(제거 금지).
 - Deploy: web 재빌드 1 이미지(app.js/admin.html baked + app.py). 캐시버스터 `?v=20260616-task0288-rbac-gating`. deploy_scope: included.
 
-## CHG-20260616-0301
+## CHG-20260616-0302
 - TASK-0289 — 대화 수행시간 정직 표시 + 내부 동작 투명화 + 즉각 반응 + 큐 병목 완화 (Major §12.3).
 - 보고: assistant 대화 요청 시 ①내부 동작(단계별 DB동작 외) 미표현 ②실측 45초인데 화면 25초(내부 동작 집계 숨김) → 낮은 신뢰감·"느리다" 체감. 투명 공개 + 즉각 반응(스트리밍 검토) + 병목 확인 요청.
 - 근본원인: 표시 `duration_ms` 가 `agent_core run_start`(초기화 이후) 기준이라 LLM 루프(≈25s)만 집계 — 큐 대기·웹 처리·DB 연결·grounding/prompt(≈20s) 제외. step 은 tool(DB 동작)만 기록.
-- 변경(frontend, feature-0003): app.js `formatDurationBreakdown`(대기/준비/추론, 250ms 미만 생략) + 완료 메시지에 헤드라인 total + 인라인 보조 + `title` tooltip(`.message-meta-duration.has-breakdown`); `buildStepDetailEl` 가 `action==='activity'` step 을 `.step-detail-activity` muted + "내부 동작" 배지로 구분; `pollProgress` 처리 중 항상 `PROGRESS_POLL_ACTIVE_MS`(첫 동작 빠른 표면화). styles.css `.message-meta-breakdown`/`.step-detail-activity`/`.step-activity-badge`/`.has-breakdown`. (백엔드 P1/P2/P4 는 feature-0002 CHG-20260616-0301.)
-- Verification: verify_runtime_transparency.mjs 16(jsdom) + node --check app.js + CSS brace. 적대 코드리뷰 REV-20260616-0301 SHIP(BLOCKER 0).
+- 변경(frontend, feature-0003): app.js `formatDurationBreakdown`(대기/준비/추론, 250ms 미만 생략) + 완료 메시지에 헤드라인 total + 인라인 보조 + `title` tooltip(`.message-meta-duration.has-breakdown`); `buildStepDetailEl` 가 `action==='activity'` step 을 `.step-detail-activity` muted + "내부 동작" 배지로 구분; `pollProgress` 처리 중 항상 `PROGRESS_POLL_ACTIVE_MS`(첫 동작 빠른 표면화). styles.css `.message-meta-breakdown`/`.step-detail-activity`/`.step-activity-badge`/`.has-breakdown`. (백엔드 P1/P2/P4 는 feature-0002 CHG-20260616-0302.)
+- Verification: verify_runtime_transparency.mjs 16(jsdom) + node --check app.js + CSS brace. 적대 코드리뷰 REV-20260616-0302 SHIP(BLOCKER 0).
 - Files: feature-0003 src/static/app.js, src/static/styles.css, tests/verify_runtime_transparency.mjs, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md; (백엔드: feature-0002 src/agent_core.py·modules/{ask,ask_jobs,config}.py).
 - Rollback: 표시값을 inference-only 로 되돌림(숫자 축소 재발) / activity step 미emit / 폴링 cadence 복원.
 - Deploy: web 재빌드(정적자산) + ask-worker 재빌드(agent_core baked). 캐시버스터 `?v=20260616-task0289-runtime-transparency`.
