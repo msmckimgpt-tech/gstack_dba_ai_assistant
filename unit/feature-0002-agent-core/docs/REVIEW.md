@@ -948,3 +948,10 @@ source_of_truth: true
 - Panel: SKIPPED — 보안/RBAC/스키마/인가경계 무관 단일 timeout 파라미터(안전 방향 상향). [[feedback_outside_voice_for_rbac]] 비해당.
 - Residual: 배포 후 콜드 스타트 재현 검증(mv-qa unstable 유지, kr-an2 down).
 - Cross-ref: CHG-20260616-0299 / TASK-0290 / TASK-0282(conn-tristate 도입 main 2e5778a).
+
+## REV-20260616-0300 [SKIPPED:evidence-docs-only] — TASK-0290 라이브 검증 기록
+- Date: 2026-06-16
+- Cycle: TASK-0290 evidence(TEST.md append). 코드 무변경 docs-only.
+- 결과: 배포 후 콜드 스타트 conn_status 실측 PASS — mv-qa unstable(빨강) 유지 + kr-an2 down(진짜 도달불가) 정확 + gz healthy. 구 2000ms down 오판 제거.
+- Panel: SKIPPED — 검증 결과 기록만, 코드/보안/RBAC 무관.
+- Cross-ref: CHG-20260616-0300 / REV-20260616-0299(본 변경 self-review) / TASK-0290.
