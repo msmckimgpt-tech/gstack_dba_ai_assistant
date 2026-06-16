@@ -14,7 +14,7 @@ source_of_truth: true
 - 수정(frontend-only): `_buildMessageAttachChip` 의 click 핸들러를 `att.id` 가 있으면 `_downloadAttachmentById(att.id, attName)`(목록과 동일 fetch+blob) 호출로 통일. signed_url 만 있는 드문 폴백은 기존 navigation 유지. 캐시버스터 `?v=20260616-task0287-bubble-chip-dl`.
 - 비변경: 백엔드/RBAC/스키마/엔드포인트/`_downloadAttachmentById` 자체 0.
 - [x] node --check PASS, 백엔드 무변경(make test 회귀 자명 0).
-- [ ] (잔여) 머지 → web 재배포 → PB-0008(말풍선 칩 클릭 다운로드 성공).
+- [x] 머지(PR #281 → main c5b4823) → web 재배포(baked+서빙 `?v=task0287`) → **PB-0008 PASS**(win-browser 실측: 말풍선 칩 click → `chipUsesFetch=true`[fetch `/api/attachments/{id}/download` 호출, navigation `<a>` 아님]·credentials=same-origin·has-download. 목록과 동일 `_downloadAttachmentById` 경로). CHG/REV-20260616-0298.
 
 ## TASK-0286 — 첨부 수정본 전달: 전체 본문 노출 제거 + 변경점만(diff) + 파일 명시 전달 (REQ-20260616-0286, AC-0528~0530, Major §12.3)
 - 보고(사용자): assistant 가 파일(첨부)을 전달하지 않고 첨부 본문 전체를 채팅에 텍스트로 출력. ① 본문 전달이 필수면 변경점만 전달, ② 수정된 파일을 명시적으로 전달하도록.

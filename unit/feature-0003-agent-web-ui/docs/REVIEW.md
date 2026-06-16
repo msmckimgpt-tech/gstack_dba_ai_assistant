@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260616-0298 [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-16 (TASK-0287 후속 docs-only — PB-0008 시각검증 evidence)
+- Skip 사유: docs 전용(STATUS/REPORT/TASK/MODIFY/REVIEW). 코드/RBAC 무변경 — 본체 검토는 REV-20260616-0297 [SKIPPED:frontend-only-download-method].
+- 기록 요지: TASK-0287 PB-0008 **PASS**(배포본 main c5b4823). win-browser 실측 — `_buildMessageAttachChip({id,...})` 칩 click → window.fetch monkeypatch 로 chipUsesFetch=true(fetch `/api/attachments/{id}/download` 호출, navigation `<a>` 아님)·credentials=same-origin·has-download. 목록과 동일 `_downloadAttachmentById` fetch+blob 경로 검증.
+
 ## REV-20260616-0297 [SKIPPED:frontend-only-download-method]
 - Date: 2026-06-16 (TASK-0287 — 말풍선 첨부 칩 다운로드 실패 수정)
 - Skip 사유: frontend-only 1곳(`_buildMessageAttachChip` 의 다운로드 방식을 navigation→fetch+blob 으로 통일). 백엔드/RBAC/스키마/엔드포인트 무변경 — 적대적 보안/데이터 리뷰 패널 트리거(§18.8) 비해당. `_downloadAttachmentById`(목록에서 검증·작동) 재사용이라 신규 위험 표면 0.
