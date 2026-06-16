@@ -3870,3 +3870,14 @@ source_of_truth: true
 - Files: feature-0003 src/app.py, src/static/app.js, src/static/index.html, src/modules/attachment_pg_mirror.py, tests/test_task0284_attachment_access.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md; feature-0002 src/agent_core.py, tests/test_attachment_idor.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
 - Rollback: 스코프를 AccountId 로 되돌림(주입 불일치 재발) / 다운로드 라우트 제거(외부 다운로드 불가) / 포맷 복원.
 - Deploy: web 재빌드 + ask-worker 재빌드(agent_core baked). 캐시버스터 `?v=20260616-task0284-attachment-access`.
+
+## CHG-20260616-0299
+- Date: 2026-06-16 (TASK-0288, **Critical §12.3** — 권한 회수 미반영 RBAC 결함 4종 + '제품' 권한 2축 분리).
+- Scope: feature-0003-agent-web-ui(app.py 권한 카탈로그·엔드포인트 게이트·seed catchup·동적권한 그룹 마이그레이션, admin.js 탭 게이팅·권한 편집기 그룹/종속성·datasource 버튼, admin.html 캐시버스터). 데이터 스키마(WebPermissions row 추가만)·기존 엔드포인트 응답 shape·SSRF 가드·audit 백엔드 무변경.
+- 사용자 보고/결정: 권한 회수해도 UI/데이터 접근 가능(관리콘솔 탭 전노출 / 제품 조회 / 데이터소스 항상 노출 / 감사로그). 결정: datasource read/manage 2단, 제품 작업화면사용↔관리콘솔구성 2축 + read/manage 쪼개기.
+- 근본원인: ① admin.js 가 audits/usage/archives 3개 탭만 게이팅(나머지 console.access 만으로 항상 노출). ③ `GET /api/admin/products` 가 console.access 만 검사. ④ datasource 전용 권한이 카탈로그에 부재(console.access/console.manage 만으로 게이팅). (② audit 백엔드 `.own` 스코프는 정상 — 회수 미반영 아님.)
+- 변경: (카탈로그) datasource.read/manage(group=datasource)·product.read(group=product) 신설, product.access.* group→product_access(신규+마이그). (게이트) datasource GET=read|manage·databases=read|manage·test=manage·CRUD=manage, product GET 4종=read|manage. (catchup) admin 역할 datasource.read/manage·product.read backfill. (프론트) applyAdminTabVisibility 전탭 게이팅+그룹라벨/구분선 숨김+활성탭 fallback, 권한편집기 그룹 재배선(datasource·product 관리권 section / product_access 운영권 section)+종속성+동적카드 재타겟, datasource 탭 버튼 datasource.manage. superset 의미=`_account_has_any_permission(read,manage)`.
+- Verification: jsdom verify_admin_tab_gating.mjs 34 PASS + make test 컨테이너 전체 회귀 0(영향 테스트 4개 신규 계약 갱신) + node --check + py ast.parse. 적대 보안 리뷰 REV-20260616-0299 SHIP(7항목 코드대조; MINOR 2+NIT 1, 흡수 가능분 흡수).
+- Files: feature-0003 src/app.py, src/static/admin.js, src/static/admin.html, tests/{test_datasource_delete,test_db_insights,test_insight_coverage_endpoint,test_permission_dependency_map}.py, tests/verify_admin_tab_gating.mjs, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
+- Rollback: 신규 권한 게이트 제거 시 결함 재발(권한 없이 노출). 동적권한 group 마이그레이션은 enforce 무관(UI 메타) — 롤백 불필요. catchup 제거 시 기존 admin lockout 위험(제거 금지).
+- Deploy: web 재빌드 1 이미지(app.js/admin.html baked + app.py). 캐시버스터 `?v=20260616-task0288-rbac-gating`. deploy_scope: included.

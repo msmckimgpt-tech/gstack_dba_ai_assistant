@@ -2944,3 +2944,23 @@ source_of_truth: true
 - Verification: test_attachment_idor.py(IDOR 5 + 신규 conversation 스코프·account 폴백·파일명 우선 4) + test_task0284_attachment_access.py 9 + make test 컨테이너 전체 회귀 0(pytest 0 fail/2 skip, ruff clean).
 - Residual: 머지 → 배포(web + ask-worker 재빌드) → 라이브 검증(cross-account 주입·외부 다운로드·파일명 답변) → PB-0008.
 - Cross-ref: CHG-20260616-0291 / TASK-0284 / feature-0002 REV-20260616-0291.
+
+## REV-20260616-0299 [SUBAGENT:rbac-gating]
+- Date: 2026-06-16
+- Cycle: TASK-0288 (권한 회수 미반영 RBAC 결함 4종 + '제품' 권한 2축 분리), **Critical §12.3** — 권한 모델/인가 경계 변경.
+- Trigger: §18.8 + [[feedback_outside_voice_for_rbac]] — RBAC 카탈로그·엔드포인트 게이트 변경. 적대적 보안 리뷰(general-purpose outside voice, bypass·escalation·lockout·blindspot 집요 탐색).
+- Verdict: **SHIP** (BLOCKER 0, MAJOR 0, MINOR 2, NIT 1).
+- 7항목 코드대조 결론(전부 안전):
+  - **① bypass**: datasource/product 조회·변경 엔드포인트 22개 전수 grep — GET 6개 전부 `_account_has_any_permission(read,manage)` 게이트, CRUD 는 _ds_write_common 단일경로 datasource.manage·product.manage. 누락 0. (관찰: `/api/session`·`/api/auth/me` 가 인증사용자에 _list_products 반환하나 자격증명 0·work-screen 피커용·사용은 _account_has_product_access 별도 게이트 — 범위외 사전존재.)
+  - **② lockout**: admin catchup tuple 에 datasource.read/manage·product.read 등록 확인, admin seed=set(PERMISSION_CODES), _ensure_permission_catalog→_ensure_seed_roles 순서로 신규코드 backfill. 위험 0.
+  - **③ superset(manage⊇read)**: GET 게이트 전부 read|manage OR — manage-only 계정도 조회 통과.
+  - **④ 동적권한 group 마이그레이션**: UPDATE 는 GroupName 만(IsDynamic=1 AND product.access.% 한정·멱등), enforce(_account_has_product_access)는 code 기반·GroupName 미참조, WebRolePermissions 부여 보존. group=순수 UI 메타.
+  - **⑤ 프론트 게이팅 보안경계**: ADMIN_TAB_PERMISSIONS↔백엔드 403 1:1 정합(프론트=UX, 실경계=백엔드). jsdom 34/34.
+  - **⑥ IDOR/escalation**: 바인딩 엔드포인트 console.manage 유지(accepted), datasource_key=_dsr.resolve 검증, admin_list_datasources user/password 비노출(has_password bool만).
+  - **⑦ override 회수**: OVERRIDE_DENY→False, _empty_permission_map 이 전 PERMISSION_CODES(신규 포함) 시드 → 신규 권한도 deny 회수 실효.
+- 흡수(MINOR-1): datasource 탭 생성/수정/삭제/bulk 버튼이 console.manage 게이트 → datasource.manage 로 정합(read-only 뷰어는 목록만). **흡수 완료**.
+- 흡수(NIT): `_resolve_permission_catalog` docstring 의 동적권한 GroupName 'product'→'product_access' 갱신. **흡수 완료**.
+- Should-note(비차단, accepted): product-datasource 바인딩 mutation(`/api/admin/products/{id}/datasource(s)`)은 console.manage 유지(사전존재 결정·데이터 접근은 product.access+DB allowlist 별도 게이트). 범위 명시.
+- Verification: jsdom verify_admin_tab_gating.mjs 34 PASS + make test 컨테이너 전체 회귀 0(영향 테스트 4개 신규 계약 갱신) + node --check + py ast.parse.
+- Residual: 머지 → 배포(web 재빌드) → 라이브 재검증(테스트계정 products/datasources 403 전환·탭 숨김) → PB-0008 Windows-browser.
+- Cross-ref: CHG-20260616-0299 / TASK-0288.

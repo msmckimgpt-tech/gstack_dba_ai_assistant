@@ -92,14 +92,19 @@ function systemPromptPendingKey({ scope, productId = null, roleId = null, accoun
 // TASK-0095: settings group 추가 — 전역 시스템 프롬프트 (system_prompt.global.read/write).
 // TASK-0094 Sprint 1 Phase 12: attachment group 추가 (8 group).
 // TASK-0269: 대화 그룹을 own/any 로 분리 — conversation → conversation_own(내 대화 권한) + conversation_any(전체 대화 권한).
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation_own", "conversation_any", "product", "attachment", "audit", "settings", "misc"];
+// TASK-0288: datasource 그룹 신설(관리 콘솔 데이터소스 권한) + 제품 권한 2축 분리 —
+//   product(제품 관리, 관리 콘솔 구성: product.read/manage) ↔ product_access(제품 사용,
+//   작업 화면에서 요청 전송: 동적 product.access.<key>). 사용자 결정 2026-06-16.
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "datasource", "audit", "settings", "product", "conversation_own", "conversation_any", "product_access", "attachment", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
   role: "역할",
+  datasource: "데이터소스",
   conversation_own: "내 대화 권한",
   conversation_any: "전체 대화 권한",
-  product: "제품",
+  product: "제품 관리",
+  product_access: "제품 사용 (작업 화면)",
   attachment: "첨부",
   audit: "감사",
   settings: "시스템 설정",
@@ -112,9 +117,11 @@ const PERMISSION_GROUP_LABELS = {
 const ADMIN_PERMISSION_SECTIONS = [
   // TASK-0073 Phase C: audit 그룹은 관리 권한 section 의 admin 콘솔 책임 — console / account / role 와 같이 배치.
   // TASK-0095: settings 그룹은 시스템 운영 (전역 시스템 프롬프트 등) — manage 와 함께.
-  { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 메타권한 · 감사 · 시스템 설정", groups: ["console", "account", "role", "audit", "settings"] },
+  // TASK-0288: datasource(데이터소스 관리) + product(제품 관리, 관리 콘솔 구성)는 관리 권한 section.
+  { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 · 데이터소스 · 제품 관리 · 감사 · 시스템 설정", groups: ["console", "account", "role", "datasource", "audit", "settings", "product"] },
   // TASK-0094 Sprint 1 Phase 12: attachment 그룹은 운영 권한 묶음에 포함.
-  { id: "operate", title: "운영 권한", description: "내 대화 · 전체 대화 · 제품 접근 · 첨부", groups: ["conversation_own", "conversation_any", "product", "attachment"] },
+  // TASK-0288: 작업 화면 제품 사용(product_access)은 운영 권한 section — 관리 콘솔 제품 관리(product)와 분리.
+  { id: "operate", title: "운영 권한", description: "내 대화 · 전체 대화 · 제품 사용 · 첨부", groups: ["conversation_own", "conversation_any", "product_access", "attachment"] },
   { id: "misc", title: "기타", description: null, groups: ["misc"] },
 ];
 
@@ -149,6 +156,13 @@ const PERMISSION_DEPENDENCIES = {
   "role.update": "role.read",
   "role.delete": "role.read",
   "role.permission.manage": "role.read",
+  // TASK-0288: 데이터소스 — datasource.read 가 그룹 게이트(console.access 하위), manage 는 read 선행.
+  "datasource.read": "console.access",
+  "datasource.manage": "datasource.read",
+  // TASK-0288: 제품 관리 — product.read 가 그룹 게이트(console.access 하위), manage/프롬프트는 read 선행.
+  "product.read": "console.access",
+  "product.manage": "product.read",
+  "system_prompt.manage.role.any": "product.read",
   "audit.read.own": "console.access",
   "audit.read.any": "audit.read.own",
   "audit.export": "audit.read.own",
@@ -413,6 +427,14 @@ function groupedPermissions(opts = {}) {
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group).push(permission);
   });
+  // TASK-0288: product_access(제품 사용) 그룹은 동적 권한(product.access.*) 전용이라
+  // excludeDynamic 시 멤버가 0이 되어 <details> 컨테이너가 렌더되지 않는다. 그 안에 per-product
+  // 접근 카드(buildRoleProductSubcatalog / buildAccountProductOverrideList)가 임베딩되므로,
+  // 동적 제품 권한이 존재하면 빈 그룹이라도 컨테이너를 보장한다(임베딩 타겟).
+  if (excludeDynamic && !groups.has("product_access")
+      && (adminState.permissions || []).some((p) => p && p.is_dynamic && p.group === "product_access")) {
+    groups.set("product_access", []);
+  }
   const order = new Map();
   PERMISSION_GROUP_ORDER.forEach((key, idx) => order.set(key, idx));
   return Array.from(groups.entries()).sort((a, b) => {
@@ -448,9 +470,9 @@ function sectionedGroupedPermissions(opts = {}) {
 
 function dynamicProductPermissions() {
   // TASK-0053 Phase B: product 별 access 권한 row 를 product_id 기준으로 sort 후 반환.
-  // `_resolve_permission_catalog` 에서 GroupName='product' 로 묶이고 is_dynamic=true.
+  // TASK-0288: 동적 제품 접근 권한은 GroupName='product_access'(제품 사용, 작업 화면) 으로 분리됨.
   return (adminState.permissions || [])
-    .filter((p) => p && p.is_dynamic && (p.group === "product"))
+    .filter((p) => p && p.is_dynamic && (p.group === "product_access"))
     .map((p) => ({
       ...p,
       product_id: Number(p.product_id || 0),
@@ -1764,6 +1786,71 @@ function showUsageConvModal(state) {
   document.addEventListener("keydown", onEsc);
 }
 
+// TASK-0288: 관리 콘솔 탭 → 필요 권한 매핑. 값은 "하나라도 보유하면 표시"(OR) 권한 배열.
+// 매핑 없는 탭(dashboard)은 항상 표시(console.access 보유 = 콘솔 진입 가능자 — overview 는 위젯별
+// RBAC 스코프). 백엔드 엔드포인트 권한과 1:1 정합 — 탭은 보이는데 데이터는 403 인 괴리를 차단한다.
+const ADMIN_TAB_PERMISSIONS = {
+  accounts: ["account.read"],
+  roles: ["role.read"],
+  products: ["product.read", "product.manage"],
+  datasources: ["datasource.read", "datasource.manage"],
+  audits: ["audit.read.own", "audit.read.any"],
+  usage: ["console.usage.read"],
+  archives: ["conversation.archive.read.any"],
+  settings: ["system_prompt.global.read", "system_prompt.global.write"],
+};
+
+function canSeeTab(tabKey) {
+  const perms = ADMIN_TAB_PERMISSIONS[tabKey];
+  if (!perms || !perms.length) return true; // 매핑 없음(dashboard) = 항상 표시.
+  return perms.some((p) => can(p));
+}
+
+// 관리 콘솔 좌측 탭 nav 의 가시성을 권한 기준으로 일괄 적용.
+// (1) 각 탭 버튼 표시/숨김 — 기존 게이팅과 동일하게 inline style.display 사용([hidden] CSS override
+//     함정 회피, TASK-0257 선례). (2) 그룹 라벨/구분선 — 그룹 내 표시 탭이 0이면 라벨+직전 구분선 숨김.
+// (3) 활성 탭이 숨겨졌으면 첫 표시 탭으로 전환(빈 본문 방지).
+function applyAdminTabVisibility() {
+  const nav = $("adminTabs");
+  if (!nav) return;
+  nav.querySelectorAll(".admin-tab").forEach((btn) => {
+    btn.style.display = canSeeTab(btn.dataset.adminTab) ? "" : "none";
+  });
+  // 그룹 경계 = .admin-tab-group-label (직전 .admin-tab-group-divider 동반 가능).
+  let pendingDivider = null;
+  let currentLabel = null;
+  let leadingDivider = null;
+  let groupVisibleTabs = 0;
+  const finalize = () => {
+    if (!currentLabel) return;
+    const show = groupVisibleTabs > 0;
+    currentLabel.style.display = show ? "" : "none";
+    if (leadingDivider) leadingDivider.style.display = show ? "" : "none";
+  };
+  Array.from(nav.children).forEach((el) => {
+    if (el.classList.contains("admin-tab-group-divider")) {
+      pendingDivider = el;
+    } else if (el.classList.contains("admin-tab-group-label")) {
+      finalize();
+      currentLabel = el;
+      leadingDivider = pendingDivider;
+      pendingDivider = null;
+      groupVisibleTabs = 0;
+    } else if (el.classList.contains("admin-tab")) {
+      // currentLabel === null 이면 그룹 라벨 없는 선행 탭(dashboard) — 그룹 집계 제외.
+      if (currentLabel && el.style.display !== "none") groupVisibleTabs += 1;
+    }
+  });
+  finalize();
+  // 활성 탭이 숨겨졌으면 첫 표시 탭으로 전환.
+  const active = nav.querySelector(".admin-tab.is-active");
+  if (active && active.style.display === "none") {
+    const firstVisible = Array.from(nav.querySelectorAll(".admin-tab"))
+      .find((b) => b.style.display !== "none");
+    if (firstVisible) switchTab(firstVisible.dataset.adminTab);
+  }
+}
+
 function switchTab(tabName) {
   adminState.tab = tabName;
   document.querySelectorAll(".admin-tab").forEach((btn) => {
@@ -1921,7 +2008,9 @@ function renderDatasourcesPane() {
   const listEl = $("datasourceList");
   const detailEl = $("datasourceDetail");
   if (!listEl || !detailEl) return;
-  const canManage = can("console.manage");
+  // TASK-0288: datasource mutation UI 는 datasource.manage 게이트(백엔드 _ds_write_common 정합).
+  // datasource.read 만 보유한 뷰어는 목록은 보되 생성/수정/삭제 버튼은 숨겨진다.
+  const canManage = can("datasource.manage");
   const encReady = Boolean(adminState.datasourcesEncryptionReady);
   const dsList = adminState.datasources || [];
 
@@ -2121,8 +2210,8 @@ function renderDatasourceBulkBar() {
     return btn;
   };
 
-  // console.manage 1 개로 모든 datasource mutation 을 통제(상세 패널 액션과 동일 게이트).
-  if (can("console.manage")) {
+  // TASK-0288: datasource.manage 로 모든 datasource bulk mutation 을 통제(상세 패널 액션과 동일 게이트).
+  if (can("datasource.manage")) {
     bar.appendChild(makeBtn("인사이트 탐색 켜기", () => bulkDatasourceSetInsight(true)));
     bar.appendChild(makeBtn("인사이트 탐색 끄기", () => bulkDatasourceSetInsight(false)));
     bar.appendChild(makeBtn("삭제", () => bulkDatasourceDelete(), true));
@@ -2233,7 +2322,8 @@ function _dsInsightHealthLabel(ih) {
 function _dsRenderDetail(ds) {
   const detailEl = $("datasourceDetail");
   if (!detailEl || !ds) return;
-  const canManage = can("console.manage");
+  // TASK-0288: 상세 패널의 수정/삭제 액션도 datasource.manage 게이트.
+  const canManage = can("datasource.manage");
   const editable = Boolean(ds.editable) && canManage;
   detailEl.innerHTML = "";
 
@@ -4029,9 +4119,11 @@ function renderAccountDetail() {
   overrideSection.appendChild(overrideWrap);
   paneEl.appendChild(overrideSection);
 
-  // TASK-0053 (사용자 follow-up 2026-05-07): 제품별 접근 카드 list 를 권한 grid 의 'product' 그룹 details
+  // TASK-0053 (사용자 follow-up 2026-05-07): 제품별 접근 카드 list 를 권한 grid 의 제품 접근 그룹 details
   // 안으로 이전. 사용자가 제품 그룹을 collapse 하면 product 별 override 카드도 함께 접힌다.
-  const accountProductGroup = overrideWrap.querySelector('details[data-perm-group="product"]');
+  // TASK-0288: 제품 접근 카드는 'product_access'(제품 사용, 작업 화면) 그룹으로 이전 — 관리 콘솔
+  // 제품 관리(product) 그룹과 분리. (groupedPermissions 가 빈 컨테이너를 보장한다.)
+  const accountProductGroup = overrideWrap.querySelector('details[data-perm-group="product_access"]');
   const productOverrides = buildAccountProductOverrideList(
     merged,
     disabledBase || !can("account.permission.override.manage"),
@@ -4598,10 +4690,10 @@ function renderRoleDetail() {
   paneEl.appendChild(permSection);
 
   // TASK-0053 Phase B/C + 사용자 follow-up (2026-05-07): 제품별 접근 + role-scope system prompt 카드를
-  // 권한 grid 의 'product' 그룹 details 안으로 이전. 사용자가 '제품' 그룹을 collapse 하면
-  // 제품별 카드도 함께 접혀 가시성 향상. fallback: product 그룹이 grid 에 없으면 별도 section.
+  // 권한 grid 의 제품 접근 그룹 details 안으로 이전. 사용자가 그룹을 collapse 하면 카드도 함께 접힘.
+  // TASK-0288: 제품 접근 카드는 'product_access'(제품 사용) 그룹으로 이전 — 관리 콘솔 제품 관리와 분리.
   if (!merged._isNew) {
-    const roleProductGroup = permWrap.querySelector('details[data-perm-group="product"]');
+    const roleProductGroup = permWrap.querySelector('details[data-perm-group="product_access"]');
     const productCards = buildRoleProductCardList(
       merged,
       disabledBase || !can("role.permission.manage"),
@@ -7096,26 +7188,12 @@ async function initialize() {
     btn.addEventListener("click", () => switchTab(btn.dataset.adminTab));
   });
 
-  // TASK-0073 Phase C: audit pane filter handlers + tab visibility gate.
+  // TASK-0073 Phase C: audit pane filter handlers.
   attachAuditFilterHandlers();
-  const auditTab = $("adminTabAudits");
-  if (auditTab) {
-    const canRead = Boolean(
-      adminState.me?.permissions?.["audit.read.own"] ||
-      adminState.me?.permissions?.["audit.read.any"]
-    );
-    auditTab.style.display = canRead ? "" : "none";
-  }
-  // TASK-0136: LLM 사용량 tab 가시성 게이트 (admin 전용 console.usage.read).
-  const usageTab = $("adminTabUsage");
-  if (usageTab) {
-    usageTab.style.display = adminState.me?.permissions?.["console.usage.read"] ? "" : "none";
-  }
-  // TASK-0273: 보관 대화 tab 가시성 게이트 (conversation.archive.read.any) + 컨트롤 바인딩.
-  const archivesTab = $("adminTabArchives");
-  if (archivesTab) {
-    archivesTab.style.display = adminState.me?.permissions?.["conversation.archive.read.any"] ? "" : "none";
-  }
+  // TASK-0288: 모든 관리 콘솔 탭을 권한 기반으로 일괄 게이팅. 이전엔 audits/usage/archives 3개만
+  // 게이팅돼 계정·역할·제품·데이터소스·설정 탭이 권한과 무관하게 항상 노출됐다(① 결함). 그룹 라벨/
+  // 구분선도 전 탭 숨김 시 함께 숨기고, 활성 탭이 숨겨지면 첫 표시 탭으로 전환한다.
+  applyAdminTabVisibility();
   const archiveRefreshBtn = $("archiveRefreshBtn");
   if (archiveRefreshBtn && !archiveRefreshBtn.dataset.bound) {
     archiveRefreshBtn.dataset.bound = "1";
