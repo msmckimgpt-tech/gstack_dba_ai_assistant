@@ -8,7 +8,19 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260616T022652-ai-claude-sidebar-resize (current cycle) — 대화창 좌측 사이드바 너비 드래그 조절 (REQ-20260616-0284, AC-0523, Minor §12.3)
+## TASK-0285 (current cycle) — 첨부 버전 현황 표면화 ②③④ (REQ-20260616-0285, AC-0525~0527, Major §12.3)
+- 보고(사용자): TASK-0275(assistant 첨부 수정→버전 관리) 배포 후 보완 — ② `'+' > 첨부파일 목록`의 각 파일 버전 현황 표시, ③ assistant 말풍선 안에 첨부 명시 표시(사용자 말풍선처럼), ④ assistant 요청 시 진행 단계에 첨부 수정 명시 출력. (쿼리 리뷰 워크플로① 는 사용자 결정으로 후속 cycle.)
+- 등급: **Major §12.3** — frontend 중심 + 백엔드 노출. history 첨부 직렬화는 IDOR 표면이라 outside-voice 게이트.
+- 진단: TASK-0275 인프라(materialize·버전 체인·`/versions`·`_serialize_attachment_for_api` 버전 필드)는 이미 존재하나 "노출·연결"이 빠짐 — ② 목록 렌더가 버전 필드 무시, ③ assistant `edited_attachments` 가 토스트만(칩 없음)·history 미직렬화, ④ materialize 가 ask 후처리(run 밖)라 step 미기록.
+- 구현:
+  - [x] ② backend: `list_conversation_attachments` 에 version_count/ai_version_count `GROUP BY COALESCE(RootAttachmentId, Id)` 집계(N+1 회피·fail-soft). frontend: `_loadConversationAttachmentList` 항목에 버전 배지 + "버전 N개" 펼침 토글 + `_renderAttachmentVersionsBox`(/versions lazy) + `_downloadAttachmentById` 공통 헬퍼.
+  - [x] ③ backend: `_load_assistant_attachments_by_message`(MetaJson.message_id 그룹핑) + `_attach_assistant_attachments` 신규 + `_get_history`(PG·MySQL) 주입. frontend: `_buildMessageAttachChip`(user/assistant 공통, 형식 유연화 + 버전 배지) + renderMessages 칩 조건 assistant 포함 + assistant 말풍선 칩 CSS.
+  - [x] ④ backend: ask materialize 후처리에서 `save_memory_step`(action=attachment_edit, tool=materialize_attachment, work/reason 직접 저장) + 응답 render_steps 즉시 반영.
+  - [x] 단위 테스트 `test_task0285_attach_surfacing.py` 9 PASS + make test 컨테이너 전체 회귀 0 + py_compile + node --check + CSS brace(1242) + 캐시버스터 `?v=20260616-task0285-attach-surfacing`.
+  - [x] outside-voice 적대 보안 리뷰 SHIP (REV-20260616-0293, BLOCKER 0; IDOR/signed_url/SQLi/MetaJson조작/fail-soft 전부 refute).
+- [ ] (잔여) 머지 → web 재배포 → PB-0008 Windows-browser 시각검증(목록 버전 배지·펼침, assistant 말풍선 칩, 진행 단계 첨부 수정).
+
+## TASK-20260616T022652-ai-claude-sidebar-resize — 대화창 좌측 사이드바 너비 드래그 조절 (REQ-20260616-0284, AC-0523, Minor §12.3)
 - 보고(사용자): `작업 화면` 좌측 대화 사이드바(대화 목록 패널)의 너비를 사용자가 조절할 수 있도록 구성. (스크린샷: 사이드바 전체 영역 강조.)
 - 등급: **Minor §12.3** (frontend-only, `src/static/{index.html,styles.css,app.js}`. RBAC/스키마/엔드포인트/백엔드 0. 비파괴 추가.)
 - 진단: 좌측 사이드바(`<aside class="sidebar">`)는 `.app-shell` CSS Grid 의 첫 컬럼(`grid-template-columns: var(--sidebar-w) minmax(0,1fr)`, `--sidebar-w: 252px` 고정)으로 너비 조절 수단이 없었다. 반면 우측 패널 3종(`#stepSidePanelResizer`/`#profileDrawerResizer`/`#attachSidePanelResizer`)에는 이미 drag-resize + `localStorage` 영속 패턴이 존재 → 동일 패턴을 좌측에 미러링.

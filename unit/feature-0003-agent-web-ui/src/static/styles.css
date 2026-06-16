@@ -1003,6 +1003,29 @@ a { color: inherit; }
   opacity: .75;
   flex-shrink: 0;
 }
+/* ③ TASK-0285: assistant 말풍선 칩 — 밝은 배경이라 반투명 흰 배경 대신 surface(타인 메시지 동형). */
+.message.is-assistant .message-bubble-attach-chip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.message.is-assistant .message-bubble-attach-chip.has-download:hover {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+/* 첨부 칩 버전 배지(AI 수정본 / version>1) — 첨부 목록 패널 .attach-list-item-ver 와 일관. */
+.attach-chip-ver {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 0 5px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.28);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.attach-chip-ver.ai-edited {
+  background: #e8f0ff;
+  color: #2563eb;
+}
 
 /* UX-COMPACT: 말풍선 hover 시 버튼 — absolute 배치로 레이아웃 이동 없음 */
 .message-actions {
@@ -2508,6 +2531,99 @@ a { color: inherit; }
   color: var(--text-muted, #9ca3af);
   font-size: 13px;
 }
+/* ② TASK-0285: 첨부 목록 버전 현황 — 버전 배지 + 펼침 토글 + 버전 이력 박스. */
+.attach-list-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.attach-list-item-ver {
+  display: inline-block;
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 7px;
+  background: var(--surface-2, #eef);
+  color: var(--muted);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.attach-list-item-ver.ai-edited {
+  background: #e8f0ff;
+  color: #2563eb;
+}
+.attach-list-item-vertoggle {
+  border: none;
+  background: transparent;
+  color: var(--primary, #2563eb);
+  font: inherit;
+  font-size: 10.5px;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.attach-list-item-vertoggle:disabled { opacity: 0.6; cursor: default; }
+.attach-list-versions {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px 4px 28px;
+  border-left: 2px solid var(--border);
+  margin-left: 8px;
+}
+.attach-list-versions.hidden { display: none; }
+.attach-list-versions-loading {
+  font-size: 11px;
+  color: var(--text-muted, #9ca3af);
+  padding: 2px 0;
+}
+.attach-list-version-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.attach-list-version-tag {
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 7px;
+  background: var(--surface-2, #eef);
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.attach-list-version-tag.ai-edited {
+  background: #e8f0ff;
+  color: #2563eb;
+}
+.attach-list-version-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.attach-list-version-role {
+  font-size: 10px;
+  color: var(--text-muted, #9ca3af);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.attach-list-version-dl {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--primary, #2563eb);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--r-sm);
+  font-size: 11px;
+}
+.attach-list-version-dl:hover { background: rgba(37, 99, 235, 0.08); }
+.attach-list-version-dl:disabled { color: var(--text-muted); cursor: default; }
 
 /* =====================================================================
    SETTINGS DRAWER
