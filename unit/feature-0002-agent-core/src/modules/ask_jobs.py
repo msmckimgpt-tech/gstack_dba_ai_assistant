@@ -169,7 +169,7 @@ WHERE j.id = (
     LIMIT 1
 )
 RETURNING j.id, j.conversation_id, j.run_id, j.account_id, j.payload,
-          j.lease_epoch, j.attempts
+          j.lease_epoch, j.attempts, j.created_at
 """
 
 
@@ -195,6 +195,10 @@ def claim_ask_job(conn, worker_id: str) -> Optional[dict[str, Any]]:
         "payload": payload or {},
         "lease_epoch": int(row[5]),
         "attempts": int(row[6]),
+        # TASK-0289: enqueue 시각 — worker 가 claim 시점과 비교해 큐 대기시간(queued_ms)을
+        # 산출하고 run_agent 에 seed 로 넘긴다(수행시간 end-to-end 집계). RETURNING 에 추가됐으나
+        # 구(舊) 행/테스트 fixture(7-tuple) 호환 위해 길이 가드(부재=None=큐 대기 미집계).
+        "created_at": row[7] if len(row) > 7 else None,
     }
 
 

@@ -16,6 +16,18 @@ source_of_truth: true
 - [x] node --check PASS, 백엔드 무변경(make test 회귀 자명 0).
 - [ ] 머지 → web 재배포 → PB-0008 Windows-browser 실측(계정 탭 배지 = 활성 필터 적용 시 목록 수와 일치, 전체 수보다 작거나 같음). CHG/REV-20260616-0300.
 
+## TASK-0289 (current cycle) — 대화 수행시간 정직 표시 + 내부 동작 투명화 + 즉각 반응 + 큐 병목 완화 (REQ-20260616-0288, AC-0532~0534, Major §12.3)
+- 사용자 보고: assistant 대화 요청 시 ①내부 동작(단계별 DB동작 외)이 표현 안 됨 ②실측 45초인데 화면엔 25초로 표시(내부 동작 집계가 숨겨져 제외) → 낮은 신뢰감·실제보다 "느리다" 체감. 모든 동작 투명 공개 + 즉각 반응(스트리밍 검토) + 성능 병목 확인 요청.
+- 사용자 결정(AskUserQuestion): **P1~P4 진행, SSE 토큰 스트리밍(P3b)은 후속 cycle**(체감 개선 대부분 확보·저위험).
+- 근본원인: 표시 `duration_ms` 가 `agent_core run_start`(모든 초기화 이후) 기준이라 LLM 루프(≈25s)만 집계 — 큐 대기(worker tick 1~2s)·웹 처리·DB 연결·grounding/prompt 조립(≈20s)이 전부 제외. step 으로 기록되는 건 tool(DB 동작)뿐이라 LLM 추론·연결·큐 대기는 화면에 "처리 중"만.
+- [x] (P1, feature-0002) `_compute_duration_breakdown` + `agent_entry_perf`/`queued_ms_seed` → 표시값 total(end-to-end), meta `duration_breakdown` 동봉. worker 가 `claim` created_at 로 큐 대기 seed 주입(ask_jobs RETURNING + created_at)
+- [x] (P2, feature-0002) `_emit_activity` non-tool activity step(맥락/준비/추론 라운드/정리) + `emit_index` 통합 step_index
+- [x] (P4, feature-0002) `AGENT_ASK_WORKER_IDLE_POLL_SEC`(0.5) 유휴 claim 폴링 sub-second
+- [x] (P1/P2/P3a, feature-0003) app.js `formatDurationBreakdown`+인라인/tooltip, activity step 구분 렌더, 처리중 ACTIVE 폴링; styles.css `.message-meta-breakdown`/`.step-detail-activity`/`.step-activity-badge`/`.has-breakdown`
+- [x] 테스트: test_duration_breakdown.py 3 + test_ask_jobs.py created_at 2 + verify_runtime_transparency.mjs 16 + feature-0002 전체 회귀 0(2 skip) + py_compile + node --check
+- [ ] outside-voice 적대 코드리뷰(타이밍/run-status clobber/emit_index) 흡수(REV-20260616-0301)
+- [ ] 머지 → 배포(web + ask-worker 재빌드 — agent_core baked) → 라이브 검증(total 표시·activity 타임라인·큐 단축) → PB-0008 Windows-browser 시각검증
+
 ## TASK-0287 — 말풍선 첨부 칩 다운로드 실패 수정 (REQ-20260616-0287, AC-0531, Minor §12.3, frontend-only)
 - 보고(사용자): 첨부파일 목록에서 다운로드는 되지만, 말풍선 안에서 제공되는 첨부파일(칩)은 다운로드 실패.
 - 진단: 목록 다운로드는 `_downloadAttachmentById`(raw fetch + blob, TASK-0284)인데, 말풍선 칩(`_buildMessageAttachChip`, TASK-0285)은 여전히 `<a href download>` **navigation** 방식. TASK-0284 가 octet-stream 프록시(`/api/attachments/{id}/download`)에서 navigation 다운로드 실패 때문에 목록을 fetch+blob 으로 전환했으나, 말풍선 칩에는 그 전환이 적용되지 않았다.

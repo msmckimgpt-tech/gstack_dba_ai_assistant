@@ -1305,6 +1305,34 @@ def _build_step_payload(
     }
 
 
+def _compute_duration_breakdown(
+    queued_ms: float,
+    agent_entry_perf: float,
+    run_start: float,
+    now_perf: float | None = None,
+) -> dict[str, float]:
+    """TASK-0289: 수행시간을 구간별로 정직하게 분해.
+
+    - queued_ms   : enqueue→worker claim 큐 대기(worker 모드만, seed 로 주입; in-process=0)
+    - init_ms     : agent 진입→추론 시작(DB 연결·히스토리·grounding·prompt 조립)
+    - inference_ms: LLM 추론 루프(기존 표시값 — '25초'의 정체)
+    - total_ms    : queued + init + inference = 사용자가 체감하는 진짜 end-to-end
+
+    total 을 헤드라인으로 표시하면 라이브 경과 타이머와 일치(완료 후 숫자가 줄지 않음).
+    """
+    now_perf = time.perf_counter() if now_perf is None else now_perf
+    init_ms = round(max(0.0, (run_start - agent_entry_perf) * 1000.0), 2)
+    inference_ms = round(max(0.0, (now_perf - run_start) * 1000.0), 2)
+    queued = round(max(0.0, float(queued_ms or 0.0)), 2)
+    total_ms = round(queued + max(0.0, (now_perf - agent_entry_perf) * 1000.0), 2)
+    return {
+        "queued_ms": queued,
+        "init_ms": init_ms,
+        "inference_ms": inference_ms,
+        "total_ms": total_ms,
+    }
+
+
 # 멀티턴 맥락 보존: 윈도우(max_messages) 밖으로 밀려나는 'standalone user 메시지'를
 # 최대 이 개수까지 윈도우 앞에 보존한다. tool 결과(execute_sql)가 윈도우를 점유해
 # 사용자가 앞서 말한 제약/의도를 밀어내는 유실을 막는다. user 메시지는 tool 짝이 없어
@@ -2372,12 +2400,17 @@ def run_agent(
     image_inline_path: str | None = None,
     text_inline_path: str | None = None,
     run_id: str | None = None,
+    queued_ms_seed: float | None = None,
 ) -> dict[str, Any]:
     """Product whitelist + 첨부 채널을 요청별 contextvar 로 설정한 뒤 실제 루프를 호출하는 얇은 래퍼.
 
     run_id: None 이면 루프가 새로 생성(현행 in-process 경로). ask-worker 가 job claim
     별로 stable run_id 를 주입할 때 사용(TASK-0169 — KV/steps/cancel 의 전 구간 correlate
     + lease fencing 정합).
+
+    queued_ms_seed: TASK-0289 — worker 모드에서 enqueue→claim 까지의 큐 대기시간(ms).
+    표시 수행시간을 진짜 end-to-end(큐 대기 포함)로 정직하게 집계하기 위한 seed. in-process
+    경로는 None(=큐 대기 0).
     """
     set_active_schema_allowlist(allowed_schemas)
     # TASK-0137: 첨부 메타를 os.environ 대신 contextvar 로 — 동시 요청 격리.
@@ -2402,6 +2435,7 @@ def run_agent(
             account_id=account_id,
             product_mode=product_mode,
             run_id=run_id,
+            queued_ms_seed=queued_ms_seed,
         )
     finally:
         clear_active_schema_allowlist()
@@ -2430,6 +2464,7 @@ def _run_agent_core(
     account_id: int | None = None,
     product_mode: str = "pinned",
     run_id: str | None = None,
+    queued_ms_seed: float | None = None,
 ) -> dict[str, Any]:
     """에이전트 메인 루프.
 
@@ -2458,6 +2493,13 @@ def _run_agent_core(
     # 들어와도 무시 (signature 는 backward-compat 위해 유지).
     _ = api_key  # explicit ignore — silence linter
     temperature = 0.0 if _model_supports_temperature(model) else None
+
+    # TASK-0289: 진짜 end-to-end 수행시간 집계 기준점. run_start(2749)는 모든 초기화
+    # (DB 연결·히스토리·grounding·prompt) 이후라 LLM 루프만 측정 → 큐 대기/초기화가
+    # 표시에서 빠지던 불일치(45s 실측 vs 25s 표시)의 근인. agent_entry_perf 부터 재면
+    # init_ms 가 포함되고, queued_ms_seed 로 큐 대기까지 더해 total 을 정직하게 낸다.
+    agent_entry_perf = time.perf_counter()
+    _queued_ms = max(0.0, float(queued_ms_seed or 0.0))
 
     result: dict[str, Any] = {
         "answer": "",
@@ -2578,6 +2620,39 @@ def _run_agent_core(
                 if output_mode == "console":
                     console.print(Panel.fit(result["error"], title="오류"))
                 return result
+
+    # ── TASK-0289: 내부 동작 투명화 ──
+    # 비-tool 내부 단계(연결/맥락 파악/추론/정리)도 step 으로 노출해 "단계별 DB동작 외"
+    # 내부 동작이 화면에 보이게 한다. tool step 과 단조 증가 step_index(emit_index)를
+    # 공유해 progress 폴링(after_step 필터)·시간순 정렬이 자연 정합된다. action='activity'
+    # 로 표시만 구분(프론트가 보조 타임라인으로 렌더). 실패는 조용히 무시(투명화 보조 기능이
+    # 본 추론을 깨지 않게).
+    emit_index = 0
+
+    def _emit_activity(label: str, detail: str = "") -> None:
+        nonlocal emit_index
+        if not _writes_allowed(mem_conn, cid):
+            return
+        emit_index += 1
+        try:
+            save_memory_step(mem_conn, cid, run_id, {
+                "step_index": emit_index,
+                "action": "activity",
+                "tool": "",
+                "intent": str(label or "")[:255],
+                "work": str(label or ""),
+                "work_source": "runtime",
+                "reason": str(detail or ""),
+                "reason_source": "runtime" if detail else "",
+                "args": {},
+                "sql": "",
+                "result_summary": None,
+                "error": "",
+            })
+        except Exception:
+            pass
+
+    _emit_activity("요청을 받았습니다 — 대화 맥락을 불러오는 중")
 
     # ── 대화 히스토리 로드 ──
     history = _load_conversation_messages(mem_conn, cid, max_messages=50)
@@ -2745,6 +2820,8 @@ def _run_agent_core(
     if output_mode == "console":
         console.print(f"\n[dim]대화: {cid[:20]}... | 모델: {model}[/dim]")
 
+    _emit_activity("스키마·지식을 파악하고 분석을 준비하는 중")
+
     # ── 에이전트 루프 ──
     run_start = time.perf_counter()
     run_timeout_sec = max(
@@ -2755,6 +2832,7 @@ def _run_agent_core(
     steps: list[dict[str, Any]] = []
     step_count = 0
     empty_retries = 0
+    llm_round = 0  # TASK-0289: LLM 추론 호출 회차(activity 노출용)
 
     while step_count < max_steps:
         if _cancel_requested_for_run(mem_conn, cid, run_id):
@@ -2779,6 +2857,14 @@ def _run_agent_core(
                 console.print("[yellow]즉시 답변 요청 감지 — 마무리 중...[/yellow]")
 
         # ── LLM 호출 ──
+        # TASK-0289: 추론 라운드를 activity 로 노출 — 45초 대기 중 LLM↔도구 사이클이
+        # 실제로 진행됨을 사용자가 보게 한다(숨겨진 "처리 중" 정적 상태 해소).
+        llm_round += 1
+        _emit_activity(
+            "AI 가 질문을 분석하고 답변을 추론하는 중"
+            if llm_round == 1
+            else f"수집한 정보로 추가 추론하는 중 ({llm_round}회차)"
+        )
         # TASK-0228 (1:N): 멀티 datasource 면 각 도구에 `datasource` 선택 인자를 주입한 정의를 쓴다.
         use_tools = None if finalize_now else _run_tool_defs
         try:
@@ -2833,13 +2919,19 @@ def _run_agent_core(
             result["answer"] = answer
 
             # 메시지 저장 (duration_ms 포함)
-            answer_duration_ms = round((time.perf_counter() - run_start) * 1000.0, 2)
+            # TASK-0289: 표시 수행시간을 LLM 루프만(run_start 기준) → 진짜 end-to-end(total:
+            # 큐 대기+초기화+추론)로. 라이브 경과 타이머와 일치해 완료 후 숫자가 줄지 않는다.
+            _ans_breakdown = _compute_duration_breakdown(_queued_ms, agent_entry_perf, run_start)
+            answer_duration_ms = _ans_breakdown["total_ms"]
             # TASK-0094 Sprint 2 (S2.6, D9 정합) — vision invoke 의 결과 메시지에
             # attachment_derived flag 부여. share view 의 D9 redact 가 본 flag 를
             # 검사 (`_meta_has_attachment_derived`) — vision 분석 결과도 자동
             # cover. WebAttachmentDerivedMessages join row INSERT (D19) 는 caller
             # (app.py /api/ask, S2.6) 책임.
-            mirror_meta: dict[str, Any] = {"duration_ms": answer_duration_ms}
+            mirror_meta: dict[str, Any] = {
+                "duration_ms": answer_duration_ms,
+                "duration_breakdown": _ans_breakdown,
+            }
             if os.getenv(_INLINE_IMAGE_ENV_VAR, "").strip():
                 mirror_meta["attachment_derived"] = True
                 mirror_meta["derivation_type"] = "vision_analysis"
@@ -2933,6 +3025,10 @@ def _run_agent_core(
                 reason_source = "derived" if reason_text else ""
 
             step_count += 1
+            # TASK-0289: 영속 step_index 는 activity step 과 공유하는 단조 카운터(emit_index)를
+            # 쓴다 — activity↔tool 이 시간순으로 정합되고 progress after_step 폴링이 중복/누락
+            # 없이 증분된다. step_count 는 도구 예산/intent 판정용으로만 유지.
+            emit_index += 1
             if output_mode == "console":
                 args_preview = json.dumps(tool_args, ensure_ascii=False)
                 if len(args_preview) > 200:
@@ -2976,7 +3072,7 @@ def _run_agent_core(
             step_intent = user_message if step_count == 1 else f"{tool_name}: {work_text or tool_name}"
             step_info = _build_step_payload(
                 run_id=run_id,
-                step_index=step_count,
+                step_index=emit_index,
                 tool_name=tool_name,
                 intent=step_intent,
                 args=tool_args,
@@ -2994,7 +3090,7 @@ def _run_agent_core(
                     mem_conn,
                     cid,
                     run_id,
-                    step_count,
+                    emit_index,
                     tool_name,
                     step_intent,
                     tool_args,
@@ -3024,11 +3120,16 @@ def _run_agent_core(
         if output_mode == "console":
             console.print(f"[yellow]{result['answer']}[/yellow]")
 
+    if not canceled_by_user:
+        _emit_activity("답변을 마무리하고 결과를 정리하는 중")
     result["steps"] = steps
     result["executed_sql"] = last_sql
     result["result_csv_paths"] = _step_csv_paths(steps)
     result["rationale"] = _summarize_step_rationale(steps)
-    duration_ms = round((time.perf_counter() - run_start) * 1000.0, 2)
+    # TASK-0289: 종료 상태(KV last_duration_ms)도 진짜 end-to-end(total)로 기록.
+    _final_breakdown = _compute_duration_breakdown(_queued_ms, agent_entry_perf, run_start)
+    duration_ms = _final_breakdown["total_ms"]
+    result["duration_breakdown"] = _final_breakdown
     pending_delete = _delete_requested(mem_conn, cid)
 
     if canceled_by_user:
