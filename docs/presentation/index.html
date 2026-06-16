@@ -198,15 +198,24 @@ kbd{font-family:var(--mono);font-size:10.5px;background:var(--bg);border:1px sol
 .widget .wd{font-size:10px;font-weight:700;margin-top:2px}
 .wd.up{color:var(--success)} .wd.down{color:var(--danger)} .wd.flat{color:var(--text-muted)}
 
-/* 권한 토글 트리 */
-.rbac{display:flex;flex-direction:column;gap:4px;font-size:12px}
-.perm{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:var(--r-sm);background:#fff;border:1px solid var(--border-subtle)}
-.perm .sw{width:30px;height:17px;border-radius:999px;background:var(--border);position:relative;flex-shrink:0;transition:.2s}
-.perm .sw:after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#fff;box-shadow:var(--shadow-sm);transition:.2s}
-.perm.on .sw{background:var(--primary)} .perm.on .sw:after{left:15px}
-.perm.d1{margin-left:20px}
-.perm .pc{font-size:11.5px;color:var(--text-2)}
-.perm .master{margin-left:auto;font-size:9.5px;font-weight:700;color:var(--primary);background:var(--primary-soft);padding:1px 7px;border-radius:999px}
+/* 권한 격자 (실제 관리 콘솔 권한 grid 정합: 2단 섹션 → 그룹(개수 배지) → 종속성 트리 토글 카드) */
+.pgrid{display:flex;flex-direction:column;gap:7px;font-size:12px;margin-top:5px}
+.psection-title{font-size:10px;font-weight:800;letter-spacing:.03em;color:var(--text-muted)}
+.pgroup{border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden;background:#fff}
+.pgroup-head{display:flex;align-items:center;justify-content:space-between;padding:5px 9px;background:var(--bg);border-bottom:1px solid var(--border-subtle)}
+.pgroup-head .gname{font-weight:700;font-size:11.5px;color:var(--text)}
+.pcount{font-size:9.5px;font-weight:700;color:var(--primary);background:var(--primary-soft);border-radius:999px;padding:1px 7px}
+.pcard{display:flex;align-items:flex-start;gap:8px;padding:5px 9px;border-top:1px solid var(--border-subtle)}
+.pcard:first-of-type{border-top:0}
+.pcard .sw{width:27px;height:15px;border-radius:999px;background:var(--border);position:relative;flex-shrink:0;margin-top:2px;transition:.2s}
+.pcard .sw:after{content:"";position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:50%;background:#fff;box-shadow:var(--shadow-sm);transition:.2s}
+.pcard.on .sw{background:var(--primary)} .pcard.on .sw:after{left:14px}
+.pcard .ptext{display:flex;flex-direction:column;min-width:0}
+.pcard .ptext strong{font-size:11.5px;font-weight:700;color:var(--text)}
+.pcard .ptext small{font-size:10px;color:var(--text-muted);line-height:1.3;margin-top:1px}
+.pcard.d1{padding-left:24px} .pcard.d2{padding-left:40px}
+.pcard .master{margin-left:auto;align-self:center;font-size:9px;font-weight:700;color:var(--primary);background:var(--primary-soft);padding:1px 6px;border-radius:999px;flex-shrink:0}
+.pmore{font-size:10.5px;color:var(--primary);font-weight:600;padding:5px 9px;border-top:1px solid var(--border-subtle);background:#fcfcfb}
 
 /* 차트 */
 .charts{display:grid;grid-template-columns:1.6fr 1fr;gap:12px;margin-top:4px}
@@ -543,14 +552,27 @@ kbd{font-family:var(--mono);font-size:10.5px;background:var(--bg);border:1px sol
         <p style="margin-top:9px">접속 비밀번호는 이중 잠금(금고 속 금고) 방식으로 암호화해 저장합니다. 원문은 화면·기록·내부에 남기지 않습니다. ‘연결 시험’ 으로 바로 확인합니다.</p>
       </div>
       <div class="card frag" data-explain="ad-perm">
-        <h3>권한은 필요한 만큼만</h3>
-        <div class="rbac">
-          <div class="perm on"><span class="sw"></span><span class="pc">콘솔 진입</span><span class="master">최상위 잠금</span></div>
-          <div class="perm on d1"><span class="sw"></span><span class="pc">계정 보기</span></div>
-          <div class="perm d1"><span class="sw"></span><span class="pc">계정 삭제</span></div>
-          <div class="perm on d1"><span class="sw"></span><span class="pc">전체 대화 보기</span></div>
+        <h3>권한 격자 — 필요한 만큼만</h3>
+        <div class="pgrid">
+          <div class="psection-title">관리 권한</div>
+          <div class="pgroup">
+            <div class="pgroup-head"><span class="gname">관리 콘솔</span><span class="pcount">2개 활성화</span></div>
+            <div class="pcard on"><span class="sw"></span><div class="ptext"><strong>관리 콘솔 접근</strong><small>관리 콘솔 화면에 접근할 수 있다.</small></div><span class="master">마스터 게이트</span></div>
+            <div class="pcard on d1"><span class="sw"></span><div class="ptext"><strong>관리 콘솔 수정</strong><small>관리 콘솔에서 변경 작업을 수행할 수 있다.</small></div></div>
+          </div>
+          <div class="pgroup">
+            <div class="pgroup-head"><span class="gname">계정</span><span class="pcount">1개 활성화</span></div>
+            <div class="pcard on"><span class="sw"></span><div class="ptext"><strong>계정 조회</strong><small>계정 목록과 상세 정보를 조회할 수 있다.</small></div></div>
+            <div class="pmore">세부 권한 6개 더 보기</div>
+          </div>
+          <div class="psection-title">운영 권한</div>
+          <div class="pgroup">
+            <div class="pgroup-head"><span class="gname">내 대화 권한</span><span class="pcount">2개 활성화</span></div>
+            <div class="pcard on"><span class="sw"></span><div class="ptext"><strong>내 대화 목록 조회</strong><small>자신의 대화 목록을 볼 수 있다.</small></div></div>
+            <div class="pcard on d1"><span class="sw"></span><div class="ptext"><strong>대화 요청 실행</strong><small>자신의 대화에 새 요청을 보낼 수 있다.</small></div></div>
+          </div>
         </div>
-        <p style="margin-top:9px">‘콘솔 진입’ 이라는 최상위 잠금 아래에서 필요한 권한만 단계적으로 펼쳐 보여줍니다. ‘내 대화’ 와 ‘전체 대화’ 를 구분하고, 사람별 예외도 줄 수 있습니다.</p>
+        <p style="margin-top:9px">‘관리 콘솔 접근’ 이 마스터 게이트 — 꺼지면 하위 그룹이 접힙니다. 종속성에 따라 필요한 권한만 단계로 펼치고, ‘내 대화’ 와 ‘전체 대화’ 를 나눕니다.</p>
       </div>
     </div>
     <p class="lead frag" style="margin-top:12px">한 사람이 볼 수 있는 데이터는 제품 단위 + 그 안의 데이터베이스 단위로 정해집니다. 지정받지 못하면 접근할 수 없습니다.</p>
