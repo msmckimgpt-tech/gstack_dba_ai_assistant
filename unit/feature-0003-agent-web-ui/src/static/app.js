@@ -625,13 +625,42 @@ function enhanceDiffBlocks(html) {
   }
 }
 
+function enhanceAttachmentEditBlocks(html) {
+  // ★ TASK-0286: marked 가 만든 ```attachment-edit 코드 블록(전체 수정본 본문)을 화면에서
+  // "📎 수정된 첨부 파일" 명시 안내로 치환 — 사용자에게 전체 본문 텍스트를 노출하지 않는다.
+  // 백엔드(_strip_attachment_edit_blocks)가 새 답변에선 이미 제거하므로, 이건 과거 메시지·share
+  // 화면·strip 누락에 대한 안전망. 첫 줄 JSON 헤더에서 filename 만 추출(본문은 버린다).
+  if (typeof document === "undefined") return html;
+  if (!html || html.indexOf("language-attachment-edit") === -1) return html;
+  try {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    const blocks = tpl.content.querySelectorAll("pre > code.language-attachment-edit");
+    if (!blocks.length) return html;
+    blocks.forEach((codeEl) => {
+      const raw = codeEl.textContent || "";
+      let fname = "";
+      const firstLine = (raw.split("\n", 1)[0] || "").trim();
+      try { fname = String((JSON.parse(firstLine) || {}).filename || ""); } catch (_) {}
+      const note = document.createElement("div");
+      note.className = "attachment-edit-note";
+      note.textContent = "📎 수정된 첨부 파일" + (fname ? ` (${fname})` : "") + " — 첨부 목록·말풍선에서 다운로드하세요.";
+      const pre = codeEl.closest("pre");
+      (pre || codeEl).replaceWith(note);
+    });
+    return tpl.innerHTML;
+  } catch (_) {
+    return html;
+  }
+}
+
 function markdownToHtml(text = "") {
   const source = String(text || "").trim();
   if (!source) {
     return "";
   }
   if (window.marked && window.DOMPurify) {
-    const rendered = enhanceDiffBlocks(window.marked.parse(source));
+    const rendered = enhanceAttachmentEditBlocks(enhanceDiffBlocks(window.marked.parse(source)));
     return window.DOMPurify.sanitize(rendered);
   }
   return `<pre>${escapeHtml(source)}</pre>`;

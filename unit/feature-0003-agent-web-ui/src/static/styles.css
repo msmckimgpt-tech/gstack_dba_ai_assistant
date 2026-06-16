@@ -1104,6 +1104,19 @@ a { color: inherit; }
 
 /* TASK-0256: ```diff 코드 블록 — 답변 내 변경 제안을 라인별 +/- 색으로 구분.
    .message-content pre 의 다크 배경(#1a1b26) 위에서 읽히는 팔레트 사용. */
+/* ★ TASK-0286: attachment-edit 블록(전체 수정본 본문) 대체 안내 칩 — 본문 미노출. */
+.attachment-edit-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  padding: 6px 11px;
+  border-radius: 8px;
+  background: var(--primary-soft, #e8f0ff);
+  color: var(--primary, #2563eb);
+  font-size: 12px;
+  font-weight: 500;
+}
 .message-content pre.diff-block { padding: 10px 0; }
 .message-content pre.diff-block code {
   display: block;

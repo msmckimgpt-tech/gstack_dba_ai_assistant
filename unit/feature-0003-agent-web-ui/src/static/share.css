@@ -224,6 +224,19 @@
 
 /* TASK-0256: ```diff 코드 블록 — 변경 제안을 라인별 +/- 색으로 구분.
    --share-code-bg(#1e293b) 다크 배경 위에서 읽히는 팔레트. */
+/* ★ TASK-0286: attachment-edit 블록 대체 안내 칩(공유 화면, 다크 팔레트). */
+.share-message-content .attachment-edit-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  padding: 6px 11px;
+  border-radius: 8px;
+  background: rgba(122, 162, 247, .16);
+  color: #7aa2f7;
+  font-size: 12px;
+  font-weight: 500;
+}
 .share-message-content pre.diff-block { padding: 10px 0; }
 .share-message-content pre.diff-block code { display: block; }
 .share-message-content pre.diff-block .diff-line {
