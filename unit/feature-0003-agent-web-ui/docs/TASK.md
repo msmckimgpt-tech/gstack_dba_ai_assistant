@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Task
 
+## TASK-0283 (current cycle) — 관리 콘솔 제품 아이콘 편집 UI 를 유저 프로필과 동일한 ✎ 오버레이로 통일
+- 보고(사용자): `관리 콘솔 > 제품 > [각 항목] > 프로필 아이콘` 의 수정버튼 UI 를 유저 프로필과 동일하도록 구성. 현재 "아이콘" 텍스트박스가 제품 아이콘(36px) 영역을 크게 침범.
+- 등급: **Minor §12.3** (frontend-only, `src/static/admin.js` 1곳 + `styles.css` dead-rule 제거 + 정적자산 cache-buster. RBAC/스키마/엔드포인트/백엔드 0).
+- 진단: 제품 상세 헤더(admin.js `renderProductDetail`)의 아이콘 편집이 `.admin-avatar-edit`(absolute, `bottom:-22px`, `left:0 right:0`) 안에 **"아이콘"·"제거" 텍스트 pill** 2개를 중앙 배치 → 텍스트 버튼 폭이 36px 아바타보다 넓어 좌우로 spill, 아이콘 영역 침범. 유저 프로필(index.html `.profile-avatar-edit`)은 ✎ 펜슬 버튼을 아바타 우하단에 **원형 오버레이**(`.profile-avatar-change`, `right:-4px bottom:-4px 22px`)하고 "사진 제거"는 텍스트 링크(`.profile-avatar-remove`)로 분리 — 동일 패턴 미적용 상태였다.
+- [x] 수정(admin.js `renderProductDetail`): 텍스트 pill 폐기 → 유저 프로필과 동일하게 아바타를 `.profile-avatar-edit` 래퍼로 감싸고 `.profile-avatar-change`(✎) 오버레이 버튼 + 숨김 file input, "아이콘 제거"는 `.profile-avatar-remove` 텍스트 링크로 idText 하단 배치. 기존 PUT/DELETE 엔드포인트·5MB 가드·toast·renderProductDetail 재렌더 로직 무변경.
+- [x] 수정(styles.css): dead `.admin-avatar-edit`/`.admin-avatar-change`/`.admin-avatar-remove` 규칙 제거(사용처 0건 — admin.js 5798/5802/5820 한정이었음). 프로필 클래스 재사용이라 신규 CSS 0.
+- [x] cache-buster: index.html(styles.css) + admin.html(styles.css·admin.js) `?v=20260616-product-icon-edit`.
+- [x] 검증: node --check admin.js PASS.
+- [ ] (잔여) verify-completion → PR 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증(제품 상세 아이콘 우하단 ✎ 오버레이·텍스트 침범 0·유저 프로필과 시각 동형).
+
 ## 0zz. TASK-20260615T182907-product-list-row-icon-layout-fix (current cycle) — 제품 관리 목록 행 UI 뒤틀림 핫픽스 (TASK-...-product-icon-chip-list 후속)
 - 보고(사용자): 제품 관리 목록의 UI 가 뒤틀림. (직전 cycle PR #249 가 목록 행에 아이콘 추가하면서 발생.)
 - 등급: **Minor §12.3** (frontend-only 단일 파일 레이아웃 버그 수정, admin.js. RBAC/스키마/엔드포인트/백엔드 0).

@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260616-0291 [SKIPPED:frontend-icon-edit-ui-no-backend-no-rbac]
+- Date: 2026-06-16 (§13.1 origin max REV-20260616-0290 → 0291)
+- Cycle: TASK-0283 (관리 콘솔 제품 아이콘 편집 UI 를 유저 프로필과 동일한 ✎ 오버레이로 통일), **Minor §12.3** — frontend-only(`src/static/admin.js` 1곳 + dead CSS 제거 + cache-buster). RBAC/인증/스키마/엔드포인트/데이터/시크릿/백엔드 0.
+- Trigger: §18.8 dispatch 키워드(UI/수정버튼/레이아웃 → ux,design). 변경 실질은 기존 편집 컨트롤을 이미 검증된 유저 프로필 패턴(`.profile-avatar-edit`)으로 재배치 — 신규 데이터·권한·인터랙션·엔드포인트 0 → §18.8.1 경량 경로(적대 패널 불요, Minor frontend-only + 정책 doc 0 → skip). 직전 REV-20260615-0286(제품 목록 행 레이아웃 버그) 와 동일 부류.
+- 자체 점검:
+  - ① **패턴 동형성**: 유저 프로필(index.html `.profile-avatar-edit` > `.profile-avatar-lg` + `.profile-avatar-change` ✎ + 숨김 input, 텍스트블록에 `.profile-avatar-remove`)을 admin.js 제품 상세에 그대로 재현. ✎ 버튼은 `position:absolute; right:-4px; bottom:-4px; 22px 원형`(styles.css 6420) — 36px 아바타 우하단 오버레이라 침범 0. 클래스 재사용이므로 시각 동형 보장.
+  - ② **기능 보존**: PUT `/api/admin/products/:id/icon`(변경)·DELETE(제거) 엔드포인트, 5MB 가드, image/png·jpeg·webp accept, FormData, toast, `renderProductDetail()` 재렌더, `canManage`(product.manage) 게이트 무변경 — 이벤트 핸들러 본문 그대로 이식.
+  - ③ **dead CSS 안전 제거**: `.admin-avatar-edit`/`.admin-avatar-change`/`.admin-avatar-remove` 는 admin.js 의 본 블록(5798/5802/5820) 단일 사용처였음(grep 전수 확인) → 제거해도 회귀 0. `.admin-avatar` 베이스(목록·계정 아바타 공용)·`.admin-avatar-sm`·has-avatar-img·image clip 규칙은 유지.
+  - ④ **cache-buster**: styles.css 변경 → index/admin.html 양쪽 ref bump, admin.js 변경 → admin.html ref bump. HTML no-cache(app.py `_HTML_NO_CACHE`) 전제 충족([[project_static_asset_cache_busting]]).
+- 검증: node --check admin.js PASS. (잔여) web 재배포(deploy_scope: included) 후 PB-0008 Windows-browser 시각검증(제품 상세 ✎ 오버레이·텍스트 침범 0·유저 프로필 시각 동형) → TEST.md §4.
+- Cross-ref: CHG-20260616-0291 / TASK-0283 / REV-20260615-0286(동일 부류 선례).
+
 ## REV-20260615-0288 [SKIPPED:migration-fk-orphan-hotfix]
 - Date: 2026-06-15 (TASK-0279 라이브 rollout 후속, **Critical §12.3** — 데이터 이전 무결성)
 - Cycle: alembic 0009 conversation FK 제거 — 라이브 backfill 이 orphan 126행을 FK 차단해 발견. 원 cutover 는 REV-20260615-0287 에서 outside-voice 2인 검토 완료(데이터 이전 SHIP-WITH-FIXES / 인가 SHIP).

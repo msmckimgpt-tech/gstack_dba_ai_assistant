@@ -6435,19 +6435,14 @@ a { color: inherit; }
 .admin-avatar { position: relative; overflow: visible; }
 .admin-avatar .admin-avatar-img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: inherit; }
 /* profile-icon 정합: 작업화면 프로필과 동일하게 applyAvatar()가 넣는 .avatar-img / Identicon SVG 를
-   원형(border-radius:50%)으로 채운다. edit 컨트롤은 avatar 밖(bottom:-22px)이라 컨테이너 overflow 는
-   visible 유지하고, 이미지·SVG 만 원형 클립(자체 border-radius + overflow). */
+   원형(border-radius:50%)으로 채운다. 이미지·SVG 만 원형 클립(자체 border-radius + overflow). */
 .admin-avatar.has-avatar-img { padding: 0; background: transparent; }
 .admin-avatar .avatar-img, .admin-avatar > svg {
   width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 50%; overflow: hidden;
 }
-.admin-avatar-edit { position: absolute; left: 0; right: 0; bottom: -22px; display: flex; gap: 6px; justify-content: center; }
-.admin-avatar-change, .admin-avatar-remove {
-  appearance: none; border: 1px solid var(--border, #e5e7eb); background: var(--surface-1, #fff);
-  border-radius: var(--r-sm, 4px); font-size: 10px; padding: 1px 6px; cursor: pointer; color: var(--text-2, #6b7280);
-}
-.admin-avatar-change:hover { color: var(--primary, #2563eb); }
-.admin-avatar-remove { color: var(--danger, #dc2626); }
+/* TASK-0283: 제품 아이콘 편집은 유저 프로필 아바타 편집(.profile-avatar-edit / .profile-avatar-change /
+   .profile-avatar-remove, 위 정의 재사용)과 동일한 ✎ 오버레이 패턴으로 통일. 기존 텍스트 pill 방식
+   (.admin-avatar-edit / .admin-avatar-change / .admin-avatar-remove) 은 36px 아이콘 영역을 침범해 폐기. */
 
 /* ─── TASK-0273/0276: 보관 대화 admin pane (audits 동형 list-detail) ────────── */
 /* TASK-0277: .admin-pane-note 는 보관 대화 pane 단일 사용처였고, 안내를 우측 상세 빈 상태로

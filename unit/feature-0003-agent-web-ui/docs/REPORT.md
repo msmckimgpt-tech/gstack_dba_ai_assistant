@@ -10,6 +10,13 @@ source_of_truth: false
 
 ## 1. Summary
 
+**2026-06-16 TASK-0283 — 관리 콘솔 제품 아이콘 편집 UI 를 유저 프로필과 동일한 ✎ 오버레이로 통일** (REV-20260616-0291 [SKIPPED:frontend-icon-edit-ui-no-backend-no-rbac], **Minor §12.3**, frontend-only `src/static/admin.js` 1곳 + dead CSS 제거 + cache-buster). 사용자 보고: `관리 콘솔 > 제품 > [항목] > 프로필 아이콘` 의 수정버튼 UI 를 유저 프로필과 동일하게. 현재 "아이콘" 텍스트박스가 제품 아이콘(36px) 영역을 크게 침범. **원인**: 제품 상세(admin.js `renderProductDetail`)가 `.admin-avatar-edit`(absolute `bottom:-22px`) 안에 "아이콘"·"제거" 텍스트 pill 2개를 배치 → 텍스트 버튼 폭이 아바타보다 넓어 좌우 spill·침범. 유저 프로필(index.html `.profile-avatar-edit`)은 ✎ 펜슬을 아바타 우하단에 원형 오버레이(`.profile-avatar-change`)하고 "사진 제거"는 텍스트 링크(`.profile-avatar-remove`)로 분리. **수정**: 텍스트 pill 폐기 → 아바타를 `.profile-avatar-edit` 래퍼로 감싸 `.profile-avatar-change`(✎) 오버레이 + 숨김 input, "아이콘 제거"는 `.profile-avatar-remove` 링크로 idText 하단 분리(유저 프로필과 동일 클래스 재사용 → 시각 동형, 신규 CSS 0). dead `.admin-avatar-edit/change/remove` 규칙 제거(사용처 0건). **비변경**: 아이콘 PUT/DELETE 엔드포인트·5MB 가드·toast·renderProductDetail 재렌더·applyAvatar/Identicon·`canManage` 게이트 0. **검증**: node --check admin.js PASS. cache-buster `?v=20260616-product-icon-edit`. worktree `ai/claude/task0283-product-icon-edit`(base 2e5778a=main). **잔여**: 머지 → web 재배포(`deploy_scope: included`) → PB-0008 Windows-browser 시각검증(✎ 오버레이·텍스트 침범 0·유저 프로필 동형).
+
+### Git 동기화 결과 (TASK-0283)
+- 커밋: <cycle commit hash> (ai/claude/task0283-product-icon-edit, base 2e5778a)
+- Push / PR / main 병합 / 배포: 자동 동기화 §16.3 — BLOCKED 없음 + Minor + `deploy_scope: included` → PR→머지→cleanup→web 재배포 자동.
+- 잔여: PB-0008(제품 상세 아이콘 편집 ✎ 오버레이·침범 0 시각검증).
+
 **2026-06-15 TASK-20260615T182907-product-list-row-icon-layout-fix — 제품 관리 목록 행 UI 뒤틀림 핫픽스** (REV-20260615-0286 [SKIPPED:frontend-layout-bugfix-no-backend-no-rbac], **Minor §12.3**, frontend-only `src/static/admin.js` 1곳). 사용자 보고: 제품 관리 목록 UI 뒤틀림. **원인**: 직전 cycle(PR #249)이 목록 행에 아이콘 추가 시 `row.append(cb, avatar, meta)` 로 avatar 를 row 최상위 2번째 칸에 둬 `.admin-list-row` 3열 grid(`auto 1fr auto`)가 깨짐(avatar 가 1fr·meta 가 auto 칸으로 밀림). **수정**: avatar 를 `meta` 첫 줄 `titleRow`(`admin-list-row-title` flex) 안에 name 과 함께 묶고 `row.append(cb, meta)` 2자식 복원 — 계정 목록 행과 동형, grid 정상. **비변경**: 아이콘 렌더·CSS·chip·드롭업·상세·row click·cov 배지 0. **검증**: node --check + **jsdom 19/19 PASS**(기존 14 + [3] 행 레이아웃 회귀 5) + make test 회귀 0. worktree `ai/claude/product-icon-pb0008-record`(base origin/main rebase). **잔여**: 머지 → web 재배포 → PB-0008 재검증(목록 행 정렬 정상).
 
 ### Git 동기화 결과 (TASK-20260615T182907-product-list-row-icon-layout-fix)
