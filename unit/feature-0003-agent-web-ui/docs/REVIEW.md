@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260616-0294 [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-16 (TASK-0285 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence 기록)
+- Skip 사유: docs 전용(STATUS/REPORT/TASK/MODIFY/REVIEW). 코드/정적자산/백엔드/RBAC 무변경 — 리뷰 패널 트리거 비해당. 본체 변경의 적대 보안 검토는 직전 cycle REV-20260616-0293 [SUBAGENT:attach-surfacing-security] SHIP 가 담당.
+- 기록 요지: TASK-0285(첨부 버전 현황 표면화 ②③④) PB-0008 Windows-browser **PASS**(실 Chrome/148, 배포본 main 1c4737d). render-injection computed 실측 — ③ `_buildMessageAttachChip` assistant 칩 `v2 · AI 수정` 배지 color rgb(37,99,235)·bg rgb(232,240,255)·`.message.is-assistant` 칩 배경 rgb(255,255,255)(밝은 배경 가시)·다운로드 가능, ② `_renderAttachmentVersionsBox` 2행·최신 위·"AI 수정 · 최신"·버전별 다운로드 2개. jsdom 이 못 잡는 CSS 캐스케이드(ai-edited 색·assistant 칩 배경)를 실 브라우저 computed 로 확증. 라이브 assistant 수정본 데이터 0건이라 합성 render-injection 으로 검증(실사용 시 자연 재현). evidence `artifacts/pb0008-task0285/attach-version-surfacing.png`.
+
 ## REV-20260616-0293 [SUBAGENT:attach-surfacing-security] — SHIP
 - Date: 2026-06-16 (TASK-0285 — 첨부 버전 현황 표면화 ②③④, TASK-0275 후속 보완)
 - 대상: ② `list_conversation_attachments` version_count 집계, ③ `_load_assistant_attachments_by_message` + `_get_history` assistant 첨부 직렬화(IDOR 표면), ④ materialize step 기록.

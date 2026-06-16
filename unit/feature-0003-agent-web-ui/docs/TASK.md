@@ -18,7 +18,7 @@ source_of_truth: true
   - [x] ④ backend: ask materialize 후처리에서 `save_memory_step`(action=attachment_edit, tool=materialize_attachment, work/reason 직접 저장) + 응답 render_steps 즉시 반영.
   - [x] 단위 테스트 `test_task0285_attach_surfacing.py` 9 PASS + make test 컨테이너 전체 회귀 0 + py_compile + node --check + CSS brace(1242) + 캐시버스터 `?v=20260616-task0285-attach-surfacing`.
   - [x] outside-voice 적대 보안 리뷰 SHIP (REV-20260616-0293, BLOCKER 0; IDOR/signed_url/SQLi/MetaJson조작/fail-soft 전부 refute).
-- [ ] (잔여) 머지 → web 재배포 → PB-0008 Windows-browser 시각검증(목록 버전 배지·펼침, assistant 말풍선 칩, 진행 단계 첨부 수정).
+- [x] 머지(PR #275 → main 1c4737d) → web 재배포(baked+서빙 `?v=task0285` 확인) → **PB-0008 Windows-browser PASS**(실 Chrome/148 render-injection computed 실측: ③ assistant 칩 `v2 · AI 수정` color rgb(37,99,235)·bg rgb(232,240,255)·assistant 말풍선 칩 배경 rgb(255,255,255), ② 버전 박스 2행+버전별 다운로드). 라이브 assistant 수정본 0건이라 합성 render-injection 으로 검증(실사용 시 자연 재현). evidence `artifacts/pb0008-task0285/attach-version-surfacing.png`. CHG/REV-20260616-0294.
 
 ## TASK-20260616T022652-ai-claude-sidebar-resize — 대화창 좌측 사이드바 너비 드래그 조절 (REQ-20260616-0284, AC-0523, Minor §12.3)
 - 보고(사용자): `작업 화면` 좌측 대화 사이드바(대화 목록 패널)의 너비를 사용자가 조절할 수 있도록 구성. (스크린샷: 사이드바 전체 영역 강조.)
