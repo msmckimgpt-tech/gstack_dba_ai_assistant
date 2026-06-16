@@ -8,7 +8,18 @@ source_of_truth: true
 
 # Task
 
-## TASK-0283 (current cycle) — 관리 콘솔 제품 아이콘 편집 UI 를 유저 프로필과 동일한 ✎ 오버레이로 통일
+## TASK-20260616T022652-ai-claude-sidebar-resize (current cycle) — 대화창 좌측 사이드바 너비 드래그 조절 (REQ-20260616-0284, AC-0523, Minor §12.3)
+- 보고(사용자): `작업 화면` 좌측 대화 사이드바(대화 목록 패널)의 너비를 사용자가 조절할 수 있도록 구성. (스크린샷: 사이드바 전체 영역 강조.)
+- 등급: **Minor §12.3** (frontend-only, `src/static/{index.html,styles.css,app.js}`. RBAC/스키마/엔드포인트/백엔드 0. 비파괴 추가.)
+- 진단: 좌측 사이드바(`<aside class="sidebar">`)는 `.app-shell` CSS Grid 의 첫 컬럼(`grid-template-columns: var(--sidebar-w) minmax(0,1fr)`, `--sidebar-w: 252px` 고정)으로 너비 조절 수단이 없었다. 반면 우측 패널 3종(`#stepSidePanelResizer`/`#profileDrawerResizer`/`#attachSidePanelResizer`)에는 이미 drag-resize + `localStorage` 영속 패턴이 존재 → 동일 패턴을 좌측에 미러링.
+- 접근: 우측은 절대배치 패널이라 왼쪽 가장자리(`innerWidth − clientX`)를 끌지만, 좌측은 in-flow grid 컬럼이라 **`--sidebar-w` CSS 변수를 JS 가 조절**하고, 핸들은 `.app-shell` 자식으로 두어 `left: var(--sidebar-w)` 로 경계를 추종(사이드바 `overflow:hidden` 클리핑 회피). 우변 드래그 = `clientX`.
+- [x] index.html: `</aside>` 뒤 `.app-shell` 자식으로 `#sidebarResizer`(role=separator, aria-label) 핸들 추가. styles.css/app.js 캐시버스터 `?v=20260616-sidebar-resize`.
+- [x] styles.css: `.app-shell{position:relative}` + `.sidebar-resizer`(left:var(--sidebar-w)·8px·ew-resize·hover/active 시 `--primary` 2px 라인) + `.app-shell.is-sidebar-resizing{user-select:none}` + 모바일(≤680) `.sidebar-resizer{display:none}`.
+- [x] app.js: `setupSidebarResize`/`_applySidebarWidth`(우측 패널 패턴 동형) — drag 가 `--sidebar-w` 를 [180, min(640, 50%vw)] clamp + mouseup 이 `localStorage["web.sidebar.width"]` 영속 + 더블클릭 reset + 모바일(≤680)에선 override 제거. `initialize()` 1회 배선 + resize 리스너에 `_applySidebarWidth()` 추가.
+- [x] 검증: node --check app.js PASS + CSS brace(1222=1222) + **jsdom 23/23 PASS**(`tests/verify_sidebar_resize.mjs`: 마크업/CSS 규칙/배선/clamp/영속/모바일 제거/더블클릭) + make test 컨테이너 **전체 회귀 0**(REAL_MAKE_EXIT=0, ruff clean).
+- [ ] (잔여) verify-completion PASS → 커밋/PR/머지(자동 동기화 §16.3) → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증(드래그 시 사이드바 폭 변화·영속·핸들 hit-test).
+
+## TASK-0283 — 관리 콘솔 제품 아이콘 편집 UI 를 유저 프로필과 동일한 ✎ 오버레이로 통일
 - 보고(사용자): `관리 콘솔 > 제품 > [각 항목] > 프로필 아이콘` 의 수정버튼 UI 를 유저 프로필과 동일하도록 구성. 현재 "아이콘" 텍스트박스가 제품 아이콘(36px) 영역을 크게 침범.
 - 등급: **Minor §12.3** (frontend-only, `src/static/admin.js` 1곳 + `styles.css` dead-rule 제거 + 정적자산 cache-buster. RBAC/스키마/엔드포인트/백엔드 0).
 - 진단: 제품 상세 헤더(admin.js `renderProductDetail`)의 아이콘 편집이 `.admin-avatar-edit`(absolute, `bottom:-22px`, `left:0 right:0`) 안에 **"아이콘"·"제거" 텍스트 pill** 2개를 중앙 배치 → 텍스트 버튼 폭이 36px 아바타보다 넓어 좌우로 spill, 아이콘 영역 침범. 유저 프로필(index.html `.profile-avatar-edit`)은 ✎ 펜슬 버튼을 아바타 우하단에 **원형 오버레이**(`.profile-avatar-change`, `right:-4px bottom:-4px 22px`)하고 "사진 제거"는 텍스트 링크(`.profile-avatar-remove`)로 분리 — 동일 패턴 미적용 상태였다.

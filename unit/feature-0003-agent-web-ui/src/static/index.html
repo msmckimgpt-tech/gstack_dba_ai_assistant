@@ -6,7 +6,7 @@
   <title>DQA — Database Query Assistant</title>
   <link rel="preconnect" href="https://fonts.bunny.net" />
   <link href="https://fonts.bunny.net/css?family=geist:300,400,500,600,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260616-product-icon-edit" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260616-sidebar-resize" />
 </head>
 <body>
 
@@ -103,6 +103,10 @@
           </button>
         </div>
       </aside>
+
+      <!-- 좌측 대화 사이드바 너비 조절 핸들 (우측 패널 #stepSidePanelResizer 과 동일 UX 패턴.
+           app-shell grid 의 sidebar/chat 경계에 절대배치, --sidebar-w 변수를 추종) -->
+      <div class="sidebar-resizer" id="sidebarResizer" role="separator" aria-orientation="vertical" aria-label="사이드바 너비 조절" title="드래그하여 너비 조절 (더블클릭 시 기본 너비)"></div>
 
       <!-- Chat Column (topbar + chat-pane) -->
       <div class="chat-column">
@@ -497,7 +501,7 @@
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260616-conn-tristate"></script>
+  <script src="/static/app.js?v=20260616-sidebar-resize"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
 </body>
 </html>

@@ -275,6 +275,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0045: node --check app.js 통과 (구문 무결).
 
 ## 4. Test Run History
+- 2026-06-16 (TASK-20260616T022652-ai-claude-sidebar-resize — 대화창 좌측 사이드바 너비 드래그 조절):
+  - **Environment: CLI** (정적 + jsdom + 컨테이너 make test). `node --check app.js` PASS + CSS brace 균형(1222=1222) + **jsdom 23 PASS** (`tests/verify_sidebar_resize.mjs` — [1] index.html `#sidebarResizer` role=separator·`.app-shell` 자식 위치, [2] styles.css `.app-shell{position:relative}`·`.sidebar-resizer{left:var(--sidebar-w);cursor:ew-resize}`·모바일 display:none, [3] init `setupSidebarResize()`·resize 리스너 `_applySidebarWidth()`, [4a] 핸들 1회 배선·멱등, [4b] drag→`--sidebar-w`=clientX·`is-sidebar-resizing`·mouseup localStorage 영속, [4c] clamp 하한 180/상한 512@1024·`_sidebarMaxW`, [4d] 저장값 복원·모바일 override 제거, [4e] 더블클릭 reset) + make test 컨테이너 **전체 회귀 0**(REAL_MAKE_EXIT=0, ruff clean). 백엔드 무변경. REV-20260616T022652-ai-claude-sidebar-resize [SKIPPED:frontend-ui-resize-no-backend-no-rbac].
+  - **Environment: Windows-browser** — (배포 후 기록 예정) `bin/win-browser.py` 로 실 Windows Chrome 에서 사이드바 경계 드래그 시 폭 실시간 변화·localStorage 영속(재진입 복원)·핸들 hit-test·더블클릭 reset 을 computed/screenshot 으로 실측. (§15.4.1 · PB-0008)
 - 2026-06-15 (TASK-0277b 후속 핫픽스 — 보관 대화 row ellipsis 실작동 수정):
   - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면.
   - **Runner: AI** (launch → /admin(세션 인증됨) → 보관 대화 탭 클릭 → computed layout 실측).
