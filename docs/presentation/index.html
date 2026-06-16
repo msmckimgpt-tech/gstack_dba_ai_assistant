@@ -64,7 +64,10 @@ body{
 .kicker .dot{width:6px;height:6px;border-radius:50%;background:var(--primary)}
 h1.title{font-size:clamp(22px,3.6vw,36px);font-weight:800;line-height:1.14;letter-spacing:-.02em}
 h2.title{font-size:clamp(19px,2.7vw,27px);font-weight:800;line-height:1.18;letter-spacing:-.015em}
-.lead{font-size:clamp(13.5px,1.5vw,16px);color:var(--text-2);line-height:1.55;margin-top:12px;max-width:46em}
+.lead{font-size:clamp(13.5px,1.5vw,16px);color:var(--text-2);line-height:1.55;margin-top:12px;max-width:64em}
+/* 고아 줄바꿈(단어 하나만 다음 줄로 떨어짐) 방지 */
+h1.title,h2.title,.card h3,.pop-card h3{text-wrap:balance}
+.lead,.card p,.callout,.cover-wrap .sub,.fstep .fd,.pop-body p,.sec-item span,.rc .now,.rc .alt,.tl .td{text-wrap:pretty}
 .muted{color:var(--text-muted)}
 .frag{opacity:0;transform:translateY(8px);transition:opacity .4s ease,transform .4s cubic-bezier(.22,.61,.36,1)}
 .frag.revealed{opacity:1;transform:none}
