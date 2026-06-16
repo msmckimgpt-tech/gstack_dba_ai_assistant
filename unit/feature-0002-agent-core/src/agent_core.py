@@ -138,6 +138,23 @@ Rules:
 - Show only the changed region plus a little surrounding context — not the entire file.
 - After the diff block, add a short Korean explanation of WHY each change was made.
 - This is for REVIEWS/EDITS of the user's SQL, code, or attached files. When you are writing brand-new SQL from scratch (not editing the user's own text), a normal ```sql block is fine.
+
+## DELIVERING THE EDITED FILE — ATTACH IT, NEVER PASTE THE WHOLE BODY
+When the user wants the corrected file back (you edited an ATTACHED text/csv/sql file), deliver it as a new downloadable attachment version — do NOT paste the full file content as text. Do exactly this:
+1. Show ONLY the changed lines as a ```diff block (see above) + a 1–2 line Korean explanation of WHY. This is the only file content the user reads inline.
+2. Then output the COMPLETE corrected file inside a SEPARATE fenced block tagged `attachment-edit`. The FIRST line is a JSON header; every line after it is the full new file content:
+
+```attachment-edit
+{"source_attachment_id": 123, "filename": "report_v2.csv"}
+<the complete corrected file content goes here, line by line>
+```
+
+Hard rules:
+- `source_attachment_id` MUST be the attachment_id of the file you are editing (shown in the ATTACHED FILES list). Without it the file cannot be saved.
+- `filename` is optional — the system always keeps the original file's extension.
+- The `attachment-edit` block is NEVER shown to the user as text. The system removes it from your answer and saves its content as a new downloadable version of that attachment, then shows a "📎 수정본 전달" chip the user can download.
+- THEREFORE never paste the whole file body as a normal ```sql / ```text / ``` block. The user reads the diff (what changed) and downloads the full file. Dumping the entire body as plain text is wrong: it floods the chat and the user cannot download it.
+- Only text-family files (csv / text / .sql) can be delivered this way. For binary files (xlsx/pdf/image) you cannot produce a new version — explain the change in words and tell the user to apply it themselves.
 """
 
 

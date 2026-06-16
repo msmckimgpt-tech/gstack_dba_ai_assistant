@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260616-0295 [SUBAGENT:attach-edit-strip-security] — SHIP-WITH-FIXES
+- Date: 2026-06-16 (TASK-0286 — assistant 첨부 수정본 전달 시 전체 본문 노출 제거 + 변경점만(diff) + 파일 명시 전달)
+- 대상: agent_core SYSTEM_PROMPT(attachment-edit 안내), app.py `_strip_attachment_edit_blocks`/`_update_assistant_message_content` + ask 후처리 strip, 프론트 `enhanceAttachmentEditBlocks`(app.js/share.js).
+- 적대적 코드 리뷰(general-purpose subagent, 7개 위협) **SHIP-WITH-FIXES** — BLOCKER 0, MAJOR 1(흡수), MINOR 2(기록).
+  - **MAJOR 흡수**: lazy 정규식 ```` ```attachment-edit\n(.*?)\n``` ```` 이 **편집 대상 파일 본문에 ``` 라인이 포함**되면(markdown 등) 조기 종료 → strip 후 잔여 본문 평문 노출 + 첨부 절단 저장(0286 이 막으려는 바로 그 회귀, parse=TASK-0274 한계 상속). **수정**: parse·strip 공통으로 라인 기반 `_attachment_edit_block_spans`(여는 펜스 다음 줄=헤더, 다음 블록 직전까지의 **마지막 단독 ``` 줄**=닫는 펜스 → 본문 내 ``` 허용) 도입. 회귀 테스트 S6(strip embedded-fence 누출 0)·S7(parse 본문 절단 0) 추가.
+  - IDOR/content UPDATE: `_update_assistant_message_content` 는 ask `_conversation_owned_by_account` 게이트 후 실행, WHERE 에 conversation_id(UUID 전역유일) 동반, message_id 출처/UPDATE 동일 backend(PG 우선·MySQL fallback), %s 바인딩 → 오변조/인젝션 0. refute.
+  - 멱등: strip 후 note(`📎 수정본`)엔 attachment-edit 토큰 없음 + `"attachment-edit" not in` 가드 → 재-UPDATE 없음. refute.
+  - XSS: enhance 는 textContent 경로 + DOMPurify 이전 적용 + 깨진 JSON try/catch graceful. refute.
+  - LLM 재컨텍스트: history 가 읽는 `messages.content` = strip 이 UPDATE 하는 컬럼 → 이후 턴은 stripped 본문만. refute.
+- MINOR(기록만): ① MySQL fallback UPDATE 대상 `AgentMemoryMessages` 는 AR-M5 cutover 드롭(loader 와 대칭 dead path, 무해). ② A1 테스트가 호출 문자열만 검사(실 배선은 전체 회귀로 커버).
+- 검증: 신규 `test_task0286_attach_edit_strip.py` 10 PASS(S1~S7·P1·P2·A1) + make test 컨테이너 전체 회귀 0(PYTEST_EXIT=0, ruff clean) + py_compile + node --check + CSS brace(styles 1243·share 107).
+
 ## REV-20260616-0294 [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-16 (TASK-0285 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence 기록)
 - Skip 사유: docs 전용(STATUS/REPORT/TASK/MODIFY/REVIEW). 코드/정적자산/백엔드/RBAC 무변경 — 리뷰 패널 트리거 비해당. 본체 변경의 적대 보안 검토는 직전 cycle REV-20260616-0293 [SUBAGENT:attach-surfacing-security] SHIP 가 담당.

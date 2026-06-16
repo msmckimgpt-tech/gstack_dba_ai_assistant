@@ -278,6 +278,33 @@
     }
   }
 
+  function enhanceAttachmentEditBlocks(html) {
+    // ★ TASK-0286: ```attachment-edit 코드 블록(전체 수정본 본문)을 "📎 수정된 첨부 파일" 안내로
+    // 치환 — 공유 화면에서도 전체 본문 텍스트를 노출하지 않는다(app.js 와 동형 안전망).
+    if (typeof document === "undefined") return html;
+    if (!html || html.indexOf("language-attachment-edit") === -1) return html;
+    try {
+      const tpl = document.createElement("template");
+      tpl.innerHTML = html;
+      const blocks = tpl.content.querySelectorAll("pre > code.language-attachment-edit");
+      if (!blocks.length) return html;
+      blocks.forEach((codeEl) => {
+        const raw = codeEl.textContent || "";
+        let fname = "";
+        const firstLine = (raw.split("\n", 1)[0] || "").trim();
+        try { fname = String((JSON.parse(firstLine) || {}).filename || ""); } catch (_) {}
+        const note = document.createElement("div");
+        note.className = "attachment-edit-note";
+        note.textContent = "📎 수정된 첨부 파일" + (fname ? ` (${fname})` : "");
+        const pre = codeEl.closest("pre");
+        (pre || codeEl).replaceWith(note);
+      });
+      return tpl.innerHTML;
+    } catch (_) {
+      return html;
+    }
+  }
+
   function renderMarkdownContent(target, text) {
     const source = String(text || "").trim();
     if (!source) {
@@ -285,7 +312,7 @@
       return;
     }
     if (window.marked && window.DOMPurify) {
-      target.innerHTML = window.DOMPurify.sanitize(enhanceDiffBlocks(window.marked.parse(source)));
+      target.innerHTML = window.DOMPurify.sanitize(enhanceAttachmentEditBlocks(enhanceDiffBlocks(window.marked.parse(source))));
       markExternalLinks(target);
     } else {
       // 폴백: 라이브러리 로드 실패 시 줄바꿈 보존 평문 (share.css .share-content-plain).

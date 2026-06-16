@@ -6543,10 +6543,39 @@ def _serialize_attachment_for_api(row: dict[str, Any] | None, *, include_signed_
 #      직전 최신 버전을 SupersededAt=NOW() 로 마킹(목록엔 최신만 노출).
 _ASSISTANT_EDIT_COUNT_CAP = 5          # turn 당 최대 materialize 첨부 수
 _ASSISTANT_EDIT_SIZE_CAP_BYTES = 1024 * 1024   # 단일 materialize 내용 1MB (텍스트 계열)
-_ATTACHMENT_EDIT_BLOCK_RE = re.compile(
-    r"```attachment-edit[ \t]*\n(.*?)\n```",
-    re.DOTALL,
-)
+def _attachment_edit_block_spans(answer: str) -> list[tuple[int, int, str, str]]:
+    """답변에서 attachment-edit 블록들의 (open_idx, close_idx, header_line, body) 를 라인 기반으로
+    추출한다(TASK-0286 보안리뷰 MAJOR 수정).
+
+    기존 lazy 정규식 ```` ```attachment-edit\\n(.*?)\\n``` ```` 은 **편집 대상 파일 본문에 ``` 라인이
+    포함**되면(markdown/텍스트 등) 거기서 조기 종료해 본문을 절단 저장하고, strip 시 잔여 본문이
+    평문으로 노출됐다. 라인 기반으로 바꿔, 여는 ```` ```attachment-edit ```` 다음 줄을 JSON 헤더로,
+    그 이후 (다음 여는 펜스 직전까지의) **마지막 단독 ``` 줄**을 닫는 펜스로 본다 → 본문 내부의
+    ``` 코드펜스를 허용한다(닫는 펜스는 항상 블록의 가장 마지막 ``` 이므로).
+    """
+    text = answer or ""
+    if "attachment-edit" not in text:
+        return []
+    lines = text.split("\n")
+    n = len(lines)
+    opens = [i for i, ln in enumerate(lines) if ln.strip().startswith("```attachment-edit")]
+    spans: list[tuple[int, int, str, str]] = []
+    for k, oi in enumerate(opens):
+        next_open = opens[k + 1] if k + 1 < len(opens) else n
+        if oi + 1 >= n:
+            continue
+        header_line = lines[oi + 1]
+        # 닫는 펜스: (헤더 다음 .. 다음 블록 직전) 중 정확히 "```" 인 **마지막** 줄.
+        close_idx = -1
+        for j in range(min(next_open, n) - 1, oi + 1, -1):
+            if lines[j].strip() == "```":
+                close_idx = j
+                break
+        if close_idx < 0:
+            continue
+        body = "\n".join(lines[oi + 2:close_idx])
+        spans.append((oi, close_idx, header_line, body))
+    return spans
 
 
 def _parse_attachment_edit_blocks(answer: str) -> list[dict[str, Any]]:
@@ -6556,16 +6585,8 @@ def _parse_attachment_edit_blocks(answer: str) -> list[dict[str, Any]]:
     Returns: [{"source_attachment_id": int, "filename": str|None, "content": str}, ...]
     파싱 불가/형식 오류 블록은 조용히 skip(LLM 출력 잡음에 견고).
     """
-    text = answer or ""
-    if "attachment-edit" not in text:
-        return []
     out: list[dict[str, Any]] = []
-    for m in _ATTACHMENT_EDIT_BLOCK_RE.finditer(text):
-        body = m.group(1)
-        if "\n" in body:
-            header_line, content = body.split("\n", 1)
-        else:
-            header_line, content = body, ""
+    for _oi, _ci, header_line, content in _attachment_edit_block_spans(answer):
         try:
             header = json.loads(header_line.strip())
         except (ValueError, TypeError):
@@ -6818,6 +6839,75 @@ def _materialize_assistant_attachment_edits(
         if new_row:
             created.append(_serialize_attachment_for_api(new_row))
     return created
+
+
+def _strip_attachment_edit_blocks(answer: str, materialized: list[dict[str, Any]]) -> str:
+    """답변에서 ```attachment-edit``` 블록을 제거하고 "📎 수정본 전달" 명시 문구로 치환(TASK-0286).
+
+    사용자에게 전체 수정본 본문이 텍스트로 노출되는 것을 막는다 — 변경점은 diff 블록으로, 전체
+    수정본은 다운로드 가능한 첨부 새 버전(materialize)으로 전달한다. materialize 가 실패(파싱은
+    됐으나 가드 거부 등)한 블록도 제거해 본문 노출을 막는다(fail-open 일관). 전부 제거돼 본문이
+    비면(블록만 있고 materialize 실패한 드문 경우) 원문을 유지해 빈 답변을 방지한다.
+    """
+    spans = _attachment_edit_block_spans(answer)
+    if not spans:
+        return answer
+    lines = (answer or "").split("\n")
+    # 각 블록의 (open..close) 라인 전체를 제거 — 본문 내 ``` 가 있어도 절단/잔여 노출이 없다.
+    remove: set[int] = set()
+    for _oi, _ci, _h, _b in spans:
+        remove.update(range(_oi, _ci + 1))
+    stripped = "\n".join(ln for i, ln in enumerate(lines) if i not in remove)
+    # 블록 제거로 생긴 과도한 빈 줄 정리.
+    stripped = re.sub(r"\n{3,}", "\n\n", stripped).strip()
+    if materialized:
+        notes = "\n".join(
+            f"📎 수정본 **{a.get('original_filename') or '파일'}** (v{a.get('version_number') or 2}) 을(를) "
+            f"첨부 파일로 전달했습니다. 위 변경점을 확인하고 첨부에서 다운로드하세요."
+            for a in materialized
+        )
+        stripped = (stripped + ("\n\n" if stripped else "") + notes).strip()
+    return stripped or answer
+
+
+def _update_assistant_message_content(conn, conversation_id: str, message_id: int, content: str) -> None:
+    """assistant 메시지 content 갱신(TASK-0286 attachment-edit strip 반영을 DB 에도 영속).
+
+    `_load_latest_assistant_message` 와 동일 라우팅(PG 우선·MySQL fallback)을 따른다 — message_id 는
+    그 backend 의 id 이므로 정합. history 재로드·LLM 재컨텍스트에서도 전체 본문이 사라지게 한다.
+    best-effort: 실패해도 사용자 응답을 막지 않는다(render_output 은 이미 strip 됨).
+    """
+    if not message_id or not conversation_id:
+        return
+    try:
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "UPDATE agent_runtime.messages SET content = %s WHERE id = %s AND conversation_id = %s",
+                    (content, int(message_id), conversation_id),
+                )
+            pg.commit()
+        finally:
+            pg.close()
+        return
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_update_assistant_message_content: PG update failed (msg=%s) — MySQL fallback", message_id, exc_info=True)
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE AgentMemoryMessages SET Content = %s WHERE Id = %s AND ConversationId = %s",
+                (content, int(message_id), conversation_id),
+            )
+            conn.commit()
+        finally:
+            cur.close()
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_update_assistant_message_content: MySQL update failed (msg=%s)", message_id, exc_info=True)
 
 
 def _extract_intent_from_content(content: str) -> str:
@@ -10040,6 +10130,25 @@ async def ask(request: Request) -> JSONResponse:
                 except Exception:
                     logging.getLogger(__name__).warning(
                         "ask: materialize step record failed (conversation_id=%s)",
+                        conversation_id, exc_info=True,
+                    )
+
+        # ★ TASK-0286: attachment-edit 블록을 답변에서 제거 → 전체 수정본 본문이 채팅에 노출되지
+        # 않게 한다(변경점은 diff 블록으로, 전체 수정본은 첨부 새 버전으로 전달). materialize 성공분은
+        # "📎 수정본 전달" 명시 문구로 치환. render_output(응답)뿐 아니라 DB content 도 갱신해
+        # history 재로드·LLM 재컨텍스트에서도 전체 본문이 사라지게 한다. error 무관 — 블록 텍스트가
+        # 남아 있으면 항상 제거(본문 노출 방지).
+        if conversation_id and isinstance(render_output, str) and "attachment-edit" in render_output:
+            _stripped_out = _strip_attachment_edit_blocks(render_output, materialized_attachments)
+            if _stripped_out != render_output:
+                render_output = _stripped_out
+                try:
+                    _strip_msg_id = int((latest_message or {}).get("id") or 0)
+                    if _strip_msg_id > 0:
+                        _update_assistant_message_content(conn, conversation_id, _strip_msg_id, _stripped_out)
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "ask: attachment-edit strip content update failed (conversation_id=%s)",
                         conversation_id, exc_info=True,
                     )
 

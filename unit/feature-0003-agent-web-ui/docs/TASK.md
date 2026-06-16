@@ -8,7 +8,19 @@ source_of_truth: true
 
 # Task
 
-## TASK-0285 (current cycle) — 첨부 버전 현황 표면화 ②③④ (REQ-20260616-0285, AC-0525~0527, Major §12.3)
+## TASK-0286 (current cycle) — 첨부 수정본 전달: 전체 본문 노출 제거 + 변경점만(diff) + 파일 명시 전달 (REQ-20260616-0286, AC-0528~0530, Major §12.3)
+- 보고(사용자): assistant 가 파일(첨부)을 전달하지 않고 첨부 본문 전체를 채팅에 텍스트로 출력. ① 본문 전달이 필수면 변경점만 전달, ② 수정된 파일을 명시적으로 전달하도록.
+- 등급: **Major §12.3** — LLM 동작(시스템 프롬프트) + 백엔드 답변/메시지 content 변조 + 프론트. RBAC 무변경.
+- 진단: attachment-edit(파일화) 인프라(TASK-0275)는 있으나 ⓐ 시스템 프롬프트에 사용법이 없어 assistant 가 전체 본문을 그냥 출력, ⓑ materialize 후에도 블록이 답변에 남아 노출, ⓒ 프론트도 미처리.
+- 구현:
+  - [x] A. agent_core `SYSTEM_PROMPT` 에 "DELIVERING THE EDITED FILE — attachment-edit" 섹션(diff=변경점 + attachment-edit=전체 본문 숨김·첨부화, 전체 본문 코드블록 금지).
+  - [x] B. app.py `_strip_attachment_edit_blocks`(라인 기반 `_attachment_edit_block_spans` 공유) + `_update_assistant_message_content`(PG·MySQL) + ask 후처리 render_output/DB content strip + "📎 수정본 전달" 명시 치환.
+  - [x] C. app.js/share.js `enhanceAttachmentEditBlocks`(블록→안내 note) + `.attachment-edit-note` CSS(메인·share). 캐시버스터 `?v=20260616-task0286-attach-edit-diff`.
+  - [x] 단위 테스트 `test_task0286_attach_edit_strip.py` 10 PASS(embedded-fence 누출/절단 회귀 포함) + make test 컨테이너 전체 회귀 0 + 정적검증.
+  - [x] outside-voice 적대 보안 리뷰 SHIP-WITH-FIXES(REV-20260616-0295, MAJOR=본문 내 ``` 절단 누출 → 라인 기반 파서 흡수; IDOR/XSS/멱등/재컨텍스트 refute).
+- [ ] (잔여) 머지 → web 재배포 + **라이브 WebSystemPrompts global row 멱등 갱신**(상수 편집만으론 무반영) → PB-0008.
+
+## TASK-0285 — 첨부 버전 현황 표면화 ②③④ (REQ-20260616-0285, AC-0525~0527, Major §12.3)
 - 보고(사용자): TASK-0275(assistant 첨부 수정→버전 관리) 배포 후 보완 — ② `'+' > 첨부파일 목록`의 각 파일 버전 현황 표시, ③ assistant 말풍선 안에 첨부 명시 표시(사용자 말풍선처럼), ④ assistant 요청 시 진행 단계에 첨부 수정 명시 출력. (쿼리 리뷰 워크플로① 는 사용자 결정으로 후속 cycle.)
 - 등급: **Major §12.3** — frontend 중심 + 백엔드 노출. history 첨부 직렬화는 IDOR 표면이라 outside-voice 게이트.
 - 진단: TASK-0275 인프라(materialize·버전 체인·`/versions`·`_serialize_attachment_for_api` 버전 필드)는 이미 존재하나 "노출·연결"이 빠짐 — ② 목록 렌더가 버전 필드 무시, ③ assistant `edited_attachments` 가 토스트만(칩 없음)·history 미직렬화, ④ materialize 가 ask 후처리(run 밖)라 step 미기록.

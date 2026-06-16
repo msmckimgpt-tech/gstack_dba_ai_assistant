@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260616-0295 (TASK-0286 — 첨부 수정본 전달: 전체 본문 노출 제거 + 변경점만 + 파일 명시 전달)
+- Date: 2026-06-16
+- Scope: feature-0003-agent-web-ui(app.py + app.js/share.js/styles.css/share.css/index.html/share.html) + feature-0002-agent-core(agent_core.py SYSTEM_PROMPT). RBAC 카탈로그/스키마/엔드포인트 shape 무변경.
+- 변경:
+  - `feature-0002 agent_core.py`: SYSTEM_PROMPT 에 "DELIVERING THE EDITED FILE — attachment-edit" 섹션 추가(diff=변경점 + attachment-edit=전체 본문 숨김·첨부화, 전체 본문 코드블록 금지).
+  - `feature-0003 app.py`: 라인 기반 `_attachment_edit_block_spans`(본문 내 ``` 허용) 도입 → `_parse_attachment_edit_blocks` 재구현(절단 제거) + 신규 `_strip_attachment_edit_blocks`(블록 제거→"📎 수정본 전달" 치환) + `_update_assistant_message_content`(PG·MySQL content UPDATE). ask 후처리에서 render_output/DB content strip.
+  - `feature-0003 app.js/share.js`: `enhanceAttachmentEditBlocks`(attachment-edit 코드블록→`.attachment-edit-note` 안내) + markdown 파이프라인 체인.
+  - `feature-0003 styles.css/share.css`: `.attachment-edit-note`(메인 라이트·share 다크). 캐시버스터 `?v=20260616-task0286-attach-edit-diff`(index.html·share.html).
+  - `tests/test_task0286_attach_edit_strip.py`: 신규 10 PASS(S1~S7 strip/parse + embedded-fence 회귀 + P1/P2 프롬프트 + A1 배선).
+- 검증: make test 컨테이너 전체 회귀 0(PYTEST_EXIT=0, ruff clean), py_compile(app.py·agent_core.py), node --check(app.js·share.js), CSS brace(styles 1243·share 107). 보안 SHIP-WITH-FIXES(REV-20260616-0295, MAJOR 흡수).
+- 배포: web 재빌드(app.py·정적자산) + agent/ask-worker 재빌드(agent_core SYSTEM_PROMPT) + **라이브 WebSystemPrompts global row 멱등 갱신**(상수는 seed/fallback). ask/insight-worker 는 agent_core baked.
+- Files: unit/feature-0002-agent-core/src/agent_core.py, unit/feature-0003-agent-web-ui/src/app.py, src/static/{app.js,share.js,styles.css,share.css,index.html,share.html}, tests/test_task0286_attach_edit_strip.py, docs/{TASK,FUNCTION,REPORT,REVIEW,MODIFY}.md
+
 ## CHG-20260616-0294 (TASK-0285 후속 docs-only — PB-0008 evidence 기록)
 - Date: 2026-06-16
 - Scope: docs 전용(STATUS/REPORT/TASK/MODIFY/REVIEW) + evidence 이미지. 코드/정적자산 0.

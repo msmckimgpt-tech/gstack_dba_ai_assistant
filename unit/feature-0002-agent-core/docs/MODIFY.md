@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260616-0295 (TASK-0286 — SYSTEM_PROMPT attachment-edit 파일화 안내)
+- Date: 2026-06-16 (TASK-0286, **Major §12.3** — feature-0003 주관, agent_core 는 SYSTEM_PROMPT 만 변경)
+- 변경: `src/agent_core.py` SYSTEM_PROMPT 에 "DELIVERING THE EDITED FILE — ATTACH IT, NEVER PASTE THE WHOLE BODY" 섹션 추가 — assistant 가 첨부 파일 수정본을 전달할 때 ⓐ 변경점은 ```diff```, ⓑ 전체 수정본은 ```attachment-edit```(헤더 JSON + 본문, 사용자 미노출·첨부 새 버전 저장), ⓒ 전체 본문을 일반 코드블록으로 붙이지 말 것을 지시. 기존 "SHOWING CHANGES — diff" 섹션과 공존.
+- 비변경: tool 정의·run 로직·실행 경로 0(프롬프트 텍스트만). **라이브 반영은 WebSystemPrompts global row 멱등 갱신 필수**(상수=seed/fallback).
+- 검증: py_compile agent_core.py + make test 전체 회귀 0. 상세는 feature-0003 REPORT/REVIEW(REV-20260616-0295).
+- Files: src/agent_core.py
+
 ## CHG-20260615-0255
 - Date: 2026-06-15 (TASK-0255, **Major §12.3** — 공유 연결 인프라 db.py + 신규 PG 테이블. insight 연결 탄력성 R1/R2/R3)
 - Scope: agent-core — `config.py`(신규 knob), `db.py`(control-plane bounded timeout), `insight.py`(R1 로그 edge-trigger + R2 PG 영속), `alembic/versions/20260615_0006_datasource_health.py`(신규), `agent_runtime_schema.sql`(§6c) + cross-feature web(feature-0003 app.py/admin.js/admin.html — 별도 CHG).
