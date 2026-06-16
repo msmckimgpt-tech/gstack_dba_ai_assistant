@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260616T022652-ai-claude-sidebar-resize [SKIPPED:frontend-ui-resize-no-backend-no-rbac]
+- Date: 2026-06-16 (TASK-20260616T022652-ai-claude-sidebar-resize — 대화창 좌측 사이드바 너비 드래그 조절)
+- Skip 사유: frontend-only UI 인터랙션 추가(`src/static/{index.html,styles.css,app.js}`). 백엔드/RBAC/스키마/엔드포인트/데이터 경계 무변경 — 적대적 보안/데이터 리뷰 패널 트리거(§18.8) 비해당. 이미 본 repo 에 검증된 우측 패널 resizer 3종(`#stepSidePanelResizer` 등)과 byte 동형 패턴이라 신규 위험 표면 0.
+- 자체 검토 요지:
+  - 안전: `--sidebar-w` clamp [180, min(640, 50%vw)] 으로 사이드바가 화면을 잠식하거나 0폭으로 사라지지 않음. 모바일(≤680)에선 핸들 숨김 + inline override 제거로 기존 반응형(grid 1fr·사이드바 display:none) 보존.
+  - 영속: `localStorage["web.sidebar.width"]`(기존 `web.*` panel-width 네임스페이스 정합). try/catch 로 storage 차단 환경 graceful.
+  - 회귀: grid 컬럼 변수만 조절 — `.app-shell` 레이아웃·chat-column·기존 우측 패널 resizer 무영향. `position:relative` 추가는 절대배치 자식 없던 컨테이너라 부작용 0.
+- 검증: node --check PASS + CSS brace(1222=1222) + jsdom 23/23(`verify_sidebar_resize.mjs`) + make test 컨테이너 전체 회귀 0(REAL_MAKE_EXIT=0, ruff clean). 시각·인터랙션 최종 확인은 PB-0008 Windows-browser(배포 후).
+
 ## REV-20260616-0292 [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-16 (§13.1 origin max REV-20260616-0291 → 0292)
 - Cycle: TASK-0283 후속 docs-only — 제품 아이콘 편집 ✎ 오버레이 통일 PB-0008 Windows-browser PASS evidence 기록. 코드/정적자산 0 변경.

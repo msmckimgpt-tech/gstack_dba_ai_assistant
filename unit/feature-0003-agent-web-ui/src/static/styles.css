@@ -302,7 +302,41 @@ a { color: inherit; }
   grid-template-rows: minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
+  position: relative; /* .sidebar-resizer 절대배치 기준 */
 }
+
+/* 좌측 대화 사이드바 너비 조절 핸들 — app-shell grid 의 sidebar/chat 경계에 위치.
+   우측 고정 패널(.step-side-panel-resizer)과 동일 UX 패턴이나, 좌측은 in-flow grid
+   컬럼이라 패널 width 대신 --sidebar-w CSS 변수를 JS 가 조절하고, 핸들은
+   left: var(--sidebar-w) 로 경계를 추종한다. */
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  left: var(--sidebar-w);
+  width: 8px;
+  height: 100%;
+  transform: translateX(-4px);
+  cursor: ew-resize;
+  z-index: 30;
+  background: transparent;
+  touch-action: none;
+}
+.sidebar-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 4px;
+  width: 2px;
+  height: 100%;
+  background: transparent;
+  transition: background .15s ease;
+}
+.sidebar-resizer:hover::before,
+.app-shell.is-sidebar-resizing .sidebar-resizer::before {
+  background: var(--primary, #2563eb);
+}
+/* 드래그 중 텍스트 선택 방지 */
+.app-shell.is-sidebar-resizing { user-select: none; }
 
 /* ─── Chat Column (topbar + chat-pane) ──────────────────────────── */
 .chat-column {
@@ -5134,6 +5168,7 @@ a { color: inherit; }
      mobile 에선 sidebar 숨김 + 본문 column 만. */
   .app-shell { grid-template-columns: 1fr; }
   .sidebar { display: none; }
+  .sidebar-resizer { display: none; } /* 모바일: 사이드바 숨김 → 핸들도 숨김 */
   .drawer { width: min(100vw, 380px); }
   .admin-controls { grid-template-columns: 1fr; }
   .permission-grid-list,

@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260616T022652-ai-claude-sidebar-resize
+- Date: 2026-06-16 (TASK-20260616T022652-ai-claude-sidebar-resize — 대화창 좌측 사이드바 너비 드래그 조절. timestamp+branch id, ADR-0025/v3.32.0)
+- Scope: frontend-only `src/static/{index.html,styles.css,app.js}` + 신규 테스트 `tests/verify_sidebar_resize.mjs`. RBAC/스키마/엔드포인트/백엔드 0.
+- 변경:
+  - index.html: `.app-shell` 자식으로 `#sidebarResizer`(role=separator, aria-label "사이드바 너비 조절") 핸들 추가. styles.css/app.js 캐시버스터 `?v=20260616-sidebar-resize`.
+  - styles.css: `.app-shell{position:relative}`; `.sidebar-resizer`(absolute, `left:var(--sidebar-w)`, 8px hit-area, `cursor:ew-resize`, hover/`is-sidebar-resizing` 시 `--primary` 2px 라인); `.app-shell.is-sidebar-resizing{user-select:none}`; 모바일(≤680) `.sidebar-resizer{display:none}`.
+  - app.js: `SIDEBAR_WIDTH_KEY="web.sidebar.width"` + `_sidebarMaxW`(min(640, 50%vw)) + `_applySidebarWidth`(저장값 복원·clamp·모바일 override 제거) + `setupSidebarResize`(mouse/touch drag → `--sidebar-w`=clamp([180,max], clientX), mouseup 영속, 더블클릭 reset). 우측 패널 resizer 3종과 동형 패턴. `initialize()` 1회 배선 + `window resize` 리스너에 `_applySidebarWidth()`.
+- 검증: node --check PASS + CSS brace(1222=1222) + jsdom 23/23(`verify_sidebar_resize.mjs`) + make test 회귀 0(REAL_MAKE_EXIT=0).
+- Files: src/static/{index.html,styles.css,app.js}, tests/verify_sidebar_resize.mjs, docs/{TASK,FUNCTION,REVIEW,TEST,REPORT,MODIFY}.md
+
 ## CHG-20260616-0292
 - Date: 2026-06-16 (TASK-0283 후속, **docs-only** — 제품 아이콘 편집 UI ✎ 오버레이 통일 PB-0008 Windows-browser 시각검증 evidence 기록; §13.1 origin max CHG-20260616-0291 → 0292)
 - Scope: docs 전용(TASK.md 잔여 체크박스 + TEST.md §4 PB-0008 Run + REPORT.md 잔여). 코드/정적자산 0.

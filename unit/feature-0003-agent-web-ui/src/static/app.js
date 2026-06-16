@@ -3419,6 +3419,67 @@ function setupAttachSidePanelResize() {
   handle.addEventListener("touchstart", (e) => { if (e.touches[0]) start(e.touches[0].clientX, e); }, { passive: false });
 }
 
+// ── 좌측 대화 사이드바 너비 조절(리사이즈) ────────────────────────────
+// 우측 고정 패널과 동일 UX 패턴이나, 좌측 사이드바는 .app-shell grid 의 in-flow
+// 컬럼(grid-template-columns: var(--sidebar-w) ...)이라 패널 width 대신 --sidebar-w
+// CSS 변수를 조절한다. 핸들은 grid 경계(left: var(--sidebar-w))를 추종.
+const SIDEBAR_WIDTH_KEY = "web.sidebar.width";
+const SIDEBAR_MIN_W = 180;
+function _sidebarMaxW() {
+  return Math.max(SIDEBAR_MIN_W, Math.min(640, Math.floor(window.innerWidth * 0.5)));
+}
+function _applySidebarWidth() {
+  // 모바일(≤680px)에선 사이드바가 숨겨지고 grid 가 1fr 이므로 저장 너비를 적용하지 않고
+  // 스타일시트(미디어쿼리)가 폭을 소유하도록 inline override 제거.
+  if (window.innerWidth <= 680) { document.documentElement.style.removeProperty("--sidebar-w"); return; }
+  let saved;
+  try { saved = parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY) || "", 10); } catch (e) { saved = NaN; }
+  if (!Number.isFinite(saved)) { document.documentElement.style.removeProperty("--sidebar-w"); return; }
+  const w = Math.min(_sidebarMaxW(), Math.max(SIDEBAR_MIN_W, saved));
+  document.documentElement.style.setProperty("--sidebar-w", w + "px");
+}
+function setupSidebarResize() {
+  const shell = document.getElementById("appFrame");
+  const handle = document.getElementById("sidebarResizer");
+  if (!shell || !handle || handle.dataset.wired === "1") return;
+  handle.dataset.wired = "1";
+  let dragging = false;
+  let lastW = NaN;
+  const onMove = (clientX) => {
+    // 좌측 in-flow 컬럼: 너비 = 뷰포트 좌변 기준 포인터X = clientX (app-shell 은 100vw 풀폭)
+    lastW = Math.min(_sidebarMaxW(), Math.max(SIDEBAR_MIN_W, Math.round(clientX)));
+    document.documentElement.style.setProperty("--sidebar-w", lastW + "px");
+  };
+  const mouseMove = (e) => { if (dragging) { onMove(e.clientX); e.preventDefault(); } };
+  const touchMove = (e) => { if (dragging && e.touches[0]) { onMove(e.touches[0].clientX); e.preventDefault(); } };
+  const stop = () => {
+    if (!dragging) return;
+    dragging = false;
+    shell.classList.remove("is-sidebar-resizing");
+    if (Number.isFinite(lastW)) { try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(lastW)); } catch (e) {} }
+    document.removeEventListener("mousemove", mouseMove);
+    document.removeEventListener("mouseup", stop);
+    document.removeEventListener("touchmove", touchMove);
+    document.removeEventListener("touchend", stop);
+  };
+  const start = (clientX, e) => {
+    dragging = true;
+    shell.classList.add("is-sidebar-resizing");
+    document.addEventListener("mousemove", mouseMove);
+    document.addEventListener("mouseup", stop);
+    document.addEventListener("touchmove", touchMove, { passive: false });
+    document.addEventListener("touchend", stop);
+    if (e && e.cancelable) e.preventDefault();
+  };
+  handle.addEventListener("mousedown", (e) => start(e.clientX, e));
+  handle.addEventListener("touchstart", (e) => { if (e.touches[0]) start(e.touches[0].clientX, e); }, { passive: false });
+  // 더블클릭 → 기본 너비로 초기화(저장 너비 제거 → 스타일시트 기본값 복귀).
+  handle.addEventListener("dblclick", () => {
+    document.documentElement.style.removeProperty("--sidebar-w");
+    try { localStorage.removeItem(SIDEBAR_WIDTH_KEY); } catch (e) {}
+  });
+}
+
 function openStepSidePanel(pending, { convId = null } = {}) {
   const panel = document.getElementById("stepSidePanel");
   if (!panel) return;
@@ -6611,6 +6672,10 @@ async function initialize() {
   closeProfileBtn.addEventListener("click", closeProfile);
   profileBackdropEl.addEventListener("click", closeProfile);
 
+  // 좌측 대화 사이드바 너비 조절 핸들 배선 + 저장 너비 복원 (페이지 1회).
+  setupSidebarResize();
+  _applySidebarWidth();
+
   // TASK-0268: 프로필 아바타 업로드/제거.
   const _avatarChangeBtn = document.getElementById("profileAvatarChangeBtn");
   const _avatarInput = document.getElementById("profileAvatarInput");
@@ -6819,6 +6884,7 @@ async function initialize() {
   window.addEventListener("resize", () => {
     layoutMessagePointRail();
     highlightActivePoint();
+    _applySidebarWidth(); // 뷰포트 변화 시 사이드바 너비 재-클램프 / 모바일 전환 처리
   });
 
   // Textarea auto-grow
