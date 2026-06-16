@@ -392,11 +392,23 @@ def pg_sum_size_bytes(*, conversation_id: str | None = None, account_id: int | N
         pg.close()
 
 
-def pg_select_text_inline(account_id: int, ids, limit: int) -> list[dict[str, Any]]:
-    """_prepare_text_inline_attachments 의 PG 판. IDOR 가드(AccountId) 동형. 컬럼은 MySQL 판과 동일."""
+def _attach_scope_clause(conversation_id: str | None, account_id: int | None):
+    """TASK-0284: 첨부 주입 스코프 — conversation_id 우선(대화 접근권은 caller=app.py ask 가 게이트),
+    미전달(legacy)이면 account_id 폴백. 반환: (sql_fragment, bind_value) 또는 None(둘 다 없음)."""
+    if conversation_id:
+        return "conversation_id = %s", str(conversation_id)
+    if account_id:
+        return "account_id = %s", int(account_id)
+    return None
+
+
+def pg_select_text_inline(conversation_id, account_id, ids, limit: int) -> list[dict[str, Any]]:
+    """_prepare_text_inline_attachments 의 PG 판. TASK-0284: ConversationId 스코프(account_id 폴백). 컬럼은 MySQL 판과 동일."""
     id_list = [int(i) for i in (ids or []) if i]
-    if not id_list:
+    scope = _attach_scope_clause(conversation_id, account_id)
+    if not id_list or scope is None:
         return []
+    scope_sql, scope_val = scope
     placeholders = ", ".join(["%s"] * len(id_list))
     pg = _pg()
     try:
@@ -406,20 +418,22 @@ def pg_select_text_inline(account_id: int, ids, limit: int) -> list[dict[str, An
                 "object_key AS \"ObjectKey\", kind AS \"Kind\", size_bytes AS \"SizeBytes\", "
                 "account_id AS \"AccountId\" "
                 f"FROM agent_runtime.core_attachments WHERE id IN ({placeholders}) "
-                "AND account_id = %s AND kind = 'text' AND upload_status = 'uploaded' "
+                f"AND {scope_sql} AND kind = 'text' AND upload_status = 'uploaded' "
                 "AND deleted_at IS NULL AND delete_pending = 0 ORDER BY id DESC LIMIT %s",
-                tuple(id_list) + (int(account_id), int(limit)),
+                tuple(id_list) + (scope_val, int(limit)),
             )
             return [dict(r) for r in (cur.fetchall() or [])]
     finally:
         pg.close()
 
 
-def pg_select_vision_images(account_id: int, ids, cap: int) -> list[dict[str, Any]]:
-    """_prepare_vision_inline_images 의 image 첨부 선별 PG 판. IDOR 가드(AccountId) 동형."""
+def pg_select_vision_images(conversation_id, account_id, ids, cap: int) -> list[dict[str, Any]]:
+    """_prepare_vision_inline_images 의 image 첨부 선별 PG 판. TASK-0284: ConversationId 스코프(account_id 폴백)."""
     id_list = [int(i) for i in (ids or []) if i]
-    if not id_list:
+    scope = _attach_scope_clause(conversation_id, account_id)
+    if not id_list or scope is None:
         return []
+    scope_sql, scope_val = scope
     placeholders = ", ".join(["%s"] * len(id_list))
     pg = _pg()
     try:
@@ -429,29 +443,31 @@ def pg_select_vision_images(account_id: int, ids, cap: int) -> list[dict[str, An
                 "original_filename AS \"OriginalFilename\", size_bytes AS \"SizeBytes\", "
                 "size_bucket AS \"SizeBucket\" "
                 f"FROM agent_runtime.core_attachments WHERE id IN ({placeholders}) "
-                "AND account_id = %s AND kind = 'image' AND deleted_at IS NULL AND delete_pending = 0 "
+                f"AND {scope_sql} AND kind = 'image' AND deleted_at IS NULL AND delete_pending = 0 "
                 "ORDER BY id ASC LIMIT %s",
-                tuple(id_list) + (int(account_id), int(cap)),
+                tuple(id_list) + (scope_val, int(cap)),
             )
             return [dict(r) for r in (cur.fetchall() or [])]
     finally:
         pg.close()
 
 
-def pg_select_ingested_meta(account_id: int, ids) -> list[str]:
-    """sandbox allowlist 보충용 MetaJson(문자열) 목록 PG 판(ingested csv/xlsx). IDOR 가드(AccountId) 동형."""
+def pg_select_ingested_meta(conversation_id, account_id, ids) -> list[str]:
+    """sandbox allowlist 보충용 MetaJson(문자열) 목록 PG 판(ingested csv/xlsx). TASK-0284: ConversationId 스코프(account_id 폴백)."""
     id_list = [int(i) for i in (ids or []) if i]
-    if not id_list:
+    scope = _attach_scope_clause(conversation_id, account_id)
+    if not id_list or scope is None:
         return []
+    scope_sql, scope_val = scope
     placeholders = ", ".join(["%s"] * len(id_list))
     pg = _pg()
     try:
         with pg.cursor() as cur:
             cur.execute(
                 f"SELECT meta_json::text FROM agent_runtime.core_attachments WHERE id IN ({placeholders}) "
-                "AND account_id = %s AND upload_status = 'ingested' "
+                f"AND {scope_sql} AND upload_status = 'ingested' "
                 "AND kind IN ('csv','xlsx') AND deleted_at IS NULL",
-                tuple(id_list) + (int(account_id),),
+                tuple(id_list) + (scope_val,),
             )
             return [str(r[0]) for r in (cur.fetchall() or []) if r and r[0] is not None]
     finally:

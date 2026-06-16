@@ -941,3 +941,7 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - AC-0517 (quota 무결성): read=postgres 기간에도 size-cap 누적은 `max(MySQL 권위, PG)` 로 enforce — dual-write fail-soft 누락분이 cap 을 과소계상해 우회되지 않는다(REV-0287 MAJOR-1).
 - AC-0518 (멱등 backfill·검증 게이트): `attachment_backfill` 은 ON CONFLICT (id) DO NOTHING 으로 dual-write 행 미덮어쓰기·재실행 안전, orphan 은 per-row skip+로그, `--verify` 가 count·SUM(size_bytes)·missing-id diff 0 을 read flip 게이트로 보장한다.
 - AC-0519 (orphan 첨부 faithful 이전): conversation 이 PG 에서 소실된 orphan 첨부(MySQL no-FK 유산)도 손실 없이 이전한다 — core_attachments 는 conversation FK 를 두지 않고(alembic 0009) conversation_id 컬럼+인덱스로만 JOIN, 신규 업로드의 대화 존재는 앱이 보장. backfill --verify 가 272 전량 diff=0 을 read flip 게이트로 확인.
+
+### (TASK-0284) 첨부 LLM 주입 스코프 = 대화 단위 + 외부 다운로드 프록시
+- AC-0523 (대화 단위 첨부 주입): 첨부 LLM 컨텍스트 주입(`_prepare_text_inline_attachments`·`_prepare_vision_inline_images`·pending ingest·sandbox allowlist)은 요청 대화(ConversationId) 스코프로 동작한다 — 목록 조회·다운로드(ConversationId + `_account_can_access_conversation` own/any)와 정합. fork/이어받기로 대화 소유 계정이 바뀌어도, ask 핸들러가 owner 게이트한 conv_id 의 첨부는 모두 LLM 에 주입된다(이전 AccountId 본인 스코프로 인한 0행 불일치 해소). 타 대화 첨부 id 주입은 ConversationId 불일치로 차단(IDOR 안전망 유지). conversation_id 미전달(legacy)이면 AccountId 폴백, 둘 다 없으면 fail-closed.
+- AC-0524 (외부 머신 다운로드): 첨부 본문 다운로드는 `GET /api/attachments/{id}/download` 가 web FastAPI 프록시 스트리밍으로 제공한다(MinIO presigned 내부호스트 회피 — 외부 머신도 앱 접근 가능하면 다운로드). 권한은 `_account_can_access_attachment`(own/any) + pending 차단, 응답은 octet-stream + `Content-Disposition: attachment`(제어문자 strip) + nosniff 로 inline 렌더/XSS 를 차단한다.

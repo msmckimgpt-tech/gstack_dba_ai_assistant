@@ -856,3 +856,11 @@ TASK-0015 (plan-review):
 - [x] 본문 주입에 적용 + "LINE NUMBERS & DIFFS" instruction(실제 줄번호로 `@@ -N,M +N,M @@` 작성, prefix 코드 미포함)
 - [x] test_attachment_line_numbers(5) + 렌더 폐루프 node 확인(`@@ -49` → gutter 49/50/51) + py_compile
 - [x] ask-worker 재배포(main 63f4a5a) + baked 확인 + **라이브 LLM probe PASS**: 줄번호 첨부 → 모델 `@@ -4,2 +4,4 @@`(실제 줄번호) 헌크 출력·prefix 코드 미포함(TEST.md)
+
+### TASK-0284 — 첨부 LLM 주입 스코프 conversation 통일 + 파일명 지칭 (Critical §12.3, 2026-06-16, feature-0003 주관)
+- (feature-0003 TASK-0284 의 agent-core 측 변경) 첨부 LLM 컨텍스트 주입을 AccountId → ConversationId 스코프로 통일 + assistant 가 첨부를 파일명으로 지칭하도록.
+- [x] `_build_attachment_context_section` 에 `conversation_id` 인자 추가 + PG/MySQL WHERE 를 conversation 우선 스코프(account 폴백, `_scope_by_conv`)로. 대화 접근권은 caller(app.py ask) 게이트.
+- [x] `compose_system_prompt` + `_run_agent_core`(2610 호출부) conversation_id 전파
+- [x] (이슈3) 첨부 포맷 파일명 우선: 목록 `- file "..." (attachment_id=..)`, csv/xlsx sandbox 라벨 `file "..."`, ATTACHED FILES 섹션에 "REFER TO ATTACHMENTS BY FILENAME" 지침
+- [x] test_attachment_idor.py +4(conversation 스코프·account 폴백·파일명 우선) + make test 전체 회귀 0
+- [ ] ask-worker 재빌드(agent_core baked) → 라이브 검증 — feature-0003 TASK-0284 와 함께 마감

@@ -924,3 +924,13 @@ source_of_truth: true
   - **MINOR #1 의도적 미적용**: SYSTEM_PROMPT `SHOWING CHANGES` 예시에 헌크 헤더 추가 제안 — 그러나 그 지침은 첨부+채팅붙여넣기 둘 다 적용되며 **채팅 붙여넣기는 실제 줄번호가 없어 헌크 헤더가 부적절(없는 번호 날조 유발)**. 줄번호가 있는 첨부에만 per-request instruction 으로 헌크 지시하는 현 설계가 정확 → 예시 미변경(live-row 동기화도 회피). MINOR #2(트레일링 개행 collapse) harmless.
 - Residual: ask-worker 재배포 후 배포 프롬프트 줄번호 주입 확인 + (가능 시) 라이브 첨부 리뷰 e2e.
 - Cross-ref: CHG-20260615-0256e / TASK-0256e / TASK-0256c(렌더 gutter) / feature-0003 REV-20260615-0267.
+
+## REV-20260616-0291 [SUBAGENT:attachment-access]
+- Date: 2026-06-16
+- Cycle: TASK-0284 (첨부 3개 이슈), **Critical §12.3** — agent-core 측 변경(`_build_attachment_context_section` 주입 스코프 AccountId→ConversationId + 파일명 우선 포맷).
+- Trigger: §18.8 + [[feedback_outside_voice_for_rbac]] — 인가 경계(IDOR) 변경. feature-0003 REV-20260616-0291 의 적대적 보안 리뷰가 두 feature 변경(app.py + agent_core.py)을 동시 대조했다.
+- Verdict: **SHIP-WITH-FIXES** (BLOCKER 0, MAJOR 0, MINOR 1 — 흡수 지점은 feature-0003 app.py).
+- agent-core 관련 confirmed-correct: `_build_attachment_context_section` 가 conversation_id 우선 스코프(PG `conversation_id = %s` / MySQL `ConversationId = %s`) + account 폴백, 둘 다 없으면 fail-closed("" 반환). `compose_system_prompt`/`_run_agent_core` 가 owned conv_id 를 전파(미게이트 호출자 0). 파일명 우선 포맷은 보안 무관.
+- Verification: test_attachment_idor.py +4(conversation 스코프·account 폴백·파일명 우선) + make test 전체 회귀 0.
+- Residual: ask-worker 재빌드(agent_core baked) — feature-0003 TASK-0284 와 함께 마감.
+- Cross-ref: CHG-20260616-0291 / TASK-0284 / feature-0003 REV-20260616-0291(full).

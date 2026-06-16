@@ -1040,3 +1040,12 @@ source_of_truth: true
 - Files: src/agent_core.py, tests/test_attachment_line_numbers.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
 - Rollback: `_number_file_lines` 호출/instruction 제거(raw 주입 복귀, 줄번호 1부터).
 - Deploy: ask-worker 재빌드(agent_core baked). web/live-row 무관(SYSTEM_PROMPT·렌더 무변경).
+
+## CHG-20260616-0291
+- Date: 2026-06-16 (TASK-0284, **Critical §12.3** — 첨부 3개 이슈, feature-0003 주관). agent-core 측 변경.
+- Scope: agent_core 첨부 LLM 컨텍스트 주입 스코프(AccountId → ConversationId) + assistant 의 첨부 파일명 지칭. RBAC/스키마/엔드포인트/SQL추출 0.
+- 변경: `_build_attachment_context_section` 에 `conversation_id` 인자 추가 + PG/MySQL WHERE 를 conversation 우선 스코프(account 폴백, `_scope_by_conv`)로 — 대화 접근권은 caller(app.py ask owner 게이트)가 보장. `compose_system_prompt`/`_run_agent_core`(2610 호출부) conversation_id 전파. 첨부 포맷 파일명 우선(목록 `- file "..." (attachment_id=..)`, csv/xlsx sandbox 라벨 `file "..."`) + ATTACHED FILES 섹션 "REFER TO ATTACHMENTS BY FILENAME" 지침.
+- 검증: test_attachment_idor.py +4(conversation 스코프·account 폴백·파일명 우선, 기존 IDOR 5 무회귀) + make test 전체 회귀 0 + py_compile. 적대 보안 리뷰 REV-20260616-0291 SHIP-WITH-FIXES.
+- Files: src/agent_core.py, tests/test_attachment_idor.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md
+- Rollback: 스코프를 AccountId 로 되돌림 + 포맷 복원.
+- Deploy: ask-worker 재빌드(agent_core baked). web 도 동일 변경 포함(feature-0003 app.py 호출부).

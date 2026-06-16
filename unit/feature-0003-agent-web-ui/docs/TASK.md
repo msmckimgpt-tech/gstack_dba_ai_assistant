@@ -3929,3 +3929,14 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 테스트: test_conn_health 재작성(27) + test_product_conn_status(down 최악 2) + test_datasource_test_nonblocking(/test status 2) + make test 컨테이너 전체 회귀 0 + ruff + node --check + CSS brace(1221)
 - [x] outside-voice 적대 리뷰 SHIP-WITH-FIXES (REV-20260616-0290) — foreground elapsed flapping + rebase 흡수
 - [ ] origin/main rebase(base 4030640 < PR#261 TASK-0277 DatasourceId — silent-revert 방지) → 머지 → web+ask-worker+insight-worker 재배포 → PB-0008 Windows-browser 시각검증(3색 배지·느린연결=빨강·작업화면 사용가능) → 마감
+
+### TASK-0284 — 첨부 3개 이슈: cross-account LLM 주입 / 외부 머신 다운로드 / 파일명 지칭 (Critical §12.3, 2026-06-16)
+- 사용자 보고 3건: ①대화에 첨부한 파일을 다른 계정이 그 대화를 조회/이어받아 질문하면 LLM 요청 텍스트에 첨부 미포함(`'+' > 첨부파일 목록` 조회는 됨). ②외부 머신에서 올린 첨부 다운로드 불가. ③assistant 가 파일명이 아닌 첨부 일련번호(attachment_id)로 답변해 혼란.
+- 사용자 결정(AskUserQuestion): 이슈1=대화 접근 권한 기준 주입, 이슈2=앱(web FastAPI) 프록시 스트리밍.
+- 근본원인(이슈1): 첨부 목록·다운로드는 ConversationId + `_account_can_access_conversation`(own/any) 게이트인데 LLM 주입 3경로(+pending ingest+sandbox allowlist)는 `AND AccountId = %s`(요청자 본인) → fork/이어받기 cross-account 시 목록엔 보이나 주입 SQL 0행.
+- [x] (이슈1) app.py `_prepare_text_inline_attachments`·`_prepare_vision_inline_images`·pending ingest·sandbox allowlist 를 conversation_id 우선 스코프(account 폴백)로 전환
+- [x] (이슈1) attachment_pg_mirror `_attach_scope_clause` 헬퍼 + `pg_select_text_inline/vision_images/ingested_meta` 시그니처 `(conversation_id, account_id, ...)` + WHERE conversation 스코프
+- [x] (이슈2) 신규 `GET /api/attachments/{id}/download` web 프록시 스트리밍(권한 `_account_can_access_attachment` own/any + pending 차단 + octet-stream + `Content-Disposition: attachment` + nosniff) + app.js 다운로드 2지점(메시지 칩·첨부목록) 프록시 경로(same-origin 쿠키) + 캐시버스터
+- [x] 테스트: test_task0284_attachment_access.py 9(scope clause·pg_select 3 conversation 스코프·account 폴백·다운로드 라우트 등록/보안계약) + make test 컨테이너 전체 회귀 0 + py_compile + node --check
+- [ ] outside-voice 적대 보안 리뷰(RBAC/IDOR) 흡수(REV-20260616-0291)
+- [ ] 머지 → 배포(web + ask-worker 재빌드 — agent_core 변경) → 라이브 검증(cross-account 주입·외부 다운로드·파일명 답변) → PB-0008
