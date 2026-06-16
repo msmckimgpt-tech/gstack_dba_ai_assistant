@@ -3001,3 +3001,12 @@ source_of_truth: true
 - Verification: test_duration_breakdown.py 3(산수 결정 고정) + test_ask_jobs.py created_at 2 + verify_runtime_transparency.mjs 16(jsdom 포맷·정적계약) + feature-0002 전체 pytest 회귀 0(2 skip) + py_compile + node --check app.js.
 - Residual: 머지 → web + ask-worker 재빌드(agent_core baked) → 라이브(total 표시·activity 타임라인·큐 단축) → PB-0008 Windows-browser(수행시간 안 줄어듦·내부 동작 step·breakdown). SSE 토큰 스트리밍(P3b)은 후속 cycle(사용자 결정).
 - Cross-ref: CHG-20260616-0302 / TASK-0289 / feature-0002 REV-20260616-0302.
+- Cross-ref: CHG-20260616-0301 / TASK-0289 / feature-0002 REV-20260616-0301.
+
+## REV-20260616-0303 [SKIPPED:frontend-only-css-overflow]
+- Date: 2026-06-16
+- Cycle: TASK-0292 (관리 콘솔 좌측 사이드패널 수직 스크롤), **Minor §12.3** — frontend-only CSS.
+- Skip 근거: 변경이 순수 CSS 2속성(styles.css `.admin-tabs` 에 `min-height:0; overflow-y:auto;`, `.admin-sidebar-foot` 에 `flex-shrink:0`) + admin.html 캐시버스터 1줄. 백엔드/RBAC/인가/스키마/엔드포인트/데이터 흐름 무변경 — §18.8 outside-voice dispatch 키워드(auth/schema/API/perf) 비매칭. 작업 화면 `.conv-list`(styles.css:500-503) 의 기존 검증된 idiom 을 admin 사이드바에 동형 적용한 것이라 신규 보안/회귀 표면 없음.
+- 비변경 단언: HTML 구조 0, JS 0, 백엔드 0. 모바일(≤680 `.admin-sidebar{display:none}`) 무영향. 다른 페이지(index/share)는 admin 사이드바 미렌더라 무영향.
+- Verification: CSS brace 균형 검사 + 정적 검증 → 머지 → web 재배포 → PB-0008 Windows-browser(짧은 viewport: `.admin-tabs` overflow-y computed=auto·scrollHeight>clientHeight·하단 '설정' 탭 스크롤 도달).
+- Cross-ref: CHG-20260616-0303 / TASK-0292 / AC-0541.

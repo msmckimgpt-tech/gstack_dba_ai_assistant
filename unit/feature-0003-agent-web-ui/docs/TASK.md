@@ -8,7 +8,16 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260616T100304-conv-entry-defaults (current cycle) — 작업 화면 첫 진입 기본값: 타 계정 대화 접힘 + 빈 대화 화면 (REQ-20260616-0289, AC-0539/0540, Major §12.3, frontend-only)
+## TASK-0292 (current cycle) — 관리 콘솔 좌측 사이드패널 수직 스크롤 (REQ-20260616-0290, AC-0541, Minor §12.3, frontend-only)
+- 보고(사용자): 화면 높이가 매우 작을 경우 `관리 콘솔` 좌측 사이드패널을 조작할 수 없음(하단 탭 클릭 불가). 수직 스크롤 구성 요청.
+- 진단: `aside.admin-sidebar`(flex column, `overflow:hidden`) 안에서 `.admin-tabs`(`flex:1`)에 `min-height:0`·`overflow-y` 가 없어, viewport 높이가 brand+탭+foot 합보다 작으면 flex 항목 기본 `min-height:auto` 가 콘텐츠 미만 축소를 막고 `.admin-sidebar` 의 `overflow:hidden` 이 넘친 탭을 스크롤 없이 잘라냈다(설정 등 하단 탭 클릭 불가). 작업 화면 `.conv-list`(styles.css:500-503)는 이미 동일 idiom(`min-height:0; overflow-y:auto`)으로 스크롤됨 — admin 만 누락.
+- 수정(frontend-only, styles.css 2곳): `.admin-tabs` 에 `min-height:0; overflow-y:auto;` 추가(작업 화면 `.conv-list` 패턴 정합) + `.admin-sidebar-foot` 에 `flex-shrink:0`(탭 스크롤 시 pending 요약 풋 하단 고정). 브랜드는 공유 `.sidebar-brand`(flex-shrink:0)로 이미 상단 고정. 캐시버스터 admin.html `?v=20260616-task0292-admin-sidebar-vscroll`.
+- 비변경: HTML 구조/JS/백엔드/RBAC/스키마 0. 사이드바 미노출 모바일(≤680, `.admin-sidebar{display:none}`) 무영향.
+- [x] CSS brace 균형(1243=1243) + node 무관(JS 무변경) + verify-completion PASS.
+- [ ] 머지 → web 재배포(deploy_scope: included, 서빙 `?v=task0292`) → PB-0008 Windows-browser 시각검증(짧은 viewport: `.admin-tabs` scrollHeight>clientHeight·`overflow-y` computed auto·하단 '설정' 탭 스크롤 도달 가능) → 마감.
+
+
+## TASK-20260616T100304-conv-entry-defaults — 작업 화면 첫 진입 기본값: 타 계정 대화 접힘 + 빈 대화 화면 (REQ-20260616-0289, AC-0539/0540, Major §12.3, frontend-only)
 - 보고(사용자): ① 작업 화면을 처음 진입 시 타 계정 대화는 접혀있도록 구성, ② 대화 화면 또한 비어있는 상태여야 함.
 - 등급: **Major §12.3** — bootstrap 진입 동작 변경(2개 동작). RBAC/스키마/엔드포인트/백엔드 무변경 → frontend-only.
 

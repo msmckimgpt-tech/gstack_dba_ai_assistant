@@ -3915,3 +3915,14 @@ source_of_truth: true
 - Files: feature-0003 src/static/app.js, src/static/styles.css, tests/verify_runtime_transparency.mjs, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md; (백엔드: feature-0002 src/agent_core.py·modules/{ask,ask_jobs,config}.py).
 - Rollback: 표시값을 inference-only 로 되돌림(숫자 축소 재발) / activity step 미emit / 폴링 cadence 복원.
 - Deploy: web 재빌드(정적자산) + ask-worker 재빌드(agent_core baked). 캐시버스터 `?v=20260616-task0289-runtime-transparency`.
+
+## CHG-20260616-0303
+- Date: 2026-06-16 (TASK-0292, **Minor §12.3** — 관리 콘솔 좌측 사이드패널 수직 스크롤).
+- Scope: feature-0003-agent-web-ui(styles.css `.admin-tabs`/`.admin-sidebar-foot`, admin.html 캐시버스터). HTML 구조·JS·백엔드·RBAC·스키마·엔드포인트 무변경.
+- 사용자 보고: 화면 높이가 매우 작을 때 `관리 콘솔` 좌측 사이드패널을 조작할 수 없음(하단 탭 클릭 불가). 수직 스크롤 구성 요청.
+- 근본원인: `aside.admin-sidebar`(flex column, `overflow:hidden`) 안에서 `.admin-tabs`(`flex:1`)에 `min-height:0`·`overflow-y` 부재. flex 항목 기본 `min-height:auto` 가 콘텐츠 높이 미만 축소를 막아, viewport 높이가 brand+탭+foot 합보다 작으면 `.admin-sidebar` 의 `overflow:hidden` 이 넘친 탭을 스크롤 없이 잘라냈다. 작업 화면 `.conv-list`(styles.css:500-503)는 이미 동일 idiom 보유 — admin 사이드바만 누락.
+- 변경: `.admin-tabs` 에 `min-height:0; overflow-y:auto;`(작업 화면 `.conv-list` 정합) + `.admin-sidebar-foot` 에 `flex-shrink:0`(탭 스크롤 시 pending 요약 풋 하단 고정). 브랜드는 공유 `.sidebar-brand`(flex-shrink:0)로 상단 고정. 모바일(≤680, `.admin-sidebar{display:none}`)은 무영향.
+- Verification: CSS brace 균형 + 정적 검증(JS 무변경 → node 무관) → 머지 → web 재배포 → PB-0008 Windows-browser(짧은 viewport: `.admin-tabs` overflow-y computed=auto·scrollHeight>clientHeight·하단 '설정' 탭 스크롤 도달).
+- Files: feature-0003 src/static/styles.css, src/static/admin.html, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
+- Rollback: `.admin-tabs` 의 `min-height:0; overflow-y:auto;` + `.admin-sidebar-foot` 의 `flex-shrink:0` 제거(짧은 화면 클리핑 재발). 캐시버스터 복원.
+- Deploy: web 재빌드 1 이미지(styles.css/admin.html baked). 캐시버스터 `?v=20260616-task0292-admin-sidebar-vscroll`. deploy_scope: included.
