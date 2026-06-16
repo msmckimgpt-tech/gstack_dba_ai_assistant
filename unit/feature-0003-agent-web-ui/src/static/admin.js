@@ -4760,7 +4760,10 @@ function renderRoleDetail() {
 function refreshPendingUI() {
   const total = pendingChangeCount();
   $("commitBarCount").textContent = `${total}건 pending`;
-  $("tabCountAccounts").textContent = `${adminState.accounts.length}`;
+  // TASK-0291: 계정 탭 배지는 활성 계정만 집계 (비활성·삭제 대상은 목록 필터에서 확인 가능).
+  // active 정의는 filteredAccounts() 의 'active' 분기와 동일: is_active && !deleted_at.
+  const activeAccountCount = adminState.accounts.filter((a) => a.is_active && !a.deleted_at).length;
+  $("tabCountAccounts").textContent = `${activeAccountCount}`;
   $("tabCountRoles").textContent = `${adminState.roles.length + adminState.pending.newRoles.size}`;
   const tabCountProducts = $("tabCountProducts");
   if (tabCountProducts) tabCountProducts.textContent = `${adminState.products.length}`;

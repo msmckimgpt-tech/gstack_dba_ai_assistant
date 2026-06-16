@@ -894,3 +894,8 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **시각 evidence**: `artifacts/pb0008-task0283/product-icon-edit-overlay.png`(1249×840) — 제품 상세 헤더가 아바타 + 이름 "(KR) 킹스레이드 - 로컬" + 메타로 깔끔, 기존 "아이콘" 텍스트박스 침범 제거됨.
   - **Pass/Fail: PASS** — ✎ 원형 오버레이 실재·visible, 텍스트 pill 부재, 아이콘 영역 침범 0, 유저 프로필과 동일 클래스 재사용으로 시각 동형 전부 실제 Windows 브라우저 실측 통과. CHECK#13(PB-0008 Windows-browser) **충족**.
   - **Notes:** 기 캐시 사용자는 1회 하드리프레시(Ctrl+Shift+R)로 no-cache index/admin.html 진입 후 자동 최신.
+
+- 2026-06-16 (TASK-0291 관리 콘솔 계정 탭 배지 활성 계정만 집계 — 정적 검증 PASS / **PB-0008 배포 후 잔여**; CHG/REV-20260616-0300):
+  - **Environment: 정적(node --check)** — 변경은 frontend 정적자산(admin.js 집계식 1곳 + admin.html 캐시버스터)뿐, 백엔드/엔드포인트 무변경이라 Python(make test) 영향 0.
+  - 결과: `node --check admin.js` PASS. diff = admin.js(`refreshPendingUI` 의 `#tabCountAccounts` = `adminState.accounts.filter((a) => a.is_active && !a.deleted_at).length`) + admin.html(cache-buster `?v=20260616-task0291-account-active-count`). 활성 정의는 `filteredAccounts()` 의 `'active'` 분기(`is_active && !deleted_at`)와 동일 재사용.
+  - **PB-0008 Windows-browser → 배포 후 측정**: 계정 탭 배지 `#tabCountAccounts` 텍스트가 "활성" 필터 적용 시 `#accountListCount`("N명")의 N 과 일치하고, "전체" 필터 수보다 작거나 같음을 win-browser eval 로 실측 예정.

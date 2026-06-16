@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260616-0300 [SKIPPED:frontend-only-display-count]
+- Date: 2026-06-16 (TASK-0291 — 계정 탭 배지 활성 계정만 집계)
+- Skip 사유: frontend-only 표시 로직(admin.js 집계식 1곳 + 캐시버스터). 백엔드/RBAC/스키마/엔드포인트/데이터 흐름 무변경 — 외부 시각(보안/데이터) 리뷰 트리거 부재.
+- 판단 근거: 활성 정의를 기존 `filteredAccounts()` 의 `'active'` 분기(`is_active && !deleted_at`)와 동일하게 재사용해 분류 일관성 유지 — 새 분류 의미 도입 없음. `#accountListCount`(filter-aware)는 비변경이라 "전체/활성/비활성/삭제" 필터별 정확 카운트는 기존대로 목록에서 확인 가능. 배지는 사용자 의도대로 "실제 중요한 정보(활성 수)"만 노출.
+- 검증: node --check PASS. PB-0008 Windows-browser 실측은 web 재배포 후(배지 = 활성 필터 목록 수 일치).
+
 ## REV-20260616-0298 [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-16 (TASK-0287 후속 docs-only — PB-0008 시각검증 evidence)
 - Skip 사유: docs 전용(STATUS/REPORT/TASK/MODIFY/REVIEW). 코드/RBAC 무변경 — 본체 검토는 REV-20260616-0297 [SKIPPED:frontend-only-download-method].
