@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260616-0292 [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-16 (§13.1 origin max REV-20260616-0291 → 0292)
+- Cycle: TASK-0283 후속 docs-only — 제품 아이콘 편집 ✎ 오버레이 통일 PB-0008 Windows-browser PASS evidence 기록. 코드/정적자산 0 변경.
+- Skip 사유: §18.8.1 경량 — docs-only(검증 결과 기록), 코드·CSS·엔드포인트·RBAC 표면 0. 원 변경의 적대 검토는 REV-20260616-0291([SKIPPED:frontend-icon-edit-ui-no-backend-no-rbac]) 에서 완료.
+- 자체 점검: ① 기록 사실성 — win-browser eval computed(`.profile-avatar-change` absolute·22px·circular·visible) + 구 pill 부재 + 배포 baking(`?v=20260616-product-icon-edit`·`profile-avatar-change` 1 hit) 실측에 근거. ② evidence 경로(`artifacts/pb0008-task0283/product-icon-edit-overlay.png`)는 git 외부(§2)라 참조만. ③ 회귀 0(문서만).
+- Verification: 라이브 win-browser 실측 + screenshot. node/make test 무관(코드 무변경).
+- Cross-ref: CHG-20260616-0292 / REV-20260616-0291(원 변경) / TASK-0283.
+
 ## REV-20260616-0291 [SKIPPED:frontend-icon-edit-ui-no-backend-no-rbac]
 - Date: 2026-06-16 (§13.1 origin max REV-20260616-0290 → 0291)
 - Cycle: TASK-0283 (관리 콘솔 제품 아이콘 편집 UI 를 유저 프로필과 동일한 ✎ 오버레이로 통일), **Minor §12.3** — frontend-only(`src/static/admin.js` 1곳 + dead CSS 제거 + cache-buster). RBAC/인증/스키마/엔드포인트/데이터/시크릿/백엔드 0.

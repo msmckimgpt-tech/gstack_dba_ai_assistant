@@ -878,4 +878,14 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - 2026-06-16 (TASK-0283 제품 아이콘 편집 UI 유저 프로필 ✎ 오버레이 통일 — 정적 검증 PASS / **PB-0008 배포 후 잔여**; CHG/REV-20260616-0291):
   - **Environment: 정적(node --check)** — 변경은 frontend 정적자산(admin.js/styles.css/index.html/admin.html)뿐, 백엔드 엔드포인트(PUT/DELETE icon) 재사용이라 Python(make test) 영향 0.
   - 결과: `node --check admin.js` PASS. diff = admin.js(renderProductDetail 1곳, 텍스트 pill → `.profile-avatar-edit`+`.profile-avatar-change` ✎ 오버레이 + `.profile-avatar-remove` 링크) + styles.css(dead `.admin-avatar-edit/change/remove` 제거) + index/admin.html(cache-buster `?v=20260616-product-icon-edit`).
-  - **잔여 — PB-0008 Windows-browser**: 배포 후 `관리 콘솔 > 제품 > [항목]` 상세에서 ① 아바타 우하단 ✎ 원형 오버레이 실재(`.profile-avatar-change` computed `position:absolute`·원형·22px), ② "아이콘" 텍스트박스 침범 0(아이콘 영역 좌/우 spread), ③ "아이콘 제거" 텍스트 링크(아이콘 설정 시), ④ 유저 프로필 드로어 아바타 편집과 시각 동형 실측 필요. CHECK#13 은 그때 충족.
+  - **PB-0008 Windows-browser → 아래 항목에서 PASS(CHG/REV-20260616-0292).**
+
+- 2026-06-16 (TASK-0283 제품 아이콘 편집 UI 유저 프로필 ✎ 오버레이 통일 — **PB-0008 Windows-browser PASS**; CHG/REV-20260616-0292 evidence):
+  - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). 배포: main `245446f`(PR #265 squash) → `docker compose build web` + `up -d --no-deps web`(repo-web-1 Up healthy, /healthz mysql_ok·pg_ok true). 서빙 admin.html `admin.js?v=20260616-product-icon-edit`·`styles.css?v=20260616-product-icon-edit`, 서빙 admin.js 에 `profile-avatar-change` baked(grep 1 hit).
+  - **계측 결과(win-browser eval, `관리 콘솔 > 제품 > (KR) 킹스레이드 - 로컬` 상세)**:
+    - **✎ 오버레이 실재**: `.admin-detail-identity .profile-avatar-edit` 래퍼 present(`position:relative`), `.profile-avatar-change` = 텍스트 "✎", computed `position:absolute · right:-4px · bottom:-4px · width:22px · height:22px · border-radius:50%`, rect 22×22, `visibility:visible · opacity:1 · display:grid` → 유저 프로필 드로어와 **동일 클래스·동일 computed**(시각 동형).
+    - **구 텍스트 pill 부재**: `.admin-detail-identity .admin-avatar-change`/`.admin-avatar-edit` querySelector = null(oldPillPresent=false). 36px 아바타(`position:relative`) 영역 침범 0.
+    - **제거 링크 분기**: 본 제품은 custom icon_url 미설정(Identicon) → `.profile-avatar-remove` 미노출(null) = 명세대로(아이콘 설정 시에만 "아이콘 제거" 표시).
+  - **시각 evidence**: `artifacts/pb0008-task0283/product-icon-edit-overlay.png`(1249×840) — 제품 상세 헤더가 아바타 + 이름 "(KR) 킹스레이드 - 로컬" + 메타로 깔끔, 기존 "아이콘" 텍스트박스 침범 제거됨.
+  - **Pass/Fail: PASS** — ✎ 원형 오버레이 실재·visible, 텍스트 pill 부재, 아이콘 영역 침범 0, 유저 프로필과 동일 클래스 재사용으로 시각 동형 전부 실제 Windows 브라우저 실측 통과. CHECK#13(PB-0008 Windows-browser) **충족**.
+  - **Notes:** 기 캐시 사용자는 1회 하드리프레시(Ctrl+Shift+R)로 no-cache index/admin.html 진입 후 자동 최신.

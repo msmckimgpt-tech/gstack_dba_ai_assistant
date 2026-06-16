@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260616-0292
+- Date: 2026-06-16 (TASK-0283 후속, **docs-only** — 제품 아이콘 편집 UI ✎ 오버레이 통일 PB-0008 Windows-browser 시각검증 evidence 기록; §13.1 origin max CHG-20260616-0291 → 0292)
+- Scope: docs 전용(TASK.md 잔여 체크박스 + TEST.md §4 PB-0008 Run + REPORT.md 잔여). 코드/정적자산 0.
+- 변경: PB-0008 Windows-browser **PASS** 기록 — `관리 콘솔 > 제품 > [항목]` 상세 아이콘 편집이 `.profile-avatar-change` ✎ 원형 오버레이(computed absolute·right:-4px·bottom:-4px·22×22·border-radius:50%·visible)·구 텍스트 pill 부재(oldPillPresent=false)·침범 0·유저 프로필 동일 클래스 시각 동형. 배포 main `245446f`(#265). evidence `artifacts/pb0008-task0283/product-icon-edit-overlay.png`.
+- 검증: PB-0008 실측(win-browser eval + screenshot). 코드 무변경(회귀 0).
+- Files: docs/{TASK,TEST,MODIFY,REVIEW,REPORT}.md
+- Cross-ref: REV-20260616-0292 / CHG-20260616-0291(원 변경) / TASK-0283.
+
 ## CHG-20260616-0291
 - Date: 2026-06-16 (TASK-0283, **Minor §12.3** — 관리 콘솔 제품 아이콘 편집 UI 를 유저 프로필과 동일한 ✎ 오버레이로 통일, frontend-only. §13.1 origin max CHG-20260616-0290 → 0291)
 - Scope: agent-web-ui(프론트 전용) — `src/static/admin.js` `renderProductDetail` 1곳 + `src/static/styles.css`(dead-rule 제거) + `src/static/{index,admin}.html`(cache-buster) + `docs/{TASK,TEST,MODIFY,REVIEW}.md`. RBAC/스키마/엔드포인트/백엔드 0.
