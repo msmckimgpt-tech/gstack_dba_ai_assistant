@@ -71,6 +71,11 @@ sources:
 - `state.composerAttachments.byConv[pendingSentinel]` — lazy-create staged attachment bucket (TASK-0106)
 - pending assistant bubble (spinner + elapsed + step list) — TASK-0061 Phase 1
 - Point rail + message calendar — TASK-0061 Phase 4/5
+- **실행 단계 side panel** (`#stepSidePanel`) — step 별 **근거(reason) 노출** + SQL + "결과 보기" toggle, stick-to-bottom (TASK-0061/0173~0178)
+- **답변 diff 블록** (`enhanceDiffBlocks`) — assistant ```diff 블록을 라인별 +/- 색 렌더 (marked→enhance→DOMPurify, textContent XSS 무첨가) (TASK-0256)
+- **전체 N행 미리보기 인라인 표** — "📎 전체 N행 미리보기" 링크를 값-기반 매칭으로 인라인 렌더 + "접기" toggle (TASK-0155/0156/0174)
+- **데이터소스 연결상태 3색 배지** — composer 제품 chip + sidebar 가 `connStatusMeta()` 로 정상(초록)/불안정(빨강)/끊김(회색) ●점+라벨 (TASK-0244/0261/0282)
+- **프롬프트 자동작성 스트리밍 스크롤** — SSE 토큰 append 시 `atBottom` 판정 후에만 추종 (TASK-0254)
 
 ### 2.5 관리 콘솔 + 실행 확장 (2026-06)
 
@@ -83,7 +88,13 @@ sources:
 | **제품 insight 완료율** | 제품별 분석완료율% 배지 + per-DB breakdown + DB별 파악내용 한 줄 인라인 | [[../concepts/insight-worker]] (TASK-0223/0242) |
 | **ask-worker 큐 cutover** | in-process → `ask_jobs` 큐 + ask-worker 서비스 (web 재배포 중 run 생존) | [[../concepts/ask-worker-queue]] (TASK-0169) |
 | **요청 중단 + 즉시 재요청** | 전송버튼 morph(중단), optimistic cancel(fetch abort), run-status 3중 정합 | TASK-0157/0241 (main 6655adc) |
-| **프롬프트 자동작성 SSE** | 제품 프롬프트 자동작성 LLM 토큰 스트리밍 (백엔드 SSE + 프런트) | TASK-0233 |
+| **프롬프트 자동작성 SSE** | 제품 프롬프트 자동작성 LLM 토큰 스트리밍 (백엔드 SSE + 프런트, stick-to-bottom) | TASK-0233/0254 |
+| **권한 편집기 tree + 그룹분리** | RBAC grid 를 종속성 기반 점진적 공개 + 단일열 tree(`data-perm-depth`) + 대화 운영권한 own/any 2그룹 + console.access 마스터게이트 | TASK-0257~0270 |
+| **보관 대화 탭** | 삭제=hard-delete 아닌 보관(데이터·첨부 보존, 감사·맥락용), 관리콘솔 보관탭에서 조회 | TASK-0277/0277b |
+| **데이터소스 연결상태 3색** | composer·sidebar·picker 가 정상/불안정/끊김 lazy probe(세션캐시+세마포어) | TASK-0244/0246/0261/0282 |
+| **답변 diff 블록** | assistant ```diff 라인별 +/- 색 렌더 (app.js/share.js `enhanceDiffBlocks`) | TASK-0256 |
+| **첨부 메타 PG cutover** | 첨부 4 테이블 MySQL→PG `core_attachments` (id 권위=MySQL, dual-write fail-soft) | TASK-0279 |
+| **제품 아이콘 편집 ✎ 오버레이** | 제품 아이콘 hover 시 편집 오버레이 (PB-0008 PASS) | TASK-0283 |
 | **fork = hybrid deep-copy** | pure git-lineage 반려(F1~F6) → `core_messages` deep-copy snapshot | ADR-WEB-0005 (TASK-0170) |
 | **진입점 없는 기능 복구** | 즉시답변·공유관리·audit.purge·내활동·facet 등 7개 발굴·구성 | TASK-0158 (DESIGN-entry-points) |
 

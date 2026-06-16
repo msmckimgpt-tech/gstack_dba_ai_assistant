@@ -15,7 +15,7 @@ ai_generated: true
 concept_category: pattern
 aliases: [datasource registry, 자격증명 암호화, envelope encryption, KEK/DEK]
 tags: [datasource, security, encryption, envelope, kek, dek, ssrf]
-last_updated: 2026-06-12
+last_updated: 2026-06-16
 ---
 
 # Datasource Registry (envelope 암호화)
@@ -51,11 +51,17 @@ KEK (32B base64 root key, .env.secret)        ← .env 와 분리 (least-privile
 
 | 테이블 | 용도 |
 |---|---|
-| `WebDatasources` (MySQL agent_memory) | host/port/user/password(암호화)/default_db/engine/IsActive |
+| `WebDatasources` (MySQL agent_memory) | **Id**(surrogate PK)/DatasourceKey(rename 가능 라벨)/host/port/user/password(암호화)/default_db/engine/IsActive |
 | `WebDatasourceKeys` | DEK 버전 관리 |
 
 - **resolution**: `cfg.get_datasource(key)` → DB (`IsActive=1`) 우선, `.env` fallback 공존. **resolve 시마다 복호화** (평문 캐시 없음). delete / `IsActive=0` 즉시 무효화.
 - **제품 MSSQL 참조DB**: `WebProducts.DatasourceDatabase` override (MSSQL 단일 datasource 다중 DB 시나리오). → TASK-0206 의 DB-단위 접근으로 일반화되어 별도 참조DB dropdown 은 폐지됨.
+- **라벨/키 분리 → Id surrogate (TASK-0277)**: 제품 바인딩 FK 를 rename 가능한 `DatasourceKey` 에서 stable `WebDatasources.Id` 로 이전. 멀티-ds join 본체(`WebProductDatasources`)·접근DB(`WebProductDatabases`)·`WebProducts` 3 테이블에 `DatasourceId` backfill, rename 은 Id-구동 완전 cascade (라벨 rename 에도 고아 0). write = dual-write (Id+Key), read 무변경.
+
+## 3.1 연결 격리 + 상태 모니터 (TASK-0247/0255/0282)
+
+- **circuit breaker**: per-datasource (`scope_key` = 엔진+host+port) breaker 로 불안정 datasource 1개가 단일 직렬 ask-worker 를 점유하는 starvation 차단. `connect_with_retry` 경계서 요청당 1회 트립, half-open 은 락내 토큰. bounded `AGENT_DB_CONNECT_TIMEOUT_SEC`(10s) 로 connect timeout 을 쿼리 예산(`AGENT_TIMEOUT_SEC`)에서 분리. control-plane(memory DB) 은 breaker 미적용.
+- **conn_health 3-state**: `modules/conn_health.py` 가 2-stage probe (TCP `AGENT_CONN_TCP_TIMEOUT_MS`=2000 → DB `SELECT 1`) 로 **정상**(빠름)/**불안정**(느림 ≥ `AGENT_CONN_SLOW_MS` 또는 1회 blip)/**끊김**(연속 `AGENT_CONN_DOWN_AFTER_FAILS` 실패) 분류. `should_fast_fail` = down 한정 → 느린 타-리전 datasource 도 작업화면에서 사용 가능. 작업화면(초록/빨강/회색 ●)·관리콘솔 picker(3-state) 양면 노출.
 
 ## 4. Admin API + RBAC
 

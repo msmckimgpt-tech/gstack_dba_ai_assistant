@@ -126,3 +126,4 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 [2026-05-26T06:52:40Z] lint-fix | index | syntheses/_Index.md | 깨진 wikilink 예시 placeholder text 로 전환 (lint broken PASS)
 
 ## [2026-06-15] feature | TASK-0256 assistant 답변 markdown diff 블록(리뷰 시 변경 제시) + 웹 UI diff 색 렌더 (PR#209, main 2befd37)
+## [2026-06-16] docs | 서비스 소개 프레젠테이션(docs/presentation: 자기완결 HTML 덱 + SCENARIO.md 발표 스크립트·공격 질문 대응) 신설 + wiki 정합 갱신(연결상태 3색·datasource Id surrogate·첨부 PG cutover·답변 diff)
