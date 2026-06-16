@@ -17,7 +17,8 @@ source_of_truth: true
 - [x] styles.css: `.app-shell{position:relative}` + `.sidebar-resizer`(left:var(--sidebar-w)·8px·ew-resize·hover/active 시 `--primary` 2px 라인) + `.app-shell.is-sidebar-resizing{user-select:none}` + 모바일(≤680) `.sidebar-resizer{display:none}`.
 - [x] app.js: `setupSidebarResize`/`_applySidebarWidth`(우측 패널 패턴 동형) — drag 가 `--sidebar-w` 를 [180, min(640, 50%vw)] clamp + mouseup 이 `localStorage["web.sidebar.width"]` 영속 + 더블클릭 reset + 모바일(≤680)에선 override 제거. `initialize()` 1회 배선 + resize 리스너에 `_applySidebarWidth()` 추가.
 - [x] 검증: node --check app.js PASS + CSS brace(1222=1222) + **jsdom 23/23 PASS**(`tests/verify_sidebar_resize.mjs`: 마크업/CSS 규칙/배선/clamp/영속/모바일 제거/더블클릭) + make test 컨테이너 **전체 회귀 0**(REAL_MAKE_EXIT=0, ruff clean).
-- [ ] (잔여) verify-completion PASS → 커밋/PR/머지(자동 동기화 §16.3) → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증(드래그 시 사이드바 폭 변화·영속·핸들 hit-test).
+- [x] verify-completion PASS → 커밋 7e43b51 → PR #267 squash 머지(main 6f1242b) → web 재배포(deploy_scope: included, healthz git_commit=6f1242b, 서빙 자산 baked) 완료.
+- [x] **PB-0008 Windows-browser 시각검증 PASS**(실 Chrome/148.0.7778.217, win-browser relay, innerWidth 1249): 핸들 computed `display:block·cursor:ew-resize·position:absolute·8px·visible`; 드래그 252→380px 시 **사이드바 폭 실제 380 + chat-column 좌변 380 으로 레이아웃 reflow**(jsdom 불가 영역); clamp 하한 180·상한 624(=min(640, 50%vw)) 정확; mouseup localStorage `web.sidebar.width` 영속; **새로고침 후 340px 복원**(`_applySidebarWidth`); 더블클릭 시 252px·localStorage 제거 reset. evidence `artifacts/pb0008-sidebar-resize/sidebar-resized-340.png`. CHG/REV-20260616T024150-ai-claude-sidebar-resize-pb0008.
 
 ## TASK-0283 — 관리 콘솔 제품 아이콘 편집 UI 를 유저 프로필과 동일한 ✎ 오버레이로 통일
 - 보고(사용자): `관리 콘솔 > 제품 > [각 항목] > 프로필 아이콘` 의 수정버튼 UI 를 유저 프로필과 동일하도록 구성. 현재 "아이콘" 텍스트박스가 제품 아이콘(36px) 영역을 크게 침범.

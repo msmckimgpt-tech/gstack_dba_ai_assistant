@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260616T024150-ai-claude-sidebar-resize-pb0008
+- Date: 2026-06-16 (TASK-20260616T022652-ai-claude-sidebar-resize 후속, **docs-only** — 사이드바 너비 드래그 조절 PB-0008 Windows-browser 시각검증 evidence 기록)
+- Scope: docs 전용(TASK.md 잔여 체크박스 [x] + TEST.md §4 Windows-browser Run 실측 + REPORT.md git-sync/PB-0008 결과). 코드/정적자산 0.
+- 변경: PB-0008 **PASS** 기록 — 배포본 main `6f1242b`(healthz git_commit 일치)에서 실 Chrome/148 드래그 시 사이드바 폭 실제 변화(252→380, chat-column reflow), clamp 180/624, 새로고침 복원(340), 더블클릭 reset 실측. evidence `artifacts/pb0008-sidebar-resize/sidebar-resized-340.png`.
+- 검증: PB-0008 실측(win-browser MouseEvent 디스패치 + computed + screenshot). 코드 무변경(회귀 0).
+- Files: docs/{TASK,TEST,REPORT,MODIFY,REVIEW}.md
+
 ## CHG-20260616T022652-ai-claude-sidebar-resize
 - Date: 2026-06-16 (TASK-20260616T022652-ai-claude-sidebar-resize — 대화창 좌측 사이드바 너비 드래그 조절. timestamp+branch id, ADR-0025/v3.32.0)
 - Scope: frontend-only `src/static/{index.html,styles.css,app.js}` + 신규 테스트 `tests/verify_sidebar_resize.mjs`. RBAC/스키마/엔드포인트/백엔드 0.
