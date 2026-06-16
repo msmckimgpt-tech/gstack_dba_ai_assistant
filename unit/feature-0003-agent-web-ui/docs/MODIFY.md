@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260616-0291
+- Date: 2026-06-16 (TASK-0283, **Minor §12.3** — 관리 콘솔 제품 아이콘 편집 UI 를 유저 프로필과 동일한 ✎ 오버레이로 통일, frontend-only. §13.1 origin max CHG-20260616-0290 → 0291)
+- Scope: agent-web-ui(프론트 전용) — `src/static/admin.js` `renderProductDetail` 1곳 + `src/static/styles.css`(dead-rule 제거) + `src/static/{index,admin}.html`(cache-buster) + `docs/{TASK,TEST,MODIFY,REVIEW}.md`. RBAC/스키마/엔드포인트/백엔드 0.
+- 원인(사용자 보고): 제품 상세 아이콘 편집이 `.admin-avatar-edit`(absolute `bottom:-22px`) 안에 "아이콘"·"제거" 텍스트 pill 2개를 배치 → 텍스트 버튼 폭이 36px 아바타보다 넓어 좌우 spill·아이콘 영역 침범. 유저 프로필(`.profile-avatar-edit`)의 ✎ 원형 오버레이 패턴과 불일치.
+- 수정: admin.js — 텍스트 pill 폐기, 유저 프로필과 동일하게 아바타를 `.profile-avatar-edit` 래퍼로 감싸 `.profile-avatar-change`(✎, `right:-4px bottom:-4px` 22px 원형 오버레이) 버튼 + 숨김 file input 부착, "아이콘 제거"는 `.profile-avatar-remove` 텍스트 링크로 idText 하단 분리. styles.css — 사용처 0건이 된 `.admin-avatar-edit`/`.admin-avatar-change`/`.admin-avatar-remove` 규칙 제거(프로필 클래스 재사용 → 신규 CSS 0).
+- 비변경: 아이콘 PUT/DELETE 엔드포인트·5MB 가드·image accept·toast·renderProductDetail 재렌더·applyAvatar/Identicon 폴백·`canManage` 게이트 무변경. 제품 목록 행·chip·드롭업·계정 아바타 무관(`.admin-avatar` 베이스 클래스 유지).
+- 검증: node --check admin.js PASS. (잔여) web 재배포 후 PB-0008 Windows-browser 시각검증.
+- Cross-ref: REV-20260616-0291 / TASK-0283.
+
 ## CHG-20260615-0286
 - Date: 2026-06-15 (TASK-20260615T182907-product-list-row-icon-layout-fix, **Minor §12.3** — 제품 관리 목록 행 UI 뒤틀림 핫픽스, frontend-only. 동시세션 TASK-0277/0277b/0278 이 CHG-0281~0285 선점 → §13.1 재번호 0280→0286)
 - Scope: agent-web-ui (프론트 전용) — `src/static/admin.js` `renderProductList` 1곳 + `tests/verify_product_icon_chip_list.mjs`([3] 회귀 검증 추가) + `docs/{TASK,TEST}.md`. RBAC/스키마/엔드포인트/백엔드 0.

@@ -874,3 +874,8 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **시각 evidence**: 스크린샷 `artifacts/pb0008-ds-multiselect/ds-multiselect-partial-select.png`(1249×840) — 좌측 데이터소스 목록 [전체선택(indeterminate) · 14] + 13행 체크 + 각 행 [체크박스·연결도트(초록/빨강)·이름·엔진 pill·좌표], 하단 bulk 툴바 "13개 선택됨 · 인사이트 켜기/끄기/삭제/선택 해제". 계정·역할·제품 pane 과 동일 다중선택 구조.
   - **Pass/Fail: PASS** — 행 체크박스(div role=row)·전체선택(indeterminate)·일괄 툴바(buttons·count)·leading 도트(#251 통합)·3열 grid(13px 9px 251px) 전부 실제 Windows 브라우저 실측 통과. CHECK#13(PB-0008 Windows-browser) **충족**.
   - **Notes:** shift-click 범위·실제 일괄 삭제/insight 토글(파괴적·상태변경)은 라이브 데이터 보호 위해 실행 미수행(구조·게이트·핸들러는 적대적 코드리뷰 REV-0286 에서 confirmed). 기 캐시 사용자는 1회 하드리프레시.
+
+- 2026-06-16 (TASK-0283 제품 아이콘 편집 UI 유저 프로필 ✎ 오버레이 통일 — 정적 검증 PASS / **PB-0008 배포 후 잔여**; CHG/REV-20260616-0291):
+  - **Environment: 정적(node --check)** — 변경은 frontend 정적자산(admin.js/styles.css/index.html/admin.html)뿐, 백엔드 엔드포인트(PUT/DELETE icon) 재사용이라 Python(make test) 영향 0.
+  - 결과: `node --check admin.js` PASS. diff = admin.js(renderProductDetail 1곳, 텍스트 pill → `.profile-avatar-edit`+`.profile-avatar-change` ✎ 오버레이 + `.profile-avatar-remove` 링크) + styles.css(dead `.admin-avatar-edit/change/remove` 제거) + index/admin.html(cache-buster `?v=20260616-product-icon-edit`).
+  - **잔여 — PB-0008 Windows-browser**: 배포 후 `관리 콘솔 > 제품 > [항목]` 상세에서 ① 아바타 우하단 ✎ 원형 오버레이 실재(`.profile-avatar-change` computed `position:absolute`·원형·22px), ② "아이콘" 텍스트박스 침범 0(아이콘 영역 좌/우 spread), ③ "아이콘 제거" 텍스트 링크(아이콘 설정 시), ④ 유저 프로필 드로어 아바타 편집과 시각 동형 실측 필요. CHECK#13 은 그때 충족.

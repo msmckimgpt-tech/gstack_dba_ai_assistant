@@ -5792,15 +5792,21 @@ function renderProductDetail() {
   // TASK-0268 + profile-icon 정합: 제품 아이콘 이미지(설정 시) 또는 Identicon(product_key 시드).
   //   작업화면 프로필(applyAvatar/identiconSvg)과 동일 폴백 — 이니셜 텍스트가 아니라 결정론적 Identicon.
   applyAvatar(avatar, { url: product.icon_url, seed: product.product_key || product.name || "", initials: (product.product_key || "P").slice(0, 2).toUpperCase() });
-  // TASK-0268: product.manage 면 아이콘 변경/제거 컨트롤.
+  // TASK-0283: product.manage 면 아이콘 변경/제거 컨트롤.
+  //   유저 프로필 아바타 편집(index.html .profile-avatar-edit)과 동일한 ✎ 오버레이 패턴으로 통일.
+  //   기존 "아이콘"/"제거" 텍스트 pill 은 36px 아이콘 영역을 침범 → 폐기.
+  let avatarNode = avatar;
+  let removeBtn = null;
   if (canManage) {
-    const iconEdit = document.createElement("div");
-    iconEdit.className = "admin-avatar-edit";
+    // .profile-avatar-edit: position:relative 래퍼 — ✎ 버튼을 아바타 우하단에 오버레이.
+    const avatarWrap = document.createElement("div");
+    avatarWrap.className = "profile-avatar-edit";
     const fileInput = document.createElement("input");
     fileInput.type = "file"; fileInput.accept = "image/png,image/jpeg,image/webp"; fileInput.hidden = true;
     const changeBtn = document.createElement("button");
-    changeBtn.type = "button"; changeBtn.className = "admin-avatar-change"; changeBtn.textContent = "아이콘";
-    changeBtn.title = "제품 아이콘 변경"; changeBtn.addEventListener("click", () => fileInput.click());
+    changeBtn.type = "button"; changeBtn.className = "profile-avatar-change"; changeBtn.textContent = "✎";
+    changeBtn.title = "제품 아이콘 변경"; changeBtn.setAttribute("aria-label", "제품 아이콘 변경");
+    changeBtn.addEventListener("click", () => fileInput.click());
     fileInput.addEventListener("change", async () => {
       const f = fileInput.files && fileInput.files[0];
       if (!f) return;
@@ -5814,11 +5820,13 @@ function renderProductDetail() {
       } catch (err) { showToast(err.message || "아이콘 변경 실패", true); }
       finally { fileInput.value = ""; }
     });
-    iconEdit.append(changeBtn, fileInput);
+    avatarWrap.append(avatar, changeBtn, fileInput);
+    avatarNode = avatarWrap;
+    // 제거는 유저 프로필("사진 제거")과 동일하게 텍스트 링크(.profile-avatar-remove)로, idText 블록 하단에 둔다.
     if (product.icon_url) {
-      const rmBtn = document.createElement("button");
-      rmBtn.type = "button"; rmBtn.className = "admin-avatar-remove"; rmBtn.textContent = "제거";
-      rmBtn.addEventListener("click", async () => {
+      removeBtn = document.createElement("button");
+      removeBtn.type = "button"; removeBtn.className = "profile-avatar-remove"; removeBtn.textContent = "아이콘 제거";
+      removeBtn.addEventListener("click", async () => {
         try {
           await apiFetch(`/api/admin/products/${Number(product.id)}/icon`, { method: "DELETE" });
           product.icon_url = null;
@@ -5826,9 +5834,7 @@ function renderProductDetail() {
           showToast("제품 아이콘을 제거했어요.");
         } catch (err) { showToast(err.message || "아이콘 제거 실패", true); }
       });
-      iconEdit.append(rmBtn);
     }
-    avatar.appendChild(iconEdit);
   }
   const idText = document.createElement("div");
   const nameEl = document.createElement("div");
@@ -5844,7 +5850,8 @@ function renderProductDetail() {
     <span>수정 ${formatDateTime(product.updated_at)}</span>
   `;
   idText.append(nameEl, metaEl);
-  idBlock.append(avatar, idText);
+  if (removeBtn) idText.appendChild(removeBtn);
+  idBlock.append(avatarNode, idText);
   header.append(idBlock);
   paneEl.appendChild(header);
 
