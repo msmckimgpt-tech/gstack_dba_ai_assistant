@@ -127,3 +127,4 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 
 ## [2026-06-15] feature | TASK-0256 assistant 답변 markdown diff 블록(리뷰 시 변경 제시) + 웹 UI diff 색 렌더 (PR#209, main 2befd37)
 ## [2026-06-16] docs | 서비스 소개 프레젠테이션(docs/presentation: 자기완결 HTML 덱 + SCENARIO.md 발표 스크립트·공격 질문 대응) 신설 + wiki 정합 갱신(연결상태 3색·datasource Id surrogate·첨부 PG cutover·답변 diff)
+## [2026-06-16] docs | 프레젠테이션 개정 — 공격질문을 발표자 전용 OBJECTION-HANDLING.md 로 분리(덱에서 제거)·워커(질문 일꾼/정리 일꾼) 작동 슬라이드 추가·전문용어 비전문가용 평이화·한국어 word-break(keep-all) 줄바꿈 수정·세로 스크롤 제거(크기 축소). browse 1366×768 검증 scroll=0
