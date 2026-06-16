@@ -7674,6 +7674,79 @@ WHERE conversation_id = %s
     )
 
 
+def _load_assistant_attachments_by_message(conn, conversation_id: str) -> dict[int, list[dict[str, Any]]]:
+    """③ TASK-0285: 대화의 assistant 생성 첨부(미삭제)를 MetaJson.message_id 별로 그룹핑.
+
+    history 직렬화에서 assistant 말풍선에 첨부 칩을 영속 표시하기 위함(사용자 말풍선이 첨부를
+    보여주는 것과 대칭). materialize 가 새 버전 row 의 MetaJson 에 message_id 를 저장하므로
+    그 키로 그룹핑한다. supersede 여부와 무관 — "그 메시지가 만든 버전"은 이후 더 새 버전이
+    나와도 그 시점 history 사실로서 칩에 남는다(다운로드는 /download 프록시가 항상 가능).
+
+    첨부 정본은 MySQL(dual-write, TASK-0279) 이므로 conn(MySQL)로 조회. fail-soft — 실패 시
+    빈 dict 를 반환해 history 를 막지 않는다. 권한은 caller(_get_history → /api/history)가 대화
+    접근권으로 이미 게이트했고, 본 조회는 그 conversation_id 로만 스코프된다(IDOR 안전망).
+    """
+    if not conversation_id:
+        return {}
+    out: dict[int, list[dict[str, Any]]] = {}
+    try:
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+                SELECT Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                       MimeType, SizeBytes, SizeBucket, Sha256, Kind, UploadStatus,
+                       CreatedAt, DeletedAt, DeletePending, DeleteReason, MetaJson,
+                       RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
+                FROM WebConversationAttachments
+                WHERE ConversationId = %s AND CreatedByRole = 'assistant' AND DeletedAt IS NULL
+                ORDER BY Id ASC
+                """,
+                (conversation_id,),
+            )
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+    except Exception:
+        return {}
+    for row in rows:
+        meta = row.get("MetaJson")
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+        mid = 0
+        if isinstance(meta, dict):
+            try:
+                mid = int(meta.get("message_id") or 0)
+            except Exception:
+                mid = 0
+        if mid <= 0:
+            continue
+        out.setdefault(mid, []).append(_serialize_attachment_for_api(dict(row)))
+    return out
+
+
+def _attach_assistant_attachments(messages: list[dict[str, Any]], by_message: dict[int, list[dict[str, Any]]]) -> None:
+    """③ TASK-0285: history message 리스트의 assistant 메시지에 `_attachments` 를 주입.
+
+    프론트(renderMessages)는 user/assistant 공통으로 message._attachments 를 칩으로 렌더한다.
+    """
+    if not by_message:
+        return
+    for m in messages:
+        if str(m.get("role", "")).lower() != "assistant":
+            continue
+        try:
+            mid = int(m.get("id") or 0)
+        except Exception:
+            mid = 0
+        atts = by_message.get(mid)
+        if atts:
+            m["_attachments"] = atts
+
+
 def _get_history(
     conversation_id: str, limit: int = 5, before_id: int | None = None
 ) -> tuple[list[dict[str, Any]], bool, int | None, int, int]:
@@ -7747,6 +7820,8 @@ def _get_history(
             if not messages_pg and (core_msgs or core_tc or _conversation_exists(conversation_id)):
                 conn.close()
                 return core_msgs, core_hm, core_oid, core_tc, core_uc
+        # ③ TASK-0285: assistant 말풍선 첨부 칩 영속 — assistant 생성 첨부를 message_id 로 주입.
+        _attach_assistant_attachments(messages_pg, _load_assistant_attachments_by_message(conn, conversation_id))
         oldest_id_pg = messages_pg[0]["id"] if messages_pg else None
         conn.close()
         return messages_pg, has_more_pg, oldest_id_pg, len(messages_pg), sum(1 for m in messages_pg if str(m.get("role", "")).lower() == "user")
@@ -7813,6 +7888,8 @@ LIMIT %s
             }
         )
     cur.close()
+    # ③ TASK-0285: assistant 말풍선 첨부 칩 영속 — assistant 생성 첨부를 message_id 로 주입 (MySQL 경로).
+    _attach_assistant_attachments(messages, _load_assistant_attachments_by_message(conn, conversation_id))
     needs_core_fallback = not messages or not any(str(item.get("role", "")).lower() == "assistant" for item in messages)
     if needs_core_fallback:
         core_messages, core_has_more, core_oldest_id, core_total_count, core_user_count = _get_agent_core_history(
@@ -9927,6 +10004,44 @@ async def ask(request: Request) -> JSONResponse:
                     "ask: assistant attachment-edit materialize failed (conversation_id=%s)",
                     conversation_id, exc_info=True,
                 )
+            # ④ TASK-0285: 첨부 수정을 진행 단계(step)로 명시 출력. "단계 보기"/progress 에 노출되고
+            # history 재로드에도 영속(PG agent_runtime.steps). run_id 는 이 답변 run 의 step 에서
+            # 추출(step 이 없는 단순 답변이면 run_id 부재 → 기록 skip). fail-soft.
+            if materialized_attachments:
+                try:
+                    _edit_run_id = ""
+                    _edit_max_idx = -1
+                    for _s in (render_steps or []):
+                        if _s.get("run_id"):
+                            _edit_run_id = str(_s.get("run_id") or "")
+                        try:
+                            _edit_max_idx = max(_edit_max_idx, int(_s.get("step_index", 0) or 0))
+                        except Exception:
+                            pass
+                    if _edit_run_id:
+                        _edit_names = ", ".join(
+                            f"'{a.get('original_filename') or '파일'}'(v{a.get('version_number') or 2})"
+                            for a in materialized_attachments
+                        )
+                        _edit_step = {
+                            "step_index": _edit_max_idx + 1,
+                            "action": "attachment_edit",
+                            "tool": "materialize_attachment",
+                            "work": f"첨부 {_edit_names}을(를) 새 버전으로 저장했습니다.",
+                            "reason": "수정한 첨부를 사용자에게 새 버전으로 제공합니다.",
+                            "args": {"attachment_ids": [int(a.get("id") or 0) for a in materialized_attachments]},
+                        }
+                        from modules.memory import save_memory_step as _save_step
+                        _save_step(conn, conversation_id, _edit_run_id, _edit_step)
+                        # 응답 steps 에도 즉시 반영 — 프론트가 새로고침 없이 단계로 표시.
+                        render_steps = list(render_steps or []) + [
+                            {**_edit_step, "run_id": _edit_run_id, "work_source": "llm", "reason_source": "llm"}
+                        ]
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "ask: materialize step record failed (conversation_id=%s)",
+                        conversation_id, exc_info=True,
+                    )
 
         result = {
             "output": render_output,
@@ -13369,7 +13484,45 @@ def list_conversation_attachments(cid: str, request: Request) -> JSONResponse:
             finally:
                 cur.close()
 
-        results = [_serialize_attachment_for_api(dict(row)) for row in rows]
+        # ② TASK-0285: 각 첨부의 버전 체인 길이(version_count) + AI 수정본 개수(ai_version_count)를
+        # 집계해 목록에 표면화한다. 목록 SQL 은 최신 버전만 노출(SupersededAt IS NULL)하므로, 같은
+        # 대화의 전체(미삭제) 버전에서 root 별 카운트를 한 번의 GROUP BY 로 구한다(N+1 회피). 첨부
+        # 정본은 MySQL(dual-write, TASK-0279) 이라 conn(MySQL) 집계가 정확. fail-soft — 집계 실패는
+        # 목록 자체를 막지 않는다(version_count 필드만 생략).
+        version_counts: dict[int, dict[str, int]] = {}
+        try:
+            vcur = conn.cursor()
+            try:
+                vcur.execute(
+                    """
+                    SELECT COALESCE(RootAttachmentId, Id) AS RootId,
+                           COUNT(*) AS Cnt,
+                           SUM(CASE WHEN CreatedByRole = 'assistant' THEN 1 ELSE 0 END) AS AiCnt
+                    FROM WebConversationAttachments
+                    WHERE ConversationId = %s AND DeletedAt IS NULL
+                    GROUP BY COALESCE(RootAttachmentId, Id)
+                    """,
+                    (cid,),
+                )
+                for vr in (vcur.fetchall() or []):
+                    if vr and vr[0] is not None:
+                        version_counts[int(vr[0])] = {
+                            "count": int(vr[1] or 1),
+                            "ai_count": int(vr[2] or 0),
+                        }
+            finally:
+                vcur.close()
+        except Exception:
+            version_counts = {}
+
+        results = []
+        for row in rows:
+            ser = _serialize_attachment_for_api(dict(row))
+            _vc = version_counts.get(int(ser.get("root_attachment_id") or ser.get("id") or 0))
+            if _vc:
+                ser["version_count"] = _vc["count"]
+                ser["ai_version_count"] = _vc["ai_count"]
+            results.append(ser)
         return JSONResponse({"attachments": results})
     finally:
         conn.close()

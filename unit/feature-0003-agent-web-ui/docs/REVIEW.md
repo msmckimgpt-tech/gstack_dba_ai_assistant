@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260616-0293 [SUBAGENT:attach-surfacing-security] — SHIP
+- Date: 2026-06-16 (TASK-0285 — 첨부 버전 현황 표면화 ②③④, TASK-0275 후속 보완)
+- 대상: ② `list_conversation_attachments` version_count 집계, ③ `_load_assistant_attachments_by_message` + `_get_history` assistant 첨부 직렬화(IDOR 표면), ④ materialize step 기록.
+- 적대적 보안 리뷰(general-purpose subagent, 침투 관점 7개 위협) **SHIP** — BLOCKER 0, MAJOR 0, MINOR 1.
+  - IDOR(③): `_load_assistant_attachments_by_message` 는 ConversationId 스코프만이나, 유일 호출경로 `/api/history` 가 `_account_can_access_conversation`(own/any) 선게이트. 첨부 AccountId 는 INSERT 시 대화 소유자로 고정(同conv·同account 가드) → cross-conv/cross-account 누출 0. refute.
+  - signed_url 누출: `_serialize_attachment_for_api` include_signed_url=False 기본, 양 신규 호출처 미전달 → ObjectKey/HMAC/AccountId 미노출. refute.
+  - SQLi: 신규 3쿼리 전부 %s 바인딩(cid/conversation_id 보간 0). refute.
+  - MetaJson.message_id 조작: message_id 는 서버 파생(`_load_latest_assistant_message` DB 조회)이고 LLM 은 source_id/filename 만 제공(별도 가드). 조작 MetaJson 은 mid<=0 drop — 타 메시지 첨부 부착 불가. refute.
+  - fail-soft: 신규 조회 try/except→빈 dict, history 비차단. confirm.
+  - ④ run_id: 자기 run 의 render_steps 에서 추출(공격자 미주입), ask 가 `_conversation_owned_by_account` 게이트. refute.
+- MINOR(비보안, 기록만): `agent_runtime.steps` 에 (conversation_id,run_id,step_index) UNIQUE 부재 → 중복 시 cosmetic 이중 항목(에러 아님). max+1 충돌 드묾 + try/except 보호. 흡수 불요.
+- 검증: 신규 `test_task0285_attach_surfacing.py` 9 PASS + make test 컨테이너 전체 회귀 0(PYTEST_EXIT=0, ruff clean) + py_compile + node --check + CSS brace(1242=1242).
+
 ## REV-20260616T024150-ai-claude-sidebar-resize-pb0008 [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-16 (TASK-20260616T022652-ai-claude-sidebar-resize 후속 docs-only — PB-0008 evidence 기록)
 - Skip 사유: docs 전용(TASK/TEST/REPORT/MODIFY/REVIEW). 코드/정적자산/백엔드/RBAC 무변경 — 리뷰 패널 트리거 비해당. 본체 변경의 적대 검토는 직전 cycle REV-20260616T022652-ai-claude-sidebar-resize 가 담당.

@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260616-0293 (TASK-0285 — 첨부 버전 현황 표면화 ②③④)
+- Date: 2026-06-16
+- Scope: feature-0003-agent-web-ui. frontend(app.js/styles.css/index.html) + 백엔드 노출(app.py). RBAC 카탈로그/스키마/엔드포인트 shape 무변경(응답 필드 추가 + 신규 헬퍼만).
+- 변경:
+  - `src/app.py`: ② `list_conversation_attachments` version_count/ai_version_count GROUP BY 집계. ③ `_load_assistant_attachments_by_message` + `_attach_assistant_attachments` 신규 + `_get_history`(PG·MySQL 양 경로) assistant 첨부 직렬화 주입. ④ ask materialize 후처리에 `save_memory_step`(attachment_edit/materialize_attachment) + 응답 render_steps 즉시 반영.
+  - `src/static/app.js`: 첨부 목록 버전 배지/펼침(`_downloadAttachmentById`·`_renderAttachmentVersionsBox` 헬퍼), 메시지 칩 공통 헬퍼 `_buildMessageAttachChip`(user/assistant), renderMessages 칩 조건 assistant 포함.
+  - `src/static/styles.css`: `.attach-list-entry`/`.attach-list-item-ver`/`.attach-list-versions*` + `.message.is-assistant` 칩 배경 보정 + `.attach-chip-ver`.
+  - `src/static/index.html`: 캐시버스터 `?v=20260616-task0285-attach-surfacing`(styles.css·app.js).
+  - `tests/test_task0285_attach_surfacing.py`: 신규 9 PASS(A1/A2/L1~L3/V1/V2/S1/S2).
+- 검증: make test 컨테이너 전체 회귀 0(PYTEST_EXIT=0), ruff clean, py_compile, node --check, CSS brace(1242=1242). 보안 SHIP(REV-20260616-0293).
+- Files: src/app.py, src/static/{app.js,styles.css,index.html}, tests/test_task0285_attach_surfacing.py, docs/{TASK,FUNCTION,REPORT,REVIEW,MODIFY}.md
+
 ## CHG-20260616T024150-ai-claude-sidebar-resize-pb0008
 - Date: 2026-06-16 (TASK-20260616T022652-ai-claude-sidebar-resize 후속, **docs-only** — 사이드바 너비 드래그 조절 PB-0008 Windows-browser 시각검증 evidence 기록)
 - Scope: docs 전용(TASK.md 잔여 체크박스 [x] + TEST.md §4 Windows-browser Run 실측 + REPORT.md git-sync/PB-0008 결과). 코드/정적자산 0.

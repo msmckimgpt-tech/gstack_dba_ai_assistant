@@ -2829,6 +2829,55 @@ function renderMessageDetails(meta = {}) {
   return detailsEl;
 }
 
+// ③ TASK-0285: 메시지 말풍선 첨부 칩 빌더(user/assistant 공통). att 는 user snapshot
+// ({name,size,id,signed_url}) 또는 백엔드 직렬화({original_filename,size,id,version_number,
+// is_assistant_generated}) 형식 모두 허용한다. 다운로드는 id 가 있으면 web 프록시 경로
+// (/api/attachments/{id}/download, 외부 머신 호환·same-origin 쿠키 인증), 없으면 signed_url.
+function _buildMessageAttachChip(att) {
+  const chip = document.createElement("span");
+  chip.className = "message-bubble-attach-chip";
+  const attName = att.name || att.original_filename || "파일";
+  const downloadable = Boolean(att.id || att.signed_url);
+  if (downloadable) {
+    chip.classList.add("has-download");
+    chip.title = "클릭하여 다운로드";
+    chip.addEventListener("click", () => {
+      const a = document.createElement("a");
+      a.href = att.id ? `/api/attachments/${encodeURIComponent(att.id)}/download` : att.signed_url;
+      a.download = attName;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+  }
+  const nameEl = document.createElement("span");
+  nameEl.className = "attach-chip-name";
+  nameEl.textContent = attName;
+  const sizeEl = document.createElement("span");
+  sizeEl.className = "attach-chip-size";
+  const sizeKb = Math.max(1, Math.round((Number(att.size) || 0) / 1024));
+  sizeEl.textContent = `${sizeKb} KB`;
+  const parts = [nameEl, sizeEl];
+  // 버전 배지 — AI 수정본 또는 version>1 표시(첨부 목록 패널 배지와 일관).
+  const verNum = Number(att.version_number || 1);
+  const isAi = Boolean(att.is_assistant_generated);
+  if (isAi || verNum > 1) {
+    const verEl = document.createElement("span");
+    verEl.className = "attach-chip-ver" + (isAi ? " ai-edited" : "");
+    verEl.textContent = isAi ? `v${verNum} · AI 수정` : `v${verNum}`;
+    parts.push(verEl);
+  }
+  if (downloadable) {
+    const dlIcon = document.createElement("span");
+    dlIcon.className = "attach-chip-dl";
+    dlIcon.textContent = "↓";
+    parts.push(dlIcon);
+  }
+  chip.append(...parts);
+  return chip;
+}
+
 function renderMessages() {
   messageLogEl.innerHTML = "";
   const hasPendingBubble = Boolean(state.pendingBubble);
@@ -2922,49 +2971,17 @@ function renderMessages() {
       }
     }
 
-    // UX-COMPACT: 사용자 메시지 버블에 첨부 파일 목록 표시.
-    // 소스 우선순위: (1) message._attachments (현 세션 인젝션), (2) messageAttachments 맵 (새로고침 후 유지).
+    // ③ TASK-0285: 사용자/assistant 메시지 버블에 첨부 칩 표시(이전엔 user 만).
+    // 소스 우선순위: (1) message._attachments (user=현 세션 인젝션 / assistant=history 직렬화),
+    // (2) messageAttachments 맵 (새로고침 후 유지). assistant 첨부는 백엔드 _get_history 가
+    // message_id 로 연결해 _attachments 를 직렬화하므로 새로고침 후에도 칩이 유지된다.
     const _displayAttachments = (Array.isArray(message._attachments) && message._attachments.length)
       ? message._attachments
       : (message.id ? (state.messageAttachments[String(message.id)] || null) : null);
-    if (role === "user" && _displayAttachments && _displayAttachments.length) {
+    if ((role === "user" || role === "assistant") && _displayAttachments && _displayAttachments.length) {
       const attachRow = document.createElement("div");
       attachRow.className = "message-bubble-attachments";
-      _displayAttachments.forEach((att) => {
-        const chip = document.createElement("span");
-        chip.className = "message-bubble-attach-chip";
-        if (att.signed_url) {
-          chip.classList.add("has-download");
-          chip.title = "클릭하여 다운로드";
-          chip.addEventListener("click", () => {
-            const a = document.createElement("a");
-            // TASK-0284: 외부 머신 다운로드 — presigned(MinIO 내부 호스트) 대신 web 프록시 경로.
-            // 쿠키(same-origin) 인증이라 직접 네비게이션도 인증된다.
-            a.href = att.id ? `/api/attachments/${encodeURIComponent(att.id)}/download` : att.signed_url;
-            a.download = att.name || "파일";
-            a.rel = "noopener";
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-          });
-        }
-        const nameEl = document.createElement("span");
-        nameEl.className = "attach-chip-name";
-        nameEl.textContent = att.name || "파일";
-        const sizeEl = document.createElement("span");
-        sizeEl.className = "attach-chip-size";
-        const sizeKb = Math.max(1, Math.round((Number(att.size) || 0) / 1024));
-        sizeEl.textContent = `${sizeKb} KB`;
-        const parts = [nameEl, sizeEl];
-        if (att.signed_url) {
-          const dlIcon = document.createElement("span");
-          dlIcon.className = "attach-chip-dl";
-          dlIcon.textContent = "↓";
-          parts.push(dlIcon);
-        }
-        chip.append(...parts);
-        attachRow.appendChild(chip);
-      });
+      _displayAttachments.forEach((att) => attachRow.appendChild(_buildMessageAttachChip(att)));
       bubble.appendChild(attachRow);
     }
 
@@ -5589,6 +5606,69 @@ async function _loadConversationAttachments(convId) {
   }
 }
 
+// ② TASK-0285: 첨부 다운로드 공통 헬퍼(목록 항목 + 버전 이력 행 공유). web 프록시 경로
+// (/api/attachments/{id}/download)로 외부 머신에서도 동작(TASK-0284) — same-origin 쿠키 인증.
+// apiFetch 는 octet-stream 을 text 로 망가뜨리므로 raw fetch + blob 을 쓴다.
+async function _downloadAttachmentById(attId, filename, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await fetch(`/api/attachments/${encodeURIComponent(attId)}/download`, { credentials: "same-origin" });
+    if (!resp.ok) {
+      showToast(resp.status === 403 ? "이 첨부를 다운로드할 권한이 없습니다." : "다운로드할 수 없습니다.", true);
+      return;
+    }
+    const blob = await resp.blob();
+    const objUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objUrl;
+    link.download = filename || "download";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+  } catch (e) {
+    showToast("다운로드 중 오류가 발생했습니다.", true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ② TASK-0285: 버전 이력 펼침 박스 렌더. /api/attachments/{id}/versions 응답(VersionNumber ASC,
+// 구→신)을 최신→구 순으로 표시하고 각 버전을 개별 다운로드할 수 있게 한다.
+function _renderAttachmentVersionsBox(box, versions) {
+  box.innerHTML = "";
+  if (!Array.isArray(versions) || !versions.length) {
+    box.innerHTML = `<div class="attach-list-versions-loading">버전 이력이 없습니다.</div>`;
+    return;
+  }
+  const ordered = [...versions].reverse(); // 최신 버전이 위로.
+  ordered.forEach((v) => {
+    const row = document.createElement("div");
+    row.className = "attach-list-version-row";
+    const vnum = Number(v.version_number || 1);
+    const isAi = Boolean(v.is_assistant_generated);
+    const isLatest = !v.superseded;
+    const tag = document.createElement("span");
+    tag.className = "attach-list-version-tag" + (isAi ? " ai-edited" : "");
+    tag.textContent = `v${vnum}`;
+    const nameEl = document.createElement("span");
+    nameEl.className = "attach-list-version-name";
+    nameEl.title = v.original_filename || "";
+    nameEl.textContent = v.original_filename || "파일";
+    const roleEl = document.createElement("span");
+    roleEl.className = "attach-list-version-role";
+    roleEl.textContent = (isAi ? "AI 수정" : "사용자") + (isLatest ? " · 최신" : "");
+    const dl = document.createElement("button");
+    dl.type = "button";
+    dl.className = "attach-list-version-dl";
+    dl.title = "이 버전 다운로드";
+    dl.textContent = "⬇";
+    dl.addEventListener("click", () => _downloadAttachmentById(v.id, v.original_filename, dl));
+    row.append(tag, nameEl, roleEl, dl);
+    box.appendChild(row);
+  });
+}
+
 async function _loadConversationAttachmentList(convId) {
   const listEl = document.getElementById("attachSidePanelList");
   if (!listEl || !convId) return;
@@ -5613,44 +5693,64 @@ async function _loadConversationAttachmentList(convId) {
     const kindIcon = (k) => ({csv:"📊", xlsx:"📊", pdf:"📄", txt:"📝", image:"🖼️"})[k] || "📎";
     const fmtSize = (b) => b > 1048576 ? `${(b/1048576).toFixed(1)}MB` : b > 1024 ? `${(b/1024).toFixed(0)}KB` : `${b}B`;
     for (const a of arr) {
+      // ② TASK-0285: 각 첨부의 버전 현황 표면화. wrapper(entry)로 감싸 가로 row(item) 아래에
+      // 버전 이력 펼침 박스를 둔다(item 은 flex 가로 정렬이라 직접 자식으로 두면 깨짐).
+      const entry = document.createElement("div");
+      entry.className = "attach-list-entry";
       const item = document.createElement("div");
       item.className = "attach-list-item";
       const statusLabel = a.status === "ingested" ? "읽기 완료" : a.status === "failed" ? "오류" : a.status || "";
+      const verNum = Number(a.version_number || 1);
+      const isAi = Boolean(a.is_assistant_generated);
+      const verCount = Number(a.version_count || 1);
+      let verBadge = "";
+      if (isAi || verNum > 1) {
+        const label = isAi ? `v${verNum} · AI 수정` : `v${verNum}`;
+        const title = isAi ? "AI가 수정한 최신 버전" : `버전 ${verNum}`;
+        verBadge = ` <span class="attach-list-item-ver${isAi ? " ai-edited" : ""}" title="${title}">${escapeHtml(label)}</span>`;
+      }
+      const verToggle = verCount > 1
+        ? ` · <button type="button" class="attach-list-item-vertoggle">버전 ${verCount}개 ▾</button>`
+        : "";
       item.innerHTML = `
         <span class="attach-list-item-icon">${kindIcon(a.kind)}</span>
         <div class="attach-list-item-info">
-          <div class="attach-list-item-name" title="${escapeHtml(a.original_filename || "")}">${escapeHtml(a.original_filename || "알 수 없음")}</div>
-          <div class="attach-list-item-meta">${fmtSize(a.size || 0)}${statusLabel ? " · " + statusLabel : ""}</div>
+          <div class="attach-list-item-name" title="${escapeHtml(a.original_filename || "")}">${escapeHtml(a.original_filename || "알 수 없음")}${verBadge}</div>
+          <div class="attach-list-item-meta">${fmtSize(a.size || 0)}${statusLabel ? " · " + statusLabel : ""}${verToggle}</div>
         </div>
         <button class="attach-list-item-dl" title="다운로드" data-id="${a.id}">⬇</button>
       `;
       const dlBtn = item.querySelector(".attach-list-item-dl");
-      dlBtn.addEventListener("click", async () => {
-        dlBtn.disabled = true;
-        try {
-          // TASK-0284: web 프록시 다운로드(외부 머신도 동작 — MinIO presigned 내부 호스트 회피).
-          // apiFetch 는 octet-stream 을 text 로 망가뜨리므로 raw fetch + blob 을 쓴다(same-origin 쿠키 인증).
-          const resp = await fetch(`/api/attachments/${encodeURIComponent(a.id)}/download`, { credentials: "same-origin" });
-          if (!resp.ok) {
-            showToast(resp.status === 403 ? "이 첨부를 다운로드할 권한이 없습니다." : "다운로드할 수 없습니다.", true);
+      dlBtn.addEventListener("click", () => _downloadAttachmentById(a.id, a.original_filename, dlBtn));
+      entry.appendChild(item);
+
+      // 버전 체인이 2개 이상이면 펼침 토글 — lazy 로 /versions 를 불러 이력 박스를 토글한다.
+      const verToggleBtn = item.querySelector(".attach-list-item-vertoggle");
+      if (verToggleBtn) {
+        let versionsBox = null;
+        verToggleBtn.addEventListener("click", async () => {
+          if (versionsBox) {
+            const hidden = versionsBox.classList.toggle("hidden");
+            verToggleBtn.textContent = `버전 ${verCount}개 ${hidden ? "▾" : "▴"}`;
             return;
           }
-          const blob = await resp.blob();
-          const objUrl = URL.createObjectURL(blob);
-          const link = document.createElement("a");
-          link.href = objUrl;
-          link.download = a.original_filename || "download";
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
-        } catch (e) {
-          showToast("다운로드 중 오류가 발생했습니다.", true);
-        } finally {
-          dlBtn.disabled = false;
-        }
-      });
-      listEl.appendChild(item);
+          verToggleBtn.disabled = true;
+          versionsBox = document.createElement("div");
+          versionsBox.className = "attach-list-versions";
+          versionsBox.innerHTML = `<div class="attach-list-versions-loading">버전 이력을 불러오는 중...</div>`;
+          entry.appendChild(versionsBox);
+          try {
+            const vresp = await apiFetch(`/api/attachments/${encodeURIComponent(a.id)}/versions`);
+            _renderAttachmentVersionsBox(versionsBox, Array.isArray(vresp?.versions) ? vresp.versions : []);
+            verToggleBtn.textContent = `버전 ${verCount}개 ▴`;
+          } catch (e) {
+            versionsBox.innerHTML = `<div class="attach-list-versions-loading">버전 이력을 불러올 수 없습니다.</div>`;
+          } finally {
+            verToggleBtn.disabled = false;
+          }
+        });
+      }
+      listEl.appendChild(entry);
     }
   } catch (exc) {
     listEl.innerHTML = `<div class="attach-list-empty">목록을 불러올 수 없습니다.</div>`;
