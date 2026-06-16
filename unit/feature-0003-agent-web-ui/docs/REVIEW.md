@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260616-0296 [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-16 (TASK-0286 후속 docs-only — PB-0008 시각검증 + 라이브 프롬프트 갱신 evidence)
+- Skip 사유: docs 전용(STATUS/REPORT/TASK/MODIFY/REVIEW). 코드/정적자산/RBAC 무변경 — 본체 적대 보안 검토는 REV-20260616-0295 [SUBAGENT:attach-edit-strip-security] SHIP-WITH-FIXES 담당.
+- 기록 요지: TASK-0286 PB-0008 Windows-browser **PASS**(실 Chrome/148, 배포본 main b884b67). render-injection computed 실측 — `markdownToHtml`(diff + attachment-edit 블록 텍스트) → fullBodyHidden=true(전체 본문 미노출)·diffPresent=true(변경점 유지)·`.attachment-edit-note`("📎 수정된 첨부 파일 (filename)", rgb(37,99,235))·attachEditBlockGone=true. 백엔드 strip=pytest 10 PASS. 라이브 WebSystemPrompts global row 에 DELIVERING 섹션 멱등 append(6837→8536). 실 e2e 는 LLM 의존이라 합성 검증, 실사용 시 자연 재현. evidence `artifacts/pb0008-task0286/attach-edit-diff-only.png`.
+
 ## REV-20260616-0295 [SUBAGENT:attach-edit-strip-security] — SHIP-WITH-FIXES
 - Date: 2026-06-16 (TASK-0286 — assistant 첨부 수정본 전달 시 전체 본문 노출 제거 + 변경점만(diff) + 파일 명시 전달)
 - 대상: agent_core SYSTEM_PROMPT(attachment-edit 안내), app.py `_strip_attachment_edit_blocks`/`_update_assistant_message_content` + ask 후처리 strip, 프론트 `enhanceAttachmentEditBlocks`(app.js/share.js).

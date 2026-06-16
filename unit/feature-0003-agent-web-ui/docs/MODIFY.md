@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260616-0296 (TASK-0286 후속 docs-only — PB-0008 + 라이브 프롬프트 evidence)
+- Date: 2026-06-16
+- Scope: docs 전용(STATUS/REPORT/TASK/MODIFY/REVIEW) + evidence 이미지. 코드/정적자산 0.
+- 변경: TASK-0286 "잔여: 머지→배포→라이브 프롬프트→PB-0008" 을 **완료(PR #278 머지 main b884b67·web+ask-worker 재배포·라이브 WebSystemPrompts global row append·PB-0008 PASS)** 로 갱신. PB-0008 render-injection 실측(fullBodyHidden·diff 유지·📎 note) + 라이브 row 6837→8536 기록. evidence `artifacts/pb0008-task0286/attach-edit-diff-only.png` 추가.
+- 검증: PB-0008 실측(win-browser eval render-injection + screenshot). 코드 무변경(회귀 0).
+- Files: docs/STATUS.md, unit/feature-0003-agent-web-ui/docs/{TASK,REPORT,MODIFY,REVIEW}.md, artifacts/pb0008-task0286/attach-edit-diff-only.png
+
 ## CHG-20260616-0295 (TASK-0286 — 첨부 수정본 전달: 전체 본문 노출 제거 + 변경점만 + 파일 명시 전달)
 - Date: 2026-06-16
 - Scope: feature-0003-agent-web-ui(app.py + app.js/share.js/styles.css/share.css/index.html/share.html) + feature-0002-agent-core(agent_core.py SYSTEM_PROMPT). RBAC 카탈로그/스키마/엔드포인트 shape 무변경.

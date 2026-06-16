@@ -18,7 +18,7 @@ source_of_truth: true
   - [x] C. app.js/share.js `enhanceAttachmentEditBlocks`(블록→안내 note) + `.attachment-edit-note` CSS(메인·share). 캐시버스터 `?v=20260616-task0286-attach-edit-diff`.
   - [x] 단위 테스트 `test_task0286_attach_edit_strip.py` 10 PASS(embedded-fence 누출/절단 회귀 포함) + make test 컨테이너 전체 회귀 0 + 정적검증.
   - [x] outside-voice 적대 보안 리뷰 SHIP-WITH-FIXES(REV-20260616-0295, MAJOR=본문 내 ``` 절단 누출 → 라인 기반 파서 흡수; IDOR/XSS/멱등/재컨텍스트 refute).
-- [ ] (잔여) 머지 → web 재배포 + **라이브 WebSystemPrompts global row 멱등 갱신**(상수 편집만으론 무반영) → PB-0008.
+- [x] 머지(PR #278 → main b884b67) → web+ask-worker 재빌드(baked 확인) + **라이브 WebSystemPrompts global row 멱등 append**(6837→8536, SHOWING CHANGES 다음 삽입, 백업) → **PB-0008 PASS**(render-injection: fullBodyHidden·diff 유지·📎 note rgb(37,99,235)). 실 e2e(첨부 업로드→assistant 수정→strip)는 LLM 의존이라 합성 render-injection + 백엔드 pytest 10 PASS 로 검증, 실사용 시 자연 재현. evidence `artifacts/pb0008-task0286/attach-edit-diff-only.png`. CHG/REV-20260616-0296.
 
 ## TASK-0285 — 첨부 버전 현황 표면화 ②③④ (REQ-20260616-0285, AC-0525~0527, Major §12.3)
 - 보고(사용자): TASK-0275(assistant 첨부 수정→버전 관리) 배포 후 보완 — ② `'+' > 첨부파일 목록`의 각 파일 버전 현황 표시, ③ assistant 말풍선 안에 첨부 명시 표시(사용자 말풍선처럼), ④ assistant 요청 시 진행 단계에 첨부 수정 명시 출력. (쿼리 리뷰 워크플로① 는 사용자 결정으로 후속 cycle.)
