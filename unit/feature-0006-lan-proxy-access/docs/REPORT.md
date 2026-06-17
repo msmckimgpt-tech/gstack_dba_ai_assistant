@@ -9,6 +9,14 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-06-17 TASK-0299 완료 — 설치 스크립트 실행 버그 2종 수정** (CHG-20260617-0310,
+REV-20260617-0310, REQ-0286, AC-0562~0563, **Minor** §12.3). 라이브에서 Windows `.bat` 실행 시
+`echo`→`cho`·base64 명령실행 파싱붕괴 제보. ①LF+UTF-8+`chcp 65001`→cmd.exe 코드페이지 오프셋
+상실 → ASCII전용+CRLF+chcp제거(trust-bundle.sh CRLF출력+비-ASCII die). ②지문 비교가 PEM **파일**
+해시 vs 인증서 **DER** 지문이라 항상 불일치(잠복) → DER SHA-256(win X509Certificate2.RawData, mac
+openssl -fingerprint)로 통일. cmd.exe 실측: neuter 후 echo/지문/디코드/지문검증(ACTUAL==FP_HEX)
+전구간 정상. 배포=`bin/trust-bundle.sh` 재실행(file_server 즉시 서빙).
+
 **2026-06-17 TASK-0298 완료 — 테스터 Root CA 원클릭 설치 번들** (CHG-20260617-0309,
 REV-20260617-0309, REQ-0285, AC-0557~0561, **Major** §12.3, ADR-LAN-0004). 테스터 PC 마다
 수동 인증서 이동 번거로움 해소. web 서버가 `http://<host>/trust/` 에서 OS별 단일 자가완결 설치

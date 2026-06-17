@@ -8,6 +8,25 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260617-0310 [SKIPPED:minor-bugfix] — 설치 스크립트 실행 버그 2종 (TASK-0299)
+- Date: 2026-06-17
+- Change: CHG-20260617-0310 (REQ-0286, AC-0562~0563, **Minor** §12.3). 라이브 제보 버그 수정.
+- 자체 점검:
+  1. **버그① 재현·수정 실측** — cmd.exe 로 깨진 .bat 재현(`echo`→`cho`, base64 명령실행) →
+     ASCII+CRLF+no-chcp 수정본을 cmd.exe 로 재실행, 파싱 정상·`[OK]` 도달 확인.
+  2. **버그② 회귀 테스트가 잡음** — cmd.exe 검증 중 지문 mismatch 노출(PEM 파일해시 vs DER
+     지문). DER SHA-256 비교로 수정 후 `ACTUAL==FP_HEX` 통과 확인. (검증 절차가 잠복 버그를
+     적발한 사례.)
+  3. **회귀 가드** — `trust-bundle.sh` 에 .bat 비-ASCII 바이트 검출 die 추가(향후 템플릿에
+     비-ASCII 가 들어오면 빌드 실패).
+  4. **macOS .command** — `base64 -D`(macOS 전용 옵션)이라 Linux 단위 실행 불가, 지문 로직은
+     openssl 기반으로 결정적(FP_HEX 와 동일 계산식). macOS 실기 검증은 운영자 영역.
+  5. **보안 불변** — 지문 재검증 로직이 오히려 정상화(이전엔 항상 중단). 신뢰 부트스트랩 모델
+     (지문 노출+out-of-band 공유) 불변. 앱/인증/RBAC 무관.
+- Outside-voice: **SKIPPED** — Minor 버그픽스(인코딩/줄바꿈/해시비교), 앱 코드 무관, RBAC 무관.
+- Risk: cmd.exe 의 본 검증은 자가상승/certutil 을 neuter 한 상태(관리자·실 설치는 미실행). 실제
+  certutil 설치는 Windows 관리자 환경에서 1회 확인 권장(운영자/테스터).
+
 ## REV-20260617-0309 [SKIPPED:non-RBAC-infra] — 테스터 Root CA 원클릭 설치 번들 (TASK-0298)
 - Date: 2026-06-17
 - Change: CHG-20260617-0309 (REQ-0285, AC-0557~0561, **Major** §12.3, ADR-LAN-0004).

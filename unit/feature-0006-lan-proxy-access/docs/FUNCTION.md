@@ -32,6 +32,13 @@ Caddy TLS 프록시 설정과 Windows 포트 프록시 스크립트를 관리한
   URL 접속 → 스크립트 실행(승인 1회) 로 끝낸다. (브라우저 방문만으로 신뢰 저장소에 자동 설치하는
   것은 OS/브라우저 보안 경계상 불가능 — 사용자 승인 필수.) Root CA 배포의 신뢰 부트스트랩 한계는
   SHA-256 지문 노출 + 스크립트 지문 재검증 + 운영자 out-of-band 지문 공유로 완화한다.
+- REQ-0286 (TASK-0299, **Minor** §12.3 — 설치 스크립트 실행 버그 2종 수정): 라이브에서 Windows
+  `.bat` 실행 시 `echo`→`cho`·base64 가 명령으로 실행되는 파싱 붕괴 + 지문 항상 불일치가 발생했다.
+  ① **인코딩/줄바꿈**: `.bat` 가 LF + UTF-8 + `chcp 65001` → cmd.exe 가 코드페이지 전환 후 파일
+  바이트 오프셋을 잃어 라인 파싱 붕괴. → ASCII 전용 + CRLF + `chcp` 제거(코드페이지 무관). ②
+  **지문 비교 오류**: 스크립트가 PEM **파일** 해시(`Get-FileHash`/`shasum`)를 인증서 **DER** 지문
+  (`openssl -fingerprint`)과 비교 → 항상 불일치. → 인증서 DER SHA-256(Windows X509Certificate2
+  RawData, macOS `openssl x509 -fingerprint`)으로 통일.
 
 ## 3. In Scope
 - `src/caddy/Caddyfile`
@@ -98,6 +105,8 @@ Caddy TLS 프록시 설정과 Windows 포트 프록시 스크립트를 관리한
 - AC-0559 (REQ-0285): 설치 스크립트는 단일 자가완결 파일(Root CA PEM base64 임베드). Windows `.bat` = 자가-상승 + 지문 표시/재검증 + `certutil -addstore -f Root`. macOS `.command` = 지문 표시/재검증 + `sudo security add-trusted-cert -d -r trustRoot -k System.keychain`. 설치 전 임베드 인증서의 SHA-256 이 기대값과 불일치하면 중단.
 - AC-0560 (REQ-0285): `http://{$WEB_PUBLIC_HOST}/trust/` 다운로드 페이지가 SHA-256 지문(out-of-band 대조 안내) + OS 감지 다운로드 + Firefox 자체 저장소 + hosts 안내를 제공한다.
 - AC-0561 (REQ-0285): 라이브 `http://<host>/trust/`(평문, index/스크립트/`rootCA.crt`) = HTTP 200, bare `/trust` → 301 `/trust/`, 그 외 HTTP 경로 → HTTPS 301, 앱 `:443` reverse_proxy = 200 (번들 추가가 앱 라우팅 무회귀).
+- AC-0562 (REQ-0286 / TASK-0299): `install-trust-windows.bat` 는 **ASCII 전용 + CRLF 줄바꿈 + `chcp` 없음**. `bin/trust-bundle.sh` 가 .bat 를 CRLF 로 출력하고 비-ASCII 바이트 검출 시 die. cmd.exe 가 라인 파싱 붕괴(`echo`→`cho`, base64 가 명령 실행) 없이 실행한다(실측: cmd.exe 로 echo/지문표시/base64 디코드/지문검증 전 구간 정상). `.command`/​`index.html` 은 LF 유지.
+- AC-0563 (REQ-0286): 설치 스크립트의 지문 재검증은 인증서 **DER SHA-256**(= `openssl x509 -fingerprint -sha256`, 브라우저 표시 지문)을 비교한다 — PEM **파일** 해시가 아님. Windows = `X509Certificate2.RawData` 의 SHA-256, macOS = `openssl x509 -noout -fingerprint -sha256`. 정상 인증서에서 `ACTUAL == FP_HEX` 로 통과(이전엔 항상 불일치로 중단되던 잠복 버그 수정).
 
 ## 12. Observability
 - Caddy 로그: `docker compose logs caddy`
