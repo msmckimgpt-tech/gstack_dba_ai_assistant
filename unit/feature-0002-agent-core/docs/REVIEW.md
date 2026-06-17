@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260617T082131-ai-claude-account-insight-recall [SUBAGENT:2-lens outside-voice — 보안(cross-account/PII) + 정합성(코드주장/임베딩dim/실현성)] — SHIP-WITH-FIXES (설계 단계)
+- 대상: 설계 `DESIGN-account-insight-recall.md` (account 스코프 cross-conversation 인사이트 회상). 구현 전 적대적 설계 검증.
+- **보안 렌즈**: NOT-SHIP → 가드 반영 시 SHIP-WITH-FIXES. **BLOCKER 2건(코드근거)**: ① fork 가 소스(타 계정) 메시지를 복사+owner=포크계정 재귀속(app.py:11156/11163/11176) → owner 격리≠콘텐츠 출처 격리(cross-account 누출). ② `_mask_rows` 호출처 0건(kb_scope.py:270 정의만) → summary/answer 가 raw PII 포함 → 회상 시 PII 전파. 가드 G1(fork 제외)·G2(owner NOT NULL+sentinel deny+헬퍼 import 금지)·G3(값-패턴 PII 마스커 또는 PII-free 구조화 인사이트만)·G4(owner 2차 재검증) 도출.
+- **정합성 렌즈**: SOUND-WITH-FIXES. 주장 1~7 본질 TRUE. **중대 단순화**: 신규 테이블/account_id 컬럼 불필요 — `core_conversations.owner_account_id`(idx)로 conv_ids 도출해 기존 벡터필터에 주입. 정정: 임베딩 dim=**1536 text-embedding-3-small**(kb_backend 주석 vector(1024) Titan v2=stale 오기, 본 cycle 정정). cross-schema JOIN schema-qualify 필수(ADR-0027). runtime MySQL fallback 시 JOIN 불가 fail-closed.
+- **반영**: 설계 v2 = 신규테이블 0 + 가드 G1~G4 + flag default OFF + shadow-first. **Phase 1(본 cycle)=회상 경로 shadow 만 구현(INJECT OFF), G1·G3 는 INJECT 활성 전 선행 필수**로 명시(범위 분리). 부수발견 R4(`_mask_rows` 미호출=기존 PII 결함)·R5(convo_search 계정 스코핑) 별도 처리 후보로 기록.
+
 ## REV-20260617-0310 [SUBAGENT:adversarial — 세션 poison / fail-closed 우회 / MySQL 골든 / SHOWPLAN 파싱 / 권한·계층 / 테스트기만] — SHIP-WITH-FIXES
 - Date: 2026-06-17
 - Cycle: TASK-0299 (MSSQL 사전 부하추정 SET SHOWPLAN_ALL — MySQL EXPLAIN 등가, Major §12.3). datasource 실행/보안 경로 변경 → DESIGN-multi-datasource §11 + [[feedback_outside_voice_for_rbac]] 정합으로 outside-voice 필수.
