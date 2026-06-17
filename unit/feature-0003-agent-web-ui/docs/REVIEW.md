@@ -3022,3 +3022,22 @@ source_of_truth: true
 - Skip 근거: 코드·자산 변경 0 (TASK-0292 본 변경은 CHG-0303/REV-0303 에서 이미 적대 평가 SKIP·머지·배포). 본 cycle 은 PB-0008 PASS 결과와 배포 사실을 정본 문서에 기록하는 docs-only. 신규 보안/회귀 표면 없음.
 - 검증 요약: PB-0008 Windows-browser PASS — computed `overflowY=auto`·`minHeight=0px`·foot `flexShrink=0`; 짧은 viewport(240px)에서 `.admin-tabs` scrollHeight 572 > clientHeight 134 → scrollable, 하단 '설정' 탭 스크롤 도달(settingsReachable=true), foot/brand 고정.
 - Cross-ref: CHG-20260616-0304 / TASK-0292 / AC-0541.
+
+## REV-20260616-0305 [SUBAGENT:audit-dashboard-scope]
+- Date: 2026-06-16
+- Cycle: TASK-0293 (감사 로그 `.own` Actor-only + 대시보드 위젯 데이터 권한 게이팅), **Critical §12.3** — 감사 가시성/데이터 노출 경계 변경.
+- Trigger: §18.8 + [[feedback_outside_voice_for_rbac]] — audit 스코프 + RBAC 데이터 경계 변경. 적대적 보안 리뷰(general-purpose outside voice).
+- Verdict: **SHIP** (BLOCKER 0, MAJOR 0, MINOR 1).
+- 8항목 코드대조 결론(전부 안전):
+  - **① audit `.own` 완전성**: `_audit_build_self_filter_sql`=`ActorAccountId=%s` 단일, 호출처 전수(list/single/profile list·single/resources facet inline) Actor-only 일관, actors facet `.own`=본인 actor 단건. **잔존 `OR TargetAccountId` SQL 분기 0건**(TargetAccountId 잔존은 DDL/INSERT/SELECT projection 만).
+  - **② under-exposure 부작용 무**: 본인 actor 이벤트(ask/share 등)는 ActorAccountId=self 기록이라 그대로 노출. single-event 404 byte-equal 유지.
+  - **③ `.any` 무영향**: self filter 는 `if scope=="own"` 가드 안만 — `.any` 전체 조회.
+  - **④ 위젯 게이팅 완전성**: catalog·widgets 동일 `_actor_can_see_widget` 경계, `_isolate` 미허가 데이터 미계산, PG 블록도 permitted 게이트.
+  - **⑤ superset**: products/datasources 리스트 권한 read|manage OR.
+  - **⑥ conversations 권한 적정**: cross-account COUNT(*) 집계 → conversation.list.any.
+  - **⑦ prefs 우회 불가**: overview permitted 가 유일·실효 경계 + 프런트 catalog 권위 렌더 이중 차단.
+  - **⑧ grant_health/pending**: 데이터원 엔드포인트 console.access 게이트, pending=순수 클라.
+- 흡수(MINOR): profile audit 엔드포인트 docstring "Actor or Target" → Actor-only 갱신(동작 무해, 주석만). **흡수 완료**.
+- Verification: test_dashboard_overview.py + test_audit_rbac.py smoke + make test 컨테이너 회귀 0.
+- Residual: 머지 → 배포(web 재빌드) → 라이브 재검증(`.own` target row 부재·대시보드 리소스 위젯 데이터 0).
+- Cross-ref: CHG-20260616-0305 / TASK-0293 / TASK-0288(선행).

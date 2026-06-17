@@ -4032,3 +4032,12 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 테스트: jsdom `verify_admin_tab_gating.mjs` 34 PASS + make test 컨테이너 전체 회귀 0(영향 테스트 4개 신규 계약 갱신: test_datasource_delete·test_db_insights·test_insight_coverage·test_permission_dependency_map) + node --check + py ast.parse.
 - [x] outside-voice 적대 보안 리뷰 SHIP(REV-20260616-0299) — bypass·lockout·superset·group 마이그레이션 enforce-무관·override 회수·IDOR 7항목 코드대조 안전. MINOR 2(datasource 탭 버튼 게이트 정합[흡수]·product-datasource 바인딩 console.manage 유지[accepted])+NIT 1(docstring[흡수]).
 - [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → 라이브 재검증(테스트계정 products/datasources 403 전환·탭 숨김) → PB-0008 Windows-browser 시각검증 → 마감.
+
+### TASK-0293 — 감사 로그 `.own` Actor-only + 대시보드 위젯 데이터 권한 게이팅 (Critical §12.3, 2026-06-16)
+- 사용자 보고(TASK-0288 후속): ① 감사 로그에 Actor 가 아닌 **TargetAccount 가 자신**일 경우의 타인 행위(관리자 조치)도 노출됨. ② 대시보드에서 권한 없는 항목의 정보가 그대로 전달됨 — UI 접근뿐 아니라 데이터 전달에 권한검증 필요.
+- 사용자 결정(2026-06-16): 감사 `.own` = **Actor-only**(내가 수행한 행위만; target=self 제외). 기존 TASK-0073 E1 '사용자 결정 B'(admin→user 투명성) 반전.
+- [x] Part A: `_audit_build_self_filter_sql` → `WHERE ActorAccountId = :self`(OR TargetAccountId 제거). resources facet `.own` raw inline 도 Actor-only. list/single/profile×2/facet 전 경로 정합(공유 헬퍼). docstring/주석/SECURITY.md §9.1 갱신.
+- [x] Part B: `_DASHBOARD_WIDGETS` coarse console.access → 리소스별 권한(accounts→account.read, roles→role.read, products→[product.read|manage], datasources→[datasource.read|manage], conversations→conversation.list.any). 신규 `_actor_can_see_widget`(OR superset). overview catalog + `_isolate` 데이터 양쪽 게이팅. usage/audits/grant_health/pending 유지.
+- [x] 테스트: test_dashboard_overview.py 갱신(console-only→리소스 위젯 부재·신규 superset 게이팅·admin 전위젯·default_prefs·window propagation 5케이스) + test_audit_rbac.py smoke(s3 Actor-only·s3a target-hidden 반전) + make test 컨테이너 회귀 0.
+- [x] outside-voice 적대 보안 리뷰 SHIP(REV-20260616-0305) — audit 6경로 OR-Target 잔존 0·under-exposure 무·`.any` 무영향·위젯 catalog/widgets/프런트 3중 정합·prefs 우회 불가 8항목 코드대조. MINOR=profile docstring(흡수).
+- [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → 라이브 재검증(테스트계정 .own target row 부재·console.access-only 대시보드 리소스 위젯 데이터 0) → 마감.

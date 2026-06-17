@@ -421,7 +421,7 @@ PERMISSION_DEFINITIONS = (
         "group": "datasource",
     },
     # TASK-0073 Phase A3 (REQ-20260519-0001, Critical §12.3): audit 권한 4건.
-    # `.own` 은 모든 role (dba 포함) auto-grant — 본인 actor/target audit row 조회.
+    # `.own` 은 모든 role (dba 포함) auto-grant — 본인이 actor 인 audit row 조회(TASK-0293 Actor-only).
     # `.any` 는 admin/dba — 전체 계정 audit row 조회 (`.any` superset semantics 정합).
     # `.export` 는 admin/dba — CSV / JSON dump 가능 (PII bulk export).
     # `.purge` 는 admin only — retention 초과 chunked PK 삭제 (자가 audit 동반).
@@ -533,7 +533,7 @@ SEED_ROLE_DEFINITIONS = (
             "conversation.list.own",
             "conversation.read.own",
             # TASK-0073 Phase A3: 모든 role 에 audit.read.own auto-grant
-            # (E1 self filter — 본인 actor/target 이벤트 조회).
+            # (self filter — 본인이 actor 인 이벤트 조회, TASK-0293 Actor-only).
             "audit.read.own",
             # TASK-0094 Sprint 1 Phase 3 (D21, R-F14): pending 은 read.own 만.
             # upload 거부 + bytes download 는 application-level (Phase 5 endpoint) 차단.
@@ -18931,8 +18931,9 @@ def _audit_user_action(
 # REQ-20260519-0001 (TASK-0073 Phase A4, Critical §12.3): Audit log endpoints.
 # =============================================================================
 # 5 read endpoint + 1 chunked purge endpoint.
-# Eng review E1: `.own` SQL filter = `WHERE ActorAccountId=:self OR TargetAccountId=:self`
-# (Actor OR Target — admin password-reset 등 admin→user 이벤트가 user 본인 audit 에 보임).
+# TASK-0293 (사용자 결정 2026-06-16): `.own` SQL filter = `WHERE ActorAccountId=:self`
+# (Actor-only — 본인이 수행한 행위만). 기존 Actor OR Target (E1 / 사용자 결정 B) 반전:
+# 내가 단지 대상인 admin→user 이벤트(비번 초기화 등)는 audit.read.any 만 조회.
 # Eng review E8: chunked PK purge — `ORDER BY Id LIMIT N` cursor, 각 chunk = 별 tx,
 # idempotency_key = hash(cutoff, started_at_minute), start + complete self-audit row.
 
@@ -18979,8 +18980,14 @@ def _audit_row_to_dict(row: dict) -> dict[str, Any]:
 
 
 def _audit_build_self_filter_sql(account_id: int) -> tuple[str, tuple[Any, ...]]:
-    """E1 self filter: `ActorAccountId = :self OR TargetAccountId = :self`."""
-    return ("(ActorAccountId = %s OR TargetAccountId = %s)", (int(account_id), int(account_id)))
+    """`.own` self filter: `ActorAccountId = :self` (본인이 **수행한** 행위만).
+
+    TASK-0293 (사용자 결정 2026-06-16): 기존 `ActorAccountId OR TargetAccountId`
+    (TASK-0073 E1 / 사용자 결정 B — admin→user 이벤트 투명성)를 반전. "내 감사
+    로그" 는 내가 actor 인 행위만 노출하고, 내가 단지 대상(target)인 타인의 행위
+    (관리자의 비밀번호 초기화·역할 변경·계정 비활성화 등)는 노출하지 않는다.
+    그런 이벤트는 `audit.read.any` 보유자만 조회한다(로깅 자체는 유지). SECURITY.md §9.1."""
+    return ("ActorAccountId = %s", (int(account_id),))
 
 
 def _audit_resolve_read_scope(actor: dict[str, Any]) -> str:
@@ -19773,24 +19780,37 @@ def admin_archived_conversations(request: Request) -> JSONResponse:
 # TASK-0218: 카탈로그 순서 = 기본 위계(CloudWatch 운영 위계). 활동/비용/이상 KPI(추세·
 # sparkline 보유)를 상단에, 변동 적은 인벤토리(제품/데이터소스/역할)를 하단에. 저장된
 # per-account prefs 가 있으면 그쪽 순서가 우선(이 순서는 기본값/신규 위젯 합류 기준).
+# TASK-0293 (사용자 결정 2026-06-16): 위젯 데이터 노출도 리소스별 권한으로 게이팅한다.
+# 기존엔 conversations/accounts/products/datasources/roles 가 전부 console.access 로만
+# 게이팅돼, 콘솔 진입권만 있으면 (계정/역할/제품/데이터소스 탭은 막혀도) 대시보드 집계
+# 데이터가 그대로 노출됐다. 각 위젯 permission 을 해당 리소스 조회 권한으로 교체.
+# `permission` 은 단일 코드 또는 리스트(OR — manage⊇read superset, _actor_can_see_widget).
 _DASHBOARD_WIDGETS: tuple[dict, ...] = (
-    {"key": "conversations", "title": "대화·활동",    "permission": "console.access",     "source": "server"},
-    {"key": "usage",         "title": "LLM 사용량",   "permission": "console.usage.read", "source": "server"},
-    {"key": "audits",        "title": "감사 활동",    "permission": "audit.read.any",     "source": "server"},
-    {"key": "grant_health",  "title": "첨부 DB 권한", "permission": "console.access",     "source": "client"},
-    {"key": "accounts",      "title": "계정",         "permission": "console.access",     "source": "server"},
-    {"key": "products",      "title": "제품",         "permission": "console.access",     "source": "server"},
-    {"key": "datasources",   "title": "데이터소스",   "permission": "console.access",     "source": "server"},
-    {"key": "roles",         "title": "역할",         "permission": "console.access",     "source": "server"},
-    {"key": "pending",       "title": "미저장 변경",  "permission": "console.access",     "source": "client"},
+    {"key": "conversations", "title": "대화·활동",    "permission": "conversation.list.any",            "source": "server"},
+    {"key": "usage",         "title": "LLM 사용량",   "permission": "console.usage.read",               "source": "server"},
+    {"key": "audits",        "title": "감사 활동",    "permission": "audit.read.any",                   "source": "server"},
+    {"key": "grant_health",  "title": "첨부 DB 권한", "permission": "console.access",                   "source": "client"},
+    {"key": "accounts",      "title": "계정",         "permission": "account.read",                     "source": "server"},
+    {"key": "products",      "title": "제품",         "permission": ["product.read", "product.manage"], "source": "server"},
+    {"key": "datasources",   "title": "데이터소스",   "permission": ["datasource.read", "datasource.manage"], "source": "server"},
+    {"key": "roles",         "title": "역할",         "permission": "role.read",                        "source": "server"},
+    {"key": "pending",       "title": "미저장 변경",  "permission": "console.access",                   "source": "client"},
 )
 _DASHBOARD_WIDGET_KEYS: frozenset = frozenset(w["key"] for w in _DASHBOARD_WIDGETS)
 _DASHBOARD_PREF_VERSION = 1
 
 
+def _actor_can_see_widget(actor: dict, widget: dict) -> bool:
+    """위젯 표시/데이터 권한 검사. `permission` 이 리스트면 하나라도 보유 시 True
+    (TASK-0293: product/datasource 의 read|manage superset 게이팅 — _account_has_any_permission)."""
+    perm = widget.get("permission")
+    perms = perm if isinstance(perm, (list, tuple)) else (perm,)
+    return _account_has_any_permission(actor, *[str(p) for p in perms if p])
+
+
 def _dashboard_default_prefs(actor: dict) -> dict:
     """actor 가 권한을 보유한 위젯만 기본 표시(카탈로그 순서)."""
-    keys = [w["key"] for w in _DASHBOARD_WIDGETS if _account_has_permission(actor, w["permission"])]
+    keys = [w["key"] for w in _DASHBOARD_WIDGETS if _actor_can_see_widget(actor, w)]
     return {
         "version": _DASHBOARD_PREF_VERSION,
         "widgets": [{"key": k, "visible": True, "order": i} for i, k in enumerate(keys)],
@@ -20168,7 +20188,7 @@ def admin_overview(request: Request) -> JSONResponse:
         catalog = [
             {"key": w["key"], "title": w["title"], "source": w["source"]}
             for w in _DASHBOARD_WIDGETS
-            if _account_has_permission(actor, w["permission"])
+            if _actor_can_see_widget(actor, w)
         ]
         permitted = {c["key"] for c in catalog}
         widgets: dict = {}
@@ -20400,8 +20420,8 @@ def profile_llm_usage(request: Request) -> JSONResponse:
 def list_audit_events(request: Request) -> JSONResponse:
     """REQ-20260519-0001 (TASK-0073 Phase A4): audit event 조회 (filter + cursor).
 
-    권한: `audit.read.own` 또는 `audit.read.any`. `.own` 은 `WHERE ActorAccountId=:self
-    OR TargetAccountId=:self` 강제 (E1). `.any` 는 전체 row 조회.
+    권한: `audit.read.own` 또는 `audit.read.any`. `.own` 은 `WHERE ActorAccountId=:self`
+    강제 (TASK-0293 Actor-only — 본인 수행 행위만). `.any` 는 전체 row 조회.
 
     Query params: action_code / resource_type / actor_account_id / actor_type / from_at /
     to_at / q (ActionCode + ResourceId substring) / cursor (Id) / limit (≤500).
@@ -20726,13 +20746,14 @@ def list_audit_resources(request: Request) -> JSONResponse:
             return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
         cur = conn.cursor(dictionary=True)
         try:
-            # `.own` 사용자도 본인 row 의 resource_type 만 — extra SQL 분기.
+            # `.own` 사용자도 본인이 actor 인 row 의 resource_type 만 — extra SQL 분기.
+            # TASK-0293: Actor-only (TargetAccountId 제외 — _audit_build_self_filter_sql 정합).
             if scope == "own":
                 cur.execute(
                     "SELECT DISTINCT ResourceType FROM WebAuditEvents "
-                    "WHERE ActorAccountId = %s OR TargetAccountId = %s "
+                    "WHERE ActorAccountId = %s "
                     "ORDER BY ResourceType ASC LIMIT 100",
-                    (int(account["id"]), int(account["id"])),
+                    (int(account["id"]),),
                 )
             else:
                 cur.execute(
@@ -20924,8 +20945,8 @@ async def purge_audit_events(request: Request) -> JSONResponse:
 def get_audit_event(event_id: int, request: Request) -> JSONResponse:
     """REQ-20260519-0001 (TASK-0073 Phase A4): audit event 단건 detail.
 
-    `.own` 보유자는 ActorAccountId/TargetAccountId 가 본인일 때만 조회 가능 (404
-    metadata leak 차단 — 권한 부족 시 무조건 404, byte-equal 응답).
+    `.own` 보유자는 ActorAccountId 가 본인일 때만 조회 가능 (TASK-0293 Actor-only;
+    404 metadata leak 차단 — 권한 부족 시 무조건 404, byte-equal 응답).
     """
     if event_id <= 0:
         return _json_error("invalid event_id", 400)
@@ -21065,8 +21086,8 @@ def list_profile_audit_events(request: Request) -> JSONResponse:
 def get_profile_audit_event(event_id: int, request: Request) -> JSONResponse:
     """REQ-20260520-0004 (TASK-0089): profile drawer audit detail.
 
-    `.own` 강제 (Actor or Target = self) — `.any` 보유자도 본인 row 만. 권한 부족
-    시 무조건 404 (byte-equal, metadata leak 차단 — TASK-0073 Eng E1 정합).
+    `.own` 강제 (Actor = self — TASK-0293 Actor-only) — profile drawer 는 본인이 수행한
+    행위만. 권한 부족 시 무조건 404 (byte-equal, metadata leak 차단).
     """
     if event_id <= 0:
         return _json_error("invalid event_id", 400)

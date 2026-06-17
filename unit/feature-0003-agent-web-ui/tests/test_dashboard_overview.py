@@ -81,8 +81,10 @@ def _patch_common(monkeypatch, actor):
 
 # ── S1: overview RBAC 스코프 ─────────────────────────────────────────────────
 
-def test_overview_operator_excludes_privileged_widgets(monkeypatch):
-    """console.access 만 가진 operator: usage/audits 위젯이 catalog/widgets 에 없어야 함."""
+def test_overview_console_only_excludes_resource_widgets(monkeypatch):
+    """TASK-0293: console.access 만 가진 actor 는 usage/audits 뿐 아니라
+    accounts/products/datasources/roles/conversations 위젯도 catalog/widgets 에 없어야 함
+    (리소스별 권한 게이팅 — 권한 경계 = 데이터 노출 경계)."""
     operator = {"id": 5, "permissions": {"console.access": True}}
     _patch_common(monkeypatch, operator)
 
@@ -90,25 +92,44 @@ def test_overview_operator_excludes_privileged_widgets(monkeypatch):
     body = _body(resp)
 
     catalog_keys = {c["key"] for c in body["catalog"]}
-    # 권한 경계: 미보유 위젯은 카탈로그·데이터 둘 다에서 부재
-    assert "usage" not in catalog_keys
-    assert "audits" not in catalog_keys
-    assert "usage" not in body["widgets"]
-    assert "audits" not in body["widgets"]
-    # console.access 로 볼 수 있는 위젯은 존재
-    assert "accounts" in catalog_keys
+    for k in ("usage", "audits", "accounts", "products", "datasources", "roles", "conversations"):
+        assert k not in catalog_keys, f"{k} 위젯이 console.access 만으로 노출됨"
+        assert k not in body["widgets"], f"{k} 데이터가 console.access 만으로 노출됨"
+    # console.access 로 볼 수 있는 client 위젯(grant_health/pending)만 catalog 에 남음
+    assert "grant_health" in catalog_keys
+    assert "pending" in catalog_keys
+
+
+def test_overview_resource_widgets_gated_by_resource_permission(monkeypatch):
+    """TASK-0293: account.read 보유자는 accounts 위젯만, 미보유 리소스 위젯은 부재.
+    product.manage(read 없이)도 products 위젯 노출 — superset(manage⊇read)."""
+    actor = {"id": 7, "permissions": {
+        "console.access": True, "account.read": True, "product.manage": True}}
+    _patch_common(monkeypatch, actor)
+
+    body = _body(app.admin_overview(_FakeRequest()))
+    catalog_keys = {c["key"] for c in body["catalog"]}
+    assert "accounts" in catalog_keys          # account.read
     assert "accounts" in body["widgets"]
-    assert "conversations" in body["widgets"]  # console.access → PG 대화 위젯 표시
+    assert "products" in catalog_keys          # product.manage (read 의 superset)
+    assert "datasources" not in catalog_keys   # datasource 권한 없음
+    assert "roles" not in catalog_keys         # role.read 없음
+    assert "conversations" not in catalog_keys  # conversation.list.any 없음
 
 
-def test_overview_admin_includes_privileged_widgets(monkeypatch):
-    """모든 권한 admin: usage/audits 위젯이 catalog/widgets 에 등장."""
+def test_overview_admin_includes_all_widgets(monkeypatch):
+    """모든 권한 admin: 전 server 위젯이 catalog/widgets 에 등장."""
     admin = {
         "id": 1,
         "permissions": {
             "console.access": True,
             "console.usage.read": True,
             "audit.read.any": True,
+            "account.read": True,
+            "role.read": True,
+            "product.read": True,
+            "datasource.read": True,
+            "conversation.list.any": True,
         },
     }
     _patch_common(monkeypatch, admin)
@@ -117,10 +138,11 @@ def test_overview_admin_includes_privileged_widgets(monkeypatch):
     body = _body(resp)
 
     catalog_keys = {c["key"] for c in body["catalog"]}
-    assert "usage" in catalog_keys
-    assert "audits" in catalog_keys
+    for k in ("usage", "audits", "accounts", "products", "datasources", "roles", "conversations"):
+        assert k in catalog_keys, f"{k} 위젯이 전권한 admin 에서 누락됨"
     assert "usage" in body["widgets"]
     assert "audits" in body["widgets"]
+    assert "accounts" in body["widgets"]
     assert body["window_days"] == 30
 
 
@@ -185,12 +207,23 @@ def test_default_prefs_respects_permissions():
     operator = {"id": 5, "permissions": {"console.access": True}}
     prefs = app._dashboard_default_prefs(operator)
     keys = [w["key"] for w in prefs["widgets"]]
-    assert "accounts" in keys
+    # TASK-0293: console.access 만으로는 리소스 위젯(accounts/usage/audits) 모두 부재.
+    assert "accounts" not in keys   # account.read 없음
     assert "usage" not in keys      # console.usage.read 없음
     assert "audits" not in keys     # audit.read.any 없음
+    # console.access 위젯(grant_health/pending)만 기본 표시
+    assert "grant_health" in keys
     # 모두 visible 기본값 + order 는 catalog 순서(연속)
     assert all(w["visible"] for w in prefs["widgets"])
     assert [w["order"] for w in prefs["widgets"]] == list(range(len(keys)))
+
+
+def test_default_prefs_account_read_includes_accounts():
+    """TASK-0293: account.read 보유 시 accounts 위젯이 기본 prefs 에 포함."""
+    actor = {"id": 6, "permissions": {"console.access": True, "account.read": True}}
+    keys = [w["key"] for w in app._dashboard_default_prefs(actor)["widgets"]]
+    assert "accounts" in keys
+    assert "roles" not in keys  # role.read 없음
 
 
 def test_default_prefs_admin_includes_privileged():
@@ -294,7 +327,10 @@ def test_overview_window_propagates_to_time_widgets(monkeypatch):
         captured["conv_days"] = days
         return {"metrics": [], "lists": []}
 
-    admin = {"id": 1, "permissions": {"console.access": True, "console.usage.read": True, "audit.read.any": True}}
+    # TASK-0293: conversations 위젯은 conversation.list.any, audits 는 audit.read.any 필요.
+    admin = {"id": 1, "permissions": {
+        "console.access": True, "console.usage.read": True, "audit.read.any": True,
+        "conversation.list.any": True}}
     _patch_common(monkeypatch, admin)
     monkeypatch.setattr(app, "_dash_widget_audits", _fake_audits)
     monkeypatch.setattr(app, "_dash_widget_conversations", _fake_conv)
