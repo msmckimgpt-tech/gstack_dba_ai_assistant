@@ -9,6 +9,13 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260617T040000-ai-claude-task0293-profile-icons-pb0008 (TASK-0293 후속 docs-only — PB-0008 evidence)
+- Date: 2026-06-17
+- Scope: docs 전용(TEST/TASK/MODIFY/REVIEW). 코드/정적자산/스키마/RBAC 0.
+- 변경: TASK-0293 의 "잔여: verify-completion·머지·배포·PB-0008" 을 **완료**(PR #300 머지 main `7a52a66` → web 재배포 → PB-0008 Windows-browser PASS)로 갱신. TEST.md §3 에 Windows-browser Run 기록(AC-0542 계정 조회버그 해소[작업화면 아바타 img 1 + Identicon 14·이니셜 0]·AC-0544 역할 Identicon 5·AC-0543 타계정 아바타 업로드 200·AC-0545 역할 아이콘 업로드 200, 검증 후 테스트 업로드 DELETE 복원). evidence `artifacts/pb0008-task0293/admin-account-role-icons.png`.
+- 검증: PB-0008 실측(win-browser eval — DOM 아바타 img/svg/textOnly 집계 + 실 업로드/서빙 round-trip). 코드 무변경.
+- Files: unit/feature-0003-agent-web-ui/docs/{TEST,TASK,MODIFY,REVIEW}.md
+
 ## CHG-20260617T034455-ai-claude-task0293-profile-icons (TASK-0293 — 프로필 아이콘 전 구간 조회·수정: 관리 콘솔 계정·역할)
 - Date: 2026-06-17
 - Scope: feature-0003-agent-web-ui — backend(`src/app.py`) + frontend(`src/static/admin.js` + `admin.html` 캐시버스터) + 테스트. 신규 admin 엔드포인트 4 + 서빙 1 + 비파괴 스키마 1컬럼. **신규 RBAC 권한 0**(기존 재사용).

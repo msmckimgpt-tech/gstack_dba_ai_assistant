@@ -21,8 +21,8 @@ source_of_truth: true
 - [x] Backend 구현 + py_compile + 라우트 충돌 0(`/api/roles/{id}/icon` 단일).
 - [x] Frontend 구현 + node --check admin.js PASS.
 - [x] 단위 테스트: `make test` PASS(pytest exit 0 + ruff all-clear), verify_profile_icon_admin_surfaces.mjs 17/17, verify_profile_icon_consistency.mjs 23/23(회귀 0).
-- [ ] §18.8 외부 패널 + REVIEW 기록.
-- [ ] verify-completion + 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증.
+- [x] §18.8 외부 패널 → SHIP(REV-20260617T034455 [SUBAGENT], BLOCKER 0/MAJOR 0/MINOR 1 accepted).
+- [x] verify-completion PASS → 머지(PR #300, main 7a52a66) → web 재배포(deploy_scope: included, `make dc-build SERVICE=web`+`up -d --no-deps web`, repo-web-1 healthy, healthz git_commit=7a52a66) → **PB-0008 Windows-browser PASS**(AC-0542 계정 img 1+Identicon 14·이니셜 0, AC-0544 역할 Identicon 5, AC-0543 타계정 아바타 업로드 200, AC-0545 역할 아이콘 업로드 200 — 실측). TEST.md §3 evidence Run 기록.
 
 ## TASK-0292 — 관리 콘솔 좌측 사이드패널 수직 스크롤 (REQ-20260616-0290, AC-0541, Minor §12.3, frontend-only)
 - 보고(사용자): 화면 높이가 매우 작을 경우 `관리 콘솔` 좌측 사이드패널을 조작할 수 없음(하단 탭 클릭 불가). 수직 스크롤 구성 요청.
