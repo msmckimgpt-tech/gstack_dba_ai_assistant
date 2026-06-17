@@ -86,6 +86,16 @@ render "$TMPL_DIR/index.html.tmpl"                  "$OUT_DIR/index.html"
 render "$TMPL_DIR/install-trust-windows.bat.tmpl"   "$OUT_DIR/install-trust-windows.bat"
 render "$TMPL_DIR/install-trust-macos.command.tmpl" "$OUT_DIR/install-trust-macos.command"
 chmod +x "$OUT_DIR/install-trust-macos.command"
+
+# .bat 은 Windows cmd.exe 요건상 CRLF 줄바꿈이어야 한다 (LF 면 cmd 가 파일 위치를 잃어
+# echo→cho·base64 가 명령으로 실행되는 파싱 붕괴 — TASK-0299). 템플릿은 ASCII 전용이라
+# 코드페이지 무관. .command/​index.html 은 LF 유지(mac/web 정상).
+sed -i 's/\r$//' "$OUT_DIR/install-trust-windows.bat"   # 기존 CR 제거(멱등)
+sed -i 's/$/\r/'  "$OUT_DIR/install-trust-windows.bat"  # LF → CRLF
+# ASCII 보장 검증 (비-ASCII 바이트가 섞이면 cmd 코드페이지 의존 회귀)
+if LC_ALL=C grep -qP '[^\x00-\x7F]' "$OUT_DIR/install-trust-windows.bat"; then
+  die "install-trust-windows.bat 에 비-ASCII 바이트 — 템플릿을 ASCII 전용으로 유지해야 함"
+fi
 cp "$ROOT_CA" "$OUT_DIR/rootCA.crt"
 chmod 644 "$OUT_DIR/rootCA.crt"
 

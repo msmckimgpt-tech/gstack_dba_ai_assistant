@@ -8,6 +8,35 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260617-0310
+- Date: 2026-06-17
+- Related Requirement: REQ-0286 / TASK-0299 / AC-0562~0563 (**Minor** §12.3)
+- Summary: TASK-0298 설치 스크립트 실행 버그 2종 수정 (라이브 제보).
+- 증상: Windows `.bat` 실행 시 `'cho'은(는) 내부 또는 외부 명령...`, base64 가 명령으로 실행됨.
+- 근본:
+  1. **인코딩/줄바꿈**: `bin/trust-bundle.sh` 가 .bat 를 LF + UTF-8 로 출력 + 템플릿에
+     `chcp 65001`. cmd.exe 는 코드페이지를 UTF-8 로 바꾸면 배치 파일의 다음 줄 바이트
+     오프셋을 잘못 계산 → 라인 파싱 붕괴(`echo`→`cho`, 긴 base64 줄을 명령으로 실행).
+  2. **지문 비교 오류(잠복)**: 스크립트가 `Get-FileHash`/`shasum`(=PEM **파일** 해시)을
+     `FP_HEX`(=인증서 **DER** 지문, `openssl -fingerprint`)와 비교 → 정상 인증서에서도 항상
+     불일치 → 설치 중단. (인코딩 버그가 가려 그동안 미발현.)
+- Files:
+  - `unit/feature-0006-lan-proxy-access/src/trust-bundle/install-trust-windows.bat.tmpl`:
+    `chcp 65001`/`title <한글>` 제거, 전체 메시지 ASCII(영문)화, 지문 검증을
+    `Get-FileHash`(PEM) → `X509Certificate2.RawData` 의 SHA-256(DER)로 교체.
+  - `unit/feature-0006-lan-proxy-access/src/trust-bundle/install-trust-macos.command.tmpl`:
+    지문 검증 `shasum`(PEM) → `openssl x509 -noout -fingerprint -sha256`(DER)로 교체.
+  - `bin/trust-bundle.sh`: .bat 렌더 후 LF→CRLF 변환 + 비-ASCII 바이트 검출 시 die(회귀 가드).
+- Diff size: 템플릿 2 + 스크립트 1. 앱 코드 0.
+- Impact:
+  - `.bat` 가 `file` 기준 "DOS batch file, ASCII text, CRLF" → cmd.exe 파싱 정상.
+  - 지문 검증이 인증서 DER SHA-256(브라우저 표시 지문)과 일치 → 정상 설치 진행.
+  - **★cmd.exe 실측**: neuter(자가상승+certutil 제외) 후 cmd.exe 로 echo·지문표시·base64
+    디코드·지문검증(ACTUAL==FP_HEX) 전 구간 정상 도달(`[OK]` 까지). 파싱 붕괴 0.
+- Rollback Notes: 템플릿 2 + trust-bundle.sh 의 CRLF/ASCII 블록 되돌림. 단 .bat 다시 깨짐.
+- 배포: 머지 후 `bash bin/trust-bundle.sh` 재실행 → `artifacts/trust-bundle/` 갱신
+  (caddy file_server 가 즉시 서빙, 컨테이너 재시작 불필요).
+
 ## CHG-20260617-0309
 - Date: 2026-06-17
 - Related Requirement: REQ-0285 / TASK-0298 / AC-0557~0561 (**Major** §12.3, ADR-LAN-0004)

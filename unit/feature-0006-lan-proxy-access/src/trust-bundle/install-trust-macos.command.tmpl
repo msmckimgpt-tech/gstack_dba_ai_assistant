@@ -29,8 +29,8 @@ base64 -D >"$CRT" <<'B64EOF'
 __ROOTCA_B64__
 B64EOF
 
-# --- 지문 재검증 ---
-ACTUAL="$(shasum -a 256 "$CRT" | awk '{print toupper($1)}')"
+# --- 지문 재검증 (인증서 DER SHA-256 — openssl -fingerprint 와 동일, PEM 파일 해시 아님) ---
+ACTUAL="$(openssl x509 -in "$CRT" -noout -fingerprint -sha256 | sed 's/.*=//' | tr -d ':' | tr 'a-f' 'A-F')"
 if [ "$ACTUAL" != "$FP_HEX" ]; then
   echo "[오류] 지문 불일치 — 설치를 중단합니다."
   echo "  기대: $FP_HEX"
