@@ -9,6 +9,28 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260617T034455-ai-claude-task0293-profile-icons (TASK-0293 — 프로필 아이콘 전 구간 조회·수정: 관리 콘솔 계정·역할)
+- Date: 2026-06-17
+- Scope: feature-0003-agent-web-ui — backend(`src/app.py`) + frontend(`src/static/admin.js` + `admin.html` 캐시버스터) + 테스트. 신규 admin 엔드포인트 4 + 서빙 1 + 비파괴 스키마 1컬럼. **신규 RBAC 권한 0**(기존 재사용).
+- 스키마 변경(비파괴): `WebRoles.IconObjectKey VARCHAR(512) NULL` 추가.
+  - fast-path: `_ensure_avatar_icon_schema(conn)` 에 `ALTER TABLE WebRoles ADD COLUMN IconObjectKey ...`(idempotent, 기존 배포 backfill — `_ensure_seed_catchup` 경유).
+  - slow-path/fresh: `_ensure_web_tables` 의 `CREATE TABLE WebRoles` 에 `IconObjectKey VARCHAR(512) NULL` 컬럼.
+  - NULL=미설정 → 프론트 role_key 시드 Identicon. MinIO object key 저장(`role-icons/<role_id>/<uuid>.<ext>`).
+- 백엔드 변경(`src/app.py`):
+  - `_role_icon_url_for(role_id, object_key)` 신설 — `/api/roles/<id>/icon?v=<sha256[:12]>` 캐시버스터(`_product_icon_url_for`/`_avatar_url_for` 동형).
+  - `_list_roles` SELECT 에 `r.IconObjectKey AS icon_object_key` + GROUP BY 추가, 직렬화에 `icon_url` 추가. `_load_role_by_id` 동일.
+  - 신규 `PUT/DELETE /api/admin/accounts/{account_id}/avatar` — 관리자(`console.access`+`console.manage`+`account.update`)가 대상 계정 아바타 교체/제거. self-service `/api/auth/me/avatar`(로그인만, 본인 한정)와 별개 경로. `_store_image_upload(prefix="avatars", owner_id=account_id, max=2MB)` 재사용, 삭제 예정 계정 차단, 이전 key best-effort 삭제.
+  - 신규 `PUT/DELETE /api/admin/roles/{role_id}/icon` — 관리자(`console.access`+`console.manage`+`role.update`). `_store_image_upload(prefix="role-icons", owner_id=role_id, max=5MB)`.
+  - 신규 `GET /api/roles/{role_id}/icon` — 로그인 서빙(`_serve_image_object`, nosniff·inline·1일 캐시). 제품 아이콘 서빙(`serve_product_icon`) 패턴 정합.
+  - audit: 아바타/아이콘 mutation 은 audit 미기록 — 제품 아이콘(TASK-0268 `upload_product_icon`/`delete_product_icon`)과 동일 정합(일관 결정, SECURITY §9.2 builder 에 아바타/아이콘 필드 미포함과도 정합).
+- 프론트 변경(`src/static/admin.js`):
+  - 계정 목록(`renderAccountList`)·상세(`renderAccountDetail`): `avatar.textContent=username.slice(0,2)` → `applyAvatar({url: avatar_url, seed: username})`. **작업화면 프로필과 동일 username 시드** → 동일 계정 동일 아이콘(조회 버그 해소). 상세에 ✎ 오버레이(`.profile-avatar-edit`) + "아바타 제거"(console.manage+account.update, 삭제 계정 제외).
+  - 역할 목록(`renderRoleList`)·상세(`renderRoleDetail`): 이니셜 텍스트 → `applyAvatar({url: icon_url, seed: role_key})`. 상세에 ✎ 오버레이 + "아이콘 제거"(console.manage+role.update, **미저장 신규 역할 차단**).
+  - CSS 무변경(제품 아이콘이 쓰는 `.admin-avatar`/`.profile-avatar-edit` 클래스 재사용). `admin.html` 캐시버스터 `?v=20260617-task0293-profile-icons`.
+- 테스트: `tests/verify_profile_icon_admin_surfaces.mjs` 신설(jsdom 17건 — applyAvatar 분기·시드 정합·이니셜 폐기·편집 엔드포인트·게이트). `tests/test_avatar_icon_upload.py` 에 4건 추가(`_role_icon_url_for`·역할/계정 mutation RBAC 403). 기존 `verify_profile_icon_consistency.mjs` 회귀 0.
+- 검증: `make test`(컨테이너 pytest exit 0 + ruff all-clear), node --check admin.js + py_compile app.py PASS, 라우트 충돌 0. 잔여: §18.8 외부 패널·verify-completion·배포·PB-0008.
+- Files: unit/feature-0003-agent-web-ui/src/app.py, src/static/admin.js, src/static/admin.html, docs/{FUNCTION,TASK,MODIFY,REVIEW}.md, tests/{test_avatar_icon_upload.py, verify_profile_icon_admin_surfaces.mjs}
+
 ## CHG-20260616T163634-ai-claude-conv-entry-defaults-pb0008 (TASK-20260616T100304-conv-entry-defaults 후속 docs-only — PB-0008 evidence)
 - Date: 2026-06-16
 - Scope: docs 전용(TEST/REPORT/TASK/MODIFY/REVIEW + STATUS) + evidence 이미지. 코드/정적자산 0.

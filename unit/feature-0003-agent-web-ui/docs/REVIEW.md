@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260617T034455-ai-claude-task0293-profile-icons [SUBAGENT:profile-icon-rbac-review]
+- Date: 2026-06-17 (TASK-0293 — 프로필 아이콘 전 구간 조회·수정: 관리 콘솔 계정·역할; REQ-20260617-0291, AC-0542~0545, Major §12.3)
+- 트리거: 신규 admin mutation 엔드포인트 4 + 비파괴 스키마 1컬럼 + RBAC-adjacent(관리자가 타 계정 아바타·역할 아이콘 변경). `feedback_outside_voice_for_rbac.md` 정합 — 외부(적대적) 시각 패널 호출.
+- 판정: **SHIP** (BLOCKER 0 / MAJOR 0 / MINOR 1[accepted·문서화] / NIT 2[non-blocking]). 신규 코드가 검증된 TASK-0268 선례(`upload_product_icon`/`delete_product_icon`/`serve_product_icon`)의 충실한 isomorph 이며 **더 약한 게이트를 도입하지 않음**을 6축 적대적 검토(반박 기본)로 확인.
+- 6축 결과:
+  - **① IDOR/권한 경계 PASS**: 신규 엔드포인트 게이트가 기존 admin baseline 과 정확히 일치 — 계정 아바타 = `console.access`+`console.manage`+`account.update`(=`admin_update_account`), 역할 아이콘 = `+role.update`(=`admin_update_role`). 임의 account_id/role_id 치환은 admin-scoped 의도(콘솔 전반과 정합). **권한 체크가 `_store_image_upload` MinIO write 前 선차단** → 비-admin 은 object orphan 도 불가. self-service(`/api/auth/me/avatar`, 로그인·본인)와 admin 경로 분리 깨끗.
+  - **② 업로드 안전성 PASS**: 매직바이트(svg/gif·거짓 MIME 거부)·size cap(2MB/5MB) 서버 강제, object key 네임스페이싱(`avatars/<id>/`·`role-icons/<id>/`), 이전 key best-effort 삭제 try/except — 선례 동형.
+  - **③ 라우트 충돌 PASS**: `GET /api/roles/{id}/icon` 이 유일한 `/api/roles/*`(grep 확인). 역할 mutation 은 `/api/admin/roles/*`. shadowing 0. 로그인-서빙(비-admin)은 의도(제품 아이콘 정합).
+  - **④ 스키마 안전성 PASS**: fast-path(`_ensure_avatar_icon_schema` idempotent ALTER, seed-catchup 경유) + slow-path(CREATE 컬럼) 정합. `WebRoles` 는 기존 always-create 테이블이라 TASK-0218 `_runtime_tables_available` probe trap 비해당(ADD COLUMN). `_list_roles` GROUP BY 에 IconObjectKey 추가로 ONLY_FULL_GROUP_BY 정합(member_count 집계 불변, IconObjectKey 는 grouped Id 에 함수종속).
+  - **⑤ audit 미기록 MINOR(accepted)**: `admin_update_account/role` 은 `_audit_admin_mutation` audit 하나, 제품 아이콘(`upload_product_icon`)은 미audit. 신규 아바타/아이콘은 **아이콘 선례(미audit)** 를 따름. 아바타·역할아이콘 변경은 저감도·가역·비-권한 cosmetic 이라 제품 아이콘 취급이 타당(문서화 결정 — FUNCTION.md AC-0545). 후속으로 admin-action audit 원하면 `_audit_admin_mutation` 1줄 추가 trivial. ship blocker 아님.
+  - **⑥ 프론트 PASS**: 클라이언트 size 가드(2MB/5MB) + 서버 검증 이중(서버 authoritative). 신규 역할 가드 `!merged._isNew && console.manage && role.update` — 위조해도 PUT `/roles/0/icon`→400 또는 nonexistent→404. `applyAvatar` `img.onerror` Identicon 폴백, AC-0542 조회버그 수정(이니셜→`applyAvatar` username 시드, 작업화면과 동일 시드).
+- NIT(non-blocking): (a) `admin_delete_account_avatar` 는 `deleted_at` 재확인 안 함(NULL cleanup 이라 무해, `delete_my_avatar` 정합) (b) `_serve_image_object` `Cache-Control: private`(per-key 캐시버스터로 freshness 처리). 둘 다 조치 불요.
+- 후속(follow-up, 비차단): admin-action audit trail 을 아바타/아이콘에도 원할 경우 `_audit_admin_mutation` 추가 — 별 cycle.
+
 ## REV-20260616T163634-ai-claude-conv-entry-defaults-pb0008 [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-16 (TASK-20260616T100304-conv-entry-defaults 후속 docs-only — PB-0008 시각검증 evidence)
 - Skip 사유: docs 전용(TEST/REPORT/TASK/MODIFY/REVIEW + STATUS). 코드/정적자산/RBAC 무변경 — 본체 검토는 REV-20260616T100304-ai-claude-conv-entry-defaults [SKIPPED:frontend-ui-entry-defaults-no-backend-no-rbac] 담당.
