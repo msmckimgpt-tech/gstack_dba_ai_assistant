@@ -9,7 +9,8 @@ last_updated: 2026-06-17
 2026-06-17
 
 ## Key Recent Facts
-- 서비스 소개 프레젠테이션: `docs/presentation/index.html`(자기완결 HTML 덱, 15슬라이드/7섹션) + `SCENARIO.md`(발표 스크립트).
+- 서비스 소개 프레젠테이션: `docs/presentation/index.html`(자기완결 HTML 덱, 15슬라이드/7섹션, 전체 대상) + `SCENARIO.md`(발표 스크립트).
+- **실무자 전용 덱: `docs/presentation/practitioner.html`(9슬라이드) — 관리 콘솔·아키텍처 제외, 실제 사용 흐름만**. index.html 프레임워크(팝업·Ctrl glow·scale-to-fit) 재사용.
 - 공격적 질문 대응은 발표자 전용 `docs/presentation/OBJECTION-HANDLING.md` 로 분리(덱에는 미노출 — 청중 불편 방지).
 
 ## Recent Changes
