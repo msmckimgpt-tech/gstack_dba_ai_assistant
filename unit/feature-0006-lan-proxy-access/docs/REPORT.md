@@ -9,6 +9,15 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-06-17 TASK-0297 완료 — caddy :443 정식 front door** (CHG-20260617-0308,
+REV-20260617-0308, REQ-0284, AC-0554~0556, **Major** §12.3, ADR-LAN-0003). TASK-0296 의
+별 cycle 후속 — caddy `:443` 502 해소. 근본 = `ENABLE_WEB_TLS=1`(web 8000 HTTPS) + caddy
+평문 `reverse_proxy`. Caddyfile 을 HTTPS-upstream(`transport http { tls; tls_trust_pool
+file /certs/rootCA.pem; tls_server_name {$WEB_PUBLIC_HOST} }`)으로 전환(XFF directive 보존).
+`.env`(로컬) `ENABLE_WEB_TLS_PROXY=1`+`WEB_TRUSTED_PROXIES=172.18.0.0/16` 로 audit 실 IP 보존
+(§9.7). `caddy validate`=Valid + one-off 테스트 caddy(:8443) 런타임 200 머지전 검증. 결과:
+포트 없는 `https://mysql-ai.company.local`(caddy :443) + `:18080`(web 직접) 양쪽 신뢰 HTTPS.
+
 **2026-06-17 TASK-0296 완료 — 사내 자체 Root CA HTTPS 신뢰** (CHG-20260617-0307,
 REV-20260617-0307, REQ-0283, AC-0549~0553, **Major** §12.3). 사내 테스터 제한 배포 직전 브라우저
 "안전하지 않은 연결" 경고의 근본 원인(self-signed 인증서, issuer==subject, CA 체인
@@ -33,17 +42,20 @@ Caddy 설정과 Windows LAN 프록시 스크립트를 별도 feature로 이관�
 - Done: 운영 자산 이관, TLS 경로 수정
 
 ## 3. Recent Changes
+- Caddyfile HTTPS-upstream(Root CA 검증)로 :443 502 해소 + front door 화 (TASK-0297)
+- `.env` ENABLE_WEB_TLS_PROXY=1 + WEB_TRUSTED_PROXIES=172.18/16 (audit 실 IP, 로컬)
 - `bin/tls-internal-ca.sh` 신규 — 사내 Root CA + 서명 leaf 발급 (TASK-0296)
 - `src/TESTER_TLS_TRUST.md` 신규 — 테스터 Root CA 신뢰 설치 가이드
 - self-signed → Root CA 서명 인증서로 재발급·배포 (web/caddy 재시작)
 - Caddyfile을 feature 경로로 이동
 - Windows 스크립트와 문서를 feature 경로로 이동
-- 총 변경 횟수: 2
+- 총 변경 횟수: 3
 
 ## 4. Open Issues
 - 실제 LAN 환경 검증은 후속 운영 시나리오가 필요하다.
-- caddy `:443` 502 (인증서 무관, `ENABLE_WEB_TLS`/`reverse_proxy` 프로토콜 불일치) — 별 cycle.
-- 외부/미신뢰 LAN 노출 시 SECURITY.md §7.2/§9.7 보완 선행 (별 cycle).
+- ~~caddy `:443` 502~~ → TASK-0297 해소 (HTTPS-upstream + Root CA 검증).
+- 외부/미신뢰 LAN 노출 시 SECURITY.md §7.2/§9.7 보완 선행 (별 cycle) — `WEB_TRUSTED_PROXIES`
+  협소화 + web port 비공개 + share/search IP allowlist.
 
 ## 5. Test Status
 - 자동 테스트: 미구성

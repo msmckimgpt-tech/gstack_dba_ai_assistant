@@ -8,6 +8,36 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260617-0308
+- Date: 2026-06-17
+- Related Requirement: REQ-0284 / TASK-0297 / AC-0554~0556 (**Major** §12.3)
+- Summary: caddy(`:443`) 502 해소 + 정식 front door 화. TASK-0296 의 별 cycle 후속.
+  근본 = `ENABLE_WEB_TLS=1`(web 이 8000서 HTTPS) + caddy 평문 `reverse_proxy web:8000`
+  프로토콜 불일치. caddy 를 HTTPS-upstream(사내 Root CA 검증)으로 전환.
+- Files:
+  - `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile`: `:443` 블록 `reverse_proxy
+    web:8000` 에 `transport http { tls; tls_trust_pool file /certs/rootCA.pem;
+    tls_server_name {$WEB_PUBLIC_HOST} }` 추가. caddy 가 web 에 HTTPS 로 붙고 사내 Root CA
+    로 leaf 검증(SNI/검증명=공개 호스트, 내부 서비스명 `web` 는 SAN 부재라 tls_server_name
+    명시). 기존 `header_up X-Forwarded-For {client_ip}` 등 XFF directive(AC-0004) 보존.
+  - `repo/.env` (gitignore, 비커밋): `ENABLE_WEB_TLS_PROXY=0→1`, `WEB_TRUSTED_PROXIES=
+    172.18.0.0/16`(caddy dbnet 서브넷) 신설. web 이 caddy XFF 를 신뢰 → audit 실 IP 보존.
+  - `unit/feature-0006-lan-proxy-access/docs/{FUNCTION,TASK,DECISIONS,REPORT,REVIEW,MODIFY}.md`.
+- Diff size: Caddyfile +7 line + docs. 앱 코드 변경 0. `.env` 는 로컬(비커밋).
+- Impact:
+  - 테스터가 포트 없는 `https://mysql-ai.company.local`(caddy :443) 사용 가능 + `:18080`(web
+    직접 TLS) 유지 — 양쪽 모두 Root CA 신뢰 후 경고 없음.
+  - `caddy validate` = `Valid configuration`. one-off 테스트 caddy(:8443, dbnet) 런타임
+    프록시 `/healthz`·`/` = HTTP 200 (이전 502 해소) 머지전 검증. 머지후 실 caddy 재시작.
+  - audit `IpAddr` 가 caddy 컨테이너 IP(172.18.0.10) 가 아닌 실 클라이언트 IP 기록.
+- Rollback Notes:
+  - Caddyfile 의 `transport http { ... }` 블록 제거 시 :443 이 다시 502(평문 upstream). web
+    직접 `:18080` 경로는 무영향.
+  - `.env` `ENABLE_WEB_TLS_PROXY=1→0` + `WEB_TRUSTED_PROXIES` 제거 후 `docker compose up -d
+    web caddy`. 단 audit 가 다시 caddy IP 만 기록(품질 회귀).
+  - 외부/미신뢰 LAN 노출 시 `WEB_TRUSTED_PROXIES` 를 bridge 서브넷으로 좁히고 web port 비공개
+    — SECURITY.md §9.7.
+
 ## CHG-20260617-0307
 - Date: 2026-06-17
 - Related Requirement: REQ-0283 / TASK-0296 / AC-0549~0553 (**Major** §12.3)

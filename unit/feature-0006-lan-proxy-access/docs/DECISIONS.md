@@ -40,3 +40,29 @@ source_of_truth: true
   `reverse_proxy web:8000` 불일치로 502. 인증서 신뢰와 무관. 테스터 경로는 web 직접 TLS
   `:18080`. 깔끔한 무포트 `https://<host>` 가 필요하면 `ENABLE_WEB_TLS_PROXY` 설계
   (web 평문 8000 ↔ caddy TLS 종료, 또는 caddy→https upstream)를 별 cycle 에서 정리.
+  → **ADR-LAN-0003 (TASK-0297) 에서 해소.**
+
+## ADR-LAN-0003
+- Date: 2026-06-17
+- Context: ADR-LAN-0002 의 미해결 항목 — caddy `:443` 502. 사용자 결정(2026-06-17):
+  포트 없는 `https://mysql-ai.company.local` 를 정식 진입점으로 만든다. 근본 = web 이
+  `ENABLE_WEB_TLS=1` 로 8000 에서 HTTPS 를 서빙하는데 caddy 가 평문으로 프록시.
+- Decision: caddy → web upstream 을 **HTTPS 로 re-encrypt** 하고 사내 Root CA 로 검증.
+  `transport http { tls; tls_trust_pool file /certs/rootCA.pem; tls_server_name
+  {$WEB_PUBLIC_HOST} }`. web 직접 TLS `:18080` 은 그대로 유지(두 진입점 공존).
+  `.env` `ENABLE_WEB_TLS_PROXY=1` + `WEB_TRUSTED_PROXIES=172.18.0.0/16` 로 web 이 caddy
+  XFF 를 신뢰 → audit 실 클라이언트 IP 보존(§9.7).
+- 대안 거부:
+  - **web 평문 8000 + caddy 단독 TLS 종료(ENABLE_WEB_TLS=0)**: `:18080` 직접 경로가
+    평문 HTTP 로 회귀 → 검증 완료된 테스터 경로 파괴 + secure-context 요건 위배. 기각.
+  - **`tls_insecure_skip_verify`**: 내부 hop 이라 위험 낮으나 Root CA 검증을 버릴 이유
+    없음. `tls_trust_pool` + `tls_server_name` 으로 정식 검증 채택.
+  - **caddy 미실행(profile gating)**: 502 는 사라지나 무포트 URL 도 불가. front door
+    제공이라는 목표와 불합치. 기각.
+- Consequence:
+  - 테스터는 `https://mysql-ai.company.local`(무포트, caddy :443) 또는 `:18080`(web 직접)
+    어느 쪽이든 Root CA 신뢰 후 경고 없이 접속.
+  - SNI/검증명은 leaf SAN 과 일치하는 `WEB_PUBLIC_HOST` 사용(내부 서비스명 `web` 는 SAN
+    부재 — leaf SAN 에 `web` 추가하지 않고 tls_server_name 으로 해결, 최소 노출).
+  - **외부/미신뢰 LAN 노출 시**: `WEB_TRUSTED_PROXIES` 를 bridge 서브넷으로 좁히고
+    web port 를 Caddy network only / 127.0.0.1 바인드로 비공개 — SECURITY.md §9.7 별 cycle.
