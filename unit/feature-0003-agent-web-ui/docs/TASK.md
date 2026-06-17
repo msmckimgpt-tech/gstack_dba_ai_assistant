@@ -22,7 +22,7 @@ source_of_truth: true
 - [x] Frontend 구현 + 빈목록 안내(`.product-dropup-empty`) + CSS.
 - [x] 단위 테스트 `test_product_list_rbac.py` **9/9 PASS**(agent 이미지, `import app`, DB 없이).
 - [x] §18.8 outside-voice RBAC 패널 → **SHIP**(REV-20260617T054423-ai-claude-task0295-product-list-rbac [SUBAGENT:product-list-rbac-review], BLOCKER 0/MAJOR 0; 6축 적대 검토 admin over-block·누출·우회·회귀·fail-closed·default 보정 전부 OK).
-- [ ] verify-completion → 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser.
+- [x] verify-completion PASS(9 checks) → 머지(PR #303, main `3fa87e8`) → web 재배포(deploy_scope: included, `docker compose build web`+`up -d --no-deps web`, repo-web-1 healthy, 서빙 app.py `_filter_products_for_account_access` baked) → **PB-0008 Windows-browser PASS**(admin role `product.access.mv` 회수 시 `/api/session` products 8→7·MV 제거·MV_QA 유지·드롭업 DOM 7개; 전체 회수 시 빈목록 안내 "접근 가능한 제품이 없습니다" 렌더; 권한 복원). CHG/REV-20260617T060740 evidence.
 
 ## TASK-0293 — 프로필 아이콘 전 구간 조회·수정 (관리 콘솔 계정·역할) (REQ-20260617-0291, AC-0542~0545, Major §12.3)
 - 보고(사용자): 작업화면에서 바꾼 계정 프로필 아이콘이 `관리 콘솔` 프로필 아이콘에 반영 안 됨. 확인 결과 관리 콘솔 계정·역할에는 프로필 아이콘 관련 작업이 전무. 아이콘을 쓰는 모든 구간에 이미지(기본=패턴) 조회·수정 가능화 요청.
