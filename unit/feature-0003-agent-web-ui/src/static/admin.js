@@ -5864,7 +5864,7 @@ function renderProductList() {
       renderProductDetail();
     });
     const meta = document.createElement("div");
-    meta.className = "admin-list-main";
+    meta.className = "admin-list-row-main";
     // product-icon-chip 뒤틀림 수정: avatar 를 row 최상위(3열 grid 깨짐)가 아니라 meta 첫 줄에
     //   name 과 함께 가로 flex(admin-list-row-title)로 묶는다 — 계정 목록 행과 동형. row 는
     //   다시 [cb, meta] 2자식이라 grid `auto 1fr auto` 정상.
@@ -5873,8 +5873,8 @@ function renderProductList() {
     const avatar = document.createElement("span");
     avatar.className = "admin-avatar admin-avatar-sm";
     applyAvatar(avatar, { url: p.icon_url, seed: p.product_key || p.name || "", initials: (p.product_key || "P").slice(0, 2).toUpperCase() });
-    const name = document.createElement("div");
-    name.className = "admin-account-name";
+    const name = document.createElement("span");
+    name.className = "admin-list-row-name";
     name.textContent = `(${p.product_key}) ${p.name}`;
     titleRow.append(avatar, name);
     const sub = document.createElement("div");

@@ -4034,3 +4034,13 @@ source_of_truth: true
 - Files: unit/feature-0003-agent-web-ui/docs/{TEST,REPORT,TASK,MODIFY,REVIEW}.md.
 - Rollback: 불요(docs-only).
 - Deploy: 불요(코드 무변경 — TASK-0300 코드는 이미 a9effd6 배포됨).
+
+## CHG-20260617-0311
+- Date: 2026-06-17 (TASK-0301, **Minor §12.3 — 관리 콘솔 제품 목록 항목 글꼴 크기 정합**).
+- Scope: feature-0003-agent-web-ui(admin.js 2줄). 백엔드·스키마·CSS·엔드포인트·RBAC 무변경.
+- 근본원인: `renderProductList()` 의 제품명 요소가 `admin-account-name`(15px, 700) 을 사용 — 계정·역할·데이터소스 목록은 `admin-list-row-name`(13px, 600). 컨테이너 클래스도 `admin-list-main`(CSS 미정의) vs `admin-list-row-main` 불일치.
+- 변경: admin.js `renderProductList()` — ① 이름 요소 `div.admin-account-name` → `span.admin-list-row-name` ② 컨테이너 `admin-list-main` → `admin-list-row-main`. 2줄, frontend-only.
+- Verification: node --check + 라이브 화면 비교(제품 탭 항목 글꼴 ≡ 계정·역할). 화면 정본 = PB-0008.
+- Files: feature-0003 src/static/admin.js, docs/{TASK,MODIFY,REVIEW}.md.
+- Rollback: 두 클래스명을 원복(`admin-account-name`, `admin-list-main`). 시각만 원복, 기능 무영향.
+- Deploy: web 재빌드 1 이미지(프론트 baked). deploy_scope: included.
