@@ -653,32 +653,37 @@ def test_mysql_metadata_still_allows_sys_golden():
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# M-4 — EXPLAIN 미지원 엔진(MSSQL) gate 모드 fail-closed + Codex-6 confirm_heavy 비-LLM
+# M-4 — MSSQL gate 모드 부하추정 실패 시 fail-closed + Codex-6 confirm_heavy 비-LLM
+# (TASK-0299: MSSQL 은 SHOWPLAN 으로 추정 지원 — 추정 *실패*(SHOWPLAN 미권한/연결)일 때 fail-closed.)
 # ──────────────────────────────────────────────────────────────────────────
-def test_load_gate_fail_closed_on_mssql_gate_mode():
+def test_load_gate_fail_closed_on_mssql_estimate_error():
     def check():
-        # pin=appdb ∈ allowlist → 접근검사 통과 후 gate(EXPLAIN 미지원) fail-closed 도달.
+        # pin=appdb ∈ allowlist → 접근검사 통과 후 gate 도달. SHOWPLAN 미취득(추정 None)이면 fail-closed.
         cfg.set_active_datasource("prod", engine="mssql", default_db="appdb")
         tools.set_active_schema_allowlist(["appdb"])
         with mock.patch.object(cfg, "AGENT_QUERY_GUARD_MODE", "gate"), \
+             mock.patch.object(tools, "_estimate_explain_rows", lambda *a, **k: None), \
              mock.patch.object(cfg, "DATASOURCES", {"prod": {"key": "prod", "default_db": "appdb"}}):
             out = tools._tool_execute_sql(mock.MagicMock(), {"sql": "SELECT c FROM appdb.dbo.t"})
-            assert "사전 차단" in out  # fail-closed 메시지
+            assert "사전 부하추정에 실패" in out  # fail-closed 메시지
+            assert "실행 시간" not in out          # 실행 안 됨
     _run_isolated(check)
 
 
-def test_load_gate_mssql_confirm_heavy_does_not_override():
-    """REV-0201 M2: MSSQL gate 하드차단은 confirm_heavy=true(TRUST_LLM=true 라도)로 우회 불가 —
-    추정치 없는 맹목 confirm 은 근거 없는 자기우회라 무력화한다."""
+def test_load_gate_mssql_confirm_heavy_does_not_override_estimate_error():
+    """REV-0201 M2 / TASK-0299: MSSQL gate 의 *추정 실패* fail-closed 는 confirm_heavy=true
+    (TRUST_LLM=true 라도)로 우회 불가 — 추정치 없는 맹목 confirm 은 근거 없는 자기우회라 무력화한다.
+    (추정이 성공한 known-heavy 는 근거가 있으므로 confirm override 가 허용된다 — 별도 테스트.)"""
     def check():
         cfg.set_active_datasource("prod", engine="mssql", default_db="appdb")
         tools.set_active_schema_allowlist(["appdb"])
         with mock.patch.object(cfg, "AGENT_QUERY_GUARD_MODE", "gate"), \
              mock.patch.object(cfg, "AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM", True), \
+             mock.patch.object(tools, "_estimate_explain_rows", lambda *a, **k: None), \
              mock.patch.object(cfg, "DATASOURCES", {"prod": {"key": "prod", "default_db": "appdb"}}):
             out = tools._tool_execute_sql(mock.MagicMock(), {"sql": "SELECT c FROM appdb.dbo.t", "confirm_heavy": "true"})
-            assert "사전 차단" in out  # confirm_heavy 로도 우회 불가(하드 차단)
-            assert "confirm_heavy" not in out  # 메시지가 우회법을 광고하지 않음
+            assert "사전 부하추정에 실패" in out  # confirm_heavy 로도 우회 불가
+            assert "실행 시간" not in out          # 실행 안 됨
     _run_isolated(check)
 
 

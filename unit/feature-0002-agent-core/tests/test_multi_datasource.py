@@ -406,7 +406,10 @@ def test_mysql_dialect_golden_unchanged():
     my = _dia.get("mysql")
     assert my.sample("s", "t", 5) == "SELECT * FROM `s`.`t` LIMIT 5"
     assert my.list_indexes("s", "t") == "SHOW INDEX FROM `s`.`t`"
-    assert my.explain("SELECT 1 FROM x") == "EXPLAIN SELECT 1 FROM x"
+    # 부하추정/실행계획은 EXPLAIN {sql} 발행 (TASK-0298: explain() 문자열 → estimate_load_rows/explain_plan 콜백).
+    _cap: list = []
+    my.explain_plan(lambda s: _cap.append(s) or [("rows", [], [])], "SELECT 1 FROM x")
+    assert _cap == ["EXPLAIN SELECT 1 FROM x"]
     assert my.quote_qualified("s", "t") == "`s`.`t`"
     assert my.list_schema_names() == "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME"
     # 핵심 introspection 이 information_schema 기반(MySQL)
@@ -424,8 +427,13 @@ def test_mssql_dialect_tsql():
     assert "sys.schemas" in ms.list_schemas_with_counts()
     assert "sys.tables" in ms.describe_schema_tables("s")
     assert "sys.indexes" in ms.list_indexes("s", "t")
-    # EXPLAIN 없음 → None (부하게이트 P6)
-    assert ms.explain("SELECT 1") is None
+    # EXPLAIN 구문은 없으나 SET SHOWPLAN_ALL 로 사전 부하추정 지원 (TASK-0298).
+    assert ms.supports_load_estimate is True
+    assert ms.gate_fail_closed_on_estimate_error is True  # 추정 실패 시 gate fail-closed
+    _cap: list = []
+    ms.explain_plan(lambda s: _cap.append(s) or [("rows", [], [])], "SELECT 1")
+    assert any("SHOWPLAN_ALL ON" in c.upper() for c in _cap)
+    assert any("SHOWPLAN_ALL OFF" in c.upper() for c in _cap)
 
 
 def test_mssql_describe_columns_same_column_order():

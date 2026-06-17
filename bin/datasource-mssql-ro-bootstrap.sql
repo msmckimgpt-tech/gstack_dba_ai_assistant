@@ -101,6 +101,15 @@ GRANT SELECT ON SCHEMA::[$(ALLOWED_SCHEMA)] TO [$(RO_ROLE)];
 -- (별도 GRANT 불필요). 사용자 객체 메타데이터만 노출되고 타 DB/시스템 비밀은 보이지 않는다.
 GO
 
+-- ── 4.5단계: 사전 부하추정용 SHOWPLAN (TASK-0298) ─────────────────────────────
+-- 에이전트가 무거운 쿼리를 실행 전에 게이팅하려면 `SET SHOWPLAN_ALL ON` 으로 추정 실행계획을
+-- 받아야 한다(MySQL EXPLAIN 등가). SHOWPLAN 은 **데이터 읽기 권한이 아니라** 추정 실행계획 생성만
+-- 허용하므로 최소권한 RO 와 양립한다(deny-by-default 유지). 미부여 시: gate 모드는 안전 차단
+-- (fail-closed), warn/off 모드는 무경고로 graceful degrade — 즉 기능은 동작하되 부하 게이팅이
+-- 비활성. AGENT_QUERY_GUARD_MODE=gate/warn 운영을 계획하면 부여 권장.
+GRANT SHOWPLAN TO [$(RO_ROLE)];
+GO
+
 -- ── 5단계: 검증 ──────────────────────────────────────────────────────────────
 PRINT '--- role 멤버십 ---';
 SELECT r.name AS role_name, m.name AS member
@@ -115,6 +124,13 @@ FROM sys.database_permissions p
 JOIN sys.schemas s ON s.schema_id = p.major_id AND p.class = 3  -- class 3 = schema
 JOIN sys.database_principals dp ON dp.principal_id = p.grantee_principal_id
 WHERE dp.name = '$(RO_ROLE)';
+
+PRINT '--- SHOWPLAN 권한 확인 (부하추정 게이트용 — GRANT 면 OK) ---';
+SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM sys.database_permissions p
+    JOIN sys.database_principals dp ON dp.principal_id = p.grantee_principal_id
+    WHERE dp.name = '$(RO_ROLE)' AND p.permission_name = 'SHOWPLAN' AND p.state_desc = 'GRANT'
+) THEN 'OK: SHOWPLAN 부여됨' ELSE 'WARN: SHOWPLAN 미부여 (gate 모드 fail-closed)' END AS showplan_check;
 
 PRINT '--- db_datareader 비멤버 확인 (없어야 정상) ---';
 SELECT CASE WHEN EXISTS (

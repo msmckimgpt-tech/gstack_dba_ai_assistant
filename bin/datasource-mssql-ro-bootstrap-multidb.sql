@@ -115,9 +115,13 @@ BEGIN
             JOIN sys.database_principals m ON m.principal_id = rm.member_principal_id AND m.name = @login
         )
             ALTER ROLE [db_datawriter] DROP MEMBER ' + QUOTENAME(@login) + N';
+        -- 사전 부하추정용 SHOWPLAN (TASK-0298, DB 스코프 권한 — 각 대상 DB 에 부여). SHOWPLAN 은
+        -- 데이터 읽기가 아니라 추정 실행계획 생성만 허용 → 읽기전용과 양립. 미부여 시 gate 모드
+        -- 안전차단(fail-closed)/warn·off 무경고로 graceful degrade.
+        GRANT SHOWPLAN TO ' + QUOTENAME(@login) + N';
     ';
     EXEC sys.sp_executesql @sql, N'@login SYSNAME', @login = @login;
-    PRINT 'OK: ' + @db + ' — USER + db_datareader 적용';
+    PRINT 'OK: ' + @db + ' — USER + db_datareader + SHOWPLAN 적용';
     FETCH NEXT FROM db_cur INTO @db;
 END
 CLOSE db_cur;

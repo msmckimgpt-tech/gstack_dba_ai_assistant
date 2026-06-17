@@ -522,8 +522,14 @@ Stage 2 P6 구현 완료. flag OFF shadow 유지(MSSQL datasource 미바인딩 �
 - **m3 — dialect 시스템/메타데이터 스키마:** Dialect 객체가 단일 소유(A2/C1). MSSQL `system_schemas()`=
   sys/INFORMATION_SCHEMA/guest/db_*(역할) 제외, **dbo 는 사용자 스키마로 유지**(기본 거처). `metadata_schemas()`
   항상-허용은 sys/INFORMATION_SCHEMA 만(db_datareader 등 역할 스키마는 allowlist 통과 필요).
-- **M-4 — 부하게이트 fail-closed:** `Dialect.supports_load_estimate`(MSSQL=False). gate 모드 + EXPLAIN 미지원
-  엔진은 사전 차단(fail-open 뒤집음). MySQL 은 종전 fail-open 유지(골든).
+- **M-4 — 부하게이트 fail-closed:** `Dialect.supports_load_estimate`. (P6 초기) MSSQL=False → gate 모드 일괄
+  사전 차단(fail-open 뒤집음). MySQL 은 종전 fail-open 유지(골든).
+  - **→ TASK-0299 (2026-06-17) 후속 구현:** MSSQL=True 로 전환 — `SET SHOWPLAN_ALL ON` 으로 본 쿼리 미실행
+    추정 실행계획을 받아 `EstimateRows×EstimateExecutions` 최대 operator 를 예상 처리 행수로 산출(MySQL EXPLAIN
+    등가). 일괄 차단 대신 *추정* 기반 게이팅. `gate_fail_closed_on_estimate_error=True` 로 **추정 실패**(SHOWPLAN
+    미권한/연결)는 gate 에서 차단(M-4 안전 보존), confirm_heavy 로도 우회 불가(Codex-6). 세션 poison 은 `OFF`
+    finally 보장(Codex-7). RO 부트스트랩에 `GRANT SHOWPLAN` 추가(데이터 비노출). 상세: FUNCTION.md (TASK-0299),
+    CHG-20260617-0310.
 - **Codex-6 — confirm_heavy 비-LLM:** `AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM`(기본 true=현행). false 면 LLM 의
   confirm_heavy 무시(모델 자기우회 차단). **사용자/UI 승인 라운드트립은 P7 이월** — 그 전 hardened 모드는 무거운
   쿼리 차단.

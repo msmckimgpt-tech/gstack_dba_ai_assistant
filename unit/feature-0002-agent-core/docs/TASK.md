@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Task
 
+## TASK-0299 (current cycle) — MSSQL 사전 부하추정 (SET SHOWPLAN_ALL) — MySQL EXPLAIN 등가 (Major §12.3, REQ-20260617-0299)
+- 사용자 요청: "assistant 요청 시 datasource 가 MSSQL 일 경우 쿼리 실행 부하 조치를 어떻게 구성했는지" → MySQL 은 EXPLAIN 으로 부하 예측하는데 MSSQL 은 미구현(`supports_load_estimate=False`, gate=일괄 차단/warn·off=무방어)임을 확인 → "MSSQL 에서도 부하 추정으로 효율적 쿼리 작동" 구현 요청. DESIGN-multi-datasource §11 M-4 의 SHOWPLAN 후속(P6 이월분).
+- 근본: MSSQL 은 EXPLAIN 구문이 없음 → `SET SHOWPLAN_ALL ON` 으로 본 쿼리를 실행하지 않고 추정 실행계획을 받아 예상 처리 행수 산출(MySQL EXPLAIN 등가).
+- [x] (AC-0562) dialects.py: `MSSQLDialect.supports_load_estimate=True` + `_showplan` runner(ON→sql 미실행→`finally` OFF, 세션 poison 방지 Codex-7) + `estimate_load_rows`(EstimateRows×EstimateExecutions 최대) + `gate_fail_closed_on_estimate_error=True`(M-4). MySQL EXPLAIN 파싱은 dialect 로 이관만(골든 0).
+- [x] (AC-0562) tools.py: `_estimate_explain_rows` 엔진무관 wrapper(dialect 에 실행 콜백 주입, 계층 보존) + 게이트 `must_estimate` 재구조화 — 추정 실패 fail-closed 는 confirm_heavy 무관(Codex-6), 추정 성공 known-heavy 만 confirm override.
+- [x] (AC-0563) tools.py `_tool_explain_query` MSSQL SHOWPLAN plan 요약 표시(`_format_mssql_showplan`) + 도구 description/프롬프트 엔진중립화.
+- [x] (AC-0563) `bin/datasource-mssql-ro-bootstrap{,-multidb}.sql` 에 `GRANT SHOWPLAN`(데이터 비노출·추정 plan 만 → 최소권한 RO 양립) + 검증 라인.
+- [x] 테스트: 신규 `test_mssql_load_estimate.py` 19 + 골든 `test_query_guard.py` 16 회귀 0 + 기존 `test_mssql_security_boundary.py`/`test_multi_datasource.py` 계약·golden 갱신. 로컬 PYTHONPATH 전 스위트 PASS(2 skip).
+- [ ] make test 컨테이너 회귀 0 + ruff clean.
+- [ ] outside-voice 적대 코드리뷰(세션 poison/fail-closed 우회/cross-engine 격리) 흡수.
+- [ ] 머지(PR) → agent-core 3 이미지(web/ask-worker/insight-worker) 재배포. CHG/REV-20260617-0310.
+
 ## TASK-0289 (current cycle) — 수행시간 end-to-end 집계 + 내부 동작(activity) step + 큐 대기 단축 (feature-0003 TASK-0289 의 agent-core 면, Major §12.3)
 - 사용자 보고(feature-0003 TASK-0289): 실측 45초인데 화면엔 25초 표시(내부 동작 집계 숨겨짐) + 내부 동작(단계별 DB동작 외) 미표현. agent-core 가 수행시간 측정·step 기록의 근원.
 - 근본원인: 표시 `duration_ms` 가 `run_start`(모든 초기화 이후) 기준 → LLM 루프만 집계. step 은 tool 호출만 기록(activity 없음). worker 큐 유휴 폴링 tick 1~2s.
