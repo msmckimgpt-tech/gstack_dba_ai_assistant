@@ -296,11 +296,13 @@ kbd{font-family:var(--mono);font-size:10.5px;background:var(--bg);border:1px sol
 
 
 /* 클릭 시 상세 설명이 열리는 항목 */
-[data-explain]{cursor:pointer}
+[data-explain]{cursor:pointer;transition:filter .35s ease}
 @media(hover:hover){[data-explain]:hover{outline:1.5px solid #cdd9f5;outline-offset:3px;border-radius:9px}}
-/* Ctrl 키를 누르면 클릭 가능한(상세 설명) 항목을 가볍게 강조 — 발표 중 찾기 쉽게 */
-body.find-explain [data-explain]{outline:1.5px solid var(--primary);outline-offset:3px;border-radius:9px;
-  box-shadow:0 0 0 4px rgba(37,99,235,.10);transition:box-shadow .14s ease,outline-color .14s ease}
+/* Ctrl 키를 누르고 있는 동안: 클릭 가능한 항목 주위로 glow 가 천천히 fade-in/out — outline 없이
+   발표자만 간접적으로 알아볼 수 있게 (filter drop-shadow 라 항목 고유의 그림자/레이아웃은 건드리지 않음) */
+body.find-explain [data-explain]{animation:findglow 2.1s ease-in-out infinite}
+@keyframes findglow{0%,100%{filter:drop-shadow(0 0 1px rgba(37,99,235,0))}50%{filter:drop-shadow(0 0 7px rgba(37,99,235,.55))}}
+@media(prefers-reduced-motion:reduce){body.find-explain [data-explain]{animation:none;filter:drop-shadow(0 0 5px rgba(37,99,235,.32))}}
 .explain-hint{position:fixed;bottom:11px;left:50%;transform:translateX(-50%);z-index:55;font-size:11.5px;color:var(--text-muted);
   background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:5px 13px;box-shadow:var(--shadow-sm);pointer-events:none;opacity:.9;transition:opacity .4s}
 /* 상세 설명 = 우측 말풍선 (배경 딤/흐림 없음, 본문 구분용 부드러운 그림자만) */
@@ -753,7 +755,7 @@ body.find-explain [data-explain]{outline:1.5px solid var(--primary);outline-offs
 
 </div>
 
-<div class="explain-hint" id="explainHint">💡 항목을 클릭하면 자세한 설명 · <b>Ctrl</b> 키를 누르면 클릭 가능한 항목이 강조됩니다</div>
+<div class="explain-hint" id="explainHint">💡 항목을 클릭하면 자세한 설명 · <b>Ctrl</b> 키를 누르면 클릭 가능한 항목이 은은하게 표시됩니다</div>
 <div class="fragind" id="fragind"><span class="fdots" id="fragDots"></span><span class="ftxt" id="fragTxt"></span></div>
 <div class="pop" id="pop"><div class="pop-card" id="popCard">
   <button class="pop-close" id="popClose" aria-label="닫기">×</button>
