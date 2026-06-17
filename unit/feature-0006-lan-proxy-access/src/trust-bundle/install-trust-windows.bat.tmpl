@@ -1,0 +1,63 @@
+@echo off
+setlocal EnableDelayedExpansion
+chcp 65001 >nul
+title mysql-ai 사내 인증서 설치
+
+REM ============================================================
+REM  mysql-ai 사내 Root CA 신뢰 설치 (Windows)
+REM  feature-0006 TASK-0298 — 단일 자가완결 파일(인증서 임베드).
+REM  관리자 권한 필요 — 자동 상승.
+REM ============================================================
+
+net session >nul 2>&1
+if errorlevel 1 (
+  echo 관리자 권한으로 다시 실행합니다...
+  powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+  exit /b
+)
+
+set "FP_DISPLAY=__ROOTCA_SHA256__"
+set "FP_HEX=__ROOTCA_SHA256_HEX__"
+set "CRT=%TEMP%\mysql-ai-rootCA.crt"
+
+echo(
+echo ===========================================================
+echo   mysql-ai 사내 Root CA 신뢰 설치 (Windows)
+echo ===========================================================
+echo   인증서 지문 (SHA-256):
+echo     %FP_DISPLAY%
+echo(
+echo   ^> 운영자가 메신저 등으로 알려준 지문과 동일한지 확인하세요.
+echo   ^> 다르면 즉시 닫고 운영자에게 문의하세요 (가로채기 위험).
+echo(
+pause
+
+REM --- 임베드된 인증서를 임시 파일로 디코드 ---
+powershell -NoProfile -Command "[IO.File]::WriteAllBytes('%CRT%',[Convert]::FromBase64String('__ROOTCA_B64__'))"
+if not exist "%CRT%" ( echo [오류] 인증서 추출 실패. & pause & exit /b 1 )
+
+REM --- 지문 재검증 (임베드 무결성) ---
+for /f "usebackq delims=" %%H in (`powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA256 -LiteralPath '%CRT%').Hash"`) do set "ACTUAL=%%H"
+if /I not "!ACTUAL!"=="%FP_HEX%" (
+  echo [오류] 지문 불일치 — 설치를 중단합니다.
+  echo   기대: %FP_HEX%
+  echo   실제: !ACTUAL!
+  del "%CRT%" >nul 2>&1
+  pause
+  exit /b 1
+)
+
+REM --- 신뢰할 수 있는 루트 인증 기관 저장소에 설치 ---
+certutil -addstore -f Root "%CRT%"
+if errorlevel 1 ( echo [오류] 설치 실패. & del "%CRT%" >nul 2>&1 & pause & exit /b 1 )
+del "%CRT%" >nul 2>&1
+
+echo(
+echo [완료] '신뢰할 수 있는 루트 인증 기관'에 설치되었습니다.
+echo   브라우저를 완전히 종료한 뒤 다시 열고
+echo   https://__PUBLIC_HOST__ 에 접속하세요 (경고 없이 자물쇠 정상).
+echo(
+echo   ※ Firefox 사용 시: Firefox 는 자체 인증서 저장소를 씁니다.
+echo     설정 → 개인정보 → 인증서 보기 → 인증 기관 → rootCA.crt 가져오기.
+echo(
+pause

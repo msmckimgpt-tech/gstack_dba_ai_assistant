@@ -212,5 +212,14 @@ openssl x509 -in "$LEAF_CERT" -noout -subject -issuer -dates -ext subjectAltName
 echo
 log "배포 파일 (테스터 PC 에 설치): $ROOT_CA_CERT"
 log "서버 leaf 인증서:             $LEAF_CERT  (web/caddy 가 자동 서빙)"
-log "다음 단계: web 컨테이너 재시작으로 새 인증서 반영"
-log "  (repo 루트에서) sudo docker compose up -d --no-deps web"
+
+# --- 4) 테스터 신뢰 설치 번들 갱신 (TASK-0298, 있으면 자동) ---
+TRUST_BUNDLE_SH="$SCRIPT_DIR/trust-bundle.sh"
+if [ -x "$TRUST_BUNDLE_SH" ] || [ -f "$TRUST_BUNDLE_SH" ]; then
+  log "테스터 설치 번들 갱신 (trust-bundle.sh) ..."
+  bash "$TRUST_BUNDLE_SH" --host "$HOST" --certs-dir "$CERTS_DIR" >&2 || \
+    log "WARN: trust-bundle.sh 실패 — 번들 미갱신 (수동: bash bin/trust-bundle.sh)"
+fi
+
+log "다음 단계: web/caddy 재시작으로 새 인증서 + 번들 반영"
+log "  (repo 루트에서) sudo docker compose up -d --no-deps web caddy"

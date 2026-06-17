@@ -8,6 +8,39 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260617-0309
+- Date: 2026-06-17
+- Related Requirement: REQ-0285 / TASK-0298 / AC-0557~0561 (**Major** §12.3, ADR-LAN-0004)
+- Summary: 테스터 Root CA "원클릭 설치 번들". PC 마다 수동 인증서 이동 번거로움 해소.
+  web 서버가 `http://<host>/trust/` 에서 OS별 단일 설치 스크립트 + 다운로드 페이지 제공.
+- Files:
+  - `bin/trust-bundle.sh` (신규): rootCA.pem → 지문/​base64 주입 → `artifacts/trust-bundle/`
+    {index.html, install-trust-windows.bat, install-trust-macos.command, rootCA.crt} 조립.
+    임베드 base64 디코드 지문 자가검증.
+  - `unit/feature-0006-lan-proxy-access/src/trust-bundle/*.tmpl` (신규): win .bat(자가-상승+
+    certutil), mac .command(security add-trusted-cert), index.html(지문 대조+OS감지), README.
+    인증서 PEM base64 임베드(단일 자가완결 파일) + 지문 재검증.
+  - `src/caddy/Caddyfile`: `:80`/`:443` 양쪽에 `/trust`→`/trust/` 리다이렉트 +
+    `handle_path /trust/*`(`root /srv/trust`, `file_server`). HTTP 서빙 = CA 미설치(HTTPS
+    경고) 상태에서 경고 없이 받게. 나머지는 :80=HTTPS 리다이렉트, :443=reverse_proxy(불변).
+  - `docker-compose.yml`: caddy 에 `../artifacts/trust-bundle:/srv/trust:ro` 마운트.
+  - `bin/tls-internal-ca.sh`: 끝에서 trust-bundle.sh 자동 호출(인증서 갱신 시 번들 동반).
+  - feature-0006 docs + `src/TESTER_TLS_TRUST.md` (웹 번들 경로 안내 추가).
+- Diff size: 신규 스크립트 1 + 신규 템플릿 4 + Caddyfile/compose + docs. 앱 코드 0.
+- Impact:
+  - 테스터: `http://<host>/trust/` 접속 → OS 스크립트 실행(승인 1회). 파일 수동 이동 불필요.
+  - **브라우저 방문 자동설치는 OS/브라우저 보안경계상 불가** — 사용자 승인 필수(설계 한계 명시).
+  - `caddy validate`=Valid + one-off 테스트 caddy(:8080/:8443): `/trust/`·스크립트·rootCA.crt
+    = 200, bare `/trust`→301 `/trust/`, 그외 HTTP→HTTPS 301, 앱 :443 reverse_proxy=200 머지전 검증.
+  - 배포: Caddyfile+compose mount 변경 → `docker compose up -d --force-recreate caddy`.
+- 보안(신뢰 부트스트랩): Root CA 최초 배포는 채널 무결성이 본질 한계(HTTP·HTTPS 무관, 미설치
+  상태라 암호학적 신뢰 없음). 완화 = 지문 노출 + 스크립트 설치전 지문 재검증 + 운영자가 지문을
+  신뢰 채널 공유. 개인키 미포함(rootCA.crt 공개만). 사내 LAN 가정(§9.7), 외부 노출 시 보완 선행.
+- Rollback Notes:
+  - Caddyfile 의 `/trust` handle 2곳 제거 + compose mount 제거 후 `up -d --force-recreate caddy`.
+    앱/인증서 서빙 무영향(번들만 사라짐).
+  - `artifacts/trust-bundle/` 는 산출물 — 삭제 가능, `bin/trust-bundle.sh` 로 재생성.
+
 ## CHG-20260617-0308
 - Date: 2026-06-17
 - Related Requirement: REQ-0284 / TASK-0297 / AC-0554~0556 (**Major** §12.3)
