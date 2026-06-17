@@ -3982,3 +3982,14 @@ source_of_truth: true
 - Files: feature-0003 src/app.py, tests/{test_dashboard_overview,test_audit_rbac}.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md; repo docs/SECURITY.md.
 - Rollback: audit self filter 에 `OR TargetAccountId=:self` 복원(target 노출 재발) / 위젯 권한 console.access 복원(데이터 노출 재발).
 - Deploy: web 재빌드 1 이미지(app.py baked, 프론트 무변경 — 캐시버스터 불요). deploy_scope: included.
+
+## CHG-20260617-0306
+- Date: 2026-06-17 (TASK-0294, **Critical §12.3** — 대시보드 위젯 데이터 `.own`/`.any` 세분화 스코핑).
+- Scope: feature-0003-agent-web-ui(app.py 대시보드 위젯 함수 2종 + 카탈로그 + overview). 스키마·엔드포인트 응답 shape·`.any` 경로·UI 레이아웃·프론트 무변경. 위젯 데이터 출력 경계 세분화(축소).
+- 사용자 보고/결정: 제한 권한(.own만) 보유자도 대시보드에서 cross-account 정보 노출 → 위젯 데이터를 보유 권한의 `.own`/`.any` 로 세분화.
+- 근본원인: `_dash_widget_*` 함수가 actor/scope 인자 없이 무조건 전체 집계. audits 의 by_actor 가 타 계정 username 노출 + `audit.read.any` 게이팅으로 `.own` 보유자 self-scoped 버전 부재(all-or-nothing). conversations 도 cross-account 전체 집계.
+- 변경: `_widget_data_scope` 신설 + `_dash_widget_audits`/`_dash_widget_conversations` 에 `scope`/`account_id` 인자. `.own`(=`.any` 미보유): audits=`ActorAccountId=self`(전 쿼리)+by_actor 생략, conversations=`owner_account_id=self`(전 쿼리, parameterized)+활성소유자 생략. `.any`: 기존 cross-account(byte-identical). 카탈로그 audits/conversations permission→[own, any] 리스트(가시성 own|any). fail-closed(account_id None→-1).
+- Verification: test_dashboard_overview.py(scope kwargs + `.own` self-scope) + make test 컨테이너 회귀 0. 적대 리뷰 REV-20260617-0306 SHIP(SQLi 0·self-scope 완전·`.any` 무회귀 7항목). D1 fail-open 흡수.
+- Files: feature-0003 src/app.py, tests/test_dashboard_overview.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
+- Rollback: 위젯 함수 scope 인자 제거(cross-account 무조건 집계 재발) / 카탈로그 permission 단일(.any) 복원.
+- Deploy: web 재빌드 1 이미지(app.py baked, 프론트 무변경 — 캐시버스터 불요). deploy_scope: included.

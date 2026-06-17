@@ -4057,3 +4057,14 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 테스트: test_dashboard_overview.py 갱신(console-only→리소스 위젯 부재·신규 superset 게이팅·admin 전위젯·default_prefs·window propagation 5케이스) + test_audit_rbac.py smoke(s3 Actor-only·s3a target-hidden 반전) + make test 컨테이너 회귀 0.
 - [x] outside-voice 적대 보안 리뷰 SHIP(REV-20260616-0305) — audit 6경로 OR-Target 잔존 0·under-exposure 무·`.any` 무영향·위젯 catalog/widgets/프런트 3중 정합·prefs 우회 불가 8항목 코드대조. MINOR=profile docstring(흡수).
 - [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → 라이브 재검증(테스트계정 .own target row 부재·console.access-only 대시보드 리소스 위젯 데이터 0) → 마감.
+
+### TASK-0294 — 대시보드 위젯 데이터 `.own`/`.any` 세분화 스코핑 (Critical §12.3, 2026-06-17)
+- 사용자 보고(TASK-0293 후속): 제한 권한(내 감사 조회만) 보유자인데 대시보드에서 다른 계정 정보가 모두 보임. 권한별로 종속적인 부분을 각 보유 권한마다 세분화해 출력 제한 필요 — 감사뿐 아니라 모든 권한 검토.
+- 조사 결론(Explore ×2): 데이터 **엔드포인트**는 전부 `.own`/`.any` 정상 스코핑(TASK-0072/0293). 누출은 **대시보드 위젯**뿐 — 위젯 함수가 actor/scope 인자를 안 받아 all-or-nothing. 특히 `_dash_widget_audits` 의 by_actor(`JOIN WebAccounts GROUP BY ActorAccountId`)가 타 계정 username 노출, `audit.read.any` 로만 게이팅(.own 보유자는 self-scoped 버전 부재).
+- [x] `_widget_data_scope(actor, any_perm)` 신설(any 보유→'any', else 'own').
+- [x] `_dash_widget_audits(scope, account_id)`: `.own` → 전 쿼리 `AND ActorAccountId=:self` + by_actor 생략 + "(내 활동)". `.any` → 기존. fail-closed(account_id None→-1).
+- [x] `_dash_widget_conversations(scope, account_id)`: `.own` → 전 쿼리 `WHERE owner_account_id=:self`(`_w` 헬퍼 parameterized) + '활성 소유자' metric 생략 + "(내 대화)". `.any` → 기존.
+- [x] `_DASHBOARD_WIDGETS`: audits→[audit.read.own, audit.read.any], conversations→[conversation.list.own, conversation.list.any]. admin_overview 가 scope+account_id(=인증 actor.id) 전달.
+- [x] 테스트: test_dashboard_overview.py(window propagation scope kwargs + 신규 `.own` self-scope 가시성·scope='own'·account_id 전달 검증) + make test 컨테이너 회귀 0.
+- [x] outside-voice 적대 보안 리뷰 SHIP(REV-20260617-0306) — SQL injection 0(parameterized)·`.own` self-scope 완전(5쿼리 누락 0·by_actor/활성소유자 생략)·scope 결정 정확·가시성↔데이터 정합·account_id 인증값·`.any` byte-identical 무회귀·accounts/usage 개별 PII 미노출 7항목. D1(fail-open) 흡수.
+- [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → 라이브 재검증(`.own` 계정 audits/conversations 위젯 self-scoped·by_actor/활성소유자 부재) + PB-0008 → 마감.
