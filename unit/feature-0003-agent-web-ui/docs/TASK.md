@@ -4100,4 +4100,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - 사용자 보고: `관리 콘솔 > 제품 > [각 항목]` 의 글꼴 크기가 계정·역할·데이터소스 목록 항목보다 너무 큼.
 - 근본원인: `renderProductList()` 의 제품명 요소가 `admin-account-name`(15px, 700) 을 사용 — 다른 목록(계정·역할·데이터소스)은 `admin-list-row-name`(13px, 600) 사용. 컨테이너도 `admin-list-main`(CSS 미정의) vs `admin-list-row-main`(flex column, gap 2px, min-width 0) 불일치.
 - [x] admin.js `renderProductList()`: 이름 요소 `div.admin-account-name` → `span.admin-list-row-name`, 컨테이너 `admin-list-main` → `admin-list-row-main`. 2줄 변경, frontend-only.
-- [ ] 배포(web 재빌드, deploy_scope: included) → 라이브 확인(제품 탭 항목 글꼴이 계정/역할과 동일 크기) → 마감.
+- [x] 배포(web 재빌드, deploy_scope: included) → 라이브 확인(제품 탭 항목 글꼴이 계정/역할과 동일 크기) → 마감. PB-0008 render-injection PASS(productFontSize=13px/600=accountFontSize, match=true). 스크린샷 `artifacts/pb0008-task0301/products_font_fix.png`. CHG-20260617-0311 / REV-20260617-0311[SKIPPED].
