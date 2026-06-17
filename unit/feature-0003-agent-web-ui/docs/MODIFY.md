@@ -3942,3 +3942,14 @@ source_of_truth: true
 - Files: unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,REVIEW,TEST}.md, docs/STATUS.md.
 - Rollback: 해당없음(docs only).
 - Deploy: 해당없음(코드 무변경).
+
+## CHG-20260616-0305
+- Date: 2026-06-16 (TASK-0293, **Critical §12.3** — 감사 로그 `.own` Actor-only + 대시보드 위젯 데이터 권한 게이팅).
+- Scope: feature-0003-agent-web-ui(app.py audit self filter·dashboard 위젯 카탈로그/헬퍼, docs/SECURITY.md §9.1). 스키마·엔드포인트 응답 shape·`.any` 경로·UI 레이아웃 무변경. 순수 권한 경계 강화(데이터 노출 축소).
+- 사용자 보고/결정: ① 감사 `.own` 이 target=self(타인의 admin 조치)까지 노출 → Actor-only 반전. ② 대시보드 위젯 데이터가 console.access 만으로 노출 → 리소스별 권한 게이팅.
+- 근본원인: ① `_audit_build_self_filter_sql` 가 `(ActorAccountId OR TargetAccountId)=self`(TASK-0073 E1 결정 B). ② `_DASHBOARD_WIDGETS` 의 accounts/products/datasources/roles/conversations 가 전부 `console.access` 로만 게이팅 — 탭(TASK-0288)은 막혀도 대시보드 집계 데이터는 누출.
+- 변경: (A) self filter `ActorAccountId = :self` 단일(헬퍼 정본 — list/single/profile×2/resources facet inline 전파). (B) 위젯 권한 리소스별 교체 + `_actor_can_see_widget`(단일/리스트 OR, manage⊇read). overview catalog·`_isolate` 데이터 양쪽 동일 경계. conversations=conversation.list.any(cross-account COUNT(*) 집계).
+- Verification: test_dashboard_overview.py(5케이스 갱신/신규) + test_audit_rbac.py smoke(s3/s3a 반전) + make test 컨테이너 회귀 0. 적대 리뷰 REV-20260616-0305 SHIP(8항목 코드대조; OR-Target 잔존 0, prefs 우회 불가). MINOR profile docstring 흡수.
+- Files: feature-0003 src/app.py, tests/{test_dashboard_overview,test_audit_rbac}.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md; repo docs/SECURITY.md.
+- Rollback: audit self filter 에 `OR TargetAccountId=:self` 복원(target 노출 재발) / 위젯 권한 console.access 복원(데이터 노출 재발).
+- Deploy: web 재빌드 1 이미지(app.py baked, 프론트 무변경 — 캐시버스터 불요). deploy_scope: included.

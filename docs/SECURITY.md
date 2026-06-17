@@ -184,7 +184,7 @@ REQ-20260519-0001 — 모든 admin mutation + user 4 high-signal action (`/api/a
 
 ### 9.1 권한 모델 (`audit.*`)
 
-- `audit.read.own` — 모든 role (pending / operator / sales / dba 포함) 자동 grant. `.own` SQL filter = `WHERE ActorAccountId = :self OR TargetAccountId = :self` (Eng review E1, 사용자 결정 B). admin password-reset / role permission grant / share revoke 등 admin→user 이벤트가 user 본인 audit 에 노출 → 보안 가시성 정합.
+- `audit.read.own` — 모든 role (pending / operator / sales / dba 포함) 자동 grant. `.own` SQL filter = `WHERE ActorAccountId = :self` (**TASK-0293, 사용자 결정 2026-06-16 — Actor-only**). "내 감사 로그" 는 본인이 **수행한(actor)** 행위만 노출한다. 기존 `WHERE ActorAccountId = :self OR TargetAccountId = :self` (Eng review E1, 사용자 결정 B — admin→user 이벤트 투명성) 은 반전됐다: 본인이 단지 **대상(target)** 인 타인의 행위(관리자의 비밀번호 초기화·역할 변경·계정 비활성화·공유 회수 등)는 `.own` 에 노출하지 않는다. 그런 admin→user 이벤트는 `audit.read.any` 보유자만 조회한다(이벤트 로깅 자체는 유지 — PIPA §29 접근기록 보존). list / single-event / resources facet 모두 동일(actors facet 의 `.own` 은 본인 actor 만 — 정합). 정본 = `_audit_build_self_filter_sql`.
 - `audit.read.any` — admin / dba auto-grant. 전체 row 조회. `.own` superset semantics (TASK-0058 share read-gate 패턴 답습).
 - `audit.export` — admin / dba auto-grant. CSV / JSON dump. **TASK-0090 (2026-05-20) StreamingResponse 전환 — hard cap 50k row 제거**, max_id high-water mark + keyset cursor pagination (chunk_size=500) + 64KiB byte-threshold flush + try/finally cleanup + export self-audit (start + complete event 2 건, `action="audit.export.start"` / `audit.export.complete`/`audit.export.aborted`). masked field 정책 유지. 동시 export 제한은 별 cycle (multi-worker semaphore 정합 검토).
 - `audit.purge` — admin only auto-grant. retention 초과 row chunked PK 삭제. start/complete self-audit row 동반.

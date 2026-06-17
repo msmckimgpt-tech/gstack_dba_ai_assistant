@@ -4,8 +4,8 @@
 
   S1  admin mutation (account update) → audit row 등장 (Same tx fail-safe 정상)
   S2  /api/ask → user fail-open audit row 생성 (silent on failure)
-  S3  `.own` actor=self → 본인 actor/target row 만 (E1 self filter)
-  S3a admin password-reset 후 user 가 본인 audit 조회 → admin actor (target=user) 가 본인 audit 에 보임 (E1 B 핵심)
+  S3  `.own` → 본인이 actor 인 row 만 (TASK-0293 Actor-only; target=self 제외)
+  S3a admin password-reset 후 user 가 본인 `.own` audit 조회 → admin actor·target=user row 가 **안 보임** (TASK-0293 Actor-only — 기존 E1 B 반전; admin .any 에선 보임)
   S4  `.own` actor=other (다른 사용자 id) → 403 (또는 404 byte-equal — metadata leak 차단)
   S5  `.any` actor=any → 전체 row 조회 가능
   S6  `.export` CSV 응답 + masked 정합
@@ -107,7 +107,7 @@ def s2_ask_fail_open_visible(base_url: str, user_cookie: str, admin_cookie: str)
 
 
 def s3_own_self_filter(base_url: str, user_cookie: str) -> bool:
-    """`.own` actor=self → 본인 actor/target row 만."""
+    """`.own` → 본인이 **actor** 인 row 만 (TASK-0293 Actor-only; target=self 는 제외)."""
     status, body = _audit_list(base_url, user_cookie, limit=20)
     if status != 200:
         return _expect("S3 .own list", False, f"status={status}")
@@ -115,15 +115,17 @@ def s3_own_self_filter(base_url: str, user_cookie: str) -> bool:
     scope = body.get("scope") or ""
     if scope != "own":
         return _expect("S3 scope", False, f"scope={scope} (expected own)")
-    # 모든 row 가 actor=self 또는 target=self (E1 SQL filter 검증).
-    return _expect("S3 .own self filter", scope == "own", f"items={len(items)} scope={scope}")
+    # TASK-0293 Actor-only: scope=own 확정. actor=self 패턴은 s4(actor=other→0행)로 교차검증.
+    return _expect("S3 .own actor-only filter", scope == "own", f"items={len(items)} scope={scope}")
 
 
-def s3a_password_reset_target_visibility(base_url: str, admin_cookie: str, target_user: str, target_pass: str) -> bool:
-    """admin password-reset target=user → user 본인 audit 에 admin actor row 노출 (E1 B)."""
+def s3a_password_reset_target_hidden(base_url: str, admin_cookie: str, target_user: str, target_pass: str) -> bool:
+    """TASK-0293: admin password-reset target=user → user 본인 `.own` audit 에 그 admin actor row 가
+    **노출되지 않아야** 한다 (Actor-only — 기존 E1 B target 노출 반전). admin(audit.read.any)만 조회."""
     # 본 시나리오는 비밀번호 reset 실 호출이라 영향 큼. smoke 는 row 패턴 검증.
-    return _expect("S3a admin→user event visibility (manual)", True,
-                   "manual — admin: password-reset target=user; user login → /api/admin/audits 에서 target_account_id=self row 확인")
+    return _expect("S3a admin→user event hidden from target (manual)", True,
+                   "manual — admin: password-reset target=user; user login → /api/admin/audits 에서 "
+                   "actor=admin·target=self row 가 **없어야** 함(Actor-only). admin .any 에서는 보임")
 
 
 def s4_own_actor_other_403(base_url: str, user_cookie: str) -> bool:
@@ -216,7 +218,7 @@ def main() -> int:
         print("[INFO] admin credentials not provided — skipping HTTP smokes.")
         # static-only path: 모두 PASS (manual / code review 권유).
         manual = [
-            s3a_password_reset_target_visibility(args.base_url, "", "", ""),
+            s3a_password_reset_target_hidden(args.base_url, "", "", ""),
             s8_prod_fail_closed(args.base_url),
             s9_anonymous_share_view(args.base_url, "", None),
         ]
@@ -230,7 +232,7 @@ def main() -> int:
         s1_admin_mutation_audit(base_url, admin_cookie),
         s2_ask_fail_open_visible(base_url, user_cookie, admin_cookie),
         s3_own_self_filter(base_url, user_cookie),
-        s3a_password_reset_target_visibility(base_url, admin_cookie, args.operator_user, args.operator_pass),
+        s3a_password_reset_target_hidden(base_url, admin_cookie, args.operator_user, args.operator_pass),
         s4_own_actor_other_403(base_url, user_cookie) if args.operator_user else True,
         s5_any_full_visibility(base_url, admin_cookie),
         s6_csv_export(base_url, admin_cookie),
