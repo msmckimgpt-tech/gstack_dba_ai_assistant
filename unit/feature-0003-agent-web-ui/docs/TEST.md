@@ -955,3 +955,12 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **단위(정적, 컨테이너 외)**: `test_perm_self_scope.py` 18 PASS(ast 추출 실 helper 4종 — escalation 403·deny 차단·merge 보존·역할 add/remove/create·배정 초과) + `verify_perm_self_scope.mjs` 13 PASS(실 `renderPermissionGrid` jsdom — 숨김·빈 그룹 제거·컨테이너 보존·하위호환) + node --check + py ast.parse.
   - **Pass/Fail: PASS** — 배포된 시스템에서 제한 admin 이 본인 미보유 권한을 계정 override·역할 배정으로 부여하지 못하고(403×3 벡터), 보유 권한은 정상 설정(200), 화면에선 미보유 권한 행이 숨겨짐을 실제 Windows 브라우저 + 라이브 HTTP 로 실측 통과. CHECK#13(PB-0008 Windows-browser) **충족**.
   - **Notes:** pgpark 자격 백업/복원으로 실계정 무오염. 기 캐시 사용자는 1회 하드리프레시(admin.html no-cache 진입 후 자동 최신).
+
+- 2026-06-17 (TASK-0302 관리 콘솔 제품 일괄 삭제 미적용 + bulk staging 목록 즉시 반영, **Major §12.3**; CHG/REV-20260617-0312):
+  - **Environment: 라이브 실 running stack + 브라우저(gstack /browse, WSL headless) + curl** — `docker cp` 로 수정 admin.js/admin.html 를 repo-web-1 `/app/web/static/` 에 반영(정식 배포 전 검증), 서빙 admin.js?v=20260617-task0302-bulk-delete-apply md5 일치 확인. 백엔드(app.py IsDefault/404 가드)는 정식 배포(web 재빌드) 후 라이브 재검증 예정.
+  - **재현(수정 전, 동일 stack)**: 제품 3개(zz_browse_prod_*) 다중선택 → "삭제 pending"(pending.productMeta=3, 전부 `{_delete:true}`) → "모두 적용" → pending 0건이나 **3개 전부 잔존(삭제 0건)** — applyAllPending 이 _delete 무처리(빈 body·요청 0건) 실증.
+  - **수정 후(동일 flow)**: 제품 3개 다중선택 → "삭제 pending" → is-to-delete rows=2·pendingDots=2(제품 행 마커 실측, productMeta pending 기준) → "모두 적용" → **3개 전부 삭제**(adminState.products·API 모두 0 잔존, commit bar 0건).
+  - **회귀**: 역할 일괄 비활성화 2/2 정상(roleSelected.size=2 → pending.roles=2 → 적용 후 active=false ×2, has-pending 마커 markedRows=2). 계정/역할/제품 일괄 활성·비활성, 단일 제품 삭제(직접 DELETE)는 수정 전부터 정상(전수 조사).
+  - **단위(정적)**: node --check admin.js PASS + py ast.parse app.py PASS.
+  - **Pass/Fail: PASS(behavioral)** — 제품 일괄 삭제가 실제 stack 에서 N개 전부 적용됨을 실측. 외부리뷰 SHIP-WITH-FIXES(REV-20260617-0312, MAJOR 기본제품 backend 가드·MINOR 제품행 마커 흡수).
+  - **Residual(CHECK#13):** 정식 배포(web 재빌드) 후 **PB-0008 Windows-browser** 로 실 Windows 화면 재검증(제품 행 pending 마커·일괄 삭제 흐름) + 라이브 백엔드 가드(기본 제품 삭제 **409**·미존재 404) 실측. 본 cycle 검증은 WSL headless /browse + curl(행동/로직 정본)이며 실 화면 정본은 배포 후 PB-0008.
