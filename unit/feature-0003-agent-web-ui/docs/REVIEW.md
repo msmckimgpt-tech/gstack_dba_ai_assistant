@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260617T060740-ai-claude-task0295-pb0008-evidence [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-17 (TASK-0295 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence)
+- Skip 사유: docs 전용(TEST/MODIFY/REVIEW/TASK). 코드/정적자산/스키마/RBAC 무변경 — 본체 검토는 REV-20260617T054423-ai-claude-task0295-product-list-rbac [SUBAGENT:product-list-rbac-review] (SHIP) 담당.
+- 기록 요지: TASK-0295 PB-0008 **PASS**(실 Chrome/148.0.7778.217, 배포본 main `3fa87e8`, repo-web-1 healthy). win-browser eval 실측 — **부분 회수**: admin role 로그인 시 `/api/session` products 8개 → `product.access.mv` 회수 후 **7개**(MV 제거·MV_QA 유지, 제품별 권한 정확), 작업 화면 드롭업 메뉴 DOM 7개·MV 부재. **빈목록**: 전체 `product.access.*` 회수 시 드롭업 제품 0개 + 신규 안내 "접근 가능한 제품이 없습니다"(`.product-dropup-empty`) 렌더. 검증 후 회수 권한 전부 복원(운영 무오염). evidence `artifacts/pb0008-task0295/{mv-revoked-picker,all-revoked-empty}.png`.
+
 ## REV-20260617T054423-ai-claude-task0295-product-list-rbac [SUBAGENT:product-list-rbac-review] — SHIP
 - Date: 2026-06-17 (TASK-0295 — 작업 화면 제품 목록 product.access RBAC 게이트, REQ-20260617-0293/AC-0548, Major §12.3)
 - 대상: backend 헬퍼 2개(`_filter_products_for_account_access`·`_coerce_default_product_id`) + 작업 화면 2곳(`/api/session`·`/api/auth/me`) 필터 적용 + frontend 빈목록 안내. [[feedback_outside_voice_for_rbac]] 정합 — RBAC 인접 변경 외부 시각 필수.

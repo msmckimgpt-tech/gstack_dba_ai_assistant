@@ -9,6 +9,13 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260617T060740-ai-claude-task0295-pb0008-evidence (TASK-0295 후속 docs-only — PB-0008 evidence)
+- Date: 2026-06-17
+- Scope: docs 전용(TEST/MODIFY/REVIEW/TASK). 코드/정적자산/스키마/RBAC 0.
+- 변경: TASK-0295 의 "verify-completion → 머지 → 배포 → PB-0008" 잔여를 **완료**(PR #303 머지 main `3fa87e8` → web 재배포 healthy → PB-0008 Windows-browser PASS)로 갱신. TEST.md §4 에 Windows-browser Run 실측 기록: 부분 회수(admin role `product.access.mv` 회수 시 `/api/session` products 8→7·MV 제거·MV_QA 유지 + 드롭업 DOM 7개·MV 부재), 빈목록(전체 회수 시 0개 + "접근 가능한 제품이 없습니다" 안내 렌더), 권한 복원. evidence `artifacts/pb0008-task0295/{mv-revoked-picker,all-revoked-empty}.png`.
+- 검증: PB-0008 실측(win-browser eval — `/api/session` products + 드롭업 메뉴 DOM 집계, DB 권한 회수/복원 대비). 코드 무변경.
+- Files: unit/feature-0003-agent-web-ui/docs/{TEST,MODIFY,REVIEW,TASK}.md
+
 ## CHG-20260617T052414-ai-claude-task0295-product-list-rbac (TASK-0295 — 작업 화면 제품 목록 product.access RBAC 게이트)
 - Date: 2026-06-17
 - Scope: feature-0003-agent-web-ui — backend(`src/app.py`) + frontend(`src/static/app.js`·`styles.css`) + 테스트. **신규 RBAC 권한 0**(기존 동적 `product.access.<key>` 재사용). 스키마/엔드포인트 무변경.
