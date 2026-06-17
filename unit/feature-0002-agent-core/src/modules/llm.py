@@ -12,6 +12,7 @@ __all__ = [
     "OBJECT_SQL_GROUNDING_REVIEW_PROMPT",
     "RAG_PRIORITY_PROMPT_MCP",
     "RAG_PRIORITY_PROMPT_SQL",
+    "ACCOUNT_INSIGHT_PROMPT",
     "SCHEMA_INSIGHT_PROMPT",
     "SQL_FIX_PROMPT",
     "SUMMARY_PROMPT",
@@ -36,6 +37,7 @@ __all__ = [
     "llm_fix_sql",
     "llm_generate_topic",
     "llm_plan",
+    "llm_account_insight",
     "llm_schema_insight",
     "llm_table_insight",
     "llm_update_summary",
@@ -784,6 +786,17 @@ Output (JSON only):
 }""".strip()
 
 
+ACCOUNT_INSIGHT_PROMPT = """You distill a SINGLE user's recurring analytical interest from one past conversation, so a future conversation can softly recall the user's context. Return JSON only — no markdown, no explanation.
+
+CRITICAL — PRIVACY: Output MUST be a high-level, PII-FREE generalization. NEVER include any concrete data values, personal names, emails, phone numbers, account/resident IDs, IP addresses, specific row values, or verbatim quotes. Describe the *kind* of analysis (domain, metric family, table/topic area, recurring question type), not the data itself. If the conversation has no durable analytical interest worth remembering, return {"insight": ""}.
+
+Input JSON: { "summary": "...", "origin_request": "...", "thread_goal": "...", "topic": "..." }
+Output (JSON only):
+{
+  "insight": "Korean 1 sentence, PII-free — e.g. '사용자는 주문/결제 도메인의 일별 매출 집계와 환불율 추이에 반복적으로 관심을 보임'. Empty string if nothing durable."
+}""".strip()
+
+
 OBJECT_RESOLVE_PROMPT = """
 You are a database object resolver.
 Choose the single best table candidate for the user's request from the provided candidates only.
@@ -1319,6 +1332,45 @@ def llm_table_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(obj, dict):
         _log_llm_warn(
             "llm_table_insight",
+            "json_extract_failed",
+            f"model={_insight_model} len={len(text)} head={text[:200]}",
+        )
+        return None
+    return obj
+
+
+def llm_account_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """TASK-20260617T082131 (B′): 한 대화의 summary/kv 에서 PII-free 메타 인사이트를 1줄
+    추출한다(계정 cross-conversation 회상 소스). schema/table insight 와 동일 티어 라우팅·
+    예외 처리. 반환 dict `{"insight": "..."}` 또는 None(실패). PII 제거는 프롬프트가 강제하되
+    호출측이 2차 마스킹을 적용한다(방어심층)."""
+    _insight_model = AGENT_INSIGHT_MODEL or OPENAI_MODEL
+    client = _get_llm_client(timeout_sec=AGENT_INSIGHT_TIMEOUT_SEC, model=_insight_model)
+    if client is None:
+        return None
+    try:
+        resp = client.chat.completions.create(
+            model=_insight_model,
+            messages=[
+                {"role": "system", "content": ACCOUNT_INSIGHT_PROMPT},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            **_max_tokens_kwargs(_insight_model, "insight"),
+            **_temperature_kwargs(_insight_model),
+            timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
+        )
+        _record_llm_usage(_insight_model, "account_insight", resp)
+        text = (resp.choices[0].message.content or "").strip()
+    except Exception as exc:
+        _log_llm_warn("llm_account_insight", "exception", str(exc))
+        return None
+    if not text:
+        _log_llm_warn("llm_account_insight", "empty_response", f"model={_insight_model}")
+        return None
+    obj = _extract_json_object(text)
+    if not isinstance(obj, dict):
+        _log_llm_warn(
+            "llm_account_insight",
             "json_extract_failed",
             f"model={_insight_model} len={len(text)} head={text[:200]}",
         )

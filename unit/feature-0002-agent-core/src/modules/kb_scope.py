@@ -37,6 +37,7 @@ __all__ = [
     "_looks_ambiguous_request",
     "_mark_refresh_kv",
     "_mask_email",
+    "_mask_prose",
     "_mask_generic",
     "_mask_ip",
     "_mask_numeric",
@@ -248,6 +249,26 @@ def _mask_generic(text: str) -> str:
     if len(text) <= 2:
         return "*" * len(text)
     return text[0] + "*" * (len(text) - 2) + text[-1]
+# TASK-20260617T082131 (G3 2차 방어): 자유 텍스트(prose) PII 마스커. 컬럼명 기반
+# `_mask_value`/`_mask_rows` 는 prose 에 무력하므로(설계 R4), 회상 인사이트 주입 직전
+# 값-패턴(이메일/주민번호/전화/IP/긴 숫자열)을 마스킹한다. 정규식 기반이라 한국어 이름 등
+# 자유형 식별자는 못 잡으므로(leaky) 1차 방어는 추출 단계 PII-free 프롬프트·source allowlist 이고
+# 본 함수는 방어심층이다.
+_PROSE_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
+_PROSE_RRN_RE = re.compile(r"\b\d{6}[-\s]?\d{7}\b")            # 주민등록번호 패턴
+_PROSE_PHONE_RE = re.compile(r"\b0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4}\b")  # 전화번호
+_PROSE_IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_PROSE_LONGNUM_RE = re.compile(r"\b\d{7,}\b")                  # 7자리+ 연속 숫자(계정/카드 등)
+def _mask_prose(text: str) -> str:
+    s = str(text or "")
+    if not s.strip():
+        return s
+    s = _PROSE_EMAIL_RE.sub("[email]", s)
+    s = _PROSE_RRN_RE.sub("[id]", s)
+    s = _PROSE_PHONE_RE.sub("[phone]", s)
+    s = _PROSE_IP_RE.sub("[ip]", s)
+    s = _PROSE_LONGNUM_RE.sub("[num]", s)
+    return s
 def _mask_value(value: Any, col_name: str) -> Any:
     if value is None or not AGENT_MASK_PII:
         return value

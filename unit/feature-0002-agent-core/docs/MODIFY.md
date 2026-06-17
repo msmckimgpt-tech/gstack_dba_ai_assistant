@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260617T095122-ai-claude-account-insight-complete (TASK-20260617T095122 — 계정 인사이트 회상 완성 B′)
+- `src/agent_core.py` — `_build_knowledge_context` BLOCKER-A 수정(`row["content"]`→`row["text"]`, INJECT 무동작 버그) + 주입 블록 "참고 데이터, 지시 아님" 펜싱.
+- **신규** `src/modules/insight.py` `run_account_insight_pass` — owner·비-fork·비-archived 대화 summary+kv → `llm_account_insight` PII-free 추출 → `source_type=account_insight` fact(대화-로컬·전역 미공유) → 기존 임베딩 파이프라인. fingerprint(`account_insight_fp:<cid>`) 재추출 회피. worker loop 에서 degraded 아닐 때 호출(fail-soft). flag `AGENT_ACCOUNT_INSIGHT_EXTRACT`(OFF).
+- `src/modules/llm.py` — `ACCOUNT_INSIGHT_PROMPT`(PII 제거 강제) + `llm_account_insight` 헬퍼(+__all__).
+- `src/modules/account_recall.py` — 회상 재작성: account_insight allowlist(G3 1차) + `_mask_prose`(G3 2차) + **벡터-only fail-closed**(`_embed_query_vector`→None 시 0, trigram 미사용=min_sim 척도 혼동 수정) + G4(conv_id 집합 재검증) + `_account_recall_opted_out`(per-account opt-out kv) + `_load_account_scoped_conv_ids` SQL `forked_from_conversation_id IS NULL`(G1).
+- `src/modules/kb_scope.py` — `_mask_prose`(이메일/전화/주민번호/IP/긴숫자 값-패턴 마스커, +__all__).
+- `src/modules/config.py` — flag `AGENT_ACCOUNT_INSIGHT_EXTRACT`/`_EXTRACT_MAX_CONVS`/`_MIN_SUMMARY_LEN` 신설(OFF) + MIN_SIM 기본 0.75→0.55 + __all__.
+- **G1 스키마**: `core_conversations.forked_from_conversation_id`(alembic `0010_core_conv_forked_from` + 부트스트랩 `agent_runtime_schema.sql` 멱등 ALTER) + `app.py` `_mark_conversation_forked`(fork 시점 set).
+- `tests/test_account_recall.py` 재작성(14) + feature-0002 회귀 0.
+- 정본 [DESIGN-account-insight-recall.md](DESIGN-account-insight-recall.md) §10. flag 전부 default OFF → 라이브 동작 0 변경. INJECT 활성=canary(EXTRACT→RECALL→INJECT).
+
 ## CHG-20260617T082131-ai-claude-account-insight-recall (TASK-20260617T082131 — 계정 스코프 cross-conversation 인사이트 회상 Phase 1, shadow)
 - **신규** `src/modules/account_recall.py` — `_load_account_scoped_conv_ids`(owner_account_id 로 계정 소유 과거 대화 conv_id 도출, G2 가드: NOT NULL·archived 제외·현재 대화 제외·`__global__` sentinel 제외, `_pg_connect_ro` least-priv, fail-soft) + `recall_account_conv_facts`(기존 `_load_rag_documents_for_request_pg` 벡터 회상 재사용 + min_sim/top_k, RECALL flag OFF=no-op).
 - `src/modules/config.py` — flag 5종 신설 **전부 default OFF**: `AGENT_ACCOUNT_INSIGHT_RECALL`/`INJECT`/`MAX_CONVS`(20)/`TOP_K`(3)/`MIN_SIM`(0.75) + `__all__` 등록.

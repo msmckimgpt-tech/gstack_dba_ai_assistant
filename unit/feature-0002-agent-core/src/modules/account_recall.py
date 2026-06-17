@@ -31,9 +31,18 @@ from .config import (
 logger = logging.getLogger("agent_core.account_recall")
 
 __all__ = [
+    "_account_recall_opted_out",
     "_load_account_scoped_conv_ids",
     "recall_account_conv_facts",
 ]
+
+# G3: 회상은 **account_insight**(insight worker 가 PII-free 로 추출한 메타 인사이트) 만 대상.
+# user_confirm(자유 Q/A prose=PII 위험) 등 다른 source_type 은 회상하지 않는다. 이게 PII
+# 차단의 1차 방어이고, 주입 직전 _mask_prose 가 2차 방어.
+_ACCOUNT_INSIGHT_SOURCE_TYPE = "account_insight"
+# opt-out 은 agent_runtime.kv 의 `__account__:<id>` / `account_insight_recall_optout` 로 저장.
+_OPTOUT_CONV_PREFIX = "__account__:"
+_OPTOUT_KEY = "account_insight_recall_optout"
 
 # G2: cross-conversation 회상은 진짜 계정 소유 대화만. __global__ / __global__:session:*
 # sentinel 은 owner_account_id 가 NULL 이라 SQL 필터에서 이미 빠지지만, 회상 모집단에
@@ -86,6 +95,7 @@ FROM agent_runtime.core_conversations
 WHERE owner_account_id = %s
   AND owner_account_id IS NOT NULL
   AND archived_at IS NULL
+  AND forked_from_conversation_id IS NULL
   AND conversation_id <> %s
 ORDER BY updated_at DESC
 LIMIT %s
@@ -118,32 +128,67 @@ def recall_account_conv_facts(
     query_text: str,
     exclude_conversation_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
-    """계정 과거 대화 fact 를 의미 회상 (Phase 1 shadow).
+    """계정 과거 대화의 PII-free 인사이트(account_insight)를 의미 회상.
 
-    RECALL flag OFF 면 [] (no-op). 도출된 account conv_ids 를 기존 PG 벡터 회상
-    (_load_rag_documents_for_request_pg)에 주입한 뒤 유사도 임계 + top-K 로 노이즈를
-    억제한다. INJECT flag 는 caller 가 본 결과를 실제 LLM 컨텍스트에 넣을지 결정하며,
-    OFF 면 shadow(반환만, caller 가 주입 안 함). 반환 row shape 은 _normalize_rag_doc_rows
-    동일(conversation_id/fact_key/content/ft_score ...).
+    RECALL flag OFF / 빈 질의 / opt-out / conv_ids 없음 → [] (no-op·fail-soft).
+    경로: 계정 소유·비-fork conv_ids 도출(G1/G2) → 쿼리 임베딩 → **벡터-only**
+    `search_rag_documents_vector`(trigram fallback 미사용 = min_sim 척도 혼동 회피) →
+    source_type=account_insight allowlist(G3) + cosine min_sim + conv_id 재검증(G4) + top-K →
+    각 text _mask_prose(G3 2차). INJECT flag 는 caller 가 주입 여부 결정(OFF=shadow).
+    반환 row shape = _normalize_rag_doc_rows (text/source_type/conversation_id/ft_score ...).
     """
     if not AGENT_ACCOUNT_INSIGHT_RECALL:
         return []
     q = " ".join(str(query_text or "").split()).strip()
     if not q:
         return []
+    if _account_recall_opted_out(account_id):
+        return []
 
     conv_ids = _load_account_scoped_conv_ids(account_id, exclude_conversation_id)
     if not conv_ids:
         return []
+    conv_id_set = set(conv_ids)
 
     try:
-        from .kb_retrieval import _load_rag_documents_for_request_pg
+        from .db import _pg_available, _pg_connect_ro
+        from .kb_retrieval import _embed_query_vector, _normalize_rag_doc_rows
+        from .kb_backend import PgKbBackend
+        from .kb_scope import _mask_prose
         from .utils import _scope_candidates
-        rows = _load_rag_documents_for_request_pg(conv_ids, q, _scope_candidates())
+    except Exception as e:  # noqa: BLE001
+        logger.warning("account_recall_import_failed", extra={"error": str(e)[:200]})
+        return []
+
+    if not _pg_available():
+        return []
+    # 벡터-only fail-closed: 쿼리 임베딩 실패 시 회상 0 (trigram 으로 안 떨어진다).
+    qvec = _embed_query_vector(q)
+    if not qvec:
+        return []
+
+    conn = None
+    try:
+        conn = _pg_connect_ro()
+        if conn is None:
+            return []
+        vrows = PgKbBackend().search_rag_documents_vector(
+            conn,
+            conversation_ids=conv_ids,
+            query_vector=qvec,
+            scope_keys=_scope_candidates(),
+            limit=max(10, int(AGENT_ACCOUNT_INSIGHT_TOP_K) * 5),
+        )
+        rows = _normalize_rag_doc_rows(vrows or [])
     except Exception as e:  # noqa: BLE001 — fail-soft.
         logger.warning("account_recall_vector_failed", extra={"error": str(e)[:200]})
         return []
-    rows = rows or []
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     try:
         min_sim = float(AGENT_ACCOUNT_INSIGHT_MIN_SIM)
@@ -154,11 +199,26 @@ def recall_account_conv_facts(
     except (TypeError, ValueError):
         top_k = 3
 
-    filtered = [r for r in rows if float(r.get("ft_score") or 0.0) >= min_sim]
-    out = filtered[: max(0, top_k)]
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        # G3: account_insight 만(PII-free 추출본). user_confirm 등 prose 는 회상 안 함.
+        if str(r.get("source_type") or "") != _ACCOUNT_INSIGHT_SOURCE_TYPE:
+            continue
+        # G4 방어심층: 회상 row 의 conversation_id 는 반드시 계정 소유 집합 안.
+        if str(r.get("conversation_id") or "") not in conv_id_set:
+            continue
+        if float(r.get("ft_score") or 0.0) < min_sim:
+            continue
+        # G3 2차 방어: 주입 텍스트 값-패턴 PII 마스킹.
+        r["text"] = _mask_prose(str(r.get("text") or ""))
+        out.append(r)
+        if len(out) >= max(0, top_k):
+            break
 
     logger.info(
-        "account_recall_shadow",
+        "account_recall",
         extra={
             "account_id": aid_safe(account_id),
             "conv_count": len(conv_ids),
@@ -168,6 +228,44 @@ def recall_account_conv_facts(
         },
     )
     return out
+
+
+def _account_recall_opted_out(account_id: Optional[int]) -> bool:
+    """계정이 인사이트 회상을 opt-out 했는지 (agent_runtime.kv `__account__:<id>`).
+
+    프라이버시: "내 과거 대화 맥락이 새 대화에 새는 게 싫다" 를 끌 수 있게 한다.
+    값이 truthy('1'/'true'/'yes') 면 opt-out. 조회 실패/미설정 → False(회상 허용, fail-open
+    은 기능 기본이 opt-in[flag OFF]이므로 안전)."""
+    try:
+        aid = int(account_id)
+    except (TypeError, ValueError):
+        return False
+    if aid <= 0:
+        return False
+    from .db import _pg_available, _pg_connect_ro
+    if not _pg_available():
+        return False
+    conn = None
+    try:
+        conn = _pg_connect_ro()
+        if conn is None:
+            return False
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT value FROM agent_runtime.kv WHERE conversation_id = %s AND key = %s LIMIT 1",
+                (f"{_OPTOUT_CONV_PREFIX}{aid}", _OPTOUT_KEY),
+            )
+            row = cur.fetchone()
+        val = str((row or [None])[0] or "").strip().lower()
+        return val in ("1", "true", "yes")
+    except Exception:
+        return False
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def aid_safe(account_id: Optional[int]) -> Optional[int]:

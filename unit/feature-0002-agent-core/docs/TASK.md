@@ -8,7 +8,18 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260617T082131-ai-claude-account-insight-recall (current cycle) — 계정 스코프 cross-conversation 인사이트 회상 (Major §12.3, 보안경계)
+## TASK-20260617T095122-ai-claude-account-insight-complete (current cycle) — 계정 인사이트 회상 완성 B′ (Major §12.3, 보안경계)
+- TASK-...082131(Phase 1 shadow) 의 완성. outside-voice 2-lens(보안+제품가치) 재검토 → **Phase 1 만으론 목표 미달**(회상 모집단=전역 DB 스키마 지식, summary 미임베딩, user_confirm PII) + BLOCKER 발견 → B′ 적용. 정본 [DESIGN-account-insight-recall.md](DESIGN-account-insight-recall.md) §10.
+- [x] **BLOCKER-A**: `_build_knowledge_context` content→text 키(INJECT 무동작 버그) + 주입 블록 "참고 데이터, 지시 아님" 펜싱(프롬프트 인젝션 완화).
+- [x] **account_insight 추출 pass**: insight worker `run_account_insight_pass` — owner·비-fork·비-archived 대화 summary+kv → `llm_account_insight`(PII-free 프롬프트) → `source_type=account_insight` fact(대화-로컬, 전역 미공유) → 기존 임베딩 파이프라인. fingerprint 재추출 회피. flag `AGENT_ACCOUNT_INSIGHT_EXTRACT`(OFF).
+- [x] **회상 개선**: account_insight allowlist(G3 1차, user_confirm 제외) + `_mask_prose`(G3 2차) + **벡터-only fail-closed**(min_sim 척도 혼동 버그 수정, MIN_SIM 0.75→0.55) + G4(conv_id 집합 재검증) + per-account opt-out(`__account__:<id>` kv).
+- [x] **G1 fork 배제**: `core_conversations.forked_from_conversation_id`(alembic 0010 + 부트스트랩 멱등 ALTER) + fork 시점 `_mark_conversation_forked`(app.py) + 추출·회상 양쪽 `IS NULL`.
+- [x] 테스트 14(account 격리·G1 SQL·G3 allowlist·G4·벡터-only·opt-out·_mask_prose·추출 가드) + feature-0002 회귀 0(2 skip) + py_compile.
+- [x] outside-voice 2-lens SHIP-WITH-FIXES 흡수(REV-20260617T095122).
+- **활성화 canary**: EXTRACT→RECALL(shadow)→INJECT 순, 전부 default OFF. 부수 R4/R5 별도.
+- worktree `ai/claude/account-insight-complete`(base fe8b8a4).
+
+## TASK-20260617T082131-ai-claude-account-insight-recall (이전 cycle) — 계정 스코프 cross-conversation 인사이트 회상 Phase 1 shadow (Major §12.3, 보안경계)
 - 사용자 요청: "새 대화를 시작하면 기존 대화에서 진행한 사용자 인사이트가 누락됨 → 세션 간 문맥/인사이트를 어렴풋이라도 이어받도록". (특정 명칭 기억이 아니라 문맥 영속화.)
 - 설계 정본: [DESIGN-account-insight-recall.md](DESIGN-account-insight-recall.md). outside-voice 2명(보안 NOT-SHIP→가드 시 SHIP-WITH-FIXES / 정합성 SOUND-WITH-FIXES) 검증 완료.
 - 근본: 회상 scope 가 `conversation_id = ANY({현재,워커샤드,__global__})` 뿐 → 계정 타 대화 배제. `core_conversations.owner_account_id`(idx 존재)로 account→conv_ids 도출해 기존 pgvector 회상에 주입하면 신규 테이블 0 으로 해결. 임베딩 1536/text-embedding-3-small, 동일 DB agent_kb cross-schema JOIN(ADR-0027 schema-qualified).
