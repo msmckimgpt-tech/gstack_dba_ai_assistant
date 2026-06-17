@@ -8,6 +8,36 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260617-0308 [SKIPPED:non-RBAC-infra] — caddy :443 정식 front door (TASK-0297)
+- Date: 2026-06-17
+- Change: CHG-20260617-0308 (REQ-0284, AC-0554~0556, **Major** §12.3). caddy `:443` 502
+  해소 + 정식 front door. ADR-LAN-0003.
+- 변경 산출물:
+  - `src/caddy/Caddyfile`: `reverse_proxy` HTTPS-upstream(`transport http { tls;
+    tls_trust_pool file /certs/rootCA.pem; tls_server_name {$WEB_PUBLIC_HOST} }`).
+  - `repo/.env`(로컬·비커밋): `ENABLE_WEB_TLS_PROXY=1` + `WEB_TRUSTED_PROXIES=172.18.0.0/16`.
+  - feature-0006 docs.
+- 자체 점검:
+  1. **502 해소 검증** — `caddy validate`=`Valid configuration`(deprecation 0,
+     tls_trust_pool 최신 형식) + one-off 테스트 caddy(:8443, dbnet 연결) 런타임 프록시
+     `/healthz`·`/` = HTTP 200 을 **머지 전** 실측. 머지 후 실 caddy 재시작 + 라이브 재검증.
+  2. **XFF 보존(AC-0004 회귀 방지)** — `header_up X-Forwarded-For {client_ip}` 등 기존
+     directive 유지. caddy XFF 정규화(REV-20260520-0010) 불변.
+  3. **audit IP 정확도(§9.7)** — `WEB_TRUSTED_PROXIES=172.18.0.0/16` 로 web 이 caddy(172.18.0.10)
+     XFF 신뢰 → 실 클라이언트 IP 기록. 미설정 시 caddy IP 만 기록되는 PIPA 품질 회귀를 차단.
+  4. **upstream 검증** — `tls_insecure_skip_verify` 대신 사내 Root CA 정식 검증 채택.
+     SNI/검증명=`WEB_PUBLIC_HOST`(leaf SAN 일치, 내부명 `web` SAN 미추가 — 최소 노출).
+  5. **auth/authz/RBAC 무변경** — 전송/프록시 계층만. SECURITY.md §3 인증/인가 변경 비해당.
+- Outside-voice (Codex/subagent): **SKIPPED** — RBAC/권한 catalog 변경 아님
+  (`feedback_outside_voice_for_rbac.md` 트리거 비해당). 앱 코드 미변경(Caddyfile + 로컬 .env +
+  문서). 결정(front door 전환)은 사용자 사전 승인. 보안/audit 위험은 본 self-review 명시.
+- Risk:
+  1. caddy 가 단일 hop 가정 — 앞단에 추가 upstream proxy(ALB/CF) 가 생기면 `{client_ip}` /
+     trusted proxy 경계 재검토 필요(REV-20260520-0010 Risk 1 과 동일 계보).
+  2. 외부/미신뢰 LAN 노출 시 `WEB_TRUSTED_PROXIES` 협소화 + web port 비공개 선행(§9.7).
+  3. web leaf 인증서 SAN 에 `web` 부재 — `tls_server_name` 의존. leaf 재발급 시 SAN 정책
+     유지 필요(`bin/tls-internal-ca.sh` 기본 SAN 이 `web` 제외).
+
 ## REV-20260617-0307 [SKIPPED:non-RBAC-TLS-infra] — 사내 자체 Root CA HTTPS 신뢰 (TASK-0296)
 - Date: 2026-06-17
 - Change: CHG-20260617-0307 (REQ-0283, AC-0549~0553, **Major** §12.3). self-signed 인증서 →

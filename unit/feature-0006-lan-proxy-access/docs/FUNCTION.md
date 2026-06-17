@@ -20,6 +20,12 @@ Caddy TLS 프록시 설정과 Windows 포트 프록시 스크립트를 관리한
   테스터 PC 신뢰 저장소에 1회 설치하면 경고 없이 신뢰된 HTTPS 가 표시된다.
   `.company.local` 내부 도메인이라 공인 CA(Let's Encrypt) 발급이 불가능한 제약에
   대한 표준 해법. Root CA 는 멱등 재사용(테스터 재설치 불필요), leaf 만 갱신된다.
+- REQ-0284 (TASK-0297, **Major** §12.3 — caddy :443 정식 front door): caddy(`:443`)가
+  반환하던 502 를 해소하고 포트 없는 `https://{$WEB_PUBLIC_HOST}` 를 정식 진입점으로 만든다.
+  근본 원인 = `ENABLE_WEB_TLS=1` 이라 web 이 8000 에서 HTTPS 를 서빙하는데 caddy 가 평문
+  `reverse_proxy web:8000` 로 붙어 프로토콜 불일치(502). caddy 를 HTTPS-upstream(사내 Root
+  CA 검증)으로 전환하고, web 이 caddy 의 `X-Forwarded-For` 를 신뢰하도록 trusted proxy 를
+  설정해 audit IP 정확도(SECURITY.md §9.7)를 보존한다. web 직접 TLS `:18080` 경로는 유지.
 
 ## 3. In Scope
 - `src/caddy/Caddyfile`
@@ -77,12 +83,17 @@ Caddy TLS 프록시 설정과 Windows 포트 프록시 스크립트를 관리한
 - AC-0551 (REQ-0283): leaf SAN 은 `.env` 의 `WEB_PUBLIC_HOST` + `WEB_ALLOWED_HOSTS` 의 DNS/IP(docker 내부 서비스명 `web` 제외)를 포함하고, `extendedKeyUsage=serverAuth`(Apple/macOS 요건) + `basicConstraints=critical,CA:FALSE` 를 갖는다.
 - AC-0552 (REQ-0283): Root CA 는 멱등 — 재실행 시 기존 Root CA 를 재사용하고 leaf 만 재발급한다(`--force-ca` 명시 시에만 Root CA 재생성). leaf 기본 유효기간 825일(Apple 상한), Root CA 10년. 따라서 leaf 갱신은 테스터 재설치 없이 transparent.
 - AC-0553 (REQ-0283): 라이브 web TLS 엔드포인트(`https://<host>:18080`)가 Root CA 로 서명된 leaf 를 서빙하고, Root CA 를 신뢰하는 클라이언트의 체인 검증이 통과한다(`Verify return code: 0`). 테스터 신뢰 설치 절차는 `src/TESTER_TLS_TRUST.md`.
+- AC-0554 (REQ-0284 / TASK-0297): `src/caddy/Caddyfile` 의 `:443` 블록 `reverse_proxy web:8000` 가 `transport http { tls; tls_trust_pool file /certs/rootCA.pem; tls_server_name {$WEB_PUBLIC_HOST} }` 를 포함한다. caddy 가 web(8000, HTTPS) 에 HTTPS 로 연결하고 사내 Root CA 로 leaf 를 검증한다. `caddy validate` = `Valid configuration`, 런타임 프록시 = HTTP 200(이전 502 해소). AC-0004 의 `header_up X-Forwarded-For {client_ip}` 등 XFF directive 는 보존된다.
+- AC-0555 (REQ-0284): `.env` `ENABLE_WEB_TLS_PROXY=1` + `WEB_TRUSTED_PROXIES=172.18.0.0/16`(caddy dbnet 서브넷). web 의 `_get_client_ip()` 가 caddy 의 `X-Forwarded-For` 를 신뢰해 `WebAuditEvents.IpAddr` / `WebAuthSessions.RemoteAddr` 가 caddy 컨테이너 IP 가 아닌 실 클라이언트 IP 를 기록한다(SECURITY.md §9.7 PIPA 품질). 외부/미신뢰 LAN 노출 시 서브넷 협소화 + web port 비공개 별 cycle.
+- AC-0556 (REQ-0284): 라이브 `:443`(caddy) 과 `:18080`(web 직접) 양쪽이 Root CA 로 신뢰된 체인으로 HTTP 200 을 반환한다. 테스터는 포트 없는 `https://{$WEB_PUBLIC_HOST}` 또는 `:18080` 어느 쪽이든 경고 없이 접속한다.
 
 ## 12. Observability
 - Caddy 로그: `docker compose logs caddy`
 - 인증서 위치: `../../../../artifacts/certs`
 - 인증서 발급/갱신: `bash bin/tls-internal-ca.sh` (서버) → `sudo docker compose up -d --no-deps web` (반영)
 - 라이브 체인 검증: `openssl s_client -connect 127.0.0.1:18080 -CAfile artifacts/certs/rootCA.pem` → `Verify return code: 0`
+- caddy :443 검증: `caddy validate` + `curl --cacert rootCA.pem https://<host>/healthz` → 200
+- caddy 설정 검증: `docker run --rm -v <Caddyfile>:/etc/caddy/Caddyfile:ro -v <certs>:/certs:ro caddy:2 caddy validate --config /etc/caddy/Caddyfile`
 
 ## 13. Pre-approved Changes
 - 비파괴적 운영 자산 재배치와 경로 수정

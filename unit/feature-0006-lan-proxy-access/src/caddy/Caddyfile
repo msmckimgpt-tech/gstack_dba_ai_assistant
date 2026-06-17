@@ -9,7 +9,16 @@ http://{$WEB_PUBLIC_HOST}, :80 {
 https://{$WEB_PUBLIC_HOST}, :443 {
 	tls {$WEB_TLS_CERT_FILE} {$WEB_TLS_KEY_FILE}
 
+	# TASK-0297 (AC-0554): web 은 ENABLE_WEB_TLS=1 로 8000 에서 HTTPS 를 서빙하므로
+	# upstream 으로 평문 HTTP 가 아닌 HTTPS 로 연결한다 (평문 연결 시 502). 사내 Root CA
+	# 로 web leaf 인증서를 검증하고(tls_trusted_ca_certs), SNI/검증 이름은 leaf SAN 과
+	# 일치하는 공개 호스트명을 사용한다(tls_server_name — 내부 서비스명 `web` 는 SAN 부재).
 	reverse_proxy web:8000 {
+		transport http {
+			tls
+			tls_trust_pool file /certs/rootCA.pem
+			tls_server_name {$WEB_PUBLIC_HOST}
+		}
 		header_up X-Forwarded-For {client_ip}
 		header_up X-Forwarded-Proto https
 		header_up X-Forwarded-Port 443
