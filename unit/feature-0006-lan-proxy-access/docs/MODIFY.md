@@ -8,6 +8,37 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260617-0307
+- Date: 2026-06-17
+- Related Requirement: REQ-0283 / TASK-0296 / AC-0549~0553 (**Major** §12.3)
+- Summary: 사내 테스터 제한 배포 직전 브라우저 "안전하지 않은 연결" 경고 제거. web 이 서빙하던
+  self-signed 인증서(issuer==subject, CA 체인 없음)를 **사내 자체 Root CA 서명 leaf** 로 전환.
+  `.company.local` 내부 도메인이라 공인 CA 발급 불가 → 사내 Root CA 방식 (사용자 결정 ADR-LAN-0002).
+- Files:
+  - `bin/tls-internal-ca.sh` (신규): Root CA(멱등, 기본 10년) 생성 + Root CA 서명 leaf(기본 825일)
+    발급. SAN = `.env` 의 `WEB_PUBLIC_HOST` + `WEB_ALLOWED_HOSTS`(DNS/IP, 내부 서비스명 `web` 제외),
+    `extendedKeyUsage=serverAuth`, `basicConstraints=critical,CA:FALSE`. `openssl verify` 체인 +
+    issuer!=subject 자동 검증. 출력 경로는 `.env` 의 `WEB_TLS_CERT_FILE`/`WEB_TLS_KEY_FILE` 정합.
+    git-common-dir 기반 경로 해석(main/worktree/비-git cwd 무관 동일 artifacts/ 로 수렴).
+  - `unit/feature-0006-lan-proxy-access/src/TESTER_TLS_TRUST.md` (신규): 테스터 Root CA 신뢰 설치
+    가이드 (Windows certutil/MMC · macOS Keychain · Firefox 자체 저장소 · hosts/IP 접속).
+  - `unit/feature-0006-lan-proxy-access/docs/{FUNCTION,TASK,DECISIONS,REPORT,REVIEW,MODIFY}.md`: 문서.
+  - `artifacts/certs/{rootCA.pem,rootCA-key.pem,mysql-ai.company.local/{fullchain,privkey}.pem}` 재생성
+    (gitignore — 버전관리 밖). 기존 self-signed 는 `artifacts/certs/_backup-selfsigned-<ts>/` 백업.
+- Diff size: 신규 스크립트 1 + 신규 문서 1 + docs 6 갱신. 앱 코드 변경 0.
+- Impact:
+  - 테스터는 `rootCA.pem` 1회 설치 후 경고 없이 신뢰된 HTTPS. leaf 갱신은 스크립트 재실행 +
+    web 재시작으로 transparent(Root CA 유지 → 재설치 불필요).
+  - 라이브 web `:18080` 체인 `Verify return code: 0` + HTTP 200 실측. caddy `:443` 핸드셰이크도
+    `Verify code 0`(단 502 — 인증서 무관 `ENABLE_WEB_TLS`/`reverse_proxy` 프로토콜 불일치, 별 cycle).
+  - 개인키 0600·서버 밖 반출 금지. 앱 인증/인가/RBAC 불변(전송 계층만).
+- Rollback Notes:
+  - 즉시 롤백: `artifacts/certs/_backup-selfsigned-<ts>/` 의 `fullchain.pem`/`privkey.pem` 를
+    `artifacts/certs/mysql-ai.company.local/` 로 복원 후 `docker compose restart web caddy`.
+    (단 self-signed 경고가 다시 표시됨 — 롤백은 신뢰 회귀.)
+  - 스크립트/문서 제거는 인증서 재발급 능력만 사라질 뿐 서빙 중 인증서엔 영향 없음.
+  - Root CA 키(`rootCA-key.pem`) 분실 시 갱신 불가 → 키 백업 운영 권고.
+
 ## CHG-20260520-0010
 - Date: 2026-05-21
 - Related Requirement: TASK-0006 (= TASK-0087 in feature-0003), REQ-20260520-0002
