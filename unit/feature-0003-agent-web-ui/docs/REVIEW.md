@@ -3110,3 +3110,10 @@ source_of_truth: true
 - Verification: test_perm_self_scope.py 18 PASS(ast 추출 실 helper 4종) + verify_perm_self_scope.mjs 13 PASS(실 renderPermissionGrid) + node --check + py ast.parse. **화면 정본 = PB-0008**.
 - Residual: 머지 → 배포(web 재빌드) → 라이브 재검증(제한 admin 미보유 권한 행/역할/제품카드 부재·우회 PATCH 403×3경로·범위 밖 기존값 보존) + PB-0008.
 - Cross-ref: CHG-20260617-0307 / TASK-0300 / TASK-0288(RBAC 선행)·TASK-0257(권한 편집기).
+
+## REV-20260617-0308 [SKIPPED:evidence-docs-only-pb0008-live403]
+- Date: 2026-06-17
+- Cycle: TASK-0300 evidence (라이브 403 + PB-0008 Windows-browser 검증 기록), docs-only.
+- Trigger: §18.4 — 코드 무변경 evidence 기록 cycle. panel 생략 정당(TEST/REPORT/TASK/MODIFY 문서만, RBAC 코드 변경은 선행 REV-20260617-0307 에서 적대 보안 리뷰 완료).
+- Verdict: **[SKIPPED]** — 검증 산출물 기록(라이브 403 4벡터 PASS + PB-0008 실 Chrome PASS). 신규 코드/엔드포인트/권한 0.
+- Cross-ref: CHG-20260617-0308 / TASK-0300 / REV-20260617-0307(코드 적대 보안 리뷰 SHIP).
