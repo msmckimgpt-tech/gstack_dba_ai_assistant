@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.33.0
+template_version: v3.34.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -1614,7 +1614,17 @@ evidence 로 첨부**한다 — 버튼이 보이는 것과 눌렀을 때 동작�
 완료 선언하면 인터랙션 결함(예: 연결 테스트 버튼 무동작, 드롭다운 추가 시 항목 리셋)이 게이트
 후에도 사용자에게 노출된다.
 
-**체크리스트 연동**: §16.2 Completion Checklist 의 `(웹 UI 프로젝트만)` 항목으로 자동 참조.
+**생성 HTML 산출물 + 복수 surface (MUST)**: 위 인터랙션 검증은 서비스 feature-UI 뿐 아니라 AI 가
+생성하는 HTML/CSS **산출물**(프레젠테이션·리포트·대시보드)에도 적용된다 — 그 안의 모든
+**author-added clickable 요소(CTA·링크·인덱스 네비게이션)** 가 검증 대상이다. "산출물이라 웹 UI
+프로젝트가 아니다" 라는 이유로 렌더만 시각검증하고 클릭 동작을 건너뛰지 않는다. 액션이 연결되지
+않은 요소는 완료 선언 전 **wire(연결) 또는 flag(사용자에게 명시·제거 제안)** 한다 ("버튼 보임=완료"
+금지). 또한 **동일 논리 액션이 복수 surface/entry-point(목록 패널·말풍선 칩·툴바 등)에 노출되면 각
+surface 에서 개별 실행 검증**이 필수다 — 한 경로 동작 확인을 전체 동작으로 추정하지 않는다(코드패스가
+갈릴 수 있음: 예 navigation vs fetch+blob — 한 surface 만 검증하면 다른 surface 의 실패가 누출된다).
+
+**체크리스트 연동**: §16.2 Completion Checklist 의 `(웹 UI 프로젝트만)` 항목으로 자동 참조 — 생성
+HTML 산출물의 author-added clickable 도 이 항목의 범위에 포함한다.
 해당 항목 미체크 상태로 완료 선언 시 §16.5 금지 패턴과 동일하게 처리.
 
 ## §17. shared/ 거버넌스
@@ -2844,6 +2854,13 @@ auto mode 는 위 둘의 **안전한 중간지대**다. 활성화·기본 차단
 전체 사용 가능, Bedrock/Vertex/Foundry 는 `CLAUDE_CODE_ENABLE_AUTO_MODE` 필요)은
 Claude Code `permission-modes` 문서를 따른다. 자율/적대적 위임 세션의 **안전 기본값으로 권장**한다.
 
+**Subagent 스폰 사전 평가 (spawn pre-launch classifier, v2.1.178+):** v2.1.178 부터 auto mode 는
+**각 도구 호출**(위 표) 평가에 더해, **subagent 스폰 요청 자체**를 spawn *전* classifier 로 한 번 더
+분류한다. §18.8 키워드 매칭 dispatch·§22.3 dynamic workflow·§22.3.2 nested subagent(최대 5단계)
+스폰이 모두 이 사전 게이트를 통과하며, nested 스폰은 각 레벨에서 재평가된다. 즉 위임 세션의 subagent
+fan-out 은 "스폰 시점"과 "도구 호출 시점"의 2중 게이트를 받는다 — 적대적 위임에서 의도치 않은
+대규모 fan-out(예: 비용·blast radius 폭증)이 스폰 단계에서 선제 차단될 수 있다.
+
 #### 2-layer 차단 모델 — 결정적 차단 vs classifier
 
 §절대금지(소비자 repo mutation, `git push --force`, `.env`/secret 읽기, `--admin`, submodule
@@ -2868,6 +2885,46 @@ pointer 강제변경 등)를 인코딩할 때 **두 메커니즘을 혼동하지
   }
 }
 ```
+
+**파라미터-레벨 매칭 — 도구 파라미터 specifier (v2.1.178+):** 권한 규칙은 도구명뿐 아니라 **도구 파라미터
+값**까지 좁혀 매칭한다 — 단 specifier 형태는 **도구마다 다르므로** 설치 버전의 `claude` 권한 docs
+(`permissions`)를 정본으로 삼는다:
+
+- **WebFetch** — `domain:` colon specifier: `WebFetch(domain:docs.anthropic.com)` /
+  `WebFetch(domain:*.example.com)` (대소문자 무시, `*` 는 한 레이블 내).
+- **Read/Edit** — gitignore-스타일 **경로 패턴**(colon 아님): `Read(.env)`, `Read(~/.ssh/**)`,
+  `Edit(./src/**)`.
+- **Bash** — **command-prefix 매칭**: `Bash(git push --force*)`, `Bash(rm -rf *)`. colon 형이 아니라
+  명령 문자열 prefix + `*` 와일드카드다(`Bash(ls:*)` 는 trailing-wildcard 약식 = `Bash(ls *)` 일 뿐
+  일반 param 문법이 아니다).
+- **MCP** — canonical 도구명: `mcp__server__tool`(param specifier 아님).
+
+이 specifier 를 `permissions.deny` 에 쓰면 **L1 결정적 차단을 인자 단위로 좁힌다**(차단 정밀화).
+`permissions.allow` 에 쓰면 §22.2 의 **프롬프트-억제 allowlist 를 좁힌다** — allow 는 차단 통제가
+아니라 auto-approve 이므로 **보안 경계가 아니다**(deny 와 혼동 금지).
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "Bash(rm -rf *)",
+      "WebFetch(domain:evil.example)",
+      "Read(.env)"
+    ],
+    "allow": [
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "WebFetch(domain:docs.anthropic.com)"
+    ]
+  }
+}
+```
+
+> ⚠ **인자 제약 패턴은 fragile**: 명령 인자를 권한 패턴으로 제약하는 것은 변수 치환·공백·옵션 재배열로
+> 우회될 수 있다(docs 경고). `rm -rf /` 류 파괴적 명령의 견고한 차단은 넓은 deny(`Bash(rm *)`)+안전
+> 동작 allow-list, 또는 PreToolUse hook 으로 보강한다 — 파라미터 specifier 단독에 의존하지 않는다.
+> §22.2(`/fewer-permission-prompts`)가 *어떤 도구를* 허용할지 제안한다면, 이 specifier 는 deny 측에서
+> *그 도구의 어떤 인자까지* 차단할지 좁힌다 — 보완 관계다.
 
 **L2 — `autoMode` (classifier 가 평가하는 prose 규칙):**
 
@@ -3059,3 +3116,47 @@ exit 0   # exit code 는 어차피 무시됨 — 차단 불가
 > 참고: `SessionEnd` 는 종료를 막지 못하므로, "압축/종료를 *차단*해 컨텍스트를 지키는" 용도는
 > 여전히 §22.1 PreCompact(`{"decision":"block"}`+exit 2)가 담당한다. SessionEnd 는 "막을 수
 > 없는 종료를 *깔끔하게 마무리*" 하는 보완재다.
+
+### §22.10 Skill hot-reload — 세션 재시작 없이 스킬 변경 반영 (v2.1.176+)
+
+Claude Code v2.1.176+ 는 **skill hot-reload** 를 지원한다 — 디스크의 스킬 `.md` 가 바뀌면 변경된
+스킬만 세션에 재announce 되고, `/reload-skills` 명령은 스킬 디렉토리를 mid-session 으로 재스캔한다.
+세션을 끝내고 다시 띄우지 않아도 편집이 즉시 반영된다.
+
+본 템플릿은 maintainer 가 다수 스킬(`.claude/commands/_template/*`, `.claude/commands/_local/*`,
+`.claude/commands/_maintainer/improve`)을 **반복 편집**하는 구조라, 이 hot-reload 가 개발 iteration 을
+직접 단축한다.
+
+- 스킬 `.md` 를 수정한 직후 `/reload-skills` 로 디렉토리를 재스캔하면 새 정의가 같은 세션에서 호출
+  가능해진다 — `/_maintainer:improve`·`/_local:inbox` 같은 스킬을 고치며 dogfood 할 때 세션 재시작
+  왕복이 사라진다.
+- 신규 스킬 파일을 추가한 경우에도 `/reload-skills` 가 discovery 를 갱신한다 (자동완성 listing 포함).
+- 주의: hot-reload 는 **스킬 정의(프롬프트)** 를 갱신하는 것이지, 이미 진행 중인 스킬 실행의 거동을
+  소급 변경하지 않는다 — 편집 후 새로 호출해야 반영된다.
+
+### §22.11 Nested `.claude/` 디렉토리 해석 — closest-to-cwd 우선순위 (v2.1.178+)
+
+Claude Code v2.1.178+ 는 `.claude/skills`(및 `.claude/` 하위 agent·workflow·output-style)를
+**작업 디렉토리(cwd)에 가장 가까운 것 우선**으로 로드한다 — 동일 이름이 복수 `.claude/` 에 존재하면
+**cwd 최근접 정의가 충돌 시 이긴다**. 이름 충돌은 `<dir>:<name>` 으로 표기돼 진단 가능하고,
+project-scope workflow 저장은 가장 가까운 기존 `.claude/workflows/` 를 타깃한다.
+
+본 템플릿은 **wrapper-layout**(cwd=wrapper, git-root=`repo/`) + **worktree-first**(`.worktrees/<branch>/`,
+§13.2/§22.5) 구조라 이 규칙이 직접 영향을 준다 — 동일 이름의 skill/agent/workflow 가 wrapper·`repo/`·
+`.worktrees/<branch>/` 의 여러 `.claude/` 에 존재하면, v2.1.178+ 부터 호출 위치(cwd)에 따라 다른 정의로
+resolve 될 수 있다. worktree cwd 에서 호출한 스킬이 의도와 다른 디렉토리의 정의로 풀릴 위험이다.
+
+**정합성 규칙:**
+
+- 템플릿 스킬(`_template`/`_local`/`_maintainer`)·agent 의 **정본 배치 위치를 한 곳으로 고정**하고
+  복수 `.claude/` 에 중복 정의를 두지 않는다 — wrapper·`repo/`·worktree 어느 cwd 에서 호출해도 동일
+  정의로 resolve 되게 한다.
+- 의도된 cwd-별 분기(예: machine-local `_local/*` 가 repo cwd 에서만 노출, §`/_local:inbox` SENTINEL)는
+  유지하되, 그 외 이름 충돌은 회피한다.
+- **보안 경계 (MUST)**: "closest-to-cwd wins" 는 worktree-local 또는 소비자 `.claude/` 가 maintainer-only·
+  machine-local 명령(`_maintainer/*`, `_local/*`)을 **shadow 하거나 의도치 않게 surface** 시키는 형태가
+  될 수 있다. machine-local 격리(`/_local:inbox` 의 hostname+cwd+인프라 3-layer SENTINEL)는 디렉토리
+  resolution 이 아니라 **명령 본문의 런타임 가드로 강제**되므로, 다른 cwd 에서 이름이 resolve 되더라도
+  SENTINEL 이 실행을 차단한다 — nested resolution 우선순위에 격리를 의존하지 않는다. 신규 `.claude/`
+  배치 시 maintainer-only 명령명과 충돌하지 않는지 확인한다.
+- 충돌이 의심되면 listing 의 `<dir>:<name>` 표기로 어떤 디렉토리 정의가 우선됐는지 확인한다.
