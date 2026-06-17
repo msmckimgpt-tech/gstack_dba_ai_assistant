@@ -3117,3 +3117,10 @@ source_of_truth: true
 - Trigger: §18.4 — 코드 무변경 evidence 기록 cycle. panel 생략 정당(TEST/REPORT/TASK/MODIFY 문서만, RBAC 코드 변경은 선행 REV-20260617-0307 에서 적대 보안 리뷰 완료).
 - Verdict: **[SKIPPED]** — 검증 산출물 기록(라이브 403 4벡터 PASS + PB-0008 실 Chrome PASS). 신규 코드/엔드포인트/권한 0.
 - Cross-ref: CHG-20260617-0308 / TASK-0300 / REV-20260617-0307(코드 적대 보안 리뷰 SHIP).
+
+## REV-20260617-0311 [SKIPPED:frontend-only-font-size-2lines]
+- Date: 2026-06-17
+- Cycle: TASK-0301 (제품 목록 항목 글꼴 크기 정합), frontend-only 2줄 변경.
+- Trigger: §18.4 — RBAC·스키마·엔드포인트 무변경, 시각 정합 2줄 CSS 클래스 교체(보안 surface 없음). panel 생략 정당.
+- Verdict: **[SKIPPED]** — `admin-account-name`(15px) → `admin-list-row-name`(13px) 클래스 교체. 데이터 흐름·권한·스키마 무영향. 기능 회귀 없음(동일 텍스트 노출, 크기만 변경).
+- Cross-ref: CHG-20260617-0311 / TASK-0301.

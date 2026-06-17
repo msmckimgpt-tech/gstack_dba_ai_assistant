@@ -4095,3 +4095,9 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 백엔드 추가(외부리뷰 우회경로 전수): `admin_create_role`(역할 생성 경유) 가드 + `_role_grant_excess_for_actor` 신설 — `admin_update_account` 역할 *배정* escalation 차단(외부리뷰 MAJOR-1, 사용자 결정 '배정도 차단'). 프론트 역할 드롭다운 배정불가 역할 숨김.
 - [x] outside-voice 적대 보안 리뷰(RBAC 필수, [[feedback_outside_voice_for_rbac]]) SHIP-WITH-FIXES(REV-20260617-0307) — 직접 우회 0(10/10 적대케이스)·merge/lockout/editable 안전. MAJOR-1(역할 배정 우회)→배정 가드 추가(사용자 결정). MINOR-1(product.access self-scope)→포함 유지(사용자 결정). MINOR-2(비대칭 주석)→흡수.
 - [x] 머지(main a9effd6, PR #313) → 배포(web 재빌드, deploy_scope: included) → 라이브 403 검증 PASS(pgpark/usermanager: 미보유 audit.purge allow·deny 403·보유 account.read 200·admin 역할배정 403) → PB-0008 Windows-browser PASS(미보유 행 숨김·실 Chrome 가시성) → 마감. evidence CHG/REV-20260617-0308, `artifacts/pb0008-task0300/perm-self-scope-hidden.png`.
+
+### TASK-0301 — 관리 콘솔 제품 목록 항목 글꼴 크기 정합 (Minor §12.3, 2026-06-17)
+- 사용자 보고: `관리 콘솔 > 제품 > [각 항목]` 의 글꼴 크기가 계정·역할·데이터소스 목록 항목보다 너무 큼.
+- 근본원인: `renderProductList()` 의 제품명 요소가 `admin-account-name`(15px, 700) 을 사용 — 다른 목록(계정·역할·데이터소스)은 `admin-list-row-name`(13px, 600) 사용. 컨테이너도 `admin-list-main`(CSS 미정의) vs `admin-list-row-main`(flex column, gap 2px, min-width 0) 불일치.
+- [x] admin.js `renderProductList()`: 이름 요소 `div.admin-account-name` → `span.admin-list-row-name`, 컨테이너 `admin-list-main` → `admin-list-row-main`. 2줄 변경, frontend-only.
+- [ ] 배포(web 재빌드, deploy_scope: included) → 라이브 확인(제품 탭 항목 글꼴이 계정/역할과 동일 크기) → 마감.
