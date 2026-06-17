@@ -8,7 +8,23 @@ source_of_truth: true
 
 # Task
 
-## TASK-0293 (current cycle) — 프로필 아이콘 전 구간 조회·수정 (관리 콘솔 계정·역할) (REQ-20260617-0291, AC-0542~0545, Major §12.3)
+## TASK-0295 (current cycle) — 작업 화면 제품 목록을 역할 제품 접근 권한으로 게이트 (REQ-20260617-0293, AC-0548, Major §12.3)
+- 보고(사용자, 2026-06-17): `관리 콘솔 > 역할` 에서 각 제품에 대한 권한이 없다면, 작업 화면 내 대화창 제품 목록 내부에서도 출력되지 않도록 구성.
+- 등급: **Major §12.3** — 인가 표시 게이트(노출 축소 = 보안 강화 방향). 데이터 파괴 0·rollback 용이(필터 추가/제거). RBAC 인접 → outside-voice 필수([[feedback_outside_voice_for_rbac]]).
+- 진단: 작업 화면 제품 목록은 `/api/session`(app.py:8871)·`/api/auth/me`(app.py:15548)가 `_list_products(include_inactive=False)` 로 반환하는데 **RBAC 필터가 없어** `IsActive=1` 전 제품을 노출. 반면 mutation 경로 8곳(`/api/ask` 9650/9758·`/api/new_conversation` 10301·pin 10421·fork 11099·prompt 18691/18731·pref 2779)은 이미 `_account_has_product_access`(제품별 `product.access.<key>`)로 403 게이트 → "요청은 막히는데 목록엔 보이는" 표시-enforcement 불일치. 관리 콘솔 4곳(`_list_products(include_inactive=True)` 16388/16765/17031/17202)은 product.read/manage 축(TASK-0288 2축 분리)이라 무관.
+
+### §2.1 Implementation Plan (PLAN)
+- Backend(`src/app.py`): ① 신규 `_filter_products_for_account_access(account, products)` — product_key 기반 `_account_has_product_access` lookup(conn 불필요), 권한 보유 제품만 반환. ② 신규 `_coerce_default_product_id(default_pid, products)` — default 가 접근 목록 밖이면 첫 접근 가능 제품으로 보정(빈 목록=0). ③ 작업 화면 2곳(`/api/session`·`/api/auth/me`)에서 `_list_products` 직후 필터 적용 + default 보정(`_attach_product_conn_status` 전 → 권한 없는 제품 연결 probe 회피). admin 4곳 무변경.
+- Frontend(`src/static/app.js`·`styles.css`): 제품 목록은 모두 `state.products` 순회라 백엔드 필터로 자동 정합. 추가로 작업 화면 드롭업 메뉴(`renderProductDropupMenu`)에 접근 가능 제품 0건 안내(`.product-dropup-empty`) — auto(제품 무관) 항목은 유지.
+- 검증: `tests/test_product_list_rbac.py`(순수 9건, `import app`·DB 불필요) + §18.8 outside-voice RBAC 패널 + PB-0008 Windows-browser(권한 회수 역할 로그인 → picker 미표시 실측).
+- 완료 기준(AC): AC-0548.
+- [x] Backend 구현 + py_compile PASS + 필터 호출 정확히 2곳(작업화면 전용) 정적 검증.
+- [x] Frontend 구현 + 빈목록 안내(`.product-dropup-empty`) + CSS.
+- [x] 단위 테스트 `test_product_list_rbac.py` **9/9 PASS**(agent 이미지, `import app`, DB 없이).
+- [x] §18.8 outside-voice RBAC 패널 → **SHIP**(REV-20260617T054423-ai-claude-task0295-product-list-rbac [SUBAGENT:product-list-rbac-review], BLOCKER 0/MAJOR 0; 6축 적대 검토 admin over-block·누출·우회·회귀·fail-closed·default 보정 전부 OK).
+- [ ] verify-completion → 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser.
+
+## TASK-0293 — 프로필 아이콘 전 구간 조회·수정 (관리 콘솔 계정·역할) (REQ-20260617-0291, AC-0542~0545, Major §12.3)
 - 보고(사용자): 작업화면에서 바꾼 계정 프로필 아이콘이 `관리 콘솔` 프로필 아이콘에 반영 안 됨. 확인 결과 관리 콘솔 계정·역할에는 프로필 아이콘 관련 작업이 전무. 아이콘을 쓰는 모든 구간에 이미지(기본=패턴) 조회·수정 가능화 요청.
 - 등급: **Major §12.3** — 신규 admin 엔드포인트 4 + 서빙 1 + 비파괴 스키마 1컬럼. 권한은 기존 재사용(신규 권한 0). 사용자 결정: D1=관리 계정·역할 한정(작업화면·제품은 TASK-0268 완료, 메시지 말풍선 등 미사용 구간은 별 cycle), D2=역할 아이콘 이미지 업로드+패턴.
 - 진단: TASK-0268 이 인프라(MinIO `_store_image_upload`/`_serve_image_object`·Identicon `applyAvatar`)와 작업화면 아바타·제품 아이콘만 구현. 관리 콘솔 계정은 `avatar.textContent=username.slice(0,2)`(이니셜 텍스트)라 백엔드가 내려주는 `avatar_url`(app.py:1340 이미 직렬화)을 소비 안 함=조회 버그. 역할은 `WebRoles` 에 아이콘 컬럼 자체가 부재.

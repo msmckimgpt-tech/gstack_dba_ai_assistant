@@ -935,6 +935,15 @@ function renderProductDropupMenu() {
       productKey: p.product_key || "",
     }));
   });
+
+  // TASK-0295: 역할에 제품 접근 권한이 없어 picker 에 표시할 제품이 없으면 안내.
+  //  auto(제품 무관) 항목은 항상 유효하므로 그대로 두고, 제품 섹션만 빈 상태 안내를 단다.
+  if (!products.some((p) => Number(p.id))) {
+    const empty = document.createElement("div");
+    empty.className = "product-dropup-empty";
+    empty.textContent = "접근 가능한 제품이 없습니다";
+    menu.appendChild(empty);
+  }
 }
 
 // TASK-0261 / conn-tristate: datasource 연결(네트워크) 상태 → 배지 클래스/라벨.

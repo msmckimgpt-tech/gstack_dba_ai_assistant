@@ -9,6 +9,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260617T052414-ai-claude-task0295-product-list-rbac (TASK-0295 — 작업 화면 제품 목록 product.access RBAC 게이트)
+- Date: 2026-06-17
+- Scope: feature-0003-agent-web-ui — backend(`src/app.py`) + frontend(`src/static/app.js`·`styles.css`) + 테스트. **신규 RBAC 권한 0**(기존 동적 `product.access.<key>` 재사용). 스키마/엔드포인트 무변경.
+- 변경:
+  - backend `src/app.py`: 신규 `_filter_products_for_account_access(account, products)`(product_key 기반 `_account_has_product_access` lookup, conn 불필요 — account.permissions 캐시만) + `_coerce_default_product_id(default_pid, products)`(default 가 접근 목록 밖이면 첫 접근 가능 제품으로 보정, 빈 목록=0). 작업 화면 2곳(`/api/session`·`/api/auth/me`)에서 `_list_products(include_inactive=False)` 직후 필터+보정 적용(`_attach_product_conn_status` 전 → 권한 없는 제품 연결 probe 회피). admin 4곳(`include_inactive=True`) 무변경.
+  - frontend `src/static/app.js`: `renderProductDropupMenu` 에 접근 가능 제품 0건 시 "접근 가능한 제품이 없습니다" 안내(`.product-dropup-empty`). 제품 목록 렌더는 `state.products` 순회라 백엔드 필터로 자동 정합(추가 변경 0).
+  - frontend `src/static/styles.css`: `.product-dropup-empty`(muted italic) 추가.
+  - test `tests/test_product_list_rbac.py`: 순수 9건(필터·default 보정·정적 호출처 2곳).
+- 검증: 단위 9/9 PASS(agent 이미지 `import app`, DB 없이) + py_compile PASS + 작업화면 필터 호출 정확히 2곳 정적 검증. outside-voice·PB-0008 후속.
+- Files: unit/feature-0003-agent-web-ui/src/app.py, src/static/app.js, src/static/styles.css, tests/test_product_list_rbac.py, docs/{FUNCTION,TASK,MODIFY,REVIEW,TEST}.md
+
 ## CHG-20260617T040000-ai-claude-task0293-profile-icons-pb0008 (TASK-0293 후속 docs-only — PB-0008 evidence)
 - Date: 2026-06-17
 - Scope: docs 전용(TEST/TASK/MODIFY/REVIEW). 코드/정적자산/스키마/RBAC 0.

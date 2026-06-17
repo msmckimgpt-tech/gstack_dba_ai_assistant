@@ -2048,6 +2048,14 @@ a { color: inherit; }
   letter-spacing: .04em;
 }
 
+/* TASK-0295: 역할에 제품 접근 권한이 없어 picker 에 표시할 제품이 없을 때 안내. */
+.product-dropup-empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .composer-box:focus-within {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(37,99,235,.10);
