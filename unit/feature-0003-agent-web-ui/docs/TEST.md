@@ -275,6 +275,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0045: node --check app.js 통과 (구문 무결).
 
 ## 4. Test Run History
+- 2026-06-17 (TASK-0295 — 작업 화면 제품 목록 product.access RBAC 게이트):
+  - **Environment: CLI** (순수 단위, DB 불필요). `tests/test_product_list_rbac.py` **9/9 PASS** (agent 이미지 `import app`, `AGENT_MODE=test`): T1 접근 권한 보유 제품만 잔존(KR 권한만→KR, MY/JP 제외), T2 account=None 빈 목록, T3 전 권한 회수 빈 목록, T4 ProductKey 대소문자 무관(대문자 ProductKey ↔ 소문자 `product.access.kr`), T5 product_key 부재 행 방어적 제외, T6~T8 `_coerce_default_product_id`(목록 내 유지 / 목록 밖 첫 제품 보정 / 빈 목록 0), T9 **정적** — `_filter_products_for_account_access` 호출 정확히 2곳(작업화면 전용) + admin `_list_products(include_inactive=True)` 경로 미적용. `python3 -m py_compile app.py` PASS. REV-20260617T054423-ai-claude-task0295-product-list-rbac [SUBAGENT:product-list-rbac-review] SHIP.
+  - **Environment: Windows-browser** (PB-0008 — 권한 회수 역할 로그인 → picker 미표시 실측). **배포 후 기록 예정**(deploy_scope: included; main 머지 → web 재배포 → win-browser eval 로 작업 화면 드롭업 메뉴 제품 항목 집계 + 권한 보유/회수 계정 대비). 정본 게이트(jsdom 은 라이브 RBAC·세션 미재현).
 - 2026-06-16 (TASK-20260616T100304-conv-entry-defaults — 작업 화면 첫 진입 기본값: 타 계정 대화 접힘 + 빈 대화 화면):
   - **Environment: CLI** (정적 + 순수 node 회귀). `node --check app.js` PASS + `tests/verify_conv_entry_defaults.mjs` **20/20 PASS** (jsdom 불필요 — localStorage/state 로직: `_seedOthersCollapsedOnce` fresh seed/already-seeded respect/date-group 보존, `loadConversations` 빈 진입(allowCurrentFallback=false)·기본 폴백·resume-select·preferred-미존재·pending-guard, `initializeWorkspace` 배선 4종). 백엔드 무변경. REV-20260616T100304-ai-claude-conv-entry-defaults [SKIPPED:frontend-ui-entry-defaults-no-backend-no-rbac].
   - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면.

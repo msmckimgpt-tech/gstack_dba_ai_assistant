@@ -1287,6 +1287,52 @@ def _account_has_product_access(
     return bool(permissions.get(code))
 
 
+def _filter_products_for_account_access(
+    account: dict[str, Any] | None,
+    products: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """TASK-0295: 작업 화면 제품 목록을 계정의 `product.access.<key>` 권한으로 필터.
+
+    역할(role)에 특정 제품 접근 권한이 없으면 작업 화면 대화창 picker 에서 해당 제품을
+    제외한다. 기존에는 `/api/ask`·`/api/new_conversation` 등 mutation 경로 8곳이 이미
+    `_account_has_product_access` 로 403 게이트하지만 목록 표시만 게이트가 빠져 있어,
+    요청이 차단되는 제품이 picker 에는 그대로 노출됐다 (표시-enforcement 불일치).
+
+    - product_key 기반 lookup 이라 conn 불필요 (account.permissions 캐시만 사용).
+    - 작업 화면 경로(`/api/session`, `/api/auth/me`) 전용. 관리 콘솔 제품 목록
+      (`_list_products(include_inactive=True)`)에는 적용하지 않는다 — 관리 권한은
+      product.read/manage 축으로 별도 게이트된다 (TASK-0288 2축 분리).
+    """
+    if not account:
+        return []
+    out: list[dict[str, Any]] = []
+    for p in products:
+        product_key = p.get("product_key")
+        if product_key and _account_has_product_access(account, product_key):
+            out.append(p)
+    return out
+
+
+def _coerce_default_product_id(default_pid, products: list[dict[str, Any]]) -> int:
+    """TASK-0295: default_product_id 가 접근 가능 목록 밖이면 첫 접근 가능 제품으로 보정.
+
+    작업 화면 제품 목록이 권한으로 필터된 뒤, 시스템 기본 제품(IsDefault)이 해당 계정의
+    접근 가능 목록에 없을 수 있다 (default 제품 접근 권한도 회수된 경우). 그 경우 프론트가
+    존재하지 않는 제품을 자동 선택하지 않도록 첫 접근 가능 제품으로 보정하고, 접근 가능한
+    제품이 하나도 없으면 0(없음)을 반환한다.
+    """
+    try:
+        pid = int(default_pid or 0)
+    except Exception:
+        pid = 0
+    accessible_ids = {int(p.get("id") or 0) for p in products}
+    if pid and pid in accessible_ids:
+        return pid
+    if products:
+        return int(products[0].get("id") or 0)
+    return 0
+
+
 def _role_payload(account: dict[str, Any] | None) -> dict[str, Any] | None:
     role_id = int(account.get("role_id") or 0) if account else 0
     if role_id <= 0:
@@ -8869,7 +8915,10 @@ def get_session(request: Request) -> JSONResponse:
     )
     try:
         products = _list_products(conn, include_inactive=False)
-        default_pid = _get_default_product_id(conn) or 0
+        # TASK-0295: 작업 화면 제품 목록을 계정의 product.access.<key> 권한으로 게이트.
+        # 역할에 접근 권한 없는 제품은 picker 에서 제외 (mutation 경로의 403 enforcement 와 정합).
+        products = _filter_products_for_account_access(account, products)
+        default_pid = _coerce_default_product_id(_get_default_product_id(conn), products)
     except Exception:
         products = []
         default_pid = 0
@@ -15546,7 +15595,10 @@ def auth_me(request: Request) -> JSONResponse:
         return JSONResponse({"ok": False})
     try:
         products = _list_products(conn, include_inactive=False)
-        default_pid = _get_default_product_id(conn) or 0
+        # TASK-0295: 작업 화면 제품 목록을 계정의 product.access.<key> 권한으로 게이트.
+        # 역할에 접근 권한 없는 제품은 picker 에서 제외 (mutation 경로의 403 enforcement 와 정합).
+        products = _filter_products_for_account_access(account, products)
+        default_pid = _coerce_default_product_id(_get_default_product_id(conn), products)
     except Exception:
         products = []
         default_pid = 0

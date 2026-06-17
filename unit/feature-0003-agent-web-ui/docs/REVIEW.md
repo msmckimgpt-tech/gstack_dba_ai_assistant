@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260617T054423-ai-claude-task0295-product-list-rbac [SUBAGENT:product-list-rbac-review] — SHIP
+- Date: 2026-06-17 (TASK-0295 — 작업 화면 제품 목록 product.access RBAC 게이트, REQ-20260617-0293/AC-0548, Major §12.3)
+- 대상: backend 헬퍼 2개(`_filter_products_for_account_access`·`_coerce_default_product_id`) + 작업 화면 2곳(`/api/session`·`/api/auth/me`) 필터 적용 + frontend 빈목록 안내. [[feedback_outside_voice_for_rbac]] 정합 — RBAC 인접 변경 외부 시각 필수.
+- 적대적 검토 6축 전부 판정 (코드 근거 + 격리 실행 assertion):
+  - ① **admin over-block = OK**: `_account_has_product_access`(app.py:1287)는 admin bypass·`.any` superset 없는 순수 권한맵 lookup — 기존 mutation 게이트 8곳과 동일 의미론. `DefaultRoleAccess` DEFAULT=1(app.py:3531) + `_ensure_product_access_permissions` 가 기본 제품마다 **전 role** backfill(2437-2441) → 기본 제품은 admin 포함 노출. 유일 미노출은 명시 `DefaultRoleAccess=0`(grant-only) 제품이며 요구사항 의도 + 기존 403 정합.
+  - ② **conversation_product/pinned pref 누출 = OK(fail-closed)**: `_load_account_product_pref`(2801) active_ids 가 필터된 products 기준 → 회수 pinned pref 는 `pinned_inactive` auto 강등. `_load_conversation_product`(2843)가 회수 제품 name/key 를 enrich 해도 프론트 `applyProductHydration`(app.js:1118-1142)이 product_id/mode 만 읽고 name/key 미사용 → 라벨은 필터된 state.products lookup 실패로 일반 "Product" graceful degrade. ask=G4(9807) / re-pin=G1(10470) 403 유지.
+  - ③ **under-block 우회 = OK**: 작업화면 products 응답 경로 `/api/session`(8917)·`/api/auth/me`(15597) 2곳 전부 필터 적용. 타 `"products"` 키(11388·16392)는 admin. 프론트 `state.products` 할당 2곳(app.js:6819·7142) 모두 `/api/session` 출처. SSE/ws products 경로 없음.
+  - ④ **admin 4곳 회귀 = OK**: `_list_products(include_inactive=True)` 4호출(16388/16765/17031/17202) 필터 미적용·`console.access`+product.read|manage 게이트 유지.
+  - ⑤ **fail-closed = OK**: account=None→[]·product_key 누락→제외·try/except→[]·malformed permissions→[]. 전 분기 격리 실측 PASS.
+  - ⑥ **default 보정 부작용 = OK**: `_coerce_default_product_id` 는 필터된 id 집합 내에서만 선택, 빈 목록=0. 접근 불가 제품 default 노출 경로 없음.
+- 종합: **SHIP** (BLOCKER 0 / MAJOR 0). 순수 display-layer 게이트 — authorization chokepoint(G1-G8) 무변경. 전 경로 fail-closed, admin 무회귀, 누출/우회 0. accepted: 회수 pid 잔여 `state.activeProductId` UX 비정합은 enforcement 상 안전(403)·TASK-0052 기존 동작(본 변경 도입 아님).
+
 ## REV-20260617T040000-ai-claude-task0293-profile-icons-pb0008 [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-17 (TASK-0293 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence)
 - Skip 사유: docs 전용(TEST/TASK/MODIFY/REVIEW). 코드/정적자산/스키마/RBAC 무변경 — 본체 검토는 REV-20260617T034455-ai-claude-task0293-profile-icons [SUBAGENT:profile-icon-rbac-review] (SHIP) 담당.
