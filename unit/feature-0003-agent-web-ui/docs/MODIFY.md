@@ -4022,3 +4022,12 @@ source_of_truth: true
 - Files: feature-0003 src/app.py, src/static/admin.js, src/static/admin.html, tests/test_perm_self_scope.py, tests/verify_perm_self_scope.mjs, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
 - Rollback: 두 enforce helper 호출 제거(escalation 재개방) + admin.js allowedCodes 전달 제거(전체 표시 복원). 캐시버스터 되돌림.
 - Deploy: web 재빌드 1 이미지(app.py + 프론트 baked, 캐시버스터 bump). deploy_scope: included.
+
+## CHG-20260617-0308
+- Date: 2026-06-17 (TASK-0300 evidence — 라이브 403 + PB-0008 Windows-browser 검증 기록).
+- Scope: docs-only(TEST.md run 기록 + REPORT.md 잔존→완료 + TASK.md 최종 체크). 코드·스키마·엔드포인트·프론트 0.
+- 내용: TASK-0300(계정/역할 권한 편집 self-scope) 배포(main a9effd6, PR #313) 후 검증 증거 기록. ① 라이브 백엔드 403(실 제한계정 pgpark/usermanager): 미보유 audit.purge override allow·deny 403, 보유 account.read allow 200, admin 역할배정 403(pgpark 자격 백업→검증→복원 비파괴). ② PB-0008 실 Chrome render-injection: 미보유 권한 행 숨김·빈 그룹 제거·product_access 컨테이너 보존·account 행 computed flex·offsetParent≠null. evidence `artifacts/pb0008-task0300/perm-self-scope-hidden.png`.
+- Verification: 본 기록 자체가 검증 산출물. 코드 무변경(회귀 0).
+- Files: unit/feature-0003-agent-web-ui/docs/{TEST,REPORT,TASK,MODIFY,REVIEW}.md.
+- Rollback: 불요(docs-only).
+- Deploy: 불요(코드 무변경 — TASK-0300 코드는 이미 a9effd6 배포됨).
