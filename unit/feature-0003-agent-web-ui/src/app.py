@@ -1792,6 +1792,37 @@ WHERE conversation_id = %s
     cur.close()
 
 
+def _mark_conversation_forked(conversation_id: str, source_conversation_id: str) -> None:
+    """fork 본에 forked_from_conversation_id 마커 기록 (TASK-20260617T082131, G1).
+
+    account insight 추출/회상이 fork 본을 배제(cross-account 누출 차단)하는 근거. fork 는 소스
+    (타 계정 가능) 메시지를 복사하고 owner 를 포크계정으로 재귀속하므로 owner 격리만으론 부족.
+    PG(agent_runtime) 전용 — 컬럼은 alembic 0010 / 부트스트랩 DDL 이 보장. best-effort
+    (실패해도 fork 흐름을 막지 않되 조용한 실패는 가시화)."""
+    cid = str(conversation_id or "").strip()
+    src = str(source_conversation_id or "").strip()
+    if not cid or not src:
+        return
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") != "postgres":
+        return
+    try:
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "UPDATE agent_runtime.core_conversations "
+                    "SET forked_from_conversation_id = %s WHERE conversation_id = %s",
+                    (src, cid),
+                )
+        finally:
+            pg.close()
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_mark_conversation_forked failed (cid=%s src=%s)", cid, src, exc_info=True,
+        )
+
+
 def _repair_current_conversation(
     conn,
     account: dict[str, Any],
@@ -11154,6 +11185,9 @@ def _fork_conversation_impl(
     try:
         new_cid = _create_conv(conv_file=_account_conv_file(int(account["id"])))
         _assign_conversation_owner(conn, new_cid, int(account["id"]), force=True)
+        # G1 (TASK-20260617T082131): fork 본 표식 — account insight 추출/회상에서 배제(소스가
+        # 타 계정일 수 있어 owner 격리만으론 콘텐츠 출처가 격리 안 됨).
+        _mark_conversation_forked(new_cid, source_id)
         new_topic = f"[Fork] {source_topic}"[:256]
         _conv_update_topic_product(conn, new_cid, new_topic, forked_product_id, forked_product_mode)
     except Exception:

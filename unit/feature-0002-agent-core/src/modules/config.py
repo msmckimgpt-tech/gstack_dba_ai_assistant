@@ -1,8 +1,11 @@
 import mysql.connector
 __all__ = [
+    "AGENT_ACCOUNT_INSIGHT_EXTRACT",
+    "AGENT_ACCOUNT_INSIGHT_EXTRACT_MAX_CONVS",
     "AGENT_ACCOUNT_INSIGHT_INJECT",
     "AGENT_ACCOUNT_INSIGHT_MAX_CONVS",
     "AGENT_ACCOUNT_INSIGHT_MIN_SIM",
+    "AGENT_ACCOUNT_INSIGHT_MIN_SUMMARY_LEN",
     "AGENT_ACCOUNT_INSIGHT_RECALL",
     "AGENT_ACCOUNT_INSIGHT_TOP_K",
     "AGENT_AUX_SKIP_NEAR_DEADLINE_MS",
@@ -721,7 +724,14 @@ AGENT_ACCOUNT_INSIGHT_RECALL = os.getenv("AGENT_ACCOUNT_INSIGHT_RECALL", "0").st
 AGENT_ACCOUNT_INSIGHT_INJECT = os.getenv("AGENT_ACCOUNT_INSIGHT_INJECT", "0").strip().lower() in ("1", "true", "yes")
 AGENT_ACCOUNT_INSIGHT_MAX_CONVS = int(os.getenv("AGENT_ACCOUNT_INSIGHT_MAX_CONVS", "20"))
 AGENT_ACCOUNT_INSIGHT_TOP_K = int(os.getenv("AGENT_ACCOUNT_INSIGHT_TOP_K", "3"))
-AGENT_ACCOUNT_INSIGHT_MIN_SIM = float(os.getenv("AGENT_ACCOUNT_INSIGHT_MIN_SIM", "0.75"))
+# 회상 유사도 임계 — 벡터 cosine(1-distance) 기준. account 회상은 벡터-only fail-closed
+# (trigram fallback 미사용 — TASK-20260617T082131: ft_score 척도 혼동 버그 회피).
+AGENT_ACCOUNT_INSIGHT_MIN_SIM = float(os.getenv("AGENT_ACCOUNT_INSIGHT_MIN_SIM", "0.55"))
+# account_insight 추출 pass (insight worker, B′). 대화 summary→PII-free 메타 인사이트 추출.
+# 기본 OFF — 켜면 insight worker 가 owner 있는 비-fork 대화의 summary 에서 인사이트를 생성.
+AGENT_ACCOUNT_INSIGHT_EXTRACT = os.getenv("AGENT_ACCOUNT_INSIGHT_EXTRACT", "0").strip().lower() in ("1", "true", "yes")
+AGENT_ACCOUNT_INSIGHT_EXTRACT_MAX_CONVS = int(os.getenv("AGENT_ACCOUNT_INSIGHT_EXTRACT_MAX_CONVS", "25"))
+AGENT_ACCOUNT_INSIGHT_MIN_SUMMARY_LEN = int(os.getenv("AGENT_ACCOUNT_INSIGHT_MIN_SUMMARY_LEN", "40"))
 AGENT_KB_REQUIRE_EVIDENCE = os.getenv("AGENT_KB_REQUIRE_EVIDENCE", "1").strip().lower() in ("1", "true", "yes")
 AGENT_RAG_DOC_MAX_CHARS = int(os.getenv("AGENT_RAG_DOC_MAX_CHARS", "2400"))
 AGENT_RAG_CHUNK_SIZE = int(os.getenv("AGENT_RAG_CHUNK_SIZE", "600"))

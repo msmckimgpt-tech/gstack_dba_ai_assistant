@@ -9,6 +9,9 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260617T095122-ai-claude-account-insight-complete (cross-feature, feature-0002 TASK-20260617T095122 주관 — fork 마커)
+- `src/app.py` — `_mark_conversation_forked(conversation_id, source_id)` 신설 + `_fork_conversation_impl` owner 부여 직후 호출. fork 본의 `agent_runtime.core_conversations.forked_from_conversation_id` 를 소스 대화 id 로 set(best-effort, PG 전용). 근거: account insight 회상/추출이 fork 본을 배제(fork 는 타 계정 메시지를 복사+owner 재귀속하므로 owner 격리만으론 cross-account 누출). 정본 feature-0002 [DESIGN-account-insight-recall.md](../../feature-0002-agent-core/docs/DESIGN-account-insight-recall.md) §10 G1. 컬럼은 feature-0002 alembic 0010.
+
 ## CHG-20260617T060740-ai-claude-task0295-pb0008-evidence (TASK-0295 후속 docs-only — PB-0008 evidence)
 - Date: 2026-06-17
 - Scope: docs 전용(TEST/MODIFY/REVIEW/TASK). 코드/정적자산/스키마/RBAC 0.

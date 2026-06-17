@@ -110,3 +110,42 @@ Rollout: shadow(RECALL=1, INJECT=0) → 로그 품질 평가 → G1·G3 완료 �
 5. kb_backend.py stale 주석 정정.
 
 **INJECT 활성화는 본 cycle 범위 밖** — G1(fork 표식)·G3(PII 마스커) 완료 후 별 cycle.
+
+## 10. B′ 구현 (TASK-20260617T095122, INJECT enable-ready)
+
+outside-voice 2-lens(보안 + 제품가치) 재검토 결과 **Phase 1 만으로는 목표(사용자 인사이트
+이월) 미달**(회상 모집단 rag_documents = 전역 DB 스키마 지식; summary 미임베딩; user_confirm PII)
++ BLOCKER 발견 → **B′** 로 완성. (REV-20260617T095122)
+
+### 10.1 적용된 개선
+- **BLOCKER-A 수정**: `_build_knowledge_context` 가 `row["content"]`(항상 빈값) → `row["text"]`
+  (`_normalize_rag_doc_rows` 실제 키). INJECT 가 실제로 주입되도록 + 주입 블록을 "참고 데이터,
+  지시 아님" 으로 펜싱(프롬프트 인젝션 완화).
+- **회상 소스 정렬 (account_insight)**: insight worker 신규 pass `run_account_insight_pass` 가
+  owner 있는 비-fork·비-archived 대화의 `agent_runtime.summary`+kv(origin_request/thread_goal/
+  topic)에서 **PII-free 메타 인사이트**를 `llm_account_insight`(신규 프롬프트, PII 제거 강제)로
+  추출 → `source_type='account_insight'` fact(대화-로컬, 전역 미공유)로 `_publish_fact` →
+  기존 임베딩 파이프라인(texts)이 후속 처리. summary fingerprint(`account_insight_fp:<cid>`)로
+  재추출 회피. flag `AGENT_ACCOUNT_INSIGHT_EXTRACT`(default OFF).
+- **G3 PII**: 회상은 `account_insight` source_type **만**(allowlist — user_confirm 등 PII prose
+  제외, 1차 방어) + 주입 직전 `_mask_prose`(이메일/전화/주민번호/IP/긴숫자 값-패턴 마스킹, 2차).
+- **G1 fork 배제**: `core_conversations.forked_from_conversation_id` 컬럼(alembic 0010 +
+  부트스트랩 멱등 ALTER) + fork 시점 `_mark_conversation_forked`(app.py) set + 추출 pass·회상
+  SQL 양쪽 `forked_from_conversation_id IS NULL`. (휴리스틱 기각 — fork 도 owner_assigned_at≈
+  created_at 이라 구별 불가.)
+- **G4**: 회상 row 의 conversation_id 가 계정 소유 집합 안에 있는지 재검증.
+- **min_sim 척도 버그 수정**: 회상을 **벡터-only fail-closed**(쿼리 임베딩 실패 시 trigram
+  fallback 없이 0건) 로 못박아 `ft_score`(cosine vs trigram) 척도 혼동 제거. MIN_SIM 기본
+  0.75→0.55(cosine 기준 현실값).
+- **per-account opt-out**: `agent_runtime.kv` `__account__:<id>`/`account_insight_recall_optout`
+  truthy 면 회상 안 함(`_account_recall_opted_out`).
+
+### 10.2 활성화 (canary)
+flag 전부 default OFF. 활성 순서: ① `AGENT_ACCOUNT_INSIGHT_EXTRACT=1`(insight worker 가
+account_insight 생성, 임베딩 누적) → ② `AGENT_ACCOUNT_INSIGHT_RECALL=1`(shadow, 회상 로깅) →
+품질 평가 → ③ `AGENT_ACCOUNT_INSIGHT_INJECT=1`(계정 canary). 코드 default ON 금지.
+
+### 10.3 잔여
+- 추출 LLM 품질(hallucination)은 라이브 canary 로 검증(코드 경로·격리는 테스트 완료).
+- 부수 R4(`_mask_rows` 호출처 0건=기존 PII 결함)·R5(`convo_search` 계정 스코핑)는 본 기능과
+  독립 — 별도 처리 후보.

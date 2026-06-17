@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260617T095122-ai-claude-account-insight-complete [SUBAGENT:2-lens outside-voice — 보안(BLOCKER/G1/G3) + 제품가치(회상 소스 적정성)] — SHIP-WITH-FIXES
+- 대상: 머지된 Phase 1 + G1/G3/완성 범위. 구현 전 적대적 재검토.
+- **보안 렌즈** (NOT-SHIP→가드 시 SHIP-WITH-FIXES): **BLOCKER-A** `_build_knowledge_context` content↔text 키 불일치(INJECT 무동작) — 수정. **BLOCKER-B(G1)** fork 가 owner 재귀속(app.py:11156)+메시지 복사 → owner 격리≠콘텐츠 격리 → `forked_from_conversation_id` 컬럼 권장(휴리스틱 기각) — 적용. **BLOCKER-C(G3)** `user_confirm`=PII prose(kb_write.py:342) → source allowlist + prose 마스커 — 적용. G4 owner 재검증·프롬프트 인젝션 펜싱 권장 — 적용.
+- **제품가치 렌즈** (SOUND-WITH-FIXES→핵심 결함): Phase 1 회상 모집단 rag_documents=**전역 DB 스키마 지식**(schema_insight 등, 이미 __global__)이라 "사용자 인사이트"와 불일치; 목표 자산 summary 는 미임베딩, user_confirm 은 PII → **INJECT 켜도 목표 미달**. 권장 **B′**=insight worker 가 summary→PII-free 메타 인사이트(account_insight) 추출해 회상 소스 정렬 — 적용. **min_sim 척도 버그**(ft_score cosine vs trigram 혼동) → 벡터-only fail-closed — 적용. per-account opt-out 필수 — 적용.
+- **반영(B′)**: BLOCKER-A 수정 + account_insight 추출 pass(전역 미공유) + 회상 allowlist/벡터-only/G4/opt-out/_mask_prose + G1 fork 컬럼. 검증: 신규 테스트 14 + feature-0002 회귀 0 + make test GREEN. flag 전부 default OFF(canary). 추출 LLM 품질은 라이브 canary 검증(코드·격리는 테스트 완료). 부수 R4/R5 별도 처리 후보.
+
 ## REV-20260617T082131-ai-claude-account-insight-recall [SUBAGENT:2-lens outside-voice — 보안(cross-account/PII) + 정합성(코드주장/임베딩dim/실현성)] — SHIP-WITH-FIXES (설계 단계)
 - 대상: 설계 `DESIGN-account-insight-recall.md` (account 스코프 cross-conversation 인사이트 회상). 구현 전 적대적 설계 검증.
 - **보안 렌즈**: NOT-SHIP → 가드 반영 시 SHIP-WITH-FIXES. **BLOCKER 2건(코드근거)**: ① fork 가 소스(타 계정) 메시지를 복사+owner=포크계정 재귀속(app.py:11156/11163/11176) → owner 격리≠콘텐츠 출처 격리(cross-account 누출). ② `_mask_rows` 호출처 0건(kb_scope.py:270 정의만) → summary/answer 가 raw PII 포함 → 회상 시 PII 전파. 가드 G1(fork 제외)·G2(owner NOT NULL+sentinel deny+헬퍼 import 금지)·G3(값-패턴 PII 마스커 또는 PII-free 구조화 인사이트만)·G4(owner 2차 재검증) 도출.

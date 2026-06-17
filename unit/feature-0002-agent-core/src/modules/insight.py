@@ -2066,6 +2066,134 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
     return payload
 
 
+def run_account_insight_pass(run_id: str | None = None) -> dict[str, Any]:
+    """B′ (TASK-20260617T082131): 계정 cross-conversation 회상의 *소스* 를 생성한다.
+
+    owner 있는 비-fork·비-archived 대화의 `summary` 에서 PII-free 메타 인사이트를 LLM 으로
+    추출(`llm_account_insight`)해 `source_type='account_insight'` fact(대화-로컬, 전역 미공유 —
+    account_insight ∉ AGENT_GLOBAL_KB_TYPES 이므로 `_publish_fact` 가 global 안 함)로 저장한다.
+    임베딩은 기존 KB 파이프라인(`texts`)이 후속 처리 → `account_recall` 이 벡터 회상한다.
+    summary fingerprint 로 재추출을 회피. flag `AGENT_ACCOUNT_INSIGHT_EXTRACT` OFF 면 no-op.
+    """
+    report: dict[str, Any] = {"candidates": 0, "extracted": 0, "skipped_fp": 0, "empty": 0, "errors": 0}
+    if not AGENT_ACCOUNT_INSIGHT_EXTRACT:
+        return report
+    from .db import _pg_available, _pg_connect
+    from .kb_write import _publish_fact
+    from .kb_scope import _mask_prose
+    if not _pg_available():
+        return report
+    try:
+        cap = max(1, int(AGENT_ACCOUNT_INSIGHT_EXTRACT_MAX_CONVS))
+    except Exception:
+        cap = 25
+    try:
+        min_len = max(0, int(AGENT_ACCOUNT_INSIGHT_MIN_SUMMARY_LEN))
+    except Exception:
+        min_len = 40
+    rid = str(run_id or "").strip() or _new_insight_worker_run_id()
+
+    # 후보 대화: owner 있고 비-fork·비-archived + summary 보유, 최근순(PG agent_runtime).
+    candidates: list[tuple[str, str]] = []
+    pg = None
+    try:
+        pg = _pg_connect()
+        if pg is None:
+            return report
+        with pg.cursor() as cur:
+            cur.execute(
+                """
+SELECT c.conversation_id, s.summary
+FROM agent_runtime.core_conversations c
+JOIN agent_runtime.summary s ON s.conversation_id = c.conversation_id
+WHERE c.owner_account_id IS NOT NULL
+  AND c.archived_at IS NULL
+  AND c.forked_from_conversation_id IS NULL
+  AND char_length(s.summary) >= %s
+ORDER BY c.updated_at DESC
+LIMIT %s
+                """,
+                (min_len, cap),
+            )
+            for r in (cur.fetchall() or []):
+                cid = str((r or [None])[0] or "").strip()
+                summ = str((r or [None, None])[1] or "")
+                if cid and summ.strip():
+                    candidates.append((cid, summ))
+    except Exception as exc:
+        logging.getLogger("insight").warning("account_insight_pass: candidate query 실패(무시): %s", exc)
+        return report
+    finally:
+        if pg is not None:
+            try:
+                pg.close()
+            except Exception:
+                pass
+
+    report["candidates"] = len(candidates)
+    if not candidates:
+        return report
+
+    fp_map = _load_kv_prefix_map(None, GLOBAL_CONVERSATION_ID, "account_insight_fp:")
+    mem_conn = None
+    try:
+        mem_conn = connect_with_retry(database=MEMORY_DB, autocommit=True)
+    except Exception:
+        mem_conn = None
+
+    try:
+        for cid, summary in candidates:
+            try:
+                fp = hashlib.sha256(summary.encode("utf-8", "ignore")).hexdigest()[:32]
+                if fp_map.get(f"account_insight_fp:{cid}") == fp:
+                    report["skipped_fp"] += 1
+                    continue
+                kv: dict[str, str] = {}
+                try:
+                    for k in ("origin_request", "thread_goal", "topic"):
+                        kv[k] = str(load_memory_kv(mem_conn, cid, k) or "").strip()
+                except Exception:
+                    kv = {}
+                payload = {
+                    "summary": summary,
+                    "origin_request": kv.get("origin_request", ""),
+                    "thread_goal": kv.get("thread_goal", ""),
+                    "topic": kv.get("topic", ""),
+                }
+                obj = llm_account_insight(payload)
+                insight_text = str(obj.get("insight") or "").strip() if isinstance(obj, dict) else ""
+                if not insight_text:
+                    report["empty"] += 1
+                    # 빈 결과도 fingerprint 저장 — summary 안 바뀌면 LLM 재호출 안 함(비용 절감).
+                    _save_fingerprint(None, f"account_insight_fp:{cid}", fp)
+                    continue
+                insight_text = _mask_prose(insight_text)  # G3 2차 방어(추출 PII-free 가 1차).
+                _publish_fact(
+                    mem_conn,
+                    cid,                      # 대화-로컬 저장 → account_recall 의 conv_ids 필터가 회상
+                    "account_insight",
+                    insight_text,
+                    4,
+                    scope_key=FACT_SCOPE_COMMON,
+                    source_type="account_insight",
+                    source_run_id=rid,
+                    source_sql="",
+                )
+                _save_fingerprint(None, f"account_insight_fp:{cid}", fp)
+                report["extracted"] += 1
+            except Exception as exc:
+                report["errors"] += 1
+                logging.getLogger("insight").warning("account_insight_pass: cid=%s 실패(무시): %s", cid, exc)
+                continue
+    finally:
+        if mem_conn is not None:
+            try:
+                mem_conn.close()
+            except Exception:
+                pass
+    return report
+
+
 def run_insight_worker_loop() -> None:
     if not AGENT_INSIGHT_WORKER_ENABLED:
         console.print("insight worker disabled: AGENT_INSIGHT_WORKER_ENABLED=0")
@@ -2086,6 +2214,13 @@ def run_insight_worker_loop() -> None:
     while True:
         result = run_insight_cycle()
         status = str((result or {}).get("status", "")).strip()
+        # B′ (TASK-20260617T082131): degraded(PG 부재) 아닐 때만 account_insight 추출 pass.
+        # flag OFF 면 내부에서 즉시 no-op. fail-soft — 추출 실패가 worker 루프를 깨지 않음.
+        if status not in ("degraded_readback", "error"):
+            try:
+                run_account_insight_pass()
+            except Exception as exc:
+                logging.getLogger("insight").warning("account_insight_pass: 루프 호출 실패(무시): %s", exc)
         # PG read 정본 부재(degraded_readback) / 연결 오류(error) 시엔 짧은 tick 대신
         # 길게 backoff — MySQL fallback 으로 떨어져 무의미한 재시도(livelock 동력)를
         # 반복하지 않고 PG 복구를 기다린다.
