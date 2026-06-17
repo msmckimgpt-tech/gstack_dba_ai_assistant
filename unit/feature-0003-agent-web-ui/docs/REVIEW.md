@@ -3095,3 +3095,18 @@ source_of_truth: true
 - Verification: test_dashboard_overview.py + make test 컨테이너 회귀 0.
 - Residual: 머지 → 배포(web 재빌드) → 라이브 재검증(`.own` 계정 위젯 self-scoped·by_actor/활성소유자 부재) + PB-0008.
 - Cross-ref: CHG-20260617-0306 / TASK-0294 / TASK-0293(선행).
+
+## REV-20260617-0307 [SUBAGENT:perm-self-scope-security]
+- Date: 2026-06-17
+- Cycle: TASK-0300 (관리 콘솔 계정/역할 권한 편집 self-scope — privilege escalation 방지), **Critical §12.3** — 인가 경계 변경.
+- Trigger: §18.8 + [[feedback_outside_voice_for_rbac]] — RBAC 권한 모델 변경. 적대적 보안 리뷰(general-purpose outside voice).
+- Verdict: **SHIP-WITH-FIXES** → 권고 흡수 후 **SHIP**.
+- 우회 경로 전수(진입점→가드): 계정 override=`admin_update_account`(`_enforce_override_self_scope` 403) SAFE / 역할 권한=`admin_update_role`+`admin_create_role`(`_enforce_role_permission_self_scope` 403) SAFE / `_set_account_overrides`·`_set_role_permissions` 타 HTTP 호출처 0 / signup·`/api/auth/me`=perm/override 미수용 SAFE / `_create_role_with_permissions`=seed·bootstrap(actor 비도달) N/A / delete cascade=부여 불가 SAFE.
+- 확인-안전(무조치): ① merge 정확성 — 범위 밖 기존값 보존(누락 시), escalation 체크가 merge **앞**이라 범위 밖 값 덮어쓰기/삭제 불가. 범위 안 inherit/uncheck 정확 제거. ② editable 집합 — `_account_permissions`(effective: deny override→False 반영) 기준, actor=세션 권위값. ③ survivor/lockout — survivor 가 merge **결과**로 평가, self-scope 로 last-management 박탈 불가. ④ bootstrap=전권→no-op, 무권한 actor=부여 0+기존 보존. ⑤ 프론트=UX 전용, 백엔드 merge 가 최종 정본. ValueError→403·conn.close() 전 신규 분기 present.
+- 흡수한 권고:
+  - **MAJOR-1 (역할 *배정* 경유 escalation)**: `account.role.assign` 보유 admin 이 고권한 역할 배정으로 미보유 권한 부여 가능. **사용자 결정(배정도 차단)** → `_role_grant_excess_for_actor` 신설 + `admin_update_account` 역할 변경 시 배정역할 권한 ⊄ actor → 403 + 프론트 드롭다운 숨김. **흡수 완료**.
+  - **MINOR-1 (product.access.* self-scope 포함 over-block)**: DefaultRoleAccess=1 제품 무영향(admin 전보유), =0 제품만 미보유 admin provisioning 불가. **사용자 결정(포함 유지)** — 더 엄격·기본제품 무영향. accepted.
+  - **MINOR-2 (계정/역할 가드 비대칭)**: override=submitted 전체 vs role=added 만 검사(데이터 모델 차이로 둘 다 정확). **docstring NOTE 추가**(향후 잘못된 통일 방지). 흡수.
+- Verification: test_perm_self_scope.py 18 PASS(ast 추출 실 helper 4종) + verify_perm_self_scope.mjs 13 PASS(실 renderPermissionGrid) + node --check + py ast.parse. **화면 정본 = PB-0008**.
+- Residual: 머지 → 배포(web 재빌드) → 라이브 재검증(제한 admin 미보유 권한 행/역할/제품카드 부재·우회 PATCH 403×3경로·범위 밖 기존값 보존) + PB-0008.
+- Cross-ref: CHG-20260617-0307 / TASK-0300 / TASK-0288(RBAC 선행)·TASK-0257(권한 편집기).
