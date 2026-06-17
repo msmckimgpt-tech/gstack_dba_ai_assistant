@@ -1,7 +1,22 @@
 # 테스터용 HTTPS 신뢰 설정 가이드 (Root CA 1회 설치)
 
-> feature-0006-lan-proxy-access / TASK-0296.
+> feature-0006-lan-proxy-access / TASK-0296·0298.
 > 브라우저의 **"안전하지 않은 연결 / 주의 요함"** 경고를 없애기 위한 1회 설정이다.
+
+## ⭐ 가장 쉬운 방법 — 웹 다운로드 페이지 (TASK-0298)
+
+대부분의 테스터는 이 한 페이지면 됩니다:
+
+**`http://mysql-ai.company.local/trust/`** 접속 → 사용하는 OS 의 설치 파일 받기 → 실행(승인 1회).
+
+- Windows: `install-trust-windows.bat` 더블클릭 → 관리자 "예".
+- macOS: `install-trust-macos.command` 더블클릭 → 비밀번호.
+- 페이지에 표시된 **SHA-256 지문**이 운영자가 알려준 값과 같은지 확인하세요(가로채기 방지).
+- 페이지는 **평문 HTTP** 라 아직 인증서를 안 깔아도 경고 없이 열립니다.
+
+> 아래 §1~§4 는 위 방법이 막히거나 수동/Firefox 설치가 필요할 때의 상세 절차입니다.
+
+---
 
 ## 왜 경고가 뜨나
 

@@ -3,24 +3,46 @@
 }
 
 http://{$WEB_PUBLIC_HOST}, :80 {
-	redir https://{host}{uri} permanent
+	# TASK-0298 (AC-0557): Root CA 신뢰 설치 번들은 평문 HTTP 로 제공한다 — 테스터가 아직
+	# CA 를 설치하지 않은 상태(HTTPS 경고)에서도 경고 없이 받게 하기 위함. 그 외 경로는 HTTPS 로.
+	handle /trust {
+		redir {http.request.scheme}://{host}/trust/ permanent
+	}
+	handle_path /trust/* {
+		root * /srv/trust
+		file_server
+	}
+	handle {
+		redir https://{host}{uri} permanent
+	}
 }
 
 https://{$WEB_PUBLIC_HOST}, :443 {
 	tls {$WEB_TLS_CERT_FILE} {$WEB_TLS_KEY_FILE}
 
+	# TASK-0298: 설치 후/직접 접근용으로 HTTPS 에서도 동일 번들을 서빙한다.
+	handle /trust {
+		redir {http.request.scheme}://{host}/trust/ permanent
+	}
+	handle_path /trust/* {
+		root * /srv/trust
+		file_server
+	}
+
 	# TASK-0297 (AC-0554): web 은 ENABLE_WEB_TLS=1 로 8000 에서 HTTPS 를 서빙하므로
 	# upstream 으로 평문 HTTP 가 아닌 HTTPS 로 연결한다 (평문 연결 시 502). 사내 Root CA
-	# 로 web leaf 인증서를 검증하고(tls_trusted_ca_certs), SNI/검증 이름은 leaf SAN 과
+	# 로 web leaf 인증서를 검증하고(tls_trust_pool), SNI/검증 이름은 leaf SAN 과
 	# 일치하는 공개 호스트명을 사용한다(tls_server_name — 내부 서비스명 `web` 는 SAN 부재).
-	reverse_proxy web:8000 {
-		transport http {
-			tls
-			tls_trust_pool file /certs/rootCA.pem
-			tls_server_name {$WEB_PUBLIC_HOST}
+	handle {
+		reverse_proxy web:8000 {
+			transport http {
+				tls
+				tls_trust_pool file /certs/rootCA.pem
+				tls_server_name {$WEB_PUBLIC_HOST}
+			}
+			header_up X-Forwarded-For {client_ip}
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-Port 443
 		}
-		header_up X-Forwarded-For {client_ip}
-		header_up X-Forwarded-Proto https
-		header_up X-Forwarded-Port 443
 	}
 }

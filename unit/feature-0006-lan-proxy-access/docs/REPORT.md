@@ -9,6 +9,16 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+**2026-06-17 TASK-0298 완료 — 테스터 Root CA 원클릭 설치 번들** (CHG-20260617-0309,
+REV-20260617-0309, REQ-0285, AC-0557~0561, **Major** §12.3, ADR-LAN-0004). 테스터 PC 마다
+수동 인증서 이동 번거로움 해소. web 서버가 `http://<host>/trust/` 에서 OS별 단일 자가완결 설치
+스크립트(Root CA base64 임베드, 자가-상승, 지문 재검증, certutil/security) + OS감지 다운로드
+페이지(지문 대조 안내) 제공. `bin/trust-bundle.sh`(템플릿→`artifacts/trust-bundle/` 조립, 임베드
+지문 자가검증) + Caddyfile `:80`/`:443` `/trust/` `file_server` carve-out + compose `/srv/trust`
+마운트 + `tls-internal-ca.sh` 자동 호출. **브라우저 방문 자동설치는 OS 보안경계상 불가**(승인 1회
+필수) — 신뢰 부트스트랩 한계는 지문 노출+재검증+운영자 out-of-band 공유로 완화. validate=Valid +
+one-off 테스트 caddy `/trust/` 200·bare `/trust`→301·앱 200 머지전 검증.
+
 **2026-06-17 TASK-0297 완료 — caddy :443 정식 front door** (CHG-20260617-0308,
 REV-20260617-0308, REQ-0284, AC-0554~0556, **Major** §12.3, ADR-LAN-0003). TASK-0296 의
 별 cycle 후속 — caddy `:443` 502 해소. 근본 = `ENABLE_WEB_TLS=1`(web 8000 HTTPS) + caddy

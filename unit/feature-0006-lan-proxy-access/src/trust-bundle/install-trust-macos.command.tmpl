@@ -1,0 +1,53 @@
+#!/bin/bash
+# ============================================================
+#  mysql-ai 사내 Root CA 신뢰 설치 (macOS)
+#  feature-0006 TASK-0298 — 단일 자가완결 파일(인증서 임베드).
+#  더블클릭 실행. 관리자(sudo) 비밀번호 1회 필요.
+# ============================================================
+set -euo pipefail
+
+FP_DISPLAY="__ROOTCA_SHA256__"
+FP_HEX="__ROOTCA_SHA256_HEX__"
+
+echo
+echo "==========================================================="
+echo "  mysql-ai 사내 Root CA 신뢰 설치 (macOS)"
+echo "==========================================================="
+echo "  인증서 지문 (SHA-256):"
+echo "    ${FP_DISPLAY}"
+echo
+echo "  > 운영자가 알려준 지문과 동일한지 확인하세요."
+echo "  > 다르면 즉시 닫고 운영자에게 문의하세요 (가로채기 위험)."
+echo
+read -r -p "계속하려면 Enter, 취소하려면 Ctrl+C: " _ || true
+
+CRT="$(mktemp /tmp/mysql-ai-rootCA.XXXXXX)"
+trap 'rm -f "$CRT"' EXIT
+
+# --- 임베드 인증서 디코드 ---
+base64 -D >"$CRT" <<'B64EOF'
+__ROOTCA_B64__
+B64EOF
+
+# --- 지문 재검증 ---
+ACTUAL="$(shasum -a 256 "$CRT" | awk '{print toupper($1)}')"
+if [ "$ACTUAL" != "$FP_HEX" ]; then
+  echo "[오류] 지문 불일치 — 설치를 중단합니다."
+  echo "  기대: $FP_HEX"
+  echo "  실제: $ACTUAL"
+  exit 1
+fi
+
+echo "관리자(sudo) 권한이 필요합니다 — 비밀번호를 입력하세요."
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain "$CRT"
+
+echo
+echo "[완료] 시스템 키체인에 신뢰 등록되었습니다."
+echo "  브라우저를 완전히 종료한 뒤 다시 열고"
+echo "  https://__PUBLIC_HOST__ 에 접속하세요 (경고 없이 자물쇠 정상)."
+echo
+echo "  ※ Firefox 사용 시: 설정 → 개인정보 → 인증서 보기 → 인증 기관 →"
+echo "    rootCA.crt 가져오기 (Firefox 는 자체 저장소 사용)."
+echo
+read -r -p "Enter 를 눌러 닫기: " _ || true

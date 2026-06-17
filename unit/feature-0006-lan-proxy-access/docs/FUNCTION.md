@@ -26,10 +26,17 @@ Caddy TLS 프록시 설정과 Windows 포트 프록시 스크립트를 관리한
   `reverse_proxy web:8000` 로 붙어 프로토콜 불일치(502). caddy 를 HTTPS-upstream(사내 Root
   CA 검증)으로 전환하고, web 이 caddy 의 `X-Forwarded-For` 를 신뢰하도록 trusted proxy 를
   설정해 audit IP 정확도(SECURITY.md §9.7)를 보존한다. web 직접 TLS `:18080` 경로는 유지.
+- REQ-0285 (TASK-0298, **Major** §12.3 — 테스터 Root CA 원클릭 설치 번들): 테스터가 PC 마다
+  인증서를 수동으로 옮기는 번거로움을 없앤다. web 서버가 `http://{$WEB_PUBLIC_HOST}/trust/`
+  에서 OS별 단일 자가완결 설치 스크립트(인증서 임베드) + 다운로드 페이지를 제공해, 테스터는
+  URL 접속 → 스크립트 실행(승인 1회) 로 끝낸다. (브라우저 방문만으로 신뢰 저장소에 자동 설치하는
+  것은 OS/브라우저 보안 경계상 불가능 — 사용자 승인 필수.) Root CA 배포의 신뢰 부트스트랩 한계는
+  SHA-256 지문 노출 + 스크립트 지문 재검증 + 운영자 out-of-band 지문 공유로 완화한다.
 
 ## 3. In Scope
 - `src/caddy/Caddyfile`
 - `src/windows/*`
+- `src/trust-bundle/*` (테스터 설치 번들 템플릿)
 - LAN/TLS 운영 문서
 
 ## 4. Out of Scope
@@ -86,6 +93,11 @@ Caddy TLS 프록시 설정과 Windows 포트 프록시 스크립트를 관리한
 - AC-0554 (REQ-0284 / TASK-0297): `src/caddy/Caddyfile` 의 `:443` 블록 `reverse_proxy web:8000` 가 `transport http { tls; tls_trust_pool file /certs/rootCA.pem; tls_server_name {$WEB_PUBLIC_HOST} }` 를 포함한다. caddy 가 web(8000, HTTPS) 에 HTTPS 로 연결하고 사내 Root CA 로 leaf 를 검증한다. `caddy validate` = `Valid configuration`, 런타임 프록시 = HTTP 200(이전 502 해소). AC-0004 의 `header_up X-Forwarded-For {client_ip}` 등 XFF directive 는 보존된다.
 - AC-0555 (REQ-0284): `.env` `ENABLE_WEB_TLS_PROXY=1` + `WEB_TRUSTED_PROXIES=172.18.0.0/16`(caddy dbnet 서브넷). web 의 `_get_client_ip()` 가 caddy 의 `X-Forwarded-For` 를 신뢰해 `WebAuditEvents.IpAddr` / `WebAuthSessions.RemoteAddr` 가 caddy 컨테이너 IP 가 아닌 실 클라이언트 IP 를 기록한다(SECURITY.md §9.7 PIPA 품질). 외부/미신뢰 LAN 노출 시 서브넷 협소화 + web port 비공개 별 cycle.
 - AC-0556 (REQ-0284): 라이브 `:443`(caddy) 과 `:18080`(web 직접) 양쪽이 Root CA 로 신뢰된 체인으로 HTTP 200 을 반환한다. 테스터는 포트 없는 `https://{$WEB_PUBLIC_HOST}` 또는 `:18080` 어느 쪽이든 경고 없이 접속한다.
+- AC-0557 (REQ-0285 / TASK-0298): `bin/trust-bundle.sh` 가 `artifacts/certs/rootCA.pem` 를 읽어 `src/trust-bundle/*.tmpl` placeholder(`__PUBLIC_HOST__`/`__ROOTCA_SHA256__`/`__ROOTCA_SHA256_HEX__`/`__ROOTCA_B64__`)를 주입, `artifacts/trust-bundle/{index.html, install-trust-windows.bat, install-trust-macos.command, rootCA.crt}` 를 조립한다. 임베드 base64 디코드 지문이 실제 Root CA 와 일치함을 자가검증(불일치 시 die). `tls-internal-ca.sh` 가 끝에서 자동 호출(인증서 갱신 시 번들 동반 갱신).
+- AC-0558 (REQ-0285): `src/caddy/Caddyfile` 가 `/trust` → `/trust/` 리다이렉트 + `handle_path /trust/*`(`root /srv/trust`, `file_server`) 를 **HTTP `:80`** 블록(나머지는 HTTPS 리다이렉트) **및 HTTPS `:443`** 블록(나머지는 reverse_proxy) 양쪽에 둔다. compose 가 `../artifacts/trust-bundle:/srv/trust:ro` 를 마운트. HTTP 서빙 이유 = 테스터가 아직 Root CA 미설치(HTTPS 경고) 상태에서 경고 없이 번들을 받게 하기 위함.
+- AC-0559 (REQ-0285): 설치 스크립트는 단일 자가완결 파일(Root CA PEM base64 임베드). Windows `.bat` = 자가-상승 + 지문 표시/재검증 + `certutil -addstore -f Root`. macOS `.command` = 지문 표시/재검증 + `sudo security add-trusted-cert -d -r trustRoot -k System.keychain`. 설치 전 임베드 인증서의 SHA-256 이 기대값과 불일치하면 중단.
+- AC-0560 (REQ-0285): `http://{$WEB_PUBLIC_HOST}/trust/` 다운로드 페이지가 SHA-256 지문(out-of-band 대조 안내) + OS 감지 다운로드 + Firefox 자체 저장소 + hosts 안내를 제공한다.
+- AC-0561 (REQ-0285): 라이브 `http://<host>/trust/`(평문, index/스크립트/`rootCA.crt`) = HTTP 200, bare `/trust` → 301 `/trust/`, 그 외 HTTP 경로 → HTTPS 301, 앱 `:443` reverse_proxy = 200 (번들 추가가 앱 라우팅 무회귀).
 
 ## 12. Observability
 - Caddy 로그: `docker compose logs caddy`
@@ -94,6 +106,8 @@ Caddy TLS 프록시 설정과 Windows 포트 프록시 스크립트를 관리한
 - 라이브 체인 검증: `openssl s_client -connect 127.0.0.1:18080 -CAfile artifacts/certs/rootCA.pem` → `Verify return code: 0`
 - caddy :443 검증: `caddy validate` + `curl --cacert rootCA.pem https://<host>/healthz` → 200
 - caddy 설정 검증: `docker run --rm -v <Caddyfile>:/etc/caddy/Caddyfile:ro -v <certs>:/certs:ro caddy:2 caddy validate --config /etc/caddy/Caddyfile`
+- 테스터 설치 번들 갱신: `bash bin/trust-bundle.sh` → `artifacts/trust-bundle/`. 서빙: `http://<host>/trust/`
+- 번들 라이브 검증: `curl http://<host>/trust/install-trust-windows.bat` → 200
 
 ## 13. Pre-approved Changes
 - 비파괴적 운영 자산 재배치와 경로 수정

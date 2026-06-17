@@ -23,3 +23,8 @@ source_of_truth: true
 ## 3. Test Run History
 - 2026-03-26: 구조 검증 기준만 정의함. 엄격한 네트워크 시나리오는 후속 작성 예정
 - 2026-05-21 (TASK-0006 / TASK-0087): Caddyfile static syntax 검증을 사용자 docker 환경에서 진행 권장 — `caddy validate` PASS 후 cycle-finalize.
+- 2026-06-17 (TASK-0296): leaf 체인 `openssl verify` OK + 라이브 web `:18080` `Verify return code: 0` + HTTP 200.
+- 2026-06-17 (TASK-0297): `caddy validate`=Valid + one-off 테스트 caddy(dbnet, :8443) 런타임 `/healthz`·`/`=200(502 해소). 라이브 caddy `:443`=200·`Verify 0`, web `:18080`=200, HTTP→HTTPS 301.
+- 2026-06-17 (TASK-0298):
+  - Environment: Linux (openssl/curl/one-off caddy). Run: `caddy validate`=Valid; one-off 테스트 caddy(:8080/:8443) → `http://…/trust/`·`install-trust-windows.bat`·`rootCA.crt`=200, bare `/trust`→301 `/trust/`, 그외 HTTP→HTTPS 301, 앱 `:443`=200. 임베드 base64 디코드 지문=실제 Root CA 일치(win .bat·mac .command). placeholder 잔존 0.
+  - Environment: Windows-browser (PB-0008). **사유 명시(미수행)**: `/trust/` 는 inline CSS + 단순 OS감지 JS 의 **정적 다운로드 페이지**로 앱 로직/동적 상태 표면 없음. server-side(HTTP 200 + 링크/지문 정확성) 검증으로 충족. 실제 설치(`certutil`/`security`)는 Windows/macOS 클라이언트 권한 동작이라 CI 브리지 불가 — 운영자/테스터 1회 수동 확인 영역. 시각 회귀 우려 낮음(단일 페이지). 후속 운영 검증 시 실제 브라우저 확인 권장.

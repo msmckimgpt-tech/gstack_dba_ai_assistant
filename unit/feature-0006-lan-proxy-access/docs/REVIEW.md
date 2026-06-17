@@ -8,6 +8,37 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260617-0309 [SKIPPED:non-RBAC-infra] — 테스터 Root CA 원클릭 설치 번들 (TASK-0298)
+- Date: 2026-06-17
+- Change: CHG-20260617-0309 (REQ-0285, AC-0557~0561, **Major** §12.3, ADR-LAN-0004).
+  테스터 Root CA 원클릭 설치 번들 + caddy `/trust/` HTTP 서빙.
+- 변경 산출물: `bin/trust-bundle.sh`, `src/trust-bundle/*.tmpl`(4), Caddyfile(/trust handle ×2),
+  compose(`/srv/trust` mount), `bin/tls-internal-ca.sh`(자동 호출), docs.
+- 자체 점검:
+  1. **자동설치 불가 정직 표명** — 페이지 방문만으로 신뢰 루트 자동 설치는 OS/브라우저 보안
+     경계상 불가능(MITM 방지). 사용자 승인 1회 필수. FUNCTION REQ-0285 + ADR-LAN-0004 명시.
+  2. **신뢰 부트스트랩 무결성** — Root CA 최초 배포는 채널 무관 암호학적 보장 불가. 완화 3중:
+     지문 노출 + 스크립트 설치전 SHA-256 재검증(불일치 die) + 운영자 out-of-band 지문 공유.
+     `trust-bundle.sh` 가 임베드 base64 디코드 지문이 실제 CA 와 일치하는지 조립 시 자가검증.
+  3. **HTTP 서빙 정당성** — `/trust/` 만 HTTP(나머지 :80 은 HTTPS 리다이렉트 유지). CA 미설치
+     상태에서 HTTPS 경고 없이 받게 하기 위함. HTTP/HTTPS 둘 다 부트스트랩 무결성은 동일(미설치).
+  4. **개인키 미노출** — 번들엔 `rootCA.crt`(공개)만. `rootCA-key.pem` 포함 안 함.
+  5. **앱 라우팅 무회귀** — `:443` reverse_proxy(TASK-0297) 를 `handle {}` 로 감싸 보존.
+     one-off 테스트 caddy 로 `/trust/`=200 + 앱 `/healthz`=200 동시 동작 머지전 실측.
+  6. **검증** — `caddy validate`=Valid(deprecation 0). 런타임: bare`/trust`→301, `/trust/`/
+     스크립트/`rootCA.crt`=200, 그외 HTTP→HTTPS 301, 앱 :443=200. 임베드 인증서 디코드 지문
+     =실제 CA 일치(win .bat + mac .command 양쪽).
+  7. **auth/authz/RBAC 무변경** — 정적 파일 서빙 + 셸 스크립트 + 문서. 앱 코드 0.
+- Outside-voice (Codex/subagent): **SKIPPED** — RBAC/권한 catalog 무관, 앱 코드 미변경.
+  결정(원클릭 스크립트 방식)은 사용자 사전 승인. 보안(신뢰 부트스트랩) 위험은 본 self-review +
+  ADR-LAN-0004 + README 에 명시.
+- Risk:
+  1. 신뢰 부트스트랩 — 운영자가 지문 out-of-band 공유를 실제로 안 하면 LAN MITM 시 위조 CA
+     설치 가능. 운영 절차(지문 공유) 가 통제점. 사내 LAN 가정.
+  2. SmartScreen/Gatekeeper 가 미서명 스크립트 차단 가능 — index.html 에 우회 안내. 코드서명은
+     별 cycle(인증서 구매 필요).
+  3. 외부/미신뢰 LAN 노출 시 SECURITY.md §7.2/§9.7 보완 선행(번들 HTTP 노출 표면 포함 재평가).
+
 ## REV-20260617-0308 [SKIPPED:non-RBAC-infra] — caddy :443 정식 front door (TASK-0297)
 - Date: 2026-06-17
 - Change: CHG-20260617-0308 (REQ-0284, AC-0554~0556, **Major** §12.3). caddy `:443` 502

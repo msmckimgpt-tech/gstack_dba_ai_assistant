@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>mysql-ai 인증서 설치</title>
+<style>
+  :root{--fg:#1f2933;--muted:#6b7280;--bd:#e5e7eb;--ac:#2563eb;--ok:#16a34a;--bg:#f8fafc}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--fg);background:var(--bg);line-height:1.6}
+  .wrap{max-width:720px;margin:0 auto;padding:32px 20px 64px}
+  h1{font-size:1.5rem;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 24px}
+  .card{background:#fff;border:1px solid var(--bd);border-radius:12px;padding:20px 22px;margin:16px 0}
+  .card h2{font-size:1.05rem;margin:0 0 12px;display:flex;align-items:center;gap:8px}
+  .step{color:var(--muted);font-size:.85rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+  a.btn{display:inline-flex;align-items:center;gap:8px;background:var(--ac);color:#fff;text-decoration:none;
+        padding:11px 18px;border-radius:8px;font-weight:600;margin:6px 8px 6px 0}
+  a.btn.sec{background:#fff;color:var(--ac);border:1px solid var(--ac)}
+  a.btn:hover{filter:brightness(.95)}
+  .fp{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.82rem;background:#0f172a;color:#e2e8f0;
+      padding:12px 14px;border-radius:8px;word-break:break-all;user-select:all}
+  .note{font-size:.9rem;color:var(--muted)}
+  .warn{background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:12px 14px;font-size:.9rem}
+  code{background:#eef2f7;padding:1px 6px;border-radius:5px;font-size:.85em}
+  ol{padding-left:20px} li{margin:6px 0}
+  .hide{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🔒 mysql-ai 사내 인증서 설치</h1>
+  <p class="sub">브라우저의 “안전하지 않은 연결” 경고를 없애기 위한 <strong>1회 설정</strong>입니다.
+    아래에서 사용하는 OS 의 설치 파일을 받아 실행하세요 (승인 1회).</p>
+
+  <div class="card">
+    <div class="step">먼저 확인</div>
+    <h2>① 인증서 지문 대조</h2>
+    <p class="note">아래 SHA-256 지문이 운영자가 알려준 값과 <strong>같은지</strong> 확인하세요.
+      다르면 설치하지 말고 운영자에게 문의하세요 (중간자 가로채기 방지).</p>
+    <div class="fp">__ROOTCA_SHA256__</div>
+  </div>
+
+  <div class="card" id="win">
+    <div class="step">Windows</div>
+    <h2>② 설치 파일 실행</h2>
+    <ol>
+      <li><a class="btn" href="install-trust-windows.bat" download>install-trust-windows.bat 받기</a></li>
+      <li>받은 파일을 <strong>더블클릭</strong> → 관리자 권한 요청에 “예” → 지문 확인 후 진행.</li>
+      <li>브라우저를 완전히 종료 후 다시 열기.</li>
+    </ol>
+    <p class="note">SmartScreen 경고가 뜨면 “추가 정보 → 실행”. 사내 배포 스크립트입니다.</p>
+  </div>
+
+  <div class="card" id="mac">
+    <div class="step">macOS</div>
+    <h2>② 설치 파일 실행</h2>
+    <ol>
+      <li><a class="btn" href="install-trust-macos.command" download>install-trust-macos.command 받기</a></li>
+      <li>받은 파일을 더블클릭 (차단 시 우클릭 → 열기) → 관리자 비밀번호 입력.</li>
+      <li>브라우저를 완전히 종료 후 다시 열기.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <div class="step">기타 / 수동</div>
+    <h2>③ 직접 설치 · Firefox</h2>
+    <p><a class="btn sec" href="rootCA.crt" download>rootCA.crt 받기</a></p>
+    <p class="note"><strong>Firefox</strong> 는 OS 저장소를 쓰지 않습니다 — 설정 →
+      개인정보 → 인증서 보기 → <em>인증 기관</em> → 가져오기 → <code>rootCA.crt</code> →
+      “웹사이트 식별 신뢰” 체크.</p>
+    <p class="note"><strong>Linux/수동</strong>: <code>rootCA.crt</code> 를 OS 신뢰 저장소에 추가.</p>
+  </div>
+
+  <div class="card">
+    <div class="step">이름 해석</div>
+    <h2>④ 도메인 접속이 안 되면 (선택)</h2>
+    <p class="note">사내 DNS 에 <code>__PUBLIC_HOST__</code> 가 없으면 hosts 파일에 한 줄 추가
+      (<code>&lt;서버-IP&gt; __PUBLIC_HOST__</code>). Windows:
+      <code>C:\Windows\System32\drivers\etc\hosts</code>, macOS/Linux: <code>/etc/hosts</code>.
+      또는 운영자가 안내한 IP 로 바로 접속.</p>
+  </div>
+
+  <p class="note">설치 후 <a href="https://__PUBLIC_HOST__">https://__PUBLIC_HOST__</a> 에서 자물쇠가
+    정상 표시되면 완료입니다.</p>
+</div>
+<script>
+  // OS 감지해 해당 카드만 강조(나머지는 접지 않고 그대로 노출 — 혼합 환경 대비)
+  try {
+    var p = (navigator.userAgentData && navigator.userAgentData.platform || navigator.platform || "").toLowerCase();
+    var ua = navigator.userAgent.toLowerCase();
+    var isMac = p.indexOf("mac") >= 0;
+    var isWin = p.indexOf("win") >= 0;
+    if (isMac && !isWin) { document.getElementById("win").classList.add("hide"); }
+    if (isWin && !isMac) { document.getElementById("mac").classList.add("hide"); }
+  } catch (e) {}
+</script>
+</body>
+</html>
