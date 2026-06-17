@@ -4084,3 +4084,14 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 테스트: test_dashboard_overview.py(window propagation scope kwargs + 신규 `.own` self-scope 가시성·scope='own'·account_id 전달 검증) + make test 컨테이너 회귀 0.
 - [x] outside-voice 적대 보안 리뷰 SHIP(REV-20260617-0306) — SQL injection 0(parameterized)·`.own` self-scope 완전(5쿼리 누락 0·by_actor/활성소유자 생략)·scope 결정 정확·가시성↔데이터 정합·account_id 인증값·`.any` byte-identical 무회귀·accounts/usage 개별 PII 미노출 7항목. D1(fail-open) 흡수.
 - [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → 라이브 재검증(`.own` 계정 audits/conversations 위젯 self-scoped·by_actor/활성소유자 부재) + PB-0008 → 마감.
+
+### TASK-0300 — 관리 콘솔 계정/역할 권한 편집 self-scope (privilege escalation 방지, Critical §12.3, 2026-06-17)
+- 사용자 보고/요청: `관리 콘솔 > 계정` 에서 자기 자신이 보유한 권한을 넘어서는 권한은 숨김 처리 + 설정 불가하도록 구성.
+- 사용자 결정(2026-06-17, /_template:entry Critical 계획 승인): ① 미보유 권한 = **allow·deny 모두 불가(완전 숨김·차단)**("숨김 처리" 문구 충실). ② 적용 범위 = **계정 + 역할 둘 다**(역할 경유 우회 차단).
+- 발견 리스크(데이터 손실): `admin_update_account`/`admin_update_role` 은 override 맵/permission_codes 를 **전체 교체** 후 delete-all-then-insert. 프론트가 행을 숨기면 숨긴 권한의 기존 값이 payload 에서 누락→삭제됨 → 백엔드·프론트 모두 **범위 밖 기존 값 보존(merge)** 필수.
+- [x] 백엔드 정본: 신규 `_actor_editable_permission_codes` + `_enforce_override_self_scope`(계정) + `_enforce_role_permission_self_scope`(역할). 미보유 권한 allow/deny 시 403, 범위 밖 기존 값 merge 보존. `admin_update_account`(normalize 직후)·`admin_update_role`(validate 직후·survivor 직전) wiring. 기존 `*.override.manage`/`role.permission.manage` 게이트와 직교(추가).
+- [x] 프론트 admin.js: `renderPermissionGrid(opts.allowedCodes)` 필터(미보유 행 미생성·빈 그룹/section 제거·product_access 컨테이너 보존). `renderAccountDetail`/`renderRoleDetail` 이 `adminState.me.permissions` 보유 code 로 allowedCodes 구성+전달+안내문구. 제품카드 `buildAccountProductOverrideList`/`buildRoleProductCardList` 미보유 `product.access.*` 숨김. onChange 숨긴 값 보존. 캐시버스터 `?v=20260617-task0300-perm-self-scope`.
+- [x] 테스트: `test_perm_self_scope.py`(ast 추출 실 helper 12 PASS — escalation 403·deny 차단·merge 보존·역할 add/remove) + jsdom `verify_perm_self_scope.mjs`(실 `renderPermissionGrid` 13 PASS — 미보유 행 숨김·빈 그룹 제거·컨테이너 보존·하위호환) + node --check + py ast.parse.
+- [x] 백엔드 추가(외부리뷰 우회경로 전수): `admin_create_role`(역할 생성 경유) 가드 + `_role_grant_excess_for_actor` 신설 — `admin_update_account` 역할 *배정* escalation 차단(외부리뷰 MAJOR-1, 사용자 결정 '배정도 차단'). 프론트 역할 드롭다운 배정불가 역할 숨김.
+- [x] outside-voice 적대 보안 리뷰(RBAC 필수, [[feedback_outside_voice_for_rbac]]) SHIP-WITH-FIXES(REV-20260617-0307) — 직접 우회 0(10/10 적대케이스)·merge/lockout/editable 안전. MAJOR-1(역할 배정 우회)→배정 가드 추가(사용자 결정). MINOR-1(product.access self-scope)→포함 유지(사용자 결정). MINOR-2(비대칭 주석)→흡수.
+- [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → 라이브 재검증(제한 admin 미보유 권한 행 부재·우회 PATCH 403·범위 밖 기존 override 보존) → PB-0008 Windows-browser 시각검증 → 마감.

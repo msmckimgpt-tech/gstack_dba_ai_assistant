@@ -4011,3 +4011,14 @@ source_of_truth: true
 - Files: feature-0003 src/app.py, tests/test_dashboard_overview.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
 - Rollback: 위젯 함수 scope 인자 제거(cross-account 무조건 집계 재발) / 카탈로그 permission 단일(.any) 복원.
 - Deploy: web 재빌드 1 이미지(app.py baked, 프론트 무변경 — 캐시버스터 불요). deploy_scope: included.
+
+## CHG-20260617-0307
+- Date: 2026-06-17 (TASK-0300, **Critical §12.3 — 인가/RBAC privilege escalation 방지**).
+- Scope: feature-0003-agent-web-ui(app.py 권한 가드 helper 3 + admin_update_account/role wiring + admin.js 권한 grid·제품카드 self-scope 필터 + admin.html 캐시버스터). 스키마·엔드포인트 응답 shape·`account.permission.override.manage`/`role.permission.manage` 게이트·RBAC 카탈로그 무변경. 권한 부여 가능 범위만 축소(actor 보유 권한 상한).
+- 사용자 보고/결정: `관리 콘솔 > 계정` 에서 자기 보유 권한 초과 권한 숨김+설정 불가. 결정 ① 미보유=allow·deny 모두 불가(완전 숨김) ② 범위=계정+역할.
+- 근본원인: 관리자가 본인 미보유 권한을 계정 override/역할 permission_codes 로 부여 가능(self-scope 가드 부재 = privilege escalation). 부수: override/permission_codes 전체 교체+delete-all-then-insert 라 행을 숨기면 숨긴 권한 기존값 누락→삭제(데이터 손실).
+- 변경: 신규 `_actor_editable_permission_codes`/`_enforce_override_self_scope`/`_enforce_role_permission_self_scope`/`_role_grant_excess_for_actor`. 미보유 권한 설정 시 403 + 범위 밖 기존값 merge 보존. wiring 4경로: `admin_update_account`(override normalize 직후 + **역할 배정 변경 시 배정역할 권한 ⊄ actor → 403**)·`admin_update_role`(validate 직후·survivor 직전)·`admin_create_role`(role.permission.manage 게이트 직후, 신규 역할이라 current=∅). admin.js `renderPermissionGrid(opts.allowedCodes)` 미보유 행 숨김(빈 그룹/section 제거·product_access 컨테이너 보존) + 계정/역할 상세 wiring + 제품카드 필터 + **역할 드롭다운 배정불가 역할 숨김** + onChange 숨긴값 보존 + 안내문구. (역할 생성/배정 가드는 외부리뷰 MAJOR-1 흡수 — 사용자 결정 '배정도 차단'.)
+- Verification: `test_perm_self_scope.py`(ast 실 helper 12 PASS) + jsdom `verify_perm_self_scope.mjs`(실 renderPermissionGrid 13 PASS) + node --check + py ast.parse. 적대 리뷰 REV-20260617-0307. 화면 정본 = PB-0008.
+- Files: feature-0003 src/app.py, src/static/admin.js, src/static/admin.html, tests/test_perm_self_scope.py, tests/verify_perm_self_scope.mjs, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
+- Rollback: 두 enforce helper 호출 제거(escalation 재개방) + admin.js allowedCodes 전달 제거(전체 표시 복원). 캐시버스터 되돌림.
+- Deploy: web 재빌드 1 이미지(app.py + 프론트 baked, 캐시버스터 bump). deploy_scope: included.

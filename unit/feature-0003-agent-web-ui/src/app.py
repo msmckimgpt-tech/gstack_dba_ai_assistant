@@ -1218,6 +1218,88 @@ def _account_has_any_permission(account: dict[str, Any] | None, *permissions: st
     return any(bool(perms.get(code)) for code in permissions)
 
 
+def _actor_editable_permission_codes(actor: dict[str, Any] | None) -> set[str]:
+    """TASK-0300: actor(편집 주체)가 실제로 보유한(effective=True) 권한 code 집합.
+    관리 콘솔에서 actor 가 타 계정/역할에 부여·설정할 수 있는 권한의 상한(self-scope)이다."""
+    return {code for code, granted in _account_permissions(actor).items() if granted}
+
+
+def _enforce_override_self_scope(
+    actor: dict[str, Any] | None,
+    submitted_overrides: dict[str, str] | None,
+    existing_overrides: dict[str, str] | None,
+) -> dict[str, str]:
+    """TASK-0300 (REQ-0287, 인가 §12.3): 관리자는 본인이 보유한 권한 범위 안에서만 계정
+    permission override 를 설정할 수 있다 — privilege escalation(자기 권한 초과 부여) 방지.
+
+    - ``submitted_overrides`` 는 ``_normalize_override_payload`` 결과(allow/deny 만, inherit 제거됨).
+    - 본인 미보유 권한에 allow/deny 를 설정하려 하면 ``ValueError`` → caller 가 403.
+      (요구사항 "숨김 처리 + 설정 불가": 미보유 권한은 allow·deny 모두 불가.)
+    - 본인 범위 **밖** 권한의 기존 override 는 보존(merge)한다. UI 가 그 권한 행을 숨겨
+      payload 에서 누락돼도 ``_set_account_overrides`` 의 delete-all-then-insert 로 삭제되지
+      않게 하는 데이터 무결성 가드다.
+    """
+    editable = _actor_editable_permission_codes(actor)
+    submitted = dict(submitted_overrides or {})
+    existing = dict(existing_overrides or {})
+    escalating = sorted(code for code in submitted if code not in editable)
+    if escalating:
+        raise ValueError(
+            "본인이 보유하지 않은 권한은 설정할 수 없습니다: " + ", ".join(escalating)
+        )
+    merged: dict[str, str] = {
+        code: value for code, value in existing.items() if code not in editable
+    }
+    merged.update(submitted)
+    return merged
+
+
+def _enforce_role_permission_self_scope(
+    actor: dict[str, Any] | None,
+    submitted_codes: "Iterable[str] | None",
+    current_codes: "Iterable[str] | None",
+) -> set[str]:
+    """TASK-0300 (REQ-0287): 역할 permission_codes 편집의 self-scope 가드 — privilege
+    escalation 방지(역할 경유 우회 차단).
+
+    - 본인 미보유 권한을 역할에 **신규 부여**(added = submitted − current)하면 ``ValueError`` → 403.
+    - 본인 범위 밖의 기존 역할 권한은 보존(merge): UI 가 숨겨 payload 에서 누락돼도
+      ``_set_role_permissions`` 의 delete-all-then-insert 로 제거되지 않게 한다. 즉 이미 부여돼
+      있던 고권한을 "본인이 보유하지 않는다"는 이유로 임의 회수하지도 못한다(보존만).
+
+    NOTE(의도된 비대칭 — 계정 override 의 ``_enforce_override_self_scope`` 와 다름): 역할은
+    permission_codes 가 flat set 이라 이미 부여된 미보유 code 를 다시 제출해도 added 가 아니므로
+    무해한 no-op (차단 X). 반면 계정 override 는 allow/deny **값**을 실어 미보유 code 제출 자체가
+    의심 신호라 `submitted` 전체를 검사한다. 두 가드를 함부로 "통일" 하지 말 것.
+    """
+    editable = _actor_editable_permission_codes(actor)
+    submitted = {str(c) for c in (submitted_codes or set())}
+    current = {str(c) for c in (current_codes or set())}
+    illegal = sorted(code for code in (submitted - current) if code not in editable)
+    if illegal:
+        raise ValueError(
+            "본인이 보유하지 않은 권한은 역할에 부여할 수 없습니다: " + ", ".join(illegal)
+        )
+    merged = set(submitted)
+    for code in current:
+        if code not in editable:
+            merged.add(code)
+    return merged
+
+
+def _role_grant_excess_for_actor(
+    actor: dict[str, Any] | None,
+    role_permission_codes: "Iterable[str] | None",
+) -> list[str]:
+    """TASK-0300 (REQ-0287, 사용자 결정 2026-06-17): 역할 *배정* 경유 escalation 차단용 —
+    주어진 역할의 권한 중 actor 가 보유하지 않은 code 목록(정렬). 빈 list 면 배정 가능.
+
+    역할 편집(권한 부여) 차단을 우회해 "사전 정의된 고권한 역할을 골라 배정" 하는 경로를 막는다.
+    """
+    editable = _actor_editable_permission_codes(actor)
+    return sorted({str(c) for c in (role_permission_codes or [])} - editable)
+
+
 def _account_has_product_access(
     account: dict[str, Any] | None,
     product_id_or_key,
@@ -15799,6 +15881,19 @@ async def admin_update_account(account_id: int, request: Request) -> JSONRespons
         if not next_role or not next_role.get("is_active"):
             conn.close()
             return _json_error("활성 역할만 부여할 수 있습니다.", 400)
+        # TASK-0300 (REQ-0287, 사용자 결정 2026-06-17): 역할 *배정* 경유 escalation 차단.
+        # 본인 보유 권한 범위를 초과하는 권한을 가진 역할은 배정할 수 없다(역할 편집 우회 차단의
+        # 보완 — 사전 정의된 고권한 역할을 골라 부여하는 우회 봉쇄). 역할이 실제로 바뀔 때만 검사
+        # (동일 역할 재지정 no-op 은 escalation 아님 — 타 필드 수정 시 false-block 방지).
+        if int(next_role_id) != int(target.get("role_id") or 0):
+            _assign_excess = _role_grant_excess_for_actor(actor, next_role.get("permission_codes"))
+            if _assign_excess:
+                conn.close()
+                return _json_error(
+                    "본인이 보유하지 않은 권한을 가진 역할은 배정할 수 없습니다: "
+                    + ", ".join(_assign_excess),
+                    403,
+                )
     else:
         next_role = _load_role_by_id(conn, next_role_id)
 
@@ -15824,6 +15919,17 @@ async def admin_update_account(account_id: int, request: Request) -> JSONRespons
         except ValueError as exc:
             conn.close()
             return _json_error(str(exc), 400)
+        # TASK-0300 (REQ-0287, 인가 §12.3): privilege escalation 방지 — actor 가 본인 보유 권한
+        # 범위 안에서만 override 설정 가능. 미보유 권한 설정 시 403, 범위 밖 기존 override 는 보존(merge).
+        try:
+            override_values = _enforce_override_self_scope(
+                actor,
+                override_values,
+                target.get("permission_overrides"),
+            )
+        except ValueError as exc:
+            conn.close()
+            return _json_error(str(exc), 403)
 
     role_permission_codes = _load_role_permission_codes(conn, [next_role_id]).get(next_role_id, set())
     next_permissions = _apply_permission_overrides(
@@ -16115,6 +16221,13 @@ async def admin_create_role(request: Request) -> JSONResponse:
     if permission_codes and not _account_has_permission(actor, "role.permission.manage"):
         conn.close()
         return _json_error("역할 권한 배치 권한이 필요합니다.", 403)
+    # TASK-0300 (REQ-0287): privilege escalation 방지 — 신규 역할 생성 시에도 본인 미보유 권한은
+    # 부여 불가(역할 생성 경유 우회 차단). 신규 역할이라 current=빈 집합 → 부여 권한 전부 self-scope 검사.
+    try:
+        permission_codes = _enforce_role_permission_self_scope(actor, permission_codes, set())
+    except ValueError as exc:
+        conn.close()
+        return _json_error(str(exc), 403)
     name = str(data.get("name", "") or "").strip()
     if not name:
         conn.close()
@@ -16216,6 +16329,17 @@ async def admin_update_role(role_id: int, request: Request) -> JSONResponse:
         except ValueError as exc:
             conn.close()
             return _json_error(str(exc), 400)
+        # TASK-0300 (REQ-0287): privilege escalation 방지 — 본인 미보유 권한을 역할에 신규 부여 시
+        # 403(역할 경유 우회 차단), 본인 범위 밖 기존 역할 권한은 보존(merge).
+        try:
+            next_permission_codes = _enforce_role_permission_self_scope(
+                actor,
+                next_permission_codes,
+                current_role.get("permission_codes"),
+            )
+        except ValueError as exc:
+            conn.close()
+            return _json_error(str(exc), 403)
         try:
             _ensure_management_survivor_for_role_change(conn, int(role_id), next_permission_codes)
         except ValueError as exc:

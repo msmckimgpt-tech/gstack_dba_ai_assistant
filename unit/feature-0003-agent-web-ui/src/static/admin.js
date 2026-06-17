@@ -672,7 +672,10 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
   // 그 권한들은 호출처가 별도 buildProductSubcatalog... 함수로 product 카드 형식으로 렌더한다.
   // CONVENTIONS.md §10.6 — group <details> 들은 ADMIN_PERMISSION_SECTIONS 의 2단 section (관리/운영/기타) 으로 묶어 렌더.
   // inheritedGrants(TASK-0270): override(계정) 모드에서 "상속(허용)" 게이트 판정용 — 역할이 부여한 code Set.
-  const { excludeDynamic = false, inheritedGrants = new Set() } = opts;
+  // TASK-0300: allowedCodes 가 주어지면(계정/역할 권한 편집) 편집 주체(admin)가 보유한 권한 code
+  //   Set 이다. 그 집합에 없는 권한 행은 grid 에서 숨긴다(privilege escalation 방지 — 본인 보유
+  //   범위 밖 권한은 표시·설정 불가). null/미지정이면 필터 없음(하위호환).
+  const { excludeDynamic = false, inheritedGrants = new Set(), allowedCodes = null } = opts;
   containerEl.innerHTML = "";
   const selected = new Set(selectedCodes || []);
   // 점진적 세분화: 그룹별 "세부 권한 더 보기" 강제표시 set + 재계산 클로저. 매 변경 핸들러가 호출.
@@ -701,6 +704,10 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
     containerEl.appendChild(sectionEl);
 
   groups.forEach(([group, items]) => {
+    // TASK-0300: 본인 미보유 권한 행 숨김. originally-empty 컨테이너(product_access: 제품 카드
+    //   임베드 타겟)는 보존하고, 필터로 비워진 그룹만 제외한다.
+    const renderItems = allowedCodes ? items.filter((p) => allowedCodes.has(p.code)) : items;
+    if (items.length > 0 && renderItems.length === 0) return;
     const section = document.createElement("details");
     section.className = "permission-group";
     section.dataset.permGroup = group;
@@ -770,7 +777,7 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
     const list = document.createElement("div");
     list.className = "permission-grid-list";
 
-    _orderItemsAsTree(items).forEach(({ permission, depth }) => {
+    _orderItemsAsTree(renderItems).forEach(({ permission, depth }) => {
       if (mode === "checkbox") {
         const label = document.createElement("label");
         label.className = "permission-toggle permission-toggle-card";
@@ -833,17 +840,19 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
 
     if (mode === "checkbox") {
       _updateCheckboxGroupSummary(section);
-      const hasSelected = items.some((p) => selected.has(p.code));
+      const hasSelected = renderItems.some((p) => selected.has(p.code));
       section.open = hasSelected;
     } else {
       _updateOverrideGroupSummary(section);
-      const hasNonInherit = items.some((p) => {
+      const hasNonInherit = renderItems.some((p) => {
         const v = overrides?.[p.code] || "inherit";
         return v === "allow" || v === "deny";
       });
       section.open = hasNonInherit;
     }
   });
+  // TASK-0300: 필터로 모든 그룹이 비워진 section 은 빈 헤더만 남으므로 제거.
+  if (!sectionGroupsEl.children.length) sectionEl.remove();
   });
   // 초기 진입 시 disclosure 1회 적용 — 게이트 OFF 인 세부 권한은 접고, 부여된 권한 체인은 펼친다.
   recompute();
@@ -4090,8 +4099,16 @@ function renderAccountDetail() {
   roleLabel.textContent = "역할";
   const roleSelect = document.createElement("select");
   const currentRoleId = Number(merged.role_id);
+  // TASK-0300 (사용자 결정 2026-06-17): 역할 배정 경유 escalation 차단의 UX 면 — 본인 보유 권한
+  //   범위를 초과하는 권한을 가진 역할은 드롭다운에서 숨긴다(설정 불가). 현재 배정된 역할은
+  //   상태 표시를 위해 초과해도 유지(변경 안 하면 백엔드 no-op). 백엔드가 최종 정본(403).
+  const _actorAllowed = new Set(
+    Object.entries(adminState.me?.permissions || {}).filter(([, g]) => g).map(([c]) => c)
+  );
+  const _roleAssignable = (role) => (role.permission_codes || []).every((c) => _actorAllowed.has(c));
   adminState.roles
-    .filter((r) => r.is_active || Number(r.id) === currentRoleId)
+    .filter((r) => (r.is_active || Number(r.id) === currentRoleId)
+      && (Number(r.id) === currentRoleId || _roleAssignable(r)))
     .forEach((role) => {
       const opt = document.createElement("option");
       opt.value = String(role.id);
@@ -4133,6 +4150,17 @@ function renderAccountDetail() {
   overrideTitle.className = "admin-detail-section-title";
   overrideTitle.textContent = "권한 Override";
   overrideSection.appendChild(overrideTitle);
+  // TASK-0300: 본인 보유 권한만 표시·설정. 미보유 권한은 숨김 처리됨을 알리는 안내.
+  const overrideHint = document.createElement("div");
+  overrideHint.className = "admin-detail-hint";
+  overrideHint.textContent = "본인이 보유한 권한만 표시·설정할 수 있습니다.";
+  overrideSection.appendChild(overrideHint);
+  // TASK-0300: 편집 주체(admin)가 보유한(effective=true) 권한 code 집합 — grid 숨김 필터의 상한.
+  const _selfAllowed = new Set(
+    Object.entries(adminState.me?.permissions || {})
+      .filter(([, granted]) => granted)
+      .map(([code]) => code)
+  );
   const overrideWrap = document.createElement("div");
   overrideWrap.className = "override-grid";
   // TASK-0270: "상속(허용)" 게이트 판정용 — 계정 역할이 부여한 권한 code Set(상속 baseline).
@@ -4146,21 +4174,24 @@ function renderAccountDetail() {
     "override",
     merged.permission_overrides || {},
     () => {
-      // TASK-0053 Phase B: grid 의 select[data-override-code] 는 정적 권한만이므로, dynamic
-      // product.access.* 의 기존 override (product subcatalog 에서 설정한 값) 는 보존해야 한다.
+      // grid 의 select[data-override-code] 에서 현재 값을 수집한다. (제품 접근 카드의 select 도
+      // product_access 그룹 안에 임베드돼 함께 잡힌다 — dynamic product.access.* 포함.)
       const overrides = {};
-      const existingDynamic = Object.fromEntries(
-        Object.entries(merged.permission_overrides || {})
-          .filter(([code]) => String(code).startsWith("product.access."))
-      );
+      const seen = new Set();
       overrideWrap.querySelectorAll("select[data-override-code]").forEach((select) => {
         overrides[select.dataset.overrideCode] = select.value;
+        seen.add(select.dataset.overrideCode);
       });
-      Object.assign(overrides, existingDynamic);
+      // TASK-0300: grid 에 렌더되지 않은(본인 미보유라 숨긴) 권한의 기존 override 는 보존한다.
+      //   payload 에서 누락되면 백엔드 delete-all-then-insert 로 삭제되므로 명시 보존.
+      //   (백엔드도 _enforce_override_self_scope 로 merge 하지만 pending 표시 정합을 위해 여기서도.)
+      Object.entries(merged.permission_overrides || {}).forEach(([code, value]) => {
+        if (!seen.has(code)) overrides[code] = value;
+      });
       setAccountPending(adminState.selectedAccountId, { permission_overrides: overrides });
       renderAccountList();
     },
-    { excludeDynamic: true, inheritedGrants: _inheritedGrants }
+    { excludeDynamic: true, inheritedGrants: _inheritedGrants, allowedCodes: _selfAllowed }
   );
   overrideSection.appendChild(overrideWrap);
   paneEl.appendChild(overrideSection);
@@ -4173,7 +4204,7 @@ function renderAccountDetail() {
   const productOverrides = buildAccountProductOverrideList(
     merged,
     disabledBase || !can("account.permission.override.manage"),
-    { embed: Boolean(accountProductGroup) },
+    { embed: Boolean(accountProductGroup), allowedCodes: _selfAllowed },
   );
   if (accountProductGroup) {
     accountProductGroup.appendChild(productOverrides);
@@ -4757,6 +4788,17 @@ function renderRoleDetail() {
   permTitle.className = "admin-detail-section-title";
   permTitle.textContent = "권한";
   permSection.appendChild(permTitle);
+  // TASK-0300: 본인 보유 권한만 표시·부여. 미보유 권한은 숨김 처리됨을 알리는 안내.
+  const permHint = document.createElement("div");
+  permHint.className = "admin-detail-hint";
+  permHint.textContent = "본인이 보유한 권한만 표시·부여할 수 있습니다.";
+  permSection.appendChild(permHint);
+  // TASK-0300: 편집 주체(admin)가 보유한 권한 code 집합 — 역할 권한 grid 숨김 필터의 상한.
+  const _selfAllowedRole = new Set(
+    Object.entries(adminState.me?.permissions || {})
+      .filter(([, granted]) => granted)
+      .map(([code]) => code)
+  );
   const permWrap = document.createElement("div");
   permWrap.className = "permission-grid";
   renderPermissionGrid(
@@ -4771,14 +4813,22 @@ function renderRoleDetail() {
       // 새 codes 를 만들면 product 카드의 토글이 무효화됨. 기존 dynamic codes 를 union 으로 유지.
       const checkedStatic = Array.from(permWrap.querySelectorAll("input[type='checkbox']:checked"))
         .map((input) => input.value);
+      const renderedStatic = new Set(
+        Array.from(permWrap.querySelectorAll("input[type='checkbox']")).map((input) => input.value)
+      );
       const existingDynamic = (merged.permission_codes || []).filter((c) =>
         String(c).startsWith("product.access.")
       );
-      const codes = Array.from(new Set([...checkedStatic, ...existingDynamic]));
+      // TASK-0300: grid 에 렌더되지 않은(본인 미보유라 숨긴) 기존 역할 권한은 보존한다 —
+      //   숨긴 권한이 payload 에서 누락돼 제거되는 것 방지. 백엔드도 merge 하지만 pending 정합용.
+      const preservedHidden = (merged.permission_codes || []).filter(
+        (c) => !renderedStatic.has(c) && !String(c).startsWith("product.access.")
+      );
+      const codes = Array.from(new Set([...checkedStatic, ...existingDynamic, ...preservedHidden]));
       setRolePending(adminState.selectedRoleId, { permission_codes: codes });
       renderRoleList();
     },
-    { excludeDynamic: true }
+    { excludeDynamic: true, allowedCodes: _selfAllowedRole }
   );
   permSection.appendChild(permWrap);
   paneEl.appendChild(permSection);
@@ -4791,7 +4841,7 @@ function renderRoleDetail() {
     const productCards = buildRoleProductCardList(
       merged,
       disabledBase || !can("role.permission.manage"),
-      { embed: Boolean(roleProductGroup) },
+      { embed: Boolean(roleProductGroup), allowedCodes: _selfAllowedRole },
     );
     if (roleProductGroup) {
       roleProductGroup.appendChild(productCards);
@@ -6866,7 +6916,8 @@ function buildRoleProductCard({ role, product, perm, disabled, onToggle }) {
 function buildRoleProductCardList(role, disabled, opts = {}) {
   // 사용자 follow-up (2026-05-07): embed=true 면 권한 grid 의 'product' 그룹 details 안에 inline 배치 —
   // 별도 section title/hint 는 부모 details summary 가 이미 "제품" 라벨을 보여주므로 중복 회피.
-  const { embed = false } = opts;
+  // TASK-0300: allowedCodes 가 주어지면 본인 미보유 product.access.* 카드는 숨긴다.
+  const { embed = false, allowedCodes = null } = opts;
   const wrap = document.createElement("div");
   wrap.className = embed ? "admin-product-card-list admin-product-card-list-embedded" : "admin-product-card-list admin-detail-section";
   if (!embed) {
@@ -6903,6 +6954,7 @@ function buildRoleProductCardList(role, disabled, opts = {}) {
     products.forEach((product) => {
       const perm = permByProductId.get(Number(product.id));
       if (!perm) return;
+      if (allowedCodes && !allowedCodes.has(perm.code)) return; // TASK-0300: 본인 미보유 제품접근 권한 숨김
       const card = buildRoleProductCard({ role, product, perm, disabled, onToggle });
       wrap.appendChild(card);
     });
@@ -6944,7 +6996,8 @@ function buildRoleProductCardList(role, disabled, opts = {}) {
  */
 function buildAccountProductOverrideList(account, disabled, opts = {}) {
   // 사용자 follow-up (2026-05-07): embed=true 면 권한 override grid 의 'product' 그룹 details 안에 inline.
-  const { embed = false } = opts;
+  // TASK-0300: allowedCodes 가 주어지면 본인 미보유 product.access.* 카드는 숨긴다.
+  const { embed = false, allowedCodes = null } = opts;
   const wrap = document.createElement("div");
   wrap.className = embed ? "admin-product-card-list admin-product-card-list-embedded" : "admin-product-card-list admin-detail-section";
   if (!embed) {
@@ -6983,6 +7036,7 @@ function buildAccountProductOverrideList(account, disabled, opts = {}) {
   products.forEach((product) => {
     const perm = permByProductId.get(Number(product.id));
     if (!perm) return;
+    if (allowedCodes && !allowedCodes.has(perm.code)) return; // TASK-0300: 본인 미보유 제품접근 권한 숨김
     const card = document.createElement("div");
     card.className = "admin-product-card admin-product-card-flat";
     const info = document.createElement("span");
