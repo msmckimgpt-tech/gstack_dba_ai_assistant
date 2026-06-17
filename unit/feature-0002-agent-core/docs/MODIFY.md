@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260617T082131-ai-claude-account-insight-recall (TASK-20260617T082131 — 계정 스코프 cross-conversation 인사이트 회상 Phase 1, shadow)
+- **신규** `src/modules/account_recall.py` — `_load_account_scoped_conv_ids`(owner_account_id 로 계정 소유 과거 대화 conv_id 도출, G2 가드: NOT NULL·archived 제외·현재 대화 제외·`__global__` sentinel 제외, `_pg_connect_ro` least-priv, fail-soft) + `recall_account_conv_facts`(기존 `_load_rag_documents_for_request_pg` 벡터 회상 재사용 + min_sim/top_k, RECALL flag OFF=no-op).
+- `src/modules/config.py` — flag 5종 신설 **전부 default OFF**: `AGENT_ACCOUNT_INSIGHT_RECALL`/`INJECT`/`MAX_CONVS`(20)/`TOP_K`(3)/`MIN_SIM`(0.75) + `__all__` 등록.
+- `src/agent_core.py` — `_build_knowledge_context` 에 `account_id`/`conversation_id` optional 파라미터 + shadow 회상 호출(INJECT flag OFF 면 회상만, 컨텍스트 미주입; 예외 fail-soft). 호출부(run loop)에서 account_id/conversation_id 전파. **두 flag 기본 OFF → 기존 동작 0 변경.**
+- `src/modules/kb_backend.py` — `search_rag_documents_vector` docstring stale 주석 정정(`vector(1024) Titan v2` → `vector(1536) text-embedding-3-small`).
+- `tests/test_account_recall.py` (신규 10) — 계정 격리·owner NULL/sentinel/현재대화 제외·account 무효·PG 미가용·flag OFF no-op·min_sim/top_k·exclude 전파.
+- 설계 정본 `docs/DESIGN-account-insight-recall.md`. **INJECT 활성화는 본 cycle 범위 밖**(G1 fork 표식·G3 PII 마스커 선행 필수).
+
 ## CHG-20260617-0310 (TASK-0299 — MSSQL 사전 부하추정 SET SHOWPLAN_ALL)
 - Date: 2026-06-17 (TASK-0299, **Major §12.3** — datasource 실행/보안 경로)
 - Scope: MSSQL datasource 부하 게이트를 EXPLAIN-미지원 일괄 차단(`supports_load_estimate=False`)에서 **SHOWPLAN_ALL 추정 기반**으로 전환. MySQL 동작 0 변경(골든). 보안경계(allowlist/sql_guard/RBAC/엔드포인트) 변경 0.

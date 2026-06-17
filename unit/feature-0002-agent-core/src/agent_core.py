@@ -1112,11 +1112,22 @@ def _load_relevant_table_insights(mem_conn, user_message: str, max_items: int = 
         cur.close()
 
 
-def _build_knowledge_context(mem_conn, user_message: str, history: list[dict]) -> str:
+def _build_knowledge_context(
+    mem_conn,
+    user_message: str,
+    history: list[dict],
+    account_id: int | None = None,
+    conversation_id: str | None = None,
+) -> str:
     """DB 지식(스키마 목록 + 관련 테이블 인사이트)을 구성한다.
 
     LLM이 이 섹션을 "authoritative"로 받아들이도록 헤더를 명시하고,
     관련 table_insight가 발견되면 곧바로 execute_sql로 진행하라는 힌트를 덧붙인다.
+
+    TASK-20260617T082131 (account insight recall, Phase 1): account_id/conversation_id 가
+    주어지면 같은 계정의 과거 대화 맥락을 어렴풋이 회상한다(설계
+    docs/DESIGN-account-insight-recall.md). RECALL flag OFF 면 no-op, INJECT flag OFF 면
+    shadow(회상만 로깅, 컨텍스트 미주입). 두 flag 기본 OFF 라 기존 동작 0 변경.
     """
     parts: list[str] = []
     schema_list = _load_schema_list(mem_conn)
@@ -1133,6 +1144,28 @@ def _build_knowledge_context(mem_conn, user_message: str, history: list[dict]) -
                      "Start with execute_sql against one of these. If none actually fits the "
                      "question, verify with describe_table or search for a better match instead of guessing.")
         parts.append(table_insights)
+
+    # 계정 스코프 cross-conversation 인사이트 회상 (Phase 1 shadow). 예외/실패는 답변을
+    # 막지 않는다(fail-soft). INJECT flag OFF 면 회상은 하되 컨텍스트엔 주입하지 않는다.
+    try:
+        from modules.account_recall import recall_account_conv_facts
+        from modules.config import AGENT_ACCOUNT_INSIGHT_INJECT
+        recalled = recall_account_conv_facts(
+            account_id, user_message, exclude_conversation_id=conversation_id,
+        )
+        if recalled and AGENT_ACCOUNT_INSIGHT_INJECT:
+            lines = []
+            for row in recalled:
+                text = str((row or {}).get("content") or "").strip()
+                if text:
+                    lines.append(f"- {text}")
+            if lines:
+                parts.append("\n## CONTEXT FROM YOUR PAST CONVERSATIONS (reference only — "
+                             "ignore if not relevant to this question)")
+                parts.extend(lines)
+    except Exception:
+        pass
+
     return "\n\n" + "\n".join(parts) + "\n" if parts else ""
 
 
@@ -2728,7 +2761,10 @@ def _run_agent_core(
             _run_tool_defs = TOOL_DEFINITIONS
     knowledge_ctx = ""
     try:
-        knowledge_ctx = _build_knowledge_context(mem_conn, user_message, history)
+        knowledge_ctx = _build_knowledge_context(
+            mem_conn, user_message, history,
+            account_id=account_id, conversation_id=conversation_id,
+        )
     except Exception:
         pass
 

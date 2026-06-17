@@ -1,5 +1,10 @@
 import mysql.connector
 __all__ = [
+    "AGENT_ACCOUNT_INSIGHT_INJECT",
+    "AGENT_ACCOUNT_INSIGHT_MAX_CONVS",
+    "AGENT_ACCOUNT_INSIGHT_MIN_SIM",
+    "AGENT_ACCOUNT_INSIGHT_RECALL",
+    "AGENT_ACCOUNT_INSIGHT_TOP_K",
     "AGENT_AUX_SKIP_NEAR_DEADLINE_MS",
     "AGENT_COLUMN_SCAN_LIMIT",
     "AGENT_CONVO_SEARCH_AUTO",
@@ -707,6 +712,16 @@ AGENT_GLOBAL_KB_SHARED_TYPES = {
 }
 AGENT_KB_FACT_LIMIT = int(os.getenv("AGENT_KB_FACT_LIMIT", "0"))
 AGENT_GLOBAL_KB_FACT_LIMIT = int(os.getenv("AGENT_GLOBAL_KB_FACT_LIMIT", "0"))
+
+# TASK-20260617T082131 — 계정 스코프 cross-conversation 인사이트 회상 (Phase 1, shadow).
+# 정본: unit/feature-0002-agent-core/docs/DESIGN-account-insight-recall.md
+# RECALL = 회상 경로 활성(shadow 포함), INJECT = 실제 LLM 주입(OFF = shadow log-only).
+# 둘 다 기본 OFF — G1(fork 표식)·G3(PII 마스커) 완료 전 INJECT 금지.
+AGENT_ACCOUNT_INSIGHT_RECALL = os.getenv("AGENT_ACCOUNT_INSIGHT_RECALL", "0").strip().lower() in ("1", "true", "yes")
+AGENT_ACCOUNT_INSIGHT_INJECT = os.getenv("AGENT_ACCOUNT_INSIGHT_INJECT", "0").strip().lower() in ("1", "true", "yes")
+AGENT_ACCOUNT_INSIGHT_MAX_CONVS = int(os.getenv("AGENT_ACCOUNT_INSIGHT_MAX_CONVS", "20"))
+AGENT_ACCOUNT_INSIGHT_TOP_K = int(os.getenv("AGENT_ACCOUNT_INSIGHT_TOP_K", "3"))
+AGENT_ACCOUNT_INSIGHT_MIN_SIM = float(os.getenv("AGENT_ACCOUNT_INSIGHT_MIN_SIM", "0.75"))
 AGENT_KB_REQUIRE_EVIDENCE = os.getenv("AGENT_KB_REQUIRE_EVIDENCE", "1").strip().lower() in ("1", "true", "yes")
 AGENT_RAG_DOC_MAX_CHARS = int(os.getenv("AGENT_RAG_DOC_MAX_CHARS", "2400"))
 AGENT_RAG_CHUNK_SIZE = int(os.getenv("AGENT_RAG_CHUNK_SIZE", "600"))

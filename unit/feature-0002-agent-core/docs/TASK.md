@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260617T082131-ai-claude-account-insight-recall (current cycle) — 계정 스코프 cross-conversation 인사이트 회상 (Major §12.3, 보안경계)
+- 사용자 요청: "새 대화를 시작하면 기존 대화에서 진행한 사용자 인사이트가 누락됨 → 세션 간 문맥/인사이트를 어렴풋이라도 이어받도록". (특정 명칭 기억이 아니라 문맥 영속화.)
+- 설계 정본: [DESIGN-account-insight-recall.md](DESIGN-account-insight-recall.md). outside-voice 2명(보안 NOT-SHIP→가드 시 SHIP-WITH-FIXES / 정합성 SOUND-WITH-FIXES) 검증 완료.
+- 근본: 회상 scope 가 `conversation_id = ANY({현재,워커샤드,__global__})` 뿐 → 계정 타 대화 배제. `core_conversations.owner_account_id`(idx 존재)로 account→conv_ids 도출해 기존 pgvector 회상에 주입하면 신규 테이블 0 으로 해결. 임베딩 1536/text-embedding-3-small, 동일 DB agent_kb cross-schema JOIN(ADR-0027 schema-qualified).
+- **Phase 1 (본 cycle, shadow·flag default OFF)**:
+  - [x] `modules/account_recall.py` — `_load_account_scoped_conv_ids`(G2: owner NOT NULL·archived 제외·현재대화 제외·`__global__` deny) + `recall_account_conv_facts`(기존 벡터 회상 재사용, shadow).
+  - [x] `_build_knowledge_context` account_id/conversation_id optional 파라미터 + shadow 호출(default no-op, INJECT flag OFF). 호출부(run loop) 전파.
+  - [x] config flags 5종 전부 default OFF (`AGENT_ACCOUNT_INSIGHT_RECALL/INJECT/MAX_CONVS/TOP_K/MIN_SIM`) + `__all__`.
+  - [x] 단위 테스트 10 (계정 격리·owner NULL 제외·현재대화 제외·`__global__` 제외·account 무효·PG 미가용·flag OFF no-op·min_sim/top_k·exclude 전파). 로컬 pytest 10/10 + feature-0002 전체 회귀 0(2 skip) + py_compile.
+  - [x] kb_backend.py stale 주석 정정(vector(1024) Titan v2 → 1536 text-embedding-3-small).
+  - [x] outside-voice 2-lens(보안+정합성) SHIP-WITH-FIXES 흡수(REV-20260617T082131): 신규테이블 0 단순화·G1~G4 가드·dim 1536 정정.
+- **INJECT 활성화는 본 cycle 범위 밖** — G1(fork 표식)·G3(PII 값-패턴 마스커) 완료 후 별 cycle. 부수발견 R4(`_mask_rows` 호출처 0건)·R5(convo_search 계정 스코핑) 별도 처리 후보.
+- worktree `ai/claude/account-insight-recall`(base 3c6ba13).
+
 ## TASK-0299 (current cycle) — MSSQL 사전 부하추정 (SET SHOWPLAN_ALL) — MySQL EXPLAIN 등가 (Major §12.3, REQ-20260617-0299)
 - 사용자 요청: "assistant 요청 시 datasource 가 MSSQL 일 경우 쿼리 실행 부하 조치를 어떻게 구성했는지" → MySQL 은 EXPLAIN 으로 부하 예측하는데 MSSQL 은 미구현(`supports_load_estimate=False`, gate=일괄 차단/warn·off=무방어)임을 확인 → "MSSQL 에서도 부하 추정으로 효율적 쿼리 작동" 구현 요청. DESIGN-multi-datasource §11 M-4 의 SHOWPLAN 후속(P6 이월분).
 - 근본: MSSQL 은 EXPLAIN 구문이 없음 → `SET SHOWPLAN_ALL ON` 으로 본 쿼리를 실행하지 않고 추정 실행계획을 받아 예상 처리 행수 산출(MySQL EXPLAIN 등가).
