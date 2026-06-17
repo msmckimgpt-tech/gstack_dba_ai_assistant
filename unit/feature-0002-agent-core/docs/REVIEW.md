@@ -8,6 +8,8 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260617T100524-ai-claude-account-insight-kv-source [SKIPPED:추출 입력 소스만 broaden(summary→summary+kv), 보안 경계(G1~G4·allowlist·PII 마스킹·account_insight 전역 미공유) 불변 — outside-voice 직전 cycle REV-20260617T095122 적용분 그대로]
+- 변경 성격: 기능 무동작(배포처 summary 0행) 해소 위한 입력 소스 확장. 추출 LLM 은 동일 PII-free 프롬프트, 저장 source_type·격리·회상 가드 전부 불변. 신규 cross-account/PII 표면 0. 단위 테스트 15(kv-only 경로 포함) + make test GREEN.
 ## REV-20260617T095122-ai-claude-account-insight-complete [SUBAGENT:2-lens outside-voice — 보안(BLOCKER/G1/G3) + 제품가치(회상 소스 적정성)] — SHIP-WITH-FIXES
 - 대상: 머지된 Phase 1 + G1/G3/완성 범위. 구현 전 적대적 재검토.
 - **보안 렌즈** (NOT-SHIP→가드 시 SHIP-WITH-FIXES): **BLOCKER-A** `_build_knowledge_context` content↔text 키 불일치(INJECT 무동작) — 수정. **BLOCKER-B(G1)** fork 가 owner 재귀속(app.py:11156)+메시지 복사 → owner 격리≠콘텐츠 격리 → `forked_from_conversation_id` 컬럼 권장(휴리스틱 기각) — 적용. **BLOCKER-C(G3)** `user_confirm`=PII prose(kb_write.py:342) → source allowlist + prose 마스커 — 적용. G4 owner 재검증·프롬프트 인젝션 펜싱 권장 — 적용.

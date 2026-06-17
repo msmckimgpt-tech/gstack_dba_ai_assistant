@@ -201,3 +201,30 @@ def test_extract_pass_pg_unavailable_noop(monkeypatch):
     monkeypatch.setattr("modules.db._pg_available", lambda: False)
     rep = insight.run_account_insight_pass()
     assert rep["candidates"] == 0 and rep["extracted"] == 0
+
+
+def test_extract_pass_kv_source_no_summary(monkeypatch):
+    """summary 가 비어도(이 배포처럼) kv 신호만으로 account_insight 를 추출·저장한다."""
+    from modules import insight
+    monkeypatch.setattr(insight, "AGENT_ACCOUNT_INSIGHT_EXTRACT", True)
+    monkeypatch.setattr(insight, "AGENT_ACCOUNT_INSIGHT_MIN_SUMMARY_LEN", 5)
+    monkeypatch.setattr("modules.db._pg_available", lambda: True)
+    # 후보 쿼리: summary 빈 대화 1건.
+    monkeypatch.setattr("modules.db._pg_connect", lambda *a, **k: _FakeConn([("conv-x", "")]))
+    monkeypatch.setattr(insight, "connect_with_retry", lambda *a, **k: _FakeConn([]))
+    monkeypatch.setattr(insight, "_load_kv_prefix_map", lambda *a, **k: {})
+    kv = {"origin_request": "주문 테이블 일별 매출 추이 분석", "thread_goal": "매출 도메인 반복 조회", "topic": "sales"}
+    monkeypatch.setattr(insight, "load_memory_kv", lambda conn, cid, key: kv.get(key, ""))
+    seen = {}
+    monkeypatch.setattr(insight, "llm_account_insight",
+                        lambda payload: seen.update(payload=payload) or {"insight": "사용자는 매출 도메인 일별 집계에 반복 관심"})
+    published = []
+    monkeypatch.setattr("modules.kb_write._publish_fact",
+                        lambda conn, cid, key, text, weight, **kw: published.append((cid, key, text, kw.get("source_type"))))
+    monkeypatch.setattr(insight, "_save_fingerprint", lambda *a, **k: None)
+
+    rep = insight.run_account_insight_pass()
+    assert rep["candidates"] == 1 and rep["extracted"] == 1
+    # kv 신호가 payload 로 전달됐고, account_insight 로 대화-로컬 저장됐다.
+    assert seen["payload"]["origin_request"].startswith("주문")
+    assert published == [("conv-x", "account_insight", "사용자는 매출 도메인 일별 집계에 반복 관심", "account_insight")]
