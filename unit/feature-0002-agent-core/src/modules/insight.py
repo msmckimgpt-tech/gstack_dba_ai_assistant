@@ -2067,13 +2067,17 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
 
 
 def run_account_insight_pass(run_id: str | None = None) -> dict[str, Any]:
-    """B′ (TASK-20260617T082131): 계정 cross-conversation 회상의 *소스* 를 생성한다.
+    """B′ (TASK-20260617T082131 / kv-source 보강 TASK-20260617T100524): 계정 cross-conversation
+    회상의 *소스* 를 생성한다.
 
-    owner 있는 비-fork·비-archived 대화의 `summary` 에서 PII-free 메타 인사이트를 LLM 으로
-    추출(`llm_account_insight`)해 `source_type='account_insight'` fact(대화-로컬, 전역 미공유 —
-    account_insight ∉ AGENT_GLOBAL_KB_TYPES 이므로 `_publish_fact` 가 global 안 함)로 저장한다.
-    임베딩은 기존 KB 파이프라인(`texts`)이 후속 처리 → `account_recall` 이 벡터 회상한다.
-    summary fingerprint 로 재추출을 회피. flag `AGENT_ACCOUNT_INSIGHT_EXTRACT` OFF 면 no-op.
+    owner 있는 비-fork·비-archived 대화의 **summary(선택) + kv 신호(origin_request/thread_goal/
+    topic)** 에서 PII-free 메타 인사이트를 LLM(`llm_account_insight`)으로 추출해
+    `source_type='account_insight'` fact(대화-로컬, 전역 미공유 — account_insight ∉
+    AGENT_GLOBAL_KB_TYPES 이므로 `_publish_fact` 가 global 안 함)로 저장한다. 임베딩은 기존 KB
+    파이프라인(`texts`)이 후속 처리 → `account_recall` 이 벡터 회상한다. **summary 가 비어도
+    kv 신호로 동작**(이 배포의 요약-쓰기 결함과 무관). 신호 충분성(summary+kv 합산 ≥
+    MIN_SUMMARY_LEN) 게이트 + 합산 fingerprint 로 재추출 회피. flag
+    `AGENT_ACCOUNT_INSIGHT_EXTRACT` OFF 면 no-op.
     """
     report: dict[str, Any] = {"candidates": 0, "extracted": 0, "skipped_fp": 0, "empty": 0, "errors": 0}
     if not AGENT_ACCOUNT_INSIGHT_EXTRACT:
@@ -2093,7 +2097,9 @@ def run_account_insight_pass(run_id: str | None = None) -> dict[str, Any]:
         min_len = 40
     rid = str(run_id or "").strip() or _new_insight_worker_run_id()
 
-    # 후보 대화: owner 있고 비-fork·비-archived + summary 보유, 최근순(PG agent_runtime).
+    # 후보 대화: owner 있고 비-fork·비-archived, 최근순(PG agent_runtime). summary 는 **선택**
+    # (LEFT JOIN) — 이 배포처럼 요약 쓰기가 비어도 kv 신호(origin_request/thread_goal/topic)로
+    # 인사이트를 추출할 수 있게 한다. 신호 충분성(min_len) 게이트는 per-conv(summary+kv 합산).
     candidates: list[tuple[str, str]] = []
     pg = None
     try:
@@ -2103,22 +2109,21 @@ def run_account_insight_pass(run_id: str | None = None) -> dict[str, Any]:
         with pg.cursor() as cur:
             cur.execute(
                 """
-SELECT c.conversation_id, s.summary
+SELECT c.conversation_id, COALESCE(s.summary, '')
 FROM agent_runtime.core_conversations c
-JOIN agent_runtime.summary s ON s.conversation_id = c.conversation_id
+LEFT JOIN agent_runtime.summary s ON s.conversation_id = c.conversation_id
 WHERE c.owner_account_id IS NOT NULL
   AND c.archived_at IS NULL
   AND c.forked_from_conversation_id IS NULL
-  AND char_length(s.summary) >= %s
 ORDER BY c.updated_at DESC
 LIMIT %s
                 """,
-                (min_len, cap),
+                (cap,),
             )
             for r in (cur.fetchall() or []):
                 cid = str((r or [None])[0] or "").strip()
                 summ = str((r or [None, None])[1] or "")
-                if cid and summ.strip():
+                if cid:
                     candidates.append((cid, summ))
     except Exception as exc:
         logging.getLogger("insight").warning("account_insight_pass: candidate query 실패(무시): %s", exc)
@@ -2144,10 +2149,6 @@ LIMIT %s
     try:
         for cid, summary in candidates:
             try:
-                fp = hashlib.sha256(summary.encode("utf-8", "ignore")).hexdigest()[:32]
-                if fp_map.get(f"account_insight_fp:{cid}") == fp:
-                    report["skipped_fp"] += 1
-                    continue
                 kv: dict[str, str] = {}
                 try:
                     for k in ("origin_request", "thread_goal", "topic"):
@@ -2160,11 +2161,24 @@ LIMIT %s
                     "thread_goal": kv.get("thread_goal", ""),
                     "topic": kv.get("topic", ""),
                 }
+                # 신호 충분성 게이트(summary+kv 합산) + fingerprint 도 합산 기준 — summary 가 비어도
+                # kv 가 바뀌면 재추출. 신호가 부족하면(빈 대화) skip.
+                signal = "".join([
+                    payload["summary"], payload["origin_request"],
+                    payload["thread_goal"], payload["topic"],
+                ])
+                if len(signal.strip()) < min_len:
+                    report["skipped_fp"] += 1
+                    continue
+                fp = hashlib.sha256(signal.encode("utf-8", "ignore")).hexdigest()[:32]
+                if fp_map.get(f"account_insight_fp:{cid}") == fp:
+                    report["skipped_fp"] += 1
+                    continue
                 obj = llm_account_insight(payload)
                 insight_text = str(obj.get("insight") or "").strip() if isinstance(obj, dict) else ""
                 if not insight_text:
                     report["empty"] += 1
-                    # 빈 결과도 fingerprint 저장 — summary 안 바뀌면 LLM 재호출 안 함(비용 절감).
+                    # 빈 결과도 fingerprint 저장 — 신호 안 바뀌면 LLM 재호출 안 함(비용 절감).
                     _save_fingerprint(None, f"account_insight_fp:{cid}", fp)
                     continue
                 insight_text = _mask_prose(insight_text)  # G3 2차 방어(추출 PII-free 가 1차).

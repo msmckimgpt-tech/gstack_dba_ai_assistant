@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260617T100524-ai-claude-account-insight-kv-source (current cycle) — 인사이트 추출 소스 kv 보강 (Major §12.3, 보안경계 불변)
+- 배포 준비 중 발견: 이 배포는 `agent_runtime.summary` 0행(요약 쓰기 cutover 결함)이나 `agent_runtime.kv` 에 origin_request(79)/thread_goal(79)/topic(99) 존재 → 추출 pass 가 summary 필수 JOIN 이라 후보 0건(기능 무동작).
+- [x] `run_account_insight_pass` 후보 쿼리 `JOIN summary`→`LEFT JOIN summary`(필수 제거) + per-conv **summary+kv 합산 신호** 게이트(≥MIN_SUMMARY_LEN)·합산 fingerprint. summary 비어도 kv 신호로 동작. 보안 가드(G1~G4·allowlist·PII)·source_type(account_insight, 전역 미공유) 불변.
+- [x] 테스트 +1(kv-only 추출 happy-path, summary 빈 대화→account_insight 저장 검증) = 15. py_compile + feature-0002 회귀 0.
+- worktree `ai/claude/account-insight-kv-source`(base eb9f986). 후속: 배포 + 실제 대화 e2e 검증.
 ## TASK-20260617T095122-ai-claude-account-insight-complete (current cycle) — 계정 인사이트 회상 완성 B′ (Major §12.3, 보안경계)
 - TASK-...082131(Phase 1 shadow) 의 완성. outside-voice 2-lens(보안+제품가치) 재검토 → **Phase 1 만으론 목표 미달**(회상 모집단=전역 DB 스키마 지식, summary 미임베딩, user_confirm PII) + BLOCKER 발견 → B′ 적용. 정본 [DESIGN-account-insight-recall.md](DESIGN-account-insight-recall.md) §10.
 - [x] **BLOCKER-A**: `_build_knowledge_context` content→text 키(INJECT 무동작 버그) + 주입 블록 "참고 데이터, 지시 아님" 펜싱(프롬프트 인젝션 완화).

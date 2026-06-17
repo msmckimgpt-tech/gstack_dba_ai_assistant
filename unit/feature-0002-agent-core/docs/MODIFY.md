@@ -8,6 +8,9 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260617T100524-ai-claude-account-insight-kv-source (TASK-20260617T100524 — 추출 소스 kv 보강)
+- `src/modules/insight.py` `run_account_insight_pass` — 후보 쿼리 `JOIN agent_runtime.summary`→`LEFT JOIN`(summary 필수 제거, COALESCE '') + per-conv 로직: kv(origin_request/thread_goal/topic) 먼저 로드 → **summary+kv 합산 신호** 길이 게이트(≥MIN_SUMMARY_LEN) + 합산 fingerprint(summary 비어도 kv 변경 시 재추출). 근거: 배포처 summary 0행(요약 쓰기 결함)이나 kv 신호 존재 → summary-필수면 후보 0. 보안/PII/source_type 불변.
+- `tests/test_account_recall.py` +1(kv-only 추출). 정본 [DESIGN-account-insight-recall.md](DESIGN-account-insight-recall.md) §10.
 ## CHG-20260617T095122-ai-claude-account-insight-complete (TASK-20260617T095122 — 계정 인사이트 회상 완성 B′)
 - `src/agent_core.py` — `_build_knowledge_context` BLOCKER-A 수정(`row["content"]`→`row["text"]`, INJECT 무동작 버그) + 주입 블록 "참고 데이터, 지시 아님" 펜싱.
 - **신규** `src/modules/insight.py` `run_account_insight_pass` — owner·비-fork·비-archived 대화 summary+kv → `llm_account_insight` PII-free 추출 → `source_type=account_insight` fact(대화-로컬·전역 미공유) → 기존 임베딩 파이프라인. fingerprint(`account_insight_fp:<cid>`) 재추출 회피. worker loop 에서 degraded 아닐 때 호출(fail-soft). flag `AGENT_ACCOUNT_INSIGHT_EXTRACT`(OFF).
