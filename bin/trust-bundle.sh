@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # trust-bundle.sh — 테스터용 Root CA 신뢰 설치 번들 조립
-#   feature-0006-lan-proxy-access / TASK-0298 (REQ-0285, AC-0557~AC-0561)
+#   feature-0006-lan-proxy-access / TASK-20260617T083954-ai-claude-trust-bundle (REQ-0285, AC-0557~AC-0561)
 #
 # 목적
 #   테스터가 PC 마다 수동으로 인증서를 옮기지 않도록, web 서버가 HTTP 로 제공할
@@ -88,7 +88,7 @@ render "$TMPL_DIR/install-trust-macos.command.tmpl" "$OUT_DIR/install-trust-maco
 chmod +x "$OUT_DIR/install-trust-macos.command"
 
 # .bat 은 Windows cmd.exe 요건상 CRLF 줄바꿈이어야 한다 (LF 면 cmd 가 파일 위치를 잃어
-# echo→cho·base64 가 명령으로 실행되는 파싱 붕괴 — TASK-0299). 템플릿은 ASCII 전용이라
+# echo→cho·base64 가 명령으로 실행되는 파싱 붕괴 — TASK-20260617T083954-ai-claude-bat-encoding-fix). 템플릿은 ASCII 전용이라
 # 코드페이지 무관. .command/​index.html 은 LF 유지(mac/web 정상).
 sed -i 's/\r$//' "$OUT_DIR/install-trust-windows.bat"   # 기존 CR 제거(멱등)
 sed -i 's/$/\r/'  "$OUT_DIR/install-trust-windows.bat"  # LF → CRLF

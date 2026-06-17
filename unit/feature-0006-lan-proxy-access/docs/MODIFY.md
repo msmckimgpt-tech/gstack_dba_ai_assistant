@@ -8,10 +8,35 @@ source_of_truth: true
 
 # Modify Log
 
-## CHG-20260617-0310
+## CHG-20260617T083954-ai-claude-id-collision-fix
 - Date: 2026-06-17
-- Related Requirement: REQ-0286 / TASK-0299 / AC-0562~0563 (**Minor** §12.3)
-- Summary: TASK-0298 설치 스크립트 실행 버그 2종 수정 (라이브 제보).
+- Related Requirement: TASK-20260617T083954-ai-claude-id-collision-fix (**Minor** §12.3)
+- Summary: 동시 세션 문서 ID 충돌 정리 + **비-일련번호(timestamp+branch) 형식 전환**.
+- 배경: feature-0002-agent-core(MSSQL SHOWPLAN, PR#309 선머지)가 docs 에서
+  `TASK-0299`·`AC-0562`·`AC-0563`·`CHG-20260617-0310`·`REV-20260617-0310` 를 점유,
+  추가로 `TASK-0298` 을 test 주석에서 참조. 본 feature-0006 의 동일 6 ID 와 전역 충돌.
+- 정책 근거: AGENTS.md §6 / ADR-0025 — 병렬 할당 식별자(TASK·CHG·REV·LRN)는
+  `<PREFIX>-<YYYYMMDDTHHMMSS>-<branch>` timestamp+branch 형식으로 순번 점유-경합 제거.
+  사용자 결정(2026-06-17, "일련번호가 아닌 형태")에 따라 AC 도 본건 한정 동일 형식 적용
+  (ADR-0024 의 AC=순번 기본에서 예외 — 신규·외부 참조 적어 안정성 영향 최소).
+- 재번호 매핑(선머지한 feature-0002 는 미변경, feature-0006 만 변경):
+  - `TASK-0298` → `TASK-20260617T083954-ai-claude-trust-bundle`
+  - `TASK-0299` → `TASK-20260617T083954-ai-claude-bat-encoding-fix`
+  - `AC-0562` / `AC-0563` → `AC-20260617T083954-ai-claude-bat-encoding-fix-01` / `-02`
+  - `CHG-20260617-0310` → `CHG-20260617T083954-ai-claude-bat-encoding-fix`
+  - `REV-20260617-0310` → `REV-20260617T083954-ai-claude-bat-encoding-fix`
+- Files: feature-0006 docs 6(FUNCTION/TASK/MODIFY/REVIEW/REPORT/TEST) + src(트러스트 번들
+  템플릿 2·README·Caddyfile·TESTER_TLS_TRUST.md) + bin(trust-bundle.sh·tls-internal-ca.sh)
+  + docker-compose.yml. 총 14 파일 sed 치환. 비-충돌 ID(TASK-0296/0297·AC-0549~0561·
+  CHG/REV-0307~0309) 보존.
+- Impact: 코드 주석의 TASK 참조도 변경되어 `bin/trust-bundle.sh` 재실행으로 번들
+  (.bat 헤더 주석) 재생성 필요. 기능·동작 무변경(식별자 문자열만).
+- Rollback Notes: sed 역치환(timestamp 형식 → 원 순번). 단 feature-0002 와 재충돌.
+
+## CHG-20260617T083954-ai-claude-bat-encoding-fix
+- Date: 2026-06-17
+- Related Requirement: REQ-0286 / TASK-20260617T083954-ai-claude-bat-encoding-fix / AC-20260617T083954-ai-claude-bat-encoding-fix-01~02 (**Minor** §12.3)
+- Summary: TASK-20260617T083954-ai-claude-trust-bundle 설치 스크립트 실행 버그 2종 수정 (라이브 제보).
 - 증상: Windows `.bat` 실행 시 `'cho'은(는) 내부 또는 외부 명령...`, base64 가 명령으로 실행됨.
 - 근본:
   1. **인코딩/줄바꿈**: `bin/trust-bundle.sh` 가 .bat 를 LF + UTF-8 로 출력 + 템플릿에
@@ -39,7 +64,7 @@ source_of_truth: true
 
 ## CHG-20260617-0309
 - Date: 2026-06-17
-- Related Requirement: REQ-0285 / TASK-0298 / AC-0557~0561 (**Major** §12.3, ADR-LAN-0004)
+- Related Requirement: REQ-0285 / TASK-20260617T083954-ai-claude-trust-bundle / AC-0557~0561 (**Major** §12.3, ADR-LAN-0004)
 - Summary: 테스터 Root CA "원클릭 설치 번들". PC 마다 수동 인증서 이동 번거로움 해소.
   web 서버가 `http://<host>/trust/` 에서 OS별 단일 설치 스크립트 + 다운로드 페이지 제공.
 - Files:

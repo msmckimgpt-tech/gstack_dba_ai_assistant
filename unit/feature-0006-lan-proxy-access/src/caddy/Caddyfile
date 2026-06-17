@@ -3,7 +3,7 @@
 }
 
 http://{$WEB_PUBLIC_HOST}, :80 {
-	# TASK-0298 (AC-0557): Root CA 신뢰 설치 번들은 평문 HTTP 로 제공한다 — 테스터가 아직
+	# TASK-20260617T083954-ai-claude-trust-bundle (AC-0557): Root CA 신뢰 설치 번들은 평문 HTTP 로 제공한다 — 테스터가 아직
 	# CA 를 설치하지 않은 상태(HTTPS 경고)에서도 경고 없이 받게 하기 위함. 그 외 경로는 HTTPS 로.
 	handle /trust {
 		redir {http.request.scheme}://{host}/trust/ permanent
@@ -20,7 +20,7 @@ http://{$WEB_PUBLIC_HOST}, :80 {
 https://{$WEB_PUBLIC_HOST}, :443 {
 	tls {$WEB_TLS_CERT_FILE} {$WEB_TLS_KEY_FILE}
 
-	# TASK-0298: 설치 후/직접 접근용으로 HTTPS 에서도 동일 번들을 서빙한다.
+	# TASK-20260617T083954-ai-claude-trust-bundle: 설치 후/직접 접근용으로 HTTPS 에서도 동일 번들을 서빙한다.
 	handle /trust {
 		redir {http.request.scheme}://{host}/trust/ permanent
 	}

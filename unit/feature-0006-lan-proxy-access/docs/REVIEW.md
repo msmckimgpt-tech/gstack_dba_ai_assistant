@@ -8,9 +8,28 @@ source_of_truth: true
 
 # Review Log
 
-## REV-20260617-0310 [SKIPPED:minor-bugfix] — 설치 스크립트 실행 버그 2종 (TASK-0299)
+## REV-20260617T083954-ai-claude-id-collision-fix [SKIPPED:doc-id-hygiene] — 동시세션 ID 충돌 정리 (비-일련번호 전환)
 - Date: 2026-06-17
-- Change: CHG-20260617-0310 (REQ-0286, AC-0562~0563, **Minor** §12.3). 라이브 제보 버그 수정.
+- Change: CHG-20260617T083954-ai-claude-id-collision-fix (**Minor** §12.3). feature-0002
+  (PR#309 선머지)와 전역 충돌한 feature-0006 의 6 ID(TASK-0298/0299·AC-0562/0563·CHG/REV-0310)를
+  §6/ADR-0025 timestamp+branch(`<PREFIX>-<YYYYMMDDTHHMMSS>-<branch>`) 비-일련번호 형식으로 재번호.
+- 자체 점검:
+  1. **충돌 전수조사** — feature-0006 의 이번 세션 ID 전체를 다른 feature 와 대조, 실제 충돌 6건만
+     식별(TASK-0296/0297·AC-0549~0561·CHG/REV-0307~0309 는 비-충돌 → 보존). 과대 변경 회피.
+  2. **선머지 우선** — feature-0002 가 #309 로 먼저 머지 → feature-0006(후행)만 재번호. 타 feature 무변경.
+  3. **잔존 검증** — sed 후 충돌 6 ID grep 0건, 비-충돌 ID 보존 확인.
+  4. **정책 정합** — TASK/CHG/REV 는 §6 권장 형식 그대로. AC 는 ADR-0024(순번) 기본을 사용자 명시
+     결정으로 본건 한정 timestamp 형식 적용(신규·외부참조 적어 안정성 영향 최소). REQ-0283~0286 은
+     비-충돌이라 순번 유지(정책 정합).
+  5. **무회귀** — 식별자 문자열만 변경, 코드 로직·동작 불변. 번들 재생성으로 .bat 헤더 주석 정합.
+- Outside-voice: **SKIPPED** — 문서 ID 하이진(코드 로직/보안/RBAC 무관). 결정(비-일련번호 형식)은
+  사용자 명시 지시.
+- Risk: 코드 주석 TASK 참조 변경 → 번들 재생성·재배포 1회 필요(반영). feature-0002 의 test 주석
+  `TASK-0298` 은 그들 소유라 미변경(soft 참조 — feature-0006 docs 와 더는 동일 anchor 아님).
+
+## REV-20260617T083954-ai-claude-bat-encoding-fix [SKIPPED:minor-bugfix] — 설치 스크립트 실행 버그 2종 (TASK-20260617T083954-ai-claude-bat-encoding-fix)
+- Date: 2026-06-17
+- Change: CHG-20260617T083954-ai-claude-bat-encoding-fix (REQ-0286, AC-20260617T083954-ai-claude-bat-encoding-fix-01~02, **Minor** §12.3). 라이브 제보 버그 수정.
 - 자체 점검:
   1. **버그① 재현·수정 실측** — cmd.exe 로 깨진 .bat 재현(`echo`→`cho`, base64 명령실행) →
      ASCII+CRLF+no-chcp 수정본을 cmd.exe 로 재실행, 파싱 정상·`[OK]` 도달 확인.
@@ -27,7 +46,7 @@ source_of_truth: true
 - Risk: cmd.exe 의 본 검증은 자가상승/certutil 을 neuter 한 상태(관리자·실 설치는 미실행). 실제
   certutil 설치는 Windows 관리자 환경에서 1회 확인 권장(운영자/테스터).
 
-## REV-20260617-0309 [SKIPPED:non-RBAC-infra] — 테스터 Root CA 원클릭 설치 번들 (TASK-0298)
+## REV-20260617-0309 [SKIPPED:non-RBAC-infra] — 테스터 Root CA 원클릭 설치 번들 (TASK-20260617T083954-ai-claude-trust-bundle)
 - Date: 2026-06-17
 - Change: CHG-20260617-0309 (REQ-0285, AC-0557~0561, **Major** §12.3, ADR-LAN-0004).
   테스터 Root CA 원클릭 설치 번들 + caddy `/trust/` HTTP 서빙.

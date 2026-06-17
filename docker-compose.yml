@@ -420,7 +420,7 @@ services:
     volumes:
       - ./unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ../artifacts/certs:/certs:ro
-      # TASK-0298: 테스터 Root CA 신뢰 설치 번들 (bin/trust-bundle.sh 가 조립). /trust/ 로 서빙.
+      # TASK-20260617T083954-ai-claude-trust-bundle: 테스터 Root CA 신뢰 설치 번들 (bin/trust-bundle.sh 가 조립). /trust/ 로 서빙.
       - ../artifacts/trust-bundle:/srv/trust:ro
       - ../artifacts/caddy-data:/data
       - ../artifacts/caddy-config:/config
