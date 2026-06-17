@@ -3761,7 +3761,9 @@ function renderAccountList() {
     title.className = "admin-list-row-title";
     const avatar = document.createElement("span");
     avatar.className = "admin-avatar admin-avatar-sm";
-    avatar.textContent = account.username.slice(0, 2).toUpperCase();
+    // TASK-0293: 아바타 이미지(설정 시) 또는 username 시드 Identicon — 작업화면 프로필과 동일 시드/폴백.
+    //   기존 이니셜 텍스트는 작업화면에서 바꾼 아바타가 관리 콘솔에 반영 안 되던 조회 버그의 원인.
+    applyAvatar(avatar, { url: account.avatar_url, seed: account.username, initials: account.username.slice(0, 2).toUpperCase() });
     const name = document.createElement("span");
     name.className = "admin-list-row-name";
     name.textContent = account.username;
@@ -3989,7 +3991,50 @@ function renderAccountDetail() {
   idBlock.className = "admin-detail-identity";
   const avatar = document.createElement("div");
   avatar.className = "admin-avatar";
-  avatar.textContent = base.username.slice(0, 2).toUpperCase();
+  // TASK-0293: 아바타 이미지 또는 username 시드 Identicon (작업화면 프로필 정합).
+  applyAvatar(avatar, { url: base.avatar_url, seed: base.username, initials: base.username.slice(0, 2).toUpperCase() });
+  // 관리자(console.manage + account.update)면 대상 계정의 아바타 변경/제거 — 제품 아이콘과 동일 ✎ 오버레이 패턴.
+  let avatarNode = avatar;
+  let avatarRemoveBtn = null;
+  if (can("console.manage") && can("account.update") && !base.deleted_at) {
+    const avatarWrap = document.createElement("div");
+    avatarWrap.className = "profile-avatar-edit";
+    const fileInput = document.createElement("input");
+    fileInput.type = "file"; fileInput.accept = "image/png,image/jpeg,image/webp"; fileInput.hidden = true;
+    const changeBtn = document.createElement("button");
+    changeBtn.type = "button"; changeBtn.className = "profile-avatar-change"; changeBtn.textContent = "✎";
+    changeBtn.title = "프로필 아바타 변경"; changeBtn.setAttribute("aria-label", "프로필 아바타 변경");
+    changeBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", async () => {
+      const f = fileInput.files && fileInput.files[0];
+      if (!f) return;
+      if (f.size > 2 * 1024 * 1024) { showToast("이미지가 너무 큽니다(최대 2MB).", true); fileInput.value = ""; return; }
+      const fd = new FormData(); fd.append("file", f);
+      try {
+        const r = await apiFetch(`/api/admin/accounts/${Number(base.id)}/avatar`, { method: "PUT", body: fd });
+        base.avatar_url = r.avatar_url || null;
+        renderAccountDetail();
+        renderAccountList();
+        showToast("프로필 아바타를 변경했어요.");
+      } catch (err) { showToast(err.message || "아바타 변경 실패", true); }
+      finally { fileInput.value = ""; }
+    });
+    avatarWrap.append(avatar, changeBtn, fileInput);
+    avatarNode = avatarWrap;
+    if (base.avatar_url) {
+      avatarRemoveBtn = document.createElement("button");
+      avatarRemoveBtn.type = "button"; avatarRemoveBtn.className = "profile-avatar-remove"; avatarRemoveBtn.textContent = "아바타 제거";
+      avatarRemoveBtn.addEventListener("click", async () => {
+        try {
+          await apiFetch(`/api/admin/accounts/${Number(base.id)}/avatar`, { method: "DELETE" });
+          base.avatar_url = null;
+          renderAccountDetail();
+          renderAccountList();
+          showToast("프로필 아바타를 제거했어요.");
+        } catch (err) { showToast(err.message || "아바타 제거 실패", true); }
+      });
+    }
+  }
   const idText = document.createElement("div");
   const nameEl = document.createElement("div");
   nameEl.className = "admin-account-name";
@@ -4002,7 +4047,8 @@ function renderAccountDetail() {
     <span>대화 ${Number(base.conversation_count || 0)}개</span>
   `;
   idText.append(nameEl, metaEl);
-  idBlock.append(avatar, idText);
+  if (avatarRemoveBtn) idText.appendChild(avatarRemoveBtn);
+  idBlock.append(avatarNode, idText);
 
   const badges = document.createElement("div");
   badges.className = "admin-status-row";
@@ -4372,7 +4418,8 @@ function buildRoleRow(roleKey, visibleIdx = -1, visibleRoleIds = []) {
   title.className = "admin-list-row-title";
   const avatar = document.createElement("span");
   avatar.className = "admin-avatar admin-avatar-sm";
-  avatar.textContent = (merged.key || "NEW").slice(0, 2).toUpperCase();
+  // TASK-0293: 역할 아이콘 이미지(설정 시) 또는 role_key 시드 Identicon (이니셜 텍스트 폐기).
+  applyAvatar(avatar, { url: merged.icon_url, seed: merged.key || "", initials: (merged.key || "NEW").slice(0, 2).toUpperCase() });
   const name = document.createElement("span");
   name.className = "admin-list-row-name";
   name.textContent = merged._isNew
@@ -4529,7 +4576,53 @@ function renderRoleDetail() {
   idBlock.className = "admin-detail-identity";
   const avatar = document.createElement("div");
   avatar.className = "admin-avatar";
-  avatar.textContent = (merged.key || "NE").slice(0, 2).toUpperCase();
+  // TASK-0293: 역할 아이콘 이미지 또는 role_key 시드 Identicon.
+  applyAvatar(avatar, { url: merged.icon_url, seed: merged.key || "", initials: (merged.key || "NE").slice(0, 2).toUpperCase() });
+  // 관리자(console.manage + role.update)면 역할 아이콘 변경/제거 — 제품 아이콘과 동일 ✎ 오버레이 패턴.
+  //   신규(미저장) 역할은 role_id 가 없어 업로드 불가 → 먼저 저장 후 아이콘 설정.
+  let avatarNode = avatar;
+  let iconRemoveBtn = null;
+  if (!merged._isNew && can("console.manage") && can("role.update")) {
+    const avatarWrap = document.createElement("div");
+    avatarWrap.className = "profile-avatar-edit";
+    const fileInput = document.createElement("input");
+    fileInput.type = "file"; fileInput.accept = "image/png,image/jpeg,image/webp"; fileInput.hidden = true;
+    const changeBtn = document.createElement("button");
+    changeBtn.type = "button"; changeBtn.className = "profile-avatar-change"; changeBtn.textContent = "✎";
+    changeBtn.title = "역할 아이콘 변경"; changeBtn.setAttribute("aria-label", "역할 아이콘 변경");
+    changeBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", async () => {
+      const f = fileInput.files && fileInput.files[0];
+      if (!f) return;
+      if (f.size > 5 * 1024 * 1024) { showToast("이미지가 너무 큽니다(최대 5MB).", true); fileInput.value = ""; return; }
+      const fd = new FormData(); fd.append("file", f);
+      try {
+        const r = await apiFetch(`/api/admin/roles/${Number(merged.id)}/icon`, { method: "PUT", body: fd });
+        const baseRole = adminState.roles.find((rr) => Number(rr.id) === Number(merged.id));
+        if (baseRole) baseRole.icon_url = r.icon_url || null;
+        renderRoleDetail();
+        renderRoleList();
+        showToast("역할 아이콘을 변경했어요.");
+      } catch (err) { showToast(err.message || "아이콘 변경 실패", true); }
+      finally { fileInput.value = ""; }
+    });
+    avatarWrap.append(avatar, changeBtn, fileInput);
+    avatarNode = avatarWrap;
+    if (merged.icon_url) {
+      iconRemoveBtn = document.createElement("button");
+      iconRemoveBtn.type = "button"; iconRemoveBtn.className = "profile-avatar-remove"; iconRemoveBtn.textContent = "아이콘 제거";
+      iconRemoveBtn.addEventListener("click", async () => {
+        try {
+          await apiFetch(`/api/admin/roles/${Number(merged.id)}/icon`, { method: "DELETE" });
+          const baseRole = adminState.roles.find((rr) => Number(rr.id) === Number(merged.id));
+          if (baseRole) baseRole.icon_url = null;
+          renderRoleDetail();
+          renderRoleList();
+          showToast("역할 아이콘을 제거했어요.");
+        } catch (err) { showToast(err.message || "아이콘 제거 실패", true); }
+      });
+    }
+  }
   const idText = document.createElement("div");
   const nameEl = document.createElement("div");
   nameEl.className = "admin-account-name";
@@ -4546,7 +4639,8 @@ function renderRoleDetail() {
     `;
   }
   idText.append(nameEl, metaEl);
-  idBlock.append(avatar, idText);
+  if (iconRemoveBtn) idText.appendChild(iconRemoveBtn);
+  idBlock.append(avatarNode, idText);
 
   const badges = document.createElement("div");
   badges.className = "admin-status-row";

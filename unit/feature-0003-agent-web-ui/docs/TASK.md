@@ -8,7 +8,23 @@ source_of_truth: true
 
 # Task
 
-## TASK-0292 (current cycle) — 관리 콘솔 좌측 사이드패널 수직 스크롤 (REQ-20260616-0290, AC-0541, Minor §12.3, frontend-only)
+## TASK-0293 (current cycle) — 프로필 아이콘 전 구간 조회·수정 (관리 콘솔 계정·역할) (REQ-20260617-0291, AC-0542~0545, Major §12.3)
+- 보고(사용자): 작업화면에서 바꾼 계정 프로필 아이콘이 `관리 콘솔` 프로필 아이콘에 반영 안 됨. 확인 결과 관리 콘솔 계정·역할에는 프로필 아이콘 관련 작업이 전무. 아이콘을 쓰는 모든 구간에 이미지(기본=패턴) 조회·수정 가능화 요청.
+- 등급: **Major §12.3** — 신규 admin 엔드포인트 4 + 서빙 1 + 비파괴 스키마 1컬럼. 권한은 기존 재사용(신규 권한 0). 사용자 결정: D1=관리 계정·역할 한정(작업화면·제품은 TASK-0268 완료, 메시지 말풍선 등 미사용 구간은 별 cycle), D2=역할 아이콘 이미지 업로드+패턴.
+- 진단: TASK-0268 이 인프라(MinIO `_store_image_upload`/`_serve_image_object`·Identicon `applyAvatar`)와 작업화면 아바타·제품 아이콘만 구현. 관리 콘솔 계정은 `avatar.textContent=username.slice(0,2)`(이니셜 텍스트)라 백엔드가 내려주는 `avatar_url`(app.py:1340 이미 직렬화)을 소비 안 함=조회 버그. 역할은 `WebRoles` 에 아이콘 컬럼 자체가 부재.
+
+### §2.1 Implementation Plan (PLAN)
+- Backend(`src/app.py`): ① `_role_icon_url_for`(캐시버스터, `_product_icon_url_for` 동형) ② `_ensure_avatar_icon_schema` 에 `WebRoles ADD COLUMN IconObjectKey`(fast-path) + WebRoles CREATE 에 컬럼(slow-path) ③ `_list_roles`/`_load_role_by_id` 에 `icon_url` 직렬화(SELECT+GROUP BY) ④ 신규 `PUT/DELETE /api/admin/accounts/{id}/avatar`(console.manage+account.update) ⑤ 신규 `PUT/DELETE /api/admin/roles/{id}/icon`(console.manage+role.update) + `GET /api/roles/{id}/icon`(로그인 서빙).
+- Frontend(`src/static/admin.js` + `admin.html` 캐시버스터): 계정 목록/상세·역할 목록/상세 4곳 이니셜 텍스트 → `applyAvatar`(계정=username 시드, 역할=role_key 시드). 계정 상세·역할 상세에 제품 아이콘과 동일 ✎ 오버레이(`.profile-avatar-edit`) 편집 UI(신규 역할은 차단). CSS 무변경(제품 아이콘이 쓰는 `.admin-avatar` 클래스 재사용).
+- 검증: `make test`(pytest+ruff) + 신규 `tests/verify_profile_icon_admin_surfaces.mjs`(jsdom 17건) + 기존 `verify_profile_icon_consistency.mjs` 회귀(23건) + Python `test_avatar_icon_upload.py` 신규 4건(role URL 헬퍼·RBAC 403) + §18.8 외부 패널 + PB-0008 Windows-browser 시각검증.
+- 완료 기준(AC): AC-0542(계정 조회 버그) / AC-0543(관리자 계정 아바타 편집) / AC-0544(역할 아이콘 도입·조회) / AC-0545(역할 아이콘 편집·신규역할 가드).
+- [x] Backend 구현 + py_compile + 라우트 충돌 0(`/api/roles/{id}/icon` 단일).
+- [x] Frontend 구현 + node --check admin.js PASS.
+- [x] 단위 테스트: `make test` PASS(pytest exit 0 + ruff all-clear), verify_profile_icon_admin_surfaces.mjs 17/17, verify_profile_icon_consistency.mjs 23/23(회귀 0).
+- [ ] §18.8 외부 패널 + REVIEW 기록.
+- [ ] verify-completion + 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증.
+
+## TASK-0292 — 관리 콘솔 좌측 사이드패널 수직 스크롤 (REQ-20260616-0290, AC-0541, Minor §12.3, frontend-only)
 - 보고(사용자): 화면 높이가 매우 작을 경우 `관리 콘솔` 좌측 사이드패널을 조작할 수 없음(하단 탭 클릭 불가). 수직 스크롤 구성 요청.
 - 진단: `aside.admin-sidebar`(flex column, `overflow:hidden`) 안에서 `.admin-tabs`(`flex:1`)에 `min-height:0`·`overflow-y` 가 없어, viewport 높이가 brand+탭+foot 합보다 작으면 flex 항목 기본 `min-height:auto` 가 콘텐츠 미만 축소를 막고 `.admin-sidebar` 의 `overflow:hidden` 이 넘친 탭을 스크롤 없이 잘라냈다(설정 등 하단 탭 클릭 불가). 작업 화면 `.conv-list`(styles.css:500-503)는 이미 동일 idiom(`min-height:0; overflow-y:auto`)으로 스크롤됨 — admin 만 누락.
 - 수정(frontend-only, styles.css 2곳): `.admin-tabs` 에 `min-height:0; overflow-y:auto;` 추가(작업 화면 `.conv-list` 패턴 정합) + `.admin-sidebar-foot` 에 `flex-shrink:0`(탭 스크롤 시 pending 요약 풋 하단 고정). 브랜드는 공유 `.sidebar-brand`(flex-shrink:0)로 이미 상단 고정. 캐시버스터 admin.html `?v=20260616-task0292-admin-sidebar-vscroll`.

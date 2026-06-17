@@ -148,3 +148,42 @@ def test_a1_product_icon_delete_requires_manage(monkeypatch):
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
     resp = app.delete_product_icon(7, _Req())
     assert resp.status_code == 403
+
+
+# ── TASK-0293: 역할 아이콘 URL 헬퍼 + 관리 콘솔 아바타/아이콘 권한 게이트 ──────────
+
+def test_s3_role_icon_url_helper():
+    # _role_icon_url_for: object key 있으면 /api/roles/<id>/icon URL + 12자 해시 캐시버스터, 없으면 None.
+    assert app._role_icon_url_for(0, "k") is None         # invalid id
+    assert app._role_icon_url_for(5, None) is None        # no key → Identicon
+    u = app._role_icon_url_for(5, "role-icons/5/abc.png")
+    assert u.startswith("/api/roles/5/icon?v=") and len(u.split("v=")[1]) == 12
+    # object key 바뀌면 캐시버스터도 바뀜(즉시 갱신).
+    assert app._role_icon_url_for(5, "role-icons/5/a.png") != app._role_icon_url_for(5, "role-icons/5/b.png")
+
+
+def test_a1_role_icon_delete_requires_role_update(monkeypatch):
+    # console.access + console.manage 보유, role.update 없음 → 403 (RBAC 게이트).
+    actor = {"id": 1, "permissions": {"console.access": True, "console.manage": True}}
+    monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
+    monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
+    resp = app.admin_delete_role_icon(3, _Req())
+    assert resp.status_code == 403
+
+
+def test_a1_role_icon_delete_requires_console_manage(monkeypatch):
+    # console.access 만(console.manage 없음) → 403.
+    actor = {"id": 1, "permissions": {"console.access": True, "role.update": True}}
+    monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
+    monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
+    resp = app.admin_delete_role_icon(3, _Req())
+    assert resp.status_code == 403
+
+
+def test_a1_account_avatar_delete_requires_account_update(monkeypatch):
+    # console.access + console.manage 보유, account.update 없음 → 403 (perm 체크가 _load 전에 선차단).
+    actor = {"id": 1, "permissions": {"console.access": True, "console.manage": True}}
+    monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
+    monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
+    resp = app.admin_delete_account_avatar(9, _Req())
+    assert resp.status_code == 403

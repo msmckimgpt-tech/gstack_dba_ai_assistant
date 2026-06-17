@@ -1362,6 +1362,19 @@ def _product_icon_url_for(product_id: int, object_key: "str | None") -> "str | N
     return f"/api/products/{product_id}/icon?v={v}"
 
 
+def _role_icon_url_for(role_id: int, object_key: "str | None") -> "str | None":
+    """TASK-0293: 역할 아이콘 이미지 API URL + 캐시버스터. 미설정 시 None(프론트 Identicon).
+
+    제품/아바타(_product_icon_url_for / _avatar_url_for) 와 동형 — object key 해시를
+    캐시버스터로 붙여 같은 출처 bytes 서빙 URL 을 만든다.
+    """
+    if not object_key or role_id <= 0:
+        return None
+    import hashlib as _hl
+    v = _hl.sha256(str(object_key).encode("utf-8")).hexdigest()[:12]
+    return f"/api/roles/{role_id}/icon?v={v}"
+
+
 def _account_conv_file(account_id: int) -> str:
     return str(SESSION_DIR / f"conversation_id.account-{int(account_id)}")
 
@@ -4689,10 +4702,11 @@ def _ensure_must_change_password_schema(conn) -> None:
 
 
 def _ensure_avatar_icon_schema(conn) -> None:
-    """TASK-0268: fast-path 재기동에서도 WebAccounts.AvatarObjectKey / WebProducts.IconObjectKey
-    컬럼이 존재하도록 idempotent ALTER. _ensure_web_tables 와 동일 SQL — 운영 재기동은 slow path
-    (_ensure_web_tables) 를 안 타고 _ensure_seed_catchup 만 타므로, 계정 SELECT(a.AvatarObjectKey)·
-    제품 SELECT(IconObjectKey) 가 'Unknown column' 으로 깨지지 않게 양쪽 경로에 ALTER 를 둔다."""
+    """TASK-0268/0293: fast-path 재기동에서도 WebAccounts.AvatarObjectKey / WebProducts.IconObjectKey
+    / WebRoles.IconObjectKey 컬럼이 존재하도록 idempotent ALTER. _ensure_web_tables 의 CREATE 와 동일
+    의미 — 운영 재기동은 slow path (_ensure_web_tables) 를 안 타고 _ensure_seed_catchup 만 타므로, 계정
+    SELECT(a.AvatarObjectKey)·제품 SELECT(IconObjectKey)·역할 SELECT(r.IconObjectKey) 가
+    'Unknown column' 으로 깨지지 않게 양쪽 경로에 ALTER 를 둔다."""
     cur = conn.cursor()
     try:
         try:
@@ -4701,6 +4715,11 @@ def _ensure_avatar_icon_schema(conn) -> None:
             pass
         try:
             cur.execute("ALTER TABLE WebProducts ADD COLUMN IconObjectKey VARCHAR(512) NULL")
+        except Exception:
+            pass
+        # TASK-0293: 역할 아이콘 이미지 — MinIO object key (NULL=미설정 → 프론트 Identicon 폴백).
+        try:
+            cur.execute("ALTER TABLE WebRoles ADD COLUMN IconObjectKey VARCHAR(512) NULL")
         except Exception:
             pass
     finally:
@@ -4976,6 +4995,7 @@ def _ensure_web_tables():
                 Description VARCHAR(255) NOT NULL DEFAULT '',
                 IsActive TINYINT(1) NOT NULL DEFAULT 1,
                 IsDefaultSignup TINYINT(1) NOT NULL DEFAULT 0,
+                IconObjectKey VARCHAR(512) NULL,
                 CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -8448,6 +8468,7 @@ SELECT
     r.Description AS role_description,
     r.IsActive AS is_active,
     r.IsDefaultSignup AS is_default_signup,
+    r.IconObjectKey AS icon_object_key,
     r.CreatedAt AS created_at,
     r.UpdatedAt AS updated_at,
     COUNT(CASE WHEN a.DeletedAt IS NULL THEN 1 END) AS member_count
@@ -8461,6 +8482,7 @@ GROUP BY
     r.Description,
     r.IsActive,
     r.IsDefaultSignup,
+    r.IconObjectKey,
     r.CreatedAt,
     r.UpdatedAt
 ORDER BY
@@ -8488,6 +8510,9 @@ ORDER BY
                 "description": str(row.get("role_description") or ""),
                 "is_active": bool(row.get("is_active")),
                 "is_default_signup": bool(row.get("is_default_signup")),
+                # TASK-0293: 역할 아이콘 URL. 설정 시 /api/roles/<id>/icon + 캐시버스터.
+                # NULL=미설정 → 프론트가 role_key 시드 Identicon 렌더.
+                "icon_url": _role_icon_url_for(role_id, row.get("icon_object_key")),
                 "created_at": str(row.get("created_at") or "") or None,
                 "updated_at": str(row.get("updated_at") or "") or None,
                 "member_count": int(row.get("member_count") or 0),
@@ -8529,6 +8554,7 @@ SELECT
     Description AS role_description,
     IsActive AS is_active,
     IsDefaultSignup AS is_default_signup,
+    IconObjectKey AS icon_object_key,
     CreatedAt AS created_at,
     UpdatedAt AS updated_at
 FROM WebRoles
@@ -8551,6 +8577,8 @@ LIMIT 1
         "description": str(row.get("role_description") or ""),
         "is_active": bool(row.get("is_active")),
         "is_default_signup": bool(row.get("is_default_signup")),
+        # TASK-0293: 역할 아이콘 URL (미설정 시 None → 프론트 role_key 시드 Identicon).
+        "icon_url": _role_icon_url_for(int(row.get("id") or 0), row.get("icon_object_key")),
         "created_at": str(row.get("created_at") or "") or None,
         "updated_at": str(row.get("updated_at") or "") or None,
         "permission_codes": sorted(granted_codes),
@@ -13215,6 +13243,215 @@ def serve_product_icon(product_id: int, request: Request) -> Any:
         cur = conn.cursor()
         try:
             cur.execute("SELECT IconObjectKey FROM WebProducts WHERE Id = %s", (int(product_id),))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        return _serve_image_object(row[0] if row else None, fallback_404="아이콘 없음")
+    finally:
+        conn.close()
+
+
+# ============================================================================
+# TASK-0293 — 관리 콘솔 계정 아바타 / 역할 아이콘 (관리자 편집·서빙)
+#   계정 아바타: 관리자가 타 계정의 아바타를 교체/제거(self-service /api/auth/me/avatar 와 별개).
+#     게이트 = console.access + console.manage + account.update (admin_update_account 정합).
+#   역할 아이콘: WebRoles.IconObjectKey. 게이트 = console.access + console.manage + role.update.
+#   저장/서빙: TASK-0268 인프라(_store_image_upload / _serve_image_object) 재사용.
+#     아바타 prefix='avatars/<account_id>/', 역할 prefix='role-icons/<role_id>/'.
+#   아바타 조회는 기존 GET /api/avatars/<id>(로그인) 재사용 — 관리자도 같은 경로로 본다.
+# ============================================================================
+
+
+@app.put("/api/admin/accounts/{account_id}/avatar")
+async def admin_upload_account_avatar(account_id: int, request: Request, file: UploadFile = File(...)) -> JSONResponse:
+    """관리자가 대상 계정의 프로필 아바타 업로드(console.manage + account.update). 이전 아바타 교체."""
+    if account_id <= 0:
+        return _json_error("invalid account_id", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        actor, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+            return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+        if not _account_has_permission(actor, "account.update"):
+            return _json_error("계정 수정 권한이 필요합니다 (account.update).", 403)
+        target = _load_account_by_id(conn, account_id)
+        if not target:
+            return _json_error("account not found", 404)
+        if target.get("deleted_at"):
+            return _json_error("삭제된 계정은 수정할 수 없습니다.", 400)
+        body = await file.read()
+        object_key, info = _store_image_upload(
+            body, prefix="avatars", owner_id=int(account_id), max_bytes=_AVATAR_MAX_BYTES,
+            mime_hint=(file.content_type or ""),
+        )
+        if not object_key:
+            return _json_error(info, 400)
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT AvatarObjectKey FROM WebAccounts WHERE Id = %s", (int(account_id),))
+            row = cur.fetchone()
+            old_key = row[0] if row else None
+            cur.execute("UPDATE WebAccounts SET AvatarObjectKey = %s WHERE Id = %s", (object_key, int(account_id)))
+            conn.commit()
+        finally:
+            cur.close()
+        if old_key and old_key != object_key:
+            try:
+                from web.modules import storage_minio
+                storage_minio.delete_object(str(old_key))
+            except Exception:
+                pass
+        return JSONResponse({"ok": True, "avatar_url": _avatar_url_for(int(account_id), object_key)})
+    finally:
+        conn.close()
+
+
+@app.delete("/api/admin/accounts/{account_id}/avatar")
+def admin_delete_account_avatar(account_id: int, request: Request) -> JSONResponse:
+    """관리자가 대상 계정의 아바타 제거(console.manage + account.update) → Identicon 폴백."""
+    if account_id <= 0:
+        return _json_error("invalid account_id", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        actor, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+            return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+        if not _account_has_permission(actor, "account.update"):
+            return _json_error("계정 수정 권한이 필요합니다 (account.update).", 403)
+        target = _load_account_by_id(conn, account_id)
+        if not target:
+            return _json_error("account not found", 404)
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT AvatarObjectKey FROM WebAccounts WHERE Id = %s", (int(account_id),))
+            row = cur.fetchone()
+            old_key = row[0] if row else None
+            cur.execute("UPDATE WebAccounts SET AvatarObjectKey = NULL WHERE Id = %s", (int(account_id),))
+            conn.commit()
+        finally:
+            cur.close()
+        if old_key:
+            try:
+                from web.modules import storage_minio
+                storage_minio.delete_object(str(old_key))
+            except Exception:
+                pass
+        return JSONResponse({"ok": True, "avatar_url": None})
+    finally:
+        conn.close()
+
+
+@app.put("/api/admin/roles/{role_id}/icon")
+async def admin_upload_role_icon(role_id: int, request: Request, file: UploadFile = File(...)) -> JSONResponse:
+    """역할 아이콘 업로드(console.manage + role.update). 이전 아이콘 교체."""
+    if role_id <= 0:
+        return _json_error("invalid role_id", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        actor, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+            return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+        if not _account_has_permission(actor, "role.update"):
+            return _json_error("역할 수정 권한이 필요합니다 (role.update).", 403)
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT IconObjectKey FROM WebRoles WHERE Id = %s", (int(role_id),))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+        if row is None:
+            return _json_error("역할을 찾을 수 없습니다.", 404)
+        old_key = row[0]
+        body = await file.read()
+        object_key, info = _store_image_upload(
+            body, prefix="role-icons", owner_id=int(role_id), max_bytes=_ICON_MAX_BYTES,
+            mime_hint=(file.content_type or ""),
+        )
+        if not object_key:
+            return _json_error(info, 400)
+        cur = conn.cursor()
+        try:
+            cur.execute("UPDATE WebRoles SET IconObjectKey = %s WHERE Id = %s", (object_key, int(role_id)))
+            conn.commit()
+        finally:
+            cur.close()
+        if old_key and old_key != object_key:
+            try:
+                from web.modules import storage_minio
+                storage_minio.delete_object(str(old_key))
+            except Exception:
+                pass
+        return JSONResponse({"ok": True, "icon_url": _role_icon_url_for(int(role_id), object_key)})
+    finally:
+        conn.close()
+
+
+@app.delete("/api/admin/roles/{role_id}/icon")
+def admin_delete_role_icon(role_id: int, request: Request) -> JSONResponse:
+    """역할 아이콘 제거(console.manage + role.update) → Identicon 폴백."""
+    if role_id <= 0:
+        return _json_error("invalid role_id", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        actor, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+            return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+        if not _account_has_permission(actor, "role.update"):
+            return _json_error("역할 수정 권한이 필요합니다 (role.update).", 403)
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT IconObjectKey FROM WebRoles WHERE Id = %s", (int(role_id),))
+            row = cur.fetchone()
+            old_key = row[0] if row else None
+            cur.execute("UPDATE WebRoles SET IconObjectKey = NULL WHERE Id = %s", (int(role_id),))
+            conn.commit()
+        finally:
+            cur.close()
+        if old_key:
+            try:
+                from web.modules import storage_minio
+                storage_minio.delete_object(str(old_key))
+            except Exception:
+                pass
+        return JSONResponse({"ok": True, "icon_url": None})
+    finally:
+        conn.close()
+
+
+@app.get("/api/roles/{role_id}/icon")
+def serve_role_icon(role_id: int, request: Request) -> Any:
+    """역할 아이콘 bytes 서빙(로그인 필요 — 같은 출처). 미설정/없음 404 → 프론트 Identicon."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT IconObjectKey FROM WebRoles WHERE Id = %s", (int(role_id),))
             row = cur.fetchone()
         finally:
             cur.close()
