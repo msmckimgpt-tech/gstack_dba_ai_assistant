@@ -317,17 +317,19 @@ def test_catalog_default_order_is_activity_first():
 
 def test_overview_window_propagates_to_time_widgets(monkeypatch):
     # days 가 audits/conversations 에도 전파되는지(거짓 컨트롤 정직화) — 호출 인자 검증.
+    # TASK-0294: 위젯 함수가 scope/account_id kwargs 도 받음 — fake 도 동형 시그니처.
     captured = {}
 
-    def _fake_audits(conn, days=7):
+    def _fake_audits(conn, days=7, *, scope="any", account_id=None):
         captured["audits_days"] = days
+        captured["audits_scope"] = scope
         return {"metrics": [], "lists": []}
 
-    def _fake_conv(pg, days=7):
+    def _fake_conv(pg, days=7, *, scope="any", account_id=None):
         captured["conv_days"] = days
+        captured["conv_scope"] = scope
         return {"metrics": [], "lists": []}
 
-    # TASK-0293: conversations 위젯은 conversation.list.any, audits 는 audit.read.any 필요.
     admin = {"id": 1, "permissions": {
         "console.access": True, "console.usage.read": True, "audit.read.any": True,
         "conversation.list.any": True}}
@@ -338,3 +340,39 @@ def test_overview_window_propagates_to_time_widgets(monkeypatch):
     app.admin_overview(_FakeRequest(days=30))
     assert captured.get("audits_days") == 30
     assert captured.get("conv_days") == 30
+    # .any 보유 admin → scope='any'(cross-account)
+    assert captured.get("audits_scope") == "any"
+    assert captured.get("conv_scope") == "any"
+
+
+def test_overview_own_user_sees_self_scoped_widgets(monkeypatch):
+    """TASK-0294: audit.read.own / conversation.list.own 만 보유 → 위젯은 보이되 데이터 scope='own'.
+    cross-account by_actor/활성소유자 노출 없이 본인 데이터로 제한된다."""
+    captured = {}
+
+    def _fake_audits(conn, days=7, *, scope="any", account_id=None):
+        captured["audits_scope"] = scope
+        captured["audits_account_id"] = account_id
+        return {"metrics": [], "lists": []}
+
+    def _fake_conv(pg, days=7, *, scope="any", account_id=None):
+        captured["conv_scope"] = scope
+        captured["conv_account_id"] = account_id
+        return {"metrics": [], "lists": []}
+
+    own_user = {"id": 42, "permissions": {
+        "console.access": True, "audit.read.own": True, "conversation.list.own": True}}
+    _patch_common(monkeypatch, own_user)
+    monkeypatch.setattr(app, "_dash_widget_audits", _fake_audits)
+    monkeypatch.setattr(app, "_dash_widget_conversations", _fake_conv)
+
+    body = _body(app.admin_overview(_FakeRequest()))
+    catalog_keys = {c["key"] for c in body["catalog"]}
+    # .own 보유자도 위젯은 보임(가시성 = own|any)
+    assert "audits" in catalog_keys
+    assert "conversations" in catalog_keys
+    # 데이터 스코프는 'own' + 본인 account_id 전달
+    assert captured.get("audits_scope") == "own"
+    assert captured.get("audits_account_id") == 42
+    assert captured.get("conv_scope") == "own"
+    assert captured.get("conv_account_id") == 42

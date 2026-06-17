@@ -20023,9 +20023,11 @@ def admin_archived_conversations(request: Request) -> JSONResponse:
 # 데이터가 그대로 노출됐다. 각 위젯 permission 을 해당 리소스 조회 권한으로 교체.
 # `permission` 은 단일 코드 또는 리스트(OR — manage⊇read superset, _actor_can_see_widget).
 _DASHBOARD_WIDGETS: tuple[dict, ...] = (
-    {"key": "conversations", "title": "대화·활동",    "permission": "conversation.list.any",            "source": "server"},
+    # TASK-0294: conversations/audits 는 `.own`/`.any` 짝 — `.own` 보유자도 위젯을 보되 데이터는
+    # 본인 스코프(_dash_widget_* 의 scope 인자). cross-account 는 `.any` 전용. 가시성=둘 중 하나.
+    {"key": "conversations", "title": "대화·활동",    "permission": ["conversation.list.own", "conversation.list.any"], "source": "server"},
     {"key": "usage",         "title": "LLM 사용량",   "permission": "console.usage.read",               "source": "server"},
-    {"key": "audits",        "title": "감사 활동",    "permission": "audit.read.any",                   "source": "server"},
+    {"key": "audits",        "title": "감사 활동",    "permission": ["audit.read.own", "audit.read.any"], "source": "server"},
     {"key": "grant_health",  "title": "첨부 DB 권한", "permission": "console.access",                   "source": "client"},
     {"key": "accounts",      "title": "계정",         "permission": "account.read",                     "source": "server"},
     {"key": "products",      "title": "제품",         "permission": ["product.read", "product.manage"], "source": "server"},
@@ -20043,6 +20045,15 @@ def _actor_can_see_widget(actor: dict, widget: dict) -> bool:
     perm = widget.get("permission")
     perms = perm if isinstance(perm, (list, tuple)) else (perm,)
     return _account_has_any_permission(actor, *[str(p) for p in perms if p])
+
+
+def _widget_data_scope(actor: dict, any_permission: str) -> str:
+    """TASK-0294: 위젯 데이터 스코프 — `.any` 권한 보유 시 'any'(cross-account), 아니면 'own'(본인).
+
+    audits/conversations 위젯은 `.own`/`.any` 짝을 가져, `.own` 만 보유한 사용자에게는
+    본인 데이터로 스코프된 집계를 보여주고 cross-account(타 계정 username·소유자 집계)는
+    `.any` 보유자에게만 노출한다. 위젯 가시성(_actor_can_see_widget)과 별개로 데이터 출력 경계."""
+    return "any" if _account_has_permission(actor, any_permission) else "own"
 
 
 def _dashboard_default_prefs(actor: dict) -> dict:
@@ -20253,39 +20264,60 @@ def _dash_widget_datasources(conn) -> dict:
     }
 
 
-def _dash_widget_audits(conn, days: int = 7) -> dict:
+def _dash_widget_audits(conn, days: int = 7, *, scope: str = "any", account_id: int | None = None) -> dict:
+    # TASK-0294: scope='own' 이면 본인이 actor 인 이벤트만 집계(ActorAccountId=self) + cross-account
+    # by_actor(타 계정 username 목록)는 제거. scope='any' 는 전체 cross-account(기존). 위젯 가시성은
+    # audit.read.own|any (둘 중 하나), 데이터 출력 경계는 본 scope — _audit_build_self_filter_sql 정합.
     d = int(days)
+    own = scope == "own"
+    if own and account_id is None:
+        account_id = -1  # fail-closed: scope='own' 인데 account_id 부재 = 매칭 0(cross-account widen 금지).
+    self_and = " AND ActorAccountId = %s" if own else ""
+    self_args = (int(account_id),) if own else ()
     cur = conn.cursor()
     try:
-        cur.execute(f"SELECT COUNT(*) FROM WebAuditEvents WHERE OccurredAt >= (NOW() - INTERVAL {d} DAY)")
+        cur.execute(
+            f"SELECT COUNT(*) FROM WebAuditEvents WHERE OccurredAt >= (NOW() - INTERVAL {d} DAY){self_and}",
+            self_args,
+        )
         cur_total = int((cur.fetchone() or (0,))[0] or 0)
         cur.execute(
             f"SELECT COUNT(*) FROM WebAuditEvents "
-            f"WHERE OccurredAt >= (NOW() - INTERVAL {2 * d} DAY) AND OccurredAt < (NOW() - INTERVAL {d} DAY)"
+            f"WHERE OccurredAt >= (NOW() - INTERVAL {2 * d} DAY) AND OccurredAt < (NOW() - INTERVAL {d} DAY){self_and}",
+            self_args,
         )
         prior_total = int((cur.fetchone() or (0,))[0] or 0)
-        cur.execute("SELECT COUNT(*) FROM WebAuditEvents WHERE OccurredAt >= (NOW() - INTERVAL 1 DAY)")
+        cur.execute(
+            f"SELECT COUNT(*) FROM WebAuditEvents WHERE OccurredAt >= (NOW() - INTERVAL 1 DAY){self_and}",
+            self_args,
+        )
         last24 = int((cur.fetchone() or (0,))[0] or 0)
         cur.execute(
             f"SELECT DATE(OccurredAt), COUNT(*) FROM WebAuditEvents "
-            f"WHERE OccurredAt >= (NOW() - INTERVAL {d} DAY) GROUP BY DATE(OccurredAt) ORDER BY 1"
+            f"WHERE OccurredAt >= (NOW() - INTERVAL {d} DAY){self_and} GROUP BY DATE(OccurredAt) ORDER BY 1",
+            self_args,
         )
         spark = _dash_fill_daily(cur.fetchall(), d)
         cur.execute(
             f"SELECT ActionCode, COUNT(*) FROM WebAuditEvents "
-            f"WHERE OccurredAt >= (NOW() - INTERVAL {d} DAY) GROUP BY ActionCode ORDER BY 2 DESC LIMIT 8"
+            f"WHERE OccurredAt >= (NOW() - INTERVAL {d} DAY){self_and} GROUP BY ActionCode ORDER BY 2 DESC LIMIT 8",
+            self_args,
         )
         by_action = [{"label": str(x[0]), "value": int(x[1])} for x in (cur.fetchall() or [])]
-        cur.execute(
-            f"SELECT COALESCE(a.Username, '(익명/시스템)'), COUNT(*) "
-            f"FROM WebAuditEvents ev LEFT JOIN WebAccounts a ON a.Id = ev.ActorAccountId "
-            f"WHERE ev.OccurredAt >= (NOW() - INTERVAL {d} DAY) "
-            f"GROUP BY ev.ActorAccountId, a.Username ORDER BY 2 DESC LIMIT 8"
-        )
-        by_actor = [{"label": str(x[0]), "value": int(x[1])} for x in (cur.fetchall() or [])]
+        # by_actor(타 계정 username × 활동량)는 cross-account enumeration — `.any` 전용. `.own` 은 생략.
+        by_actor: list[dict] = []
+        if not own:
+            cur.execute(
+                f"SELECT COALESCE(a.Username, '(익명/시스템)'), COUNT(*) "
+                f"FROM WebAuditEvents ev LEFT JOIN WebAccounts a ON a.Id = ev.ActorAccountId "
+                f"WHERE ev.OccurredAt >= (NOW() - INTERVAL {d} DAY) "
+                f"GROUP BY ev.ActorAccountId, a.Username ORDER BY 2 DESC LIMIT 8"
+            )
+            by_actor = [{"label": str(x[0]), "value": int(x[1])} for x in (cur.fetchall() or [])]
     finally:
         cur.close()
-    primary = {"label": f"최근 {d}일 이벤트", "value": cur_total, "primary": True, "spark": spark}
+    title_suffix = "(내 활동)" if own else ""
+    primary = {"label": f"최근 {d}일 이벤트{title_suffix}", "value": cur_total, "primary": True, "spark": spark}
     dp = _dash_pct_delta(cur_total, prior_total)
     if dp is not None:
         primary["delta_pct"] = dp
@@ -20302,44 +20334,63 @@ def _dash_widget_audits(conn, days: int = 7) -> dict:
     }
 
 
-def _dash_widget_conversations(pg, days: int = 7) -> dict:
+def _dash_widget_conversations(pg, days: int = 7, *, scope: str = "any", account_id: int | None = None) -> dict:
+    # TASK-0294: scope='own' 이면 본인 소유 대화만 집계(owner_account_id=self) + cross-account
+    # '활성 소유자' metric(타 계정 수) 제거. scope='any' 는 전체(기존). 위젯 가시성은 conversation.list.own|any.
     d = int(days)
     cur_win = f"now() - interval '{d} days'"
     prior_lo = f"now() - interval '{2 * d} days'"
     prior_hi = cur_win
+    own = scope == "own"
+    if own and account_id is None:
+        account_id = -1  # fail-closed: scope='own' 인데 account_id 부재 = 매칭 0(cross-account widen 금지).
+    args = (int(account_id),) if own else ()
+
+    def _w(extra: str) -> str:
+        parts = [p for p in (extra, "owner_account_id = %s" if own else "") if p]
+        return (" WHERE " + " AND ".join(parts)) if parts else ""
+
+    # WHERE 절을 미리 구성(f-string 안 중첩 따옴표 회피 — Python 3.11 호환).
+    one_day = "created_at >= now() - interval '1 day'"
+    w_total = _w("")
+    w_d1 = _w(one_day)
+    w_cur = _w(f"created_at >= {cur_win}")
+    w_prior = _w(f"created_at >= {prior_lo} AND created_at < {prior_hi}")
+    base = "SELECT COUNT(*) FROM agent_runtime.core_conversations"
     with pg.cursor() as cur:
-        cur.execute("SELECT COUNT(*) FROM agent_runtime.core_conversations")
+        cur.execute(f"{base}{w_total}", args)
         total = int((cur.fetchone() or (0,))[0] or 0)
-        cur.execute("SELECT COUNT(*) FROM agent_runtime.core_conversations WHERE created_at >= now() - interval '1 day'")
+        cur.execute(f"{base}{w_d1}", args)
         d1 = int((cur.fetchone() or (0,))[0] or 0)
-        cur.execute(f"SELECT COUNT(*) FROM agent_runtime.core_conversations WHERE created_at >= {cur_win}")
+        cur.execute(f"{base}{w_cur}", args)
         cur_total = int((cur.fetchone() or (0,))[0] or 0)
-        cur.execute(
-            f"SELECT COUNT(*) FROM agent_runtime.core_conversations "
-            f"WHERE created_at >= {prior_lo} AND created_at < {prior_hi}"
-        )
+        cur.execute(f"{base}{w_prior}", args)
         prior_total = int((cur.fetchone() or (0,))[0] or 0)
-        cur.execute("SELECT COUNT(DISTINCT owner_account_id) FROM agent_runtime.core_conversations WHERE owner_account_id IS NOT NULL")
-        owners = int((cur.fetchone() or (0,))[0] or 0)
+        # '활성 소유자'(distinct owner) 는 cross-account 집계 — `.own` 은 항상 본인 1명이라 생략.
+        owners = None
+        if not own:
+            cur.execute("SELECT COUNT(DISTINCT owner_account_id) FROM agent_runtime.core_conversations WHERE owner_account_id IS NOT NULL")
+            owners = int((cur.fetchone() or (0,))[0] or 0)
         cur.execute(
-            f"SELECT date_trunc('day', created_at)::date, count(*) FROM agent_runtime.core_conversations "
-            f"WHERE created_at >= {cur_win} GROUP BY 1 ORDER BY 1"
+            f"SELECT date_trunc('day', created_at)::date, count(*) FROM agent_runtime.core_conversations"
+            f"{w_cur} GROUP BY 1 ORDER BY 1",
+            args,
         )
         spark = _dash_fill_daily(cur.fetchall(), d)
-    primary = {"label": f"최근 {d}일 대화", "value": cur_total, "primary": True, "spark": spark}
+    title_suffix = "(내 대화)" if own else ""
+    primary = {"label": f"최근 {d}일 대화{title_suffix}", "value": cur_total, "primary": True, "spark": spark}
     dp = _dash_pct_delta(cur_total, prior_total)
     if dp is not None:
         primary["delta_pct"] = dp
         primary["delta_sentiment"] = "neutral"
-    return {
-        "metrics": [
-            primary,
-            {"label": "최근 24시간", "value": d1, "accent": "ok"},
-            {"label": "전체 대화", "value": total},
-            {"label": "활성 소유자", "value": owners},
-        ],
-        "lists": [],
-    }
+    metrics = [
+        primary,
+        {"label": "최근 24시간", "value": d1, "accent": "ok"},
+        {"label": "내 전체 대화" if own else "전체 대화", "value": total},
+    ]
+    if owners is not None:
+        metrics.append({"label": "활성 소유자", "value": owners})
+    return {"metrics": metrics, "lists": []}
 
 
 def _dash_widget_usage(pg, days: int) -> dict:
@@ -20430,6 +20481,10 @@ def admin_overview(request: Request) -> JSONResponse:
         permitted = {c["key"] for c in catalog}
         widgets: dict = {}
         log = logging.getLogger(__name__)
+        actor_id = int(actor["id"])
+        # TASK-0294: `.own`/`.any` 짝 위젯의 데이터 스코프 — `.any` 미보유면 본인 데이터로 제한.
+        audits_scope = _widget_data_scope(actor, "audit.read.any")
+        conv_scope = _widget_data_scope(actor, "conversation.list.any")
 
         def _isolate(key: str, fn):
             if key not in permitted:
@@ -20445,7 +20500,7 @@ def admin_overview(request: Request) -> JSONResponse:
         _isolate("roles", lambda: _dash_widget_roles(conn))
         _isolate("products", lambda: _dash_widget_products(conn))
         _isolate("datasources", lambda: _dash_widget_datasources(conn))
-        _isolate("audits", lambda: _dash_widget_audits(conn, days))
+        _isolate("audits", lambda: _dash_widget_audits(conn, days, scope=audits_scope, account_id=actor_id))
 
         # PG 위젯 (conversations + usage) — 단일 연결 재사용
         if ("conversations" in permitted) or ("usage" in permitted):
@@ -20462,7 +20517,7 @@ def admin_overview(request: Request) -> JSONResponse:
                         widgets[k] = {"error": True, "metrics": [], "lists": []}
             else:
                 try:
-                    _isolate("conversations", lambda: _dash_widget_conversations(pg, days))
+                    _isolate("conversations", lambda: _dash_widget_conversations(pg, days, scope=conv_scope, account_id=actor_id))
                     _isolate("usage", lambda: _dash_widget_usage(pg, days))
                 finally:
                     try:

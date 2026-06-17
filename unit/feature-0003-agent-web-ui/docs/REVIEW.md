@@ -3060,3 +3060,21 @@ source_of_truth: true
 - Verification: test_dashboard_overview.py + test_audit_rbac.py smoke + make test 컨테이너 회귀 0.
 - Residual: 머지 → 배포(web 재빌드) → 라이브 재검증(`.own` target row 부재·대시보드 리소스 위젯 데이터 0).
 - Cross-ref: CHG-20260616-0305 / TASK-0293 / TASK-0288(선행).
+
+## REV-20260617-0306 [SUBAGENT:widget-data-scope]
+- Date: 2026-06-17
+- Cycle: TASK-0294 (대시보드 위젯 데이터 `.own`/`.any` 세분화 스코핑), **Critical §12.3** — 위젯 데이터 노출 경계 변경.
+- Trigger: §18.8 + [[feedback_outside_voice_for_rbac]] — RBAC 데이터 스코프 변경. 적대적 보안 리뷰(general-purpose outside voice).
+- Verdict: **SHIP** (BLOCKER 0, MAJOR 0, MINOR 0, INFO 1).
+- 7항목 코드대조 결론(전부 안전):
+  - **① SQL injection**: self-filter `ActorAccountId/owner_account_id = %s` parameterized(%s + args 튜플, placeholder=args 정합), account_id `int()` 캐스트·f-string 직접삽입 0, days int clamp.
+  - **② `.own` self-scope 완전성**: audits 5쿼리(cur_total/prior/last24/spark/by_action) 전부 `AND ActorAccountId=self`, by_actor `if not own` 생략. conversations 전 COUNT/spark `owner_account_id=self`, 활성소유자 `if not own` 생략. 누출 0.
+  - **③ scope 결정**: `_widget_data_scope` = any 보유시 'any' else 'own'. own+any 둘다→'any'(정상).
+  - **④ 가시성↔데이터 정합**: `_actor_can_see_widget`(own|any OR) ↔ `_widget_data_scope`. `.own`만→visible+scope='own'.
+  - **⑤ account_id 무결성**: `int(actor["id"])` = 세션쿠키 인증 서버권위값(요청파라미터 아님). fail-closed(None→-1 매칭0).
+  - **⑥ `.any` 무회귀**: scope='any'→own=False→self_and=''/args=() → 쿼리 byte-identical, by_actor/owners 전부 실행.
+  - **⑦ 잔존 위젯**: accounts(by_role 집계만·개별 username 미노출)·usage(per-model 집계·per-account 비용 미노출)는 단일 관리권한이라 `.own` 짝 불필요·PII 미노출.
+- 흡수(INFO/defense-in-depth): D1 fail-open(`scope='own'`+`account_id=None`→cross-account widen, 현 호출그래프 도달불가) → account_id None 시 -1(매칭 0) fail-closed 적용. **흡수 완료**.
+- Verification: test_dashboard_overview.py + make test 컨테이너 회귀 0.
+- Residual: 머지 → 배포(web 재빌드) → 라이브 재검증(`.own` 계정 위젯 self-scoped·by_actor/활성소유자 부재) + PB-0008.
+- Cross-ref: CHG-20260617-0306 / TASK-0294 / TASK-0293(선행).
