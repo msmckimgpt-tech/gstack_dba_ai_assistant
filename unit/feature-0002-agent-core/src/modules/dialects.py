@@ -17,11 +17,98 @@ from __future__ import annotations
 from . import config as cfg
 
 
+# ── 사전 부하추정 파서 (엔진별 결과 → 예상 처리 행수) ──────────────────────────
+def _parse_explain_rows_product(result_sets) -> int | None:
+    """MySQL EXPLAIN 결과 → 테이블별 (rows × filtered/100) 곱 = join 후 예상 카디널리티.
+
+    `filtered`(옵티마이저 선택률 %)를 반영해 잘 인덱싱된 조인의 과대추정(false-positive 게이팅)을
+    줄인다. **골든**: 이전 tools.py `_estimate_explain_rows` 의 산식 그대로 — MySQL 동작 0 변경.
+    """
+    for kind, columns, rows in result_sets:
+        if kind != "rows" or not isinstance(columns, list) or not isinstance(rows, list):
+            continue
+        lcols = [str(c).lower() for c in columns]
+        try:
+            ridx = lcols.index("rows")
+        except ValueError:
+            continue
+        fidx = lcols.index("filtered") if "filtered" in lcols else None
+        product = 1
+        seen = False
+        for r in rows:
+            try:
+                v = int(r[ridx])
+            except (ValueError, TypeError, IndexError):
+                continue
+            eff = float(v)
+            if fidx is not None:
+                try:
+                    filt = float(r[fidx])
+                    if 0.0 <= filt <= 100.0:
+                        eff = v * (filt / 100.0)
+                except (ValueError, TypeError, IndexError):
+                    pass
+            product *= max(1, int(round(eff)))
+            seen = True
+        if seen:
+            return product
+    return None
+
+
+def _parse_showplan_estimate(result_sets) -> int | None:
+    """MSSQL `SET SHOWPLAN_ALL` 결과 → 예상 처리 행수.
+
+    추정 실행계획의 각 operator 행에서 `EstimateRows × EstimateExecutions`(중첩루프 inner side
+    재실행 반영)를 구해 **최대값**을 "예상 처리 행수"로 산출. MySQL 의 rows×filtered 곱(join 후
+    카디널리티)과 산식은 다르나 동일 임계값(AGENT_QUERY_EXPLAIN_ROWS_WARN)으로 무거운 쿼리를
+    판정한다(=가장 무거운 단일 operator 가 처리하는 추정 행수). `EstimateRows` 컬럼 부재/전부
+    파싱불가 시 None(추정 실패 → caller 가 엔진별 fail-open/closed 결정).
+
+    **알려진 한계 (REV-20260617-0310 M1)**: `EstimateRows` 는 operator 의 *출력* 추정행수이지
+    *스캔* 행수가 아니다 → 잔여 술어가 선택적인 비인덱스 풀스캔(많이 읽고 적게 출력)은 과소추정될
+    수 있다(무거운 쿼리를 light 로 오판). 이 스캔-부하 공백은 게이트와 무관하게 항상 적용되는 런타임
+    시간 cap(tools.py `_apply_query_cap`, `AGENT_QUERY_MAX_EXECUTION_MS`)이 2차 방어로 보완한다.
+    더 정확한 비용 기반 게이트(`TotalSubtreeCost` 보조 임계)는 후속 cycle 이월.
+    """
+    for kind, columns, rows in result_sets:
+        if kind != "rows" or not isinstance(columns, list) or not isinstance(rows, list):
+            continue
+        lcols = [str(c).strip().lower() for c in columns]  # m2: 컬럼명 패딩 견고화
+        if "estimaterows" not in lcols:
+            continue
+        ridx = lcols.index("estimaterows")
+        eidx = lcols.index("estimateexecutions") if "estimateexecutions" in lcols else None
+        best: int | None = None
+        for r in rows:
+            try:
+                er = float(r[ridx])
+            except (ValueError, TypeError, IndexError):
+                continue
+            ex = 1.0
+            if eidx is not None:
+                try:
+                    ex = float(r[eidx])
+                except (ValueError, TypeError, IndexError):
+                    ex = 1.0
+            if ex < 1.0:
+                ex = 1.0
+            eff = int(round(er * ex))
+            if best is None or eff > best:
+                best = eff
+        if best is not None:
+            return max(0, best)
+    return None
+
+
 class Dialect:
     name = "mysql"
     sqlglot = "mysql"
-    # 사전 부하추정(EXPLAIN rows) 지원 여부. False 엔진(MSSQL)은 gate 모드에서 fail-closed (M-4).
+    # 사전 부하추정 지원 여부. False 엔진은 gate 모드에서 무조건 fail-closed (M-4).
     supports_load_estimate = True
+    # gate 모드에서 추정 실패(None) 시 동작. False=fail-open(허용 — MySQL 골든: EXPLAIN 실패는
+    # 드물고 정상 작업을 막지 않음). True=fail-closed(차단 — MSSQL: SHOWPLAN 미권한/연결 실패 시
+    # 무거운 쿼리 무방어를 막는 보수적 차단, M-4).
+    gate_fail_closed_on_estimate_error = False
 
     # ── 보안: 시스템 스키마 소유권 (P6, DESIGN §3.4 m3 / §4 "차단 스키마 정합") ──
     def system_schemas(self) -> frozenset:
@@ -87,7 +174,18 @@ class Dialect:
     def search_tables(self, keyword: str, sys_exclude: str, where_schema: str) -> str:
         raise NotImplementedError
 
-    def explain(self, sql: str) -> str | None:
+    # ── 사전 부하추정 / 실행계획 (P6 부하게이트 — dialect 별 처리) ──
+    def estimate_load_rows(self, run, sql: str) -> int | None:
+        """사전 부하추정: 본 쿼리를 **실행하지 않고** 예상 처리 행수를 산출.
+
+        `run(sql_str) -> result_sets` 는 caller(tools.py)가 주입하는 실행 콜백이다(dialects 가
+        db/tools 를 import 하지 않도록 — 계층 보존). 추정 불가/실패 시 None → caller 가 엔진별
+        fail-open/closed(`gate_fail_closed_on_estimate_error`)를 결정한다.
+        """
+        raise NotImplementedError
+
+    def explain_plan(self, run, sql: str):
+        """explain_query 도구용 실행계획 result_sets(본 쿼리 미실행). None=미지원/실패."""
         raise NotImplementedError
 
     # ── get_table_indexes / get_foreign_keys 전용 SQL (P6: 두 도구 dialect 화) ──
@@ -191,8 +289,19 @@ class MySQLDialect(Dialect):
         LIMIT 50
     """
 
-    def explain(self, sql: str) -> str | None:
-        return f"EXPLAIN {sql}"
+    def estimate_load_rows(self, run, sql: str) -> int | None:
+        # 골든: EXPLAIN 실행 후 (rows × filtered/100) 곱. 실패(구문/권한/플랜불가)는 None(fail-open).
+        try:
+            result_sets = run(f"EXPLAIN {sql}")
+        except Exception:
+            return None
+        return _parse_explain_rows_product(result_sets)
+
+    def explain_plan(self, run, sql: str):
+        try:
+            return run(f"EXPLAIN {sql}")
+        except Exception:
+            return None
 
     def table_indexes(self, schema: str, table: str) -> str:
         # 골든: _tool_get_table_indexes 의 기존 SQL 그대로.
@@ -236,11 +345,17 @@ class MSSQLDialect(Dialect):
     의미가 달라 컬럼 별칭/순서를 MySQL 산출과 동일하게 맞춘다. 행수 추정은 **sys.partitions.rows**
     (P6: 최소권한 RO 가 metadata-visibility 로 접근 — sys.dm_db_partition_stats DMV 는 VIEW DATABASE
     STATE 권한이 필요해 db_datareader 금지/스키마 GRANT-only RO 에서 거부됨).
+
+    **사전 부하추정 (TASK-0299)**: EXPLAIN 구문은 없으나 `SET SHOWPLAN_ALL ON` 으로 본 쿼리를
+    실행하지 않고 추정 실행계획을 받아 예상 처리 행수를 산출한다(MySQL EXPLAIN 등가). RO role 에
+    `GRANT SHOWPLAN` 필요(데이터 읽기 권한 아님 — 최소권한과 양립; bin/datasource-mssql-ro-bootstrap*.sql).
+    SHOWPLAN 미권한/연결 실패 시 추정 불가 → gate 모드 fail-closed(`gate_fail_closed_on_estimate_error`).
     """
     name = "mssql"
     sqlglot = "tsql"
-    # EXPLAIN 구문이 없어 사전 부하추정 불가 → gate 모드에서 fail-closed (M-4).
-    supports_load_estimate = False
+    # SET SHOWPLAN_ALL 로 사전 부하추정 지원(TASK-0299). 추정 실패 시 gate 모드 fail-closed.
+    supports_load_estimate = True
+    gate_fail_closed_on_estimate_error = True
 
     # 사용자 스키마 열거에서 제외: sys/INFORMATION_SCHEMA(카탈로그) + guest + 고정 db_* 역할 스키마.
     # **dbo 는 제외하지 않는다** — MSSQL 의 기본 사용자 스키마(대부분의 사용자 테이블 거처)라
@@ -386,10 +501,43 @@ class MSSQLDialect(Dialect):
         ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
     """
 
-    def explain(self, sql: str) -> str | None:
-        # MSSQL 은 EXPLAIN 구문 없음. P6 의 부하게이트가 dialect 별로 처리(SHOWPLAN 또는 fail-closed).
-        # P5 단계에서는 None → caller(부하게이트)가 best-effort skip (보수화는 P6).
-        return None
+    def _showplan(self, run, sql: str):
+        """`SET SHOWPLAN_ALL ON` → sql(미실행, 추정 실행계획 반환) → `OFF`. result_sets | None.
+
+        **단일 result-set 의존 (REV-20260617-0310 m1)**: SHOWPLAN_ALL 은 본 SELECT 에 대해 operator
+        당 1행을 가진 *단일* result set 을 반환하므로, `nextset()` 미호출(db.execute_sql)인 현 수집기와
+        호환된다. 다른 result-set 형태가 오면 estimaterows 컬럼 부재로 None(추정 실패 → MSSQL gate
+        fail-closed=안전 방향). sql_guard 가 단일 SELECT/CTE 만 허용해 다중 result-set SQL 은 도달 불가.
+
+        **세션 poison 방지 (Codex-7, DESIGN §"pool 세션누출")**: conn 은 run 전체 공유라 SHOWPLAN_ALL
+        이 켜진 채 남으면 *이후 실쿼리가 데이터 대신 plan 을 반환하는 조용한 오염*이 된다. ON 이 성공한
+        경우 OFF 를 `finally` 로 항상 보장한다(조회가 예외로 끝나도 복구). OFF 자체가 실패하면 conn 이
+        끊긴 것 — 이후 실쿼리도 loud 하게 실패하므로 silent plan-as-data 는 발생하지 않는다.
+        ON 실패(SHOWPLAN 미권한 등)·조회 실패 시 None(추정 불가).
+        """
+        showplan_on = False
+        try:
+            run("SET SHOWPLAN_ALL ON")
+            showplan_on = True
+            return run(sql)
+        except Exception:
+            return None
+        finally:
+            if showplan_on:
+                try:
+                    run("SET SHOWPLAN_ALL OFF")
+                except Exception:
+                    # conn 세션 복구 실패(끊긴 conn 추정). 이후 실쿼리가 loud 실패 → silent 오염 없음.
+                    pass
+
+    def estimate_load_rows(self, run, sql: str) -> int | None:
+        result_sets = self._showplan(run, sql)
+        if result_sets is None:
+            return None
+        return _parse_showplan_estimate(result_sets)
+
+    def explain_plan(self, run, sql: str):
+        return self._showplan(run, sql)
 
     def table_indexes(self, schema: str, table: str) -> str:
         # 컬럼 순서/이름을 MySQL 산출과 동일하게(INDEX_NAME, NON_UNIQUE, COLUMN_NAME, SEQ_IN_INDEX,

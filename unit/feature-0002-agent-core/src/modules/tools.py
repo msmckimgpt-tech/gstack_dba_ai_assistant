@@ -408,8 +408,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "SELECT SQL을 실행하여 데이터를 조회한다. "
                 "반드시 `schema`.`table` 형식을 사용한다. "
                 "이 도구를 가장 먼저 사용하라 — 시스템 프롬프트의 KNOWN SCHEMAS 정보로 SQL을 즉시 작성할 수 있다. "
-                "무거운 쿼리는 DB 부하 경고(EXPLAIN 게이트)에 걸릴 수 있다 — 그 경우 WHERE/기간/집계 "
-                "범위를 좁히거나 LIMIT 을 추가하라. 전체 스캔이 정말 필요하면 confirm_heavy=true 로 다시 호출한다."
+                "무거운 쿼리는 DB 부하 경고(부하 게이트 — MySQL EXPLAIN / MSSQL SHOWPLAN 사전 추정)에 걸릴 수 있다 — "
+                "그 경우 WHERE/기간/집계 범위를 좁히거나 LIMIT/TOP 을 추가하라. 전체 스캔이 정말 필요하면 confirm_heavy=true 로 다시 호출한다."
             ),
             "parameters": {
                 "type": "object",
@@ -421,7 +421,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "confirm_heavy": {
                         "type": "boolean",
                         "description": (
-                            "true 면 무거운 쿼리 EXPLAIN 게이트를 우회해 그대로 실행한다. "
+                            "true 면 무거운 쿼리 부하 게이트를 우회해 그대로 실행한다. "
                             "범위를 좁힐 수 없고 전체 스캔이 반드시 필요할 때만 사용."
                         ),
                     },
@@ -526,7 +526,7 @@ TOOL_DEFINITIONS_FULL: list[dict[str, Any]] = TOOL_DEFINITIONS + [
         "type": "function",
         "function": {
             "name": "explain_query",
-            "description": "SQL 실행 계획(EXPLAIN)을 분석한다.",
+            "description": "SQL 실행 계획을 분석한다(본 쿼리는 실행하지 않음). MySQL=EXPLAIN, MSSQL=SET SHOWPLAN_ALL 추정 실행계획.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -900,51 +900,26 @@ _TOOL_PREVIEW_ROWS = 50
 
 
 def _estimate_explain_rows(conn, sql: str) -> int | None:
-    """EXPLAIN 으로 예상 스캔 rows 추정 — 테이블별 (rows × filtered/100) 곱 = join 후
-    예상 카디널리티. `filtered`(옵티마이저 선택률 %)를 반영해 잘 인덱싱된 조인의 과대추정
-    (false-positive 게이팅)을 줄인다(diff review m3).
+    """엔진별 사전 부하추정 — 본 쿼리를 실행하지 않고 예상 처리 행수를 산출.
 
-    TASK-0172: 무거운 쿼리 사전 게이팅용. EXPLAIN 은 본 쿼리를 실행하지 않으므로 cheap
-    (EXPLAIN ANALYZE 는 sql_guard 가 차단). 실패(구문/권한/플랜불가) 시 None → caller 가
-    fail-open(게이트가 정상 작업을 막지 않음)."""
-    # Stage 2 P5: dialect 별 EXPLAIN. MSSQL 은 explain()=None → 추정 skip(None).
-    # MSSQL 부하게이트 fail-closed/SHOWPLAN 은 P6. (현재 MySQL 만 EXPLAIN rows/filtered 파싱.)
-    explain_sql = _dialects.active().explain(sql)
-    if not explain_sql:
+    MySQL: EXPLAIN 의 (rows × filtered/100) 곱 = join 후 예상 카디널리티.
+    MSSQL: SET SHOWPLAN_ALL 의 (EstimateRows × EstimateExecutions) 최대 operator (TASK-0299).
+
+    엔진별 산출/파싱은 dialect 가 담당하고 tools 는 실행 콜백(_run)만 주입한다(계층 보존 —
+    dialects 가 db/tools 를 import 하지 않음). EXPLAIN/SHOWPLAN 모두 본 쿼리를 실행하지 않으므로
+    cheap (EXPLAIN ANALYZE 류 실행형은 sql_guard 가 차단). 실패 시 None → caller 가 엔진별
+    fail-open(MySQL 골든) / fail-closed(MSSQL gate, `gate_fail_closed_on_estimate_error`) 분기.
+
+    TASK-0172(MySQL 도입) → TASK-0299(MSSQL SHOWPLAN 확장)."""
+    dialect = _dialects.active()
+    if not dialect.supports_load_estimate:
         return None
-    try:
-        result_sets, _ = _raw_execute_sql(conn, explain_sql)
-    except Exception:
-        return None
-    for kind, columns, rows in result_sets:
-        if kind != "rows" or not isinstance(columns, list) or not isinstance(rows, list):
-            continue
-        lcols = [str(c).lower() for c in columns]
-        try:
-            ridx = lcols.index("rows")
-        except ValueError:
-            continue
-        fidx = lcols.index("filtered") if "filtered" in lcols else None
-        product = 1
-        seen = False
-        for r in rows:
-            try:
-                v = int(r[ridx])
-            except (ValueError, TypeError, IndexError):
-                continue
-            eff = float(v)
-            if fidx is not None:
-                try:
-                    filt = float(r[fidx])
-                    if 0.0 <= filt <= 100.0:
-                        eff = v * (filt / 100.0)
-                except (ValueError, TypeError, IndexError):
-                    pass
-            product *= max(1, int(round(eff)))
-            seen = True
-        if seen:
-            return product
-    return None
+
+    def _run(stmt: str):
+        result_sets, _ = _raw_execute_sql(conn, stmt)
+        return result_sets
+
+    return dialect.estimate_load_rows(_run, sql)
 
 
 def _apply_query_cap(conn) -> None:
@@ -992,8 +967,8 @@ def _tool_execute_sql(conn, args: dict) -> str:
     err = _freeform_sql_access_error(sql)
     if err:
         return err
-    # TASK-0172: 무거운 쿼리 자가규제 — 실행 전 EXPLAIN 으로 예상 스캔 rows 추정해
-    # 임계 초과 시 gate(좁히기 유도) 또는 warn(비용 경고 prepend). confirm_heavy=true 면
+    # TASK-0172/0298: 무거운 쿼리 자가규제 — 실행 전 사전 부하추정(MySQL EXPLAIN / MSSQL SHOWPLAN)으로
+    # 예상 처리 행수를 구해 임계 초과 시 gate(좁히기 유도) 또는 warn(비용 경고 prepend). confirm_heavy=true 면
     # 추정 무관 실행("무거운 쿼리는 감수" — LLM 이 필요 판단 시 override). guard off=현행.
     import modules.config as _cfg
     guard_mode = str(getattr(_cfg, "AGENT_QUERY_GUARD_MODE", "off") or "off").lower()
@@ -1010,31 +985,50 @@ def _tool_execute_sql(conn, args: dict) -> str:
     if not bool(getattr(_cfg, "AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM", True)):
         confirm_heavy = False
     cost_note: str | None = None
-    # P6 M-4 + REV-0201 M2: EXPLAIN 미지원 엔진(MSSQL 등)은 사전 부하추정이 불가하다. gate 모드면
-    # **하드 차단**한다 — `confirm_heavy` 로 우회시키지 않는다(추정치 없이 "감수" 판단은 근거 없는
-    # 맹목 우회이고, LLM tool 인자라 모델이 자기우회한다, Codex-6). 따라서 이 검사는 confirm_heavy 와
-    # 무관하게 선행하고, 메시지도 우회법(confirm_heavy)을 안내하지 않는다. gate 는 opt-in(기본 off)이며
-    # 운영자가 최대보호를 택한 것 — 정상 쿼리를 원하면 gate off/warn 으로 둔다. 사용자 승인 경로는 P7.
-    if guard_mode == "gate" and not _dialects.active().supports_load_estimate:
+    # 사전 부하추정 자체가 불가한 엔진(supports_load_estimate=False)은 gate 모드에서 confirm_heavy 와
+    # 무관하게 **하드 차단**한다(추정치 없이 "감수" 판단은 근거 없는 맹목 우회 — Codex-6). gate 는 opt-in
+    # (기본 off)이며 운영자가 최대보호를 택한 것 — 정상 쿼리를 원하면 gate off/warn 으로 둔다(P7 사용자 승인 경로).
+    # MSSQL 은 TASK-0299 부터 SHOWPLAN 으로 추정 지원(=True) → 본 분기 미해당(미래 엔진 방어용). MSSQL 의
+    # *추정 실패* fail-closed 는 아래 est is None 분기(gate_fail_closed_on_estimate_error)가 담당한다.
+    _dialect = _dialects.active()
+    if guard_mode == "gate" and not _dialect.supports_load_estimate:
         return (
-            "⚠ 이 데이터소스 엔진은 사전 부하추정(EXPLAIN)을 지원하지 않아, 부하게이트(gate) 모드에서 "
+            "⚠ 이 데이터소스 엔진은 사전 부하추정을 지원하지 않아, 부하게이트(gate) 모드에서 "
             "무거운 쿼리를 사전 차단합니다(fail-closed). WHERE 조건·기간·집계 범위를 좁히거나 TOP/행 "
             "제한을 추가해 더 작은 쿼리로 다시 시도하세요."
         )
-    if guard_mode in ("warn", "gate") and not confirm_heavy:
-        # MySQL 등 추정 지원 엔진: 종전대로(추정 실패는 fail-open — 정상 작업 비차단).
-        est = _estimate_explain_rows(conn, sql)
-        warn_thr = int(getattr(_cfg, "AGENT_QUERY_EXPLAIN_ROWS_WARN", 1000000) or 1000000)
-        if est is not None and est > warn_thr:
-            if guard_mode == "gate":
-                return (
-                    f"⚠ 무거운 쿼리로 추정됩니다 (EXPLAIN 예상 스캔 ~{est:,}행 > 임계 {warn_thr:,}행). "
-                    f"DB 부하를 줄이도록 WHERE 조건·기간·집계 범위를 좁히거나 LIMIT 을 추가해 다시 시도하세요. "
-                    f"전체 스캔이 정말 필요하면 같은 쿼리를 confirm_heavy=true 로 다시 호출하면 실행합니다."
+    if guard_mode in ("warn", "gate"):
+        # confirm_heavy=true 면 추정 생략(근거 있는 override)이 기본 — EXPLAIN/SHOWPLAN 오버헤드 0.
+        # 단 fail-closed 엔진(MSSQL)은 추정 *실패* 시 confirm_heavy 로도 우회 불가해야 하므로
+        # (M-4/Codex-6 — 추정치 없는 맹목 confirm 은 근거 없는 자기우회) 추정을 강제 수행해, None 이면
+        # confirm 여부와 무관하게 차단한다. 추정이 성공한 known-heavy 는 근거가 있으므로 confirm override 허용.
+        must_estimate = (not confirm_heavy) or (
+            guard_mode == "gate" and _dialect.gate_fail_closed_on_estimate_error
+        )
+        if must_estimate:
+            est = _estimate_explain_rows(conn, sql)
+            warn_thr = int(getattr(_cfg, "AGENT_QUERY_EXPLAIN_ROWS_WARN", 1000000) or 1000000)
+            if est is None:
+                # 추정 실패. MySQL=fail-open(골든 — EXPLAIN 실패는 드물고 정상 작업 비차단).
+                # MSSQL gate=fail-closed(M-4 — SHOWPLAN 미권한/연결 실패 시 무거운 쿼리 무방어 방지).
+                # confirm_heavy 로도 우회 불가(must_estimate 가 confirm 시에도 True 라 이 분기 진입).
+                if guard_mode == "gate" and _dialect.gate_fail_closed_on_estimate_error:
+                    return (
+                        "⚠ 사전 부하추정에 실패했습니다 (실행계획 미취득 — SHOWPLAN 권한·연결 확인). "
+                        "부하게이트(gate) 모드에서 안전을 위해 차단합니다. WHERE 조건·기간·집계 범위를 좁히거나 "
+                        "TOP/행 제한을 추가해 더 작은 쿼리로 다시 시도하세요."
+                    )
+            elif est > warn_thr and not confirm_heavy:
+                # 무거운 쿼리(추정치 보유) — confirm_heavy=true 면 근거 있는 override 로 실행한다.
+                if guard_mode == "gate":
+                    return (
+                        f"⚠ 무거운 쿼리로 추정됩니다 (예상 처리 ~{est:,}행 > 임계 {warn_thr:,}행). "
+                        f"DB 부하를 줄이도록 WHERE 조건·기간·집계 범위를 좁히거나 LIMIT/TOP 을 추가해 다시 시도하세요. "
+                        f"전체 스캔이 정말 필요하면 같은 쿼리를 confirm_heavy=true 로 다시 호출하면 실행합니다."
+                    )
+                cost_note = (
+                    f"⚠ 무거운 쿼리 (예상 처리 ~{est:,}행). 가능하면 다음엔 범위를 좁히세요."
                 )
-            cost_note = (
-                f"⚠ 무거운 쿼리 (EXPLAIN 예상 스캔 ~{est:,}행). 가능하면 다음엔 범위를 좁히세요."
-            )
     # per-query 시간 cap(폭주 backstop) 적용 — generous/off 기본.
     _apply_query_cap(conn)
     try:
@@ -1072,6 +1066,61 @@ def _tool_execute_sql(conn, args: dict) -> str:
         return f"SQL 실행 오류: {e}"
 
 
+def _format_mssql_showplan(result_sets) -> str:
+    """SET SHOWPLAN_ALL 결과를 사람이 읽기 쉽게 요약 — 핵심 컬럼(연산자·예상행·비용)만.
+
+    SHOWPLAN_ALL 은 18 컬럼이라 그대로 표시하면 노이즈가 크다. StmtText(연산자 트리)/PhysicalOp/
+    EstimateRows/EstimateExecutions/TotalSubtreeCost 만 투영하고, 예상 처리 행수(최대 operator)와
+    총 추정 비용(첫 행=statement root 의 TotalSubtreeCost)을 요약 라인으로 덧붙인다."""
+    for kind, columns, rows in result_sets:
+        if kind != "rows" or not isinstance(columns, list) or not isinstance(rows, list):
+            continue
+        lcols = [str(c).strip().lower() for c in columns]  # m2: 컬럼명 패딩 견고화
+        if "estimaterows" not in lcols:
+            continue
+
+        def _idx(name):
+            return lcols.index(name) if name in lcols else None
+
+        i_stmt, i_op = _idx("stmttext"), _idx("physicalop")
+        i_rows, i_exec, i_cost = _idx("estimaterows"), _idx("estimateexecutions"), _idx("totalsubtreecost")
+        out_cols = ["StmtText", "PhysicalOp", "EstimateRows", "EstimateExecutions", "TotalSubtreeCost"]
+        out_rows: list = []
+        max_eff: int | None = None
+        root_cost: float | None = None
+        for r in rows:
+            def _get(i):
+                try:
+                    return r[i] if i is not None else ""
+                except (IndexError, TypeError):
+                    return ""
+            er, ex, cost = _get(i_rows), _get(i_exec), _get(i_cost)
+            out_rows.append([str(_get(i_stmt)).strip()[:80], str(_get(i_op)).strip(), er, ex, cost])
+            try:
+                exf = float(ex) if ex not in ("", None) else 1.0
+                eff = int(round(float(er) * (exf if exf >= 1.0 else 1.0)))
+                if max_eff is None or eff > max_eff:
+                    max_eff = eff
+            except (ValueError, TypeError):
+                pass
+            if root_cost is None:
+                try:
+                    root_cost = float(cost)
+                except (ValueError, TypeError):
+                    pass
+        parts = ["추정 실행계획 (SET SHOWPLAN_ALL — 본 쿼리는 실행되지 않음):",
+                 _format_result_sets([("rows", out_cols, out_rows)])]
+        summary = []
+        if max_eff is not None:
+            summary.append(f"예상 처리 행수(최대 operator): ~{max_eff:,}행")
+        if root_cost is not None:
+            summary.append(f"총 추정 비용(TotalSubtreeCost): {root_cost:.4f}")
+        if summary:
+            parts.append(" · ".join(summary))
+        return "\n\n".join(parts)
+    return "실행계획을 취득했으나 예상 행수 컬럼(EstimateRows)을 찾지 못했습니다 (SHOWPLAN 형식 확인)."
+
+
 def _tool_explain_query(conn, args: dict) -> str:
     sql = str(args.get("sql", "")).strip()
     if not sql:
@@ -1080,15 +1129,22 @@ def _tool_explain_query(conn, args: dict) -> str:
     err = _freeform_sql_access_error(sql)
     if err:
         return err
-    # P6: dialect 별 EXPLAIN — MSSQL 은 EXPLAIN 구문이 없어 None → 안내 메시지(원문 미실행).
-    explain_sql = _dialects.active().explain(sql)
-    if not explain_sql:
-        return "이 데이터소스 엔진은 EXPLAIN 을 지원하지 않습니다 (실행 계획 미제공)."
+    dialect = _dialects.active()
+
+    def _run(stmt: str):
+        result_sets, _ = _raw_execute_sql(conn, stmt)
+        return result_sets
+
+    # 엔진별 실행계획 — MySQL=EXPLAIN, MSSQL=SET SHOWPLAN_ALL (둘 다 본 쿼리 미실행, TASK-0299).
     try:
-        result_sets, _ = _raw_execute_sql(conn, explain_sql)
-        return _format_result_sets(result_sets)
+        result_sets = dialect.explain_plan(_run, sql)
     except Exception as e:
-        return f"EXPLAIN 오류: {e}"
+        return f"실행계획 조회 오류: {e}"
+    if result_sets is None:
+        return "이 데이터소스 엔진은 실행계획(EXPLAIN/SHOWPLAN) 조회를 지원하지 않습니다."
+    if str(dialect.name).lower() == "mssql":
+        return _format_mssql_showplan(result_sets)
+    return _format_result_sets(result_sets)
 
 
 def _tool_get_table_indexes(conn, args: dict) -> str:

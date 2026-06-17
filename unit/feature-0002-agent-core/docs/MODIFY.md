@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260617-0310 (TASK-0299 — MSSQL 사전 부하추정 SET SHOWPLAN_ALL)
+- Date: 2026-06-17 (TASK-0299, **Major §12.3** — datasource 실행/보안 경로)
+- Scope: MSSQL datasource 부하 게이트를 EXPLAIN-미지원 일괄 차단(`supports_load_estimate=False`)에서 **SHOWPLAN_ALL 추정 기반**으로 전환. MySQL 동작 0 변경(골든). 보안경계(allowlist/sql_guard/RBAC/엔드포인트) 변경 0.
+- 근본: MSSQL 은 EXPLAIN 구문이 없어 사전 부하추정 불가 → gate=무거운/가벼운 쿼리 무차별 fail-closed 차단(과보호), warn/off=무방어. MySQL 처럼 *추정* 으로 무거운 쿼리만 게이팅 필요(사용자 요청).
+- 변경:
+  - `dialects.py`: `MSSQLDialect.supports_load_estimate=True`, `gate_fail_closed_on_estimate_error=True`. `_showplan(run, sql)` = `SET SHOWPLAN_ALL ON` → sql(미실행, 추정 plan) → `finally` 로 `OFF` 보장(**세션 poison 방지 Codex-7**: 공유 conn 에 SHOWPLAN 잔존 시 이후 실쿼리가 데이터 대신 plan 반환=조용한 오염). `estimate_load_rows`=plan 의 `EstimateRows×EstimateExecutions` 최대 operator. `explain_plan`=plan result_sets. MySQL `estimate_load_rows`/`explain_plan` 은 기존 `EXPLAIN {sql}` 산식 그대로 이관(`_parse_explain_rows_product`). 구 `explain()` 메서드 제거(두 신규 메서드로 대체).
+  - `tools.py`: `_estimate_explain_rows` 를 엔진무관 wrapper 로(dialect 에 `_run` 실행 콜백 주입 — dialects 가 db/tools 미import, 계층 보존). 게이트 `must_estimate` 재구조화 — confirm_heavy=true 면 추정 생략이 기본이나 **fail-closed 엔진(MSSQL)은 추정 강제 수행해 None 이면 confirm 무관 차단**(M-4/Codex-6 맹목 confirm 무력화), 추정 성공 known-heavy 만 confirm override 허용. `_tool_explain_query` 엔진별(`explain_plan`)+MSSQL SHOWPLAN 요약(`_format_mssql_showplan`). 게이트 메시지·도구 description 엔진중립화(예상 처리 행수).
+  - `bin/datasource-mssql-ro-bootstrap.sql`/`-multidb.sql`: `GRANT SHOWPLAN` 추가(데이터 읽기 아님·추정 plan 생성만 → 최소권한 RO deny-by-default 양립) + 검증 라인. 미부여 시 gate=안전차단/warn·off=무경고 graceful degrade.
+- 보안: SHOWPLAN 은 본 쿼리를 실행하지 않음(부하 0). 추정 실패 fail-closed(gate)로 현행 안전 보존, confirm_heavy 우회 차단(Codex-6). sql_guard/allowlist 가 SHOWPLAN 전 단계 게이트 유지.
+- Files: src/modules/{dialects,tools}.py, bin/datasource-mssql-ro-bootstrap{,-multidb}.sql, tests/{test_mssql_load_estimate(신규),test_mssql_security_boundary,test_multi_datasource}.py, docs/{FUNCTION,TASK,MODIFY,REVIEW}.md, DESIGN-multi-datasource.md
+- Rollback: `MSSQLDialect.supports_load_estimate=False` 복귀 시 구 일괄 fail-closed 동작(코드 단일 플래그). 또는 운영상 `AGENT_QUERY_GUARD_MODE=off`.
+- Deploy: web + ask-worker + insight-worker 재빌드(dialects.py/tools.py = agent-core 3 이미지 공유 baked). RO 부트스트랩 SQL 은 운영자가 각 MSSQL 서버에서 재실행(SHOWPLAN 부여) — gate/warn 운영 시 필요.
+
 ## CHG-20260616-0300 (TASK-0290 evidence — 라이브 검증 기록, docs-only)
 - Date: 2026-06-16 (TASK-0290 evidence, 코드 무변경)
 - Scope: TEST.md 에 TASK-0290 배포·라이브 검증 결과 기록.

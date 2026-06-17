@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260617-0310 [SUBAGENT:adversarial — 세션 poison / fail-closed 우회 / MySQL 골든 / SHOWPLAN 파싱 / 권한·계층 / 테스트기만] — SHIP-WITH-FIXES
+- Date: 2026-06-17
+- Cycle: TASK-0299 (MSSQL 사전 부하추정 SET SHOWPLAN_ALL — MySQL EXPLAIN 등가, Major §12.3). datasource 실행/보안 경로 변경 → DESIGN-multi-datasource §11 + [[feedback_outside_voice_for_rbac]] 정합으로 outside-voice 필수.
+- 패널: 적대적 코드 리뷰어 1(기본 입장 "위험하다—반증하라"). working-tree diff 전량 + 실제 코드/테스트 대조, 6개 가설 confirm/refute.
+- Verdict: **SHIP-WITH-FIXES (BLOCKER 0)**. 핵심 안전속성 전부 confirmed:
+  - **세션 poison [REFUTED 안전]**: `_showplan` 이 ON 성공 시 `finally` 로 OFF 보장(조회예외 포함), ON 실패 시 OFF skip 정확, OFF 실패는 `try/except pass` 흡수(반환값 마스킹 없음). gate 도달 전 sql_guard 가 단일 SELECT 강제 → user SQL 에 SET 끼워넣기 불가. pymssql 단일 TDS 세션이라 ON 이 다음 cursor SELECT 에 적용(plan 만 반환, 본 쿼리 미실행=부하 0).
+  - **fail-closed 우회 [REFUTED 안전]**: `must_estimate` 가 MSSQL gate 에서 confirm_heavy=true 라도 추정 강제 → est None 차단(우회 불가, Codex-6). known-heavy + confirm 만 override. TRUST_LLM=false 면 더 보수적.
+  - **MySQL 골든 [REFUTED 안전]**: rows×filtered 곱 산식 바이트 동등(`_parse_explain_rows_product`), confirm_heavy 시 추정 생략 유지(불필요 EXPLAIN 0), gate 추정 None→fail-open 유지.
+  - **권한·계층 [REFUTED 안전]**: SHOWPLAN≠데이터 읽기, deny-by-default 단일-DB 모델 불변, dialects 가 db/tools import 0(콜백 주입), multidb GRANT QUOTENAME 인젝션 안전.
+- 흡수한 FIX:
+  - **M1(MAJOR, 과소추정)**: `EstimateRows`=operator 출력 추정이라 잔여술어 비인덱스 풀스캔 과소추정 가능. → 코드 docstring + FUNCTION.md 에 한계 명시 + 런타임 시간 cap(`_apply_query_cap`) 이 스캔-부하 2차 방어임을 문서화. 비용기반(`TotalSubtreeCost`) 보조 임계는 후속 cycle 이월(rows 임계와 단위 상이 + 신규 env 튜닝 → scope). ship 차단 아님(런타임 cap 완화).
+  - **m1(MINOR)**: `db.execute_sql` 의 `nextset()` 미호출(SHOWPLAN_ALL 단일 result-set 가정) 의존성을 `_showplan` docstring 에 명시. 형식 변경 시 None→fail-closed(안전 방향).
+  - **m2(MINOR)**: SHOWPLAN 컬럼명 패딩 견고화 — `_parse_showplan_estimate`/`_format_mssql_showplan` `lcols` 에 `.strip()`. 회귀 테스트 `test_mssql_estimate_column_name_padding_robust` 추가.
+- 검증: 신규 `test_mssql_load_estimate.py` 20 + 골든 `test_query_guard.py` 16 회귀 0 + `test_mssql_security_boundary.py`(계약 갱신)·`test_multi_datasource.py`(golden API 갱신) + **make test 컨테이너 feature-0002+0003 전체 PASS(2 skip) + ruff All checks passed**. CHG-20260617-0310.
+
 ## REV-20260615-0255 [SUBAGENT:5-lens adversarial — db.py blast-radius / GRANT trap / credential-leak / soft-telemetry / regression] — SHIP_WITH_FIXES
 - Date: 2026-06-15
 - Cycle: TASK-0255 (insight 연결 탄력성 R1 로그 edge-trigger / R2 PG datasource_health / R3 control-plane bounded timeout)
