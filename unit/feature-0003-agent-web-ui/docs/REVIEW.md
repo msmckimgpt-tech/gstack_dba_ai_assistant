@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260617T040000-ai-claude-task0293-profile-icons-pb0008 [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-17 (TASK-0293 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence)
+- Skip 사유: docs 전용(TEST/TASK/MODIFY/REVIEW). 코드/정적자산/스키마/RBAC 무변경 — 본체 검토는 REV-20260617T034455-ai-claude-task0293-profile-icons [SUBAGENT:profile-icon-rbac-review] (SHIP) 담당.
+- 기록 요지: TASK-0293 PB-0008 **PASS**(실 Chrome/148.0.7778.217, 배포본 main `7a52a66`, healthz git_commit 일치). win-browser eval 실측 — **AC-0542**: `#accountList` 아바타 15 = img 1(작업화면 업로드 아바타가 관리 콘솔에 반영 = 사용자 보고 버그 해소)+Identicon svg 14+이니셜 0. **AC-0544**: `#roleList` 아바타 5 = Identicon svg 5(role_key 시드)+이니셜 0, `WebRoles.IconObjectKey` 라이브 반영. **AC-0543**: 관리자→타계정 `DQA_ADMIN`(#30) 아바타 `PUT /api/admin/accounts/30/avatar` 200·서빙 200 image/png·상세 ✎ 오버레이+제거+img. **AC-0545**: 역할 `pending`(#1) `PUT /api/admin/roles/1/icon` 200·서빙 200·상세 ✎ 오버레이+제거+img. 검증 후 테스트 업로드 DELETE 200/200 으로 Identicon 복원(운영 무오염). evidence `artifacts/pb0008-task0293/admin-account-role-icons.png`.
+
 ## REV-20260617T034455-ai-claude-task0293-profile-icons [SUBAGENT:profile-icon-rbac-review]
 - Date: 2026-06-17 (TASK-0293 — 프로필 아이콘 전 구간 조회·수정: 관리 콘솔 계정·역할; REQ-20260617-0291, AC-0542~0545, Major §12.3)
 - 트리거: 신규 admin mutation 엔드포인트 4 + 비파괴 스키마 1컬럼 + RBAC-adjacent(관리자가 타 계정 아바타·역할 아이콘 변경). `feedback_outside_voice_for_rbac.md` 정합 — 외부(적대적) 시각 패널 호출.
