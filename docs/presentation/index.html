@@ -296,7 +296,7 @@ kbd{font-family:var(--mono);font-size:10.5px;background:var(--bg);border:1px sol
 
 
 /* 클릭 시 상세 설명이 열리는 항목 */
-[data-explain]{cursor:pointer;transition:filter .35s ease}
+[data-explain]{cursor:pointer;transition:filter .5s ease}
 @media(hover:hover){[data-explain]:hover{outline:1.5px solid #cdd9f5;outline-offset:3px;border-radius:9px}}
 /* Ctrl 키를 누르고 있는 동안: 클릭 가능한 항목 주위로 glow 가 천천히 fade-in/out — outline 없이
    발표자만 간접적으로 알아볼 수 있게 (filter drop-shadow 라 항목 고유의 그림자/레이아웃은 건드리지 않음) */
@@ -864,11 +864,31 @@ body.find-explain [data-explain]{animation:findglow 2.1s ease-in-out infinite}
     else if(e.key==='End'){go(slides.length-1,{allFrags:true});}
   });
 
-  // Ctrl(또는 ⌘) 키를 누르고 있는 동안 클릭 가능한 항목을 강조 — 발표 중 상호작용 지점을 쉽게 찾기 위함
-  function setFind(on){document.body.classList.toggle('find-explain',!!on);}
+  // Ctrl(또는 ⌘) 키를 누르고 있는 동안 클릭 가능한 항목을 강조 — 발표 중 상호작용 지점을 쉽게 찾기 위함.
+  // 키를 떼면(keyup/blur) 갑자기 사라지지 않고: 현재 glow 값을 inline 으로 고정 → 애니메이션 중단 →
+  // base transition(.5s)으로 0 까지 부드럽게 fade-out. (애니메이션만 제거하면 transition 이 안 걸려 snap 됨)
+  var findFadeTimer=null;
+  function clearFindInline(){Array.prototype.slice.call(document.querySelectorAll('[data-explain]')).forEach(function(el){el.style.filter='';});}
+  function setFind(on){
+    var b=document.body;
+    if(on){
+      if(findFadeTimer){clearTimeout(findFadeTimer);findFadeTimer=null;}
+      clearFindInline();           // 진행 중이던 fade-out 정리 후 재강조
+      b.classList.add('find-explain');
+      return;
+    }
+    if(!b.classList.contains('find-explain'))return;
+    var els=Array.prototype.slice.call(document.querySelectorAll('.slide.is-active [data-explain]'));
+    els.forEach(function(el){el.style.filter=getComputedStyle(el).filter;}); // 현재 glow 고정
+    b.classList.remove('find-explain');                                       // breathing 애니메이션 중단
+    void b.offsetWidth;                                                       // reflow → 고정값을 transition 시작점으로
+    els.forEach(function(el){el.style.filter='none';});                        // base transition(.5s)으로 0 까지 fade-out
+    if(findFadeTimer)clearTimeout(findFadeTimer);
+    findFadeTimer=setTimeout(function(){clearFindInline();findFadeTimer=null;},560);
+  }
   document.addEventListener('keydown',function(e){if(e.key==='Control'||e.key==='Meta'||e.ctrlKey||e.metaKey)setFind(true);});
   document.addEventListener('keyup',function(e){if(!e.ctrlKey&&!e.metaKey)setFind(false);});
-  window.addEventListener('blur',function(){setFind(false);}); // alt-tab 등으로 포커스가 빠지면 강조 해제
+  window.addEventListener('blur',function(){setFind(false);}); // alt-tab 등으로 포커스가 빠지면 부드럽게 해제
   deck.addEventListener('click',function(e){
     var ex=e.target.closest&&e.target.closest('[data-explain]');
     if(ex){openPop(ex.getAttribute('data-explain'));return;}   // 항목 클릭 → 팝업 열기/교체 (열린 상태에서도 동작)
