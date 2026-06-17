@@ -9,15 +9,22 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
-**2026-06-17 TASK-0299 완료 — 설치 스크립트 실행 버그 2종 수정** (CHG-20260617-0310,
-REV-20260617-0310, REQ-0286, AC-0562~0563, **Minor** §12.3). 라이브에서 Windows `.bat` 실행 시
+**2026-06-17 TASK-20260617T083954-ai-claude-id-collision-fix 완료 — 동시세션 ID 충돌 정리(비-일련번호 전환)**
+(CHG/REV-20260617T083954-ai-claude-id-collision-fix, **Minor** §12.3). feature-0002(MSSQL, #309
+선머지)와 전역 충돌한 feature-0006 의 6 ID(TASK-0298/0299·AC-0562/0563·CHG/REV-20260617-0310)를
+§6/ADR-0025 **timestamp+branch 형식**(`<PREFIX>-<YYYYMMDDTHHMMSS>-<branch>`)으로 재번호. 사용자
+결정으로 AC 도 본건 한정 timestamp 형식(ADR-0024 순번 기본의 예외). feature-0002 미변경, 비-충돌 ID
+(TASK-0296/0297·AC-0549~0561·CHG/REV-0307~0309) 보존. 14 파일 sed + 번들 재생성. 기능 무변경.
+
+**2026-06-17 (구 TASK-0299) 완료 — 설치 스크립트 실행 버그 2종 수정** (CHG-20260617T083954-ai-claude-bat-encoding-fix,
+REV-20260617T083954-ai-claude-bat-encoding-fix, REQ-0286, AC-20260617T083954-ai-claude-bat-encoding-fix-01~02, **Minor** §12.3). 라이브에서 Windows `.bat` 실행 시
 `echo`→`cho`·base64 명령실행 파싱붕괴 제보. ①LF+UTF-8+`chcp 65001`→cmd.exe 코드페이지 오프셋
 상실 → ASCII전용+CRLF+chcp제거(trust-bundle.sh CRLF출력+비-ASCII die). ②지문 비교가 PEM **파일**
 해시 vs 인증서 **DER** 지문이라 항상 불일치(잠복) → DER SHA-256(win X509Certificate2.RawData, mac
 openssl -fingerprint)로 통일. cmd.exe 실측: neuter 후 echo/지문/디코드/지문검증(ACTUAL==FP_HEX)
 전구간 정상. 배포=`bin/trust-bundle.sh` 재실행(file_server 즉시 서빙).
 
-**2026-06-17 TASK-0298 완료 — 테스터 Root CA 원클릭 설치 번들** (CHG-20260617-0309,
+**2026-06-17 TASK-20260617T083954-ai-claude-trust-bundle 완료 — 테스터 Root CA 원클릭 설치 번들** (CHG-20260617-0309,
 REV-20260617-0309, REQ-0285, AC-0557~0561, **Major** §12.3, ADR-LAN-0004). 테스터 PC 마다
 수동 인증서 이동 번거로움 해소. web 서버가 `http://<host>/trust/` 에서 OS별 단일 자가완결 설치
 스크립트(Root CA base64 임베드, 자가-상승, 지문 재검증, certutil/security) + OS감지 다운로드

@@ -1,6 +1,6 @@
 # Trust bundle (테스터 Root CA 원클릭 설치)
 
-feature-0006-lan-proxy-access / TASK-0298. 테스터가 PC 마다 수동으로 인증서를 옮기지
+feature-0006-lan-proxy-access / TASK-20260617T083954-ai-claude-trust-bundle. 테스터가 PC 마다 수동으로 인증서를 옮기지
 않도록, web 서버가 `http://<host>/trust/` 에서 제공하는 설치 번들의 **템플릿** 디렉토리.
 
 ## 구성

@@ -213,7 +213,7 @@ echo
 log "배포 파일 (테스터 PC 에 설치): $ROOT_CA_CERT"
 log "서버 leaf 인증서:             $LEAF_CERT  (web/caddy 가 자동 서빙)"
 
-# --- 4) 테스터 신뢰 설치 번들 갱신 (TASK-0298, 있으면 자동) ---
+# --- 4) 테스터 신뢰 설치 번들 갱신 (TASK-20260617T083954-ai-claude-trust-bundle, 있으면 자동) ---
 TRUST_BUNDLE_SH="$SCRIPT_DIR/trust-bundle.sh"
 if [ -x "$TRUST_BUNDLE_SH" ] || [ -f "$TRUST_BUNDLE_SH" ]; then
   log "테스터 설치 번들 갱신 (trust-bundle.sh) ..."
