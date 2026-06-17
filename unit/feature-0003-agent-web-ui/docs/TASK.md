@@ -4101,3 +4101,15 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - 근본원인: `renderProductList()` 의 제품명 요소가 `admin-account-name`(15px, 700) 을 사용 — 다른 목록(계정·역할·데이터소스)은 `admin-list-row-name`(13px, 600) 사용. 컨테이너도 `admin-list-main`(CSS 미정의) vs `admin-list-row-main`(flex column, gap 2px, min-width 0) 불일치.
 - [x] admin.js `renderProductList()`: 이름 요소 `div.admin-account-name` → `span.admin-list-row-name`, 컨테이너 `admin-list-main` → `admin-list-row-main`. 2줄 변경, frontend-only.
 - [x] 배포(web 재빌드, deploy_scope: included) → 라이브 확인(제품 탭 항목 글꼴이 계정/역할과 동일 크기) → 마감. PB-0008 render-injection PASS(productFontSize=13px/600=accountFontSize, match=true). 스크린샷 `artifacts/pb0008-task0301/products_font_fix.png`. CHG-20260617-0311 / REV-20260617-0311[SKIPPED].
+
+### TASK-0302 — 관리 콘솔 제품 일괄 삭제 미적용 (다중선택 pending→"마지막만 적용") + bulk staging 목록 즉시 반영 (Major §12.3, 2026-06-17)
+- 사용자 보고(/_template:entry): 관리 콘솔에서 다중선택(체크박스)의 변경점이 pending 돼도 "모두 적용" 시 마지막으로 수정한 사항만 적용됨.
+- 전수 조사(코드 + 백엔드 실측 + 라이브 브라우저): 계정·역할·제품 일괄 활성/비활성, 권한 grid, 제품 상세, 시스템 프롬프트, 대시보드 위젯, 신규 역할 다중 생성, **단일 제품 삭제(직접 DELETE)** 는 전부 정상. 배포본 admin.js md5 = 소스 동일. 깨진 것은 **제품 일괄 삭제**뿐.
+- 근본 원인: `applyAllPending` 의 productMeta 루프가 `_delete` 플래그 미처리(account/role 루프와 비대칭) → bulk "삭제 pending" 이 빈 body→요청 0건→pending 만 조용히 비워짐(삭제 0건). 혼합 편집(제품 메타 수정 + 다중 삭제) 시 수정한 제품만 PATCH 반영 → "마지막으로 수정한 것만 적용"으로 보임.
+- [x] `applyAllPending` productMeta `_delete` → `DELETE /api/admin/products/{id}`(단일 삭제와 동일 엔드포인트, account/role 정합).
+- [x] bulkProductDelete/bulkProductSetActive/bulkAccount*/bulkRole*: staging 후 `renderXList()` — pending 점(•)/삭제대기 즉시 반영.
+- [x] 제품 행 pending 마커(`has-pending`/`is-to-delete` + dot) 신설 — `renderProductList` 재렌더가 실제 표시(외부리뷰 MINOR 흡수).
+- [x] 백엔드 `admin_delete_product`: 기본 제품(IsDefault) 삭제 **409** 차단 + 미존재 **404**(외부리뷰 MAJOR 흡수 — bulk DELETE 경로가 서버 도달, client-trust 가드 보강; 단일 삭제도 보호).
+- [x] 라이브 검증(실 running stack + 브라우저): 수정 전 제품 3개 일괄 삭제 → 0건 삭제, 수정 후 → 3건 전부 삭제. is-to-delete rows=2·pendingDots=2. 회귀(역할 일괄 비활성 2/2) 정상. node --check + py ast.parse.
+- [x] outside-voice 적대 리뷰 SHIP-WITH-FIXES(REV-20260617-0312) — 의도외 삭제 0(refuted)·partial-fail 안전·기본제품 backend 가드(MAJOR 흡수)·제품 행 마커(MINOR 흡수).
+- [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → 라이브 재검증(기본 제품 삭제 409·일괄 삭제 N건 전부·pending 마커) + PB-0008 Windows-browser → 마감.

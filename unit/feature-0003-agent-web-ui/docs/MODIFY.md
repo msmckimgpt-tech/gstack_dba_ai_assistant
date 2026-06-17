@@ -4044,3 +4044,12 @@ source_of_truth: true
 - Files: feature-0003 src/static/admin.js, docs/{TASK,MODIFY,REVIEW}.md.
 - Rollback: 두 클래스명을 원복(`admin-account-name`, `admin-list-main`). 시각만 원복, 기능 무영향.
 - Deploy: web 재빌드 1 이미지(프론트 baked). deploy_scope: included.
+
+## CHG-20260617-0312
+- Date: 2026-06-17 (TASK-0302 — 관리 콘솔 제품 일괄 삭제 미적용 + bulk staging 목록 즉시 반영).
+- Scope: frontend admin.js + admin.html(cache-buster) + backend app.py(admin_delete_product 가드). 스키마 0, 신규 권한 0.
+- 내용: ① **근본 수정** — `applyAllPending` 의 productMeta 루프가 `_delete` 플래그를 미처리(account/role 루프와 비대칭)해 bulk "삭제 pending"→"모두 적용" 이 빈 body·요청 0건으로 조용히 무효였음. `if (patch._delete) → DELETE /api/admin/products/{id}` 추가(단일 삭제·account/role 정합). 혼합 편집(제품 메타 수정 + 다중 삭제) 시 "마지막 수정 제품만 적용"으로 보이던 증상의 근본. ② bulkProductDelete/bulkProductSetActive/bulkAccount*/bulkRole* staging 후 `renderXList()` + 제품 행 pending 마커(`has-pending`/`is-to-delete`/dot) 신설(계정·역할 동형 — 이전엔 제품 행 마커 부재). ③ 백엔드 `admin_delete_product`: 기본 제품(IsDefault) **409** + 미존재 **404** 가드(defense-in-depth — bulk DELETE 가 서버 도달, 프론트 canTargetRow client-trust 보강; 단일 삭제도 보호).
+- Why: 사용자 보고 "다중선택 변경점 pending 돼도 마지막만 적용". 전수 조사 결과 깨진 것은 제품 일괄 삭제뿐(나머지 bulk·grid·prompt·단일 삭제 정상).
+- Verification: 라이브(실 running stack + 브라우저) 수정 전 제품 3개 일괄 삭제 → 0건, 수정 후 → 3건 전부 삭제. is-to-delete rows=2·pendingDots=2. 회귀(역할 일괄 비활성 2/2) 정상. node --check + py ast.parse. 외부리뷰 SHIP-WITH-FIXES(REV-20260617-0312 — MAJOR 기본제품 가드·MINOR 제품행 마커 흡수).
+- Rollback: 3 파일 revert(admin.js _delete 분기·renderXList·제품 마커, admin.html cache-buster, app.py IsDefault/404 가드).
+- Deploy: web 재빌드(deploy_scope: included). 라이브 재검증 = 기본 제품 삭제 409 + 일괄 삭제 N건 전부 + pending 마커 + PB-0008.

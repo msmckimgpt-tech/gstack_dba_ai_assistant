@@ -3124,3 +3124,17 @@ source_of_truth: true
 - Trigger: §18.4 — RBAC·스키마·엔드포인트 무변경, 시각 정합 2줄 CSS 클래스 교체(보안 surface 없음). panel 생략 정당.
 - Verdict: **[SKIPPED]** — `admin-account-name`(15px) → `admin-list-row-name`(13px) 클래스 교체. 데이터 흐름·권한·스키마 무영향. 기능 회귀 없음(동일 텍스트 노출, 크기만 변경).
 - Cross-ref: CHG-20260617-0311 / TASK-0301.
+
+## REV-20260617-0312 [SUBAGENT:bulk-delete-apply-safety]
+- Date: 2026-06-17
+- Cycle: TASK-0301 (관리 콘솔 제품 일괄 삭제 미적용 + bulk staging 목록 즉시 반영), Major §12.3 — 파괴적 삭제 경로 활성화.
+- Trigger: §18.8 — 그동안 무효였던 파괴적 동작(제품 일괄 삭제) 활성화. 적대적 outside-voice 리뷰(general-purpose, REFUTE 지향).
+- Verdict: **SHIP-WITH-FIXES** → 권고 흡수 후 SHIP.
+- 적대 검증 6항목: ① 의도외 삭제 — **REFUTED**(`_delete` 는 `bulkProductDelete` 만 staging, 제품 상세 편집기엔 delete 버튼 없음→PATCH-only 행에 stray `_delete` 불가, DELETE 분기는 `if (patch._delete)` 엄격 게이트) ② 기본 제품 보호 — **REAL MAJOR**(백엔드 무가드, 프론트 canTargetRow 만) ③ 혼합 PATCH+DELETE — MINOR by-design(`_delete` 우선, account/role 정합, 삭제 행 편집 폐기는 정확) ④ partial-fail — **REFUTED**(per-item try/catch, 실패 시 `pending.delete` 미도달→pending 보존+failures, `loadAdminData` 재동기화, 백엔드 tx rollback) ⑤ renderXList 회귀 — MOSTLY REFUTED + MINOR(제품 행 pending 마커 부재로 cosmetic no-op) ⑥ cascade — MINOR 기존·의도적(hard delete + 참조 대화 '차단' 전환 TASK-0248).
+- 흡수한 권고:
+  - **MAJOR (기본 제품 backend 가드)**: `DELETE /api/admin/products/{id}` 에 `IsDefault`→409 + 미존재→404 추가. bulk DELETE 경로가 이제 실제 서버 도달 → 프론트 canTargetRow(client-trust)만으론 destructive cascade 보호 불충분. 단일 삭제 경로도 동일 가드 적용. **흡수 완료**.
+  - **MINOR (제품 행 pending 마커)**: 제품 행에 `has-pending`/`is-to-delete` + pending dot 신설(계정/역할 동형) → `renderProductList` 재렌더가 실제 시각 표시. **흡수 완료**(라이브 is-to-delete rows=2·pendingDots=2 확인). 주석도 정합화.
+  - MINOR (혼합 by-design)·MINOR (cascade 기존) — 무조치(정확/의도).
+- Verification: 라이브(실 running stack + 브라우저) 수정 전 0/3 → 수정 후 3/3 삭제, 회귀 역할 일괄 비활성 2/2, node --check + py ast.parse. **화면 정본 = PB-0008(배포 후)**.
+- Residual: 머지 → 배포(web 재빌드) → 라이브 재검증(기본 제품 삭제 409·일괄 삭제 전부·pending 마커) + PB-0008 Windows-browser.
+- Cross-ref: CHG-20260617-0312 / TASK-0302 / TASK-0300·TASK-0301(동시세션 식별자 충돌로 재번호된 별건들).

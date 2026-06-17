@@ -3951,6 +3951,7 @@ function bulkAccountSetActive(active) {
       return true;
     },
   });
+  renderAccountList();  // TASK-0302: pending 점(•) 즉시 반영
 }
 
 function bulkAccountDelete() {
@@ -3969,6 +3970,7 @@ function bulkAccountDelete() {
       return true;
     },
   });
+  renderAccountList();  // TASK-0302: pending 점(•)/삭제대기 표시 즉시 반영
 }
 
 function selectAccount(accountId) {
@@ -4546,6 +4548,7 @@ function bulkRoleSetActive(active) {
     applyFn: (key) => setRolePending(Number(key), { is_active: active }),
     canTargetRow: (key) => !String(key).startsWith("new:"),
   });
+  renderRoleList();  // TASK-0302: pending 점(•) 즉시 반영
 }
 
 function bulkRoleDelete() {
@@ -4558,6 +4561,7 @@ function bulkRoleDelete() {
     applyFn: (key) => setRolePending(Number(key), { _delete: true }),
     canTargetRow: (key) => !String(key).startsWith("new:"),
   });
+  renderRoleList();  // TASK-0302: pending 점(•)/삭제대기 표시 즉시 반영
 }
 
 function selectRole(roleKey) {
@@ -5031,21 +5035,30 @@ async function applyAllPending() {
     }
   }
 
-  // Product metadata patches
+  // Product metadata patches / deletes
   for (const [productId, patch] of productMetaEntries) {
     try {
-      const body = {};
-      if (patch.name !== undefined) body.name = patch.name;
-      if (patch.description !== undefined) body.description = patch.description;
-      if (patch.is_active !== undefined) body.is_active = Boolean(patch.is_active);
-      if (patch.is_default !== undefined) body.is_default = Boolean(patch.is_default);
-      if (patch.sort_order !== undefined) body.sort_order = Number(patch.sort_order) || 100;
-      if (patch.default_role_access !== undefined) body.default_role_access = Boolean(patch.default_role_access);
-      if (Object.keys(body).length > 0) {
-        await apiFetch(`/api/admin/products/${Number(productId)}`, {
-          method: "PATCH",
-          body: JSON.stringify(body),
-        });
+      if (patch._delete) {
+        // TASK-0302: bulk "삭제 pending" 가 _delete 플래그만 스테이징했으나 이 루프가 _delete 를
+        //   처리하지 않아 빈 body → 요청 0건 → pending 만 조용히 비워짐(삭제가 전혀 안 됨).
+        //   account/role 루프와 동일하게 DELETE 를 호출한다(단일 삭제=제품 상세 '삭제' 버튼과 동일
+        //   엔드포인트; 참조 대화는 서버가 '차단'으로 전환). 혼합 편집(다른 제품 메타 수정 + 다중
+        //   삭제) 시 '마지막으로 수정한 제품만 적용' 처럼 보이던 증상의 근본 원인.
+        await apiFetch(`/api/admin/products/${Number(productId)}`, { method: "DELETE" });
+      } else {
+        const body = {};
+        if (patch.name !== undefined) body.name = patch.name;
+        if (patch.description !== undefined) body.description = patch.description;
+        if (patch.is_active !== undefined) body.is_active = Boolean(patch.is_active);
+        if (patch.is_default !== undefined) body.is_default = Boolean(patch.is_default);
+        if (patch.sort_order !== undefined) body.sort_order = Number(patch.sort_order) || 100;
+        if (patch.default_role_access !== undefined) body.default_role_access = Boolean(patch.default_role_access);
+        if (Object.keys(body).length > 0) {
+          await apiFetch(`/api/admin/products/${Number(productId)}`, {
+            method: "PATCH",
+            body: JSON.stringify(body),
+          });
+        }
       }
       adminState.pending.productMeta.delete(productId);
       ok += 1;
@@ -5831,6 +5844,13 @@ function renderProductList() {
     row.setAttribute("role", "row");
     if (Number(adminState.selectedProductId) === Number(p.id)) row.classList.add("is-active");
     if (!p.is_active) row.classList.add("is-disabled");
+    // TASK-0302: 제품 행도 계정/역할처럼 pending 변경/삭제대기 시각 표시(외부리뷰 MINOR — 이전엔 제품
+    //   행에 pending 마커가 없어 bulk staging 후 renderProductList 재렌더가 무표시였다). productMeta pending 기준.
+    const _pmPending = adminState.pending.productMeta.get(Number(p.id));
+    if (_pmPending) {
+      row.classList.add("has-pending");
+      if (_pmPending._delete) row.classList.add("is-to-delete");
+    }
 
     // DESIGN.md §12 Phase A — row checkbox (multi-select 신설), detail panel 은 단일 selectedProductId 유지
     const cb = document.createElement("input");
@@ -5876,7 +5896,11 @@ function renderProductList() {
     const name = document.createElement("span");
     name.className = "admin-list-row-name";
     name.textContent = `(${p.product_key}) ${p.name}`;
-    titleRow.append(avatar, name);
+    const pendingDot = document.createElement("span");  // TASK-0302: pending 변경 표시(계정/역할 행과 동형)
+    pendingDot.className = "admin-pending-dot";
+    pendingDot.title = "pending 변경 있음";
+    pendingDot.textContent = _pmPending ? "•" : "";
+    titleRow.append(avatar, name, pendingDot);
     const sub = document.createElement("div");
     sub.className = "admin-meta";
     const badges = [];
@@ -5978,15 +6002,18 @@ function bulkProductSetActive(active) {
       return !!base;
     },
   });
-  // pending 반영 후 detail 새로고침 (선택된 product 의 active 상태가 바뀐 경우 UI 일관성)
+  // TASK-0302: pending 스테이징 후 목록 재렌더 — 선택 행의 pending 점(•)/상태를 즉시 반영
+  //   (상세 편집 경로는 renderXList 를 호출하나 bulk 경로는 누락돼 "반영 안 된 듯" 보이던 불일치).
+  renderProductList();
   if (adminState.selectedProductId) renderProductDetail();
 }
 
 function bulkProductDelete() {
   const count = adminState.productSelected.size;
   if (!confirmBulkAction({ entity: "products", action: "delete", count, danger: true })) return;
-  // product 삭제는 catalog 영향이 큼 (Role/Account 권한 grid 도 의존). 본 cycle 은 deletion API 가 마련된 경우만 적용.
-  // 현재 product.manage 권한 + setProductMetaPending 에 _delete 키 plumbing 이 backend 에 없을 수 있으므로 safety check.
+  // product 삭제는 catalog 영향이 큼 (Role/Account 권한 grid 도 의존). _delete 플래그를 pending 에
+  //   스테이징하고 "모두 적용"(applyAllPending)이 DELETE /api/admin/products/{id} 로 일괄 실행한다
+  //   (TASK-0302 — 이전엔 applyAllPending 이 _delete 를 무시해 삭제가 조용히 무효였다). default product 보호.
   runBulkActionWithPartialFail({
     entity: "products",
     ids: adminState.productSelected,
@@ -5999,6 +6026,7 @@ function bulkProductDelete() {
       return true;
     },
   });
+  renderProductList();
   if (adminState.selectedProductId) renderProductDetail();
 }
 

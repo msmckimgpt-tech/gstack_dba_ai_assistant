@@ -17871,6 +17871,20 @@ def admin_delete_product(product_id: int, request: Request) -> JSONResponse:
     if not _account_has_permission(account, "product.manage"):
         conn.close()
         return _json_error("제품 관리 권한이 필요합니다.", 403)
+    # TASK-0302 (외부리뷰 MAJOR — defense-in-depth): 기본 제품(IsDefault) 삭제는 백엔드에서도 차단한다.
+    #   프론트 bulkProductDelete 의 canTargetRow(is_default 제외)는 client-trust 가드뿐이고, bulk DELETE
+    #   경로가 이제 실제 서버 호출에 도달하므로(이전엔 _delete 무처리로 no-op) 서버 측 보호가 load-bearing.
+    #   미존재 제품은 404(이전엔 WHERE Id=%s no-op 으로 200 오인). 단일 삭제 경로도 동일 가드 적용.
+    _gcur = conn.cursor()
+    _gcur.execute("SELECT IsDefault FROM WebProducts WHERE Id = %s", (int(product_id),))
+    _grow = _gcur.fetchone()
+    _gcur.close()
+    if _grow is None:
+        conn.close()
+        return _json_error("제품을 찾을 수 없습니다.", 404)
+    if int(_grow[0] or 0) == 1:
+        conn.close()
+        return _json_error("기본 제품은 삭제할 수 없습니다.", 409)
     # TASK-0248: 과거에는 참조 대화가 있으면 삭제를 거부(400)했으나, 이제는 삭제를 허용하고
     # 그 제품을 pinned 한 대화를 차단(blocked)으로 전환한다(이력 열람·공유는 가능, 진행 불가).
     # 아래 COUNT 는 새로 차단될(아직 미차단인 참조) 대화 수 — 응답/감사 메시지에만 사용하며
