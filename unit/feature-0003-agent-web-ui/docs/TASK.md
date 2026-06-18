@@ -17,7 +17,7 @@ source_of_truth: true
 - 완료 기준(AC): AC-0573.
 - [x] 구현(admin.js 기본값 true + 주석, admin.html 캐시버스터) + `node -c admin.js` PASS.
 - [x] `verify_ds_accordion_collapse.mjs` **19/19 PASS**(초기 접힘·클릭 펼침·재클릭 접힘·하단 버튼 도달).
-- [ ] verify-completion → 머지 → web 재배포(deploy_scope: included) → **PB-0008 Windows-browser**(제품 선택 직후 기본 접힘 실측).
+- [x] verify-completion --pre-commit PASS(9 checks) → 머지(PR #328 merge, main `1ad1519`) → web 재배포(deploy_scope: included, `docker compose build web`+`up -d --no-deps web`, repo-web-1 Up·mysql_ok·pg_ok, 서빙 `admin.js?v=20260618-ds-acc-collapsed-default`·`let _dsBodyCollapsed = true` baked) → **PB-0008 Windows-browser PASS**(실 Chrome/149, 단일 datasource 제품 KR `mysql-local`: 선택 직후 클릭 없이 DB 목록 접힘[body 미생성·caret ▸·aria false·하단 '+ 데이터소스 추가' 도달] + 머리 클릭 토글 펼침/접힘 무회귀; evidence `artifacts/pb0008-ds-acc-collapsed-default/default-collapsed-on-select.png`). CHG/REV-20260618T025848-ai-claude-ds-acc-collapsed-default-evidence.
 
 ## TASK-20260618T022150-ai-claude-ds-acc-collapsible — 관리 콘솔 > 제품: 펼쳐진 데이터소스의 접근 가능 DB 목록 접기 가능하게 (REQ-20260618-0314, AC-0571, Minor §12.3)
 - 보고(사용자, 2026-06-18): `관리 콘솔 > 제품` 탭에서 펼쳐진 데이터소스의 접근 가능 데이터베이스 목록을 접을 수 있게 해 달라. 현재는 데이터소스가 하나만 있을 경우 그 DB 목록이 접히지 않아 하단의 UI(데이터소스 추가·제품 프롬프트·삭제)에 접근하기 번거롭다.
