@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260618T061520-ai-claude-release-notes-scope-scroll [SKIPPED:frontend-ui-scope-scroll-no-backend-no-rbac]
+- Date: 2026-06-18 (TASK-20260618T061520 — 릴리즈 노트 표면별 영역 + 관리 콘솔 스크롤)
+- 분류 근거: Minor frontend-only — 렌더러 `opts.areas` 화이트리스트 + 작업 화면 호출 1 + CSS overflow 1규칙 + 캐시버스터. 백엔드·RBAC·스키마·엔드포인트·데이터 0. 보안 표면 무(영역 숨김은 UX 필터일 뿐 — 콘텐츠 자체가 비민감 공개 릴리즈 노트, 접근 제어 아님).
+- 점검: 작업 화면 admin 0건·칩 3개(전체/작업/공통)·관리 콘솔 기본 전체 무회귀(verify 34/34). 스크롤=TASK-0167 검증된 dashboard/usage 패턴 재사용. 빈 영역(allowed 전부 0) → 기존 빈 상태 안내 경로. 화면 정본 PB-0008(재배포 후).
+- Verdict: SHIP.
+
 ## REV-20260618T051005-ai-claude-release-notes-evidence [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-18 (TASK-20260618T044611 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence)
 - 분류 근거: docs 전용(TEST §4 Run PASS + TASK 마감 + MODIFY/REVIEW). 코드·정적자산·RBAC·스키마 무변경 → 리뷰 SKIP. 검증 대상 코드는 본 cycle REV-20260618T044611([SUBAGENT]) + REV-20260618T050409(hotfix) 에서 점검 완료.

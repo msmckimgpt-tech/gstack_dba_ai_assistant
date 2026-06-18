@@ -8,7 +8,20 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260618T044611-ai-claude-release-notes (current cycle) — 릴리즈 노트 (작업 화면 프로필 탭 + 관리 콘솔 카테고리) (REQ-20260618-0321, AC-0578·0579, Major §12.3)
+## TASK-20260618T061520-ai-claude-release-notes-scope-scroll (current cycle) — 릴리즈 노트: 작업 화면서 관리 콘솔 영역 숨김 + 관리 콘솔 pane 스크롤 (REQ-20260618-0323, AC-0582·0583, Minor §12.3)
+- 보고(사용자, 2026-06-18): ① 작업 화면에서는 관리 콘솔에 대한 릴리즈 노트를 숨겨 달라. ② 관리 콘솔에서 릴리즈 노트 스크롤이 없어 하단 항목을 볼 수 없다.
+- 등급: **Minor §12.3** — frontend-only(렌더러 옵션 + 호출 1 + CSS 1규칙 + 캐시버스터). 백엔드·RBAC·스키마·데이터 0. 비파괴.
+- 수정:
+  - `src/static/release-notes.js`: `render(container, opts)` 에 `opts.areas` 화이트리스트 신설 — items 를 allowed area 로 선필터+빈 일자 그룹 제거, 필터 칩도 allowed 영역만(전체 + 해당 영역). 기본=전체(work/admin/common, 관리 콘솔 무회귀).
+  - `src/static/app.js`: 작업 화면 `switchProfileTab` 의 release-notes 렌더에 `{areas:["work","common"]}` 전달 → area=admin 노트·'관리 콘솔' 칩 숨김.
+  - `src/static/styles.css`: `.admin-pane[data-admin-pane="release-notes"].is-active` 를 dashboard/usage 스크롤 규칙(TASK-0167)에 추가 → `overflow-y:auto; overflow-x:hidden`.
+  - index.html/admin.html: 변경 자산(styles.css·app.js·release-notes.js) `?v=20260618-rn-scope-scroll` bump(기존 사용자 stale 방지; admin.js 미변경 유지).
+- 완료 기준(AC): AC-0582(작업 화면 admin 숨김·칩3·관리콘솔 무회귀), AC-0583(관리 콘솔 pane 스크롤).
+- [x] 구현 + `node --check` PASS.
+- [x] `verify_release_notes.mjs` **34/34 PASS**(작업화면 admin 0건·표시=work+common 43·칩 3개·그룹 11·관리콘솔 회귀 없음·스크롤 규칙 소스 단언 + 기존 27건).
+- [ ] verify-completion --pre-commit → 머지 → web 재배포(deploy_scope: included) → **PB-0008**(작업 화면 admin 노트/칩 부재 + 관리 콘솔 pane scrollHeight>clientHeight·하단 도달).
+
+## TASK-20260618T044611-ai-claude-release-notes — 릴리즈 노트 (작업 화면 프로필 탭 + 관리 콘솔 카테고리) (REQ-20260618-0321, AC-0578·0579, Major §12.3)
 - 보고(사용자, 2026-06-18): 각 작업의 내역·개선 사항을 사용자도 파악할 수 있도록 릴리즈 노트를 구성. 진입점 2개(`작업 화면 > 사용자 프로필 > 릴리즈 노트(탭)`, `관리 콘솔 > 릴리즈 노트(카테고리)`) — 역할/권한별 분리. 일자별 정리 + 접기/탐색. 일반 사용자가 알 수 있는 단순·명시적 정보로 풀어서, 내부 정보(로직·네트워크·보안 처리 방법)는 숨기거나 간략화.
 - 사용자 결정(2026-06-18, AskUserQuestion): 콘텐츠 관리 방식 = **정적 큐레이션(읽기 전용)**. (관리자 편집형 CRUD 는 미채택 — 추후 얹기 가능.)
 - 등급: **Major §12.3** — 다중 파일(7) 변경이나 전부 **비파괴 additive frontend**. 백엔드·RBAC·스키마·엔드포인트·DB·신규 권한·인증/인가·데이터 **0**. rollback = 파일 제거(무손실).
