@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260618-0316 [SKIPPED:cache-buster-bump-no-logic-change]
+- Date: 2026-06-18
+- Cycle: TASK-20260618T022006 후속 fix — 엔진 드롭다운 styles.css cache-buster 누락 보정.
+- 변경: admin.html + index.html 의 `styles.css?v=` 2곳을 `?v=20260618-engine-dropdown` 으로 bump. 코드 로직·CSS 본문·백엔드·RBAC·데이터 0(순수 cache-buster 문자열).
+- 판단: 로직/계약 변경이 전무한 cache-buster bump 이라 외부 패널 불요(SKIPPED). 정합성 검증은 PB-0008 재검증(재배포 후 `.engine-icon` CSS 적용·아이콘 18px·버튼 border/padding)으로 직접 실측한다.
+- 근본: TASK-20260618T022006 가 styles.css 본문을 변경하고도 이를 링크하는 페이지의 cache-buster 를 안 올려, 캐시 브라우저가 옛 CSS 수신 → 미스타일. PB-0008 실 Windows Chrome 1차에서 적발(jsdom 미검출 영역). 교훈: 공유 styles.css 변경 시 admin.html·index.html 양쪽 cache-buster 동반 bump.
+- Cross-ref: CHG-20260618-0316 / TASK-20260618T022006(REV-20260618-0315 의 후속).
+
 ## REV-20260618T022846-ai-claude-admin-status-filter-evidence [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-18 (TASK-20260618T021526 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence 기록)
 - 변경: 코드 0. TEST.md §4 Windows-browser Run 추가 + TASK.md 마지막 체크박스 완료 + MODIFY/REVIEW evidence 항목. PR #321 머지(main `6da40dc`)·web 재배포·PB-0008 PASS(제품 13=6+7 분할·역할 6) 사실 기록.
