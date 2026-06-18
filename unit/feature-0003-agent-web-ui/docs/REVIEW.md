@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260618T011645-ai-claude-date-group-collapse-evidence [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-18 (TASK-20260618T010417 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence 기록)
+- 변경: 코드 0. TEST.md §4 Windows-browser Run 추가 + TASK.md 마지막 체크박스 완료 + REPORT.md "완료 대기"→"완료" + MODIFY/REVIEW evidence 항목. PR #319 머지(main `32b5e8f`)·web 재배포·PB-0008 PASS 사실 기록.
+- 판단: docs-only evidence 기록이라 코드 리뷰/외부 패널 불요. 검증 정본(PB-0008 실측 결과)은 직전 cycle 의 코드 변경에 대한 것이며 본 항목은 그 결과를 문서에 영속화할 뿐. 회귀 위험 0.
+
 ## REV-20260618T010417-ai-claude-date-group-collapse [SKIPPED:frontend-ui-entry-defaults-no-backend-no-rbac]
 - Date: 2026-06-18 (TASK-20260618T010417-ai-claude-date-group-collapse — 작업 화면 좌측 대화목록 첫 진입 시 최근 일자 그룹만 펼침)
 - 등급: **Minor §12.3** — frontend-only UI 기본값. 백엔드·RBAC·스키마·엔드포인트·데이터 0 → 외부 보안 패널 불요(§18.8 dispatch: ux/design 후보지만 단일 코드 파일 비파괴 기본값이라 패널 skip).

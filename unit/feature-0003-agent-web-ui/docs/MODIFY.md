@@ -9,6 +9,11 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260618T011645-ai-claude-date-group-collapse-evidence (TASK-20260618T010417 후속 docs-only — PB-0008 Windows-browser evidence)
+- Date: 2026-06-18
+- Scope: docs 전용(TEST/TASK/REPORT/MODIFY/REVIEW). 코드·정적자산·스키마·RBAC 0.
+- 변경: TASK-20260618T010417 의 "verify-completion → 머지 → 배포 → PB-0008" 잔여를 **완료**로 갱신(PR #319 squash 머지 main `32b5e8f` → web 재배포 healthy → PB-0008 Windows-browser PASS). TEST.md §4 에 Windows-browser Run 실측 기록: 첫 진입 6개 날짜 그룹 중 가장 최근 "6월 10일 (수)"만 펼침·나머지 5개 접힘(VERDICT PASS), clean-room `localStorage.clear()`→reload seed 매-진입 재발화 + 날짜키 비영속(reload 후 `mad.collapsedGroups.v1`=`["__others__"]`만) 실증, 세션 내 토글 1회-게이트 존중 PASS. evidence `artifacts/pb0008-date-group-collapse/entry-recent-only-expanded.png`(git 비추적 artifacts).
+
 ## CHG-20260618T010417-ai-claude-date-group-collapse (TASK-20260618T010417, 작업 화면 좌측 대화목록 첫 진입 시 최근 일자 그룹만 펼침)
 - Date: 2026-06-18
 - Scope: frontend-only. 백엔드·RBAC·스키마·엔드포인트·데이터 0.
