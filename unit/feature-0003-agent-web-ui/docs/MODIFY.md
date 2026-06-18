@@ -9,6 +9,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260618T021526-ai-claude-admin-status-filter (TASK-20260618T021526 — 관리 콘솔 역할·제품 탭 활성/비활성 필터 추가)
+- Date: 2026-06-18
+- Scope: frontend-only — feature-0003-agent-web-ui `src/static/admin.html`(역할·제품 toolbar 2곳) + `src/static/admin.js`(상태 2 + 술어 2 + 배선 2). 백엔드·스키마·RBAC·엔드포인트·CSS 0.
+- 내용: 관리 콘솔 `역할`·`제품` 탭에 계정 탭과 동형의 활성/비활성 필터를 추가. ① admin.html — 두 toolbar 의 검색창 뒤에 `admin-filter-group`(전체/활성/비활성, `data-role-filter`/`data-product-filter`) 추가(계정 탭 `data-account-filter` 마크업 1:1, 단 역할·제품엔 soft-delete 가 없어 "삭제됨" 버튼 제외 → 3버튼). ② admin.js — `adminState.roleFilter`/`productFilter`(기본 "all") 신설; `filteredRoles()`/`filteredProducts()` 가 검색어 매칭 앞에서 상태로 게이트(active=`is_active` true 만, inactive=false 만); `filteredProducts()` 의 `if(!q) return slice()` 단축 제거(빈 검색에도 필터 적용); `[data-role-filter]`·`[data-product-filter]` 버튼 핸들러를 계정 필터와 동형으로 배선.
+- Why: 사용자 요청 — 계정 탭에만 있던 활성/비활성 필터를 역할·제품 탭에도. 기본 "전체"라 기존 동작 무회귀.
+- Verification: node --check admin.js PASS + `scripts/verify_admin_status_filter.mjs` 11/11 PASS(실 `filteredRoles`/`filteredProducts` 본문 추출 실행 — all/active/inactive × 검색 교집합 × 빈검색 회귀). 화면 정본 = PB-0008 Windows-browser(배포 후).
+- Rollback: admin.html 2 filter-group 제거 + admin.js 상태 2·술어 분기·배선 2 revert(`filteredProducts` 단축 복원). 시각/필터만 원복, 데이터·권한 무영향.
+- Deploy: web 재빌드 1 이미지(프론트 baked). deploy_scope: included.
+
 ## CHG-20260618T011645-ai-claude-date-group-collapse-evidence (TASK-20260618T010417 후속 docs-only — PB-0008 Windows-browser evidence)
 - Date: 2026-06-18
 - Scope: docs 전용(TEST/TASK/REPORT/MODIFY/REVIEW). 코드·정적자산·스키마·RBAC 0.

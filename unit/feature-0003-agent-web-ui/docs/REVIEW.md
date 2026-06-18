@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260618T021526-ai-claude-admin-status-filter [SKIPPED:frontend-ui-list-filter-no-backend-no-rbac]
+- Date: 2026-06-18 (TASK-20260618T021526-ai-claude-admin-status-filter — 관리 콘솔 역할·제품 탭 활성/비활성 필터 추가)
+- 등급: **Minor §12.3** — frontend-only(admin.html 2 toolbar + admin.js 상태/술어/배선). 백엔드·RBAC·스키마·엔드포인트·데이터 0 → 외부 보안 패널 불요(§18.8 dispatch: ux/design 후보지만 기존 계정 탭 패턴을 그대로 미러한 비파괴 list 필터라 패널 skip).
+- 변경 요지: 계정 탭의 검증된 `admin-filter-group`+`accountFilter`+`filteredAccounts()` 패턴을 역할·제품에 1:1 이식. `filteredRoles()`/`filteredProducts()` 가 상태 필터를 검색어 매칭 앞에서 적용, 기본 "all" 로 무회귀.
+- 판단 근거 / 대안 검토:
+  - 보안/권한: 클라이언트 측 *표시* 필터일 뿐 데이터 fetch·권한 경계 무관(역할·제품 목록 자체는 기존 RBAC 게이트로 로드됨). enforcement 영향 0.
+  - 회귀: `filteredProducts()` 의 `if(!q) return slice()` 단축 제거가 유일한 동작 변경점 — 빈 검색 + filter="all" 이 전체 반환임을 verify 11/11(특히 `product all empty-search`)로 확인. 기본 "all" 이라 미상호작용 사용자에겐 변화 없음.
+  - 검증 정본: 화면 동작은 PB-0008 Windows-browser(배포 후) — 역할·제품 탭에서 비활성 클릭 시 비활성 행만 렌더 + computed `is-active` 버튼 상태.
+- Verdict: **[SKIPPED]** — frontend-only list 필터, 검증된 계정 탭 패턴 미러. 백엔드·권한·스키마 무영향, 회귀 위험 낮음(verify 11/11 + node --check).
+
 ## REV-20260618T011645-ai-claude-date-group-collapse-evidence [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-18 (TASK-20260618T010417 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence 기록)
 - 변경: 코드 0. TEST.md §4 Windows-browser Run 추가 + TASK.md 마지막 체크박스 완료 + REPORT.md "완료 대기"→"완료" + MODIFY/REVIEW evidence 항목. PR #319 머지(main `32b5e8f`)·web 재배포·PB-0008 PASS 사실 기록.
