@@ -3172,3 +3172,13 @@ source_of_truth: true
 - Verification: 라이브(실 running stack + 브라우저) 수정 전 0/3 → 수정 후 3/3 삭제, 회귀 역할 일괄 비활성 2/2, node --check + py ast.parse. **화면 정본 = PB-0008(배포 후)**.
 - Residual: 머지 → 배포(web 재빌드) → 라이브 재검증(기본 제품 삭제 409·일괄 삭제 전부·pending 마커) + PB-0008 Windows-browser.
 - Cross-ref: CHG-20260617-0312 / TASK-0302 / TASK-0300·TASK-0301(동시세션 식별자 충돌로 재번호된 별건들).
+
+## REV-20260618T022150-ai-claude-ds-acc-collapsible [SKIPPED:frontend-ui-presentation-toggle-no-backend-no-rbac]
+- Date: 2026-06-18
+- Cycle: TASK-20260618T022150-ai-claude-ds-acc-collapsible (관리 콘솔 > 제품: 펼쳐진 데이터소스의 접근 가능 DB 목록 접기), **Minor §12.3**.
+- Panel 생략 근거(§18.8): 표현 계층 전용 toggle 추가 — 백엔드·스키마·엔드포인트·RBAC·데이터·CSS 무변경, 신규 권한 0, 파괴적 동작 0. UI/layout 신호는 PB-0008 Windows-browser 가 정본 검증(§10.5). RBAC/보안 인접 아님 → outside-voice 불요([[feedback_outside_voice_for_rbac]] 비대상).
+- 설계 판단: ① 접힘을 별 상태(`_dsBodyCollapsed`)로 두고 `_editDsKey`(편집 대상)는 보존 — 접어도 draft/picker 클로저가 유지되어 데이터 손실 0, 재펼침 시 그대로 복원. ② 기본값 펼침(false)로 멀티 datasource 기존 흐름·패널 재진입 일관성 무회귀. ③ 다른 datasource 전환(`_switchEditDs`)·편집 대상 제거(`_afterBindChange`) 시 자동 펼침 리셋 — "전환=편집 시작" 의도와 정합, 접힌 채 다른 ds 로 넘어가 혼란 방지. ④ 접힌 행 = 기존 비활성 행과 동일 렌더라 CSS 무변경(멀티 datasource 에 이미 존재하던 스타일 재사용).
+- 검토한 회귀 리스크: (a) 접힘 중 `_refreshAccessibleDbs`/`redrawChips` 가 detached `dbEditorWrap` 에 작동 — DOM 분리 상태라도 메모리 노드 조작은 무해, 재펼침 시 반영. (b) `_afterBindChange` else-분기(primary 배지 갱신)는 접힘 상태 보존 — 접은 채 기본 지정해도 body 안 튀어나옴(의도). (c) accordion 재렌더가 head 클로저를 새로 만들어 토글 후 재클릭 정상 동작(테스트 토글2 로 확인).
+- Verification: `node -c admin.js` + `tests/verify_ds_accordion_collapse.mjs` 19/19 PASS. 화면 정본 = PB-0008(배포 후).
+- Residual: 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser(실 화면 접기/펼치기 + 하단 UI 접근) → evidence CHG/REV.
+- Cross-ref: CHG-20260618T022150-ai-claude-ds-acc-collapsible / REQ-20260618-0314 / AC-0571 / TASK-0238(accordion 원 설계).
