@@ -26,6 +26,14 @@ source_of_truth: true
 - Verification: node --check admin.js PASS + `scripts/verify_admin_status_filter.mjs` 11/11 PASS(실 `filteredRoles`/`filteredProducts` 본문 추출 실행 — all/active/inactive × 검색 교집합 × 빈검색 회귀). 화면 정본 = PB-0008 Windows-browser(배포 후).
 - Rollback: admin.html 2 filter-group 제거 + admin.js 상태 2·술어 분기·배선 2 revert(`filteredProducts` 단축 복원). 시각/필터만 원복, 데이터·권한 무영향.
 - Deploy: web 재빌드 1 이미지(프론트 baked). deploy_scope: included.
+## CHG-20260618-0315
+- Date: 2026-06-18 (TASK-20260618T022006 — 관리 콘솔 데이터소스 '새 항목' 엔진 선택 = 아이콘 드롭다운).
+- Scope: frontend admin.js + styles.css + admin.html(cache-buster). 백엔드·스키마·RBAC·엔드포인트·데이터 0.
+- 내용: `관리 콘솔 > 데이터소스 > 새 데이터소스` 폼의 엔진 입력을 자유 텍스트 input → **아이콘 드롭다운**으로 전환. ① admin.js `ENGINE_CATALOG`(mysql|mssql — 라벨·기본포트·브랜드색·아이콘) + `engineMeta()`(미지원/공백/null→mysql 폴백, 백엔드 기본값 정합) + `_dsBuildEngineField`(아이콘+라벨 트리거, role=listbox/option·aria-selected·↓↑/Enter/Esc·hidden valueHolder) 신설. ② `_dsRenderForm` 의 엔진 필드를 드롭다운으로 교체 — save 핸들러는 `inputs.engine.value`(hidden) 를 그대로 읽어 POST/PATCH `body.engine` **무변경**(텍스트 input 의 `.value` 계약 보존). 엔진 변경 시 포트 placeholder=기본포트(값 강제변경 안 함). ③ 아이콘 = 공식 브랜드 마크 **inline SVG baking**(외부 CDN 핫링크 0 — sparkline/identicon 정합): MySQL=simple-icons 돌고래(#00758F)·MSSQL=devicon SQL Server(#EE352C), `fill=currentColor`+`.engine-icon` color. ④ styles.css `.engine-picker*`/`.engine-option*`/`.engine-icon` — 목록은 admin-db-picker 처럼 inline-flow(absolute 금지, `.admin-detail-col` overflow 클리핑 회피 TASK-0240).
+- Why: 사용자 요청(/_template:entry) — 엔진을 드롭다운으로 선택 + 각 엔진 서비스 아이콘으로 식별 용이. 기존 자유 텍스트는 오타 가능 + 식별 보조 없음.
+- Verification: jsdom `verify_engine_dropdown.mjs` 36 PASS(드롭다운 구조·옵션별 svg·hidden 값 계약·선택→repaint/aria/onChange·engineMeta 폴백·CSS inline-flow) + node --check. outside-voice 적대 리뷰 SHIP(REV-20260618-0315, 8가설 전부 REFUTED).
+- Rollback: 3 파일 revert(admin.js ENGINE_*/`_dsBuildEngineField`/`_dsRenderForm` 필드, styles.css `.engine-*`, admin.html cache-buster) — 백엔드 영향 0.
+- Deploy: web 재빌드(deploy_scope: included). 라이브 검증 = PB-0008 Windows-browser(드롭다운 열림·브랜드 아이콘 렌더·선택 반영).
 
 ## CHG-20260618T011645-ai-claude-date-group-collapse-evidence (TASK-20260618T010417 후속 docs-only — PB-0008 Windows-browser evidence)
 - Date: 2026-06-18

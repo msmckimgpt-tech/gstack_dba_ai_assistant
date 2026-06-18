@@ -4061,6 +4061,90 @@ a { color: inherit; }
   cursor: not-allowed;
 }
 
+/* ── 데이터소스 엔진 선택 드롭다운 (TASK-20260618T022006) ──────────────────
+   '새 데이터소스' 폼의 엔진 입력 = 아이콘 + 라벨 커스텀 드롭다운. 목록은
+   admin-db-picker 와 동일하게 position:absolute 가 아닌 정상 흐름(inline)으로 둔다 —
+   .admin-detail-col(overflow-y:auto) 이 absolute 드롭다운을 잘라내던 TASK-0240 문제를
+   답습하지 않기 위함. 아이콘은 단색 path(fill:currentColor)라 .engine-icon 의 color 로
+   브랜드색을 받는다. */
+.admin-field--engine .engine-picker { position: relative; }
+
+.engine-picker-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.engine-picker-btn:hover { border-color: var(--primary, #2563eb); }
+.engine-picker-btn:focus-visible {
+  outline: none;
+  border-color: var(--primary, #2563eb);
+  box-shadow: 0 0 0 3px var(--primary-soft, rgba(37,99,235,.15));
+}
+.engine-picker-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.engine-picker-caret { color: var(--text-muted); font-size: 11px; flex: none; }
+
+.engine-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.engine-icon svg { width: 100%; height: 100%; display: block; }
+
+.engine-picker-list {
+  margin-top: 4px;
+  width: 100%;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--border, rgba(0,0,0,.15));
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.06);
+  padding: 4px 0;
+}
+.engine-picker-list.hidden { display: none; }
+
+.engine-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text);
+}
+.engine-option:hover,
+.engine-option:focus-visible {
+  background: var(--primary-soft, rgba(37,99,235,.06));
+  outline: none;
+}
+.engine-option[aria-selected="true"] { background: var(--primary-soft, rgba(37,99,235,.10)); }
+.engine-option .engine-icon { width: 22px; height: 22px; }
+.engine-option-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.engine-option-text strong { font-weight: 600; font-size: 13px; }
+.engine-option-text small { color: var(--text-muted); font-size: 11px; }
+
 /* ── Commit bar ─────────────────────────────────────────────── */
 .admin-commit-bar {
   display: flex;
