@@ -20,7 +20,7 @@ source_of_truth: true
 - 완료 기준(AC): AC-0570.
 - [x] 구현(admin.js 상태/술어/배선 + admin.html 2 toolbar) + node --check PASS.
 - [x] `scripts/verify_admin_status_filter.mjs` **11/11 PASS**(역할·제품 각 all/active/inactive + 상태×검색 교집합 + 빈검색 회귀).
-- [ ] verify-completion --pre-commit PASS → 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser PASS.
+- [x] verify-completion --pre-commit PASS(9 checks) → 머지(PR #321 squash, main `6da40dc`) → web 재배포(`make dc-build SERVICE=web` + `docker compose up -d --no-deps web`, repo-web-1 healthy, 서빙 `admin.js?v=20260618-admin-status-filter`·역할/제품 `data-*-filter` 3버튼·필터 술어 baked) → **PB-0008 Windows-browser PASS**(실 Chrome/149, 제품 탭 13행=비활성 6+활성 7 정확 분할·`is-disabled` 6 전부 inactive 배지·버튼 `is-active` 단독 토글; 역할 탭 6행 active=6/inactive=0). evidence `artifacts/pb0008-admin-status-filter/{products-inactive-filter,roles-active-filter}.png`. CHG/REV-20260618T022846-ai-claude-admin-status-filter-evidence.
 
 ## TASK-20260618T010417-ai-claude-date-group-collapse — 작업 화면 좌측 대화목록 첫 진입 시 최근 일자 그룹만 펼침 (REQ-20260618-0288, AC-0569, Minor §12.3)
 - 보고(사용자, 2026-06-18): 서비스를 처음 진입할 때 `작업 화면 > 좌측 대화목록` 에서, 가장 최근의 일자에 대한 대화그룹을 제외한 나머지 오래된 일자들은 접힌 상태로 나타내 달라.
