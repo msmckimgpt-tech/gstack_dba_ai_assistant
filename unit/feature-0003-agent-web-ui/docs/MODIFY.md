@@ -4120,3 +4120,12 @@ source_of_truth: true
 - Verification: 본 변경은 docs-only(코드 0). 검증 정본은 본 cycle 이 기록하는 PB-0008 결과 자체.
 - Rollback: docs revert(증거 기록 제거). 코드·배포 무영향.
 - Deploy: 없음(docs-only).
+
+## CHG-20260618T025220-ai-claude-ds-acc-collapsed-default
+- Date: 2026-06-18 (TASK-20260618T025220-ai-claude-ds-acc-collapsed-default — 제품 선택 시 접근 가능 DB 목록 기본 접힘).
+- Scope: frontend-only — feature-0003 `src/static/admin.js`(1줄 + 주석) + `src/static/admin.html`(cache-buster) + `tests/verify_ds_accordion_collapse.mjs`(단언 반전). 백엔드·스키마·CSS·엔드포인트·RBAC 0.
+- 내용: TASK-20260618T022150 이 도입한 datasource accordion 접힘 상태 `_dsBodyCollapsed` 의 초기값을 `false`(펼침) → `true`(접힘)로 변경. 제품을 선택해 `renderProductDetail` 이 상세를 열면 편집 대상 datasource 의 DB 편집기(`.ds-acc-body`)가 접힌 채 시작 → 하단 UI(데이터소스 추가·제품 프롬프트·삭제) 바로 접근. 토글 메커니즘(머리 클릭 펼침/접힘)·전환 시 자동 펼침(`_switchEditDs`/`_afterBindChange` 의 `false` 리셋)은 불변. 주석 갱신, admin.html cache-buster `?v=20260618-ds-acc-collapsed-default`.
+- Why: 사용자 요청 — 기본적으로 제품 선택 시 데이터베이스 목록이 접혀 있도록. REQ-20260618-0314(접기 토글)의 기본값 후속.
+- Verification: `node -c admin.js` PASS + `tests/verify_ds_accordion_collapse.mjs` **19/19 PASS**(초기 접힘[body 미생성·is-active 아님·aria false·caret ▸·행 유지·하단 `.ds-acc-add-btn` 도달]·토글1 펼침·토글2 접힘). 화면 정본 = PB-0008 Windows-browser(배포 후).
+- Rollback: 초기값 `true`→`false` 복원(1줄) + cache-buster·test 단언 원복. 동작만 기본 펼침으로, 데이터·기능 무영향.
+- Deploy: web 재빌드 1 이미지(프론트 baked). deploy_scope: included.
