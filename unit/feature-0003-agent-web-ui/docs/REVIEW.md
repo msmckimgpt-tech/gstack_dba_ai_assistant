@@ -3322,3 +3322,16 @@ source_of_truth: true
 - Verification: `verify_product_access_multiselect.mjs` 6 PASS(실 추출 함수 + OLD 버그 대조군) + node --check. **화면 정본 = PB-0008(배포 후)**.
 - Residual: 머지 → 배포(web 재빌드) → 라이브 재검증(역할 제품 3개 토글→3개 staged·배지 N/M·적용 후 영속) + PB-0008 Windows-browser.
 - Cross-ref: CHG-20260618-0317 / REQ-20260618-0320 / TASK-0303 / TASK-0300(self-scope 선행)·TASK-0288(RBAC 선행).
+
+## REV-20260618T044318-ai-claude-db-rule-autosync [SUBAGENT:rbac-adversarial-2pass]
+- Date: 2026-06-18
+- Cycle: TASK-20260618T044318 (제품 DB allowlist 정규식 규칙 자동 동기화), **Critical §12.3** — RBAC/데이터 접근 경계 변경.
+- Panel: outside-voice 필수(feedback_outside_voice_for_rbac) — [SKIPPED] 아님. general-purpose 적대(REFUTE) 2-pass.
+- **Pass 1 (설계) — NOT-SHIP → 안전 하이브리드**: 순수 자동적용은 allowlist(=`set_active_schema_allowlist` fail-closed 경계)에 대한 무인 GRANT 라, "데이터소스에 DB 를 만들 수 있는 누구나(DBA·마이그레이션·공격자)가 패턴에 맞는 이름을 지으면 AI 가 승인 없이 즉시 읽음" + cap-경고는 사후약방문이라 indefensible. 권고=규칙 엔진은 만들되 broad/cap초과/모호는 pending 승인. 사용자 결정으로 안전 하이브리드 채택. BLOCKER B1~B5·M2~M6 도출.
+- **Pass 2 (구현 코드) — SHIP-WITH-FIXES**: B1(cap withhold·empty include 매치없음)·B3(생성자 귀속 감사)·B4(수동 PUT manual-only 교체로 rule 행 생존, 프론트 body 필터, 레거시 폴백)·B5(MySQL IGNORECASE/MSSQL 대소문자=enforcement 정합)·M2(제외 union)·M4(add-only, 열거실패 no-op)·M6(5 엔드포인트 product.manage 게이트, lazy reconcile 게이트 내부) **충족 확인**. SQL 인젝션 clean(파라미터화+인젝션 정규식). 
+  - **BLOCKER(흡수)**: ReDoS — alternation 그룹수량자(`(a|a)*`·`(.*a){20}`)가 중첩수량자 휴리스틱 우회 → 41자 입력에 >20s catastrophic backtracking(요청·백그라운드 스레드 hang). 수정=검증에 그룹수량자 `)[*+?{]` 금지·무한수량자(*,+)≤8·`_match_db_rule` 가 저장패턴 재검증(방어심층). 실측: 동일 패턴 0.000s 즉시 [] 반환.
+  - **MAJOR 흡수**: #1 백그라운드 creator **활성·비삭제** 확인 추가(비활성 계정 권한 잔존 차단). #2 picker rule 행 체크박스 비활성(uncheck no-op 혼란 제거).
+  - **MAJOR 문서화(잔여)**: #3 approve-pending 은 시스템/내부/인젝션 재검증하나 *현재 패턴* 재매칭은 안 함 — pending 행은 staging 시점 실 일치였고 비-시스템 사용자 DB 라 영향 낮음(후속 강화 여지).
+- Verification: `verify_db_rule_logic.py` 25/25 + `verify_db_rule_ui.mjs` 17/17 + ast/node 구문 + ReDoS 실측. 화면 정본 = PB-0008(배포 후).
+- Residual: 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser → evidence.
+- Cross-ref: CHG-20260618T044318-ai-claude-db-rule-autosync / REQ-20260618-0322 / AC-0580 / AC-0581 / PLAN-db-rule-autosync.md / PROPOSAL-frequent-db-config-changes.md.

@@ -3213,6 +3213,55 @@ a { color: inherit; }
 /* 펼친 datasource 의 DB 편집기 컨테이너 */
 .cov-db-editor { padding-top: 6px; }
 
+/* TASK-20260618T044318: 정규식 자동 규칙 에디터 + pending 승인 + rule 행 배지. */
+.cov-db-rule {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle, rgba(0,0,0,.12));
+  border-radius: 8px;
+  background: var(--surface, #fff);
+}
+.cov-db-rule-head { font-size: 13px; font-weight: 700; color: var(--text); }
+.cov-db-rule-hint { font-size: 11px; color: var(--text-muted, #888); margin: 2px 0 6px; }
+.cov-db-rule-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.cov-db-rule-input {
+  flex: 1 1 auto; min-width: 0; box-sizing: border-box; padding: 5px 8px; font-size: 12px;
+  color: var(--text); background: var(--surface, #fff); border: 1px solid var(--border, rgba(0,0,0,.15));
+  border-radius: 6px; outline: none; font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+.cov-db-rule-input:focus { border-color: var(--primary, #2563eb); box-shadow: 0 0 0 2px rgba(37,99,235,.12); }
+.cov-db-rule-caplbl { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted, #888); }
+.cov-db-rule-cap { width: 56px; padding: 4px 6px; font-size: 12px; border: 1px solid var(--border, rgba(0,0,0,.15)); border-radius: 6px; }
+.cov-db-rule-count { flex: 1 1 auto; font-size: 11px; color: var(--text-muted, #888); }
+.cov-db-rule-save {
+  font-size: 12px; padding: 5px 10px; border: 1px solid var(--primary, #2563eb); border-radius: 6px;
+  background: var(--primary, #2563eb); color: #fff; cursor: pointer; white-space: nowrap;
+}
+.cov-db-rule-save:disabled { opacity: .5; cursor: not-allowed; }
+.cov-db-rule-del {
+  font-size: 12px; padding: 5px 10px; border: 1px solid var(--danger, #dc2626); border-radius: 6px;
+  background: #fff; color: var(--danger, #dc2626); cursor: pointer; white-space: nowrap;
+}
+.cov-db-rule-err { font-size: 11px; color: var(--danger, #dc2626); margin-top: 2px; }
+.cov-db-rule-pending { margin-top: 8px; }
+.cov-db-rule-pending-head { font-size: 11px; font-weight: 600; color: var(--warning, #b45309); margin-bottom: 4px; }
+.cov-db-rule-pending-item { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.cov-db-rule-pending-name {
+  flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+.cov-db-rule-approve {
+  flex: 0 0 auto; font-size: 11px; padding: 3px 10px; border: 1px solid var(--primary, #2563eb);
+  border-radius: 6px; background: var(--primary-soft, rgba(37,99,235,.08)); color: var(--primary, #2563eb); cursor: pointer;
+}
+.cov-db-rule-approve:disabled { opacity: .5; cursor: not-allowed; }
+/* 규칙으로 추가된 DB 행 배지(이름 옆). */
+.cov-db-rule-badge {
+  flex: 0 0 auto; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 999px;
+  color: var(--primary, #2563eb); background: color-mix(in srgb, var(--primary, #2563eb) 12%, transparent);
+}
+
 .admin-chip-locked-hint {
   font-size: 10px;
   letter-spacing: 0.02em;
