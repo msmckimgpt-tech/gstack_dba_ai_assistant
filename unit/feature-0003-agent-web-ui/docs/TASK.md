@@ -4191,7 +4191,7 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증(정적): `tests/verify_product_picker_search.mjs` 27/27 PASS(jsdom — 입력 노출 조건·data-search·product_key/한글명/부분일치 다건/0건 no-result/복원/auto 포함·focus 코드) + `node --check app.js`.
 - [x] REV-20260618T024517-ai-claude-product-picker-search [SKIPPED:frontend-ui-search-filter-no-backend-no-rbac] — Minor frontend 비파괴, RBAC/백엔드 무변경(자체 점검 6항목 REVIEW.md).
 - [x] 식별자: 고병렬 동시세션 rebase(2회) 충돌(REQ-0288/AC-0572·0573 타 세션 선점) → grep max 재번호 REQ-20260618-0317/AC-0574·0575, docs --ours+재삽입 keep-both([[feedback_feature_doc_id_grep_max]]).
-- [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → 라이브 PB-0008 Windows-browser(제품 13개 → 검색박스 노출·명칭 입력→필터·sticky·focus·결과없음) → 마감.
+- [x] 머지(main ebd2849, PR #327 squash; 고병렬 rebase 2회) → 배포(web 재빌드, deploy_scope: included, /healthz git_commit=ebd2849·서빙자산 baked) → 라이브 PB-0008 Windows-browser **PASS**(pinned 10개≥6 → 검색박스 노출·placeholder·sticky top:0·자동 focus·`dk_`→2건·미매칭→"검색 결과가 없습니다"·비움→복원) → **마감**. evidence CHG/REV-20260618T031450, `artifacts/pb0008-product-picker-search/search-filter-dk.png`.
 - [ ] 재배포(web) → PB-0008 재검증(`.engine-icon` width 18px·버튼 border/padding·드롭다운 열림·옵션 2개 아이콘·MySQL/SQL Server 브랜드색) PASS → 마감.
 
 ### TASK-20260618T025755 — '+ 데이터베이스 추가' picker 검색 필터 + 정규식 일괄 선택 (REQ-20260618-0317, AC-0574·0575, Major §12.3, 2026-06-18)

@@ -9,6 +9,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260618T031450-ai-claude-product-picker-search-evidence (TASK-20260618T024517 후속 docs-only — PB-0008 Windows-browser evidence)
+- Date: 2026-06-18
+- Scope: docs 전용(TEST/TASK/MODIFY/REVIEW). 코드·정적자산·스키마·RBAC 0.
+- 변경: TASK-20260618T024517(제품 선택 드롭업 명칭 검색 필터)의 "머지 → 배포 → PB-0008" 잔여를 **완료**로 갱신(PR #327 squash main `ebd2849` → `make dc-build SERVICE=web`+`up -d --no-deps --force-recreate web` healthy, /healthz git_commit=ebd2849 → PB-0008 Windows-browser PASS). TEST.md §4 에 Windows-browser Run 실측 기록: pinned 10개(≥임계 6)→검색 입력 노출·placeholder·sticky top:0·자동 focus·`dk_`→2건(DK_DEV·DK_QA)·`zzzznotexist`→0건+"검색 결과가 없습니다"·비움→11건 복원(VERDICT PASS). evidence `artifacts/pb0008-product-picker-search/search-filter-dk.png`(1249×836, git 비추적).
+- Why: 화면 정본(PB-0008) 검증 결과를 문서에 영속화 + CHECK#13(Windows-browser) 충족.
+- Verification: 본 기록 자체가 검증 산출물. 코드 무변경(회귀 0).
+- Rollback: 불요(docs-only). 코드는 이미 `ebd2849` 배포됨.
+- Deploy: 불요(코드 무변경).
+
 ## CHG-20260618T024517-ai-claude-product-picker-search (TASK-20260618T024517 — 제품 선택 드롭업 명칭 검색 필터)
 - Date: 2026-06-18
 - Scope: frontend-only — feature-0003-agent-web-ui `src/static/app.js`(검색 입력 빌더+필터+포커스+data-search) + `src/static/styles.css`(검색 입력/sticky/결과없음) + `src/static/index.html`(캐시버스터 2곳). 백엔드·스키마·RBAC·엔드포인트·데이터 0.
