@@ -408,8 +408,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "SELECT SQL을 실행하여 데이터를 조회한다. "
                 "반드시 `schema`.`table` 형식을 사용한다. "
                 "이 도구를 가장 먼저 사용하라 — 시스템 프롬프트의 KNOWN SCHEMAS 정보로 SQL을 즉시 작성할 수 있다. "
-                "무거운 쿼리는 DB 부하 경고(부하 게이트 — MySQL EXPLAIN / MSSQL SHOWPLAN 사전 추정)에 걸릴 수 있다 — "
-                "그 경우 WHERE/기간/집계 범위를 좁히거나 LIMIT/TOP 을 추가하라. 전체 스캔이 정말 필요하면 confirm_heavy=true 로 다시 호출한다."
+                "처음부터 가벼운 쿼리로 작성하라(필요 컬럼만·WHERE 한정·서버측 집계·표본은 LIMIT/TOP). 무거운 쿼리는 "
+                "부하 게이트(MySQL EXPLAIN / MSSQL SHOWPLAN 사전 추정)에 걸려 실행되지 않으며 예상 행수가 반환된다 — "
+                "그 경우 confirm_heavy 로 강행하지 말고 같은 목적을 달성하는 더 가벼운 쿼리로 재구성해 다시 호출하라."
             ),
             "parameters": {
                 "type": "object",
@@ -421,8 +422,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "confirm_heavy": {
                         "type": "boolean",
                         "description": (
-                            "true 면 무거운 쿼리 부하 게이트를 우회해 그대로 실행한다. "
-                            "범위를 좁힐 수 없고 전체 스캔이 반드시 필요할 때만 사용."
+                            "최후수단. true 면 무거운 쿼리 부하 게이트를 우회해 그대로 실행한다. 먼저 더 가벼운 쿼리로 "
+                            "재구성을 시도하고, 더 가벼운 형태로 목적 달성이 불가능한 전체 스캔이 반드시 필요할 때만 사용."
                         ),
                     },
                 },
@@ -1019,12 +1020,15 @@ def _tool_execute_sql(conn, args: dict) -> str:
                         "TOP/행 제한을 추가해 더 작은 쿼리로 다시 시도하세요."
                     )
             elif est > warn_thr and not confirm_heavy:
-                # 무거운 쿼리(추정치 보유) — confirm_heavy=true 면 근거 있는 override 로 실행한다.
+                # 무거운 쿼리(추정치 보유). gate=실행 전 가로채고 LLM 이 더 가벼운 쿼리로 재작성하도록
+                # 코칭(차단이 목적이 아니라 부하 절감 — TASK-0304). confirm_heavy 는 최후수단으로 후순위.
                 if guard_mode == "gate":
                     return (
-                        f"⚠ 무거운 쿼리로 추정됩니다 (예상 처리 ~{est:,}행 > 임계 {warn_thr:,}행). "
-                        f"DB 부하를 줄이도록 WHERE 조건·기간·집계 범위를 좁히거나 LIMIT/TOP 을 추가해 다시 시도하세요. "
-                        f"전체 스캔이 정말 필요하면 같은 쿼리를 confirm_heavy=true 로 다시 호출하면 실행합니다."
+                        f"⚠ 무거운 쿼리로 추정됩니다 (예상 처리 ~{est:,}행 > 임계 {warn_thr:,}행) — 실행하지 않았습니다. "
+                        f"같은 목적을 유지하면서 DB 부하가 더 적은 쿼리로 재구성해 다시 실행하세요: 필요한 컬럼만 SELECT, "
+                        f"WHERE 로 대상 한정(id/상태/기간), 서버측 집계(COUNT/SUM/GROUP BY), 표본은 LIMIT/TOP n. "
+                        f"더 가벼운 형태로 목적 달성이 정말 불가능한 전체 스캔 한정으로만, 최후수단으로 같은 쿼리를 "
+                        f"confirm_heavy=true 로 호출하면 실행합니다."
                     )
                 cost_note = (
                     f"⚠ 무거운 쿼리 (예상 처리 ~{est:,}행). 가능하면 다음엔 범위를 좁히세요."

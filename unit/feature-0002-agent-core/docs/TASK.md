@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Task
 
+## TASK-0304 (current cycle) — 무거운 쿼리 사전 감지 → LLM 이 더 가벼운 쿼리로 재작성해 목적 달성 (Major §12.3, REQ-20260618-0304)
+- 사용자 요청: "차단하기보다, LLM 이 무거운 쿼리를 미리 감지해 되도록 부하 적은 쿼리 구성으로 목적을 달성하도록 동작". (TASK-0299 SHOWPLAN 부하추정 활용 — gate=하드차단/warn=사후경고 둘 다 의도와 불일치.)
+- 결정(AskUserQuestion): "가로채고 LLM 재작성" — 무거운 원본은 실행 전 가로채되 LLM 이 tool 루프에서 더 가벼운 쿼리로 재작성→목적 달성. 최종 사용자엔 차단 미노출(효율적 답변만).
+- [x] (AC-0578) agent_core.py SYSTEM_PROMPT 에 "QUERY LOAD — STAY LIGHT" 섹션: ⓐ 처음부터 효율적 쿼리(필요 컬럼만·WHERE 한정·서버측 집계·표본 LIMIT/TOP) ⓑ 큰 조회 전 explain_query 자가확인 ⓒ 게이트가 무거운 쿼리 표시 시 confirm_heavy 강행 금지·더 가벼운 동등 쿼리로 재작성 ⓓ confirm_heavy=최후수단.
+- [x] (AC-0578) tools.py gate 메시지 reframe: "차단" 톤 → "실행하지 않았습니다 + 더 가벼운 쿼리로 재구성해 다시 실행" 코칭(재작성 우선·confirm_heavy 후순위). execute_sql/confirm_heavy 도구 description 동반 정렬.
+- [x] 테스트: `test_gate_message_coaches_rewrite_not_block`(재구성·실행안함·최후수단 단언) + 기존 게이트 토큰("무거운 쿼리"/"confirm_heavy=true") 보존 회귀 0.
+- [ ] make test 컨테이너 회귀 0 + ruff.
+- [ ] outside-voice 리뷰(프롬프트 회귀·게이트 의미) + verify-completion.
+- [ ] 머지→배포 3이미지 + 라이브 WebSystemPrompts global row 갱신 + AGENT_QUERY_GUARD_MODE=gate 활성. CHG/REV-20260618-0318.
+
 ## TASK-20260617T100524-ai-claude-account-insight-kv-source (current cycle) — 인사이트 추출 소스 kv 보강 (Major §12.3, 보안경계 불변)
 - 배포 준비 중 발견: 이 배포는 `agent_runtime.summary` 0행(요약 쓰기 cutover 결함)이나 `agent_runtime.kv` 에 origin_request(79)/thread_goal(79)/topic(99) 존재 → 추출 pass 가 summary 필수 JOIN 이라 후보 0건(기능 무동작).
 - [x] `run_account_insight_pass` 후보 쿼리 `JOIN summary`→`LEFT JOIN summary`(필수 제거) + per-conv **summary+kv 합산 신호** 게이트(≥MIN_SUMMARY_LEN)·합산 fingerprint. summary 비어도 kv 신호로 동작. 보안 가드(G1~G4·allowlist·PII)·source_type(account_insight, 전역 미공유) 불변.

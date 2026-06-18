@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260618-0318 [SUBAGENT:adversarial — 게이트 로직 회귀 / 토큰 보존 / 프롬프트 충돌 / confirm_heavy 약화 / 라이브 적용 / 사용자 노출] — SHIP
+- Date: 2026-06-18
+- Cycle: TASK-0304 (무거운 쿼리 사전 감지 → LLM 재작성 코칭 — 시스템 프롬프트 + 게이트 메시지 프레이밍, Major §12.3).
+- 패널: 적대 코드 리뷰어 1(기본 입장 "회귀 유발—반증하라"). `git diff main` 전수 + 게이트 로직 라인 대조 + test_query_guard(11)·test_mssql_load_estimate(24) = 35 PASS.
+- Verdict: **SHIP (BLOCKER 0 / MAJOR 0 / MINOR 2)**:
+  - **게이트 로직 회귀 [REFUTED]**: diff 의 added/removed 는 전부 도구 description·주석 1줄·gate 메시지 f-string 본문뿐. `must_estimate`/`est is None` fail-closed/`est > warn_thr and not confirm_heavy`/confirm override 제어흐름 라인은 diff 에 0건 — 가로채기·fail-closed·override 1바이트 불변.
+  - **토큰 보존 [REFUTED]**: 새 gate 메시지에 "무거운 쿼리"·"confirm_heavy=true" 보존, warn cost_note 미변경 → 기존 단언 35/35 통과.
+  - **프롬프트 충돌 [REFUTED]**: "QUERY LOAD" 섹션은 PRIME DIRECTIVE(정확성)와 다른 축(부하), Discovery budget 과 정합, explain_query 권장은 "큰 조회/불확실 시" 한정(과잉지시 아님).
+  - **confirm_heavy 약화 [REFUTED]**: 강등은 텍스트뿐, 로직상 override 여전히 가능(정당 전체스캔 봉쇄 없음).
+  - **라이브 적용 [REFUTED]**: WebSystemPrompts global row 갱신 의무 docs 명시(seed↔라이브 truth).
+  - **사용자 노출 [REFUTED]**: gate 메시지는 `tool_result` 채널 전용 → LLM 재진입, 최종 사용자엔 미노출.
+- 흡수한 FIX: **MINOR-1(livelock 방지)** — 프롬프트 confirm_heavy 불릿에 "가벼운 재작성 약 2회로도 게이트에 걸리고 사용자가 전체 결과가 정말 필요하면 무한 재시도 말고 confirm_heavy 로 fallback" 추가(step 소진 방지). MINOR-2(운영: gate 승격·global row PUT 누락 시 silent no-op)는 배포 절차로 처리.
+- 검증: feature-0002 회귀 0(게이트 35 PASS). **make test 컨테이너 실패 2건은 feature-0003 `test_product_delete_block_conv.py`(404≠200)로 clean main(9d15676, 내 변경 0)에서도 동일 실패 — TASK-0302 DELETE 404/409 변경 후 미갱신 추정, 본 cycle 무관(별건)**. ruff All checks passed. CHG-20260618-0318.
+
 ## REV-20260617T100524-ai-claude-account-insight-kv-source [SKIPPED:추출 입력 소스만 broaden(summary→summary+kv), 보안 경계(G1~G4·allowlist·PII 마스킹·account_insight 전역 미공유) 불변 — outside-voice 직전 cycle REV-20260617T095122 적용분 그대로]
 - 변경 성격: 기능 무동작(배포처 summary 0행) 해소 위한 입력 소스 확장. 추출 LLM 은 동일 PII-free 프롬프트, 저장 source_type·격리·회상 가드 전부 불변. 신규 cross-account/PII 표면 0. 단위 테스트 15(kv-only 경로 포함) + make test GREEN.
 ## REV-20260617T095122-ai-claude-account-insight-complete [SUBAGENT:2-lens outside-voice — 보안(BLOCKER/G1/G3) + 제품가치(회상 소스 적정성)] — SHIP-WITH-FIXES
