@@ -8,7 +8,18 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260618T022150-ai-claude-ds-acc-collapsible (current cycle) — 관리 콘솔 > 제품: 펼쳐진 데이터소스의 접근 가능 DB 목록 접기 가능하게 (REQ-20260618-0314, AC-0571, Minor §12.3)
+## TASK-20260618T025220-ai-claude-ds-acc-collapsed-default (current cycle) — 관리 콘솔 > 제품: 제품 선택 시 접근 가능 DB 목록 기본 접힘 (REQ-20260618-0316, AC-0573, Minor §12.3)
+- 보고(사용자, 2026-06-18): 기본적으로 제품 항목을 선택했을 경우 데이터베이스 목록이 접혀 있도록 구성해 달라. (TASK-20260618T022150 접기 토글 후속 — 토글은 됐으나 기본은 펼침이었음.)
+- 등급: **Minor §12.3** — frontend-only 기본값 1줄 변경. 백엔드·RBAC·스키마·엔드포인트·데이터·CSS 무변경. 비파괴(토글로 펼침 가능, 다른 datasource 전환 시 자동 펼침 유지).
+- 진단: TASK-20260618T022150 이 `_renderDsAccordion` 의 접힘 상태(`_dsBodyCollapsed`)와 머리 클릭 토글을 도입했으나 초기값이 `false`(펼침)라 제품 선택 시 편집 대상 datasource 의 DB 편집기가 펼친 채 시작했다. 사용자는 기본 접힘을 원함.
+- 수정: `src/static/admin.js` — `let _dsBodyCollapsed = false` → `true`(렌더 함수 클로저 초기값). 제품 상세를 열면(`renderProductDetail`) DB 편집기 body 가 접힌 채 시작, 데이터소스 행 머리 클릭으로 펼침 토글. `_switchEditDs`(전환)·`_afterBindChange`(편집대상 제거)의 `false` 리셋은 유지(다른 datasource 로 명시 전환 시 자동 펼침 — "전환=편집 시작" 의도 보존). 주석 갱신. admin.html 캐시버스터 `?v=20260618-ds-acc-collapsed-default`.
+- 검증: `tests/verify_ds_accordion_collapse.mjs`(기본 접힘으로 단언 반전 — 초기 접힘→클릭 펼침→재클릭 접힘) + `node -c admin.js` + PB-0008 Windows-browser(제품 선택 직후 DB 목록 접힘 실측).
+- 완료 기준(AC): AC-0573.
+- [x] 구현(admin.js 기본값 true + 주석, admin.html 캐시버스터) + `node -c admin.js` PASS.
+- [x] `verify_ds_accordion_collapse.mjs` **19/19 PASS**(초기 접힘·클릭 펼침·재클릭 접힘·하단 버튼 도달).
+- [ ] verify-completion → 머지 → web 재배포(deploy_scope: included) → **PB-0008 Windows-browser**(제품 선택 직후 기본 접힘 실측).
+
+## TASK-20260618T022150-ai-claude-ds-acc-collapsible — 관리 콘솔 > 제품: 펼쳐진 데이터소스의 접근 가능 DB 목록 접기 가능하게 (REQ-20260618-0314, AC-0571, Minor §12.3)
 - 보고(사용자, 2026-06-18): `관리 콘솔 > 제품` 탭에서 펼쳐진 데이터소스의 접근 가능 데이터베이스 목록을 접을 수 있게 해 달라. 현재는 데이터소스가 하나만 있을 경우 그 DB 목록이 접히지 않아 하단의 UI(데이터소스 추가·제품 프롬프트·삭제)에 접근하기 번거롭다.
 - 등급: **Minor §12.3** — frontend-only UI 동작 추가. 백엔드·RBAC·스키마·엔드포인트·데이터·CSS 무변경. 비파괴(기존 펼침 기본값 보존, 토글만 신설).
 - 진단: 제품 상세의 "데이터 소스 & 접근 가능 데이터베이스" accordion(TASK-0238, admin.js `_renderDsAccordion`)은 편집 대상(`_editDsKey`) 행만 펼쳐 `dbEditorWrap`(접근 DB 편집기)을 `.ds-acc-body` 로 그린다. 행 머리(`.ds-acc-head`) 클릭은 `_switchEditDs(key)` 호출인데, `_switchEditDs` 가 `nk === _editDsKey` 이면 **early-return**(admin.js:6526~6538) → 이미 펼쳐진(편집 대상) 행 머리를 다시 눌러도 무반응 = 접기 불가. 데이터소스가 하나면 그 하나가 항상 편집 대상이라 DB 목록이 영구 펼침 → 하단 UI 가 멀어짐.

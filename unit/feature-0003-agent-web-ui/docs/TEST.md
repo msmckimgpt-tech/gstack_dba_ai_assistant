@@ -275,12 +275,22 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0045: node --check app.js 통과 (구문 무결).
 
 ### TASK-20260618T022150 관리 콘솔 > 제품: 펼쳐진 데이터소스의 접근 가능 DB 목록 접기 (REQ-20260618-0314, AC-0571, Minor §12.3)
-- TEST-0117: 제품 상세 datasource accordion 초기 렌더 시 편집 대상 행은 펼침 — `.ds-acc-body` 존재, 행 `.ds-acc-row.is-active`, head `aria-expanded="true"`, caret `▾`(기존 동작 보존 회귀 검사).
-- TEST-0118: 펼쳐진(편집 대상) 행 머리(`.ds-acc-head`) 클릭 시 접힘 — `.ds-acc-body` 제거, `.ds-acc-row.is-active` 해제, `aria-expanded="false"`, caret `▸`, 행 자체는 목록에 유지, 하단 `.ds-acc-add-btn`('+ 데이터소스 추가') 도달 가능.
+> **NOTE**: 초기 기본값은 TASK-20260618T025220(REQ-20260618-0316, 아래 TEST-0121~0124)에서 **접힘**으로 변경됨 — `verify_ds_accordion_collapse.mjs` 단언이 반전됐다. 아래 TEST-0117~0120 은 당시(기본 펼침) 케이스 정의이며 §4 의 그 시점 Run 으로 보존된다.
+- TEST-0117: (superseded by TEST-0121) 제품 상세 datasource accordion 초기 렌더 시 편집 대상 행은 펼침 — `.ds-acc-body` 존재, 행 `.ds-acc-row.is-active`, head `aria-expanded="true"`, caret `▾`.
+- TEST-0118: 펼친(편집 대상) 행 머리(`.ds-acc-head`) 클릭 시 접힘 — `.ds-acc-body` 제거, is-active 해제, `aria-expanded="false"`, caret `▸`, 행 유지, 하단 `.ds-acc-add-btn` 도달.
 - TEST-0119: 접힌 행 머리 재클릭 시 재펼침 — `.ds-acc-body` 재생성, is-active 복원, `aria-expanded="true"`, caret `▾`(토글 복원).
-- TEST-0120: `node -c admin.js` 구문 무결 + 접힌 행은 CSS 무변경(기존 비활성 행과 동일 렌더 — 멀티 datasource 기존 스타일 재사용).
+- TEST-0120: `node -c admin.js` 구문 무결 + 접힌 행은 CSS 무변경(기존 비활성 행과 동일 렌더).
+
+### TASK-20260618T025220 관리 콘솔 > 제품: 제품 선택 시 접근 가능 DB 목록 기본 접힘 (REQ-20260618-0316, AC-0573, Minor §12.3)
+- TEST-0121: 제품 상세 datasource accordion **초기 렌더 시 편집 대상 행은 접힘**(기본값 변경) — `.ds-acc-body` 미생성, 행 `.ds-acc-row.is-active` 아님, head `aria-expanded="false"`, caret `▸`, datasource 행 자체는 목록 유지, 하단 `.ds-acc-add-btn`('+ 데이터소스 추가') 도달 가능.
+- TEST-0122: 접힌(편집 대상) 행 머리(`.ds-acc-head`) 클릭 시 펼침 — `.ds-acc-body` 생성, `.ds-acc-row.is-active`, `aria-expanded="true"`, caret `▾`, 편집기 안 `.admin-db-picker-btn` 존재.
+- TEST-0123: 펼친 행 머리 재클릭 시 재접힘 — `.ds-acc-body` 제거, is-active 해제, `aria-expanded="false"`, caret `▸`(토글 복원).
+- TEST-0124: `node -c admin.js` 구문 무결 + `_dsBodyCollapsed` 초기값 `true`(기본 접힘) + 전환 리셋(`_switchEditDs`/`_afterBindChange` 의 `false`) 불변(REQ-0314 동작 보존).
 
 ## 4. Test Run History
+- 2026-06-18 (TASK-20260618T025220-ai-claude-ds-acc-collapsed-default — 제품 선택 시 DB 목록 기본 접힘, **Minor §12.3**):
+  - **Environment: CLI/jsdom** (frontend-only, layout 비의존). `tests/verify_ds_accordion_collapse.mjs` **19/19 PASS** (Node18 + jsdom@22, 단언 반전): TEST-0121(초기 접힘 — body 미생성·is-active 아님·aria false·caret ▸·행 유지·`.ds-acc-add-btn` 도달), TEST-0122(클릭 펼침 — body 생성·is-active·aria true·caret ▾·picker 버튼), TEST-0123(재클릭 접힘 — body 제거·is-active 해제·aria false·caret ▸). `node -c admin.js` PASS(TEST-0124, `_dsBodyCollapsed=true` 초기값). REV-20260618T025220-ai-claude-ds-acc-collapsed-default [SKIPPED:frontend-ui-default-value-no-backend-no-rbac].
+  - **Residual(CHECK#13):** 머지 → web 재배포(deploy_scope: included) 후 **PB-0008 Windows-browser** 로 실 Windows 화면에서 제품 선택 직후 DB 목록이 접힌 채 시작하는지 + 머리 클릭 시 펼침 실측.
 - 2026-06-18 (TASK-20260618T022150-ai-claude-ds-acc-collapsible — 관리 콘솔 > 제품 데이터소스 DB 목록 접기, **Minor §12.3**):
   - **Environment: CLI/jsdom** (frontend-only, layout 비의존 — body 노드 생성/제거·클래스·속성·caret). `tests/verify_ds_accordion_collapse.mjs` **19/19 PASS** (Node18 + jsdom@22, admin.js realm 로드 후 `renderProductDetail()` 단일 datasource 제품 렌더): TEST-0117(초기 펼침 — body 존재·is-active·aria-expanded true·caret ▾·picker 버튼 존재), TEST-0118(토글1 접힘 — body 제거·is-active 해제·aria-expanded false·caret ▸·행 1개 유지·`.ds-acc-add-btn` 도달), TEST-0119(토글2 재펼침 — body 재생성·is-active 복원·aria-expanded true·caret ▾). `node -c admin.js` PASS(TEST-0120). REV-20260618T022150-ai-claude-ds-acc-collapsible [SKIPPED:frontend-ui-presentation-toggle-no-backend-no-rbac].
   - **Environment: Windows-browser** (실제 Windows Chrome/149.0.7827.116 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면. 배포: main `9069518`(PR #323 merge) → `docker compose build web` + `up -d --no-deps web`(repo-web-1 Up healthy, /healthz mysql_ok·pg_ok true). 서빙 admin.html `admin.js?v=20260618-ds-acc-collapsible` + 서빙 admin.js 에 `_dsBodyCollapsed`/`isEditTarget`/`isExpanded` baked(10 hit) + 컨테이너 baked admin.js `_dsBodyCollapsed`(7 hit). (healthz git_commit=unknown 은 GIT_COMMIT build-arg 미주입 기존 quirk — 코드 베이킹은 직접 grep 으로 확증.)

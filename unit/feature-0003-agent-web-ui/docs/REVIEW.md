@@ -3208,3 +3208,13 @@ source_of_truth: true
 - PB-0008 요지(PASS): 단일 datasource 제품 KR(`mysql-local`) — 사용자 보고 시나리오 정확 일치. 초기 펼침(body display:block·caret ▾·'+ 데이터소스 추가' 912px > viewport 836px 화면 밖) → 데이터소스 머리 클릭 접힘(`.ds-acc-body` 제거·행 유지·is-active 해제·aria false·caret ▸·'+ 데이터소스 추가' 685px viewport 내) → 재클릭 재펼침(body 재생성·caret ▾) 토글 사이클. 하단 UI(데이터소스 추가·삭제) 도달 실증.
 - Verification: docs-only. 실측 정본 = 본 evidence 가 기록하는 PB-0008.
 - Cross-ref: CHG-20260618T024209-ai-claude-ds-acc-collapsible-evidence / CHG-20260618T022150-ai-claude-ds-acc-collapsible / REQ-20260618-0314 / AC-0571.
+
+## REV-20260618T025220-ai-claude-ds-acc-collapsed-default [SKIPPED:frontend-ui-default-value-no-backend-no-rbac]
+- Date: 2026-06-18
+- Cycle: TASK-20260618T025220-ai-claude-ds-acc-collapsed-default (제품 선택 시 접근 가능 DB 목록 기본 접힘), **Minor §12.3**.
+- Panel 생략 근거(§18.8): 기존 toggle(REQ-20260618-0314)의 초기값 1줄 flip — 백엔드·스키마·엔드포인트·RBAC·데이터·CSS 무변경, 신규 권한·파괴적 동작 0. UI 동작 정본은 PB-0008 Windows-browser. RBAC/보안 인접 아님.
+- 설계 판단: ① 초기값만 `true` 로 두고 토글/전환 리셋 로직은 그대로 — 사용자가 datasource 를 명시 클릭하면 펼쳐 편집 시작(REQ-0314 "전환=편집 시작" 의도 보존). ② `_dsBodyCollapsed` 는 렌더 함수 클로저 변수라 매 `renderProductDetail`(제품 선택·아이콘 변경 등)마다 재초기화 → 제품 선택 시 항상 접힘으로 시작(요구 정합). 같은 제품 보는 중 머리 클릭 토글은 `_renderDsAccordion`(부분 렌더)이라 세션 내 펼침 유지. ③ 접힘 중에도 `_refreshAccessibleDbs`/`redrawChips`/`buildPicker` 는 detached `dbEditorWrap` 에 정상 작동 → 펼치면 최신 내용 표시(회귀 0, 테스트 토글1 로 확인).
+- 검토한 회귀 리스크: 멀티 datasource 제품도 초기 전부 접힘(이전엔 primary 펼침) — 사용자가 "제품 선택 시 DB 목록 접힘"을 명시 요청했으므로 의도된 변경. coverage 요약(`buildProductCoverageDetail`)·datasource 행 목록은 그대로 표시(접히는 것은 per-datasource DB 편집기뿐).
+- Verification: `node -c admin.js` + `tests/verify_ds_accordion_collapse.mjs` 19/19 PASS. 화면 정본 = PB-0008(배포 후).
+- Residual: 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser(제품 선택 직후 기본 접힘) → evidence.
+- Cross-ref: CHG-20260618T025220-ai-claude-ds-acc-collapsed-default / REQ-20260618-0316 / AC-0573 / TASK-20260618T022150(접기 토글 도입).

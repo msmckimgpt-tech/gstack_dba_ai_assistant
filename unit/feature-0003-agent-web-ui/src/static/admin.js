@@ -6423,11 +6423,11 @@ function renderProductDetail() {
 
   // 편집 중(펼친) datasource. 기본 = effective primary. 단일/미바인딩이면 primary(또는 '').
   let _editDsKey = _effPrimaryKey;
-  // 펼친(편집 대상) datasource 의 DB 편집기 body 접힘 여부. 기본 false(=펼침, 기존 동작 보존).
-  //  이미 편집 대상인 행의 머리를 다시 클릭하면 토글된다 — 단일 datasource 라도 목록을 접어
-  //  하단 UI(데이터소스 추가·제품 프롬프트·삭제)에 쉽게 접근할 수 있게 한다. 다른 datasource 로
-  //  전환하면 자동으로 펼쳐진다(_switchEditDs / _afterBindChange 에서 false 로 리셋).
-  let _dsBodyCollapsed = false;
+  // 펼친(편집 대상) datasource 의 DB 편집기 body 접힘 여부. 기본 true(=접힘) — 제품을 선택해
+  //  상세를 열면 DB 목록을 접은 상태로 시작해 하단 UI(데이터소스 추가·제품 프롬프트·삭제)에
+  //  바로 접근할 수 있게 한다(사용자 요청). 데이터소스 행의 머리를 클릭하면 펼침/접힘 토글되고,
+  //  다른 datasource 로 전환하면 자동으로 펼쳐진다(_switchEditDs / _afterBindChange 에서 false 로 리셋).
+  let _dsBodyCollapsed = true;
   let _switchEditDs = () => {};  // forward hook (정의 후 채움)
   const _serverDbsFor = (dsk) => {
     const want = String(dsk || "").trim().toLowerCase();

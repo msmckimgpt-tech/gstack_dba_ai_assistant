@@ -1,8 +1,8 @@
 // verify_ds_accordion_collapse.mjs
-// TASK-20260618 (관리 콘솔 > 제품): 데이터 소스 & 접근 가능 데이터베이스 accordion 에서
-//   이미 펼쳐진(편집 대상) 데이터소스 행의 머리를 다시 클릭하면 DB 편집기 body 가 접히도록
-//   한 동작을 jsdom 으로 격리 검증한다. 단일 datasource 라도 접어서 하단 UI(데이터소스 추가·
-//   제품 프롬프트·삭제)에 접근할 수 있어야 한다.
+// TASK-20260618 (관리 콘솔 > 제품): 데이터 소스 & 접근 가능 데이터베이스 accordion 의 접힘 동작을
+//   jsdom 으로 격리 검증한다. 제품을 선택해 상세를 열면 DB 편집기 body 는 **기본 접힘**으로
+//   시작하고(하단 UI 바로 접근), 데이터소스 행의 머리를 클릭하면 펼침/접힘이 토글된다.
+//   단일 datasource 라도 접어서 하단 UI(데이터소스 추가·제품 프롬프트·삭제)에 접근할 수 있어야 한다.
 //
 //   jsdom 으로 검증 가능한 이유: 접힘 = `.ds-acc-body` DOM 노드의 생성/제거 + is-active
 //   클래스 + aria-expanded + caret 텍스트 변화이며, 모두 layout 비의존(노드 존재/속성)이다.
@@ -108,28 +108,28 @@ const caretText = () => {
 ok("accordion 렌더됨", !!accordion());
 ok("datasource 행 1개 렌더됨", pane.querySelectorAll(".ds-acc-row").length === 1);
 
-// 2) 초기 상태 = 펼침(기존 동작 보존, 회귀 없음).
-ok("초기: DB 편집기 body 존재(펼침)", !!body());
-ok("초기: 행 is-active(펼침 강조)", !!firstRow() && firstRow().classList.contains("is-active"));
-ok("초기: head aria-expanded=true", firstHead() && firstHead().getAttribute("aria-expanded") === "true");
-ok("초기: caret ▾", caretText() === "▾");
-ok("초기: 편집기 안 DB picker 버튼 존재", !!pane.querySelector(".admin-db-picker-btn"));
+// 2) 초기 상태 = 접힘(제품 선택 시 기본 접힘 — 사용자 요청). 행은 유지, body 미생성.
+ok("초기: DB 편집기 body 미생성(기본 접힘)", body() === null);
+ok("초기: 행 is-active 아님(접힘)", !!firstRow() && !firstRow().classList.contains("is-active"));
+ok("초기: head aria-expanded=false", firstHead() && firstHead().getAttribute("aria-expanded") === "false");
+ok("초기: caret ▸", caretText() === "▸");
+ok("초기: datasource 행 유지(목록 표시)", pane.querySelectorAll(".ds-acc-row").length === 1);
+ok("초기: 하단 '+ 데이터소스 추가' 버튼 도달 가능", !!pane.querySelector(".ds-acc-add-btn"));
 
-// 3) 펼친 행의 머리를 다시 클릭 → 접힘.
+// 3) 접힌 행의 머리를 클릭 → 펼침(편집 시작).
 firstHead().click();
-ok("토글1: DB 편집기 body 제거(접힘)", body() === null);
-ok("토글1: 행 is-active 해제", !!firstRow() && !firstRow().classList.contains("is-active"));
-ok("토글1: head aria-expanded=false", firstHead() && firstHead().getAttribute("aria-expanded") === "false");
-ok("토글1: caret ▸", caretText() === "▸");
-ok("토글1: 행 자체는 유지(목록서 사라지지 않음)", pane.querySelectorAll(".ds-acc-row").length === 1);
-ok("토글1: 하단 '+ 데이터소스 추가' 버튼 여전히 도달 가능", !!pane.querySelector(".ds-acc-add-btn"));
+ok("토글1: DB 편집기 body 생성(펼침)", !!body());
+ok("토글1: 행 is-active(펼침 강조)", !!firstRow() && firstRow().classList.contains("is-active"));
+ok("토글1: head aria-expanded=true", firstHead() && firstHead().getAttribute("aria-expanded") === "true");
+ok("토글1: caret ▾", caretText() === "▾");
+ok("토글1: 편집기 안 DB picker 버튼 존재", !!pane.querySelector(".admin-db-picker-btn"));
 
-// 4) 다시 클릭 → 펼침(토글 복원).
+// 4) 다시 클릭 → 접힘(토글 복원).
 firstHead().click();
-ok("토글2: DB 편집기 body 재생성(펼침)", !!body());
-ok("토글2: 행 is-active 복원", !!firstRow() && firstRow().classList.contains("is-active"));
-ok("토글2: head aria-expanded=true", firstHead() && firstHead().getAttribute("aria-expanded") === "true");
-ok("토글2: caret ▾", caretText() === "▾");
+ok("토글2: DB 편집기 body 제거(접힘)", body() === null);
+ok("토글2: 행 is-active 해제", !!firstRow() && !firstRow().classList.contains("is-active"));
+ok("토글2: head aria-expanded=false", firstHead() && firstHead().getAttribute("aria-expanded") === "false");
+ok("토글2: caret ▸", caretText() === "▸");
 
 console.log(`\n${failed === 0 ? "ALL PASS" : "FAILURES"} — passed=${passed} failed=${failed}`);
 process.exit(failed === 0 ? 0 : 1);
