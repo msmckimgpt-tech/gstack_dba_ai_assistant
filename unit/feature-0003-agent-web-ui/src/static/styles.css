@@ -7098,6 +7098,10 @@ a { color: inherit; }
   flex-direction: column;
   border-top: 1px solid var(--border-subtle);
 }
+/* 접힘은 [hidden] 속성으로 토글. 위 .rn-group-body{display:flex} 가 UA [hidden]{display:none}
+   를 specificity 동률+소스순서로 덮어써 접힘이 무력화되는 함정(PB-0008 적발)을 막는다 —
+   class+attr (0,2,0) 로 명시 우선. (참조: 권한 grid [hidden] override 트랩) */
+.rn-group-body[hidden] { display: none; }
 
 /* 항목 */
 .rn-item {
