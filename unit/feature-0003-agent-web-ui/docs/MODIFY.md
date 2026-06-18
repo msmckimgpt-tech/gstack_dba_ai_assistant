@@ -4094,3 +4094,12 @@ source_of_truth: true
 - Verification: `node -c admin.js` PASS + `tests/verify_ds_accordion_collapse.mjs` **19/19 PASS**(jsdom — 초기 펼침 회귀 없음·토글1 접힘[body 제거·is-active 해제·aria-expanded false·caret ▸·행 유지·하단 '+ 데이터소스 추가' 도달]·토글2 재펼침). 화면 정본 = PB-0008 Windows-browser(배포 후).
 - Rollback: 2 파일 revert(admin.js `_dsBodyCollapsed`/`isExpanded`/토글 핸들러/리셋, admin.html cache-buster). 동작만 원복(접기 불가 상태로), 데이터·기능 무영향.
 - Deploy: web 재빌드 1 이미지(프론트 baked). deploy_scope: included.
+
+## CHG-20260618T024209-ai-claude-ds-acc-collapsible-evidence
+- Date: 2026-06-18 (TASK-20260618T022150-ai-claude-ds-acc-collapsible — PB-0008 Windows-browser evidence 기록, docs-only).
+- Scope: docs-only — feature-0003 `docs/{TASK,REPORT,MODIFY,REVIEW,TEST}.md`. 코드·스키마·배포 0(증거 기록).
+- 내용: TASK-20260618T022150(데이터소스 DB 목록 접기 토글)의 배포 후 PB-0008 Windows-browser 실측 결과를 TEST.md §4 에 'Environment: Windows-browser' Run 으로 기록(CHECK#13 충족), TASK/REPORT 의 잔여 → 완료 전환. 실측: 배포본 main `9069518`(PR #323 merge), 실 Chrome/149 via win-browser relay, 단일 datasource 제품 KR(`mysql-local`) 에서 초기 펼침→머리 클릭 접힘(body 제거·행 유지·caret ▸·aria false)→'+ 데이터소스 추가' 912→685px viewport 내 진입→재펼침 토글 복원 PASS. evidence `artifacts/pb0008-ds-acc-collapsible/ds-acc-collapsed.png`.
+- Why: AGENTS.md §15.4.1 PB-0008 — 웹/UI 변경 완료 검증은 실 Windows 브라우저 정본. 코드 PR(#323) 머지·배포 후 별도 evidence cycle 로 기록(two-PR 패턴).
+- Verification: 본 변경은 docs-only(코드 0). 검증 정본은 본 cycle 이 기록하는 PB-0008 결과 자체.
+- Rollback: docs revert(증거 기록 제거). 코드·배포 무영향.
+- Deploy: 없음(docs-only).

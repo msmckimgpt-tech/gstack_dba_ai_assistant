@@ -3182,3 +3182,11 @@ source_of_truth: true
 - Verification: `node -c admin.js` + `tests/verify_ds_accordion_collapse.mjs` 19/19 PASS. 화면 정본 = PB-0008(배포 후).
 - Residual: 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser(실 화면 접기/펼치기 + 하단 UI 접근) → evidence CHG/REV.
 - Cross-ref: CHG-20260618T022150-ai-claude-ds-acc-collapsible / REQ-20260618-0314 / AC-0571 / TASK-0238(accordion 원 설계).
+
+## REV-20260618T024209-ai-claude-ds-acc-collapsible-evidence [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-18
+- Cycle: TASK-20260618T022150-ai-claude-ds-acc-collapsible PB-0008 evidence 기록, **Minor §12.3**, docs-only.
+- Panel 생략 근거(§18.8): 코드·스키마·RBAC·배포 변경 0 — 이미 머지·배포된 frontend toggle(PR #323)의 실 Windows 브라우저 검증 결과를 문서에 기록할 뿐. 신규 위험 표면 없음.
+- PB-0008 요지(PASS): 단일 datasource 제품 KR(`mysql-local`) — 사용자 보고 시나리오 정확 일치. 초기 펼침(body display:block·caret ▾·'+ 데이터소스 추가' 912px > viewport 836px 화면 밖) → 데이터소스 머리 클릭 접힘(`.ds-acc-body` 제거·행 유지·is-active 해제·aria false·caret ▸·'+ 데이터소스 추가' 685px viewport 내) → 재클릭 재펼침(body 재생성·caret ▾) 토글 사이클. 하단 UI(데이터소스 추가·삭제) 도달 실증.
+- Verification: docs-only. 실측 정본 = 본 evidence 가 기록하는 PB-0008.
+- Cross-ref: CHG-20260618T024209-ai-claude-ds-acc-collapsible-evidence / CHG-20260618T022150-ai-claude-ds-acc-collapsible / REQ-20260618-0314 / AC-0571.
