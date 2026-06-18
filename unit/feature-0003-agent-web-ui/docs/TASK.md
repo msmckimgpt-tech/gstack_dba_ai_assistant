@@ -8,7 +8,22 @@ source_of_truth: true
 
 # Task
 
-## TASK-0295 (current cycle) — 작업 화면 제품 목록을 역할 제품 접근 권한으로 게이트 (REQ-20260617-0293, AC-0548, Major §12.3)
+## TASK-20260618T010417-ai-claude-date-group-collapse (current cycle) — 작업 화면 좌측 대화목록 첫 진입 시 최근 일자 그룹만 펼침 (REQ-20260618-0288, AC-0569, Minor §12.3)
+- 보고(사용자, 2026-06-18): 서비스를 처음 진입할 때 `작업 화면 > 좌측 대화목록` 에서, 가장 최근의 일자에 대한 대화그룹을 제외한 나머지 오래된 일자들은 접힌 상태로 나타내 달라.
+- 등급: **Minor §12.3** — frontend-only UI 기본값 추가. 백엔드·RBAC·스키마·엔드포인트·데이터 0. 비파괴(접힘 기본값 + 사용자 토글 존중).
+- 사용자 결정(AskUserQuestion, 2026-06-18): "처음 진입" = 매 페이지 진입(reload)마다 재적용. 날짜 키가 상대적(`__today__`/`__yesterday__`)이라 영구 1회 seed(타 계정 그룹 `_seedOthersCollapsedOnce` 패턴)는 다음 날 무의미 → 매 로드 1회 seed, 세션 내 사용자 펼침 토글은 존중.
+- 진단: 내 대화 날짜 그룹 접힘은 `state.collapsedDateGroups`(localStorage `mad.collapsedGroups.v1`)로 결정되는데, 첫 진입 시 오래된 그룹 키가 set 에 없어 전부 펼침이 기본(app.js `renderConversationList` ~L1993, `sortedDateKeys` = today→yesterday→YYYY-MM-DD desc→`__other__`). "가장 최근 일자 그룹만 펼침" 기본값 부재.
+
+### §2.1 Implementation Plan (PLAN)
+- `src/static/app.js`: ① 모듈 스코프 `let _dateGroupsSeededThisLoad`(스크립트 재실행=페이지 로드당 리셋) + `_seedDateGroupsCollapsedOnce(sortedDateKeys)` 신설 — `sortedDateKeys[0]`(최근)은 `delete`(펼침 보장, 직전 영속 접힘 해제), 나머지는 `add`(접힘). 빈 키면 플래그 미설정(대화 미로드 시 다음 렌더 재시도). localStorage 영속 안 함(세션 단위, reload 재적용). ② `renderConversationList` 의 `sortedDateKeys` 정렬 직후·`forEach` 렌더 전에 1회 호출. 타 계정/owner 그룹은 별 seed(`_seedOthersCollapsedOnce`)라 무관.
+- `src/static/index.html`: app.js 캐시버스터 `?v=20260618-date-group-collapse`.
+- 검증: `tests/verify_date_group_collapse.mjs`(순수 node, set 조작 로직 — jsdom 불필요) + 기존 `verify_conv_entry_defaults.mjs` 무회귀 + PB-0008 Windows-browser(최근 외 날짜 그룹 `is-collapsed` computed).
+- 완료 기준(AC): AC-0569.
+- [x] 구현(app.js seed + 배선, index.html 캐시버스터) + node --check.
+- [x] `verify_date_group_collapse.mjs` **22/22 PASS** + 기존 `verify_conv_entry_defaults.mjs` **20/20 무회귀**.
+- [ ] verify-completion --pre-commit PASS → 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser.
+
+## TASK-0295 — 작업 화면 제품 목록을 역할 제품 접근 권한으로 게이트 (REQ-20260617-0293, AC-0548, Major §12.3)
 - 보고(사용자, 2026-06-17): `관리 콘솔 > 역할` 에서 각 제품에 대한 권한이 없다면, 작업 화면 내 대화창 제품 목록 내부에서도 출력되지 않도록 구성.
 - 등급: **Major §12.3** — 인가 표시 게이트(노출 축소 = 보안 강화 방향). 데이터 파괴 0·rollback 용이(필터 추가/제거). RBAC 인접 → outside-voice 필수([[feedback_outside_voice_for_rbac]]).
 - 진단: 작업 화면 제품 목록은 `/api/session`(app.py:8871)·`/api/auth/me`(app.py:15548)가 `_list_products(include_inactive=False)` 로 반환하는데 **RBAC 필터가 없어** `IsActive=1` 전 제품을 노출. 반면 mutation 경로 8곳(`/api/ask` 9650/9758·`/api/new_conversation` 10301·pin 10421·fork 11099·prompt 18691/18731·pref 2779)은 이미 `_account_has_product_access`(제품별 `product.access.<key>`)로 403 게이트 → "요청은 막히는데 목록엔 보이는" 표시-enforcement 불일치. 관리 콘솔 4곳(`_list_products(include_inactive=True)` 16388/16765/17031/17202)은 product.read/manage 축(TASK-0288 2축 분리)이라 무관.
