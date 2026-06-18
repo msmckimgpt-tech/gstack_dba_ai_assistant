@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.34.0
+template_version: v3.34.1
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -2141,6 +2141,14 @@ options:
 - `description`에 여러 단락 / 마크다운 헤딩 / 코드 블록 삽입
 - 한국어 긴 문장을 `description`에 넣어 인코딩 깨짐 유발
 
+**재호출 억제 (1턴 1회, MUST)**: AskUserQuestion 은 **한 턴에 1회만** 호출한다. 호출 후 응답이
+수신되지 않으면(빈 결과·툴이 즉시 리턴·멀티세션 병렬 컨텍스트에서 미수신) **같은 내용으로 재호출하지
+않는다** — 다음 사용자 턴까지 대기한다. 동일 질문을 응답 대기 없이 반복 호출하면(관찰: 1분 내 4회
+연속) 사용자 UI 가 중복 프롬프트로 막히고, 외부 영향 confirm 게이트(§16.3)에서는 승인 의미가
+모호해진다. 응답이 비었거나 모호하면 재호출 대신 **사용자 입력을 기다리거나**, 정말 진행 차단이
+필요하면 prose 로 1줄 안내 후 턴을 종료한다. **빈/미수신 결과는 승인이 아니다 (fail-closed)** — §16.3
+외부 영향 행동은 명시적 affirmative 응답이 없으면 진행하지 않는다.
+
 **SKILL 작성 지침**: 본 정책이 `~/.claude/CLAUDE.md` 전역 정책과 동일 내용이다.
 SKILL 지문에서 "AskUserQuestion 으로 … 호출" 이라고 지시할 때 직전 prose 출력 단계를
 명시하거나 `(~/.claude/CLAUDE.md §AskUserQuestion 분리 패턴 준수)` 를 주석으로 달아
@@ -2643,6 +2651,36 @@ exit 0
 - *피드백이 목적* (정보 전달 후 진행) → Stop/SubagentStop `additionalContext` + exit 0.
 - additionalContext 로 반환하는 내용도 §12 민감정보 처리 규칙을 따른다 (secret·credential 비노출).
 
+**차단형 block 의 런타임 한도 (8-block cap, v2.1.143+):** §22.1 PreCompact 와 Stop/SubagentStop 의
+*차단형*(`{"decision":"block"}` + exit 2)은 **무한 hard-gate 가 아니다** — 반복 block 이 8회에 도달하면
+Claude Code 가 강제 종료(force-stop)를 허용한다(무한루프 방지). 한도는 `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`
+환경변수로 조정한다. 따라서:
+- 차단형 hook 은 "자동 해소 가능한 조건의 ≤8회 soft 환기"(예: 미완료 TASK 재확인)에만 쓴다.
+- **자동 해소 불가한 결정적 차단**(소비자 repo mutation·force-push·외부 영향 행동 등)은 차단형 hook 으로
+  hard-gate 화하지 않는다 — §22.6 L1 `permissions.deny` 로 인코딩한다(정본 결정적 차단). cap 은 **8 을
+  보장하지 않는다**: env 로 1·0 까지 하향 가능하고 세션 내 무관한 block 으로 이미 소진될 수 있어, 보안
+  목적 block 은 **1회도 발동을 보장받지 못한다** — "≤8 은 안전 마진" 으로 읽지 말 것.
+- §16 완료 게이트·verify-completion 보조로 차단형 Stop hook 을 설계할 때, "사람 개입 필요" 같은
+  자동 해소 불가 BLOCKED 상태를 무한 block 으로 강제하면 *false sense of hard-gate* 가 된다 — 8-block
+  cap 을 인지하고 결정적 경계는 deny 측에 둔다.
+- 단 `permissions.deny` 도 `bypassPermissions`/`--dangerously-skip-permissions` 모드에서는 미강제다.
+  진짜 비가역 경계(공유 main force-push 등)는 에이전트 밖 **server-side / branch-protection** 으로도
+  보강한다 — deny 단독을 절대 보증으로 의존하지 않는다.
+
+**PostToolUse `continueOnBlock` — 도구 차단 후 사유 피드백 + 자기수정 (v2.1.139+):** `PostToolUse` hook 의
+`continueOnBlock` 옵션은 **도구 호출을 차단할 때 거부 사유를 Claude 에 되먹여**, 턴을 종료하지 않고 다음
+행동에서 자기수정하게 한다. 위 두 패턴과 적용 *단위*가 다르다:
+- §22.1 PreCompact `decision:block` — *압축/종료 시점* 차단.
+- §22.1.1 Stop/SubagentStop `additionalContext` — *턴 종료 시점* 비차단 피드백.
+- PostToolUse `continueOnBlock` — ***개별 도구 호출 시점*** 차단 + 사유 피드백(턴 유지).
+
+ANCHOR·verify-completion·META 경로 가드(예: 금지 경로 write, 미승인 force-push 시도)를 PostToolUse 로
+차단할 때 `continueOnBlock` 으로 사유를 반환하면, AI 가 차단 이유를 보고 *같은 턴*에 올바른 행동으로
+재시도한다 — 사유 없는 단독 차단(turn 종료) 대비 위임 세션의 자기수정 루프를 짧게 한다. ⚠ 반환 사유
+문자열은 **hook 이 생성**하므로(모델 prose 아님) 모델의 §12 자기검열이 적용되지 않는다 — 차단을 유발한
+토큰을 그대로 echo 하면 secret·경로가 transcript/컨텍스트로 누출된다. **hook 작성자가 매칭된 secret·경로를
+사유 반환 전 redact** 해야 한다(§12 는 hook 출력에도 적용).
+
 ### §22.2 `/fewer-permission-prompts` — 권한 설정 자동화
 
 Claude Code v2.1.105+ 는 `/fewer-permission-prompts` 명령으로 transcript 를 분석해 `.claude/settings.json` 의 `allowedTools` allowlist 를 자동 제안한다. 신규 소비자 init 직후 또는 초기 작업 세션 후 실행하면 반복 권한 승인 프롬프트를 크게 줄일 수 있다.
@@ -2660,6 +2698,25 @@ Claude Code v2.1.105+ 는 `/fewer-permission-prompts` 명령으로 transcript �
 
 > **보완 관계**: 본 § 는 *사전(pre-built) allowlist* 를 구축한다. 런타임에 권한을 classifier 로
 > 처리하는 **auto mode** 와 절대 차단 규칙은 §22.6 참조 — 두 패턴은 대체가 아닌 보완 관계다.
+
+**`disableBundledSkills` — 번들 skill/command 숨김으로 clean surface 구성 (v2.1.169+):** `disableBundledSkills`
+설정(또는 `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1` 환경변수)은 Claude Code 에 번들된 skill·workflow·
+slash command 를 listing 에서 숨긴다. 소비자가 **template 이 제공하는 커스텀 skill 만 노출**하려 할 때
+사용한다 — `_template:*` / `_local:*` 같은 프로젝트 skill 의 discovery 를 빌트인 명령 noise 와 분리해
+clean surface 를 만든다.
+
+```json
+{
+  "disableBundledSkills": true
+}
+```
+
+- 활용 시점: `/_template:init` 직후, 또는 위임 세션에서 빌트인 skill 자동완성이 프로젝트 skill 선택을
+  방해할 때.
+- ⚠ 숨김은 **표시(discovery)** 만 제어한다 — **권한 경계가 아니다**. 실제 실행 차단은 §22.6
+  `permissions.deny` 가 담당한다(§22.2 allowlist 와 동일하게 *표시 ≠ 보안 경계*).
+- env 변수(`CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1`)는 settings 키와 동등한 대안 — CI/cron 위임처럼
+  `settings.json` 을 건드리지 않고 토글하려는 경우에 쓴다.
 
 ### §22.3 Dynamic Workflow Tool 운용 — 신뢰성·subagent lifecycle
 
