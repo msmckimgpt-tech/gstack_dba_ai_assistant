@@ -4084,3 +4084,13 @@ source_of_truth: true
 - Verification: 라이브(실 running stack + 브라우저) 수정 전 제품 3개 일괄 삭제 → 0건, 수정 후 → 3건 전부 삭제. is-to-delete rows=2·pendingDots=2. 회귀(역할 일괄 비활성 2/2) 정상. node --check + py ast.parse. 외부리뷰 SHIP-WITH-FIXES(REV-20260617-0312 — MAJOR 기본제품 가드·MINOR 제품행 마커 흡수).
 - Rollback: 3 파일 revert(admin.js _delete 분기·renderXList·제품 마커, admin.html cache-buster, app.py IsDefault/404 가드).
 - Deploy: web 재빌드(deploy_scope: included). 라이브 재검증 = 기본 제품 삭제 409 + 일괄 삭제 N건 전부 + pending 마커 + PB-0008.
+
+## CHG-20260618T022150-ai-claude-ds-acc-collapsible
+- Date: 2026-06-18 (TASK-20260618T022150-ai-claude-ds-acc-collapsible — 관리 콘솔 > 제품: 펼쳐진 데이터소스의 접근 가능 DB 목록 접기 가능하게).
+- Scope: frontend-only — feature-0003 `src/static/admin.js`(제품 상세 datasource accordion) + `src/static/admin.html`(cache-buster). 백엔드·스키마·CSS·엔드포인트·RBAC·신규 권한 0.
+- 근본원인: "데이터 소스 & 접근 가능 데이터베이스" accordion(TASK-0238, `_renderDsAccordion`)의 행 머리(`.ds-acc-head`) 클릭이 `_switchEditDs(key)` 만 호출하는데, `_switchEditDs` 는 `nk === _editDsKey` 이면 early-return(admin.js:6526~) → 이미 편집 대상인 행을 다시 눌러도 무반응 = 접기 불가. 데이터소스가 하나면 그 하나가 항상 편집 대상이라 접근 DB 편집기(`.ds-acc-body`)가 영구 펼침 → 하단 UI(데이터소스 추가·제품 프롬프트·삭제)가 멀어짐.
+- 변경(admin.js): ① 렌더 함수 클로저에 `let _dsBodyCollapsed = false`(편집 대상 body 접힘 여부, 기본 펼침=기존 동작 보존) 신설. ② `_renderDsAccordion` 행 렌더에서 `isActive` → `isEditTarget`(키 일치) + `isExpanded`(= isEditTarget && !_dsBodyCollapsed) 분리 — is-active 클래스·`aria-expanded`·caret(▾/▸)·`.ds-acc-body` 생성·head `title` 모두 `isExpanded` 기준. ③ head 클릭 핸들러: 이미 편집 대상이면 `_dsBodyCollapsed` 토글 + `_renderDsAccordion()`, 아니면 `_switchEditDs(key)` 전환. ④ `_switchEditDs`·`_afterBindChange`(편집 대상 제거 분기)에서 `_dsBodyCollapsed=false` 리셋(다른 datasource 전환/이동 시 자동 펼침). admin.html cache-buster `?v=20260618-ds-acc-collapsible`.
+- Why: 사용자 보고 — 데이터소스가 하나일 때 DB 목록이 접히지 않아 하단 UI 접근이 번거로움. 접기 토글 신설로 해소. 기본 펼침 유지로 멀티 datasource 기존 흐름 무회귀.
+- Verification: `node -c admin.js` PASS + `tests/verify_ds_accordion_collapse.mjs` **19/19 PASS**(jsdom — 초기 펼침 회귀 없음·토글1 접힘[body 제거·is-active 해제·aria-expanded false·caret ▸·행 유지·하단 '+ 데이터소스 추가' 도달]·토글2 재펼침). 화면 정본 = PB-0008 Windows-browser(배포 후).
+- Rollback: 2 파일 revert(admin.js `_dsBodyCollapsed`/`isExpanded`/토글 핸들러/리셋, admin.html cache-buster). 동작만 원복(접기 불가 상태로), 데이터·기능 무영향.
+- Deploy: web 재빌드 1 이미지(프론트 baked). deploy_scope: included.

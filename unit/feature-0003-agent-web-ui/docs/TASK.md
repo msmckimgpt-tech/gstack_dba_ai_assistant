@@ -8,7 +8,22 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260618T021526-ai-claude-admin-status-filter (current cycle) — 관리 콘솔 역할·제품 탭에 활성/비활성 필터 추가 (REQ-20260618-0313, AC-0570, Minor §12.3)
+## TASK-20260618T022150-ai-claude-ds-acc-collapsible (current cycle) — 관리 콘솔 > 제품: 펼쳐진 데이터소스의 접근 가능 DB 목록 접기 가능하게 (REQ-20260618-0314, AC-0571, Minor §12.3)
+- 보고(사용자, 2026-06-18): `관리 콘솔 > 제품` 탭에서 펼쳐진 데이터소스의 접근 가능 데이터베이스 목록을 접을 수 있게 해 달라. 현재는 데이터소스가 하나만 있을 경우 그 DB 목록이 접히지 않아 하단의 UI(데이터소스 추가·제품 프롬프트·삭제)에 접근하기 번거롭다.
+- 등급: **Minor §12.3** — frontend-only UI 동작 추가. 백엔드·RBAC·스키마·엔드포인트·데이터·CSS 무변경. 비파괴(기존 펼침 기본값 보존, 토글만 신설).
+- 진단: 제품 상세의 "데이터 소스 & 접근 가능 데이터베이스" accordion(TASK-0238, admin.js `_renderDsAccordion`)은 편집 대상(`_editDsKey`) 행만 펼쳐 `dbEditorWrap`(접근 DB 편집기)을 `.ds-acc-body` 로 그린다. 행 머리(`.ds-acc-head`) 클릭은 `_switchEditDs(key)` 호출인데, `_switchEditDs` 가 `nk === _editDsKey` 이면 **early-return**(admin.js:6526~6538) → 이미 펼쳐진(편집 대상) 행 머리를 다시 눌러도 무반응 = 접기 불가. 데이터소스가 하나면 그 하나가 항상 편집 대상이라 DB 목록이 영구 펼침 → 하단 UI 가 멀어짐.
+
+### §2.1 Implementation Plan (PLAN)
+- `src/static/admin.js`: ① 모듈 스코프(렌더 함수 클로저) `let _dsBodyCollapsed = false` 신설 — 편집 대상 행의 body 접힘 여부(기본 펼침=기존 동작 보존). ② `_renderDsAccordion` 의 행 렌더에서 `isActive` → `isEditTarget`(키 일치) + `isExpanded`(= isEditTarget && !_dsBodyCollapsed) 분리. is-active 클래스·aria-expanded·caret(▾/▸)·body 렌더 모두 `isExpanded` 기준. head `title` = 펼침 시 "클릭하면 접기" / 접힘 시 "클릭하면 펼쳐서 DB 편집". ③ head 클릭 핸들러: 이미 편집 대상이면 `_dsBodyCollapsed` 토글 + `_renderDsAccordion()`, 아니면 `_switchEditDs(key)`(전환). ④ `_switchEditDs` 와 `_afterBindChange`(편집 대상 제거 분기)에서 `_dsBodyCollapsed = false` 리셋 — 다른 datasource 로 전환/이동 시 자동 펼침.
+- `src/static/admin.html`: admin.js 캐시버스터 `?v=20260618-ds-acc-collapsible`.
+- CSS 무변경: 접힌 행은 기존 비활성(non-active) 행과 동일 렌더(멀티 datasource 에서 이미 존재하는 스타일). `.ds-acc-head:only-child` / 비-active border-radius 가 그대로 적용.
+- 검증: `tests/verify_ds_accordion_collapse.mjs`(jsdom — body 노드 생성/제거·is-active·aria-expanded·caret, layout 비의존) + PB-0008 Windows-browser(실 화면 클릭 접기/펼치기 + 하단 UI 도달).
+- 완료 기준(AC): AC-0571.
+- [x] 구현(admin.js 접힘 상태 + 토글 + 전환 리셋, admin.html 캐시버스터) + `node -c admin.js` PASS.
+- [x] `verify_ds_accordion_collapse.mjs` **19/19 PASS**(초기 펼침 회귀 없음·토글1 접힘·토글2 재펼침·하단 버튼 도달).
+- [ ] verify-completion --pre-commit → 머지 → web 재배포(deploy_scope: included) → **PB-0008 Windows-browser**(실 화면 접기/펼치기 + 하단 UI 접근).
+
+## TASK-20260618T021526-ai-claude-admin-status-filter — 관리 콘솔 역할·제품 탭에 활성/비활성 필터 추가 (REQ-20260618-0313, AC-0570, Minor §12.3)
 - 보고(사용자, 2026-06-18): `관리 콘솔 > 역할`, `관리 콘솔 > 제품` 탭에서 활성/비활성 필터를 적용해 달라. 기존의 `계정` 탭을 참조.
 - 등급: **Minor §12.3** — frontend-only(admin.html 2 toolbar + admin.js 필터 상태/술어/배선). 백엔드·RBAC·스키마·엔드포인트·데이터 0. 비파괴(기본 "전체" → 기존 동작 보존).
 - 진단: `계정` 탭은 이미 `admin-filter-group`(전체/활성/비활성/삭제됨, `data-account-filter`)을 가지며 `filteredAccounts()` 가 `adminState.accountFilter` 로 게이트한다. 반면 `역할`·`제품` 탭 toolbar 는 검색창만 있고 상태 필터 UI·상태·술어가 모두 부재(`filteredRoles()`/`filteredProducts()` 는 검색어만 필터). 역할·제품은 soft-delete(`deleted_at`)가 없고 hard-delete 라 "삭제됨" 분기는 제외 → 3버튼(전체/활성/비활성).

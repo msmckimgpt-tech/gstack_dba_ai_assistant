@@ -274,7 +274,16 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0044: `initialize()` 의 탭 클릭 리스너는 `switchProfileTab(tab)` 만 호출하고 lazy 디스패치(`initAccountPromptEditor`/`loadProfileUsage`)를 직접 중복 보유하지 않는다 (단일 진입점 = `switchProfileTab`).
 - TEST-0045: node --check app.js 통과 (구문 무결).
 
+### TASK-20260618T022150 관리 콘솔 > 제품: 펼쳐진 데이터소스의 접근 가능 DB 목록 접기 (REQ-20260618-0314, AC-0571, Minor §12.3)
+- TEST-0117: 제품 상세 datasource accordion 초기 렌더 시 편집 대상 행은 펼침 — `.ds-acc-body` 존재, 행 `.ds-acc-row.is-active`, head `aria-expanded="true"`, caret `▾`(기존 동작 보존 회귀 검사).
+- TEST-0118: 펼쳐진(편집 대상) 행 머리(`.ds-acc-head`) 클릭 시 접힘 — `.ds-acc-body` 제거, `.ds-acc-row.is-active` 해제, `aria-expanded="false"`, caret `▸`, 행 자체는 목록에 유지, 하단 `.ds-acc-add-btn`('+ 데이터소스 추가') 도달 가능.
+- TEST-0119: 접힌 행 머리 재클릭 시 재펼침 — `.ds-acc-body` 재생성, is-active 복원, `aria-expanded="true"`, caret `▾`(토글 복원).
+- TEST-0120: `node -c admin.js` 구문 무결 + 접힌 행은 CSS 무변경(기존 비활성 행과 동일 렌더 — 멀티 datasource 기존 스타일 재사용).
+
 ## 4. Test Run History
+- 2026-06-18 (TASK-20260618T022150-ai-claude-ds-acc-collapsible — 관리 콘솔 > 제품 데이터소스 DB 목록 접기, **Minor §12.3**):
+  - **Environment: CLI/jsdom** (frontend-only, layout 비의존 — body 노드 생성/제거·클래스·속성·caret). `tests/verify_ds_accordion_collapse.mjs` **19/19 PASS** (Node18 + jsdom@22, admin.js realm 로드 후 `renderProductDetail()` 단일 datasource 제품 렌더): TEST-0117(초기 펼침 — body 존재·is-active·aria-expanded true·caret ▾·picker 버튼 존재), TEST-0118(토글1 접힘 — body 제거·is-active 해제·aria-expanded false·caret ▸·행 1개 유지·`.ds-acc-add-btn` 도달), TEST-0119(토글2 재펼침 — body 재생성·is-active 복원·aria-expanded true·caret ▾). `node -c admin.js` PASS(TEST-0120). REV-20260618T022150-ai-claude-ds-acc-collapsible [SKIPPED:frontend-ui-presentation-toggle-no-backend-no-rbac].
+  - **Residual(CHECK#13):** 머지 → web 재배포(deploy_scope: included) 후 **PB-0008 Windows-browser** 로 실 Windows 화면에서 데이터소스 1개 제품의 DB 목록 접기/펼치기 토글 + 하단 UI(데이터소스 추가·제품 프롬프트·삭제) 도달 실측. 본 cycle 의 jsdom 은 DOM 구조/속성 정본이며 실 화면 정본은 배포 후 PB-0008.
 - 2026-06-17 (TASK-0295 — 작업 화면 제품 목록 product.access RBAC 게이트):
   - **Environment: CLI** (순수 단위, DB 불필요). `tests/test_product_list_rbac.py` **9/9 PASS** (agent 이미지 `import app`, `AGENT_MODE=test`): T1 접근 권한 보유 제품만 잔존(KR 권한만→KR, MY/JP 제외), T2 account=None 빈 목록, T3 전 권한 회수 빈 목록, T4 ProductKey 대소문자 무관(대문자 ProductKey ↔ 소문자 `product.access.kr`), T5 product_key 부재 행 방어적 제외, T6~T8 `_coerce_default_product_id`(목록 내 유지 / 목록 밖 첫 제품 보정 / 빈 목록 0), T9 **정적** — `_filter_products_for_account_access` 호출 정확히 2곳(작업화면 전용) + admin `_list_products(include_inactive=True)` 경로 미적용. `python3 -m py_compile app.py` PASS. REV-20260617T054423-ai-claude-task0295-product-list-rbac [SUBAGENT:product-list-rbac-review] SHIP.
   - **Environment: Windows-browser** (실제 Windows Chrome/148.0.7778.217 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면.

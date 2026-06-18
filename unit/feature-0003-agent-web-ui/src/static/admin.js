@@ -6257,6 +6257,11 @@ function renderProductDetail() {
 
   // 편집 중(펼친) datasource. 기본 = effective primary. 단일/미바인딩이면 primary(또는 '').
   let _editDsKey = _effPrimaryKey;
+  // 펼친(편집 대상) datasource 의 DB 편집기 body 접힘 여부. 기본 false(=펼침, 기존 동작 보존).
+  //  이미 편집 대상인 행의 머리를 다시 클릭하면 토글된다 — 단일 datasource 라도 목록을 접어
+  //  하단 UI(데이터소스 추가·제품 프롬프트·삭제)에 쉽게 접근할 수 있게 한다. 다른 datasource 로
+  //  전환하면 자동으로 펼쳐진다(_switchEditDs / _afterBindChange 에서 false 로 리셋).
+  let _dsBodyCollapsed = false;
   let _switchEditDs = () => {};  // forward hook (정의 후 채움)
   const _serverDbsFor = (dsk) => {
     const want = String(dsk || "").trim().toLowerCase();
@@ -6536,6 +6541,8 @@ function renderProductDetail() {
     if (nk === String(_editDsKey || "").trim().toLowerCase()) return;
     adminState.productDbDraft.set(_draftKeyFor(_editDsKey), draft.map((d) => ({ ...d })));
     _editDsKey = nk;
+    _dsBodyCollapsed = false;  // 다른 datasource 로 전환 = 편집기 펼침
+
     _swapDraftContents(_loadDraft(nk));
     adminState.productDbDraft.set(_draftKeyFor(nk), draft);
     // TASK-0239: draft 를 즉시 다시 그려 전환 시 구 datasource 의 DB 가 남아 깜빡이는 현상 제거.
@@ -6564,6 +6571,7 @@ function renderProductDetail() {
         const prim = eff.find((d) => d.is_primary) || eff[0] || null;
         const next = prim ? String(prim.datasource_key).toLowerCase() : "";
         _editDsKey = next;
+        _dsBodyCollapsed = false;  // 편집 대상이 제거되어 다른 datasource 로 옮겨감 = 펼침
         _swapDraftContents(_loadDraft(next));
         adminState.productDbDraft.set(_draftKeyFor(next), draft);
         redrawChips();
@@ -6648,19 +6656,32 @@ function renderProductDetail() {
       }
       const activeKey = String(_editDsKey || "").trim().toLowerCase();
       binds.forEach((b) => {
-        const isActive = String(b.datasource_key || "").trim().toLowerCase() === activeKey;
+        // isEditTarget = 이 datasource 가 편집 대상(_editDsKey). isExpanded = 편집 대상이면서 접히지 않음.
+        //  접힘(_dsBodyCollapsed)일 때는 편집 대상이라도 body 를 그리지 않고 행을 비활성처럼 보인다.
+        const isEditTarget = String(b.datasource_key || "").trim().toLowerCase() === activeKey;
+        const isExpanded = isEditTarget && !_dsBodyCollapsed;
         const meta = dsMeta.get(b.datasource_key) || {};
         const row = document.createElement("div");
-        row.className = "ds-acc-row" + (isActive ? " is-active" : "");
+        row.className = "ds-acc-row" + (isExpanded ? " is-active" : "");
 
         const head = document.createElement("button");
         head.type = "button";
         head.className = "ds-acc-head";
-        head.setAttribute("aria-expanded", isActive ? "true" : "false");
-        head.addEventListener("click", () => { _switchEditDs(b.datasource_key); });
+        head.setAttribute("aria-expanded", isExpanded ? "true" : "false");
+        head.title = isExpanded ? "클릭하면 접기" : "클릭하면 펼쳐서 DB 편집";
+        head.addEventListener("click", () => {
+          if (isEditTarget) {
+            // 이미 편집 대상인 행 → 펼침/접힘 토글(단일 datasource 도 접어 하단 UI 접근 용이).
+            _dsBodyCollapsed = !_dsBodyCollapsed;
+            _renderDsAccordion();
+          } else {
+            // 다른 datasource 로 전환(전환 시 _switchEditDs 가 _dsBodyCollapsed 를 펼침으로 리셋).
+            _switchEditDs(b.datasource_key);
+          }
+        });
 
         const caret = document.createElement("span");
-        caret.className = "ds-acc-caret"; caret.textContent = isActive ? "▾" : "▸";
+        caret.className = "ds-acc-caret"; caret.textContent = isExpanded ? "▾" : "▸";
         head.appendChild(caret);
 
         const name = document.createElement("span");
@@ -6681,8 +6702,8 @@ function renderProductDetail() {
         if (canDs) row.appendChild(_buildDsMenu(b));
 
         dsAccordion.appendChild(row);
-        // 펼친 행 바로 아래에 DB 편집기 삽입.
-        if (isActive) {
+        // 펼친 행 바로 아래에 DB 편집기 삽입(접힘 상태면 생략).
+        if (isExpanded) {
           const body = document.createElement("div");
           body.className = "ds-acc-body";
           body.appendChild(dbEditorWrap);
