@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260618T031450-ai-claude-product-picker-search-evidence [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-18 (TASK-20260618T024517 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence 기록)
+- 분류 근거: docs 전용(TEST §4 Windows-browser Run + TASK 마감 + MODIFY/REVIEW). 코드·정적자산·RBAC·스키마 무변경 → 리뷰 SKIP. 검증 대상 코드는 이미 REV-20260618T024517(본 cycle) 에서 자체 점검 완료.
+- 잔여: 없음(cycle 마감).
+
 ## REV-20260618T024517-ai-claude-product-picker-search [SKIPPED:frontend-ui-search-filter-no-backend-no-rbac]
 - Date: 2026-06-18 (TASK-20260618T024517 — 제품 선택 드롭업 명칭 검색 필터)
 - 분류 근거: frontend-only 비파괴 UI 추가(검색 입력 + 클라이언트측 표시 필터). 백엔드·스키마·RBAC·엔드포인트·데이터·인증/인가 무변경 → §12.3 Minor. 적대 보안 리뷰 패널(outside-voice)은 RBAC/권한 모델 변경 한정([[feedback_outside_voice_for_rbac]])이라 대상 아님.
