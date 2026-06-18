@@ -93,15 +93,29 @@
     return group;
   }
 
-  function render(container) {
+  // opts.areas: 표시할 영역 화이트리스트(기본 전체). 작업 화면은 ["work","common"] 로
+  // 호출해 '관리 콘솔' 영역 릴리즈 노트를 숨긴다(관리 콘솔은 기본=전체).
+  function render(container, opts) {
     if (!container) return;
+    opts = opts || {};
+    var allowed = (Array.isArray(opts.areas) && opts.areas.length) ? opts.areas : ["work", "admin", "common"];
     var data = window.RELEASE_NOTES;
     container.innerHTML = "";
 
     var root = el("div", "rn-root");
     root.appendChild(el("p", "rn-intro", "새로운 기능과 개선 사항을 일자별로 정리했습니다."));
 
-    var releases = (data && Array.isArray(data.releases)) ? data.releases : [];
+    // 표면별 영역 제한: items 를 allowed area 로 선필터하고 빈 일자 그룹은 제거한다.
+    // 이렇게 하면 '전체' 필터·카운트·그룹 가시성·필터 칩이 모두 allowed 영역만 반영한다.
+    var rawReleases = (data && Array.isArray(data.releases)) ? data.releases : [];
+    var releases = rawReleases
+      .map(function (r) {
+        var copy = {};
+        for (var k in r) { if (Object.prototype.hasOwnProperty.call(r, k)) copy[k] = r[k]; }
+        copy.items = (r.items || []).filter(function (it) { return allowed.indexOf(it.area) !== -1; });
+        return copy;
+      })
+      .filter(function (r) { return r.items.length > 0; });
     if (!releases.length) {
       root.appendChild(el("div", "rn-empty", "표시할 릴리즈 노트가 없습니다."));
       container.appendChild(root);
@@ -112,15 +126,14 @@
 
     var state = { filter: "all" };
 
-    // 상단 탐색 바: 영역 필터 칩 + 모두 펼치기/접기.
+    // 상단 탐색 바: 영역 필터 칩(allowed 영역만) + 모두 펼치기/접기.
     var toolbar = el("div", "rn-toolbar");
     var chips = el("div", "rn-filter-chips");
-    var FILTERS = [
-      { key: "all", label: "전체" },
-      { key: "work", label: "작업 화면" },
-      { key: "admin", label: "관리 콘솔" },
-      { key: "common", label: "공통" },
-    ];
+    var AREA_ORDER = ["work", "admin", "common"];
+    var FILTERS = [{ key: "all", label: "전체" }].concat(
+      AREA_ORDER.filter(function (a) { return allowed.indexOf(a) !== -1; })
+        .map(function (a) { return { key: a, label: AREA_LABEL[a] }; })
+    );
     var chipEls = {};
     FILTERS.forEach(function (f) {
       var chip = el("button", "rn-chip" + (f.key === state.filter ? " is-active" : ""), f.label);

@@ -3733,7 +3733,8 @@ a { color: inherit; }
    overflow:hidden + height:100vh 이므로, 누락 시 작은 화면에서 하단(차트·표)이 잘린다.
    다른 pane(accounts/roles/products/audits)은 내부 admin-list 가 스크롤하므로 제외. */
 .admin-pane[data-admin-pane="dashboard"].is-active,
-.admin-pane[data-admin-pane="usage"].is-active {
+.admin-pane[data-admin-pane="usage"].is-active,
+.admin-pane[data-admin-pane="release-notes"].is-active {
   overflow-y: auto;
   /* TASK-0198: 좌우 스크롤 차단 — 카드 min-width 누적/SVG 폭/표 넓이로 가로 넘침이 발생하던 회귀 차단.
      내부 요소는 min-width:min(Npx,100%) + 표는 카드 내부 스크롤로 흡수(아래). */

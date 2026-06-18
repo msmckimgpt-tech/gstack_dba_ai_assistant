@@ -116,6 +116,29 @@ expandBtn.dispatchEvent(new window.Event("click"));
 const allClosed = Array.from(container.querySelectorAll(".rn-group-head")).every((h) => h.getAttribute("aria-expanded") === "false");
 ok("[펼치기] 모두 접기 → 전 그룹 접힘", allClosed);
 
+// ── 8.7 작업 화면 표면(opts.areas) — 관리 콘솔 영역 숨김 ───────────
+window.ReleaseNotes.render(container, { areas: ["work", "common"] });
+const wsAdminCount = container.querySelectorAll(".rn-item .rn-area-admin").length;
+ok("[작업화면] 관리 콘솔 항목 0건(.rn-area-admin)", wsAdminCount === 0);
+const expectedWS = releases.reduce((n, r) => n + r.items.filter((it) => it.area === "work" || it.area === "common").length, 0);
+ok(`[작업화면] 표시 항목 = work+common (${expectedWS})`, container.querySelectorAll(".rn-item").length === expectedWS);
+const wsChipTexts = Array.from(container.querySelectorAll(".rn-chip")).map((c) => c.textContent);
+ok("[작업화면] '관리 콘솔' 필터 칩 없음", wsChipTexts.indexOf("관리 콘솔") === -1);
+ok("[작업화면] 칩 = 전체/작업 화면/공통 (3)", wsChipTexts.length === 3 && wsChipTexts.indexOf("작업 화면") >= 0 && wsChipTexts.indexOf("공통") >= 0);
+const expectedWSGroups = releases.filter((r) => r.items.some((it) => it.area === "work" || it.area === "common")).length;
+ok(`[작업화면] 그룹 수 = ${expectedWSGroups}`, container.querySelectorAll(".rn-group").length === expectedWSGroups);
+// 관리 콘솔(기본) 은 admin 항목을 계속 노출(회귀 없음)
+window.ReleaseNotes.render(container);
+ok("[관리콘솔] 기본 렌더는 관리 콘솔 항목 노출(회귀 없음)", container.querySelectorAll(".rn-item .rn-area-admin").length === expectedAdmin && expectedAdmin > 0);
+
+// ── 8.8 관리 콘솔 pane 세로 스크롤 가드 (PB-0008 보완 소스 단언) ────
+// jsdom 은 overflow/스크롤 layout 미계산(정본 PB-0008). styles.css 에 release-notes
+// pane 의 overflow-y:auto 규칙이 존재하는지 소스 레벨로 단언.
+const cssForScroll = readFileSync(join(STATIC, "styles.css"), "utf8");
+ok("[스크롤] admin release-notes pane overflow-y:auto 규칙 존재",
+  /\.admin-pane\[data-admin-pane="release-notes"\]\.is-active/.test(cssForScroll) &&
+  /data-admin-pane="release-notes"\]\.is-active[\s\S]{0,160}overflow-y:\s*auto/.test(cssForScroll));
+
 // ── 9. XSS 안전: 제목/부연을 textContent 로 주입 ───────────────────
 const injected = { date: "2099-01-01", summary: "<script>x</script>", items: [{ type: "new", area: "work", title: "<img src=x onerror=alert(1)>", detail: "<b>bold</b>" }] };
 releases.unshift(injected);

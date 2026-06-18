@@ -9,6 +9,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260618T061520-ai-claude-release-notes-scope-scroll (TASK-20260618T061520 — 릴리즈 노트 표면별 영역 + 관리 콘솔 스크롤)
+- Date: 2026-06-18
+- Scope: frontend-only. `release-notes.js`·`app.js`·`styles.css` + index/admin 캐시버스터 + 테스트. 백엔드·RBAC·스키마·데이터 0.
+- 변경:
+  - `release-notes.js` — `render(container, opts)` `opts.areas` 화이트리스트: items 선필터+빈 그룹 제거, 필터 칩 allowed 영역만(전체+해당). 기본=전체(무회귀).
+  - `app.js` — 작업 화면 release-notes 렌더에 `{areas:["work","common"]}` → area=admin 노트·'관리 콘솔' 칩 숨김.
+  - `styles.css` — `.admin-pane[data-admin-pane="release-notes"].is-active{overflow-y:auto;overflow-x:hidden}`(TASK-0167 동형) → 관리 콘솔 pane 세로 스크롤.
+  - index.html/admin.html — styles.css·app.js·release-notes.js `?v=20260618-rn-scope-scroll` bump.
+  - `tests/verify_release_notes.mjs` — 작업화면 영역 제한 + 스크롤 규칙 단언 추가(34/34).
+- Why: 사용자 요청 — ①작업 화면서 관리 콘솔 릴리즈 노트 숨김 ②관리 콘솔 하단 항목 스크롤 불가 해소.
+- Verification: `verify_release_notes.mjs` 34/34 + `node --check`. 화면 정본 PB-0008(재배포 후).
+- Rollback: 옵션/규칙/버전 revert(무손실).
+- Deploy: web 재배포(deploy_scope: included).
+
 ## CHG-20260618T051005-ai-claude-release-notes-evidence (TASK-20260618T044611 후속 docs-only — PB-0008 Windows-browser evidence)
 - Date: 2026-06-18
 - Scope: docs 전용(TEST §4 Windows-browser Run PASS + TASK 마감). 코드·정적자산·스키마·RBAC 0.
