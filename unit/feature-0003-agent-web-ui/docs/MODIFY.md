@@ -9,6 +9,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260618T022846-ai-claude-admin-status-filter-evidence (TASK-20260618T021526 후속 docs-only — PB-0008 Windows-browser evidence)
+- Date: 2026-06-18
+- Scope: docs 전용(TEST/TASK/MODIFY/REVIEW). 코드·정적자산·스키마·RBAC 0.
+- 변경: TASK-20260618T021526(역할·제품 탭 활성/비활성 필터)의 "verify-completion → 머지 → 배포 → PB-0008" 잔여를 **완료**로 갱신(PR #321 squash 머지 main `6da40dc` → `make dc-build SERVICE=web`+`up -d --no-deps web` healthy → PB-0008 Windows-browser PASS). TEST.md §4 에 Windows-browser Run 실측 기록: 제품 탭 전체 13행 = 비활성 6(전부 `is-disabled`·inactive 배지) + 활성 7(전부 활성) 정확 분할, 역할 탭 6행(active=6/inactive=0), 버튼 `is-active` 단독 토글, 계정 탭 패턴 1:1 정합(VERDICT PASS). evidence `artifacts/pb0008-admin-status-filter/{products-inactive-filter,roles-active-filter}.png`(git 비추적 artifacts).
+- Why: 직전 cycle 의 화면 정본(PB-0008) 검증 결과를 문서에 영속화 + CHECK#13(Windows-browser) 충족.
+- Verification: 본 기록 자체가 검증 산출물. 코드 무변경(회귀 0).
+- Rollback: 불요(docs-only). 코드는 이미 `6da40dc` 배포됨.
+- Deploy: 불요(코드 무변경).
+
 ## CHG-20260618T021526-ai-claude-admin-status-filter (TASK-20260618T021526 — 관리 콘솔 역할·제품 탭 활성/비활성 필터 추가)
 - Date: 2026-06-18
 - Scope: frontend-only — feature-0003-agent-web-ui `src/static/admin.html`(역할·제품 toolbar 2곳) + `src/static/admin.js`(상태 2 + 술어 2 + 배선 2). 백엔드·스키마·RBAC·엔드포인트·CSS 0.
