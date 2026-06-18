@@ -19852,6 +19852,20 @@ def build_audit_change_json(
             },
             [],
         )
+    # TASK-20260618T044318: DB allowlist 정규식 규칙 자동 동기화 audit actions.
+    if action in ("admin.product.db_rule.set", "admin.product.db_rule.delete",
+                  "admin.product.db_rule.approve", "admin.product.db.autoadd",
+                  "admin.product.db.staged"):
+        return (
+            {
+                "target_product_id": request_ctx.get("product_id") or (after or {}).get("product_id"),
+                "datasource_key": request_ctx.get("datasource_key") or (after or {}).get("datasource_key")
+                or (before or {}).get("datasource_key"),
+                "before": before or {},
+                "after": after or {},
+            },
+            [],
+        )
     if action == "admin.system_prompt.update":
         # system_prompt 본문 자체는 length 만 — full content 는 redact 가 아닌 size cap.
         body_before = str((before or {}).get("content") or "")
