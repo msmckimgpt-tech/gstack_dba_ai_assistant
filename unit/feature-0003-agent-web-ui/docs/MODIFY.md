@@ -9,6 +9,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260618T024517-ai-claude-product-picker-search (TASK-20260618T024517 — 제품 선택 드롭업 명칭 검색 필터)
+- Date: 2026-06-18
+- Scope: frontend-only — feature-0003-agent-web-ui `src/static/app.js`(검색 입력 빌더+필터+포커스+data-search) + `src/static/styles.css`(검색 입력/sticky/결과없음) + `src/static/index.html`(캐시버스터 2곳). 백엔드·스키마·RBAC·엔드포인트·데이터 0.
+- 내용: 작업 화면 요청문 텍스트박스의 제품 선택 드롭업(`#productDropupMenu`)에 제품 명칭 검색 필터를 추가. ① app.js — `PRODUCT_DROPUP_SEARCH_MIN`(=6) 상수 + `renderProductDropupMenu` 리팩토링(pinned 제품 ≥ 임계 시 `buildProductDropupSearch()` 삽입, `.product-dropup-no-result` 동적 안내 추가, `products.filter(id)` 로 pinned 분리) + 신규 `buildProductDropupSearch()`(input[type=text].product-dropup-search, input 이벤트→`filterProductDropupItems`) + 신규 `filterProductDropupItems(query)`(항목 `.hidden` 토글 + no-result 토글, 재렌더 없이 포커스/한글 IME 유지) + `buildProductDropupItem` 에 `data-search`(소문자 라벨=product_key+제품명) 부여 + `openProductDropup` 에 검색 입력 자동 `focus()`. ② styles.css — `.product-dropup-search-wrap`(position:sticky top:0), `.product-dropup-search`(+:focus 보더/그림자, ::placeholder), `.product-dropup-no-result`. ③ index.html — styles.css/app.js 캐시버스터 `?v=20260618-product-picker-search`.
+- Why: 사용자 요청 — 제품이 많아질수록 드롭업에서 원하는 제품 탐색이 번거로움. 명칭(product_key/한글명) 검색으로 즉시 좁히기. 제품이 적을 때는 입력칸을 숨겨 단순성 유지(무회귀). `.hidden`(글로벌 `display:none !important`) 토글이라 별도 숨김 CSS 불필요.
+- Verification: `tests/verify_product_picker_search.mjs` 27/27 PASS(jsdom 격리) + `node --check app.js`. 화면 정본 = PB-0008 Windows-browser(배포 후, 라이브 제품 13개라 검색박스 자연 노출).
+- Rollback: 3개 정적 파일 revert(비파괴 추가라 단순).
+- Deploy: web 재빌드(deploy_scope: included — FIRST_REQUEST.md 전역 선언).
+- 식별자 메모: 고병렬 동시세션 origin/main rebase(2회) 시 최초 REQ-0288/AC-0572·0573 이 타 세션 선점과 충돌 → grep max 재번호 REQ-20260618-0317/AC-0574·0575([[feedback_feature_doc_id_grep_max]]). docs 충돌은 --ours(타 세션 항목 보존)+내 항목 재삽입으로 keep-both.
+
 ## CHG-20260618T030014-ai-claude-engine-dropdown-evidence (TASK-20260618T022006 후속 docs-only — PB-0008 Windows-browser evidence)
 - Date: 2026-06-18
 - 변경: 코드 0. TEST.md §3 Windows-browser Run 추가 + TASK.md 마지막 체크박스 완료(마감) + REVIEW evidence 항목. feature(PR #325 main `da227eb`) + cache-buster fix(PR #326 main `071020c`) 배포 후 실 Windows Chrome PB-0008 PASS 사실 기록.

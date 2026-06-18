@@ -920,6 +920,10 @@ function renderProductChip() {
   }
 }
 
+// 제품 선택 드롭업에 명칭 검색 입력을 노출할 최소 제품 수.
+//  제품이 적을 때(이 값 미만)는 검색 없이도 한눈에 들어오므로 입력칸을 숨겨 UI 를 단순하게 유지한다.
+const PRODUCT_DROPUP_SEARCH_MIN = 6;
+
 function renderProductDropupMenu() {
   const menu = document.getElementById("productDropupMenu");
   if (!menu) return;
@@ -927,6 +931,7 @@ function renderProductDropupMenu() {
   const mode = state.productMode === "pinned" ? "pinned" : "auto";
   const currentPid = mode === "pinned" ? Number(state.pinnedProductId) : null;
   const products = Array.isArray(state.products) ? state.products : [];
+  const pinned = products.filter((p) => Number(p.id));
 
   // section head
   const head = document.createElement("div");
@@ -934,7 +939,13 @@ function renderProductDropupMenu() {
   head.textContent = "이 대화의 제품";
   menu.appendChild(head);
 
-  // auto item
+  // 제품 명칭 검색 필터 — 제품이 많아 탐색이 번거로워질 때만 노출(사용자 요청).
+  //  매 open 마다 메뉴를 재렌더하므로 검색어는 의도적으로 비휘발(재오픈 시 초기화)이다.
+  if (pinned.length >= PRODUCT_DROPUP_SEARCH_MIN) {
+    menu.appendChild(buildProductDropupSearch());
+  }
+
+  // auto item — 제품 무관 모드. 검색 대상이지만 라벨("Product · 제품")로 매칭된다.
   menu.appendChild(buildProductDropupItem({
     mode: "auto",
     pid: null,
@@ -943,9 +954,8 @@ function renderProductDropupMenu() {
   }));
 
   // pinned items
-  products.forEach((p) => {
+  pinned.forEach((p) => {
     const pid = Number(p.id);
-    if (!pid) return;
     menu.appendChild(buildProductDropupItem({
       mode: "pinned",
       pid,
@@ -959,14 +969,57 @@ function renderProductDropupMenu() {
     }));
   });
 
+  // 검색 결과 없음 안내(동적) — filterProductDropupItems 가 표시/숨김을 토글한다.
+  const noResult = document.createElement("div");
+  noResult.className = "product-dropup-no-result hidden";
+  noResult.textContent = "검색 결과가 없습니다";
+  menu.appendChild(noResult);
+
   // TASK-0295: 역할에 제품 접근 권한이 없어 picker 에 표시할 제품이 없으면 안내.
   //  auto(제품 무관) 항목은 항상 유효하므로 그대로 두고, 제품 섹션만 빈 상태 안내를 단다.
-  if (!products.some((p) => Number(p.id))) {
+  if (!pinned.length) {
     const empty = document.createElement("div");
     empty.className = "product-dropup-empty";
     empty.textContent = "접근 가능한 제품이 없습니다";
     menu.appendChild(empty);
   }
+}
+
+// 제품 명칭 검색 입력칸 — sticky 로 메뉴 상단에 고정(목록이 길어도 항상 접근 가능).
+function buildProductDropupSearch() {
+  const wrap = document.createElement("div");
+  wrap.className = "product-dropup-search-wrap";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.id = "productDropupSearch";
+  input.className = "product-dropup-search";
+  input.placeholder = "제품 명칭 검색…";
+  input.setAttribute("aria-label", "제품 명칭으로 검색");
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  // 한글 IME 조합 중에도 매 입력마다 필터(input 이벤트는 조합 확정/중간 모두 발화).
+  input.addEventListener("input", () => filterProductDropupItems(input.value));
+  wrap.appendChild(input);
+  return wrap;
+}
+
+// 검색어로 드롭업 항목을 실시간 필터링한다(재렌더 없이 DOM 표시/숨김만 토글 → 포커스·IME 유지).
+//  data-search 는 buildProductDropupItem 이 채운 소문자 라벨(product_key + name 포함).
+function filterProductDropupItems(query) {
+  const menu = document.getElementById("productDropupMenu");
+  if (!menu) return;
+  const q = (query || "").trim().toLowerCase();
+  const items = menu.querySelectorAll(".product-dropup-item");
+  let visible = 0;
+  items.forEach((it) => {
+    const hay = it.dataset.search || "";
+    const match = !q || hay.indexOf(q) !== -1;
+    it.classList.toggle("hidden", !match);
+    if (match) visible += 1;
+  });
+  // 검색어가 있고 보이는 항목이 없을 때만 "검색 결과 없음" 노출.
+  const noResult = menu.querySelector(".product-dropup-no-result");
+  if (noResult) noResult.classList.toggle("hidden", !(q && visible === 0));
 }
 
 // TASK-0261 / conn-tristate: datasource 연결(네트워크) 상태 → 배지 클래스/라벨.
@@ -988,6 +1041,8 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
   item.setAttribute("role", "menuitem");
   item.dataset.mode = mode;
   if (pid != null) item.dataset.pid = String(pid);
+  // 명칭 검색용 haystack — 라벨(product_key + 제품명)을 소문자로 보관. filterProductDropupItems 가 사용.
+  item.dataset.search = String(label || "").toLowerCase();
   if (selected) item.classList.add("is-selected");
 
   // profile-icon 정합: 사용자 요청 항목 순서 — ① 네트워크 상태 배지(dot) → ② 프로필 아이콘 →
@@ -1083,6 +1138,9 @@ function openProductDropup() {
   renderProductDropupMenu();
   menu.classList.remove("hidden");
   chip.setAttribute("aria-expanded", "true");
+  // 제품이 많아 검색 입력이 렌더된 경우 즉시 포커스 → 키보드로 바로 명칭 타이핑.
+  const searchInput = menu.querySelector(".product-dropup-search");
+  if (searchInput) { try { searchInput.focus(); } catch (e) {} }
   const detach = () => {
     document.removeEventListener("mousedown", onDocClick, true);
     document.removeEventListener("keydown", onKey, true);

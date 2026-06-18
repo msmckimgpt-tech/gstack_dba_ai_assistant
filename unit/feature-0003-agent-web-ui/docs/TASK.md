@@ -4181,3 +4181,14 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 머지(main da227eb, PR #325) → 배포(web 재빌드 + 컨테이너 재생성, deploy_scope: included) → PB-0008 1차 실 Windows Chrome: 데이터소스 탭 → '+ 새 데이터소스' → 엔진 드롭다운 렌더·트리거 라벨 "MySQL"·SVG 아이콘·**색 rgb(0,117,143)=#00758F 정확**. 단 `.engine-icon` CSS 미적용(width auto·아이콘 52px·버튼 border/padding 0) 발견.
 - [x] **PB-0008 발견 버그 fix(후속 cycle)**: styles.css 에 엔진 규칙을 추가했으나 admin.html 의 `styles.css?v=` cache-buster 를 안 올려, 캐시된 브라우저가 옛 CSS(엔진 규칙 0)를 수신 → 미스타일. admin.html + index.html(공유 styles.css) cache-buster 를 `?v=20260618-engine-dropdown` 으로 bump. CHG-20260618-0316. (교훈: styles.css 변경 시 이를 링크하는 모든 페이지의 cache-buster 를 bump.)
 - [x] 재배포(web, fix main `071020c` PR #326) → PB-0008 재검증 PASS: `.engine-icon` width 18px·버튼 border 1px/padding 10px·드롭다운 열림·옵션 2개(MySQL #00758F / Microsoft SQL Server #EE352C 브랜드 아이콘·색)·선택 시 트리거·포트 placeholder 1433 갱신. evidence `artifacts/pb0008-engine-dropdown/{engine-dropdown-open,engine-mssql-selected}.png`. **마감**(CHG/REV-20260618T030014 evidence).
+
+### TASK-20260618T024517-ai-claude-product-picker-search — 작업 화면 제품 선택 드롭업 명칭 검색 필터 (Minor §12.3, 2026-06-18)
+- 사용자 보고(/_template:entry): 서비스 내 요청문 텍스트박스에서 제품을 선택하는 목록 팝업의 제품들이 많아질수록 탐색이 번거로움. 제품 명칭 검색 필터 구성 요청.
+- 근본/설계: 제품 선택 드롭업(`#productDropupMenu`)은 `renderProductDropupMenu`(app.js)가 JS 로 동적 렌더하며 검색 수단이 없었음. 제품 수가 임계 이상일 때만 드롭업 상단에 명칭 검색 입력칸을 노출하고, 입력에 따라 항목을 클라이언트측에서 실시간 필터링. frontend-only(app.js/styles.css/index.html) — 백엔드·RBAC·스키마·엔드포인트·데이터 0. 검색은 백엔드가 권한 게이트(`state.products`, TASK-0295)한 목록 위에서만 동작 → 접근 제어 우회 불가.
+- [x] app.js: `PRODUCT_DROPUP_SEARCH_MIN`(=6) 상수 + `renderProductDropupMenu` 리팩토링(pinned ≥ 임계 시 검색 입력 삽입, no-result 동적 안내) + 신규 `buildProductDropupSearch()`(sticky input, input→필터) + 신규 `filterProductDropupItems(query)`(`.hidden` 토글, 재렌더 없이 포커스/IME 유지) + `buildProductDropupItem` `data-search`(소문자 라벨) + `openProductDropup` 검색 입력 자동 focus.
+- [x] styles.css: `.product-dropup-search-wrap`(sticky top:0) + `.product-dropup-search`(+:focus/::placeholder) + `.product-dropup-no-result`.
+- [x] index.html: styles.css/app.js 캐시버스터 `?v=20260618-product-picker-search`.
+- [x] 검증(정적): `tests/verify_product_picker_search.mjs` 27/27 PASS(jsdom — 입력 노출 조건·data-search·product_key/한글명/부분일치 다건/0건 no-result/복원/auto 포함·focus 코드) + `node --check app.js`.
+- [x] REV-20260618T024517-ai-claude-product-picker-search [SKIPPED:frontend-ui-search-filter-no-backend-no-rbac] — Minor frontend 비파괴, RBAC/백엔드 무변경(자체 점검 6항목 REVIEW.md).
+- [x] 식별자: 고병렬 동시세션 rebase(2회) 충돌(REQ-0288/AC-0572·0573 타 세션 선점) → grep max 재번호 REQ-20260618-0317/AC-0574·0575, docs --ours+재삽입 keep-both([[feedback_feature_doc_id_grep_max]]).
+- [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → 라이브 PB-0008 Windows-browser(제품 13개 → 검색박스 노출·명칭 입력→필터·sticky·focus·결과없음) → 마감.
