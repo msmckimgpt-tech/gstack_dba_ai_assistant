@@ -4154,3 +4154,11 @@ source_of_truth: true
 - Verification: docs-only. 검증 정본 = 본 cycle 이 기록하는 PB-0008.
 - Rollback: docs revert. 코드·배포 무영향.
 - Deploy: 없음(docs-only).
+## CHG-20260618T025755-ai-claude-dbpicker-search-regex
+- Date: 2026-06-18 (TASK-20260618T025755-ai-claude-dbpicker-search-regex — '+ 데이터베이스 추가' picker 검색 필터 + 정규식 일괄 선택).
+- Scope: frontend-only — feature-0003 `src/static/admin.js`(모듈 helper 4종 + buildPicker toolbar + 클로저 보존 변수) + `src/static/styles.css`(toolbar/검색/정규식/하이라이트/결과없음) + `src/static/admin.html`·`index.html`(cache-buster) + `tests/verify_dbpicker_search_regex.mjs`(신규). 백엔드·스키마·엔드포인트·RBAC·데이터 0.
+- 내용: 관리 콘솔 제품 상세의 '+ 데이터베이스 추가' 드롭다운(`buildPicker`)에 후보 DB ≥ 6 일 때 sticky toolbar 추가 — ① 이름 검색 필터(부분일치·대소문자 무시, `.hidden` 토글, 결과없음 안내) ② 정규식 일괄 선택(라이브 `N개 일치` 카운트 + `.is-regex-match` 하이라이트 미리보기, "일치 선택" 버튼/Enter 로 additive push, 검증 통과분만) ③ "선택됨 N개" 요약. 입력값은 렌더 클로저(`_dbPickerQuery`/`_dbPickerRegex`)에 보존. 순수/DOM helper 4종 분리(`dbPickerFilterNames`/`dbPickerRegexMatches`/`applyDbPickerSearch`/`applyDbPickerRegexHighlight`)로 jsdom 검증.
+- Why: 사용자 요청 — 사내 데이터소스 DB 추가/삭제가 잦아 제품 DB 구성 변경이 번거로움. 검색+정규식 선택으로 다수 DB 를 빠르게 allowlist 에 반영.
+- Verification: `node --check admin.js` PASS + `tests/verify_dbpicker_search_regex.mjs` **33/33 PASS**. 선택 쓰기는 기존 pending→모두 적용 경로 + 기존 schema_name 검증 그대로(보안 경계·쓰기 계약 불변). 화면 정본 = PB-0008 Windows-browser(배포 후).
+- Rollback: helper 4종 + buildPicker toolbar 블록 + 클로저 변수 2개 + CSS 블록 제거, cache-buster·test revert. 후보 목록 체크박스만 남는 기존 동작으로 복원(데이터·기능 무영향).
+- Deploy: web 재빌드 1 이미지(프론트 baked). deploy_scope: included.

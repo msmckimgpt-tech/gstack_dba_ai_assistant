@@ -83,6 +83,63 @@ const adminState = {
 const METADATA_SCHEMAS = ["information_schema", "mysql", "sys", "performance_schema"];
 const INTERNAL_SCHEMAS = new Set(["agent_memory"]);
 
+// ── TASK-20260618T025755: '+ 데이터베이스 추가' picker 검색 필터 + 정규식 일괄 선택 ──────────
+//  사내 서비스는 데이터소스의 DB 추가/삭제가 잦아, 후보 DB 가 많을 때 원하는 DB 를 빠르게
+//  찾거나(검색) 패턴으로 한 번에 선택(정규식)할 수 있게 한다. 후보가 이 수 이상일 때만
+//  toolbar 를 노출한다(소수 목록은 불필요). 자매 제품 드롭업 검색필터(PRODUCT_DROPUP_SEARCH_MIN)
+//  와 동일 idiom. 아래 4개는 순수/DOM helper — admin.js 상태에 의존하지 않아 jsdom 으로 검증한다.
+const DB_PICKER_SEARCH_MIN = 6;
+
+// 검색 부분일치(대소문자 무시). 순수 함수 — 일치하는 이름만 반환.
+function dbPickerFilterNames(names, query) {
+  const q = String(query == null ? "" : query).trim().toLowerCase();
+  if (!q) return (names || []).slice();
+  return (names || []).filter((n) => String(n).toLowerCase().includes(q));
+}
+
+// 정규식 다중 매칭(대소문자 무시 'i'). 순수 함수 — { ok, matches, error }.
+//  ok=false 면 정규식 컴파일 실패(error 메시지). 빈 패턴은 ok=true + 빈 matches.
+function dbPickerRegexMatches(names, pattern) {
+  const pat = String(pattern == null ? "" : pattern).trim();
+  if (!pat) return { ok: true, matches: [], error: null };
+  let re;
+  try {
+    re = new RegExp(pat, "i");
+  } catch (e) {
+    return { ok: false, matches: [], error: (e && e.message) || "정규식 오류" };
+  }
+  const matches = (names || []).filter((n) => re.test(String(n)));
+  return { ok: true, matches, error: null };
+}
+
+// 드롭다운 항목(.admin-db-picker-item)에 검색어 적용 — .hidden 토글 + 표시 개수 반환.
+//  item.dataset.search 는 buildPicker 가 채운 소문자 DB명.
+function applyDbPickerSearch(listEl, query) {
+  const q = String(query == null ? "" : query).trim().toLowerCase();
+  let shown = 0;
+  (listEl ? listEl.querySelectorAll(".admin-db-picker-item") : []).forEach((it) => {
+    const hay = it.dataset.search || "";
+    const hit = !q || hay.includes(q);
+    it.classList.toggle("hidden", !hit);
+    if (hit) shown += 1;
+  });
+  return shown;
+}
+
+// 정규식 일치 항목에 .is-regex-match 하이라이트(적용 전 미리보기 = "조회 가능").
+//  반환: { ok, count, error }. 빈/오류 패턴이면 하이라이트 전부 해제.
+function applyDbPickerRegexHighlight(listEl, pattern) {
+  const items = listEl ? Array.from(listEl.querySelectorAll(".admin-db-picker-item")) : [];
+  const names = items.map((it) => it.dataset.dbname || "");
+  const res = dbPickerRegexMatches(names, pattern);
+  const active = !!String(pattern == null ? "" : pattern).trim() && res.ok;
+  const matchSet = new Set((res.matches || []).map((n) => String(n).toLowerCase()));
+  items.forEach((it) => {
+    it.classList.toggle("is-regex-match", active && matchSet.has(it.dataset.dbname || ""));
+  });
+  return { ok: res.ok, count: active ? matchSet.size : 0, error: res.error };
+}
+
 function systemPromptPendingKey({ scope, productId = null, roleId = null, accountId = null }) {
   return `${scope}:${productId || 0}:${roleId || 0}:${accountId || 0}`;
 }
@@ -6462,6 +6519,9 @@ function renderProductDetail() {
   let lockedChips = _defaultLocked.slice();              // 시스템 DB / 메타데이터(고정칩)
   let availableUserDbs = (adminState.availableDatabases.user_schemas || []).slice();  // 사용자 DB(picker)
   let dsCaseInsensitive = false;                          // MSSQL DB명 대소문자 보존(true=lower 비교만)
+  // TASK-20260618T025755: picker 검색/정규식 입력값 — buildPicker 재렌더(비동기 insight 도착 등) 간 보존.
+  let _dbPickerQuery = "";
+  let _dbPickerRegex = "";
 
   // 체크박스 드롭다운 패널 빌더. 드롭다운은 버튼 클릭 시 열리며, 각 항목에 체크박스로
   // 연속 토글 가능. 선택 즉시 draft 에 반영(추가 버튼 불필요).
@@ -6484,9 +6544,108 @@ function renderProductDetail() {
       pickerDropBtn.disabled = !canManage;
       return;
     }
+
+    // ── TASK-20260618T025755: 검색 필터 + 정규식 일괄 선택 toolbar ──────────────────
+    //  후보 DB 가 많을 때만(빈번한 DB 구성 변경 대응) 노출. selectedCountEl 은 toolbar 가
+    //  없을 땐 null → _refreshSelectedCount/_applySearch 는 no-op 으로 안전 동작한다.
+    let noResultEl = null, regexErrEl = null, regexCountEl = null, selectedCountEl = null;
+    const _refreshSelectedCount = () => {
+      if (selectedCountEl) {
+        selectedCountEl.textContent = `선택됨 ${draft.filter((d) => d && d.schema_name).length}개`;
+      }
+    };
+    const _applySearch = () => {
+      const shown = applyDbPickerSearch(pickerDropList, _dbPickerQuery);
+      if (noResultEl) noResultEl.classList.toggle("hidden", shown !== 0);
+    };
+    const _applyRegexPreview = () => {
+      const res = applyDbPickerRegexHighlight(pickerDropList, _dbPickerRegex);
+      if (regexErrEl) {
+        regexErrEl.textContent = res.ok ? "" : "정규식이 올바르지 않습니다.";
+        regexErrEl.classList.toggle("hidden", res.ok);
+      }
+      if (regexCountEl) {
+        regexCountEl.textContent = (!String(_dbPickerRegex).trim() || !res.ok) ? "" : `${res.count}개 일치`;
+      }
+    };
+    // 정규식 일치 DB 를 draft 에 일괄 추가(additive — 기존 선택은 해제하지 않음).
+    //  체크박스 단일 추가와 동일한 검증(시스템/내부 스키마 제외, 비-MSSQL 이름 형식)을 통과한 것만.
+    const _applyRegexSelect = () => {
+      const res = dbPickerRegexMatches(userSchemas, _dbPickerRegex);
+      if (!res.ok) { showToast("정규식이 올바르지 않습니다.", true); return; }
+      if (!res.matches.length) { showToast("정규식과 일치하는 DB 가 없습니다."); return; }
+      let added = 0;
+      res.matches.forEach((raw) => {
+        const v = String(raw).toLowerCase();
+        if (METADATA_SCHEMAS.includes(v) || INTERNAL_SCHEMAS.has(v)) return;
+        if (!dsCaseInsensitive && !/^[a-z_][a-z0-9_]{0,63}$/.test(v)) return;
+        if (!draft.some((d) => String(d.schema_name).toLowerCase() === v)) {
+          draft.push({ schema_name: dsCaseInsensitive ? raw : v, description: "", sort_order: (draft.length + 1) * 10 });
+          added += 1;
+        }
+      });
+      if (added > 0) {
+        setProductDatabasesPending(product.id, draft, _editDsKey);
+        redrawChips();
+        buildPicker();   // 체크박스/카운트 재반영(검색·정규식 입력값은 closure 로 보존·복원).
+      }
+      showToast(`정규식 일치 ${res.matches.length}개 중 ${added}개를 선택에 추가했습니다.`);
+    };
+
+    if (userSchemas.length >= DB_PICKER_SEARCH_MIN) {
+      const toolbar = document.createElement("div");
+      toolbar.className = "admin-db-picker-toolbar";
+      toolbar.addEventListener("click", (e) => e.stopPropagation());  // toolbar 클릭이 항목 토글로 새지 않게.
+
+      const searchInput = document.createElement("input");
+      searchInput.type = "text";
+      searchInput.className = "admin-db-picker-search";
+      searchInput.placeholder = "DB 이름 검색…";
+      searchInput.value = _dbPickerQuery;
+      searchInput.disabled = !canManage;
+      searchInput.setAttribute("aria-label", "데이터베이스 이름 검색");
+      searchInput.addEventListener("input", () => { _dbPickerQuery = searchInput.value; _applySearch(); });
+      toolbar.appendChild(searchInput);
+
+      const reRow = document.createElement("div");
+      reRow.className = "admin-db-picker-regex-row";
+      const reInput = document.createElement("input");
+      reInput.type = "text";
+      reInput.className = "admin-db-picker-regex";
+      reInput.placeholder = "정규식 일괄 선택… 예: ^prod_|_log$";
+      reInput.value = _dbPickerRegex;
+      reInput.disabled = !canManage;
+      reInput.setAttribute("aria-label", "정규식으로 데이터베이스 일괄 선택");
+      reInput.addEventListener("input", () => { _dbPickerRegex = reInput.value; _applyRegexPreview(); });
+      reInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); _applyRegexSelect(); } });
+      regexCountEl = document.createElement("span");
+      regexCountEl.className = "admin-db-picker-regex-count";
+      const reBtn = document.createElement("button");
+      reBtn.type = "button";
+      reBtn.className = "admin-db-picker-regex-btn";
+      reBtn.textContent = "일치 선택";
+      reBtn.disabled = !canManage;
+      reBtn.title = "정규식과 일치하는 모든 DB 를 선택에 추가(기존 선택은 유지)";
+      reBtn.addEventListener("click", () => _applyRegexSelect());
+      reRow.append(reInput, regexCountEl, reBtn);
+      toolbar.appendChild(reRow);
+
+      regexErrEl = document.createElement("div");
+      regexErrEl.className = "admin-db-picker-regex-err hidden";
+      toolbar.appendChild(regexErrEl);
+
+      selectedCountEl = document.createElement("div");
+      selectedCountEl.className = "admin-db-picker-selected-count";
+      toolbar.appendChild(selectedCountEl);
+
+      pickerDropList.appendChild(toolbar);
+    }
+
     userSchemas.forEach((name) => {
       const item = document.createElement("label");
       item.className = "admin-db-picker-item";
+      item.dataset.search = String(name).toLowerCase();   // 검색 haystack(부분일치).
+      item.dataset.dbname = String(name).toLowerCase();   // 정규식 하이라이트 매칭 키.
       const cb = document.createElement("input");
       cb.type = "checkbox";
       const nameKey = String(name).toLowerCase();
@@ -6506,6 +6665,7 @@ function renderProductDetail() {
             draft.push({ schema_name: dsCaseInsensitive ? raw : v, description: "", sort_order: (draft.length + 1) * 10 });
             setProductDatabasesPending(product.id, draft, _editDsKey);
             redrawChips();
+            _refreshSelectedCount();
           }
         } else {
           const v = String(name).toLowerCase();
@@ -6514,6 +6674,7 @@ function renderProductDetail() {
             draft.splice(idx, 1);
             setProductDatabasesPending(product.id, draft, _editDsKey);
             redrawChips();
+            _refreshSelectedCount();
           }
         }
       });
@@ -6525,7 +6686,18 @@ function renderProductDetail() {
       item.appendChild(buildPickerInsightMeta(_pkByDb[String(name).toLowerCase()] || null, _pkWorker));
       pickerDropList.appendChild(item);
     });
+
+    // 검색 결과 없음 안내(동적 — _applySearch 가 .hidden 토글).
+    noResultEl = document.createElement("div");
+    noResultEl.className = "admin-db-picker-no-result hidden";
+    noResultEl.textContent = "검색 결과가 없습니다.";
+    pickerDropList.appendChild(noResultEl);
+
     pickerDropBtn.disabled = !canManage;
+    // 재렌더 후 보존된 검색/정규식 입력값을 즉시 재적용(필터·하이라이트·카운트 복원).
+    _refreshSelectedCount();
+    _applySearch();
+    _applyRegexPreview();
   };
 
   const redrawChips = () => {

@@ -4192,3 +4192,16 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] REV-20260618T024517-ai-claude-product-picker-search [SKIPPED:frontend-ui-search-filter-no-backend-no-rbac] — Minor frontend 비파괴, RBAC/백엔드 무변경(자체 점검 6항목 REVIEW.md).
 - [x] 식별자: 고병렬 동시세션 rebase(2회) 충돌(REQ-0288/AC-0572·0573 타 세션 선점) → grep max 재번호 REQ-20260618-0317/AC-0574·0575, docs --ours+재삽입 keep-both([[feedback_feature_doc_id_grep_max]]).
 - [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → 라이브 PB-0008 Windows-browser(제품 13개 → 검색박스 노출·명칭 입력→필터·sticky·focus·결과없음) → 마감.
+- [ ] 재배포(web) → PB-0008 재검증(`.engine-icon` width 18px·버튼 border/padding·드롭다운 열림·옵션 2개 아이콘·MySQL/SQL Server 브랜드색) PASS → 마감.
+
+### TASK-20260618T025755 — '+ 데이터베이스 추가' picker 검색 필터 + 정규식 일괄 선택 (REQ-20260618-0317, AC-0574·0575, Major §12.3, 2026-06-18)
+- 사용자 보고(/_template:entry): 사내 데이터소스는 DB 추가/삭제가 잦아 제품의 DB 구성을 매번 바꾸기 번거롭다. `관리 콘솔 > 제품 > '데이터 소스 & 접근 가능 데이터베이스' > '+ 데이터베이스 추가'` 항목에 **검색 필터** 추가 + **정규식으로 임의 DB 들을 미리 선택**(선택 목록 조회 가능). 그 외 잦은 DB 변경에 대한 모범 대응책 제안.
+- 근본: `buildPicker()`(admin.js) 의 후보 DB 목록은 체크박스 리스트만 있어, 데이터소스에 DB 가 많으면 원하는 것을 찾아 하나씩 토글해야 했다(검색·패턴 선택 부재). 후보 DB(`availableUserDbs`)·선택(draft)·쓰기 경로(pending→모두 적용)는 이미 존재 — 탐색/선택 UX 만 부재.
+- [x] admin.js 모듈 helper 4종 신설(순수/DOM, jsdom 검증 대상): `DB_PICKER_SEARCH_MIN`(=6), `dbPickerFilterNames`(부분일치 필터), `dbPickerRegexMatches`(정규식 `i` 매칭 `{ok,matches,error}`), `applyDbPickerSearch`(항목 `.hidden` 토글+표시수), `applyDbPickerRegexHighlight`(일치 `.is-regex-match`+count).
+- [x] admin.js `buildPicker()`: 후보 ≥ `DB_PICKER_SEARCH_MIN` 일 때 sticky toolbar 삽입 — 검색 입력(라이브 부분일치) + 정규식 입력(라이브 카운트·하이라이트) + "일치 선택" 버튼(Enter 지원) + "선택됨 N개" 요약 + 검색결과없음/정규식오류 안내. 항목에 `dataset.search`/`dataset.dbname` 부여. 검색·정규식 입력값은 렌더 함수 클로저(`_dbPickerQuery`/`_dbPickerRegex`)에 보존해 재렌더(비동기 insight)에도 유지.
+- [x] 정규식 일괄 선택 = **additive**(`draft.push` 만, 기존 선택 해제 없음) + 체크박스 단일 추가와 동일 검증(시스템/내부 스키마 제외·비-MSSQL 이름 형식·MSSQL 대소문자 보존) 통과분만. 선택 후 redrawChips+buildPicker 재반영 + toast(M개 중 K개 추가). 선택 목록은 기존 `cov-db-list` 에 행 단위 표시("조회 가능" 충족).
+- [x] styles.css: `.admin-db-picker-toolbar`(sticky) + `.admin-db-picker-search`/`.admin-db-picker-regex`(+focus/placeholder) + `.admin-db-picker-regex-row`/`-count`/`-btn`/`-err` + `.admin-db-picker-selected-count` + `.admin-db-picker-item.is-regex-match` 하이라이트 + `.admin-db-picker-no-result`. admin.html(styles.css+admin.js)·index.html(styles.css) cache-buster `?v=20260618-dbpicker-search-regex`.
+- [x] 검증: jsdom `tests/verify_dbpicker_search_regex.mjs` **33/33 PASS**(순수 검색 5·정규식 6·DOM 검색 4·DOM 하이라이트 3·wiring 7·CSS/cache-buster 8) + `node --check admin.js`. frontend-only(백엔드·RBAC·스키마·엔드포인트·데이터 0).
+- [x] 잦은 DB 구성 변경 모범 대응책 제안서 작성: `docs/PROPOSAL-frequent-db-config-changes.md`.
+- [ ] outside-voice/panel: §18.8 — frontend-only·RBAC/스키마/엔드포인트 0·기존 검증/쓰기 경로 재사용이라 패널 생략(REV [SKIPPED] 근거 기록). 보안 경계 변화 없음(정규식은 선택 편의, 서버 검증 불변).
+- [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → PB-0008 Windows-browser(검색 필터·정규식 라이브 카운트/하이라이트·일치 선택 additive·선택됨 N개·sticky) → 마감.
