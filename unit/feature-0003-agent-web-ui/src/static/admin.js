@@ -2203,7 +2203,18 @@ function _dsRenderList() {
     const dsk = String(ds.key || "").trim().toLowerCase();
     const dot = document.createElement("span");
     _paintDsConnDot(dot, adminState.datasourceConnStatus.get(dsk));
-    row.append(cb, dot, main);
+    // TASK-20260618T030534: 연결 상태 도트 우측에 엔진 서비스 브랜드 아이콘(목록 식별 보조).
+    //  '새 데이터소스' 드롭다운(_dsBuildEngineField)과 동일한 engineMeta(아이콘 + 브랜드색)를
+    //  재사용한다. 행 grid 는 [체크박스 · 도트 · 엔진아이콘 · main] 4열(styles.css 동반 갱신).
+    const em = engineMeta(ds.engine);
+    const engIcon = document.createElement("span");
+    engIcon.className = "ds-list-engine-icon";
+    engIcon.style.color = em.color;
+    engIcon.innerHTML = em.icon;
+    engIcon.title = `엔진: ${em.label}`;
+    engIcon.setAttribute("role", "img");
+    engIcon.setAttribute("aria-label", `엔진: ${em.label}`);
+    row.append(cb, dot, engIcon, main);
     _probeDatasourceConn(dsk).then((res) => { if (dot.isConnected) _paintDsConnDot(dot, res); });
     row.addEventListener("click", () => {
       adminState._dsSelectedKey = ds.key;

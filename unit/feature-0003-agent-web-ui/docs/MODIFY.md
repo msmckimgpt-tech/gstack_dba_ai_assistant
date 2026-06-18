@@ -18,6 +18,14 @@ source_of_truth: true
 - Rollback: 3개 정적 파일 revert(비파괴 추가라 단순).
 - Deploy: web 재빌드(deploy_scope: included — FIRST_REQUEST.md 전역 선언).
 - 식별자 메모: 고병렬 동시세션 origin/main rebase(2회) 시 최초 REQ-0288/AC-0572·0573 이 타 세션 선점과 충돌 → grep max 재번호 REQ-20260618-0317/AC-0574·0575([[feedback_feature_doc_id_grep_max]]). docs 충돌은 --ours(타 세션 항목 보존)+내 항목 재삽입으로 keep-both.
+## CHG-20260618T030534-ai-claude-ds-list-engine-icon (TASK-20260618T030534 — 데이터소스 목록 행 엔진 서비스 아이콘)
+- Date: 2026-06-18.
+- Scope: frontend admin.js(`_dsRenderList`) + styles.css + admin.html(cache-buster ×2). 백엔드·RBAC·스키마·데이터 0.
+- 내용: TASK-20260618T022006(엔진 드롭다운) 후속. `관리 콘솔 > 데이터소스` 목록 각 행의 네트워크 연결 도트 **우측에** 엔진 서비스 브랜드 아이콘 추가. ① `_dsRenderList` 가 `engineMeta(ds.engine)`(드롭다운과 동일 출처)의 아이콘을 `span.ds-list-engine-icon`(브랜드색·role=img·aria-label "엔진: <label>")으로 만들어 `row.append(cb, dot, engIcon, main)`. ② styles.css `#datasourceList .admin-list-row` grid `auto auto 1fr`→`auto auto auto 1fr`(4열 cb·dot·engIcon·main 1:1, 행 정렬 보존) + `.ds-list-engine-icon`(16px). 기존 엔진 텍스트 배지는 유지(additive). ③ admin.html admin.js+styles.css 캐시버스터 `?v=20260618-ds-list-engine-icon`(공유 styles.css 변경 — 직전 task cache-buster 교훈 적용).
+- Why: 사용자 요청 "데이터소스 목록에서도 식별하기 쉽도록 네트워크 연결 뱃지 우측에 [엔진 아이콘] 구성".
+- Verification: jsdom `verify_ds_list_engine_icon.mjs` 17 PASS + node --check. 화면 정본 = PB-0008(배포 후).
+- Rollback: admin.js engIcon 블록·`row.append` 4-인자, styles.css 4열 grid·`.ds-list-engine-icon`, admin.html cache-buster revert.
+- Deploy: web 재빌드 + 컨테이너 재생성(deploy_scope: included).
 
 ## CHG-20260618T030014-ai-claude-engine-dropdown-evidence (TASK-20260618T022006 후속 docs-only — PB-0008 Windows-browser evidence)
 - Date: 2026-06-18
