@@ -4193,3 +4193,12 @@ source_of_truth: true
 - Verification: 본 변경은 docs-only(코드 0). 검증 정본은 본 cycle 이 기록하는 PB-0008 결과 자체.
 - Rollback: docs revert(증거 기록 제거). 코드·배포 무영향.
 - Deploy: 없음(docs-only).
+
+## CHG-20260618-0317
+- Date: 2026-06-18 (TASK-0303 — 역할/계정 '제품 사용(product_access)' 다중선택 무효 + 그룹 카운트 "0/0").
+- Scope: frontend admin.js + admin.html(cache-buster) + tests/verify_product_access_multiselect.mjs. 백엔드·스키마·RBAC·신규권한 0.
+- 내용: ① 제품 카드 토글이 렌더 시점 스냅샷(role.permission_codes/account.permission_overrides)을 읽어 매 토글이 전체 교체→마지막 1개만 남던 다중선택 무효 수정 — `onToggle`/`onChange` 가 라이브 `mergedRole`/`mergedAccount`(pending 오버레이) 읽기로 전환(단건만 가감, 누적). ② 역할 메인 grid `onChange` 의 `existingDynamic`/`preservedHidden` 도 라이브 `mergedRole` 읽기(정적↔제품 상호 클로버 방지, TASK-0300 self-scope hidden 보존 정합). ③ product_access 그룹 배지 "0/0" — 카드는 grid 렌더(`_updateCheckboxGroupSummary` 1차) *이후* 임베드돼 0/0 고정이던 것을, 임베드 직후 재집계(역할 N/M·계정 허용/거부/상속) + 부여 시 그룹 펼침 + 토글 시 배지 라이브 갱신.
+- Why: 사용자 보고 — 역할 제품별 접근 다중선택 미작동 + "제품 사용" 권한 항상 "0/0".
+- Verification: `verify_product_access_multiselect.mjs` 6 PASS(실 추출 함수 — 역할·계정 다중선택 누적·OLD 버그 대조군·정적↔제품 클로버 방지·카운트 0/0→3/16) + node --check. 외부리뷰 **SHIP**(REV-20260618-0317 — 6항목 전부 refuted, 권한손실·self-scope회귀·escalation 0).
+- Rollback: admin.js 5개 편집 + admin.html cache-buster revert.
+- Deploy: web 재빌드(deploy_scope: included). 라이브 재검증 = 역할 제품 3개 토글→3개 staged·배지 N/M·적용 후 영속 + PB-0008.

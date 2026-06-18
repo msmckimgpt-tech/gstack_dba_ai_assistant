@@ -4213,3 +4213,14 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: jsdom `verify_ds_list_engine_icon.mjs` 17 PASS(아이콘 빌드 mysql/mssql/폴백·브랜드색·aria·도트 우측 배선·이전 3-append 잔존 0·4열 grid·아이콘 CSS) + node --check. frontend-only(백엔드·RBAC·스키마·엔드포인트·데이터 0).
 - [x] outside-voice 패널 SKIP — Minor 추가 변경 + 이미 적대 검증된 engineMeta/아이콘 재사용(TASK-20260618T022006 REV-20260618-0315). REV-20260618T030534 [SKIPPED:frontend-ui-list-icon-no-backend-no-rbac]. 화면 정본 = PB-0008.
 - [x] 머지(main `8a2c886`, PR #332) → 배포(web 재빌드 + 컨테이너 재생성, deploy_scope: included) → PB-0008 Windows-browser PASS: `#datasourceList` 18행 children `[cb, dot, engIcon, main]`(엔진 아이콘 도트 우측)·grid `13px 9px 16px 225px`(4열)·MySQL #00758F·Microsoft SQL Server #EE352C·아이콘 컬럼 leftAlignSpread=0px(정렬 무붕괴). evidence `artifacts/pb0008-ds-list-engine-icon/ds-list-engine-icons.png`. **마감**(CHG/REV-20260618T031747 evidence).
+- [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → 라이브 PB-0008 Windows-browser(제품 13개 → 검색박스 노출·명칭 입력→필터·sticky·focus·결과없음) → 마감.
+
+### TASK-0303 — 역할/계정 '제품 사용(product_access)' 다중선택 무효 + 그룹 카운트 "0/0" 수정 (Major §12.3, 2026-06-18)
+- 사용자 보고: ① `역할 > [항목] > 운영 권한 > 제품 사용` 의 제품별 접근 다중선택·적용이 제대로 안 됨. ② `제품 사용 (작업 화면)` 권한이 항상 "0/0" 으로 출력됨.
+- 근본 원인: ① 제품 카드 토글 핸들러(`buildRoleProductCardList` onToggle·`buildAccountProductOverrideList` onChange)가 **렌더 시점 스냅샷**(`role.permission_codes`/`account.permission_overrides`)을 읽음 → 매 토글이 서버 스냅샷+단건으로 전체 교체 → 직전 토글의 pending 을 잃어 **마지막 1개만 남음**(다중선택 무효). 역할 메인 grid onChange 의 `existingDynamic`/`preservedHidden` 도 스냅샷 기반이라 정적↔제품 상호 클로버. ② product_access 그룹은 빈 컨테이너로 렌더되고 카드는 **그 후** 임베드되는데, `_updateCheckboxGroupSummary` 가 임베드 전(체크박스 0개)에 1회만 실행 → 배지가 "0/0" 고정.
+- [x] 제품 카드 onToggle/onChange: 라이브 `mergedRole`/`mergedAccount`(pending 오버레이) 읽기로 전환 → 단건만 가감, 다중선택 누적.
+- [x] 역할 메인 grid onChange: `existingDynamic`/`preservedHidden` 를 라이브 `mergedRole` 에서 읽어 정적↔제품 상호 클로버 방지(TASK-0300 self-scope hidden 보존 정합 유지).
+- [x] 카드 임베드 직후 `_updateCheckboxGroupSummary`/`_updateOverrideGroupSummary` 재집계(역할 N/M·계정 허용/거부/상속) + 부여 있으면 그룹 펼침. 토글 시에도 `wrap.closest('details.permission-group')` 로 배지 라이브 갱신.
+- [x] 검증: `tests/verify_product_access_multiselect.mjs` 6 PASS(실 추출 mergedRole/setRolePending/mergedAccount/setAccountPending/_updateCheckboxGroupSummary — 역할·계정 다중선택 누적·OLD 스냅샷 버그 대조군·정적↔제품 클로버 방지·카운트 0/0→3/16) + node --check.
+- [x] outside-voice 적대 리뷰(RBAC-인접, [[feedback_outside_voice_for_rbac]]) **SHIP** — 권한 손실 0·self-scope(TASK-0300) 무회귀·escalation 0(백엔드 `_enforce_*_self_scope` 정본)·역할 divergence 0·카운트 inflation 0·신규역할 안전, 6항목 전부 refuted. M1(그룹 모두선택 버튼)·M2(계정 메인 비대칭)=기존·범위외.
+- [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → 라이브 재검증(역할 제품 3개 토글→3개 staged·배지 N/M·적용 후 영속) + PB-0008 Windows-browser → 마감.
