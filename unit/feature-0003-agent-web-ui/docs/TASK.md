@@ -4244,3 +4244,17 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `tests/verify_product_access_multiselect.mjs` 6 PASS(실 추출 mergedRole/setRolePending/mergedAccount/setAccountPending/_updateCheckboxGroupSummary — 역할·계정 다중선택 누적·OLD 스냅샷 버그 대조군·정적↔제품 클로버 방지·카운트 0/0→3/16) + node --check.
 - [x] outside-voice 적대 리뷰(RBAC-인접, [[feedback_outside_voice_for_rbac]]) **SHIP** — 권한 손실 0·self-scope(TASK-0300) 무회귀·escalation 0(백엔드 `_enforce_*_self_scope` 정본)·역할 divergence 0·카운트 inflation 0·신규역할 안전, 6항목 전부 refuted. M1(그룹 모두선택 버튼)·M2(계정 메인 비대칭)=기존·범위외.
 - [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → 라이브 재검증(역할 제품 3개 토글→3개 staged·배지 N/M·적용 후 영속) + PB-0008 Windows-browser → 마감.
+
+### TASK-20260618T044318 — 제품 DB allowlist 정규식 규칙 자동 동기화 (REQ-20260618-0322, AC-0580·0581, Critical §12.3, 2026-06-18)
+- 사용자 요청: 정규식 선택(TASK-20260618T025755)을 "한 번 구성해두면 데이터소스 변화 시 제품에 자동 반영"되게 확장.
+- 사용자 결정(AskUserQuestion): ①자동 즉시 적용 → ②outside-voice NOT-SHIP → **안전 하이브리드** → ③**풀스코프(백그라운드 포함)**.
+- [x] outside-voice 설계 리뷰: 순수 자동적용 NOT-SHIP(allowlist=에이전트 접근 경계, "DB 이름 지을 수 있는 누구나 → AI 즉시 노출"). BLOCKER B1~B5·M2~M6 도출 → 안전 하이브리드로 전환.
+- [x] 스키마(멱등·비파괴): `WebProductDatasourceDbRules` + `WebProductDatabasePending` + `WebProductDatabases.Source/RuleId`(기존행 manual backfill). probe 에 Source 컬럼 등록(TASK-0047 trap 회피) + slow-path 호출.
+- [x] reconcile + 헬퍼: `_validate_db_rule_pattern`(ReDoS)·`_db_rule_excluded_lower`(M2)·`_match_db_rule`(B5)·`_reconcile_product_db_rule`(cap이하+can_manage=자동/else pending=B1, add-only no-op=M4, SortOrder 말미=M5, 생성자 귀속 감사=B3).
+- [x] 엔드포인트 5종(GET/PUT/DELETE/preview/approve-pending) — `_db_rule_gate`(product.manage+바인딩, M6) + 파라미터화 SQL.
+- [x] B4: 수동 PUT `admin_update_product_databases` 가 manual 행만 교체(rule 행 보존) + 프론트 PUT body `source==='rule'` 제외 + `_list_product_databases` source 반환.
+- [x] 백그라운드 `_start_db_rule_reconcile_loop`(env AGENT_DB_RULE_RECONCILE_SEC=300) — creator 활성·비삭제+product.manage 재검증(M3).
+- [x] UI: 규칙 에디터(`_renderRuleEditor`)·preview 라이브·pending 1클릭 승인·rule 배지·picker rule 체크박스 비활성·CSS·cache-buster.
+- [x] outside-voice 구현 코드 재리뷰: **SHIP-WITH-FIXES**. B1·B3·B4·B5·M2·M4·M6 충족 확인. BLOCKER(ReDoS alternation `(a|a)*`/`(.*a){20}` 우회) → 검증 강화(그룹수량자 `)[*+?{]` 금지·무한수량자≤8·match 방어심층) — catastrophic 0.000s 즉시 [] 실측. MAJOR#1(creator 활성 확인)·#2(rule 체크박스 비활성) 반영. MAJOR#3(approve 패턴 재매칭) 문서화.
+- [x] 검증: `tests/verify_db_rule_logic.py` 25/25 + `tests/verify_db_rule_ui.mjs` 17/17 + ast.parse + node --check.
+- [ ] 머지 → 배포(web, deploy_scope: included) → PB-0008 Windows-browser(규칙 저장→자동/pending·승인·배지·B4 수동저장 후 rule 행 생존) → 마감.

@@ -5404,7 +5404,11 @@ async function applyAllPending() {
       continue;
     }
     try {
-      const body = { databases: Array.isArray(draft) ? draft.map((d) => ({ ...d })) : [] };
+      // TASK-20260618T044318 (B4): 수동 저장 body 는 manual 행만 — 규칙(rule) 자동 동기화 행은 제외해
+      //   백엔드가 보존하도록 한다(manual PUT 이 rule 행을 manual 로 승격/덮어쓰지 않게).
+      const body = { databases: Array.isArray(draft)
+        ? draft.filter((d) => String((d && d.source) || "manual") !== "rule").map((d) => ({ ...d }))
+        : [] };
       // datasource 차원이 지정됐으면 함께 전송(백엔드가 그 datasource 행만 교체). 빈 문자열은 레거시 단일.
       if (dsKey) body.datasource_key = dsKey;
       await apiFetch(`/api/admin/products/${productId}/databases`, {
@@ -6684,8 +6688,13 @@ function renderProductDetail() {
       const cb = document.createElement("input");
       cb.type = "checkbox";
       const nameKey = String(name).toLowerCase();
-      cb.checked = draft.some((d) => String(d.schema_name).toLowerCase() === nameKey);
-      cb.disabled = !canManage;
+      const _draftEntry = draft.find((d) => String(d.schema_name).toLowerCase() === nameKey);
+      cb.checked = !!_draftEntry;
+      // TASK-20260618T044318: 규칙(rule) 자동 행은 체크박스 비활성 — 수동 uncheck 가 무효(reconcile 재추가)
+      //   라 혼란 방지. 제거하려면 규칙 편집/삭제로 관리.
+      const _isRuleEntry = _draftEntry && String(_draftEntry.source || "manual") === "rule";
+      cb.disabled = !canManage || !!_isRuleEntry;
+      if (_isRuleEntry) item.title = "정규식 자동 규칙으로 추가됨 — 규칙 편집/삭제로 관리합니다.";
       cb.addEventListener("change", () => {
         if (cb.checked) {
           const raw = name;
@@ -6770,6 +6779,16 @@ function renderProductDetail() {
       nameEl.title = entry.schema_name;
       rowEl.appendChild(nameEl);
 
+      // TASK-20260618T044318: 규칙(rule) 자동 동기화로 추가된 행은 "규칙" 배지(수동 제거 대상 아님).
+      const _isRuleRow = String((entry && entry.source) || "manual") === "rule";
+      if (_isRuleRow) {
+        const rb = document.createElement("span");
+        rb.className = "cov-db-rule-badge";
+        rb.textContent = "규칙";
+        rb.title = "정규식 자동 규칙으로 추가됨 — 규칙 편집/삭제로 관리합니다.";
+        rowEl.appendChild(rb);
+      }
+
       // TASK-0242: insight-worker 가 파악한 역할/도메인 한 줄(이름 다음, 진척 셀 앞).
       rowEl.appendChild(buildDbRoleCell(insByDb[String(entry.schema_name).toLowerCase()] || null, { loading: insLoading }));
 
@@ -6794,8 +6813,8 @@ function renderProductDetail() {
         rowEl.appendChild(rspacer);
       }
 
-      // 제거 버튼(편집 권한 시).
-      if (canManage) {
+      // 제거 버튼(편집 권한 시). 규칙(rule) 행은 수동 제거 대상이 아님(규칙 편집/삭제로 관리) → spacer.
+      if (canManage && !_isRuleRow) {
         const x = document.createElement("button");
         x.type = "button";
         x.className = "cov-db-remove";
@@ -6856,6 +6875,133 @@ function renderProductDetail() {
 
   redrawChips();
   buildPicker();
+
+  // ── TASK-20260618T044318: 정규식 자동 규칙 에디터 + pending 승인 (per (product, datasource)) ──
+  //  규칙을 한 번 저장하면 데이터소스 DB 변화 시 일치 DB 가 (반)자동 반영된다(cap 이하·명확=자동,
+  //  초과·권한보류=pending 승인). allowlist 는 보안 경계라 안전 하이브리드(outside-voice B1).
+  const ruleWrap = document.createElement("div");
+  ruleWrap.className = "cov-db-rule";
+  dbEditorWrap.appendChild(ruleWrap);
+
+  const reloadProductAfterRuleChange = async () => {
+    try { await loadAdminData(); } catch (e) { /* ignore */ }
+    renderProductDetail();  // 갱신된 product.databases(rule 행 포함)로 상세 재렌더.
+  };
+
+  let _renderRuleEditor = () => {};
+  if (canManage) {
+    _renderRuleEditor = async () => {
+      const dsk = String(_editDsKey || "").trim().toLowerCase();
+      ruleWrap.innerHTML = "";
+      if (!dsk) return;  // 미바인딩(기본 단일 MySQL)에는 규칙 미지원.
+      const head = document.createElement("div");
+      head.className = "cov-db-rule-head";
+      head.textContent = "정규식 자동 규칙";
+      const hint = document.createElement("div");
+      hint.className = "cov-db-rule-hint";
+      hint.textContent = "정규식과 일치하는 DB 를 데이터소스 변화 시 자동 반영합니다(한도 초과/권한 보류분은 승인 대기).";
+      const incInput = document.createElement("input");
+      incInput.type = "text"; incInput.className = "cov-db-rule-input cov-db-rule-include";
+      incInput.placeholder = "포함 정규식… 예: ^prod_|_live$";
+      const excInput = document.createElement("input");
+      excInput.type = "text"; excInput.className = "cov-db-rule-input cov-db-rule-exclude";
+      excInput.placeholder = "제외 정규식(선택)… 예: _bak$";
+      const capInput = document.createElement("input");
+      capInput.type = "number"; capInput.className = "cov-db-rule-cap";
+      capInput.min = "1"; capInput.max = "100"; capInput.value = "3";
+      capInput.title = "한 번에 자동 적용할 최대 신규 DB 수(초과 시 승인 대기)";
+      const countEl = document.createElement("span"); countEl.className = "cov-db-rule-count";
+      const saveBtn = document.createElement("button");
+      saveBtn.type = "button"; saveBtn.className = "cov-db-rule-save"; saveBtn.textContent = "규칙 저장";
+      const delBtn = document.createElement("button");
+      delBtn.type = "button"; delBtn.className = "cov-db-rule-del hidden"; delBtn.textContent = "규칙 삭제";
+      const errEl = document.createElement("div"); errEl.className = "cov-db-rule-err hidden";
+      const pendWrap = document.createElement("div"); pendWrap.className = "cov-db-rule-pending";
+      const row1 = document.createElement("div"); row1.className = "cov-db-rule-row"; row1.append(incInput);
+      const row2 = document.createElement("div"); row2.className = "cov-db-rule-row"; row2.append(excInput);
+      const row3 = document.createElement("div"); row3.className = "cov-db-rule-row";
+      const capLbl = document.createElement("label"); capLbl.className = "cov-db-rule-caplbl";
+      capLbl.textContent = "자동 적용 한도"; capLbl.appendChild(capInput);
+      row3.append(capLbl, countEl, saveBtn, delBtn);
+      ruleWrap.append(head, hint, row1, row2, row3, errEl, pendWrap);
+
+      let data = null;
+      try {
+        data = await apiFetch(`/api/admin/products/${product.id}/datasources/${encodeURIComponent(dsk)}/db-rule`);
+      } catch (e) { data = null; }
+      if (data && data.rule) {
+        incInput.value = data.rule.include_pattern || "";
+        excInput.value = data.rule.exclude_pattern || "";
+        capInput.value = String(data.rule.cap || 3);
+        delBtn.classList.remove("hidden");
+      }
+      const renderPending = (pending) => {
+        pendWrap.innerHTML = "";
+        const list = pending || [];
+        if (!list.length) return;
+        const ph = document.createElement("div"); ph.className = "cov-db-rule-pending-head";
+        ph.textContent = `승인 대기 ${list.length}개 — 규칙 일치(한도 초과/권한 보류)`;
+        pendWrap.appendChild(ph);
+        list.forEach((p) => {
+          const it = document.createElement("div"); it.className = "cov-db-rule-pending-item";
+          const nm = document.createElement("span"); nm.className = "cov-db-rule-pending-name"; nm.textContent = p.schema_name;
+          const ap = document.createElement("button"); ap.type = "button"; ap.className = "cov-db-rule-approve"; ap.textContent = "승인";
+          ap.addEventListener("click", async () => {
+            ap.disabled = true;
+            try {
+              await apiFetch(`/api/admin/products/${product.id}/datasources/${encodeURIComponent(dsk)}/db-rule/approve-pending`,
+                { method: "POST", body: JSON.stringify({ schemas: [p.schema_name] }) });
+              showToast(`'${p.schema_name}' 승인 — 접근 목록에 추가됨.`);
+              await reloadProductAfterRuleChange();
+            } catch (e) { showToast("승인 실패: " + (e.message || "오류"), true); ap.disabled = false; }
+          });
+          it.append(nm, ap); pendWrap.appendChild(it);
+        });
+      };
+      renderPending(data && data.pending);
+
+      let _pvTimer = null;
+      const _doPreview = async () => {
+        const inc = incInput.value.trim();
+        if (!inc) { countEl.textContent = ""; errEl.classList.add("hidden"); return; }
+        try {
+          const r = await apiFetch(`/api/admin/products/${product.id}/datasources/${encodeURIComponent(dsk)}/db-rule/preview`,
+            { method: "POST", body: JSON.stringify({ include_pattern: inc, exclude_pattern: excInput.value.trim() }) });
+          if (r && r.ok) { countEl.textContent = `${r.matched_count}개 일치 · 신규 ${r.new_count}개`; errEl.classList.add("hidden"); }
+          else { countEl.textContent = ""; errEl.textContent = (r && r.error) || "정규식 오류"; errEl.classList.remove("hidden"); }
+        } catch (e) { /* keep last */ }
+      };
+      const _schedule = () => { if (_pvTimer) clearTimeout(_pvTimer); _pvTimer = setTimeout(_doPreview, 350); };
+      incInput.addEventListener("input", _schedule);
+      excInput.addEventListener("input", _schedule);
+      _doPreview();
+
+      saveBtn.addEventListener("click", async () => {
+        const inc = incInput.value.trim();
+        if (!inc) { errEl.textContent = "포함 정규식을 입력하세요."; errEl.classList.remove("hidden"); return; }
+        saveBtn.disabled = true;
+        try {
+          const r = await apiFetch(`/api/admin/products/${product.id}/datasources/${encodeURIComponent(dsk)}/db-rule`,
+            { method: "PUT", body: JSON.stringify({ include_pattern: inc, exclude_pattern: excInput.value.trim(), cap: Number(capInput.value) || 3 }) });
+          const rec = (r && r.reconcile) || {};
+          const a = (rec.auto_added || []).length, pnd = (rec.pending || []).length;
+          showToast(`규칙 저장 — 자동 추가 ${a}개${pnd ? `, 승인 대기 ${pnd}개` : ""}.`);
+          await reloadProductAfterRuleChange();
+        } catch (e) { errEl.textContent = "저장 실패: " + (e.message || "오류"); errEl.classList.remove("hidden"); saveBtn.disabled = false; }
+      });
+      delBtn.addEventListener("click", async () => {
+        if (!confirm("이 데이터소스의 정규식 자동 규칙을 삭제할까요?")) return;
+        const strip = confirm("규칙으로 추가된 DB 접근 행도 함께 삭제할까요?\n확인=행도 삭제 · 취소=규칙만 삭제(행 유지)");
+        try {
+          await apiFetch(`/api/admin/products/${product.id}/datasources/${encodeURIComponent(dsk)}/db-rule${strip ? "?strip=1" : ""}`,
+            { method: "DELETE" });
+          showToast("규칙 삭제됨.");
+          await reloadProductAfterRuleChange();
+        } catch (e) { showToast("삭제 실패: " + (e.message || "오류"), true); }
+      });
+    };
+    _renderRuleEditor();
+  }
 
   // TASK-0242: 편집 대상(펼친) datasource 의 DB insight 지연로드 — 캐시에 없으면 fetch 후 재렌더(설명/상태 채움).
   _ensureDbInsights = (opts = {}) => {
@@ -6923,6 +7069,7 @@ function renderProductDetail() {
     redrawChips();
     _renderDsAccordion();        // active 행 강조 + dbEditorWrap 을 새 행 아래로 이동
     _refreshAccessibleDbs(nk);   // 새 datasource 의 DB picker + 시스템칩 갱신
+    _renderRuleEditor();         // TASK-20260618T044318: 새 datasource 의 규칙/pending 로드
   };
 
   // ── TASK-0238: datasource accordion (선택기 = 상태표시 = 바인딩관리 통합) ──────────────

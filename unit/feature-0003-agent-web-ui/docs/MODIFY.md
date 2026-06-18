@@ -4240,3 +4240,12 @@ source_of_truth: true
 - Verification: `verify_product_access_multiselect.mjs` 6 PASS(실 추출 함수 — 역할·계정 다중선택 누적·OLD 버그 대조군·정적↔제품 클로버 방지·카운트 0/0→3/16) + node --check. 외부리뷰 **SHIP**(REV-20260618-0317 — 6항목 전부 refuted, 권한손실·self-scope회귀·escalation 0).
 - Rollback: admin.js 5개 편집 + admin.html cache-buster revert.
 - Deploy: web 재빌드(deploy_scope: included). 라이브 재검증 = 역할 제품 3개 토글→3개 staged·배지 N/M·적용 후 영속 + PB-0008.
+
+## CHG-20260618T044318-ai-claude-db-rule-autosync
+- Date: 2026-06-18 (TASK-20260618T044318 — 제품 DB allowlist 정규식 규칙 자동 동기화, **Critical §12.3**).
+- Scope: feature-0003 `src/app.py`(스키마 helper + reconcile/검증/매칭 helper + 5 엔드포인트 + 수동 PUT B4 수정 + 백그라운드 task + probe 등록 + `_list_product_databases` source) + `src/static/admin.js`(규칙 에디터·pending·배지·picker 비활성·PUT body 필터) + `src/static/styles.css`(.cov-db-rule*) + `admin.html`/`index.html`(cache-buster) + `tests/verify_db_rule_logic.py`·`verify_db_rule_ui.mjs`(신규) + `docs/PLAN-db-rule-autosync.md`.
+- 내용: (제품×데이터소스) 정규식 규칙을 저장하면 데이터소스 DB 변화 시 일치 DB 를 allowlist 에 안전 하이브리드로 반영 — cap 이하+권한 충족=자동(Source='rule'), 초과·권한보류=pending(1클릭 승인). 트리거=규칙 저장·관리자 규칙 섹션 열람(lazy)·백그라운드 주기(300s). allowlist=에이전트 접근 경계라 outside-voice 2-pass + BLOCKER 전부 반영(B1 hybrid/cap-withhold·B2 ReDoS 강화·B3 생성자 귀속 감사·B4 수동 PUT rule 보존·B5 엔진별 case-fold·M2 제외 union·M3 creator 활성+권한 재검증·M4 add-only no-op·M5 SortOrder 말미·M6 product.manage 쓰기 게이트).
+- Why: 사용자 요청 — 정규식 선택을 1회 구성으로 데이터소스 변화 자동 추종(잦은 DB 구성 변경 무인 대응).
+- Verification: `ast.parse(app.py)` + `node --check admin.js` + `verify_db_rule_logic.py` 25/25 + `verify_db_rule_ui.mjs` 17/17 + ReDoS catastrophic 0.000s 차단 실측. outside-voice 구현 재리뷰 SHIP-WITH-FIXES(BLOCKER ReDoS 흡수). 화면 정본 = PB-0008(배포 후).
+- Rollback: 신규 helper/엔드포인트/백그라운드/스키마 helper + admin.js 규칙블록 + CSS 제거, 수동 PUT B4 분기 원복(Source 무시 전체교체), cache-buster·test revert. 스키마 테이블/컬럼은 비파괴(잔존 무해). reconcile 미동작 시 기존 수동 allowlist 그대로.
+- Deploy: web 재빌드 1 이미지(백엔드+프론트 baked). deploy_scope: included.
