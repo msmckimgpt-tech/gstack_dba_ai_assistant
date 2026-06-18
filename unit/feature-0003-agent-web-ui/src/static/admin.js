@@ -26,9 +26,11 @@ const adminState = {
   accountSelected: new Set(),
   selectedAccountId: null,
   roleSearch: "",
+  roleFilter: "all",            // 계정 탭과 동형: all|active|inactive (역할엔 soft-delete 없음 → 삭제됨 분기 없음)
   roleSelected: new Set(),
   selectedRoleId: null,
   productSearch: "",
+  productFilter: "all",         // 계정 탭과 동형: all|active|inactive (제품도 hard-delete 라 삭제됨 분기 없음)
   selectedProductId: null,
   // DESIGN.md §4 / §12 Phase A — Products multi-select (단일 selectedProductId 와 동거)
   productSelected: new Set(),
@@ -4352,6 +4354,9 @@ function showTemporaryPasswordModal(payload) {
 function filteredRoles() {
   const q = adminState.roleSearch.trim().toLowerCase();
   const serverRoles = adminState.roles.filter((role) => {
+    // 계정 탭 filteredAccounts() 와 동형: 상태 필터 먼저, 그다음 검색어 매칭.
+    if (adminState.roleFilter === "active" && !role.is_active) return false;
+    if (adminState.roleFilter === "inactive" && role.is_active) return false;
     if (!q) return true;
     return String(role.name || "").toLowerCase().includes(q) ||
            String(role.key || "").toLowerCase().includes(q);
@@ -5807,8 +5812,11 @@ async function resetProductDbInsight(product, db) {
 
 function filteredProducts() {
   const q = (adminState.productSearch || "").toLowerCase().trim();
-  if (!q) return adminState.products.slice();
   return adminState.products.filter((p) => {
+    // 계정 탭 filteredAccounts() 와 동형: 상태 필터 먼저, 그다음 검색어 매칭.
+    if (adminState.productFilter === "active" && !p.is_active) return false;
+    if (adminState.productFilter === "inactive" && p.is_active) return false;
+    if (!q) return true;
     return (
       (p.product_key || "").toLowerCase().includes(q)
       || (p.name || "").toLowerCase().includes(q)
@@ -7486,6 +7494,16 @@ async function initialize() {
     }, 150);
   });
 
+  // Role 활성/비활성 필터 (계정 탭 data-account-filter 와 동형)
+  document.querySelectorAll("[data-role-filter]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("[data-role-filter]").forEach((node) => node.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      adminState.roleFilter = btn.dataset.roleFilter;
+      renderRoleList();
+    });
+  });
+
   // Role select-all
   $("roleSelectAll").addEventListener("change", (ev) => {
     const visible = filteredRoles();
@@ -7518,6 +7536,16 @@ async function initialize() {
       }, 150);
     });
   }
+
+  // Product 활성/비활성 필터 (계정 탭 data-account-filter 와 동형)
+  document.querySelectorAll("[data-product-filter]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("[data-product-filter]").forEach((node) => node.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      adminState.productFilter = btn.dataset.productFilter;
+      renderProductList();
+    });
+  });
   const newProductBtn = $("newProductBtn");
   if (newProductBtn) {
     newProductBtn.addEventListener("click", () => {

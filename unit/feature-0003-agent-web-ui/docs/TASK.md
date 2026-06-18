@@ -8,7 +8,21 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260618T010417-ai-claude-date-group-collapse (current cycle) — 작업 화면 좌측 대화목록 첫 진입 시 최근 일자 그룹만 펼침 (REQ-20260618-0288, AC-0569, Minor §12.3)
+## TASK-20260618T021526-ai-claude-admin-status-filter (current cycle) — 관리 콘솔 역할·제품 탭에 활성/비활성 필터 추가 (REQ-20260618-0313, AC-0570, Minor §12.3)
+- 보고(사용자, 2026-06-18): `관리 콘솔 > 역할`, `관리 콘솔 > 제품` 탭에서 활성/비활성 필터를 적용해 달라. 기존의 `계정` 탭을 참조.
+- 등급: **Minor §12.3** — frontend-only(admin.html 2 toolbar + admin.js 필터 상태/술어/배선). 백엔드·RBAC·스키마·엔드포인트·데이터 0. 비파괴(기본 "전체" → 기존 동작 보존).
+- 진단: `계정` 탭은 이미 `admin-filter-group`(전체/활성/비활성/삭제됨, `data-account-filter`)을 가지며 `filteredAccounts()` 가 `adminState.accountFilter` 로 게이트한다. 반면 `역할`·`제품` 탭 toolbar 는 검색창만 있고 상태 필터 UI·상태·술어가 모두 부재(`filteredRoles()`/`filteredProducts()` 는 검색어만 필터). 역할·제품은 soft-delete(`deleted_at`)가 없고 hard-delete 라 "삭제됨" 분기는 제외 → 3버튼(전체/활성/비활성).
+
+### §2.1 Implementation Plan (PLAN)
+- `src/static/admin.js`: ① `adminState` 에 `roleFilter:"all"`·`productFilter:"all"` 추가(계정 `accountFilter` 동형). ② `filteredRoles()`/`filteredProducts()` 에 상태 필터를 검색어 매칭 *앞* 단계로 삽입(active→`!is_active` 제외, inactive→`is_active` 제외). `filteredProducts()` 의 `if (!q) return slice()` 단축을 제거해 빈 검색에도 상태 필터가 적용되게 재구조화. ③ 이벤트 배선: `[data-role-filter]`·`[data-product-filter]` 버튼에 계정 필터(`[data-account-filter]`)와 동형 핸들러(`is-active` 토글 + 상태 갱신 + 재렌더).
+- `src/static/admin.html`: 역할·제품 toolbar 의 검색창 뒤에 계정 탭과 동일한 `admin-filter-group`(전체/활성/비활성 3버튼) 추가. CSS(`.admin-filter-group`/`.admin-filter-btn`)는 이미 존재 → 재사용(신규 CSS 0).
+- 검증: `scripts/verify_admin_status_filter.mjs`(순수 node — admin.js 실 `filteredRoles`/`filteredProducts` 본문 추출 + mock adminState 클로저 실행, 상태×검색 교집합 검증) + node --check + PB-0008 Windows-browser(역할·제품 탭에서 비활성 클릭 시 비활성 행만 렌더, computed `is-active` 버튼 상태).
+- 완료 기준(AC): AC-0570.
+- [x] 구현(admin.js 상태/술어/배선 + admin.html 2 toolbar) + node --check PASS.
+- [x] `scripts/verify_admin_status_filter.mjs` **11/11 PASS**(역할·제품 각 all/active/inactive + 상태×검색 교집합 + 빈검색 회귀).
+- [ ] verify-completion --pre-commit PASS → 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser PASS.
+
+## TASK-20260618T010417-ai-claude-date-group-collapse — 작업 화면 좌측 대화목록 첫 진입 시 최근 일자 그룹만 펼침 (REQ-20260618-0288, AC-0569, Minor §12.3)
 - 보고(사용자, 2026-06-18): 서비스를 처음 진입할 때 `작업 화면 > 좌측 대화목록` 에서, 가장 최근의 일자에 대한 대화그룹을 제외한 나머지 오래된 일자들은 접힌 상태로 나타내 달라.
 - 등급: **Minor §12.3** — frontend-only UI 기본값 추가. 백엔드·RBAC·스키마·엔드포인트·데이터 0. 비파괴(접힘 기본값 + 사용자 토글 존중).
 - 사용자 결정(AskUserQuestion, 2026-06-18): "처음 진입" = 매 페이지 진입(reload)마다 재적용. 날짜 키가 상대적(`__today__`/`__yesterday__`)이라 영구 1회 seed(타 계정 그룹 `_seedOthersCollapsedOnce` 패턴)는 다음 날 무의미 → 매 로드 1회 seed, 세션 내 사용자 펼침 토글은 존중.

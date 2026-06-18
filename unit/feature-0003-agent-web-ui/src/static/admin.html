@@ -199,6 +199,11 @@
                 placeholder="제품 이름/키 검색…"
                 autocomplete="off"
               />
+              <div class="admin-filter-group">
+                <button type="button" class="admin-filter-btn is-active" data-product-filter="all">전체</button>
+                <button type="button" class="admin-filter-btn" data-product-filter="active">활성</button>
+                <button type="button" class="admin-filter-btn" data-product-filter="inactive">비활성</button>
+              </div>
             </div>
             <div class="admin-list-head">
               <label class="admin-list-select-all">
@@ -245,6 +250,11 @@
                 placeholder="역할 이름/키 검색…"
                 autocomplete="off"
               />
+              <div class="admin-filter-group">
+                <button type="button" class="admin-filter-btn is-active" data-role-filter="all">전체</button>
+                <button type="button" class="admin-filter-btn" data-role-filter="active">활성</button>
+                <button type="button" class="admin-filter-btn" data-role-filter="inactive">비활성</button>
+              </div>
             </div>
             <div class="admin-list-head">
               <label class="admin-list-select-all">
@@ -599,7 +609,7 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260617-task0302-bulk-delete-apply"></script>
+  <script src="/static/admin.js?v=20260618-admin-status-filter"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
 </body>
 </html>
