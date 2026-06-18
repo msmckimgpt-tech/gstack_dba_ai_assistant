@@ -9,6 +9,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260618-0316
+- Date: 2026-06-18 (TASK-20260618T022006 후속 fix — 엔진 드롭다운 styles.css cache-buster 누락 보정).
+- Scope: frontend admin.html + index.html(styles.css cache-buster 2곳). 코드 로직·CSS 본문·백엔드·데이터 0.
+- 내용: TASK-20260618T022006 이 `styles.css` 에 `.engine-picker*`/`.engine-option*`/`.engine-icon` 규칙을 추가했으나, 이를 링크하는 페이지의 `styles.css?v=` cache-buster 를 안 올려, 캐시된 브라우저가 옛 styles.css(엔진 규칙 0)를 계속 수신 → 드롭다운이 미스타일(아이콘 ~52px·버튼 border/padding 0)로 렌더되던 것. admin.html(`?v=20260616-task0292-admin-sidebar-vscroll`)·index.html(`?v=20260616-task0289-runtime-transparency`) 의 styles.css cache-buster 를 둘 다 `?v=20260618-engine-dropdown` 으로 bump(공유 styles.css 변경 → 전 consumer 페이지 bust).
+- Why: PB-0008 실 Windows Chrome 1차 검증에서 `engineIconCssRuleLoaded=false`·아이콘 52px·버튼 border 0px 로 미스타일 적발(jsdom 은 캐시·실 stylesheet 미재현이라 못 잡음 — PB-0008 canonical 게이트의 본령).
+- Verification: 재배포 후 PB-0008 재검증(`.engine-icon` width 18px·버튼 border/padding·브랜드색). 코드 로직 무변경이라 jsdom/단위 영향 0.
+- Rollback: 2 파일 cache-buster 문자열 revert.
+- Deploy: web 재빌드 + 컨테이너 재생성(deploy_scope: included).
+
 ## CHG-20260618T022846-ai-claude-admin-status-filter-evidence (TASK-20260618T021526 후속 docs-only — PB-0008 Windows-browser evidence)
 - Date: 2026-06-18
 - Scope: docs 전용(TEST/TASK/MODIFY/REVIEW). 코드·정적자산·스키마·RBAC 0.
