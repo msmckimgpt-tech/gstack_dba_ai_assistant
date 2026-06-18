@@ -3342,6 +3342,85 @@ a { color: inherit; }
 @keyframes covPickerPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 @media (prefers-reduced-motion: reduce) { .admin-db-picker-status.is-running { animation: none; } }
 
+/* ── TASK-20260618T025755: '+ 데이터베이스 추가' picker 검색 필터 + 정규식 일괄 선택 toolbar ──────
+   후보 DB 가 많을 때(잦은 DB 구성 변경 대응) 빠르게 찾고/패턴으로 일괄 선택. sticky 로 목록 상단에
+   고정해 스크롤해도 항상 보이게 한다(검색 결과 0건·정규식 오류 안내는 .hidden 토글). */
+.admin-db-picker-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fff;
+  padding: 6px 12px 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border-subtle, rgba(0,0,0,.08));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.admin-db-picker-search,
+.admin-db-picker-regex {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, rgba(0,0,0,.15));
+  border-radius: 6px;
+  outline: none;
+}
+.admin-db-picker-search:focus,
+.admin-db-picker-regex:focus {
+  border-color: var(--primary, #2563eb);
+  box-shadow: 0 0 0 2px rgba(37,99,235,.12);
+}
+.admin-db-picker-search::placeholder,
+.admin-db-picker-regex::placeholder { color: var(--text-muted, #888); }
+.admin-db-picker-regex-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.admin-db-picker-regex { flex: 1 1 auto; min-width: 0; font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
+.admin-db-picker-regex-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  white-space: nowrap;
+}
+.admin-db-picker-regex-btn {
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding: 5px 10px;
+  border: 1px solid var(--primary, #2563eb);
+  border-radius: 6px;
+  background: var(--primary, #2563eb);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.admin-db-picker-regex-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.admin-db-picker-regex-btn:not(:disabled):hover { filter: brightness(0.94); }
+.admin-db-picker-regex-err {
+  font-size: 11px;
+  color: var(--danger, #dc2626);
+}
+.admin-db-picker-selected-count {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+}
+/* 정규식 일치 라이브 하이라이트(적용 전 미리보기). */
+.admin-db-picker-item.is-regex-match {
+  background: color-mix(in srgb, var(--primary, #2563eb) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--primary, #2563eb);
+}
+.admin-db-picker-no-result {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-muted, #888);
+  font-style: italic;
+}
+
 /* ── TASK-0244: '+ 데이터소스 추가' 드롭다운 항목 — 이름/엔진/좌표/연결상태를 accordion·DB picker 와 동일
    시각 문법으로 정합(이전엔 'key — engine @ host:port' 단일 raw 문자열이라 다른 UI 와 폰트/정렬이 이질적). */
 .admin-ds-picker-head {
