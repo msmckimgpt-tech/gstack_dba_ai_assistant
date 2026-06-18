@@ -21,7 +21,7 @@ source_of_truth: true
 - 완료 기준(AC): AC-0571.
 - [x] 구현(admin.js 접힘 상태 + 토글 + 전환 리셋, admin.html 캐시버스터) + `node -c admin.js` PASS.
 - [x] `verify_ds_accordion_collapse.mjs` **19/19 PASS**(초기 펼침 회귀 없음·토글1 접힘·토글2 재펼침·하단 버튼 도달).
-- [ ] verify-completion --pre-commit → 머지 → web 재배포(deploy_scope: included) → **PB-0008 Windows-browser**(실 화면 접기/펼치기 + 하단 UI 접근).
+- [x] verify-completion --post-commit PASS(9 checks) → 머지(PR #323 merge, main `9069518`) → web 재배포(deploy_scope: included, `docker compose build web`+`up -d --no-deps web`, repo-web-1 Up·mysql_ok·pg_ok, 서빙 `admin.js?v=20260618-ds-acc-collapsible`·`_dsBodyCollapsed` baked) → **PB-0008 Windows-browser PASS**(실 Chrome/149, 단일 datasource 제품 KR `mysql-local`: 초기 펼침→머리 클릭 접힘[body 제거·행 유지·caret ▸·aria false]→'+ 데이터소스 추가' 912→685px viewport 내 진입→재펼침 토글 복원; evidence `artifacts/pb0008-ds-acc-collapsible/ds-acc-collapsed.png`). 식별자 충돌(타 세션 021526 가 REQ-0313/AC-0570 선점)→REQ-0314/AC-0571 재번호·rebase. CHG/REV-20260618T024209-ai-claude-ds-acc-collapsible-evidence.
 
 ## TASK-20260618T021526-ai-claude-admin-status-filter — 관리 콘솔 역할·제품 탭에 활성/비활성 필터 추가 (REQ-20260618-0313, AC-0570, Minor §12.3)
 - 보고(사용자, 2026-06-18): `관리 콘솔 > 역할`, `관리 콘솔 > 제품` 탭에서 활성/비활성 필터를 적용해 달라. 기존의 `계정` 탭을 참조.
