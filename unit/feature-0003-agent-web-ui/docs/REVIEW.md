@@ -12,6 +12,11 @@ source_of_truth: true
 - Date: 2026-06-18 (TASK-20260618T024517 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence 기록)
 - 분류 근거: docs 전용(TEST §4 Windows-browser Run + TASK 마감 + MODIFY/REVIEW). 코드·정적자산·RBAC·스키마 무변경 → 리뷰 SKIP. 검증 대상 코드는 이미 REV-20260618T024517(본 cycle) 에서 자체 점검 완료.
 - 잔여: 없음(cycle 마감).
+## REV-20260618T031747-ai-claude-ds-list-engine-icon-evidence [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-18 (TASK-20260618T030534 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence 기록)
+- 변경: 코드 0. TEST.md §3 Windows-browser Run + TASK.md 마감 + MODIFY evidence. 실 Windows Chrome 으로 데이터소스 목록 각 행 도트 우측 엔진 아이콘(MySQL #00758F·Microsoft SQL Server #EE352C)·4열 grid·정렬 무붕괴(leftAlignSpread=0) PB-0008 PASS 기록.
+- 판단: docs-only evidence 라 외부 패널 불요(SKIPPED). 검증 정본(PB-0008 실측)은 직전 cycle(PR #332)의 코드 변경에 대한 것이며 본 항목은 그 결과를 문서에 영속화. 회귀 위험 0.
+- Cross-ref: CHG-20260618T031747 / TASK-20260618T030534(REV-20260618T030534 의 evidence).
 
 ## REV-20260618T024517-ai-claude-product-picker-search [SKIPPED:frontend-ui-search-filter-no-backend-no-rbac]
 - Date: 2026-06-18 (TASK-20260618T024517 — 제품 선택 드롭업 명칭 검색 필터)

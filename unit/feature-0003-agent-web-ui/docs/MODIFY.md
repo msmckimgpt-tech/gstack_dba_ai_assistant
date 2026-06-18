@@ -17,6 +17,11 @@ source_of_truth: true
 - Verification: 본 기록 자체가 검증 산출물. 코드 무변경(회귀 0).
 - Rollback: 불요(docs-only). 코드는 이미 `ebd2849` 배포됨.
 - Deploy: 불요(코드 무변경).
+## CHG-20260618T031747-ai-claude-ds-list-engine-icon-evidence (TASK-20260618T030534 후속 docs-only — PB-0008 Windows-browser evidence)
+- Date: 2026-06-18.
+- 변경: 코드 0. TEST.md §3 Windows-browser Run + TASK.md 마감 체크박스 + REVIEW evidence 항목. main `8a2c886`(PR #332) 배포 후 실 Windows Chrome PB-0008 PASS 기록.
+- 내용: 데이터소스 목록 18행 각각 children `[cb, dot, engIcon, main]`(엔진 아이콘 도트 우측)·grid `13px 9px 16px 225px`(4열)·MySQL #00758F / Microsoft SQL Server #EE352C 브랜드색·아이콘 컬럼 leftAlignSpread=0px(정렬 무붕괴) 실측. evidence `artifacts/pb0008-ds-list-engine-icon/ds-list-engine-icons.png`.
+- 판단: docs-only evidence 기록이라 코드 리뷰/외부 패널 불요. 회귀 위험 0.
 
 ## CHG-20260618T024517-ai-claude-product-picker-search (TASK-20260618T024517 — 제품 선택 드롭업 명칭 검색 필터)
 - Date: 2026-06-18
