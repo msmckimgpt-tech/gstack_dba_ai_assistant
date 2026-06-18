@@ -9,6 +9,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260618T062406-ai-claude-release-notes-scope-scroll-evidence (TASK-20260618T061520 후속 docs-only — PB-0008 evidence)
+- Date: 2026-06-18
+- Scope: docs 전용(TEST §4 Run PASS + TASK 마감). 코드·자산·RBAC 0.
+- 변경: TEST.md §4 에 양 화면 PB-0008 PASS 기록 — 작업 화면 칩=[전체/작업/공통]·admin 항목 0(AC-0582), 관리 콘솔 pane overflow-y:auto·scrollH 1418>clientH 801·하단 도달·admin 23 무회귀(AC-0583). TASK 마감.
+- Why: 화면 정본(PB-0008 computed 값) 영속화 + CHECK#13 충족.
+- Verification: computed 값 authoritative. 스크린샷은 relay 폰트로드 transient timeout(직전 사이클 시각 베이스라인 보유).
+- Rollback: 불요(docs-only). 코드 `e812c9d` 배포됨.
+- Deploy: 불요.
+
 ## CHG-20260618T061520-ai-claude-release-notes-scope-scroll (TASK-20260618T061520 — 릴리즈 노트 표면별 영역 + 관리 콘솔 스크롤)
 - Date: 2026-06-18
 - Scope: frontend-only. `release-notes.js`·`app.js`·`styles.css` + index/admin 캐시버스터 + 테스트. 백엔드·RBAC·스키마·데이터 0.

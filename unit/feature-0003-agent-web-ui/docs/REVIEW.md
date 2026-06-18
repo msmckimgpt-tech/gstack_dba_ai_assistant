@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260618T062406-ai-claude-release-notes-scope-scroll-evidence [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-18 (TASK-20260618T061520 후속 docs-only — PB-0008 evidence)
+- 분류 근거: docs 전용(TEST §4 Run + TASK 마감 + MODIFY/REVIEW). 코드·자산·RBAC·스키마 무변경 → 리뷰 SKIP. 대상 코드는 본 cycle REV-20260618T061520 에서 점검 완료.
+- 잔여: 없음(cycle 마감).
+
 ## REV-20260618T061520-ai-claude-release-notes-scope-scroll [SKIPPED:frontend-ui-scope-scroll-no-backend-no-rbac]
 - Date: 2026-06-18 (TASK-20260618T061520 — 릴리즈 노트 표면별 영역 + 관리 콘솔 스크롤)
 - 분류 근거: Minor frontend-only — 렌더러 `opts.areas` 화이트리스트 + 작업 화면 호출 1 + CSS overflow 1규칙 + 캐시버스터. 백엔드·RBAC·스키마·엔드포인트·데이터 0. 보안 표면 무(영역 숨김은 UX 필터일 뿐 — 콘텐츠 자체가 비민감 공개 릴리즈 노트, 접근 제어 아님).

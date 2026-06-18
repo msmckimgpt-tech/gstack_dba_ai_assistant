@@ -19,7 +19,7 @@ source_of_truth: true
 - 완료 기준(AC): AC-0582(작업 화면 admin 숨김·칩3·관리콘솔 무회귀), AC-0583(관리 콘솔 pane 스크롤).
 - [x] 구현 + `node --check` PASS.
 - [x] `verify_release_notes.mjs` **34/34 PASS**(작업화면 admin 0건·표시=work+common 43·칩 3개·그룹 11·관리콘솔 회귀 없음·스크롤 규칙 소스 단언 + 기존 27건).
-- [ ] verify-completion --pre-commit → 머지 → web 재배포(deploy_scope: included) → **PB-0008**(작업 화면 admin 노트/칩 부재 + 관리 콘솔 pane scrollHeight>clientHeight·하단 도달).
+- [x] verify-completion --pre-commit PASS(9) → 머지(PR #345, main `e812c9d`) → web 재배포(deploy_scope: included, repo-web-1 healthy, `?v=20260618-rn-scope-scroll` baked) → **PB-0008 PASS**: 작업 화면 칩=[전체/작업/공통]·admin 항목 0건(AC-0582) + 관리 콘솔 pane overflow-y:auto·scrollH 1418>clientH 801·하단 도달·admin 23건 무회귀(AC-0583). evidence CHG/REV-20260618T062406. **cycle 완료.**
 
 ## TASK-20260618T044611-ai-claude-release-notes — 릴리즈 노트 (작업 화면 프로필 탭 + 관리 콘솔 카테고리) (REQ-20260618-0321, AC-0578·0579, Major §12.3)
 - 보고(사용자, 2026-06-18): 각 작업의 내역·개선 사항을 사용자도 파악할 수 있도록 릴리즈 노트를 구성. 진입점 2개(`작업 화면 > 사용자 프로필 > 릴리즈 노트(탭)`, `관리 콘솔 > 릴리즈 노트(카테고리)`) — 역할/권한별 분리. 일자별 정리 + 접기/탐색. 일반 사용자가 알 수 있는 단순·명시적 정보로 풀어서, 내부 정보(로직·네트워크·보안 처리 방법)는 숨기거나 간략화.
