@@ -21,7 +21,7 @@ source_of_truth: true
 - 완료 기준(AC): AC-0569.
 - [x] 구현(app.js seed + 배선, index.html 캐시버스터) + node --check.
 - [x] `verify_date_group_collapse.mjs` **22/22 PASS** + 기존 `verify_conv_entry_defaults.mjs` **20/20 무회귀**.
-- [ ] verify-completion --pre-commit PASS → 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser.
+- [x] verify-completion --pre-commit PASS(9 checks) → 머지(PR #319 squash, main `32b5e8f`) → web 재배포(deploy_scope: included, `docker compose build web`+`up -d --no-deps web`, repo-web-1 Up·mysql_ok·pg_ok, 서빙 `app.js?v=20260618-date-group-collapse`·`_seedDateGroupsCollapsedOnce` baked) → **PB-0008 Windows-browser PASS**(실 Chrome/148, 첫 진입 6개 날짜 그룹 중 "6월 10일"만 펼침·나머지 5개 접힘; clean-room `localStorage.clear()`→reload seed 재발화 + 날짜키 비영속(`mad.collapsedGroups.v1`=`["__others__"]`만) 실증; 세션 토글 존중 1회-게이트). evidence `artifacts/pb0008-date-group-collapse/entry-recent-only-expanded.png`. CHG/REV-20260618T011645-ai-claude-date-group-collapse-evidence.
 
 ## TASK-0295 — 작업 화면 제품 목록을 역할 제품 접근 권한으로 게이트 (REQ-20260617-0293, AC-0548, Major §12.3)
 - 보고(사용자, 2026-06-17): `관리 콘솔 > 역할` 에서 각 제품에 대한 권한이 없다면, 작업 화면 내 대화창 제품 목록 내부에서도 출력되지 않도록 구성.
