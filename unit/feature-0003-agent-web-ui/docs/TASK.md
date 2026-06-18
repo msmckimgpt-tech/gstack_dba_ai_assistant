@@ -8,7 +8,25 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260618T025220-ai-claude-ds-acc-collapsed-default (current cycle) — 관리 콘솔 > 제품: 제품 선택 시 접근 가능 DB 목록 기본 접힘 (REQ-20260618-0316, AC-0573, Minor §12.3)
+## TASK-20260618T044611-ai-claude-release-notes (current cycle) — 릴리즈 노트 (작업 화면 프로필 탭 + 관리 콘솔 카테고리) (REQ-20260618-0321, AC-0578·0579, Major §12.3)
+- 보고(사용자, 2026-06-18): 각 작업의 내역·개선 사항을 사용자도 파악할 수 있도록 릴리즈 노트를 구성. 진입점 2개(`작업 화면 > 사용자 프로필 > 릴리즈 노트(탭)`, `관리 콘솔 > 릴리즈 노트(카테고리)`) — 역할/권한별 분리. 일자별 정리 + 접기/탐색. 일반 사용자가 알 수 있는 단순·명시적 정보로 풀어서, 내부 정보(로직·네트워크·보안 처리 방법)는 숨기거나 간략화.
+- 사용자 결정(2026-06-18, AskUserQuestion): 콘텐츠 관리 방식 = **정적 큐레이션(읽기 전용)**. (관리자 편집형 CRUD 는 미채택 — 추후 얹기 가능.)
+- 등급: **Major §12.3** — 다중 파일(7) 변경이나 전부 **비파괴 additive frontend**. 백엔드·RBAC·스키마·엔드포인트·DB·신규 권한·인증/인가·데이터 **0**. rollback = 파일 제거(무손실).
+
+### §2.1 Implementation Plan (PLAN)
+- 신규 정적 파일 2종(데이터/로직 분리):
+  - `src/static/release-notes-data.js` — `window.RELEASE_NOTES = { generated, releases:[{date,label?,summary,items:[{type:new|improved|fixed, area:work|admin|common, title, detail?}]}] }`. 콘텐츠는 git 출시 이력(2026-06-04~06-18 상세 + "그 이전" 마일스톤)을 사용자 친화 문장으로 큐레이션, 내부 정보 비노출.
+  - `src/static/release-notes.js` — IIFE 로 `window.ReleaseNotes.render(container)` 노출. 일자별 그룹 접기(기본 최신 1개 펼침)·영역 필터 칩·모두 펼치기/접기. 전 텍스트 `textContent`(XSS-safe). jsdom layout 비의존.
+- 작업 화면: `index.html` drawer-tab `data-profile-tab="release-notes"` + pane `#releaseNotesBody` + 스크립트 2종(`?v=20260618-release-notes`); `app.js` `switchProfileTab` 에 `release-notes` lazy 렌더 디스패치.
+- 관리 콘솔: `admin.html` 시스템 그룹에 `data-admin-tab="release-notes"` + pane `#adminReleaseNotesBody` + 스크립트 2종; `admin.js` `switchTab` 에 렌더 디스패치. `ADMIN_TAB_PERMISSIONS` 미등록 → `canSeeTab` 항상 true(콘솔 진입자 모두 노출).
+- `styles.css`: `.release-notes`/`.rn-*` 스타일(디자인 토큰 var(--*) 재사용, 종류·영역 배지 색).
+- 검증: `tests/verify_release_notes.mjs`(jsdom) + 양 화면 PB-0008 Windows-browser.
+- 완료 기준(AC): AC-0578(양 진입점 동일 콘텐츠·접기·탐색), AC-0579(내부 정보 비노출).
+- [x] 구현(신규 2파일 + index/app/admin html·js + styles.css) + `node --check` 4파일 PASS.
+- [x] `verify_release_notes.mjs` **26/26 PASS**(그룹 수·기본 접힘·카운트·토글·일자 포맷·영역 필터·모두 펼치기·XSS·빈 데이터).
+- [ ] verify-completion --pre-commit → 머지 → web 재배포(deploy_scope: included) → **PB-0008 Windows-browser**(작업 화면 프로필 탭 + 관리 콘솔 카테고리 양쪽 실측: 일자 그룹·접기·필터).
+
+## TASK-20260618T025220-ai-claude-ds-acc-collapsed-default — 관리 콘솔 > 제품: 제품 선택 시 접근 가능 DB 목록 기본 접힘 (REQ-20260618-0316, AC-0573, Minor §12.3)
 - 보고(사용자, 2026-06-18): 기본적으로 제품 항목을 선택했을 경우 데이터베이스 목록이 접혀 있도록 구성해 달라. (TASK-20260618T022150 접기 토글 후속 — 토글은 됐으나 기본은 펼침이었음.)
 - 등급: **Minor §12.3** — frontend-only 기본값 1줄 변경. 백엔드·RBAC·스키마·엔드포인트·데이터·CSS 무변경. 비파괴(토글로 펼침 가능, 다른 datasource 전환 시 자동 펼침 유지).
 - 진단: TASK-20260618T022150 이 `_renderDsAccordion` 의 접힘 상태(`_dsBodyCollapsed`)와 머리 클릭 토글을 도입했으나 초기값이 `false`(펼침)라 제품 선택 시 편집 대상 datasource 의 DB 편집기가 펼친 채 시작했다. 사용자는 기본 접힘을 원함.

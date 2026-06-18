@@ -1952,6 +1952,10 @@ function switchTab(tabName) {
     adminState.archivesInitialized = true;
     loadArchivedConversations();
   }
+  // 릴리즈 노트 — 정적 콘텐츠라 진입 시 렌더(가벼움). 렌더러는 release-notes.js, 작업 화면과 공유.
+  if (tabName === "release-notes" && window.ReleaseNotes) {
+    window.ReleaseNotes.render(document.getElementById("adminReleaseNotesBody"));
+  }
 }
 
 // TASK-0273: 보관 대화 목록 로드 + 렌더(conversation.archive.read.any).

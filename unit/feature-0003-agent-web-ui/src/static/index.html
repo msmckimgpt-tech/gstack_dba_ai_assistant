@@ -356,6 +356,8 @@
       <!-- TASK-0184: 내 사용 내역 (본인 LLM 사용량 간소 차트). 모든 로그인 사용자에 노출. -->
       <button type="button" class="drawer-tab" data-profile-tab="usage">사용 내역</button>
       <button type="button" class="drawer-tab" data-profile-tab="security-and-account">보안 및 계정</button>
+      <!-- 릴리즈 노트: 모든 로그인 사용자에게 노출. 콘텐츠는 release-notes-data.js(정적 큐레이션). -->
+      <button type="button" class="drawer-tab" data-profile-tab="release-notes">릴리즈 노트</button>
     </div>
 
     <!-- TASK-0184: 내 사용 내역 — 본인 LLM 토큰/모델/요청 (GET /api/profile/usage). 간소판(추정 비용 비노출).
@@ -441,6 +443,11 @@
       </div>
     </div><!-- /prompt -->
 
+    <!-- 릴리즈 노트 — 일자별 그룹(접기/탐색). 렌더는 release-notes.js 의 ReleaseNotes.render. -->
+    <div class="drawer-pane hidden" data-profile-pane="release-notes">
+      <div id="releaseNotesBody" class="release-notes"></div>
+    </div><!-- /release-notes -->
+
     </div><!-- /drawer-scroll -->
 
   </aside>
@@ -503,5 +510,8 @@
   <script src="/static/vendor/purify.min.js"></script>
   <script src="/static/app.js?v=20260618-product-picker-search"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
+  <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 관리 콘솔과 동일 파일을 공유한다. -->
+  <script src="/static/release-notes-data.js?v=20260618-release-notes"></script>
+  <script src="/static/release-notes.js?v=20260618-release-notes"></script>
 </body>
 </html>

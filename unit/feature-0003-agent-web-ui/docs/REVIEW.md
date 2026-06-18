@@ -8,6 +8,25 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260618T044611-ai-claude-release-notes [SUBAGENT:release-notes-adversarial] SHIP
+- Date: 2026-06-18 (TASK-20260618T044611 — 릴리즈 노트 작업 화면 탭 + 관리 콘솔 카테고리)
+- 분류 근거: **비파괴 additive frontend**(백엔드·RBAC·스키마·엔드포인트·DB·인증/인가·신규 권한·데이터 마이그레이션 0). 보안 표면은 ①정적 콘텐츠의 내부정보 누출(이 기능의 핵심 요구 AC-0579) ②렌더러 XSS 두 축 → 적대적 subagent 1회로 점검(staged diff 전수 + `release-notes-data.js` 콘텐츠 정독).
+- subagent VERDICT: **SHIP-WITH-FIXES** → 지적된 콘텐츠 누출 3건 수정 후 SHIP.
+- 흡수한 지적(콘텐츠 누출, AC-0579):
+  - [MAJOR] `release-notes-data.js` "권한(RBAC) 관리" — "RBAC" 내부 약어 노출 → **수정**: "권한 관리".
+  - [MAJOR] "잘못된 답변(환각) 감소" — "환각" 내부 ML 용어 → **수정**: "잘못된 답변 감소"(평이 표현이 이미 의미 전달).
+  - [MINOR] "(권한 상승 방지)" — 위협 모델 명시(민감 보안 처리 specifics) → **수정**: "(보안 강화)".
+  - [author's-call] "MySQL / SQL Server" 엔진명 — 사용자가 직접 고르는 UI 컨트롤 라벨이라 무해 판단 → **유지**.
+- 점검 통과(BLOCKER 0):
+  - H1 (XSS) — 렌더러는 전 사용자-가시 문자열(title/detail/summary/date/badge/count)을 `el(tag,cls,text)`→`textContent` 로만 주입, `innerHTML` 은 컨테이너 clear(`""`) 2곳뿐. `<img onerror>`/`<script>` 주입 시 엘리먼트 미생성·원문 보존(test 3건). **clean.**
+  - H2 (콘텐츠 누출) — cutover/PG/SSRF/KEK/livelock/alembic/SQL-injection/내부 호스트·포트·파일경로 누출 0(grep 확인). HTTPS/연결 안정성·무거운 쿼리·데이터 저장 등 진짜 민감 내부는 "안정성/보안 개선"으로 추상화됨(의도된 bar). 위 3건만 수정.
+  - H3 (그룹 가시성) — `ADMIN_TAB_PERMISSIONS` 미등록 → `canSeeTab` true → 시스템 그룹 라벨 항상 표시(설정 숨김 사용자도 "시스템 > 릴리즈 노트"). 의도된 동작(상시 제공), 다른 그룹/탭 게이팅 무영향.
+  - H4 (로드 순서/null) — 렌더는 탭 클릭 시점 호출(전 스크립트 로드 후), 양 호출처 `if (window.ReleaseNotes)` 가드, `render()` 는 `!container`/빈 `RELEASE_NOTES` 가드.
+  - H5 (접힘/필터) — `rendered === 0` 기준으로 필터 후 "보이는 첫 그룹"만 펼침, 빈 그룹 skip, per-filter 빈 상태 안내. test 26/26.
+  - DRY — 양 화면이 동일 data+renderer(`?v=20260618-release-notes`) 단일 출처.
+- 잔여: 화면 정본 PB-0008 Windows-browser(배포 후 양 화면 실측) — 별 evidence 기록.
+- Verdict: **SHIP** (수정 3건 반영 후, BLOCKER 0).
+
 ## REV-20260618T031450-ai-claude-product-picker-search-evidence [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-18 (TASK-20260618T024517 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence 기록)
 - 분류 근거: docs 전용(TEST §4 Windows-browser Run + TASK 마감 + MODIFY/REVIEW). 코드·정적자산·RBAC·스키마 무변경 → 리뷰 SKIP. 검증 대상 코드는 이미 REV-20260618T024517(본 cycle) 에서 자체 점검 완료.

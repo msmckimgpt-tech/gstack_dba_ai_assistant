@@ -69,6 +69,10 @@
         <button type="button" class="admin-tab" data-admin-tab="settings" id="adminTabSettings">
           <span class="admin-tab-label">설정</span>
         </button>
+        <!-- 릴리즈 노트: 비민감 정보 → 콘솔 진입자 모두에게 노출(권한 매핑 없음). 콘텐츠는 release-notes-data.js. -->
+        <button type="button" class="admin-tab" data-admin-tab="release-notes" id="adminTabReleaseNotes">
+          <span class="admin-tab-label">릴리즈 노트</span>
+        </button>
       </nav>
       <div class="admin-sidebar-foot">
         <div class="admin-pending-summary" id="adminPendingSummary">pending 변경 0건</div>
@@ -592,6 +596,18 @@
         </div>
       </section>
 
+      <!-- 릴리즈 노트 pane — 작업 화면 프로필 탭과 동일 콘텐츠를 공유 렌더러로 표시 -->
+      <section class="admin-pane" data-admin-pane="release-notes">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">Release Notes</div>
+            <h2>릴리즈 노트</h2>
+          </div>
+          <div class="admin-pane-head-right"></div>
+        </header>
+        <div id="adminReleaseNotesBody" class="release-notes"></div>
+      </section>
+
     </main>
 
     <!-- REQ-20260518-0006: commit bar 가 admin-column 의 하단 — sidebar 와 분리되어 workspace 하단에만 표시 -->
@@ -611,5 +627,8 @@
 
   <script src="/static/admin.js?v=20260618-task0303-product-access-multiselect"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
+  <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
+  <script src="/static/release-notes-data.js?v=20260618-release-notes"></script>
+  <script src="/static/release-notes.js?v=20260618-release-notes"></script>
 </body>
 </html>
