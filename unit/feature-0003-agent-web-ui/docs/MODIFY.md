@@ -9,6 +9,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260618T051005-ai-claude-release-notes-evidence (TASK-20260618T044611 후속 docs-only — PB-0008 Windows-browser evidence)
+- Date: 2026-06-18
+- Scope: docs 전용(TEST §4 Windows-browser Run PASS + TASK 마감). 코드·정적자산·스키마·RBAC 0.
+- 변경: TEST.md §4 에 양 화면(작업 화면 프로필 탭 + 관리 콘솔 카테고리) PB-0008 Windows-browser 재실측 PASS 기록 — 접힘 트랩 1차 적발→hotfix→재실측 `display:none`/height 0 확정, 토글·영역 필터(작업 40/관리 23)·모두 펼치기·누출어 0 서빙. TASK 마지막 체크박스 마감. evidence `artifacts/pb0008-release-notes/{work-screen,admin}-release-notes.png`(git 비추적).
+- Why: 화면 정본(PB-0008) 결과 영속화 + CHECK#13(Windows-browser) 충족.
+- Verification: 본 기록 자체가 검증 산출물. 코드 무변경(회귀 0).
+- Rollback: 불요(docs-only).
+- Deploy: 불요(코드 무변경, 이미 `091280e` 배포됨).
+
 ## CHG-20260618T050409-ai-claude-release-notes (TASK-20260618T044611 후속 — PB-0008 적발 접힘 버그 + CSS 캐시버스터)
 - Date: 2026-06-18
 - Scope: frontend CSS hotfix. `styles.css` 1규칙 + `index.html`/`admin.html` 캐시버스터 + 테스트 가드 1건. 로직·백엔드·RBAC 0.
