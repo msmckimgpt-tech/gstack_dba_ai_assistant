@@ -9,6 +9,12 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260618T030014-ai-claude-engine-dropdown-evidence (TASK-20260618T022006 후속 docs-only — PB-0008 Windows-browser evidence)
+- Date: 2026-06-18
+- 변경: 코드 0. TEST.md §3 Windows-browser Run 추가 + TASK.md 마지막 체크박스 완료(마감) + REVIEW evidence 항목. feature(PR #325 main `da227eb`) + cache-buster fix(PR #326 main `071020c`) 배포 후 실 Windows Chrome PB-0008 PASS 사실 기록.
+- 내용: 데이터소스 탭 → '+ 새 데이터소스' → 엔진 드롭다운 열림·옵션 2개(MySQL #00758F·Microsoft SQL Server #EE352C 브랜드 아이콘+색)·선택 시 트리거/포트 placeholder(1433) 갱신 실측. 1차에서 styles.css cache-buster 누락(아이콘 52px·CSS 미적용) 적발→CHG-20260618-0316 으로 수정→재배포 후 18px·border 1px 해소까지 기록. evidence `artifacts/pb0008-engine-dropdown/{engine-dropdown-open,engine-mssql-selected}.png`.
+- 판단: docs-only evidence 기록이라 코드 리뷰/외부 패널 불요. 회귀 위험 0.
+
 ## CHG-20260618-0316
 - Date: 2026-06-18 (TASK-20260618T022006 후속 fix — 엔진 드롭다운 styles.css cache-buster 누락 보정).
 - Scope: frontend admin.html + index.html(styles.css cache-buster 2곳). 코드 로직·CSS 본문·백엔드·데이터 0.

@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260618T030014-ai-claude-engine-dropdown-evidence [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-18 (TASK-20260618T022006 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence 기록)
+- 변경: 코드 0. TEST.md §3 Windows-browser Run + TASK.md 마감 체크박스 + MODIFY evidence 항목. 실 Windows Chrome 으로 엔진 드롭다운(MySQL #00758F·Microsoft SQL Server #EE352C 브랜드 아이콘+색)·선택 동작 PB-0008 PASS 사실 기록.
+- 판단: docs-only evidence 기록이라 외부 패널 불요(SKIPPED). 검증 정본(PB-0008 실측)은 직전 cycle(feature PR #325 + cache-buster fix PR #326)의 코드 변경에 대한 것이며 본 항목은 그 결과를 문서에 영속화. 회귀 위험 0.
+- Cross-ref: CHG-20260618T030014 / TASK-20260618T022006(REV-20260618-0315 feature + REV-20260618-0316 fix 의 evidence).
+
 ## REV-20260618-0316 [SKIPPED:cache-buster-bump-no-logic-change]
 - Date: 2026-06-18
 - Cycle: TASK-20260618T022006 후속 fix — 엔진 드롭다운 styles.css cache-buster 누락 보정.
