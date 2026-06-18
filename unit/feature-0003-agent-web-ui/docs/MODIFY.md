@@ -9,6 +9,14 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260618T010417-ai-claude-date-group-collapse (TASK-20260618T010417, 작업 화면 좌측 대화목록 첫 진입 시 최근 일자 그룹만 펼침)
+- Date: 2026-06-18
+- Scope: frontend-only. 백엔드·RBAC·스키마·엔드포인트·데이터 0.
+- `src/static/app.js` — ① 모듈 스코프 `let _dateGroupsSeededThisLoad = false` + `_seedDateGroupsCollapsedOnce(sortedDateKeys)` 신설(`_seedOthersCollapsedOnce` 직후). `sortedDateKeys[0]`(최근)은 `state.collapsedDateGroups.delete`(펼침 보장), 나머지는 `add`(접힘). 빈 키면 플래그 미설정(다음 렌더 재시도). `_saveCollapsedGroups` 미호출(비영속, 세션 단위). ② `renderConversationList` 의 `sortedDateKeys` 정렬 직후·`forEach` 렌더 전에 `_seedDateGroupsCollapsedOnce(sortedDateKeys)` 1회 호출.
+- `src/static/index.html` — app.js 캐시버스터 `?v=20260616-conv-entry-defaults` → `?v=20260618-date-group-collapse`.
+- `tests/verify_date_group_collapse.mjs` — 신규 순수 node 회귀(22 케이스). set 조작 로직이라 jsdom 불필요.
+- 근거: 사용자 요청(2026-06-18) "처음 진입 시 최근 일자 제외 나머지 접힘". 사용자 결정으로 매 reload 재적용(날짜 키 상대성 → 영구 seed 부적합). 타 계정 그룹 `_seedOthersCollapsedOnce` 와 직교. 판단 상세 REV-20260618T010417-ai-claude-date-group-collapse.
+
 ## CHG-20260617T095122-ai-claude-account-insight-complete (cross-feature, feature-0002 TASK-20260617T095122 주관 — fork 마커)
 - `src/app.py` — `_mark_conversation_forked(conversation_id, source_id)` 신설 + `_fork_conversation_impl` owner 부여 직후 호출. fork 본의 `agent_runtime.core_conversations.forked_from_conversation_id` 를 소스 대화 id 로 set(best-effort, PG 전용). 근거: account insight 회상/추출이 fork 본을 배제(fork 는 타 계정 메시지를 복사+owner 재귀속하므로 owner 격리만으론 cross-account 누출). 정본 feature-0002 [DESIGN-account-insight-recall.md](../../feature-0002-agent-core/docs/DESIGN-account-insight-recall.md) §10 G1. 컬럼은 feature-0002 alembic 0010.
 

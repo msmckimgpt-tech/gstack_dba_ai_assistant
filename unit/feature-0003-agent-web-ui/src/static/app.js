@@ -245,6 +245,29 @@ function _seedOthersCollapsedOnce() {
 }
 _seedOthersCollapsedOnce();
 
+// 처음 진입(매 페이지 로드)마다, 내 대화 날짜 그룹은 "가장 최근 일자 1개만 펼치고
+// 나머지 오래된 일자는 접힌 상태"로 시작한다. 날짜 그룹 키(__today__/__yesterday__/
+// YYYY-MM-DD)는 상대적이라 영속 seed 가 다음 날 무의미해지므로, localStorage 에
+// 영속하지 않고 in-memory 플래그로 페이지 로드당 1회만 적용한다(reload 시 재적용).
+// 같은 로드 안에서 사용자가 펼친 토글은 플래그가 막아 그대로 존중된다.
+let _dateGroupsSeededThisLoad = false;
+function _seedDateGroupsCollapsedOnce(sortedDateKeys) {
+  if (_dateGroupsSeededThisLoad) return;
+  // 그룹이 아직 없으면(대화 미로드) 플래그를 세우지 않고 다음 렌더에서 재시도.
+  if (!Array.isArray(sortedDateKeys) || sortedDateKeys.length === 0) return;
+  _dateGroupsSeededThisLoad = true;
+  sortedDateKeys.forEach((dateKey, idx) => {
+    if (idx === 0) {
+      // 가장 최근 일자 그룹 — 펼침 보장(직전 세션 영속 접힘이 남아있어도 해제).
+      state.collapsedDateGroups.delete(dateKey);
+    } else {
+      // 나머지 오래된 일자 그룹 — 접힘.
+      state.collapsedDateGroups.add(dateKey);
+    }
+  });
+  // 영속 안 함(_saveCollapsedGroups 미호출) — 세션 단위 기본값. 사용자 토글만 영속.
+}
+
 // Restore send mode from localStorage
 state.sendMode = localStorage.getItem(SEND_MODE_LS_KEY) === "enter" ? "enter" : "ctrl+enter";
 
@@ -1974,6 +1997,9 @@ function renderConversationList() {
     if (ra !== rb) return ra - rb;
     return b.localeCompare(a);
   });
+
+  // 처음 진입 시 가장 최근 일자 그룹(sortedDateKeys[0])만 펼치고 나머지는 접힘(1회/로드).
+  _seedDateGroupsCollapsedOnce(sortedDateKeys);
 
   sortedDateKeys.forEach((dateKey) => {
     const groupItems = dateGroups.get(dateKey);

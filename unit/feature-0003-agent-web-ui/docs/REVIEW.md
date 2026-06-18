@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260618T010417-ai-claude-date-group-collapse [SKIPPED:frontend-ui-entry-defaults-no-backend-no-rbac]
+- Date: 2026-06-18 (TASK-20260618T010417-ai-claude-date-group-collapse — 작업 화면 좌측 대화목록 첫 진입 시 최근 일자 그룹만 펼침)
+- 등급: **Minor §12.3** — frontend-only UI 기본값. 백엔드·RBAC·스키마·엔드포인트·데이터 0 → 외부 보안 패널 불요(§18.8 dispatch: ux/design 후보지만 단일 코드 파일 비파괴 기본값이라 패널 skip).
+- 변경 요지: `_seedDateGroupsCollapsedOnce(sortedDateKeys)` 가 매 페이지 로드당 1회(`_dateGroupsSeededThisLoad` 가드) `sortedDateKeys[0]` 펼침·나머지 접힘. 비영속(세션 단위, reload 재적용). `renderConversationList` 정렬 직후 배선.
+- 판단 근거 / 대안 검토:
+  - **대안 A(채택): 매 reload 1회 seed + 비영속.** 사용자 결정(AskUserQuestion 2026-06-18). 날짜 그룹 키가 상대적(`__today__`/`__yesterday__`/`YYYY-MM-DD`)이라 시간 경과 시 의미가 변한다 — 타 계정 그룹(`__others__`)의 영구 1회 seed(`mad.othersCollapsedSeed.v1`) 패턴을 그대로 쓰면 seed 한 다음 날 "어제"가 다른 대화를 가리켜 무의미. 매 로드 재계산이 요구 문구("처음 진입할 때") 및 날짜 상대성과 정합.
+  - **대안 B(기각): 영구 1회 seed(타 계정 패턴 복제).** 날짜 상대키 때문에 다음 날 효과 소멸. 사용자 미채택.
+  - **[0] 강제 펼침(delete) 선택 이유**: 직전 세션이 영속으로 최근 키를 접힘 set 에 남겼을 수 있어, 매 진입 "최근은 펼침" 보장을 위해 `delete` 필요. 사용자가 로드 후 최근 그룹을 접으면 1회-게이트가 그 토글을 그 로드 동안 존중.
+  - **비영속(`_saveCollapsedGroups` 미호출) 선택 이유**: seed 가 localStorage 에 날짜 상대키를 쌓으면 stale 누적·다음 날 오접힘. 세션 단위 in-memory 적용으로 reload 마다 깨끗이 재계산. 타 계정/owner 그룹의 영속 토글은 별 키라 무영향.
+  - **회귀 경계**: 타 계정 그룹 seed(`_seedOthersCollapsedOnce`)·owner 그룹 토글·날짜 그룹 사용자 클릭 토글(`_saveCollapsedGroups` 영속)은 전부 비변경. seed 는 own 날짜 그룹의 `sortedDateKeys` 만 대상.
+- 리스크: 낮음. 비파괴 UI 기본값. 빈 대화(키 0)·단일 그룹·`__other__` 엣지 케이스 테스트 커버. rollback = 코드 제거(데이터 영향 0).
+- 검증: `verify_date_group_collapse.mjs` 22/22 PASS + `verify_conv_entry_defaults.mjs` 20/20 무회귀 + node --check. 화면 정본 = PB-0008 Windows-browser(배포 후).
+
 ## REV-20260617T060740-ai-claude-task0295-pb0008-evidence [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-17 (TASK-0295 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence)
 - Skip 사유: docs 전용(TEST/MODIFY/REVIEW/TASK). 코드/정적자산/스키마/RBAC 무변경 — 본체 검토는 REV-20260617T054423-ai-claude-task0295-product-list-rbac [SUBAGENT:product-list-rbac-review] (SHIP) 담당.
