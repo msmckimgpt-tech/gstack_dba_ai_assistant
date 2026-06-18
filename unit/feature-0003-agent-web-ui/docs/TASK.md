@@ -4271,3 +4271,12 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] outside-voice 구현 코드 재리뷰: **SHIP-WITH-FIXES**. B1·B3·B4·B5·M2·M4·M6 충족 확인. BLOCKER(ReDoS alternation `(a|a)*`/`(.*a){20}` 우회) → 검증 강화(그룹수량자 `)[*+?{]` 금지·무한수량자≤8·match 방어심층) — catastrophic 0.000s 즉시 [] 실측. MAJOR#1(creator 활성 확인)·#2(rule 체크박스 비활성) 반영. MAJOR#3(approve 패턴 재매칭) 문서화.
 - [x] 검증: `tests/verify_db_rule_logic.py` 25/25 + `tests/verify_db_rule_ui.mjs` 17/17 + ast.parse + node --check.
 - [x] 머지(PR #341, main) → 배포(web) → **PB-0008 적발 버그**: audit action(admin.product.db_rule.set 등) 미등록 → PUT 500. fix=build_audit_change_json 에 5 action 등록(CHG-20260618T052403-audit-fix). 라이브 preview round-trip OK(실 datasource '11개 일치·신규 0개'). 규칙 에디터 실 렌더 OK(border 1px·저장버튼 primary). 재배포 후 PUT/GET/DELETE round-trip 재검증 → 마감.
+
+### TASK-20260618T061703 — DB allowlist 정규식 규칙 다중 + 종속 UI (REQ-20260618-0323, AC-0582·0583, Major §12.3, 2026-06-18)
+- 사용자 요청: 규칙을 여러 개 설정 + 각 규칙에 DB 목록이 종속돼 보이게 UI 구성. TASK-20260618T044318 확장.
+- [x] 스키마: UNIQUE 제거 + SortOrder(멱등 마이그레이션, probe 등록, fast-path catchup 등록).
+- [x] 백엔드: `_get_product_db_rules`/`_get_db_rule_by_id` + `_reconcile_one_db_rule`/`_reconcile_product_db_rules`(순차·cross-rule dedup) + 복수형 엔드포인트(by-id, IDOR 재검증) + `_list_product_databases` rule_id.
+- [x] UI: 규칙 카드(`_buildRuleCard`)+추가/수정 폼(`_buildRuleForm`)+"+ 규칙 추가" + DB 중첩 표시 + redrawChips manual 분리 + CSS.
+- [x] outside-voice(다중규칙 격리) SHIP-WITH-FIXES — A~G 확인, BLOCKER 0. MAJOR#1(INSERT IGNORE 중복방지)·#2(fast-path catchup 등록) 반영. MINOR(pending phantom) 무해 문서화.
+- [x] 검증: verify_db_rule_logic.py 30/30 + verify_db_rule_ui.mjs 18/18 + ast/node.
+- [ ] 머지 → 배포(web, deploy_scope: included) → PB-0008(규칙 2개 추가·각 카드에 DB 중첩·삭제 격리) → 마감.

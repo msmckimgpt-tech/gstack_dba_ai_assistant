@@ -3355,3 +3355,13 @@ source_of_truth: true
 - 내용: build_audit_change_json 이 db_rule 5 action 을 raise 이전에 처리 → PUT/DELETE 500 해소. record_audit_event 경로(autoadd/staged/approve)는 builder 미경유라 원래 정상(방어적 등록 포함).
 - Verification: verify_db_rule_logic.py 30/30 + 재배포 후 라이브 round-trip + PB-0008.
 - Cross-ref: CHG-20260618T052403-ai-claude-db-rule-autosync-audit-fix / TASK-20260618T044318 / REQ-20260618-0322.
+## REV-20260618T061703-ai-claude-db-rule-multi [SUBAGENT:multi-rule-isolation-adversarial]
+- Date: 2026-06-18
+- Cycle: TASK-20260618T061703 (DB allowlist 정규식 규칙 다중 + 종속 UI), **Major §12.3** — 접근경계 인접.
+- Panel: outside-voice(general-purpose, REFUTE) — 다중규칙 격리 초점. RBAC plan 인접이라 [SKIPPED] 아님.
+- VERDICT: **SHIP-WITH-FIXES** (BLOCKER 0). 핵심: enforcement(allowlist 해석)는 (Product,Datasource,SchemaName)만 보고 RuleId/Source 미참조 → 규칙 bookkeeping 이 접근경계를 넓히거나 깨지 못함. 사전 안전 invariant 전부 보존(F 확인).
+- A 교차 dedup: `_reconcile_one_db_rule` 가 규칙별 existing 재계산 + 규칙별 커밋 → 순차 reconcile 이 앞 규칙 행 인지(중복행 없음). B 삭제 격리: strip=RuleId+Source='rule' 스코프(타 규칙·manual 불변). C 고아 RuleId(무-strip 삭제): enforcement 무영향·UI 카드에서만 누락(허용). D IDOR: PUT/DELETE/approve 가 rule_id 의 (product,ds) 소속 재검증 → 타 제품 rule_id 404. E 마이그레이션: UNIQUE drop 멱등(information_schema 가드)·동시워커 안전·probe 가 기존배포 slow-path 트리거. G 프론트: `_isRuleRow` 스코프 정상·카드 DB 필터 datasource_key+rule_id 양조건.
+- 흡수한 MAJOR: #1 동시 reconcile/PK 미마이그 시 중복 allowlist 행 가능 → reconcile auto-add·approve 를 **INSERT IGNORE** + auto-add pending 정리. #2 스키마 helper 가 slow path 전용이라 fast-path 재기동서 UNIQUE 미제거 → **`_ensure_seed_catchup` 에 helper 등록**.
+- 잔여 MINOR(무해): 규칙 간 pending phantom(rule A pending 을 rule B 가 auto-add) — approve 의 `low in existing` 가드로 no-op. manual PUT 이 manual 승격 schema 의 pending 미정리(동류).
+- Verification: verify_db_rule_logic.py 30/30 + verify_db_rule_ui.mjs 18/18. 화면 정본=PB-0008(배포 후).
+- Cross-ref: CHG-20260618T061703-ai-claude-db-rule-multi / REQ-20260618-0323 / AC-0582 / AC-0583 / TASK-20260618T044318.

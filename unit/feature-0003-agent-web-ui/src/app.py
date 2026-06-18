@@ -2763,7 +2763,7 @@ def _list_product_databases(conn, product_id: int) -> list[dict[str, Any]]:
         cur.execute(
             """
 SELECT SchemaName AS schema_name, Description AS description, SortOrder AS sort_order,
-       LOWER(DatasourceKey) AS datasource_key, COALESCE(Source,'manual') AS source
+       LOWER(DatasourceKey) AS datasource_key, COALESCE(Source,'manual') AS source, RuleId AS rule_id
 FROM WebProductDatabases
 WHERE ProductId = %s
 ORDER BY DatasourceKey ASC, SortOrder ASC, SchemaName ASC
@@ -2792,6 +2792,8 @@ ORDER BY SortOrder ASC, SchemaName ASC
             "datasource_key": (str(r.get("datasource_key") or "") or None),
             # TASK-20260618T044318: manual(수동) / rule(규칙 자동) 구분 — 미이전 행은 manual.
             "source": (str(r.get("source") or "manual") if "source" in r else "manual"),
+            # TASK-20260618T061703: 다중 규칙 — 어느 규칙이 추가했는지(UI 가 규칙 카드에 종속 표시).
+            "rule_id": (int(r["rule_id"]) if r.get("rule_id") is not None else None),
         }
         for r in rows
     ]
@@ -3580,6 +3582,8 @@ def _runtime_tables_available() -> bool:
                     # TASK-20260618T044318: DB allowlist rule/manual 구분 컬럼 — 누락 시 1054 → full 마이그레이션
                     #   (rule 테이블/pending 도 같은 slow path 에서 생성됨).
                     "SELECT `Source` FROM `WebProductDatabases` LIMIT 1",
+                    # TASK-20260618T061703: 다중 규칙 — SortOrder 누락 시 1054 → slow path 가 UNIQUE 제거 + SortOrder 추가.
+                    "SELECT `SortOrder` FROM `WebProductDatasourceDbRules` LIMIT 1",
                 ):
                     cur.execute(column_check)
                     cur.fetchall()
@@ -4298,7 +4302,8 @@ def _ensure_web_product_db_rules_schema(conn) -> None:
     """
     cur = conn.cursor()
     try:
-        # 1) 규칙 테이블: (product, datasource) 당 정규식 규칙 1개.
+        # 1) 규칙 테이블: (product, datasource) 당 정규식 규칙 **여러 개**(TASK-20260618T061703).
+        #    신규 설치는 UNIQUE 없이 생성. 기존(단일 규칙 시절 UNIQUE) 테이블은 아래 마이그레이션이 DROP.
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS WebProductDatasourceDbRules (
@@ -4309,15 +4314,39 @@ def _ensure_web_product_db_rules_schema(conn) -> None:
                 ExcludePattern VARCHAR(255) NULL,
                 Cap INT NOT NULL DEFAULT 3,
                 IsEnabled TINYINT(1) NOT NULL DEFAULT 1,
+                SortOrder INT NOT NULL DEFAULT 100,
                 CreatedByAccountId BIGINT NULL,
                 LastSyncAt DATETIME NULL,
                 CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY UQ_WebProductDsDbRule (ProductId, DatasourceKey),
+                INDEX IX_WebProductDsDbRule_PD (ProductId, DatasourceKey),
                 INDEX IX_WebProductDsDbRule_Ds (DatasourceKey)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """
         )
+        # 1b) 다중 규칙 마이그레이션: 단일 규칙 시절의 UNIQUE(ProductId,DatasourceKey) 제거 + SortOrder 추가.
+        try:
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() "
+                "AND TABLE_NAME='WebProductDatasourceDbRules' AND INDEX_NAME='UQ_WebProductDsDbRule'")
+            if int((cur.fetchone() or [0])[0]) > 0:
+                cur.execute("ALTER TABLE WebProductDatasourceDbRules DROP INDEX UQ_WebProductDsDbRule")
+                # UNIQUE 자리에 비-UNIQUE 조회 인덱스 보강(부재 시).
+                cur.execute(
+                    "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() "
+                    "AND TABLE_NAME='WebProductDatasourceDbRules' AND INDEX_NAME='IX_WebProductDsDbRule_PD'")
+                if int((cur.fetchone() or [0])[0]) == 0:
+                    cur.execute("ALTER TABLE WebProductDatasourceDbRules ADD INDEX IX_WebProductDsDbRule_PD (ProductId, DatasourceKey)")
+        except Exception as _exc:
+            logging.getLogger(__name__).error("[db-rule] 다중규칙 UNIQUE 제거 실패: %r", _exc)
+        try:
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() "
+                "AND TABLE_NAME='WebProductDatasourceDbRules' AND COLUMN_NAME='SortOrder'")
+            if int((cur.fetchone() or [0])[0]) == 0:
+                cur.execute("ALTER TABLE WebProductDatasourceDbRules ADD COLUMN SortOrder INT NOT NULL DEFAULT 100")
+        except Exception as _exc:
+            logging.getLogger(__name__).error("[db-rule] SortOrder 추가 실패: %r", _exc)
         # 2) pending: 자동적용 보류분(Cap 초과/모호 — 승인 대기). B1.
         cur.execute(
             """
@@ -5073,6 +5102,9 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_avatar_icon_schema(conn)
     # TASK-0274: 첨부 버전 관리 컬럼(RootAttachmentId/VersionNumber/CreatedByRole/SupersededAt) fast-path 보정.
     _ensure_attachment_version_schema(conn)
+    # TASK-20260618T044318/061703: DB allowlist 규칙 테이블 + Source/RuleId + 다중규칙(UNIQUE 제거·SortOrder)
+    #   fast-path 보정 — slow path 안 타는 재기동에서도 다중규칙 마이그레이션이 반영되도록(MAJOR#2 재리뷰).
+    _ensure_web_product_db_rules_schema(conn)
     # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 fast-path 보정.
     _ensure_web_audit_events_schema(conn)
     # REQ-20260520-0001 (TASK-0086): WebAccountActivity DROP 완료. migration helper 는
@@ -18225,29 +18257,60 @@ def _db_rule_audit_actor(account: "dict | None") -> "dict | None":
     }
 
 
-def _get_product_db_rule(conn, product_id: int, ds_key: str) -> "dict | None":
-    """(product, datasource) 규칙 1건 조회. 테이블 미존재 graceful → None."""
-    if product_id <= 0 or not ds_key:
-        return None
-    cur = conn.cursor(dictionary=True)
-    try:
-        cur.execute(
-            "SELECT Id AS id, ProductId AS product_id, LOWER(DatasourceKey) AS datasource_key, "
-            "IncludePattern AS include_pattern, ExcludePattern AS exclude_pattern, Cap AS cap, "
-            "IsEnabled AS is_enabled, CreatedByAccountId AS created_by_account_id, LastSyncAt AS last_sync_at "
-            "FROM WebProductDatasourceDbRules WHERE ProductId=%s AND LOWER(DatasourceKey)=%s LIMIT 1",
-            (int(product_id), str(ds_key).strip().lower()),
-        )
-        row = cur.fetchone()
-    except Exception:
-        return None
-    finally:
-        cur.close()
+_DB_RULE_SELECT_COLS = (
+    "Id AS id, ProductId AS product_id, LOWER(DatasourceKey) AS datasource_key, "
+    "IncludePattern AS include_pattern, ExcludePattern AS exclude_pattern, Cap AS cap, "
+    "IsEnabled AS is_enabled, CreatedByAccountId AS created_by_account_id, LastSyncAt AS last_sync_at"
+)
+
+
+def _normalize_db_rule_row(row: "dict | None") -> "dict | None":
     if not row:
         return None
     row["is_enabled"] = bool(row.get("is_enabled"))
     row["cap"] = int(row.get("cap") or 3)
     return row
+
+
+def _get_product_db_rules(conn, product_id: int, ds_key: str) -> "list[dict]":
+    """(product, datasource) 의 **모든** 규칙(SortOrder, Id 순). 테이블 미존재 graceful → []."""
+    if product_id <= 0 or not ds_key:
+        return []
+    cur = conn.cursor(dictionary=True)
+    try:
+        try:
+            cur.execute(
+                f"SELECT {_DB_RULE_SELECT_COLS} FROM WebProductDatasourceDbRules "
+                "WHERE ProductId=%s AND LOWER(DatasourceKey)=%s ORDER BY SortOrder ASC, Id ASC",
+                (int(product_id), str(ds_key).strip().lower()))
+        except Exception:
+            # SortOrder 컬럼 부재(마이그레이션 전) → Id 순.
+            cur.execute(
+                f"SELECT {_DB_RULE_SELECT_COLS} FROM WebProductDatasourceDbRules "
+                "WHERE ProductId=%s AND LOWER(DatasourceKey)=%s ORDER BY Id ASC",
+                (int(product_id), str(ds_key).strip().lower()))
+        rows = cur.fetchall() or []
+    except Exception:
+        return []
+    finally:
+        cur.close()
+    return [_normalize_db_rule_row(r) for r in rows]
+
+
+def _get_db_rule_by_id(conn, rule_id: int) -> "dict | None":
+    """규칙 1건 Id 조회(엔드포인트 per-rule 동작용). 테이블 미존재 graceful → None."""
+    if int(rule_id or 0) <= 0:
+        return None
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(f"SELECT {_DB_RULE_SELECT_COLS} FROM WebProductDatasourceDbRules WHERE Id=%s LIMIT 1",
+                    (int(rule_id),))
+        row = cur.fetchone()
+    except Exception:
+        return None
+    finally:
+        cur.close()
+    return _normalize_db_rule_row(row)
 
 
 def _touch_db_rule_sync(conn, rule_id: int) -> None:
@@ -18259,20 +18322,21 @@ def _touch_db_rule_sync(conn, rule_id: int) -> None:
         pass
 
 
-def _reconcile_product_db_rule(conn, product_id: int, ds_key: str, *,
-                               actor_account: "dict | None", can_manage: bool, trigger: str) -> dict:
-    """핵심 reconcile — 라이브 DB 와 규칙을 대조해 신규 일치 DB 를 자동적용(cap 이하·can_manage) 또는
-    pending(초과·미보유) 으로 스테이징. manual 행 절대 미변경(B4). 열거 실패=no-op(M4). 자동행 SortOrder
+def _reconcile_one_db_rule(conn, rule: dict, *,
+                           actor_account: "dict | None", can_manage: bool, trigger: str) -> dict:
+    """단일 규칙 reconcile — 라이브 DB 와 대조해 신규 일치 DB 를 자동적용(cap 이하·can_manage) 또는
+    pending(초과·미보유) 으로 스테이징. **기존 행(manual ∪ 전 규칙)** 전체로 dedup → 다중 규칙에서 한
+    DB 는 먼저 추가한 규칙이 소유(RuleId). manual 행 절대 미변경(B4). 열거 실패=no-op(M4). 자동행 SortOrder
     말미(M5). 감사는 규칙 생성자 귀속(B3)."""
-    result = {"status": "ok", "auto_added": [], "pending": []}
-    pid = int(product_id or 0)
-    dsk = str(ds_key or "").strip().lower()
-    if pid <= 0 or not dsk:
+    result = {"status": "ok", "auto_added": [], "pending": [], "rule_id": int(rule.get("id") or 0)}
+    pid = int(rule.get("product_id") or 0)
+    dsk = str(rule.get("datasource_key") or "").strip().lower()
+    rid = int(rule.get("id") or 0)
+    if pid <= 0 or not dsk or rid <= 0:
         result["status"] = "bad-args"
         return result
-    rule = _get_product_db_rule(conn, pid, dsk)
-    if not rule or not rule.get("is_enabled"):
-        result["status"] = "no-rule"
+    if not rule.get("is_enabled"):
+        result["status"] = "disabled"
         return result
     # 라이브 DB 열거 (M4: 모든 실패 = no-op — 빈 목록을 '전부 제거'로 해석 금지).
     try:
@@ -18298,7 +18362,7 @@ def _reconcile_product_db_rule(conn, product_id: int, ds_key: str, *,
                   if isinstance(d, dict) and not d.get("system") and d.get("name")]
     excluded = _db_rule_excluded_lower(engine)
     matched = _match_db_rule(user_names, rule["include_pattern"], rule.get("exclude_pattern"), engine, excluded)
-    # 기존 행(manual ∪ rule) — dedup(소문자) + SortOrder max(M5: 자동행은 말미).
+    # 기존 행(manual ∪ 전 규칙) — dedup(소문자) + SortOrder max(M5: 자동행은 말미). 다중 규칙 cross-dedup.
     cur = conn.cursor()
     try:
         cur.execute(
@@ -18311,7 +18375,7 @@ def _reconcile_product_db_rule(conn, product_id: int, ds_key: str, *,
     max_sort = max([int(r[1] or 0) for r in rows], default=0)
     new = [m for m in matched if str(m).strip().lower() not in existing_lower]
     if not new:
-        _touch_db_rule_sync(conn, rule["id"])
+        _touch_db_rule_sync(conn, rid)
         conn.commit()
         result["status"] = "no-change"
         return result
@@ -18320,17 +18384,22 @@ def _reconcile_product_db_rule(conn, product_id: int, ds_key: str, *,
     try:
         if auto:
             for i, name in enumerate(new):
+                # MAJOR#1(재리뷰): INSERT IGNORE — 동시 reconcile 경쟁/PK 미마이그 시에도 중복 allowlist 행 방지.
                 cur.execute(
-                    "INSERT INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder, "
+                    "INSERT IGNORE INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder, "
                     "DatasourceKey, Source, RuleId) VALUES (%s,%s,%s,%s,%s,'rule',%s)",
-                    (pid, name, "", max_sort + (i + 1) * 10, dsk, int(rule["id"])))
+                    (pid, name, "", max_sort + (i + 1) * 10, dsk, rid))
+                # 자동 추가된 schema 의 잔여 pending(다른 규칙이 보류해 둔 것) 정리(phantom 제거).
+                cur.execute(
+                    "DELETE FROM WebProductDatabasePending WHERE ProductId=%s AND LOWER(DatasourceKey)=%s AND SchemaName=%s",
+                    (pid, dsk, name))
             result["auto_added"] = list(new)
         else:
             for name in new:
                 cur.execute(
                     "INSERT IGNORE INTO WebProductDatabasePending (ProductId, DatasourceKey, SchemaName, "
                     "RuleId, Reason) VALUES (%s,%s,%s,%s,%s)",
-                    (pid, dsk, name, int(rule["id"]), ("cap_exceeded" if can_manage else "no_manage")))
+                    (pid, dsk, name, rid, ("cap_exceeded" if can_manage else "no_manage")))
             result["pending"] = list(new)
     finally:
         cur.close()
@@ -18339,7 +18408,7 @@ def _reconcile_product_db_rule(conn, product_id: int, ds_key: str, *,
             conn, actor=_db_rule_audit_actor(actor_account),
             action=("admin.product.db.autoadd" if auto else "admin.product.db.staged"),
             resource_type="product", resource_id=str(pid),
-            change_json={"datasource_key": dsk, "rule_id": int(rule["id"]), "trigger": str(trigger),
+            change_json={"datasource_key": dsk, "rule_id": rid, "trigger": str(trigger),
                          "names": list(new), "auto": auto, "cap": int(rule.get("cap") or 3),
                          "creator_account_id": rule.get("created_by_account_id")},
         )
@@ -18350,13 +18419,33 @@ def _reconcile_product_db_rule(conn, product_id: int, ds_key: str, *,
             pass
         result["status"] = f"audit-failed: {_aexc}"
         return result
-    _touch_db_rule_sync(conn, rule["id"])
+    _touch_db_rule_sync(conn, rid)
     conn.commit()
     return result
 
 
+def _reconcile_product_db_rules(conn, product_id: int, ds_key: str, *,
+                                actor_account: "dict | None", can_manage: bool, trigger: str) -> dict:
+    """(product, datasource) 의 **모든** enabled 규칙을 순차 reconcile(SortOrder 순 — 앞 규칙이 DB 우선 소유).
+    각 규칙은 직전 규칙의 커밋된 행까지 dedup 대상으로 본다(cross-rule 이중 추가 방지)."""
+    agg = {"status": "ok", "auto_added": [], "pending": [], "per_rule": []}
+    rules = _get_product_db_rules(conn, int(product_id or 0), str(ds_key or "").strip().lower())
+    if not rules:
+        agg["status"] = "no-rule"
+        return agg
+    for rule in rules:
+        if not rule.get("is_enabled"):
+            continue
+        r = _reconcile_one_db_rule(conn, rule, actor_account=actor_account, can_manage=can_manage, trigger=trigger)
+        agg["auto_added"].extend(r.get("auto_added") or [])
+        agg["pending"].extend(r.get("pending") or [])
+        agg["per_rule"].append({"rule_id": rule.get("id"), "status": r.get("status"),
+                                "auto_added": r.get("auto_added") or [], "pending": r.get("pending") or []})
+    return agg
+
+
 def _reconcile_all_db_rules_once() -> None:
-    """백그라운드 1 cycle: 모든 enabled 규칙을 creator 권한 재검증(M3) 후 reconcile."""
+    """백그라운드 1 cycle: 모든 enabled 규칙을 creator 권한 재검증(M3) 후 규칙별 reconcile."""
     try:
         conn = _connect_memory()
     except Exception:
@@ -18364,24 +18453,25 @@ def _reconcile_all_db_rules_once() -> None:
     try:
         cur = conn.cursor(dictionary=True)
         try:
-            cur.execute(
-                "SELECT Id, ProductId, LOWER(DatasourceKey) AS dsk, CreatedByAccountId "
-                "FROM WebProductDatasourceDbRules WHERE IsEnabled=1")
-            rules = cur.fetchall() or []
+            cur.execute(f"SELECT {_DB_RULE_SELECT_COLS} FROM WebProductDatasourceDbRules WHERE IsEnabled=1 "
+                        "ORDER BY ProductId, DatasourceKey, SortOrder, Id")
+            rules = [_normalize_db_rule_row(r) for r in (cur.fetchall() or [])]
         except Exception:
-            rules = []
+            try:
+                cur.execute(f"SELECT {_DB_RULE_SELECT_COLS} FROM WebProductDatasourceDbRules WHERE IsEnabled=1")
+                rules = [_normalize_db_rule_row(r) for r in (cur.fetchall() or [])]
+            except Exception:
+                rules = []
         finally:
             cur.close()
-        for r in rules:
+        for rule in rules:
             try:
-                creator_id = int(r.get("CreatedByAccountId") or 0)
+                creator_id = int(rule.get("created_by_account_id") or 0)
                 creator = _load_account_by_id(conn, creator_id) if creator_id > 0 else None
                 # M3: creator 가 현재도 **활성·비삭제 + product.manage** 일 때만 자동 GRANT — 아니면 pending.
                 creator_ok = bool(creator and creator.get("is_active") and not creator.get("deleted_at"))
                 can_manage = bool(creator_ok and _account_has_permission(creator, "product.manage"))
-                _reconcile_product_db_rule(
-                    conn, int(r.get("ProductId") or 0), str(r.get("dsk") or ""),
-                    actor_account=creator, can_manage=can_manage, trigger="background")
+                _reconcile_one_db_rule(conn, rule, actor_account=creator, can_manage=can_manage, trigger="background")
             except Exception:
                 try:
                     conn.rollback()
@@ -18735,38 +18825,49 @@ def _list_db_rule_pending(conn, product_id: int, ds_key: str) -> "list[dict]":
         cur.close()
 
 
-@app.get("/api/admin/products/{product_id}/datasources/{key}/db-rule")
-async def admin_get_product_db_rule(product_id: int, key: str, request: Request) -> JSONResponse:
+def _rule_to_public(rule: dict) -> dict:
+    return {
+        "id": int(rule.get("id") or 0),
+        "include_pattern": str(rule.get("include_pattern") or ""),
+        "exclude_pattern": (str(rule["exclude_pattern"]) if rule.get("exclude_pattern") else ""),
+        "cap": int(rule.get("cap") or 3),
+        "is_enabled": bool(rule.get("is_enabled")),
+        "last_sync_at": str(rule.get("last_sync_at") or ""),
+    }
+
+
+@app.get("/api/admin/products/{product_id}/datasources/{key}/db-rules")
+async def admin_list_product_db_rules(product_id: int, key: str, request: Request) -> JSONResponse:
+    """(product, datasource) 의 **모든** 규칙 + 규칙별 pending. M6: lazy reconcile(전 규칙, product.manage 게이트 내부)."""
     conn, account, dsk, error = _db_rule_gate(request, product_id, key)
     if error:
         return error
     try:
-        # M6: lazy reconcile — 관리자(product.manage)가 규칙 섹션을 열 때 현재 datasource 상태 반영.
-        #   규칙 없으면 _reconcile 가 즉시 no-rule 반환(네트워크 enum 안 함). datasource.read 뷰어는
-        #   이 엔드포인트(product.manage)를 못 부르므로 read-with-write 우려 없음.
         try:
-            _reconcile_product_db_rule(conn, int(product_id), dsk,
-                                       actor_account=account, can_manage=True, trigger="view")
+            _reconcile_product_db_rules(conn, int(product_id), dsk,
+                                        actor_account=account, can_manage=True, trigger="view")
         except Exception:
             pass
-        rule = _get_product_db_rule(conn, int(product_id), dsk)
+        rules = _get_product_db_rules(conn, int(product_id), dsk)
         pending = _list_db_rule_pending(conn, int(product_id), dsk)
-        out_rule = None
-        if rule:
-            out_rule = {
-                "include_pattern": str(rule.get("include_pattern") or ""),
-                "exclude_pattern": (str(rule["exclude_pattern"]) if rule.get("exclude_pattern") else ""),
-                "cap": int(rule.get("cap") or 3),
-                "is_enabled": bool(rule.get("is_enabled")),
-                "last_sync_at": str(rule.get("last_sync_at") or ""),
-            }
-        return JSONResponse({"ok": True, "rule": out_rule, "pending": pending})
+        # pending 을 rule_id 별로 그룹(미귀속=None 키 0).
+        pend_by_rule: dict[int, list] = {}
+        for p in pending:
+            pend_by_rule.setdefault(int(p.get("rule_id") or 0), []).append(p)
+        out = []
+        for r in rules:
+            rp = _rule_to_public(r)
+            rp["pending"] = pend_by_rule.get(int(r.get("id") or 0), [])
+            out.append(rp)
+        return JSONResponse({"ok": True, "rules": out, "pending": pending,
+                             "orphan_pending": pend_by_rule.get(0, [])})
     finally:
         conn.close()
 
 
-@app.put("/api/admin/products/{product_id}/datasources/{key}/db-rule")
-async def admin_put_product_db_rule(product_id: int, key: str, request: Request) -> JSONResponse:
+@app.post("/api/admin/products/{product_id}/datasources/{key}/db-rules")
+async def admin_create_product_db_rule(product_id: int, key: str, request: Request) -> JSONResponse:
+    """신규 규칙 1건 생성(다중 규칙) + 즉시 reconcile. product.manage."""
     try:
         data = await request.json()
     except Exception:
@@ -18790,56 +18891,125 @@ async def admin_put_product_db_rule(product_id: int, key: str, request: Request)
             if not ok2:
                 return _json_error(f"exclude 패턴 오류: {perr2}", 400)
         cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO WebProductDatasourceDbRules "
-            "(ProductId, DatasourceKey, IncludePattern, ExcludePattern, Cap, IsEnabled, CreatedByAccountId) "
-            "VALUES (%s,%s,%s,%s,%s,1,%s) "
-            "ON DUPLICATE KEY UPDATE IncludePattern=VALUES(IncludePattern), ExcludePattern=VALUES(ExcludePattern), "
-            "Cap=VALUES(Cap), IsEnabled=1",
-            (int(product_id), dsk, include_pattern, (exclude_pattern or None), cap, int(account.get("id") or 0)))
+        # SortOrder = 현재 max+10(말미 추가). 미이전 graceful.
+        try:
+            cur.execute("SELECT COALESCE(MAX(SortOrder),0) FROM WebProductDatasourceDbRules "
+                        "WHERE ProductId=%s AND LOWER(DatasourceKey)=%s", (int(product_id), dsk))
+            next_sort = int((cur.fetchone() or [0])[0] or 0) + 10
+        except Exception:
+            next_sort = 100
+        try:
+            cur.execute(
+                "INSERT INTO WebProductDatasourceDbRules "
+                "(ProductId, DatasourceKey, IncludePattern, ExcludePattern, Cap, IsEnabled, SortOrder, CreatedByAccountId) "
+                "VALUES (%s,%s,%s,%s,%s,1,%s,%s)",
+                (int(product_id), dsk, include_pattern, (exclude_pattern or None), cap, next_sort, int(account.get("id") or 0)))
+        except Exception:
+            # SortOrder 컬럼 부재(마이그레이션 전) 폴백.
+            cur.execute(
+                "INSERT INTO WebProductDatasourceDbRules "
+                "(ProductId, DatasourceKey, IncludePattern, ExcludePattern, Cap, IsEnabled, CreatedByAccountId) "
+                "VALUES (%s,%s,%s,%s,%s,1,%s)",
+                (int(product_id), dsk, include_pattern, (exclude_pattern or None), cap, int(account.get("id") or 0)))
+        new_rule_id = int(cur.lastrowid or 0)
         cur.close()
         try:
             _audit_admin_mutation(
                 conn, request, account, action="admin.product.db_rule.set",
                 resource_type="product", resource_id=str(product_id),
                 before=None,
-                after={"datasource_key": dsk, "include": include_pattern, "exclude": exclude_pattern, "cap": cap},
+                after={"datasource_key": dsk, "rule_id": new_rule_id, "include": include_pattern, "exclude": exclude_pattern, "cap": cap},
                 request_ctx={"product_id": int(product_id), "datasource_key": dsk})
             conn.commit()
         except Exception as audit_exc:
             conn.rollback()
             return _json_error(f"audit write failed: {audit_exc}", 500)
-        # 즉시 reconcile(can_manage=True — 요청자가 product.manage 보유, trigger=rule-save).
-        recon = _reconcile_product_db_rule(conn, int(product_id), dsk,
-                                           actor_account=account, can_manage=True, trigger="rule-save")
+        rule = _get_db_rule_by_id(conn, new_rule_id)
+        recon = _reconcile_one_db_rule(conn, rule, actor_account=account, can_manage=True, trigger="rule-save") if rule else {}
+        return JSONResponse({"ok": True, "rule_id": new_rule_id, "reconcile": recon})
+    finally:
+        conn.close()
+
+
+@app.put("/api/admin/products/{product_id}/datasources/{key}/db-rules/{rule_id}")
+async def admin_update_product_db_rule(product_id: int, key: str, rule_id: int, request: Request) -> JSONResponse:
+    """기존 규칙 1건 수정(Id 기준) + 즉시 reconcile. product.manage."""
+    try:
+        data = await request.json()
+    except Exception:
+        return _json_error("invalid json", 400)
+    conn, account, dsk, error = _db_rule_gate(request, product_id, key)
+    if error:
+        return error
+    try:
+        rule = _get_db_rule_by_id(conn, int(rule_id))
+        if not rule or int(rule.get("product_id") or 0) != int(product_id) or str(rule.get("datasource_key")) != dsk:
+            return _json_error("rule not found", 404)
+        include_pattern = str((data or {}).get("include_pattern") or "").strip()
+        exclude_pattern = str((data or {}).get("exclude_pattern") or "").strip()
+        try:
+            cap = int((data or {}).get("cap") or 3)
+        except Exception:
+            cap = 3
+        cap = max(1, min(cap, 100))
+        ok, perr = _validate_db_rule_pattern(include_pattern)
+        if not ok:
+            return _json_error(f"include 패턴 오류: {perr}", 400)
+        if exclude_pattern:
+            ok2, perr2 = _validate_db_rule_pattern(exclude_pattern)
+            if not ok2:
+                return _json_error(f"exclude 패턴 오류: {perr2}", 400)
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE WebProductDatasourceDbRules SET IncludePattern=%s, ExcludePattern=%s, Cap=%s, IsEnabled=1 WHERE Id=%s",
+            (include_pattern, (exclude_pattern or None), cap, int(rule_id)))
+        cur.close()
+        try:
+            _audit_admin_mutation(
+                conn, request, account, action="admin.product.db_rule.set",
+                resource_type="product", resource_id=str(product_id),
+                before={"datasource_key": dsk, "rule_id": int(rule_id),
+                        "include": rule.get("include_pattern"), "exclude": rule.get("exclude_pattern"), "cap": rule.get("cap")},
+                after={"datasource_key": dsk, "rule_id": int(rule_id), "include": include_pattern, "exclude": exclude_pattern, "cap": cap},
+                request_ctx={"product_id": int(product_id), "datasource_key": dsk})
+            conn.commit()
+        except Exception as audit_exc:
+            conn.rollback()
+            return _json_error(f"audit write failed: {audit_exc}", 500)
+        fresh = _get_db_rule_by_id(conn, int(rule_id))
+        recon = _reconcile_one_db_rule(conn, fresh, actor_account=account, can_manage=True, trigger="rule-save") if fresh else {}
         return JSONResponse({"ok": True, "reconcile": recon})
     finally:
         conn.close()
 
 
-@app.delete("/api/admin/products/{product_id}/datasources/{key}/db-rule")
-async def admin_delete_product_db_rule(product_id: int, key: str, request: Request) -> JSONResponse:
+@app.delete("/api/admin/products/{product_id}/datasources/{key}/db-rules/{rule_id}")
+async def admin_delete_product_db_rule(product_id: int, key: str, rule_id: int, request: Request) -> JSONResponse:
+    """규칙 1건 삭제(Id 기준). strip=1 이면 그 규칙(RuleId)이 추가한 DB 행만 제거(다른 규칙·manual 보존)."""
     strip_rows = str(request.query_params.get("strip", "")).strip().lower() in ("1", "true", "yes")
     conn, account, dsk, error = _db_rule_gate(request, product_id, key)
     if error:
         return error
     try:
+        rule = _get_db_rule_by_id(conn, int(rule_id))
+        if not rule or int(rule.get("product_id") or 0) != int(product_id) or str(rule.get("datasource_key")) != dsk:
+            return _json_error("rule not found", 404)
         cur = conn.cursor()
-        cur.execute("DELETE FROM WebProductDatasourceDbRules WHERE ProductId=%s AND LOWER(DatasourceKey)=%s",
-                    (int(product_id), dsk))
-        cur.execute("DELETE FROM WebProductDatabasePending WHERE ProductId=%s AND LOWER(DatasourceKey)=%s",
-                    (int(product_id), dsk))
+        cur.execute("DELETE FROM WebProductDatasourceDbRules WHERE Id=%s", (int(rule_id),))
+        cur.execute("DELETE FROM WebProductDatabasePending WHERE ProductId=%s AND LOWER(DatasourceKey)=%s AND RuleId=%s",
+                    (int(product_id), dsk, int(rule_id)))
         if strip_rows:
-            # 규칙이 추가한 행만 제거(manual 보존).
+            # 이 규칙(RuleId)이 추가한 행만 제거(다른 규칙·manual 보존).
             cur.execute(
                 "DELETE FROM WebProductDatabases WHERE ProductId=%s AND LOWER(DatasourceKey)=%s "
-                "AND COALESCE(Source,'manual')='rule'", (int(product_id), dsk))
+                "AND COALESCE(Source,'manual')='rule' AND RuleId=%s", (int(product_id), dsk, int(rule_id)))
         cur.close()
         try:
             _audit_admin_mutation(
                 conn, request, account, action="admin.product.db_rule.delete",
                 resource_type="product", resource_id=str(product_id),
-                before={"datasource_key": dsk}, after={"stripped_rule_rows": strip_rows},
+                before={"datasource_key": dsk, "rule_id": int(rule_id)},
+                after={"stripped_rule_rows": strip_rows},
                 request_ctx={"product_id": int(product_id), "datasource_key": dsk})
             conn.commit()
         except Exception as audit_exc:
@@ -18850,7 +19020,7 @@ async def admin_delete_product_db_rule(product_id: int, key: str, request: Reque
         conn.close()
 
 
-@app.post("/api/admin/products/{product_id}/datasources/{key}/db-rule/preview")
+@app.post("/api/admin/products/{product_id}/datasources/{key}/db-rules/preview")
 async def admin_preview_product_db_rule(product_id: int, key: str, request: Request) -> JSONResponse:
     """dry-run: 라이브 DB 에 패턴을 적용해 일치/신규 목록을 반환(쓰기 없음). UI 라이브 카운트."""
     try:
@@ -18895,9 +19065,9 @@ async def admin_preview_product_db_rule(product_id: int, key: str, request: Requ
         conn.close()
 
 
-@app.post("/api/admin/products/{product_id}/datasources/{key}/db-rule/approve-pending")
-async def admin_approve_product_db_rule_pending(product_id: int, key: str, request: Request) -> JSONResponse:
-    """pending(보류) 일치 DB 를 allowlist 에 승격(Source='rule'). 1클릭 승인(B1). product.manage."""
+@app.post("/api/admin/products/{product_id}/datasources/{key}/db-rules/{rule_id}/approve-pending")
+async def admin_approve_product_db_rule_pending(product_id: int, key: str, rule_id: int, request: Request) -> JSONResponse:
+    """해당 규칙(rule_id)의 pending(보류) 일치 DB 를 allowlist 에 승격(Source='rule'). 1클릭 승인(B1). product.manage."""
     try:
         data = await request.json()
     except Exception:
@@ -18906,18 +19076,21 @@ async def admin_approve_product_db_rule_pending(product_id: int, key: str, reque
     if error:
         return error
     try:
+        rule = _get_db_rule_by_id(conn, int(rule_id))
+        if not rule or int(rule.get("product_id") or 0) != int(product_id) or str(rule.get("datasource_key")) != dsk:
+            return _json_error("rule not found", 404)
+        rule_id = int(rule_id)
         want = data.get("schemas") if isinstance(data, dict) else None
-        pending = _list_db_rule_pending(conn, int(product_id), dsk)
+        # 이 규칙(rule_id) 에 귀속된 pending 만 대상.
+        pending = [p for p in _list_db_rule_pending(conn, int(product_id), dsk)
+                   if int(p.get("rule_id") or 0) == rule_id]
         pend_names = {p["schema_name"] for p in pending}
-        # 요청 schemas 가 있으면 그 교집합만, 없으면 전체 pending 승인.
         if isinstance(want, list) and want:
             targets = [s for s in want if str(s) in pend_names]
         else:
             targets = [p["schema_name"] for p in pending]
         if not targets:
             return JSONResponse({"ok": True, "approved": []})
-        rule = _get_product_db_rule(conn, int(product_id), dsk)
-        rule_id = int(rule["id"]) if rule else None
         engine = "mysql"
         try:
             from modules import datasources as _dsr
@@ -18941,7 +19114,7 @@ async def admin_approve_product_db_rule_pending(product_id: int, key: str, reque
                 continue
             max_sort += 10
             cur.execute(
-                "INSERT INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder, DatasourceKey, Source, RuleId) "
+                "INSERT IGNORE INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder, DatasourceKey, Source, RuleId) "
                 "VALUES (%s,%s,%s,%s,%s,'rule',%s)",
                 (int(product_id), str(name), "", max_sort, dsk, rule_id))
             cur.execute("DELETE FROM WebProductDatabasePending WHERE ProductId=%s AND LOWER(DatasourceKey)=%s AND SchemaName=%s",

@@ -3262,6 +3262,42 @@ a { color: inherit; }
   color: var(--primary, #2563eb); background: color-mix(in srgb, var(--primary, #2563eb) 12%, transparent);
 }
 
+/* TASK-20260618T061703: 다중 규칙 — 규칙 카드 + 카드에 종속(중첩)된 DB 목록. */
+.cov-db-rule-cards { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }
+.cov-db-rule-empty { font-size: 12px; color: var(--text-muted, #888); padding: 6px 2px; }
+.cov-db-rule-card {
+  border: 1px solid var(--border, rgba(0,0,0,.15)); border-radius: 8px; padding: 8px 10px;
+  background: var(--surface, #fff); border-left: 3px solid var(--primary, #2563eb);
+}
+.cov-db-rule-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cov-db-rule-card-title { font-size: 12px; font-weight: 700; color: var(--text); flex: 0 0 auto; }
+.cov-db-rule-card-pat {
+  flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--primary, #2563eb);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: color-mix(in srgb, var(--primary, #2563eb) 8%, transparent); padding: 1px 6px; border-radius: 4px;
+}
+.cov-db-rule-card-cap { flex: 0 0 auto; font-size: 11px; color: var(--text-muted, #888); }
+.cov-db-rule-edit, .cov-db-rule-addbtn {
+  flex: 0 0 auto; font-size: 11px; padding: 3px 10px; border: 1px solid var(--border, rgba(0,0,0,.2));
+  border-radius: 6px; background: #fff; color: var(--text); cursor: pointer;
+}
+.cov-db-rule-addbtn { color: var(--primary, #2563eb); border-color: var(--primary, #2563eb); margin: 2px 0; }
+.cov-db-rule-edit:hover, .cov-db-rule-addbtn:hover { background: var(--primary-soft, rgba(37,99,235,.06)); }
+.cov-db-rule-edit-host, .cov-db-rule-add-host { margin-top: 6px; }
+.cov-db-rule-form { border-top: 1px dashed var(--border-subtle, rgba(0,0,0,.12)); padding-top: 6px; }
+/* 규칙에 종속(중첩)된 DB 목록 — 들여쓰기 + 좌측 가이드선으로 '규칙 소속'을 시각화. */
+.cov-db-rule-dblist { margin: 6px 0 2px 10px; padding-left: 8px; border-left: 2px solid var(--border-subtle, rgba(0,0,0,.12)); }
+.cov-db-rule-dblist-head { font-size: 11px; font-weight: 600; color: var(--text-muted, #888); margin-bottom: 2px; }
+.cov-db-rule-dbitem { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
+.cov-db-rule-dbdot { flex: 0 0 auto; color: var(--text-muted, #aaa); font-size: 11px; }
+.cov-db-rule-dbname {
+  flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--text);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cov-db-rule-dbempty { font-size: 11px; color: var(--text-muted, #aaa); font-style: italic; padding: 1px 0; }
+
 .admin-chip-locked-hint {
   font-size: 10px;
   letter-spacing: 0.02em;
