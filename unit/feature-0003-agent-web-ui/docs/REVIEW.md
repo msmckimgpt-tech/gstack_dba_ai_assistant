@@ -3273,3 +3273,11 @@ source_of_truth: true
 - Verification: `node -c admin.js` + `tests/verify_dbpicker_search_regex.mjs` **33/33 PASS**(순수 검색 5·정규식 6·DOM 검색 4·DOM 하이라이트 3·wiring 7·CSS/cache-buster 8). 화면 정본 = PB-0008 Windows-browser(배포 후).
 - Residual: 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser(검색 라이브 필터·정규식 라이브 카운트/하이라이트·"일치 선택" additive·선택됨 N개·sticky·결과없음) → evidence.
 - Cross-ref: CHG-20260618T025755-ai-claude-dbpicker-search-regex / REQ-20260618-0317 / AC-0574 / AC-0575 / docs/PROPOSAL-frequent-db-config-changes.md.
+
+## REV-20260618T025755-ai-claude-dbpicker-search-regex-evidence [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-18
+- Cycle: TASK-20260618T025755 PB-0008 Windows-browser evidence ('+ 데이터베이스 추가' 검색 필터 + 정규식 일괄 선택), **docs-only**.
+- Panel 생략 근거(§18.8): 코드·스키마·RBAC·배포 변경 0 — 이미 머지·배포된 frontend 기능(PR #331)의 실 Windows 브라우저 검증 결과를 문서에 기록할 뿐. 신규 위험 표면 없음.
+- PB-0008 요지(PASS): 실 배포 admin.js helper(DB_PICKER_SEARCH_MIN=6 + 4 fn) + styles.css 위 render-injection. CSS computed: toolbar sticky·search border 1px·"일치 선택" 버튼 rgb(37,99,235)·is-regex-match primary@12%·hidden 항목 display:none(글로벌 .hidden !important 가 .admin-db-picker-item display:flex 이김). helper: 검색 'prod' 3/8·'zzzz' 0+결과없음 가시·정규식 '^prod_' count 3·'[' ok:false·순수 helper 정상. 시각 evidence picker-search-regex.png(1249×836).
+- Verification: docs-only. 실측 정본 = 본 evidence 가 기록하는 PB-0008 + tests/verify_dbpicker_search_regex.mjs 33/33.
+- Cross-ref: CHG-20260618T025755-ai-claude-dbpicker-search-regex-evidence / CHG-20260618T025755-ai-claude-dbpicker-search-regex / REQ-20260618-0317 / AC-0574 / AC-0575.

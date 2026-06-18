@@ -4184,3 +4184,12 @@ source_of_truth: true
 - Verification: `node --check admin.js` PASS + `tests/verify_dbpicker_search_regex.mjs` **33/33 PASS**. 선택 쓰기는 기존 pending→모두 적용 경로 + 기존 schema_name 검증 그대로(보안 경계·쓰기 계약 불변). 화면 정본 = PB-0008 Windows-browser(배포 후).
 - Rollback: helper 4종 + buildPicker toolbar 블록 + 클로저 변수 2개 + CSS 블록 제거, cache-buster·test revert. 후보 목록 체크박스만 남는 기존 동작으로 복원(데이터·기능 무영향).
 - Deploy: web 재빌드 1 이미지(프론트 baked). deploy_scope: included.
+
+## CHG-20260618T025755-ai-claude-dbpicker-search-regex-evidence
+- Date: 2026-06-18 (TASK-20260618T025755 PB-0008 Windows-browser evidence — '+ 데이터베이스 추가' 검색 필터 + 정규식 일괄 선택).
+- Scope: docs-only — feature-0003 `docs/TEST.md`(PB-0008 Run 기록) + `docs/TASK.md`(마감 체크) + `docs/MODIFY.md`·`docs/REVIEW.md`(본 evidence). 코드·배포·스키마·RBAC 0.
+- 내용: 배포(main 14c3280, web 재빌드)된 '+ 데이터베이스 추가' 검색 필터 + 정규식 일괄 선택을 실제 Windows Chrome(win-browser relay)으로 PB-0008 검증한 결과를 TEST.md §3 에 'Environment: Windows-browser' Run 으로 기록. render-injection 기법(실 배포 helper 4종 + styles.css computed) — sticky toolbar·검색 3/8·결과없음·정규식 count 3·하이라이트 primary@12%·hidden display:none(글로벌 .hidden !important)·additive 전부 PASS. 시각 evidence `artifacts/pb0008-dbpicker-search-regex/picker-search-regex.png`.
+- Why: AGENTS.md §15.4.1 CHECK#13 — 웹/UI 변경은 실제 Windows 브라우저 검증 기록 필요.
+- Verification: 본 변경은 docs-only(코드 0). 검증 정본은 본 cycle 이 기록하는 PB-0008 결과 자체.
+- Rollback: docs revert(증거 기록 제거). 코드·배포 무영향.
+- Deploy: 없음(docs-only).

@@ -4203,8 +4203,8 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] styles.css: `.admin-db-picker-toolbar`(sticky) + `.admin-db-picker-search`/`.admin-db-picker-regex`(+focus/placeholder) + `.admin-db-picker-regex-row`/`-count`/`-btn`/`-err` + `.admin-db-picker-selected-count` + `.admin-db-picker-item.is-regex-match` 하이라이트 + `.admin-db-picker-no-result`. admin.html(styles.css+admin.js)·index.html(styles.css) cache-buster `?v=20260618-dbpicker-search-regex`.
 - [x] 검증: jsdom `tests/verify_dbpicker_search_regex.mjs` **33/33 PASS**(순수 검색 5·정규식 6·DOM 검색 4·DOM 하이라이트 3·wiring 7·CSS/cache-buster 8) + `node --check admin.js`. frontend-only(백엔드·RBAC·스키마·엔드포인트·데이터 0).
 - [x] 잦은 DB 구성 변경 모범 대응책 제안서 작성: `docs/PROPOSAL-frequent-db-config-changes.md`.
-- [ ] outside-voice/panel: §18.8 — frontend-only·RBAC/스키마/엔드포인트 0·기존 검증/쓰기 경로 재사용이라 패널 생략(REV [SKIPPED] 근거 기록). 보안 경계 변화 없음(정규식은 선택 편의, 서버 검증 불변).
-- [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → PB-0008 Windows-browser(검색 필터·정규식 라이브 카운트/하이라이트·일치 선택 additive·선택됨 N개·sticky) → 마감.
+- [x] outside-voice/panel: §18.8 — frontend-only·RBAC/스키마/엔드포인트 0·기존 검증/쓰기 경로 재사용이라 패널 생략(REV-20260618T025755 [SKIPPED] 기록). 보안 경계 변화 없음.
+- [x] 머지(main, PR #331) → 배포(web 재빌드 main 14c3280, deploy_scope: included; #327 충돌 rebase keep-both) → **PB-0008 Windows-browser PASS**(render-injection: sticky toolbar·검색 3/8·결과없음·정규식 count 3·하이라이트 primary@12%·hidden display:none·additive; 시각 evidence picker-search-regex.png). CHG/REV-20260618T025755 evidence. 마감.
 ### TASK-20260618T030534 — 데이터소스 목록 행에 엔진 서비스 아이콘(연결 도트 우측) (REQ-20260618-0318, AC-0576, Minor §12.3, 2026-06-18)
 - 사용자 보고(/_template:entry 후속): TASK-20260618T022006(엔진 드롭다운) 에 이어, `관리 콘솔 > 데이터소스` **목록에서도 식별하기 쉽도록** 네트워크 연결 뱃지(도트) **우측에** 엔진 서비스 아이콘을 구성.
 - 근본: `_dsRenderList` 의 목록 행은 `row.append(cb, dot, main)`(체크박스·연결도트·main[이름+엔진 텍스트배지+host:port]) 3열 grid 였고, 엔진은 텍스트 배지(`.admin-badge` "mysql"/"mssql")로만 식별. 브랜드 아이콘 식별 보조 부재.
