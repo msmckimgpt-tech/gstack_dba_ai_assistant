@@ -3226,3 +3226,11 @@ source_of_truth: true
 - Verification: `node -c admin.js` + `tests/verify_ds_accordion_collapse.mjs` 19/19 PASS. 화면 정본 = PB-0008(배포 후).
 - Residual: 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser(제품 선택 직후 기본 접힘) → evidence.
 - Cross-ref: CHG-20260618T025220-ai-claude-ds-acc-collapsed-default / REQ-20260618-0316 / AC-0573 / TASK-20260618T022150(접기 토글 도입).
+
+## REV-20260618T025848-ai-claude-ds-acc-collapsed-default-evidence [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-18
+- Cycle: TASK-20260618T025220-ai-claude-ds-acc-collapsed-default PB-0008 evidence 기록, **Minor §12.3**, docs-only.
+- Panel 생략 근거(§18.8): 코드·스키마·RBAC·배포 0 — 이미 머지·배포된 frontend 기본값 변경(PR #328)의 실 Windows 브라우저 검증 결과 기록. 신규 위험 표면 없음.
+- PB-0008 요지(PASS): 단일 datasource 제품 KR(`mysql-local`) 선택 직후 **클릭 없이** DB 목록 접힘(`.ds-acc-body` 미생성·caret ▸·aria false·행 유지·하단 '+ 데이터소스 추가' viewport 내) = 사용자 요청 "제품 선택 시 기본 접힘" 실증. 머리 클릭 → 펼침(body 생성·caret ▾·picker) → 재클릭 → 접힘 토글 무회귀(REQ-0314 보존).
+- Verification: docs-only. 실측 정본 = 본 evidence 가 기록하는 PB-0008.
+- Cross-ref: CHG-20260618T025848-ai-claude-ds-acc-collapsed-default-evidence / CHG-20260618T025220-ai-claude-ds-acc-collapsed-default / REQ-20260618-0316 / AC-0573.

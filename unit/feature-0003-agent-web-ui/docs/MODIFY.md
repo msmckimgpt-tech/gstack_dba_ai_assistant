@@ -4129,3 +4129,12 @@ source_of_truth: true
 - Verification: `node -c admin.js` PASS + `tests/verify_ds_accordion_collapse.mjs` **19/19 PASS**(초기 접힘[body 미생성·is-active 아님·aria false·caret ▸·행 유지·하단 `.ds-acc-add-btn` 도달]·토글1 펼침·토글2 접힘). 화면 정본 = PB-0008 Windows-browser(배포 후).
 - Rollback: 초기값 `true`→`false` 복원(1줄) + cache-buster·test 단언 원복. 동작만 기본 펼침으로, 데이터·기능 무영향.
 - Deploy: web 재빌드 1 이미지(프론트 baked). deploy_scope: included.
+
+## CHG-20260618T025848-ai-claude-ds-acc-collapsed-default-evidence
+- Date: 2026-06-18 (TASK-20260618T025220-ai-claude-ds-acc-collapsed-default — PB-0008 Windows-browser evidence 기록, docs-only).
+- Scope: docs-only — feature-0003 `docs/{TASK,REPORT,MODIFY,REVIEW,TEST}.md`. 코드·스키마·배포 0.
+- 내용: 제품 선택 시 DB 목록 기본 접힘(TASK-...T025220)의 배포 후 PB-0008 Windows-browser 실측 결과를 TEST.md §4 'Environment: Windows-browser' Run 으로 기록(CHECK#13 충족), TASK/REPORT 잔여→완료. 실측: 배포본 main `1ad1519`(PR #328), 실 Chrome/149, 단일 datasource 제품 KR(`mysql-local`) 선택 직후 클릭 없이 DB 목록 접힘(body 미생성·caret ▸·aria false·하단 버튼 도달) + 머리 클릭 토글 펼침/접힘 무회귀. evidence `artifacts/pb0008-ds-acc-collapsed-default/default-collapsed-on-select.png`.
+- Why: AGENTS.md §15.4.1 PB-0008 — 웹/UI 완료 검증 정본. 코드 PR(#328) 머지·배포 후 별도 evidence cycle(two-PR 패턴).
+- Verification: docs-only. 검증 정본 = 본 cycle 이 기록하는 PB-0008.
+- Rollback: docs revert. 코드·배포 무영향.
+- Deploy: 없음(docs-only).
