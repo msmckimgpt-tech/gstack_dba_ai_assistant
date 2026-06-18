@@ -1098,3 +1098,14 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **단위(정적)**: `verify_db_rule_logic.py` 30/30(검증·제외셋·매칭 B5·인젝션·**ReDoS 강화** `(a|a)*`/`(.*a){20}` 거부 + catastrophic 0.000s 차단·방어심층·audit action 등록 가드) + `verify_db_rule_ui.mjs` 17/17(wiring·B4 body 필터·배지·CSS) + ast/node.
   - **Pass/Fail: PASS** — 배포 시스템에서 규칙 저장/조회/삭제·라이브 preview·마이그레이션·인증게이트·규칙 에디터 렌더를 실제 Windows 브라우저로 실측 통과. auto-add insert + rule 배지 live 시연은 모든 datasource 가 완전 allowlist 상태("신규 0")라 비파괴 재현 불가 → 단위(insert 결정 로직)·jsdom(배지) 으로 커버. CHECK#13 충족.
   - **Notes:** outside-voice 2-pass(설계 NOT-SHIP→하이브리드, 구현 SHIP-WITH-FIXES) BLOCKER ReDoS·MAJOR#1/#2 흡수. 캐시버스터 `?v=20260618-db-rule-autosync`.
+
+- 2026-06-18 (TASK-20260618T061703 DB allowlist 규칙 다중 + DB 종속 UI, **Major §12.3** — **PB-0008 Windows-browser PASS**; CHG/REV evidence):
+  - **Environment: Windows-browser** (실제 Windows Chrome/149 via `bin/win-browser.py` relay `http://172.28.64.1:9223`, https://172.28.73.199:18080). 배포: main `ae9226f`(PR #347) → `docker compose build web` + `up -d`(healthy). 검증 동안만 `.env WEB_ALLOWED_HOSTS` 에 WSL IP 추가 후 복원(종료 후 "Invalid host header" 거부 복귀 실측).
+  - **마이그레이션 라이브 검증**(MySQL agent_memory): `WebProductDatasourceDbRules` 의 `UQ_WebProductDsDbRule` UNIQUE **제거됨**(uniq:0) + `SortOrder` 컬럼 추가(sortcol:1) — fast-path catchup 등록(MAJOR#2)으로 재기동 반영.
+  - **다중 규칙 라이브 확인**: product 109 / datasource `mssql-dk-dev` 에 규칙 2개 추가 POST 연속 성공(rule_id 9·10) — UNIQUE 제거로 (product,ds) 당 복수 규칙 공존(총 3개, 2번째 POST duplicate-key 없음). GET db-rules ruleCount=3.
+  - **종속(중첩) UI 실 렌더**(eval DOM 스냅샷 — 스크린샷은 폰트-로드 타임아웃 환경 이슈로 대체): `.cov-db-rule-card` 3개, 각 카드 = [규칙 N · 패턴(code) · 한도 pill · 수정/삭제] + **"이 규칙으로 추가된 DB N개"(`.cov-db-rule-dblist`) 중첩 섹션** + "+ 규칙 추가" 버튼. 실측 카드: ①`(^GameLog_[0-9]{3}$)|(^dk_game_release_[0-9]{3}$)` 한도3(실 운영 규칙) ②`^zzz_pb_a_` 한도3 ③`^zzz_pb_b_ (제외:_tmp$)` 한도5. 각 카드 hasEdit/hasDel=true.
+  - **종속 N>0 비재현 사유**: mssql-dk-dev 의 사용자 DB 11개가 전부 기존 manual allowlist → 규칙 dedup 으로 rule-owned 0개("이 규칙으로 추가된 DB 0개"). 비파괴로는 rule-owned 행 재현 불가 → 중첩 *구조*(섹션·필터 rule_id===rule.id)는 실 렌더로, 중첩 *엔트리*는 단위/jsdom 으로 커버.
+  - **삭제 격리 라이브**: 테스트 규칙 9·10 을 `DELETE /db-rules/{id}?strip=1` 로 정리 → 실 GameLog 규칙 1개 보존(remaining=[`(^GameLog_[0-9]{3}$)`]). RuleId 스코프 strip 으로 타 규칙 불변 확인.
+  - **단위(정적)**: `verify_db_rule_logic.py` 30/30(순수 helper·ReDoS·audit 가드) + `verify_db_rule_ui.mjs` 18/18(복수형 엔드포인트·카드/폼·rule_id 필터·중첩·manual 분리·CSS) + ast/node.
+  - **Pass/Fail: PASS** — 배포 시스템에서 다중 규칙 생성/공존·규칙 카드·DB 종속 중첩 섹션·삭제 격리·UNIQUE 제거 마이그레이션을 실제 Windows 브라우저로 실측 통과. CHECK#13 충족.
+  - **Notes:** outside-voice(다중규칙 격리) SHIP-WITH-FIXES — A~G 확인, BLOCKER 0, MAJOR#1(INSERT IGNORE 중복방지)·#2(fast-path catchup) 흡수. 캐시버스터 `?v=20260618-db-rule-multi`.
