@@ -4205,3 +4205,11 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 잦은 DB 구성 변경 모범 대응책 제안서 작성: `docs/PROPOSAL-frequent-db-config-changes.md`.
 - [ ] outside-voice/panel: §18.8 — frontend-only·RBAC/스키마/엔드포인트 0·기존 검증/쓰기 경로 재사용이라 패널 생략(REV [SKIPPED] 근거 기록). 보안 경계 변화 없음(정규식은 선택 편의, 서버 검증 불변).
 - [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → PB-0008 Windows-browser(검색 필터·정규식 라이브 카운트/하이라이트·일치 선택 additive·선택됨 N개·sticky) → 마감.
+### TASK-20260618T030534 — 데이터소스 목록 행에 엔진 서비스 아이콘(연결 도트 우측) (REQ-20260618-0318, AC-0576, Minor §12.3, 2026-06-18)
+- 사용자 보고(/_template:entry 후속): TASK-20260618T022006(엔진 드롭다운) 에 이어, `관리 콘솔 > 데이터소스` **목록에서도 식별하기 쉽도록** 네트워크 연결 뱃지(도트) **우측에** 엔진 서비스 아이콘을 구성.
+- 근본: `_dsRenderList` 의 목록 행은 `row.append(cb, dot, main)`(체크박스·연결도트·main[이름+엔진 텍스트배지+host:port]) 3열 grid 였고, 엔진은 텍스트 배지(`.admin-badge` "mysql"/"mssql")로만 식별. 브랜드 아이콘 식별 보조 부재.
+- [x] admin.js `_dsRenderList`: 연결 도트 우측에 `engineMeta(ds.engine)` 의 브랜드 아이콘을 `.ds-list-engine-icon`(role=img·`aria-label/title="엔진: <label>"`·브랜드색)으로 만들어 `row.append(cb, dot, engIcon, main)` — 드롭다운(`_dsBuildEngineField`)과 동일한 engineMeta 재사용(아이콘+색 단일 출처). 기존 텍스트 배지는 유지(additive, 식별성↑).
+- [x] styles.css: `#datasourceList .admin-list-row` grid `auto auto 1fr` → `auto auto auto 1fr`(children cb·dot·engIcon·main 1:1, 고정폭 컬럼이라 행 간 정렬 안정 — 행 목록 컬럼 정합 정책) + `.ds-list-engine-icon`(16px·align center·flex none). admin.html admin.js+styles.css 캐시버스터 `?v=20260618-ds-list-engine-icon`(공유 styles.css 변경 — 직전 cache-buster 교훈 적용).
+- [x] 검증: jsdom `verify_ds_list_engine_icon.mjs` 17 PASS(아이콘 빌드 mysql/mssql/폴백·브랜드색·aria·도트 우측 배선·이전 3-append 잔존 0·4열 grid·아이콘 CSS) + node --check. frontend-only(백엔드·RBAC·스키마·엔드포인트·데이터 0).
+- [x] outside-voice 패널 SKIP — Minor 추가 변경 + 이미 적대 검증된 engineMeta/아이콘 재사용(TASK-20260618T022006 REV-20260618-0315). REV-20260618T030534 [SKIPPED:frontend-ui-list-icon-no-backend-no-rbac]. 화면 정본 = PB-0008.
+- [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → PB-0008 Windows-browser(목록 각 행 도트 우측 MySQL/SQL Server 브랜드 아이콘 렌더·행 정렬 무붕괴) → 마감.

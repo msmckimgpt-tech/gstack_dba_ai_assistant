@@ -3502,10 +3502,25 @@ a { color: inherit; }
 /* TASK-0281(ds-list-multiselect): 데이터소스 목록 행 = [체크박스 auto · 네트워크 도트 auto · main 1fr].
  *  다중 선택 도입으로 행이 .admin-list-row--nav(단일선택) → .admin-list-row(체크박스 div)로 바뀌어
  *  PR#251 의 --nav 스코프 grid(auto 1fr)가 미매칭됨 → 체크박스 컬럼을 더한 3열 grid 로 대체.
- *  #datasourceList 스코프라 #settingsList 등 다른 nav 목록(1fr)은 무영향. */
+ *  #datasourceList 스코프라 #settingsList 등 다른 nav 목록(1fr)은 무영향.
+ *  TASK-20260618T030534: 네트워크 도트 우측에 엔진 서비스 브랜드 아이콘 컬럼을 더해 4열
+ *  [체크박스 auto · 도트 auto · 엔진아이콘 auto · main 1fr]. 행 children(cb·dot·engIcon·main)과
+ *  1:1 매핑 — 고정폭 컬럼이라 콘텐츠 길이 무관 행 간 정렬 안정(행 목록 컬럼 정합 정책). */
 #datasourceList .admin-list-row {
-  grid-template-columns: auto auto 1fr;
+  grid-template-columns: auto auto auto 1fr;
 }
+/* 목록 행 엔진 아이콘 — 도트(9px)보다 약간 크게(16px) 식별성 확보. 단색 path(currentColor)에
+ *  inline color 로 브랜드색(MySQL #00758F / MSSQL #EE352C). 드롭다운 .engine-icon 과 동형. */
+.ds-list-engine-icon {
+  width: 16px;
+  height: 16px;
+  align-self: center;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ds-list-engine-icon svg { width: 100%; height: 100%; display: block; }
 
 /* TASK-0053 Phase B/C — product subcatalog cards (Role/Account detail) */
 .admin-product-card-list {

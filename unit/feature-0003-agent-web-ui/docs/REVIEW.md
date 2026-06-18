@@ -13,6 +13,14 @@ source_of_truth: true
 - 분류 근거: frontend-only 비파괴 UI 추가(검색 입력 + 클라이언트측 표시 필터). 백엔드·스키마·RBAC·엔드포인트·데이터·인증/인가 무변경 → §12.3 Minor. 적대 보안 리뷰 패널(outside-voice)은 RBAC/권한 모델 변경 한정([[feedback_outside_voice_for_rbac]])이라 대상 아님.
 - 자체 점검: ① 필터는 클라이언트 표시 토글일 뿐 — 제품 접근 권한은 백엔드 `state.products`(TASK-0295 `_filter_products_for_account_access`)가 이미 게이트하므로, 검색은 그 권한 게이트 결과 위에서만 동작(권한 우회 0, 숨겨진 제품을 검색으로 드러낼 수 없음). ② 재렌더 대신 `.hidden` 토글로 포커스·한글 IME 유지(매 input 마다 input 요소 재생성 시 조합 깨짐 회피). ③ 매 open 시 메뉴 재렌더라 검색어 비휘발(직전 검색어 stale 잔류 없음). ④ 제품 수 < 임계(6)면 입력칸 미렌더 → 소수 제품 환경 기존 동작 무회귀. ⑤ Escape/외부 클릭 닫기는 기존 `openProductDropup` 의 document capture 핸들러가 처리(검색 input 도 menu.contains 보호 안). ⑥ data-search 는 라벨(`(product_key) 제품명`) 소문자라 product_key·한글명 양쪽 매칭.
 - 잔여: PB-0008 Windows-browser 실측(배포 후, 실 드롭업에서 입력→실시간 필터·sticky 고정·자동 focus·결과없음 안내).
+## REV-20260618T030534-ai-claude-ds-list-engine-icon [SKIPPED:frontend-ui-list-icon-no-backend-no-rbac]
+- Date: 2026-06-18
+- Cycle: TASK-20260618T030534 (데이터소스 목록 행에 엔진 서비스 아이콘 — 연결 도트 우측), Minor §12.3 — frontend-only, 비파괴 additive.
+- 변경: `_dsRenderList` 가 연결 도트 우측에 `engineMeta(ds.engine)` 브랜드 아이콘(`.ds-list-engine-icon`) 삽입 + `#datasourceList` 행 grid 4열화 + cache-buster. 백엔드·RBAC·스키마·엔드포인트·데이터 0.
+- 판단: 외부 패널 SKIP — (1) Minor 추가(비파괴) UI, (2) 핵심 자산(engineMeta/ENGINE_CATALOG/baked 아이콘)은 직전 TASK-20260618T022006 에서 적대 outside-voice 리뷰 SHIP(REV-20260618-0315, 8가설 REFUTED)로 이미 검증됨 — 본 변경은 그 단일 출처를 목록 행에 재사용할 뿐. (3) 유일한 신규 리스크인 행 grid 정렬은 4열 grid 동반 갱신 + jsdom 단언 + PB-0008 실측으로 커버.
+- Verification: jsdom `verify_ds_list_engine_icon.mjs` 17/17 PASS(아이콘 빌드·브랜드색·aria·도트 우측 배선·이전 3-append 잔존 0·4열 grid·아이콘 CSS) + node --check. **화면 정본 = PB-0008 Windows-browser(배포 후)** — 목록 각 행 도트 우측 MySQL/SQL Server 브랜드 아이콘·행 정렬 무붕괴(jsdom 은 grid layout 미계산).
+- Residual: 머지 → 배포(web 재빌드) → PB-0008 Windows-browser → 마감.
+- Cross-ref: CHG-20260618T030534 / REQ-20260618-0318·AC-0576 / TASK-20260618T022006(엔진 드롭다운 — 아이콘 자산 출처).
 
 ## REV-20260618T030014-ai-claude-engine-dropdown-evidence [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-18 (TASK-20260618T022006 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence 기록)
