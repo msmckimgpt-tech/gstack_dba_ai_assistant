@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260618-0318 (TASK-0304 — 무거운 쿼리 사전 감지 + LLM 재작성 코칭)
+- Date: 2026-06-18 (TASK-0304, **Major §12.3** — datasource 실행 거동 + LLM 행동(시스템 프롬프트))
+- Scope: TASK-0299 SHOWPLAN/EXPLAIN 부하추정을 활용해, 무거운 쿼리를 실행 전 가로채고 LLM 이 더 가벼운 쿼리로 재작성해 목적을 달성하도록 거동 변경. 추정/게이트 *메커니즘*은 불변(TASK-0299), 메시지 프레이밍 + 시스템 프롬프트 + 운영 모드(gate)만 변경. 보안경계(allowlist/sql_guard/RBAC) 변경 0.
+- 근본: gate=하드차단(막다른 길)·warn=사후경고(부하 이미 발생) 둘 다 "LLM 이 미리 감지해 가벼운 쿼리로 목적 달성" 의도와 불일치. 사용자 결정 "가로채고 LLM 재작성".
+- 변경:
+  - `agent_core.py` SYSTEM_PROMPT: "QUERY LOAD — STAY LIGHT, ACHIEVE THE GOAL WITH THE CHEAPEST QUERY" 섹션 추가 — 처음부터 효율적 쿼리(필요 컬럼만·WHERE·서버측 집계·표본 LIMIT/TOP), 큰 조회 전 explain_query 자가확인, 게이트 표시 시 confirm_heavy 강행 금지·더 가벼운 동등 쿼리로 재작성(tool 루프 내, 사용자엔 차단 미노출), confirm_heavy=최후수단.
+  - `tools.py` gate 메시지: "차단합니다" → "실행하지 않았습니다 + 같은 목적 유지하며 더 가벼운 쿼리로 재구성해 다시 실행" 코칭(재작성 우선·confirm_heavy 후순위). execute_sql/confirm_heavy 도구 description 동반 정렬. 게이트 *로직*(가로채기·fail-closed·must_estimate)은 불변.
+  - 토큰 보존: 기존 테스트 단언("무거운 쿼리"/"confirm_heavy=true") 유지 → 게이트 메커니즘 회귀 0.
+- 운영: `AGENT_QUERY_GUARD_MODE=warn → gate` 승격(.env, 배포 시) — TASK-0299 검증으로 MSSQL 2개 모두 SHOWPLAN 보유 확인되어 fail-closed 위험 없음. 라이브 WebSystemPrompts global row 도 갱신(코드 상수=seed, DB row=라이브 truth).
+- Files: src/agent_core.py, src/modules/tools.py, tests/test_query_guard.py, docs/{FUNCTION,TASK,MODIFY,REVIEW}.md
+- Rollback: SYSTEM_PROMPT 섹션 제거 + gate 메시지 환원 + `AGENT_QUERY_GUARD_MODE=warn/off`.
+- Deploy: web + ask-worker + insight-worker 재빌드(agent_core.py/tools.py = agent-core 3 이미지 공유 baked) + 라이브 global row PUT + .env gate.
+
 ## CHG-20260617T100524-ai-claude-account-insight-kv-source (TASK-20260617T100524 — 추출 소스 kv 보강)
 - `src/modules/insight.py` `run_account_insight_pass` — 후보 쿼리 `JOIN agent_runtime.summary`→`LEFT JOIN`(summary 필수 제거, COALESCE '') + per-conv 로직: kv(origin_request/thread_goal/topic) 먼저 로드 → **summary+kv 합산 신호** 길이 게이트(≥MIN_SUMMARY_LEN) + 합산 fingerprint(summary 비어도 kv 변경 시 재추출). 근거: 배포처 summary 0행(요약 쓰기 결함)이나 kv 신호 존재 → summary-필수면 후보 0. 보안/PII/source_type 불변.
 - `tests/test_account_recall.py` +1(kv-only 추출). 정본 [DESIGN-account-insight-recall.md](DESIGN-account-insight-recall.md) §10.

@@ -108,6 +108,18 @@ def test_gate_blocks_heavy_query(monkeypatch):
     assert "실행 시간" not in out  # 실행 안 됨
 
 
+def test_gate_message_coaches_rewrite_not_block(monkeypatch):
+    # TASK-0304: gate 메시지는 "차단" 이 아니라 더 가벼운 쿼리로 재구성 코칭 + confirm_heavy 는 최후수단.
+    monkeypatch.setattr(cfg, "AGENT_QUERY_GUARD_MODE", "gate", raising=False)
+    monkeypatch.setattr(cfg, "AGENT_QUERY_EXPLAIN_ROWS_WARN", 1_000_000, raising=False)
+    _stub_exec(monkeypatch, est_rows=9_000_000)
+    out = tools._tool_execute_sql(None, {"sql": "SELECT * FROM dbgame.big"})
+    assert "재구성" in out                  # 더 가벼운 쿼리로 재구성 유도
+    assert "실행하지 않았습니다" in out      # 가로채기(실행 전)
+    assert "최후수단" in out                 # confirm_heavy 는 후순위
+    assert "실행 시간" not in out
+
+
 def test_gate_confirm_heavy_executes(monkeypatch):
     monkeypatch.setattr(cfg, "AGENT_QUERY_GUARD_MODE", "gate", raising=False)
     monkeypatch.setattr(cfg, "AGENT_QUERY_EXPLAIN_ROWS_WARN", 1_000_000, raising=False)
