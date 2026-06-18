@@ -23,6 +23,24 @@ source_of_truth: true
   - 회귀: `filteredProducts()` 의 `if(!q) return slice()` 단축 제거가 유일한 동작 변경점 — 빈 검색 + filter="all" 이 전체 반환임을 verify 11/11(특히 `product all empty-search`)로 확인. 기본 "all" 이라 미상호작용 사용자에겐 변화 없음.
   - 검증 정본: 화면 동작은 PB-0008 Windows-browser(배포 후) — 역할·제품 탭에서 비활성 클릭 시 비활성 행만 렌더 + computed `is-active` 버튼 상태.
 - Verdict: **[SKIPPED]** — frontend-only list 필터, 검증된 계정 탭 패턴 미러. 백엔드·권한·스키마 무영향, 회귀 위험 낮음(verify 11/11 + node --check).
+## REV-20260618-0315 [SUBAGENT:engine-dropdown-adversarial] — SHIP
+- Date: 2026-06-18
+- Cycle: TASK-20260618T022006 (관리 콘솔 데이터소스 '새 항목' 엔진 선택 = 아이콘 드롭다운), Minor §12.3 — frontend-only, 비파괴 UI.
+- Trigger: §18.8 — production 배포(deploy_scope: included) 대상 + 데이터소스(자격증명) surface 인접이라 적대적 outside-voice(general-purpose, REFUTE 지향) 1패스. RBAC 변경 없음(자체로는 panel 비의무)이나 배포 대상이라 선제 검증.
+- Verdict: **SHIP** (8가설 전부 REFUTED, BLOCKER/MAJOR 0).
+- 적대 검증 8항목(file:line evidence):
+  - H1 저장 계약 파손 — **REFUTED**: hidden `<input>` 이 `.value` 계약 유지(`hidden.value=selected`/`_choose` 가 canonical mysql|mssql 기록), save 루프(`inputs[k].value.trim()`)에서 engine 은 password/user/key 특수케이스 미해당→`else body[k]=v`→POST/PATCH 동일 직렬화. create·edit 모두 engine 정상 전송.
+  - H2 XSS(`ic.innerHTML=meta.icon`) — **REFUTED**: meta 는 하드코딩 `ENGINE_CATALOG`(또는 폴백 [0])에서만, `.icon` 은 모듈 상수 2개. user/server 입력이 innerHTML 미도달. `ds.engine` 은 lookup 키로만 사용(HTML 렌더 안 됨).
+  - H3 편집 prefill 회귀 — **REFUTED**: edit 시 `ds.engine||"mysql"` 로 초기화·해당 옵션 aria-selected/버튼 paint. 필드 순서(key→engine→host→port→user→password) 보존, write-only user/password·key-on-change 로직 무변경.
+  - H4 리스너 누수 — **REFUTED**(기존 norm 정합, 회귀 아님): `_closeEnginePicker` 가 렌더당 추가·미제거인데 기존 `_closePicker`(admin.js ~6629, admin-db-picker)와 **동일 패턴**. 더 나쁜 관행 도입 아님, stale 리스너는 detached 노드 `contains` 1회 체크로 저렴. 선택적 cleanup 은 주변 코드와 괴리되어 미적용.
+  - H5 드롭다운 클리핑 — **REFUTED**: `.engine-picker-list` 는 normal flow(`margin-top`/`width:100%`), **position:absolute 없음**. wrapper relative 는 containing-block 위생만. TASK-0240 완화책(`.admin-detail-col` overflow scroll)과 정합, `max-height:240px`+`overflow-y:auto` 로 목록 자체 흡수.
+  - H6 키보드/a11y — **REFUTED**(기능 정상, minor polish gap): role=listbox/option·aria-selected·aria-haspopup·aria-expanded, ↓↑ 클램프·Enter/Space·Esc+버튼 refocus, 포커스 트랩 없음. minor=keydown 이 `document.activeElement` 기반(열린 후 옵션 포커스로 동작) — `_open()` 이 선택 옵션 포커스라 수용.
+  - H7 포트 placeholder 데이터손실 — **REFUTED**: onChange·초기 paint 모두 `inputs.port.placeholder` 만 set, `.value` 미할당. 사용자 입력 포트는 엔진 변경에도 보존.
+  - H8 미변경 편집 폴백 강제 — **REFUTED**(가정조차 무해): edit 무상호작용 시 `engineMeta(ds.engine)` 가 저장 엔진 그대로 반환→동일 값 전송. 백엔드가 engine∈{mysql,mssql} 보장이라 폴백 발화 불가, 구 자유텍스트도 동일 `||"mysql"` 폴백 보유(신규 coercion surface 0).
+  - 기타: admin.html cache-bust `?v=20260617-...`→`?v=20260618-engine-dropdown`(정확), 백엔드 계약 미접촉.
+- Verification: jsdom `verify_engine_dropdown.mjs` 36/36 PASS + node --check. **화면 정본 = PB-0008 Windows-browser(배포 후)** — 드롭다운 열림·MySQL/SQL Server 브랜드 아이콘 렌더·선택 반영·브랜드색(jsdom 은 layout 미계산이라 픽셀·클리핑 미검출).
+- Residual: 머지 → 배포(web 재빌드) → PB-0008 Windows-browser → 마감.
+- Cross-ref: CHG-20260618-0315 / REQ-20260618-0315·AC-0572 / TASK-20260618T022006.
 
 ## REV-20260618T011645-ai-claude-date-group-collapse-evidence [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-18 (TASK-20260618T010417 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence 기록)

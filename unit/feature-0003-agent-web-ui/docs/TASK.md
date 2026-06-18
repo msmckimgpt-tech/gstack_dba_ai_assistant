@@ -4157,3 +4157,14 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 라이브 검증(실 running stack + 브라우저): 수정 전 제품 3개 일괄 삭제 → 0건 삭제, 수정 후 → 3건 전부 삭제. is-to-delete rows=2·pendingDots=2. 회귀(역할 일괄 비활성 2/2) 정상. node --check + py ast.parse.
 - [x] outside-voice 적대 리뷰 SHIP-WITH-FIXES(REV-20260617-0312) — 의도외 삭제 0(refuted)·partial-fail 안전·기본제품 backend 가드(MAJOR 흡수)·제품 행 마커(MINOR 흡수).
 - [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → 라이브 재검증(기본 제품 삭제 409·일괄 삭제 N건 전부·pending 마커) + PB-0008 Windows-browser → 마감.
+
+### TASK-20260618T022006 — 관리 콘솔 데이터소스 '새 항목' 엔진 선택 = 아이콘 드롭다운 (REQ-20260618-0315, AC-0572, Minor §12.3, 2026-06-18)
+- 사용자 보고(/_template:entry): `관리 콘솔 > 데이터소스` 의 새 항목 추가 시 엔진을 **드롭다운**으로 선택하게 하고, **식별하기 쉽도록 각 엔진의 서비스 아이콘**을 웹에서 탐색해 적절히 구성.
+- 근본: `_dsRenderForm` 의 엔진 입력이 자유 텍스트 input("엔진 (mysql|mssql)")이라 오타 가능 + 식별 보조 없음. 백엔드는 이미 engine ∈ {mysql, mssql} 만 허용(app.py POST/PATCH `/api/admin/datasources`) — FE 가드·식별 부재였던 것.
+- [x] admin.js: `ENGINE_CATALOG`(mysql|mssql — 라벨·기본포트·브랜드색·아이콘) + `engineMeta()` 폴백(미지원/공백/null→mysql, 백엔드 기본값 정합) + `_dsBuildEngineField` 커스텀 드롭다운(아이콘+라벨 트리거, role=listbox/option·aria-selected·↓↑/Enter/Esc, hidden `valueHolder` 로 기존 텍스트 input 의 `.value` 계약 유지) 신설.
+- [x] admin.js `_dsRenderForm`: 엔진 자유 텍스트 → `_dsBuildEngineField` 드롭다운 교체. save 핸들러는 `inputs.engine.value`(hidden) 를 그대로 읽어 POST/PATCH `body.engine` 무변경(계약 보존). 엔진 변경 시 포트 placeholder=엔진 기본포트(mysql 3306/mssql 1433, **값 강제변경 안 함** — 사용자 입력 보존).
+- [x] 아이콘 = 공식 서비스 브랜드 마크 **inline SVG baking**(외부 CDN 핫링크 0 — dashboard sparkline·프로필 identicon 과 동일 "외부 의존 0" baked 정책). MySQL=simple-icons 돌고래(teal #00758F) · MSSQL=devicon 공식 SQL Server 마크(red #EE352C). 단색 path `fill=currentColor` + `.engine-icon` color 로 브랜드색.
+- [x] styles.css: `.engine-picker*`/`.engine-option*`/`.engine-icon` 신설. 목록은 admin-db-picker 처럼 **inline-flow(position:absolute 금지)** — `.admin-detail-col`(overflow-y:auto)이 absolute 드롭다운을 잘라내던 TASK-0240 문제 답습 회피. admin.html 캐시버스터 `?v=20260618-engine-dropdown`.
+- [x] 검증: jsdom `verify_engine_dropdown.mjs` 36 PASS(드롭다운 구조·옵션별 브랜드 svg·hidden 값 계약·선택→repaint/aria/onChange·engineMeta 폴백·CSS inline-flow) + node --check. frontend-only(백엔드·RBAC·스키마·엔드포인트·데이터 0).
+- [x] outside-voice 적대 리뷰(general-purpose, REFUTE 지향) **SHIP**(REV-20260618-0315) — 8가설 전부 REFUTED: 저장 계약 보존·XSS 0(아이콘=하드코딩 상수)·편집 prefill 정상·리스너 패턴 기존 정합(회귀 아님)·클리핑 0(inline-flow)·a11y 정상·포트 placeholder-only(데이터손실 0)·폴백 무해. BLOCKER/MAJOR 0.
+- [ ] 머지 → 배포(web 재빌드, deploy_scope: included) → PB-0008 Windows-browser(실 Chrome 드롭다운 열림·MySQL/SQL Server 브랜드 아이콘 렌더·선택 반영) → 마감.
