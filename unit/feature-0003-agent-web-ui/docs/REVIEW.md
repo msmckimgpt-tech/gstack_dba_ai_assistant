@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260618T051005-ai-claude-release-notes-evidence [SKIPPED:docs-only-pb0008-evidence]
+- Date: 2026-06-18 (TASK-20260618T044611 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence)
+- 분류 근거: docs 전용(TEST §4 Run PASS + TASK 마감 + MODIFY/REVIEW). 코드·정적자산·RBAC·스키마 무변경 → 리뷰 SKIP. 검증 대상 코드는 본 cycle REV-20260618T044611([SUBAGENT]) + REV-20260618T050409(hotfix) 에서 점검 완료.
+- 잔여: 없음(cycle 마감).
+
 ## REV-20260618T050409-ai-claude-release-notes [SKIPPED:frontend-css-collapse-hotfix-no-backend-no-rbac]
 - Date: 2026-06-18 (TASK-20260618T044611 후속 — PB-0008 적발 접힘 버그 CSS hotfix)
 - 분류 근거: CSS 1규칙(`.rn-group-body[hidden]{display:none}`) + 캐시버스터 bump 2 + 테스트 가드 1. 로직·백엔드·RBAC·스키마·엔드포인트·데이터 0. 본 cycle 의 적대적 리뷰(REV-20260618T044611 [SUBAGENT])는 이미 완료, 본 항목은 그 리뷰가 의존한 화면 정본(PB-0008)이 적발한 단일 CSS 트랩의 수정이라 추가 패널 불요.

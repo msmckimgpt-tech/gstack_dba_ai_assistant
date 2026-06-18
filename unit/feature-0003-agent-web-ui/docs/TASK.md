@@ -26,7 +26,7 @@ source_of_truth: true
 - [x] `verify_release_notes.mjs` **26/26 PASS**(그룹 수·기본 접힘·카운트·토글·일자 포맷·영역 필터·모두 펼치기·XSS·빈 데이터).
 - [x] verify-completion --pre-commit PASS(9) → 머지(PR #338, main `8b8fe53`) → web 재배포(deploy_scope: included, `docker compose build web`+`up -d --no-deps web`, repo-web-1 Up healthy·mysql_ok·pg_ok, 서빙 `release-notes(-data).js`·index/admin 탭·누출어 0 baked).
 - [x] **PB-0008 1차 적발**: 작업 화면 릴리즈 노트 탭 실측 — 접힌 그룹 computed `display:flex`(접힘 무력화). `.rn-group-body{display:flex}` 가 UA `[hidden]{display:none}` override(권한 grid 트랩 동류). → CSS hotfix(`.rn-group-body[hidden]{display:none}`) + `styles.css?v=` bump(기존 사용자 stale CSS 방지) + jsdom 가드(27/27). CHG/REV-20260618T050409.
-- [ ] hotfix 재배포 → **PB-0008 재실측**(접힌 그룹 computed `display:none` + 양 화면[작업/관리] 일자 그룹·기본 접힘·토글·필터) → evidence 기록.
+- [x] hotfix 재배포(PR #339, main `091280e`) → **PB-0008 재실측 PASS**: 작업 화면+관리 콘솔 양쪽 접힌 그룹 computed `display:none`(높이 0px)·첫 그룹 펼침·토글·영역 필터(작업 40/관리 23)·모두 펼치기·누출어 0 서빙 확정. evidence `artifacts/pb0008-release-notes/{work-screen,admin}-release-notes.png`. CHG/REV-20260618T051005-evidence. **cycle 완료.**
 
 ## TASK-20260618T025220-ai-claude-ds-acc-collapsed-default — 관리 콘솔 > 제품: 제품 선택 시 접근 가능 DB 목록 기본 접힘 (REQ-20260618-0316, AC-0573, Minor §12.3)
 - 보고(사용자, 2026-06-18): 기본적으로 제품 항목을 선택했을 경우 데이터베이스 목록이 접혀 있도록 구성해 달라. (TASK-20260618T022150 접기 토글 후속 — 토글은 됐으나 기본은 펼침이었음.)
