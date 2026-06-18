@@ -4446,6 +4446,13 @@ function renderAccountDetail() {
   );
   if (accountProductGroup) {
     accountProductGroup.appendChild(productOverrides);
+    // TASK-0303: 카드(select[data-override-code])는 grid 렌더 이후 임베드되므로 배지를 다시 집계하고,
+    //   allow/deny override 가 있으면 그룹을 펼친다(역할 카드 동형).
+    _updateOverrideGroupSummary(accountProductGroup);
+    const _ov = accountProductGroup.querySelectorAll("select[data-override-code]");
+    let _hasNonInherit = false;
+    _ov.forEach((s) => { if (s.value === "allow" || s.value === "deny") _hasNonInherit = true; });
+    if (_hasNonInherit) accountProductGroup.open = true;
   } else {
     // Fallback: product 그룹이 grid 에 없으면 (정적 product.manage 등 권한 부재 시) 별도 section.
     paneEl.appendChild(productOverrides);
@@ -5059,12 +5066,19 @@ function renderRoleDetail() {
       const renderedStatic = new Set(
         Array.from(permWrap.querySelectorAll("input[type='checkbox']")).map((input) => input.value)
       );
-      const existingDynamic = (merged.permission_codes || []).filter((c) =>
+      // TASK-0303: 보존 대상(dynamic product.access.* + 숨긴 권한)은 렌더 시점 merged 스냅샷이 아니라
+      //   라이브 mergedRole(pending 오버레이) 에서 읽어야 한다. 정적 권한 체크박스를 토글하기 전에
+      //   제품 접근 카드를 켰다면 그 pending 이 merged 스냅샷엔 없어, 여기서 정적 변경 시 union 에서
+      //   누락→제품 토글이 사라진다(정적↔제품 상호 클로버). 라이브로 읽어 양쪽 편집을 보존한다.
+      const _liveRole = mergedRole(adminState.selectedRoleId);
+      const _liveCodes = (_liveRole && Array.isArray(_liveRole.permission_codes))
+        ? _liveRole.permission_codes : (merged.permission_codes || []);
+      const existingDynamic = _liveCodes.filter((c) =>
         String(c).startsWith("product.access.")
       );
       // TASK-0300: grid 에 렌더되지 않은(본인 미보유라 숨긴) 기존 역할 권한은 보존한다 —
       //   숨긴 권한이 payload 에서 누락돼 제거되는 것 방지. 백엔드도 merge 하지만 pending 정합용.
-      const preservedHidden = (merged.permission_codes || []).filter(
+      const preservedHidden = _liveCodes.filter(
         (c) => !renderedStatic.has(c) && !String(c).startsWith("product.access.")
       );
       const codes = Array.from(new Set([...checkedStatic, ...existingDynamic, ...preservedHidden]));
@@ -5088,6 +5102,12 @@ function renderRoleDetail() {
     );
     if (roleProductGroup) {
       roleProductGroup.appendChild(productCards);
+      // TASK-0303: 카드는 grid 렌더(_updateCheckboxGroupSummary 1차 실행) *이후* 임베드되므로
+      //   배지가 "0/0" 으로 고정됐었다. 임베드 직후 다시 집계해 실제 N/M(부여 제품/전체)을 표시하고,
+      //   부여가 있으면 그룹을 펼친다(다른 그룹과 동일 동작).
+      _updateCheckboxGroupSummary(roleProductGroup);
+      const _granted = roleProductGroup.querySelectorAll("input[type='checkbox']:checked").length;
+      if (_granted > 0) roleProductGroup.open = true;
     } else {
       paneEl.appendChild(productCards);
     }
@@ -7344,11 +7364,20 @@ function buildRoleProductCardList(role, disabled, opts = {}) {
   const products = adminState.products || [];
 
   const onToggle = (code, granted) => {
-    const current = new Set((role.permission_codes || []).map(String));
+    // TASK-0303: 라이브 merged(pending 오버레이) 기준으로 읽는다. 렌더 시점 role.permission_codes
+    //   스냅샷을 쓰면 직전 토글이 만든 pending 을 반영하지 못해 — 제품을 여러 개 켜도 매 토글이
+    //   서버 스냅샷+단건으로 permission_codes 를 통째 교체 → 마지막 1개만 남는다(다중선택 무효).
+    //   mergedRole 로 현재 effective codes 를 읽어 단건만 가감한다(신규 역할=draft 도 mergedRole 처리).
+    const live = mergedRole(role.id);
+    const base = (live && Array.isArray(live.permission_codes)) ? live.permission_codes : (role.permission_codes || []);
+    const current = new Set(base.map(String));
     if (granted) current.add(code);
     else current.delete(code);
     setRolePending(role.id, { permission_codes: Array.from(current) });
     renderRoleList();
+    // TASK-0303: 임베드된 product_access 그룹의 N/M 배지를 토글 즉시 갱신(상세 재렌더 없이).
+    const grp = wrap.closest("details.permission-group");
+    if (grp) _updateCheckboxGroupSummary(grp);
   };
 
   if (!products.length) {
@@ -7423,13 +7452,20 @@ function buildAccountProductOverrideList(account, disabled, opts = {}) {
   const overrides = account.permission_overrides || {};
 
   const onChange = (code, value) => {
-    const next = { ...(account.permission_overrides || {}) };
+    // TASK-0303: 라이브 merged(pending 오버레이) 기준으로 읽는다(역할 카드와 동일 근본). 렌더 시점
+    //   account.permission_overrides 스냅샷을 쓰면 직전 카드 변경이 만든 pending 을 잃어 — 제품
+    //   override 를 여러 개 바꿔도 마지막 1개만 남고, 정적 override 변경과도 서로 덮어쓴다.
+    const live = mergedAccount(account.id);
+    const next = { ...((live && live.permission_overrides) || account.permission_overrides || {}) };
     if (value === "inherit") {
       delete next[code];
     } else {
       next[code] = value;
     }
     setAccountPending(account.id, { permission_overrides: next });
+    // TASK-0303: 임베드된 product_access 그룹의 허용/거부/상속 배지를 변경 즉시 갱신.
+    const grp = wrap.closest("details.permission-group");
+    if (grp) _updateOverrideGroupSummary(grp);
   };
 
   if (!products.length) {

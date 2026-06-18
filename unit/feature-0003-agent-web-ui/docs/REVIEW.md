@@ -30,7 +30,7 @@ source_of_truth: true
 - 판단: 외부 패널 SKIP — (1) Minor 추가(비파괴) UI, (2) 핵심 자산(engineMeta/ENGINE_CATALOG/baked 아이콘)은 직전 TASK-20260618T022006 에서 적대 outside-voice 리뷰 SHIP(REV-20260618-0315, 8가설 REFUTED)로 이미 검증됨 — 본 변경은 그 단일 출처를 목록 행에 재사용할 뿐. (3) 유일한 신규 리스크인 행 grid 정렬은 4열 grid 동반 갱신 + jsdom 단언 + PB-0008 실측으로 커버.
 - Verification: jsdom `verify_ds_list_engine_icon.mjs` 17/17 PASS(아이콘 빌드·브랜드색·aria·도트 우측 배선·이전 3-append 잔존 0·4열 grid·아이콘 CSS) + node --check. **화면 정본 = PB-0008 Windows-browser(배포 후)** — 목록 각 행 도트 우측 MySQL/SQL Server 브랜드 아이콘·행 정렬 무붕괴(jsdom 은 grid layout 미계산).
 - Residual: 머지 → 배포(web 재빌드) → PB-0008 Windows-browser → 마감.
-- Cross-ref: CHG-20260618T030534 / REQ-20260618-0318·AC-0576 / TASK-20260618T022006(엔진 드롭다운 — 아이콘 자산 출처).
+- Cross-ref: CHG-20260618T030534 / REQ-20260618-0319·AC-0576 / TASK-20260618T022006(엔진 드롭다운 — 아이콘 자산 출처).
 
 ## REV-20260618T030014-ai-claude-engine-dropdown-evidence [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-18 (TASK-20260618T022006 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence 기록)
@@ -3281,3 +3281,14 @@ source_of_truth: true
 - PB-0008 요지(PASS): 실 배포 admin.js helper(DB_PICKER_SEARCH_MIN=6 + 4 fn) + styles.css 위 render-injection. CSS computed: toolbar sticky·search border 1px·"일치 선택" 버튼 rgb(37,99,235)·is-regex-match primary@12%·hidden 항목 display:none(글로벌 .hidden !important 가 .admin-db-picker-item display:flex 이김). helper: 검색 'prod' 3/8·'zzzz' 0+결과없음 가시·정규식 '^prod_' count 3·'[' ok:false·순수 helper 정상. 시각 evidence picker-search-regex.png(1249×836).
 - Verification: docs-only. 실측 정본 = 본 evidence 가 기록하는 PB-0008 + tests/verify_dbpicker_search_regex.mjs 33/33.
 - Cross-ref: CHG-20260618T025755-ai-claude-dbpicker-search-regex-evidence / CHG-20260618T025755-ai-claude-dbpicker-search-regex / REQ-20260618-0317 / AC-0574 / AC-0575.
+
+## REV-20260618-0317 [SUBAGENT:product-access-multiselect-safety]
+- Date: 2026-06-18
+- Cycle: TASK-0303 (역할/계정 '제품 사용(product_access)' 다중선택 무효 + 그룹 카운트 "0/0"), Major §12.3 — 권한 편집(어떤 product.access 코드가 staged/저장되는지)에 영향 → RBAC-인접.
+- Trigger: §18.8 + [[feedback_outside_voice_for_rbac]] — 권한 모델 staging 경로 변경. 적대적 outside-voice 리뷰(general-purpose, REFUTE 지향).
+- Verdict: **SHIP** — 권고 흡수 0(전 concern refuted), 머지 가능.
+- 적대 검증 6항목(전부 REFUTED): ① 권한 손실 — mergedRole 은 항상 effective 전체(base∪pending) 반환, 모든 pending write 가 "전체±단건"이라 정적/hidden 손실 불가(writer 2곳뿐: 5017·7193). ② TASK-0300 self-scope 회귀 — preservedHidden 라이브 읽기는 stale 보다 *엄격히 안전*(hidden 코드는 base/pending 양쪽에 존재, 라이브가 누락 가능성 더 낮음), `verify_perm_self_scope.mjs` 13/13 유지. ③ escalation — allowedCodes/_selfAllowedRole 필터·백엔드 `_enforce_role_permission_self_scope`(app.py:1257)·`_enforce_override_self_scope`(1227) 무변경, 프론트는 in-memory source 만 바꿈(bypass 0). ④ role divergence — onToggle=캡처 role.id(선택 시 detail 전체 재렌더), main=selectedRoleId, 분기 불가. ⑤ count inflation — product_access 그룹은 dynamic-only 빈 컨테이너(static 체크박스 0), buildSystemPromptEditor 는 textarea/select(checkbox 0) → 정확히 제품 토글만 집계("3/16"). ⑥ 신규역할 — 카드는 `!merged._isNew` 시만 임베드(onToggle 미도달), main onChange 의 mergedRole 은 draft 반환(무영향).
+- 무조치(기존·범위외): M1(그룹 "모두 선택/해제" 버튼이 카드 toggle 에 change 미디스패치 — bulk 선택 미영속, TASK-0303 이전부터 존재) · M2(계정 메인 override onChange 가 hidden 보존에 stale 사용 — overrideWrap DOM 에서 product select 라이브 수집하므로 안전, 역할측만 라이브 전환). 둘 다 본 fix 미도입.
+- Verification: `verify_product_access_multiselect.mjs` 6 PASS(실 추출 함수 + OLD 버그 대조군) + node --check. **화면 정본 = PB-0008(배포 후)**.
+- Residual: 머지 → 배포(web 재빌드) → 라이브 재검증(역할 제품 3개 토글→3개 staged·배지 N/M·적용 후 영속) + PB-0008 Windows-browser.
+- Cross-ref: CHG-20260618-0317 / REQ-20260618-0320 / TASK-0303 / TASK-0300(self-scope 선행)·TASK-0288(RBAC 선행).

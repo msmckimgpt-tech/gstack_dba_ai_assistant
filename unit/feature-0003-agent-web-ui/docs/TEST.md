@@ -1053,3 +1053,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **단위(정적, 컨테이너 외)**: `tests/verify_dbpicker_search_regex.mjs` **33/33 PASS**(순수 검색 5·정규식 6·DOM 검색 4·DOM 하이라이트 3·wiring 7·CSS/cache-buster 8) + `node --check admin.js`.
   - **Pass/Fail: PASS** — 배포된 시스템에서 '+ 데이터베이스 추가' 검색 필터·정규식 일괄 선택(additive)·라이브 카운트/하이라이트·검색결과없음·선택됨 N개·sticky toolbar 가 실 배포 CSS/JS 로 동작함을 실제 Windows 브라우저로 실측 통과. CHECK#13(PB-0008 Windows-browser) **충족**.
   - **Notes:** ① toolbar 는 후보 사용자 DB ≥ 6 일 때만 노출(소수 목록 무회귀). ② 임시 검증 동안만 `.env` `WEB_ALLOWED_HOSTS` 에 WSL IP 추가 후 검증 종료 시 복원(deployed 이미지·영속 config 무변경, WSL IP 호스트 거부 복귀 실측). ③ 기 캐시 사용자는 1회 하드리프레시(cache-buster `?v=20260618-ds-list-engine-icon` — 동시 머지 후행 cache-buster, admin.js 내용에 본 변경 포함).
+- 2026-06-18 (TASK-0303 역할/계정 '제품 사용(product_access)' 다중선택 무효 + 그룹 카운트 "0/0", **Major §12.3**; CHG/REV-20260618-0317):
+  - **Environment: node + jsdom 격리(실 함수 추출)** — `tests/verify_product_access_multiselect.mjs` 가 admin.js 에서 실제 `mergedRole`/`setRolePending`/`mergedAccount`/`setAccountPending`/`_updateCheckboxGroupSummary` 를 brace-match 추출해 평가. 라이브 브라우저는 동시세션 잦은 재배포로 세션 회전(쿠키 무효화)·docker cp 덮어쓰기가 반복돼 본 cycle 검증은 결정적 node 정본 + 배포 후 PB-0008.
+  - **결과 6/6 PASS**: ① 역할 제품 3개 토글 → 3개 모두 staged(다중선택 누적) ② mv 해제 후 kr·dk 보존 ③ **OLD 스냅샷 로직 = 마지막 1개만 남음(버그 재현 대조군)** ④ 제품 토글 후 정적 권한 변경 시 제품 접근 보존(정적↔제품 클로버 방지) ⑤ 계정 제품 override 3개 → 3개 staged ⑥ 카드 임베드 후 재집계 → "3/16 선택"(이전 "0/0" 해소). + node --check admin.js PASS.
+  - **외부리뷰 SHIP**(REV-20260618-0317, general-purpose adversarial): 권한 손실 0·TASK-0300 self-scope 무회귀·escalation 0(백엔드 `_enforce_*_self_scope` 정본)·role divergence 0·카운트 inflation 0·신규역할 안전 — 6항목 전부 refuted.
+  - **Pass/Fail: PASS(로직 정본)** — staging 누적·카운트 재집계 로직 결정적 통과.
+  - **Residual(CHECK#13):** 정식 배포(web 재빌드) 후 **PB-0008 Windows-browser** 로 실 화면 재검증(역할 zz 테스트역할에서 제품 3개 토글 → pending 3개 staged·배지 "N/M"·"모두 적용" 후 영속). jsdom/node 는 layout·실 DOM 이벤트 미계산이라 화면 정본은 PB-0008.
