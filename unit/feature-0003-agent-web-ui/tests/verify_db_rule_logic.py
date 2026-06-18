@@ -100,5 +100,14 @@ ok("match: 잘못된 exclude 패턴 → 전체 [] (over-grant 금지)",
 ok("match: 빈/None include 안전",
    match(["a"], "", None, "mysql", exm) == [] and match([], "^x", None, "mysql", exm) == [])
 
+# ── 4. audit action 등록(PB-0008 적발 회귀 가드): build_audit_change_json 이 5종 action 을
+#       'unknown audit action' raise 이전에 처리해야 _audit_admin_mutation 경로(db_rule.set 등)가 깨지지 않는다.
+_bi = src.index("def build_audit_change_json(")
+_bj = src.index('raise ValueError(f"unknown audit action')
+_bbody = src[_bi:_bj]
+for _act in ("admin.product.db_rule.set", "admin.product.db_rule.delete",
+             "admin.product.db_rule.approve", "admin.product.db.autoadd", "admin.product.db.staged"):
+    ok(f"audit: '{_act}' build_audit_change_json 등록", _act in _bbody)
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)

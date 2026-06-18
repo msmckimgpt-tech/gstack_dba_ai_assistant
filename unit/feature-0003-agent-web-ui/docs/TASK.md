@@ -4257,4 +4257,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] UI: 규칙 에디터(`_renderRuleEditor`)·preview 라이브·pending 1클릭 승인·rule 배지·picker rule 체크박스 비활성·CSS·cache-buster.
 - [x] outside-voice 구현 코드 재리뷰: **SHIP-WITH-FIXES**. B1·B3·B4·B5·M2·M4·M6 충족 확인. BLOCKER(ReDoS alternation `(a|a)*`/`(.*a){20}` 우회) → 검증 강화(그룹수량자 `)[*+?{]` 금지·무한수량자≤8·match 방어심층) — catastrophic 0.000s 즉시 [] 실측. MAJOR#1(creator 활성 확인)·#2(rule 체크박스 비활성) 반영. MAJOR#3(approve 패턴 재매칭) 문서화.
 - [x] 검증: `tests/verify_db_rule_logic.py` 25/25 + `tests/verify_db_rule_ui.mjs` 17/17 + ast.parse + node --check.
-- [ ] 머지 → 배포(web, deploy_scope: included) → PB-0008 Windows-browser(규칙 저장→자동/pending·승인·배지·B4 수동저장 후 rule 행 생존) → 마감.
+- [x] 머지(PR #341, main) → 배포(web) → **PB-0008 적발 버그**: audit action(admin.product.db_rule.set 등) 미등록 → PUT 500. fix=build_audit_change_json 에 5 action 등록(CHG-20260618T052403-audit-fix). 라이브 preview round-trip OK(실 datasource '11개 일치·신규 0개'). 규칙 에디터 실 렌더 OK(border 1px·저장버튼 primary). 재배포 후 PUT/GET/DELETE round-trip 재검증 → 마감.

@@ -3335,3 +3335,12 @@ source_of_truth: true
 - Verification: `verify_db_rule_logic.py` 25/25 + `verify_db_rule_ui.mjs` 17/17 + ast/node 구문 + ReDoS 실측. 화면 정본 = PB-0008(배포 후).
 - Residual: 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser → evidence.
 - Cross-ref: CHG-20260618T044318-ai-claude-db-rule-autosync / REQ-20260618-0322 / AC-0580 / AC-0581 / PLAN-db-rule-autosync.md / PROPOSAL-frequent-db-config-changes.md.
+
+
+## REV-20260618T052403-ai-claude-db-rule-autosync-audit-fix [SKIPPED:audit-action-registration-no-rbac-change]
+- Date: 2026-06-18
+- Cycle: TASK-20260618T044318 후속 — audit action 등록 버그 수정(PB-0008 적발).
+- Panel 생략 근거(§18.8): 권한 모델/접근 경계 변경 0 — 이미 outside-voice 2-pass 통과한 규칙 기능이 동작하도록 audit ActionCode 를 builder 에 등록하는 결함 수정일 뿐(감사 누락→감사 기록 정상화 방향, 보안 강화). 신규 위험 표면 없음.
+- 내용: build_audit_change_json 이 db_rule 5 action 을 raise 이전에 처리 → PUT/DELETE 500 해소. record_audit_event 경로(autoadd/staged/approve)는 builder 미경유라 원래 정상(방어적 등록 포함).
+- Verification: verify_db_rule_logic.py 30/30 + 재배포 후 라이브 round-trip + PB-0008.
+- Cross-ref: CHG-20260618T052403-ai-claude-db-rule-autosync-audit-fix / TASK-20260618T044318 / REQ-20260618-0322.

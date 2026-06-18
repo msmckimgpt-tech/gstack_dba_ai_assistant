@@ -4249,3 +4249,13 @@ source_of_truth: true
 - Verification: `ast.parse(app.py)` + `node --check admin.js` + `verify_db_rule_logic.py` 25/25 + `verify_db_rule_ui.mjs` 17/17 + ReDoS catastrophic 0.000s 차단 실측. outside-voice 구현 재리뷰 SHIP-WITH-FIXES(BLOCKER ReDoS 흡수). 화면 정본 = PB-0008(배포 후).
 - Rollback: 신규 helper/엔드포인트/백그라운드/스키마 helper + admin.js 규칙블록 + CSS 제거, 수동 PUT B4 분기 원복(Source 무시 전체교체), cache-buster·test revert. 스키마 테이블/컬럼은 비파괴(잔존 무해). reconcile 미동작 시 기존 수동 allowlist 그대로.
 - Deploy: web 재빌드 1 이미지(백엔드+프론트 baked). deploy_scope: included.
+
+
+## CHG-20260618T052403-ai-claude-db-rule-autosync-audit-fix
+- Date: 2026-06-18 (TASK-20260618T044318 후속 — PB-0008 적발 audit action 미등록 버그 수정).
+- Scope: feature-0003 `src/app.py`(build_audit_change_json 에 db_rule 5 action 등록) + `tests/verify_db_rule_logic.py`(회귀 가드).
+- 내용: 규칙 PUT/DELETE 가 `_audit_admin_mutation` → `build_audit_change_json` 경로인데, 신규 action(`admin.product.db_rule.set/delete`, `db.autoadd/staged`, `db_rule.approve`)이 빌더에 미등록 → `unknown audit action` ValueError → 500/rollback 으로 규칙 저장 자체가 실패(PB-0008 라이브 적발). 빌더에 5 action handler 추가(target_product_id/datasource_key/before/after 통과).
+- Why: PB-0008 Windows-browser 실 저장 시 500 발견 — 단위/jsdom 은 audit 레이어 미경유라 못 잡음(라이브 게이트의 가치).
+- Verification: ast.parse + verify_db_rule_logic.py 30/30(audit 등록 가드 5건 포함) + 재배포 후 라이브 PUT/GET/DELETE round-trip.
+- Rollback: 빌더 5 action 블록 제거.
+- Deploy: web 재빌드. deploy_scope: included.
