@@ -9,6 +9,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260618T050409-ai-claude-release-notes (TASK-20260618T044611 후속 — PB-0008 적발 접힘 버그 + CSS 캐시버스터)
+- Date: 2026-06-18
+- Scope: frontend CSS hotfix. `styles.css` 1규칙 + `index.html`/`admin.html` 캐시버스터 + 테스트 가드 1건. 로직·백엔드·RBAC 0.
+- 변경:
+  - `src/static/styles.css` — `.rn-group-body[hidden] { display: none; }` 추가. **PB-0008 적발**: `.rn-group-body{display:flex}` 가 UA `[hidden]{display:none}` 를 specificity 동률(둘 다 0,1,0)+소스순서로 덮어써, 접힌 그룹(hidden 속성·aria-expanded=false)이 실제 화면에선 여전히 `display:flex`(펼침)로 보였다. class+attr (0,2,0) 명시 규칙으로 우선권 확보 → 접힘 정상. (메모리의 권한 grid `[hidden]` override 트랩과 동류 — jsdom 은 cascade 미계산이라 못 잡고 PB-0008 만 적발.)
+  - `src/static/index.html` · `admin.html` — `styles.css?v=` 를 `20260618-release-notes` 로 bump. 신규 `.rn-*` 스타일을 기존 사용자(캐시된 styles.css) 에게도 강제 재요청(미bump 시 기존 cache-buster URL 동일 → stale CSS → RN 무스타일).
+  - `tests/verify_release_notes.mjs` — `.rn-group-body[hidden]{display:none}` 가드 소스 단언 추가(jsdom cascade 비검출 보완, 27/27).
+- Why: PB-0008 Windows-browser 실측에서 접힌 그룹 computed `display:flex` 확인(접힘 무력화). 화면 정본 게이트가 jsdom 통과 버그를 적발.
+- Verification: `verify_release_notes.mjs` 27/27 + `node --check`. 재배포 후 PB-0008 재실측(접힌 그룹 computed display:none).
+- Rollback: 규칙/버전 revert(무손실).
+- Deploy: web 재배포(deploy_scope: included).
+
 ## CHG-20260618T044611-ai-claude-release-notes (TASK-20260618T044611 — 릴리즈 노트: 작업 화면 프로필 탭 + 관리 콘솔 카테고리)
 - Date: 2026-06-18
 - Scope: frontend additive. 신규 정적 2파일 + index.html/admin.html/app.js/admin.js/styles.css + 신규 jsdom 테스트. 백엔드·RBAC·스키마·엔드포인트·DB·신규 권한 **0**.

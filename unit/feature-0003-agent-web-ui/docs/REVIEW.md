@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260618T050409-ai-claude-release-notes [SKIPPED:frontend-css-collapse-hotfix-no-backend-no-rbac]
+- Date: 2026-06-18 (TASK-20260618T044611 후속 — PB-0008 적발 접힘 버그 CSS hotfix)
+- 분류 근거: CSS 1규칙(`.rn-group-body[hidden]{display:none}`) + 캐시버스터 bump 2 + 테스트 가드 1. 로직·백엔드·RBAC·스키마·엔드포인트·데이터 0. 본 cycle 의 적대적 리뷰(REV-20260618T044611 [SUBAGENT])는 이미 완료, 본 항목은 그 리뷰가 의존한 화면 정본(PB-0008)이 적발한 단일 CSS 트랩의 수정이라 추가 패널 불요.
+- 적발/수정: PB-0008 Windows-browser computed `display:flex`(접힌 그룹) → `[hidden]` override 트랩 → class+attr 명시 규칙으로 수정. jsdom 가드 단언 추가(27/27). 재배포 후 PB-0008 재실측으로 확정.
+- Verdict: SHIP(hotfix).
+
 ## REV-20260618T044611-ai-claude-release-notes [SUBAGENT:release-notes-adversarial] SHIP
 - Date: 2026-06-18 (TASK-20260618T044611 — 릴리즈 노트 작업 화면 탭 + 관리 콘솔 카테고리)
 - 분류 근거: **비파괴 additive frontend**(백엔드·RBAC·스키마·엔드포인트·DB·인증/인가·신규 권한·데이터 마이그레이션 0). 보안 표면은 ①정적 콘텐츠의 내부정보 누출(이 기능의 핵심 요구 AC-0579) ②렌더러 XSS 두 축 → 적대적 subagent 1회로 점검(staged diff 전수 + `release-notes-data.js` 콘텐츠 정독).

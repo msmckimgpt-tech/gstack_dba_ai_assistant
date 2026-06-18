@@ -126,6 +126,13 @@ ok("[XSS] 제목 텍스트가 원문 그대로", injTitle.textContent === "<img 
 ok("[XSS] summary 에 <script> 엘리먼트 없음", container.querySelector(".rn-group-summary script") === null);
 releases.shift(); // 복원
 
+// ── 9.5 CSS [hidden] 가드 (PB-0008 적발 트랩 회귀 방지) ────────────
+// jsdom 은 stylesheet cascade 로 computed display 를 계산하지 못하므로(실 화면 정본은
+// PB-0008), 접힘 무력화 트랩(.rn-group-body{display:flex} 가 UA [hidden]{display:none}
+// 를 덮어씀)을 막는 명시 규칙이 styles.css 에 존재하는지 소스 레벨로 단언한다.
+const cssSrc = readFileSync(join(STATIC, "styles.css"), "utf8");
+ok("[CSS] .rn-group-body[hidden]{display:none} 가드 존재", /\.rn-group-body\[hidden\]\s*\{[^}]*display\s*:\s*none/.test(cssSrc));
+
 // ── 10. 빈 데이터 → 안내 ───────────────────────────────────────────
 const saved = DATA.releases;
 DATA.releases = [];
