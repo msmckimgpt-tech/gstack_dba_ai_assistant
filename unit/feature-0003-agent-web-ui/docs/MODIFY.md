@@ -9,6 +9,23 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260618T044611-ai-claude-release-notes (TASK-20260618T044611 — 릴리즈 노트: 작업 화면 프로필 탭 + 관리 콘솔 카테고리)
+- Date: 2026-06-18
+- Scope: frontend additive. 신규 정적 2파일 + index.html/admin.html/app.js/admin.js/styles.css + 신규 jsdom 테스트. 백엔드·RBAC·스키마·엔드포인트·DB·신규 권한 **0**.
+- 변경:
+  - 신규 `src/static/release-notes-data.js` — 릴리즈 노트 콘텐츠(정적 큐레이션). `window.RELEASE_NOTES`, 일자별 11블록(2026-06-04~06-18 상세 + "그 이전" 마일스톤), 항목 = type(new/improved/fixed)+area(work/admin/common)+title+detail. git 출시 이력을 사용자 친화 문장으로 풀고 내부 정보(cutover/PG/RBAC 내부/SSRF/KEK/livelock 등) 비노출·"안정성/보안 개선"으로 간략화.
+  - 신규 `src/static/release-notes.js` — 공유 렌더러 `window.ReleaseNotes.render(container)`. 일자별 그룹 접기(기본 최신 1개 펼침)·영역 필터 칩(전체/작업/관리/공통)·모두 펼치기/접기. 전 텍스트 `textContent`(XSS-safe).
+  - `src/static/index.html` — 프로필 드로어 `drawer-tab[data-profile-tab="release-notes"]` + pane `#releaseNotesBody` + 스크립트 2종(`?v=20260618-release-notes`).
+  - `src/static/app.js` — `switchProfileTab` 에 `release-notes` lazy 렌더 디스패치.
+  - `src/static/admin.html` — 시스템 그룹에 `admin-tab[data-admin-tab="release-notes"]` + pane `#adminReleaseNotesBody` + 스크립트 2종.
+  - `src/static/admin.js` — `switchTab` 에 `release-notes` 렌더 디스패치(`ADMIN_TAB_PERMISSIONS` 미등록 → 콘솔 진입자 모두 노출).
+  - `src/static/styles.css` — `.release-notes`/`.rn-*` 스타일(디자인 토큰 재사용, 종류·영역 배지).
+  - 신규 `tests/verify_release_notes.mjs` — jsdom 검증.
+- Why: 사용자 요청(2026-06-18) — 각 작업 내역·개선을 일반 사용자가 파악하도록 릴리즈 노트 제공, 역할/권한별 진입점 2개, 일자별 접기/탐색.
+- Verification: `node --check` 4파일 PASS + `tests/verify_release_notes.mjs` 26/26 PASS. 화면 정본 = PB-0008 Windows-browser(배포 후 양 화면 실측, 별 evidence cycle).
+- Rollback: 신규 파일 제거 + index/admin/app/admin.js/styles.css 추가분 revert(무손실, 비파괴).
+- Deploy: web 재배포(deploy_scope: included) — 정적 자산 baked.
+
 ## CHG-20260618T031450-ai-claude-product-picker-search-evidence (TASK-20260618T024517 후속 docs-only — PB-0008 Windows-browser evidence)
 - Date: 2026-06-18
 - Scope: docs 전용(TEST/TASK/MODIFY/REVIEW). 코드·정적자산·스키마·RBAC 0.

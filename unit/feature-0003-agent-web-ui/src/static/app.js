@@ -812,6 +812,11 @@ function switchProfileTab(tab) {
     initAccountPromptEditor().catch(() => {});
   } else if (tab === "usage") {
     loadProfileUsage().catch(() => {}); // TASK-0184: 내 사용 내역 lazy 로드
+  } else if (tab === "release-notes") {
+    // 릴리즈 노트 — 정적 콘텐츠라 매 진입 렌더(가벼움). 렌더러는 release-notes.js.
+    if (window.ReleaseNotes) {
+      window.ReleaseNotes.render(document.getElementById("releaseNotesBody"));
+    }
   }
 }
 
