@@ -1074,3 +1074,14 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **외부리뷰 SHIP**(REV-20260618-0317, general-purpose adversarial): 권한 손실 0·TASK-0300 self-scope 무회귀·escalation 0(백엔드 `_enforce_*_self_scope` 정본)·role divergence 0·카운트 inflation 0·신규역할 안전 — 6항목 전부 refuted.
   - **Pass/Fail: PASS(로직 정본)** — staging 누적·카운트 재집계 로직 결정적 통과.
   - **Residual(CHECK#13):** 정식 배포(web 재빌드) 후 **PB-0008 Windows-browser** 로 실 화면 재검증(역할 zz 테스트역할에서 제품 3개 토글 → pending 3개 staged·배지 "N/M"·"모두 적용" 후 영속). jsdom/node 는 layout·실 DOM 이벤트 미계산이라 화면 정본은 PB-0008.
+
+- 2026-06-18 (TASK-20260618T044318 제품 DB allowlist 정규식 규칙 자동 동기화, **Critical §12.3** — **PB-0008 Windows-browser PASS** + 라이브 버그 적발/수정):
+  - **Environment: Windows-browser** (실제 Windows Chrome/149 via `bin/win-browser.py` relay `http://172.28.64.1:9223`, https://172.28.73.199:18080). 배포: main `72e5769`(PR #341 기능 + #342 audit-fix) → `docker compose build web` + `up -d --no-deps web`(healthy). 검증 동안만 `.env WEB_ALLOWED_HOSTS` 에 WSL IP 추가 후 복원(deployed 이미지·영속 config 무변경, 종료 후 WSL IP "Invalid host header" 거부 복귀 실측).
+  - **마이그레이션 라이브 검증**(MySQL agent_memory): `WebProductDatasourceDbRules`·`WebProductDatabasePending` 테이블 + `WebProductDatabases.Source`·`RuleId` 컬럼 생성 확인(probe Source 컬럼 등록으로 slow-path 트리거).
+  - **★라이브 버그 적발(PB-0008 가치)**: 규칙 PUT 시 `audit write failed: unknown audit action: admin.product.db_rule.set`(500) — `_audit_admin_mutation`→`build_audit_change_json` 빌더에 신규 action 미등록. **단위(Python)·jsdom 은 audit 레이어 미경유라 못 잡음**. fix=빌더에 5 action 등록(PR #342) + 회귀 가드(verify_db_rule_logic.py 30/30). 재배포 후 재검증 통과.
+  - **규칙 에디터 실 렌더**(product 109 상세, datasource 펼침): `.cov-db-rule` 노출 · border-top 1px · include/exclude/cap 입력 · 저장버튼 `rgb(37,99,235)` · head "정규식 자동 규칙". 시각 evidence `artifacts/pb0008-db-rule-autosync/rule-editor-live.png`(1920×953).
+  - **라이브 preview round-trip**: MySQL datasource `.` → "11개 일치 · 신규 0개"(실 datasource enum+match+diff), MSSQL `mssql-dk-dev` `.` → 11 matched/0 new — 실 datasource 연결·정규식 매칭·기존 allowlist diff 동작.
+  - **라이브 PUT/GET/DELETE round-trip**(product 109 / mssql-dk-dev, audit fix 후): PUT(`^zzz_nomatch_`) ok·reconcile `no-change` · GET 규칙 반환 · DELETE ok. 비-매칭 패턴이라 allowlist 무변경(안전). 인증 게이트 무인증 GET=401 실측.
+  - **단위(정적)**: `verify_db_rule_logic.py` 30/30(검증·제외셋·매칭 B5·인젝션·**ReDoS 강화** `(a|a)*`/`(.*a){20}` 거부 + catastrophic 0.000s 차단·방어심층·audit action 등록 가드) + `verify_db_rule_ui.mjs` 17/17(wiring·B4 body 필터·배지·CSS) + ast/node.
+  - **Pass/Fail: PASS** — 배포 시스템에서 규칙 저장/조회/삭제·라이브 preview·마이그레이션·인증게이트·규칙 에디터 렌더를 실제 Windows 브라우저로 실측 통과. auto-add insert + rule 배지 live 시연은 모든 datasource 가 완전 allowlist 상태("신규 0")라 비파괴 재현 불가 → 단위(insert 결정 로직)·jsdom(배지) 으로 커버. CHECK#13 충족.
+  - **Notes:** outside-voice 2-pass(설계 NOT-SHIP→하이브리드, 구현 SHIP-WITH-FIXES) BLOCKER ReDoS·MAJOR#1/#2 흡수. 캐시버스터 `?v=20260618-db-rule-autosync`.
