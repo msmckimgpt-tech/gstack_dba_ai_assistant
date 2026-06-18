@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260618T024517-ai-claude-product-picker-search [SKIPPED:frontend-ui-search-filter-no-backend-no-rbac]
+- Date: 2026-06-18 (TASK-20260618T024517 — 제품 선택 드롭업 명칭 검색 필터)
+- 분류 근거: frontend-only 비파괴 UI 추가(검색 입력 + 클라이언트측 표시 필터). 백엔드·스키마·RBAC·엔드포인트·데이터·인증/인가 무변경 → §12.3 Minor. 적대 보안 리뷰 패널(outside-voice)은 RBAC/권한 모델 변경 한정([[feedback_outside_voice_for_rbac]])이라 대상 아님.
+- 자체 점검: ① 필터는 클라이언트 표시 토글일 뿐 — 제품 접근 권한은 백엔드 `state.products`(TASK-0295 `_filter_products_for_account_access`)가 이미 게이트하므로, 검색은 그 권한 게이트 결과 위에서만 동작(권한 우회 0, 숨겨진 제품을 검색으로 드러낼 수 없음). ② 재렌더 대신 `.hidden` 토글로 포커스·한글 IME 유지(매 input 마다 input 요소 재생성 시 조합 깨짐 회피). ③ 매 open 시 메뉴 재렌더라 검색어 비휘발(직전 검색어 stale 잔류 없음). ④ 제품 수 < 임계(6)면 입력칸 미렌더 → 소수 제품 환경 기존 동작 무회귀. ⑤ Escape/외부 클릭 닫기는 기존 `openProductDropup` 의 document capture 핸들러가 처리(검색 input 도 menu.contains 보호 안). ⑥ data-search 는 라벨(`(product_key) 제품명`) 소문자라 product_key·한글명 양쪽 매칭.
+- 잔여: PB-0008 Windows-browser 실측(배포 후, 실 드롭업에서 입력→실시간 필터·sticky 고정·자동 focus·결과없음 안내).
+
 ## REV-20260618T030014-ai-claude-engine-dropdown-evidence [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-18 (TASK-20260618T022006 후속 docs-only — PB-0008 Windows-browser 시각검증 evidence 기록)
 - 변경: 코드 0. TEST.md §3 Windows-browser Run + TASK.md 마감 체크박스 + MODIFY evidence 항목. 실 Windows Chrome 으로 엔진 드롭다운(MySQL #00758F·Microsoft SQL Server #EE352C 브랜드 아이콘+색)·선택 동작 PB-0008 PASS 사실 기록.

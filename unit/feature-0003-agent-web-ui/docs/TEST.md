@@ -1021,3 +1021,10 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **단위(정적, 컨테이너 외)**: `tests/verify_engine_dropdown.mjs` 36/36 PASS(드롭다운 구조·옵션별 svg·hidden 값 계약·선택→repaint/aria/onChange·engineMeta 폴백·CSS inline-flow) + node --check. 적대 outside-voice 리뷰 SHIP(REV-20260618-0315, 8가설 전부 REFUTED).
   - **Pass/Fail: PASS** — 배포된 시스템에서 데이터소스 추가 시 엔진을 드롭다운으로 선택하고, MySQL/Microsoft SQL Server 가 각자의 공식 서비스 브랜드 아이콘+브랜드색으로 식별되며, 선택 시 트리거·포트 placeholder 가 갱신됨을 실제 Windows 브라우저로 실측 통과. CHECK#13(PB-0008 Windows-browser) **충족**.
   - **Notes:** 기 캐시 사용자는 1회 하드리프레시(캐시버스터 `?v=20260618-engine-dropdown`로 자동 최신).
+
+- 2026-06-18 (TASK-20260618T024517-product-picker-search 작업 화면 제품 선택 드롭업 명칭 검색 필터, **Minor §12.3** — 정적 PASS / Windows-browser **배포 후 기록 예정**):
+  - **Environment: 정적(node + jsdom@22, 컨테이너 외)** — 변경은 frontend 정적자산(app.js/styles.css/index.html)뿐, 백엔드·엔드포인트·RBAC 무변경이라 Python(make test) 영향 0.
+  - **jsdom 실측**: `tests/verify_product_picker_search.mjs` **27 PASS / 0 FAIL** — 실 `renderProductDropupMenu`/`buildProductDropupSearch`/`filterProductDropupItems`/`buildProductDropupItem` 본문 추출 + state 스텁. 검증: ① 정의·`PRODUCT_DROPUP_SEARCH_MIN`(=6)·`openProductDropup` focus 코드·`data-search` 설정, ② 제품 8개(≥6)→검색 입력 렌더+placeholder "제품 명칭 검색…"+항목 9(auto1+pinned8)+전 항목 data-search+no-result 초기 hidden, ③ 제품 3개(<6)→검색 입력 미렌더, ④ 필터: 'dk'→DK 1건/no-result hidden, '유럽'→1건, 'qa'→2건(KR_QA·MV_QA), 미매칭→0건+no-result 노출, 빈검색→전체 복원 9건, 'product'→auto 매칭, ⑤ 제품 0개→검색 입력 없음+'접근 가능한 제품이 없습니다'+auto 유지.
+  - **`node --check src/static/app.js`** PASS(문법 무결).
+  - **Pass/Fail: PASS(정적)** — 필터 로직 jsdom 격리 통과. layout(sticky 고정·자동 focus·시각)은 jsdom 미계산 → **PB-0008 Windows-browser 가 정본 게이트**(배포 후 라이브 제품 13개로 검색박스 자연 노출 실측 예정).
+  - **Notes:** 기 캐시 사용자는 1회 하드리프레시(캐시버스터 `?v=20260618-product-picker-search`로 자동 최신).
