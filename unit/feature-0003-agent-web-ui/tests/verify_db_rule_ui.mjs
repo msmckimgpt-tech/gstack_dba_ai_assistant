@@ -1,8 +1,7 @@
 // verify_db_rule_ui.mjs
-// TASK-20260618T044318 (REQ-20260618-0321): 정규식 자동 규칙 UI 의 wiring + CSS 를 정적 검증한다.
-//   규칙 에디터/pending 승인/rule 배지/manual draft 분리(B4)는 renderProductDetail 클로저 깊숙이
-//   있어 격리 호출이 어렵다 → 소스 문자열 wiring + CSS 규칙 존재로 게이트하고, 실제 동작 정본은
-//   PB-0008 Windows-browser(라이브) 가 담당한다.
+// TASK-20260618T061703 (REQ-20260618-0323): 다중 정규식 규칙 UI 의 wiring + CSS 정적 검증.
+//   규칙 카드/추가폼/DB 종속(중첩)/manual 분리는 renderProductDetail 클로저 깊숙이 있어 격리 호출이
+//   어렵다 → 소스 문자열 wiring + CSS 규칙 존재로 게이트하고, 실제 동작 정본은 PB-0008(라이브)이 담당.
 //
 // 실행: node verify_db_rule_ui.mjs
 import { readFileSync } from "node:fs";
@@ -14,6 +13,7 @@ const STATIC = join(__dirname, "..", "src", "static");
 const adminJs = readFileSync(join(STATIC, "admin.js"), "utf8");
 const adminCss = readFileSync(join(STATIC, "styles.css"), "utf8");
 const adminHtml = readFileSync(join(STATIC, "admin.html"), "utf8");
+const flat = adminJs.replace(/\s+/g, " ");
 
 let passed = 0, failed = 0;
 function ok(name, cond) {
@@ -21,32 +21,31 @@ function ok(name, cond) {
   else { failed++; console.log(`  FAIL  ${name}`); }
 }
 
-// ── wiring: 규칙 에디터 ──
-ok("rule editor: _renderRuleEditor 정의", /_renderRuleEditor\s*=\s*async\s*\(\)\s*=>/.test(adminJs));
-ok("rule editor: db-rule GET/PUT 엔드포인트 호출", /\/db-rule`/.test(adminJs) && /method:\s*"PUT"[^}]*db-rule/s.test(adminJs.replace(/\n/g, " ")) || /db-rule`,\s*\{\s*method:\s*"PUT"/.test(adminJs.replace(/\s+/g, " ")));
-ok("rule editor: preview 호출", /db-rule\/preview`/.test(adminJs));
-ok("rule editor: approve-pending 호출", /db-rule\/approve-pending`/.test(adminJs));
-ok("rule editor: 삭제(strip 옵션)", /db-rule\$\{strip \? "\?strip=1" : ""\}`/.test(adminJs) || /strip=1/.test(adminJs));
-ok("rule editor: datasource 전환 시 재렌더 wiring", /_renderRuleEditor\(\);\s*\/\/ TASK-20260618T044318/.test(adminJs) || /_renderRuleEditor\(\);/.test(adminJs));
-ok("rule editor: 저장 후 product 재로드", /reloadProductAfterRuleChange/.test(adminJs) && /loadAdminData\(\)/.test(adminJs));
+// ── 다중 규칙 wiring ──
+ok("multi: 복수형 엔드포인트 베이스(_ruleBase → /db-rules)", /\/db-rules`/.test(adminJs) && /_ruleBase\s*=/.test(adminJs));
+ok("multi: 규칙 카드 빌더 _buildRuleCard", /_buildRuleCard\s*=/.test(adminJs));
+ok("multi: 규칙 폼 빌더 _buildRuleForm(추가/수정 공용)", /_buildRuleForm\s*=/.test(adminJs));
+ok("multi: '+ 규칙 추가' 버튼", /\+ 규칙 추가/.test(adminJs) && /cov-db-rule-addbtn/.test(adminJs));
+ok("multi: 규칙 생성 POST(_ruleBase())", /apiFetch\(_ruleBase\(\), \{ method: "POST"/.test(flat));
+ok("multi: 규칙 수정 PUT(/db-rules/{id})", /\$\{_ruleBase\(\)\}\/\$\{rule\.id\}`, \{ method: "PUT"/.test(flat));
+ok("multi: 규칙 삭제 DELETE(/db-rules/{id})", /\$\{_ruleBase\(\)\}\/\$\{rule\.id\}\$\{strip/.test(adminJs));
+ok("multi: 규칙별 approve-pending(/db-rules/{id}/approve-pending)", /\/\$\{rule\.id\}\/approve-pending`/.test(adminJs));
+ok("multi: preview(/db-rules/preview)", /\$\{_ruleBase\(\)\}\/preview`/.test(adminJs));
 
-// ── B4: manual PUT body 가 rule 행 제외 ──
-ok("B4: PUT body 가 source==='rule' 제외", /\.filter\(\(d\)\s*=>\s*String\(\(d && d\.source\) \|\| "manual"\)\s*!==\s*"rule"\)/.test(adminJs));
+// ── DB 종속(중첩) ──
+ok("종속: 규칙별 DB 필터(rule_id 일치)", /Number\(d\.rule_id\) === Number\(rule\.id\)/.test(flat));
+ok("종속: 중첩 DB 목록 컨테이너(cov-db-rule-dblist)", /cov-db-rule-dblist/.test(adminJs));
+ok("종속: '이 규칙으로 추가된 DB' 헤더", /이 규칙으로 추가된 DB/.test(adminJs));
+ok("분리: rule 행은 메인 cov-db-list 에서 제외(_isRuleRow return)", /if \(_isRuleRow\) return;/.test(adminJs));
 
-// ── rule 행 배지 + × 비노출 ──
-ok("badge: cov-db-rule-badge 생성", /cov-db-rule-badge/.test(adminJs));
-ok("badge: rule 행 판정(_isRuleRow)", /_isRuleRow\s*=\s*String\(\(entry && entry\.source\)/.test(adminJs));
-ok("badge: rule 행은 × 제거 비노출(canManage && !_isRuleRow)", /if \(canManage && !_isRuleRow\)/.test(adminJs));
-
-// ── CSS sanity ──
-ok("CSS: .cov-db-rule 정의", /\.cov-db-rule\s*\{/.test(adminCss));
-ok("CSS: .cov-db-rule-input focus", /\.cov-db-rule-input:focus\s*\{/.test(adminCss));
-ok("CSS: .cov-db-rule-approve 정의", /\.cov-db-rule-approve\s*\{/.test(adminCss));
-ok("CSS: .cov-db-rule-badge 정의", /\.cov-db-rule-badge\s*\{/.test(adminCss));
-ok("CSS: .cov-db-rule-pending-head 정의", /\.cov-db-rule-pending-head\s*\{/.test(adminCss));
+// ── CSS ──
+ok("CSS: .cov-db-rule-card 정의", /\.cov-db-rule-card\s*\{/.test(adminCss));
+ok("CSS: .cov-db-rule-dblist(들여쓰기/가이드선) 정의", /\.cov-db-rule-dblist\s*\{/.test(adminCss));
+ok("CSS: .cov-db-rule-card-pat 정의", /\.cov-db-rule-card-pat\s*\{/.test(adminCss));
+ok("CSS: .cov-db-rule-addbtn 정의", /\.cov-db-rule-addbtn[\s,]/.test(adminCss));
 
 // ── cache-buster ──
-ok("cache-buster: admin.html admin.js/styles.css db-rule-autosync", /admin\.js\?v=20260618-db-rule-autosync/.test(adminHtml) && /styles\.css\?v=20260618-db-rule-autosync/.test(adminHtml));
+ok("cache-buster: admin.html db-rule-multi", /admin\.js\?v=20260618-db-rule-multi/.test(adminHtml) && /styles\.css\?v=20260618-db-rule-multi/.test(adminHtml));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

@@ -4282,3 +4282,11 @@ source_of_truth: true
 - Verification: ast.parse + verify_db_rule_logic.py 30/30(audit 등록 가드 5건 포함) + 재배포 후 라이브 PUT/GET/DELETE round-trip.
 - Rollback: 빌더 5 action 블록 제거.
 - Deploy: web 재빌드. deploy_scope: included.
+## CHG-20260618T061703-ai-claude-db-rule-multi
+- Date: 2026-06-18 (TASK-20260618T061703 — DB allowlist 정규식 규칙 다중 + 종속 UI). TASK-20260618T044318 확장.
+- Scope: feature-0003 `src/app.py`(UNIQUE 제거+SortOrder 마이그레이션·probe·fast-path catchup·다중규칙 함수/엔드포인트·INSERT IGNORE·rule_id 직렬화) + `src/static/admin.js`(규칙 카드/폼/추가·DB 중첩·redrawChips manual 분리) + `styles.css`(.cov-db-rule-card*/-dblist*) + admin.html·index.html(cache-buster) + tests(logic 30/ui 18) + docs.
+- 내용: (product,ds)당 규칙 1→N. 각 규칙 카드에 그 규칙이 추가한 DB 를 중첩 표시(종속 시각화). reconcile 은 규칙별 순차(cross-rule dedup, 먼저 매칭한 규칙이 RuleId 소유), 삭제는 RuleId 행만 strip. 안전 모델(cap/pending/ReDoS/manual 우선/감사/creator 재검증) 규칙별 유지. outside-voice 재리뷰 MAJOR#1(INSERT IGNORE)·#2(fast-path catchup) 반영.
+- Why: 사용자 요청 — 여러 규칙 + DB 종속 UI.
+- Verification: ast+node + verify_db_rule_logic.py 30/30 + verify_db_rule_ui.mjs 18/18. 화면 정본=PB-0008.
+- Rollback: 다중규칙 함수/엔드포인트/UI 복원 + UNIQUE 재추가(단, 기존 다중 규칙 행 있으면 충돌 — 운영 주의). 비파괴 스키마(SortOrder 잔존 무해).
+- Deploy: web 재빌드. deploy_scope: included.

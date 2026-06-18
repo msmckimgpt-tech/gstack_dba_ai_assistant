@@ -6768,6 +6768,10 @@ function renderProductDetail() {
     const listEl = document.createElement("div");
     listEl.className = "cov-db-list";
     draft.forEach((entry, idx) => {
+      // TASK-20260618T061703: 규칙(rule) 행은 이 메인 목록이 아니라 각 규칙 카드에 종속 표시 → 여기선 제외.
+      //   (manual 수동 추가 DB 만 이 목록에 남긴다.)
+      const _isRuleRow = String((entry && entry.source) || "manual") === "rule";
+      if (_isRuleRow) return;
       const rowEl = document.createElement("div");
       rowEl.className = "cov-db-row";
       const covRow = covByDb.get(String(entry.schema_name).toLowerCase()) || null;
@@ -6778,16 +6782,6 @@ function renderProductDetail() {
       nameEl.textContent = entry.schema_name;
       nameEl.title = entry.schema_name;
       rowEl.appendChild(nameEl);
-
-      // TASK-20260618T044318: 규칙(rule) 자동 동기화로 추가된 행은 "규칙" 배지(수동 제거 대상 아님).
-      const _isRuleRow = String((entry && entry.source) || "manual") === "rule";
-      if (_isRuleRow) {
-        const rb = document.createElement("span");
-        rb.className = "cov-db-rule-badge";
-        rb.textContent = "규칙";
-        rb.title = "정규식 자동 규칙으로 추가됨 — 규칙 편집/삭제로 관리합니다.";
-        rowEl.appendChild(rb);
-      }
 
       // TASK-0242: insight-worker 가 파악한 역할/도메인 한 줄(이름 다음, 진척 셀 앞).
       rowEl.appendChild(buildDbRoleCell(insByDb[String(entry.schema_name).toLowerCase()] || null, { loading: insLoading }));
@@ -6888,117 +6882,172 @@ function renderProductDetail() {
     renderProductDetail();  // 갱신된 product.databases(rule 행 포함)로 상세 재렌더.
   };
 
+  // TASK-20260618T061703: 다중 규칙 — (product, datasource) 당 여러 규칙. 각 규칙 카드에 그 규칙이
+  //  추가한 DB 를 중첩 표시(DB 가 규칙에 종속돼 보이게). manual DB 는 위 cov-db-list 에 그대로.
   let _renderRuleEditor = () => {};
   if (canManage) {
-    _renderRuleEditor = async () => {
-      const dsk = String(_editDsKey || "").trim().toLowerCase();
-      ruleWrap.innerHTML = "";
-      if (!dsk) return;  // 미바인딩(기본 단일 MySQL)에는 규칙 미지원.
-      const head = document.createElement("div");
-      head.className = "cov-db-rule-head";
-      head.textContent = "정규식 자동 규칙";
-      const hint = document.createElement("div");
-      hint.className = "cov-db-rule-hint";
-      hint.textContent = "정규식과 일치하는 DB 를 데이터소스 변화 시 자동 반영합니다(한도 초과/권한 보류분은 승인 대기).";
+    const _ruleBase = () => `/api/admin/products/${product.id}/datasources/${encodeURIComponent(String(_editDsKey || "").trim().toLowerCase())}/db-rules`;
+    // 정규식 입력 폼(추가/수정 공용). onSubmit(payload) 반환 시 호출. existing=수정 대상 규칙(없으면 추가).
+    const _buildRuleForm = (existing, onSubmit, submitLabel) => {
+      const form = document.createElement("div"); form.className = "cov-db-rule-form";
       const incInput = document.createElement("input");
       incInput.type = "text"; incInput.className = "cov-db-rule-input cov-db-rule-include";
-      incInput.placeholder = "포함 정규식… 예: ^prod_|_live$";
+      incInput.placeholder = "포함 정규식… 예: ^prod_|_live$"; incInput.value = (existing && existing.include_pattern) || "";
       const excInput = document.createElement("input");
       excInput.type = "text"; excInput.className = "cov-db-rule-input cov-db-rule-exclude";
-      excInput.placeholder = "제외 정규식(선택)… 예: _bak$";
+      excInput.placeholder = "제외 정규식(선택)… 예: _bak$"; excInput.value = (existing && existing.exclude_pattern) || "";
       const capInput = document.createElement("input");
-      capInput.type = "number"; capInput.className = "cov-db-rule-cap";
-      capInput.min = "1"; capInput.max = "100"; capInput.value = "3";
+      capInput.type = "number"; capInput.className = "cov-db-rule-cap"; capInput.min = "1"; capInput.max = "100";
+      capInput.value = String((existing && existing.cap) || 3);
       capInput.title = "한 번에 자동 적용할 최대 신규 DB 수(초과 시 승인 대기)";
       const countEl = document.createElement("span"); countEl.className = "cov-db-rule-count";
-      const saveBtn = document.createElement("button");
-      saveBtn.type = "button"; saveBtn.className = "cov-db-rule-save"; saveBtn.textContent = "규칙 저장";
-      const delBtn = document.createElement("button");
-      delBtn.type = "button"; delBtn.className = "cov-db-rule-del hidden"; delBtn.textContent = "규칙 삭제";
+      const okBtn = document.createElement("button"); okBtn.type = "button"; okBtn.className = "cov-db-rule-save"; okBtn.textContent = submitLabel;
       const errEl = document.createElement("div"); errEl.className = "cov-db-rule-err hidden";
-      const pendWrap = document.createElement("div"); pendWrap.className = "cov-db-rule-pending";
       const row1 = document.createElement("div"); row1.className = "cov-db-rule-row"; row1.append(incInput);
       const row2 = document.createElement("div"); row2.className = "cov-db-rule-row"; row2.append(excInput);
       const row3 = document.createElement("div"); row3.className = "cov-db-rule-row";
-      const capLbl = document.createElement("label"); capLbl.className = "cov-db-rule-caplbl";
-      capLbl.textContent = "자동 적용 한도"; capLbl.appendChild(capInput);
-      row3.append(capLbl, countEl, saveBtn, delBtn);
-      ruleWrap.append(head, hint, row1, row2, row3, errEl, pendWrap);
-
-      let data = null;
-      try {
-        data = await apiFetch(`/api/admin/products/${product.id}/datasources/${encodeURIComponent(dsk)}/db-rule`);
-      } catch (e) { data = null; }
-      if (data && data.rule) {
-        incInput.value = data.rule.include_pattern || "";
-        excInput.value = data.rule.exclude_pattern || "";
-        capInput.value = String(data.rule.cap || 3);
-        delBtn.classList.remove("hidden");
+      const capLbl = document.createElement("label"); capLbl.className = "cov-db-rule-caplbl"; capLbl.textContent = "자동 적용 한도"; capLbl.appendChild(capInput);
+      row3.append(capLbl, countEl, okBtn);
+      form.append(row1, row2, row3, errEl);
+      let _pvTimer = null;
+      const _doPreview = async () => {
+        const inc = incInput.value.trim();
+        if (!inc) { countEl.textContent = ""; errEl.classList.add("hidden"); return; }
+        try {
+          const r = await apiFetch(`${_ruleBase()}/preview`,
+            { method: "POST", body: JSON.stringify({ include_pattern: inc, exclude_pattern: excInput.value.trim() }) });
+          if (r && r.ok) { countEl.textContent = `${r.matched_count}개 일치 · 신규 ${r.new_count}개`; errEl.classList.add("hidden"); }
+          else { countEl.textContent = ""; errEl.textContent = (r && r.error) || "정규식 오류"; errEl.classList.remove("hidden"); }
+        } catch (e) { /* keep */ }
+      };
+      const _sch = () => { if (_pvTimer) clearTimeout(_pvTimer); _pvTimer = setTimeout(_doPreview, 350); };
+      incInput.addEventListener("input", _sch); excInput.addEventListener("input", _sch);
+      _doPreview();
+      okBtn.addEventListener("click", async () => {
+        const inc = incInput.value.trim();
+        if (!inc) { errEl.textContent = "포함 정규식을 입력하세요."; errEl.classList.remove("hidden"); return; }
+        okBtn.disabled = true;
+        try {
+          await onSubmit({ include_pattern: inc, exclude_pattern: excInput.value.trim(), cap: Number(capInput.value) || 3 });
+        } catch (e) { errEl.textContent = "실패: " + (e.message || "오류"); errEl.classList.remove("hidden"); okBtn.disabled = false; }
+      });
+      return form;
+    };
+    // 한 규칙 카드: 요약/수정 토글 + 그 규칙이 추가한 DB(중첩) + 그 규칙의 pending.
+    const _buildRuleCard = (rule, idx) => {
+      const dsk = String(_editDsKey || "").trim().toLowerCase();
+      const card = document.createElement("div"); card.className = "cov-db-rule-card";
+      // 헤더(요약 + 수정/삭제).
+      const hd = document.createElement("div"); hd.className = "cov-db-rule-card-head";
+      const title = document.createElement("span"); title.className = "cov-db-rule-card-title";
+      title.textContent = `규칙 ${idx + 1}`;
+      const pat = document.createElement("code"); pat.className = "cov-db-rule-card-pat";
+      pat.textContent = rule.include_pattern + (rule.exclude_pattern ? `  (제외: ${rule.exclude_pattern})` : "");
+      const capPill = document.createElement("span"); capPill.className = "cov-db-rule-card-cap"; capPill.textContent = `한도 ${rule.cap}`;
+      const editBtn = document.createElement("button"); editBtn.type = "button"; editBtn.className = "cov-db-rule-edit"; editBtn.textContent = "수정";
+      const delBtn = document.createElement("button"); delBtn.type = "button"; delBtn.className = "cov-db-rule-del"; delBtn.textContent = "삭제";
+      hd.append(title, pat, capPill, editBtn, delBtn);
+      card.appendChild(hd);
+      // 수정 폼(접힘).
+      const editHost = document.createElement("div"); editHost.className = "cov-db-rule-edit-host hidden"; card.appendChild(editHost);
+      editBtn.addEventListener("click", () => {
+        if (!editHost.classList.contains("hidden")) { editHost.classList.add("hidden"); editHost.innerHTML = ""; return; }
+        editHost.innerHTML = "";
+        editHost.appendChild(_buildRuleForm(rule, async (payload) => {
+          const r = await apiFetch(`${_ruleBase()}/${rule.id}`, { method: "PUT", body: JSON.stringify(payload) });
+          const rec = (r && r.reconcile) || {};
+          showToast(`규칙 수정 — 자동 추가 ${(rec.auto_added || []).length}개${(rec.pending || []).length ? `, 승인 대기 ${(rec.pending || []).length}개` : ""}.`);
+          await reloadProductAfterRuleChange();
+        }, "수정 저장"));
+        editHost.classList.remove("hidden");
+      });
+      delBtn.addEventListener("click", async () => {
+        if (!confirm(`'규칙 ${idx + 1}' (${rule.include_pattern}) 을 삭제할까요?`)) return;
+        const strip = confirm("이 규칙이 추가한 DB 접근 행도 함께 삭제할까요?\n확인=행도 삭제 · 취소=규칙만 삭제(행 유지)");
+        try {
+          await apiFetch(`${_ruleBase()}/${rule.id}${strip ? "?strip=1" : ""}`, { method: "DELETE" });
+          showToast("규칙 삭제됨.");
+          await reloadProductAfterRuleChange();
+        } catch (e) { showToast("삭제 실패: " + (e.message || "오류"), true); }
+      });
+      // 이 규칙이 추가한 DB(종속 중첩 표시).
+      const dbWrap = document.createElement("div"); dbWrap.className = "cov-db-rule-dblist";
+      const ruleDbs = (product.databases || []).filter((d) =>
+        String(d.datasource_key || "").trim().toLowerCase() === dsk && Number(d.rule_id) === Number(rule.id));
+      const dbHead = document.createElement("div"); dbHead.className = "cov-db-rule-dblist-head";
+      dbHead.textContent = `이 규칙으로 추가된 DB ${ruleDbs.length}개`;
+      dbWrap.appendChild(dbHead);
+      if (ruleDbs.length) {
+        ruleDbs.forEach((d) => {
+          const it = document.createElement("div"); it.className = "cov-db-rule-dbitem";
+          const dot = document.createElement("span"); dot.className = "cov-db-rule-dbdot"; dot.textContent = "└";
+          const nm = document.createElement("span"); nm.className = "cov-db-rule-dbname"; nm.textContent = d.schema_name; nm.title = d.schema_name;
+          it.append(dot, nm); dbWrap.appendChild(it);
+        });
+      } else {
+        const em = document.createElement("div"); em.className = "cov-db-rule-dbempty"; em.textContent = "(아직 없음 — 데이터소스에 일치 DB 가 생기면 자동 추가)";
+        dbWrap.appendChild(em);
       }
-      const renderPending = (pending) => {
-        pendWrap.innerHTML = "";
-        const list = pending || [];
-        if (!list.length) return;
+      card.appendChild(dbWrap);
+      // 이 규칙의 pending(승인 대기).
+      const pend = (rule.pending || []);
+      if (pend.length) {
+        const pw = document.createElement("div"); pw.className = "cov-db-rule-pending";
         const ph = document.createElement("div"); ph.className = "cov-db-rule-pending-head";
-        ph.textContent = `승인 대기 ${list.length}개 — 규칙 일치(한도 초과/권한 보류)`;
-        pendWrap.appendChild(ph);
-        list.forEach((p) => {
+        ph.textContent = `승인 대기 ${pend.length}개 (한도 초과/권한 보류)`;
+        pw.appendChild(ph);
+        pend.forEach((p) => {
           const it = document.createElement("div"); it.className = "cov-db-rule-pending-item";
           const nm = document.createElement("span"); nm.className = "cov-db-rule-pending-name"; nm.textContent = p.schema_name;
           const ap = document.createElement("button"); ap.type = "button"; ap.className = "cov-db-rule-approve"; ap.textContent = "승인";
           ap.addEventListener("click", async () => {
             ap.disabled = true;
             try {
-              await apiFetch(`/api/admin/products/${product.id}/datasources/${encodeURIComponent(dsk)}/db-rule/approve-pending`,
-                { method: "POST", body: JSON.stringify({ schemas: [p.schema_name] }) });
+              await apiFetch(`${_ruleBase()}/${rule.id}/approve-pending`, { method: "POST", body: JSON.stringify({ schemas: [p.schema_name] }) });
               showToast(`'${p.schema_name}' 승인 — 접근 목록에 추가됨.`);
               await reloadProductAfterRuleChange();
             } catch (e) { showToast("승인 실패: " + (e.message || "오류"), true); ap.disabled = false; }
           });
-          it.append(nm, ap); pendWrap.appendChild(it);
+          it.append(nm, ap); pw.appendChild(it);
         });
-      };
-      renderPending(data && data.pending);
+        card.appendChild(pw);
+      }
+      return card;
+    };
 
-      let _pvTimer = null;
-      const _doPreview = async () => {
-        const inc = incInput.value.trim();
-        if (!inc) { countEl.textContent = ""; errEl.classList.add("hidden"); return; }
-        try {
-          const r = await apiFetch(`/api/admin/products/${product.id}/datasources/${encodeURIComponent(dsk)}/db-rule/preview`,
-            { method: "POST", body: JSON.stringify({ include_pattern: inc, exclude_pattern: excInput.value.trim() }) });
-          if (r && r.ok) { countEl.textContent = `${r.matched_count}개 일치 · 신규 ${r.new_count}개`; errEl.classList.add("hidden"); }
-          else { countEl.textContent = ""; errEl.textContent = (r && r.error) || "정규식 오류"; errEl.classList.remove("hidden"); }
-        } catch (e) { /* keep last */ }
-      };
-      const _schedule = () => { if (_pvTimer) clearTimeout(_pvTimer); _pvTimer = setTimeout(_doPreview, 350); };
-      incInput.addEventListener("input", _schedule);
-      excInput.addEventListener("input", _schedule);
-      _doPreview();
-
-      saveBtn.addEventListener("click", async () => {
-        const inc = incInput.value.trim();
-        if (!inc) { errEl.textContent = "포함 정규식을 입력하세요."; errEl.classList.remove("hidden"); return; }
-        saveBtn.disabled = true;
-        try {
-          const r = await apiFetch(`/api/admin/products/${product.id}/datasources/${encodeURIComponent(dsk)}/db-rule`,
-            { method: "PUT", body: JSON.stringify({ include_pattern: inc, exclude_pattern: excInput.value.trim(), cap: Number(capInput.value) || 3 }) });
+    _renderRuleEditor = async () => {
+      const dsk = String(_editDsKey || "").trim().toLowerCase();
+      ruleWrap.innerHTML = "";
+      if (!dsk) return;  // 미바인딩(기본 단일 MySQL)에는 규칙 미지원.
+      const head = document.createElement("div"); head.className = "cov-db-rule-head"; head.textContent = "정규식 자동 규칙";
+      const hint = document.createElement("div"); hint.className = "cov-db-rule-hint";
+      hint.textContent = "여러 규칙을 둘 수 있습니다. 각 규칙과 일치하는 DB 를 데이터소스 변화 시 자동 반영하며, 그 규칙에 종속돼 아래에 묶여 표시됩니다(한도 초과/권한 보류분은 승인 대기).";
+      const cardsWrap = document.createElement("div"); cardsWrap.className = "cov-db-rule-cards";
+      const addBtn = document.createElement("button"); addBtn.type = "button"; addBtn.className = "cov-db-rule-addbtn"; addBtn.textContent = "+ 규칙 추가";
+      const addHost = document.createElement("div"); addHost.className = "cov-db-rule-add-host hidden";
+      addBtn.addEventListener("click", () => {
+        if (!addHost.classList.contains("hidden")) { addHost.classList.add("hidden"); addHost.innerHTML = ""; return; }
+        addHost.innerHTML = "";
+        addHost.appendChild(_buildRuleForm(null, async (payload) => {
+          const r = await apiFetch(_ruleBase(), { method: "POST", body: JSON.stringify(payload) });
           const rec = (r && r.reconcile) || {};
-          const a = (rec.auto_added || []).length, pnd = (rec.pending || []).length;
-          showToast(`규칙 저장 — 자동 추가 ${a}개${pnd ? `, 승인 대기 ${pnd}개` : ""}.`);
+          showToast(`규칙 추가 — 자동 추가 ${(rec.auto_added || []).length}개${(rec.pending || []).length ? `, 승인 대기 ${(rec.pending || []).length}개` : ""}.`);
           await reloadProductAfterRuleChange();
-        } catch (e) { errEl.textContent = "저장 실패: " + (e.message || "오류"); errEl.classList.remove("hidden"); saveBtn.disabled = false; }
+        }, "규칙 추가"));
+        addHost.classList.remove("hidden");
       });
-      delBtn.addEventListener("click", async () => {
-        if (!confirm("이 데이터소스의 정규식 자동 규칙을 삭제할까요?")) return;
-        const strip = confirm("규칙으로 추가된 DB 접근 행도 함께 삭제할까요?\n확인=행도 삭제 · 취소=규칙만 삭제(행 유지)");
-        try {
-          await apiFetch(`/api/admin/products/${product.id}/datasources/${encodeURIComponent(dsk)}/db-rule${strip ? "?strip=1" : ""}`,
-            { method: "DELETE" });
-          showToast("규칙 삭제됨.");
-          await reloadProductAfterRuleChange();
-        } catch (e) { showToast("삭제 실패: " + (e.message || "오류"), true); }
-      });
+      ruleWrap.append(head, hint, cardsWrap, addBtn, addHost);
+
+      let data = null;
+      try { data = await apiFetch(`${_ruleBase()}`); } catch (e) { data = null; }
+      const rules = (data && data.rules) || [];
+      if (!rules.length) {
+        const em = document.createElement("div"); em.className = "cov-db-rule-empty";
+        em.textContent = "설정된 규칙이 없습니다. '+ 규칙 추가' 로 첫 규칙을 만드세요.";
+        cardsWrap.appendChild(em);
+      } else {
+        rules.forEach((rule, i) => cardsWrap.appendChild(_buildRuleCard(rule, i)));
+      }
     };
     _renderRuleEditor();
   }
