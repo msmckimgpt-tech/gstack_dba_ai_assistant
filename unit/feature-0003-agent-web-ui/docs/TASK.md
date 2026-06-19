@@ -4313,3 +4313,9 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `tests/test_login_attempt_limit.py` 11/11(B1~B10 + F1, IP throttle 실 동작 + 나머지 inspect.getsource) + make test 전체 회귀 0(사전존재 `test_product_delete_block_conv` 2건 제외, 본 변경 무관) + py_compile + node --check + CSS brace 1373=1373.
 - [x] outside-voice 적대 보안 리뷰(Critical 인증, [[feedback_outside_voice_for_rbac]]) **SHIP-WITH-FIXES**(BLOCKER 0). **흡수**: MINOR(IP 버킷 메모리 가드)·NIT(/api/auth/me 실패횟수 비노출). **accept+문서화**: MAJOR(동시요청 soft-threshold — is_locked 가 느린 PBKDF2 직전 스냅샷이라 버스트가 임계 초과 가능; LOGIN_MAX=연속 한도. 1차 DB잠금·2차 IP throttle+느린해시, 분산 botnet 은 사내 LAN 위협모델 외, 외부 노출 시 별 cycle FOR UPDATE/per-account pre-gate)·MINOR(429vs401 계정열거 오라클=잠금 본질·수용·내부LAN, schema-catchup 선행 의존=must_change idiom 동일, unlock audit-fail 500-after-commit=password-reset 동일 패턴, locked_until naive tz=cosmetic).
 - [ ] 머지 → 배포(web) → 라이브 재검증(5회 실패→잠금→429·관리자 해제) + PB-0008(잠금 배지/해제 버튼) → 마감.
+
+### TASK-20260619T022449 — 릴리즈 노트: LLM 사용 제한 안내 항목 추가 (content-only, Minor §12.3, 2026-06-19)
+- 사용자 정책(2026-06-19): `/_template:entry` 완료 시 릴리즈 노트에도 개발사항 명시 + 기존 노트로 양식·문체 파악 후 정합 구성. TASK-20260619T014034(LLM provider 외부요인 제한) 의 사용자-대상 릴리즈 노트.
+- [x] `release-notes-data.js` `releases[]` 맨 앞 2026-06-19 블록 추가(`generated` 동기) — `{type:new, area:work}` "AI 사용이 일시적으로 제한될 때 화면에서 바로 확인". 기존 문체 정합(사용자 결과 중심·존댓말 detail·내부동작 비노출="외부 요인" 추상화, AC-0579).
+- [x] index.html/admin.html `release-notes-data.js?v=` 캐시버스터 bump(20260619-llm-restriction) + `verify_release_notes.mjs` 34/34 + node --check.
+- [ ] 머지 → 배포(web) → PB-0008(양 진입점 노출) → 마감.
