@@ -36,6 +36,9 @@ source_of_truth: true
 - [~] **S2 Membership** — ✅백엔드: 멤버십 열람 접근제어(중앙 게이트 + 첨부 게이트 OR, F6 sweep) + 멤버 엔드포인트(list/add/remove, owner/`conversation.member.manage`) + member.add/remove audit + backfill wiring + 신규 권한. ⏳잔여: **roster UI**(프론트 멤버 목록·초대·제거)
 - [ ] **S3 Chat+Mention** — ⏳ sender_account_id write 배선 · 사람 채팅(enqueue 미경유) · @assistant enqueue(actor) · LLM 히스토리(구조 sender 라벨·sanitize·연속 user 병합) · **발신자-한정 첨부 주입(F1)** · read-state 커서 · @mention 표시
   - [x] canonical 멘션 파서 (BE modules/mentions.py + FE static/mentions.js + node parity 14/14)
+  - [x] sender_account_id write 배선 (save_core_message + _save_message + _run_agent_core)
+  - [x] 사람 채팅 store-only 엔드포인트 (POST /api/conversations/{cid}/messages)
+  - [x] F1 발신자-한정 첨부 주입 (force_sender_scope + _is_group_conversation)
 - [ ] **S4 Security** — actor 기준 datasource 발화 게이트 + cross-account 감사 + 적대적 리뷰 + 멘션 자동완성 roster 한정
 - [ ] **S5 Realtime+Limits** — 폴링 동기화 + per-conversation run cap + llm_usage actor 귀속 + 멤버 제거/보존 정책
 - [ ] **S6 (deferred, 별도 계획)** — 풀 스레드 UI + run-status `(conversation,thread)` 재키잉

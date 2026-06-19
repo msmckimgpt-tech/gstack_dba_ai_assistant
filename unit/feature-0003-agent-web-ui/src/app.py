@@ -13589,6 +13589,82 @@ def remove_conversation_member(cid: str, account_id: int, request: Request) -> J
         conn.close()
 
 
+def _save_group_chat_message_pg(conversation_id: str, account_id: int, content: str) -> int:
+    """feature-0009: 사람-사람 채팅 메시지(user role)를 PG 에 저장 + 대화 updated_at 갱신.
+
+    LLM 미호출(ask_jobs 미경유). sender_account_id 로 발신자 귀속. returns message_id(0=실패).
+    """
+    from modules.runtime_backend import _get_pg_runtime_backend, _get_pg_runtime_conn
+    pg_conn = _get_pg_runtime_conn()
+    if not pg_conn:
+        return 0
+    try:
+        mid = _get_pg_runtime_backend().save_core_message(
+            pg_conn,
+            conversation_id=conversation_id,
+            role="user",
+            content=content,
+            sender_account_id=int(account_id),
+        )
+        try:
+            with pg_conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE agent_runtime.core_conversations SET updated_at = now() WHERE conversation_id = %s",
+                    (conversation_id,),
+                )
+            pg_conn.commit()
+        except Exception:
+            pass
+        return int(mid or 0)
+    finally:
+        try:
+            pg_conn.close()
+        except Exception:
+            pass
+
+
+@app.post("/api/conversations/{cid}/messages")
+async def post_group_chat_message(cid: str, request: Request) -> JSONResponse:
+    """그룹 대화 사람-사람 채팅 메시지 저장 (LLM 미호출). @assistant 호출은 /api/ask.
+
+    권한: 대화 접근(멤버/owner/read.any). datasource 미접촉이라 무권한 멤버도 채팅 가능
+    (열람 ≠ 발화 — 사람 채팅은 '발화'(제품 사용)가 아니다). 발신자 귀속(sender_account_id).
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    content = str(data.get("content") or data.get("message") or "").strip()
+    if not content:
+        return _json_error("empty message", 400)
+    if len(content) > 8000:
+        return _json_error("메시지가 너무 깁니다.", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_can_access_conversation(
+            conn, account, cid, "conversation.read.own", "conversation.read.any"
+        ):
+            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        # 차단(blocked)·보관(archived) 대화는 진행 불가(채팅 포함).
+        _is_blocked, _block_reason = _conversation_block_info(cid, conn=conn)
+        if _is_blocked:
+            return _json_error(_block_reason or _BLOCKED_PRODUCT_DELETED_REASON, 403)
+        mid = _save_group_chat_message_pg(cid, int(account["id"]), content)
+        if not mid:
+            return _json_error("메시지 저장 실패", 500)
+        return JSONResponse(
+            {"ok": True, "conversation_id": cid, "message_id": mid, "role": "user"}
+        )
+    finally:
+        conn.close()
+
+
 @app.get("/api/conversations/{cid}/shares")
 def list_conversation_shares(cid: str, request: Request) -> JSONResponse:
     """해당 대화의 share 목록 (활성 + revoked 모두). 조회 권한: read.own/any."""
