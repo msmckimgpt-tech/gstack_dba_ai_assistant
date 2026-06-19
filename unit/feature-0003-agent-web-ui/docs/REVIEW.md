@@ -3420,3 +3420,41 @@ source_of_truth: true
 - 내용 검토: 내부동작 비노출(AC-0579) 준수 — Bedrock/자격증명/분류기/PG 등 미노출, "외부 요인"으로 추상화. 기존 노트 문체 정합.
 - Verification: verify_release_notes.mjs 34/34 + node --check.
 - Cross-ref: CHG-20260619T022449-ai-claude-release-note-llm-restriction / TASK-20260619T022449 / TASK-20260619T014034.
+
+## REV-20260619T023922-ai-claude-audit-tamper-evidence [SUBAGENT:audit-tamper-evidence-adversarial]
+- Date: 2026-06-19
+- Cycle: TASK-20260619T023922-audit-tamper-evidence (감사 기록 변조방지 해시 체인), **Critical §12.3** — 감사 무결성.
+- Panel: outside-voice(general-purpose, REFUTE) — Critical 감사 무결성 필수 적대 리뷰.
+- VERDICT: **SHIP-WITH-FIXES** (BLOCKER 0, MAJOR 3, MINOR 4, NIT 1). 9 probe.
+- REFUTED(clean): seal 실패 fail-open(감사 write 유지)·GET_LOCK 재진입/release(finally)·authz(audit.read.any+first_break 내용 비노출)·purge checkpoint 정합(단일 시계 정상)·sync-seal 실패 후 Id 순 재봉인(skip/fork 없음)·기존 read/export/list 무회귀·스키마 멱등 양 경로.
+- **흡수한 MAJOR**:
+  - MAJOR-1(RR 스냅샷 fork): record_audit_event 가 admin 트랜잭션(autocommit=False) caller conn 으로 봉인 시 REPEATABLE READ 고정 스냅샷이 stale view fork 유발 가능 + UPDATE 가드 부재 → **동기 봉인을 fresh autocommit 연결로 전환**(최신 커밋만 보고, 스냅샷 pinning 없음) + **UPDATE `WHERE Id=%s AND EventHash IS NULL` 가드**(locking read 최신 평가, double-seal 차단·경쟁 시 실제 EventHash 로 head 재동기화).
+  - MAJOR-4(verify/purge lock starvation+메모리): `batch=1000000` 단일 봉인이 GET_LOCK 장기점유+대량 fetchall → **`_seal_audit_chain_drain`(1000-batch 반복, 락 짧게)** 로 교체.
+  - MAJOR-2(in-DB 체인 과대표현): full DB-write 공격자는 체인 재계산(2a)·tail truncation(2b)·checkpoint 위조(5) 로 검증 통과 가능 = in-DB 체인 본질 한계 → **위협모델 정직화**(schema docstring + SECURITY.md §13: 비-체인-인지 변조/손상/부분권한 탐지용임을 명시) + **백그라운드 sealer off-DB 로그 앵커**(`[audit-chain-anchor] id=.. hash=.. sealed_count=..`, 외부 WORM/SIEM 선적 시 외부 대조 탐지). 주기적 외부 notarization 은 별 cycle TODO.
+- **수용(문서화)**: MINOR(CAST(JSON AS CHAR) 서버버전/charset 의존 → MySQL major upgrade 시 과거 history false-invalidate 위험·운영 시 동결 가정)·MINOR(ThroughEventId 기록되나 verify 미사용=장식적·향후 boundary 강화 여지)·MINOR(Id/OccurredAt 비-단조 backfill[WebAccountActivity 마이그] 시 경계 interleave 가능·정상상태 무관)·MINOR(테스트=source-grep+순수함수, DB 통합/동시성/truncation 미커버 — make test 게이트가 DB-less라 불가, 라이브 round-trip 으로 보완)·NIT(\x1f/\x1e 구분자 UserAgent embeddable=chosen-prefix collision only).
+- Verification: test_audit_tamper_evidence.py 11/11 + make test 회귀 0 + py_compile + node --check. 화면 정본=PB-0008(배포 후).
+- Cross-ref: CHG-20260619T023922-ai-claude-audit-tamper-evidence / REQ-20260619-0326 / AC-0592~0595 / SECURITY.md §13.
+
+## REV-20260619T030500-ai-claude-llm-usage-quota [SUBAGENT:llm-usage-quota-adversarial]
+- Date: 2026-06-19
+- Cycle: TASK-20260619T030500-llm-usage-quota (LLM 사용량 한도), **Major §12.3** — 비용 통제·가용성 영향.
+- Panel: outside-voice(general-purpose, REFUTE) — over-block/우회 초점.
+- VERDICT: **SHIP-WITH-FIXES** (BLOCKER 0, MAJOR 0, MINOR 다수). 9 probe.
+- REFUTED(clean): 게이트가 slot/worker dispatch 선행(양 모드 커버, conn 닫음)·fail-open 전구간(킬스위치/account None/effective 예외/PG 실패)·0vs미설정 정합·used>=limit 경계·SQLi(table/key_col/trunc 전부 코드 상수)·authz(console.manage·404·self-quota 없음·audit PII 0)·RBAC 무교차·입력검증(NaN/Inf→None)·무회귀(미설정 시 PG 미조회·스키마 멱등 양경로)·프론트 XSS(escapeHtml).
+- **흡수한 MINOR**: parse_limit BIGINT overflow→500 (clamp 9e15 상한) · 0=무제한 footgun (캡션 "전면 차단=1" 명시).
+- **수용(문서화)**: 동시요청 race(pre-flight 한도 본질, parallel limit 6 bound·비용통제라 허용) · aux-call(validate/summary/classify/topic/sql_fix) conversation_id 없어 INNER join 탈락 = under-count(가용성 우선·dominant inference 는 집계·evasion 아님) · admin `prompt/generate` LLM 미게이트(console.manage admin-only 저표면) · daily/monthly date_trunc tz=PG 세션(UTC, 기존 대시보드 정합) · 계정 override free-text id(오타→404, 향후 picker) · 1.x 정수절단.
+- Verification: test_llm_usage_quota.py 10/10 + make test 회귀 0. 화면 정본=PB-0008(배포 후).
+- Cross-ref: CHG-20260619T030500-ai-claude-llm-usage-quota / REQ-20260619-0327 / AC-0596~0599.
+## REV-20260619T034522-ai-claude-oauth-google-foundation [SUBAGENT:oauth-google-foundation-adversarial]
+- Date: 2026-06-19
+- Cycle: TASK-20260619T034522-oauth-google-foundation (Google 계정 OAuth 로그인 토대), **Critical §12.3** — 인증 경로. 사내 웹서비스 편입 기반작업.
+- Panel: outside-voice(general-purpose, REFUTE) — Critical 인증 + 신규 계정 프로비저닝, `feedback_outside_voice_for_rbac` 정책(권한/인증 변경은 외부 시각 필수) 적용.
+- VERDICT: **SHIP-WITH-FIXES** (BLOCKER 0, MAJOR 2, MINOR 2, NIT 2). **MAJOR/MINOR 4건 전부 흡수 후 재검증 PASS** — 토대 단계지만 활성화 전 게이트로 미루지 않고 즉시 수정.
+- REFUTED(clean): 비파괴 위반(flag OFF→/start·/callback 404·기존 login/signup/session/RBAC 무변경·스키마 멱등 NULL)·sentinel 비번 로그인(split("$") ValueError→False)·서명 미검증 임의 ID token 위조(고정 token endpoint 백채널 client_secret+TLS·aud 치환차단=실악용 불가)·admin/로컬 계정 email-link 탈취(Email=NULL)·open redirect/SSRF(고정 `/`·상수 endpoint)·권한 상승(pending 우선·ApprovedAt NULL 하드코딩=signup 보다 보수적)·state 위변조/재생(HMAC+compare_digest+TTL+skew)·oauth_subject 누출(_serialize_account 미포함).
+- **흡수한 MAJOR**:
+  - MAJOR-1(login-CSRF/세션 고정): self-contained 서명 state 가 개시 브라우저에 미바인딩 → 공격자가 자기 플로우 callback URL 을 피해자에게 먹여 공격자 계정으로 로그인시킬 수 있었음(서명은 위변조만 차단). → **state↔브라우저 바인딩 추가**: `/start` 가 random binding 을 state payload(`b`)와 단명 httponly 쿠키(`OAUTH_BIND_COOKIE`)에 동시 심고, `/callback` 이 `hmac.compare_digest(쿠키, state.b)` 일치 시에만 수락(`_oauth_callback_redirect` 가 모든 종료 경로서 쿠키 삭제). 단위테스트 missing-cookie/mismatch 거부 추가.
+  - MAJOR-2(email 재할당 인계): email-link 가 가변 식별자(email)로 안정 식별자(sub) 덮어써 퇴사자→신규입사자 email 재할당 시 옛 계정 인계 가능. → **email-link 를 OAuthSubject NULL(미연결) 계정으로 한정**, 이미 다른 sub 면 `email-conflict` 거부(인계 0, 관리자 개입). SECURITY.md §15.4 명시 + 단위테스트.
+- **흡수한 MINOR**: MINOR-1(nonce 조건부→무조건 enforce, replay 방어) · MINOR-2(aud 문자열만→배열 처리, OIDC 정합).
+- **수용(문서화)**: NIT-1(`.env.oauth` agent-common 공유=least-privilege 위배, §15.4 acknowledged·web-only 분리 후속) · NIT-2(스키마 ALTER 비동기 적용 race=기성 idiom[FailedLoginAttempts/AvatarObjectKey 동일]·신규 회귀 아님). **잔여 활성화 게이트 TODO: ID token JWKS RS256 서명 검증(§15.3)** — 백채널 구조상 현재 실악용 불가하나 외부 배포 전 필수.
+- Verification: test_oauth_google_foundation.py 36/36(기존 29 + 바인딩/conflict/nonce/aud 7 신규) + 전체 회귀 0(사전존재 product-delete 2건 base 동일·무관) + py_compile OK. 비파괴(flag OFF) 유지.
+- Cross-ref: CHG-20260619T034522-ai-claude-oauth-google-foundation / REQ-20260619-0328 / AC-0600~0601 / SECURITY.md §15.

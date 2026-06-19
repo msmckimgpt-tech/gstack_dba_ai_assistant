@@ -35,6 +35,12 @@ x-agent-common: &agent-common
     # optional(required:false) — 미설정 환경은 datasource DB저장만 비활성(.env datasource 는 동작).
     - path: .env.secret
       required: false
+    # TASK-20260619T034522-oauth-google-foundation: Google OAuth client 자격증명. web 의 OAuth 진입점
+    # 전용이나 agent-common 공유 구조상 함께 inherit(agent/insight-worker 는 미사용 — 무해).
+    # optional — 토대 기본 비활성(파일 부재 시 WEB_OAUTH_GOOGLE_ENABLED 미설정 → 엔드포인트 404).
+    # web-only 분리는 후속(SECURITY.md §15.4 least-privilege 한계).
+    - path: .env.oauth
+      required: false
   environment:
     TZ: ${TZ}
     LANG: ${APP_LANG}

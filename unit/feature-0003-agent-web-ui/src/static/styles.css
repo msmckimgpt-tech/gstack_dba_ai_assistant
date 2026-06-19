@@ -179,6 +179,53 @@ a { color: inherit; }
   line-height: 1.6;
 }
 
+/* TASK-20260619T034522-oauth-google-foundation: 외부 IdP(Google) 로그인 진입.
+   .auth-oauth 는 기본 hidden(index.html) — config google.enabled 일 때만 app.js 가 노출. */
+.auth-oauth {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 16px;
+}
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border, #e2e2e2);
+}
+.btn-oauth {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border, #dadce0);
+  border-radius: 8px;
+  background: #fff;
+  color: #3c4043;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+.btn-oauth:hover {
+  background: #f7f8f8;
+  box-shadow: 0 1px 3px rgba(60, 64, 67, 0.18);
+}
+.btn-oauth .oauth-icon {
+  flex-shrink: 0;
+}
+
 /* =====================================================================
    FORM FIELDS  (shared: auth + drawer)
    ===================================================================== */
@@ -4861,6 +4908,11 @@ a { color: inherit; }
 .admin-usage-table th.num, .admin-usage-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .admin-usage-table tbody tr:hover { background: var(--bg); }
 .admin-usage-details { margin-top: 24px; }
+/* TASK-20260619T030500-llm-usage-quota (보안 ④): 사용 한도 편집 행. */
+.admin-quota-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap; }
+.admin-quota-row:last-child { border-bottom: none; }
+.admin-quota-name { min-width: 140px; font-weight: 600; font-size: 13px; }
+.admin-quota-acct-add { display: flex; gap: 8px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
 .admin-usage-details > summary {
   cursor: pointer;
   color: var(--text-2);
@@ -6797,6 +6849,10 @@ a { color: inherit; }
   min-width: 130px;
 }
 
+/* TASK-20260619T023922-audit-tamper-evidence (보안 ③): 감사 무결성 검증 결과 표시. */
+.admin-audit-verify-result { font-size: 12px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; align-self: center; }
+.admin-audit-verify-result.is-ok { background: #ecfdf3; color: var(--success); }
+.admin-audit-verify-result.is-error { background: var(--danger-soft); color: var(--danger); }
 .admin-audit-row {
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);

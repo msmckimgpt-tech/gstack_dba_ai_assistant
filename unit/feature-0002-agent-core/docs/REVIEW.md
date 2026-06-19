@@ -1026,3 +1026,16 @@ source_of_truth: true
 - Deferred(무해): m4(`is-unknown` dead CSS class — 유지), m6(`_read_llm_provider_status` hot-path PG read — 캐시 도입 시 inline-notice staleness 위험이라 미도입, single-row PK read graceful 유지), n7(probe 모델 fallback — max_tokens=1 로 비용 무시 가능).
 - Verification: test_llm_provider_health.py 18(분류·confirmed 게이팅·자격증명 비유출·폴백) + feature-0002 전체 pytest 회귀 0(2 skip) + py_compile + node --check.
 - Cross-ref: CHG-20260619-0319 / TASK-20260619T014034 / feature-0003 REV-20260619T014034-ai-claude-llm-restriction-notice.
+
+## REV-20260619T033714-ai-claude-prompt-injection-defense [SUBAGENT:prompt-injection-defense-adversarial]
+- Date: 2026-06-19
+- Cycle: TASK-20260619T033714-prompt-injection-defense (AI 프롬프트 인젝션 방지), **Major §12.3** — LLM 보안 표면.
+- Panel: outside-voice(general-purpose, REFUTE) — 인젝션 우회/효과성 초점.
+- VERDICT: **SHIP-WITH-FIXES** (BLOCKER 0, MAJOR 흡수). 8 probe.
+- 핵심 정직성: 프롬프트 인젝션 방어는 **확률적 완화이지 보장 아님** — datamark+guard 는 성공률을 낮추고, 실 권한·실행 경계는 RBAC·SQL guard·tool/schema allowlist 가 fail-closed 강제.
+- REFUTED(clean): exact-sentinel 위조 차단(strip, test_b1b)·unicode 룩얼라이크 비-위조·None/대용량 crash-free·라인번호/diff 무회귀(numbered 본문 위 wrap)·샘플 표 구조 유지·user 메시지 비-datamark(신뢰 채널, 정상)·fence breakout(`_number_file_lines` 가 모든 줄 `<N>→` prefix → 콘텐츠 ``` 비-줄머리 → 조기 종료 불가, 완화됨).
+- **흡수한 MAJOR**: ①coverage gap — guard notice 가 "쿼리 실행 결과" 보호 광고하나 `_run_agent_core` 의 execute_sql tool 결과(공격자 데이터=최대 벡터) 미-datamark → **tool_msg content `_datamark_untrusted`**(notice 약속 실 이행, 저장 copy 는 원문). ②KB `schema_list`/`table_insights` 가 "authoritative/trust" 단정 + 미-datamark(악성 컬럼 COMMENT) → **datamark + 이름은 grounding·설명문은 비신뢰 명시**.
+- **흡수한 MINOR**: 과대표현(무력화/차단/방지 → best-effort 확률적 완화·100% 보장 아님 코드주석 명시).
+- **수용(문서화)**: guard notice proximity(블록 인접 재진술 — recall 은 이미 prose, 첨부/결과는 label+전역 notice 로 충분)·i18n(한국어 guard·제품 한국어-우선 정합)·conversation history 과거 raw 행(향후 tool 결과 datamark 가 미래분 커버, 과거분 한계)·token 비용(guard ~200토큰/요청, 허용).
+- Verification: test_prompt_injection_defense.py 10/10 + make test 회귀 0 + py_compile. 라이브 = 배포 후 인젝션 시도 무시 확인(LLM 의존, 합성).
+- Cross-ref: CHG-20260619T033714-ai-claude-prompt-injection-defense / REQ-20260619-0328 / AC-0600~0603 / docs/SECURITY.md §14.

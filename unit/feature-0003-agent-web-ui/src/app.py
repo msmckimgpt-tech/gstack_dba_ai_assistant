@@ -28,7 +28,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from fastapi import FastAPI, Request, UploadFile, File, Form  # TASK-0094 Phase 5: multipart upload
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from modules.memory import (
@@ -620,8 +620,45 @@ LOGIN_MAX_FAILED_ATTEMPTS = max(1, int(os.getenv("WEB_LOGIN_MAX_FAILED_ATTEMPTS"
 LOGIN_LOCKOUT_MINUTES = max(1, int(os.getenv("WEB_LOGIN_LOCKOUT_MINUTES", "15")))
 LOGIN_IP_MAX_ATTEMPTS = max(1, int(os.getenv("WEB_LOGIN_IP_MAX_ATTEMPTS", "20")))
 LOGIN_IP_WINDOW_SEC = max(30, int(os.getenv("WEB_LOGIN_IP_WINDOW_SEC", "600")))
+# TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 토큰 사용량 한도. 역할별 기본 + 계정별 특수(override).
+# 미설정=무제한(배포만으로 누구도 차단하지 않음 — 관리자가 한도 설정 시 발효). `=0` 으로 enforce
+# 전체 비활성(킬스위치). PG usage 조회 실패 시 fail-open(인프라 장애로 전원 차단 회피).
+LLM_QUOTA_ENFORCE = os.getenv("AGENT_LLM_QUOTA_ENFORCE", "1").strip() not in ("0", "false", "no", "off")
+_LLM_QUOTA_TYPES = ("daily", "monthly")
 BOOTSTRAP_ADMIN_USERNAME = str(os.getenv("WEB_BOOTSTRAP_ADMIN_USERNAME", "") or "").strip()
 BOOTSTRAP_ADMIN_PASSWORD = str(os.getenv("WEB_BOOTSTRAP_ADMIN_PASSWORD", "") or "")
+
+# === TASK-20260619T034522-oauth-google-foundation (REQ-20260619-0328): Google OAuth 로그인 토대 ===
+# 사내 웹서비스 편입을 위한 기반작업(사용자 결정 2026-06-19: "비파괴 토대 구축").
+# 비파괴 — 기본 비활성. credential(.env.oauth) 주입 + WEB_OAUTH_GOOGLE_ENABLED=1 일 때만
+# 동작한다. 기존 username/password 로그인은 그대로 유지(공존, 둘 다 허용).
+# 활성 판정 = _oauth_google_configured() (enabled AND client_id AND client_secret AND redirect_uri).
+# 비활성 시 /api/auth/oauth/google/* 엔드포인트는 404 — 런타임 인증 경로 무영향.
+# 상세 정책 = docs/SECURITY.md §15 + feature-0003 FUNCTION.md AC-0600~0601.
+OAUTH_GOOGLE_ENABLED = str(os.getenv("WEB_OAUTH_GOOGLE_ENABLED", "0") or "").strip().lower() in ("1", "true", "yes", "on")
+OAUTH_GOOGLE_CLIENT_ID = str(os.getenv("WEB_OAUTH_GOOGLE_CLIENT_ID", "") or "").strip()
+OAUTH_GOOGLE_CLIENT_SECRET = str(os.getenv("WEB_OAUTH_GOOGLE_CLIENT_SECRET", "") or "")
+OAUTH_GOOGLE_REDIRECT_URI = str(os.getenv("WEB_OAUTH_GOOGLE_REDIRECT_URI", "") or "").strip()
+# 빈 = 모든 Google 계정 허용(사용자 결정 2026-06-19). 콤마구분 도메인으로 사내 Workspace 한정 가능
+# (hd claim / email 도메인 서버 검증). 외부 노출 시 도메인 한정 권장 — SECURITY.md §15.4.
+OAUTH_GOOGLE_ALLOWED_DOMAINS = [
+    d.strip().lower()
+    for d in str(os.getenv("WEB_OAUTH_GOOGLE_ALLOWED_DOMAINS", "") or "").split(",")
+    if d.strip()
+]
+# state/PKCE/nonce HMAC 서명 비밀(CSRF·위변조 방어). 미설정 시 프로세스 기동 1회 임의값
+# (재시작 시 in-flight OAuth 무효 — 토대 단계 허용; 멀티워커/영속이 필요하면 env 로 고정).
+OAUTH_STATE_SECRET = str(os.getenv("WEB_OAUTH_STATE_SECRET", "") or "").strip() or secrets.token_hex(32)
+OAUTH_STATE_TTL_SEC = max(60, int(os.getenv("WEB_OAUTH_STATE_TTL_SEC", "600")))
+OAUTH_GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
+OAUTH_GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+OAUTH_GOOGLE_VALID_ISSUERS = ("https://accounts.google.com", "accounts.google.com")
+# OAuth 신규 계정의 PasswordHash 자리값 — pbkdf2 형식이 아니라 _verify_password 가 항상 False
+# 를 반환한다(=비밀번호 로그인 불가). 컬럼이 NOT NULL 이므로 빈 값 대신 명시 sentinel 사용.
+OAUTH_NO_PASSWORD_SENTINEL = "oauth-google:no-local-password"
+# /start 가 브라우저에 심는 단명 바인딩 쿠키 — callback 의 state 가 이 브라우저에서 개시됐는지
+# 확인(login-CSRF/세션 고정 차단, outside-voice MAJOR-1). state.b == 쿠키값(constant-time)일 때만 수락.
+OAUTH_BIND_COOKIE = "mysql_ai_oauth_bind"
 
 app = FastAPI(title="mysql_ai web")
 
@@ -809,6 +846,66 @@ def _start_db_rule_reconcile_loop() -> None:
             _t.sleep(interval)
 
     threading.Thread(target=_run, name="web-product-db-rule-reconcile", daemon=True).start()
+
+
+@app.on_event("startup")
+def _start_audit_seal_loop() -> None:
+    """TASK-20260619T023922-audit-tamper-evidence (보안 ③): 감사 해시 체인 백그라운드 봉인(안전망).
+
+    record_audit_event 가 동기 봉인하지만, 동기 봉인 실패/누락(예: 봉인 중 예외) 행을 주기적으로
+    catch-up 한다. 간격 `AGENT_AUDIT_SEAL_SEC`(기본 30, 0=비활성). `_seal_audit_chain` 이 멱등·
+    GET_LOCK 직렬이라 동기 봉인과 경쟁해도 안전.
+    """
+    import logging
+    import threading
+    import time as _t
+    log = logging.getLogger(__name__)
+    if not AGENT_AUDIT_ENABLED:
+        return
+    try:
+        interval = int(os.getenv("AGENT_AUDIT_SEAL_SEC", "30") or "30")
+    except Exception:
+        interval = 30
+    if interval <= 0:
+        return
+
+    def _run():
+        _t.sleep(min(15, interval))  # 부팅 직후 herd 회피.
+        last_head = None
+        while True:
+            try:
+                conn = _connect_memory()
+                try:
+                    _seal_audit_chain_drain(conn)
+                    # outside-voice MAJOR-2 흡수 — off-DB 로그 앵커: 매 cycle 체인 head
+                    # (EventHash + max Id + 봉인 행수)를 app 로그로 남긴다. 로그를 외부(WORM/SIEM)
+                    # 로 선적하면 DB-write 공격자의 체인 재계산/tail-truncation/checkpoint 위조를
+                    # 외부 대조로 탐지 가능(in-DB 체인 단독 한계 보완). SECURITY.md §13 참조.
+                    hcur = conn.cursor()
+                    try:
+                        hcur.execute(
+                            "SELECT Id, EventHash FROM WebAuditEvents WHERE EventHash IS NOT NULL "
+                            "ORDER BY Id DESC LIMIT 1"
+                        )
+                        hrow = hcur.fetchone()
+                        hcur.execute("SELECT COUNT(*) FROM WebAuditEvents WHERE EventHash IS NOT NULL")
+                        hcnt = hcur.fetchone()
+                        head = (
+                            f"id={hrow[0]} hash={hrow[1]} sealed_count={hcnt[0]}"
+                            if hrow and hrow[1] else "empty"
+                        )
+                        if head != last_head:
+                            log.info("[audit-chain-anchor] %s", head)
+                            last_head = head
+                    finally:
+                        hcur.close()
+                finally:
+                    conn.close()
+            except Exception as exc:
+                log.warning("audit seal loop 1 cycle 실패(무시): %s", exc)
+            _t.sleep(interval)
+
+    threading.Thread(target=_run, name="web-audit-seal", daemon=True).start()
 
 
 @app.on_event("shutdown")
@@ -1516,6 +1613,10 @@ def _serialize_account(
         # TASK-0268: 아바타 이미지 URL. 설정 시 /api/avatars/<id>(같은 출처 bytes 서빙) +
         # object key 해시 캐시버스터. NULL=미설정 → 프론트가 Identicon 렌더.
         "avatar_url": _avatar_url_for(int(account.get("id") or 0), account.get("avatar_object_key")),
+        # TASK-20260619T034522-oauth-google-foundation: OAuth 편입 식별. email(연동 시 채워짐, 없으면 None)
+        # 과 auth_provider("google" 등, 없으면 None — 로컬 계정). 민감 토큰/secret 은 비노출.
+        "email": str(account.get("email") or "") or None,
+        "auth_provider": str(account.get("auth_provider") or "") or None,
     }
     if include_permissions:
         payload["permissions"] = _account_permissions(account)
@@ -1641,6 +1742,9 @@ SELECT
     a.LockedUntilAt AS locked_until_at,
     (a.LockedUntilAt IS NOT NULL AND a.LockedUntilAt > NOW()) AS is_locked,
     a.AvatarObjectKey AS avatar_object_key,
+    a.Email AS email,
+    a.AuthProvider AS auth_provider,
+    a.OAuthSubject AS oauth_subject,
     r.RoleKey AS role_key,
     r.Name AS role_name,
     r.Description AS role_description,
@@ -4808,6 +4912,195 @@ def _ensure_web_audit_events_schema(conn) -> None:
         cur.close()
 
 
+def _ensure_web_audit_chain_schema(conn) -> None:
+    """TASK-20260619T023922-audit-tamper-evidence (보안 ③, Critical §12.3): 감사 로그 변조방지 해시 체인.
+
+    `WebAuditEvents` 에 `EventHash`/`PrevHash CHAR(64)` 멱등 ALTER + `WebAuditChainCheckpoint`
+    (purge 경계 재앵커) 신설. `EventHash = SHA256(PrevHash | 정규화행)` 해시 체인.
+
+    **위협모델(정직)**: 본 체인은 *tamper-EVIDENCE* 다 — 체인을 인지하지 못한 수정/삭제/삽입
+    (SQL injection 버그·잘못된 마이그레이션·우발적 손상·내용 컬럼만 쓸 수 있는 부분권한 공격자)
+    을 검증에서 탐지한다. 그러나 `WebAuditEvents` 전체 write 권한을 가진 공격자는 행을 고치고
+    EventHash/PrevHash 를 재계산해 후속 행까지 re-chain 하거나(2a), tail 을 truncate 하거나(2b),
+    checkpoint 를 위조해(5) 검증을 통과시킬 수 있다 — in-DB 체인 단독의 본질적 한계.
+    이를 보완하려고 백그라운드 sealer 가 체인 head 해시를 **app 로그로 앵커**(off-DB)하며,
+    로그를 외부 WORM/SIEM 으로 선적하면 외부 대조로 위 공격을 탐지할 수 있다. 강한 보장이
+    필요하면 별 cycle 에서 head 해시의 주기적 외부 notarization(object-lock 버킷 등)을 추가한다
+    (SECURITY.md §13).
+
+    봉인(seal)은 `_seal_audit_chain` 이 GET_LOCK 직렬화 하에 미봉인 커밋행을 Id 순 일괄 처리
+    (fork 방지, `EventHash IS NULL` 가드). 기존 행 NULL=미봉인(다음 seal 이 backfill).
+    fast(`_ensure_seed_catchup`)+slow(`_ensure_web_tables`) 양 경로 — 기존 배포 자동 적용.
+    """
+    cur = conn.cursor()
+    try:
+        for ddl in (
+            "ALTER TABLE WebAuditEvents ADD COLUMN EventHash CHAR(64) NULL",
+            "ALTER TABLE WebAuditEvents ADD COLUMN PrevHash CHAR(64) NULL",
+            "CREATE INDEX IX_WAE_EventHash ON WebAuditEvents (EventHash)",
+        ):
+            try:
+                cur.execute(ddl)
+            except Exception:
+                pass
+        try:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS WebAuditChainCheckpoint (
+                    Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    ThroughEventId BIGINT NOT NULL,
+                    CheckpointHash CHAR(64) NOT NULL,
+                    Reason VARCHAR(32) NOT NULL DEFAULT 'purge',
+                    CreatedAt TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                    INDEX IX_WACC_Through (ThroughEventId)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                """
+            )
+        except Exception:
+            pass
+    finally:
+        cur.close()
+
+
+# TASK-20260619T023922-audit-tamper-evidence (보안 ③): 해시 체인 정규화 + 봉인.
+# 정규화 행 필드는 INSERT 시 불변 컬럼만 — EventHash/PrevHash 자신은 제외(봉인 UPDATE 가
+# 해시를 무효화하지 않도록). OccurredAt 은 ISO 문자열로 안정 직렬화.
+_AUDIT_CHAIN_FIELDS = (
+    "Id", "ActorAccountId", "ActorRoleId", "ActorType", "TargetAccountId",
+    "SessionId", "ActionCode", "ResourceType", "ResourceId",
+    "ChangeJson", "MaskedFields", "RemoteAddr", "UserAgent", "RequestId", "OccurredAt",
+)
+_AUDIT_SEAL_BATCH = 1000
+_AUDIT_SEAL_LOCK_NAME = "webaudit_seal"
+# JSON 컬럼(ChangeJson/MaskedFields)은 CAST(... AS CHAR) 로 MySQL 정규화 텍스트를 읽어
+# 결정성 확보(seal·verify 가 동일 정규형 사용 → 일관 해시). 별칭은 _AUDIT_CHAIN_FIELDS 정합.
+_AUDIT_CHAIN_SELECT = (
+    "Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, SessionId, "
+    "ActionCode, ResourceType, ResourceId, CAST(ChangeJson AS CHAR) AS ChangeJson, "
+    "CAST(MaskedFields AS CHAR) AS MaskedFields, RemoteAddr, UserAgent, RequestId, OccurredAt"
+)
+
+
+def _seal_audit_chain(conn, *, batch: int = _AUDIT_SEAL_BATCH) -> int:
+    """미봉인 커밋행을 Id 순으로 일괄 봉인(GET_LOCK 직렬화 → fork 방지). 봉인 행수 반환.
+
+    autocommit 연결 가정 — 모든 감사 INSERT 가 즉시 커밋되므로 별 연결에서 즉시 가시.
+    best-effort: 실패는 감사 write/응답을 막지 않는다(다음 seal 이 catch-up). 보유 GET_LOCK
+    은 finally 에서 RELEASE.
+    """
+    if not AGENT_AUDIT_ENABLED:
+        return 0
+    lock_cur = conn.cursor()
+    locked = False
+    sealed = 0
+    try:
+        lock_cur.execute("SELECT GET_LOCK(%s, %s)", (_AUDIT_SEAL_LOCK_NAME, 5))
+        got = lock_cur.fetchone()
+        locked = bool(got and got[0] == 1)
+        if not locked:
+            return 0
+        dcur = conn.cursor(dictionary=True)
+        try:
+            # 체인 head = 마지막 봉인 EventHash. 없으면 최신 checkpoint, 그것도 없으면 genesis "".
+            dcur.execute(
+                "SELECT EventHash FROM WebAuditEvents WHERE EventHash IS NOT NULL ORDER BY Id DESC LIMIT 1"
+            )
+            r = dcur.fetchone()
+            prev_hash = str(r["EventHash"]) if r and r.get("EventHash") else ""
+            if not prev_hash:
+                dcur.execute(
+                    "SELECT CheckpointHash FROM WebAuditChainCheckpoint ORDER BY Id DESC LIMIT 1"
+                )
+                cp = dcur.fetchone()
+                prev_hash = str(cp["CheckpointHash"]) if cp and cp.get("CheckpointHash") else ""
+            dcur.execute(
+                f"SELECT {_AUDIT_CHAIN_SELECT} FROM WebAuditEvents "
+                "WHERE EventHash IS NULL ORDER BY Id ASC LIMIT %s",
+                (int(batch),),
+            )
+            rows = dcur.fetchall() or []
+        finally:
+            dcur.close()
+        ucur = conn.cursor()
+        try:
+            for row in rows:
+                canonical = _audit_canonical_string(row)
+                event_hash = _audit_compute_hash(prev_hash, canonical)
+                # AND EventHash IS NULL 가드 (outside-voice MAJOR-1 흡수): 다른 연결이 이미 봉인한
+                # 행은 덮어쓰지 않는다(locking read 가 최신 커밋 버전 평가 → double-seal/fork 차단).
+                ucur.execute(
+                    "UPDATE WebAuditEvents SET EventHash = %s, PrevHash = %s "
+                    "WHERE Id = %s AND EventHash IS NULL",
+                    (event_hash, (prev_hash or None), int(row["Id"])),
+                )
+                if int(ucur.rowcount or 0) == 0:
+                    # 경쟁 연결이 먼저 봉인 — 그 행의 실제 EventHash 를 head 로 재동기화 후 계속.
+                    rcur = conn.cursor()
+                    try:
+                        rcur.execute("SELECT EventHash FROM WebAuditEvents WHERE Id = %s", (int(row["Id"]),))
+                        rr = rcur.fetchone()
+                        if rr and rr[0]:
+                            prev_hash = str(rr[0])
+                    finally:
+                        rcur.close()
+                    continue
+                prev_hash = event_hash
+                sealed += 1
+        finally:
+            ucur.close()
+        return sealed
+    except Exception:
+        return sealed
+    finally:
+        if locked:
+            try:
+                lock_cur.execute("SELECT RELEASE_LOCK(%s)", (_AUDIT_SEAL_LOCK_NAME,))
+                lock_cur.fetchone()
+            except Exception:
+                pass
+        lock_cur.close()
+
+
+def _seal_audit_chain_drain(conn, *, max_iters: int = 10000) -> int:
+    """미봉인 backlog 전체를 봉인 — 단, 매 호출이 GET_LOCK 을 짧게(배치당) 잡았다 놓도록
+    `_seal_audit_chain(batch=_AUDIT_SEAL_BATCH)` 를 반복 호출(outside-voice MAJOR-4 흡수).
+
+    1회 거대 batch(=락 장기 점유 + 대량 fetchall)를 피해 verify/purge 의 lock starvation·메모리
+    폭증을 막는다. 배치보다 적게 봉인되면 drained 로 간주 종료. max_iters 안전 상한.
+    """
+    total = 0
+    for _ in range(max_iters):
+        n = _seal_audit_chain(conn, batch=_AUDIT_SEAL_BATCH)
+        total += int(n or 0)
+        if int(n or 0) < _AUDIT_SEAL_BATCH:
+            break
+    return total
+
+
+def _audit_canonical_string(row: dict) -> str:
+    """감사 행의 결정적 정규화 문자열 — 해시 입력. 필드 순서/구분자 고정.
+
+    None 은 빈 문자열, JSON 컬럼은 이미 문자열(dispatcher 가 sort_keys 직렬화)이라 그대로.
+    OccurredAt(datetime) 은 마이크로초까지 ISO 로 안정화.
+    """
+    parts: list[str] = []
+    for f in _AUDIT_CHAIN_FIELDS:
+        v = row.get(f)
+        if v is None:
+            parts.append("")
+        elif hasattr(v, "isoformat"):
+            parts.append(v.isoformat())
+        else:
+            parts.append(str(v))
+    # \x1f (unit separator) — 본문에 나타나지 않는 제어문자로 필드 경계 모호성 차단.
+    return "\x1f".join(parts)
+
+
+def _audit_compute_hash(prev_hash: str, canonical: str) -> str:
+    import hashlib as _hl
+    return _hl.sha256((str(prev_hash or "") + "\x1e" + canonical).encode("utf-8")).hexdigest()
+
+
 def record_audit_event(
     conn,
     *,
@@ -4906,6 +5199,20 @@ def record_audit_event(
         )
     finally:
         cur.close()
+    # TASK-20260619T023922-audit-tamper-evidence (보안 ③): INSERT 직후 동기 봉인(best-effort).
+    # outside-voice MAJOR-1 흡수: caller conn 이 admin 트랜잭션(autocommit=False)이면 REPEATABLE
+    # READ 스냅샷이 고정돼 seal 이 stale view 로 fork 를 낼 수 있다. 따라서 **fresh autocommit
+    # 연결**로 봉인한다 — 최신 커밋 상태만 보고(스냅샷 pinning 없음), GET_LOCK 직렬 + Id ASC +
+    # EventHash IS NULL 가드로 fork 차단. caller tx 가 아직 미커밋이면 그 행은 다음 seal/백그라운드
+    # 가 커밋 후 봉인(deferred, 무해). 실패해도 감사 write 유지(fail-open).
+    try:
+        _seal_conn = _connect_memory()
+        try:
+            _seal_audit_chain(_seal_conn)
+        finally:
+            _seal_conn.close()
+    except Exception:
+        pass
 
 
 def _build_actor_from_request(
@@ -5082,6 +5389,158 @@ def _ensure_login_lockout_schema(conn) -> None:
         cur.close()
 
 
+def _ensure_llm_quota_schema(conn) -> None:
+    """TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 토큰 사용량 한도 테이블 (멱등 CREATE).
+
+    `WebRoleTokenQuotas`(역할별 기본)·`WebAccountTokenQuotas`(계정별 특수/override). QuotaType=
+    'daily'|'monthly', TokenLimit BIGINT(0=무제한 명시). 미존재 행=상속(계정→역할→무제한).
+    RBAC override 패턴(WebRolePermissions+WebAccountPermissionOverrides) 미러. fast+slow 양 경로.
+    """
+    cur = conn.cursor()
+    try:
+        for ddl in (
+            """
+            CREATE TABLE IF NOT EXISTS WebRoleTokenQuotas (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                RoleId BIGINT NOT NULL,
+                QuotaType VARCHAR(16) NOT NULL,
+                TokenLimit BIGINT NOT NULL,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY UQ_WRTQ (RoleId, QuotaType)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS WebAccountTokenQuotas (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                AccountId BIGINT NOT NULL,
+                QuotaType VARCHAR(16) NOT NULL,
+                TokenLimit BIGINT NOT NULL,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY UQ_WATQ (AccountId, QuotaType)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """,
+        ):
+            try:
+                cur.execute(ddl)
+            except Exception:
+                pass
+    finally:
+        cur.close()
+
+
+def _account_effective_quota(conn, account_id: int, role_id: int, quota_type: str) -> "int | None":
+    """계정 override → 역할 기본 → None(무제한) 순 유효 한도. 0=무제한(명시). (보안 ④)"""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT TokenLimit FROM WebAccountTokenQuotas WHERE AccountId = %s AND QuotaType = %s LIMIT 1",
+            (int(account_id), str(quota_type)),
+        )
+        r = cur.fetchone()
+        if r is not None:
+            return int(r[0] or 0)
+        if role_id:
+            cur.execute(
+                "SELECT TokenLimit FROM WebRoleTokenQuotas WHERE RoleId = %s AND QuotaType = %s LIMIT 1",
+                (int(role_id), str(quota_type)),
+            )
+            rr = cur.fetchone()
+            if rr is not None:
+                return int(rr[0] or 0)
+        return None
+    finally:
+        cur.close()
+
+
+def _account_period_usage_tokens(account_id: int, quota_type: str) -> int:
+    """PG agent_runtime.llm_usage 에서 본인 소유 대화의 토큰 합 — 'daily'=달력 당일,
+    'monthly'=달력 당월(date_trunc). best-effort(실패 시 0=무제한 취급, fail-open)."""
+    trunc = "day" if quota_type == "daily" else "month"
+    try:
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+    except Exception:
+        return 0
+    try:
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT COALESCE(sum(u.total_tokens), 0) "
+                "FROM agent_runtime.llm_usage u "
+                "JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
+                f"WHERE c.owner_account_id = %s AND u.created_at >= date_trunc('{trunc}', now())",
+                (int(account_id),),
+            )
+            row = cur.fetchone()
+            return int((row[0] if row else 0) or 0)
+    except Exception:
+        return 0
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+
+
+def _check_account_token_quota(conn, account: dict) -> "tuple[bool, str]":
+    """LLM 사용량 한도 사전 게이트. (allowed, error_message). 무제한/미설정/인프라장애=allowed.
+    enforce 킬스위치 OFF 면 무조건 allowed. (보안 ④, fail-open)"""
+    if not LLM_QUOTA_ENFORCE or not account:
+        return (True, "")
+    account_id = int(account.get("id") or 0)
+    role_id = int(account.get("role_id") or 0)
+    if account_id <= 0:
+        return (True, "")
+    _label = {"daily": "일일", "monthly": "월간"}
+    for qtype in _LLM_QUOTA_TYPES:
+        try:
+            limit = _account_effective_quota(conn, account_id, role_id, qtype)
+        except Exception:
+            limit = None
+        if not limit or int(limit) <= 0:
+            continue  # 무제한/미설정
+        used = _account_period_usage_tokens(account_id, qtype)
+        if used >= int(limit):
+            return (
+                False,
+                f"{_label.get(qtype, qtype)} LLM 토큰 한도({int(limit):,})를 초과했습니다. "
+                f"현재 사용량 {int(used):,}. 관리자에게 문의하거나 한도 초기화 시점까지 기다려 주세요.",
+            )
+    return (True, "")
+
+
+def _ensure_oauth_identity_schema(conn) -> None:
+    """TASK-20260619T034522-oauth-google-foundation (REQ-20260619-0328, SECURITY.md §15):
+    WebAccounts 에 외부 IdP(Google OAuth) 신원 매핑 컬럼 idempotent ALTER.
+
+    - `Email VARCHAR(320) NULL`: OAuth 신원 또는 향후 이메일 식별용. 기존 행 NULL = 무회귀.
+      (RFC 5321 local 64 + @ + domain 255 = 320.)
+    - `AuthProvider VARCHAR(32) NULL`: 'google' 등. NULL = 로컬(비번) 계정.
+    - `OAuthSubject VARCHAR(255) NULL`: IdP 의 안정적 사용자 식별자(Google `sub`).
+    - UNIQUE (AuthProvider, OAuthSubject): 동일 IdP 신원 중복 계정 차단(부분 NULL 은 MySQL
+      에서 UNIQUE 제약 면제 → 로컬 계정 다수 공존 가능).
+    - UNIQUE (Email): 이메일 기준 계정 link 일관성(NULL 다수 허용).
+
+    기본 비활성 토대 — 컬럼만 추가하고 런타임 인증 경로는 OAUTH_GOOGLE_ENABLED OFF 면 무영향.
+    `_ensure_login_lockout_schema` idiom 동형 — fast-path(_ensure_seed_catchup) +
+    slow-path(_ensure_web_tables) 양쪽 호출로 기존 배포 자동 적용.
+    """
+    cur = conn.cursor()
+    try:
+        for ddl in (
+            "ALTER TABLE WebAccounts ADD COLUMN Email VARCHAR(320) NULL",
+            "ALTER TABLE WebAccounts ADD COLUMN AuthProvider VARCHAR(32) NULL",
+            "ALTER TABLE WebAccounts ADD COLUMN OAuthSubject VARCHAR(255) NULL",
+            "CREATE UNIQUE INDEX UX_WebAccounts_OAuth ON WebAccounts (AuthProvider, OAuthSubject)",
+            "CREATE UNIQUE INDEX UX_WebAccounts_Email ON WebAccounts (Email)",
+        ):
+            try:
+                cur.execute(ddl)
+            except Exception:
+                pass
+    finally:
+        cur.close()
+
+
 def _ensure_avatar_icon_schema(conn) -> None:
     """TASK-0268/0293: fast-path 재기동에서도 WebAccounts.AvatarObjectKey / WebProducts.IconObjectKey
     / WebRoles.IconObjectKey 컬럼이 존재하도록 idempotent ALTER. _ensure_web_tables 의 CREATE 와 동일
@@ -5184,6 +5643,10 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_must_change_password_schema(conn)
     # TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 컬럼 fast-path 보정.
     _ensure_login_lockout_schema(conn)
+    # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 사용량 한도 테이블 (fast path).
+    _ensure_llm_quota_schema(conn)
+    # TASK-20260619T034522-oauth-google-foundation (REQ-20260619-0328): Google OAuth 신원 매핑 컬럼 fast-path 보정.
+    _ensure_oauth_identity_schema(conn)
     # TASK-0268: 아바타/아이콘 object key 컬럼 fast-path 보정(slow path _ensure_web_tables 미경유 재기동 대비).
     _ensure_avatar_icon_schema(conn)
     # TASK-0274: 첨부 버전 관리 컬럼(RootAttachmentId/VersionNumber/CreatedByRole/SupersededAt) fast-path 보정.
@@ -5193,6 +5656,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_web_product_db_rules_schema(conn)
     # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 fast-path 보정.
     _ensure_web_audit_events_schema(conn)
+    # TASK-20260619T023922-audit-tamper-evidence (보안 ③): 감사 해시 체인 컬럼/체크포인트 (fast path).
+    _ensure_web_audit_chain_schema(conn)
     # REQ-20260520-0001 (TASK-0086): WebAccountActivity DROP 완료. migration helper 는
     # rollback 1~2 cycle window 동안 보존 — table 부재 시 SHOW TABLES check 로 silent skip.
     try:
@@ -5397,6 +5862,10 @@ def _ensure_web_tables():
         _ensure_web_share_links_expiry_column(conn)
         # TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 컬럼 (slow path).
         _ensure_login_lockout_schema(conn)
+        # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 사용량 한도 테이블 (slow path).
+        _ensure_llm_quota_schema(conn)
+        # TASK-20260619T034522-oauth-google-foundation (REQ-20260619-0328): Google OAuth 신원 매핑 컬럼 (slow path).
+        _ensure_oauth_identity_schema(conn)
         # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping +
         # derived join + provider files lifecycle 4 신규 테이블 (slow path).
         _ensure_web_conversation_attachments_schema(conn)
@@ -5407,6 +5876,8 @@ def _ensure_web_tables():
         _ensure_attachment_version_schema(conn)
         # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 보장 (slow path).
         _ensure_web_audit_events_schema(conn)
+        # TASK-20260619T023922-audit-tamper-evidence (보안 ③): 감사 해시 체인 컬럼/체크포인트 (slow path).
+        _ensure_web_audit_chain_schema(conn)
         # REQ-20260520-0001 (TASK-0086): migration helper 는 rollback window 동안 보존 (slow path).
         # WebAccountActivity 부재 시 SHOW TABLES check 로 silent skip.
         try:
@@ -10258,6 +10729,12 @@ async def ask(request: Request) -> JSONResponse:
     # 자격증명 검증은 backend 단일 env 소스로 이동 (config.py 의 LLM_API_KEY).
     # 호출 시점에 자격증명이 미설정이면 `_run_agent_core` 가 result["error"] 로
     # 보고 → user 에게 503 안내.
+    # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 토큰 사용량 한도 사전 게이트(역할 기본 + 계정 특수).
+    # 무제한/미설정/인프라장애=통과(fail-open). 초과 시 429(slot 획득 전 조기 차단).
+    _quota_ok, _quota_msg = _check_account_token_quota(conn, account)
+    if not _quota_ok:
+        conn.close()
+        return _json_error(_quota_msg, 429)
     if request_conversation_id:
         if not _conversation_exists(request_conversation_id, conn=conn):
             conn.close()
@@ -11537,7 +12014,7 @@ def _copy_conversation_attachments(
       (DESIGN §6 / ADR-WEB-0005 의 "blob 재업로드 0" 에서 안전상 이탈 — 근거 주석).
     - CSV/XLSX 는 fork 전용 sandbox 를 위해 재적재 대상으로 표시(UploadStatus='uploaded' +
       MetaJson NULL)하고 (new_att_id, new_object_key, kind) 를 반환 → 호출자가 background
-      ingest 를 spawn(조상 sandbox 공유 금지 — DESIGN §14 F5).
+      ingest 를 spawn(조상 sandbox 공유 금지 — DESIGN §15 F5).
     - 첨부는 보조물이므로 **per-attachment fail-open**: 단일 첨부 복사 실패가 fork 전체를
       막지 않는다(대화·문맥은 이미 복사됨). 실패는 log + skip, 성공분만 카운트.
 
@@ -11811,8 +12288,8 @@ def _fork_conversation_impl(
     # _load_conversation_messages), 이를 복사하지 않으면 fork 본의 문맥이 비어 어시스턴트가
     # 이전 대화를 인지 못 한다(보고된 버그). anchored fork 는 앵커 메시지 시각까지, full
     # fork/duplicate 는 전체 복사. 교차계정(공유 fork)도 이 복사로 snapshot 이 된다(상시
-    # 참조 아님 — DESIGN §14 F4). 경계 턴의 미세 불일치는 로드 시 _normalize_history_rows
-    # 가 정규화한다(DESIGN §14 F1).
+    # 참조 아님 — DESIGN §15 F4). 경계 턴의 미세 불일치는 로드 시 _normalize_history_rows
+    # 가 정규화한다(DESIGN §15 F1).
     core_copied = 0
     try:
         core_cutoff = src_rows[-1][3] if (from_id is not None and src_rows) else None
@@ -16804,6 +17281,335 @@ def auth_logout(request: Request) -> JSONResponse:
     return resp
 
 
+# ===========================================================================
+# Google OAuth 로그인 토대 (TASK-20260619T034522-oauth-google-foundation, REQ-20260619-0328)
+# ---------------------------------------------------------------------------
+# 사내 웹서비스 편입 기반작업(사용자 결정 2026-06-19: 비파괴 토대 + 모든 Google 계정 허용
+# + 신규=자동생성/pending 승인 + 기존 비번 로그인 공존). 기본 비활성 — _oauth_google_configured()
+# 가 False 면 /start·/callback 은 404 로 런타임 인증 경로에 무영향이다.
+#
+# 흐름: /start → PKCE(S256) + 서명 state(CSRF) + nonce 로 Google authz redirect.
+#       /callback → state 서명/TTL 검증 → 백채널 code→token 교환(client_secret over TLS)
+#       → ID token claim 검증(iss/aud/exp/nonce/email_verified/도메인) → 계정 매핑/프로비저닝
+#       → 기존 _issue_auth_session + _set_session_cookie 재사용 → "/" redirect.
+#
+# 보안 주의(SECURITY.md §15.3): ID token 서명(JWKS RS256) 검증은 활성화/배포 전 강화 TODO.
+# 현재 토대는 (a) Authorization Code + 백채널 TLS(client_secret) + (b) claim 검증으로 방어하며
+# 사내 미배포 상태다. /start·/callback·/config 는 로그인 진입점이라 anonymous(login/signup 정합).
+# ===========================================================================
+def _oauth_google_configured() -> bool:
+    """OAuth 활성 조건: flag ON + client_id/secret/redirect_uri 모두 설정. 하나라도 빠지면 비활성."""
+    return bool(
+        OAUTH_GOOGLE_ENABLED
+        and OAUTH_GOOGLE_CLIENT_ID
+        and OAUTH_GOOGLE_CLIENT_SECRET
+        and OAUTH_GOOGLE_REDIRECT_URI
+    )
+
+
+def _oauth_b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _oauth_b64url_decode(text: str) -> bytes:
+    pad = "=" * (-len(str(text or "")) % 4)
+    return base64.urlsafe_b64decode(str(text or "") + pad)
+
+
+def _oauth_pkce_pair() -> tuple[str, str]:
+    """PKCE(RFC 7636) verifier + S256 challenge."""
+    verifier = _oauth_b64url(secrets.token_bytes(32))
+    challenge = _oauth_b64url(hashlib.sha256(verifier.encode("ascii")).digest())
+    return verifier, challenge
+
+
+def _oauth_state_encode(payload: dict[str, Any]) -> str:
+    """state = base64url(json).HMAC-SHA256. 서버 비밀로 위변조 차단(CSRF 방어)."""
+    body = _oauth_b64url(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    sig = _oauth_b64url(
+        hmac.new(OAUTH_STATE_SECRET.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+    )
+    return f"{body}.{sig}"
+
+
+def _oauth_state_decode(token: str) -> dict[str, Any] | None:
+    """state 서명 검증(constant-time) + TTL 확인. 실패 시 None."""
+    try:
+        body, sig = str(token or "").split(".", 1)
+    except ValueError:
+        return None
+    expected = _oauth_b64url(
+        hmac.new(OAUTH_STATE_SECRET.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+    )
+    if not hmac.compare_digest(sig, expected):
+        return None
+    try:
+        payload = json.loads(_oauth_b64url_decode(body).decode("utf-8"))
+    except Exception:
+        return None
+    issued = int(payload.get("ts") or 0)
+    now = int(datetime.now(timezone.utc).timestamp())
+    if issued <= 0 or (now - issued) > OAUTH_STATE_TTL_SEC or (issued - now) > 60:
+        return None
+    return payload
+
+
+def _oauth_google_exchange_code(code: str, code_verifier: str) -> dict[str, Any]:
+    """authorization code → token. 백채널 POST(client_secret over TLS). stdlib urllib(외부 의존 0)."""
+    import urllib.request
+    import urllib.parse
+    data = urllib.parse.urlencode(
+        {
+            "code": code,
+            "client_id": OAUTH_GOOGLE_CLIENT_ID,
+            "client_secret": OAUTH_GOOGLE_CLIENT_SECRET,
+            "redirect_uri": OAUTH_GOOGLE_REDIRECT_URI,
+            "grant_type": "authorization_code",
+            "code_verifier": code_verifier,
+        }
+    ).encode("ascii")
+    req = urllib.request.Request(
+        OAUTH_GOOGLE_TOKEN_ENDPOINT,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310 (고정 https endpoint)
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _oauth_decode_id_token_claims(id_token: str) -> dict[str, Any] | None:
+    """ID token(JWT) payload claim 디코드.
+
+    백채널 TLS + client_secret 으로 받은 토큰이라 토대 단계에서는 서명 검증을 생략한다
+    (SECURITY.md §15.3 — 활성화/외부배포 전 JWKS RS256 서명 검증 강화 TODO). claim 자체의
+    유효성(iss/aud/exp/nonce/email_verified)은 _oauth_validate_claims 가 enforce 한다.
+    """
+    try:
+        parts = str(id_token or "").split(".")
+        if len(parts) != 3:
+            return None
+        return json.loads(_oauth_b64url_decode(parts[1]).decode("utf-8"))
+    except Exception:
+        return None
+
+
+def _oauth_validate_claims(claims: dict[str, Any], expected_nonce: str) -> tuple[bool, str]:
+    """ID token claim 검증 — issuer/audience/expiry/nonce/email_verified/도메인. (ok, reason)."""
+    if not isinstance(claims, dict):
+        return False, "claims"
+    if str(claims.get("iss") or "") not in OAUTH_GOOGLE_VALID_ISSUERS:
+        return False, "issuer"
+    # audience: OIDC `aud` 는 문자열 또는 배열 — 둘 다 처리(outside-voice MINOR-2). client_id 미포함 거부.
+    aud_raw = claims.get("aud")
+    aud_list = aud_raw if isinstance(aud_raw, list) else [aud_raw]
+    if OAUTH_GOOGLE_CLIENT_ID not in [str(a or "") for a in aud_list]:
+        return False, "audience"
+    now = int(datetime.now(timezone.utc).timestamp())
+    if int(claims.get("exp") or 0) <= now:
+        return False, "expired"
+    # nonce: replay 방어 핵심 — 무조건 enforce(outside-voice MINOR-1). expected_nonce 는 /start 가 항상 생성.
+    if str(claims.get("nonce") or "") != str(expected_nonce or ""):
+        return False, "nonce"
+    if not str(claims.get("email") or "").strip():
+        return False, "email-missing"
+    ev = claims.get("email_verified")
+    if not (ev is True or str(ev).strip().lower() == "true"):
+        return False, "email-unverified"
+    # 도메인 화이트리스트(빈=모든 도메인 허용 — 사용자 결정 2026-06-19).
+    if OAUTH_GOOGLE_ALLOWED_DOMAINS:
+        hd = str(claims.get("hd") or "").strip().lower()
+        email_domain = str(claims.get("email") or "").rsplit("@", 1)[-1].strip().lower()
+        if hd not in OAUTH_GOOGLE_ALLOWED_DOMAINS and email_domain not in OAUTH_GOOGLE_ALLOWED_DOMAINS:
+            return False, "domain"
+    return True, "ok"
+
+
+def _oauth_provision_username(conn, email: str, sub: str) -> str:
+    """OAuth 신규 계정의 내부 username 파생. email local-part sanitize → 충돌 시 숫자 suffix.
+
+    기존 _sanitize_username 규칙(영문/숫자/._-, 최대 64)을 준수. 빈/충돌 폴백은 'g_<랜덤>'.
+    """
+    base = _sanitize_username(str(email or "").split("@", 1)[0])
+    base = (base[:48] or f"g_{_sanitize_username(sub)[:24]}" or f"g_{secrets.token_hex(4)}")[:48]
+    candidate = base
+    cur = conn.cursor()
+    try:
+        for i in range(0, 1000):
+            cur.execute("SELECT 1 FROM WebAccounts WHERE Username = %s LIMIT 1", (candidate,))
+            if not cur.fetchone():
+                return candidate
+            candidate = f"{base}{i + 1}"[:64]
+    finally:
+        cur.close()
+    return f"g_{secrets.token_hex(8)}"
+
+
+def _oauth_resolve_or_provision_account(
+    conn, *, provider: str, sub: str, email: str
+) -> tuple[int, str]:
+    """OAuth 신원 → 내부 계정 매핑. (account_id, mode) 반환.
+
+    mode = linked-subject | linked-email | created | email-conflict(account_id=0).
+    1) (provider, sub) 기존 OAuth 계정이 있으면 그대로 사용.
+    2) email 일치 기존 계정이 **아직 OAuth 미연결(OAuthSubject NULL)** 이면 OAuth 신원을 link
+       (기존 비번 로그인 보존 — 둘 다 유지). 이미 *다른* sub 에 묶인 email 이면 재할당 인계로 보고
+       link 거부 → (0,"email-conflict") 반환(관리자 개입, outside-voice MAJOR-2).
+    3) 그 외에는 pending 역할(승인 대기)로 자동 생성(사용자 결정 2026-06-19). 비번 로그인 불가 sentinel.
+    autocommit 연결 가정(_connect_memory) — signup 패턴과 동일.
+    """
+    email_norm = str(email or "").strip().lower()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT Id FROM WebAccounts WHERE AuthProvider = %s AND OAuthSubject = %s AND DeletedAt IS NULL LIMIT 1",
+            (provider, sub),
+        )
+        row = cur.fetchone()
+        if row:
+            return int(row[0]), "linked-subject"
+        if email_norm:
+            cur.execute(
+                "SELECT Id, OAuthSubject FROM WebAccounts WHERE Email = %s AND DeletedAt IS NULL LIMIT 1",
+                (email_norm,),
+            )
+            row = cur.fetchone()
+            if row:
+                account_id = int(row[0])
+                existing_sub = str(row[1] or "")
+                # 안정 식별자(sub)가 이미 다른 값이면 email 재할당(퇴사자→신규입사자)으로 보고 인계 차단.
+                if existing_sub and existing_sub != sub:
+                    return 0, "email-conflict"
+                cur.execute(
+                    "UPDATE WebAccounts SET AuthProvider = %s, OAuthSubject = %s WHERE Id = %s",
+                    (provider, sub, account_id),
+                )
+                return account_id, "linked-email"
+        username = _oauth_provision_username(conn, email_norm, sub)
+        cur.execute("SELECT Id FROM WebRoles WHERE RoleKey = 'pending' AND IsActive = 1 LIMIT 1")
+        prow = cur.fetchone()
+        role_id = int((prow or (0,))[0] or 0) or _default_signup_role_id(conn)
+        cur.execute(
+            """
+INSERT INTO WebAccounts (Username, Email, AuthProvider, OAuthSubject, PasswordHash, RoleId, ApprovedAt, IsActive)
+VALUES (%s, %s, %s, %s, %s, %s, NULL, 1)
+            """,
+            (username, email_norm or None, provider, sub, OAUTH_NO_PASSWORD_SENTINEL, role_id),
+        )
+        return int(cur.lastrowid or 0), "created"
+    finally:
+        cur.close()
+
+
+def _oauth_callback_redirect(request: Request, location: str) -> Any:
+    """callback redirect — 단명 OAuth 바인딩 쿠키를 항상 정리(1회용, MAJOR-1)."""
+    resp = RedirectResponse(location, status_code=302)
+    resp.delete_cookie(
+        OAUTH_BIND_COOKIE,
+        httponly=True,
+        samesite="lax",
+        secure=_request_is_https(request),
+    )
+    return resp
+
+
+@app.get("/api/auth/oauth/config")
+def auth_oauth_config(request: Request) -> JSONResponse:
+    """로그인 화면이 외부 IdP 버튼 노출 여부를 판단하기 위한 공개 설정.
+
+    민감값(client_secret 등) 미노출 — enabled 플래그만. anonymous(로그인 전 호출).
+    """
+    return JSONResponse({"google": {"enabled": _oauth_google_configured()}})
+
+
+@app.get("/api/auth/oauth/google/start")
+def auth_oauth_google_start(request: Request) -> Any:
+    if not _oauth_google_configured():
+        return _json_error("google 로그인이 활성화되어 있지 않습니다.", 404)
+    verifier, challenge = _oauth_pkce_pair()
+    nonce = _oauth_b64url(secrets.token_bytes(16))
+    # MAJOR-1(login-CSRF/세션 고정 차단): state 를 개시 브라우저에 바인딩한다. random binding 을
+    # state payload(b)에 넣고 동일 값을 단명 httponly 쿠키로 심어, callback 에서 둘이 일치할 때만 수락.
+    bind = _oauth_b64url(secrets.token_bytes(16))
+    state = _oauth_state_encode(
+        {"v": verifier, "n": nonce, "b": bind, "ts": int(datetime.now(timezone.utc).timestamp())}
+    )
+    import urllib.parse
+    params = urllib.parse.urlencode(
+        {
+            "client_id": OAUTH_GOOGLE_CLIENT_ID,
+            "redirect_uri": OAUTH_GOOGLE_REDIRECT_URI,
+            "response_type": "code",
+            "scope": "openid email profile",
+            "state": state,
+            "nonce": nonce,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "access_type": "online",
+            "prompt": "select_account",
+        }
+    )
+    resp = RedirectResponse(f"{OAUTH_GOOGLE_AUTH_ENDPOINT}?{params}", status_code=302)
+    resp.set_cookie(
+        OAUTH_BIND_COOKIE,
+        bind,
+        max_age=OAUTH_STATE_TTL_SEC,
+        httponly=True,
+        samesite="lax",
+        secure=_request_is_https(request),
+    )
+    return resp
+
+
+@app.get("/api/auth/oauth/google/callback")
+def auth_oauth_google_callback(request: Request) -> Any:
+    if not _oauth_google_configured():
+        return _json_error("google 로그인이 활성화되어 있지 않습니다.", 404)
+    if str(request.query_params.get("error") or "").strip():
+        return RedirectResponse("/?oauth_error=denied", status_code=302)
+    code = str(request.query_params.get("code") or "").strip()
+    state = _oauth_state_decode(str(request.query_params.get("state") or "").strip())
+    if not code or not state:
+        return _oauth_callback_redirect(request, "/?oauth_error=state")
+    # MAJOR-1: state 가 이 브라우저에서 개시됐는지 — 단명 바인딩 쿠키 == state.b (constant-time).
+    bind_cookie = str(request.cookies.get(OAUTH_BIND_COOKIE) or "")
+    if not bind_cookie or not hmac.compare_digest(bind_cookie, str(state.get("b") or "")):
+        return _oauth_callback_redirect(request, "/?oauth_error=state")
+    try:
+        tokens = _oauth_google_exchange_code(code, str(state.get("v") or ""))
+    except Exception:
+        return _oauth_callback_redirect(request, "/?oauth_error=exchange")
+    claims = _oauth_decode_id_token_claims(str(tokens.get("id_token") or ""))
+    ok, _reason = _oauth_validate_claims(claims or {}, str(state.get("n") or ""))
+    if not ok:
+        return _oauth_callback_redirect(request, "/?oauth_error=claims")
+    sub = str((claims or {}).get("sub") or "").strip()
+    email = str((claims or {}).get("email") or "").strip()
+    if not sub:
+        return _oauth_callback_redirect(request, "/?oauth_error=subject")
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _oauth_callback_redirect(request, "/?oauth_error=server")
+    try:
+        account_id, mode = _oauth_resolve_or_provision_account(
+            conn, provider="google", sub=sub, email=email
+        )
+        if mode == "email-conflict":
+            return _oauth_callback_redirect(request, "/?oauth_error=email_conflict")
+        if account_id <= 0:
+            return _oauth_callback_redirect(request, "/?oauth_error=provision")
+        acct = _load_account_by_id(conn, account_id)
+        if not acct or not bool(acct.get("is_active")) or acct.get("deleted_at"):
+            return _oauth_callback_redirect(request, "/?oauth_error=inactive")
+        session_token = _issue_auth_session(conn, account_id, request)
+    finally:
+        conn.close()
+    resp = _oauth_callback_redirect(request, "/")
+    _set_session_cookie(resp, request, session_token)
+    return resp
+
+
 @app.get("/api/admin/me")
 def admin_me(request: Request) -> JSONResponse:
     """관리 콘솔 전용 self 정보 endpoint (TASK-0098).
@@ -21132,6 +21938,25 @@ def build_audit_change_json(
             },
             [],
         )
+    # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 사용량 한도 설정 변경 audit.
+    if action == "quota.role.update":
+        return (
+            {
+                "target_role_id": request_ctx.get("role_id"),
+                "daily": request_ctx.get("daily"),
+                "monthly": request_ctx.get("monthly"),
+            },
+            [],
+        )
+    if action == "quota.account.update":
+        return (
+            {
+                "target_account_id": request_ctx.get("account_id"),
+                "daily": request_ctx.get("daily"),
+                "monthly": request_ctx.get("monthly"),
+            },
+            [],
+        )
     # Unknown ActionCode — explicit raise (Codex C6 builder allowlist policy).
     raise ValueError(f"unknown audit action: {action}")
 
@@ -21440,6 +22265,185 @@ def _aggregate_usage_by_role(by_account: list[dict]) -> list[dict]:
             m["cost_usd"] = round(m["cost_usd"], 4)
         out.append(b)
     return sorted(out, key=lambda x: x["total_tokens"], reverse=True)
+
+
+# =============================================================================
+# TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 토큰 사용량 한도 관리 (역할 기본 + 계정 특수).
+# =============================================================================
+def _quota_upsert(conn, table: str, key_col: str, key_id: int, daily, monthly) -> None:
+    """role/account 한도 upsert. 값이 None 이면 해당 QuotaType 행 삭제(상속으로 복귀).
+    table/key_col 은 코드 상수만(엔드포인트가 고정 전달) — SQL injection 무관."""
+    cur = conn.cursor()
+    try:
+        for qtype, val in (("daily", daily), ("monthly", monthly)):
+            if val is None:
+                cur.execute(
+                    f"DELETE FROM {table} WHERE {key_col} = %s AND QuotaType = %s",
+                    (int(key_id), qtype),
+                )
+            else:
+                cur.execute(
+                    f"INSERT INTO {table} ({key_col}, QuotaType, TokenLimit) VALUES (%s, %s, %s) "
+                    "ON DUPLICATE KEY UPDATE TokenLimit = VALUES(TokenLimit)",
+                    (int(key_id), qtype, max(0, int(val))),
+                )
+    finally:
+        cur.close()
+
+
+def _quota_parse_limit(raw) -> "int | None":
+    """body 값 → 한도 int. None/빈값/음수 = None(상속/해제). 0 = 무제한(명시)."""
+    if raw is None or (isinstance(raw, str) and raw.strip() == ""):
+        return None
+    try:
+        v = int(raw)
+    except Exception:
+        return None
+    if v < 0:
+        return None  # 음수 = 무효 → 상속/해제 취급
+    return min(v, 9_000_000_000_000_000)  # BIGINT 안전 상한 clamp (overflow 500 방지, outside-voice MINOR)
+
+
+@app.get("/api/admin/quotas")
+def admin_list_quotas(request: Request) -> JSONResponse:
+    """역할별 기본 + 계정별 특수 LLM 토큰 한도 목록. 권한: console.manage(admin)."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        actor, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+            return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                "SELECT r.Id AS role_id, r.RoleKey AS role_key, r.Name AS name, "
+                "MAX(CASE WHEN q.QuotaType='daily' THEN q.TokenLimit END) AS daily, "
+                "MAX(CASE WHEN q.QuotaType='monthly' THEN q.TokenLimit END) AS monthly "
+                "FROM WebRoles r LEFT JOIN WebRoleTokenQuotas q ON q.RoleId = r.Id "
+                "GROUP BY r.Id, r.RoleKey, r.Name ORDER BY r.Id"
+            )
+            roles = [
+                {"role_id": int(x["role_id"]), "role_key": x.get("role_key"), "name": x.get("name"),
+                 "daily": int(x["daily"]) if x.get("daily") is not None else None,
+                 "monthly": int(x["monthly"]) if x.get("monthly") is not None else None}
+                for x in (cur.fetchall() or [])
+            ]
+            cur.execute(
+                "SELECT a.Id AS account_id, a.Username AS username, "
+                "MAX(CASE WHEN q.QuotaType='daily' THEN q.TokenLimit END) AS daily, "
+                "MAX(CASE WHEN q.QuotaType='monthly' THEN q.TokenLimit END) AS monthly "
+                "FROM WebAccountTokenQuotas q JOIN WebAccounts a ON a.Id = q.AccountId "
+                "GROUP BY a.Id, a.Username ORDER BY a.Username"
+            )
+            overrides = [
+                {"account_id": int(x["account_id"]), "username": x.get("username"),
+                 "daily": int(x["daily"]) if x.get("daily") is not None else None,
+                 "monthly": int(x["monthly"]) if x.get("monthly") is not None else None}
+                for x in (cur.fetchall() or [])
+            ]
+        finally:
+            cur.close()
+        return JSONResponse({"roles": roles, "account_overrides": overrides, "enforce": bool(LLM_QUOTA_ENFORCE)})
+    finally:
+        conn.close()
+
+
+@app.put("/api/admin/quotas/role/{role_id}")
+async def admin_set_role_quota(role_id: int, request: Request) -> JSONResponse:
+    """역할 기본 LLM 토큰 한도 설정. body {daily?, monthly?} — null/생략=상속 해제, 0=무제한."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        actor, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+            return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT RoleKey FROM WebRoles WHERE Id = %s LIMIT 1", (int(role_id),))
+            rr = cur.fetchone()
+        finally:
+            cur.close()
+        if not rr:
+            return _json_error("role not found", 404)
+        daily = _quota_parse_limit(data.get("daily"))
+        monthly = _quota_parse_limit(data.get("monthly"))
+        try:
+            _quota_upsert(conn, "WebRoleTokenQuotas", "RoleId", int(role_id), daily, monthly)
+        except Exception:
+            return _json_error("한도 저장에 실패했습니다.", 500)
+        try:
+            _audit_admin_mutation(
+                conn, request, actor, action="quota.role.update", resource_type="role",
+                resource_id=str(role_id), before=None, after=None,
+                request_ctx={"role_id": int(role_id), "daily": daily, "monthly": monthly},
+            )
+            conn.commit()
+        except Exception as audit_exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return _json_error(f"audit write failed: {audit_exc}", 500)
+        return JSONResponse({"ok": True, "role_id": int(role_id), "daily": daily, "monthly": monthly})
+    finally:
+        conn.close()
+
+
+@app.put("/api/admin/quotas/account/{account_id}")
+async def admin_set_account_quota(account_id: int, request: Request) -> JSONResponse:
+    """계정 특수(override) LLM 토큰 한도. body {daily?, monthly?} — null/생략=override 해제(역할 상속)."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        actor, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+            return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+        target = _load_account_by_id(conn, int(account_id))
+        if not target:
+            return _json_error("account not found", 404)
+        daily = _quota_parse_limit(data.get("daily"))
+        monthly = _quota_parse_limit(data.get("monthly"))
+        try:
+            _quota_upsert(conn, "WebAccountTokenQuotas", "AccountId", int(account_id), daily, monthly)
+        except Exception:
+            return _json_error("한도 저장에 실패했습니다.", 500)
+        try:
+            _audit_admin_mutation(
+                conn, request, actor, action="quota.account.update", resource_type="account",
+                resource_id=str(account_id), before=None, after=None,
+                request_ctx={"account_id": int(account_id), "daily": daily, "monthly": monthly},
+                target_account_id=int(account_id),
+            )
+            conn.commit()
+        except Exception as audit_exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return _json_error(f"audit write failed: {audit_exc}", 500)
+        return JSONResponse({"ok": True, "account_id": int(account_id), "daily": daily, "monthly": monthly})
+    finally:
+        conn.close()
 
 
 @app.get("/api/admin/usage")
@@ -23121,6 +24125,86 @@ def list_audit_resources(request: Request) -> JSONResponse:
         conn.close()
 
 
+@app.get("/api/admin/audits/verify")
+def verify_audit_chain(request: Request) -> JSONResponse:
+    """TASK-20260619T023922-audit-tamper-evidence (보안 ③, Critical §12.3): 감사 로그 해시 체인 무결성 검증.
+
+    봉인 catch-up 후 Id 순으로 walk 하며 (1) 각 행 PrevHash == 직전 봉인행 EventHash(링크),
+    (2) EventHash == SHA256(PrevHash | 정규화행)(내용) 을 검사. 첫 파손 위치를 반환. purge 경계는
+    최신 checkpoint 로 재앵커(잔존 최古행 PrevHash == checkpoint). 권한: `audit.read.any`(admin/dba).
+    walk 는 keyset 페이지네이션으로 메모리 bound.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        actor, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(actor, "audit.read.any"):
+            return _json_error("감사 무결성 검증 권한이 필요합니다.", 403)
+        # 검증 전 봉인 catch-up(미봉인 행 포함). 실패해도 검증은 진행(미봉인=break 로 보고).
+        try:
+            sealed_now = _seal_audit_chain_drain(conn)
+        except Exception:
+            sealed_now = 0
+        cur = conn.cursor(dictionary=True)
+        try:
+            # purge 경계 genesis = 최신 checkpoint hash(없으면 "").
+            cur.execute(
+                "SELECT ThroughEventId, CheckpointHash FROM WebAuditChainCheckpoint ORDER BY Id DESC LIMIT 1"
+            )
+            cp = cur.fetchone()
+            prev_event_hash = str(cp["CheckpointHash"]) if cp and cp.get("CheckpointHash") else ""
+            checkpoint_through = int(cp["ThroughEventId"]) if cp and cp.get("ThroughEventId") is not None else None
+            # 첫 잔존행 PrevHash 가 checkpoint(또는 genesis "")와 일치하는지 검사용.
+            last_id = 0
+            verified = 0
+            first_break: dict | None = None
+            while first_break is None:
+                cur.execute(
+                    f"SELECT {_AUDIT_CHAIN_SELECT}, EventHash, PrevHash FROM WebAuditEvents "
+                    "WHERE Id > %s ORDER BY Id ASC LIMIT 1000",
+                    (last_id,),
+                )
+                batch = cur.fetchall() or []
+                if not batch:
+                    break
+                for row in batch:
+                    rid = int(row["Id"])
+                    last_id = rid
+                    stored = row.get("EventHash")
+                    if not stored:
+                        first_break = {"id": rid, "reason": "unsealed"}
+                        break
+                    stored_prev = str(row.get("PrevHash") or "")
+                    if stored_prev != str(prev_event_hash or ""):
+                        first_break = {
+                            "id": rid, "reason": "prev_hash_mismatch",
+                            "expected_prev": (prev_event_hash or None), "stored_prev": (stored_prev or None),
+                        }
+                        break
+                    recomputed = _audit_compute_hash(stored_prev, _audit_canonical_string(row))
+                    if recomputed != str(stored):
+                        first_break = {"id": rid, "reason": "content_modified"}
+                        break
+                    prev_event_hash = str(stored)
+                    verified += 1
+        finally:
+            cur.close()
+        ok = first_break is None
+        return JSONResponse({
+            "ok": ok,
+            "verified_count": verified,
+            "first_break": first_break,
+            "sealed_during_verify": int(sealed_now or 0),
+            "checkpoint_through_event_id": checkpoint_through,
+        })
+    finally:
+        conn.close()
+
+
 @app.post("/api/admin/audits/purge")
 async def purge_audit_events(request: Request) -> JSONResponse:
     """REQ-20260519-0001 (TASK-0073 Phase A4, Eng review E8): chunked PK purge.
@@ -23211,6 +24295,37 @@ async def purge_audit_events(request: Request) -> JSONResponse:
             except Exception:
                 pass
             return _json_error(f"purge start audit failed: {exc}", 500)
+
+        # TASK-20260619T023922-audit-tamper-evidence (보안 ③): purge 경계 체인 재앵커.
+        # 삭제 전 (1) 전체 봉인 catch-up → (2) 삭제될 마지막 행(최대 Id)의 EventHash 를 checkpoint
+        # 로 기록. 삭제 후 잔존 최古행의 PrevHash 가 이 checkpoint 와 일치해야 검증 통과(정당 purge
+        # 경계 인지). start self-audit 행(방금 INSERT, OccurredAt=now)은 cutoff 밖이라 미삭제.
+        try:
+            _seal_audit_chain_drain(conn)
+            _cpcur = conn.cursor(dictionary=True)
+            try:
+                _cpcur.execute(
+                    "SELECT Id, EventHash FROM WebAuditEvents WHERE OccurredAt < %s AND EventHash IS NOT NULL "
+                    "ORDER BY Id DESC LIMIT 1",
+                    (cutoff,),
+                )
+                _last = _cpcur.fetchone()
+            finally:
+                _cpcur.close()
+            if _last and _last.get("EventHash"):
+                _ins = conn.cursor()
+                try:
+                    _ins.execute(
+                        "INSERT INTO WebAuditChainCheckpoint (ThroughEventId, CheckpointHash, Reason) "
+                        "VALUES (%s, %s, 'purge')",
+                        (int(_last["Id"]), str(_last["EventHash"])),
+                    )
+                finally:
+                    _ins.close()
+                conn.commit()
+        except Exception as _cp_exc:
+            # 체크포인트 실패 시 purge 중단(체인 단절 방지) — 재시도 가능.
+            return _json_error(f"purge chain checkpoint failed: {_cp_exc}", 500)
 
         # Chunked DELETE loop.
         total_deleted = 0

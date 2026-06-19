@@ -4319,3 +4319,47 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] `release-notes-data.js` `releases[]` 맨 앞 2026-06-19 블록 추가(`generated` 동기) — `{type:new, area:work}` "AI 사용이 일시적으로 제한될 때 화면에서 바로 확인". 기존 문체 정합(사용자 결과 중심·존댓말 detail·내부동작 비노출="외부 요인" 추상화, AC-0579).
 - [x] index.html/admin.html `release-notes-data.js?v=` 캐시버스터 bump(20260619-llm-restriction) + `verify_release_notes.mjs` 34/34 + node --check.
 - [ ] 머지 → 배포(web) → PB-0008(양 진입점 노출) → 마감.
+
+### TASK-20260619T023922-audit-tamper-evidence — 감사 기록 변조방지 (해시 체인 + 검증 + 로그 앵커) (REQ-20260619-0326, AC-0592~0595, Critical §12.3, 2026-06-19)
+- 사용자 요청(보안 보강 6종 중 ③): 감사 기록 변조방지. 기존 `WebAuditEvents`(TASK-0073) append-only 의도였으나 변조(수정/삭제/삽입/재정렬) 탐지 수단 부재.
+- [x] 스키마(멱등·비파괴): `WebAuditEvents.EventHash/PrevHash CHAR(64)` ALTER + `WebAuditChainCheckpoint`(purge 경계 재앵커) 신설(`_ensure_web_audit_chain_schema`, fast+slow 양 경로). 기존 행 NULL=미봉인→backfill.
+- [x] 해시 체인: `EventHash = SHA256(PrevHash | 정규화행)`. 정규화=`_audit_canonical_string`(\x1f 구분, JSON 컬럼 `CAST(... AS CHAR)` 결정성, EventHash/PrevHash 제외). 봉인 `_seal_audit_chain`=GET_LOCK 직렬+미봉인 커밋행 Id ASC 일괄+`EventHash IS NULL` 가드(fork 방지).
+- [x] 훅: record_audit_event INSERT 후 **fresh autocommit 연결**로 동기 봉인(best-effort) + 백그라운드 sealer(`AGENT_AUDIT_SEAL_SEC`=30, drain) + verify 시 봉인.
+- [x] verify 엔드포인트 `GET /api/admin/audits/verify`(audit.read.any): drain 봉인 후 Id 순 keyset walk·재계산·링크/내용 검사 → first_break 보고. purge 경계는 최신 checkpoint 재앵커.
+- [x] purge 정합: 삭제 전 drain 봉인 + 경계 행 EventHash 를 checkpoint INSERT(실패 시 purge 중단=체인 단절 방지).
+- [x] 프론트: 감사 탭 "무결성 검증" 버튼(audit.read.any)+`triggerAuditChainVerify`+결과 배지(정상 green/위반 red), styles `.admin-audit-verify-result`, cache-buster `?v=20260619-audit-chain`.
+- [x] 검증: `tests/test_audit_tamper_evidence.py` 11/11(B1/B2 해시 tamper-detection 실 동작 + 나머지 inspect.getsource) + make test 회귀 0(사전존재 product-delete 2건 제외) + py_compile + node --check + CSS brace.
+- [x] outside-voice 적대 보안 리뷰(Critical 감사 무결성) **SHIP-WITH-FIXES**(BLOCKER 0). **흡수**: MAJOR-1(RR 스냅샷 fork→fresh-conn 봉인+`EventHash IS NULL` 가드)·MAJOR-4(verify/purge 거대 batch lock starvation→1000-batch drain bound)·MAJOR-2(in-DB 체인 단독 한계 정직화: 위협모델 docstring/SECURITY.md §13 명시 + 백그라운드 sealer **off-DB 로그 앵커** `[audit-chain-anchor]` head 해시). **수용**: MINOR(CAST(JSON) 서버버전 의존 upgrade 위험·ThroughEventId 검증 미사용·DB 통합테스트 부재[게이트 DB-less]·\x1f 구분자 embeddable=chosen-prefix only).
+- [ ] 머지 → 배포(web) → 라이브 verify round-trip(정상 ok + 인위 변조→break) + PB-0008(검증 버튼/배지) → 마감.
+
+### TASK-20260619T030500-llm-usage-quota — LLM 사용량 한도 (역할 기본 + 계정 특수) (REQ-20260619-0327, AC-0596~0599, Major §12.3, 2026-06-19)
+- 사용자 요청(보안 보강 6종 중 ④): LLM 사용량 한도 처리 — 역할별 기본, 계정별 특수(override).
+- [x] 인프라 재사용: 토큰 계량(`agent_runtime.llm_usage`)·대시보드(TASK-0136)는 기존 → 한도 설정 + 사전 게이트만 신설.
+- [x] 스키마(멱등): `WebRoleTokenQuotas`(역할 기본)·`WebAccountTokenQuotas`(계정 특수), QuotaType=daily|monthly, TokenLimit(0=무제한 명시). RBAC override 패턴 미러. fast+slow 양 경로.
+- [x] 유효 한도 `_account_effective_quota`(계정 override→역할 기본→None 무제한) + 사용량 `_account_period_usage_tokens`(PG date_trunc day/month·owner_account_id join·fail-open 0).
+- [x] 사전 게이트 `_check_account_token_quota`(/api/ask 조기, slot 전): 무제한/미설정/인프라장애=통과(fail-open), 초과 시 429. 킬스위치 `AGENT_LLM_QUOTA_ENFORCE`. **안전 기본=미설정 무제한**(배포만으로 누구도 차단 안 함).
+- [x] admin: `GET /api/admin/quotas`·`PUT .../role/{id}`·`PUT .../account/{id}`(console.manage)+audit `quota.role/account.update`. UI=LLM 사용량 탭 "사용 한도 설정"(역할 행 편집+계정 특수 추가/해제), cache-buster `?v=20260619-llm-quota`.
+- [x] 검증: `tests/test_llm_usage_quota.py` 10/10(B3 parse·B4 fail-open 실 동작 + inspect.getsource) + make test 회귀 0(사전존재 product-delete 2건 제외) + py_compile + node --check + CSS brace.
+- [x] outside-voice 적대 리뷰 **SHIP-WITH-FIXES**(BLOCKER/MAJOR 0). **흡수**: MINOR(parse_limit BIGINT clamp overflow 500 방지)·MINOR(0=무제한 footgun→캡션 "전면 차단=1" 명시). **수용**: 동시요청 race(parallel limit 6 bound)·aux-call 미집계(under-count=가용성 우선·evasion 아님)·admin prompt/generate 미게이트(admin-only)·daily/monthly tz(PG UTC, 대시보드 정합)·계정 free-text id(404 가드).
+- [ ] 머지 → 배포(web) → 라이브(한도 설정→초과 429·해제) + PB-0008(한도 패널) → 마감.
+### TASK-20260619T034522-oauth-google-foundation — Google 계정(OAuth) 로그인 토대 (REQ-20260619-0328, AC-0600~0601, Critical §12.3, 2026-06-19)
+- 사용자 요청: "이후 google 계정을 통한 로그인이 가능할까요? 사내 웹서비스에 편입하기 위한 기반작업을 진행해두고 싶습니다. 검토를 우선하여 진행해주세요." → 검토 후 사용자 결정(AskUserQuestion 2026-06-19): **① 비파괴 토대 구축**(flag OFF, credential 주입 시 활성) ② **모든 Google 계정 허용**(도메인 무제한) ③ **자동 생성+pending 승인 대기** + email 일치 시 link ④ **기존 비번 로그인 공존**.
+
+#### §2.1 Implementation Plan (Critical §12.3 — 인증 경로, 비파괴 토대)
+- **위험도 = Critical** (SECURITY.md §3 인증 변경). 비파괴 보장: 신규 엔드포인트 flag OFF 시 404, DB 컬럼 NULL, 프론트 버튼 hidden, 기존 login/signup/세션/RBAC 무변경 → 런타임 인증 경로 무영향. 배포 보류(토대만).
+- 영향 파일/심볼:
+  - `unit/feature-0003-agent-web-ui/src/app.py`: config 블록(`OAUTH_GOOGLE_*`/`OAUTH_NO_PASSWORD_SENTINEL`), `_ensure_oauth_identity_schema`(fast+slow 등록), `_fetch_account_rows` SELECT(email/auth_provider/oauth_subject), `_serialize_account`(email/auth_provider 노출), OAuth helper 9종(`_oauth_google_configured`/`_oauth_b64url(_decode)`/`_oauth_pkce_pair`/`_oauth_state_encode(decode)`/`_oauth_google_exchange_code`/`_oauth_decode_id_token_claims`/`_oauth_validate_claims`/`_oauth_provision_username`/`_oauth_resolve_or_provision_account`), 엔드포인트 3종(`auth_oauth_config`/`auth_oauth_google_start`/`auth_oauth_google_callback`), import `RedirectResponse`.
+  - 프론트: `static/index.html`(#oauthSection 버튼 hidden + Google SVG), `static/app.js`(`refreshOAuthLoginButtons`/`showOAuthErrorIfPresent`/showAuthOverlay 훅), `static/styles.css`(`.auth-oauth`/`.auth-divider`/`.btn-oauth`), index.html+admin.html cache-buster `?v=20260619-oauth-foundation`.
+  - 인프라: `docker-compose.yml`(agent-common env_file `.env.oauth` optional), `.env.oauth.example` 신설, `.gitignore`(`.env.oauth`).
+  - 문서: `docs/SECURITY.md §15`, `FUNCTION.md AC-0600~0601`, `docs/TEST.md §4`, `REVIEW.md`, `REPORT.md`.
+  - 테스트: `tests/test_oauth_google_foundation.py`(29 케이스).
+- 완료 판정(acceptance): AC-0600~0601(FUNCTION.md). 핵심 = flag OFF 시 엔드포인트 404 + 기존 인증 무회귀 + PKCE/state/claim 검증/계정매핑 단위 통과.
+- 구현/검증 결과:
+- [x] DB: `_ensure_oauth_identity_schema` 멱등 ALTER(Email/AuthProvider/OAuthSubject + 2 UNIQUE index), fast(`_ensure_seed_catchup`)+slow(`_ensure_web_tables`) 양 경로. 기존 행 NULL=로컬 계정 무회귀.
+- [x] Config: `OAUTH_GOOGLE_ENABLED`(기본 0) 외 client/secret/redirect/allowed-domains/state-secret/ttl. `_oauth_google_configured()` AND 게이트.
+- [x] Backend: Authorization Code + PKCE(S256) + 서명 state(CSRF/TTL) + claim 검증(iss/aud/exp/nonce/email_verified/도메인) + 계정 매핑(subject/email-link/pending-create) + 기존 `_issue_auth_session` 재사용. 외부 의존 0(stdlib urllib). flag OFF 시 /start·/callback 404.
+- [x] Frontend: 로그인 화면 Google 버튼(기본 hidden → `/api/auth/oauth/config` enabled 시 노출) + `?oauth_error=` 안내 매핑 + CSS + 캐시버스터 bump(index+admin).
+- [x] 인프라: `.env.oauth`(gitignored, optional env_file) + `.env.oauth.example`(발급/활성 절차 문서화).
+- [x] 검증: `test_oauth_google_foundation.py` **29/29 통과**(agent 이미지 컨테이너, PYTHONPATH feature-0002 src). 전체 회귀 = 사전존재 `test_product_delete_block_conv` 2건(base 동일 실패, product-delete RBAC — 본 변경과 무관)만 실패, **신규 회귀 0**. `py_compile` OK.
+- [x] 보안 한계 정직 기록(SECURITY.md §15.3/14.4): ID token **JWKS RS256 서명 검증=활성화/배포 전 TODO**(현재 백채널 TLS+claim 검증) · 모든-도메인 허용의 pending abuse(외부 노출 시 도메인 한정/사전등록 전환) · env web-only scoping · state-secret 멀티워커.
+- [ ] (활성화 cycle, 사용자 후속 결정) Google Cloud Console OAuth Client 등록 → `.env.oauth` 주입 + `WEB_OAUTH_GOOGLE_ENABLED=1` → JWKS 서명 검증 추가 → 배포(web) → 라이브 e2e + PB-0008(버튼 노출/로그인) → outside-voice 적대 보안 리뷰.
