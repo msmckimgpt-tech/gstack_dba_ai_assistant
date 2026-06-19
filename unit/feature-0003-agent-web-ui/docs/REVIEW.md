@@ -3365,3 +3365,21 @@ source_of_truth: true
 - 잔여 MINOR(무해): 규칙 간 pending phantom(rule A pending 을 rule B 가 auto-add) — approve 의 `low in existing` 가드로 no-op. manual PUT 이 manual 승격 schema 의 pending 미정리(동류).
 - Verification: verify_db_rule_logic.py 30/30 + verify_db_rule_ui.mjs 18/18. 화면 정본=PB-0008(배포 후).
 - Cross-ref: CHG-20260618T061703-ai-claude-db-rule-multi / REQ-20260618-0323 / AC-0582 / AC-0583 / TASK-20260618T044318.
+
+## REV-20260619T012028-ai-claude-share-link-expiry [SUBAGENT:share-link-expiry-adversarial]
+- Date: 2026-06-19
+- Cycle: TASK-20260619T012028-share-link-expiry (대화 공유 링크 시간 기반 만료), **Major §12.3** — 익명 공유 접근경계 인접.
+- Panel: outside-voice(general-purpose, REFUTE) — 익명 share 접근제어 초점. 보안경계 변경이라 [SKIPPED] 아님([[feedback_outside_voice_for_rbac]]).
+- VERDICT: **SHIP** (BLOCKER 0, MAJOR 0). 9 probe 전부 REFUTED.
+- 만료우회(P1): public_share_view 순서 = ViewCount UPDATE(만료 predicate) → `_share_load_active`(share 컬럼만, 대화 본문 미포함) → RevokedAt 410 → bumped==0 시 `_share_row_expired` 410 → **그 다음에야** `_conv_load_share_meta`/`_share_load_messages`. fork 도 `_share_row_expired` 가 `_fork_conversation_impl` 앞. 만료 링크는 어떤 경로로도 본문/메타/카운트 누출 0.
+- clock skew/TOCTOU(P2): 만료 평가 전부 DB 시계(create DATE_ADD(NOW()), UPDATE predicate NOW(), `_share_row_expired` NOW()). Python datetime.now() 0(grep 확인). autocommit 단일 연결=단일 시계 도메인. UPDATE→재확인 window 는 "카운트 시점 유효→직후 만료=1회 view 성공" 무해 경계뿐.
+- SQLi(P3): `expires_expr` 는 코드 상수("NULL" 또는 "DATE_ADD(NOW(), INTERVAL %s SECOND)") — 사용자 데이터 미보간. seconds 는 `%s` 파라미터화. 컬럼/값 개수 양 분기 정합.
+- 입력검증(P4): `int()` 가 float/비숫자 거부(400), ≤0=무기한, >365일=400(DATE_ADD 도달 전 차단→interval overflow 불가). 서버가 프론트 프리셋과 독립 검증.
+- 무회귀(P5): expires 없으면 ExpiresAt NULL=never. ALTER 멱등(try/except)+양 경로 등록(probe fast-path 트랩 회피). 기존행 무영향.
+- 취소vs만료(P6): RevokedAt 410 우선, bumped==0 분기서 `_share_row_expired` 로 구분. 둘 다 410·본문 0 → 보안영향 0.
+- audit(P7): build_audit_change_json share.create 화이트리스트에 expires_in_seconds(plain int) 추가, token_full 마스킹 유지(prefix 8자만).
+- 프론트(P8): share.js textContent / app.js escapeHtml 로 만료 표시 XSS-safe(expires_at=서버 DB DATETIME). 취소 path 가 POST 전 abort(share 미생성), 모달 리스너 cleanup.
+- IDOR/authz(P9): create/list/revoke/view/fork 게이트 전부 불변(weaken 0). fork 의 share-token-as-grant 설계 유지 + 만료/취소 추가 집행.
+- 잔여(무해): MINOR 취소-race 라벨(취소를 만료로 표기할 미세 경계, 둘 다 410)·NIT probe 자기문서화·boundary 더블카운트(ViewCount soft-metric).
+- Verification: test_task20260619_share_expiry.py 12/12 + make test 회귀 0 + py_compile + node --check. 화면 정본=PB-0008(배포 후).
+- Cross-ref: CHG-20260619T012028-ai-claude-share-link-expiry / REQ-20260619-0324 / AC-0584~0587 / SECURITY.md §7.2.

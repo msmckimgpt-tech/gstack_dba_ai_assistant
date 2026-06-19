@@ -85,7 +85,11 @@
       credentials: "same-origin",
     });
     if (res.status === 404) throw new Error("공유 링크를 찾을 수 없습니다.");
-    if (res.status === 410) throw new Error("이 공유 링크는 취소되었습니다.");
+    if (res.status === 410) {
+      // TASK-20260619T012028-share-link-expiry: 서버 메시지로 만료/취소 구분.
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body && body.error ? body.error : "이 공유 링크는 더 이상 사용할 수 없습니다.");
+    }
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       throw new Error(body && body.error ? body.error : `서버 오류 (${res.status})`);
@@ -118,6 +122,12 @@
     if (productEl) {
       const productLabel = conv.product_name || conv.product_key || "";
       productEl.textContent = productLabel ? `제품 ${productLabel}` : "";
+    }
+
+    // TASK-20260619T012028-share-link-expiry: 만료일 표시 (무기한이면 숨김).
+    const expiryEl = document.getElementById("shareExpiry");
+    if (expiryEl) {
+      expiryEl.textContent = share.expires_at ? `만료 ${formatDateTime(share.expires_at)}` : "";
     }
 
     const viewCountEl = document.getElementById("shareViewCount");

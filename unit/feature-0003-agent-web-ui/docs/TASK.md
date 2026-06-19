@@ -4280,3 +4280,15 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] outside-voice(다중규칙 격리) SHIP-WITH-FIXES — A~G 확인, BLOCKER 0. MAJOR#1(INSERT IGNORE 중복방지)·#2(fast-path catchup 등록) 반영. MINOR(pending phantom) 무해 문서화.
 - [x] 검증: verify_db_rule_logic.py 30/30 + verify_db_rule_ui.mjs 18/18 + ast/node.
 - [ ] 머지 → 배포(web, deploy_scope: included) → PB-0008(규칙 2개 추가·각 카드에 DB 중첩·삭제 격리) → 마감.
+
+### TASK-20260619T012028-share-link-expiry — 대화 공유 링크 시간 기반 만료 (설정 가능) (REQ-20260619-0324, AC-0584~0587, Major §12.3, 2026-06-19)
+- 사용자 요청(보안 보강 6종 중 ①): 대화공유 링크 만료처리(설정 가능하도록). SECURITY.md §7.2 의 명시 TODO(시간 기반 만료) 구현.
+- 사용자 결정: 6개 보안 항목을 1 TASK=1 worktree=1 PR 로 순차 진행, 추천 순서(① 공유링크 만료부터) — AskUserQuestion 2026-06-19.
+- [x] 스키마(멱등·비파괴): `WebConversationShares.ExpiresAt DATETIME NULL`(`_ensure_web_share_links_expiry_column`, PolicyVersion 헬퍼 idiom 동형) + `IX_WCS_ExpiresAt` — fast-path(`_ensure_seed_catchup`)+slow-path(`_ensure_web_tables`) 양쪽 등록(기존행 NULL=무기한, 무회귀).
+- [x] create(`POST /api/conversations/{cid}/share`): `expires_in_seconds` 옵션(누락/0/음수=무기한, 상한 365일 초과 400). INSERT 가 `ExpiresAt = DATE_ADD(NOW(), INTERVAL %s SECOND)`(DB 시계 도메인, f-string=코드상수만·값은 파라미터화). 응답 + audit(`expires_in_seconds`) 노출.
+- [x] 집행(DB NOW() 기준, clock skew 차단): public view 의 ViewCount UPDATE predicate `(ExpiresAt IS NULL OR ExpiresAt > NOW())`(만료뷰 카운트 인플레 차단) + 만료 시 취소와 구분된 410("만료되었습니다") + `_share_row_expired` 헬퍼 재확인. fork 도 만료 410 차단. **410 이 대화 본문/메타 로드보다 먼저**(누출 0).
+- [x] list(`GET .../shares`): `IsExpired`(DB NOW()) SELECT + `expires_at`/`is_expired`/`is_revoked` 노출, `is_active = 미취소 ∧ 미만료`.
+- [x] 프론트: app.js `promptShareExpiry` 모달(무기한/1일/7일/30일, 취소 시 생성 중단) + body `expires_in_seconds` + 공유 관리 만료일/만료됨 배지. share.html `#shareExpiry` + share.js 만료 렌더 + 410 `body.error` 로 만료/취소 구분. styles.css `.is-expired`/`.share-expiry-*` + index/share cache-buster `?v=20260619-share-expiry`.
+- [x] 검증: `tests/test_task20260619_share_expiry.py` 12/12(B1~B9 백엔드 + F1~F3 프론트) + make test 전체 회귀 0(사전존재 `test_product_delete_block_conv` 2건 제외 — main 81185d4 에서도 동일 실패, 본 변경 무관) + py_compile + node --check + CSS brace 1372=1372.
+- [x] outside-voice 적대 보안 리뷰(공유=익명 접근경계, [[feedback_outside_voice_for_rbac]]) **SHIP** — 9 probe 전부 refute(만료우회·clock skew/TOCTOU·SQLi·입력검증·무회귀·취소vs만료·audit·프론트XSS·IDOR). BLOCKER/MAJOR 0, MINOR 1(취소-race 라벨, 무해)·NIT 2(probe 자기문서화·boundary 더블카운트, 무해).
+- [ ] 머지 → 배포(web 재빌드, deploy_scope 확인) → 라이브 재검증(만료 링크 410·무기한 무회귀) + PB-0008 Windows-browser(만료 모달·관리 배지·뷰 만료 표시) → 마감.

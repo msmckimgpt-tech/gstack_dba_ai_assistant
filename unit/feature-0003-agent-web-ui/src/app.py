@@ -4464,6 +4464,38 @@ def _ensure_web_share_links_policy_version_column(conn) -> None:
         cur.close()
 
 
+def _ensure_web_share_links_expiry_column(conn) -> None:
+    """TASK-20260619T012028-share-link-expiry (REQ-20260619-0324, SECURITY.md §7.2):
+    WebConversationShares 에 `ExpiresAt DATETIME NULL` column 추가.
+
+    시간 기반 공유 링크 만료. 기본 NULL = 무기한 (기존 share 동작 무회귀 — 명시 revoke
+    그대로). 생성 시 `expires_in_seconds` 옵션 → `DATE_ADD(NOW(), INTERVAL ... SECOND)`.
+    public GET / fork 시 `ExpiresAt IS NOT NULL AND ExpiresAt <= NOW()` → 410 Gone
+    (revoke 의 410 과 구분된 만료 메시지). 만료 판정은 **DB 시계 기준** (Python clock
+    skew 차단) — view 의 ViewCount UPDATE predicate 와 `_share_row_expired` 헬퍼 모두 DB
+    NOW() 사용.
+
+    `_ensure_web_tables` (slow path) 와 `_ensure_seed_catchup` (fast path) 양쪽에서
+    호출되어 기존 배포에도 자동 적용된다 (PolicyVersion 헬퍼 idiom 동형).
+    """
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute(
+                "ALTER TABLE WebConversationShares ADD COLUMN ExpiresAt DATETIME NULL"
+            )
+        except Exception:
+            pass
+        try:
+            cur.execute(
+                "CREATE INDEX IX_WCS_ExpiresAt ON WebConversationShares (ExpiresAt)"
+            )
+        except Exception:
+            pass
+    finally:
+        cur.close()
+
+
 def _ensure_web_conversation_attachments_schema(conn) -> None:
     """TASK-0094 Sprint 1 Phase 2: WebConversationAttachments 테이블 idempotent CREATE.
 
@@ -5090,6 +5122,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_web_conversation_shares_schema(conn)
     # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column ALTER.
     _ensure_web_share_links_policy_version_column(conn)
+    # TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 공유 링크 만료 column ALTER.
+    _ensure_web_share_links_expiry_column(conn)
     # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping +
     # derived join + provider files lifecycle 4 신규 테이블 fast-path 보정.
     _ensure_web_conversation_attachments_schema(conn)
@@ -5275,6 +5309,8 @@ def _ensure_web_tables():
         _ensure_web_conversation_shares_schema(conn)
         # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column (slow path).
         _ensure_web_share_links_policy_version_column(conn)
+        # TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 공유 링크 만료 column (slow path).
+        _ensure_web_share_links_expiry_column(conn)
         # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping +
         # derived join + provider files lifecycle 4 신규 테이블 (slow path).
         _ensure_web_conversation_attachments_schema(conn)
@@ -12667,13 +12703,17 @@ def _share_generate_token() -> str:
 
 
 def _share_load_active(conn, token: str) -> dict[str, Any] | None:
-    """Token 으로 활성 (RevokedAt IS NULL) share row 조회. 없거나 revoked 면 None."""
+    """Token 으로 share row 조회 (revoked/expired 도 row 반환 — 호출자가 상태 판정).
+
+    이름은 historical (`active`) 이나 실제로는 token 일치 row 를 그대로 반환한다.
+    RevokedAt / ExpiresAt 판정은 호출자(public view / fork)가 수행한다.
+    """
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute(
             """
 SELECT Id, ConversationId, Token, ScopeMode, AnchorMessageId,
-       CreatedBy, CreatedAt, RevokedAt, ViewCount, LastViewedAt, PolicyVersion
+       CreatedBy, CreatedAt, RevokedAt, ViewCount, LastViewedAt, PolicyVersion, ExpiresAt
 FROM WebConversationShares
 WHERE Token = %s
 LIMIT 1
@@ -12682,6 +12722,33 @@ LIMIT 1
         )
         row = cur.fetchone()
         return row
+    finally:
+        cur.close()
+
+
+# TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 공유 링크 만료 상수/헬퍼.
+# 만료 최대 기간 (서버측 검증 상한 — 절대시각 폭주 방지). 365 일.
+_SHARE_EXPIRY_MAX_SECONDS = 365 * 24 * 60 * 60
+
+
+def _share_row_expired(conn, share_id: int) -> bool:
+    """DB 시계 기준 share 만료 여부 (`ExpiresAt IS NOT NULL AND ExpiresAt <= NOW()`).
+
+    만료 판정을 항상 DB NOW() 로 평가해 web 프로세스 ↔ DB 간 clock skew 를 차단한다
+    (생성 시 `DATE_ADD(NOW(), ...)` 와 동일 시계 도메인). 무기한(NULL) share 는 False.
+    """
+    try:
+        sid = int(share_id)
+    except Exception:
+        return False
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT 1 FROM WebConversationShares "
+            "WHERE Id = %s AND ExpiresAt IS NOT NULL AND ExpiresAt <= NOW() LIMIT 1",
+            (sid,),
+        )
+        return cur.fetchone() is not None
     finally:
         cur.close()
 
@@ -12874,6 +12941,20 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
             anchor_id = int(raw_anchor)
         except Exception:
             return _json_error("invalid anchor_message_id", 400)
+    # TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 만료 옵션.
+    # `expires_in_seconds` 누락 / null / 0 이하 = 무기한 (NULL, 기존 동작 무회귀).
+    # 상한 365 일 — 초과 시 400 (절대시각 폭주 차단).
+    raw_expires = data.get("expires_in_seconds")
+    expires_in_seconds: int | None = None
+    if raw_expires is not None and str(raw_expires).strip() != "":
+        try:
+            expires_in_seconds = int(raw_expires)
+        except Exception:
+            return _json_error("invalid expires_in_seconds", 400)
+        if expires_in_seconds <= 0:
+            expires_in_seconds = None  # 0/음수 = 무기한 취급
+        elif expires_in_seconds > _SHARE_EXPIRY_MAX_SECONDS:
+            return _json_error("만료 기간이 너무 깁니다 (최대 365일).", 400)
     try:
         conn = _connect_memory()
     except Exception:
@@ -12895,6 +12976,15 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
         if anchor_id is not None and not _share_anchor_belongs_to_conversation(conn, cid, anchor_id):
             return _json_error("anchor_message_id 가 대화에 속하지 않습니다.", 400)
         # Token UNIQUE 충돌 retry loop (확률은 극히 낮지만 cheap).
+        # 만료: expires_in_seconds 가 있으면 ExpiresAt = DATE_ADD(NOW(), INTERVAL %s SECOND)
+        # (DB 시계 도메인 — view/fork 의 NOW() 비교와 정합). 무기한이면 NULL.
+        # 주의: expires_expr 는 코드 상수 (사용자 데이터 미포함) — SQL injection 무관.
+        if expires_in_seconds is None:
+            expires_expr = "NULL"
+            expires_params: tuple = ()
+        else:
+            expires_expr = "DATE_ADD(NOW(), INTERVAL %s SECOND)"
+            expires_params = (int(expires_in_seconds),)
         share_id: int | None = None
         token: str = ""
         for _attempt in range(5):
@@ -12902,10 +12992,10 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
             cur = conn.cursor()
             try:
                 cur.execute(
-                    """
+                    f"""
 INSERT INTO WebConversationShares
-    (ConversationId, Token, ScopeMode, AnchorMessageId, CreatedBy, PolicyVersion)
-VALUES (%s, %s, %s, %s, %s, %s)
+    (ConversationId, Token, ScopeMode, AnchorMessageId, CreatedBy, PolicyVersion, ExpiresAt)
+VALUES (%s, %s, %s, %s, %s, %s, {expires_expr})
                     """,
                     (
                         cid,
@@ -12914,6 +13004,7 @@ VALUES (%s, %s, %s, %s, %s, %s)
                         int(anchor_id) if anchor_id is not None else None,
                         int(account["id"]),
                         SHARE_POLICY_VERSION_CURRENT,
+                        *expires_params,
                     ),
                 )
                 share_id = int(cur.lastrowid or 0)
@@ -12924,6 +13015,22 @@ VALUES (%s, %s, %s, %s, %s, %s)
                 continue
         if not share_id:
             return _json_error("공유 링크 생성 실패", 500)
+        # 응답/감사에 실제 ExpiresAt (DB 계산값) 반환 — DATE_ADD 결과를 read-back.
+        expires_at_iso: str | None = None
+        if expires_in_seconds is not None:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "SELECT ExpiresAt FROM WebConversationShares WHERE Id = %s LIMIT 1",
+                    (int(share_id),),
+                )
+                _row = cur.fetchone()
+                _exp = _row[0] if _row else None
+                expires_at_iso = _exp.isoformat() if hasattr(_exp, "isoformat") else (str(_exp) if _exp else None)
+            except Exception:
+                expires_at_iso = None
+            finally:
+                cur.close()
         # TASK-0073 Phase A6: user endpoint best-effort audit (token full X — prefix 8 char 만).
         _audit_user_action(
             conn,
@@ -12938,6 +13045,7 @@ VALUES (%s, %s, %s, %s, %s, %s)
                 "anchor_message_id": int(anchor_id) if anchor_id is not None else None,
                 "share_id": int(share_id),
                 "token_prefix": token[:8],
+                "expires_in_seconds": int(expires_in_seconds) if expires_in_seconds is not None else None,
             },
         )
         return JSONResponse(
@@ -12948,6 +13056,8 @@ VALUES (%s, %s, %s, %s, %s, %s)
                 "scope_mode": scope_mode,
                 "anchor_message_id": int(anchor_id) if anchor_id is not None else None,
                 "url": f"/share/{token}",
+                "expires_at": expires_at_iso,
+                "expires_in_seconds": int(expires_in_seconds) if expires_in_seconds is not None else None,
             }
         )
     finally:
@@ -12978,7 +13088,8 @@ def list_conversation_shares(cid: str, request: Request) -> JSONResponse:
             cur.execute(
                 """
 SELECT Id, Token, ScopeMode, AnchorMessageId, CreatedBy, CreatedAt,
-       RevokedAt, RevokedBy, ViewCount, LastViewedAt
+       RevokedAt, RevokedBy, ViewCount, LastViewedAt, ExpiresAt,
+       (ExpiresAt IS NOT NULL AND ExpiresAt <= NOW()) AS IsExpired
 FROM WebConversationShares
 WHERE ConversationId = %s
 ORDER BY CreatedAt DESC, Id DESC
@@ -12993,6 +13104,10 @@ ORDER BY CreatedAt DESC, Id DESC
             created_at = row.get("CreatedAt")
             revoked_at = row.get("RevokedAt")
             last_viewed_at = row.get("LastViewedAt")
+            expires_at = row.get("ExpiresAt")
+            # TASK-20260619T012028-share-link-expiry: 만료는 DB NOW() 평가(IsExpired)로 판정.
+            is_revoked = row.get("RevokedAt") is not None
+            is_expired = bool(row.get("IsExpired"))
             items.append(
                 {
                     "id": int(row.get("Id") or 0),
@@ -13005,8 +13120,12 @@ ORDER BY CreatedAt DESC, Id DESC
                     "revoked_by": int(row["RevokedBy"]) if row.get("RevokedBy") is not None else None,
                     "view_count": int(row.get("ViewCount") or 0),
                     "last_viewed_at": last_viewed_at.isoformat() if hasattr(last_viewed_at, "isoformat") else (str(last_viewed_at) if last_viewed_at else None),
+                    "expires_at": expires_at.isoformat() if hasattr(expires_at, "isoformat") else (str(expires_at) if expires_at else None),
+                    "is_expired": is_expired,
                     "url": f"/share/{row.get('Token')}",
-                    "is_active": row.get("RevokedAt") is None,
+                    # is_active = 활성(취소 안 됨 + 만료 안 됨). revoke 버튼 노출 조건.
+                    "is_active": (not is_revoked) and (not is_expired),
+                    "is_revoked": is_revoked,
                 }
             )
         return JSONResponse({"items": items})
@@ -13087,7 +13206,9 @@ def public_share_view(token: str, request: Request) -> JSONResponse:
     except Exception:
         return _json_error("db connection failed", 500)
     try:
-        # race-free: 활성 share 일 때만 ViewCount++ + LastViewedAt 갱신.
+        # race-free: 활성(취소 안 됨 + 만료 안 됨) share 일 때만 ViewCount++ + LastViewedAt 갱신.
+        # TASK-20260619T012028-share-link-expiry: 만료 predicate 추가 — 만료된 링크 조회는
+        # ViewCount 를 부풀리지 않는다 (DB NOW() 평가).
         cur = conn.cursor()
         try:
             cur.execute(
@@ -13095,6 +13216,7 @@ def public_share_view(token: str, request: Request) -> JSONResponse:
 UPDATE WebConversationShares
 SET ViewCount = ViewCount + 1, LastViewedAt = CURRENT_TIMESTAMP
 WHERE Token = %s AND RevokedAt IS NULL
+  AND (ExpiresAt IS NULL OR ExpiresAt > NOW())
                 """,
                 (token,),
             )
@@ -13107,7 +13229,11 @@ WHERE Token = %s AND RevokedAt IS NULL
         if share.get("RevokedAt") is not None:
             return _json_error("이 공유 링크는 취소되었습니다.", 410)
         if bumped == 0:
-            # race 가드: revoke 가 사이에 끼어든 경우.
+            # UPDATE 가 매칭 안 됨 = 취소 아님(위에서 처리) → 만료 또는 revoke race.
+            # 만료는 명시적 메시지로 구분 (DB NOW() 기준 재확인).
+            if _share_row_expired(conn, int(share.get("Id") or 0)):
+                return _json_error("이 공유 링크는 만료되었습니다.", 410)
+            # race 가드: revoke 가 load 직후 끼어든 경우.
             return _json_error("이 공유 링크는 취소되었습니다.", 410)
         conversation_id = str(share.get("ConversationId") or "")
         anchor_id = share.get("AnchorMessageId")
@@ -13168,6 +13294,7 @@ WHERE Token = %s AND RevokedAt IS NULL
         can_fork = bool(viewer and _account_has_permission(viewer, "conversation.create"))
         created_at = share.get("CreatedAt")
         last_viewed = share.get("LastViewedAt")
+        share_expires_at = share.get("ExpiresAt")
         # TASK-0073 Phase A6 (Eng review E4): anonymous share view audit.
         # ActorType='anonymous' (viewer is None) 또는 'account' (logged in viewer).
         # ChangeJson 에 share_token_prefix 8 char 만 — full token X (PII 차단).
@@ -13196,6 +13323,7 @@ WHERE Token = %s AND RevokedAt IS NULL
                     "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else (str(created_at) if created_at else None),
                     "view_count": int(share.get("ViewCount") or 0) + 1,
                     "last_viewed_at": last_viewed.isoformat() if hasattr(last_viewed, "isoformat") else (str(last_viewed) if last_viewed else None),
+                    "expires_at": share_expires_at.isoformat() if hasattr(share_expires_at, "isoformat") else (str(share_expires_at) if share_expires_at else None),
                 },
                 "conversation": {
                     "topic": str(conv_meta.get("topic") or "대화"),
@@ -13237,6 +13365,9 @@ def public_share_fork(token: str, request: Request) -> JSONResponse:
             return _json_error("공유 링크를 찾을 수 없습니다.", 404)
         if share.get("RevokedAt") is not None:
             return _json_error("이 공유 링크는 취소되었습니다.", 410)
+        # TASK-20260619T012028-share-link-expiry: 만료된 링크는 fork 도 차단 (DB NOW() 기준).
+        if _share_row_expired(conn, int(share.get("Id") or 0)):
+            return _json_error("이 공유 링크는 만료되었습니다.", 410)
         conversation_id = str(share.get("ConversationId") or "")
         anchor_id = share.get("AnchorMessageId")
         anchor_id_int = int(anchor_id) if anchor_id is not None else None
@@ -20076,6 +20207,7 @@ def build_audit_change_json(
                 "anchor_message_id": request_ctx.get("anchor_message_id"),
                 "share_id": request_ctx.get("share_id"),
                 "token_prefix": str(request_ctx.get("token_prefix") or "")[:8],
+                "expires_in_seconds": request_ctx.get("expires_in_seconds"),
             },
             ["share.token_full"],
         )
