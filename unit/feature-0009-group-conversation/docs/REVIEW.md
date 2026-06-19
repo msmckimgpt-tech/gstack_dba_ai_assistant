@@ -151,3 +151,12 @@ source_of_truth: true
      sanitize 필요 → 배포 후. (LLM 은 채팅 전체 맥락은 이미 받음 — 요구 #2 충족.)
 - Risks: 위 4항목은 모두 비-블로커(코어 동작 영향 없음). 멤버 보존정책은 설계상 완료(remove=membership만 삭제).
 - Human Approval Needed: 아니오 (이연 결정, 사용자 "완수 후 배포" 지시 + deploy_scope:included).
+
+## REV-20260619-0013 [SUBAGENT: alembic 0012 마이그레이션 §18.8]
+- Related Change: CHG-20260619-0011 (alembic 0012)
+- Reason: ★배포 게이트 — agent_runtime 스키마 권위는 alembic(0001~0011). .sql 만 변경했던 갭을
+  적발·보정. prod 에 테이블 생성되어야 S1~S4 코드가 실동작.
+- 검증: py_compile OK + revision chain 0012→0011→0010 정합 + DDL=scripts/agent_runtime_schema.sql
+  parity(멱등 CREATE/ALTER 동일) + DEPLOY TRAP(명시 GRANT agent_kb_rw/ro) 반영(0011 동형). downgrade 완비.
+- Risks: 기존 데이터 무손실(IF NOT EXISTS, nullable ADD). FK CASCADE 는 core_conversations 삭제 시 멤버 정리(정합).
+- Human Approval Needed: 아니오 (배포 필수 정합 보정, PLAN-APPROVED + deploy_scope:included).

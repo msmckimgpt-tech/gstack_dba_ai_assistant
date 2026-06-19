@@ -60,7 +60,8 @@ source_of_truth: true
 - S2 백엔드 (접근제어·멤버 엔드포인트·audit·backfill wiring·신규 권한·F6 sweep)
 
 ## 7. Next Action
-- push + PR + merge + 배포(web + ask-worker 재빌드) → 라이브 smoke. 이후 S5 잔여 라이브 폴리시(REV-0012).
+- alembic 0012 적용(bin/alembic-migrate.sh upgrade head) → 배포(web + ask-worker 재빌드) → 라이브 smoke. 이후 S5 잔여 라이브 폴리시(REV-0012).
+  - [x] ★배포 필수 alembic 0012 마이그레이션(conversation_members + core_messages 컬럼 + GRANT, CHG-0011/REV-0013)
 
 ## 8. Completion Checklist
 - [x] 코어 REQ(R1~R7)의 AC 구현 (S1~S4 + roster + send-routing + S3c). R8 일부(read-state/cap)는 S5 이연
