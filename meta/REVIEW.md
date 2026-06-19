@@ -33,3 +33,18 @@
   - `CLAUDE.md` — Skill routing 에 `/_dqa:*` 1블록 등록.
 - **panel skipped 사유 (§18.4 doc/meta-tooling carve-out)**: ① Round 2 = RESEARCH 에 findings append 만(ROADMAP/코드 무변경, 신규 production 동작 0) ② fit-reviewer agent = REV-1 에서 이미 검증된 패널 기준의 codify(신규 판단 로직 아님) ③ CLAUDE.md = 1블록 라우팅 추가. 비파괴·additive·meta-class 라 독립 패널 불요.
 - **note**: Round 2 의 F-016(safety lower-bound 거부 평가축)·F-015(execution-based 벤치마크)는 차후 `improve_listup` 가 ITEM-01 acceptance 로 fold 예정(현재 RESEARCH 에만 적재 — research↔listup 단계 분리 준수).
+
+## REV-20260619T032212-dqa-drain-mode [SUBAGENT:dqa-drain-mode-review]
+
+- **cycle**: ai/claude/dqa-drain-mode — `/_dqa:improve_cycle` 드레인 모드 추가(no-arg → ready 항목 종속/순차 전체 구현)
+- **changeset (pure-meta)**: `.claude/commands/_dqa/improve_cycle.md`(드레인 모드 + 실행모드 섹션 + Phase 6 + 종료조건) · `README.md`(정합 갱신)
+- **panel**: `improve-fit-reviewer` subagent(첫 자가 사용). 적대적 검토 — 거버넌스 우회/외부영향 confirm/무인 안전선/종속 무결성/단건 회귀.
+- **verdict (1차)**: **SHIP-WITH-FIXES** — MAJOR 3 + MINOR 2.
+- **findings → 조치**:
+  - **MAJOR-1** (시퀀스 batch 승인이 9개 Major 의 §7.1 개별 plan-review 를 대체=우회) → 드레인 승인을 **orchestration 메타승인으로 한정**(자동전진+Minor+commit/push 만 인가). 각 Major 는 항목 차례에 file/symbol/acceptance plan→PLAN-APPROVED 개별 유지.
+  - **MAJOR-2** (불변제약 §외부영향 confirm ↔ "batch 가 per-item PR/머지 인가" 자기모순 + 전역 PR-confirm 이탈) → batch consent 에서 **PR 생성·머지·deploy 제거**. 항목별 confirm 유지.
+  - **MAJOR-3** (무인 모드 판별 미정의 = fail-open 위험) → **fail-closed 기본값**: `--unattended` 명시 신호 또는 게이트 미응답이면 자동 진행 안 함(Minor-only 강등·blocked).
+  - **MINOR-1** (종속 재로드 위치 모호) → 의사코드에 `cd main_worktree; git pull --ff-only; reload ROADMAP`(§13.2.5) 명시.
+  - **MINOR-2** (STOP 분기 `continue` 누락·진행성 가드 일반화) → `continue` + `no_progress` 카운터로 교착 종료.
+- **verdict (2차, 조치 후)**: SHIP-WITH-FIXES — MAJOR/MINOR 전건 반영. 단건 모드 회귀 없음(reviewer 통과).
+- **note**: 드레인은 orchestration 만 자동화, 거버넌스 게이트(Major plan-review·Critical confirm·PR/deploy)는 항목별 유지 — "전체 자동 구현"이되 §7.1/§12.3/외부영향 confirm 불변.
