@@ -128,3 +128,14 @@ source_of_truth: true
 - Files: docs (TASK/REPORT/REVIEW) — REV-20260619-0012 이연 사유, Completion Checklist 갱신.
 - Impact: 코드 무변경. 배포 진입 게이트.
 - Rollback Notes: docs only.
+
+## CHG-20260619-0011
+- Date: 2026-06-19
+- Related Requirement: REQ-GC-R1/R5 (배포 정합 — alembic 마이그레이션)
+- Summary: ★배포 필수 — agent_runtime 신규 스키마(conversation_members + core_messages 컬럼)의 alembic 0012 마이그레이션. .sql 만으론 prod 미적용(스키마 권위=alembic).
+- Files: `unit/feature-0002-agent-core/alembic/versions/20260619_0012_group_conversation_members.py` (신규).
+  CREATE conversation_members(+FK CASCADE, PK, ix_account) + core_messages ALTER ADD sender_account_id/thread_root_message_id(IF NOT EXISTS) + ix_core_messages_thread + **명시 GRANT(agent_kb_rw/ro)**.
+- Impact: prod DB 에 멤버십 테이블/컬럼 생성(기존 데이터 무손실). 이게 없으면 S1~S4 코드가 graceful degrade(기능 무동작). down_revision=0011_llm_provider_health(head).
+- ★DEPLOY TRAP(0011 동형): superuser 적용이라 신규 테이블 명시 GRANT 필수(누락 시 permission denied 조용한 실패).
+- Rollback Notes: alembic downgrade 0012→0011(DROP table + DROP columns).
+- 검증: py_compile OK + revision chain(0012→0011→0010) 정합.
