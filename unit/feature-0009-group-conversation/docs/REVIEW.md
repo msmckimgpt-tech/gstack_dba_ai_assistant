@@ -60,3 +60,12 @@ source_of_truth: true
 - Risks: 발화 경로(ask/fork/update_product)는 아직 멤버 미허용(owner-only) — 의도된 S3/S4 경계.
 - Open Questions: roster UI(프론트) 미구현 — S2 잔여(다음 turn).
 - Human Approval Needed: 아니오 (additive view-access, PLAN-APPROVED 범위).
+
+## REV-20260619-0005 [SKIPPED: S3 멘션 파서 — pure additive primitive, 미배선]
+- Related Change: CHG-20260619-0003 (canonical 멘션 파서)
+- Reason: 패널 skip 사유 — 어떤 흐름에도 미배선된 순수 함수(behavior 무변경). 소비처 0.
+- 검증: BE 단위 3/3 + FE↔BE parity 14/14(node, 동일 _CANONICAL_CASES 표) + py_compile.
+  divergence 위험(eng/cso 지적)을 ASCII-explicit lookbehind + 공유 케이스표로 구조적 차단.
+- Risks: 없음(미배선). 배선(enqueue 게이팅·발신자 라벨·F1 첨부주입)은 behavior-changing →
+  그 chunk 에서 정식 패널.
+- Human Approval Needed: 아니오.
