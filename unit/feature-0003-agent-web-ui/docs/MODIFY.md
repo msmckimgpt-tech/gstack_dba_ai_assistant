@@ -4290,3 +4290,12 @@ source_of_truth: true
 - Verification: ast+node + verify_db_rule_logic.py 30/30 + verify_db_rule_ui.mjs 18/18. 화면 정본=PB-0008.
 - Rollback: 다중규칙 함수/엔드포인트/UI 복원 + UNIQUE 재추가(단, 기존 다중 규칙 행 있으면 충돌 — 운영 주의). 비파괴 스키마(SortOrder 잔존 무해).
 - Deploy: web 재빌드. deploy_scope: included.
+
+## CHG-20260619T012028-ai-claude-share-link-expiry
+- Date: 2026-06-19 (TASK-20260619T012028-share-link-expiry — 대화 공유 링크 시간 기반 만료, 설정 가능. SECURITY.md §7.2 TODO 구현). 사용자 보안 보강 6종 중 ①.
+- Scope: feature-0003 `src/app.py`(스키마 헬퍼 `_ensure_web_share_links_expiry_column`+양 경로 호출·`_share_load_active` SELECT·`_share_row_expired` 헬퍼·`_SHARE_EXPIRY_MAX_SECONDS`·create 검증/INSERT/응답/audit·list IsExpired·public view/fork 410 집행·view 응답 expires_at·audit builder share.create) + `src/static/app.js`(promptShareExpiry 모달·createConversationShare·공유관리 만료 배지) + `share.js`(만료 렌더+410 body.error 구분) + `share.html`(#shareExpiry) + `styles.css`(.is-expired/.share-expiry-*) + index.html/share.html(cache-buster) + `tests/test_task20260619_share_expiry.py`(신규 12) + docs.
+- 내용: `ExpiresAt DATETIME NULL`(기본 NULL=무기한, 기존 동작 무회귀·명시 revoke 유지). 생성 시 `expires_in_seconds`(무기한/1일/7일/30일, 상한 365일) → `DATE_ADD(NOW(), INTERVAL %s SECOND)`. anonymous view/fork 시 `ExpiresAt <= NOW()` → 410(취소 410 과 구분된 "만료되었습니다" 메시지). 만료 판정은 **전부 DB 시계(NOW()/DATE_ADD)** — web↔DB clock skew 차단. view 의 ViewCount UPDATE 도 만료 predicate 포함(만료뷰 카운트 인플레 차단). 410 이 대화 본문 로드보다 선행(누출 0).
+- Why: 사용자 요청 + SECURITY.md §7.2 외부 배포 전 보완 TODO(시간 기반 만료) 충족. 공유 링크의 무기한 노출 위험 완화.
+- Verification: test_task20260619_share_expiry.py 12/12 + make test 전체 회귀 0(사전존재 product-delete 2건 제외) + py_compile + node --check(app.js/share.js) + CSS brace 1372=1372. outside-voice 적대 보안 리뷰 SHIP(9 probe refute, BLOCKER/MAJOR 0). 화면 정본=PB-0008(배포 후).
+- Rollback: 스키마 헬퍼/엔드포인트/UI 변경 복원. ExpiresAt 컬럼은 비파괴(잔존 무해, NULL=무기한이라 enforcement 영향 0). cache-buster 되돌림.
+- Deploy: web 재빌드. (ask/insight-worker 무관 — 공유는 web 전용.)

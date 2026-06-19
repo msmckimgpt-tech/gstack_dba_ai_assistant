@@ -121,9 +121,9 @@ ai_read_priority: 4
 
 1. **IP allowlist**: Caddy / reverse proxy 레벨에서 `/api/public/share/...` 와 `/share/...` 에 대한 사내 CIDR 화이트리스트.
 2. **Token 별 비밀번호**: `WebConversationShares` 에 `PasswordHash VARCHAR(255) NULL` 컬럼 + 생성 시 옵션. GET 응답 401 시 password prompt 노출.
-3. **시간 기반 만료**: `ExpiresAt DATETIME NULL` 컬럼 + GET 시 `NOW() > ExpiresAt` → 410. 기본은 무기한 + 명시 revoke 그대로 유지.
+3. ~~**시간 기반 만료**: `ExpiresAt DATETIME NULL` 컬럼 + GET 시 `NOW() > ExpiresAt` → 410. 기본은 무기한 + 명시 revoke 그대로 유지.~~ **→ 구현 완료 (TASK-20260619T012028-share-link-expiry, 2026-06-19)**: `WebConversationShares.ExpiresAt DATETIME NULL` + 생성 시 `expires_in_seconds`(무기한/1일/7일/30일, 상한 365일) + anonymous view/fork 시 `ExpiresAt <= NOW()` → 410("만료되었습니다", 취소와 구분). 만료 판정 전부 DB 시계(`DATE_ADD(NOW())`/`NOW()`)로 clock skew 차단. 기본 NULL=무기한(무회귀). 정합 정본 = feature-0003 FUNCTION.md AC-0584~0587.
 
-후속 cycle 결정은 운영 환경 변경 시점에 진행한다 (사용자 직접 결정 필요).
+§7.2 의 IP allowlist(1) / token 별 비밀번호(2) 는 외부 배포 가시화 시점에 후속 cycle 로 진행한다 (사용자 직접 결정 필요).
 
 ## 8. Cross-account 대화 검색·필터 정책 (TASK-0072)
 

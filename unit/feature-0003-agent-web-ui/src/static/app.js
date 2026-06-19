@@ -4802,6 +4802,59 @@ function _switchToPendingConversationContext(entry) {
 
 // REQ-20260514-0001: 대화 공유 링크 생성. anchorMessageId 가 주어지면 'anchored', 아니면 'full'.
 // 성공 시 절대 URL 을 clipboard 에 복사하고 toast 로 노출. 실패 시 throw.
+// TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 공유 링크 만료 기간 선택 프리셋.
+const SHARE_EXPIRY_PRESETS = [
+  { label: "무기한", seconds: null },
+  { label: "1일", seconds: 86400 },
+  { label: "7일", seconds: 604800 },
+  { label: "30일", seconds: 2592000 },
+];
+
+// 만료 기간 선택 모달. resolve({ cancelled, seconds }). seconds=null → 무기한.
+function promptShareExpiry() {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement("div");
+    backdrop.className = "share-mgr-backdrop";
+    backdrop.setAttribute("role", "dialog");
+    backdrop.setAttribute("aria-modal", "true");
+    backdrop.innerHTML =
+      '<div class="share-mgr-panel share-expiry-panel">' +
+      '  <div class="share-mgr-head">' +
+      '    <h3 class="share-mgr-title">공유 링크 만료 설정</h3>' +
+      '    <button type="button" class="share-mgr-close" aria-label="닫기">×</button>' +
+      '  </div>' +
+      '  <div class="share-expiry-desc">링크가 자동으로 만료될 기간을 선택하세요. 만료 후에는 더 이상 열 수 없습니다.</div>' +
+      '  <div class="share-expiry-opts"></div>' +
+      '</div>';
+    let settled = false;
+    const cleanup = () => {
+      if (backdrop.parentNode) document.body.removeChild(backdrop);
+      document.removeEventListener("keydown", onKey);
+    };
+    const finish = (val) => { if (settled) return; settled = true; cleanup(); resolve(val); };
+    const onKey = (e) => { if (e.key === "Escape") finish({ cancelled: true, seconds: null }); };
+    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) finish({ cancelled: true, seconds: null }); });
+    backdrop.querySelector(".share-mgr-close").addEventListener("click", () => finish({ cancelled: true, seconds: null }));
+    document.addEventListener("keydown", onKey);
+    const opts = backdrop.querySelector(".share-expiry-opts");
+    SHARE_EXPIRY_PRESETS.forEach((p) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "share-mgr-btn share-expiry-opt";
+      btn.textContent = p.label;
+      btn.addEventListener("click", () => finish({ cancelled: false, seconds: p.seconds }));
+      opts.appendChild(btn);
+    });
+    document.body.appendChild(backdrop);
+  });
+}
+
+function shareExpiryLabel(seconds) {
+  if (seconds == null) return "무기한";
+  const match = SHARE_EXPIRY_PRESETS.find((p) => p.seconds === Number(seconds));
+  return match ? match.label : `${Math.round(Number(seconds) / 86400)}일`;
+}
+
 async function createConversationShare({ anchorMessageId = null, conversationId = null } = {}) {
   const cid = conversationId || state.activeConversationId;
   if (!cid) return null;
@@ -4809,9 +4862,13 @@ async function createConversationShare({ anchorMessageId = null, conversationId 
     showPermissionDeniedToast("conversation.share.create");
     return null;
   }
+  // 만료 기간 선택 (취소 시 생성 중단).
+  const choice = await promptShareExpiry();
+  if (!choice || choice.cancelled) return null;
   const body = anchorMessageId != null
     ? { scope_mode: "anchored", anchor_message_id: Number(anchorMessageId) }
     : { scope_mode: "full" };
+  if (choice.seconds != null) body.expires_in_seconds = Number(choice.seconds);
   const payload = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/share`, {
     method: "POST",
     body: JSON.stringify(body),
@@ -4820,10 +4877,11 @@ async function createConversationShare({ anchorMessageId = null, conversationId 
     throw new Error("공유 링크 응답이 비어 있습니다.");
   }
   const absoluteUrl = `${window.location.origin}${payload.url}`;
+  const expirySuffix = choice.seconds != null ? ` (만료: ${shareExpiryLabel(choice.seconds)})` : "";
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(absoluteUrl);
-      showToast(`공유 링크가 복사되었습니다: ${absoluteUrl}`);
+      showToast(`공유 링크가 복사되었습니다${expirySuffix}: ${absoluteUrl}`);
     } else {
       window.prompt("공유 링크를 복사하세요:", absoluteUrl);
     }
@@ -4882,12 +4940,22 @@ async function openShareManager(cid) {
       row.className = "share-mgr-row" + (it.is_active ? "" : " is-revoked");
       const main = document.createElement("div");
       main.className = "share-mgr-row-main";
+      // TASK-20260619T012028-share-link-expiry: 만료일 표시 + 취소/만료 구분 배지.
+      const expirySeg = it.expires_at
+        ? ` · 만료 ${escapeHtml(formatDateTime(it.expires_at))}`
+        : "";
+      let badgeHtml;
+      if (it.is_revoked) {
+        badgeHtml = '<span class="share-mgr-badge is-revoked">취소됨</span>';
+      } else if (it.is_expired) {
+        badgeHtml = '<span class="share-mgr-badge is-expired">만료됨</span>';
+      } else {
+        badgeHtml = '<span class="share-mgr-badge is-active">활성</span>';
+      }
       main.innerHTML =
         `<code class="share-mgr-token">${escapeHtml(String(it.token || "").slice(0, 10))}…</code>` +
-        `<span class="share-mgr-meta">${escapeHtml(scopeLabel)} · ${escapeHtml(formatDateTime(it.created_at))} · 조회 ${Number(it.view_count) || 0}</span>` +
-        (it.is_active
-          ? '<span class="share-mgr-badge is-active">활성</span>'
-          : '<span class="share-mgr-badge is-revoked">취소됨</span>');
+        `<span class="share-mgr-meta">${escapeHtml(scopeLabel)} · ${escapeHtml(formatDateTime(it.created_at))} · 조회 ${Number(it.view_count) || 0}${expirySeg}</span>` +
+        badgeHtml;
       const actions = document.createElement("div");
       actions.className = "share-mgr-row-actions";
       if (it.is_active) {

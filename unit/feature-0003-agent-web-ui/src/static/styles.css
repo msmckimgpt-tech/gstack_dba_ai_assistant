@@ -2176,6 +2176,12 @@ a { color: inherit; }
 .share-mgr-btn.is-danger { color: var(--danger); }
 .share-mgr-btn.is-danger:hover { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
 .share-mgr-btn:disabled { opacity: .5; cursor: not-allowed; }
+/* TASK-20260619T012028-share-link-expiry: 만료 배지 + 만료 기간 선택 모달. */
+.share-mgr-badge.is-expired { background: #fff7ed; color: #b45309; }
+.share-expiry-panel { max-width: 420px; }
+.share-expiry-desc { padding: 14px 20px 4px; font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+.share-expiry-opts { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 20px 20px; }
+.share-expiry-opt { flex: 1 1 auto; min-width: 72px; justify-content: center; text-align: center; padding: 8px 12px; font-size: 13px; }
 
 /* TASK-0158: 첨부 scopeAll 토글 (attach 사이드패널) */
 .attach-scope-all {
