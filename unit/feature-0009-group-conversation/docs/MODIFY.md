@@ -87,3 +87,12 @@ source_of_truth: true
 - Impact: 프론트 additive(신규 패널·버튼). 기존 대화 흐름 무변경. 멤버 버튼은 대화 선택 시만 표시.
 - Rollback Notes: 버튼/패널/JS/CSS 삭제로 가역.
 - 검증: node --check(app.js·mentions.js) OK + element id 정합(html↔app.js 7/7). **PB-0008 실측 보류**(Windows 브라우저 필요 — TEST.md, WARN-only).
+
+## CHG-20260619-0007
+- Date: 2026-06-19
+- Related Requirement: 릴리즈 노트(사용자 요청) — 그룹 대화 사용자-사용가능 알림.
+- Summary: release-notes-data.js 2026-06-19 블록에 "그룹 대화" 항목 추가 + 캐시버스터 bump.
+- Files: `static/release-notes-data.js`(releases[0] summary 확장 + 그룹대화 new 항목, 내부동작 비노출) + index.html·admin.html `release-notes-data.js?v=` bump.
+- Impact: 정적 데이터 추가(읽기전용). 문체=사용자 보이는 결과 중심, "초대=대화 공유" 고지 포함.
+- 내부동작 비노출: RBAC/멤버십테이블/actor/PG/F1 등 미언급. "본인에게 허용된 제품에 한해" 로 열람≠발화를 사용자 역량으로만 표현.
+- Rollback Notes: 항목 제거 + 캐시버스터 환원.

@@ -104,3 +104,12 @@ source_of_truth: true
 - Risks: 실 브라우저 렌더/상호작용 미검증 — **PB-0008(Windows 브라우저) 보류**(TEST.md 기록). WARN-only.
 - Open: 멘션 자동완성(F7) 미구현(입력창 @roster) · 사람채팅 send-routing(mention 게이팅) 미배선.
 - Human Approval Needed: 아니오 (additive 프론트). 배포 전 PB-0008 권장.
+
+## REV-20260619-0009 [SKIPPED: 릴리즈 노트 정적 데이터, 내부동작 비노출 검토]
+- Related Change: CHG-20260619-0007 (release-notes-data.js 그룹 대화 항목)
+- Reason: 패널 skip 사유 — 정적 큐레이션 데이터(읽기전용), 코드/동작 변경 없음.
+- 검증: node --check(release-notes-data.js) OK + 캐시버스터 양 페이지 bump. **콘텐츠 누출 검토**:
+  RBAC/멤버십테이블/actor/PG/F1 등 내부동작 미언급, "본인에게 허용된 제품에 한해"·"초대=대화 공유"
+  로 사용자 역량/주의만 표현(AC-0579 정합). shipped 동작에 정확(멘션-게이팅 send-routing 미배선분
+  과장 안 함 — "@assistant 안 넣으면 AI 미호출" 문구 제외).
+- Human Approval Needed: 아니오.

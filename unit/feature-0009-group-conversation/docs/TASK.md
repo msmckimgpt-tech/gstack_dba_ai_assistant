@@ -45,7 +45,8 @@ source_of_truth: true
 - [ ] **S6 (deferred, 별도 계획)** — 풀 스레드 UI + run-status `(conversation,thread)` 재키잉
 
 ## 4. In Progress
-- S3 멘션 배선(enqueue 게이팅·발신자 라벨·F1 첨부주입·read-state) + S2 roster UI (둘 다 잔여)
+- 잔여: S3c LLM 발신자 라벨 · S5(run cap·llm_usage actor 귀속·폴링) · send-routing(멘션 게이팅 프론트)
+  - [x] 릴리즈 노트(그룹 대화) + 캐시버스터 (CHG-0007)
 
 ## 5. Blocked
 - 없음
