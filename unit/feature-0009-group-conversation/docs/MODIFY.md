@@ -96,3 +96,14 @@ source_of_truth: true
 - Impact: 정적 데이터 추가(읽기전용). 문체=사용자 보이는 결과 중심, "초대=대화 공유" 고지 포함.
 - 내부동작 비노출: RBAC/멤버십테이블/actor/PG/F1 등 미언급. "본인에게 허용된 제품에 한해" 로 열람≠발화를 사용자 역량으로만 표현.
 - Rollback Notes: 항목 제거 + 캐시버스터 환원.
+
+## CHG-20260619-0008
+- Date: 2026-06-19
+- Related Requirement: REQ-GC-R2/R3 (send-routing — 멘션 게이팅 사람 채팅)
+- Summary: 그룹 대화에서 @assistant 멘션 없는 메시지는 사람-사람 채팅(AI 미호출). 핵심 요구 완성.
+- Files:
+  - `app.py` `_list_conversations_pg`: conversation 에 `member_count` + `is_member`(viewer) 신호 추가(멤버 1쿼리 BOOL_OR/COUNT).
+  - `static/app.js`: ① sendPrompt 게이트 완화(owner OR `active.is_member`) — 멤버 발화/채팅 허용 ② 그룹(member_count>1)+@assistant 미포함 → `_sendGroupChatMessage`(POST /messages, AI 미호출) ③ 멘션 판정 `window.Mentions.messageInvokesAssistant`.
+- Impact: 그룹 대화에서 사람끼리 채팅 가능(AI 미호출), @assistant 시에만 AI 응답. 1:1(member_count≤1)·신규 대화는 종전 /api/ask 무회귀. 비-멤버 타계정 대화는 여전히 차단.
+- Rollback Notes: 게이트/분기/member 신호 제거로 가역.
+- 검증: py_compile + node --check + 회귀 17/17. 잔여=발신자 UI 표시/LLM 라벨(S3c).

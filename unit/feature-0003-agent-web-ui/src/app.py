@@ -6179,9 +6179,25 @@ LEFT JOIN agent_runtime.kv kv_topic
         status_map: dict[str, dict[str, str]] = {}
         count_map: dict[str, dict[str, int]] = {}
         run_id_map: dict[str, str] = {}
+        # feature-0009: 멤버십 신호(member_count + viewer is_member) — 프론트 send 게이트/멘션 라우팅용.
+        member_map: dict[str, dict[str, Any]] = {}
         if conv_ids:
             with pg.cursor() as pgcur:
                 placeholders_pg = ",".join(["%s"] * len(conv_ids))
+                try:
+                    pgcur.execute(
+                        f"""
+SELECT conversation_id, COUNT(*) AS cnt, BOOL_OR(account_id = %s) AS is_member
+FROM agent_runtime.conversation_members
+WHERE conversation_id IN ({placeholders_pg})
+GROUP BY conversation_id
+                        """,
+                        (int(self_id or 0), *conv_ids),
+                    )
+                    for cid, cnt, ismem in pgcur.fetchall() or []:
+                        member_map[str(cid)] = {"count": int(cnt or 0), "is_member": bool(ismem)}
+                except Exception:
+                    member_map = {}
                 pgcur.execute(
                     f"""
 SELECT conversation_id, key, value FROM agent_runtime.kv
@@ -6251,6 +6267,9 @@ GROUP BY conversation_id
                 item["duration_ms"] = None
             item["message_count"] = counts.get("total", 0)
             item["user_message_count"] = counts.get("user", 0)
+            _mm = member_map.get(item["id"], {})
+            item["member_count"] = int(_mm.get("count", 0))
+            item["is_member"] = bool(_mm.get("is_member", False))
 
         return items
     finally:

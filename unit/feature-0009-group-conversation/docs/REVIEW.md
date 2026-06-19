@@ -113,3 +113,14 @@ source_of_truth: true
   로 사용자 역량/주의만 표현(AC-0579 정합). shipped 동작에 정확(멘션-게이팅 send-routing 미배선분
   과장 안 함 — "@assistant 안 넣으면 AI 미호출" 문구 제외).
 - Human Approval Needed: 아니오.
+
+## REV-20260619-0010 [SUBAGENT: send-routing 멘션 게이팅 §18.8]
+- Related Change: CHG-20260619-0008 (멘션 게이팅 사람 채팅)
+- Reason: 핵심 send 경로 변경 — 1:1/신규 대화 무회귀 + 그룹만 채팅 분기 확인.
+- 검증(self): ① 분기 조건 `member_count>1 && activeConversationId && !messageInvokesAssistant` —
+  1:1(count≤1)·신규(lazy)·@assistant 포함은 전부 /api/ask 유지(무회귀). ② 게이트 완화는
+  `|| active.is_member` 추가만(비-멤버 차단 유지). ③ member 신호 PG 1쿼리(self_id BOOL_OR), 실패 시
+  member_map={}→count 0→채팅 분기 비활성(안전 폴백). ④ 채팅 경로=backend `/messages`(접근 게이트+
+  blocked 가드+발신자 귀속) 재사용. py_compile+node --check+회귀 17/17.
+- Risks/Open: 발신자 UI 표시·LLM 라벨 미구현(S3c, 다음 커밋) — 현재 타 멤버 채팅이 자기 메시지처럼 보일 수 있음.
+- Human Approval Needed: 아니오 (무회귀 분기, PLAN-APPROVED).

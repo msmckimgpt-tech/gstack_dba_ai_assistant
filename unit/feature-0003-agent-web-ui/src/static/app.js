@@ -6501,6 +6501,34 @@ function _bindComposerActionsEvents() {
   });
 }
 
+// feature-0009: 그룹 대화 사람-사람 채팅 전송 (AI 미호출). @assistant 멘션 없는 메시지 경로.
+async function _sendGroupChatMessage(cid, message) {
+  const optimistic = {
+    id: null,
+    role: "user",
+    content: message,
+    created_at: new Date().toISOString(),
+    meta: {},
+    _optimistic: true,
+  };
+  state.messages = [...state.messages, optimistic];
+  promptInputEl.value = "";
+  renderMessages();
+  try { renderComposer(); } catch (_e) {}
+  try {
+    await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: message }),
+    });
+  } catch (e) {
+    showToast(e.message || "메시지 전송에 실패했습니다.", true);
+    return;
+  }
+  // 저장된 메시지를 hydrate (optimistic 교체) + 사이드바 최신화.
+  try { await refreshWorkspace(cid); } catch (_e) {}
+  try { await loadConversations(cid); } catch (_e) {}
+}
+
 async function sendPrompt() {
   const message = promptInputEl.value.trim();
   if (!message) return;
@@ -6510,7 +6538,8 @@ async function sendPrompt() {
     return;
   }
   const active = currentConversation();
-  if (active && !isOwnConversation(active)) {
+  // feature-0009: 그룹 대화 멤버도 발화/채팅 가능(owner OR 멤버). 비-멤버 타계정 대화만 차단.
+  if (active && !isOwnConversation(active) && !active.is_member) {
     showToast("타 계정 소유의 대화에는 요청을 보낼 수 없습니다. 새 대화를 생성하세요.", true);
     return;
   }
@@ -6521,6 +6550,15 @@ async function sendPrompt() {
   }
   if (state.composerAttachments.uploadingCount > 0) {
     showToast("파일 업로드가 완료될 때까지 기다려주세요.", true);
+    return;
+  }
+  // feature-0009: 그룹 대화(멤버 2+)에서 @assistant 멘션이 없으면 사람-사람 채팅 — AI 미호출, 저장만.
+  // 멘션이 있으면(또는 1:1) 종전대로 /api/ask 로 AI 호출.
+  if (
+    active && Number(active.member_count || 0) > 1 && state.activeConversationId &&
+    window.Mentions && !window.Mentions.messageInvokesAssistant(message)
+  ) {
+    await _sendGroupChatMessage(active.id, message);
     return;
   }
   // TASK-0048: pending 모드는 client-side 만 진입한 빈 대화 단계. cid 가 없으니 lazy create.
