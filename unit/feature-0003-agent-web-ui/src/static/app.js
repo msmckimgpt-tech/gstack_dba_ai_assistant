@@ -860,6 +860,8 @@ function switchProfileTab(tab) {
     initAccountPromptEditor().catch(() => {});
   } else if (tab === "usage") {
     loadProfileUsage().catch(() => {}); // TASK-0184: 내 사용 내역 lazy 로드
+  } else if (tab === "security-and-account") {
+    renderProfileTotp(); // TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA 상태 렌더.
   } else if (tab === "release-notes") {
     // 릴리즈 노트 — 정적 콘텐츠라 매 진입 렌더(가벼움). 렌더러는 release-notes.js.
     // 작업 화면은 '관리 콘솔' 영역 노트를 숨긴다(work/common 만 노출).
@@ -1627,6 +1629,85 @@ function renderProfile() {
   if (passwordErrorEl) passwordErrorEl.textContent = "";
   if (passwordChangeFormEl) passwordChangeFormEl.reset();
   // TASK-0184: 내 활동 기록 탭(TASK-0158)은 의도치 않은 노출이라 제거됨 — 게이트 불필요.
+}
+
+// TASK-20260619T040000-two-factor-auth (보안 ⑥): 프로필 2FA(TOTP) 상태/켜기/끄기 self-service.
+function renderProfileTotp() {
+  const box = document.getElementById("profileTotpBody");
+  if (!box) return;
+  const enabled = !!(state.user && state.user.totp_enabled);
+  box.innerHTML = "";
+  if (enabled) {
+    const status = document.createElement("div");
+    status.className = "profile-usage-caption";
+    status.textContent = "✓ 2단계 인증이 사용 중입니다. 로그인 시 authenticator 코드가 필요합니다.";
+    const btn = document.createElement("button");
+    btn.type = "button"; btn.className = "btn-secondary"; btn.textContent = "2단계 인증 해제";
+    btn.style.marginTop = "8px";
+    btn.addEventListener("click", async () => {
+      const pw = window.prompt("2단계 인증을 해제하려면 비밀번호를 입력하세요:");
+      if (pw === null) return;
+      try {
+        await apiFetch("/api/auth/totp/disable", { method: "POST", body: JSON.stringify({ password: pw }) });
+        state.user.totp_enabled = false;
+        showToast("2단계 인증을 해제했습니다.");
+        renderProfileTotp();
+      } catch (error) { showToast(`해제 실패: ${error.message || error}`, true); }
+    });
+    box.append(status, btn);
+    return;
+  }
+  const desc = document.createElement("div");
+  desc.className = "profile-usage-caption";
+  desc.textContent = "사용 안 함. authenticator 앱(Google Authenticator 등)으로 2단계 인증을 켜면 로그인 보안이 강화됩니다.";
+  const btn = document.createElement("button");
+  btn.type = "button"; btn.className = "btn-primary"; btn.textContent = "2단계 인증 켜기";
+  btn.style.marginTop = "8px";
+  btn.addEventListener("click", () => startProfileTotpSetup(box));
+  box.append(desc, btn);
+}
+
+async function startProfileTotpSetup(box) {
+  let setup;
+  try {
+    setup = await apiFetch("/api/auth/totp/setup", { method: "POST", body: JSON.stringify({}) });
+  } catch (error) { showToast(`설정 시작 실패: ${error.message || error}`, true); return; }
+  box.innerHTML = "";
+  const guide = document.createElement("div");
+  guide.className = "profile-usage-caption";
+  guide.innerHTML =
+    "authenticator 앱에 아래 키를 등록한 뒤, 표시되는 6자리 코드를 입력해 확인하세요.<br>" +
+    `<strong>설정 키:</strong> <code>${escapeHtml(setup.secret)}</code>`;
+  const codeInput = document.createElement("input");
+  codeInput.type = "text"; codeInput.className = "admin-search"; codeInput.placeholder = "인증 코드 6자리";
+  codeInput.inputMode = "numeric"; codeInput.style.cssText = "width:100%;margin:8px 0";
+  const err = document.createElement("div"); err.className = "form-error";
+  const confirmBtn = document.createElement("button");
+  confirmBtn.type = "button"; confirmBtn.className = "btn-primary"; confirmBtn.textContent = "확인하고 켜기";
+  confirmBtn.addEventListener("click", async () => {
+    err.textContent = ""; confirmBtn.disabled = true;
+    try {
+      const res = await apiFetch("/api/auth/totp/confirm", { method: "POST", body: JSON.stringify({ code: codeInput.value.trim() }) });
+      state.user.totp_enabled = true;
+      showProfileBackupCodes(box, res.backup_codes || []);
+    } catch (error) { confirmBtn.disabled = false; err.textContent = error.message || "코드가 올바르지 않습니다."; }
+  });
+  box.append(guide, codeInput, err, confirmBtn);
+  codeInput.focus();
+}
+
+function showProfileBackupCodes(box, codes) {
+  box.innerHTML = "";
+  const ok = document.createElement("div");
+  ok.className = "profile-usage-caption";
+  ok.innerHTML = "✓ 2단계 인증이 켜졌습니다. <strong>아래 백업 코드를 안전한 곳에 보관하세요</strong> — 기기 분실 시 1회씩 로그인에 사용합니다. (다시 표시되지 않습니다.)";
+  const pre = document.createElement("pre");
+  pre.style.cssText = "background:var(--surface-2,#f5f5f5);padding:10px;border-radius:6px;font-family:var(--mono);font-size:13px;white-space:pre-wrap;margin:8px 0";
+  pre.textContent = (codes || []).join("\n");
+  const done = document.createElement("button");
+  done.type = "button"; done.className = "btn-secondary"; done.textContent = "확인 완료";
+  done.addEventListener("click", () => renderProfileTotp());
+  box.append(ok, pre, done);
 }
 
 // TASK-0184: 내 사용 내역 — 본인 LLM 사용량 (GET /api/profile/usage). 간소판: 토큰·모델·요청
@@ -7073,6 +7154,11 @@ async function handleLogin(event) {
         password: document.getElementById("loginPassword").value,
       }),
     });
+    // TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA 활성 계정은 200 + totp_required.
+    if (payload && payload.totp_required) {
+      showTotpLoginPrompt(payload.totp_token);
+      return;
+    }
     state.user = payload.user;
     hideAuthOverlay();
     await initializeWorkspace();
@@ -7084,6 +7170,56 @@ async function handleLogin(event) {
   } catch (error) {
     loginErrorEl.textContent = error.message || "로그인에 실패했습니다.";
   }
+}
+
+// TASK-20260619T040000-two-factor-auth (보안 ⑥): 로그인 2단계 — TOTP 코드 입력 프롬프트.
+function showTotpLoginPrompt(totpToken) {
+  if (document.getElementById("totpLoginModal")) return;
+  const overlay = document.createElement("div");
+  overlay.id = "totpLoginModal";
+  overlay.className = "share-mgr-backdrop";
+  overlay.innerHTML =
+    '<div class="share-mgr-panel share-expiry-panel">' +
+    '  <div class="share-mgr-head"><h3 class="share-mgr-title">2단계 인증</h3></div>' +
+    '  <div class="share-expiry-desc">authenticator 앱의 6자리 코드를 입력하세요. (분실 시 백업 코드도 사용 가능)</div>' +
+    '  <div style="padding:0 20px 18px">' +
+    '    <input type="text" id="totpLoginCode" class="admin-search" inputmode="numeric" autocomplete="one-time-code" placeholder="인증 코드" style="width:100%;margin-bottom:10px" />' +
+    '    <div class="form-error" id="totpLoginError"></div>' +
+    '    <button type="button" id="totpLoginSubmit" class="btn-primary" style="width:100%">확인</button>' +
+    '  </div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  const codeEl = overlay.querySelector("#totpLoginCode");
+  const errEl = overlay.querySelector("#totpLoginError");
+  const btn = overlay.querySelector("#totpLoginSubmit");
+  codeEl.focus();
+  const submit = async () => {
+    errEl.textContent = "";
+    btn.disabled = true;
+    try {
+      const res = await apiFetch("/api/auth/login/totp", {
+        method: "POST",
+        body: JSON.stringify({ totp_token: totpToken, code: codeEl.value.trim() }),
+      });
+      state.user = res.user;
+      overlay.remove();
+      hideAuthOverlay();
+      await initializeWorkspace();
+      if (res.used_backup_code) showToast("백업 코드로 로그인했습니다. 새 백업 코드 발급을 권장합니다.");
+      if (state.user && state.user.must_change_password) showForceChangePasswordModal();
+    } catch (error) {
+      btn.disabled = false;
+      // 세션 만료 → 처음부터 다시 로그인.
+      if (error.payload && error.payload.totp_expired) {
+        overlay.remove();
+        loginErrorEl.textContent = error.message || "인증 세션이 만료되었습니다. 다시 로그인해 주세요.";
+        return;
+      }
+      errEl.textContent = error.message || "인증 코드가 올바르지 않습니다.";
+    }
+  };
+  btn.addEventListener("click", submit);
+  codeEl.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
 }
 
 // TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0095): 강제 비밀번호 변경 modal.

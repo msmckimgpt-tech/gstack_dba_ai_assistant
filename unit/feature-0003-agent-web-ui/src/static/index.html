@@ -6,7 +6,7 @@
   <title>DQA — Database Query Assistant</title>
   <link rel="preconnect" href="https://fonts.bunny.net" />
   <link href="https://fonts.bunny.net/css?family=geist:300,400,500,600,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260619-group-conv-oauth" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260619-2fa-grpconv-oauth" />
 </head>
 <body>
 
@@ -466,6 +466,12 @@
         </form>
       </div>
 
+      <!-- TASK-20260619T040000-two-factor-auth (보안 ⑥): 2단계 인증(TOTP) self-service. -->
+      <div class="profile-section" id="profileTotpSection">
+        <div class="profile-section-title">2단계 인증 (2FA)</div>
+        <div id="profileTotpBody" aria-live="polite">로딩 중…</div>
+      </div>
+
       <div class="profile-section profile-danger-zone">
         <button type="button" class="btn-secondary" id="logoutBtn">로그아웃</button>
       </div>
@@ -554,7 +560,7 @@
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
   <script src="/static/mentions.js?v=20260619-group-conversation"></script>
-  <script src="/static/app.js?v=20260619-group-conversation"></script>
+  <script src="/static/app.js?v=20260619-2fa-grpconv"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 관리 콘솔과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260619-group-conversation"></script>

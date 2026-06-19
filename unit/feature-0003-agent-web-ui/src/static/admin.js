@@ -4433,6 +4433,8 @@ function renderAccountDetail() {
   badges.appendChild(statusBadge(merged.is_active ? "active" : "inactive", merged.is_active ? "role-operator" : ""));
   // TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 상태 배지.
   if (base.is_locked) badges.appendChild(statusBadge("잠김", "is-locked"));
+  // TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA 사용 배지.
+  if (base.totp_enabled) badges.appendChild(statusBadge("2FA", "is-2fa"));
   if (base.deleted_at) badges.appendChild(statusBadge("deleted", "is-disabled"));
   if (merged._pending) badges.appendChild(statusBadge("pending", "role-pending"));
   if (merged._delete) badges.appendChild(statusBadge("삭제 예정", "is-disabled"));
@@ -4655,9 +4657,40 @@ function renderAccountDetail() {
       unlockBtn.addEventListener("click", () => triggerAccountUnlockFlow(base));
       actions.appendChild(unlockBtn);
     }
+
+    // TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA 강제 해제 버튼 (2FA 사용 계정에만).
+    // 분실 디바이스 복구 — 비밀번호 변경 없이 2FA 만 제거.
+    if (base.totp_enabled) {
+      const totpBtn = document.createElement("button");
+      totpBtn.type = "button";
+      totpBtn.id = "adminTotpDisableBtn";
+      totpBtn.className = "btn-secondary";
+      totpBtn.textContent = "2FA 해제";
+      totpBtn.title = "기기 분실 등으로 2단계 인증을 풀어줍니다 (비밀번호 변경 없음). 사용자가 재설정해야 합니다.";
+      totpBtn.addEventListener("click", () => triggerAccountTotpDisableFlow(base));
+      actions.appendChild(totpBtn);
+    }
   }
 
   if (actions.children.length) paneEl.appendChild(actions);
+}
+
+// TASK-20260619T040000-two-factor-auth (보안 ⑥): 관리자 2FA 강제 해제 flow.
+async function triggerAccountTotpDisableFlow(account) {
+  if (!account || !account.id) return;
+  if (!window.confirm(`${account.username} 계정의 2단계 인증을 해제하시겠습니까?\n사용자는 비밀번호로 로그인 후 다시 설정해야 합니다.`)) return;
+  try {
+    await apiFetch(`/api/admin/accounts/${Number(account.id)}/totp/disable`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  } catch (error) {
+    showToast(`2FA 해제 실패: ${error.message || error}`, true);
+    return;
+  }
+  showToast(`${account.username} 계정의 2단계 인증을 해제했습니다.`);
+  await loadAdminData();
+  renderAccountDetail();
 }
 
 // TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 즉시 해제 flow.

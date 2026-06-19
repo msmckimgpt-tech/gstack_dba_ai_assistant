@@ -488,3 +488,35 @@ FUNCTION.md AC-0600~0601. **인증 변경은 §3 의 사람 승인 대상** — 
   후속(§6.1 정합 — web 을 agent-common 에서 떼거나 docker secret 전환).
 - **OAUTH_STATE_SECRET 멀티워커**: 미설정 시 프로세스 기동마다 임의값 → 멀티워커/재시작 시
   in-flight OAuth state 무효(사용자 재시도 필요). 영속이 필요하면 env 로 고정.
+
+## 15. 2단계 인증 (TOTP) (TASK-20260619T040000-two-factor-auth)
+
+로그인 2차 인증. stdlib RFC 6238 TOTP(pyotp 없이). 사용자 opt-in self-service + 관리자 강제
+해제(분실 복구). 정합 정본 = feature-0003 FUNCTION.md AC-0604~0607.
+
+### 15.1 메커니즘
+
+- **TOTP**: HMAC-SHA1·6자리·30초 step·±1 step drift(시계 오차 허용)·constant-time 비교.
+- **secret 저장**: `cred_crypto`(DEK 를 KEK 로 wrap, AESGCM, AAD=`totp:{account_id}`)로 **암호화**.
+  평문은 setup 응답에 1회만 노출, 저장/로그 평문 없음. KEK 부재 시 setup 503(평문 미저장).
+- **로그인 2단계**: 비밀번호 통과 + TOTP 활성 → 세션 미발급, `{totp_required, totp_token}` 반환
+  (pending token = DEK-HMAC 서명, 5분 TTL, 서버 전용·위조 불가) → `/api/auth/login/totp` 에서
+  TOTP 또는 백업코드(1회용, `SELECT FOR UPDATE` 원자 소비) 검증 후 세션.
+- **백업코드**: 10개, sha256 해시 저장, 1회용. setup-confirm 시 1회 노출.
+- **운영**: self-service 켜기/끄기(끄기는 비밀번호 재확인) + 관리자 강제 해제(`console.manage`+
+  `account.update`, 분실 디바이스 복구). 기본 미설정 = 2FA 미사용(무회귀).
+
+### 15.2 brute-force 방어 (2FA 핵심 위협 = 비밀번호 유출)
+
+6자리 코드 공간(±1 drift → 3/1,000,000)이라 무차별 대입 방어가 필수다. 이중 bound:
+- **IP throttle**(§12, feature ②): 로그인 두 단계 공통 IP 실패 카운트(20회/600초).
+- **계정 잠금**(§12): TOTP 단계 실패도 `_login_record_failure` 로 계정 잠금(5회→15분, DB·cross-IP).
+- **증폭 차단**: 2FA 분기에서는 IP 버킷·계정 잠금 리셋을 **2단계 완료 시로 미룬다** — 비밀번호만
+  통과시켜 throttle 을 리셋하고 코드를 무한 시도하는 우회를 차단(outside-voice MAJOR 흡수).
+
+### 15.3 알려진 한계 (수용)
+
+- pending token 은 TTL(300초) 내 재사용 가능(유효 코드 필요 + 이중 throttle 로 bound). 더 강한
+  보장이 필요하면 별 cycle 에서 single-use(서버 nonce) 도입.
+- TOTP 코드는 30초 step 내 재사용 가능(RFC 표준·산업 관행).
+- KEK 부재 시 Enabled=1 계정은 fail-closed(로그인 2단계 통과 불가) — 관리자 강제 해제로 복구.

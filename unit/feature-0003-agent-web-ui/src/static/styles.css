@@ -4626,6 +4626,8 @@ a { color: inherit; }
 .status-chip.is-disabled   { background: var(--danger-soft); color: var(--danger); }
 /* TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 배지 (amber). */
 .status-chip.is-locked     { background: #fff7ed; color: #b45309; }
+/* TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA 사용 배지 (blue). */
+.status-chip.is-2fa        { background: rgba(37,99,235,.1); color: var(--primary); }
 
 .admin-grid {
   display: flex;
