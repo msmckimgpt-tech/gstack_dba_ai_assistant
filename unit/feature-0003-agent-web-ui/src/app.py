@@ -9179,6 +9179,47 @@ def healthz() -> JSONResponse:
     )
 
 
+def _read_llm_provider_status() -> "dict[str, Any]":
+    """TASK-20260619T014034: LLM provider 외부요인 제한 상태(PG agent_runtime.llm_provider_health)
+    를 읽어 web 표면(컴포저 배너·상태점·툴팁·실행단계 패널)에 싣는다. probe 없이 cheap PG read 만
+    (probe 는 /api/llm/health 전용). 실패/미가용은 graceful {state:'unknown'}."""
+    try:
+        from modules.llm_provider_health import read_provider_health
+        return read_provider_health()
+    except Exception:
+        return {"state": "unknown"}
+
+
+@app.get("/api/llm/health")
+def get_llm_health(request: Request, force: int = 0) -> JSONResponse:
+    """TASK-20260619T014034: LLM provider health(외부요인 제한) 조회 + hybrid active probe.
+
+    프론트가 로드 시 + 주기적으로 폴링. probe 는 TTL(LLM_HEALTH_PROBE_TTL_SEC, 기본 60s) 내
+    재호출이면 skip(비용 최소화) — 단 `force=1`(배너 '다시 확인')은 TTL 무시. 인증 필요(외부
+    노출 최소화) — 미인증은 cheap read 만 반환.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return JSONResponse(_read_llm_provider_status())
+    try:
+        account = _get_authenticated_account(conn, request)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    if not account:
+        # 미인증: probe 트리거 없이 마지막 알려진 상태만.
+        return JSONResponse(_read_llm_provider_status())
+    try:
+        from modules.llm_provider_health import probe_provider
+        status = probe_provider(force=bool(force))
+    except Exception:
+        status = _read_llm_provider_status()
+    return JSONResponse(status)
+
+
 @app.get("/api/session")
 def get_session(request: Request) -> JSONResponse:
     local_llm_enabled = _is_local_llm_available()
@@ -9236,6 +9277,8 @@ def get_session(request: Request) -> JSONResponse:
         "default_product_id": int(default_pid) if default_pid else None,
         "product_pref": product_pref,
         "conversation_product": conversation_product,
+        # TASK-20260619T014034: LLM provider 외부요인 제한 상태(컴포저 배너·상태점 초기값).
+        "llm_provider_status": _read_llm_provider_status(),
     }
     conn.close()
     return JSONResponse(payload)
@@ -15624,6 +15667,9 @@ def _build_ask_status_snapshot(conn, conversation_id: str) -> dict[str, Any]:
         "error": error_text or None,
         "has_answer": has_answer,
         "answer_preview": answer_preview,
+        # TASK-20260619T014034: 이 run 시점의 LLM provider 외부요인 제한 상태.
+        # 프론트가 status=='error' && llm_provider_status.state=='restricted' 이면 전용 인라인 제한 안내 렌더.
+        "llm_provider_status": _read_llm_provider_status(),
         "_latest_assistant": latest_assistant,  # 내부용 (ask_result 가 소비)
     }
 

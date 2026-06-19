@@ -4282,6 +4282,18 @@ source_of_truth: true
 - Verification: ast.parse + verify_db_rule_logic.py 30/30(audit 등록 가드 5건 포함) + 재배포 후 라이브 PUT/GET/DELETE round-trip.
 - Rollback: 빌더 5 action 블록 제거.
 - Deploy: web 재빌드. deploy_scope: included.
+## CHG-20260619T014034-ai-claude-llm-restriction-notice
+- TASK-20260619T014034 — LLM provider 외부요인 제한 명시 표면화 (web 면, Major §12.3). agent-core 분류·영속·probe 는 feature-0002 CHG-20260619-0319.
+- 변경:
+  - `src/app.py`: `_read_llm_provider_status`(modules.llm_provider_health.read_provider_health graceful) + `GET /api/llm/health`(인증 게이트 — 미인증은 probe 없이 read만; force=1=TTL 무시) + `/api/session` payload·`_build_ask_status_snapshot` 에 `llm_provider_status` 필드.
+  - `src/static/index.html`: 컴포저 배너+'다시 확인' / footer 상태점(툴팁) / 실행단계 패널 노트 마크업 + 캐시버스터 bump(`?v=20260619-llm-restriction`).
+  - `src/static/styles.css`: `.llm-restriction-banner`·`.llm-status-dot(.is-restricted)`·`.llm-restriction-notice`·`.llm-restriction-panel-note` + footer 상태점 노출 시 유지하는 `:has(.llm-status-dot.hidden)` 조정.
+  - `src/static/app.js`: `applyLlmProviderStatus`/`renderLlmRestrictionInlineNotice`/`pollLlmHealth`/`startLlmHealthPolling` + `/api/session`·`/api/ask_result` 소비 wiring(restricted+error→인라인 notice). textContent(XSS-safe)·DOM 누락 graceful·인라인 dedup·타이머 단일 가드.
+- Verification: `tests/verify_llm_restriction_surface.mjs` 35(정적+jsdom 4-surface) + node --check + py_compile. 적대 코드리뷰 REV-20260619T014034-ai-claude-llm-restriction-notice.
+- Files: src/app.py, src/static/{index.html,styles.css,app.js}, tests/verify_llm_restriction_surface.mjs(new), docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
+- Rollback: 엔드포인트/필드 제거 + UI surface 제거 + 캐시버스터 revert. backend 미가용 시 read→unknown(배너 미표시) graceful.
+- Deploy: web 재빌드(app.py·static baked) + ask-worker(feature-0002) + 마이그 0011. deploy_scope: included.
+
 ## CHG-20260618T061703-ai-claude-db-rule-multi
 - Date: 2026-06-18 (TASK-20260618T061703 — DB allowlist 정규식 규칙 다중 + 종속 UI). TASK-20260618T044318 확장.
 - Scope: feature-0003 `src/app.py`(UNIQUE 제거+SortOrder 마이그레이션·probe·fast-path catchup·다중규칙 함수/엔드포인트·INSERT IGNORE·rule_id 직렬화) + `src/static/admin.js`(규칙 카드/폼/추가·DB 중첩·redrawChips manual 분리) + `styles.css`(.cov-db-rule-card*/-dblist*) + admin.html·index.html(cache-buster) + tests(logic 30/ui 18) + docs.

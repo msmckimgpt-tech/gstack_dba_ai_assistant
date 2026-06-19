@@ -3383,3 +3383,14 @@ source_of_truth: true
 - 잔여(무해): MINOR 취소-race 라벨(취소를 만료로 표기할 미세 경계, 둘 다 410)·NIT probe 자기문서화·boundary 더블카운트(ViewCount soft-metric).
 - Verification: test_task20260619_share_expiry.py 12/12 + make test 회귀 0 + py_compile + node --check. 화면 정본=PB-0008(배포 후).
 - Cross-ref: CHG-20260619T012028-ai-claude-share-link-expiry / REQ-20260619-0324 / AC-0584~0587 / SECURITY.md §7.2.
+## REV-20260619T014034-ai-claude-llm-restriction-notice [SUBAGENT:llm-restriction-adversarial]
+- Date: 2026-06-19
+- Cycle: TASK-20260619T014034 (LLM provider 외부요인 제한 명시 표면화) — web 면(엔드포인트 + UI 4 surface). **Major §12.3**.
+- Trigger: §18.8 — 신규 외부 노출 엔드포인트(`/api/llm/health`)·probe 외부 비용·UI 표면. 적대적 코드리뷰(general-purpose outside voice). full 본문 = feature-0002 REV-20260619-0311.
+- Verdict: **SHIP-WITH-FIXES** (BLOCKER 0). web 면 confirmed-safe 요약:
+  - `/api/llm/health` 인증 게이트 정합 — 미인증은 probe 트리거 없이 cheap read 만(M1 force 비용증폭은 module probe 5s 플로어로 차단).
+  - 프론트 XSS-safe — 모든 사용자향 텍스트 `textContent`(innerHTML 미사용), `applyLlmProviderStatus` 전 DOM null-guard + try/catch, 인라인 notice dedup, 폴링 타이머 단일 가드(`_llmHealthPollTimer`).
+  - **m5 흡수**: 인라인 notice append 가 무조건 최하단 강제 → `atBottom`(8px) 후에만 추종(stick-to-bottom 정책 정합).
+  - `_read_llm_provider_status` graceful(PG 실패→unknown→배너 미표시). m6(hot-path PG read 캐시)은 inline-notice staleness 위험으로 미도입(single-row PK read 유지).
+- Verification: verify_llm_restriction_surface.mjs 35(정적 7+CSS 5+wiring 6+jsdom 4-surface 17) + node --check + py_compile(app.py). 화면 정본=PB-0008(restricted 주입 4-surface, 배포 후).
+- Cross-ref: CHG-20260619T014034-ai-claude-llm-restriction-notice / TASK-20260619T014034 / feature-0002 REV-20260619-0311(full).
