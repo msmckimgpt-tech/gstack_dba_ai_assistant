@@ -2493,8 +2493,13 @@ def run_agent(
     text_inline_path: str | None = None,
     run_id: str | None = None,
     queued_ms_seed: float | None = None,
+    eval_datasource: "dict | None" = None,
 ) -> dict[str, Any]:
     """Product whitelist + 첨부 채널을 요청별 contextvar 로 설정한 뒤 실제 루프를 호출하는 얇은 래퍼.
+
+    eval_datasource (ITEM-01 평가 harness 전용, None-gated): 주어지면 product/registry
+    datasource 라우팅을 우회하고 이 좌표 dict 를 data-plane 연결로 직접 쓴다. 운영 호출은
+    항상 None → 동작 0 변경. tests/eval/runner 만 채운다(AGENT_MULTI_DATASOURCE_ENABLED 필요).
 
     run_id: None 이면 루프가 새로 생성(현행 in-process 경로). ask-worker 가 job claim
     별로 stable run_id 를 주입할 때 사용(TASK-0169 — KV/steps/cancel 의 전 구간 correlate
@@ -2528,6 +2533,7 @@ def run_agent(
             product_mode=product_mode,
             run_id=run_id,
             queued_ms_seed=queued_ms_seed,
+            eval_datasource=eval_datasource,
         )
     finally:
         clear_active_schema_allowlist()
@@ -2557,6 +2563,7 @@ def _run_agent_core(
     product_mode: str = "pinned",
     run_id: str | None = None,
     queued_ms_seed: float | None = None,
+    eval_datasource: "dict | None" = None,
 ) -> dict[str, Any]:
     """에이전트 메인 루프.
 
@@ -2685,7 +2692,21 @@ def _run_agent_core(
         _multi_ds_list = []
     _ds_router = None
     _ds = None
-    if _multi_ds_list:
+    if eval_datasource is not None:
+        # ITEM-01 eval harness 전용 시드(None-gated). product/registry 라우팅을 우회하고
+        # 주어진 datasource 좌표를 data-plane 연결로 직접 쓴다. 운영 경로는 항상 None →
+        # 동작 0 변경(tests/eval/runner 만 채움). db.connect 의 좌표 라우팅은
+        # AGENT_MULTI_DATASOURCE_ENABLED 게이트를 따른다(make eval 가 설정).
+        _ds = eval_datasource
+        try:
+            db_conn = connect_with_retry(database=None, autocommit=True, datasource=_ds)
+        except Exception as e:
+            cfg.CURRENT_RUN_ID = ""
+            result["error"] = f"DB 연결 실패(eval datasource): {e}"
+            if output_mode == "console":
+                console.print(Panel.fit(result["error"], title="오류"))
+            return result
+    elif _multi_ds_list:
         # 멀티 datasource: 라우터가 tool 별 연결·allowlist·engine 을 관리. primary 를 db_conn 기본값으로 연결.
         import modules.tools as _tools_mod
         def _connect_ds(ds_dict):

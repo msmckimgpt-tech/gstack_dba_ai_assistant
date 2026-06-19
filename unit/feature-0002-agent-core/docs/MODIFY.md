@@ -1155,3 +1155,16 @@ source_of_truth: true
 - Verification: test 10/10(datamark strip 실 동작) + make test 회귀 0 + py_compile. outside-voice SHIP-WITH-FIXES(MAJOR tool/KB datamark + MINOR 표현 흡수).
 - Rollback: datamark 호출/guard notice/상수 복원(비파괴, 프롬프트 텍스트만).
 - Deploy: **web + ask-worker 재빌드 필수**(agent_core = ask-worker 이미지).
+
+## CHG-20260619T172843-eval-harness
+- Date: 2026-06-19 (TASK-20260619T172843-eval-harness — ROADMAP dba-ai-nl2sql **ITEM-01**, Major §12.3). `/_dqa:improve_cycle` 드레인.
+- Scope: NL→SQL offline 평가 harness 신규 + `run_agent` None-gated `eval_datasource` seam.
+- 내용:
+  - 신규 `tests/eval/`: `fixtures/schema.sql`(결정적 합성 e-commerce fixture, prod 무관/PII 없음) · `golden/eval_fixture.yaml`(24문항 nl_question+expected_sql) · `fixture_provision.py`(멱등 provision + datasource 좌표 + ground-truth/생성SQL 실행) · `metrics.py`(execution-accuracy 정규화 set-동치 + retrieval P/R + LLM-as-Judge cap) · `runner.py`(golden→파이프라인→지표→타임스탬프 회귀 리포트; **actual=agent 가 샌드박스 실행해 산출한 결과 CSV 를 읽어 비교 — 생성SQL 을 root 로 재실행하지 않음**, REV BLOCKER 흡수) · `test_eval_harness.py`(스모크 14, Bedrock/DB 불요).
+  - `src/agent_core.py`: `run_agent`/`_run_agent_core` 에 keyword `eval_datasource: dict|None=None` 추가. 주어지면 product/registry 라우팅 우회·좌표 직접 data-plane 연결. 운영 호출은 항상 None → **동작 0 변경**(db.connect 좌표 라우팅은 `AGENT_MULTI_DATASOURCE_ENABLED` 게이트 따름 — `make eval` 가 설정).
+  - `Makefile`: `eval` 타깃(agent 컨테이너 + 라이브 스택 네트워크, `python tests/eval/runner.py`, pyyaml 설치, judge cap env). `EVAL_ARGS`/`EVAL_MODEL` 옵션.
+- Why: ROADMAP ITEM-01 — 현 smoke-only → NL→SQL 품질 정량지표 부재(메타-레버). 이후 성능항목(ITEM-05/06/07/12)의 acceptance 가 본 harness 수치를 인용.
+- Verification: pytest 스모크 11/11(정규화/equiv/retrieval/read-only 가드/golden 무결성) + fixture 멱등 provision + expected_sql ground-truth 라이브 검산 일치 + harness end-to-end 실행→리포트 산출 확인. 적대 코드리뷰 REV-20260619T172843-eval-harness. **measured generation accuracy 는 스택 Bedrock 인증 다운(오늘 IAM 제거)으로 보류 — 자격증명 복구 후 `make eval`.**
+- Files: tests/eval/{fixtures/schema.sql,golden/eval_fixture.yaml,fixture_provision.py,metrics.py,runner.py,test_eval_harness.py}(신규), src/agent_core.py, Makefile, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md, docs/improvements/dba-ai-nl2sql/ROADMAP.md.
+- Rollback: tests/eval/ 삭제 + agent_core eval_datasource 분기/인자 제거(순수 additive, None-gated이라 운영 무영향) + Makefile eval 타깃 제거.
+- Deploy: 불필요(개발 도구, 비-서빙). ask-worker 이미지에 eval_datasource seam 포함되나 None-gated 무영향.

@@ -196,6 +196,17 @@ test:  ## ci: 단위 테스트(pytest) + 린트(ruff) — agent 이미지 격리
 	  ruff check unit/feature-0002-agent-core/src unit/feature-0003-agent-web-ui/src || true; \
 	  exit $$rc'
 
+eval:  ## ci: NL→SQL 평가 harness (ITEM-01) — golden 질문을 실제 파이프라인에 흘려 execution-accuracy 측정. 라이브 Bedrock 소비(judge cap). 옵션: EVAL_ARGS="--limit 6 --judge"
+	@$(MAKE) -s dc-build SERVICE=agent
+	@$(DC_QUIET) run --rm --no-deps \
+	  -e AGENT_MULTI_DATASOURCE_ENABLED=1 \
+	  -e EVAL_MAX_JUDGE_CALLS=$${EVAL_MAX_JUDGE_CALLS:-25} \
+	  -v "$(CURDIR):/work" -w /work --entrypoint sh agent -lc '\
+	  pip install -q --no-cache-dir pyyaml >/tmp/pip-eval.log 2>&1 || { cat /tmp/pip-eval.log; exit 1; }; \
+	  export PYTHONPATH=/work/unit/feature-0002-agent-core/src:/work/unit/feature-0002-agent-core/tests/eval; \
+	  python /work/unit/feature-0002-agent-core/tests/eval/runner.py $(EVAL_ARGS); \
+	'
+
 backup:  ## ops: 플랫폼 정본 데이터 논리 백업 (PG agent_kb + MySQL agent_memory) — TASK-0130
 	@bash bin/backup.sh
 

@@ -1039,3 +1039,15 @@ source_of_truth: true
 - **수용(문서화)**: guard notice proximity(블록 인접 재진술 — recall 은 이미 prose, 첨부/결과는 label+전역 notice 로 충분)·i18n(한국어 guard·제품 한국어-우선 정합)·conversation history 과거 raw 행(향후 tool 결과 datamark 가 미래분 커버, 과거분 한계)·token 비용(guard ~200토큰/요청, 허용).
 - Verification: test_prompt_injection_defense.py 10/10 + make test 회귀 0 + py_compile. 라이브 = 배포 후 인젝션 시도 무시 확인(LLM 의존, 합성).
 - Cross-ref: CHG-20260619T033714-ai-claude-prompt-injection-defense / REQ-20260619-0328 / AC-0600~0603 / docs/SECURITY.md §14.
+
+## REV-20260619T172843-eval-harness [SUBAGENT:eval-harness-adversarial-backend-qa]
+- Date: 2026-06-19
+- Cycle: TASK-20260619T172843-eval-harness (ROADMAP ITEM-01 NL→SQL 평가 harness), **Major §12.3**.
+- Trigger: §18.8 — schema/query/performance keyword + 핵심 run 경로(`run_agent`) seam → backend+qa dispatch. 적대적 코드리뷰(general-purpose outside voice, REFUTE: seam blast-radius/재실행 안전/fixture 격리/지표 정확/결정성/리소스).
+- 초기 VERDICT: **NO-SHIP** → BLOCKER 흡수 후 **SHIP-WITH-FIXES** (BLOCKER 0).
+- **흡수한 BLOCKER (재실행 안전)**: `result["executed_sql"]` 는 sql_guard *이전* raw SQL 이고 harness 의 `_is_readonly` 정규식이 production guard 보다 약해 `INTO OUTFILE`/`LOAD_FILE`/cross-schema 읽기(`agent_memory.*`)가 통과 → root 로 공존 운영 DB 재실행 위험. **수정**: 생성SQL 재실행 제거 — actual 은 **agent 가 sql_guard+allowlist([eval_fixture]) 샌드박스로 실제 실행해 산출한 결과 CSV**(`result_csv_paths[-1]`)를 읽어 비교. expected_sql(신뢰 golden)만 실행 + read-only insurance(`INTO OUTFILE/DUMPFILE`·`LOAD_FILE` 차단 추가).
+- **흡수한 MAJOR/MINOR**: ①결정성 overclaim(§5) → AC-1603 표현 정정(지표 계산은 결정적/LLM 무관, end-to-end 2회 동일은 temp-0 SQL 동일 조건·provider bit-결정 아님). ②`_is_readonly` 오탐(`replace`/`merge`/`call` 함수) → forbidden 에서 제거(파괴/유출계만). ③flag-OFF silent 미스루트 → runner 가 경고 대신 **fail-closed 중단**. ④by_tag md dead-code 제거.
+- **수용(문서화 한계)**: 숫자형 문자열 coercion(`'01'==1`)·bigint>2^53·date-vs-datetime — 합성 fixture 엔 해당 컬럼 없어 안전, metrics docstring 명시(타 datasource 재사용 시 typed 비교 강화). `_split_statements` 정적 파일 한정. `executed_sql`=마지막 execute_sql(다중 실행 시 한계).
+- 핵심 정직성: **measured generation accuracy 는 스택 Bedrock 인증 다운(2026-06-19 IAM 제거)으로 미산출** — harness 코드/단위 검증 완료, 라이브 수치는 자격증명 복구 후 `make eval`. 0.0 은 환경 탓(harness 결함 아님).
+- Verification: pytest 스모크 14/14(정규화/equiv/retrieval P·R/read-only 가드[+OUTFILE/LOAD_FILE/REPLACE]/CSV 리더/golden 무결성) + fixture 멱등 provision + expected_sql ground-truth 라이브 검산 일치 + harness end-to-end 실행→리포트(JSON+MD)+회귀 산출. py_compile.
+- Cross-ref: CHG-20260619T172843-eval-harness / REQ-20260619-1601 / AC-1601~1605 / ROADMAP dba-ai-nl2sql ITEM-01.

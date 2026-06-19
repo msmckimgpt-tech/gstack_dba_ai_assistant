@@ -56,7 +56,8 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 ## 3. 항목 (각 1 cycle)
 
 ### ITEM-01 · NL→SQL 평가 harness (RAGAS + LLM-as-Judge)
-- **status**: pending
+- **status**: done
+- **note**: harness 코드 완성+단위검증(스모크 14, fixture 멱등, ground-truth 검산, end-to-end 리포트/회귀 산출) + 적대리뷰 BLOCKER 흡수(생성SQL root 재실행 제거→agent 샌드박스 CSV 비교). **measured generation accuracy 는 스택 Bedrock 인증 다운(2026-06-19 IAM 제거)으로 보류 — 자격증명 복구 후 `make eval` 로 AC-1602/1603 라이브 수치 산출.** CHG/REV-20260619T172843-eval-harness.
 - **feature_id**: feature-0002-agent-core
 - **dimension**: performance
 - **risk_grade**: Major
@@ -256,6 +257,7 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 | F-014 (결과 차트 시각화) | **defer** | frontend Minor·가치 중간. 정확도 항목 후순위. 재검토 트리거: 사용자 요청 누적 시. |
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
-- 총 12 항목 · done 0 · in-progress 0 · pending 12 · blocked 0
-- 다음 ready(pending ∧ deps 충족; Phase asc → risk asc → id asc): **ITEM-01**
-  - 무인(/loop·cron) 모드 주의: ITEM-01 은 Major → 사람 plan 승인 필요(무인 시 blocked). Minor·deps-free 인 **ITEM-04** 가 무인 자율 진행 가능한 첫 항목.
+- 총 12 항목 · done 1 · in-progress 0 · pending 11 · blocked 0
+- 완료: **ITEM-01**(2026-06-19, 드레인) — harness 코드+단위검증 완료, measured 수치는 bedrock-auth 복구 후 산출(아래 ⚠).
+- 다음 ready(pending ∧ deps 충족; Phase asc → risk asc → id asc): **ITEM-04**(P1, Minor — DS 컨텍스트 필드, LLM 무관 verify 가능).
+- ⚠ **환경 블로커 (2026-06-19)**: 스택 전반 **Bedrock 인증 다운**(IAM 제거, 게이트웨이 401 "Unable to locate credentials"). 측정/임베딩이 LLM·Titan 에 의존하는 항목(ITEM-02 임베딩, ITEM-05/06/07/12 측정 게이트, 그 의존 ITEM-03/08/11)은 자격증명 복구 전 verify 불가 → 드레인은 사용자 지시로 **LLM 무관 항목만**(ITEM-04) 진행, 나머지는 복구 후 재개.
