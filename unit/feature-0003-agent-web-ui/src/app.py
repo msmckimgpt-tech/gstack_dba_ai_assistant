@@ -5506,6 +5506,35 @@ def _ensure_web_tables():
                 )
             except Exception:
                 pass
+            # feature-0009-group-conversation (TASK-20260619T023140): 그룹 대화 — MySQL parity.
+            # core_messages/멤버십 정본은 PG(agent_runtime). 본 블록은 READ_BACKEND != postgres
+            # 레거시 경로 parity 유지(try/except 멱등). production(PG)에서는 본 가드가 skip 된다.
+            try:
+                cur.execute(
+                    "ALTER TABLE AgentCoreMessages ADD COLUMN sender_account_id BIGINT NULL"
+                )
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    "ALTER TABLE AgentCoreMessages ADD COLUMN thread_root_message_id BIGINT NULL"
+                )
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    "CREATE TABLE IF NOT EXISTS AgentCoreConversationMembers ("
+                    " conversation_id VARCHAR(128) NOT NULL,"
+                    " account_id BIGINT NOT NULL,"
+                    " role VARCHAR(16) NOT NULL DEFAULT 'member',"
+                    " joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                    " invited_by_account_id BIGINT NULL,"
+                    " PRIMARY KEY (conversation_id, account_id),"
+                    " INDEX IX_AgentCoreConversationMembers_Account (account_id)"
+                    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+                )
+            except Exception:
+                pass
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS WebProducts (
