@@ -4304,6 +4304,8 @@ function renderAccountDetail() {
   const badges = document.createElement("div");
   badges.className = "admin-status-row";
   badges.appendChild(statusBadge(merged.is_active ? "active" : "inactive", merged.is_active ? "role-operator" : ""));
+  // TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 상태 배지.
+  if (base.is_locked) badges.appendChild(statusBadge("잠김", "is-locked"));
   if (base.deleted_at) badges.appendChild(statusBadge("deleted", "is-disabled"));
   if (merged._pending) badges.appendChild(statusBadge("pending", "role-pending"));
   if (merged._delete) badges.appendChild(statusBadge("삭제 예정", "is-disabled"));
@@ -4513,9 +4515,40 @@ function renderAccountDetail() {
     resetBtn.title = "임시 비밀번호 생성 및 세션 종료. 1회만 표시됨.";
     resetBtn.addEventListener("click", () => triggerPasswordResetFlow(base));
     actions.appendChild(resetBtn);
+
+    // TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 해제 버튼 (잠긴 계정에만 노출).
+    // 비밀번호 변경 없이 잠금만 해제 — 표적 DoS 회복 경로.
+    if (base.is_locked) {
+      const unlockBtn = document.createElement("button");
+      unlockBtn.type = "button";
+      unlockBtn.id = "adminUnlockBtn";
+      unlockBtn.className = "btn-secondary";
+      unlockBtn.textContent = "잠금 해제";
+      unlockBtn.title = "로그인 실패로 잠긴 계정의 잠금을 즉시 해제합니다 (비밀번호 변경 없음).";
+      unlockBtn.addEventListener("click", () => triggerAccountUnlockFlow(base));
+      actions.appendChild(unlockBtn);
+    }
   }
 
   if (actions.children.length) paneEl.appendChild(actions);
+}
+
+// TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 즉시 해제 flow.
+async function triggerAccountUnlockFlow(account) {
+  if (!account || !account.id) return;
+  if (!window.confirm(`${account.username} 계정의 로그인 잠금을 해제하시겠습니까?`)) return;
+  try {
+    await apiFetch(`/api/admin/accounts/${Number(account.id)}/unlock`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  } catch (error) {
+    showToast(`잠금 해제 실패: ${error.message || error}`, true);
+    return;
+  }
+  showToast(`${account.username} 계정의 잠금을 해제했습니다.`);
+  await loadAdminData();
+  renderAccountDetail();
 }
 
 // TASK-0061 Phase 6 (REQ-20260515-0008): 임시 비밀번호 생성 + 1 회 표시 modal.

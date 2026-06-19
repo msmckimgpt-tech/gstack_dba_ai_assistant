@@ -4311,3 +4311,12 @@ source_of_truth: true
 - Verification: test_task20260619_share_expiry.py 12/12 + make test 전체 회귀 0(사전존재 product-delete 2건 제외) + py_compile + node --check(app.js/share.js) + CSS brace 1372=1372. outside-voice 적대 보안 리뷰 SHIP(9 probe refute, BLOCKER/MAJOR 0). 화면 정본=PB-0008(배포 후).
 - Rollback: 스키마 헬퍼/엔드포인트/UI 변경 복원. ExpiresAt 컬럼은 비파괴(잔존 무해, NULL=무기한이라 enforcement 영향 0). cache-buster 되돌림.
 - Deploy: web 재빌드. (ask/insight-worker 무관 — 공유는 web 전용.)
+
+## CHG-20260619T021356-ai-claude-login-attempt-limit
+- Date: 2026-06-19 (TASK-20260619T021356-login-attempt-limit — 잘못된 로그인 시도 제한). 사용자 보안 보강 6종 중 ②.
+- Scope: feature-0003 `src/app.py`(config 4 env·`_ensure_login_lockout_schema`+양 경로·`_fetch_account_rows` is_locked DB컬럼·`_serialize_account` lock 노출·IP throttle 3헬퍼+메모리 sweep·계정잠금 2헬퍼·auth_login 재작성·`admin_account_unlock` 엔드포인트·password-reset 잠금해제·build_audit_change_json auth.lockout/auth.unlock) + `src/static/admin.js`(잠금 배지+해제 버튼+triggerAccountUnlockFlow) + `styles.css`(.status-chip.is-locked) + admin.html/index.html(cache-buster) + `tests/test_login_attempt_limit.py`(신규 11) + docs.
+- 내용: 계정 잠금(DB 영속, cross-worker) + IP throttle(in-process, per-worker) 심층방어. 보수적 프로파일(계정 5회→15분 자동해제, IP 20회/600초). 모든 임계 env. 잠금 판정 전부 DB 시계(NOW()/DATE_ADD)로 clock skew 차단. 로그인: IP throttle→미존재(일반 401)→is_locked(429)→실패누적/잠금시 audit→성공시 초기화. 관리자 잠금 해제(비번 변경 없이) + password-reset 동반 해제.
+- Why: 사용자 요청 — 무차별 대입(brute-force) 방어. 기존 로그인엔 실패 제한 전무.
+- Verification: test_login_attempt_limit.py 11/11(IP throttle 실 동작 포함) + make test 회귀 0(사전존재 product-delete 2건 제외) + py_compile + node --check + CSS brace 1373. outside-voice 적대 보안 리뷰 SHIP-WITH-FIXES(BLOCKER 0, MINOR/NIT 흡수, MAJOR soft-threshold accept+문서화).
+- Rollback: 엔드포인트/헬퍼/login 변경 복원. lockout 컬럼 비파괴(잔존 무해, DEFAULT 0/NULL=enforcement 영향 0). cache-buster 되돌림.
+- Deploy: web 재빌드. (ask/insight-worker 무관 — 인증은 web 전용.)

@@ -603,6 +603,14 @@ OVERRIDE_DENY = "deny"
 OVERRIDE_INHERIT = "inherit"
 PASSWORD_HASH_ITERATIONS = max(100_000, int(os.getenv("WEB_PASSWORD_HASH_ITERATIONS", "310000")))
 AUTH_SESSION_DAYS = max(1, int(os.getenv("WEB_AUTH_SESSION_DAYS", "14")))
+# TASK-20260619T021356-login-attempt-limit (보안 보강 ②): 로그인 시도 제한 (계정 잠금 + IP throttle).
+# 전부 env 설정 가능. 사용자 결정(2026-06-19): 계정+IP 둘 다, 보수적 프로파일.
+# 계정: MAX_FAILED 회 비밀번호 실패 → LOCKOUT_MINUTES 분 잠금(자동 해제). IP: WINDOW_SEC 내
+# IP_MAX 실패 → 추가 시도 429(IP 무차별 대입 차단). 모든 임계는 DB 시계(NOW()/DATE_ADD) 기준.
+LOGIN_MAX_FAILED_ATTEMPTS = max(1, int(os.getenv("WEB_LOGIN_MAX_FAILED_ATTEMPTS", "5")))
+LOGIN_LOCKOUT_MINUTES = max(1, int(os.getenv("WEB_LOGIN_LOCKOUT_MINUTES", "15")))
+LOGIN_IP_MAX_ATTEMPTS = max(1, int(os.getenv("WEB_LOGIN_IP_MAX_ATTEMPTS", "20")))
+LOGIN_IP_WINDOW_SEC = max(30, int(os.getenv("WEB_LOGIN_IP_WINDOW_SEC", "600")))
 BOOTSTRAP_ADMIN_USERNAME = str(os.getenv("WEB_BOOTSTRAP_ADMIN_USERNAME", "") or "").strip()
 BOOTSTRAP_ADMIN_PASSWORD = str(os.getenv("WEB_BOOTSTRAP_ADMIN_PASSWORD", "") or "")
 
@@ -1490,6 +1498,10 @@ def _serialize_account(
         "last_conversation_id": str(account.get("last_conversation_id") or ""),
         # TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0095): 다음 로그인 시 비밀번호 강제 변경.
         "must_change_password": bool(account.get("must_change_password")),
+        # TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 상태(DB NOW() 기준 is_locked).
+        # admin UI 가 잠금 배지/해제 버튼 노출에 사용. locked_until=자동 해제 시각.
+        "is_locked": bool(account.get("is_locked")),
+        "locked_until": str(account.get("locked_until_at") or "") or None,
         # UI gate 전용 최소 플래그 — permissions 전체 노출 없이 관리 콘솔 접근 여부만 전달.
         "console_access": _account_has_permission(account, "console.access"),
         # TASK-0268: 아바타 이미지 URL. 설정 시 /api/avatars/<id>(같은 출처 bytes 서빙) +
@@ -1498,6 +1510,8 @@ def _serialize_account(
     }
     if include_permissions:
         payload["permissions"] = _account_permissions(account)
+        # 실패 횟수는 admin-context 에만 노출(자기 세션 /api/auth/me 비노출 — outside-voice NIT 흡수).
+        payload["failed_login_attempts"] = int(account.get("failed_login_attempts") or 0)
     return payload
 
 
@@ -1614,6 +1628,9 @@ SELECT
     a.DeletedAt AS deleted_at,
     a.DeletedByAccountId AS deleted_by_account_id,
     COALESCE(a.MustChangePassword, 0) AS must_change_password,
+    COALESCE(a.FailedLoginAttempts, 0) AS failed_login_attempts,
+    a.LockedUntilAt AS locked_until_at,
+    (a.LockedUntilAt IS NOT NULL AND a.LockedUntilAt > NOW()) AS is_locked,
     a.AvatarObjectKey AS avatar_object_key,
     r.RoleKey AS role_key,
     r.Name AS role_name,
@@ -5032,6 +5049,30 @@ def _ensure_must_change_password_schema(conn) -> None:
         cur.close()
 
 
+def _ensure_login_lockout_schema(conn) -> None:
+    """TASK-20260619T021356-login-attempt-limit (보안 ②): WebAccounts 에 로그인 실패 제한 컬럼 (멱등 ALTER).
+
+    `FailedLoginAttempts`(연속 실패 누적, 성공/잠금 시 0 리셋)·`LockedUntilAt`(잠금 자동 해제
+    시각, NULL=미잠금)·`LastFailedLoginAt`(관측용). 기존 행은 DEFAULT 0/NULL → 무회귀.
+    fast-path(`_ensure_seed_catchup`)+slow-path(`_ensure_web_tables`) 양쪽 호출
+    (`_ensure_must_change_password_schema` idiom 동형) — 기존 배포 자동 적용.
+    """
+    cur = conn.cursor()
+    try:
+        for ddl in (
+            "ALTER TABLE WebAccounts ADD COLUMN FailedLoginAttempts INT NOT NULL DEFAULT 0",
+            "ALTER TABLE WebAccounts ADD COLUMN LockedUntilAt DATETIME NULL",
+            "ALTER TABLE WebAccounts ADD COLUMN LastFailedLoginAt DATETIME NULL",
+            "CREATE INDEX IX_WebAccounts_LockedUntil ON WebAccounts (LockedUntilAt)",
+        ):
+            try:
+                cur.execute(ddl)
+            except Exception:
+                pass
+    finally:
+        cur.close()
+
+
 def _ensure_avatar_icon_schema(conn) -> None:
     """TASK-0268/0293: fast-path 재기동에서도 WebAccounts.AvatarObjectKey / WebProducts.IconObjectKey
     / WebRoles.IconObjectKey 컬럼이 존재하도록 idempotent ALTER. _ensure_web_tables 의 CREATE 와 동일
@@ -5132,6 +5173,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_web_conversation_attachment_provider_files_schema(conn)
     # TASK-0061 Phase 6: 기존 배포에 MustChangePassword 컬럼 backfill.
     _ensure_must_change_password_schema(conn)
+    # TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 컬럼 fast-path 보정.
+    _ensure_login_lockout_schema(conn)
     # TASK-0268: 아바타/아이콘 object key 컬럼 fast-path 보정(slow path _ensure_web_tables 미경유 재기동 대비).
     _ensure_avatar_icon_schema(conn)
     # TASK-0274: 첨부 버전 관리 컬럼(RootAttachmentId/VersionNumber/CreatedByRole/SupersededAt) fast-path 보정.
@@ -5311,6 +5354,8 @@ def _ensure_web_tables():
         _ensure_web_share_links_policy_version_column(conn)
         # TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 공유 링크 만료 column (slow path).
         _ensure_web_share_links_expiry_column(conn)
+        # TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 컬럼 (slow path).
+        _ensure_login_lockout_schema(conn)
         # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping +
         # derived join + provider files lifecycle 4 신규 테이블 (slow path).
         _ensure_web_conversation_attachments_schema(conn)
@@ -5626,6 +5671,108 @@ def _search_rate_limit_check(account_id: int, max_per_min: int = 10) -> bool:
             return False
         bucket.append(now)
         return True
+
+
+# =============================================================================
+# TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 시도 제한 — IP throttle + 계정 잠금.
+# 사용자 결정(2026-06-19): 계정+IP 둘 다, 보수적 프로파일. 계정 잠금은 DB 영속(워커 공유),
+# IP throttle 은 in-process token bucket(per-worker — `_search_rate_limit_check` 패턴 동형).
+# 멀티워커 배포 시 IP 한도는 워커당 적용(계정 잠금이 DB 공유 1차 방어, IP 는 2차 심층).
+# =============================================================================
+_LOGIN_IP_BUCKETS: dict[str, list[float]] = {}
+_LOGIN_IP_LOCK = threading.Lock()
+# 메모리 가드 (outside-voice MINOR 흡수): 버킷 키는 공격자 영향 IP 문자열이라
+# 무한 증가 가능 → 키 수가 이 상한을 넘으면 빈/만료 버킷을 sweep.
+_LOGIN_IP_BUCKETS_MAX_KEYS = 4096
+
+
+def _login_ip_sweep_locked(window_start: float) -> None:
+    """_LOGIN_IP_LOCK 보유 상태에서 호출 — 빈/완전 만료 버킷 제거(메모리 가드)."""
+    if len(_LOGIN_IP_BUCKETS) <= _LOGIN_IP_BUCKETS_MAX_KEYS:
+        return
+    stale = [k for k, b in _LOGIN_IP_BUCKETS.items() if (not b) or b[-1] < window_start]
+    for k in stale:
+        _LOGIN_IP_BUCKETS.pop(k, None)
+
+
+def _login_ip_throttled(ip: str) -> bool:
+    """이 IP 가 WINDOW 내 LOGIN_IP_MAX_ATTEMPTS 실패에 도달했으면 True(추가 시도 차단)."""
+    import time as _time
+    now = _time.time()
+    window_start = now - float(LOGIN_IP_WINDOW_SEC)
+    key = str(ip or "")
+    with _LOGIN_IP_LOCK:
+        bucket = _LOGIN_IP_BUCKETS.get(key)
+        if not bucket:
+            return False
+        while bucket and bucket[0] < window_start:
+            bucket.pop(0)
+        if not bucket:
+            _LOGIN_IP_BUCKETS.pop(key, None)  # 만료 후 빈 버킷 정리.
+            return False
+        return len(bucket) >= LOGIN_IP_MAX_ATTEMPTS
+
+
+def _login_ip_record_failure(ip: str) -> None:
+    """이 IP 의 로그인 실패 1건 기록(sliding window). 무차별 대입 IP 차단용."""
+    import time as _time
+    now = _time.time()
+    key = str(ip or "")
+    window_start = now - float(LOGIN_IP_WINDOW_SEC)
+    with _LOGIN_IP_LOCK:
+        bucket = _LOGIN_IP_BUCKETS.setdefault(key, [])
+        while bucket and bucket[0] < window_start:
+            bucket.pop(0)
+        bucket.append(now)
+        _login_ip_sweep_locked(window_start)
+
+
+def _login_ip_clear(ip: str) -> None:
+    """성공 로그인 시 해당 IP 버킷 정리(정상 사용자 즉시 회복)."""
+    key = str(ip or "")
+    with _LOGIN_IP_LOCK:
+        _LOGIN_IP_BUCKETS.pop(key, None)
+
+
+def _login_record_failure(conn, account_id: int) -> bool:
+    """비밀번호 실패 1회 DB 누적. 임계(LOGIN_MAX_FAILED_ATTEMPTS) 도달 시 LockedUntilAt 설정
+    + 카운터 0 리셋. 잠금이 새로 발생했으면 True 반환. (autocommit 연결 가정.)"""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE WebAccounts SET FailedLoginAttempts = FailedLoginAttempts + 1, "
+            "LastFailedLoginAt = NOW() WHERE Id = %s",
+            (int(account_id),),
+        )
+        cur.execute(
+            "SELECT FailedLoginAttempts FROM WebAccounts WHERE Id = %s LIMIT 1",
+            (int(account_id),),
+        )
+        row = cur.fetchone()
+        attempts = int((row[0] if row else 0) or 0)
+        if attempts >= LOGIN_MAX_FAILED_ATTEMPTS:
+            # 임계 도달 → 잠금(DB 시계 기준 자동 해제 시각) + 카운터 리셋.
+            cur.execute(
+                "UPDATE WebAccounts SET LockedUntilAt = DATE_ADD(NOW(), INTERVAL %s MINUTE), "
+                "FailedLoginAttempts = 0 WHERE Id = %s",
+                (int(LOGIN_LOCKOUT_MINUTES), int(account_id)),
+            )
+            return True
+        return False
+    finally:
+        cur.close()
+
+
+def _login_reset_lockout(conn, account_id: int) -> None:
+    """로그인 성공 또는 관리자 해제 시 실패 카운터 + 잠금 초기화."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE WebAccounts SET FailedLoginAttempts = 0, LockedUntilAt = NULL WHERE Id = %s",
+            (int(account_id),),
+        )
+    finally:
+        cur.close()
 
 
 def _audit_message_table_collations(conn) -> None:
@@ -16003,20 +16150,69 @@ async def auth_login(request: Request) -> JSONResponse:
     password = str(data.get("password", "") or "")
     if not username or not password:
         return JSONResponse({"ok": False, "error": "username and password are required"}, status_code=400)
+    # TASK-20260619T021356-login-attempt-limit (보안 ②): IP throttle — DB 접근 전 무차별 대입 IP 차단.
+    client_ip = _get_client_ip(request)
+    if _login_ip_throttled(client_ip):
+        return JSONResponse(
+            {"ok": False, "error": "너무 많은 로그인 시도가 감지되었습니다. 잠시 후 다시 시도해 주세요."},
+            status_code=429,
+        )
     try:
         conn = _connect_memory()
     except Exception:
         return JSONResponse({"ok": False, "error": "db connection failed"}, status_code=500)
-    account = _load_account_by_username(conn, username)
-    if not account or not bool(account.get("is_active")) or account.get("deleted_at"):
+    try:
+        account = _load_account_by_username(conn, username)
+        # 미존재/비활성/삭제 — 일반 메시지(계정 열거 방지) + IP 실패 기록.
+        if not account or not bool(account.get("is_active")) or account.get("deleted_at"):
+            _login_ip_record_failure(client_ip)
+            return JSONResponse({"ok": False, "error": "로그인에 실패했습니다."}, status_code=401)
+        # 계정 잠금 확인 (is_locked = `_fetch_account_rows` 의 DB NOW() 평가 — clock skew 무관).
+        # NOTE(soft threshold, outside-voice MAJOR accept): is_locked 는 비밀번호 검증(느린
+        # PBKDF2) 직전 스냅샷이라, 동시 요청 버스트는 잠금 기록 전 임계를 초과할 수 있다.
+        # LOGIN_MAX_FAILED_ATTEMPTS 는 "연속(sequential)" 한도이며 절대 상한이 아니다.
+        # 1차 방어=DB 잠금(cross-worker 영속), 2차=IP throttle(단일 IP 버스트 제한) + 느린 해시.
+        # 분산(botnet) 공격은 사내 LAN 위협모델 외 — 외부 노출 시 별 cycle 에서 원자적 재검사
+        # (SELECT ... FOR UPDATE) 또는 per-account in-memory pre-gate 검토.
+        if bool(account.get("is_locked")):
+            _login_ip_record_failure(client_ip)
+            return JSONResponse(
+                {"ok": False, "error": "비밀번호를 여러 번 잘못 입력하여 계정이 일시적으로 잠겼습니다. 잠시 후 다시 시도하거나 관리자에게 문의해 주세요."},
+                status_code=429,
+            )
+        # 비밀번호 검증.
+        if not _verify_password(password, str(account.get("password_hash") or "")):
+            locked_now = _login_record_failure(conn, int(account["id"]))
+            _login_ip_record_failure(client_ip)
+            if locked_now:
+                # 잠금 발생 — best-effort audit(anonymous actor, target=계정). fail-open.
+                _audit_user_action(
+                    conn,
+                    request,
+                    None,
+                    action="auth.lockout",
+                    resource_type="account",
+                    resource_id=str(int(account["id"])),
+                    request_ctx={
+                        "username": str(account.get("username") or ""),
+                        "lockout_minutes": int(LOGIN_LOCKOUT_MINUTES),
+                        "remote_addr": client_ip,
+                    },
+                    actor_type="anonymous",
+                    target_account_id=int(account["id"]),
+                )
+                return JSONResponse(
+                    {"ok": False, "error": f"비밀번호 오류가 반복되어 계정이 약 {LOGIN_LOCKOUT_MINUTES}분간 잠겼습니다. 잠시 후 다시 시도하거나 관리자에게 문의해 주세요."},
+                    status_code=429,
+                )
+            return JSONResponse({"ok": False, "error": "로그인에 실패했습니다."}, status_code=401)
+        # 성공 — 실패 카운터/잠금 + IP 버킷 초기화.
+        _login_reset_lockout(conn, int(account["id"]))
+        _login_ip_clear(client_ip)
+        session_token = _issue_auth_session(conn, int(account["id"]), request)
+        account = _load_account_by_id(conn, int(account["id"]))
+    finally:
         conn.close()
-        return JSONResponse({"ok": False, "error": "로그인에 실패했습니다."}, status_code=401)
-    if not _verify_password(password, str(account.get("password_hash") or "")):
-        conn.close()
-        return JSONResponse({"ok": False, "error": "로그인에 실패했습니다."}, status_code=401)
-    session_token = _issue_auth_session(conn, int(account["id"]), request)
-    account = _load_account_by_id(conn, int(account["id"]))
-    conn.close()
     resp = JSONResponse({"ok": True, "user": _serialize_account(account)})
     _set_session_cookie(resp, request, session_token)
     return resp
@@ -16404,7 +16600,10 @@ def admin_account_password_reset(account_id: int, request: Request) -> JSONRespo
     cur = conn.cursor()
     try:
         cur.execute(
-            "UPDATE WebAccounts SET PasswordHash = %s, MustChangePassword = 1 WHERE Id = %s",
+            # TASK-20260619T021356-login-attempt-limit (보안 ②): 비밀번호 초기화는 로그인 실패 잠금도 함께 해제
+            # (관리자 개입 = 정당 사용자 회복 경로).
+            "UPDATE WebAccounts SET PasswordHash = %s, MustChangePassword = 1, "
+            "FailedLoginAttempts = 0, LockedUntilAt = NULL WHERE Id = %s",
             (password_hash, int(account_id)),
         )
         # 기존 세션 일괄 revoke — 대상 계정이 강제로 재로그인 후 새 비번 설정하도록.
@@ -16446,6 +16645,74 @@ def admin_account_password_reset(account_id: int, request: Request) -> JSONRespo
         "username": str(target.get("username") or ""),
         "temporary_password": temporary_password,
         "expires_hint": "다음 로그인 시 즉시 변경됩니다.",
+    })
+
+
+@app.post("/api/admin/accounts/{account_id}/unlock")
+def admin_account_unlock(account_id: int, request: Request) -> JSONResponse:
+    """TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금을 비밀번호 변경 없이 즉시 해제.
+
+    표적 DoS(공격자가 정당 사용자를 일부러 잠금)로부터의 관리자 회복 경로 — 비밀번호
+    초기화(강제 변경 동반)와 달리 잠금만 푼다. 권한: password-reset 와 동일
+    (`console.access` + `console.manage` + `account.update`). 신규 RBAC 권한 없음.
+    """
+    if account_id <= 0:
+        return _json_error("invalid account_id", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    actor, error = _require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+        conn.close()
+        return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+    if not _account_has_permission(actor, "account.update"):
+        conn.close()
+        return _json_error("계정 수정 권한이 필요합니다.", 403)
+    target = _load_account_by_id(conn, account_id)
+    if not target:
+        conn.close()
+        return _json_error("account not found", 404)
+    was_locked = bool(target.get("is_locked"))
+    try:
+        _login_reset_lockout(conn, int(account_id))
+    except Exception:
+        conn.close()
+        return _json_error("잠금 해제에 실패했습니다.", 500)
+    try:
+        _audit_admin_mutation(
+            conn,
+            request,
+            actor,
+            action="auth.unlock",
+            resource_type="account",
+            resource_id=str(account_id),
+            before=None,
+            after=None,
+            request_ctx={
+                "target_account_id": int(account_id),
+                "username": str(target.get("username") or ""),
+                "was_locked": was_locked,
+            },
+            target_account_id=int(account_id),
+        )
+        conn.commit()
+    except Exception as audit_exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.close()
+        return _json_error(f"audit write failed: {audit_exc}", 500)
+    conn.close()
+    return JSONResponse({
+        "ok": True,
+        "account_id": int(account_id),
+        "username": str(target.get("username") or ""),
+        "was_locked": was_locked,
     })
 
 
@@ -20375,6 +20642,25 @@ def build_audit_change_json(
                 "error_reason": request_ctx.get("error_reason"),
             },
             ["attachment.bytes", "attachment.original_filename", "attachment.object_key"],
+        )
+    # TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 / 관리자 잠금 해제 audit.
+    if action == "auth.lockout":
+        return (
+            {
+                "target_username": request_ctx.get("username"),
+                "lockout_minutes": int(request_ctx.get("lockout_minutes") or 0),
+                "remote_addr_present": bool(request_ctx.get("remote_addr")),
+            },
+            [],
+        )
+    if action == "auth.unlock":
+        return (
+            {
+                "target_account_id": request_ctx.get("target_account_id"),
+                "target_username": request_ctx.get("username"),
+                "was_locked": bool(request_ctx.get("was_locked")),
+            },
+            [],
         )
     # Unknown ActionCode — explicit raise (Codex C6 builder allowlist policy).
     raise ValueError(f"unknown audit action: {action}")
