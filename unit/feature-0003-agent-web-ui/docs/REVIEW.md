@@ -3445,3 +3445,16 @@ source_of_truth: true
 - **수용(문서화)**: 동시요청 race(pre-flight 한도 본질, parallel limit 6 bound·비용통제라 허용) · aux-call(validate/summary/classify/topic/sql_fix) conversation_id 없어 INNER join 탈락 = under-count(가용성 우선·dominant inference 는 집계·evasion 아님) · admin `prompt/generate` LLM 미게이트(console.manage admin-only 저표면) · daily/monthly date_trunc tz=PG 세션(UTC, 기존 대시보드 정합) · 계정 override free-text id(오타→404, 향후 picker) · 1.x 정수절단.
 - Verification: test_llm_usage_quota.py 10/10 + make test 회귀 0. 화면 정본=PB-0008(배포 후).
 - Cross-ref: CHG-20260619T030500-ai-claude-llm-usage-quota / REQ-20260619-0327 / AC-0596~0599.
+## REV-20260619T034522-ai-claude-oauth-google-foundation [SUBAGENT:oauth-google-foundation-adversarial]
+- Date: 2026-06-19
+- Cycle: TASK-20260619T034522-oauth-google-foundation (Google 계정 OAuth 로그인 토대), **Critical §12.3** — 인증 경로. 사내 웹서비스 편입 기반작업.
+- Panel: outside-voice(general-purpose, REFUTE) — Critical 인증 + 신규 계정 프로비저닝, `feedback_outside_voice_for_rbac` 정책(권한/인증 변경은 외부 시각 필수) 적용.
+- VERDICT: **SHIP-WITH-FIXES** (BLOCKER 0, MAJOR 2, MINOR 2, NIT 2). **MAJOR/MINOR 4건 전부 흡수 후 재검증 PASS** — 토대 단계지만 활성화 전 게이트로 미루지 않고 즉시 수정.
+- REFUTED(clean): 비파괴 위반(flag OFF→/start·/callback 404·기존 login/signup/session/RBAC 무변경·스키마 멱등 NULL)·sentinel 비번 로그인(split("$") ValueError→False)·서명 미검증 임의 ID token 위조(고정 token endpoint 백채널 client_secret+TLS·aud 치환차단=실악용 불가)·admin/로컬 계정 email-link 탈취(Email=NULL)·open redirect/SSRF(고정 `/`·상수 endpoint)·권한 상승(pending 우선·ApprovedAt NULL 하드코딩=signup 보다 보수적)·state 위변조/재생(HMAC+compare_digest+TTL+skew)·oauth_subject 누출(_serialize_account 미포함).
+- **흡수한 MAJOR**:
+  - MAJOR-1(login-CSRF/세션 고정): self-contained 서명 state 가 개시 브라우저에 미바인딩 → 공격자가 자기 플로우 callback URL 을 피해자에게 먹여 공격자 계정으로 로그인시킬 수 있었음(서명은 위변조만 차단). → **state↔브라우저 바인딩 추가**: `/start` 가 random binding 을 state payload(`b`)와 단명 httponly 쿠키(`OAUTH_BIND_COOKIE`)에 동시 심고, `/callback` 이 `hmac.compare_digest(쿠키, state.b)` 일치 시에만 수락(`_oauth_callback_redirect` 가 모든 종료 경로서 쿠키 삭제). 단위테스트 missing-cookie/mismatch 거부 추가.
+  - MAJOR-2(email 재할당 인계): email-link 가 가변 식별자(email)로 안정 식별자(sub) 덮어써 퇴사자→신규입사자 email 재할당 시 옛 계정 인계 가능. → **email-link 를 OAuthSubject NULL(미연결) 계정으로 한정**, 이미 다른 sub 면 `email-conflict` 거부(인계 0, 관리자 개입). SECURITY.md §15.4 명시 + 단위테스트.
+- **흡수한 MINOR**: MINOR-1(nonce 조건부→무조건 enforce, replay 방어) · MINOR-2(aud 문자열만→배열 처리, OIDC 정합).
+- **수용(문서화)**: NIT-1(`.env.oauth` agent-common 공유=least-privilege 위배, §15.4 acknowledged·web-only 분리 후속) · NIT-2(스키마 ALTER 비동기 적용 race=기성 idiom[FailedLoginAttempts/AvatarObjectKey 동일]·신규 회귀 아님). **잔여 활성화 게이트 TODO: ID token JWKS RS256 서명 검증(§15.3)** — 백채널 구조상 현재 실악용 불가하나 외부 배포 전 필수.
+- Verification: test_oauth_google_foundation.py 36/36(기존 29 + 바인딩/conflict/nonce/aud 7 신규) + 전체 회귀 0(사전존재 product-delete 2건 base 동일·무관) + py_compile OK. 비파괴(flag OFF) 유지.
+- Cross-ref: CHG-20260619T034522-ai-claude-oauth-google-foundation / REQ-20260619-0328 / AC-0600~0601 / SECURITY.md §15.

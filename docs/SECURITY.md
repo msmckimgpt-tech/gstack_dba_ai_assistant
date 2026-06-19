@@ -426,3 +426,65 @@ LLM 에 들어가는 비신뢰 콘텐츠에 spotlighting/datamarking + 명령-�
    raw tool/메시지는 reload 시 무구획(guard notice 가 전역 적용되나 sentinel 부재).
 3. **proximity / i18n**: guard notice 가 untrusted 블록과 멀리 떨어질 수 있고(코드-주입 위치),
    한국어 guard 가 일부 약모델에서 영어보다 약할 수 있다. 향후 블록 인접 재진술 / 영어 병기 검토.
+## 15. Google OAuth 로그인 토대 (TASK-20260619T-oauth-google-foundation)
+
+REQ-20260619-0328 — 사내 웹서비스 편입을 위한 외부 IdP(Google) 로그인 **기반작업**(사용자 결정
+2026-06-19: "검토 우선 + 비파괴 토대 구축"). 표준 OAuth 2.0 / OpenID Connect(Authorization
+Code + PKCE)로 기존 세션·RBAC 인프라에 "로그인 수단"만 추가한다. 정합 정본 = feature-0003
+FUNCTION.md AC-0600~0601. **인증 변경은 §3 의 사람 승인 대상** — 활성화/배포는 사용자 결정.
+
+### 15.1 비파괴 기본 비활성 (secure-by-default OFF)
+
+- 활성 판정 = `_oauth_google_configured()` = `WEB_OAUTH_GOOGLE_ENABLED` AND `CLIENT_ID` AND
+  `CLIENT_SECRET` AND `REDIRECT_URI` 가 모두 설정. 하나라도 빠지면 **비활성**.
+- 비활성 시 `GET /api/auth/oauth/google/start`·`/callback` 은 404 — 런타임 인증 경로 무영향.
+  `GET /api/auth/oauth/config` 는 `{google:{enabled}}` bool 만 노출(민감값 0).
+- credential 은 `.env.oauth`(gitignored, optional env_file) — 운영자가 Google Cloud Console
+  에서 OAuth 2.0 Client(웹 앱) 발급 후 채운다. `.env.oauth.example` 가 절차/키 문서화.
+- 기존 username/password 로그인은 **그대로 공존**(둘 다 유지 — 사용자 결정). OAuth 는 추가 진입점.
+
+### 15.2 인증 흐름 + CSRF/재생 방어
+
+- `/start`: PKCE(S256) `code_challenge` + nonce + **HMAC 서명 state**(`OAUTH_STATE_SECRET`,
+  TTL `OAUTH_STATE_TTL_SEC` 기본 600s) 를 Google authz URL 에 실어 302 redirect. **추가로
+  random binding 값을 state payload(`b`)와 단명 httponly 쿠키(`mysql_ai_oauth_bind`)에 동시에
+  심는다** — outside-voice MAJOR-1.
+- state 방어 3중: ① 서명(`hmac.compare_digest`, 위변조) ② TTL+future-skew(재생) ③ **브라우저
+  바인딩**(callback 의 쿠키 == state.b 일 때만 수락 → **login-CSRF/세션 고정 차단**). 서명만으로는
+  공격자가 자기 플로우의 callback URL 을 피해자에게 먹여 공격자 계정으로 로그인시키는 login-CSRF
+  를 막지 못하므로 바인딩이 필수다.
+- `/callback`: state 서명/TTL **+ 바인딩 쿠키** 검증 → 백채널 `code→token` 교환(client_secret
+  over TLS, stdlib urllib) → ID token claim 검증 → 계정 매핑/프로비저닝 → `_issue_auth_session`
+  + `_set_session_cookie`(기존 세션 인프라 재사용) → `/` redirect. 바인딩 쿠키는 callback 의 모든
+  종료 경로에서 삭제(1회용). 실패는 `/?oauth_error=<code>`.
+- claim 검증(`_oauth_validate_claims`): issuer(`accounts.google.com`) · audience(client_id —
+  **`aud` 배열도 처리**) · exp · **nonce 무조건 일치**(replay 방어) · email_verified · 도메인
+  화이트리스트. 신규 계정 PasswordHash = 비-pbkdf2 sentinel → `_verify_password` 항상
+  False(비밀번호 로그인 불가).
+
+### 15.3 알려진 한계 — ID token 서명 검증 (활성화/배포 전 강화 TODO)
+
+- **현재 토대는 ID token 의 JWKS RS256 서명을 검증하지 않는다.** Authorization Code flow 의
+  백채널 token 교환은 client_secret + TLS 로 Google 과 직접 통신하므로(중간자 없음) 받은 ID
+  token 은 신뢰 가능하며(OIDC Core §3.1.3.7: code flow + TLS 백채널 시 서명 검증 MAY skip),
+  claim 검증(iss/aud/exp/nonce/email_verified)으로 토큰 치환을 방어한다.
+- **활성화/외부 배포 전 필수 보완**: Google JWKS(`https://www.googleapis.com/oauth2/v3/certs`)
+  로 RS256 서명 검증(kid 매칭 + 캐싱/rotation)을 추가한다. 이 토대는 사내 미배포 상태이며
+  `WEB_OAUTH_GOOGLE_ENABLED` 가 기본 OFF 라 현재 노출 위험은 없다.
+
+### 15.4 알려진 한계 — 계정 프로비저닝 / env scoping (외부 노출 전 보완 TODO)
+
+- **모든 Google 계정 허용**(사용자 결정 2026-06-19, `WEB_OAUTH_GOOGLE_ALLOWED_DOMAINS` 빈값):
+  누구나 로그인 시 pending 계정이 자동 생성된다. 승인 게이트(ApprovedAt NULL + pending 역할)가
+  1차 방어이나, 외부/공개 노출 시 무한 pending 계정 생성(자원 abuse) 가능 → 외부 노출 가시화
+  시 도메인 화이트리스트(사내 Workspace 도메인) 또는 사전 등록 전환 + rate limit 검토.
+- **email 재할당(recycle) 인계 차단**(outside-voice MAJOR-2): email-link 분기는 매칭 계정이
+  **아직 OAuth 미연결(OAuthSubject NULL)** 일 때만 신원을 연결한다. 이미 *다른* `sub` 에 묶인
+  email(퇴사자 이메일이 신규 입사자에게 재할당된 경우)이면 link 를 거부하고 `email_conflict` 로
+  로그인 실패시킨다 — 옛 계정(역할/이력) 자동 인계 0, 관리자 개입 필요. 기존 로컬/admin 계정은
+  `Email=NULL` 이라 애초에 email-link 대상이 아니다(takeover 불가).
+- **env scoping**: `.env.oauth` 는 web 의 OAuth 진입점 전용이나 `x-agent-common` 공유 구조상
+  agent/insight-worker 도 inherit 한다(미사용 — 무해하나 least-privilege 위배). web-only 분리는
+  후속(§6.1 정합 — web 을 agent-common 에서 떼거나 docker secret 전환).
+- **OAUTH_STATE_SECRET 멀티워커**: 미설정 시 프로세스 기동마다 임의값 → 멀티워커/재시작 시
+  in-flight OAuth state 무효(사용자 재시도 필요). 영속이 필요하면 env 로 고정.

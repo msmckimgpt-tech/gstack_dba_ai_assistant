@@ -1109,3 +1109,16 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **단위(정적)**: `verify_db_rule_logic.py` 30/30(순수 helper·ReDoS·audit 가드) + `verify_db_rule_ui.mjs` 18/18(복수형 엔드포인트·카드/폼·rule_id 필터·중첩·manual 분리·CSS) + ast/node.
   - **Pass/Fail: PASS** — 배포 시스템에서 다중 규칙 생성/공존·규칙 카드·DB 종속 중첩 섹션·삭제 격리·UNIQUE 제거 마이그레이션을 실제 Windows 브라우저로 실측 통과. CHECK#13 충족.
   - **Notes:** outside-voice(다중규칙 격리) SHIP-WITH-FIXES — A~G 확인, BLOCKER 0, MAJOR#1(INSERT IGNORE 중복방지)·#2(fast-path catchup) 흡수. 캐시버스터 `?v=20260618-db-rule-multi`.
+
+### TASK-20260619T034522-oauth-google-foundation — Google 계정(OAuth) 로그인 토대 (REQ-20260619-0327, AC-0596~0601, Critical §12.3)
+- **단위 테스트**: `tests/test_oauth_google_foundation.py` **36/36 PASS** (agent 이미지 격리 컨테이너, `PYTHONPATH=feature-0002-agent-core/src:feature-0003-agent-web-ui/src`, `import app`).
+  - AC-0596 비활성 기본: `_oauth_google_configured()` flag/credential 조합 3 + `/start`·`/callback` flag-OFF 404 + `/config` enabled/disabled bool.
+  - AC-0597 PKCE: challenge == base64url(sha256(verifier)) + verifier 엔트로피.
+  - AC-0598 서명 state: roundtrip + tampered-sig 거부 + tampered-body 거부 + expired(TTL) 거부 + garbage 거부.
+  - AC-0599 claim 검증: valid + issuer/audience/expired/nonce/email-unverified/domain 거부 + email_verified "true" 문자열 수용 + 도메인 화이트리스트 allow/block.
+  - AC-0600 계정 매핑(FakeConn): subject 매칭 / email link(**UPDATE 에 PasswordHash 미포함=기존 비번 보존 단언**) / 신규 pending 자동 생성(role=3 + sentinel + ApprovedAt NULL).
+  - AC-0601 sentinel: `_verify_password(*, OAUTH_NO_PASSWORD_SENTINEL)` 항상 False (3 케이스).
+- **회귀**: feature-0002 + feature-0003 전체 pytest — 신규 회귀 **0**. 유일 실패 = 사전존재 `test_product_delete_block_conv` 2건이며 **base(main d639219)에서도 동일 실패**(product-delete RBAC, 본 변경과 무관) 대조 확인(`PYTEST_RC=1` 양쪽 동일). collection/import 오류 0.
+- **정적**: `python3 -m py_compile app.py` OK.
+- **Pass/Fail: PASS** (토대 단계). 배포·라이브 e2e(Google Cloud Console OAuth Client 등록 필요)·PB-0008(버튼 노출/로그인 화면)·ID token 서명검증은 활성화 cycle TODO(SECURITY.md §14.3).
+- **Notes:** 기본 비활성(flag OFF)이라 라이브 OAuth round-trip 은 credential 주입 후에만 가능 — 토대 검증은 단위(순수 helper + FakeConn + flag-gating)로 완결. ID token 서명 미검증은 의도적 trade-off(§14.3 정직 기록).

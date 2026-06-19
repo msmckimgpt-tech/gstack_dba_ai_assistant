@@ -4342,3 +4342,24 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `tests/test_llm_usage_quota.py` 10/10(B3 parse·B4 fail-open 실 동작 + inspect.getsource) + make test 회귀 0(사전존재 product-delete 2건 제외) + py_compile + node --check + CSS brace.
 - [x] outside-voice 적대 리뷰 **SHIP-WITH-FIXES**(BLOCKER/MAJOR 0). **흡수**: MINOR(parse_limit BIGINT clamp overflow 500 방지)·MINOR(0=무제한 footgun→캡션 "전면 차단=1" 명시). **수용**: 동시요청 race(parallel limit 6 bound)·aux-call 미집계(under-count=가용성 우선·evasion 아님)·admin prompt/generate 미게이트(admin-only)·daily/monthly tz(PG UTC, 대시보드 정합)·계정 free-text id(404 가드).
 - [ ] 머지 → 배포(web) → 라이브(한도 설정→초과 429·해제) + PB-0008(한도 패널) → 마감.
+### TASK-20260619T034522-oauth-google-foundation — Google 계정(OAuth) 로그인 토대 (REQ-20260619-0328, AC-0600~0601, Critical §12.3, 2026-06-19)
+- 사용자 요청: "이후 google 계정을 통한 로그인이 가능할까요? 사내 웹서비스에 편입하기 위한 기반작업을 진행해두고 싶습니다. 검토를 우선하여 진행해주세요." → 검토 후 사용자 결정(AskUserQuestion 2026-06-19): **① 비파괴 토대 구축**(flag OFF, credential 주입 시 활성) ② **모든 Google 계정 허용**(도메인 무제한) ③ **자동 생성+pending 승인 대기** + email 일치 시 link ④ **기존 비번 로그인 공존**.
+
+#### §2.1 Implementation Plan (Critical §12.3 — 인증 경로, 비파괴 토대)
+- **위험도 = Critical** (SECURITY.md §3 인증 변경). 비파괴 보장: 신규 엔드포인트 flag OFF 시 404, DB 컬럼 NULL, 프론트 버튼 hidden, 기존 login/signup/세션/RBAC 무변경 → 런타임 인증 경로 무영향. 배포 보류(토대만).
+- 영향 파일/심볼:
+  - `unit/feature-0003-agent-web-ui/src/app.py`: config 블록(`OAUTH_GOOGLE_*`/`OAUTH_NO_PASSWORD_SENTINEL`), `_ensure_oauth_identity_schema`(fast+slow 등록), `_fetch_account_rows` SELECT(email/auth_provider/oauth_subject), `_serialize_account`(email/auth_provider 노출), OAuth helper 9종(`_oauth_google_configured`/`_oauth_b64url(_decode)`/`_oauth_pkce_pair`/`_oauth_state_encode(decode)`/`_oauth_google_exchange_code`/`_oauth_decode_id_token_claims`/`_oauth_validate_claims`/`_oauth_provision_username`/`_oauth_resolve_or_provision_account`), 엔드포인트 3종(`auth_oauth_config`/`auth_oauth_google_start`/`auth_oauth_google_callback`), import `RedirectResponse`.
+  - 프론트: `static/index.html`(#oauthSection 버튼 hidden + Google SVG), `static/app.js`(`refreshOAuthLoginButtons`/`showOAuthErrorIfPresent`/showAuthOverlay 훅), `static/styles.css`(`.auth-oauth`/`.auth-divider`/`.btn-oauth`), index.html+admin.html cache-buster `?v=20260619-oauth-foundation`.
+  - 인프라: `docker-compose.yml`(agent-common env_file `.env.oauth` optional), `.env.oauth.example` 신설, `.gitignore`(`.env.oauth`).
+  - 문서: `docs/SECURITY.md §15`, `FUNCTION.md AC-0600~0601`, `docs/TEST.md §4`, `REVIEW.md`, `REPORT.md`.
+  - 테스트: `tests/test_oauth_google_foundation.py`(29 케이스).
+- 완료 판정(acceptance): AC-0600~0601(FUNCTION.md). 핵심 = flag OFF 시 엔드포인트 404 + 기존 인증 무회귀 + PKCE/state/claim 검증/계정매핑 단위 통과.
+- 구현/검증 결과:
+- [x] DB: `_ensure_oauth_identity_schema` 멱등 ALTER(Email/AuthProvider/OAuthSubject + 2 UNIQUE index), fast(`_ensure_seed_catchup`)+slow(`_ensure_web_tables`) 양 경로. 기존 행 NULL=로컬 계정 무회귀.
+- [x] Config: `OAUTH_GOOGLE_ENABLED`(기본 0) 외 client/secret/redirect/allowed-domains/state-secret/ttl. `_oauth_google_configured()` AND 게이트.
+- [x] Backend: Authorization Code + PKCE(S256) + 서명 state(CSRF/TTL) + claim 검증(iss/aud/exp/nonce/email_verified/도메인) + 계정 매핑(subject/email-link/pending-create) + 기존 `_issue_auth_session` 재사용. 외부 의존 0(stdlib urllib). flag OFF 시 /start·/callback 404.
+- [x] Frontend: 로그인 화면 Google 버튼(기본 hidden → `/api/auth/oauth/config` enabled 시 노출) + `?oauth_error=` 안내 매핑 + CSS + 캐시버스터 bump(index+admin).
+- [x] 인프라: `.env.oauth`(gitignored, optional env_file) + `.env.oauth.example`(발급/활성 절차 문서화).
+- [x] 검증: `test_oauth_google_foundation.py` **29/29 통과**(agent 이미지 컨테이너, PYTHONPATH feature-0002 src). 전체 회귀 = 사전존재 `test_product_delete_block_conv` 2건(base 동일 실패, product-delete RBAC — 본 변경과 무관)만 실패, **신규 회귀 0**. `py_compile` OK.
+- [x] 보안 한계 정직 기록(SECURITY.md §15.3/14.4): ID token **JWKS RS256 서명 검증=활성화/배포 전 TODO**(현재 백채널 TLS+claim 검증) · 모든-도메인 허용의 pending abuse(외부 노출 시 도메인 한정/사전등록 전환) · env web-only scoping · state-secret 멀티워커.
+- [ ] (활성화 cycle, 사용자 후속 결정) Google Cloud Console OAuth Client 등록 → `.env.oauth` 주입 + `WEB_OAUTH_GOOGLE_ENABLED=1` → JWKS 서명 검증 추가 → 배포(web) → 라이브 e2e + PB-0008(버튼 노출/로그인) → outside-voice 적대 보안 리뷰.

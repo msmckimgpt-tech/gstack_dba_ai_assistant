@@ -790,8 +790,56 @@ function toggleAuthPane(tab) {
   });
 }
 
+// TASK-20260619T034522-oauth-google-foundation: Google OAuth 로그인 버튼은 서버가 활성일 때만 노출.
+// /api/auth/oauth/config 가 google.enabled=true 면 #oauthSection 의 hidden 을 제거한다(토대 기본 OFF).
+let _oauthConfigChecked = false;
+async function refreshOAuthLoginButtons() {
+  if (_oauthConfigChecked) return;
+  _oauthConfigChecked = true;
+  const section = document.getElementById("oauthSection");
+  if (!section) return;
+  try {
+    const res = await fetch("/api/auth/oauth/config", { credentials: "same-origin" });
+    if (!res.ok) return;
+    const cfg = await res.json();
+    if (cfg && cfg.google && cfg.google.enabled) {
+      section.classList.remove("hidden");
+    }
+  } catch (_e) {
+    // 비활성/네트워크 실패 시 버튼 숨김 유지(기존 비번 로그인은 영향 없음).
+  }
+}
+
+// OAuth callback 이 ?oauth_error=<code> 로 되돌아오면 로그인 폼에 안내를 표시한다.
+const _OAUTH_ERROR_MESSAGES = {
+  denied: "Google 로그인이 취소되었습니다.",
+  state: "로그인 세션이 만료되었습니다. 다시 시도해 주세요.",
+  exchange: "Google 인증 처리 중 오류가 발생했습니다. 다시 시도해 주세요.",
+  claims: "Google 계정 정보를 확인하지 못했습니다.",
+  domain: "허용되지 않은 도메인의 계정입니다.",
+  inactive: "비활성화된 계정입니다. 관리자에게 문의해 주세요.",
+  email_conflict: "이 이메일은 다른 계정에 연결되어 있습니다. 관리자에게 문의해 주세요.",
+};
+function showOAuthErrorIfPresent() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("oauth_error");
+    if (!code) return;
+    if (loginErrorEl) {
+      loginErrorEl.textContent = _OAUTH_ERROR_MESSAGES[code] || "Google 로그인에 실패했습니다.";
+    }
+    params.delete("oauth_error");
+    const qs = params.toString();
+    window.history.replaceState({}, "", window.location.pathname + (qs ? `?${qs}` : ""));
+  } catch (_e) {
+    /* no-op */
+  }
+}
+
 function showAuthOverlay() {
   authOverlayEl.classList.remove("hidden");
+  refreshOAuthLoginButtons();
+  showOAuthErrorIfPresent();
 }
 
 function hideAuthOverlay() {
