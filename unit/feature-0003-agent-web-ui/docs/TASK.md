@@ -4331,3 +4331,14 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `tests/test_audit_tamper_evidence.py` 11/11(B1/B2 해시 tamper-detection 실 동작 + 나머지 inspect.getsource) + make test 회귀 0(사전존재 product-delete 2건 제외) + py_compile + node --check + CSS brace.
 - [x] outside-voice 적대 보안 리뷰(Critical 감사 무결성) **SHIP-WITH-FIXES**(BLOCKER 0). **흡수**: MAJOR-1(RR 스냅샷 fork→fresh-conn 봉인+`EventHash IS NULL` 가드)·MAJOR-4(verify/purge 거대 batch lock starvation→1000-batch drain bound)·MAJOR-2(in-DB 체인 단독 한계 정직화: 위협모델 docstring/SECURITY.md §13 명시 + 백그라운드 sealer **off-DB 로그 앵커** `[audit-chain-anchor]` head 해시). **수용**: MINOR(CAST(JSON) 서버버전 의존 upgrade 위험·ThroughEventId 검증 미사용·DB 통합테스트 부재[게이트 DB-less]·\x1f 구분자 embeddable=chosen-prefix only).
 - [ ] 머지 → 배포(web) → 라이브 verify round-trip(정상 ok + 인위 변조→break) + PB-0008(검증 버튼/배지) → 마감.
+
+### TASK-20260619T030500-llm-usage-quota — LLM 사용량 한도 (역할 기본 + 계정 특수) (REQ-20260619-0327, AC-0596~0599, Major §12.3, 2026-06-19)
+- 사용자 요청(보안 보강 6종 중 ④): LLM 사용량 한도 처리 — 역할별 기본, 계정별 특수(override).
+- [x] 인프라 재사용: 토큰 계량(`agent_runtime.llm_usage`)·대시보드(TASK-0136)는 기존 → 한도 설정 + 사전 게이트만 신설.
+- [x] 스키마(멱등): `WebRoleTokenQuotas`(역할 기본)·`WebAccountTokenQuotas`(계정 특수), QuotaType=daily|monthly, TokenLimit(0=무제한 명시). RBAC override 패턴 미러. fast+slow 양 경로.
+- [x] 유효 한도 `_account_effective_quota`(계정 override→역할 기본→None 무제한) + 사용량 `_account_period_usage_tokens`(PG date_trunc day/month·owner_account_id join·fail-open 0).
+- [x] 사전 게이트 `_check_account_token_quota`(/api/ask 조기, slot 전): 무제한/미설정/인프라장애=통과(fail-open), 초과 시 429. 킬스위치 `AGENT_LLM_QUOTA_ENFORCE`. **안전 기본=미설정 무제한**(배포만으로 누구도 차단 안 함).
+- [x] admin: `GET /api/admin/quotas`·`PUT .../role/{id}`·`PUT .../account/{id}`(console.manage)+audit `quota.role/account.update`. UI=LLM 사용량 탭 "사용 한도 설정"(역할 행 편집+계정 특수 추가/해제), cache-buster `?v=20260619-llm-quota`.
+- [x] 검증: `tests/test_llm_usage_quota.py` 10/10(B3 parse·B4 fail-open 실 동작 + inspect.getsource) + make test 회귀 0(사전존재 product-delete 2건 제외) + py_compile + node --check + CSS brace.
+- [x] outside-voice 적대 리뷰 **SHIP-WITH-FIXES**(BLOCKER/MAJOR 0). **흡수**: MINOR(parse_limit BIGINT clamp overflow 500 방지)·MINOR(0=무제한 footgun→캡션 "전면 차단=1" 명시). **수용**: 동시요청 race(parallel limit 6 bound)·aux-call 미집계(under-count=가용성 우선·evasion 아님)·admin prompt/generate 미게이트(admin-only)·daily/monthly tz(PG UTC, 대시보드 정합)·계정 free-text id(404 가드).
+- [ ] 머지 → 배포(web) → 라이브(한도 설정→초과 429·해제) + PB-0008(한도 패널) → 마감.

@@ -4338,3 +4338,12 @@ source_of_truth: true
 - Verification: test 11/11(해시 tamper-detection 실 동작) + make test 회귀 0 + py_compile + node --check. outside-voice SHIP-WITH-FIXES(MAJOR 3 흡수).
 - Rollback: 엔드포인트/헬퍼/훅/UI 복원. EventHash/PrevHash 컬럼·Checkpoint 테이블 비파괴(잔존 무해). cache-buster 되돌림.
 - Deploy: web 재빌드.
+
+## CHG-20260619T030500-ai-claude-llm-usage-quota
+- Date: 2026-06-19 (TASK-20260619T030500-llm-usage-quota — LLM 사용량 한도). 사용자 보안 보강 6종 중 ④.
+- Scope: feature-0003 `src/app.py`(config LLM_QUOTA_ENFORCE·`_ensure_llm_quota_schema`+양 경로·`_account_effective_quota`/`_account_period_usage_tokens`/`_check_account_token_quota`/`_quota_upsert`/`_quota_parse_limit`·/api/ask 게이트·admin 3 엔드포인트·audit quota.role/account.update) + `src/static/admin.js`(loadQuotas)+`admin.html`(한도 패널)+`styles.css`(.admin-quota-row)+admin/index.html(cache-buster) + `tests/test_llm_usage_quota.py`(신규 10) + docs.
+- 내용: 역할별 기본 + 계정별 특수(override) LLM 토큰 한도(daily/monthly). 토큰 계량/대시보드는 기존(TASK-0136) 재사용, 한도 설정+사전 게이트만 추가. 미설정=무제한(안전 기본), 초과 시 /api/ask 429. fail-open(PG 장애/킬스위치). admin UI 로 역할/계정 한도 편집.
+- Why: 사용자 요청 — LLM 비용 통제(역할 기본·계정 특수).
+- Verification: test 10/10 + make test 회귀 0 + py_compile + node --check. outside-voice SHIP-WITH-FIXES(MINOR clamp+footgun 캡션 흡수).
+- Rollback: 게이트/헬퍼/엔드포인트/UI 복원. 한도 테이블 비파괴(잔존 무해, 행 없으면 무제한). cache-buster 되돌림.
+- Deploy: web 재빌드.
