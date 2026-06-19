@@ -4364,3 +4364,12 @@ source_of_truth: true
 - Verification: test 10/10(TOTP roundtrip 실 동작) + make test 회귀 0 + py_compile + node --check. outside-voice SHIP-WITH-FIXES(MAJOR brute-force 흡수 + MINOR 백업코드 race 흡수).
 - Rollback: TOTP 헬퍼/엔드포인트/UI/로그인 2단계 복원. WebAccountTotp 테이블 비파괴(잔존 무해, 행 없으면 2FA off). cache-buster 되돌림.
 - Deploy: web 재빌드(인증=web 전용, agent_core 무관).
+
+## CHG-20260619T084227-ai-claude-release-notes-security-6
+- Date: 2026-06-19 (보안 보강 6종 릴리즈 노트 기록). frontend-only(콘텐츠 큐레이션).
+- Scope: feature-0003 `src/static/release-notes-data.js`(2026-06-19 블록 6 항목 추가+summary)+index.html/admin.html(release-notes-data.js cache-buster) + docs.
+- 내용: ①공유링크 만료·②로그인 보호·③감사 무결성 검증·④AI 사용 한도·⑤어시스턴트 보안 강화(추상)·⑥2단계 인증을 사용자 향 문장으로 기록. 내부 메커니즘(암호화/해시체인/인젝션/RBAC 등) 비노출(AC-0579).
+- Why: 사용자 요청 — 릴리즈 노트 기록 후 배포.
+- Verification: node --check(release-notes-data.js) + 금지 용어 스캔 clean. 렌더 정본=PB-0008.
+- Rollback: 6 항목 제거 + summary/캐시버스터 복원.
+- Deploy: web 재빌드(정적 콘텐츠).

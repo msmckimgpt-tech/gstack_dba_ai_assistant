@@ -4374,3 +4374,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `tests/test_two_factor_auth.py` 10/10(B1 TOTP roundtrip+drift·B3 백업코드 실 동작 + inspect.getsource) + make test 회귀 0(사전존재 product-delete 2건 제외) + py_compile + node --check + CSS brace 1402.
 - [x] outside-voice 적대 보안 리뷰(Critical 인증, 2FA bypass/brute-force 집중) **SHIP-WITH-FIXES**(BLOCKER 0, 클린 bypass 없음·crypto core RFC6238 정확). **흡수 MAJOR**: TOTP brute-force 증폭(비번 통과 시 IP/잠금 리셋이 TOTP 분기 전 → 비번 보유 공격자 step1 반복으로 throttle 무한리셋) → **2FA 분기는 리셋 미룸(2단계 완료 시에만)** + **TOTP 실패 시 계정 잠금(② 인프라)+IP 기록 + step-2 잠금 차단**. **흡수 MINOR**: 백업코드 소비 `SELECT FOR UPDATE` 원자화. **수용**: pending token TTL 내 재사용(코드 필요+이중 throttle bound)·30s 내 코드 재사용(표준)·KEK 부재 시 2FA 계정 fail-closed(admin 복구).
 - [ ] 머지 → 배포(web) → 라이브(설정→로그인 2단계→백업코드→admin 해제) + PB-0008(2FA UI) → 마감. **6종 전체 완료.**
+
+### TASK-20260619T084227-release-notes-security-6 — 보안 보강 6종 릴리즈 노트 기록 (REQ-20260619-0330, AC-0608, Minor §12.3, frontend-only, 2026-06-19)
+- 사용자 요청: 보안 보강 6종(①~⑥) 중 릴리즈 노트 적용 사항 기록 후 배포.
+- [x] `release-notes-data.js` 2026-06-19 블록에 보안 6종 사용자 향 항목 6개 추가(기존 그룹대화·AI제한 2항목 유지, summary 보강). 양식·문체=기존 노트 정합([[feedback_template_entry_release_notes]]).
+- [x] 내부 동작 비노출(AC-0579): 암호화/해시체인/TOTP secret/인젝션/RBAC/PG/quota 등 금지 용어 0(자가 스캔 clean). 사용자 보이는 결과 중심(2FA 켜기·공유 만료·로그인 잠금·사용 한도·무결성 검증 버튼·보안 처리 강화 추상화).
+- [x] index/admin cache-buster `release-notes-data.js?v=20260619-security-6`. node --check valid.
+- [ ] 머지 → 배포(web) → PB-0008(양 화면 노트 렌더) → 마감.
