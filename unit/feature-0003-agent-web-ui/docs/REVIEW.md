@@ -3458,3 +3458,15 @@ source_of_truth: true
 - **수용(문서화)**: NIT-1(`.env.oauth` agent-common 공유=least-privilege 위배, §15.4 acknowledged·web-only 분리 후속) · NIT-2(스키마 ALTER 비동기 적용 race=기성 idiom[FailedLoginAttempts/AvatarObjectKey 동일]·신규 회귀 아님). **잔여 활성화 게이트 TODO: ID token JWKS RS256 서명 검증(§15.3)** — 백채널 구조상 현재 실악용 불가하나 외부 배포 전 필수.
 - Verification: test_oauth_google_foundation.py 36/36(기존 29 + 바인딩/conflict/nonce/aud 7 신규) + 전체 회귀 0(사전존재 product-delete 2건 base 동일·무관) + py_compile OK. 비파괴(flag OFF) 유지.
 - Cross-ref: CHG-20260619T034522-ai-claude-oauth-google-foundation / REQ-20260619-0328 / AC-0600~0601 / SECURITY.md §15.
+
+## REV-20260619T040000-ai-claude-two-factor-auth [SUBAGENT:two-factor-auth-adversarial]
+- Date: 2026-06-19
+- Cycle: TASK-20260619T040000-two-factor-auth (2단계 인증 TOTP), **Critical §12.3** — 인증 경로.
+- Panel: outside-voice(general-purpose, REFUTE) — 2FA bypass/brute-force 집중 적대 리뷰.
+- VERDICT: **SHIP-WITH-FIXES** (BLOCKER 0, MAJOR 1, MINOR 2). 11 probe. **클린 bypass 없음**, crypto core RFC6238 검증(test vector 일치).
+- REFUTED(clean): bypass(2FA 계정은 /login 에서 세션·쿠키 절대 미발급·pending token DEK-HMAC 서버전용·위조 불가)·TOTP 정확(HMAC-SHA1 counter RFC 일치·±1 drift·constant-time)·secret 암호화(AAD 계정 바인딩·평문 미저장/미로그·setup 1회 노출·KEK 부재 503 fail-safe·serialize 미노출)·enrollment authz(IDOR 없음·session aid·disable 비번 재확인·Enabled=0 미확정)·admin 해제(게이트+audit·복구경로)·무회귀(미설정=off·KEK 부재여도 일반 로그인 정상)·프론트 XSS-safe(escapeHtml/textContent).
+- **흡수한 MAJOR**: TOTP brute-force throttle 증폭 — 비밀번호 통과 시 `_login_ip_clear`+`_login_reset_lockout` 가 TOTP 분기 *전* 실행 → 비번 보유 공격자가 step1 반복으로 IP버킷·계정잠금 무한 리셋하며 6자리 코드(3/1M) brute-force(2FA 핵심 위협=비번 유출 시나리오 무력화) → **(a) 2FA 분기는 리셋 미룸(2단계 완료 시에만 reset)** + **(b) TOTP 실패 시 `_login_record_failure`(계정 잠금 ② 인프라, DB·cross-IP)+IP 기록, step-2 시작 시 is_locked 차단**. 결과: IP throttle(per-IP) + 계정 잠금(5회→15분, cross-IP) 이중 bound.
+- **흡수한 MINOR**: 백업코드 소비 race(autocommit read-modify-write 중복 소비) → `SELECT ... FOR UPDATE` 명시 tx 원자화.
+- **수용(문서화)**: pending token TTL(300s) 내 재사용(유효 코드 필요 + 이중 throttle 로 bound)·30s step 내 TOTP 코드 재사용(RFC 표준·산업관행)·KEK 부재 시 Enabled=1 계정 fail-closed(admin disable 복구)·`_runtime_tables_available` probe 에 WebAccountTotp 미등록(catchup 무조건 생성이라 무영향).
+- Verification: test_two_factor_auth.py 10/10(B1 roundtrip+drift·B9 흡수 가드) + make test 회귀 0 + py_compile + node --check. 화면 정본=PB-0008(배포 후).
+- Cross-ref: CHG-20260619T040000-ai-claude-two-factor-auth / REQ-20260619-0329 / AC-0604~0607 / docs/SECURITY.md §15.

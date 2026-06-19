@@ -1263,6 +1263,227 @@ def _verify_password(password: str, stored_hash: str) -> bool:
     return hmac.compare_digest(actual, expected)
 
 
+# =============================================================================
+# TASK-20260619T040000-two-factor-auth (보안 ⑥, Critical §12.3): 2단계 인증 (TOTP, RFC 6238).
+# secret 은 cred_crypto(DEK/KEK, AAD=totp:{account_id})로 암호화 저장. 로그인 pending token 은
+# DEK-HMAC 서명(stateless, 5분 TTL). 백업코드는 sha256 해시(1회용). pyotp 미사용(stdlib).
+# 사용자 opt-in(self-service 켜기/끄기) + 관리자 강제 해제(분실 복구). 기본 미설정=2FA 미사용(무회귀).
+# =============================================================================
+_TOTP_STEP = 30
+_TOTP_DIGITS = 6
+_TOTP_DRIFT_WINDOW = 1            # ±1 step (시계 drift 허용)
+_TOTP_PENDING_TTL = 300          # 로그인 pending token 유효 5분
+_TOTP_BACKUP_CODE_COUNT = 10
+_TOTP_AAD_PREFIX = "totp:"
+
+
+def _totp_generate_secret() -> str:
+    """base32 TOTP secret (160-bit) 생성."""
+    import base64 as _b64
+    return _b64.b32encode(os.urandom(20)).decode("ascii").rstrip("=")
+
+
+def _totp_code_at(secret_b32: str, ts: float) -> str:
+    import base64 as _b64
+    import struct as _st
+    pad = "=" * ((8 - len(secret_b32) % 8) % 8)
+    key = _b64.b32decode(secret_b32.upper() + pad, casefold=True)
+    counter = int(ts // _TOTP_STEP)
+    h = hmac.new(key, _st.pack(">Q", counter), hashlib.sha1).digest()
+    o = h[-1] & 0x0F
+    val = (_st.unpack(">I", h[o:o + 4])[0] & 0x7FFFFFFF) % (10 ** _TOTP_DIGITS)
+    return str(val).zfill(_TOTP_DIGITS)
+
+
+def _totp_verify(secret_b32: str, code: str, ts: "float | None" = None) -> bool:
+    import time as _t
+    code = str(code or "").strip().replace(" ", "")
+    if not code.isdigit() or len(code) != _TOTP_DIGITS:
+        return False
+    now = ts if ts is not None else _t.time()
+    for drift in range(-_TOTP_DRIFT_WINDOW, _TOTP_DRIFT_WINDOW + 1):
+        try:
+            if hmac.compare_digest(_totp_code_at(secret_b32, now + drift * _TOTP_STEP), code):
+                return True
+        except Exception:
+            return False
+    return False
+
+
+def _totp_otpauth_uri(secret_b32: str, username: str, issuer: str = "DQA") -> str:
+    from urllib.parse import quote
+    label = quote(f"{issuer}:{username}")
+    return (f"otpauth://totp/{label}?secret={secret_b32}&issuer={quote(issuer)}"
+            f"&digits={_TOTP_DIGITS}&period={_TOTP_STEP}")
+
+
+def _totp_dek(conn):
+    """(_cc, ver, dek) 또는 None. KEK 미설정/DEK 부재 시 None(2FA 불가)."""
+    try:
+        from modules import cred_crypto as _cc
+        from modules import datasources as _dsr
+    except Exception:
+        return None
+    if not _cc.enc_available():
+        return None
+    try:
+        got = _dsr.ensure_dek(conn)
+    except Exception:
+        return None
+    if not got:
+        return None
+    ver, dek = got
+    return (_cc, int(ver), dek)
+
+
+def _totp_encrypt_secret(conn, account_id: int, secret_b32: str) -> "tuple[str, int] | None":
+    d = _totp_dek(conn)
+    if not d:
+        return None
+    _cc, ver, dek = d
+    try:
+        return (_cc.encrypt_password(dek, secret_b32, f"{_TOTP_AAD_PREFIX}{int(account_id)}"), ver)
+    except Exception:
+        return None
+
+
+def _totp_decrypt_secret(conn, account_id: int, enc: str, version: int) -> "str | None":
+    try:
+        from modules import cred_crypto as _cc
+        from modules import datasources as _dsr
+    except Exception:
+        return None
+    try:
+        got = _dsr.get_dek(conn, int(version))
+    except Exception:
+        return None
+    if not got:
+        return None
+    _ver, dek = got
+    try:
+        return _cc.decrypt_password(dek, enc, f"{_TOTP_AAD_PREFIX}{int(account_id)}")
+    except Exception:
+        return None
+
+
+def _totp_load(conn, account_id: int) -> "dict | None":
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            "SELECT AccountId, SecretEnc, EncryptionVersion, Enabled, BackupCodesJson "
+            "FROM WebAccountTotp WHERE AccountId = %s LIMIT 1",
+            (int(account_id),),
+        )
+        return cur.fetchone()
+    except Exception:
+        return None
+    finally:
+        cur.close()
+
+
+def _totp_is_enabled(conn, account_id: int) -> bool:
+    row = _totp_load(conn, account_id)
+    return bool(row and int(row.get("Enabled") or 0) == 1)
+
+
+def _totp_backup_hash(code: str) -> str:
+    return hashlib.sha256(str(code or "").strip().upper().replace("-", "").encode("utf-8")).hexdigest()
+
+
+def _totp_generate_backup_codes(n: int = _TOTP_BACKUP_CODE_COUNT) -> list[str]:
+    import base64 as _b64
+    return [_b64.b32encode(os.urandom(6)).decode("ascii").rstrip("=")[:10] for _ in range(n)]
+
+
+def _totp_consume_backup_code(conn, account_id: int, code: str) -> bool:
+    """백업 코드 1회용 소비. 일치 시 used 마킹 후 True.
+
+    outside-voice MINOR 흡수: read-modify-write 를 `SELECT ... FOR UPDATE` 명시 tx 로 감싸
+    동시 로그인이 같은 백업코드를 중복 소비하는 race 를 차단(원자적 1회용 보장).
+    """
+    target = _totp_backup_hash(code)
+    started = False
+    try:
+        conn.start_transaction()
+        started = True
+    except Exception:
+        started = False  # 이미 tx 중이면 기존 tx 안에서 FOR UPDATE 로 락.
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT BackupCodesJson FROM WebAccountTotp WHERE AccountId = %s FOR UPDATE",
+            (int(account_id),),
+        )
+        r = cur.fetchone()
+        if not r or not r[0]:
+            if started:
+                conn.commit()
+            return False
+        codes = json.loads(r[0])
+        matched = False
+        for c in codes:
+            if (not c.get("used")) and hmac.compare_digest(str(c.get("hash") or ""), target):
+                c["used"] = True
+                matched = True
+                break
+        if not matched:
+            if started:
+                conn.commit()
+            return False
+        cur.execute(
+            "UPDATE WebAccountTotp SET BackupCodesJson = %s WHERE AccountId = %s",
+            (json.dumps(codes), int(account_id)),
+        )
+        if started:
+            conn.commit()
+        return True
+    except Exception:
+        if started:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False
+    finally:
+        cur.close()
+
+
+def _totp_pending_token(conn, account_id: int) -> "str | None":
+    """로그인 1단계(비밀번호) 통과 후 TOTP 대기용 stateless 서명 토큰(DEK-HMAC, TTL)."""
+    import time as _t
+    import base64 as _b64
+    d = _totp_dek(conn)
+    if not d:
+        return None
+    _cc, _ver, dek = d
+    exp = int(_t.time()) + _TOTP_PENDING_TTL
+    payload = f"{int(account_id)}:{exp}"
+    sig = hmac.new(dek, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return _b64.urlsafe_b64encode(f"{payload}:{sig}".encode("utf-8")).decode("ascii")
+
+
+def _totp_verify_pending_token(conn, token: str) -> "int | None":
+    """pending token 검증 → account_id (만료/위조 시 None)."""
+    import time as _t
+    import base64 as _b64
+    try:
+        raw = _b64.urlsafe_b64decode(str(token or "").encode("ascii")).decode("utf-8")
+        aid_s, exp_s, sig = raw.split(":", 2)
+        aid, exp = int(aid_s), int(exp_s)
+    except Exception:
+        return None
+    if exp < int(_t.time()):
+        return None
+    d = _totp_dek(conn)
+    if not d:
+        return None
+    _cc, _ver, dek = d
+    expect = hmac.new(dek, f"{aid}:{exp}".encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expect, str(sig)):
+        return None
+    return aid
+
+
 def _empty_permission_map(catalog_codes: Iterable[str] | None = None) -> dict[str, bool]:
     """TASK-0052 Phase 1A: catalog_codes 인자가 None 이면 정적 PERMISSION_CODES 사용 (기존 동작)."""
     codes = catalog_codes if catalog_codes is not None else PERMISSION_CODES
@@ -1608,6 +1829,8 @@ def _serialize_account(
         # admin UI 가 잠금 배지/해제 버튼 노출에 사용. locked_until=자동 해제 시각.
         "is_locked": bool(account.get("is_locked")),
         "locked_until": str(account.get("locked_until_at") or "") or None,
+        # TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA 활성 여부(프로필 토글 + admin 배지/해제).
+        "totp_enabled": bool(account.get("totp_enabled")),
         # UI gate 전용 최소 플래그 — permissions 전체 노출 없이 관리 콘솔 접근 여부만 전달.
         "console_access": _account_has_permission(account, "console.access"),
         # TASK-0268: 아바타 이미지 URL. 설정 시 /api/avatars/<id>(같은 출처 bytes 서빙) +
@@ -1741,6 +1964,7 @@ SELECT
     COALESCE(a.FailedLoginAttempts, 0) AS failed_login_attempts,
     a.LockedUntilAt AS locked_until_at,
     (a.LockedUntilAt IS NOT NULL AND a.LockedUntilAt > NOW()) AS is_locked,
+    COALESCE((SELECT t.Enabled FROM WebAccountTotp t WHERE t.AccountId = a.Id LIMIT 1), 0) AS totp_enabled,
     a.AvatarObjectKey AS avatar_object_key,
     a.Email AS email,
     a.AuthProvider AS auth_provider,
@@ -5541,6 +5765,35 @@ def _ensure_oauth_identity_schema(conn) -> None:
         cur.close()
 
 
+def _ensure_web_account_totp_schema(conn) -> None:
+    """TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA TOTP 저장 테이블 (멱등 CREATE).
+
+    `WebAccountTotp`: AccountId PK·SecretEnc(cred_crypto AESGCM 암호문)·EncryptionVersion(DEK 버전)·
+    Enabled(0=등록 미확인, 1=활성)·BackupCodesJson(백업코드 sha256 해시 1회용)·ConfirmedAt.
+    미존재 행 = 2FA 미사용(무회귀). fast+slow 양 경로.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebAccountTotp (
+                AccountId BIGINT PRIMARY KEY,
+                SecretEnc TEXT NOT NULL,
+                EncryptionVersion INT NOT NULL,
+                Enabled TINYINT(1) NOT NULL DEFAULT 0,
+                BackupCodesJson TEXT NULL,
+                ConfirmedAt DATETIME NULL,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+    except Exception:
+        pass
+    finally:
+        cur.close()
+
+
 def _ensure_avatar_icon_schema(conn) -> None:
     """TASK-0268/0293: fast-path 재기동에서도 WebAccounts.AvatarObjectKey / WebProducts.IconObjectKey
     / WebRoles.IconObjectKey 컬럼이 존재하도록 idempotent ALTER. _ensure_web_tables 의 CREATE 와 동일
@@ -5647,6 +5900,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_llm_quota_schema(conn)
     # TASK-20260619T034522-oauth-google-foundation (REQ-20260619-0328): Google OAuth 신원 매핑 컬럼 fast-path 보정.
     _ensure_oauth_identity_schema(conn)
+    # TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA TOTP 테이블 (fast path).
+    _ensure_web_account_totp_schema(conn)
     # TASK-0268: 아바타/아이콘 object key 컬럼 fast-path 보정(slow path _ensure_web_tables 미경유 재기동 대비).
     _ensure_avatar_icon_schema(conn)
     # TASK-0274: 첨부 버전 관리 컬럼(RootAttachmentId/VersionNumber/CreatedByRole/SupersededAt) fast-path 보정.
@@ -5866,6 +6121,8 @@ def _ensure_web_tables():
         _ensure_llm_quota_schema(conn)
         # TASK-20260619T034522-oauth-google-foundation (REQ-20260619-0328): Google OAuth 신원 매핑 컬럼 (slow path).
         _ensure_oauth_identity_schema(conn)
+        # TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA TOTP 테이블 (slow path).
+        _ensure_web_account_totp_schema(conn)
         # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping +
         # derived join + provider files lifecycle 4 신규 테이블 (slow path).
         _ensure_web_conversation_attachments_schema(conn)
@@ -17153,7 +17410,21 @@ async def auth_login(request: Request) -> JSONResponse:
                     status_code=429,
                 )
             return JSONResponse({"ok": False, "error": "로그인에 실패했습니다."}, status_code=401)
-        # 성공 — 실패 카운터/잠금 + IP 버킷 초기화.
+        # 비밀번호 검증 통과.
+        # TASK-20260619T040000-two-factor-auth (보안 ⑥): TOTP 활성 계정은 완전 세션 미발급 —
+        # pending token 반환 후 /api/auth/login/totp 로 2단계 검증을 요구한다(2-step login).
+        # outside-voice MAJOR 흡수: 2FA 분기에서는 잠금/IP 리셋을 **미룬다**(2단계 미완료).
+        # 비밀번호만 통과시켜 IP 버킷·계정 잠금을 리셋하면 비밀번호 보유 공격자가 step1 반복으로
+        # throttle 을 무한 리셋하며 6자리 TOTP 를 brute-force 할 수 있다 → 리셋은 2단계 완료 시에만.
+        if _totp_is_enabled(conn, int(account["id"])):
+            pending = _totp_pending_token(conn, int(account["id"]))
+            if not pending:
+                return JSONResponse(
+                    {"ok": False, "error": "2단계 인증 처리 중 오류가 발생했습니다. 관리자에게 문의해 주세요."},
+                    status_code=500,
+                )
+            return JSONResponse({"ok": False, "totp_required": True, "totp_token": pending}, status_code=200)
+        # 2FA 미사용 — 즉시 완료: 실패 카운터/잠금 + IP 버킷 초기화 후 세션 발급.
         _login_reset_lockout(conn, int(account["id"]))
         _login_ip_clear(client_ip)
         session_token = _issue_auth_session(conn, int(account["id"]), request)
@@ -17161,6 +17432,82 @@ async def auth_login(request: Request) -> JSONResponse:
     finally:
         conn.close()
     resp = JSONResponse({"ok": True, "user": _serialize_account(account)})
+    _set_session_cookie(resp, request, session_token)
+    return resp
+
+
+@app.post("/api/auth/login/totp")
+async def auth_login_totp(request: Request) -> JSONResponse:
+    """TASK-20260619T040000-two-factor-auth (보안 ⑥): 로그인 2단계 — TOTP 코드(또는 백업코드) 검증.
+
+    body: {totp_token, code}. pending token(DEK-HMAC, 5분) 검증 → TOTP/백업코드 일치 시 세션 발급.
+    IP throttle + 코드 실패 IP 기록(2단계도 무차별 대입 차단). 백업코드는 1회용 소비.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
+    token = str(data.get("totp_token", "") or "")
+    code = str(data.get("code", "") or "").strip()
+    client_ip = _get_client_ip(request)
+    if _login_ip_throttled(client_ip):
+        return JSONResponse(
+            {"ok": False, "error": "너무 많은 로그인 시도가 감지되었습니다. 잠시 후 다시 시도해 주세요."},
+            status_code=429,
+        )
+    if not token or not code:
+        return JSONResponse({"ok": False, "error": "인증 코드를 입력해 주세요."}, status_code=400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "db connection failed"}, status_code=500)
+    try:
+        account_id = _totp_verify_pending_token(conn, token)
+        if not account_id:
+            _login_ip_record_failure(client_ip)
+            return JSONResponse(
+                {"ok": False, "error": "인증 세션이 만료되었습니다. 다시 로그인해 주세요.", "totp_expired": True},
+                status_code=401,
+            )
+        # outside-voice MAJOR 흡수: 2단계 brute-force 방어 — 계정 잠금(② 인프라, DB·cross-IP)도
+        # TOTP 단계에 적용. 잠긴 계정은 코드 검증 전에 차단.
+        acct_full = _load_account_by_id(conn, int(account_id))
+        if acct_full and bool(acct_full.get("is_locked")):
+            _login_ip_record_failure(client_ip)
+            return JSONResponse(
+                {"ok": False, "error": "인증 시도가 반복되어 계정이 일시적으로 잠겼습니다. 잠시 후 다시 시도하거나 관리자에게 문의해 주세요."},
+                status_code=429,
+            )
+        row = _totp_load(conn, int(account_id))
+        if not row or int(row.get("Enabled") or 0) != 1:
+            return JSONResponse({"ok": False, "error": "2단계 인증이 설정되어 있지 않습니다."}, status_code=400)
+        secret = _totp_decrypt_secret(
+            conn, int(account_id), str(row.get("SecretEnc") or ""), int(row.get("EncryptionVersion") or 0),
+        )
+        ok_code = bool(secret and _totp_verify(secret, code))
+        used_backup = False
+        if not ok_code:
+            # TOTP 불일치 → 백업코드 시도(1회용, row-lock 원자 소비).
+            used_backup = _totp_consume_backup_code(conn, int(account_id), code)
+        if not ok_code and not used_backup:
+            # 코드 실패 → IP 기록 + 계정 잠금 누적(② 인프라, brute-force 무한 시도 차단).
+            _login_ip_record_failure(client_ip)
+            _login_record_failure(conn, int(account_id))
+            return JSONResponse({"ok": False, "error": "인증 코드가 올바르지 않습니다."}, status_code=401)
+        # 통과 — 실패 카운터/잠금 + IP 버킷 초기화(2단계 완료) 후 세션 발급.
+        _login_reset_lockout(conn, int(account_id))
+        _login_ip_clear(client_ip)
+        session_token = _issue_auth_session(conn, int(account_id), request)
+        account = _load_account_by_id(conn, int(account_id))
+        _audit_user_action(
+            conn, request, account, action="auth.login.totp", resource_type="account",
+            resource_id=str(int(account_id)),
+            request_ctx={"method": "backup_code" if used_backup else "totp", "remote_addr": client_ip},
+            target_account_id=int(account_id),
+        )
+    finally:
+        conn.close()
+    resp = JSONResponse({"ok": True, "user": _serialize_account(account), "used_backup_code": used_backup})
     _set_session_cookie(resp, request, session_token)
     return resp
 
@@ -17259,6 +17606,130 @@ async def auth_me_patch(request: Request) -> JSONResponse:
     if not updated_account:
         return _json_error("account not found", 404)
     return JSONResponse({"ok": True, "user": _serialize_account(updated_account)})
+
+
+# =============================================================================
+# TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA self-service 등록/해제 (로그인 필요).
+# =============================================================================
+@app.post("/api/auth/totp/setup")
+async def auth_totp_setup(request: Request) -> JSONResponse:
+    """2FA 등록 시작 — secret 생성·암호화 저장(Enabled=0 미확인) + otpauth URI 반환.
+    재호출(미확인 상태) 시 새 secret 으로 덮어쓴다. 이미 활성(Enabled=1)이면 409."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        aid = int(account["id"])
+        if _totp_is_enabled(conn, aid):
+            return _json_error("이미 2단계 인증이 설정되어 있습니다. 먼저 해제 후 다시 설정하세요.", 409)
+        secret = _totp_generate_secret()
+        enc = _totp_encrypt_secret(conn, aid, secret)
+        if not enc:
+            return _json_error("2단계 인증 암호화 인프라(KEK)가 구성되어 있지 않습니다. 관리자에게 문의해 주세요.", 503)
+        secret_enc, ver = enc
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO WebAccountTotp (AccountId, SecretEnc, EncryptionVersion, Enabled, BackupCodesJson, ConfirmedAt) "
+                "VALUES (%s, %s, %s, 0, NULL, NULL) "
+                "ON DUPLICATE KEY UPDATE SecretEnc=VALUES(SecretEnc), EncryptionVersion=VALUES(EncryptionVersion), "
+                "Enabled=0, BackupCodesJson=NULL, ConfirmedAt=NULL",
+                (aid, secret_enc, int(ver)),
+            )
+        finally:
+            cur.close()
+        username = str(account.get("username") or "user")
+        return JSONResponse({
+            "ok": True,
+            "secret": secret,  # 1회 노출 — 사용자가 authenticator 에 수동 입력 가능.
+            "otpauth_uri": _totp_otpauth_uri(secret, username),
+            "digits": _TOTP_DIGITS,
+            "period": _TOTP_STEP,
+        })
+    finally:
+        conn.close()
+
+
+@app.post("/api/auth/totp/confirm")
+async def auth_totp_confirm(request: Request) -> JSONResponse:
+    """2FA 등록 확정 — setup 의 secret 으로 첫 코드 검증 → Enabled=1 + 백업코드 10개(1회 노출) 발급."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    code = str(data.get("code", "") or "").strip()
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        aid = int(account["id"])
+        row = _totp_load(conn, aid)
+        if not row or not row.get("SecretEnc"):
+            return _json_error("먼저 2단계 인증 설정을 시작해 주세요.", 400)
+        if int(row.get("Enabled") or 0) == 1:
+            return _json_error("이미 활성화되어 있습니다.", 409)
+        secret = _totp_decrypt_secret(conn, aid, str(row.get("SecretEnc") or ""), int(row.get("EncryptionVersion") or 0))
+        if not secret or not _totp_verify(secret, code):
+            return _json_error("인증 코드가 올바르지 않습니다. authenticator 앱의 현재 코드를 입력해 주세요.", 400)
+        backup_codes = _totp_generate_backup_codes()
+        backup_json = json.dumps([{"hash": _totp_backup_hash(c), "used": False} for c in backup_codes])
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE WebAccountTotp SET Enabled=1, BackupCodesJson=%s, ConfirmedAt=NOW() WHERE AccountId=%s",
+                (backup_json, aid),
+            )
+        finally:
+            cur.close()
+        _audit_user_action(
+            conn, request, account, action="auth.totp.enable", resource_type="account",
+            resource_id=str(aid), request_ctx={"backup_codes_issued": len(backup_codes)}, target_account_id=aid,
+        )
+        return JSONResponse({"ok": True, "enabled": True, "backup_codes": backup_codes})
+    finally:
+        conn.close()
+
+
+@app.post("/api/auth/totp/disable")
+async def auth_totp_disable(request: Request) -> JSONResponse:
+    """2FA 해제 — 비밀번호 재확인 후 삭제(self-service)."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    password = str(data.get("password", "") or "")
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        aid = int(account["id"])
+        full = _load_account_by_username(conn, str(account.get("username") or ""))
+        if not full or not _verify_password(password, str(full.get("password_hash") or "")):
+            return _json_error("비밀번호가 올바르지 않습니다.", 403)
+        cur = conn.cursor()
+        try:
+            cur.execute("DELETE FROM WebAccountTotp WHERE AccountId=%s", (aid,))
+        finally:
+            cur.close()
+        _audit_user_action(
+            conn, request, account, action="auth.totp.disable", resource_type="account",
+            resource_id=str(aid), request_ctx={"by": "self"}, target_account_id=aid,
+        )
+        return JSONResponse({"ok": True, "enabled": False})
+    finally:
+        conn.close()
 
 
 @app.post("/api/auth/logout")
@@ -17990,6 +18461,56 @@ def admin_account_unlock(account_id: int, request: Request) -> JSONResponse:
         "username": str(target.get("username") or ""),
         "was_locked": was_locked,
     })
+
+
+@app.post("/api/admin/accounts/{account_id}/totp/disable")
+def admin_account_totp_disable(account_id: int, request: Request) -> JSONResponse:
+    """TASK-20260619T040000-two-factor-auth (보안 ⑥): 관리자 2FA 강제 해제(분실 디바이스 복구).
+
+    비밀번호 변경 없이 2FA 만 제거 → 사용자가 비밀번호로 로그인 후 재설정. 권한:
+    password-reset 동일(`console.access`+`console.manage`+`account.update`). 신규 RBAC 0.
+    """
+    if account_id <= 0:
+        return _json_error("invalid account_id", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        actor, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+            return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+        if not _account_has_permission(actor, "account.update"):
+            return _json_error("계정 수정 권한이 필요합니다.", 403)
+        target = _load_account_by_id(conn, account_id)
+        if not target:
+            return _json_error("account not found", 404)
+        was_enabled = _totp_is_enabled(conn, int(account_id))
+        cur = conn.cursor()
+        try:
+            cur.execute("DELETE FROM WebAccountTotp WHERE AccountId=%s", (int(account_id),))
+        finally:
+            cur.close()
+        try:
+            _audit_admin_mutation(
+                conn, request, actor, action="auth.totp.admin_disable", resource_type="account",
+                resource_id=str(account_id), before=None, after=None,
+                request_ctx={"target_account_id": int(account_id),
+                             "username": str(target.get("username") or ""), "was_enabled": was_enabled},
+                target_account_id=int(account_id),
+            )
+            conn.commit()
+        except Exception as audit_exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return _json_error(f"audit write failed: {audit_exc}", 500)
+        return JSONResponse({"ok": True, "account_id": int(account_id), "was_enabled": was_enabled})
+    finally:
+        conn.close()
 
 
 @app.delete("/api/admin/accounts/{account_id}")
@@ -21954,6 +22475,28 @@ def build_audit_change_json(
                 "target_account_id": request_ctx.get("account_id"),
                 "daily": request_ctx.get("daily"),
                 "monthly": request_ctx.get("monthly"),
+            },
+            [],
+        )
+    # TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA 활성/해제/관리자 해제 + 로그인 TOTP audit.
+    if action == "auth.totp.enable":
+        return ({"backup_codes_issued": int(request_ctx.get("backup_codes_issued") or 0)}, [])
+    if action == "auth.totp.disable":
+        return ({"by": request_ctx.get("by") or "self"}, [])
+    if action == "auth.totp.admin_disable":
+        return (
+            {
+                "target_account_id": request_ctx.get("target_account_id"),
+                "target_username": request_ctx.get("username"),
+                "was_enabled": bool(request_ctx.get("was_enabled")),
+            },
+            [],
+        )
+    if action == "auth.login.totp":
+        return (
+            {
+                "method": request_ctx.get("method"),
+                "remote_addr_present": bool(request_ctx.get("remote_addr")),
             },
             [],
         )

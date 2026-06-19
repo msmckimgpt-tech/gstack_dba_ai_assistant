@@ -4363,3 +4363,14 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `test_oauth_google_foundation.py` **29/29 통과**(agent 이미지 컨테이너, PYTHONPATH feature-0002 src). 전체 회귀 = 사전존재 `test_product_delete_block_conv` 2건(base 동일 실패, product-delete RBAC — 본 변경과 무관)만 실패, **신규 회귀 0**. `py_compile` OK.
 - [x] 보안 한계 정직 기록(SECURITY.md §15.3/14.4): ID token **JWKS RS256 서명 검증=활성화/배포 전 TODO**(현재 백채널 TLS+claim 검증) · 모든-도메인 허용의 pending abuse(외부 노출 시 도메인 한정/사전등록 전환) · env web-only scoping · state-secret 멀티워커.
 - [ ] (활성화 cycle, 사용자 후속 결정) Google Cloud Console OAuth Client 등록 → `.env.oauth` 주입 + `WEB_OAUTH_GOOGLE_ENABLED=1` → JWKS 서명 검증 추가 → 배포(web) → 라이브 e2e + PB-0008(버튼 노출/로그인) → outside-voice 적대 보안 리뷰.
+
+### TASK-20260619T040000-two-factor-auth — 2단계 인증 (TOTP, self-service + 관리자 해제) (REQ-20260619-0329, AC-0604~0607, Critical §12.3, 2026-06-19)
+- 사용자 요청(보안 보강 6종 중 ⑥, 마지막): 2단계 인증 과정. 사용자 결정(AskUserQuestion): **사용자 opt-in self-service** + 관리자 강제 해제(역할 강제는 후속 cycle).
+- [x] TOTP: stdlib RFC 6238(HMAC-SHA1·6자리·30s·±1 step drift, pyotp 없이). secret 은 `cred_crypto`(DEK/KEK AESGCM, AAD=`totp:{account_id}`) 암호화 저장. `WebAccountTotp` 신규(멱등, fast+slow). 기본 미설정=2FA off(무회귀).
+- [x] 등록 self-service: `POST /api/auth/totp/setup`(secret+otpauth QR, Enabled=0)·`confirm`(첫 코드 검증→Enabled=1+백업코드 10개 1회 노출)·`disable`(비밀번호 재확인).
+- [x] 로그인 2단계: auth_login 비번 통과+TOTP 활성 시 `{totp_required, totp_token}`(세션 미발급) → `POST /api/auth/login/totp`(pending token=DEK-HMAC 5분 + TOTP/백업코드) → 세션. 백업코드 row-lock 1회용.
+- [x] admin: `POST /api/admin/accounts/{id}/totp/disable`(분실 복구, console.manage+account.update 재사용·신규 RBAC 0). serialize `totp_enabled`(`_fetch_account_rows` 서브쿼리). audit `auth.totp.enable/disable/admin_disable`+`auth.login.totp`.
+- [x] 프론트: 로그인 TOTP 프롬프트(app.js `showTotpLoginPrompt`)·프로필 "보안 및 계정" 2FA 켜기/끄기(`renderProfileTotp`·QR·백업코드)·admin "2FA" 배지(blue)+해제. cache-buster `?v=20260619-2fa`.
+- [x] 검증: `tests/test_two_factor_auth.py` 10/10(B1 TOTP roundtrip+drift·B3 백업코드 실 동작 + inspect.getsource) + make test 회귀 0(사전존재 product-delete 2건 제외) + py_compile + node --check + CSS brace 1402.
+- [x] outside-voice 적대 보안 리뷰(Critical 인증, 2FA bypass/brute-force 집중) **SHIP-WITH-FIXES**(BLOCKER 0, 클린 bypass 없음·crypto core RFC6238 정확). **흡수 MAJOR**: TOTP brute-force 증폭(비번 통과 시 IP/잠금 리셋이 TOTP 분기 전 → 비번 보유 공격자 step1 반복으로 throttle 무한리셋) → **2FA 분기는 리셋 미룸(2단계 완료 시에만)** + **TOTP 실패 시 계정 잠금(② 인프라)+IP 기록 + step-2 잠금 차단**. **흡수 MINOR**: 백업코드 소비 `SELECT FOR UPDATE` 원자화. **수용**: pending token TTL 내 재사용(코드 필요+이중 throttle bound)·30s 내 코드 재사용(표준)·KEK 부재 시 2FA 계정 fail-closed(admin 복구).
+- [ ] 머지 → 배포(web) → 라이브(설정→로그인 2단계→백업코드→admin 해제) + PB-0008(2FA UI) → 마감. **6종 전체 완료.**

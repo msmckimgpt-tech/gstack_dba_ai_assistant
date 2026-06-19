@@ -4355,3 +4355,12 @@ source_of_truth: true
 - Verification: test_oauth_google_foundation.py 29/29 + 전체 회귀 0(사전존재 product-delete 2건 base 동일·무관) + py_compile OK. ANCHOR §1~§3 충돌 없음(인증/세션이 app.py 에 있다는 §1 와 정합).
 - Rollback: config/helper/엔드포인트/프론트/문서 복원. `WebAccounts` Email/AuthProvider/OAuthSubject 컬럼·UNIQUE index 비파괴(잔존 무해, NULL). `.env.oauth`/.example/compose env_file/cache-buster 되돌림.
 - Deploy: **보류**(토대만 — flag OFF). 활성화는 Google Cloud Console OAuth Client 등록 + `.env.oauth` 주입 + `WEB_OAUTH_GOOGLE_ENABLED=1` + JWKS 서명검증 추가 후 별 cycle(SECURITY.md §15.3).
+
+## CHG-20260619T040000-ai-claude-two-factor-auth
+- Date: 2026-06-19 (TASK-20260619T040000-two-factor-auth — 2단계 인증 TOTP). 사용자 보안 보강 6종 중 ⑥(마지막).
+- Scope: feature-0003 `src/app.py`(TOTP stdlib 헬퍼·`WebAccountTotp` 스키마+양 경로·cred_crypto 암호화·등록 3EP·로그인 2단계+`auth_login_totp`·admin 해제·audit 4 action·`_serialize_account`/`_fetch_account_rows` totp_enabled·brute-force 흡수·백업코드 row-lock) + `src/static/app.js`(showTotpLoginPrompt·renderProfileTotp)+`admin.js`(triggerAccountTotpDisableFlow·2FA 배지)+`index.html`(프로필 2FA 섹션)+`styles.css`(.is-2fa)+cache-buster + `tests/test_two_factor_auth.py`(신규 10) + docs(SECURITY.md §15).
+- 내용: RFC 6238 TOTP(stdlib), secret cred_crypto 암호화(AAD 계정 바인딩), 로그인 2단계(pending token=DEK-HMAC), 백업코드(1회용 row-lock), self-service 등록/해제 + 관리자 강제 해제. 기본 미설정=2FA off(무회귀). brute-force 방어=IP throttle+계정 잠금(②) 2FA 단계 적용 + 비번-통과-리셋 증폭 차단.
+- Why: 사용자 요청 — 로그인 2차 인증.
+- Verification: test 10/10(TOTP roundtrip 실 동작) + make test 회귀 0 + py_compile + node --check. outside-voice SHIP-WITH-FIXES(MAJOR brute-force 흡수 + MINOR 백업코드 race 흡수).
+- Rollback: TOTP 헬퍼/엔드포인트/UI/로그인 2단계 복원. WebAccountTotp 테이블 비파괴(잔존 무해, 행 없으면 2FA off). cache-buster 되돌림.
+- Deploy: web 재빌드(인증=web 전용, agent_core 무관).
