@@ -3394,3 +3394,21 @@ source_of_truth: true
   - `_read_llm_provider_status` graceful(PG 실패→unknown→배너 미표시). m6(hot-path PG read 캐시)은 inline-notice staleness 위험으로 미도입(single-row PK read 유지).
 - Verification: verify_llm_restriction_surface.mjs 35(정적 7+CSS 5+wiring 6+jsdom 4-surface 17) + node --check + py_compile(app.py). 화면 정본=PB-0008(restricted 주입 4-surface, 배포 후).
 - Cross-ref: CHG-20260619T014034-ai-claude-llm-restriction-notice / TASK-20260619T014034 / feature-0002 REV-20260619-0311(full).
+
+## REV-20260619T021356-ai-claude-login-attempt-limit [SUBAGENT:login-attempt-limit-adversarial]
+- Date: 2026-06-19
+- Cycle: TASK-20260619T021356-login-attempt-limit (잘못된 로그인 시도 제한), **Critical §12.3** — 인증 경로.
+- Panel: outside-voice(general-purpose, REFUTE) — Critical 인증 변경 필수 적대 리뷰([[feedback_outside_voice_for_rbac]]).
+- VERDICT: **SHIP-WITH-FIXES** (BLOCKER 0, MAJOR 1, MINOR 5, NIT 2). 10 probe.
+- REFUTED(clean): clock skew/TOCTOU(전부 DB NOW()/DATE_ADD, Python datetime 0), 카운터 리셋 정합(성공/임계 양쪽 초기화·post-unlock 즉시 재잠금 없음), admin unlock authz/IDOR(console.manage+account.update 게이트·audit), audit(auth.lockout/unlock 화이트리스트·PII 0·anonymous fail-open), 회귀(성공 로그인/bootstrap/must_change/serialize 무영향), is_locked 게이트가 비번 검증 선행.
+- **흡수한 MINOR/NIT**: ① IP 버킷 무한증가(공격자 영향 IP 키) → 4096 초과 시 만료 버킷 sweep + throttled 시 빈 버킷 정리. ② /api/auth/me 가 본인 failed_login_attempts 노출 → admin-context(include_permissions)로 이동.
+- **accept+문서화(코드 주석 + 본 항목)**:
+  - **MAJOR 동시요청 soft-threshold**: is_locked 가 느린 PBKDF2(310k) 직전 스냅샷이라 동시 버스트가 잠금 기록 전 임계 초과 가능. `LOGIN_MAX_FAILED_ATTEMPTS`=연속(sequential) 한도, 절대 상한 아님. 1차 방어=DB 잠금(영속·cross-worker, 임계 넘으면 결국 잠김·UPDATE 멱등), 2차=IP throttle(단일 IP 버스트 ~4 계정/window 로 제한)+느린 해시. 분산 botnet 은 사내 LAN 위협모델 외. 외부 노출 가시화 시 별 cycle 에서 원자적 재검사(SELECT FOR UPDATE) 또는 per-account in-memory pre-gate.
+  - MINOR 계정열거 오라클(429+잠금메시지 vs 401-일반): 잠금 스킴의 본질(잠금 상태가 곧 존재 누설). 사용자가 명시 선택한 계정 잠금 + 사내 LAN. 미존재 경로는 일반 401+IP기록 유지.
+  - MINOR schema-catchup 선행 의존(COALESCE 는 NULL 만, 부재 컬럼 미보호): `_ensure_*` 가 serving 전 startup 에 실행 = must_change_password(동일 SELECT 패턴)와 동일 idiom, 기존 검증됨.
+  - MINOR unlock audit-fail 500-after-commit(autocommit): password-reset 동일 기존 패턴(잠금은 실제 해제됨, admin 재시도 시 already-unlocked).
+  - MINOR XFF-spoof: `_get_client_ip` 는 WEB_TRUSTED_PROXIES 직접 peer 만 XFF 신뢰(SECURITY.md §9.7 Caddy XFF 정규화). 기존 audit/session 과 동일 의존.
+  - NIT locked_until naive tz: admin 배지는 bool is_locked 만 사용 = cosmetic.
+- 테스트 한계 명시: 단위는 IP throttle 실동작 + source-grep — 동시성 window/열거 오라클/라이브 DB 잠금은 미커버(라이브 재검증 + PB-0008 로 보완).
+- Verification: test_login_attempt_limit.py 11/11 + make test 회귀 0 + py_compile + node --check. 화면 정본=PB-0008(배포 후).
+- Cross-ref: CHG-20260619T021356-ai-claude-login-attempt-limit / REQ-20260619-0325 / AC-0588~0591.

@@ -332,3 +332,35 @@ implicit 허용 (TASK-0214).
 
 ADR-0030 "복원 절차" 참조 — 요약: `repo/.env.secret` 의 토글을 `=1` 로 되돌리고(또는 줄 제거),
 필요 시 allowlist 등재 후 `sudo docker compose up -d --build web`. 코드 변경 불필요.
+
+## 12. 로그인 시도 제한 (계정 잠금 + IP throttle) (TASK-20260619T021356-login-attempt-limit)
+
+무차별 대입(brute-force) 방어. 계정 단위 잠금(DB 영속) + IP 단위 throttle(in-process) 심층방어.
+사용자 결정(2026-06-19): 둘 다 + 보수적 프로파일. 정합 정본 = feature-0003 FUNCTION.md AC-0588~0591.
+
+### 12.1 메커니즘
+
+- **계정 잠금**: `WebAccounts.FailedLoginAttempts` 가 `WEB_LOGIN_MAX_FAILED_ATTEMPTS`(기본 5) 회
+  연속 비밀번호 실패에 도달하면 `LockedUntilAt = DATE_ADD(NOW(), INTERVAL WEB_LOGIN_LOCKOUT_MINUTES MINUTE)`
+  (기본 15 분) 로 잠그고 카운터를 리셋한다. 잠금 판정은 **DB 시계**(`LockedUntilAt > NOW()`) — web↔DB
+  clock skew 무관. 성공 로그인 또는 관리자 해제 시 카운터/잠금 초기화. 잠금은 비밀번호 검증보다 **선행**.
+- **IP throttle**: `WEB_LOGIN_IP_WINDOW_SEC`(기본 600) 초 내 동일 IP 의 실패가 `WEB_LOGIN_IP_MAX_ATTEMPTS`
+  (기본 20) 에 도달하면 추가 시도를 429 로 차단(DB 접근 전). in-process token bucket — 멀티워커 시 워커당
+  적용(계정 잠금이 cross-worker 1차 방어, IP 는 2차). IP 키는 `_get_client_ip`(SECURITY.md §9.7 의
+  WEB_TRUSTED_PROXIES 조건부 trust) 기준. 공격자 영향 IP 키 무한증가 방지 메모리 가드 내장.
+- **관리자 운영**: `POST /api/admin/accounts/{id}/unlock` 이 비밀번호 변경 없이 잠금만 해제(표적 DoS
+  회복; 권한 `console.access`+`console.manage`+`account.update` 재사용, 신규 RBAC 없음). 비밀번호
+  초기화도 잠금을 동반 해제. 잠금 발생은 audit `auth.lockout`, 관리자 해제는 `auth.unlock` 기록.
+
+### 12.2 알려진 한계 (외부 배포 전 보완 TODO)
+
+본 정책은 사내 LAN dev/staging 위협모델 전제다. 외부/공개 노출 가시화 시 별 cycle 에서 보완한다:
+
+1. **동시요청 soft-threshold** (outside-voice MAJOR, accept): `is_locked` 가 느린 PBKDF2(310k) 검증
+   직전 스냅샷이라, 동시 요청 버스트는 잠금 기록 전 임계를 초과할 수 있다(`LOGIN_MAX_FAILED_ATTEMPTS`
+   는 연속 한도이지 절대 상한이 아님). DB 잠금이 결국 발동하고 IP throttle + 느린 해시가 단일 IP 버스트를
+   제한하나, 분산(botnet) 공격은 막지 못한다. 외부 노출 시 원자적 재검사(`SELECT ... FOR UPDATE`) 또는
+   per-account in-memory pre-gate 도입.
+2. **계정 열거 오라클**: 잠긴 계정은 429+잠금 메시지, 미존재/일반 실패는 401+일반 메시지 → 사용자명 존재
+   여부가 누설된다(잠금 스킴의 본질). 엄격 잔류가 필요하면 잠금 상태도 일반 메시지로 균질화 검토.
+3. **per-IP throttle 의 워커 공유**: 멀티워커 운영 시 IP throttle 을 Redis 등 공유 저장소로 승격.

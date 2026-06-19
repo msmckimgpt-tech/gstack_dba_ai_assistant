@@ -4301,3 +4301,15 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `verify_llm_restriction_surface.mjs` 35(정적 7+CSS 5+wiring 6+jsdom 4-surface 토글 17) + node --check + py_compile(app.py).
 - [x] 적대 코드리뷰 → REV-20260619T014034-ai-claude-llm-restriction-notice.
 - [ ] 머지 → 배포(web+ask-worker, deploy_scope: included) + 마이그 0011 → PB-0008(restricted 주입 4-surface computed 실측, jsdom 불가 영역) → 마감.
+
+### TASK-20260619T021356-login-attempt-limit — 잘못된 로그인 시도 제한 (계정 잠금 + IP throttle) (REQ-20260619-0325, AC-0588~0591, Critical §12.3, 2026-06-19)
+- 사용자 요청(보안 보강 6종 중 ②): 잘못된 로그인 시도 제한. 사용자 결정(AskUserQuestion 2026-06-19): **계정+IP 둘 다(심층방어)**, **보수적 프로파일**(계정 5회→15분 자동해제, IP 20회/10분), 전부 env 설정 가능.
+- [x] 스키마(멱등·비파괴): `WebAccounts` 에 `FailedLoginAttempts`/`LockedUntilAt`/`LastFailedLoginAt` + `IX_WebAccounts_LockedUntil`(`_ensure_login_lockout_schema`, must_change_password idiom). fast(`_ensure_seed_catchup`)+slow(`_ensure_web_tables`) 양 경로. 기존 행 DEFAULT 0/NULL=무회귀.
+- [x] config: `WEB_LOGIN_MAX_FAILED_ATTEMPTS`(5)/`WEB_LOGIN_LOCKOUT_MINUTES`(15)/`WEB_LOGIN_IP_MAX_ATTEMPTS`(20)/`WEB_LOGIN_IP_WINDOW_SEC`(600).
+- [x] IP throttle: in-process token bucket(`_login_ip_throttled`/`_record_failure`/`_clear`, `_search_rate_limit_check` 패턴) + 메모리 가드(공격자 영향 IP 키 무한증가 → 4096 초과 시 만료 버킷 sweep, outside-voice MINOR 흡수).
+- [x] 계정 잠금: `_login_record_failure`(실패 누적, 임계 도달 시 `DATE_ADD(NOW(), INTERVAL %s MINUTE)` 잠금+카운터 리셋)·`_login_reset_lockout`(성공/해제 시 초기화). 잠금 판정=`_fetch_account_rows` 의 DB NOW() 평가 `is_locked`(clock skew 무관).
+- [x] login 흐름: IP throttle(DB 전, 429) → 미존재/비활성(일반 401+IP기록, 계정열거 방지) → is_locked(429) → 비번 검증 실패 시 누적+IP기록, 잠금 발생 시 audit `auth.lockout`(anonymous actor, fail-open)+429 → 성공 시 카운터/잠금/IP 초기화. conn try/finally.
+- [x] admin: `POST /api/admin/accounts/{id}/unlock`(비번 변경 없이 잠금만 해제, 표적 DoS 회복; 권한=password-reset 동일 `console.access`+`console.manage`+`account.update`, 신규 RBAC 0)+audit `auth.unlock`. password-reset 도 잠금 해제(FailedLoginAttempts=0/LockedUntilAt=NULL). 계정 직렬화 `is_locked`/`locked_until`(failed_login_attempts 는 admin-context만 — NIT 흡수). admin.js 잠금 배지(amber)+해제 버튼+`triggerAccountUnlockFlow`. 로그인 잠금 메시지=`error` 필드 자동 표시(프론트 변경 0).
+- [x] 검증: `tests/test_login_attempt_limit.py` 11/11(B1~B10 + F1, IP throttle 실 동작 + 나머지 inspect.getsource) + make test 전체 회귀 0(사전존재 `test_product_delete_block_conv` 2건 제외, 본 변경 무관) + py_compile + node --check + CSS brace 1373=1373.
+- [x] outside-voice 적대 보안 리뷰(Critical 인증, [[feedback_outside_voice_for_rbac]]) **SHIP-WITH-FIXES**(BLOCKER 0). **흡수**: MINOR(IP 버킷 메모리 가드)·NIT(/api/auth/me 실패횟수 비노출). **accept+문서화**: MAJOR(동시요청 soft-threshold — is_locked 가 느린 PBKDF2 직전 스냅샷이라 버스트가 임계 초과 가능; LOGIN_MAX=연속 한도. 1차 DB잠금·2차 IP throttle+느린해시, 분산 botnet 은 사내 LAN 위협모델 외, 외부 노출 시 별 cycle FOR UPDATE/per-account pre-gate)·MINOR(429vs401 계정열거 오라클=잠금 본질·수용·내부LAN, schema-catchup 선행 의존=must_change idiom 동일, unlock audit-fail 500-after-commit=password-reset 동일 패턴, locked_until naive tz=cosmetic).
+- [ ] 머지 → 배포(web) → 라이브 재검증(5회 실패→잠금→429·관리자 해제) + PB-0008(잠금 배지/해제 버튼) → 마감.

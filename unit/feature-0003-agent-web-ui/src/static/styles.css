@@ -4577,6 +4577,8 @@ a { color: inherit; }
 .status-chip.role-operator { background: rgba(22,163,74,.1); color: #15803d; }
 .status-chip.role-pending  { background: rgba(217,119,6,.12); color: #92400e; }
 .status-chip.is-disabled   { background: var(--danger-soft); color: var(--danger); }
+/* TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 배지 (amber). */
+.status-chip.is-locked     { background: #fff7ed; color: #b45309; }
 
 .admin-grid {
   display: flex;
