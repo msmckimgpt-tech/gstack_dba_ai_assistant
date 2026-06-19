@@ -7,6 +7,8 @@
 .env.minio
 .env.llm
 .env.secret
+# TASK-20260619T034522-oauth-google-foundation: Google OAuth client 자격증명 (web 진입점 전용).
+.env.oauth
 .env.local
 __pycache__/
 *.py[cod]

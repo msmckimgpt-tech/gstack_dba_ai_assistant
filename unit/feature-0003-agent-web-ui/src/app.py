@@ -28,7 +28,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from fastapi import FastAPI, Request, UploadFile, File, Form  # TASK-0094 Phase 5: multipart upload
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from modules.memory import (
@@ -618,6 +618,38 @@ LLM_QUOTA_ENFORCE = os.getenv("AGENT_LLM_QUOTA_ENFORCE", "1").strip() not in ("0
 _LLM_QUOTA_TYPES = ("daily", "monthly")
 BOOTSTRAP_ADMIN_USERNAME = str(os.getenv("WEB_BOOTSTRAP_ADMIN_USERNAME", "") or "").strip()
 BOOTSTRAP_ADMIN_PASSWORD = str(os.getenv("WEB_BOOTSTRAP_ADMIN_PASSWORD", "") or "")
+
+# === TASK-20260619T034522-oauth-google-foundation (REQ-20260619-0328): Google OAuth 로그인 토대 ===
+# 사내 웹서비스 편입을 위한 기반작업(사용자 결정 2026-06-19: "비파괴 토대 구축").
+# 비파괴 — 기본 비활성. credential(.env.oauth) 주입 + WEB_OAUTH_GOOGLE_ENABLED=1 일 때만
+# 동작한다. 기존 username/password 로그인은 그대로 유지(공존, 둘 다 허용).
+# 활성 판정 = _oauth_google_configured() (enabled AND client_id AND client_secret AND redirect_uri).
+# 비활성 시 /api/auth/oauth/google/* 엔드포인트는 404 — 런타임 인증 경로 무영향.
+# 상세 정책 = docs/SECURITY.md §15 + feature-0003 FUNCTION.md AC-0600~0601.
+OAUTH_GOOGLE_ENABLED = str(os.getenv("WEB_OAUTH_GOOGLE_ENABLED", "0") or "").strip().lower() in ("1", "true", "yes", "on")
+OAUTH_GOOGLE_CLIENT_ID = str(os.getenv("WEB_OAUTH_GOOGLE_CLIENT_ID", "") or "").strip()
+OAUTH_GOOGLE_CLIENT_SECRET = str(os.getenv("WEB_OAUTH_GOOGLE_CLIENT_SECRET", "") or "")
+OAUTH_GOOGLE_REDIRECT_URI = str(os.getenv("WEB_OAUTH_GOOGLE_REDIRECT_URI", "") or "").strip()
+# 빈 = 모든 Google 계정 허용(사용자 결정 2026-06-19). 콤마구분 도메인으로 사내 Workspace 한정 가능
+# (hd claim / email 도메인 서버 검증). 외부 노출 시 도메인 한정 권장 — SECURITY.md §15.4.
+OAUTH_GOOGLE_ALLOWED_DOMAINS = [
+    d.strip().lower()
+    for d in str(os.getenv("WEB_OAUTH_GOOGLE_ALLOWED_DOMAINS", "") or "").split(",")
+    if d.strip()
+]
+# state/PKCE/nonce HMAC 서명 비밀(CSRF·위변조 방어). 미설정 시 프로세스 기동 1회 임의값
+# (재시작 시 in-flight OAuth 무효 — 토대 단계 허용; 멀티워커/영속이 필요하면 env 로 고정).
+OAUTH_STATE_SECRET = str(os.getenv("WEB_OAUTH_STATE_SECRET", "") or "").strip() or secrets.token_hex(32)
+OAUTH_STATE_TTL_SEC = max(60, int(os.getenv("WEB_OAUTH_STATE_TTL_SEC", "600")))
+OAUTH_GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
+OAUTH_GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+OAUTH_GOOGLE_VALID_ISSUERS = ("https://accounts.google.com", "accounts.google.com")
+# OAuth 신규 계정의 PasswordHash 자리값 — pbkdf2 형식이 아니라 _verify_password 가 항상 False
+# 를 반환한다(=비밀번호 로그인 불가). 컬럼이 NOT NULL 이므로 빈 값 대신 명시 sentinel 사용.
+OAUTH_NO_PASSWORD_SENTINEL = "oauth-google:no-local-password"
+# /start 가 브라우저에 심는 단명 바인딩 쿠키 — callback 의 state 가 이 브라우저에서 개시됐는지
+# 확인(login-CSRF/세션 고정 차단, outside-voice MAJOR-1). state.b == 쿠키값(constant-time)일 때만 수락.
+OAUTH_BIND_COOKIE = "mysql_ai_oauth_bind"
 
 app = FastAPI(title="mysql_ai web")
 
@@ -1572,6 +1604,10 @@ def _serialize_account(
         # TASK-0268: 아바타 이미지 URL. 설정 시 /api/avatars/<id>(같은 출처 bytes 서빙) +
         # object key 해시 캐시버스터. NULL=미설정 → 프론트가 Identicon 렌더.
         "avatar_url": _avatar_url_for(int(account.get("id") or 0), account.get("avatar_object_key")),
+        # TASK-20260619T034522-oauth-google-foundation: OAuth 편입 식별. email(연동 시 채워짐, 없으면 None)
+        # 과 auth_provider("google" 등, 없으면 None — 로컬 계정). 민감 토큰/secret 은 비노출.
+        "email": str(account.get("email") or "") or None,
+        "auth_provider": str(account.get("auth_provider") or "") or None,
     }
     if include_permissions:
         payload["permissions"] = _account_permissions(account)
@@ -1697,6 +1733,9 @@ SELECT
     a.LockedUntilAt AS locked_until_at,
     (a.LockedUntilAt IS NOT NULL AND a.LockedUntilAt > NOW()) AS is_locked,
     a.AvatarObjectKey AS avatar_object_key,
+    a.Email AS email,
+    a.AuthProvider AS auth_provider,
+    a.OAuthSubject AS oauth_subject,
     r.RoleKey AS role_key,
     r.Name AS role_name,
     r.Description AS role_description,
@@ -5460,6 +5499,39 @@ def _check_account_token_quota(conn, account: dict) -> "tuple[bool, str]":
     return (True, "")
 
 
+def _ensure_oauth_identity_schema(conn) -> None:
+    """TASK-20260619T034522-oauth-google-foundation (REQ-20260619-0328, SECURITY.md §15):
+    WebAccounts 에 외부 IdP(Google OAuth) 신원 매핑 컬럼 idempotent ALTER.
+
+    - `Email VARCHAR(320) NULL`: OAuth 신원 또는 향후 이메일 식별용. 기존 행 NULL = 무회귀.
+      (RFC 5321 local 64 + @ + domain 255 = 320.)
+    - `AuthProvider VARCHAR(32) NULL`: 'google' 등. NULL = 로컬(비번) 계정.
+    - `OAuthSubject VARCHAR(255) NULL`: IdP 의 안정적 사용자 식별자(Google `sub`).
+    - UNIQUE (AuthProvider, OAuthSubject): 동일 IdP 신원 중복 계정 차단(부분 NULL 은 MySQL
+      에서 UNIQUE 제약 면제 → 로컬 계정 다수 공존 가능).
+    - UNIQUE (Email): 이메일 기준 계정 link 일관성(NULL 다수 허용).
+
+    기본 비활성 토대 — 컬럼만 추가하고 런타임 인증 경로는 OAUTH_GOOGLE_ENABLED OFF 면 무영향.
+    `_ensure_login_lockout_schema` idiom 동형 — fast-path(_ensure_seed_catchup) +
+    slow-path(_ensure_web_tables) 양쪽 호출로 기존 배포 자동 적용.
+    """
+    cur = conn.cursor()
+    try:
+        for ddl in (
+            "ALTER TABLE WebAccounts ADD COLUMN Email VARCHAR(320) NULL",
+            "ALTER TABLE WebAccounts ADD COLUMN AuthProvider VARCHAR(32) NULL",
+            "ALTER TABLE WebAccounts ADD COLUMN OAuthSubject VARCHAR(255) NULL",
+            "CREATE UNIQUE INDEX UX_WebAccounts_OAuth ON WebAccounts (AuthProvider, OAuthSubject)",
+            "CREATE UNIQUE INDEX UX_WebAccounts_Email ON WebAccounts (Email)",
+        ):
+            try:
+                cur.execute(ddl)
+            except Exception:
+                pass
+    finally:
+        cur.close()
+
+
 def _ensure_avatar_icon_schema(conn) -> None:
     """TASK-0268/0293: fast-path 재기동에서도 WebAccounts.AvatarObjectKey / WebProducts.IconObjectKey
     / WebRoles.IconObjectKey 컬럼이 존재하도록 idempotent ALTER. _ensure_web_tables 의 CREATE 와 동일
@@ -5564,6 +5636,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_login_lockout_schema(conn)
     # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 사용량 한도 테이블 (fast path).
     _ensure_llm_quota_schema(conn)
+    # TASK-20260619T034522-oauth-google-foundation (REQ-20260619-0328): Google OAuth 신원 매핑 컬럼 fast-path 보정.
+    _ensure_oauth_identity_schema(conn)
     # TASK-0268: 아바타/아이콘 object key 컬럼 fast-path 보정(slow path _ensure_web_tables 미경유 재기동 대비).
     _ensure_avatar_icon_schema(conn)
     # TASK-0274: 첨부 버전 관리 컬럼(RootAttachmentId/VersionNumber/CreatedByRole/SupersededAt) fast-path 보정.
@@ -5749,6 +5823,8 @@ def _ensure_web_tables():
         _ensure_login_lockout_schema(conn)
         # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 사용량 한도 테이블 (slow path).
         _ensure_llm_quota_schema(conn)
+        # TASK-20260619T034522-oauth-google-foundation (REQ-20260619-0328): Google OAuth 신원 매핑 컬럼 (slow path).
+        _ensure_oauth_identity_schema(conn)
         # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping +
         # derived join + provider files lifecycle 4 신규 테이블 (slow path).
         _ensure_web_conversation_attachments_schema(conn)
@@ -11789,7 +11865,7 @@ def _copy_conversation_attachments(
       (DESIGN §6 / ADR-WEB-0005 의 "blob 재업로드 0" 에서 안전상 이탈 — 근거 주석).
     - CSV/XLSX 는 fork 전용 sandbox 를 위해 재적재 대상으로 표시(UploadStatus='uploaded' +
       MetaJson NULL)하고 (new_att_id, new_object_key, kind) 를 반환 → 호출자가 background
-      ingest 를 spawn(조상 sandbox 공유 금지 — DESIGN §14 F5).
+      ingest 를 spawn(조상 sandbox 공유 금지 — DESIGN §15 F5).
     - 첨부는 보조물이므로 **per-attachment fail-open**: 단일 첨부 복사 실패가 fork 전체를
       막지 않는다(대화·문맥은 이미 복사됨). 실패는 log + skip, 성공분만 카운트.
 
@@ -12063,8 +12139,8 @@ def _fork_conversation_impl(
     # _load_conversation_messages), 이를 복사하지 않으면 fork 본의 문맥이 비어 어시스턴트가
     # 이전 대화를 인지 못 한다(보고된 버그). anchored fork 는 앵커 메시지 시각까지, full
     # fork/duplicate 는 전체 복사. 교차계정(공유 fork)도 이 복사로 snapshot 이 된다(상시
-    # 참조 아님 — DESIGN §14 F4). 경계 턴의 미세 불일치는 로드 시 _normalize_history_rows
-    # 가 정규화한다(DESIGN §14 F1).
+    # 참조 아님 — DESIGN §15 F4). 경계 턴의 미세 불일치는 로드 시 _normalize_history_rows
+    # 가 정규화한다(DESIGN §15 F1).
     core_copied = 0
     try:
         core_cutoff = src_rows[-1][3] if (from_id is not None and src_rows) else None
@@ -16732,6 +16808,335 @@ def auth_logout(request: Request) -> JSONResponse:
         pass
     resp = JSONResponse({"ok": True})
     _clear_session_cookie(resp, request)
+    return resp
+
+
+# ===========================================================================
+# Google OAuth 로그인 토대 (TASK-20260619T034522-oauth-google-foundation, REQ-20260619-0328)
+# ---------------------------------------------------------------------------
+# 사내 웹서비스 편입 기반작업(사용자 결정 2026-06-19: 비파괴 토대 + 모든 Google 계정 허용
+# + 신규=자동생성/pending 승인 + 기존 비번 로그인 공존). 기본 비활성 — _oauth_google_configured()
+# 가 False 면 /start·/callback 은 404 로 런타임 인증 경로에 무영향이다.
+#
+# 흐름: /start → PKCE(S256) + 서명 state(CSRF) + nonce 로 Google authz redirect.
+#       /callback → state 서명/TTL 검증 → 백채널 code→token 교환(client_secret over TLS)
+#       → ID token claim 검증(iss/aud/exp/nonce/email_verified/도메인) → 계정 매핑/프로비저닝
+#       → 기존 _issue_auth_session + _set_session_cookie 재사용 → "/" redirect.
+#
+# 보안 주의(SECURITY.md §15.3): ID token 서명(JWKS RS256) 검증은 활성화/배포 전 강화 TODO.
+# 현재 토대는 (a) Authorization Code + 백채널 TLS(client_secret) + (b) claim 검증으로 방어하며
+# 사내 미배포 상태다. /start·/callback·/config 는 로그인 진입점이라 anonymous(login/signup 정합).
+# ===========================================================================
+def _oauth_google_configured() -> bool:
+    """OAuth 활성 조건: flag ON + client_id/secret/redirect_uri 모두 설정. 하나라도 빠지면 비활성."""
+    return bool(
+        OAUTH_GOOGLE_ENABLED
+        and OAUTH_GOOGLE_CLIENT_ID
+        and OAUTH_GOOGLE_CLIENT_SECRET
+        and OAUTH_GOOGLE_REDIRECT_URI
+    )
+
+
+def _oauth_b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _oauth_b64url_decode(text: str) -> bytes:
+    pad = "=" * (-len(str(text or "")) % 4)
+    return base64.urlsafe_b64decode(str(text or "") + pad)
+
+
+def _oauth_pkce_pair() -> tuple[str, str]:
+    """PKCE(RFC 7636) verifier + S256 challenge."""
+    verifier = _oauth_b64url(secrets.token_bytes(32))
+    challenge = _oauth_b64url(hashlib.sha256(verifier.encode("ascii")).digest())
+    return verifier, challenge
+
+
+def _oauth_state_encode(payload: dict[str, Any]) -> str:
+    """state = base64url(json).HMAC-SHA256. 서버 비밀로 위변조 차단(CSRF 방어)."""
+    body = _oauth_b64url(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    sig = _oauth_b64url(
+        hmac.new(OAUTH_STATE_SECRET.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+    )
+    return f"{body}.{sig}"
+
+
+def _oauth_state_decode(token: str) -> dict[str, Any] | None:
+    """state 서명 검증(constant-time) + TTL 확인. 실패 시 None."""
+    try:
+        body, sig = str(token or "").split(".", 1)
+    except ValueError:
+        return None
+    expected = _oauth_b64url(
+        hmac.new(OAUTH_STATE_SECRET.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+    )
+    if not hmac.compare_digest(sig, expected):
+        return None
+    try:
+        payload = json.loads(_oauth_b64url_decode(body).decode("utf-8"))
+    except Exception:
+        return None
+    issued = int(payload.get("ts") or 0)
+    now = int(datetime.now(timezone.utc).timestamp())
+    if issued <= 0 or (now - issued) > OAUTH_STATE_TTL_SEC or (issued - now) > 60:
+        return None
+    return payload
+
+
+def _oauth_google_exchange_code(code: str, code_verifier: str) -> dict[str, Any]:
+    """authorization code → token. 백채널 POST(client_secret over TLS). stdlib urllib(외부 의존 0)."""
+    import urllib.request
+    import urllib.parse
+    data = urllib.parse.urlencode(
+        {
+            "code": code,
+            "client_id": OAUTH_GOOGLE_CLIENT_ID,
+            "client_secret": OAUTH_GOOGLE_CLIENT_SECRET,
+            "redirect_uri": OAUTH_GOOGLE_REDIRECT_URI,
+            "grant_type": "authorization_code",
+            "code_verifier": code_verifier,
+        }
+    ).encode("ascii")
+    req = urllib.request.Request(
+        OAUTH_GOOGLE_TOKEN_ENDPOINT,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310 (고정 https endpoint)
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _oauth_decode_id_token_claims(id_token: str) -> dict[str, Any] | None:
+    """ID token(JWT) payload claim 디코드.
+
+    백채널 TLS + client_secret 으로 받은 토큰이라 토대 단계에서는 서명 검증을 생략한다
+    (SECURITY.md §15.3 — 활성화/외부배포 전 JWKS RS256 서명 검증 강화 TODO). claim 자체의
+    유효성(iss/aud/exp/nonce/email_verified)은 _oauth_validate_claims 가 enforce 한다.
+    """
+    try:
+        parts = str(id_token or "").split(".")
+        if len(parts) != 3:
+            return None
+        return json.loads(_oauth_b64url_decode(parts[1]).decode("utf-8"))
+    except Exception:
+        return None
+
+
+def _oauth_validate_claims(claims: dict[str, Any], expected_nonce: str) -> tuple[bool, str]:
+    """ID token claim 검증 — issuer/audience/expiry/nonce/email_verified/도메인. (ok, reason)."""
+    if not isinstance(claims, dict):
+        return False, "claims"
+    if str(claims.get("iss") or "") not in OAUTH_GOOGLE_VALID_ISSUERS:
+        return False, "issuer"
+    # audience: OIDC `aud` 는 문자열 또는 배열 — 둘 다 처리(outside-voice MINOR-2). client_id 미포함 거부.
+    aud_raw = claims.get("aud")
+    aud_list = aud_raw if isinstance(aud_raw, list) else [aud_raw]
+    if OAUTH_GOOGLE_CLIENT_ID not in [str(a or "") for a in aud_list]:
+        return False, "audience"
+    now = int(datetime.now(timezone.utc).timestamp())
+    if int(claims.get("exp") or 0) <= now:
+        return False, "expired"
+    # nonce: replay 방어 핵심 — 무조건 enforce(outside-voice MINOR-1). expected_nonce 는 /start 가 항상 생성.
+    if str(claims.get("nonce") or "") != str(expected_nonce or ""):
+        return False, "nonce"
+    if not str(claims.get("email") or "").strip():
+        return False, "email-missing"
+    ev = claims.get("email_verified")
+    if not (ev is True or str(ev).strip().lower() == "true"):
+        return False, "email-unverified"
+    # 도메인 화이트리스트(빈=모든 도메인 허용 — 사용자 결정 2026-06-19).
+    if OAUTH_GOOGLE_ALLOWED_DOMAINS:
+        hd = str(claims.get("hd") or "").strip().lower()
+        email_domain = str(claims.get("email") or "").rsplit("@", 1)[-1].strip().lower()
+        if hd not in OAUTH_GOOGLE_ALLOWED_DOMAINS and email_domain not in OAUTH_GOOGLE_ALLOWED_DOMAINS:
+            return False, "domain"
+    return True, "ok"
+
+
+def _oauth_provision_username(conn, email: str, sub: str) -> str:
+    """OAuth 신규 계정의 내부 username 파생. email local-part sanitize → 충돌 시 숫자 suffix.
+
+    기존 _sanitize_username 규칙(영문/숫자/._-, 최대 64)을 준수. 빈/충돌 폴백은 'g_<랜덤>'.
+    """
+    base = _sanitize_username(str(email or "").split("@", 1)[0])
+    base = (base[:48] or f"g_{_sanitize_username(sub)[:24]}" or f"g_{secrets.token_hex(4)}")[:48]
+    candidate = base
+    cur = conn.cursor()
+    try:
+        for i in range(0, 1000):
+            cur.execute("SELECT 1 FROM WebAccounts WHERE Username = %s LIMIT 1", (candidate,))
+            if not cur.fetchone():
+                return candidate
+            candidate = f"{base}{i + 1}"[:64]
+    finally:
+        cur.close()
+    return f"g_{secrets.token_hex(8)}"
+
+
+def _oauth_resolve_or_provision_account(
+    conn, *, provider: str, sub: str, email: str
+) -> tuple[int, str]:
+    """OAuth 신원 → 내부 계정 매핑. (account_id, mode) 반환.
+
+    mode = linked-subject | linked-email | created | email-conflict(account_id=0).
+    1) (provider, sub) 기존 OAuth 계정이 있으면 그대로 사용.
+    2) email 일치 기존 계정이 **아직 OAuth 미연결(OAuthSubject NULL)** 이면 OAuth 신원을 link
+       (기존 비번 로그인 보존 — 둘 다 유지). 이미 *다른* sub 에 묶인 email 이면 재할당 인계로 보고
+       link 거부 → (0,"email-conflict") 반환(관리자 개입, outside-voice MAJOR-2).
+    3) 그 외에는 pending 역할(승인 대기)로 자동 생성(사용자 결정 2026-06-19). 비번 로그인 불가 sentinel.
+    autocommit 연결 가정(_connect_memory) — signup 패턴과 동일.
+    """
+    email_norm = str(email or "").strip().lower()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT Id FROM WebAccounts WHERE AuthProvider = %s AND OAuthSubject = %s AND DeletedAt IS NULL LIMIT 1",
+            (provider, sub),
+        )
+        row = cur.fetchone()
+        if row:
+            return int(row[0]), "linked-subject"
+        if email_norm:
+            cur.execute(
+                "SELECT Id, OAuthSubject FROM WebAccounts WHERE Email = %s AND DeletedAt IS NULL LIMIT 1",
+                (email_norm,),
+            )
+            row = cur.fetchone()
+            if row:
+                account_id = int(row[0])
+                existing_sub = str(row[1] or "")
+                # 안정 식별자(sub)가 이미 다른 값이면 email 재할당(퇴사자→신규입사자)으로 보고 인계 차단.
+                if existing_sub and existing_sub != sub:
+                    return 0, "email-conflict"
+                cur.execute(
+                    "UPDATE WebAccounts SET AuthProvider = %s, OAuthSubject = %s WHERE Id = %s",
+                    (provider, sub, account_id),
+                )
+                return account_id, "linked-email"
+        username = _oauth_provision_username(conn, email_norm, sub)
+        cur.execute("SELECT Id FROM WebRoles WHERE RoleKey = 'pending' AND IsActive = 1 LIMIT 1")
+        prow = cur.fetchone()
+        role_id = int((prow or (0,))[0] or 0) or _default_signup_role_id(conn)
+        cur.execute(
+            """
+INSERT INTO WebAccounts (Username, Email, AuthProvider, OAuthSubject, PasswordHash, RoleId, ApprovedAt, IsActive)
+VALUES (%s, %s, %s, %s, %s, %s, NULL, 1)
+            """,
+            (username, email_norm or None, provider, sub, OAUTH_NO_PASSWORD_SENTINEL, role_id),
+        )
+        return int(cur.lastrowid or 0), "created"
+    finally:
+        cur.close()
+
+
+def _oauth_callback_redirect(request: Request, location: str) -> Any:
+    """callback redirect — 단명 OAuth 바인딩 쿠키를 항상 정리(1회용, MAJOR-1)."""
+    resp = RedirectResponse(location, status_code=302)
+    resp.delete_cookie(
+        OAUTH_BIND_COOKIE,
+        httponly=True,
+        samesite="lax",
+        secure=_request_is_https(request),
+    )
+    return resp
+
+
+@app.get("/api/auth/oauth/config")
+def auth_oauth_config(request: Request) -> JSONResponse:
+    """로그인 화면이 외부 IdP 버튼 노출 여부를 판단하기 위한 공개 설정.
+
+    민감값(client_secret 등) 미노출 — enabled 플래그만. anonymous(로그인 전 호출).
+    """
+    return JSONResponse({"google": {"enabled": _oauth_google_configured()}})
+
+
+@app.get("/api/auth/oauth/google/start")
+def auth_oauth_google_start(request: Request) -> Any:
+    if not _oauth_google_configured():
+        return _json_error("google 로그인이 활성화되어 있지 않습니다.", 404)
+    verifier, challenge = _oauth_pkce_pair()
+    nonce = _oauth_b64url(secrets.token_bytes(16))
+    # MAJOR-1(login-CSRF/세션 고정 차단): state 를 개시 브라우저에 바인딩한다. random binding 을
+    # state payload(b)에 넣고 동일 값을 단명 httponly 쿠키로 심어, callback 에서 둘이 일치할 때만 수락.
+    bind = _oauth_b64url(secrets.token_bytes(16))
+    state = _oauth_state_encode(
+        {"v": verifier, "n": nonce, "b": bind, "ts": int(datetime.now(timezone.utc).timestamp())}
+    )
+    import urllib.parse
+    params = urllib.parse.urlencode(
+        {
+            "client_id": OAUTH_GOOGLE_CLIENT_ID,
+            "redirect_uri": OAUTH_GOOGLE_REDIRECT_URI,
+            "response_type": "code",
+            "scope": "openid email profile",
+            "state": state,
+            "nonce": nonce,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "access_type": "online",
+            "prompt": "select_account",
+        }
+    )
+    resp = RedirectResponse(f"{OAUTH_GOOGLE_AUTH_ENDPOINT}?{params}", status_code=302)
+    resp.set_cookie(
+        OAUTH_BIND_COOKIE,
+        bind,
+        max_age=OAUTH_STATE_TTL_SEC,
+        httponly=True,
+        samesite="lax",
+        secure=_request_is_https(request),
+    )
+    return resp
+
+
+@app.get("/api/auth/oauth/google/callback")
+def auth_oauth_google_callback(request: Request) -> Any:
+    if not _oauth_google_configured():
+        return _json_error("google 로그인이 활성화되어 있지 않습니다.", 404)
+    if str(request.query_params.get("error") or "").strip():
+        return RedirectResponse("/?oauth_error=denied", status_code=302)
+    code = str(request.query_params.get("code") or "").strip()
+    state = _oauth_state_decode(str(request.query_params.get("state") or "").strip())
+    if not code or not state:
+        return _oauth_callback_redirect(request, "/?oauth_error=state")
+    # MAJOR-1: state 가 이 브라우저에서 개시됐는지 — 단명 바인딩 쿠키 == state.b (constant-time).
+    bind_cookie = str(request.cookies.get(OAUTH_BIND_COOKIE) or "")
+    if not bind_cookie or not hmac.compare_digest(bind_cookie, str(state.get("b") or "")):
+        return _oauth_callback_redirect(request, "/?oauth_error=state")
+    try:
+        tokens = _oauth_google_exchange_code(code, str(state.get("v") or ""))
+    except Exception:
+        return _oauth_callback_redirect(request, "/?oauth_error=exchange")
+    claims = _oauth_decode_id_token_claims(str(tokens.get("id_token") or ""))
+    ok, _reason = _oauth_validate_claims(claims or {}, str(state.get("n") or ""))
+    if not ok:
+        return _oauth_callback_redirect(request, "/?oauth_error=claims")
+    sub = str((claims or {}).get("sub") or "").strip()
+    email = str((claims or {}).get("email") or "").strip()
+    if not sub:
+        return _oauth_callback_redirect(request, "/?oauth_error=subject")
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _oauth_callback_redirect(request, "/?oauth_error=server")
+    try:
+        account_id, mode = _oauth_resolve_or_provision_account(
+            conn, provider="google", sub=sub, email=email
+        )
+        if mode == "email-conflict":
+            return _oauth_callback_redirect(request, "/?oauth_error=email_conflict")
+        if account_id <= 0:
+            return _oauth_callback_redirect(request, "/?oauth_error=provision")
+        acct = _load_account_by_id(conn, account_id)
+        if not acct or not bool(acct.get("is_active")) or acct.get("deleted_at"):
+            return _oauth_callback_redirect(request, "/?oauth_error=inactive")
+        session_token = _issue_auth_session(conn, account_id, request)
+    finally:
+        conn.close()
+    resp = _oauth_callback_redirect(request, "/")
+    _set_session_cookie(resp, request, session_token)
     return resp
 
 

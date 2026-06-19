@@ -1328,3 +1328,31 @@ System Prompt 를 Product → Role → Account 3 계층으로 조립하도록 �
    - 백업: 컨테이너 `/tmp/task0256_global_prompt_backup.txt` (롤백 시 동일 헬퍼로 복원).
    - 멱등: 마커 존재 시 무변경. 기존 admin 커스터마이즈 보존(append-only).
 3. PB-0008 Windows-browser 시각검증: 첨부 SQL 리뷰 요청 → 답변의 ```diff 블록이 +초록/-빨강 라인으로 구분되는지 (메인 채팅 + 공유 뷰).
+
+## TASK-20260619T034522-oauth-google-foundation — Google 계정(OAuth) 로그인 토대 (2026-06-19)
+
+### 1. Summary
+사내 웹서비스 편입을 위한 **Google OAuth 2.0 / OpenID Connect 로그인 토대**를 비파괴로 구축했다(사용자 요청 "검토 우선 + 기반작업", REQ-20260619-0327, Critical §12.3). 검토 결과 현재는 자체 인증(username/password, PBKDF2 310k, 쿠키 세션 `mysql_ai_session`, RBAC)만 존재하고 Google/OAuth 는 전무했으며, 세션·인가 인프라(`_issue_auth_session`·`_set_session_cookie`·`WebRolePermissions`)를 그대로 재사용할 수 있어 "로그인 수단"만 추가하는 형태로 편입했다.
+
+핵심 = **기본 비활성**: `_oauth_google_configured()`(flag AND client_id AND secret AND redirect_uri)가 False 면 `/api/auth/oauth/google/start`·`/callback` 은 404 로 런타임 인증 경로에 무영향이다. credential(`.env.oauth`) 주입 + `WEB_OAUTH_GOOGLE_ENABLED=1` 시에만 동작하며, 기존 비번 로그인은 공존한다.
+
+### 2. 사용자 결정 (AskUserQuestion 2026-06-19)
+① 비파괴 토대 구축 ② 모든 Google 계정 허용(도메인 무제한) ③ 자동 생성 + pending 승인 대기(email 일치 시 link) ④ 기존 비번 로그인 공존.
+
+### 3. 구현
+- **DB**(비파괴): `WebAccounts` 멱등 ALTER — `Email`/`AuthProvider`/`OAuthSubject` NULL + UNIQUE(AuthProvider,OAuthSubject)·UNIQUE(Email). `_ensure_oauth_identity_schema`, fast+slow 양 경로.
+- **Backend**: Authorization Code + PKCE(S256) + HMAC 서명 state(CSRF/TTL) + ID token claim 검증(iss/aud/exp/nonce/email_verified/도메인) + 계정 매핑(subject/email-link/pending-create). 외부 의존 0(stdlib urllib+base64+hashlib+hmac). 엔드포인트 3종 + helper 9종.
+- **Frontend**: 로그인 화면 Google 버튼(기본 hidden → `/api/auth/oauth/config` enabled 시 노출), `?oauth_error=` 안내, CSS, 캐시버스터 bump(index+admin).
+- **인프라**: `.env.oauth`(gitignored, optional env_file) + `.env.oauth.example`(발급/활성 절차).
+
+### 4. 검증
+- `tests/test_oauth_google_foundation.py` 29/29 통과. 전체 회귀 0(사전존재 product-delete 2건은 base 동일, 무관). py_compile OK. 상세 = docs/TEST.md §4.
+- outside-voice 적대 보안 리뷰: (REVIEW.md REV-20260619T-...-oauth-google-foundation 참조).
+
+### 5. 보안 한계 (SECURITY.md §14.3/14.4 — 활성화/배포 전 보완 TODO)
+- ID token **JWKS RS256 서명 검증 미구현**(현재 백채널 TLS+claim 검증). 활성화/외부 배포 전 필수 추가.
+- 모든-도메인 허용 → 외부 노출 시 pending 계정 abuse(도메인 한정/사전등록 전환 검토). pending 승인 게이트가 1차 방어.
+- `.env.oauth` agent-common 공유(web-only scoping 후속). state-secret 멀티워커.
+
+### 6. 잔여 (활성화 cycle — 사용자 후속 결정)
+Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + flag=1 → JWKS 서명 검증 추가 → web 배포 → 라이브 e2e + PB-0008 → outside-voice 본 리뷰.
