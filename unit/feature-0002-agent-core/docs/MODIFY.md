@@ -1146,3 +1146,12 @@ source_of_truth: true
 - Files: src/modules/llm_provider_health.py(new), src/agent_core.py, src/scripts/agent_runtime_schema.sql, alembic/versions/20260619_0011_llm_provider_health.py(new), tests/test_llm_provider_health.py(new), docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
 - Rollback: 분류 미적용(raw 에러 복원) + ok/restricted 기록 제거 + 0011 downgrade(DROP TABLE). 테이블 부재는 graceful(read→unknown).
 - Deploy: ask-worker 재빌드(agent_core baked) + 마이그 0011 적용. web 면(app.py 엔드포인트·UI)은 feature-0003 동반.
+
+## CHG-20260619T033714-ai-claude-prompt-injection-defense
+- Date: 2026-06-19 (TASK-20260619T033714-prompt-injection-defense — AI 프롬프트 인젝션 방지). 사용자 보안 보강 6종 중 ⑤.
+- Scope: feature-0002 `src/agent_core.py`(`_INJ_OPEN/_CLOSE`·`_INJECTION_GUARD_NOTICE`·`_datamark_untrusted`·compose_system_prompt guard 주입·첨부 본문/샘플/recall/**tool 결과**/**KB schema/insights** datamark) + `tests/test_prompt_injection_defense.py`(신규 10) + docs.
+- 내용: 비신뢰 콘텐츠(첨부 본문·쿼리 결과·KB 설명·과거 대화)를 sentinel 로 구획(spotlighting) + 명령-계층 고지를 시스템 프롬프트에 코드-주입 → 인젝션("이전 지시 무시" 류) 성공률 저하. defense-in-depth(확률적 완화, 보장 아님; RBAC·SQL guard·allowlist 가 실 경계 fail-closed). sentinel strip 으로 breakout 차단.
+- Why: 사용자 요청 — 자연어 인젝션 표면 방어. 기존엔 비신뢰 콘텐츠 무구획.
+- Verification: test 10/10(datamark strip 실 동작) + make test 회귀 0 + py_compile. outside-voice SHIP-WITH-FIXES(MAJOR tool/KB datamark + MINOR 표현 흡수).
+- Rollback: datamark 호출/guard notice/상수 복원(비파괴, 프롬프트 텍스트만).
+- Deploy: **web + ask-worker 재빌드 필수**(agent_core = ask-worker 이미지).
