@@ -23,3 +23,13 @@
   - **m3** (research/listup 산출의 worktree 책임 공백) → 산출도 worktree 에서 작성(§13.2.7 F0) 명시.
 - **verdict (2차, 조치 후)**: SHIP-WITH-FIXES — BLOCKER/MAJOR 전건 반영. 잔여 MINOR 없음(전건 조치).
 - **note**: 본 묶음은 메타-도구(스킬 정의)로 비파괴 추가. 실제 ROADMAP 항목 구현은 각 `improve_cycle` 호출이 독립 feature cycle 로 verify-completion 게이트를 거친다.
+
+## REV-20260619T030718-dqa-skill-suite [SKIPPED:additive-meta-tooling-docs]
+
+- **cycle**: ai/claude/dqa-skill-suite (2차 commit) — 파이프라인 가동 + 추가 구조
+- **changeset (pure-meta)**:
+  - `docs/improvements/dba-ai-nl2sql/RESEARCH.md` — `## Round 2` append(F-015~F-019: enterprise 벤치마크·safety lower-bound·동적 few-shot·분해·NL rewriter + 채널 C 내부 히스토리 정합).
+  - `.claude/agents/improve-fit-reviewer.md` — improve_listup 전용 적대적 정합 리뷰어(REV-1 패널이 쓴 6축 기준을 subagent 로 codify).
+  - `CLAUDE.md` — Skill routing 에 `/_dqa:*` 1블록 등록.
+- **panel skipped 사유 (§18.4 doc/meta-tooling carve-out)**: ① Round 2 = RESEARCH 에 findings append 만(ROADMAP/코드 무변경, 신규 production 동작 0) ② fit-reviewer agent = REV-1 에서 이미 검증된 패널 기준의 codify(신규 판단 로직 아님) ③ CLAUDE.md = 1블록 라우팅 추가. 비파괴·additive·meta-class 라 독립 패널 불요.
+- **note**: Round 2 의 F-016(safety lower-bound 거부 평가축)·F-015(execution-based 벤치마크)는 차후 `improve_listup` 가 ITEM-01 acceptance 로 fold 예정(현재 RESEARCH 에만 적재 — research↔listup 단계 분리 준수).

@@ -175,3 +175,68 @@ status: draft
 - [Wren AI vs Vanna — Enterprise Text-to-SQL Guide](https://www.getwren.ai/post/wren-ai-vs-vanna-the-enterprise-guide-to-choosing-a-text-to-sql-solution)
 - [Top Text-to-SQL Query Tools — Bytebase](https://www.bytebase.com/blog/top-text-to-sql-query-tools/)
 - [Best SQL AI Tools in 2025 — text2sql.ai](https://www.text2sql.ai/best-text-to-sql-tools-2025)
+
+## Round 2 (2026-06-19) — 웹 AI 트렌드(채널 B) + 내부 히스토리(채널 C)
+
+> `/_dqa:improve_research` append-mode 산출. Round 1(상용/사내 서비스 벤치마크)을 보완하는 학술/트렌드 + 내부 결정 정합 검토.
+
+### 0. 내부 히스토리 정합 (채널 C 결론)
+- 12항목(ITEM-01~12) 모두 기존 ADR(ADR-0019 audit / ADR-0021 KB Postgres RBAC / ADR-0026 Bedrock / ask-worker queue)과 **무모순**. 최근(2026-05~06) KB·storage·LLM·audit 기반 완성으로 로드맵 선행작업 완료 상태 — 근거 `docs/DECISIONS.md`.
+- 기존 anti-hallucination 정책(SYSTEM_PROMPT PRIME DIRECTIVE + 0행 재검증, `unit/feature-0002-agent-core/src/agent_core.py:83-169`)이 아래 F-016(safety lower-bound)과 정확히 정렬 — 즉 우리는 이미 옳은 방향이고, 그걸 **측정**하는 축만 빈다.
+- 기각 ADR-0018(자동화 폐기)·ADR-0020(slow_query_log 통합 거부)은 ITEM-* 와 비직교(모순 아님).
+
+### 1. Findings (Round 2)
+
+#### F-015 · 실행기반 enterprise 벤치마크 방법론 (Spider 2.0 / BIRD / BEAVER)
+- **dimension**: performance
+- **source_kind**: web-trend
+- **source**: https://blogs.oracle.com/cloud-infrastructure/oci-gen-ai-tops-spider-2-lite ; https://arxiv.org/html/2409.02038 (BEAVER enterprise)
+- **무엇을**: ITEM-01 평가 harness 를 **execution-based**(생성SQL 실행 결과 일치) + enterprise 벤치마크(BIRD/Spider 2.0/BEAVER) 방법론으로 설계. 단순 string match 가 아닌 결과 동치.
+- **현재 상태**: 없음(ITEM-01 미구현)
+- **raw_impact**: ★4 · **confidence**: high
+- **note**: ITEM-01 의 acceptance 를 강화(refine) — 별도 항목 아님. golden set 을 BEAVER 스타일(실제 enterprise 스키마)로 큐레이션.
+
+#### F-016 · Safety lower-bound — "적절한 거부" 평가 축 (★신규 각도)
+- **dimension**: performance / functional
+- **source_kind**: web-trend
+- **source**: enterprise NL2SQL: "Spider 85%+ → 실제 환경 10~20% 붕괴", "forced answering(invalid 질문에 SQL 환각)이 거부보다 위험"
+- **무엇을**: ITEM-01 harness 에 **거부 정확도 축** 추가 — 모호/불가능/권한밖 질문에 환각 SQL 대신 적절히 거부/되묻는지 측정. golden set 에 "거부가 정답인 케이스" 포함.
+- **현재 상태**: 부분 — anti-hallucination 정책은 있으나(PRIME DIRECTIVE) **측정 부재**.
+- **raw_impact**: ★4 · **confidence**: high
+- **note**: ITEM-01 acceptance 에 refusal axis 로 흡수 권장(listup 이 fold). 우리 강점(폐쇄망·RBAC·anti-hallucination)을 정량 입증하는 차별화 지표.
+
+#### F-017 · 동적 few-shot 선택 + consistency alignment (OpenSearch-SQL / DeTriever)
+- **dimension**: performance
+- **source_kind**: web-trend
+- **source**: https://arxiv.org/pdf/2502.14913 (OpenSearch-SQL dynamic few-shot) ; https://arxiv.org/pdf/2406.07913 (DeTriever)
+- **무엇을**: ITEM-02 샘플 검색을 단순 top-K 임베딩 → **표현 기반 동적 선택 + 다양성/일관성 정렬**로 정교화.
+- **현재 상태**: 없음(ITEM-02 미구현; 설계 시 top-K 임베딩까지만 계획)
+- **raw_impact**: ★3 · **confidence**: med
+- **note**: ITEM-02 의 검색 단계 refine — 별도 항목 아님. ITEM-01 측정 위에서 top-K vs 동적선택 비교.
+
+#### F-018 · 질의 분류·분해 (DIN-SQL, prompt-level)
+- **dimension**: structural
+- **source_kind**: web-trend
+- **source**: https://arxiv.org/pdf/2304.11015 (DIN-SQL) ; https://arxiv.org/pdf/2511.01008 (MARS-SQL multi-agent)
+- **무엇을**: 질문을 easy/복합/중첩으로 분류 후 중첩만 분해(CoT 프롬프트 수준, 별도 오케스트레이션 그래프 아님).
+- **현재 상태**: 없음
+- **raw_impact**: ★2 · **confidence**: med
+- **note**: **주의 — F-012(LangGraph 전면 planner) 기각과 경계.** DIN-SQL 식은 prompt-level CoT 라 F-012 와 다르나, ITEM-09(무거운쿼리 plan)와 일부 겹침. listup 에서 "ITEM-09 확장 vs 신규" 판정 필요. defer 후보.
+
+#### F-019 · NL 질문 rewriter (plug-and-play 전처리)
+- **dimension**: functional
+- **source_kind**: web-trend
+- **source**: https://arxiv.org/pdf/2412.17068 (NL rewriter)
+- **무엇을**: 모호한 자연어를 SQL 생성 전 명확화 전처리.
+- **현재 상태**: 부분 — origin/thread_goal 3-state 가 의도추론은 하나 명시 rewrite 단계 없음.
+- **raw_impact**: ★2 · **confidence**: low
+- **note**: 소규모. defer 후보(가치 중간).
+
+### 2. 출처 목록 (Round 2)
+- [DIN-SQL: Decomposed In-Context Learning with Self-Correction](https://arxiv.org/pdf/2304.11015)
+- [MARS-SQL: Multi-Agent RL Framework for Text-to-SQL](https://arxiv.org/pdf/2511.01008)
+- [OpenSearch-SQL: Dynamic Few-shot + Consistency Alignment](https://arxiv.org/pdf/2502.14913)
+- [RSL-SQL: Robust Schema Linking](https://arxiv.org/pdf/2411.00073)
+- [BEAVER: Enterprise Benchmark for Text-to-SQL](https://arxiv.org/html/2409.02038)
+- [OCI Gen AI tops Spider 2.0 Lite (enterprise NL2SQL)](https://blogs.oracle.com/cloud-infrastructure/oci-gen-ai-tops-spider-2-lite)
+- [A Plug-and-Play NL Rewriter for NL2SQL](https://arxiv.org/pdf/2412.17068)

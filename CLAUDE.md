@@ -10,6 +10,12 @@
 
 gstack 스킬이 본 저장소 맥락과 충돌하지 않는 경우에 한해, 사용자의 요청이 다음 패턴과 맞으면 Skill 툴을 통해 해당 스킬을 호출한다. 판단이 모호한 경우 기존 governance (`AGENTS.md`) 를 먼저 따르고, 스킬 호출 여부를 사용자에게 확인한다.
 
+**프로젝트 전용 `/_dqa` 지속 개선 파이프라인** (gstack 외, project-owned, `.claude/commands/_dqa/README.md`):
+- 개선 발굴 (웹+상용/사내서비스+운영 리서치) → `/_dqa:improve_research` (사람 호출)
+- 정합성 6축 review + 종속성 로드맵화 → `/_dqa:improve_listup` (AI 자율 호출)
+- 로드맵 항목 구현 (worktree cycle, 스케줄 가능) → `/_dqa:improve_cycle` (사람 호출)
+- 산출물: `docs/improvements/<initiative>/{RESEARCH,ROADMAP}.md` · fit-review subagent `improve-fit-reviewer`
+
 - 제품 아이디어 / "이거 만들 가치가 있나" / 브레인스토밍 → `/office-hours`
 - 전략 · scope · "더 크게 생각해 보자" · 방향 리뷰 → `/plan-ceo-review`
 - 아키텍처 · "이 설계 말 되나" · 엔지니어링 리뷰 → `/plan-eng-review`
