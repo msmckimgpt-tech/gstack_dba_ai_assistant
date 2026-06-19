@@ -326,6 +326,15 @@ PERMISSION_DEFINITIONS = (
         "group": "conversation_own",
     },
     {
+        # feature-0009-group-conversation (CSO F2/AR-1): 멤버는 대화 전체(권한 멤버가
+        # 생성한 datasource 쿼리 결과·SQL 포함)를 열람하므로, 초대 자체가 데이터 노출
+        # 행위다. owner 만(또는 본 권한 보유자) 멤버를 관리할 수 있게 게이트한다.
+        "code": "conversation.member.manage",
+        "label": "그룹 대화 멤버 관리",
+        "description": "자신이 소유한 그룹 대화에 멤버를 초대하거나 제거할 수 있다. 초대된 멤버는 대화 전체(쿼리 결과 포함)를 열람하게 되므로, 초대는 데이터 노출 행위다.",
+        "group": "conversation_own",
+    },
+    {
         "code": "conversation.duplicate.own",
         "label": "내 대화 복사",
         "description": "자신이 소유한 대화의 메시지/첨부/SQL 결과 전체를 본 계정 소유의 새 대화로 복제할 수 있다.",
@@ -5666,6 +5675,36 @@ def _ensure_seed_catchup(conn) -> None:
             pass
 
 
+_GROUP_MEMBERS_BACKFILL_DONE = False
+
+
+def _backfill_group_conversation_members_once() -> None:
+    """feature-0009: 기존 단일소유 대화 → owner member backfill (멱등, 프로세스당 1회, best-effort).
+
+    멤버십 정본은 PG `agent_runtime.conversation_members`. READ_BACKEND != postgres 또는 PG
+    미가용 시 skip(레거시/테스트 환경). ON CONFLICT DO NOTHING 이라 재실행 안전(이미 멤버는 skip).
+    실패는 startup 흐름을 막지 않는다(다음 startup 에 재시도).
+    """
+    global _GROUP_MEMBERS_BACKFILL_DONE
+    if _GROUP_MEMBERS_BACKFILL_DONE:
+        return
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") != "postgres":
+        _GROUP_MEMBERS_BACKFILL_DONE = True
+        return
+    try:
+        from modules.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
+        try:
+            inserted = group_members.backfill_conversation_members(pg)
+            print(f"[web.startup] group_members backfill: inserted={inserted}")
+        finally:
+            pg.close()
+        _GROUP_MEMBERS_BACKFILL_DONE = True
+    except Exception as exc:
+        print(f"[web.startup] group_members backfill skipped: {exc}")
+
+
 def _schedule_memory_runtime_bootstrap() -> None:
     global _MEMORY_BOOTSTRAP_RUNNING
     if _MEMORY_SCHEMA_READY:
@@ -5680,6 +5719,7 @@ def _schedule_memory_runtime_bootstrap() -> None:
                     catchup_conn.close()
             except Exception as exc:
                 print(f"[web.startup] seed catchup skipped: {exc}")
+            _backfill_group_conversation_members_once()
             _mark_memory_runtime_ready()
             return
     except Exception as exc:
@@ -5694,6 +5734,7 @@ def _schedule_memory_runtime_bootstrap() -> None:
         global _MEMORY_BOOTSTRAP_RUNNING
         try:
             _ensure_memory_runtime_ready()
+            _backfill_group_conversation_members_once()
         except Exception as exc:
             print(f"[web.startup] memory bootstrap failed: {exc}")
         finally:
@@ -5974,6 +6015,35 @@ def _ensure_web_tables():
             try:
                 cur.execute(
                     "ALTER TABLE AgentCoreConversations ADD COLUMN archived_by_account_id BIGINT NULL"
+                )
+            except Exception:
+                pass
+            # feature-0009-group-conversation (TASK-20260619T023140): 그룹 대화 — MySQL parity.
+            # core_messages/멤버십 정본은 PG(agent_runtime). 본 블록은 READ_BACKEND != postgres
+            # 레거시 경로 parity 유지(try/except 멱등). production(PG)에서는 본 가드가 skip 된다.
+            try:
+                cur.execute(
+                    "ALTER TABLE AgentCoreMessages ADD COLUMN sender_account_id BIGINT NULL"
+                )
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    "ALTER TABLE AgentCoreMessages ADD COLUMN thread_root_message_id BIGINT NULL"
+                )
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    "CREATE TABLE IF NOT EXISTS AgentCoreConversationMembers ("
+                    " conversation_id VARCHAR(128) NOT NULL,"
+                    " account_id BIGINT NOT NULL,"
+                    " role VARCHAR(16) NOT NULL DEFAULT 'member',"
+                    " joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                    " invited_by_account_id BIGINT NULL,"
+                    " PRIMARY KEY (conversation_id, account_id),"
+                    " INDEX IX_AgentCoreConversationMembers_Account (account_id)"
+                    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
                 )
             except Exception:
                 pass
@@ -6487,7 +6557,13 @@ LEFT JOIN agent_runtime.kv kv_topic
                 params.append(int(owner_id))
         else:
             if self_id is not None:
-                where_clauses.append("c.owner_account_id = %s")
+                # feature-0009: owner OR 그룹 멤버십 — 멤버인 대화도 목록에 포함(열람 ≠ 발화).
+                where_clauses.append(
+                    "(c.owner_account_id = %s OR c.conversation_id IN ("
+                    "SELECT conversation_id FROM agent_runtime.conversation_members "
+                    "WHERE account_id = %s))"
+                )
+                params.append(int(self_id))
                 params.append(int(self_id))
 
         if hidden_ids:
@@ -6574,9 +6650,25 @@ LEFT JOIN agent_runtime.kv kv_topic
         status_map: dict[str, dict[str, str]] = {}
         count_map: dict[str, dict[str, int]] = {}
         run_id_map: dict[str, str] = {}
+        # feature-0009: 멤버십 신호(member_count + viewer is_member) — 프론트 send 게이트/멘션 라우팅용.
+        member_map: dict[str, dict[str, Any]] = {}
         if conv_ids:
             with pg.cursor() as pgcur:
                 placeholders_pg = ",".join(["%s"] * len(conv_ids))
+                try:
+                    pgcur.execute(
+                        f"""
+SELECT conversation_id, COUNT(*) AS cnt, BOOL_OR(account_id = %s) AS is_member
+FROM agent_runtime.conversation_members
+WHERE conversation_id IN ({placeholders_pg})
+GROUP BY conversation_id
+                        """,
+                        (int(self_id or 0), *conv_ids),
+                    )
+                    for cid, cnt, ismem in pgcur.fetchall() or []:
+                        member_map[str(cid)] = {"count": int(cnt or 0), "is_member": bool(ismem)}
+                except Exception:
+                    member_map = {}
                 pgcur.execute(
                     f"""
 SELECT conversation_id, key, value FROM agent_runtime.kv
@@ -6646,6 +6738,9 @@ GROUP BY conversation_id
                 item["duration_ms"] = None
             item["message_count"] = counts.get("total", 0)
             item["user_message_count"] = counts.get("user", 0)
+            _mm = member_map.get(item["id"], {})
+            item["member_count"] = int(_mm.get("count", 0))
+            item["is_member"] = bool(_mm.get("is_member", False))
 
         return items
     finally:
@@ -6758,7 +6853,13 @@ LEFT JOIN WebAccounts owner
                 params.append(int(owner_id))
         else:
             if self_id is not None:
-                where_clauses.append("c.owner_account_id = %s")
+                # feature-0009: owner OR 그룹 멤버십 (MySQL parity, 레거시 경로).
+                where_clauses.append(
+                    "(c.owner_account_id = %s OR c.conversation_id IN ("
+                    "SELECT conversation_id FROM AgentCoreConversationMembers "
+                    "WHERE account_id = %s))"
+                )
+                params.append(int(self_id))
                 params.append(int(self_id))
             # else: account-less internal call — no owner filter (admin tooling).
 
@@ -7163,6 +7264,30 @@ def _conversation_owned_by_account(conn, conversation_id: str, account_id: int) 
     return owner_account_id is not None and owner_account_id == int(account_id)
 
 
+def _account_is_conversation_member(conversation_id: str, account_id: int) -> bool:
+    """feature-0009: account 가 그룹 대화의 멤버인지 (PG agent_runtime.conversation_members 정본).
+
+    "열람 ≠ 발화"(FUNCTION.md §2 REQ-GC-R7): 멤버면 datasource 권한이 없어도 대화를
+    열람한다. 멤버십은 PG-native 개념이라 READ_BACKEND 무관하게 PG 를 조회한다. 조회 실패는
+    멤버 아님으로 폴백(owner 경로는 _conversation_owned_by_account 가 별도 보장).
+    """
+    if not conversation_id or not account_id:
+        return False
+    try:
+        from modules.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
+        try:
+            return group_members.is_member(pg, conversation_id, int(account_id))
+        finally:
+            pg.close()
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_account_is_conversation_member: lookup failed", exc_info=True,
+        )
+        return False
+
+
 def _account_can_access_conversation(
     conn,
     account: dict[str, Any] | None,
@@ -7176,7 +7301,12 @@ def _account_can_access_conversation(
         return True
     if not _account_has_permission(account, own_permission):
         return False
-    return _conversation_owned_by_account(conn, conversation_id, int(account["id"]))
+    acct_id = int(account["id"])
+    if _conversation_owned_by_account(conn, conversation_id, acct_id):
+        return True
+    # feature-0009: 그룹 대화 멤버도 열람 가능 (열람 ≠ 발화, CSO F6 — 멤버십이 열람 경계).
+    # @assistant 발화/datasource 쿼리는 별도 actor RBAC 게이트(S3/S4)로 막는다.
+    return _account_is_conversation_member(conversation_id, acct_id)
 
 
 # ============================================================================
@@ -7372,7 +7502,12 @@ def _account_can_access_attachment(
     conversation_id = str(attachment_row.get("ConversationId") or "")
     if not conversation_id:
         return False
-    return _conversation_owned_by_account(conn, conversation_id, int(account["id"]))
+    acct_id = int(account["id"])
+    if _conversation_owned_by_account(conn, conversation_id, acct_id):
+        return True
+    # feature-0009: 그룹 대화 멤버도 첨부 접근 가능 (첨부는 전원 공유, REQ-GC-R6). LLM 맥락
+    # 주입은 발신자-한정(CSO F1, S3) 으로 별도 제한 — 여기는 열람/공유 경계.
+    return _account_is_conversation_member(conversation_id, acct_id)
 
 
 def _check_attachment_size_caps(
@@ -10608,8 +10743,22 @@ async def ask(request: Request) -> JSONResponse:
             conn.close()
             return _json_error("권한이 없습니다.", 403)
         if not _conversation_owned_by_account(conn, request_conversation_id, int(account["id"])):
-            conn.close()
-            return _json_error("타 계정 대화에는 요청을 이어서 보낼 수 없습니다.", 403)
+            # feature-0009 S4 (열람 ≠ 발화): 그룹 대화 멤버도 @assistant 발화 가능. 비-멤버는 차단.
+            if not _account_is_conversation_member(request_conversation_id, int(account["id"])):
+                conn.close()
+                return _json_error("타 계정 대화에는 요청을 이어서 보낼 수 없습니다.", 403)
+            # actor RBAC 게이트: 발신 멤버 본인이 이 대화의 데이터소스(pinned product)에 접근 권한이
+            # 있어야 발화(쿼리) 가능. 무권한 멤버는 열람만 — 결과·SQL 은 볼 수 있으나 새 질의는 거부.
+            # auto 모드(미고정)는 다운스트림 execute_sql 가 actor 접근 datasource 로 제한하므로 허용.
+            _ask_conv_prod = _load_conversation_product(conn, request_conversation_id)
+            if (
+                _ask_conv_prod
+                and _ask_conv_prod.get("product_mode") == "pinned"
+                and _ask_conv_prod.get("product_id")
+                and not _account_has_product_access(account, int(_ask_conv_prod["product_id"]), conn=conn)
+            ):
+                conn.close()
+                return _json_error("이 대화의 데이터소스에 발화(질의) 권한이 없습니다. 열람만 가능합니다.", 403)
         # TASK-0248: 참조 제품이 삭제되어 차단(blocked)된 대화는 진행 불가. 이력 열람·공유는
         # 가능하나 새 메시지 전송은 거부. slot 획득 전(조기 차단)이라 동시성 카운터 영향 없음.
         _is_blocked, _block_reason = _conversation_block_info(request_conversation_id, conn=conn)
@@ -13726,6 +13875,327 @@ VALUES (%s, %s, %s, %s, %s, %s, {expires_expr})
                 "expires_at": expires_at_iso,
                 "expires_in_seconds": int(expires_in_seconds) if expires_in_seconds is not None else None,
             }
+        )
+    finally:
+        conn.close()
+
+
+# ============================================================================
+# feature-0009-group-conversation S2: 그룹 대화 멤버 관리 엔드포인트.
+#   - GET    /api/conversations/{cid}/members         roster 조회 (대화 접근자)
+#   - POST   /api/conversations/{cid}/members         멤버 추가/초대 (owner 또는 member.manage)
+#   - DELETE /api/conversations/{cid}/members/{aid}   멤버 제거 또는 본인 나가기
+# 멤버십 정본은 PG agent_runtime.conversation_members (modules.group_members).
+# "열람 ≠ 발화": 멤버는 datasource 권한 없어도 대화 전체 열람. 발화 게이트는 S3/S4.
+# ============================================================================
+
+def _resolve_member_target_account_id(conn, data: dict) -> tuple[int | None, str | None]:
+    """body 의 account_id 또는 username 으로 대상 account 해석. returns (account_id, error)."""
+    raw_id = data.get("account_id")
+    if raw_id is not None and str(raw_id).strip() != "":
+        try:
+            aid = int(raw_id)
+        except Exception:
+            return None, "invalid account_id"
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT Id FROM WebAccounts WHERE Id = %s AND DeletedAt IS NULL LIMIT 1", (aid,)
+        )
+        row = cur.fetchone()
+        cur.close()
+        return (aid, None) if row else (None, "대상 계정을 찾을 수 없습니다.")
+    uname = str(data.get("username") or "").strip()
+    if uname:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT Id FROM WebAccounts WHERE Username = %s AND DeletedAt IS NULL LIMIT 1", (uname,)
+        )
+        row = cur.fetchone()
+        cur.close()
+        return (int(row[0]), None) if row else (None, "대상 계정을 찾을 수 없습니다.")
+    return None, "account_id 또는 username 이 필요합니다."
+
+
+@app.get("/api/conversations/{cid}/members")
+def list_conversation_members(cid: str, request: Request) -> JSONResponse:
+    """그룹 대화 멤버 roster. 조회 권한: 대화 접근(멤버/owner/read.any)."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_can_access_conversation(
+            conn, account, cid, "conversation.read.own", "conversation.read.any"
+        ):
+            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        try:
+            from modules.db import _pg_connect
+            from modules import group_members
+            pg = _pg_connect()
+            try:
+                member_ids = group_members.list_member_account_ids(pg, cid)
+                roles = {
+                    aid: (group_members.account_member_role(pg, cid, aid) or "member")
+                    for aid in member_ids
+                }
+            finally:
+                pg.close()
+        except Exception:
+            return _json_error("멤버 조회 실패", 500)
+        uname_map: dict[int, str] = {}
+        if member_ids:
+            cur = conn.cursor()
+            ph = ",".join(["%s"] * len(member_ids))
+            cur.execute(
+                f"SELECT Id, Username FROM WebAccounts WHERE Id IN ({ph})", tuple(member_ids)
+            )
+            for mid, un in cur.fetchall() or []:
+                uname_map[int(mid)] = str(un or "")
+            cur.close()
+        owner_id = _conversation_owner_account_id(conn, cid)
+        members = [
+            {
+                "account_id": aid,
+                "username": uname_map.get(aid, ""),
+                "role": roles.get(aid, "member"),
+            }
+            for aid in member_ids
+        ]
+        return JSONResponse(
+            {"conversation_id": cid, "owner_account_id": owner_id, "members": members}
+        )
+    finally:
+        conn.close()
+
+
+@app.post("/api/conversations/{cid}/members")
+async def add_conversation_member(cid: str, request: Request) -> JSONResponse:
+    """그룹 대화 멤버 추가(초대). 권한: owner 또는 conversation.member.manage + 대화 접근.
+
+    ⚠ 초대된 멤버는 대화 전체(권한 멤버가 생성한 datasource 결과·SQL 포함)를 열람한다
+    (열람 ≠ 발화). 초대 = 데이터 노출 행위 → audit conversation.member.add (CSO F2/AR-1).
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    role = str(data.get("role") or "member").strip().lower()
+    if role not in ("owner", "member"):
+        return _json_error("invalid role", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_can_access_conversation(
+            conn, account, cid, "conversation.read.own", "conversation.read.any"
+        ):
+            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        actor_id = int(account["id"])
+        is_owner = _conversation_owned_by_account(conn, cid, actor_id)
+        if not (is_owner or _account_has_permission(account, "conversation.member.manage")):
+            return _json_error("멤버를 관리할 권한이 없습니다.", 403)
+        target_id, terr = _resolve_member_target_account_id(conn, data)
+        if terr:
+            code = 404 if "찾을 수 없" in terr else 400
+            return _json_error(terr, code)
+        try:
+            from modules.db import _pg_connect
+            from modules import group_members
+            pg = _pg_connect()
+            try:
+                group_members.add_member(
+                    pg, cid, target_id, role=role, invited_by_account_id=actor_id
+                )
+            finally:
+                pg.close()
+        except Exception:
+            return _json_error("멤버 추가 실패", 500)
+        _audit_user_action(
+            conn,
+            request,
+            account,
+            action="conversation.member.add",
+            resource_type="conversation_member",
+            resource_id=str(target_id),
+            request_ctx={
+                "conversation_id": cid,
+                "target_account_id": target_id,
+                "role": role,
+            },
+        )
+        return JSONResponse({"conversation_id": cid, "account_id": target_id, "role": role})
+    finally:
+        conn.close()
+
+
+@app.delete("/api/conversations/{cid}/members/{account_id}")
+def remove_conversation_member(cid: str, account_id: int, request: Request) -> JSONResponse:
+    """그룹 대화 멤버 제거 또는 본인 나가기.
+
+    권한: owner/conversation.member.manage(타인 제거) 또는 본인(나가기). 대화 소유자는
+    멤버에서 제거 불가(409, 소유권 이전/대화 삭제는 별도 흐름). 메시지·첨부는 잔존(tombstone
+    author), 향후 접근만 차단 → audit conversation.member.remove.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_can_access_conversation(
+            conn, account, cid, "conversation.read.own", "conversation.read.any"
+        ):
+            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        actor_id = int(account["id"])
+        target_id = int(account_id)
+        is_owner = _conversation_owned_by_account(conn, cid, actor_id)
+        is_self_leave = target_id == actor_id
+        if not (
+            is_self_leave
+            or is_owner
+            or _account_has_permission(account, "conversation.member.manage")
+        ):
+            return _json_error("멤버를 관리할 권한이 없습니다.", 403)
+        conv_owner = _conversation_owner_account_id(conn, cid)
+        if conv_owner is not None and target_id == int(conv_owner):
+            return _json_error("대화 소유자는 멤버에서 제거할 수 없습니다.", 409)
+        try:
+            from modules.db import _pg_connect
+            from modules import group_members
+            pg = _pg_connect()
+            try:
+                removed = group_members.remove_member(pg, cid, target_id)
+            finally:
+                pg.close()
+        except Exception:
+            return _json_error("멤버 제거 실패", 500)
+        _audit_user_action(
+            conn,
+            request,
+            account,
+            action="conversation.member.remove",
+            resource_type="conversation_member",
+            resource_id=str(target_id),
+            request_ctx={
+                "conversation_id": cid,
+                "target_account_id": target_id,
+                "self_leave": is_self_leave,
+                "removed": removed,
+            },
+        )
+        return JSONResponse(
+            {"conversation_id": cid, "account_id": target_id, "removed": removed}
+        )
+    finally:
+        conn.close()
+
+
+def _save_group_chat_message_pg(
+    conversation_id: str, account_id: int, content: str, username: str | None = None
+) -> int:
+    """feature-0009: 사람-사람 채팅 메시지(user role)를 PG 에 저장 + 대화 updated_at 갱신.
+
+    LLM 미호출(ask_jobs 미경유). **두 store 에 모두 기록**:
+      - core_messages: LLM 히스토리(다음 @assistant 가 맥락으로 봄), sender_account_id 귀속.
+      - messages(표시 store, /api/history 가 읽음): meta_json 에 발신자(sender_account_id/username)
+        를 담아 UI 가 "누가 보냈는지" 표시. (이 미러가 없으면 채팅이 화면에 안 보임.)
+    returns core message_id(0=실패).
+    """
+    from modules.runtime_backend import _get_pg_runtime_backend, _get_pg_runtime_conn
+    pg_conn = _get_pg_runtime_conn()
+    if not pg_conn:
+        return 0
+    try:
+        be = _get_pg_runtime_backend()
+        mid = be.save_core_message(
+            pg_conn,
+            conversation_id=conversation_id,
+            role="user",
+            content=content,
+            sender_account_id=int(account_id),
+        )
+        # 표시 store 미러 (sender meta 포함) — /api/history 노출.
+        try:
+            meta = json.dumps(
+                {
+                    "sender_account_id": int(account_id),
+                    "sender_username": username or "",
+                    "group_chat": True,
+                },
+                ensure_ascii=False,
+            )
+            be.save_memory_message(
+                pg_conn, conversation_id=conversation_id, role="user", content=content, meta_json=meta
+            )
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "group chat display mirror failed (conversation_id=%s)", conversation_id, exc_info=True
+            )
+        try:
+            with pg_conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE agent_runtime.core_conversations SET updated_at = now() WHERE conversation_id = %s",
+                    (conversation_id,),
+                )
+            pg_conn.commit()
+        except Exception:
+            pass
+        return int(mid or 0)
+    finally:
+        try:
+            pg_conn.close()
+        except Exception:
+            pass
+
+
+@app.post("/api/conversations/{cid}/messages")
+async def post_group_chat_message(cid: str, request: Request) -> JSONResponse:
+    """그룹 대화 사람-사람 채팅 메시지 저장 (LLM 미호출). @assistant 호출은 /api/ask.
+
+    권한: 대화 접근(멤버/owner/read.any). datasource 미접촉이라 무권한 멤버도 채팅 가능
+    (열람 ≠ 발화 — 사람 채팅은 '발화'(제품 사용)가 아니다). 발신자 귀속(sender_account_id).
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    content = str(data.get("content") or data.get("message") or "").strip()
+    if not content:
+        return _json_error("empty message", 400)
+    if len(content) > 8000:
+        return _json_error("메시지가 너무 깁니다.", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_can_access_conversation(
+            conn, account, cid, "conversation.read.own", "conversation.read.any"
+        ):
+            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        # 차단(blocked)·보관(archived) 대화는 진행 불가(채팅 포함).
+        _is_blocked, _block_reason = _conversation_block_info(cid, conn=conn)
+        if _is_blocked:
+            return _json_error(_block_reason or _BLOCKED_PRODUCT_DELETED_REASON, 403)
+        mid = _save_group_chat_message_pg(
+            cid, int(account["id"]), content, username=str(account.get("username") or "")
+        )
+        if not mid:
+            return _json_error("메시지 저장 실패", 500)
+        return JSONResponse(
+            {"ok": True, "conversation_id": cid, "message_id": mid, "role": "user"}
         )
     finally:
         conn.close()

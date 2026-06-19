@@ -390,11 +390,36 @@ def _number_file_lines(content: str) -> str:
     return "\n".join(f"{i:>{width}}→{line}" for i, line in enumerate(src, 1))
 
 
+def _is_group_conversation(conversation_id: str | None) -> bool:
+    """feature-0009: 멤버 2명 이상인 그룹 대화인지(PG conversation_members). 실패/단일/미백필=False.
+
+    F1 첨부 주입 발신자-한정 게이팅에 사용 — 그룹일 때만 sender 스코프(1:1·fork 는 conv 스코프 유지).
+    """
+    if not conversation_id:
+        return False
+    try:
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM agent_runtime.conversation_members WHERE conversation_id = %s",
+                    (conversation_id,),
+                )
+                row = cur.fetchone()
+            return bool(row and int(row[0] or 0) > 1)
+        finally:
+            pg.close()
+    except Exception:
+        return False
+
+
 def _build_attachment_context_section(
     mem_conn,
     attachment_ids: list[int],
     account_id: int | None = None,
     conversation_id: str | None = None,
+    force_sender_scope: bool = False,
 ) -> str:
     """TASK-0094 Sprint 1 Phase 11 + TASK-0107 Phase B — selected attachment metadata
     + sandbox schema/table 명 + 각 table 의 column schema + head 5 sample rows
@@ -416,7 +441,11 @@ def _build_attachment_context_section(
     # IDOR 안전망 유지). conversation_id 미전달(legacy 경로)은 AccountId 스코프로 폴백.
     # TASK-0132 (#8 IDOR/env-race): 스코프 자체는 ATTACHMENT_IDS 가 os.environ 으로 전달되며 동시
     # 요청 간 race 가 나도 교차테넌트 유출을 막는 안전망이라는 성격은 그대로 유지된다.
-    _scope_by_conv = bool(conversation_id)
+    # feature-0009 (CSO F1): 그룹 대화에서는 발신자(account_id) 본인 첨부만 주입한다(force_sender_scope).
+    # 타 멤버가 올린 첨부가 발신자의 @assistant 실행 맥락에 주입되어 actor 권한으로 datasource 를
+    # 끌어오는 권한상승(indirect prompt injection)을 차단. 1:1·fork(이어받기)는 종전 conversation
+    # 스코프(TASK-0284) 유지 — force_sender_scope=False 또는 account_id 부재 시.
+    _scope_by_conv = bool(conversation_id) and not (force_sender_scope and account_id)
     if not attachment_ids or mem_conn is None or (not account_id and not _scope_by_conv):
         return ""
     # TASK-0277: read cutover — AGENT_RUNTIME_ATTACHMENTS_READ_BACKEND=postgres 면 PG agent_runtime
@@ -862,7 +891,11 @@ def compose_system_prompt(
         if attachment_ids_raw:
             attachment_ids = [int(x) for x in attachment_ids_raw.split(",") if x.strip().lstrip("-").isdigit() and int(x) > 0]
             if attachment_ids:
-                section = _build_attachment_context_section(mem_conn, attachment_ids, account_id, conversation_id)
+                # feature-0009 (CSO F1): 그룹 대화면 발신자(account_id) 본인 첨부만 주입(권한상승 차단).
+                section = _build_attachment_context_section(
+                    mem_conn, attachment_ids, account_id, conversation_id,
+                    force_sender_scope=_is_group_conversation(conversation_id),
+                )
                 if section:
                     parts.append(section)
     except Exception:
@@ -1450,6 +1483,39 @@ def _format_core_messages(normalized: list[dict]) -> list[dict]:
     return messages
 
 
+def _merge_consecutive_user_messages(messages: list[dict]) -> list[dict]:
+    """feature-0009: 연속된 user 메시지를 하나의 user 턴으로 병합한다.
+
+    그룹 대화에서 사람-사람 채팅(@assistant 없는 여러 user 메시지)이 @assistant 호출 사이에
+    쌓이면 user 턴이 연속되어 Anthropic/Bedrock 의 role 교대 제약(messages must alternate)에
+    걸릴 수 있다. 연속 user 의 string content 를 빈 줄로 이어 단일 user 턴으로 합친다. content 가
+    string 이 아닌 경우(이미지 array 등)는 병합하지 않고 그대로 둔다(안전). 1:1 대화엔 연속 user 가
+    드물어 사실상 무영향.
+    """
+    if not messages:
+        return messages
+    out: list[dict] = []
+    for msg in messages:
+        if (
+            out
+            and isinstance(msg, dict)
+            and msg.get("role") == "user"
+            and out[-1].get("role") == "user"
+            and isinstance(msg.get("content"), str)
+            and isinstance(out[-1].get("content"), str)
+        ):
+            prev = dict(out[-1])
+            prev["content"] = (
+                str(prev.get("content") or "").rstrip()
+                + "\n\n"
+                + str(msg.get("content") or "").lstrip()
+            ).strip()
+            out[-1] = prev
+        else:
+            out.append(msg)
+    return out
+
+
 def _assemble_core_messages(rows: list[dict], max_messages: int) -> list[dict]:
     """normalize + truncate + format for OpenAI API. shared by MySQL and PG paths.
 
@@ -1459,7 +1525,7 @@ def _assemble_core_messages(rows: list[dict], max_messages: int) -> list[dict]:
     """
     normalized = _normalize_history_rows(rows)
     if len(normalized) <= max_messages:
-        return _format_core_messages(normalized)
+        return _merge_consecutive_user_messages(_format_core_messages(normalized))
 
     window = normalized[-max_messages:]
     dropped = normalized[:-max_messages]
@@ -1473,7 +1539,7 @@ def _assemble_core_messages(rows: list[dict], max_messages: int) -> list[dict]:
         kept_users = kept_users[-_USER_TURN_KEEP:]
     # 재정규화: 윈도우 시작부의 orphan tool 메시지(짝 assistant 가 dropped) 정리.
     combined = _normalize_history_rows(kept_users + window)
-    return _format_core_messages(combined)
+    return _merge_consecutive_user_messages(_format_core_messages(combined))
 
 
 def _load_conversation_messages(conn, conversation_id: str, max_messages: int = 50) -> list[dict]:
@@ -1517,8 +1583,13 @@ def _save_message(conn, conversation_id: str, role: str,
                   content: str | None = None,
                   tool_calls: list | None = None,
                   tool_call_id: str | None = None,
-                  name: str | None = None):
-    """메시지를 DB에 저장."""
+                  name: str | None = None,
+                  sender_account_id: int | None = None):
+    """메시지를 DB에 저장.
+
+    feature-0009: sender_account_id 는 user 메시지의 발신 멤버(그룹 대화 발신자 귀속).
+    assistant/tool 메시지는 None(AI/시스템). nullable 이라 기존 호출 무회귀.
+    """
     from modules.runtime_backend import _get_pg_runtime_backend, _get_pg_runtime_conn
     pg_conn = _get_pg_runtime_conn()
     if pg_conn:
@@ -1526,7 +1597,8 @@ def _save_message(conn, conversation_id: str, role: str,
             _get_pg_runtime_backend().save_core_message(pg_conn,
                 conversation_id=conversation_id, role=role,
                 content=content, tool_calls=tool_calls,
-                tool_call_id=tool_call_id, name=name)
+                tool_call_id=tool_call_id, name=name,
+                sender_account_id=sender_account_id)
         except Exception as _exc:
             logger.warning("_save_message PG write failed: %s", _exc)
         finally:
@@ -2763,8 +2835,9 @@ def _run_agent_core(
     history = _load_conversation_messages(mem_conn, cid, max_messages=50)
 
     # ── 사용자 메시지 저장 ──
+    # feature-0009: 그룹 대화 발신자 귀속 — account_id(=actor, ask 호출자)를 sender 로 기록.
     if _writes_allowed(mem_conn, cid):
-        _save_message(mem_conn, cid, "user", content=user_message)
+        _save_message(mem_conn, cid, "user", content=user_message, sender_account_id=account_id)
         _mirror_message(mem_conn, cid, "user", user_message, run_id)
     try:
         save_memory_kv(mem_conn, cid, "last_run_id", run_id)

@@ -137,6 +137,42 @@ CREATE TABLE IF NOT EXISTS agent_runtime.core_messages (
 CREATE INDEX IF NOT EXISTS ix_core_messages_conv_id
     ON agent_runtime.core_messages (conversation_id, id);
 
+-- feature-0009-group-conversation (TASK-20260619T023140): 그룹 대화
+--   sender_account_id      — 메시지 발신 account 귀속(멀티 멤버). NULL=레거시/시스템.
+--   thread_root_message_id — Slack형 스레드 컬럼 훅. v1 동작 미연동(S6 에서 연동).
+ALTER TABLE agent_runtime.core_messages
+    ADD COLUMN IF NOT EXISTS sender_account_id bigint;
+ALTER TABLE agent_runtime.core_messages
+    ADD COLUMN IF NOT EXISTS thread_root_message_id bigint;
+
+-- 스레드 컬럼 훅용 인덱스 (메인 타임라인 = thread_root_message_id IS NULL).
+CREATE INDEX IF NOT EXISTS ix_core_messages_thread
+    ON agent_runtime.core_messages (conversation_id, thread_root_message_id);
+
+-- ============================================================================
+-- 2b. conversation_members — feature-0009-group-conversation (그룹 대화 멤버십)
+--    PK: (conversation_id, account_id) — 멤버당 1행.
+--    core_conversations.owner_account_id 는 backward-compat 로 유지하되, 멤버십이
+--    열람 권한의 정본이 된다. role: 'owner' | 'member'.
+--    backfill: 기존 대화의 owner_account_id → owner member 1행 (멱등, app 측 수행).
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS agent_runtime.conversation_members (
+    conversation_id       varchar(128) NOT NULL,
+    account_id            bigint       NOT NULL,
+    role                  varchar(16)  NOT NULL DEFAULT 'member',
+    joined_at             timestamptz  NOT NULL DEFAULT now(),
+    invited_by_account_id bigint,
+    PRIMARY KEY (conversation_id, account_id),
+    CONSTRAINT fk_conv_members_conv
+        FOREIGN KEY (conversation_id)
+        REFERENCES agent_runtime.core_conversations (conversation_id)
+        ON DELETE CASCADE
+);
+
+-- 멤버 기준 대화 목록 조회용 (_list_conversations 멤버십 OR). account_id 선두.
+CREATE INDEX IF NOT EXISTS ix_conv_members_account
+    ON agent_runtime.conversation_members (account_id);
+
 -- ============================================================================
 -- 3. kv — MySQL AgentMemoryKv 등가
 --    PK: (conversation_id, key) — composite (MySQL 원본과 동일)

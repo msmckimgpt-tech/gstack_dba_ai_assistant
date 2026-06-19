@@ -2232,6 +2232,10 @@ function renderConversationList() {
 
 function renderConversationHeader() {
   const conversation = currentConversation();
+  // feature-0009: 그룹 대화 멤버 버튼 — 대화 선택 시에만 표시.
+  const _membersBtn = document.getElementById("membersBtn");
+  if (_membersBtn) _membersBtn.classList.toggle("hidden", !conversation);
+  if (!conversation) { try { closeMembersPanel(); } catch (_e) {} }
   if (!conversation) {
     if (state.pendingNewConversation) {
       // TASK-0048: pending 새 대화 — 첫 메시지 전송 전 단계.
@@ -3128,9 +3132,15 @@ function renderMessages() {
 
     const row = document.createElement("article");
     const role = message.role === "user" ? "user" : "assistant";
+    // feature-0009: 그룹 채팅 메시지는 메시지별 발신자(meta.sender_*) 우선 — 누가 보냈는지 표시.
+    const senderUsername = (message.meta && message.meta.sender_username) || "";
+    const senderId = Number((message.meta && message.meta.sender_account_id) || 0);
+    const msgIsOwn = role === "user"
+      ? (senderId ? senderId === Number((state.user && state.user.id) || 0) : isOwn)
+      : false;
     const classes = [`message`, `is-${role}`];
     if (role === "user") {
-      classes.push(isOwn ? "is-own-message" : "is-other-message");
+      classes.push(msgIsOwn ? "is-own-message" : "is-other-message");
     }
     row.className = classes.join(" ");
 
@@ -3138,7 +3148,11 @@ function renderMessages() {
     meta.className = "message-meta";
     let speaker = "Assistant";
     if (role === "user") {
-      speaker = isOwn ? selfLabel : ownerLabel;
+      if (senderUsername) {
+        speaker = msgIsOwn ? `나 (${senderUsername})` : senderUsername;
+      } else {
+        speaker = isOwn ? selfLabel : ownerLabel;
+      }
     }
     const durationMs = role === "assistant" ? Number(message.meta?.duration_ms || 0) : 0;
     if (durationMs > 0) {
@@ -6545,6 +6559,34 @@ function _bindComposerActionsEvents() {
   });
 }
 
+// feature-0009: 그룹 대화 사람-사람 채팅 전송 (AI 미호출). @assistant 멘션 없는 메시지 경로.
+async function _sendGroupChatMessage(cid, message) {
+  const optimistic = {
+    id: null,
+    role: "user",
+    content: message,
+    created_at: new Date().toISOString(),
+    meta: {},
+    _optimistic: true,
+  };
+  state.messages = [...state.messages, optimistic];
+  promptInputEl.value = "";
+  renderMessages();
+  try { renderComposer(); } catch (_e) {}
+  try {
+    await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: message }),
+    });
+  } catch (e) {
+    showToast(e.message || "메시지 전송에 실패했습니다.", true);
+    return;
+  }
+  // 저장된 메시지를 hydrate (optimistic 교체) + 사이드바 최신화.
+  try { await refreshWorkspace(cid); } catch (_e) {}
+  try { await loadConversations(cid); } catch (_e) {}
+}
+
 async function sendPrompt() {
   const message = promptInputEl.value.trim();
   if (!message) return;
@@ -6554,7 +6596,8 @@ async function sendPrompt() {
     return;
   }
   const active = currentConversation();
-  if (active && !isOwnConversation(active)) {
+  // feature-0009: 그룹 대화 멤버도 발화/채팅 가능(owner OR 멤버). 비-멤버 타계정 대화만 차단.
+  if (active && !isOwnConversation(active) && !active.is_member) {
     showToast("타 계정 소유의 대화에는 요청을 보낼 수 없습니다. 새 대화를 생성하세요.", true);
     return;
   }
@@ -6565,6 +6608,15 @@ async function sendPrompt() {
   }
   if (state.composerAttachments.uploadingCount > 0) {
     showToast("파일 업로드가 완료될 때까지 기다려주세요.", true);
+    return;
+  }
+  // feature-0009: 그룹 대화(멤버 2+)에서 @assistant 멘션이 없으면 사람-사람 채팅 — AI 미호출, 저장만.
+  // 멘션이 있으면(또는 1:1) 종전대로 /api/ask 로 AI 호출.
+  if (
+    active && Number(active.member_count || 0) > 1 && state.activeConversationId &&
+    window.Mentions && !window.Mentions.messageInvokesAssistant(message)
+  ) {
+    await _sendGroupChatMessage(active.id, message);
     return;
   }
   // TASK-0048: pending 모드는 client-side 만 진입한 빈 대화 단계. cid 가 없으니 lazy create.
@@ -8024,6 +8076,139 @@ function _bindSearchModalListeners() {
 }
 
 _bindSearchModalListeners();
+
+// ── feature-0009: 그룹 대화 멤버 패널(roster) ──────────────────────────────
+function closeMembersPanel() {
+  const panel = document.getElementById("membersPanel");
+  const btn = document.getElementById("membersBtn");
+  if (panel) panel.classList.add("hidden");
+  if (btn) btn.setAttribute("aria-expanded", "false");
+}
+
+function _setMembersMsg(text, isError) {
+  const el = document.getElementById("membersPanelMsg");
+  if (!el) return;
+  el.textContent = text || "";
+  el.classList.toggle("is-error", !!isError);
+}
+
+async function _loadMembers() {
+  const cid = state.activeConversationId;
+  const listEl = document.getElementById("membersList");
+  if (!cid || !listEl) return;
+  listEl.innerHTML = "";
+  _setMembersMsg("불러오는 중…", false);
+  let data;
+  try {
+    data = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/members`);
+  } catch (e) {
+    _setMembersMsg(e.message || "멤버를 불러오지 못했습니다.", true);
+    return;
+  }
+  _setMembersMsg("", false);
+  const ownerId = Number((data && data.owner_account_id) || 0);
+  const myId = Number((state.user && state.user.id) || 0);
+  const members = (data && data.members) || [];
+  if (!members.length) {
+    const li = document.createElement("li");
+    li.className = "members-list-empty";
+    li.textContent = "멤버가 없습니다.";
+    listEl.appendChild(li);
+    return;
+  }
+  members.forEach((m) => {
+    const li = document.createElement("li");
+    li.className = "members-list-item";
+    const name = document.createElement("span");
+    name.className = "members-list-name";
+    name.textContent = m.username || ("#" + m.account_id);
+    li.appendChild(name);
+    const role = document.createElement("span");
+    role.className = "members-list-role";
+    role.textContent = (Number(m.account_id) === ownerId || m.role === "owner") ? "소유자" : "멤버";
+    li.appendChild(role);
+    // 소유자는 제거 불가. 본인(나가기) 또는 관리자(제거)는 백엔드가 최종 게이트.
+    if (Number(m.account_id) !== ownerId) {
+      const rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "members-list-remove";
+      rm.textContent = (Number(m.account_id) === myId) ? "나가기" : "제거";
+      rm.addEventListener("click", () => _removeMember(m.account_id, m.username));
+      li.appendChild(rm);
+    }
+    listEl.appendChild(li);
+  });
+}
+
+async function _removeMember(accountId, username) {
+  const cid = state.activeConversationId;
+  if (!cid) return;
+  const isSelf = Number((state.user && state.user.id) || 0) === Number(accountId);
+  const label = isSelf
+    ? "이 대화에서 나가시겠습니까?"
+    : `${username || ("#" + accountId)} 님을 제거하시겠습니까?`;
+  if (!window.confirm(label)) return;
+  try {
+    await apiFetch(
+      `/api/conversations/${encodeURIComponent(cid)}/members/${encodeURIComponent(accountId)}`,
+      { method: "DELETE" },
+    );
+  } catch (e) {
+    _setMembersMsg(e.message || "제거하지 못했습니다.", true);
+    return;
+  }
+  if (isSelf) {
+    closeMembersPanel();
+    try { showToast("대화에서 나갔습니다.", false); } catch (_e) {}
+    try { await loadConversations(); } catch (_e) {}
+    return;
+  }
+  _loadMembers();
+}
+
+function _bindMembersPanel() {
+  const btn = document.getElementById("membersBtn");
+  const panel = document.getElementById("membersPanel");
+  const closeBtn = document.getElementById("membersPanelClose");
+  const form = document.getElementById("membersInviteForm");
+  const input = document.getElementById("membersInviteInput");
+  if (!btn || !panel) return;
+  btn.addEventListener("click", () => {
+    if (!panel.classList.contains("hidden")) { closeMembersPanel(); return; }
+    if (!state.activeConversationId) return;
+    panel.classList.remove("hidden");
+    btn.setAttribute("aria-expanded", "true");
+    _loadMembers();
+  });
+  if (closeBtn) closeBtn.addEventListener("click", closeMembersPanel);
+  if (form) {
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const cid = state.activeConversationId;
+      const uname = ((input && input.value) || "").trim().replace(/^@/, "");
+      if (!cid || !uname) return;
+      try {
+        await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/members`, {
+          method: "POST",
+          body: JSON.stringify({ username: uname }),
+        });
+      } catch (e) {
+        _setMembersMsg(e.message || "초대하지 못했습니다.", true);
+        return;
+      }
+      if (input) input.value = "";
+      _setMembersMsg(`${uname} 님을 초대했습니다.`, false);
+      _loadMembers();
+    });
+  }
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && panel && !panel.classList.contains("hidden")) {
+      closeMembersPanel();
+    }
+  });
+}
+
+_bindMembersPanel();
 
 initialize().catch((error) => {
   showToast(error.message || "페이지 초기화에 실패했습니다.", true);

@@ -93,9 +93,9 @@ RETURNING conversation_id, (xmax = 0) AS pg_inserted
 
 _PG_INSERT_CORE_MESSAGE = """
 INSERT INTO agent_runtime.core_messages
-    (conversation_id, role, content, tool_calls, tool_call_id, name)
+    (conversation_id, role, content, tool_calls, tool_call_id, name, sender_account_id)
 VALUES
-    (%(conversation_id)s, %(role)s, %(content)s, %(tool_calls)s::jsonb, %(tool_call_id)s, %(name)s)
+    (%(conversation_id)s, %(role)s, %(content)s, %(tool_calls)s::jsonb, %(tool_call_id)s, %(name)s, %(sender_account_id)s)
 RETURNING id
 """
 
@@ -236,6 +236,7 @@ class RuntimeBackend(ABC):
         self, conn: Any, *, conversation_id: str, role: str,
         content: Optional[str] = None, tool_calls: Optional[Any] = None,
         tool_call_id: Optional[str] = None, name: Optional[str] = None,
+        sender_account_id: Optional[int] = None,
     ) -> int: ...
 
     @abstractmethod
@@ -278,7 +279,8 @@ class MysqlRuntimeBackend(RuntimeBackend):
         raise NotImplementedError("M4 cutover 이전: caller 가 raw SQL 직접 실행")
 
     def save_core_message(self, conn, *, conversation_id, role, content=None,
-                          tool_calls=None, tool_call_id=None, name=None):
+                          tool_calls=None, tool_call_id=None, name=None,
+                          sender_account_id=None):
         raise NotImplementedError("M4 cutover 이전: caller 가 raw SQL 직접 실행")
 
     def save_kv(self, conn, *, conversation_id, key, value):
@@ -341,6 +343,7 @@ class PgRuntimeBackend:
         tool_calls: Optional[Any] = None,
         tool_call_id: Optional[str] = None,
         name: Optional[str] = None,
+        sender_account_id: Optional[int] = None,
     ) -> int:
         import json as _json
         tc_json = _json.dumps(tool_calls, ensure_ascii=False) if tool_calls is not None else None
@@ -352,6 +355,7 @@ class PgRuntimeBackend:
                 "tool_calls": tc_json,
                 "tool_call_id": tool_call_id,
                 "name": name,
+                "sender_account_id": int(sender_account_id) if sender_account_id is not None else None,
             })
             row = cur.fetchone()
             return int(row[0]) if row else 0

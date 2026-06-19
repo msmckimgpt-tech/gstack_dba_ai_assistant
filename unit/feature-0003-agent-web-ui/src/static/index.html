@@ -6,7 +6,7 @@
   <title>DQA — Database Query Assistant</title>
   <link rel="preconnect" href="https://fonts.bunny.net" />
   <link href="https://fonts.bunny.net/css?family=geist:300,400,500,600,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260619-oauth-foundation" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260619-group-conv-oauth" />
 </head>
 <body>
 
@@ -134,12 +134,29 @@
           </div>
           <div class="topbar-tools">
             <button type="button" class="tool-btn hidden" id="loadMoreBtn">이전 기록</button>
+            <!-- feature-0009: 그룹 대화 멤버 관리(roster). 대화 선택 시 표시. -->
+            <button type="button" class="tool-btn hidden" id="membersBtn" aria-haspopup="dialog" aria-expanded="false">멤버</button>
             <!-- REQ-20260518-0003: 대화 복사 / 공유 / 제목 변경 / 삭제 4 버튼은 좌측 conv-item "···" menu 로 일원화 -->
           </div>
           <div class="topbar-end">
             <button type="button" class="topbar-btn hidden" id="openAdminBtn">관리 콘솔</button>
           </div>
         </header>
+
+        <!-- feature-0009: 그룹 대화 멤버 패널(roster). 멤버 목록·초대(username)·제거. -->
+        <div class="members-panel hidden" id="membersPanel" role="dialog" aria-label="대화 멤버" aria-modal="false">
+          <div class="members-panel-head">
+            <strong>대화 멤버</strong>
+            <button type="button" class="members-panel-close" id="membersPanelClose" aria-label="닫기">×</button>
+          </div>
+          <p class="members-panel-note">멤버는 이 대화 전체를 볼 수 있습니다. 초대는 대화 내용 공유를 의미합니다.</p>
+          <ul class="members-list" id="membersList"></ul>
+          <form class="members-invite" id="membersInviteForm">
+            <input type="text" id="membersInviteInput" placeholder="초대할 사용자 이름" autocomplete="off" />
+            <button type="submit" class="members-invite-btn">초대</button>
+          </form>
+          <div class="members-panel-msg" id="membersPanelMsg" role="status"></div>
+        </div>
 
       <!-- Chat Pane -->
       <div class="chat-pane" id="chatPane">
@@ -536,10 +553,11 @@
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/app.js?v=20260619-share-expiry-llm-restriction"></script>
+  <script src="/static/mentions.js?v=20260619-group-conversation"></script>
+  <script src="/static/app.js?v=20260619-group-conversation"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 관리 콘솔과 동일 파일을 공유한다. -->
-  <script src="/static/release-notes-data.js?v=20260619-llm-restriction"></script>
+  <script src="/static/release-notes-data.js?v=20260619-group-conversation"></script>
   <script src="/static/release-notes.js?v=20260618-rn-scope-scroll"></script>
 </body>
 </html>
