@@ -3412,3 +3412,11 @@ source_of_truth: true
 - 테스트 한계 명시: 단위는 IP throttle 실동작 + source-grep — 동시성 window/열거 오라클/라이브 DB 잠금은 미커버(라이브 재검증 + PB-0008 로 보완).
 - Verification: test_login_attempt_limit.py 11/11 + make test 회귀 0 + py_compile + node --check. 화면 정본=PB-0008(배포 후).
 - Cross-ref: CHG-20260619T021356-ai-claude-login-attempt-limit / REQ-20260619-0325 / AC-0588~0591.
+
+## REV-20260619T022449-ai-claude-release-note-llm-restriction [SKIPPED:content-only-no-logic-no-rbac-no-backend]
+- Date: 2026-06-19
+- Cycle: TASK-20260619T022449 (릴리즈 노트에 LLM 사용 제한 안내 항목 추가) — content-only, **Minor §12.3**.
+- Rationale(SKIP): `release-notes-data.js` 정적 콘텐츠 1항목 추가 + 캐시버스터 bump 만. 로직/엔드포인트/RBAC/스키마/데이터 접근 0, 렌더러 불변. 텍스트는 렌더러가 textContent 주입(XSS-safe, verify_release_notes.mjs 가드). 적대 리뷰 대상 표면 없음.
+- 내용 검토: 내부동작 비노출(AC-0579) 준수 — Bedrock/자격증명/분류기/PG 등 미노출, "외부 요인"으로 추상화. 기존 노트 문체 정합.
+- Verification: verify_release_notes.mjs 34/34 + node --check.
+- Cross-ref: CHG-20260619T022449-ai-claude-release-note-llm-restriction / TASK-20260619T022449 / TASK-20260619T014034.

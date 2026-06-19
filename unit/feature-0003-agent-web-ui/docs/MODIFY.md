@@ -4320,3 +4320,12 @@ source_of_truth: true
 - Verification: test_login_attempt_limit.py 11/11(IP throttle 실 동작 포함) + make test 회귀 0(사전존재 product-delete 2건 제외) + py_compile + node --check + CSS brace 1373. outside-voice 적대 보안 리뷰 SHIP-WITH-FIXES(BLOCKER 0, MINOR/NIT 흡수, MAJOR soft-threshold accept+문서화).
 - Rollback: 엔드포인트/헬퍼/login 변경 복원. lockout 컬럼 비파괴(잔존 무해, DEFAULT 0/NULL=enforcement 영향 0). cache-buster 되돌림.
 - Deploy: web 재빌드. (ask/insight-worker 무관 — 인증은 web 전용.)
+
+## CHG-20260619T022449-ai-claude-release-note-llm-restriction
+- TASK-20260619T022449 — 릴리즈 노트에 LLM 사용 제한 안내 항목 추가 (content-only, Minor §12.3). 사용자 정책(2026-06-19): /_template:entry 완료 시 릴리즈 노트 명시.
+- 변경: `src/static/release-notes-data.js` `releases[]` 맨 앞 2026-06-19 블록 + `generated` 갱신(1 item: type=new/area=work). index.html/admin.html `release-notes-data.js?v=20260619-llm-restriction`. 렌더러(release-notes.js)·로직 불변 — 순수 데이터/콘텐츠.
+- 문체 정합: 기존 노트(2026-06-12~18) 양식·문체 파악 후 동일하게(사용자 결과 중심 title·존댓말 detail·내부동작 비노출 AC-0579 — "외부 요인" 추상화).
+- Verification: `verify_release_notes.mjs` 34/34 + node --check.
+- Files: src/static/release-notes-data.js, src/static/{index,admin}.html, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
+- Rollback: 2026-06-19 블록 제거 + 캐시버스터 되돌림.
+- Deploy: web 재빌드(static baked). ask/insight-worker 무관.
