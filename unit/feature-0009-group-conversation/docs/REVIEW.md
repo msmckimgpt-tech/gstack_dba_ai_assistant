@@ -46,3 +46,17 @@ source_of_truth: true
 - 결론: S1 (비파괴 additive) SHIP. 잔여 P1 통제(F2 audit·IDOR 전수·actor 발화 게이트)는
   S2~S4 슬라이스에서 검증.
 - Human Approval Needed: 아니오 (S1 비파괴, PLAN-APPROVED 범위).
+
+## REV-20260619-0004 [SUBAGENT: S2 membership 검증 패널 §18.8]
+- Related Change: CHG-20260619-0002 (S2 Membership 백엔드)
+- Reason: 접근제어 변경(보안 민감) — 멤버십 OR 이 IDOR 우회/과다노출을 만들지 않는지 확인.
+- 검증: ① 본 cycle 의 cso 패널이 이미 "view ≠ invoke"·F6(멤버십 OR 전 엔드포인트 적용) 을
+  코드 grounding 으로 리뷰. ② 본 cycle F6 IDOR sweep 직접 수행 — VIEW 게이트 19곳이 중앙
+  `_account_can_access_conversation`(멤버십 반영) 경유 확인, owner-직접 잔존 4곳 분류(ask·
+  update_product·fork 는 발화/mutation→S3/S4 의도적 owner-only; 멤버 엔드포인트는 manage
+  게이트). **첨부 헬퍼(`_account_can_access_attachment`) 갭 적발→멤버십 OR 추가**(첨부 전원공유
+  REQ-GC-R6). ③ py_compile OK + 소스-계약 7/7 + group_members 10/10. (diff 전용 독립 subagent 는
+  세션 한도로 미완 — self+패널 대체.)
+- Risks: 발화 경로(ask/fork/update_product)는 아직 멤버 미허용(owner-only) — 의도된 S3/S4 경계.
+- Open Questions: roster UI(프론트) 미구현 — S2 잔여(다음 turn).
+- Human Approval Needed: 아니오 (additive view-access, PLAN-APPROVED 범위).

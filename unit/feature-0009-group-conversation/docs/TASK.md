@@ -10,7 +10,7 @@ source_of_truth: true
 # Task — 그룹 대화
 
 ## 1. Current Status
-- State: in-progress (S1 Foundations)
+- State: in-progress (S2 Membership — 백엔드 완료, roster UI 잔여)
 - Owner: AI (claude) / Human (sign-off 완료)
 - Priority: high
 - Risk: Critical (인가·cross-account·스키마 마이그레이션)
@@ -32,15 +32,15 @@ source_of_truth: true
 <!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-19 (실행 진입 S1 선택) -->
 
 ## 3. Task Queue (슬라이스)
-- [~] **S1 Foundations** — DDL(conversation_members + sender_account_id + thread_root_message_id) + 멱등 backfill + members(account_id) 인덱스 + membership helper 모듈
-- [ ] **S2 Membership** — 멤버십 열람 접근제어 확장(전 conversation-scope 엔드포인트, IDOR) + 멤버 관리 엔드포인트(owner/`conversation.member.manage`) + roster UI + member.add/remove audit
+- [x] **S1 Foundations** — DDL(conversation_members + sender_account_id + thread_root_message_id) + 멱등 backfill + members(account_id) 인덱스 + membership helper 모듈 (commit 489deb5)
+- [~] **S2 Membership** — ✅백엔드: 멤버십 열람 접근제어(중앙 게이트 + 첨부 게이트 OR, F6 sweep) + 멤버 엔드포인트(list/add/remove, owner/`conversation.member.manage`) + member.add/remove audit + backfill wiring + 신규 권한. ⏳잔여: **roster UI**(프론트 멤버 목록·초대·제거)
 - [ ] **S3 Chat+Mention** — 사람 채팅(enqueue 미경유) + canonical 멘션 파서(FE/BE) + @assistant enqueue(actor) + LLM 히스토리(구조 sender 라벨·sanitize·연속 user 병합) + **발신자-한정 첨부 주입** + read-state 커서 + @mention 표시
 - [ ] **S4 Security** — actor 기준 datasource 발화 게이트 + cross-account 감사 + 적대적 리뷰 + 멘션 자동완성 roster 한정
 - [ ] **S5 Realtime+Limits** — 폴링 동기화 + per-conversation run cap + llm_usage actor 귀속 + 멤버 제거/보존 정책
 - [ ] **S6 (deferred, 별도 계획)** — 풀 스레드 UI + run-status `(conversation,thread)` 재키잉
 
 ## 4. In Progress
-- S1 Foundations
+- S2 roster UI (프론트 멤버 목록·초대·제거)
 
 ## 5. Blocked
 - 없음
@@ -48,9 +48,12 @@ source_of_truth: true
 ## 6. Done
 - 계획 수립 + eng-review + cso 검증 (REVIEW.md)
 - feature unit + FUNCTION.md(수용위험 포함) 작성
+- S1 Foundations (commit 489deb5)
+- S2 백엔드 (접근제어·멤버 엔드포인트·audit·backfill wiring·신규 권한·F6 sweep)
 
 ## 7. Next Action
-- S1: PG `agent_runtime_schema.sql` + MySQL `_ensure_*` DDL 추가(멱등) + backfill + 인덱스.
+- S2 roster UI: 대화 헤더에 멤버 목록·초대(username)·제거 + GET/POST/DELETE members 연동.
+- 이후 S3 Chat+Mention(사람 채팅·@assistant enqueue actor·발신자 라벨·발신자-한정 첨부주입·read-state).
 
 ## 8. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다 (S1~S5 누적)

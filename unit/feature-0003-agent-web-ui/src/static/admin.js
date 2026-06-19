@@ -240,6 +240,7 @@ const PERMISSION_DEPENDENCIES = {
   "conversation.finalize.own": "conversation.list.own",
   "conversation.duplicate.own": "conversation.list.own",
   "conversation.share.create": "conversation.list.own",
+  "conversation.member.manage": "conversation.list.own",
   "conversation.attachment.upload.own": "conversation.list.own",
   "conversation.attachment.read.own": "conversation.list.own",
   //   전체 대화 권한(conversation_any): "전체 대화 목록 조회"(list.any) 가 게이트(루트).
