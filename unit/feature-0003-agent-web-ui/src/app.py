@@ -10247,8 +10247,22 @@ async def ask(request: Request) -> JSONResponse:
             conn.close()
             return _json_error("권한이 없습니다.", 403)
         if not _conversation_owned_by_account(conn, request_conversation_id, int(account["id"])):
-            conn.close()
-            return _json_error("타 계정 대화에는 요청을 이어서 보낼 수 없습니다.", 403)
+            # feature-0009 S4 (열람 ≠ 발화): 그룹 대화 멤버도 @assistant 발화 가능. 비-멤버는 차단.
+            if not _account_is_conversation_member(request_conversation_id, int(account["id"])):
+                conn.close()
+                return _json_error("타 계정 대화에는 요청을 이어서 보낼 수 없습니다.", 403)
+            # actor RBAC 게이트: 발신 멤버 본인이 이 대화의 데이터소스(pinned product)에 접근 권한이
+            # 있어야 발화(쿼리) 가능. 무권한 멤버는 열람만 — 결과·SQL 은 볼 수 있으나 새 질의는 거부.
+            # auto 모드(미고정)는 다운스트림 execute_sql 가 actor 접근 datasource 로 제한하므로 허용.
+            _ask_conv_prod = _load_conversation_product(conn, request_conversation_id)
+            if (
+                _ask_conv_prod
+                and _ask_conv_prod.get("product_mode") == "pinned"
+                and _ask_conv_prod.get("product_id")
+                and not _account_has_product_access(account, int(_ask_conv_prod["product_id"]), conn=conn)
+            ):
+                conn.close()
+                return _json_error("이 대화의 데이터소스에 발화(질의) 권한이 없습니다. 열람만 가능합니다.", 403)
         # TASK-0248: 참조 제품이 삭제되어 차단(blocked)된 대화는 진행 불가. 이력 열람·공유는
         # 가능하나 새 메시지 전송은 거부. slot 획득 전(조기 차단)이라 동시성 카운터 영향 없음.
         _is_blocked, _block_reason = _conversation_block_info(request_conversation_id, conn=conn)

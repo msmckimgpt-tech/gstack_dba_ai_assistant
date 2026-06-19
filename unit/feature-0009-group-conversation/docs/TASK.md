@@ -39,7 +39,8 @@ source_of_truth: true
   - [x] sender_account_id write 배선 (save_core_message + _save_message + _run_agent_core)
   - [x] 사람 채팅 store-only 엔드포인트 (POST /api/conversations/{cid}/messages)
   - [x] F1 발신자-한정 첨부 주입 (force_sender_scope + _is_group_conversation)
-- [ ] **S4 Security** — actor 기준 datasource 발화 게이트 + cross-account 감사 + 적대적 리뷰 + 멘션 자동완성 roster 한정
+- [~] **S4 Security** — cross-account 감사(기존 ask audit actor). ⏳잔여: auto-mode 라이브 적대검증 · 멘션 자동완성 roster 한정(roster UI)
+  - [x] actor datasource 발화 게이트 (멤버 @assistant 허용, pinned 이중게이트, 열람≠발화 완성)
 - [ ] **S5 Realtime+Limits** — 폴링 동기화 + per-conversation run cap + llm_usage actor 귀속 + 멤버 제거/보존 정책
 - [ ] **S6 (deferred, 별도 계획)** — 풀 스레드 UI + run-status `(conversation,thread)` 재키잉
 

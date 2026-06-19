@@ -81,3 +81,17 @@ source_of_truth: true
 - Risks: 멤버 @assistant 호출은 아직 owner-gate(의도) — S4 에서 actor RBAC 로 확장 시 재검증.
 - Open Questions: S3c(히스토리 발신자 라벨) 미구현 — 그룹 @assistant 가 S4 에서 켜질 때 함께 필요.
 - Human Approval Needed: 아니오 (F1=보안 강화·그룹한정, 나머지 additive, PLAN-APPROVED 범위).
+
+## REV-20260619-0007 [SUBAGENT: S4 actor 발화 게이트 §18.8]
+- Related Change: CHG-20260619-0005 (멤버 @assistant 발화 + actor datasource 게이트)
+- Reason: 최고 보안-민감 — owner-gate 해제가 datasource RBAC 우회를 만들지 않는지 확인(열람 ≠ 발화).
+- 검증(self, code-grounded): ① ask 흐름 전반이 `account`(=actor=호출 멤버) 사용 — 소유자 신원 미사용.
+  ② **기존 line 10422 가 pinned product 를 `_account_has_product_access(account, pid)` 로 이미 enforce**
+  (기존 대화 경로 포함, TASK-0052 G4) → 멤버가 owner-gate 통과해도 무권한 pinned datasource 발화 불가.
+  ③ auto 모드는 `allowed_schemas_for_run=[]`(meta only, cross-product leak 차단) + turn-local 제품 선택.
+  ④ 폴링/결과(ask_status/ask_result) 멤버십-인지 게이트. ⑤ 명시 멤버 체크(10249) = defense-in-depth +
+  "열람만 가능" 명확 메시지 + slot 획득 전 차단. py_compile OK.
+- Risks/Open: auto 모드 turn-local 제품 선택의 멤버-invocation actor 게이팅은 product-selector 미정독 —
+  컨테이너 make test + 라이브 적대 검증 권장(pinned 은 이중 게이트 확인). cross-account 감사=기존
+  conversation.ask audit 가 actor 기록(충족). 멘션 자동완성 roster 한정(F7)=roster UI 에서.
+- Human Approval Needed: 아니오 (pinned 이중게이트 확인 + account=actor, PLAN-APPROVED 범위). auto-mode 라이브 재검증 권고.
