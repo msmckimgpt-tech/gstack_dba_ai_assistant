@@ -1102,3 +1102,7 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
   - AC-0605 (self-service 등록): `POST /api/auth/totp/setup`(secret+otpauth URI, Enabled=0)→`confirm`(첫 코드 검증→Enabled=1+백업코드 10개 sha256 1회 노출)→`disable`(비밀번호 재확인). IDOR 없음(session aid). 검증: B3·B5.
   - AC-0606 (로그인 2단계 + brute-force 방어): 비번 통과+TOTP 활성 시 세션 미발급·`{totp_required, totp_token}`(pending token=DEK-HMAC 5분) → `POST /api/auth/login/totp`(TOTP 또는 백업코드[row-lock 1회용]) → 세션. **brute-force 방어(MAJOR 흡수)**: 2FA 분기는 IP/잠금 리셋을 2단계 완료 시로 미루고, TOTP 실패 시 계정 잠금(② 인프라)+IP 기록, step-2 시작 시 잠긴 계정 차단 → IP throttle+계정잠금 이중 bound. 검증: B6·B9.
   - AC-0607 (운영·표면화): admin `POST /api/admin/accounts/{id}/totp/disable`(분실 복구, console.manage+account.update). `totp_enabled` serialize(`_fetch_account_rows` 서브쿼리). audit `auth.totp.enable/disable/admin_disable`+`auth.login.totp`(secret/코드 비노출). 프론트=로그인 TOTP 프롬프트·프로필 2FA 켜기/끄기(QR·백업코드)·admin "2FA" 배지+해제. 검증: B7·B8·F1. 화면 정본=PB-0008(배포 후).
+
+### (TASK-20260619T084227-release-notes-security-6) 보안 보강 6종 릴리즈 노트 기록 (frontend-only)
+- REQ-20260619-0330 (Minor §12.3): 보안 보강 6종(①~⑥)의 사용자 향 릴리즈 노트를 `release-notes-data.js` 2026-06-19 블록에 기록(콘텐츠 큐레이션, 로직 0). AC-0608.
+  - AC-0608 (정합 기록 + 내부 비노출): 기존 노트 양식/문체(type new/improved·area work/admin/common·존댓말 ~합니다·UI 라벨 ' ')에 맞춰 6 항목 추가(2FA·공유 만료·로그인 보호·AI 사용 한도·감사 무결성 검증·어시스턴트 보안 강화). 내부 메커니즘 비노출(AC-0579): 암호화/해시체인/TOTP/인젝션/RBAC/PG 등 금지 용어 0. cache-buster bump. 검증: node --check + 금지 용어 스캔 + PB-0008(양 화면 렌더).

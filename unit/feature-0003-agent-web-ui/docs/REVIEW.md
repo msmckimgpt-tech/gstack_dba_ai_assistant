@@ -3470,3 +3470,10 @@ source_of_truth: true
 - **수용(문서화)**: pending token TTL(300s) 내 재사용(유효 코드 필요 + 이중 throttle 로 bound)·30s step 내 TOTP 코드 재사용(RFC 표준·산업관행)·KEK 부재 시 Enabled=1 계정 fail-closed(admin disable 복구)·`_runtime_tables_available` probe 에 WebAccountTotp 미등록(catchup 무조건 생성이라 무영향).
 - Verification: test_two_factor_auth.py 10/10(B1 roundtrip+drift·B9 흡수 가드) + make test 회귀 0 + py_compile + node --check. 화면 정본=PB-0008(배포 후).
 - Cross-ref: CHG-20260619T040000-ai-claude-two-factor-auth / REQ-20260619-0329 / AC-0604~0607 / docs/SECURITY.md §15.
+
+## REV-20260619T084227-ai-claude-release-notes-security-6 [SKIPPED:release-notes-content-curation-no-logic-no-rbac]
+- Date: 2026-06-19
+- Cycle: TASK-20260619T084227-release-notes-security-6 (보안 6종 릴리즈 노트 기록), Minor §12.3 frontend-only.
+- Panel 생략 근거(§18.8): 로직·RBAC·스키마·엔드포인트 변경 0 — 정적 릴리즈 노트 데이터(`release-notes-data.js`) 콘텐츠 추가 + 캐시버스터만. 보안 표면 변화 없음.
+- 대신 AC-0579 내부 동작 비노출 자가 검증: 신규 6 항목에 암호화/해시체인/TOTP secret/인젝션/datamarking/RBAC/PG/quota/체인/token 등 금지 용어 0(스캔 clean). 사용자 보이는 결과만.
+- Cross-ref: CHG-20260619T084227-ai-claude-release-notes-security-6 / REQ-20260619-0330 / AC-0608.
