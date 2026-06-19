@@ -3420,3 +3420,17 @@ source_of_truth: true
 - 내용 검토: 내부동작 비노출(AC-0579) 준수 — Bedrock/자격증명/분류기/PG 등 미노출, "외부 요인"으로 추상화. 기존 노트 문체 정합.
 - Verification: verify_release_notes.mjs 34/34 + node --check.
 - Cross-ref: CHG-20260619T022449-ai-claude-release-note-llm-restriction / TASK-20260619T022449 / TASK-20260619T014034.
+
+## REV-20260619T023922-ai-claude-audit-tamper-evidence [SUBAGENT:audit-tamper-evidence-adversarial]
+- Date: 2026-06-19
+- Cycle: TASK-20260619T023922-audit-tamper-evidence (감사 기록 변조방지 해시 체인), **Critical §12.3** — 감사 무결성.
+- Panel: outside-voice(general-purpose, REFUTE) — Critical 감사 무결성 필수 적대 리뷰.
+- VERDICT: **SHIP-WITH-FIXES** (BLOCKER 0, MAJOR 3, MINOR 4, NIT 1). 9 probe.
+- REFUTED(clean): seal 실패 fail-open(감사 write 유지)·GET_LOCK 재진입/release(finally)·authz(audit.read.any+first_break 내용 비노출)·purge checkpoint 정합(단일 시계 정상)·sync-seal 실패 후 Id 순 재봉인(skip/fork 없음)·기존 read/export/list 무회귀·스키마 멱등 양 경로.
+- **흡수한 MAJOR**:
+  - MAJOR-1(RR 스냅샷 fork): record_audit_event 가 admin 트랜잭션(autocommit=False) caller conn 으로 봉인 시 REPEATABLE READ 고정 스냅샷이 stale view fork 유발 가능 + UPDATE 가드 부재 → **동기 봉인을 fresh autocommit 연결로 전환**(최신 커밋만 보고, 스냅샷 pinning 없음) + **UPDATE `WHERE Id=%s AND EventHash IS NULL` 가드**(locking read 최신 평가, double-seal 차단·경쟁 시 실제 EventHash 로 head 재동기화).
+  - MAJOR-4(verify/purge lock starvation+메모리): `batch=1000000` 단일 봉인이 GET_LOCK 장기점유+대량 fetchall → **`_seal_audit_chain_drain`(1000-batch 반복, 락 짧게)** 로 교체.
+  - MAJOR-2(in-DB 체인 과대표현): full DB-write 공격자는 체인 재계산(2a)·tail truncation(2b)·checkpoint 위조(5) 로 검증 통과 가능 = in-DB 체인 본질 한계 → **위협모델 정직화**(schema docstring + SECURITY.md §13: 비-체인-인지 변조/손상/부분권한 탐지용임을 명시) + **백그라운드 sealer off-DB 로그 앵커**(`[audit-chain-anchor] id=.. hash=.. sealed_count=..`, 외부 WORM/SIEM 선적 시 외부 대조 탐지). 주기적 외부 notarization 은 별 cycle TODO.
+- **수용(문서화)**: MINOR(CAST(JSON AS CHAR) 서버버전/charset 의존 → MySQL major upgrade 시 과거 history false-invalidate 위험·운영 시 동결 가정)·MINOR(ThroughEventId 기록되나 verify 미사용=장식적·향후 boundary 강화 여지)·MINOR(Id/OccurredAt 비-단조 backfill[WebAccountActivity 마이그] 시 경계 interleave 가능·정상상태 무관)·MINOR(테스트=source-grep+순수함수, DB 통합/동시성/truncation 미커버 — make test 게이트가 DB-less라 불가, 라이브 round-trip 으로 보완)·NIT(\x1f/\x1e 구분자 UserAgent embeddable=chosen-prefix collision only).
+- Verification: test_audit_tamper_evidence.py 11/11 + make test 회귀 0 + py_compile + node --check. 화면 정본=PB-0008(배포 후).
+- Cross-ref: CHG-20260619T023922-ai-claude-audit-tamper-evidence / REQ-20260619-0326 / AC-0592~0595 / SECURITY.md §13.

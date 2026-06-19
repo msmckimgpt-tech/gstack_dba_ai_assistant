@@ -3060,6 +3060,15 @@ function renderAuditList() {
   if (purgeBtn) {
     purgeBtn.style.display = Boolean(adminState.me?.permissions?.["audit.purge"]) ? "" : "none";
   }
+  // TASK-20260619T023922-audit-tamper-evidence (보안 ③): 무결성 검증 버튼 (audit.read.any 권한자만).
+  const verifyBtn = $("auditVerifyBtn");
+  if (verifyBtn) {
+    verifyBtn.style.display = Boolean(adminState.me?.permissions?.["audit.read.any"]) ? "" : "none";
+    if (!verifyBtn._wired) {
+      verifyBtn._wired = true;
+      verifyBtn.addEventListener("click", () => triggerAuditChainVerify());
+    }
+  }
 
   if (items.length === 0) {
     listEl.innerHTML = '<div class="admin-list-empty">이벤트 없음</div>';
@@ -3095,6 +3104,33 @@ function renderAuditList() {
       renderAuditDetail(id);
     });
   });
+}
+
+// TASK-20260619T023922-audit-tamper-evidence (보안 ③): 감사 해시 체인 무결성 검증.
+async function triggerAuditChainVerify() {
+  const btn = $("auditVerifyBtn");
+  const out = $("auditVerifyResult");
+  if (out) { out.style.display = ""; out.className = "admin-audit-verify-result"; out.textContent = "검증 중…"; }
+  if (btn) btn.disabled = true;
+  let res;
+  try {
+    res = await apiFetch("/api/admin/audits/verify");
+  } catch (error) {
+    if (out) { out.className = "admin-audit-verify-result is-error"; out.textContent = `검증 실패: ${error.message || error}`; }
+    if (btn) btn.disabled = false;
+    return;
+  }
+  if (btn) btn.disabled = false;
+  if (!out) return;
+  if (res && res.ok) {
+    out.className = "admin-audit-verify-result is-ok";
+    out.textContent = `✓ 무결성 정상 (${Number(res.verified_count) || 0}건 검증)`;
+  } else {
+    const br = (res && res.first_break) || {};
+    const reasonMap = { unsealed: "미봉인", prev_hash_mismatch: "체인 링크 불일치", content_modified: "내용 변조" };
+    out.className = "admin-audit-verify-result is-error";
+    out.textContent = `⚠ 무결성 위반 — 이벤트 #${br.id || "?"} (${reasonMap[br.reason] || br.reason || "알 수 없음"})`;
+  }
 }
 
 function renderAuditDetail(id) {
