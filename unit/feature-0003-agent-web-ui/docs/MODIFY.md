@@ -4329,3 +4329,12 @@ source_of_truth: true
 - Files: src/static/release-notes-data.js, src/static/{index,admin}.html, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
 - Rollback: 2026-06-19 블록 제거 + 캐시버스터 되돌림.
 - Deploy: web 재빌드(static baked). ask/insight-worker 무관.
+
+## CHG-20260619T023922-ai-claude-audit-tamper-evidence
+- Date: 2026-06-19 (TASK-20260619T023922-audit-tamper-evidence — 감사 기록 변조방지 해시 체인). 사용자 보안 보강 6종 중 ③.
+- Scope: feature-0003 `src/app.py`(`_ensure_web_audit_chain_schema`+양 경로·`_audit_canonical_string`/`_audit_compute_hash`/`_AUDIT_CHAIN_SELECT`·`_seal_audit_chain`(GET_LOCK·Id ASC·`EventHash IS NULL` 가드)·`_seal_audit_chain_drain`·record_audit_event fresh-conn 봉인 훅·`_start_audit_seal_loop` 로그 앵커·`verify_audit_chain` 엔드포인트·purge checkpoint·build 무관) + `src/static/admin.js`(무결성 검증 버튼+triggerAuditChainVerify)+`admin.html`(버튼)+`styles.css`(.admin-audit-verify-result)+admin/index.html(cache-buster) + `tests/test_audit_tamper_evidence.py`(신규 11) + docs(SECURITY.md §13).
+- 내용: 감사행마다 EventHash=SHA256(PrevHash|정규화행) 해시 체인 → 변조 탐지. 봉인은 GET_LOCK 직렬 fresh-conn(RR fork 방지)+Id ASC 일괄+가드. verify 엔드포인트가 walk·재계산. purge 는 경계 checkpoint 재앵커. **위협모델 정직화**: in-DB 체인은 비-체인-인지 변조/손상/부분권한 공격 탐지용; full DB-write 공격자는 재계산/truncation 가능 → 백그라운드 sealer 가 head 해시를 off-DB 로그 앵커(외부 WORM/SIEM 대조).
+- Why: 사용자 요청 — 감사 무결성. 기존 audit 는 변조 탐지 수단 0.
+- Verification: test 11/11(해시 tamper-detection 실 동작) + make test 회귀 0 + py_compile + node --check. outside-voice SHIP-WITH-FIXES(MAJOR 3 흡수).
+- Rollback: 엔드포인트/헬퍼/훅/UI 복원. EventHash/PrevHash 컬럼·Checkpoint 테이블 비파괴(잔존 무해). cache-buster 되돌림.
+- Deploy: web 재빌드.

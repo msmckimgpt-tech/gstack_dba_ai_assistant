@@ -802,6 +802,66 @@ def _start_db_rule_reconcile_loop() -> None:
     threading.Thread(target=_run, name="web-product-db-rule-reconcile", daemon=True).start()
 
 
+@app.on_event("startup")
+def _start_audit_seal_loop() -> None:
+    """TASK-20260619T023922-audit-tamper-evidence (보안 ③): 감사 해시 체인 백그라운드 봉인(안전망).
+
+    record_audit_event 가 동기 봉인하지만, 동기 봉인 실패/누락(예: 봉인 중 예외) 행을 주기적으로
+    catch-up 한다. 간격 `AGENT_AUDIT_SEAL_SEC`(기본 30, 0=비활성). `_seal_audit_chain` 이 멱등·
+    GET_LOCK 직렬이라 동기 봉인과 경쟁해도 안전.
+    """
+    import logging
+    import threading
+    import time as _t
+    log = logging.getLogger(__name__)
+    if not AGENT_AUDIT_ENABLED:
+        return
+    try:
+        interval = int(os.getenv("AGENT_AUDIT_SEAL_SEC", "30") or "30")
+    except Exception:
+        interval = 30
+    if interval <= 0:
+        return
+
+    def _run():
+        _t.sleep(min(15, interval))  # 부팅 직후 herd 회피.
+        last_head = None
+        while True:
+            try:
+                conn = _connect_memory()
+                try:
+                    _seal_audit_chain_drain(conn)
+                    # outside-voice MAJOR-2 흡수 — off-DB 로그 앵커: 매 cycle 체인 head
+                    # (EventHash + max Id + 봉인 행수)를 app 로그로 남긴다. 로그를 외부(WORM/SIEM)
+                    # 로 선적하면 DB-write 공격자의 체인 재계산/tail-truncation/checkpoint 위조를
+                    # 외부 대조로 탐지 가능(in-DB 체인 단독 한계 보완). SECURITY.md §13 참조.
+                    hcur = conn.cursor()
+                    try:
+                        hcur.execute(
+                            "SELECT Id, EventHash FROM WebAuditEvents WHERE EventHash IS NOT NULL "
+                            "ORDER BY Id DESC LIMIT 1"
+                        )
+                        hrow = hcur.fetchone()
+                        hcur.execute("SELECT COUNT(*) FROM WebAuditEvents WHERE EventHash IS NOT NULL")
+                        hcnt = hcur.fetchone()
+                        head = (
+                            f"id={hrow[0]} hash={hrow[1]} sealed_count={hcnt[0]}"
+                            if hrow and hrow[1] else "empty"
+                        )
+                        if head != last_head:
+                            log.info("[audit-chain-anchor] %s", head)
+                            last_head = head
+                    finally:
+                        hcur.close()
+                finally:
+                    conn.close()
+            except Exception as exc:
+                log.warning("audit seal loop 1 cycle 실패(무시): %s", exc)
+            _t.sleep(interval)
+
+    threading.Thread(target=_run, name="web-audit-seal", daemon=True).start()
+
+
 @app.on_event("shutdown")
 def _stop_conn_health_monitor() -> None:
     try:
@@ -4799,6 +4859,195 @@ def _ensure_web_audit_events_schema(conn) -> None:
         cur.close()
 
 
+def _ensure_web_audit_chain_schema(conn) -> None:
+    """TASK-20260619T023922-audit-tamper-evidence (보안 ③, Critical §12.3): 감사 로그 변조방지 해시 체인.
+
+    `WebAuditEvents` 에 `EventHash`/`PrevHash CHAR(64)` 멱등 ALTER + `WebAuditChainCheckpoint`
+    (purge 경계 재앵커) 신설. `EventHash = SHA256(PrevHash | 정규화행)` 해시 체인.
+
+    **위협모델(정직)**: 본 체인은 *tamper-EVIDENCE* 다 — 체인을 인지하지 못한 수정/삭제/삽입
+    (SQL injection 버그·잘못된 마이그레이션·우발적 손상·내용 컬럼만 쓸 수 있는 부분권한 공격자)
+    을 검증에서 탐지한다. 그러나 `WebAuditEvents` 전체 write 권한을 가진 공격자는 행을 고치고
+    EventHash/PrevHash 를 재계산해 후속 행까지 re-chain 하거나(2a), tail 을 truncate 하거나(2b),
+    checkpoint 를 위조해(5) 검증을 통과시킬 수 있다 — in-DB 체인 단독의 본질적 한계.
+    이를 보완하려고 백그라운드 sealer 가 체인 head 해시를 **app 로그로 앵커**(off-DB)하며,
+    로그를 외부 WORM/SIEM 으로 선적하면 외부 대조로 위 공격을 탐지할 수 있다. 강한 보장이
+    필요하면 별 cycle 에서 head 해시의 주기적 외부 notarization(object-lock 버킷 등)을 추가한다
+    (SECURITY.md §13).
+
+    봉인(seal)은 `_seal_audit_chain` 이 GET_LOCK 직렬화 하에 미봉인 커밋행을 Id 순 일괄 처리
+    (fork 방지, `EventHash IS NULL` 가드). 기존 행 NULL=미봉인(다음 seal 이 backfill).
+    fast(`_ensure_seed_catchup`)+slow(`_ensure_web_tables`) 양 경로 — 기존 배포 자동 적용.
+    """
+    cur = conn.cursor()
+    try:
+        for ddl in (
+            "ALTER TABLE WebAuditEvents ADD COLUMN EventHash CHAR(64) NULL",
+            "ALTER TABLE WebAuditEvents ADD COLUMN PrevHash CHAR(64) NULL",
+            "CREATE INDEX IX_WAE_EventHash ON WebAuditEvents (EventHash)",
+        ):
+            try:
+                cur.execute(ddl)
+            except Exception:
+                pass
+        try:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS WebAuditChainCheckpoint (
+                    Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    ThroughEventId BIGINT NOT NULL,
+                    CheckpointHash CHAR(64) NOT NULL,
+                    Reason VARCHAR(32) NOT NULL DEFAULT 'purge',
+                    CreatedAt TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                    INDEX IX_WACC_Through (ThroughEventId)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                """
+            )
+        except Exception:
+            pass
+    finally:
+        cur.close()
+
+
+# TASK-20260619T023922-audit-tamper-evidence (보안 ③): 해시 체인 정규화 + 봉인.
+# 정규화 행 필드는 INSERT 시 불변 컬럼만 — EventHash/PrevHash 자신은 제외(봉인 UPDATE 가
+# 해시를 무효화하지 않도록). OccurredAt 은 ISO 문자열로 안정 직렬화.
+_AUDIT_CHAIN_FIELDS = (
+    "Id", "ActorAccountId", "ActorRoleId", "ActorType", "TargetAccountId",
+    "SessionId", "ActionCode", "ResourceType", "ResourceId",
+    "ChangeJson", "MaskedFields", "RemoteAddr", "UserAgent", "RequestId", "OccurredAt",
+)
+_AUDIT_SEAL_BATCH = 1000
+_AUDIT_SEAL_LOCK_NAME = "webaudit_seal"
+# JSON 컬럼(ChangeJson/MaskedFields)은 CAST(... AS CHAR) 로 MySQL 정규화 텍스트를 읽어
+# 결정성 확보(seal·verify 가 동일 정규형 사용 → 일관 해시). 별칭은 _AUDIT_CHAIN_FIELDS 정합.
+_AUDIT_CHAIN_SELECT = (
+    "Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, SessionId, "
+    "ActionCode, ResourceType, ResourceId, CAST(ChangeJson AS CHAR) AS ChangeJson, "
+    "CAST(MaskedFields AS CHAR) AS MaskedFields, RemoteAddr, UserAgent, RequestId, OccurredAt"
+)
+
+
+def _seal_audit_chain(conn, *, batch: int = _AUDIT_SEAL_BATCH) -> int:
+    """미봉인 커밋행을 Id 순으로 일괄 봉인(GET_LOCK 직렬화 → fork 방지). 봉인 행수 반환.
+
+    autocommit 연결 가정 — 모든 감사 INSERT 가 즉시 커밋되므로 별 연결에서 즉시 가시.
+    best-effort: 실패는 감사 write/응답을 막지 않는다(다음 seal 이 catch-up). 보유 GET_LOCK
+    은 finally 에서 RELEASE.
+    """
+    if not AGENT_AUDIT_ENABLED:
+        return 0
+    lock_cur = conn.cursor()
+    locked = False
+    sealed = 0
+    try:
+        lock_cur.execute("SELECT GET_LOCK(%s, %s)", (_AUDIT_SEAL_LOCK_NAME, 5))
+        got = lock_cur.fetchone()
+        locked = bool(got and got[0] == 1)
+        if not locked:
+            return 0
+        dcur = conn.cursor(dictionary=True)
+        try:
+            # 체인 head = 마지막 봉인 EventHash. 없으면 최신 checkpoint, 그것도 없으면 genesis "".
+            dcur.execute(
+                "SELECT EventHash FROM WebAuditEvents WHERE EventHash IS NOT NULL ORDER BY Id DESC LIMIT 1"
+            )
+            r = dcur.fetchone()
+            prev_hash = str(r["EventHash"]) if r and r.get("EventHash") else ""
+            if not prev_hash:
+                dcur.execute(
+                    "SELECT CheckpointHash FROM WebAuditChainCheckpoint ORDER BY Id DESC LIMIT 1"
+                )
+                cp = dcur.fetchone()
+                prev_hash = str(cp["CheckpointHash"]) if cp and cp.get("CheckpointHash") else ""
+            dcur.execute(
+                f"SELECT {_AUDIT_CHAIN_SELECT} FROM WebAuditEvents "
+                "WHERE EventHash IS NULL ORDER BY Id ASC LIMIT %s",
+                (int(batch),),
+            )
+            rows = dcur.fetchall() or []
+        finally:
+            dcur.close()
+        ucur = conn.cursor()
+        try:
+            for row in rows:
+                canonical = _audit_canonical_string(row)
+                event_hash = _audit_compute_hash(prev_hash, canonical)
+                # AND EventHash IS NULL 가드 (outside-voice MAJOR-1 흡수): 다른 연결이 이미 봉인한
+                # 행은 덮어쓰지 않는다(locking read 가 최신 커밋 버전 평가 → double-seal/fork 차단).
+                ucur.execute(
+                    "UPDATE WebAuditEvents SET EventHash = %s, PrevHash = %s "
+                    "WHERE Id = %s AND EventHash IS NULL",
+                    (event_hash, (prev_hash or None), int(row["Id"])),
+                )
+                if int(ucur.rowcount or 0) == 0:
+                    # 경쟁 연결이 먼저 봉인 — 그 행의 실제 EventHash 를 head 로 재동기화 후 계속.
+                    rcur = conn.cursor()
+                    try:
+                        rcur.execute("SELECT EventHash FROM WebAuditEvents WHERE Id = %s", (int(row["Id"]),))
+                        rr = rcur.fetchone()
+                        if rr and rr[0]:
+                            prev_hash = str(rr[0])
+                    finally:
+                        rcur.close()
+                    continue
+                prev_hash = event_hash
+                sealed += 1
+        finally:
+            ucur.close()
+        return sealed
+    except Exception:
+        return sealed
+    finally:
+        if locked:
+            try:
+                lock_cur.execute("SELECT RELEASE_LOCK(%s)", (_AUDIT_SEAL_LOCK_NAME,))
+                lock_cur.fetchone()
+            except Exception:
+                pass
+        lock_cur.close()
+
+
+def _seal_audit_chain_drain(conn, *, max_iters: int = 10000) -> int:
+    """미봉인 backlog 전체를 봉인 — 단, 매 호출이 GET_LOCK 을 짧게(배치당) 잡았다 놓도록
+    `_seal_audit_chain(batch=_AUDIT_SEAL_BATCH)` 를 반복 호출(outside-voice MAJOR-4 흡수).
+
+    1회 거대 batch(=락 장기 점유 + 대량 fetchall)를 피해 verify/purge 의 lock starvation·메모리
+    폭증을 막는다. 배치보다 적게 봉인되면 drained 로 간주 종료. max_iters 안전 상한.
+    """
+    total = 0
+    for _ in range(max_iters):
+        n = _seal_audit_chain(conn, batch=_AUDIT_SEAL_BATCH)
+        total += int(n or 0)
+        if int(n or 0) < _AUDIT_SEAL_BATCH:
+            break
+    return total
+
+
+def _audit_canonical_string(row: dict) -> str:
+    """감사 행의 결정적 정규화 문자열 — 해시 입력. 필드 순서/구분자 고정.
+
+    None 은 빈 문자열, JSON 컬럼은 이미 문자열(dispatcher 가 sort_keys 직렬화)이라 그대로.
+    OccurredAt(datetime) 은 마이크로초까지 ISO 로 안정화.
+    """
+    parts: list[str] = []
+    for f in _AUDIT_CHAIN_FIELDS:
+        v = row.get(f)
+        if v is None:
+            parts.append("")
+        elif hasattr(v, "isoformat"):
+            parts.append(v.isoformat())
+        else:
+            parts.append(str(v))
+    # \x1f (unit separator) — 본문에 나타나지 않는 제어문자로 필드 경계 모호성 차단.
+    return "\x1f".join(parts)
+
+
+def _audit_compute_hash(prev_hash: str, canonical: str) -> str:
+    import hashlib as _hl
+    return _hl.sha256((str(prev_hash or "") + "\x1e" + canonical).encode("utf-8")).hexdigest()
+
+
 def record_audit_event(
     conn,
     *,
@@ -4897,6 +5146,20 @@ def record_audit_event(
         )
     finally:
         cur.close()
+    # TASK-20260619T023922-audit-tamper-evidence (보안 ③): INSERT 직후 동기 봉인(best-effort).
+    # outside-voice MAJOR-1 흡수: caller conn 이 admin 트랜잭션(autocommit=False)이면 REPEATABLE
+    # READ 스냅샷이 고정돼 seal 이 stale view 로 fork 를 낼 수 있다. 따라서 **fresh autocommit
+    # 연결**로 봉인한다 — 최신 커밋 상태만 보고(스냅샷 pinning 없음), GET_LOCK 직렬 + Id ASC +
+    # EventHash IS NULL 가드로 fork 차단. caller tx 가 아직 미커밋이면 그 행은 다음 seal/백그라운드
+    # 가 커밋 후 봉인(deferred, 무해). 실패해도 감사 write 유지(fail-open).
+    try:
+        _seal_conn = _connect_memory()
+        try:
+            _seal_audit_chain(_seal_conn)
+        finally:
+            _seal_conn.close()
+    except Exception:
+        pass
 
 
 def _build_actor_from_request(
@@ -5184,6 +5447,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_web_product_db_rules_schema(conn)
     # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 fast-path 보정.
     _ensure_web_audit_events_schema(conn)
+    # TASK-20260619T023922-audit-tamper-evidence (보안 ③): 감사 해시 체인 컬럼/체크포인트 (fast path).
+    _ensure_web_audit_chain_schema(conn)
     # REQ-20260520-0001 (TASK-0086): WebAccountActivity DROP 완료. migration helper 는
     # rollback 1~2 cycle window 동안 보존 — table 부재 시 SHOW TABLES check 로 silent skip.
     try:
@@ -5366,6 +5631,8 @@ def _ensure_web_tables():
         _ensure_attachment_version_schema(conn)
         # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 보장 (slow path).
         _ensure_web_audit_events_schema(conn)
+        # TASK-20260619T023922-audit-tamper-evidence (보안 ③): 감사 해시 체인 컬럼/체크포인트 (slow path).
+        _ensure_web_audit_chain_schema(conn)
         # REQ-20260520-0001 (TASK-0086): migration helper 는 rollback window 동안 보존 (slow path).
         # WebAccountActivity 부재 시 SHOW TABLES check 로 silent skip.
         try:
@@ -22651,6 +22918,86 @@ def list_audit_resources(request: Request) -> JSONResponse:
         conn.close()
 
 
+@app.get("/api/admin/audits/verify")
+def verify_audit_chain(request: Request) -> JSONResponse:
+    """TASK-20260619T023922-audit-tamper-evidence (보안 ③, Critical §12.3): 감사 로그 해시 체인 무결성 검증.
+
+    봉인 catch-up 후 Id 순으로 walk 하며 (1) 각 행 PrevHash == 직전 봉인행 EventHash(링크),
+    (2) EventHash == SHA256(PrevHash | 정규화행)(내용) 을 검사. 첫 파손 위치를 반환. purge 경계는
+    최신 checkpoint 로 재앵커(잔존 최古행 PrevHash == checkpoint). 권한: `audit.read.any`(admin/dba).
+    walk 는 keyset 페이지네이션으로 메모리 bound.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        actor, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(actor, "audit.read.any"):
+            return _json_error("감사 무결성 검증 권한이 필요합니다.", 403)
+        # 검증 전 봉인 catch-up(미봉인 행 포함). 실패해도 검증은 진행(미봉인=break 로 보고).
+        try:
+            sealed_now = _seal_audit_chain_drain(conn)
+        except Exception:
+            sealed_now = 0
+        cur = conn.cursor(dictionary=True)
+        try:
+            # purge 경계 genesis = 최신 checkpoint hash(없으면 "").
+            cur.execute(
+                "SELECT ThroughEventId, CheckpointHash FROM WebAuditChainCheckpoint ORDER BY Id DESC LIMIT 1"
+            )
+            cp = cur.fetchone()
+            prev_event_hash = str(cp["CheckpointHash"]) if cp and cp.get("CheckpointHash") else ""
+            checkpoint_through = int(cp["ThroughEventId"]) if cp and cp.get("ThroughEventId") is not None else None
+            # 첫 잔존행 PrevHash 가 checkpoint(또는 genesis "")와 일치하는지 검사용.
+            last_id = 0
+            verified = 0
+            first_break: dict | None = None
+            while first_break is None:
+                cur.execute(
+                    f"SELECT {_AUDIT_CHAIN_SELECT}, EventHash, PrevHash FROM WebAuditEvents "
+                    "WHERE Id > %s ORDER BY Id ASC LIMIT 1000",
+                    (last_id,),
+                )
+                batch = cur.fetchall() or []
+                if not batch:
+                    break
+                for row in batch:
+                    rid = int(row["Id"])
+                    last_id = rid
+                    stored = row.get("EventHash")
+                    if not stored:
+                        first_break = {"id": rid, "reason": "unsealed"}
+                        break
+                    stored_prev = str(row.get("PrevHash") or "")
+                    if stored_prev != str(prev_event_hash or ""):
+                        first_break = {
+                            "id": rid, "reason": "prev_hash_mismatch",
+                            "expected_prev": (prev_event_hash or None), "stored_prev": (stored_prev or None),
+                        }
+                        break
+                    recomputed = _audit_compute_hash(stored_prev, _audit_canonical_string(row))
+                    if recomputed != str(stored):
+                        first_break = {"id": rid, "reason": "content_modified"}
+                        break
+                    prev_event_hash = str(stored)
+                    verified += 1
+        finally:
+            cur.close()
+        ok = first_break is None
+        return JSONResponse({
+            "ok": ok,
+            "verified_count": verified,
+            "first_break": first_break,
+            "sealed_during_verify": int(sealed_now or 0),
+            "checkpoint_through_event_id": checkpoint_through,
+        })
+    finally:
+        conn.close()
+
+
 @app.post("/api/admin/audits/purge")
 async def purge_audit_events(request: Request) -> JSONResponse:
     """REQ-20260519-0001 (TASK-0073 Phase A4, Eng review E8): chunked PK purge.
@@ -22741,6 +23088,37 @@ async def purge_audit_events(request: Request) -> JSONResponse:
             except Exception:
                 pass
             return _json_error(f"purge start audit failed: {exc}", 500)
+
+        # TASK-20260619T023922-audit-tamper-evidence (보안 ③): purge 경계 체인 재앵커.
+        # 삭제 전 (1) 전체 봉인 catch-up → (2) 삭제될 마지막 행(최대 Id)의 EventHash 를 checkpoint
+        # 로 기록. 삭제 후 잔존 최古행의 PrevHash 가 이 checkpoint 와 일치해야 검증 통과(정당 purge
+        # 경계 인지). start self-audit 행(방금 INSERT, OccurredAt=now)은 cutoff 밖이라 미삭제.
+        try:
+            _seal_audit_chain_drain(conn)
+            _cpcur = conn.cursor(dictionary=True)
+            try:
+                _cpcur.execute(
+                    "SELECT Id, EventHash FROM WebAuditEvents WHERE OccurredAt < %s AND EventHash IS NOT NULL "
+                    "ORDER BY Id DESC LIMIT 1",
+                    (cutoff,),
+                )
+                _last = _cpcur.fetchone()
+            finally:
+                _cpcur.close()
+            if _last and _last.get("EventHash"):
+                _ins = conn.cursor()
+                try:
+                    _ins.execute(
+                        "INSERT INTO WebAuditChainCheckpoint (ThroughEventId, CheckpointHash, Reason) "
+                        "VALUES (%s, %s, 'purge')",
+                        (int(_last["Id"]), str(_last["EventHash"])),
+                    )
+                finally:
+                    _ins.close()
+                conn.commit()
+        except Exception as _cp_exc:
+            # 체크포인트 실패 시 purge 중단(체인 단절 방지) — 재시도 가능.
+            return _json_error(f"purge chain checkpoint failed: {_cp_exc}", 500)
 
         # Chunked DELETE loop.
         total_deleted = 0

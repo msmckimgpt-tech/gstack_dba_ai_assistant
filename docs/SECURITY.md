@@ -364,3 +364,37 @@ ADR-0030 "복원 절차" 참조 — 요약: `repo/.env.secret` 의 토글을 `=1
 2. **계정 열거 오라클**: 잠긴 계정은 429+잠금 메시지, 미존재/일반 실패는 401+일반 메시지 → 사용자명 존재
    여부가 누설된다(잠금 스킴의 본질). 엄격 잔류가 필요하면 잠금 상태도 일반 메시지로 균질화 검토.
 3. **per-IP throttle 의 워커 공유**: 멀티워커 운영 시 IP throttle 을 Redis 등 공유 저장소로 승격.
+
+## 13. 감사 로그 변조방지 — 해시 체인 (TASK-20260619T023922-audit-tamper-evidence)
+
+`WebAuditEvents`(§9) 에 SHA-256 해시 체인을 입혀 사후 변조를 탐지한다. 정합 정본 =
+feature-0003 FUNCTION.md AC-0592~0595.
+
+### 13.1 메커니즘
+
+- 각 감사 행 `EventHash = SHA256(PrevHash | 정규화행)`, `PrevHash` = 직전 봉인행 EventHash
+  (Id 순 체인). 정규화는 행의 불변 컬럼만(EventHash/PrevHash 제외, JSON 은 MySQL 정규화 텍스트).
+- 봉인은 `GET_LOCK` 직렬화 하에 미봉인 커밋행을 Id 순 일괄 처리(`EventHash IS NULL` 가드로
+  fork/double-seal 차단). record_audit_event 직후 **fresh autocommit 연결** 동기 봉인 +
+  백그라운드 sealer(`AGENT_AUDIT_SEAL_SEC`, 기본 30s) + 검증 시 봉인.
+- 검증 `GET /api/admin/audits/verify`(`audit.read.any`): Id 순 walk·해시 재계산·링크 검사 →
+  첫 파손 위치 반환. purge 는 삭제 전 봉인 + 경계 EventHash 를 `WebAuditChainCheckpoint` 에
+  기록 → 검증이 정당 purge 경계를 재앵커.
+
+### 13.2 위협모델 (정직 — 무엇을 막고 못 막는가)
+
+본 in-DB 해시 체인은 **tamper-EVIDENCE** 다. **탐지 대상**: 체인을 인지하지 못한 단일/부분
+변조 — SQL injection 버그·잘못된 마이그레이션·우발적 손상·내용 컬럼만 쓸 수 있는 부분권한
+공격자·단순 행 수정/삭제. **탐지 못 하는 대상(in-DB 체인 본질 한계)**: `WebAuditEvents`
+전체 write 권한 공격자는 (a) 행을 고치고 후속 행까지 EventHash/PrevHash 재계산(re-chain),
+(b) 최신 행 tail truncation, (c) checkpoint 위조로 검증을 통과시킬 수 있다.
+
+### 13.3 보완 — off-DB 로그 앵커 + 외부 notarization (TODO)
+
+- **현재**: 백그라운드 sealer 가 매 cycle 체인 head(`[audit-chain-anchor] id=.. hash=..
+  sealed_count=..`)를 app 로그로 남긴다. 운영자가 이 로그를 **외부 WORM/SIEM 으로 선적**하면
+  DB-write 공격자의 재계산/truncation/위조를 외부 대조로 탐지할 수 있다(로그는 DB 밖이라
+  공격자가 소급 수정 불가).
+- **강한 보장 TODO(별 cycle)**: head 해시 + max Id + row count 를 주기적으로 append-only
+  외부 저장소(object-lock/WORM 버킷, 별 notarization 서비스, 서명 후 off-box 선적)에 게시.
+  + DB 레벨 WORM(감사 테이블 UPDATE/DELETE 권한 분리 — 단 봉인 UPDATE/purge DELETE 경로 재설계 필요).

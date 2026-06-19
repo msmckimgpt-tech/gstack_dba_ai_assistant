@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260619-login-lockout" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260619-audit-chain" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -338,6 +338,9 @@
             <h2>감사 로그</h2>
           </div>
           <div class="admin-pane-actions">
+            <!-- TASK-20260619T023922-audit-tamper-evidence (보안 ③): 감사 해시 체인 무결성 검증. audit.read.any 권한자만. -->
+            <button type="button" id="auditVerifyBtn" class="btn-secondary" style="display:none">무결성 검증</button>
+            <span id="auditVerifyResult" class="admin-audit-verify-result" style="display:none"></span>
             <a href="#" id="auditExportCsvBtn" class="btn-secondary" style="display:none">CSV 내보내기</a>
             <!-- TASK-0158: audit.purge 진입점 (파괴적 — dry-run + typed-confirm). audit.purge 권한자만 노출. -->
             <button type="button" id="auditPurgeBtn" class="btn-danger" style="display:none">보존기간 초과 로그 정리</button>
@@ -625,7 +628,7 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260619-login-lockout"></script>
+  <script src="/static/admin.js?v=20260619-audit-chain"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260619-llm-restriction"></script>

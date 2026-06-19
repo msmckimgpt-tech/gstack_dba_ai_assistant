@@ -4319,3 +4319,15 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] `release-notes-data.js` `releases[]` 맨 앞 2026-06-19 블록 추가(`generated` 동기) — `{type:new, area:work}` "AI 사용이 일시적으로 제한될 때 화면에서 바로 확인". 기존 문체 정합(사용자 결과 중심·존댓말 detail·내부동작 비노출="외부 요인" 추상화, AC-0579).
 - [x] index.html/admin.html `release-notes-data.js?v=` 캐시버스터 bump(20260619-llm-restriction) + `verify_release_notes.mjs` 34/34 + node --check.
 - [ ] 머지 → 배포(web) → PB-0008(양 진입점 노출) → 마감.
+
+### TASK-20260619T023922-audit-tamper-evidence — 감사 기록 변조방지 (해시 체인 + 검증 + 로그 앵커) (REQ-20260619-0326, AC-0592~0595, Critical §12.3, 2026-06-19)
+- 사용자 요청(보안 보강 6종 중 ③): 감사 기록 변조방지. 기존 `WebAuditEvents`(TASK-0073) append-only 의도였으나 변조(수정/삭제/삽입/재정렬) 탐지 수단 부재.
+- [x] 스키마(멱등·비파괴): `WebAuditEvents.EventHash/PrevHash CHAR(64)` ALTER + `WebAuditChainCheckpoint`(purge 경계 재앵커) 신설(`_ensure_web_audit_chain_schema`, fast+slow 양 경로). 기존 행 NULL=미봉인→backfill.
+- [x] 해시 체인: `EventHash = SHA256(PrevHash | 정규화행)`. 정규화=`_audit_canonical_string`(\x1f 구분, JSON 컬럼 `CAST(... AS CHAR)` 결정성, EventHash/PrevHash 제외). 봉인 `_seal_audit_chain`=GET_LOCK 직렬+미봉인 커밋행 Id ASC 일괄+`EventHash IS NULL` 가드(fork 방지).
+- [x] 훅: record_audit_event INSERT 후 **fresh autocommit 연결**로 동기 봉인(best-effort) + 백그라운드 sealer(`AGENT_AUDIT_SEAL_SEC`=30, drain) + verify 시 봉인.
+- [x] verify 엔드포인트 `GET /api/admin/audits/verify`(audit.read.any): drain 봉인 후 Id 순 keyset walk·재계산·링크/내용 검사 → first_break 보고. purge 경계는 최신 checkpoint 재앵커.
+- [x] purge 정합: 삭제 전 drain 봉인 + 경계 행 EventHash 를 checkpoint INSERT(실패 시 purge 중단=체인 단절 방지).
+- [x] 프론트: 감사 탭 "무결성 검증" 버튼(audit.read.any)+`triggerAuditChainVerify`+결과 배지(정상 green/위반 red), styles `.admin-audit-verify-result`, cache-buster `?v=20260619-audit-chain`.
+- [x] 검증: `tests/test_audit_tamper_evidence.py` 11/11(B1/B2 해시 tamper-detection 실 동작 + 나머지 inspect.getsource) + make test 회귀 0(사전존재 product-delete 2건 제외) + py_compile + node --check + CSS brace.
+- [x] outside-voice 적대 보안 리뷰(Critical 감사 무결성) **SHIP-WITH-FIXES**(BLOCKER 0). **흡수**: MAJOR-1(RR 스냅샷 fork→fresh-conn 봉인+`EventHash IS NULL` 가드)·MAJOR-4(verify/purge 거대 batch lock starvation→1000-batch drain bound)·MAJOR-2(in-DB 체인 단독 한계 정직화: 위협모델 docstring/SECURITY.md §13 명시 + 백그라운드 sealer **off-DB 로그 앵커** `[audit-chain-anchor]` head 해시). **수용**: MINOR(CAST(JSON) 서버버전 의존 upgrade 위험·ThroughEventId 검증 미사용·DB 통합테스트 부재[게이트 DB-less]·\x1f 구분자 embeddable=chosen-prefix only).
+- [ ] 머지 → 배포(web) → 라이브 verify round-trip(정상 ok + 인위 변조→break) + PB-0008(검증 버튼/배지) → 마감.
