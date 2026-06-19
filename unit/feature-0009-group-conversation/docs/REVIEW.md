@@ -124,3 +124,15 @@ source_of_truth: true
   blocked 가드+발신자 귀속) 재사용. py_compile+node --check+회귀 17/17.
 - Risks/Open: 발신자 UI 표시·LLM 라벨 미구현(S3c, 다음 커밋) — 현재 타 멤버 채팅이 자기 메시지처럼 보일 수 있음.
 - Human Approval Needed: 아니오 (무회귀 분기, PLAN-APPROVED).
+
+## REV-20260619-0011 [SUBAGENT: S3c 발신자 표시 + 연속 user 병합 §18.8]
+- Related Change: CHG-20260619-0009
+- Reason: ① 채팅 표시 버그(표시 store 미러 누락) 수정 ② LLM 경로 연속 user 병합(공유 _assemble 변경 — 전 대화 영향)이 1:1 무회귀인지.
+- 검증(self): ① 표시 store 미러=채팅이 /api/history(agent_runtime.messages) 에 노출되도록 save_memory_message
+  추가(meta_json sender). 미러 실패는 best-effort(흐름 무중단). ② renderMessages 는 meta.sender_* 있을 때만
+  메시지별 발신자, 없으면 기존 owner 로직 폴백 → 비-그룹 무회귀. ③ `_merge_consecutive_user_messages` 는
+  연속 user(string) 만 병합, 비-string(이미지)·교대 정상 메시지 무변경 → 1:1 사실상 무영향(연속 user 드묾),
+  그룹 채팅 누적 후 @assistant alternating 위반 방지. py_compile + node --check + 회귀 17/17 + 병합 4테스트(컨테이너).
+- Risks/Open: LLM 화자 **라벨**(프롬프트에 "누가 말했는지") 미주입 — Bedrock alternating 실측+sanitize 필요로
+  배포 후 검증 권장. LLM 은 채팅 전체 맥락은 받음(요구 #2 충족), 화자 명시만 잔여.
+- Human Approval Needed: 아니오 (표시 버그수정 + 무회귀 병합, PLAN-APPROVED). 배포 후 그룹 @assistant 라이브 확인 권장.

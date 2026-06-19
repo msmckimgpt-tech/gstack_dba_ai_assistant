@@ -1441,6 +1441,39 @@ def _format_core_messages(normalized: list[dict]) -> list[dict]:
     return messages
 
 
+def _merge_consecutive_user_messages(messages: list[dict]) -> list[dict]:
+    """feature-0009: 연속된 user 메시지를 하나의 user 턴으로 병합한다.
+
+    그룹 대화에서 사람-사람 채팅(@assistant 없는 여러 user 메시지)이 @assistant 호출 사이에
+    쌓이면 user 턴이 연속되어 Anthropic/Bedrock 의 role 교대 제약(messages must alternate)에
+    걸릴 수 있다. 연속 user 의 string content 를 빈 줄로 이어 단일 user 턴으로 합친다. content 가
+    string 이 아닌 경우(이미지 array 등)는 병합하지 않고 그대로 둔다(안전). 1:1 대화엔 연속 user 가
+    드물어 사실상 무영향.
+    """
+    if not messages:
+        return messages
+    out: list[dict] = []
+    for msg in messages:
+        if (
+            out
+            and isinstance(msg, dict)
+            and msg.get("role") == "user"
+            and out[-1].get("role") == "user"
+            and isinstance(msg.get("content"), str)
+            and isinstance(out[-1].get("content"), str)
+        ):
+            prev = dict(out[-1])
+            prev["content"] = (
+                str(prev.get("content") or "").rstrip()
+                + "\n\n"
+                + str(msg.get("content") or "").lstrip()
+            ).strip()
+            out[-1] = prev
+        else:
+            out.append(msg)
+    return out
+
+
 def _assemble_core_messages(rows: list[dict], max_messages: int) -> list[dict]:
     """normalize + truncate + format for OpenAI API. shared by MySQL and PG paths.
 
@@ -1450,7 +1483,7 @@ def _assemble_core_messages(rows: list[dict], max_messages: int) -> list[dict]:
     """
     normalized = _normalize_history_rows(rows)
     if len(normalized) <= max_messages:
-        return _format_core_messages(normalized)
+        return _merge_consecutive_user_messages(_format_core_messages(normalized))
 
     window = normalized[-max_messages:]
     dropped = normalized[:-max_messages]
@@ -1464,7 +1497,7 @@ def _assemble_core_messages(rows: list[dict], max_messages: int) -> list[dict]:
         kept_users = kept_users[-_USER_TURN_KEEP:]
     # 재정규화: 윈도우 시작부의 orphan tool 메시지(짝 assistant 가 dropped) 정리.
     combined = _normalize_history_rows(kept_users + window)
-    return _format_core_messages(combined)
+    return _merge_consecutive_user_messages(_format_core_messages(combined))
 
 
 def _load_conversation_messages(conn, conversation_id: str, max_messages: int = 50) -> list[dict]:

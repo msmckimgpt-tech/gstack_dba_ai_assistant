@@ -107,3 +107,16 @@ source_of_truth: true
 - Impact: 그룹 대화에서 사람끼리 채팅 가능(AI 미호출), @assistant 시에만 AI 응답. 1:1(member_count≤1)·신규 대화는 종전 /api/ask 무회귀. 비-멤버 타계정 대화는 여전히 차단.
 - Rollback Notes: 게이트/분기/member 신호 제거로 가역.
 - 검증: py_compile + node --check + 회귀 17/17. 잔여=발신자 UI 표시/LLM 라벨(S3c).
+
+## CHG-20260619-0009
+- Date: 2026-06-19
+- Related Requirement: REQ-GC-R5 (S3c — 발신자 표시 + 연속 user 병합)
+- Summary: 그룹 채팅 발신자 UI 표시 + 표시 store 미러 + 연속 user 메시지 병합(role 교대 제약 회피).
+- Files:
+  - `app.py` `_save_group_chat_message_pg`: **표시 store(agent_runtime.messages) 미러 추가**(meta_json 에 sender_account_id/username) — 이게 없으면 채팅이 /api/history 에 안 보이는 잠재 버그. endpoint 가 username 전달.
+  - `app.js` renderMessages: 메시지별 발신자(meta.sender_*) 우선 표시(그룹 채팅 "누가 보냈는지"), 미존재 시 기존 owner 기반 로직 폴백(무회귀).
+  - `agent_core.py` `_merge_consecutive_user_messages` 신규 + `_assemble_core_messages` 양 return 에 적용 — 연속 user(사람 채팅 누적) 를 단일 user 턴으로 병합해 Anthropic/Bedrock alternating 제약 회피(string content 만, 1:1 무영향).
+  - 신규 `tests/test_group_history_merge.py` (병합 4 테스트, 컨테이너 make test).
+- Impact: 그룹 채팅이 화면에 발신자와 함께 표시 + @assistant 가 채팅 누적 후에도 안전 실행. 1:1·이미지 content 무회귀.
+- Rollback Notes: 미러/렌더/병합 제거로 가역.
+- ⚠ 잔여(라이브 검증): LLM 히스토리 발신자 **라벨**(누가 말했는지 프롬프트 명시) — Bedrock alternating 실측 + 라벨 주입 sanitize 가 필요해 배포 후 검증 권장(현재 LLM 은 채팅 전체 맥락은 받음, 화자 라벨만 미주입).

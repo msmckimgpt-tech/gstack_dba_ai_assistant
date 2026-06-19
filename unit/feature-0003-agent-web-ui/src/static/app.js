@@ -3084,9 +3084,15 @@ function renderMessages() {
 
     const row = document.createElement("article");
     const role = message.role === "user" ? "user" : "assistant";
+    // feature-0009: 그룹 채팅 메시지는 메시지별 발신자(meta.sender_*) 우선 — 누가 보냈는지 표시.
+    const senderUsername = (message.meta && message.meta.sender_username) || "";
+    const senderId = Number((message.meta && message.meta.sender_account_id) || 0);
+    const msgIsOwn = role === "user"
+      ? (senderId ? senderId === Number((state.user && state.user.id) || 0) : isOwn)
+      : false;
     const classes = [`message`, `is-${role}`];
     if (role === "user") {
-      classes.push(isOwn ? "is-own-message" : "is-other-message");
+      classes.push(msgIsOwn ? "is-own-message" : "is-other-message");
     }
     row.className = classes.join(" ");
 
@@ -3094,7 +3100,11 @@ function renderMessages() {
     meta.className = "message-meta";
     let speaker = "Assistant";
     if (role === "user") {
-      speaker = isOwn ? selfLabel : ownerLabel;
+      if (senderUsername) {
+        speaker = msgIsOwn ? `나 (${senderUsername})` : senderUsername;
+      } else {
+        speaker = isOwn ? selfLabel : ownerLabel;
+      }
     }
     const durationMs = role === "assistant" ? Number(message.meta?.duration_ms || 0) : 0;
     if (durationMs > 0) {

@@ -48,6 +48,7 @@ source_of_truth: true
 - 잔여: S3c(발신자 UI 표시·LLM 라벨) · S5(run cap·llm_usage actor 귀속·폴링)
   - [x] 릴리즈 노트(그룹 대화) + 캐시버스터 (CHG-0007)
   - [x] send-routing 멘션 게이팅 사람 채팅 (CHG-0008, member_count/is_member 신호 + sendPrompt 분기)
+  - [x] S3c 발신자 UI 표시(표시 store 미러 + renderMessages 발신자) + 연속 user 병합(CHG-0009). LLM 화자 라벨만 라이브 검증 잔여
 
 ## 5. Blocked
 - 없음

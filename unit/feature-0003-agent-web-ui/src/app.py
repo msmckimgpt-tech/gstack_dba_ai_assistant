@@ -13622,23 +13622,47 @@ def remove_conversation_member(cid: str, account_id: int, request: Request) -> J
         conn.close()
 
 
-def _save_group_chat_message_pg(conversation_id: str, account_id: int, content: str) -> int:
+def _save_group_chat_message_pg(
+    conversation_id: str, account_id: int, content: str, username: str | None = None
+) -> int:
     """feature-0009: 사람-사람 채팅 메시지(user role)를 PG 에 저장 + 대화 updated_at 갱신.
 
-    LLM 미호출(ask_jobs 미경유). sender_account_id 로 발신자 귀속. returns message_id(0=실패).
+    LLM 미호출(ask_jobs 미경유). **두 store 에 모두 기록**:
+      - core_messages: LLM 히스토리(다음 @assistant 가 맥락으로 봄), sender_account_id 귀속.
+      - messages(표시 store, /api/history 가 읽음): meta_json 에 발신자(sender_account_id/username)
+        를 담아 UI 가 "누가 보냈는지" 표시. (이 미러가 없으면 채팅이 화면에 안 보임.)
+    returns core message_id(0=실패).
     """
     from modules.runtime_backend import _get_pg_runtime_backend, _get_pg_runtime_conn
     pg_conn = _get_pg_runtime_conn()
     if not pg_conn:
         return 0
     try:
-        mid = _get_pg_runtime_backend().save_core_message(
+        be = _get_pg_runtime_backend()
+        mid = be.save_core_message(
             pg_conn,
             conversation_id=conversation_id,
             role="user",
             content=content,
             sender_account_id=int(account_id),
         )
+        # 표시 store 미러 (sender meta 포함) — /api/history 노출.
+        try:
+            meta = json.dumps(
+                {
+                    "sender_account_id": int(account_id),
+                    "sender_username": username or "",
+                    "group_chat": True,
+                },
+                ensure_ascii=False,
+            )
+            be.save_memory_message(
+                pg_conn, conversation_id=conversation_id, role="user", content=content, meta_json=meta
+            )
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "group chat display mirror failed (conversation_id=%s)", conversation_id, exc_info=True
+            )
         try:
             with pg_conn.cursor() as cur:
                 cur.execute(
@@ -13688,7 +13712,9 @@ async def post_group_chat_message(cid: str, request: Request) -> JSONResponse:
         _is_blocked, _block_reason = _conversation_block_info(cid, conn=conn)
         if _is_blocked:
             return _json_error(_block_reason or _BLOCKED_PRODUCT_DELETED_REASON, 403)
-        mid = _save_group_chat_message_pg(cid, int(account["id"]), content)
+        mid = _save_group_chat_message_pg(
+            cid, int(account["id"]), content, username=str(account.get("username") or "")
+        )
         if not mid:
             return _json_error("메시지 저장 실패", 500)
         return JSONResponse(
