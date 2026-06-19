@@ -1322,6 +1322,95 @@ function getSystemPromptPending(args) {
 //   마지막 응답 캐시(days|gran). 모델 칩 토글은 재조회 없이 캐시로 재렌더(loadUsage({refetch:false})).
 adminState.usage = { initialized: false, byAccount: [], drillRole: null, drillPage: 0, drillQuery: "", drillPageSize: 10, _renderDrill: null, selectedModels: null, _lastRaw: null, _lastKey: null };
 
+// TASK-20260619T030500-llm-usage-quota (보안 ④): 역할 기본 + 계정 특수 LLM 토큰 한도 관리.
+async function loadQuotas() {
+  const rolesBox = document.getElementById("quotaRolesBox");
+  const acctBox = document.getElementById("quotaAcctBox");
+  if (!rolesBox) return;
+  let data;
+  try {
+    data = await apiFetch("/api/admin/quotas");
+  } catch (err) {
+    rolesBox.textContent = "한도를 불러오지 못했습니다.";
+    return;
+  }
+  const fmtVal = (v) => (v === null || v === undefined ? "" : String(v));
+  rolesBox.innerHTML = "";
+  (data.roles || []).forEach((r) => {
+    const row = document.createElement("div");
+    row.className = "admin-quota-row";
+    row.innerHTML =
+      `<span class="admin-quota-name">${escapeHtml(r.name || r.role_key || ("#" + r.role_id))}</span>` +
+      `<input type="number" min="0" class="admin-search admin-quota-daily" placeholder="일일(상속)" value="${escapeHtml(fmtVal(r.daily))}" style="max-width:130px" />` +
+      `<input type="number" min="0" class="admin-search admin-quota-monthly" placeholder="월간(상속)" value="${escapeHtml(fmtVal(r.monthly))}" style="max-width:130px" />` +
+      `<button type="button" class="btn-secondary admin-quota-save">저장</button>`;
+    row.querySelector(".admin-quota-save").addEventListener("click", async () => {
+      const d = row.querySelector(".admin-quota-daily").value;
+      const m = row.querySelector(".admin-quota-monthly").value;
+      try {
+        await apiFetch(`/api/admin/quotas/role/${Number(r.role_id)}`, {
+          method: "PUT",
+          body: JSON.stringify({ daily: d === "" ? null : Number(d), monthly: m === "" ? null : Number(m) }),
+        });
+        showToast(`${r.name || r.role_key} 역할 한도를 저장했습니다.`);
+        loadQuotas();
+      } catch (err) {
+        showToast(`한도 저장 실패: ${err.message || err}`, true);
+      }
+    });
+    rolesBox.appendChild(row);
+  });
+  if (acctBox) {
+    acctBox.innerHTML = "";
+    (data.account_overrides || []).forEach((a) => {
+      const row = document.createElement("div");
+      row.className = "admin-quota-row";
+      const dt = a.daily === null || a.daily === undefined ? "상속" : String(a.daily);
+      const mt = a.monthly === null || a.monthly === undefined ? "상속" : String(a.monthly);
+      row.innerHTML =
+        `<span class="admin-quota-name">${escapeHtml(a.username || ("#" + a.account_id))}</span>` +
+        `<span class="admin-usage-caption">일일 ${escapeHtml(dt)} · 월간 ${escapeHtml(mt)}</span>` +
+        `<button type="button" class="btn-secondary admin-quota-clear">해제</button>`;
+      row.querySelector(".admin-quota-clear").addEventListener("click", async () => {
+        try {
+          await apiFetch(`/api/admin/quotas/account/${Number(a.account_id)}`, {
+            method: "PUT",
+            body: JSON.stringify({ daily: null, monthly: null }),
+          });
+          showToast(`${a.username} 계정 특수 한도를 해제했습니다.`);
+          loadQuotas();
+        } catch (err) {
+          showToast(`해제 실패: ${err.message || err}`, true);
+        }
+      });
+      acctBox.appendChild(row);
+    });
+  }
+  const addBtn = document.getElementById("quotaAcctSaveBtn");
+  if (addBtn && !addBtn._wired) {
+    addBtn._wired = true;
+    addBtn.addEventListener("click", async () => {
+      const aid = document.getElementById("quotaAcctId").value;
+      const d = document.getElementById("quotaAcctDaily").value;
+      const m = document.getElementById("quotaAcctMonthly").value;
+      if (!aid) { showToast("계정 ID 를 입력하세요.", true); return; }
+      try {
+        await apiFetch(`/api/admin/quotas/account/${Number(aid)}`, {
+          method: "PUT",
+          body: JSON.stringify({ daily: d === "" ? null : Number(d), monthly: m === "" ? null : Number(m) }),
+        });
+        showToast("계정 특수 한도를 저장했습니다.");
+        document.getElementById("quotaAcctId").value = "";
+        document.getElementById("quotaAcctDaily").value = "";
+        document.getElementById("quotaAcctMonthly").value = "";
+        loadQuotas();
+      } catch (err) {
+        showToast(`저장 실패: ${err.message || err}`, true);
+      }
+    });
+  }
+}
+
 // TASK-0198: opts.refetch=false → days/gran 동일 캐시(_lastRaw)로 재렌더만(모델 칩 토글용).
 //   기간/단위 변경(컨트롤 change) 은 refetch=true(기본) — 새 모델 집합이 올 수 있으므로 선택 초기화.
 async function loadUsage(opts) {
@@ -1937,6 +2026,7 @@ function switchTab(tabName) {
   if (tabName === "usage" && !adminState.usage.initialized) {
     adminState.usage.initialized = true;
     loadUsage();
+    loadQuotas(); // TASK-20260619T030500-llm-usage-quota (보안 ④): 사용 한도 패널.
   }
   // TASK-0095: 설정 tab 첫 진입 시 sub-section 마운트.
   if (tabName === "settings" && !adminState.settings.initialized) {

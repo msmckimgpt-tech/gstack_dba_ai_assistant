@@ -611,6 +611,11 @@ LOGIN_MAX_FAILED_ATTEMPTS = max(1, int(os.getenv("WEB_LOGIN_MAX_FAILED_ATTEMPTS"
 LOGIN_LOCKOUT_MINUTES = max(1, int(os.getenv("WEB_LOGIN_LOCKOUT_MINUTES", "15")))
 LOGIN_IP_MAX_ATTEMPTS = max(1, int(os.getenv("WEB_LOGIN_IP_MAX_ATTEMPTS", "20")))
 LOGIN_IP_WINDOW_SEC = max(30, int(os.getenv("WEB_LOGIN_IP_WINDOW_SEC", "600")))
+# TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 토큰 사용량 한도. 역할별 기본 + 계정별 특수(override).
+# 미설정=무제한(배포만으로 누구도 차단하지 않음 — 관리자가 한도 설정 시 발효). `=0` 으로 enforce
+# 전체 비활성(킬스위치). PG usage 조회 실패 시 fail-open(인프라 장애로 전원 차단 회피).
+LLM_QUOTA_ENFORCE = os.getenv("AGENT_LLM_QUOTA_ENFORCE", "1").strip() not in ("0", "false", "no", "off")
+_LLM_QUOTA_TYPES = ("daily", "monthly")
 BOOTSTRAP_ADMIN_USERNAME = str(os.getenv("WEB_BOOTSTRAP_ADMIN_USERNAME", "") or "").strip()
 BOOTSTRAP_ADMIN_PASSWORD = str(os.getenv("WEB_BOOTSTRAP_ADMIN_PASSWORD", "") or "")
 
@@ -5336,6 +5341,125 @@ def _ensure_login_lockout_schema(conn) -> None:
         cur.close()
 
 
+def _ensure_llm_quota_schema(conn) -> None:
+    """TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 토큰 사용량 한도 테이블 (멱등 CREATE).
+
+    `WebRoleTokenQuotas`(역할별 기본)·`WebAccountTokenQuotas`(계정별 특수/override). QuotaType=
+    'daily'|'monthly', TokenLimit BIGINT(0=무제한 명시). 미존재 행=상속(계정→역할→무제한).
+    RBAC override 패턴(WebRolePermissions+WebAccountPermissionOverrides) 미러. fast+slow 양 경로.
+    """
+    cur = conn.cursor()
+    try:
+        for ddl in (
+            """
+            CREATE TABLE IF NOT EXISTS WebRoleTokenQuotas (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                RoleId BIGINT NOT NULL,
+                QuotaType VARCHAR(16) NOT NULL,
+                TokenLimit BIGINT NOT NULL,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY UQ_WRTQ (RoleId, QuotaType)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS WebAccountTokenQuotas (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                AccountId BIGINT NOT NULL,
+                QuotaType VARCHAR(16) NOT NULL,
+                TokenLimit BIGINT NOT NULL,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY UQ_WATQ (AccountId, QuotaType)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """,
+        ):
+            try:
+                cur.execute(ddl)
+            except Exception:
+                pass
+    finally:
+        cur.close()
+
+
+def _account_effective_quota(conn, account_id: int, role_id: int, quota_type: str) -> "int | None":
+    """계정 override → 역할 기본 → None(무제한) 순 유효 한도. 0=무제한(명시). (보안 ④)"""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT TokenLimit FROM WebAccountTokenQuotas WHERE AccountId = %s AND QuotaType = %s LIMIT 1",
+            (int(account_id), str(quota_type)),
+        )
+        r = cur.fetchone()
+        if r is not None:
+            return int(r[0] or 0)
+        if role_id:
+            cur.execute(
+                "SELECT TokenLimit FROM WebRoleTokenQuotas WHERE RoleId = %s AND QuotaType = %s LIMIT 1",
+                (int(role_id), str(quota_type)),
+            )
+            rr = cur.fetchone()
+            if rr is not None:
+                return int(rr[0] or 0)
+        return None
+    finally:
+        cur.close()
+
+
+def _account_period_usage_tokens(account_id: int, quota_type: str) -> int:
+    """PG agent_runtime.llm_usage 에서 본인 소유 대화의 토큰 합 — 'daily'=달력 당일,
+    'monthly'=달력 당월(date_trunc). best-effort(실패 시 0=무제한 취급, fail-open)."""
+    trunc = "day" if quota_type == "daily" else "month"
+    try:
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+    except Exception:
+        return 0
+    try:
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT COALESCE(sum(u.total_tokens), 0) "
+                "FROM agent_runtime.llm_usage u "
+                "JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
+                f"WHERE c.owner_account_id = %s AND u.created_at >= date_trunc('{trunc}', now())",
+                (int(account_id),),
+            )
+            row = cur.fetchone()
+            return int((row[0] if row else 0) or 0)
+    except Exception:
+        return 0
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+
+
+def _check_account_token_quota(conn, account: dict) -> "tuple[bool, str]":
+    """LLM 사용량 한도 사전 게이트. (allowed, error_message). 무제한/미설정/인프라장애=allowed.
+    enforce 킬스위치 OFF 면 무조건 allowed. (보안 ④, fail-open)"""
+    if not LLM_QUOTA_ENFORCE or not account:
+        return (True, "")
+    account_id = int(account.get("id") or 0)
+    role_id = int(account.get("role_id") or 0)
+    if account_id <= 0:
+        return (True, "")
+    _label = {"daily": "일일", "monthly": "월간"}
+    for qtype in _LLM_QUOTA_TYPES:
+        try:
+            limit = _account_effective_quota(conn, account_id, role_id, qtype)
+        except Exception:
+            limit = None
+        if not limit or int(limit) <= 0:
+            continue  # 무제한/미설정
+        used = _account_period_usage_tokens(account_id, qtype)
+        if used >= int(limit):
+            return (
+                False,
+                f"{_label.get(qtype, qtype)} LLM 토큰 한도({int(limit):,})를 초과했습니다. "
+                f"현재 사용량 {int(used):,}. 관리자에게 문의하거나 한도 초기화 시점까지 기다려 주세요.",
+            )
+    return (True, "")
+
+
 def _ensure_avatar_icon_schema(conn) -> None:
     """TASK-0268/0293: fast-path 재기동에서도 WebAccounts.AvatarObjectKey / WebProducts.IconObjectKey
     / WebRoles.IconObjectKey 컬럼이 존재하도록 idempotent ALTER. _ensure_web_tables 의 CREATE 와 동일
@@ -5438,6 +5562,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_must_change_password_schema(conn)
     # TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 컬럼 fast-path 보정.
     _ensure_login_lockout_schema(conn)
+    # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 사용량 한도 테이블 (fast path).
+    _ensure_llm_quota_schema(conn)
     # TASK-0268: 아바타/아이콘 object key 컬럼 fast-path 보정(slow path _ensure_web_tables 미경유 재기동 대비).
     _ensure_avatar_icon_schema(conn)
     # TASK-0274: 첨부 버전 관리 컬럼(RootAttachmentId/VersionNumber/CreatedByRole/SupersededAt) fast-path 보정.
@@ -5621,6 +5747,8 @@ def _ensure_web_tables():
         _ensure_web_share_links_expiry_column(conn)
         # TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 컬럼 (slow path).
         _ensure_login_lockout_schema(conn)
+        # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 사용량 한도 테이블 (slow path).
+        _ensure_llm_quota_schema(conn)
         # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping +
         # derived join + provider files lifecycle 4 신규 테이블 (slow path).
         _ensure_web_conversation_attachments_schema(conn)
@@ -10390,6 +10518,12 @@ async def ask(request: Request) -> JSONResponse:
     # 자격증명 검증은 backend 단일 env 소스로 이동 (config.py 의 LLM_API_KEY).
     # 호출 시점에 자격증명이 미설정이면 `_run_agent_core` 가 result["error"] 로
     # 보고 → user 에게 503 안내.
+    # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 토큰 사용량 한도 사전 게이트(역할 기본 + 계정 특수).
+    # 무제한/미설정/인프라장애=통과(fail-open). 초과 시 429(slot 획득 전 조기 차단).
+    _quota_ok, _quota_msg = _check_account_token_quota(conn, account)
+    if not _quota_ok:
+        conn.close()
+        return _json_error(_quota_msg, 429)
     if request_conversation_id:
         if not _conversation_exists(request_conversation_id, conn=conn):
             conn.close()
@@ -20929,6 +21063,25 @@ def build_audit_change_json(
             },
             [],
         )
+    # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 사용량 한도 설정 변경 audit.
+    if action == "quota.role.update":
+        return (
+            {
+                "target_role_id": request_ctx.get("role_id"),
+                "daily": request_ctx.get("daily"),
+                "monthly": request_ctx.get("monthly"),
+            },
+            [],
+        )
+    if action == "quota.account.update":
+        return (
+            {
+                "target_account_id": request_ctx.get("account_id"),
+                "daily": request_ctx.get("daily"),
+                "monthly": request_ctx.get("monthly"),
+            },
+            [],
+        )
     # Unknown ActionCode — explicit raise (Codex C6 builder allowlist policy).
     raise ValueError(f"unknown audit action: {action}")
 
@@ -21237,6 +21390,185 @@ def _aggregate_usage_by_role(by_account: list[dict]) -> list[dict]:
             m["cost_usd"] = round(m["cost_usd"], 4)
         out.append(b)
     return sorted(out, key=lambda x: x["total_tokens"], reverse=True)
+
+
+# =============================================================================
+# TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 토큰 사용량 한도 관리 (역할 기본 + 계정 특수).
+# =============================================================================
+def _quota_upsert(conn, table: str, key_col: str, key_id: int, daily, monthly) -> None:
+    """role/account 한도 upsert. 값이 None 이면 해당 QuotaType 행 삭제(상속으로 복귀).
+    table/key_col 은 코드 상수만(엔드포인트가 고정 전달) — SQL injection 무관."""
+    cur = conn.cursor()
+    try:
+        for qtype, val in (("daily", daily), ("monthly", monthly)):
+            if val is None:
+                cur.execute(
+                    f"DELETE FROM {table} WHERE {key_col} = %s AND QuotaType = %s",
+                    (int(key_id), qtype),
+                )
+            else:
+                cur.execute(
+                    f"INSERT INTO {table} ({key_col}, QuotaType, TokenLimit) VALUES (%s, %s, %s) "
+                    "ON DUPLICATE KEY UPDATE TokenLimit = VALUES(TokenLimit)",
+                    (int(key_id), qtype, max(0, int(val))),
+                )
+    finally:
+        cur.close()
+
+
+def _quota_parse_limit(raw) -> "int | None":
+    """body 값 → 한도 int. None/빈값/음수 = None(상속/해제). 0 = 무제한(명시)."""
+    if raw is None or (isinstance(raw, str) and raw.strip() == ""):
+        return None
+    try:
+        v = int(raw)
+    except Exception:
+        return None
+    if v < 0:
+        return None  # 음수 = 무효 → 상속/해제 취급
+    return min(v, 9_000_000_000_000_000)  # BIGINT 안전 상한 clamp (overflow 500 방지, outside-voice MINOR)
+
+
+@app.get("/api/admin/quotas")
+def admin_list_quotas(request: Request) -> JSONResponse:
+    """역할별 기본 + 계정별 특수 LLM 토큰 한도 목록. 권한: console.manage(admin)."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        actor, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+            return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                "SELECT r.Id AS role_id, r.RoleKey AS role_key, r.Name AS name, "
+                "MAX(CASE WHEN q.QuotaType='daily' THEN q.TokenLimit END) AS daily, "
+                "MAX(CASE WHEN q.QuotaType='monthly' THEN q.TokenLimit END) AS monthly "
+                "FROM WebRoles r LEFT JOIN WebRoleTokenQuotas q ON q.RoleId = r.Id "
+                "GROUP BY r.Id, r.RoleKey, r.Name ORDER BY r.Id"
+            )
+            roles = [
+                {"role_id": int(x["role_id"]), "role_key": x.get("role_key"), "name": x.get("name"),
+                 "daily": int(x["daily"]) if x.get("daily") is not None else None,
+                 "monthly": int(x["monthly"]) if x.get("monthly") is not None else None}
+                for x in (cur.fetchall() or [])
+            ]
+            cur.execute(
+                "SELECT a.Id AS account_id, a.Username AS username, "
+                "MAX(CASE WHEN q.QuotaType='daily' THEN q.TokenLimit END) AS daily, "
+                "MAX(CASE WHEN q.QuotaType='monthly' THEN q.TokenLimit END) AS monthly "
+                "FROM WebAccountTokenQuotas q JOIN WebAccounts a ON a.Id = q.AccountId "
+                "GROUP BY a.Id, a.Username ORDER BY a.Username"
+            )
+            overrides = [
+                {"account_id": int(x["account_id"]), "username": x.get("username"),
+                 "daily": int(x["daily"]) if x.get("daily") is not None else None,
+                 "monthly": int(x["monthly"]) if x.get("monthly") is not None else None}
+                for x in (cur.fetchall() or [])
+            ]
+        finally:
+            cur.close()
+        return JSONResponse({"roles": roles, "account_overrides": overrides, "enforce": bool(LLM_QUOTA_ENFORCE)})
+    finally:
+        conn.close()
+
+
+@app.put("/api/admin/quotas/role/{role_id}")
+async def admin_set_role_quota(role_id: int, request: Request) -> JSONResponse:
+    """역할 기본 LLM 토큰 한도 설정. body {daily?, monthly?} — null/생략=상속 해제, 0=무제한."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        actor, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+            return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT RoleKey FROM WebRoles WHERE Id = %s LIMIT 1", (int(role_id),))
+            rr = cur.fetchone()
+        finally:
+            cur.close()
+        if not rr:
+            return _json_error("role not found", 404)
+        daily = _quota_parse_limit(data.get("daily"))
+        monthly = _quota_parse_limit(data.get("monthly"))
+        try:
+            _quota_upsert(conn, "WebRoleTokenQuotas", "RoleId", int(role_id), daily, monthly)
+        except Exception:
+            return _json_error("한도 저장에 실패했습니다.", 500)
+        try:
+            _audit_admin_mutation(
+                conn, request, actor, action="quota.role.update", resource_type="role",
+                resource_id=str(role_id), before=None, after=None,
+                request_ctx={"role_id": int(role_id), "daily": daily, "monthly": monthly},
+            )
+            conn.commit()
+        except Exception as audit_exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return _json_error(f"audit write failed: {audit_exc}", 500)
+        return JSONResponse({"ok": True, "role_id": int(role_id), "daily": daily, "monthly": monthly})
+    finally:
+        conn.close()
+
+
+@app.put("/api/admin/quotas/account/{account_id}")
+async def admin_set_account_quota(account_id: int, request: Request) -> JSONResponse:
+    """계정 특수(override) LLM 토큰 한도. body {daily?, monthly?} — null/생략=override 해제(역할 상속)."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        actor, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
+            return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+        target = _load_account_by_id(conn, int(account_id))
+        if not target:
+            return _json_error("account not found", 404)
+        daily = _quota_parse_limit(data.get("daily"))
+        monthly = _quota_parse_limit(data.get("monthly"))
+        try:
+            _quota_upsert(conn, "WebAccountTokenQuotas", "AccountId", int(account_id), daily, monthly)
+        except Exception:
+            return _json_error("한도 저장에 실패했습니다.", 500)
+        try:
+            _audit_admin_mutation(
+                conn, request, actor, action="quota.account.update", resource_type="account",
+                resource_id=str(account_id), before=None, after=None,
+                request_ctx={"account_id": int(account_id), "daily": daily, "monthly": monthly},
+                target_account_id=int(account_id),
+            )
+            conn.commit()
+        except Exception as audit_exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return _json_error(f"audit write failed: {audit_exc}", 500)
+        return JSONResponse({"ok": True, "account_id": int(account_id), "daily": daily, "monthly": monthly})
+    finally:
+        conn.close()
 
 
 @app.get("/api/admin/usage")

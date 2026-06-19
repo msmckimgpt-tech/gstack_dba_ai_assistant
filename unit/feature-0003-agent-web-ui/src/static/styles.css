@@ -4861,6 +4861,11 @@ a { color: inherit; }
 .admin-usage-table th.num, .admin-usage-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .admin-usage-table tbody tr:hover { background: var(--bg); }
 .admin-usage-details { margin-top: 24px; }
+/* TASK-20260619T030500-llm-usage-quota (보안 ④): 사용 한도 편집 행. */
+.admin-quota-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap; }
+.admin-quota-row:last-child { border-bottom: none; }
+.admin-quota-name { min-width: 140px; font-weight: 600; font-size: 13px; }
+.admin-quota-acct-add { display: flex; gap: 8px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
 .admin-usage-details > summary {
   cursor: pointer;
   color: var(--text-2);

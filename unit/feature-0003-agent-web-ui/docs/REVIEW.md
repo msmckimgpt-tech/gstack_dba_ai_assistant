@@ -3434,3 +3434,14 @@ source_of_truth: true
 - **수용(문서화)**: MINOR(CAST(JSON AS CHAR) 서버버전/charset 의존 → MySQL major upgrade 시 과거 history false-invalidate 위험·운영 시 동결 가정)·MINOR(ThroughEventId 기록되나 verify 미사용=장식적·향후 boundary 강화 여지)·MINOR(Id/OccurredAt 비-단조 backfill[WebAccountActivity 마이그] 시 경계 interleave 가능·정상상태 무관)·MINOR(테스트=source-grep+순수함수, DB 통합/동시성/truncation 미커버 — make test 게이트가 DB-less라 불가, 라이브 round-trip 으로 보완)·NIT(\x1f/\x1e 구분자 UserAgent embeddable=chosen-prefix collision only).
 - Verification: test_audit_tamper_evidence.py 11/11 + make test 회귀 0 + py_compile + node --check. 화면 정본=PB-0008(배포 후).
 - Cross-ref: CHG-20260619T023922-ai-claude-audit-tamper-evidence / REQ-20260619-0326 / AC-0592~0595 / SECURITY.md §13.
+
+## REV-20260619T030500-ai-claude-llm-usage-quota [SUBAGENT:llm-usage-quota-adversarial]
+- Date: 2026-06-19
+- Cycle: TASK-20260619T030500-llm-usage-quota (LLM 사용량 한도), **Major §12.3** — 비용 통제·가용성 영향.
+- Panel: outside-voice(general-purpose, REFUTE) — over-block/우회 초점.
+- VERDICT: **SHIP-WITH-FIXES** (BLOCKER 0, MAJOR 0, MINOR 다수). 9 probe.
+- REFUTED(clean): 게이트가 slot/worker dispatch 선행(양 모드 커버, conn 닫음)·fail-open 전구간(킬스위치/account None/effective 예외/PG 실패)·0vs미설정 정합·used>=limit 경계·SQLi(table/key_col/trunc 전부 코드 상수)·authz(console.manage·404·self-quota 없음·audit PII 0)·RBAC 무교차·입력검증(NaN/Inf→None)·무회귀(미설정 시 PG 미조회·스키마 멱등 양경로)·프론트 XSS(escapeHtml).
+- **흡수한 MINOR**: parse_limit BIGINT overflow→500 (clamp 9e15 상한) · 0=무제한 footgun (캡션 "전면 차단=1" 명시).
+- **수용(문서화)**: 동시요청 race(pre-flight 한도 본질, parallel limit 6 bound·비용통제라 허용) · aux-call(validate/summary/classify/topic/sql_fix) conversation_id 없어 INNER join 탈락 = under-count(가용성 우선·dominant inference 는 집계·evasion 아님) · admin `prompt/generate` LLM 미게이트(console.manage admin-only 저표면) · daily/monthly date_trunc tz=PG 세션(UTC, 기존 대시보드 정합) · 계정 override free-text id(오타→404, 향후 picker) · 1.x 정수절단.
+- Verification: test_llm_usage_quota.py 10/10 + make test 회귀 0. 화면 정본=PB-0008(배포 후).
+- Cross-ref: CHG-20260619T030500-ai-claude-llm-usage-quota / REQ-20260619-0327 / AC-0596~0599.

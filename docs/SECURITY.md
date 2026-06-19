@@ -97,7 +97,7 @@ ai_read_priority: 4
 - **Paired fallback 정책 (CHG-0003)**: `LLM_BASE_URL` 과 `LLM_API_KEY` 는
   `_select_llm_provider()` helper 가 paired tuple 로 결정. provider URL 만
   설정 + key 미설정 시 silent misroute 차단 (다음 provider 로 fallback).
-- 본 cycle 범위 외: per-user / per-role token quota (배포 후 별 cycle).
+- ~~본 cycle 범위 외: per-user / per-role token quota (배포 후 별 cycle).~~ **→ 구현 완료 (TASK-20260619T030500-llm-usage-quota, 2026-06-19)**: `WebRoleTokenQuotas`(역할 기본)+`WebAccountTokenQuotas`(계정 특수) daily/monthly 토큰 한도 + `/api/ask` 사전 게이트(초과 429, fail-open, 미설정=무제한). 정합 정본 = feature-0003 FUNCTION.md AC-0596~0599.
 
 ## 7. Anonymous 접근 허용 경로 (allowlist)
 
