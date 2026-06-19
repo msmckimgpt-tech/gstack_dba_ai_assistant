@@ -120,3 +120,11 @@ source_of_truth: true
 - Impact: 그룹 채팅이 화면에 발신자와 함께 표시 + @assistant 가 채팅 누적 후에도 안전 실행. 1:1·이미지 content 무회귀.
 - Rollback Notes: 미러/렌더/병합 제거로 가역.
 - ⚠ 잔여(라이브 검증): LLM 히스토리 발신자 **라벨**(누가 말했는지 프롬프트 명시) — Bedrock alternating 실측 + 라벨 주입 sanitize 가 필요해 배포 후 검증 권장(현재 LLM 은 채팅 전체 맥락은 받음, 화자 라벨만 미주입).
+
+## CHG-20260619-0010
+- Date: 2026-06-19
+- Related Requirement: S5 범위 결정 (문서)
+- Summary: 코어 그룹 대화 완성 기록 + S5 잔여 4항목 배포-후 라이브 검증 이연 결정(코드 변경 없음).
+- Files: docs (TASK/REPORT/REVIEW) — REV-20260619-0012 이연 사유, Completion Checklist 갱신.
+- Impact: 코드 무변경. 배포 진입 게이트.
+- Rollback Notes: docs only.

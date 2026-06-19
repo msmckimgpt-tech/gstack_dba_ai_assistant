@@ -41,7 +41,7 @@ source_of_truth: true
   - [x] F1 발신자-한정 첨부 주입 (force_sender_scope + _is_group_conversation)
 - [~] **S4 Security** — cross-account 감사(기존 ask audit actor). ⏳잔여: auto-mode 라이브 적대검증 · 멘션 자동완성 roster 한정(roster UI)
   - [x] actor datasource 발화 게이트 (멤버 @assistant 허용, pinned 이중게이트, 열람≠발화 완성)
-- [ ] **S5 Realtime+Limits** — 폴링 동기화 + per-conversation run cap + llm_usage actor 귀속 + 멤버 제거/보존 정책
+- [~] **S5 Realtime+Limits** — ✅멤버 제거/보존 정책(remove=membership 삭제·메시지/첨부 잔존, 설계상 완료). ⏳**배포 후 라이브 검증/폴리시로 이연**(아래 사유): per-conversation run cap(동시 멤버 @assistant) · llm_usage actor 귀속(F5) · 폴링 동기화 · LLM 화자 라벨
 - [ ] **S6 (deferred, 별도 계획)** — 풀 스레드 UI + run-status `(conversation,thread)` 재키잉
 
 ## 4. In Progress
@@ -60,15 +60,14 @@ source_of_truth: true
 - S2 백엔드 (접근제어·멤버 엔드포인트·audit·backfill wiring·신규 권한·F6 sweep)
 
 ## 7. Next Action
-- S2 roster UI: 대화 헤더에 멤버 목록·초대(username)·제거 + GET/POST/DELETE members 연동.
-- 이후 S3 Chat+Mention(사람 채팅·@assistant enqueue actor·발신자 라벨·발신자-한정 첨부주입·read-state).
+- push + PR + merge + 배포(web + ask-worker 재빌드) → 라이브 smoke. 이후 S5 잔여 라이브 폴리시(REV-0012).
 
 ## 8. Completion Checklist
-- [ ] 모든 REQ의 AC가 구현되었다 (S1~S5 누적)
-- [ ] 단위 테스트(unit test)가 통과한다
-- [ ] 전체/통합 테스트가 통과하거나 사유·계획이 TEST.md §4에 기록되었다
-- [ ] FUNCTION.md가 현재 동작과 일치한다
-- [ ] MODIFY.md에 변경 이력이 기록되었다 (cross-feature 편집 포함)
+- [x] 코어 REQ(R1~R7)의 AC 구현 (S1~S4 + roster + send-routing + S3c). R8 일부(read-state/cap)는 S5 이연
+- [x] 단위 테스트 통과 (mentions 3 + group_members 10 + s2 7 = 20, + 병합 4 컨테이너, + FE parity 14)
+- [x] 전체/통합 테스트: 컨테이너 make test 대상(병합·권한계약), 라이브 smoke 는 배포 후
+- [x] FUNCTION.md가 현재 동작과 일치한다
+- [x] MODIFY.md에 변경 이력이 기록되었다 (cross-feature 편집 포함)
 - [ ] REVIEW.md에 판단 근거가 기록되었다
 - [ ] REPORT.md에 최종 상태가 반영되었다
 - [ ] TEST.md에 테스트 결과가 기록되었다

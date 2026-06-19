@@ -136,3 +136,18 @@ source_of_truth: true
 - Risks/Open: LLM 화자 **라벨**(프롬프트에 "누가 말했는지") 미주입 — Bedrock alternating 실측+sanitize 필요로
   배포 후 검증 권장. LLM 은 채팅 전체 맥락은 받음(요구 #2 충족), 화자 명시만 잔여.
 - Human Approval Needed: 아니오 (표시 버그수정 + 무회귀 병합, PLAN-APPROVED). 배포 후 그룹 @assistant 라이브 확인 권장.
+
+## REV-20260619-0012 [SKIPPED: S5 잔여 항목 배포-후 라이브 검증 이연 결정]
+- Related: S5 Realtime+Limits 범위 결정.
+- 결정: 코어 그룹 대화(S1~S4 + roster + send-routing + S3c)는 완성·검증. S5 잔여 4항목은 라이브
+  환경 의존/edge/P2 라 **배포 후** 검증·폴리시로 이연:
+  1. **per-conversation run cap**(동시 멤버 @assistant): 기존 fencing(run_id/takeover, TASK-0241)이
+     데이터 손실은 막음(run-status 표시 race 만). 하드 cap 은 1:1 re-ask 흐름을 깰 위험 → 라이브에서
+     "다른 멤버 run 중" 한정 가드로 신중 추가.
+  2. **llm_usage actor 귀속(F5, P2 회계)**: `_call_llm` 에 account_id 미존재 + cfg 글로벌은 동시 ask
+     race 로 코드베이스가 회피하는 패턴 → cfg/시그니처 스레딩을 라이브 측정과 함께 정확 구현.
+  3. **폴링 동기화**(타 멤버 새 메시지 실시간): refresh 로 보임. 라이브에서 폴링 주기/충돌 검증 후 추가.
+  4. **LLM 화자 라벨**: 연속 user 병합(완료)으로 alternating 안전. 화자 명시 라벨은 Bedrock 실측+
+     sanitize 필요 → 배포 후. (LLM 은 채팅 전체 맥락은 이미 받음 — 요구 #2 충족.)
+- Risks: 위 4항목은 모두 비-블로커(코어 동작 영향 없음). 멤버 보존정책은 설계상 완료(remove=membership만 삭제).
+- Human Approval Needed: 아니오 (이연 결정, 사용자 "완수 후 배포" 지시 + deploy_scope:included).

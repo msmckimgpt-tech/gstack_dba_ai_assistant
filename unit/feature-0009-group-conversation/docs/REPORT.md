@@ -13,9 +13,10 @@ source_of_truth: false
 스키마(PG 정본 + MySQL parity) + 멤버십 데이터접근 모듈 + 멱등 backfill 함수 완료.
 
 ## 2. Progress
-- Planned: S2 roster UI(잔여) / S3 Chat+Mention / S4 Security / S5 Realtime+Limits / S6(스레드, deferred)
-- In Progress: S2 roster UI(프론트)
-- Done: 계획 + eng-review + cso 검증, feature unit, S1(commit 489deb5), S2 백엔드(접근제어·멤버 엔드포인트·audit·backfill wiring·신규 권한·F6 sweep)
+- **코어 완성(배포 대기)**: S1 Foundations · S2 Membership(백엔드+roster UI) · S3(멘션 파서·발신자 귀속·사람채팅·F1·send-routing·발신자 표시·연속 user 병합) · S4 Security(멤버 @assistant actor RBAC) · 릴리즈 노트.
+- In Progress: 없음 (코어 완료 → push/PR/배포).
+- Deferred(배포 후 라이브): S5 run cap·llm_usage actor 귀속·폴링·LLM 화자 라벨 (REV-0012) / S6 스레드(별도 계획).
+- 커밋: 489deb5·8ef6598·eb707e2·76da62d·2542359·fa23367·f503630·1b7ba47·5c75c84 (+ 본 docs).
 
 ## 3. Recent Changes
 - PG `agent_runtime_schema.sql`: `conversation_members` 테이블 + `core_messages.sender_account_id`/`thread_root_message_id` + 인덱스 2.
