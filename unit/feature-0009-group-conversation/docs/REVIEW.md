@@ -95,3 +95,12 @@ source_of_truth: true
   컨테이너 make test + 라이브 적대 검증 권장(pinned 은 이중 게이트 확인). cross-account 감사=기존
   conversation.ask audit 가 actor 기록(충족). 멘션 자동완성 roster 한정(F7)=roster UI 에서.
 - Human Approval Needed: 아니오 (pinned 이중게이트 확인 + account=actor, PLAN-APPROVED 범위). auto-mode 라이브 재검증 권고.
+
+## REV-20260619-0008 [SKIPPED: S2 roster UI — additive 프론트, PB-0008 보류]
+- Related Change: CHG-20260619-0006 (멤버 패널 UI)
+- Reason: 패널 skip 사유 — 기존 흐름 무변경 additive UI(신규 버튼·패널). 보안/데이터 변경 없음.
+- 검증: node --check(app.js·mentions.js) syntax OK + html↔app.js element id 정합 7/7 + 백엔드
+  엔드포인트(S2)는 이미 검증/게이트. 초대 시 "대화 내용 공유" 고지 문구 포함(AR-1 운영자 인지).
+- Risks: 실 브라우저 렌더/상호작용 미검증 — **PB-0008(Windows 브라우저) 보류**(TEST.md 기록). WARN-only.
+- Open: 멘션 자동완성(F7) 미구현(입력창 @roster) · 사람채팅 send-routing(mention 게이팅) 미배선.
+- Human Approval Needed: 아니오 (additive 프론트). 배포 전 PB-0008 권장.

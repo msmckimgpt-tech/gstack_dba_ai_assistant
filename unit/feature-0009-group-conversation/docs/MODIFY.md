@@ -74,3 +74,16 @@ source_of_truth: true
 - ★안전성 근거: 기존 line 10422 가 이미 actor `account` 기준 pinned product 접근을 enforce(기존 대화 경로 포함, TASK-0052 G4). account 가 흐름 전반에서 actor → owner-gate 해제가 datasource bypass 를 만들지 않음. auto 모드는 allowed_schemas=[](meta only)+turn-local 제품도 actor 게이트.
 - Rollback Notes: owner-gate 를 종전 owner-only 로 되돌리면 멤버 발화 비활성(가역).
 - ⚠ adversarial 검증 잔여: auto 모드 turn-local 제품 선택의 멤버-invocation actor 게이팅 — 컨테이너 make test + 라이브에서 재확인 권장(pinned 경로는 10422+명시체크로 이중 게이트 확인).
+
+## CHG-20260619-0006
+- Date: 2026-06-19
+- Related Requirement: REQ-GC-R1 (S2 roster UI — 그룹 대화 멤버 관리 프론트)
+- Summary: 대화 헤더 "멤버" 버튼 + 멤버 패널(roster) — 목록·초대(username)·제거/나가기. 그룹 대화 구성 UI.
+- Files:
+  - `static/index.html`: topbar 멤버 버튼 + `#membersPanel`(목록/초대폼/메시지) + mentions.js 로드 + 캐시버스터 bump(app.js·styles.css `?v=20260619-group-conversation`).
+  - `static/app.js`: `renderConversationHeader` 멤버버튼 가시성 + `_bindMembersPanel`/`_loadMembers`/`_removeMember`/`closeMembersPanel`(GET/POST/DELETE /members 연동, 소유자 제거 불가, 본인=나가기, Esc 닫기).
+  - `static/styles.css`: `.members-panel` 외 roster 스타일 + 캐시버스터.
+  - `static/admin.html`: styles.css 캐시버스터 bump(공유 CSS).
+- Impact: 프론트 additive(신규 패널·버튼). 기존 대화 흐름 무변경. 멤버 버튼은 대화 선택 시만 표시.
+- Rollback Notes: 버튼/패널/JS/CSS 삭제로 가역.
+- 검증: node --check(app.js·mentions.js) OK + element id 정합(html↔app.js 7/7). **PB-0008 실측 보류**(Windows 브라우저 필요 — TEST.md, WARN-only).

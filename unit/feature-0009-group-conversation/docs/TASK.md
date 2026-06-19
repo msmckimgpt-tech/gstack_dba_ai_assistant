@@ -33,7 +33,7 @@ source_of_truth: true
 
 ## 3. Task Queue (슬라이스)
 - [x] **S1 Foundations** — DDL(conversation_members + sender_account_id + thread_root_message_id) + 멱등 backfill + members(account_id) 인덱스 + membership helper 모듈 (commit 489deb5)
-- [~] **S2 Membership** — ✅백엔드: 멤버십 열람 접근제어(중앙 게이트 + 첨부 게이트 OR, F6 sweep) + 멤버 엔드포인트(list/add/remove, owner/`conversation.member.manage`) + member.add/remove audit + backfill wiring + 신규 권한. ⏳잔여: **roster UI**(프론트 멤버 목록·초대·제거)
+- [x] **S2 Membership** — ✅백엔드: 멤버십 열람 접근제어(중앙 게이트 + 첨부 게이트 OR, F6 sweep) + 멤버 엔드포인트 + audit + backfill wiring + 신규 권한. ✅roster UI(멤버 버튼·패널·초대·제거/나가기, CHG-0006, PB-0008 보류)
 - [ ] **S3 Chat+Mention** — ⏳ sender_account_id write 배선 · 사람 채팅(enqueue 미경유) · @assistant enqueue(actor) · LLM 히스토리(구조 sender 라벨·sanitize·연속 user 병합) · **발신자-한정 첨부 주입(F1)** · read-state 커서 · @mention 표시
   - [x] canonical 멘션 파서 (BE modules/mentions.py + FE static/mentions.js + node parity 14/14)
   - [x] sender_account_id write 배선 (save_core_message + _save_message + _run_agent_core)
