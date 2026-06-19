@@ -929,3 +929,15 @@ TASK-0015 (plan-review):
 - [x] (이슈3) 첨부 포맷 파일명 우선: 목록 `- file "..." (attachment_id=..)`, csv/xlsx sandbox 라벨 `file "..."`, ATTACHED FILES 섹션에 "REFER TO ATTACHMENTS BY FILENAME" 지침
 - [x] test_attachment_idor.py +4(conversation 스코프·account 폴백·파일명 우선) + make test 전체 회귀 0
 - [ ] ask-worker 재빌드(agent_core baked) → 라이브 검증 — feature-0003 TASK-0284 와 함께 마감
+
+### TASK-20260619T014034 — LLM provider 외부요인 제한(자격증명 만료) 명시 표면화 (Major §12.3, agent-core 면, 2026-06-19)
+<!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-19 -->
+- 목표: Bedrock 등 외부 provider 장애(특히 AWS 키/자격증명 만료)로 LLM 응답이 막힐 때, 현재 raw 예외(`LLM 호출 오류: ExpiredToken`)/일반 에러로만 노출되던 것을 서비스 사용자가 여러 surface 로 명시 확인하도록. 사용자 결정: 범위=외부요인 제한(사용량/쿼리부하 아님), UI=인라인+패널+컴포저+툴팁 직/간접 다중, 감지=hybrid(passive+probe).
+- [x] 신규 `modules/llm_provider_health.py`: `classify_llm_provider_error`(예외→{kind,provider,message,retryable,error_tag}, credential_expired/auth_invalid/throttled/unavailable/not_configured/unknown) + PG upsert/read(`agent_runtime.llm_provider_health`) + active `probe_provider`(max_tokens=1, TTL throttle).
+- [x] agent_core: LLM 호출 예외 경로(`_call_llm` 2931)에서 분류→친화 메시지 치환 + passive `record_provider_restricted`; 성공 시 `record_provider_ok`(run 당 1회, try/except/else); 무자격증명(2568)→not_configured; `result["llm_restriction"]` 필드.
+- [x] 스키마: `agent_runtime_schema.sql` §6e bootstrap DDL + alembic `0011_llm_provider_health`(GRANT 포함 — 0006 DEPLOY TRAP 동형). 자격증명 비영속(state/kind/message/error_tag(클래스명만)/source/since 만).
+- [x] (feature-0003) app.py: `_read_llm_provider_status` + `GET /api/llm/health`(인증 게이트·probe) + `/api/session`·`_build_ask_status_snapshot` 에 `llm_provider_status` 동봉.
+- [x] (feature-0003) 프론트 4 surface: 컴포저 상단 배너 + footer 상태점/툴팁 + 대화 인라인 notice + 실행단계 패널 노트 + send title(indirect). `/api/llm/health` 폴링(60s)+로드 직후 probe+'다시 확인' force. 캐시버스터 bump.
+- [x] 검증: `test_llm_provider_health.py` 14(분류·자격증명 비유출·폴백·not_configured) + `verify_llm_restriction_surface.mjs` 35(정적+jsdom 4-surface 토글) + feature-0002 전체 pytest 회귀 0(2 skip) + py_compile + node --check.
+- [x] 적대 코드리뷰(outside voice, secret leakage/probe auth·cost/agent_core else/PG 폴백) → REV-20260619-0311.
+- [ ] 배포: ask-worker + web 재빌드(agent_core·app.py baked) + 마이그 0011 적용 → 라이브 검증(restricted 주입 PB-0008 Windows-browser 4-surface, 실 키만료 e2e 는 운영 의존).

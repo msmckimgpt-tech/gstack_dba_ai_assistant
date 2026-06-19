@@ -5375,6 +5375,139 @@ function showTimeoutRecoveryDialog({ statusText = "" } = {}) {
   });
 }
 
+// ============================================================================
+// TASK-20260619T014034 — LLM provider 외부요인 제한(자격증명 만료 등) 명시 표면화.
+//   4 surface: (1) 컴포저 상단 직접 배너 (2) footer 상태점+툴팁(glanceable)
+//   (3) 대화 인라인 제한 안내 (4) 실행단계 패널 제한 노트. + send 버튼 title(indirect).
+//   상태 소스: /api/session(초기) · /api/ask_result(run 시점) · /api/llm/health(폴링·hybrid probe).
+// ============================================================================
+let _llmHealthPollTimer = null;
+const LLM_HEALTH_POLL_MS = 60000;
+
+function _llmKindLabel(kind) {
+  const m = {
+    credential_expired: "자격증명 만료",
+    auth_invalid: "인증 실패",
+    throttled: "요청량 한도",
+    unavailable: "서비스 불가",
+    not_configured: "미설정",
+    unknown: "외부 요인",
+  };
+  return m[kind] || "외부 요인";
+}
+
+function _llmTooltipText(st) {
+  const parts = [String(st.message || "AI 제공자 사용 제한")];
+  if (st.kind) parts.push("유형: " + _llmKindLabel(st.kind));
+  if (st.since_epoch) {
+    try { parts.push("발생: " + new Date(Number(st.since_epoch) * 1000).toLocaleString()); } catch (_) { /* noop */ }
+  }
+  return parts.join("\n");
+}
+
+// 4 surface 를 status 하나로 일괄 갱신. 실패는 앱에 무영향(try/catch).
+function applyLlmProviderStatus(status) {
+  try {
+    const st = (status && typeof status === "object") ? status : {};
+    const restricted = String(st.state || "") === "restricted";
+    window.__llmProviderStatus = st;
+    const msg = String(st.message || "AI 제공자 사용에 외부 요인으로 인한 제한이 발생했습니다.");
+    const banner = document.getElementById("llmRestrictionBanner");
+    const bannerText = document.getElementById("llmRestrictionBannerText");
+    const retryBtn = document.getElementById("llmRestrictionBannerRetry");
+    const dot = document.getElementById("llmStatusDot");
+    const panelNote = document.getElementById("llmRestrictionPanelNote");
+    const sendBtn = document.getElementById("sendBtn");
+    if (banner && bannerText) {
+      if (restricted) {
+        bannerText.textContent = msg;
+        banner.classList.remove("hidden");
+        if (retryBtn) retryBtn.classList.toggle("hidden", st.retryable === false);
+      } else {
+        banner.classList.add("hidden");
+      }
+    }
+    if (dot) {
+      if (restricted) {
+        dot.classList.remove("hidden");
+        dot.classList.add("is-restricted");
+        dot.classList.remove("is-unknown");
+        dot.setAttribute("title", _llmTooltipText(st));
+        dot.setAttribute("aria-label", "AI 제공자 제한: " + msg);
+      } else {
+        dot.classList.add("hidden");
+        dot.classList.remove("is-restricted");
+        dot.removeAttribute("title");
+      }
+    }
+    if (panelNote) {
+      if (restricted) {
+        panelNote.textContent = "⚠ " + msg;
+        panelNote.classList.remove("hidden");
+      } else {
+        panelNote.classList.add("hidden");
+      }
+    }
+    if (sendBtn) {
+      sendBtn.setAttribute("title", restricted ? (msg + " (전송 시 즉시 실패할 수 있습니다)") : "전송 (Ctrl+Enter)");
+    }
+  } catch (_) { /* surface 실패는 앱에 무영향 */ }
+}
+
+// 대화 인라인 제한 안내 — errored run 직후 messageLog 에 1회 표면(직접 surface).
+function renderLlmRestrictionInlineNotice(status, errorText) {
+  try {
+    const st = (status && typeof status === "object") ? status : {};
+    const log = document.getElementById("messageLog");
+    if (!log) return;
+    const prev = document.getElementById("llmRestrictionInlineNotice");
+    if (prev) prev.remove();
+    const el = document.createElement("div");
+    el.className = "llm-restriction-notice";
+    el.id = "llmRestrictionInlineNotice";
+    el.setAttribute("role", "alert");
+    const head = document.createElement("div");
+    head.className = "llm-restriction-notice-head";
+    head.textContent = "⚠ AI 제공자 사용 제한 (" + _llmKindLabel(st.kind) + ")";
+    const body = document.createElement("div");
+    body.className = "llm-restriction-notice-body";
+    body.textContent = String(st.message || errorText || "AI 응답을 생성할 수 없습니다.");
+    el.appendChild(head);
+    el.appendChild(body);
+    if (st.since_epoch) {
+      const meta = document.createElement("div");
+      meta.className = "llm-restriction-notice-meta";
+      try { meta.textContent = "발생 시각: " + new Date(Number(st.since_epoch) * 1000).toLocaleString(); } catch (_) { /* noop */ }
+      el.appendChild(meta);
+    }
+    // m5(리뷰): stick-to-bottom 정책 — 최하단(8px)일 때만 추종(위로 스크롤 시 위치 유지).
+    let _atBottom = true;
+    try { _atBottom = (log.scrollHeight - log.scrollTop - log.clientHeight) < 8; } catch (_) { /* noop */ }
+    log.appendChild(el);
+    if (_atBottom) { try { log.scrollTop = log.scrollHeight; } catch (_) { /* noop */ } }
+  } catch (_) { /* noop */ }
+}
+
+async function pollLlmHealth({ force = false } = {}) {
+  try {
+    const status = await apiFetch(force ? "/api/llm/health?force=1" : "/api/llm/health");
+    if (status) applyLlmProviderStatus(status);
+    return status;
+  } catch (_) { return null; }
+}
+
+function startLlmHealthPolling() {
+  try {
+    const retryBtn = document.getElementById("llmRestrictionBannerRetry");
+    if (retryBtn && !retryBtn._llmBound) {
+      retryBtn._llmBound = true;
+      retryBtn.addEventListener("click", () => { pollLlmHealth({ force: true }); });
+    }
+    if (_llmHealthPollTimer) return;
+    _llmHealthPollTimer = window.setInterval(() => { pollLlmHealth(); }, LLM_HEALTH_POLL_MS);
+  } catch (_) { /* noop */ }
+}
+
 // TASK-0041: /api/ask_result 를 long-poll 방식으로 반복 호출해
 // 서버가 종료 상태가 될 때까지 대기한다. 종료되면 refreshWorkspace 를 호출한다.
 async function attachAndWaitForResult(conversationId, { runId = "" } = {}) {
@@ -5411,9 +5544,16 @@ async function attachAndWaitForResult(conversationId, { runId = "" } = {}) {
     // TASK-0061 Phase 1 (AC-0072) + Phase 3: pending bubble cleanup. stale 이면 별도 toast.
     clearPendingBubble();
     await refreshWorkspace(conversationId);
+    // TASK-20260619T014034: 이 run 시점의 LLM provider 제한 상태를 4 surface 에 반영.
+    const _lps = (payload && payload.llm_provider_status) || null;
+    if (_lps) applyLlmProviderStatus(_lps);
     if (payload && payload.is_stale) {
       showToast("작업이 중단된 것으로 보입니다. 사이드바에서 취소 또는 삭제 액션을 사용해 주세요.", true);
     } else if (payload && payload.status === "error" && payload.error) {
+      // 외부요인 제한이면 대화에 전용 인라인 안내 추가(직접 표면 — 일반 에러 토스트와 별개).
+      if (_lps && _lps.state === "restricted") {
+        renderLlmRestrictionInlineNotice(_lps, payload.error);
+      }
       showToast(`실행 오류: ${payload.error}`, true);
     } else {
       showToast("응답을 갱신했습니다.");
@@ -6969,6 +7109,12 @@ async function handleLogout() {
 
 async function initializeWorkspace() {
   state.session = await apiFetch("/api/session");
+  // TASK-20260619T014034: LLM provider 제한 상태 초기 적용 + hybrid 폴링 시작 + 선제 probe(로드 직후 1회).
+  try {
+    applyLlmProviderStatus(state.session && state.session.llm_provider_status);
+    startLlmHealthPolling();
+    pollLlmHealth();
+  } catch (_) { /* noop */ }
   state.user = state.session.user;
   // TASK-0061 Phase 6 (AC-0095): 새로고침 후에도 must_change_password 가 true 면 강제 modal.
   if (state.user && state.user.must_change_password) {

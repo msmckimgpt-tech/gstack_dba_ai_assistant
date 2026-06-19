@@ -1012,3 +1012,17 @@ source_of_truth: true
 - Verification: test_duration_breakdown.py 3 + test_ask_jobs.py created_at 2 + feature-0002 전체 pytest 회귀 0(2 skip) + py_compile.
 - Residual: ask-worker 재빌드(agent_core baked) — feature-0003 TASK-0289 와 함께 마감.
 - Cross-ref: CHG-20260616-0302 / TASK-0289 / feature-0003 REV-20260616-0302(full).
+
+## REV-20260619-0311 [SUBAGENT:llm-restriction-adversarial]
+- Date: 2026-06-19
+- Cycle: TASK-20260619T014034 (LLM provider 외부요인 제한 명시 표면화) — agent-core 면. **Major §12.3**.
+- Trigger: §18.8 — 자격증명-에러 처리(민감)·신규 외부 노출 엔드포인트·외부 비용(probe). 적대적 코드리뷰(general-purpose outside voice, secret leakage/probe auth·cost/agent_core else/PG 폴백/마이그/XSS/오탐).
+- Verdict: **SHIP-WITH-FIXES** (BLOCKER 0). 흡수 완료:
+  - **M1 (probe force 비용증폭)**: `force=1` 가 TTL+running 우회 → `running` 가드 항상 + force 도 최소 5s 플로어로 수정(per-request 증폭 차단).
+  - **M2 (N-워커 probe stampede)**: per-process `_PROBE_STATE` 만으로 부족 → probe 전 PG `updated_at`(source='probe') TTL 비교로 클러스터 전역 throttle 보강.
+  - **M3 (일시 오류의 sticky 오탐 배너)**: connection reset/bare 403·429 등 일시·모호 신호가 글로벌 restricted 배너로 영속되던 것 → restriction 에 `confirmed`(특정 provider 오류 *클래스명* 매칭) 추가, `record_provider_restricted` 가 confirmed 만 영속. 미확정은 per-run 에러 메시지로만 노출(글로벌 health 무변경). datasource_health tri-state 선례 정합.
+  - **m5 (stick-to-bottom 위반)**: 인라인 notice append 가 무조건 최하단 강제 → `atBottom`(8px) 판정 후에만 추종(repo 정책 [[feedback_updating_ui_stick_to_bottom]] 정합). feature-0003 면.
+- Confirmed-safe (리뷰 검증): secret leakage 없음(`message`=고정 템플릿·`error_tag`=클래스명만 ≤120·`_extract` blob 은 분류용만), `else` 절 성공시에만·`_provider_ok_recorded` run당 1회, PG 미가용 graceful(`_pg()`→None 전 caller 가드), alembic 0011 head 정합+GRANT(deploy trap), `result["llm_restriction"]` 순수 additive(consumer 무영향).
+- Deferred(무해): m4(`is-unknown` dead CSS class — 유지), m6(`_read_llm_provider_status` hot-path PG read — 캐시 도입 시 inline-notice staleness 위험이라 미도입, single-row PK read graceful 유지), n7(probe 모델 fallback — max_tokens=1 로 비용 무시 가능).
+- Verification: test_llm_provider_health.py 18(분류·confirmed 게이팅·자격증명 비유출·폴백) + feature-0002 전체 pytest 회귀 0(2 skip) + py_compile + node --check.
+- Cross-ref: CHG-20260619-0319 / TASK-20260619T014034 / feature-0003 REV-20260619T014034-ai-claude-llm-restriction-notice.

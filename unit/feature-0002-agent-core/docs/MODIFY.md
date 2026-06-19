@@ -1134,3 +1134,15 @@ source_of_truth: true
 - Files: src/agent_core.py, src/modules/{ask,ask_jobs,config}.py, tests/{test_duration_breakdown.py,test_ask_jobs.py}, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
 - Rollback: 표시값 inference-only 복원 / activity step 미emit / IDLE_POLL 제거(tick 복귀).
 - Deploy: ask-worker 재빌드(agent_core baked). web 도 동일 import(in-process 폴백 경로).
+
+## CHG-20260619-0319
+- TASK-20260619T014034 — LLM provider 외부요인 제한(자격증명 만료) 명시 표면화 (agent-core 면, Major §12.3).
+- 근본: LLM 호출 실패가 `result["error"]="LLM 호출 오류: {raw exc}"`(2932)로 raw 노출, gate 류 제한은 tool_result 채널(사용자 미노출). 외부요인(AWS 키 만료 등)을 사용자가 명시 확인할 단일 채널 부재.
+- 변경:
+  - 신규 `src/modules/llm_provider_health.py`: `classify_llm_provider_error`/`not_configured_restriction`(예외→restriction, 자격증명 비유출) + PG upsert/read(`record_provider_state`·`record_provider_restricted`·`record_provider_ok`·`read_provider_health`) + `probe_provider`(hybrid active, TTL throttle).
+  - `src/agent_core.py`: result dict `llm_restriction` 필드 + `_provider_ok_recorded` 가드; `_call_llm` 예외 경로(분류→친화 메시지+passive 기록); 성공 `else` 절 ok 기록; 무자격증명→not_configured.
+  - `src/scripts/agent_runtime_schema.sql` §6e + `alembic/versions/20260619_0011_llm_provider_health.py`(CREATE+INDEX+GRANT, 0006 동형). down_revision=0010(head).
+- Verification: `tests/test_llm_provider_health.py` 14 + feature-0002 전체 pytest 회귀 0(2 skip) + py_compile. 적대 코드리뷰 REV-20260619-0311(secret leakage/probe auth·cost/agent_core else/PG 폴백).
+- Files: src/modules/llm_provider_health.py(new), src/agent_core.py, src/scripts/agent_runtime_schema.sql, alembic/versions/20260619_0011_llm_provider_health.py(new), tests/test_llm_provider_health.py(new), docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
+- Rollback: 분류 미적용(raw 에러 복원) + ok/restricted 기록 제거 + 0011 downgrade(DROP TABLE). 테이블 부재는 graceful(read→unknown).
+- Deploy: ask-worker 재빌드(agent_core baked) + 마이그 0011 적용. web 면(app.py 엔드포인트·UI)은 feature-0003 동반.

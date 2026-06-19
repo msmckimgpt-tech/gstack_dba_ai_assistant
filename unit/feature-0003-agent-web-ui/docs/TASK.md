@@ -4292,3 +4292,12 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `tests/test_task20260619_share_expiry.py` 12/12(B1~B9 백엔드 + F1~F3 프론트) + make test 전체 회귀 0(사전존재 `test_product_delete_block_conv` 2건 제외 — main 81185d4 에서도 동일 실패, 본 변경 무관) + py_compile + node --check + CSS brace 1372=1372.
 - [x] outside-voice 적대 보안 리뷰(공유=익명 접근경계, [[feedback_outside_voice_for_rbac]]) **SHIP** — 9 probe 전부 refute(만료우회·clock skew/TOCTOU·SQLi·입력검증·무회귀·취소vs만료·audit·프론트XSS·IDOR). BLOCKER/MAJOR 0, MINOR 1(취소-race 라벨, 무해)·NIT 2(probe 자기문서화·boundary 더블카운트, 무해).
 - [ ] 머지 → 배포(web 재빌드, deploy_scope 확인) → 라이브 재검증(만료 링크 410·무기한 무회귀) + PB-0008 Windows-browser(만료 모달·관리 배지·뷰 만료 표시) → 마감.
+### TASK-20260619T014034 — LLM provider 외부요인 제한 명시 표면화 (web 면, Major §12.3, 2026-06-19)
+<!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-19 -->
+- 목표: 외부 provider 장애(AWS Bedrock 키 만료 등)로 LLM 이 막힐 때 서비스 사용자가 4 surface 로 명시 확인. 분류·영속·probe 는 agent-core 면(feature-0002 TASK-20260619T014034). 본 면은 web 노출 + UI.
+- [x] app.py: `_read_llm_provider_status`(PG read graceful) + `GET /api/llm/health`(인증 게이트·hybrid probe·force=1) + `/api/session`·`_build_ask_status_snapshot` 에 `llm_provider_status` 동봉.
+- [x] index.html: 컴포저 상단 배너(`#llmRestrictionBanner`)+'다시 확인' + footer 상태점(`#llmStatusDot`, 툴팁) + 실행단계 패널 노트(`#llmRestrictionPanelNote`). styles.css 4 surface 클래스 + footer 상태점 유지 `:has`. 캐시버스터 bump(styles/app `?v=20260619-llm-restriction`).
+- [x] app.js: `applyLlmProviderStatus`(배너/점/패널/send title 일괄) + `renderLlmRestrictionInlineNotice`(대화 인라인, textContent XSS-safe, dedup) + `pollLlmHealth`/`startLlmHealthPolling`(60s + 로드 직후 probe + retry force). `/api/session`·`/api/ask_result` 소비 시 적용; restricted+error 일 때만 인라인 notice.
+- [x] 검증: `verify_llm_restriction_surface.mjs` 35(정적 7+CSS 5+wiring 6+jsdom 4-surface 토글 17) + node --check + py_compile(app.py).
+- [x] 적대 코드리뷰 → REV-20260619T014034-ai-claude-llm-restriction-notice.
+- [ ] 머지 → 배포(web+ask-worker, deploy_scope: included) + 마이그 0011 → PB-0008(restricted 주입 4-surface computed 실측, jsdom 불가 영역) → 마감.

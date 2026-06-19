@@ -284,6 +284,28 @@ CREATE INDEX IF NOT EXISTS ix_datasource_health_status  ON agent_runtime.datasou
 CREATE INDEX IF NOT EXISTS ix_datasource_health_updated ON agent_runtime.datasource_health (updated_at DESC);
 
 -- ============================================================================
+-- 6e. llm_provider_health — LLM provider 외부요인 제한 정본 (TASK-20260619T014034)
+--     ask-worker(agent_core) 가 LLM 호출 실패/성공으로 passive upsert, web probe(hybrid)
+--     가 선제 upsert. 사용자가 "AWS Bedrock 키 만료" 등 외부 제한을 명시 확인하도록 표면화.
+--     PK=provider(bedrock|local|openai). **자격증명 비영속** — state/kind/message/error_tag
+--     (예외 클래스명만)·source·since 만. api key·AWS secret 절대 미저장(datasource_health 동형).
+--     §7 의 GRANT ... ON ALL TABLES 가 본 테이블을 자동 커버하지만, alembic 0011 은 superuser
+--     적용이라 명시 GRANT 도 둔다(0006 DEPLOY TRAP 동형).
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS agent_runtime.llm_provider_health (
+    provider    VARCHAR(32) PRIMARY KEY,    -- bedrock | local | openai
+    state       VARCHAR(16) NOT NULL,        -- ok | restricted | unknown
+    kind        VARCHAR(32),                 -- credential_expired | auth_invalid | throttled | unavailable | not_configured | unknown
+    message     VARCHAR(512),                -- 사용자 친화 한국어 메시지
+    error_tag   VARCHAR(120),                -- 예외 클래스명/코드 축약(비밀 비포함)
+    source      VARCHAR(16),                 -- ask | probe
+    since       TIMESTAMPTZ,                 -- 현재 state 시작 시각(edge)
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_llm_provider_health_state   ON agent_runtime.llm_provider_health (state);
+CREATE INDEX IF NOT EXISTS ix_llm_provider_health_updated ON agent_runtime.llm_provider_health (updated_at DESC);
+
+-- ============================================================================
 -- 6d. core_attachments (+ 부속 3) — 첨부 메타 MySQL→PG 통합 (TASK-0277)
 --     MySQL agent_memory 의 첨부 4 테이블 등가. 정본은 alembic 0008_core_attachments.
 --     id 는 MySQL Id 보존(GENERATED ALWAYS 금지) — dual-write 기간 MySQL 이 ID 권위자,

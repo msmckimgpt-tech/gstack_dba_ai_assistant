@@ -2559,7 +2559,11 @@ def _run_agent_core(
         "result_csv_paths": [],
         "rationale": "",
         "error": "",
+        # TASK-20260619T014034: 외부요인 LLM 제한(자격증명 만료 등) 구조화. None=제한 없음.
+        "llm_restriction": None,
     }
+    # provider 제한 해소(ok) 를 run 당 1회만 기록하기 위한 가드.
+    _provider_ok_recorded = False
 
     # ── LLM 클라이언트 초기화 (feature-0007 단일 env 경로) ──
     if not OpenAI:
@@ -2571,6 +2575,15 @@ def _run_agent_core(
             "BEDROCK_GATEWAY_API_KEY (권장) / LOCAL_LLM_API_KEY "
             "중 하나가 .env 에 채워져야 합니다."
         )
+        # TASK-20260619T014034: 자격증명 미설정도 외부요인 제한으로 표면화(친화 메시지 + health 기록).
+        try:
+            from modules.llm_provider_health import not_configured_restriction, record_provider_restricted
+            _restr = not_configured_restriction()
+            result["llm_restriction"] = _restr
+            result["error"] = _restr["message"]
+            record_provider_restricted(_restr, source="ask")
+        except Exception:
+            pass
         return result
     client_kwargs: dict[str, Any] = {"api_key": LLM_API_KEY}
     if LLM_BASE_URL:
@@ -2930,10 +2943,30 @@ def _run_agent_core(
             )
         except Exception as e:
             error_msg = f"LLM 호출 오류: {e}"
+            # TASK-20260619T014034: 외부요인(자격증명 만료·인증실패·쓰로틀·서비스불가)이면
+            # raw 예외 대신 사용자 친화 메시지로 치환 + provider health 에 passive 기록.
+            try:
+                from modules.llm_provider_health import classify_llm_provider_error, record_provider_restricted
+                _restr = classify_llm_provider_error(e)
+                if _restr is not None:
+                    error_msg = _restr["message"]
+                    result["llm_restriction"] = _restr
+                    record_provider_restricted(_restr, source="ask")
+            except Exception:
+                pass
             result["error"] = error_msg
             if output_mode == "console":
                 console.print(Panel.fit(error_msg, title="오류"))
             break
+        else:
+            # TASK-20260619T014034: LLM 호출 성공 → provider 제한 해소(ok) 기록(run 당 1회).
+            if not _provider_ok_recorded:
+                _provider_ok_recorded = True
+                try:
+                    from modules.llm_provider_health import record_provider_ok
+                    record_provider_ok(source="ask")
+                except Exception:
+                    pass
 
         if _cancel_requested_for_run(mem_conn, cid, run_id):
             canceled_by_user = True
